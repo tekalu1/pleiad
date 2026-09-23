@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
-import { createAgentBridge } from '../../core/agent-bridge.mjs';
+import { createAgentBridge, DELEGATING_TOOLS } from '../../core/agent-bridge.mjs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
@@ -37,7 +37,10 @@ export default async function(t) {
     await client.connect(new StreamableHTTPClientTransport(new URL(connection.url), { requestInit: { headers: connection.headers } }));
     const tools = (await client.listTools()).tools;
     const names = tools.map(t => t.name);
-    t.ok('SDK クライアントから6ツールが見え、native 名と重ならない', names.length === 6 && names.every(n => n.startsWith('ply_')) && !names.includes('spawn_agent'));
+    t.ok('SDK クライアントから7ツールが見え、native 名と重ならない', names.length === 7 && names.every(n => n.startsWith('ply_')) && !names.includes('spawn_agent'));
+    const usageTool = tools.find(t => t.name === 'ply_usage');
+    t.ok('ply_usage は backend を任意の文字列で受ける', usageTool?.inputSchema?.properties?.backend?.type === 'string' && usageTool.inputSchema.required.length === 0);
+    t.ok('ply_usage は読み取り・計画モードの制限に掛けない', !DELEGATING_TOOLS.includes('ply_usage') && DELEGATING_TOOLS.includes('ply_delegate'));
     const delegateTool = tools.find(t => t.name === 'ply_delegate');
     t.ok('backend enum に antigravity が含まれる', delegateTool?.inputSchema?.properties?.backend?.enum?.includes('antigravity'));
     t.ok('backend enum に procway は無い（対応を終えた）', !delegateTool?.inputSchema?.properties?.backend?.enum?.includes('procway'));

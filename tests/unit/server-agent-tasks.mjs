@@ -88,6 +88,18 @@ export default async function(t) {
     t.ok('子は親の承認モードの強さを継ぐ', inherited.mode === 'auto',
       `${inherited.mode} / ${(await c.cmd('listSessions')).find(s => s.id === inherited.sessionId)?.mode}`);
 
+    // ---- 使用枠（ply_usage）。読むだけのツールで、設定の画面（providerUsage）と同じキャッシュを通す
+    const usageTurn = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_usage', {}) });
+    const usageAll = JSON.parse(usageTurn.events.find(e => e.type === 'tool.result').text);
+    t.ok('ply_usage は省略時に使用枠を持つバックエンドだけを返す', usageAll.backends.length === 1 && usageAll.backends[0].backend === 'antigravity'
+      && usageAll.backends[0].windows.length === 3 && usageAll.backends[0].windows.every(w => Object.keys(w).sort().join() === 'label,resetsAt,usedPercent'), JSON.stringify(usageAll));
+    const usageOne = await callTool(usageTurn.sessionId, 'ply_usage', { backend: 'antigravity' });
+    const screen = await c.cmd('providerUsage', { backend: 'antigravity' });
+    t.ok('ply_usage と providerUsage は同じキャッシュを共有する', usageOne.backends[0].checkedAt === usageAll.backends[0].checkedAt
+      && new Date(screen.quota.checkedAt).toISOString() === usageAll.backends[0].checkedAt);
+    const unknownUsage = await c.runTurn({ sessionId: usageTurn.sessionId, prompt: prompt('ply_usage', { backend: 'nope' }) });
+    t.ok('ply_usage は不明なバックエンド名をエラーで返す', unknownUsage.events.some(e => e.type === 'tool.result' && e.isError && e.text.includes('nope')));
+
     // ---- 承認の中継と、依頼元への「承認待ち」の伝達
     hold = true;
     const top = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { backend: 'fake', task: 'ask-slow' }) })).sessionId;
