@@ -52,6 +52,24 @@ export default async function(t) {
     t.ok('開始失敗でも入力が再送可能な状態で残る', (await c.cmd('listMessages', { sessionId: bad.sessionId }))[0].status === 'failed');
   } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 
+  // 何も走っていない新しい会話でも、ほかの会話で上限まで埋まっていれば待つ。そのとき「作業が終わると」とは出さない
+  const limitDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-outbox-limit-'));
+  const limitServer = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_MAX_TURNS: '1' }, dataDir: path.join(limitDir, 'data') });
+  const lc = await open(limitServer);
+  try {
+    const busy = await lc.cmd('newSession', { backend: 'fake', cwd: ROOT });
+    await lc.cmd('runTurn', { sessionId: busy.sessionId, prompt: 'ask' });
+    const permission = await lc.waitFor(e => e.type === 'permission');
+    const fresh = await lc.cmd('newSession', { backend: 'fake', cwd: ROOT });
+    await lc.cmd('sendMessage', { sessionId: fresh.sessionId, messageId: 'message-0101', prompt: 'echo:fresh' });
+    await lc.waitFor(e => e.type === 'outbox' && e.sessionId === fresh.sessionId && e.messages[0]?.waiting, { ms: 3000 });
+    const [held] = await lc.cmd('listMessages', { sessionId: fresh.sessionId });
+    t.ok('新しい会話の上限待ちは limit として出す', held.status === 'queued' && held.waiting?.reason === 'limit' && held.waiting.limit === 1, JSON.stringify(held));
+    await lc.cmd('resolvePermission', { id: permission.id, allow: true });
+    await lc.waitFor(e => e.type === 'outbox' && e.sessionId === fresh.sessionId && e.messages[0]?.status === 'sent', { ms: 5000 });
+    t.ok('空きが出たら自動で送る', true);
+  } finally { lc.close(); await limitServer.stop(); await fs.rm(limitDir, { recursive: true, force: true }); }
+
   // A transport failure after delivery must never fall back to a new turn.
   const data = {};
   let calls = 0;
@@ -89,4 +107,32 @@ export default async function(t) {
   await requeue.kick('r');
   for (let i = 0; i < 50 && (await requeue.list('r'))[1].status !== 'sent'; i++) await new Promise(r => setTimeout(r, 10));
   t.ok('相手のターンが終わると同じ順で送り直す', JSON.stringify(starts) === JSON.stringify(['after wake', 'after wake', 'next']), JSON.stringify(starts));
+
+  // 送信待ちが何を待っているかを画面へ渡す。何も走っていない会話でも、同時実行の上限で待つことがある
+  const waitData = {};
+  const emitted = [];
+  let block = { blocked: true, wait: { reason: 'limit', limit: 8 } };
+  const store3 = { get: async id => waitData[id] ?? {}, getAll: async () => waitData,
+    setSessionData: async (id, field, value) => { (waitData[id] ??= {})[field] = structuredClone(value); } };
+  const waiting = createMessageQueue({ store: store3, active: () => block,
+    start: async (args, onStarted) => { await onStarted(); return 'ok'; },
+    changed: (id, messages) => emitted.push(messages), delivered: () => {} });
+  await waiting.accept('w', 'request-5', { prompt: 'first' });
+  await waiting.kick('w');
+  const limited = (await waiting.list('w'))[0];
+  t.ok('上限待ちは理由と上限を添える', limited.status === 'queued' && limited.waiting?.reason === 'limit' && limited.waiting.limit === 8, JSON.stringify(limited));
+  t.ok('理由の変化も画面へ通知する', emitted.at(-1)?.[0]?.waiting?.reason === 'limit');
+  t.ok('理由は保存しない', !('waiting' in waitData.w.outbox[0]));
+  block = { blocked: true };
+  await waiting.kick('w');
+  t.ok('この会話の作業待ちは turn', (await waiting.list('w'))[0].waiting?.reason === 'turn');
+  waitData.w.outbox[0].status = 'paused';
+  await waiting.accept('w', 'request-6', { prompt: 'second' });
+  await waiting.kick('w');
+  const ordered = await waiting.list('w');
+  t.ok('先頭が保留なら後続は順番待ち', ordered[1].waiting?.reason === 'order' && !ordered[0].waiting, JSON.stringify(ordered));
+  block = null;
+  await waiting.action('w', 'request-5', 'cancel');
+  for (let i = 0; i < 50 && (await waiting.list('w'))[1].status !== 'sent'; i++) await new Promise(r => setTimeout(r, 10));
+  t.ok('送れたら理由は外れる', (await waiting.list('w')).every(m => !m.waiting));
 }

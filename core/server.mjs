@@ -1019,7 +1019,12 @@ const outbox = createMessageQueue({
   store,
   active: id => {
     const turn = runtime.turns.get(id);
-    if (!turn) return switching.has(id) || forking.has(id) || pendingExternal.has(id) || runtime.turns.size >= MAX_TURNS ? { blocked: true } : null;
+    if (!turn) {
+      if (switching.has(id) || forking.has(id) || pendingExternal.has(id)) return { blocked: true, wait: { reason: 'turn' } };
+      // ほかの会話（委譲した子のターンも数える）で上限まで埋まっている。この会話は何も走っていなくても待つ
+      if (runtime.turns.size >= MAX_TURNS) return { blocked: true, wait: { reason: 'limit', limit: MAX_TURNS } };
+      return null;
+    }
     const steer = turn.control.steer;
     // 送るのは outbox の item そのもの（本文だけではない）。バックエンドは item.id を
     // 相手に預け、「渡った」合図（userMessage.delivered）でこの id を返してくる
