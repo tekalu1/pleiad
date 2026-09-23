@@ -4,7 +4,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { contextTools, mcpTransportConfig, hash } from './context-runtime.mjs';
-import { t } from './i18n.mjs';
+import { t, agentT } from './i18n.mjs';
 
 export const CONTEXT_MCP_PATH = '/mcp/context';
 const MAX_TOOLS = 500;
@@ -119,15 +119,17 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
       }
       if (signal?.aborted || binding.closed) throw new Error(t('context.bridge.aborted'));
       if (binding.entries.size) {
-        binding.tools.push({ name: 'mcp_resources', description: 'List or read resources from connected MCP servers. Omit uri to list resources; pass a listed URI to read.', inputSchema: { type:'object',properties:{uri:{type:'string'}},additionalProperties:false } });
-        binding.tools.push({ name: 'mcp_prompts', description: 'List or fetch reusable MCP prompts. Omit name to list; pass a listed name and optional string arguments to fetch.', inputSchema: { type:'object',properties:{name:{type:'string'},arguments:{type:'object',additionalProperties:{type:'string'}}},additionalProperties:false } });
+        // ツールの説明はエージェントが読むので会話の言語（runtime.locale）で
+        binding.tools.push({ name: 'mcp_resources', description: agentT(runtime.locale, 'context.tools.mcp_resources'), inputSchema: { type:'object',properties:{uri:{type:'string'}},additionalProperties:false } });
+        binding.tools.push({ name: 'mcp_prompts', description: agentT(runtime.locale, 'context.tools.mcp_prompts'), inputSchema: { type:'object',properties:{name:{type:'string'},arguments:{type:'object',additionalProperties:{type:'string'}}},additionalProperties:false } });
       }
       bindings.set(token, binding);
       runtime.report.status = 'ready'; await changed();
+      // locale は会話の言語。agy（antigravity）はエージェント定義の文と中継のエラーをこの言語で作る。
       // shape: 担当と渡すツールの名前。会話のあいだプロセスを生かすバックエンド（antigravity）は、これが変わったら起こし直す
       // （設定の変更で担当や外部 MCP が変わっても、起動時に受け取ったツール一覧のままになるため）
       const shape = hash([runtime.owners, binding.tools.map(tool => tool.name)]);
-      return { owners: runtime.owners, prompt: helpers.prompt, url: `${origin}${CONTEXT_MCP_PATH}`, headers: { Authorization: `Bearer ${token}` }, shape, close };
+      return { owners: runtime.owners, prompt: helpers.prompt, locale: runtime.locale, url: `${origin}${CONTEXT_MCP_PATH}`, headers: { Authorization: `Bearer ${token}` }, shape, close };
     } catch (e) { await close(); throw e; }
   }
   async function metadata(b, kind, params = {}) {
@@ -183,14 +185,14 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
     if (!b.tools.some(t => t.name === m.params?.name)) return error('Unknown tool');
     const work = (async () => {
       try {
-        if (call && !await b.authorize(call.item.name, call.name, m.params.arguments ?? {})) return { isError: true, content: [{type:'text',text:'MCP tool call was declined.'}] };
+        if (call && !await b.authorize(call.item.name, call.name, m.params.arguments ?? {})) return { isError: true, content: [{type:'text',text:agentT(b.runtime.locale, 'context.errors.mcpDeclined')}] };
         if (b.closed || !b.isActive()) throw new Error('Turn ended');
         const isMetadata=['mcp_resources','mcp_prompts'].includes(m.params.name);
         const result = call ? await call.client.callTool({ name: call.name, arguments: m.params.arguments ?? {} }, undefined,
           { timeout: Math.min(300000, (call.item.definition.tool_timeout_sec ?? 60) * 1000) }) : isMetadata ? {content:[{type:'text',text:JSON.stringify(await metadata(b,m.params.name==='mcp_resources'?'resources':'prompts',m.params.arguments))}]} : await b.helpers.call(m.params.name, m.params.arguments);
         if (call) { const row = b.runtime.report.entries.find(e => e.id === call.item.id); row.calls = (row.calls ?? 0) + 1; }
         await b.changed(); return result;
-      } catch { return { isError: true, content: [{ type: 'text', text: 'コンテキストの読み込みまたは MCP 呼び出しに失敗しました。設定・ファイルの変更と接続先を確認してください。' }] }; }
+      } catch { return { isError: true, content: [{ type: 'text', text: agentT(b.runtime.locale, 'context.errors.callFailed') }] }; }
     })();
     b.pending.add(work);
     try { return reply(await work); } finally { b.pending.delete(work); }

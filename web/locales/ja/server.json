@@ -779,5 +779,8 @@
     "launchFailed": "起動できませんでした（{{reason}}）",
     "openFailed": "開けませんでした（{{reason}}）",
     "noResponse": "応答がありませんでした"
+  },
+  "agentRuntime": {
+    "visualizeNotStarted": "会話がまだ開始されていません"
   }
 }

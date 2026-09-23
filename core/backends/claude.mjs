@@ -13,7 +13,7 @@ import {
   listSubagents as sdkListSubagents, getSubagentMessages as sdkGetSubagentMessages,
 } from "@anthropic-ai/claude-agent-sdk";
 import { claudeAuth } from '../auth/claude-cli.mjs';
-import { t } from '../i18n.mjs';
+import { t, agentT } from '../i18n.mjs';
 import { readClaudeAccountsUsage } from './claude-usage.mjs';
 import { claudeEnv, redactToken } from '../claude-accounts.mjs';
 import { claudeCompatEnv, writeClaudeFlagSettings, redactSecret } from '../compat-endpoints.mjs';
@@ -190,9 +190,10 @@ const TOOL_HINTS = {
 // 人間の操作（server.mjs のコマンド）と同じ store・同じイベントを通る。
 
 /**
- * ctx = { sessionId, emit(event) }
+ * ctx = { sessionId, emit(event), locale }
  * sessionId は新規セッションだと init メッセージまで確定しないので、
  * ctx を書き換えられるオブジェクトとして渡す（runTurn が差し替える）。
+ * 説明・引数の説明・返り値はエージェントが読むので、会話の言語（ctx.locale）で引く（agent 名前空間）
  */
 function buildToolServer(ctx) {
   // 応答は CLI の stdin を通る。走っている間は入力を閉じさせない（claude-background.mjs）
@@ -203,16 +204,15 @@ function buildToolServer(ctx) {
     tools: [
       tool(
         "set_status",
-        "このセッションの状態を設定する。事前定義された一覧は無く、その場に合う語を自由に決めてよい。" +
-          "既に使われている状態があれば揃えるほうが一覧が読みやすいが、強制ではない。",
+        agentT(ctx.locale, 'host.setStatus.description'),
         {
-          status: z.string().describe("状態を表す短い語（例: 進行中 / レビュー待ち / 保留）"),
-          reason: z.string().optional().describe("なぜ変えたか。履歴に残る"),
-          icon: z.string().optional().describe("この状態のグループに付けるアイコン（記号 1 つ）。省略すると今のまま"),
+          status: z.string().describe(agentT(ctx.locale, 'host.setStatus.status')),
+          reason: z.string().optional().describe(agentT(ctx.locale, 'host.setStatus.reason')),
+          icon: z.string().optional().describe(agentT(ctx.locale, 'host.setStatus.icon')),
         },
         hosted("mcp__host__set_status", async (args) => {
           const sessionId = ctx.hostSessionId ?? ctx.sessionId;
-          if (!sessionId) return { content: [{ type: "text", text: "セッションIDが未確定" }] };
+          if (!sessionId) return { content: [{ type: "text", text: agentT(ctx.locale, 'host.sessionPending') }] };
           await (ctx.hostBackend ?? backend).setTag(sessionId, args.status);
           await store.recordChange(sessionId, {
             by: "ai", field: "status", to: args.status, reason: args.reason, backend,
@@ -223,41 +223,39 @@ function buildToolServer(ctx) {
             const icon = await store.setStatusIcon(args.status, args.icon);
             ctx.emit({ type: "statusIcon", sessionId: null, status: args.status, icon });
           }
-          return { content: [{ type: "text", text: `状態を「${args.status}」にした` }] };
+          return { content: [{ type: "text", text: agentT(ctx.locale, 'host.setStatus.done', { status: args.status }) }] };
         }),
       ),
 
       tool(
         "set_title",
-        "このセッションのタイトルを変更する。話の主題が変わったときに使う。" +
-          "毎ターン勝手に書き換えてはいけない（ユーザーが追えなくなる）。意図して変えるときだけ。",
+        agentT(ctx.locale, 'host.setTitle.description'),
         {
           title: z.string(),
-          reason: z.string().optional().describe("なぜ変えたか。履歴に残る"),
+          reason: z.string().optional().describe(agentT(ctx.locale, 'host.setTitle.reason')),
         },
         hosted("mcp__host__set_title", async (args) => {
           const sessionId = ctx.hostSessionId ?? ctx.sessionId;
-          if (!sessionId) return { content: [{ type: "text", text: "セッションIDが未確定" }] };
+          if (!sessionId) return { content: [{ type: "text", text: agentT(ctx.locale, 'host.sessionPending') }] };
           await (ctx.hostBackend ?? backend).setTitle(sessionId, args.title);
           await store.recordChange(sessionId, {
             by: "ai", field: "title", to: args.title, reason: args.reason, backend,
           });
           ctx.emit({ type: "title", sessionId, title: args.title, by: "ai", reason: args.reason ?? null });
-          return { content: [{ type: "text", text: `タイトルを「${args.title}」にした` }] };
+          return { content: [{ type: "text", text: agentT(ctx.locale, 'host.setTitle.done', { title: args.title }) }] };
         }),
       ),
 
       tool(
         "fork",
-        "この会話をここまで引き継いだ別のセッションを作る。話が別の筋に入るときに使う。" +
-          "元のセッションはそのまま残り、両方が一覧に並ぶ。人間も同じことができる。",
+        agentT(ctx.locale, 'host.fork.description'),
         {
-          title: z.string().optional().describe("分岐先のタイトル。省略すると元タイトル + (fork)"),
-          reason: z.string().optional().describe("なぜ分けたか。履歴に残る"),
+          title: z.string().optional().describe(agentT(ctx.locale, 'host.fork.title')),
+          reason: z.string().optional().describe(agentT(ctx.locale, 'host.fork.reason')),
         },
         hosted("mcp__host__fork", async (args) => {
           const sessionId = ctx.hostSessionId ?? ctx.sessionId;
-          if (!sessionId) return { content: [{ type: "text", text: "セッションIDが未確定" }] };
+          if (!sessionId) return { content: [{ type: "text", text: agentT(ctx.locale, 'host.sessionPending') }] };
           const { sessionId: child } = ctx.hostBackend
             ? await ctx.hostBackend.fork(sessionId, { title: args.title })
             : await forkSession(sessionId, { title: args.title });
@@ -270,7 +268,7 @@ function buildToolServer(ctx) {
             by: "ai", field: "parent", to: parent, reason: args.reason ?? "fork", backend,
           });
           ctx.emit({ type: "fork", sessionId: child, parent, by: "ai", reason: args.reason ?? null });
-          return { content: [{ type: "text", text: `分岐した（${child}）。この会話は元のまま続く。` }] };
+          return { content: [{ type: "text", text: agentT(ctx.locale, 'host.fork.done', { sessionId: child }) }] };
         }),
       ),
     ],
@@ -298,11 +296,12 @@ function makeCanUseTool(ctx, askPermission) {
       : decidePermission(ctx, askPermission, toolName, input, options);
 }
 
+// deny の理由はツールの結果としてエージェントに返る（画面のツールの結果にも出る）。会話の言語（ctx.locale）で
 async function decidePermission(ctx, askPermission, toolName, input, options) {
   if (AUTO_ALLOW.has(toolName)) return { behavior: "allow", updatedInput: input };
 
   if (typeof askPermission !== "function") {
-    return { behavior: "deny", message: `${toolName} は承認先が無いので実行できない` };
+    return { behavior: "deny", message: agentT(ctx.locale, 'approval.noHandler', { tool: toolName }) };
   }
 
   const isQuestion = toolName === QUESTION_TOOL && Array.isArray(input?.questions);
@@ -324,11 +323,11 @@ async function decidePermission(ctx, askPermission, toolName, input, options) {
       questions: isQuestion ? input.questions : null,
     });
   } catch (err) {
-    return { behavior: "deny", message: `承認を取れなかった: ${String(err?.message ?? err)}` };
+    return { behavior: "deny", message: agentT(ctx.locale, 'approval.failed', { error: String(err?.message ?? err) }) };
   }
 
   if (!answer?.allow) {
-    return { behavior: "deny", message: answer?.message || "ユーザーが許可しなかった" };
+    return { behavior: "deny", message: answer?.message || agentT(ctx.locale, 'approval.notAllowed') };
   }
 
   // AskUserQuestion のように、承認そのものではなく**回答**を運ぶツールがある。
@@ -500,8 +499,9 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, contextRuntime, agentRuntime, oauthToken, endpoint = null }) {
-    const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend };
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, contextRuntime, agentRuntime, oauthToken, endpoint = null, locale }) {
+    // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
+    const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, locale };
     let releaseContext;
     const readyContext = new Promise(resolve => { releaseContext = resolve; });
     const userMessage = (text) => ({ type: 'user', session_id: ctx.sessionId ?? '', parent_tool_use_id: null, message: { role: 'user', content: String(text ?? '') } });
@@ -924,13 +924,12 @@ export const backend = {
    * 道具も設定も要らないので settingSources / allowedTools を切って軽く回す。
    * 返すのは生成された生のテキスト。前後の記号を落とす整形は server 側（バックエンド非依存）。
    */
-  async suggestTitle({ transcript, oauthToken, endpoint = null }) {
+  // locale は会話の言語。タイトルもその言語で作らせる
+  async suggestTitle({ transcript, oauthToken, endpoint = null, locale }) {
     let title = "";
     try {
       for await (const m of query({
-        prompt:
-          "次は作業ログの冒頭です。この作業を表す短い日本語のタイトルを1つだけ返してください。" + NL +
-          "20文字以内。記号や引用符で囲まず、タイトルだけを返すこと。" + NL + NL + transcript,
+        prompt: agentT(locale, 'title.claude') + NL + NL + transcript,
         options: {
           pathToClaudeCodeExecutable: claudeExecutable(), model: "haiku", settingSources: [], allowedTools: [], permissionMode: "default",
           // その会話で選んだアカウントで回す。選んでいなければ env を渡さない（今までどおり SDK が process.env を使う）。

@@ -4,8 +4,12 @@ import { readLocalFile } from './local-files.mjs';
 import { visualizeReferences } from '../web/visualize-reference.mjs';
 import { t } from './i18n.mjs';
 
-const skill = await fs.readFile(new URL('../skills/visualize/SKILL.md', import.meta.url), 'utf8');
-export const VISUALIZE_INSTRUCTIONS = skill.replace(/^---[\s\S]*?---\s*/, '');
+// Visualize の案内（エージェントに渡す）。会話の言語ごとの本文: en は skills/visualize/SKILL.md、ja は SKILL.ja.md。
+// 1 つの文書として長く、表示の約束（参照の形式・特殊な印）をそのまま保つ必要があるので、辞書ではなく Skill の形のファイルで持つ
+const readSkill = async name => (await fs.readFile(new URL(`../skills/visualize/${name}`, import.meta.url), 'utf8')).replace(/^---[\s\S]*?---\s*/, '');
+const SKILLS = { en: await readSkill('SKILL.md'), ja: await readSkill('SKILL.ja.md') };
+/** 会話の言語（ja|en）の案内。言語を持たなければ英語 */
+export const visualizeInstructions = locale => SKILLS[locale] ?? SKILLS.en;
 export const MAX_VISUALIZE_BYTES = 1024 * 1024;
 
 export async function prepareVisualization(ref, roots) {

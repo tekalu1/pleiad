@@ -7,12 +7,15 @@
 // （agy 1.2.7 で実測）ので、接続先とトークンはファイルに書かず、agy を起こすときの env だけで渡す:
 //   PLY_CONTEXT_URL            ply_context の URL（http://127.0.0.1:<port>/mcp/context）
 //   PLY_CONTEXT_AUTHORIZATION  `Bearer <会話ごとのトークン>`
+//   PLY_CONTEXT_LOCALE         会話の言語（ja|en）。agy へ返すエラーの言語（agent 名前空間）。無ければ英語
 // 受け取った JSON-RPC をそのまま Pleiad へ POST し、返事を stdout へ書く。env が無ければ（利用者が手で
 // このエージェントを選んだなど）ツールを持たない MCP として振る舞う。
 import readline from 'node:readline';
+import { agentT } from './i18n.mjs';
 
 const url = process.env.PLY_CONTEXT_URL;
 const authorization = process.env.PLY_CONTEXT_AUTHORIZATION;
+const locale = process.env.PLY_CONTEXT_LOCALE;
 const connected = Boolean(url && /^Bearer [a-f0-9]{64}$/.test(authorization ?? ''));
 const FORWARDED = new Set(['initialize', 'ping', 'tools/list', 'tools/call', 'resources/list', 'resources/read', 'prompts/list', 'prompts/get']);
 // ツールの呼び出しは Pleiad 側で最長 300 秒まで待つ（context-bridge.mjs）。それより少し長く待つ
@@ -29,8 +32,8 @@ async function forward(message) {
     signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
   });
   if (message.id === undefined) { await response.body?.cancel().catch(() => {}); return; }
-  if (response.status === 401) return fail(message.id, -32001, 'Pleiad のコンテキストはこのターンでは使えません（Pleiad のターンの外か、会話が閉じられました）');
-  if (!response.ok) return fail(message.id, -32603, `Pleiad のコンテキストに届きません（HTTP ${response.status}）`);
+  if (response.status === 401) return fail(message.id, -32001, agentT(locale, 'relay.inactive'));
+  if (!response.ok) return fail(message.id, -32603, agentT(locale, 'relay.unreachableStatus', { status: response.status }));
   const body = await response.json();
   write({ ...body, id: message.id });
 }
@@ -54,5 +57,5 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     continue;
   }
   if (!connected || !FORWARDED.has(message.method)) { local(message); continue; }
-  forward(message).catch(error => fail(message.id, -32603, `Pleiad のコンテキストに届きません: ${error?.message ?? error}`));
+  forward(message).catch(error => fail(message.id, -32603, agentT(locale, 'relay.unreachable', { error: error?.message ?? error })));
 }
