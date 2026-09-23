@@ -764,6 +764,8 @@ export const backend = {
       if (contextRuntime) {
         await q.initializationResult();
         if (contextRuntime.owners.instruction === 'ply') {
+          // 指示ファイルは最初のプロンプトを処理するときに読まれることが多く、ここではまだ空のことがある。
+          // 止める本体は claudeMdExcludes（context-options.mjs）で、この確認は取りこぼしを拾う保険
           const usage = await q.getContextUsage({ detail: 'summary' });
           if (usage.memoryFiles?.length) throw new Error(t('claude.errors.nativeInstructions'));
         }

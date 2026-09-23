@@ -1,11 +1,16 @@
 import { CodexRpc } from './codex-rpc.mjs';
 import { t } from '../i18n.mjs';
 
+// 指示を Pleiad が担当するとき、Claude Code に読ませない指示ファイル。
+// AGENTS.md も含める: CLI 2.1.280 は CLAUDE.md と同じく Project の指示として読む（2026-09-23 確認）。
+// 読んだかどうかは最初のプロンプトを処理するまで memoryFiles に出ないので、claude.mjs の起動時の確認では見逃す
+export const CLAUDE_MD_EXCLUDES = ['**/CLAUDE.md', '**/CLAUDE.local.md', '**/AGENTS.md', '**/.claude/rules/**'];
+
 export function claudeContextOptions(context) {
   if (!context) return {};
   const { owners } = context;
   return {
-    ...(owners.instruction === 'ply' ? { settings: { claudeMdExcludes: ['**/CLAUDE.md','**/CLAUDE.local.md','**/.claude/rules/**'], autoMemoryEnabled: false } } : {}),
+    ...(owners.instruction === 'ply' ? { settings: { claudeMdExcludes: CLAUDE_MD_EXCLUDES, autoMemoryEnabled: false } } : {}),
     ...(owners.skill === 'ply' ? { skills: [], extraArgs: { 'disable-slash-commands': null }, disallowedTools: ['Skill'] } : {}),
     ...(owners.mcp === 'ply' ? { strictMcpConfig: true } : {}),
     ...(context.prompt ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: context.prompt } } : {}),

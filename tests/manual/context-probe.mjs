@@ -29,7 +29,7 @@ for await (const line of readline.createInterface({input:process.stdin})) {
     ['native', { settingSources: keepSources, skills: 'all', settings: { enableAllProjectMcpServers: true } }],
     ['isolated', { settingSources: [], skills: [], strictMcpConfig: true }],
     ['selective', { settingSources: keepSources, skills: [], strictMcpConfig: true,
-      settings: { claudeMdExcludes: ['**/CLAUDE.md', '**/CLAUDE.local.md', '**/.claude/rules/**'], enableAllProjectMcpServers: true },
+      settings: { claudeMdExcludes: ['**/CLAUDE.md', '**/CLAUDE.local.md', '**/AGENTS.md', '**/.claude/rules/**'], enableAllProjectMcpServers: true },
       mcpServers: { plyExplicit: { command: process.execPath, args: [path.join(tmp, 'mcp.mjs')] } } }],
   ]) {
     const gate = new Promise(resolve => { release = resolve; });
