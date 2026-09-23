@@ -21,7 +21,7 @@ export default async function (t) {
   const notices = [];
   const completionNotifications = createCompletionNotifications({ host: { plyDesktop: { notifyCompletion: notice => notices.push(notice) } }, openSession: noop });
   let bodies = [], releaseHistory, releaseBranches, syncs = 0;
-  const state = { current: "other", sessions: [], drafts: new Map(), toolCards: new Map(), runningIds: new Set(["target"]), pendingPerms: new Map() };
+  const state = { current: "other", sessions: [], drafts: new Map(), toolCards: new Map(), runningIds: new Set(["target"]), stopping: new Set(), pendingPerms: new Map() };
   const loads = createSessionLoads();
   const context = vm.createContext({
     completionNotifications,
@@ -43,6 +43,8 @@ export default async function (t) {
     paintContextLine: noop, paintContextEntry: noop, refreshContextEntry: async () => null, isManagedContext: () => false,
     syncHistory: () => { syncs++; }, refresh: async () => {},
     cmd: () => new Promise(r => { releaseHistory = r; }),
+    // 文言（web/i18n.mjs の t と client.mjs の html.t・ACTIVITY_LABEL）。このテストは文言を見ない
+    t: key => key, html: { t: key => key }, ACTIVITY_LABEL: {},
   });
   vm.runInContext(functions, context);
   const event = (text, streamSeq) => ({ type: "text.delta", sessionId: "target", text, streamSeq });

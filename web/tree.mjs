@@ -24,9 +24,11 @@ function chevron() {
  * ツリーを 1 つ作る。
  * @param {HTMLElement} root 置き場所。role と tabindex はここで付ける
  * @param {{nodes?:Array, open?:string[], empty?:string,
- *          render?:(node:any, row:HTMLElement)=>void, onSelect?:(node:any)=>void, onOpen?:(node:any, open:boolean)=>void}} opts
+ *          render?:(node:any, row:HTMLElement)=>void, onSelect?:(node:any)=>void, onOpen?:(node:any, open:boolean)=>void,
+ *          onContext?:(node:any, x:number, y:number, row:HTMLElement)=>void}} opts
+ *   onContext は行のメニュー。右クリック・ContextMenu キー・Shift+F10 で呼ぶ（行は選ぶが onSelect は呼ばない）
  */
-export function createTree(root, { nodes = [], open = [], empty = "一致なし", render, onSelect, onOpen } = {}) {
+export function createTree(root, { nodes = [], open = [], empty = "一致なし", render, onSelect, onOpen, onContext } = {}) {
   const prefix = `tree${++seq}`;
   const opened = new Set(open);                       // 開いている節の id。呼び出し側が state() で持ち出せる
   const parents = new Map(), rows = new Map(), byId = new Map();
@@ -76,6 +78,11 @@ export function createTree(root, { nodes = [], open = [], empty = "一致なし"
       if (render) render(n, row); else row.append(el("span", "nm", n.name));
       row.onclick = () => select(n);                   // 単押しは選択だけ。開閉は chevron かダブルクリック
       row.ondblclick = () => toggle(n);
+      if (onContext) row.oncontextmenu = (e) => {
+        e.preventDefault();
+        select(n, false);
+        onContext(n, e.clientX, e.clientY, row);
+      };
       li.append(row);
       rows.set(n, row);
       if (n.children?.length && expanded(n)) li.append(build(n.children, level + 1));
@@ -134,7 +141,20 @@ export function createTree(root, { nodes = [], open = [], empty = "一致なし"
     redraw();
   }
 
+  /** キーボードからのメニュー。今いる行の左下に開く */
+  function contextFromKeyboard() {
+    const row = rows.get(selected);
+    if (!onContext || !row) return false;
+    const r = row.getBoundingClientRect();
+    onContext(selected, r.left + 24, r.bottom, row);
+    return true;
+  }
+
   root.addEventListener("keydown", (e) => {
+    if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey)) {
+      if (contextFromKeyboard()) e.preventDefault();
+      return;
+    }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const order = [...rows.keys()];
     if (!order.length) return;

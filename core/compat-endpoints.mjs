@@ -24,6 +24,7 @@ const ID = /^ep-[a-f0-9]{12}$/;
 const MAX_NAME = 60;
 const MAX_MODEL = 200;
 const MAX_MODELS = 5000;
+const MAX_DISPLAY = 120;
 const MAX_BODY = 8 * 1024 * 1024;
 export const CHECK_TIMEOUT_MS = Number(process.env.AGENT_HOST_COMPAT_CHECK_MS ?? 20_000);
 const RECEIPT_MS = 15 * 60_000;
@@ -185,7 +186,11 @@ const authHeaders = (mode, key) => mode === 'x-api-key' ? { 'x-api-key': key || 
   : mode === 'none' ? {}
   : { authorization: `Bearer ${key || NO_KEY}` };
 
-/** モデル一覧（OpenAI 形式と Anthropic 形式のどちらも data[].id）。取れなければ null */
+/**
+ * モデル一覧（OpenAI 形式と Anthropic 形式のどちらも data[].id）。取れなければ null。
+ * 返すのは { ids, info }。info は取れた分だけの { [id]: { name?, context? } }
+ * （Anthropic 形式は display_name・max_input_tokens、OpenAI 形式（OpenRouter など）は name・context_length）
+ */
 async function fetchModels(fetchImpl, url, headers, key) {
   try {
     const r = await send(fetchImpl, url, { method: 'GET', headers, key, timeoutMs: Math.min(CHECK_TIMEOUT_MS, 15_000) });
@@ -193,9 +198,44 @@ async function fetchModels(fetchImpl, url, headers, key) {
     const body = JSON.parse(r.text);
     const list = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : Array.isArray(body) ? body : null;
     if (!list) return null;
-    const ids = [...new Set(list.map(m => typeof m === 'string' ? m : m?.id ?? m?.name).filter(isModelId))];
-    return ids.slice(0, MAX_MODELS);
+    return normalizeModels(list);
   } catch { return null; }
+}
+
+/** コンテキスト長として受け取る値（正の整数） */
+const tokensOf = v => Number.isSafeInteger(Number(v)) && Number(v) > 0 ? Number(v) : undefined;
+const CONTROL = /[\x00-\x1f\x7f]/g;
+
+/**
+ * 一覧の要素（文字列か { id, display_name?, name?, max_input_tokens?, context_length? }）を { ids, info } にそろえる。
+ * 保存済みの models（旧形式は文字列の配列。modelInfo は無い）の読み込みにも使う。prevInfo は保存済みの modelInfo
+ */
+export function normalizeModels(list, prevInfo = {}) {
+  const ids = [];
+  const info = {};
+  const seen = new Set();
+  for (const m of Array.isArray(list) ? list : []) {
+    if (ids.length >= MAX_MODELS) break;
+    const id = typeof m === 'string' ? m : m?.id ?? m?.name;
+    if (!isModelId(id) || seen.has(id)) continue;
+    seen.add(id); ids.push(id);
+    const raw = m && typeof m === 'object' ? m : {};
+    const nameRaw = raw.display_name ?? (raw.id ? raw.name : undefined);
+    const name = typeof nameRaw === 'string' ? nameRaw.replace(CONTROL, '').trim().slice(0, MAX_DISPLAY) : '';
+    const context = tokensOf(raw.max_input_tokens ?? raw.context_length ?? raw.context_window ?? raw.top_provider?.context_length);
+    const prev = prevInfo && typeof prevInfo === 'object' ? prevInfo[id] : null;
+    const one = {};
+    if (name && name !== id) one.name = name; else if (typeof prev?.name === 'string' && prev.name) one.name = prev.name.slice(0, MAX_DISPLAY);
+    if (context) one.context = context; else if (tokensOf(prev?.context)) one.context = tokensOf(prev.context);
+    if (one.name || one.context) info[id] = one;
+  }
+  return { ids, info };
+}
+
+/** 保存済みの接続先の models・modelInfo を読む（旧形式: models が文字列の配列で modelInfo が無い） */
+function storedModels(e) {
+  const { ids, info } = normalizeModels(Array.isArray(e?.models) ? e.models : [], e?.modelInfo);
+  return { models: ids, modelInfo: info };
 }
 
 const looksLikeModelError = text => /model/i.test(text);
@@ -222,7 +262,6 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
           lines: ['URL には /v1 を付けずに入れます（Claude Code が /v1/messages を付けます）。'] });
       }
       if (r.status >= 500) throw new CheckError(`接続先がエラーを返しました（HTTP ${r.status}）`, { lines: [errorText(r.text, key)].filter(Boolean), code: 'server' });
-      lines.push(`POST /v1/messages に応答しました（${(r.ms / 1000).toFixed(1)} 秒）。`);
       if (!r.ok) {
         const why = errorText(r.text, key);
         lines.push(looksLikeModelError(why) && r.status !== 429
@@ -230,10 +269,9 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
           : `確認のリクエストは HTTP ${r.status} でした${why ? `（${why}）` : ''}。URL とキーは通っています。`);
       }
       const auth = mode;
-      lines.push('認証: ' + (auth === 'none' ? 'キーなしで通りました' : auth === 'bearer' ? 'Bearer（Authorization ヘッダー）' : 'x-api-key ヘッダー') + (authMode === 'auto' && key ? '。自動で判定しました' : ''));
       const models = await fetchModels(fetchImpl, `${baseUrl}/v1/models?limit=1000`, { 'anthropic-version': '2023-06-01', ...authHeaders(auth === 'none' ? 'bearer' : auth, key) }, key);
-      lines.push(models?.length ? `モデルの一覧: ${models.length} 件を取りました。` : 'モデルの一覧は取れませんでした（GET /v1/models に未対応）。ID を入力してください。');
-      return { auth, latencyMs: r.ms, models: models ?? [], lines };
+      if (!models?.ids.length) lines.push('モデルの一覧は取れませんでした。ID を入力してください。');
+      return { auth, latencyMs: r.ms, models: models?.ids ?? [], modelInfo: models?.info ?? {}, lines };
     }
     const statuses = [...new Set(tried.map(t => t.r.status))].join('・');
     throw new CheckError('キーが違います', { code: 'auth', lines: [
@@ -254,23 +292,21 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
     if (chat && chat.status !== 404 && chat.status !== 405) {
       throw new CheckError('この接続先は Chat Completions にしか対応していないため Codex では使えません', { code: 'chat-only', lines: [
         `POST ${baseUrl}/responses が ${r.status} を返しました（/chat/completions は応答します）。`,
-        'LiteLLM などで Responses API に変換すると使えます。Claude Code 用の接続先としては、Anthropic 互換の URL で登録できます。'] });
+        'LiteLLM などで Responses API に変換すると使えます。'] });
     }
     throw new CheckError(`POST ${baseUrl}/responses が ${r.status} を返しました。Responses API（/responses）に対応した URL か確かめてください`, { code: 'not-found',
       lines: ['多くの接続先では URL の末尾が /v1 です（Codex が /responses を付けます）。'] });
   }
   if (r.status >= 500) throw new CheckError(`接続先がエラーを返しました（HTTP ${r.status}）`, { lines: [errorText(r.text, key)].filter(Boolean), code: 'server' });
-  lines.push(`POST /responses に応答しました（${(r.ms / 1000).toFixed(1)} 秒）。`);
   if (!r.ok) {
     const why = errorText(r.text, key);
     lines.push(looksLikeModelError(why) && r.status !== 429
       ? `確認に使ったモデル ${model} は受け付けられませんでした（HTTP ${r.status}${why ? ': ' + why : ''}）。URL とキーは通っています。モデルは次で決めます。`
       : `確認のリクエストは HTTP ${r.status} でした${why ? `（${why}）` : ''}。URL とキーは通っています。`);
   }
-  lines.push('認証: ' + (auth === 'none' ? 'キーなしで通りました' : auth === 'api-key' ? 'api-key ヘッダー' : 'Bearer（Authorization ヘッダー）'));
   const models = await fetchModels(fetchImpl, `${baseUrl}/models`, authHeaders(auth, key), key);
-  lines.push(models?.length ? `モデルの一覧: ${models.length} 件を取りました。` : 'モデルの一覧は取れませんでした（GET /models に未対応）。ID を入力してください。');
-  return { auth, latencyMs: r.ms, models: models ?? [], lines };
+  if (!models?.ids.length) lines.push('モデルの一覧は取れませんでした。ID を入力してください。');
+  return { auth, latencyMs: r.ms, models: models?.ids ?? [], modelInfo: models?.info ?? {}, lines };
 }
 
 // ---- 置き場 ------------------------------------------------------------------
@@ -327,7 +363,7 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
     return {
       id: e.id, agent: e.agent, kind: KIND[e.agent], name: e.name, preset: e.preset ?? 'custom', baseUrl: e.baseUrl,
       authMode: e.authMode ?? (e.agent === 'claude' ? 'auto' : 'bearer'), auth: e.auth ?? 'bearer', hasKey: stored.has(secretKey(e.id)),
-      roles: { ...e.roles }, models: Array.isArray(e.models) ? e.models : [], options: { ...(e.options ?? {}) },
+      roles: { ...e.roles }, ...storedModels(e), options: { ...(e.options ?? {}) },
       verifiedAt: e.verifiedAt ?? null, lastCheck: e.lastCheck ?? null, isDefault: defaults[e.agent] === e.id,
       ready: e.lastCheck?.ok !== false,
     };
@@ -389,8 +425,8 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
         for (const [k, v] of receipts) if (v.until < now()) receipts.delete(k);
         if (receipts.size > 100) receipts.delete(receipts.keys().next().value);
         receipts.set(receipt, { hash: fingerprint({ agent: c.agent, baseUrl: c.baseUrl, authMode: c.authMode, key: keyHash(c.key), keySource: c.keySource, id: id ?? null }),
-          until: now() + RECEIPT_MS, auth: result.auth, models: result.models, latencyMs: result.latencyMs });
-        return { ok: true, receipt, auth: result.auth, latencyMs: result.latencyMs, models: result.models, lines: result.lines };
+          until: now() + RECEIPT_MS, auth: result.auth, models: result.models, modelInfo: result.modelInfo ?? {}, latencyMs: result.latencyMs });
+        return { ok: true, receipt, auth: result.auth, latencyMs: result.latencyMs, models: result.models, modelInfo: result.modelInfo ?? {}, lines: result.lines };
       } catch (e) {
         if (e instanceof CheckError) throw new CheckError(redactSecret(e.message, c.key), { lines: e.lines.map(l => redactSecret(l, c.key)), code: e.code });
         throw new CheckError(redactSecret(e?.message ?? e, c.key));
@@ -418,7 +454,7 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
       try {
         await update(data => {
           const entry = { id: created, agent: c.agent, name, preset, baseUrl: c.baseUrl, authMode: c.authMode, auth: proof.auth, roles, options,
-            models: proof.models, verifiedAt: at, lastCheck: { ok: true, at, latencyMs: proof.latencyMs, modelCount: proof.models.length } };
+            models: proof.models, modelInfo: proof.modelInfo ?? {}, verifiedAt: at, lastCheck: { ok: true, at, latencyMs: proof.latencyMs, modelCount: proof.models.length } };
           const i = data.endpoints.findIndex(e => e.id === created);
           if (id && i < 0) throw new CheckError('接続先が見つかりません。一覧を開き直してください');
           if (i >= 0) data.endpoints[i] = { ...data.endpoints[i], ...entry }; else data.endpoints.push({ ...entry, createdAt: at });
@@ -446,11 +482,11 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
         else {
           x.lastCheck = { ok: true, at, latencyMs: result.latencyMs, modelCount: result.models.length };
           x.verifiedAt = at; x.auth = result.auth;
-          if (result.models.length) x.models = result.models;
+          if (result.models.length) { x.models = result.models; x.modelInfo = result.modelInfo ?? {}; }
         }
       });
       if (result) receipts.delete(result.receipt);
-      return failure ? { ok: false, error: failure.message, lines: failure.lines ?? [] } : { ok: true, lines: result.lines, auth: result.auth, models: result.models };
+      return failure ? { ok: false, error: failure.message, lines: failure.lines ?? [] } : { ok: true, lines: result.lines, auth: result.auth, models: result.models, modelInfo: result.modelInfo ?? {} };
     },
     remove(id) {
       return serial(async () => {
@@ -493,7 +529,7 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
       try { key = (await secrets.get(secretKey(e.id)))?.key ?? ''; }
       catch (err) { throw new EndpointError(err.code === 'SECRET_LOCKED' ? err.message : `接続先「${e.name}」のキーを読めません`, 'unreadable'); }
       return { id: e.id, agent: e.agent, kind: KIND[e.agent], name: e.name, baseUrl: e.baseUrl, auth: e.auth ?? (key ? 'bearer' : 'none'), key,
-        roles: { ...e.roles }, models: Array.isArray(e.models) ? [...e.models] : [], options: { ...(e.options ?? {}) } };
+        roles: { ...e.roles }, models: storedModels(e).models, options: { ...(e.options ?? {}) } };
     },
   };
 }

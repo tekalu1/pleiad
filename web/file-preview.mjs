@@ -1,9 +1,11 @@
 import { el } from './dom.mjs';
+import { fmt, t } from './i18n.mjs';
 import { isComposingKey } from './keyboard.mjs';
 import { fileReference, fileDownloadUrl } from './file-reference.mjs';
 import { htmlDocument, markdownContent, parseTable, previewFrame } from './file-preview-content.mjs';
 import { visualizationFrame, visualizationBlobUrl, visualizationFileName } from './visualize-frame.mjs';
-import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fileIcon } from './icons.mjs';
+import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fileIcon, moreIcon } from './icons.mjs';
+import { fileMenuItems, relativeTo, samePath, notify, download } from './file-actions.mjs';
 import { copyText } from './code-copy.mjs';
 import { createTree } from './tree.mjs';
 
@@ -23,7 +25,11 @@ const iconButton = (icon, label, action, className = 'btn btn-icon') => {
   return b;
 };
 
-export function setupFilePreview({ getContext, useFile, onLayout }) {
+/**
+ * showMenu は web/client.mjs の右クリックメニュー（1 つを共有する）。cmd はサーバーへのコマンド。
+ * osActions() はサーバーのある PC の画面から見ているか（OS の操作を出してよいか。判定はサーバー）
+ */
+export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd, osActions = () => false }) {
   const panel = el('aside', 'file-preview'); panel.id = 'filePreview'; panel.hidden = true;
   panel.setAttribute('aria-label', 'ファイルプレビュー'); panel.tabIndex = -1;
   const head = el('header', 'file-preview-head'), title = el('div', 'file-preview-title');
@@ -37,14 +43,25 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     treeToggle.setAttribute('aria-expanded', String(!collapsed));
   });
   treeToggle.setAttribute('aria-expanded', 'true');
-  const actions = el('div', 'file-preview-actions'); actions.append(treeToggle, wide, closeButton); head.append(title, actions);
+  // 今のファイルの操作。道具の列を増やさず、ツリー・会話のリンクと同じメニューにまとめる
+  const more = iconButton(moreIcon, t('files.currentActions'), () => {
+    if (!file) return;
+    const r = more.getBoundingClientRect();
+    menu(r.left, r.bottom + 4, { path:file.path, kind:file.kind === 'directory' ? 'directory' : 'file', cwd:file.cwd, current:true });
+  });
+  more.setAttribute('aria-haspopup', 'menu'); more.hidden = true;
+  const actions = el('div', 'file-preview-actions'); actions.append(treeToggle, more, wide, closeButton); head.append(title, actions);
   const toolbar = el('div', 'file-preview-toolbar'), switcher = el('div', 'file-preview-switch');
   switcher.setAttribute('aria-label', '表示方法');
   const rendered = button('プレビュー', () => { source = false; paint(); });
   const original = button('原文', () => { source = true; paint(); }); switcher.append(rendered, original);
   const locationButton = button('パス', () => { location.hidden = !location.hidden; locationButton.setAttribute('aria-expanded', String(!location.hidden)); if (!location.hidden) { fullPath.focus(); fullPath.select(); } });
   locationButton.setAttribute('aria-expanded', 'false');
-  const reload = button('再読み込み', () => load()); toolbar.append(switcher, locationButton, reload);
+  const reload = button('再読み込み', () => load());
+  // HTML だけ。サーバーのある PC の既定のブラウザーで開く（相対のリンク・読み込みもそのまま動く）
+  const browser = button(t('files.menu.openInBrowser'), () => file && osAction('openPath', { path:file.path }));
+  browser.title = t('files.browserTitle'); browser.hidden = true; browser.classList.add('file-preview-browser');
+  toolbar.append(switcher, browser, locationButton, reload);
   const location = el('div', 'file-preview-location'); location.hidden = true;
   const fullPath = el('input'); fullPath.readOnly = true; fullPath.setAttribute('aria-label', 'ファイルの完全パス');
   const copyPath = iconButton(copyIcon, 'パスをコピー', () => copyText(copyPath, fullPath.value, 'パスをコピー'));
@@ -64,13 +81,25 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
       const ic = el('span', 'ic');
       ic.innerHTML = node.kind === 'directory' ? folderIcon : fileIcon;
       const nm = el('span', 'nm', node.name);
-      row.append(ic, nm);
+      // ⋯ は触れた・選んだ行に出る。フォーカスはツリー 1 つのまま（tabindex -1）。支援技術には出さない
+      // （行の名前に混ざる）。キーボードは Shift+F10・ContextMenu キーで同じメニュー
+      const dots = el('button', 'btn btn-icon tree-more'); dots.type = 'button'; dots.tabIndex = -1;
+      setIcon(dots, moreIcon, t('files.actionsFor', { name: node.name })); dots.setAttribute('aria-hidden', 'true');
+      dots.onclick = e => { e.stopPropagation(); const r = dots.getBoundingClientRect(); treeMenu(node, r.left, r.bottom + 4); };
+      dots.ondblclick = e => e.stopPropagation();
+      row.append(ic, nm, dots);
     },
     onSelect(node) {
       open({ path: node.id });
-    }
+    },
+    onContext(node, x, y) { treeMenu(node, x, y); },
   });
+  function treeMenu(node, x, y) {
+    menu(x, y, { path:node.id, kind:node.kind === 'directory' ? 'directory' : 'file', cwd:file?.cwd, current:samePath(node.id, file?.path) });
+  }
   const footer = el('footer', 'file-preview-foot'), status = el('span'); status.setAttribute('role', 'status');
+  const reveal = button(t('files.menu.revealFile'), () => file && osAction('revealPath', { path:file.path }));
+  reveal.hidden = true;
   const save = el('a', 'btn', '保存'); save.download = ''; save.hidden = true;
   const use = button('会話で使う', () => {
     if (!file || context.sessionId !== getContext().sessionId) return;
@@ -79,7 +108,7 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     if (mobile.matches) close(false); else layout();
     useFile(selectedFile);
   });
-  footer.append(status, save, use);
+  footer.append(status, reveal, save, use);
   const handle = el('div', 'file-preview-resize'); handle.tabIndex = 0; handle.setAttribute('role', 'separator');
   handle.setAttribute('aria-label', 'プレビューの幅'); handle.setAttribute('aria-orientation', 'vertical'); handle.setAttribute('aria-valuemin', '30'); handle.setAttribute('aria-valuemax', '65');
   panel.append(handle, head, toolbar, location, note, bodyLayout, footer); document.body.append(panel);
@@ -133,6 +162,7 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     abort?.abort(); abort = new AbortController(); const current = ++generation; paintId++; disposePdf();
     file = null; source = false; pdfPage = 1; pdfZoom = imageZoom = 1;
     switcher.hidden = true; use.disabled = true; save.hidden = true; setNote('');
+    more.hidden = browser.hidden = reveal.hidden = true;
     status.textContent = '読み込み中…'; stateMessage('読み込み中…');
     try {
       const data = await request(reference.path + (reference.line ? `:${reference.line}` : ''), context.base);
@@ -141,13 +171,14 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
       const normalized = data.path.replaceAll('\\','/'), cwd = (data.cwd || '').replaceAll('\\','/').replace(/\/$/, '');
       path.textContent = cwd && normalized.startsWith(cwd + '/') ? normalized.slice(cwd.length + 1) : normalized;
       use.disabled = false; save.hidden = !data.downloadable; save.href = fileDownloadUrl(data.path);
+      more.hidden = false; osButtons();
       save.title = '現在のファイルを保存';
       if (data.kind === 'directory') {
         status.textContent = `ディレクトリ · ${(data.items || []).length} 項目`;
-        status.title = `現在のフォルダー · 更新日時 ${new Date(data.modifiedAt).toLocaleString('ja-JP')}`;
+        status.title = `現在のフォルダー · 更新日時 ${fmt.dateTime(data.modifiedAt)}`;
       } else {
-        status.textContent = `${KIND[data.kind] || data.kind} · ${new Date(data.fetchedAt).toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' })}に取得`;
-        status.title = `現在のファイル · 更新日時 ${new Date(data.modifiedAt).toLocaleString('ja-JP')}`;
+        status.textContent = `${KIND[data.kind] || data.kind} · ${fmt.time(data.fetchedAt)}に取得`;
+        status.title = `現在のファイル · 更新日時 ${fmt.dateTime(data.modifiedAt)}`;
       }
       source = !!reference.line && typeof data.text === 'string';
       if (data.tree) {
@@ -269,6 +300,11 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
           card.onclick = () => {
             open({ path: item.path }, card, file.path);
           };
+          card.oncontextmenu = e => {
+            e.preventDefault();
+            const at = pointAt(e, card);
+            menu(at.x, at.y, { path:item.path, kind:item.kind === 'directory' ? 'directory' : 'file', cwd:file?.cwd });
+          };
           grid.append(card);
         }
         if (!file.items || file.items.length === 0) {
@@ -334,7 +370,7 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     panel.hidden = false; panel.classList.add('custom'); panel.dataset.panel = key; document.body.classList.add('file-preview-open');
     document.body.classList.remove('file-preview-wide');
     toolbar.hidden = true; location.hidden = true; footer.hidden = true; wide.hidden = true; setNote('');
-    treeToggle.hidden = true;
+    treeToggle.hidden = true; more.hidden = true;
     name.textContent = title; path.textContent = subtitle;
     content.setAttribute('aria-label', label); content.tabIndex = -1; content.scrollTop = 0;
     content.replaceChildren(body);
@@ -364,7 +400,8 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     name.textContent = ref.path.split(/[\\/]/).at(-1); path.textContent = ref.path; fullPath.value = ref.path;
     location.hidden = true; locationButton.setAttribute('aria-expanded','false');
     clearCurrent();
-    if (element) { element.classList.add('file-link'); element.setAttribute('aria-current','true'); }
+    // 印を付けるのはリンクだけ（画像や ⋯ から開いたときは、その横のリンクに付けない）
+    if (element?.tagName === 'A') { element.classList.add('file-link'); element.setAttribute('aria-current','true'); }
     layout(); panel.focus({preventScroll:true}); load();
   }
   /**
@@ -379,7 +416,7 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     context = getContext(element);
     panel.hidden = false; document.body.classList.add('file-preview-open');
     toolbar.hidden = false; reload.hidden = true; use.hidden = true; setNote('');
-    treeToggle.hidden = true;
+    treeToggle.hidden = true; more.hidden = browser.hidden = reveal.hidden = true;
     locationButton.hidden = !origin;
     location.hidden = true; locationButton.setAttribute('aria-expanded','false');
     name.textContent = title || '可視化'; path.textContent = origin ?? ''; fullPath.value = origin ?? '';
@@ -392,6 +429,99 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     clearCurrent(); element.setAttribute('aria-current','true');
     layout(); panel.focus({preventScroll:true});
   }
+  // ---- ファイルの操作（docs/mockups/file-actions.html）。メニューの中身は web/file-actions.mjs
+  /** OS の操作の口（下の行・道具の列）。見ている場所と種類で出し分ける */
+  function osButtons() {
+    const local = osActions() && !!file && !visual && !custom;
+    browser.hidden = !(local && file.kind === 'html');
+    reveal.hidden = !local;
+    if (local) reveal.textContent = file.kind === 'directory' ? t('files.menu.revealFolder') : t('files.menu.revealFile');
+  }
+  /** サーバーへ渡す場所の手がかり。相対パスは発言の時刻（at）かプレビュー中の文書（base）で解く */
+  const whereFrom = target => {
+    const ctx = target.element ? getContext(target.element) : context;
+    return { path:target.path, ...(ctx.sessionId ? { sessionId:ctx.sessionId } : {}), ...(ctx.at ? { at:ctx.at } : {}), ...(target.base ? { base:target.base } : {}) };
+  };
+  const failed = error => notify(String(error?.message || error || t('files.actionFailed')));
+  async function osAction(command, target) {
+    if (!cmd) return;
+    try { await cmd(command, whereFrom(target)); }
+    catch (error) { failed(error); }
+  }
+  /** 完全なパスと作業ディレクトリ。分かっていればそのまま、相対なら発言の時点の作業ディレクトリでサーバーが解く */
+  async function resolve(target) {
+    if (/^(?:[a-z]:[\\/]|\/)/i.test(target.path) && target.cwd) return { path:target.path, cwd:target.cwd };
+    return cmd('resolvePath', whereFrom(target));
+  }
+  /** relative は相対パスのコピーか（知らせの文言だけが違う） */
+  async function copy(text, relative = false) {
+    try { await navigator.clipboard.writeText(text); notify(relative ? t('files.copiedRelative') : t('files.copiedPath')); }
+    catch { notify(relative ? t('files.copyRelativeFailed') : t('files.copyPathFailed')); }
+  }
+  async function run(action, target) {
+    try {
+      if (action === 'panel') return open({ path:target.path, line:target.line ?? null }, target.element, target.base);
+      if (action === 'reveal') return osAction('revealPath', target);
+      if (action === 'browser') return osAction('openPath', target);
+      if (action === 'copy') return copy(/^(?:[a-z]:[\\/]|\/)/i.test(target.path) ? target.path : (await resolve(target)).path);
+      if (action === 'copyRelative') {
+        // 書かれたとおりの相対パスは、そのまま発言の時点の作業ディレクトリからの相対
+        if (!/^(?:[a-z]:[\\/]|\/)/i.test(target.path) && !target.base) return copy(target.path.replace(/^\.[\\/]/, ''), true);
+        const where = await resolve(target);
+        const rel = relativeTo(where.path, where.cwd);
+        return rel ? copy(rel, true) : notify(t('files.noRelative'));
+      }
+      const where = /^(?:[a-z]:[\\/]|\/)/i.test(target.path) ? { path:target.path } : await resolve(target);
+      const name = where.path.split(/[\\/]/).at(-1);
+      if (action === 'save') return download(fileDownloadUrl(where.path), name);
+      if (action === 'use') {
+        if (getContext().sessionId !== whereFrom(target).sessionId) return;
+        useFile({ path:where.path, name, mime:'' });
+      }
+    } catch (error) { failed(error); }
+  }
+  /**
+   * ファイルの操作メニューを開く。target は { path, kind?, line?, element?, base?, cwd?, current? }。
+   * current（右パネルに出ているファイル）は「右パネルで開く」を出さない
+   */
+  function menu(x, y, target) {
+    if (!showMenu || !target?.path) return;
+    const current = target.current ?? (!!file && !panel.hidden && samePath(target.path, file.path));
+    showMenu(x, y, fileMenuItems(target, { osActions:osActions(), current, canUse:!!useFile, run:action => run(action, target) }), menuTitle(target.path));
+  }
+  /** メニューの題はパス。長ければ先頭を省く（見たいのは末尾のファイル名） */
+  const menuTitle = p => (p.length > 40 ? `…${p.slice(-39)}` : p);
+  /** マウスなら押した位置、キーボード（ContextMenu キー・Shift+F10）なら要素の左下 */
+  function pointAt(event, element) {
+    if (event.clientX || event.clientY) return { x:event.clientX, y:event.clientY };
+    const r = element.getBoundingClientRect();
+    return { x:r.left + 8, y:r.bottom + 4 };
+  }
+  /** 会話・Markdown プレビューの中のファイル（リンク・画像・⋯）から操作の対象を作る */
+  function targetOf(node) {
+    const holder = node.closest('[data-file-path],[data-file-menu]');
+    if (!holder || (!holder.closest('#log') && !holder.closest('.file-preview-document') && !holder.closest('#lightbox'))) return null;
+    const path = holder.dataset.filePath ?? holder.dataset.fileMenu;
+    if (!path) return null;
+    return { path, line:Number(holder.dataset.fileLine) || null, element:holder, base:holder.closest('.file-preview-document') ? file?.path : undefined };
+  }
+  document.addEventListener('contextmenu', event => {
+    if (event.defaultPrevented) return;
+    const target = targetOf(event.target);
+    if (!target) return;
+    event.preventDefault();
+    const at = pointAt(event, target.element);
+    menu(at.x, at.y, target);
+  });
+  document.addEventListener('click', event => {
+    const more = event.target.closest('[data-file-menu]');
+    if (!more) return;
+    const target = targetOf(more);
+    if (!target) return;
+    event.preventDefault();
+    const r = more.getBoundingClientRect();
+    menu(r.left, r.bottom + 4, target);
+  });
   document.addEventListener('click', event => {
     const anchor = event.target.closest('a');
     if (!anchor || (!anchor.closest('#log') && !anchor.closest('.file-preview-document'))) return;
@@ -422,5 +552,11 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
   addEventListener('resize', layout);
   new MutationObserver(() => { if (!panel.hidden && document.body.classList.contains('settings')) close(false); }).observe(document.body,{attributes:true,attributeFilter:['class']});
   return { close, layout, openPanel, updatePanel, panelOpen: key => !panel.hidden && custom?.key === key,
+    /** 右パネルでファイルを開く（拡大表示の「右パネルで開く」） */
+    open: (ref, element) => open(ref, element),
+    /** ファイルの操作メニュー（拡大表示・会話の画像） */
+    menu, reveal: (target) => osAction('revealPath', target),
+    /** 見ている場所（OS の操作の可否）が分かった・変わった */
+    osChanged: osButtons,
     sessionChanged(id) { if (!panel.hidden && context.sessionId !== id) close(false); } };
 }

@@ -28,6 +28,8 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000 } = {}
       AGENT_HOST_TOKEN: token,
       // Claude のトークンの持ち主の確認（api.anthropic.com）へは送らない。確かめるテストは偽の送り先を渡す
       AGENT_HOST_ANTHROPIC_API: "off",
+      // 言語は日本語に固定する。テストは日本語の文言に依存している（CI の OS の言語で変わらないように）
+      AGENT_HOST_LOCALE: process.env.AGENT_HOST_LOCALE || "ja",
       ...(dataDir ? { AGENT_HOST_DATA: dataDir } : {}),
       ...env,
     },

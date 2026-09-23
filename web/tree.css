@@ -21,3 +21,8 @@
 .tree-row .chev.none{visibility:hidden}   /* 葉でも場所は空ける。字下げが揃わないと階層が読めない */
 .tree-row .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tree-empty{padding:6px 10px;font-size:var(--fs-s);color:var(--ink-weak)}
+/* 行の ⋯（呼び出し側が render で置く）。触れた・選んだ行だけに出す。タッチでは常に出す（ホバーが無い） */
+.tree-row .tree-more{margin-left:auto;width:22px;height:22px;padding:0;flex:none;color:var(--ink-weak);visibility:hidden}
+.tree-row .tree-more svg.i{width:14px;height:14px}
+.tree-row:hover .tree-more,.tree-row.sel .tree-more,.tree-row .tree-more[aria-expanded=true]{visibility:visible}
+@media(hover:none){.tree-row .tree-more{visibility:visible}}
