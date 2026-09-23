@@ -14,11 +14,16 @@
 <link rel="stylesheet" href="/updates.css">
 <link rel="stylesheet" href="/usage.css">
 <link rel="stylesheet" href="/file-preview.css">
-<!-- 最初の描画より前に、配色・窓の枠（デスクトップ版だけ）・脇の開閉を決める。client.mjs を待つと一瞬ずれて見える -->
+<!-- i18next はビルドしないので、裸の名前をサーバーの配信口へ向ける（core/server.mjs の /vendor/i18next.mjs）。モジュールより前に置く -->
+<script type="importmap">{ "imports": { "i18next": "/vendor/i18next.mjs" } }</script>
+<!-- 最初の描画より前に、配色・言語・窓の枠（デスクトップ版だけ）・脇の開閉を決める。client.mjs を待つと一瞬ずれて見える。
+     言語の正本はサーバー（ready で届く）。ここは前回の写し。違えば client.mjs が写しを直して読み直す -->
 <script>
 {
   const root = document.documentElement, desk = window.plyDesktop;
   try {
+    const lang = localStorage.getItem('agent-host-lang');
+    if (lang === 'ja' || lang === 'en') root.lang = lang;
     const theme = localStorage.getItem('agent-host-theme');
     if (theme === 'light' || theme === 'dark') root.dataset.theme = theme;
     if (localStorage.getItem('agent-host-sidebar') === 'closed') root.classList.add('side-closed');
@@ -186,6 +191,11 @@
         <section id="appearancePanel" hidden aria-label="外観">
           <p>画面の配色を選びます。</p>
           <div class="seg sec" id="themeSeg"><button type="button" data-theme="auto">自動</button><button type="button" data-theme="light">明</button><button type="button" data-theme="dark">暗</button></div>
+          <!-- 言語（docs/design-system.md「言語」）。文言は辞書から入れる（web/i18n.mjs の applyDom と client.mjs の paintLocale） -->
+          <h3 data-i18n="settings.appearance.language.title"></h3>
+          <p data-i18n="settings.appearance.language.description"></p>
+          <div class="seg sec" id="localeSeg" role="group" data-i18n-aria-label="settings.appearance.language.title"><button type="button" data-locale="auto"></button><button type="button" data-locale="ja"></button><button type="button" data-locale="en"></button></div>
+          <p class="locale-now" id="localeNow" role="status" aria-live="polite"></p>
         </section>
         <section id="contextPanel" aria-label="コンテキスト" hidden></section>
       </div>

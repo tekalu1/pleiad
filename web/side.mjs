@@ -17,6 +17,7 @@ import { isComposingKey } from "./keyboard.mjs";
 // localStorage に持つ。
 import { runMark, satMark } from "./arc.mjs";
 import { el, icon, relTime, svgEl } from "./dom.mjs";
+import { fmt } from "./i18n.mjs";
 import { familiesOf } from "./family.mjs";
 
 const backendLogos = {
@@ -427,7 +428,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     else if (last.unreadIds.has(s.id)) meta.append(unreadMark());
     if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", "承認待ち"));
     if (isStale(s)) meta.append(el("span", "stale", `${staleDays(s.statusChangedAt)}日`));
-    else meta.append(el("span", "row-when", s.id == null ? "たった今" : relTime(s.lastModified)));
+    else meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
     if (last.backendLabels && s.backend) meta.append(backendLogo(s.backend, last.backendLabels[s.backend] ?? s.backend));
     const cwd = el("span", "row-cwd", shortDir(s.cwd));
     if (s.cwd) cwd.title = s.cwd;

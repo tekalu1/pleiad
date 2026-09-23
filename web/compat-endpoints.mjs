@@ -8,6 +8,7 @@
 // 面と部品は Claude のアカウントの設定（web/claude-accounts.mjs）と同じ .mp-*（web/manage-panel.css）。
 // 入力欄のモデルの面（web/composer-controls.mjs）は list() の値を読むだけ。
 import { el } from './dom.mjs';
+import { fmt } from './i18n.mjs';
 import { createCombo } from './combo.mjs';
 import { compatModelLabel, modelCandidates, comboModelOptions, ONE_M_TITLE, SHOW_LIMIT } from './compat-models.mjs';
 import { PRESETS, CLAUDE_ROLES, CONTEXT_CANDIDATES, AUTH_LABEL, presetOf, urlCandidates, urlHelp } from './compat-presets.mjs';
@@ -15,12 +16,8 @@ import { PRESETS, CLAUDE_ROLES, CONTEXT_CANDIDATES, AUTH_LABEL, presetOf, urlCan
 const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex' };
 const STEPS = ['種類', '接続情報', '接続を確認', 'モデル', '保存'];
 
-function when(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${p(d.getMinutes())}`;
-}
+// 月/日 時:分（ja は「9/23 14:05」）
+const when = (iso) => fmt.dateTime(iso, { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
 export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, officialLine = () => '' }) {
   const $ = id => document.getElementById(id);

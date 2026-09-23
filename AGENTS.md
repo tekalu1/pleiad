@@ -17,6 +17,7 @@
 - 作成直後の worktree には `node_modules` が無く、そのままでは `npm test` が走らない。依存が `main` と同じなら、`npm ci` の代わりに `cmd /c mklink /J <worktreeの絶対パス>\node_modules <メインの作業ディレクトリの絶対パス>\node_modules` でジャンクションを張れば足りる。消すときは `cmd /c rmdir <worktreeの絶対パス>\node_modules` を使う（`rm -rf` はリンク先の実体を消す恐れがある）。このジャンクション操作は PowerShell から実行する。Bash tool 経由の `cmd //c mklink /J …` は「パラメーターの形式が違っています」で失敗する。
 - テストは必ず作業用 worktree の中で実行する。`main` の作業ディレクトリで `npm test` を走らせても worktree の変更は検証できない（worktree を編集しながら `main` でテストを走らせ、通ったことにしてしまった例がある）。
 - 設計は `docs/design.md`、画面の変更は `docs/design-system.md` を参照する。
+- 画面・エラー・エージェント向けの文言は辞書（`web/locales/<言語>/<名前空間>.json`）に置き、`t()` で引く（`docs/design.md`「多言語対応」）。直書きの日本語は `npm test` の lint-i18n が落とす。基準（`tests/i18n-baseline.json`）の更新は減らすときだけ（`node tests/lint-i18n.mjs --update-baseline`）。
 - コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。
 - `npm run test:e2e` は実際の LLM を呼び出すため、実サービスとの接続確認が必要な変更で実行する。
 - 現在は独立したビルドコマンドはない。文書のみの変更では、内容と `git diff --check` の確認を行えばよい。
@@ -25,7 +26,7 @@
   - `playwright-cli` の `type` は対象を取らない（`type <text>` だけ）。欄を指定して入れるなら `fill <ref> <text>`。
   - 右クリックメニューの子メニュー（`状態を変更 ▸` など）は、親の項目を `.click()` しても開かないことがある。`eval` の中で `[...document.querySelectorAll('.pop.menu .li')].find(n => n.textContent.includes('…'))` を取り、`web/context-menu.mjs` が生やす `row.openSub(false)` を呼ぶ。`新しい状態を作る` は `.li` ではなく入力欄なので、`input[placeholder]` を探して値を入れ `keydown` の Enter を送る。
   - 数秒で消える表示（脇の下の「元に戻す」は 12 秒）は、出す `eval` と `screenshot` を 1 回のコマンドでつなげて撮る。別々に打つと撮る前に消える。
-  - LLM を呼ばずに画面を見るなら、fake バックエンドを別ポート・別のデータ置き場で立てる（実データを汚さないため）: `AGENT_HOST_BACKENDS=fake AGENT_HOST_DATA=<一時ディレクトリ> AGENT_HOST_PORT=7499 node core/server.mjs`。トークン付き URL は起動ログに出る。
+  - LLM を呼ばずに画面を見るなら、fake バックエンドを別ポート・別のデータ置き場で立てる（実データを汚さないため）: `AGENT_HOST_BACKENDS=fake AGENT_HOST_DATA=<一時ディレクトリ> AGENT_HOST_PORT=7499 node core/server.mjs`。トークン付き URL は起動ログに出る。tests/browser/*.cjs は日本語の文言で要素を引くので、OS が日本語でなければ `AGENT_HOST_LOCALE=ja` も付ける。
     - 指定ポートが埋まっていると空きポートへ移る（起動ログに `port 7499 は使えない (EADDRINUSE)`）。止めるときは起動したプロセスの PID か、起動ログの実際のポートで引いた PID を使う。**指定したポート番号で PID を引いて止めない**（そのポートを持っていた別の作業のサーバーを殺す。実際に起きた）。
   - fake は初回「未ログイン」で最初の案内が開き、作業ディレクトリも空のため、そのまま送った会話は「未送信」に残り、送信済みが前提の操作（タイトル生成など）が押せない。案内の「ログイン」→「あとで」→ 入力欄で作業ディレクトリを指定してから送る。
   - fake の応答は即座に返り、処理中の表示が一瞬で消える。見るときはページ上で `WebSocket.prototype.send` を包み、対象コマンド（例: `suggestTitle`）の送信を数秒遅らせる。
