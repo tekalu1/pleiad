@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>入力欄と上端の見直し v2（承認済み、スマホ・タブレット・デスクトップ） — モック</title>
+<style>html,body{margin:0}</style>
+<div id="pc" data-theme="dark">
+<style>
+/* 値は web/tokens.css と同じ（明 → 暗） */
+#pc{--surface-paper:#fff;--surface-0:#eceef4;--surface-1:#f4f5f9;--surface-2:#e8eaf1;--surface-3:#dcdee8;--surface-veil:rgba(21,22,28,.32);
+  --fill-primary:#3a499e;--fill-primary-hover:#2f3c86;--on-fill:#f4f5ff;
+  --ink:#1c2247;--ink-strong:#0f1330;--ink-weak:#6b7299;--ink-blue:#3a499e;--ink-mark:#aa2678;
+  --line:#c9cee0;--line-blue:#5665cd;--line-faint:#dfe2ec;--shadow:rgba(21,22,28,.16);--page:#e4e6ee;
+  --font:system-ui,"Yu Gothic UI","Segoe UI",sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace;
+  --fs-xs:11px;--fs-s:12px;--fs:14px;--fs-l:15px;--fs-xl:18px;--r-s:8px;--r-m:14px;--r-l:20px;--r-pill:999px;
+  font-family:var(--font);color:var(--ink);font-size:14px;line-height:1.5;padding:16px;background:var(--page);min-height:100vh;box-sizing:border-box}
+#pc[data-theme="dark"]{--surface-paper:#1b1c23;--surface-0:#121318;--surface-1:#222329;--surface-2:#15161c;--surface-3:#2a2b32;--surface-veil:rgba(0,0,0,.55);
+  --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;
+  --line:#2c2f3f;--line-blue:#728cd7;--line-faint:#1a1b22;--shadow:rgba(0,0,0,.5);--page:#0b0c10}
+html:has(#pc[data-theme="dark"]){background:#0b0c10}
+#pc *{box-sizing:border-box}
+#pc h1{font-size:20px;margin:0 0 4px}
+#pc h2{font-size:17px;margin:28px 0 6px}
+#pc h3{font-size:15px;margin:18px 0 6px}
+#pc p{margin:0 0 8px}
+#pc .lead{color:var(--ink-weak);font-size:13px;max-width:980px}
+#pc code{font-family:var(--font-mono);font-size:12px}
+#pc svg.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* ---- 操作盤 ---- */
+#pc .ctl{position:sticky;top:0;z-index:30;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;font-size:12px;color:var(--ink-weak);
+  background:var(--page);padding:8px 0 10px;margin:0 0 6px}
+#pc .ctl label{display:inline-flex;align-items:center;gap:4px 6px;flex-wrap:wrap;white-space:nowrap}
+@media (max-width:700px){#pc .ctl{position:static}}
+#pc .seg{display:inline-flex;background:var(--surface-2);border-radius:999px;padding:2px;flex-wrap:wrap}
+#pc .seg button{border:0;background:transparent;color:var(--ink-weak);font:inherit;padding:4px 10px;border-radius:999px;cursor:pointer;min-height:28px}
+#pc .seg button[aria-pressed="true"]{background:var(--surface-paper);color:var(--ink);font-weight:600}
+#pc .notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:12px;margin:4px 0 8px}
+#pc .note{background:var(--surface-paper);border-radius:var(--r-m);padding:12px 14px;font-size:13px}
+#pc .note b.k{display:block;font-size:14px;margin-bottom:4px}
+#pc .note ul{margin:4px 0 0;padding-left:18px}
+#pc .note li{margin:2px 0}
+#pc .note .dev-note{color:var(--ink-weak)}
+#pc .row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+#pc figure{margin:0;max-width:100%}
+#pc figcaption{font-size:12px;color:var(--ink-weak);margin:8px 2px 0;max-width:var(--cap,412px)}
+#pc figcaption .m{font-family:var(--font-mono);color:var(--ink)}
+#pc .scroll{max-width:100%;overflow-x:auto;padding:4px 4px 12px}
+#pc .zoomed .dev{zoom:var(--z,1)}
+#pc table{border-collapse:collapse;font-size:13px;background:var(--surface-paper);border-radius:12px;overflow:hidden;width:100%;max-width:1100px}
+#pc th,#pc td{text-align:left;padding:7px 10px;vertical-align:top;overflow-wrap:anywhere}
+#pc th{background:var(--surface-3);font-size:12px}
+#pc tr:nth-child(even) td{background:var(--surface-1)}
+
+/* ==================== 端末・窓の枠 ==================== */
+#pc .dev{position:relative;width:var(--w);height:var(--h);background:var(--surface-paper);color:var(--ink);overflow:hidden;display:flex;flex-direction:column;
+  border-radius:var(--rad,30px);box-shadow:0 8px 28px var(--shadow);flex:none;font-size:14px}
+#pc .dev.win{--rad:8px;background:var(--surface-0)}
+#pc .sb{position:relative;z-index:2;flex:none;height:var(--sat,48px);display:flex;align-items:center;justify-content:space-between;padding:6px 26px 0;font-size:14px;font-weight:600;color:var(--ink);background:var(--surface-paper)}
+#pc .sb.fill{background:var(--fill-primary);color:var(--on-fill)}
+#pc .sb .ic{letter-spacing:2px;font-weight:400}
+#pc .homebar{position:absolute;left:50%;bottom:8px;width:120px;height:4px;border-radius:999px;background:var(--ink);opacity:.8;transform:translateX(-50%);pointer-events:none}
+
+/* ボタン（web/style.css の .btn / .btn-icon と同じ考え: 既定は文字だけ） */
+#pc .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;background:transparent;color:var(--ink-weak);font:inherit;
+  border-radius:var(--r-pill);padding:5px 12px;cursor:pointer;line-height:1.5;white-space:nowrap}
+#pc .btn:hover{background:var(--surface-2);color:var(--ink)}
+#pc .ib{width:30px;height:30px;padding:0;flex:none}
+#pc .touch .ib{width:36px;height:36px}
+#pc .btn-quiet{background:var(--surface-2);color:var(--ink)}
+#pc .send{width:34px;height:34px;border-radius:50%;padding:0;margin-left:6px;flex:none;background:var(--fill-primary);color:var(--on-fill)}
+#pc .send:hover{background:var(--fill-primary-hover);color:var(--on-fill)}
+#pc .send svg.i{width:17px;height:17px}
+
+/* ---- 会話 ---- */
+#pc .main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface-paper);position:relative}
+#pc .log{flex:1;min-height:0;overflow:auto}
+#pc .thread{padding:6px 16px 10px 54px;font-size:15px;line-height:1.8;max-width:860px}
+#pc .win .thread,#pc .tab .thread{padding-left:72px}
+#pc .thread ul{margin:0;padding-left:18px}
+#pc .thread li{margin:0 0 6px}
+#pc .thread li::marker{color:var(--ink-weak)}
+
+/* ---- タイトル行（今: web/style.css:404-417） ---- */
+#pc .top{flex:none;display:flex;align-items:center;gap:6px;padding:10px 18px 4px;min-width:0;background:var(--surface-paper)}
+#pc .touch .top{padding:10px 10px 4px;gap:4px}
+#pc .ttl{flex:1;min-width:0;border:0;background:transparent;color:var(--ink-strong);font:600 var(--fs-l)/1.5 var(--font);padding:5px 10px;border-radius:var(--r-m);
+  text-overflow:ellipsis;white-space:nowrap;overflow:hidden}
+#pc .ttl:focus{outline:none;background:var(--surface-2)}
+#pc .ctxlink{flex:none;padding:4px 12px;font-size:var(--fs-s)}
+#pc .ctxlink svg.i{width:14px;height:14px}
+/* 詰めたコンテキストの入口: 文書のアイコン + 等幅の数字。札（色地）は作らない */
+#pc .ctxi{flex:none;padding:0 8px 0 6px;gap:3px;min-width:36px;height:36px}
+#pc .ctxi svg.i{width:16px;height:16px}
+#pc .ctxi .n{font-family:var(--font-mono);font-size:var(--fs-s)}
+#pc .tt{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center}
+#pc .tt .ttl{flex:none;padding:0 8px;line-height:1.35}
+/* リモートの印（塗りなし）: ⇄ と等幅のホスト名を差しの青（--ink-blue）の字で。面は付けない */
+#pc .sub{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:100%;padding:0 8px;border:0;background:transparent;font:500 var(--fs-s)/1.45 var(--font-mono);color:var(--ink-blue);white-space:nowrap;cursor:pointer;align-self:flex-start;border-radius:var(--r-pill)}
+#pc .sub span{overflow:hidden;text-overflow:ellipsis}
+#pc .sub svg.i{width:13px;height:13px}
+#pc .hostline{flex:none;display:flex;align-items:center;height:32px;padding:0 8px;background:var(--surface-paper)}
+#pc .hostline .sub{min-height:32px;padding:0 10px 0 4px;font-size:var(--fs-s)}
+#pc .hostline .sub:hover{background:var(--surface-1)}
+
+/* ---- 塗りの帯（今: ホスト名の帯 style.css:987-996、デスクトップ版の帯 369-381） ---- */
+#pc .hostbar{flex:none;display:flex;align-items:center;min-width:0;height:44px;padding:0 8px;background:var(--fill-primary);color:var(--on-fill)}
+#pc .badge{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;min-height:36px;padding:4px 12px 4px 6px;border:0;border-radius:var(--r-pill);
+  background:transparent;color:var(--on-fill);font:600 var(--fs)/1.5 var(--font);white-space:nowrap;cursor:pointer}
+#pc .badge:hover{background:var(--fill-primary-hover)}
+#pc .badge .h{font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis}
+#pc .badge svg.i{width:15px;height:15px}
+#pc .fillbar{background:var(--fill-primary);color:var(--on-fill)}
+#pc .fillbar .btn,#pc .fillbar .ttl{color:var(--on-fill)}
+#pc .fillbar .btn:hover{background:var(--fill-primary-hover);color:var(--on-fill)}
+#pc .fillbar .ttl:focus{background:var(--fill-primary-hover)}
+/* 塗りなしの帯のバッジ: 差しの青の字 */
+#pc .plainbar .badge{color:var(--ink-blue)}
+#pc .plainbar .badge:hover{background:var(--surface-2)}
+
+/* ---- デスクトップ版の窓の帯（40px） ---- */
+#pc .tbar{flex:none;height:40px;display:flex;align-items:center;min-width:0;background:var(--surface-0);
+  background-image:radial-gradient(var(--line-faint) 1px,transparent 1.2px);background-size:24px 24px}
+#pc .tbar.fillbar{background:var(--fill-primary);background-image:none}
+#pc .tbar .zl{width:292px;flex:none;display:flex;align-items:center;gap:2px;min-width:0;padding:0 8px 0 12px;height:100%}
+#pc .tbar .zr{flex:1;min-width:0;display:flex;align-items:center;gap:4px;height:100%;padding-left:8px}
+#pc .tbar .ttl{font-size:var(--fs);padding:3px 8px}
+#pc .wc{display:flex;flex:none;height:100%;margin-left:auto}
+#pc .wc span{width:46px;display:grid;place-items:center;color:var(--ink)}
+#pc .fillbar .wc span{color:var(--on-fill)}
+#pc .wc svg.i{width:12px;height:12px;stroke-width:1.2}
+#pc .brand{display:flex;align-items:center;gap:7px;font-weight:700;font-size:16px;letter-spacing:.01em;margin-right:auto;min-width:0}
+#pc .brand i{width:20px;height:20px;border-radius:6px;background:var(--ink-blue);display:inline-block;flex:none;
+  -webkit-mask:radial-gradient(circle at 35% 40%,#000 3px,transparent 3.5px),radial-gradient(circle at 65% 35%,#000 2.4px,transparent 2.9px),radial-gradient(circle at 55% 68%,#000 2.8px,transparent 3.3px);
+  mask:radial-gradient(circle at 35% 40%,#000 3px,transparent 3.5px),radial-gradient(circle at 65% 35%,#000 2.4px,transparent 2.9px),radial-gradient(circle at 55% 68%,#000 2.8px,transparent 3.3px)}
+
+/* ---- 脇（タブレット・デスクトップ） ---- */
+#pc .body{flex:1;min-height:0;display:grid;grid-template-columns:292px minmax(0,1fr)}
+#pc .side{min-height:0;display:flex;flex-direction:column;background:var(--surface-0);background-image:radial-gradient(var(--line-faint) 1px,transparent 1.2px);background-size:24px 24px;padding:0 8px}
+#pc .shead{height:40px;flex:none;display:flex;align-items:center;gap:2px;padding:0 0 0 4px;min-width:0}
+#pc .search{flex:none;background:var(--surface-paper);border-radius:999px;padding:6px 12px;color:var(--ink-weak);font-size:var(--fs-s);margin:6px 0 8px}
+#pc .touch .search{font-size:16px}
+#pc .gh{font-size:var(--fs-s);font-weight:600;padding:6px 6px 2px}
+#pc .sr{display:flex;align-items:center;gap:6px;padding:7px 8px 7px 20px;border-radius:10px;font-size:var(--fs-s);min-width:0}
+#pc .sr.on{background:var(--surface-paper)}
+#pc .sr .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#pc .sr .w{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak)}
+#pc .win .main{border-top-left-radius:var(--r-l)}
+
+/* ==================== 入力欄（現在: web/style.css:640-673） ==================== */
+#pc .composer{flex:none;padding:6px 22px 14px;min-width:0;position:relative}
+#pc .touch .composer{padding:6px 10px max(14px,var(--sab,0px))}
+#pc .composer .ta{background:var(--surface-1);border-radius:var(--r-m);padding:10px 16px;min-height:72px;max-height:calc(var(--h) * .4);overflow:hidden;font-size:14px;line-height:1.6;white-space:pre-wrap;color:var(--ink)}
+#pc .touch .composer .ta{font-size:16px}
+#pc .ph{color:var(--ink-weak)}
+#pc .saved{font-size:var(--fs-xs);color:var(--ink-weak);padding:2px 6px;display:inline-block}
+#pc .crow{display:flex;align-items:center;gap:4px;margin-top:8px;min-width:0}
+#pc .gap{flex:1}
+#pc .chip{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;padding:5px 10px;border:0;border-radius:var(--r-pill);background:transparent;color:var(--ink);
+  font:400 var(--fs)/1.5 var(--font);white-space:nowrap;cursor:pointer;flex:0 1 auto}
+#pc .chip:hover,#pc .chip[aria-expanded="true"]{background:var(--surface-2)}
+#pc .chip .v{min-width:0;overflow:hidden;text-overflow:ellipsis;display:flex}
+#pc .chip svg.i{width:15px;height:15px;color:var(--ink-weak)}
+#pc .chip svg.caret{width:12px;height:12px}
+#pc .chip.mono{font-family:var(--font-mono);font-size:var(--fs-s)}
+#pc .chip.danger{color:var(--ink-strong);font-weight:600}
+#pc .chip.danger svg.i{color:var(--ink-strong)}
+#pc .narrow .crow.now{flex-wrap:wrap}
+#pc .narrow .crow.now .chip.folder{max-width:calc(100% - 40px)}
+#pc .chip .mn{min-width:0;overflow:hidden;text-overflow:ellipsis}
+#pc .chip .ef{flex:none}
+
+/* ==================== 入力欄 v2: チップと送信を入力の箱の中へ ==================== */
+#pc .composer.v2{padding:4px 18px 12px}
+#pc .touch .composer.v2{padding:4px 8px max(8px,var(--sab,0px))}
+#pc .cbox{background:var(--surface-1);border-radius:var(--r-l);padding:2px 4px 4px;position:relative}
+/* 字の欄: 1 行から始まり、中身に合わせて伸びる。上限はマウス 10 行・タッチ 6 行で、その先は中でスクロール */
+#pc .ta2{padding:9px 12px 3px;font-size:14px;line-height:1.6;white-space:pre-wrap;color:var(--ink);max-height:calc(10 * 1.6em + 12px);overflow-y:auto;min-height:calc(1.6em + 12px)}
+#pc .touch .ta2{font-size:16px;line-height:1.5;max-height:calc(6 * 1.5em + 12px)}
+#pc .cbox .crow{margin-top:0;gap:2px;flex-wrap:nowrap}
+/* チップは 3 つとも同じ: 本文の書体 14px・400・高さ 30/36px・余白 0 8px・アイコン 15px・▾ 12px（スマホでは 3 つとも ▾ なし） */
+#pc .cbox .chip{font:400 var(--fs)/1.5 var(--font);height:30px;padding:0 8px;gap:5px;color:var(--ink)}
+#pc .touch .cbox .chip{height:36px}
+#pc .cbox .chip.danger{font-weight:400;color:var(--ink-strong)}
+#pc .cbox .chip.folder{flex-shrink:6}
+#pc .cbox .chip.model{flex-shrink:2}
+#pc .cbox .chip.mode{flex-shrink:0}
+#pc .narrow .cbox .caret{display:none}
+#pc .xs .cbox .chip{padding:0 5px;gap:4px}
+#pc .cbox .send{margin-left:4px}
+#pc .stop{width:36px;height:36px;padding:0;border-radius:50%;flex:none}
+#pc .win .stop{width:30px;height:30px}
+#pc .cbox .saved2{font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap;padding:0 6px;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* ---- 添付（v2）: 箱の中の添付の札。リモートでは出どころ（⇄ ホスト / この端末）をアイコンで ---- */
+#pc{--surface-sel:#e3e5ed}
+#pc[data-theme="dark"]{--surface-sel:#2a2b32}
+#pc .attached2{display:flex;flex-wrap:wrap;gap:6px;padding:8px 6px 0}
+#pc .att{display:inline-flex;align-items:center;gap:5px;background:var(--surface-paper);border-radius:var(--r-pill);padding:3px 4px 3px 9px;font-size:var(--fs-s);max-width:230px;min-width:0;color:var(--ink)}
+#pc .att svg.i{width:13px;height:13px;color:var(--ink-weak)}
+#pc .att .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+#pc .att .x{border:0;background:transparent;color:var(--ink-weak);font:inherit;cursor:pointer;padding:0 6px;border-radius:var(--r-pill)}
+/* 添付の面（クリップの上に浮く）。スマホは入力欄の幅いっぱい、広い幅は 360px */
+#pc .apop{position:absolute;z-index:9;bottom:calc(100% - 2px);left:8px;right:8px;background:var(--surface-paper);border-radius:var(--r-l);box-shadow:0 8px 28px var(--shadow);padding:6px;font-size:14px}
+#pc .win .apop,#pc .tab .apop{left:18px;right:auto;width:360px}
+#pc .win .apop.menu,#pc .tab .apop.menu{width:260px}
+#pc .apop .hd{font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em;padding:8px 10px 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#pc .apop .hd .h{font-family:var(--font-mono);letter-spacing:0}
+#pc .apop .li{display:flex;align-items:center;gap:10px;min-height:36px;padding:6px 10px;border-radius:var(--r-s);white-space:nowrap;cursor:pointer}
+#pc .touch .apop .li{min-height:44px;font-size:15px}
+#pc .apop .li:hover{background:var(--surface-1)}
+#pc .apop .li svg.i{color:var(--ink-weak)}
+#pc .hb-top{display:flex;align-items:center;gap:4px;padding:0 2px 2px}
+#pc .hb-top b{flex:1;min-width:0;font-size:14px}
+#pc .hb-cnt{font-family:var(--font-mono);font-size:var(--fs-s);color:var(--ink-weak);padding-right:8px}
+#pc .crumb{display:flex;flex-wrap:wrap;align-items:center;gap:0 2px;font:var(--fs-s)/1.6 var(--font-mono);color:var(--ink-weak);padding:0 8px 6px}
+#pc .crumb button{border:0;background:transparent;font:inherit;color:var(--ink);padding:0 3px;border-radius:6px;cursor:pointer}
+#pc .crumb button:hover{background:var(--surface-1)}
+#pc .hb-q{margin:0 4px 6px;background:var(--surface-1);border-radius:var(--r-pill);padding:6px 12px;font-size:14px;color:var(--ink-weak)}
+#pc .touch .hb-q{font-size:16px}
+#pc .hb-list{max-height:250px;overflow:auto}
+#pc .touch.narrow .hb-list{max-height:300px}
+#pc .hb-row{display:flex;align-items:center;gap:9px;min-height:34px;padding:3px 10px;border-radius:var(--r-s);cursor:pointer;min-width:0}
+#pc .touch .hb-row{min-height:42px}
+#pc .hb-row:hover{background:var(--surface-1)}
+#pc .hb-row.sel{background:var(--surface-sel)}
+#pc .hb-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#pc .hb-row .meta{font:var(--fs-xs)/1 var(--font-mono);color:var(--ink-weak);white-space:nowrap}
+#pc .hb-row svg.i{width:16px;height:16px;color:var(--ink-weak)}
+#pc .hb-row .ck{width:18px;height:18px;border-radius:6px;background:var(--surface-3);display:grid;place-items:center;flex:none;color:var(--ink-blue);font-size:12px;font-weight:700}
+#pc .hb-row.dis{opacity:.4;cursor:default}
+#pc .hb-foot{display:flex;align-items:center;gap:8px;padding:8px 4px 2px}
+#pc .hb-foot .note{flex:1;min-width:0;font-size:var(--fs-s);color:var(--ink-weak)}
+#pc .hb-foot .note b{color:var(--ink-strong);font-weight:600}
+#pc .btn-primary{background:var(--fill-primary);color:var(--on-fill);font-weight:600}
+#pc .btn-primary:hover{background:var(--fill-primary-hover);color:var(--on-fill)}
+
+#pc .pmenu{position:absolute;z-index:8;min-width:220px;background:var(--surface-paper);border-radius:var(--r-m);box-shadow:0 8px 28px var(--shadow);padding:6px;font-size:15px}
+#pc .pmenu[hidden]{display:none}
+#pc .pmenu .li{display:flex;align-items:center;gap:10px;min-height:40px;padding:6px 10px;border-radius:var(--r-s);white-space:nowrap}
+#pc .pmenu .li:hover{background:var(--surface-1)}
+#pc .pmenu .li .r{margin-left:auto;color:var(--ink-weak);font-size:13px;padding-left:14px}
+#pc .pmenu .li svg.i{color:var(--ink-weak)}
+#pc .pmenu .sep{height:6px}
+
+/* スクロールで隠す（任意）: 状態バーは残し、下の段だけ畳む */
+#pc .hideable{transition:margin-top 240ms cubic-bezier(.2,.7,.2,1)}
+#pc .dev.hid .hideable{margin-top:calc(-1 * var(--hh,52px))}
+@media (prefers-reduced-motion:reduce){#pc .hideable{transition:none}}
+
+@media (max-width:480px){#pc{padding:8px}#pc .row{gap:12px}}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 10v4.5M12 17.2v.3"/></symbol>
+  <symbol id="i-model" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="3"/><path d="M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3"/></symbol>
+  <symbol id="i-caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></symbol>
+  <symbol id="i-side" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></symbol>
+  <symbol id="i-wand" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M4 4h9l5 5v11H4z"/><path d="M13 4v5h5"/></symbol>
+  <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+  <symbol id="i-arrows" viewBox="0 0 24 24"><path d="M4 8h13l-3-3M20 16H7l3 3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="m9.5 3-.5 2a8 8 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A8 8 0 0 0 9 19l.5 2h5l.5-2a8 8 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A8 8 0 0 0 15 5l-.5-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-device" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 16.5v-6M9.5 13l2.5-2.5 2.5 2.5"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></symbol>
+  <symbol id="i-min" viewBox="0 0 24 24"><path d="M4 12h16"/></symbol>
+  <symbol id="i-max" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19"/></symbol>
+</svg>
+
+<h1>入力欄と上端の見直し v2（承認済み 2026-09-23）</h1>
+<div class="note" style="max-width:980px;margin:6px 0 10px"><b class="k">決まったこと（初期表示はこの組み合わせ）</b><ul>
+  <li>入力欄: v2（箱の中に字の欄・チップの行・送信。C1 の並べ方。1 行から伸ばし、上限はタッチ 6 行・マウス 10 行。「保存済み」はスマホでは出さず、広い幅では行の空きに弱い字）。デスクトップも同じ</li>
+  <li>チップ: U1 を完全にそろえる。逸脱 3 つ（作業ディレクトリの名前の等幅をやめる・YOLO の太字をやめる・モデルにアイコンを足す）を採用し、docs/design-system.md に書いた</li>
+  <li>スマホの上端: H1 配置（塗りなし）。✦ は「…」へ、コンテキストは 700px 以下でアイコン + 数字。状態バーは紙の色（殻が記号の明暗を画面の配色に合わせる）</li>
+  <li>タブレット・デスクトップのリモートの窓: <b>H1・塗りなし</b>（帯とタイトル行を 1 本にし、帯は面の色。リモートの印は差しの青の「⇄ リモート: ホスト名」と、OS の窓タイトル・タスクバーの重ねアイコン）</li>
+  <li>添付の出どころ: リモート（デスクトップのリモートの窓・モバイル版の殻）と、ホストの画面ではないブラウザー（<code>hostCapabilities</code> の <code>osActions === false</code>）で「この端末から / ホストから」を選ぶ。ホストの PC の窓ではクリップはすぐファイルを選ぶ</li>
+  <li>添付の件数の上限（20 件）は無くす。1 件 8MB の上限と下書きの字の上限は残す。下の「n / 20」と「外すと選べます」は実装では出さない</li>
+</ul></div>
+<p class="lead">v1 への指摘を反映した版。① チップと送信を入力の箱の中に入れる（デスクトップも）。並べ方は C1（1 行・折り返さない・送信は右端・長い名前は … で詰める） ② 入力欄を低くする（1 行から始めて中身に合わせて伸ばし、上限で止める。「保存済み」は目立たない場所へ） ③ チップ 3 つの書体・大きさ・太さ・高さ・余白・アイコン・▾ を完全に同じにする ④ スマホの上端は塗りにしない（H1 配置 / H2 配置の塗りなし）。「現在」は今の CSS の値で再現したもので、比べるために残してある。各画面の下の数字は、このページが実測した値。</p>
+
+<div class="ctl" role="toolbar" aria-label="表示の切り替え">
+  <label>配色 <span class="seg" role="group" aria-label="配色" data-k="theme"><button data-v="light">明</button><button data-v="dark">暗</button></span></label>
+  <label>上端（スマホ） <span class="seg" role="group" aria-label="上端の案" data-k="h"><button data-v="H0">現在</button><button data-v="A">H1 配置（塗りなし・採用）</button><button data-v="B">H2 配置（塗りなし・不採用）</button></span></label>
+  <label>タブレット・デスクトップの帯 <span class="seg" role="group" aria-label="タブレット・デスクトップの帯" data-k="bd"><button data-v="fill">H1・塗り（不採用）</button><button data-v="none">H1・塗りなし（採用）</button></span></label>
+  <label>入力欄 <span class="seg" role="group" aria-label="入力欄の案" data-k="c"><button data-v="C0">現在</button><button data-v="V2">v2 箱の中に</button></span></label>
+  <label>入力の量 <span class="seg" role="group" aria-label="入力の量" data-k="txt"><button data-v="empty">空</button><button data-v="short">1 行</button><button data-v="long">長文</button></span></label>
+  <label>添付 <span class="seg" role="group" aria-label="添付の見せ方" data-k="ap"><button data-v="none">閉じている</button><button data-v="menu">メニュー</button><button data-v="host">ホストのファイル</button></span></label>
+  <label>添付の札 <span class="seg" role="group" aria-label="添付の札" data-k="att"><button data-v="0">なし</button><button data-v="1">あり</button></span></label>
+  <label>承認モード <span class="seg" role="group" aria-label="承認モード" data-k="mode"><button data-v="yolo">YOLO</button><button data-v="ask">都度確認</button></span></label>
+  <label>実行中 <span class="seg" role="group" aria-label="実行中（中断ボタン）" data-k="run"><button data-v="0">いいえ</button><button data-v="1">はい</button></span></label>
+  <label>スクロールで隠す <span class="seg" role="group" aria-label="スクロールで上端を隠す" data-k="hide"><button data-v="0">いいえ</button><button data-v="1">はい</button></span></label>
+  <label>縮尺 <span class="seg" role="group" aria-label="タブレット・デスクトップの縮尺" data-k="z"><button data-v="1">100%</button><button data-v=".6">60%</button></span></label>
+</div>
+
+<div class="notes" id="notes" aria-live="polite"></div>
+
+<h2>スマホ（モバイル版の殻）</h2>
+<div class="row">
+  <figure><div class="scroll"><div data-frame="phone" data-w="412" data-h="915"></div></div><figcaption data-cap="phone412"></figcaption></figure>
+  <figure><div class="scroll"><div data-frame="phone" data-w="360" data-h="800"></div></div><figcaption data-cap="phone360"></figcaption></figure>
+</div>
+
+<h2>タブレット（モバイル版の殻、900px。700px を超えるので脇は常に出る）</h2>
+<div class="scroll zoomed"><div data-frame="tab" data-w="900" data-h="760"></div></div>
+<figcaption data-cap="tab" style="--cap:900px"></figcaption>
+
+<h2>デスクトップ版（1280×800）</h2>
+<h3>リモートの窓</h3>
+<div class="scroll zoomed"><div data-frame="dremote" data-w="1280" data-h="800"></div></div>
+<figcaption data-cap="dremote" style="--cap:1280px"></figcaption>
+<h3>ローカルの窓</h3>
+<div class="scroll zoomed"><div data-frame="dlocal" data-w="1280" data-h="800"></div></div>
+<figcaption data-cap="dlocal" style="--cap:1280px"></figcaption>
+
+<h2>チップの字がそろわない原因（今の値）</h2>
+<table>
+  <tr><th>部品</th><th>効いている規則</th><th>見え方</th></tr>
+  <tr><td>作業ディレクトリ</td><td><code>web/style.css:671</code> <code>.chip.mono{font-family:var(--font-mono);font-size:var(--fs-s)}</code>（12px、<code>web/tokens.css:80</code>）。<code>index.html:145</code> の <code>class="chip mono folder"</code></td><td>等幅 12px。Windows の Cascadia Mono や Android の等幅は線が太く、<b>太字のように見える</b>（v1 の U1 で 14px にしても書体の差は残った）</td></tr>
+  <tr><td>モデル</td><td><code>web/style.css:662-663</code> <code>.chip{… font-size:var(--fs) …}</code>（14px）。アイコンなし</td><td>本文の書体 14px・細い。3 つの中でこれだけアイコンが無い</td></tr>
+  <tr><td>承認モード（YOLO）</td><td><code>web/style.css:673</code> <code>.chip.danger{…;font-weight:600}</code>。<code>web/composer-controls.mjs:539-540</code> が字に「⚠ 」を足す。盾のアイコン（<code>:187</code>）も付く</td><td>太字 + 盾 + 字の ⚠ で記号が 2 つ</td></tr>
+  <tr><td>高さ</td><td>チップは高さの指定が無い（字 + <code>padding:5px 10px</code> で約 31px）。添付は <code>.btn-icon</code> 30px（<code>:69</code>）、タッチでは 36px（<code>:946</code>）。送信は 34px（<code>:656</code>）</td><td>3 種類</td></tr>
+  <tr><td>入力欄の高さ</td><td><code>web/style.css:652</code> <code>.composer textarea{… min-height:72px}</code>。上限は画面の 40%（client.mjs）。その下に「保存済み」（<code>:857</code>、11px）の 1 段とチップの行（<code>:655</code>、<code>margin-top:8px</code>）が別に積まれる</td><td>空でも入力欄の全体が約 150px になる</td></tr>
+</table>
+
+<h2>v2 のチップの決まり（3 つとも同じ）</h2>
+<table>
+  <tr><th>項目</th><th>値</th><th>設計からの逸脱</th></tr>
+  <tr><td>書体・大きさ・太さ</td><td>本文の書体（<code>--font</code>）・14px（<code>--fs</code>）・400</td><td><b>作業ディレクトリの名前の等幅をやめる</b>（「入力欄の設定」の「末尾の名前、等幅」から外れる）。全体のパスは title と面の中で等幅のまま</td></tr>
+  <tr><td>高さ・余白</td><td>マウス 30px / タッチ 36px（添付・送信と同じ）、余白 0 8px（400px 未満は 0 5px）</td><td>—</td></tr>
+  <tr><td>アイコン</td><td>3 つとも先頭に 15px の線画（フォルダー / モデル / 盾）。弱い字の色</td><td><b>モデルにアイコンを足す</b>（今は無い）。形をそろえるため</td></tr>
+  <tr><td>▾</td><td>3 つとも 12px。スマホの幅（480px 未満）では 3 つとも省く</td><td>—</td></tr>
+  <tr><td>警告（YOLO）</td><td>盾を ⚠ の線画に替え、アイコンと字を強い字（<code>--ink-strong</code>）に。字は「YOLO」だけ</td><td><b>太字をやめる</b>（「⚠ と強い字（太字）」の太字だけ外す）。字の ⚠ も省く（アイコンで出すので 2 つ目は要らない）</td></tr>
+</table>
+
+<script>
+(() => {
+  const root = document.getElementById('pc');
+  const st = { theme: 'dark', h: 'A', bd: 'none', c: 'V2', txt: 'long', ap: 'none', att: '0', mode: 'yolo', run: '0', hide: '0', z: '.6' };
+  // URL の #h=A&c=V2&theme=light で初期状態を決められる（スクリーンショット用）
+  for (const [k, v] of new URLSearchParams(location.hash.slice(1))) if (k in st) st[k] = v;
+
+  const I = (n, cls = '') => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+  const HOST = 'DESKTOP-7V5DPNM';
+  const TITLE = 'Pleiad リモートの使い方と端末の追加';
+  const THREAD = `<div class="thread"><ul>
+    <li><b>ログイン</b>（Claude CLI・Codex・外部 MCP・Antigravity）は、ホストの PC で済ませてください。リモートからはできません。</li>
+    <li><b>手元のフォルダーを送る</b>：リモートの窓の添付ボタン（クリップ）から「フォルダーを送る…」を選びます。</li>
+    <li><b>端末をなくしたとき</b>：ホストの 設定 › リモート の端末一覧から「取り消す」を押すと、その端末からはつながらなくなります。</li>
+    <li><b>登録用の秘密は、信頼できる人にだけ渡してください。</b> 知っている人は誰でも、中継にホストとして登録できます。</li>
+    <li>中継の URL を変えたら、端末はホスト一覧から一度つなぎ直してください。</li>
+    <li>スリープの設定は 設定 › リモート ›「常駐」で選べます。</li>
+    <li>未読の印は端末ごとではなく、ホストの記録を共有します。</li>
+    <li>通知は、ホストの 設定 › 通知 で端末ごとに切り替えられます。</li></ul></div>`;
+  const TEXT = {
+    empty: '',
+    short: 'スマホの下部のチップの字の大きさをそろえてほしい',
+    long: '未読などのセッションのステータスがリモートだと共有されず、全部未読になるように見えます。\nあと、可能であればスマホ表示の際の下部のプルダウンの文字の大きさがプルダウンによって異なり違和感を感じるので、直してほしいのと、プルダウンなどの横幅が足りず、二段になっているので直してほしいです。'
+  };
+  const MENU_SESSION = `<div class="li">状態を変更</div><div class="li">名前を変更</div><div class="li">グループに入れる</div><div class="li">削除</div>`;
+
+  // ---------- 上端 ----------
+  const ctxFull = () => `<button type="button" class="btn ctxlink" aria-label="この会話のコンテキスト（12 件）" title="この会話のコンテキスト">${I('doc')}<span>コンテキスト</span><span>12</span></button>`;
+  const ctxIcon = () => `<button type="button" class="btn ctxi" aria-label="この会話のコンテキスト（12 件）" title="この会話のコンテキスト（12 件）">${I('doc')}<span class="n">12</span></button>`;
+  const wand = () => `<button type="button" class="btn ib" aria-label="タイトルを生成" title="タイトルを生成">${I('wand')}</button>`;
+  const more = (items) => `<button type="button" class="btn ib" data-menu aria-haspopup="menu" aria-expanded="false" aria-label="この会話の操作" title="この会話の操作">${I('dots')}</button>
+    <div class="pmenu hmenu" role="menu" hidden>${items.includes('wand') ? `<div class="li">${I('wand')}タイトルを生成</div>` : ''}${items.includes('hosts') ? `<div class="li">${I('back')}ホスト一覧に戻る<span class="r" style="font-family:var(--font-mono)">${HOST}</span></div>` : ''}<div class="sep"></div>${MENU_SESSION}</div>`;
+  const sideBtn = () => `<button type="button" class="btn ib" aria-label="サイドバーを開く" title="サイドバーを開く">${I('side')}</button>`;
+  const title = () => `<input class="ttl" value="${TITLE}" aria-label="会話のタイトル">`;
+  const hostLink = (back) => `<button type="button" class="sub" aria-label="ホスト一覧に戻る: ${HOST}（リモート）" title="リモートのホスト ${HOST}。押すとホスト一覧へ">${back ? I('back') : ''}${I('arrows')}<span>${HOST}</span></button>`;
+  const hostBand = () => `<div class="hostbar"><button type="button" class="badge" aria-label="ホスト一覧に戻る: ${HOST}" title="ホスト一覧に戻る（${HOST}）">${I('back')}${I('arrows')}<span class="h">${HOST}</span></button></div>`;
+  const deskBadge = () => `<button type="button" class="badge" aria-expanded="false" aria-label="リモートの接続: ${HOST}" title="リモートのホスト ${HOST} につないでいます">${I('arrows')}<span>リモート:</span><span class="h">${HOST}</span></button>`;
+  const winCtl = () => `<span class="wc" aria-hidden="true"><span>${I('min')}</span><span>${I('max')}</span><span>${I('x')}</span></span>`;
+  const shead = (style = '') => `<div class="shead" style="${style}"><span class="brand"><i></i>Pleiad</span><button type="button" class="btn ib" aria-label="新しい会話" title="新しい会話">${I('plus')}</button><button type="button" class="btn ib" aria-label="設定" title="設定">${I('gear')}</button><button type="button" class="btn ib" aria-label="サイドバーを閉じる" title="サイドバーを閉じる">${I('side')}</button></div>`;
+  const sideList = () => `<div class="search">検索</div><div class="gh">進行中</div>
+    <div class="sr"><span class="t">リモートの設計を書く</span><span class="w">12:04</span></div>
+    <div class="sr on"><span class="t">${TITLE}</span><span class="w">21:15</span></div>
+    <div class="sr"><span class="t">モバイルの画面の手直し</span><span class="w">昨日</span></div>
+    <div class="gh">状態なし</div><div class="sr"><span class="t">使用量の表示</span><span class="w">3 日</span></div>`;
+
+  function phoneHeader(h) {
+    if (h === 'H0') return `<div class="sb fill"><span>21:15</span><span class="ic">◐ ▂▄▆ 74</span></div>` + hostBand() + `<div class="top">${sideBtn()}${title()}${wand()}${ctxFull()}${more('')}</div>`;
+    const sb = `<div class="sb"><span>21:15</span><span class="ic">◐ ▂▄▆ 74</span></div>`;
+    // H1 配置: 1 本の行。タイトルの下に差しの青の「⇄ ホスト名」（押すとホスト一覧へ）
+    if (h === 'A') return sb + `<div class="top hideable" style="--hh:56px;padding-top:6px">${sideBtn()}<div class="tt">${title()}${hostLink(false)}</div>${ctxIcon()}${more('wand hosts')}</div>`;
+    // H2 配置: ホスト名の行を帯の位置に残す（塗りなし・差しの青の字）。その下にタイトル 1 行
+    return sb + `<div class="hideable" style="--hh:78px">${`<div class="hostline">${hostLink(true)}</div>`}<div class="top" style="padding-top:2px">${sideBtn()}${title()}${ctxIcon()}${more('wand')}</div></div>`;
+  }
+  function tabHeader(h) {
+    if (h === 'H0') {
+      const sb = `<div class="sb fill" style="--sat:28px;padding-top:0;font-size:12px"><span>21:15</span><span class="ic">▂▄▆ 74</span></div>`;
+      return { top: sb + hostBand(), side: shead(), main: `<div class="top">${title()}${wand()}${ctxFull()}${more('')}</div>` };
+    }
+    const fill = st.bd === 'fill';
+    const sb = `<div class="sb ${fill ? 'fill' : ''}" style="--sat:28px;padding-top:0;font-size:12px;${fill ? '' : 'background:var(--surface-0)'}"><span>21:15</span><span class="ic">▂▄▆ 74</span></div>`;
+    return { top: sb + `<div class="tbar ${fill ? 'fillbar' : 'plainbar'}" style="height:48px"><div class="zl" style="padding-left:6px"><button type="button" class="badge" aria-label="ホスト一覧に戻る: ${HOST}" title="ホスト一覧に戻る（${HOST}）">${I('back')}${I('arrows')}<span class="h">${HOST}</span></button></div><div class="zr">${title()}${wand()}${ctxFull()}${more('')}</div></div>`, side: shead(), main: '' };
+  }
+  function deskHeader(h, remote) {
+    const row = `<div class="top">${title()}${wand()}${ctxFull()}</div>`;
+    const sh = shead('width:100%;padding:0');
+    if (h === 'H0') {
+      if (!remote) return { bar: `<div class="tbar"><div class="zl">${sh}</div><div class="zr">${winCtl()}</div></div>`, side: '', main: row };
+      return { bar: `<div class="tbar fillbar"><div class="zl" style="padding-left:8px;width:auto">${deskBadge()}</div><div class="zr">${winCtl()}</div></div>`, side: shead(), main: row };
+    }
+    if (!remote) return { bar: `<div class="tbar"><div class="zl">${sh}</div><div class="zr">${title()}${wand()}${ctxFull()}${winCtl()}</div></div>`, side: '', main: '' };
+    const fill = st.bd === 'fill';
+    return { bar: `<div class="tbar ${fill ? 'fillbar' : 'plainbar'}"><div class="zl" style="padding-left:8px">${deskBadge()}</div><div class="zr">${title()}${wand()}${ctxFull()}${winCtl()}</div></div>`, side: shead(), main: '' };
+  }
+
+  // ---------- 入力欄 ----------
+  function composer(c, kind, w) {
+    const narrow = kind === 'phone';
+    const yolo = st.mode === 'yolo';
+    const running = st.run === '1';
+    const text = TEXT[st.txt];
+    const caret = I('caret', 'caret');
+    const send = `<button type="submit" class="btn send" aria-label="送信" title="送信">${I('send')}</button>`;
+    const attach = `<button type="button" class="btn ib" aria-label="添付" title="添付">${I('clip')}</button>`;
+    if (c === 'C0') {
+      const folder = `<button type="button" class="chip mono folder" aria-haspopup="dialog" aria-label="作業ディレクトリ: D:\\dev\\pleiad" title="D:\\dev\\pleiad">${I('folder')}<span class="v">pleiad</span>${caret}</button>`;
+      const model = `<button type="button" class="chip" aria-haspopup="dialog" aria-label="モデル: Opus 5.5 · high"><span class="v">Opus 5.5 · high</span>${caret}</button>`;
+      const mode = yolo ? `<button type="button" class="chip danger" aria-haspopup="dialog" aria-label="承認モード: YOLO（確認なし・制限なし）">${I('shield')}<span class="v">⚠ YOLO</span>${caret}</button>`
+                        : `<button type="button" class="chip" aria-haspopup="dialog" aria-label="承認モード: 都度確認">${I('shield')}<span class="v">都度確認</span>${caret}</button>`;
+      const abort = running ? `<button type="button" class="btn btn-quiet">中断</button>` : '';
+      return `<div class="composer"><div class="ta" role="textbox" aria-label="メッセージを書く">${text || '<span class="ph">メッセージを書く</span>'}</div><span class="saved">保存済み</span><div class="crow now">${attach}${folder}<span class="gap"></span>${model}${mode}${abort}${send}</div></div>`;
+    }
+    const chip = (cls, icon, label, aria, title) => `<button type="button" class="chip ${cls}" aria-haspopup="dialog" aria-label="${aria}" title="${title}">${I(icon)}<span class="v">${label}</span>${caret}</button>`;
+    const folder = chip('folder', 'folder', 'pleiad', '作業ディレクトリ: D:\\dev\\pleiad', 'D:\\dev\\pleiad');
+    const model = chip('model', 'model', '<span class="mn">Opus 5.5</span><span class="ef">&nbsp;· high</span>', 'モデル: Opus 5.5 · high', 'Opus 5.5 · high');
+    const mode = yolo ? chip('mode danger', 'warn', 'YOLO', '承認モード: YOLO（確認なし・制限なし）', '確認なし・制限なし') : chip('mode', 'shield', '都度確認', '承認モード: 都度確認', '承認モード');
+    const abort = running ? (narrow ? `<button type="button" class="btn btn-quiet stop" aria-label="中断" title="中断">${I('stop')}</button>` : `<button type="button" class="btn btn-quiet">中断</button>`) : '';
+    // 「保存済み」: 広い幅は行の空き（作業ディレクトリとモデルの間）に弱い字で。スマホは出さない（脇の行の「未送信」で分かる）
+    const saved = !narrow && text ? `<span class="saved2" aria-live="polite">保存済み</span>` : '';
+    const remote = kind !== 'dlocal';
+    const full = st.ap === 'full';
+    const nAtt = full ? 18 : st.att === '1' ? 2 : 0;
+    const attArea = nAtt ? `<div class="attached2">${attChip('device', 'IMG_2041.jpg', remote)}${attChip('host', 'web/style.css', remote)}${full ? `<span class="att" style="padding-right:10px;color:var(--ink-weak)">ほか 16 件</span>` : ''}</div>` : '';
+    // ローカルの窓・ホストの画面のブラウザー: ホスト＝この端末なので選ばせず、クリップはそのままファイルを選ぶ
+    const pop = remote ? attachPop(kind, nAtt) : '';
+    const clip = `<button type="button" class="btn ib" aria-label="添付" title="${remote ? '添付（この端末から / ホストから）' : '添付'}" ${remote ? `aria-haspopup="dialog" aria-expanded="${st.ap !== 'none'}"` : ''}>${I('clip')}</button>`;
+    return `<div class="composer v2">${pop}<div class="cbox">${attArea}<div class="ta2" role="textbox" aria-label="メッセージを書く">${text || '<span class="ph">メッセージを書く</span>'}</div><div class="crow">${clip}${folder}<span class="gap"></span>${saved}${model}${mode}${abort}${send}</div></div></div>`;
+  }
+
+  function attChip(from, name, remote) {
+    const icon = !remote ? '' : from === 'host' ? I('arrows') : I('device');
+    const tip = from === 'host' ? `ホストのファイル D:\\dev\\pleiad\\web\\style.css（送らずにパスで渡す）` : `この端末から送ったファイル ${name}`;
+    return `<span class="att" title="${tip}">${icon}<span class="nm">${name}</span><button type="button" class="x" aria-label="${name} を外す">×</button></span>`;
+  }
+  function attachPop(kind, nAtt) {
+    if (st.ap === 'none') return '';
+    const deskRemote = kind === 'dremote';
+    if (st.ap === 'menu') {
+      return `<div class="apop menu" role="dialog" aria-label="添付">
+        <div class="hd">この端末から</div>
+        <div class="li" role="button">${I('clip')}ファイル…</div>
+        ${deskRemote ? `<div class="li" role="button">${I('up')}フォルダーを送る…</div>` : ''}
+        <div class="hd">ホストから <span class="h">${HOST}</span></div>
+        <div class="li" role="button">${I('folder')}ファイルを選ぶ…</div></div>`;
+    }
+    const full = st.ap === 'full';
+    const sel = new Set(['index.html', 'style.css']);
+    const rows = [
+      ['dir', 'locales'], ['dir', 'vendor'], ['dir', 'brand'],
+      ['file', 'client.mjs', '142 KB · 21:02'], ['file', 'index.html', '18 KB · 20:40'], ['file', 'style.css', '61 KB · 21:10'],
+      ['file', 'tokens.css', '6 KB · 昨日'], ['file', 'composer-controls.mjs', '24 KB · 昨日'], ['file', 'remote-badge.mjs', '7 KB · 3 日']
+    ].map(([k, n, m]) => {
+      if (k === 'dir') return `<div class="hb-row" role="option" aria-label="フォルダー ${n}">${I('folder')}<span class="nm">${n}</span><span class="meta">›</span></div>`;
+      const on = sel.has(n), dis = full && !on;
+      return `<div class="hb-row ${on ? 'sel' : ''} ${dis ? 'dis' : ''}" role="option" aria-selected="${on}" ${dis ? 'aria-disabled="true"' : ''}><span class="ck" aria-hidden="true">${on ? '✓' : ''}</span><span class="nm">${n}</span><span class="meta">${m}</span></div>`;
+    }).join('');
+    return `<div class="apop" role="dialog" aria-label="ホストのファイル">
+      <div class="hb-top"><button type="button" class="btn ib" aria-label="添付のメニューに戻る">${I('back')}</button><b>ホストのファイル</b></div>
+      <div class="crumb" aria-label="場所"><button type="button">D:</button>›<button type="button">dev</button>›<button type="button">pleiad</button>›<button type="button" aria-current="true" style="font-weight:600">web</button></div>
+      <div class="hb-q" role="searchbox" aria-label="このフォルダーで絞り込む">このフォルダーで絞り込む</div>
+      <div class="hb-list" role="listbox" aria-multiselectable="true" aria-label="web の中身"><div class="hb-row" role="option" aria-label="上のフォルダーへ">${I('back')}<span class="nm">..</span></div>${rows}</div>
+      <div class="hb-foot"><span class="note">2 件を選択</span><button type="button" class="btn btn-primary">添付する（2）</button></div></div>`;
+  }
+
+  // ---------- 枠 ----------
+  function frame(kind, w, h) {
+    const touch = kind === 'phone' || kind === 'tab';
+    const narrow = kind === 'phone';
+    const cls = `dev ${touch ? 'touch' : 'win'} ${narrow ? 'narrow' : ''} ${w < 400 ? 'xs' : ''} ${kind === 'tab' ? 'tab' : ''}`;
+    const style = `--w:${w}px;--h:${h}px;--sab:${narrow ? 24 : 16}px`;
+    if (kind === 'phone') return `<div class="${cls}" style="${style}" aria-label="スマホ ${w}px">${phoneHeader(st.h)}<div class="main"><div class="log">${THREAD}</div>${composer(st.c, kind, w)}</div><div class="homebar"></div></div>`;
+    if (kind === 'tab') {
+      const p = tabHeader(st.h);
+      return `<div class="${cls}" style="${style};--rad:22px" aria-label="タブレット ${w}px">${p.top}<div class="body"><aside class="side">${p.side}${sideList()}</aside><div class="main">${p.main}<div class="log">${THREAD}</div>${composer(st.c, kind, w)}</div></div></div>`;
+    }
+    const p = deskHeader(st.h, kind === 'dremote');
+    return `<div class="${cls}" style="${style}" aria-label="デスクトップ版 ${kind === 'dremote' ? 'リモートの窓' : 'ローカルの窓'}">${p.bar}<div class="body"><aside class="side">${p.side}${sideList()}</aside><div class="main">${p.main}<div class="log">${THREAD}</div>${composer(st.c, kind, w)}</div></div></div>`;
+  }
+
+  // ---------- 説明 ----------
+  const NOTES = {
+    H0: ['上端: 現在', '状態バー（塗り）+ ホスト名の塗りの帯 44px（<code>style.css:987</code>）+ タイトル行（<code>:404</code>）の 3 段。412px でタイトル欄に残るのは約 150px。', [], ''],
+    A: ['上端: H1 配置（塗りなし）', '状態バーは紙の色のまま。1 本の行に 脇の開閉 / タイトル（下に差しの青の等幅「⇄ DESKTOP-7V5DPNM」）/ コンテキスト（アイコン + 数字）/「…」を置く。',
+      ['リモートの印: タイトルの真下に常に「⇄ ホスト名」が差しの青の字で出る。ローカル（ブラウザー版）にはこの行が無いので、有無で見分けられる',
+       '添え字を押すとホスト一覧へ戻る（1 タップのまま）。「…」の中にも「ホスト一覧に戻る」。✦ は「…」の先頭へ',
+       '利点: 段が一番少なく（上端 約 104px）、タイトル欄が一番広い',
+       '代償: 添え字は 12px と小さい（押せる高さは 18px ほどなので、「…」とジェスチャーの戻る操作で補う）。塗りが無くなるぶん、リモートの見分けはデスクトップの窓より弱い'],
+      ''],
+    B: ['上端: H2 配置（塗りなし）', '塗りを外すと元の H1 と H2 はほぼ同じ形（1 行 + 添え字）になるので、比べられるようにこちらは「ホスト名の行を帯の位置に残す」形にした。紙の地の 32px の行に「‹ ⇄ DESKTOP-7V5DPNM」（差しの青の字）、その下にタイトル 1 行。',
+      ['リモートの印: 画面の一番上の行がホスト名になり、今の帯と同じ位置で見分けられる（色は字だけ）',
+       '「‹」を押すとホスト一覧へ（今と同じ 1 タップ、押せる高さ 32px）',
+       '利点: 今の構成に近く、見慣れた位置にホスト名が残る',
+       '代償: 1 段多い（上端 約 126px）。タイトルは 1 行だが幅は H1 配置と同じ'],
+      ''],
+    C0: ['入力欄: 現在', '字の欄（<code>min-height:72px</code>）→「保存済み」の 1 段 → チップの行 と 3 段を積む。チップは字が 3 種類（等幅 12px / 14px / 14px 太字）で、412px では 2 段になる。', [], ''],
+    V2: ['入力欄: v2 箱の中に', '1 つの角丸の箱（<code>--surface-1</code>、角丸 20px）の中に、字の欄とチップ・送信の行を入れる。デスクトップも同じ。',
+      ['字の欄は 1 行から始まり、中身に合わせて伸びる。上限はタッチ 6 行・マウス 10 行で、その先は中でスクロール（今の上限は画面の 40%）',
+       '行の並びは C1: 添付 / 作業ディレクトリ / 空き / モデル / 承認モード / (中断) / 送信。折り返さず、送信は常に右端。足りなければ 作業ディレクトリ → モデル名 の順に … で詰める（段「high」と承認モードは削らない）',
+       '「保存済み」は広い幅では行の空きに弱い字で出す。スマホでは出さない（下書きがあることは脇の行の「未送信」で分かる）',
+       'チップは 3 つとも同じ書体・大きさ・太さ・高さ・余白・アイコン・▾（下の表）。YOLO の違いはアイコン（⚠）と字の色だけ',
+       '代償: 作業ディレクトリの等幅と YOLO の太字をやめる（設計の決まりから外れる。下の表）。360px で実行中のときは名前が短く詰まる'],
+      '幅で違うところ: スマホの幅（480px 未満）では 3 つとも ▾ を省き、中断は四角のアイコンにする。400px 未満ではチップの余白を 5px に詰める。']
+  };
+  function renderNotes() {
+    const card = (k) => {
+      const [name, lead, pts, width] = NOTES[k];
+      return `<div class="note"><b class="k">${name}</b><p>${lead}</p>${pts.length ? `<ul>${pts.map(p => `<li>${p}</li>`).join('')}</ul>` : ''}${width ? `<p class="dev-note" style="margin-top:6px">${width}</p>` : ''}</div>`;
+    };
+    const band = st.h === 'H0' ? '' : `<div class="note"><b class="k">タブレット・デスクトップ: ${st.bd === 'fill' ? 'H1・塗り' : 'H1・塗りなし'}</b><p>帯の左（脇の列の上）にホスト名のバッジ、右（会話の列の上）にタイトル・✦・コンテキストを置き、タイトル行を無くす（v1 の H1。ローカルの窓も面の色の帯で同じ形）。</p><ul>${st.bd === 'fill'
+      ? '<li>今の承認済みのリモートの窓（塗りの帯）のまま、段が 1 つ減る。スマホ（塗りなし）とは色の扱いが違うが、デスクトップは同じ PC にローカルの窓とリモートの窓が並ぶので、取り違えを防ぐ強い印が要る</li><li>代償: 塗りの上にタイトル・操作が乗る（塗りの例外が帯の中身まで広がる）</li>'
+      : '<li>スマホとそろえて塗りをやめ、バッジを差しの青の字にする。塗りの例外が無くなる</li><li>代償: ローカルの窓とリモートの窓が並んだとき、帯の色で見分けられなくなる（承認済みの remote-window.html の要件から外れる）</li>'}</ul></div>`;
+    const att = st.c === 'V2' ? `<div class="note"><b class="k">添付: 出どころを選ぶ</b><p>リモート（デスクトップのリモートの窓・モバイル版の殻・ホスト以外の PC のブラウザー）では、クリップで出どころごとに分けたメニューを開く。「この端末から」はファイル…（デスクトップのリモートの窓では今と同じくフォルダーを送る…も）、「ホストから」はファイルを選ぶ…。</p><ul>
+      <li>ホストのファイル: 場所のパンくず、このフォルダーの中での絞り込み、複数選択（✓）。件数の上限は無い。送らずにホストのパスで添付する（ファイルプレビューの「会話で使う」と同じ仕組み）</li>
+      <li>添付の札は、リモートのときだけ出どころのアイコンを付ける（⇄ ホスト / 端末）。ローカルでは付けない</li>
+      <li>ローカルの窓・ホストの画面で開いたブラウザー: ホスト＝この端末なので選ばせず、クリップはそのままファイルを選ぶ（ローカルの窓の画面を参照）</li></ul></div>` : '';
+    document.getElementById('notes').innerHTML = card(st.h) + band + card(st.c) + att;
+  }
+
+  // ---------- 実測 ----------
+  function measure(dev) {
+    const z = dev.getBoundingClientRect().width / dev.offsetWidth || 1;
+    const R = (n) => n.getBoundingClientRect();
+    const log = dev.querySelector('.log');
+    const headerH = Math.round((R(log).top - R(dev).top) / z);
+    const logH = Math.round(R(log).height / z);
+    const comp = dev.querySelector('.composer');
+    const compH = Math.round(R(comp).height / z);
+    const ttl = dev.querySelector('.ttl');
+    const ttlW = ttl ? Math.round(R(ttl).width / z) : 0;
+    const row = comp.querySelector('.crow');
+    const tops = new Set([...row.children].filter(n => n.offsetParent && !n.classList.contains('gap') && !n.classList.contains('saved2')).map(n => Math.round((R(n).top + R(n).height / 2) / z / 12)));
+    const cut = [...comp.querySelectorAll('.chip .v, .chip .mn')].some(n => n.scrollWidth > n.clientWidth + 1);
+    return `上端 <span class="m">${headerH}px</span> · 会話の欄 <span class="m">${logH}px</span> · 入力欄 <span class="m">${compH}px</span> · タイトル欄 <span class="m">${ttlW}px</span> · チップ <span class="m">${tops.size}</span> 段${cut ? ' · … で詰めている' : ''}`;
+  }
+
+  function render() {
+    root.dataset.theme = st.theme;
+    root.style.setProperty('--z', st.z);
+    root.querySelectorAll('.seg').forEach(s => s.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(st[s.dataset.k] === b.dataset.v))));
+    root.querySelectorAll('[data-frame]').forEach(slot => { slot.innerHTML = frame(slot.dataset.frame, +slot.dataset.w, +slot.dataset.h); });
+    renderNotes();
+    const caps = { phone412: 'スマホ 412×915（Pixel 9）', phone360: 'スマホ 360×800（確認用）', tab: 'タブレット 900×760', dremote: 'デスクトップ版 リモートの窓', dlocal: 'デスクトップ版 ローカルの窓' };
+    const keys = ['phone412', 'phone360', 'tab', 'dremote', 'dlocal'];
+    root.querySelectorAll('[data-frame] > .dev').forEach((d, i) => { root.querySelector(`[data-cap="${keys[i]}"]`).innerHTML = `${caps[keys[i]]} — ${measure(d)}`; });
+    bindFrames();
+  }
+
+  function bindFrames() {
+    root.querySelectorAll('[data-menu]').forEach(b => b.addEventListener('click', e => {
+      e.stopPropagation();
+      const m = b.parentElement.querySelector('.pmenu') || b._menu;
+      const open = m.hidden;
+      root.querySelectorAll('.pmenu').forEach(x => { x.hidden = true; });
+      root.querySelectorAll('[data-menu]').forEach(x => x.setAttribute('aria-expanded', 'false'));
+      m.hidden = !open; b.setAttribute('aria-expanded', String(open));
+      if (open) {
+        const dev = b.closest('.dev'), z = dev.getBoundingClientRect().width / dev.offsetWidth || 1;
+        m.style.top = Math.round((b.getBoundingClientRect().bottom - dev.getBoundingClientRect().top) / z + 4) + 'px';
+        m.style.right = '8px';
+        b._menu = m;
+        dev.appendChild(m);
+      }
+    }));
+    root.querySelectorAll('.dev.narrow .log').forEach(log => {
+      let last = 0;
+      log.addEventListener('scroll', () => {
+        if (st.hide !== '1' || st.h === 'H0') return;
+        const y = log.scrollTop, dev = log.closest('.dev');
+        if (y > last + 6) dev.classList.add('hid'); else if (y < last - 6 || y < 8) dev.classList.remove('hid');
+        last = y;
+      }, { passive: true });
+    });
+  }
+  document.addEventListener('click', () => { root.querySelectorAll('.pmenu').forEach(x => { x.hidden = true; }); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') root.querySelectorAll('.pmenu').forEach(x => { x.hidden = true; }); });
+  root.querySelectorAll('.seg').forEach(s => s.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    st[s.dataset.k] = b.dataset.v; render();
+  }));
+  render();
+})();
+</script>
+</div>
+</html>
