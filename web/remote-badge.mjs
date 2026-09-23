@@ -1,7 +1,8 @@
-// リモートの窓の印（docs/remote.md §7.2 の 1。承認済みのモック docs/mockups/remote-window.html）。
+// リモートの窓の印（docs/remote.md §7.2 の 1。承認済みのモック docs/mockups/remote-window.html と、
+// 塗りをやめた docs/mockups/phone-composer-header.html の「H1・塗りなし」）。
 // 端末のアプリ（デスクトップ版の desktop/remote-preload.cjs）が window.plyRemote を渡したときだけ描く。
-// 帯の左にホスト名のバッジを常に出す（閉じるボタンは無い）。押すと接続の情報と「この窓を閉じる」の小さな面。
-// 帯の色は style.css の :root.remote .titlebar（client.mjs の paintTitleBar が読んで OS へ送る）。
+// 帯の左に差しの青のホスト名のバッジを常に出す（閉じるボタンは無い）。押すと接続の情報と「この窓を閉じる」の小さな面。
+// 帯の色は脇と同じ面（style.css の :root.desktop.remote .titlebar。client.mjs の paintTitleBar が読んで OS へ送る）。
 // つながらないとき（中継・ホストがオフライン）はバッジに状態を添え、面に「再試行」を出す。取り消されたら本体が読み直して
 // プロキシの案内のページを出す（desktop/remote-windows.cjs）。
 import { t, fmt } from './i18n.mjs';
@@ -108,9 +109,11 @@ export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = 
 const BACK = 'M15 6l-6 6 6 6';
 
 /**
- * モバイル版の殻（docs/remote.md §8.2、承認済みのモック docs/mockups/remote-mobile.html の ③）。
- * 画面の上端に塗りの帯を置き、ホスト名を出す。押すとホスト一覧へ戻る（殻の backToHosts）。
- * デスクトップ版のバッジと同じ部品・同じ文言で、面（接続の情報・この窓を閉じる）は出さない。帯は safe-area の内側に置く（style.css）
+ * モバイル版の殻（docs/remote.md §8.2、承認済みのモック docs/mockups/phone-composer-header.html の H1 配置・塗りなし）。
+ * ホスト名を 2 か所に置き、見せる方は画面の幅で CSS が決める（style.css の「モバイル版の殻」）:
+ *   - 701px 以上: 上端の帯（脇と同じ面）の左に「‹ ⇄ ホスト名」の pill（.host-bar の .remote-badge）
+ *   - 700px 以下: タイトルの下に差しの青の添え字「⇄ ホスト名」（.title-col の .host-sub）
+ * どちらも押すとホスト一覧へ戻る（殻の backToHosts）。面（接続の情報・この窓を閉じる）は出さない。帯は safe-area の内側に置く
  *   back: 戻る関数（既定は押したときの window.backToHosts。plyRemote.backToHosts があればそちら）
  */
 function setupHostBar({ info, remote, doc, back }) {
@@ -125,6 +128,20 @@ function setupHostBar({ info, remote, doc, back }) {
   backIcon.classList.add('back');
   badge.append(backIcon, icon(ARROWS), host, suffix);
   bar.append(badge);
+  // タイトルの下の添え字（700px 以下）。タイトルの列が無い画面（テスト）では作らない
+  const col = doc.querySelector?.('.title-col');
+  let sub = null, subHost = null, subState = null;
+  if (col) {
+    sub = el('button', 'host-sub');
+    sub.type = 'button';
+    sub.id = 'hostSub';
+    subHost = el('span', 'host');
+    subState = el('span', 'state');
+    const arrows = icon(ARROWS);
+    arrows.setAttribute('aria-hidden', 'true');
+    sub.append(arrows, subHost, subState);
+    col.append(sub);
+  }
 
   let view = badgeView(info, null);
   function paint(status) {
@@ -135,6 +152,14 @@ function setupHostBar({ info, remote, doc, back }) {
     badge.title = t('remote.backToHostsTitle', { host: view.host });
     badge.setAttribute('aria-label', `${t('remote.backToHosts')}: ${view.host}${view.suffix ? ` · ${view.suffix}` : ''}`);
     badge.dataset.state = view.state;
+    if (sub) {
+      subHost.textContent = view.host;
+      subState.textContent = view.suffix ? ` · ${view.suffix}` : '';
+      subState.hidden = !view.suffix;
+      sub.title = badge.title;
+      sub.setAttribute('aria-label', badge.getAttribute('aria-label'));
+      sub.dataset.state = view.state;
+    }
   }
   badge.onclick = () => {
     // 殻が後から入れても拾えるよう、押したときに探す
@@ -142,9 +167,10 @@ function setupHostBar({ info, remote, doc, back }) {
     const go = typeof remote.backToHosts === 'function' ? () => remote.backToHosts() : typeof fn === 'function' ? fn : null;
     if (go) Promise.resolve().then(go).catch(() => {});
   };
+  if (sub) sub.onclick = () => badge.onclick();
   doc.body.prepend(bar);
   paint();
   Promise.resolve(remote.status?.()).then(s => { if (s) paint(s); }).catch(() => {});
   remote.onStatus?.(s => paint(s));
-  return { bar, badge, pop: null, paint, view: () => view };
+  return { bar, badge, sub, pop: null, paint, view: () => view };
 }

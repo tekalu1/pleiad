@@ -189,6 +189,8 @@
     }
   },
   "activity": {
+    "preparing": "Preparing to send…",
+    "connectingMcp": "Connecting to external MCP {{current}}/{{total}}",
     "thinking": "Thinking",
     "writing": "Writing",
     "compacting": "Compacting context",
@@ -204,6 +206,8 @@
     "turnRunning": "Turn in progress",
     "subagents_one": "Subagents {{count}}",
     "subagents_other": "Subagents {{count}}",
+    "tasks_one": "Tasks {{count}}",
+    "tasks_other": "Tasks {{count}}",
     "background_one": "Background {{count}}",
     "background_other": "Background {{count}}",
     "subagentsEnded_one": "Subagents · done {{count}}",
@@ -984,6 +988,8 @@
     "thought_one": "Thought ({{chars}} char)",
     "thought_other": "Thought ({{chars}} chars)",
     "delivery": {
+      "sending": "Sending…",
+      "failed": "✕ Couldn't send",
       "pending": "Will pass to the AI at the next break",
       "late": "Too late for this task. The AI will answer next.",
       "sent": "Sent to the AI",
@@ -1088,13 +1094,40 @@
       "restored": "Draft restored"
     },
     "attach": {
-      "tooMany_one": "You can attach up to {{count}} file. Remove the ones you don’t need.",
-      "tooMany_other": "You can attach up to {{count}} files. Remove the ones you don’t need.",
       "enlarge": "{{name}} (click to enlarge)",
       "remove": "Remove",
       "readFailed": "Couldn't read the file",
-      "tooLarge": "{{name}} is too large (max 8 MB)",
-      "failed": "Couldn't attach {{name}}: {{error}}"
+      "tooLarge": "{{name}} is too large (max {{limit}})",
+      "failed": "Couldn't attach {{name}}: {{error}}",
+      "fromHost": "Host file {{path}} (passed by path, not uploaded)",
+      "fromDevice": "Sent from this device: {{name}}",
+      "source": {
+        "buttonTitle": "Attach (from this device / from the host)",
+        "device": "From this device",
+        "host": "From the host",
+        "files": "Files…",
+        "hostFiles": "Choose files…"
+      },
+      "host": {
+        "back": "Back to the attach menu",
+        "title": "Host files",
+        "location": "Location",
+        "filter": "Filter this folder",
+        "listLabel": "Contents of {{path}}",
+        "loading": "Loading…",
+        "noMatch": "Nothing matches",
+        "empty": "This folder is empty",
+        "truncated": "Too many items. Showing the first 2,000 only.",
+        "none": "Select files",
+        "selected_one": "{{count}} selected",
+        "selected_other": "{{count}} selected",
+        "attach_one": "Attach ({{count}})",
+        "attach_other": "Attach ({{count}})"
+      },
+      "sending": "{{percent}}%",
+      "sendingTitle": "Sending {{name}} ({{size}}) to the host",
+      "cancelSending": "Stop sending",
+      "largeImage": "Attached {{name}} ({{size}}). Agents read images from the path. Some agents can't read images over 5 MB as images; if that happens, shrink the image and attach it again."
     },
     "fork": {
       "noId": "The new branch's id wasn't returned",
@@ -1455,7 +1488,8 @@
     },
     "behind": {
       "subagents": "Waiting for subagents",
-      "commands": "Waiting for background commands"
+      "commands": "Waiting for background commands",
+      "tasks": "Waiting for tasks"
     }
   },
   "composer": {
@@ -1712,7 +1746,6 @@
   "upload": {
     "menu": {
       "label": "Attach",
-      "files": "Attach files…",
       "folder": "Send a folder…"
     },
     "lead": "Send a folder on this PC to the host.",
@@ -1773,7 +1806,7 @@
       "send": "Send as working directory",
       "attach": "Attach",
       "cancel": "Cancel",
-      "attachNote": "Attachments are up to 8MB per file. Each file is attached separately; the folder isn't attached as a whole."
+      "attachNote": "Attachments are up to 100 MB per file. Each file is attached separately; the folder isn't attached as a whole."
     },
     "busy": "Another folder is being sent.",
     "sentNotice": "Sent the folder to {{dest}} on the host.",

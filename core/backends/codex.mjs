@@ -34,15 +34,15 @@ const NL = String.fromCharCode(10);
  */
 // label / note はゲッター（サーバーの言語は実行中に変わる。core/i18n.mjs）
 const MODES = {
-  ask:      { get label() { return t("modes.ask"); },      get note() { return t("codex.modes.ask"); },      approvalPolicy: "untrusted",  sandbox: "workspace-write", scope: "workspace", autonomy: "ask",   enforced: true },
+  ask:      { get label() { return t("modes.ask"); },      get short() { return t("modesShort.ask"); },      get note() { return t("codex.modes.ask"); },      approvalPolicy: "untrusted",  sandbox: "workspace-write", scope: "workspace", autonomy: "ask",   enforced: true },
   auto:     { label: "auto",                               get note() { return t("codex.modes.auto"); },     approvalPolicy: "on-request", sandbox: "workspace-write", scope: "workspace", autonomy: "judge", enforced: true },
-  full:     { get label() { return t("modes.full"); },     get note() { return t("codex.modes.full"); },     approvalPolicy: "never",     sandbox: "workspace-write", scope: "workspace", autonomy: "never", enforced: true },
+  full:     { get label() { return t("modes.full"); },     get short() { return t("modesShort.full"); },     get note() { return t("codex.modes.full"); },     approvalPolicy: "never",     sandbox: "workspace-write", scope: "workspace", autonomy: "never", enforced: true },
   yolo:     { label: "YOLO",                               get note() { return t("codex.modes.yolo"); },     approvalPolicy: "never", sandbox: "danger-full-access", scope: "full", autonomy: "never", enforced: false },
-  readonly: { get label() { return t("modes.readonly"); }, get note() { return t("codex.modes.readonly"); }, approvalPolicy: "on-request", sandbox: "read-only", scope: "readonly", autonomy: "judge", enforced: true },
+  readonly: { get label() { return t("modes.readonly"); }, get short() { return t("modesShort.readonly"); }, get note() { return t("codex.modes.readonly"); }, approvalPolicy: "on-request", sandbox: "read-only", scope: "readonly", autonomy: "judge", enforced: true },
 };
 
 // 外へ見せるのは語彙と軸だけ。approvalPolicy / sandbox は codex の内部事情なので出さない。
-const vocab = ({ label, note, scope, autonomy, enforced }) => ({ label, note, scope, autonomy, enforced });
+const vocab = ({ label, short, note, scope, autonomy, enforced }) => ({ label, ...(short ? { short } : {}), note, scope, autonomy, enforced });
 
 // thread/resume が以前の設定を返しても、選んだアクセス範囲を turn/start に適用する。
 // 同じ種類なら設定済みの追加ルートなどを保持し、YOLO から戻る場合は制限を復元する。
@@ -1082,7 +1082,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, askPermission, signal, control, ephemeral = false, visualizeInstructions, contextRuntime, agentRuntime, endpoint = null }) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, contextRuntime, agentRuntime, endpoint = null }) {
     const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
     // 互換の接続先（core/compat-endpoints.mjs）。スレッドごとに modelProvider と model_providers.<id> を渡す（app-server は共有のまま）。
     // 鍵は experimental_bearer_token / http_headers で JSON-RPC に載る（argv・環境に出ない）。エラー文からは伏せる
@@ -1394,6 +1394,7 @@ export const backend = {
         input: [{ type: "text", text: String(prompt ?? "") }],
       });
       turnId ??= res?.turn?.id ?? null;
+      onPromptDelivered?.();
       // 「渡った」合図（userMessage.delivered）を後から出せる。server は渡るまでを pending として画面に出す
       if (control) control.steerConfirms = true;
       if (control) control.steer = async (item) => {

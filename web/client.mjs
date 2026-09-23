@@ -6,7 +6,7 @@ import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
-import { setupRemoteBadge } from './remote-badge.mjs';
+import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
 import { setupUsage } from './usage.mjs';
 import { setupOnboarding } from "./onboarding.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
@@ -23,16 +23,19 @@ import { setupLongPress } from "./long-press.mjs";
 import { setupComposerControls, resolvedModel } from "./composer-controls.mjs";
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { setupAttachMenu } from "./attach-menu.mjs";
+import { promptMaxHeight, attachSources, attachOrigin } from "./composer-layout.mjs";
+import { sendAttachment, ATTACH_MAX_BYTES } from "./attach-upload.mjs";
+import { formatBytes } from "./folder-upload.mjs";
 import { modelRowIds } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
-import { behindOfTasks } from './work-status.mjs';
+import { behindOfTasks, liveTasksOf } from './work-status.mjs';
 import { createSide } from "./side.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
-import { el, svgEl, relTime, randomId } from "./dom.mjs";
+import { el, svgEl, icon, relTime, randomId } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
 import { savedEvent, savedTitle } from "./saved-text.mjs";
 import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE } from "./timeline.mjs";
@@ -43,6 +46,7 @@ import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { renderOutbox } from './outbox.mjs';
 const outboxes = new Map();
+const turnErrorRows = new Map();
 const submittingMessages = new Set();
 // Persist the request ID before transport so an acknowledgement lost on reload
 // can be reconciled with server acceptance instead of sending a second copy.
@@ -55,14 +59,15 @@ function saveReceipts() {
 }
 function paintOutbox() {
   const id = state.current;
+  const shown = new Set([...thread.querySelectorAll('.mw[data-message-id]')].map(w => w.dataset.messageId));
   renderOutbox($('outbox'), outboxes.get(id) ?? [], async (messageId, action) => {
     await cmd('messageAction', { sessionId: id, messageId, action });
-  });
+  }, shown);
 }
 async function refreshOutbox(id) {
   const messages = await cmd('listMessages', { sessionId: id });
   outboxes.set(id, messages);
-  if (state.current === id) paintOutbox();
+  if (state.current === id) syncOutboxRows(messages);
   return messages;
 }
 
@@ -626,7 +631,9 @@ function paintPendingPerms(id) {
 // その間に来る show()（subagent 側のツール名など）は text に覚えるだけで、見出しは変えない。
 
 /** ターン行 -> 裏を待っているなら { n, label }、そうでなければ null */
-const behindOf = (t) => (t?.phase === "waiting" ? behindOfTasks(t.background, { waiting: true }) : null);
+// 委譲した Pleiad タスク（ply_delegate の子の会話）も、この会話の裏で動いている子として数える
+const behindOf = (t) => (t?.phase === "waiting"
+  ? behindOfTasks([...(t.background ?? []), ...liveTasksOf(state.work.tasks, t.sessionId)], { waiting: true }) : null);
 /**
  * この画面の会話が裏を待っているか。ターンが走っていればターン行（Claude の phase: waiting）、
  * 走っていなければ running の background（Codex: ターンは終わったがバックグラウンド端末が残っている）
@@ -635,12 +642,14 @@ function behindHere() {
   const t = (state.work.turns ?? []).find(belongsHere);
   if (t) return behindOf(t);
   const b = (state.work.background ?? []).find(belongsHere);
-  return b ? behindOfTasks(b.tasks) : null;
+  const all = [...(b?.tasks ?? []), ...liveTasksOf(state.work.tasks, state.current)];
+  return all.length ? behindOfTasks(all) : null;
 }
 
 const activity = {
   t0: 0,
   timer: null,
+  markTimer: null,
   el: null,          // .m.activity
   text: "",
   subagents: 0,
@@ -656,7 +665,7 @@ const activity = {
   remark() {
     this.el?.closest(".mw")?.querySelector(".activity-tip")?.replaceChildren(this.mark());
   },
-  show(text) {
+  show(text, { delayMark = false } = {}) {
     // 中断を頼んだ後は、止まり終えるまで何が流れてきても「中断している」のまま出す
     if (stoppingHere()) text = ACTIVITY_LABEL.stopping;
     this.text = text;
@@ -674,9 +683,20 @@ const activity = {
       m.append(el("span", "txt"), work, el("span", "el"));
       const w = append(m, "activity");
       const tip = el("span", "activity-tip");
-      tip.append(this.mark());
+      if (!delayMark) tip.append(this.mark());
       w.querySelector(".mw-gutter").append(tip);
       this.el = m;
+    }
+    const tip = this.el.closest('.mw').querySelector('.activity-tip');
+    if (delayMark) {
+      if (!tip.children.length && !this.markTimer) this.markTimer = setTimeout(() => {
+        this.markTimer = null;
+        if (this.el?.isConnected && !tip.children.length) tip.append(this.mark());
+      }, 150);
+    } else {
+      clearTimeout(this.markTimer);
+      this.markTimer = null;
+      if (!tip.children.length) tip.append(this.mark());
     }
     this.paint();
     relayoutBranches();
@@ -710,14 +730,20 @@ const activity = {
     const b = this.el?.querySelector(".work");
     if (!b) return;
     const behind = backgroundHere().length;
-    b.hidden = n === 0 && ended === 0 && behind === 0;
+    const tasks = liveTasksOf(state.work.tasks, state.current).length;
+    b.hidden = n === 0 && ended === 0 && behind === 0 && tasks === 0;
+    // 委譲したタスクだけが残っているときは、タスクの一覧を開く（右上の入口と同じ）
+    b.onclick = !n && !behind && tasks ? openAgentTasks : openWork;
     if (n) b.textContent = t("activity.subagents", { count: n });
     else if (behind) b.textContent = t("activity.background", { count: behind });
+    else if (tasks) b.textContent = t("activity.tasks", { count: tasks });
     else if (ended) b.textContent = t("activity.subagentsEnded", { count: ended });
   },
   hide() {
     clearInterval(this.timer);
+    clearTimeout(this.markTimer);
     this.timer = null;
+    this.markTimer = null;
     this.t0 = 0;
     this.text = "";
     this.behind = null;
@@ -834,7 +860,9 @@ function isMine(ev) {
 // 回る弧と一言を出す（docs/design-system.md §6。印は待っている間しか DOM に置かない）。
 // 渡ったら「AIへ送信済み」に戻し、渡らないままターンが終わったら、次のターンで答えることを言う。
 const deliveredEarly = new Set();   // 吹き出しより先に届いた配達の合図
+const deliveryTimers = new WeakMap();
 const DELIVERY = {
+  sending: t('chat.delivery.sending'),
   pending: t('chat.delivery.pending'),
   late: t('chat.delivery.late'),
   sent: t('chat.delivery.sent'),
@@ -845,29 +873,89 @@ const messageRow = (messageId) => (messageId
 function markDelivery(row, kind) {
   const status = row.querySelector('.outbox-status');
   if (!status) return;
+  clearTimeout(deliveryTimers.get(row));
   if (kind === 'pending') row.dataset.deliveryPending = '1';
   else delete row.dataset.deliveryPending;
-  status.replaceChildren(...(kind === 'pending' ? [runMark(t('chat.delivery.notYet'))] : []), DELIVERY[kind]);
-  status.classList.toggle('outbox-status-mark', kind === 'pending');
+  if (kind === 'sending') row.dataset.deliverySending = '1';
+  else delete row.dataset.deliverySending;
+  const waiting = kind === 'pending' || kind === 'sending';
+  status.replaceChildren(DELIVERY[kind]);
+  status.classList.remove('outbox-status-failed');
+  status.classList.toggle('outbox-status-mark', waiting);
+  if (waiting) deliveryTimers.set(row, setTimeout(() => {
+    if (row.isConnected && status.textContent === DELIVERY[kind])
+      status.prepend(runMark(kind === 'sending' ? DELIVERY.sending : t('chat.delivery.notYet')));
+  }, 150));
+}
+
+function ensureMessageRow(messageId, text, at) {
+  let row = messageRow(messageId);
+  if (!row) {
+    row = append(userMsg(text, { at }), `live:${++liveSeq}`);
+    row.dataset.messageId = messageId;
+  }
+  if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
+  return row;
+}
+
+function markFailedMessage(row, item) {
+  const status = row.querySelector('.outbox-status');
+  clearTimeout(deliveryTimers.get(row));
+  delete row.dataset.deliveryPending;
+  delete row.dataset.deliverySending;
+  status.classList.remove('outbox-status-mark');
+  status.classList.add('outbox-status-failed');
+  const reason = item.error ? ` · ${item.error}` : '';
+  status.replaceChildren(el('b', null, t('chat.delivery.failed')), document.createTextNode(reason));
+  for (const [action, label] of [['retry', t('outbox.retry')], ['cancel', t('outbox.cancel')]]) {
+    const button = el('button', 'btn', label);
+    button.type = 'button';
+    button.onclick = async () => {
+      button.disabled = true;
+      try { await cmd('messageAction', { sessionId: state.current, messageId: item.id, action }); }
+      catch (e) { status.childNodes[1].textContent = ` · ${e.message}`; }
+      finally { button.disabled = false; }
+    };
+    status.append(button);
+  }
+}
+
+function syncOutboxRows(messages) {
+  if (!state.current || state.loadingSession) { paintOutbox(); return; }
+  let withdrawn = false;
+  for (const item of messages ?? []) {
+    const row = messageRow(item.id);
+    if ((item.status === 'queued' && (item.waiting || row?.dataset.messageStarted))
+      || ['paused', 'unknown', 'cancelled'].includes(item.status)) {
+      if (row) { row.remove(); withdrawn = true; }
+    } else if (item.status === 'failed') {
+      markFailedMessage(ensureMessageRow(item.id, item.args.prompt, item.at), item);
+      const failure = turnErrorRows.get(state.current);
+      if (failure?.messageId === item.id) {
+        failure.node.closest('.mw')?.remove();
+        turnErrorRows.delete(state.current);
+        withdrawn = true;
+      }
+    } else if (item.status === 'sending' && row) {
+      row.dataset.messageStarted = '1';
+      if (!row.dataset.deliveryPending) markDelivery(row, 'sending');
+    }
+  }
+  if (withdrawn) relayoutBranches();
+  paintOutbox();
 }
 
 function onEvent(ev, replay = false) {
   if (ev.type === 'outbox') {
     outboxes.set(ev.sessionId, ev.messages);
-    if (state.current === ev.sessionId) {
-      // 送ったつもりが届かず送信待ちへ戻ったもの（エージェントが別のターンを走らせていた）。
-      // 会話の吹き出しを引っ込め、送信待ちの側に出す。そのターンが終わると改めて送られる
-      const back = new Set((ev.messages ?? []).filter(m => m.status === 'queued').map(m => m.id));
-      let withdrawn = false;
-      for (const w of thread.querySelectorAll('.mw[data-message-id]')) {
-        if (back.has(w.dataset.messageId)) { w.remove(); withdrawn = true; }
-      }
-      if (withdrawn) relayoutBranches();
-      paintOutbox();
-    }
+    if (state.current === ev.sessionId) syncOutboxRows(ev.messages);
     return;
   }
   if (ev.type === "turnEnd" && ev.sessionId) {
+    // ターンが終わったのに「送信中」のままの吹き出し（渡った合図が来なかった）は片付ける。失敗なら outbox が先に失敗へ替えている
+    if (ev.sessionId === state.current && !ev.requeued) {
+      for (const row of thread.querySelectorAll('.mw[data-delivery-sending]')) markDelivery(row, 'sent');
+    }
     const s = state.sessions.find(s => s.id === ev.sessionId);
     completionNotifications.completed(ev, s, replay);
     // requeued は完了ではない（何も届かず送信待ちへ戻った）。完了時刻も既読も触らない
@@ -907,17 +995,28 @@ function onEvent(ev, replay = false) {
   }
   switch (ev.type) {
     case 'userMessage': {
-      if (replay && ev.messageId === state.initialMessageId) return;
+      if (replay && ev.messageId === state.initialMessageId) {
+        const row = ensureMessageRow(ev.messageId, ev.text, ev.at);
+        const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);
+        if (confirmed) row.dataset.delivered = '1';
+        markDelivery(row, ev.pending && !confirmed ? 'sending' : 'sent');
+        syncOutboxRows(outboxes.get(state.current) ?? []);
+        return;
+      }
       closeTurnEl();
-      const row = append(userMsg(ev.text, { at: ev.at }), `live:${++liveSeq}`);
-      if (ev.messageId) row.dataset.messageId = ev.messageId;
-      const status = document.createElement('div');
-      status.className = 'outbox-status';
-      row.querySelector('.m').append(status);
+      const row = ev.messageId ? ensureMessageRow(ev.messageId, ev.text, ev.at)
+        : append(userMsg(ev.text, { at: ev.at }), `live:${++liveSeq}`);
+      if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
+      row.dataset.messageStarted = '1';
+      row.querySelector('.m.user .body').textContent = ev.text;
+      if (ev.at) { row.querySelector('.m').dataset.at = ev.at; row.querySelector('.who .when').textContent = hhmm(ev.at); }
       // pending = 受理はしたが、まだエージェントに渡っていない（userMessage.delivered を待つ）。
       // 配達の合図が先に来ていた分（速いバックエンド）はここで消化する
-      if (ev.pending && ev.messageId && !deliveredEarly.delete(ev.messageId)) markDelivery(row, 'pending');
+      const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);
+      if (confirmed) row.dataset.delivered = '1';
+      if (ev.pending && ev.messageId && !confirmed) markDelivery(row, ev.initial ? 'sending' : 'pending');
       else markDelivery(row, 'sent');
+      syncOutboxRows(outboxes.get(state.current) ?? []);
       paintContextLine();      // 最初の発言が出てから置く（記録は発言より先に届く）
       return;
     }
@@ -925,12 +1024,14 @@ function onEvent(ev, replay = false) {
       const row = messageRow(ev.messageId);
       // 吹き出しより先に届くことがある（受理の応答と配達の合図が競る）。覚えておいて吹き出しで消す
       if (!row) { if (ev.messageId) deliveredEarly.add(ev.messageId); return; }
+      row.dataset.delivered = '1';
       markDelivery(row, 'sent');
       return;
     }
     case 'userMessage.dropped':
       // 読まれないままターンが死んだ。発言は送信待ち（保留）へ戻るので、会話からは下げる
       messageRow(ev.messageId)?.remove();
+      paintOutbox();
       return;
     case "sessionsChanged":
       if (ev.deleted === state.current) { state.current = null; clearThread(); loadDraft(); }
@@ -1007,7 +1108,9 @@ function onEvent(ev, replay = false) {
       if (ev.state === "idle") return activity.hide();
       // 別のタブで押した中断・開き直した会話でも、止まり終えるまで中断ボタンを押せなくする
       if (ev.state === "stopping" && ev.sessionId && isRunningHere()) { state.stopping.add(ev.sessionId); syncRunState(); }
-      return activity.show(ev.label || ACTIVITY_LABEL[ev.state] || ACTIVITY_LABEL.running);
+      return activity.show(ev.label || (ev.state === 'preparing'
+        ? ev.current && ev.total ? t('activity.connectingMcp', { current: ev.current, total: ev.total }) : t('activity.preparing')
+        : ACTIVITY_LABEL[ev.state] || ACTIVITY_LABEL.running), { delayMark: ev.state === 'preparing' });
 
     case 'taskNotice':
       closeTurnEl();
@@ -1017,7 +1120,12 @@ function onEvent(ev, replay = false) {
       if (ev.outcome === "ok") return;             // 終わったことは稼働表示が消えれば分かる
       closeTurnEl();
       if (ev.outcome === "aborted") sys(html.t("chat.sys.aborted"));
-      else sys(html.t("chat.sys.failed", { error: ev.error ?? t("chat.sys.unknownReason") }));
+      else {
+        const node = sys(html.t("chat.sys.failed", { error: ev.error ?? t("chat.sys.unknownReason") }));
+        if (ev.sessionId) turnErrorRows.set(ev.sessionId, { messageId: ev.messageId, node });
+        const failed = outboxes.get(ev.sessionId)?.find(m => m.status === 'failed' && m.id === ev.messageId);
+        if (failed) syncOutboxRows(outboxes.get(ev.sessionId));
+      }
       return;
     }
 
@@ -1165,10 +1273,13 @@ function applyRunning(work) {
     if (b && t.sessionId) behind.set(t.sessionId, b.n);
   }
   // ターンの外で裏に残っている作業（Codex の端末）。ターンが走っていればそちらが優先（弧）
-  for (const x of state.work.background ?? []) {
-    if (!x.sessionId || running.has(x.sessionId)) continue;
-    const b = behindOfTasks(x.tasks);
-    if (b) behind.set(x.sessionId, b.n);
+  // 委譲したタスクが終わっていない依頼元の会話も衛星（ターンが走っていれば behindOf が数える）
+  const idle = new Set([...(state.work.background ?? []).map((x) => x.sessionId), ...(state.work.tasks ?? []).map((x) => x.parentSessionId)]);
+  for (const id of idle) {
+    if (!id || running.has(id)) continue;
+    const tasks = [...((state.work.background ?? []).find((x) => x.sessionId === id)?.tasks ?? []), ...liveTasksOf(state.work.tasks, id)];
+    const b = behindOfTasks(tasks);
+    if (b) behind.set(id, b.n);
   }
   // 4 秒ごとの放送で印が変わっていなければ一覧を描き直さない
   const changed = !sameSet(running, state.runningIds) || !sameSet(waiting, state.waitingIds)
@@ -1643,7 +1754,16 @@ const folderUpload = canSendFolders() ? createFolderUpload({
   },
   onChange: () => attachMenu?.refresh(),
 }) : null;
-let attachMenu = null;   // 添付のボタンのメニュー（folderUpload があるときだけ。wireDropZone で作る）
+let attachMenu = null;   // 添付のボタンのメニュー（wireDropZone で作る。出どころを選べる接続でだけ開く）
+
+/** 添付のボタンの読み上げと title を、出どころを選ばせるかに合わせる（hostCapabilities が届いたときにも） */
+function syncAttachButton() {
+  const b = $("attach"), menu = Boolean(currentAttachSources());
+  b.title = menu ? t("chat.attach.source.buttonTitle") : t("chat.composer.attach");
+  b.setAttribute("aria-label", b.title);
+  if (menu) { b.setAttribute("aria-haspopup", "dialog"); if (!b.hasAttribute("aria-expanded")) b.setAttribute("aria-expanded", "false"); }
+  else { b.removeAttribute("aria-haspopup"); b.removeAttribute("aria-expanded"); }
+}
 
 // 入力欄の設定のチップ（web/composer-controls.mjs）。値は state に持ち、チップは get() で毎回読む
 const controls = setupComposerControls({
@@ -1730,13 +1850,15 @@ const side = createSide({
 });
 
 function renderSessions() {
-  side.render(state.sessions, {
+  // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から
+  const listed = state.sessions.filter(s => !s.delegation);
+  side.render(listed, {
     statuses: state.statuses,
     currentId: pendingNewSession && !state.current ? pendingNewSession.id : state.current,
     runningIds: state.runningIds,
     waitingIds: state.waitingIds,
     bgWaiting: state.bgWaiting,
-    unreadIds: new Set(state.sessions.filter(s => readCompletions.hasUnread(s)).map(s => s.id)),
+    unreadIds: new Set(listed.filter(s => readCompletions.hasUnread(s)).map(s => s.id)),
     draft: null,      // 新規のときだけ。予約は current が無いときに意味を持つ
     backendLabels: backendLabels(),
     pendingRows,
@@ -1893,7 +2015,8 @@ function renderAgentTasks() {
     body.append(group);
   }
 }
-$('agentTasksEntry').onclick = () => { renderAgentTasks(); $('workDialog').showModal(); };
+function openAgentTasks() { renderAgentTasks(); $('workDialog').showModal(); }
+$('agentTasksEntry').onclick = openAgentTasks;
 
 function sessionLabel(id) {
   if (!id) return t("session.untitledParen");
@@ -2107,6 +2230,19 @@ function applyTheme(mode) {
   try { localStorage.setItem("agent-host-theme", m); } catch { /* 保存できなくても動く */ }
   for (const b of $("themeSeg").querySelectorAll("button")) b.classList.toggle("on", b.dataset.theme === m);
   paintTitleBar();
+  paintShellTheme();
+}
+
+/**
+ * モバイル版の殻へ、今の配色が暗いかを知らせる（状態バー・ナビゲーションバーの記号の明暗を画面の面に合わせる。
+ * 上端に塗りを使わなくなったので、状態バーの下地は紙の色。mobile/android の HostActivity）。古い殻には口が無いので黙って何もしない
+ */
+function paintShellTheme() {
+  const setTheme = window.plyRemote?.setTheme;
+  if (typeof setTheme !== "function") return;
+  const m = document.documentElement.dataset.theme;
+  const dark = m === "dark" || (m !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+  try { setTheme(dark); } catch { /* 殻が受けなくても画面は動く */ }
 }
 
 function initTheme() {
@@ -2115,7 +2251,7 @@ function initTheme() {
   applyTheme(saved);
   for (const b of $("themeSeg").querySelectorAll("button")) b.onclick = () => applyTheme(b.dataset.theme);
   // 自動のときは OS の明暗が変わると面の色も変わる。窓のボタンの地も追いかける
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paintTitleBar);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { paintTitleBar(); paintShellTheme(); });
 }
 
 // ---------------------------------------------------------------- 言語
@@ -2271,7 +2407,7 @@ function persistDraft(id, value) {
   state.drafts.set(id, value);
   try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch { /* report server result below */ }
   if (!id) return Promise.resolve();
-  if (state.current === id) $("draftSaved").textContent = t("chat.draft.saving");
+  if (state.current === id) setDraftNote(t("chat.draft.saving"), "saving");
   const work = (draftWrites.get(id) ?? Promise.resolve()).catch(() => {}).then(() => cmd("saveDraft", { sessionId: id, ...value }));
   draftWrites.set(id, work);
   work.then(() => {
@@ -2281,11 +2417,17 @@ function persistDraft(id, value) {
     }
     const s = state.sessions.find(s => s.id === id);
     if (s) s.hasDraft = Boolean(value.text || value.attached.length);
-    if (state.current === id && draftWrites.get(id) === work) $("draftSaved").textContent = t("chat.draft.saved");
+    if (state.current === id && draftWrites.get(id) === work) setDraftNote(t("chat.draft.saved"), "saved");
   }, () => {
-    if (state.current === id) $("draftSaved").textContent = t("chat.draft.saveFailed");
+    if (state.current === id) setDraftNote(t("chat.draft.saveFailed"), "failed");
   });
   return work;
+}
+/** 入力欄の行の「保存済み」。state は saving | saved | failed | restored（700px 以下では failed だけ見せる。style.css） */
+function setDraftNote(text, st) {
+  const b = $("draftSaved");
+  b.textContent = text;
+  b.dataset.state = st;
 }
 function loadDraft() {
   const d = state.drafts.get(draftKey());
@@ -2293,7 +2435,9 @@ function loadDraft() {
   fitPrompt();
   state.attached = Array.isArray(d?.attached) ? d.attached.slice() : [];
   renderAttached();
-  $("draftSaved").textContent = d?.text || d?.attached?.length ? t("chat.draft.restored") : "";
+  // ホストのファイルの面で選んでいたもの・開いていた場所は会話ごと（次は新しい会話の作業ディレクトリから）
+  attachMenu?.reset();
+  setDraftNote(d?.text || d?.attached?.length ? t("chat.draft.restored") : "", "restored");
 }
 $("draftSaved").onclick = () => saveDraft().catch(() => {});
 const filePreview = setupFilePreview({
@@ -2303,16 +2447,24 @@ const filePreview = setupFilePreview({
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   cmd: (command, args) => cmd(command, args),
   osActions: () => state.osActions === true,
-  useFile: file => {
-    if ($('prompt').disabled) return;
-    if (!state.attached.some(a => a.path === file.path)) {
-      if (state.attached.length >= 20) { $('draftSaved').textContent = t('chat.attach.tooMany', { count: 20 }); return; }
-      state.attached.push({ path:file.path, name:file.name, kind:'file', mime:file.mime ?? '' });
-      renderAttached(); saveDraft().catch(() => {});
-    }
-    $('prompt').focus();
-  },
+  useFile: file => { if (attachHostFiles([file])) $('prompt').focus(); },
 });
+
+/**
+ * ホストのファイルをパスのまま添付に積む（送らない。ファイルプレビューの「会話で使う」とホストのファイルの面）。
+ * 件数の上限は無い。同じパスは 1 つだけ。積めたら true
+ */
+function attachHostFiles(files) {
+  if ($('prompt').disabled) return false;
+  let added = 0;
+  for (const file of files) {
+    if (!file?.path || state.attached.some(a => a.path === file.path)) continue;
+    state.attached.push({ path: file.path, name: file.name, kind: 'file', mime: file.mime ?? '', from: 'host' });
+    added++;
+  }
+  if (added) { renderAttached(); saveDraft().catch(() => {}); }
+  return true;
+}
 $("prompt").addEventListener("input", () => saveDraft().catch(() => {}));
 addEventListener("pagehide", () => saveDraft().catch(() => {}));
 
@@ -2320,10 +2472,24 @@ addEventListener("pagehide", () => saveDraft().catch(() => {}));
 // present の逆方向。AI が人間に見せるのと同じ流れに、人間からも置けるようにする（設計メモ §7）。
 // 送るまでは入力欄の中（サムネイル）。会話に載るのは送信のとき（runTurn の attachments → present）。
 
+// 出どころのアイコン（⇄ ホスト / 端末）。出どころを選べる接続でだけ札に付ける（composer-layout.mjs の attachOrigin）
+const ORIGIN_ICON = { host: "M4 8h13l-3-3M20 16H7l3 3", device: "M9.5 3h5A2.5 2.5 0 0 1 17 5.5v13a2.5 2.5 0 0 1-2.5 2.5h-5A2.5 2.5 0 0 1 7 18.5v-13A2.5 2.5 0 0 1 9.5 3zM11 18h2" };
+/** 添付で出どころを選ばせるか（null ならクリップはすぐファイルを選ぶ）。composer-layout.mjs の attachSources */
+const currentAttachSources = () => attachSources({ remote: window.plyRemote, osActions: state.hostCaps?.osActions });
+
 function renderAttached() {
   const box = $("attached");
+  const sources = currentAttachSources();
   box.replaceChildren(...state.attached.map((a, i) => {
     const item = el("span", "att" + (a.dataUri ? " att-img" : ""));
+    const origin = attachOrigin(a, sources);
+    if (origin) {
+      const mark = el("span", "att-from");
+      mark.append(icon(ORIGIN_ICON[origin]));
+      mark.firstChild.setAttribute("aria-hidden", "true");
+      item.append(mark);
+      item.title = origin === "host" ? t("chat.attach.fromHost", { path: a.path }) : t("chat.attach.fromDevice", { name: a.name });
+    }
     if (a.dataUri) {
       const b = el("button", "att-thumb");
       b.type = "button";
@@ -2332,7 +2498,7 @@ function renderAttached() {
       img.src = a.dataUri;
       img.alt = a.name;
       b.append(img);
-      b.onclick = () => openLightbox(a.dataUri, a.name, a.path);
+      b.onclick = () => openLightbox(attachedImageSrc(a), a.name, a.path);
       item.append(b);
     } else {
       item.append(el("span", "att-name", a.name));
@@ -2343,8 +2509,67 @@ function renderAttached() {
     x.onclick = () => { state.attached.splice(i, 1); renderAttached(); saveDraft().catch(() => {}); };
     item.append(x);
     return item;
-  }));
+  }), ...attachUploads.filter(u => u.sessionId === (state.current ?? null)).map(uploadChip));
 }
+
+// ---- 送っている途中の添付（attach-upload.mjs）。札に進み具合（%）を出し、× でやめる。終わったら普通の札になる
+const attachUploads = [];
+function uploadChip(u) {
+  const item = el("span", "att att-sending");
+  item.title = t("chat.attach.sendingTitle", { name: u.name, size: formatBytes(u.size) });
+  if (currentAttachSources()) {
+    const mark = el("span", "att-from");
+    mark.append(icon(ORIGIN_ICON.device));
+    mark.firstChild.setAttribute("aria-hidden", "true");
+    item.append(mark);
+  }
+  const pct = u.size ? Math.floor((u.sent / u.size) * 100) : 0;
+  const bar = el("span", "att-bar");
+  bar.style.setProperty("--p", `${pct}%`);
+  const label = el("span", "att-pct", t("chat.attach.sending", { percent: pct }));
+  label.setAttribute("role", "status");
+  item.append(el("span", "att-name", u.name), label, bar);
+  const x = el("button", "x", "×");
+  x.type = "button";
+  x.title = t("chat.attach.cancelSending");
+  x.setAttribute("aria-label", t("chat.attach.cancelSending"));
+  x.onclick = () => { u.cancelled = true; x.disabled = true; };
+  item.append(x);
+  u.chip = { label, bar };
+  return item;
+}
+function paintUpload(u) {
+  if (!u.chip?.label.isConnected) return renderAttached();
+  const pct = u.size ? Math.floor((u.sent / u.size) * 100) : 0;
+  u.chip.label.textContent = t("chat.attach.sending", { percent: pct });
+  u.chip.bar.style.setProperty("--p", `${pct}%`);
+}
+
+// 切れている間に待っている断片の送り手。ready で起こす（attach-upload.mjs の online）
+const onlineWaiters = new Set();
+function whenOnline(err) {
+  if (ws?.readyState === WebSocket.OPEN) return Promise.reject(err);   // 切れたのではない失敗
+  return new Promise((res, rej) => {
+    const done = () => { clearTimeout(timer); onlineWaiters.delete(done); res(); };
+    const timer = setTimeout(() => { onlineWaiters.delete(done); rej(err); }, 120_000);
+    onlineWaiters.add(done);
+  });
+}
+
+/** 画像の添付の縮小（入力欄の札に出す 112px）。下書きに残すので小さく作る。作れなければ null */
+async function thumbnailOf(file) {
+  if (typeof createImageBitmap !== "function") return null;
+  const bmp = await createImageBitmap(file);
+  try {
+    const k = Math.min(1, 112 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.85);
+  } finally { bmp.close?.(); }
+}
+/** 添付の置き場の画像を大きく見る URL（/local-file。認証はクッキー）。パスが無ければ縮小の data URI */
+const attachedImageSrc = (a) => (a.path ? `/local-file?path=${encodeURIComponent(a.path)}` : a.dataUri);
 
 /**
  * 画像を大きく見る。会話の present・生成画像・本文の画像も入力欄の添付も同じ。
@@ -2372,55 +2597,75 @@ function openLightbox(src, caption, path, origin) {
   d.showModal();
 }
 
-const readAsDataUri = (file) => new Promise((res, rej) => {
-  const fr = new FileReader();
-  fr.onerror = () => rej(new Error(t("chat.attach.readFailed")));
-  fr.onload = () => res(String(fr.result));
-  fr.readAsDataURL(file);
-});
-
+/**
+ * この端末のファイルを添付として送る（ドロップ・貼り付け・クリップの「ファイル…」）。1 件 100MB まで・件数の上限は無い。
+ * 中身は断片で送る（web/attach-upload.mjs）。送っている間は札に進み具合を出し、終わったら普通の札にする
+ */
 async function attachFiles(files) {
   const sessionId = state.current;
   for (const file of files) {
-    // 下書きの添付はサーバーが 20 件までしか保存しない。越えた分は送らずに止める（フォルダーを落とすと一度に来る）
-    const count = state.current === sessionId ? state.attached.length : (state.drafts.get(sessionId)?.attached.length ?? 0);
-    if (count >= 20) { $('draftSaved').textContent = t('chat.attach.tooMany', { count: 20 }); break; }
-    if (file.size > 8 * 1024 * 1024) {
-      sys(html.t("chat.attach.tooLarge", { name: file.name }));
+    if (file.size > ATTACH_MAX_BYTES) {
+      sys(html.t("chat.attach.tooLarge", { name: file.name, limit: formatBytes(ATTACH_MAX_BYTES) }));
       continue;
     }
+    const u = { name: file.name, size: file.size, sent: 0, sessionId: sessionId ?? null, cancelled: false, chip: null };
+    attachUploads.push(u);
+    renderAttached();
     try {
-      const dataUri = await readAsDataUri(file);
-      const data = dataUri.split(",")[1] ?? "";
-      const r = await cmd("attachFile", { sessionId, name: file.name, mime: file.type, data });
-      const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, ...(r.kind === "image" ? { dataUri } : {}) };
-      if (state.current === sessionId) { state.attached.push(item); renderAttached(); saveDraft().catch(() => {}); }
+      const isImage = /^image\//.test(file.type);
+      const [r, thumb] = await Promise.all([
+        sendAttachment({ cmd, file, sessionId, cancelled: () => u.cancelled, online: whenOnline,
+          onProgress: (sent) => { u.sent = sent; paintUpload(u); } }),
+        isImage ? thumbnailOf(file).catch(() => null) : null,
+      ]);
+      if (!r) continue;   // やめた
+      const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: "device", ...(thumb ? { dataUri: thumb } : {}) };
+      if (state.current === sessionId) { state.attached.push(item); saveDraft().catch(() => {}); }
       else {
         const draft = state.drafts.get(sessionId) ?? { text: "", attached: [] };
         draft.attached.push(item); state.drafts.set(sessionId, draft);
         try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch {}
         await cmd("saveDraft", { sessionId, ...draft });
       }
+      // エージェントは画像をパスから自分の道具で読む。大きな画像は画像として読めないことがある（Claude の API は 1 枚 5MB まで）
+      if (isImage && file.size > IMAGE_READ_HINT_BYTES) sys(html.t("chat.attach.largeImage", { name: file.name, size: formatBytes(file.size) }));
     } catch (e) {
       sys(html.t("chat.attach.failed", { name: file.name, error: e.message }));
+    } finally {
+      attachUploads.splice(attachUploads.indexOf(u), 1);
+      renderAttached();
     }
   }
 }
+// これより大きな画像は、エージェントが画像として読めないことがある（Claude の API の画像の上限は 1 枚 5MB）
+const IMAGE_READ_HINT_BYTES = 5 * 1024 * 1024;
 
-/** 入力欄の高さを中身に合わせる。最小 3 行、最大は画面の 40%、その先は中でスクロール */
+/**
+ * 入力欄の高さを中身に合わせる。1 行から始め、上限はマウス 10 行・タッチ 6 行（promptMaxLines）。その先は中でスクロール。
+ * 画面が低いとき（キーボードが出ている）は画面の 40% でも止める
+ */
 function fitPrompt() {
   const ta = $("prompt");
   ta.style.height = "auto";
-  const max = Math.floor(innerHeight * 0.4);
+  const css = getComputedStyle(ta);
+  const line = parseFloat(css.lineHeight) || 22;
+  const pad = (parseFloat(css.paddingTop) || 0) + (parseFloat(css.paddingBottom) || 0);
+  const max = promptMaxHeight({ line, pad, touch: matchMedia("(pointer:coarse)").matches, viewport: innerHeight });
   ta.style.height = `${Math.min(ta.scrollHeight, max)}px`;
   ta.style.overflowY = ta.scrollHeight > max ? "auto" : "hidden";
 }
 
 function wireDropZone() {
-  // クリップ → 隠した file input。選んだものはドロップ・貼り付けと同じ列に入る
-  // リモートの窓では「ファイルを添付… / フォルダーを送る…」のメニュー（web/attach-menu.mjs）
-  if (folderUpload) attachMenu = setupAttachMenu({ button: $("attach"), upload: folderUpload, pickFiles: () => $("fileIn").click(), recent: cwdOptions });
-  else $("attach").onclick = () => $("fileIn").click();
+  // クリップ → 隠した file input。選んだものはドロップ・貼り付けと同じ列に入る。
+  // 出どころを選べる接続（リモートの窓・ホストの画面ではないブラウザー）では「この端末から / ホストから」のメニュー（web/attach-menu.mjs）
+  attachMenu = setupAttachMenu({
+    button: $("attach"), sources: currentAttachSources, upload: folderUpload, pickFiles: () => $("fileIn").click(), recent: cwdOptions, cmd,
+    hostName: () => remoteInfo(window.plyRemote)?.host ?? state.hostCaps?.hostName ?? "",
+    startDir: () => state.cwd.trim(),
+    attachHost: (files) => { if (attachHostFiles(files)) $("prompt").focus(); },
+  });
+  $("attach").addEventListener("click", () => { if (!currentAttachSources()) $("fileIn").click(); });
+  syncAttachButton();
   $("fileIn").onchange = () => { attachFiles([...$("fileIn").files]); $("fileIn").value = ""; };
   // 会話に載った画像も同じライトボックスで大きく見る
   log.addEventListener("click", (e) => {
@@ -2733,7 +2978,11 @@ async function deleteUnsentRow(s) {
   } finally { cancel(); }
 }
 
-function rowMenu(s, x, y) {
+/**
+ * 会話の操作のメニュー（脇の行の右クリック・「…」・タイトル行の「…」）。lead はメニューの頭に足す項目
+ * （タイトル行の「…」の 700px 以下: タイトルを生成・ホスト一覧に戻る）
+ */
+function rowMenu(s, x, y, lead = []) {
   let vocab = null, efforts = null, endpoints = null, accounts = null;
   let waitingVisible = false;
   const known = [...new Set(state.sessions.map((z) => z.status).filter(Boolean))];
@@ -2747,6 +2996,7 @@ function rowMenu(s, x, y) {
   const paint = () => {
   const mode = vocab ? selectedMode(s, s.nextSettings?.backend ?? s.backend, vocab.modes) : '';
   const items = [
+    ...lead, ...(lead.length ? [{ sep: true }] : []),
     { label: t("session.menu.open"), onClick: () => select(s.id) },
     ...(s.parent?.sessionId ? [{ label: t("session.menu.openParent"), hint: sessionLabel(s.parent.sessionId).slice(0, 20), onClick: () => select(s.parent.sessionId) }] : []),
     ...(hasKin ? [{ label: t("session.menu.branches"), sub: kinItems }] : []),
@@ -2907,6 +3157,8 @@ function paintContextEntry() {
   $('contextEntryCount').hidden = !managed;
   $('contextEntryCount').textContent = managed ? String(contextTotal(report)) : '';
   $('contextEntryChanged').hidden = !state.contextInfo?.changed?.differs;
+  // 700px 以下では字を畳んでアイコンと数字だけになるので、読み上げの名前は字で持つ
+  button.setAttribute('aria-label', [t('session.context.label'), managed ? String(contextTotal(report)) : '', state.contextInfo?.changed?.differs ? t('session.context.changed') : ''].filter(Boolean).join(' '));
 }
 const CHIP_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg>';
 /** 会話の頭に付く札（指示 2 · Skills 14 · MCP …）。最初の発言の下。押すと右パネルが開く */
@@ -3326,6 +3578,11 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   loadDraft();
   closeTurnEl();
   const added = paintHistory(keepUpTo ?? 0);
+  if (state.initialMessageId) {
+    const lastUser = [...thread.querySelectorAll('.mw:has(.m.user)')].at(-1);
+    if (lastUser) lastUser.dataset.messageId = state.initialMessageId;
+  }
+  syncOutboxRows(outboxes.get(id) ?? []);
   // Replay synchronously after clearing/painting; only events after the server
   // snapshot are appended, so an in-flight delta is neither lost nor doubled.
   if (load) for (const event of sessionLoads.finish(load, data)) onEvent(event, true);
@@ -3517,6 +3774,7 @@ function syncRunState() {
   $("abort").hidden = !(here || isWaitingHere());
   // 受け付けた中断は取り消せない。止まり終えるまで押せないようにする（稼働表示は「中断している」）
   $("abort").disabled = here && stoppingHere();
+  controls.fit();   // 中断が出入りすると行の幅の配分が変わる
   if (!here) {
     closeTurnEl();
     // ターンは終わったが裏の作業が残っている。末尾の節は消さずに衛星にする（中断は出さない）
@@ -3565,6 +3823,10 @@ async function submit() {
     const request = previous && previous.prompt === full ? previous : { ...args, messageId: randomId() };
     receipts.set(sessionId, request); saveReceipts();
     await cmd('sendMessage', request);
+    if (state.current === sessionId && !messageRow(request.messageId)) {
+      markDelivery(ensureMessageRow(request.messageId, full, new Date().toISOString()), 'sending');
+      syncOutboxRows(outboxes.get(sessionId) ?? []);
+    }
     await clearSentDraft(sessionId, text, attachments);
     receipts.delete(sessionId); saveReceipts();
     $('settingsError').textContent = '';
@@ -3596,10 +3858,18 @@ function connect() {
       side.setConnLost(false);
       // 切れている間の確認と、旧版がこのブラウザーに持っていた確認済みを送る（受け取られたら旧版の分は消す）
       readCompletions.flush();
-      // 切れて止まっていたフォルダーの送信を、受け取り済みの位置から続ける
+      // 切れて止まっていたフォルダーの送信・添付の送信を、受け取り済みの位置から続ける
       folderUpload?.online();
+      for (const wake of [...onlineWaiters]) wake();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
-      cmd("hostCapabilities").then((c) => { state.osActions = c?.osActions === true && !window.plyRemote; filePreview.osChanged(); }).catch(() => {});
+      // 同じ答えで、添付の出どころを選ばせるか（ホストの画面でない接続）も決める（composer-layout.mjs の attachSources）
+      cmd("hostCapabilities").then((c) => {
+        state.hostCaps = c ?? null;
+        state.osActions = c?.osActions === true && !window.plyRemote;
+        filePreview.osChanged();
+        syncAttachButton();
+        renderAttached();
+      }).catch(() => {});
       // 開く前から承認待ちがあれば、ここでダイアログに出す
       remoteSettings.refresh();
       return refresh().then(async () => {
@@ -3701,8 +3971,26 @@ $("sessionMore").onclick = () => {
   const s = state.sessions.find((x) => x.id === state.current);
   if (!s) return;
   const r = $("sessionMore").getBoundingClientRect();
-  rowMenu(s, r.right, r.bottom + 4);
+  rowMenu(s, r.right, r.bottom + 4, sessionMoreLead());
 };
+/**
+ * タイトル行の「…」の頭に足す項目。700px 以下では ✦ をタイトル行に出さないので「タイトルを生成」をここに置く。
+ * モバイル版の殻では、タイトルの下の添え字と同じ「ホスト一覧に戻る」も置く
+ */
+function sessionMoreLead() {
+  if (!narrowView.matches) return [];
+  const lead = [];
+  const wand = $("titleWand");
+  if (!wand.hidden) lead.push({ label: t("session.titleWand"), disabled: wand.disabled, onClick: () => { if (!wand.disabled) wand.onclick(); } });
+  const info = remoteInfo(window.plyRemote);
+  if (info?.shell === "mobile") lead.push({ label: t("remote.backToHosts"), hint: info.host, onClick: () => backToHosts() });
+  return lead;
+}
+/** モバイル版の殻のホスト一覧へ戻る（plyRemote.backToHosts、無ければ殻が入れる window.backToHosts） */
+function backToHosts() {
+  const fn = typeof window.plyRemote?.backToHosts === "function" ? () => window.plyRemote.backToHosts() : window.backToHosts;
+  if (typeof fn === "function") Promise.resolve().then(fn).catch(() => {});
+}
 $("titleWand").onclick = async () => {
   const id = state.current;
   if (!id || titleGenerating.has(id)) return;

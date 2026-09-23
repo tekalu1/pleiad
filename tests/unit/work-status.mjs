@@ -1,4 +1,4 @@
-import { behindOfTasks } from '../../web/work-status.mjs';
+import { behindOfTasks, liveTasksOf } from '../../web/work-status.mjs';
 export const name = 'work-status';
 export const title = '端末の待ち受けをAIの結果待ちとして表示しない';
 export default function (t) {
@@ -16,4 +16,16 @@ export default function (t) {
     behindOfTasks([command]).label === 'バックグラウンドのコマンドを待っている', behindOfTasks([command]).label);
   t.ok('サブエージェントと混ざれば裏の作業', behindOfTasks([agent, command]).label === '裏の作業を待っている');
   t.ok('サブエージェントだけなら今までどおり', behindOfTasks([agent]).label === 'サブエージェントを待っている');
+
+  // Pleiad タスク（委譲した子の会話）は、依頼元の会話で衛星になる。終わったものと他の会話のものは数えない
+  const tasks = [
+    { taskId: 'a', parentSessionId: 'p', status: 'running' },
+    { taskId: 'b', parentSessionId: 'p', status: 'queued' },
+    { taskId: 'c', parentSessionId: 'p', status: 'completed' },
+    { taskId: 'd', parentSessionId: 'q', status: 'running' },
+  ];
+  t.ok('依頼元の会話の終わっていないタスクだけを拾う', JSON.stringify(liveTasksOf(tasks, 'p').map(x => x.taskId)) === '["a","b"]');
+  t.ok('タスクだけなら衛星の数と見出し', behindOfTasks(liveTasksOf(tasks, 'p')).n === 2 && behindOfTasks(liveTasksOf(tasks, 'p')).label === 'タスクを待機中');
+  t.ok('終わったタスクだけなら衛星を出さない', behindOfTasks(liveTasksOf([tasks[2]], 'p')) === null);
+  t.ok('サブエージェントと混ざれば裏の作業', behindOfTasks([agent, ...liveTasksOf(tasks, 'p')]).label === '裏の作業を待っている');
 }

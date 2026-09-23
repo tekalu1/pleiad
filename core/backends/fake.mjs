@@ -29,7 +29,7 @@ const iso = () => new Date().toISOString();
 const wait = (ms) => new Promise((r) => setTimeout(r, ms).unref?.());
 
 const MODES = {
-  default: { label: "都度確認", note: "全部聞く",     scope: "workspace", autonomy: "ask",   enforced: false },
+  default: { label: "都度確認", short: "都度", note: "全部聞く",     scope: "workspace", autonomy: "ask",   enforced: false },
   auto:    { label: "auto",     note: "聞かずに進む", scope: "workspace", autonomy: "never", enforced: false },
 };
 
@@ -211,7 +211,7 @@ export const backend = {
   modes: () => MODES,
   models: async () => MODELS,
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, emit, askPermission, signal, control, agentRuntime, contextRuntime, oauthToken }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, oauthToken }) {
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
     if (String(prompt ?? "").trim().startsWith("undelivered")) {
       const error = "fake: failed before the prompt was delivered";
@@ -230,6 +230,8 @@ export const backend = {
     if (control) control.handle = handle;
 
     push(s, { role: "user", text: String(prompt ?? "") });
+    // silent: は渡った合図を出さないバックエンド（antigravity）の代わり。server は返答の中身で渡ったとみなす
+    if (!String(prompt ?? "").trim().startsWith("silent:")) onPromptDelivered?.();
     emit({ type: "activity", state: "thinking" });
 
     const text = String(prompt ?? "").trim();

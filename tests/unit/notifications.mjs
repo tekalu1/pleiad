@@ -33,6 +33,9 @@ export default async function(t) {
   alerts.completed({ ...end, sessionId: 'b', completedAt: 20 });
   alerts.completed({ ...end, completedAt: 60 });
   t.ok('他の会話と次の完了はそれぞれ通知', sent.length === 3);
+  alerts.completed({ ...end, sessionId: 'c', completedAt: 70, delegated: true });
+  alerts.completed({ ...end, sessionId: 'd', completedAt: 70 }, { title: '子', delegation: { parentSessionId: 'a' } });
+  t.ok('委譲された子の会話の完了は通知しない', sent.length === 3);
   const native = [];
   const desktop = createCompletionNotifications({ host: { Notification: BrowserNotice, plyDesktop: {
     notifyCompletion: n => { native.push(n); return Promise.resolve(true); },

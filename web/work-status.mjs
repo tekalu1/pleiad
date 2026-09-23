@@ -13,7 +13,17 @@ export function behindOfTasks(tasks, { waiting = false } = {}) {
   return {
     n: Math.max(1, live.length),
     label: live.every(x => x.kind === 'agent') ? t('timeline.behind.subagents')
+      : live.every(x => x.kind === 'task') ? t('timeline.behind.tasks')
       : live.every(x => x.kind === 'shell') ? t('timeline.behind.commands')
       : t('activity.waitingBackground'),
   };
+}
+
+// Pleiad タスク（ply_delegate で委譲した子の会話）のうち、まだ終わっていないもの。
+// 依頼元の会話から見ると裏で動いている子なので、サブエージェントと同じく衛星で待つ（完了は必ず届く）
+const LIVE_TASK = new Set(['queued', 'running', 'cancelling', 'waiting']);
+export function liveTasksOf(tasks, parentSessionId) {
+  if (!parentSessionId) return [];
+  return (tasks ?? []).filter(x => x.parentSessionId === parentSessionId && LIVE_TASK.has(x.status))
+    .map(x => ({ kind: 'task', waitable: true, taskId: x.taskId }));
 }
