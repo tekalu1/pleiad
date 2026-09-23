@@ -1036,7 +1036,6 @@
       "restored": "下書きを復元しました"
     },
     "attach": {
-      "tooMany_other": "添付は{{count}}件までです。不要な添付を外してください。",
       "enlarge": "{{name}}（押すと大きく見る）",
       "remove": "外す",
       "readFailed": "読めなかった",

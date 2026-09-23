@@ -1070,8 +1070,6 @@
       "restored": "Draft restored"
     },
     "attach": {
-      "tooMany_one": "You can attach up to {{count}} file. Remove the ones you don’t need.",
-      "tooMany_other": "You can attach up to {{count}} files. Remove the ones you don’t need.",
       "enlarge": "{{name}} (click to enlarge)",
       "remove": "Remove",
       "readFailed": "Couldn't read the file",

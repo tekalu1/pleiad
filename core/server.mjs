@@ -1384,7 +1384,7 @@ async function runTurnInternal(args, onStarted, hooks) {
     const status = !sessionId && typeof args?.status === "string" && args.status.trim()
       ? args.status.trim() : null;
     // 入力欄に溜めていた添付（attachFile が置いたもの）。送信と一緒に会話へ載せる
-    const attachments = Array.isArray(args?.attachments) ? args.attachments.slice(0, 20) : [];
+    const attachments = Array.isArray(args?.attachments) ? args.attachments : [];
     const baseline = await history.loadTranscript(sessionId, backend);
     // 前のターンまでのサブエージェント。listSubagents は全期間の分を返すので、実行中一覧から外すために覚える。
     // CLI を起こす前に取る（後で取ると、このターンで生まれた分まで前の分に数えてしまう）
@@ -2001,8 +2001,10 @@ wss.on("connection", (ws, req) => {
         case "saveDraft": {
           const { sessionId, text = "", attached = [] } = msg.args ?? {};
           if (!sessionId || !(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
-          if (typeof text !== "string" || text.length > 2_000_000 || !Array.isArray(attached) || attached.length > 20) throw new Error(t('session.draftTooLarge'));
-          const files = attached.map(a => ({ name: String(a.name ?? ""), path: String(a.path ?? ""), kind: String(a.kind ?? "file"), mime: String(a.mime ?? "") }));
+          if (typeof text !== "string" || text.length > 2_000_000 || !Array.isArray(attached)) throw new Error(t('session.draftTooLarge'));
+          // 件数の上限は無い（添付の上限は 1 件 8MB だけ。docs/design-system.md「入力欄」）。from は札の出どころの印（ホスト / この端末）
+          const files = attached.map(a => ({ name: String(a.name ?? ""), path: String(a.path ?? ""), kind: String(a.kind ?? "file"), mime: String(a.mime ?? ""),
+            ...(a?.from === "host" || a?.from === "device" ? { from: a.from } : {}) }));
           if (files.some(a => a.path.length > 8192 || a.name.length > 4096)) throw new Error(t('session.attachmentInfoTooLarge'));
           await store.setSessionData(sessionId, "draft", { text, attached: files });
           if ((await store.get(sessionId)).unsent && typeof msg.args?.cwd === "string") {
@@ -2052,7 +2054,7 @@ wss.on("connection", (ws, req) => {
           if (!sessionId || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
           if (typeof messageId !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(messageId)) throw new Error(t('send.messageIdRequired'));
           if (typeof prompt !== 'string' || !prompt.trim()) throw new Error(t('send.messageRequired'));
-          if (attachments !== undefined && (!Array.isArray(attachments) || attachments.length > 20)) throw new Error(t('send.tooManyAttachments', { max: 20 }));
+          if (attachments !== undefined && !Array.isArray(attachments)) throw new Error(t('send.invalidAttachments'));
           return reply(true, await outbox.accept(sessionId, messageId, {
             prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}),
           }));
@@ -2235,12 +2237,13 @@ wss.on("connection", (ws, req) => {
         }
         // 作業ディレクトリを選ぶ簡易ブラウザー（ブラウザー版の入力欄）。フォルダーの名前だけを返す
         case "listDirs":
-          return reply(true, await listDirs(msg.args?.path));
+          return reply(true, await listDirs(msg.args?.path, { files: msg.args?.files === true }));
 
         // ファイルの操作（web/file-actions.mjs）。範囲は /file-preview と同じで、実体を解決した後のパスで確かめる。
         // OS の操作は遠隔の接続から断る（画面で隠すだけにしない）。開けるのは HTML だけ
         case "hostCapabilities":
-          return reply(true, { osActions: local });
+          // hostName は添付の「ホストから <ホスト名>」の見出し（リモートの印の無いブラウザーで使う）
+          return reply(true, { osActions: local, hostName: os.hostname() });
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));
