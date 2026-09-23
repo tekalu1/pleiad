@@ -1,1 +1,14 @@
-{}
+{
+  "resident": {
+    "summary": "Relay {{relay}} · Devices online {{devices}} · Running {{running}}",
+    "open": "Open Pleiad",
+    "quit": "Quit",
+    "relay": {
+      "disabled": "off",
+      "connecting": "connecting",
+      "connected": "connected",
+      "retrying": "reconnecting",
+      "error": "unreachable"
+    }
+  }
+}

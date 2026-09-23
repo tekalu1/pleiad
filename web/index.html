@@ -63,6 +63,7 @@
       <button type="button" id="usageTab" aria-controls="usagePanel" data-i18n="settings.nav.usage"></button>
       <button type="button" id="appearanceTab" aria-controls="appearancePanel" data-i18n="settings.nav.appearance"></button>
       <button type="button" id="openContext" aria-controls="contextPanel" data-i18n="settings.nav.context"></button>
+      <button type="button" id="remoteTab" aria-controls="remotePanel" data-i18n="settings.nav.remote"></button>
       <button type="button" id="updatesTab" aria-controls="updatesPanel" data-i18n="settings.nav.about"></button>
     </nav>
     <div class="pop" id="iconPop" hidden></div>
@@ -198,6 +199,8 @@
           <p class="locale-now" id="localeNow" role="status" aria-live="polite"></p>
         </section>
         <section id="contextPanel" data-i18n-aria-label="settings.nav.context" hidden></section>
+        <!-- 中身は web/remote.mjs が作る -->
+        <section id="remotePanel" data-i18n-aria-label="settings.nav.remote" hidden></section>
       </div>
     </section>
   </main>

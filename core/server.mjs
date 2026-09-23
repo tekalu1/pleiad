@@ -41,6 +41,7 @@ import { createMcpOAuth } from './mcp-oauth.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
+import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
 import { createVisualizationCollector, VISUALIZE_INSTRUCTIONS } from './visualize.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff } from "./conversations.mjs";
@@ -137,8 +138,29 @@ const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth });
 // 端末からのストリームはこのサーバー自身（localOrigin）へ組み立て直し、UI トークンは接続口が差し込む
 const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, token: TOKEN, appVersion: APP_VERSION,
   target: () => { const u = new URL(localOrigin()); return { host: u.hostname.replace(/^\[|\]$/g, ''), port: Number(u.port) }; },
-  emit: event => emitGlobal({ ...event, sessionId: null }),
+  emit: event => {
+    if (event.type !== 'remoteStatus') return emitGlobal({ ...event, sessionId: null });
+    const status = withResident(event.status);
+    emitGlobal({ ...event, status, sessionId: null });
+    postResident({ status });
+  },
   log: line => console.log(`  ${line}`) });
+// ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
+// トレイとスリープの抑止は main（desktop/resident.cjs）が持つので、リモートの状態か実行中の作業が変わるたびに送る
+const residentPrefs = createResidentPrefs({ dataDir: store.dataDir });
+const withResident = status => ({ ...status, resident: { available: Boolean(process.parentPort), ...residentPrefs.get() } });
+const remoteStatus = async () => withResident(await remote.status());
+let residentLast = '', residentStatus = null, residentWork = null;
+function postResident({ status, work } = {}) {
+  if (!process.parentPort) return;
+  if (status) residentStatus = status;
+  if (work) residentWork = work;
+  const signal = residentSignal({ status: residentStatus, prefs: residentPrefs.get(), work: residentWork, locale: locale.lang });
+  const key = JSON.stringify(signal);
+  if (key === residentLast) return;
+  residentLast = key;
+  process.parentPort.postMessage({ type: 'resident', state: signal });
+}
 // 固定した指示・Skills の開始時の本文（「差分を見る」用。内容のハッシュを名前にして 1 つずつ）
 const CONTEXT_SNAPSHOTS = path.join(store.dataDir, 'context-snapshots');
 const contextSession = createContextSession({ store, snapshots: CONTEXT_SNAPSHOTS, plyServers: () => plyMcp.scanInput(),
@@ -942,7 +964,7 @@ let runningSeq = 0;
 async function broadcastRunning() {
   const seq = ++runningSeq;
   const work = await runningWork().catch(() => null);
-  if (work && seq === runningSeq) emitGlobal({ type: "running", ...work });
+  if (work && seq === runningSeq) { emitGlobal({ type: "running", ...work }); postResident({ work }); }
 }
 
 /** サブエージェントは走っている最中に増える。1本でも走っていれば（裏に残っていれば）定期的に配る。 */
@@ -1713,21 +1735,28 @@ wss.on("connection", (ws, req) => {
 
         // リモート（ホスト側）。秘密・トークンは返さない（core/remote/connector.mjs）
         case 'remoteStatus':
-          return reply(true, await remote.status());
+          return reply(true, await remoteStatus());
         case 'setRemoteSettings':
-          return reply(true, await remote.setSettings(msg.args ?? {}));
+          return reply(true, withResident(await remote.setSettings(msg.args ?? {})));
+        case 'setRemoteResident': {
+          await residentPrefs.set({ keepRunning: msg.args?.keepRunning, sleep: msg.args?.sleep });
+          const status = await remoteStatus();
+          emitGlobal({ type: 'remoteStatus', status, sessionId: null });
+          postResident({ status });
+          return reply(true, status);
+        }
         case 'remotePairingStart':
           return reply(true, await remote.startPairing());
         case 'remotePairingCancel':
-          return reply(true, await remote.cancelPairing());
+          return reply(true, withResident(await remote.cancelPairing()));
         case 'remotePairingApprove':
           return reply(true, await remote.approve(msg.args?.id));
         case 'remotePairingDeny':
-          return reply(true, await remote.deny(msg.args?.id));
+          return reply(true, withResident(await remote.deny(msg.args?.id)));
         case 'remoteDevices':
           return reply(true, await remote.devices());
         case 'remoteRevoke':
-          return reply(true, await remote.revoke(msg.args?.id));
+          return reply(true, withResident(await remote.revoke(msg.args?.id)));
 
         // Claude のアカウント（会話ごとに選ぶ）。トークンは返さない（登録済みかどうかだけ）
         // 互換の接続先（core/compat-endpoints.mjs）。キーは返さない。確認の失敗は例外ではなく { ok: false, error, lines } で返す（理由の行を画面に出すため）
@@ -2538,6 +2567,9 @@ function announce() {
   const { port } = server.address();
   process.parentPort?.postMessage({ type: "ready", port, token: TOKEN, locale: locale.lang });
   remote.start().catch(() => {});
+  // 起動直後の常駐の状態（リモートが無効でも送る。main はそれを見てトレイを出さない）
+  if (process.parentPort) Promise.all([residentPrefs.loaded, remote.status(), runningWork()])
+    .then(([, status, work]) => postResident({ status: withResident(status), work })).catch(() => {});
   console.log("");
   // 待ち受けがループバックか全アドレスなら、覚えやすい localhost で案内する（開く先は同じ）
   const shown = /^(127\.0\.0\.1|0\.0\.0\.0|::1?)$/.test(HOST) ? "localhost" : HOST.includes(":") ? `[${HOST}]` : HOST;

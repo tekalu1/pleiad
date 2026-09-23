@@ -55,3 +55,56 @@
 .mp-check { display:flex; gap:8px; align-items:center; margin-top:14px; }
 .mp-link { color:var(--ink-blue); }
 @media(max-width:520px) { .mp-grid { grid-template-columns:1fr; } .mp-panel { padding:14px; } .mp-presets { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+/* 設定 › リモート（web/remote.mjs）。スイッチの行・状態の一行・端末の行・ペアリングの面・承認のダイアログ */
+.rm-switch { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:8px; }
+.rm-switch-label { font-weight:600; cursor:pointer; }
+.settings-content .rm-state { margin:6px 0 0; color:var(--ink-weak); font-size:var(--fs-s); overflow-wrap:anywhere; }
+.settings-content .rm-state.rm-strong { color:var(--ink-strong); font-weight:600; }
+.rm-relay .mp-actions { margin-top:14px; }
+.rm-relay .mp-warn { margin:12px 0 0; font-size:var(--fs-s); }
+.rm-add { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:10px; }
+.rm-add[hidden] { display:none; }
+.rm-add-hint { color:var(--ink-weak); font-size:var(--fs-s); }
+.rm-device .mp-card-actions { gap:10px; }
+.rm-online { color:var(--ink); font-weight:600; font-size:var(--fs-s); }
+.rm-offline { color:var(--ink-weak); font-size:var(--fs-s); }
+.settings-content .rm-empty { margin:0 0 4px; }
+.rm-devices-panel .mp-card:last-of-type { margin-bottom:0; }
+.rm-devices-panel h3 { margin:0 0 12px; }
+.rm-pair h3 { margin:0 0 12px; font-size:var(--fs); }
+.rm-pair p { margin:0; }
+.rm-pair-body { display:flex; gap:20px; align-items:flex-start; flex-wrap:wrap; }
+.rm-qr { flex:none; width:208px; max-width:100%; }
+.rm-qr svg { display:block; width:100%; height:auto; border-radius:var(--r-s); }
+.rm-qr-bg { fill:var(--surface-qr); }
+.rm-qr-fg { fill:var(--ink-qr); }
+.rm-pair-side { flex:1 1 240px; min-width:0; display:flex; flex-direction:column; gap:10px; }
+.settings-content .rm-left { font-size:var(--fs-xl); font-weight:600; font-variant-numeric:tabular-nums; line-height:1.3; }
+.settings-content .rm-pair-hint { color:var(--ink-weak); font-size:var(--fs-s); line-height:1.6; }
+.settings-content .rm-pair .mp-warn { color:var(--ink-strong); font-weight:600; font-size:var(--fs-s); line-height:1.6; }
+.rm-code-row { display:flex; gap:8px; align-items:center; min-width:0; }
+.rm-payload { flex:1; min-width:0; padding:8px 12px; border-radius:var(--r-s); background:var(--surface-2); color:var(--ink);
+  font-family:var(--font-mono); font-size:var(--fs-xs); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; user-select:all; }
+.settings-content .rm-pair-message { margin-top:8px; }
+.settings-content .rm-login-note { margin-top:16px; }
+.rm-resident[hidden] { display:none; }
+.settings-content .rm-sub { margin:14px 0 6px; }
+.rm-resident h3 { margin:0 0 4px; }
+.rm-sleep { max-width:560px; }
+.rm-sleep button { padding:4px 10px; }
+.rm-others { margin-top:20px; }
+.rm-others:empty { display:none; }
+.rm-dialog { position:fixed; inset:0; margin:auto; width:min(440px,calc(100vw - 32px)); max-height:calc(100dvh - 48px); overflow:auto;
+  padding:24px; border:0; border-radius:var(--r-l); background:var(--surface-paper); color:var(--ink); box-shadow:0 8px 28px var(--shadow); }
+.rm-dialog::backdrop { background:var(--surface-veil); }
+.rm-dialog p { margin:0; }
+.rm-dialog .rm-dialog-kind { font-size:var(--fs-s); margin-bottom:10px; }
+.rm-dialog h2 { margin:0 0 4px; font-size:var(--fs-xl); overflow-wrap:anywhere; }
+.rm-dialog-meta { color:var(--ink-weak); font-size:var(--fs-s); }
+.rm-dialog .rm-dialog-label { margin-top:18px; color:var(--ink-weak); font-size:var(--fs-s); }
+.rm-dialog-code { font-family:var(--font-mono); font-size:34px; font-weight:600; letter-spacing:.08em; color:var(--ink-strong); font-variant-numeric:tabular-nums; }
+.rm-dialog .rm-dialog-hint { margin-top:10px; color:var(--ink-weak); font-size:var(--fs-s); line-height:1.6; }
+.rm-dialog .mp-state { margin-top:10px; color:var(--ink-strong); overflow-wrap:anywhere; }
+.rm-dialog .mp-state:empty { display:none; }
+.rm-dialog-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:20px; }
+@media(max-width:520px) { .rm-qr { width:100%; max-width:260px; margin:0 auto; } .rm-pair-body { justify-content:center; } .rm-dialog { padding:18px; } }

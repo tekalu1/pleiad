@@ -21,6 +21,7 @@
       "usage": "使用量",
       "appearance": "外観",
       "context": "コンテキスト",
+      "remote": "リモート",
       "about": "アプリ情報・更新"
     },
     "usage": {
@@ -66,6 +67,91 @@
       "beta": "先行版も受け取る",
       "autoDownload": "更新を自動でダウンロードする",
       "releaseNotes": "リリースノート"
+    },
+    "remote": {
+      "enable": "このホストをリモートから使えるようにする",
+      "state": {
+        "loading": "状態を読み込んでいます…",
+        "disabled": "リモートは無効です",
+        "connecting": "中継につないでいます…",
+        "connected": "中継につながっています",
+        "connectedDevices_other": "中継につながっています · 端末 {{count}} 台が接続中",
+        "failed": "中継につながりません",
+        "reason": " · {{reason}}",
+        "retryAt": "（{{time}} にもう一度試します）"
+      },
+      "relay": {
+        "title": "中継",
+        "url": "中継の URL",
+        "urlFromEnv": "環境変数 AGENT_HOST_RELAY_URL の値を使っています。",
+        "secret": "登録用の秘密",
+        "secretSaved": "保存済み（変えるときだけ入力）",
+        "secretFromEnv": "環境変数 AGENT_HOST_RELAY_SECRET の値を使っています。",
+        "hostName": "ホスト名",
+        "notEncrypted": "この起動では登録用の秘密を暗号化できません（本人だけが読めるファイルに保存します）。",
+        "save": "保存",
+        "saved": "保存しました。"
+      },
+      "devices": {
+        "title": "端末",
+        "empty": "まだ端末はありません。",
+        "unnamed": "名前のない端末",
+        "added": "追加 {{date}}",
+        "lastSeen": "最後に使った {{when}}",
+        "neverSeen": "まだ使っていません",
+        "online": "接続中",
+        "offline": "未接続",
+        "revoke": "取り消す",
+        "revokeConfirm": "「{{name}}」を取り消しますか。この端末はすぐに切れ、もう一度ペアリングするまで使えません。",
+        "keep": "やめる",
+        "revokeConfirmButton": "取り消す",
+        "revoked": "「{{name}}」を取り消しました。"
+      },
+      "platform": {
+        "desktop": "デスクトップ",
+        "ios": "iPhone",
+        "android": "Android"
+      },
+      "pair": {
+        "add": "＋ 端末を追加",
+        "needEnable": "リモートを有効にすると追加できます。",
+        "needConnected": "中継につながると追加できます。",
+        "title": "端末を追加",
+        "qrLabel": "ペアリングの QR コード",
+        "left": "残り {{time}}",
+        "hint": "モバイル版で QR を読むか、デスクトップ版にコードを貼り付けます。",
+        "copy": "コードをコピー",
+        "copied": "コピーしました",
+        "copyFailed": "コピーできませんでした（選択してあります）",
+        "cancel": "やめる",
+        "connecting": "端末がつながりました。承認を待っています…",
+        "expired": "期限が切れました。",
+        "again": "作り直す",
+        "close": "閉じる"
+      },
+      "approve": {
+        "mark": "承認を待っている",
+        "title": "「{{name}}」をこのホストに追加しますか？",
+        "codeLabel": "確認コード",
+        "hint": "端末の画面に同じ数字が出ていることを確かめてから承認してください。",
+        "deny": "拒否",
+        "approve": "承認",
+        "added": "「{{name}}」を追加しました。",
+        "denied": "端末の追加を拒否しました。",
+        "cancelled": "端末が承認を待たずに切れました。",
+        "expired": "承認されないまま期限が切れました。"
+      },
+      "fullAccess": "ペアリングした端末は、このホストの利用者と同じことがすべてできます（承認モードの変更やコマンドの実行を含む）。",
+      "loginOnHost": "Claude CLI・Codex・外部 MCP・Antigravity のログインは、このホストの PC で行ってください。",
+      "otherHosts": "ほかのホストにつなぐ…",
+      "resident": {
+        "title": "常駐",
+        "keepRunning": "窓を閉じてもホストを続ける（トレイに残す）",
+        "sleep": "スリープ",
+        "sleepWorking": "作業中だけ防ぐ",
+        "sleepAlways": "リモートが有効な間は防ぐ",
+        "sleepOff": "防がない"
+      }
     }
   },
   "time": {

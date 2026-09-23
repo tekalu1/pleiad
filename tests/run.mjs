@@ -133,6 +133,8 @@ const cases = [
   await import("./unit/relay.mjs"),
   // リモートのホスト側（core/remote/connector.mjs）。中継をこのプロセスで、fake のサーバーを別プロセスで立て、試験用の端末で往復する
   await import("./unit/remote-host.mjs"),
+  // 設定 › リモートの部品と常駐（トレイ・スリープ。Electron は差し替える）、setRemoteResident
+  await import("./unit/remote-settings.mjs"),
   // リモートの端末側（core/remote/device*.mjs）。中継とホストを立て、端末内プロキシの URL を素の HTTP と ws で叩く
   await import("./unit/remote-device.mjs"),
 ];

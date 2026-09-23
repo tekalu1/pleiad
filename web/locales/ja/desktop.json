@@ -1,1 +1,14 @@
-{}
+{
+  "resident": {
+    "summary": "中継 {{relay}} · 接続中の端末 {{devices}} · 実行中 {{running}}",
+    "open": "Pleiad を開く",
+    "quit": "終了",
+    "relay": {
+      "disabled": "無効",
+      "connecting": "つないでいる",
+      "connected": "つながっている",
+      "retrying": "つなぎ直している",
+      "error": "つながらない"
+    }
+  }
+}

@@ -21,6 +21,7 @@
       "usage": "Usage",
       "appearance": "Appearance",
       "context": "Context",
+      "remote": "Remote",
       "about": "About & updates"
     },
     "usage": {
@@ -66,6 +67,92 @@
       "beta": "Get beta versions",
       "autoDownload": "Download updates automatically",
       "releaseNotes": "Release notes"
+    },
+    "remote": {
+      "enable": "Allow remote access to this host",
+      "state": {
+        "loading": "Loading status…",
+        "disabled": "Remote access is off",
+        "connecting": "Connecting to the relay…",
+        "connected": "Connected to the relay",
+        "connectedDevices_one": "Connected to the relay · {{count}} device online",
+        "connectedDevices_other": "Connected to the relay · {{count}} devices online",
+        "failed": "Cannot reach the relay",
+        "reason": " · {{reason}}",
+        "retryAt": " (retrying at {{time}})"
+      },
+      "relay": {
+        "title": "Relay",
+        "url": "Relay URL",
+        "urlFromEnv": "Using the AGENT_HOST_RELAY_URL environment variable.",
+        "secret": "Enrollment secret",
+        "secretSaved": "Saved (enter only to change)",
+        "secretFromEnv": "Using the AGENT_HOST_RELAY_SECRET environment variable.",
+        "hostName": "Host name",
+        "notEncrypted": "This session cannot encrypt the enrollment secret (it is saved to a file only you can read).",
+        "save": "Save",
+        "saved": "Saved."
+      },
+      "devices": {
+        "title": "Devices",
+        "empty": "No devices yet.",
+        "unnamed": "Unnamed device",
+        "added": "added {{date}}",
+        "lastSeen": "last used {{when}}",
+        "neverSeen": "not used yet",
+        "online": "Online",
+        "offline": "Offline",
+        "revoke": "Revoke",
+        "revokeConfirm": "Revoke \"{{name}}\"? It is disconnected right away and cannot connect until it is paired again.",
+        "keep": "Cancel",
+        "revokeConfirmButton": "Revoke",
+        "revoked": "Revoked \"{{name}}\"."
+      },
+      "platform": {
+        "desktop": "Desktop",
+        "ios": "iOS",
+        "android": "Android"
+      },
+      "pair": {
+        "add": "+ Add device",
+        "needEnable": "Turn on remote access to add a device.",
+        "needConnected": "You can add a device once the relay is connected.",
+        "title": "Add device",
+        "qrLabel": "Pairing QR code",
+        "left": "{{time}} left",
+        "hint": "Scan the QR code with the mobile app, or paste the code into the desktop app.",
+        "copy": "Copy code",
+        "copied": "Copied",
+        "copyFailed": "Could not copy (the code is selected)",
+        "cancel": "Cancel",
+        "connecting": "A device connected. Waiting for your approval…",
+        "expired": "The code has expired.",
+        "again": "Create a new code",
+        "close": "Close"
+      },
+      "approve": {
+        "mark": "Waiting for your approval",
+        "title": "Add \"{{name}}\" to this host?",
+        "codeLabel": "Confirmation code",
+        "hint": "Approve only if the device shows the same number.",
+        "deny": "Deny",
+        "approve": "Approve",
+        "added": "Added \"{{name}}\".",
+        "denied": "Denied the device.",
+        "cancelled": "The device disconnected before approval.",
+        "expired": "The request expired without approval."
+      },
+      "fullAccess": "A paired device can do everything the user of this host can, including changing approval modes and running commands.",
+      "loginOnHost": "Sign in to Claude CLI, Codex, external MCP servers, and Antigravity on this host PC.",
+      "otherHosts": "Connect to other hosts…",
+      "resident": {
+        "title": "Keep running",
+        "keepRunning": "Keep the host running when the window is closed (stay in the tray)",
+        "sleep": "Sleep",
+        "sleepWorking": "Prevent only while working",
+        "sleepAlways": "Prevent while remote access is on",
+        "sleepOff": "Do not prevent"
+      }
     }
   },
   "time": {

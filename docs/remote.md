@@ -300,7 +300,10 @@ Coolify の設定: 新しいリソース → GitHub のリポジトリ → Build
 - ホストとして常駐する設定（§6.3）
 - 画面は既存の管理の面（`.mp-panel` など）を使う。設定の状態はサーバー側（WS コマンド）に置くので、リモートの窓からも見える・触れる（全権限のため）
 
-QR の画像を作る部品が要る（依存が無い）。§11 未決。
+QR の画像は `web/vendor/qrcode-generator.mjs`（kazuhikoarase/qrcode-generator 2.0.4、MIT。取得元と版はファイルの頭）を同梱して SVG に描く（誤り訂正 M、余白 4 マス、明暗テーマによらず白地 `--surface-qr` に濃い点 `--ink-qr`）。
+
+画面（`web/remote.mjs`、2026-09-23）: 設定のメニューに「リモート」。上からスイッチと状態の一行（困っているときだけ強い字）、「中継」の面（URL・登録用の秘密は伏せ字で保存後は「保存済み（変えるときだけ入力）」・ホスト名・「保存」。環境変数を使っているときと暗号化できない起動のときだけ 1 行）、「端末」の面（一覧・「＋ 端末を追加」・ペアリングの面）、ログインはホストの PC での一文、「常駐」の面（デスクトップ版のホストだけ）。スイッチを入れるときは、入力したまま保存していない中継の欄も一緒に送る。
+承認のダイアログは `<dialog>` のモーダルで、`remotePairing` の request（と開いたときの `remoteStatus` の承認待ち）で出す。既定の居場所は「拒否」、Esc では閉じない。承認待ちが消えたら（切れた・期限・ほかの画面で決めた）閉じて、端末の面の下に一言を残す。
 
 WS コマンド（`core/protocol.mjs`）: `remoteStatus`・`setRemoteSettings { enabled?, relayUrl?, enrollSecret?, hostName? }`・`remotePairingStart`（QR の文字列を返す）・`remotePairingCancel`・`remotePairingApprove { id }`・`remotePairingDeny { id }`・`remoteDevices`・`remoteRevoke { id }`。イベントは `remoteStatus { status }`（状態の丸ごと）と `remotePairing { phase, request?, device? }`。登録用の秘密・トークン・鍵は返さない。設定は `<data>/remote/settings.json`（秘密は `secrets.json`）。既定は無効で、有効にするまで鍵も作らない。
 
@@ -315,7 +318,11 @@ WS コマンド（`core/protocol.mjs`）: `remoteStatus`・`setRemoteSettings { 
 
 - **推奨: リモートを有効にしたら「窓を閉じてもホストを続ける」を既定でオン**にし、トレイ（macOS はメニューバー）に残す。トレイのメニュー: 状態（中継 · 接続中の端末 N · 実行中 N）、「Pleiad を開く」、「終了」（実行中なら今と同じ確認）
 - スリープ: 「作業中だけ防ぐ（既定）/ リモートが有効な間は防ぐ / 防がない」。作業中 = ターンが走っているか承認待ちがあるとき、`powerSaveBlocker.start('prevent-app-suspension')`。画面は消えてよい。常に防ぐのは電気代と熱の問題があるので選択にする
-- ログイン時の自動起動は任意（`app.setLoginItemSettings`）。既定はオフ
+- ログイン時の自動起動は任意（`app.setLoginItemSettings`）。既定はオフ（まだ作っていない）
+
+実装（2026-09-23）: 設定は `<data>/remote/resident.json` の `{ keepRunning, sleep }`（`core/remote/resident.mjs`。既定 `true` / `'working'`）。WS コマンド `setRemoteResident { keepRunning?, sleep? }`、`RemoteStatus.resident = { available, keepRunning, sleep }`（`available` はデスクトップ版のホストのとき）。
+サーバーはリモートの状態か実行中の作業（`broadcastRunning`）が変わるたびに、parentPort で `{ type: 'resident', state: { remote, keepRunning, sleep, working, running, waiting, devices, relay, locale } }` を送る（同じ内容は送らない）。作業中 = `runningWork().count > 0`。
+main は `desktop/resident.cjs`: トレイ（Windows・Linux は押すと窓を出す）、窓の close は `keepOnClose()` なら隠すだけ、リモートを無効にしてトレイが消えるとき窓が隠れていれば出し直す、「終了」は窓を出してから `closeSafely`。トレイの文言は `web/locales/<言語>/desktop.json`。
 - `npm start` のホストは窓が無いので、そのまま常駐と同じ。スリープ対策は OS の設定に任せる
 - 理由: 常駐しないと、リモートの価値（外出先から続きを見る）がほぼ成り立たない。一方で勝手にスリープを止めるのは不意打ちなので、既定は「作業中だけ」
 
@@ -471,7 +478,7 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 ## 11. 未決
 
 1. **リモートの帯の色**: 案は `--fill-primary`（§7.2）。「塗りは 1 画面に 1 つ」の例外になる。代案は無彩色の濃い帯（新しいトークン `--surface-remote`）で、塗りの規則は守れるがローカルの暗い配色と見分けにくい
-2. **QR を作る部品**: 依存が無い。小さな MIT の QR エンコーダーを `web/vendor/` に同梱するか、npm の依存を足すか。読み取りはモバイルのネイティブ（Capacitor のバーコードのプラグイン）
+2. ~~**QR を作る部品**~~ 決定（2026-09-23）: `web/vendor/qrcode-generator.mjs`（MIT）を同梱（§6.1）。読み取りはモバイルのネイティブ（Capacitor のバーコードのプラグイン）
 3. **Android の最低版**: API 31 以上なら標準の暗号だけで済む。それより古い端末も対象にするなら Tink（依存）が要る
 4. **WKWebView と `127.0.0.1` の secure context**: 実機で確かめる。だめなら §8.3 の代わりの UUID、それでもだめなら B 案
 5. **通知**: 背面のモバイルには完了・承認待ちが届かない。APNs / FCM の鍵を持つ中継が要るので、この中継に載せるかは別に決める（中身は端末の鍵で暗号化して載せる）
