@@ -62,7 +62,7 @@
 
 | もの | 持ち主 | 保存 | 用途 |
 |---|---|---|---|
-| ホストの静的鍵（X25519） | ホスト | `<data>/remote/host-key`。秘密鍵は `core/secret-store.mjs`（デスクトップは safeStorage、`npm start` は 0600） | Noise の静的鍵。端末が QR で公開鍵を覚えて照合する |
+| ホストの静的鍵（X25519） | ホスト | `<data>/remote/secrets.json` の `hostKey`（`core/secret-store.mjs`。デスクトップは safeStorage、`npm start` は 0600）。公開鍵は秘密鍵から導く | Noise の静的鍵。端末が QR で公開鍵を覚えて照合する |
 | `hostId` | 公開 | — | `base32(SHA-256(ホストの公開鍵))` の先頭 26 字。中継での宛先 |
 | 端末の静的鍵（X25519） | 端末 | Electron は safeStorage、iOS は Keychain（`AfterFirstUnlockThisDeviceOnly`）、Android は Keystore で包む | Noise の静的鍵。ホストの端末一覧に公開鍵を登録 |
 | `deviceId` | ホストが発行 | ホストの `devices.json`・端末の保管庫 | 端末一覧と中継での識別 |
@@ -101,6 +101,17 @@ AES-GCM ではなく ChaCha20-Poly1305 にするのは、iOS の CryptoKit（`Ch
 4. ホスト: **承認のダイアログ**「『Pixel 9』をこのホストに追加しますか？ 確認コード 482 193」。確認コードは両側でハンドシェイクのハッシュから導いた 6 桁で、端末の画面にも同じものを出す。QR が写真や画面共有で漏れても、承認する人が自分の端末の数字と見比べて止められる
 5. 承認したら、ホストが `deviceId` と中継用トークンを発行し、端末一覧（`<data>/remote/devices.json`: `{ id, name, platform, publicKey, createdAt, lastSeenAt }`）に加え、中継にトークンのハッシュを登録し、チャネルの中で端末へ渡す。入場券は消す
 6. 端末は `{ hostId, ホストの公開鍵, 中継の URL, deviceId, 中継用トークン, ホスト名 }` を保管庫に置き、ホスト一覧に出す
+
+細部（実装 `core/remote/connector.mjs`・`pairing.mjs` で決めたこと）:
+
+- IKpsk2 の psk はメッセージ 2 の最後で混ぜるので、ホストはメッセージ 1 だけでは QR を読んだ端末か分からない。端末はメッセージ 2 のあと transport で `{ type: 'pair' }` を 1 通送り、ホストはそれを復号できたときに初めて承認待ちを出す
+- 結果はホストから transport の 1 通で返す: `{ type: 'approved', deviceId, token, hostName }` か `{ type: 'denied' | 'expired' }`。そのあとホストが 1000 で閉じる。transport の平文はどれも UTF-8 の JSON
+- 通常の接続（IK）のメッセージ 1 の payload は JSON `{ proto: 1, name?, app? }`、メッセージ 2 は空。そのあと §4 のチャネル（最初は HELLO）
+- ペアリングの入場券は、ペアリングの接続が来た時点でホストも捨てる（成否によらず 1 回きり）。承認待ちは 5 分で `expired`、端末が切れたら `cancelled`
+- ホストが中継名乗りの `deviceId` の公開鍵とハンドシェイクで証明された鍵を比べ、違う・一覧に無い・ハンドシェイクの失敗はデータ用の接続を 4401 で閉じる（中継がそのまま端末へ渡す）。取り消しでは GOAWAY `revoked` のあと 4401
+- `deviceId` は `d` + 12 バイトの base64url、中継用トークンは 32 バイトの base64url。`devices.json` には `tokenHash` も置く（`sync` に要る）
+- 中継の URL は `https://`（`wss://`）だけ。`http://` はループバックの中継だけ（試験用。登録用の秘密を平文で流さない）
+- 設定が空のときは環境変数 `AGENT_HOST_RELAY_URL`・`AGENT_HOST_RELAY_SECRET` を代わりに使う（有効にするのは設定だけ）
 
 **取り消し**: ホストの端末一覧で「取り消す」→ 一覧から消し、中継からトークンのハッシュを消し、その端末のチャネルを即座に切る。中継が古い情報のままでも、ホストがハンドシェイクで静的鍵を弾く（二重）。
 端末一覧は名前・種類・追加した日・最後に使った時刻・今つながっているかを出す。ホスト自身の窓は一覧に出さない（ローカルは今のままの一時トークン）。
@@ -160,6 +171,8 @@ stream 0 はチャネル自体。端末が開くストリームは奇数、ホ�
 - 端末から来た `Cookie`・`Authorization`・`?token=`・`Host`・`Origin`・hop-by-hop のヘッダーを捨て、**ホストの UI トークンを接続口が付ける**（HTTP は Cookie、`/ws` は `?token=`）。接続口はサーバーと同じプロセスにいるので `TOKEN` と実際のポートを知っている
 - 応答の `Set-Cookie`（`agent_host_token`。`core/server.mjs` の静的配信）を捨てる。**ホストの UI トークンは端末に届かない**
 - 既存サーバーのコード（トークン照合・静的配信・`/ws`）は変えない。変えるのは起動時に接続口を立てる数行だけ
+
+実装（`core/remote/forward.mjs`）では、端末のヘッダーは決まったものだけを通す（`accept`・`accept-language`・`accept-encoding`・`cache-control`・`pragma`・`if-none-match`・`if-modified-since`・`if-range`・`range`・`user-agent`）。パスは WHATWG の URL で読み直し、`/mcp` の判定は小文字にしたものと復号したものの両方で行い、判定した形のまま送る。通さないもの（`/mcp`・GET/HEAD 以外・`/ws` 以外の WebSocket）はどれも RESET 3。
 
 将来、端末ごとの記録や権限を持たせるときは、接続口が `X-Pleiad-Device` を付ける余地がある（今は付けない）。
 
@@ -286,6 +299,8 @@ Coolify の設定: 新しいリソース → GitHub のリポジトリ → Build
 - 画面は既存の管理の面（`.mp-panel` など）を使う。設定の状態はサーバー側（WS コマンド）に置くので、リモートの窓からも見える・触れる（全権限のため）
 
 QR の画像を作る部品が要る（依存が無い）。§11 未決。
+
+WS コマンド（`core/protocol.mjs`）: `remoteStatus`・`setRemoteSettings { enabled?, relayUrl?, enrollSecret?, hostName? }`・`remotePairingStart`（QR の文字列を返す）・`remotePairingCancel`・`remotePairingApprove { id }`・`remotePairingDeny { id }`・`remoteDevices`・`remoteRevoke { id }`。イベントは `remoteStatus { status }`（状態の丸ごと）と `remotePairing { phase, request?, device? }`。登録用の秘密・トークン・鍵は返さない。設定は `<data>/remote/settings.json`（秘密は `secrets.json`）。既定は無効で、有効にするまで鍵も作らない。
 
 ### 6.2 画面が離れたとき（#11 を参照）
 

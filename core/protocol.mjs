@@ -45,6 +45,15 @@ export const COMMANDS = new Set([
   'compatEndpointRecheck',  // { id } -> { ok, lines?, error? }。保存済みを確かめ直して結果を記録する
   'compatEndpointDelete',   // { id } -> 一覧。キーも消す。選んでいる会話は次の送信の前に選び直しを求める
   'compatEndpointDefault',  // { agent, id } -> 一覧。新しい会話の既定（'' = 公式）
+  // リモート（ホスト側。core/remote/connector.mjs、docs/remote.md §6.1）。どの画面からも触れる（全権限）。秘密・トークンは返さない
+  'remoteStatus',          // {} -> RemoteStatus（{ enabled, configured, relayUrl, hasEnrollSecret, hostName, hostId, connection, pairing: { offer, requests }, devices, storage }）
+  'setRemoteSettings',     // { enabled?, relayUrl?, enrollSecret?, hostName? } -> RemoteStatus。enrollSecret は省けば残し、'' で消す
+  'remotePairingStart',    // {} -> { payload, expiresAt, hostId, hostName }。payload は QR とコピーに使う pleiad://pair?... の文字列（5 分・1 回）
+  'remotePairingCancel',   // {} -> RemoteStatus。入場券を取り下げる
+  'remotePairingApprove',  // { id } -> 追加した端末 { id, name, platform, app, createdAt, lastSeenAt, connected, connections }
+  'remotePairingDeny',     // { id } -> RemoteStatus
+  'remoteDevices',         // {} -> 端末の一覧（RemoteStatus の devices と同じ）
+  'remoteRevoke',          // { id } -> RemoteStatus。一覧と中継から消し、つながり中のチャネルを切る
   'contextSettings', // { cwd? } -> { defaults, places: [{ id, path, kinds: { <kind>: { value, override, from } }, roots, overrides, current }] } 種類ごとの設定と継承（core/context-settings.mjs）
   'slashSkills',     // { cwd } -> 入力欄「/」の候補。コンテキスト画面と同じ探索結果からのスキル一覧（説明文付き）
   'sessionContext', // { sessionId } -> { report, owners, pinned, changed, startedAt, refreshedAt, removedMcp } この会話が読み込んだ記録。固定された会話では今のファイルと突き合わせる
@@ -140,6 +149,8 @@ export const EVENTS = new Set([
   "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す
   "compatEndpointsChanged", // 互換の接続先の一覧・既定が変わった（sessionId は null）。中身は compatEndpoints コマンドで取り直す
   "claudeLogin",  // { loginId, kind, accountId, phase: url|code|verifying|done|error|cancelled, url?, message? } アカウントの認可の進み具合（sessionId は null）。トークンは載せない
+  "remoteStatus",  // { status: RemoteStatus } リモートの設定・中継との接続・承認待ち・端末一覧が変わった（sessionId は null）
+  "remotePairing", // { phase: connecting|request|approved|denied|cancelled|expired, request?, device? } ペアリングの進み具合。request のときに承認のダイアログを出す（sessionId は null）
   "sessionsChanged",
   "present",      // 成果物の提示
   "status",       // 状態が変わった

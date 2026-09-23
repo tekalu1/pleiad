@@ -38,6 +38,7 @@ import { createPlyMcp } from './ply-mcp.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
+import { createRemoteHost } from './remote/connector.mjs';
 import { createVisualizationCollector, VISUALIZE_INSTRUCTIONS } from './visualize.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff } from "./conversations.mjs";
@@ -127,6 +128,12 @@ const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.
   openExternal: url => process.parentPort?.postMessage({ type: 'open-external', url }),
   emit: event => emitGlobal({ ...event, sessionId: null }) });
 const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth });
+// リモートの接続口（docs/remote.md §4.2・§6.1）。既定は無効で、有効にするまで中継へはつながない。
+// 端末からのストリームはこのサーバー自身（localOrigin）へ組み立て直し、UI トークンは接続口が差し込む
+const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, token: TOKEN, appVersion: APP_VERSION,
+  target: () => { const u = new URL(localOrigin()); return { host: u.hostname.replace(/^\[|\]$/g, ''), port: Number(u.port) }; },
+  emit: event => emitGlobal({ ...event, sessionId: null }),
+  log: line => console.log(`  ${line}`) });
 // 固定した指示・Skills の開始時の本文（「差分を見る」用。内容のハッシュを名前にして 1 つずつ）
 const CONTEXT_SNAPSHOTS = path.join(store.dataDir, 'context-snapshots');
 const contextSession = createContextSession({ store, snapshots: CONTEXT_SNAPSHOTS, plyServers: () => plyMcp.scanInput(),
@@ -1665,6 +1672,24 @@ wss.on("connection", (ws) => {
         case "listSessions":
           return reply(true, await sessionList());
 
+        // リモート（ホスト側）。秘密・トークンは返さない（core/remote/connector.mjs）
+        case 'remoteStatus':
+          return reply(true, await remote.status());
+        case 'setRemoteSettings':
+          return reply(true, await remote.setSettings(msg.args ?? {}));
+        case 'remotePairingStart':
+          return reply(true, await remote.startPairing());
+        case 'remotePairingCancel':
+          return reply(true, await remote.cancelPairing());
+        case 'remotePairingApprove':
+          return reply(true, await remote.approve(msg.args?.id));
+        case 'remotePairingDeny':
+          return reply(true, await remote.deny(msg.args?.id));
+        case 'remoteDevices':
+          return reply(true, await remote.devices());
+        case 'remoteRevoke':
+          return reply(true, await remote.revoke(msg.args?.id));
+
         // Claude のアカウント（会話ごとに選ぶ）。トークンは返さない（登録済みかどうかだけ）
         // 互換の接続先（core/compat-endpoints.mjs）。キーは返さない。確認の失敗は例外ではなく { ok: false, error, lines } で返す（理由の行を画面に出すため）
         case 'compatEndpoints':
@@ -2432,6 +2457,7 @@ process.parentPort?.on("message", async ({ data }) => {
 function announce() {
   const { port } = server.address();
   process.parentPort?.postMessage({ type: "ready", port, token: TOKEN });
+  remote.start().catch(() => {});
   console.log("");
   // 待ち受けがループバックか全アドレスなら、覚えやすい localhost で案内する（開く先は同じ）
   const shown = /^(127\.0\.0\.1|0\.0\.0\.0|::1?)$/.test(HOST) ? "localhost" : HOST.includes(":") ? `[${HOST}]` : HOST;
