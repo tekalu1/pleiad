@@ -1039,8 +1039,35 @@
       "enlarge": "{{name}}（押すと大きく見る）",
       "remove": "外す",
       "readFailed": "読めなかった",
-      "tooLarge": "{{name}} は大きすぎる（上限 8MB）",
-      "failed": "{{name}} を渡せなかった: {{error}}"
+      "tooLarge": "{{name}} は大きすぎる（上限 {{limit}}）",
+      "failed": "{{name}} を渡せなかった: {{error}}",
+      "fromHost": "ホストのファイル {{path}}（送らずにパスで渡します）",
+      "fromDevice": "この端末から送ったファイル {{name}}",
+      "source": {
+        "buttonTitle": "添付（この端末から / ホストから）",
+        "device": "この端末から",
+        "host": "ホストから",
+        "files": "ファイル…",
+        "hostFiles": "ファイルを選ぶ…"
+      },
+      "host": {
+        "back": "添付のメニューに戻る",
+        "title": "ホストのファイル",
+        "location": "場所",
+        "filter": "このフォルダーで絞り込む",
+        "listLabel": "{{path}} の中身",
+        "loading": "読み込んでいます…",
+        "noMatch": "当てはまるものはありません",
+        "empty": "このフォルダーは空です",
+        "truncated": "多すぎるため、先頭の 2,000 件だけを出しています",
+        "none": "ファイルを選んでください",
+        "selected_other": "{{count}} 件を選択",
+        "attach_other": "添付する（{{count}}）"
+      },
+      "sending": "{{percent}}%",
+      "sendingTitle": "{{name}}（{{size}}）をホストへ送っています",
+      "cancelSending": "送るのをやめる",
+      "largeImage": "{{name}}（{{size}}）を添付しました。エージェントは画像をパスから読みます。5MB を超える画像は、エージェントによっては画像として読めないことがあります。そのときは小さくしてから添付してください。"
     },
     "fork": {
       "noId": "分岐先の id が返らなかった",
@@ -1646,7 +1673,6 @@
   "upload": {
     "menu": {
       "label": "添付",
-      "files": "ファイルを添付…",
       "folder": "フォルダーを送る…"
     },
     "lead": "この PC のフォルダーをホストへ送ります。",
@@ -1701,7 +1727,7 @@
       "send": "作業フォルダーとして送る",
       "attach": "添付する",
       "cancel": "やめる",
-      "attachNote": "添付は 1 ファイル 8MB まで。フォルダーの中身をまとめて添付するのではなく、ファイルごとに添付します。"
+      "attachNote": "添付は 1 ファイル 100MB まで。フォルダーの中身をまとめて添付するのではなく、ファイルごとに添付します。"
     },
     "busy": "ほかのフォルダーを送っている途中です。",
     "sentNotice": "フォルダーをホストの {{dest}} に送りました。",

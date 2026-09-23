@@ -38,7 +38,7 @@ import java.util.concurrent.Executors
 /**
  * One host's window: a plain WebView (no Capacitor bridge) on the in-app loopback proxy, http://127.0.0.1:<p>/?token=…
  * (docs/remote.md §8.2, §8.3 option A). Into the host page we inject only `window.plyRemote`
- * ({ hostId, hostName, shell: 'mobile', status, onStatus, retry, backToHosts, closeWindow }), and only for the proxy's
+ * ({ hostId, hostName, shell: 'mobile', status, onStatus, retry, backToHosts, closeWindow, setTheme }), and only for the proxy's
  * origin and main frame (plus `window.backToHosts`, the same function, which web/remote-badge.mjs also looks for):
  * a document-start script plus a WebMessageListener whose messages are accepted only from the
  * main frame of that origin.
@@ -80,12 +80,11 @@ class HostActivity : ComponentActivity() {
         root.addView(progress, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.CENTER))
         setContentView(root)
         // Edge-to-edge: the host page draws under the system bars and places itself with env(safe-area-inset-*)
-        // (web/style.css; the host bar paints the status-bar area with the fill color, so the icons are light).
+        // (web/style.css). The status-bar area shows the page's own surface (no fill band since 2026-09-23), so the
+        // bar icons follow the page's theme: the system's until the page reports its own via plyRemote.setTheme (applyBars).
         // Only the keyboard is padded here (the page's interactive-widget=resizes-content expects a resized viewport).
         // If this WebView reports no safe-area insets, fall back to padding the bars (probeSafeArea).
-        val bar = WindowCompat.getInsetsController(window, root)
-        bar.isAppearanceLightStatusBars = false
-        bar.isAppearanceLightNavigationBars = !isNight()
+        applyBars(isNight())
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
@@ -106,6 +105,13 @@ class HostActivity : ComponentActivity() {
                 runOnUiThread { showError(getString(R.string.host_open_failed)) }
             }
         }
+    }
+
+    /** Dark page surface -> light icons, light surface -> dark icons (status and navigation bars). */
+    private fun applyBars(dark: Boolean) {
+        val bar = WindowCompat.getInsetsController(window, root)
+        bar.isAppearanceLightStatusBars = !dark
+        bar.isAppearanceLightNavigationBars = !dark
     }
 
     private fun isNight() = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
@@ -196,6 +202,7 @@ class HostActivity : ComponentActivity() {
             when (type) {
                 "hello" -> { reply = replyProxy; pushStatus(px.link.status) }
                 "retry" -> px.retryNow()
+                "theme" -> { val dark = try { JSONObject(message.data ?: "").optBoolean("dark", isNight()) } catch (_: Exception) { isNight() }; runOnUiThread { applyBars(dark) } }
                 "back" -> finish()
             }
         }
@@ -215,7 +222,7 @@ class HostActivity : ComponentActivity() {
     let m; try { m = JSON.parse(e.data); } catch (_) { return; }
     if (m && m.type === 'status') { last = m.status; for (const fn of listeners) { try { fn(last); } catch (_) {} } }
   };
-  const post = (type) => bridge.postMessage(JSON.stringify({ type }));
+  const post = (type, extra) => bridge.postMessage(JSON.stringify(Object.assign({ type }, extra || {})));
   const api = Object.freeze({
     hostId: info.hostId, hostName: info.hostName, relay: info.relay, device: info.device, shell: 'mobile',
     status: () => Promise.resolve(last),
@@ -223,6 +230,7 @@ class HostActivity : ComponentActivity() {
     retry: () => { post('retry'); return Promise.resolve(); },
     backToHosts: () => post('back'),
     closeWindow: () => post('back'),
+    setTheme: (dark) => post('theme', { dark: dark === true }),
   });
   Object.defineProperty(window, 'plyRemote', { value: api, writable: false, configurable: false, enumerable: false });
   Object.defineProperty(window, 'backToHosts', { value: api.backToHosts, writable: false, configurable: false, enumerable: false });

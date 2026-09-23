@@ -31,9 +31,9 @@
     if (localStorage.getItem('agent-host-sidebar') === 'closed') root.classList.add('side-closed');
   } catch {}
   if (desk) root.classList.add('desktop', desk.platform === 'darwin' ? 'mac' : 'overlay');
-  // リモートの窓（desktop/remote-preload.cjs の plyRemote）。帯を塗りの色にしてホスト名のバッジを置く（web/remote-badge.mjs）
+  // リモートの窓（desktop/remote-preload.cjs の plyRemote）。帯にホスト名のバッジを置き、タイトル行を帯に上げる（web/remote-badge.mjs）
   if (window.plyRemote) root.classList.add('remote');
-  // モバイル版の殻（docs/remote.md §8.2）。上端はホスト名の帯（web/remote-badge.mjs）
+  // モバイル版の殻（docs/remote.md §8.2）。700px 以下はタイトルの下にホスト名、広い幅は帯にホスト名（web/remote-badge.mjs）
   if (window.plyRemote?.shell === 'mobile') root.classList.add('remote-mobile');
 }
 </script>
@@ -111,7 +111,10 @@
     <header class="top">
       <!-- 脇を閉じている間だけ出る。閉じるボタンと同じ絵 -->
       <button type="button" class="btn btn-icon side-toggle" id="openSidebar" data-i18n-title="app.openSidebarTitle" data-i18n-aria-label="app.openSidebar" aria-controls="sidebar"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
-      <span class="title-field" id="titleField"><input id="titleEdit" data-i18n-placeholder="session.untitled" data-i18n-aria-label="session.titleLabel" autocomplete="off" disabled></span>
+      <!-- タイトルの列。モバイル版の殻の 700px 以下では、タイトルの下に差しの青の「⇄ ホスト名」（押すとホスト一覧へ。web/remote-badge.mjs）を置く -->
+      <div class="title-col">
+        <span class="title-field" id="titleField"><input id="titleEdit" data-i18n-placeholder="session.untitled" data-i18n-aria-label="session.titleLabel" autocomplete="off" disabled></span>
+      </div>
       <button type="button" class="btn btn-icon" id="titleWand" data-i18n-title="session.titleWand" disabled><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></button>
       <!-- 会話の右パネル「この会話のコンテキスト」の入口（web/session-context.mjs）。件数と「変更あり」は client.mjs が入れる -->
       <button type="button" class="btn ctxlink" id="contextEntry" data-i18n-title="session.context.entryTitle" hidden><svg class="i" viewBox="0 0 24 24"><path d="M4 4h9l5 5v11H4z"/><path d="M13 4v5h5"/></svg><span data-i18n="session.context.label"></span><span class="n mono" id="contextEntryCount" hidden></span><span class="chg" id="contextEntryChanged" hidden data-i18n="session.context.changed"></span></button>
@@ -128,28 +131,35 @@
       <div class="next-settings" id="nextSettings" role="status" hidden><div><b data-i18n="chat.next.title"></b><div id="nextSettingsText"></div></div><button type="button" class="btn" id="cancelSettings" data-i18n="chat.next.cancel"></button></div>
       <div class="settings-error" id="settingsError" role="alert"></div>
       <button type="button" class="btn" id="retrySettings" hidden data-i18n="chat.next.retry"></button>
-      <!-- 送る前の添付。会話にはまだ出ない（送信で present として載る） -->
-      <div class="attached" id="attached"></div>
       <!-- 入力欄の先頭が / の間だけ出るスキル候補（web/slash-skills.mjs）。面は .clist と同じ -->
       <ul class="clist" id="skillList" role="listbox" data-i18n-aria-label="chat.composer.skills" hidden></ul>
-      <textarea id="prompt" data-i18n-placeholder="chat.composer.placeholder" rows="3" aria-autocomplete="list" aria-controls="skillList" aria-expanded="false"></textarea>
-      <!-- 候補を選んだ直後だけ、引数の書き方を薄く出す -->
-      <div class="slash-hint" id="slashHint"></div>
-      <button type="button" class="btn draft-saved" id="draftSaved" aria-live="polite"></button>
-      <div class="crow">
-        <button type="button" class="btn btn-icon" id="attach" data-i18n-title="chat.composer.attach"><svg class="i" viewBox="0 0 24 24"><path d="M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2"/></svg></button>
-        <input type="file" id="fileIn" multiple hidden>
-        <!-- 入力欄の設定は 3 つのチップ（web/composer-controls.mjs、docs/design-system.md「入力欄の設定」）。
-             どこで（作業ディレクトリ）・誰が・どれだけ考えて（エージェント・モデル・エフォート・アカウント）・どこまで任せるか（承認モード）。
-             字は全部同じ色。チップは実際に使う値を出す。中身は押すと上に浮く面で選ぶ -->
-        <button type="button" class="chip mono folder" id="cwdChip" aria-controls="cwdPop"></button>
-        <span class="crow-gap"></span>
-        <!-- 接続先（互換の接続先）はモデルのチップの面の中で選ぶ（入力欄の行に専用の欄は置かない） -->
-        <button type="button" class="chip" id="modelChip" aria-controls="modelPop"></button>
-        <!-- 承認モード。人間だけが変えられる（AI 用のツールは生やさない） -->
-        <button type="button" class="chip" id="modeChip" aria-controls="modePop"></button>
-        <button type="button" class="btn btn-quiet" id="abort" hidden data-i18n="chat.composer.abort"></button>
-        <button type="submit" class="btn btn-primary send" id="send" data-i18n-title="chat.composer.sendTitle"><svg class="i" viewBox="0 0 24 24"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg></button>
+      <!-- 入力の箱（承認済みのモック docs/mockups/phone-composer-header.html の v2）。1 つの角丸の面に
+           送る前の添付 → 字の欄（1 行から伸びる）→ チップと送信の行 を入れる。デスクトップもスマホも同じ -->
+      <div class="cbox" id="cbox">
+        <!-- 送る前の添付。会話にはまだ出ない（送信で present として載る） -->
+        <div class="attached" id="attached"></div>
+        <textarea id="prompt" data-i18n-placeholder="chat.composer.placeholder" rows="1" aria-autocomplete="list" aria-controls="skillList" aria-expanded="false"></textarea>
+        <!-- 候補を選んだ直後だけ、引数の書き方を薄く出す -->
+        <div class="slash-hint" id="slashHint"></div>
+        <div class="crow">
+          <button type="button" class="btn btn-icon" id="attach" data-i18n-title="chat.composer.attach" data-i18n-aria-label="chat.composer.attach"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2"/></svg></button>
+          <input type="file" id="fileIn" multiple hidden>
+          <!-- 入力欄の設定は 3 つのチップ（web/composer-controls.mjs、docs/design-system.md「入力欄の設定」）。
+               どこで（作業ディレクトリ）・誰が・どれだけ考えて（エージェント・モデル・エフォート・アカウント）・どこまで任せるか（承認モード）。
+               3 つとも同じ書体・大きさ・太さ・高さ・余白・アイコン・▾。チップは実際に使う値を出す。中身は押すと上に浮く面で選ぶ。
+               1 行に並べ、折り返さない。足りなければ作業ディレクトリ → モデル名の順に … で詰める（送信は常に右端） -->
+          <button type="button" class="chip folder" id="cwdChip" aria-controls="cwdPop"></button>
+          <span class="crow-gap"></span>
+          <!-- 「保存済み」: 行の空きに弱い字で。700px 以下では出さない（保存に失敗したときだけ出す） -->
+          <button type="button" class="btn draft-saved" id="draftSaved" aria-live="polite"></button>
+          <!-- 接続先（互換の接続先）はモデルのチップの面の中で選ぶ（入力欄の行に専用の欄は置かない） -->
+          <button type="button" class="chip model" id="modelChip" aria-controls="modelPop"></button>
+          <!-- 承認モード。人間だけが変えられる（AI 用のツールは生やさない） -->
+          <button type="button" class="chip mode" id="modeChip" aria-controls="modePop"></button>
+          <!-- 中断。狭い幅（480px 以下）では四角のアイコンだけにする -->
+          <button type="button" class="btn btn-quiet abort" id="abort" hidden data-i18n-title="chat.composer.abort" data-i18n-aria-label="chat.composer.abort"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg><span data-i18n="chat.composer.abort"></span></button>
+          <button type="submit" class="btn btn-primary send" id="send" data-i18n-title="chat.composer.sendTitle" data-i18n-aria-label="chat.composer.sendTitle"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg></button>
+        </div>
       </div>
       <div class="pop cpop" id="cwdPop" role="dialog" data-i18n-aria-label="chat.composer.cwd" hidden></div>
       <div class="pop cpop" id="modelPop" role="dialog" data-i18n-aria-label="chat.composer.model" hidden></div>

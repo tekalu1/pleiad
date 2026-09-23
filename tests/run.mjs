@@ -68,6 +68,10 @@ const cases = [
   await import("./unit/attachment-order.mjs"),
   // 添付の件数に上限が無い（下書き・送信）。出どころの印。1 件 8MB の上限は残る
   await import("./unit/attach-no-limit.mjs"),
+  // 添付を断片で送る（1 件 100MB まで）: 境目・抜け・やめる・切れても続きから・大きな画像は会話にパスだけ
+  await import("./unit/attach-chunked.mjs"),
+  // 入力欄と上端の見直し: 字の欄の上限・チップの字・添付の出どころ・パンくず・規則
+  await import("./unit/composer-layout.mjs"),
   await import("./unit/unread.mjs"),
   // 確認済み（既読）の置き場と、2 本の接続で共有されること（fake バックエンド）
   await import("./unit/read-store.mjs"),

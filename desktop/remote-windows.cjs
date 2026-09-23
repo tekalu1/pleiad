@@ -2,8 +2,9 @@
 //   - ほかのホストにつなぐ窓（アプリに同梱の desktop/remote-hosts.html）: ペアリングしたホストの一覧と、貼り付けでのペアリング
 //   - リモートの窓: ホストごとに 1 枚。端末内プロキシ（core/remote/device-proxy.mjs）から画面を読む。
 //     保存領域はホストごとの session（persist:remote-<hostId>）。ポートはホストごとに覚える（device.mjs の hosts.json）
-//   - リモートの印: 画面の帯とバッジ（preload の plyRemote を見て web/ が描く）、帯の色（ply:remote-title-bar）、
-//     OS の窓タイトル（Pleiad — リモート: <ホスト>）とタスクバーの重ねアイコン
+//   - リモートの印: 画面の帯のバッジ（preload の plyRemote を見て web/ が描く。差しの青の字）、
+//     OS の窓タイトル（Pleiad — リモート: <ホスト>）とタスクバーの重ねアイコン。帯は塗らない（2026-09-23 から。
+//     ローカルの窓と同じ脇の面で、色は画面が ply:remote-title-bar で送ってくる）
 //   - 同じ PC を前提にしたブリッジ（フォルダーの選択・更新）はリモートの窓に出さない（desktop/remote-preload.cjs）
 // リモートの窓を閉じてもホストでは何も止めない（端末内プロキシを閉じるだけ。確認も出さない）。
 const path = require('node:path');
@@ -15,8 +16,8 @@ const { originOf } = require('./window-trust.cjs');
 
 const HOST_ID = /^[a-z2-7]{26}$/;
 const TITLE_BAR_HEIGHT = 40;   // desktop/main.cjs と web/style.css の --bar-h と同じ
-// リモートの帯（web/tokens.css の --fill-primary と --on-fill）。画面が色を送ってくるまでの一瞬に使う
-const REMOTE_BAR = { light: { color: '#3a499e', symbolColor: '#f4f5ff' }, dark: { color: '#5665cd', symbolColor: '#f4f5ff' } };
+// リモートの窓の帯（web/tokens.css の --surface-0 と --ink。ローカルの窓の desktop/main.cjs と同じ）。画面が色を送ってくるまでの一瞬に使う
+const REMOTE_BAR = { light: { color: '#eceef4', symbolColor: '#1c2247' }, dark: { color: '#121318', symbolColor: '#dfe3f2' } };
 const HOSTS_ARG = '--remote-hosts';
 const REMOTE_ARG = '--ply-remote=';
 
