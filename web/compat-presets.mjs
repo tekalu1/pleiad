@@ -82,8 +82,4 @@ export function urlHelp(agent, url) {
   return agent === 'claude' ? 'Claude Code はこの URL に /v1/messages を付けて送ります。' : 'Codex はこの URL に /responses を付けて送ります。';
 }
 
-/** チップの字などで使うモデル ID の短い形（`/` より前を省く。全体は title に出す） */
-export function shortModel(id) {
-  const s = String(id ?? '');
-  return s.includes('/') ? s.slice(s.lastIndexOf('/') + 1) : s;
-}
+// モデル ID の表示の形（名前空間と [1m] の扱い）は web/compat-models.mjs の compatModelLabel

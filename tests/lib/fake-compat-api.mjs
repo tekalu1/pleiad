@@ -12,7 +12,7 @@
 //   messages    POST /v1/messages に応答するか（Anthropic 互換）
 //   responses   POST /responses（/v1/responses も）に応答するか
 //   chat        POST /chat/completions に応答するか
-//   models      GET /models・/v1/models の ID（null なら 404）
+//   models      GET /models・/v1/models の ID（null なら 404）。要素はオブジェクトでもよい（display_name・max_input_tokens などをそのまま返す）
 //   knownModels 推論の要求で受け付けるモデル（空なら全部）。知らないモデルは 400
 //   status      推論の要求に返す HTTP（既定 200）
 //   redirect    true なら全部 307
@@ -47,7 +47,7 @@ export async function startFakeCompatApi(options = {}) {
     if (req.method === 'GET' && /\/models$/.test(p)) {
       if (!state.models) return json(res, 404, { error: { message: 'not found' } });
       if (!authed) return json(res, 401, { error: { message: 'bad key' } });
-      return json(res, 200, { object: 'list', data: state.models.map(id => ({ id, object: 'model' })) });
+      return json(res, 200, { object: 'list', data: state.models.map(m => typeof m === 'string' ? { id: m, object: 'model' } : m) });
     }
     const infer = (kind) => {
       if (!authed) return json(res, 401, { error: { message: 'invalid api key' } }), true;
