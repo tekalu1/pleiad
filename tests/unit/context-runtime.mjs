@@ -54,6 +54,7 @@ export default async function(t) {
     const ctx={owners:policy.owners,prompt:'MANAGED_PROMPT',url:'http://localhost/context',headers:{Authorization:'test'}};
     const cl=claudeContextOptions(ctx);
     t.ok('Claude の種類別抑止と明示プロンプト',cl.strictMcpConfig&&cl.skills.length===0&&cl.extraArgs['disable-slash-commands']===null&&cl.settings.claudeMdExcludes.length&&cl.systemPrompt.append==='MANAGED_PROMPT');
+    t.ok('Claude が自分で読む AGENTS.md も止める',cl.settings.claudeMdExcludes.includes('**/AGENTS.md'));
     // MCP を Pleiad が担当する Claude の会話: Pleiad 自身が渡した MCP（委譲の ply_agents を含む）はネイティブ扱いしない
     const passed=['host','ply_agents','ply_context'];
     t.ok('Pleiad が渡した ply_agents・ply_context はネイティブ MCP と見なさない',unexpectedNativeMcp([{name:'host'},{name:'ply_agents'},{name:'ply_context'}],passed).length===0);
