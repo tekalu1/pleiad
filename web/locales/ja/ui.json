@@ -284,7 +284,8 @@
       "model": "エージェント・モデル・エフォート",
       "mode": "承認モード",
       "firstMessage": "{{name}} の最初の発言を書く",
-      "placeholder": "Ctrl+Enter で送信"
+      "placeholder": "Ctrl+Enter で送信",
+      "placeholderTouch": "メッセージを書く"
     },
     "account": {
       "signedIn": "ログイン中",
@@ -433,7 +434,11 @@
     },
     "titleFailed": "タイトル変更に失敗: {{error}}",
     "parentChat": "親の会話",
-    "titleSuggestFailed": "タイトルを考えられなかった: {{error}}"
+    "titleSuggestFailed": "タイトルを考えられなかった: {{error}}",
+    "more": "この会話の操作",
+    "rowMore": "「{{title}}」の操作",
+    "groupMore": "状態「{{status}}」の操作",
+    "familyMore": "グループ「{{title}}」の操作"
   },
   "app": {
     "listSeparator": "・",
@@ -593,15 +598,17 @@
     "loginOnHostShort": "ホストの PC でログイン",
     "loginOnHost": "このログインはホストの PC で行ってください。ログインの戻り先がホストの PC なので、この端末からは完了できません。",
     "updateStatus": "ホストで動いている Pleiad の版です",
-    "updateOnHost": "ホストの Pleiad の更新はホストで行います。"
+    "updateOnHost": "ホストの Pleiad の更新はホストで行います。",
+    "backToHosts": "ホスト一覧に戻る",
+    "backToHostsTitle": "{{host}} から離れてホスト一覧に戻る"
   },
   "upload": {
-    "tabs": {
-      "label": "作業フォルダーの場所",
-      "host": "ホストのフォルダー",
-      "local": "手元から送る"
+    "menu": {
+      "label": "添付",
+      "files": "ファイルを添付…",
+      "folder": "フォルダーを送る…"
     },
-    "lead": "この PC のフォルダーをホストへ送り、この会話の作業フォルダーにします。",
+    "lead": "この PC のフォルダーをホストへ送ります。",
     "choose": "フォルダーを選ぶ…",
     "defaultDest": "送り先の既定はホストの ~/Pleiad/uploads の下の新しいフォルダーです。",
     "thisPc": "（この PC）",
@@ -628,6 +635,7 @@
     "andMore_other": "ほか {{files}} 件",
     "changeDest": "送り先を変える",
     "overwriteSend": "上書きして送る",
+    "makeCwd": "送ったフォルダーを作業フォルダーにする",
     "sendingTitle": "{{name}} を送っています",
     "pausedTitle": "{{name}} の送信を止めています",
     "progressLabel": "送信の進み具合",
@@ -655,6 +663,7 @@
       "attachNote": "添付は 1 ファイル 8MB まで。フォルダーの中身をまとめて添付するのではなく、ファイルごとに添付します。"
     },
     "busy": "ほかのフォルダーを送っている途中です。",
+    "sentNotice": "フォルダーをホストの {{dest}} に送りました。",
     "dropFailed": "フォルダーを読めませんでした（{{error}}）"
   }
 }

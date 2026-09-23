@@ -194,6 +194,22 @@ export default async function (t) {
     statusListener({ state: 'revoked' });
     t.ok('取り消し: 再試行は出さない（本体が読み直して案内を出す）', retryBtn.hidden === true && ui.badge.textContent.includes('取り消されました'));
     t.ok('知らない状態は接続中として扱う', badgeView(remoteInfo(remote), { state: 'weird' }).state === 'connected');
+
+    // モバイル版の殻（docs/remote.md §8.2）: 上端のホスト名の帯。押すとホスト一覧へ（面は出さない）
+    let backs = 0;
+    const mdoc = mkDoc();
+    const mobile = setupRemoteBadge({ remote: { hostId: HOST_ID, hostName: 'desktop-home', shell: 'mobile' }, doc: mdoc, back: () => { backs++; } });
+    t.ok('モバイル: html に .remote と .remote-mobile', mdoc.documentElement.classList.contains('remote') && mdoc.documentElement.classList.contains('remote-mobile'));
+    t.ok('モバイル: 帯は body の先頭、面は作らない', mdoc.body.children[0] === mobile.bar && mobile.pop === null && mobile.bar.children[0] === mobile.badge);
+    t.ok('モバイル: 帯にホスト名、読み上げは「ホスト一覧に戻る」', mobile.badge.textContent === 'desktop-home' && String(mobile.badge.attrs['aria-label']).startsWith('ホスト一覧に戻る'), mobile.badge.textContent);
+    mobile.badge.onclick();
+    await new Promise(r => setTimeout(r, 0));
+    t.ok('モバイル: 押すと backToHosts', backs === 1);
+    let viaRemote = 0;
+    const m2 = setupRemoteBadge({ remote: { hostId: HOST_ID, shell: 'mobile', backToHosts: () => { viaRemote++; } }, doc: mkDoc(), back: () => { backs++; } });
+    m2.badge.onclick();
+    await new Promise(r => setTimeout(r, 0));
+    t.ok('モバイル: plyRemote.backToHosts があればそちら（名前が無ければ hostId の頭）', viaRemote === 1 && backs === 1 && m2.badge.textContent === HOST_ID.slice(0, 8));
   }
 
   // ---------------------------------------------------------------- 本体の文言
