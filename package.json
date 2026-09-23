@@ -25,7 +25,7 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "electron-updater": "6.8.9",
     "i18next": "26.4.2",
-    "pdfjs-dist": "5.5.207",
+    "pdfjs-dist": "6.3.289",
     "smol-toml": "1.8.0",
     "ws": "^8.21.3",
     "yaml": "2.9.1",
