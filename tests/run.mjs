@@ -19,6 +19,8 @@ const cases = [
   await import('./unit/antigravity-usage.mjs'),
   await import('./unit/effort.mjs'),
   await import('./unit/composer-agy.mjs'),
+  // 互換の接続先（保存・確認・キーを出さない・env と Codex の上書き）。偽の互換 API とだけ話す
+  await import('./unit/compat-endpoints.mjs'),
   // 入力欄の設定のチップ: フォルダーの一覧（listDirs）・「既定」の解決・エフォートの既定の段
   await import('./unit/composer-settings.mjs'),
   await import('./unit/context-transports.mjs'),
