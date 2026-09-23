@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { FRONTMATTER, scanContext } from './context-scan.mjs';
 import { DEFAULT_OWNERS, KINDS, containsPath, legacyPlan, matchesGlobs, pathKey } from './context-settings.mjs';
@@ -28,10 +29,9 @@ export function nativeContextReport(policy, cwd, backend, at = new Date()) {
     ...(reason ? { guardedBackend: backend.id, reason } : {}) };
 }
 /**
- * 会話の方針。最初の送信で記録し、以後の再開・分岐・バックエンド切り替えでも変えない。
- * 再開で作業場所を変えたときだけ、cwd と plan を新しい場所で解き直す（担当は変えない。core/server.mjs の runTurn）。
+ * 会話の方針。最初の送信で記録し、以後はターンごとに今の設定（と作業場所）で解き直す（followSettings。core/server.mjs の runTurn）。
  * 形式 2 は探索の計画（plan。core/context-settings.mjs）をそのまま持つ。形式 1（user / directory の探索設定）の記録も読める。
- * at は方針を決めた時刻、removedMcp は「この会話では外す」とした外部 MCP の名前
+ * at は最初に方針を決めた時刻、removedMcp は「この会話では外す」とした外部 MCP の名前
  */
 export function contextPolicy(settings, at = new Date()) {
   return { version: 2, cwd: settings.cwd, at: at.toISOString(), owners: structuredClone(settings.owners ?? DEFAULT_OWNERS), plan: structuredClone(settings.plan) };
@@ -49,6 +49,30 @@ const properties = { type: 'object', properties: { id: { type: 'string' }, full:
 // エージェントに渡す文（前置き・ツールの説明・返り）は会話の言語で引く（agent 名前空間。runtime.locale）。en は以前の英語の固定文と同じ
 const alreadyLine = (locale, label, scope) => agentT(locale, 'context.alreadyProvided', { label, scope });
 
+/**
+ * 前のターンの方針 previous を、今の設定 settings（contextSettings.get の結果）で解き直す。設定の変更を次のターンから効かせるため。
+ * 会話ごとの決めごと（最初の時刻 at・読み込み直しの時刻 refreshedAt・「この会話では外す」removedMcp・keepNative）は引き継ぐ。
+ * keepNative は、コンテキストの記録が無いまま送信済みだった会話（この機能より前の会話）。担当はエージェント任せのまま変えない。
+ * 戻り: { policy, changed }。changed は設定の変更で実際に渡し方が変わった種類（担当か、Pleiad が探す範囲。作業場所の変更だけなら空）
+ */
+export function followSettings(previous, settings, { keepNative = false } = {}) {
+  const policy = contextPolicy(settings);
+  if (keepNative || previous?.keepNative) { policy.owners = { ...DEFAULT_OWNERS }; policy.keepNative = true; }
+  if (!previous) return { policy, changed: [] };
+  if (previous.at) policy.at = previous.at;
+  if (previous.refreshedAt) policy.refreshedAt = previous.refreshedAt;
+  if (previous.removedMcp?.length) policy.removedMcp = [...previous.removedMcp];
+  // 作業場所が変わったときは、場所ごとの設定の違いを設定の変更とは数えない（探し直しの結果は pin の突き合わせで知らせる）
+  if (pathKey(previous.cwd ?? '') !== pathKey(policy.cwd ?? '')) return { policy, changed: [] };
+  const before = runtimeSettings(previous).plan, after = runtimeSettings(policy).plan;
+  const changed = KINDS.filter(k => (previous.owners?.[k] ?? 'native') !== policy.owners[k]
+    || !isDeepStrictEqual(before.user.kinds[k], after.user.kinds[k]) || !isDeepStrictEqual(before.directory.kinds[k], after.directory.kinds[k])
+    || (k === 'mcp' && policy.owners.mcp === 'ply' && !isDeepStrictEqual(before.mcp, after.mcp)));
+  // 追加で探すフォルダーは種類を問わない。Pleiad が探している種類すべてに効く
+  if (!changed.length && (!isDeepStrictEqual(before.user.roots, after.user.roots) || !isDeepStrictEqual(before.directory.roots, after.directory.roots)))
+    changed.push(...KINDS.filter(k => policy.owners[k] === 'ply'));
+  return { policy, changed };
+}
 /** 会話の方針から探索設定を作る。Pleiad が担当する種類だけを探す（担当がエージェントの種類は探さない） */
 export function runtimeSettings(policy) {
   const plan = structuredClone(policy.plan ?? legacyPlan(policy.user, policy.directory));

@@ -84,22 +84,47 @@ export default async function (t) {
     const messages = (await client.cmd('loadSession', session)).messages;
     t.ok('読み込み直したあとも同じ会話で続けられる（やり取りは引き継ぐ）', turn.outcome === 'ok' && messages.some(m => m.text === 'echo:one') && messages.some(m => m.text === 'echo:after'), JSON.stringify(messages.map(m => m.text)));
 
-    // ---- 再開で作業場所を変える → 止めずに新しい場所で探し直す（担当は会話の方針のまま）
+    // ---- 再開で作業場所を変える → 止めずに新しい場所の設定で解き直す（担当も探す範囲も新しい場所の設定に従う）
     const moved = path.join(tmp, 'moved');
     await fs.mkdir(path.join(moved, '.git'), { recursive: true });
     await write(path.join(moved, 'AGENTS.md'), 'MOVED_VERSION');
-    await client.cmd('setContextSettings', { cwd: moved, place: moved, kind: 'instruction', value: { owner: 'native', user: none, directory: { sources: ['common'], excludePaths: [] } } });
-    await client.cmd('setContextSettings', { cwd: moved, place: moved, kind: 'mcp', value: { owner: 'ply', user: none, directory: none } });
+    await client.cmd('setContextSettings', { cwd: moved, place: moved, kind: 'instruction', value: { owner: 'ply', user: none, directory: { sources: ['common'], excludePaths: [] } } });
+    await client.cmd('setContextSettings', { cwd: moved, place: moved, kind: 'mcp', value: { owner: 'native', user: none, directory: none } });
     turn = await client.runTurn({ ...session, cwd: moved, prompt: 'echo:moved' }, { ms: 60_000 });
     record = await client.cmd('sessionContext', session);
     const movedReal = await fs.realpath(moved);
     t.ok('共通コンテキストの会話も作業場所を変えて送れる', turn.outcome === 'ok', turn.outcome);
-    t.ok('新しい作業場所で指示を探し直す（担当は開始時のまま）', record.report.cwd === movedReal && record.report.owners.instruction === 'ply'
+    t.ok('新しい作業場所で指示を探し直す（担当は新しい場所の設定に従う）', record.report.cwd === movedReal && record.report.owners.instruction === 'ply' && record.report.owners.mcp === 'native'
       && record.report.entries.some(e => e.kind === 'instruction' && e.path === path.join(movedReal, 'AGENTS.md'))
       && !record.report.entries.some(e => e.path === path.join(cwd, 'AGENTS.md')) && record.startedAt === startedAt, JSON.stringify(record.report.entries.map(e => e.path)));
     const native = await client.cmd('newSession', { cwd: tmp, backend: 'fake' });
     await client.runTurn({ ...native, prompt: 'echo:native' }, { ms: 60_000 });
     await client.cmd('refreshContext', native).then(() => t.ok('Pleiad がそろえていない会話は読み込み直せない', false), () => t.ok('Pleiad がそろえていない会話は読み込み直せない', true));
+
+    // ---- 設定の変更は、始まっている会話にも次のターンから効く（担当・外部 MCP の有効／無効）
+    const follow = path.join(tmp, 'follow');
+    await fs.mkdir(path.join(follow, '.git'), { recursive: true });
+    await write(path.join(follow, '.mcp.json'), JSON.stringify({ mcpServers: { fixture: { command: process.execPath, args: [script] } } }));
+    const fs1 = await client.cmd('newSession', { cwd: follow, backend: 'fake' });
+    await client.runTurn({ ...fs1, prompt: 'echo:follow-1' }, { ms: 60_000 });
+    record = await client.cmd('sessionContext', fs1);
+    const followStarted = record.startedAt;
+    t.ok('全体の設定がエージェント任せなら、会話もエージェント任せで始まる', record.report.owners.mcp === 'native' && record.refreshedAt === null);
+    const beforeFollow = await count();
+    view = await client.cmd('setContextSettings', { cwd: follow, place: null, kind: 'mcp', value: { owner: 'ply', user: none, directory: { sources: ['claude'], excludePaths: [] } } });
+    t.ok('全体の設定を変えても、今の場所の設定は増えない', !view.places.some(p => p.saved && p.path === follow) && view.places.find(p => p.current)?.overrides === 0);
+    turn = await client.runTurn({ ...fs1, prompt: 'echo:follow-2' }, { ms: 60_000 });
+    record = await client.cmd('sessionContext', fs1);
+    t.ok('全体の設定の変更が、次のターンから始まっている会話に効く', turn.outcome === 'ok' && record.report.owners.mcp === 'ply'
+      && record.report.entries.find(e => e.name === 'fixture')?.status === 'connected' && await count() === beforeFollow + 1, JSON.stringify(record.report.owners));
+    t.ok('反映したことを記録する（開始時刻は保つ）', typeof record.refreshedAt === 'string' && record.startedAt === followStarted);
+    const history = JSON.parse(await fs.readFile(path.join(dataDir, 'sessions.json'), 'utf8'))[fs1.sessionId]?.history ?? [];
+    t.ok('反映したことが会話の履歴に残る', history.some(h => h.field === 'context' && h.reasonKey === 'contextSettingsApplied'), JSON.stringify(history).slice(0, 400));
+    await client.cmd('setContextSettings', { cwd: follow, place: null, kind: 'mcp', value: { owner: 'ply', user: none, directory: { sources: ['claude'], excludePaths: [] }, disabled: ['fixture'] } });
+    await client.runTurn({ ...fs1, prompt: 'echo:follow-3' }, { ms: 60_000 });
+    record = await client.cmd('sessionContext', fs1);
+    t.ok('外部 MCP を設定で無効にすると、次のターンから接続しない', record.report.entries.find(e => e.name === 'fixture')?.status === 'excluded' && await count() === beforeFollow + 1);
+    await client.cmd('setContextSettings', { cwd: follow, place: null, kind: 'mcp', value: null });
 
     // ---- エージェント任せの MCP。各エージェントの登録（読むだけ）
     const launchedBefore = await count();
