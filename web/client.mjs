@@ -1739,13 +1739,15 @@ const side = createSide({
 });
 
 function renderSessions() {
-  side.render(state.sessions, {
+  // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から
+  const listed = state.sessions.filter(s => !s.delegation);
+  side.render(listed, {
     statuses: state.statuses,
     currentId: state.current,
     runningIds: state.runningIds,
     waitingIds: state.waitingIds,
     bgWaiting: state.bgWaiting,
-    unreadIds: new Set(state.sessions.filter(s => readCompletions.hasUnread(s)).map(s => s.id)),
+    unreadIds: new Set(listed.filter(s => readCompletions.hasUnread(s)).map(s => s.id)),
     draft: null,      // 新規のときだけ。予約は current が無いときに意味を持つ
     backendLabels: backendLabels(),
   });
