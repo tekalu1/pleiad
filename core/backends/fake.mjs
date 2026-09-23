@@ -19,6 +19,7 @@
 //   "compact"      … 文脈の圧縮（Claude の activity compacting と同じ形）を流す
 //   それ以外        … prompt をそのまま echo
 import crypto from "node:crypto";
+import { undelivered } from "./undelivered.mjs";
 
 const sessions = new Map();   // sessionId -> { sessionId, title, cwd, createdAt, lastModified, tag, messages, subagents }
 const auth = { loggedIn: false, account: null };
@@ -211,6 +212,12 @@ export const backend = {
   models: async () => MODELS,
 
   async runTurn({ prompt, sessionId, cwd, mode, model, emit, askPermission, signal, control, agentRuntime, contextRuntime, oauthToken }) {
+    // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
+    if (String(prompt ?? "").trim().startsWith("undelivered")) {
+      const error = "fake: failed before the prompt was delivered";
+      emit({ type: "turnResult", outcome: "error", error });
+      throw undelivered(new Error(error));
+    }
     const id = sessionId ?? `fake-${crypto.randomUUID()}`;
     const s = ensure(id, cwd);
     // claude と同じ形にする: 再開ターンでも session を 1 本出し、

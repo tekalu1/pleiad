@@ -19,6 +19,7 @@ import { claudeEnv, redactToken } from '../claude-accounts.mjs';
 import { claudeCompatEnv, writeClaudeFlagSettings, redactSecret } from '../compat-endpoints.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
 import { claudeContextOptions, unexpectedNativeMcp } from './context-options.mjs';
+import { undelivered } from './undelivered.mjs';
 import { z } from "zod";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -513,9 +514,12 @@ export const backend = {
     // 閉じるのは tracker.canCloseInput() が揃ったとき（claude-background.mjs）と中断のときだけ。
     const tracker = createTurnTracker();
     const input = createInputQueue();
+    // プロンプトを CLI へ渡したか。渡す前の失敗（ネイティブの指示・MCP を止められないなど）は undelivered を付けて投げる
+    let promptSent = false;
     async function* promptStream() {
       if (contextRuntime) await readyContext;
       if (input.closed || signal?.signal?.aborted) return;       // 走り出す前に中断された
+      promptSent = true;
       yield userMessage(prompt);
       yield* input;
     }
@@ -591,7 +595,7 @@ export const backend = {
         includePartialMessages: true,
         canUseTool: makeCanUseTool(ctx, askPermission),
       },
-    }); } catch (e) { await flag?.dispose(); throw e; }
+    }); } catch (e) { await flag?.dispose(); throw undelivered(e); }
 
     // 実行中に承認モードやモデルを変えられるようにする。
     // ターン開始時の options だけだと、走り出した後の切り替えが効かない。
@@ -828,8 +832,8 @@ export const backend = {
       }
       const message = hide(err?.message ?? err);
       emit({ type: "turnResult", outcome: "error", error: message });
-      if ((oauthToken || endpoint) && err?.message && message !== err.message) throw new Error(message);
-      throw err;
+      const thrown = (oauthToken || endpoint) && err?.message && message !== err.message ? new Error(message) : err;
+      throw promptSent ? thrown : undelivered(thrown);
     } finally {
       clearStopTimer();
       await flag?.dispose();
