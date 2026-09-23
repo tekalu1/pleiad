@@ -166,7 +166,8 @@ export async function resolveRuntime(policy, options = {}) {
     if (item.status !== 'candidate') continue;
     // 「この会話では外す」とした外部 MCP。接続せず、ply_context にもツールを出さない
     if (item.kind === 'mcp' && removed.has(item.name)) { row.status = 'removed'; row.reason = t('context.removedHere'); continue; }
-    const key = `${item.kind}:${pathKey(item.realPath)}:${item.appliesTo ?? ''}:${item.kind === 'mcp' ? item.name : ''}`;
+    // Skill と MCP は範囲を問わず同じ実体なら 1 つ（作業場所が home だと ~/.claude/skills が user と directory の両方で見つかる）
+    const key = `${item.kind}:${pathKey(item.realPath)}:${item.kind === 'instruction' ? item.appliesTo ?? '' : ''}:${item.kind === 'mcp' ? item.name : ''}`;
     if (seen.has(key)) { row.status = 'duplicate'; continue; }
     seen.add(key);
     if (item.kind === 'instruction') {
