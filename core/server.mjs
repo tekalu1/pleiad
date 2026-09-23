@@ -40,6 +40,9 @@ import { createPlyMcp } from './ply-mcp.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
+import { createRemoteHost } from './remote/connector.mjs';
+import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
+import { createFolderUploads } from './folder-uploads.mjs';
 import { createVisualizationCollector, visualizeInstructions } from './visualize.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff } from "./conversations.mjs";
@@ -74,6 +77,11 @@ const COOKIE_NAME = "agent_host_token";
 // 人間が渡したファイルの置き場。作業ディレクトリを汚さないよう外に出す
 const UPLOAD_DIR = path.join(store.dataDir, "uploads");
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+// 手元のフォルダーを送る口（upload* コマンド、docs/remote.md §8.1）。置き場の既定は ~/Pleiad/uploads（作業フォルダーになるので見える場所）。
+// 7 日触られていない途中のものは起動時と 1 日ごとに捨てる
+const folderUploads = createFolderUploads({ root: process.env.AGENT_HOST_FOLDER_UPLOADS || undefined });
+folderUploads.sweep().catch(() => {});
+setInterval(() => folderUploads.sweep().catch(() => {}), 24 * 60 * 60_000).unref();
 const IMAGE_MIME = /^image\//;
 // Native sessions opened outside this host may not have sidecar metadata yet.
 const workspaceRoots = new Set([process.cwd()]);
@@ -132,6 +140,33 @@ const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.
   openExternal: url => process.parentPort?.postMessage({ type: 'open-external', url }),
   emit: event => emitGlobal({ ...event, sessionId: null }) });
 const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth });
+// リモートの接続口（docs/remote.md §4.2・§6.1）。既定は無効で、有効にするまで中継へはつながない。
+// 端末からのストリームはこのサーバー自身（localOrigin）へ組み立て直し、UI トークンは接続口が差し込む
+const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, token: TOKEN, appVersion: APP_VERSION,
+  target: () => { const u = new URL(localOrigin()); return { host: u.hostname.replace(/^\[|\]$/g, ''), port: Number(u.port) }; },
+  emit: event => {
+    if (event.type !== 'remoteStatus') return emitGlobal({ ...event, sessionId: null });
+    const status = withResident(event.status);
+    emitGlobal({ ...event, status, sessionId: null });
+    postResident({ status });
+  },
+  log: line => console.log(`  ${line}`) });
+// ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
+// トレイとスリープの抑止は main（desktop/resident.cjs）が持つので、リモートの状態か実行中の作業が変わるたびに送る
+const residentPrefs = createResidentPrefs({ dataDir: store.dataDir });
+const withResident = status => ({ ...status, resident: { available: Boolean(process.parentPort), ...residentPrefs.get() } });
+const remoteStatus = async () => withResident(await remote.status());
+let residentLast = '', residentStatus = null, residentWork = null;
+function postResident({ status, work } = {}) {
+  if (!process.parentPort) return;
+  if (status) residentStatus = status;
+  if (work) residentWork = work;
+  const signal = residentSignal({ status: residentStatus, prefs: residentPrefs.get(), work: residentWork, locale: locale.lang });
+  const key = JSON.stringify(signal);
+  if (key === residentLast) return;
+  residentLast = key;
+  process.parentPort.postMessage({ type: 'resident', state: signal });
+}
 // 固定した指示・Skills の開始時の本文（「差分を見る」用。内容のハッシュを名前にして 1 つずつ）
 const CONTEXT_SNAPSHOTS = path.join(store.dataDir, 'context-snapshots');
 const contextSession = createContextSession({ store, snapshots: CONTEXT_SNAPSHOTS, plyServers: () => plyMcp.scanInput(),
@@ -597,8 +632,16 @@ async function resolveCwd(resume, given, backend) {
 // かといって、居ないあいだ「承認できないから deny」を返し続けるのは最悪で、
 // エージェントは走り続けたまま書き込みだけが全部失敗し、
 // 読み取り系（自動許可）だけが通るので「動いているのに成果ゼロ」になる。
-// 居ないあいだは待たせ、戻ってきたら聞き直し、戻らなければターンごと止める。
-const HOST_GRACE_MS = Number(process.env.AGENT_HOST_GRACE_MS ?? 60_000);
+// 居ないあいだは待たせ、戻ってきたら聞き直す。既定では打ち切らない（待ち続ける。issue #11）。
+// リモートの端末はスリープで簡単に切れるので、切れただけで作業を止めない。
+// AGENT_HOST_GRACE_MS に正の数を指定したときだけ、その時間戻らなければターンごと止める。
+const HOST_GRACE_MS = parseGraceMs(process.env.AGENT_HOST_GRACE_MS);
+
+/** 未指定・空・0 以下・数でないものは「打ち切らない」(0)。 */
+function parseGraceMs(raw) {
+  const n = Number(raw);
+  return raw != null && String(raw).trim() !== "" && Number.isFinite(n) && n > 0 ? n : 0;
+}
 const EVENT_BUFFER_MAX = 500;
 // 同時に回せるターン数に上限は置かない（2026-09-23 に廃止。委譲した子で埋まり、利用者の送信が待たされていた）
 
@@ -621,14 +664,14 @@ const runtime = {
 // { key, ac, backend, control:{handle}, info:{sessionId,backend,startedAt,cwd,mode,model},
 //   taskHints: Map<tool_use id, 見出し>, pastSubagents: Set<agentId>, subagentOrigins: Map<agentId, tool_use id> }
 
-/** host が居ない時間が猶予を超えたか。タイマーに頼らず、その場で判定する。 */
+/** host が居ない時間が猶予を超えたか。タイマーに頼らず、その場で判定する。猶予が無効（既定）なら常に false。 */
 function graceExpired() {
-  return runtime.awaySince !== 0 && Date.now() - runtime.awaySince > HOST_GRACE_MS;
+  return HOST_GRACE_MS > 0 && runtime.awaySince !== 0 && Date.now() - runtime.awaySince > HOST_GRACE_MS;
 }
 
-/** 猶予切れの後始末。何度呼ばれても安全。走っているターンは全部止める。 */
+/** 猶予切れの後始末。何度呼ばれても安全。走っているターンは全部止める。猶予が無効なら何もしない。 */
 function giveUp() {
-  if (runtime.awaySince === 0) return;
+  if (HOST_GRACE_MS <= 0 || runtime.awaySince === 0) return;
   const seconds = Math.round((Date.now() - runtime.awaySince) / 1000);
   runtime.awaySince = 0;
   clearTimeout(runtime.graceTimer);
@@ -994,7 +1037,7 @@ let runningSeq = 0;
 async function broadcastRunning() {
   const seq = ++runningSeq;
   const work = await runningWork().catch(() => null);
-  if (work && seq === runningSeq) emitGlobal({ type: "running", ...work });
+  if (work && seq === runningSeq) { emitGlobal({ type: "running", ...work }); postResident({ work }); }
 }
 
 /** サブエージェントは走っている最中に増える。1本でも走っていれば（裏に残っていれば）定期的に配る。 */
@@ -1016,7 +1059,7 @@ function attach(ws) {
   // 待たせていた承認を聞き直す。取りこぼすとツールが無期限に止まる
   for (const [id, w] of runtime.waiting) sendTo({ kind: P.EVENT, event: { ...w.payload, id } });
   if (runtime.waiting.size) console.log(`  承認 ${runtime.waiting.size} 件を聞き直した`);
-  if (hadGrace) console.log("  猶予を解除した（host が戻った）");
+  if (hadGrace) console.log(HOST_GRACE_MS > 0 ? "  猶予を解除した（host が戻った）" : "  host が戻った");
 }
 
 function detach(ws) {
@@ -1025,9 +1068,14 @@ function detach(ws) {
   if (runtime.turns.size === 0 && runtime.waiting.size === 0) return;
 
   runtime.awaySince = Date.now();
+  clearTimeout(runtime.graceTimer);
+  runtime.graceTimer = null;
+  if (HOST_GRACE_MS <= 0) {
+    console.log(`  host が離れた。戻るまで待つ (turns=${runtime.turns.size}, waiting=${runtime.waiting.size})`);
+    return;
+  }
   console.log(`  host が離れた。${HOST_GRACE_MS / 1000} 秒待つ (turns=${runtime.turns.size}, waiting=${runtime.waiting.size})`);
   // 保険のタイマー。ただしこれ単体には頼らない（発火しなくても graceExpired() が拾う）
-  clearTimeout(runtime.graceTimer);
   runtime.graceTimer = setTimeout(giveUp, HOST_GRACE_MS + 500);
 }
 
@@ -1133,8 +1181,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay });
     signal?.addEventListener?.("abort", onAbort, { once: true });
 
-    // 送れなければ黙って待つ。戻ってきたら attach() が聞き直し、
-    // 戻らなければ猶予切れがターンごと中断する。
+    // 送れなければ黙って待つ。戻ってきたら attach() が聞き直す。
+    // 既定では戻るまで待ち続け、AGENT_HOST_GRACE_MS を指定したときだけ猶予切れがターンごと中断する。
     let sent = false;
     for (const card of cards) if (sendTo({ kind: P.EVENT, event: { ...card.payload, id: card.id } })) sent = true;
     if (!sent) {
@@ -1649,7 +1697,9 @@ wss.on("connection", (ws, req) => {
   // タブが複数あってもよい設計にして、イベントは全部に配る。
   const resumed = runtime.turns.size > 0;
   attach(ws);
-  sendTo({
+  // ready はこの接続にだけ返す。全部に配ると、受けた側のクライアントは初期化し直す
+  // （一覧と開いている会話を読み込み直す）ので、別の端末がつながるたびに他の画面が揺れる（issue #11）。
+  ws.send(JSON.stringify({
     kind: P.READY,
     protocolVersion: P.PROTOCOL_VERSION,
     version: APP_VERSION,
@@ -1657,7 +1707,7 @@ wss.on("connection", (ws, req) => {
     resumedTurn: resumed,
     // 画面の言語。setting は設定値（auto|ja|en）、lang は実際に使う言語（ja|en）
     locale,
-  });
+  }));
   ws.on("close", () => detach(ws));
 
   ws.on("message", async (raw) => {
@@ -1781,6 +1831,31 @@ wss.on("connection", (ws, req) => {
         }
         case "listSessions":
           return reply(true, await sessionList());
+
+        // リモート（ホスト側）。秘密・トークンは返さない（core/remote/connector.mjs）
+        case 'remoteStatus':
+          return reply(true, await remoteStatus());
+        case 'setRemoteSettings':
+          return reply(true, withResident(await remote.setSettings(msg.args ?? {})));
+        case 'setRemoteResident': {
+          await residentPrefs.set({ keepRunning: msg.args?.keepRunning, sleep: msg.args?.sleep });
+          const status = await remoteStatus();
+          emitGlobal({ type: 'remoteStatus', status, sessionId: null });
+          postResident({ status });
+          return reply(true, status);
+        }
+        case 'remotePairingStart':
+          return reply(true, await remote.startPairing());
+        case 'remotePairingCancel':
+          return reply(true, withResident(await remote.cancelPairing()));
+        case 'remotePairingApprove':
+          return reply(true, await remote.approve(msg.args?.id));
+        case 'remotePairingDeny':
+          return reply(true, withResident(await remote.deny(msg.args?.id)));
+        case 'remoteDevices':
+          return reply(true, await remote.devices());
+        case 'remoteRevoke':
+          return reply(true, withResident(await remote.revoke(msg.args?.id)));
 
         // Claude のアカウント（会話ごとに選ぶ）。トークンは返さない（登録済みかどうかだけ）
         // 互換の接続先（core/compat-endpoints.mjs）。キーは返さない。確認の失敗は例外ではなく { ok: false, error, lines } で返す（理由の行を画面に出すため）
@@ -2302,6 +2377,18 @@ wss.on("connection", (ws, req) => {
          * 中身は作業ディレクトリではなく uploads/ に置く。
          * 相手のリポジトリに勝手に物を増やさないため。
          */
+        // 手元のフォルダーを送る（core/folder-uploads.mjs）。作業フォルダーにするのは画面（setTurnSettings の cwd / 未送信の会話の下書き）
+        case "uploadCheck":
+          return reply(true, await folderUploads.check(msg.args ?? {}));
+        case "uploadStart":
+          return reply(true, await folderUploads.start(msg.args ?? {}));
+        case "uploadChunk":
+          return reply(true, await folderUploads.chunk(msg.args ?? {}));
+        case "uploadFinish":
+          return reply(true, await folderUploads.finish(msg.args ?? {}));
+        case "uploadCancel":
+          return reply(true, await folderUploads.cancel(msg.args ?? {}));
+
         case "attachFile": {
           const { sessionId, name, mime, data } = msg.args ?? {};
           if (typeof data !== "string" || !data) return reply(false, t('attach.noContent'));
@@ -2598,6 +2685,10 @@ process.parentPort?.on("message", async ({ data }) => {
 function announce() {
   const { port } = server.address();
   process.parentPort?.postMessage({ type: "ready", port, token: TOKEN, locale: locale.lang });
+  remote.start().catch(() => {});
+  // 起動直後の常駐の状態（リモートが無効でも送る。main はそれを見てトレイを出さない）
+  if (process.parentPort) Promise.all([residentPrefs.loaded, remote.status(), runningWork()])
+    .then(([, status, work]) => postResident({ status: withResident(status), work })).catch(() => {});
   console.log("");
   // 待ち受けがループバックか全アドレスなら、覚えやすい localhost で案内する（開く先は同じ）
   const shown = /^(127\.0\.0\.1|0\.0\.0\.0|::1?)$/.test(HOST) ? "localhost" : HOST.includes(":") ? `[${HOST}]` : HOST;

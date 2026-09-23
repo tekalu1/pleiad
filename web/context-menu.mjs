@@ -76,7 +76,8 @@ export function createContextMenu() {
         };
         row.onpointerenter = e => { if (e.pointerType === 'touch') return; cancelTimers(); openTimer = setTimeout(() => { if (!editing()) row.openSub(false); }, 150); };
         row.onfocus = () => { clearTimeout(closeTimer); };
-        row.onclick = () => row.openSub(true);
+        // 指で開いたときは中へフォーカスを移さない（先頭が入力欄だとキーボードが勝手に出る）
+        row.onclick = e => row.openSub(e?.pointerType !== 'touch');
       } else {
         row.onpointerenter = () => { scheduleTrim(depth + 1); };
         row.onclick = () => { close(true); item.onClick?.(); };
@@ -85,7 +86,12 @@ export function createContextMenu() {
     }
     document.body.append(panel); panels.push(panel);
     const r = panel.getBoundingClientRect();
-    if (trigger && x + r.width > innerWidth - 8) x = trigger.getBoundingClientRect().left - r.width - 6;
+    if (trigger && x + r.width > innerWidth - 8) {
+      // 右に入らなければ左へ返す。左にも入らない狭い画面（スマホ）では、押した行の下へ少しずらして重ねる
+      const tr = trigger.getBoundingClientRect();
+      if (tr.left - r.width - 6 >= 8) x = tr.left - r.width - 6;
+      else { x = tr.left + 12; y = tr.bottom + 2; }
+    }
     panel.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
     panel.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
     return panel;

@@ -2,7 +2,9 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- viewport-fit=cover: スマホの切り欠き・ホームバーの下まで描き、余白は env(safe-area-inset-*) で取る（style.css「狭い画面・タッチ」）。
+     interactive-widget=resizes-content: キーボードが出たら画面の高さを縮め、入力欄をキーボードの上に残す（Android の Chrome） -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Pleiad</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="stylesheet" href="/tokens.css">
@@ -29,6 +31,10 @@
     if (localStorage.getItem('agent-host-sidebar') === 'closed') root.classList.add('side-closed');
   } catch {}
   if (desk) root.classList.add('desktop', desk.platform === 'darwin' ? 'mac' : 'overlay');
+  // リモートの窓（desktop/remote-preload.cjs の plyRemote）。帯を塗りの色にしてホスト名のバッジを置く（web/remote-badge.mjs）
+  if (window.plyRemote) root.classList.add('remote');
+  // モバイル版の殻（docs/remote.md §8.2）。上端はホスト名の帯（web/remote-badge.mjs）
+  if (window.plyRemote?.shell === 'mobile') root.classList.add('remote-mobile');
 }
 </script>
 </head>
@@ -63,6 +69,7 @@
       <button type="button" id="usageTab" aria-controls="usagePanel" data-i18n="settings.nav.usage"></button>
       <button type="button" id="appearanceTab" aria-controls="appearancePanel" data-i18n="settings.nav.appearance"></button>
       <button type="button" id="openContext" aria-controls="contextPanel" data-i18n="settings.nav.context"></button>
+      <button type="button" id="remoteTab" aria-controls="remotePanel" data-i18n="settings.nav.remote"></button>
       <button type="button" id="updatesTab" aria-controls="updatesPanel" data-i18n="settings.nav.about"></button>
     </nav>
     <div class="pop" id="iconPop" hidden></div>
@@ -79,6 +86,8 @@
     <!-- ログインが要るエージェントがあるときだけ。押すと設定メニューが開く -->
     <button type="button" class="conn-lost" id="authNeed" hidden></button>
   </aside>
+  <!-- 狭い画面（700px 以下）で脇を引き出しにしている間だけ、会話の上に敷く幕。押すと閉じる（client.mjs の「脇の開閉」） -->
+  <div class="side-veil" id="sideVeil" aria-hidden="true"></div>
 
   <dialog class="onboarding-dialog" id="onboardingDialog" aria-labelledby="onboardingTitle">
     <div class="dialog-heading">
@@ -108,6 +117,8 @@
       <button type="button" class="btn ctxlink" id="contextEntry" data-i18n-title="session.context.entryTitle" hidden><svg class="i" viewBox="0 0 24 24"><path d="M4 4h9l5 5v11H4z"/><path d="M13 4v5h5"/></svg><span data-i18n="session.context.label"></span><span class="n mono" id="contextEntryCount" hidden></span><span class="chg" id="contextEntryChanged" hidden data-i18n="session.context.changed"></span></button>
       <button type="button" class="btn" id="agentTasksEntry" hidden data-i18n="dialog.tasks.title"></button>
       <button type="button" class="btn" id="backgroundEntry" hidden data-i18n="session.terminal"></button>
+      <!-- この会話の操作（脇の行の右クリックと同じメニュー）。狭い画面・タッチのときだけ出す（脇が引き出しで隠れているため） -->
+      <button type="button" class="btn btn-icon more-btn" id="sessionMore" hidden aria-haspopup="menu" data-i18n-title="session.more" data-i18n-aria-label="session.more"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></button>
     </header>
     <!-- 稼働表示（考えている・経過時間）は会話の筋の末尾の節として client.mjs が描く。固定の帯は置かない -->
     <div id="log"><div class="thread" id="thread"></div></div>
@@ -198,6 +209,8 @@
           <p class="locale-now" id="localeNow" role="status" aria-live="polite"></p>
         </section>
         <section id="contextPanel" data-i18n-aria-label="settings.nav.context" hidden></section>
+        <!-- 中身は web/remote.mjs が作る -->
+        <section id="remotePanel" data-i18n-aria-label="settings.nav.remote" hidden></section>
       </div>
     </section>
   </main>

@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <!-- web/locales/ja/server.json の remote.device.* と同じ文言 -->
+    <string name="remote_revoked">この端末はホストで取り消されました</string>
+    <string name="remote_host_offline">ホストにつながりません</string>
+    <string name="remote_page_revoked">もう一度ペアリングしてください。</string>
+    <string name="remote_page_host_offline">ホストの Pleiad が起動しているか確かめてください。つながり次第、自動で開きます。</string>
+    <string name="remote_page_offline">中継につながりません。ネットワークを確かめてください。つながり次第、自動で開きます。</string>
+    <string name="remote_token_required">トークンが要る（アプリから開いてください）</string>
+    <string name="remote_lost">ホストとの接続が切れました</string>
+    <string name="host_open_failed">このホストを開けませんでした。戻ってもう一度試してください。</string>
+</resources>

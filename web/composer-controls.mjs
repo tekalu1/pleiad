@@ -48,7 +48,11 @@ export { resolvedModel, effortStops, modelChipLabel } from "./composer-labels.mj
 
 let openPanel = null;   // 同時に開くのは 1 枚だけ
 
-function panel(chip, pop, { align = "left", render, onShow }) {
+/**
+ * チップ（押すもの）の上に浮く面。同時に開くのは 1 枚だけで、面の外を押すと閉じる。
+ * width は面の幅（px。関数なら開くたび・置き直すたびに読む）。添付のメニュー（web/folder-upload.mjs）も使う
+ */
+export function panel(chip, pop, { align = "left", render, onShow, width: wantWidth = 360 }) {
   const self = {
     chip, pop,
     get open() { return !pop.hidden; },
@@ -74,7 +78,7 @@ function panel(chip, pop, { align = "left", render, onShow }) {
       if (pop.hidden) return;
       const r = chip.getBoundingClientRect();
       const vw = document.documentElement.clientWidth || window.innerWidth;
-      const width = Math.min(360, vw - 16);
+      const width = Math.min(typeof wantWidth === "function" ? wantWidth() : wantWidth, vw - 16);
       pop.style.width = `${width}px`;
       const want = align === "right" ? r.right - width : r.left;
       pop.style.left = `${Math.round(Math.max(8, Math.min(want, vw - 8 - width)))}px`;

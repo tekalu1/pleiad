@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('plyDesktop', {
     return () => ipcRenderer.removeListener('ply:notification-click', handler);
   },
   chooseFolder: () => ipcRenderer.invoke('ply:choose-folder'),
+  // ほかのホストにつなぐ窓（desktop/remote-hosts.html）を開く。手元のアプリの機能なので、この窓（ローカル）にだけ出す
+  openRemoteHosts: () => ipcRenderer.invoke('ply:open-remote-hosts'),
   update: (action, value) => ipcRenderer.invoke('ply:update', action, value),
   onUpdate: listener => {
     const handler = (_event, state) => listener(state);

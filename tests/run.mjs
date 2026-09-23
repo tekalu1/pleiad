@@ -27,6 +27,10 @@ const cases = [
   await import('./unit/composer-agy.mjs'),
   // 互換の接続先（保存・確認・キーを出さない・env と Codex の上書き）。偽の互換 API とだけ話す
   await import('./unit/compat-endpoints.mjs'),
+  // リモート接続の暗号・フレーム・チャネル（core/remote/）。Noise の公式ベクトルと、メモリの管でつないだ往復
+  await import('./unit/remote-noise.mjs'),
+  await import('./unit/remote-frames.mjs'),
+  await import('./unit/remote-channel.mjs'),
   // 互換の接続先のモデルの表示名（anthropic/ と [1m]）・検索（AND・件数の上限・自由入力）・display_name の保存と旧形式
   await import('./unit/compat-models.mjs'),
   // 入力欄の設定のチップ: フォルダーの一覧（listDirs）・「既定」の解決・エフォートの既定の段
@@ -64,6 +68,10 @@ const cases = [
   await import("./unit/attachment-order.mjs"),
   await import("./unit/unread.mjs"),
   await import("./unit/desktop-port.mjs"),
+  // デスクトップ版の端末（リモートの窓）: 窓ごとの信頼・preload の出し分け・バッジ。Electron は起こさない
+  await import("./unit/desktop-remote.mjs"),
+  // スマホの画面（docs/remote.md §8.3・§8.4）: UUID の代わり・長押し・「…」・狭い画面の規則
+  await import("./unit/mobile-web.mjs"),
   await import("./unit/stream-routing.mjs"),
   await import("./unit/stream-prefix.mjs"),
   await import("./unit/session-stream.mjs"),
@@ -129,6 +137,20 @@ const cases = [
   // 孤児の agy の掃除。**名前を確かめてからでないと落とさない**
   await import("./unit/antigravity-pids.mjs"),
   // 同じ身代わりで、ターン途中の送信をその区切りへ差し込む（serve の steer）
+  // リモートの中継（relay/server.mjs）。空きポートで立て、素の WebSocket で照合・行き先・上限を叩く
+  await import("./unit/relay.mjs"),
+  // リモートのホスト側（core/remote/connector.mjs）。中継をこのプロセスで、fake のサーバーを別プロセスで立て、試験用の端末で往復する
+  await import("./unit/remote-host.mjs"),
+  // 設定 › リモートの部品と常駐（トレイ・スリープ。Electron は差し替える）、setRemoteResident
+  await import("./unit/remote-settings.mjs"),
+  // リモートの端末側（core/remote/device*.mjs）。中継とホストを立て、端末内プロキシの URL を素の HTTP と ws で叩く
+  await import("./unit/remote-device.mjs"),
+  // 手元のフォルダーを送る口（core/folder-uploads.mjs）: パスの検査・送り先・続きから・中断・上書きの確認・掃除、WS での往復
+  await import("./unit/folder-uploads.mjs"),
+  // 同じ口を端末内プロキシ → 中継 → ホストで。50 MiB・2000 件が流量の制御の下で届くこと、中継が落ちても続きから送れること
+  await import("./unit/remote-upload.mjs"),
+  // モバイルの殻（mobile/）の取り決め: plyRemote の形・平文はループバックだけ・依存の版の固定・殻の辞書
+  await import("./unit/mobile-shell.mjs"),
 ];
 
 const selected = pick(cases, process.argv.slice(2));

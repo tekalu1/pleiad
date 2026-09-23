@@ -6,10 +6,12 @@ import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
+import { setupRemoteBadge } from './remote-badge.mjs';
 import { setupUsage } from './usage.mjs';
 import { setupOnboarding } from "./onboarding.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
 import { setupCompatEndpoints } from './compat-endpoints.mjs';
+import { setupRemote } from './remote.mjs';
 import { compatModelText } from './compat-models.mjs';
 import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
@@ -17,7 +19,10 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // 見た目の規則は docs/design-system.md。
 import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints } from "./render.mjs";
 import { createContextMenu } from "./context-menu.mjs";
+import { setupLongPress } from "./long-press.mjs";
 import { setupComposerControls, resolvedModel } from "./composer-controls.mjs";
+import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
+import { setupAttachMenu } from "./attach-menu.mjs";
 import { modelRowIds } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
@@ -26,7 +31,7 @@ import { createSide } from "./side.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
-import { el, svgEl, relTime } from "./dom.mjs";
+import { el, svgEl, relTime, randomId } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
 import { savedEvent, savedTitle } from "./saved-text.mjs";
 import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE } from "./timeline.mjs";
@@ -883,6 +888,8 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'mcpAuth') { window.dispatchEvent(new CustomEvent('ply:mcp-auth', { detail: ev })); return; }
   // Claude のアカウントの認可（claude setup-token / 使用量の claude auth login）の進み具合。設定のアカウントの画面へ渡す
   if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); return; }
+  // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
+  if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') { remoteSettings.event(ev); return; }
   if (!isMine(ev)) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
@@ -1313,6 +1320,9 @@ function renderAuth() {
       const link = el("a", "btn", t("settings.agents.install"));
       link.href = st.installUrl; link.target = "_blank"; link.rel = "noreferrer";
       row.append(link);
+    } else if (st.supported && !st.pending && !st.loggedIn && window.plyRemote) {
+      // リモートの窓: ログインの戻り先はホストの PC なので、ここからは始めない（docs/remote.md §7.3）。状態はそのまま見える
+      row.append(el("span", "remote-login-note", t("remote.loginOnHost")));
     } else if (st.supported && !st.pending) {
       const loggedIn = st.loggedIn;
       const btn = el("button", "btn", loggedIn ? t("settings.agents.signOut") : t("settings.agents.signIn"));
@@ -1390,6 +1400,7 @@ function authUrlBox(id) {
 
 /** ログインは完了まで返ってこない（サーバがコールバックを待つ。10 分で時間切れ）。応答待ちで画面を止めない */
 function authLogin(b) {
+  if (window.plyRemote) { sys(html.t("remote.loginOnHost")); return; }   // リモートの窓からは始めない（renderAuth と同じ理由）
   state.auth.set(b.id, { ...(state.auth.get(b.id) ?? {}), supported: true, pending: true });
   renderAuth();
   onboarding.paint();
@@ -1585,6 +1596,39 @@ function endpointView(bid) {
   };
 }
 
+/** 作業ディレクトリを変える（入力欄のチップ・フォルダーを送り終えたとき）。送信済みの会話は次のターンから */
+function applyCwd(v) {
+  state.cwd = v;
+  controls.paint();
+  if (state.current) reserveSettings({ cwd: v });
+  else state.draft.cwd = v;
+}
+
+// 手元のフォルダーをホストへ送る（リモートの窓だけ。入口は添付のボタンのメニュー。web/folder-upload.mjs・web/attach-menu.mjs、
+// docs/remote.md §8.1）。送り終えたら、「作業フォルダーにする」が入なら送り先を送り始めたときの会話の作業フォルダーにする。
+// 切ってあれば作業フォルダーは変えず、送り先を会話に一行で知らせる
+const folderUpload = canSendFolders() ? createFolderUpload({
+  cmd,
+  connected: () => ws?.readyState === WebSocket.OPEN,
+  session: () => state.current ?? null,
+  onDone: async (dest, sessionId, { makeCwd = true } = {}) => {
+    if (!makeCwd) {
+      sys(html.t("upload.sentNotice", { dest }, ["dest"]));
+      return "other";
+    }
+    if (sessionId === (state.current ?? null)) {
+      const unsent = !sessionId || state.sessions.find((s) => s.id === sessionId)?.unsent;
+      applyCwd(dest);
+      return unsent ? "now" : "next";
+    }
+    if (!sessionId) return "other";
+    await cmd("setTurnSettings", { sessionId, cwd: dest });
+    return "next";
+  },
+  onChange: () => attachMenu?.refresh(),
+}) : null;
+let attachMenu = null;   // 添付のボタンのメニュー（folderUpload があるときだけ。wireDropZone で作る）
+
 // 入力欄の設定のチップ（web/composer-controls.mjs）。値は state に持ち、チップは get() で毎回読む
 const controls = setupComposerControls({
   cmd,
@@ -1603,12 +1647,7 @@ const controls = setupComposerControls({
     };
   },
   on: {
-    cwd: (v) => {
-      state.cwd = v;
-      controls.paint();
-      if (state.current) reserveSettings({ cwd: v });
-      else state.draft.cwd = v;
-    },
+    cwd: applyCwd,
     backend: (v) => { state.shownBackend = v; controls.paint(); reserveSettings({ backend: v, model: "" }); },
     model: (v) => { state.model = v; controls.paint(); reserveSettings({ model: v, rememberModel: true }); },
     // 互換の接続先。'' は公式。モデルは接続先の既定（メイン）に戻る（server も同じ）
@@ -1706,6 +1745,7 @@ window.addEventListener("storage", ev => {
 let creatingSession = null;
 async function startNew({ status = null, cwd = "", backend } = {}) {
   if (state.busy || creatingSession) return creatingSession;
+  setDrawer(false);
   saveDraft().catch(() => {});
   const source = state.current;
   creatingSession = (async () => {
@@ -2097,15 +2137,34 @@ function watchTitleBar() {
   paintTitleBar();
 }
 
+// 入力欄の既定の案内。指で使う画面には Ctrl+Enter が無いので、送信のボタンを案内する
+const promptPlaceholder = () => (matchMedia("(pointer:coarse)").matches ? t("chat.composer.placeholderTouch") : t("chat.composer.placeholder"));
+
 // ---------------------------------------------------------------- 脇の開閉
 // 端末ごとの好みなのでブラウザ側に覚える。最初の描画での反映は index.html の先頭の script が済ませている。
 // 設定の間は脇が設定メニューなので、開閉は受け付けない（CSS でも必ず開いて見える）
 
 const SIDEBAR_STORE = "agent-host-sidebar";
 let sidebarMoving;
+// 狭い画面（style.css の「狭い画面・タッチ」と同じ 700px）では、脇は会話の上に重ねる引き出し（docs/remote.md §8.4）。
+// 開閉は side-open で持ち、覚えない（広い画面の好み side-closed はそのまま残す）。会話を選ぶ・幕を押す・Esc で閉じる
+const narrowView = matchMedia("(max-width:700px)");
+const drawerOpen = () => document.documentElement.classList.contains("side-open");
+
+function setDrawer(open) {
+  const root = document.documentElement;
+  if (drawerOpen() === open) return;
+  root.classList.toggle("side-open", open);
+  $("openSidebar").setAttribute("aria-expanded", String(open));
+  const from = document.activeElement;
+  // 検索欄には置かない（スマホでキーボードが出る）。閉じるボタンへ
+  if (open) $("closeSidebar").focus({ preventScroll: true });
+  else if ($("sidebar").contains(from)) $("openSidebar").focus({ preventScroll: true });
+}
 
 function setSidebar(open) {
   const root = document.documentElement;
+  if (narrowView.matches && !document.body.classList.contains("settings")) return setDrawer(open);
   if (document.body.classList.contains("settings") || root.classList.contains("side-closed") !== open) return;
   document.body.classList.add("side-moving");
   root.classList.toggle("side-closed", !open);
@@ -2122,6 +2181,19 @@ function setSidebar(open) {
 function initSidebar() {
   $("closeSidebar").onclick = () => setSidebar(false);
   $("openSidebar").onclick = () => setSidebar(true);
+  $("sideVeil").onclick = () => setDrawer(false);
+  // 引き出しの中で会話の行・設定を押したら閉じる。メニューから開く・新しく始めるときは select / startNew が閉じる
+  $("sidebar").addEventListener("click", (e) => {
+    if (!narrowView.matches || !drawerOpen()) return;
+    if (e.target.closest(".row, #settings, #authNeed")) setDrawer(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !drawerOpen() || e.defaultPrevented || isComposingKey(e)) return;
+    if (document.querySelector("dialog[open], .pop.menu, .pop:not([hidden])")) return;
+    setDrawer(false);
+  });
+  // 広い画面へ戻ったら引き出しの印を外す（幕が残らないように）
+  narrowView.addEventListener("change", () => setDrawer(false));
   // Ctrl+B（macOS は ⌘B）。入力欄でも太字などの既定の意味は無いので、どこからでも効かせる。
   // macOS の Ctrl+B は入力欄で「1 文字戻る」なので奪わない
   const mac = /Mac/.test(navigator.platform);
@@ -2261,6 +2333,9 @@ const readAsDataUri = (file) => new Promise((res, rej) => {
 async function attachFiles(files) {
   const sessionId = state.current;
   for (const file of files) {
+    // 下書きの添付はサーバーが 20 件までしか保存しない。越えた分は送らずに止める（フォルダーを落とすと一度に来る）
+    const count = state.current === sessionId ? state.attached.length : (state.drafts.get(sessionId)?.attached.length ?? 0);
+    if (count >= 20) { $('draftSaved').textContent = t('chat.attach.tooMany', { count: 20 }); break; }
     if (file.size > 8 * 1024 * 1024) {
       sys(html.t("chat.attach.tooLarge", { name: file.name }));
       continue;
@@ -2294,7 +2369,9 @@ function fitPrompt() {
 
 function wireDropZone() {
   // クリップ → 隠した file input。選んだものはドロップ・貼り付けと同じ列に入る
-  $("attach").onclick = () => $("fileIn").click();
+  // リモートの窓では「ファイルを添付… / フォルダーを送る…」のメニュー（web/attach-menu.mjs）
+  if (folderUpload) attachMenu = setupAttachMenu({ button: $("attach"), upload: folderUpload, pickFiles: () => $("fileIn").click(), recent: cwdOptions });
+  else $("attach").onclick = () => $("fileIn").click();
   $("fileIn").onchange = () => { attachFiles([...$("fileIn").files]); $("fileIn").value = ""; };
   // 会話に載った画像も同じライトボックスで大きく見る
   log.addEventListener("click", (e) => {
@@ -2328,6 +2405,12 @@ function wireDropZone() {
   zone.addEventListener("drop", (e) => {
     if (!e.dataTransfer.files?.length) return;
     e.preventDefault(); depth = 0; show(false);
+    // リモートの窓にフォルダーを落としたら、添付するか作業フォルダーとして送るかを聞く。
+    // webkitGetAsEntry はイベントの中でしか読めないので、先に取っておく
+    if (folderUpload) {
+      const entries = [...e.dataTransfer.items].map((i) => (i.kind === "file" ? i.webkitGetAsEntry?.() : null)).filter(Boolean);
+      if (entries.some((x) => x.isDirectory)) { dropFolder(entries); return; }
+    }
     attachFiles([...e.dataTransfer.files]);
   });
   // 貼り付けでも渡せるようにする。スクショを撮ってそのまま貼る動線が一番短い
@@ -2337,6 +2420,25 @@ function wireDropZone() {
     e.preventDefault();
     attachFiles(files);
   });
+}
+
+/** リモートの窓に落としたフォルダー（最初のフォルダーを送る。添付はフォルダーの中のファイルと、一緒に落としたファイル） */
+async function dropFolder(entries) {
+  const dir = entries.find((x) => x.isDirectory);
+  let picked;
+  try { picked = await entriesFromDirectory(dir); }
+  catch (e) { sys(html.t("upload.dropFailed", { error: e?.message ?? String(e) })); return; }
+  const excludes = folderUpload.state.excludes;
+  const sum = summarize(picked.entries, excludes);
+  const choice = await askDroppedFolder({ name: picked.name, files: sum.files, bytes: sum.bytes, excludes });
+  if (choice === "send") {
+    if (folderUpload.busy) { sys(html.t("upload.busy")); attachMenu?.openUpload(); return; }
+    folderUpload.choose(picked, { makeCwd: true });
+    attachMenu?.openUpload();
+  } else if (choice === "attach") {
+    const loose = await Promise.all(entries.filter((x) => x.isFile).map((x) => new Promise((res) => x.file(res, () => res(null)))));
+    attachFiles([...sum.included.map((x) => x.file), ...loose.filter(Boolean)]);
+  }
 }
 
 // ---------------------------------------------------------------- 右クリックのメニュー
@@ -2749,6 +2851,8 @@ function syncTitleControls() {
   $("titleWand").classList.toggle("busy", busy);
   $("titleWand").hidden = caps.suggestTitle === false;
   $("titleWand").disabled = !on || busy || s?.unsent || caps.suggestTitle === false;
+  // この会話の操作（脇の行の「…」と同じメニュー）。一覧に載っている会話だけ
+  $("sessionMore").hidden = !s;
   paintContextEntry();
 }
 function selectedMode(s, bid, modes) {
@@ -2957,6 +3061,7 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
  */
 async function select(id, { keepUpTo, reload = false } = {}) {
   if (state.busy || (id === state.current && keepUpTo === undefined && !reload)) return;
+  if (keepUpTo === undefined) setDrawer(false);
   filePreview.sessionChanged(id);
   if (keepUpTo === undefined) {
     // 開き直し: 先に空にして「読み込み中」。切り替え（keepUpTo）は剥がれた後に一緒に描くので、ここでは触らない
@@ -3071,7 +3176,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   if (isRunningHere()) activity.show(activity.text || ACTIVITY_LABEL.running);   // 走っている会話を開いたら末尾に弧
   else if (behindHere()) activity.show(t("activity.waitingBackground"));     // ターンは終わったが裏の子が残っている会話は衛星
   relayoutBranches();     // 稼働表示が出た後の高さで、今いる枝の終端ノードを置き直す
-  $("prompt").placeholder = branchIsFresh(id) ? t("chat.composer.firstMessage", { name: branches.nameOf(id) }) : t("chat.composer.placeholder");
+  $("prompt").placeholder = branchIsFresh(id) ? t("chat.composer.firstMessage", { name: branches.nameOf(id) }) : promptPlaceholder();
   // 対応を終えたエージェントの会話は読むだけ。入力欄を閉じ、理由を末尾に出す（送信はサーバーも断る）
   const retired = data?.retired ?? null;
   if (retired) { sys(escText(retired)); $("prompt").disabled = true; $("prompt").placeholder = retired; }
@@ -3275,7 +3380,7 @@ async function submit() {
         return;
       }
     }
-    const request = previous && previous.prompt === full ? previous : { ...args, messageId: crypto.randomUUID() };
+    const request = previous && previous.prompt === full ? previous : { ...args, messageId: randomId() };
     receipts.set(sessionId, request); saveReceipts();
     await cmd('sendMessage', request);
     await clearSentDraft(sessionId, text, attachments);
@@ -3307,8 +3412,12 @@ function connect() {
       // 画面と違う言語なら読み直すので、ここで止める
       if (applyLocale(m.locale)) return;
       side.setConnLost(false);
+      // 切れて止まっていたフォルダーの送信を、受け取り済みの位置から続ける
+      folderUpload?.online();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
-      cmd("hostCapabilities").then((c) => { state.osActions = c?.osActions === true; filePreview.osChanged(); }).catch(() => {});
+      cmd("hostCapabilities").then((c) => { state.osActions = c?.osActions === true && !window.plyRemote; filePreview.osChanged(); }).catch(() => {});
+      // 開く前から承認待ちがあれば、ここでダイアログに出す
+      remoteSettings.refresh();
       return refresh().then(async () => {
         if (state.current) return select(state.current, { reload: true });
         let saved;
@@ -3331,7 +3440,7 @@ function connect() {
   };
 
   ws.onclose = () => {
-    // 困っているときだけ出す。切れても向こうは走り続けている（猶予の間）ので実行中の印は消さない
+    // 困っているときだけ出す。切れても向こうは走り続けている（既定では戻るまで待ち続ける）ので実行中の印は消さない
     side.setConnLost(true);
     for (const [, p] of pending) p.rej(new Error(t("app.disconnected")));
     pending.clear();
@@ -3404,6 +3513,12 @@ $("titleEdit").onblur = commitTitle;
 $("titleEdit").onkeydown = (e) => { if (isComposingKey(e)) return; if (e.key === "Enter") { e.preventDefault(); $("titleEdit").blur(); } };
 
 // タイトルは AI にも考えてもらえる。人間が同じことをできる場所の隣に置く（設計メモ 2.2）
+$("sessionMore").onclick = () => {
+  const s = state.sessions.find((x) => x.id === state.current);
+  if (!s) return;
+  const r = $("sessionMore").getBoundingClientRect();
+  rowMenu(s, r.right, r.bottom + 4);
+};
 $("titleWand").onclick = async () => {
   const id = state.current;
   if (!id || titleGenerating.has(id)) return;
@@ -3455,10 +3570,16 @@ function openSettings() { onboarding.open(); }
 setupUsage({ $, cmd, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
   onUsageLogin: accountId => claudeAccounts.open({ usageLogin: accountId }) });
+const remoteSettings = setupRemote({ cmd, page: onboarding.page });
 clearThread();
 initTheme();
 initLocale();
 initSidebar();
+$("prompt").placeholder = promptPlaceholder();
+// タッチの長押しで右クリックのメニュー（iOS は contextmenu を出さない）
+setupLongPress();
+// リモートの窓（端末のアプリが plyRemote を渡したとき）の帯のバッジ。帯の色を送るより先に置く
+setupRemoteBadge();
 watchTitleBar();
 wireDropZone();
 fitPrompt();

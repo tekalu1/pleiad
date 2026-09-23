@@ -330,8 +330,14 @@ export default async function (t) {
     // ---- 開き直しても承認が残る（別サーバ。この接続は承認に即答してしまうので混ぜない）
     await reopenCase(t, scratch);
 
-    // ---- 承認の猶予切れ（別サーバ。本番の 60 秒は待てないので 500ms にする）
+    // ---- 既定では host が離れても打ち切らない（別サーバ。AGENT_HOST_GRACE_MS 無し）
+    await holdCase(t, scratch);
+
+    // ---- 承認の猶予切れ（別サーバ。AGENT_HOST_GRACE_MS を明示したときだけ。500ms にする）
     await graceCase(t, scratch);
+
+    // ---- ready は新しくつないだ接続にだけ返る（別サーバ）
+    await readyCase(t, scratch);
   } finally {
     c.close();
     await server.stop();
@@ -340,7 +346,93 @@ export default async function (t) {
 }
 
 /**
+ * 既定（AGENT_HOST_GRACE_MS 無し）では、host が全部離れても何も打ち切らない（issue #11）。
+ * 承認待ちは保留のまま残り、戻ったタブへ同じ id で聞き直される。承認の要らないターンは走り続ける。
+ */
+async function holdCase(t, scratch) {
+  const server = await startServer({
+    // 走らせる側の環境に残っていても既定の挙動を測れるよう、空にして渡す（空＝未指定と同じ扱い）
+    env: { AGENT_HOST_BACKENDS: "fake", AGENT_HOST_GRACE_MS: "" },
+    dataDir: path.join(scratch, "hold"),
+    timeoutMs: 30_000,
+  });
+  try {
+    const away = await open({ port: server.port, token: server.token });
+    const mark = away.mark();
+    away.cmd("runTurn", { prompt: "ask", sessionId: null, cwd: ROOT, backend: "fake" }).catch(() => {});
+    const asking = await away.waitFor((e) => e.type === "session", { ms: 20_000, from: mark });
+    const perm = await away.waitFor((e) => e.type === "permission", { ms: 20_000, from: mark });
+    const mark2 = away.mark();
+    away.cmd("runTurn", { prompt: "slow", sessionId: null, cwd: ROOT, backend: "fake" }).catch(() => {});
+    const slow = await away.waitFor((e) => e.type === "session" && e.sessionId !== asking.sessionId, { ms: 20_000, from: mark2 });
+    away.close();
+
+    // 以前の 500ms 猶予のテストと同じだけ待っても、何も止まらない
+    await sleep(1600);
+    t.ok("既定では離れても「戻るまで待つ」と記録する", server.tail(50).includes("戻るまで待つ"));
+
+    const back = await open({ port: server.port, token: server.token });
+    try {
+      const again = await back.waitFor((e) => e.type === "permission" && e.id === perm.id, { ms: 5_000 }).catch(() => null);
+      t.ok("戻ると保留していた承認が同じ id で聞き直される", Boolean(again), perm.id);
+      t.ok("承認待ちのあいだ turnEnd は来ていない",
+        !back.events.some((e) => e.type === "turnEnd"), JSON.stringify(back.events.filter((e) => e.type === "turnEnd")));
+      const running = await back.cmd("running");
+      const ids = running.turns.map((x) => x.sessionId);
+      t.ok("承認待ちのターンも承認の要らないターンも走ったまま",
+        ids.includes(asking.sessionId) && ids.includes(slow.sessionId), JSON.stringify(ids));
+      t.ok("承認待ちとして残っている", running.permissions.some((p) => p.id === perm.id), `permissions=${running.permissions.length}`);
+
+      const mark3 = back.mark();
+      await back.cmd("resolvePermission", { id: perm.id, allow: true });
+      await back.waitFor((e) => e.type === "turnEnd" && e.sessionId === asking.sessionId, { ms: 20_000, from: mark3 });
+      const said = back.since(mark3).filter((e) => e.type === "text.delta" && e.sessionId === asking.sessionId).map((e) => e.text).join("");
+      t.ok("戻ってから答えた承認がそのまま効く", said.startsWith("許可された"), JSON.stringify(said));
+
+      await back.cmd("abort", { sessionId: slow.sessionId });
+      await back.waitFor((e) => e.type === "turnEnd" && e.sessionId === slow.sessionId, { ms: 20_000, from: mark3 });
+    } finally {
+      back.close();
+    }
+  } finally {
+    await server.stop();
+  }
+}
+
+/**
+ * ready は新しくつないだ接続にだけ返す（issue #11）。
+ * 全部に配ると、受けたクライアントは一覧と開いている会話を読み込み直すので、
+ * 別の端末がつながるたびに他の画面が揺れる。
+ */
+async function readyCase(t, scratch) {
+  const server = await startServer({
+    env: { AGENT_HOST_BACKENDS: "fake" },
+    dataDir: path.join(scratch, "ready"),
+    timeoutMs: 30_000,
+  });
+  const first = await open({ port: server.port, token: server.token });
+  let readyOnFirst = 0;
+  first.ws.on("message", (raw) => {
+    try { if (JSON.parse(raw.toString()).kind === "ready") readyOnFirst++; } catch {}
+  });
+  let second;
+  try {
+    second = await open({ port: server.port, token: server.token });
+    t.ok("新しい接続は ready を受け取る", true);
+    // 往復を 1 回挟み、遅れて届く ready が無いことを確かめてから数える
+    await first.cmd("running");
+    await sleep(200);
+    t.ok("先につないでいた接続には ready が届かない", readyOnFirst === 0, `ready=${readyOnFirst}`);
+  } finally {
+    second?.close();
+    first.close();
+    await server.stop();
+  }
+}
+
+/**
  * host が消えたまま戻らなかったとき（design.md §8.5 の猶予切れ）。
+ * 既定では打ち切らないので、AGENT_HOST_GRACE_MS を明示したときだけの挙動。
  *
  * 承認を聞かれたところで切ると、サーバは猶予のあいだ黙って待つ。
  * 猶予が切れたら「黙って deny し続ける」のではなく、待っている承認を理由付きで deny し、

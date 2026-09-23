@@ -10,6 +10,9 @@ import { codeBlock, langFromPath } from './render.mjs';
 import { createCombo } from './combo.mjs';
 import { closeIcon } from './icons.mjs';
 
+// リモートの窓（docs/remote.md §7.3）: OAuth の戻り先はホストの 127.0.0.1 なので、ログインはホストの PC で行う
+const remoteWindow = () => Boolean(globalThis.window?.plyRemote);
+
 /** 追加ボタンの ＋。全角の ＋ は字形がフォントで揺れるので線で描く */
 function withPlus(b, text) {
   b.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
@@ -129,7 +132,7 @@ export function createMcpSection() {
       open.onclick = () => { if (ctx.opened.has(key)) ctx.opened.delete(key); else ctx.opened.add(key); ctx.rerender(); };
       row.append(open);
       const reg = fromPly ? registry.get(name) : null;
-      if (active && reg?.auth === 'oauth' && ['signed-out', 'expired'].includes(reg.authStatus?.state)) row.append(button(t('mcp.login'), 'btn btn-quiet', () => login(ctx, name)));
+      if (active && reg?.auth === 'oauth' && ['signed-out', 'expired'].includes(reg.authStatus?.state) && !remoteWindow()) row.append(button(t('mcp.login'), 'btn btn-quiet', () => login(ctx, name)));
       const sw = button('', 'cx-sw');
       sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(Boolean(active))); sw.setAttribute('aria-label', t('mcp.switchAria', { name }));
       sw.disabled = nativeOff;
@@ -244,7 +247,8 @@ export function createMcpSection() {
       acts.append(button(t('mcp.edit'), 'btn', () => ctx.work(async () => openSheet(ctx, await ctx.cmd('readPlyMcp', { name })))));
       acts.append(button(t('mcp.rename'), 'btn', () => renameLine(box, ctx, name)));
       if (reg.auth === 'oauth') {
-        acts.append(button(reg.authStatus?.state === 'signed-in' ? t('mcp.loginAgain') : t('mcp.login'), 'btn', () => login(ctx, name)));
+        if (remoteWindow()) box.append(el('p', 'remote-login-note', t('remote.loginOnHost')));
+        else acts.append(button(reg.authStatus?.state === 'signed-in' ? t('mcp.loginAgain') : t('mcp.login'), 'btn', () => login(ctx, name)));
         if (reg.authStatus?.state === 'signed-in') acts.append(button(t('mcp.logout'), 'btn', () => ctx.work(async () => {
           const r = await ctx.cmd('mcpAuthLogout', { name });
           messages.set(name, r.revoked ? t('mcp.loggedOutRevoked') : t('mcp.loggedOut'));
@@ -309,6 +313,7 @@ export function createMcpSection() {
     input.focus(); input.select();
   }
   function login(ctx, name) {
+    if (remoteWindow()) { messages.set(name, t('remote.loginOnHost')); ctx.rerender(); return Promise.resolve(); }
     return ctx.work(async () => {
       const started = await ctx.cmd('mcpAuthStart', { name });
       const note = el('span');
