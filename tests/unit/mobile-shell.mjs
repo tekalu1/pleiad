@@ -17,15 +17,20 @@ export default async function (t) {
   // ---- plyRemote（HostActivity が入れるもの）を web/remote-badge.mjs が読める
   const host = read(`${APP}/kotlin/com/procway/pleiad/HostActivity.kt`);
   const script = host.slice(host.indexOf('private fun remoteScript'), host.indexOf('private fun pushStatus'));
-  const keys = ['hostId:', 'hostName:', 'relay:', 'device:', "shell: 'mobile'", 'status:', 'onStatus:', 'retry:', 'backToHosts:', 'closeWindow:'];
-  t.ok('plyRemote に web/ が使う口がそろう（status・onStatus・retry・closeWindow・backToHosts・shell: mobile）',
+  const keys = ['hostId:', 'hostName:', 'relay:', 'device:', "shell: 'mobile'", 'status:', 'onStatus:', 'retry:', 'backToHosts:', 'closeWindow:', 'setTheme:'];
+  t.ok('plyRemote に web/ が使う口がそろう（status・onStatus・retry・closeWindow・backToHosts・setTheme・shell: mobile）',
     keys.every(k => script.includes(k)), keys.filter(k => !script.includes(k)).join(', '));
   t.ok('plyRemote は凍結し、書き換え・再定義できない', script.includes('Object.freeze') && /writable: false, configurable: false/.test(script));
   t.ok('注入は殻のプロキシのオリジンだけ（本体フレームの確認つき）。Capacitor のブリッジは使わない',
     /addDocumentStartJavaScript\(w, remoteScript\(info\), setOf\(origin\)\)/.test(host) && /addWebMessageListener\(w, BRIDGE, setOf\(origin\)\)/.test(host)
       && /!isMainFrame \|\| sourceOrigin\.toString\(\) != origin/.test(host) && !/com\.getcapacitor/.test(host));
   t.ok('window.backToHosts も plyRemote.backToHosts と同じものを入れる（再定義できない）', /defineProperty\(window, 'backToHosts', \{ value: api\.backToHosts, writable: false, configurable: false/.test(script));
-  t.ok('ホストの窓は edge-to-edge（安全領域は web/ の env() が受け持つ。状態バーの記号は明るく）', /isAppearanceLightStatusBars = false/.test(host) && /setDecorFitsSystemWindows\(window, false\)/.test(host));
+  t.ok('ホストの窓は edge-to-edge（安全領域は web/ の env() が受け持つ）', /setDecorFitsSystemWindows\(window, false\)/.test(host));
+  // 上端に塗りを使わなくなった（2026-09-23）。状態バーの下地は画面の紙の色なので、記号の明暗は画面の配色に従う
+  t.ok('状態バー・ナビゲーションバーの記号は画面の配色に従う（初めは OS の明暗、画面が setTheme で知らせたらそれ）',
+    /isAppearanceLightStatusBars = !dark/.test(host) && /isAppearanceLightNavigationBars = !dark/.test(host) && /applyBars\(isNight\(\)\)/.test(host)
+      && /"theme" -> \{.*applyBars\(dark\)/.test(host) && /setTheme: \(dark\) => post\('theme', \{ dark: dark === true \}\)/.test(script)
+      && !/isAppearanceLightStatusBars = false/.test(host));
   t.ok('戻るボタンはまず画面に plyremote:back（取り消せる）を投げる', /new CustomEvent\('plyremote:back', \{ cancelable: true \}\)/.test(host));
   const info = remoteInfo({ hostId: 'trleh4p5diok2b3hxpcck5nsba', hostName: 'desk', relay: 'https://relay.example', device: 'Pixel', shell: 'mobile' });
   t.ok('remoteInfo はモバイルの形を受ける（shell: mobile）', info?.shell === 'mobile' && info.host === 'desk');
