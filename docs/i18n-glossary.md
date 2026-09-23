@@ -135,6 +135,18 @@
 | 渡し済み（ply_context） | already provided |
 | 会話の言語（エージェントに渡す文の言語） | conversation language |
 | 添付の印 [添付] | [Attachment] |
+| リモート（リモート接続・リモートの窓） | remote |
+| ホスト（Pleiad が動いている PC） | host |
+| 端末（リモートでつなぐ機器。疑似端末の「端末」とは別） | device |
+| 中継（中継サーバー） | relay |
+| 登録の秘密（中継） | enrollment secret |
+| ペアリング / ペアリングのコード | pairing / pairing code |
+| 確認コード（ペアリング） | confirmation code |
+| 取り消す（端末の登録） | revoke |
+| 窓（OS のウィンドウ） | window |
+| 常駐（窓を閉じてもホストを続ける） | keep running (in the tray) |
+| フォルダーを送る | Send a folder |
+| 作業フォルダー | working directory |
 
 ## 揺れ（未統一）
 - 使用枠: `usage`（辞書での使用が多数派。例 server:antigravity.usage.badResponse・shared・none・timeout・tooLarge・cannotRead・needsUpdate） / `usage limits`（例 server:antigravity.usage.unsupported、server:usage.codexUnavailable、server:usage.claudeUnavailable）。本表には多い方の `usage` を採ったが、辞書は直していないので `usage limits` の箇所も残っている

@@ -1,0 +1,18 @@
+{
+  "name": "pleiad-relay",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pleiad remote relay: routes end-to-end encrypted WebSockets between devices and their host",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "server.mjs",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.21.3"
+  }
+}

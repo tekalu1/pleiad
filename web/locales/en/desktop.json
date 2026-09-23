@@ -43,5 +43,67 @@
     "unknownAction": "Unknown update action.",
     "verifyFailed": "The update was not applied because its files could not be verified. You can keep using the current version. Check again later.",
     "networkFailed": "Could not get the update. You can keep using the current version. Check your network connection and try again."
+  },
+  "resident": {
+    "summary": "Relay {{relay}} · Devices online {{devices}} · Running {{running}}",
+    "open": "Open Pleiad",
+    "quit": "Quit",
+    "relay": {
+      "disabled": "off",
+      "connecting": "connecting",
+      "connected": "connected",
+      "retrying": "reconnecting",
+      "error": "unreachable"
+    }
+  },
+  "remote": {
+    "windowTitle": "Pleiad — Remote: {{host}}",
+    "overlay": "Remote",
+    "notifyBody": "[{{host}}] {{body}}",
+    "hosts": {
+      "windowTitle": "Connect to another host",
+      "jumpTask": "Connect to another host…",
+      "jumpTaskDescription": "Open a paired host's Pleiad in a window on this PC",
+      "heading": "Paired hosts",
+      "empty": "No hosts yet. Add one under \"Add a host\" below.",
+      "state": {
+        "connected": "Online",
+        "connecting": "Checking…",
+        "offline": "Can't reach the relay",
+        "host-offline": "Host is offline",
+        "revoked": "Revoked",
+        "closed": "Closed",
+        "stopped": "Closed"
+      },
+      "lastConnected": "Last connected {{when}}",
+      "neverConnected": "Never connected",
+      "windowOpen": "Window open",
+      "open": "Open",
+      "opening": "Opening…",
+      "rename": "Rename",
+      "renameLabel": "Host name",
+      "renameSave": "Rename",
+      "cancel": "Cancel",
+      "remove": "Delete",
+      "removeConfirm": "Delete \"{{host}}\" from this PC? It stays in the host's device list, so revoke it on the host when you no longer use it.",
+      "removeYes": "Delete",
+      "revokedHint": "To pair again, create a new code on the host and paste it under \"Add a host\".",
+      "unknown": "This host is not paired",
+      "loadFailed": "Couldn't read the host list: {{error}}",
+      "storagePlain": "Credentials can't be encrypted on this PC (they are saved in a file only you can read).",
+      "add": {
+        "heading": "Add a host",
+        "help": "On the host's Pleiad, open Settings › Remote › \"Add a device\", choose \"Copy code\", and paste it here.",
+        "label": "Pairing code",
+        "placeholder": "Pairing code (pleiad://pair?…)",
+        "submit": "Add",
+        "connecting": "Connecting to the host…",
+        "waiting": "Approve on the host's screen",
+        "codeLabel": "Confirmation code",
+        "codeHint": "Check that the host shows the same number before approving.",
+        "done": "Added \"{{host}}\"",
+        "fullAccess": "An added device can do everything the host's user can. If you lose it, revoke it from the host's device list."
+      }
+    }
   }
 }

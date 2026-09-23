@@ -1,0 +1,7 @@
+include ':app'
+// Pleiad: the device side of the remote protocol (pure JVM, unit-tested with Gradle)
+include ':remote-core'
+include ':capacitor-cordova-android-plugins'
+project(':capacitor-cordova-android-plugins').projectDir = new File('./capacitor-cordova-android-plugins/')
+
+apply from: 'capacitor.settings.gradle'

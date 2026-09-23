@@ -21,6 +21,7 @@
       "usage": "使用量",
       "appearance": "外観",
       "context": "コンテキスト",
+      "remote": "リモート",
       "about": "アプリ情報・更新"
     },
     "usage": {
@@ -66,6 +67,91 @@
       "beta": "先行版も受け取る",
       "autoDownload": "更新を自動でダウンロードする",
       "releaseNotes": "リリースノート"
+    },
+    "remote": {
+      "enable": "このホストをリモートから使えるようにする",
+      "state": {
+        "loading": "状態を読み込んでいます…",
+        "disabled": "リモートは無効です",
+        "connecting": "中継につないでいます…",
+        "connected": "中継につながっています",
+        "connectedDevices_other": "中継につながっています · 端末 {{count}} 台が接続中",
+        "failed": "中継につながりません",
+        "reason": " · {{reason}}",
+        "retryAt": "（{{time}} にもう一度試します）"
+      },
+      "relay": {
+        "title": "中継",
+        "url": "中継の URL",
+        "urlFromEnv": "環境変数 AGENT_HOST_RELAY_URL の値を使っています。",
+        "secret": "登録用の秘密",
+        "secretSaved": "保存済み（変えるときだけ入力）",
+        "secretFromEnv": "環境変数 AGENT_HOST_RELAY_SECRET の値を使っています。",
+        "hostName": "ホスト名",
+        "notEncrypted": "この起動では登録用の秘密を暗号化できません（本人だけが読めるファイルに保存します）。",
+        "save": "保存",
+        "saved": "保存しました。"
+      },
+      "devices": {
+        "title": "端末",
+        "empty": "まだ端末はありません。",
+        "unnamed": "名前のない端末",
+        "added": "追加 {{date}}",
+        "lastSeen": "最後に使った {{when}}",
+        "neverSeen": "まだ使っていません",
+        "online": "接続中",
+        "offline": "未接続",
+        "revoke": "取り消す",
+        "revokeConfirm": "「{{name}}」を取り消しますか。この端末はすぐに切れ、もう一度ペアリングするまで使えません。",
+        "keep": "やめる",
+        "revokeConfirmButton": "取り消す",
+        "revoked": "「{{name}}」を取り消しました。"
+      },
+      "platform": {
+        "desktop": "デスクトップ",
+        "ios": "iPhone",
+        "android": "Android"
+      },
+      "pair": {
+        "add": "＋ 端末を追加",
+        "needEnable": "リモートを有効にすると追加できます。",
+        "needConnected": "中継につながると追加できます。",
+        "title": "端末を追加",
+        "qrLabel": "ペアリングの QR コード",
+        "left": "残り {{time}}",
+        "hint": "モバイル版で QR を読むか、デスクトップ版にコードを貼り付けます。",
+        "copy": "コードをコピー",
+        "copied": "コピーしました",
+        "copyFailed": "コピーできませんでした（選択してあります）",
+        "cancel": "やめる",
+        "connecting": "端末がつながりました。承認を待っています…",
+        "expired": "期限が切れました。",
+        "again": "作り直す",
+        "close": "閉じる"
+      },
+      "approve": {
+        "mark": "承認を待っている",
+        "title": "「{{name}}」をこのホストに追加しますか？",
+        "codeLabel": "確認コード",
+        "hint": "端末の画面に同じ数字が出ていることを確かめてから承認してください。",
+        "deny": "拒否",
+        "approve": "承認",
+        "added": "「{{name}}」を追加しました。",
+        "denied": "端末の追加を拒否しました。",
+        "cancelled": "端末が承認を待たずに切れました。",
+        "expired": "承認されないまま期限が切れました。"
+      },
+      "fullAccess": "ペアリングした端末は、このホストの利用者と同じことがすべてできます（承認モードの変更やコマンドの実行を含む）。",
+      "loginOnHost": "Claude CLI・Codex・外部 MCP・Antigravity のログインは、このホストの PC で行ってください。",
+      "otherHosts": "ほかのホストにつなぐ…",
+      "resident": {
+        "title": "常駐",
+        "keepRunning": "窓を閉じてもホストを続ける（トレイに残す）",
+        "sleep": "スリープ",
+        "sleepWorking": "作業中だけ防ぐ",
+        "sleepAlways": "リモートが有効な間は防ぐ",
+        "sleepOff": "防がない"
+      }
     }
   },
   "time": {
@@ -919,7 +1005,8 @@
       "model": "エージェント・モデル・エフォート",
       "mode": "承認モード",
       "firstMessage": "{{name}} の最初の発言を書く",
-      "placeholder": "Ctrl+Enter で送信"
+      "placeholder": "Ctrl+Enter で送信",
+      "placeholderTouch": "メッセージを書く"
     },
     "account": {
       "signedIn": "ログイン中",
@@ -1068,7 +1155,11 @@
     },
     "titleFailed": "タイトル変更に失敗: {{error}}",
     "parentChat": "親の会話",
-    "titleSuggestFailed": "タイトルを考えられなかった: {{error}}"
+    "titleSuggestFailed": "タイトルを考えられなかった: {{error}}",
+    "more": "この会話の操作",
+    "rowMore": "「{{title}}」の操作",
+    "groupMore": "状態「{{status}}」の操作",
+    "familyMore": "グループ「{{title}}」の操作"
   },
   "app": {
     "listSeparator": "・",
@@ -1525,5 +1616,96 @@
   "notify": {
     "completed": "作業が完了しました",
     "untitled": "Pleiad の会話"
+  },
+  "remote": {
+    "badgeLabel": "リモート:",
+    "badgeTitle": "リモートのホスト {{host}} につないでいます",
+    "state": {
+      "connecting": "つないでいます…",
+      "connected": "接続中",
+      "offline": "中継につながりません",
+      "host-offline": "ホストがオフライン",
+      "revoked": "取り消されました",
+      "stopped": "接続を止めました"
+    },
+    "pop": {
+      "label": "リモートの接続",
+      "relay": "中継",
+      "connectedAt": "つないだ時刻",
+      "device": "この端末",
+      "state": "状態",
+      "retry": "再試行",
+      "close": "この窓を閉じる"
+    },
+    "loginOnHostShort": "ホストの PC でログイン",
+    "loginOnHost": "このログインはホストの PC で行ってください。ログインの戻り先がホストの PC なので、この端末からは完了できません。",
+    "updateStatus": "ホストで動いている Pleiad の版です",
+    "updateOnHost": "ホストの Pleiad の更新はホストで行います。",
+    "backToHosts": "ホスト一覧に戻る",
+    "backToHostsTitle": "{{host}} から離れてホスト一覧に戻る"
+  },
+  "upload": {
+    "menu": {
+      "label": "添付",
+      "files": "ファイルを添付…",
+      "folder": "フォルダーを送る…"
+    },
+    "lead": "この PC のフォルダーをホストへ送ります。",
+    "choose": "フォルダーを選ぶ…",
+    "defaultDest": "送り先の既定はホストの ~/Pleiad/uploads の下の新しいフォルダーです。",
+    "thisPc": "（この PC）",
+    "count_other": "{{files}} 件 · {{size}}",
+    "skipped_other": "（除外で {{files}} 件 · {{size}} を省きました）",
+    "excludes": "除外",
+    "removeExclude": "{{name}} を外す",
+    "addExclude": "足す（例: dist）",
+    "addExcludeLabel": "除外を足す（Enter で決める）",
+    "large": "2 万件または 2 GB を超えています。除外を見直してください。",
+    "dest": "送り先（ホスト）",
+    "destDefault": "既定",
+    "checking": "送り先を確かめています…",
+    "newFolder": "新しいフォルダーを作ります。",
+    "intoEmpty": "空のフォルダーに入れます。",
+    "rechoose": "選び直す",
+    "send": "送る",
+    "retry": "もう一度送る",
+    "confirmExists": "⚠ {{dest}} には既にファイルがあります。",
+    "confirmOutside": "⚠ 置き場の外にある既存のフォルダー {{dest}} に入れます。",
+    "confirmOverwrite_other": "同じ名前の {{files}} 件を上書きします。ほかのファイルは残します。",
+    "confirmNoOverlap": "同じ名前のファイルはありません。ほかのファイルは残します。",
+    "overwriteList_other": "上書きする {{files}} 件",
+    "andMore_other": "ほか {{files}} 件",
+    "changeDest": "送り先を変える",
+    "overwriteSend": "上書きして送る",
+    "makeCwd": "送ったフォルダーを作業フォルダーにする",
+    "sendingTitle": "{{name}} を送っています",
+    "pausedTitle": "{{name}} の送信を止めています",
+    "progressLabel": "送信の進み具合",
+    "progress_other": "{{done}} / {{files}} 件 · {{sent}} / {{size}}",
+    "lost": "接続が切れました。",
+    "resumeSoon": "つながり次第、続きから送ります。",
+    "stop": "中断",
+    "stopSending": "送信をやめる",
+    "stalled": "送信が進みません。もう一度送ってください。",
+    "readFailed": "手元のファイルを読めません: {{path}}（選び直してください）",
+    "done": "送りました",
+    "applied": {
+      "now": "この会話の作業フォルダーを {{dest}} にしました。",
+      "next": "この会話の作業フォルダーを {{dest}} にしました（次のターンから適用）。",
+      "other": "{{dest}} に送りました。作業フォルダーは変えていません。"
+    },
+    "close": "閉じる",
+    "drop": {
+      "label": "ドロップしたフォルダー",
+      "question": "{{name}} をどうしますか",
+      "summaryExcluding": "{{summary}}（{{excludes}} を除く）",
+      "send": "作業フォルダーとして送る",
+      "attach": "添付する",
+      "cancel": "やめる",
+      "attachNote": "添付は 1 ファイル 8MB まで。フォルダーの中身をまとめて添付するのではなく、ファイルごとに添付します。"
+    },
+    "busy": "ほかのフォルダーを送っている途中です。",
+    "sentNotice": "フォルダーをホストの {{dest}} に送りました。",
+    "dropFailed": "フォルダーを読めませんでした（{{error}}）"
   }
 }

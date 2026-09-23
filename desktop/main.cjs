@@ -1,12 +1,20 @@
-const { app, BrowserWindow, utilityProcess, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage } = require('electron');
+const { app, BrowserWindow, utilityProcess, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { Updates } = require('./updates.cjs');
 const { prepareUpdateCheck } = require('./update-auth.cjs');
 const { savedPort, rememberPort } = require('./server-port.cjs');
 const { attachSecretBridge } = require('./secret-bridge.cjs');
-const { t, setLocale, resolveLocale } = require('./i18n.cjs');
+const { t, setLocale, resolveLocale, initDesktopI18n } = require('./i18n.cjs');
 const { attachFileBridge } = require('./file-bridge.cjs');
+// ホストとして常駐する（リモートが有効な間、窓を閉じてもトレイに残す・スリープを防ぐ。docs/remote.md §6.3）
+const { attachResident } = require('./resident.cjs');
+let resident;
+// 窓ごとのオリジンの表と、ほかのホストへつなぐ端末の窓（docs/remote.md §7。desktop/remote-windows.cjs）
+const { createWindowTrust } = require('./window-trust.cjs');
+const { createRemoteWindows } = require('./remote-windows.cjs');
+const trust = createWindowTrust();
+let remoteWindows;
 let worker, window, origin, updates, quitting = false, closing = false;
 let requestId = 0;
 const { createDesktopNotifications } = require('./notifications.cjs');
@@ -16,9 +24,8 @@ const notifyCompletion = createDesktopNotifications({ Notification, getWindow: (
 const APP_USER_MODEL_ID = app.isPackaged ? 'jp.ply.desktop' : 'jp.ply.desktop.dev';
 if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 
-function trusted(event) {
-  if (event.sender !== window?.webContents || event.senderFrame !== event.sender.mainFrame || new URL(event.senderFrame.url).origin !== origin) throw new Error('Invalid sender');
-}
+// ローカルの窓の本体フレームで、ローカルのサーバーの画面からの IPC だけを通す（リモートの窓・同梱の窓は別の口）
+function trusted(event) { trust.check(event, ['local']); }
 function workerRequest(type) {
   return new Promise((resolve, reject) => {
     const id = ++requestId;
@@ -86,8 +93,9 @@ function systemLanguage() {
 }
 
 async function boot() {
-  // サーバーが起動するまでは、設定（prefs.json）と OS の言語で決める。起動後はサーバーが解決した言語に合わせる（desktop/i18n.cjs）
-  setLocale(resolveLocale({ system: systemLanguage() }));
+  // サーバーが起動するまでは、設定（prefs.json）と OS の言語で決める。起動後はサーバーが解決した言語に合わせる（desktop/i18n.cjs）。
+  // main の中のリモートの端末側（core/remote/device.mjs）が引く core/i18n.mjs もここで同じ言語にそろえる
+  await initDesktopI18n({ systemLanguage: systemLanguage() }).catch(() => setLocale(resolveLocale({ system: systemLanguage() })));
   // 開発版と配布版が同時に動いても互いのポートを奪い合わないよう、記録を分ける
   const portFile = path.join(app.getPath('userData'), app.isPackaged ? 'server-port.json' : 'server-port-dev.json');
   worker = utilityProcess.fork(path.join(__dirname, 'server.cjs'), [], {
@@ -104,6 +112,7 @@ async function boot() {
   attachSecretBridge(worker, { safeStorage, openExternal: url => shell.openExternal(url).catch(() => {}) });
   // 「エクスプローラーで表示」「ブラウザーで開く」。範囲と接続元はサーバーが確かめ、実行は本体の shell（窓を前に出せる）
   attachFileBridge(worker, { shell });
+  resident = attachResident({ app, worker, icon: path.join(__dirname, 'icon.png'), getWindow: () => window, quit: () => closeSafely() });
   let startupError = '';
   worker.stderr.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });
   const ready = await new Promise((resolve, reject) => {
@@ -126,6 +135,10 @@ async function boot() {
       relaunchCommand: `"${process.execPath}"`, relaunchDisplayName: 'Pleiad' });
   }
   window.removeMenu();
+  trust.register(window, { kind: 'local', origin });
+  remoteWindows = createRemoteWindows({ app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust,
+    icon: path.join(__dirname, 'icon.png'), external });
+  remoteWindows.attach();
   window.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
   window.webContents.on('will-navigate', (event, url) => {
     if (new URL(url).origin !== origin) { event.preventDefault(); external(url); }
@@ -140,6 +153,7 @@ async function boot() {
   window.on('close', event => {
     if (quitting) return;
     event.preventDefault();
+    if (resident?.keepOnClose()) { window.hide(); return; }
     closeSafely();
   });
   worker.once('exit', () => {
@@ -149,6 +163,7 @@ async function boot() {
   });
   await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}`);
   window.show();
+  remoteWindows.handleArgv(process.argv);
   const { autoUpdater } = require('electron-updater');
   // Provider errors may include authenticated HTTP request details.
   autoUpdater.logger = null;
@@ -212,7 +227,7 @@ ipcMain.on('ply:title-bar', (event, colors) => {
 });
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('second-instance', () => { if (window) { window.restore(); window.show(); window.focus(); } });
+  app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { if (!quitting && window) { event.preventDefault(); closeSafely(); } });
   app.whenReady().then(boot).catch(e => { console.error(e.message); dialog.showErrorBox(t('boot.failedTitle'), e.message); quitting = true; worker?.kill(); app.quit(); });
 }

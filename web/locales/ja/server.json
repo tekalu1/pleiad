@@ -782,5 +782,97 @@
   },
   "agentRuntime": {
     "visualizeNotStarted": "会話がまだ開始されていません"
+  },
+  "remote": {
+    "relayUrl": {
+      "invalid": "中継の URL の形が違います",
+      "httpsOnly": "中継の URL は https:// で始めてください",
+      "httpsOnlyLoopback": "中継の URL は https:// で始めてください（http はこの PC の中継だけ）",
+      "noUserinfo": "中継の URL に利用者名やパスワードは入れられません",
+      "noQuery": "中継の URL に ? や # は入れられません"
+    },
+    "pairingCode": {
+      "notCode": "ペアリングのコードではありません",
+      "unsupportedVersion": "対応していない版のペアリングのコードです",
+      "broken": "ペアリングのコードが壊れています",
+      "hostIdMismatch": "ペアリングのコードの hostId が公開鍵と合いません"
+    },
+    "relay": {
+      "closed": {
+        "badRequest": "中継との取り決めが合いません（版の違いかもしれません）",
+        "unauthorized": "中継が登録用の秘密を受け付けませんでした",
+        "replaced": "同じホストの別の接続に置き換わりました（同じデータ置き場の Pleiad が 2 つ動いていませんか）",
+        "full": "中継のホスト数の上限に達しています",
+        "shutdown": "中継が終了しました",
+        "lost": "中継との接続が切れました",
+        "other": "中継との接続が閉じました（{{code}}）"
+      },
+      "rateLimited": "中継が一時的に接続を止めています（認証の失敗が続いたため）",
+      "rejected": "中継が接続を受け付けませんでした（HTTP {{status}}）",
+      "unreachable": "中継につながりません（{{reason}}）"
+    },
+    "unnamedDevice": "名前のない端末",
+    "settings": {
+      "needConfig": "中継の URL と登録用の秘密を入れてください",
+      "secretWhitespace": "登録用の秘密に空白は入れられません",
+      "needConfigToEnable": "中継の URL と登録用の秘密を入れてから有効にしてください",
+      "disabled": "リモートが無効です",
+      "notConnected": "中継につながっていません"
+    },
+    "pairing": {
+      "requestGone": "その承認待ちはもうありません"
+    },
+    "device": {
+      "revoked": "この端末はホストで取り消されました",
+      "hostOffline": "ホストにつながりません",
+      "stopped": "接続を止めました",
+      "offline": "中継につながりません",
+      "lost": "ホストとの接続が切れました",
+      "tokenRequired": "トークンが要る（アプリから開いてください）",
+      "unknownHost": "このホストはペアリングされていません",
+      "page": {
+        "revoked": "もう一度ペアリングしてください。",
+        "hostOffline": "ホストの Pleiad が起動しているか確かめてください。つながり次第、自動で開きます。",
+        "offline": "中継につながりません。ネットワークを確かめてください。つながり次第、自動で開きます。"
+      }
+    },
+    "pair": {
+      "ticket": "このペアリングのコードは使えません（使用済みか期限切れ）。ホストで作り直してください",
+      "rate": "ペアリングの試行が多すぎます。少し待ってから試してください",
+      "hostOffline": "ホストにつながりません。ホストの Pleiad が起動しているか確かめてください",
+      "cancelled": "ペアリングの途中で接続が切れました",
+      "aborted": "ペアリングを中止しました",
+      "noResponse": "ホストから応答がありません",
+      "keyMismatch": "ホストの鍵がペアリングのコードと合いません",
+      "timeout": "ホストの承認を待ちきれませんでした",
+      "unreadable": "ホストの応答を読めません",
+      "denied": "ホストで拒否されました",
+      "expired": "ホストの承認を待つ間に期限が切れました",
+      "badResponse": "ホストの応答の形が違います"
+    },
+    "store": {
+      "unreadable": "{{file}} を読み込めません（形式が壊れています）",
+      "badFormat": "{{file}} の形式が違います"
+    }
+  },
+  "upload": {
+    "invalidName": "フォルダーの名前に使えない字が入っています。",
+    "noFiles": "送るファイルがありません。",
+    "tooManyFiles": "ファイルが多すぎます（上限 {{max}} 件）。除外を見直してください。",
+    "invalidPath": "送れない名前のファイルがあります: {{path}}",
+    "invalidSize": "ファイルの大きさが読めません: {{path}}",
+    "fileTooLarge": "大きすぎるファイルがあります: {{path}}",
+    "totalTooLarge": "合計が大きすぎます。除外を見直してください。",
+    "duplicatePath": "大文字と小文字だけが違う名前が重なっています: {{path}}",
+    "fileDirClash": "ファイルとフォルダーが同じ名前です: {{path}}",
+    "destInvalid": "この送り先には送れません。",
+    "destNotFolder": "送り先がフォルダーではありません: {{path}}",
+    "destOutside": "{{root}} の外には、既にあるフォルダーだけを選べます: {{path}}",
+    "noSpace": "ホストの空き容量が足りません。",
+    "unknownUpload": "途中の送信が見つかりません。もう一度フォルダーを選んでください。",
+    "badChunk": "送られた断片の形が違います。",
+    "incomplete": "まだ受け取っていないファイルがあります（{{count}} 件）。",
+    "escape": "送り先の外を指すリンクがあるため書けません: {{path}}",
+    "conflictDir": "送り先に同じ名前のフォルダーがあります: {{path}}"
   }
 }

@@ -63,4 +63,26 @@ function attachSecretBridge(worker, { safeStorage, openExternal, platform = proc
   });
 }
 
-module.exports = { attachSecretBridge, createSecretHandler, encryptionState, openableAuthUrl };
+/**
+ * main プロセスで直接 safeStorage を使う暗号器（core/secret-store.mjs の cipher の形: status / encrypt / decrypt）。
+ * リモートの端末の資格情報（core/remote/device.mjs の createRemoteDevice の cipher）に渡す。
+ * 暗号化できない（Linux の basic_text など）ときは status().encrypted が false になり、置き場は 0600 の平文になる。
+ */
+function safeStorageCipher({ safeStorage, platform = process.platform }) {
+  const handle = createSecretHandler({ safeStorage, platform });
+  const call = (op, value) => {
+    const r = handle({ id: 0, op, value });
+    if (!r.ok) throw new Error(r.error);
+    return r.value;
+  };
+  return {
+    async status() {
+      const s = call('status');
+      return { encrypted: Boolean(s.available), backend: s.backend, ...(s.available ? {} : { reason: s.reason }) };
+    },
+    async encrypt(value) { return call('encrypt', value); },
+    async decrypt(value) { return call('decrypt', value); },
+  };
+}
+
+module.exports = { attachSecretBridge, createSecretHandler, encryptionState, openableAuthUrl, safeStorageCipher };

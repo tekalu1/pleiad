@@ -1,7 +1,7 @@
 import { isComposingKey } from './keyboard.mjs';
 import { t } from './i18n.mjs';
 
-const pages = [['setup', 'setupTab', 'setupPanel'], ['usage', 'usageTab', 'usagePanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['context', 'openContext', 'contextPanel'], ['updates', 'updatesTab', 'updatesPanel']];
+const pages = [['setup', 'setupTab', 'setupPanel'], ['usage', 'usageTab', 'usagePanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['context', 'openContext', 'contextPanel'], ['remote', 'remoteTab', 'remotePanel'], ['updates', 'updatesTab', 'updatesPanel']];
 
 // A failed status check is not evidence that the account is unconfigured.
 export function shouldShowOnboarding(status, auth) {
@@ -108,6 +108,10 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
           stateEl.textContent = st.account || t('settings.agents.loggedIn');
         } else if (st?.pending) {
           stateEl.textContent = t('settings.agents.loginPending');
+        } else if (globalThis.window?.plyRemote) {
+          // リモートの窓: ログインの戻り先はホストの PC なので、ここからは始めない（docs/remote.md §7.3）
+          stateEl.textContent = t('remote.loginOnHostShort');
+          stateEl.title = t('remote.loginOnHost');
         } else {
           const btn = document.createElement('button');
           btn.type = 'button';

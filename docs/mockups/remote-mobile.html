@@ -1,0 +1,206 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>モバイル版: ホスト一覧とホスト名 — モック</title>
+<style>html,body{margin:0}</style>
+<div id="mb">
+<style>
+#mb{--paper:#fff;--s0:#eceef4;--s1:#f4f5f9;--s2:#e8eaf1;--s3:#dcdee8;--sel:#e3e5ed;--fill:#3a499e;--on:#f4f5ff;--ink:#1c2247;--strong:#0f1330;--weak:#6b7299;--blue:#3a499e;--lineb:#5665cd;--line:#c9cee0;--faint:#dfe2ec;--mark:#aa2678;--unread:#5665cd;--shadow:rgba(21,22,28,.16);
+  font-family:-apple-system,"Segoe UI","Hiragino Sans","Yu Gothic UI",sans-serif;color:var(--ink);font-size:14px;line-height:1.5;padding:16px;max-width:1200px;margin:0 auto}
+#mb[data-theme="dark"]{--paper:#1b1c23;--s0:#121318;--s1:#222329;--s2:#15161c;--s3:#2a2b32;--sel:#2a2b32;--fill:#5665cd;--ink:#dfe3f2;--strong:#f4f6ff;--weak:#8a91b8;--blue:#9eabde;--line:#2c2f3f;--faint:#1a1b22;--mark:#e07ab8;--shadow:rgba(0,0,0,.5);background:#0b0c10}
+html:has(#mb[data-theme="dark"]){background:#0b0c10}
+#mb *{box-sizing:border-box}
+#mb h2{font-size:18px;margin:0 0 4px}
+#mb p.lead{margin:0 0 12px;color:var(--weak);font-size:13px}
+#mb .ctl{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--weak);margin-bottom:14px;flex-wrap:wrap}
+#mb .seg{display:inline-flex;background:var(--s2);border-radius:999px;padding:2px}
+#mb .seg button{border:0;background:transparent;color:var(--weak);font:inherit;padding:3px 10px;border-radius:999px;cursor:pointer}
+#mb .seg button[aria-pressed="true"]{background:var(--paper);color:var(--ink)}
+#mb svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+#mb .phones{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+#mb figure{margin:0;width:min(360px,100%)}
+#mb figcaption{font-size:12px;color:var(--weak);margin:8px 2px 0}
+/* 端末の枠: 上に状態バー（44px の safe-area）、下にホームバー（34px） */
+#mb .phone{width:100%;height:720px;border-radius:36px;background:var(--paper);box-shadow:0 8px 28px var(--shadow);overflow:hidden;display:flex;flex-direction:column;position:relative;--sat:44px;--sab:34px}
+#mb .status{height:var(--sat);flex:none;display:flex;align-items:flex-end;justify-content:space-between;padding:0 26px 6px;font-size:13px;font-weight:600}
+#mb .homebar{position:absolute;left:50%;bottom:8px;width:120px;height:5px;border-radius:999px;background:var(--ink);opacity:.8;transform:translateX(-50%)}
+/* 殻: ホスト一覧 */
+#mb .shell{flex:1;display:flex;flex-direction:column;padding:0 16px calc(var(--sab) + 8px);background:var(--s0);background-image:radial-gradient(var(--faint) 1px,transparent 1.2px);background-size:24px 24px}
+#mb .shell .top{display:flex;align-items:center;gap:8px;padding:10px 2px 14px}
+#mb .shell .top b{font-size:20px}
+#mb .shell .top i{width:24px;height:24px;border-radius:7px;background:var(--fill);display:inline-block}
+#mb .list{background:var(--paper);border-radius:20px;padding:6px}
+#mb .host{display:flex;align-items:center;gap:12px;padding:12px 10px;border-radius:14px;min-height:56px}
+#mb .host:active{background:var(--s1)}
+#mb .host .nm{font-weight:600;font-size:16px;font-family:Consolas,monospace}
+#mb .host .st{font-size:12.5px;color:var(--weak)}
+#mb .host .st .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:1px;border:1.5px solid var(--ink)}
+#mb .host .st .dot.on{background:var(--ink)}
+#mb .host .more{margin-left:auto;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:var(--weak)}
+#mb .add{margin-top:14px;display:flex;align-items:center;justify-content:center;gap:8px;background:var(--fill);color:var(--on);border-radius:999px;padding:12px;font-size:16px;font-weight:600}
+#mb .foot{margin-top:auto;font-size:12px;color:var(--weak);padding:12px 4px 0}
+/* 殻: ペアリング */
+#mb .cam{margin:4px 0 14px;height:260px;border-radius:20px;background:var(--s3);display:grid;place-items:center;position:relative}
+#mb .cam .frame{width:170px;height:170px;border-radius:20px;outline:2px solid var(--lineb);outline-offset:0}
+#mb .card{background:var(--paper);border-radius:20px;padding:16px}
+#mb .code{font:600 30px Consolas,monospace;letter-spacing:.08em;text-align:center;margin:10px 0 4px;font-variant-numeric:tabular-nums}
+#mb .weak{color:var(--weak);font-size:13px}
+#mb .btnq{display:block;text-align:center;margin-top:12px;background:var(--s1);border-radius:999px;padding:10px;font-size:15px}
+/* ホストの画面（web/） */
+#mb .hostbar{flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;height:40px;background:var(--fill);color:var(--on);font-size:14px;font-weight:600}
+#mb .hostbar .h{font-family:Consolas,monospace}
+#mb .hostbar .back{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 10px 4px 6px}
+#mb .hostbar .back svg{width:16px;height:16px}
+#mb .web{flex:1;display:flex;flex-direction:column;position:relative;overflow:hidden;min-height:0}
+#mb .wtop{display:flex;align-items:center;gap:4px;padding:6px 8px;font-size:15px;font-weight:600}
+#mb .ib{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:var(--ink);flex:none}
+#mb .wtop .ttl{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mb .thread{flex:1;padding:4px 14px;overflow:hidden;min-height:0}
+#mb .you{background:var(--s2);border-radius:20px;padding:9px 14px;margin:8px 0;font-size:15px}
+#mb .ai{margin:8px 0;font-size:15px}
+#mb .card-wait{background:var(--s1);border-radius:20px;padding:12px 14px;margin:8px 0}
+#mb .card-wait .w{color:var(--mark);font-weight:600}
+#mb .card-wait .acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+#mb .b{border-radius:999px;padding:8px 14px;font-size:14px}
+#mb .b.fill{background:var(--fill);color:var(--on)}
+#mb .b.quiet{background:var(--s2)}
+#mb .composer{flex:none;margin:0 10px calc(var(--sab) + 6px);background:var(--s1);border-radius:16px;padding:10px 12px}
+#mb .composer .in{font-size:16px;color:var(--weak);min-height:24px}
+#mb .crow{display:flex;align-items:center;gap:2px;margin-top:6px;flex-wrap:wrap}
+#mb .chip{display:inline-flex;align-items:center;gap:5px;font-size:13px;padding:6px 8px;border-radius:999px}
+#mb .chip.mono{font-family:Consolas,monospace;font-size:12.5px}
+#mb .send{width:40px;height:40px;border-radius:50%;background:var(--fill);color:var(--on);display:grid;place-items:center;margin-left:auto}
+/* 引き出しの脇 */
+#mb .drawer{position:absolute;inset:0 18% 0 0;background:var(--s0);background-image:radial-gradient(var(--faint) 1px,transparent 1.2px);background-size:24px 24px;box-shadow:0 8px 28px var(--shadow);padding:8px 8px calc(var(--sab) + 8px);transform:translateX(-102%);transition:transform 240ms cubic-bezier(.2,.7,.2,1);z-index:3;display:flex;flex-direction:column}
+#mb .web.open .drawer{transform:none}
+#mb .veil{position:absolute;inset:0;background:rgba(21,22,28,.28);opacity:0;pointer-events:none;transition:opacity 240ms;z-index:2}
+#mb .web.open .veil{opacity:1;pointer-events:auto}
+#mb .dtop{display:flex;align-items:center;gap:6px;padding:2px 2px 8px;font-weight:700}
+#mb .dtop i{width:20px;height:20px;border-radius:6px;background:var(--fill);display:inline-block}
+#mb .search{background:var(--paper);border-radius:999px;padding:8px 14px;color:var(--weak);font-size:16px;margin-bottom:8px}
+#mb .sh{display:flex;align-items:center;font-weight:600;padding:4px 4px 2px 6px;font-size:14px}
+#mb .sh .ib,#mb .r .ib{width:36px;height:36px;color:var(--weak);margin-left:auto}
+#mb .r{display:flex;align-items:center;gap:6px;padding:2px 0 2px 20px;border-radius:10px;font-size:14px;min-height:44px}
+#mb .r.on{background:var(--paper)}
+#mb .r .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mb .r .m{font-size:11px;color:var(--weak);font-variant-numeric:tabular-nums}
+#mb .r .wait{color:var(--mark);font-size:11px;white-space:nowrap}
+#mb .menu{position:absolute;right:14px;top:188px;width:210px;background:var(--paper);border-radius:14px;box-shadow:0 8px 28px var(--shadow);padding:6px;z-index:4;font-size:15px}
+#mb .menu[hidden]{display:none}
+#mb .menu div{padding:10px 12px;border-radius:8px}
+#mb .menu div:active{background:var(--s1)}
+#mb .menu .sub::after{content:"›";float:right;color:var(--weak)}
+#mb table{width:100%;border-collapse:collapse;font-size:13px;background:var(--paper);border-radius:12px;overflow:hidden;margin-top:18px}
+#mb th,#mb td{text-align:left;padding:7px 10px;vertical-align:top}
+#mb th{background:var(--s3);font-size:12px}
+#mb tr:nth-child(even) td{background:var(--s1)}
+#mb code{font-size:12px}
+@media (max-width:420px){#mb{padding:0}#mb h2,#mb p.lead,#mb .ctl,#mb figcaption{padding:0 12px}#mb h2{padding-top:12px}#mb .phone{border-radius:0;box-shadow:none}#mb .phones{gap:12px}#mb table{border-radius:0}}
+</style>
+
+<h2>モバイル版 — ホスト一覧とホスト名</h2>
+<p class="lead">殻（アプリに同梱）はホスト一覧・QR のペアリング・資格情報の保管・端末内プロキシだけ。ホストを選ぶと、ホストが配る <code>web/</code> を全部出し、上端に今のホスト名。docs/remote.md §8.2–8.4。</p>
+<div class="ctl">配色 <span class="seg" role="group" aria-label="配色"><button data-theme="light" aria-pressed="true">明</button><button data-theme="dark" aria-pressed="false">暗</button></span></div>
+
+<div class="phones">
+  <figure>
+    <div class="phone" aria-label="ホスト一覧">
+      <div class="status"><span>9:41</span><span>●●● ▮</span></div>
+      <div class="shell">
+        <div class="top"><i></i><b>ホスト</b></div>
+        <div class="list" role="list">
+          <div class="host" role="listitem"><div><div class="nm">desktop-home</div><div class="st"><span class="dot on"></span>オンライン · 実行中 1 · 3 分前</div></div><span class="more" aria-label="desktop-home の操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></span></div>
+          <div class="host" role="listitem"><div><div class="nm">office-ws</div><div class="st"><span class="dot"></span>オフライン · 昨日</div></div><span class="more" aria-label="office-ws の操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></span></div>
+          <div class="host" role="listitem"><div><div class="nm">mac-mini</div><div class="st">確認中…</div></div><span class="more" aria-label="mac-mini の操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></span></div>
+        </div>
+        <div class="add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>ホストを追加</div>
+        <div class="foot">ホストの Pleiad の 設定 › リモート ›「端末を追加」で出る QR を読みます。</div>
+      </div>
+      <div class="homebar"></div>
+    </div>
+    <figcaption>① ホスト一覧（殻）。オンラインは塗りの丸、オフラインは中抜き + 文字。色だけに意味を持たせない</figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone" aria-label="ペアリング">
+      <div class="status"><span>9:41</span><span>●●● ▮</span></div>
+      <div class="shell">
+        <div class="top"><b>ホストを追加</b></div>
+        <div class="cam"><div class="frame"></div></div>
+        <div class="card">
+          <div><b style="font-family:Consolas,monospace">desktop-home</b> の画面で承認してください</div>
+          <div class="code">482 193</div>
+          <div class="weak" style="text-align:center">ホストの画面に同じ数字が出ていることを確かめてから承認します。</div>
+          <div class="btnq">やめる</div>
+        </div>
+        <div class="foot">追加した端末は、ホストの利用者と同じようにすべての操作ができます。失くしたときはホストの端末一覧から取り消してください。</div>
+      </div>
+      <div class="homebar"></div>
+    </div>
+    <figcaption>② QR を読んだあと。確認コードはハンドシェイクから導く 6 桁</figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone" aria-label="ホストの画面">
+      <div class="status" style="background:var(--fill);color:var(--on)"><span>9:41</span><span>●●● ▮</span></div>
+      <div class="hostbar"><span class="back" role="button" aria-label="ホスト一覧に戻る"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg><svg viewBox="0 0 24 24" style="width:15px"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg><span class="h">desktop-home</span></span></div>
+      <div class="web" id="mbWeb">
+        <div class="wtop"><span class="ib" role="button" id="mbOpen" aria-label="サイドバーを開く"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></span><span class="ttl">中継の Dockerfile</span><span class="ib" aria-label="この会話の操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></span></div>
+        <div class="thread">
+          <div class="you">relay/Dockerfile を作って、ヘルスチェックも付けて</div>
+          <div class="ai">node:22-alpine で作り、<code>/healthz</code> を見る HEALTHCHECK を付けます。</div>
+          <div class="card-wait"><div><span class="w">承認を待っている</span> · <code>npm ci</code></div>
+            <div class="acts"><span class="b fill">許可</span><span class="b quiet">拒否</span><span class="b">常に許可</span></div></div>
+        </div>
+        <div class="composer">
+          <div class="in">続きを書く…（16px）</div>
+          <div class="crow">
+            <span class="chip"><svg viewBox="0 0 24 24"><path d="M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2"/></svg></span>
+            <span class="chip mono"><svg viewBox="0 0 24 24" style="width:15px"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>pleiad ▾</span>
+            <span class="chip">Opus 5.5 ▾</span>
+            <span class="send"><svg viewBox="0 0 24 24"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg></span>
+          </div>
+        </div>
+        <div class="veil" id="mbVeil"></div>
+        <aside class="drawer" aria-label="会話一覧">
+          <div class="dtop"><i></i>Pleiad<span class="ib" style="margin-left:auto" aria-label="新しい会話"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span></div>
+          <div class="search">検索</div>
+          <div class="sh">進行中<span class="ib" aria-label="状態「進行中」の操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></span></div>
+          <div class="r"><span class="t">リモートの設計を書く</span><span class="m">12:04</span><span class="ib" aria-label="操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></span></div>
+          <div class="r on"><span class="t">中継の Dockerfile</span><span class="wait">◆ 承認待ち</span><span class="ib" id="mbMore" role="button" aria-label="操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></span></div>
+          <div class="r"><span class="t">モバイルの画面の手直し</span><span class="m">昨日</span><span class="ib" aria-label="操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></span></div>
+          <div class="sh">状態なし<span class="ib" aria-label="状態「状態なし」の操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></span></div>
+          <div class="r"><span class="t">使用量の表示</span><span class="m">3 日</span><span class="ib" aria-label="操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></span></div>
+          <div class="menu" id="mbMenu" hidden role="menu"><div class="sub">状態を変更</div><div>名前を変更</div><div>このグループから外す</div><div>削除</div></div>
+        </aside>
+      </div>
+      <div class="homebar"></div>
+    </div>
+    <figcaption>③ ホストの画面（<code>web/</code>）。上端の帯のホスト名を押すとホスト一覧へ。<span id="mbHint">左上のボタンで脇が引き出しで開く</span></figcaption>
+  </figure>
+</div>
+
+<table>
+  <tr><th>手直し</th><th>見せ方</th></tr>
+  <tr><td>サイドバーの折りたたみ</td><td>700px 以下で会話の上に重ねる引き出し。外側・会話を押すと閉じる（③で左上を押す）</td></tr>
+  <tr><td>「…」ボタン</td><td>行・状態の見出し・会話の頭に置き、右クリックと同じメニュー。ドラッグでの移動は「状態を変更」で代わる（③の脇の「…」）</td></tr>
+  <tr><td>入力欄 16px 以上</td><td><code>pointer:coarse</code> のとき入力欄・検索・combo を 16px。iOS の自動拡大を防ぐ</td></tr>
+  <tr><td>画面の上下端</td><td>ホスト名の帯は状態バーの下（safe-area の内側）、入力欄はホームバーの上。高さは <code>100dvh</code></td></tr>
+  <tr><td>押せる大きさ</td><td>行・ボタンは 44px 以上</td></tr>
+</table>
+
+<script>
+(() => {
+  const root = document.getElementById('mb');
+  const $ = s => root.querySelector(s);
+  root.querySelectorAll('[data-theme]').forEach(b => b.addEventListener('click', () => {
+    root.dataset.theme = b.dataset.theme;
+    root.querySelectorAll('[data-theme]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  }));
+  const web = $('#mbWeb');
+  $('#mbOpen').addEventListener('click', () => web.classList.add('open'));
+  $('#mbVeil').addEventListener('click', () => { web.classList.remove('open'); $('#mbMenu').hidden = true; });
+  $('#mbMore').addEventListener('click', e => { e.stopPropagation(); $('#mbMenu').hidden = !$('#mbMenu').hidden; });
+})();
+</script>
+</div>

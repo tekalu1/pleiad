@@ -1,0 +1,10 @@
+{
+  "appId": "com.procway.pleiad",
+  "appName": "Pleiad",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": false,
+    "webContentsDebuggingEnabled": false
+  }
+}
