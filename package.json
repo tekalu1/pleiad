@@ -2,7 +2,7 @@
   "name": "agent-host",
   "private": true,
   "license": "Apache-2.0",
-  "version": "0.1.0-beta.34",
+  "version": "0.1.0-beta.35",
   "type": "module",
   "engines": {
     "node": ">=20.19.0"
