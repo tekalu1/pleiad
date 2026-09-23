@@ -29,4 +29,28 @@
 .mp-panel .mp-state:empty { display:none; }
 .mp-panel details { margin-top:18px; }
 .mp-panel summary { cursor:pointer; color:var(--ink-blue); }
-@media(max-width:520px) { .mp-grid { grid-template-columns:1fr; } .mp-panel { padding:14px; } }
+/* 互換の接続先（web/compat-endpoints.mjs）。一覧の行の補足・追加の流れの段・プリセット・確認の結果 */
+.mp-card .mp-ln { display:block; margin-top:2px; font-size:12px; color:var(--ink-weak); overflow-wrap:anywhere; }
+.mp-card .mp-ln b { color:var(--ink); font-weight:600; }
+.mp-steps { display:flex; gap:4px 14px; flex-wrap:wrap; font-size:12px; color:var(--ink-weak); margin:0 0 4px; }
+.mp-steps .done { color:var(--ink); }
+.mp-steps .cur { color:var(--ink-blue); font-weight:600; }
+.mp-step { margin:20px 0 4px; font-size:12px; font-weight:600; letter-spacing:.04em; color:var(--ink-weak); }
+.mp-step b { color:var(--ink); }
+.mp-presets { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:6px; margin-top:6px; }
+.mp-preset { display:block; text-align:left; padding:8px 12px; border-radius:var(--r-m); background:transparent; color:var(--ink); cursor:pointer; }
+.mp-preset:hover { background:var(--surface-2); }
+.mp-preset:disabled { color:var(--ink-weak); cursor:default; background:transparent; }
+.mp-preset[aria-pressed="true"] { background:var(--surface-paper); box-shadow:0 4px 14px var(--shadow); }
+.mp-preset small { display:block; font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mp-result { margin-top:12px; padding:10px 14px; background:var(--surface-paper); border-radius:var(--r-m); overflow-wrap:anywhere; }
+.mp-result strong { display:block; }
+.mp-result .mp-ln { display:block; margin-top:2px; font-size:12px; color:var(--ink-weak); }
+.mp-keyrow { display:flex; gap:6px; align-items:center; }
+.mp-keyrow input { flex:1; }
+.mp-seg { display:inline-flex; max-width:100%; flex-wrap:wrap; background:var(--surface-2); }
+.mp-field > small { display:block; margin-top:4px; }
+.mp-seg button { flex:none; padding:4px 12px; }
+.mp-check { display:flex; gap:8px; align-items:center; margin-top:14px; }
+.mp-link { color:var(--ink-blue); }
+@media(max-width:520px) { .mp-grid { grid-template-columns:1fr; } .mp-panel { padding:14px; } .mp-presets { grid-template-columns:repeat(2,minmax(0,1fr)); } }

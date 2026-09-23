@@ -7,6 +7,8 @@ import { setupUpdates } from './updates.mjs';
 import { setupUsage } from './usage.mjs';
 import { setupOnboarding } from "./onboarding.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
+import { setupCompatEndpoints } from './compat-endpoints.mjs';
+import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
@@ -93,6 +95,8 @@ const state = {
   effortDisabled: false,
   account: "",         // 次のターンの Claude のアカウント（空 = ログイン中のアカウント）
   accountShown: false, // アカウントの選択を出すか（登録が無く、選んでもいない会話には出さない）
+  endpoint: "",        // 次のターンの互換の接続先（空 = 公式）。Claude Code・Codex だけ
+  endpointShown: false, // 接続先の節を出すか（接続先を選べるエージェントのとき）
   prefs: {},           // 新しいセッションを始めるときの既定
   awaitingSession: false,  // 新規セッションの id 待ち（自分が送った直後だけ真）
   toolCards: new Map(),// tool_use_id -> 描いたカード（結果を後から差し込む）
@@ -863,6 +867,11 @@ function onEvent(ev, replay = false) {
       claudeAccounts.invalidate();
       syncTopbar().catch(() => {});
       break;
+    case 'compatEndpointsChanged':
+      compatEndpoints.invalidate();
+      syncTopbar().catch(() => {});
+      renderAuth();
+      break;
     case "nextSettings":
       return refresh();
     case "backend":
@@ -918,7 +927,7 @@ function onEvent(ev, replay = false) {
     // ツールの戻り。対応するカードに結果を差し込む（別の吹き出しにはしない）
     case "tool.result": {
       const card = state.toolCards.get(ev.id);
-      if (card) applyToolResult(card, ev);
+      if (card) { applyToolResult(card, ev); noteEndpointFailure(card, ev); }
       return;
     }
 
@@ -1244,6 +1253,13 @@ function renderAuth() {
     if (b.capabilities?.claudeAccounts && st.installed !== false) {
       const button = el('button', 'btn', 'アカウント'); button.type = 'button'; button.onclick = () => claudeAccounts.open(); row.append(button);
     }
+    // 互換の接続先（Claude Code の Anthropic 互換・Codex の Responses 互換）。同じページの下に管理の面を開く
+    if (b.capabilities?.compatEndpoints && st.installed !== false) {
+      const button = el('button', 'btn', '接続先'); button.type = 'button';
+      button.setAttribute('aria-expanded', String(compatEndpoints.openAgent === b.id));
+      button.onclick = () => compatEndpoints.open(b.id);
+      row.append(button);
+    }
     sec.append(row);
     if (st.installed !== false && st.supported && !st.loggedIn && !st.pending) need.push(b.label);
 
@@ -1386,10 +1402,13 @@ function paintSettingsNotice() {
     const changes = [];
     // 既定のモデルは実際に当たる名前を添える（分からなければ「既定」だけ）
     const fallback = state.models[""]?.resolvesTo || state.models[""]?.resolvedLabel ? `既定（${resolvedModel(state.models, "").label}）` : "既定";
-    if (next.backend !== s.backend || next.model !== (s.model ?? "")) changes.push(`${labelOf(next.backend)} / ${next.model ? state.models[next.model]?.label ?? next.model : fallback}${next.backend !== s.backend && !next.model && fallback === "既定" ? "（変更先の既定モデル）" : ""}`);
+    const nextEndpoint = next.endpoint ?? (next.backend !== s.backend ? "" : s.compatEndpoint ?? "");
+    const epFallback = nextEndpoint ? `既定（${compatEndpoints.get(nextEndpoint)?.roles?.main || "接続先のメイン"}）` : fallback;
+    if (next.backend !== s.backend || next.model !== (s.model ?? "")) changes.push(`${labelOf(next.backend)} / ${next.model ? (nextEndpoint ? next.model : state.models[next.model]?.label ?? next.model) : epFallback}${next.backend !== s.backend && !next.model && fallback === "既定" ? "（変更先の既定モデル）" : ""}`);
     if (next.effort !== undefined && next.effort !== (s.effort ?? "")) changes.push(`エフォート: ${next.effort || "既定に従う"}`);
     if (next.cwd) changes.push(`作業ディレクトリ: ${next.cwd}`);
     if (next.mode !== undefined) changes.push(`承認モード: ${state.modes[next.mode]?.label ?? next.mode}`);
+    if (next.endpoint !== undefined) changes.push(`接続先: ${endpointLabel(next.endpoint)}`);
     if (next.account !== undefined) changes.push(`アカウント: ${accountLabel(next.account)}`);
     $("nextSettingsText").textContent = `${changes.join(" · ")} · 次に送信すると適用されます`;
   }
@@ -1442,6 +1461,57 @@ async function syncAccount(s, bid) {
   state.account = value;
 }
 
+// 互換の接続先の設定（web/compat-endpoints.mjs）。入力欄の面が候補を引くので、controls より先に作る
+const compatEndpoints = setupCompatEndpoints({ cmd,
+  openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
+  onChange: () => { syncTopbar().catch(() => {}); },
+  officialLine: (agent) => { const st = state.auth.get(agent); return st?.loggedIn ? (st.account || 'ログイン済み') : ''; } });
+compatEndpoints.onOpen(() => renderAuth());
+function endpointLabel(id) {
+  if (!id) return "公式";
+  return compatEndpoints.get(id)?.name ?? "削除された接続先";
+}
+/** 会話の次のターンの接続先（予約があればそれ。エージェントを変える予約で接続先が書かれていなければ公式） */
+function endpointOf(s) {
+  if (!s) return "";
+  const next = s.nextSettings;
+  return next?.endpoint ?? (next && next.backend !== s.backend ? "" : s.compatEndpoint ?? "");
+}
+let endpointWarning = "";
+/** 入力欄の接続先の出し分け。選べないエージェントでは節を出さない。消えた・確認に失敗した接続先は入力欄の上に一文 */
+async function syncEndpoint(s, bid) {
+  const supported = Boolean(capsOf(bid).compatEndpoints);
+  const list = supported ? await compatEndpoints.load().catch(() => []) : [];
+  const value = supported ? endpointOf(s) : "";
+  state.endpointShown = Boolean(s) && supported;
+  const chosen = list.find((e) => e.id === value);
+  const warning = !value ? "" : !chosen ? "選択中の接続先は削除されています。モデルのチップの面で接続先を選び直してください"
+    : chosen.ready === false ? `接続先「${chosen.name}」は前回の確認に失敗しています。設定 › エージェント設定の「接続先」で確認し直してください` : "";
+  if (endpointWarning && $("settingsError").textContent === endpointWarning) $("settingsError").textContent = "";
+  endpointWarning = warning;
+  if (warning) $("settingsError").textContent = warning;
+  state.endpoint = value;
+}
+/** 入力欄のモデルの面に渡す接続先の値と口（web/composer-controls.mjs の endpointSection / compatModelSection） */
+function endpointView(bid) {
+  if (!state.endpointShown) return null;
+  const list = compatEndpoints.list(bid);
+  const defaults = compatEndpoints.defaults();
+  const row = list.find((e) => e.id === state.endpoint) ?? null;
+  const official = bid === "claude" ? "Anthropic · ログイン中のアカウントで使う" : "OpenAI · ChatGPT のログインで使う";
+  return {
+    selected: state.endpoint, row, lost: lostText(bid),
+    roleNames: bid === "claude" ? CLAUDE_ROLES.map((r) => [r.key, r.short]) : [],
+    options: [
+      { value: "", label: "公式", sub: official, isDefault: !defaults[bid] },
+      ...list.map((e) => ({ value: e.id, label: e.name, isDefault: defaults[bid] === e.id, warn: e.ready === false,
+        sub: `${KIND_LABEL[e.kind]} · ${e.baseUrl.replace(/^https?:\/\//, "")}${e.ready === false ? " · ⚠ 確認に失敗しています" : ""}`, title: `${e.name}（${e.baseUrl}）` })),
+      ...(state.endpoint && !row ? [{ value: state.endpoint, label: "削除された接続先", sub: "選び直してください", gone: true }] : []),
+    ],
+    manage: () => compatEndpoints.open(bid),
+  };
+}
+
 // 入力欄の設定のチップ（web/composer-controls.mjs）。値は state に持ち、チップは get() で毎回読む
 const controls = setupComposerControls({
   cmd,
@@ -1455,6 +1525,7 @@ const controls = setupComposerControls({
       models: state.models, model: state.model,
       efforts: state.efforts, effort: state.effort, effortDisabled: state.effortDisabled,
       accounts: state.accountShown ? accountOptions() : null, account: state.account,
+      endpoint: endpointView(bid),
       modes: state.modes, mode: state.mode,
     };
   },
@@ -1467,6 +1538,8 @@ const controls = setupComposerControls({
     },
     backend: (v) => { state.shownBackend = v; controls.paint(); reserveSettings({ backend: v, model: "" }); },
     model: (v) => { state.model = v; controls.paint(); reserveSettings({ model: v, rememberModel: true }); },
+    // 互換の接続先。'' は公式。モデルは接続先の既定（メイン）に戻る（server も同じ）
+    endpoint: (v) => { state.endpoint = v; state.model = ""; state.effort = ""; controls.paint(); reserveSettings({ endpoint: v }); },
     // Claude のアカウント。'' はログイン中のアカウント（既定）
     account: (v) => { state.account = v; controls.paint(); reserveSettings({ account: v }); },
     effort: (effort) => { state.effort = effort; controls.paint(); reserveSettings({ effort, rememberEffort: true }); },
@@ -1847,7 +1920,7 @@ async function openSubagent(a) {
       if (m.text) { const b = el("div", "body"); b.innerHTML = renderAssistantMarkdown(m.text, []); ai.append(b); }
       for (const c of m.toolCalls ?? []) {
         const card = renderToolCall(c.name, c.input, { id: c.id });
-        if (c.result) applyToolResult(card, c.result);
+        if (c.result) { applyToolResult(card, c.result); noteEndpointFailure(card, c.result); }
         ai.append(card);
       }
       if (!m.toolCalls) for (const t of m.tools ?? []) ai.append(renderToolCall(t, null));
@@ -2350,6 +2423,7 @@ async function rowMenu(s, x, y) {
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, backend: s.nextSettings?.backend ?? s.backend, model: id, rememberModel: true })
           .then(refresh).catch((e) => sys(`モデルの変更に失敗: ${escText(e.message)}`)),
       })) },
+    ...(await rowEndpointItems(s)),
     ...(await rowAccountItems(s)),
     { sep: true },
     { label: "エフォート（次のターン）", hint: (s.nextSettings?.effort ?? s.effort) || efforts[""]?.resolvesTo || "既定", sub: () =>
@@ -2484,6 +2558,37 @@ async function rowAccountItems(s) {
   })) }];
 }
 
+/**
+ * 互換の接続先の会話で Web 検索が失敗したら、そのカードに理由を一文足す（画面 4）。
+ * エージェントの失敗文だけでは接続先が原因だと分からないため。公式の会話では何もしない
+ */
+function noteEndpointFailure(card, result) {
+  if (!card || !(result?.isError ?? result?.is_error) || !/^(WebSearch|webSearch|web_search)$/.test(card.dataset?.tool ?? "")) return;
+  const s = state.sessions.find((x) => x.id === state.current);
+  const e = s?.compatEndpoint ? compatEndpoints.get(s.compatEndpoint) : null;
+  if (!e || card.querySelector(".tc-note")) return;
+  const note = el("p", "tc-note", `この接続先（${e.name}）では Web 検索を使えません。`);
+  const more = el("button", "clink", "接続先の詳細"); more.type = "button";
+  more.onclick = () => compatEndpoints.open(e.agent);
+  note.append(" ", more);
+  card.append(note);   // 畳んだ詳細（details）の外に置く。畳んでいても見える
+}
+
+/** 右クリックメニューの接続先（入力欄と同じ選択肢。接続先を選べるエージェントの会話だけ） */
+async function rowEndpointItems(s) {
+  const bid = s.nextSettings?.backend ?? s.backend;
+  if (!capsOf(bid).compatEndpoints) return [];
+  const list = (await compatEndpoints.load().catch(() => [])).filter((e) => e.agent === bid);
+  const value = endpointOf(s);
+  if (!list.length && !value) return [];
+  const choices = [{ value: "", label: "公式", note: "" }, ...list.map((e) => ({ value: e.id, label: e.name, note: e.ready === false ? "⚠ 確認に失敗" : "" }))];
+  return [{ label: "接続先（次のターン）", hint: endpointLabel(value), sub: () => choices.map((c) => ({
+    label: c.label, hint: c.note, checked: c.value === value,
+    onClick: () => cmd("setTurnSettings", { sessionId: s.id, endpoint: c.value })
+      .then(refresh).catch((e) => sys(`接続先の変更に失敗: ${escText(e.message)}`)),
+  })) }];
+}
+
 // AI がタイトルを考えている会話。その間は欄に書き込ませず、途中で一覧が更新されても開け直さない
 const titleGenerating = new Set();
 function syncTitleControls() {
@@ -2533,8 +2638,11 @@ async function syncTopbar() {
   if (s) { state.mode = s.mode ?? "default"; state.model = s.nextSettings?.model ?? s.model ?? ""; }
   else { const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {}; state.mode = prefs.mode ?? "default"; state.model = prefs.model ?? ""; }
   state.mode = selectedMode(s, bid, modes);
-  if (!(state.model in models)) state.model = "" in models ? "" : Object.keys(models)[0] ?? "";
-  const efforts = await cmd('efforts', { backend: bid, model: state.model, cwd: s?.nextSettings?.cwd || s?.cwd || undefined }).catch(() => ({ '': { label: '既定に従う' } }));
+  await syncEndpoint(s, bid);
+  if (state.current !== id || version !== topbarVersion) return;
+  // 互換の接続先のモデルは接続先の一覧＋自由入力なので、公式の一覧に無くても戻さない
+  if (!state.endpoint && !(state.model in models)) state.model = "" in models ? "" : Object.keys(models)[0] ?? "";
+  const efforts = await cmd('efforts', { backend: bid, model: state.model, cwd: s?.nextSettings?.cwd || s?.cwd || undefined, ...(state.endpoint ? { endpoint: state.endpoint } : {}) }).catch(() => ({ '': { label: '既定に従う' } }));
   if (state.current !== id || version !== topbarVersion) return;
   state.efforts = efforts;
   state.effort = s?.nextSettings?.effort ?? s?.effort ?? '';
@@ -2634,7 +2742,7 @@ function paintHistory(fromMi = 0) {
       if (m.thinking) node.append(thinkFromText(m.thinking));
       for (const c of m.toolCalls ?? []) {
         const card = renderToolCall(c.name, c.input, { id: c.id });
-        if (c.result) applyToolResult(card, c.result);
+        if (c.result) { applyToolResult(card, c.result); noteEndpointFailure(card, c.result); }
         node.append(card);
         if (c.id) state.toolCards.set(c.id, card);
       }
@@ -3169,7 +3277,7 @@ setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lo
   await Promise.all([...draftWrites.values()]);
 } });
 function openSettings() { onboarding.open(); }
-setupUsage({ $, cmd, getBackends: () => state.backends, page: onboarding.page, isOpen: onboarding.isOpen,
+setupUsage({ $, cmd, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
   onUsageLogin: accountId => claudeAccounts.open({ usageLogin: accountId }) });
 clearThread();

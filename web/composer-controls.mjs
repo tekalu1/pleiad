@@ -11,7 +11,8 @@
 //     面の外を押すと閉じる。面は画面の幅に収める（360px の画面でもはみ出さない）
 import { el, svgEl, relTime } from "./dom.mjs";
 import { isComposingKey } from "./keyboard.mjs";
-import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault } from "./composer-labels.mjs";
+import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, endpointChipLabel } from "./composer-labels.mjs";
+import { shortModel } from "./compat-presets.mjs";
 
 const FOLDER = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
 const FOLDER_ADD = "M12 11v5M9.5 13.5h5";
@@ -115,9 +116,11 @@ document.addEventListener("pointerdown", (e) => {
 window.addEventListener("resize", () => openPanel?.place());
 
 /** 一覧の行。main（名前）+ sub（補足）+ right（札・時刻）。選ばれていれば ✓ */
-function row({ on, main, sub, right, tag, mono, danger, onPick, title, key }) {
+function row({ on, main, sub, right, tag, mono, danger, onPick, title, key, disabled }) {
   const b = el("button", "copt" + (mono ? " cmono" : "") + (danger ? " danger" : ""));
   b.type = "button";
+  // 選べない行（互換の接続先を選んでいる間の Claude のアカウント）。弱い字で ✓ を付けない
+  if (disabled) { b.disabled = true; b.setAttribute("aria-disabled", "true"); }
   if (key) b.dataset.key = key;
   b.setAttribute("role", "option");
   b.setAttribute("aria-selected", on ? "true" : "false");
@@ -281,7 +284,96 @@ export function setupComposerControls({ cmd, get, on }) {
       }
       parts.push(seg);
     }
-    parts.push(head("モデル"));
+    // 互換の接続先（Claude Code・Codex）。先頭は「公式」、下に登録した接続先。選んでいる間は使えないものを一行で出す
+    const ep = d.endpoint;
+    if (ep) parts.push(...endpointSection(d));
+    if (ep?.row) parts.push(...compatModelSection(d));
+    else parts.push(...officialModelSection(d));
+    parts.push(head("エフォート（考える量）"));
+    parts.push(effortBlock(d));
+    if (d.accounts) {
+      parts.push(head("Claude のアカウント"));
+      // 互換の接続先ではアカウントを使わない（接続先のキーで送る）。節は残し、選べない見た目と理由を出す
+      const off = Boolean(ep?.row);
+      if (off) parts.push(el("p", "cnote", "互換の接続先ではアカウントを使いません。接続先に登録したキーで送ります。"));
+      parts.push(listbox("Claude のアカウント", d.accounts.map((a) => row({
+        on: !off && a.value === d.account, main: a.label, right: off ? "" : a.hint, tag: !off && a.value === "" ? "既定" : "", key: `account:${a.value}`, disabled: off,
+        onPick: () => { if (!off && a.value !== d.account) on.account(a.value); },
+      }))));
+    }
+    if (ep) {
+      const foot = el("div", "cfoot");
+      const manage = el("button", "clink", "接続先を管理…");
+      manage.type = "button";
+      manage.dataset.key = "epmanage";
+      manage.onclick = () => { model.hide(false); ep.manage(); };
+      foot.append(manage);
+      parts.push(foot);
+    }
+    pop.replaceChildren(...parts);
+  }
+
+  /** 接続先の節。d.endpoint は client.mjs の endpointView() */
+  function endpointSection(d) {
+    const ep = d.endpoint;
+    const out = [head("接続先")];
+    out.push(listbox("接続先", ep.options.map((o) => row({
+      on: o.value === ep.selected, main: (o.warn ? "⚠ " : "") + o.label, sub: o.sub, tag: o.isDefault ? "既定" : "", key: `endpoint:${o.value}`, title: o.title ?? o.label,
+      onPick: () => { if (o.value !== ep.selected && !o.gone) on.endpoint(o.value); },
+    }))));
+    if (ep.row) {
+      const lost = el("p", "cnote");
+      lost.append(el("b", null, "この接続先で使えないもの: "), ep.lost);
+      out.push(lost);
+    }
+    return out;
+  }
+
+  /** 互換の接続先のモデル: ID の入力欄（Enter で決める）＋接続先の一覧。空はメインのモデル（「既定」の札） */
+  function compatModelSection(d) {
+    const ep = d.endpoint;
+    const out = [head("モデル")];
+    const main = ep.row.roles?.main ?? "";
+    const input = el("input", "cpath");
+    input.value = d.model ?? "";
+    input.placeholder = main ? `モデル ID（空ならメインの ${shortModel(main)}）` : "モデル ID";
+    input.setAttribute("aria-label", "モデル ID（Enter で決める）");
+    input.dataset.key = "epmodel";
+    input.autocomplete = "off"; input.spellcheck = false;
+    const box = el("div");
+    const roleOf = (id) => ep.roleNames.filter(([k]) => ep.row.roles?.[k] === id && k !== "main").map(([, n]) => n).join("・");
+    const commit = (value) => {
+      const v = String(value ?? "").trim();
+      const next = v === main ? "" : v;
+      if (next !== (d.model ?? "")) on.model(next);
+    };
+    const paintList = () => {
+      const q = input.value.trim().toLowerCase();
+      const all = [...new Set([main, ...(ep.row.models ?? [])].filter(Boolean))];
+      const exact = all.some((m) => m.toLowerCase() === q);
+      const shown = q && !exact ? all.filter((m) => m.toLowerCase().includes(q)) : all;
+      const cur = d.model || main;
+      box.replaceChildren(...(shown.length ? [listbox("モデルの候補", shown.slice(0, 200).map((m) => row({
+        on: m === cur, main: m, mono: true, key: `epmodel:${m}`, title: m, tag: m === main ? "既定" : "", right: roleOf(m),
+        onPick: () => commit(m),
+      })))] : [el("p", "cnote", q ? "一覧にありません。Enter でこの ID を使います。" : "一覧がありません。ID を入力してください。")]));
+    };
+    input.addEventListener("input", paintList);
+    input.addEventListener("keydown", (e) => {
+      if (isComposingKey(e) || e.key !== "Enter") return;
+      e.preventDefault();     // フォームの送信にしない
+      commit(input.value);
+    });
+    paintList();
+    out.push(input, box, el("p", "cnote", d.backend === "claude"
+      ? "一覧は接続を確認したときに取ったものです。Opus・Sonnet・Haiku 相当は接続先の設定で割り当てます。"
+      : "一覧は接続を確認したときに取ったものです。"));
+    return out;
+  }
+
+  /** 公式のモデルの一覧（版付きの名前＋補足、既定の行に「既定」の札） */
+  function officialModelSection(d) {
+    const parts = [head("モデル")];
     const models = d.models ?? {};
     const { id: resolved, entry: current } = resolvedModel(models, d.model);
     const def = models[""]?.resolvesTo;
@@ -303,16 +395,7 @@ export function setupComposerControls({ cmd, get, on }) {
       }));
     }
     parts.push(listbox("モデル", rows));
-    parts.push(head("エフォート（考える量）"));
-    parts.push(effortBlock(d));
-    if (d.accounts) {
-      parts.push(head("Claude のアカウント"));
-      parts.push(listbox("Claude のアカウント", d.accounts.map((a) => row({
-        on: a.value === d.account, main: a.label, right: a.hint, tag: a.value === "" ? "既定" : "", key: `account:${a.value}`,
-        onPick: () => { if (a.value !== d.account) on.account(a.value); },
-      }))));
-    }
-    pop.replaceChildren(...parts);
+    return parts;
   }
 
   function effortBlock(d) {
@@ -332,7 +415,7 @@ export function setupComposerControls({ cmd, get, on }) {
     const ticks = el("div", "ticks");
     const { label: modelLabel } = resolvedModel(d.models, d.model);
     // 既定に従うときに誰の設定が効くか
-    const owner = d.backend === "antigravity" ? "agy " : "エージェント";
+    const owner = d.endpoint?.row ? "接続先" : d.backend === "antigravity" ? "agy " : "エージェント";
     const paintVal = (v) => {
       val.textContent = v || "既定";
       note.textContent = !v ? `（${owner}の設定に従う）` : v === def && !d.effort ? `（${modelLabel} の既定）` : "";
@@ -400,8 +483,11 @@ export function setupComposerControls({ cmd, get, on }) {
     chips.cwd.dataset.value = cwd;
     chips.cwd.disabled = Boolean(d.cwdDisabled);
     // モデル
-    const label = modelChipLabel(d.models, d.model, d.efforts, d.effort);
-    const full = label;
+    // 互換の接続先は「接続先 · モデル · 段」。モデル ID の `/` より前は省き、全体は title に出す
+    const row = d.endpoint?.row;
+    const epLabel = row ? endpointChipLabel({ connection: row.name, model: shortModel(d.model || row.roles?.main || ""), fullModel: d.model || row.roles?.main || "", effort: effortStops(d.efforts, d.effort).current }) : null;
+    const label = epLabel ? epLabel.text : modelChipLabel(d.models, d.model, d.efforts, d.effort);
+    const full = epLabel ? epLabel.full : label;
     modelName.textContent = label;
     chips.model.title = `${full}（エージェント・モデル・エフォート。次のターンから適用）`;
     chips.model.setAttribute("aria-label", `モデルとエフォート: ${full}`);

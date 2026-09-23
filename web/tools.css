@@ -82,3 +82,5 @@
 .tc-todo-completed{opacity:.6}
 
 /* .tc-done は見た目を変えない。結果が返ったことを client.mjs 側が見分けるための印。 */
+/* 互換の接続先で使えない機能が失敗したときに Pleiad が足す一文（web/client.mjs の noteEndpointFailure） */
+.tc-note{margin:4px 0 0;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
