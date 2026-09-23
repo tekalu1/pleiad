@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createCompatEndpoints, claudeCompatEnv, claudeCompatVars, codexCompatThread, codexProviderId, writeClaudeFlagSettings,
-  sweepClaudeFlagSettings, normalizeUrl, EndpointError, CheckError, NO_KEY } from '../../core/compat-endpoints.mjs';
+  sweepClaudeFlagSettings, normalizeUrl, EndpointError, CheckError, NO_KEY, delegatedEndpoint } from '../../core/compat-endpoints.mjs';
 import { createSecretStore, plainCipher } from '../../core/secret-store.mjs';
 import { startFakeCompatApi } from '../lib/fake-compat-api.mjs';
 
@@ -136,6 +136,11 @@ export default async function (t) {
     const deleted = await rejects(() => eps.resolve(id, 'claude'));
     t.ok('削除済みの接続先は止める', deleted instanceof EndpointError && deleted.code === 'deleted');
 
+    // ---- 委譲の規則（決定 3）
+    t.ok('同じエージェントへの委譲は親の接続先を継ぐ', delegatedEndpoint('claude', 'claude', 'ep-x') === 'ep-x' && delegatedEndpoint('codex', 'codex', 'ep-y') === 'ep-y');
+    t.ok('違うエージェントへの委譲は公式に戻す', delegatedEndpoint('claude', 'codex', 'ep-x') === '' && delegatedEndpoint('codex', 'claude', 'ep-y') === '');
+    t.ok('親が公式なら子も公式', delegatedEndpoint('claude', 'claude', '') === '');
+
     // ---- Claude への注入
     const ep = { id: 'ep-aaaaaaaaaaaa', name: 'X', baseUrl: 'https://gw.example', auth: 'bearer', key: KEY,
       roles: { main: 'm/main', opus: 'm/opus', sonnet: 'm/sonnet', haiku: 'm/haiku' }, options: {} };
@@ -157,9 +162,10 @@ export default async function (t) {
     t.ok('x-api-key の接続先は ANTHROPIC_API_KEY に入れる', xk.ANTHROPIC_API_KEY === KEY && xk.ANTHROPIC_AUTH_TOKEN === '');
     const nokey = claudeCompatVars({ ...ep, auth: 'none', key: '' });
     t.ok('キーの無い接続先にもダミーの Bearer を入れる（ログイン中の OAuth を送らせない）', nokey.ANTHROPIC_AUTH_TOKEN === NO_KEY);
-    const flag = await writeClaudeFlagSettings(dir, ep);
+    const flag = await writeClaudeFlagSettings(dir, ep, { claudeMdExcludes: ['**/CLAUDE.md'] });
     const flagBody = JSON.parse(await fs.readFile(flag.file, 'utf8'));
     t.ok('フラグ設定のファイルに同じ env を書く', flagBody.env.ANTHROPIC_BASE_URL === 'https://gw.example' && flagBody.env.ANTHROPIC_AUTH_TOKEN === KEY);
+    t.ok('Pleiad の担当のフラグ設定も同じファイルに入れる', flagBody.claudeMdExcludes?.[0] === '**/CLAUDE.md');
     if (process.platform !== 'win32') t.ok('フラグ設定のファイルは 0600', ((await fs.stat(flag.file)).mode & 0o777) === 0o600);
     await flag.dispose();
     t.ok('dispose でフラグ設定のファイルを消す', await fs.access(flag.file).then(() => false, () => true));

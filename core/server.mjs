@@ -32,6 +32,7 @@ import { DEFAULT_OWNERS, pathKey } from './context-settings.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createContextSession } from './context-session.mjs';
 import { createSecretStore, defaultCipher } from './secret-store.mjs';
+import { createCompatEndpoints, sweepClaudeFlagSettings, isModelId, redactSecret, CheckError, delegatedEndpoint } from './compat-endpoints.mjs';
 import { createClaudeAccounts, redactToken, normalizeName as normalizeAccountName, fetchTokenOrg, ANTHROPIC_API } from './claude-accounts.mjs';
 import { createPlyMcp } from './ply-mcp.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
@@ -112,6 +113,12 @@ const claudeLogin = createClaudeLogin({
   openExternal: url => process.parentPort?.postMessage({ type: 'open-external', url }),
 });
 process.on('exit', () => claudeLogin.cancelAll());
+// 互換の接続先（Claude Code の Anthropic 互換 / Codex の Responses 互換。会話ごとに選ぶ。core/compat-endpoints.mjs）。
+// キーは Claude のアカウント・MCP と同じ暗号化の置き場。前の起動で消し損ねたフラグ設定のファイル（キーを含む）は起動時に片付ける
+const compatSecrets = createSecretStore({ file: path.join(store.dataDir, 'compat-endpoint-secrets.json'), cipher: secretCipher });
+compatSecrets.migrate().catch(() => {});
+const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets: compatSecrets });
+sweepClaudeFlagSettings(store.dataDir).catch(() => {});
 const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.dataDir, 'mcp-locks'),
   // Client ID Metadata Document の URL（設定値。既定は無し。公開する文書のひな形は docs/mcp-oauth-client-metadata.json）
   clientMetadataUrl: async () => (await plyMcp.settings().catch(() => ({}))).clientMetadataUrl ?? undefined,
@@ -337,6 +344,8 @@ function sessionRow(b, s, extra = {}) {
     nextSettings: extra.nextSettings ?? null,
     // Claude のアカウント（'' = ログイン中のアカウント）。id だけでトークンは載せない
     claudeAccount: extra.claudeAccount ?? "",
+    // 互換の接続先（'' = 公式）。id だけでキーは載せない
+    compatEndpoint: extra.compatEndpoint ?? "",
     // 対応を終えたエージェントの会話（core/backends/index.mjs の RETIRED）。読めるが続けられない理由
     ...(b.retired ? { retired: b.retired } : {}),
     unsent: extra.unsent ?? false,
@@ -429,25 +438,37 @@ function refuseRetired(backend) {
  * 段はモデルごとに違う（Claude の Haiku は段を持たない）。以前は全モデル共通の段だったので、
  * 保存済みの値で送信を止めると、それまで動いていた会話が送れなくなる。
  */
-async function resolveEffort(sessionId, asked, backend, model, cwd) {
+async function resolveEffort(sessionId, asked, backend, model, cwd, endpoint = null) {
   const current = sessionId ? await store.get(sessionId) : {};
   const prefs = await store.getPrefs();
-  const value = asked ?? current.effort ?? prefs.backends?.[backend.id]?.effort ?? '';
-  if (asked !== undefined) return validateEffort(backend, value, model, cwd);
-  return Object.hasOwn(await effortOptions(backend, model, cwd), value) ? value : '';
+  // 互換の接続先では公式の既定（prefs）を持ち込まない（段の意味が接続先ごとに違う）
+  const value = asked ?? current.effort ?? (endpoint ? '' : prefs.backends?.[backend.id]?.effort) ?? '';
+  if (asked !== undefined) return validateEffort(backend, value, model, cwd, endpoint);
+  return Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value) ? value : '';
 }
 
-async function validModel(backend, model, cwd) {
+/**
+ * モデルの検証。互換の接続先を選んでいる会話（endpointId）は、接続先の一覧＋自由入力なので形だけを見る
+ * （`/` や `:` を含む ID も通す。黙って既定に戻さない）。'' は接続先のメインのモデル
+ */
+async function validModel(backend, model, cwd, endpointId = '') {
+  if (endpointId) return model === '' || isModelId(model);
   return backend.validModel ? backend.validModel(model, cwd) : Object.hasOwn(await backend.models(cwd), model);
 }
-async function resolveModel(sessionId, given, backend, cwd) {
+async function resolveModel(sessionId, given, backend, cwd, endpointId = '') {
   const asked = typeof given === "string" ? given : null;
   const saved = sessionId ? (await store.get(sessionId)).model : null;
   const prefs = await store.getPrefs();
-  const fallback = (prefs.backends ? prefs.backends[backend.id] : prefs)?.model;
+  // 公式の既定のモデル（prefs）は互換の接続先へは持ち込まない
+  const fallback = endpointId ? '' : (prefs.backends ? prefs.backends[backend.id] : prefs)?.model;
   const model = asked ?? saved ?? fallback ?? "";
-  return await validModel(backend, model, cwd) ? model : "";
+  return await validModel(backend, model, cwd, endpointId) ? model : "";
 }
+
+/** 接続先を選べるエージェントか（Claude Code・Codex） */
+const endpointCapable = backend => Boolean(backend?.capabilities?.compatEndpoints);
+/** 一覧の行（キー無し）。effortOptions に渡す。'' なら null */
+const endpointRow = async id => id ? await compatEndpoints.get(id) : null;
 
 /** セッションに覚えさせた承認モードを読む。不明なものは既定に落とす。 */
 function firstMode(modes) {
@@ -696,6 +717,7 @@ function makeEmit(turn) {
         store.setMode(sessionId, mode),
           store.setModel(sessionId, model ?? ""),
           store.setSessionData(sessionId, "effort", turn.info.effort ?? ""),
+          ...(turn.info.endpoint ? [store.setSessionData(sessionId, 'compatEndpoint', turn.info.endpoint)] : []),
           ...(turn.contextRecord ? [store.setSessionData(sessionId, 'contextSession', turn.contextRecord)] : []),
         // 新規セッションに最初から付ける状態。id が無いうちは host が予約として持っていて、
         // 生まれた瞬間にここで書く。経路は setStatus と同じ（ネイティブ + sidecar + イベント）
@@ -1047,8 +1069,12 @@ agentTasks = await createAgentTasks({
     if (!backend) throw new Error('指定したバックエンドは有効ではありません');
     const cwd = path.resolve(parent.info.cwd, args.cwd ?? '.');
     if (!(await fs.stat(cwd)).isDirectory()) throw new Error('cwd はディレクトリを指定してください');
-    const model = await resolveModel(null, args.model, backend, cwd);
-    const effort = await resolveEffort(null, args.effort, backend, model, cwd);
+    // 接続先（決定 3）: 同じエージェントへの委譲なら親の会話の接続先を継ぐ。違うエージェントへは公式に戻す（形式が合わない）
+    const parentEndpoint = (await store.get(owner)).compatEndpoint ?? '';
+    const inherited = endpointCapable(backend) ? delegatedEndpoint(parent.backend?.id, backend.id, parentEndpoint) : '';
+    const endpoint = inherited && await compatEndpoints.has(inherited, backend.id) ? inherited : '';
+    const model = await resolveModel(null, args.model, backend, cwd, endpoint);
+    const effort = await resolveEffort(null, args.effort, backend, model, cwd, await endpointRow(endpoint));
     // 承認モードは委譲を受け付けた側（agentBridge の call）が親の強さから決めてある。
     // ここで決め直すと「聞いた内容」と「実際に動く強さ」がずれるので、来た値をそのまま使う。
     const modes = backend.modes();
@@ -1063,6 +1089,7 @@ agentTasks = await createAgentTasks({
       // 子は親の会話のアカウントで走る（親が別のエージェントでも、その会話で選んであるものを継ぐ）
       const parentAccount = (await store.get(owner)).claudeAccount ?? '';
       if (parentAccount) await store.setSessionData(sessionId, 'claudeAccount', parentAccount);
+      if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
       if (signal?.aborted) throw new Error('中断しました');
     } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
     return { backend: backend.id, model, effort, cwd, mode, sessionId };
@@ -1132,13 +1159,22 @@ async function runTurnInternal(args, onStarted, hooks) {
     const { cwd, changedFrom } = await resolveCwd(sessionId, reserved?.cwd ?? args?.cwd, backend);
     // Claude のアカウント。削除済み・トークンが読めないものを選んでいる会話は、ここで止める
     // （黙ってログイン中のアカウントで走らせない）。予約の切り替えより前に確かめる
-    const accountId = reserved?.account !== undefined ? reserved.account : sessionId ? (await store.get(sessionId)).claudeAccount ?? "" : "";
     const accountBackend = (reserved && getBackend(reserved.backend)) || backend;
-    const account = accountBackend.capabilities?.claudeAccounts ? await claudeAccounts.resolve(accountId) : null;
+    // 互換の接続先（'' = 公式）。削除済み・確認に失敗している・キーを読めないものを選んでいる会話は、ここで止める
+    // （黙って公式で走らせない。アカウントと同じ扱い）。新しい会話は、設定で「既定にする」を押した接続先（無ければ公式）
+    const endpointId = !endpointCapable(accountBackend) ? ''
+      : reserved?.endpoint !== undefined ? reserved.endpoint
+      : sessionId ? (await store.get(sessionId)).compatEndpoint ?? ''
+      : typeof args?.endpoint === 'string' ? args.endpoint : await compatEndpoints.defaultFor(accountBackend.id);
+    const endpoint = endpointId ? await compatEndpoints.resolve(endpointId, accountBackend.id) : null;
+    const endpointInfo = endpointId ? await endpointRow(endpointId) : null;
+    // Claude のアカウント。互換の接続先では使わない（接続先のキーで送る）ので引かない
+    const accountId = reserved?.account !== undefined ? reserved.account : sessionId ? (await store.get(sessionId)).claudeAccount ?? "" : "";
+    const account = !endpoint && accountBackend.capabilities?.claudeAccounts ? await claudeAccounts.resolve(accountId) : null;
     if (reserved) {
       const target = getBackend(reserved.backend);
-      if (!target || !await validModel(target, reserved.model, cwd) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error("予約した設定は使用できません。選び直してください");
-      await validateEffort(target, reserved.effort ?? '', reserved.model, cwd);
+      if (!target || !await validModel(target, reserved.model, cwd, endpointId) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error("予約した設定は使用できません。選び直してください");
+      await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo);
       if (target.id !== backend.id) await switchBackend(sessionId, backend, target);
       backend = target;
     }
@@ -1149,12 +1185,13 @@ async function runTurnInternal(args, onStarted, hooks) {
       emitGlobal({ type: "cwd", sessionId, cwd, by: "human", reason: `${changedFrom} から` });
     }
     const permissionMode = await resolveMode(sessionId, reserved ? reserved.mode : args?.mode, backend);
-    const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd);
-    const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd);
+    const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd, endpointId);
+    const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
     if (sessionId) {
       await store.setModel(sessionId, model);
       await store.setSessionData(sessionId, "effort", effort);
       if (reserved?.account !== undefined) await store.setSessionData(sessionId, 'claudeAccount', reserved.account);
+      if (reserved?.endpoint !== undefined) await store.setSessionData(sessionId, 'compatEndpoint', reserved.endpoint);
       await store.setMode(sessionId, permissionMode);
       await store.setMeta(sessionId, { cwd, unsent: false, lastModified: Date.now() });
       if (reserved) {
@@ -1239,6 +1276,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         mode: permissionMode,
         model: model || "",
         effort,
+        endpoint: endpointId,
         status,
         attachments,
         // active = main が動いている / waiting = main は返答済みで、裏の subagent などを待っている
@@ -1309,6 +1347,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         agentRuntime: agentConnection(turn),
         // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
         ...(account ? { oauthToken: account.token } : {}),
+        // 互換の接続先（キーを含む。backend の中でだけ使い、ログ・イベントには出さない。core/compat-endpoints.mjs）
+        ...(endpoint ? { endpoint } : {}),
       });
       // 相手が別のターンを走らせていて、何も届かなかった。
       // 完了ではない。送信待ちへ戻し（message-queue）、そのターンが終わってから送り直す
@@ -1603,6 +1643,33 @@ wss.on("connection", (ws) => {
           return reply(true, await sessionList());
 
         // Claude のアカウント（会話ごとに選ぶ）。トークンは返さない（登録済みかどうかだけ）
+        // 互換の接続先（core/compat-endpoints.mjs）。キーは返さない。確認の失敗は例外ではなく { ok: false, error, lines } で返す（理由の行を画面に出すため）
+        case 'compatEndpoints':
+          return reply(true, await compatEndpoints.list(msg.args?.agent));
+        case 'compatEndpointCheck': {
+          try { return reply(true, await compatEndpoints.check(msg.args?.input, { id: msg.args?.id ?? null })); }
+          catch (e) { if (e instanceof CheckError) return reply(true, { ok: false, error: e.message, lines: e.lines ?? [], code: e.code }); throw e; }
+        }
+        case 'compatEndpointSave': {
+          const saved = await compatEndpoints.save(msg.args?.input, msg.args?.receipt, { id: msg.args?.id ?? null });
+          emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
+          return reply(true, saved);
+        }
+        case 'compatEndpointRecheck': {
+          const result = await compatEndpoints.recheck(String(msg.args?.id ?? ''));
+          emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
+          return reply(true, result);
+        }
+        case 'compatEndpointDelete': {
+          await compatEndpoints.remove(String(msg.args?.id ?? ''));
+          emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
+          return reply(true, await compatEndpoints.list());
+        }
+        case 'compatEndpointDefault': {
+          await compatEndpoints.setDefault(String(msg.args?.agent ?? ''), String(msg.args?.id ?? ''));
+          emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
+          return reply(true, await compatEndpoints.list());
+        }
         case 'claudeAccounts':
           return reply(true, await claudeAccounts.list());
         case 'saveClaudeAccount': {
@@ -1647,7 +1714,7 @@ wss.on("connection", (ws) => {
           return reply(true, describeBackends());
 
         case "setTurnSettings": {
-          const { sessionId, backend: targetId, model, mode, cwd: requestedCwd, cancel, account } = msg.args ?? {};
+          const { sessionId, backend: targetId, model, mode, cwd: requestedCwd, cancel, account, endpoint } = msg.args ?? {};
           if (!sessionId) throw new Error("セッションが要る");
           if (forking.has(sessionId) || switching.has(sessionId) && !runtime.turns.has(sessionId)) throw new Error("送信の準備中です。設定変更を再試行してください");
           const work = (settingsWrites.get(sessionId) ?? Promise.resolve()).catch(() => {}).then(async () => {
@@ -1660,14 +1727,26 @@ wss.on("connection", (ws) => {
               ? current.nextSettings?.mode : target.id !== source.id ? await resolveMode(null, undefined, target) : undefined);
             if (!cancel && selectedMode !== undefined && !target.modes()[selectedMode]) throw new Error("選択した承認モードは使用できません");
             const settingsCwd = requestedCwd || current.nextSettings?.cwd || current.cwd;
-            const selectedModel = model ?? (target.id === (current.nextSettings?.backend ?? source.id) ? current.nextSettings?.model ?? current.model ?? "" : "");
-            if (!cancel && !await validModel(target, selectedModel, settingsCwd)) throw new Error("選択したモデルは使用できません");
+            // 互換の接続先（'' = 公式）。エージェントを変えたら、変えた先の既定（設定で「既定にする」を押したもの。無ければ公式）。
+            // 元のエージェントへ戻したら、この会話の今の接続先に戻る
+            if (endpoint !== undefined && typeof endpoint !== 'string') throw new Error('接続先の指定が不正です');
+            const previousSelection = current.nextSettings?.backend ?? source.id;
+            const currentEndpoint = current.compatEndpoint ?? '';
+            const previousEndpoint = current.nextSettings?.endpoint ?? currentEndpoint;
+            let selectedEndpoint = !endpointCapable(target) ? ''
+              : endpoint ?? (target.id === previousSelection ? previousEndpoint : target.id === source.id ? currentEndpoint : await compatEndpoints.defaultFor(target.id));
+            if (!cancel && endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error('選択した接続先は登録されていません');
+            const endpointChanged = selectedEndpoint !== currentEndpoint;
+            // 接続先を変えたらモデルは接続先の既定（メインのモデル）に戻す（公式のモデル名を互換の先へ送らない）
+            const selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
+            if (!cancel && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) throw new Error("選択したモデルは使用できません");
+            const selectedEndpointRow = await endpointRow(selectedEndpoint);
             const previousBackend = current.nextSettings?.backend ?? source.id;
             const previousEffort = target.id === previousBackend ? current.nextSettings?.effort ?? current.effort ?? ''
               : target.id === source.id ? current.effort ?? '' : (await store.getPrefs()).backends?.[target.id]?.effort ?? '';
-            const choices = cancel ? { '': {} } : await effortOptions(target, selectedModel, settingsCwd);
+            const choices = cancel ? { '': {} } : await effortOptions(target, selectedModel, settingsCwd, selectedEndpointRow);
             const selectedEffort = cancel ? '' : msg.args.effort !== undefined
-              ? await validateEffort(target, msg.args.effort, selectedModel, settingsCwd)
+              ? await validateEffort(target, msg.args.effort, selectedModel, settingsCwd, selectedEndpointRow)
               : Object.hasOwn(choices, previousEffort) ? previousEffort : '';
             // Claude のアカウント（'' = ログイン中のアカウント）。モデルと同じく次のターンから効く
             if (account !== undefined && typeof account !== 'string') throw new Error('アカウントの指定が不正です');
@@ -1682,13 +1761,14 @@ wss.on("connection", (ws) => {
               const own = (current.history ?? []).some(h => h?.field === "cwd") ? current.cwd ?? info?.cwd : info?.cwd ?? current.cwd;
               if (own && path.resolve(own) === selectedCwd) selectedCwd = undefined;
             }
-            const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged)
-              ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(accountChanged ? { account: selectedAccount } : {}) };
+            const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged && !endpointChanged)
+              ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(accountChanged ? { account: selectedAccount } : {}), ...(endpointChanged ? { endpoint: selectedEndpoint } : {}) };
             await store.setSessionData(sessionId, "nextSettings", next);
             if (!cancel) {
               if (targetId !== undefined) await savePref("backend", target.id);
-              if (msg.args.rememberEffort) await savePref("effort", selectedEffort, target.id);
-              if (msg.args.rememberModel) await savePref("model", selectedModel, target.id);
+              // 互換の接続先のモデル・段は公式の既定（prefs）に覚えない。接続先の既定は設定の「既定にする」だけで決まる（決定 2）
+              if (msg.args.rememberEffort && !selectedEndpoint) await savePref("effort", selectedEffort, target.id);
+              if (msg.args.rememberModel && !selectedEndpoint) await savePref("model", selectedModel, target.id);
               if (msg.args.rememberMode && selectedMode !== undefined) await savePref("mode", selectedMode, target.id);
               // 人が選んだ Claude のアカウントは、次に開く新しい会話の既定にする（newSession）
               if (account !== undefined) await savePref("claudeAccount", account || null);
@@ -1873,10 +1953,23 @@ wss.on("connection", (ws) => {
           const sessionId = await createConversation(backend, info);
           try {
             await store.setMeta(sessionId, { backend: backend.id, ...info, status, unsent: true });
-            const selected = await resolveModel(null, model, backend, cwd || undefined);
+            // 互換の接続先（決定 2・3）: 同じエージェントの引き継ぎなら元の会話の接続先（予約中ならそれ）を継ぐ。
+            // それ以外は設定で「既定にする」を押した接続先（無ければ公式）。削除済みは継がない
+            let endpoint = '';
+            if (endpointCapable(backend)) {
+              if (typeof msg.args?.endpoint === 'string') {
+                endpoint = msg.args.endpoint;
+                if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) throw new Error('選択した接続先は登録されていません');
+              } else {
+                endpoint = inherit ? source.nextSettings?.endpoint ?? source.compatEndpoint ?? '' : await compatEndpoints.defaultFor(backend.id);
+                if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) endpoint = '';
+              }
+            }
+            if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
+            const selected = await resolveModel(null, inherit || msg.args?.model !== undefined ? model : undefined, backend, cwd || undefined, endpoint);
             await store.setModel(sessionId, selected);
             const effort = msg.args?.effort ?? (inherit ? source.nextSettings?.effort ?? source.effort : undefined);
-            await store.setSessionData(sessionId, 'effort', await resolveEffort(null, effort, backend, selected, cwd || undefined));
+            await store.setSessionData(sessionId, 'effort', await resolveEffort(null, effort, backend, selected, cwd || undefined, await endpointRow(endpoint)));
             await store.setMode(sessionId, await resolveMode(null, mode, backend));
             // 引き継ぎ元の会話で選んでいた Claude のアカウントも継ぐ（予約中ならそれを）
             // 引き継ぎ元が無ければ前回選んだアカウント（削除済みなら、ログイン中のアカウントのまま）
@@ -2000,13 +2093,16 @@ wss.on("connection", (ws) => {
           const context = {};
           try {
             // タイトル生成もその会話で選んだアカウントで回す。使えないアカウントなら生成しない（別のアカウントへ落とさない）
-            if (backend.capabilities?.claudeAccounts) {
-              const account = await claudeAccounts.resolve((await store.get(sessionId)).claudeAccount ?? '');
+            // 互換の接続先の会話は、その接続先の Haiku 相当（Codex は既定）のモデルで作る。使えない接続先なら作らない
+            const saved = await store.get(sessionId);
+            if (endpointCapable(backend) && saved.compatEndpoint) context.endpoint = await compatEndpoints.resolve(saved.compatEndpoint, backend.id);
+            if (!context.endpoint && backend.capabilities?.claudeAccounts) {
+              const account = await claudeAccounts.resolve(saved.claudeAccount ?? '');
               if (account) context.oauthToken = account.token;
             }
             title = String(await backend.suggestTitle({ transcript: gist, ...context }) ?? "");
           } catch (err) {
-            return reply(false, `考えられなかった: ${redactToken(err?.message ?? err, context.oauthToken)}`);
+            return reply(false, `考えられなかった: ${redactSecret(redactToken(err?.message ?? err, context.oauthToken), context.endpoint?.key)}`);
           }
 
           // 前後の記号を落とす。モデルが鉤括弧やクオートで包むことがある
