@@ -28,4 +28,4 @@
 
 ## 検証
 
-`npm test`。`server-handoff` はfakeとCodex app-serverのテスト用実装を往復し、会話ID、承認先、履歴、一覧、再起動、分岐、実行中の拒否を検証する。`server-procway` は実物のprocway serveとテスト用生成器を使って往復する。本番LLMの判断品質やClaudeの実通信はこのテストの対象外。
+`npm test`。`server-handoff` はfakeとCodex app-serverのテスト用実装を往復し、会話ID、承認先、履歴、一覧、再起動、分岐、実行中の拒否を検証する。本番LLMの判断品質やClaudeの実通信はこのテストの対象外。
