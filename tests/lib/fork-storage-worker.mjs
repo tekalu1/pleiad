@@ -8,7 +8,7 @@ process.env.AGENT_HOST_DATA = scratch;
 const { wrapBackend, conversation } = await import("../../core/conversations.mjs");
 const { recordPresent } = await import("../../core/history.mjs");
 const at = "2026-09-11T10:00:00Z";
-for (const id of ["codex", "procway"]) {
+for (const id of ["codex", "antigravity"]) {
   const sourceId = `${id}-source`;
   const source = [
     { role: "user", uuid: "u1", text: "remember violet\n[添付] C:/uploads/one.png", at },
@@ -97,21 +97,4 @@ assert.equal((await liveBackend.getPresents(liveFork.sessionId)).length, 0);
 liveMessages[0].text = "parent changed";
 assert.equal((await liveBackend.getMessages(liveFork.sessionId))[0].text, "saved");
 await assert.rejects(liveBackend.fork("live-source", { upToMessageId: "live-a", snapshot: true }), /実行中のツール/);
-process.env.AGENT_HOST_PROCWAY_HOME = scratch;
-const { backend: procway } = await import("../../core/backends/procway.mjs");
-const snapshot = path.join(scratch, ".procway/ai-agent/sessions/snapshot-race/snapshot.json");
-await fs.mkdir(path.dirname(snapshot), { recursive: true });
-await fs.writeFile(snapshot, '{"messages":');
-const keepAlive = setInterval(() => {}, 1000);
-try {
-  const replacing = new Promise(resolve => setTimeout(async () => {
-    await fs.writeFile(snapshot, JSON.stringify({ messages: [{ role: "user", id: "u", content: [{ kind: "text", text: "saved" }] }] }));
-    resolve();
-  }, 75));
-  const messages = await procway.getMessages("snapshot-race");
-  await replacing;
-  assert.equal(messages[0].text, "saved");
-  await fs.writeFile(snapshot, '{"broken":');
-  await assert.rejects(procway.getMessages("snapshot-race"), SyntaxError);
-} finally { clearInterval(keepAlive); }
-console.log("storage, attachments, full tool results, bounded handoff, retry, nested forks and snapshot race passed");
+console.log("storage, attachments, full tool results, bounded handoff, retry and nested forks passed");

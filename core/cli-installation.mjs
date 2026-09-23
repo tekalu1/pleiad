@@ -7,7 +7,6 @@ import { parseCommand } from './command-line.mjs';
 export const INSTALL_URLS = {
   codex: 'https://developers.openai.com/codex/cli/',
   claude: 'https://code.claude.com/docs/en/setup',
-  procway: 'https://github.com/tekalu1/procway-code',
   antigravity: 'https://antigravity.google/docs/cli/install/',
 };
 
@@ -35,22 +34,18 @@ export function findExecutable(command, env = process.env, platform = process.pl
 }
 
 export function cliCommand(id) {
-  if (id === 'procway' && process.env.AGENT_HOST_PROCWAY_CODE) {
-    const script = process.env.AGENT_HOST_PROCWAY_CODE;
-    return fs.existsSync(script) ? [process.execPath, script] : null;
-  }
   const configured = id === 'codex' ? process.env.AGENT_HOST_CODEX_BIN : id === 'claude' ? process.env.AGENT_HOST_CLAUDE_BIN : id === 'antigravity' ? process.env.AGENT_HOST_AGY_BIN : null;
   // 実行ファイル名がバックエンド id と違うものだけ書く。**id は必ずバックエンド id に揃える**
   // （installation() は backend.id で引かれるので、ここだけ別名にすると
   //  INSTALL_URLS が引けず「未インストール」を出せなくなる）
-  const argv = configured ? parseCommand(configured) : [{ procway: 'procway-code', antigravity: 'agy' }[id] ?? id];
+  const argv = configured ? parseCommand(configured) : [{ antigravity: 'agy' }[id] ?? id];
   const exe = argv[0] && findExecutable(argv[0]);
   if (exe && /\.(cmd|bat)$/i.test(exe)) {
-    const packageName = { claude: '@anthropic-ai/claude-code', codex: '@openai/codex', procway: 'procway-code' }[id];
+    const packageName = { claude: '@anthropic-ai/claude-code', codex: '@openai/codex' }[id];
     try {
       const packageDir = path.join(path.dirname(exe), 'node_modules', packageName);
       const metadata = JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8'));
-      const bin = typeof metadata.bin === 'string' ? metadata.bin : metadata.bin?.[id === 'procway' ? 'procway-code' : id];
+      const bin = typeof metadata.bin === 'string' ? metadata.bin : metadata.bin?.[id];
       const script = bin && path.resolve(packageDir, bin);
       if (script && /\.[cm]?js$/i.test(script) && fs.statSync(script).isFile()) return [process.execPath, script, ...argv.slice(1)];
     } catch {}

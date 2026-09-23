@@ -1,17 +1,11 @@
 # Vendored OAuth code
 
-The files `pkce.mjs`, `oauth-page.mjs` and `openai-codex-oauth.mjs` in this
-directory are derived from `@earendil-works/pi-ai` (specifically
-`packages/ai/src/utils/oauth/{pkce,oauth-page,openai-codex}.ts`) at
-https://github.com/earendil-works/pi, by way of procway-code
-(`ai-agent/src/auth/oauth/`), which vendored them first.
+The file `oauth-page.mjs` in this directory is derived from
+`@earendil-works/pi-ai` (specifically `packages/ai/src/utils/oauth/oauth-page.ts`)
+at https://github.com/earendil-works/pi.
 
-They are vendored here (rather than added as an npm dependency) because
-agent-host keeps its dependency list to `ws` + the Agent SDK, and the OAuth
-flow is a few hundred lines of plain `.mjs` that needs no build step.
-
-Changes from the procway-code copy: the default `originator` is `"agent-host"`
-and the callback bind host is read from `AGENT_HOST_OAUTH_CALLBACK_HOST`.
+It is vendored here (rather than added as an npm dependency) because the page
+is a small plain `.mjs` file that needs no build step.
 
 The upstream license is reproduced below.
 

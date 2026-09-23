@@ -38,21 +38,3 @@ export async function codexContextRpc(context, cwd, nativeRpc) {
   }
   return new CodexRpc(config);
 }
-
-export function procwayContextSettings(native, context) {
-  if (!context) return native;
-  const settings = structuredClone(native);
-  settings.context ??= {};
-  if (context.owners.instruction === 'ply') {
-    settings.context.instructionScanners = [];
-    settings.rules = { all: [] };
-  }
-  if (context.owners.skill === 'ply') settings.context.skillScanners = [];
-  settings.rules ??= {};
-  settings.rules.all = [...(settings.rules.all ?? []), context.prompt];
-  // Project buckets otherwise shadow the global bucket in procway's resolver.
-  for (const key of Object.keys(settings.rules.projects ?? {})) settings.rules.projects[key] = [...settings.rules.projects[key], context.prompt];
-  if (context.owners.mcp === 'ply') settings.mcpServers = {};
-  settings.mcpServers = { ...settings.mcpServers, ply_context: { transport: 'http', baseUrl: context.url, headers: context.headers } };
-  return settings;
-}

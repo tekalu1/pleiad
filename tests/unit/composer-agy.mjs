@@ -1,16 +1,16 @@
-// 入力欄の設定: Antigravity と procway-code（docs/design-system.md「入力欄の設定」）。
+// 入力欄の設定: Antigravity と互換の接続先のチップ（docs/design-system.md「入力欄の設定」）。
 //
 //   - `agy models`（id<TAB>表示名）の読み取り、段違いの系統へのまとめ、既定のモデル（ログの label）
 //   - 段 → agy に渡す引数（--model と --effort を同時に渡さない）
 //   - エフォートの段（既定が分からないときに「既定」の段を作らない）と、段の候補（effortOptions）
-//   - procway-code のモデルのチップの字
+//   - 互換の接続先を選んでいるときのモデルのチップの字
 // プロセスも LLM も呼ばない（`agy models` の行は agy 1.2.8 の実際の出力を写してある）。
 import { parseAgyModels, defaultLabelFromLog, buildAgyModels, agyTarget } from "../../core/backends/antigravity-models.mjs";
 import { effortOptions } from "../../core/effort.mjs";
-import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, procwayChipLabel, procwayTypeLabel, middleEllipsis } from "../../web/composer-labels.mjs";
+import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, endpointChipLabel, middleEllipsis } from "../../web/composer-labels.mjs";
 
-export const name = "composer-agy-procway";
-export const title = "入力欄の設定: Antigravity の段違いと既定・procway-code のチップ";
+export const name = "composer-agy";
+export const title = "入力欄の設定: Antigravity の段違いと既定・接続先のチップ";
 
 const TAB = String.fromCharCode(9), NL = String.fromCharCode(10), CR = String.fromCharCode(13);
 // `agy models` の実際の出力（agy 1.2.8、2026-09-23）
@@ -105,16 +105,15 @@ export default async function (t) {
   t.ok("選んでいなければ既定の id が代表し、系統の行に既定の札",
     modelRowIds(m, "")[0] === "gemini-3.8-flash-high" && holdsDefault(m, "gemini-3.8-flash-low") && !holdsDefault(m, "gemini-3.1-pro-high"));
 
-  // ---- procway-code のチップ
-  t.ok("procway: 接続先 · モデル（段が決まっていれば · 段）",
-    procwayChipLabel({ connection: "local", model: "lfm2.5-2.6b" }).text === "local · lfm2.5-2.6b"
-      && procwayChipLabel({ connection: "仕事用", model: "gpt-5.6", effort: "high" }).text === "仕事用 · gpt-5.6 · high");
-  const long = procwayChipLabel({ connection: "とても長い接続先の名前をつけた場合の例", model: "accounts/fireworks/models/qwen3-coder-480b-a35b-instruct", effort: "medium" });
-  t.ok("procway: 長い名前とモデル ID は真ん中を詰め、段は削らない。全体は full に",
+  // ---- 互換の接続先のチップ
+  t.ok("接続先: 接続先 · モデル（段が決まっていれば · 段）",
+    endpointChipLabel({ connection: "local", model: "lfm2.5-2.6b" }).text === "local · lfm2.5-2.6b"
+      && endpointChipLabel({ connection: "仕事用", model: "gpt-5.6", effort: "high" }).text === "仕事用 · gpt-5.6 · high");
+  const long = endpointChipLabel({ connection: "とても長い接続先の名前をつけた場合の例", model: "accounts/fireworks/models/qwen3-coder-480b-a35b-instruct", effort: "medium" });
+  t.ok("接続先: 長い名前とモデル ID は真ん中を詰め、段は削らない。全体は full に",
     long.text.endsWith(" · medium") && long.text.length < 60 && long.text.includes("…")
       && long.full === "とても長い接続先の名前をつけた場合の例 · accounts/fireworks/models/qwen3-coder-480b-a35b-instruct · medium",
     long.text);
-  t.ok("procway: 接続先が無ければ選ぶよう促す", procwayChipLabel({}).text === "接続先を選ぶ");
-  t.ok("procway: 接続方式の説明", procwayTypeLabel("openai") === "API · OpenAI" && procwayTypeLabel("cli-agent") === "CLI エージェント" && procwayTypeLabel("x") === "x");
+  t.ok("接続先: 接続先が無ければ選ぶよう促す", endpointChipLabel({}).text === "接続先を選ぶ");
   t.ok("真ん中を詰める", middleEllipsis("abcdefghij", 5) === "ab…ij" && middleEllipsis("abc", 5) === "abc");
 }

@@ -10,8 +10,8 @@ import { el } from './dom.mjs';
 const KEY = 'session-context';
 const WORD = { instruction: '指示', skill: 'Skills', mcp: 'MCP' };
 const COUNTED = { instruction: ['supplied', 'loaded'], skill: ['available', 'manual-only', 'loaded'], mcp: ['pending', 'connected'] };
-const AGENT_FILES = { claude: 'claude', codex: 'codex', procway: 'procway' };
-const SOURCE = { claude: 'Claude', codex: 'Codex', procway: 'procway-code', common: '共通', ply: 'Pleiad' };
+const AGENT_FILES = { claude: 'claude', codex: 'codex' };
+const SOURCE = { claude: 'Claude', codex: 'Codex', common: '共通', ply: 'Pleiad' };
 
 const two = n => String(n).padStart(2, '0');
 function stamp(at, withDay = true) {
@@ -251,8 +251,6 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const rowOf = x => { const r = el('div', 'scx-item'); const t = el('div', 't'); t.append(el('div', null, x.name), el('div', 'p', x.disabled ? `${shortPath(x.path)} · 無効` : shortPath(x.path))); r.append(el('span', 'cx-dot off'), t); return r; };
     list.slice(0, 5).forEach(x => k.append(rowOf(x)));
     if (list.length > 5) k.append(fold(`ほか ${list.length - 5} 件`, list.slice(5).map(rowOf)));
-    // procway-code はエージェント任せでも、同名の Pleiad の登録の接続先とログインを使う（core/procway-mcp.mjs の withPlyCredentials）
-    if (s?.backend === 'procway') k.append(el('p', 'cx-sub', '同じ名前で Pleiad に登録した MCP があれば、その接続先とログインを使います'));
   }
 
   function changedNotice(data) {

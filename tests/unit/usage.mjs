@@ -3,7 +3,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { codexQuota, whamQuota, claudeQuota, usageWindow, createQuotaCache, createUsageStore, createCodexMeter } from '../../core/usage.mjs';
-import { readProcwayUsage } from '../../core/backends/procway-usage.mjs';
 import { normalizeSdkMessage } from '../../core/backends/claude-normalize.mjs';
 import { quotaText } from '../../web/usage.mjs';
 import { startServer } from '../lib/server.mjs';
@@ -52,16 +51,6 @@ export default async function(t) {
   assert.equal(failed.checkedAt, null); assert.ok(!JSON.stringify(failed).includes('secret'));
   t.ok('同時取得を共有し、キャッシュ期限と認証変更を反映する', true);
 
-  let requests = 0;
-  const procway = await readProcwayUsage({}, {
-    settings: async () => ({ settings: { providers: { one: { type: 'openai-codex', authProfile: 'codex' } } } }),
-    profile: async () => ({ mode: 'oauth', provider: 'openai-codex', credentials: { access: 'secret', accountId: 'account', expires: Date.now() + 60000 } }),
-    fetchImpl: async (url, options) => { requests++; assert.equal(url, 'https://chatgpt.com/backend-api/wham/usage'); assert.equal(options.redirect, 'error');
-      return { ok: true, json: async () => ({ rate_limit: { primary_window: { used_percent: 25, limit_window_seconds: 18000 } } }) }; },
-  });
-  assert.equal(requests, 1); assert.equal(procway.accounts[0].windows[0].remainingPercent, 75);
-  assert.ok(!JSON.stringify(procway).includes('secret'));
-  t.ok('procwayは自身のOAuthを使い、資格情報を返さない', true);
 
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-usage-'));
   let server, client;

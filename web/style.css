@@ -239,7 +239,6 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .row-be svg{display:block;width:14px;height:14px;fill:currentColor}
 .row-be-codex svg{color:var(--ink-brand)}
 .row-be-claude img{height:14px}
-.row-be-procway svg{color:var(--ink-procway)}
 .row-be-antigravity svg{color:var(--ink-antigravity)}
 .wait{color:var(--ink-mark);flex:none}                 /* あなたを待っている。UI 全体でこの意味にだけ差し色 */
 .wait::before{content:"◆ ";font-size:9px;vertical-align:1px}
@@ -664,7 +663,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 既定の段が分からず既定に従っているとき（composer-labels.mjs の effortStops の unset）: つまみを出さない。動かすと出る */
 .ceffort input[type=range].unset::-webkit-slider-thumb{opacity:0}
 .ceffort input[type=range].unset::-moz-range-thumb{opacity:0}
-/* 面の下の文字だけのボタン（procway-code の「コンテキスト…」「接続設定…」） */
+/* 面の下の文字だけのボタン（「接続先を管理…」など） */
 .cfoot{display:flex;gap:16px;flex-wrap:wrap;padding:8px 8px 2px}
 .clink{padding:0;background:transparent;color:var(--ink-blue);font-size:var(--fs-s);cursor:pointer}
 .clink:hover{text-decoration:underline}

@@ -1,6 +1,6 @@
 // バックエンドのレジストリ。
 //
-// 有効にするものは環境変数 AGENT_HOST_BACKENDS（カンマ区切り、既定 "claude,codex,procway,antigravity"）で選ぶ。
+// 有効にするものは環境変数 AGENT_HOST_BACKENDS（カンマ区切り、既定 "claude,codex,antigravity"）で選ぶ。
 // 読み込みは動的 import にしてある。理由: claude.mjs は Agent SDK を引き込むので、
 // `AGENT_HOST_BACKENDS=fake` のテストでは**そもそも読み込みたくない**
 // （SDK 無しでサーバが起動できることが、バックエンド抽象化ができている証拠になる）。
@@ -11,17 +11,49 @@ import { wrapBackend, conversationBackend } from "../conversations.mjs";
 const KNOWN = {
   claude: "./claude.mjs",
   codex: "./codex.mjs",
-  procway: "./procway.mjs",
   antigravity: "./antigravity.mjs",
   fake: "./fake.mjs",
 };
 
 const enabled = new Map();   // id -> backend
 
-// 既定は 4 つとも。読み込めないものは skip され、codex / procway / antigravity は最初に使うまで
+// 対応を終えたバックエンド。その会話は一覧に残し、開いて読めるが続けられない（送信・設定の変更・分岐・切り替えは断る）。
+// 新しい会話の既定や委譲の行き先には出さない（getBackend / listBackends には載らない）。
+export const RETIRED = {
+  procway: { label: "procway-code", notice: "procway-code への対応は終了しました。この会話は続けられません。" },
+};
+const retired = new Map(Object.entries(RETIRED).map(([id, info]) => [id, retiredBackend(id, info)]));
+
+/**
+ * 対応を終えたバックエンドの代わり。履歴は Pleiad が持っている分（切り替え・分岐で写した会話）だけ読め、
+ * エージェントの手元にしか無い履歴は読めない（空）。ターンは始めない。
+ */
+function retiredBackend(id, { label, notice }) {
+  const native = {
+    id, label, retired: notice,
+    capabilities: {},
+    modes: () => ({}),
+    models: async () => ({}),
+    listSessions: async () => [],
+    getSession: async (sessionId) => {
+      const entry = await store.get(sessionId).catch(() => null);
+      if (entry?.backend !== id) return null;
+      return { sessionId, title: entry.title ?? null, tag: entry.status ?? null, cwd: entry.cwd ?? null,
+        createdAt: entry.createdAt ?? null, lastModified: entry.lastModified ?? null };
+    },
+    getMessages: async () => [],
+    runTurn: async () => { throw new Error(notice); },
+  };
+  const wrapped = wrapBackend(native);
+  wrapped.capabilities = { ...wrapped.capabilities, fork: false, forkMessage: false };
+  delete wrapped.fork;
+  return wrapped;
+}
+
+// 既定は 3 つとも。読み込めないものは skip され、codex / antigravity は最初に使うまで
 // プロセスを起こさないので、入っていない環境でも claude だけで動く
 // （一覧の取得はバックエンドごとに失敗を握るので巻き添えにならない）。
-const wanted = String(process.env.AGENT_HOST_BACKENDS ?? "claude,codex,procway,antigravity")
+const wanted = String(process.env.AGENT_HOST_BACKENDS ?? "claude,codex,antigravity")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -29,6 +61,7 @@ const wanted = String(process.env.AGENT_HOST_BACKENDS ?? "claude,codex,procway,a
 for (const id of wanted) {
   const where = KNOWN[id];
   if (!where) {
+    if (Object.hasOwn(RETIRED, id)) continue;
     console.error(`  知らないバックエンド: ${id}（無視した）`);
     continue;
   }
@@ -43,9 +76,14 @@ for (const id of wanted) {
 
 if (enabled.size === 0) console.error("  有効なバックエンドが1つも無い（AGENT_HOST_BACKENDS を確認）");
 
-/** id で引く。無効・未知なら null。 */
+/** id で引く。無効・未知・対応を終えたものなら null。 */
 export function getBackend(id) {
   return enabled.get(id) ?? null;
+}
+
+/** 会話の持ち主として引く。対応を終えたバックエンドなら、その代わり（retired に断る理由を持つ）を返す。 */
+export function sessionBackend(id) {
+  return enabled.get(id) ?? retired.get(id) ?? null;
 }
 
 /** 有効なバックエンドを、AGENT_HOST_BACKENDS に書かれた順で返す。 */
@@ -99,10 +137,10 @@ export function describeBackends() {
 export async function resolveBackendForSession(sessionId) {
   if (!sessionId) return null;
   const managed = await conversationBackend(sessionId);
-  if (managed) return getBackend(managed);
+  if (managed) return sessionBackend(managed);
 
   const entry = await store.get(sessionId).catch(() => null);
-  const known = entry?.backend ? getBackend(entry.backend) : null;
+  const known = entry?.backend ? sessionBackend(entry.backend) : null;
   if (known) return known;
 
   // どのバックエンドも知らない id（消えたセッション、sidecar にだけ残った行）は、
@@ -116,7 +154,7 @@ export async function resolveBackendForSession(sessionId) {
   }
 
   // 直列で聞くと、バックエンドが増えるほど一覧のクリック1回が遅くなる（codex は
-  // stdio JSON-RPC、procway は WS の往復）。同時に聞いて、書かれた順で最初のヒットを採る。
+  // stdio JSON-RPC の往復）。同時に聞いて、書かれた順で最初のヒットを採る。
   const backends = listBackends();
   const hits = await Promise.all(backends.map((b) => b.getSession(sessionId).catch(() => null)));
   const i = hits.findIndex(Boolean);

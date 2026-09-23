@@ -4,13 +4,12 @@ import assert from 'node:assert/strict';
 import { canDelegate, modePosition, resolveDelegatedMode } from '../../core/modes.mjs';
 import { backend as claude } from '../../core/backends/claude.mjs';
 import { backend as codex } from '../../core/backends/codex.mjs';
-import { backend as procway } from '../../core/backends/procway.mjs';
 import { backend as antigravity } from '../../core/backends/antigravity.mjs';
 
 export const name = 'modes';
 export const title = '承認モードの2軸と、委譲したときの強さの引き継ぎ';
 
-const BACKENDS = { claude, codex, procway, antigravity };
+const BACKENDS = { claude, codex, antigravity };
 const resolve = (parent, parentMode, childId) => resolveDelegatedMode({
   parentMode, parentModes: BACKENDS[parent].modes(), childModes: BACKENDS[childId].modes(),
 });
@@ -22,10 +21,7 @@ const TABLE = [
   ['claude', 'default', 'codex',       'ask',       false],
   ['codex',  'ask',     'antigravity', 'yolo',      true],    // yolo しか無く、上限を超える
   ['codex',  'yolo',    'antigravity', 'yolo',      false],   // 親が無制限なら超えない
-  ['codex',  'full',    'procway',     'full-auto', true],    // 範囲を強制できないので1回聞く
   ['claude', 'default', 'claude',      'default',   false],
-  ['codex',  'auto',    'procway',     'always-ask', false],  // 範囲を保つ。読むだけに落とすと書き込みの依頼が果たせない
-  ['claude', 'bypass',  'procway',     'full-auto', false],   // 親が full なら「強制なし」でも聞かない
 ];
 
 export default async function (t) {
@@ -35,7 +31,7 @@ export default async function (t) {
       got.mode === mode && got.escalation === escalation, `${got.mode} / escalation=${got.escalation} / ${got.reason}`);
   }
 
-  const readonlyParents = [['claude', 'plan'], ['codex', 'readonly'], ['procway', 'auto-readonly']];
+  const readonlyParents = [['claude', 'plan'], ['codex', 'readonly']];
   for (const [id, mode] of readonlyParents)
     t.ok(`${id}/${mode} からは委譲させない`, !canDelegate(BACKENDS[id].modes()[mode]));
   t.ok('触れる範囲を持つ親からは委譲できる', canDelegate(claude.modes().default) && canDelegate(codex.modes().yolo));

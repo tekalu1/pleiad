@@ -32,7 +32,7 @@ const TEXT = {
     agent: ['エージェントに任せる', '各エージェントが自分の MCP 設定どおりに接続する'],
     ply: ['Pleiad がそろえる', 'どのエージェントにも同じ MCP をつなぐ'],
     list: 'この場所でつなぐもの', listDefault: '既定でつなぐもの',
-    sources: [['claude', 'Claude の設定'], ['codex', 'Codex の設定'], ['procway', 'procway-code']],
+    sources: [['claude', 'Claude の設定'], ['codex', 'Codex の設定']],
   },
 };
 const SHOWN = 8;   // Skills は多いので最初はこれだけ並べ、「すべて見る」で残りを出す

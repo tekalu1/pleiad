@@ -145,7 +145,7 @@ async function claudeModels(cwd) {
 
 // web/render.mjs の TOOL_LABEL / TOOL_DRAW を補うヒント。
 // render.mjs は Claude の名前を既に知っているので、ここは「同じものを別経路でも渡せる」
-// ことの担保でもある（codex / procway はこれしか手がかりが無い）。
+// ことの担保でもある（codex はこれしか手がかりが無い）。
 const TOOL_HINTS = {
   Bash:         { label: "実行",     shape: "shell" },
   PowerShell:   { label: "実行",     shape: "shell" },

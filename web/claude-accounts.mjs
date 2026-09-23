@@ -6,7 +6,7 @@
 // トークンは画面に出さない（サーバーも返さない。hasToken だけ）。手で貼る欄は、Pleiad から発行できないときの代わりに残す。
 // トークンの持ち主が使用量の認可と別のアカウントなら（サーバーの tokenCheck）、その行と完了のカードに ⚠ と強い字で知らせ、
 // 「トークンを発行し直す」を添える（警告色は使わない。docs/design-system.md）。
-// 面と部品は procway-code の接続先の管理（web/procway.mjs・procway.css）と同じものを使う。
+// 面と部品は設定の管理の面（web/manage-panel.css の .mp-*）を使う。
 import { el } from './dom.mjs';
 
 const KIND_TITLE = { 'setup-token': 'トークンを発行', 'usage-login': '使用量の表示を認可' };
@@ -14,23 +14,23 @@ const KIND_TITLE = { 'setup-token': 'トークンを発行', 'usage-login': '使
 export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) {
   const $ = id => document.getElementById(id);
   const panel = document.createElement('section');
-  panel.className = 'pw-panel'; panel.id = 'claudeAccountsPanel'; panel.hidden = true;
+  panel.className = 'mp-panel'; panel.id = 'claudeAccountsPanel'; panel.hidden = true;
   panel.setAttribute('aria-labelledby', 'caTitle');
-  panel.innerHTML = `<div class="pw-row"><h3 id="caTitle">Claude のアカウント</h3><button type="button" class="btn" id="caClose">閉じる</button></div>
-  <p class="pw-note">登録したアカウントは、会話の入力欄のモデルの隣で選べます。選ばない会話はログイン中のアカウントで動きます。</p>
+  panel.innerHTML = `<div class="mp-row"><h3 id="caTitle">Claude のアカウント</h3><button type="button" class="btn" id="caClose">閉じる</button></div>
+  <p class="mp-note">登録したアカウントは、会話の入力欄のモデルの隣で選べます。選ばない会話はログイン中のアカウントで動きます。</p>
   <div id="caList"></div><button type="button" class="btn" id="caAdd">＋ アカウントを追加</button>
-  <section class="pw-card" id="caFlow" hidden aria-live="polite"><h3 id="caFlowTitle"></h3><div id="caFlowBody"></div></section>
+  <section class="mp-card" id="caFlow" hidden aria-live="polite"><h3 id="caFlowTitle"></h3><div id="caFlowBody"></div></section>
   <form id="caForm" hidden><h3 id="caFormTitle">アカウントを追加</h3>
-  <label class="pw-field"><span>表示名</span><input id="caName" required maxlength="60" placeholder="仕事用、個人用など" autocomplete="off"></label>
-  <p class="pw-note" id="caAuthNote">「ブラウザーで認可する」を押すと、Claude のログイン画面が開きます。使いたいアカウントでログインして承認し、表示されたコードをここに貼ると登録できます。</p>
-  <div class="pw-actions" id="caAuthActions"><button type="button" class="btn" id="caCancel">キャンセル</button><button type="button" class="btn btn-primary" id="caAuthorize">ブラウザーで認可する</button></div>
+  <label class="mp-field"><span>表示名</span><input id="caName" required maxlength="60" placeholder="仕事用、個人用など" autocomplete="off"></label>
+  <p class="mp-note" id="caAuthNote">「ブラウザーで認可する」を押すと、Claude のログイン画面が開きます。使いたいアカウントでログインして承認し、表示されたコードをここに貼ると登録できます。</p>
+  <div class="mp-actions" id="caAuthActions"><button type="button" class="btn" id="caCancel">キャンセル</button><button type="button" class="btn btn-primary" id="caAuthorize">ブラウザーで認可する</button></div>
   <details id="caManual"><summary>トークンを手動で貼り付ける</summary>
-  <p class="pw-note">Pleiad から認可できないときは、使いたいアカウントでターミナルから <code>claude setup-token</code> を実行し、表示されたトークンを貼り付けてください。</p>
-  <label class="pw-field"><span>トークン</span><div class="pw-row"><input id="caToken" type="password" autocomplete="new-password" spellcheck="false"><button type="button" class="btn" id="caReveal">表示</button></div><small id="caTokenHint"></small></label>
-  <div class="pw-actions"><button type="submit" class="btn" id="caSave">保存</button></div></details>
-  <p class="pw-state" id="caFormState" role="status"></p></form>
-  <p class="pw-note">使用量の画面にアカウントごとの残りを出すには、アカウントごとに「使用量の表示を認可」が要ります。環境変数 ANTHROPIC_API_KEY があるときは、そちらが優先されます。</p>
-  <p class="pw-note" id="caStorage"></p><p class="pw-state" id="caState" role="status"></p>`;
+  <p class="mp-note">Pleiad から認可できないときは、使いたいアカウントでターミナルから <code>claude setup-token</code> を実行し、表示されたトークンを貼り付けてください。</p>
+  <label class="mp-field"><span>トークン</span><div class="mp-row"><input id="caToken" type="password" autocomplete="new-password" spellcheck="false"><button type="button" class="btn" id="caReveal">表示</button></div><small id="caTokenHint"></small></label>
+  <div class="mp-actions"><button type="submit" class="btn" id="caSave">保存</button></div></details>
+  <p class="mp-state" id="caFormState" role="status"></p></form>
+  <p class="mp-note">使用量の画面にアカウントごとの残りを出すには、アカウントごとに「使用量の表示を認可」が要ります。環境変数 ANTHROPIC_API_KEY があるときは、そちらが優先されます。</p>
+  <p class="mp-note" id="caStorage"></p><p class="mp-state" id="caState" role="status"></p>`;
   $('agentControls').append(panel);
 
   let accounts = [], storage = null, loaded = null, editingId = '', saving = false, confirming = '';
@@ -75,19 +75,19 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   function warningBlock(a) {
     const text = ownerWarning(a);
     if (!text) return null;
-    const box = el('div', 'pw-confirm');
-    box.append(el('p', 'pw-warn', `⚠ ${text}`));
-    const row = el('div', 'pw-card-actions');
+    const box = el('div', 'mp-confirm');
+    box.append(el('p', 'mp-warn', `⚠ ${text}`));
+    const row = el('div', 'mp-card-actions');
     row.append(button('トークンを発行し直す', () => startLogin({ kind: 'setup-token', accountId: a.id, name: a.name })));
     box.append(row);
     return box;
   }
   function draw() {
     $('caList').replaceChildren(...accounts.map(a => {
-      const card = el('div', 'pw-card');
-      const top = el('div', 'pw-row'), info = el('div', 'pw-card-info');
+      const card = el('div', 'mp-card');
+      const top = el('div', 'mp-row'), info = el('div', 'mp-card-info');
       info.append(el('strong', null, a.name), el('small', null, status(a)));
-      const actions = el('div', 'pw-card-actions');
+      const actions = el('div', 'mp-card-actions');
       actions.hidden = confirming === a.id;
       actions.append(
         button(a.hasToken ? 'トークンを発行し直す' : 'トークンを発行', () => startLogin({ kind: 'setup-token', accountId: a.id, name: a.name })),
@@ -97,15 +97,15 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
       const warning = confirming === a.id ? null : warningBlock(a);
       if (warning) card.append(warning);
       if (confirming === a.id) {
-        const ask = el('div', 'pw-confirm');
+        const ask = el('div', 'mp-confirm');
         ask.append(el('p', null, `「${a.name}」を削除しますか？ このアカウントを選んでいる会話は、選び直すまで送信できません。使用量の表示の認可も消えます。`));
-        const row = el('div', 'pw-card-actions');
+        const row = el('div', 'mp-card-actions');
         row.append(button('やめる', () => { confirming = ''; draw(); }), button('削除する', () => remove(a)));
         ask.append(row); card.append(ask);
       }
       return card;
     }));
-    if (!accounts.length) $('caList').replaceChildren(el('p', 'pw-note', 'まだ登録していません。'));
+    if (!accounts.length) $('caList').replaceChildren(el('p', 'mp-note', 'まだ登録していません。'));
     $('caStorage').textContent = !storage ? '' : storage.encrypted
       ? 'トークンは OS の資格情報で暗号化して保存します。'
       : 'この起動では暗号化できないため、トークンは本人だけが読めるファイルに保存します（Pleiad デスクトップで開くと暗号化し直します）。';
@@ -118,8 +118,8 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     box.hidden = false;
     $('caFlowTitle').textContent = `「${flow.name}」の${KIND_TITLE[flow.kind]}`;
     const body = [];
-    const note = text => el('p', 'pw-note', text);
-    const actions = (...buttons) => { const row = el('div', 'pw-actions'); row.append(...buttons); return row; };
+    const note = text => el('p', 'mp-note', text);
+    const actions = (...buttons) => { const row = el('div', 'mp-actions'); row.append(...buttons); return row; };
     const cancel = button('やめる', cancelFlow);
     const link = () => {
       if (!/^https:\/\//.test(flow.url ?? '')) return null;
@@ -137,10 +137,10 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
         body.push(el('p', null, flow.kind === 'usage-login'
           ? '1. ブラウザーで、このアカウントの Claude にログインして「承認」を押してください。'
           : '1. ブラウザーで、使いたいアカウントの Claude にログインして「承認」を押してください。'));
-        const l = link(); if (l) { const p = el('p', 'pw-note'); p.append(l); body.push(p); }
+        const l = link(); if (l) { const p = el('p', 'mp-note'); p.append(l); body.push(p); }
         body.push(el('p', null, '2. ブラウザーに表示されたコードを貼ってください。'));
         const form = el('form');
-        const field = el('label', 'pw-field');
+        const field = el('label', 'mp-field');
         // 描き直しで打ちかけのコードを消さない
         const typed = $('caCode')?.value ?? '';
         const input = el('input'); input.id = 'caCode'; input.value = typed; input.autocomplete = 'off'; input.spellcheck = false; input.placeholder = 'コードを貼り付け';
@@ -151,7 +151,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
         input.disabled = flow.phase === 'verifying';
         form.append(actions(cancel, submit));
         form.onsubmit = e => { e.preventDefault(); submitCode(input.value); };
-        if (flow.message) body.push(el('p', 'pw-state', flow.message));
+        if (flow.message) body.push(el('p', 'mp-state', flow.message));
         body.push(form);
         if (flow.phase !== 'verifying') queueMicrotask(() => { if (document.activeElement?.id !== 'caCode' && !panel.hidden) input.focus(); });
         break;
@@ -162,7 +162,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
         const warning = ownerWarning(account);
         if (warning) {
           body.push(el('p', null, flow.kind === 'setup-token' ? 'トークンを登録しました。' : '使用量の表示を認可しました。'),
-            el('p', 'pw-warn', `⚠ ${warning}`),
+            el('p', 'mp-warn', `⚠ ${warning}`),
             actions(button('閉じる', () => { flow = null; drawFlow(); }),
               button('トークンを発行し直す', () => startLogin({ kind: 'setup-token', accountId: account.id, name: account.name }))));
         } else if (flow.kind === 'setup-token') {
@@ -179,7 +179,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
         break;
       }
       case 'error':
-        body.push(el('p', 'pw-state', flow.message || '認可できませんでした。'),
+        body.push(el('p', 'mp-state', flow.message || '認可できませんでした。'),
           actions(button('閉じる', () => { flow = null; drawFlow(); }),
             button('やり直す', () => startLogin({ kind: flow.kind, accountId: flow.accountId, name: flow.name }))));
         if (flow.kind === 'setup-token') body.push(note('うまくいかないときは、「アカウントを追加」の「トークンを手動で貼り付ける」から登録できます。'));

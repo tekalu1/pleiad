@@ -71,8 +71,8 @@ export function createMessageQueue({ store, active, start, changed, delivered })
         });
         Promise.resolve(task).then(outcome => {
           if (!accepted) ready();
-          // The agent was running a turn Pleiad did not start (procway's wake) and nothing was
-          // delivered. Back to the queue; that turn's end kicks the queue again.
+          // Nothing was delivered (the agent was busy with a turn Pleiad did not start).
+          // Back to the queue; that turn's end kicks the queue again.
           if (outcome === 'requeue') return serial(id, () => update(id, item.id, { status: 'queued', error: null }));
           if (outcome && outcome !== 'ok') return pause(id);
         }, e => serial(id, () => update(id, item.id, {

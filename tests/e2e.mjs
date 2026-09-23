@@ -19,8 +19,6 @@ const cases = [
   await import('./e2e/antigravity-usage.mjs'),
   await import('./e2e/effort.mjs'),
   await import('./e2e/context-runtime.mjs'),
-  await import('./e2e/visualize-procway.mjs'),
-  await import('./e2e/procway-settings.mjs'),
   await import('./e2e/message-steer.mjs'),
   await import('./e2e/message-steer-claude.mjs'),
   await import('./e2e/visualize-claude.mjs'),
