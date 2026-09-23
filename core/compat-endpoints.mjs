@@ -496,6 +496,16 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
   };
 }
 
+// ---- 引き継ぎの規則 ------------------------------------------------------------
+
+/**
+ * 委譲（ply_delegate）した子の接続先（決定 3）。同じエージェントへの委譲なら親の会話の接続先を継ぎ、
+ * 違うエージェントへは公式（''）に戻す（Anthropic 互換と Responses 互換は形式が合わない）
+ */
+export function delegatedEndpoint(parentBackendId, childBackendId, parentEndpoint) {
+  return parentEndpoint && parentBackendId && parentBackendId === childBackendId ? parentEndpoint : '';
+}
+
 // ---- エージェントへの注入 -----------------------------------------------------
 
 /** 親から来ると互換の接続先と混ざる変数（毎回消すか上書きする。research §5-3） */
@@ -547,12 +557,13 @@ export function claudeCompatEnv(base, endpoint, extra = {}) {
 /**
  * フラグ設定（--settings）のファイルを書く。オブジェクトで渡すと argv に JSON のまま載ってキーがプロセス一覧に出るので、
  * データ置き場の下に 0600 で書き、パスだけを渡す。dispose() で消す（ターンの終わり）。
+ * extra はほかのフラグ設定（Pleiad が担当するときの claudeMdExcludes など）。同じファイルに入れる（settings は 1 つしか渡せない）。
  */
-export async function writeClaudeFlagSettings(dataDir, endpoint) {
+export async function writeClaudeFlagSettings(dataDir, endpoint, extra = {}) {
   const dir = path.join(dataDir, 'run');
   await fs.mkdir(dir, { recursive: true });
   const file = path.join(dir, `claude-compat-${crypto.randomUUID()}.json`);
-  await fs.writeFile(file, JSON.stringify({ env: claudeCompatVars(endpoint) }), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  await fs.writeFile(file, JSON.stringify({ ...(extra ?? {}), env: { ...(extra?.env ?? {}), ...claudeCompatVars(endpoint) } }), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   await fs.chmod(file, 0o600).catch(() => {});
   let gone = false;
   return { file, dispose: async () => { if (gone) return; gone = true; await fs.rm(file, { force: true }).catch(() => {}); } };

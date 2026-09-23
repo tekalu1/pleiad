@@ -8,7 +8,19 @@ const levels = {
   claude: ['low', 'medium', 'high', 'xhigh', 'max'],
   fake: ['low', 'medium', 'high'],
 };
-export async function effortOptions(backend, model = '', cwd) {
+/**
+ * endpoint は会話が選んでいる互換の接続先（core/compat-endpoints.mjs の一覧の行。無ければ公式）。
+ * 互換の接続先では既定の段が分からない（design-system の規則どおり「既定」の段を作らない）。
+ * Claude の互換の接続先は「思考を送る」がオンのときだけ段を選べる（決定 4。オフなら段を送らない）。
+ */
+export async function effortOptions(backend, model = '', cwd, endpoint = null) {
+  if (endpoint) {
+    const off = endpoint.agent === 'claude' && !endpoint.options?.sendThinking;
+    const values = off ? [] : endpoint.agent === 'claude' ? levels.claude : ['low', 'medium', 'high'];
+    return Object.fromEntries([['', { label: '既定に従う', note: '接続先の設定を使う',
+      ...(off ? { reason: '互換の接続先には段を送りません（接続先の「思考を送る」がオフのため）' } : {}) }],
+      ...values.map(value => [value, { label: value, note: '対応するモデルで使用' }])]);
+  }
   let values = levels[backend.id] ?? [];
   let entry = null;
   let reason = null;       // 段を選べない理由（画面の無効のスライダーに出す。分かるときだけ）
@@ -27,9 +39,9 @@ export async function effortOptions(backend, model = '', cwd) {
     ...values.map(value => [value, { label: value, note: levelNote(value),
       ...(value === fallback ? { isDefault: true } : {}) }])]);
 }
-export async function validateEffort(backend, value, model, cwd) {
+export async function validateEffort(backend, value, model, cwd, endpoint = null) {
   if (value === '') return value;
-  if (typeof value !== 'string' || !Object.hasOwn(await effortOptions(backend, model, cwd), value))
+  if (typeof value !== 'string' || !Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value))
     throw new Error('選択したエフォートは使用できません。選び直してください');
   return value;
 }

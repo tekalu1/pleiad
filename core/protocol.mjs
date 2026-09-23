@@ -38,6 +38,13 @@ export const COMMANDS = new Set([
   'claudeLoginStart',    // { kind: setup-token|usage-login, accountId?, name?, open? } -> { loginId }。setup-token は accountId 無しなら name で新規追加
   'claudeLoginCode',     // { loginId, code } -> {}。ブラウザーに表示されたコードを CLI へ渡す
   'claudeLoginCancel',   // { loginId } -> {}
+  // 互換の接続先（エージェントごと。会話ごとに選ぶ。core/compat-endpoints.mjs）。キーは返さない
+  'compatEndpoints',        // { agent? } -> { endpoints: [{ id, agent, kind, name, baseUrl, auth, hasKey, roles, models, options, lastCheck, isDefault, ready }], defaults, storage }
+  'compatEndpointCheck',    // { input, id? } -> { ok: true, receipt, auth, latencyMs, models, lines } | { ok: false, error, lines, code }。本物の 1 リクエストで確かめる
+  'compatEndpointSave',     // { input, receipt, id? } -> { id }。確認の受領証が今の接続情報と合うときだけ保存する
+  'compatEndpointRecheck',  // { id } -> { ok, lines?, error? }。保存済みを確かめ直して結果を記録する
+  'compatEndpointDelete',   // { id } -> 一覧。キーも消す。選んでいる会話は次の送信の前に選び直しを求める
+  'compatEndpointDefault',  // { agent, id } -> 一覧。新しい会話の既定（'' = 公式）
   'contextSettings', // { cwd? } -> { defaults, places: [{ id, path, kinds: { <kind>: { value, override, from } }, roots, overrides, current }] } 種類ごとの設定と継承（core/context-settings.mjs）
   'slashSkills',     // { cwd } -> 入力欄「/」の候補。コンテキスト画面と同じ探索結果からのスキル一覧（説明文付き）
   'sessionContext', // { sessionId } -> { report, owners, pinned, changed, startedAt, refreshedAt, removedMcp } この会話が読み込んだ記録。固定された会話では今のファイルと突き合わせる
@@ -131,6 +138,7 @@ export const EVENTS = new Set([
   "backend",      // { backend } 会話の実行先が変わった
   "nextSettings",
   "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す
+  "compatEndpointsChanged", // 互換の接続先の一覧・既定が変わった（sessionId は null）。中身は compatEndpoints コマンドで取り直す
   "claudeLogin",  // { loginId, kind, accountId, phase: url|code|verifying|done|error|cancelled, url?, message? } アカウントの認可の進み具合（sessionId は null）。トークンは載せない
   "sessionsChanged",
   "present",      // 成果物の提示
