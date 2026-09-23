@@ -1634,8 +1634,10 @@ async function endTurn(turn, emit, { record = true } = {}) {
       console.error("  完了の記録に失敗:", String(err?.message ?? err));
     });
   }
+  // 委譲された子の会話（delegation）の完了は、画面が通知しない。結果は依頼元の会話へ届く
+  const delegated = turn.info.sessionId ? Boolean((await store.get(turn.info.sessionId).catch(() => null))?.delegation) : false;
   // Retain turnEnd in snapshots already being read, then release the turn.
-  emit({ type: "turnEnd", completedAt, outcome: turn.outcome, ...(requeued ? { requeued: true } : {}) });
+  emit({ type: "turnEnd", completedAt, outcome: turn.outcome, ...(requeued ? { requeued: true } : {}), ...(delegated ? { delegated: true } : {}) });
   runtime.turns.delete(turn.key);
   notifyFree(turn.key);
   syncRunningPoll();
