@@ -1,5 +1,5 @@
 import { el } from './dom.mjs';
-import { fmt } from './i18n.mjs';
+import { t, fmt } from './i18n.mjs';
 import { isComposingKey } from './keyboard.mjs';
 import { fileReference, fileDownloadUrl } from './file-reference.mjs';
 import { htmlDocument, markdownContent, parseTable, previewFrame } from './file-preview-content.mjs';
@@ -8,7 +8,8 @@ import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fi
 import { copyText } from './code-copy.mjs';
 import { createTree } from './tree.mjs';
 
-const KIND = { markdown:'Markdown', html:'HTML', image:'画像', table:'表', text:'テキスト', pdf:'PDF', unsupported:'プレビュー未対応', directory:'ディレクトリ' };
+const KIND = { markdown:'Markdown', html:'HTML', image:t('filePreview.kind.image'), table:t('filePreview.kind.table'), text:t('filePreview.kind.text'), pdf:'PDF',
+  unsupported:t('filePreview.kind.unsupported'), directory:t('filePreview.kind.directory') };
 function formatSize(bytes) {
   if (!bytes) return '0 B';
   if (bytes < 1024) return `${bytes} B`;
@@ -26,13 +27,13 @@ const iconButton = (icon, label, action, className = 'btn btn-icon') => {
 
 export function setupFilePreview({ getContext, useFile, onLayout }) {
   const panel = el('aside', 'file-preview'); panel.id = 'filePreview'; panel.hidden = true;
-  panel.setAttribute('aria-label', 'ファイルプレビュー'); panel.tabIndex = -1;
+  panel.setAttribute('aria-label', t('filePreview.panel')); panel.tabIndex = -1;
   const head = el('header', 'file-preview-head'), title = el('div', 'file-preview-title');
   const name = el('h2'), path = el('div', 'file-preview-path'); title.append(name, path);
-  const wide = iconButton(expandIcon, '広げる', () => { document.body.classList.toggle('file-preview-wide'); layout(); });
+  const wide = iconButton(expandIcon, t('filePreview.expand'), () => { document.body.classList.toggle('file-preview-wide'); layout(); });
   wide.classList.add('btn-wide');
-  const closeButton = iconButton(closeIcon, '閉じる', () => close());
-  const treeToggle = iconButton(folderIcon, 'ツリー', () => {
+  const closeButton = iconButton(closeIcon, t('filePreview.close'), () => close());
+  const treeToggle = iconButton(folderIcon, t('filePreview.tree'), () => {
     treePane.classList.toggle('collapsed');
     const collapsed = treePane.classList.contains('collapsed');
     treeToggle.setAttribute('aria-expanded', String(!collapsed));
@@ -40,24 +41,24 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
   treeToggle.setAttribute('aria-expanded', 'true');
   const actions = el('div', 'file-preview-actions'); actions.append(treeToggle, wide, closeButton); head.append(title, actions);
   const toolbar = el('div', 'file-preview-toolbar'), switcher = el('div', 'file-preview-switch');
-  switcher.setAttribute('aria-label', '表示方法');
-  const rendered = button('プレビュー', () => { source = false; paint(); });
-  const original = button('原文', () => { source = true; paint(); }); switcher.append(rendered, original);
-  const locationButton = button('パス', () => { location.hidden = !location.hidden; locationButton.setAttribute('aria-expanded', String(!location.hidden)); if (!location.hidden) { fullPath.focus(); fullPath.select(); } });
+  switcher.setAttribute('aria-label', t('filePreview.viewMode'));
+  const rendered = button(t('filePreview.preview'), () => { source = false; paint(); });
+  const original = button(t('filePreview.original'), () => { source = true; paint(); }); switcher.append(rendered, original);
+  const locationButton = button(t('filePreview.path'), () => { location.hidden = !location.hidden; locationButton.setAttribute('aria-expanded', String(!location.hidden)); if (!location.hidden) { fullPath.focus(); fullPath.select(); } });
   locationButton.setAttribute('aria-expanded', 'false');
-  const reload = button('再読み込み', () => load()); toolbar.append(switcher, locationButton, reload);
+  const reload = button(t('filePreview.reload'), () => load()); toolbar.append(switcher, locationButton, reload);
   const location = el('div', 'file-preview-location'); location.hidden = true;
-  const fullPath = el('input'); fullPath.readOnly = true; fullPath.setAttribute('aria-label', 'ファイルの完全パス');
-  const copyPath = iconButton(copyIcon, 'パスをコピー', () => copyText(copyPath, fullPath.value, 'パスをコピー'));
+  const fullPath = el('input'); fullPath.readOnly = true; fullPath.setAttribute('aria-label', t('filePreview.fullPath'));
+  const copyPath = iconButton(copyIcon, t('filePreview.copyPath'), () => copyText(copyPath, fullPath.value, t('filePreview.copyPath')));
   location.append(fullPath, copyPath);
   const note = el('div', 'file-preview-note'); note.hidden = true; note.setAttribute('role', 'status');
   const bodyLayout = el('div', 'file-preview-body-layout');
   const treePane = el('div', 'file-preview-tree-pane');
   const treeHeader = el('div', 'file-preview-tree-header');
-  treeHeader.append(el('span', null, 'エクスプローラー'));
+  treeHeader.append(el('span', null, t('filePreview.explorer')));
   const treeRoot = el('div', 'tree file-preview-tree');
   treePane.append(treeHeader, treeRoot);
-  const content = el('div', 'file-preview-content'); content.setAttribute('aria-label', 'ファイルの内容'); content.tabIndex = 0;
+  const content = el('div', 'file-preview-content'); content.setAttribute('aria-label', t('filePreview.contents')); content.tabIndex = 0;
   bodyLayout.append(treePane, content);
   const tree = createTree(treeRoot, {
     nodes: [],
@@ -72,8 +73,8 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     }
   });
   const footer = el('footer', 'file-preview-foot'), status = el('span'); status.setAttribute('role', 'status');
-  const save = el('a', 'btn', '保存'); save.download = ''; save.hidden = true;
-  const use = button('会話で使う', () => {
+  const save = el('a', 'btn', t('filePreview.save')); save.download = ''; save.hidden = true;
+  const use = button(t('filePreview.use'), () => {
     if (!file || context.sessionId !== getContext().sessionId) return;
     const selectedFile = file;
     document.body.classList.remove('file-preview-wide');
@@ -82,7 +83,7 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
   });
   footer.append(status, save, use);
   const handle = el('div', 'file-preview-resize'); handle.tabIndex = 0; handle.setAttribute('role', 'separator');
-  handle.setAttribute('aria-label', 'プレビューの幅'); handle.setAttribute('aria-orientation', 'vertical'); handle.setAttribute('aria-valuemin', '30'); handle.setAttribute('aria-valuemax', '65');
+  handle.setAttribute('aria-label', t('filePreview.width')); handle.setAttribute('aria-orientation', 'vertical'); handle.setAttribute('aria-valuemin', '30'); handle.setAttribute('aria-valuemax', '65');
   panel.append(handle, head, toolbar, location, note, bodyLayout, footer); document.body.append(panel);
   const main = document.querySelector('body > main'), sidebar = document.getElementById('sidebar');
   const mobile = matchMedia('(max-width:760px)');
@@ -96,9 +97,9 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     main.inert = open && (mobile.matches || expanded); sidebar.inert = open && mobile.matches;
     panel.setAttribute('role', mobile.matches ? 'dialog' : 'complementary');
     if (mobile.matches) panel.setAttribute('aria-modal', 'true'); else panel.removeAttribute('aria-modal');
-    setIcon(wide, expanded ? collapseIcon : expandIcon, expanded ? '会話と並べて表示' : '広げる');
-    setIcon(closeButton, mobile.matches ? backIcon : closeIcon, mobile.matches ? '会話へ戻る' : 'プレビューを閉じる');
-    panel.setAttribute('aria-label', custom ? custom.label : visual ? '可視化のプレビュー' : 'ファイルプレビュー');
+    setIcon(wide, expanded ? collapseIcon : expandIcon, expanded ? t('filePreview.besideChat') : t('filePreview.expand'));
+    setIcon(closeButton, mobile.matches ? backIcon : closeIcon, mobile.matches ? t('filePreview.backToChat') : t('filePreview.closePreview'));
+    panel.setAttribute('aria-label', custom ? custom.label : visual ? t('filePreview.visualPanel') : t('filePreview.panel'));
     const available = besideSidebar();
     const pixels = Math.min(available - 360, Math.max(300, available * percentage / 100));
     document.body.style.setProperty('--file-preview-width', `${Math.max(300, pixels)}px`);
@@ -125,16 +126,16 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
   async function request(raw, base, signal = abort?.signal, resource = false) {
     const params = new URLSearchParams({ path:raw, ...(context.sessionId ? { sessionId:context.sessionId } : {}), ...(context.at ? { at:context.at } : {}), ...(base ? { base } : {}), ...(resource ? { resource:'1' } : {}) });
     const response = await fetch(`/file-preview?${params}`, { signal, credentials:'same-origin' });
-    if (response.status === 401) throw new Error('接続の認証が切れています。起動時のURLから開き直してください。');
+    if (response.status === 401) throw new Error(t('filePreview.error.auth'));
     const data = await response.json();
-    if (!response.ok) { const error = new Error(data.error?.message || 'ファイルを読み込めませんでした。'); error.path = data.path; throw error; }
+    if (!response.ok) { const error = new Error(data.error?.message || t('filePreview.error.load')); error.path = data.path; throw error; }
     return data;
   }
   async function load() {
     abort?.abort(); abort = new AbortController(); const current = ++generation; paintId++; disposePdf();
     file = null; source = false; pdfPage = 1; pdfZoom = imageZoom = 1;
     switcher.hidden = true; use.disabled = true; save.hidden = true; setNote('');
-    status.textContent = '読み込み中…'; stateMessage('読み込み中…');
+    status.textContent = t('filePreview.loading'); stateMessage(t('filePreview.loading'));
     try {
       const data = await request(reference.path + (reference.line ? `:${reference.line}` : ''), context.base);
       if (current !== generation || panel.hidden) return;
@@ -142,13 +143,13 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
       const normalized = data.path.replaceAll('\\','/'), cwd = (data.cwd || '').replaceAll('\\','/').replace(/\/$/, '');
       path.textContent = cwd && normalized.startsWith(cwd + '/') ? normalized.slice(cwd.length + 1) : normalized;
       use.disabled = false; save.hidden = !data.downloadable; save.href = fileDownloadUrl(data.path);
-      save.title = '現在のファイルを保存';
+      save.title = t('filePreview.saveFile');
       if (data.kind === 'directory') {
-        status.textContent = `ディレクトリ · ${(data.items || []).length} 項目`;
-        status.title = `現在のフォルダー · 更新日時 ${fmt.dateTime(data.modifiedAt)}`;
+        status.textContent = t('filePreview.status.directory', { count: (data.items || []).length });
+        status.title = t('filePreview.status.folderTitle', { date: fmt.dateTime(data.modifiedAt) });
       } else {
-        status.textContent = `${KIND[data.kind] || data.kind} · ${fmt.time(data.fetchedAt)}に取得`;
-        status.title = `現在のファイル · 更新日時 ${fmt.dateTime(data.modifiedAt)}`;
+        status.textContent = t('filePreview.status.fetched', { kind: KIND[data.kind] || data.kind, time: fmt.time(data.fetchedAt) });
+        status.title = t('filePreview.status.fileTitle', { date: fmt.dateTime(data.modifiedAt) });
       }
       source = !!reference.line && typeof data.text === 'string';
       if (data.tree) {
@@ -160,7 +161,7 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     } catch (error) {
       if (current !== generation || error.name === 'AbortError' || panel.hidden) return;
       if (error.path) fullPath.value = error.path;
-      status.textContent = '読み込みできません'; stateMessage('ファイルを開けません', error.message);
+      status.textContent = t('filePreview.status.failed'); stateMessage(t('filePreview.error.open'), error.message);
     }
   }
   /** 「原文」の中身。ファイルの本文でも可視化の HTML でも、同じ見た目で見せる */
@@ -175,8 +176,8 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
       row.append(number, document.createTextNode(lines[i] || ' ')); pre.append(row);
     }
     content.replaceChildren(pre);
-    if (lines.length > 5000) setNote(`${start + 1}〜${end}行を表示（全${lines.length}行）。全文は保存して確認できます。`);
-    if (line > lines.length) setNote(`指定された${line}行目はありません（全${lines.length}行）。`);
+    if (lines.length > 5000) setNote(t('filePreview.source.truncated', { start: start + 1, end, total: lines.length }));
+    if (line > lines.length) setNote(t('filePreview.source.noLine', { line, total: lines.length }));
     if (line) requestAnimationFrame(() => { const row = pre.querySelector('.on'); if (row?.isConnected) content.scrollTop = row.offsetTop - pre.offsetTop - 60; });
   }
   async function paintPdf(ticket) {
@@ -194,12 +195,12 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     }
     if (ticket !== paintId || current !== generation) return;
     const tools = el('div', 'file-preview-media-tools');
-    const prev = button('前のページ', () => { pdfPage--; paint(); }); prev.disabled = pdfPage <= 1;
-    const next = button('次のページ', () => { pdfPage++; paint(); }); next.disabled = pdfPage >= pdfDoc.numPages;
+    const prev = button(t('filePreview.pdf.prev'), () => { pdfPage--; paint(); }); prev.disabled = pdfPage <= 1;
+    const next = button(t('filePreview.pdf.next'), () => { pdfPage++; paint(); }); next.disabled = pdfPage >= pdfDoc.numPages;
     tools.append(prev, el('span', null, `${pdfPage} / ${pdfDoc.numPages}`), next,
       button('−', () => { pdfZoom = Math.max(.5, pdfZoom - .25); paint(); }), button('＋', () => { pdfZoom = Math.min(3, pdfZoom + .25); paint(); }));
-    tools.children[3].setAttribute('aria-label','PDFを縮小'); tools.children[4].setAttribute('aria-label','PDFを拡大');
-    const canvas = el('canvas'); canvas.setAttribute('role','img'); canvas.setAttribute('aria-label', `${file.name} ${pdfPage}ページ目`);
+    tools.children[3].setAttribute('aria-label',t('filePreview.pdf.zoomOut')); tools.children[4].setAttribute('aria-label',t('filePreview.pdf.zoomIn'));
+    const canvas = el('canvas'); canvas.setAttribute('role','img'); canvas.setAttribute('aria-label', t('filePreview.pdf.page', { name: file.name, page: pdfPage }));
     const stage = el('div','file-preview-pdf'); stage.append(canvas); content.replaceChildren(tools, stage);
     const page = await pdfDoc.getPage(pdfPage);
     if (ticket !== paintId || current !== generation) return;
@@ -213,7 +214,7 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     if (ticket !== paintId || current !== generation) return;
     const text = await page.getTextContent();
     if (ticket !== paintId || current !== generation) return;
-    const accessible = el('details','file-preview-pdf-text'); accessible.append(el('summary',null,'このページのテキスト'),el('p',null,text.items.map(item=>item.str).join(' '))); content.append(accessible);
+    const accessible = el('details','file-preview-pdf-text'); accessible.append(el('summary',null,t('filePreview.pdf.text')),el('p',null,text.items.map(item=>item.str).join(' '))); content.append(accessible);
   }
   const setPressed = () => {
     rendered.setAttribute('aria-pressed', String(!source));
@@ -228,10 +229,10 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     switcher.hidden = typeof visual.html !== 'string';
     setNote(''); content.scrollTop = 0;
     if (source) {
-      content.setAttribute('aria-label', '可視化の原文');
+      content.setAttribute('aria-label', t('filePreview.visual.source'));
       return sourceView(visual.html);
     }
-    content.setAttribute('aria-label', '可視化の内容');
+    content.setAttribute('aria-label', t('filePreview.visual.contents'));
     content.replaceChildren(visualizationFrame(visual.html, visual.title, { fill:true }));
   }
   async function paint() {
@@ -253,7 +254,7 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
         const dirView = el('div', 'directory-view');
         const dirHead = el('div', 'dir-head');
         const dirTitle = el('h3', 'dir-title', file.name);
-        const dirDesc = el('p', 'dir-desc', `${(file.items || []).length} 項目`);
+        const dirDesc = el('p', 'dir-desc', t('filePreview.dir.items', { count: (file.items || []).length }));
         dirHead.append(dirTitle, dirDesc);
 
         const grid = el('div', 'directory-grid');
@@ -264,7 +265,7 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
           iconSpan.innerHTML = item.kind === 'directory' ? folderIcon : fileIcon;
           const info = el('div', 'dir-card-info');
           const nameSpan = el('span', 'dir-card-name', item.name);
-          const metaSpan = el('span', 'dir-card-meta', item.kind === 'directory' ? 'フォルダー' : formatSize(item.size));
+          const metaSpan = el('span', 'dir-card-meta', item.kind === 'directory' ? t('filePreview.dir.folder') : formatSize(item.size));
           info.append(nameSpan, metaSpan);
           card.append(iconSpan, info);
           card.onclick = () => {
@@ -273,7 +274,7 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
           grid.append(card);
         }
         if (!file.items || file.items.length === 0) {
-          dirView.append(dirHead, el('div', 'dir-empty', 'フォルダーは空です'));
+          dirView.append(dirHead, el('div', 'dir-empty', t('filePreview.dir.empty')));
         } else {
           dirView.append(dirHead, grid);
         }
@@ -281,7 +282,7 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
         return;
       }
       if (source || file.kind === 'text') return sourceView(file.text, reference?.line ?? null);
-      if (file.kind === 'unsupported') return stateMessage('このファイルはプレビューできません', file.reason);
+      if (file.kind === 'unsupported') return stateMessage(t('filePreview.error.unsupported'), file.reason);
       if (file.kind === 'markdown') {
         const result = await markdownContent(file.text, loadAsset);
         if (ticket !== paintId) return;
@@ -295,21 +296,22 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
         const table = el('table'), head = el('thead'), body = el('tbody');
         rows.forEach((row,i) => { const tr = el('tr'); row.forEach(value => { const cell = el(i ? 'td' : 'th', null, value); if (!i) cell.scope = 'col'; tr.append(cell); }); (i ? body : head).append(tr); });
         table.append(head, body); const wrapper = el('div', 'file-preview-table'); wrapper.append(table); content.replaceChildren(wrapper);
-        setNote(truncated ? '先頭500行・100列まで表示しています。全文は原文または保存で確認できます。' : `${Math.max(0, rows.length - 1)}行 · ${Math.max(0, ...rows.map(row => row.length))}列`);
+        setNote(truncated ? t('filePreview.table.truncated')
+          : `${t('filePreview.table.rows', { count: Math.max(0, rows.length - 1) })} · ${t('filePreview.table.columns', { count: Math.max(0, ...rows.map(row => row.length)) })}`);
       } else if (file.kind === 'image') {
         const tools = el('div', 'file-preview-media-tools');
-        const minus = button('−', () => { imageZoom = Math.max(.25, imageZoom - .25); paint(); }); minus.setAttribute('aria-label','画像を縮小');
-        const plus = button('＋', () => { imageZoom = Math.min(3, imageZoom + .25); paint(); }); plus.setAttribute('aria-label','画像を拡大');
-        tools.append(minus,el('span',null,`${Math.round(imageZoom * 100)}%`),plus,button('全体を表示',()=>{ imageZoom=1; paint(); }));
+        const minus = button('−', () => { imageZoom = Math.max(.25, imageZoom - .25); paint(); }); minus.setAttribute('aria-label',t('filePreview.image.zoomOut'));
+        const plus = button('＋', () => { imageZoom = Math.min(3, imageZoom + .25); paint(); }); plus.setAttribute('aria-label',t('filePreview.image.zoomIn'));
+        tools.append(minus,el('span',null,`${Math.round(imageZoom * 100)}%`),plus,button(t('filePreview.image.fit'),()=>{ imageZoom=1; paint(); }));
         const img = el('img'); img.alt = file.name; img.src = `data:${file.mime};base64,${file.data}`;
         img.style.width = `${imageZoom * 100}%`;
         img.onload = () => { if (ticket === paintId) setNote(`${img.naturalWidth} × ${img.naturalHeight}`); };
-        img.onerror = () => { if (ticket === paintId) stateMessage('画像を表示できません', '破損または未対応の画像です。保存して確認できます。'); };
+        img.onerror = () => { if (ticket === paintId) stateMessage(t('filePreview.image.failed'), t('filePreview.image.failedHint')); };
         const stage = el('div', 'file-preview-image'); stage.append(img); content.replaceChildren(tools,stage);
       } else if (file.kind === 'pdf') await paintPdf(ticket);
     } catch (error) {
       if (ticket !== paintId || error.name === 'AbortError' || error.name === 'RenderingCancelledException') return;
-      stateMessage('プレビューを表示できません', file.kind === 'pdf' ? '暗号化・破損・未対応のPDFの可能性があります。保存して確認できます。' : '再読み込みするか、原文・保存で確認してください。');
+      stateMessage(t('filePreview.error.preview'), file.kind === 'pdf' ? t('filePreview.error.pdfHint') : t('filePreview.error.previewHint'));
     }
   }
   /** ファイル・可視化へ切り替えるとき、ファイル以外の中身の印を外して道具を戻す */
@@ -361,7 +363,7 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     panel.hidden = false; document.body.classList.add('file-preview-open');
     toolbar.hidden = false; reload.hidden = false; use.hidden = false; locationButton.hidden = false; save.download = '';
     treeToggle.hidden = false;
-    content.setAttribute('aria-label', 'ファイルの内容');
+    content.setAttribute('aria-label', t('filePreview.contents'));
     name.textContent = ref.path.split(/[\\/]/).at(-1); path.textContent = ref.path; fullPath.value = ref.path;
     location.hidden = true; locationButton.setAttribute('aria-expanded','false');
     clearCurrent();
@@ -383,12 +385,12 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
     treeToggle.hidden = true;
     locationButton.hidden = !origin;
     location.hidden = true; locationButton.setAttribute('aria-expanded','false');
-    name.textContent = title || '可視化'; path.textContent = origin ?? ''; fullPath.value = origin ?? '';
+    name.textContent = title || t('filePreview.visual.title'); path.textContent = origin ?? ''; fullPath.value = origin ?? '';
     snapshotUrl = visualizationBlobUrl(html);
     save.href = snapshotUrl; save.download = visualizationFileName({ path:origin, title }); save.hidden = false;
-    save.title = '会話に残っている HTML を保存';
-    status.textContent = '保存済みの可視化';
-    status.title = 'この回答に保存された内容です。ホスト上のファイルの現在の内容ではありません。';
+    save.title = t('filePreview.visual.save');
+    status.textContent = t('filePreview.visual.status');
+    status.title = t('filePreview.visual.statusTitle');
     paint();
     clearCurrent(); element.setAttribute('aria-current','true');
     layout(); panel.focus({preventScroll:true});

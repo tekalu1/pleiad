@@ -8,36 +8,50 @@
 // 「トークンを発行し直す」を添える（警告色は使わない。docs/design-system.md）。
 // 面と部品は設定の管理の面（web/manage-panel.css の .mp-*）を使う。
 import { el } from './dom.mjs';
+import { t, applyDom } from './i18n.mjs';
 
-const KIND_TITLE = { 'setup-token': 'トークンを発行', 'usage-login': '使用量の表示を認可' };
+/** 認可の進み具合の見出し。「「名前」のトークンを発行」 */
+const FLOW_TITLE = {
+  'setup-token': name => t('accounts.flowTitle.setupToken', { name }),
+  'usage-login': name => t('accounts.flowTitle.usageLogin', { name }),
+};
+
+/** text の中の code の部分を <code> にして node に入れる（訳文に HTML を混ぜないため） */
+function withCode(node, text, code) {
+  const i = text.indexOf(code);
+  if (i < 0) { node.textContent = text; return; }
+  node.replaceChildren(text.slice(0, i), el('code', null, code), text.slice(i + code.length));
+}
 
 export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) {
   const $ = id => document.getElementById(id);
   const panel = document.createElement('section');
   panel.className = 'mp-panel'; panel.id = 'claudeAccountsPanel'; panel.hidden = true;
   panel.setAttribute('aria-labelledby', 'caTitle');
-  panel.innerHTML = `<div class="mp-row"><h3 id="caTitle">Claude のアカウント</h3><button type="button" class="btn" id="caClose">閉じる</button></div>
-  <p class="mp-note">登録したアカウントは、会話の入力欄のモデルの隣で選べます。選ばない会話はログイン中のアカウントで動きます。</p>
-  <div id="caList"></div><button type="button" class="btn" id="caAdd">＋ アカウントを追加</button>
+  panel.innerHTML = `<div class="mp-row"><h3 id="caTitle" data-i18n="accounts.title"></h3><button type="button" class="btn" id="caClose" data-i18n="accounts.close"></button></div>
+  <p class="mp-note" data-i18n="accounts.intro"></p>
+  <div id="caList"></div><button type="button" class="btn" id="caAdd" data-i18n="accounts.add"></button>
   <section class="mp-card" id="caFlow" hidden aria-live="polite"><h3 id="caFlowTitle"></h3><div id="caFlowBody"></div></section>
-  <form id="caForm" hidden><h3 id="caFormTitle">アカウントを追加</h3>
-  <label class="mp-field"><span>表示名</span><input id="caName" required maxlength="60" placeholder="仕事用、個人用など" autocomplete="off"></label>
-  <p class="mp-note" id="caAuthNote">「ブラウザーで認可する」を押すと、Claude のログイン画面が開きます。使いたいアカウントでログインして承認し、表示されたコードをここに貼ると登録できます。</p>
-  <div class="mp-actions" id="caAuthActions"><button type="button" class="btn" id="caCancel">キャンセル</button><button type="button" class="btn btn-primary" id="caAuthorize">ブラウザーで認可する</button></div>
-  <details id="caManual"><summary>トークンを手動で貼り付ける</summary>
-  <p class="mp-note">Pleiad から認可できないときは、使いたいアカウントでターミナルから <code>claude setup-token</code> を実行し、表示されたトークンを貼り付けてください。</p>
-  <label class="mp-field"><span>トークン</span><div class="mp-row"><input id="caToken" type="password" autocomplete="new-password" spellcheck="false"><button type="button" class="btn" id="caReveal">表示</button></div><small id="caTokenHint"></small></label>
-  <div class="mp-actions"><button type="submit" class="btn" id="caSave">保存</button></div></details>
+  <form id="caForm" hidden><h3 id="caFormTitle" data-i18n="accounts.form.addTitle"></h3>
+  <label class="mp-field"><span data-i18n="accounts.form.name"></span><input id="caName" required maxlength="60" data-i18n-placeholder="accounts.form.namePlaceholder" autocomplete="off"></label>
+  <p class="mp-note" id="caAuthNote" data-i18n="accounts.form.authNote"></p>
+  <div class="mp-actions" id="caAuthActions"><button type="button" class="btn" id="caCancel" data-i18n="accounts.form.cancel"></button><button type="button" class="btn btn-primary" id="caAuthorize" data-i18n="accounts.form.authorize"></button></div>
+  <details id="caManual"><summary data-i18n="accounts.form.manual"></summary>
+  <p class="mp-note" id="caManualNote"></p>
+  <label class="mp-field"><span data-i18n="accounts.form.token"></span><div class="mp-row"><input id="caToken" type="password" autocomplete="new-password" spellcheck="false"><button type="button" class="btn" id="caReveal" data-i18n="accounts.form.show"></button></div><small id="caTokenHint"></small></label>
+  <div class="mp-actions"><button type="submit" class="btn" id="caSave" data-i18n="accounts.form.save"></button></div></details>
   <p class="mp-state" id="caFormState" role="status"></p></form>
-  <p class="mp-note">使用量の画面にアカウントごとの残りを出すには、アカウントごとに「使用量の表示を認可」が要ります。環境変数 ANTHROPIC_API_KEY があるときは、そちらが優先されます。</p>
+  <p class="mp-note" data-i18n="accounts.usageNote"></p>
   <p class="mp-note" id="caStorage"></p><p class="mp-state" id="caState" role="status"></p>`;
+  applyDom(panel);
+  withCode(panel.querySelector('#caManualNote'), t('accounts.form.manualNote', { command: 'claude setup-token' }), 'claude setup-token');
   $('agentControls').append(panel);
 
   let accounts = [], storage = null, loaded = null, editingId = '', saving = false, confirming = '';
   /** 進行中の認可。{ loginId, kind, accountId, name, phase, url, message, popup } */
   let flow = null;
-  const NEW_HINT = '発行されたトークン（sk-ant-oat01-…）をそのまま貼り付けてください。保存したトークンは表示しません。';
-  const EDIT_HINT = '変更するときだけ貼り付けてください。空のままなら保存済みのトークンを使います。';
+  const NEW_HINT = t('accounts.form.newHint');
+  const EDIT_HINT = t('accounts.form.editHint');
   // デスクトップ版はサーバーが既定のブラウザーで開く。ブラウザー版は押した時点で窓を開けておき、URL が届いたら移す（後から開くとポップアップとして止められる）
   const desktop = () => Boolean(window.plyDesktop);
 
@@ -49,25 +63,26 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   }
   function button(text, onclick, className = 'btn') { const b = el('button', className, text); b.type = 'button'; b.onclick = onclick; return b; }
   function status(a) {
-    const token = a.hasToken ? 'トークン登録済み' : 'トークン未登録';
-    const usage = a.usageLogin ? '使用量の表示: 認可済み' : '使用量の表示: 未認可';
+    const token = a.hasToken ? t('accounts.status.token') : t('accounts.status.noToken');
+    const usage = a.usageLogin ? t('accounts.status.usage') : t('accounts.status.noUsage');
     return `${token} · ${usage}`;
   }
   /**
    * トークンの持ち主の食い違い（サーバーの tokenCheck。core/claude-accounts.mjs の tokenChecks）。無ければ ''。
    * setup-token はブラウザーでログイン中の claude.ai アカウントで黙って発行されるので、直し方はログインを切り替えて発行し直すこと
    */
-  const REISSUE = 'ブラウザーで claude.ai のログインを切り替えてから、トークンを発行し直してください。';
+  // 括弧書き（メールアドレス）は文の中へ差し込む。無ければ空
   function ownerWarning(a) {
     const c = a?.hasToken ? a.tokenCheck : null;
     if (c?.status === 'mismatch') {
-      const expected = c.expectedEmail ? `（使用量の認可は ${c.expectedEmail}）` : '';
-      if (c.ownerName) return `このトークンは「${c.ownerName}」のアカウントで発行されています${expected}。${REISSUE}`;
-      if (c.ownerLoggedIn) return `このトークンは、ログイン中のアカウント${c.ownerEmail ? `（${c.ownerEmail}）` : ''}で発行されています${expected}。${REISSUE}`;
-      return `このトークンは、使用量の認可${c.expectedEmail ? `（${c.expectedEmail}）` : ''}とは別のアカウントで発行されています。${REISSUE}`;
+      const reissue = t('accounts.owner.reissue');
+      const expected = c.expectedEmail ? t('accounts.owner.expected', { email: c.expectedEmail }) : '';
+      if (c.ownerName) return t('accounts.owner.named', { owner: c.ownerName, expected, reissue });
+      if (c.ownerLoggedIn) return t('accounts.owner.loggedIn', { email: c.ownerEmail ? t('accounts.owner.email', { email: c.ownerEmail }) : '', expected, reissue });
+      return t('accounts.owner.other', { email: c.expectedEmail ? t('accounts.owner.email', { email: c.expectedEmail }) : '', reissue });
     }
     if (c?.sameTokenAs?.length) {
-      return `このトークンは「${c.sameTokenAs.join('」「')}」と同じアカウントで発行されています。別のアカウントとして使うなら、${REISSUE}`;
+      return t('accounts.owner.same', { names: c.sameTokenAs.join(t('accounts.owner.nameJoin')) });
     }
     return '';
   }
@@ -78,7 +93,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     const box = el('div', 'mp-confirm');
     box.append(el('p', 'mp-warn', `⚠ ${text}`));
     const row = el('div', 'mp-card-actions');
-    row.append(button('トークンを発行し直す', () => startLogin({ kind: 'setup-token', accountId: a.id, name: a.name })));
+    row.append(button(t('accounts.reissue'), () => startLogin({ kind: 'setup-token', accountId: a.id, name: a.name })));
     box.append(row);
     return box;
   }
@@ -90,25 +105,25 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
       const actions = el('div', 'mp-card-actions');
       actions.hidden = confirming === a.id;
       actions.append(
-        button(a.hasToken ? 'トークンを発行し直す' : 'トークンを発行', () => startLogin({ kind: 'setup-token', accountId: a.id, name: a.name })),
-        button(a.usageLogin ? '使用量の認可をやり直す' : '使用量の表示を認可', () => startLogin({ kind: 'usage-login', accountId: a.id, name: a.name })),
-        button('編集', () => edit(a)), button('削除', () => { confirming = a.id; draw(); }));
+        button(a.hasToken ? t('accounts.reissue') : t('accounts.issue'), () => startLogin({ kind: 'setup-token', accountId: a.id, name: a.name })),
+        button(a.usageLogin ? t('accounts.redoUsage') : t('accounts.authorizeUsage'), () => startLogin({ kind: 'usage-login', accountId: a.id, name: a.name })),
+        button(t('accounts.edit'), () => edit(a)), button(t('accounts.delete'), () => { confirming = a.id; draw(); }));
       top.append(info, actions); card.append(top);
       const warning = confirming === a.id ? null : warningBlock(a);
       if (warning) card.append(warning);
       if (confirming === a.id) {
         const ask = el('div', 'mp-confirm');
-        ask.append(el('p', null, `「${a.name}」を削除しますか？ このアカウントを選んでいる会話は、選び直すまで送信できません。使用量の表示の認可も消えます。`));
+        ask.append(el('p', null, t('accounts.confirmDelete', { name: a.name })));
         const row = el('div', 'mp-card-actions');
-        row.append(button('やめる', () => { confirming = ''; draw(); }), button('削除する', () => remove(a)));
+        row.append(button(t('accounts.cancel'), () => { confirming = ''; draw(); }), button(t('accounts.confirmDeleteButton'), () => remove(a)));
         ask.append(row); card.append(ask);
       }
       return card;
     }));
-    if (!accounts.length) $('caList').replaceChildren(el('p', 'mp-note', 'まだ登録していません。'));
+    if (!accounts.length) $('caList').replaceChildren(el('p', 'mp-note', t('accounts.empty')));
     $('caStorage').textContent = !storage ? '' : storage.encrypted
-      ? 'トークンは OS の資格情報で暗号化して保存します。'
-      : 'この起動では暗号化できないため、トークンは本人だけが読めるファイルに保存します（Pleiad デスクトップで開くと暗号化し直します）。';
+      ? t('accounts.storage.encrypted')
+      : t('accounts.storage.plain');
   }
 
   // ---------------------------------------------------------------- 認可の進み具合
@@ -116,37 +131,37 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     const box = $('caFlow');
     if (!flow) { box.hidden = true; $('caFlowBody').replaceChildren(); return; }
     box.hidden = false;
-    $('caFlowTitle').textContent = `「${flow.name}」の${KIND_TITLE[flow.kind]}`;
+    $('caFlowTitle').textContent = FLOW_TITLE[flow.kind]?.(flow.name) ?? flow.name;
     const body = [];
     const note = text => el('p', 'mp-note', text);
     const actions = (...buttons) => { const row = el('div', 'mp-actions'); row.append(...buttons); return row; };
-    const cancel = button('やめる', cancelFlow);
+    const cancel = button(t('accounts.cancel'), cancelFlow);
     const link = () => {
       if (!/^https:\/\//.test(flow.url ?? '')) return null;
-      const a = el('a', null, 'ブラウザーが開かないときはこちら');
+      const a = el('a', null, t('accounts.flow.openLink'));
       a.href = flow.url; a.target = '_blank'; a.rel = 'noreferrer';
       return a;
     };
     switch (flow.phase) {
       case 'starting':
-        body.push(el('p', null, 'Claude Code を起動しています…'), actions(cancel));
+        body.push(el('p', null, t('accounts.flow.starting')), actions(cancel));
         break;
       case 'url':
       case 'code':
       case 'verifying': {
         body.push(el('p', null, flow.kind === 'usage-login'
-          ? '1. ブラウザーで、このアカウントの Claude にログインして「承認」を押してください。'
-          : '1. ブラウザーで、使いたいアカウントの Claude にログインして「承認」を押してください。'));
+          ? t('accounts.flow.step1Usage')
+          : t('accounts.flow.step1Token')));
         const l = link(); if (l) { const p = el('p', 'mp-note'); p.append(l); body.push(p); }
-        body.push(el('p', null, '2. ブラウザーに表示されたコードを貼ってください。'));
+        body.push(el('p', null, t('accounts.flow.step2')));
         const form = el('form');
         const field = el('label', 'mp-field');
         // 描き直しで打ちかけのコードを消さない
         const typed = $('caCode')?.value ?? '';
-        const input = el('input'); input.id = 'caCode'; input.value = typed; input.autocomplete = 'off'; input.spellcheck = false; input.placeholder = 'コードを貼り付け';
-        input.setAttribute('aria-label', 'ブラウザーに表示されたコード');
+        const input = el('input'); input.id = 'caCode'; input.value = typed; input.autocomplete = 'off'; input.spellcheck = false; input.placeholder = t('accounts.flow.codePlaceholder');
+        input.setAttribute('aria-label', t('accounts.flow.codeLabel'));
         field.append(input); form.append(field);
-        const submit = el('button', 'btn btn-primary', flow.phase === 'verifying' ? '確認しています…' : '送信'); submit.type = 'submit';
+        const submit = el('button', 'btn btn-primary', flow.phase === 'verifying' ? t('accounts.flow.verifying') : t('accounts.flow.submit')); submit.type = 'submit';
         submit.disabled = flow.phase === 'verifying';
         input.disabled = flow.phase === 'verifying';
         form.append(actions(cancel, submit));
@@ -161,28 +176,28 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
         const account = accounts.find(a => a.id === flow.accountId);
         const warning = ownerWarning(account);
         if (warning) {
-          body.push(el('p', null, flow.kind === 'setup-token' ? 'トークンを登録しました。' : '使用量の表示を認可しました。'),
+          body.push(el('p', null, flow.kind === 'setup-token' ? t('accounts.flow.tokenDone') : t('accounts.flow.usageDoneShort')),
             el('p', 'mp-warn', `⚠ ${warning}`),
-            actions(button('閉じる', () => { flow = null; drawFlow(); }),
-              button('トークンを発行し直す', () => startLogin({ kind: 'setup-token', accountId: account.id, name: account.name }))));
+            actions(button(t('accounts.close'), () => { flow = null; drawFlow(); }),
+              button(t('accounts.reissue'), () => startLogin({ kind: 'setup-token', accountId: account.id, name: account.name }))));
         } else if (flow.kind === 'setup-token') {
-          body.push(el('p', null, 'トークンを登録しました。会話の入力欄でこのアカウントを選べます。'));
+          body.push(el('p', null, t('accounts.flow.tokenDoneChoose')));
           if (account && !account.usageLogin) {
-            body.push(note('続けて、使用量を表示するための認可をします。使用量の画面にこのアカウントの残りを出すために、もう一度ブラウザーで承認してコードを貼ります（会話に使うトークンとは別の認可です）。'));
-            body.push(actions(button('あとで', () => { flow = null; drawFlow(); }),
-              button('使用量の表示を認可', () => startLogin({ kind: 'usage-login', accountId: account.id, name: account.name }), 'btn btn-primary')));
-          } else body.push(actions(button('閉じる', () => { flow = null; drawFlow(); })));
+            body.push(note(t('accounts.flow.usageNext')));
+            body.push(actions(button(t('accounts.flow.later'), () => { flow = null; drawFlow(); }),
+              button(t('accounts.authorizeUsage'), () => startLogin({ kind: 'usage-login', accountId: account.id, name: account.name }), 'btn btn-primary')));
+          } else body.push(actions(button(t('accounts.close'), () => { flow = null; drawFlow(); })));
         } else {
-          body.push(el('p', null, '使用量の表示を認可しました。設定の「使用量」にこのアカウントの残りが出ます。'),
-            actions(button('閉じる', () => { flow = null; drawFlow(); })));
+          body.push(el('p', null, t('accounts.flow.usageDone')),
+            actions(button(t('accounts.close'), () => { flow = null; drawFlow(); })));
         }
         break;
       }
       case 'error':
-        body.push(el('p', 'mp-state', flow.message || '認可できませんでした。'),
-          actions(button('閉じる', () => { flow = null; drawFlow(); }),
-            button('やり直す', () => startLogin({ kind: flow.kind, accountId: flow.accountId, name: flow.name }))));
-        if (flow.kind === 'setup-token') body.push(note('うまくいかないときは、「アカウントを追加」の「トークンを手動で貼り付ける」から登録できます。'));
+        body.push(el('p', 'mp-state', flow.message || t('accounts.flow.failed')),
+          actions(button(t('accounts.close'), () => { flow = null; drawFlow(); }),
+            button(t('accounts.flow.retry'), () => startLogin({ kind: flow.kind, accountId: flow.accountId, name: flow.name }))));
+        if (flow.kind === 'setup-token') body.push(note(t('accounts.flow.failedHint')));
         break;
     }
     $('caFlowBody').replaceChildren(...body);
@@ -215,7 +230,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   async function submitCode(value) {
     if (!flow?.loginId) return;
     const code = String(value ?? '').trim();
-    if (!code) { flow.message = 'ブラウザーに表示されたコードを貼り付けてください'; drawFlow(); return; }
+    if (!code) { flow.message = t('accounts.flow.codeRequired'); drawFlow(); return; }
     flow.phase = 'verifying'; flow.message = ''; drawFlow();
     try { await cmd('claudeLoginCode', { loginId: flow.loginId, code }); }
     catch (e) { if (flow) { flow.phase = 'code'; flow.message = e.message; drawFlow(); } }
@@ -253,20 +268,20 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
 
   // ---------------------------------------------------------------- 追加・編集のフォーム
   function resetForm() {
-    editingId = ''; $('caFormTitle').textContent = 'アカウントを追加';
-    $('caName').value = ''; $('caToken').value = ''; $('caToken').type = 'password'; $('caReveal').textContent = '表示';
+    editingId = ''; $('caFormTitle').textContent = t('accounts.form.addTitle');
+    $('caName').value = ''; $('caToken').value = ''; $('caToken').type = 'password'; $('caReveal').textContent = t('accounts.form.show');
     $('caTokenHint').textContent = NEW_HINT; $('caFormState').textContent = '';
     $('caAuthNote').hidden = false; $('caAuthorize').hidden = false; $('caManual').open = false;
-    $('caManual').querySelector('summary').textContent = 'トークンを手動で貼り付ける';
-    $('caSave').textContent = '保存';
+    $('caManual').querySelector('summary').textContent = t('accounts.form.manual');
+    $('caSave').textContent = t('accounts.form.save');
   }
   function edit(a) {
     resetForm(); editingId = a.id; confirming = '';
-    $('caFormTitle').textContent = `「${a.name}」を編集`; $('caName').value = a.name;
+    $('caFormTitle').textContent = t('accounts.form.editTitle', { name: a.name }); $('caName').value = a.name;
     // 編集は名前の変更とトークンの貼り直しだけ。ブラウザーでの認可は一覧の「トークンを発行し直す」から
     $('caAuthNote').hidden = true; $('caAuthorize').hidden = true;
     $('caManual').open = !a.hasToken;
-    $('caManual').querySelector('summary').textContent = 'トークンを手動で貼り直す';
+    $('caManual').querySelector('summary').textContent = t('accounts.form.manualReplace');
     $('caTokenHint').textContent = a.hasToken ? EDIT_HINT : NEW_HINT;
     $('caForm').hidden = false; draw(); $('caName').focus();
   }
@@ -278,10 +293,10 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
       if (editingId === a.id) { $('caForm').hidden = true; resetForm(); }
       await load(true); draw(); onChange();
     }
-    catch (e) { $('caState').textContent = `削除できませんでした: ${e.message}`; }
+    catch (e) { $('caState').textContent = t('accounts.deleteFailed', { error: e.message }); }
   }
   async function open({ usageLogin } = {}) {
-    openSettings(); panel.hidden = false; $('caState').textContent = '読み込んでいます…';
+    openSettings(); panel.hidden = false; $('caState').textContent = t('accounts.loading');
     try {
       await load(true); $('caForm').hidden = true; resetForm(); confirming = ''; draw(); drawFlow(); $('caState').textContent = '';
       panel.scrollIntoView({ block: 'nearest' });
@@ -293,10 +308,10 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   $('caClose').onclick = () => { panel.hidden = true; $('caForm').hidden = true; resetForm(); };
   $('caAdd').onclick = () => { resetForm(); confirming = ''; $('caForm').hidden = false; draw(); $('caName').focus(); };
   $('caCancel').onclick = () => { $('caForm').hidden = true; resetForm(); };
-  $('caReveal').onclick = () => { const show = $('caToken').type === 'password'; $('caToken').type = show ? 'text' : 'password'; $('caReveal').textContent = show ? '非表示' : '表示'; };
+  $('caReveal').onclick = () => { const show = $('caToken').type === 'password'; $('caToken').type = show ? 'text' : 'password'; $('caReveal').textContent = show ? t('accounts.form.hide') : t('accounts.form.show'); };
   $('caAuthorize').onclick = () => {
     const name = $('caName').value.trim();
-    if (!name) { $('caFormState').textContent = 'アカウントの表示名を入力してください'; $('caName').focus(); return; }
+    if (!name) { $('caFormState').textContent = t('accounts.form.nameRequired'); $('caName').focus(); return; }
     startLogin({ kind: 'setup-token', name });
   };
   $('caForm').onsubmit = async e => {
@@ -304,7 +319,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     const token = $('caToken').value.trim();
     // 新規で貼っていないなら、Enter はブラウザーでの認可として扱う
     if (!editingId && !token) { $('caAuthorize').click(); return; }
-    saving = true; $('caSave').disabled = true; $('caFormState').textContent = '保存しています…';
+    saving = true; $('caSave').disabled = true; $('caFormState').textContent = t('accounts.form.saving');
     try {
       await cmd('saveClaudeAccount', { ...(editingId ? { id: editingId } : {}), name: $('caName').value, ...(token ? { token } : {}) });
       $('caForm').hidden = true; resetForm(); await load(true); draw(); onChange();
