@@ -1,5 +1,6 @@
 // Durable acceptance is separate from execution. A lost backend acknowledgement
 // is never retried automatically: the original may already have been consumed.
+import { t } from './i18n.mjs';
 export function createMessageQueue({ store, active, start, changed, delivered }) {
   const locks = new Map();
   const serial = (id, fn) => {
@@ -119,10 +120,10 @@ export function createMessageQueue({ store, active, start, changed, delivered })
         const items = await list(id);
         const existing = items.find(m => m.id === messageId);
         if (existing) {
-          if (JSON.stringify(existing.args) !== JSON.stringify(args)) throw new Error('同じ送信IDで内容を変更できません');
+          if (JSON.stringify(existing.args) !== JSON.stringify(args)) throw new Error(t('queue.idConflict'));
           return existing;
         }
-        if (items.filter(m => !['sent', 'cancelled'].includes(m.status)).length >= 100) throw new Error('送信待ちは100件までです');
+        if (items.filter(m => !['sent', 'cancelled'].includes(m.status)).length >= 100) throw new Error(t('queue.full', { max: 100 }));
         const item = { id: messageId, args, at: new Date().toISOString(), status: 'queued' };
         items.push(item);
         await save(id, items);
@@ -135,8 +136,8 @@ export function createMessageQueue({ store, active, start, changed, delivered })
       await serial(id, async () => {
         const items = await list(id);
         const item = items.find(m => m.id === messageId);
-        if (!item || ['sent', 'sending', 'cancelled'].includes(item.status)) throw new Error('このメッセージは変更できません');
-        if (!['cancel', 'retry'].includes(action)) throw new Error('不正な操作です');
+        if (!item || ['sent', 'sending', 'cancelled'].includes(item.status)) throw new Error(t('queue.notEditable'));
+        if (!['cancel', 'retry'].includes(action)) throw new Error(t('queue.invalidAction'));
         item.status = action === 'cancel' ? 'cancelled' : 'queued';
         item.error = null;
         await save(id, items);

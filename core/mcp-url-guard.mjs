@@ -13,6 +13,7 @@
 //     wrap は fetch に init.pinnedAddresses を渡し、core/pinned-fetch.mjs がそのアドレスにだけ接続する。
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import { t } from './i18n.mjs';
 
 const MAX_REDIRECTS = 5;
 
@@ -71,7 +72,9 @@ async function resolveAll(hostname, lookup) {
   return (Array.isArray(found) ? found : [found]).map(a => typeof a === 'string' ? a : a.address);
 }
 
-const KIND_LABEL = { loopback: 'ループバック', private: 'プライベート', 'link-local': 'リンクローカル', unspecified: '未指定', reserved: '予約済み', unknown: '不明' };
+/** アドレスの種類の表示名（net.addressKind.*。知らない種類はそのまま） */
+// i18n-dynamic: net.addressKind.
+const kindLabel = kind => t(`net.addressKind.${kind}`, { defaultValue: kind });
 
 /**
  * MCP 本体の URL を基準にした検査器。
@@ -90,22 +93,22 @@ export function createUrlGuard({ serverUrl, lookup = dns.lookup }) {
     return serverPublic;
   }
   /** 検査して、名前を解決して確かめたときはその答えも返す（接続をそのアドレスに固定するため） */
-  async function inspect(target, label = '探索で得た URL') {
+  async function inspect(target, label = t('net.guard.defaultLabel')) {
     let u;
-    try { u = new URL(target); } catch { throw new UrlRejected(`${label} が URL として不正です`); }
+    try { u = new URL(target); } catch { throw new UrlRejected(t('net.guard.invalid', { label })); }
     const shown = `${u.origin}${u.pathname}`.slice(0, 200);
-    if (u.username || u.password) throw new UrlRejected(`${label}（${shown}）に認証情報が含まれているため使いません`);
+    if (u.username || u.password) throw new UrlRejected(t('net.guard.credentials', { label, url: shown }));
     if (u.protocol === 'http:') {
-      if (!(serverLoopback && isLoopbackHost(u.hostname))) throw new UrlRejected(`${label}（${shown}）が https ではないため使いません（http はループバックで動かす MCP のときだけ許可）`);
+      if (!(serverLoopback && isLoopbackHost(u.hostname))) throw new UrlRejected(t('net.guard.httpLoopbackOnly', { label, url: shown }));
       return { url: u, addresses: null };
     }
-    if (u.protocol !== 'https:') throw new UrlRejected(`${label}（${shown}）は https ではないため使いません`);
+    if (u.protocol !== 'https:') throw new UrlRejected(t('net.guard.notHttps', { label, url: shown }));
     if (await mcpIsPublic()) {
       let addresses;
       try { addresses = await resolveAll(u.hostname, lookup); }
-      catch { throw new UrlRejected(`${label}（${shown}）の名前を解決できません`); }
+      catch { throw new UrlRejected(t('net.guard.unresolved', { label, url: shown })); }
       const bad = addresses.map(a => [a, addressKind(a)]).find(([, kind]) => kind !== 'public');
-      if (bad) throw new UrlRejected(`${label}（${shown}）が${KIND_LABEL[bad[1]] ?? bad[1]}アドレス（${bad[0]}）を指しているため使いません。公開された MCP から内部のアドレスへは接続しません`);
+      if (bad) throw new UrlRejected(t('net.guard.internal', { label, url: shown, kind: kindLabel(bad[1]), address: bad[0] }));
       // IP の直書きは解決し直されないので固定は要らない
       return { url: u, addresses: net.isIP(bareHost(u.hostname)) ? null : addresses };
     }
@@ -128,8 +131,8 @@ export function createUrlGuard({ serverUrl, lookup = dns.lookup }) {
         const location = res.headers.get('location');
         if (!location) return res;
         await res.body?.cancel().catch(() => {});
-        if (method !== 'GET' && method !== 'HEAD') throw new UrlRejected(`${label ?? '認可サーバー'} が ${method} の要求をリダイレクトしました。追わずに止めます`);
-        if (hop >= MAX_REDIRECTS) throw new UrlRejected('リダイレクトが多すぎます');
+        if (method !== 'GET' && method !== 'HEAD') throw new UrlRejected(t('net.guard.redirect', { label: label ?? t('net.guard.authServer'), method }));
+        if (hop >= MAX_REDIRECTS) throw new UrlRejected(t('net.guard.tooManyRedirects'));
         url = new URL(location, url).href;
         current = { ...current, method };
       }

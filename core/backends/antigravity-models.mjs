@@ -14,6 +14,8 @@
 // 系統（family）ごとに 1 つだけを表に出す（残りは hidden）。各 id の efforts は系統の段、defaultEffort はその id 自身の段。
 // つまり「gemini-3.8-flash-low を選んで、段を high へ動かす」は「gemini-3.8-flash-high を使う」と同じ意味になる。
 
+import { t } from "../i18n.mjs";
+
 /** agy の段の並び（弱い → 強い）。`agy --help` の `--effort (low|medium|high)` */
 export const AGY_LEVELS = ["low", "medium", "high"];
 
@@ -85,7 +87,7 @@ export function buildAgyModels(rows, defaultLabel = null) {
     // 表に出す 1 つ: 既定が入っていればそれ、無ければ medium（agy の /model も選んでいない系統は medium から）、無ければ先頭
     const shown = group.find((g) => g.id === def) ?? group.find((g) => g.level === "medium") ?? group[0];
     out[row.id] = {
-      label: v.name, note: `段: ${efforts.join(" / ")}`,
+      label: v.name, note: t("antigravity.models.levels", { levels: efforts.join(" / ") }),
       family: v.base, level: v.level, efforts, defaultEffort: v.level,
       // 段ごとの本当の id（エフォートの一覧の補足に出す）
       effortNotes: Object.fromEntries(group.map((g) => [g.level, g.id])),
@@ -94,11 +96,11 @@ export function buildAgyModels(rows, defaultLabel = null) {
   }
   const target = def && out[def] ? def : null;
   out[""] = target
-    ? { label: "既定に従う", note: "agy の設定をそのまま使う", resolvesTo: target, efforts: out[target].efforts, defaultEffort: out[target].defaultEffort,
+    ? { label: t("models.default"), note: t("antigravity.models.defaultNote"), resolvesTo: target, efforts: out[target].efforts, defaultEffort: out[target].defaultEffort,
       ...(out[target].effortNotes ? { effortNotes: out[target].effortNotes } : {}) }
     : {
-      label: "既定（agy の設定）", note: "agy の設定をそのまま使う（Pleiad からは読めない）", efforts: [], defaultEffort: null,
-      effortReason: "agy の既定のモデルが分からないため、段はモデルを選ぶと選べます",
+      label: t("antigravity.models.unknownDefault"), note: t("antigravity.models.unknownDefaultNote"), efforts: [], defaultEffort: null,
+      effortReason: t("antigravity.models.effortReason"),
     };
   return out;
 }

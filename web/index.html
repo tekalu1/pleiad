@@ -43,39 +43,39 @@
         <svg class="brand-wordmark" viewBox="0 0 346 104" aria-hidden="true"><use href="/brand/pleiad-wordmark.svg#wordmark"/></svg>
       </div>
       <!-- 設定を開いている間だけ、ロゴの位置に出る。Esc でも会話へ戻る -->
-      <button type="button" class="btn back-chat" id="backToChat"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>会話に戻る</button>
-      <button type="button" class="btn btn-icon" id="newSession" title="新しいセッション（絞り込みの条件を引き継ぐ）"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
-      <button type="button" class="btn btn-icon" id="settings" title="設定" aria-label="設定"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.5 2a8 8 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A8 8 0 0 0 9 19l.5 2h5l.5-2a8 8 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A8 8 0 0 0 15 5l-.5-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
-      <button type="button" class="btn btn-icon side-toggle" id="closeSidebar" title="サイドバーを閉じる（Ctrl+B）" aria-label="サイドバーを閉じる" aria-controls="sidebar"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
+      <button type="button" class="btn back-chat" id="backToChat"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg><span data-i18n="app.backToChat"></span></button>
+      <button type="button" class="btn btn-icon" id="newSession" data-i18n-title="app.newSessionTitle"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button type="button" class="btn btn-icon" id="settings" data-i18n-title="app.settings" data-i18n-aria-label="app.settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.5 2a8 8 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A8 8 0 0 0 9 19l.5 2h5l.5-2a8 8 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A8 8 0 0 0 15 5l-.5-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      <button type="button" class="btn btn-icon side-toggle" id="closeSidebar" data-i18n-title="app.closeSidebarTitle" data-i18n-aria-label="app.closeSidebar" aria-controls="sidebar"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
     </header>
     <div class="search">
-      <input type="search" id="q" placeholder="検索" aria-label="検索" autocomplete="off">
-      <button type="button" class="btn btn-icon" id="filterBtn" title="作業ディレクトリ・状態・エージェントで絞る"><svg class="i" viewBox="0 0 24 24"><path d="M3 5h18l-7 8.5V19l-4 2v-7.5z"/></svg></button>
+      <input type="search" id="q" data-i18n-placeholder="app.search" data-i18n-aria-label="app.search" autocomplete="off">
+      <button type="button" class="btn btn-icon" id="filterBtn" data-i18n-title="app.filterTitle"><svg class="i" viewBox="0 0 24 24"><path d="M3 5h18l-7 8.5V19l-4 2v-7.5z"/></svg></button>
       <div class="pop" id="filterPop" hidden></div>
     </div>
     <div class="fchips" id="fchips"></div>
-    <div class="filter-outside" id="filterOutside" hidden>この会話はフィルター対象外です<button type="button" class="btn" id="clearFilterOutside">絞り込みを解除</button></div>
+    <div class="filter-outside" id="filterOutside" hidden><span data-i18n="app.filterOutside"></span><button type="button" class="btn" id="clearFilterOutside" data-i18n="app.clearFilter"></button></div>
     <div class="groups" id="groups"></div>
     <!-- 設定を開いている間、セッション一覧と入れ替わる。見出しと行は状態・セッションと同じ形 -->
-    <nav class="settings-menu" id="settingsNav" aria-label="設定">
-      <h2>設定</h2>
-      <button type="button" id="setupTab" aria-controls="setupPanel">エージェント設定</button>
-      <button type="button" id="usageTab" aria-controls="usagePanel">使用量</button>
-      <button type="button" id="appearanceTab" aria-controls="appearancePanel">外観</button>
-      <button type="button" id="openContext" aria-controls="contextPanel">コンテキスト</button>
-      <button type="button" id="updatesTab" aria-controls="updatesPanel">アプリ情報・更新</button>
+    <nav class="settings-menu" id="settingsNav" data-i18n-aria-label="app.settings">
+      <h2 data-i18n="app.settings"></h2>
+      <button type="button" id="setupTab" aria-controls="setupPanel" data-i18n="settings.nav.agents"></button>
+      <button type="button" id="usageTab" aria-controls="usagePanel" data-i18n="settings.nav.usage"></button>
+      <button type="button" id="appearanceTab" aria-controls="appearancePanel" data-i18n="settings.nav.appearance"></button>
+      <button type="button" id="openContext" aria-controls="contextPanel" data-i18n="settings.nav.context"></button>
+      <button type="button" id="updatesTab" aria-controls="updatesPanel" data-i18n="settings.nav.about"></button>
     </nav>
     <div class="pop" id="iconPop" hidden></div>
-    <div class="update-notice" id="updateNotice" hidden><span id="updateNoticeText"></span><button type="button" class="btn" id="viewUpdateNotes">変更内容を見る</button><button type="button" class="btn" id="dismissUpdateNotice">閉じる</button></div>
+    <div class="update-notice" id="updateNotice" hidden><span id="updateNoticeText"></span><button type="button" class="btn" id="viewUpdateNotes" data-i18n="app.update.viewNotes"></button><button type="button" class="btn" id="dismissUpdateNotice" data-i18n="app.update.dismiss"></button></div>
     <div class="update-notice" id="updatePrompt" hidden>
       <span id="updatePromptText" role="status" aria-live="polite"></span>
-      <progress id="updatePromptProgress" max="100" hidden aria-label="更新の進捗"></progress>
-      <button type="button" class="btn" id="viewAvailableUpdate">更新を見る</button>
-      <button type="button" class="btn" id="deferUpdate">あとで</button>
+      <progress id="updatePromptProgress" max="100" hidden data-i18n-aria-label="app.update.progress"></progress>
+      <button type="button" class="btn" id="viewAvailableUpdate" data-i18n="app.update.view"></button>
+      <button type="button" class="btn" id="deferUpdate" data-i18n="app.update.later"></button>
     </div>
     <!-- 直前の操作を取り消す一行（グループの出入り・状態の移動）。操作したときだけ出る -->
     <div class="side-undo" id="sideUndo" role="status" hidden></div>
-    <div class="conn-lost" id="connLost" hidden>接続が切れた。再接続している…</div>
+    <div class="conn-lost" id="connLost" hidden data-i18n="app.connLost"></div>
     <!-- ログインが要るエージェントがあるときだけ。押すと設定メニューが開く -->
     <button type="button" class="conn-lost" id="authNeed" hidden></button>
   </aside>
@@ -83,17 +83,17 @@
   <dialog class="onboarding-dialog" id="onboardingDialog" aria-labelledby="onboardingTitle">
     <div class="dialog-heading">
       <div>
-        <h2 id="onboardingTitle">Pleiad へようこそ</h2>
-        <p class="onboarding-subtitle">使用するエージェントを選んで、最初の会話を始めましょう。</p>
+        <h2 id="onboardingTitle" data-i18n="dialog.onboarding.title"></h2>
+        <p class="onboarding-subtitle" data-i18n="dialog.onboarding.subtitle"></p>
       </div>
-      <button type="button" class="btn btn-quiet" id="closeOnboarding">あとで</button>
+      <button type="button" class="btn btn-quiet" id="closeOnboarding" data-i18n="dialog.onboarding.later"></button>
     </div>
-    <div id="onboardingAgentList" class="onboarding-agent-list" role="radiogroup" aria-label="使用するエージェント"></div>
+    <div id="onboardingAgentList" class="onboarding-agent-list" role="radiogroup" data-i18n-aria-label="dialog.onboarding.agents"></div>
     <div id="onboardingAuth" class="onboarding-auth"></div>
     <p id="onboardingError" role="status" aria-live="polite"></p>
     <div class="onboarding-actions">
-      <small class="muted">エージェントや作業場所は会話画面でいつでも変更できます</small>
-      <button type="button" class="btn btn-primary" id="completeSetup">会話を始める</button>
+      <small class="muted" data-i18n="dialog.onboarding.note"></small>
+      <button type="button" class="btn btn-primary" id="completeSetup" data-i18n="dialog.onboarding.start"></button>
     </div>
   </dialog>
 
@@ -101,32 +101,32 @@
   <main>
     <header class="top">
       <!-- 脇を閉じている間だけ出る。閉じるボタンと同じ絵 -->
-      <button type="button" class="btn btn-icon side-toggle" id="openSidebar" title="サイドバーを開く（Ctrl+B）" aria-label="サイドバーを開く" aria-controls="sidebar"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
-      <span class="title-field" id="titleField"><input id="titleEdit" placeholder="新しいセッション" aria-label="タイトル" autocomplete="off" disabled></span>
-      <button type="button" class="btn btn-icon" id="titleWand" title="AI にタイトルを考えてもらう" disabled><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></button>
+      <button type="button" class="btn btn-icon side-toggle" id="openSidebar" data-i18n-title="app.openSidebarTitle" data-i18n-aria-label="app.openSidebar" aria-controls="sidebar"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
+      <span class="title-field" id="titleField"><input id="titleEdit" data-i18n-placeholder="session.untitled" data-i18n-aria-label="session.titleLabel" autocomplete="off" disabled></span>
+      <button type="button" class="btn btn-icon" id="titleWand" data-i18n-title="session.titleWand" disabled><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></button>
       <!-- 会話の右パネル「この会話のコンテキスト」の入口（web/session-context.mjs）。件数と「変更あり」は client.mjs が入れる -->
-      <button type="button" class="btn ctxlink" id="contextEntry" title="この会話が読み込むコンテキスト" hidden><svg class="i" viewBox="0 0 24 24"><path d="M4 4h9l5 5v11H4z"/><path d="M13 4v5h5"/></svg>コンテキスト<span class="n mono" id="contextEntryCount" hidden></span><span class="chg" id="contextEntryChanged" hidden>変更あり</span></button>
-      <button type="button" class="btn" id="agentTasksEntry" hidden>Pleiad タスク</button>
-      <button type="button" class="btn" id="backgroundEntry" hidden>端末</button>
+      <button type="button" class="btn ctxlink" id="contextEntry" data-i18n-title="session.context.entryTitle" hidden><svg class="i" viewBox="0 0 24 24"><path d="M4 4h9l5 5v11H4z"/><path d="M13 4v5h5"/></svg><span data-i18n="session.context.label"></span><span class="n mono" id="contextEntryCount" hidden></span><span class="chg" id="contextEntryChanged" hidden data-i18n="session.context.changed"></span></button>
+      <button type="button" class="btn" id="agentTasksEntry" hidden data-i18n="dialog.tasks.title"></button>
+      <button type="button" class="btn" id="backgroundEntry" hidden data-i18n="session.terminal"></button>
     </header>
     <!-- 稼働表示（考えている・経過時間）は会話の筋の末尾の節として client.mjs が描く。固定の帯は置かない -->
     <div id="log"><div class="thread" id="thread"></div></div>
 
     <form class="composer" id="composer">
       <div id="outbox" class="outbox" aria-live="polite" hidden></div>
-      <div class="next-settings" id="nextSettings" role="status" hidden><div><b>次のターンから適用</b><div id="nextSettingsText"></div></div><button type="button" class="btn" id="cancelSettings">取り消す</button></div>
+      <div class="next-settings" id="nextSettings" role="status" hidden><div><b data-i18n="chat.next.title"></b><div id="nextSettingsText"></div></div><button type="button" class="btn" id="cancelSettings" data-i18n="chat.next.cancel"></button></div>
       <div class="settings-error" id="settingsError" role="alert"></div>
-      <button type="button" class="btn" id="retrySettings" hidden>設定の保存を再試行</button>
+      <button type="button" class="btn" id="retrySettings" hidden data-i18n="chat.next.retry"></button>
       <!-- 送る前の添付。会話にはまだ出ない（送信で present として載る） -->
       <div class="attached" id="attached"></div>
       <!-- 入力欄の先頭が / の間だけ出るスキル候補（web/slash-skills.mjs）。面は .clist と同じ -->
-      <ul class="clist" id="skillList" role="listbox" aria-label="スキル" hidden></ul>
-      <textarea id="prompt" placeholder="Ctrl+Enter で送信" rows="3" aria-autocomplete="list" aria-controls="skillList" aria-expanded="false"></textarea>
+      <ul class="clist" id="skillList" role="listbox" data-i18n-aria-label="chat.composer.skills" hidden></ul>
+      <textarea id="prompt" data-i18n-placeholder="chat.composer.placeholder" rows="3" aria-autocomplete="list" aria-controls="skillList" aria-expanded="false"></textarea>
       <!-- 候補を選んだ直後だけ、引数の書き方を薄く出す -->
       <div class="slash-hint" id="slashHint"></div>
       <button type="button" class="btn draft-saved" id="draftSaved" aria-live="polite"></button>
       <div class="crow">
-        <button type="button" class="btn btn-icon" id="attach" title="ファイルを添付（ドロップ・貼り付けでも）"><svg class="i" viewBox="0 0 24 24"><path d="M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2"/></svg></button>
+        <button type="button" class="btn btn-icon" id="attach" data-i18n-title="chat.composer.attach"><svg class="i" viewBox="0 0 24 24"><path d="M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2"/></svg></button>
         <input type="file" id="fileIn" multiple hidden>
         <!-- 入力欄の設定は 3 つのチップ（web/composer-controls.mjs、docs/design-system.md「入力欄の設定」）。
              どこで（作業ディレクトリ）・誰が・どれだけ考えて（エージェント・モデル・エフォート・アカウント）・どこまで任せるか（承認モード）。
@@ -137,83 +137,91 @@
         <button type="button" class="chip" id="modelChip" aria-controls="modelPop"></button>
         <!-- 承認モード。人間だけが変えられる（AI 用のツールは生やさない） -->
         <button type="button" class="chip" id="modeChip" aria-controls="modePop"></button>
-        <button type="button" class="btn btn-quiet" id="abort" hidden>中断</button>
-        <button type="submit" class="btn btn-primary send" id="send" title="送信（Ctrl+Enter）"><svg class="i" viewBox="0 0 24 24"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg></button>
+        <button type="button" class="btn btn-quiet" id="abort" hidden data-i18n="chat.composer.abort"></button>
+        <button type="submit" class="btn btn-primary send" id="send" data-i18n-title="chat.composer.sendTitle"><svg class="i" viewBox="0 0 24 24"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg></button>
       </div>
-      <div class="pop cpop" id="cwdPop" role="dialog" aria-label="作業ディレクトリ" hidden></div>
-      <div class="pop cpop" id="modelPop" role="dialog" aria-label="エージェント・モデル・エフォート" hidden></div>
-      <div class="pop cpop" id="modePop" role="dialog" aria-label="承認モード" hidden></div>
+      <div class="pop cpop" id="cwdPop" role="dialog" data-i18n-aria-label="chat.composer.cwd" hidden></div>
+      <div class="pop cpop" id="modelPop" role="dialog" data-i18n-aria-label="chat.composer.model" hidden></div>
+      <div class="pop cpop" id="modePop" role="dialog" data-i18n-aria-label="chat.composer.mode" hidden></div>
     </form>
 
     <!-- ==================== 設定（会話と入れ替わる。脇は settingsNav になる） ==================== -->
     <section class="settings-view" id="settingsView" aria-labelledby="settingsPageTitle">
-      <header class="top"><h2 id="settingsPageTitle">エージェント設定</h2></header>
+      <header class="top"><h2 id="settingsPageTitle" data-i18n="settings.nav.agents"></h2></header>
       <div class="settings-content">
-        <section id="usagePanel" aria-label="使用量" hidden>
-          <p>サブスクの枠はアカウント全体の値です。使用率・残量・リセット日時を表示します。</p>
-          <button type="button" class="btn" id="refreshUsage">更新</button>
-          <p class="usage-note">表示中は1分ごとに更新します。取得後1分間は同じ結果を使います。</p>
+        <section id="usagePanel" data-i18n-aria-label="settings.nav.usage" hidden>
+          <p data-i18n="settings.usage.description"></p>
+          <button type="button" class="btn" id="refreshUsage" data-i18n="settings.usage.refresh"></button>
+          <p class="usage-note" data-i18n="settings.usage.note"></p>
           <div id="usageCards" aria-live="polite"></div>
         </section>
-        <section id="setupPanel" aria-label="エージェント設定">
-          <p>エージェントのインストールとアカウントの接続を管理します。</p>
+        <section id="setupPanel" data-i18n-aria-label="settings.nav.agents">
+          <p data-i18n="settings.agents.description"></p>
           <div id="settingsAgentSlot">
             <div id="agentControls">
               <div id="authSec" hidden></div>
-              <button type="button" class="btn" id="refreshAgents">インストール・ログイン状態を再確認</button>
+              <button type="button" class="btn" id="refreshAgents" data-i18n="settings.agents.recheck"></button>
               <p id="setupError" role="status" aria-live="polite"></p>
             </div>
           </div>
         </section>
-        <section id="updatesPanel" hidden aria-label="アプリ情報・更新">
+        <section id="updatesPanel" hidden data-i18n-aria-label="settings.nav.about">
           <p id="appVersion">Pleiad</p>
-          <p id="updateStatus" role="status" aria-live="polite">読み込み中…</p>
+          <p id="updateStatus" role="status" aria-live="polite" data-i18n="settings.updates.loading"></p>
           <p id="updateHint"></p>
           <p id="updateLastChecked" hidden></p>
-          <progress id="updateProgress" max="100" hidden aria-label="ダウンロードの進捗"></progress>
+          <progress id="updateProgress" max="100" hidden data-i18n-aria-label="settings.updates.downloadProgress"></progress>
           <div id="updateNotes" class="body" hidden></div>
-          <button type="button" class="btn" id="checkUpdate" hidden>更新を確認</button>
-          <button type="button" class="btn btn-primary" id="downloadUpdate" hidden>ダウンロード</button>
-          <button type="button" class="btn btn-primary" id="installUpdate" hidden>再起動して更新</button>
+          <button type="button" class="btn" id="checkUpdate" hidden data-i18n="settings.updates.check"></button>
+          <button type="button" class="btn btn-primary" id="downloadUpdate" hidden data-i18n="settings.updates.download"></button>
+          <button type="button" class="btn btn-primary" id="installUpdate" hidden data-i18n="settings.updates.install"></button>
           <div id="updateConfirm" hidden aria-labelledby="updateConfirmTitle">
-            <h3 id="updateConfirmTitle" tabindex="-1">再起動して更新しますか？</h3>
-            <p>会話と下書きを保存してPleiadを再起動します。実行中の作業や承認待ちがある場合は、更新せずにお知らせします。</p>
-            <button type="button" class="btn btn-primary" id="confirmInstallUpdate">保存して再起動</button>
-            <button type="button" class="btn" id="cancelInstallUpdate">あとで</button>
+            <h3 id="updateConfirmTitle" tabindex="-1" data-i18n="settings.updates.confirmTitle"></h3>
+            <p data-i18n="settings.updates.confirmBody"></p>
+            <button type="button" class="btn btn-primary" id="confirmInstallUpdate" data-i18n="settings.updates.confirmInstall"></button>
+            <button type="button" class="btn" id="cancelInstallUpdate" data-i18n="settings.updates.later"></button>
           </div>
           <p id="updateError" role="alert"></p>
           <div id="updatePreferences" hidden>
-            <label><input type="checkbox" id="updateCheckAutomatic">更新を自動で確認する</label>
-            <label><input type="checkbox" id="updateBeta">先行版も受け取る</label>
-            <label><input type="checkbox" id="updateAutomatic">更新を自動でダウンロードする</label>          </div>
-          <h3>リリースノート</h3><div id="releaseHistory"></div>
+            <label><input type="checkbox" id="updateCheckAutomatic"><span data-i18n="settings.updates.autoCheck"></span></label>
+            <label><input type="checkbox" id="updateBeta"><span data-i18n="settings.updates.beta"></span></label>
+            <label><input type="checkbox" id="updateAutomatic"><span data-i18n="settings.updates.autoDownload"></span></label>          </div>
+          <h3 data-i18n="settings.updates.releaseNotes"></h3><div id="releaseHistory"></div>
         </section>
-        <section id="appearancePanel" hidden aria-label="外観">
-          <p>画面の配色を選びます。</p>
-          <div class="seg sec" id="themeSeg"><button type="button" data-theme="auto">自動</button><button type="button" data-theme="light">明</button><button type="button" data-theme="dark">暗</button></div>
+        <section id="appearancePanel" hidden data-i18n-aria-label="settings.nav.appearance">
+          <p data-i18n="settings.appearance.theme.description"></p>
+          <div class="seg sec" id="themeSeg"><button type="button" data-theme="auto" data-i18n="settings.appearance.theme.auto"></button><button type="button" data-theme="light" data-i18n="settings.appearance.theme.light"></button><button type="button" data-theme="dark" data-i18n="settings.appearance.theme.dark"></button></div>
           <!-- 言語（docs/design-system.md「言語」）。文言は辞書から入れる（web/i18n.mjs の applyDom と client.mjs の paintLocale） -->
           <h3 data-i18n="settings.appearance.language.title"></h3>
           <p data-i18n="settings.appearance.language.description"></p>
           <div class="seg sec" id="localeSeg" role="group" data-i18n-aria-label="settings.appearance.language.title"><button type="button" data-locale="auto"></button><button type="button" data-locale="ja"></button><button type="button" data-locale="en"></button></div>
           <p class="locale-now" id="localeNow" role="status" aria-live="polite"></p>
         </section>
-        <section id="contextPanel" aria-label="コンテキスト" hidden></section>
+        <section id="contextPanel" data-i18n-aria-label="settings.nav.context" hidden></section>
       </div>
     </section>
   </main>
 
-  <!-- 画像を大きく見る（閲覧だけ。承認ではないので dialog でよい）。× と Esc と外側のクリックで閉じる -->
+  <!-- 画像を大きく見る（承認ではないので dialog でよい）。× と Esc と外側のクリックで閉じる。
+       下端に所在（フルパスとコピー）と操作を並べる（docs/mockups/file-actions.html）。中身は web/client.mjs の openLightbox -->
   <dialog id="lightbox">
-    <button type="button" class="btn btn-icon lb-close" data-close title="閉じる（Esc）"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <button type="button" class="btn btn-icon lb-close" data-close data-i18n-title="dialog.closeEsc"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <img alt="">
     <div class="lb-cap"></div>
+    <div class="lb-foot">
+      <div class="lb-path"><span class="lb-path-text"></span><button type="button" class="btn btn-icon lb-copy" data-i18n-title="files.menu.copyPath" data-i18n-aria-label="files.menu.copyPath"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 8h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button></div>
+      <button type="button" class="btn lb-panel" data-i18n="files.menu.openInPanel"></button>
+      <span class="lb-gap"></span>
+      <button type="button" class="btn lb-reveal" data-i18n="files.menu.revealFile" data-i18n-title="files.revealTitle"></button>
+      <a class="btn lb-save" href="#" download data-i18n="files.menu.save"></a>
+    </div>
   </dialog>
 
   <!-- このセッションのサブエージェント（一覧と会話を読む）。承認ではないので dialog でよい -->
   <dialog id="workDialog">
     <header>
-      <strong id="workTitle">サブエージェント</strong>
-      <button type="button" class="btn" data-close>閉じる</button>
+      <strong id="workTitle" data-i18n="dialog.work.subagents"></strong>
+      <button type="button" class="btn" data-close data-i18n="dialog.close"></button>
     </header>
     <div id="workBody"></div>
   </dialog>

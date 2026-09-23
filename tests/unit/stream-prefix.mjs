@@ -21,6 +21,7 @@ export default async function (t) {
     const context = vm.createContext({
       state, el, renderAssistantMarkdown,
       closeThink() {}, activity: { show() {} }, atBottom: () => false,
+      ACTIVITY_LABEL: {},   // 稼働表示の文言（client.mjs）。このテストは見ない
       ensureTurnEl: () => ({ append: node => bodies.push(node) }),
     });
     vm.runInContext(functions, context);
