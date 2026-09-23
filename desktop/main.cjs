@@ -5,6 +5,7 @@ const { Updates } = require('./updates.cjs');
 const { prepareUpdateCheck } = require('./update-auth.cjs');
 const { savedPort, rememberPort } = require('./server-port.cjs');
 const { attachSecretBridge } = require('./secret-bridge.cjs');
+const { attachFileBridge } = require('./file-bridge.cjs');
 let worker, window, origin, updates, quitting = false, closing = false;
 let requestId = 0;
 const { createDesktopNotifications } = require('./notifications.cjs');
@@ -98,6 +99,8 @@ async function boot() {
   // 外部 MCP の秘密は safeStorage で暗号化する。safeStorage は main でしか使えないので、サーバーの依頼をここで受ける
   // MCP の OAuth の同意画面も、サーバー（utilityProcess）はブラウザを開けないので頼まれて開く
   attachSecretBridge(worker, { safeStorage, openExternal: url => shell.openExternal(url).catch(() => {}) });
+  // 「エクスプローラーで表示」「ブラウザーで開く」。範囲と接続元はサーバーが確かめ、実行は本体の shell（窓を前に出せる）
+  attachFileBridge(worker, { shell });
   let startupError = '';
   worker.stderr.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });
   const ready = await new Promise((resolve, reject) => {

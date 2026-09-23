@@ -484,5 +484,27 @@
       "notificationUnknown": "It's unknown whether the completion notice was delivered. Check the result in the child conversation.",
       "stop": "Stop task"
     }
+  },
+  "files": {
+    "menu": {
+      "openInPanel": "Open in side panel",
+      "openInBrowser": "Open in browser",
+      "revealFile": "Show in Explorer",
+      "revealFolder": "Open in Explorer",
+      "copyPath": "Copy path",
+      "copyRelative": "Copy relative path",
+      "save": "Save",
+      "use": "Use in conversation"
+    },
+    "actionsFor": "Actions for {{name}}",
+    "currentActions": "Actions for this file",
+    "browserTitle": "Opens in this PC's default browser",
+    "revealTitle": "Opens File Explorer on this PC with the file selected",
+    "copiedPath": "Path copied",
+    "copiedRelative": "Relative path copied",
+    "copyPathFailed": "Couldn't copy the path",
+    "copyRelativeFailed": "Couldn't copy the relative path",
+    "noRelative": "This file is outside the working directory, so it has no relative path",
+    "actionFailed": "The action failed"
   }
 }
