@@ -26,6 +26,9 @@ export default async function (t) {
   const context = vm.createContext({
     completionNotifications,
     filePreview: { sessionChanged: noop },
+    // 狭い画面の引き出し（client.mjs の setDrawer）。会話を開くと閉じる。このテストの対象外
+    setDrawer: noop,
+    promptPlaceholder: () => "chat.composer.placeholder",
     state, sessionLoads: loads, outboxes: new Map(), paintOutbox: noop, refreshOutbox: async () => [],
     displayedCompletions: new Map(), document: { visibilityState: "visible" },
     // 承認カードはこのテストの対象外（tests/unit/server-fake.mjs の reopenCase が見ている）

@@ -16,8 +16,8 @@ import { isComposingKey } from "./keyboard.mjs";
 // 絞り込み（作業ディレクトリ × 状態、AND）と畳んだ状態・開いたグループは端末ごとの好みなので
 // localStorage に持つ。
 import { runMark, satMark } from "./arc.mjs";
-import { el, icon, relTime, svgEl } from "./dom.mjs";
-import { fmt } from "./i18n.mjs";
+import { el, icon, moreButton, relTime, svgEl } from "./dom.mjs";
+import { fmt, t } from "./i18n.mjs";
 import { familiesOf } from "./family.mjs";
 
 const backendLogos = {
@@ -222,6 +222,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         head.append(add);
       }
       if (st != null) ic.dataset.status = st;
+      // 右クリックと同じメニューを開く「…」。タッチでは右クリックもドラッグも届かない（docs/remote.md §8.4）
+      if (onGroupContext) head.append(moreButton("grp-more", t("session.groupMore", { status: st ?? t("session.status.none") }), (x, y) => onGroupContext(st, x, y)));
       head.oncontextmenu = (e) => { if (!onGroupContext) return; e.preventDefault(); onGroupContext(st, e.clientX, e.clientY); };
       sec.append(head);
       // 行とグループの見出しを落とせる先。掴んでいる間、上に来た状態の面が一段持ち上がる。
@@ -378,6 +380,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       for (const g of root.querySelectorAll(".over")) g.classList.remove("over");
     });
     box.append(head);
+    // 見出しはボタンなので「…」は中に入れられない。器の右上に重ねる
+    if (onFamilyContext) box.append(moreButton("fam-more", t("session.familyMore", { title: titleOf(fam.root) || t("session.untitled") }), (x, y) => onFamilyContext(fam.root, list, x, y)));
     // 外にある枝をここへ落とすと、このグループに入る（状態も根に揃う）
     box.addEventListener("dragover", (e) => {
       if (dragId == null || dragKind !== "row" || inFamily.has(dragId)) return;
@@ -420,6 +424,12 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     // fork で生まれた会話の印。グループから外しても状態を変えても消えない（§4.1）
     if (s.parent?.sessionId) title.append(forkMark());
     title.append(el("span", "row-t", titleOf(s)));
+    // 右クリックと同じメニューを開く「…」。Tab は行で止まる（行では ContextMenu・Shift+F10 で同じメニュー）
+    if (onContext && s.id != null) {
+      const more = moreButton("row-more", t("session.rowMore", { title: titleOf(s) || t("session.untitled") }), (x, y) => onContext(s, x, y));
+      more.tabIndex = -1;
+      title.append(more);
+    }
     r.append(title);
     const meta = el("div", "row-meta");
     // 走っていれば弧。裏だけを待っていれば衛星（ターンが終わっても裏の作業が残っている会話を含む）

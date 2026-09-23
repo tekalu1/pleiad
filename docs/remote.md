@@ -463,6 +463,8 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 - **画面下端**: `viewport-fit=cover` と `env(safe-area-inset-*)` を入力欄の下・上端の帯・引き出しに、高さは `100dvh`
 - 会話の左の 72px の溝（`web/style.css:385-390`）を狭い画面で縮めるのは任意（筋と節の位置に効くので、見た目の確認をしてから）
 
+実装（2026-09-23、#16 の web 側）: 上の通り。加えて、タイトル行の右端に「この会話の操作」の「…」（700px 以下とタッチ）、タッチの長押しで右クリックと同じメニュー（`web/long-press.mjs`。Android の OS の長押しと二重にならない）、指で開いた子メニューは入力欄にフォーカスしない、`crypto.randomUUID` の代わり（`web/dom.mjs` の `randomId`、§8.3）、モバイル版の殻の上端のホスト名の帯（`web/remote-badge.mjs` の `setupHostBar`。`plyRemote.backToHosts` か `window.backToHosts` を呼ぶ）。見た目の決まりは docs/design-system.md「狭い画面・タッチ」
+
 ## 9. 安全についての考え
 
 | 相手 | できること | 対策 |
