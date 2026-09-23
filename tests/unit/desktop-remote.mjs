@@ -94,6 +94,13 @@ export default async function (t) {
       rw.displayName({ label: 'home', hostName: 'desk' }) === 'home' && rw.displayName({ hostName: 'desk' }) === 'desk' && rw.displayName({ hostId: HOST_ID }) === HOST_ID.slice(0, 8));
     t.ok('中継はホスト名だけを出す', rw.relayLabel('https://relay.example.net/path?x') === 'relay.example.net' && rw.relayLabel('nope') === '');
     t.ok('確認コードは 3 桁ずつ', rw.formatCode('482193') === '482 193' && rw.formatCode(12) === '12');
+    {
+      // 帯は塗らない（2026-09-23）。画面が色を送るまでの一瞬も、ローカルの窓と同じ脇の面（tokens.css の --surface-0 / --ink）
+      const tokens = fs.readFileSync(path.join(ROOT, 'web/tokens.css'), 'utf8');
+      const light = /--surface-0:(#[0-9a-f]{6})/i.exec(tokens)?.[1], ink = /--ink:(#[0-9a-f]{6})/i.exec(tokens)?.[1];
+      t.ok('リモートの窓の帯の既定の色は脇の面（塗りの --fill-primary ではない）', rw.REMOTE_BAR.light.color === light && rw.REMOTE_BAR.light.symbolColor === ink
+        && rw.REMOTE_BAR.dark.color === '#121318' && !/3a499e|5665cd/i.test(JSON.stringify(rw.REMOTE_BAR)), JSON.stringify(rw.REMOTE_BAR));
+    }
     t.ok('帯の色は #rrggbb の 2 つだけ', rw.validTitleBarColors({ color: '#3a499e', symbolColor: '#F4F5FF' })?.color === '#3a499e'
       && rw.validTitleBarColors({ color: 'red', symbolColor: '#fff' }) === null && rw.validTitleBarColors(null) === null);
     const arg = rw.encodeRemoteArg({ hostId: HOST_ID, hostName: 'desk — ホーム', relay: 'relay.example.net', device: 'thinkpad', token: 'SECRET', url: 'http://127.0.0.1:1/?token=SECRET' });
@@ -210,6 +217,20 @@ export default async function (t) {
     m2.badge.onclick();
     await new Promise(r => setTimeout(r, 0));
     t.ok('モバイル: plyRemote.backToHosts があればそちら（名前が無ければ hostId の頭）', viaRemote === 1 && backs === 1 && m2.badge.textContent === HOST_ID.slice(0, 8));
+    // 塗りなしの H1 配置（2026-09-23）: タイトルの列があれば、タイトルの下に差しの青の添え字「⇄ ホスト名」も置く（700px 以下で見せる）
+    const tdoc = mkDoc();
+    const col = new N('div');
+    col.className = 'title-col';
+    tdoc.body.append(col);
+    let subBacks = 0;
+    const withSub = setupRemoteBadge({ remote: { hostId: HOST_ID, hostName: 'desktop-home', shell: 'mobile', status: () => Promise.resolve({ state: 'host-offline' }) }, doc: tdoc, back: () => { subBacks++; } });
+    await new Promise(r => setTimeout(r, 0));
+    t.ok('モバイル: タイトルの列の中に添え字（ホスト名と状態）', withSub.sub && col.children.includes(withSub.sub) && withSub.sub.textContent.includes('desktop-home') && withSub.sub.textContent.includes('ホストがオフライン'), withSub.sub?.textContent);
+    t.ok('モバイル: 添え字の読み上げは帯のバッジと同じ「ホスト一覧に戻る: …」', String(withSub.sub.attrs['aria-label']).startsWith('ホスト一覧に戻る') && withSub.sub.attrs['aria-label'] === withSub.badge.attrs['aria-label']);
+    withSub.sub.onclick();
+    await new Promise(r => setTimeout(r, 0));
+    t.ok('モバイル: 添え字を押してもホスト一覧へ', subBacks === 1);
+    t.ok('モバイル: タイトルの列が無ければ添え字は作らない', mobile.sub === null);
   }
 
   // ---------------------------------------------------------------- 本体の文言

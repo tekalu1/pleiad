@@ -106,7 +106,8 @@ export async function recordPresent(sessionId, payload) {
 
   const inline =
     Buffer.byteLength(payload.content ?? "", "utf8") + Buffer.byteLength(payload.dataUri ?? "", "utf8");
-  if (inline > MAX_INLINE_BYTES) {
+  // truncated: 載せる前から中身を外したもの（大きな添付の画像。core/server.mjs の presentAttachments）
+  if (inline > MAX_INLINE_BYTES || payload.truncated === true) {
     record.truncated = true;
   } else {
     if (payload.content != null) record.content = payload.content;
