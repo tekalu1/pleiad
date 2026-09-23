@@ -18,6 +18,7 @@ import { rpc } from "./codex-rpc.mjs";
 import { rpc as nativeRpc } from './codex-rpc.mjs';
 import { createTerminalTracker } from "./codex-background.mjs";
 import { codexContextRpc } from './context-options.mjs';
+import { undelivered } from './undelivered.mjs';
 import { codexCompatThread, redactSecret } from '../compat-endpoints.mjs';
 import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { t, agentT } from "../i18n.mjs";
@@ -1082,7 +1083,7 @@ export const backend = {
   // ---- 実行 ---------------------------------------------------------------
 
   async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, askPermission, signal, control, ephemeral = false, visualizeInstructions, contextRuntime, agentRuntime, endpoint = null }) {
-    const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc) : nativeRpc;
+    const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
     // 互換の接続先（core/compat-endpoints.mjs）。スレッドごとに modelProvider と model_providers.<id> を渡す（app-server は共有のまま）。
     // 鍵は experimental_bearer_token / http_headers で JSON-RPC に載る（argv・環境に出ない）。エラー文からは伏せる
     const compat = endpoint ? codexCompatThread(endpoint) : null;
@@ -1291,6 +1292,7 @@ export const backend = {
     // 受け皿は見知らぬ threadId の frame を預かるだけで、渡すのは adopt で id が一致したものだけ
     let threadId = sessionId ?? null;
     let detach = threadId ? rpc.attach(threadId, handlers) : rpc.claimOrphan(handlers);
+    let promptSent = false;
 
     try {
       const common = {
@@ -1379,6 +1381,8 @@ export const backend = {
         effectiveEffort = config?.model_reasoning_effort ?? selected?.defaultEffort;
       }
       emit({ type: "activity", state: "thinking" });
+      // ここから先の失敗は、プロンプトが渡ったかどうか分からない（応答だけ失われた場合がある）
+      promptSent = true;
       const res = await rpc.request("turn/start", {
         threadId,
         cwd,
@@ -1424,8 +1428,8 @@ export const backend = {
         return { sessionId: threadId };
       }
       emit({ type: "turnResult", outcome: "error", error: hide(String(err?.message ?? err)) });
-      if (endpoint?.key && String(err?.message ?? '').includes(endpoint.key)) throw new Error(hide(err.message));
-      throw err;
+      const thrown = endpoint?.key && String(err?.message ?? '').includes(endpoint.key) ? new Error(hide(err.message)) : err;
+      throw promptSent ? thrown : undelivered(thrown);
     } finally {
       detach();
       // turn/completed が来ない終わり方（error 通知・中断）でも、走ったままの端末を裏へ回す
