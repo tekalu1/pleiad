@@ -1859,17 +1859,28 @@ wss.on("connection", (ws) => {
         case "abort": {
           // どのセッションを止めるか。省略されたら全部止める
           const { sessionId } = msg.args ?? {};
-          await agentTasks.cancelOwner(sessionId);
-          const ownTask = agentTasks.list().find(r => r.sessionId === sessionId);
-          if (ownTask) await agentTasks.cancel(ownTask.taskId);
-          for (const id of sessionId ? [sessionId] : [...runtime.turns.keys()]) await outbox.pause(id);
+          const paused = sessionId ? [sessionId] : [...runtime.turns.keys()];
+          // 実際の中断を**最初に同期的に**行う。以前は Pleiad タスクの停止と送信待ちの保留（どちらもディスクへの
+          // 書き込み）を待ってから中断していたので、タスクを多く作った会話ほど止まるのが遅れ、その間は途中送信も
+          // 通ってしまっていた（steer は turn.ac.signal.aborted で断る）
           const targets = sessionId
             ? [runtime.turns.get(sessionId)].filter(Boolean)
             : [...runtime.turns.values()];
           for (const t of targets) {
             t.ac.abort();
             settleAll("中断された", t.info.sessionId);
+            // 受け付けたことをすぐ画面に出す。バックエンドが止まり終えるまで（Claude は CLI の終了まで）
+            // turnResult / turnEnd は来ないので、それまでの間「中断している」を出す
+            if (!t.info.stopping) {
+              t.info.stopping = true;
+              makeEmit(t)({ type: 'activity', state: 'stopping' });
+            }
           }
+          if (targets.length) broadcastRunning();
+          await agentTasks.cancelOwner(sessionId);
+          const ownTask = agentTasks.list().find(r => r.sessionId === sessionId);
+          if (ownTask) await agentTasks.cancel(ownTask.taskId);
+          for (const id of paused) await outbox.pause(id);
           return reply(true, { aborted: targets.length });
         }
 
