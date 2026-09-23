@@ -1991,7 +1991,9 @@ wss.on("connection", (ws) => {
 
         case "efforts": {
           const backend = await pickBackend(null, msg.args?.backend);
-          return reply(true, await effortOptions(backend, msg.args?.model ?? '', msg.args?.cwd));
+          // endpoint を渡すと互換の接続先の段（既定の段を作らない。Claude は「思考を送る」がオフなら段なし）
+          const endpoint = endpointCapable(backend) && typeof msg.args?.endpoint === 'string' ? await endpointRow(msg.args.endpoint) : null;
+          return reply(true, await effortOptions(backend, msg.args?.model ?? '', msg.args?.cwd, endpoint));
         }
         case "models": {
           const backend = await pickBackend(null, msg.args?.backend);

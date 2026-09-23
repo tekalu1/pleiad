@@ -235,7 +235,7 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
       lines.push(models?.length ? `モデルの一覧: ${models.length} 件を取りました。` : 'モデルの一覧は取れませんでした（GET /v1/models に未対応）。ID を入力してください。');
       return { auth, latencyMs: r.ms, models: models ?? [], lines };
     }
-    const statuses = tried.map(t => t.r.status).join('・');
+    const statuses = [...new Set(tried.map(t => t.r.status))].join('・');
     throw new CheckError('キーが違います', { code: 'auth', lines: [
       tried.length > 1 ? `Bearer と x-api-key の両方で試し、どちらも ${statuses} でした。キーを確かめてください。` : `${statuses}（認証に失敗）が返りました。${key ? 'キー' : 'この接続先はキーが要ります。キー'}を確かめてください。`,
       'URL には届いています。'] });

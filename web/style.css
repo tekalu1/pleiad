@@ -618,6 +618,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
   background:transparent;color:var(--ink);cursor:pointer}
 .copt:hover{background:var(--surface-hover)}
 .copt[aria-selected=true]{background:var(--surface-sel)}
+.copt:disabled{color:var(--ink-weak);cursor:default;background:transparent}
 .copt .tick{width:12px;flex:none;color:var(--ink-blue);font-size:var(--fs-xs)}
 .copt .cbody{flex:1;min-width:0}
 .copt .main{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -643,7 +644,8 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .cbrowse .copt .main{font-family:var(--font-mono);font-size:var(--fs-s)}
 .cbrowse .go{display:flex;justify-content:flex-end;padding:4px}
 .cbrowse .go .btn{font-size:var(--fs-s);padding:4px 12px}
-.cnote{margin:4px 8px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.cnote{margin:4px 8px;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
+.cnote b{color:var(--ink);font-weight:600}
 .cerr{margin:6px 8px 0;font-size:var(--fs-s);font-weight:600;color:var(--ink);overflow-wrap:anywhere}
 .cerr:empty{display:none}
 .cseg{margin:2px 8px 4px}
