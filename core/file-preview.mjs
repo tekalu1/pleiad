@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileReference } from '../web/file-reference.mjs';
+import { t } from './i18n.mjs';
 
 const TEXT_LIMIT = 8 * 1024 * 1024;
 export const FILE_LIMIT = 32 * 1024 * 1024;
@@ -13,7 +14,7 @@ export function cwdAt(meta, at) {
   const changes = (meta.history ?? []).filter(h => h.field === 'cwd');
   if (!changes.length) return meta.cwd;
   const time = Date.parse(at);
-  if (!Number.isFinite(time)) throw new PreviewError('cwd-unknown', 'この発言の作業場所を特定できません。絶対パスで開いてください。');
+  if (!Number.isFinite(time)) throw new PreviewError('cwd-unknown', t('filePreview.cwdAtUnknown'));
   let cwd = meta.cwd;
   for (const change of changes.slice().reverse()) if (Date.parse(change.at) > time) cwd = change.from;
   return cwd;
@@ -21,24 +22,24 @@ export function cwdAt(meta, at) {
 
 export function resolveReference(raw, cwd) {
   const ref = fileReference(raw);
-  if (!ref) throw new PreviewError('invalid-path', 'このファイルパスを読み取れません。');
-  if (process.platform !== 'win32' && /^[a-z]:[\\/]/i.test(ref.path)) throw new PreviewError('different-host', 'このパスは別のOSの形式です。接続先のファイルパスを確認してください。');
-  if (process.platform === 'win32' && /^\//.test(ref.path)) throw new PreviewError('different-host', 'このパスにはドライブ名がありません。接続先の絶対パスを確認してください。');
-  if (!path.isAbsolute(ref.path) && (!cwd || !path.isAbsolute(cwd))) throw new PreviewError('cwd-unknown', '作業場所が不明なため、相対パスを解決できません。絶対パスで開いてください。');
+  if (!ref) throw new PreviewError('invalid-path', t('filePreview.invalidPath'));
+  if (process.platform !== 'win32' && /^[a-z]:[\\/]/i.test(ref.path)) throw new PreviewError('different-host', t('filePreview.otherOs'));
+  if (process.platform === 'win32' && /^\//.test(ref.path)) throw new PreviewError('different-host', t('filePreview.noDrive'));
+  if (!path.isAbsolute(ref.path) && (!cwd || !path.isAbsolute(cwd))) throw new PreviewError('cwd-unknown', t('filePreview.relativeUnknownCwd'));
   return { path: path.resolve(cwd || '.', ref.path), line: ref.line };
 }
 
 export async function inspectFile(requested, roots) {
-  if (typeof requested !== 'string' || !path.isAbsolute(requested) || /^[\\/]{2}/.test(requested)) throw new PreviewError('invalid-path', 'このファイルパスを読み取れません。');
+  if (typeof requested !== 'string' || !path.isAbsolute(requested) || /^[\\/]{2}/.test(requested)) throw new PreviewError('invalid-path', t('filePreview.invalidPath'));
   const file = await fs.realpath(requested);
   const resolvedRoots = await Promise.all(roots.filter(Boolean).map(r => fs.realpath(r).catch(() => null)));
   if (!resolvedRoots.some(root => {
     if (!root) return false;
     const rel = path.relative(root, file);
     return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
-  })) throw new PreviewError('outside-workspace', 'このファイルはアクセスできる作業場所の外にあります。');
+  })) throw new PreviewError('outside-workspace', t('filePreview.outsideWorkspace'));
   const stat = await fs.stat(file);
-  if (!stat.isFile() && !stat.isDirectory()) throw new PreviewError('not-file', 'ファイルまたはフォルダーを選んでください。');
+  if (!stat.isFile() && !stat.isDirectory()) throw new PreviewError('not-file', t('filePreview.notFile'));
   return { file, stat, resolvedRoots };
 }
 
@@ -52,7 +53,7 @@ export async function readBounded(file, maxBytes) {
       if (!bytesRead) break;
       chunks.push(buffer.subarray(0, bytesRead)); total += bytesRead;
     }
-    if (total > maxBytes) throw new PreviewError('too-large', 'ファイルが表示上限を超えています。');
+    if (total > maxBytes) throw new PreviewError('too-large', t('filePreview.tooLarge'));
     return Buffer.concat(chunks, total);
   } finally { await handle.close(); }
 }
@@ -185,21 +186,22 @@ export async function readPreview(requested, roots, { resource = false } = {}) {
   const mime = IMAGES[ext] || (ext === '.pdf' ? 'application/pdf' : null);
   const textLike = TEXT.has(ext.slice(1)) || (!ext && TEXT.has(path.basename(file).toLowerCase()));
   const limit = resource ? (mime ? 4 * 1024 * 1024 : 512 * 1024) : mime ? FILE_LIMIT : TEXT_LIMIT;
-  if (stat.size > limit) return { ...result, kind:'unsupported', reason:`表示上限（${limit / 1024 / 1024} MB）を超えています。${result.downloadable ? '保存して確認できます。' : 'ホスト上のファイルを確認してください。'}` };
+  // i18n-dynamic: filePreview.overLimit
+  if (stat.size > limit) return { ...result, kind:'unsupported', reason:t(result.downloadable ? 'filePreview.overLimitDownload' : 'filePreview.overLimitHost', { mb: limit / 1024 / 1024 }) };
   const body = await readBounded(file, limit);
   if (mime) return { ...result, kind:ext === '.pdf' ? 'pdf' : 'image', mime, data:body.toString('base64'), ...(ext === '.svg' ? { text:body.toString('utf8') } : {}) };
   let text;
   try { text = new TextDecoder('utf-8', { fatal:true }).decode(body); }
-  catch { return { ...result, kind:'unsupported', reason:'この文字コードまたはファイル形式はプレビューに対応していません。保存して確認できます。' }; }
-  if (text.includes('\0') || (!textLike && /[\u0001-\u0008\u000e-\u001f]/.test(text))) return { ...result, kind:'unsupported', reason:'このファイル形式はプレビューに対応していません。保存して確認できます。' };
-  if (['.docx','.xlsx','.pptx','.zip','.exe','.dll','.7z','.mp4','.mp3'].includes(ext)) return { ...result, kind:'unsupported', reason:'このファイル形式はプレビューに対応していません。保存して確認できます。' };
+  catch { return { ...result, kind:'unsupported', reason:t('filePreview.unsupportedEncoding') }; }
+  if (text.includes('\0') || (!textLike && /[\u0001-\u0008\u000e-\u001f]/.test(text))) return { ...result, kind:'unsupported', reason:t('filePreview.unsupportedType') };
+  if (['.docx','.xlsx','.pptx','.zip','.exe','.dll','.7z','.mp4','.mp3'].includes(ext)) return { ...result, kind:'unsupported', reason:t('filePreview.unsupportedType') };
   const kind = ['.md','.markdown'].includes(ext) ? 'markdown' : ['.html','.htm'].includes(ext) ? 'html' : ['.csv','.tsv'].includes(ext) ? 'table' : 'text';
   return { ...result, kind, text, ...(kind === 'table' ? { delimiter:ext === '.tsv' ? '\t' : ',' } : {}) };
 }
 
 export function previewFailure(error) {
   if (error instanceof PreviewError) return { code:error.code, message:error.message };
-  if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return { code:'not-found', message:'ファイルが見つかりません。移動または削除された可能性があります。' };
-  if (error.code === 'EACCES' || error.code === 'EPERM') return { code:'access-denied', message:'このファイルを読み取れません。ホストのアクセス権を確認してください。' };
-  return { code:'read-failed', message:'ファイルを読み込めませんでした。再読み込みしてください。' };
+  if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return { code:'not-found', message:t('filePreview.notFound') };
+  if (error.code === 'EACCES' || error.code === 'EPERM') return { code:'access-denied', message:t('filePreview.accessDenied') };
+  return { code:'read-failed', message:t('filePreview.readFailed') };
 }

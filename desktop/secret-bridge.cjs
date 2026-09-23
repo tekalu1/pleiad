@@ -1,14 +1,16 @@
 // utilityProcess（core/server.mjs）からの暗号化の依頼に、main プロセスの safeStorage で答える。
+// 理由・エラーの文は画面（設定のコンテキストの「暗号化されていない」）まで届くので、main の言語で出す（desktop/i18n.cjs）
 // 相手は core/secret-store.mjs の parentPortCipher。秘密の値はメッセージの中だけを通り、ログには出さない。
 //
 // Linux で鍵束が無いと safeStorage は basic_text（固定の鍵）に落ちる。暗号化したように見えて実質は平文なので、
 // その場合は「使えない」と答え、サーバー側は 0600 の平文に切り替えて UI に「暗号化されていない」と出す。
+const { t } = require('./i18n.cjs');
 
 function encryptionState(safeStorage, platform) {
-  if (!safeStorage?.isEncryptionAvailable?.()) return { available: false, backend: 'none', reason: 'OS の暗号化機能（safeStorage）が使えません' };
+  if (!safeStorage?.isEncryptionAvailable?.()) return { available: false, backend: 'none', reason: t('secrets.unavailable') };
   if (platform === 'linux') {
     const backend = safeStorage.getSelectedStorageBackend?.() ?? 'unknown';
-    if (backend === 'basic_text' || backend === 'unknown') return { available: false, backend, reason: 'OS の鍵束が見つからないため、暗号化できません（basic_text）' };
+    if (backend === 'basic_text' || backend === 'unknown') return { available: false, backend, reason: t('secrets.noKeyring') };
     return { available: true, backend };
   }
   return { available: true, backend: platform === 'win32' ? 'dpapi' : platform === 'darwin' ? 'keychain' : platform };
@@ -28,7 +30,7 @@ function createSecretHandler({ safeStorage, platform = process.platform }) {
       throw new Error('unknown operation');
     } catch (e) {
       // 例外の文面に値が混じらないよう、固定の文にする
-      return { ...reply, ok: false, error: message?.op === 'decrypt' ? '秘密情報を復号できませんでした（別のユーザー・別の PC で暗号化された可能性があります）' : String(e?.message ?? '暗号化できませんでした').slice(0, 200) };
+      return { ...reply, ok: false, error: message?.op === 'decrypt' ? t('secrets.decryptFailed') : String(e?.message ?? t('secrets.encryptFailed')).slice(0, 200) };
     }
   };
 }

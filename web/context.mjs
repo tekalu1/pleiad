@@ -1,38 +1,41 @@
 // ==================== 設定 › コンテキスト（docs/mockups/context-unified.html の②） ====================
 // 新しい会話を始めるときに、エージェントへ何を渡すかを種類ごと（指示・Skills・外部 MCP）に決める 1 画面。
-// 範囲は「すべての場所（既定）」か場所ごと。場所では種類ごとに「既定どおり／この場所だけ変更中」。
-// 変更はその場で保存し（setContextSettings）、「保存しました · 次の会話から反映」を出す。始まっている会話は変わらない。
+// 範囲は「全体の設定」か場所ごと。開いたときは全体の設定で、場所の設定はプルダウンでその場所を選んだときだけ作る。
+// 場所では種類ごとに「全体の設定どおり／このフォルダーだけの設定」。全体の設定を見ているときも、今の会話のフォルダーで
+// フォルダーだけの設定が効いている種類には印と「全体の設定に戻す」を出す。
+// 変更はその場で保存し（setContextSettings）、「保存しました · 次のターンから反映」を出す。始まっている会話にも次のターンから効く。
 // 設定の形と継承は core/context-settings.mjs、外部 MCP のカードの中身と追加シートは web/mcp-config.mjs。
 import { el } from './dom.mjs';
 import { runMark } from './arc.mjs';
 import { renderMarkdown } from './render.mjs';
 import { copyIcon, trashIcon } from './icons.mjs';
 import { createMcpSection } from './mcp-config.mjs';
+import { t } from './i18n.mjs';
 
 const KINDS = ['instruction', 'skill', 'mcp'];
 const TEXT = {
   instruction: {
-    title: '指示ファイル',
-    agent: ['エージェントに任せる', 'Claude は CLAUDE.md、Codex は AGENTS.md を各自の決まりで読む'],
-    ply: ['Pleiad がそろえる', 'どのエージェントにも同じものを渡す'],
-    note: 'Pleiad は何も渡しません。どのファイルが読まれるかはエージェント次第です。',
-    list: 'この場所で渡すもの', listDefault: '既定で渡すもの',
-    sources: [['common', 'AGENTS.md（共通）'], ['claude', 'CLAUDE.md'], ['codex', 'Codex 形式']],
+    title: t('context.instruction.title'),
+    agent: [t('context.owner.agent'), t('context.instruction.agent')],
+    ply: [t('context.owner.ply'), t('context.instruction.ply')],
+    note: t('context.instruction.note'),
+    list: t('context.instruction.list'), listDefault: t('context.instruction.listDefault'),
+    sources: [['common', t('context.instruction.sourceCommon')], ['claude', 'CLAUDE.md'], ['codex', t('context.instruction.sourceCodex')]],
   },
   skill: {
     title: 'Skills',
-    agent: ['エージェントに任せる', '各エージェントが自分の skills フォルダーを読む'],
-    ply: ['Pleiad がそろえる', '一覧を渡し、必要な時だけ本文を読ませる'],
-    note: 'Pleiad は何も渡しません。どの Skill が使えるかはエージェント次第です。',
-    list: 'この場所で案内するもの', listDefault: '既定で案内するもの',
-    sources: [['common', '.agents/skills（共通）'], ['claude', '.claude/skills'], ['codex', '.codex/skills']],
+    agent: [t('context.owner.agent'), t('context.skill.agent')],
+    ply: [t('context.owner.ply'), t('context.skill.ply')],
+    note: t('context.skill.note'),
+    list: t('context.skill.list'), listDefault: t('context.skill.listDefault'),
+    sources: [['common', t('context.skill.sourceCommon')], ['claude', '.claude/skills'], ['codex', '.codex/skills']],
   },
   mcp: {
-    title: '外部 MCP',
-    agent: ['エージェントに任せる', '各エージェントが自分の MCP 設定どおりに接続する'],
-    ply: ['Pleiad がそろえる', 'どのエージェントにも同じ MCP をつなぐ'],
-    list: 'この場所でつなぐもの', listDefault: '既定でつなぐもの',
-    sources: [['claude', 'Claude の設定'], ['codex', 'Codex の設定']],
+    title: t('context.mcp.title'),
+    agent: [t('context.owner.agent'), t('context.mcp.agent')],
+    ply: [t('context.owner.ply'), t('context.mcp.ply')],
+    list: t('context.mcp.list'), listDefault: t('context.mcp.listDefault'),
+    sources: [['claude', t('context.mcp.sourceClaude')], ['codex', t('context.mcp.sourceCodex')]],
   },
 };
 const SHOWN = 8;   // Skills は多いので最初はこれだけ並べ、「すべて見る」で残りを出す
@@ -78,8 +81,8 @@ export function peekDocument(entry, { short = p => p } = {}) {
   const line = el('div', 'row-line');
   line.append(el('span', 'cx-path', short(entry.path)));
   const copy = button('', 'btn btn-icon');
-  copy.innerHTML = copyIcon; copy.title = 'パスをコピー'; copy.setAttribute('aria-label', 'パスをコピー');
-  copy.onclick = () => navigator.clipboard?.writeText(entry.path).then(() => { copy.title = 'コピーしました'; }).catch(() => {});
+  copy.innerHTML = copyIcon; copy.title = t('context.copyPath'); copy.setAttribute('aria-label', t('context.copyPath'));
+  copy.onclick = () => navigator.clipboard?.writeText(entry.path).then(() => { copy.title = t('context.copied'); }).catch(() => {});
   line.append(copy);
   box.append(line);
   const { meta, body } = entry.kind === 'skill' ? frontmatter(entry.content) : { meta: [], body: entry.content ?? '' };
@@ -89,7 +92,7 @@ export function peekDocument(entry, { short = p => p } = {}) {
     box.append(table);
   }
   const text = el('div', 'body');
-  text.innerHTML = renderMarkdown(body || '（空のファイル）');
+  text.innerHTML = renderMarkdown(body || t('context.emptyFile'));
   box.append(text);
   return box;
 }
@@ -99,7 +102,7 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   panel.classList.add('context');
   panel.replaceChildren();
   const root = el('div', 'cx');
-  const lead = el('p', 'cx-lead', '新しい会話を始めるときに、エージェントへ何を渡すかを決めます。始まっている会話は変わりません。');
+  const lead = el('p', 'cx-lead', t('context.lead'));
   const status = el('p', 'cx-status'); status.setAttribute('role', 'alert');
   // ---- 範囲のプルダウン
   const place = el('div', 'cx-place');
@@ -107,11 +110,11 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   combo.setAttribute('aria-haspopup', 'listbox'); combo.setAttribute('aria-expanded', 'false');
   const comboValue = el('span', 'v');
   combo.append(comboValue, chevron());
-  const pop = el('div', 'pop cx-pop'); pop.hidden = true; pop.setAttribute('role', 'listbox'); pop.setAttribute('aria-label', '設定する範囲');
-  place.append(el('span', 'cx-sub', '設定する範囲'), combo, pop);
+  const pop = el('div', 'pop cx-pop'); pop.hidden = true; pop.setAttribute('role', 'listbox'); pop.setAttribute('aria-label', t('context.scope'));
+  place.append(el('span', 'cx-sub', t('context.scope')), combo, pop);
   const cards = Object.fromEntries(KINDS.map(k => [k, el('div', 'cx-card')]));
   const rootsFold = el('details', 'cx-fold');
-  const toast = el('div', 'cx-toast', '保存しました · 次の会話から反映'); toast.setAttribute('role', 'status');
+  const toast = el('div', 'cx-toast', t('context.saved')); toast.setAttribute('role', 'status');
   root.append(lead, status, place, cards.instruction, cards.skill, cards.mcp, rootsFold, toast);
   panel.append(root);
 
@@ -138,7 +141,7 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   }
   async function work(fn) {
     try { await fn(); }
-    catch (e) { status.textContent = `保存できませんでした：${e.message}`; }
+    catch (e) { status.textContent = t('context.saveFailed', { error: e.message }); }
   }
 
   // ---------------------------------------------------------------- 保存（その場で）
@@ -151,8 +154,8 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
     renderAll();
     if (rescan) await loadScan();
   }
-  async function resetKind(kind) {
-    view = await cmd('setContextSettings', { cwd, place: level, kind, value: null });
+  async function resetKind(kind, at = level) {
+    view = await cmd('setContextSettings', { cwd, place: at, kind, value: null });
     saved();
     renderAll();
     await loadScan();
@@ -165,12 +168,12 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   }
 
   // ---------------------------------------------------------------- 範囲のプルダウン
-  const placeLabel = info => info.id === 'default' ? 'すべての場所（既定）' : info.path;
+  const placeLabel = info => info.id === 'default' ? t('context.place.default') : info.path;
   function placeSub(info) {
-    if (info.id === 'default') return '個別に変えていない場所はこれに従う';
+    if (info.id === 'default') return t('context.place.defaultSub');
     const bits = [];
-    if (info.current) bits.push('今の会話の場所');
-    bits.push(info.overrides ? `${info.overrides} 項目を個別に変更` : 'すべて既定どおり');
+    if (info.current) bits.push(t('context.place.current'));
+    bits.push(info.overrides ? t('context.place.overrides', { count: info.overrides }) : t('context.place.allDefault'));
     return bits.join(' · ');
   }
   function renderCombo() {
@@ -194,8 +197,8 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
     const row = el('div', 'cx-optrow');
     const del = button('', 'cx-optdel');
     del.innerHTML = trashIcon;
-    del.title = 'この場所の設定を消す';
-    del.setAttribute('aria-label', `${info.path} の設定を消す`);
+    del.title = t('context.place.remove');
+    del.setAttribute('aria-label', t('context.place.removeAria', { path: info.path }));
     del.onclick = e => { e.stopPropagation(); const box = confirmRemove(info, row); row.replaceWith(box); box.querySelector('button')?.focus(); };
     row.append(opt, del);
     return row;
@@ -203,19 +206,19 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   /** 消す前の確認。プルダウンの中のその行を置き換える */
   function confirmRemove(info, row) {
     const box = el('div', 'cx-confirm');
-    box.setAttribute('role', 'group'); box.setAttribute('aria-label', 'この場所の設定を消す');
+    box.setAttribute('role', 'group'); box.setAttribute('aria-label', t('context.place.remove'));
     const text = el('div', 't');
-    text.append(el('b', null, 'この場所の設定を消しますか？'), el('span', 'v', info.path),
+    text.append(el('b', null, t('context.place.confirm')), el('span', 'v', info.path),
       el('span', 'cx-sub', info.overrides
-        ? `個別に変えた ${info.overrides} 項目を消し、すべての場所（既定）の設定に従うようにします。始まっている会話は変わりません`
-        : '一覧から外します。この場所はすべての場所（既定）の設定に従います'));
+        ? t('context.place.confirmOverrides', { count: info.overrides })
+        : t('context.place.confirmPlain')));
     const error = el('p', 'err'); error.setAttribute('role', 'alert');
     const acts = el('div', 'acts');
-    const cancel = button('やめる', 'btn', () => { box.replaceWith(row); row.querySelector('.cx-optdel')?.focus(); });
-    const ok = button('消す', 'btn btn-primary', async () => {
+    const cancel = button(t('context.cancel'), 'btn', () => { box.replaceWith(row); row.querySelector('.cx-optdel')?.focus(); });
+    const ok = button(t('context.place.removeButton'), 'btn btn-primary', async () => {
       ok.disabled = cancel.disabled = true;
       try { await removePlace(info); }
-      catch (e) { error.textContent = `消せませんでした：${e.message}`; ok.disabled = cancel.disabled = false; }
+      catch (e) { error.textContent = t('context.place.removeFailed', { error: e.message }); ok.disabled = cancel.disabled = false; }
     });
     acts.append(cancel, ok);
     box.append(text, error, acts);
@@ -236,20 +239,20 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
     pop.replaceChildren();
     pop.append(option(view.defaults), ...view.places.map(placeRow), el('div', 'gap'));
     const add = button('', 'cx-add');
-    add.append(plus(), document.createTextNode('場所を追加'));
+    add.append(plus(), document.createTextNode(t('context.place.add')));
     const box = el('div', 'cx-addbox'); box.hidden = true;
-    const input = el('input'); input.placeholder = 'フォルダーのパス'; input.setAttribute('aria-label', '追加するフォルダーのパス'); input.autocomplete = 'off'; input.spellcheck = false;
+    const input = el('input'); input.placeholder = t('context.folderPath'); input.setAttribute('aria-label', t('context.place.addAria')); input.autocomplete = 'off'; input.spellcheck = false;
     const cands = el('div', 'cands');
     const error = el('p', 'err'); error.setAttribute('role', 'alert');
     const acts = el('div', 'acts');
-    if (window.plyDesktop?.chooseFolder) acts.append(button('フォルダーを選ぶ…', 'btn', async () => {
+    if (window.plyDesktop?.chooseFolder) acts.append(button(t('context.chooseFolder'), 'btn', async () => {
       const picked = await window.plyDesktop.chooseFolder().catch(() => null);
       const chosen = typeof picked === 'string' ? picked : picked?.path ?? picked?.[0];
       if (chosen) { input.value = chosen; paintCands(); input.focus(); }
     }));
-    const ok = button('追加', 'btn btn-primary', () => addPlace(input.value, error));
+    const ok = button(t('context.add'), 'btn btn-primary', () => addPlace(input.value, error));
     acts.append(ok);
-    box.append(input, el('p', 'cx-sub', '最近の会話の場所'), cands, error, acts);
+    box.append(input, el('p', 'cx-sub', t('context.place.recent')), cands, error, acts);
     const listed = new Set(view.places.map(p => pathKey(p.path)));
     function paintCands() {
       cands.replaceChildren();
@@ -261,7 +264,7 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
         b.onclick = () => { input.value = c.value; paintCands(); input.focus(); };
         cands.append(b);
       }
-      if (!list.length) cands.append(el('p', 'cx-sub', q ? '一致する場所がありません' : '候補はありません'));
+      if (!list.length) cands.append(el('p', 'cx-sub', q ? t('context.place.noMatch') : t('context.place.noCandidates')));
     }
     input.oninput = () => { error.textContent = ''; paintCands(); };
     input.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addPlace(input.value, error); } };
@@ -270,7 +273,7 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   }
   async function addPlace(value, error) {
     const target = String(value ?? '').trim();
-    if (!target) { error.textContent = 'フォルダーのパスを入れてください'; return; }
+    if (!target) { error.textContent = t('context.place.pathRequired'); return; }
     try {
       view = await cmd('setContextSettings', { cwd, place: target, add: true });
       level = view.place ?? target;
@@ -301,18 +304,29 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   document.addEventListener('mousedown', e => { if (!pop.hidden && !place.contains(e.target)) closePop(); });
 
   // ---------------------------------------------------------------- 種類のカード
+  /** 場所 at の上に、この種類を個別に変えた場所があるか（あれば「全体の設定に戻す」ではなく「上の設定に戻す」） */
+  const parentOverride = (kind, at) => view.places.some(p => p.saved && p.kinds[kind].override && pathKey(p.path) !== pathKey(at) && within(p.path, at));
+  const resetLabel = (kind, at) => parentOverride(kind, at) ? t('context.inherit.resetParent') : t('context.inherit.reset');
   function inheritance(kind) {
     const info = levelInfo(), wrap = el('span', 'cx-inh');
-    if (isDefault()) { wrap.textContent = '個別に変えていない場所すべて'; return wrap; }
+    if (isDefault()) {
+      // 全体の設定を見ていても、今の会話のフォルダーでフォルダーだけの設定が効いていれば、全体の変更はそこには効かない
+      const here = view.places.find(p => p.current), from = here?.kinds[kind].from;
+      if (!from) { wrap.textContent = t('context.inherit.all'); return wrap; }
+      wrap.classList.add('over');
+      wrap.append(t('context.inherit.hereOverride', { path: short(from) }),
+        button(resetLabel(kind, from), 'cx-link', () => work(() => resetKind(kind, from))));
+      return wrap;
+    }
     const k = info.kinds[kind];
     if (k.override) {
       wrap.classList.add('over');
-      wrap.append('この場所だけ変更中 · ', button('既定に戻す', 'cx-link', () => work(() => resetKind(kind))));
-    } else wrap.textContent = k.from ? `${short(k.from)} の設定どおり` : '既定どおり';
+      wrap.append(t('context.inherit.override'), button(resetLabel(kind, level), 'cx-link', () => work(() => resetKind(kind))));
+    } else wrap.textContent = `${k.from ? t('context.inherit.from', { path: short(k.from) }) : t('context.inherit.default')}${t('context.inherit.willOverride')}`;
     return wrap;
   }
   function seg(kind, owner) {
-    const box = el('div', 'cx-seg'); box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', `${TEXT[kind].title}を読み込むのは`);
+    const box = el('div', 'cx-seg'); box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', t('context.ownerAria', { kind: TEXT[kind].title }));
     for (const [id, [title, desc]] of [['native', TEXT[kind].agent], ['ply', TEXT[kind].ply]]) {
       const b = button('', 'cx-opt');
       b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(owner === id));
@@ -324,7 +338,7 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   }
   /** 探す形式の札。user（home）と directory（Git ルート〜作業場所）の両方を同じに変える */
   function sourceChips(kind, value) {
-    const box = el('div', 'cx-chips'); box.setAttribute('role', 'group'); box.setAttribute('aria-label', kind === 'mcp' ? '読み込む設定ファイル' : '探す形式');
+    const box = el('div', 'cx-chips'); box.setAttribute('role', 'group'); box.setAttribute('aria-label', kind === 'mcp' ? t('context.configFiles') : t('context.formats'));
     for (const [id, label] of TEXT[kind].sources) {
       const b = button(label, 'cx-chip');
       // 移行した設定では home と作業場所で違うことがある。どちらかで探していればオン、押すと両方をそろえる
@@ -342,34 +356,34 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   }
   function loading() {
     const p = el('p', 'cx-empty');
-    p.append(runMark('探しています'), document.createTextNode(' 探しています…'));
+    p.append(runMark(t('context.searching')), document.createTextNode(' ' + t('context.searchingDots')));
     return p;
   }
   /** 指示・Skills の行。スイッチはこの範囲の除外（その行が見つかった範囲の excludePaths）を出し入れする */
   function documentRows(kind, value) {
     const list = el('div', 'cx-list');
     const entries = (scan?.entries ?? []).filter(e => e.kind === kind);
-    if (!entries.length) { list.append(el('p', 'cx-empty', kind === 'skill' ? 'この場所で見つかった Skill はありません' : 'この場所で見つかった指示ファイルはありません')); return { list, on: 0 }; }
+    if (!entries.length) { list.append(el('p', 'cx-empty', kind === 'skill' ? t('context.skill.none') : t('context.instruction.none'))); return { list, on: 0 }; }
     const shown = kind === 'skill' && !expanded.has(kind) ? entries.slice(0, SHOWN) : entries;
     for (const entry of shown) {
       const off = entry.status === 'excluded';
       const row = el('div', 'cx-row' + (off ? ' off' : ''));
       const open = button('', 'cx-open');
       open.setAttribute('aria-expanded', String(opened.has(entry.id)));
-      const t = el('span', 't');
-      t.append(el('span', 'nm', entry.name));
-      const note = entry.status === 'shadowed' ? '同じ場所の override が優先' : entry.status === 'conditional' ? `${entry.paths.join(', ')} のときだけ` : '';
-      t.append(el('span', 'p', kind === 'skill' ? (entry.description || short(entry.path)) : [short(entry.path.replace(/[\\/][^\\/]+$/, '')), note].filter(Boolean).join(' · ')));
-      open.append(t);
+      const body = el('span', 't');
+      body.append(el('span', 'nm', entry.name));
+      const note = entry.status === 'shadowed' ? t('context.row.shadowed') : entry.status === 'conditional' ? t('context.row.conditional', { paths: entry.paths.join(', ') }) : '';
+      body.append(el('span', 'p', kind === 'skill' ? (entry.description || short(entry.path)) : [short(entry.path.replace(/[\\/][^\\/]+$/, '')), note].filter(Boolean).join(' · ')));
+      open.append(body);
       open.onclick = () => { if (opened.has(entry.id)) opened.delete(entry.id); else opened.add(entry.id); renderCard(kind); };
       const sw = button('', 'cx-sw');
-      sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(!off)); sw.setAttribute('aria-label', `${entry.name} を${kind === 'skill' ? '案内する' : '渡す'}`);
+      sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(!off)); sw.setAttribute('aria-label', kind === 'skill' ? t('context.row.offerAria', { name: entry.name }) : t('context.row.provideAria', { name: entry.name }));
       sw.onclick = () => { sw.setAttribute('aria-checked', String(off)); work(() => saveKind(kind, v => toggleExclude(v, entry, off))); };
       row.append(open, sw);
       list.append(row);
       if (opened.has(entry.id)) list.append(peekDocument(entry, { short }));
     }
-    if (shown.length < entries.length) list.append(button(`すべて見る（${entries.length} 件）`, 'btn cx-more-rows', () => { expanded.add(kind); renderCard(kind); }));
+    if (shown.length < entries.length) list.append(button(t('context.showAll', { n: entries.length }), 'btn cx-more-rows', () => { expanded.add(kind); renderCard(kind); }));
     return { list, on: entries.filter(e => e.status !== 'excluded').length };
   }
   /** 除外の出し入れ。入れるときは、その行を含むフォルダーごとの除外も外す（その行だけを戻す方法が無いので） */
@@ -387,7 +401,7 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   function antigravityNote(kind, info) {
     if (kind === 'instruction' || !backends().some(b => b.id === 'antigravity')) return null;
     if (info.kinds[kind].value.owner !== 'ply' || info.kinds.instruction.value.owner === 'ply') return null;
-    return el('p', 'cx-sub', 'antigravity の会話では、指示ファイルも「Pleiad がそろえる」にしたときだけ、ここを Pleiad がそろえます。今は指示ファイルがエージェント任せなので、antigravity ではこの種類もエージェント任せになります（Pleiad から渡すと、agy がワークスペースの AGENTS.md・GEMINI.md を読まなくなるため）');
+    return el('p', 'cx-sub', t('context.antigravityNote'));
   }
   function renderCard(kind) {
     const card = cards[kind], info = levelInfo(), value = info.kinds[kind].value, ply = value.owner === 'ply';
@@ -402,13 +416,13 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
     const plyBlock = el('div', 'cx-block'), agentBlock = el('p', 'cx-note', TEXT[kind].note);
     plyBlock.hidden = !ply; agentBlock.hidden = ply;
     if (ply) {
-      plyBlock.append(el('p', 'cx-sub', '探す形式'), sourceChips(kind, value));
+      plyBlock.append(el('p', 'cx-sub', t('context.formats')), sourceChips(kind, value));
       const label = el('p', 'cx-sub');
       label.append(isDefault() ? TEXT[kind].listDefault : TEXT[kind].list);
       if (!scan) plyBlock.append(label, loading());
       else {
         const { list, on } = documentRows(kind, value);
-        label.append(' ', el('span', 'n', `${on} 件`));
+        label.append(' ', el('span', 'n', t('context.count', { count: on })));
         plyBlock.append(label, list);
       }
     }
@@ -427,39 +441,39 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
     const info = levelInfo(), roots = info.roots;
     const wasOpen = rootsFold.open;
     rootsFold.replaceChildren();
-    rootsFold.append(el('summary', null, '探す場所を増やす（任意）'));
+    rootsFold.append(el('summary', null, t('context.roots.summary')));
     const card = el('div', 'cx-card cx-roots');
     card.append(el('p', 'cx-sub', isDefault()
-      ? 'Pleiad がそろえる種類について、どの場所でも次のフォルダーも探します。'
-      : 'Pleiad がそろえる種類について、Git ルートからこの場所までに加えて、次のフォルダーも探します。'));
+      ? t('context.roots.descDefault')
+      : t('context.roots.descPlace')));
     if (!isDefault()) {
       const inh = el('p', 'cx-sub');
-      if (roots.override) inh.append('この場所だけ変更中 · ', button('既定に戻す', 'cx-link', () => work(() => saveRoots(null))));
-      else if (roots.from) inh.append(`${short(roots.from)} の設定どおり`);
+      if (roots.override) inh.append(t('context.inherit.override'), button(t('context.inherit.reset'), 'cx-link', () => work(() => saveRoots(null))));
+      else if (roots.from) inh.append(t('context.inherit.from', { path: short(roots.from) }));
       if (inh.childNodes.length) card.append(inh);
     }
     const list = el('div', 'cx-list');
     for (const p of roots.value) {
       const row = el('div', 'cx-row');
-      const t = el('span', 't'); t.append(el('span', 'nm', p));
-      const remove = button('外す', 'btn', () => work(() => saveRoots(roots.value.filter(r => r !== p))));
-      remove.setAttribute('aria-label', `${p} を探す場所から外す`);
-      row.append(t, remove);
+      const body = el('span', 't'); body.append(el('span', 'nm', p));
+      const remove = button(t('context.roots.remove'), 'btn', () => work(() => saveRoots(roots.value.filter(r => r !== p))));
+      remove.setAttribute('aria-label', t('context.roots.removeAria', { path: p }));
+      row.append(body, remove);
       list.append(row);
     }
     if (roots.value.length) card.append(list);
-    if (!isDefault() && view.defaults.roots.value.length) card.append(el('p', 'cx-sub', `すべての場所の設定で探すフォルダー：${view.defaults.roots.value.join('、')}`));
+    if (!isDefault() && view.defaults.roots.value.length) card.append(el('p', 'cx-sub', t('context.roots.defaults', { folders: view.defaults.roots.value.join(t('context.roots.join')) })));
     const line = el('div', 'cx-inline');
-    const input = el('input'); input.placeholder = 'フォルダーのパス'; input.setAttribute('aria-label', '追加で探すフォルダー'); input.autocomplete = 'off'; input.spellcheck = false;
+    const input = el('input'); input.placeholder = t('context.folderPath'); input.setAttribute('aria-label', t('context.roots.addAria')); input.autocomplete = 'off'; input.spellcheck = false;
     const addRoot = value => { const v = String(value ?? '').trim(); if (v) work(() => saveRoots([...roots.value, v])); };
     input.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addRoot(input.value); } };
     line.append(input);
-    if (window.plyDesktop?.chooseFolder) line.append(button('フォルダーを選ぶ…', 'btn', async () => {
+    if (window.plyDesktop?.chooseFolder) line.append(button(t('context.chooseFolder'), 'btn', async () => {
       const picked = await window.plyDesktop.chooseFolder().catch(() => null);
       const chosen = typeof picked === 'string' ? picked : picked?.path ?? picked?.[0];
       if (chosen) input.value = chosen;
     }));
-    line.append(button('フォルダーを追加', 'btn btn-quiet', () => addRoot(input.value)));
+    line.append(button(t('context.roots.add'), 'btn btn-quiet', () => addRoot(input.value)));
     card.append(line);
     // 入力欄には最近の会話の場所を候補として出す
     const cands = el('div', 'cx-chips');
@@ -495,8 +509,8 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
       scan = found; ply = list; agents = native;
     } catch (e) {
       if (ticket !== scanTicket) return;
-      status.textContent = /スキャン中/.test(e.message) ? '' : `探せませんでした：${e.message}`;
-      if (/スキャン中/.test(e.message)) { setTimeout(() => { if (ticket === scanTicket) loadScan(); }, 400); return; }
+      status.textContent = e.code === 'SCAN_BUSY' ? '' : t('context.scanFailed', { error: e.message });
+      if (e.code === 'SCAN_BUSY') { setTimeout(() => { if (ticket === scanTicket) loadScan(); }, 400); return; }
       scan = { entries: [], configs: [] };
     } finally { if (ticket === scanTicket) scanning = false; }
     renderAll();
@@ -508,13 +522,12 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
       view = await cmd('contextSettings', { cwd });
     } catch (e) {
       view = null;
-      status.textContent = `コンテキストの設定を読めませんでした：${e.message}`;
+      status.textContent = t('context.loadFailed', { error: e.message });
       return;
     }
-    const wanted = target ?? (level !== 'default' && view.places.some(p => pathKey(p.path) === pathKey(level)) ? level : null);
-    const here = view.places.find(p => p.current);
-    level = wanted && view.places.some(p => pathKey(p.path) === pathKey(wanted)) ? view.places.find(p => pathKey(p.path) === pathKey(wanted)).path
-      : here?.path ?? 'default';
+    // 既定の編集先は全体の設定。場所を渡されたときだけその場所を選ぶ（会話から開いても、黙って場所の設定を作らない）
+    const wanted = target && view.places.find(p => pathKey(p.path) === pathKey(target));
+    level = wanted ? wanted.path : 'default';
     scan = null; opened.clear(); expanded.clear();
     renderAll();
     await loadScan();

@@ -2,19 +2,24 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { readLocalFile } from './local-files.mjs';
 import { visualizeReferences } from '../web/visualize-reference.mjs';
+import { t } from './i18n.mjs';
 
-const skill = await fs.readFile(new URL('../skills/visualize/SKILL.md', import.meta.url), 'utf8');
-export const VISUALIZE_INSTRUCTIONS = skill.replace(/^---[\s\S]*?---\s*/, '');
+// Visualize の案内（エージェントに渡す）。会話の言語ごとの本文: en は skills/visualize/SKILL.md、ja は SKILL.ja.md。
+// 1 つの文書として長く、表示の約束（参照の形式・特殊な印）をそのまま保つ必要があるので、辞書ではなく Skill の形のファイルで持つ
+const readSkill = async name => (await fs.readFile(new URL(`../skills/visualize/${name}`, import.meta.url), 'utf8')).replace(/^---[\s\S]*?---\s*/, '');
+const SKILLS = { en: await readSkill('SKILL.md'), ja: await readSkill('SKILL.ja.md') };
+/** 会話の言語（ja|en）の案内。言語を持たなければ英語 */
+export const visualizeInstructions = locale => SKILLS[locale] ?? SKILLS.en;
 export const MAX_VISUALIZE_BYTES = 1024 * 1024;
 
 export async function prepareVisualization(ref, roots) {
   if (ref.error) throw new Error(ref.error);
   const { path: file, title, mode } = ref.value;
-  if (!['.html', '.htm'].includes(path.extname(file).toLowerCase())) throw new Error('可視化には HTML ファイルを指定してください');
+  if (!['.html', '.htm'].includes(path.extname(file).toLowerCase())) throw new Error(t('filePreview.visualize.htmlRequired'));
   const { body } = await readLocalFile(file, roots, { maxBytes: MAX_VISUALIZE_BYTES });
   let content;
   try { content = new TextDecoder('utf-8', { fatal: true }).decode(body); }
-  catch { throw new Error('可視化を UTF-8 の HTML として読めません'); }
+  catch { throw new Error(t('filePreview.visualize.notUtf8')); }
   return { kind: 'visualization', path: file, caption: title ?? path.basename(file), mode, content };
 }
 
@@ -30,10 +35,10 @@ export function createVisualizationCollector({ roots, publish }) {
       chain = chain.then(async () => {
         let payload;
         try {
-          if (overLimit) throw new Error('可視化は1ターン32件までです');
+          if (overLimit) throw new Error(t('filePreview.visualize.tooMany', { max: 32 }));
           payload = await prepareVisualization(ref, roots);
         }
-        catch (e) { payload = { kind: 'visualization', caption: ref.value?.title ?? '可視化', error: String(e.message) }; }
+        catch (e) { payload = { kind: 'visualization', caption: ref.value?.title ?? t('filePreview.visualize.caption'), error: String(e.message) }; }
         await publish({ ...payload, reference: ref.raw });
       });
       // Keep the rejection for close(), without an unhandled rejection while

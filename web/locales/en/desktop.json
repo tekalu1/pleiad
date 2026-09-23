@@ -1,4 +1,49 @@
 {
+  "errors": {
+    "runningCheckFailed": "Could not check what is running. Try again."
+  },
+  "server": {
+    "startTimeout": "The server took too long to start.",
+    "startFailed": "Could not start the server.\n{{detail}}",
+    "exited": "The server stopped. Restart Pleiad. Your saved conversations are kept."
+  },
+  "boot": {
+    "failedTitle": "Pleiad failed to start"
+  },
+  "quit": {
+    "checkFailed": "Could not check what is running. Wait a moment, then close again.",
+    "busyTitle": "Work is still running",
+    "busyMessage": "Wait for the conversation to finish before quitting. To cancel it, use Stop in the conversation.",
+    "backToWork": "Back to work"
+  },
+  "common": {
+    "back": "Back"
+  },
+  "notifications": {
+    "completed": "Work finished"
+  },
+  "secrets": {
+    "unavailable": "The OS encryption feature (safeStorage) is not available.",
+    "noKeyring": "Cannot encrypt because no OS keyring was found (basic_text).",
+    "decryptFailed": "Could not decrypt the secret (it may have been encrypted by another user or on another PC).",
+    "encryptFailed": "Could not encrypt."
+  },
+  "update": {
+    "blocked": "Cannot update: {{reason}} Wait for it to finish, then update. The downloaded update stays ready.",
+    "applyFailed": "Could not apply the update. Try again.",
+    "fetchFailed": "Could not get the update. Check your connection and your access to the release source, then try again.",
+    "authRequired": "Checking for updates requires GitHub authentication. Run gh auth login --hostname github.com with GitHub CLI, then try again.",
+    "settingsReadFailed": "Could not read the update settings. Check the settings file.",
+    "busy": "An update is in progress. Wait for it to finish.",
+    "invalidSettings": "The update settings are invalid.",
+    "applyDownloadedFirst": "Apply the downloaded update before changing this.",
+    "unavailable": "Automatic updates are not available when Pleiad is started this way.",
+    "checkFirst": "Check for updates before downloading.",
+    "notDownloaded": "The update has not finished downloading.",
+    "unknownAction": "Unknown update action.",
+    "verifyFailed": "The update was not applied because its files could not be verified. You can keep using the current version. Check again later.",
+    "networkFailed": "Could not get the update. You can keep using the current version. Check your network connection and try again."
+  },
   "resident": {
     "summary": "Relay {{relay}} · Devices online {{devices}} · Running {{running}}",
     "open": "Open Pleiad",
@@ -39,9 +84,9 @@
       "renameLabel": "Host name",
       "renameSave": "Rename",
       "cancel": "Cancel",
-      "remove": "Remove",
-      "removeConfirm": "Remove \"{{host}}\" from this PC? It stays in the host's device list, so revoke it on the host when you no longer use it.",
-      "removeYes": "Remove",
+      "remove": "Delete",
+      "removeConfirm": "Delete \"{{host}}\" from this PC? It stays in the host's device list, so revoke it on the host when you no longer use it.",
+      "removeYes": "Delete",
       "revokedHint": "To pair again, create a new code on the host and paste it under \"Add a host\".",
       "unknown": "This host is not paired",
       "loadFailed": "Couldn't read the host list: {{error}}",

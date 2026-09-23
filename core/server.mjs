@@ -12,7 +12,7 @@ import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS } from './agent-br
 import { canDelegate, resolveDelegatedMode } from './modes.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
-import { localeInfo, setLocale, t, LOCALE_SETTINGS } from './i18n.mjs';
+import { localeInfo, setLocale, t, i18n, LOCALE_SETTINGS, agentT, agentLocaleOf, currentLocale } from './i18n.mjs';
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -29,7 +29,7 @@ import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
 import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
-import { acceptsPlyContext, contextPolicy, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
+import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
 import { DEFAULT_OWNERS, pathKey } from './context-settings.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createContextSession } from './context-session.mjs';
@@ -43,7 +43,7 @@ import { createMcpConfig } from './mcp-config.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
 import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
-import { createVisualizationCollector, VISUALIZE_INSTRUCTIONS } from './visualize.mjs';
+import { createVisualizationCollector, visualizeInstructions } from './visualize.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
@@ -109,7 +109,7 @@ const claudeLogin = createClaudeLogin({
   emit: event => emitGlobal({ ...event, sessionId: null }),
   saveToken: async ({ accountId, name, token }) => {
     const current = accountId ? (await claudeAccounts.list()).accounts.find(a => a.id === accountId) : null;
-    if (accountId && !current) throw new Error('そのアカウントは削除されています');
+    if (accountId && !current) throw new Error(t('accounts.deleted'));
     const saved = await claudeAccounts.save({ ...(accountId ? { id: accountId } : {}), name: current?.name ?? name, token });
     quotaCache.clear();
     emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
@@ -175,13 +175,15 @@ const mcpConfig = createMcpConfig();
 let agentTasks;
 const agentConnections = new Map();
 const taskExecutions = new Map();
-const agentBridge = createAgentBridge({ call: async (owner, name, args) => {
+// エラー・結果の文はツールの結果としてエージェントが読むので、会話の言語で引く（agent 名前空間。橋は会話ごとに開き、locale はその会話の言語）
+const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale } = {}) => {
   const turn = runtime.turns.get(owner);
-  if (!turn || turn.ac.signal.aborted) throw new Error('この会話は実行中ではありません');
+  const lng = turn?.agentLocale ?? locale;
+  if (!turn || turn.ac.signal.aborted) throw new Error(agentT(lng, 'delegation.notRunning'));
   // 使用枠は読むだけなので、読み取り・計画モードでも答える。providerUsage と同じキャッシュを通す
-  if (name === 'ply_usage') return agentUsage({ backend: args.backend, list: listBackends, get: getBackend, read: providerQuota });
+  if (name === 'ply_usage') return agentUsage({ backend: args.backend, list: listBackends, get: getBackend, read: providerQuota, locale: lng });
   const mutation = DELEGATING_TOOLS.includes(name);
-  if (mutation && !canDelegate(turn.backend.modes()[turn.info.mode])) throw new Error('読み取り・計画モードでは Pleiad の子タスクを開始できません');
+  if (mutation && !canDelegate(turn.backend.modes()[turn.info.mode])) throw new Error(agentT(lng, 'delegation.readOnly'));
   // 子の承認モードは「親の強さまで継ぐ、それを超えない」（core/modes.mjs）。
   // 決めるのはここだけ。prepare は決まった結果をそのまま使う（同じ判定を二度しない）。
   const child = name === 'ply_delegate' ? getBackend(args.backend) : null;
@@ -191,11 +193,11 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args) => {
   const codexBlind = turn.backend.id === 'codex' && !['full', 'yolo'].includes(turn.info.mode);
   if (mutation && (decided?.escalation || codexBlind)) {
     // 何をどの強さで動かすことになるのかをカードに出す。委譲のたびではなく、この1回だけ聞く
-    const title = decided ? `この委譲は ${child.label} を「${child.modes()[decided.mode]?.label ?? decided.mode}（${decided.mode}）」で動かします` : undefined;
-    const answer = await askPermission({ toolName: name, input: args, title, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false });
-    if (!answer.allow) throw new Error('委譲は許可されませんでした');
+    const title = decided ? t('permission.delegateEscalation', { agent: child.label, mode: child.modes()[decided.mode]?.label ?? decided.mode, modeId: decided.mode }) : undefined;
+    const answer = await askPermission({ toolName: name, input: args, title, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng });
+    if (!answer.allow) throw new Error(agentT(lng, 'delegation.denied'));
   }
-  return agentTasks.call(owner, name, decided?.mode ? { ...args, mode: decided.mode } : args, turn.ac.signal);
+  return agentTasks.call(owner, name, decided?.mode ? { ...args, mode: decided.mode } : args, turn.ac.signal, lng);
 } });
 function agentConnection(turn) {
   return conversationConnection(turn).runtime;
@@ -210,13 +212,14 @@ function conversationConnection(turn) {
   if (existing) return existing;
   // 橋は会話ごとに使い回すので、ターンそのものを閉じ込めない（終わったターンが丸ごと残ってしまう）。
   // 持つのは鍵だけにして、呼ばれた時に今走っているターンを引く。
-  const entry = { key: turn.key };
-  const binding = agentBridge.open({ origin: localOrigin(),
+  // 会話の言語は会話を始めたときに決まり、以後は変わらない（runTurn）。橋の instructions・ツールの説明もその言語で開く
+  const entry = { key: turn.key, locale: turn.agentLocale };
+  const binding = agentBridge.open({ origin: localOrigin(), locale: entry.locale,
     owner: async () => {
       const live = runtime.turns.get(entry.key);
-      if (!live) throw new Error('この会話は実行中ではありません');
+      if (!live) throw new Error(agentT(entry.locale, 'delegation.notRunning'));
       await live.setup;
-      if (!live.info.sessionId) throw new Error('会話IDはまだ確定していません');
+      if (!live.info.sessionId) throw new Error(agentT(entry.locale, 'delegation.idPending'));
       return live.info.sessionId;
     } });
   const { close, ...agentRuntime } = binding;
@@ -230,6 +233,26 @@ function conversationConnection(turn) {
 /** Pleiad 自身の HTTP の口（子プロセスや中継から呼ばせる先） */
 function localOrigin() {
   return `http://${HOST === '0.0.0.0' ? '127.0.0.1' : HOST === '::' ? '[::1]' : HOST.includes(':') ? `[${HOST}]` : HOST}:${server.address().port}`;
+}
+
+/**
+ * 会話の言語（エージェントに渡す文の言語。docs/design.md「多言語対応」）。記録（agentLocale）にあればそれを使い、
+ * 無ければ今の画面の言語で決めて保存する。途中で画面の言語を変えても、決めた会話の言語は変えない
+ * （応答の一貫性とプロンプトのキャッシュのため）。この値を持たない既存の会話は、次にエージェントを動かすときに決まる
+ */
+async function ensureAgentLocale(sessionId) {
+  const saved = agentLocaleOf((await store.get(sessionId)).agentLocale);
+  if (saved) return saved;
+  const lang = currentLocale();
+  await store.setSessionData(sessionId, 'agentLocale', lang);
+  return lang;
+}
+
+/** 会話の言語を読むだけ（保存しない）。走っているターンがあればその言語、決まっていなければ今の画面の言語 */
+async function agentLocaleFor(sessionId) {
+  const live = sessionId ? runtime.turns.get(sessionId)?.agentLocale : null;
+  if (live) return live;
+  return (sessionId ? agentLocaleOf((await store.get(sessionId)).agentLocale) : null) ?? currentLocale();
 }
 
 /** 会話が消えたら橋も閉じる。開けっ放しにするとトークンと束縛が貯まる。 */
@@ -313,7 +336,7 @@ const server = http.createServer(async (req, res) => {
   const ok = tokenOk(viaQuery) || tokenOk(tokenFromCookie(req.headers.cookie));
   if (!ok) {
     res.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
-    return res.end("トークンが要る（起動時に出た URL を使う）");
+    return res.end(t('auth.tokenRequired'));
   }
 
   const name = url.pathname === "/" ? "/index.html" : url.pathname;
@@ -417,6 +440,8 @@ function sessionRow(b, s, extra = {}) {
     claudeAccount: extra.claudeAccount ?? "",
     // 互換の接続先（'' = 公式）。id だけでキーは載せない
     compatEndpoint: extra.compatEndpoint ?? "",
+    // 会話の言語（エージェントに渡す文の言語。null = まだ決めていない）。画面は添付の印をこの言語で付ける
+    agentLocale: agentLocaleOf(extra.agentLocale),
     // 対応を終えたエージェントの会話（core/backends/index.mjs の RETIRED）。読めるが続けられない理由
     ...(b.retired ? { retired: b.retired } : {}),
     unsent: extra.unsent ?? false,
@@ -476,7 +501,7 @@ async function usageAccounts() {
  * どちらから何度呼んでも各サービスへの問い合わせは 1 分に 1 回まで
  */
 async function providerQuota(backend) {
-  if (!backend.usage) return { windows: [], checkedAt: null, message: 'このエージェントは使用枠の取得に対応していません。' };
+  if (!backend.usage) return { windows: [], checkedAt: null, message: t('quota.unsupported') };
   return quotaCache(backend.id, async () => backend.usage({ cwd: process.cwd(), ...(backend.capabilities?.claudeAccounts ? await usageAccounts() : {}) }));
 }
 
@@ -489,13 +514,13 @@ async function pickBackend(sessionId, given) {
   if (sessionId) {
     // 対応を終えたエージェントの会話もここで引ける（retired を持つ）。続ける操作は refuseRetired で断る
     const current = await resolveBackendForSession(sessionId);
-    if (current && given && current.id !== given) throw new Error("エージェントは切り替え操作で変更してください");
+    if (current && given && current.id !== given) throw new Error(t('agents.switchViaCommand'));
     if (current) return current;
-    if (!given) throw new Error(`セッション ${sessionId} のエージェントが分からない`);
+    if (!given) throw new Error(t('agents.unknownForSession', { sessionId }));
   }
   if (typeof given === "string" && given) {
     const b = getBackend(given);
-    if (!b) throw new Error(`知らないエージェント: ${given}`);
+    if (!b) throw new Error(t('agents.unknownId', { id: given }));
     return b;
   }
   const remembered = (await store.getPrefs()).backend;
@@ -504,7 +529,7 @@ async function pickBackend(sessionId, given) {
   // 既定に覚えていたエージェントが無くなった（対応を終えた・無効にした）なら、有効なものの先頭へ落とす
   const only = listBackends();
   if (only.length === 1 || (remembered && only.length)) return only[0];
-  throw new Error("エージェントの指定が要る");
+  throw new Error(t('agents.required'));
 }
 
 /** 対応を終えたエージェントの会話は続けられない。ターン・設定の変更・切り替えの前に断る */
@@ -596,8 +621,8 @@ async function resolveCwd(resume, given, backend) {
   }
 
   const stat = await fs.stat(cwd).catch(() => null);
-  if (!stat) throw new Error(`作業ディレクトリが無い: ${cwd}`);
-  if (!stat.isDirectory()) throw new Error(`作業ディレクトリではない: ${cwd}`);
+  if (!stat) throw new Error(t('cwd.missing', { cwd }));
+  if (!stat.isDirectory()) throw new Error(t('cwd.notDirectory', { cwd }));
   return { cwd, changedFrom };
 }
 
@@ -647,15 +672,16 @@ function graceExpired() {
 /** 猶予切れの後始末。何度呼ばれても安全。走っているターンは全部止める。猶予が無効なら何もしない。 */
 function giveUp() {
   if (HOST_GRACE_MS <= 0 || runtime.awaySince === 0) return;
-  const reason = `host が ${Math.round((Date.now() - runtime.awaySince) / 1000)} 秒戻らなかったので中断した`;
+  const seconds = Math.round((Date.now() - runtime.awaySince) / 1000);
   runtime.awaySince = 0;
   clearTimeout(runtime.graceTimer);
   runtime.graceTimer = null;
-  for (const [, w] of [...runtime.waiting]) w.settle({ allow: false, message: reason });
+  // エージェントへの理由は承認ごとに会話の言語で（askPermission が messageKey を訳す）。ログは日本語のまま
+  for (const [, w] of [...runtime.waiting]) w.settle({ allow: false, messageKey: 'hostAway', messageParams: { seconds } });
   // 承認を返せないまま走らせ続けない。黙って deny し続けるより、止めて気づかせる。
   for (const t of [...runtime.turns.values()]) t.ac.abort();
   void agentTasks?.cancelOwner().catch(() => {});
-  console.log(`  ${reason}`);
+  console.log(`  host が ${seconds} 秒戻らなかったので中断した`);
 }
 
 /** つながっている host 全部に送る。1つでも届けば true。 */
@@ -673,6 +699,8 @@ async function savePref(key, value, backendId) {
   const prefs = await store.setPref(key, value, backendId);
   locale = localeInfo(prefs);
   setLocale(locale.lang);
+  // デスクトップ版の main（ダイアログ・通知・更新のエラー文）にも知らせる（desktop/main.cjs）
+  process.parentPort?.postMessage({ type: "locale", locale: locale.lang });
   emitGlobal({ type: "prefs", sessionId: null, prefs, locale });
   return prefs;
 }
@@ -747,11 +775,45 @@ function groupKin(rows, rootId) {
 }
 
 /** 人間からの状態の変更。setStatus コマンドと新規セッションの引き継ぎが同じ経路を通る。 */
-async function applyStatus(backend, sessionId, status, reason) {
+async function applyStatus(backend, sessionId, status, why) {
+  const reason = reasonOf(why);
   // ネイティブに持てるなら**そこが正本**。持てなくても sidecar には必ず残る
   if (backend.capabilities?.tag && backend.setTag) await backend.setTag(sessionId, status);
-  await store.recordChange(sessionId, { by: "human", field: "status", to: status, reason, backend });
-  emitGlobal({ type: "status", sessionId, status, by: "human", reason: reason ?? null });
+  await store.recordChange(sessionId, { by: "human", field: "status", to: status, ...reason, backend });
+  emitGlobal({ type: "status", sessionId, status, by: "human", ...reason });
+}
+
+// ---- 保存される変更理由（docs/design.md「多言語対応」） ------------------------
+// 変更履歴（sessions.json の history）とイベントの reason は、従来どおり日本語の文を持つ（過去の記録・古い画面と互換）。
+// 新しい記録には reasonKey（ui:saved.reason.<key>）と reasonParams を足し、画面が今の言語で出す（web/saved-text.mjs）。
+// 過去の記録は reason の文のまま出る。reasonParams の配列（names）は、ja は「・」、画面は言語の区切りでつなぐ。
+// i18n-dynamic: ui:saved.reason.
+const SAVED_SEPARATOR_JA = '・';
+function savedReason(key, params) {
+  const ja = Object.fromEntries(Object.entries(params ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v.join(SAVED_SEPARATOR_JA) : v]));
+  return { reason: t(`ui:saved.reason.${key}`, { ...ja, lng: 'ja' }), reasonKey: key, ...(params ? { reasonParams: params } : {}) };
+}
+/** 呼び出しの引数の理由。文字列（従来）か savedReason の形。無ければ reason: null */
+function reasonOf(why) {
+  if (why && typeof why === 'object') return why;
+  return { reason: typeof why === 'string' ? why : null };
+}
+/**
+ * 画面から来た理由。reasonKey が辞書（ui:saved.reason）にあればキーで保存し、無ければ reason の文字列をそのまま。
+ * reasonParams は文字列・数（とその配列）だけを受ける
+ */
+function clientReason(args) {
+  const key = args?.reasonKey;
+  if (typeof key === 'string' && /^[\w.-]{1,80}$/.test(key) && i18n.exists(`ui:saved.reason.${key}`, { lng: 'ja' })) {
+    const plain = (v) => typeof v === 'string' ? v.slice(0, 500) : Number.isFinite(v) ? v : null;
+    const params = args.reasonParams && typeof args.reasonParams === 'object' && !Array.isArray(args.reasonParams)
+      ? Object.fromEntries(Object.entries(args.reasonParams).slice(0, 10)
+        .map(([k, v]) => [k, Array.isArray(v) ? v.slice(0, 10).map(plain).filter(x => x !== null) : plain(v)])
+        .filter(([k, v]) => /^\w{1,40}$/.test(k) && v !== null))
+      : undefined;
+    return savedReason(key, params && Object.keys(params).length ? params : undefined);
+  }
+  return reasonOf(args?.reason);
 }
 
 /**
@@ -806,11 +868,13 @@ function makeEmit(turn) {
           store.setModel(sessionId, model ?? ""),
           store.setSessionData(sessionId, "effort", turn.info.effort ?? ""),
           ...(turn.info.endpoint ? [store.setSessionData(sessionId, 'compatEndpoint', turn.info.endpoint)] : []),
+          // 会話の言語。新しい会話は始めたときの画面の言語で、id が決まったここで保存する（再開・委譲の子は runTurn で保存済み）
+          store.setSessionData(sessionId, 'agentLocale', turn.agentLocale),
           ...(turn.contextRecord ? [store.setSessionData(sessionId, 'contextSession', turn.contextRecord)] : []),
         // 新規セッションに最初から付ける状態。id が無いうちは host が予約として持っていて、
         // 生まれた瞬間にここで書く。経路は setStatus と同じ（ネイティブ + sidecar + イベント）
         // first（このターンで id が確定した）の 1 本にだけ付ける
-        status && event.first ? applyStatus(turn.backend, sessionId, status, "新しいセッションに引き継いだ") : null,
+        status && event.first ? applyStatus(turn.backend, sessionId, status, savedReason('inheritedStatus')) : null,
         // 送信と一緒に渡した添付も、id が決まった今、会話に載せる
         event.first && attachments?.length ? presentAttachments(sessionId, attachments, emit) : null,
       ]);
@@ -860,7 +924,10 @@ async function presentAttachments(sessionId, attachments, emit) {
       type: "present",
       sessionId,
       kind: isImage ? "image" : "file",
-      caption: `添付: ${name}`,
+      // caption は従来どおり日本語の文（web/client.mjs が「添付:」を外して名前を取る）。画面は captionKey で今の言語に訳す（web/saved-text.mjs）
+      caption: t('ui:saved.caption.attachment', { name, lng: 'ja' }),
+      captionKey: 'attachment',
+      captionParams: { name },
       path: file,
       by: "human",
       ...(isImage ? { dataUri: `data:${mime};base64,${buf.toString("base64")}` } : { content: buf.toString("utf8").slice(0, 20000) }),
@@ -1012,8 +1079,11 @@ function detach(ws) {
   runtime.graceTimer = setTimeout(giveUp, HOST_GRACE_MS + 500);
 }
 
-/** 承認待ちを片付ける。どのセッションの分かは呼び出し側が必ず指定する。 */
-function settleAll(message, sessionId) {
+/**
+ * 承認待ちを片付ける。どのセッションの分かは呼び出し側が必ず指定する。
+ * messageKey はエージェントへ返す理由（agent の approval.*。askPermission が会話の言語で訳す）
+ */
+function settleAll(messageKey, sessionId) {
   // id が決まらないまま終わったターンで全部を deny すると、
   // 走っている他のセッションの承認待ちまで巻き添えにする。何もしない方が安全。
   if (!sessionId) return;
@@ -1023,7 +1093,7 @@ function settleAll(message, sessionId) {
     // この会話のターンが終わっても取り下げない（元の会話が決着すれば一緒に消える）。
     // 取り下げると、依頼元が ply_task_wait を終えただけで子の承認が拒否される
     if (w.relay) continue;
-    w.settle({ allow: false, message });
+    w.settle({ allow: false, messageKey });
   }
 }
 
@@ -1064,12 +1134,16 @@ async function delegationAncestors(sessionId) {
  * 人間は最上位の会話に居るので、1段だけ上げても誰も見ない場所に出るだけになる。
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
-const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions }) => {
+const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale }) => {
   const ancestors = sessionId ? await delegationAncestors(sessionId) : [];
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
-  const childTitle = ancestors.length ? (await store.get(sessionId)).title || "委譲した子の会話" : "";
+  const childTitle = ancestors.length ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
+  // 拒否・中断の理由はエージェントに返るので、承認を求めた会話の言語で訳す（settle には messageKey で来る）
+  const lng = agentLocaleOf(locale) ?? await agentLocaleFor(sessionId);
+  // i18n-dynamic: agent:approval.
+  const localize = answer => answer?.messageKey ? { ...answer, message: agentT(lng, `approval.${answer.messageKey}`, answer.messageParams) } : answer;
   // 祖先を読むあいだに中断されたなら、待たせずに返す（abort はもう来ない）
-  if (signal?.aborted) return { allow: false, message: "中断された" };
+  if (signal?.aborted) return localize({ allow: false, messageKey: 'aborted' });
   return new Promise((resolve) => {
     const payload = {
       type: "permission",
@@ -1090,16 +1164,17 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       // 中継したカードに「常に許可」は出さない。「常に許可」は子の会話で今後も通す約束で、
       // 依頼元の画面からは子が今後何をするのか見えないまま恒久的な許可を与えることになる。
       // 子の会話を開けば従来どおり押せる。
-      payload: { ...payload, sessionId: ancestor, canAlways: false, title: `委譲先「${childTitle}」${title ? ` / ${title}` : ""}` },
+      payload: { ...payload, sessionId: ancestor, canAlways: false, title: title ? t('permission.relayTitleWith', { child: childTitle, title }) : t('permission.relayTitle', { child: childTitle }) },
     }))];
-    const onAbort = () => settle({ allow: false, message: "中断された" });
+    const onAbort = () => settle({ allow: false, messageKey: 'aborted' });
     const settle = (answer) => {
       // どれか1つで決着し、残りの複製も消す。1つも残っていなければ二重解決
       let found = false;
       for (const card of cards) if (runtime.waiting.delete(card.id)) found = true;
       if (!found) return;
       signal?.removeEventListener?.("abort", onAbort);
-      resolve(answer);
+      const { messageKey, messageParams, ...rest } = localize(answer);
+      resolve(rest);
       permissionsChanged();
     };
 
@@ -1155,16 +1230,18 @@ agentTasks = await createAgentTasks({
   rollback: async ({ sessionId }) => { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); },
   prepare: async (owner, args, taskId, signal) => {
     const parent = runtime.turns.get(owner);
-    if (!parent || signal?.aborted) throw new Error('依頼元の会話は終了しています');
+    // エラーは ply_delegate の結果として依頼元のエージェントが読む。子の会話は依頼元の会話の言語を継ぐ
+    const lng = parent?.agentLocale ?? await agentLocaleFor(owner);
+    if (!parent || signal?.aborted) throw new Error(agentT(lng, 'delegation.parentEnded'));
     const backend = getBackend(args.backend);
-    if (!backend) throw new Error('指定したバックエンドは有効ではありません');
+    if (!backend) throw new Error(agentT(lng, 'delegation.backendDisabled'));
     const cwd = path.resolve(parent.info.cwd, args.cwd ?? '.');
-    if (!(await fs.stat(cwd)).isDirectory()) throw new Error('cwd はディレクトリを指定してください');
+    if (!(await fs.stat(cwd)).isDirectory()) throw new Error(agentT(lng, 'delegation.cwdNotDirectory'));
     // 接続先（決定 3）: 同じエージェントへの委譲なら親の会話の接続先を継ぐ。違うエージェントへは公式に戻す（形式が合わない）
     const parentEndpoint = (await store.get(owner)).compatEndpoint ?? '';
     const inherited = endpointCapable(backend) ? delegatedEndpoint(parent.backend?.id, backend.id, parentEndpoint) : '';
     // 継ぐべき接続先が消えていたら委譲を断る（黙って公式で走らせない）
-    if (inherited && !(await compatEndpoints.has(inherited, backend.id))) throw new Error('依頼元の会話の接続先は削除されています。依頼元の会話で接続先を選び直してください');
+    if (inherited && !(await compatEndpoints.has(inherited, backend.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
     const endpoint = inherited;
     const model = await resolveModel(null, args.model, backend, cwd, endpoint);
     const effort = await resolveEffort(null, args.effort, backend, model, cwd, await endpointRow(endpoint));
@@ -1179,11 +1256,12 @@ agentTasks = await createAgentTasks({
       await store.setMode(sessionId, mode); await store.setModel(sessionId, model);
       await store.setSessionData(sessionId, 'effort', effort);
       await store.setSessionData(sessionId, 'delegation', { taskId, parentSessionId: owner, manager: 'ply' });
+      await store.setSessionData(sessionId, 'agentLocale', lng);
       // 子は親の会話のアカウントで走る（親が別のエージェントでも、その会話で選んであるものを継ぐ）
       const parentAccount = (await store.get(owner)).claudeAccount ?? '';
       if (parentAccount) await store.setSessionData(sessionId, 'claudeAccount', parentAccount);
       if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
-      if (signal?.aborted) throw new Error('中断しました');
+      if (signal?.aborted) throw new Error(agentT(lng, 'delegation.aborted'));
     } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
     return { backend: backend.id, model, effort, cwd, mode, sessionId };
   },
@@ -1207,14 +1285,19 @@ agentTasks = await createAgentTasks({
       const backend = await resolveBackendForSession(task.sessionId);
       const messages = await backend.getMessages(task.sessionId, { fullResults: true });
       const last = messages.findLast(m => m.role === 'assistant' && m.text);
-      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text: last?.text ?? '', error: '子タスクの完了通知を確認できませんでした。子の会話を確認してください' };
+      // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
+      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text: last?.text ?? '', error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown') };
       return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text: last?.text ?? '', error: execution.error };
     } finally { signal.removeEventListener('abort', stopChild); taskExecutions.delete(task.sessionId); }
   },
   deliver: async task => {
     const owner = task.parentSessionId;
     if (sessionBusy(owner) || runtime.background.has(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status))) return 'requeue';
-    const prompt = `[Pleiad タスク完了通知 / ${task.taskId}]\n実行先: ${task.backend}\n状態: ${task.status}\n依頼: ${task.task}\n結果（子エージェントの報告）:\n${task.result.slice(0, 16000)}${task.result.length > 16000 ? '\n続きは ply_task_status の offset: 16000 で取得できます。' : ''}\n${task.error ?? ''}\n元の依頼に必要な作業を続けてください。`;
+    // 完了通知は依頼元の会話の言語で。人間の発言と見分ける印は文言ではなく、送った本文のハッシュ（taskNotices。runTurn の internal）
+    const lng = await ensureAgentLocale(owner);
+    const more = task.result.length > 16000 ? agentT(lng, 'delegation.noticeMore', { offset: 16000 }) : '';
+    const prompt = agentT(lng, 'delegation.notice', { taskId: task.taskId, backend: task.backend, status: task.status, task: task.task,
+      result: task.result.slice(0, 16000), more, error: task.error ?? '' });
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
 });
@@ -1238,9 +1321,9 @@ async function runTurn(args, onStarted = () => {}, hooks = {}) {
 async function runTurnInternal(args, onStarted, hooks) {
   const { prompt, sessionId = null } = args ?? {};
   if ((hooks.internal || hooks.signal) && (sessionBusy(sessionId))) return 'requeue';
-  if (switching.has(sessionId) || forking.has(sessionId)) throw new Error("エージェントを切り替え中です");
+  if (switching.has(sessionId) || forking.has(sessionId)) throw new Error(t('agents.switching'));
   // 同じセッションの二重実行は防ぐ。別のセッションなら並行して回してよい
-  if (sessionId && runtime.turns.has(sessionId)) throw new Error("このセッションは実行中");
+  if (sessionId && runtime.turns.has(sessionId)) throw new Error(t('session.running'));
   if (sessionId) switching.add(sessionId);
   try {
 
@@ -1265,7 +1348,7 @@ async function runTurnInternal(args, onStarted, hooks) {
     const account = !endpoint && accountBackend.capabilities?.claudeAccounts ? await claudeAccounts.resolve(accountId) : null;
     if (reserved) {
       const target = getBackend(reserved.backend);
-      if (!target || !await validModel(target, reserved.model, cwd, endpointId) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error("予約した設定は使用できません。選び直してください");
+      if (!target || !await validModel(target, reserved.model, cwd, endpointId) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error(t('turn.reservedInvalid'));
       await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo);
       if (target.id !== backend.id) await switchBackend(sessionId, backend, target);
       backend = target;
@@ -1273,9 +1356,11 @@ async function runTurnInternal(args, onStarted, hooks) {
     // 再開のセッションの作業ディレクトリを人が変えた。status / title と同じく履歴に残し、一覧と会話に知らせる。
     // エージェントが新しい cwd でセッションを見つけられるかはエージェント次第（claude は init の id で確かめる）
     if (changedFrom) {
-      await store.recordChange(sessionId, { by: "human", field: "cwd", from: changedFrom, to: cwd, reason: "再開時に変更", backend });
-      emitGlobal({ type: "cwd", sessionId, cwd, by: "human", reason: `${changedFrom} から` });
+      await store.recordChange(sessionId, { by: "human", field: "cwd", from: changedFrom, to: cwd, ...savedReason('resumeCwd'), backend });
+      emitGlobal({ type: "cwd", sessionId, cwd, by: "human", ...savedReason('cwdFrom', { from: changedFrom }) });
     }
+    // 会話の言語（エージェントに渡す文の言語）。記録にあればそれ、無ければ今の画面の言語で決めて保存する（新規は id が決まったとき）
+    const agentLocale = sessionId ? await ensureAgentLocale(sessionId) : currentLocale();
     const permissionMode = await resolveMode(sessionId, reserved ? reserved.mode : args?.mode, backend);
     const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd, endpointId);
     const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
@@ -1304,25 +1389,22 @@ async function runTurnInternal(args, onStarted, hooks) {
     const pastSubagents = new Set(sessionId && backend.listSubagents
       ? await backend.listSubagents(sessionId).catch(() => []) : []);
     const previousContext = sessionId ? (await store.get(sessionId)).contextSession : null;
-    let policy = previousContext?.policy ?? contextPolicy(await contextSettings.get(cwd));
-    if (!previousContext && baseline.messages.length) policy.owners = { ...DEFAULT_OWNERS };
-    // 再開で作業場所が変わった。担当（owners）と「この会話では外す」MCP は会話の方針として保ち、探索の計画だけを
-    // 新しい場所の設定で解き直す（作業場所側の探索元・除外・追加フォルダーは場所ごとの設定のため）。
-    // 探し直した結果は下の読み込み直し（refreshedContext）と同じ扱いで記録・通知される。
-    // policy.cwd は実体パス（contextSettings.get が realpath する）。cwd は渡された表記のままなので、実体どうしで比べる
-    if (previousContext && managed(policy) && pathKey(policy.cwd) !== pathKey(await fs.realpath(cwd).catch(() => cwd))) {
-      const here = await contextSettings.get(cwd);
-      const { user, directory, ...rest } = policy;
-      policy = { ...rest, version: 2, cwd: here.cwd, plan: here.plan };
-    }
+    // 方針（担当・探索の計画）はターンごとに今の設定と作業場所で解き直す。設定の変更は始まっている会話にも次のターンから効く。
+    // 「この会話では外す」MCP と開始時刻は会話の方針として引き継ぐ（followSettings）。コンテキストの記録が無いまま送信済みの会話
+    // （この機能より前の会話）はエージェント任せのまま。作業場所を変えたときの探し直しは下の読み込み直し（refreshedContext）で知らせる
+    const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, await contextSettings.get(cwd),
+      { keepNative: !previousContext && baseline.messages.length > 0 });
+    let policy = followed;
     // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
     // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
     const plyContext = managed(policy) && acceptsPlyContext(backend, policy);
-    const resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS }) : null;
+    const resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale }) : null;
     // 開始時の固定と違う＝指示・Skills が変わった。止めずに今の内容で続ける（resolvedContext が今のファイルで解き直した結果なので、
     // 記録も pin も自動で新しくなる）。指示本文は毎ターン指示欄へ渡し直し、Skills はカタログしか渡していないので技術的な制約は無い。
     // 右パネルの「渡したもの」との食い違いだけが問題なので、読み込み直したことを履歴と会話に残す
     const refreshedContext = Boolean(plyContext && previousContext?.pin && resolvedContext?.pin !== previousContext.pin);
+    // コンテキストの設定の変更（担当・探す範囲・外部 MCP の登録や有効／無効）を、このターンから反映した
+    const appliedSettings = Boolean(previousContext && settingsChanged.length);
     // instructions_for_path / load_skill で渡し済みの本文の控え（行の id → 本文のハッシュ）。会話の記録に残して
     // 次のターンへ持ち越し、同じものを頼まれたら短い一行だけを返す（core/context-runtime.mjs の contextTools）。
     // 履歴を引き継ぎの文で渡し直すターン（バックエンドの切り替え・ホスト側で写した分岐）と、記録した相手と違うバックエンドでは捨てる。
@@ -1331,15 +1413,21 @@ async function runTurnInternal(args, onStarted, hooks) {
     const delivered = !handoff && previousContext?.delivered?.backend === backend.id ? { ...previousContext.delivered.entries } : {};
     if (resolvedContext) resolvedContext.delivered = delivered;
     // エージェント任せにしたターンでも固定（pin）は捨てない。Pleiad 担当を受け取れるエージェントへ戻したときに突き合わせる
-    const contextRecord = { policy: refreshedContext ? { ...policy, refreshedAt: new Date().toISOString() } : policy,
+    const contextRecord = { policy: refreshedContext || appliedSettings ? { ...policy, refreshedAt: new Date().toISOString() } : policy,
       pin: resolvedContext?.pin ?? (plyContext ? null : previousContext?.pin ?? null), report: resolvedContext?.report ?? nativeContextReport(policy, cwd, backend),
       delivered: { backend: backend.id, entries: delivered } };
-    if (refreshedContext) {
+    if (appliedSettings) {
+      await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin ?? null, to: contextRecord.pin,
+        ...savedReason('contextSettingsApplied'), backend });
+      emitGlobal({ type: 'contextRefreshed', sessionId, settings: true, kinds: settingsChanged, names: [], count: 0 });
+    } else if (refreshedContext) {
       // 何が変わったかは前の記録と今の記録の突き合わせで出す（pinChanges を呼ぶと同じターンで探索がもう一度走る）
       const changed = pinnedChanges(previousContext.report?.entries ?? [], resolvedContext.report.entries);
       const names = changed.map(c => c.name || path.basename(c.path ?? '')).filter(Boolean).slice(0, 3);
-      const reason = names.length ? `${names.join('・')}${changed.length > names.length ? ` ほか ${changed.length - names.length} 件` : ''}` : '指示・Skills を読み込み直した';
-      await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin, to: resolvedContext.pin, reason, backend });
+      const reason = !names.length ? savedReason('contextReloaded')
+        : changed.length > names.length ? savedReason('contextChangedMore', { names, count: changed.length - names.length })
+        : savedReason('contextChanged', { names });
+      await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin, to: resolvedContext.pin, ...reason, backend });
       emitGlobal({ type: 'contextRefreshed', sessionId, names, count: changed.length });
     }
     const turn = {
@@ -1351,6 +1439,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       key: sessionId ?? `new:${crypto.randomUUID()}`,
       ac: new AbortController(),
       backend,
+      agentLocale,
       control: { handle: null, onReady: () => outbox.kick(sessionId).catch(() => {}) },
       outcome: null,
       contextRecord,
@@ -1386,7 +1475,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       publish: async payload => {
         await turn.setup;
         const id = turn.info.sessionId;
-        if (!id) throw new Error('会話がまだ開始されていません');
+        if (!id) throw new Error(t('agentRuntime.visualizeNotStarted'));
         const record = await history.recordPresent(id, { ...payload, turnKey: turn.presentKey });
         emit({ type: 'present', sessionId: id, ...record }, { recorded: true });
       },
@@ -1414,14 +1503,14 @@ async function runTurnInternal(args, onStarted, hooks) {
         origin: localOrigin(), signal: turn.ac.signal,
         isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted, changed: saveContext,
         authorize: backend.id === 'codex' && !['full','yolo'].includes(permissionMode)
-          ? async (serverName, toolName, input) => Boolean((await askPermission({ toolName: `${serverName} / ${toolName}`, input, sessionId: turn.info.sessionId, signal: turn.ac.signal, kind: 'tool', canAlways: false }))?.allow)
+          ? async (serverName, toolName, input) => Boolean((await askPermission({ toolName: `${serverName} / ${toolName}`, input, sessionId: turn.info.sessionId, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: agentLocale }))?.allow)
           : undefined });
       if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true });
       broadcastRunning();
       syncRunningPoll();
       // 再開なら id が分かっているので先に載せる。新規は session イベントで id が決まった瞬間に（makeEmit）
       if (sessionId && attachments.length) await presentAttachments(sessionId, attachments, emit);
-      if (hooks.signal?.aborted) throw new Error('中断しました');
+      if (hooks.signal?.aborted) throw new Error(t('turn.aborted'));
       const result = await backend.runTurn({
         prompt,
         sessionId,
@@ -1430,10 +1519,13 @@ async function runTurnInternal(args, onStarted, hooks) {
         model: model || undefined,
         effort,
         emit,
-        askPermission,
+        // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
+        askPermission: request => askPermission({ ...request, locale: agentLocale }),
         signal: turn.ac,
         control: turn.control,
-        visualizeInstructions: VISUALIZE_INSTRUCTIONS,
+        // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
+        locale: agentLocale,
+        visualizeInstructions: visualizeInstructions(agentLocale),
         contextRuntime: runtimeContext,
         agentRuntime: agentConnection(turn),
         // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
@@ -1468,9 +1560,9 @@ async function runTurnInternal(args, onStarted, hooks) {
       if (!didStart) throw err;
     } finally {
       if (didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
-      await turn.visualizations.close().catch(err => emit({ type: 'turnResult', outcome: 'error', error: `可視化を保存できませんでした: ${err.message}` }));
+      await turn.visualizations.close().catch(err => emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) }));
       await Promise.allSettled([runtimeContext?.close()]);
-      await saveContext().catch(() => { emit({ type: 'turnResult', outcome: 'error', error: 'コンテキストの利用記録を保存できませんでした' }); });
+      await saveContext().catch(() => { emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') }); });
       await endTurn(turn, emit, { record: didStart });
       hooks.signal?.removeEventListener("abort", abortFromTask);
     }
@@ -1503,7 +1595,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   notifyFree(turn.key);
   syncRunningPoll();
   // 片付けるのはこのセッションの承認待ちだけ。他のターンの分は残す
-  settleAll("ターンが終わった", turn.info.sessionId);
+  settleAll('turnEnded', turn.info.sessionId);
   broadcastRunning();
 }
 
@@ -1625,8 +1717,9 @@ wss.on("connection", (ws, req) => {
 
     // Command IDs are scoped to a socket. Broadcast events, never private replies
     // (connection-check receipts and concurrent clients can share the same ID).
-    const reply = (ok, payload) => {
-      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(ok ? { result: payload } : { error: payload }) }));
+    // code: 失敗の種類。画面は文言（言語で変わる）ではなくこれで見分ける
+    const reply = (ok, payload, code) => {
+      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(ok ? { result: payload } : { error: payload, ...(code ? { code } : {}) }) }));
     };
 
     let releaseUpdateGate;
@@ -1724,14 +1817,14 @@ wss.on("connection", (ws, req) => {
         case 'scanContext': {
           // One scan at a time per connection; no changes to running turns.
           // place: 'default' なら場所ごとの上書きを使わず既定だけで探す（設定の「すべての場所」）
-          if (ws.contextScanning) throw new Error('スキャン中です');
+          if (ws.contextScanning) throw Object.assign(new Error(t('scan.busy')), { code: 'SCAN_BUSY' });
           ws.contextScanning = true;
           try { return reply(true, await scanContext(await contextSettings.get(msg.args?.cwd ?? process.cwd(), { level: msg.args?.place === 'default' ? 'default' : null }), { plyServers: await plyMcp.scanInput() })); }
           finally { ws.contextScanning = false; }
         }
         case 'slashSkills': {
           // 入力欄の「/」の候補。コンキスト画面と同じ探索をそのまま使い、スキルだけを返す
-          if (ws.contextScanning) throw new Error('スキャン中です');
+          if (ws.contextScanning) throw Object.assign(new Error(t('scan.busy')), { code: 'SCAN_BUSY' });
           ws.contextScanning = true;
           try { return reply(true, skillList(await scanContext(await contextSettings.get(msg.args?.cwd ?? process.cwd())))); }
           finally { ws.contextScanning = false; }
@@ -1811,7 +1904,7 @@ wss.on("connection", (ws, req) => {
         // アカウントの認可（claude setup-token / 使用量の claude auth login）を Pleiad から回す。進み具合は claudeLogin イベント
         case 'claudeLoginStart': {
           const { kind, accountId, name, open } = msg.args ?? {};
-          if (accountId && !(await claudeAccounts.has(String(accountId)))) throw new Error('そのアカウントは登録されていません');
+          if (accountId && !(await claudeAccounts.has(String(accountId)))) throw new Error(t('accounts.notRegistered'));
           if (kind === 'setup-token' && !accountId) normalizeAccountName(name);
           return reply(true, claudeLogin.start({ kind, accountId: accountId ? String(accountId) : undefined, name: name ? String(name).trim() : undefined, open: Boolean(open) }));
         }
@@ -1823,11 +1916,11 @@ wss.on("connection", (ws, req) => {
         // 使えるエージェントと、その語彙・出し分けの材料
         case 'providerUsage': {
           const backend = getBackend(msg.args?.backend);
-          if (!backend) throw new Error('エージェントが見つかりません');
+          if (!backend) throw new Error(t('agents.notFound'));
           const quota = await providerQuota(backend);
           let local;
           try { local = await usageStore.summary(backend.id); }
-          catch { local = { error: '使用実績を読み込めませんでした。' }; }
+          catch { local = { error: t('quota.localFailed') }; }
           return reply(true, { backend: backend.id, label: backend.label, quota, local });
         }
         case "backends":
@@ -1835,33 +1928,33 @@ wss.on("connection", (ws, req) => {
 
         case "setTurnSettings": {
           const { sessionId, backend: targetId, model, mode, cwd: requestedCwd, cancel, account, endpoint } = msg.args ?? {};
-          if (!sessionId) throw new Error("セッションが要る");
-          if (forking.has(sessionId) || switching.has(sessionId) && !runtime.turns.has(sessionId)) throw new Error("送信の準備中です。設定変更を再試行してください");
+          if (!sessionId) throw new Error(t('session.required'));
+          if (forking.has(sessionId) || switching.has(sessionId) && !runtime.turns.has(sessionId)) throw new Error(t('session.preparingSettings'));
           const work = (settingsWrites.get(sessionId) ?? Promise.resolve()).catch(() => {}).then(async () => {
             const source = refuseRetired(await resolveBackendForSession(sessionId));
-            if (!source) throw new Error("セッションが見つかりません");
+            if (!source) throw new Error(t('session.notFound'));
             const current = { ...(await store.get(sessionId)) };
             // 予約の行き先が今は無いエージェント（対応を終えた procway など）なら、予約は無かったものとして扱う（取り消し・選び直しができるように）
             if (current.nextSettings?.backend && !getBackend(current.nextSettings.backend)) current.nextSettings = null;
             const target = getBackend(targetId ?? current.nextSettings?.backend ?? source.id);
-            if (!target) throw new Error("エージェントが見つかりません");
+            if (!target) throw new Error(t('agents.notFound'));
             const selectedMode = mode ?? (target.id === (current.nextSettings?.backend ?? source.id)
               ? current.nextSettings?.mode : target.id !== source.id ? await resolveMode(null, undefined, target) : undefined);
-            if (!cancel && selectedMode !== undefined && !target.modes()[selectedMode]) throw new Error("選択した承認モードは使用できません");
+            if (!cancel && selectedMode !== undefined && !target.modes()[selectedMode]) throw new Error(t('settings.modeUnavailable'));
             const settingsCwd = requestedCwd || current.nextSettings?.cwd || current.cwd;
             // 互換の接続先（'' = 公式）。エージェントを変えたら、変えた先の既定（設定で「既定にする」を押したもの。無ければ公式）。
             // 元のエージェントへ戻したら、この会話の今の接続先に戻る
-            if (endpoint !== undefined && typeof endpoint !== 'string') throw new Error('接続先の指定が不正です');
+            if (endpoint !== undefined && typeof endpoint !== 'string') throw new Error(t('settings.endpointInvalid'));
             const previousSelection = current.nextSettings?.backend ?? source.id;
             const currentEndpoint = current.compatEndpoint ?? '';
             const previousEndpoint = current.nextSettings?.endpoint ?? currentEndpoint;
             let selectedEndpoint = !endpointCapable(target) ? ''
               : endpoint ?? (target.id === previousSelection ? previousEndpoint : target.id === source.id ? currentEndpoint : await compatEndpoints.defaultFor(target.id));
-            if (!cancel && endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error('選択した接続先は登録されていません');
+            if (!cancel && endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error(t('settings.endpointNotRegistered'));
             const endpointChanged = selectedEndpoint !== currentEndpoint;
             // 接続先を変えたらモデルは接続先の既定（メインのモデル）に戻す（公式のモデル名を互換の先へ送らない）
             const selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
-            if (!cancel && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) throw new Error("選択したモデルは使用できません");
+            if (!cancel && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) throw new Error(t('settings.modelUnavailable'));
             const selectedEndpointRow = await endpointRow(selectedEndpoint);
             const previousBackend = current.nextSettings?.backend ?? source.id;
             const previousEffort = target.id === previousBackend ? current.nextSettings?.effort ?? current.effort ?? ''
@@ -1871,13 +1964,13 @@ wss.on("connection", (ws, req) => {
               ? await validateEffort(target, msg.args.effort, selectedModel, settingsCwd, selectedEndpointRow)
               : Object.hasOwn(choices, previousEffort) ? previousEffort : '';
             // Claude のアカウント（'' = ログイン中のアカウント）。モデルと同じく次のターンから効く
-            if (account !== undefined && typeof account !== 'string') throw new Error('アカウントの指定が不正です');
+            if (account !== undefined && typeof account !== 'string') throw new Error(t('settings.accountInvalid'));
             const selectedAccount = account ?? current.nextSettings?.account ?? current.claudeAccount ?? '';
-            if (!cancel && account && !(await claudeAccounts.has(account))) throw new Error('選択したアカウントは登録されていません');
+            if (!cancel && account && !(await claudeAccounts.has(account))) throw new Error(t('settings.accountNotRegistered'));
             const accountChanged = selectedAccount !== (current.claudeAccount ?? '');
             let selectedCwd = current.nextSettings?.cwd;
             if (!cancel && requestedCwd !== undefined) {
-              if (typeof requestedCwd !== "string" || !requestedCwd.trim() || requestedCwd.length > 8192) throw new Error("作業ディレクトリを入力してください");
+              if (typeof requestedCwd !== "string" || !requestedCwd.trim() || requestedCwd.length > 8192) throw new Error(t('cwd.required'));
               selectedCwd = (await resolveCwd(null, path.resolve(requestedCwd.trim()), source)).cwd;
               const info = await source.getSession(sessionId);
               const own = (current.history ?? []).some(h => h?.field === "cwd") ? current.cwd ?? info?.cwd : info?.cwd ?? current.cwd;
@@ -1905,10 +1998,10 @@ wss.on("connection", (ws, req) => {
 
         case "saveDraft": {
           const { sessionId, text = "", attached = [] } = msg.args ?? {};
-          if (!sessionId || !(await resolveBackendForSession(sessionId))) throw new Error("セッションが見つかりません");
-          if (typeof text !== "string" || text.length > 2_000_000 || !Array.isArray(attached) || attached.length > 20) throw new Error("下書きが大きすぎます");
+          if (!sessionId || !(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
+          if (typeof text !== "string" || text.length > 2_000_000 || !Array.isArray(attached) || attached.length > 20) throw new Error(t('session.draftTooLarge'));
           const files = attached.map(a => ({ name: String(a.name ?? ""), path: String(a.path ?? ""), kind: String(a.kind ?? "file"), mime: String(a.mime ?? "") }));
-          if (files.some(a => a.path.length > 8192 || a.name.length > 4096)) throw new Error("添付の情報が大きすぎます");
+          if (files.some(a => a.path.length > 8192 || a.name.length > 4096)) throw new Error(t('session.attachmentInfoTooLarge'));
           await store.setSessionData(sessionId, "draft", { text, attached: files });
           if ((await store.get(sessionId)).unsent && typeof msg.args?.cwd === "string") {
             await store.setMeta(sessionId, { cwd: msg.args.cwd });
@@ -1919,10 +2012,10 @@ wss.on("connection", (ws, req) => {
         case "deleteUnsentSession": {
           const { sessionId } = msg.args ?? {};
           if (!sessionId || switching.has(sessionId) || forking.has(sessionId) || runtime.turns.has(sessionId)
-              || (await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status))) throw new Error("実行中または送信待ちのセッションは削除できません");
+              || (await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status))) throw new Error(t('session.cannotDeleteBusy'));
           switching.add(sessionId);
           try {
-            if (!(await store.get(sessionId)).unsent) throw new Error("未送信のセッションだけ削除できます");
+            if (!(await store.get(sessionId)).unsent) throw new Error(t('session.onlyUnsentDeletable'));
             await deleteUnsentConversation(sessionId);
             await store.removeSession(sessionId);
             releaseAgentConnection(sessionId);
@@ -1933,13 +2026,13 @@ wss.on("connection", (ws, req) => {
 
         case "switchBackend": {
           const { sessionId, backend: targetId } = msg.args ?? {};
-          if (!sessionId) return reply(false, "セッションが要る");
-          if (runtime.turns.has(sessionId) || switching.has(sessionId) || forking.has(sessionId)) return reply(false, "実行が終わってから切り替えてください");
+          if (!sessionId) return reply(false, t('session.required'));
+          if (runtime.turns.has(sessionId) || switching.has(sessionId) || forking.has(sessionId)) return reply(false, t('session.finishBeforeSwitch'));
           switching.add(sessionId);
           try {
             const source = refuseRetired(await resolveBackendForSession(sessionId));
             const target = getBackend(targetId);
-            if (!source || !target) throw new Error("エージェントが見つかりません");
+            if (!source || !target) throw new Error(t('agents.notFound'));
             await switchBackend(sessionId, source, target);
             // 接続先はエージェントごとの形式なので、エージェントが変わったら変えた先の既定（「既定にする」を押したもの。無ければ公式）に置き直す
             if (source.id !== target.id) await store.setSessionData(sessionId, 'compatEndpoint', endpointCapable(target) ? await compatEndpoints.defaultFor(target.id) : '');
@@ -1954,10 +2047,10 @@ wss.on("connection", (ws, req) => {
           return;
         case 'sendMessage': {
           const { sessionId, messageId, prompt, attachments, cwd, mode } = msg.args ?? {};
-          if (!sessionId || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error('セッションが見つかりません');
-          if (typeof messageId !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(messageId)) throw new Error('送信IDが必要です');
-          if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('メッセージを入力してください');
-          if (attachments !== undefined && (!Array.isArray(attachments) || attachments.length > 20)) throw new Error('添付は20件までです');
+          if (!sessionId || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
+          if (typeof messageId !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(messageId)) throw new Error(t('send.messageIdRequired'));
+          if (typeof prompt !== 'string' || !prompt.trim()) throw new Error(t('send.messageRequired'));
+          if (attachments !== undefined && (!Array.isArray(attachments) || attachments.length > 20)) throw new Error(t('send.tooManyAttachments', { max: 20 }));
           return reply(true, await outbox.accept(sessionId, messageId, {
             prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}),
           }));
@@ -1982,7 +2075,7 @@ wss.on("connection", (ws, req) => {
             : [...runtime.turns.values()];
           for (const t of targets) {
             t.ac.abort();
-            settleAll("中断された", t.info.sessionId);
+            settleAll('aborted', t.info.sessionId);
             // 受け付けたことをすぐ画面に出す。バックエンドが止まり終えるまで（Claude は CLI の終了まで）
             // turnResult / turnEnd は来ないので、それまでの間「中断している」を出す
             if (!t.info.stopping) {
@@ -2001,19 +2094,22 @@ wss.on("connection", (ws, req) => {
         case 'agentTasks': return reply(true, agentTasks.list(msg.args?.sessionId));
         case 'cancelAgentTask': {
           const task = agentTasks.get(msg.args?.taskId);
-          if (!task) throw new Error('Pleiad タスクが見つかりません');
+          if (!task) throw new Error(t('delegation.taskNotFound'));
           await agentTasks.cancel(task.taskId); return reply(true, agentTasks.get(task.taskId));
         }
         case "resolvePermission": {
-          const { id, allow, always, message, answers, annotations, response } = msg.args ?? {};
+          const { id, allow, always, message, messageKey, answers, annotations, response } = msg.args ?? {};
           const w = runtime.waiting.get(id);
-          if (!w) return reply(false, "その承認は既に解決済み");
+          if (!w) return reply(false, t('approval.alreadyResolved'));
           // 回答を伴うツール（質問カード）は、承認ではなく入力の差し替えとして返る。
           // ここでは解釈しない。エージェントが自分の形へ戻す（§2.2）。
+          // 拒否の理由は画面の言語ではなく会話の言語でエージェントへ返すので、画面は文ではなく印（messageKey: 'userDenied'）で送る。
+          // 文（message）で来たら従来どおりそのまま渡す
           w.settle({
             allow: !!allow,
             always: !!always,
             message: message ?? null,
+            ...(!allow && !message && messageKey === 'userDenied' ? { messageKey } : {}),
             answers: answers ?? null,
             annotations: annotations ?? null,
             response: response ?? null,
@@ -2072,7 +2168,7 @@ wss.on("connection", (ws, req) => {
           const sourceId = msg.args?.sourceSessionId;
           if (sourceId) await settingsWrites.get(sourceId);
           const sourceBackend = sourceId ? await resolveBackendForSession(sourceId) : null;
-          if (sourceId && !sourceBackend) throw new Error("引き継ぎ元のセッションが見つかりません");
+          if (sourceId && !sourceBackend) throw new Error(t('session.sourceNotFound'));
           const source = sourceId ? await store.get(sourceId) : null;
           const selected = source?.nextSettings?.backend ?? sourceBackend?.id;
           // 引き継ぎ元が対応を終えたエージェントなら、エージェントは継がない（既定へ落とす）
@@ -2084,7 +2180,8 @@ wss.on("connection", (ws, req) => {
           const cwd = typeof msg.args?.cwd === "string" && msg.args.cwd.trim() ? msg.args.cwd.trim() : os.homedir();
           const status = typeof msg.args?.status === "string" ? msg.args.status.trim() || null : null;
           const now = Date.now();
-          const info = { title: "新しいセッション", cwd, tag: status, createdAt: now, lastModified: now };
+          // 既定のタイトルは保存しない（空）。画面が今の言語で既定名を出す（web/style.css の .row-t:empty など）。過去の記録には「新しいセッション」が残っている
+          const info = { title: "", cwd, tag: status, createdAt: now, lastModified: now };
           const sessionId = await createConversation(backend, info);
           try {
             await store.setMeta(sessionId, { backend: backend.id, ...info, status, unsent: true });
@@ -2094,7 +2191,7 @@ wss.on("connection", (ws, req) => {
             if (endpointCapable(backend)) {
               if (typeof msg.args?.endpoint === 'string') {
                 endpoint = msg.args.endpoint;
-                if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) throw new Error('選択した接続先は登録されていません');
+                if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) throw new Error(t('settings.endpointNotRegistered'));
               } else {
                 endpoint = inherit ? source.nextSettings?.endpoint ?? source.compatEndpoint ?? '' : await compatEndpoints.defaultFor(backend.id);
                 if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) endpoint = '';
@@ -2216,8 +2313,8 @@ wss.on("connection", (ws, req) => {
         }
         case "completeSetup": {
           const backend = await pickBackend(null, msg.args?.backend);
-          if (!installation(backend.id).installed) throw new Error("エージェントをインストールしてください");
-          if (backend.auth?.status && !(await backend.auth.status()).loggedIn) throw new Error("ログイン状態を再確認してください");
+          if (!installation(backend.id).installed) throw new Error(t('agents.installRequired'));
+          if (backend.auth?.status && !(await backend.auth.status()).loggedIn) throw new Error(t('agents.checkLogin'));
           const { cwd } = await resolveCwd(null, msg.args?.cwd, backend);
           const saved = { seen: true, setupComplete: true, backend: backend.id, cwd: path.resolve(cwd) };
           await fs.mkdir(store.dataDir, { recursive: true });
@@ -2239,17 +2336,19 @@ wss.on("connection", (ws, req) => {
          */
         case "suggestTitle": {
           const { sessionId } = msg.args ?? {};
-          if (!sessionId) return reply(false, "セッションが要る");
+          if (!sessionId) return reply(false, t('session.required'));
           const backend = await resolveBackendForSession(sessionId);
-          if (!backend) return reply(false, "エージェントが見つかりません");
-          if (!backend.suggestTitle) return reply(false, "このエージェントはタイトル生成に対応していません");
+          if (!backend) return reply(false, t('agents.notFound'));
+          if (!backend.suggestTitle) return reply(false, t('title.unsupported'));
           const { messages } = await history.loadTranscript(sessionId, backend);
+          // タイトルは会話の言語で作る（渡す見出しもその言語）
+          const lng = await ensureAgentLocale(sessionId);
           const gist = messages
             .filter((m) => m.text)
             .slice(0, 6)
-            .map((m) => `${m.role === "user" ? "依頼" : "応答"}: ${m.text.slice(0, 600)}`)
+            .map((m) => m.role === "user" ? agentT(lng, 'title.request', { text: m.text.slice(0, 600) }) : agentT(lng, 'title.response', { text: m.text.slice(0, 600) }))
             .join(NL + NL);
-          if (!gist) return reply(false, "まだ中身が無いので付けられない");
+          if (!gist) return reply(false, t('title.noContent'));
 
           let title = "";
           const context = {};
@@ -2262,14 +2361,14 @@ wss.on("connection", (ws, req) => {
               const account = await claudeAccounts.resolve(saved.claudeAccount ?? '');
               if (account) context.oauthToken = account.token;
             }
-            title = String(await backend.suggestTitle({ transcript: gist, ...context }) ?? "");
+            title = String(await backend.suggestTitle({ transcript: gist, locale: lng, ...context }) ?? "");
           } catch (err) {
-            return reply(false, `考えられなかった: ${redactSecret(redactToken(err?.message ?? err, context.oauthToken), context.endpoint?.key)}`);
+            return reply(false, t('title.failed', { error: redactSecret(redactToken(err?.message ?? err, context.oauthToken), context.endpoint?.key) }));
           }
 
           // 前後の記号を落とす。モデルが鉤括弧やクオートで包むことがある
           title = title.trim().split(NL)[0].replace(/^["'「『]|["'」』。]$/g, "").trim().slice(0, 60);
-          if (!title) return reply(false, "空のタイトルが返ってきた");
+          if (!title) return reply(false, t('title.empty'));
           return reply(true, { title });
         }
 
@@ -2292,10 +2391,10 @@ wss.on("connection", (ws, req) => {
 
         case "attachFile": {
           const { sessionId, name, mime, data } = msg.args ?? {};
-          if (typeof data !== "string" || !data) return reply(false, "中身が無い");
+          if (typeof data !== "string" || !data) return reply(false, t('attach.noContent'));
           const buf = Buffer.from(data, "base64");
           if (buf.length > MAX_UPLOAD_BYTES) {
-            return reply(false, `大きすぎる（${Math.round(buf.length / 1024 / 1024)}MB / 上限 8MB）`);
+            return reply(false, t('attach.tooLarge', { size: Math.round(buf.length / 1024 / 1024), limit: 8 }));
           }
           // 名前は信用しない。区切り文字を落としてから使う
           const safe = String(name ?? "file")
@@ -2319,7 +2418,7 @@ wss.on("connection", (ws, req) => {
         case "setPref": {
           const { key, value, backend: backendId } = msg.args ?? {};
           if (key === "backend") {
-            if (!getBackend(value)) return reply(false, "知らないエージェント");
+            if (!getBackend(value)) return reply(false, t('agents.unknown'));
             return reply(true, await savePref(key, value));
           }
           // 画面の言語。auto は OS に合わせる
@@ -2327,12 +2426,12 @@ wss.on("connection", (ws, req) => {
             if (!LOCALE_SETTINGS.includes(value)) return reply(false, t("errors.unknownLocale", { value }));
             return reply(true, await savePref(key, value));
           }
-          if (backendId && !getBackend(backendId)) return reply(false, "知らないエージェント");
-          if (key !== "mode" && key !== "model") return reply(false, `知らない設定: ${key}`);
+          if (backendId && !getBackend(backendId)) return reply(false, t('agents.unknown'));
+          if (key !== "mode" && key !== "model") return reply(false, t('settings.unknownPref', { key }));
           // 語彙はエージェントごとに違う。どれか1つでも知っていれば通す
           const known = await Promise.all((backendId ? [getBackend(backendId)] : listBackends()).map(async (b) =>
             key === "mode" ? Boolean(b.modes()[value]) : value in (await b.models())));
-          if (!known.some(Boolean)) return reply(false, `知らない${key === "mode" ? "承認モード" : "モデル"}: ${value}`);
+          if (!known.some(Boolean)) return reply(false, t(key === "mode" ? 'settings.unknownMode' : 'settings.unknownModel', { value }));
           return reply(true, await savePref(key, value, backendId));
         }
 
@@ -2341,7 +2440,7 @@ wss.on("connection", (ws, req) => {
         // だから改名も削除も、対象セッションの状態を書き換えるだけで足りる。
         case "renameStatus": {
           const { from, to } = msg.args ?? {};
-          if (typeof from !== "string" || !from) return reply(false, "改名元の状態が要る");
+          if (typeof from !== "string" || !from) return reply(false, t('statuses.renameFromRequired'));
           const next = typeof to === "string" ? to.trim() : "";
           const hit = (await sessionList({ limit: 500 })).filter((x) => (x.status ?? "") === from);
           for (const x of hit) {
@@ -2351,20 +2450,20 @@ wss.on("connection", (ws, req) => {
             }
             await store.recordChange(x.id, {
               by: "human", field: "status", from, to: next || null, backend,
-              reason: next ? `状態を「${next}」に改名` : "グループを削除",
+              ...(next ? savedReason('renameStatus', { to: next }) : savedReason('deleteGroup')),
             });
           }
           // statuses.json の器（アイコン・作った時刻）も一緒に移す。削除なら捨てる（空のグループはこれで消える）
           await store.moveStatus(from, next || null);
           emitGlobal({ type: "status", sessionId: null, status: next, by: "human", bulk: hit.length,
-                 reason: next ? `「${from}」を「${next}」に改名` : `「${from}」を削除` });
+                 ...(next ? savedReason('renamedGroup', { from, to: next }) : savedReason('deletedGroup', { from })) });
           return reply(true, { moved: hit.length });
         }
 
         // 詳細の読み出しは停止から独立した操作。
         case "loadBackground": {
           const { sessionId, taskId } = msg.args ?? {};
-          if (!sessionId || !taskId) return reply(false, "sessionId と taskId が要る");
+          if (!sessionId || !taskId) return reply(false, t('background.idsRequired'));
           const found = findBackgroundTask(sessionId, taskId);
           if (!found) return reply(true, { task: null });
           const detail = await found.backend?.getBackgroundTask?.(sessionId, taskId);
@@ -2374,10 +2473,10 @@ wss.on("connection", (ws, req) => {
         // ターンの中断（abort）とは別に、裏の作業を1本止める。
         case "stopBackground": {
           const { sessionId, taskId } = msg.args ?? {};
-          if (!sessionId || !taskId) return reply(false, "sessionId と taskId が要る");
+          if (!sessionId || !taskId) return reply(false, t('background.idsRequired'));
           const found = findBackgroundTask(sessionId, taskId);
-          if (!found) return reply(false, "その裏の作業はもう動いていません");
-          if (!found.backend?.stopBackground) return reply(false, `${found.backendId} は裏の作業を止められません`);
+          if (!found) return reply(false, t('background.notRunning'));
+          if (!found.backend?.stopBackground) return reply(false, t('background.cannotStop', { backend: found.backendId }));
           const res = await found.backend.stopBackground(sessionId, taskId);
           return reply(true, { stopped: res?.stopped !== false });
         }
@@ -2385,7 +2484,7 @@ wss.on("connection", (ws, req) => {
         // サブエージェントの会話を読む。表示に要る最小形へ落とす。
         case "loadSubagent": {
           const { sessionId, agentId } = msg.args ?? {};
-          if (!sessionId || !agentId) return reply(false, "sessionId と agentId が要る");
+          if (!sessionId || !agentId) return reply(false, t('background.agentIdsRequired'));
           const backend = await resolveBackendForSession(sessionId);
           if (!backend?.getSubagentMessages) return reply(true, { agentId, sessionId, messages: [] });
           const raw = await backend.getSubagentMessages(sessionId, agentId, { limit: 500 }).catch(() => []);
@@ -2406,12 +2505,12 @@ wss.on("connection", (ws, req) => {
           const backend = refuseRetired(await pickBackend(sessionId, msg.args?.backend));
           // 互換の接続先の会話はモデル ID を形だけ見る（接続先の一覧＋自由入力）。公式の既定（prefs）には覚えない
           const endpointId = endpointCapable(backend) ? (await store.get(sessionId)).compatEndpoint ?? '' : '';
-          if (!(await validModel(backend, model, undefined, endpointId))) return reply(false, `知らないモデル: ${model}`);
+          if (!(await validModel(backend, model, undefined, endpointId))) return reply(false, t('settings.unknownModel', { value: model }));
           const from = (await store.get(sessionId)).model ?? "";
           await store.setModel(sessionId, model);
           if (!endpointId) await savePref("model", model, backend.id);
           await store.recordChange(sessionId, {
-            by: "human", field: "model", from, to: model, reason: msg.args.reason, backend,
+            by: "human", field: "model", from, to: model, ...clientReason(msg.args), backend,
           });
           let live = false;
           const liveTurn = runtime.turns.get(sessionId);
@@ -2427,13 +2526,13 @@ wss.on("connection", (ws, req) => {
         case "setMode": {
           const { sessionId, mode } = msg.args;
           const backend = refuseRetired(await pickBackend(sessionId, msg.args?.backend));
-          if (!backend.modes()[mode]) return reply(false, `知らない承認モード: ${mode}`);
+          if (!backend.modes()[mode]) return reply(false, t('settings.unknownMode', { value: mode }));
           const from = (await store.get(sessionId)).mode ?? "default";
           await store.setMode(sessionId, mode);
           // 人間が選んだものを、次に新しく始めるときの既定にする
           await savePref("mode", mode, backend.id);
           await store.recordChange(sessionId, {
-            by: "human", field: "mode", from, to: mode, reason: msg.args.reason, backend,
+            by: "human", field: "mode", from, to: mode, ...clientReason(msg.args), backend,
           });
           // 走っている最中でも切り替える。次のターンまで待たせない
           let live = false;
@@ -2448,8 +2547,9 @@ wss.on("connection", (ws, req) => {
 
         // 人間からの変更。AI 用ツールと同じ store・同じイベントを通る（設計メモ 2.2）
         case "setStatus": {
-          const { sessionId, status, reason } = msg.args;
-          if (!sessionId) return reply(false, "セッションが要る（新規なら runTurn の status に載せる）");
+          const { sessionId, status } = msg.args;
+          const reason = clientReason(msg.args);
+          if (!sessionId) return reply(false, t('session.requiredForStatus'));
           const backend = await pickBackend(sessionId, msg.args?.backend);
           // グループの根を動かすと、まとまりごと移る（中の会話も同じ状態に保つ、§4.1）。
           // 中の会話を動かしたときは、その 1 本だけが出る
@@ -2458,7 +2558,7 @@ wss.on("connection", (ws, req) => {
           await applyStatus(backend, sessionId, status, reason);
           for (const r of kin) {
             const b = getBackend(r.backend) ?? backend;
-            await applyStatus(b, r.id, status, reason ?? "グループごと移動").catch(() => {});
+            await applyStatus(b, r.id, status, reason.reason === null ? savedReason('groupMove') : reason).catch(() => {});
           }
           return reply(true, { moved: kin.map((r) => r.id) });
         }
@@ -2466,7 +2566,7 @@ wss.on("connection", (ws, req) => {
         // グループから外す / 戻す。まとまりは親子と状態から決まるので、覚えるのは「外した」ことだけ
         case "setGrouped": {
           const { sessionId, ungrouped } = msg.args ?? {};
-          if (!sessionId) return reply(false, "セッションが要る");
+          if (!sessionId) return reply(false, t('session.required'));
           await store.setSessionData(sessionId, "ungrouped", ungrouped ? true : null);
           emitGlobal({ type: "group", sessionId, ungrouped: Boolean(ungrouped) });
           return reply(true, { sessionId, ungrouped: Boolean(ungrouped) });
@@ -2475,7 +2575,7 @@ wss.on("connection", (ws, req) => {
         // 状態グループのアイコン。人間の操作。AI が set_status で渡す経路も同じ store に入る（設計メモ 2.2）
         case "setStatusIcon": {
           const { status, icon } = msg.args ?? {};
-          if (typeof status !== "string" || !status.trim()) return reply(false, "状態が要る");
+          if (typeof status !== "string" || !status.trim()) return reply(false, t('statuses.statusRequired'));
           const saved = await store.setStatusIcon(status, icon);
           emitGlobal({ type: "statusIcon", sessionId: null, status, icon: saved });
           return reply(true, { status, icon: saved });
@@ -2485,9 +2585,9 @@ wss.on("connection", (ws, req) => {
         // 人が先に作った器は statuses.json にある限り存在する（セッション 0 件でも一覧に出る）
         case "createStatus": {
           const status = String(msg.args?.status ?? "").trim();
-          if (!status) return reply(false, "グループの名前が要る");
+          if (!status) return reply(false, t('statuses.groupNameRequired'));
           await store.createStatus(status);
-          emitGlobal({ type: "status", sessionId: null, status, by: "human", bulk: 0, reason: "グループを作った" });
+          emitGlobal({ type: "status", sessionId: null, status, by: "human", bulk: 0, ...savedReason('createdGroup') });
           return reply(true, { status });
         }
 
@@ -2499,7 +2599,7 @@ wss.on("connection", (ws, req) => {
          */
         case "lineage": {
           const { sessionId } = msg.args ?? {};
-          if (!sessionId) return reply(false, "セッションが要る");
+          if (!sessionId) return reply(false, t('session.required'));
           const rows = await sessionList({ limit: 500 });
           const byId = new Map(rows.map((r) => [r.id, r]));
           const { rootId, ids } = familyOf(rows, sessionId);
@@ -2507,23 +2607,24 @@ wss.on("connection", (ws, req) => {
         }
 
         case "setTitle": {
-          const { sessionId, title, reason } = msg.args;
+          const { sessionId, title } = msg.args;
+          const reason = clientReason(msg.args);
           const backend = await pickBackend(sessionId, msg.args?.backend);
           if (backend.capabilities?.title && backend.setTitle) await backend.setTitle(sessionId, title);
-          await store.recordChange(sessionId, { by: "human", field: "title", to: title, reason, backend });
-          emitGlobal({ type: "title", sessionId, title, by: "human", reason: reason ?? null });
+          await store.recordChange(sessionId, { by: "human", field: "title", to: title, ...reason, backend });
+          emitGlobal({ type: "title", sessionId, title, by: "human", ...reason });
           return reply(true, "ok");
         }
 
         case "fork": {
           const { sessionId, upToMessageId, beforeMessageId, title } = msg.args;
           const running = runtime.turns.get(sessionId);
-          if (!sessionId || forking.has(sessionId) || switching.has(sessionId) && !running) return reply(false, "会話の準備中です。分岐を再試行してください");
+          if (!sessionId || forking.has(sessionId) || switching.has(sessionId) && !running) return reply(false, t('session.preparingFork'));
           forking.add(sessionId);
           try {
             await settingsWrites.get(sessionId);
             const backend = refuseRetired(await pickBackend(sessionId, msg.args?.backend));
-            if (!backend.fork) return reply(false, "このエージェントは分岐できない");
+            if (!backend.fork) return reply(false, t('session.cannotFork'));
             const snapshot = running ? {
               messageIds: running.stream.messages.map(m => m.uuid),
               presents: structuredClone(running.stream.presents),
@@ -2554,7 +2655,7 @@ wss.on("connection", (ws, req) => {
         }
       }
     } catch (err) {
-      reply(false, String(err?.message ?? err));
+      reply(false, String(err?.message ?? err), typeof err?.code === 'string' ? err.code : undefined);
     } finally { releaseUpdateGate?.(); }
   });
 });
@@ -2567,14 +2668,14 @@ async function readOnboarding() {
 process.parentPort?.on("message", async ({ data }) => {
   if (data?.type === 'update-lock') {
     // 断るときは何が止めているかを返す。画面に出さないと、見た目に何も動いていないのに更新できない理由が分からない
-    const reason = runtime.turns.size ? `実行中の会話が ${runtime.turns.size} 件あります`
-      : runtime.waiting.size ? `承認待ちが ${runtime.waiting.size} 件あります`
-      : agentTasks.busy ? '委譲した作業か、その完了の知らせを親の会話へ届ける処理が終わっていません'
-      : outbox.busy ? '途中送信したメッセージを処理しています'
-      : switching.size || forking.size ? '会話の切り替えか分岐を処理しています'
+    const reason = runtime.turns.size ? t('updateLock.turns', { count: runtime.turns.size })
+      : runtime.waiting.size ? t('updateLock.approvals', { count: runtime.waiting.size })
+      : agentTasks.busy ? t('updateLock.delegation')
+      : outbox.busy ? t('updateLock.steer')
+      : switching.size || forking.size ? t('updateLock.switching')
       : null;
     const ok = updateGate.acquire(Boolean(reason));
-    process.parentPort.postMessage({ type: 'update-lock', id: data.id, ok, reason: ok ? null : reason || 'ほかの操作を処理しています' });
+    process.parentPort.postMessage({ type: 'update-lock', id: data.id, ok, reason: ok ? null : reason || t('updateLock.other') });
   }
   if (data?.type === 'update-unlock') updateGate.release();
   if (data?.type === "running") process.parentPort.postMessage({ type: "running", work: await runningWork() });

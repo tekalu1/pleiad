@@ -1,10 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { t, agentT } from './i18n.mjs';
 
 const ACTIVE = new Set(['queued', 'running', 'cancelling']);
-const text = (value, name, max = 60000) => {
-  if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(`${name} は1〜${max}文字で指定してください`);
+// call() のエラーと子への依頼文はエージェントが読むので、会話の言語（locale）で引く（agent 名前空間）
+const text = (locale, value, name, max = 60000) => {
+  if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(agentT(locale, 'tasks.textLength', { name, max }));
   return value;
 };
 
@@ -29,13 +31,13 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     for (const fn of [...listeners]) fn();
   };
   for (const r of Object.values(records)) {
-    if (ACTIVE.has(r.status)) { r.status = 'interrupted'; r.error = 'Pleiad が再起動したため中断しました。実際の変更を確認してから追加指示してください'; r.queue = []; }
+    if (ACTIVE.has(r.status)) { r.status = 'interrupted'; r.error = t('tasks.interruptedByRestart'); r.queue = []; }
     if (['pending', 'delivering'].includes(r.notification)) r.notification = 'unknown';
   }
   await serial(save);
-  const owned = (owner, id) => {
+  const owned = (owner, id, locale) => {
     const r = records[id];
-    if (!r || r.parentSessionId !== owner) throw new Error('この会話が作成した Pleiad タスクではありません');
+    if (!r || r.parentSessionId !== owner) throw new Error(agentT(locale, 'tasks.notOwned'));
     return r;
   };
   const view = (r, offset = 0) => {
@@ -110,39 +112,40 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     get busy() { return live.size > 0 || notices.size > 0 || Object.values(records).some(r => ACTIVE.has(r.status) || r.notification === 'pending'); },
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
     get(taskId) { return records[taskId] ? view(records[taskId]) : null; },
-    async call(owner, name, args = {}, signal) {
-      if (closed || signal?.aborted) throw new Error('実行は中断されています');
+    // locale は呼び出した会話（owner）の言語。子の会話も同じ言語を継ぐので、子への依頼文もこれで作る
+    async call(owner, name, args = {}, signal, locale) {
+      if (closed || signal?.aborted) throw new Error(agentT(locale, 'tasks.halted'));
       if (name === 'ply_delegate') {
-        text(args.backend, 'backend', 40); text(args.task, 'task');
-        if (args.context !== undefined) text(args.context, 'context');
+        text(locale, args.backend, 'backend', 40); text(locale, args.task, 'task');
+        if (args.context !== undefined) text(locale, args.context, 'context');
         const row = await serial(async () => {
-          if (Object.values(records).filter(r => ACTIVE.has(r.status)).length >= maxActive) throw new Error(`Pleiad の委譲は同時に${maxActive}件までです`);
-          if (Object.values(records).filter(r => r.parentSessionId === owner).length >= 100) throw new Error('1会話の Pleiad タスクは100件までです');
+          if (Object.values(records).filter(r => ACTIVE.has(r.status)).length >= maxActive) throw new Error(agentT(locale, 'tasks.maxActive', { max: maxActive }));
+          if (Object.values(records).filter(r => r.parentSessionId === owner).length >= 100) throw new Error(agentT(locale, 'tasks.maxPerConversation', { max: 100 }));
           const parent = Object.values(records).find(r => r.sessionId === owner);
           const depth = (parent?.depth ?? 0) + 1;
-          if (depth > 4) throw new Error('Pleiad の委譲は4階層までです');
+          if (depth > 4) throw new Error(agentT(locale, 'tasks.maxDepth', { max: 4 }));
           const taskId = `ply-task-${crypto.randomUUID()}`;
           const prepared = await prepare(owner, args, taskId, signal);
           try {
-          if (signal?.aborted) throw new Error('中断しました');
+          if (signal?.aborted) throw new Error(agentT(locale, 'tasks.aborted'));
           const row = { ...prepared, taskId, parentSessionId: owner, manager: 'ply', depth, task: args.task,
             createdAt: Date.now(), updatedAt: Date.now(), status: 'queued', notification: 'none',
-            result: '', error: null, queue: [args.task + (args.context ? `\n\n依頼元からのコンテキスト:\n${args.context}` : '')] };
+            result: '', error: null, queue: [args.context ? agentT(locale, 'tasks.withContext', { task: args.task, context: args.context }) : args.task] };
           records[taskId] = row; await save(); return view(row);
           } catch (e) { delete records[taskId]; await rollback(prepared); throw e; }
         });
         kick(); return row;
       }
       if (name === 'ply_task_list') return { tasks: Object.values(records).filter(r => r.parentSessionId === owner).map(r => { const { result, ...rest } = shown(r); return rest; }) };
-      const r = owned(owner, text(args.taskId, 'taskId', 100));
+      const r = owned(owner, text(locale, args.taskId, 'taskId', 100), locale);
       if (name === 'ply_task_status') {
         const offset = args.offset ?? 0;
-        if (!Number.isInteger(offset) || offset < 0) throw new Error('offset は0以上の整数です');
+        if (!Number.isInteger(offset) || offset < 0) throw new Error(agentT(locale, 'tasks.offsetInvalid'));
         return shown(r, offset);
       }
       if (name === 'ply_task_wait') {
         const seconds = args.seconds ?? 30;
-        if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) throw new Error('seconds は1〜30です');
+        if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) throw new Error(agentT(locale, 'tasks.secondsInvalid'));
         // 人間の承認待ちになったら待たずに戻る。待つ相手が人間に変わったことを依頼元へ早く伝える
         const pending = () => ACTIVE.has(r.status) && !waiting(r.sessionId);
         if (pending()) await new Promise(resolve => {
@@ -154,11 +157,11 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         return shown(r);
       }
       if (name === 'ply_task_send') {
-        text(args.message, 'message');
+        text(locale, args.message, 'message');
         await update(r.taskId, row => {
-          if (row.status === 'cancelling') throw new Error('停止処理中です。少し待ってください');
-          if (row.queue.length >= 20) throw new Error('追加指示は20件までです');
-          if (!ACTIVE.has(row.status) && Object.values(records).filter(r => ACTIVE.has(r.status)).length >= maxActive) throw new Error('同時実行の上限に達しました');
+          if (row.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
+          if (row.queue.length >= 20) throw new Error(agentT(locale, 'tasks.maxQueued'));
+          if (!ACTIVE.has(row.status) && Object.values(records).filter(r => ACTIVE.has(r.status)).length >= maxActive) throw new Error(agentT(locale, 'tasks.limitReached'));
           row.revision = (row.revision ?? 0) + 1;
           row.queue.push(args.message); row.notification = 'none'; row.error = null;
           if (!live.has(row.taskId) || !ACTIVE.has(row.status)) row.status = 'queued';
@@ -168,7 +171,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (name === 'ply_task_cancel') {
         await this.cancel(r.taskId); return view(r);
       }
-      throw new Error('不明な Pleiad タスクツールです');
+      throw new Error(agentT(locale, 'tasks.unknownTool'));
     },
     async cancel(taskId) {
       const r = records[taskId]; if (!r) return;

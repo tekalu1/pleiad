@@ -5,7 +5,8 @@
 // `AGENT_HOST_BACKENDS=fake` のテストでは**そもそも読み込みたくない**
 // （SDK 無しでサーバが起動できることが、バックエンド抽象化ができている証拠になる）。
 import * as store from "../store.mjs";
-import { wrapBackend, conversationBackend } from "../conversations.mjs";
+import { wrapBackend as wrapNative, conversationBackend } from "../conversations.mjs";
+import { t } from "../i18n.mjs";
 
 // id -> そのモジュールの場所。ここに無い id は無視する（環境変数からの任意 import は許さない）
 const KNOWN = {
@@ -20,17 +21,31 @@ const enabled = new Map();   // id -> backend
 // 対応を終えたバックエンド。その会話は一覧に残し、開いて読めるが続けられない（送信・設定の変更・分岐・切り替えは断る）。
 // 新しい会話の既定や委譲の行き先には出さない（getBackend / listBackends には載らない）。
 export const RETIRED = {
-  procway: { label: "procway-code", notice: "procway-code への対応は終了しました。この会話は続けられません。" },
+  // 告知は言語が実行中に変わるので、読むたびに引く
+  procway: { label: "procway-code", get notice() { return t("backends.retired.procway"); } },
 };
+/**
+ * conversations.mjs の wrapBackend は native をスプレッドで写すので、ゲッター（description など、言語で変わる文言）が
+ * 包んだ時点の値で固まる。ゲッターだけ包んだ側へ付け直し、読むたびに今の言語で引けるようにする
+ */
+function wrapBackend(native) {
+  const wrapped = wrapNative(native);
+  for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(native))) {
+    if (desc.get) Object.defineProperty(wrapped, key, { get: desc.get.bind(native), enumerable: true, configurable: true });
+  }
+  return wrapped;
+}
+
 const retired = new Map(Object.entries(RETIRED).map(([id, info]) => [id, retiredBackend(id, info)]));
 
 /**
  * 対応を終えたバックエンドの代わり。履歴は Pleiad が持っている分（切り替え・分岐で写した会話）だけ読め、
  * エージェントの手元にしか無い履歴は読めない（空）。ターンは始めない。
  */
-function retiredBackend(id, { label, notice }) {
+function retiredBackend(id, info) {
   const native = {
-    id, label, retired: notice,
+    id, label: info.label,
+    get retired() { return info.notice; },
     capabilities: {},
     modes: () => ({}),
     models: async () => ({}),
@@ -42,7 +57,7 @@ function retiredBackend(id, { label, notice }) {
         createdAt: entry.createdAt ?? null, lastModified: entry.lastModified ?? null };
     },
     getMessages: async () => [],
-    runTurn: async () => { throw new Error(notice); },
+    runTurn: async () => { throw new Error(info.notice); },
   };
   const wrapped = wrapBackend(native);
   wrapped.capabilities = { ...wrapped.capabilities, fork: false, forkMessage: false };

@@ -18,7 +18,7 @@ Codex の専用形式も同じ経路で受け取る。
 
 上のコードブロックは説明用。実際の回答ではコードフェンス・インラインコード・リストに入れず出力する。コード例とユーザー発言からファイルを読み込むことはない。Claude の実接続では専用 Unicode 記号が落ちる場合があるため ASCII 形式を使えるようにした。
 
-共通スキルは `skills/visualize/SKILL.md`。ターン開始時に Claude の system prompt append、Codex の developerInstructions に同じ本文を注入する。ネイティブのスキル・指示は既存のコンテキスト設定に従い、可視化の表示契約を追加する。ユーザーのスキルディレクトリを書き換えたり、OpenAI プラグインのコードをコピーしたりしない。
+共通スキルは `skills/visualize/SKILL.md`（英語の会話）と `skills/visualize/SKILL.ja.md`（日本語の会話。参照の形式は同じ。docs/design.md「多言語対応」）。ターン開始時に、会話の言語のものを Claude の system prompt append と Codex の developerInstructions に注入する。ネイティブのスキル・指示は既存のコンテキスト設定に従い、可視化の表示契約を追加する。ユーザーのスキルディレクトリを書き換えたり、OpenAI プラグインのコードをコピーしたりしない。
 
 ## 表示・保存
 

@@ -4,6 +4,8 @@
 // resolvesTo は「既定に従う」で実際に使われる段（分かるときだけ）。その段には isDefault を付ける。
 // 段の候補と既定はモデルの一覧（models()）の efforts / defaultEffort から取る（codex・claude・antigravity・fake）。
 // reason は段を選べないときの理由（'' の行に付ける。画面の無効のスライダーの説明）。
+import { t } from './i18n.mjs';
+
 const levels = {
   claude: ['low', 'medium', 'high', 'xhigh', 'max'],
   fake: ['low', 'medium', 'high'],
@@ -17,9 +19,9 @@ export async function effortOptions(backend, model = '', cwd, endpoint = null) {
   if (endpoint) {
     const off = endpoint.agent === 'claude' && !endpoint.options?.sendThinking;
     const values = off ? [] : endpoint.agent === 'claude' ? levels.claude : ['low', 'medium', 'high'];
-    return Object.fromEntries([['', { label: '既定に従う', note: '接続先の設定を使う',
-      ...(off ? { reason: '送らない（接続先の設定）' } : {}) }],
-      ...values.map(value => [value, { label: value, note: '対応するモデルで使用' }])]);
+    return Object.fromEntries([['', { label: t('models.default'), note: t('effort.useEndpoint'),
+      ...(off ? { reason: t('effort.notSent') } : {}) }],
+      ...values.map(value => [value, { label: value, note: t('effort.supported') }])]);
   }
   let values = levels[backend.id] ?? [];
   let entry = null;
@@ -34,14 +36,14 @@ export async function effortOptions(backend, model = '', cwd, endpoint = null) {
     if (entry?.effortReason) reason = entry.effortReason;
   }
   const fallback = values.includes(entry?.defaultEffort) ? entry.defaultEffort : null;
-  const levelNote = value => entry?.effortNotes?.[value] ?? '対応するモデルで使用';
-  return Object.fromEntries([['', { label: '既定に従う', note: 'エージェント・接続先の設定を使う', ...(fallback ? { resolvesTo: fallback } : {}), ...(reason ? { reason } : {}) }],
+  const levelNote = value => entry?.effortNotes?.[value] ?? t('effort.supported');
+  return Object.fromEntries([['', { label: t('models.default'), note: t('effort.useAgentEndpoint'), ...(fallback ? { resolvesTo: fallback } : {}), ...(reason ? { reason } : {}) }],
     ...values.map(value => [value, { label: value, note: levelNote(value),
       ...(value === fallback ? { isDefault: true } : {}) }])]);
 }
 export async function validateEffort(backend, value, model, cwd, endpoint = null) {
   if (value === '') return value;
   if (typeof value !== 'string' || !Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value))
-    throw new Error('選択したエフォートは使用できません。選び直してください');
+    throw new Error(t('effort.unavailable'));
   return value;
 }

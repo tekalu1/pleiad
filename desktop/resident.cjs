@@ -6,8 +6,6 @@
 //
 // スリープ: 'working' はターンが走っているか承認待ちがある間だけ、'always' はリモートが有効な間ずっと
 // powerSaveBlocker.start('prevent-app-suspension')。画面は消えてよい。リモートが無効なら何もしない。
-const fs = require('node:fs');
-const path = require('node:path');
 
 /** スリープを防ぐべきか */
 function sleepWanted(state) {
@@ -22,23 +20,9 @@ function keepRunning(state) {
   return Boolean(state?.remote && state.keepRunning);
 }
 
-// 文言は web/locales/<言語>/desktop.json。main には i18next を載せないので、差し込み（{{name}}）だけの小さな引き当て
-const dictionaries = new Map();
-function dictionary(lang) {
-  if (!dictionaries.has(lang)) {
-    let data = {};
-    try { data = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'web', 'locales', lang, 'desktop.json'), 'utf8')); } catch {}
-    dictionaries.set(lang, data);
-  }
-  return dictionaries.get(lang);
-}
-function translator(lang) {
-  const pick = (dict, key) => key.split('.').reduce((node, part) => (node && typeof node === 'object' ? node[part] : undefined), dict);
-  return (key, vars = {}) => {
-    const text = pick(dictionary(lang), key) ?? pick(dictionary('en'), key) ?? key;
-    return String(text).replace(/\{\{(\w+)\}\}/g, (_, name) => String(vars[name] ?? ''));
-  };
-}
+// 文言は web/locales/<言語>/desktop.json（desktop/i18n.cjs）。言語はサーバーが送る state.locale（画面の言語）に従う
+const i18n = require('./i18n.cjs');
+const translator = lang => (key, vars = {}) => i18n.t(key, { ...vars, lng: lang });
 
 /**
  * @param deps.Tray / deps.Menu / deps.powerSaveBlocker  Electron のもの（試験では差し替える）

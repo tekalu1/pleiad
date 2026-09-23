@@ -95,12 +95,12 @@ export default async function(t) {
     await client.runTurn({...session,prompt:'echo:first'});
     await owners(kindAs('native'));
     await client.runTurn({...session,prompt:'echo:second'});
-    t.ok('設定変更後も既存セッションは開始時の担当を維持',(await client.cmd('sessionContext',session)).owners.mcp==='ply');
+    t.ok('設定変更後は既存セッションも次のターンから新しい担当に従う',(await client.cmd('sessionContext',session)).owners.mcp==='native');
     const next=await client.cmd('newSession',{cwd,backend:'fake'});await client.runTurn({...next,prompt:'echo:new'});
     t.ok('新しい会話から新しい担当に切り替わる',(await client.cmd('sessionContext',next)).owners.mcp==='native');
     client.close();await host.stop();client=null;host=null;
     host=await startServer({dataDir:path.join(tmp,'data'),env:{AGENT_HOST_BACKENDS:'fake'}});client=await open(host);
-    t.ok('読み込み記録を再起動後に復元',(await client.cmd('sessionContext',session)).owners.mcp==='ply');
+    t.ok('読み込み記録を再起動後に復元',(await client.cmd('sessionContext',session)).owners.mcp==='native');
     // 固定された会話と今のファイルの突き合わせ（会話の入口とコンテキスト画面の「変更あり」）
     await owners(kind=>kind==='instruction'?{owner:'ply',user:none,directory:{sources:['common'],excludePaths:[]}}:kindAs('native'));
     const pinned=await client.cmd('newSession',{cwd,backend:'fake'});await client.runTurn({...pinned,prompt:'echo:pinned'});

@@ -13,9 +13,12 @@
 //   ungrouped       … 人が「グループから外した／解除した」と決めた印。グループは親子と状態から自動で決まるので、
 //                     外したことだけを覚える（docs/design-system.md §4.1）
 //   mode / model    … 承認モードとモデルの記憶（人間だけが変えられる）
+//   agentLocale     … 会話の言語（ja|en）。エージェントに渡す文（指示・ツールの説明・通知）の言語。会話を始めたときに
+//                     画面の言語で決め、以後は変えない（core/server.mjs。docs/design.md「多言語対応」）
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { t } from "./i18n.mjs";
 
 const DIR = process.env.AGENT_HOST_DATA ?? path.join(os.homedir(), ".agent-host");
 const FILE = path.join(DIR, "sessions.json");
@@ -213,7 +216,7 @@ async function resolveFrom(sessionId, entry, field, to, backend) {
  * `from` を渡さない（または null の）場合は直前の値をこちらで補う。
  * `backend` はバックエンドのオブジェクト。from の復元と、行がどこのものかの記録に使う。
  */
-export async function recordChange(sessionId, { by, field, from, to, reason, backend }) {
+export async function recordChange(sessionId, { by, field, from, to, reason, reasonKey, reasonParams, backend }) {
   return exclusive(async () => {
     const all = await load();
     const entry = (all[sessionId] ??= { history: [] });
@@ -229,6 +232,8 @@ export async function recordChange(sessionId, { by, field, from, to, reason, bac
       from: resolved ?? null,
       to: to ?? null,
       reason: reason ?? null,
+      // 新しい記録は理由をキーでも持つ（画面が今の言語で出す。web/saved-text.mjs）。reason は従来どおりの日本語の文
+      ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}),
     });
     if (backend?.id) entry.backend = backend.id;
     // ネイティブに持てるバックエンドでも sidecar に写す。
@@ -309,6 +314,9 @@ export async function inheritSettings(sourceId, childId) {
     // 互換の接続先（core/compat-endpoints.mjs）。分岐は同じエージェントなので、同じ接続先で続ける
     if (source.compatEndpoint) entry.compatEndpoint = source.compatEndpoint;
     else delete entry.compatEndpoint;
+    // 会話の言語（エージェントに渡す文の言語。core/server.mjs）。分岐・切り替えた先も同じ言語で続ける（履歴と同じ言語のまま）
+    if (source.agentLocale) entry.agentLocale = source.agentLocale;
+    else delete entry.agentLocale;
     entry.contextSession = structuredClone(source.contextSession ?? null);
     await flush();
   });
@@ -330,7 +338,7 @@ export const dataDir = DIR;
 
 /** Host-only data; durable before acknowledging the client. Roll back a failed write. */
 export async function setSessionData(sessionId, field, value) {
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint"].includes(field)) throw new Error("不正なセッション設定");
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];

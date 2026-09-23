@@ -13,6 +13,7 @@ import {
   listSubagents as sdkListSubagents, getSubagentMessages as sdkGetSubagentMessages,
 } from "@anthropic-ai/claude-agent-sdk";
 import { claudeAuth } from '../auth/claude-cli.mjs';
+import { t, agentT } from '../i18n.mjs';
 import { readClaudeAccountsUsage } from './claude-usage.mjs';
 import { claudeEnv, redactToken } from '../claude-accounts.mjs';
 import { claudeCompatEnv, writeClaudeFlagSettings, redactSecret } from '../compat-endpoints.mjs';
@@ -67,12 +68,13 @@ const QUESTION_TOOL = "AskUserQuestion";
 // 他のエンジンには YOLO 相当があり、Claude だけ無いと委任のときに「親と同じ強さ」を継げない。
 // そして危険の度合いは軸（full / never / 強制なし）で表せるようになったので、
 // 隠すのではなく「選んだことが見える」形で扱うほうがよい。
+// 表示名と説明は言語が実行中に変わるので、読むたびに引く（ゲッター）
 const MODES = {
-  default:     { label: "都度確認", note: "危険な操作のたびに聞く",              scope: "workspace", autonomy: "ask",   enforced: false },
-  auto:        { label: "auto",     note: "モデルの分類器が判断し、迷うものだけ聞く", scope: "workspace", autonomy: "judge", enforced: false },
-  acceptEdits: { label: "編集は自動", note: "ファイル編集は自動、他は聞く",         scope: "workspace", autonomy: "judge", enforced: false },
-  plan:        { label: "計画のみ", note: "ツールを実行しない",                  scope: "none",      autonomy: "ask",   enforced: false },
-  bypass:      { label: "YOLO",     note: "確認なし・制限なし。Claude Code の権限層を通さない", scope: "full", autonomy: "never", enforced: false },
+  default:     { get label() { return t("modes.ask"); },         get note() { return t("claude.modes.defaultNote"); },     scope: "workspace", autonomy: "ask",   enforced: false },
+  auto:        { label: "auto",                                  get note() { return t("claude.modes.autoNote"); },        scope: "workspace", autonomy: "judge", enforced: false },
+  acceptEdits: { get label() { return t("modes.acceptEdits"); }, get note() { return t("claude.modes.acceptEditsNote"); }, scope: "workspace", autonomy: "judge", enforced: false },
+  plan:        { get label() { return t("modes.plan"); },        get note() { return t("claude.modes.planNote"); },        scope: "none",      autonomy: "ask",   enforced: false },
+  bypass:      { label: "YOLO",                                  get note() { return t("claude.modes.bypassNote"); },      scope: "full", autonomy: "never", enforced: false },
 };
 
 // SDK の PermissionMode 名。食い違うのは bypass だけ。
@@ -158,26 +160,29 @@ async function claudeModels(cwd) {
 // web/render.mjs の TOOL_LABEL / TOOL_DRAW を補うヒント。
 // render.mjs は Claude の名前を既に知っているので、ここは「同じものを別経路でも渡せる」
 // ことの担保でもある（codex はこれしか手がかりが無い）。
+// label は言語が実行中に変わるので、読むたびに辞書（server の tools.*）から引く
+// i18n-dynamic: tools.
+const hint = (key, shape) => ({ get label() { return t(`tools.${key}`); }, shape });
 const TOOL_HINTS = {
-  Bash:         { label: "実行",     shape: "shell" },
-  PowerShell:   { label: "実行",     shape: "shell" },
-  Read:         { label: "読む",     shape: "read" },
-  Write:        { label: "書く",     shape: "write" },
-  Edit:         { label: "編集",     shape: "edit" },
-  MultiEdit:    { label: "編集",     shape: "edit" },
-  NotebookEdit: { label: "編集",     shape: "edit" },
-  Glob:         { label: "探す",     shape: "search" },
-  Grep:         { label: "検索",     shape: "search" },
-  Task:         { label: "委譲",     shape: "delegate" },
-  Agent:        { label: "委譲",     shape: "delegate" },
-  WebFetch:     { label: "取得",     shape: "web" },
-  WebSearch:    { label: "web検索",  shape: "web" },
-  TodoWrite:    { label: "TODO",     shape: "generic" },
-  mcp__host__present:    { label: "提示",     shape: "generic" },
-  mcp__ply__present:     { label: "提示",     shape: "generic" },
-  mcp__host__set_status: { label: "状態",     shape: "generic" },
-  mcp__host__set_title:  { label: "タイトル", shape: "generic" },
-  mcp__host__fork:       { label: "分岐",     shape: "generic" },
+  Bash:         hint("run", "shell"),
+  PowerShell:   hint("run", "shell"),
+  Read:         hint("read", "read"),
+  Write:        hint("write", "write"),
+  Edit:         hint("edit", "edit"),
+  MultiEdit:    hint("edit", "edit"),
+  NotebookEdit: hint("edit", "edit"),
+  Glob:         hint("find", "search"),
+  Grep:         hint("search", "search"),
+  Task:         hint("delegate", "delegate"),
+  Agent:        hint("delegate", "delegate"),
+  WebFetch:     hint("fetch", "web"),
+  WebSearch:    hint("webSearch", "web"),
+  TodoWrite:    { label: "TODO", shape: "generic" },
+  mcp__host__present:    hint("present", "generic"),
+  mcp__ply__present:     hint("present", "generic"),
+  mcp__host__set_status: hint("status", "generic"),
+  mcp__host__set_title:  hint("title", "generic"),
+  mcp__host__fork:       hint("fork", "generic"),
 };
 
 // ---------------------------------------------------------------- host ツール
@@ -185,9 +190,10 @@ const TOOL_HINTS = {
 // 人間の操作（server.mjs のコマンド）と同じ store・同じイベントを通る。
 
 /**
- * ctx = { sessionId, emit(event) }
+ * ctx = { sessionId, emit(event), locale }
  * sessionId は新規セッションだと init メッセージまで確定しないので、
  * ctx を書き換えられるオブジェクトとして渡す（runTurn が差し替える）。
+ * 説明・引数の説明・返り値はエージェントが読むので、会話の言語（ctx.locale）で引く（agent 名前空間）
  */
 function buildToolServer(ctx) {
   // 応答は CLI の stdin を通る。走っている間は入力を閉じさせない（claude-background.mjs）
@@ -198,16 +204,15 @@ function buildToolServer(ctx) {
     tools: [
       tool(
         "set_status",
-        "このセッションの状態を設定する。事前定義された一覧は無く、その場に合う語を自由に決めてよい。" +
-          "既に使われている状態があれば揃えるほうが一覧が読みやすいが、強制ではない。",
+        agentT(ctx.locale, 'host.setStatus.description'),
         {
-          status: z.string().describe("状態を表す短い語（例: 進行中 / レビュー待ち / 保留）"),
-          reason: z.string().optional().describe("なぜ変えたか。履歴に残る"),
-          icon: z.string().optional().describe("この状態のグループに付けるアイコン（記号 1 つ）。省略すると今のまま"),
+          status: z.string().describe(agentT(ctx.locale, 'host.setStatus.status')),
+          reason: z.string().optional().describe(agentT(ctx.locale, 'host.setStatus.reason')),
+          icon: z.string().optional().describe(agentT(ctx.locale, 'host.setStatus.icon')),
         },
         hosted("mcp__host__set_status", async (args) => {
           const sessionId = ctx.hostSessionId ?? ctx.sessionId;
-          if (!sessionId) return { content: [{ type: "text", text: "セッションIDが未確定" }] };
+          if (!sessionId) return { content: [{ type: "text", text: agentT(ctx.locale, 'host.sessionPending') }] };
           await (ctx.hostBackend ?? backend).setTag(sessionId, args.status);
           await store.recordChange(sessionId, {
             by: "ai", field: "status", to: args.status, reason: args.reason, backend,
@@ -218,41 +223,39 @@ function buildToolServer(ctx) {
             const icon = await store.setStatusIcon(args.status, args.icon);
             ctx.emit({ type: "statusIcon", sessionId: null, status: args.status, icon });
           }
-          return { content: [{ type: "text", text: `状態を「${args.status}」にした` }] };
+          return { content: [{ type: "text", text: agentT(ctx.locale, 'host.setStatus.done', { status: args.status }) }] };
         }),
       ),
 
       tool(
         "set_title",
-        "このセッションのタイトルを変更する。話の主題が変わったときに使う。" +
-          "毎ターン勝手に書き換えてはいけない（ユーザーが追えなくなる）。意図して変えるときだけ。",
+        agentT(ctx.locale, 'host.setTitle.description'),
         {
           title: z.string(),
-          reason: z.string().optional().describe("なぜ変えたか。履歴に残る"),
+          reason: z.string().optional().describe(agentT(ctx.locale, 'host.setTitle.reason')),
         },
         hosted("mcp__host__set_title", async (args) => {
           const sessionId = ctx.hostSessionId ?? ctx.sessionId;
-          if (!sessionId) return { content: [{ type: "text", text: "セッションIDが未確定" }] };
+          if (!sessionId) return { content: [{ type: "text", text: agentT(ctx.locale, 'host.sessionPending') }] };
           await (ctx.hostBackend ?? backend).setTitle(sessionId, args.title);
           await store.recordChange(sessionId, {
             by: "ai", field: "title", to: args.title, reason: args.reason, backend,
           });
           ctx.emit({ type: "title", sessionId, title: args.title, by: "ai", reason: args.reason ?? null });
-          return { content: [{ type: "text", text: `タイトルを「${args.title}」にした` }] };
+          return { content: [{ type: "text", text: agentT(ctx.locale, 'host.setTitle.done', { title: args.title }) }] };
         }),
       ),
 
       tool(
         "fork",
-        "この会話をここまで引き継いだ別のセッションを作る。話が別の筋に入るときに使う。" +
-          "元のセッションはそのまま残り、両方が一覧に並ぶ。人間も同じことができる。",
+        agentT(ctx.locale, 'host.fork.description'),
         {
-          title: z.string().optional().describe("分岐先のタイトル。省略すると元タイトル + (fork)"),
-          reason: z.string().optional().describe("なぜ分けたか。履歴に残る"),
+          title: z.string().optional().describe(agentT(ctx.locale, 'host.fork.title')),
+          reason: z.string().optional().describe(agentT(ctx.locale, 'host.fork.reason')),
         },
         hosted("mcp__host__fork", async (args) => {
           const sessionId = ctx.hostSessionId ?? ctx.sessionId;
-          if (!sessionId) return { content: [{ type: "text", text: "セッションIDが未確定" }] };
+          if (!sessionId) return { content: [{ type: "text", text: agentT(ctx.locale, 'host.sessionPending') }] };
           const { sessionId: child } = ctx.hostBackend
             ? await ctx.hostBackend.fork(sessionId, { title: args.title })
             : await forkSession(sessionId, { title: args.title });
@@ -265,7 +268,7 @@ function buildToolServer(ctx) {
             by: "ai", field: "parent", to: parent, reason: args.reason ?? "fork", backend,
           });
           ctx.emit({ type: "fork", sessionId: child, parent, by: "ai", reason: args.reason ?? null });
-          return { content: [{ type: "text", text: `分岐した（${child}）。この会話は元のまま続く。` }] };
+          return { content: [{ type: "text", text: agentT(ctx.locale, 'host.fork.done', { sessionId: child }) }] };
         }),
       ),
     ],
@@ -288,15 +291,17 @@ function buildToolServer(ctx) {
  */
 function makeCanUseTool(ctx, askPermission) {
   return async (toolName, input, options) =>
+    // i18n-ignore: サーバーのログにだけ出る名前（claude-background.mjs の createHostCalls）
     ctx.hostCalls ? ctx.hostCalls.run(`${toolName} の承認`, () => decidePermission(ctx, askPermission, toolName, input, options))
       : decidePermission(ctx, askPermission, toolName, input, options);
 }
 
+// deny の理由はツールの結果としてエージェントに返る（画面のツールの結果にも出る）。会話の言語（ctx.locale）で
 async function decidePermission(ctx, askPermission, toolName, input, options) {
   if (AUTO_ALLOW.has(toolName)) return { behavior: "allow", updatedInput: input };
 
   if (typeof askPermission !== "function") {
-    return { behavior: "deny", message: `${toolName} は承認先が無いので実行できない` };
+    return { behavior: "deny", message: agentT(ctx.locale, 'approval.noHandler', { tool: toolName }) };
   }
 
   const isQuestion = toolName === QUESTION_TOOL && Array.isArray(input?.questions);
@@ -318,11 +323,11 @@ async function decidePermission(ctx, askPermission, toolName, input, options) {
       questions: isQuestion ? input.questions : null,
     });
   } catch (err) {
-    return { behavior: "deny", message: `承認を取れなかった: ${String(err?.message ?? err)}` };
+    return { behavior: "deny", message: agentT(ctx.locale, 'approval.failed', { error: String(err?.message ?? err) }) };
   }
 
   if (!answer?.allow) {
-    return { behavior: "deny", message: answer?.message || "ユーザーが許可しなかった" };
+    return { behavior: "deny", message: answer?.message || agentT(ctx.locale, 'approval.notAllowed') };
   }
 
   // AskUserQuestion のように、承認そのものではなく**回答**を運ぶツールがある。
@@ -453,7 +458,7 @@ export const backend = {
   usage: ({ accounts, loginLabel } = {}) => readClaudeAccountsUsage({ accounts, loginLabel }),
   id: "claude",
   label: "Claude Code",
-  description: "公式サブスク認証 · スキル・MCP 連携に対応",
+  get description() { return t("claude.description"); },
 
   capabilities: {
     title: true,       // renameSession / customTitle。公式 CLI・VS Code と共有される
@@ -494,8 +499,9 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, contextRuntime, agentRuntime, oauthToken, endpoint = null }) {
-    const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend };
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, contextRuntime, agentRuntime, oauthToken, endpoint = null, locale }) {
+    // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
+    const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, locale };
     let releaseContext;
     const readyContext = new Promise(resolve => { releaseContext = resolve; });
     const userMessage = (text) => ({ type: 'user', session_id: ctx.sessionId ?? '', parent_tool_use_id: null, message: { role: 'user', content: String(text ?? '') } });
@@ -759,12 +765,12 @@ export const backend = {
         await q.initializationResult();
         if (contextRuntime.owners.instruction === 'ply') {
           const usage = await q.getContextUsage({ detail: 'summary' });
-          if (usage.memoryFiles?.length) throw new Error('Claude のネイティブ指示を停止できませんでした。会話への送信を中止しました');
+          if (usage.memoryFiles?.length) throw new Error(t('claude.errors.nativeInstructions'));
         }
         if (contextRuntime.owners.mcp === 'ply') {
           const native = await q.mcpServerStatus();
           const left = unexpectedNativeMcp(native, Object.keys(plyServers));
-          if (left.length) throw new Error(`Claude のネイティブ MCP を停止できませんでした（${left.join('、')}）`);
+          if (left.length) throw new Error(t('claude.errors.nativeMcp', { names: left.join(t('claude.listSeparator')) }));
         }
         releaseContext();
       }
@@ -777,8 +783,7 @@ export const backend = {
         // （作業ディレクトリを変えて再開したときに起きうる。CLI は cwd のプロジェクトを探す）。
         // 黙って別のセッションに書き続けるより、止めて知らせる
         if (sessionId && message.session_id && message.session_id !== sessionId) {
-          throw new Error(`Claude Code がセッション ${sessionId} を引き継げず、別のセッション ${message.session_id} を始めた。`
-            + "作業ディレクトリを変えた再開は Claude Code 側で見つけられないことがある。元のディレクトリに戻すか、分岐して続ける");
+          throw new Error(t('claude.errors.resumeMismatch', { expected: sessionId, actual: message.session_id }));
         }
         if (message.session_id && ctx.sessionId !== message.session_id) {
           ctx.sessionId = message.session_id;
@@ -846,8 +851,8 @@ export const backend = {
    */
   async stopBackground(sessionId, taskId) {
     const q = liveQueries.get(sessionId);
-    if (!q) throw new Error("この会話のターンはもう走っていない（裏のコマンドは CLI ごと終わっている）");
-    if (typeof q.stopTask !== "function") throw new Error("この Claude Code は裏のコマンドを止められません。`claude update` で更新してください");
+    if (!q) throw new Error(t("claude.errors.turnNotRunning"));
+    if (typeof q.stopTask !== "function") throw new Error(t("claude.errors.stopUnsupported"));
     await q.stopTask(taskId);
     return { stopped: true };
   },
@@ -919,13 +924,12 @@ export const backend = {
    * 道具も設定も要らないので settingSources / allowedTools を切って軽く回す。
    * 返すのは生成された生のテキスト。前後の記号を落とす整形は server 側（バックエンド非依存）。
    */
-  async suggestTitle({ transcript, oauthToken, endpoint = null }) {
+  // locale は会話の言語。タイトルもその言語で作らせる
+  async suggestTitle({ transcript, oauthToken, endpoint = null, locale }) {
     let title = "";
     try {
       for await (const m of query({
-        prompt:
-          "次は作業ログの冒頭です。この作業を表す短い日本語のタイトルを1つだけ返してください。" + NL +
-          "20文字以内。記号や引用符で囲まず、タイトルだけを返すこと。" + NL + NL + transcript,
+        prompt: agentT(locale, 'title.claude') + NL + NL + transcript,
         options: {
           pathToClaudeCodeExecutable: claudeExecutable(), model: "haiku", settingSources: [], allowedTools: [], permissionMode: "default",
           // その会話で選んだアカウントで回す。選んでいなければ env を渡さない（今までどおり SDK が process.env を使う）。

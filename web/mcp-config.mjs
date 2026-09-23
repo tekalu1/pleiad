@@ -5,7 +5,7 @@
 //   どれを使うか、Pleiad に登録したものはログイン・編集・名前の変更・削除・ログアウト・接続の確認、エージェントの登録は「Pleiad に取り込む」。
 // 登録は Pleiad 自身の設定（core/ply-mcp.mjs）。Claude や Codex の設定ファイルは書き換えない。秘密は伏せ字（••••）でしか返ってこない。
 import { el } from './dom.mjs';
-import { fmt, t } from './i18n.mjs';
+import { t, fmt } from './i18n.mjs';
 import { codeBlock, langFromPath } from './render.mjs';
 import { createCombo } from './combo.mjs';
 import { closeIcon } from './icons.mjs';
@@ -23,7 +23,11 @@ function withPlus(b, text) {
 const MASK = '••••';
 const AGENTS = [['claude', 'Claude'], ['codex', 'Codex']];
 const agentName = id => AGENTS.find(([k]) => k === id)?.[1] ?? id;
-const STATES = { 'signed-in': 'ログイン済み', 'signed-out': 'ログインが必要', expired: 'ログインが必要（期限切れ）', pending: 'ブラウザでログイン中', locked: 'この起動では鍵を開けません', error: 'ログインの状態を確認できません' };
+const STATES = { 'signed-in': t('mcp.state.signedIn'), 'signed-out': t('mcp.state.signedOut'), expired: t('mcp.state.expired'), pending: t('mcp.state.pending'), locked: t('mcp.state.locked'), error: t('mcp.state.error') };
+/** つなぎ方の短い名前 */
+const transportText = kind => kind === 'stdio' ? t('mcp.transport.stdio') : t('mcp.transport.url');
+/** エージェントの名前を並べる（Claude・Codex） */
+const agentList = ids => ids.map(agentName).join(t('mcp.join'));
 
 function button(text, className = 'btn', onClick) {
   const b = el('button', className, text);
@@ -33,7 +37,7 @@ function button(text, className = 'btn', onClick) {
 }
 function icon(kind) {
   const box = el('span', 'cx-ic');
-  box.title = kind === 'stdio' ? '手元で動かす' : 'URL につなぐ';
+  box.title = transportText(kind);
   box.innerHTML = kind === 'stdio'
     ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 8 4 4-4 4M12 16h7"/></svg>'
     : '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16"/></svg>';
@@ -75,7 +79,7 @@ export function createMcpSection() {
 
   /** エージェント任せ: 各エージェントの登録を並べる（Pleiad は読むだけ） */
   function renderAgents(block, ctx) {
-    block.append(el('p', 'cx-sub', '各エージェントの設定に登録されているもの（Pleiad は読むだけで変えません）'));
+    block.append(el('p', 'cx-sub', t('mcp.agents.lead')));
     if (!ctx.agents) { block.append(ctx.loading()); return; }
     const lists = Object.fromEntries(AGENTS.map(([id]) => [id, ctx.agents.agents?.[id] ?? []]));
     const shown = AGENTS;
@@ -83,23 +87,23 @@ export function createMcpSection() {
     for (const [id, label] of shown) {
       const col = el('div', 'cx-col');
       col.append(el('b', null, label));
-      if (!lists[id].length) col.append(el('span', 'cx-sub', '登録はありません'));
+      if (!lists[id].length) col.append(el('span', 'cx-sub', t('mcp.agents.none')));
       for (const s of lists[id]) {
         const line = el('div', 'nm2');
         line.append(el('span', 'cx-dot off'), el('span', 'n', s.name));
-        if (shown.length > 1 && shown.filter(([o]) => o !== id).every(([o]) => !lists[o].some(x => x.name === s.name))) line.append(el('span', 'only', `${label} だけ`));
-        if (s.disabled) line.append(el('span', 'only', '無効'));
-        line.title = `${s.transport === 'stdio' ? '手元で動かす' : 'URL につなぐ'} · ${ctx.short(s.path)}`;
+        if (shown.length > 1 && shown.filter(([o]) => o !== id).every(([o]) => !lists[o].some(x => x.name === s.name))) line.append(el('span', 'only', t('mcp.agents.only', { agent: label })));
+        if (s.disabled) line.append(el('span', 'only', t('mcp.agents.disabled')));
+        line.title = `${transportText(s.transport)} · ${ctx.short(s.path)}`;
         col.append(line);
       }
       cols.append(col);
     }
-    block.append(cols, el('p', 'cx-sub', 'エージェントを切り替えると使える MCP が変わります。そろえたいときは「Pleiad がそろえる」へ'));
+    block.append(cols, el('p', 'cx-sub', t('mcp.agents.foot')));
   }
 
   /** Pleiad がそろえる: 名前ごとの一覧・追加・読み込む設定ファイル */
   function renderPly(block, ctx, value) {
-    const label = el('p', 'cx-sub', ctx.isDefault ? '既定でつなぐもの' : 'この場所でつなぐもの');
+    const label = el('p', 'cx-sub', ctx.isDefault ? t('mcp.listDefault') : t('mcp.list'));
     block.append(label);
     if (!ctx.scan) { block.append(ctx.loading()); return; }
     const groups = new Map();
@@ -119,20 +123,20 @@ export function createMcpSection() {
       const open = button('', 'cx-open');
       const key = `mcp:${name}`;
       open.setAttribute('aria-expanded', String(ctx.opened.has(key)));
-      const t = el('span', 't');
-      t.append(el('span', 'nm', name));
+      const body = el('span', 't');
+      body.append(el('span', 'nm', name));
       const p = el('span', 'p');
       describe(p, { entries, shown, fromPly, registry, active, nativeOff, disabledByName, value });
-      t.append(p);
-      open.append(icon(shown.transport === 'stdio' ? 'stdio' : 'http'), t);
+      body.append(p);
+      open.append(icon(shown.transport === 'stdio' ? 'stdio' : 'http'), body);
       open.onclick = () => { if (ctx.opened.has(key)) ctx.opened.delete(key); else ctx.opened.add(key); ctx.rerender(); };
       row.append(open);
       const reg = fromPly ? registry.get(name) : null;
-      if (active && reg?.auth === 'oauth' && ['signed-out', 'expired'].includes(reg.authStatus?.state) && !remoteWindow()) row.append(button('ログイン', 'btn btn-quiet', () => login(ctx, name)));
+      if (active && reg?.auth === 'oauth' && ['signed-out', 'expired'].includes(reg.authStatus?.state) && !remoteWindow()) row.append(button(t('mcp.login'), 'btn btn-quiet', () => login(ctx, name)));
       const sw = button('', 'cx-sw');
-      sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(Boolean(active))); sw.setAttribute('aria-label', `${name} をつなぐ`);
+      sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(Boolean(active))); sw.setAttribute('aria-label', t('mcp.switchAria', { name }));
       sw.disabled = nativeOff;
-      if (nativeOff) sw.title = '元の設定で無効になっています（Pleiad は変えません）';
+      if (nativeOff) sw.title = t('mcp.nativeOffTitle');
       sw.onclick = () => { sw.setAttribute('aria-checked', String(!active)); ctx.saveKind(v => toggle(v, name, entries, !active, ctx)); };
       row.append(sw);
       list.append(row);
@@ -140,17 +144,17 @@ export function createMcpSection() {
       if (choice) list.append(choice);
       if (ctx.opened.has(key)) list.append(peek(ctx, name, entries, fromPly, reg));
     }
-    if (!groups.size) list.append(el('p', 'cx-empty', 'つなぐ MCP はまだありません。「＋ MCP を追加」から登録するか、読み込む設定ファイルを選んでください'));
-    label.append(' ', el('span', 'n', `${on} 件`));
+    if (!groups.size) list.append(el('p', 'cx-empty', t('mcp.empty')));
+    label.append(' ', el('span', 'n', t('mcp.count', { count: on })));
     block.append(list);
     const foot = el('div', 'cx-foot');
-    foot.append(withPlus(button('', 'btn btn-quiet', () => openSheet(ctx)), 'MCP を追加'), el('span', 'cx-sub', '行を押すと中身の確認・編集（鍵やトークンは伏せて表示）'));
+    foot.append(withPlus(button('', 'btn btn-quiet', () => openSheet(ctx)), t('mcp.add')), el('span', 'cx-sub', t('mcp.rowHint')));
     block.append(foot);
-    if (ctx.ply?.storage && ctx.ply.storage.encrypted === false) block.append(el('p', 'cx-note', `この起動では鍵の保管庫を使えないため、トークンや鍵は所有者だけが読める権限の平文で保存します（${ctx.ply.storage.reason ?? '暗号化できない起動'}）。Pleiad デスクトップで開き直すと暗号化し直します。`));
+    if (ctx.ply?.storage && ctx.ply.storage.encrypted === false) block.append(el('p', 'cx-note', t('mcp.storage.plainList', { reason: ctx.ply.storage.reason ?? t('mcp.storage.noEncryption') })));
     const files = el('details', 'cx-fold');
-    files.append(el('summary', null, '読み込む設定ファイル'));
+    files.append(el('summary', null, t('mcp.files.summary')));
     const filesBlock = el('div', 'cx-block');
-    filesBlock.append(el('p', 'cx-sub', 'Claude・Codex の設定に登録された MCP も、ここで選んだものは一覧に並びます。同じ名前なら Pleiad に登録したものが優先します。'), ctx.sourceChips(value));
+    filesBlock.append(el('p', 'cx-sub', t('mcp.files.desc')), ctx.sourceChips(value));
     files.append(filesBlock);
     block.append(files, advanced(ctx));
   }
@@ -160,26 +164,27 @@ export function createMcpSection() {
     const reg = fromPly ? registry.get(shown.name) : null;
     if (reg?.auth === 'oauth') {
       const state = reg.authStatus?.state;
-      const text = STATES[state] ?? 'ログインの状態を確認できません';
+      const text = STATES[state] ?? STATES.error;
       bits.push(['signed-out', 'expired'].includes(state) ? el('span', 'cx-strong', text) : text);
-      if (reg.authStatus?.needsScope) bits.push(el('span', 'cx-strong', '追加の権限が必要'));
+      if (reg.authStatus?.needsScope) bits.push(el('span', 'cx-strong', t('mcp.describe.needsScope')));
     }
-    bits.push(shown.transport === 'stdio' ? '手元で動かす' : 'URL につなぐ');
-    if (reg?.auth === 'bearer') bits.push('トークン');
-    if (reg?.auth === 'headers') bits.push('ヘッダー');
-    if (reg?.pending?.length) bits.push(el('span', 'cx-strong', '未入力の値あり'));
+    bits.push(transportText(shown.transport));
+    if (reg?.auth === 'bearer') bits.push(t('mcp.auth.token'));
+    if (reg?.auth === 'headers') bits.push(t('mcp.auth.headers'));
+    if (reg?.pending?.length) bits.push(el('span', 'cx-strong', t('mcp.describe.pending')));
     const sources = [...new Set(entries.flatMap(e => e.origins?.map(o => o.source) ?? []))];
-    if (fromPly) bits.push(sources.length > 1 ? `Pleiad に登録（${sources.filter(s => s !== 'ply').map(agentName).join('・')} の同名より優先）` : 'Pleiad に登録');
-    else if (sources.length === 1) bits.push(`${agentName(sources[0])} だけに登録`);
-    else bits.push(sources.length === 2 ? `${agentName(sources[0])} と ${agentName(sources[1])} の両方に登録` : `${sources.map(agentName).join('・')} に登録`);
+    if (fromPly) bits.push(sources.length > 1 ? t('mcp.describe.plyOver', { agents: agentList(sources.filter(s => s !== 'ply')) }) : t('mcp.describe.ply'));
+    else if (sources.length === 1) bits.push(t('mcp.describe.only', { agent: agentName(sources[0]) }));
+    else bits.push(sources.length === 2 ? t('mcp.describe.both', { a: agentName(sources[0]), b: agentName(sources[1]) }) : t('mcp.describe.many', { agents: agentList(sources) }));
     const defs = new Set(entries.filter(e => e.status === 'candidate' || e.shadowedBy === 'choice').map(signature));
     if (!fromPly && defs.size > 1) {
       // どちらを使うか: 選んだ定義（prefer）、無ければ先に見つかった方（core/context-scan.mjs）
       const picked = active && value?.prefer?.[shown.name] && within(value.prefer[shown.name], active.path);
-      bits.push(active ? `同じ名前で定義が ${defs.size} つ · ${agentName(active.origins?.[0]?.source)} の設定の方を使用（${picked ? '選んだもの' : '先に見つかった方'}）` : `同じ名前で定義が ${defs.size} つ`);
+      bits.push(active ? t('mcp.describe.defsUsing', { n: defs.size, agent: agentName(active.origins?.[0]?.source), by: picked ? t('mcp.describe.byPicked') : t('mcp.describe.byFirst') })
+        : t('mcp.describe.defs', { n: defs.size }));
     }
-    if (nativeOff) bits.push('元の設定で無効');
-    else if (!active && !disabledByName) bits.push('外しています');
+    if (nativeOff) bits.push(t('mcp.describe.nativeOff'));
+    else if (!active && !disabledByName) bits.push(t('mcp.describe.excluded'));
     if (reg?.authStatus?.message && !reg.authStatus.needsScope) bits.push(reg.authStatus.message);
     const message = messages.get(shown.name);
     if (message) bits.push(message);
@@ -208,8 +213,8 @@ export function createMcpSection() {
     if (entries.some(e => e.origins?.[0]?.source === 'ply')) return null;
     const usable = entries.filter(e => e.status === 'candidate' || e.shadowedBy === 'choice');
     if (new Set(usable.map(signature)).size < 2) return null;
-    const box = el('div', 'cx-choice'); box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', `${name} の定義を選ぶ`);
-    box.append(el('span', null, 'どちらの定義を使いますか（選ばなければ先に見つかった方）'));
+    const box = el('div', 'cx-choice'); box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', t('mcp.choice.aria', { name }));
+    box.append(el('span', null, t('mcp.choice.lead')));
     // 中身が同じものは 1 行にまとめる（同じ定義を複数のエージェントに登録しているだけなので、選ばせる意味がない）
     const groups = new Map();
     for (const e of usable) groups.set(signature(e), [...(groups.get(signature(e)) ?? []), e]);
@@ -217,9 +222,9 @@ export function createMcpSection() {
       const e = list[0], label = el('label'), input = el('input');
       input.type = 'radio'; input.name = `mcp-choice-${name}`; input.checked = list.some(x => x.status === 'candidate');
       input.onchange = () => ctx.saveKind(v => { v.prefer = { ...(v.prefer ?? {}), [name]: e.path }; });
-      const sources = [...new Set(list.flatMap(x => x.origins?.map(o => o.source) ?? []))].map(agentName);
-      const how = e.transport === 'stdio' ? `${joinCommand(e.command, e.args)}（手元）` : e.endpoint ?? '';
-      label.append(input, document.createTextNode(`${sources.join('・')} の設定`), el('span', 'cx-mono', how.length > 72 ? `${how.slice(0, 72)}…` : how));
+      const sources = [...new Set(list.flatMap(x => x.origins?.map(o => o.source) ?? []))];
+      const how = e.transport === 'stdio' ? t('mcp.choice.local', { command: joinCommand(e.command, e.args) }) : e.endpoint ?? '';
+      label.append(input, document.createTextNode(t('mcp.choice.settings', { agents: agentList(sources) })), el('span', 'cx-mono', how.length > 72 ? `${how.slice(0, 72)}…` : how));
       label.title = list.map(x => ctx.short(x.path)).join(', ');
       box.append(label);
     }
@@ -232,29 +237,29 @@ export function createMcpSection() {
     if (fromPly && reg) {
       const facts = el('div', 'fm facts');
       const put = (k, v) => { if (v) facts.append(el('span', 'k', k), el('span', 'v', v)); };
-      put('つなぎ方', reg.transport === 'stdio' ? '手元で動かす' : reg.transport === 'sse' ? 'URL につなぐ（SSE）' : 'URL につなぐ');
-      put('接続先', reg.url ?? null);
-      put('認証', { none: 'なし', bearer: 'トークン', headers: `ヘッダー（${(reg.headerNames ?? []).join(', ')}）`, oauth: 'ブラウザでログイン' }[reg.auth] ?? reg.auth);
-      if (reg.envKeys?.length) put('環境変数', reg.envKeys.map(k => `${k}=${MASK}`).join('  '));
-      if (reg.authStatus?.expiresAt) put('期限', fmt.dateTime(reg.authStatus.expiresAt));
+      put(t('mcp.fact.transport'), reg.transport === 'stdio' ? t('mcp.transport.stdio') : reg.transport === 'sse' ? t('mcp.transport.sse') : t('mcp.transport.url'));
+      put(t('mcp.fact.endpoint'), reg.url ?? null);
+      put(t('mcp.fact.auth'), { none: t('mcp.auth.none'), bearer: t('mcp.auth.token'), headers: t('mcp.auth.headersWith', { names: (reg.headerNames ?? []).join(', ') }), oauth: t('mcp.auth.oauth') }[reg.auth] ?? reg.auth);
+      if (reg.envKeys?.length) put(t('mcp.fact.env'), reg.envKeys.map(k => `${k}=${MASK}`).join('  '));
+      if (reg.authStatus?.expiresAt) put(t('mcp.fact.expires'), fmt.dateTime(reg.authStatus.expiresAt));
       box.append(facts);
       const acts = el('div', 'acts');
-      acts.append(button('編集', 'btn', () => ctx.work(async () => openSheet(ctx, await ctx.cmd('readPlyMcp', { name })))));
-      acts.append(button('名前を変える', 'btn', () => renameLine(box, ctx, name)));
+      acts.append(button(t('mcp.edit'), 'btn', () => ctx.work(async () => openSheet(ctx, await ctx.cmd('readPlyMcp', { name })))));
+      acts.append(button(t('mcp.rename'), 'btn', () => renameLine(box, ctx, name)));
       if (reg.auth === 'oauth') {
         if (remoteWindow()) box.append(el('p', 'remote-login-note', t('remote.loginOnHost')));
-        else acts.append(button(reg.authStatus?.state === 'signed-in' ? 'ログインし直す' : 'ログイン', 'btn', () => login(ctx, name)));
-        if (reg.authStatus?.state === 'signed-in') acts.append(button('ログアウト', 'btn', () => ctx.work(async () => {
+        else acts.append(button(reg.authStatus?.state === 'signed-in' ? t('mcp.loginAgain') : t('mcp.login'), 'btn', () => login(ctx, name)));
+        if (reg.authStatus?.state === 'signed-in') acts.append(button(t('mcp.logout'), 'btn', () => ctx.work(async () => {
           const r = await ctx.cmd('mcpAuthLogout', { name });
-          messages.set(name, r.revoked ? 'ログアウトしました（トークンを失効）' : 'ログアウトしました');
+          messages.set(name, r.revoked ? t('mcp.loggedOutRevoked') : t('mcp.loggedOut'));
           await ctx.reload();
         })));
       }
-      acts.append(button('接続を確認', 'btn', () => check(ctx, name)));
-      const del = button('削除', 'btn');
+      acts.append(button(t('mcp.check'), 'btn', () => check(ctx, name)));
+      const del = button(t('mcp.delete'), 'btn');
       let armed = null;
       del.onclick = () => {
-        if (!armed) { del.textContent = 'もう一度押すと削除'; armed = setTimeout(() => { armed = null; del.textContent = '削除'; }, 3000); return; }
+        if (!armed) { del.textContent = t('mcp.deleteConfirm'); armed = setTimeout(() => { armed = null; del.textContent = t('mcp.delete'); }, 3000); return; }
         clearTimeout(armed);
         ctx.work(async () => { await ctx.cmd('deletePlyMcp', { name }); messages.delete(name); ctx.opened.delete(`mcp:${name}`); await ctx.reload(); ctx.toast(); });
       };
@@ -266,32 +271,32 @@ export function createMcpSection() {
     for (const e of entries) {
       const config = ctx.scan.configs?.find(c => pathKey(c.path) === pathKey(e.path));
       const line = el('div', 'row-line');
-      line.append(el('span', 'cx-path', `${agentName(e.origins?.[0]?.source)} の設定 · ${ctx.short(e.path)}`));
+      line.append(el('span', 'cx-path', t('mcp.peek.config', { agent: agentName(e.origins?.[0]?.source), path: ctx.short(e.path) })));
       box.append(line);
       if (config) { const code = el('div'); code.innerHTML = codeBlock(excerpt(config, name), langFromPath(config.path)); box.append(code); }
     }
-    box.append(el('p', 'msg', '環境変数とヘッダーの値、URL のクエリは伏せています。'));
+    box.append(el('p', 'msg', t('mcp.peek.masked')));
     const importable = entries.find(e => ['claude', 'codex'].includes(e.origins?.[0]?.source) && (e.status === 'candidate' || e.shadowedBy === 'choice'))
       ?? entries.find(e => ['claude', 'codex'].includes(e.origins?.[0]?.source));
     if (importable) {
       const acts = el('div', 'acts');
-      acts.append(button('Pleiad に取り込む', 'btn btn-quiet', () => ctx.work(async () => {
+      acts.append(button(t('mcp.import.button'), 'btn btn-quiet', () => ctx.work(async () => {
         const source = importable.origins[0].source;
         const scope = source === 'claude' && importable.scope === 'directory' && /\.claude\.json$/i.test(importable.path) ? 'local' : importable.scope === 'user' ? 'user' : 'directory';
         const r = await ctx.cmd('importPlyMcp', { items: [{ format: source, scope, cwd: ctx.scanCwd, name }] });
         const row = r.results?.[0];
-        if (!row?.ok) throw new Error(row?.error ?? '取り込めませんでした');
-        messages.set(name, row.needsLogin ? 'Pleiad に取り込みました。ログインしてください' : row.pending?.length ? 'Pleiad に取り込みました。鍵などの値は編集で入れてください' : 'Pleiad に取り込みました');
+        if (!row?.ok) throw new Error(row?.error ?? t('mcp.import.failed'));
+        messages.set(name, row.needsLogin ? t('mcp.import.doneLogin') : row.pending?.length ? t('mcp.import.donePending') : t('mcp.import.done'));
         await ctx.reload(); ctx.toast();
       })));
-      box.append(acts, el('p', 'msg', '取り込むと Pleiad の登録になり、どのエージェントにも同じものをつなぎます。トークンは引き継がないので、ログインが要るものは Pleiad でログインし直します。'));
+      box.append(acts, el('p', 'msg', t('mcp.import.note')));
     }
     return box;
   }
   function renameLine(box, ctx, name) {
     if (box.querySelector('.cx-inline')) return;
     const line = el('div', 'cx-inline');
-    const input = el('input'); input.value = name; input.setAttribute('aria-label', '新しい名前'); input.autocomplete = 'off'; input.spellcheck = false;
+    const input = el('input'); input.value = name; input.setAttribute('aria-label', t('mcp.newName')); input.autocomplete = 'off'; input.spellcheck = false;
     const go = () => ctx.work(async () => {
       const to = input.value.trim();
       if (!to || to === name) { line.remove(); return; }
@@ -303,7 +308,7 @@ export function createMcpSection() {
       await ctx.reload(); ctx.toast();
     });
     input.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } if (e.key === 'Escape') line.remove(); };
-    line.append(input, button('変更', 'btn btn-quiet', go), button('やめる', 'btn', () => line.remove()));
+    line.append(input, button(t('mcp.change'), 'btn btn-quiet', go), button(t('mcp.cancel'), 'btn', () => line.remove()));
     box.append(line);
     input.focus(); input.select();
   }
@@ -312,9 +317,9 @@ export function createMcpSection() {
     return ctx.work(async () => {
       const started = await ctx.cmd('mcpAuthStart', { name });
       const note = el('span');
-      note.append('ブラウザで続けてください… ');
+      note.append(t('mcp.loginFlow.continue'));
       if (/^https?:\/\//i.test(started.url ?? '')) {
-        const link = el('a', 'cx-link', '開かないときはこちら');
+        const link = el('a', 'cx-link', t('mcp.loginFlow.link'));
         link.href = started.url; link.target = '_blank'; link.rel = 'noreferrer';
         note.append(link);
       }
@@ -324,27 +329,29 @@ export function createMcpSection() {
   }
   function check(ctx, name) {
     return ctx.work(async () => {
-      messages.set(name, '接続を確かめています…'); ctx.rerender();
+      messages.set(name, t('mcp.checkResult.checking')); ctx.rerender();
       const r = await ctx.cmd('mcpReconnect', { name, cwd: ctx.scanCwd });
-      messages.set(name, r.status === 'connected' ? `つながりました（ツール ${r.tools} 件）` : r.status === 'needs-auth' ? `ログインが必要です${r.reason ? `（${r.reason}）` : ''}` : `つながりませんでした${r.reason ? `：${r.reason}` : ''}`);
+      messages.set(name, r.status === 'connected' ? t('mcp.checkResult.connected', { count: r.tools })
+        : r.status === 'needs-auth' ? (r.reason ? t('mcp.checkResult.needsLoginWith', { reason: r.reason }) : t('mcp.checkResult.needsLogin'))
+          : r.reason ? t('mcp.checkResult.failedWith', { reason: r.reason }) : t('mcp.checkResult.failed'));
       await ctx.reload();
     });
   }
   /** ログインが済んだ・失敗した（mcpAuth イベント）。行の知らせを差し替える */
   function authEvent(ev) {
-    if (ev.phase === 'done') messages.set(ev.name, 'ログインしました');
-    else if (ev.phase === 'error') messages.set(ev.name, `ログインできませんでした${ev.message ? `：${ev.message}` : ''}`);
+    if (ev.phase === 'done') messages.set(ev.name, t('mcp.loginFlow.done'));
+    else if (ev.phase === 'error') messages.set(ev.name, ev.message ? t('mcp.loginFlow.failedWith', { error: ev.message }) : t('mcp.loginFlow.failed'));
   }
 
   /** 詳細の奥: Client ID Metadata Document の URL（既定は空。サービス側がアプリ登録を受け付けないときに使う） */
   function advanced(ctx) {
     const box = el('details', 'cx-fold');
-    box.append(el('summary', null, 'ログインの詳細設定'));
+    box.append(el('summary', null, t('mcp.advanced.summary')));
     const block = el('div', 'cx-block');
-    block.append(el('p', 'cx-sub', 'クライアント ID メタデータ文書の URL（任意）。公開した文書の https の URL を入れると、対応するサービスではアプリ登録の代わりに使います。空のままで構いません。'));
+    block.append(el('p', 'cx-sub', t('mcp.advanced.desc')));
     const line = el('div', 'cx-inline');
-    const input = el('input'); input.value = ctx.ply?.settings?.clientMetadataUrl ?? ''; input.placeholder = 'https://…/client.json'; input.setAttribute('aria-label', 'クライアント ID メタデータ文書の URL'); input.autocomplete = 'off'; input.spellcheck = false;
-    line.append(input, button('保存', 'btn btn-quiet', () => ctx.work(async () => {
+    const input = el('input'); input.value = ctx.ply?.settings?.clientMetadataUrl ?? ''; input.placeholder = 'https://…/client.json'; input.setAttribute('aria-label', t('mcp.advanced.aria')); input.autocomplete = 'off'; input.spellcheck = false;
+    line.append(input, button(t('mcp.save'), 'btn btn-quiet', () => ctx.work(async () => {
       await ctx.cmd('setPlyMcpSettings', { clientMetadataUrl: input.value.trim() || null });
       ctx.toast();
     })));
@@ -357,7 +364,7 @@ export function createMcpSection() {
   function openSheet(ctx, existing = null) {
     document.querySelector('dialog.mcp-sheet')?.remove();
     const dialog = el('dialog', 'mcp-sheet');
-    dialog.setAttribute('aria-label', existing ? `${existing.name} を編集` : 'MCP を追加');
+    dialog.setAttribute('aria-label', existing ? t('mcp.sheet.editTitle', { name: existing.name }) : t('mcp.add'));
     const form = el('form');
     dialog.append(form);
     const v = existing?.value ?? {};
@@ -368,23 +375,23 @@ export function createMcpSection() {
     };
     const natives = (ctx.scan?.entries ?? []).filter(e => e.kind === 'mcp' && e.origins?.[0]?.source !== 'ply');
     // 見出しに居場所を置く（名前の欄に置くと候補がすぐ開き、下の欄を覆う）
-    const heading = el('h3', null, existing ? `${existing.name} を編集` : 'MCP を追加');
+    const heading = el('h3', null, existing ? t('mcp.sheet.editTitle', { name: existing.name }) : t('mcp.add'));
     heading.tabIndex = -1;
     form.append(heading);
     // 名前（候補: エージェントの登録で、まだ Pleiad に無いもの。選ぶとつなぎ方などを写す）
     const nameField = el('label', 'mcp-field');
-    nameField.append('名前');
+    nameField.append(t('mcp.sheet.name'));
     const registered = new Set((ctx.ply?.servers ?? []).map(s => s.name));
-    const nameOptions = [...new Map(natives.filter(e => !registered.has(e.name)).map(e => [e.name, { value: e.name, hint: `${agentName(e.origins?.[0]?.source)} の登録` }])).values()];
-    const name = createCombo({ ariaLabel: '名前', placeholder: 'github', cls: 'mono', head: 'エージェントの登録から写す', options: () => nameOptions, value: existing?.name ?? '',
+    const nameOptions = [...new Map(natives.filter(e => !registered.has(e.name)).map(e => [e.name, { value: e.name, hint: t('mcp.sheet.registeredIn', { agent: agentName(e.origins?.[0]?.source) }) }])).values()];
+    const name = createCombo({ ariaLabel: t('mcp.sheet.name'), placeholder: 'github', cls: 'mono', head: t('mcp.sheet.copyFrom'), options: () => nameOptions, value: existing?.name ?? '',
       onCommit: n => { const src = natives.find(e => e.name === n); if (src) fill(src); } });
     if (existing) name.root.querySelector('input').readOnly = true;
     nameField.append(name.root);
     // つなぎ方
     const kindField = el('div', 'mcp-field');
-    kindField.append('つなぎ方');
-    const kindSeg = el('div', 'cx-seg'); kindSeg.setAttribute('role', 'radiogroup'); kindSeg.setAttribute('aria-label', 'つなぎ方');
-    const kindButtons = [['url', 'URL につなぐ', 'サービスが公開している MCP'], ['cmd', '手元で動かす', 'npx などのコマンドを起動']].map(([id, title, desc]) => {
+    kindField.append(t('mcp.fact.transport'));
+    const kindSeg = el('div', 'cx-seg'); kindSeg.setAttribute('role', 'radiogroup'); kindSeg.setAttribute('aria-label', t('mcp.fact.transport'));
+    const kindButtons = [['url', t('mcp.transport.url'), t('mcp.sheet.urlDesc')], ['cmd', t('mcp.transport.stdio'), t('mcp.sheet.cmdDesc')]].map(([id, title, desc]) => {
       const b = button('', 'cx-opt'); b.setAttribute('role', 'radio'); b.dataset.k = id;
       b.append(el('b', null, title), el('span', null, desc));
       b.onclick = () => { state.kind = id; paint(); };
@@ -394,50 +401,50 @@ export function createMcpSection() {
     kindField.append(kindSeg);
     // コマンド（候補: エージェントの登録にあるコマンド）
     const cmdField = el('label', 'mcp-field');
-    cmdField.append('コマンド');
+    cmdField.append(t('mcp.sheet.command'));
     const commands = [...new Set(natives.filter(e => e.command).map(e => joinCommand(e.command, e.args)))].map(c => ({ value: c }));
-    const command = createCombo({ ariaLabel: 'コマンド', placeholder: 'npx -y @modelcontextprotocol/server-github', cls: 'mono', head: 'エージェントの登録にあるコマンド', options: () => commands, value: v.command ? joinCommand(v.command, v.args) : '' });
+    const command = createCombo({ ariaLabel: t('mcp.sheet.command'), placeholder: 'npx -y @modelcontextprotocol/server-github', cls: 'mono', head: t('mcp.sheet.commandHead'), options: () => commands, value: v.command ? joinCommand(v.command, v.args) : '' });
     cmdField.append(command.root);
     // 環境変数（値は伏せ字。空のまま = 前の値を残す）
     const envField = el('div', 'mcp-field');
-    envField.append('環境変数');
+    envField.append(t('mcp.fact.env'));
     const envKeys = [...new Set(natives.flatMap(e => e.envKeys ?? []))].map(k => ({ value: k }));
-    const env = pairs(envField, { keyLabel: '名前', valueLabel: '値', keyOptions: () => envKeys, initial: Object.entries(v.env ?? {}), addLabel: '環境変数' });
+    const env = pairs(envField, { keyLabel: t('mcp.sheet.name'), valueLabel: t('mcp.sheet.value'), keyOptions: () => envKeys, initial: Object.entries(v.env ?? {}), addLabel: t('mcp.sheet.addEnv') });
     // URL（候補: エージェントの登録にある接続先）
     const urlField = el('label', 'mcp-field');
     urlField.append('URL');
     const urls = [...new Set(natives.filter(e => e.endpoint).map(e => `https://${e.endpoint}`))].map(u => ({ value: u }));
-    const url = createCombo({ ariaLabel: 'URL', placeholder: 'https://api.example.com/mcp', cls: 'mono', head: 'エージェントの登録にある接続先', options: () => urls, value: v.url ?? '' });
+    const url = createCombo({ ariaLabel: 'URL', placeholder: 'https://api.example.com/mcp', cls: 'mono', head: t('mcp.sheet.urlHead'), options: () => urls, value: v.url ?? '' });
     urlField.append(url.root);
     // 認証
     const authField = el('div', 'mcp-field');
-    authField.append('認証');
-    const authChips = el('div', 'cx-chips'); authChips.setAttribute('role', 'group'); authChips.setAttribute('aria-label', '認証の方式');
-    const authButtons = [['oauth', 'ブラウザでログイン'], ['token', 'トークン'], ['headers', 'ヘッダー'], ['none', 'なし']].map(([id, label]) => {
+    authField.append(t('mcp.fact.auth'));
+    const authChips = el('div', 'cx-chips'); authChips.setAttribute('role', 'group'); authChips.setAttribute('aria-label', t('mcp.sheet.authAria'));
+    const authButtons = [['oauth', t('mcp.auth.oauth')], ['token', t('mcp.auth.token')], ['headers', t('mcp.auth.headers')], ['none', t('mcp.auth.none')]].map(([id, label]) => {
       const b = button(label, 'cx-chip'); b.dataset.a = id;
       b.onclick = () => { state.auth = id; paint(); };
       authChips.append(b);
       return b;
     });
-    const oauthNote = el('p', 'mcp-note', '追加するとブラウザが開きます。ログインが済めば、期限の更新は Pleiad が自動で行います');
+    const oauthNote = el('p', 'mcp-note', t('mcp.sheet.oauthNote'));
     const appReg = el('details', 'cx-fold');
-    appReg.append(el('summary', null, 'サービス側でアプリ登録が必要なとき'));
-    const clientId = el('input'); clientId.placeholder = 'クライアント ID'; clientId.setAttribute('aria-label', 'クライアント ID'); clientId.value = v.oauth?.clientId ?? ''; clientId.autocomplete = 'off';
-    const clientSecret = el('input'); clientSecret.type = 'password'; clientSecret.placeholder = v.oauth?.clientSecret ? '変えないときは空のまま' : 'クライアントシークレット（任意）'; clientSecret.setAttribute('aria-label', 'クライアントシークレット'); clientSecret.autocomplete = 'off';
+    appReg.append(el('summary', null, t('mcp.sheet.appReg')));
+    const clientId = el('input'); clientId.placeholder = t('mcp.sheet.clientId'); clientId.setAttribute('aria-label', t('mcp.sheet.clientId')); clientId.value = v.oauth?.clientId ?? ''; clientId.autocomplete = 'off';
+    const clientSecret = el('input'); clientSecret.type = 'password'; clientSecret.placeholder = v.oauth?.clientSecret ? t('mcp.sheet.keep') : t('mcp.sheet.clientSecretOptional'); clientSecret.setAttribute('aria-label', t('mcp.sheet.clientSecret')); clientSecret.autocomplete = 'off';
     appReg.append(clientId, clientSecret);
     appReg.open = Boolean(v.oauth?.clientId);
-    const token = el('input'); token.type = 'password'; token.setAttribute('aria-label', 'トークン'); token.autocomplete = 'off';
-    token.placeholder = v.bearerToken === MASK ? '変えないときは空のまま' : 'トークンを貼り付け';
+    const token = el('input'); token.type = 'password'; token.setAttribute('aria-label', t('mcp.auth.token')); token.autocomplete = 'off';
+    token.placeholder = v.bearerToken === MASK ? t('mcp.sheet.keep') : t('mcp.sheet.pasteToken');
     const tokenWrap = el('div', 'mcp-field'); tokenWrap.append(token);
     const headerWrap = el('div', 'mcp-field');
-    const headers = pairs(headerWrap, { keyLabel: 'ヘッダー名', valueLabel: '値', keyOptions: () => [{ value: 'X-API-Key' }, { value: 'Authorization' }], initial: Object.entries(v.headers ?? {}), addLabel: 'ヘッダー' });
-    const noneNote = el('p', 'mcp-note', '認証の要らない MCP に使います');
+    const headers = pairs(headerWrap, { keyLabel: t('mcp.sheet.headerName'), valueLabel: t('mcp.sheet.value'), keyOptions: () => [{ value: 'X-API-Key' }, { value: 'Authorization' }], initial: Object.entries(v.headers ?? {}), addLabel: t('mcp.sheet.addHeader') });
+    const noneNote = el('p', 'mcp-note', t('mcp.sheet.noneNote'));
     authField.append(authChips, oauthNote, appReg, tokenWrap, headerWrap, noneNote);
     // 使う範囲（場所を選んで追加するときだけ）
     const scopeField = el('div', 'mcp-field');
-    scopeField.append('使う範囲');
-    const scopeChips = el('div', 'cx-chips'); scopeChips.setAttribute('role', 'group'); scopeChips.setAttribute('aria-label', '使う範囲');
-    const scopeButtons = [['here', 'この場所だけ'], ['all', 'すべての場所']].map(([id, label]) => {
+    scopeField.append(t('mcp.sheet.scope'));
+    const scopeChips = el('div', 'cx-chips'); scopeChips.setAttribute('role', 'group'); scopeChips.setAttribute('aria-label', t('mcp.sheet.scope'));
+    const scopeButtons = [['here', t('mcp.sheet.here')], ['all', t('mcp.sheet.all')]].map(([id, label]) => {
       const b = button(label, 'cx-chip'); b.dataset.s = id;
       b.onclick = () => { state.scope = id; paint(); };
       scopeChips.append(b);
@@ -448,23 +455,22 @@ export function createMcpSection() {
     scopeField.hidden = Boolean(existing) || ctx.isDefault;
     // 保存先と暗号化の説明
     const storage = ctx.ply?.storage;
-    const where = el('p', 'mcp-note', 'Pleiad の設定として保存し、どのエージェントにもつなぎます。Claude や Codex の設定ファイルは書き換えません。'
-      + (storage && storage.encrypted === false
-        ? `この起動では鍵の保管庫を使えないため、トークンや鍵は所有者だけが読める権限の平文で保存します（${storage.reason ?? '暗号化できない起動'}）。`
-        : 'トークンや鍵は OS の鍵の保管庫（Windows の資格情報、macOS のキーチェーン、Linux の Secret Service）で暗号化して保存します。'));
+    const where = el('p', 'mcp-note', storage && storage.encrypted === false
+      ? t('mcp.storage.sheetPlain', { reason: storage.reason ?? t('mcp.storage.noEncryption') })
+      : t('mcp.storage.sheetEncrypted'));
     // JSON で直接（上級者向け。開いているときはこちらを保存する）
     const json = el('details', 'cx-fold');
-    json.append(el('summary', null, 'JSON で編集（上級者向け）'));
+    json.append(el('summary', null, t('mcp.sheet.json')));
     const jsonField = el('label', 'mcp-field');
-    const text = el('textarea'); text.rows = 8; text.spellcheck = false; text.setAttribute('aria-label', 'MCP の定義（JSON）');
-    jsonField.append('秘密の値は伏せ字（••••）のままなら前の値を残します', text);
+    const text = el('textarea'); text.rows = 8; text.spellcheck = false; text.setAttribute('aria-label', t('mcp.sheet.jsonAria'));
+    jsonField.append(t('mcp.sheet.jsonNote'), text);
     json.append(jsonField);
     const error = el('p', 'mcp-error'); error.setAttribute('role', 'alert');
     json.ontoggle = () => { if (json.open) { try { text.value = JSON.stringify(build(), null, 2); } catch (e) { text.value = ''; error.textContent = e.message; } } };
     const acts = el('div', 'mcp-acts');
     const go = button('', 'btn btn-primary');
     go.type = 'submit';
-    acts.append(button('やめる', 'btn', () => dialog.close()), go);
+    acts.append(button(t('mcp.cancel'), 'btn', () => dialog.close()), go);
     form.append(nameField, kindField, cmdField, envField, urlField, authField, scopeField, where, json, error, acts);
 
     function fill(src) {
@@ -480,20 +486,20 @@ export function createMcpSection() {
       cmdField.hidden = isUrl; envField.hidden = isUrl; urlField.hidden = !isUrl; authField.hidden = !isUrl;
       oauthNote.hidden = state.auth !== 'oauth'; appReg.hidden = state.auth !== 'oauth';
       tokenWrap.hidden = state.auth !== 'token'; headerWrap.hidden = state.auth !== 'headers'; noneNote.hidden = state.auth !== 'none';
-      go.textContent = existing ? '保存' : isUrl && state.auth === 'oauth' ? '追加してログイン' : '追加して試しにつなぐ';
+      go.textContent = existing ? t('mcp.save') : isUrl && state.auth === 'oauth' ? t('mcp.sheet.addLogin') : t('mcp.sheet.addTry');
     }
     /** 画面の値から保存する定義を作る（伏せ字の値はそのまま渡し、サーバが前の値を残す） */
     function build() {
       if (state.kind === 'cmd') {
         const { command: c, args } = splitCommand(command.value);
-        if (!c) throw new Error('コマンドを入れてください');
+        if (!c) throw new Error(t('mcp.error.command'));
         const out = { transport: 'stdio', command: c, args, auth: 'none' };
         const e = env.value();
         if (Object.keys(e).length) out.env = e;
         return out;
       }
       const u = url.value.trim();
-      if (!u) throw new Error('URL を入れてください');
+      if (!u) throw new Error(t('mcp.error.url'));
       const out = { transport: v.transport === 'sse' || /\/sse\/?$/.test(u) ? 'sse' : 'http', url: u };
       if (state.auth === 'oauth') {
         out.auth = 'oauth';
@@ -505,11 +511,11 @@ export function createMcpSection() {
       } else if (state.auth === 'token') {
         out.auth = 'bearer';
         out.bearerToken = token.value || (v.bearerToken === MASK ? MASK : '');
-        if (!out.bearerToken) throw new Error('トークンを入れてください');
+        if (!out.bearerToken) throw new Error(t('mcp.error.token'));
       } else if (state.auth === 'headers') {
         out.auth = 'headers';
         out.headers = headers.value();
-        if (!Object.keys(out.headers).length) throw new Error('ヘッダーを 1 つ以上入れてください');
+        if (!Object.keys(out.headers).length) throw new Error(t('mcp.error.headers'));
       } else out.auth = 'none';
       return out;
     }
@@ -519,16 +525,16 @@ export function createMcpSection() {
       const n = name.value.trim();
       let value;
       try {
-        if (!n) throw new Error('名前を入れてください');
+        if (!n) throw new Error(t('mcp.error.name'));
         value = json.open ? JSON.parse(text.value) : build();
-      } catch (err) { error.textContent = err instanceof SyntaxError ? 'JSON の形が正しくありません' : err.message; return; }
+      } catch (err) { error.textContent = err instanceof SyntaxError ? t('mcp.error.json') : err.message; return; }
       go.disabled = true;
       try {
         const saved = await ctx.cmd('savePlyMcp', { name: n, value, mode: existing ? 'edit' : 'add', revision: ctx.ply?.revision });
         if (!existing && state.scope === 'here' && !ctx.isDefault) await onlyHere(ctx, n);
         dialog.close();
         ctx.opened.add(`mcp:${n}`);
-        if (saved.oauthReset) messages.set(n, '接続先などが変わったため、ログインし直してください');
+        if (saved.oauthReset) messages.set(n, t('mcp.oauthReset'));
         if (!existing && value.auth === 'oauth') await login(ctx, n);
         else if (!existing) await check(ctx, n);
         else await ctx.reload();
@@ -563,9 +569,9 @@ export function createMcpSection() {
       const key = createCombo({ ariaLabel: keyLabel, placeholder: keyLabel, cls: 'mono', options: keyOptions, value: k });
       const input = el('input'); input.type = 'password'; input.autocomplete = 'off'; input.setAttribute('aria-label', valueLabel);
       const masked = val === MASK, missing = val === null;
-      input.placeholder = masked ? '変えないときは空のまま' : missing ? '未入力' : valueLabel;
+      input.placeholder = masked ? t('mcp.sheet.keep') : missing ? t('mcp.sheet.missing') : valueLabel;
       if (!masked && !missing) input.value = val ?? '';
-      const remove = button('', 'btn btn-icon'); remove.innerHTML = closeIcon; remove.title = '外す'; remove.setAttribute('aria-label', `${keyLabel}を外す`);
+      const remove = button('', 'btn btn-icon'); remove.innerHTML = closeIcon; remove.title = t('mcp.sheet.remove'); remove.setAttribute('aria-label', t('mcp.sheet.removeAria', { label: keyLabel }));
       const item = { key, input, masked, missing };
       remove.onclick = () => { row.remove(); rows.splice(rows.indexOf(item), 1); };
       row.append(key.root, input, remove);

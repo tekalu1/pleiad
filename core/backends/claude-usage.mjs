@@ -2,6 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { claudeExecutable } from '../cli-installation.mjs';
 import { claudeQuota } from '../usage.mjs';
 import { claudeEnv, redactToken, TOKEN_ENV } from '../claude-accounts.mjs';
+import { t } from '../i18n.mjs';
 
 /**
  * 使用量を読むプロセスの env。
@@ -32,13 +33,16 @@ export async function readClaudeUsage({ token, configDir } = {}) {
   try {
     const result = await Promise.race([
       q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
-      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('使用量の取得が時間切れです')), 20_000); }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(t('claude.usage.timeout'))), 20_000); }),
     ]);
     return claudeQuota(result);
   } finally { clearTimeout(timer); release(); q.close(); }
 }
 
-export const NEEDS_USAGE_LOGIN = '使用量を表示するには、設定の「Claude のアカウント」で「使用量の表示を認可」を済ませてください。';
+/** 使用量の認可を促す文。言語が実行中に変わるので呼ぶたびに引く */
+export const needsUsageLogin = () => t('claude.usage.needsLogin');
+/** 互換（tests/unit/claude-login.mjs が比べる）。読み込み時の言語で固まるので、本体は needsUsageLogin() を使う */
+export const NEEDS_USAGE_LOGIN = needsUsageLogin();
 
 /**
  * 登録したアカウントがあるときの使用量。どのアカウントの値かが分かるよう、アカウントごとに見出しを付けて並べる
@@ -48,20 +52,20 @@ export const NEEDS_USAGE_LOGIN = '使用量を表示するには、設定の「C
  * 使用量の認可が済んでいないアカウントは読みに行かず、認可を促す（needsUsageLogin）。
  * 1 件が取れなくても他は出す。エラーメッセージからはトークンを伏せる。
  */
-export async function readClaudeAccountsUsage({ accounts = [], loginLabel = 'ログイン中のアカウント', read = readClaudeUsage } = {}) {
+export async function readClaudeAccountsUsage({ accounts = [], loginLabel = t('claude.usage.loginAccount'), read = readClaudeUsage } = {}) {
   if (!accounts.length) return read({});
   const login = async () => {
     try { return { label: loginLabel, ...(await read({})) }; }
-    catch (e) { return { label: loginLabel, windows: [], message: `取得できませんでした: ${redactToken(e?.message ?? e)}` }; }
+    catch (e) { return { label: loginLabel, windows: [], message: t('claude.usage.failed', { message: redactToken(e?.message ?? e) }) }; }
   };
   const one = async a => {
     const base = { label: a.name, accountId: a.id ?? null };
     if (a.error) return { ...base, windows: [], message: a.error };
-    if (!a.usageLogin || !a.configDir) return { ...base, windows: [], needsUsageLogin: true, message: NEEDS_USAGE_LOGIN };
+    if (!a.usageLogin || !a.configDir) return { ...base, windows: [], needsUsageLogin: true, message: needsUsageLogin() };
     try { return { ...base, ...(await read({ configDir: a.configDir })) }; }
     catch (e) {
-      const text = String(e?.message ?? e).replace(/sk-ant-[A-Za-z0-9_-]+/g, '[トークン]');
-      return { ...base, windows: [], reauth: true, message: `取得できませんでした: ${text}。続くときは「使用量の表示を認可」をやり直してください。` };
+      const text = String(e?.message ?? e).replace(/sk-ant-[A-Za-z0-9_-]+/g, t('claude.redacted.token'));
+      return { ...base, windows: [], reauth: true, message: t('claude.usage.failedReauth', { message: text }) };
     }
   };
   const rows = await Promise.all([login(), ...accounts.map(one)]);

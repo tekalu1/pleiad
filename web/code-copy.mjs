@@ -1,4 +1,5 @@
 import { copyIcon, checkIcon } from './icons.mjs';
+import { t } from './i18n.mjs';
 
 // 結果を1.8秒だけボタンに出し、元のアイコンとラベルへ戻す。
 // 連打しても最後の1回だけが残るよう、タイマーはボタンに持たせる。
@@ -18,9 +19,9 @@ export async function copyText(button, text, label) {
   try {
     if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
     await navigator.clipboard.writeText(String(text ?? ''));
-    flash(button, { icon: checkIcon, title: 'コピーしました', restoreTitle: label });
+    flash(button, { icon: checkIcon, title: t('timeline.code.copied'), restoreTitle: label });
   } catch {
-    flash(button, { icon: copyIcon, title: 'コピーできませんでした', restoreTitle: label });
+    flash(button, { icon: copyIcon, title: t('timeline.code.copyFailed'), restoreTitle: label });
   }
 }
 
@@ -33,13 +34,13 @@ export function setupCodeCopy(root = document) {
     try {
       if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
       await navigator.clipboard.writeText(code.textContent);
-      flash(button, { icon: checkIcon, title: 'コピーしました', restoreTitle: 'コードをコピー' });
+      flash(button, { icon: checkIcon, title: t('timeline.code.copied'), restoreTitle: t('timeline.code.copy') });
     } catch {
       const selection = getSelection(), range = document.createRange();
       range.selectNodeContents(code);
       selection.removeAllRanges();
       selection.addRange(range);
-      flash(button, { icon: copyIcon, title: 'コードを選択しました。Ctrl+C / ⌘C でコピー', restoreTitle: 'コードをコピー' });
+      flash(button, { icon: copyIcon, title: t('timeline.code.selected'), restoreTitle: t('timeline.code.copy') });
     }
   });
 }

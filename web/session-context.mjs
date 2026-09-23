@@ -6,13 +6,13 @@
 //   - エージェント任せの MCP は、そのエージェントの設定に登録されているものを読み取りのみで並べる（agentMcp）
 //   - antigravity で Pleiad 担当を扱わなかった会話は、その理由
 import { el } from './dom.mjs';
-import { fmt } from './i18n.mjs';
+import { t, fmt } from './i18n.mjs';
 
 const KEY = 'session-context';
-const WORD = { instruction: '指示', skill: 'Skills', mcp: 'MCP' };
+const WORD = { instruction: t('sessionContext.word.instruction'), skill: 'Skills', mcp: 'MCP' };
 const COUNTED = { instruction: ['supplied', 'loaded'], skill: ['available', 'manual-only', 'loaded'], mcp: ['pending', 'connected'] };
 const AGENT_FILES = { claude: 'claude', codex: 'codex' };
-const SOURCE = { claude: 'Claude', codex: 'Codex', common: '共通', ply: 'Pleiad' };
+const SOURCE = { claude: 'Claude', codex: 'Codex', common: t('sessionContext.source.common'), ply: 'Pleiad' };
 
 // 「9/23 09:05」か「09:05」
 function stamp(at, withDay = true) {
@@ -30,6 +30,14 @@ function button(text, className = 'btn', onClick) {
   if (onClick) b.onclick = onClick;
   return b;
 }
+/** 渡さなかった理由（記録に理由の文が無いとき） */
+const REASON = {
+  excluded: () => t('sessionContext.reason.excluded'),
+  shadowed: () => t('sessionContext.reason.shadowed'),
+  duplicate: () => t('sessionContext.reason.duplicate'),
+  disabled: () => t('sessionContext.reason.disabled'),
+  unsupported: () => t('sessionContext.reason.unsupported'),
+};
 /** Pleiad が担当した種類か（antigravity で扱わなかった会話は、担当が Pleiad でもエージェント任せ） */
 const managed = (info, kind) => info?.report?.status !== 'native' && (info.owners ?? info.report?.owners ?? {})[kind] === 'ply';
 
@@ -44,9 +52,9 @@ export function chipText(info) {
     const n = rows.filter(e => COUNTED[kind].includes(e.status)).length;
     if (kind !== 'mcp') { parts.push(`${WORD[kind]} ${n}`); continue; }
     const bad = rows.filter(e => e.status === 'needs-auth' || e.status === 'failed').length;
-    parts.push(`MCP ${n}${bad ? `（${bad} 件つながらない）` : ''}`);
+    parts.push(bad ? t('sessionContext.chip.mcpBad', { n, bad }) : `MCP ${n}`);
   }
-  if (natives.length) parts.push(`${natives.join('・')} はエージェント任せ`);
+  if (natives.length) parts.push(t('sessionContext.chip.native', { kinds: natives.join(t('sessionContext.chip.join')) }));
   return parts.join(' · ');
 }
 
@@ -80,7 +88,7 @@ function diffView(ops) {
     if (!keep[i]) {
       let j = i;
       while (j < ops.length && !keep[j]) j++;
-      box.append(el('div', 'skip', `… ${j - i} 行同じ`));
+      box.append(el('div', 'skip', t('sessionContext.diff.same', { count: j - i })));
       i = j;
       continue;
     }
@@ -98,13 +106,13 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   let diff = null, diffOpen = false, busy = false, notice = '';
   let chip = null;
 
-  const title = 'この会話のコンテキスト';
+  const title = t('sessionContext.title');
   function subtitle(data) {
     const started = data.startedAt ?? data.report?.at;
-    const text = started ? `開始時（${stamp(started)}）に決まり、途中では変わりません` : '開始時に決まり、途中では変わりません';
-    return data.refreshedAt ? `${text} · ${stamp(data.refreshedAt)} に読み込み直し` : text;
+    const text = started ? t('sessionContext.subtitle.startedAt', { time: stamp(started) }) : t('sessionContext.subtitle.started');
+    return data.refreshedAt ? t('sessionContext.subtitle.refreshed', { text, time: stamp(data.refreshedAt) }) : text;
   }
-  const backendLabel = () => labelOf(session()?.backend) || 'エージェント';
+  const backendLabel = () => labelOf(session()?.backend) || t('sessionContext.agent');
 
   // ---------------------------------------------------------------- 描画
   let shownFor = null;
@@ -114,24 +122,24 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const data = info();
     const box = el('div', 'scx');
     if (!data?.report) {
-      box.append(el('p', 'cx-sub', 'この会話はまだ始まっていません。最初の送信で、何を渡したかをここに記録します。'));
+      box.append(el('p', 'cx-sub', t('sessionContext.notStarted')));
       return box;
     }
     const report = data.report;
     if (data.changed?.differs) box.append(changedNotice(data));
     if (report.guardedBackend) {
       const n = el('div', 'scx-notice');
-      n.append(el('p', 'cx-strong', 'この会話では Pleiad がそろえる設定を使っていません'), el('p', 'cx-sub', report.reason ?? `${report.guardedBackend} は Pleiad がそろえるコンテキストを受け取れないため、エージェント自身の読み込みに任せました`));
+      n.append(el('p', 'cx-strong', t('sessionContext.guarded.title')), el('p', 'cx-sub', report.reason ?? t('sessionContext.guarded.reason', { backend: report.guardedBackend })));
       box.append(n);
     }
     if (report.status === 'failed') {
       const n = el('div', 'scx-notice');
-      n.append(el('p', 'cx-strong', '読み込みか実行が途中で失敗しました'), el('p', 'cx-sub', '下の状態と、会話のエラーを確かめてください。'));
+      n.append(el('p', 'cx-strong', t('sessionContext.failed.title')), el('p', 'cx-sub', t('sessionContext.failed.hint')));
       box.append(n);
     }
     box.append(instructions(data), skills(data), mcp(data));
     const foot = el('p', 'scx-foot');
-    foot.append('次の会話から変えたいとき ', button('この場所の設定を開く →', 'cx-link', () => openSettings(report.cwd ?? session()?.cwd)));
+    foot.append(t('sessionContext.foot.lead'), button(t('sessionContext.foot.link'), 'cx-link', () => openSettings()));
     box.append(foot);
     return box;
   }
@@ -146,42 +154,43 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const row = el('div', 'scx-item');
     const m = el('span', 'mark' + (on ? ' on' : ''), mark);
     m.setAttribute('aria-hidden', 'true');
-    const t = el('div', 't');
-    t.append(el('div', null, name));
-    if (sub) t.append(el('div', 'p', sub));
-    row.append(m, t);
-    return { row, t };
+    const body = el('div', 't');
+    body.append(el('div', null, name));
+    if (sub) body.append(el('div', 'p', sub));
+    row.append(m, body);
+    return { row, body };
   }
   function instructions(data) {
     const ply = managed(data, 'instruction');
-    const k = kindBox('指示', ply ? 'Pleiad が渡した' : 'エージェント任せ', ply);
-    if (!ply) { k.append(el('p', 'cx-sub', `${backendLabel()} が自分の決まりで読みます（Pleiad からは中身が見えません）`)); return k; }
+    const k = kindBox(WORD.instruction, ply ? t('sessionContext.instruction.who') : t('sessionContext.native'), ply);
+    if (!ply) { k.append(el('p', 'cx-sub', t('sessionContext.instruction.native', { agent: backendLabel() }))); return k; }
     const rows = data.report.entries.filter(e => e.kind === 'instruction');
     const given = rows.filter(e => e.status === 'supplied' || e.status === 'loaded');
-    for (const e of given) k.append(item('✓', e.name, e.status === 'loaded' ? `${shortPath(dir(e.path))} · 途中で読み込み` : shortPath(dir(e.path)), { on: true }).row);
-    if (!given.length) k.append(el('p', 'cx-sub', '渡した指示ファイルはありません'));
+    for (const e of given) k.append(item('✓', e.name, e.status === 'loaded' ? t('sessionContext.instruction.loaded', { path: shortPath(dir(e.path)) }) : shortPath(dir(e.path)), { on: true }).row);
+    if (!given.length) k.append(el('p', 'cx-sub', t('sessionContext.instruction.none')));
     const left = rows.filter(e => !['supplied', 'loaded'].includes(e.status));
-    if (left.length) k.append(fold(`渡していないもの ${left.length} 件`, left.map(e => item('○', e.name, `${shortPath(dir(e.path))} · ${reasonOf(e)}`).row)));
+    if (left.length) k.append(fold(t('sessionContext.instruction.notGiven', { count: left.length }), left.map(e => item('○', e.name, `${shortPath(dir(e.path))} · ${reasonOf(e)}`).row)));
     return k;
   }
   function skills(data) {
     const ply = managed(data, 'skill');
     const rows = data.report.entries.filter(e => e.kind === 'skill');
     const offered = rows.filter(e => ['available', 'manual-only', 'loaded'].includes(e.status));
-    const k = kindBox('Skills', ply ? `Pleiad が案内 ${offered.length} 件` : 'エージェント任せ', ply);
-    if (!ply) { k.append(el('p', 'cx-sub', `${backendLabel()} が自分の skills フォルダーを読みます（Pleiad からは中身が見えません）`)); return k; }
+    const k = kindBox('Skills', ply ? t('sessionContext.skill.who', { count: offered.length }) : t('sessionContext.native'), ply);
+    if (!ply) { k.append(el('p', 'cx-sub', t('sessionContext.skill.native', { agent: backendLabel() }))); return k; }
     const used = offered.filter(e => e.status === 'loaded'), unused = offered.filter(e => e.status !== 'loaded');
-    k.append(el('p', 'cx-sub', used.length ? '使ったもの' : 'まだ使っていません'));
+    k.append(el('p', 'cx-sub', used.length ? t('sessionContext.skill.used') : t('sessionContext.skill.noneUsed')));
     for (const e of used) k.append(item('●', e.name, shortPath(dir(dir(e.path))), { on: true }).row);
-    if (unused.length) k.append(fold(`使っていない ${unused.length} 件`, unused.map(e => item('○', e.name, e.status === 'manual-only' ? '明示したときだけ' : '').row)));
+    if (unused.length) k.append(fold(t('sessionContext.skill.unused', { count: unused.length }), unused.map(e => item('○', e.name, e.status === 'manual-only' ? t('sessionContext.skill.manualOnly') : '').row)));
     const other = rows.filter(e => !offered.includes(e));
-    if (other.length) k.append(fold(`案内していないもの ${other.length} 件`, other.map(e => item('○', e.name, reasonOf(e)).row)));
+    if (other.length) k.append(fold(t('sessionContext.skill.notOffered', { count: other.length }), other.map(e => item('○', e.name, reasonOf(e)).row)));
     return k;
   }
   function reasonOf(e) {
     // paths 付きの Claude rules。当たるファイルを扱うまでは渡さない
-    if (!e.reason && e.status === 'conditional') return `${(e.paths ?? []).join(', ')} に当たるファイルを扱うときだけ`;
-    return e.reason ?? { excluded: '外しています', shadowed: '同名・override が優先', duplicate: '同じものを 1 つにまとめました', disabled: '元の設定で無効', unsupported: '対応していない設定があります' }[e.status] ?? e.status;
+    if (!e.reason && e.status === 'conditional') return t('sessionContext.reason.conditional', { paths: (e.paths ?? []).join(', ') });
+    if (e.reason) return e.reason;
+    return REASON[e.status]?.() ?? e.status;
   }
   function fold(summary, rows) {
     const d = el('details', 'cx-fold');
@@ -191,97 +200,99 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   function mcp(data) {
     const ply = managed(data, 'mcp');
     const rows = data.report.entries.filter(e => e.kind === 'mcp' && ['connected', 'pending', 'needs-auth', 'failed', 'removed'].includes(e.status));
-    const k = kindBox('MCP', ply ? `Pleiad がつなぐ ${rows.filter(e => e.status !== 'removed').length} 件` : 'エージェント任せ', ply);
+    const k = kindBox('MCP', ply ? t('sessionContext.mcp.who', { count: rows.filter(e => e.status !== 'removed').length }) : t('sessionContext.native'), ply);
     if (!ply) { nativeMcp(k, data); return k; }
-    if (!rows.length) k.append(el('p', 'cx-sub', 'つなぐ MCP はありません'));
+    if (!rows.length) k.append(el('p', 'cx-sub', t('sessionContext.mcp.none')));
     const primaryFree = !data.changed?.differs;
     let waiting = false;
     for (const e of rows) {
       const row = el('div', 'scx-item');
       const dot = el('span', 'cx-dot' + (e.status === 'connected' ? ' on' : e.status === 'failed' ? '' : ' off'));
-      const t = el('div', 't');
-      t.append(el('div', null, e.name));
+      const body = el('div', 't');
+      body.append(el('div', null, e.name));
       const p = el('div', 'p');
       const login = logins.get(e.name);
-      if (e.status === 'connected') p.textContent = `接続中 · ツール ${e.tools ?? 0} · ${e.calls ? `呼び出し ${e.calls} 回` : '未使用'}`;
-      else if (e.status === 'pending') p.textContent = e.reason ?? '次の返答でつなぎます';
-      else if (e.status === 'removed') p.textContent = 'この会話では外しています';
-      else if (e.status === 'failed') p.append(el('span', 'cx-fail', '✕ つながりませんでした'), ` · ${e.reason ?? '理由は分かりません'}`);
+      if (e.status === 'connected') p.textContent = t('sessionContext.mcp.connected', { tools: e.tools ?? 0, usage: e.calls ? t('sessionContext.mcp.calls', { count: e.calls }) : t('sessionContext.mcp.unused') });
+      else if (e.status === 'pending') p.textContent = e.reason ?? t('sessionContext.mcp.pending');
+      else if (e.status === 'removed') p.textContent = t('sessionContext.mcp.removed');
+      else if (e.status === 'failed') p.append(el('span', 'cx-fail', t('sessionContext.mcp.failed')), ` · ${e.reason ?? t('sessionContext.mcp.unknownReason')}`);
       else {
         waiting = true;
         const oauth = e.auth === 'oauth';
         if (login) p.append(login);
-        else p.append(el('span', 'cx-strong', oauth ? 'ログインが必要です' : '認証が通りませんでした'),
-          `${e.reason && !/ログインが必要/.test(e.reason) ? `（${e.reason}）` : ''}。この MCP を外して会話は進めています`);
+        else p.append(el('span', 'cx-strong', oauth ? t('sessionContext.mcp.needsLogin') : t('sessionContext.mcp.authFailed')),
+          t('sessionContext.mcp.authRest', { reason: e.reason && e.reasonCode !== 'MCP_AUTH_REQUIRED' ? t('sessionContext.mcp.reasonParen', { reason: e.reason }) : '' }));
       }
-      t.append(p);
+      body.append(p);
       // 同じ名前の定義が複数あったとき、どれを使ったか（core/context-runtime.mjs の markChoices）
-      if (e.choice) t.append(el('div', 'p', `同じ名前の定義が ${e.choice.others + 1} つ · ${SOURCE[e.choice.source] ?? e.choice.source ?? ''} の設定の方を使用（${e.choice.by === 'prefer' ? '設定で選んだもの' : '先に見つかった方'}）`));
+      if (e.choice) body.append(el('div', 'p', t('sessionContext.mcp.choice', { n: e.choice.others + 1, source: SOURCE[e.choice.source] ?? e.choice.source ?? '',
+        by: e.choice.by === 'prefer' ? t('sessionContext.mcp.byPrefer') : t('sessionContext.mcp.byFirst') })));
       const acts = el('div', 'acts');
       const fromPly = e.origins?.[0]?.source === 'ply';
-      if (e.status === 'needs-auth' && fromPly && e.auth === 'oauth' && !/ログインしました/.test(login?.textContent ?? '')) acts.append(button('ブラウザでログイン', primaryFree ? 'btn btn-primary' : 'btn btn-quiet', () => startLogin(e.name)));
-      if (e.status === 'needs-auth' && e.auth !== 'oauth') acts.append(button('設定を開く', 'btn', () => openSettings(data.report.cwd ?? session()?.cwd)));
-      if (e.status === 'needs-auth' || e.status === 'failed') acts.append(button('この会話では外す', 'btn', () => setRemoved(e.name, true)));
-      if (e.status === 'removed') acts.append(button('戻す', 'btn', () => setRemoved(e.name, false)));
-      if (acts.childNodes.length) t.append(acts);
-      row.append(dot, t);
+      if (e.status === 'needs-auth' && fromPly && e.auth === 'oauth' && !login?.dataset?.done) acts.append(button(t('sessionContext.mcp.login'), primaryFree ? 'btn btn-primary' : 'btn btn-quiet', () => startLogin(e.name)));
+      if (e.status === 'needs-auth' && e.auth !== 'oauth') acts.append(button(t('sessionContext.mcp.openSettings'), 'btn', () => openSettings()));
+      if (e.status === 'needs-auth' || e.status === 'failed') acts.append(button(t('sessionContext.mcp.remove'), 'btn', () => setRemoved(e.name, true)));
+      if (e.status === 'removed') acts.append(button(t('sessionContext.mcp.restore'), 'btn', () => setRemoved(e.name, false)));
+      if (acts.childNodes.length) body.append(acts);
+      row.append(dot, body);
       k.append(row);
     }
     const unused = data.report.entries.filter(e => e.kind === 'mcp' && e.shadowedBy === 'choice');
-    if (unused.length) k.append(fold(`使わなかった同じ名前の定義 ${unused.length} 件`, unused.map(e => item('○', e.name, `${shortPath(e.path)} · ${reasonOf(e)}`).row)));
-    if (waiting) k.append(el('p', 'cx-sub', 'ログインが済むと自動でつなぎ直し、次の返答から使えます。会話を作り直す必要はありません'));
+    if (unused.length) k.append(fold(t('sessionContext.mcp.unusedDefs', { count: unused.length }), unused.map(e => item('○', e.name, `${shortPath(e.path)} · ${reasonOf(e)}`).row)));
+    if (waiting) k.append(el('p', 'cx-sub', t('sessionContext.mcp.waiting')));
     if (notice) k.append(el('p', 'cx-strong', notice));
     return k;
   }
   /** エージェント任せの MCP。そのエージェントの設定に登録されているもの（読むだけ） */
   function nativeMcp(k, data) {
     const s = session(), label = backendLabel(), file = AGENT_FILES[s?.backend];
-    if (!file) { k.append(el('p', 'cx-sub', `エージェント任せ。${label} の MCP の登録は Pleiad から読めません`)); return; }
+    if (!file) { k.append(el('p', 'cx-sub', t('sessionContext.nativeMcp.unreadable', { agent: label }))); return; }
     const where = data.report.cwd ?? s?.cwd;
     const cached = agentCache.get(where);
     if (!cached) {
-      k.append(el('p', 'cx-sub', `エージェント任せ。${label} の設定を読んでいます…`));
+      k.append(el('p', 'cx-sub', t('sessionContext.nativeMcp.reading', { agent: label })));
       cmd('agentMcp', { cwd: where }).then(r => { agentCache.set(where, r); refresh(); }).catch(() => { agentCache.set(where, { agents: {} }); refresh(); });
       return;
     }
     const list = cached.agents?.[file] ?? [];
-    if (!list.length) { k.append(el('p', 'cx-sub', `エージェント任せ。${label} の設定に MCP の登録はありません`)); return; }
-    k.append(el('p', 'cx-sub', `エージェント任せ。${label} の設定に登録されているのは次の ${list.length} 件です（接続の成否は ${label} 側が持つため、Pleiad からは見えません）`));
-    const rowOf = x => { const r = el('div', 'scx-item'); const t = el('div', 't'); t.append(el('div', null, x.name), el('div', 'p', x.disabled ? `${shortPath(x.path)} · 無効` : shortPath(x.path))); r.append(el('span', 'cx-dot off'), t); return r; };
+    if (!list.length) { k.append(el('p', 'cx-sub', t('sessionContext.nativeMcp.none', { agent: label }))); return; }
+    k.append(el('p', 'cx-sub', t('sessionContext.nativeMcp.list', { agent: label, count: list.length })));
+    const rowOf = x => { const r = el('div', 'scx-item'); const body = el('div', 't'); body.append(el('div', null, x.name), el('div', 'p', x.disabled ? t('sessionContext.nativeMcp.disabled', { path: shortPath(x.path) }) : shortPath(x.path))); r.append(el('span', 'cx-dot off'), body); return r; };
     list.slice(0, 5).forEach(x => k.append(rowOf(x)));
-    if (list.length > 5) k.append(fold(`ほか ${list.length - 5} 件`, list.slice(5).map(rowOf)));
+    if (list.length > 5) k.append(fold(t('sessionContext.more', { count: list.length - 5 }), list.slice(5).map(rowOf)));
   }
 
   function changedNotice(data) {
     const files = data.changed.files ?? (data.changed.paths ?? []).map(path => ({ path, name: base(path) }));
     const box = el('div', 'scx-notice'); box.setAttribute('role', 'status');
     const head = el('p');
-    head.append(el('span', 'cx-strong', `開始後に ${files.length || 1} 件変わりました`));
+    head.append(el('span', 'cx-strong', t('sessionContext.changed.title', { count: files.length || 1 })));
     for (const f of files.slice(0, 3)) {
-      const what = f.after === null && f.before ? 'が消えました' : !f.before ? 'が新しく見つかりました'
-        : f.modifiedAt ? `が ${stamp(f.modifiedAt, !sameDay(f.modifiedAt, Date.now()))} に更新` : 'が更新されました';
-      head.append(el('br'), el('span', 'cx-sub', `${f.name ?? base(f.path)} ${what}`));
+      const name = f.name ?? base(f.path);
+      const what = f.after === null && f.before ? t('sessionContext.changed.removed', { name }) : !f.before ? t('sessionContext.changed.added', { name })
+        : f.modifiedAt ? t('sessionContext.changed.updatedAt', { name, time: stamp(f.modifiedAt, !sameDay(f.modifiedAt, Date.now())) }) : t('sessionContext.changed.updated', { name });
+      head.append(el('br'), el('span', 'cx-sub', what));
     }
-    if (files.length > 3) head.append(el('br'), el('span', 'cx-sub', `ほか ${files.length - 3} 件`));
+    if (files.length > 3) head.append(el('br'), el('span', 'cx-sub', t('sessionContext.more', { count: files.length - 3 })));
     const acts = el('div', 'acts');
-    const go = button('新しい内容で会話を続ける', 'btn btn-primary', () => refreshNow(go));
+    const go = button(t('sessionContext.changed.continue'), 'btn btn-primary', () => refreshNow(go));
     go.disabled = busy || isRunning();
-    if (isRunning()) go.title = '返答が終わってから押せます';
-    acts.append(go, button(diffOpen ? '差分を閉じる' : '差分を見る', 'btn', toggleDiff));
-    box.append(head, acts, el('p', 'cx-sub', '次の送信で自動的に読み込み直します。送信を待たずに今すぐ反映するなら「新しい内容で会話を続ける」（どちらもやり取りは引き継ぎます）'));
+    if (isRunning()) go.title = t('sessionContext.changed.afterReply');
+    acts.append(go, button(diffOpen ? t('sessionContext.changed.hideDiff') : t('sessionContext.changed.showDiff'), 'btn', toggleDiff));
+    box.append(head, acts, el('p', 'cx-sub', t('sessionContext.changed.note')));
     if (diffOpen) box.append(diffBody());
     return box;
   }
   function diffBody() {
     const box = el('div', 'scx-diff');
-    if (!diff) { box.append(el('p', 'cx-sub', '差分を読んでいます…')); return box; }
+    if (!diff) { box.append(el('p', 'cx-sub', t('sessionContext.diff.loading'))); return box; }
     if (diff.error) { box.append(el('p', 'cx-strong', diff.error)); return box; }
-    if (!diff.files.length) { box.append(el('p', 'cx-sub', '今は開始時と同じ内容です')); return box; }
+    if (!diff.files.length) { box.append(el('p', 'cx-sub', t('sessionContext.diff.noChange'))); return box; }
     for (const f of diff.files) {
       box.append(el('h5', null, f.path));
-      if (f.beforeMissing) box.append(el('p', 'cx-sub', '開始時の中身は残っていません（この版より前に始めた会話）。今の中身だけを出します。'));
-      if (f.removed) { box.append(el('p', 'cx-sub', 'このファイルは今はありません')); continue; }
-      if (f.after === null) { box.append(el('p', 'cx-sub', '大きすぎるため中身を出せません')); continue; }
+      if (f.beforeMissing) box.append(el('p', 'cx-sub', t('sessionContext.diff.beforeMissing')));
+      if (f.removed) { box.append(el('p', 'cx-sub', t('sessionContext.diff.removed'))); continue; }
+      if (f.after === null) { box.append(el('p', 'cx-sub', t('sessionContext.diff.tooLarge'))); continue; }
       box.append(diffView(lineDiff(f.beforeMissing ? '' : f.before ?? '', f.after)));
     }
     return box;
@@ -291,7 +302,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     if (diffOpen && !diff) {
       refresh();
       const id = session()?.id;
-      diff = await cmd('contextDiff', { sessionId: id }).catch(e => ({ error: `差分を読めませんでした：${e.message}` }));
+      diff = await cmd('contextDiff', { sessionId: id }).catch(e => ({ error: t('sessionContext.diff.failed', { error: e.message }) }));
       if (session()?.id !== id) return;
     }
     refresh();
@@ -304,7 +315,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       await cmd('refreshContext', { sessionId: id });
       diff = null; diffOpen = false;
       await refreshInfo(true);
-    } catch (e) { notice = `読み込み直せませんでした：${e.message}`; }
+    } catch (e) { notice = t('sessionContext.refreshFailed', { error: e.message }); }
     finally { busy = false; refresh(); }
   }
   async function setRemoved(name, removed) {
@@ -319,21 +330,21 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     try {
       const started = await cmd('mcpAuthStart', { name });
       const span = el('span');
-      span.append('ブラウザで続けてください… ');
+      span.append(t('sessionContext.login.continue'));
       if (/^https?:\/\//i.test(started.url ?? '')) {
-        const a = el('a', 'cx-link', '開かないときはこちら');
+        const a = el('a', 'cx-link', t('sessionContext.login.link'));
         a.href = started.url; a.target = '_blank'; a.rel = 'noreferrer';
         span.append(a);
       }
       logins.set(name, span);
-    } catch (e) { logins.set(name, document.createTextNode(`ログインを始められませんでした：${e.message}`)); }
+    } catch (e) { logins.set(name, document.createTextNode(t('sessionContext.login.startFailed', { error: e.message }))); }
     refresh();
   }
   window.addEventListener('ply:mcp-auth', e => {
     const ev = e.detail ?? {};
     if (!logins.has(ev.name) && !info()?.report?.entries?.some(x => x.kind === 'mcp' && x.name === ev.name)) return;
-    if (ev.phase === 'done') logins.set(ev.name, document.createTextNode('ログインしました。次の返答から使えます'));
-    else if (ev.phase === 'error') logins.set(ev.name, document.createTextNode(`ログインできませんでした${ev.message ? `：${ev.message}` : ''}`));
+    if (ev.phase === 'done') { const done = el('span', null, t('sessionContext.login.done')); done.dataset.done = '1'; logins.set(ev.name, done); }
+    else if (ev.phase === 'error') logins.set(ev.name, document.createTextNode(ev.message ? t('sessionContext.login.failedWith', { error: ev.message }) : t('sessionContext.login.failed')));
     else return;
     refresh();
   });

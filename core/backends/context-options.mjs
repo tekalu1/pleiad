@@ -1,4 +1,5 @@
 import { CodexRpc } from './codex-rpc.mjs';
+import { t } from '../i18n.mjs';
 
 export function claudeContextOptions(context) {
   if (!context) return {};
@@ -24,13 +25,13 @@ export async function codexContextRpc(context, cwd, nativeRpc) {
   if (context.owners.instruction === 'ply') config.project_doc_max_bytes = 0;
   if (context.owners.skill === 'ply') {
     const { data } = await nativeRpc.request('skills/list', { cwds: [cwd], forceReload: true });
-    if (!Array.isArray(data)) throw new Error('Codex の Skills 一覧を確認できず、探索を停止できません');
+    if (!Array.isArray(data)) throw new Error(t('backends.context.codexSkills'));
     config['skills.config'] = data.flatMap(d => d.skills ?? []).map(s => ({ path: s.path, enabled: false }));
     config['features.plugins'] = false;
   }
   if (context.owners.mcp === 'ply') {
     const result = await nativeRpc.request('config/read', { cwd, includeLayers: false });
-    if (!result.config) throw new Error('Codex の MCP 設定を確認できず、接続を停止できません');
+    if (!result.config) throw new Error(t('backends.context.codexMcp'));
     // Replace the map with disabled, credential-free placeholders. Codex's -c
     // dotted-path parser does not support quoted server names containing dots.
     config.mcp_servers = Object.fromEntries(Object.keys(result.config.mcp_servers ?? {}).map(name => [name, { command: process.execPath, enabled: false, required: false }]));

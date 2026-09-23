@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { parse as toml, stringify as tomlText } from 'smol-toml';
 import { parse as yaml } from 'yaml';
 import { KINDS, SOURCES, containsPath, globRegExp, pathKey, scanPlan } from './context-settings.mjs';
+import { t } from './i18n.mjs';
 
 const digest = s => crypto.createHash('sha256').update(s).digest('hex');
 const record = v => v && typeof v === 'object' && !Array.isArray(v);
@@ -60,7 +61,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
   function issue(file, message) { if (diagnostics.length < 100) diagnostics.push({ path: file, message }); }
   function budget() {
     if (++operations > 5000 || bytes >= MAX_TOTAL || entries.length >= MAX_ENTRIES) {
-      if (!limited) issue(cwd, 'スキャン上限に達しました。探索元を絞って再実行してください');
+      if (!limited) issue(cwd, t('context.scan.limitReached'));
       limited = true; return false;
     }
     return true;
@@ -72,27 +73,27 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     try {
       const stat = await fs.stat(file);
       if (!stat.isFile()) return null;
-      if (stat.size > MAX_FILE || bytes + stat.size > MAX_TOTAL) { issue(file, 'サイズ上限のため未読'); return null; }
+      if (stat.size > MAX_FILE || bytes + stat.size > MAX_TOTAL) { issue(file, t('context.scan.tooLarge')); return null; }
       const handle = await fs.open(file, 'r');
       let body;
       try { const b = Buffer.alloc(MAX_FILE + 1); const r = await handle.read(b, 0, b.length, 0); body = b.subarray(0, r.bytesRead); }
       finally { await handle.close(); }
-      if (body.length > MAX_FILE) { issue(file, 'サイズ上限のため未読'); return null; }
+      if (body.length > MAX_FILE) { issue(file, t('context.scan.tooLarge')); return null; }
       bytes += body.length;
       const result = { text: body.toString('utf8').replace(/^\uFEFF/, ''), real: await fs.realpath(file), bytes: body.length };
       cache.set(key, result); return result;
-    } catch (e) { if (!['ENOENT', 'ENOTDIR'].includes(e.code)) issue(file, 'ファイルを読み込めません'); return null; }
+    } catch (e) { if (!['ENOENT', 'ENOTDIR'].includes(e.code)) issue(file, t('context.scan.fileUnreadable')); return null; }
   }
   async function list(dir) {
     if (!budget()) return [];
     try { return (await fs.readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name)); }
-    catch (e) { if (!['ENOENT', 'ENOTDIR'].includes(e.code)) issue(dir, 'ディレクトリを読み込めません'); return []; }
+    catch (e) { if (!['ENOENT', 'ENOTDIR'].includes(e.code)) issue(dir, t('context.scan.dirUnreadable')); return []; }
   }
   const ancestors = [];
   let root = cwd;
   for (let dir = cwd; ; dir = path.dirname(dir)) {
     ancestors.unshift(dir);
-    try { await fs.stat(path.join(dir, '.git')); root = dir; break; } catch (e) { if (e.code !== 'ENOENT') issue(dir, 'Git ルートの確認に失敗しました'); }
+    try { await fs.stat(path.join(dir, '.git')); root = dir; break; } catch (e) { if (e.code !== 'ENOENT') issue(dir, t('context.scan.gitRootFailed')); }
     if (path.dirname(dir) === dir) { ancestors.splice(0, ancestors.length, cwd); break; }
   }
   const exclusions = { user: {}, directory: {} };
@@ -121,7 +122,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     const data = await read(file);
     if (!data || !data.text.trim()) return;
     const key = pathKey(data.real);
-    if (stack.has(key)) { issue(file, '指示ファイルの参照が循環しています'); return; }
+    if (stack.has(key)) { issue(file, t('context.scan.circularReference')); return; }
     const item = add(data, file, ctx, { kind: 'instruction', name: path.basename(file), status, bytes: data.bytes, hash: digest(data.text), content: data.text, references: [], ...more });
     if (item.status === 'excluded' || item.status === 'shadowed') return;
     // Only standalone @path imports; ambiguous inline imports are reported, not guessed.
@@ -129,13 +130,13 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     const imports = data.text.replace(/```[^]*?```/g, '').split(/\r?\n/).filter(l => /^\s*@/.test(l));
     for (const line of imports) {
       const match = /^\s*@(?:"([^"]+)"|(\S+))\s*$/.exec(line);
-      if (!match) { issue(file, '複雑な @参照は未展開です'); continue; }
+      if (!match) { issue(file, t('context.scan.complexImport')); continue; }
       const ref = match[1] ?? match[2];
-      if (/^[a-z]+:\/\//i.test(ref)) { issue(file, 'URL の @参照は未展開です'); continue; }
+      if (/^[a-z]+:\/\//i.test(ref)) { issue(file, t('context.scan.urlImport')); continue; }
       const target = path.resolve(path.dirname(file), /^~[/\\]/.test(ref) ? path.join(home, ref.slice(2)) : ref);
       if (!item.references.includes(target)) item.references.push(target);
-      if (depth >= 5) { issue(target, '@参照の深さ上限に達しました'); continue; }
-      if (!await read(target)) { issue(target, '@参照先を読み込めません'); continue; }
+      if (depth >= 5) { issue(target, t('context.scan.importDepth')); continue; }
+      if (!await read(target)) { issue(target, t('context.scan.importUnreadable')); continue; }
       const { rule, ...inherited } = more;
       await instruction(target, ctx, status === 'conditional' ? 'conditional' : 'candidate', depth + 1, new Set([...stack, key]), inherited);
     }
@@ -156,9 +157,9 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
       const match = FRONTMATTER.exec(data.text);
       let meta = null;
       try { meta = match ? yaml(match[1] ?? '', { maxAliasCount: 20, logLevel: 'silent' }) : null; }
-      catch { issue(file, 'rules の frontmatter を解析できません'); continue; }
+      catch { issue(file, t('context.scan.ruleFrontmatter')); continue; }
       const raw = record(meta) ? meta.paths : undefined, paths = raw == null ? null : globList(raw);
-      if (raw != null && !paths) { issue(file, 'rules の paths を解釈できません'); continue; }
+      if (raw != null && !paths) { issue(file, t('context.scan.rulePaths')); continue; }
       await instruction(file, ctx, paths ? 'conditional' : 'candidate', 0, new Set(), { rule: true, ...(paths ? { paths, pathsBase } : {}) });
     }
   }
@@ -171,7 +172,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
       const match = FRONTMATTER.exec(data.text);
       let meta = {};
       try { if (!match) throw new Error(); meta = yaml(match[1] ?? '', { maxAliasCount: 20, logLevel: 'silent' }); if (!record(meta)) throw new Error(); }
-      catch { meta = {}; issue(file, 'Skill の frontmatter を解析できません'); }
+      catch { meta = {}; issue(file, t('context.scan.skillFrontmatter')); }
       const name = typeof meta?.name === 'string' ? meta.name : entry.name;
       // 本文は frontmatter を含めたまま返す。画面が表に起こす項目を絞らないため
       add(data, file, ctx, { kind: 'skill', name, description: typeof meta?.description === 'string' ? meta.description : '', hash: digest(data.text),
@@ -185,15 +186,15 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     if (!data) return;
     let config;
     try { config = path.extname(file) === '.toml' ? toml(data.text) : JSON.parse(data.text); }
-    catch { issue(file, 'MCP 設定を解析できません（内容は非表示）'); return; }
-    if (!record(config)) { issue(file, 'MCP 設定の形式が不正です'); return; }
+    catch { issue(file, t('context.scan.mcpParse')); return; }
+    if (!record(config)) { issue(file, t('context.scan.mcpInvalid')); return; }
     const servers = select(config);
     if (servers == null) return;
-    if (!record(servers)) { issue(file, 'MCP サーバー一覧の形式が不正です'); return; }
+    if (!record(servers)) { issue(file, t('context.scan.mcpServersInvalid')); return; }
     const shown = {};
     for (const [name, value] of Object.entries(servers)) {
       if (!budget()) break;
-      if (!record(value)) { issue(file, 'MCP サーバー設定の形式が不正です'); continue; }
+      if (!record(value)) { issue(file, t('context.scan.mcpServerInvalid')); continue; }
       shown[name] = safeDefinition(value);
       add(data, file, ctx, { kind: 'mcp', name, status: value.enabled === false || value.disabled === true ? 'disabled' : 'candidate',
         ...(runtime ? { definition: value, hash: digest(JSON.stringify(value)) } : {}), transport: typeof value.command === 'string' ? 'stdio' : typeof (value.url ?? value.baseUrl) === 'string' ? 'http' : 'unknown',
@@ -295,31 +296,26 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     if (item.status !== 'candidate') continue;
     item.conflicts = entries.filter(e => e !== item && e.status === 'candidate' && e.kind === item.kind &&
       (item.kind === 'instruction' ? e.hash === item.hash : e.name === item.name)).map(e => e.id);
-    if (item.kind === 'instruction') item.conflictReason = '同じ本文・適用範囲を確認';
-    else item.conflictReason = '同名の別定義・優先元を確認';
+    if (item.kind === 'instruction') item.conflictReason = t('context.scan.conflictInstruction');
+    else item.conflictReason = t('context.scan.conflictName');
   }
   // home と root は画面がツリーの根（「ユーザー」「この場所」）を作るために使う
   return { previewOnly: true, owner: 'native', cwd, root, home, scannedAt: new Date().toISOString(), entries, searched, configs, diagnostics, limited,
-    limitations: ['探索結果のプレビューです。エージェントが実際に読み込んだ一覧ではありません。',
-      'plugin・管理者設定・自動メモリ・子ディレクトリの遅延読み込みは対象外です。',
-      'Codex の trust・profile・fallback、Claude の複雑な @参照による解決は未対応です。',
-      'Claude の rules のうち paths 付きのものは、当たるファイルを扱うときだけ渡します（開始時には渡しません）。',
-      'ディレクトリ探索は Git ルート〜作業場所です。Git が無ければ作業場所のみ。Claude が読むルート外の親ファイルは含みません。',
-      'MCP は設定を読むだけで接続は行いません。設定ファイルは MCP 登録だけを書き出して示し、環境変数とヘッダーの値、URL のクエリは伏せます。',
-      'Pleiad に登録した MCP は同名のエージェント側の登録より優先します。秘密（トークン・ヘッダー値など）は登録ファイルに含めません。'] };
+    // i18n-dynamic: context.scan.limitations.
+    limitations: ['preview', 'excluded', 'unsupported', 'rules', 'directories', 'mcp', 'ply'].map(k => t(`context.scan.limitations.${k}`)) };
 }
 
 /** 入力欄「/」の候補。コンテキスト画面と同じ探索結果から作る（docs/design-system.md §2.4） */
 export function skillList(report) {
   const label = (entry) => {
-    if (entry.scope === 'user' || entry.origins?.some(o => o.scope === 'user')) return 'ユーザー';
-    if (entry.appliesTo) return 'プロジェクト';
+    if (entry.scope === 'user' || entry.origins?.some(o => o.scope === 'user')) return t('context.scan.fromUser');
+    if (entry.appliesTo) return t('context.scan.fromProject');
     // 配置元（.agents / .claude / .codex …）が分かるものはその名前を出す
     for (const origin of entry.origins ?? []) {
       const dir = origin.path.split(/[\\/]/).find(part => /^\.[a-z0-9_-]+$/i.test(part));
-      if (dir) return dir === '.agents' ? '共通' : dir.slice(1);
+      if (dir) return dir === '.agents' ? t('context.scan.fromCommon') : dir.slice(1);
     }
-    return 'プロジェクト';
+    return t('context.scan.fromProject');
   };
   const byName = new Map();
   for (const e of report.entries ?? []) {
@@ -333,7 +329,7 @@ export function skillList(report) {
       hint: [
         typeof e?.metadata?.['argument-hint'] === 'string' && e.metadata['argument-hint'] ? e.metadata['argument-hint'] : '',
         Array.isArray(e?.extensions?.arguments) && e.extensions.arguments.some(a => !a?.optional)
-          ? '<引数>（欠けると聞かれます）' : '',
+          ? t('context.scan.requiredArgs') : '',
       ].filter(Boolean).join(' '),
       from: label(e),
     });

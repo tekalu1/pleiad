@@ -1,25 +1,27 @@
 import { renderMarkdown } from './render.mjs';
 import { fmt, t } from './i18n.mjs';
+
+// i18n-dynamic: updates.phase.
+const PHASES = ['idle', 'checking', 'current', 'available', 'downloading', 'downloaded', 'installing', 'error', 'unavailable'];
 export function setupUpdates({ page, open, lock, flush }) {
   const $ = id => document.getElementById(id), bridge = window.plyDesktop;
   let info, state, busy = false, installing = false, confirming = false, shownNotice = null, failure = '';
   const deferred = new Set();
-  const phases = { idle: '更新を確認できます', checking: '更新を確認しています…', current: '最新バージョンです', available: '新しいバージョンがあります', downloading: 'ダウンロード中', downloaded: '再起動すると更新を適用できます', installing: '更新を準備しています…', error: '更新を取得できませんでした', unavailable: '自動更新は配布版のデスクトップアプリで利用できます' };
   function paint(value) {
     state = value;
     const applying = installing || state.phase === 'installing';
     const downloading = state.phase === 'downloading';
     const progressing = applying || downloading;
     const progress = Number.isFinite(state.progress) ? Math.max(0, Math.min(100, Math.round(state.progress))) : null;
-    const stage = applying ? (state.phase === 'installing' ? '更新を適用する準備をしています…' : '会話と下書きを保存しています…')
-      : `ダウンロード中${progress === null ? '…' : ` · ${progress}%`}`;
+    const stage = applying ? (state.phase === 'installing' ? t('updates.stage.installing') : t('updates.stage.saving'))
+      : progress === null ? t('updates.stage.downloading') : t('updates.stage.downloadingPercent', { percent: progress });
     lock(applying);
     $('appVersion').textContent = `Pleiad ${state.version || info?.version || ''}`;
-    $('updateStatus').textContent = (phases[state.phase] || phases.idle) + (state.target ? ` · ${state.target}` : '');
+    $('updateStatus').textContent = t(`updates.phase.${PHASES.includes(state.phase) ? state.phase : 'idle'}`) + (state.target ? ` · ${state.target}` : '');
     if (progressing) $('updateStatus').textContent = stage;
-    $('updateHint').textContent = applying ? '保存と更新の準備が終わるまでお待ちください。Pleiadが終了した後、更新を適用して自動で起動し直します。'
-      : downloading ? 'このまま作業を続けられます。準備ができたらお知らせします。'
-      : !state.enabled ? (bridge?.update ? 'この評価版は自動更新に対応していません。新しいインストーラーで更新してください。' : 'ブラウザー版では更新履歴を確認できます。')
+    $('updateHint').textContent = applying ? t('updates.hint.applying')
+      : downloading ? t('updates.hint.downloading')
+      : !state.enabled ? (bridge?.update ? t('updates.hint.noAutoUpdate') : t('updates.hint.browser'))
       : '';
     // リモートの窓: 版はホストが配る画面のもの（release-info.json）。手元のアプリの更新はローカルの窓で（docs/remote.md §7.3）
     if (window.plyRemote && !bridge?.update) {
@@ -28,13 +30,13 @@ export function setupUpdates({ page, open, lock, flush }) {
     }
     $('updateHint').hidden = !$('updateHint').textContent;
     $('updateLastChecked').hidden = !state.lastChecked;
-    $('updateLastChecked').textContent = state.lastChecked ? `最終確認：${fmt.dateTime(state.lastChecked)}` : '';
+    $('updateLastChecked').textContent = state.lastChecked ? t('updates.lastChecked', { when: fmt.dateTime(state.lastChecked) }) : '';
     // 操作の失敗は、あとから届く状態の知らせ（定期の確認など）で消さない。次の操作を始めるまで残す
     $('updateError').textContent = failure || state.error || '';
     for (const id of ['updateProgress', 'updatePromptProgress']) {
       const bar = $(id);
       bar.hidden = !progressing;
-      bar.setAttribute('aria-label', applying ? stage : 'ダウンロードの進捗');
+      bar.setAttribute('aria-label', applying ? stage : t('settings.updates.downloadProgress'));
       if (downloading && !applying && progress !== null) bar.value = progress;
       else bar.removeAttribute('value');
     }
@@ -49,7 +51,7 @@ export function setupUpdates({ page, open, lock, flush }) {
     $('updateBeta').disabled = $('updateAutomatic').disabled = $('updateCheckAutomatic').disabled = working || state.phase === 'downloaded';
     $('checkUpdate').hidden = !state.enabled || ['available', 'downloading', 'installing'].includes(state.phase);
     $('checkUpdate').disabled = working;
-    $('checkUpdate').textContent = state.phase === 'error' ? '再試行' : '更新を確認';
+    $('checkUpdate').textContent = state.phase === 'error' ? t('updates.retry') : t('settings.updates.check');
     $('downloadUpdate').hidden = state.phase !== 'available';
     $('downloadUpdate').disabled = working;
     if (state.phase !== 'downloaded') confirming = false;
@@ -58,20 +60,20 @@ export function setupUpdates({ page, open, lock, flush }) {
     $('updateConfirm').hidden = !confirming;
     $('confirmInstallUpdate').disabled = $('cancelInstallUpdate').disabled = working;
     $('settings').classList.toggle('has-update', ['available', 'downloaded'].includes(state.phase));
-    $('settings').title = ['available', 'downloaded'].includes(state.phase) ? '設定・更新があります' : '設定';
+    $('settings').title = ['available', 'downloaded'].includes(state.phase) ? t('updates.settingsHasUpdate') : t('app.settings');
     let alreadyShown = false;
     try { alreadyShown = sessionStorage.getItem('ply-update-notice') === state.version; } catch {}
     const show = state.notice && (shownNotice === state.version || !alreadyShown);
     $('updateNotice').hidden = !show;
     if (show) { shownNotice = state.version; try { sessionStorage.setItem('ply-update-notice', state.version); } catch {} }
-    $('updateNoticeText').textContent = `Pleiad ${state.version} に更新しました`;
+    $('updateNoticeText').textContent = t('updates.updated', { version: state.version });
     const key = `${state.target}:${state.phase}`;
     let postponed = deferred.has(key);
     try { postponed ||= sessionStorage.getItem(`ply-update-deferred:${key}`) === 'yes'; } catch {}
     const ready = state.phase === 'downloaded';
     $('updatePrompt').hidden = !state.enabled || !state.target || (!progressing && (postponed || (!ready && !(state.phase === 'available' && !state.autoDownload))));
     $('updatePromptText').textContent = progressing ? `Pleiad ${state.target} · ${stage}`
-      : ready ? `Pleiad ${state.target} の更新準備ができました` : `Pleiad ${state.target} を利用できます`;
+      : ready ? t('updates.promptReady', { target: state.target }) : t('updates.promptAvailable', { target: state.target });
     $('viewAvailableUpdate').hidden = applying;
     $('deferUpdate').hidden = progressing;
   }
@@ -111,7 +113,7 @@ export function setupUpdates({ page, open, lock, flush }) {
   bridge?.onUpdate?.(paint);
   (async () => {
     const response = await fetch('./release-info.json');
-    if (!response.ok) throw new Error('リリースノートを読み込めませんでした。');
+    if (!response.ok) throw new Error(t('updates.notesFailed'));
     info = await response.json();
     for (const release of info.releases) {
       const details = document.createElement('details'); details.open = release.version === info.version;
