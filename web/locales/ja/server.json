@@ -108,7 +108,7 @@
   "send": {
     "messageIdRequired": "送信IDが必要です",
     "messageRequired": "メッセージを入力してください",
-    "tooManyAttachments": "添付は{{max}}件までです"
+    "invalidAttachments": "添付の形式が正しくありません"
   },
   "delegation": {
     "taskNotFound": "Pleiad タスクが見つかりません"
@@ -874,5 +874,12 @@
     "incomplete": "まだ受け取っていないファイルがあります（{{count}} 件）。",
     "escape": "送り先の外を指すリンクがあるため書けません: {{path}}",
     "conflictDir": "送り先に同じ名前のフォルダーがあります: {{path}}"
+  },
+  "modesShort": {
+    "ask": "都度",
+    "full": "全自動",
+    "readonly": "読む",
+    "acceptEdits": "編集自動",
+    "plan": "計画"
   }
 }

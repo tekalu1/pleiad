@@ -34,15 +34,15 @@ const NL = String.fromCharCode(10);
  */
 // label / note はゲッター（サーバーの言語は実行中に変わる。core/i18n.mjs）
 const MODES = {
-  ask:      { get label() { return t("modes.ask"); },      get note() { return t("codex.modes.ask"); },      approvalPolicy: "untrusted",  sandbox: "workspace-write", scope: "workspace", autonomy: "ask",   enforced: true },
+  ask:      { get label() { return t("modes.ask"); },      get short() { return t("modesShort.ask"); },      get note() { return t("codex.modes.ask"); },      approvalPolicy: "untrusted",  sandbox: "workspace-write", scope: "workspace", autonomy: "ask",   enforced: true },
   auto:     { label: "auto",                               get note() { return t("codex.modes.auto"); },     approvalPolicy: "on-request", sandbox: "workspace-write", scope: "workspace", autonomy: "judge", enforced: true },
-  full:     { get label() { return t("modes.full"); },     get note() { return t("codex.modes.full"); },     approvalPolicy: "never",     sandbox: "workspace-write", scope: "workspace", autonomy: "never", enforced: true },
+  full:     { get label() { return t("modes.full"); },     get short() { return t("modesShort.full"); },     get note() { return t("codex.modes.full"); },     approvalPolicy: "never",     sandbox: "workspace-write", scope: "workspace", autonomy: "never", enforced: true },
   yolo:     { label: "YOLO",                               get note() { return t("codex.modes.yolo"); },     approvalPolicy: "never", sandbox: "danger-full-access", scope: "full", autonomy: "never", enforced: false },
-  readonly: { get label() { return t("modes.readonly"); }, get note() { return t("codex.modes.readonly"); }, approvalPolicy: "on-request", sandbox: "read-only", scope: "readonly", autonomy: "judge", enforced: true },
+  readonly: { get label() { return t("modes.readonly"); }, get short() { return t("modesShort.readonly"); }, get note() { return t("codex.modes.readonly"); }, approvalPolicy: "on-request", sandbox: "read-only", scope: "readonly", autonomy: "judge", enforced: true },
 };
 
 // 外へ見せるのは語彙と軸だけ。approvalPolicy / sandbox は codex の内部事情なので出さない。
-const vocab = ({ label, note, scope, autonomy, enforced }) => ({ label, note, scope, autonomy, enforced });
+const vocab = ({ label, short, note, scope, autonomy, enforced }) => ({ label, ...(short ? { short } : {}), note, scope, autonomy, enforced });
 
 // thread/resume が以前の設定を返しても、選んだアクセス範囲を turn/start に適用する。
 // 同じ種類なら設定済みの追加ルートなどを保持し、YOLO から戻る場合は制限を復元する。

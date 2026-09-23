@@ -108,7 +108,7 @@
   "send": {
     "messageIdRequired": "A message ID is required.",
     "messageRequired": "Enter a message.",
-    "tooManyAttachments": "You can attach up to {{max}} files."
+    "invalidAttachments": "The attachments are not in a valid format."
   },
   "delegation": {
     "taskNotFound": "Pleiad task not found."
@@ -876,5 +876,12 @@
     "incomplete": "Some files haven't been received yet ({{count}}).",
     "escape": "Can't write because a link points outside the destination: {{path}}",
     "conflictDir": "The destination has a folder with the same name: {{path}}"
+  },
+  "modesShort": {
+    "ask": "Ask",
+    "full": "Auto",
+    "readonly": "Read",
+    "acceptEdits": "Edits",
+    "plan": "Plan"
   }
 }

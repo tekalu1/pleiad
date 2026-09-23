@@ -104,9 +104,9 @@ export const COMMANDS = new Set([
   "modes",           // 使える承認モードの一覧 { backend }
   "setModel",        // モデルの切り替え（人間のみ）
   "models",          // 使えるモデルの一覧 { backend, cwd? }。'' には resolvesTo（既定が実際に当たる id）と efforts / defaultEffort
-  "listDirs",        // { path? } -> { path, parent, dirs: [名前], truncated, roots }。フォルダーだけ。path が空ならホーム
+  "listDirs",        // { path?, files? } -> { path, parent, dirs: [名前], files?: [{ name, size, mtime }], truncated, roots }。files が true のときだけファイルも。path が空ならホーム
   // ファイルの操作（web/file-actions.mjs）。path は会話の中の参照（相対は sessionId・at か base で解く）。許可範囲は /file-preview と同じ
-  "hostCapabilities", // {} -> { osActions }。この接続がサーバーのある PC の画面からか（OS の操作を出してよいか）
+  "hostCapabilities", // {} -> { osActions, hostName }。この接続がサーバーのある PC の画面からか（OS の操作を出してよいか・添付の出どころを選ばせるか）
   "resolvePath",      // { path, sessionId?, at?, base? } -> { path（実体）, cwd, kind: file|directory }
   "revealPath",       // { path, sessionId?, at?, base? } -> { path }。エクスプローラーでファイルを選んだ状態で開く（フォルダーはその中）。遠隔の接続は断る
   "openPath",         // 同上。HTML だけ、既定のブラウザーで開く。遠隔の接続は断る
@@ -122,7 +122,12 @@ export const COMMANDS = new Set([
   "renameStatus",    // 状態の一括改名（to が空なら状態を外す＝グループ削除）
   "prefs",           // 次に新しく始めるときの既定
   "setPref",         // その既定を変える
-  "attachFile",      // 人間が会話へ渡すファイル
+  "attachFile",      // 人間が会話へ渡すファイル。中身を 1 通で送る古い口（8MB まで）
+  // 添付を断片で送る（1 件 100MB まで。core/folder-uploads.mjs と同じ仕組み・512 KiB の断片）。今の画面はこちらだけを使う
+  "attachStart",     // { sessionId, name, mime, size } -> { uploadId, path, received, chunkBytes }
+  "attachChunk",     // { uploadId, offset, data（base64）} -> { received }。data が空なら今の位置だけ
+  "attachFinish",    // { uploadId } -> { path, bytes, kind }
+  "attachCancel",    // { uploadId } -> { cancelled }
   // 手元のフォルダーをホストへ送る（core/folder-uploads.mjs、docs/remote.md §8.1）。リモート専用ではない一般の口
   "uploadCheck",     // { name, dest?, paths } -> { dest, root, exists, inRoot, empty, conflicts, sample, needsConfirm }。送る前の下見
   "uploadStart",     // { name, dest?, files: [{ path, size, mtime }], overwrite } -> { uploadId, dest, received: [バイト], resumed, chunkBytes } | { needsConfirm, ... }
