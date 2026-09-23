@@ -15,6 +15,8 @@ export function createCompletionNotifications({ host = window, openSession }) {
     completed(event, session, replay = false) {
       if (replay || event.type !== 'turnEnd' || event.outcome !== 'ok' || event.requeued
           || !event.sessionId || !Number.isFinite(event.completedAt)) return;
+      // 委譲された子の会話（Pleiad タスク）は知らせない。結果は依頼元の会話に届き、そちらの完了で知らせる
+      if (event.delegated || session?.delegation) return;
       if (event.completedAt <= (seen.get(event.sessionId) ?? 0)) return;
       seen.set(event.sessionId, event.completedAt);
       const notice = { sessionId: event.sessionId, completedAt: event.completedAt,

@@ -71,10 +71,10 @@ const QUESTION_TOOL = "AskUserQuestion";
 // 隠すのではなく「選んだことが見える」形で扱うほうがよい。
 // 表示名と説明は言語が実行中に変わるので、読むたびに引く（ゲッター）
 const MODES = {
-  default:     { get label() { return t("modes.ask"); },         get note() { return t("claude.modes.defaultNote"); },     scope: "workspace", autonomy: "ask",   enforced: false },
+  default:     { get label() { return t("modes.ask"); },         get short() { return t("modesShort.ask"); },         get note() { return t("claude.modes.defaultNote"); },     scope: "workspace", autonomy: "ask",   enforced: false },
   auto:        { label: "auto",                                  get note() { return t("claude.modes.autoNote"); },        scope: "workspace", autonomy: "judge", enforced: false },
-  acceptEdits: { get label() { return t("modes.acceptEdits"); }, get note() { return t("claude.modes.acceptEditsNote"); }, scope: "workspace", autonomy: "judge", enforced: false },
-  plan:        { get label() { return t("modes.plan"); },        get note() { return t("claude.modes.planNote"); },        scope: "none",      autonomy: "ask",   enforced: false },
+  acceptEdits: { get label() { return t("modes.acceptEdits"); }, get short() { return t("modesShort.acceptEdits"); }, get note() { return t("claude.modes.acceptEditsNote"); }, scope: "workspace", autonomy: "judge", enforced: false },
+  plan:        { get label() { return t("modes.plan"); },        get short() { return t("modesShort.plan"); },        get note() { return t("claude.modes.planNote"); },        scope: "none",      autonomy: "ask",   enforced: false },
   bypass:      { label: "YOLO",                                  get note() { return t("claude.modes.bypassNote"); },      scope: "full", autonomy: "never", enforced: false },
 };
 
@@ -500,7 +500,7 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, contextRuntime, agentRuntime, oauthToken, endpoint = null, locale }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, contextRuntime, agentRuntime, oauthToken, endpoint = null, locale }) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, locale };
     let releaseContext;
@@ -520,6 +520,7 @@ export const backend = {
       if (contextRuntime) await readyContext;
       if (input.closed || signal?.signal?.aborted) return;       // 走り出す前に中断された
       promptSent = true;
+      onPromptDelivered?.();
       yield userMessage(prompt);
       yield* input;
     }
