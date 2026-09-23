@@ -836,6 +836,7 @@ function makeEmit(turn) {
       outbox.returned(turn.info.sessionId, event.messageId).catch(() => {});
     }
     if (event?.type === "turnResult") {
+      if (turn.stream.initialMessageId) event = { ...event, messageId: turn.stream.initialMessageId };
       turn.outcome = event.outcome;
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）
       if (event.outcome === "error") turn.errorShown = true;
@@ -1438,6 +1439,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       stream: {
         ...structuredClone(baseline),
         user: hooks.internal ? null : { role: "user", text: String(prompt ?? ""), at: new Date().toISOString(), backend: backend.id },
+        initialMessageId: args.messageId ?? null,
         events: [],
       },
       key: sessionId ?? `new:${crypto.randomUUID()}`,
@@ -1485,7 +1487,13 @@ async function runTurnInternal(args, onStarted, hooks) {
       },
     });
 
-    let didStart = false, runtimeContext;
+    let didStart = false, backendInvoked = false, runtimeContext;
+    let initialDelivered = false;
+    const onPromptDelivered = () => {
+      if (initialDelivered || !args.messageId) return;
+      initialDelivered = true;
+      emit({ type: 'userMessage.delivered', messageId: args.messageId });
+    };
     const saveContext = async () => {
       await turn.setup;
       if (turn.info.sessionId) await store.setSessionData(turn.info.sessionId, 'contextSession', contextRecord);
@@ -1494,6 +1502,10 @@ async function runTurnInternal(args, onStarted, hooks) {
     try {
       await onStarted();
       didStart = true;
+      if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true });
+      broadcastRunning();
+      syncRunningPoll();
+      if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'preparing' });
       if (hooks.internal) {
         const hashes = (await store.get(sessionId)).taskNotices ?? [];
         const digest = crypto.createHash('sha256').update(prompt).digest('hex');
@@ -1506,15 +1518,15 @@ async function runTurnInternal(args, onStarted, hooks) {
         ...(backend.capabilities?.plyContext === 'conversation' ? { token: conversationConnection(turn).contextToken } : {}),
         origin: localOrigin(), signal: turn.ac.signal,
         isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted, changed: saveContext,
+        progress: ({ current, total }) => emit({ type: 'activity', state: 'preparing', current, total }),
         authorize: backend.id === 'codex' && !['full','yolo'].includes(permissionMode)
           ? async (serverName, toolName, input) => Boolean((await askPermission({ toolName: `${serverName} / ${toolName}`, input, sessionId: turn.info.sessionId, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: agentLocale }))?.allow)
           : undefined });
-      if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true });
-      broadcastRunning();
-      syncRunningPoll();
+      if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'thinking' });
       // 再開なら id が分かっているので先に載せる。新規は session イベントで id が決まった瞬間に（makeEmit）
       if (sessionId && attachments.length) await presentAttachments(sessionId, attachments, emit);
       if (hooks.signal?.aborted) throw new Error(t('turn.aborted'));
+      backendInvoked = true;
       const result = await backend.runTurn({
         prompt,
         sessionId,
@@ -1523,6 +1535,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         model: model || undefined,
         effort,
         emit,
+        onPromptDelivered,
         // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
         askPermission: request => askPermission({ ...request, locale: agentLocale }),
         signal: turn.ac,
@@ -1563,7 +1576,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       if (!turn.errorShown) emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
       // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
       // 送信待ちの「失敗」に戻し、利用者に再送か取り消しを選ばせる
-      if (err?.undelivered && sessionId && args.messageId) {
+      if ((err?.undelivered || !backendInvoked) && sessionId && args.messageId) {
         await outbox.undelivered(sessionId, args.messageId, String(err?.message ?? err)).catch(() => {});
       }
       if (!didStart) throw err;
@@ -2165,7 +2178,7 @@ wss.on("connection", (ws, req) => {
               return reply(true, {
                 messages: [...live.messages, ...(user ? [user] : [])], presents: live.presents, completedAt, draft,
                 stream: { events: live.events }, streamCursor: streamSequence, permissions,
-                initialMessageId: live.events.find(e => e.type === 'userMessage' && e.initial)?.messageId,
+                initialMessageId: live.initialMessageId,
               });
             }
             return reply(true, { ...data, completedAt, draft, streamCursor: streamSequence, permissions, ...retired });

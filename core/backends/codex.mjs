@@ -1082,7 +1082,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, askPermission, signal, control, ephemeral = false, visualizeInstructions, contextRuntime, agentRuntime, endpoint = null }) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, contextRuntime, agentRuntime, endpoint = null }) {
     const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
     // 互換の接続先（core/compat-endpoints.mjs）。スレッドごとに modelProvider と model_providers.<id> を渡す（app-server は共有のまま）。
     // 鍵は experimental_bearer_token / http_headers で JSON-RPC に載る（argv・環境に出ない）。エラー文からは伏せる
@@ -1394,6 +1394,7 @@ export const backend = {
         input: [{ type: "text", text: String(prompt ?? "") }],
       });
       turnId ??= res?.turn?.id ?? null;
+      onPromptDelivered?.();
       // 「渡った」合図（userMessage.delivered）を後から出せる。server は渡るまでを pending として画面に出す
       if (control) control.steerConfirms = true;
       if (control) control.steer = async (item) => {

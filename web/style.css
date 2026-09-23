@@ -903,6 +903,9 @@ main.dropping #log{background:var(--surface-1)}
 /* 途中送信がまだエージェントに渡っていない間だけ、回る弧を一言の前に置く（design-system.md §6。色は本文と同じ） */
 .outbox-status-mark { display: flex; align-items: center; gap: 6px; }
 .outbox-status-mark .run, .outbox-status-mark .run svg { width: 12px; height: 12px; }
+.outbox-status-failed { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.outbox-status-failed b { color: var(--ink-strong); }
+.outbox-status-failed button { font-size: 12px; padding: 1px 10px; }
 
 /* ==================== 狭い画面・タッチ（docs/remote.md §8.4、承認済みのモック docs/mockups/remote-mobile.html） ====================
    plyRemote の有無ではなく、画面の幅（700px 以下）と入力の種類（hover:none / pointer:coarse）で効かせる。ブラウザー版の狭い窓にも効く。

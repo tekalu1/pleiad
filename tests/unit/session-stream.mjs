@@ -29,7 +29,7 @@ export default async function (t) {
     // 狭い画面の引き出し（client.mjs の setDrawer）。会話を開くと閉じる。このテストの対象外
     setDrawer: noop,
     promptPlaceholder: () => "chat.composer.placeholder",
-    state, sessionLoads: loads, outboxes: new Map(), paintOutbox: noop, refreshOutbox: async () => [],
+    state, sessionLoads: loads, outboxes: new Map(), paintOutbox: noop, syncOutboxRows: noop, refreshOutbox: async () => [],
     displayedCompletions: new Map(), document: { visibilityState: "visible" },
     // 承認カードはこのテストの対象外（tests/unit/server-fake.mjs の reopenCase が見ている）
     paintPendingPerms: noop,
@@ -106,7 +106,7 @@ export default async function (t) {
     serverSource.indexOf('// Allocate the host identity')).trim().replace(/\}\s*$/, "");
   let resolveTranscript;
   const liveReads = new Set();
-  const turn = { stream: { messages: [], presents: [], user: { role: "user", text: "input" }, events: [event("先頭", 1)] } };
+  const turn = { stream: { messages: [], presents: [], user: { role: "user", text: "input" }, initialMessageId: 'msg-initial', events: [event("先頭", 1)] } };
   const turns = new Map([["target", turn]]);
   const serverContext = vm.createContext({
     msg: { args: { sessionId: "target", live: true } }, runtime: { turns, waiting: new Map() }, liveReads,
@@ -121,6 +121,7 @@ export default async function (t) {
   resolveTranscript({ messages: [], presents: [] });
   const completedDuringRead = await loading;
   t.ok("サーバーの履歴取得中に終了しても保持したターンから末尾まで返す", completedDuringRead.stream.events.length === 3 && completedDuringRead.stream.events.at(-1).type === "turnEnd");
+  t.ok('初回発言の ID は userMessage より前の履歴取得でも保つ', completedDuringRead.initialMessageId === 'msg-initial');
   t.ok("サーバーの読込待ち参照を解放する", liveReads.size === 0);
 
   // Real server and a fresh socket: no browser-side cache can supply the prefix.

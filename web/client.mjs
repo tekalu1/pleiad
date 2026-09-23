@@ -42,6 +42,7 @@ import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { renderOutbox } from './outbox.mjs';
 const outboxes = new Map();
+const turnErrorRows = new Map();
 const submittingMessages = new Set();
 // Persist the request ID before transport so an acknowledgement lost on reload
 // can be reconciled with server acceptance instead of sending a second copy.
@@ -54,14 +55,15 @@ function saveReceipts() {
 }
 function paintOutbox() {
   const id = state.current;
+  const shown = new Set([...thread.querySelectorAll('.mw[data-message-id]')].map(w => w.dataset.messageId));
   renderOutbox($('outbox'), outboxes.get(id) ?? [], async (messageId, action) => {
     await cmd('messageAction', { sessionId: id, messageId, action });
-  });
+  }, shown);
 }
 async function refreshOutbox(id) {
   const messages = await cmd('listMessages', { sessionId: id });
   outboxes.set(id, messages);
-  if (state.current === id) paintOutbox();
+  if (state.current === id) syncOutboxRows(messages);
   return messages;
 }
 
@@ -640,6 +642,7 @@ function behindHere() {
 const activity = {
   t0: 0,
   timer: null,
+  markTimer: null,
   el: null,          // .m.activity
   text: "",
   subagents: 0,
@@ -655,7 +658,7 @@ const activity = {
   remark() {
     this.el?.closest(".mw")?.querySelector(".activity-tip")?.replaceChildren(this.mark());
   },
-  show(text) {
+  show(text, { delayMark = false } = {}) {
     // 中断を頼んだ後は、止まり終えるまで何が流れてきても「中断している」のまま出す
     if (stoppingHere()) text = ACTIVITY_LABEL.stopping;
     this.text = text;
@@ -673,9 +676,20 @@ const activity = {
       m.append(el("span", "txt"), work, el("span", "el"));
       const w = append(m, "activity");
       const tip = el("span", "activity-tip");
-      tip.append(this.mark());
+      if (!delayMark) tip.append(this.mark());
       w.querySelector(".mw-gutter").append(tip);
       this.el = m;
+    }
+    const tip = this.el.closest('.mw').querySelector('.activity-tip');
+    if (delayMark) {
+      if (!tip.children.length && !this.markTimer) this.markTimer = setTimeout(() => {
+        this.markTimer = null;
+        if (this.el?.isConnected && !tip.children.length) tip.append(this.mark());
+      }, 150);
+    } else {
+      clearTimeout(this.markTimer);
+      this.markTimer = null;
+      if (!tip.children.length) tip.append(this.mark());
     }
     this.paint();
     relayoutBranches();
@@ -716,7 +730,9 @@ const activity = {
   },
   hide() {
     clearInterval(this.timer);
+    clearTimeout(this.markTimer);
     this.timer = null;
+    this.markTimer = null;
     this.t0 = 0;
     this.text = "";
     this.behind = null;
@@ -833,7 +849,9 @@ function isMine(ev) {
 // 回る弧と一言を出す（docs/design-system.md §6。印は待っている間しか DOM に置かない）。
 // 渡ったら「AIへ送信済み」に戻し、渡らないままターンが終わったら、次のターンで答えることを言う。
 const deliveredEarly = new Set();   // 吹き出しより先に届いた配達の合図
+const deliveryTimers = new WeakMap();
 const DELIVERY = {
+  sending: t('chat.delivery.sending'),
   pending: t('chat.delivery.pending'),
   late: t('chat.delivery.late'),
   sent: t('chat.delivery.sent'),
@@ -844,26 +862,79 @@ const messageRow = (messageId) => (messageId
 function markDelivery(row, kind) {
   const status = row.querySelector('.outbox-status');
   if (!status) return;
+  clearTimeout(deliveryTimers.get(row));
   if (kind === 'pending') row.dataset.deliveryPending = '1';
   else delete row.dataset.deliveryPending;
-  status.replaceChildren(...(kind === 'pending' ? [runMark(t('chat.delivery.notYet'))] : []), DELIVERY[kind]);
-  status.classList.toggle('outbox-status-mark', kind === 'pending');
+  const waiting = kind === 'pending' || kind === 'sending';
+  status.replaceChildren(DELIVERY[kind]);
+  status.classList.remove('outbox-status-failed');
+  status.classList.toggle('outbox-status-mark', waiting);
+  if (waiting) deliveryTimers.set(row, setTimeout(() => {
+    if (row.isConnected && status.textContent === DELIVERY[kind])
+      status.prepend(runMark(kind === 'sending' ? DELIVERY.sending : t('chat.delivery.notYet')));
+  }, 150));
+}
+
+function ensureMessageRow(messageId, text, at) {
+  let row = messageRow(messageId);
+  if (!row) {
+    row = append(userMsg(text, { at }), `live:${++liveSeq}`);
+    row.dataset.messageId = messageId;
+  }
+  if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
+  return row;
+}
+
+function markFailedMessage(row, item) {
+  const status = row.querySelector('.outbox-status');
+  clearTimeout(deliveryTimers.get(row));
+  delete row.dataset.deliveryPending;
+  status.classList.remove('outbox-status-mark');
+  status.classList.add('outbox-status-failed');
+  const reason = item.error ? ` · ${item.error}` : '';
+  status.replaceChildren(el('b', null, t('chat.delivery.failed')), document.createTextNode(reason));
+  for (const [action, label] of [['retry', t('outbox.retry')], ['cancel', t('outbox.cancel')]]) {
+    const button = el('button', 'btn', label);
+    button.type = 'button';
+    button.onclick = async () => {
+      button.disabled = true;
+      try { await cmd('messageAction', { sessionId: state.current, messageId: item.id, action }); }
+      catch (e) { status.childNodes[1].textContent = ` · ${e.message}`; }
+      finally { button.disabled = false; }
+    };
+    status.append(button);
+  }
+}
+
+function syncOutboxRows(messages) {
+  if (!state.current || state.loadingSession) { paintOutbox(); return; }
+  let withdrawn = false;
+  for (const item of messages ?? []) {
+    const row = messageRow(item.id);
+    if ((item.status === 'queued' && (item.waiting || row?.dataset.messageStarted))
+      || ['paused', 'unknown', 'cancelled'].includes(item.status)) {
+      if (row) { row.remove(); withdrawn = true; }
+    } else if (item.status === 'failed') {
+      markFailedMessage(ensureMessageRow(item.id, item.args.prompt, item.at), item);
+      const failure = turnErrorRows.get(state.current);
+      if (failure?.messageId === item.id) {
+        failure.node.closest('.mw')?.remove();
+        turnErrorRows.delete(state.current);
+        withdrawn = true;
+      }
+    } else if (item.status === 'sending' && row) {
+      row.dataset.messageStarted = '1';
+      if (!row.dataset.deliveryPending) markDelivery(row, 'sending');
+    }
+  }
+  if (withdrawn) relayoutBranches();
+  paintOutbox();
 }
 
 function onEvent(ev, replay = false) {
   if (ev.type === 'outbox') {
     outboxes.set(ev.sessionId, ev.messages);
-    if (state.current === ev.sessionId) {
-      // 送ったつもりが届かず送信待ちへ戻ったもの（エージェントが別のターンを走らせていた）。
-      // 会話の吹き出しを引っ込め、送信待ちの側に出す。そのターンが終わると改めて送られる
-      const back = new Set((ev.messages ?? []).filter(m => m.status === 'queued').map(m => m.id));
-      let withdrawn = false;
-      for (const w of thread.querySelectorAll('.mw[data-message-id]')) {
-        if (back.has(w.dataset.messageId)) { w.remove(); withdrawn = true; }
-      }
-      if (withdrawn) relayoutBranches();
-      paintOutbox();
-    }
+    if (state.current === ev.sessionId) syncOutboxRows(ev.messages);
     return;
   }
   if (ev.type === "turnEnd" && ev.sessionId) {
@@ -906,17 +977,28 @@ function onEvent(ev, replay = false) {
   }
   switch (ev.type) {
     case 'userMessage': {
-      if (replay && ev.messageId === state.initialMessageId) return;
+      if (replay && ev.messageId === state.initialMessageId) {
+        const row = ensureMessageRow(ev.messageId, ev.text, ev.at);
+        const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);
+        if (confirmed) row.dataset.delivered = '1';
+        markDelivery(row, ev.pending && !confirmed ? 'sending' : 'sent');
+        syncOutboxRows(outboxes.get(state.current) ?? []);
+        return;
+      }
       closeTurnEl();
-      const row = append(userMsg(ev.text, { at: ev.at }), `live:${++liveSeq}`);
-      if (ev.messageId) row.dataset.messageId = ev.messageId;
-      const status = document.createElement('div');
-      status.className = 'outbox-status';
-      row.querySelector('.m').append(status);
+      const row = ev.messageId ? ensureMessageRow(ev.messageId, ev.text, ev.at)
+        : append(userMsg(ev.text, { at: ev.at }), `live:${++liveSeq}`);
+      if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
+      row.dataset.messageStarted = '1';
+      row.querySelector('.m.user .body').textContent = ev.text;
+      if (ev.at) { row.querySelector('.m').dataset.at = ev.at; row.querySelector('.who .when').textContent = hhmm(ev.at); }
       // pending = 受理はしたが、まだエージェントに渡っていない（userMessage.delivered を待つ）。
       // 配達の合図が先に来ていた分（速いバックエンド）はここで消化する
-      if (ev.pending && ev.messageId && !deliveredEarly.delete(ev.messageId)) markDelivery(row, 'pending');
+      const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);
+      if (confirmed) row.dataset.delivered = '1';
+      if (ev.pending && ev.messageId && !confirmed) markDelivery(row, ev.initial ? 'sending' : 'pending');
       else markDelivery(row, 'sent');
+      syncOutboxRows(outboxes.get(state.current) ?? []);
       paintContextLine();      // 最初の発言が出てから置く（記録は発言より先に届く）
       return;
     }
@@ -924,12 +1006,14 @@ function onEvent(ev, replay = false) {
       const row = messageRow(ev.messageId);
       // 吹き出しより先に届くことがある（受理の応答と配達の合図が競る）。覚えておいて吹き出しで消す
       if (!row) { if (ev.messageId) deliveredEarly.add(ev.messageId); return; }
+      row.dataset.delivered = '1';
       markDelivery(row, 'sent');
       return;
     }
     case 'userMessage.dropped':
       // 読まれないままターンが死んだ。発言は送信待ち（保留）へ戻るので、会話からは下げる
       messageRow(ev.messageId)?.remove();
+      paintOutbox();
       return;
     case "sessionsChanged":
       if (ev.deleted === state.current) { state.current = null; clearThread(); loadDraft(); }
@@ -1006,7 +1090,9 @@ function onEvent(ev, replay = false) {
       if (ev.state === "idle") return activity.hide();
       // 別のタブで押した中断・開き直した会話でも、止まり終えるまで中断ボタンを押せなくする
       if (ev.state === "stopping" && ev.sessionId && isRunningHere()) { state.stopping.add(ev.sessionId); syncRunState(); }
-      return activity.show(ev.label || ACTIVITY_LABEL[ev.state] || ACTIVITY_LABEL.running);
+      return activity.show(ev.label || (ev.state === 'preparing'
+        ? ev.current && ev.total ? t('activity.connectingMcp', { current: ev.current, total: ev.total }) : t('activity.preparing')
+        : ACTIVITY_LABEL[ev.state] || ACTIVITY_LABEL.running), { delayMark: ev.state === 'preparing' });
 
     case 'taskNotice':
       closeTurnEl();
@@ -1016,7 +1102,12 @@ function onEvent(ev, replay = false) {
       if (ev.outcome === "ok") return;             // 終わったことは稼働表示が消えれば分かる
       closeTurnEl();
       if (ev.outcome === "aborted") sys(html.t("chat.sys.aborted"));
-      else sys(html.t("chat.sys.failed", { error: ev.error ?? t("chat.sys.unknownReason") }));
+      else {
+        const node = sys(html.t("chat.sys.failed", { error: ev.error ?? t("chat.sys.unknownReason") }));
+        if (ev.sessionId) turnErrorRows.set(ev.sessionId, { messageId: ev.messageId, node });
+        const failed = outboxes.get(ev.sessionId)?.find(m => m.status === 'failed' && m.id === ev.messageId);
+        if (failed) syncOutboxRows(outboxes.get(ev.sessionId));
+      }
       return;
     }
 
@@ -3157,6 +3248,11 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   loadDraft();
   closeTurnEl();
   const added = paintHistory(keepUpTo ?? 0);
+  if (state.initialMessageId) {
+    const lastUser = [...thread.querySelectorAll('.mw:has(.m.user)')].at(-1);
+    if (lastUser) lastUser.dataset.messageId = state.initialMessageId;
+  }
+  syncOutboxRows(outboxes.get(id) ?? []);
   // Replay synchronously after clearing/painting; only events after the server
   // snapshot are appended, so an in-flight delta is neither lost nor doubled.
   if (load) for (const event of sessionLoads.finish(load, data)) onEvent(event, true);
@@ -3384,6 +3480,10 @@ async function submit() {
     const request = previous && previous.prompt === full ? previous : { ...args, messageId: randomId() };
     receipts.set(sessionId, request); saveReceipts();
     await cmd('sendMessage', request);
+    if (state.current === sessionId && !messageRow(request.messageId)) {
+      markDelivery(ensureMessageRow(request.messageId, full, new Date().toISOString()), 'sending');
+      syncOutboxRows(outboxes.get(sessionId) ?? []);
+    }
     await clearSentDraft(sessionId, text, attachments);
     receipts.delete(sessionId); saveReceipts();
     $('settingsError').textContent = '';

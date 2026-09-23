@@ -58,7 +58,31 @@ export default async function(t) {
     const lostItem = (await c.cmd('listMessages', { sessionId: lost.sessionId }))[0];
     t.ok('渡す前の失敗は送信済みにせず、エラー付きの失敗で残す', lostItem.status === 'failed' && lostItem.error?.includes('before the prompt'), JSON.stringify(lostItem));
     const errors = c.events.slice(lostFrom).filter(e => e.type === 'turnResult' && e.outcome === 'error');
-    t.ok('同じ失敗を 2 回知らせない', errors.length === 1, String(errors.length));
+    t.ok('同じ失敗を 2 回知らせず、失敗した発言の ID を付ける',
+      errors.length === 1 && errors[0].messageId === 'message-0006', JSON.stringify(errors));
+    t.ok('渡す前の失敗には送信済みの合図を出さない',
+      !c.events.slice(lostFrom).some(e => e.type === 'userMessage.delivered' && e.messageId === 'message-0006'));
+    // contextBridge.open がバックエンドへ渡す前に失敗しても、同じ送信 ID を failed に戻す。
+    const overflow = path.join(scratch, 'mcp-overflow');
+    await fs.mkdir(path.join(overflow, '.git'), { recursive: true });
+    await fs.writeFile(path.join(overflow, '.mcp.json'), JSON.stringify({ mcpServers: Object.fromEntries(
+      Array.from({ length: 33 }, (_, i) => [`fixture${i}`, { command: process.execPath, args: ['--version'] }])) }));
+    await c.cmd('setContextSettings', { cwd: overflow, place: overflow, kind: 'mcp', value: {
+      owner: 'ply', user: { sources: [], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] },
+    } });
+    const bridgeFail = await c.cmd('newSession', { backend: 'fake', cwd: overflow });
+    const bridgeFrom = c.mark();
+    await c.cmd('sendMessage', { sessionId: bridgeFail.sessionId, messageId: 'message-0007', prompt: 'echo:bridge-fail' });
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === bridgeFail.sessionId, { from: bridgeFrom, ms: 3000 });
+    const [bridgeItem] = await c.cmd('listMessages', { sessionId: bridgeFail.sessionId });
+    const bridgeEvents = c.events.slice(bridgeFrom).filter(e => e.sessionId === bridgeFail.sessionId);
+    t.ok('MCP 接続の準備失敗もエラー付き failed に戻り、発言は失敗より先に届く',
+      bridgeItem.status === 'failed' && Boolean(bridgeItem.error)
+      && bridgeEvents.findIndex(e => e.type === 'userMessage') >= 0
+      && bridgeEvents.findIndex(e => e.type === 'userMessage') < bridgeEvents.findIndex(e => e.type === 'turnResult')
+      && bridgeEvents.some(e => e.type === 'turnResult' && e.messageId === 'message-0007')
+      && !bridgeEvents.some(e => e.type === 'userMessage.delivered' && e.messageId === 'message-0007'),
+      JSON.stringify({ item: bridgeItem, events: bridgeEvents.map(e => e.type) }));
   } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 
   // 会話をまたいだ同時実行の本数に上限は無い。ほかの会話が走っていても、新しい会話の送信は待たずに届く
@@ -71,8 +95,14 @@ export default async function(t) {
     await lc.cmd('runTurn', { sessionId: busy.sessionId, prompt: 'ask' });
     const permission = await lc.waitFor(e => e.type === 'permission');
     const fresh = await lc.cmd('newSession', { backend: 'fake', cwd: ROOT });
+    const freshFrom = lc.mark();
     await lc.cmd('sendMessage', { sessionId: fresh.sessionId, messageId: 'message-0101', prompt: 'echo:fresh' });
     await lc.waitFor(e => e.type === 'outbox' && e.sessionId === fresh.sessionId && e.messages[0]?.status === 'sent', { ms: 5000 });
+    await lc.waitFor(e => e.type === 'userMessage.delivered' && e.messageId === 'message-0101', { ms: 5000, from: freshFrom });
+    const freshEvents = lc.events.slice(freshFrom).filter(e => e.sessionId === fresh.sessionId);
+    const initial = freshEvents.find(e => e.type === 'userMessage' && e.messageId === 'message-0101');
+    t.ok('初回発言も送信中として流し、準備後に同じ ID の配達を知らせる', initial?.pending === true
+      && freshEvents.findIndex(e => e === initial) < freshEvents.findIndex(e => e.type === 'userMessage.delivered' && e.messageId === 'message-0101'));
     const [sent] = await lc.cmd('listMessages', { sessionId: fresh.sessionId });
     t.ok('ほかの会話が承認待ちで走っていても、新しい会話の送信は待たない', sent.status === 'sent' && !sent.waiting, JSON.stringify(sent));
     await lc.cmd('resolvePermission', { id: permission.id, allow: true });
