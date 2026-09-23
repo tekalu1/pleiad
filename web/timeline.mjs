@@ -5,6 +5,15 @@ const normalize = value => {
   return /^[a-z]:\//i.test(p) ? p.toLowerCase() : p;
 };
 
+/**
+ * 送信の本文に付ける添付の印（エージェントが読む）。会話の言語（一覧の行の agentLocale。決まっていなければ画面の言語）で選ぶ。
+ * 読み戻し（送信済みの発言と添付の突き合わせ・再送の下書き）は、どちらの言語の印も受ける（会話の途中で印の言語は変わらないが、
+ * 言語を持つ前の会話の記録は日本語の印）。機械が読み戻す印なので辞書ではなくここで固定する
+ */
+export const ATTACHMENT_MARKS = { ja: '[添付]', en: '[Attachment]' }; // i18n-ignore: エージェントに渡す添付の印（会話の言語で選ぶ。読み戻しの正規表現と対）
+export const attachmentLine = (locale, path) => `${ATTACHMENT_MARKS[locale] ?? ATTACHMENT_MARKS.ja} ${path}`;
+export const ATTACHMENT_LINE = /^\[(?:添付|Attachment)\]\s+(.+)$/;
+
 /** Match the attachment marker, not incidental mentions of a filename. */
 export function attachmentMessageIndex(messages, present) {
   if (present.by !== "human" || !present.path) return -1;
@@ -15,7 +24,7 @@ export function attachmentMessageIndex(messages, present) {
   const target = normalize(present.path);
   const candidates = messages.flatMap((m, i) => m.role === "user" &&
     String(m.text ?? "").split(/\r?\n/).some(line => {
-      const match = /^\[添付\]\s+(.+)$/.exec(line.trim());
+      const match = ATTACHMENT_LINE.exec(line.trim());
       return match && normalize(match[1]) === target;
     }) ? [i] : []);
   if (!candidates.length) return -1;

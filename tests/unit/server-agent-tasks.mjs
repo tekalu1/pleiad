@@ -61,7 +61,9 @@ export default async function(t) {
     await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { backend: 'fake', task: nestedPrompt }) });
     rows = await awaitTasks(rows => rows.some(r => r.task === nestedPrompt && r.notification === 'sent'));
     const nestedResult = rows.find(r => r.task === nestedPrompt).result;
-    t.ok('孫の結果を受け取った子の最終回答を親へ返す', nestedResult.includes('[Pleiad タスク完了通知') && nestedResult.includes('DEEP_RESULT') && rows.some(r => r.depth === 2 && r.notification === 'sent'));
+    // 完了通知の文は会話の言語で変わる（tests/unit/i18n-agent.mjs）。ここでは言語に依らない孫の taskId で見分ける
+    const grandchild = rows.find(r => r.depth === 2);
+    t.ok('孫の結果を受け取った子の最終回答を親へ返す', Boolean(grandchild) && nestedResult.includes(grandchild.taskId) && nestedResult.includes('DEEP_RESULT') && grandchild.notification === 'sent', nestedResult.slice(0, 200));
     const other = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_task_status', { taskId: child.taskId }) });
     t.ok('別会話の taskId を MCP から操作できない', other.events.some(e => e.type === 'tool.result' && e.isError));
     await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { backend: 'fake', task: 'slow' }) });

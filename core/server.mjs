@@ -12,7 +12,7 @@ import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS } from './agent-br
 import { canDelegate, resolveDelegatedMode } from './modes.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
-import { localeInfo, setLocale, t, i18n, LOCALE_SETTINGS } from './i18n.mjs';
+import { localeInfo, setLocale, t, i18n, LOCALE_SETTINGS, agentT, agentLocaleOf, currentLocale } from './i18n.mjs';
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -40,7 +40,7 @@ import { createPlyMcp } from './ply-mcp.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
-import { createVisualizationCollector, VISUALIZE_INSTRUCTIONS } from './visualize.mjs';
+import { createVisualizationCollector, visualizeInstructions } from './visualize.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
@@ -140,13 +140,15 @@ const mcpConfig = createMcpConfig();
 let agentTasks;
 const agentConnections = new Map();
 const taskExecutions = new Map();
-const agentBridge = createAgentBridge({ call: async (owner, name, args) => {
+// エラー・結果の文はツールの結果としてエージェントが読むので、会話の言語で引く（agent 名前空間。橋は会話ごとに開き、locale はその会話の言語）
+const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale } = {}) => {
   const turn = runtime.turns.get(owner);
-  if (!turn || turn.ac.signal.aborted) throw new Error('この会話は実行中ではありません');
+  const lng = turn?.agentLocale ?? locale;
+  if (!turn || turn.ac.signal.aborted) throw new Error(agentT(lng, 'delegation.notRunning'));
   // 使用枠は読むだけなので、読み取り・計画モードでも答える。providerUsage と同じキャッシュを通す
-  if (name === 'ply_usage') return agentUsage({ backend: args.backend, list: listBackends, get: getBackend, read: providerQuota });
+  if (name === 'ply_usage') return agentUsage({ backend: args.backend, list: listBackends, get: getBackend, read: providerQuota, locale: lng });
   const mutation = DELEGATING_TOOLS.includes(name);
-  if (mutation && !canDelegate(turn.backend.modes()[turn.info.mode])) throw new Error('読み取り・計画モードでは Pleiad の子タスクを開始できません');
+  if (mutation && !canDelegate(turn.backend.modes()[turn.info.mode])) throw new Error(agentT(lng, 'delegation.readOnly'));
   // 子の承認モードは「親の強さまで継ぐ、それを超えない」（core/modes.mjs）。
   // 決めるのはここだけ。prepare は決まった結果をそのまま使う（同じ判定を二度しない）。
   const child = name === 'ply_delegate' ? getBackend(args.backend) : null;
@@ -157,10 +159,10 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args) => {
   if (mutation && (decided?.escalation || codexBlind)) {
     // 何をどの強さで動かすことになるのかをカードに出す。委譲のたびではなく、この1回だけ聞く
     const title = decided ? t('permission.delegateEscalation', { agent: child.label, mode: child.modes()[decided.mode]?.label ?? decided.mode, modeId: decided.mode }) : undefined;
-    const answer = await askPermission({ toolName: name, input: args, title, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false });
-    if (!answer.allow) throw new Error('委譲は許可されませんでした');
+    const answer = await askPermission({ toolName: name, input: args, title, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng });
+    if (!answer.allow) throw new Error(agentT(lng, 'delegation.denied'));
   }
-  return agentTasks.call(owner, name, decided?.mode ? { ...args, mode: decided.mode } : args, turn.ac.signal);
+  return agentTasks.call(owner, name, decided?.mode ? { ...args, mode: decided.mode } : args, turn.ac.signal, lng);
 } });
 function agentConnection(turn) {
   return conversationConnection(turn).runtime;
@@ -175,13 +177,14 @@ function conversationConnection(turn) {
   if (existing) return existing;
   // 橋は会話ごとに使い回すので、ターンそのものを閉じ込めない（終わったターンが丸ごと残ってしまう）。
   // 持つのは鍵だけにして、呼ばれた時に今走っているターンを引く。
-  const entry = { key: turn.key };
-  const binding = agentBridge.open({ origin: localOrigin(),
+  // 会話の言語は会話を始めたときに決まり、以後は変わらない（runTurn）。橋の instructions・ツールの説明もその言語で開く
+  const entry = { key: turn.key, locale: turn.agentLocale };
+  const binding = agentBridge.open({ origin: localOrigin(), locale: entry.locale,
     owner: async () => {
       const live = runtime.turns.get(entry.key);
-      if (!live) throw new Error('この会話は実行中ではありません');
+      if (!live) throw new Error(agentT(entry.locale, 'delegation.notRunning'));
       await live.setup;
-      if (!live.info.sessionId) throw new Error('会話IDはまだ確定していません');
+      if (!live.info.sessionId) throw new Error(agentT(entry.locale, 'delegation.idPending'));
       return live.info.sessionId;
     } });
   const { close, ...agentRuntime } = binding;
@@ -195,6 +198,26 @@ function conversationConnection(turn) {
 /** Pleiad 自身の HTTP の口（子プロセスや中継から呼ばせる先） */
 function localOrigin() {
   return `http://${HOST === '0.0.0.0' ? '127.0.0.1' : HOST === '::' ? '[::1]' : HOST.includes(':') ? `[${HOST}]` : HOST}:${server.address().port}`;
+}
+
+/**
+ * 会話の言語（エージェントに渡す文の言語。docs/design.md「多言語対応」）。記録（agentLocale）にあればそれを使い、
+ * 無ければ今の画面の言語で決めて保存する。途中で画面の言語を変えても、決めた会話の言語は変えない
+ * （応答の一貫性とプロンプトのキャッシュのため）。この値を持たない既存の会話は、次にエージェントを動かすときに決まる
+ */
+async function ensureAgentLocale(sessionId) {
+  const saved = agentLocaleOf((await store.get(sessionId)).agentLocale);
+  if (saved) return saved;
+  const lang = currentLocale();
+  await store.setSessionData(sessionId, 'agentLocale', lang);
+  return lang;
+}
+
+/** 会話の言語を読むだけ（保存しない）。走っているターンがあればその言語、決まっていなければ今の画面の言語 */
+async function agentLocaleFor(sessionId) {
+  const live = sessionId ? runtime.turns.get(sessionId)?.agentLocale : null;
+  if (live) return live;
+  return (sessionId ? agentLocaleOf((await store.get(sessionId)).agentLocale) : null) ?? currentLocale();
 }
 
 /** 会話が消えたら橋も閉じる。開けっ放しにするとトークンと束縛が貯まる。 */
@@ -382,6 +405,8 @@ function sessionRow(b, s, extra = {}) {
     claudeAccount: extra.claudeAccount ?? "",
     // 互換の接続先（'' = 公式）。id だけでキーは載せない
     compatEndpoint: extra.compatEndpoint ?? "",
+    // 会話の言語（エージェントに渡す文の言語。null = まだ決めていない）。画面は添付の印をこの言語で付ける
+    agentLocale: agentLocaleOf(extra.agentLocale),
     // 対応を終えたエージェントの会話（core/backends/index.mjs の RETIRED）。読めるが続けられない理由
     ...(b.retired ? { retired: b.retired } : {}),
     unsent: extra.unsent ?? false,
@@ -604,15 +629,16 @@ function graceExpired() {
 /** 猶予切れの後始末。何度呼ばれても安全。走っているターンは全部止める。 */
 function giveUp() {
   if (runtime.awaySince === 0) return;
-  const reason = `host が ${Math.round((Date.now() - runtime.awaySince) / 1000)} 秒戻らなかったので中断した`;
+  const seconds = Math.round((Date.now() - runtime.awaySince) / 1000);
   runtime.awaySince = 0;
   clearTimeout(runtime.graceTimer);
   runtime.graceTimer = null;
-  for (const [, w] of [...runtime.waiting]) w.settle({ allow: false, message: reason });
+  // エージェントへの理由は承認ごとに会話の言語で（askPermission が messageKey を訳す）。ログは日本語のまま
+  for (const [, w] of [...runtime.waiting]) w.settle({ allow: false, messageKey: 'hostAway', messageParams: { seconds } });
   // 承認を返せないまま走らせ続けない。黙って deny し続けるより、止めて気づかせる。
   for (const t of [...runtime.turns.values()]) t.ac.abort();
   void agentTasks?.cancelOwner().catch(() => {});
-  console.log(`  ${reason}`);
+  console.log(`  host が ${seconds} 秒戻らなかったので中断した`);
 }
 
 /** つながっている host 全部に送る。1つでも届けば true。 */
@@ -799,6 +825,8 @@ function makeEmit(turn) {
           store.setModel(sessionId, model ?? ""),
           store.setSessionData(sessionId, "effort", turn.info.effort ?? ""),
           ...(turn.info.endpoint ? [store.setSessionData(sessionId, 'compatEndpoint', turn.info.endpoint)] : []),
+          // 会話の言語。新しい会話は始めたときの画面の言語で、id が決まったここで保存する（再開・委譲の子は runTurn で保存済み）
+          store.setSessionData(sessionId, 'agentLocale', turn.agentLocale),
           ...(turn.contextRecord ? [store.setSessionData(sessionId, 'contextSession', turn.contextRecord)] : []),
         // 新規セッションに最初から付ける状態。id が無いうちは host が予約として持っていて、
         // 生まれた瞬間にここで書く。経路は setStatus と同じ（ネイティブ + sidecar + イベント）
@@ -1003,8 +1031,11 @@ function detach(ws) {
   runtime.graceTimer = setTimeout(giveUp, HOST_GRACE_MS + 500);
 }
 
-/** 承認待ちを片付ける。どのセッションの分かは呼び出し側が必ず指定する。 */
-function settleAll(message, sessionId) {
+/**
+ * 承認待ちを片付ける。どのセッションの分かは呼び出し側が必ず指定する。
+ * messageKey はエージェントへ返す理由（agent の approval.*。askPermission が会話の言語で訳す）
+ */
+function settleAll(messageKey, sessionId) {
   // id が決まらないまま終わったターンで全部を deny すると、
   // 走っている他のセッションの承認待ちまで巻き添えにする。何もしない方が安全。
   if (!sessionId) return;
@@ -1014,7 +1045,7 @@ function settleAll(message, sessionId) {
     // この会話のターンが終わっても取り下げない（元の会話が決着すれば一緒に消える）。
     // 取り下げると、依頼元が ply_task_wait を終えただけで子の承認が拒否される
     if (w.relay) continue;
-    w.settle({ allow: false, message });
+    w.settle({ allow: false, messageKey });
   }
 }
 
@@ -1055,12 +1086,16 @@ async function delegationAncestors(sessionId) {
  * 人間は最上位の会話に居るので、1段だけ上げても誰も見ない場所に出るだけになる。
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
-const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions }) => {
+const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale }) => {
   const ancestors = sessionId ? await delegationAncestors(sessionId) : [];
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
+  // 拒否・中断の理由はエージェントに返るので、承認を求めた会話の言語で訳す（settle には messageKey で来る）
+  const lng = agentLocaleOf(locale) ?? await agentLocaleFor(sessionId);
+  // i18n-dynamic: agent:approval.
+  const localize = answer => answer?.messageKey ? { ...answer, message: agentT(lng, `approval.${answer.messageKey}`, answer.messageParams) } : answer;
   // 祖先を読むあいだに中断されたなら、待たせずに返す（abort はもう来ない）
-  if (signal?.aborted) return { allow: false, message: "中断された" };
+  if (signal?.aborted) return localize({ allow: false, messageKey: 'aborted' });
   return new Promise((resolve) => {
     const payload = {
       type: "permission",
@@ -1083,14 +1118,15 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       // 子の会話を開けば従来どおり押せる。
       payload: { ...payload, sessionId: ancestor, canAlways: false, title: title ? t('permission.relayTitleWith', { child: childTitle, title }) : t('permission.relayTitle', { child: childTitle }) },
     }))];
-    const onAbort = () => settle({ allow: false, message: "中断された" });
+    const onAbort = () => settle({ allow: false, messageKey: 'aborted' });
     const settle = (answer) => {
       // どれか1つで決着し、残りの複製も消す。1つも残っていなければ二重解決
       let found = false;
       for (const card of cards) if (runtime.waiting.delete(card.id)) found = true;
       if (!found) return;
       signal?.removeEventListener?.("abort", onAbort);
-      resolve(answer);
+      const { messageKey, messageParams, ...rest } = localize(answer);
+      resolve(rest);
       permissionsChanged();
     };
 
@@ -1146,16 +1182,18 @@ agentTasks = await createAgentTasks({
   rollback: async ({ sessionId }) => { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); },
   prepare: async (owner, args, taskId, signal) => {
     const parent = runtime.turns.get(owner);
-    if (!parent || signal?.aborted) throw new Error('依頼元の会話は終了しています');
+    // エラーは ply_delegate の結果として依頼元のエージェントが読む。子の会話は依頼元の会話の言語を継ぐ
+    const lng = parent?.agentLocale ?? await agentLocaleFor(owner);
+    if (!parent || signal?.aborted) throw new Error(agentT(lng, 'delegation.parentEnded'));
     const backend = getBackend(args.backend);
-    if (!backend) throw new Error('指定したバックエンドは有効ではありません');
+    if (!backend) throw new Error(agentT(lng, 'delegation.backendDisabled'));
     const cwd = path.resolve(parent.info.cwd, args.cwd ?? '.');
-    if (!(await fs.stat(cwd)).isDirectory()) throw new Error('cwd はディレクトリを指定してください');
+    if (!(await fs.stat(cwd)).isDirectory()) throw new Error(agentT(lng, 'delegation.cwdNotDirectory'));
     // 接続先（決定 3）: 同じエージェントへの委譲なら親の会話の接続先を継ぐ。違うエージェントへは公式に戻す（形式が合わない）
     const parentEndpoint = (await store.get(owner)).compatEndpoint ?? '';
     const inherited = endpointCapable(backend) ? delegatedEndpoint(parent.backend?.id, backend.id, parentEndpoint) : '';
     // 継ぐべき接続先が消えていたら委譲を断る（黙って公式で走らせない）
-    if (inherited && !(await compatEndpoints.has(inherited, backend.id))) throw new Error('依頼元の会話の接続先は削除されています。依頼元の会話で接続先を選び直してください');
+    if (inherited && !(await compatEndpoints.has(inherited, backend.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
     const endpoint = inherited;
     const model = await resolveModel(null, args.model, backend, cwd, endpoint);
     const effort = await resolveEffort(null, args.effort, backend, model, cwd, await endpointRow(endpoint));
@@ -1170,11 +1208,12 @@ agentTasks = await createAgentTasks({
       await store.setMode(sessionId, mode); await store.setModel(sessionId, model);
       await store.setSessionData(sessionId, 'effort', effort);
       await store.setSessionData(sessionId, 'delegation', { taskId, parentSessionId: owner, manager: 'ply' });
+      await store.setSessionData(sessionId, 'agentLocale', lng);
       // 子は親の会話のアカウントで走る（親が別のエージェントでも、その会話で選んであるものを継ぐ）
       const parentAccount = (await store.get(owner)).claudeAccount ?? '';
       if (parentAccount) await store.setSessionData(sessionId, 'claudeAccount', parentAccount);
       if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
-      if (signal?.aborted) throw new Error('中断しました');
+      if (signal?.aborted) throw new Error(agentT(lng, 'delegation.aborted'));
     } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
     return { backend: backend.id, model, effort, cwd, mode, sessionId };
   },
@@ -1198,14 +1237,19 @@ agentTasks = await createAgentTasks({
       const backend = await resolveBackendForSession(task.sessionId);
       const messages = await backend.getMessages(task.sessionId, { fullResults: true });
       const last = messages.findLast(m => m.role === 'assistant' && m.text);
-      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text: last?.text ?? '', error: '子タスクの完了通知を確認できませんでした。子の会話を確認してください' };
+      // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
+      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text: last?.text ?? '', error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown') };
       return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text: last?.text ?? '', error: execution.error };
     } finally { signal.removeEventListener('abort', stopChild); taskExecutions.delete(task.sessionId); }
   },
   deliver: async task => {
     const owner = task.parentSessionId;
     if (sessionBusy(owner) || runtime.background.has(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status))) return 'requeue';
-    const prompt = `[Pleiad タスク完了通知 / ${task.taskId}]\n実行先: ${task.backend}\n状態: ${task.status}\n依頼: ${task.task}\n結果（子エージェントの報告）:\n${task.result.slice(0, 16000)}${task.result.length > 16000 ? '\n続きは ply_task_status の offset: 16000 で取得できます。' : ''}\n${task.error ?? ''}\n元の依頼に必要な作業を続けてください。`;
+    // 完了通知は依頼元の会話の言語で。人間の発言と見分ける印は文言ではなく、送った本文のハッシュ（taskNotices。runTurn の internal）
+    const lng = await ensureAgentLocale(owner);
+    const more = task.result.length > 16000 ? agentT(lng, 'delegation.noticeMore', { offset: 16000 }) : '';
+    const prompt = agentT(lng, 'delegation.notice', { taskId: task.taskId, backend: task.backend, status: task.status, task: task.task,
+      result: task.result.slice(0, 16000), more, error: task.error ?? '' });
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
 });
@@ -1267,6 +1311,8 @@ async function runTurnInternal(args, onStarted, hooks) {
       await store.recordChange(sessionId, { by: "human", field: "cwd", from: changedFrom, to: cwd, ...savedReason('resumeCwd'), backend });
       emitGlobal({ type: "cwd", sessionId, cwd, by: "human", ...savedReason('cwdFrom', { from: changedFrom }) });
     }
+    // 会話の言語（エージェントに渡す文の言語）。記録にあればそれ、無ければ今の画面の言語で決めて保存する（新規は id が決まったとき）
+    const agentLocale = sessionId ? await ensureAgentLocale(sessionId) : currentLocale();
     const permissionMode = await resolveMode(sessionId, reserved ? reserved.mode : args?.mode, backend);
     const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd, endpointId);
     const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
@@ -1309,7 +1355,7 @@ async function runTurnInternal(args, onStarted, hooks) {
     // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
     // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
     const plyContext = managed(policy) && acceptsPlyContext(backend, policy);
-    const resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS }) : null;
+    const resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale }) : null;
     // 開始時の固定と違う＝指示・Skills が変わった。止めずに今の内容で続ける（resolvedContext が今のファイルで解き直した結果なので、
     // 記録も pin も自動で新しくなる）。指示本文は毎ターン指示欄へ渡し直し、Skills はカタログしか渡していないので技術的な制約は無い。
     // 右パネルの「渡したもの」との食い違いだけが問題なので、読み込み直したことを履歴と会話に残す
@@ -1344,6 +1390,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       key: sessionId ?? `new:${crypto.randomUUID()}`,
       ac: new AbortController(),
       backend,
+      agentLocale,
       control: { handle: null, onReady: () => outbox.kick(sessionId).catch(() => {}) },
       outcome: null,
       contextRecord,
@@ -1379,7 +1426,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       publish: async payload => {
         await turn.setup;
         const id = turn.info.sessionId;
-        if (!id) throw new Error('会話がまだ開始されていません');
+        if (!id) throw new Error(t('agentRuntime.visualizeNotStarted'));
         const record = await history.recordPresent(id, { ...payload, turnKey: turn.presentKey });
         emit({ type: 'present', sessionId: id, ...record }, { recorded: true });
       },
@@ -1407,7 +1454,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         origin: localOrigin(), signal: turn.ac.signal,
         isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted, changed: saveContext,
         authorize: backend.id === 'codex' && !['full','yolo'].includes(permissionMode)
-          ? async (serverName, toolName, input) => Boolean((await askPermission({ toolName: `${serverName} / ${toolName}`, input, sessionId: turn.info.sessionId, signal: turn.ac.signal, kind: 'tool', canAlways: false }))?.allow)
+          ? async (serverName, toolName, input) => Boolean((await askPermission({ toolName: `${serverName} / ${toolName}`, input, sessionId: turn.info.sessionId, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: agentLocale }))?.allow)
           : undefined });
       if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true });
       broadcastRunning();
@@ -1423,10 +1470,13 @@ async function runTurnInternal(args, onStarted, hooks) {
         model: model || undefined,
         effort,
         emit,
-        askPermission,
+        // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
+        askPermission: request => askPermission({ ...request, locale: agentLocale }),
         signal: turn.ac,
         control: turn.control,
-        visualizeInstructions: VISUALIZE_INSTRUCTIONS,
+        // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
+        locale: agentLocale,
+        visualizeInstructions: visualizeInstructions(agentLocale),
         contextRuntime: runtimeContext,
         agentRuntime: agentConnection(turn),
         // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
@@ -1496,7 +1546,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   notifyFree(turn.key);
   syncRunningPoll();
   // 片付けるのはこのセッションの承認待ちだけ。他のターンの分は残す
-  settleAll("ターンが終わった", turn.info.sessionId);
+  settleAll('turnEnded', turn.info.sessionId);
   broadcastRunning();
 }
 
@@ -1949,7 +1999,7 @@ wss.on("connection", (ws, req) => {
             : [...runtime.turns.values()];
           for (const t of targets) {
             t.ac.abort();
-            settleAll("中断された", t.info.sessionId);
+            settleAll('aborted', t.info.sessionId);
             // 受け付けたことをすぐ画面に出す。バックエンドが止まり終えるまで（Claude は CLI の終了まで）
             // turnResult / turnEnd は来ないので、それまでの間「中断している」を出す
             if (!t.info.stopping) {
@@ -1972,15 +2022,18 @@ wss.on("connection", (ws, req) => {
           await agentTasks.cancel(task.taskId); return reply(true, agentTasks.get(task.taskId));
         }
         case "resolvePermission": {
-          const { id, allow, always, message, answers, annotations, response } = msg.args ?? {};
+          const { id, allow, always, message, messageKey, answers, annotations, response } = msg.args ?? {};
           const w = runtime.waiting.get(id);
           if (!w) return reply(false, t('approval.alreadyResolved'));
           // 回答を伴うツール（質問カード）は、承認ではなく入力の差し替えとして返る。
           // ここでは解釈しない。エージェントが自分の形へ戻す（§2.2）。
+          // 拒否の理由は画面の言語ではなく会話の言語でエージェントへ返すので、画面は文ではなく印（messageKey: 'userDenied'）で送る。
+          // 文（message）で来たら従来どおりそのまま渡す
           w.settle({
             allow: !!allow,
             always: !!always,
             message: message ?? null,
+            ...(!allow && !message && messageKey === 'userDenied' ? { messageKey } : {}),
             answers: answers ?? null,
             annotations: annotations ?? null,
             response: response ?? null,
@@ -2212,10 +2265,12 @@ wss.on("connection", (ws, req) => {
           if (!backend) return reply(false, t('agents.notFound'));
           if (!backend.suggestTitle) return reply(false, t('title.unsupported'));
           const { messages } = await history.loadTranscript(sessionId, backend);
+          // タイトルは会話の言語で作る（渡す見出しもその言語）
+          const lng = await ensureAgentLocale(sessionId);
           const gist = messages
             .filter((m) => m.text)
             .slice(0, 6)
-            .map((m) => `${m.role === "user" ? "依頼" : "応答"}: ${m.text.slice(0, 600)}`)
+            .map((m) => m.role === "user" ? agentT(lng, 'title.request', { text: m.text.slice(0, 600) }) : agentT(lng, 'title.response', { text: m.text.slice(0, 600) }))
             .join(NL + NL);
           if (!gist) return reply(false, t('title.noContent'));
 
@@ -2230,7 +2285,7 @@ wss.on("connection", (ws, req) => {
               const account = await claudeAccounts.resolve(saved.claudeAccount ?? '');
               if (account) context.oauthToken = account.token;
             }
-            title = String(await backend.suggestTitle({ transcript: gist, ...context }) ?? "");
+            title = String(await backend.suggestTitle({ transcript: gist, locale: lng, ...context }) ?? "");
           } catch (err) {
             return reply(false, t('title.failed', { error: redactSecret(redactToken(err?.message ?? err, context.oauthToken), context.endpoint?.key) }));
           }
