@@ -88,4 +88,19 @@ export function t(key, options) {
   return i18n.t(key, { lng: current, ...options });
 }
 
+/**
+ * 会話の言語（ja|en）を丸める。決めていない（空・不明）なら null。
+ * 会話の言語はセッションの記録の agentLocale（core/server.mjs が会話を始めたときに画面の言語で決めて保存する）
+ */
+export const agentLocaleOf = (value) => (LOCALES.includes(value) ? value : null);
+
+/**
+ * エージェント（LLM）に渡す文。名前空間は agent。**画面の言語（t）とは連動させない**:
+ * locale は必ず会話の言語を渡す（途中で画面の言語を変えても進行中の会話への指示は変えない。応答の一貫性とプロンプトのキャッシュのため）。
+ * 会話の言語を持たない呼び出し（会話の外で作るもの）は en。以前はエージェント向けの文の多くが英語で固定だったため
+ */
+export function agentT(locale, key, params) {
+  return i18n.t(key, { ...params, lng: agentLocaleOf(locale) ?? FALLBACK, ns: 'agent' });
+}
+
 export { i18n };

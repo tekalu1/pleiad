@@ -2,7 +2,7 @@
 // be converted into subscription percentages. Never persist account credentials.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { t } from './i18n.mjs';
+import { t, agentT } from './i18n.mjs';
 
 export const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 // Thread totals include previous turns; last describes the latest model request.
@@ -100,18 +100,19 @@ export function compactQuota(quota, now = Date.now()) {
  * ply_usage の本体。backend を省けば使用枠を読めるバックエンドすべて。
  * read は providerUsage と同じ取得（同じ quotaCache を通す）。1 つが失敗しても他は返す
  */
-export async function agentUsage({ backend, list, get, read }) {
+export async function agentUsage({ backend, list, get, read, locale }) {
   let targets;
   if (backend === undefined) targets = list().filter(b => b.usage);
   else {
     const found = typeof backend === 'string' ? get(backend) : null;
-    if (!found) throw new Error(`知らないバックエンドです: ${String(backend)}（使えるもの: ${list().map(b => b.id).join(', ')}）`);
+    // エージェントへ返す文は会話の言語（locale）で（agent 名前空間）
+    if (!found) throw new Error(agentT(locale, 'usage.unknownBackend', { backend: String(backend), available: list().map(b => b.id).join(', ') }));
     targets = [found];
   }
   const backends = await Promise.all(targets.map(async b => {
     let quota;
     try { quota = await read(b); }
-    catch { quota = { windows: [], checkedAt: null, message: '取得に失敗しました。' }; }
+    catch { quota = { windows: [], checkedAt: null, message: agentT(locale, 'usage.failed') }; }
     return { backend: b.id, label: b.label, ...compactQuota(quota) };
   }));
   return { backends };

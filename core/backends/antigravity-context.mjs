@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dir } from './antigravity-store.mjs';
-import { t } from '../i18n.mjs';
+import { t, agentT } from '../i18n.mjs';
 
 export const AGENT_NAME = 'ply-context';
 const RELAY = fileURLToPath(new URL('../agy-context-relay.mjs', import.meta.url));
@@ -62,14 +62,17 @@ export function contextRefusal(owners = {}) {
   return t('antigravity.contextRefusal');
 }
 
-/** agent.md の中身。frontmatter の値は JSON で書く（YAML としても読める） */
-export function agentDefinition({ owners, prompt, cwd, home, execPath = process.execPath, electron = Boolean(process.versions.electron) }) {
+/**
+ * agent.md の中身。frontmatter の値は JSON で書く（YAML としても読める）。
+ * locale は会話の言語（説明・見出し・注意書きはエージェントが読むので、その言語で書く。agent 名前空間）
+ */
+export function agentDefinition({ owners, prompt, cwd, home, locale, execPath = process.execPath, electron = Boolean(process.versions.electron) }) {
   const server = { serverName: 'ply_context', command: execPath, args: [RELAY],
     // 配布版の Pleiad は Electron。Node として動かす印が無いと、中継ではなく Pleiad 本体が立ち上がる
     ...(electron ? { env: { ELECTRON_RUN_AS_NODE: '1' } } : {}) };
   const front = [
     `name: ${AGENT_NAME}`,
-    `description: ${JSON.stringify('Pleiad がこの会話のために作ったエージェント。Pleiad が担当する指示・Skills・外部 MCP を ply_context から受け取る')}`,
+    `description: ${JSON.stringify(agentT(locale, 'antigravity.description'))}`,
     'mainAgent: true',
     'subagent: false',
     'hidden: true',
@@ -80,22 +83,23 @@ export function agentDefinition({ owners, prompt, cwd, home, execPath = process.
     // 書かないと書き込み系ツールが 1 つも渡らない（TOOLS のコメント）
     `tools: ${JSON.stringify(TOOLS)}`,
   ];
-  const note = `Pleiad created this agent definition in ${home}. That directory is not part of the user's project: do not read, list or modify files there. The project workspace is ${cwd}.`;
-  return ['---', ...front, '---', '', '# Pleiad context', '', String(prompt ?? '').trim(), '', note, ''].join('\n');
+  const note = agentT(locale, 'antigravity.note', { home, cwd });
+  return ['---', ...front, '---', '', agentT(locale, 'antigravity.heading'), '', String(prompt ?? '').trim(), '', note, ''].join('\n');
 }
 
 /**
  * 会話用のエージェントを Pleiad の置き場（<data>/antigravity/context/<pid>-<乱数>/）に書く。
  * `--add-dir <home> --agent ply-context` で agy に見せ、env を agy の環境変数に足す。agy が終わったら cleanup で消す
  */
-export async function prepareAgent({ owners, prompt, cwd, url, authorization }) {
+export async function prepareAgent({ owners, prompt, cwd, url, authorization, locale }) {
   const home = path.join(root(), `${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
   const file = path.join(home, '.agents', 'agents', AGENT_NAME, 'agent.md');
   await fs.promises.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-  await fs.promises.writeFile(file, agentDefinition({ owners, prompt, cwd, home }), { encoding: 'utf8', mode: 0o600 });
+  await fs.promises.writeFile(file, agentDefinition({ owners, prompt, cwd, home, locale }), { encoding: 'utf8', mode: 0o600 });
   return {
     home,
-    env: { PLY_CONTEXT_URL: url, PLY_CONTEXT_AUTHORIZATION: authorization },
+    // PLY_CONTEXT_LOCALE は中継が agy へ返すエラーの言語（会話の言語。core/agy-context-relay.mjs）
+    env: { PLY_CONTEXT_URL: url, PLY_CONTEXT_AUTHORIZATION: authorization, ...(locale ? { PLY_CONTEXT_LOCALE: locale } : {}) },
     cleanup: () => fs.rmSync(home, { recursive: true, force: true, maxRetries: 3 }),
   };
 }

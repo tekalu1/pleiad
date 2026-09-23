@@ -29,7 +29,7 @@ import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./bran
 import { el, svgEl, relTime } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
 import { savedEvent } from "./saved-text.mjs";
-import { buildItems, attachmentMessageIndex } from "./timeline.mjs";
+import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE } from "./timeline.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
 import { createReadCompletions, READ_STORE } from "./unread.mjs";
@@ -280,10 +280,10 @@ function forkButton(m) {
           const attached = data.presents.filter(p => attachmentMessageIndex(data.messages, p) === index)
             .map(p => ({ path: p.path, name: p.caption?.replace(/^添付:\s*/, '') || p.path.split(/[\\/]/).at(-1),
               mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri }));
-          // 自動で付いた添付行だけを除く。本文に書かれた [添付] の説明は残す。
+          // 自動で付いた添付行（[添付] / [Attachment]）だけを除く。本文に書かれた説明は残す。
           const paths = new Set(attached.map(p => p.path.replace(/\\/g, '/').toLowerCase()));
           const text = (data.messages[index].text ?? '').split(/\r?\n/).filter(line => {
-            const match = /^\[添付\]\s+(.+)$/.exec(line.trim());
+            const match = ATTACHMENT_LINE.exec(line.trim());
             return !match || !paths.has(match[1].replace(/\\/g, '/').toLowerCase());
           }).join('\n').trimEnd();
           const draft = { text, attached, index };
@@ -574,7 +574,8 @@ function permissionCard(ev) {
     code.remove();
     if (isRunningHere()) activity.show(ok ? t("activity.runningTool", { tool: ev.toolName }) : t("activity.continuing"));
     state.pendingPerms.delete(ev.id);
-    cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, message: ok ? undefined : "ユーザーが拒否した" })   // i18n-ignore: エージェントに返す拒否の理由（UI の言語に連動させない）
+    // 拒否の理由はエージェントに返る。画面の言語ではなく会話の言語で返すよう、文ではなく印を送る（サーバーが会話の言語で訳す）
+    cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, ...(ok ? {} : { messageKey: "userDenied" }) })
       .catch((e) => sys(html.t("chat.approval.sendFailed", { error: e.message })));
   };
   allow.onclick = () => settle(true);
@@ -3256,8 +3257,9 @@ async function submit() {
     const text = $('prompt').value;
     const attachments = state.attached.map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
     if (!text.trim() && !attachments.length) return;
-    // i18n-ignore: エージェントに渡す添付の印。forkButton の読み戻し（/^\[添付\]/）と揃える
-    const full = [text.trim(), attachments.map(a => `[添付] ${a.path}`).join(NL)].filter(Boolean).join(NL + NL);
+    // 添付の印はエージェントが読むので会話の言語で（まだ決まっていない会話は、サーバーが決めるのと同じ画面の言語）
+    const agentLang = state.sessions.find(s => s.id === sessionId)?.agentLocale ?? uiLang;
+    const full = [text.trim(), attachments.map(a => attachmentLine(agentLang, a.path)).join(NL)].filter(Boolean).join(NL + NL);
     const args = { sessionId, prompt: full, cwd: state.cwd.trim() || undefined, mode: state.mode,
       ...(attachments.length ? { attachments } : {}) };
     const previous = receipts.get(sessionId);
