@@ -185,6 +185,8 @@
     "turnRunning": "Turn in progress",
     "subagents_one": "Subagents {{count}}",
     "subagents_other": "Subagents {{count}}",
+    "tasks_one": "Tasks {{count}}",
+    "tasks_other": "Tasks {{count}}",
     "background_one": "Background {{count}}",
     "background_other": "Background {{count}}",
     "subagentsEnded_one": "Subagents · done {{count}}",
@@ -1452,7 +1454,8 @@
     },
     "behind": {
       "subagents": "Waiting for subagents",
-      "commands": "Waiting for background commands"
+      "commands": "Waiting for background commands",
+      "tasks": "Waiting for tasks"
     }
   },
   "composer": {
