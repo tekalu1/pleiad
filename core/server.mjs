@@ -539,8 +539,16 @@ async function resolveCwd(resume, given, backend) {
 // かといって、居ないあいだ「承認できないから deny」を返し続けるのは最悪で、
 // エージェントは走り続けたまま書き込みだけが全部失敗し、
 // 読み取り系（自動許可）だけが通るので「動いているのに成果ゼロ」になる。
-// 居ないあいだは待たせ、戻ってきたら聞き直し、戻らなければターンごと止める。
-const HOST_GRACE_MS = Number(process.env.AGENT_HOST_GRACE_MS ?? 60_000);
+// 居ないあいだは待たせ、戻ってきたら聞き直す。既定では打ち切らない（待ち続ける。issue #11）。
+// リモートの端末はスリープで簡単に切れるので、切れただけで作業を止めない。
+// AGENT_HOST_GRACE_MS に正の数を指定したときだけ、その時間戻らなければターンごと止める。
+const HOST_GRACE_MS = parseGraceMs(process.env.AGENT_HOST_GRACE_MS);
+
+/** 未指定・空・0 以下・数でないものは「打ち切らない」(0)。 */
+function parseGraceMs(raw) {
+  const n = Number(raw);
+  return raw != null && String(raw).trim() !== "" && Number.isFinite(n) && n > 0 ? n : 0;
+}
 const EVENT_BUFFER_MAX = 500;
 // 同時に回せるターン数に上限は置かない（2026-09-23 に廃止。委譲した子で埋まり、利用者の送信が待たされていた）
 
@@ -563,14 +571,14 @@ const runtime = {
 // { key, ac, backend, control:{handle}, info:{sessionId,backend,startedAt,cwd,mode,model},
 //   taskHints: Map<tool_use id, 見出し>, pastSubagents: Set<agentId>, subagentOrigins: Map<agentId, tool_use id> }
 
-/** host が居ない時間が猶予を超えたか。タイマーに頼らず、その場で判定する。 */
+/** host が居ない時間が猶予を超えたか。タイマーに頼らず、その場で判定する。猶予が無効（既定）なら常に false。 */
 function graceExpired() {
-  return runtime.awaySince !== 0 && Date.now() - runtime.awaySince > HOST_GRACE_MS;
+  return HOST_GRACE_MS > 0 && runtime.awaySince !== 0 && Date.now() - runtime.awaySince > HOST_GRACE_MS;
 }
 
-/** 猶予切れの後始末。何度呼ばれても安全。走っているターンは全部止める。 */
+/** 猶予切れの後始末。何度呼ばれても安全。走っているターンは全部止める。猶予が無効なら何もしない。 */
 function giveUp() {
-  if (runtime.awaySince === 0) return;
+  if (HOST_GRACE_MS <= 0 || runtime.awaySince === 0) return;
   const reason = `host が ${Math.round((Date.now() - runtime.awaySince) / 1000)} 秒戻らなかったので中断した`;
   runtime.awaySince = 0;
   clearTimeout(runtime.graceTimer);
@@ -914,7 +922,7 @@ function attach(ws) {
   // 待たせていた承認を聞き直す。取りこぼすとツールが無期限に止まる
   for (const [id, w] of runtime.waiting) sendTo({ kind: P.EVENT, event: { ...w.payload, id } });
   if (runtime.waiting.size) console.log(`  承認 ${runtime.waiting.size} 件を聞き直した`);
-  if (hadGrace) console.log("  猶予を解除した（host が戻った）");
+  if (hadGrace) console.log(HOST_GRACE_MS > 0 ? "  猶予を解除した（host が戻った）" : "  host が戻った");
 }
 
 function detach(ws) {
@@ -923,9 +931,14 @@ function detach(ws) {
   if (runtime.turns.size === 0 && runtime.waiting.size === 0) return;
 
   runtime.awaySince = Date.now();
+  clearTimeout(runtime.graceTimer);
+  runtime.graceTimer = null;
+  if (HOST_GRACE_MS <= 0) {
+    console.log(`  host が離れた。戻るまで待つ (turns=${runtime.turns.size}, waiting=${runtime.waiting.size})`);
+    return;
+  }
   console.log(`  host が離れた。${HOST_GRACE_MS / 1000} 秒待つ (turns=${runtime.turns.size}, waiting=${runtime.waiting.size})`);
   // 保険のタイマー。ただしこれ単体には頼らない（発火しなくても graceExpired() が拾う）
-  clearTimeout(runtime.graceTimer);
   runtime.graceTimer = setTimeout(giveUp, HOST_GRACE_MS + 500);
 }
 
@@ -1023,8 +1036,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay });
     signal?.addEventListener?.("abort", onAbort, { once: true });
 
-    // 送れなければ黙って待つ。戻ってきたら attach() が聞き直し、
-    // 戻らなければ猶予切れがターンごと中断する。
+    // 送れなければ黙って待つ。戻ってきたら attach() が聞き直す。
+    // 既定では戻るまで待ち続け、AGENT_HOST_GRACE_MS を指定したときだけ猶予切れがターンごと中断する。
     let sent = false;
     for (const card of cards) if (sendTo({ kind: P.EVENT, event: { ...card.payload, id: card.id } })) sent = true;
     if (!sent) {
@@ -1520,13 +1533,15 @@ wss.on("connection", (ws) => {
   // タブが複数あってもよい設計にして、イベントは全部に配る。
   const resumed = runtime.turns.size > 0;
   attach(ws);
-  sendTo({
+  // ready はこの接続にだけ返す。全部に配ると、受けた側のクライアントは初期化し直す
+  // （一覧と開いている会話を読み込み直す）ので、別の端末がつながるたびに他の画面が揺れる（issue #11）。
+  ws.send(JSON.stringify({
     kind: P.READY,
     protocolVersion: P.PROTOCOL_VERSION,
     version: APP_VERSION,
     homeDir: os.homedir(),
     resumedTurn: resumed,
-  });
+  }));
   ws.on("close", () => detach(ws));
 
   ws.on("message", async (raw) => {
