@@ -244,7 +244,8 @@
   if (Remote) {
     Remote.addListener('status', s => {
       const h = hosts.get(s.hostId);
-      if (!h) return refresh();
+      // 'stopped' = the host window was left: reload so a stored revoked state (revokedAt) shows again
+      if (!h || s.state === 'stopped') return refresh();
       h.state = s.state;
       if (s.state === 'connected') h.lastConnectedAt = Date.now();
       render();

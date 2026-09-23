@@ -4,13 +4,17 @@
 // plain http, docs/remote.md §3.3).
 //
 //   node mobile/scripts/fake-host.mjs [--relay-port 8787] [--auto-approve] [--data <dir>]
+//   node mobile/scripts/fake-host.mjs --relay https://relay.example --secret-file <file with RELAY_ENROLL_SECRET>
+//     (an existing relay instead of a local one; the secret is read from the file and never printed)
 //
 // Prints one JSON object per line on stdout:
 //   {"event":"ready","relayUrl":"http://127.0.0.1:8787","hostUrl":"http://127.0.0.1:<p>/?token=…","hostId":"…"}
 //   {"event":"offer","payload":"pleiad://pair?…"}             after start and after each "offer" command
 //   {"event":"request","id":"…","code":"123456","name":"…","platform":"android"}
 //   {"event":"approved","id":"…"} / {"event":"revoked","id":"…"} / {"event":"devices","devices":[…]} / {"event":"error",…}
-// Commands on stdin (one per line): offer | approve <id> | deny <id> | devices | revoke <deviceId> | revoke-all | quit
+// Commands on stdin (one per line): offer | approve <id> | deny <id> | devices | revoke <deviceId> | revoke-all | login | disable | quit
+// login = log the fake backend in on the host (remote windows ask to log in on the host's PC).
+// quit always disables remote on the host first (so a shared relay forgets it).
 //
 // The host URL contains the host's UI token: this is a throwaway host with a temporary data dir.
 import fs from 'node:fs/promises';
@@ -31,11 +35,16 @@ const autoApprove = args.includes('--auto-approve');
 const relayPort = Number(arg('--relay-port', '0'));
 const out = obj => process.stdout.write(JSON.stringify(obj) + '\n');
 
-const secret = crypto.randomBytes(32).toString('base64url');
+const external = arg('--relay');
+const secret = external ? (await fs.readFile(arg('--secret-file'), 'utf8')).trim() : crypto.randomBytes(32).toString('base64url');
 const scratch = arg('--data') ?? await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-fake-host-'));
-const relay = createRelay({ enrollSecret: secret, trustProxy: false, logger: () => {} });
-const addr = await relay.listen(relayPort, '127.0.0.1');
-const relayUrl = `http://127.0.0.1:${addr.port}`;
+let relay = null;
+let relayUrl = external;
+if (!external) {
+  relay = createRelay({ enrollSecret: secret, trustProxy: false, logger: () => {} });
+  const addr = await relay.listen(relayPort, '127.0.0.1');
+  relayUrl = `http://127.0.0.1:${addr.port}`;
+}
 const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir: path.join(scratch, 'host'), timeoutMs: 60_000 });
 const c = await open({ port: server.port, token: server.token, onEvent: ev => {
   if (ev.type === 'remotePairing' && ev.phase === 'request') {
@@ -61,8 +70,9 @@ let stopping = false;
 async function stop() {
   if (stopping) return;
   stopping = true;
+  try { await c.cmd('setRemoteSettings', { enabled: false }); out({ event: 'disabled' }); } catch {}
   try { await server.stop(); } catch {}
-  try { await relay.close(); } catch {}
+  try { await relay?.close(); } catch {}
   process.exit(0);
 }
 process.on('SIGINT', stop);
