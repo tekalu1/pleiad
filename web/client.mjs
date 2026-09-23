@@ -3171,7 +3171,7 @@ function connect() {
   };
 
   ws.onclose = () => {
-    // 困っているときだけ出す。切れても向こうは走り続けている（猶予の間）ので実行中の印は消さない
+    // 困っているときだけ出す。切れても向こうは走り続けている（既定では戻るまで待ち続ける）ので実行中の印は消さない
     side.setConnLost(true);
     for (const [, p] of pending) p.rej(new Error("切断"));
     pending.clear();
