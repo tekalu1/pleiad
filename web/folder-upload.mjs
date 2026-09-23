@@ -1,7 +1,10 @@
 // 手元のフォルダーをホストへ送る（docs/remote.md §8.1、issue #15。承認済みのモック docs/mockups/remote-folder-picker.html）。
 //
-// リモートの窓（window.plyRemote があり、shell が mobile ではない）だけで使う。作業フォルダーの面の「手元から送る」のタブと、
-// フォルダーをドロップしたときの問い（添付する / 作業フォルダーとして送る）。
+// リモートの窓（window.plyRemote があり、shell が mobile ではない）だけで使う。手元のファイルを渡すのは添付と同じ種類の操作なので、
+// 入口は添付（クリップ）のボタン: 押すと小さなメニュー「ファイルを添付… / フォルダーを送る…」（web/attach-menu.mjs）。
+// 「フォルダーを送る…」は同じ面の中で送る流れ（renderUpload）に替わる。「送ったフォルダーを作業フォルダーにする」（既定で入）。
+// フォルダーをドロップしたときの問い（添付する / 作業フォルダーとして送る）の「送る」も同じ流れを開く。
+// 作業フォルダーの面（入力欄のチップ）はホストのフォルダーだけを扱う。ローカルの窓・ブラウザー版のクリップは今までどおりファイルを選ぶだけ。
 //
 // 手元のフォルダーの読み方: <input type="file" webkitdirectory> と、ドロップの DataTransferItem.webkitGetAsEntry()。
 // どちらもブラウザー（Electron の描画側）の機能で、手元の OS のダイアログを出して File を返すだけなので、
@@ -12,9 +15,9 @@
 // 送り方: uploadCheck で送り先を下見 → uploadStart（受け取り済みの位置が返る）→ uploadChunk を同時に 4 つまで
 // （512 KiB を base64。応答が背圧になる）→ uploadFinish。切れたら止め、つながり直したら uploadStart をもう一度呼んで
 // 受け取り済みの位置から続ける（トンネルはストリームを持ち越さないので、再開はこの層で行う）。
-// 終わったら送り先をその会話の作業フォルダーにする（client.mjs の onDone。未送信の会話はその場で、送信済みは次のターンから）。
+// 終わったら、入にしていれば送り先をその会話の作業フォルダーにする（client.mjs の onDone。未送信の会話はその場で、送信済みは次のターンから）。
 import { t, fmt } from './i18n.mjs';
-import { el } from './dom.mjs';
+import { el, svgEl } from './dom.mjs';
 import { createCombo } from './combo.mjs';
 import { isComposingKey } from './keyboard.mjs';
 
@@ -120,7 +123,8 @@ const readChunk = (blob) => new Promise((res, rej) => {
  * @param {(command:string, args?:object) => Promise<any>} o.cmd
  * @param {() => boolean} o.connected 今サーバーにつながっているか
  * @param {() => string|null} o.session 今の会話（送り終えたときに作業フォルダーにする相手）
- * @param {(dest:string, sessionId:string|null) => Promise<'now'|'next'|'other'>} o.onDone
+ * @param {(dest:string, sessionId:string|null, o:{ makeCwd:boolean }) => Promise<'now'|'next'|'other'>} o.onDone
+ *   makeCwd が偽なら作業フォルダーは変えない（'other' を返す）
  * @param {() => void} [o.onChange]
  */
 export function createFolderUpload({ cmd, connected, session, onDone, onChange = () => {} }) {
@@ -129,6 +133,7 @@ export function createFolderUpload({ cmd, connected, session, onDone, onChange =
     dest: '', plan: null, planError: '', checking: false,
     files: [], received: [], uploadId: null, overwrite: false, sessionId: null, current: '',
     error: '', result: null,
+    makeCwd: true,      // 送ったフォルダーを作業フォルダーにする（既定で入）
   };
   let gen = 0;          // 送る作業の世代。中断・選び直しで上げ、古い作業の応答を捨てる
   let cancelled = -1;   // 中断した世代
@@ -160,8 +165,10 @@ export function createFolderUpload({ cmd, connected, session, onDone, onChange =
     }
   }
 
-  function choose({ name, entries }) {
+  /** 送るフォルダーを決める。makeCwd を渡せば「作業フォルダーにする」もそれにする（ドロップの「作業フォルダーとして送る」は true） */
+  function choose({ name, entries }, { makeCwd } = {}) {
     gen++;
+    if (typeof makeCwd === 'boolean') s.makeCwd = makeCwd;
     Object.assign(s, { phase: 'ready', name, entries, dest: '', defaultDest: '', plan: null, error: '', result: null, uploadId: null, overwrite: false });
     s.summary = summarize(entries, s.excludes);
     changed();
@@ -174,6 +181,11 @@ export function createFolderUpload({ cmd, connected, session, onDone, onChange =
     s.summary = summarize(s.entries, s.excludes);
     changed();
     return check();
+  }
+
+  function setMakeCwd(v) {
+    s.makeCwd = Boolean(v);
+    changed();
   }
 
   function setDest(v) {
@@ -242,7 +254,7 @@ export function createFolderUpload({ cmd, connected, session, onDone, onChange =
       const done = await cmd('uploadFinish', { uploadId: s.uploadId });
       if (my !== gen) return;
       if (done.needsConfirm) { s.plan = done; s.dest = done.dest; s.phase = 'ready'; return changed(); }
-      const applied = await onDone(done.dest, s.sessionId).catch(() => 'other');
+      const applied = await onDone(done.dest, s.sessionId, { makeCwd: s.makeCwd }).catch(() => 'other');
       s.result = { ...done, applied };
       s.phase = 'done';
       s.uploadId = null;
@@ -278,18 +290,42 @@ export function createFolderUpload({ cmd, connected, session, onDone, onChange =
 
   function reset() {
     gen++;
-    Object.assign(s, { phase: 'empty', name: '', entries: [], summary: null, dest: '', plan: null, planError: '', error: '', result: null, uploadId: null, files: [], received: [] });
+    Object.assign(s, { phase: 'empty', name: '', entries: [], summary: null, dest: '', plan: null, planError: '', error: '', result: null, uploadId: null, files: [], received: [], makeCwd: true });
     changed();
   }
 
   return {
-    state: s, progress, choose, setExcludes, setDest, send, online, cancel, reset,
+    state: s, progress, choose, setExcludes, setDest, setMakeCwd, send, online, cancel, reset,
     get busy() { return s.phase === 'sending' || s.phase === 'paused'; },
   };
 }
 
-const FOLDER = 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z';
+export const FOLDER = 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z';
 const FOLDER_ADD = 'M12 11v5M9.5 13.5h5';
+
+export function glyph(...paths) {
+  const svg = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+  for (const d of paths) svg.append(svgEl('path', { d }));
+  return svg;
+}
+
+/** 手元の OS のフォルダーのダイアログを出す（押した操作の中で呼ぶ）。選んだら up.choose */
+export function pickFolder(up, opts) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.webkitdirectory = true;
+  input.multiple = true;
+  input.hidden = true;
+  input.onchange = () => {
+    const picked = entriesFromFileList(input.files);
+    input.remove();
+    if (picked.entries.length) up.choose(picked, opts);
+  };
+  input.addEventListener('cancel', () => input.remove());
+  // 面を描き直しても選んだ結果を受け取れるよう、面の外に置く
+  document.body.append(input);
+  input.click();
+}
 
 // 訳文の中に要素を差し込む（語順は言語で違うので、差し込む位置は訳文に任せる）
 const SLOT = '\u0000';
@@ -303,15 +339,14 @@ function button(text, cls, onClick) {
 }
 
 /**
- * 「手元から送る」のタブの中身を box に描く。進み具合だけが変わったときは数字だけ差し替える（押しているボタンを消さない）。
+ * 「フォルダーを送る」の流れを box に描く。進み具合だけが変わったときは数字だけ差し替える（押しているボタンを消さない）。
  * @param {HTMLElement} box
  * @param {ReturnType<typeof createFolderUpload>} up
  * @param {object} o
- * @param {(paths:string[]) => SVGElement} o.glyph アイコン
  * @param {() => Array<{value:string,time?:number}>} o.recent 最近の作業フォルダー（送り先の候補）
  * @param {() => void} o.close 面を閉じる
  */
-export function renderLocal(box, up, { glyph, recent, close }) {
+export function renderUpload(box, up, { recent, close }) {
   const s = up.state;
   const view = box._fu;
   // 送る前の面は、除外・一覧が変わったときだけ描き直す（送り先を打っている途中・下見の結果だけなら状態の行だけ）
@@ -322,26 +357,11 @@ export function renderLocal(box, up, { glyph, recent, close }) {
   box._fu = { phase: s.phase, sig };
   box.dataset.phase = s.phase;
 
-  const picker = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.webkitdirectory = true;
-    input.multiple = true;
-    input.hidden = true;
-    input.onchange = () => {
-      const picked = entriesFromFileList(input.files);
-      input.remove();
-      if (picked.entries.length) up.choose(picked);
-    };
-    input.addEventListener('cancel', () => input.remove());
-    // 面を描き直しても選んだ結果を受け取れるよう、面の外に置く
-    document.body.append(input);
-    input.click();
-  };
+  const picker = () => pickFolder(up);
   const pickAction = () => {
     const b = el('button', 'caction');
     b.type = 'button';
-    b.append(glyph([FOLDER, FOLDER_ADD]), el('span', null, t('upload.choose')));
+    b.append(glyph(FOLDER, FOLDER_ADD), el('span', null, t('upload.choose')));
     b.onclick = picker;
     return b;
   };
@@ -405,6 +425,15 @@ export function renderLocal(box, up, { glyph, recent, close }) {
     box.append(dest.root);
     const status = el('div', 'fu-status');
     box.append(status);
+    // 送ったフォルダーを作業フォルダーにする（既定で入。切れば送り先を知らせるだけ）
+    const mk = el('label', 'fu-cwd');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.dataset.key = 'makeCwd';
+    cb.checked = s.makeCwd;
+    cb.onchange = () => up.setMakeCwd(cb.checked);
+    mk.append(cb, el('span', null, t('upload.makeCwd')));
+    box.append(mk);
     const err = el('p', 'cerr');
     err.setAttribute('role', 'alert');
     box.append(err);

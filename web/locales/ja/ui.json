@@ -596,12 +596,12 @@
     "updateOnHost": "ホストの Pleiad の更新はホストで行います。"
   },
   "upload": {
-    "tabs": {
-      "label": "作業フォルダーの場所",
-      "host": "ホストのフォルダー",
-      "local": "手元から送る"
+    "menu": {
+      "label": "添付",
+      "files": "ファイルを添付…",
+      "folder": "フォルダーを送る…"
     },
-    "lead": "この PC のフォルダーをホストへ送り、この会話の作業フォルダーにします。",
+    "lead": "この PC のフォルダーをホストへ送ります。",
     "choose": "フォルダーを選ぶ…",
     "defaultDest": "送り先の既定はホストの ~/Pleiad/uploads の下の新しいフォルダーです。",
     "thisPc": "（この PC）",
@@ -628,6 +628,7 @@
     "andMore_other": "ほか {{files}} 件",
     "changeDest": "送り先を変える",
     "overwriteSend": "上書きして送る",
+    "makeCwd": "送ったフォルダーを作業フォルダーにする",
     "sendingTitle": "{{name}} を送っています",
     "pausedTitle": "{{name}} の送信を止めています",
     "progressLabel": "送信の進み具合",
@@ -655,6 +656,7 @@
       "attachNote": "添付は 1 ファイル 8MB まで。フォルダーの中身をまとめて添付するのではなく、ファイルごとに添付します。"
     },
     "busy": "ほかのフォルダーを送っている途中です。",
+    "sentNotice": "フォルダーをホストの {{dest}} に送りました。",
     "dropFailed": "フォルダーを読めませんでした（{{error}}）"
   }
 }

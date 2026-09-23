@@ -212,7 +212,7 @@ export default async function (t) {
     };
     const changes = [];
     const applied = [];
-    const up2 = createFolderUpload({ cmd, connected: () => online, session: () => 'sess-1', onDone: async (dest, sid) => { applied.push([dest, sid]); return 'next'; }, onChange: () => changes.push(up2.state.phase) });
+    const up2 = createFolderUpload({ cmd, connected: () => online, session: () => 'sess-1', onDone: async (dest, sid, o) => { applied.push([dest, sid, o?.makeCwd]); return o?.makeCwd ? 'next' : 'other'; }, onChange: () => changes.push(up2.state.phase) });
     const blobs = [['src/a.bin', crypto.randomBytes(CHUNK_BYTES * 3 + 7)], ['README.md', Buffer.from('hi')], ['.git/HEAD', Buffer.from('ref')], ['empty.txt', Buffer.alloc(0)]];
     const entries = blobs.map(([p, b]) => ({ path: p, file: new File([b], path.basename(p), { lastModified: 1_700_000_000_000 }) }));
     await up2.choose({ name: 'proj', entries });
@@ -228,6 +228,7 @@ export default async function (t) {
       up2.state.phase === 'done' && applied[0]?.[0] === destDir && applied[0]?.[1] === 'sess-1' && up2.state.result.applied === 'next'
       && (await fs.readFile(path.join(destDir, 'src', 'a.bin'))).equals(blobs[0][1]) && await fs.readFile(path.join(destDir, 'empty.txt'), 'utf8') === ''
       && !(await fs.stat(path.join(destDir, '.git')).then(() => true, () => false)), `${up2.state.phase} ${up2.state.error}`);
+    t.ok('「作業フォルダーにする」は既定で入で、onDone に makeCwd: true が渡る', applied[0]?.[2] === true);
     t.ok('切れる前に受け取った分は送り直さない（断片の数が最小に近い）', chunks <= 4 + 1 + 2, `断片 ${chunks}`);
     // 既にあるフォルダーを送り先にすると確認を求める
     await up2.choose({ name: 'proj', entries });
@@ -243,6 +244,20 @@ export default async function (t) {
     await new Promise((r) => setTimeout(r, 50));
     t.ok('中断すると ready に戻り、置き場の途中のものを捨てる', up2.state.phase === 'ready'
       && (await fs.readdir(path.join(s3, 'uploads', '.partial'))).length === 0);
+    // 「作業フォルダーにする」を切って送ると、onDone に makeCwd: false が渡り、作業フォルダーは変えない（'other'）
+    up2.setMakeCwd(false);
+    await up2.choose({ name: 'proj-b', entries });
+    t.ok('選び直しても「作業フォルダーにする」は切ったまま', up2.state.makeCwd === false);
+    await up2.send();
+    for (let i = 0; i < 100 && up2.state.phase !== 'done'; i++) await new Promise((r) => setTimeout(r, 20));
+    t.ok('切って送ると onDone に makeCwd: false が渡り、終わりの字は作業フォルダーを変えていない方', up2.state.phase === 'done'
+      && applied.at(-1)?.[0] === path.join(s3, 'uploads', 'proj-b') && applied.at(-1)?.[2] === false && up2.state.result.applied === 'other', `${up2.state.phase} ${up2.state.error}`);
+    up2.reset();
+    t.ok('閉じる（reset）と「作業フォルダーにする」は入に戻る', up2.state.makeCwd === true);
+    up2.setMakeCwd(false);
+    up2.choose({ name: 'proj-c', entries }, { makeCwd: true });
+    t.ok('ドロップの「作業フォルダーとして送る」（choose に makeCwd: true）は入にする', up2.state.makeCwd === true);
+    up2.reset();
   } finally {
     globalThis.FileReader = hadReader;
     await fs.rm(s3, { recursive: true, force: true }).catch(() => {});

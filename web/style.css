@@ -715,12 +715,13 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .cerr{margin:6px 8px 0;font-size:var(--fs-s);font-weight:600;color:var(--ink);overflow-wrap:anywhere}
 .cerr:empty{display:none}
 .cseg{margin:2px 8px 4px}
-/* ---- 手元のフォルダーを送る（web/folder-upload.mjs、docs/remote.md §8.1。リモートの窓の作業ディレクトリの面） ----
-   上に「ホストのフォルダー / 手元から送る」のタブ（.seg）。送る前は件数と大きさ・除外の札・送り先（combo）、
-   既にあるフォルダーへはその場の確認、送っている間はバーと件数・大きさ。色は塗りのバーと「送る」だけ */
-.fu-tabs{margin:2px 2px 8px}
-.fu-tabs button{font-size:var(--fs-s);padding:5px 10px}
-.fu-tabs button.on{font-weight:600}
+/* ---- 手元のフォルダーを送る（web/folder-upload.mjs・web/attach-menu.mjs、docs/remote.md §8.1。リモートの窓の添付のボタンの面） ----
+   押すとまず「ファイルを添付… / フォルダーを送る…」（.caction の 2 行）。送る前は件数と大きさ・除外の札・送り先（combo）・
+   「作業フォルダーにする」、既にあるフォルダーへはその場の確認、送っている間はバーと件数・大きさ。色は塗りのバーと「送る」だけ */
+.fu-pop:focus{outline:none}
+.fu-menu .caction{margin-top:0}
+.fu-cwd{display:flex;align-items:center;gap:8px;padding:8px 8px 0;font-size:var(--fs-s);color:var(--ink);cursor:pointer}
+.fu-cwd input{margin:0;accent-color:var(--ink-blue);cursor:pointer}
 .fu-body{min-width:0}
 .fu-lead{margin:8px}
 .fu-sum{padding:6px 8px 2px;min-width:0}

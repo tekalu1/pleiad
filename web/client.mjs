@@ -21,6 +21,7 @@ import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall,
 import { createContextMenu } from "./context-menu.mjs";
 import { setupComposerControls, resolvedModel } from "./composer-controls.mjs";
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
+import { setupAttachMenu } from "./attach-menu.mjs";
 import { modelRowIds } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
@@ -1598,13 +1599,18 @@ function applyCwd(v) {
   else state.draft.cwd = v;
 }
 
-// 手元のフォルダーをホストへ送る（リモートの窓だけ。web/folder-upload.mjs、docs/remote.md §8.1）。
-// 送り終えたら送り先を、送り始めたときの会話の作業フォルダーにする
+// 手元のフォルダーをホストへ送る（リモートの窓だけ。入口は添付のボタンのメニュー。web/folder-upload.mjs・web/attach-menu.mjs、
+// docs/remote.md §8.1）。送り終えたら、「作業フォルダーにする」が入なら送り先を送り始めたときの会話の作業フォルダーにする。
+// 切ってあれば作業フォルダーは変えず、送り先を会話に一行で知らせる
 const folderUpload = canSendFolders() ? createFolderUpload({
   cmd,
   connected: () => ws?.readyState === WebSocket.OPEN,
   session: () => state.current ?? null,
-  onDone: async (dest, sessionId) => {
+  onDone: async (dest, sessionId, { makeCwd = true } = {}) => {
+    if (!makeCwd) {
+      sys(html.t("upload.sentNotice", { dest }, ["dest"]));
+      return "other";
+    }
     if (sessionId === (state.current ?? null)) {
       const unsent = !sessionId || state.sessions.find((s) => s.id === sessionId)?.unsent;
       applyCwd(dest);
@@ -1614,13 +1620,13 @@ const folderUpload = canSendFolders() ? createFolderUpload({
     await cmd("setTurnSettings", { sessionId, cwd: dest });
     return "next";
   },
-  onChange: () => controls.refreshFolder(),
+  onChange: () => attachMenu?.refresh(),
 }) : null;
+let attachMenu = null;   // 添付のボタンのメニュー（folderUpload があるときだけ。wireDropZone で作る）
 
 // 入力欄の設定のチップ（web/composer-controls.mjs）。値は state に持ち、チップは get() で毎回読む
 const controls = setupComposerControls({
   cmd,
-  upload: folderUpload,
   get: () => {
     const bid = state.shownBackend ?? activeBackendId();
     return {
@@ -2324,7 +2330,9 @@ function fitPrompt() {
 
 function wireDropZone() {
   // クリップ → 隠した file input。選んだものはドロップ・貼り付けと同じ列に入る
-  $("attach").onclick = () => $("fileIn").click();
+  // リモートの窓では「ファイルを添付… / フォルダーを送る…」のメニュー（web/attach-menu.mjs）
+  if (folderUpload) attachMenu = setupAttachMenu({ button: $("attach"), upload: folderUpload, pickFiles: () => $("fileIn").click(), recent: cwdOptions });
+  else $("attach").onclick = () => $("fileIn").click();
   $("fileIn").onchange = () => { attachFiles([...$("fileIn").files]); $("fileIn").value = ""; };
   // 会話に載った画像も同じライトボックスで大きく見る
   log.addEventListener("click", (e) => {
@@ -2385,9 +2393,9 @@ async function dropFolder(entries) {
   const sum = summarize(picked.entries, excludes);
   const choice = await askDroppedFolder({ name: picked.name, files: sum.files, bytes: sum.bytes, excludes });
   if (choice === "send") {
-    if (folderUpload.busy) { sys(html.t("upload.busy")); controls.openLocal(); return; }
-    folderUpload.choose(picked);
-    controls.openLocal();
+    if (folderUpload.busy) { sys(html.t("upload.busy")); attachMenu?.openUpload(); return; }
+    folderUpload.choose(picked, { makeCwd: true });
+    attachMenu?.openUpload();
   } else if (choice === "attach") {
     const loose = await Promise.all(entries.filter((x) => x.isFile).map((x) => new Promise((res) => x.file(res, () => res(null)))));
     attachFiles([...sum.included.map((x) => x.file), ...loose.filter(Boolean)]);
