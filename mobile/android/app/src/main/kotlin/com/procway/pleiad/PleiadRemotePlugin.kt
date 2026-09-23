@@ -11,7 +11,6 @@ import com.procway.pleiad.remote.LinkStatus
 import com.procway.pleiad.remote.PairError
 import com.procway.pleiad.remote.Pairing
 import com.procway.pleiad.remote.PairingCodec
-import com.procway.pleiad.remote.X25519
 import java.util.concurrent.Executors
 
 /**
@@ -67,8 +66,7 @@ class PleiadRemotePlugin : Plugin() {
             JSObject()
                 .put("deviceName", (context.applicationContext as PleiadApp).deviceName())
                 .put("app", BuildConfig.VERSION_NAME)
-                .put("encrypted", device.store.encrypted)
-                .put("x25519", X25519.implementation),
+                .put("encrypted", device.store.encrypted),
         )
     }
 

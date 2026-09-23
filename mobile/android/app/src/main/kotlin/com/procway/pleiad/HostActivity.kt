@@ -39,7 +39,8 @@ import java.util.concurrent.Executors
  * One host's window: a plain WebView (no Capacitor bridge) on the in-app loopback proxy, http://127.0.0.1:<p>/?token=…
  * (docs/remote.md §8.2, §8.3 option A). Into the host page we inject only `window.plyRemote`
  * ({ hostId, hostName, shell: 'mobile', status, onStatus, retry, backToHosts, closeWindow }), and only for the proxy's
- * origin and main frame: a document-start script plus a WebMessageListener whose messages are accepted only from the
+ * origin and main frame (plus `window.backToHosts`, the same function, which web/remote-badge.mjs also looks for):
+ * a document-start script plus a WebMessageListener whose messages are accepted only from the
  * main frame of that origin.
  *
  * Back button: first offered to the page as a cancelable `plyremote:back` event (so it can close a drawer or a menu);
@@ -60,6 +61,8 @@ class HostActivity : ComponentActivity() {
     private lateinit var progress: ProgressBar
     @Volatile private var reply: JavaScriptReplyProxy? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private var padBars = false
+    private var lastBars: androidx.core.graphics.Insets? = null
     private val statusListener: (String, LinkStatus) -> Unit = { id, s -> if (id == hostId) runOnUiThread { pushStatus(s) } }
 
     private val pickFiles = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
@@ -76,12 +79,20 @@ class HostActivity : ComponentActivity() {
         progress = ProgressBar(this).apply { isIndeterminate = true }
         root.addView(progress, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.CENTER))
         setContentView(root)
-        // The host page stays inside the system bars and above the keyboard (so env(safe-area-inset-*) is 0 here)
+        // Edge-to-edge: the host page draws under the system bars and places itself with env(safe-area-inset-*)
+        // (web/style.css; the host bar paints the status-bar area with the fill color, so the icons are light).
+        // Only the keyboard is padded here (the page's interactive-widget=resizes-content expects a resized viewport).
+        // If this WebView reports no safe-area insets, fall back to padding the bars (probeSafeArea).
+        val bar = WindowCompat.getInsetsController(window, root)
+        bar.isAppearanceLightStatusBars = false
+        bar.isAppearanceLightNavigationBars = !isNight()
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-            v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
-            WindowInsetsCompat.CONSUMED
+            lastBars = bars
+            if (padBars) v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+            else v.setPadding(0, 0, 0, if (ime.bottom > 0) ime.bottom else 0)
+            insets
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() = offerBack()
@@ -134,7 +145,10 @@ class HostActivity : ComponentActivity() {
                 return true
             }
 
-            override fun onPageFinished(view: WebView, url: String) { progress.visibility = View.GONE }
+            override fun onPageFinished(view: WebView, url: String) {
+                progress.visibility = View.GONE
+                probeSafeArea(view)
+            }
         }
         w.webChromeClient = object : WebChromeClient() {
             override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
@@ -211,9 +225,25 @@ class HostActivity : ComponentActivity() {
     closeWindow: () => post('back'),
   });
   Object.defineProperty(window, 'plyRemote', { value: api, writable: false, configurable: false, enumerable: false });
+  Object.defineProperty(window, 'backToHosts', { value: api.backToHosts, writable: false, configurable: false, enumerable: false });
   post('hello');
 })();
 """
+
+    /** Older WebViews report env(safe-area-inset-top) as 0 even when drawing under the status bar: pad instead. */
+    private fun probeSafeArea(view: WebView) {
+        if (padBars) return
+        val top = lastBars?.top ?: 0
+        if (top <= 0) return
+        val js = "(() => { const d = document.createElement('div'); d.style.cssText = 'position:fixed;top:0;height:0;visibility:hidden;padding-top:env(safe-area-inset-top,0px)';" +
+            " document.documentElement.appendChild(d); const v = parseFloat(getComputedStyle(d).paddingTop) || 0; d.remove(); return v; })()"
+        view.evaluateJavascript(js) { r ->
+            if ((r?.toDoubleOrNull() ?: 0.0) <= 0.0) {
+                padBars = true
+                ViewCompat.requestApplyInsets(root)
+            }
+        }
+    }
 
     private fun pushStatus(s: LinkStatus) {
         val r = reply ?: return

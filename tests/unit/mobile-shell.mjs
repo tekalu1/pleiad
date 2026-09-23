@@ -24,6 +24,8 @@ export default async function (t) {
   t.ok('注入は殻のプロキシのオリジンだけ（本体フレームの確認つき）。Capacitor のブリッジは使わない',
     /addDocumentStartJavaScript\(w, remoteScript\(info\), setOf\(origin\)\)/.test(host) && /addWebMessageListener\(w, BRIDGE, setOf\(origin\)\)/.test(host)
       && /!isMainFrame \|\| sourceOrigin\.toString\(\) != origin/.test(host) && !/com\.getcapacitor/.test(host));
+  t.ok('window.backToHosts も plyRemote.backToHosts と同じものを入れる（再定義できない）', /defineProperty\(window, 'backToHosts', \{ value: api\.backToHosts, writable: false, configurable: false/.test(script));
+  t.ok('ホストの窓は edge-to-edge（安全領域は web/ の env() が受け持つ。状態バーの記号は明るく）', /isAppearanceLightStatusBars = false/.test(host) && /setDecorFitsSystemWindows\(window, false\)/.test(host));
   t.ok('戻るボタンはまず画面に plyremote:back（取り消せる）を投げる', /new CustomEvent\('plyremote:back', \{ cancelable: true \}\)/.test(host));
   const info = remoteInfo({ hostId: 'trleh4p5diok2b3hxpcck5nsba', hostName: 'desk', relay: 'https://relay.example', device: 'Pixel', shell: 'mobile' });
   t.ok('remoteInfo はモバイルの形を受ける（shell: mobile）', info?.shell === 'mobile' && info.host === 'desk');
@@ -46,7 +48,9 @@ export default async function (t) {
   const root = JSON.parse(read('package.json'));
   t.ok('ルートの package.json に Capacitor を入れない', !Object.keys({ ...root.dependencies, ...root.devDependencies }).some(k => k.startsWith('@capacitor')));
   const vars = read('mobile/android/variables.gradle');
-  t.ok('最低の版は Android 12（API 31）', /minSdkVersion = 31\b/.test(vars));
+  t.ok('最低の版は Android 13（API 33。標準の XDH が使える最初の版）', /minSdkVersion = 33\b/.test(vars));
+  const x = read('mobile/android/remote-core/src/main/kotlin/com/procway/pleiad/remote/X25519.kt');
+  t.ok('X25519 は標準の XDH だけ（自前の実装を持たない）', /KeyAgreement\.getInstance\("XDH"\)/.test(x) && !/scalarMult|car25519|Portable/.test(x));
 
   // ---- 殻の辞書（mobile/www/i18n.js）の ja と en がそろう
   const sandbox = { navigator: { language: 'ja' }, document: { documentElement: {} }, window: {}, Intl };

@@ -435,7 +435,7 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 - ホストを選ぶと、殻がそのホストのプロキシを立てて WebView を `http://127.0.0.1:<p>/?token=…` へ移す。殻のプラグインのブリッジはホストの画面に入れない。代わりに小さなスクリプトで `window.plyRemote = { hostId, hostName, shell: 'mobile', backToHosts() }` だけを入れる（`backToHosts` はメッセージハンドラー経由。送り元がそのプロキシのオリジンの本体フレームのときだけ受ける）
 - 画面の上端に今のホスト名の帯（`⇄ desktop-home`）。押すと `backToHosts()` でホスト一覧へ戻る。デスクトップのバッジと同じ部品で、`shell: 'mobile'` のときは safe-area の内側に置く
 - 背面に回るとプロキシとチャネルは OS に止められる。前面に戻ったら張り直し、画面は既存の再接続で追いつく。承認待ちは #11 でホストが待ち続ける
-- 暗号は iOS が CryptoKit、Android が標準の暗号（X25519 は `XDH`、AES-GCM は `javax.crypto` の `AES/GCM/NoPadding`）。どちらも §2.1 の試験ベクトルで Node の実装と突き合わせる。**Android の `XDH` は API 33 から**（developer.android.com の KeyAgreement の表。当初 31 と書いたのは誤り）なので、API 31–32 では TweetNaCl の `crypto_scalarmult` を移した実装に落とす（下の「実装」）
+- 暗号は iOS が CryptoKit、Android が標準の暗号（X25519 は `XDH`、AES-GCM は `javax.crypto` の `AES/GCM/NoPadding`）。どちらも §2.1 の試験ベクトルで Node の実装と突き合わせる。**Android の `XDH` は API 33 から**（developer.android.com の KeyAgreement / KeyFactory の表。当初 31 と書いたのは誤り）なので、最低の版を API 33（Android 13）にした（§11 の 3）
 - 添付はファイルだけ（`#fileIn`。カメラも可）。フォルダーの送信は出さない
 
 ### 8.3 アプリ内でローカルのプロキシを動かす制約（iOS / Android）
@@ -455,16 +455,16 @@ A 案で WKWebView が `127.0.0.1` を secure context と見なさなかった�
 実装（Android、2026-09-23、issue #16。iOS は Mac と iPhone が無いので後回し）:
 
 - **端末側は Kotlin に移した**（`mobile/android/remote-core/`）。JS のモジュールをアプリの中で動かす案（nodejs-mobile・隠した WebView）は採らない。nodejs-mobile は Node 一式（ABI ごとに数十 MB）を抱え、プロセスに 1 つで作り直せず、Android 15 以降の 16 KB ページの要件を外の prebuild に頼ることになる。隠した WebView は `node:crypto`・`node:http`・`ws` の代わりが要り、待ち受けと中継への線はどのみちネイティブで、フレームごとに JS と行き来する糊の方が本体より大きくなる。iOS も Swift で書き直すので、重なるのは同じ量。取り決めのずれは共有のベクトルと、Node の中継・ホストとの往復の試験で押さえる
-- 移したもの: `X25519.kt`（JCA の `XDH`。生の鍵は noise.mjs と同じ PKCS#8 / SPKI の前置きで出し入れ。`XDH` が無い API 31–32 は TweetNaCl の移植。両方を RFC 7748 のベクトルと互いの一致で確かめる）、`Noise.kt`、`Frames.kt`、`Channel.kt`（1 本のスレッドの `Loop` に閉じ込める。Node のイベントループの代わり）、`RelaySocket.kt`（OkHttp 4.12.0。届いた順に溜め、聞き手を付けてから流す）、`Pairing.kt`、`DeviceLink.kt`、`DeviceProxy.kt` + `WebSocketFrames.kt`（127.0.0.1 の HTTP/1.1 と RFC 6455 の小さなサーバー。認証・`Host` の照合・GET/HEAD だけ・案内のページはデスクトップと同じ。HTTP の応答はどれも `Connection: close`）、`RemoteDevice.kt`（`hosts.json` はデスクトップと同じ形、秘密は `secrets.bin` に封じる）
+- 移したもの: `X25519.kt`（JCA の `XDH` だけ。生の鍵は noise.mjs と同じ PKCS#8 / SPKI の前置きで出し入れ。RFC 7748 のベクトルで確かめる）、`Noise.kt`、`Frames.kt`、`Channel.kt`（1 本のスレッドの `Loop` に閉じ込める。Node のイベントループの代わり）、`RelaySocket.kt`（OkHttp 4.12.0。届いた順に溜め、聞き手を付けてから流す）、`Pairing.kt`、`DeviceLink.kt`、`DeviceProxy.kt` + `WebSocketFrames.kt`（127.0.0.1 の HTTP/1.1 と RFC 6455 の小さなサーバー。認証・`Host` の照合・GET/HEAD だけ・案内のページはデスクトップと同じ。HTTP の応答はどれも `Connection: close`）、`RemoteDevice.kt`（`hosts.json` はデスクトップと同じ形、秘密は `secrets.bin` に封じる）
 - 試験（`cd mobile/android && ./gradlew :remote-core:test`、JDK 17 以上）: ベクトル（cacophony の IK / IKpsk2、Pleiad の導出、フレーム 17 例）、メモリの管でつないだチャネル（窓より大きい本文・大きい WebSocket のメッセージ）、**Node の本物の中継と fake のホストとの往復**（`InteropTest`。`mobile/scripts/fake-host.mjs` を子プロセスで立て、ペアリング・プロキシの認証と防火壁・`/ws` の `ready` とコマンド・900 KB のメッセージ・取り消しまで。`node` が無ければ飛ばす）。`npm test` の `mobile-shell` は plyRemote の形・平文の許可・版の固定・殻の辞書を見る
 - 資格情報: `noBackupFilesDir/remote/`。秘密は Android Keystore の AES-256-GCM の鍵で封じる（`KeystoreCipher`）。Keystore の鍵はバックアップされないので `allowBackup=false` と data extraction rules でバックアップ・端末の移行から外す
 - 平文: `network_security_config` で `127.0.0.1` だけ（ループバックのプロキシと、試験で `adb reverse` した中継）。利用者の入れた CA は信じない
 - 殻の画面（`mobile/www/`、モック ①②）: ホスト一覧（状態・最後に使った時刻・「…」で名前を変える / 削除）、「ホストを追加」（ML Kit の `scan()` で QR、カメラの許可を求め、Google のスキャナーのモジュールが無ければ入れ始める。貼り付けも可）、ペアリング中は確認コード 6 桁と「やめる」。`pleiad://pair?...` のリンク（端末のカメラで QR を開いたとき）でも開き、そのときとペアリング済みのホストのときは先に確かめる。文言は殻の辞書 `mobile/www/i18n.js`（ja / en）、ネイティブは失敗を決まったコードで返して殻が訳す
 - ホストの窓（`HostActivity`）: Capacitor の入らない素の WebView で `http://127.0.0.1:<p>/?token=…` を開く。入れるのは `window.plyRemote` だけで、`WebViewCompat.addDocumentStartJavaScript` と `addWebMessageListener` をどちらもプロキシのオリジンに限り、受け口は本体フレームからのメッセージだけを受ける。形は `{ hostId, hostName, relay, device, shell: 'mobile', status(), onStatus(fn), retry(), backToHosts(), closeWindow() }`（`closeWindow` = `backToHosts`。凍結し再定義できない）。帯のバッジはこれでデスクトップと同じ部品が動く
 - 戻るボタン: まず画面に取り消せる `plyremote:back` のイベント（`window`）を投げ、`preventDefault()` されなければホスト一覧へ戻る（引き出し・メニューを先に閉じたいときは web/ が受ける）。窓を離れたらそのホストのプロキシを閉じる。前面に戻ったとき `offline` / `host-offline` なら待たずに張り直す
-- 画面の端: WebView をシステムバー・切り欠き・キーボードの分だけ内側に置くので、Android では `env(safe-area-inset-*)` は 0（web/ はこれに頼らなくてよい）
+- 画面の端: ホストの窓は edge-to-edge（システムバーの下まで描く）。web/ は `env(safe-area-inset-*)` で帯と入力欄を置き、ホスト名の帯が状態バーの下地を塗るので、状態バーの記号は明るい色にする。殻が内側に寄せるのはキーボードの分だけ（web/ の `interactive-widget=resizes-content` と揃える）。WebView が `env(safe-area-inset-top)` を 0 と返す古い版のときだけ、読み込み後に確かめてシステムバーの分を内側に寄せる。`window.backToHosts` も `plyRemote.backToHosts` と同じものを入れる（web/remote-badge.mjs が両方を見る）
 - 添付は WebView のファイル選択（`#fileIn`）、ダウンロードは DownloadManager にプロキシの Cookie を付けて渡す。外へのリンクはブラウザーで開く
-- 版: Capacitor 8.5.2、@capacitor/app 8.1.1、@capacitor-mlkit/barcode-scanning 8.2.1、AGP 8.13.0、Gradle 8.14.3、Kotlin 2.2.21、OkHttp 4.12.0、compile / target 36、**minSdk 31**。アプリ ID `com.procway.pleiad`（デスクトップは `jp.ply.desktop`。ストアに出す前に揃えるか決める）
+- 版: Capacitor 8.5.2、@capacitor/app 8.1.1、@capacitor-mlkit/barcode-scanning 8.2.1、AGP 8.13.0、Gradle 8.14.3、Kotlin 2.2.21、OkHttp 4.12.0、compile / target 36、**minSdk 33**。アプリ ID `com.procway.pleiad`（デスクトップは `jp.ply.desktop`。ストアに出す前に揃えるか決める）
 
 - ビルドと手元の確認: `cd mobile && npm ci && npx cap sync android && cd android && gradlew assembleDebug`（JDK 17 以上。`local.properties` に `sdk.dir`）。本番の中継を使わずに確かめるなら `node mobile/scripts/fake-host.mjs --relay-port 8787` と `adb reverse tcp:8787 tcp:8787` で、端末の `http://127.0.0.1:8787` が手元の中継になる（出てくる `pleiad://pair?...` を `adb shell am start -a android.intent.action.VIEW -d '<それ>'` で渡すか貼り付ける）
 
@@ -515,7 +515,7 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 
 1. **リモートの帯の色**: 案は `--fill-primary`（§7.2）。「塗りは 1 画面に 1 つ」の例外になる。代案は無彩色の濃い帯（新しいトークン `--surface-remote`）で、塗りの規則は守れるがローカルの暗い配色と見分けにくい
 2. ~~**QR を作る部品**~~ 決定（2026-09-23）: `web/vendor/qrcode-generator.mjs`（MIT）を同梱（§6.1）。読み取りはモバイルのネイティブ（Capacitor のバーコードのプラグイン）
-3. ~~**Android の最低版**~~ 決定: API 31（Android 12）以上。ただし `XDH` は API 33 からなので、31–32 は X25519 だけ移植の実装（§8.2 の実装）。移植を持ちたくなければ minSdk を 33 に上げるか、31–32 だけ Tink を使う
+3. ~~**Android の最低版**~~ 決定（2026-09-23）: **API 33（Android 13）以上**。X25519 を標準の `XDH` だけで済ませるため（`XDH` は API 33 から。31–32 のために自前の X25519 を持つ案は採らない。Tink も足さない）
 4. **WKWebView と `127.0.0.1` の secure context**: 実機で確かめる。だめなら §8.3 の代わりの UUID、それでもだめなら B 案
 5. **通知**: 背面のモバイルには完了・承認待ちが届かない。APNs / FCM の鍵を持つ中継が要るので、この中継に載せるかは別に決める（中身は端末の鍵で暗号化して載せる）
 6. **送信の効率**: フォルダーの送信は base64 の WS コマンド（約 33% 増える）。バイナリのフレームにするかは、実際の速さを見てから
