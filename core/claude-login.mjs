@@ -18,6 +18,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn as spawnChild } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { t } from './i18n.mjs';
 
 export const LOGIN_KINDS = new Set(['setup-token', 'usage-login']);
 export const LOGIN_TIMEOUT_MS = 10 * 60_000;
@@ -96,8 +97,8 @@ const SUCCESS = /login successful|logged in (?:as|successfully)|successfully (?:
 
 /** 文字列からトークン（sk-ant-…）と、渡された秘密（貼ったコードなど）を伏せる */
 export function redactSecrets(text, secrets = []) {
-  let s = String(text ?? '').replace(/sk-ant-[A-Za-z0-9_-]+/g, '[トークン]');
-  for (const secret of secrets) if (secret && secret.length >= 4) s = s.split(secret).join('[伏せ字]');
+  let s = String(text ?? '').replace(/sk-ant-[A-Za-z0-9_-]+/g, t('claude.redacted.token'));
+  for (const secret of secrets) if (secret && secret.length >= 4) s = s.split(secret).join(t('claude.redacted.secret'));
   return s;
 }
 
@@ -113,8 +114,8 @@ export function outputTail(raw, secrets = [], max = 300) {
 /** 貼られたコード。空白・改行が混じるものは断る（改行を混ぜて別の入力を送らせない） */
 export function normalizeCode(value) {
   const code = String(value ?? '').trim();
-  if (!code) throw new Error('ブラウザーに表示されたコードを貼り付けてください');
-  if (!/^[\x21-\x7e]{1,2048}$/.test(code)) throw new Error('コードの形式が正しくありません。ブラウザーに表示されたコードをそのまま貼り付けてください');
+  if (!code) throw new Error(t('claude.login.pasteCode'));
+  if (!/^[\x21-\x7e]{1,2048}$/.test(code)) throw new Error(t('claude.login.badCode'));
   return code;
 }
 
@@ -138,7 +139,7 @@ export function loginEnv(base = process.env, { configDir, noBrowser } = {}) {
 function commandLine(argv, args) {
   const [command, ...prefix] = argv;
   if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(command)) {
-    const quote = v => { if (/["%\r\n]/.test(v)) throw new Error('CLI の引数に使用できない文字があります'); return `"${v}"`; };
+    const quote = v => { if (/["%\r\n]/.test(v)) throw new Error(t('cli.badArgument')); return `"${v}"`; };
     return { file: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${[command, ...prefix, ...args].map(quote).join(' ')}"`] };
   }
   return { file: command, args: [...prefix, ...args] };
@@ -249,7 +250,7 @@ export function createClaudeLogin({ command, emit, saveToken, usageDir, markUsag
     try {
       if (s.kind === 'setup-token') {
         const token = findToken(s.raw);
-        if (!token) throw new Error('トークンを読み取れませんでした');
+        if (!token) throw new Error(t('claude.login.tokenUnreadable'));
         const saved = await saveToken({ accountId: s.accountId, name: s.name, token });
         s.accountId = saved.id;
       } else {
@@ -257,7 +258,7 @@ export function createClaudeLogin({ command, emit, saveToken, usageDir, markUsag
       }
       finish(s, { phase: 'done' });
     } catch (e) {
-      fail(s, `保存できませんでした: ${e?.message ?? e}`);
+      fail(s, t('claude.login.saveFailed', { message: e?.message ?? e }));
     }
   }
 
@@ -281,7 +282,7 @@ export function createClaudeLogin({ command, emit, saveToken, usageDir, markUsag
       // （送ったコードを入力欄が表示し直すだけでは、失敗の文面が無いので数えない）
       const tail = outputTail(s.raw.slice(s.submittedAt), s.codes, 160);
       s.waitingCode = true; s.submittedAt = s.raw.length;
-      send(s, { phase: 'code', message: `コードを受け付けませんでした。もう一度貼り付けてください${tail ? `（${tail}）` : ''}` });
+      send(s, { phase: 'code', message: tail ? t('claude.login.codeRejectedDetail', { detail: tail }) : t('claude.login.codeRejected') });
     }
     if (s.kind === 'setup-token' && findToken(s.raw)) {
       // 折り返しの続きが届くまで少し待ってから読む
@@ -299,8 +300,9 @@ export function createClaudeLogin({ command, emit, saveToken, usageDir, markUsag
     if (s.kind === 'setup-token' && findToken(s.raw)) return void complete(s);
     if (s.kind === 'usage-login' && code === 0 && s.url) return void complete(s);
     const tail = outputTail(s.raw, s.codes);
-    const why = error ? `Claude Code を起動できませんでした（${error.message}）`
-      : `Claude Code が終了しました（終了コード ${code ?? '不明'}）${tail ? `: ${tail}` : ''}`;
+    const exitCode = code ?? t('claude.login.unknownCode');
+    const why = error ? t('claude.login.launchFailed', { message: error.message })
+      : tail ? t('claude.login.exitedDetail', { code: exitCode, detail: tail }) : t('claude.login.exited', { code: exitCode });
     fail(s, why);
   }
 
@@ -314,12 +316,12 @@ export function createClaudeLogin({ command, emit, saveToken, usageDir, markUsag
      * @returns {{ loginId: string }}
      */
     start({ kind, accountId, name, open = false } = {}) {
-      if (!LOGIN_KINDS.has(kind)) throw new Error('認可の種類が正しくありません');
-      if (kind === 'usage-login' && !accountId) throw new Error('アカウントを指定してください');
+      if (!LOGIN_KINDS.has(kind)) throw new Error(t('claude.login.badKind'));
+      if (kind === 'usage-login' && !accountId) throw new Error(t('claude.login.accountRequired'));
       const argv = command();
-      if (!argv) throw new Error('Claude Code が見つかりません。インストールしてから、もう一度お試しください');
+      if (!argv) throw new Error(t('claude.login.notInstalled'));
       const spawner = pickSpawner(kind);
-      if (!spawner) throw new Error('この環境では疑似端末（node-pty）を使えないため、Pleiad からトークンを発行できません。ターミナルで `claude setup-token` を実行し、表示されたトークンを「トークンを貼り付ける」から登録してください');
+      if (!spawner) throw new Error(t('claude.login.noPty'));
       // 一度に 1 つだけ（コードの貼り付け先を取り違えないように）
       cancelWhere(() => true);
 
@@ -334,20 +336,20 @@ export function createClaudeLogin({ command, emit, saveToken, usageDir, markUsag
       try { s.proc = spawner(argv, args, { env, cwd: configDir }); }
       catch (e) {
         if (s.scratch) fs.rmSync(s.scratch, { recursive: true, force: true });
-        throw new Error(`Claude Code を起動できませんでした（${e?.message ?? e}）`);
+        throw new Error(t('claude.login.launchFailed', { message: e?.message ?? e }));
       }
       sessions.set(id, s);
       s.proc.onData(chunk => onData(s, String(chunk)));
       s.proc.onExit(e => onExit(s, e ?? {}));
-      s.timer = setTimeout(() => fail(s, '時間切れになりました（10 分）。もう一度やり直してください'), timeoutMs);
+      s.timer = setTimeout(() => fail(s, t('claude.login.timeout')), timeoutMs);
       s.timer.unref?.();
       return { loginId: id };
     },
     /** ブラウザーに表示されたコードを CLI へ渡す */
     submitCode(loginId, value) {
       const s = sessions.get(loginId);
-      if (!s) throw new Error('この認可は終了しています。もう一度やり直してください');
-      if (!s.url) throw new Error('まだ認可の準備ができていません。少し待ってからもう一度お試しください');
+      if (!s) throw new Error(t('claude.login.ended'));
+      if (!s.url) throw new Error(t('claude.login.notReady'));
       const code = normalizeCode(value);
       s.codes.push(code);
       s.submitted++; s.submittedAt = s.raw.length; s.waitingCode = false;

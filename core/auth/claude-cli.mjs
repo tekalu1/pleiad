@@ -1,4 +1,5 @@
 import { cliCommand, spawnCli } from '../cli-installation.mjs';
+import { t } from '../i18n.mjs';
 
 export function createClaudeAuth(launch = (args) => spawnCli(cliCommand('claude'), args, { stdio: ['ignore', 'pipe', 'pipe'] })) {
   let pending = null;
@@ -8,7 +9,7 @@ export function createClaudeAuth(launch = (args) => spawnCli(cliCommand('claude'
       let output = '';
       let stdout = '';
       let lastUrl = '';
-      const timer = setTimeout(() => { child.kill(); reject(new Error('時間切れです。ログインをやり直してください')); }, timeout);
+      const timer = setTimeout(() => { child.kill(); reject(new Error(t('claude.auth.timeout'))); }, timeout);
       const read = data => {
         output = (output + data.toString().replace(/\x1b\[[0-9;]*m/g, '')).slice(-64_000);
         const urls = output.match(/https:\/\/[^\s<>"\x1b]+/g) || [];
@@ -30,23 +31,23 @@ export function createClaudeAuth(launch = (args) => spawnCli(cliCommand('claude'
       if (pending) return { loggedIn: false, pending: true };
       const result = await run(['auth', 'status', '--json']);
       let value; try { value = JSON.parse(result.output); } catch {
-        throw new Error('Claude Code の認証状態を確認できません。CLI を更新して再確認してください');
+        throw new Error(t('claude.auth.statusUnreadable'));
       }
       return { loggedIn: result.code === 0 && value.loggedIn === true, account: value.email || undefined, detail: value.authMethod || undefined };
     },
     async login({ emit }) {
-      if (pending) throw new Error('ログインは既に進行中です');
+      if (pending) throw new Error(t('claude.auth.loginPending'));
       pending = run(['auth', 'login'], { emit, timeout: 10 * 60_000 });
       try {
         const result = await pending;
-        if (result.code !== 0) throw new Error('ログインを完了できませんでした。もう一度お試しください');
-        emit({ type: 'auth', phase: 'done', message: 'ログインしました' });
+        if (result.code !== 0) throw new Error(t('claude.auth.loginFailed'));
+        emit({ type: 'auth', phase: 'done', message: t('claude.auth.loggedIn') });
       } finally { pending = null; }
     },
     async logout() {
-      if (pending) throw new Error('ログインの完了を待ってください');
+      if (pending) throw new Error(t('claude.auth.waitLogin'));
       const result = await run(['auth', 'logout']);
-      if (result.code !== 0) throw new Error('ログアウトできませんでした');
+      if (result.code !== 0) throw new Error(t('claude.auth.logoutFailed'));
     },
   };
 }

@@ -20,6 +20,7 @@ import { createTerminalTracker } from "./codex-background.mjs";
 import { codexContextRpc } from './context-options.mjs';
 import { codexCompatThread, redactSecret } from '../compat-endpoints.mjs';
 import { MAX_RESULT_CHARS } from "./shared.mjs";
+import { t } from "../i18n.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -30,12 +31,13 @@ const NL = String.fromCharCode(10);
  * on-failure は無い**（untrusted / on-request / never / granular の4つだけ）。
  * 「聞く回数」が spec の意図した順に並ぶよう untrusted -> on-request -> never に割り当てた。
  */
+// label / note はゲッター（サーバーの言語は実行中に変わる。core/i18n.mjs）
 const MODES = {
-  ask:      { label: "都度確認",   note: "信頼済み以外は毎回聞く",       approvalPolicy: "untrusted",  sandbox: "workspace-write", scope: "workspace", autonomy: "ask",   enforced: true },
-  auto:     { label: "auto",      note: "モデルが必要と判断したときだけ聞く", approvalPolicy: "on-request", sandbox: "workspace-write", scope: "workspace", autonomy: "judge", enforced: true },
-  full:     { label: "全部自動",   note: "聞かない。作業ディレクトリには書ける", approvalPolicy: "never",     sandbox: "workspace-write", scope: "workspace", autonomy: "never", enforced: true },
-  yolo:     { label: "YOLO",      note: "確認なし・Codexの制限なし（全ファイル・ネットワーク）", approvalPolicy: "never", sandbox: "danger-full-access", scope: "full", autonomy: "never", enforced: false },
-  readonly: { label: "読むだけ",   note: "書き込みを sandbox で止める",   approvalPolicy: "on-request", sandbox: "read-only", scope: "readonly", autonomy: "judge", enforced: true },
+  ask:      { get label() { return t("modes.ask"); },      get note() { return t("codex.modes.ask"); },      approvalPolicy: "untrusted",  sandbox: "workspace-write", scope: "workspace", autonomy: "ask",   enforced: true },
+  auto:     { label: "auto",                               get note() { return t("codex.modes.auto"); },     approvalPolicy: "on-request", sandbox: "workspace-write", scope: "workspace", autonomy: "judge", enforced: true },
+  full:     { get label() { return t("modes.full"); },     get note() { return t("codex.modes.full"); },     approvalPolicy: "never",     sandbox: "workspace-write", scope: "workspace", autonomy: "never", enforced: true },
+  yolo:     { label: "YOLO",                               get note() { return t("codex.modes.yolo"); },     approvalPolicy: "never", sandbox: "danger-full-access", scope: "full", autonomy: "never", enforced: false },
+  readonly: { get label() { return t("modes.readonly"); }, get note() { return t("codex.modes.readonly"); }, approvalPolicy: "on-request", sandbox: "read-only", scope: "readonly", autonomy: "judge", enforced: true },
 };
 
 // 外へ見せるのは語彙と軸だけ。approvalPolicy / sandbox は codex の内部事情なので出さない。
@@ -55,19 +57,22 @@ function sandboxForTurn(mode, current) {
 }
 
 /** ツール（アイテム）の表示ヒント。web/render.mjs の TOOL_LABEL を補う。 */
+// label はゲッター（共有キー tools.*。言語は実行中に変わる）
+// i18n-dynamic: tools.
+const hint = (key, shape) => ({ get label() { return t(`tools.${key}`); }, shape });
 const TOOL_HINTS = {
-  commandExecution: { label: "実行",    shape: "shell" },
-  fileChange:       { label: "編集",    shape: "edit" },
+  commandExecution: hint("run", "shell"),
+  fileChange:       hint("edit", "edit"),
   mcpToolCall:      { label: "MCP",     shape: "generic" },
-  webSearch:        { label: "web検索", shape: "web" },
-  imageView:        { label: "画像",    shape: "read" },
-  imageGeneration:  { label: "画像生成", shape: "generic" },
-  dynamicToolCall:  { label: "ツール",  shape: "generic" },
-  sleep:            { label: "待つ",    shape: "generic" },
+  webSearch:        hint("webSearch", "web"),
+  imageView:        hint("image", "read"),
+  imageGeneration:  hint("imageGeneration", "generic"),
+  dynamicToolCall:  hint("tool", "generic"),
+  sleep:            hint("sleep", "generic"),
   // サブエージェント。gpt-6-astra（multi_agent v2）は subAgentActivity だけを出し、
   // 別の版・モデルは collabAgentToolCall を出す。どちらも web の drawTask（委譲カード）で描く
-  subAgentActivity:    { label: "委譲", shape: "delegate" },
-  collabAgentToolCall: { label: "委譲", shape: "delegate" },
+  subAgentActivity:    hint("delegate", "delegate"),
+  collabAgentToolCall: hint("delegate", "delegate"),
 };
 
 /** 委譲ツールとして server に申告するアイテム（subagentTools）。tool.start の name と厳密一致する */
@@ -111,11 +116,11 @@ async function listModelRows() {
     cursor = res?.nextCursor ?? null;
     if (cursor == null) return rows;
   }
-  throw new Error(`${MAX_MODEL_PAGES} ページで読み切れない`);
+  throw new Error(t("codex.errors.tooManyPages", { pages: MAX_MODEL_PAGES }));
 }
 
 function toModels(rows) {
-  const out = { "": { label: "既定に従う", note: "codex の設定をそのまま使う" } };
+  const out = { "": { label: t("models.default"), note: t("codex.models.defaultNote") } };
   for (const m of rows) {
     if (!m?.id || m.hidden) continue;
     out[m.id] = {
@@ -188,7 +193,7 @@ async function readConfig(cwd) {
 const cut = (s) => {
   const text = String(s ?? "");
   return text.length > MAX_RESULT_CHARS
-    ? { text: text.slice(0, MAX_RESULT_CHARS) + "…（以下略）", truncated: true }
+    ? { text: text.slice(0, MAX_RESULT_CHARS) + t("codex.truncated"), truncated: true }
     : { text, truncated: false };
 };
 
@@ -226,19 +231,20 @@ function toolInput(item) {
     // 委譲カード（web/render.mjs の drawTask）は description を見出し、prompt を「渡した指示」に出す。
     // server はこの description（無ければ prompt）を実行中一覧の見出しに使う
     case "subAgentActivity": {
-      const name = agentName(item.agentPath) || "サブエージェント";
+      const name = agentName(item.agentPath) || t("codex.subagent.name");
       const kind = item.kind ?? "started";
       return {
-        description: kind === "started" ? name : `${name}（${ACTIVITY_LABEL[kind] ?? kind}）`,
+        description: kind === "started" ? name : t("codex.subagent.withKind", { name, kind: activityLabel(kind) }),
         kind, agentPath: item.agentPath ?? null, agentThreadId: item.agentThreadId ?? null,
       };
     }
     case "collabAgentToolCall": {
       const names = (item.receiverThreadIds ?? []).map(nameOfChild).filter(Boolean);
-      const verb = COLLAB_VERB[item.tool] ?? String(item.tool ?? "");
+      const verb = collabVerb(item.tool);
       const description = item.tool === "spawnAgent"
-        ? names.join(", ") || firstLine(item.prompt) || "サブエージェント"
-        : [verb, names.join(", ")].filter(Boolean).join(" ");
+        ? names.join(", ") || firstLine(item.prompt) || t("codex.subagent.name")
+        : names.length && verb ? t("codex.subagent.collab", { verb, names: names.join(", ") })
+        : verb || names.join(", ");
       return {
         description, prompt: item.prompt ?? null, model: item.model ?? null,
         tool: item.tool ?? null, receiverThreadIds: item.receiverThreadIds ?? [],
@@ -289,7 +295,7 @@ function toolResult(item) {
   }
   if (item?.type === "subAgentActivity") {
     const kind = item.kind ?? "started";
-    return { ...cut(`${ACTIVITY_LABEL[kind] ?? kind}: ${item.agentPath ?? item.agentThreadId ?? ""}`), isError: false };
+    return { ...cut(`${activityLabel(kind)}: ${item.agentPath ?? item.agentThreadId ?? ""}`), isError: false };
   }
   if (item?.type === "collabAgentToolCall") {
     const lines = Object.entries(item.agentsStates ?? {}).map(([id, s]) =>
@@ -336,7 +342,7 @@ function approvalResponse(method, params, answer) {
 function subagentLabel(child) {
   const path = String(child?.path ?? "").replace(/^\/root\/?/, "");
   const name = path || child?.nickname || child?.role || "";
-  return name ? `サブエージェント ${name}` : "サブエージェント";
+  return name ? t("codex.subagent.named", { name }) : t("codex.subagent.name");
 }
 
 // ------------------------------------------------ サブエージェント（一覧 UI）
@@ -358,11 +364,16 @@ const validId = (v) => typeof v === "string" && THREAD_ID.test(v);
 const agentName = (p) => String(p ?? "").replace(/^\/root\/?/, "");
 const firstLine = (s) => String(s ?? "").split(/\r?\n/).map((l) => l.trim()).find(Boolean)?.slice(0, 80) ?? "";
 
-const ACTIVITY_LABEL = { started: "起動", interacted: "追加の指示", completed: "完了", interrupted: "中断" };
-const COLLAB_VERB = {
-  spawnAgent: "起動", sendInput: "追加の指示", sendMessage: "メッセージ", followupTask: "追加の依頼",
-  resumeAgent: "再開", wait: "待つ", closeAgent: "終了", interruptAgent: "中断", listAgents: "一覧",
-};
+// 見出しに添える語。呼ぶたびに引く（言語は実行中に変わる）
+const ACTIVITY_KINDS = new Set(["started", "interacted", "completed", "interrupted"]);
+// i18n-dynamic: codex.activity.
+const activityLabel = (kind) => (ACTIVITY_KINDS.has(kind) ? t(`codex.activity.${kind}`) : kind);
+const COLLAB_VERBS = new Set([
+  "spawnAgent", "sendInput", "sendMessage", "followupTask",
+  "resumeAgent", "wait", "closeAgent", "interruptAgent", "listAgents",
+]);
+// i18n-dynamic: codex.collab.
+const collabVerb = (tool) => (COLLAB_VERBS.has(tool) ? t(`codex.collab.${tool}`) : String(tool ?? ""));
 
 /** 状態の語彙（server の getSubagentState の契約）への写し。notFound など写せないものは null（分からない） */
 const ACTIVITY_STATE = { started: "running", interacted: "running", completed: "completed", interrupted: "stopped" };
@@ -891,7 +902,7 @@ async function reconcileAll() {
       // method ごと無い版なら、以後は照合しない。
       // そうでなければこのスレッドだけ飛ばす（unload されていると thread not found が返る。
       // これは -32601 ではなく -32600 で、諦める理由にはならない）
-      if (noSuchMethod(err)) return giveUpReconcile("この codex には thread/backgroundTerminals/list が無い");
+      if (noSuchMethod(err)) return giveUpReconcile("この codex には thread/backgroundTerminals/list が無い"); // i18n-ignore: ログにだけ出る（giveUpReconcile は console.error）
       continue;
     }
     if (entries === null) continue;   // 読み切れなかった。消さずに見送る
@@ -914,7 +925,7 @@ export const backend = {
   async usage() { return codexQuota(await rpc.request('account/rateLimits/read', {}, 15_000)); },
   id: "codex",
   label: "OpenAI Codex",
-  description: "ChatGPT のサブスク枠を使う",
+  get description() { return t("codex.description"); },
 
   capabilities: {
     title: true,        // thread/name/set。公式クライアントとタイトルを共有できる
@@ -1029,8 +1040,8 @@ export const backend = {
   async stopBackground(sessionId, taskId) {
     const w = watchOf(sessionId);
     const processId = w?.tracker.processIdOf(taskId) ?? null;
-    if (!w) throw new Error("この会話の裏の端末を見張っていない");
-    if (!processId) throw new Error("この端末の processId が分からない（古い会話は止められない）");
+    if (!w) throw new Error(t("codex.errors.notWatching"));
+    if (!processId) throw new Error(t("codex.errors.noProcessId"));
 
     const threadId = [...trackers].find(([, x]) => x === w)?.[0];
     let res;
@@ -1040,7 +1051,7 @@ export const backend = {
     } catch (err) {
       if (!noSuchMethod(err)) throw err;
       // 古い codex（0.147.0 で確認）はこの method を持たない。生のプロトコルエラーは見せず、直し方を言う
-      throw new Error("この codex はバックグラウンド端末を止められません。`codex update` で更新してください");
+      throw new Error(t("codex.errors.cannotStopBackground"));
     }
     await reconcileAll().catch(() => {});
     return { stopped: res?.terminated !== false };
@@ -1064,7 +1075,7 @@ export const backend = {
     if (effort) for (const [id, m] of Object.entries(out)) if (id && m.efforts?.includes(effort)) out[id] = { ...m, defaultEffort: effort };
     if (target && out[target]) Object.assign(out[""], { resolvesTo: target, efforts: out[target].efforts, defaultEffort: out[target].defaultEffort });
     // 一覧に無いモデルを設定している。名前だけ出す（段は codex に任せる）
-    else if (configured) Object.assign(out[""], { resolvedLabel: configured, note: `codex の設定（${configured}）` });
+    else if (configured) Object.assign(out[""], { resolvedLabel: configured, note: t("codex.models.configured", { model: configured }) });
     return out;
   },
 
@@ -1133,7 +1144,7 @@ export const backend = {
           items.set(item.id, item);
           noteDelivered(item);
           if (!TOOL_ITEMS.has(item.type)) return;
-          emit({ type: "activity", state: "running", label: `${TOOL_HINTS[item.type]?.label ?? item.type} 中` });
+          emit({ type: "activity", state: "running", label: t("activity.tool", { label: TOOL_HINTS[item.type]?.label ?? item.type }) });
           return emit({ type: "tool.start", id: item.id, name: item.type, input: toolInput(item) });
         }
 
@@ -1169,7 +1180,7 @@ export const backend = {
             status === "interrupted" ? { type: "turnResult", outcome: "aborted", turns: 1 }
             : status === "failed" ? {
                 type: "turnResult", outcome: "error", turns: 1,
-                error: hide(String(err?.message ?? err?.type ?? "codex が失敗した")),
+                error: hide(String(err?.message ?? err?.type ?? t("codex.errors.failed"))),
               }
             // costUsd は app-server が出さない（token 数だけ）。turns だけ載せる
             : { type: "turnResult", outcome: "ok", turns: 1 },
@@ -1183,7 +1194,7 @@ export const backend = {
           if (params?.willRetry) return;
           emit({
             type: "turnResult", outcome: "error",
-            error: hide(String(params?.error?.message ?? "codex がエラーを返した")),
+            error: hide(String(params?.error?.message ?? t("codex.errors.errorReturned"))),
           });
           return settleTurn?.();
         }
@@ -1212,11 +1223,11 @@ export const backend = {
     // child は子スレッドから来た要求のときだけ入る（{ threadId, nickname?, path?, role? }）。
     // 承認は親の会話（sessionId = 親の threadId）に出し、どの子の要求かを title に添える
     const onRequest = async (method, params, child = null) => {
-      if (typeof askPermission !== "function") throw new Error("承認先が無い");
+      if (typeof askPermission !== "function") throw new Error(t("codex.errors.noApprover"));
       const title = child ? subagentLabel(child) : null;
 
       if (method === "item/tool/requestUserInput") {
-        emit({ type: "activity", state: "waiting", label: "あなたの回答を待っている" });
+        emit({ type: "activity", state: "waiting", label: t("activity.waitingAnswer") });
         const questions = params?.questions ?? [];
         const answer = await askPermission({
           toolName: "requestUserInput",
@@ -1237,7 +1248,7 @@ export const backend = {
         return { action: "decline" };
       }
 
-      emit({ type: "activity", state: "waiting", label: "承認を待っている" });
+      emit({ type: "activity", state: "waiting", label: t("activity.waitingApproval") });
       const item = !params?.itemId ? null
         : child ? childItems.get(childKey(child, params.itemId)) : items.get(params.itemId);
       const toolName =
@@ -1309,7 +1320,7 @@ export const backend = {
           // 外せなかったら、この後の resume は接続先の変更を黙って無視する。前の接続先へ送らないよう、ここで止める
           const out = await rpc.request('thread/unsubscribe', { threadId }).catch(e => ({ error: e }));
           if (out?.error || !['unsubscribed', 'notLoaded', 'notSubscribed'].includes(out?.status)) {
-            throw new Error(`接続先を切り替えられませんでした（codex が会話を外せませんでした: ${out?.error?.message ?? out?.status ?? '応答なし'}）。裏で動いている端末があれば止めてから、もう一度送ってください`);
+            throw new Error(t("codex.errors.unsubscribeFailed", { reason: out?.error?.message ?? out?.status ?? t("codex.errors.noResponse") }));
           }
           loadedProvider.delete(threadId);
         }
@@ -1321,7 +1332,7 @@ export const backend = {
         if (expected && typeof resumed?.modelProvider === 'string' && resumed.modelProvider !== expected) {
           // 実際にロードされている接続先を覚えておく（次の送信でもう一度外してから読み直す）
           if (rpc === nativeRpc) loadedProvider.set(threadId, resumed.modelProvider.startsWith('ply_') ? resumed.modelProvider : 'default');
-          throw new Error(`接続先を切り替えられませんでした（codex が前の接続先のまま会話を読み込みました）。裏で動いている端末があれば止めてから、もう一度送ってください`);
+          throw new Error(t("codex.errors.stillOldEndpoint"));
         }
         effectiveSandbox = resumed?.sandbox;
         if (rpc === nativeRpc && !ephemeral) loadedProvider.set(threadId, providerKey);
@@ -1329,7 +1340,7 @@ export const backend = {
         const started = await rpc.request("thread/start", { ...common, ...(ephemeral ? { ephemeral: true } : {}) });
         effectiveSandbox = started?.sandbox;
         threadId = started?.thread?.id ?? null;
-        if (!threadId) throw new Error("thread/start が threadId を返さなかった");
+        if (!threadId) throw new Error(t("codex.errors.noThreadId", { method: "thread/start" }));
         if (rpc === nativeRpc && !ephemeral) loadedProvider.set(threadId, providerKey);
         // 受け皿を取り下げる前に attach する。逆にすると、預かっていた自分の通知が捨てられる
         detach = rpc.adopt(threadId, handlers);
@@ -1441,7 +1452,7 @@ export const backend = {
         askPermission: async () => ({ allow: false }),
         emit: (ev) => {
           if (ev.type === "text.delta") text += ev.text;
-          if (ev.type === "turnResult" && ev.outcome !== "ok") error = ev.error || "タイトル生成を中断しました";
+          if (ev.type === "turnResult" && ev.outcome !== "ok") error = ev.error || t("codex.errors.titleAborted");
         },
       });
       if (error) throw new Error(error);
@@ -1469,7 +1480,7 @@ export const backend = {
   async getMessages(sessionId, options) {
     if (!sessionId) return [];
     const res = await rpc.request("thread/read", { threadId: sessionId, includeTurns: true });
-    if (!res?.thread) throw new Error("Codex の履歴を読み出せません");
+    if (!res?.thread) throw new Error(t("codex.errors.historyUnreadable"));
     return threadToMessages(res?.thread, options);
   },
 
@@ -1481,10 +1492,10 @@ export const backend = {
     // upToMessageId は使えない。codex の分岐点は turn 単位（lastTurnId）で、
     // web が渡すのはメッセージ id なので、そのまま渡すと別のところで切れる。
     // 黙って末尾から分けると「途中から分けた」つもりの枝に後ろの発言が残るので断る
-    if (upToMessageId) throw new Error("codex は途中の発言からは分岐できない（末尾からなら分岐できる）");
+    if (upToMessageId) throw new Error(t("codex.errors.forkMidway"));
     const res = await rpc.request("thread/fork", { threadId: sessionId });
     const child = res?.thread?.id;
-    if (!child) throw new Error("thread/fork が threadId を返さなかった");
+    if (!child) throw new Error(t("codex.errors.noThreadId", { method: "thread/fork" }));
     return { sessionId: child };
   },
 
@@ -1493,10 +1504,10 @@ export const backend = {
   auth: {
     async status() {
       const res = await rpc.request("account/read", {}, 30_000).catch((err) => {
-        throw new Error(`codex の認証状態を読めなかった: ${String(err?.message ?? err)}`);
+        throw new Error(t("codex.errors.authReadFailed", { message: String(err?.message ?? err) }));
       });
       const a = res?.account ?? null;
-      if (!a) return { loggedIn: false, account: null, detail: "codex にログインしていない" };
+      if (!a) return { loggedIn: false, account: null, detail: t("codex.auth.notLoggedIn") };
       const account = a.type === "chatgpt" ? (a.email || "ChatGPT") : a.type;
       const detail = a.type === "chatgpt" ? `ChatGPT / ${a.planType ?? "?"}` : a.type;
       return { loggedIn: true, account, detail };
@@ -1515,10 +1526,10 @@ export const backend = {
       if (!url) {
         // apiKey など、URL を出さずに終わる型。すでに終わっている
         forgetModels();
-        emit?.({ type: "auth", phase: "done", message: "ログインした" });
+        emit?.({ type: "auth", phase: "done", message: t("codex.auth.loggedIn") });
         return;
       }
-      emit?.({ type: "auth", phase: "url", url, message: "ブラウザで開いて許可してください" });
+      emit?.({ type: "auth", phase: "url", url, message: t("codex.auth.openBrowser") });
 
       await new Promise((resolve) => {
         const off = rpc.onNotify((method, params) => {
@@ -1526,8 +1537,8 @@ export const backend = {
           if (loginId && params?.loginId && params.loginId !== loginId) return;
           off();
           // 使えるモデルはアカウントで変わる。「ログインした」を受けた画面が引き直す前に捨てる
-          if (params?.success) { forgetModels(); emit?.({ type: "auth", phase: "done", message: "ログインした" }); }
-          else emit?.({ type: "auth", phase: "error", message: String(params?.error ?? "ログインに失敗した") });
+          if (params?.success) { forgetModels(); emit?.({ type: "auth", phase: "done", message: t("codex.auth.loggedIn") }); }
+          else emit?.({ type: "auth", phase: "error", message: String(params?.error ?? t("codex.auth.loginFailed")) });
           resolve();
         });
       });

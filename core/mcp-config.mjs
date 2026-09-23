@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { parse, stringify } from 'smol-toml';
 import { scanDirectory } from './context-settings.mjs';
+import { t } from './i18n.mjs';
 
 const record = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const hash = s => crypto.createHash('sha256').update(s).digest('hex');
@@ -39,7 +40,7 @@ function renderToml(text, config, name, value) {
 export function createMcpConfig({ home = os.homedir(), codexHome = process.env.CODEX_HOME ?? path.join(home, '.codex') } = {}) {
   let writes = Promise.resolve();
   async function target(args) {
-    if (!['claude', 'codex'].includes(args?.format) || !['user', 'directory'].includes(args?.scope)) throw new Error('保存形式とスコープを選んでください');
+    if (!['claude', 'codex'].includes(args?.format) || !['user', 'directory'].includes(args?.scope)) throw new Error(t('mcp.config.target'));
     const cwd = await scanDirectory(args.cwd);
     const file = args.format === 'codex'
       ? path.join(args.scope === 'user' ? codexHome : path.join(cwd, '.codex'), 'config.toml')
@@ -61,16 +62,16 @@ export function createMcpConfig({ home = os.homedir(), codexHome = process.env.C
         text = buffer.subarray(0, bytesRead).toString('utf8'); mode = stat.mode & 0o777; exists = true;
       } finally { await handle.close(); }
     } catch (e) {
-      if (e.code !== 'ENOENT') throw new Error('MCP 設定ファイルを読み込めません（上限 1 MiB）');
+      if (e.code !== 'ENOENT') throw new Error(t('mcp.config.unreadable'));
       // A dangling link is not a missing registration file; never replace the link.
       const link = await fs.lstat(info.path).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
-      if (link) throw new Error('MCP 設定のリンク先を読み込めません');
+      if (link) throw new Error(t('mcp.config.link'));
     }
     let config;
     try { config = exists ? info.format === 'codex' ? parse(text.replace(/^\uFEFF/, '')) : JSON.parse(text.replace(/^\uFEFF/, '')) : {}; }
-    catch { throw new Error('MCP 設定の構文が不正です。元ファイルを確認してください'); }
+    catch { throw new Error(t('mcp.config.syntax')); }
     const key = info.format === 'codex' ? 'mcp_servers' : 'mcpServers';
-    if (!record(config) || (own(config, key) && !record(config[key]))) throw new Error('MCP 設定の形式が不正です');
+    if (!record(config) || (own(config, key) && !record(config[key]))) throw new Error(t('mcp.config.format'));
     const servers = config[key] ?? {};
     return { info, real, text, config, key, servers, mode, revision: exists ? hash(text) : 'missing' };
   }
@@ -82,37 +83,37 @@ export function createMcpConfig({ home = os.homedir(), codexHome = process.env.C
   async function get(args) {
     await writes.catch(() => {});
     const data = await read(args);
-    if (typeof args.name !== 'string' || !own(data.servers, args.name) || !record(data.servers[args.name])) throw new Error('編集する MCP が見つかりません');
+    if (typeof args.name !== 'string' || !own(data.servers, args.name) || !record(data.servers[args.name])) throw new Error(t('mcp.config.notFound'));
     return { ...data.info, revision: data.revision, name: args.name, value: data.servers[args.name],
       reformatsFile: data.info.format === 'codex' && renderToml(data.text, data.config, args.name, data.servers[args.name]).reformatsFile };
   }
   function save(args) {
     const run = writes.catch(() => {}).then(async () => {
       const { name, value, revision, mode: operation } = args ?? {};
-      if (typeof name !== 'string' || !/^[a-zA-Z0-9_.-]{1,128}$/.test(name) || ['__proto__', 'constructor', 'prototype', 'host', 'ply'].includes(name)) throw new Error('名前は英数字・_・.・- の128文字以内で指定してください（host・plyは内蔵MCPの予約名です）');
-      if (!record(value) || Buffer.byteLength(JSON.stringify(value)) > 65536) throw new Error('MCP 定義は64 KiB以内の JSON オブジェクトで指定してください');
+      if (typeof name !== 'string' || !/^[a-zA-Z0-9_.-]{1,128}$/.test(name) || ['__proto__', 'constructor', 'prototype', 'host', 'ply'].includes(name)) throw new Error(t('mcp.config.name'));
+      if (!record(value) || Buffer.byteLength(JSON.stringify(value)) > 65536) throw new Error(t('mcp.config.definition'));
       const stdio = typeof value.command === 'string' && value.command.trim();
       const endpoint = value.url;
       const http = typeof endpoint === 'string' && /^https?:\/\//.test(endpoint);
-      if ((!stdio && !http) || (stdio && own(value, 'url')) || (http && own(value, 'command'))) throw new Error('command または HTTP(S) の url のどちらかを指定してください');
-      if (own(value, 'args') && (!Array.isArray(value.args) || !value.args.every(v => typeof v === 'string'))) throw new Error('args は文字列の配列で指定してください');
-      if (own(value, 'env') && (!record(value.env) || !Object.values(value.env).every(v => typeof v === 'string'))) throw new Error('env は文字列の値を持つオブジェクトで指定してください');
-      if (!['add', 'edit'].includes(operation)) throw new Error('追加または編集を指定してください');
+      if ((!stdio && !http) || (stdio && own(value, 'url')) || (http && own(value, 'command'))) throw new Error(t('mcp.config.transport'));
+      if (own(value, 'args') && (!Array.isArray(value.args) || !value.args.every(v => typeof v === 'string'))) throw new Error(t('mcp.config.args'));
+      if (own(value, 'env') && (!record(value.env) || !Object.values(value.env).every(v => typeof v === 'string'))) throw new Error(t('mcp.config.env'));
+      if (!['add', 'edit'].includes(operation)) throw new Error(t('mcp.config.operation'));
       const data = await read(args);
       const definition = data.info.format === 'claude' ? { type: stdio ? 'stdio' : 'http', ...value } : value;
-      if (data.info.format === 'claude' && (stdio ? definition.type !== 'stdio' : !['http', 'sse'].includes(definition.type))) throw new Error('接続方式の type と command / url が一致しません');
-      if (revision !== data.revision) throw new Error('保存先が変更されています。一覧を再読込してから編集してください');
-      if (own(data.servers, name) !== (operation === 'edit')) throw new Error(operation === 'add' ? '同名の MCP が存在します。編集から開いてください' : '編集する MCP が見つかりません');
+      if (data.info.format === 'claude' && (stdio ? definition.type !== 'stdio' : !['http', 'sse'].includes(definition.type))) throw new Error(t('mcp.config.typeMismatch'));
+      if (revision !== data.revision) throw new Error(t('mcp.config.changed'));
+      if (own(data.servers, name) !== (operation === 'edit')) throw new Error(operation === 'add' ? t('mcp.config.exists') : t('mcp.config.notFound'));
       const rendered = data.info.format === 'codex' ? renderToml(data.text, data.config, name, definition)
         : { text: JSON.stringify({ ...data.config, [data.key]: { ...data.servers, [name]: definition } }, null, 2) + '\n', reformatsFile: false };
-      if (rendered.reformatsFile && args.allowReformat !== true) throw new Error('この TOML 配置ではファイル全体の再整形が必要です。再整形を許可して保存してください');
-      if (Buffer.byteLength(rendered.text) > LIMIT) throw new Error('保存後の設定が1 MiBを超えます');
+      if (rendered.reformatsFile && args.allowReformat !== true) throw new Error(t('mcp.config.reformat'));
+      if (Buffer.byteLength(rendered.text) > LIMIT) throw new Error(t('mcp.config.tooLarge'));
       await fs.mkdir(path.dirname(data.real), { recursive: true });
       const tmp = `${data.real}.${crypto.randomUUID()}.tmp`;
       try {
         await fs.writeFile(tmp, rendered.text, { encoding: 'utf8', mode: data.mode, flag: 'wx' });
         const current = await read(args);
-        if (current.revision !== revision || current.real !== data.real) throw new Error('保存先が変更されています。一覧を再読込してください');
+        if (current.revision !== revision || current.real !== data.real) throw new Error(t('mcp.config.changedReload'));
         await fs.rename(tmp, data.real);
       } finally { await fs.rm(tmp, { force: true }); }
       return { ...data.info, name, revision: hash(rendered.text), reformatsFile: rendered.reformatsFile };

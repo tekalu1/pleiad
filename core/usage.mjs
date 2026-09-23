@@ -2,6 +2,7 @@
 // be converted into subscription percentages. Never persist account credentials.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { t } from './i18n.mjs';
 
 export const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 // Thread totals include previous turns; last describes the latest model request.
@@ -23,7 +24,7 @@ export function usageWindow(label, used, resetsAt, minutes) {
   return { label, usedPercent: percent, remainingPercent: percent == null ? null : Math.max(0, 100 - percent),
     resetsAt: iso(resetsAt), minutes: number(minutes) };
 }
-const duration = minutes => minutes === 300 ? '5時間' : minutes === 10080 ? '週次（7日間）' : minutes ? `${minutes / 60}時間` : '期間不明';
+const duration = minutes => minutes === 300 ? t('usage.window.fiveHour') : minutes === 10080 ? t('usage.window.weekly') : minutes ? t('usage.window.hours', { hours: minutes / 60 }) : t('usage.window.unknown');
 
 export function codexQuota(data) {
   const buckets = Object.values(data?.rateLimitsByLimitId ?? {});
@@ -35,7 +36,7 @@ export function codexQuota(data) {
     return [usageWindow(label, w.usedPercent, number(w.resetsAt) == null ? null : w.resetsAt * 1000, w.windowDurationMins)];
   }));
   return { plan: buckets[0]?.planType ?? null, windows,
-    message: windows.length ? null : '使用枠を取得できません。API 接続や未対応のアカウントでは表示されません。' };
+    message: windows.length ? null : t('usage.codexUnavailable') };
 }
 export function whamQuota(data) {
   const convert = (limit, id, name) => ({ limitId: id, limitName: name, planType: data?.plan_type,
@@ -50,13 +51,13 @@ export function whamQuota(data) {
 }
 export function claudeQuota(data) {
   const limits = data?.rate_limits;
-  const labels = { five_hour: ['5時間', 300], seven_day: ['週次（7日間）', 10080],
-    seven_day_oauth_apps: ['OAuth アプリ・週次', 10080], seven_day_opus: ['Opus・週次', 10080], seven_day_sonnet: ['Sonnet・週次', 10080] };
+  const labels = { five_hour: [t('usage.window.fiveHour'), 300], seven_day: [t('usage.window.weekly'), 10080],
+    seven_day_oauth_apps: [t('usage.window.oauthAppsWeekly'), 10080], seven_day_opus: [t('usage.window.modelWeekly', { model: 'Opus' }), 10080], seven_day_sonnet: [t('usage.window.modelWeekly', { model: 'Sonnet' }), 10080] };
   const windows = Object.entries(labels).flatMap(([key, [label, minutes]]) => limits?.[key]
     ? [usageWindow(label, limits[key].utilization, limits[key].resets_at, minutes)] : []);
-  for (const w of limits?.model_scoped ?? []) windows.push(usageWindow(`${w.display_name}・週次`, w.utilization, w.resets_at, 10080));
+  for (const w of limits?.model_scoped ?? []) windows.push(usageWindow(t('usage.window.modelWeekly', { model: w.display_name }), w.utilization, w.resets_at, 10080));
   return { plan: data?.subscription_type ?? null, windows,
-    message: windows.length ? null : '使用枠を取得できません。API 接続・権限不足・未対応の CLI では表示されません。' };
+    message: windows.length ? null : t('usage.claudeUnavailable') };
 }
 
 // Cache only successful sanitized responses, coalesce concurrent refresh requests.
@@ -69,9 +70,9 @@ export function createQuotaCache({ now = Date.now, ttl = 60_000 } = {}) {
     if (pending.has(key)) return pending.get(key);
     const version = generation;
     const task = Promise.resolve().then(fetcher).then(value => {
-      if (version !== generation) return { windows: [], checkedAt: null, message: '認証状態が変わりました。更新してください。' };
+      if (version !== generation) return { windows: [], checkedAt: null, message: t('usage.authChanged') };
       const result = { ...value, checkedAt: now() }; cache.set(key, result); return result;
-    }).catch(() => ({ windows: [], checkedAt: null, message: '取得に失敗しました。ログイン状態を確認し、しばらくして更新してください。' }))
+    }).catch(() => ({ windows: [], checkedAt: null, message: t('usage.fetchFailed') }))
       .finally(() => pending.delete(key));
     pending.set(key, task); return task;
   };
@@ -122,7 +123,7 @@ export function createUsageStore(dir, { now = Date.now } = {}) {
   async function read() {
     try {
       const data = JSON.parse(await fs.readFile(file, 'utf8'));
-      if (data.version !== 1 || !Array.isArray(data.records)) throw new Error('使用量記録の形式が不正です');
+      if (data.version !== 1 || !Array.isArray(data.records)) throw new Error(t('usage.recordInvalid'));
       return data;
     } catch (e) { if (e.code === 'ENOENT') return { version: 1, since: now(), records: [] }; throw e; }
   }

@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { FRONTMATTER, scanContext } from './context-scan.mjs';
 import { DEFAULT_OWNERS, KINDS, containsPath, legacyPlan, matchesGlobs, pathKey } from './context-settings.mjs';
+import { t } from './i18n.mjs';
 
 export const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 export const managed = policy => Object.values(policy?.owners ?? {}).includes('ply');
@@ -13,7 +14,7 @@ export const managed = policy => Object.values(policy?.owners ?? {}).includes('p
  * （antigravity は指示の担当がエージェントのままだと受けない。core/backends/antigravity-context.mjs）
  */
 export function plyContextRefusal(backend, policy) {
-  if (backend?.capabilities?.plyContext === false) return `${backend.label ?? backend.id} は Pleiad が担当するコンテキスト（指示・Skills・外部 MCP）を受け取れないため、この会話ではエージェント自身の読み込みに任せました`;
+  if (backend?.capabilities?.plyContext === false) return t('context.runtime.refused', { backend: backend.label ?? backend.id });
   return backend?.plyContextRefusal?.(policy?.owners ?? {}) ?? null;
 }
 export const acceptsPlyContext = (backend, policy) => !plyContextRefusal(backend, policy);
@@ -92,7 +93,7 @@ export async function readSnapshot(dir, digest) {
   return fs.readFile(path.join(dir, `${digest}.txt`), 'utf8').catch(() => null);
 }
 
-const SOURCE_LABEL = { claude: 'Claude', codex: 'Codex', common: '共通', ply: 'Pleiad' };
+const sourceLabel = source => ({ claude: 'Claude', codex: 'Codex', common: t('context.scan.fromCommon'), ply: 'Pleiad' })[source];
 /**
  * 同じ名前の外部 MCP が複数あったとき（core/context-scan.mjs が 1 つを選び、残りを shadowedBy: 'choice' にする）、
  * どれを使ったかを記録に残す。使った行に choice（選び方と、使わなかった定義の数）、使わなかった行に理由。
@@ -108,7 +109,8 @@ function markChoices(rows, plan) {
     const source = used.origins?.[0]?.source;
     used.choice ??= { by, source, others: 0 };
     used.choice.others++;
-    row.reason = `同じ名前の定義が複数あり、${SOURCE_LABEL[source] ?? source ?? '別'} の設定の方を使いました（${by === 'prefer' ? '設定で選んだもの' : '選んでいないので先に見つかった方'}）`;
+    // i18n-dynamic: context.runtime.choice
+    row.reason = t(by === 'prefer' ? 'context.runtime.choicePrefer' : 'context.runtime.choiceFirst', { source: sourceLabel(source) ?? source ?? t('context.runtime.otherSource') });
   }
 }
 
@@ -119,7 +121,7 @@ export async function resolveRuntime(policy, options = {}) {
   const { snapshots, ...scanOptions } = options;
   const scan = await scanContext(settings, { ...scanOptions, runtime: true });
   const removed = new Set(policy.removedMcp ?? []);
-  if (scan.limited || scan.diagnostics.length) throw new Error(`コンテキストを完全に解決できません。探索結果を確認してください：${scan.diagnostics[0]?.message ?? '探索上限'}`);
+  if (scan.limited || scan.diagnostics.length) throw new Error(t('context.runtime.unresolved', { detail: scan.diagnostics[0]?.message ?? t('context.runtime.scanLimit') }));
   const report = { version: 1, cwd: policy.cwd, owners, at: new Date().toISOString(), entries: [], native: kinds.length < 3, status: 'resolved' };
   const instructions = [], conditional = [], skills = [], servers = [], seen = new Set(), names = new Map();
   // 渡す本文。@参照の行（参照先は探索で別の行になっている）と、rules の frontmatter（paths は範囲として別に示す）を除く
@@ -138,7 +140,7 @@ export async function resolveRuntime(policy, options = {}) {
     }
     if (item.status !== 'candidate') continue;
     // 「この会話では外す」とした外部 MCP。接続せず、ply_context にもツールを出さない
-    if (item.kind === 'mcp' && removed.has(item.name)) { row.status = 'removed'; row.reason = 'この会話では外しました'; continue; }
+    if (item.kind === 'mcp' && removed.has(item.name)) { row.status = 'removed'; row.reason = t('context.removedHere'); continue; }
     const key = `${item.kind}:${pathKey(item.realPath)}:${item.appliesTo ?? ''}:${item.kind === 'mcp' ? item.name : ''}`;
     if (seen.has(key)) { row.status = 'duplicate'; continue; }
     seen.add(key);
@@ -148,12 +150,12 @@ export async function resolveRuntime(policy, options = {}) {
       instructions.push({ ...item, content: body(item) });
     } else {
       const nameKey = `${item.kind}:${item.name}`;
-      if (names.has(nameKey)) throw new Error(`同名の ${item.kind === 'mcp' ? 'MCP' : 'Skill'}「${item.name}」があります。探索設定の除外パスで使用する定義を1つに絞ってください`);
+      if (names.has(nameKey)) throw new Error(t('context.runtime.duplicateName', { kind: item.kind === 'mcp' ? 'MCP' : 'Skill', name: item.name }));
       names.set(nameKey, item);
       if (item.kind === 'skill') {
         const unsupported = Object.keys(item.metadata ?? {}).filter(k => !['name','description','license','compatibility','metadata','allowed-tools','user-invocable','disable-model-invocation','argument-hint'].includes(k));
-        if (unsupported.length) { row.status = 'unsupported'; row.reason = `固有の実行設定：${unsupported.join(', ')}`; continue; }
-        if (item.metadata?.['disable-model-invocation']) { row.status = 'manual-only'; row.reason = '自動呼び出し不可。ユーザーの依頼に $名前 があるターンのみ公開'; }
+        if (unsupported.length) { row.status = 'unsupported'; row.reason = t('context.runtime.skillUnsupported', { keys: unsupported.join(', ') }); continue; }
+        if (item.metadata?.['disable-model-invocation']) { row.status = 'manual-only'; row.reason = t('context.runtime.manualOnly'); }
         else row.status = 'available';
         skills.push(item);
       } else { row.status = 'pending'; servers.push(item); }
@@ -161,7 +163,7 @@ export async function resolveRuntime(policy, options = {}) {
   }
   markChoices(report.entries, settings.plan);
   const prompt = instructions.map(i => `Instructions from ${i.path} (scope: ${i.appliesTo ?? 'all working directories'}):\n${i.content}`).join('\n\n');
-  if (Buffer.byteLength(prompt) > 128 * 1024) throw new Error('指示ファイルの合計が128 KiBを超えます。探索対象を絞ってください');
+  if (Buffer.byteLength(prompt) > 128 * 1024) throw new Error(t('context.runtime.instructionsTooLarge'));
   const pin = contextPin(scan.entries);
   await saveSnapshots(snapshots, scan.entries);
   // scanOptions は instructions_for_path が同じ探索（home など）で解き直すために持つ
@@ -258,23 +260,25 @@ export function contextTools(runtime, userPrompt = '') {
 }
 
 // Convert existing client configuration into transport parameters in memory.
+// 設定の誤りは code: 'MCP_CONFIG' で投げる（context-bridge が文言ではなく code で見分けて、理由として画面に出す）
+const configError = (message, more = {}) => Object.assign(new Error(message), { code: 'MCP_CONFIG', ...more });
 export function mcpTransportConfig(item, cwd, env = process.env) {
   const v = item.definition, source = item.origins[0].source;
   const allowed = ['command','args','env','cwd','url','baseUrl','type','transport','headers','http_headers','env_http_headers','bearer_token_env_var','env_vars','enabled','disabled','startup_timeout_sec','tool_timeout_sec','timeoutMs','enabled_tools','disabled_tools','required','startup_timeout_ms'];
   const unknown = Object.keys(v).filter(k => !allowed.includes(k));
-  if (unknown.length) throw new Error(`MCP「${item.name}」の未対応設定：${unknown.join(', ')}`);
+  if (unknown.length) throw configError(t('context.runtime.mcpUnsupported', { name: item.name, keys: unknown.join(', ') }), { unsupported: true });
   const expand = value => typeof value === 'string' ? value.replace(/\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_, key, fallback) => {
-    if (env[key] !== undefined) return env[key]; if (fallback !== undefined) return fallback; throw new Error(`MCP「${item.name}」の環境変数 ${key} が未設定です`);
+    if (env[key] !== undefined) return env[key]; if (fallback !== undefined) return fallback; throw configError(t('context.runtime.mcpEnvMissing', { name: item.name, key }));
   }) : value;
   const headers = Object.fromEntries(Object.entries(v.headers ?? v.http_headers ?? {}).map(([k,s]) => [k, expand(s)]));
-  for (const [k,e] of Object.entries(v.env_http_headers ?? {})) { if (!env[e]) throw new Error(`MCP「${item.name}」の環境変数 ${e} が未設定です`); headers[k] = env[e]; }
-  if (v.bearer_token_env_var) { if (!env[v.bearer_token_env_var]) throw new Error(`MCP「${item.name}」の認証環境変数が未設定です`); headers.Authorization = `Bearer ${env[v.bearer_token_env_var]}`; }
+  for (const [k,e] of Object.entries(v.env_http_headers ?? {})) { if (!env[e]) throw configError(t('context.runtime.mcpEnvMissing', { name: item.name, key: e })); headers[k] = env[e]; }
+  if (v.bearer_token_env_var) { if (!env[v.bearer_token_env_var]) throw configError(t('context.runtime.mcpAuthEnvMissing', { name: item.name })); headers.Authorization = `Bearer ${env[v.bearer_token_env_var]}`; }
   const command = expand(v.command), url = expand(v.url ?? v.baseUrl);
   const timeout = v.timeoutMs ?? v.startup_timeout_ms ?? (v.startup_timeout_sec ?? 20) * 1000;
-  if (!Number.isFinite(timeout) || timeout <= 0) throw new Error(`MCP「${item.name}」の待機時間が不正です`);
+  if (!Number.isFinite(timeout) || timeout <= 0) throw configError(t('context.runtime.mcpTimeoutInvalid', { name: item.name }));
   const inherited = source === 'codex' ? { ...getDefaultEnvironment(), ...Object.fromEntries((v.env_vars ?? []).filter(k => env[k] !== undefined).map(k => [k, env[k]])) } : env;
   if (command) return { type: 'stdio', command, args: (v.args ?? []).map(expand), cwd: v.cwd ? path.resolve(cwd, expand(v.cwd)) : cwd,
     env: { ...inherited, ...Object.fromEntries(Object.entries(v.env ?? {}).map(([k,s]) => [k,expand(s)])) }, timeout: Math.min(60000, timeout) };
-  if (!url || !/^https?:\/\//.test(url)) throw new Error(`MCP「${item.name}」の接続先が不正です`);
+  if (!url || !/^https?:\/\//.test(url)) throw configError(t('context.runtime.mcpUrlInvalid', { name: item.name }));
   return { type: (v.type ?? v.transport) === 'sse' ? 'sse' : 'http', url, headers, timeout: Math.min(60000, timeout) };
 }

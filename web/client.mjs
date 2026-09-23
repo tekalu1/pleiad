@@ -26,6 +26,7 @@ import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
 import { el, svgEl, relTime } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
+import { savedEvent } from "./saved-text.mjs";
 import { buildItems, attachmentMessageIndex } from "./timeline.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
@@ -2778,7 +2779,7 @@ function paintHistory(fromMi = 0) {
     if (it.kind === "present") {
       if (it.anchorMi >= 0 && it.anchorMi < fromMi) continue;
       if (it.anchorMi < 0 && startAt && new Date(it.p.at ?? 0) < startAt) continue;
-      const wrapper = append(renderPresent(it.p), `p:${it.pi}`);
+      const wrapper = append(renderPresent(savedEvent(it.p)), `p:${it.pi}`);
       if (it.p.by === "human") wrapper.dataset.humanAttachment = "true";
       added.push(wrapper);
       continue;
@@ -3222,7 +3223,8 @@ function connect() {
       }).catch(e => sys(`初期化に失敗: ${escText(e.message)}`));
     }
 
-    if (m.kind === "event") return onEvent(m.event);
+    // 保存される文言（変更の理由・添付の見出し）を今の言語に（web/saved-text.mjs）
+    if (m.kind === "event") return onEvent(savedEvent(m.event));
 
     if (m.kind === "response") {
       const p = pending.get(m.id);

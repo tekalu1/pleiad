@@ -1,5 +1,774 @@
 {
   "errors": {
     "unknownLocale": "Unknown language: {{value}}"
+  },
+  "tools": {
+    "run": "Run",
+    "read": "Read",
+    "write": "Write",
+    "edit": "Edit",
+    "find": "Search",
+    "search": "Grep",
+    "list": "List",
+    "delegate": "Delegate",
+    "fetch": "Fetch",
+    "webSearch": "Web search",
+    "present": "Present",
+    "status": "Status",
+    "title": "Title",
+    "fork": "Branch",
+    "image": "Image",
+    "imageGeneration": "Generate image",
+    "tool": "Tool",
+    "sleep": "Wait"
+  },
+  "activity": {
+    "tool": "{{label}} in progress",
+    "waitingAnswer": "Waiting for your answer",
+    "waitingApproval": "Waiting for approval"
+  },
+  "modes": {
+    "ask": "Ask each time",
+    "full": "Fully automatic",
+    "readonly": "Read only",
+    "acceptEdits": "Auto-accept edits",
+    "plan": "Plan only"
+  },
+  "models": {
+    "default": "Use default"
+  },
+  "auth": {
+    "tokenRequired": "A token is required (use the URL printed at startup)."
+  },
+  "accounts": {
+    "deleted": "That account has been deleted.",
+    "notRegistered": "That account is not registered."
+  },
+  "permission": {
+    "delegateEscalation": "This delegation runs {{agent}} in \"{{mode}}\" ({{modeId}}).",
+    "childConversation": "Delegated conversation",
+    "relayTitle": "Delegated task \"{{child}}\"",
+    "relayTitleWith": "Delegated task \"{{child}}\" / {{title}}"
+  },
+  "quota": {
+    "unsupported": "This agent cannot report its usage limits.",
+    "localFailed": "Could not load the usage history."
+  },
+  "agents": {
+    "switchViaCommand": "Use the switch action to change the agent.",
+    "unknownForSession": "Unknown agent for session {{sessionId}}.",
+    "unknownId": "Unknown agent: {{id}}",
+    "required": "Specify an agent.",
+    "notFound": "Agent not found.",
+    "unknown": "Unknown agent.",
+    "installRequired": "Install the agent.",
+    "checkLogin": "Check the sign-in status again.",
+    "switching": "Switching agents."
+  },
+  "cwd": {
+    "missing": "Working directory not found: {{cwd}}",
+    "notDirectory": "Not a directory: {{cwd}}",
+    "required": "Enter a working directory."
+  },
+  "session": {
+    "running": "This session is running.",
+    "required": "A session is required.",
+    "requiredForStatus": "A session is required (for a new session, pass status to runTurn).",
+    "notFound": "Session not found.",
+    "preparingSettings": "Preparing to send. Try changing the settings again.",
+    "draftTooLarge": "The draft is too large.",
+    "attachmentInfoTooLarge": "The attachment details are too large.",
+    "cannotDeleteBusy": "A session that is running or has queued messages cannot be deleted.",
+    "onlyUnsentDeletable": "Only unsent sessions can be deleted.",
+    "finishBeforeSwitch": "Wait for the run to finish before switching.",
+    "sourceNotFound": "The session to continue from was not found.",
+    "preparingFork": "The conversation is being prepared. Try branching again.",
+    "cannotFork": "This agent cannot branch."
+  },
+  "turn": {
+    "reservedInvalid": "The scheduled settings can no longer be used. Choose again.",
+    "aborted": "Stopped.",
+    "visualizationSaveFailed": "Could not save the visualization: {{error}}",
+    "contextSaveFailed": "Could not save the context usage record."
+  },
+  "scan": {
+    "busy": "A scan is already running."
+  },
+  "settings": {
+    "modeUnavailable": "The selected approval mode is not available.",
+    "endpointInvalid": "Invalid endpoint.",
+    "endpointNotRegistered": "The selected endpoint is not registered.",
+    "modelUnavailable": "The selected model is not available.",
+    "accountInvalid": "Invalid account.",
+    "accountNotRegistered": "The selected account is not registered.",
+    "unknownPref": "Unknown setting: {{key}}",
+    "unknownMode": "Unknown approval mode: {{value}}",
+    "unknownModel": "Unknown model: {{value}}"
+  },
+  "send": {
+    "messageIdRequired": "A message ID is required.",
+    "messageRequired": "Enter a message.",
+    "tooManyAttachments": "You can attach up to {{max}} files."
+  },
+  "delegation": {
+    "taskNotFound": "Pleiad task not found."
+  },
+  "approval": {
+    "alreadyResolved": "That approval has already been resolved."
+  },
+  "title": {
+    "unsupported": "This agent cannot generate titles.",
+    "noContent": "Nothing to title yet.",
+    "failed": "Could not generate a title: {{error}}",
+    "empty": "An empty title was returned."
+  },
+  "attach": {
+    "noContent": "The file is empty.",
+    "tooLarge": "Too large ({{size}} MB / limit {{limit}} MB)."
+  },
+  "statuses": {
+    "renameFromRequired": "Specify the status to rename.",
+    "statusRequired": "A status is required.",
+    "groupNameRequired": "A group name is required."
+  },
+  "background": {
+    "idsRequired": "sessionId and taskId are required.",
+    "notRunning": "That background task is no longer running.",
+    "cannotStop": "{{backend}} cannot stop background tasks.",
+    "agentIdsRequired": "sessionId and agentId are required."
+  },
+  "updateLock": {
+    "turns_one": "{{count}} conversation is running.",
+    "turns_other": "{{count}} conversations are running.",
+    "approvals_one": "{{count}} approval is waiting.",
+    "approvals_other": "{{count}} approvals are waiting.",
+    "delegation": "A delegated task, or delivery of its result to the parent conversation, has not finished.",
+    "steer": "Processing a message sent during the turn.",
+    "switching": "Switching or branching a conversation.",
+    "other": "Another operation is in progress."
+  },
+  "compat": {
+    "redactedKey": "[key]",
+    "listSeparator": ", ",
+    "url": {
+      "empty": "Enter a URL.",
+      "placeholder": "Replace placeholders such as <resource-name> in the URL with the actual values.",
+      "scheme": "The URL must start with http:// or https://.",
+      "credentials": "Don't put a username or password in the URL. Enter the key in the \"API key\" field.",
+      "query": "Remove the ? or # part from the URL.",
+      "claudeV1": "Leave /v1 off the end of the URL (Claude Code adds /v1/messages).",
+      "claudeMessages": "Leave /v1/messages off the end of the URL (Claude Code adds it).",
+      "codexSuffix": "Leave /responses and similar paths off the end of the URL (Codex adds /responses).",
+      "unresolved": "Can't resolve {{host}}. Check the URL and your network.",
+      "publicHttp": "Use https for public addresses (over http, your key and conversation are sent unencrypted)."
+    },
+    "name": {
+      "empty": "Enter a name.",
+      "tooLong": "Keep the name to {{max}} characters or fewer.",
+      "control": "The name can't contain line breaks or other control characters."
+    },
+    "key": {
+      "invalid": "The API key contains spaces or line breaks. Paste only the value.",
+      "unreadable": "Can't read the saved key."
+    },
+    "model": {
+      "invalidId": "The model ID isn't valid."
+    },
+    "roles": {
+      "main": "Main",
+      "default": "Default model",
+      "opus": "Opus equivalent",
+      "sonnet": "Sonnet equivalent",
+      "haiku": "Haiku equivalent",
+      "missing": "Enter a model for {{roles}}."
+    },
+    "contextTokens": {
+      "range": "The context length must be a whole number from 1024 to 10,000,000."
+    },
+    "check": {
+      "timeout": "The endpoint didn't respond within {{seconds}} seconds. Check the URL and your network.",
+      "network": "Couldn't connect. Check the URL and your network (for a local endpoint, make sure it's running).",
+      "redirect": "The endpoint redirected to another URL (HTTP {{status}}). It isn't followed so the key isn't forwarded. Enter the redirect target URL directly.",
+      "tooLarge": "The endpoint's response is too large.",
+      "serverError": "The endpoint returned an error (HTTP {{status}}).",
+      "claudeNotFound": "POST {{url}} returned {{status}}. Check that the URL is Anthropic-compatible (/v1/messages).",
+      "claudeNotFoundHint": "Enter the URL without /v1 (Claude Code adds /v1/messages).",
+      "claudeModelRejected": "The model used for the check, {{model}}, wasn't accepted (HTTP {{status}}{{reason}}). The URL and key work. Assign models next.",
+      "codexModelRejected": "The model used for the check, {{model}}, wasn't accepted (HTTP {{status}}{{reason}}). The URL and key work. Choose models next.",
+      "probeStatus": "The check request returned HTTP {{status}}. The URL and key work.",
+      "probeStatusWithReason": "The check request returned HTTP {{status}} ({{reason}}). The URL and key work.",
+      "noModels": "Couldn't get the model list. Enter the IDs.",
+      "badKey": "The key is wrong.",
+      "authBoth": "Tried both Bearer and x-api-key; both returned {{statuses}}. Check the key.",
+      "authFailed": "Got {{status}} (authentication failed). Check the key.",
+      "authFailedNoKey": "Got {{status}} (authentication failed). This endpoint requires a key. Check the key.",
+      "codexAuthFailed": "Got {{status}} (authentication failed). Check the key and how it's sent (Bearer / api-key).",
+      "reached": "The URL is reachable.",
+      "chatOnly": "This endpoint only supports Chat Completions, so it can't be used with Codex.",
+      "chatOnlyDetail": "POST {{url}} returned {{status}} (/chat/completions responds).",
+      "chatOnlyHint": "It works if you convert it to the Responses API with something like LiteLLM.",
+      "codexNotFound": "POST {{url}} returned {{status}}. Check that the URL supports the Responses API (/responses).",
+      "codexNotFoundHint": "For most endpoints, the URL ends in /v1 (Codex adds /responses)."
+    },
+    "store": {
+      "unreadable": "Can't read the list of compatible endpoints. The file is corrupted.",
+      "agentRequired": "Choose an agent.",
+      "notFound": "Endpoint not found. Reopen the list.",
+      "agentFixed": "You can't change an endpoint's agent.",
+      "receiptStale": "The connection details changed or the check has expired. Click \"Check connection\" again.",
+      "notRegistered": "That endpoint isn't registered.",
+      "badAgent": "Invalid agent."
+    },
+    "resolve": {
+      "deleted": "This conversation's endpoint has been deleted. Choose another endpoint from the model panel in the input area.",
+      "wrongAgent": "This conversation's endpoint \"{{name}}\" is for {{agent}}. Choose another endpoint.",
+      "failed": "The last check of endpoint \"{{name}}\" failed. Check it again under Settings › Agents › Endpoints, or choose another endpoint.",
+      "keyUnreadable": "Can't read the key for endpoint \"{{name}}\"."
+    }
+  },
+  "mcp": {
+    "oauth": {
+      "loginRequired": "Sign-in required. Sign in from Settings › Context › External MCP.",
+      "registrationMissing": "registration_client_uri / registration_access_token is missing.",
+      "labelRegistration": "Registration management URL",
+      "labelAuthorization": "Authorization endpoint",
+      "notOauth": "This MCP doesn't use OAuth.",
+      "callbackPort": "Callback port {{port}} isn't available. Close other apps or change callbackPort.",
+      "resourceMismatch": "The resource in the protected resource metadata ({{resource}}) doesn't match the endpoint.",
+      "noAuthUrl": "Couldn't build the authorization URL.",
+      "noDcr": "This authorization server doesn't support dynamic client registration. Set oauth.clientId (and clientSecret if needed) in the MCP registration.",
+      "prepareFailed": "Couldn't prepare authorization: {{error}}",
+      "timeout": "Sign-in timed out (10 minutes). Sign in again.",
+      "denied": "The authorization server refused: {{error}}",
+      "noToken": "Didn't receive a token.",
+      "tokenFailed": "Couldn't get a token: {{error}}",
+      "tokenExpired": "The token has expired. Sign in again.",
+      "noClient": "Client information is missing. Sign in again.",
+      "sessionExpired": "Your sign-in has expired. Sign in again.",
+      "tokenRejected": "The MCP doesn't accept the token. Sign in again.",
+      "scope": "Insufficient permissions (scope). Sign in again to request them along with your current permissions.",
+      "scopeWith": "Insufficient permissions (scope: {{scope}}). Sign in again to request them along with your current permissions.",
+      "stepUp": "Additional permissions ({{scope}}) are required. Sign in again to request them along with your current permissions.",
+      "noRevocation": "revocation_endpoint is missing.",
+      "localCleared": "{{reason}} (the local token was deleted)",
+      "revokeFailed": "The revocation request failed (the local token was deleted).",
+      "notSignedIn": "Not signed in."
+    },
+    "import": {
+      "invalid": "The MCP definition is invalid.",
+      "labelEnv": "env \"{{name}}\"",
+      "labelHeader": "header \"{{name}}\"",
+      "secretMissing": "Environment variable {{names}} for {{label}} wasn't found, so it was left empty.",
+      "envMissing": "Environment variable {{names}} for {{label}} wasn't found.",
+      "transport": "Transport ({{type}}) can't be imported.",
+      "format": "Only Claude and Codex registrations can be imported.",
+      "args": "args isn't an array of strings.",
+      "noUrl": "url is missing.",
+      "forbiddenHeader": "Header {{name}} can't be set in Pleiad, so it was removed.",
+      "oauthField": "Claude's oauth.{{key}} can't be imported, so it was removed.",
+      "clientSecret": "If the authorization server requires a clientSecret, edit the registration and enter oauth.clientSecret.",
+      "oauthHeaders": "OAuth registrations can't be combined with headers or bearer, so they were removed.",
+      "ignored": "Items not imported: {{keys}}",
+      "claudeJson": "Can't read ~/.claude.json.",
+      "notFound": "MCP to import not found.",
+      "count": "Specify 1 to 64 MCPs to import.",
+      "auth": "auth can only be none or oauth, and only for HTTP MCPs with no authentication hints.",
+      "detectedOauth": "The MCP asked for an OAuth sign-in, so it was imported as OAuth.",
+      "detectedNone": "No authentication was specified, so it was imported without authentication."
+    },
+    "config": {
+      "target": "Choose a format and scope.",
+      "unreadable": "Can't read the MCP config file (limit 1 MiB).",
+      "link": "Can't read the target of the MCP config link.",
+      "syntax": "The MCP config has a syntax error. Check the original file.",
+      "format": "The MCP config format is invalid.",
+      "notFound": "MCP to edit not found.",
+      "name": "Use up to 128 letters, digits, _, . or - for the name (host and ply are reserved for built-in MCPs).",
+      "definition": "The MCP definition must be a JSON object of 64 KiB or less.",
+      "transport": "Specify either a command or an HTTP(S) url.",
+      "args": "args must be an array of strings.",
+      "env": "env must be an object with string values.",
+      "operation": "Specify add or edit.",
+      "typeMismatch": "The transport type doesn't match command / url.",
+      "changed": "The file has changed. Reload the list before editing.",
+      "exists": "An MCP with the same name already exists. Open it from Edit.",
+      "reformat": "With this TOML layout, the whole file needs to be reformatted. Allow reformatting to save.",
+      "tooLarge": "The config would exceed 1 MiB after saving.",
+      "changedReload": "The file has changed. Reload the list."
+    }
+  },
+  "net": {
+    "guard": {
+      "defaultLabel": "Discovered URL",
+      "authServer": "Authorization server",
+      "invalid": "{{label}} isn't a valid URL.",
+      "credentials": "{{label}} ({{url}}) contains credentials, so it won't be used.",
+      "httpLoopbackOnly": "{{label}} ({{url}}) isn't https, so it won't be used (http is allowed only for MCPs running on loopback).",
+      "notHttps": "{{label}} ({{url}}) isn't https, so it won't be used.",
+      "unresolved": "Can't resolve {{label}} ({{url}}).",
+      "internal": "{{label}} ({{url}}) points to an internal address ({{address}}, {{kind}}), so it won't be used. A public MCP isn't allowed to connect to internal addresses.",
+      "redirect": "{{label}} redirected a {{method}} request. Stopped without following it.",
+      "tooManyRedirects": "Too many redirects."
+    },
+    "addressKind": {
+      "loopback": "loopback",
+      "private": "private",
+      "link-local": "link-local",
+      "unspecified": "unspecified",
+      "reserved": "reserved",
+      "unknown": "unknown"
+    },
+    "pinned": {
+      "noFamily": "The pinned addresses for {{host}} have no IPv{{family}} address.",
+      "bodyType": "This request body type isn't supported by pinned-address fetches.",
+      "protocol": "{{protocol}} isn't supported."
+    }
+  },
+  "secrets": {
+    "busy": "The secrets file is in use by another process. Wait a moment and try again.",
+    "plainReason": "Electron's safeStorage isn't available in this launch (such as npm start).",
+    "cryptoFailed": "Couldn't encrypt or decrypt the secrets.",
+    "noResponse": "Secret encryption didn't respond.",
+    "osUnavailable": "The OS encryption feature isn't available.",
+    "fileBroken": "Can't read the secrets file. The file is corrupted.",
+    "locked": "Secrets saved with encryption can't be decrypted in this launch. Open them from Pleiad desktop.",
+    "unknownFormat": "Unknown secret format."
+  },
+  "claude": {
+    "description": "Official subscription sign-in · Supports skills and MCP",
+    "listSeparator": ", ",
+    "modes": {
+      "defaultNote": "Asks before each risky action.",
+      "autoNote": "A model classifier decides and asks only about unclear cases.",
+      "acceptEditsNote": "File edits are automatic; asks about everything else.",
+      "planNote": "Does not run tools.",
+      "bypassNote": "No prompts or limits. Skips Claude Code permissions."
+    },
+    "errors": {
+      "nativeInstructions": "Could not turn off Claude native instructions. The message was not sent.",
+      "nativeMcp": "Could not turn off Claude native MCP ({{names}}).",
+      "resumeMismatch": "Claude Code could not resume session {{expected}} and started a different session {{actual}}. Claude Code may not find a session resumed from a different working directory. Switch back to the original directory, or branch to continue.",
+      "turnNotRunning": "This conversation no longer has a running turn (background commands ended with the CLI).",
+      "stopUnsupported": "This version of Claude Code cannot stop background commands. Update it with `claude update`."
+    },
+    "models": {
+      "defaultNote": "Uses your Claude Code settings.",
+      "fableFallback": "Top Claude 5 model. For the heaviest work.",
+      "fable": "Top model. For the heaviest work.",
+      "opus": "Smart. For heavy work.",
+      "sonnet": "Balances speed and intelligence.",
+      "haiku": "Light. For simple work."
+    },
+    "usage": {
+      "timeout": "Timed out while getting usage.",
+      "needsLogin": "To show usage, complete \"Authorize usage display\" under \"Claude accounts\" in Settings.",
+      "loginAccount": "Signed-in account",
+      "failed": "Could not get usage: {{message}}",
+      "failedReauth": "Could not get usage: {{message}}. If this keeps happening, redo \"Authorize usage display\"."
+    },
+    "redacted": {
+      "token": "[token]",
+      "secret": "[redacted]"
+    },
+    "truncated": "… (truncated)",
+    "auth": {
+      "timeout": "Timed out. Sign in again.",
+      "statusUnreadable": "Could not check the Claude Code sign-in status. Update the CLI and check again.",
+      "loginPending": "Sign-in is already in progress.",
+      "loginFailed": "Could not complete sign-in. Try again.",
+      "loggedIn": "Signed in",
+      "waitLogin": "Wait for sign-in to finish.",
+      "logoutFailed": "Could not sign out."
+    },
+    "login": {
+      "pasteCode": "Paste the code shown in your browser.",
+      "badCode": "The code format is invalid. Paste the code exactly as shown in your browser.",
+      "tokenUnreadable": "Could not read the token.",
+      "saveFailed": "Could not save: {{message}}",
+      "codeRejected": "The code was not accepted. Paste it again.",
+      "codeRejectedDetail": "The code was not accepted. Paste it again. ({{detail}})",
+      "launchFailed": "Could not start Claude Code ({{message}}).",
+      "exited": "Claude Code exited (exit code {{code}}).",
+      "exitedDetail": "Claude Code exited (exit code {{code}}): {{detail}}",
+      "unknownCode": "unknown",
+      "badKind": "Invalid authorization type.",
+      "accountRequired": "Specify an account.",
+      "notInstalled": "Claude Code was not found. Install it and try again.",
+      "noPty": "Pleiad cannot issue a token here because a pseudo-terminal (node-pty) is not available. Run `claude setup-token` in a terminal and register the token it shows with \"Paste token\".",
+      "timeout": "Timed out (10 minutes). Try again.",
+      "ended": "This authorization has ended. Start again.",
+      "notReady": "Authorization is not ready yet. Wait a moment and try again."
+    },
+    "accounts": {
+      "badToken": "The token format is invalid. Paste the value shown by `claude setup-token` exactly as is.",
+      "nameRequired": "Enter a display name for the account.",
+      "nameTooLong": "Use {{max}} characters or fewer for the display name.",
+      "ownerUnknown": "Could not verify the token owner ({{message}}).",
+      "ownerHttp": "Could not verify the token owner (HTTP {{status}}).",
+      "ownerNoOrg": "Could not verify the token owner (no organization in the response).",
+      "listBroken": "Could not read the Claude account list. The file is corrupted.",
+      "badId": "Invalid account ID.",
+      "notRegistered": "That account is not registered.",
+      "deleted": "The Claude account selected for this conversation was deleted. Choose another account.",
+      "tokenUnreadable": "Could not read the token for Claude account \"{{name}}\" ({{message}}). Paste it again in the account list in Settings, or choose another account.",
+      "tokenMissing": "No token is registered for Claude account \"{{name}}\". Paste one in the account list in Settings."
+    }
+  },
+  "effort": {
+    "useEndpoint": "Uses the endpoint settings.",
+    "notSent": "Not sent (endpoint setting)",
+    "supported": "Used with supported models.",
+    "useAgentEndpoint": "Uses the agent and endpoint settings.",
+    "unavailable": "The selected effort is not available. Choose another."
+  },
+  "backends": {
+    "retired": {
+      "procway": "procway-code is no longer supported. This conversation cannot be continued."
+    },
+    "context": {
+      "codexSkills": "Could not read the Codex Skills list, so skill discovery cannot be turned off.",
+      "codexMcp": "Could not read the Codex MCP settings, so MCP connections cannot be turned off."
+    }
+  },
+  "cli": {
+    "claudeNotInstalled": "Install Claude Code.",
+    "installAgent": "Install the agent, then check its status again.",
+    "badArgument": "A CLI argument contains characters that are not allowed."
+  },
+  "codex": {
+    "description": "Uses your ChatGPT subscription.",
+    "modes": {
+      "ask": "Asks every time unless the command is trusted.",
+      "auto": "Asks only when the model decides it needs to.",
+      "full": "Never asks. Can write to the working directory.",
+      "yolo": "No approvals and no Codex restrictions (all files and network).",
+      "readonly": "Blocks writes with the sandbox."
+    },
+    "models": {
+      "defaultNote": "Uses your codex settings as is.",
+      "configured": "codex settings ({{model}})"
+    },
+    "truncated": "… (truncated)",
+    "terminal": "Background terminal",
+    "subagent": {
+      "name": "Subagent",
+      "named": "Subagent {{name}}",
+      "withKind": "{{name}} ({{kind}})",
+      "collab": "{{verb}} {{names}}"
+    },
+    "activity": {
+      "started": "started",
+      "interacted": "follow-up instruction",
+      "completed": "completed",
+      "interrupted": "stopped"
+    },
+    "collab": {
+      "spawnAgent": "Start",
+      "sendInput": "Follow-up instruction",
+      "sendMessage": "Message",
+      "followupTask": "Follow-up task",
+      "resumeAgent": "Resume",
+      "wait": "Wait",
+      "closeAgent": "Close",
+      "interruptAgent": "Stop",
+      "listAgents": "List"
+    },
+    "errors": {
+      "tooManyPages": "Could not read the model list within {{pages}} pages.",
+      "notWatching": "Background terminals for this conversation are not being tracked.",
+      "noProcessId": "The processId of this terminal is unknown (terminals in older conversations cannot be stopped).",
+      "cannotStopBackground": "This version of codex cannot stop background terminals. Update it with `codex update`.",
+      "failed": "codex failed.",
+      "errorReturned": "codex returned an error.",
+      "noApprover": "There is nowhere to send the approval request.",
+      "unsubscribeFailed": "Could not switch the endpoint (codex could not unload the conversation: {{reason}}). Stop any background terminals, then send again.",
+      "noResponse": "no response",
+      "stillOldEndpoint": "Could not switch the endpoint (codex loaded the conversation with the previous endpoint). Stop any background terminals, then send again.",
+      "noThreadId": "{{method}} did not return a threadId.",
+      "titleAborted": "Title generation was stopped.",
+      "historyUnreadable": "Cannot read the Codex history.",
+      "forkMidway": "codex cannot branch from the middle of a conversation (it can branch from the end).",
+      "authReadFailed": "Could not read the codex sign-in status: {{message}}",
+      "appServerDied": "codex app-server exited: {{why}}",
+      "timeout": "codex {{method}} did not respond within {{ms}} ms.",
+      "notConnected": "Not connected to codex app-server.",
+      "noHandler": "Nothing is listening for {{method}}."
+    },
+    "auth": {
+      "notLoggedIn": "Not signed in to codex.",
+      "loggedIn": "Signed in.",
+      "openBrowser": "Open this in your browser and allow access.",
+      "loginFailed": "Sign-in failed."
+    }
+  },
+  "antigravity": {
+    "description": "Uses your Google AI Pro / Ultra plan.",
+    "modes": {
+      "yolo": "Never asks. Allows every tool (in headless mode agy silently rejects tools otherwise)."
+    },
+    "truncated": "… (truncated)",
+    "errors": {
+      "endedWith": "agy ended with {{status}}.",
+      "unknownStatus": "an unknown status",
+      "printTimeout": "agy cut off its output (--print-timeout). The reply is incomplete, and agy may still be working on this turn. To avoid mixing things up, this agy process was stopped (the conversation is kept, so you can continue). To handle long turns, increase AGENT_HOST_AGY_PRINT_TIMEOUT (a Go duration string; the default is 24h).",
+      "startTimeout": "agy did not respond within {{ms}} ms.",
+      "noModels": "agy models returned nothing.",
+      "exited": "agy exited: {{why}}",
+      "notConnected": "Not connected to agy.",
+      "badConversationId": "Invalid conversation id: {{id}}"
+    },
+    "auth": {
+      "notLoggedInTurn": "You are not signed in to Antigravity. Run this command in a terminal to sign in.",
+      "account": "Google account",
+      "detail": "Antigravity (uses your subscription)",
+      "notLoggedIn": "Not signed in to agy (run agy in a terminal to sign in).",
+      "loginRunning": "Sign-in is already in progress.",
+      "alreadyLoggedIn": "Already signed in.",
+      "runCommand": "Run this command in a terminal and follow the prompts to sign in to Google. (Antigravity sign-in only works from a terminal. This updates automatically when you finish.)",
+      "loggedIn": "Signed in.",
+      "loginTimeout": "Sign-in in the terminal did not finish. Please try again.",
+      "logoutInAgy": "Sign out of Antigravity from agy (the credentials are in the OS credential store)."
+    },
+    "models": {
+      "levels": "Effort: {{levels}}",
+      "defaultNote": "Uses your agy settings as is.",
+      "unknownDefault": "Default (agy settings)",
+      "unknownDefaultNote": "Uses your agy settings as is (Pleiad cannot read them).",
+      "effortReason": "The agy default model is unknown, so choose a model to pick an effort."
+    },
+    "usage": {
+      "badResponse": "The usage response has an invalid format.",
+      "fiveHours": "5 hours",
+      "weekly": "Weekly (7 days)",
+      "unknownPeriod": "Unknown period",
+      "model": "Model",
+      "shared": "Usage is shared within the same model group. Both the 5-hour and weekly limits apply.",
+      "none": "Antigravity returned no usage. Check your sign-in status and plan.",
+      "timeout": "Timed out while getting usage.",
+      "tooLarge": "The usage response is too large.",
+      "cannotStart": "Cannot start Antigravity.",
+      "cannotRead": "Cannot get Antigravity usage.",
+      "needsUpdate": "Showing usage requires Antigravity CLI 1.1.11 or later. Run agy update in a terminal."
+    },
+    "contextRefusal": "When Pleiad passes its context to Antigravity, agy stops reading the workspace instructions (AGENTS.md, GEMINI.md). Instructions are still handled by the agent, so this conversation leaves loading to the agent itself. To let Pleiad handle Skills or external MCP, have Pleiad handle instructions too."
+  },
+  "context": {
+    "removedHere": "Removed for this conversation.",
+    "scan": {
+      "limitReached": "Scan limit reached. Narrow the search locations and try again.",
+      "tooLarge": "Not read because it exceeds the size limit.",
+      "fileUnreadable": "Cannot read the file.",
+      "dirUnreadable": "Cannot read the directory.",
+      "gitRootFailed": "Could not check for the Git root.",
+      "circularReference": "Instruction file references form a loop.",
+      "complexImport": "Complex @ references are not expanded.",
+      "urlImport": "URL @ references are not expanded.",
+      "importDepth": "@ reference depth limit reached.",
+      "importUnreadable": "Cannot read the @ reference target.",
+      "ruleFrontmatter": "Cannot parse the rule's frontmatter.",
+      "rulePaths": "Cannot interpret the rule's paths.",
+      "skillFrontmatter": "Cannot parse the Skill's frontmatter.",
+      "mcpParse": "Cannot parse the MCP configuration (contents hidden).",
+      "mcpInvalid": "The MCP configuration is malformed.",
+      "mcpServersInvalid": "The MCP server list is malformed.",
+      "mcpServerInvalid": "The MCP server entry is malformed.",
+      "conflictInstruction": "Check for identical text and scope.",
+      "conflictName": "Check for other definitions with the same name and which one wins.",
+      "fromUser": "User",
+      "fromProject": "Project",
+      "fromCommon": "Shared",
+      "requiredArgs": "<arguments> (asked for if missing)",
+      "limitations": {
+        "preview": "This is a preview of the scan results, not the list the agent actually loaded.",
+        "excluded": "Plugins, managed settings, auto memory, and lazy loading from subdirectories are not covered.",
+        "unsupported": "Codex trust, profile, and fallback, and resolution through Claude's complex @ references are not supported.",
+        "rules": "Claude rules with paths are provided only when working on matching files (not at the start).",
+        "directories": "Directories are searched from the Git root to the working directory, or only the working directory without Git. Parent files outside the root that Claude reads are not included.",
+        "mcp": "MCP configuration is only read; no connections are made. Configuration files show only the MCP entries, with environment variable and header values and URL queries hidden.",
+        "ply": "MCP servers registered in Pleiad take precedence over agent entries with the same name. Secrets (tokens, header values, and so on) are not stored in the registry file."
+      }
+    },
+    "settings": {
+      "cwdRequired": "Specify a working directory.",
+      "dirRequired": "Specify a directory.",
+      "scanInvalid": "The scan settings are malformed.",
+      "unknownKind": "Invalid kind.",
+      "kindInvalid": "The context settings are malformed.",
+      "disabledMcpOnly": "Removing by name is only available for external MCP servers.",
+      "rootsInvalid": "The additional search folders are malformed.",
+      "defaultPlace": "Default",
+      "migrateDiffers": "Could not migrate the context settings to the new format (the result would change for {{place}}). The original settings were not changed.",
+      "migrateUnverified": "Could not verify the context settings migration. The original settings were not changed.",
+      "unreadable": "Cannot read the context settings. Check context-scans.json.",
+      "nothingToChange": "Specify what to change."
+    },
+    "session": {
+      "sessionRequired": "Specify a conversation.",
+      "noRecord": "This conversation has no context record.",
+      "notManaged": "Pleiad is not providing instructions or Skills in this conversation.",
+      "busy": "Cannot reload while a reply is in progress. Try again after the reply finishes.",
+      "invalidMcpName": "Invalid MCP name.",
+      "reconnectNext": "Connects from the next reply."
+    },
+    "runtime": {
+      "refused": "{{backend}} cannot receive context managed by Pleiad (instructions, Skills, external MCP), so this conversation uses the agent's own loading.",
+      "choicePrefer": "Multiple definitions share this name; used the one from {{source}} (chosen in settings).",
+      "choiceFirst": "Multiple definitions share this name; used the one from {{source}} (none chosen, so the first one found).",
+      "otherSource": "another source",
+      "unresolved": "Cannot fully resolve the context. Check the scan results: {{detail}}",
+      "scanLimit": "scan limit",
+      "duplicateName": "More than one {{kind}} is named \"{{name}}\". Use excluded paths in the scan settings to keep only one definition.",
+      "skillUnsupported": "Agent-specific settings: {{keys}}",
+      "manualOnly": "Not invoked automatically. Exposed only in turns where your request contains $name.",
+      "instructionsTooLarge": "Instruction files exceed 128 KiB in total. Narrow the search.",
+      "mcpUnsupported": "MCP \"{{name}}\" has unsupported settings: {{keys}}",
+      "mcpEnvMissing": "Environment variable {{key}} for MCP \"{{name}}\" is not set.",
+      "mcpAuthEnvMissing": "The authentication environment variable for MCP \"{{name}}\" is not set.",
+      "mcpTimeoutInvalid": "Invalid timeout for MCP \"{{name}}\".",
+      "mcpUrlInvalid": "Invalid endpoint for MCP \"{{name}}\"."
+    },
+    "bridge": {
+      "plyUnavailable": "Cannot read Pleiad's MCP registry.",
+      "oauthUnavailable": "OAuth is not available in this launch.",
+      "configUnreadable": "Cannot read the connection settings.",
+      "unsupportedHint": "{{message}}. For MCP servers that need authentication settings, use \"Import into Pleiad\" under Settings › Context › External MCP to authenticate in Pleiad.",
+      "authRequiredPly": "The MCP server requires authentication. Check the authentication method and values under Settings › Context › External MCP.",
+      "authRequiredNative": "The MCP server requires authentication. Use \"Import into Pleiad\" under Settings › Context › External MCP to sign in, or leave external MCP to the agent.",
+      "tooManyTools": "Too many tools (up to {{max}}).",
+      "connectFailed": "Cannot connect to the MCP server. Check the endpoint, authentication, and launch command.",
+      "invalidToken": "Invalid context token.",
+      "tooManyServers": "Up to 32 MCP servers per session. Narrow the search.",
+      "aborted": "Stopped.",
+      "toolTotalExceeded": "Removed because the total number of tools exceeds the limit ({{max}})."
+    },
+    "mcp": {
+      "plainValue": "{{label}} must be a string of up to 8 KiB without line breaks.",
+      "stringMapObject": "{{label}} must be an object with string values.",
+      "stringMapMax": "{{label}} can have up to {{max}} entries.",
+      "stringMapKey": "The name \"{{key}}\" cannot be used in {{label}}.",
+      "valueLabel": "The value of {{label}} \"{{key}}\"",
+      "seconds": "{{label}} must be a number of seconds from 1 to 3600.",
+      "stringArray": "{{label}} must be an array of strings.",
+      "definitionObject": "Specify the MCP definition as a JSON object.",
+      "definitionTooLarge": "The MCP definition must be 64 KiB or less.",
+      "unknownFields": "Unsupported fields: {{keys}}",
+      "previousValueMissing": "There is no previous value for {{label}} \"{{keys}}\". Enter a value.",
+      "transportInvalid": "transport must be http, sse, or stdio.",
+      "authInvalid": "auth must be none, bearer, headers, or oauth.",
+      "stdioCommand": "For stdio, specify command and not url.",
+      "stdioAuth": "Pass authentication for stdio MCP servers through env (auth is none).",
+      "httpNoCommand": "Do not specify command, args, or env for HTTP MCP servers.",
+      "urlRequired": "Specify url.",
+      "urlInvalid": "Invalid url.",
+      "urlScheme": "url must be http(s) without credentials.",
+      "bearerRequired": "Specify bearerToken when auth is bearer.",
+      "bearerOnly": "Specify bearerToken only when auth is bearer.",
+      "headersRequired": "Specify at least one header when auth is headers.",
+      "headerForbidden": "These headers are not allowed: {{names}}",
+      "headerLabel": "Header",
+      "headersTooLarge": "Headers must total 16 KiB or less.",
+      "headersOnly": "Specify headers only when auth is headers.",
+      "oauthObject": "oauth must be an object.",
+      "oauthUnknown": "Unsupported oauth fields: {{keys}}",
+      "callbackPort": "oauth.callbackPort must be an integer from 1024 to 65535.",
+      "resourceUrl": "oauth.resource must be a URL.",
+      "resourceScheme": "oauth.resource must be an http(s) URL without #.",
+      "clientSecretNeedsId": "Specify clientSecret together with clientId.",
+      "oauthOnly": "Specify oauth only when auth is oauth.",
+      "registryBroken": "Cannot read Pleiad's MCP registry file. It is malformed.",
+      "notRegistered": "No MCP server with that name is registered in Pleiad.",
+      "invalidName": "Names must be up to 128 letters, digits, _, ., or - (host, ply, and some others are reserved).",
+      "modeRequired": "Specify add or edit.",
+      "revisionChanged": "The registry has changed. Reload the list before editing.",
+      "alreadyRegistered": "An MCP server with the same name is already registered. Open it with Edit.",
+      "editNotFound": "The MCP server to edit was not found.",
+      "sameName": "The name is unchanged.",
+      "nameTaken": "An MCP server with that name is already registered.",
+      "settingsObject": "Settings must be an object.",
+      "metadataUrl": "clientMetadataUrl must be a URL.",
+      "metadataUrlScheme": "clientMetadataUrl must be an https URL with a path (for example, https://example.com/ply/oauth-client.json).",
+      "pendingValues": "Some values are missing ({{keys}}). Edit the entry under Settings › Context › External MCP and enter them.",
+      "bearerMissing": "No bearer token is saved. Edit the MCP entry and enter it."
+    }
+  },
+  "filePreview": {
+    "cwdAtUnknown": "Cannot determine the working directory for this message. Open it with an absolute path.",
+    "invalidPath": "Cannot read this file path.",
+    "otherOs": "This path is in another OS's format. Check the file path on the host.",
+    "noDrive": "This path has no drive letter. Check the absolute path on the host.",
+    "relativeUnknownCwd": "Cannot resolve a relative path because the working directory is unknown. Open it with an absolute path.",
+    "outsideWorkspace": "This file is outside the accessible working directories.",
+    "notFile": "Choose a file or folder.",
+    "tooLarge": "The file exceeds the display limit.",
+    "overLimitDownload": "Exceeds the display limit ({{mb}} MB). You can save it to view.",
+    "overLimitHost": "Exceeds the display limit ({{mb}} MB). Check the file on the host.",
+    "unsupportedEncoding": "This encoding or file type is not supported for preview. You can save it to view.",
+    "unsupportedType": "This file type is not supported for preview. You can save it to view.",
+    "notFound": "File not found. It may have been moved or deleted.",
+    "accessDenied": "Cannot read this file. Check the permissions on the host.",
+    "readFailed": "Could not load the file. Reload to try again.",
+    "visualize": {
+      "htmlRequired": "Specify an HTML file for the visualization.",
+      "notUtf8": "Cannot read the visualization as UTF-8 HTML.",
+      "tooMany": "Up to {{max}} visualizations per turn.",
+      "caption": "Visualization"
+    }
+  },
+  "usage": {
+    "window": {
+      "fiveHour": "5 hours",
+      "weekly": "Weekly (7 days)",
+      "hours": "{{hours}} hours",
+      "unknown": "Unknown period",
+      "oauthAppsWeekly": "OAuth apps, weekly",
+      "modelWeekly": "{{model}}, weekly"
+    },
+    "codexUnavailable": "Cannot get usage limits. They are not shown for API connections or unsupported accounts.",
+    "claudeUnavailable": "Cannot get usage limits. They are not shown for API connections, insufficient permissions, or unsupported CLIs.",
+    "authChanged": "Sign-in status changed. Refresh to update.",
+    "fetchFailed": "Could not get usage. Check that you are signed in and refresh after a while.",
+    "recordInvalid": "The usage record is malformed."
+  },
+  "conversations": {
+    "deleteSent": "Sessions that have been sent cannot be deleted.",
+    "switchUnreadable": "Cannot switch because the conversation cannot be read.",
+    "switchEmpty": "Cannot switch because the history is empty.",
+    "truncated": "… (truncated)",
+    "forkPointAmbiguous": "Specify the branch point with either beforeMessageId or upToMessageId.",
+    "forkSourceUnreadable": "Cannot read the conversation to branch from.",
+    "forkEmpty": "Cannot branch because the history is empty.",
+    "messageNotSaved": "This message has not been saved to the history yet. Wait a moment and try again.",
+    "messageNotSavedFork": "This message has not been saved to the history yet. Wait a moment and try branching again.",
+    "forkMessageNotFound": "The message to branch from was not found.",
+    "presentNoTime": "Cannot determine the branch point because the presented output has no timestamp. Branch from the end.",
+    "toolRunning": "A tool is still running in the selected range. Branch from a completed message.",
+    "backendMismatch": "The conversation's backend does not match.",
+    "historyUnreadable": "Could not read the history after the run. Check the native history."
+  },
+  "tasks": {
+    "interruptedByRestart": "Stopped because Pleiad restarted. Check the actual changes before sending more instructions."
+  },
+  "dirs": {
+    "notFound": "Folder not found: {{dir}}",
+    "notDirectory": "Not a folder: {{dir}}",
+    "accessDenied": "Cannot open the folder (access denied): {{dir}}",
+    "openFailed": "Cannot open the folder: {{dir}}",
+    "invalidPath": "Invalid path."
+  },
+  "queue": {
+    "idConflict": "Cannot change the content under the same send ID.",
+    "full": "Up to {{max}} messages can wait to be sent.",
+    "notEditable": "This message cannot be changed.",
+    "invalidAction": "Invalid action."
+  },
+  "data": {
+    "schemaUnreadable": "Cannot determine the saved data format. Check data-schema.json.",
+    "schemaMismatch": "This saved data uses a different format. Use a newer version of Pleiad that supports it. The data was not changed."
+  },
+  "update": {
+    "preparing": "Preparing an update. Wait a moment and try again."
+  },
+  "store": {
+    "invalidSessionField": "Invalid session setting."
   }
 }

@@ -4,10 +4,12 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { contextTools, mcpTransportConfig, hash } from './context-runtime.mjs';
+import { t } from './i18n.mjs';
 
 export const CONTEXT_MCP_PATH = '/mcp/context';
 const MAX_TOOLS = 500;
-const configError = e => e?.code === 'INVALID' || e?.code === 'SECRET_LOCKED' || String(e?.message ?? '').startsWith('MCP「');
+// MCP_CONFIG は mcpTransportConfig（core/context-runtime.mjs）の設定の誤り。文言は言語で変わるので code で見る
+const configError = e => e?.code === 'INVALID' || e?.code === 'SECRET_LOCKED' || e?.code === 'MCP_CONFIG';
 
 /**
  * 外部 MCP 1 件に接続してツール一覧まで取る。**失敗しても投げない**（1 件のために会話を止めない）。
@@ -20,10 +22,10 @@ export async function connectServer(item, { cwd, plyMcp, oauth } = {}) {
   let config;
   try {
     if (ply) {
-      if (!plyMcp) throw Object.assign(new Error('Pleiad の MCP 登録を読み込めません'), { code: 'INVALID' });
+      if (!plyMcp) throw Object.assign(new Error(t('context.bridge.plyUnavailable')), { code: 'INVALID' });
       config = await plyMcp.connection(item.name, cwd);
       if (config.definition.auth === 'oauth') {
-        if (!oauth) throw Object.assign(new Error('OAuth を扱えない起動です'), { code: 'INVALID' });
+        if (!oauth) throw Object.assign(new Error(t('context.bridge.oauthUnavailable')), { code: 'INVALID' });
         // トークンが無ければここで「要ログイン」。ターンの中ではブラウザを開かない
         await oauth.accessToken(item.name, config.definition, config);
         config.fetch = oauth.authFetch(item.name, config.definition, config, tracker);
@@ -31,9 +33,8 @@ export async function connectServer(item, { cwd, plyMcp, oauth } = {}) {
     } else config = mcpTransportConfig(item, cwd);
   } catch (e) {
     if (e?.code === 'MCP_AUTH_REQUIRED') return { status: 'needs-auth', reason: e.message };
-    if (!configError(e)) return { status: 'failed', reason: '接続設定を読み込めません' };
-    const hint = /未対応設定/.test(e.message) ? '。認証の設定が要る MCP は、設定 › コンテキストの外部 MCP で「Pleiad に取り込む」と Pleiad 側で認証できます' : '';
-    return { status: 'failed', reason: `${e.message}${hint}` };
+    if (!configError(e)) return { status: 'failed', reason: t('context.bridge.configUnreadable') };
+    return { status: 'failed', reason: e.unsupported ? t('context.bridge.unsupportedHint', { message: e.message }) : e.message };
   }
   const client = new Client({ name: 'ply-context', version: '1.0.0' }, { capabilities: {} });
   const fetchImpl = config.fetch ?? fetch;
@@ -62,10 +63,9 @@ export async function connectServer(item, { cwd, plyMcp, oauth } = {}) {
     await client.close().catch(() => {});
     if (tracker.authRequired || e?.code === 'MCP_AUTH_REQUIRED') return { status: 'needs-auth', reason: tracker.authRequired ?? e.message };
     if (e?.code === 401 || /\b401\b/.test(String(e?.message ?? ''))) {
-      return { status: 'needs-auth', reason: ply ? 'MCP が認証を求めています。設定 › コンテキストの外部 MCP で認証の方式と値を確かめてください'
-        : 'MCP が認証を求めています。設定 › コンテキストの外部 MCP で「Pleiad に取り込む」とログインできます。または外部 MCP をエージェントに任せてください' };
+      return { status: 'needs-auth', reason: ply ? t('context.bridge.authRequiredPly') : t('context.bridge.authRequiredNative') };
     }
-    return { status: 'failed', reason: e?.message === 'tool limit' ? `ツールが多すぎます（${MAX_TOOLS} 件まで）` : 'MCP に接続できません。接続先・認証・起動コマンドを確認してください' };
+    return { status: 'failed', reason: e?.message === 'tool limit' ? t('context.bridge.tooManyTools', { max: MAX_TOOLS }) : t('context.bridge.connectFailed') };
   }
 }
 
@@ -77,7 +77,7 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
    * 省略時はターンごとに新しい値を作る
    */
   async function open({ runtime, prompt, origin, isActive, changed = async () => {}, authorize = async () => true, signal, token: fixed }) {
-    if (fixed !== undefined && !/^[a-f0-9]{64}$/.test(fixed)) throw new Error('コンテキストのトークンが不正です');
+    if (fixed !== undefined && !/^[a-f0-9]{64}$/.test(fixed)) throw new Error(t('context.bridge.invalidToken'));
     const token = fixed ?? crypto.randomBytes(32).toString('hex'), helpers = contextTools(runtime, prompt);
     const binding = { origin, isActive, runtime, helpers, tools: [...helpers.tools], clients: [], entries: new Map(), calls: new Map(), pending: new Set(), changed, authorize, closed: false };
     const close = async () => {
@@ -90,15 +90,15 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
     };
     signal?.addEventListener('abort', () => { void close(); }, { once: true });
     try {
-      if (runtime.servers.length > 32) throw new Error('MCP は1セッション32件までです。探索対象を絞ってください');
+      if (runtime.servers.length > 32) throw new Error(t('context.bridge.tooManyServers'));
       for (const item of runtime.servers) {
-        if (signal?.aborted || binding.closed) throw new Error('中断しました');
+        if (signal?.aborted || binding.closed) throw new Error(t('context.bridge.aborted'));
         const row = runtime.report.entries.find(e => e.id === item.id);
         const result = await connectServer(item, { cwd: runtime.policy.cwd, plyMcp, oauth });
-        if (result.status === 'connected' && binding.closed) { await result.client.close().catch(() => {}); throw new Error('中断しました'); }
+        if (result.status === 'connected' && binding.closed) { await result.client.close().catch(() => {}); throw new Error(t('context.bridge.aborted')); }
         if (result.status === 'connected' && binding.tools.length + result.tools.length > MAX_TOOLS) {
           await result.client.close().catch(() => {});
-          Object.assign(result, { status: 'failed', reason: `ツールの合計が上限（${MAX_TOOLS} 件）を超えるため外しました` });
+          Object.assign(result, { status: 'failed', reason: t('context.bridge.toolTotalExceeded', { max: MAX_TOOLS }) });
         }
         // つながらない 1 件は外して会話を進める。状態と理由は会話の記録（report）に残す
         if (result.status !== 'connected') { row.status = result.status; row.reason = result.reason; row.tools = 0; await changed(); continue; }
@@ -113,7 +113,7 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
         row.capabilities = Object.keys(caps ?? {});
         binding.entries.set(item.id, { client, item, caps });
       }
-      if (signal?.aborted || binding.closed) throw new Error('中断しました');
+      if (signal?.aborted || binding.closed) throw new Error(t('context.bridge.aborted'));
       if (binding.entries.size) {
         binding.tools.push({ name: 'mcp_resources', description: 'List or read resources from connected MCP servers. Omit uri to list resources; pass a listed URI to read.', inputSchema: { type:'object',properties:{uri:{type:'string'}},additionalProperties:false } });
         binding.tools.push({ name: 'mcp_prompts', description: 'List or fetch reusable MCP prompts. Omit name to list; pass a listed name and optional string arguments to fetch.', inputSchema: { type:'object',properties:{name:{type:'string'},arguments:{type:'object',additionalProperties:{type:'string'}}},additionalProperties:false } });
