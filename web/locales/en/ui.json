@@ -593,5 +593,30 @@
     "copyRelativeFailed": "Couldn't copy the relative path",
     "noRelative": "This file is outside the working directory, so it has no relative path",
     "actionFailed": "The action failed"
+  },
+  "remote": {
+    "badgeLabel": "Remote:",
+    "badgeTitle": "Connected to the remote host {{host}}",
+    "state": {
+      "connecting": "Connecting…",
+      "connected": "Connected",
+      "offline": "Can't reach the relay",
+      "host-offline": "Host is offline",
+      "revoked": "Revoked",
+      "stopped": "Disconnected"
+    },
+    "pop": {
+      "label": "Remote connection",
+      "relay": "Relay",
+      "connectedAt": "Connected at",
+      "device": "This device",
+      "state": "Status",
+      "retry": "Retry",
+      "close": "Close this window"
+    },
+    "loginOnHostShort": "Sign in on the host PC",
+    "loginOnHost": "Sign in on the host PC. The sign-in returns to the host PC, so it can't be completed from this device.",
+    "updateStatus": "Version of Pleiad running on the host",
+    "updateOnHost": "Update the host's Pleiad on the host."
   }
 }

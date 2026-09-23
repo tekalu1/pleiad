@@ -1,4 +1,5 @@
 import { isComposingKey } from './keyboard.mjs';
+import { t } from './i18n.mjs';
 
 const pages = [['setup', 'setupTab', 'setupPanel'], ['usage', 'usageTab', 'usagePanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['context', 'openContext', 'contextPanel'], ['remote', 'remoteTab', 'remotePanel'], ['updates', 'updatesTab', 'updatesPanel']];
 
@@ -107,6 +108,10 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
           stateEl.textContent = st.account || 'ログイン済み';
         } else if (st?.pending) {
           stateEl.textContent = 'ログインを待っている';
+        } else if (globalThis.window?.plyRemote) {
+          // リモートの窓: ログインの戻り先はホストの PC なので、ここからは始めない（docs/remote.md §7.3）
+          stateEl.textContent = t('remote.loginOnHostShort');
+          stateEl.title = t('remote.loginOnHost');
         } else {
           const btn = document.createElement('button');
           btn.type = 'button';
