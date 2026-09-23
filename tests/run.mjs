@@ -4,6 +4,10 @@
 //   npm test -- markdown     名前で絞る（部分一致）
 //
 // 落ちたテストは末尾にまとめて出る。終了コードで成否を返す。
+//
+// 画面とサーバーの言語は日本語に固定する（テストは日本語の文言に依存している。CI の OS の言語で変わらないように）。
+// 英語のケースは i18n のテストが明示的に切り替えて見る。起動するサーバーにも環境変数で引き継がれる。
+process.env.AGENT_HOST_LOCALE ||= "ja";
 import { installDomStub } from "./lib/dom-stub.mjs";
 import { runCase, summarize, pick } from "./lib/harness.mjs";
 
@@ -74,6 +78,9 @@ const cases = [
   await import("./unit/branches.mjs"),
   // 見た目の規則。web/ の CSS と index.html を lint する（docs/design-system.md §5）
   await import("./unit/design-lint.mjs"),
+  // 多言語対応。翻訳漏れの lint（直書きの日本語のラチェット・辞書の揃い）と、言語の解決・書式・setPref locale
+  await import("./unit/i18n-lint.mjs"),
+  await import("./unit/i18n.mjs"),
   await import("./unit/codex-mode.mjs"),
   // model/list のページ送り・覚える長さ・ログイン / ログアウトで捨てる・タイトル生成のモデル選び
   await import("./unit/codex-models.mjs"),

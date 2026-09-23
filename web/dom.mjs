@@ -1,6 +1,8 @@
 // web/ 共通の小さな下請け。要素を作る定型と相対時刻の整形。
 // タイトル・状態名・パスはモデル由来なので、文字は必ず textContent で入れる（innerHTML は使わない）。
 
+import { fmt } from "./i18n.mjs";
+
 export const SVG_NS = "http://www.w3.org/2000/svg";
 
 /** テキストだけの要素 */
@@ -27,20 +29,9 @@ export function icon(d) {
 
 /**
  * 経過した幅。「3分」「5時間」「2日」。ms でも ISO でも受ける。
- * 「〜経過」「〜待っている」のように後ろへ語を続けるときはこちら
+ * 「〜経過」「〜待っている」のように後ろへ語を続けるときはこちら。書き方は画面の言語に従う（web/i18n.mjs の fmt）
  */
-export function elapsed(when) {
-  const t = typeof when === "number" ? when : when ? Date.parse(when) : NaN;
-  if (!Number.isFinite(t)) return "";
-  const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
-  if (sec < 60) return `${sec}秒`;
-  if (sec < 3600) return `${Math.round(sec / 60)}分`;
-  if (sec < 86400) return `${Math.round(sec / 3600)}時間`;
-  return `${Math.round(sec / 86400)}日`;
-}
+export const elapsed = (when) => fmt.elapsed(when);
 
 /** 相対時刻。「たった今」「3分前」。一覧の行と候補の補足に */
-export function relTime(when) {
-  const e = elapsed(when);
-  return !e ? "" : e.endsWith("秒") ? "たった今" : `${e}前`;
-}
+export const relTime = (when) => fmt.relative(when);

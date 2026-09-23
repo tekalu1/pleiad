@@ -1,0 +1,28 @@
+{
+  "settings": {
+    "appearance": {
+      "language": {
+        "title": "Language",
+        "description": "Used for the interface text and for date and number formats.",
+        "auto": "Match OS",
+        "autoResolved": "Match OS ({{lang}})",
+        "current": "Showing in {{lang}}",
+        "saveFailed": "Couldn't save the language: {{error}}"
+      }
+    }
+  },
+  "time": {
+    "justNow": "just now",
+    "ago": "{{elapsed}} ago",
+    "elapsed": {
+      "second_one": "{{count}}s",
+      "second_other": "{{count}}s",
+      "minute_one": "{{count}}m",
+      "minute_other": "{{count}}m",
+      "hour_one": "{{count}}h",
+      "hour_other": "{{count}}h",
+      "day_one": "{{count}}d",
+      "day_other": "{{count}}d"
+    }
+  }
+}

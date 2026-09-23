@@ -5,6 +5,7 @@
 //   どれを使うか、Pleiad に登録したものはログイン・編集・名前の変更・削除・ログアウト・接続の確認、エージェントの登録は「Pleiad に取り込む」。
 // 登録は Pleiad 自身の設定（core/ply-mcp.mjs）。Claude や Codex の設定ファイルは書き換えない。秘密は伏せ字（••••）でしか返ってこない。
 import { el } from './dom.mjs';
+import { fmt } from './i18n.mjs';
 import { codeBlock, langFromPath } from './render.mjs';
 import { createCombo } from './combo.mjs';
 import { closeIcon } from './icons.mjs';
@@ -232,7 +233,7 @@ export function createMcpSection() {
       put('接続先', reg.url ?? null);
       put('認証', { none: 'なし', bearer: 'トークン', headers: `ヘッダー（${(reg.headerNames ?? []).join(', ')}）`, oauth: 'ブラウザでログイン' }[reg.auth] ?? reg.auth);
       if (reg.envKeys?.length) put('環境変数', reg.envKeys.map(k => `${k}=${MASK}`).join('  '));
-      if (reg.authStatus?.expiresAt) put('期限', new Date(reg.authStatus.expiresAt).toLocaleString());
+      if (reg.authStatus?.expiresAt) put('期限', fmt.dateTime(reg.authStatus.expiresAt));
       box.append(facts);
       const acts = el('div', 'acts');
       acts.append(button('編集', 'btn', () => ctx.work(async () => openSheet(ctx, await ctx.cmd('readPlyMcp', { name })))));
