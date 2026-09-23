@@ -33,6 +33,8 @@
 .tc-main.tc-text{font-family:inherit;white-space:normal;overflow:hidden;
   display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}
 .tc-main.tc-link{white-space:nowrap;text-overflow:ellipsis}
+/* 読む・書く・編集の対象はファイルリンク（押すと右パネル、右クリックで操作）。色はリンクに戻す */
+.tc-main.tc-file{color:var(--ink-blue);flex:0 1 auto}
 /* 主役の中の横スクロールバーは細く。太いと行が膨らんで一覧性が落ちる */
 .tc-main::-webkit-scrollbar{height:6px}
 .tc-main::-webkit-scrollbar-thumb{border:0}   /* 共通のつまみ（style.css）は縁を 2px 取る。6px の溝ではつまみを溝いっぱいにする */

@@ -213,7 +213,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .row.dragging{background:var(--surface-paper);box-shadow:0 8px 28px var(--shadow);opacity:.9}
 .row-title{display:flex;align-items:center;gap:5px;min-width:0;font-size:var(--fs-s);line-height:1.4}
 .row-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row-t:empty::before{content:"新しいセッション";color:var(--ink-weak)}
+.row-t:empty::before{content:var(--i18n-untitled,"");color:var(--ink-weak)}
 /* fork で生まれた会話の印。題の前。グループから外しても状態を変えても消えない（§4.1） */
 .forkmark{width:12px;height:12px;flex:none;fill:none;stroke:var(--ink-weak);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 
@@ -239,7 +239,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .fam-body{flex:1;min-width:0}
 .fam-name{display:flex;align-items:center;gap:5px;min-width:0;font-size:var(--fs-s);line-height:1.4}
 .fam-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fam-t:empty::before{content:"新しいセッション";color:var(--ink-weak)}
+.fam-t:empty::before{content:var(--i18n-untitled,"");color:var(--ink-weak)}
 /* 畳んでいる間だけ出る要約。行の meta と同じ位置に、印と状態ごとの件数（枝の本数は出さない） */
 .fam-sum{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .fam-count{white-space:nowrap}
@@ -359,7 +359,7 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 :root.mac #sidebar header{padding-left:80px}   /* 左の信号 3 つ（x=16 から 52px）を避ける */
 /* 重ねたダイアログは帯の下の範囲で中央に置く。帯に掛かると右上の閉じるボタンが窓のボタンの下に潜って押せない */
 :root.desktop dialog:modal{top:var(--bar-h)}
-:root.desktop #lightbox img{max-height:calc(92vh - 36px - var(--bar-h))}
+:root.desktop #lightbox img{max-height:calc(92vh - 124px - var(--bar-h))}
 
 /* ==================== 走っている印（web/arc.mjs） ====================
    弧だけ。台（暗い円）は置かない。色は本文の文字色（--ink）なので、ライトでは濃い紺、ダークでは明るい。
@@ -466,6 +466,23 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 許可していないスキームのリンク。押せない字として残す */
 .md-link-blocked{color:var(--ink-weak);text-decoration:line-through dotted;cursor:help}
 .md-img{display:block;max-width:100%;border-radius:var(--r-s);margin:.4em 0}
+/* 画像の下の所在の一行（docs/mockups/file-actions.html）。ファイル名はファイルリンク、フォルダーは弱い字、⋯ で操作 */
+.md-figure{display:block;margin:.4em 0}
+.md-figure>.md-img{margin:0}
+.file-where{display:flex;align-items:center;gap:6px;margin-top:4px;max-width:min(100%,480px);min-width:0;font-size:var(--fs-xs);color:var(--ink-weak)}
+.file-where .file-link{white-space:nowrap;font-size:var(--fs-s)}
+.file-where-dir{flex:0 1 auto;min-width:0;font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.file-more{flex:none;color:var(--ink-weak)}
+.file-more.btn-icon{width:26px;height:26px}
+.file-more svg.i{width:15px;height:15px}
+/* インラインコードのパスもファイルリンク。下線はリンクと同じ */
+.code-link{text-decoration:underline;text-decoration-color:var(--line-strong)}
+.code-link code{color:var(--ink-blue)}
+/* 短い知らせ（コピーした・開けなかった）。数秒で消える */
+.file-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;max-width:min(92vw,520px);padding:8px 16px;
+  background:var(--surface-paper);color:var(--ink);border-radius:var(--r-pill);box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-s);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-toast[hidden]{display:none}
 .table-wrap{overflow-x:auto;margin:0 0 .9em;background:var(--surface-1);border-radius:var(--r-m);max-width:100%}
 .table-wrap table{border-collapse:collapse;width:100%;font-size:.94em}
 .table-wrap :is(th,td){padding:7px 14px;text-align:left;vertical-align:top}
@@ -501,8 +518,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* iframe の中身の高さは sandbox かつスクリプト無しでは測れない。固定高 + 縦スクロールで妥協する */
 .present-body>iframe{display:block;width:100%;height:440px;border:0;border-radius:var(--r-s);background:var(--surface-paper)}
 .present-note{padding:22px 16px;color:var(--ink-weak);font-size:var(--fs-s);text-align:center}
-.present-path{padding:2px 14px 6px;font-size:var(--fs-xs);color:var(--ink-weak);overflow-x:auto;white-space:nowrap}
+.present-path{display:flex;align-items:center;gap:4px;padding:2px 14px 6px;font-size:var(--fs-xs);color:var(--ink-weak);overflow-x:auto;white-space:nowrap}
 .present-path code{font-size:var(--fs-xs);color:var(--ink-weak)}
+.present-path .code-link code{color:var(--ink-blue)}
 .visualize-wide .present-body>.visualize-frame{height:600px}
 /* 見出し行は狭いので、可視化の操作はアイコンだけにする（名前は title / aria-label） */
 .present-tools .h-icon{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0}
@@ -680,7 +698,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .ceffort.off .val{color:var(--ink-weak)}
 .ceffort .ticks{display:flex;justify-content:space-between;padding:0 7px 16px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .ceffort .ticks span{position:relative;width:0;display:flex;justify-content:center;white-space:nowrap}
-.ceffort .ticks span.def::after{content:"既定";position:absolute;top:15px;font-size:10px;color:var(--ink-blue)}
+.ceffort .ticks span.def::after{content:var(--i18n-default,"");position:absolute;top:15px;font-size:10px;color:var(--ink-blue)}
 /* 既定の段が分からず既定に従っているとき（composer-labels.mjs の effortStops の unset）: つまみを出さない。動かすと出る */
 .ceffort input[type=range].unset::-webkit-slider-thumb{opacity:0}
 .ceffort input[type=range].unset::-moz-range-thumb{opacity:0}
@@ -692,11 +710,21 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 落とせることが分かるように、主要部を一段沈める */
 main.dropping #log{background:var(--surface-1)}
 
-/* ---- 画像を大きく見る（閲覧だけ）。面は白、枠線なし、影だけ。× と Esc と外側のクリックで閉じる ---- */
+/* ---- 画像を大きく見る。面は白、枠線なし、影だけ。× と Esc と外側のクリックで閉じる。
+   下端に所在（フルパスとコピー）と操作（右パネルで開く・エクスプローラーで表示・保存）を並べる ---- */
 #lightbox{padding:0;border:0;background:var(--surface-paper);color:var(--ink);border-radius:var(--r-l);
-  max-width:min(92vw,1280px);max-height:92vh;box-shadow:0 16px 48px var(--shadow);overflow:hidden}
+  max-width:min(92vw,1280px);min-width:min(92vw,420px);max-height:92vh;box-shadow:0 16px 48px var(--shadow);overflow:hidden}
 #lightbox::backdrop{background:var(--surface-veil)}
-#lightbox img{display:block;max-width:min(92vw,1280px);max-height:calc(92vh - 36px);object-fit:contain}
+#lightbox img{display:block;margin:0 auto;max-width:min(92vw,1280px);max-height:calc(92vh - 124px);object-fit:contain}
+#lightbox .lb-foot{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:4px 12px 12px}
+#lightbox .lb-foot .btn{font-size:var(--fs-s);padding:5px 11px;color:var(--ink-blue);text-decoration:none}
+#lightbox .lb-foot .btn[hidden]{display:none}
+#lightbox .lb-path{display:flex;align-items:center;gap:2px;flex:1 1 100%;min-width:0;background:var(--surface-1);border-radius:var(--r-pill);padding:2px 2px 2px 12px;margin-bottom:4px}
+#lightbox .lb-path[hidden]{display:none}
+/* 長いパスは先頭側を省く（ファイル名が見えるように）。全体は title */
+#lightbox .lb-path-text{flex:1;min-width:0;font:var(--fs-xs)/1.6 var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+#lightbox .lb-path .btn-icon{width:28px;height:28px;padding:0;color:var(--ink-weak)}
+#lightbox .lb-gap{flex:1}
 #lightbox .lb-cap{padding:8px 16px;font-size:var(--fs-xs);color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #lightbox .lb-cap:empty{display:none}
 #lightbox .lb-close{position:absolute;right:8px;top:8px;background:var(--surface-paper)}
