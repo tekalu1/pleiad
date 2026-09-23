@@ -43,7 +43,8 @@ export function createContextMenu() {
     trim(depth);
     const panel = el('div', 'pop menu');
     panel.setAttribute('role', 'menu'); panel.trigger = trigger;
-    if (title) panel.append(el('div', 'head', title));
+    // 見出しは 1 行で省略する。確認文のように全文を読ませたいものは { text, wrap: true } で渡す
+    if (title) panel.append(typeof title === 'object' ? el('div', 'head' + (title.wrap ? ' wrap' : ''), title.text) : el('div', 'head', title));
     panel.onpointerenter = () => { clearTimeout(closeTimer); };
     panel.onfocusin = cancelTimers;
     panel.onpointerleave = e => {
@@ -56,7 +57,7 @@ export function createContextMenu() {
       if (item.input) {
         const input = el('input', 'field');
         input.placeholder = item.input.placeholder ?? ''; input.value = item.input.value ?? '';
-        input.setAttribute('aria-label', input.placeholder || title || t('common.input'));
+        input.setAttribute('aria-label', input.placeholder || (typeof title === 'object' ? title?.text : title) || t('common.input'));
         input.onkeydown = e => { if (isComposingKey(e)) return; if (e.key === 'Enter') { e.preventDefault(); const v = input.value.trim(); if (v) { close(true); item.input.onCommit(v); } } };
         panel.append(input); continue;
       }
