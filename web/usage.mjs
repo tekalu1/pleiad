@@ -68,11 +68,9 @@ export function renderEndpoints(parent, endpoints) {
     parent.append(el('h4', null, `接続先 ${e.name}`));
     let local = false;
     try { local = ['localhost', '127.0.0.1', '[::1]'].includes(new URL(e.baseUrl).hostname); } catch {}
-    parent.append(el('p', 'usage-note', local
-      ? 'この接続先の使用量は表示できません。手元で動いているため枠がありません。'
-      : `この接続先の使用量は表示できません。互換の接続先は枠の情報を返さないためです。残高や請求は ${e.name} の管理画面で確認してください。`));
+    parent.append(el('p', 'usage-note', local ? '使用量は表示できません（ローカル）。' : `使用量は表示できません。残高は ${e.name} の管理画面で確認してください。`));
   }
-  parent.append(el('p', 'usage-note', '互換の接続先で動かした分も「Pleiad での使用実績」に含まれます。その参考費用はモデルの単価が分からないため当てになりません。'));
+  parent.append(el('p', 'usage-note', '互換の接続先の分の参考費用は当てになりません（単価が不明）。'));
 }
 export function setupUsage({ $, cmd, getBackends, page, isOpen, onUsageLogin, endpoints = async () => [] }) {
   let loading = false;

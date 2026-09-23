@@ -21,6 +21,7 @@ import { claudeContextOptions, unexpectedNativeMcp } from './context-options.mjs
 import { z } from "zod";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import * as store from "../store.mjs";
 import { buildClaudeModels, FALLBACK_MODELS } from "./claude-models.mjs";
@@ -28,6 +29,16 @@ import { normalizeSdkMessage, transcriptToMessages, mergeQueuedCommands, subagen
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog } from "./claude-background.mjs";
 
 const NL = String.fromCharCode(10);
+
+// runTurn が使う SDK の入口と中断の待ち時間。テスト（tests/unit/claude-steer-stop.mjs）だけが差し替える。
+// 中断は CLI に interrupt を頼み、stopAckMs のうちに受領（interrupt の応答か result）が無ければ
+// 入力を閉じて SDK の abort に落とす。受領の後も stopExitMs のうちに終わらなければ同じく落とす
+const sdk = { query, executable: claudeExecutable, stopAckMs: 2500, stopExitMs: 3000 };
+export function setClaudeSdkForTest(over = {}) {
+  const prev = { ...sdk };
+  Object.assign(sdk, over);
+  return () => Object.assign(sdk, prev);
+}
 
 // Pleiadが提供するツール。名前はMCPサーバー名 host / ply から決まる。
 const HOST_TOOL_NAMES = [
@@ -498,7 +509,7 @@ export const backend = {
     const input = createInputQueue();
     async function* promptStream() {
       if (contextRuntime) await readyContext;
-      if (input.closed) return;       // 走り出す前に中断された
+      if (input.closed || signal?.signal?.aborted) return;       // 走り出す前に中断された
       yield userMessage(prompt);
       yield* input;
     }
@@ -515,7 +526,12 @@ export const backend = {
     hostCalls.watch(() => closer.settle());   // 最後の応答が終わった時点でも閉じてよいか見直す
     const settleInput = () => closer.settle();
     const closeInput = () => closer.now();
-    signal?.signal?.addEventListener?.("abort", closeInput, { once: true });
+    // SDK には server の AbortController（signal）を渡さない。渡すと中断の瞬間に SDK が CLI の stdin を閉じ、
+    // interrupt の control_request を書けなくなる（閉じた後の書き込みは黙って捨てられる）。
+    // stdin を閉じるだけでは CLI は止まらず、今の仕事と待ち行列を片付けてから終わる。Windows では
+    // SDK が 2 秒 + 5 秒待ってから claude.exe を kill するので、それまで動き続けていた（2026-09-23 調査）。
+    // そこで中断はまず interrupt（Esc と同じ）で頼み、応答が無いときだけ sdkAbort を引く（stopTurn）
+    const sdkAbort = new AbortController();
 
     // Pleiad 自身が渡す MCP。MCP を Pleiad が担当するときの「ネイティブ MCP を止められたか」の確認でも、これらは除く
     const plyServers = { host: buildToolServer(ctx), ...(agentRuntime ? { ply_agents: { type: "http", url: agentRuntime.url, headers: agentRuntime.headers } } : {}), ...(contextRuntime ? { ply_context: { type: 'http', url: contextRuntime.url, headers: contextRuntime.headers } } : {}) };
@@ -527,10 +543,10 @@ export const backend = {
     const hide = text => redactSecret(redactToken(text, oauthToken), endpoint?.key);
     // query の組み立てで例外になっても、鍵を含むフラグ設定のファイルを残さない（ターンの終わりの finally まで届かないため）
     let q;
-    try { q = query({
+    try { q = sdk.query({
       prompt: promptStream(),
       options: {
-        pathToClaudeCodeExecutable: claudeExecutable(),
+        pathToClaudeCodeExecutable: sdk.executable(),
         // env は置き換え（足し算ではない）なので process.env を必ず広げる。
         // 待ちの上限は 0 = 無し。入力を開けている限り CLI は上限を見ないが、閉じた後の保険として外す。
         // 会話で選んだアカウントのトークンは、この会話の env にだけ入れる（process.env は触らない。core/claude-accounts.mjs）
@@ -540,7 +556,7 @@ export const backend = {
         stderr: createStderrLog({ secrets: [oauthToken, endpoint?.key].filter(Boolean) }),
         resume: sessionId ?? undefined,
         cwd,
-        abortController: signal,
+        abortController: sdkAbort,
         // 流し込んだ user メッセージが**折り込まれた瞬間**に echo（isReplay）を返させる。
         // 既定ではストリームに合図が無く、途中送信が会話に入ったことを外から確かめられない。
         // 返ってくるのは最初のプロンプトと自分が push した分だけで、CLI 内部の通知は replay されない
@@ -585,18 +601,24 @@ export const backend = {
     // 今のターンが終わってから次のターンで送る（codex.mjs の control.steer と同じ約束）。
     //
     // priority "next" で流すと、**次のツール結果の区切り**で今のターンに折り込まれ、
-    // そのターンの中で答える。区切りが来ないままターンが終わったときは待ち行列から外れ、
-    // 次のターンとして答える。実測（2026-09、CLI 2.1.273。temporary/steer-inline/）:
+    // そのターンの中で答える。実測（2026-09、CLI 2.1.273。temporary/steer-inline/）:
     //   - ツールを走らせている最中: その結果の直後に折り込まれ、同じターンで答える
     //   - 承認を待っている最中: 承認が返るまで待ち、返った区切りで同じターンに折り込まれる
     //   - 裏の作業を待って main が止まっている最中: 止まっていること自体が区切りになり、
     //     約 1.6 秒で折り込まれてすぐ答える（"later" と同じ速さ）
     // どの場面でも遅れないので、tracker の状態で priority を出し分けることはしない。
+    // 区切りが来ないまま CLI の内部ターンが終わったとき（最後の本文を書いている最中に送ったとき）は、
+    // CLI が待ち行列に溜まった分を**全部まとめて**次の内部ターンとして取り出す。Claude の Pleiad ターンは
+    // query 全体なので（途中の result は heldResult で保留する）、その答えも**同じ Pleiad ターンの中**で流れる。
     //
     // 折り込まれた瞬間はストリームに合図が無い。`replay-user-messages`（options の extraArgs）を
-    // 付けると、折り込みと同時に isReplay の user が流れるので、push した本文を FIFO に覚えておいて
-    // 突き合わせ、渡ったものを userMessage.delivered として外へ出す。
-    const pendingSteers = [];        // { id, text } 流し込んだが、まだ折り込まれていないもの
+    // 付けると、折り込みと同時に isReplay の user が流れるので、それと突き合わせて渡ったものを
+    // userMessage.delivered として外へ出す（takeDelivered）。突き合わせは**毎回新しく振る uuid** が本命。
+    // 本文だけで照合していたころは、まとめて取り出された分（本文が \n でつながった replay が 1 本だけ）を
+    // 取りこぼし、答えが返っているのに「次の区切りで AI に渡します」が残った（実測 2026-09-23、CLI 2.1.280。
+    // uuid を付けたフレームだけ、メンバーごとの replay が出る）。uuid は CLI の重複除けにも効くので使い回さない。
+    // uuid は interrupt({ cancelQueued }) で取り消された分を知るのにも使う（stopTurn）
+    const pendingSteers = [];        // { id, uuid, text, sawResult } 流し込んだが、まだ折り込まれていないもの
     const openSteer = () => {
       if (!control) return;
       // 「渡った」合図を後から出せる。server はこれを見て、渡るまでを pending として画面に出す
@@ -604,8 +626,10 @@ export const backend = {
       control.steer = async (item) => {
         const text = String(item?.args?.prompt ?? "");
         if (input.closed || signal?.signal?.aborted) return false;
-        if (!input.push({ ...userMessage(text), priority: "next" })) return false;   // CLI の既定と同じだが、既定が変わっても折り込みを保つ
-        pendingSteers.push({ id: item?.id ?? null, text });
+        // item.id（outbox の id）は UUID とは限らないので、CLI に渡す uuid は別に振る
+        const uuid = randomUUID();
+        if (!input.push({ ...userMessage(text), uuid, priority: "next" })) return false;   // CLI の既定と同じだが、既定が変わっても折り込みを保つ
+        pendingSteers.push({ id: item?.id ?? null, uuid, text, sawResult: false });
         tracker.pushed();
         settleInput();   // 流し込んだ分がまだ手付かずなので、閉じる予約が出ていたら取り消す
         return true;
@@ -613,17 +637,111 @@ export const backend = {
       control.onReady?.();
     };
 
+    const takeAt = (i) => pendingSteers.splice(i, 1)[0].id;
     /**
-     * 折り込みの echo（isReplay の user）と、流し込んだ本文を突き合わせる。
-     * 最初のプロンプトも replay されるが、FIFO に無いので素通りする。
+     * まとめて取り出された分の本文（メンバーの本文を \n でつないだもの）から、含まれる途中送信を取り出す。
+     * 先頭から順に、覚えている順で当てはめる。最後まで当てはまったときだけ取り出す（途中で外れたら何もしない）
+     */
+    const takeMerged = (text) => {
+      const hits = [];
+      let pos = 0;
+      for (let i = 0; i < pendingSteers.length && pos < text.length; i++) {
+        const t = pendingSteers[i].text;
+        if (!t || !text.startsWith(t, pos)) continue;
+        const end = pos + t.length;
+        if (end !== text.length && text[end] !== "\n") continue;
+        hits.push(i);
+        pos = end === text.length ? end : end + 1;
+      }
+      if (pos !== text.length || !hits.length) return [];
+      return hits.reverse().map(takeAt).reverse();
+    };
+    /**
+     * 折り込みの echo（isReplay の user）と、流し込んだ途中送信を突き合わせ、渡った分の id を返す。
+     * 1. uuid で引く。まとめて取り出された分の replay は最後のメンバーの uuid を持ち、本文はつないだもの。
+     *    前のメンバーは普通それぞれの uuid で先に来るが、来なかったときに備えて本文の残りからも拾う
+     * 2. 本文の完全一致（uuid を返さない CLI への備え）
+     * 3. 本文がつないだものなら、含まれる分をまとめて
+     * 最初のプロンプトも replay されるが、覚えていないので素通りする。
      */
     const takeDelivered = (m) => {
-      if (m?.type !== "user" || !m.isReplay || !pendingSteers.length) return null;
-      const text = m.message?.content;
-      if (typeof text !== "string") return null;
-      const i = pendingSteers.findIndex((p) => p.text === text);
-      return i < 0 ? null : pendingSteers.splice(i, 1)[0].id;
+      if (m?.type !== "user" || !m.isReplay || !pendingSteers.length) return [];
+      const text = typeof m.message?.content === "string" ? m.message.content : null;
+      const byUuid = m.uuid ? pendingSteers.findIndex((p) => p.uuid === m.uuid) : -1;
+      if (byUuid >= 0) {
+        const hit = pendingSteers[byUuid];
+        const ids = [takeAt(byUuid)];
+        if (text && text !== hit.text && text.endsWith("\n" + hit.text)) {
+          ids.unshift(...takeMerged(text.slice(0, text.length - hit.text.length - 1)));
+        }
+        return ids;
+      }
+      if (text === null) return [];
+      const same = pendingSteers.findIndex((p) => p.text === text);
+      if (same >= 0) return [takeAt(same)];
+      return takeMerged(text);
     };
+    /**
+     * 保険。CLI の内部ターンが終わった（result）後に次の内部ターンが始まった（system/init）なら、
+     * その result より前に流し込んで残っている分は、もう取り出されている（CLI は区切りで溜まった分を全部取り出す）。
+     * replay を取りこぼしても、答えが流れている間ずっと「渡します」のまま残らないようにする
+     */
+    const takeLeftovers = (m) => {
+      if (m?.type === "result") { for (const p of pendingSteers) p.sawResult = true; return []; }
+      if (m?.type !== "system" || m.subtype !== "init") return [];
+      const ids = [];
+      for (let i = pendingSteers.length - 1; i >= 0; i--) if (pendingSteers[i].sawResult) ids.unshift(takeAt(i));
+      return ids;
+    };
+
+    // 中断（server の turn.ac）。まず CLI に interrupt を頼む（Esc と同じで、今のターンをすぐ打ち切る）。
+    // cancelQueued で、流し込んだがまだ折り込まれていない途中送信も CLI 側で取り消させる
+    // （d.ts の型には引数が無いが、SDK 0.3.258 の実装は受けて cancel_queued を付ける。古い CLI は無視する）。
+    // 取り消された分は userMessage.dropped を出し、server が送信待ちの保留へ戻す。
+    // perTaskStopAffordance を宣言していないので、interrupt は裏のタスクも止める。
+    // 受領（interrupt の応答か result）が stopAckMs のうちに来なければ、入力を閉じて SDK の abort に落とす。
+    // 受領した後は入力を閉じ、CLI が自分で終わるのを stopExitMs まで待つ（過ぎたら同じく SDK の abort）。
+    // どちらで終わっても、このターンの結果は aborted にする（interrupt の後は例外ではなく result で終わるため、
+    // signal.aborted の catch だけでは拾えない）。
+    // Windows でのプロセスツリーごとの強制終了は入れていない。SDK が pid を渡すのは spawnClaudeCodeProcess で
+    // 自前に起動したときだけで、そうすると SDK の stderr の扱い（終了時のエラーに添える末尾）を失うため
+    let stop = null;   // { acked, forced, timer }
+    const clearStopTimer = () => { if (stop?.timer) { clearTimeout(stop.timer); stop.timer = null; } };
+    const forceStop = () => {
+      if (!stop || stop.forced) return;
+      stop.forced = true;
+      clearStopTimer();
+      closeInput();
+      sdkAbort.abort();
+    };
+    const stopAcked = () => {
+      if (!stop || stop.acked || stop.forced) return;
+      stop.acked = true;
+      clearStopTimer();
+      closeInput();
+      stop.timer = setTimeout(forceStop, sdk.stopExitMs);
+    };
+    const dropCancelled = (uuids) => {
+      if (!Array.isArray(uuids)) return;
+      for (const uuid of uuids) {
+        const i = pendingSteers.findIndex((p) => p.uuid === uuid);
+        if (i < 0) continue;   // こちらが送っていない uuid（CLI 内部の分）は無視する
+        const id = takeAt(i);
+        if (id) emit({ type: "userMessage.dropped", messageId: id });
+      }
+    };
+    const stopTurn = () => {
+      if (stop) return;
+      stop = { acked: false, forced: false, timer: null };
+      if (typeof q?.interrupt !== "function") return forceStop();
+      stop.timer = setTimeout(forceStop, sdk.stopAckMs);
+      Promise.resolve()
+        .then(() => q.interrupt({ cancelQueued: true }))
+        .then((receipt) => { dropCancelled(receipt?.cancelled); stopAcked(); },
+          () => forceStop());   // 送れなかった（CLI が既に落ちている・受け付けない）
+    };
+    if (signal?.signal?.aborted) stopTurn();
+    else signal?.signal?.addEventListener?.("abort", stopTurn, { once: true });
 
     // init メッセージには**実際に解決されたモデル**が乗る。エイリアス（opus / haiku）が
     // 何になったかはこれでしか分からないので、session イベントに添えて外へ出す。
@@ -673,13 +791,18 @@ export const backend = {
         }
 
         // 流し込んだ途中送信が会話に折り込まれた。どれが渡ったかを、返答より先に知らせる
-        const deliveredId = takeDelivered(message);
-        if (deliveredId) emit({ type: "userMessage.delivered", messageId: deliveredId });
+        for (const id of [...takeDelivered(message), ...takeLeftovers(message)]) {
+          if (id) emit({ type: "userMessage.delivered", messageId: id });
+        }
+        // 中断を頼んだ後の result は、interrupt が効いた合図（応答より先に来ることがある）
+        if (stop && message.type === "result") stopAcked();
 
         for (const ev of normalizeSdkMessage(message)) {
           // result は 1 回の query で何度も出る（裏の subagent が終わるたびに main が再開する・途中送信に答える）。
           // turnResult は「このターンが終わった」の合図で、server はそれを見て途中送信を止める。
-          // 成功の分は最後の 1 つだけを query の終わりに出す。使用量（usage）は累計なのでその都度出してよい
+          // 成功の分は最後の 1 つだけを query の終わりに出す。使用量（usage）は累計なのでその都度出してよい。
+          // 中断を頼んだ後の result（打ち切られた内部ターン）は出さない。結果は最後に aborted で出す
+          if (ev.type === "turnResult" && stop) continue;
           if (ev.type === "turnResult" && ev.outcome === "ok") { heldResult = ev; continue; }
           emit(ev);
         }
@@ -687,11 +810,12 @@ export const backend = {
         for (const ev of tracker.observe(message)) emit(ev);
         settleInput();
       }
-      if (heldResult) emit(heldResult);
+      if (stop) emit({ type: "turnResult", outcome: "aborted" });
+      else if (heldResult) emit(heldResult);
     } catch (err) {
       // 中断は「失敗」ではない。呼び出し側（server）は finally で片付けるだけなので、
       // 何が起きたかは turnResult で web に伝える。
-      if (signal?.signal?.aborted) {
+      if (stop || signal?.signal?.aborted) {
         emit({ type: "turnResult", outcome: "aborted" });
         return { sessionId: ctx.sessionId };
       }
@@ -700,8 +824,9 @@ export const backend = {
       if ((oauthToken || endpoint) && err?.message && message !== err.message) throw new Error(message);
       throw err;
     } finally {
+      clearStopTimer();
       await flag?.dispose();
-      signal?.signal?.removeEventListener?.("abort", closeInput);
+      signal?.signal?.removeEventListener?.("abort", stopTurn);
       for (const [id, x] of liveQueries) if (x === q) liveQueries.delete(id);
       closeInput();
       if (contextRuntime) { q.close(); releaseContext(); }

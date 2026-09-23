@@ -107,6 +107,7 @@ const state = {
   askedFor: new Set(), // 一覧に無いセッションのために取り直した記録（取り直しの繰り返しを防ぐ）
   work: { count: 0, turns: [], permissions: [], subagents: [], background: [] },
   runningIds: new Set(),   // いま走っているセッション（サーバの running が正）
+  stopping: new Set(),     // 中断を頼んだが、まだ止まり終えていないセッション（押した瞬間と、サーバの running の stopping）
   bgWaiting: new Map(),    // 裏を待っているセッション -> 待っている本数（running のターン行の phase と background が正）
   waitingIds: new Set(),   // 承認・回答を待っているセッション
   // 未解決の承認: id -> permission イベントの中身。会話を開き直すたびに描き直す材料。
@@ -594,6 +595,8 @@ const activity = {
     this.el?.closest(".mw")?.querySelector(".activity-tip")?.replaceChildren(this.mark());
   },
   show(text) {
+    // 中断を頼んだ後は、止まり終えるまで何が流れてきても「中断している」のまま出す
+    if (stoppingHere()) text = ACTIVITY_LABEL.stopping;
     this.text = text;
     if (!this.t0) this.t0 = Date.now();
     const was = this.behind;
@@ -722,11 +725,12 @@ function appendText(text) {
 }
 
 const ACTIVITY_LABEL = {
-  thinking: "考えている",
-  writing: "書いている",
-  compacting: "文脈を圧縮している",
-  waiting: "あなたの応答を待っている",
-  running: "動いている",
+  thinking: t("activity.thinking"),
+  writing: t("activity.writing"),
+  compacting: t("activity.compacting"),
+  waiting: t("activity.waiting"),
+  running: t("activity.running"),
+  stopping: t("activity.stopping"),   // 中断を受け付けた。バックエンドが止まり終えるまで（server の abort が出す）
 };
 
 // ---------------------------------------------------------------- イベント
@@ -935,6 +939,8 @@ function onEvent(ev, replay = false) {
 
     case "activity":
       if (ev.state === "idle") return activity.hide();
+      // 別のタブで押した中断・開き直した会話でも、止まり終えるまで中断ボタンを押せなくする
+      if (ev.state === "stopping" && ev.sessionId && isRunningHere()) { state.stopping.add(ev.sessionId); syncRunState(); }
       return activity.show(ev.label || ACTIVITY_LABEL[ev.state] || "動いている");
 
     case 'taskNotice':
@@ -1047,12 +1053,14 @@ function onEvent(ev, replay = false) {
 
     case "turnEnd":
       closeTurnEl();
-      // 区切りが来ないままターンが終わった分。エージェントは次のターンとして答える（claude で実測）。
+      // 渡った合図が来ないままターンが終わった分。Codex などは次のターンとして答える。
+      // Claude は区切りで取り出された分にも同じターンの中で答え、渡った合図も出す（取りこぼしても、
+      // 次の内部ターンが始まった時点で出す。core/backends/claude.mjs の takeLeftovers）ので、普通はここに残らない。
       // 待っているものは何も走っていないので、回る弧はここで外す
       for (const row of thread.querySelectorAll('.mw[data-delivery-pending]')) markDelivery(row, 'late');
       state.awaitingSession = false;
       state.submitting = false;
-      if (ev.sessionId) state.runningIds.delete(ev.sessionId);
+      if (ev.sessionId) { state.runningIds.delete(ev.sessionId); state.stopping.delete(ev.sessionId); }
       syncRunState();
       syncHistory();
       return refresh();
@@ -1086,6 +1094,9 @@ function applyRunning(work) {
     || behind.size !== state.bgWaiting.size || [...behind].some(([id, n]) => state.bgWaiting.get(id) !== n);
   state.runningIds = running;
   state.waitingIds = waiting;
+  // 中断中の印はサーバの turn.info.stopping が正。走り終えた会話の分は外す
+  for (const t of state.work.turns ?? []) if (t.stopping && t.sessionId) state.stopping.add(t.sessionId);
+  for (const id of [...state.stopping]) if (!running.has(id)) state.stopping.delete(id);
   state.bgWaiting = behind;
   if (state.current && state.runningIds.has(state.current)) state.submitting = false;
   syncRunState();
@@ -3113,6 +3124,10 @@ function isRunningHere() {
 }
 
 const isWaitingHere = () => (state.work.permissions ?? []).some(belongsHere);
+/** いま表示している会話の中断を受け付けて、止まり終えるのを待っているか */
+function stoppingHere() {
+  return Boolean(state.current) && state.stopping.has(state.current);
+}
 
 /** 実行状態から見た目を合わせる。走っている本数ではなく「この画面が走っているか」で決める。 */
 function syncRunState() {
@@ -3121,6 +3136,8 @@ function syncRunState() {
   $("send").disabled = submittingMessages.has(state.current) || state.loadingSession === state.current && Boolean(state.current)
     || Boolean(retiredHere());
   $("abort").hidden = !(here || isWaitingHere());
+  // 受け付けた中断は取り消せない。止まり終えるまで押せないようにする（稼働表示は「中断している」）
+  $("abort").disabled = here && stoppingHere();
   if (!here) {
     closeTurnEl();
     // ターンは終わったが裏の作業が残っている。末尾の節は消さずに衛星にする（中断は出さない）
@@ -3249,7 +3266,21 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   isRunning: () => Boolean(state.current && state.runningIds.has(state.current)) });
 $('contextEntry').onclick = () => sessionContext.toggle($('contextEntry'));
 // 止めるのは今見ているセッションだけ。他のセッションは走らせたままにする
-$("abort").onclick = () => cmd("abort", { sessionId: state.current }).catch(() => {});
+$("abort").onclick = () => {
+  const sessionId = state.current;
+  // 走っているターンの中断は、押した瞬間に受け付けた見た目にする（サーバの running が追って確かめる）。
+  // 承認を待っているだけ（ターンの外）なら止まり終える待ちは無いので印を立てない
+  const running = isRunningHere();
+  if (sessionId && running) {
+    state.stopping.add(sessionId);
+    syncRunState();
+    activity.show(ACTIVITY_LABEL.stopping);
+  }
+  cmd("abort", { sessionId }).catch(() => {
+    if (sessionId) state.stopping.delete(sessionId);
+    syncRunState();
+  });
+};
 
 $("authNeed").onclick = (e) => { e.stopPropagation(); side.closePops(); openSettings(); };
 

@@ -20,5 +20,13 @@
       "hour_other": "{{count}}時間",
       "day_other": "{{count}}日"
     }
+  },
+  "activity": {
+    "thinking": "考えている",
+    "writing": "書いている",
+    "compacting": "文脈を圧縮している",
+    "waiting": "あなたの応答を待っている",
+    "running": "動いている",
+    "stopping": "中断している"
   }
 }

@@ -24,5 +24,13 @@
       "day_one": "{{count}}d",
       "day_other": "{{count}}d"
     }
+  },
+  "activity": {
+    "thinking": "Thinking",
+    "writing": "Writing",
+    "compacting": "Compacting context",
+    "waiting": "Waiting for your reply",
+    "running": "Running",
+    "stopping": "Stopping"
   }
 }
