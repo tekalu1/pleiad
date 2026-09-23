@@ -4,4 +4,13 @@
     <string name="title_activity_main">Pleiad</string>
     <string name="package_name">com.procway.pleiad</string>
     <string name="custom_url_scheme">com.procway.pleiad</string>
+    <!-- The in-app proxy's notice page (same texts as remote.device.* in web/locales/en/server.json) -->
+    <string name="remote_revoked">This device was removed on the host</string>
+    <string name="remote_host_offline">Can\'t reach the host</string>
+    <string name="remote_page_revoked">Pair this device again.</string>
+    <string name="remote_page_host_offline">Make sure Pleiad is running on the host. This page opens automatically once connected.</string>
+    <string name="remote_page_offline">Can\'t reach the relay. Check your network. This page opens automatically once connected.</string>
+    <string name="remote_token_required">A token is required (open this from the app)</string>
+    <string name="remote_lost">Lost the connection to the host</string>
+    <string name="host_open_failed">Couldn\'t open this host. Go back and try again.</string>
 </resources>

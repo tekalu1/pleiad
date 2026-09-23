@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  docs/remote.md §8.3: cleartext only to the in-app loopback proxy (the host WebView loads http://127.0.0.1:<p>/) and to a
+  loopback relay used for testing (adb reverse). Everything else, including the relay, must be HTTPS / WSS.
+  No user-installed CAs (a relay MITM would still fail the Noise handshake, but don't invite it).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>
