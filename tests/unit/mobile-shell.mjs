@@ -25,13 +25,20 @@ export default async function (t) {
     /addDocumentStartJavaScript\(w, remoteScript\(info\), setOf\(origin\)\)/.test(host) && /addWebMessageListener\(w, BRIDGE, setOf\(origin\)\)/.test(host)
       && /!isMainFrame \|\| sourceOrigin\.toString\(\) != origin/.test(host) && !/com\.getcapacitor/.test(host));
   t.ok('window.backToHosts も plyRemote.backToHosts と同じものを入れる（再定義できない）', /defineProperty\(window, 'backToHosts', \{ value: api\.backToHosts, writable: false, configurable: false/.test(script));
-  t.ok('ホストの窓は edge-to-edge（安全領域は web/ の env() が受け持つ）', /setDecorFitsSystemWindows\(window, false\)/.test(host));
-  // 上端に塗りを使わなくなった（2026-09-23）。状態バーの下地は画面の紙の色なので、記号の明暗は画面の配色に従う
-  t.ok('状態バー・ナビゲーションバーの記号は画面の配色に従う（初めは OS の明暗、画面が setTheme で知らせたらそれ）',
-    /isAppearanceLightStatusBars = !dark/.test(host) && /isAppearanceLightNavigationBars = !dark/.test(host) && /applyBars\(isNight\(\)\)/.test(host)
-      && /"theme" -> \{.*applyBars\(dark\)/.test(host) && /setTheme: \(dark\) => post\('theme', \{ dark: dark === true \}\)/.test(script)
-      && !/isAppearanceLightStatusBars = false/.test(host));
-  t.ok('戻るボタンはまず画面に plyremote:back（取り消せる）を投げる', /new CustomEvent\('plyremote:back', \{ cancelable: true \}\)/.test(host));
+  // システムバーの下には画面を描かない（2026-09-24）。WebView はバーとキーボードの分だけ内側に寄せ、insets を消費する（env() は 0）
+  t.ok('ホストの窓はシステムバー・切り欠き・キーボードの分だけ内側に寄せ、insets を WebView へ渡さない',
+    /frame\.setPadding\(bars\.left, bars\.top, bars\.right, maxOf\(bars\.bottom, ime\.bottom\)\)/.test(host) && /WindowInsetsCompat\.CONSUMED/.test(host)
+      && /frame\.addView\(w, 0/.test(host) && !/probeSafeArea|padBars/.test(host));
+  t.ok('バーは画面の地の色で塗り、記号は画面の配色に従う（初めは OS の明暗、画面が setTheme で知らせたらそれ）',
+    /isAppearanceLightStatusBars = !dark/.test(host) && /isAppearanceLightNavigationBars = !dark/.test(host) && /applyBars\(isNight\(\), paper, paper\)/.test(host)
+      && /topBand\.setBackgroundColor\(top\)/.test(host) && /root\.setBackgroundColor\(bottom\)/.test(host)
+      && /"theme" -> applyTheme\(message\.data\)/.test(host) && /\^#\[0-9a-fA-F\]\{6\}\$/.test(host)
+      && /setTheme: \(dark, colors\) => post\('theme', \{ dark: dark === true, top: .*bottom: /.test(script));
+  t.ok('戻るボタンはまず画面に plyremote:back（取り消せる）を投げ、取り消されなければ背面へ回る（ホスト一覧へは戻らない）',
+    /new CustomEvent\('plyremote:back', \{ cancelable: true \}\)/.test(host) && /if \(result != "true"\) moveTaskToBack\(true\)/.test(host));
+  const client = read('web/client.mjs');
+  t.ok('web/ は殻の戻るで開いている面を閉じ、殻へ上端・下端の地の色を送る',
+    /addEventListener\("plyremote:back"/.test(client) && /watchShellBack\(\);/.test(client) && /setTheme\(dark, colors\)/.test(client) && /watchShellTheme\(\);/.test(client));
   const info = remoteInfo({ hostId: 'trleh4p5diok2b3hxpcck5nsba', hostName: 'desk', relay: 'https://relay.example', device: 'Pixel', shell: 'mobile' });
   t.ok('remoteInfo はモバイルの形を受ける（shell: mobile）', info?.shell === 'mobile' && info.host === 'desk');
   t.ok('殻の状態の名前はバッジの状態と同じ（revoked）', badgeView(info, { state: 'revoked' }).state === 'revoked');
