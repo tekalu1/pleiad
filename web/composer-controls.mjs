@@ -14,6 +14,7 @@ import { isComposingKey } from "./keyboard.mjs";
 import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, endpointChipLabel } from "./composer-labels.mjs";
 import { compatModelLabel, modelCandidates, searchModels, resolveTyped, moreText, ONE_M_TITLE } from "./compat-models.mjs";
 import { t } from "./i18n.mjs";
+import { splitChipLabel } from "./composer-layout.mjs";
 
 /** 一覧の「既定」の札 */
 const DEFAULT_TAG = () => t("chat.model.default");
@@ -21,6 +22,10 @@ const DEFAULT_TAG = () => t("chat.model.default");
 const FOLDER = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
 const FOLDER_ADD = "M12 11v5M9.5 13.5h5";
 const SHIELD = "M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z";
+// YOLO のときに盾と入れ替える ⚠ の線画（字には ⚠ を書かない。記号は 1 つ）
+const WARN = ["M12 3.5l9.5 16.5h-19z", "M12 10v4.5M12 17.2v.3"];
+// モデルのアイコン（チップの形を 3 つそろえるため。2026-09-23 に足した）
+const MODEL = ["M8 6h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z", "M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3"];
 const CARET = "M7 10l5 5 5-5";
 
 function glyph(...paths) {
@@ -50,9 +55,10 @@ let openPanel = null;   // 同時に開くのは 1 枚だけ
 
 /**
  * チップ（押すもの）の上に浮く面。同時に開くのは 1 枚だけで、面の外を押すと閉じる。
- * width は面の幅（px。関数なら開くたび・置き直すたびに読む）。添付のメニュー（web/folder-upload.mjs）も使う
+ * width は面の幅（px。関数なら開くたび・置き直すたびに読む）。添付のメニュー（web/attach-menu.mjs）も使う。
+ * when は開いてよいか（false なら押しても開かない。添付のメニューはホストの画面では開かず、クリップがすぐファイルを選ぶ）
  */
-export function panel(chip, pop, { align = "left", render, onShow, width: wantWidth = 360 }) {
+export function panel(chip, pop, { align = "left", render, onShow, width: wantWidth = 360, when }) {
   const self = {
     chip, pop,
     get open() { return !pop.hidden; },
@@ -87,11 +93,11 @@ export function panel(chip, pop, { align = "left", render, onShow, width: wantWi
     },
     render,
   };
-  chip.setAttribute("aria-haspopup", "dialog");
-  chip.setAttribute("aria-expanded", "false");
-  chip.addEventListener("click", () => (self.open ? self.hide() : self.show()));
+  const may = () => !when || when();
+  if (may()) { chip.setAttribute("aria-haspopup", "dialog"); chip.setAttribute("aria-expanded", "false"); }
+  chip.addEventListener("click", () => (self.open ? self.hide() : may() && self.show()));
   chip.addEventListener("keydown", (e) => {
-    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !self.open) { e.preventDefault(); self.show(); }
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !self.open && may()) { e.preventDefault(); self.show(); }
   });
   pop.addEventListener("keydown", (e) => {
     if (isComposingKey(e)) return;
@@ -176,15 +182,16 @@ export function setupComposerControls({ cmd, get, on }) {
   const chips = { cwd: $("cwdChip"), model: $("modelChip"), mode: $("modeChip") };
   const pops = { cwd: $("cwdPop"), model: $("modelPop"), mode: $("modePop") };
 
-  // チップの骨組み（アイコン + 字 + ▾）
+  // チップの骨組み（アイコン + 字 + ▾）。3 つとも同じ形（docs/design-system.md「入力欄の設定」）
   const cwdName = el("span", "v");
   chips.cwd.append(glyph(FOLDER), cwdName, glyph(CARET));
   chips.cwd.lastChild.classList.add("caret");
   const modelName = el("span", "v");
-  chips.model.append(modelName, glyph(CARET));
+  chips.model.append(glyph(...MODEL), modelName, glyph(CARET));
   chips.model.lastChild.classList.add("caret");
   const modeName = el("span", "v");
-  chips.mode.append(glyph(SHIELD), modeName, glyph(CARET));
+  const shield = glyph(SHIELD), warn = glyph(...WARN);
+  chips.mode.append(shield, modeName, glyph(CARET));
   chips.mode.lastChild.classList.add("caret");
 
   // ---- 作業ディレクトリ
@@ -527,8 +534,14 @@ export function setupComposerControls({ cmd, get, on }) {
     if (epLabel && epModel.oneM) {
       const b = el("span", "cbadge", "1M");
       b.title = ONE_M_TITLE;
+      modelName.classList.remove("split");
       modelName.replaceChildren(epLabel.head, b, epLabel.tail ? ` · ${epLabel.tail}` : "");
-    } else modelName.textContent = label;
+    } else {
+      // 狭いときは名前だけを … で詰め、「 · 段」は残す
+      const { head, tail } = splitChipLabel(label);
+      modelName.classList.add("split");
+      modelName.replaceChildren(el("span", "mn", head), ...(tail ? [el("span", "ef", tail)] : []));
+    }
     chips.model.title = t("composer.model.chipTitle", { label: full });
     chips.model.setAttribute("aria-label", t("composer.model.chipAria", { label: full }));
     chips.model.dataset.value = d.model ?? "";
@@ -536,7 +549,13 @@ export function setupComposerControls({ cmd, get, on }) {
     // 承認モード
     const m = d.modes?.[d.mode];
     const danger = isDanger(m);
-    modeName.textContent = (danger ? "⚠ " : "") + (m?.label ?? d.mode ?? "");
+    // YOLO: 盾を ⚠ の線画に替え、強い字にする（字の頭に ⚠ は書かない・太字にしない）
+    // 狭い行では短い名前（サーバーの short。「都度」など）に替える（fitRow）。読み上げは長い名前のまま
+    const modeFull = m?.label ?? d.mode ?? "";
+    const modeShort = m?.short && m.short !== modeFull ? m.short : "";
+    modeName.replaceChildren(el("span", "full", modeFull), ...(modeShort ? [el("span", "short", modeShort)] : []));
+    const icon = danger ? warn : shield;
+    if (chips.mode.firstChild !== icon) chips.mode.firstChild.replaceWith(icon);
     chips.mode.classList.toggle("danger", danger);
     chips.mode.title = danger ? t("composer.mode.dangerTitle") : t("chat.composer.mode");
     chips.mode.setAttribute("aria-label", (danger ? t("composer.mode.chipAriaDanger", { mode: m?.label ?? d.mode ?? "" }) : t("composer.mode.chipAria", { mode: m?.label ?? d.mode ?? "" })));
@@ -550,7 +569,49 @@ export function setupComposerControls({ cmd, get, on }) {
       if (key) (p.pop.querySelector(`[data-key="${CSS.escape(key)}"]:not([hidden]):not(:disabled)`) ?? p.pop.querySelector('[aria-selected="true"]'))?.focus();
     }
     folder.place();
+    fitRow();
   }
 
-  return { paint, close: () => openPanel?.hide(false), panels: { folder, model, mode } };
+  /**
+   * チップの行を 1 行に収める（docs/design-system.md「入力欄と上端」）。短い値は詰めない。足りない分だけ、この順に削る:
+   *   1. 承認モードを短い名前に（都度確認 → 都度）  2. モデルの「 · 段」を外す
+   *   3. モデル名を … で詰める（「Smart…」くらいまで）  4. 作業ディレクトリの名前を … で詰める（9 字くらいまでは残す）
+   * 縮める前の幅は、チップを縮めない状態（.measuring）で測る。行の幅・中身が変わるたびに呼ぶ（paint・窓の幅・中断の出入り）
+   */
+  function fitRow() {
+    const row = chips.cwd.parentElement;
+    if (!row || !row.isConnected || !row.offsetParent) return;
+    const cwd = chips.cwd, mdl = chips.model;
+    row.classList.remove("fit-short", "fit-noef");
+    cwd.style.minWidth = ""; mdl.style.minWidth = "";
+    row.classList.add("measuring");
+    // 最後の部品（送信）の右端が行の右端に収まるか（scrollWidth は整数に丸められ、1px 足りないのを見逃す）
+    const fits = () => {
+      const last = [...row.children].reverse().find((n) => n.offsetParent);
+      return !last || last.getBoundingClientRect().right <= row.getBoundingClientRect().right + 0.01;
+    };
+    if (!fits()) row.classList.add("fit-short");
+    if (!fits()) row.classList.add("fit-noef");
+    let size = null;
+    if (!fits()) {
+      const w = (n) => n.getBoundingClientRect().width;
+      const v = (n) => w(n.querySelector(".v"));
+      size = { cwd: [w(cwd), w(cwd) - v(cwd)], mdl: [w(mdl), w(mdl) - v(mdl)] };
+    }
+    row.classList.remove("measuring");
+    if (!size) return;
+    // 名前の最小の幅は字の幅（ch）で決める（作業ディレクトリ 9 字・モデル 6 字）。もともと短い名前はそのまま。
+    // それでも入らない（とても狭い・中断が出ている）ときは、両方の最小を段々に下げる
+    const min = ([whole, frame], ch) => `min(${whole}px, calc(${frame}px + ${ch}ch))`;
+    for (const [a, b] of [[9, 6], [7, 4], [5, 3], [3, 2]]) {
+      cwd.style.minWidth = min(size.cwd, a);
+      mdl.style.minWidth = min(size.mdl, b);
+      if (fits()) return;
+    }
+    cwd.style.minWidth = ""; mdl.style.minWidth = "";
+  }
+  window.addEventListener("resize", fitRow);
+  if (typeof ResizeObserver === "function") new ResizeObserver(() => fitRow()).observe(chips.cwd.parentElement);
+
+  return { paint, fit: fitRow, close: () => openPanel?.hide(false), panels: { folder, model, mode } };
 }

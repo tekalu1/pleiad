@@ -345,10 +345,11 @@ main は `desktop/resident.cjs`: トレイ（Windows・Linux は押すと窓を�
 
 ### 7.2 リモートの印（3 箇所。消せない）
 
-1. **窓の上端のバッジ**: 帯の左（ロゴの上の行）に `⇄ リモート: desktop-home`。常に出し、閉じるボタンは無い。押すとホストの接続情報（中継・つないだ時刻・「この窓を閉じる」）の小さな面
-2. **帯の色**: ローカルの帯は `--surface-0`（点のグリッド）。リモートの窓は帯を `--fill-primary`、文字と窓のボタンの記号を `--on-fill` にする。
-   既存の `paintTitleBar`（`web/client.mjs:1960`）が `.titlebar` の `--bar-end` と `--ink` を読んで `setTitleBar` で送る仕組みをそのまま使い、`:root.remote .titlebar{--bar-end:var(--fill-primary)}` と記号の色の読み先を足すだけ。
-   塗りは「1 画面に 1 つ・主要操作だけ」（design-system §2.3）の例外になる。承認モードの YOLO の ⚠ と同じく、取り違えると被害が大きい場所なので例外として認める（§11 未決に代案）
+1. **窓の上端のバッジ**: 帯の左（脇の列の上）に `⇄ リモート: desktop-home`（差しの青 `--ink-blue` の字、面は付けない）。常に出し、閉じるボタンは無い。押すとホストの接続情報（中継・つないだ時刻・「この窓を閉じる」）の小さな面。
+   701px 以上の窓では会話のタイトル行（タイトル・✦・コンテキスト）を帯の右（会話の列の上）に上げ、帯とタイトル行を 1 本にする（2026-09-23、承認済みのモック [phone-composer-header.html](mockups/phone-composer-header.html) の「H1・塗りなし」）
+2. **帯の色**: ~~リモートの窓は帯を `--fill-primary`~~（2026-09-23 にやめた。利用者の決定）。帯はローカルと同じ `--surface-0`（点のグリッド）で、脇を閉じても・プレビューを並べても変えない。
+   窓のボタンの地と記号は、既存の `paintTitleBar`（`web/client.mjs`）が `.titlebar` の `--bar-end` と `--ink` を読んで `setTitleBar` で送る。画面が送るまでの一瞬は `desktop/remote-windows.cjs` の `REMOTE_BAR`（ローカルと同じ脇の面の色）。
+   見分けは、差しの青のバッジ（1）と、OS の窓タイトル・タスクバーの重ねアイコン（3）で行う。塗りの例外（design-system §2.3）は無くなった
 3. **OS の窓タイトルとタスクバー**: `Pleiad — リモート: desktop-home`（`page-title-updated` を止めて main が付ける）。Windows はタスクバーのボタンに `setOverlayIcon`（⇄ の小さな印、説明「リモート」）。macOS はタイトルと Dock メニューの窓の名前で見分ける
 
 画面は preload から「リモートの窓であること」とホスト名を受け取って描く:
@@ -373,7 +374,7 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 | 窓を閉じるときの確認（`desktop/main.cjs` の `closeSafely`） | ローカルのサーバーに実行中を聞き、アプリを終える | リモートの窓を閉じても何も止めない（ホストは #11 で待ち続ける）。確認も出さない。アプリの終了はローカルの窓の規則のまま |
 | エクスプローラーで表示・ブラウザーで開く（`hostCapabilities` の `osActions`、`core/os-open.mjs` の `isLocalRequest`） | ループバックからの接続なら許す | ホストの接続口がホストのサーバーへ張る `/ws` に `X-Forwarded-For` を付け（`core/remote/forward.mjs`）、ホストから見て「サーバーのある PC の画面」ではなくする。画面も `plyRemote` があれば出さない |
 | `ws://` 固定（`web/client.mjs:3140`）・`crypto.randomUUID()`（`:3123`） | 平文の非ループバックで壊れる | ループバックなので壊れない（直さなくてよい。モバイルの保険は §8.3） |
-| 1 ファイルの添付（`attachFile`、上限 8MB `core/server.mjs:71`） | 中身を WS で送る | そのまま |
+| 1 ファイルの添付（上限 100MB） | 中身を 512 KiB の断片で送る（`attachStart` / `attachChunk` / `attachFinish`。フォルダーを送る口と同じ `core/folder-uploads.mjs`）。1 通で丸ごと送る `attachFile`（8MB まで）は古い画面のために残す | そのまま（1 通が 64 MiB の上限・端末内プロキシの溜めを超えない） |
 | ファイルのダウンロード（`/local-file?download=1`） | ブラウザーの保存 | そのまま（Electron の保存ダイアログ）。取り出しはこれで足りる |
 
 ### 7.4 ホストへのつなぎ方
@@ -392,7 +393,10 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 
 モック: [remote-folder-picker.html](mockups/remote-folder-picker.html)。
 
-- 手元のファイルを渡すのは添付と同じ種類の操作なので、**入口は添付（クリップ）のボタン**（2026-09-23 に作業フォルダーの面のタブから移した）。リモートの窓でクリップを押すと小さな面「**ファイルを添付…**」（今までどおり）/「**フォルダーを送る…**」。ローカルの窓・ブラウザー版・モバイルではメニューを出さず、クリップはファイルを選ぶだけ。作業フォルダーの面（入力欄のチップ）はホストのフォルダーだけを扱う
+- 手元のファイルを渡すのは添付と同じ種類の操作なので、**入口は添付（クリップ）のボタン**（2026-09-23 に作業フォルダーの面のタブから移した）。作業フォルダーの面（入力欄のチップ）はホストのフォルダーだけを扱う
+- **添付の出どころ**（2026-09-23、モック [phone-composer-header.html](mockups/phone-composer-header.html)）: 出どころを選べる接続では、クリップで見出しを分けたメニューを開く。「**この端末から**」: ファイル…（デスクトップ版のリモートの窓だけ、フォルダーを送る… も）。「**ホストから** <ホスト名>」: ファイルを選ぶ… → 同じ面がホストのファイルの一覧（場所のパンくず・このフォルダーでの絞り込み・フォルダーとファイル・✓ で複数選択・「添付する（n）」）に替わり、ホストのパスのまま添付に積む（送らない。ファイルプレビューの「会話で使う」と同じ）。一覧はサーバーの `listDirs` の `{ files: true }`（名前・大きさ・更新時刻。パスの検めはフォルダーだけのときと同じ）。添付の札には出どころのアイコン（⇄ ホスト / 端末）
+  - 選べる接続: デスクトップ版のリモートの窓・モバイル版の殻（`plyRemote`）と、ホストの画面ではないブラウザー（`hostCapabilities` の `osActions === false`。LAN などで別の PC から直接開いたもの）。ホストの PC の窓・ホストで開いたブラウザーではホスト＝この端末なので選ばせず、クリップはすぐファイルを選ぶ（`web/composer-layout.mjs` の `attachSources`）
+  - 添付の件数の上限は無い（2026-09-23 に 20 件の上限を外した）。1 件は 100MB まで（断片で送る。§7.3 の表）
 - 「フォルダーを送る…」: 手元の OS のフォルダーのダイアログ（`<input type="file" webkitdirectory>`。ブラウザーの機能で読むので同じ PC のブリッジは要らない）を出し、同じ面が下の送る流れに替わる。送っている途中にクリップを押すとメニューではなく進み具合を出す
 - 選んだら送る前に: フォルダー名、**ファイル数と合計の大きさ**、除外（札。既定 `.git`・`node_modules`。× で外す、打って足す。変えると数と大きさを数え直す）、送り先（combo。既定はホストの `~/Pleiad/uploads/<フォルダー名>`、あれば `-2` を付けた新しいフォルダー。ホストの最近の作業フォルダーも候補）
 - 送り先が既にあるフォルダーなら、送る前にその場の確認「`D:\work\site` には既にファイルがあります。同じ名前の 12 件を上書きします。」（上書きしない名前の一覧は折りたたみ）
@@ -400,7 +404,7 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 - 送る前の面にチェックボックス「**送ったフォルダーを作業フォルダーにする**」（既定で入）
 - 終わったら「送りました · 3,410 件」。入なら送り先が**その会話の作業フォルダー**になる（未送信の会話はその場で、送信済みの会話は「次のターンから適用」に入る。既存の `nextSettings.cwd`）。切ってあれば作業フォルダーは変えず、会話に「フォルダーをホストの <パス> に送りました。」と一行で知らせる
 - 大きすぎるとき（2 万件超 または 2 GB 超）は送る前に一文で知らせ、除外を見直してもらう（送ることは止めない）
-- **リモートの窓にフォルダーをドロップ**したら、その場に「添付する / 作業フォルダーとして送る」を聞く小さな面。「作業フォルダーとして送る」はクリップの面を送る流れで開く（チェックボックスは入）。ファイルだけのドロップは今までどおり添付（8MB まで）
+- **リモートの窓にフォルダーをドロップ**したら、その場に「添付する / 作業フォルダーとして送る」を聞く小さな面。「作業フォルダーとして送る」はクリップの面を送る流れで開く（チェックボックスは入）。ファイルだけのドロップは今までどおり添付（1 件 100MB まで）
 
 サーバー側（新しい WS コマンド。ローカルの画面から使ってもよい、リモート専用ではない一般の口）:
 
@@ -433,10 +437,10 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 
 - 殻の画面（アプリに同梱。Capacitor の既定のオリジン）: ホスト一覧（名前・オンライン / オフライン / 確認中・最後に使った時刻）、「＋ ホストを追加」（カメラで QR → 「ホストの画面で承認してください · 確認コード 482 193」）、行の「…」（名前を変える・削除）
 - ホストを選ぶと、殻がそのホストのプロキシを立てて WebView を `http://127.0.0.1:<p>/?token=…` へ移す。殻のプラグインのブリッジはホストの画面に入れない。代わりに小さなスクリプトで `window.plyRemote = { hostId, hostName, shell: 'mobile', backToHosts() }` だけを入れる（`backToHosts` はメッセージハンドラー経由。送り元がそのプロキシのオリジンの本体フレームのときだけ受ける）
-- 画面の上端に今のホスト名の帯（`⇄ desktop-home`）。押すと `backToHosts()` でホスト一覧へ戻る。デスクトップのバッジと同じ部品で、`shell: 'mobile'` のときは safe-area の内側に置く
+- 今のホスト名（`⇄ desktop-home`）を出す。押すと `backToHosts()` でホスト一覧へ戻る。2026-09-23 から塗りは使わない（モック [phone-composer-header.html](mockups/phone-composer-header.html) の H1 配置・塗りなし）: 700px 以下はタイトルの下の差しの青の添え字、701px 以上（タブレット）は上端の帯（脇と同じ面）の左の「‹ ⇄ ホスト名」で、タイトル行は帯の右に上げる。「…」の中にも「ホスト一覧に戻る」
 - 背面に回るとプロキシとチャネルは OS に止められる。前面に戻ったら張り直し、画面は既存の再接続で追いつく。承認待ちは #11 でホストが待ち続ける
 - 暗号は iOS が CryptoKit、Android が標準の暗号（X25519 は `XDH`、AES-GCM は `javax.crypto` の `AES/GCM/NoPadding`）。どちらも §2.1 の試験ベクトルで Node の実装と突き合わせる。**Android の `XDH` は API 33 から**（developer.android.com の KeyAgreement / KeyFactory の表。当初 31 と書いたのは誤り）なので、最低の版を API 33（Android 13）にした（§11 の 3）
-- 添付はファイルだけ（`#fileIn`。カメラも可）。フォルダーの送信は出さない
+- 添付はクリップの「この端末から › ファイル…」（`#fileIn`。カメラも可）と「ホストから › ファイルを選ぶ…」（§8.1）。フォルダーの送信は出さない
 
 ### 8.3 アプリ内でローカルのプロキシを動かす制約（iOS / Android）
 
@@ -460,9 +464,9 @@ A 案で WKWebView が `127.0.0.1` を secure context と見なさなかった�
 - 資格情報: `noBackupFilesDir/remote/`。秘密は Android Keystore の AES-256-GCM の鍵で封じる（`KeystoreCipher`）。Keystore の鍵はバックアップされないので `allowBackup=false` と data extraction rules でバックアップ・端末の移行から外す
 - 平文: `network_security_config` で `127.0.0.1` だけ（ループバックのプロキシと、試験で `adb reverse` した中継）。利用者の入れた CA は信じない
 - 殻の画面（`mobile/www/`、モック ①②）: ホスト一覧（状態・最後に使った時刻・「…」で名前を変える / 削除）、「ホストを追加」（ML Kit の `scan()` で QR、カメラの許可を求め、Google のスキャナーのモジュールが無ければ入れ始める。貼り付けも可）、ペアリング中は確認コード 6 桁と「やめる」。`pleiad://pair?...` のリンク（端末のカメラで QR を開いたとき）でも開き、そのときとペアリング済みのホストのときは先に確かめる。文言は殻の辞書 `mobile/www/i18n.js`（ja / en）、ネイティブは失敗を決まったコードで返して殻が訳す
-- ホストの窓（`HostActivity`）: Capacitor の入らない素の WebView で `http://127.0.0.1:<p>/?token=…` を開く。入れるのは `window.plyRemote` だけで、`WebViewCompat.addDocumentStartJavaScript` と `addWebMessageListener` をどちらもプロキシのオリジンに限り、受け口は本体フレームからのメッセージだけを受ける。形は `{ hostId, hostName, relay, device, shell: 'mobile', status(), onStatus(fn), retry(), backToHosts(), closeWindow() }`（`closeWindow` = `backToHosts`。凍結し再定義できない）。帯のバッジはこれでデスクトップと同じ部品が動く
+- ホストの窓（`HostActivity`）: Capacitor の入らない素の WebView で `http://127.0.0.1:<p>/?token=…` を開く。入れるのは `window.plyRemote` だけで、`WebViewCompat.addDocumentStartJavaScript` と `addWebMessageListener` をどちらもプロキシのオリジンに限り、受け口は本体フレームからのメッセージだけを受ける。形は `{ hostId, hostName, relay, device, shell: 'mobile', status(), onStatus(fn), retry(), backToHosts(), closeWindow(), setTheme(dark) }`（`closeWindow` = `backToHosts`。凍結し再定義できない。`setTheme` は画面の配色を殻へ知らせる口）。帯のバッジはこれでデスクトップと同じ部品が動く
 - 戻るボタン: まず画面に取り消せる `plyremote:back` のイベント（`window`）を投げ、`preventDefault()` されなければホスト一覧へ戻る（引き出し・メニューを先に閉じたいときは web/ が受ける）。窓を離れたらそのホストのプロキシを閉じる。前面に戻ったとき `offline` / `host-offline` なら待たずに張り直す
-- 画面の端: ホストの窓は edge-to-edge（システムバーの下まで描く）。web/ は `env(safe-area-inset-*)` で帯と入力欄を置き、ホスト名の帯が状態バーの下地を塗るので、状態バーの記号は明るい色にする。殻が内側に寄せるのはキーボードの分だけ（web/ の `interactive-widget=resizes-content` と揃える）。WebView が `env(safe-area-inset-top)` を 0 と返す古い版のときだけ、読み込み後に確かめてシステムバーの分を内側に寄せる。`window.backToHosts` も `plyRemote.backToHosts` と同じものを入れる（web/remote-badge.mjs が両方を見る）
+- 画面の端: ホストの窓は edge-to-edge（システムバーの下まで描く）。web/ は `env(safe-area-inset-*)` で上端と入力欄を置く。状態バーの下地は画面の紙の色（2026-09-23 に塗りの帯をやめた）なので、状態バー・ナビゲーションバーの記号の明暗は画面の配色に合わせる（初めは OS の明暗、画面が `plyRemote.setTheme(dark)` で知らせたらそれ。`HostActivity.applyBars`。**殻の作り直しが要る**。古い殻では記号が明るいままで、明るい配色では状態バーの字が見えにくい）。殻が内側に寄せるのはキーボードの分だけ（web/ の `interactive-widget=resizes-content` と揃える）。WebView が `env(safe-area-inset-top)` を 0 と返す古い版のときだけ、読み込み後に確かめてシステムバーの分を内側に寄せる。`window.backToHosts` も `plyRemote.backToHosts` と同じものを入れる（web/remote-badge.mjs が両方を見る）
 - 添付は WebView のファイル選択（`#fileIn`）、ダウンロードは DownloadManager にプロキシの Cookie を付けて渡す。外へのリンクはブラウザーで開く
 - 版: Capacitor 8.5.2、@capacitor/app 8.1.1、@capacitor-mlkit/barcode-scanning 8.2.1、AGP 8.13.0、Gradle 8.14.3、Kotlin 2.2.21、OkHttp 4.12.0、compile / target 36、**minSdk 33**。アプリ ID `com.procway.pleiad`（デスクトップは `jp.ply.desktop`。ストアに出す前に揃えるか決める）
 
@@ -513,7 +517,7 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 
 ## 11. 未決
 
-1. **リモートの帯の色**: 案は `--fill-primary`（§7.2）。「塗りは 1 画面に 1 つ」の例外になる。代案は無彩色の濃い帯（新しいトークン `--surface-remote`）で、塗りの規則は守れるがローカルの暗い配色と見分けにくい
+1. ~~**リモートの帯の色**~~ 決定（2026-09-23）: 塗らない。帯はローカルと同じ面で、差しの青のバッジ・OS の窓タイトル・タスクバーの重ねアイコンで見分ける（§7.2）
 2. ~~**QR を作る部品**~~ 決定（2026-09-23）: `web/vendor/qrcode-generator.mjs`（MIT）を同梱（§6.1）。読み取りはモバイルのネイティブ（Capacitor のバーコードのプラグイン）
 3. ~~**Android の最低版**~~ 決定（2026-09-23）: **API 33（Android 13）以上**。X25519 を標準の `XDH` だけで済ませるため（`XDH` は API 33 から。31–32 のために自前の X25519 を持つ案は採らない。Tink も足さない）
 4. **WKWebView と `127.0.0.1` の secure context**: 実機で確かめる。だめなら §8.3 の代わりの UUID、それでもだめなら B 案
