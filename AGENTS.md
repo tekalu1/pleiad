@@ -17,7 +17,7 @@
 - 作成直後の worktree には `node_modules` が無く、そのままでは `npm test` が走らない。依存が `main` と同じなら、`npm ci` の代わりに `cmd /c mklink /J <worktreeの絶対パス>\node_modules <メインの作業ディレクトリの絶対パス>\node_modules` でジャンクションを張れば足りる。消すときは `cmd /c rmdir <worktreeの絶対パス>\node_modules` を使う（`rm -rf` はリンク先の実体を消す恐れがある）。このジャンクション操作は PowerShell から実行する。Bash tool 経由の `cmd //c mklink /J …` は「パラメーターの形式が違っています」で失敗する。
 - テストは必ず作業用 worktree の中で実行する。`main` の作業ディレクトリで `npm test` を走らせても worktree の変更は検証できない（worktree を編集しながら `main` でテストを走らせ、通ったことにしてしまった例がある）。
 - 設計は `docs/design.md`、画面の変更は `docs/design-system.md` を参照する。
-- 画面・エラー・エージェント向けの文言は辞書（`web/locales/<言語>/<名前空間>.json`）に置き、`t()` で引く（`docs/design.md`「多言語対応」）。直書きの日本語は `npm test` の lint-i18n が落とす。基準（`tests/i18n-baseline.json`）の更新は減らすときだけ（`node tests/lint-i18n.mjs --update-baseline`）。
+- 画面・エラー・エージェント向けの文言は辞書（`web/locales/<言語>/<名前空間>.json`）に置き、`t()` で引く（`docs/design.md`「多言語対応」、訳語は `docs/i18n-glossary.md` に従う）。直書きの日本語は `npm test` の lint-i18n が落とす。基準（`tests/i18n-baseline.json`）の更新は減らすときだけ（`node tests/lint-i18n.mjs --update-baseline`）。
 - コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。
 - `npm run test:e2e` は実際の LLM を呼び出すため、実サービスとの接続確認が必要な変更で実行する。
 - 現在は独立したビルドコマンドはない。文書のみの変更では、内容と `git diff --check` の確認を行えばよい。
