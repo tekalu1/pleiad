@@ -1244,5 +1244,342 @@
     "copyRelativeFailed": "Couldn't copy the relative path",
     "noRelative": "This file is outside the working directory, so it has no relative path",
     "actionFailed": "The action failed"
+  },
+  "timeline": {
+    "code": {
+      "copy": "Copy code",
+      "copied": "Copied",
+      "copyFailed": "Couldn't copy",
+      "selected": "Code selected. Press Ctrl+C / ⌘C to copy"
+    },
+    "link": {
+      "blocked": "Disabled because the link is unsafe"
+    },
+    "present": {
+      "height": {
+        "small": "S",
+        "medium": "M",
+        "large": "L"
+      },
+      "kind": {
+        "image": "Image",
+        "text": "Text",
+        "file": "File",
+        "visualization": "Visualization"
+      },
+      "copyPath": "Copy path",
+      "download": "Download HTML",
+      "sidePanel": "Show in side panel",
+      "truncated": "Omitted because it's too large.",
+      "badImage": "This image can't be displayed."
+    },
+    "tool": {
+      "label": {
+        "run": "Run",
+        "read": "Read",
+        "write": "Write",
+        "edit": "Edit",
+        "find": "Search",
+        "grep": "Grep",
+        "delegate": "Delegate",
+        "fetch": "Fetch",
+        "webSearch": "Web search",
+        "present": "Show",
+        "status": "Status",
+        "title": "Title",
+        "fork": "Branch"
+      },
+      "noPath": "(no path)",
+      "diff": "Diff (−{{del}} / +{{add}})",
+      "diffMore_one": "…{{n}} more line",
+      "diffMore_other": "…{{n}} more lines",
+      "background": "In background",
+      "fullCommand_one": "Full command ({{n}} line)",
+      "fullCommand_other": "Full command ({{n}} lines)",
+      "lineRange": "Lines {{from}}–{{to}}",
+      "firstLines_one": "First {{n}} line",
+      "firstLines_other": "First {{n}} lines",
+      "fromLine": "From line {{n}}",
+      "lines_one": "{{n}} line",
+      "lines_other": "{{n}} lines",
+      "writeContent": "Content to write",
+      "editLines": "{{from}} → {{to}} lines",
+      "replaceAll": "Replace all",
+      "edits_one": "{{n}} edit",
+      "edits_other": "{{n}} edits",
+      "grepMode": {
+        "content": "Content",
+        "files": "File names",
+        "count": "Count"
+      },
+      "ignoreCase": "Ignore case",
+      "multiline": "Multiline",
+      "context_one": "±{{n}} line",
+      "context_other": "±{{n}} lines",
+      "headLimit": "Top {{n}}",
+      "subagent": "Subagent",
+      "prompt": "Instructions given",
+      "domainsAllowed": "Only: {{domains}}",
+      "domainsBlocked": "Excluding: {{domains}}",
+      "todoCount_one": "{{n}} item",
+      "todoCount_other": "{{n}} items",
+      "todoDone": "{{done}}/{{total}} done",
+      "todoItems": "Items ({{n}})",
+      "forkHere": "Carry this conversation over up to here",
+      "input": "Input"
+    },
+    "result": {
+      "empty": "No output",
+      "count_one": "{{n}} result",
+      "count_other": "{{n}} results",
+      "saved": "Saved",
+      "edited": "Edited",
+      "updated": "Updated",
+      "ran": "Done",
+      "lines_one": "{{n}} line",
+      "lines_other": "{{n}} lines",
+      "failed": "✕ Failed",
+      "output": "Output",
+      "outputPartial": "Output (partial)",
+      "generatedImage": "Generated image"
+    },
+    "branch": {
+      "pick": "Choose the conversation to continue",
+      "switchTo_one": "Switch to {{name}} ({{count}} message)",
+      "switchTo_other": "Switch to {{name}} ({{count}} messages)",
+      "current": "Current conversation",
+      "continues_one": "{{count}} more message",
+      "continues_other": "{{count}} more messages",
+      "root": "Original",
+      "numbered": "Branch {{n}}"
+    },
+    "behind": {
+      "subagents": "Waiting for subagents",
+      "commands": "Waiting for background commands"
+    }
+  },
+  "composer": {
+    "cwd": {
+      "placeholder": "Working directory path",
+      "inputLabel": "Working directory path (Enter to set)",
+      "choose": "Choose folder…",
+      "recent": "Recent working directories",
+      "noRecent": "None yet",
+      "up": "Up one level",
+      "drive": "Drive",
+      "useThis": "Use this folder",
+      "foldersIn": "Folders in {{path}}",
+      "noFolders": "No folders",
+      "truncated": "Too many to show them all. Type a path.",
+      "chipTitle": "{{cwd}} (changes apply from the next turn)",
+      "chipAria": "Working directory: {{cwd}}",
+      "unset": "Not set"
+    },
+    "agent": "Agent",
+    "account": {
+      "title": "Claude account",
+      "compatOff": "Accounts aren't used with compatible endpoints"
+    },
+    "endpoint": {
+      "title": "Endpoint",
+      "manage": "Manage endpoints…",
+      "lost": "Not available: {{items}}",
+      "pick": "Choose endpoint"
+    },
+    "model": {
+      "title": "Model",
+      "searchMain": "Search or enter an ID (empty uses the main model, {{model}})",
+      "search": "Search or enter an ID",
+      "searchLabel": "Search models or enter an ID (Enter to set)",
+      "candidates": "Model suggestions",
+      "notListed": "Not in the list. Press Enter to use this ID as is.",
+      "noList": "No list available. Enter an ID.",
+      "chipTitle": "{{label}} (agent, model, effort; applies from the next turn)",
+      "chipAria": "Model and effort: {{label}}"
+    },
+    "effort": {
+      "title": "Effort",
+      "label": "Effort",
+      "reset": "Reset to default",
+      "follow": {
+        "endpoint": "(uses the endpoint's setting)",
+        "agy": "(uses agy's setting)",
+        "agent": "(uses the agent's setting)"
+      },
+      "defaultFollow": {
+        "endpoint": "Default (uses the endpoint's setting)",
+        "agy": "Default (uses agy's setting)",
+        "agent": "Default (uses the agent's setting)"
+      },
+      "modelDefault": "({{model}} default)",
+      "levelDefault": "{{level}} (default)",
+      "noLevels": "{{model}} has no effort levels"
+    },
+    "mode": {
+      "dangerTitle": "Approval mode: no confirmation, no restrictions",
+      "chipAria": "Approval mode: {{mode}}",
+      "chipAriaDanger": "Approval mode: {{mode}} (no confirmation, no restrictions)"
+    },
+    "skills": {
+      "none": "No matching skills",
+      "failed": "Couldn't get the skills list",
+      "args": "Arguments  {{hint}}"
+    }
+  },
+  "sidebar": {
+    "unread": "Finished, not yet viewed",
+    "somethingRunning": "Something is running",
+    "empty": "Nothing yet",
+    "noMatch": "No matches",
+    "forked": "Conversation created by a fork",
+    "waiting": "Waiting for approval",
+    "waitingCount_one": "{{count}} waiting for approval",
+    "waitingCount_other": "{{count}} waiting for approval",
+    "staleDays_one": "{{count}}d",
+    "staleDays_other": "{{count}}d",
+    "unsent": "Unsent",
+    "unsentDraft": "Unsent · draft",
+    "undo": "Undo",
+    "undoClose": "Close",
+    "undoCloseLabel": "Close this notice",
+    "group": {
+      "pickIcon": "Choose icon",
+      "newSession": "New session with this status"
+    },
+    "family": {
+      "collapse": "Collapse branches",
+      "expand": "Expand branches",
+      "hereInside": "The current conversation is in here. Click to expand"
+    },
+    "filter": {
+      "remove": "Remove",
+      "agent": "Agent",
+      "place": "Location",
+      "status": "Status",
+      "placeholder": "Filter",
+      "inputLabel": "Filter options",
+      "agents": "Agents (multiple)",
+      "all": "All"
+    },
+    "emoji": {
+      "title": "Icon for \"{{status}}\"",
+      "placeholder": "Search (English, Japanese, or paste an emoji)",
+      "search": "Search emoji",
+      "loadingMark": "Loading the list",
+      "loading": "Loading",
+      "reset": "Reset to default",
+      "folder": "Folder",
+      "loadFailed": "Couldn't load the list",
+      "recent": "Recently used",
+      "hits_one": "{{count}} result",
+      "hits_other": "{{count}} results",
+      "category": {
+        "smileys": "Smileys & people",
+        "nature": "Animals & nature",
+        "food": "Food & drink",
+        "activity": "Activities",
+        "travel": "Travel & places",
+        "objects": "Objects",
+        "symbols": "Symbols",
+        "flags": "Flags"
+      }
+    }
+  },
+  "usage": {
+    "unknown": "Unknown",
+    "expired": "Past the reset time · waiting for refresh",
+    "percentUnknown": "Usage and remaining: unknown",
+    "percent": "{{used}}% used · {{remaining}}% left",
+    "plan": "Plan: {{plan}}",
+    "meter": "{{label}} usage",
+    "resetsAt": "Resets: {{when}}",
+    "resetsUnknown": "Reset time: unknown",
+    "redoAuth": "Authorize again",
+    "local": {
+      "title": "Usage in Pleiad",
+      "period": "Period",
+      "input": "Input tokens",
+      "output": "Output tokens",
+      "cost": "Est. cost",
+      "fiveHour": "Last 5 hours",
+      "sevenDay": "Last 7 days",
+      "none": "No records",
+      "partial": " (partial)",
+      "measured_one": "Measured {{measured}} of {{count}} completed run",
+      "measured_other": "Measured {{measured}} of {{count}} completed runs",
+      "noteSince": "Recorded since {{when}}. Only runs completed in Pleiad after this feature was added. Input includes cache. Estimated cost is the agent's estimate, not your subscription bill.",
+      "noteEmpty": "No usage yet. Only runs completed in Pleiad after this feature was added. Input includes cache. Estimated cost is the agent's estimate, not your subscription bill."
+    },
+    "endpoint": "Endpoint {{name}}",
+    "endpointLocal": "Usage can't be shown (local).",
+    "endpointRemote": "Usage can't be shown. Check your balance in the {{name}} dashboard.",
+    "endpointCost": "Estimated costs for compatible endpoints aren't reliable (unit prices are unknown).",
+    "waiting": "Waiting for agents to connect. Refresh after they connect.",
+    "loading": "Loading…",
+    "checkedAt": "Last fetched: {{when}}",
+    "failed": "Couldn't fetch. Check the connection and refresh."
+  },
+  "updates": {
+    "phase": {
+      "idle": "You can check for updates",
+      "checking": "Checking for updates…",
+      "current": "You're up to date",
+      "available": "A new version is available",
+      "downloading": "Downloading",
+      "downloaded": "Restart to apply the update",
+      "installing": "Preparing the update…",
+      "error": "Couldn't get the update",
+      "unavailable": "Automatic updates are available in the released desktop app"
+    },
+    "stage": {
+      "installing": "Preparing to apply the update…",
+      "saving": "Saving conversations and drafts…",
+      "downloading": "Downloading…",
+      "downloadingPercent": "Downloading · {{percent}}%"
+    },
+    "hint": {
+      "applying": "Please wait while saving and preparing the update. After Pleiad quits, the update is applied and Pleiad restarts automatically.",
+      "downloading": "You can keep working. You'll be notified when it's ready.",
+      "noAutoUpdate": "This preview build doesn't support automatic updates. Update with a new installer.",
+      "browser": "In the browser version, you can view the release history."
+    },
+    "lastChecked": "Last checked: {{when}}",
+    "retry": "Retry",
+    "settingsHasUpdate": "Settings · update available",
+    "updated": "Updated to Pleiad {{version}}",
+    "promptReady": "Pleiad {{target}} is ready to install",
+    "promptAvailable": "Pleiad {{target}} is available",
+    "notesFailed": "Couldn't load the release notes."
+  },
+  "outbox": {
+    "status": {
+      "queued": "Waiting to be sent",
+      "sending": "Sending to the AI",
+      "paused": "Sending paused",
+      "failed": "Couldn't send",
+      "unknown": "Can't confirm whether it was sent"
+    },
+    "waitTurn": "Waiting to be sent — sends automatically when the current work finishes",
+    "waitOrder": "Waiting to be sent — sends after the previous message is sent",
+    "unknownHint": "Check the conversation. Resending may deliver the same instruction twice.",
+    "retry": "Resend",
+    "cancel": "Cancel"
+  },
+  "onboarding": {
+    "installHint": "Install this agent, then recheck its status in Settings.",
+    "waitingLogin": "Waiting for sign-in to finish.",
+    "signInHint": "Sign in to this agent.",
+    "seenFailed": "Couldn't save that the welcome screen was shown: {{error}}"
+  },
+  "common": {
+    "input": "Input",
+    "noMatch": "No matches",
+    "loading": "Loading…",
+    "moreMatches_one": "{{count}} more. Type to narrow down",
+    "moreMatches_other": "{{count}} more. Type to narrow down"
+  },
+  "notify": {
+    "completed": "Work finished",
+    "untitled": "Pleiad conversation"
   }
 }

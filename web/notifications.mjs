@@ -1,4 +1,7 @@
 // Live completions only: replayed history must never produce desktop alerts.
+import { t } from './i18n.mjs';
+import { savedTitle } from './saved-text.mjs';
+
 export function createCompletionNotifications({ host = window, openSession }) {
   const seen = new Map();
   let requested = false;
@@ -15,7 +18,7 @@ export function createCompletionNotifications({ host = window, openSession }) {
       if (event.completedAt <= (seen.get(event.sessionId) ?? 0)) return;
       seen.set(event.sessionId, event.completedAt);
       const notice = { sessionId: event.sessionId, completedAt: event.completedAt,
-        title: '作業が完了しました', body: String(session?.title || 'Pleiad の会話').slice(0, 200) };
+        title: t('notify.completed'), body: String(session ? savedTitle(session.title) : t('notify.untitled')).slice(0, 200) };
       try {
         if (host.plyDesktop?.notifyCompletion) {
           Promise.resolve(host.plyDesktop.notifyCompletion(notice)).catch(() => {});

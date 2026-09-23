@@ -1,25 +1,5 @@
 {
   "about": "tests/lint-i18n.mjs の基準。ファイルごとの直書きの日本語の件数。下げるだけ（node tests/lint-i18n.mjs --update-baseline）",
-  "total": 308,
-  "files": {
-    "web/branch-view.mjs": 4,
-    "web/branches.mjs": 2,
-    "web/code-copy.mjs": 6,
-    "web/composer-controls.mjs": 61,
-    "web/composer-labels.mjs": 3,
-    "web/context-menu.mjs": 1,
-    "web/notifications.mjs": 2,
-    "web/onboarding.mjs": 9,
-    "web/outbox.mjs": 10,
-    "web/render.mjs": 82,
-    "web/search-terms.mjs": 1,
-    "web/side.mjs": 55,
-    "web/slash-skills.mjs": 5,
-    "web/tree.mjs": 1,
-    "web/updates.mjs": 26,
-    "web/usage.mjs": 32,
-    "web/visualize-frame.mjs": 4,
-    "web/visualize-reference.mjs": 1,
-    "web/work-status.mjs": 3
-  }
+  "total": 0,
+  "files": {}
 }

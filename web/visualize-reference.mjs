@@ -21,7 +21,7 @@ export function visualizeReferences(text) {
             || typeof value.path !== 'string' || !value.path || value.path.length > 8192
             || (value.title !== undefined && (typeof value.title !== 'string' || value.title.length > 1000))
             || (value.mode !== undefined && value.mode !== 'wide')) throw new Error();
-        } catch { error = '可視化の参照形式が不正です'; }
+        } catch { error = '可視化の参照形式が不正です'; } // i18n-ignore: core/visualize.mjs がサーバーの言語でエラーカードに保存する文。web の辞書では訳せない（server 段階の残課題「可視化のエラーカード」と一緒に扱う）
         refs.push({ start: offset, end: offset + line.length, raw, value, error });
       }
     }

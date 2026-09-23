@@ -1,4 +1,5 @@
 import { isComposingKey } from './keyboard.mjs';
+import { t } from './i18n.mjs';
 
 const pages = [['setup', 'setupTab', 'setupPanel'], ['usage', 'usageTab', 'usagePanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['context', 'openContext', 'contextPanel'], ['updates', 'updatesTab', 'updatesPanel']];
 
@@ -94,24 +95,24 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
           if (agent.installUrl) {
             const link = document.createElement('a');
             link.className = 'btn';
-            link.textContent = 'インストール';
+            link.textContent = t('settings.agents.install');
             link.href = agent.installUrl;
             link.target = '_blank';
             link.rel = 'noreferrer';
             link.onclick = e => e.stopPropagation();
             stateEl.append(link);
           } else {
-            stateEl.textContent = '未インストール';
+            stateEl.textContent = t('settings.agents.notInstalled');
           }
         } else if (st?.loggedIn) {
-          stateEl.textContent = st.account || 'ログイン済み';
+          stateEl.textContent = st.account || t('settings.agents.loggedIn');
         } else if (st?.pending) {
-          stateEl.textContent = 'ログインを待っている';
+          stateEl.textContent = t('settings.agents.loginPending');
         } else {
           const btn = document.createElement('button');
           btn.type = 'button';
           btn.className = 'btn';
-          btn.textContent = 'ログイン';
+          btn.textContent = t('settings.agents.signIn');
           btn.onclick = e => {
             e.stopPropagation();
             if (authLogin) authLogin(agent);
@@ -133,9 +134,9 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
     const ready = agent?.installed && st.loggedIn;
     $('completeSetup').disabled = !ready;
     error(ready ? ''
-      : agent?.installed === false ? 'このエージェントをインストールし、設定から状態を再確認してください。'
-      : st.pending ? 'ログインの完了を待っています。'
-      : 'このエージェントにログインしてください。');
+      : agent?.installed === false ? t('onboarding.installHint')
+      : st.pending ? t('onboarding.waitingLogin')
+      : t('onboarding.signInHint'));
   }
   async function refresh() {
     status = await cmd('onboardingStatus');
@@ -143,7 +144,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
       checked = true;
       if (shouldShowOnboarding(status, getAuth())) {
         try { await cmd('onboardingSeen'); status.seen = true; }
-        catch (e) { $('setupError').textContent = `初回表示の記録を保存できませんでした: ${e.message}`; }
+        catch (e) { $('setupError').textContent = t('onboarding.seenFailed', { error: e.message }); }
         close();
         welcome.showModal();
       }
