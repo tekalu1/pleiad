@@ -124,7 +124,10 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
       }
       bindings.set(token, binding);
       runtime.report.status = 'ready'; await changed();
-      return { owners: runtime.owners, prompt: helpers.prompt, url: `${origin}${CONTEXT_MCP_PATH}`, headers: { Authorization: `Bearer ${token}` }, close };
+      // shape: 担当と渡すツールの名前。会話のあいだプロセスを生かすバックエンド（antigravity）は、これが変わったら起こし直す
+      // （設定の変更で担当や外部 MCP が変わっても、起動時に受け取ったツール一覧のままになるため）
+      const shape = hash([runtime.owners, binding.tools.map(tool => tool.name)]);
+      return { owners: runtime.owners, prompt: helpers.prompt, url: `${origin}${CONTEXT_MCP_PATH}`, headers: { Authorization: `Bearer ${token}` }, shape, close };
     } catch (e) { await close(); throw e; }
   }
   async function metadata(b, kind, params = {}) {

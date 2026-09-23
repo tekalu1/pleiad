@@ -29,7 +29,7 @@ import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
 import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
-import { acceptsPlyContext, contextPolicy, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
+import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
 import { DEFAULT_OWNERS, pathKey } from './context-settings.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createContextSession } from './context-session.mjs';
@@ -1295,17 +1295,12 @@ async function runTurnInternal(args, onStarted, hooks) {
     const pastSubagents = new Set(sessionId && backend.listSubagents
       ? await backend.listSubagents(sessionId).catch(() => []) : []);
     const previousContext = sessionId ? (await store.get(sessionId)).contextSession : null;
-    let policy = previousContext?.policy ?? contextPolicy(await contextSettings.get(cwd));
-    if (!previousContext && baseline.messages.length) policy.owners = { ...DEFAULT_OWNERS };
-    // 再開で作業場所が変わった。担当（owners）と「この会話では外す」MCP は会話の方針として保ち、探索の計画だけを
-    // 新しい場所の設定で解き直す（作業場所側の探索元・除外・追加フォルダーは場所ごとの設定のため）。
-    // 探し直した結果は下の読み込み直し（refreshedContext）と同じ扱いで記録・通知される。
-    // policy.cwd は実体パス（contextSettings.get が realpath する）。cwd は渡された表記のままなので、実体どうしで比べる
-    if (previousContext && managed(policy) && pathKey(policy.cwd) !== pathKey(await fs.realpath(cwd).catch(() => cwd))) {
-      const here = await contextSettings.get(cwd);
-      const { user, directory, ...rest } = policy;
-      policy = { ...rest, version: 2, cwd: here.cwd, plan: here.plan };
-    }
+    // 方針（担当・探索の計画）はターンごとに今の設定と作業場所で解き直す。設定の変更は始まっている会話にも次のターンから効く。
+    // 「この会話では外す」MCP と開始時刻は会話の方針として引き継ぐ（followSettings）。コンテキストの記録が無いまま送信済みの会話
+    // （この機能より前の会話）はエージェント任せのまま。作業場所を変えたときの探し直しは下の読み込み直し（refreshedContext）で知らせる
+    const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, await contextSettings.get(cwd),
+      { keepNative: !previousContext && baseline.messages.length > 0 });
+    let policy = followed;
     // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
     // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
     const plyContext = managed(policy) && acceptsPlyContext(backend, policy);
@@ -1314,6 +1309,8 @@ async function runTurnInternal(args, onStarted, hooks) {
     // 記録も pin も自動で新しくなる）。指示本文は毎ターン指示欄へ渡し直し、Skills はカタログしか渡していないので技術的な制約は無い。
     // 右パネルの「渡したもの」との食い違いだけが問題なので、読み込み直したことを履歴と会話に残す
     const refreshedContext = Boolean(plyContext && previousContext?.pin && resolvedContext?.pin !== previousContext.pin);
+    // コンテキストの設定の変更（担当・探す範囲・外部 MCP の登録や有効／無効）を、このターンから反映した
+    const appliedSettings = Boolean(previousContext && settingsChanged.length);
     // instructions_for_path / load_skill で渡し済みの本文の控え（行の id → 本文のハッシュ）。会話の記録に残して
     // 次のターンへ持ち越し、同じものを頼まれたら短い一行だけを返す（core/context-runtime.mjs の contextTools）。
     // 履歴を引き継ぎの文で渡し直すターン（バックエンドの切り替え・ホスト側で写した分岐）と、記録した相手と違うバックエンドでは捨てる。
@@ -1322,10 +1319,14 @@ async function runTurnInternal(args, onStarted, hooks) {
     const delivered = !handoff && previousContext?.delivered?.backend === backend.id ? { ...previousContext.delivered.entries } : {};
     if (resolvedContext) resolvedContext.delivered = delivered;
     // エージェント任せにしたターンでも固定（pin）は捨てない。Pleiad 担当を受け取れるエージェントへ戻したときに突き合わせる
-    const contextRecord = { policy: refreshedContext ? { ...policy, refreshedAt: new Date().toISOString() } : policy,
+    const contextRecord = { policy: refreshedContext || appliedSettings ? { ...policy, refreshedAt: new Date().toISOString() } : policy,
       pin: resolvedContext?.pin ?? (plyContext ? null : previousContext?.pin ?? null), report: resolvedContext?.report ?? nativeContextReport(policy, cwd, backend),
       delivered: { backend: backend.id, entries: delivered } };
-    if (refreshedContext) {
+    if (appliedSettings) {
+      await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin ?? null, to: contextRecord.pin,
+        ...savedReason('contextSettingsApplied'), backend });
+      emitGlobal({ type: 'contextRefreshed', sessionId, settings: true, kinds: settingsChanged, names: [], count: 0 });
+    } else if (refreshedContext) {
       // 何が変わったかは前の記録と今の記録の突き合わせで出す（pinChanges を呼ぶと同じターンで探索がもう一度走る）
       const changed = pinnedChanges(previousContext.report?.entries ?? [], resolvedContext.report.entries);
       const names = changed.map(c => c.name || path.basename(c.path ?? '')).filter(Boolean).slice(0, 3);
