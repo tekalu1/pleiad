@@ -33,7 +33,7 @@ export function createContextSession({ store, snapshots, plyServers = async () =
     for (const row of runtime.report.entries) {
       const was = before.get(row.id);
       if (row.kind !== 'mcp' || row.status !== 'pending' || !was || !['connected', 'needs-auth', 'failed'].includes(was.status)) continue;
-      for (const k of ['status', 'reason', 'tools', 'calls', 'capabilities']) if (was[k] !== undefined) row[k] = was[k];
+      for (const k of ['status', 'reason', 'reasonCode', 'tools', 'calls', 'capabilities']) if (was[k] !== undefined) row[k] = was[k];
     }
     // 渡し済みの控え（delivered）は引き継がない。読み込み直した後は instructions_for_path / load_skill が本文をもう一度渡す
     const next = { policy: { ...record.policy, refreshedAt: new Date().toISOString() }, pin: runtime.pin, report: runtime.report };

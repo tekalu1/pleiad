@@ -32,7 +32,7 @@ export async function connectServer(item, { cwd, plyMcp, oauth } = {}) {
       }
     } else config = mcpTransportConfig(item, cwd);
   } catch (e) {
-    if (e?.code === 'MCP_AUTH_REQUIRED') return { status: 'needs-auth', reason: e.message };
+    if (e?.code === 'MCP_AUTH_REQUIRED') return { status: 'needs-auth', reason: e.message, ...(e.message === t('mcp.oauth.loginRequired') ? { reasonCode: 'MCP_AUTH_REQUIRED' } : {}) };
     if (!configError(e)) return { status: 'failed', reason: t('context.bridge.configUnreadable') };
     return { status: 'failed', reason: e.unsupported ? t('context.bridge.unsupportedHint', { message: e.message }) : e.message };
   }
@@ -61,7 +61,11 @@ export async function connectServer(item, { cwd, plyMcp, oauth } = {}) {
     return { status: 'connected', client, caps, tools };
   } catch (e) {
     await client.close().catch(() => {});
-    if (tracker.authRequired || e?.code === 'MCP_AUTH_REQUIRED') return { status: 'needs-auth', reason: tracker.authRequired ?? e.message };
+    if (tracker.authRequired || e?.code === 'MCP_AUTH_REQUIRED') {
+      const reason = tracker.authRequired ?? e.message;
+      // 「ログインが必要」の定型文なら画面は理由を重ねて出さない（文言ではなく reasonCode で見分ける）
+      return { status: 'needs-auth', reason, ...(reason === t('mcp.oauth.loginRequired') ? { reasonCode: 'MCP_AUTH_REQUIRED' } : {}) };
+    }
     if (e?.code === 401 || /\b401\b/.test(String(e?.message ?? ''))) {
       return { status: 'needs-auth', reason: ply ? t('context.bridge.authRequiredPly') : t('context.bridge.authRequiredNative') };
     }
@@ -101,7 +105,7 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
           Object.assign(result, { status: 'failed', reason: t('context.bridge.toolTotalExceeded', { max: MAX_TOOLS }) });
         }
         // つながらない 1 件は外して会話を進める。状態と理由は会話の記録（report）に残す
-        if (result.status !== 'connected') { row.status = result.status; row.reason = result.reason; row.tools = 0; await changed(); continue; }
+        if (result.status !== 'connected') { row.status = result.status; row.reason = result.reason; if (result.reasonCode) row.reasonCode = result.reasonCode; else delete row.reasonCode; row.tools = 0; await changed(); continue; }
         const { client, caps } = result;
         binding.clients.push(client);
         for (const tool of result.tools) {
@@ -109,7 +113,7 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
           binding.tools.push({ ...tool, name, description: `[${item.name} / ${tool.name}] ${tool.description ?? ''}` });
           binding.calls.set(name, { client, name: tool.name, item });
         }
-        row.status = 'connected'; row.tools = result.tools.length; delete row.reason;
+        row.status = 'connected'; row.tools = result.tools.length; delete row.reason; delete row.reasonCode;
         row.capabilities = Object.keys(caps ?? {});
         binding.entries.set(item.id, { client, item, caps });
       }
