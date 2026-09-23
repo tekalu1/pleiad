@@ -19,6 +19,7 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // 見た目の規則は docs/design-system.md。
 import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints } from "./render.mjs";
 import { createContextMenu } from "./context-menu.mjs";
+import { setupLongPress } from "./long-press.mjs";
 import { setupComposerControls, resolvedModel } from "./composer-controls.mjs";
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { setupAttachMenu } from "./attach-menu.mjs";
@@ -30,7 +31,7 @@ import { createSide } from "./side.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
-import { el, svgEl, relTime } from "./dom.mjs";
+import { el, svgEl, relTime, randomId } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
 import { buildItems, attachmentMessageIndex } from "./timeline.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
@@ -1740,6 +1741,7 @@ window.addEventListener("storage", ev => {
 let creatingSession = null;
 async function startNew({ status = null, cwd = "", backend } = {}) {
   if (state.busy || creatingSession) return creatingSession;
+  setDrawer(false);
   saveDraft().catch(() => {});
   const source = state.current;
   creatingSession = (async () => {
@@ -2130,15 +2132,34 @@ function watchTitleBar() {
   paintTitleBar();
 }
 
+// 入力欄の既定の案内。指で使う画面には Ctrl+Enter が無いので、送信のボタンを案内する
+const promptPlaceholder = () => (matchMedia("(pointer:coarse)").matches ? t("chat.composer.placeholderTouch") : t("chat.composer.placeholder"));
+
 // ---------------------------------------------------------------- 脇の開閉
 // 端末ごとの好みなのでブラウザ側に覚える。最初の描画での反映は index.html の先頭の script が済ませている。
 // 設定の間は脇が設定メニューなので、開閉は受け付けない（CSS でも必ず開いて見える）
 
 const SIDEBAR_STORE = "agent-host-sidebar";
 let sidebarMoving;
+// 狭い画面（style.css の「狭い画面・タッチ」と同じ 700px）では、脇は会話の上に重ねる引き出し（docs/remote.md §8.4）。
+// 開閉は side-open で持ち、覚えない（広い画面の好み side-closed はそのまま残す）。会話を選ぶ・幕を押す・Esc で閉じる
+const narrowView = matchMedia("(max-width:700px)");
+const drawerOpen = () => document.documentElement.classList.contains("side-open");
+
+function setDrawer(open) {
+  const root = document.documentElement;
+  if (drawerOpen() === open) return;
+  root.classList.toggle("side-open", open);
+  $("openSidebar").setAttribute("aria-expanded", String(open));
+  const from = document.activeElement;
+  // 検索欄には置かない（スマホでキーボードが出る）。閉じるボタンへ
+  if (open) $("closeSidebar").focus({ preventScroll: true });
+  else if ($("sidebar").contains(from)) $("openSidebar").focus({ preventScroll: true });
+}
 
 function setSidebar(open) {
   const root = document.documentElement;
+  if (narrowView.matches && !document.body.classList.contains("settings")) return setDrawer(open);
   if (document.body.classList.contains("settings") || root.classList.contains("side-closed") !== open) return;
   document.body.classList.add("side-moving");
   root.classList.toggle("side-closed", !open);
@@ -2155,6 +2176,19 @@ function setSidebar(open) {
 function initSidebar() {
   $("closeSidebar").onclick = () => setSidebar(false);
   $("openSidebar").onclick = () => setSidebar(true);
+  $("sideVeil").onclick = () => setDrawer(false);
+  // 引き出しの中で会話の行・設定を押したら閉じる。メニューから開く・新しく始めるときは select / startNew が閉じる
+  $("sidebar").addEventListener("click", (e) => {
+    if (!narrowView.matches || !drawerOpen()) return;
+    if (e.target.closest(".row, #settings, #authNeed")) setDrawer(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !drawerOpen() || e.defaultPrevented || isComposingKey(e)) return;
+    if (document.querySelector("dialog[open], .pop.menu, .pop:not([hidden])")) return;
+    setDrawer(false);
+  });
+  // 広い画面へ戻ったら引き出しの印を外す（幕が残らないように）
+  narrowView.addEventListener("change", () => setDrawer(false));
   // Ctrl+B（macOS は ⌘B）。入力欄でも太字などの既定の意味は無いので、どこからでも効かせる。
   // macOS の Ctrl+B は入力欄で「1 文字戻る」なので奪わない
   const mac = /Mac/.test(navigator.platform);
@@ -2812,6 +2846,8 @@ function syncTitleControls() {
   $("titleWand").classList.toggle("busy", busy);
   $("titleWand").hidden = caps.suggestTitle === false;
   $("titleWand").disabled = !on || busy || s?.unsent || caps.suggestTitle === false;
+  // この会話の操作（脇の行の「…」と同じメニュー）。一覧に載っている会話だけ
+  $("sessionMore").hidden = !s;
   paintContextEntry();
 }
 function selectedMode(s, bid, modes) {
@@ -3020,6 +3056,7 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
  */
 async function select(id, { keepUpTo, reload = false } = {}) {
   if (state.busy || (id === state.current && keepUpTo === undefined && !reload)) return;
+  if (keepUpTo === undefined) setDrawer(false);
   filePreview.sessionChanged(id);
   if (keepUpTo === undefined) {
     // 開き直し: 先に空にして「読み込み中」。切り替え（keepUpTo）は剥がれた後に一緒に描くので、ここでは触らない
@@ -3134,7 +3171,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   if (isRunningHere()) activity.show(activity.text || ACTIVITY_LABEL.running);   // 走っている会話を開いたら末尾に弧
   else if (behindHere()) activity.show(t("activity.waitingBackground"));     // ターンは終わったが裏の子が残っている会話は衛星
   relayoutBranches();     // 稼働表示が出た後の高さで、今いる枝の終端ノードを置き直す
-  $("prompt").placeholder = branchIsFresh(id) ? t("chat.composer.firstMessage", { name: branches.nameOf(id) }) : t("chat.composer.placeholder");
+  $("prompt").placeholder = branchIsFresh(id) ? t("chat.composer.firstMessage", { name: branches.nameOf(id) }) : promptPlaceholder();
   // 対応を終えたエージェントの会話は読むだけ。入力欄を閉じ、理由を末尾に出す（送信はサーバーも断る）
   const retired = data?.retired ?? null;
   if (retired) { sys(escText(retired)); $("prompt").disabled = true; $("prompt").placeholder = retired; }
@@ -3337,7 +3374,7 @@ async function submit() {
         return;
       }
     }
-    const request = previous && previous.prompt === full ? previous : { ...args, messageId: crypto.randomUUID() };
+    const request = previous && previous.prompt === full ? previous : { ...args, messageId: randomId() };
     receipts.set(sessionId, request); saveReceipts();
     await cmd('sendMessage', request);
     await clearSentDraft(sessionId, text, attachments);
@@ -3469,6 +3506,12 @@ $("titleEdit").onblur = commitTitle;
 $("titleEdit").onkeydown = (e) => { if (isComposingKey(e)) return; if (e.key === "Enter") { e.preventDefault(); $("titleEdit").blur(); } };
 
 // タイトルは AI にも考えてもらえる。人間が同じことをできる場所の隣に置く（設計メモ 2.2）
+$("sessionMore").onclick = () => {
+  const s = state.sessions.find((x) => x.id === state.current);
+  if (!s) return;
+  const r = $("sessionMore").getBoundingClientRect();
+  rowMenu(s, r.right, r.bottom + 4);
+};
 $("titleWand").onclick = async () => {
   const id = state.current;
   if (!id || titleGenerating.has(id)) return;
@@ -3525,6 +3568,9 @@ clearThread();
 initTheme();
 initLocale();
 initSidebar();
+$("prompt").placeholder = promptPlaceholder();
+// タッチの長押しで右クリックのメニュー（iOS は contextmenu を出さない）
+setupLongPress();
 // リモートの窓（端末のアプリが plyRemote を渡したとき）の帯のバッジ。帯の色を送るより先に置く
 setupRemoteBadge();
 watchTitleBar();
