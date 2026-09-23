@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { codexQuota, whamQuota, claudeQuota, usageWindow, createQuotaCache, createUsageStore, createCodexMeter } from '../../core/usage.mjs';
+import { codexQuota, whamQuota, claudeQuota, usageWindow, createQuotaCache, createUsageStore, createCodexMeter, agentUsage, compactQuota } from '../../core/usage.mjs';
 import { normalizeSdkMessage } from '../../core/backends/claude-normalize.mjs';
 import { quotaText } from '../../web/usage.mjs';
 import { startServer } from '../lib/server.mjs';
@@ -50,6 +50,42 @@ export default async function(t) {
   const failed = await cache('bad', () => { throw new Error('Bearer secret'); });
   assert.equal(failed.checkedAt, null); assert.ok(!JSON.stringify(failed).includes('secret'));
   t.ok('同時取得を共有し、キャッシュ期限と認証変更を反映する', true);
+
+  // ply_usage: 画面と同じ quotaCache を通すので、何度呼んでも各サービスへの問い合わせは増えない
+  const fetched = {};
+  const shared = createQuotaCache({ now: () => now });
+  const agents = [
+    { id: 'claude', label: 'Claude', usage: async () => ({ plan: 'max', windows: [], accounts: [
+      { label: 'ログイン中のアカウント', accountId: 'x', plan: 'max', windows: [usageWindow('5時間', 40, 1800000000000, 300)], message: null },
+      { label: 'tekalu@example.com', accountId: 'y', windows: [], needsUsageLogin: true, message: '認可してください' }] }) },
+    { id: 'codex', label: 'Codex', usage: async () => { throw new Error('Bearer secret'); } },
+    { id: 'fake', label: 'Fake' },
+  ];
+  const quotaOf = b => b.usage ? shared(b.id, () => { fetched[b.id] = (fetched[b.id] ?? 0) + 1; return b.usage(); }) : { windows: [], message: '未対応' };
+  const deps = { list: () => agents, get: id => agents.find(b => b.id === id) ?? null, read: quotaOf };
+  const all = await agentUsage(deps);
+  assert.deepEqual(all.backends.map(b => b.backend), ['claude', 'codex']);
+  const claude = all.backends[0];
+  assert.deepEqual(Object.keys(claude.accounts[0].windows[0]).sort(), ['label', 'resetsAt', 'usedPercent']);
+  assert.equal(claude.accounts[0].windows[0].usedPercent, 40);
+  assert.equal(claude.accounts[1].label, 't***@example.com');
+  assert.ok(!JSON.stringify(all).includes('accountId') && !JSON.stringify(all).includes('tekalu@'));
+  assert.equal(typeof claude.checkedAt, 'string');
+  const codex = all.backends[1];
+  assert.equal(codex.checkedAt, null); assert.ok(codex.message && !JSON.stringify(codex).includes('secret'));
+  t.ok('ply_usage は使用枠を持つ全バックエンドを返し、失敗は message に入れて他を返す', true);
+  const one = await agentUsage({ ...deps, backend: 'claude' });
+  assert.deepEqual(one.backends.map(b => b.backend), ['claude']);
+  assert.equal(one.backends[0].checkedAt, claude.checkedAt);
+  await quotaOf(agents[0]);
+  assert.equal(fetched.claude, 1);
+  assert.equal((await agentUsage({ ...deps, backend: 'fake' })).backends[0].message, '未対応');
+  await assert.rejects(agentUsage({ ...deps, backend: 'nope' }), /nope/);
+  await assert.rejects(agentUsage({ ...deps, backend: 3 }));
+  assert.deepEqual(compactQuota(null), { plan: null, windows: [], checkedAt: null, message: null });
+  assert.equal(compactQuota({ windows: [usageWindow('5時間', 90, 1000, 300)] }, 2000).windows[0].usedPercent, null);
+  assert.equal(compactQuota({ windows: [usageWindow('5時間', 90, 3000, 300)] }, 2000).windows[0].usedPercent, 90);
+  t.ok('ply_usage は backend 指定・不明名を扱い、画面と同じキャッシュを共有する', true);
 
 
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-usage-'));
