@@ -50,6 +50,9 @@ export default async function(t) {
     t.ok('MCP 委譲で別の子会話を開始する', child.sessionId !== sid && child.parentSessionId === sid && child.result === 'CHILD_RESULT');
     const sessions = await c.cmd('listSessions');
     t.ok('一覧に管理元と親を保存する', sessions.find(s => s.id === child.sessionId)?.delegation?.parentSessionId === sid);
+    const ends = c.events.filter(e => e.type === 'turnEnd');
+    t.ok('子の会話の turnEnd には delegated が付き、親には付かない',
+      ends.some(e => e.sessionId === child.sessionId && e.delegated === true) && ends.filter(e => e.sessionId === sid).every(e => !e.delegated));
     const parent = await c.cmd('loadSession', { sessionId: sid });
     t.ok('完了通知を人間の発言と区別する', parent.messages.filter(m => m.internalTaskNotice).length === 1);
     await c.runTurn({ sessionId: sid, prompt: prompt('ply_task_send', { taskId: child.taskId, message: 'echo:FOLLOW_UP' }) });
