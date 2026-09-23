@@ -179,8 +179,37 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     },
     // 承認待ちの増減で ply_task_wait を起こす。保存する状態は変わらないので save() は通らない
     wake() { for (const fn of [...listeners]) fn(); },
+    // 会話を止めたときに、その会話が作ったタスク（と子孫）をまとめて止める。cancel と同じ書き換えを、
+    // 書き換えて何かが変わるものにだけ行い、保存は 1 回にする。以前は終わったタスクまで 1 件ずつ保存していて
+    // （1 会話で数十件になる）、会話の停止を遅らせていた。止め終わって通知も抑えたもの（cancel を呼んでも
+    // revision と updatedAt しか変わらない）は飛ばす。子孫は親を飛ばしても辿る
     async cancelOwner(owner) {
-      for (const r of Object.values(records).filter(r => !owner || r.parentSessionId === owner)) await this.cancel(r.taskId);
+      const targets = [], seen = new Set();
+      const visit = r => {
+        if (seen.has(r.taskId)) return;
+        seen.add(r.taskId);
+        for (const child of Object.values(records).filter(c => c.parentSessionId === r.sessionId)) visit(child);
+        targets.push(r);
+      };
+      for (const r of Object.values(records).filter(r => !owner || r.parentSessionId === owner)) visit(r);
+      const settled = r => !ACTIVE.has(r.status) && !r.queue.length && r.notification === 'suppressed' && !live.has(r.taskId);
+      const change = targets.filter(r => !settled(r));
+      if (!change.length) return;
+      await serial(async () => {
+        const before = change.map(r => [r, structuredClone(r)]);
+        try {
+          for (const r of change) {
+            r.revision = (r.revision ?? 0) + 1; r.queue = []; r.notification = 'suppressed';
+            if (ACTIVE.has(r.status)) r.status = live.has(r.taskId) ? 'cancelling' : 'cancelled';
+            r.updatedAt = Date.now();
+          }
+          await save();
+        } catch (e) {
+          for (const [r, old] of before) { for (const key of Object.keys(r)) delete r[key]; Object.assign(r, old); }
+          throw e;
+        }
+      });
+      for (const r of change) live.get(r.taskId)?.abort();
     },
     close() { closed = true; clearInterval(timer); for (const ac of live.values()) ac.abort(); },
   };

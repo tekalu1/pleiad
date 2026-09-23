@@ -21,7 +21,7 @@ export default async function (t) {
   const notices = [];
   const completionNotifications = createCompletionNotifications({ host: { plyDesktop: { notifyCompletion: notice => notices.push(notice) } }, openSession: noop });
   let bodies = [], releaseHistory, releaseBranches, syncs = 0;
-  const state = { current: "other", sessions: [], drafts: new Map(), toolCards: new Map(), runningIds: new Set(["target"]), pendingPerms: new Map() };
+  const state = { current: "other", sessions: [], drafts: new Map(), toolCards: new Map(), runningIds: new Set(["target"]), stopping: new Set(), pendingPerms: new Map() };
   const loads = createSessionLoads();
   const context = vm.createContext({
     completionNotifications,
