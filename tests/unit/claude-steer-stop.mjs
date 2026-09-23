@@ -234,4 +234,37 @@ export default async function (t) {
         && events.filter((e) => e.type === "turnResult").map((e) => e.outcome).join() === "aborted");
     } finally { restoreTiming(); restore(); }
   }
+
+  // ---- プロンプトを渡す前の失敗には undelivered の印を付け、渡した後の失敗には付けない（backends/undelivered.mjs）
+  const runWithContext = (q, memoryFiles, sessionId = null) => {
+    q.initializationResult = async () => ({});
+    q.getContextUsage = async () => ({ memoryFiles });
+    const events = [];
+    const done = claude.runTurn({
+      prompt: "first", sessionId, cwd: process.cwd(), mode: "default",
+      emit: (ev) => events.push(ev), askPermission: async () => ({ allow: true }),
+      signal: new AbortController(), control: {}, hostSessionId: "host-test",
+      contextRuntime: { owners: { instruction: "ply", skill: "native", mcp: "native" } },
+    });
+    return { events, done };
+  };
+  {
+    const { q, restore } = fakeSdk();
+    try {
+      const { events, done } = runWithContext(q, [{ path: "AGENTS.md" }]);
+      const err = await done.then(() => null, (e) => e);
+      t.ok("ネイティブ指示を止められずに落ちたら undelivered を付ける", err?.undelivered === true && !q.frames.length, String(err?.message));
+      t.ok("失敗の turnResult は 1 回", events.filter((e) => e.type === "turnResult").length === 1);
+    } finally { restore(); }
+  }
+  {
+    const { q, restore } = fakeSdk();
+    try {
+      const { done } = runWithContext(q, [], "s-1");
+      await until(() => q.frames.length >= 1);
+      q.push({ type: "system", subtype: "init", session_id: "s-2" });   // 再開を頼んだのに別の id = resumeMismatch で落ちる
+      const err = await done.then(() => null, (e) => e);
+      t.ok("プロンプトを渡した後の失敗には undelivered を付けない", err && !err.undelivered, String(err?.message));
+    } finally { restore(); }
+  }
 }

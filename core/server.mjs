@@ -837,6 +837,8 @@ function makeEmit(turn) {
     }
     if (event?.type === "turnResult") {
       turn.outcome = event.outcome;
+      // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）
+      if (event.outcome === "error") turn.errorShown = true;
       const execution = taskExecutions.get(turn.info.sessionId);
       if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; }
     }
@@ -1558,7 +1560,12 @@ async function runTurnInternal(args, onStarted, hooks) {
       }
     } catch (err) {
       if (resolvedContext) { contextRecord.report.status = 'failed'; await saveContext().catch(() => {}); }
-      emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
+      if (!turn.errorShown) emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
+      // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
+      // 送信待ちの「失敗」に戻し、利用者に再送か取り消しを選ばせる
+      if (err?.undelivered && sessionId && args.messageId) {
+        await outbox.undelivered(sessionId, args.messageId, String(err?.message ?? err)).catch(() => {});
+      }
       if (!didStart) throw err;
     } finally {
       if (didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
