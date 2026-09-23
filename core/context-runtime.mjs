@@ -28,6 +28,7 @@ export function nativeContextReport(policy, cwd, backend, at = new Date()) {
 }
 /**
  * 会話の方針。最初の送信で記録し、以後の再開・分岐・バックエンド切り替えでも変えない。
+ * 再開で作業場所を変えたときだけ、cwd と plan を新しい場所で解き直す（担当は変えない。core/server.mjs の runTurn）。
  * 形式 2 は探索の計画（plan。core/context-settings.mjs）をそのまま持つ。形式 1（user / directory の探索設定）の記録も読める。
  * at は方針を決めた時刻、removedMcp は「この会話では外す」とした外部 MCP の名前
  */
