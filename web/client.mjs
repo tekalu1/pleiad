@@ -2288,6 +2288,9 @@ const readAsDataUri = (file) => new Promise((res, rej) => {
 async function attachFiles(files) {
   const sessionId = state.current;
   for (const file of files) {
+    // 下書きの添付はサーバーが 20 件までしか保存しない。越えた分は送らずに止める（フォルダーを落とすと一度に来る）
+    const count = state.current === sessionId ? state.attached.length : (state.drafts.get(sessionId)?.attached.length ?? 0);
+    if (count >= 20) { $('draftSaved').textContent = t('chat.attach.tooMany', { count: 20 }); break; }
     if (file.size > 8 * 1024 * 1024) {
       sys(html.t("chat.attach.tooLarge", { name: file.name }));
       continue;
