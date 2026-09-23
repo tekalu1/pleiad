@@ -109,7 +109,7 @@ export async function entriesFromDirectory(dir) {
   return { name: dir.name, entries };
 }
 
-const readChunk = (blob) => new Promise((res, rej) => {
+export const readChunk = (blob) => new Promise((res, rej) => {
   const fr = new FileReader();
   fr.onerror = () => rej(fr.error ?? new Error('read'));
   fr.onload = () => { const s = String(fr.result); res(s.slice(s.indexOf(',') + 1)); };

@@ -76,12 +76,34 @@ const settingsWrites = new Map();
 const COOKIE_NAME = "agent_host_token";
 // 人間が渡したファイルの置き場。作業ディレクトリを汚さないよう外に出す
 const UPLOAD_DIR = path.join(store.dataDir, "uploads");
-const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+// 1 件の添付の上限（2026-09-23 に 8MB から上げた）。中身は断片（512 KiB の base64）で送る（attachStart / attachChunk / attachFinish）。
+// 1 通の WS で丸ごと送ると 100MB は約 133MB の 1 通になり、ws の既定の maxPayload（100 MiB）・リモートの 64 MiB の上限を超え、
+// 端末内プロキシ・中継・このサーバーのどこでも丸ごと抱えることになるため
+const ATTACH_MAX_BYTES = 100 * 1024 * 1024;
+// 中身を 1 通で送る古い口（attachFile）の上限。今の画面は使わない（古い画面・テストのため残す）
+const ATTACH_INLINE_MAX = 8 * 1024 * 1024;
+// 会話に画像そのもの（data URI）として載せる大きさの上限。base64 にして履歴の上限（core/history.mjs の 8 MiB）に収まる大きさ。
+// 超える画像はパスだけを載せ、会話には「大きすぎるため省略」とパスのリンクを出す（右パネルで開ける）
+const PRESENT_IMAGE_INLINE = 6 * 1024 * 1024;
+// 会話に載せる文字のファイルの先頭（字数）。読むのはその分のバイトだけ（大きなファイルを丸ごと読まない）
+const PRESENT_TEXT_CHARS = 20000;
+// 断片で送る添付の置き場の途中のもの（<UPLOAD_DIR>/.partial）。手元のフォルダーを送る口と同じ仕組みを、1 ファイル・添付の置き場で使う
+const attachUploads = createFolderUploads({ root: UPLOAD_DIR, limits: { files: 1, fileBytes: ATTACH_MAX_BYTES, totalBytes: ATTACH_MAX_BYTES } });
+const attachPending = new Map();   // uploadId -> { file: 置き場の中の最終のパス, mime }
 // 手元のフォルダーを送る口（upload* コマンド、docs/remote.md §8.1）。置き場の既定は ~/Pleiad/uploads（作業フォルダーになるので見える場所）。
 // 7 日触られていない途中のものは起動時と 1 日ごとに捨てる
 const folderUploads = createFolderUploads({ root: process.env.AGENT_HOST_FOLDER_UPLOADS || undefined });
 folderUploads.sweep().catch(() => {});
-setInterval(() => folderUploads.sweep().catch(() => {}), 24 * 60 * 60_000).unref();
+attachUploads.sweep().catch(() => {});
+setInterval(() => { folderUploads.sweep().catch(() => {}); attachUploads.sweep().catch(() => {}); }, 24 * 60 * 60_000).unref();
+
+/** 添付を置く場所。名前は信用せず区切り文字を落とす。id の形はエージェントごとに違うので、形で弾かずパスに使えない字を潰す */
+function attachTarget(sessionId, name) {
+  const safe = String(name ?? "file").replace(/[^\p{L}\p{N}._-]/gu, "_").slice(-80).replace(/[. ]+$/, "_") || "file";
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const bucket = sessionId ? String(sessionId).replace(/[^A-Za-z0-9._-]/g, "_").replace(/[. ]+$/, "_").slice(0, 200) : "_new";
+  return { bucket, dir: path.join(UPLOAD_DIR, bucket), rel: `${stamp}_${safe}` };
+}
 const IMAGE_MIME = /^image\//;
 // Native sessions opened outside this host may not have sidecar metadata yet.
 const workspaceRoots = new Set([process.cwd()]);
@@ -917,10 +939,13 @@ async function presentAttachments(sessionId, attachments, emit) {
   for (const a of attachments) {
     const file = path.resolve(String(a?.path ?? ""));
     if (!file.startsWith(UPLOAD_DIR + path.sep)) continue;
-    let buf;
-    try { buf = await fs.readFile(file); } catch { continue; }
     const mime = String(a.mime ?? "");
     const isImage = IMAGE_MIME.test(mime);
+    // 丸ごと読むのは会話に画像として載せる大きさまで。文字のファイルは先頭だけ読む（添付は 1 件 100MB まである）
+    let size, buf;
+    try { size = (await fs.stat(file)).size; } catch { continue; }
+    const whole = isImage && size <= PRESENT_IMAGE_INLINE;
+    try { buf = whole ? await fs.readFile(file) : isImage ? null : await readHead(file, PRESENT_TEXT_CHARS * 4); } catch { continue; }
     const name = path.basename(file).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z_/, "");
     emit({
       type: "present",
@@ -932,9 +957,20 @@ async function presentAttachments(sessionId, attachments, emit) {
       captionParams: { name },
       path: file,
       by: "human",
-      ...(isImage ? { dataUri: `data:${mime};base64,${buf.toString("base64")}` } : { content: buf.toString("utf8").slice(0, 20000) }),
+      ...(isImage ? (buf ? { dataUri: `data:${mime};base64,${buf.toString("base64")}` } : { truncated: true })
+        : { content: buf.toString("utf8").slice(0, PRESENT_TEXT_CHARS) }),
     });
   }
+}
+
+/** ファイルの先頭 bytes バイトだけを読む */
+async function readHead(file, bytes) {
+  const h = await fs.open(file, "r");
+  try {
+    const buf = Buffer.alloc(bytes);
+    const { bytesRead } = await h.read(buf, 0, bytes, 0);
+    return buf.subarray(0, bytesRead);
+  } finally { await h.close(); }
 }
 
 /** サブエージェントを生んだ委譲ツールの tool_use id。変わらないので、分かったらターンに覚えておく */
@@ -2002,7 +2038,7 @@ wss.on("connection", (ws, req) => {
           const { sessionId, text = "", attached = [] } = msg.args ?? {};
           if (!sessionId || !(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
           if (typeof text !== "string" || text.length > 2_000_000 || !Array.isArray(attached)) throw new Error(t('session.draftTooLarge'));
-          // 件数の上限は無い（添付の上限は 1 件 8MB だけ。docs/design-system.md「入力欄」）。from は札の出どころの印（ホスト / この端末）
+          // 件数の上限は無い（添付の上限は 1 件 100MB だけ。docs/design-system.md「入力欄」）。from は札の出どころの印（ホスト / この端末）
           const files = attached.map(a => ({ name: String(a.name ?? ""), path: String(a.path ?? ""), kind: String(a.kind ?? "file"), mime: String(a.mime ?? ""),
             ...(a?.from === "host" || a?.from === "device" ? { from: a.from } : {}) }));
           if (files.some(a => a.path.length > 8192 || a.name.length > 4096)) throw new Error(t('session.attachmentInfoTooLarge'));
@@ -2397,26 +2433,55 @@ wss.on("connection", (ws, req) => {
         case "attachFile": {
           const { sessionId, name, mime, data } = msg.args ?? {};
           if (typeof data !== "string" || !data) return reply(false, t('attach.noContent'));
+          // 中身を 1 通で受ける古い口。上限は 8MB のまま（大きなものは attachStart からの断片で送る）
           const buf = Buffer.from(data, "base64");
-          if (buf.length > MAX_UPLOAD_BYTES) {
-            return reply(false, t('attach.tooLarge', { size: Math.round(buf.length / 1024 / 1024), limit: 8 }));
+          if (buf.length > ATTACH_INLINE_MAX) {
+            return reply(false, t('attach.tooLarge', { size: Math.round(buf.length / 1024 / 1024), limit: ATTACH_INLINE_MAX / 1024 / 1024 }));
           }
-          // 名前は信用しない。区切り文字を落としてから使う
-          const safe = String(name ?? "file")
-            .replace(/[^\p{L}\p{N}._-]/gu, "_")
-            .slice(-80) || "file";
-          const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-          // id の形はエージェントごとに違う（UUID / UUIDv7 / YYYYMMDD-xxxxxx）。
-          // 形で弾かず、パスに使えない字を潰して使う。
-          const bucket = sessionId ? String(sessionId).replace(/[^A-Za-z0-9._-]/g, "_") : "_new";
-          const dir = path.join(UPLOAD_DIR, bucket);
+          const { dir, rel } = attachTarget(sessionId, name);
           await fs.mkdir(dir, { recursive: true });
-          const file = path.join(dir, `${stamp}_${safe}`);
+          const file = path.join(dir, rel);
           await fs.writeFile(file, buf);
 
           // ここでは置くだけ。会話に載るのは送信のとき（runTurn の attachments）。
           // 送る前の添付は入力欄のものであって、会話の出来事ではない
           return reply(true, { path: file, bytes: buf.length, kind: IMAGE_MIME.test(String(mime ?? "")) ? "image" : "file" });
+        }
+
+        // 添付を断片で送る（1 件 100MB まで。手元のフォルダーを送る口と同じ仕組み・同じ 512 KiB の断片）。
+        //   attachStart { sessionId, name, mime, size } -> { uploadId, path, received, chunkBytes }
+        //   attachChunk { uploadId, offset, data } -> { received }（data が空なら今の位置を返すだけ。つなぎ直した後に使う）
+        //   attachFinish { uploadId } -> { path, bytes, kind }   attachCancel { uploadId }
+        // 置くだけで、会話に載るのは送信のとき（attachFile と同じ）
+        case "attachStart": {
+          const { sessionId, name, mime, size } = msg.args ?? {};
+          if (!Number.isSafeInteger(size) || size < 0) return reply(false, t('attach.noContent'));
+          if (size > ATTACH_MAX_BYTES) return reply(false, t('attach.tooLarge', { size: Math.round(size / 1024 / 1024), limit: ATTACH_MAX_BYTES / 1024 / 1024 }));
+          const { bucket, dir, rel } = attachTarget(sessionId, name);
+          const r = await attachUploads.start({ name: bucket, dest: dir, files: [{ path: rel, size, mtime: 0 }], overwrite: true });
+          const file = path.join(r.dest, rel);
+          attachPending.set(r.uploadId, { file, mime: String(mime ?? "") });
+          return reply(true, { uploadId: r.uploadId, path: file, received: r.received[0], chunkBytes: r.chunkBytes });
+        }
+        case "attachChunk": {
+          const args = msg.args ?? {};
+          if (!attachPending.has(args.uploadId)) return reply(false, t('upload.unknownUpload'));
+          return reply(true, await attachUploads.chunk({ uploadId: args.uploadId, file: 0, offset: args.offset, data: args.data }));
+        }
+        case "attachFinish": {
+          const id = msg.args?.uploadId;
+          const pending = attachPending.get(id);
+          if (!pending) return reply(false, t('upload.unknownUpload'));
+          const r = await attachUploads.finish({ uploadId: id });
+          if (r.needsConfirm) return reply(false, t('upload.unknownUpload'));
+          attachPending.delete(id);
+          return reply(true, { path: pending.file, bytes: r.bytes, kind: IMAGE_MIME.test(pending.mime) ? "image" : "file" });
+        }
+        case "attachCancel": {
+          const id = msg.args?.uploadId;
+          if (!attachPending.has(id)) return reply(true, { cancelled: false });
+          attachPending.delete(id);
+          return reply(true, await attachUploads.cancel({ uploadId: id }));
         }
 
         // セッションを選んでいなくても既定は変えられる

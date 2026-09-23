@@ -122,7 +122,12 @@ export const COMMANDS = new Set([
   "renameStatus",    // 状態の一括改名（to が空なら状態を外す＝グループ削除）
   "prefs",           // 次に新しく始めるときの既定
   "setPref",         // その既定を変える
-  "attachFile",      // 人間が会話へ渡すファイル
+  "attachFile",      // 人間が会話へ渡すファイル。中身を 1 通で送る古い口（8MB まで）
+  // 添付を断片で送る（1 件 100MB まで。core/folder-uploads.mjs と同じ仕組み・512 KiB の断片）。今の画面はこちらだけを使う
+  "attachStart",     // { sessionId, name, mime, size } -> { uploadId, path, received, chunkBytes }
+  "attachChunk",     // { uploadId, offset, data（base64）} -> { received }。data が空なら今の位置だけ
+  "attachFinish",    // { uploadId } -> { path, bytes, kind }
+  "attachCancel",    // { uploadId } -> { cancelled }
   // 手元のフォルダーをホストへ送る（core/folder-uploads.mjs、docs/remote.md §8.1）。リモート専用ではない一般の口
   "uploadCheck",     // { name, dest?, paths } -> { dest, root, exists, inRoot, empty, conflicts, sample, needsConfirm }。送る前の下見
   "uploadStart",     // { name, dest?, files: [{ path, size, mtime }], overwrite } -> { uploadId, dest, received: [バイト], resumed, chunkBytes } | { needsConfirm, ... }
