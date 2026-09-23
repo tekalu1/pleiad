@@ -178,6 +178,7 @@
     "behindCount_other": "裏で {{count}} 本が動いている",
     "turnRunning": "ターンが走っている",
     "subagents_other": "サブエージェント {{count}}",
+    "tasks_other": "タスク {{count}}",
     "background_other": "裏で動いている {{count}}",
     "subagentsEnded_other": "サブエージェント · 終了 {{count}}",
     "thinkingTokens_other": "考えている（約 {{count}} トークン）",
@@ -1395,7 +1396,8 @@
     },
     "behind": {
       "subagents": "サブエージェントを待っている",
-      "commands": "バックグラウンドのコマンドを待っている"
+      "commands": "バックグラウンドのコマンドを待っている",
+      "tasks": "タスクを待機中"
     }
   },
   "composer": {
