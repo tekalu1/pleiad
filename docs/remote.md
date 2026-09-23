@@ -52,7 +52,8 @@
 | 中継 | `relay/`（独立した `package.json`、依存は `ws` だけ。`Dockerfile`） | Node |
 | 暗号・フレーム・チャネル（共有） | `core/remote/noise.mjs`、`core/remote/frames.mjs`、`core/remote/channel.mjs`（ストリームの多重化と流量の制御。運び手に依存しない） | Node（ESM。デスクトップの main からは `import()`） |
 | ホストの接続口・ペアリング・端末一覧 | `core/remote/connector.mjs`、`core/remote/devices.mjs`。サーバーのプロセス内で動く（`npm start` のホストでも使える） | Node |
-| デスクトップの端末内プロキシ・リモートの窓 | `desktop/remote/`（main プロセス） | Node |
+| 端末の資格情報・ペアリング・端末内プロキシ | `core/remote/device.mjs`（置き場・ペアリング・ホストごとのプロキシの管理）、`core/remote/device-link.mjs`（中継への線・張り直し・状態）、`core/remote/device-proxy.mjs`（127.0.0.1 の HTTP と /ws）。デスクトップの main から `import()`、試験からも使う | Node |
+| リモートの窓 | `desktop/remote/`（main プロセス） | Node |
 | モバイルの殻 | `mobile/`（Capacitor。プロキシと暗号は Swift / Kotlin） | Swift / Kotlin / JS |
 | 試験ベクトル | `tests/remote/vectors.json`（Noise の公式ベクトル + フレームの例。3 実装が同じものを読む） | — |
 
@@ -193,7 +194,8 @@ stream 0 はチャネル自体。端末が開くストリームは奇数、ホ�
 
 - **ストリームは持ち越さない。** チャネルが切れたら、端末内プロキシは処理中の HTTP に 502 を返し、ローカルの WebSocket を 1006 で閉じる
 - 画面は既に 1.5 秒ごとに再接続し（`web/client.mjs` の `connect`）、`ready` のあと一覧と開いている会話を読み直し、送信は `messageId` と受領控えで二重にならない。**再開の仕組みはアプリの層に既にあるので、トンネルに作らない**
-- 端末内プロキシは要求が来た時点でチャネルを張る（遅延接続）。失敗したら 0.5 秒から 30 秒まで倍々（揺らぎ付き）
+- 端末内プロキシはホストの窓を開いた時点（`open()`）でチャネルを張り、開いている間は切れても張り直す。失敗したら 0.5 秒から 30 秒まで倍々（±25% の揺らぎ。10 秒つながり続けたら初めから）。取り消し（4401・GOAWAY `revoked`）では張り直さない
+- 張り直しを待っている間の要求は待たせずに断る（画面の読み込みは §7.4 の案内、ほかの HTTP と `/ws` は 502）。つないでいる最中に来た要求は結果を最大 10 秒待つ
 - ホストの接続口は中継への制御用の接続を常に張り、切れたら 1 秒から 60 秒まで倍々で張り直し、つながるたびに端末一覧（ハッシュ）を送り直す（§5.2）
 - 中継は両側に 30 秒ごとに WebSocket の ping を送り、返らない接続を捨てる（NAT の半開きの検出。Traefik の無通信切断も防ぐ）
 
@@ -327,6 +329,12 @@ WS コマンド（`core/protocol.mjs`）: `remoteStatus`・`setRemoteSettings { 
 - プロキシは起動ごとの乱数トークンを持ち、窓は `http://127.0.0.1:<p>/?token=<それ>` を開く。**プロキシの認証は今のサーバーと同じ形**（`?token=` か HttpOnly・SameSite=Strict の Cookie、`/ws` は `?token=`）なので、`web/` は変えずに済む。加えて `Host` が `127.0.0.1:<p>` 以外なら 403（DNS rebinding 対策）
 - 同じ PC の別プロセスもループバックには届くが、トークンが無ければ 401。同じ利用者の悪意あるプロセスは対象外（その時点で保管庫も読める）
 
+細部（実装 `core/remote/device*.mjs` で決めたこと）:
+
+- プロキシの Cookie の名前は `pleiad_remote_token`（ローカルの `agent_host_token` と別。`?token=` が合った応答に付ける）。`?token=` と Cookie はホストへ送らない。HTTP は GET と HEAD だけで、ほかは 405（ホストの接続口に届く前に断る）。防火壁の RESET 3 は 403
+- 端末の置き場（デスクトップは userData の下）: `secrets.json`（`core/secret-store.mjs`。端末の静的鍵 `deviceKey` と、ホストごとの中継用トークン `host:<hostId>`）、`hosts.json`（`{ hostId, hostName, label, relayUrl, hostPublicKey, deviceId, port, pairedAt, lastConnectedAt, revokedAt }`。秘密は入れない）。端末の静的鍵は 1 つで、すべてのホストに使う
+- Electron の main は safeStorage を直接使える（`desktop/secret-bridge.cjs` の `safeStorageCipher`）。暗号化できない環境ではホストと同じく 0600 の平文
+
 ### 7.2 リモートの印（3 箇所。消せない）
 
 1. **窓の上端のバッジ**: 帯の左（ロゴの上の行）に `⇄ リモート: desktop-home`。常に出し、閉じるボタンは無い。押すとホストの接続情報（中継・つないだ時刻・「この窓を閉じる」）の小さな面
@@ -363,7 +371,8 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 
 - ローカルの窓の設定 › リモートの下半分「ほかのホストにつなぐ」: ペアリングしたホストの一覧（名前・オンラインかどうか・最後に使った時刻、「開く」「名前を変える」「削除」）と「ホストを追加」（ペアリングのコードを貼る）
 - これは手元のアプリの機能なので、ローカルの窓の preload にだけ `plyDesktop.remoteHosts`（`list / pair / open / remove`）を足す。リモートの窓には出さない
-- ホストがオフライン・取り消し済みなどで最初の読み込みができないときは、プロキシが小さな案内のページを返す（「ホストにつながりません。ホストの Pleiad が起動しているか確かめてください。」「この端末はホストで取り消されました。もう一度ペアリングしてください。」）。中継の close code で分ける: 4401 取り消し・認証失敗、4404 ホストが居ない、それ以外は通信の失敗
+- ホストがオフライン・取り消し済みなどで最初の読み込みができないときは、プロキシが小さな案内のページを返す（「ホストにつながりません。ホストの Pleiad が起動しているか確かめてください。」「この端末はホストで取り消されました。もう一度ペアリングしてください。」）。中継の close code で分ける: 4401 取り消し・認証失敗、4404 ホストが居ない、それ以外は通信の失敗。
+  状態は `connecting`・`connected`・`offline`（中継につながらない）・`host-offline`（4404・4408・ホストの GOAWAY `shutdown`）・`revoked`（4401・GOAWAY `revoked`・ホストの鍵が合わない）。案内のページは 503 で、取り消し以外は 5 秒ごとに読み直してつながり次第画面に移る
 
 ## 8. 手元のフォルダーを送る（#15）とモバイル版（#16）
 
