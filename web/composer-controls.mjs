@@ -13,6 +13,10 @@ import { el, svgEl, relTime } from "./dom.mjs";
 import { isComposingKey } from "./keyboard.mjs";
 import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, endpointChipLabel } from "./composer-labels.mjs";
 import { compatModelLabel, modelCandidates, searchModels, resolveTyped, moreText, ONE_M_TITLE } from "./compat-models.mjs";
+import { t } from "./i18n.mjs";
+
+/** 一覧の「既定」の札 */
+const DEFAULT_TAG = () => t("chat.model.default");
 
 const FOLDER = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
 const FOLDER_ADD = "M12 11v5M9.5 13.5h5";
@@ -193,8 +197,8 @@ export function setupComposerControls({ cmd, get, on }) {
     const pop = pops.cwd;
     const input = el("input", "cpath");
     input.value = d.cwd ?? "";
-    input.placeholder = "作業ディレクトリのパス";
-    input.setAttribute("aria-label", "作業ディレクトリのパス（Enter で決める）");
+    input.placeholder = t("composer.cwd.placeholder");
+    input.setAttribute("aria-label", t("composer.cwd.inputLabel"));
     input.autocomplete = "off"; input.spellcheck = false;
     input.addEventListener("keydown", (e) => {
       if (isComposingKey(e) || e.key !== "Enter") return;
@@ -207,7 +211,7 @@ export function setupComposerControls({ cmd, get, on }) {
     }));
     const pick = el("button", "caction");
     pick.type = "button";
-    pick.append(glyph(FOLDER, FOLDER_ADD), el("span", null, "フォルダーを選ぶ…"));
+    pick.append(glyph(FOLDER, FOLDER_ADD), el("span", null, t("composer.cwd.choose")));
     const err = el("p", "cerr");
     err.setAttribute("role", "alert");
     pick.onclick = async () => {
@@ -223,8 +227,8 @@ export function setupComposerControls({ cmd, get, on }) {
     };
     const box = el("div", "cbrowse");
     box.hidden = true;
-    pop.replaceChildren(input, head("最近の作業ディレクトリ"),
-      recent.length ? listbox("最近の作業ディレクトリ", recent) : el("p", "cnote", "まだありません"),
+    pop.replaceChildren(input, head(t("composer.cwd.recent")),
+      recent.length ? listbox(t("composer.cwd.recent"), recent) : el("p", "cnote", t("composer.cwd.noRecent")),
       pick, box, err);
     if (browsing != null) browse(browsing);
 
@@ -250,8 +254,8 @@ export function setupComposerControls({ cmd, get, on }) {
       if (!keepError) err.textContent = "";
       browsing = r.path;
       const rows = [];
-      if (r.parent) rows.push(row({ main: "..", sub: "ひとつ上へ", mono: true, onPick: () => browse(r.parent) }));
-      for (const root of r.roots ?? []) if (root !== r.path) rows.push(row({ main: root, sub: "ドライブ", mono: true, onPick: () => browse(root) }));
+      if (r.parent) rows.push(row({ main: "..", sub: t("composer.cwd.up"), mono: true, onPick: () => browse(r.parent) }));
+      for (const root of r.roots ?? []) if (root !== r.path) rows.push(row({ main: root, sub: t("composer.cwd.drive"), mono: true, onPick: () => browse(root) }));
       for (const name of r.dirs) {
         const full = r.path.replace(/[\\/]+$/, "") + (r.path.includes("\\") ? "\\" : "/") + name;
         rows.push(row({ main: name, mono: true, title: full, onPick: () => browse(full) }));
@@ -259,13 +263,13 @@ export function setupComposerControls({ cmd, get, on }) {
       const crumb = el("div", "crumb", r.path);
       crumb.title = r.path;
       const go = el("div", "go");
-      const choose = el("button", "btn btn-primary", "このフォルダーにする");
+      const choose = el("button", "btn btn-primary", t("composer.cwd.useThis"));
       choose.type = "button";
       choose.onclick = () => commitCwd(r.path);
       go.append(choose);
       box.replaceChildren(crumb,
-        rows.length ? listbox(`${r.path} の中のフォルダー`, rows) : el("p", "cnote", "フォルダーがありません"),
-        ...(r.truncated ? [el("p", "cnote", "多すぎるため途中まで表示しています。パスを入力してください")] : []),
+        rows.length ? listbox(t("composer.cwd.foldersIn", { path: r.path }), rows) : el("p", "cnote", t("composer.cwd.noFolders")),
+        ...(r.truncated ? [el("p", "cnote", t("composer.cwd.truncated"))] : []),
         go);
       (box.querySelector("[role=option]") ?? choose).focus();
     }
@@ -279,10 +283,10 @@ export function setupComposerControls({ cmd, get, on }) {
     const pop = pops.model;
     const parts = [];
     if (d.backendSwitchable) {
-      parts.push(head("エージェント"));
+      parts.push(head(t("composer.agent")));
       const seg = el("div", "seg cseg");
       seg.setAttribute("role", "group");
-      seg.setAttribute("aria-label", "エージェント");
+      seg.setAttribute("aria-label", t("composer.agent"));
       for (const b of d.backends) {
         const btn = el("button", b.id === d.backend ? "on" : "", b.label);
         btn.type = "button";
@@ -298,21 +302,21 @@ export function setupComposerControls({ cmd, get, on }) {
     if (ep) parts.push(...endpointSection(d));
     if (ep?.row) parts.push(...compatModelSection(d));
     else parts.push(...officialModelSection(d));
-    parts.push(head("エフォート（考える量）"));
+    parts.push(head(t("composer.effort.title")));
     parts.push(effortBlock(d));
     if (d.accounts) {
-      parts.push(head("Claude のアカウント"));
+      parts.push(head(t("composer.account.title")));
       // 互換の接続先ではアカウントを使わない（接続先のキーで送る）。節は残し、選べない見た目と理由を出す
       const off = Boolean(ep?.row);
-      if (off) parts.push(el("p", "cnote", "互換の接続先ではアカウントを使いません"));
-      parts.push(listbox("Claude のアカウント", d.accounts.map((a) => row({
-        on: !off && a.value === d.account, main: a.label, right: off ? "" : a.hint, tag: !off && a.value === "" ? "既定" : "", key: `account:${a.value}`, disabled: off,
+      if (off) parts.push(el("p", "cnote", t("composer.account.compatOff")));
+      parts.push(listbox(t("composer.account.title"), d.accounts.map((a) => row({
+        on: !off && a.value === d.account, main: a.label, right: off ? "" : a.hint, tag: !off && a.value === "" ? DEFAULT_TAG() : "", key: `account:${a.value}`, disabled: off,
         onPick: () => { if (!off && a.value !== d.account) on.account(a.value); },
       }))));
     }
     if (ep) {
       const foot = el("div", "cfoot");
-      const manage = el("button", "clink", "接続先を管理…");
+      const manage = el("button", "clink", t("composer.endpoint.manage"));
       manage.type = "button";
       manage.dataset.key = "epmanage";
       manage.onclick = () => { model.hide(false); ep.manage(); };
@@ -325,13 +329,13 @@ export function setupComposerControls({ cmd, get, on }) {
   /** 接続先の節。d.endpoint は client.mjs の endpointView() */
   function endpointSection(d) {
     const ep = d.endpoint;
-    const out = [head("接続先")];
-    out.push(listbox("接続先", ep.options.map((o) => row({
-      on: o.value === ep.selected, main: (o.warn ? "⚠ " : "") + o.label, sub: o.sub, tag: o.isDefault ? "既定" : "", key: `endpoint:${o.value}`, title: o.title ?? o.label,
+    const out = [head(t("composer.endpoint.title"))];
+    out.push(listbox(t("composer.endpoint.title"), ep.options.map((o) => row({
+      on: o.value === ep.selected, main: (o.warn ? "⚠ " : "") + o.label, sub: o.sub, tag: o.isDefault ? DEFAULT_TAG() : "", key: `endpoint:${o.value}`, title: o.title ?? o.label,
       onPick: () => { if (o.value !== ep.selected && !o.gone) on.endpoint(o.value); },
     }))));
     if (ep.row) {
-      out.push(el("p", "cnote", `使えないもの: ${ep.lost}`));
+      out.push(el("p", "cnote", t("composer.endpoint.lost", { items: ep.lost })));
     }
     return out;
   }
@@ -344,7 +348,7 @@ export function setupComposerControls({ cmd, get, on }) {
    */
   function compatModelSection(d) {
     const ep = d.endpoint;
-    const out = [head("モデル")];
+    const out = [head(t("composer.model.title"))];
     const main = ep.row.roles?.main ?? "";
     const cur = d.model || main;
     // メイン → 今のモデル → 一覧の順（今のものは絞らなくても見える）
@@ -353,8 +357,8 @@ export function setupComposerControls({ cmd, get, on }) {
     const input = el("input", "cpath");
     input.value = initial;
     if (d.model) input.title = d.model;
-    input.placeholder = main ? `検索、または ID（空ならメインの ${compatModelLabel(main).text}）` : "検索、または ID";
-    input.setAttribute("aria-label", "モデルを検索、または ID を入力（Enter で決める）");
+    input.placeholder = main ? t("composer.model.searchMain", { model: compatModelLabel(main).text }) : t("composer.model.search");
+    input.setAttribute("aria-label", t("composer.model.searchLabel"));
     input.dataset.key = "epmodel";
     input.autocomplete = "off"; input.spellcheck = false;
     const box = el("div");
@@ -376,13 +380,13 @@ export function setupComposerControls({ cmd, get, on }) {
       const exact = !q || q === initial.toLowerCase() || cands.some((c) => c.id.toLowerCase() === q);
       const { shown, more } = searchModels(cands, exact ? "" : q);
       const rows = shown.map((c) => row({
-        on: c.id === cur, main: c.text, sub: c.sub, key: `epmodel:${c.id}`, title: c.id, tag: c.id === main ? "既定" : "", right: roleOf(c.id),
+        on: c.id === cur, main: c.text, sub: c.sub, key: `epmodel:${c.id}`, title: c.id, tag: c.id === main ? DEFAULT_TAG() : "", right: roleOf(c.id),
         badge: c.oneM ? { text: "1M", title: ONE_M_TITLE } : null,
         onPick: () => commit(c.id),
       }));
       const notes = [];
       if (more > 0) notes.push(el("p", "cnote", moreText(more)));
-      box.replaceChildren(...(rows.length ? [listbox("モデルの候補", rows)] : [el("p", "cnote", q ? "一覧にありません。Enter でこの ID をそのまま使います。" : "一覧がありません。ID を入力してください。")]), ...notes);
+      box.replaceChildren(...(rows.length ? [listbox(t("composer.model.candidates"), rows)] : [el("p", "cnote", q ? t("composer.model.notListed") : t("composer.model.noList"))]), ...notes);
     };
     input.addEventListener("focus", () => input.select());
     input.addEventListener("input", paintList);
@@ -398,7 +402,7 @@ export function setupComposerControls({ cmd, get, on }) {
 
   /** 公式のモデルの一覧（版付きの名前＋補足、既定の行に「既定」の札） */
   function officialModelSection(d) {
-    const parts = [head("モデル")];
+    const parts = [head(t("composer.model.title"))];
     const models = d.models ?? {};
     const { id: resolved, entry: current } = resolvedModel(models, d.model);
     const def = models[""]?.resolvesTo;
@@ -407,19 +411,19 @@ export function setupComposerControls({ cmd, get, on }) {
     // 既定が一覧のどれにも当たらない（分からない）ときは「既定に従う」の行を残す
     const rows = [];
     if (!def || !ids.some((id) => holdsDefault(models, id))) rows.push(row({
-      on: !d.model, main: models[""]?.resolvedLabel ?? models[""]?.label ?? "既定に従う", sub: models[""]?.note, tag: "既定",
+      on: !d.model, main: models[""]?.resolvedLabel ?? models[""]?.label ?? t("chat.next.useDefault"), sub: models[""]?.note, tag: DEFAULT_TAG(),
       key: "model:", onPick: () => d.model && on.model(""),
     }));
     for (const id of ids) {
       const m = models[id];
       rows.push(row({
         on: id === resolved || Boolean(m.family && m.family === current?.family),
-        main: m.label ?? id, sub: m.note, tag: holdsDefault(models, id) ? "既定" : "", key: `model:${id}`,
+        main: m.label ?? id, sub: m.note, tag: holdsDefault(models, id) ? DEFAULT_TAG() : "", key: `model:${id}`,
         // 既定の行を選ぶと '' を保存する（既定が変われば追従する）。選んでいる系統の行は何もしない
         onPick: () => { const v = id === def ? "" : id; if (v !== d.model && id !== resolved) on.model(v); },
       }));
     }
-    parts.push(listbox("モデル", rows));
+    parts.push(listbox(t("composer.model.title"), rows));
     return parts;
   }
 
@@ -429,27 +433,29 @@ export function setupComposerControls({ cmd, get, on }) {
     const top = el("div", "etop");
     const val = el("span", "val");
     const note = el("span", "note");
-    const reset = el("button", "reset", "既定に戻す");
+    const reset = el("button", "reset", t("composer.effort.reset"));
     reset.type = "button";
     top.append(val, note, reset);
     const range = el("input");
     range.type = "range";
     range.min = "0"; range.step = "1";
-    range.setAttribute("aria-label", "エフォート");
+    range.setAttribute("aria-label", t("composer.effort.label"));
     range.dataset.key = "effort";
     const ticks = el("div", "ticks");
     const { label: modelLabel } = resolvedModel(d.models, d.model);
     // 既定に従うときに誰の設定が効くか
-    const owner = d.endpoint?.row ? "接続先" : d.backend === "antigravity" ? "agy " : "エージェント";
+    // i18n-dynamic: composer.effort.follow.
+    // i18n-dynamic: composer.effort.defaultFollow.
+    const owner = d.endpoint?.row ? "endpoint" : d.backend === "antigravity" ? "agy" : "agent";
     const paintVal = (v) => {
-      val.textContent = v || "既定";
-      note.textContent = !v ? `（${owner}の設定に従う）` : v === def && !d.effort ? `（${modelLabel} の既定）` : "";
-      range.setAttribute("aria-valuetext", v ? v + (v === def ? "（既定）" : "") : `既定（${owner}の設定に従う）`);
+      val.textContent = v || DEFAULT_TAG();
+      note.textContent = !v ? t(`composer.effort.follow.${owner}`) : v === def && !d.effort ? t("composer.effort.modelDefault", { model: modelLabel }) : "";
+      range.setAttribute("aria-valuetext", v ? (v === def ? t("composer.effort.levelDefault", { level: v }) : v) : t(`composer.effort.defaultFollow.${owner}`));
     };
     if (!stops.length || d.effortDisabled) {
       range.disabled = true; range.max = "0"; range.value = "0";
       val.textContent = "—";
-      note.textContent = d.efforts?.[""]?.reason ?? `${modelLabel} は段を選べません`;
+      note.textContent = d.efforts?.[""]?.reason ?? t("composer.effort.noLevels", { model: modelLabel });
       note.title = note.textContent;
       reset.hidden = true;
       box.classList.add("off");
@@ -490,10 +496,10 @@ export function setupComposerControls({ cmd, get, on }) {
     const d = get();
     const def = defaultModeOf(d.modes);
     const rows = Object.entries(d.modes ?? {}).map(([id, m]) => row({
-      on: id === d.mode, main: (isDanger(m) ? "⚠ " : "") + (m.label ?? id), sub: m.note, tag: id === def ? "既定" : "", danger: isDanger(m), key: `mode:${id}`,
+      on: id === d.mode, main: (isDanger(m) ? "⚠ " : "") + (m.label ?? id), sub: m.note, tag: id === def ? DEFAULT_TAG() : "", danger: isDanger(m), key: `mode:${id}`,
       onPick: () => { mode.hide(); if (id !== d.mode) on.mode(id); },
     }));
-    pops.mode.replaceChildren(head("承認モード"), listbox("承認モード", rows));
+    pops.mode.replaceChildren(head(t("chat.composer.mode")), listbox(t("chat.composer.mode"), rows));
   }
   const mode = panel(chips.mode, pops.mode, { align: "right", render: renderMode });
 
@@ -502,9 +508,9 @@ export function setupComposerControls({ cmd, get, on }) {
     const d = get();
     // 作業ディレクトリ
     const cwd = d.cwd ?? "";
-    cwdName.textContent = cwd ? baseName(cwd) : "作業ディレクトリ";
-    chips.cwd.title = cwd ? `${cwd}（変更は次のターンから適用）` : "作業ディレクトリ";
-    chips.cwd.setAttribute("aria-label", `作業ディレクトリ: ${cwd || "未指定"}`);
+    cwdName.textContent = cwd ? baseName(cwd) : t("chat.composer.cwd");
+    chips.cwd.title = cwd ? t("composer.cwd.chipTitle", { cwd }) : t("chat.composer.cwd");
+    chips.cwd.setAttribute("aria-label", t("composer.cwd.chipAria", { cwd: cwd || t("composer.cwd.unset") }));
     chips.cwd.dataset.value = cwd;
     chips.cwd.disabled = Boolean(d.cwdDisabled);
     // モデル
@@ -519,8 +525,8 @@ export function setupComposerControls({ cmd, get, on }) {
       b.title = ONE_M_TITLE;
       modelName.replaceChildren(epLabel.head, b, epLabel.tail ? ` · ${epLabel.tail}` : "");
     } else modelName.textContent = label;
-    chips.model.title = `${full}（エージェント・モデル・エフォート。次のターンから適用）`;
-    chips.model.setAttribute("aria-label", `モデルとエフォート: ${full}`);
+    chips.model.title = t("composer.model.chipTitle", { label: full });
+    chips.model.setAttribute("aria-label", t("composer.model.chipAria", { label: full }));
     chips.model.dataset.value = d.model ?? "";
     chips.model.dataset.backend = d.backend ?? "";
     // 承認モード
@@ -528,8 +534,8 @@ export function setupComposerControls({ cmd, get, on }) {
     const danger = isDanger(m);
     modeName.textContent = (danger ? "⚠ " : "") + (m?.label ?? d.mode ?? "");
     chips.mode.classList.toggle("danger", danger);
-    chips.mode.title = danger ? "承認モード: 確認なし・制限なし" : "承認モード";
-    chips.mode.setAttribute("aria-label", `承認モード: ${m?.label ?? d.mode ?? ""}${danger ? "（確認なし・制限なし）" : ""}`);
+    chips.mode.title = danger ? t("composer.mode.dangerTitle") : t("chat.composer.mode");
+    chips.mode.setAttribute("aria-label", (danger ? t("composer.mode.chipAriaDanger", { mode: m?.label ?? d.mode ?? "" }) : t("composer.mode.chipAria", { mode: m?.label ?? d.mode ?? "" })));
     chips.mode.dataset.value = d.mode ?? "";
     // 開いている面も描き直す。触っていた部品へフォーカスを戻す（data-key で引き直す）。
     // 作業ディレクトリの面は打ち込み中・辿っている途中を消さないよう、位置だけ合わせる
