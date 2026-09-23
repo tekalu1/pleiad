@@ -52,7 +52,8 @@ export default async function(t) {
     t.ok('開始失敗でも入力が再送可能な状態で残る', (await c.cmd('listMessages', { sessionId: bad.sessionId }))[0].status === 'failed');
   } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 
-  // 何も走っていない新しい会話でも、ほかの会話で上限まで埋まっていれば待つ。そのとき「作業が終わると」とは出さない
+  // 会話をまたいだ同時実行の本数に上限は無い。ほかの会話が走っていても、新しい会話の送信は待たずに届く
+  // （以前の AGENT_HOST_MAX_TURNS が残っていても効かない）
   const limitDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-outbox-limit-'));
   const limitServer = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_MAX_TURNS: '1' }, dataDir: path.join(limitDir, 'data') });
   const lc = await open(limitServer);
@@ -62,12 +63,10 @@ export default async function(t) {
     const permission = await lc.waitFor(e => e.type === 'permission');
     const fresh = await lc.cmd('newSession', { backend: 'fake', cwd: ROOT });
     await lc.cmd('sendMessage', { sessionId: fresh.sessionId, messageId: 'message-0101', prompt: 'echo:fresh' });
-    await lc.waitFor(e => e.type === 'outbox' && e.sessionId === fresh.sessionId && e.messages[0]?.waiting, { ms: 3000 });
-    const [held] = await lc.cmd('listMessages', { sessionId: fresh.sessionId });
-    t.ok('新しい会話の上限待ちは limit として出す', held.status === 'queued' && held.waiting?.reason === 'limit' && held.waiting.limit === 1, JSON.stringify(held));
-    await lc.cmd('resolvePermission', { id: permission.id, allow: true });
     await lc.waitFor(e => e.type === 'outbox' && e.sessionId === fresh.sessionId && e.messages[0]?.status === 'sent', { ms: 5000 });
-    t.ok('空きが出たら自動で送る', true);
+    const [sent] = await lc.cmd('listMessages', { sessionId: fresh.sessionId });
+    t.ok('ほかの会話が承認待ちで走っていても、新しい会話の送信は待たない', sent.status === 'sent' && !sent.waiting, JSON.stringify(sent));
+    await lc.cmd('resolvePermission', { id: permission.id, allow: true });
   } finally { lc.close(); await limitServer.stop(); await fs.rm(limitDir, { recursive: true, force: true }); }
 
   // A transport failure after delivery must never fall back to a new turn.
@@ -108,10 +107,10 @@ export default async function(t) {
   for (let i = 0; i < 50 && (await requeue.list('r'))[1].status !== 'sent'; i++) await new Promise(r => setTimeout(r, 10));
   t.ok('相手のターンが終わると同じ順で送り直す', JSON.stringify(starts) === JSON.stringify(['after wake', 'after wake', 'next']), JSON.stringify(starts));
 
-  // 送信待ちが何を待っているかを画面へ渡す。何も走っていない会話でも、同時実行の上限で待つことがある
+  // 送信待ちが何を待っているかを画面へ渡す
   const waitData = {};
   const emitted = [];
-  let block = { blocked: true, wait: { reason: 'limit', limit: 8 } };
+  let block = { blocked: true, wait: { reason: 'turn', detail: 'switching' } };
   const store3 = { get: async id => waitData[id] ?? {}, getAll: async () => waitData,
     setSessionData: async (id, field, value) => { (waitData[id] ??= {})[field] = structuredClone(value); } };
   const waiting = createMessageQueue({ store: store3, active: () => block,
@@ -120,12 +119,13 @@ export default async function(t) {
   await waiting.accept('w', 'request-5', { prompt: 'first' });
   await waiting.kick('w');
   const limited = (await waiting.list('w'))[0];
-  t.ok('上限待ちは理由と上限を添える', limited.status === 'queued' && limited.waiting?.reason === 'limit' && limited.waiting.limit === 8, JSON.stringify(limited));
-  t.ok('理由の変化も画面へ通知する', emitted.at(-1)?.[0]?.waiting?.reason === 'limit');
+  t.ok('待っている理由を添える', limited.status === 'queued' && limited.waiting?.reason === 'turn' && limited.waiting.detail === 'switching', JSON.stringify(limited));
+  t.ok('理由の変化も画面へ通知する', emitted.at(-1)?.[0]?.waiting?.detail === 'switching');
   t.ok('理由は保存しない', !('waiting' in waitData.w.outbox[0]));
   block = { blocked: true };
   await waiting.kick('w');
-  t.ok('この会話の作業待ちは turn', (await waiting.list('w'))[0].waiting?.reason === 'turn');
+  const plain = (await waiting.list('w'))[0].waiting;
+  t.ok('理由の指定が無ければ turn', plain?.reason === 'turn' && !plain.detail, JSON.stringify(plain));
   waitData.w.outbox[0].status = 'paused';
   await waiting.accept('w', 'request-6', { prompt: 'second' });
   await waiting.kick('w');
