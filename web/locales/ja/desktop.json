@@ -10,5 +10,55 @@
       "retrying": "つなぎ直している",
       "error": "つながらない"
     }
+  },
+  "remote": {
+    "windowTitle": "Pleiad — リモート: {{host}}",
+    "overlay": "リモート",
+    "notifyBody": "【{{host}}】{{body}}",
+    "hosts": {
+      "windowTitle": "ほかのホストにつなぐ",
+      "jumpTask": "ほかのホストにつなぐ…",
+      "jumpTaskDescription": "ペアリングしたホストの Pleiad をこの PC の窓で開きます",
+      "heading": "ペアリングしたホスト",
+      "empty": "まだホストがありません。下の「ホストを追加」から追加します。",
+      "state": {
+        "connected": "オンライン",
+        "connecting": "確認中…",
+        "offline": "中継につながりません",
+        "host-offline": "ホストがオフライン",
+        "revoked": "取り消されました",
+        "closed": "閉じています",
+        "stopped": "閉じています"
+      },
+      "lastConnected": "最後につないだ時刻 {{when}}",
+      "neverConnected": "まだつないでいません",
+      "windowOpen": "窓を開いています",
+      "open": "開く",
+      "opening": "開いています…",
+      "rename": "名前を変える",
+      "renameLabel": "ホストの名前",
+      "renameSave": "変更",
+      "cancel": "やめる",
+      "remove": "削除",
+      "removeConfirm": "「{{host}}」をこの PC から削除しますか。ホストの端末一覧には残るので、使わなくなったらホストの画面で取り消してください。",
+      "removeYes": "削除する",
+      "revokedHint": "もう一度ペアリングするには、ホストで新しいコードを作って「ホストを追加」に貼り付けます。",
+      "unknown": "このホストはペアリングされていません",
+      "loadFailed": "ホストの一覧を読めません: {{error}}",
+      "storagePlain": "この PC では資格情報を暗号化できません（本人だけが読めるファイルに保存します）。",
+      "add": {
+        "heading": "ホストを追加",
+        "help": "ホストの Pleiad の 設定 › リモート ›「端末を追加」で「コードをコピー」し、ここに貼り付けます。",
+        "label": "ペアリングのコード",
+        "placeholder": "ペアリングのコード（pleiad://pair?…）",
+        "submit": "追加",
+        "connecting": "ホストにつないでいます…",
+        "waiting": "ホストの画面で承認してください",
+        "codeLabel": "確認コード",
+        "codeHint": "ホストの画面に同じ数字が出ていることを確かめてから承認します。",
+        "done": "「{{host}}」を追加しました",
+        "fullAccess": "追加した端末は、ホストの利用者と同じようにすべての操作ができます。失くしたときはホストの端末一覧から取り消してください。"
+      }
+    }
   }
 }

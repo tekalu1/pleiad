@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   Handshake, CipherState, MAX_NONCE, keyPairFromPrivate, generateKeyPair, dh,
   prologueFor, hostIdFor, derivePairing, confirmationCode, formatConfirmationCode, base32,
+  AEAD_CIPHER, PROTOCOL_IK, PROTOCOL_IKPSK2,
 } from '../../core/remote/noise.mjs';
 
 export const name = 'remote-noise';
@@ -74,7 +75,10 @@ export default async function (t) {
   // ── 公式ベクトル ──
   t.ok('vectors.json に IK と IKpsk2 の 2 本だけがある',
     VECTORS.noise.length === 2 && VECTORS.noise.map(v => v.protocol_name).sort().join() ===
-      'Noise_IK_25519_ChaChaPoly_SHA256,Noise_IKpsk2_25519_ChaChaPoly_SHA256');
+      'Noise_IK_25519_AESGCM_SHA256,Noise_IKpsk2_25519_AESGCM_SHA256');
+  // Electron の Node（BoringSSL）には chacha20-poly1305 が無かった。どちらの crypto にもある AEAD を使っていることを落とせる形で見る
+  t.ok(`AEAD（${AEAD_CIPHER}）が crypto.getCiphers() にある（Electron の BoringSSL にもある組）`,
+    crypto.getCiphers().includes(AEAD_CIPHER) && PROTOCOL_IK.includes('_AESGCM_') && PROTOCOL_IKPSK2.includes('_AESGCM_'));
   for (const v of VECTORS.noise) {
     const bad = runVector(v);
     t.ok(`${v.protocol_name}: cacophony のベクトルと一致（ハンドシェイク 2 通 + transport 4 通・h）`, bad.length === 0, bad.join(', '));

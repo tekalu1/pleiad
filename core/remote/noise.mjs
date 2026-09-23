@@ -1,6 +1,8 @@
 // リモート接続の暗号（docs/remote.md §3）。Node の標準 crypto だけで組む。
 //
-// - Noise_IK_25519_ChaChaPoly_SHA256（通常の接続）と Noise_IKpsk2_25519_ChaChaPoly_SHA256（ペアリング）。
+// - Noise_IK_25519_AESGCM_SHA256（通常の接続）と Noise_IKpsk2_25519_AESGCM_SHA256（ペアリング）。
+//   AEAD は AES-256-GCM（ChaChaPoly ではない）。Electron の Node（BoringSSL）には chacha20-poly1305 が無く、
+//   デスクトップ版の端末（main）もホスト（utilityProcess）もつなげなかったため（docs/remote.md §3.2）。
 //   Noise の仕様（rev 34）の HandshakeState / SymmetricState / CipherState をそのまま書く。自作の組み立てはしない。
 // - 公式の試験ベクトル（cacophony）を tests/remote/vectors.json に置き、tests/unit/remote-noise.mjs で突き合わせる。
 // - 端末（デスクトップ・モバイル）とホストの両方がこれを使う。モバイルの Swift / Kotlin も同じベクトルで確かめる。
@@ -21,8 +23,10 @@ export const MAX_PLAINTEXT = MAX_MESSAGE - TAGLEN;
  */
 export const MAX_NONCE = 2 ** 32;
 
-export const PROTOCOL_IK = 'Noise_IK_25519_ChaChaPoly_SHA256';
-export const PROTOCOL_IKPSK2 = 'Noise_IKpsk2_25519_ChaChaPoly_SHA256';
+export const PROTOCOL_IK = 'Noise_IK_25519_AESGCM_SHA256';
+export const PROTOCOL_IKPSK2 = 'Noise_IKpsk2_25519_AESGCM_SHA256';
+/** Node の crypto の名前。OpenSSL（Node）と BoringSSL（Electron）の両方にある（tests/unit/remote-noise.mjs が getCiphers() で確かめる） */
+export const AEAD_CIPHER = 'aes-256-gcm';
 
 // パターン（Noise の仕様 §7.5 / §9）。pre は応答側の静的鍵を事前に知っていること（IK の「K」）。
 const PATTERNS = {
@@ -101,15 +105,15 @@ export function dh(privateKey, publicKey) {
 // ── CipherState ────────────────────────────────────────────
 
 function nonceBytes(n) {
-  // 4 バイトの 0 + 64bit 小端の通番（ChaChaPoly の nonce。仕様 §12.3）
+  // 4 バイトの 0 + 64bit 大端の通番（AESGCM の nonce。仕様 §12.4。ChaChaPoly は小端なので取り違えない）
   const b = Buffer.alloc(12);
-  b.writeBigUInt64LE(BigInt(n), 4);
+  b.writeBigUInt64BE(BigInt(n), 4);
   return b;
 }
 
 function aeadEncrypt(k, n, ad, plaintext) {
-  const c = crypto.createCipheriv('chacha20-poly1305', k, nonceBytes(n), { authTagLength: TAGLEN });
-  c.setAAD(ad, { plaintextLength: plaintext.length });
+  const c = crypto.createCipheriv(AEAD_CIPHER, k, nonceBytes(n), { authTagLength: TAGLEN });
+  c.setAAD(ad);
   const body = c.update(plaintext);
   c.final();
   return Buffer.concat([body, c.getAuthTag()]);
@@ -117,8 +121,8 @@ function aeadEncrypt(k, n, ad, plaintext) {
 
 function aeadDecrypt(k, n, ad, ciphertext) {
   if (ciphertext.length < TAGLEN) throw new Error('ciphertext too short');
-  const d = crypto.createDecipheriv('chacha20-poly1305', k, nonceBytes(n), { authTagLength: TAGLEN });
-  d.setAAD(ad, { plaintextLength: ciphertext.length - TAGLEN });
+  const d = crypto.createDecipheriv(AEAD_CIPHER, k, nonceBytes(n), { authTagLength: TAGLEN });
+  d.setAAD(ad);
   d.setAuthTag(ciphertext.subarray(ciphertext.length - TAGLEN));
   const body = d.update(ciphertext.subarray(0, ciphertext.length - TAGLEN));
   try { d.final(); } catch { throw new Error('decryption failed (tampered, wrong key or out of order)'); }

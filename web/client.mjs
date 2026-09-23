@@ -6,6 +6,7 @@ import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
+import { setupRemoteBadge } from './remote-badge.mjs';
 import { setupUsage } from './usage.mjs';
 import { setupOnboarding } from "./onboarding.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
@@ -1312,6 +1313,9 @@ function renderAuth() {
       const link = el("a", "btn", t("settings.agents.install"));
       link.href = st.installUrl; link.target = "_blank"; link.rel = "noreferrer";
       row.append(link);
+    } else if (st.supported && !st.pending && !st.loggedIn && window.plyRemote) {
+      // リモートの窓: ログインの戻り先はホストの PC なので、ここからは始めない（docs/remote.md §7.3）。状態はそのまま見える
+      row.append(el("span", "remote-login-note", t("remote.loginOnHost")));
     } else if (st.supported && !st.pending) {
       const loggedIn = st.loggedIn;
       const btn = el("button", "btn", loggedIn ? t("settings.agents.signOut") : t("settings.agents.signIn"));
@@ -1389,6 +1393,7 @@ function authUrlBox(id) {
 
 /** ログインは完了まで返ってこない（サーバがコールバックを待つ。10 分で時間切れ）。応答待ちで画面を止めない */
 function authLogin(b) {
+  if (window.plyRemote) { sys(html.t("remote.loginOnHost")); return; }   // リモートの窓からは始めない（renderAuth と同じ理由）
   state.auth.set(b.id, { ...(state.auth.get(b.id) ?? {}), supported: true, pending: true });
   renderAuth();
   onboarding.paint();
@@ -3305,7 +3310,7 @@ function connect() {
       if (applyLocale(m.locale)) return;
       side.setConnLost(false);
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
-      cmd("hostCapabilities").then((c) => { state.osActions = c?.osActions === true; filePreview.osChanged(); }).catch(() => {});
+      cmd("hostCapabilities").then((c) => { state.osActions = c?.osActions === true && !window.plyRemote; filePreview.osChanged(); }).catch(() => {});
       // 開く前から承認待ちがあれば、ここでダイアログに出す
       remoteSettings.refresh();
       return refresh().then(async () => {
@@ -3458,6 +3463,8 @@ clearThread();
 initTheme();
 initLocale();
 initSidebar();
+// リモートの窓（端末のアプリが plyRemote を渡したとき）の帯のバッジ。帯の色を送るより先に置く
+setupRemoteBadge();
 watchTitleBar();
 wireDropZone();
 fitPrompt();

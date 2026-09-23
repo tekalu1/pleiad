@@ -117,7 +117,10 @@ function forwardWs(stream, path, protocols, { host, port }, token) {
   const sep = path.includes('?') ? '&' : '?';
   const url = `ws://${host.includes(':') ? `[${host}]` : host}:${port}${path}${sep}token=${encodeURIComponent(token)}`;
   const list = Array.isArray(protocols) ? protocols.filter(p => typeof p === 'string' && /^[\x21-\x7e]{1,64}$/.test(p)).slice(0, 8) : [];
-  const local = new WebSocket(url, list, { perMessageDeflate: false, followRedirects: false, handshakeTimeout: 10_000 });
+  // ホストのサーバーから見るとループバックの接続なので、印を付けて「サーバーのある PC の画面」と区別させる
+  // （core/os-open.mjs の isLocalRequest。エクスプローラーで表示・ブラウザーで開くをリモートの端末から動かさない）
+  const local = new WebSocket(url, list, { perMessageDeflate: false, followRedirects: false, handshakeTimeout: 10_000,
+    headers: { 'x-forwarded-for': 'pleiad-remote' } });
   let opened = false;
   let inflight = 0;
 

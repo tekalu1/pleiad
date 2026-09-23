@@ -39,7 +39,8 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   const NEW_HINT = '発行されたトークン（sk-ant-oat01-…）をそのまま貼り付けてください。保存したトークンは表示しません。';
   const EDIT_HINT = '変更するときだけ貼り付けてください。空のままなら保存済みのトークンを使います。';
   // デスクトップ版はサーバーが既定のブラウザーで開く。ブラウザー版は押した時点で窓を開けておき、URL が届いたら移す（後から開くとポップアップとして止められる）
-  const desktop = () => Boolean(window.plyDesktop);
+  // リモートの窓（plyRemote）はデスクトップ版でも、サーバーが開くのはホストの PC のブラウザー。ブラウザー版と同じく手元で開く（docs/remote.md §7.3）
+  const desktop = () => Boolean(window.plyDesktop) && !window.plyRemote;
 
   /** 一覧を取り直す。force でなければ前回の結果を使い回す（入力欄の出し分けで何度も呼ばれる） */
   async function load(force = false) {
