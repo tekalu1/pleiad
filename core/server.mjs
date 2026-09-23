@@ -2227,11 +2227,12 @@ wss.on("connection", (ws) => {
         case "setModel": {
           const { sessionId, model } = msg.args ?? {};
           const backend = refuseRetired(await pickBackend(sessionId, msg.args?.backend));
-          const models = await backend.models();
-          if (!(model in models)) return reply(false, `知らないモデル: ${model}`);
+          // 互換の接続先の会話はモデル ID を形だけ見る（接続先の一覧＋自由入力）。公式の既定（prefs）には覚えない
+          const endpointId = endpointCapable(backend) ? (await store.get(sessionId)).compatEndpoint ?? '' : '';
+          if (!(await validModel(backend, model, undefined, endpointId))) return reply(false, `知らないモデル: ${model}`);
           const from = (await store.get(sessionId)).model ?? "";
           await store.setModel(sessionId, model);
-          await savePref("model", model, backend.id);
+          if (!endpointId) await savePref("model", model, backend.id);
           await store.recordChange(sessionId, {
             by: "human", field: "model", from, to: model, reason: msg.args.reason, backend,
           });
