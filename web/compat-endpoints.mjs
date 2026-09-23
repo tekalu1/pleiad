@@ -8,6 +8,7 @@
 // 入力欄のモデルの面（web/composer-controls.mjs）は list() の値を読むだけ。
 import { el } from './dom.mjs';
 import { createCombo } from './combo.mjs';
+import { compatModelLabel, modelCandidates, comboModelOptions, ONE_M_TITLE, SHOW_LIMIT } from './compat-models.mjs';
 import { PRESETS, KIND_LABEL, CLAUDE_ROLES, CONTEXT_CANDIDATES, AUTH_LABEL, presetOf, urlCandidates, urlHelp, lostText } from './compat-presets.mjs';
 
 const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex' };
@@ -39,11 +40,19 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
   }
   const button = (text, onclick, className = 'btn') => { const b = el('button', className, text); b.type = 'button'; b.onclick = onclick; return b; };
   const line = (text, cls = 'mp-ln') => el('span', cls, text);
-  const labelled = (label, text) => { const s = el('span', 'mp-ln'); s.append(el('b', null, label), text); return s; };
+  const labelled = (label, ...text) => { const s = el('span', 'mp-ln'); s.append(el('b', null, label), ...text.flat()); return s; };
 
+  /** モデル ID の表示（web/compat-models.mjs の表示名＋「1M」の札。送る ID は title） */
+  function modelNode(id) {
+    if (!id) return document.createTextNode('（未設定）');
+    const { text, oneM } = compatModelLabel(id);
+    const s = el('span', 'mp-model', text); s.title = id;
+    if (oneM) { const b = el('span', 'cbadge', '1M'); b.title = ONE_M_TITLE; s.append(b); }
+    return s;
+  }
   function roleText(e) {
-    if (e.agent === 'codex') return (e.roles.main || '（未設定）') + (e.options?.contextTokens ? ` · コンテキスト ${e.options.contextTokens.toLocaleString()} tokens` : '');
-    return CLAUDE_ROLES.map(r => `${r.short} ${e.roles[r.key] || '（未設定）'}`).join(' · ');
+    if (e.agent === 'codex') return [modelNode(e.roles.main), e.options?.contextTokens ? ` · コンテキスト ${e.options.contextTokens.toLocaleString()} tokens` : ''];
+    return CLAUDE_ROLES.flatMap((r, i) => [i ? ' · ' : '', `${r.short} `, modelNode(e.roles[r.key])]);
   }
   function checkLine(e) {
     if (checking === e.id) return line('確認しています…');
@@ -128,14 +137,14 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
     const p = presetOf(agent, presetId);
     return { id: '', preset: p.id, name: p.id === 'custom' ? '' : p.name, baseUrl: p.urls[0]?.value ?? '',
       authMode: agent === 'claude' ? (['bearer', 'x-api-key'].includes(p.auth) ? p.auth : 'auto') : (p.auth === 'api-key' ? 'api-key' : 'bearer'),
-      key: '', show: false, hasKey: false, phase: 'edit', result: null, models: [], roles: { ...p.roles }, context: p.context ?? '',
+      key: '', show: false, hasKey: false, phase: 'edit', result: null, models: [], modelInfo: {}, roles: { ...p.roles }, context: p.context ?? '',
       sendThinking: Boolean(p.thinking), saved: false, stale: false, error: '' };
   }
   function startForm(e) {
     confirming = ''; message = ''; view = 'form';
     if (!e) form = blankForm('custom' === agent ? 'custom' : PRESETS[agent][0].id);
     else form = { id: e.id, preset: e.preset, name: e.name, baseUrl: e.baseUrl, authMode: e.authMode, key: '', show: false, hasKey: e.hasKey,
-      phase: 'edit', result: null, models: e.models ?? [], roles: { ...e.roles }, context: e.options?.contextTokens ? String(e.options.contextTokens) : '',
+      phase: 'edit', result: null, models: e.models ?? [], modelInfo: e.modelInfo ?? {}, roles: { ...e.roles }, context: e.options?.contextTokens ? String(e.options.contextTokens) : '',
       sendThinking: Boolean(e.options?.sendThinking), saved: false, stale: false, error: '' };
     draw();
     panel.scrollIntoView({ block: 'nearest' });
@@ -151,7 +160,9 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
       roles: form.roles, options: { contextTokens: form.context, sendThinking: form.sendThinking }, probeModel: form.roles.main || '' };
   }
   function modelCombo(value, onCommit, label, placeholder = 'モデル ID') {
-    const c = createCombo({ ariaLabel: label, placeholder, cls: 'mono', value, options: () => form.models.map(m => ({ value: m })), onCommit });
+    // 候補は取れた一覧（数百件でもよい）。割り当て済みで一覧に無い ID も後ろに足し、表示名で出す。描くのは先頭の SHOW_LIMIT 件
+    const c = createCombo({ ariaLabel: label, placeholder, cls: 'mono', value, limit: SHOW_LIMIT, emptyText: '一覧にありません。Enter でこの ID をそのまま使います。',
+      options: () => comboModelOptions(modelCandidates([...form.models, ...Object.values(form.roles).filter(Boolean)], form.modelInfo)), onCommit });
     c.root.querySelector('input').spellcheck = false;
     return c.root;
   }
@@ -240,7 +251,7 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
       out.push(step(4, claude ? 'モデルの割り当て' : 'モデル'));
       const n = form.models.length;
       if (claude) {
-        out.push(el('p', 'mp-note', `Claude Code はモデルを役割で呼び分けます。${n ? `取れた ${n} 件から選ぶか、` : ''}ID を入力してください。空の役割があると、Claude のモデル名がそのまま送られて失敗します。`));
+        out.push(el('p', 'mp-note', `Claude Code はモデルを役割で呼び分けます。${n ? `取れた ${n} 件から選ぶ（文字を入れると絞り込めます）か、` : ''}ID を入力してください。空の役割があると、Claude のモデル名がそのまま送られて失敗します。`));
         const rg = el('div', 'mp-grid');
         for (const r of CLAUDE_ROLES) rg.append(field(r.label, modelCombo(form.roles[r.key] ?? '', v => { form.roles[r.key] = v; }, r.label), el('small', null, r.help)));
         out.push(rg);
@@ -258,7 +269,7 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
         const rg = el('div', 'mp-grid');
         const azure = form.preset === 'azure';
         rg.append(field(azure ? '既定のモデル（デプロイ名）' : '既定のモデル', modelCombo(form.roles.main ?? '', v => { form.roles.main = v; }, '既定のモデル', azure ? 'デプロイ名' : 'モデル ID'),
-          el('small', null, `${n ? `取れた ${n} 件から選ぶか、` : ''}ID を入力してください。会話ごとに変えられます。`)));
+          el('small', null, `${n ? `取れた ${n} 件から選ぶ（文字を入れると絞り込めます）か、` : ''}ID を入力してください。会話ごとに変えられます。`)));
         const ctx = createCombo({ ariaLabel: 'コンテキスト長', placeholder: '空なら Codex の既定（小さめ）', cls: 'mono', value: form.context,
           options: () => CONTEXT_CANDIDATES.map(([value, hint]) => ({ value, hint })), onCommit: v => { form.context = v; } });
         rg.append(field('コンテキスト長（tokens）', ctx.root, el('small', null, 'ローカルのモデルは起動時の設定（num_ctx など）に合わせてください。')));
@@ -285,7 +296,7 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
       if (form !== mine) return;
       form.phase = r.ok ? 'ok' : 'fail';
       form.result = r;
-      if (r.ok) { form.receipt = r.receipt; if (r.models?.length) form.models = r.models; }
+      if (r.ok) { form.receipt = r.receipt; if (r.models?.length) { form.models = r.models; form.modelInfo = r.modelInfo ?? {}; } }
     } catch (e) { if (form !== mine) return; form.phase = 'fail'; form.result = { ok: false, error: e.message, lines: [] }; }
     draw();
   }
