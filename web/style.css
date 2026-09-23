@@ -75,6 +75,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
   box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-s);min-width:0}
 .pop .head{padding:2px 8px 4px;font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pop .head.wrap{white-space:normal;overflow:visible;letter-spacing:0;line-height:1.5}
 .pop .head+.head,.pop .sec+.head,.pop .li+.head{margin-top:6px}
 .pop .li{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:5px 10px;border-radius:var(--r-s);cursor:pointer;color:var(--ink);background:transparent;min-width:0}
 .pop .li:hover{background:var(--surface-hover)}

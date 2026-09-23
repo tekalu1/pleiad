@@ -3110,7 +3110,7 @@ function confirmDeleteStatus(st, count, x, y) {
   showMenu(x, y, [
     { label: t('pending.cancel'), onClick: () => {} },
     { label: t('session.menu.deleteStatus'), onClick: () => changeStatusName(st, '') },
-  ], t('pending.deleteStatusConfirm', { status: st, count, destination: t('session.status.none') }));
+  ], { text: t('pending.deleteStatusConfirm', { status: st, count, destination: t('session.status.none') }), wrap: true });
 }
 
 function groupMenu(st, x, y) {
