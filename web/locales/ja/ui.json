@@ -284,7 +284,8 @@
       "model": "エージェント・モデル・エフォート",
       "mode": "承認モード",
       "firstMessage": "{{name}} の最初の発言を書く",
-      "placeholder": "Ctrl+Enter で送信"
+      "placeholder": "Ctrl+Enter で送信",
+      "placeholderTouch": "メッセージを書く"
     },
     "account": {
       "signedIn": "ログイン中",
@@ -433,7 +434,11 @@
     },
     "titleFailed": "タイトル変更に失敗: {{error}}",
     "parentChat": "親の会話",
-    "titleSuggestFailed": "タイトルを考えられなかった: {{error}}"
+    "titleSuggestFailed": "タイトルを考えられなかった: {{error}}",
+    "more": "この会話の操作",
+    "rowMore": "「{{title}}」の操作",
+    "groupMore": "状態「{{status}}」の操作",
+    "familyMore": "グループ「{{title}}」の操作"
   },
   "app": {
     "listSeparator": "・",
@@ -593,7 +598,9 @@
     "loginOnHostShort": "ホストの PC でログイン",
     "loginOnHost": "このログインはホストの PC で行ってください。ログインの戻り先がホストの PC なので、この端末からは完了できません。",
     "updateStatus": "ホストで動いている Pleiad の版です",
-    "updateOnHost": "ホストの Pleiad の更新はホストで行います。"
+    "updateOnHost": "ホストの Pleiad の更新はホストで行います。",
+    "backToHosts": "ホスト一覧に戻る",
+    "backToHostsTitle": "{{host}} から離れてホスト一覧に戻る"
   },
   "upload": {
     "menu": {
