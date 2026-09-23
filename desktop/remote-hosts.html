@@ -1,0 +1,82 @@
+<!doctype html>
+<!-- ほかのホストにつなぐ窓（docs/remote.md §7.4）。アプリに同梱し、どのホストからも配らない（file: で開く）。
+     ペアリングしたホストの一覧と、ペアリングのコードの貼り付けでの追加。操作は desktop/remote-hosts-preload.cjs の plyHosts だけ。
+     文言は desktop の辞書（web/locales/<言語>/desktop.json）を本体から受け取って入れる（desktop/remote-hosts-view.cjs） -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="desktop:remote.hosts.windowTitle"></title>
+<link rel="stylesheet" href="../web/tokens.css">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{background:var(--surface-0);color:var(--ink);font:var(--fs)/var(--lh) var(--font);background-image:radial-gradient(var(--line-faint) 1px,transparent 1.2px);background-size:24px 24px}
+main{max-width:640px;margin:0 auto;padding:var(--sp-5) var(--sp-4) var(--sp-6)}
+h1{font-size:var(--fs-xl);margin:0 0 var(--sp-3)}
+h2{font-size:var(--fs-l);margin:0 0 var(--sp-1)}
+p{margin:0}
+.weak{color:var(--ink-weak);font-size:var(--fs-s)}
+.strong{color:var(--ink-strong);font-weight:600;font-size:var(--fs-s)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:transparent;border:0;color:var(--ink);font:inherit;font-size:var(--fs-s);padding:5px 12px;border-radius:var(--r-pill);cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--surface-2)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-quiet{background:var(--surface-2)}
+.btn-quiet:hover{background:var(--surface-3)}
+.btn-primary{background:var(--fill-primary);color:var(--on-fill);font-weight:600}
+.btn-primary:hover{background:var(--fill-primary-hover)}
+.btn:focus-visible,textarea:focus-visible,input:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.hosts:empty{display:none}
+#empty{margin:0 0 var(--sp-4)}
+.hosts{list-style:none;margin:0 0 var(--sp-5);padding:0;display:flex;flex-direction:column;gap:var(--sp-2)}
+.host{background:var(--surface-paper);border-radius:var(--r-m);padding:var(--sp-3) var(--sp-4);display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2) var(--sp-3)}
+.host .info{flex:1;min-width:180px}
+.host .nm{font-family:var(--font-mono);font-weight:600;overflow-wrap:anywhere}
+.host .st{display:flex;align-items:center;gap:6px;color:var(--ink-weak);font-size:var(--fs-s);flex-wrap:wrap}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--fill-primary)}
+.dot.off{background:transparent;box-shadow:0 0 0 1.5px var(--ink-weak) inset}
+.host .acts{display:flex;gap:4px;flex-wrap:wrap}
+.host .sub{flex-basis:100%;display:flex;flex-wrap:wrap;gap:var(--sp-2);align-items:center}
+.host .sub input{flex:1;min-width:160px}
+input,textarea{width:100%;background:var(--surface-1);color:var(--ink);border:0;border-radius:var(--r-s);padding:8px 12px;font:inherit}
+textarea{font-family:var(--font-mono);font-size:var(--fs-s);resize:vertical;min-height:72px}
+input::placeholder,textarea::placeholder{color:var(--ink-weak)}
+.add{background:var(--surface-paper);border-radius:var(--r-l);padding:var(--sp-4);display:flex;flex-direction:column;gap:var(--sp-3)}
+.actions{display:flex;justify-content:flex-end;gap:var(--sp-2)}
+.card{background:var(--surface-1);border-radius:var(--r-m);padding:var(--sp-3) var(--sp-4);display:flex;flex-direction:column;gap:var(--sp-2);align-items:flex-start}
+.code{font-family:var(--font-mono);font-size:28px;font-weight:600;letter-spacing:.08em;font-variant-numeric:tabular-nums}
+#storage{margin-top:var(--sp-4)}
+[hidden]{display:none !important}
+</style>
+</head>
+<body>
+<main>
+  <h1 data-i18n="desktop:remote.hosts.heading"></h1>
+  <p id="loadError" class="strong" role="alert" hidden></p>
+  <ul id="hosts" class="hosts"></ul>
+  <p id="empty" class="weak" data-i18n="desktop:remote.hosts.empty" hidden></p>
+  <section class="add" aria-labelledby="addHeading">
+    <h2 id="addHeading" data-i18n="desktop:remote.hosts.add.heading"></h2>
+    <p class="weak" data-i18n="desktop:remote.hosts.add.help"></p>
+    <form id="pairForm">
+      <textarea id="payload" rows="3" spellcheck="false" autocomplete="off" data-i18n-placeholder="desktop:remote.hosts.add.placeholder" data-i18n-aria-label="desktop:remote.hosts.add.label"></textarea>
+      <div class="actions"><button type="submit" class="btn btn-primary" id="pairSubmit" data-i18n="desktop:remote.hosts.add.submit"></button></div>
+    </form>
+    <div id="pairCard" class="card" hidden>
+      <p id="pairStatus" role="status"></p>
+      <div id="codeBox" hidden>
+        <span class="weak" data-i18n="desktop:remote.hosts.add.codeLabel"></span>
+        <div class="code" id="code"></div>
+        <p class="weak" data-i18n="desktop:remote.hosts.add.codeHint"></p>
+      </div>
+      <button type="button" class="btn btn-quiet" id="cancelPair" data-i18n="desktop:remote.hosts.cancel"></button>
+    </div>
+    <p id="pairResult" role="status"></p>
+    <p class="weak" data-i18n="desktop:remote.hosts.add.fullAccess"></p>
+  </section>
+  <p id="storage" class="strong" data-i18n="desktop:remote.hosts.storagePlain" hidden></p>
+</main>
+<script src="remote-hosts-view.cjs"></script>
+</body>
+</html>

@@ -68,6 +68,8 @@ const cases = [
   await import("./unit/attachment-order.mjs"),
   await import("./unit/unread.mjs"),
   await import("./unit/desktop-port.mjs"),
+  // デスクトップ版の端末（リモートの窓）: 窓ごとの信頼・preload の出し分け・バッジ。Electron は起こさない
+  await import("./unit/desktop-remote.mjs"),
   await import("./unit/stream-routing.mjs"),
   await import("./unit/stream-prefix.mjs"),
   await import("./unit/session-stream.mjs"),

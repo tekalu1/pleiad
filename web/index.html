@@ -29,6 +29,8 @@
     if (localStorage.getItem('agent-host-sidebar') === 'closed') root.classList.add('side-closed');
   } catch {}
   if (desk) root.classList.add('desktop', desk.platform === 'darwin' ? 'mac' : 'overlay');
+  // リモートの窓（desktop/remote-preload.cjs の plyRemote）。帯を塗りの色にしてホスト名のバッジを置く（web/remote-badge.mjs）
+  if (window.plyRemote) root.classList.add('remote');
 }
 </script>
 </head>

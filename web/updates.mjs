@@ -1,5 +1,5 @@
 import { renderMarkdown } from './render.mjs';
-import { fmt } from './i18n.mjs';
+import { fmt, t } from './i18n.mjs';
 export function setupUpdates({ page, open, lock, flush }) {
   const $ = id => document.getElementById(id), bridge = window.plyDesktop;
   let info, state, busy = false, installing = false, confirming = false, shownNotice = null, failure = '';
@@ -21,6 +21,11 @@ export function setupUpdates({ page, open, lock, flush }) {
       : downloading ? 'このまま作業を続けられます。準備ができたらお知らせします。'
       : !state.enabled ? (bridge?.update ? 'この評価版は自動更新に対応していません。新しいインストーラーで更新してください。' : 'ブラウザー版では更新履歴を確認できます。')
       : '';
+    // リモートの窓: 版はホストが配る画面のもの（release-info.json）。手元のアプリの更新はローカルの窓で（docs/remote.md §7.3）
+    if (window.plyRemote && !bridge?.update) {
+      $('updateStatus').textContent = t('remote.updateStatus');
+      $('updateHint').textContent = t('remote.updateOnHost');
+    }
     $('updateHint').hidden = !$('updateHint').textContent;
     $('updateLastChecked').hidden = !state.lastChecked;
     $('updateLastChecked').textContent = state.lastChecked ? `最終確認：${fmt.dateTime(state.lastChecked)}` : '';

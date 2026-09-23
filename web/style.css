@@ -361,6 +361,35 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 :root.desktop dialog:modal{top:var(--bar-h)}
 :root.desktop #lightbox img{max-height:calc(92vh - 124px - var(--bar-h))}
 
+/* ==================== リモートの窓（docs/remote.md §7.2。web/remote-badge.mjs、desktop/remote-preload.cjs の plyRemote） ====================
+   帯を窓の幅いっぱいの 1 行にして塗りの色（--fill-primary）にし、左にホスト名のバッジを常に出す。脇と会話は帯の下から始まる。
+   塗りは「1 画面に 1 つ・主要操作だけ」（§2.3）の例外。取り違えると被害が大きい場所なので認めた（承認済みのモック remote-window.html）。
+   帯の地と記号の色は、ローカルと同じく paintTitleBar が .titlebar の --bar-end と --ink を読んで OS へ送る。
+   脇の開閉・プレビューで帯を紙にする上の規則より強くするため、帯の地だけ !important にする（どの状態でも塗りのまま） */
+:root.remote .titlebar{--ink:var(--on-fill);--bar-end:var(--fill-primary) !important;background:var(--fill-primary) !important;color:var(--on-fill)}
+:root.desktop.remote #sidebar{grid-area:2/1/-1/2}
+:root.desktop.remote #sidebar header{-webkit-app-region:no-drag}
+:root.mac.remote #sidebar header{padding-left:12px}   /* 信号は帯の中にある */
+.remote-badge,.remote-pop{display:none}
+:root.remote .remote-badge{display:inline-flex;align-items:center;gap:6px;grid-area:1/1/2/-1;justify-self:start;align-self:center;z-index:5;
+  margin-left:8px;max-width:calc(100% - 160px);min-width:0;padding:3px 10px 3px 8px;border-radius:var(--r-pill);background:transparent;
+  color:var(--on-fill);font:inherit;font-size:var(--fs-s);font-weight:600;white-space:nowrap;cursor:pointer;-webkit-app-region:no-drag}
+:root.remote .remote-badge:hover,:root.remote .remote-badge[aria-expanded="true"]{background:var(--fill-primary-hover)}
+:root.remote .remote-badge:focus-visible{background:var(--fill-primary-hover);outline:2px solid var(--line-strong);outline-offset:-2px}
+:root.mac.remote .remote-badge{margin-left:80px;max-width:calc(100% - 96px)}   /* 左の信号 3 つを避ける */
+.remote-badge .i{width:15px;height:15px;flex:none}
+.remote-badge .host{font-family:var(--font-mono);min-width:0;overflow:hidden;text-overflow:ellipsis}
+.remote-badge .state{font-weight:400;flex:none}
+:root.remote .remote-pop:not([hidden]){display:block;position:fixed;left:12px;top:calc(var(--bar-h,40px) + 4px);z-index:60;
+  width:min(300px,calc(100vw - 24px));padding:12px 14px;font-size:var(--fs-s)}
+.remote-pop .remote-host{font-family:var(--font-mono);overflow-wrap:anywhere}
+.remote-pop dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:8px 0 10px}
+.remote-pop dt{color:var(--ink-weak)}
+.remote-pop dd{margin:0;font-family:var(--font-mono);overflow-wrap:anywhere}
+.remote-pop .acts{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+/* ホストで済ませるログインの一文（設定 › エージェント設定・初期設定・外部 MCP） */
+.remote-login-note{color:var(--ink-weak);font-size:var(--fs-s);flex-basis:100%}
+
 /* ==================== 走っている印（web/arc.mjs） ====================
    弧だけ。台（暗い円）は置かない。色は本文の文字色（--ink）なので、ライトでは濃い紺、ダークでは明るい。
    弧: 半径 5、線幅 1.6（アイコンと同じ）、端は丸。先端と尾の角度は JS が毎フレーム決める。

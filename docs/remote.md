@@ -53,7 +53,7 @@
 | 暗号・フレーム・チャネル（共有） | `core/remote/noise.mjs`、`core/remote/frames.mjs`、`core/remote/channel.mjs`（ストリームの多重化と流量の制御。運び手に依存しない） | Node（ESM。デスクトップの main からは `import()`） |
 | ホストの接続口・ペアリング・端末一覧 | `core/remote/connector.mjs`、`core/remote/devices.mjs`。サーバーのプロセス内で動く（`npm start` のホストでも使える） | Node |
 | 端末の資格情報・ペアリング・端末内プロキシ | `core/remote/device.mjs`（置き場・ペアリング・ホストごとのプロキシの管理）、`core/remote/device-link.mjs`（中継への線・張り直し・状態）、`core/remote/device-proxy.mjs`（127.0.0.1 の HTTP と /ws）。デスクトップの main から `import()`、試験からも使う | Node |
-| リモートの窓 | `desktop/remote/`（main プロセス） | Node |
+| リモートの窓・ほかのホストにつなぐ窓 | `desktop/remote-windows.cjs`（窓・IPC・印。main プロセス）、`desktop/remote-preload.cjs`（リモートの窓の preload）、`desktop/remote-hosts.html`・`remote-hosts-view.cjs`・`remote-hosts-preload.cjs`（同梱の窓）、`desktop/window-trust.cjs`（窓ごとのオリジンの表）、`desktop/i18n.cjs`（本体の文言）。画面の印は `web/remote-badge.mjs` | Node |
 | モバイルの殻 | `mobile/`（Capacitor。プロキシと暗号は Swift / Kotlin） | Swift / Kotlin / JS |
 | 試験ベクトル | `tests/remote/vectors.json`（Noise の公式ベクトル + フレームの例。3 実装が同じものを読む） | — |
 
@@ -363,14 +363,18 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 | 窓の枠 `web/index.html:20`（`desktop` の class） | `plyDesktop` の有無 | そのまま（リモートの窓も同じ枠）。`plyRemote` があれば `remote` の class も |
 | `desktop/main.cjs:17` の `trusted()`・遷移（`:115`）・権限（`:121`）・帯の色（`:190`） | 窓 1 枚・オリジン 1 つの変数 | 窓ごとのオリジンの表に変える。IPC は送り元の窓のオリジンと照合する。リモートの窓からの `ply:choose-folder`・`ply:update` は拒否 |
 | 窓を閉じるときの確認（`desktop/main.cjs` の `closeSafely`） | ローカルのサーバーに実行中を聞き、アプリを終える | リモートの窓を閉じても何も止めない（ホストは #11 で待ち続ける）。確認も出さない。アプリの終了はローカルの窓の規則のまま |
+| エクスプローラーで表示・ブラウザーで開く（`hostCapabilities` の `osActions`、`core/os-open.mjs` の `isLocalRequest`） | ループバックからの接続なら許す | ホストの接続口がホストのサーバーへ張る `/ws` に `X-Forwarded-For` を付け（`core/remote/forward.mjs`）、ホストから見て「サーバーのある PC の画面」ではなくする。画面も `plyRemote` があれば出さない |
 | `ws://` 固定（`web/client.mjs:3140`）・`crypto.randomUUID()`（`:3123`） | 平文の非ループバックで壊れる | ループバックなので壊れない（直さなくてよい。モバイルの保険は §8.3） |
 | 1 ファイルの添付（`attachFile`、上限 8MB `core/server.mjs:71`） | 中身を WS で送る | そのまま |
 | ファイルのダウンロード（`/local-file?download=1`） | ブラウザーの保存 | そのまま（Electron の保存ダイアログ）。取り出しはこれで足りる |
 
 ### 7.4 ホストへのつなぎ方
 
-- ローカルの窓の設定 › リモートの下半分「ほかのホストにつなぐ」: ペアリングしたホストの一覧（名前・オンラインかどうか・最後に使った時刻、「開く」「名前を変える」「削除」）と「ホストを追加」（ペアリングのコードを貼る）
-- これは手元のアプリの機能なので、ローカルの窓の preload にだけ `plyDesktop.remoteHosts`（`list / pair / open / remove`）を足す。リモートの窓には出さない
+- **「ほかのホストにつなぐ」はアプリに同梱の小さな窓**（`desktop/remote-hosts.html`。file: で開き、どのホストからも配らない。2026-09-23 に設定 › リモートの下半分から変更）: ペアリングしたホストの一覧（名前・オンラインかどうか・最後につないだ時刻、「開く」「名前を変える」「削除」）と「ホストを追加」（ペアリングのコードを貼る → 「ホストの画面で承認してください · 確認コード 482 193」と「やめる」）。資格情報を暗号化できない起動では末尾に一文
+  - 理由: 手元のアプリの機能で、ペアリングと窓を開く口は HTTP のオリジンを持つ画面（ローカルのサーバーが配る `web/` も含む）に渡さない方が狭く守れる。ホストの版と画面の版がずれても関係ない。ホスト側の 設定 › リモート（#13）と同じ画面を取り合わない
+  - 入口: ローカルの窓の preload にだけ `plyDesktop.openRemoteHosts()`（設定 › リモートの「ほかのホストにつなぐ…」から呼ぶ。リモートの窓には出さない）、Windows のジャンプリスト（`--remote-hosts` で起動 → 2 つ目の起動として受ける）、macOS の Dock のメニュー
+  - 窓の操作は `plyHosts`（`init / list / pair / cancelPair / open / rename / remove / onCode / onChange`）。送り元はその窓の本体フレームで、同梱のファイルであることを `desktop/window-trust.cjs` で確かめる
+- リモートの窓の状態: 画面のバッジが `plyRemote.status()` と `onStatus` で状態を受け、つながっていない間は「リモート: desktop-home · ホストがオフライン」と添え、面に「再試行」（`plyRemote.retry()` = 待ちを飛ばして張り直す）。取り消されたら本体が窓を読み直し、下のプロキシの案内（取り消されました）を出す。読み込みそのものが失敗しているとき（最初の表示・読み直し）はプロキシの案内のページが 5 秒ごとに読み直してつなぎ次第画面に移る
 - ホストがオフライン・取り消し済みなどで最初の読み込みができないときは、プロキシが小さな案内のページを返す（「ホストにつながりません。ホストの Pleiad が起動しているか確かめてください。」「この端末はホストで取り消されました。もう一度ペアリングしてください。」）。中継の close code で分ける: 4401 取り消し・認証失敗、4404 ホストが居ない、それ以外は通信の失敗。
   状態は `connecting`・`connected`・`offline`（中継につながらない）・`host-offline`（4404・4408・ホストの GOAWAY `shutdown`）・`revoked`（4401・GOAWAY `revoked`・ホストの鍵が合わない）。案内のページは 503 で、取り消し以外は 5 秒ごとに読み直してつながり次第画面に移る
 
@@ -462,7 +466,7 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 | 1 | #11 | 打ち切りの既定を無効に、`ready` を新しい接続だけへ、`docs/design.md` の「host が離れたとき」 | — |
 | 2 | #12 | `relay/`（口・照合・上限・ping・状態を持たない）、Dockerfile、`tests/unit/relay.mjs`、Coolify への配置 | — |
 | 3 | #13 | `core/remote/`（Noise IK / IKpsk2・フレーム・流量制御・接続口の防火壁・端末一覧・ペアリング・承認・取り消し）、設定 › リモート、常駐（トレイ・スリープ）、試験ベクトル | #12 |
-| 4 | #14 | `desktop/remote/`（端末内プロキシ・窓ごとの partition とポート・preload の出し分け・`trusted()` の窓ごと化）、バッジ・帯・窓タイトル・タスクバーの印、ホストでのログインの案内、ホスト一覧とペアリングの貼り付け | #13 |
+| 4 | #14 | `desktop/remote-windows.cjs` ほか（端末内プロキシ・窓ごとの partition とポート・preload の出し分け・`trusted()` の窓ごと化）、バッジ・帯・窓タイトル・タスクバーの印、ホストでのログインの案内、ホスト一覧とペアリングの貼り付け | #13 |
 | 5 | #15 | `upload*` コマンドと置き場、作業フォルダーの面のタブ、ドロップの問い | #14 |
 | 6 | #16 | `mobile/`（Capacitor の殻・A 案のプロキシ・CryptoKit / Android の暗号・QR の読み取り・保管庫）、スマホの画面の手直し（§8.4 は #13 と並行して先に始めてよい） | #13 |
 
