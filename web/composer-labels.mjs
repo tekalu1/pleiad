@@ -1,5 +1,6 @@
 // 入力欄の設定のチップ・一覧に出す字を決める関数（DOM を触らない。tests/unit/composer-labels.mjs から直接呼ぶ）。
 // 画面の組み立ては web/composer-controls.mjs、仕様は docs/design-system.md「入力欄の設定」。
+import { t } from "./i18n.mjs";
 
 /**
  * モデルの表示。'' は実際に当たるモデルの名前にする（resolvesTo）。分からなければ '' の行の名前（「既定に従う」など）
@@ -8,7 +9,7 @@
 export function resolvedModel(models, value) {
   const id = value || models?.[""]?.resolvesTo || "";
   const entry = models?.[id] ?? null;
-  const label = id ? entry?.label ?? id : models?.[""]?.resolvedLabel ?? models?.[""]?.label ?? "既定に従う";
+  const label = id ? entry?.label ?? id : models?.[""]?.resolvedLabel ?? models?.[""]?.label ?? t("chat.next.useDefault");
   return { id, entry, label };
 }
 
@@ -79,9 +80,9 @@ export function middleEllipsis(text, max) {
  */
 export function endpointChipLabel({ connection, model, fullModel, effort } = {}) {
   // model はチップに出す表示名（web/compat-models.mjs の compatModelLabel）、fullModel は title に出す送る ID
-  const parts = [connection || "接続先を選ぶ", fullModel || model, effort].filter(Boolean);
+  const parts = [connection || t("composer.endpoint.pick"), fullModel || model, effort].filter(Boolean);
   const full = parts.join(" · ");
-  const head = [middleEllipsis(connection || "接続先を選ぶ", 18), model ? middleEllipsis(model, 26) : ""].filter(Boolean).join(" · ");
+  const head = [middleEllipsis(connection || t("composer.endpoint.pick"), 18), model ? middleEllipsis(model, 26) : ""].filter(Boolean).join(" · ");
   const tail = effort || "";
   return { text: [head, tail].filter(Boolean).join(" · "), full, head, tail };
 }

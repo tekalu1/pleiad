@@ -1,5 +1,6 @@
 import { isComposingKey } from "./keyboard.mjs";
 import { el } from "./dom.mjs";
+import { t } from "./i18n.mjs";
 
 /** One menu chain, shared by pointer, touch, and keyboard. */
 export function createContextMenu() {
@@ -53,7 +54,7 @@ export function createContextMenu() {
       if (item.input) {
         const input = el('input', 'field');
         input.placeholder = item.input.placeholder ?? ''; input.value = item.input.value ?? '';
-        input.setAttribute('aria-label', input.placeholder || title || '入力');
+        input.setAttribute('aria-label', input.placeholder || title || t('common.input'));
         input.onkeydown = e => { if (isComposingKey(e)) return; if (e.key === 'Enter') { e.preventDefault(); const v = input.value.trim(); if (v) { close(true); item.input.onCommit(v); } } };
         panel.append(input); continue;
       }
