@@ -1,5 +1,16 @@
 {
   "errors": {
     "unknownLocale": "Unknown language: {{value}}"
+  },
+  "files": {
+    "remoteOnly": "This action is only available on the PC running the server. Use Save or Copy path instead.",
+    "htmlOnly": "Only HTML files can be opened in a browser.",
+    "tooMany": "Too many open requests in a row. Wait a moment and try again.",
+    "invalidPath": "This path can't be opened.",
+    "notFound": "File not found.",
+    "notFileOrFolder": "Choose a file or folder.",
+    "launchFailed": "Couldn't start the app ({{reason}})",
+    "openFailed": "Couldn't open it ({{reason}})",
+    "noResponse": "No response"
   }
 }

@@ -1,5 +1,5 @@
 import { el } from './dom.mjs';
-import { fmt } from './i18n.mjs';
+import { fmt, t } from './i18n.mjs';
 import { isComposingKey } from './keyboard.mjs';
 import { fileReference, fileDownloadUrl } from './file-reference.mjs';
 import { htmlDocument, markdownContent, parseTable, previewFrame } from './file-preview-content.mjs';
@@ -44,7 +44,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   });
   treeToggle.setAttribute('aria-expanded', 'true');
   // 今のファイルの操作。道具の列を増やさず、ツリー・会話のリンクと同じメニューにまとめる
-  const more = iconButton(moreIcon, 'このファイルの操作', () => {
+  const more = iconButton(moreIcon, t('files.currentActions'), () => {
     if (!file) return;
     const r = more.getBoundingClientRect();
     menu(r.left, r.bottom + 4, { path:file.path, kind:file.kind === 'directory' ? 'directory' : 'file', cwd:file.cwd, current:true });
@@ -59,8 +59,8 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   locationButton.setAttribute('aria-expanded', 'false');
   const reload = button('再読み込み', () => load());
   // HTML だけ。サーバーのある PC の既定のブラウザーで開く（相対のリンク・読み込みもそのまま動く）
-  const browser = button('ブラウザーで開く', () => file && osAction('openPath', { path:file.path }));
-  browser.title = 'この PC の既定のブラウザーで開きます'; browser.hidden = true; browser.classList.add('file-preview-browser');
+  const browser = button(t('files.menu.openInBrowser'), () => file && osAction('openPath', { path:file.path }));
+  browser.title = t('files.browserTitle'); browser.hidden = true; browser.classList.add('file-preview-browser');
   toolbar.append(switcher, browser, locationButton, reload);
   const location = el('div', 'file-preview-location'); location.hidden = true;
   const fullPath = el('input'); fullPath.readOnly = true; fullPath.setAttribute('aria-label', 'ファイルの完全パス');
@@ -84,7 +84,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
       // ⋯ は触れた・選んだ行に出る。フォーカスはツリー 1 つのまま（tabindex -1）。支援技術には出さない
       // （行の名前に混ざる）。キーボードは Shift+F10・ContextMenu キーで同じメニュー
       const dots = el('button', 'btn btn-icon tree-more'); dots.type = 'button'; dots.tabIndex = -1;
-      setIcon(dots, moreIcon, `${node.name} の操作`); dots.setAttribute('aria-hidden', 'true');
+      setIcon(dots, moreIcon, t('files.actionsFor', { name: node.name })); dots.setAttribute('aria-hidden', 'true');
       dots.onclick = e => { e.stopPropagation(); const r = dots.getBoundingClientRect(); treeMenu(node, r.left, r.bottom + 4); };
       dots.ondblclick = e => e.stopPropagation();
       row.append(ic, nm, dots);
@@ -98,7 +98,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     menu(x, y, { path:node.id, kind:node.kind === 'directory' ? 'directory' : 'file', cwd:file?.cwd, current:samePath(node.id, file?.path) });
   }
   const footer = el('footer', 'file-preview-foot'), status = el('span'); status.setAttribute('role', 'status');
-  const reveal = button('エクスプローラーで表示', () => file && osAction('revealPath', { path:file.path }));
+  const reveal = button(t('files.menu.revealFile'), () => file && osAction('revealPath', { path:file.path }));
   reveal.hidden = true;
   const save = el('a', 'btn', '保存'); save.download = ''; save.hidden = true;
   const use = button('会話で使う', () => {
@@ -435,14 +435,14 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     const local = osActions() && !!file && !visual && !custom;
     browser.hidden = !(local && file.kind === 'html');
     reveal.hidden = !local;
-    if (local) reveal.textContent = file.kind === 'directory' ? 'エクスプローラーで開く' : 'エクスプローラーで表示';
+    if (local) reveal.textContent = file.kind === 'directory' ? t('files.menu.revealFolder') : t('files.menu.revealFile');
   }
   /** サーバーへ渡す場所の手がかり。相対パスは発言の時刻（at）かプレビュー中の文書（base）で解く */
   const whereFrom = target => {
     const ctx = target.element ? getContext(target.element) : context;
     return { path:target.path, ...(ctx.sessionId ? { sessionId:ctx.sessionId } : {}), ...(ctx.at ? { at:ctx.at } : {}), ...(target.base ? { base:target.base } : {}) };
   };
-  const failed = error => notify(String(error?.message || error || '操作できませんでした'));
+  const failed = error => notify(String(error?.message || error || t('files.actionFailed')));
   async function osAction(command, target) {
     if (!cmd) return;
     try { await cmd(command, whereFrom(target)); }
@@ -453,22 +453,23 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     if (/^(?:[a-z]:[\\/]|\/)/i.test(target.path) && target.cwd) return { path:target.path, cwd:target.cwd };
     return cmd('resolvePath', whereFrom(target));
   }
-  async function copy(text, what) {
-    try { await navigator.clipboard.writeText(text); notify(`${what}をコピーしました`); }
-    catch { notify(`${what}をコピーできませんでした`); }
+  /** relative は相対パスのコピーか（知らせの文言だけが違う） */
+  async function copy(text, relative = false) {
+    try { await navigator.clipboard.writeText(text); notify(relative ? t('files.copiedRelative') : t('files.copiedPath')); }
+    catch { notify(relative ? t('files.copyRelativeFailed') : t('files.copyPathFailed')); }
   }
   async function run(action, target) {
     try {
       if (action === 'panel') return open({ path:target.path, line:target.line ?? null }, target.element, target.base);
       if (action === 'reveal') return osAction('revealPath', target);
       if (action === 'browser') return osAction('openPath', target);
-      if (action === 'copy') return copy(/^(?:[a-z]:[\\/]|\/)/i.test(target.path) ? target.path : (await resolve(target)).path, 'パス');
+      if (action === 'copy') return copy(/^(?:[a-z]:[\\/]|\/)/i.test(target.path) ? target.path : (await resolve(target)).path);
       if (action === 'copyRelative') {
         // 書かれたとおりの相対パスは、そのまま発言の時点の作業ディレクトリからの相対
-        if (!/^(?:[a-z]:[\\/]|\/)/i.test(target.path) && !target.base) return copy(target.path.replace(/^\.[\\/]/, ''), '相対パス');
+        if (!/^(?:[a-z]:[\\/]|\/)/i.test(target.path) && !target.base) return copy(target.path.replace(/^\.[\\/]/, ''), true);
         const where = await resolve(target);
         const rel = relativeTo(where.path, where.cwd);
-        return rel ? copy(rel, '相対パス') : notify('作業ディレクトリの外にあるため、相対パスはありません');
+        return rel ? copy(rel, true) : notify(t('files.noRelative'));
       }
       const where = /^(?:[a-z]:[\\/]|\/)/i.test(target.path) ? { path:target.path } : await resolve(target);
       const name = where.path.split(/[\\/]/).at(-1);

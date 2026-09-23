@@ -2069,7 +2069,7 @@ wss.on("connection", (ws, req) => {
           return reply(true, { osActions: local });
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
-          if (hostAction && !local) return reply(false, 'この操作はサーバーのある PC の画面からだけ使えます。保存かパスのコピーを使ってください。');
+          if (hostAction && !local) return reply(false, t('files.remoteOnly'));
           try {
             const sessions = await store.getAll();
             const roots = fileRoots(sessions);
@@ -2078,8 +2078,8 @@ wss.on("connection", (ws, req) => {
             const { file, stat } = await inspectFile(resolved.path, roots);
             const directory = stat.isDirectory();
             if (!hostAction) return reply(true, { path: file, cwd: resolved.cwd ?? null, kind: directory ? 'directory' : 'file' });
-            if (msg.command === 'openPath' && (directory || !OPENABLE.test(file))) return reply(false, 'ブラウザーで開けるのは HTML だけです。');
-            if (!osActionAllowed()) return reply(false, '続けて開きすぎています。少し待ってからもう一度押してください。');
+            if (msg.command === 'openPath' && (directory || !OPENABLE.test(file))) return reply(false, t('files.htmlOnly'));
+            if (!osActionAllowed()) return reply(false, t('files.tooMany'));
             await openOnHost(msg.command === 'openPath' ? 'open' : 'reveal', file, { directory });
             return reply(true, { path: file });
           } catch (error) {

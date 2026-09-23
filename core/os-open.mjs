@@ -9,6 +9,7 @@
 // デスクトップ版（Electron）では本体の shell.showItemInFolder / shell.openPath に頼む（desktop/file-bridge.cjs）。
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import { t } from './i18n.mjs';
 
 export const OPENABLE = /\.html?$/i;
 
@@ -29,8 +30,8 @@ export function isLocalRequest(req) {
  * @returns {{ command:string, args:string[], options:object }}
  */
 export function launchPlan(action, file, { directory = false, platform = process.platform, env = process.env } = {}) {
-  if (typeof file !== 'string' || !file || /[\u0000-\u001f"]/.test(file)) throw new Error('このパスは開けません。');
-  if (action === 'open' && (directory || !OPENABLE.test(file))) throw new Error('ブラウザーで開けるのは HTML だけです。');
+  if (typeof file !== 'string' || !file || /[\u0000-\u001f"]/.test(file)) throw new Error(t('files.invalidPath'));
+  if (action === 'open' && (directory || !OPENABLE.test(file))) throw new Error(t('files.htmlOnly'));
   if (action !== 'open' && action !== 'reveal') throw new Error('unknown action');
   const detached = { detached: true, stdio: 'ignore', shell: false, windowsHide: false };
   if (platform === 'win32') {
@@ -59,8 +60,8 @@ export function launch(plan, { spawnImpl = spawn } = {}) {
   return new Promise((resolve, reject) => {
     let child;
     try { child = spawnImpl(plan.command, plan.args, plan.options); }
-    catch (error) { reject(new Error(`起動できませんでした（${error.code ?? error.message}）`)); return; }
-    child.once('error', error => reject(new Error(`起動できませんでした（${error.code ?? error.message}）`)));
+    catch (error) { reject(new Error(t('files.launchFailed', { reason: error.code ?? error.message }))); return; }
+    child.once('error', error => reject(new Error(t('files.launchFailed', { reason: error.code ?? error.message }))));
     child.once('spawn', () => { child.unref(); resolve(); });
   });
 }
@@ -77,9 +78,18 @@ export function createRateLimit({ limit = 5, windowMs = 10_000, now = () => Date
   };
 }
 
+const BRIDGE_ERRORS = { 'invalid-path': () => t('files.invalidPath'), 'not-found': () => t('files.notFound'),
+  'not-file': () => t('files.notFileOrFolder'), 'html-only': () => t('files.htmlOnly') };
+/** 本体（desktop/file-bridge.cjs）が返した失敗の文言 */
+export function bridgeError({ code, detail } = {}) {
+  if (Object.hasOwn(BRIDGE_ERRORS, code)) return BRIDGE_ERRORS[code]();
+  return t('files.openFailed', { reason: String(detail || code || 'unknown').slice(0, 200) });
+}
+
 /**
  * main プロセス（Electron）に頼む実行器。port は utilityProcess の process.parentPort。
- * main 側（desktop/file-bridge.cjs）は { type:'os-open', id, action, path, directory } を受けて { type:'os-open', id, ok, error? } を返す
+ * main 側（desktop/file-bridge.cjs）は { type:'os-open', id, action, path, directory } を受けて { type:'os-open', id, ok, code?, detail? } を返す。
+ * 本体は画面の言語を知らないので、失敗は code（BRIDGE_ERRORS のキー）で返り、文言はここで辞書から引く
  */
 export function parentPortOpener(port, { timeoutMs = 10_000 } = {}) {
   const waiting = new Map();
@@ -89,11 +99,11 @@ export function parentPortOpener(port, { timeoutMs = 10_000 } = {}) {
     if (data?.type !== 'os-open' || !waiting.has(data.id)) return;
     const { resolve, reject, timer } = waiting.get(data.id);
     waiting.delete(data.id); clearTimeout(timer);
-    if (data.ok) resolve(); else reject(new Error(data.error || '開けませんでした'));
+    if (data.ok) resolve(); else reject(new Error(bridgeError(data)));
   });
   return (action, file, { directory = false } = {}) => new Promise((resolve, reject) => {
     const id = `o${++seq}`;
-    const timer = setTimeout(() => { waiting.delete(id); reject(new Error('応答がありませんでした')); }, timeoutMs);
+    const timer = setTimeout(() => { waiting.delete(id); reject(new Error(t('files.noResponse'))); }, timeoutMs);
     waiting.set(id, { resolve, reject, timer });
     port.postMessage({ type: 'os-open', id, action, path: file, directory });
   });

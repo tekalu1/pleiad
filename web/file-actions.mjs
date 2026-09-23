@@ -4,6 +4,7 @@
 // OS の操作（エクスプローラー・ブラウザー）はサーバーのある PC の画面から見ているときだけ出す。
 // 出さないだけでなく、サーバーも断る（core/server.mjs の revealPath / openPath）。
 import { el } from './dom.mjs';
+import { t } from './i18n.mjs';
 
 const isHtml = path => /\.html?$/i.test(String(path ?? ''));
 
@@ -18,12 +19,12 @@ export function fileMenuItems(target, { osActions, current = false, canUse = tru
   const item = (label, action) => ({ label, onClick: () => run(action) });
   const groups = [
     [
-      !current && item('右パネルで開く', 'panel'),
-      osActions && !directory && isHtml(target.path) && item('ブラウザーで開く', 'browser'),
-      osActions && item(directory ? 'エクスプローラーで開く' : 'エクスプローラーで表示', 'reveal'),
+      !current && item(t('files.menu.openInPanel'), 'panel'),
+      osActions && !directory && isHtml(target.path) && item(t('files.menu.openInBrowser'), 'browser'),
+      osActions && item(directory ? t('files.menu.revealFolder') : t('files.menu.revealFile'), 'reveal'),
     ],
-    [item('パスをコピー', 'copy'), item('相対パスをコピー', 'copyRelative')],
-    directory ? [] : [item('保存', 'save'), canUse && item('会話で使う', 'use')],
+    [item(t('files.menu.copyPath'), 'copy'), item(t('files.menu.copyRelative'), 'copyRelative')],
+    directory ? [] : [item(t('files.menu.save'), 'save'), canUse && item(t('files.menu.use'), 'use')],
   ].map(group => group.filter(Boolean)).filter(group => group.length);
   return groups.flatMap((group, i) => (i ? [{ sep: true }, ...group] : group));
 }
