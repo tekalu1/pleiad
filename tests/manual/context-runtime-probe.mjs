@@ -2,12 +2,10 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { claudeExecutable } from '../../core/cli-installation.mjs';
-import { claudeContextOptions, codexContextRpc, procwayContextSettings } from '../../core/backends/context-options.mjs';
+import { claudeContextOptions, codexContextRpc } from '../../core/backends/context-options.mjs';
 import { rpc } from '../../core/backends/codex-rpc.mjs';
-import { procwaySource } from '../../core/procway-config.mjs';
 const tmp=await fs.mkdtemp(path.join(os.tmpdir(),'ply-runtime-probe-')),cwd=path.join(tmp,'repo'),home=path.join(tmp,'home');
 const write=async(p,s)=>{await fs.mkdir(path.dirname(p),{recursive:true});await fs.writeFile(p,s);};
 const context={owners:{instruction:'ply',skill:'ply',mcp:'ply'},prompt:'PLY_EXPLICIT_CONTEXT',url:'http://127.0.0.1:1/unused',headers:{}};
@@ -34,12 +32,5 @@ try{
  const found=skills.data.flatMap(d=>d.skills??[]).find(s=>s.name==='probe');
  const result={backend:'codex',projectDocMaxBytes:settings.config.project_doc_max_bytes,probeSkillEnabled:found?.enabled,nativeMcpEnabled:settings.config.mcp_servers.nativeFixture.enabled,dottedEnabled:settings.config.mcp_servers['with.dot'].enabled};
  console.log(JSON.stringify(result));if(result.projectDocMaxBytes!==0||result.probeSkillEnabled!==false||result.nativeMcpEnabled!==false||result.dottedEnabled!==false)throw new Error('Codex suppression failed');
- const src=await procwaySource(),importAt=p=>import(pathToFileURL(path.join(src,p)).href);
- const {loadSettings}=await importAt('config/load-settings.mjs');const {resolveContext}=await importAt('context/context-resolver.mjs');
- const native=(await loadSettings({cwd,homeDir:home})).settings;
- const managed=procwayContextSettings(native,context);
- const resolved=await resolveContext({cwd,settings:managed});
- const pw={backend:'procway',instructions:resolved.instructions.length,skills:resolved.skills.length,explicit:resolved.rules.includes(context.prompt),mcpNames:Object.keys(managed.mcpServers)};
- console.log(JSON.stringify(pw));if(pw.instructions||pw.skills||!pw.explicit||pw.mcpNames.join()!=='ply_context')throw new Error('procway suppression failed');
  console.log('PASS: native suppression, no turns sent');
 }finally{codex?.stop();rpc.stop();process.chdir(os.tmpdir());if(!path.basename(tmp).startsWith('ply-runtime-probe-'))throw new Error('bad probe path');await fs.rm(tmp,{recursive:true,maxRetries:5,retryDelay:200});}

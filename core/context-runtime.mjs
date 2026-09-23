@@ -92,7 +92,7 @@ export async function readSnapshot(dir, digest) {
   return fs.readFile(path.join(dir, `${digest}.txt`), 'utf8').catch(() => null);
 }
 
-const SOURCE_LABEL = { claude: 'Claude', codex: 'Codex', procway: 'procway-code', common: '共通', ply: 'Pleiad' };
+const SOURCE_LABEL = { claude: 'Claude', codex: 'Codex', common: '共通', ply: 'Pleiad' };
 /**
  * 同じ名前の外部 MCP が複数あったとき（core/context-scan.mjs が 1 つを選び、残りを shadowedBy: 'choice' にする）、
  * どれを使ったかを記録に残す。使った行に choice（選び方と、使わなかった定義の数）、使わなかった行に理由。

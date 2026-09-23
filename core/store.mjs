@@ -1,7 +1,7 @@
 // バックエンドが持たない差分を持つ sidecar ストア。**全バックエンド横断のインデックス**でもある。
 //
 // v1 では正本を全部 ~/.claude（SDK ネイティブ）に置いていたが、
-// codex / procway-code には等価物が無い（docs/multi-backend.md §2.1 で改訂）。
+// codex には等価物が無い（docs/multi-backend.md §2.1 で改訂）。
 //
 //   backend        … このセッションを回すバックエンドの id。これが無いと誰に聞けばよいか分からない
 //   title / status … バックエンドがネイティブに持てるなら**そちらが正本**、持てないならここが正本。
@@ -327,7 +327,7 @@ export const dataDir = DIR;
 
 /** Host-only data; durable before acknowledging the client. Roll back a failed write. */
 export async function setSessionData(sessionId, field, value) {
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "procwayLimits", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount"].includes(field)) throw new Error("不正なセッション設定");
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount"].includes(field)) throw new Error("不正なセッション設定");
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];

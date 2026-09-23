@@ -35,7 +35,6 @@
 // CLI はそれで main を自動で再開させるので、待てば「完了の通知が来たら報告します」が本当に果たされる。
 // 終わらないコマンド（`npm run dev` など）への逃げ道は、タイムアウトではなく作業ダイアログの停止ボタン
 // （claude.mjs の stopBackground -> SDK の Query.stopTask。止めると status: "stopped" の通知が来て閉じられる）。
-// procway の裏のシェルには終わりの合図が無いので、あちらは今までどおり数えない（web/work-status.mjs）。
 //
 // (b) は ambient を数えない（終わらないものが混じると、ターンが永久に終わらなくなる）。
 // そのかわり ambient と完了通知は sawWaitable を立て、**閉じる前の猶予を必ず置かせる**。
@@ -152,8 +151,8 @@ export function createTurnTracker({ now = () => new Date() } = {}) {
     // 一覧に出さない ambient も「CLI が main を再開しうる」印としては数える（上の注意書き）
     sawWaitable = true;
     if (ambient || bg.has(id)) return;
-    // waitable は「終わりの通知が必ず来るので待てる」の印。web はこれで procway の裏のシェル
-    // （終わりの合図が無い）と区別し、待っていることを画面に出す（web/work-status.mjs）
+    // waitable は「終わりの通知が必ず来るので待てる」の印。web はこれで終わりの合図が無い裏の作業と
+    // 区別し、待っていることを画面に出す（web/work-status.mjs）
     bg.set(id, { id, kind, label: String(label ?? ""), waitable: true });
   }
 

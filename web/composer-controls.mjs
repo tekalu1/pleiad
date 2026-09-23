@@ -11,7 +11,7 @@
 //     面の外を押すと閉じる。面は画面の幅に収める（360px の画面でもはみ出さない）
 import { el, svgEl, relTime } from "./dom.mjs";
 import { isComposingKey } from "./keyboard.mjs";
-import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, procwayChipLabel } from "./composer-labels.mjs";
+import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault } from "./composer-labels.mjs";
 
 const FOLDER = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
 const FOLDER_ADD = "M12 11v5M9.5 13.5h5";
@@ -281,36 +281,30 @@ export function setupComposerControls({ cmd, get, on }) {
       }
       parts.push(seg);
     }
-    if (d.procway) {
-      // procway-code は「接続先」→「モデル」（自由入力 + 候補）。値と保存は web/procway.mjs が持つ
-      parts.push(...procwaySection(d));
-    } else {
-      parts.push(head("モデル"));
-      const models = d.models ?? {};
-      const { id: resolved, entry: current } = resolvedModel(models, d.model);
-      const def = models[""]?.resolvesTo;
-      // 段違いを系統にまとめた一覧（antigravity）は系統ごとに 1 行（composer-labels.mjs の modelRowIds）
-      const ids = modelRowIds(models, d.model);
-      // 既定が一覧のどれにも当たらない（分からない）ときは「既定に従う」の行を残す
-      const rows = [];
-      if (!def || !ids.some((id) => holdsDefault(models, id))) rows.push(row({
-        on: !d.model, main: models[""]?.resolvedLabel ?? models[""]?.label ?? "既定に従う", sub: models[""]?.note, tag: "既定",
-        key: "model:", onPick: () => d.model && on.model(""),
+    parts.push(head("モデル"));
+    const models = d.models ?? {};
+    const { id: resolved, entry: current } = resolvedModel(models, d.model);
+    const def = models[""]?.resolvesTo;
+    // 段違いを系統にまとめた一覧（antigravity）は系統ごとに 1 行（composer-labels.mjs の modelRowIds）
+    const ids = modelRowIds(models, d.model);
+    // 既定が一覧のどれにも当たらない（分からない）ときは「既定に従う」の行を残す
+    const rows = [];
+    if (!def || !ids.some((id) => holdsDefault(models, id))) rows.push(row({
+      on: !d.model, main: models[""]?.resolvedLabel ?? models[""]?.label ?? "既定に従う", sub: models[""]?.note, tag: "既定",
+      key: "model:", onPick: () => d.model && on.model(""),
+    }));
+    for (const id of ids) {
+      const m = models[id];
+      rows.push(row({
+        on: id === resolved || Boolean(m.family && m.family === current?.family),
+        main: m.label ?? id, sub: m.note, tag: holdsDefault(models, id) ? "既定" : "", key: `model:${id}`,
+        // 既定の行を選ぶと '' を保存する（既定が変われば追従する）。選んでいる系統の行は何もしない
+        onPick: () => { const v = id === def ? "" : id; if (v !== d.model && id !== resolved) on.model(v); },
       }));
-      for (const id of ids) {
-        const m = models[id];
-        rows.push(row({
-          on: id === resolved || Boolean(m.family && m.family === current?.family),
-          main: m.label ?? id, sub: m.note, tag: holdsDefault(models, id) ? "既定" : "", key: `model:${id}`,
-          // 既定の行を選ぶと '' を保存する（既定が変われば追従する）。選んでいる系統の行は何もしない
-          onPick: () => { const v = id === def ? "" : id; if (v !== d.model && id !== resolved) on.model(v); },
-        }));
-      }
-      parts.push(listbox("モデル", rows));
     }
+    parts.push(listbox("モデル", rows));
     parts.push(head("エフォート（考える量）"));
     parts.push(effortBlock(d));
-    if (d.procway) parts.push(procwayFooter(d));
     if (d.accounts) {
       parts.push(head("Claude のアカウント"));
       parts.push(listbox("Claude のアカウント", d.accounts.map((a) => row({
@@ -319,55 +313,6 @@ export function setupComposerControls({ cmd, get, on }) {
       }))));
     }
     pop.replaceChildren(...parts);
-  }
-
-  /** procway-code の「接続先」と「モデル」。d.procway は web/procway.mjs の view() */
-  function procwaySection(d) {
-    const pw = d.procway;
-    const out = [head("接続先")];
-    if (pw.loading && !pw.connections) out.push(el("p", "cnote", "接続先を読み込んでいます…"));
-    else if (!pw.connections?.length) out.push(el("p", "cnote", "接続先がありません。「接続設定…」から追加してください"));
-    else out.push(listbox("接続先", pw.connections.map((c) => row({
-      on: c.id === pw.selectedId, main: c.name, sub: c.hint, tag: c.isDefault ? "既定" : "", key: `pwconn:${c.id}`, title: c.name,
-      onPick: () => { if (c.id !== pw.selectedId) pw.pickConnection(c.id); },
-    }))));
-    out.push(head("モデル"));
-    const input = el("input", "cpath");
-    input.value = pw.selectedModel ?? "";
-    input.placeholder = pw.cliAgent ? "モデル ID（空欄ならエージェントの既定）" : "モデル ID";
-    input.setAttribute("aria-label", "procway-code のモデル ID（Enter で決める）");
-    input.dataset.key = "pwmodel";
-    input.autocomplete = "off"; input.spellcheck = false;
-    input.disabled = !pw.selectedId;
-    const err = el("p", "cerr");
-    err.setAttribute("role", "alert");
-    err.textContent = pw.modelError ?? "";
-    const commit = async (value) => {
-      err.textContent = "";
-      const message = await pw.commitModel(String(value ?? "").trim());
-      if (message && err.isConnected) { err.textContent = message; input.focus(); }
-    };
-    const box = el("div");
-    // 候補（接続先の既定のモデルと、接続確認で取れたモデルの一覧）。打った字で絞る
-    const paintSuggestions = () => {
-      const q = input.value.trim().toLowerCase();
-      const all = pw.models ?? [];
-      const exact = all.some((m) => m.toLowerCase() === q);
-      const shown = q && !exact ? all.filter((m) => m.toLowerCase().includes(q)) : all;
-      box.replaceChildren(...(shown.length ? [listbox("モデルの候補", shown.map((m) => row({
-        on: m === pw.selectedModel, main: m, mono: true, key: `pwmodel:${m}`, title: m,
-        tag: m === pw.connectionModel ? "既定" : "", onPick: () => commit(m),
-      })))] : []));
-    };
-    input.addEventListener("input", paintSuggestions);
-    input.addEventListener("keydown", (e) => {
-      if (isComposingKey(e) || e.key !== "Enter") return;
-      e.preventDefault();     // フォームの送信にしない
-      commit(input.value);
-    });
-    paintSuggestions();
-    out.push(input, box, err);
-    return out;
   }
 
   function effortBlock(d) {
@@ -387,16 +332,16 @@ export function setupComposerControls({ cmd, get, on }) {
     const ticks = el("div", "ticks");
     const { label: modelLabel } = resolvedModel(d.models, d.model);
     // 既定に従うときに誰の設定が効くか
-    const owner = d.procway ? "接続先" : d.backend === "antigravity" ? "agy " : "エージェント";
+    const owner = d.backend === "antigravity" ? "agy " : "エージェント";
     const paintVal = (v) => {
       val.textContent = v || "既定";
-      note.textContent = !v ? `（${owner}の設定に従う）` : v === def && !d.effort ? `（${d.procway ? "接続先" : modelLabel} の既定）` : "";
+      note.textContent = !v ? `（${owner}の設定に従う）` : v === def && !d.effort ? `（${modelLabel} の既定）` : "";
       range.setAttribute("aria-valuetext", v ? v + (v === def ? "（既定）" : "") : `既定（${owner}の設定に従う）`);
     };
     if (!stops.length || d.effortDisabled) {
       range.disabled = true; range.max = "0"; range.value = "0";
       val.textContent = "—";
-      note.textContent = d.efforts?.[""]?.reason ?? (d.procway ? "接続先の設定に従います" : `${modelLabel} は段を選べません`);
+      note.textContent = d.efforts?.[""]?.reason ?? `${modelLabel} は段を選べません`;
       note.title = note.textContent;
       reset.hidden = true;
       box.classList.add("off");
@@ -430,22 +375,6 @@ export function setupComposerControls({ cmd, get, on }) {
     return box;
   }
 
-  /** procway-code の面の下の操作（コンテキストの容量・接続設定）。どちらも面を閉じてから開く */
-  function procwayFooter(d) {
-    const foot = el("div", "cfoot");
-    const budget = el("button", "clink", "コンテキスト…");
-    budget.type = "button";
-    budget.dataset.key = "pwbudget";
-    budget.disabled = !d.procway.canBudget;
-    if (d.procway.budgetNote) budget.title = d.procway.budgetNote;
-    budget.onclick = () => { model.hide(false); d.procway.openBudget(); };
-    const manage = el("button", "clink", "接続設定…");
-    manage.type = "button";
-    manage.dataset.key = "pwmanage";
-    manage.onclick = () => { model.hide(false); d.procway.openManager(); };
-    foot.append(budget, manage);
-    return foot;
-  }
   const model = panel(chips.model, pops.model, { align: "right", render: renderModel, onShow: () => on.openModel?.() });
 
   // ---- 承認モード
@@ -470,10 +399,9 @@ export function setupComposerControls({ cmd, get, on }) {
     chips.cwd.setAttribute("aria-label", `作業ディレクトリ: ${cwd || "未指定"}`);
     chips.cwd.dataset.value = cwd;
     chips.cwd.disabled = Boolean(d.cwdDisabled);
-    // モデル（procway は「接続先 · モデル · 段」。長い名前は詰め、全体は title に出す）
-    const pwLabel = d.procway ? procwayChipLabel({ connection: d.procway.connectionName, model: d.procway.selectedModel, effort: effortStops(d.efforts, d.effort).current }) : null;
-    const label = pwLabel ? pwLabel.text : modelChipLabel(d.models, d.model, d.efforts, d.effort);
-    const full = pwLabel ? pwLabel.full : label;
+    // モデル
+    const label = modelChipLabel(d.models, d.model, d.efforts, d.effort);
+    const full = label;
     modelName.textContent = label;
     chips.model.title = `${full}（エージェント・モデル・エフォート。次のターンから適用）`;
     chips.model.setAttribute("aria-label", `モデルとエフォート: ${full}`);

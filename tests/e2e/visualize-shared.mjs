@@ -6,7 +6,7 @@ export async function checkVisualize(t, ctx, backend) {
   await fs.writeFile(html, '<button id="count">0</button><script>document.getElementById("count").onclick=e=>e.target.textContent=Number(e.target.textContent)+1</script><p>Pleiad visualize check</p>');
   const c = await ctx.open(); let sessionId;
   try {
-    sessionId = (await c.cmd('newSession', { backend, cwd: ctx.work, mode: backend === 'claude' ? 'default' : backend === 'procway' ? 'always-ask' : 'readonly' })).sessionId;
+    sessionId = (await c.cmd('newSession', { backend, cwd: ctx.work, mode: backend === 'claude' ? 'default' : 'readonly' })).sessionId;
     const first = await c.runTurn({sessionId, prompt:`表示の接続テストです。既存の ${JSON.stringify(html)} を変更せず、Pleiad の Visualize 形式で会話内に表示してください。タイトルは「HTML check」。MCPツールの呼び出しは不要です。説明は不要です。`}, {ms:180000});
     t.ok(`${backend}: first turn completes`, first.outcome==='ok', first.outcome === 'ok' ? 'ok' : JSON.stringify(first.events.filter(e=>e.type==='turnResult')));
     const visuals = first.events.filter(e=>e.kind==='visualization');

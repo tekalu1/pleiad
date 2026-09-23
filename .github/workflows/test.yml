@@ -42,26 +42,12 @@ jobs:
           - { os: windows-latest, node: "20" }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    env:
-      # 本物の procway-code serve を起こすテスト（server-procway / procway-mcp / procway-connections）用。
-      # 無いと skip ではなく失敗にする方針なので、Evaluation release と同じ版をここに置く
-      AGENT_HOST_PROCWAY_CODE: ${{ github.workspace }}/temporary/procway-code/src/cli.mjs
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      # 版は evaluation-release.yml と揃える（上げるときは両方）
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          repository: tekalu1/procway-code
-          ref: 309f25f39c11b349fe53063b2e6065d7978513e6
-          path: temporary/procway-code
-          persist-credentials: false
-      - name: Install test backend
-        working-directory: temporary/procway-code
-        run: npm install --ignore-scripts --omit=dev --omit=optional --package-lock=false
       - run: npm ci
       - run: npm test
 

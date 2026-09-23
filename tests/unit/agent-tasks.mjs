@@ -40,7 +40,8 @@ export default async function(t) {
     t.ok('SDK クライアントから6ツールが見え、native 名と重ならない', names.length === 6 && names.every(n => n.startsWith('ply_')) && !names.includes('spawn_agent'));
     const delegateTool = tools.find(t => t.name === 'ply_delegate');
     t.ok('backend enum に antigravity が含まれる', delegateTool?.inputSchema?.properties?.backend?.enum?.includes('antigravity'));
-    const result = await client.callTool({ name: 'ply_delegate', arguments: { backend: 'procway', task: 'hold' } });
+    t.ok('backend enum に procway は無い（対応を終えた）', !delegateTool?.inputSchema?.properties?.backend?.enum?.includes('procway'));
+    const result = await client.callTool({ name: 'ply_delegate', arguments: { backend: 'codex', task: 'hold' } });
     const job = JSON.parse(result.content[0].text);
     t.ok('結果を待たずに Pleiad の ID を返す', job.taskId.startsWith('ply-task-'));
     await until(() => release);

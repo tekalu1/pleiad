@@ -3,12 +3,12 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 export const name = 'ux';
 export const title = '保存済みの空セッションから実エージェントを開始・再開する';
-export const serverEnv = { AGENT_HOST_BACKENDS: 'claude,codex,procway' };
+export const serverEnv = { AGENT_HOST_BACKENDS: 'claude,codex' };
 export default async function(t, ctx) {
   const c = await ctx.open({ autoAllow: true });
   try {
     const agents = await c.cmd('backends');
-    for (const backend of ['claude', 'codex', 'procway']) {
+    for (const backend of ['claude', 'codex']) {
       if (!agents.some(a => a.id === backend)) { t.ok(`${backend} が利用可能`, false); continue; }
       const models = await c.cmd('models', { backend });
       const model = backend === 'claude' ? 'haiku' : '';

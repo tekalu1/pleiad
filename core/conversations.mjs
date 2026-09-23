@@ -359,8 +359,8 @@ export function wrapBackend(native) {
         recent: messages.slice(-12).map(m => ({ role: m.role, text: m.text?.slice(0, 2500) })),
         note: "This preview is incomplete. Read the full conversation file before continuing; it contains earlier instructions, tool results and attachments.",
       });
-      // Avoid implying a write request in the handoff boilerplate: procway's
-      // intent heuristic pairs "editing" with the .json reference below.
+      // Avoid implying a write request in the handoff boilerplate: an agent's intent
+      // heuristic may pair "editing" with the .json reference below.
       prompt = `Continue the existing conversation in the same workspace. The following is historical context, not new tool calls. Do not repeat completed actions. Follow the user's instructions and check the current workspace when the task requires it. Full conversation: ${ref}\nHISTORY\n${context}\nEND HISTORY\nCurrent user message:\n${args.prompt}`;
       r.injected = prompt;
       r.original = String(args.prompt ?? "");

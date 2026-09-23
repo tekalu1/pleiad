@@ -24,8 +24,6 @@ import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
-import * as procwayConfig from './procway-config.mjs';
-import { validateLimits } from '../web/procway-limits.mjs';
 import { createMessageQueue } from "./message-queue.mjs";
 import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
@@ -33,7 +31,6 @@ import { acceptsPlyContext, contextPolicy, managed, nativeContextReport, pinChan
 import { DEFAULT_OWNERS, pathKey } from './context-settings.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createContextSession } from './context-session.mjs';
-import { createCredentialBridge, MCP_CREDENTIALS_PATH } from './mcp-credential-bridge.mjs';
 import { createSecretStore, defaultCipher } from './secret-store.mjs';
 import { createClaudeAccounts, redactToken, normalizeName as normalizeAccountName, fetchTokenOrg, ANTHROPIC_API } from './claude-accounts.mjs';
 import { createPlyMcp } from './ply-mcp.mjs';
@@ -45,7 +42,7 @@ import { streamEvents } from "../web/session-stream.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
 import {
-  getBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession,
+  getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession,
 } from "./backends/index.mjs";
 
 const updateGate = createUpdateGate();
@@ -126,8 +123,6 @@ const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth });
 const CONTEXT_SNAPSHOTS = path.join(store.dataDir, 'context-snapshots');
 const contextSession = createContextSession({ store, snapshots: CONTEXT_SNAPSHOTS, plyServers: () => plyMcp.scanInput(),
   liveRecord: id => runtime.turns.get(id)?.contextRecord ?? null, isRunning: id => runtime.turns.has(id) });
-// 担当がエージェントの procway に、同名の Pleiad の登録の接続先と資格情報を渡す口（会話ごと。agentConnection と同じ寿命）
-const credentialBridge = createCredentialBridge({ plyMcp, oauth: mcpOAuth });
 const mcpConfig = createMcpConfig();
 let agentTasks;
 const agentConnections = new Map();
@@ -157,7 +152,7 @@ function agentConnection(turn) {
 }
 
 /**
- * 会話ごとの橋（ply_agents と、procway の native 経路に Pleiad の MCP 登録の資格情報を渡す口）。
+ * 会話ごとの橋（ply_agents）。
  * contextToken は、会話のあいだ同じ値で ply_context を開くバックエンド（antigravity）に使う
  */
 function conversationConnection(turn) {
@@ -175,19 +170,11 @@ function conversationConnection(turn) {
       return live.info.sessionId;
     } });
   const { close, ...agentRuntime } = binding;
-  const credentials = credentialBridge.open({ origin: localOrigin(), cwd: turn.info.cwd });
   entry.runtime = agentRuntime;
-  entry.credentials = { url: credentials.url, headers: credentials.headers };
   entry.contextToken = crypto.randomBytes(32).toString('hex');
-  entry.close = () => { close(); credentials.close(); };
+  entry.close = close;
   agentConnections.set(entry.key, entry);
   return entry;
-}
-
-/** 使える（無効にしていない）Pleiad の MCP 登録の名前と更新時刻。秘密は含まない */
-async function plyMcpNames() {
-  const { servers } = await plyMcp.scanInput();
-  return servers.filter(s => s.definition.enabled !== false).map(s => ({ name: s.name, updatedAt: s.definition.updatedAt ?? null }));
 }
 
 /** Pleiad 自身の HTTP の口（子プロセスや中継から呼ばせる先） */
@@ -231,7 +218,6 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (url.pathname === AGENTS_MCP_PATH) return agentBridge.handle(req, res);
   if (url.pathname === CONTEXT_MCP_PATH) return contextBridge.handle(req, res);
-  if (url.pathname === MCP_CREDENTIALS_PATH) return credentialBridge.handle(req, res);
 
   // 静的ファイルもトークンで守る。守られているのが WebSocket だけだと、
   // リモートに出したときに UI 一式が誰でも取れてしまう。
@@ -351,7 +337,8 @@ function sessionRow(b, s, extra = {}) {
     nextSettings: extra.nextSettings ?? null,
     // Claude のアカウント（'' = ログイン中のアカウント）。id だけでトークンは載せない
     claudeAccount: extra.claudeAccount ?? "",
-    procwayLimits: extra.procwayLimits ?? null,
+    // 対応を終えたエージェントの会話（core/backends/index.mjs の RETIRED）。読めるが続けられない理由
+    ...(b.retired ? { retired: b.retired } : {}),
     unsent: extra.unsent ?? false,
     hasDraft: Boolean(extra.draft?.text || extra.draft?.attached?.length),
     historyCount: (extra.history ?? []).length,
@@ -382,9 +369,12 @@ async function sessionList({ limit = 100 } = {}) {
 
   // sidecar にしか無い行。どのエージェントのものか分からないもの（v1 から引き継いだ行で
   // まだ一度も触っていないもの）は出さない。出しても開けないので一覧を濁すだけ。
+  // 対応を終えたエージェントの会話は出す（読めるが続けられない。sessionBackend の retired）
   for (const [id, extra] of Object.entries(side)) {
-    if (rows.has(id) || !extra.backend || !getBackend(extra.backend)) continue;
-    rows.set(id, sessionRow(getBackend(extra.backend), null, { ...extra, id }));
+    const b = rows.has(id) || !extra.backend ? null : sessionBackend(extra.backend);
+    if (!b) continue;
+    const managed = b.retired ? await b.getSession(id).catch(() => null) : null;
+    rows.set(id, sessionRow(b, managed, { ...extra, id }));
   }
 
   for (const row of rows.values()) if (row.cwd) workspaceRoots.add(row.cwd);
@@ -407,25 +397,31 @@ async function usageAccounts() {
  *   新規 … クライアントの指定。1つしか有効になっていなければそれに落とす
  */
 async function pickBackend(sessionId, given) {
-  if (sessionId && given) {
+  if (sessionId) {
+    // 対応を終えたエージェントの会話もここで引ける（retired を持つ）。続ける操作は refuseRetired で断る
     const current = await resolveBackendForSession(sessionId);
-    if (current && current.id !== given) throw new Error("エージェントは切り替え操作で変更してください");
+    if (current && given && current.id !== given) throw new Error("エージェントは切り替え操作で変更してください");
+    if (current) return current;
+    if (!given) throw new Error(`セッション ${sessionId} のエージェントが分からない`);
   }
   if (typeof given === "string" && given) {
     const b = getBackend(given);
     if (!b) throw new Error(`知らないエージェント: ${given}`);
     return b;
   }
-  if (sessionId) {
-    const b = await resolveBackendForSession(sessionId);
-    if (!b) throw new Error(`セッション ${sessionId} のエージェントが分からない`);
-    return b;
-  }
-  const preferred = getBackend((await store.getPrefs()).backend);
+  const remembered = (await store.getPrefs()).backend;
+  const preferred = getBackend(remembered);
   if (preferred) return preferred;
+  // 既定に覚えていたエージェントが無くなった（対応を終えた・無効にした）なら、有効なものの先頭へ落とす
   const only = listBackends();
-  if (only.length === 1) return only[0];
+  if (only.length === 1 || (remembered && only.length)) return only[0];
   throw new Error("エージェントの指定が要る");
+}
+
+/** 対応を終えたエージェントの会話は続けられない。ターン・設定の変更・切り替えの前に断る */
+function refuseRetired(backend) {
+  if (backend?.retired) throw new Error(backend.retired);
+  return backend;
 }
 
 /**
@@ -519,24 +515,17 @@ const MAX_TURNS = Number(process.env.AGENT_HOST_MAX_TURNS ?? 8);
 
 const runtime = {
   sockets: new Set(),    // つながっている host。タブが複数あってもよい
-  turns: new Map(),      // 走っているターン: key -> Turn（key は sessionId か仮キー）。外部ターンも入る
+  turns: new Map(),      // 走っているターン: key -> Turn（key は sessionId か仮キー）
   waiting: new Map(),    // 承認待ち: id -> { settle, payload, askedAt }
   buffer: [],            // host が居ないあいだのイベント
   awaySince: 0,          // host が居なくなった時刻（0 = 居る）
   graceTimer: null,
   runningPoll: null,     // 実行中一覧を配る間隔タイマー
   // ターンの外で裏に残っている作業: sessionId -> { sessionId, backend, tasks, since }（setBackground）。
-  // procway はバックグラウンドの子を残したままターンを終えるので、ターン行（turn.info.background）とは別に持つ
+  // Codex のバックグラウンド端末はターンが終わっても残るので、ターン行（turn.info.background）とは別に持つ
   background: new Map(),
 };
 
-// 登録を待っている外部ターン: sessionId -> 数。送信待ちの kick はこれがある間も待つ
-// （外部ターンが先。そうしないと Pleiad のターンを始めて turn_in_progress で撥ねられる）
-const pendingExternal = new Map();
-function holdExternal(id, n) {
-  const v = (pendingExternal.get(id) ?? 0) + n;
-  if (v > 0) pendingExternal.set(id, v); else pendingExternal.delete(id);
-}
 
 // Turn = 走っている1本。
 // 新規セッションは走り出すまで id が無いので、仮キーで登録して後から差し替える。
@@ -663,13 +652,13 @@ async function applyStatus(backend, sessionId, status, reason) {
 function makeEmit(turn) {
   const emit = (event, { recorded = false } = {}) => {
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
-    // 文脈の圧縮（Claude の activity compacting、procway の compact.started）。控えを捨て、
+    // 文脈の圧縮（Claude の activity compacting）。控えを捨て、
     // 次に頼まれたら instructions_for_path / load_skill が本文を渡し直す（要約に置き換わると手元から消えるため）
     if (event?.type === 'activity' && event.state === 'compacting') {
       const kept = turn.contextRecord?.delivered?.entries;
       if (kept) for (const key of Object.keys(kept)) delete kept[key];
     }
-    // 受理済みの途中送信が読まれずに捨てられた（procway の steer.dropped）。送信待ちへ戻す
+    // 受理済みの途中送信が読まれずに捨てられた（userMessage.dropped）。送信待ちへ戻す
     if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId) {
       outbox.returned(turn.info.sessionId, event.messageId).catch(() => {});
     }
@@ -708,7 +697,6 @@ function makeEmit(turn) {
           store.setModel(sessionId, model ?? ""),
           store.setSessionData(sessionId, "effort", turn.info.effort ?? ""),
           ...(turn.contextRecord ? [store.setSessionData(sessionId, 'contextSession', turn.contextRecord)] : []),
-        ...(turn.backend.id === 'procway' ? [store.setSessionData(sessionId, 'procwayLimits', turn.info.procwayLimits)] : []),
         // 新規セッションに最初から付ける状態。id が無いうちは host が予約として持っていて、
         // 生まれた瞬間にここで書く。経路は setStatus と同じ（ネイティブ + sidecar + イベント）
         // first（このターンで id が確定した）の 1 本にだけ付ける
@@ -842,7 +830,7 @@ async function runningWork() {
   }));
   const subagents = nested.flat();
 
-  // ターンの外で裏に残っている作業（procway のバックグラウンドの子など）。
+  // ターンの外で裏に残っている作業（Codex のバックグラウンド端末など）。
   // count には入れない: デスクトップは count > 0 の間は終了させないが、これは Pleiad から止める口が無い
   const background = [...runtime.background.values()].map((b) => ({
     kind: "background", ...b, tasks: b.tasks.map((x) => ({ ...x })),
@@ -1020,7 +1008,7 @@ const outbox = createMessageQueue({
   active: id => {
     const turn = runtime.turns.get(id);
     if (!turn) {
-      if (switching.has(id) || forking.has(id) || pendingExternal.has(id)) return { blocked: true, wait: { reason: 'turn' } };
+      if (switching.has(id) || forking.has(id)) return { blocked: true, wait: { reason: 'turn' } };
       // ほかの会話（委譲した子のターンも数える）で上限まで埋まっている。この会話は何も走っていなくても待つ
       if (runtime.turns.size >= MAX_TURNS) return { blocked: true, wait: { reason: 'limit', limit: MAX_TURNS } };
       return null;
@@ -1059,12 +1047,7 @@ agentTasks = await createAgentTasks({
     if (!backend) throw new Error('指定したバックエンドは有効ではありません');
     const cwd = path.resolve(parent.info.cwd, args.cwd ?? '.');
     if (!(await fs.stat(cwd)).isDirectory()) throw new Error('cwd はディレクトリを指定してください');
-    let model = await resolveModel(null, args.model, backend, cwd);
-    let procwayLimits;
-    if (backend.id === 'procway') {
-      const config = await procwayConfig.resolveConnection(model, cwd);
-      model = config.id + (config.model ? '/' + config.model : ''); procwayLimits = config.limits;
-    }
+    const model = await resolveModel(null, args.model, backend, cwd);
     const effort = await resolveEffort(null, args.effort, backend, model, cwd);
     // 承認モードは委譲を受け付けた側（agentBridge の call）が親の強さから決めてある。
     // ここで決め直すと「聞いた内容」と「実際に動く強さ」がずれるので、来た値をそのまま使う。
@@ -1076,7 +1059,6 @@ agentTasks = await createAgentTasks({
       await store.setMeta(sessionId, { ...info, backend: backend.id, unsent: true });
       await store.setMode(sessionId, mode); await store.setModel(sessionId, model);
       await store.setSessionData(sessionId, 'effort', effort);
-      if (procwayLimits) await store.setSessionData(sessionId, 'procwayLimits', procwayLimits);
       await store.setSessionData(sessionId, 'delegation', { taskId, parentSessionId: owner, manager: 'ply' });
       // 子は親の会話のアカウントで走る（親が別のエージェントでも、その会話で選んであるものを継ぐ）
       const parentAccount = (await store.get(owner)).claudeAccount ?? '';
@@ -1087,7 +1069,7 @@ agentTasks = await createAgentTasks({
   },
   execute: async (task, prompt, signal) => {
     if (signal.aborted) return { outcome: 'aborted' };
-    if (sessionBusy(task.sessionId) || pendingExternal.has(task.sessionId) || runtime.turns.size >= MAX_TURNS) return { requeue: true };
+    if (sessionBusy(task.sessionId) || runtime.turns.size >= MAX_TURNS) return { requeue: true };
     const execution = { outcome: null, error: null };
     taskExecutions.set(task.sessionId, execution);
     const stopChild = () => {
@@ -1101,7 +1083,7 @@ agentTasks = await createAgentTasks({
       // A child can itself delegate. Its result is final only after those results
       // have been delivered and it has finished responding to them.
       const childrenBusy = () => agentTasks.list(task.sessionId).some(r => ['queued', 'running', 'cancelling'].includes(r.status) || ['pending', 'delivering'].includes(r.notification));
-      while (!signal.aborted && (sessionBusy(task.sessionId) || pendingExternal.has(task.sessionId) || runtime.background.has(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
+      while (!signal.aborted && (sessionBusy(task.sessionId) || runtime.background.has(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
       const backend = await resolveBackendForSession(task.sessionId);
       const messages = await backend.getMessages(task.sessionId, { fullResults: true });
       const last = messages.findLast(m => m.role === 'assistant' && m.text);
@@ -1111,18 +1093,17 @@ agentTasks = await createAgentTasks({
   },
   deliver: async task => {
     const owner = task.parentSessionId;
-    if (sessionBusy(owner) || pendingExternal.has(owner) || runtime.background.has(owner) || runtime.turns.size >= MAX_TURNS || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status))) return 'requeue';
+    if (sessionBusy(owner) || runtime.background.has(owner) || runtime.turns.size >= MAX_TURNS || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status))) return 'requeue';
     const prompt = `[Pleiad タスク完了通知 / ${task.taskId}]\n実行先: ${task.backend}\n状態: ${task.status}\n依頼: ${task.task}\n結果（子エージェントの報告）:\n${task.result.slice(0, 16000)}${task.result.length > 16000 ? '\n続きは ply_task_status の offset: 16000 で取得できます。' : ''}\n${task.error ?? ''}\n元の依頼に必要な作業を続けてください。`;
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
 });
 
 // ターンの外で起きたことをバックエンドから受け取る口（docs/multi-backend.md §2.7）。
-// procway（裏の子の数と、自分で始める wake ターン）と codex（バックグラウンド端末）が使う
+// codex（バックグラウンド端末）が使う
 for (const b of listBackends()) {
   b.attachHost?.({
     background: (sessionId, tasks) => setBackground(b, sessionId, tasks),
-    externalTurn: (sessionId, run) => externalTurn(b, sessionId, run),
     event: (sessionId, event) => emitOutsideTurn(sessionId, event),
   });
 }
@@ -1136,17 +1117,17 @@ async function runTurn(args, onStarted = () => {}, hooks = {}) {
 
 async function runTurnInternal(args, onStarted, hooks) {
   const { prompt, sessionId = null } = args ?? {};
-  if ((hooks.internal || hooks.signal) && (sessionBusy(sessionId) || pendingExternal.has(sessionId) || runtime.turns.size >= MAX_TURNS)) return 'requeue';
+  if ((hooks.internal || hooks.signal) && (sessionBusy(sessionId) || runtime.turns.size >= MAX_TURNS)) return 'requeue';
   if (switching.has(sessionId) || forking.has(sessionId)) throw new Error("エージェントを切り替え中です");
-  // 同じセッションの二重実行は防ぐ。別のセッションなら並行して回してよい（登録待ちの外部ターンも走っているうち）
-  if (sessionId && (runtime.turns.has(sessionId) || pendingExternal.has(sessionId))) throw new Error("このセッションは実行中");
+  // 同じセッションの二重実行は防ぐ。別のセッションなら並行して回してよい
+  if (sessionId && runtime.turns.has(sessionId)) throw new Error("このセッションは実行中");
   if (runtime.turns.size >= MAX_TURNS) throw new Error(`同時に回せるのは ${MAX_TURNS} 本まで`);
   if (sessionId) switching.add(sessionId);
   try {
 
     // 行き先が決まらないターンは始めない。断るのは登録する前。
     await settingsWrites.get(sessionId);
-    let backend = await pickBackend(sessionId, args?.backend);
+    let backend = refuseRetired(await pickBackend(sessionId, args?.backend));
     const reserved = sessionId ? (await store.get(sessionId)).nextSettings : null;
     const { cwd, changedFrom } = await resolveCwd(sessionId, reserved?.cwd ?? args?.cwd, backend);
     // Claude のアカウント。削除済み・トークンが読めないものを選んでいる会話は、ここで止める
@@ -1168,21 +1149,11 @@ async function runTurnInternal(args, onStarted, hooks) {
       emitGlobal({ type: "cwd", sessionId, cwd, by: "human", reason: `${changedFrom} から` });
     }
     const permissionMode = await resolveMode(sessionId, reserved ? reserved.mode : args?.mode, backend);
-    let model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd);
+    const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd);
     const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd);
-    let procwayLimits;
-    if (backend.id === 'procway') {
-      const current = sessionId ? await store.get(sessionId) : {};
-      const changed = reserved && (reserved.backend !== current.backend || reserved.model !== (current.model ?? ''));
-      const requested = reserved?.procwayLimits ?? (changed ? undefined : current.procwayLimits ?? args?.procwayLimits);
-      const config = await procwayConfig.resolveConnection(model, cwd, requested);
-      model = config.id + (config.model ? '/' + config.model : '');
-      procwayLimits = config.limits;
-    }
     if (sessionId) {
       await store.setModel(sessionId, model);
       await store.setSessionData(sessionId, "effort", effort);
-      if (backend.id === 'procway') await store.setSessionData(sessionId, 'procwayLimits', procwayLimits);
       if (reserved?.account !== undefined) await store.setSessionData(sessionId, 'claudeAccount', reserved.account);
       await store.setMode(sessionId, permissionMode);
       await store.setMeta(sessionId, { cwd, unsent: false, lastModified: Date.now() });
@@ -1268,7 +1239,6 @@ async function runTurnInternal(args, onStarted, hooks) {
         mode: permissionMode,
         model: model || "",
         effort,
-        procwayLimits,
         status,
         attachments,
         // active = main が動いている / waiting = main は返答済みで、裏の subagent などを待っている
@@ -1330,7 +1300,6 @@ async function runTurnInternal(args, onStarted, hooks) {
         mode: permissionMode,
         model: model || undefined,
         effort,
-        procwayLimits,
         emit,
         askPermission,
         signal: turn.ac,
@@ -1340,11 +1309,9 @@ async function runTurnInternal(args, onStarted, hooks) {
         agentRuntime: agentConnection(turn),
         // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
         ...(account ? { oauthToken: account.token } : {}),
-        // procway の native 経路用。同名の Pleiad の登録があれば、その接続先と資格情報を serve 子が Pleiad から引く
-        ...(backend.capabilities?.plyMcpNative ? { plyMcpAccess: { ...conversationConnection(turn).credentials, servers: await plyMcpNames() } } : {}),
       });
-      // 相手が Pleiad の送っていないターンを走らせていて、何も届かなかった（procway の wake と重なった）。
-      // 完了ではない。送信待ちへ戻し（message-queue）、そのターン（外部ターン）が終わってから送り直す
+      // 相手が別のターンを走らせていて、何も届かなかった。
+      // 完了ではない。送信待ちへ戻し（message-queue）、そのターンが終わってから送り直す
       if (result?.requeue) turn.outcome = "requeue";
       await turn.visualizations.close();
       // Complete any accepted steering write before releasing the live snapshot.
@@ -1385,7 +1352,7 @@ async function runTurnInternal(args, onStarted, hooks) {
 }
 
 /**
- * ターンの後始末（Pleiad のターンと外部ターンで共通）。使用量と完了時刻を残し、turnEnd を出して一覧から外す。
+ * ターンの後始末。使用量と完了時刻を残し、turnEnd を出して一覧から外す。
  * requeue（相手が別のターンを走らせていて何も届かなかった）は完了ではないので、使用量も完了時刻も残さない。
  */
 async function endTurn(turn, emit, { record = true } = {}) {
@@ -1418,12 +1385,8 @@ async function kickQueued() {
 
 // ---- ターンの外（docs/multi-backend.md §2.7）----------------------------------
 //
-// 外部ターン: バックエンドが自分で始めたターン。Pleiad は送っていないが、エージェントは動いている
-// （procway の wake: 裏の子が終わると、procway が結果を渡すターンを自分で差し込む）。
-// 走っている間は Pleiad のターンと同じに扱う: 一覧の弧、稼働表示、ライブの流れ、承認、中断、
-// 送信待ち（steer は無いので終わってから送る）、使用量、turnEnd。
 
-// 同じ会話のターン（準備中を含む）が終わるのを待つ。外部ターンは Pleiad のターンと重ねない
+// 同じ会話のターン（準備中を含む）が終わるのを待つ
 const sessionBusy = (id) => runtime.turns.has(id) || switching.has(id) || forking.has(id);
 const freeWaiters = new Map();   // sessionId -> Set<() => void>
 function notifyFree(id) {
@@ -1444,86 +1407,6 @@ function waitFree(id, ms) {
     timer.unref?.();
     set.add(done);
   });
-}
-async function whenFree(id) {
-  while (sessionBusy(id)) await waitFree(id, 500);
-}
-
-/**
- * 外部ターンを走らせる。run({ emit, askPermission, signal, control }) は runTurn と同じ約束で、
- * ターンが終わったら resolve する（turnResult は emit で出す）。戻りは outcome。
- * 同じ会話で Pleiad のターン（準備中を含む）が走っていれば、それが終わってから登録する。
- */
-async function externalTurn(backend, sessionId, run) {
-  if (!sessionId || typeof run !== "function") throw new Error("外部ターンには会話 id と run が要る");
-  const releaseUpdateGate = updateGate.enter();
-  holdExternal(sessionId, 1);
-  let turn;
-  try {
-    const meta = await store.get(sessionId).catch(() => ({}));
-    const cwd = meta.cwd ?? (await backend.getSession(sessionId).catch(() => null))?.cwd ?? null;
-    // ライブの流れの土台（loadSession live が使う）。ターンが始まる前の履歴
-    const baseline = await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [], presents: [] }));
-    // 前のターンまでのサブエージェント。runTurnInternal と同じく、実行中一覧から外すために覚える
-    const pastSubagents = new Set(backend.listSubagents ? await backend.listSubagents(sessionId).catch(() => []) : []);
-    await whenFree(sessionId);
-    // ここから登録までは同期で進める（間に Pleiad のターンを割り込ませない）
-    turn = {
-      stream: { ...baseline, user: null, events: [] },
-      key: sessionId,
-      ac: new AbortController(),
-      backend,
-      control: { handle: null, onReady: () => outbox.kick(sessionId).catch(() => {}) },
-      outcome: null,
-      taskHints: new Map(),
-      pastSubagents,
-      subagentOrigins: new Map(),
-      presentKey: crypto.randomUUID(),
-      presentWrites: [],
-      info: {
-        sessionId,
-        backend: backend.id,
-        startedAt: new Date().toISOString(),
-        cwd,
-        mode: meta.mode ?? "",
-        model: meta.model ?? "",
-        effort: meta.effort ?? "",
-        external: true,   // Pleiad が送っていないターン
-        phase: "active",
-        background: [],
-      },
-    };
-    runtime.turns.set(sessionId, turn);
-  } catch (err) {
-    releaseUpdateGate();
-    throw err;
-  } finally {
-    holdExternal(sessionId, -1);
-    if (!turn) outbox.kick(sessionId).catch(() => {});
-  }
-  for (const read of liveReads) if (read.sessionId === sessionId) read.turn = turn;
-  const emit = makeEmit(turn);
-  turn.visualizations = createVisualizationCollector({
-    roots: [turn.info.cwd].filter(Boolean),
-    publish: async (payload) => {
-      const record = await history.recordPresent(sessionId, { ...payload, turnKey: turn.presentKey });
-      emit({ type: 'present', sessionId, ...record }, { recorded: true });
-    },
-  });
-  broadcastRunning();
-  syncRunningPoll();
-  try {
-    await run({ emit, askPermission, signal: turn.ac, control: turn.control });
-  } catch (err) {
-    emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
-  } finally {
-    await turn.visualizations.close().catch(err => emit({ type: 'turnResult', outcome: 'error', error: `可視化を保存できませんでした: ${err.message}` }));
-    await store.setMeta(sessionId, { lastModified: Date.now() }).catch(() => {});
-    await endTurn(turn, emit);
-    releaseUpdateGate();
-    await kickQueued();
-  }
-  return turn.outcome;
 }
 
 /**
@@ -1556,7 +1439,7 @@ function setBackground(backend, sessionId, tasks) {
 /**
  * 裏で動いているタスクを 1 本引く。読む（loadBackground）と止める（stopBackground）が使う。
  *
- * 置き場は 2 つある。ターンの外に残っているもの（procway・Codex の `runtime.background`）と、
+ * 置き場は 2 つある。ターンの外に残っているもの（Codex の `runtime.background`）と、
  * 走っているターンが抱えているもの（Claude の `turn.info.background`。§2.2 の phase: waiting）。
  * 画面はどちらも同じ行として並べるので、ここで両方を見る。
  */
@@ -1768,7 +1651,7 @@ wss.on("connection", (ws) => {
           if (!sessionId) throw new Error("セッションが要る");
           if (forking.has(sessionId) || switching.has(sessionId) && !runtime.turns.has(sessionId)) throw new Error("送信の準備中です。設定変更を再試行してください");
           const work = (settingsWrites.get(sessionId) ?? Promise.resolve()).catch(() => {}).then(async () => {
-            const source = await resolveBackendForSession(sessionId);
+            const source = refuseRetired(await resolveBackendForSession(sessionId));
             if (!source) throw new Error("セッションが見つかりません");
             const current = await store.get(sessionId);
             const target = getBackend(targetId ?? current.nextSettings?.backend ?? source.id);
@@ -1786,9 +1669,6 @@ wss.on("connection", (ws) => {
             const selectedEffort = cancel ? '' : msg.args.effort !== undefined
               ? await validateEffort(target, msg.args.effort, selectedModel, settingsCwd)
               : Object.hasOwn(choices, previousEffort) ? previousEffort : '';
-            const sameSelection = target.id === (current.nextSettings?.backend ?? source.id) && selectedModel === (current.nextSettings?.model ?? current.model ?? '');
-            const limits = target.id === 'procway' ? (msg.args.procwayLimits !== undefined ? validateLimits(msg.args.procwayLimits) : sameSelection ? current.nextSettings?.procwayLimits : undefined) : undefined;
-            const limitsChanged = limits !== undefined && JSON.stringify(limits) !== JSON.stringify(current.procwayLimits ?? null);
             // Claude のアカウント（'' = ログイン中のアカウント）。モデルと同じく次のターンから効く
             if (account !== undefined && typeof account !== 'string') throw new Error('アカウントの指定が不正です');
             const selectedAccount = account ?? current.nextSettings?.account ?? current.claudeAccount ?? '';
@@ -1802,8 +1682,8 @@ wss.on("connection", (ws) => {
               const own = (current.history ?? []).some(h => h?.field === "cwd") ? current.cwd ?? info?.cwd : info?.cwd ?? current.cwd;
               if (own && path.resolve(own) === selectedCwd) selectedCwd = undefined;
             }
-            const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !limitsChanged && !accountChanged)
-              ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(limits !== undefined ? { procwayLimits: limits } : {}), ...(accountChanged ? { account: selectedAccount } : {}) };
+            const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged)
+              ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(accountChanged ? { account: selectedAccount } : {}) };
             await store.setSessionData(sessionId, "nextSettings", next);
             if (!cancel) {
               if (targetId !== undefined) await savePref("backend", target.id);
@@ -1855,7 +1735,7 @@ wss.on("connection", (ws) => {
           if (runtime.turns.has(sessionId) || switching.has(sessionId) || forking.has(sessionId)) return reply(false, "実行が終わってから切り替えてください");
           switching.add(sessionId);
           try {
-            const source = await resolveBackendForSession(sessionId);
+            const source = refuseRetired(await resolveBackendForSession(sessionId));
             const target = getBackend(targetId);
             if (!source || !target) throw new Error("エージェントが見つかりません");
             await switchBackend(sessionId, source, target);
@@ -1870,7 +1750,7 @@ wss.on("connection", (ws) => {
           return;
         case 'sendMessage': {
           const { sessionId, messageId, prompt, attachments, cwd, mode } = msg.args ?? {};
-          if (!sessionId || !await resolveBackendForSession(sessionId)) throw new Error('セッションが見つかりません');
+          if (!sessionId || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error('セッションが見つかりません');
           if (typeof messageId !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(messageId)) throw new Error('送信IDが必要です');
           if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('メッセージを入力してください');
           if (attachments !== undefined && (!Array.isArray(attachments) || attachments.length > 20)) throw new Error('添付は20件までです');
@@ -1935,6 +1815,7 @@ wss.on("connection", (ws) => {
           if (msg.args?.live) liveReads.add(read);
           try {
             const backend = await resolveBackendForSession(sessionId);
+            const retired = backend?.retired ? { retired: backend.retired } : {};
             // A later completion cannot be acknowledged by an older history snapshot.
             const completedAt = (await store.get(sessionId)).completedAt ?? null;
             const data = await history.loadTranscript(sessionId, backend);
@@ -1945,7 +1826,7 @@ wss.on("connection", (ws) => {
               ...(m.toolCalls ? { toolCalls: m.toolCalls.map(call => ({ name: call.name })) } : {}),
             })) });
             const draft = (await store.get(sessionId)).draft ?? null;
-            if (!msg.args?.live) return reply(true, { ...data, completedAt, draft });
+            if (!msg.args?.live) return reply(true, { ...data, completedAt, draft, ...retired });
             // 承認は一度きりの配信で、streamEvents にも載らない（web/session-stream.mjs）。
             // 開き直しのたびに保留中のものを返さないと、承認が起きた後にその会話を開いても
             // カードが出ず、一覧だけが「承認待ち」のまま止まる。
@@ -1955,7 +1836,7 @@ wss.on("connection", (ws) => {
             const turn = read.turn;
             if (turn) {
               const live = turn.stream;
-              // 外部ターン（user が無い）は利用者の発言を持たない
+              // 利用者の発言が無いターン（user が無い）もある
               const user = live.user
                 ? data.messages.slice(live.messages.length).find(m => m.role === "user" && m.text === live.user.text) ?? live.user
                 : null;
@@ -1967,7 +1848,7 @@ wss.on("connection", (ws) => {
                 initialMessageId: live.events.find(e => e.type === 'userMessage' && e.initial)?.messageId,
               });
             }
-            return reply(true, { ...data, completedAt, draft, streamCursor: streamSequence, permissions });
+            return reply(true, { ...data, completedAt, draft, streamCursor: streamSequence, permissions, ...retired });
           } finally { liveReads.delete(read); }
         }
 
@@ -1978,7 +1859,9 @@ wss.on("connection", (ws) => {
           const sourceBackend = sourceId ? await resolveBackendForSession(sourceId) : null;
           if (sourceId && !sourceBackend) throw new Error("引き継ぎ元のセッションが見つかりません");
           const source = sourceId ? await store.get(sourceId) : null;
-          const selectedBackend = source?.nextSettings?.backend ?? sourceBackend?.id;
+          const selected = source?.nextSettings?.backend ?? sourceBackend?.id;
+          // 引き継ぎ元が対応を終えたエージェントなら、エージェントは継がない（既定へ落とす）
+          const selectedBackend = getBackend(selected) ? selected : undefined;
           const backend = await pickBackend(null, msg.args?.backend ?? selectedBackend);
           const inherit = source && backend.id === selectedBackend;
           const model = msg.args?.model ?? (inherit ? source.nextSettings?.model ?? source.model ?? "" : undefined);
@@ -1990,12 +1873,7 @@ wss.on("connection", (ws) => {
           const sessionId = await createConversation(backend, info);
           try {
             await store.setMeta(sessionId, { backend: backend.id, ...info, status, unsent: true });
-            let selected = await resolveModel(null, model, backend, cwd || undefined);
-            if (backend.id === 'procway') {
-              const config = await procwayConfig.resolveConnection(selected, cwd || undefined, inherit ? source.nextSettings?.procwayLimits ?? source.procwayLimits : undefined);
-              selected = config.id + (config.model ? '/' + config.model : '');
-              await store.setSessionData(sessionId, 'procwayLimits', config.limits);
-            }
+            const selected = await resolveModel(null, model, backend, cwd || undefined);
             await store.setModel(sessionId, selected);
             const effort = msg.args?.effort ?? (inherit ? source.nextSettings?.effort ?? source.effort : undefined);
             await store.setSessionData(sessionId, 'effort', await resolveEffort(null, effort, backend, selected, cwd || undefined));
@@ -2029,38 +1907,6 @@ wss.on("connection", (ws) => {
         // 作業ディレクトリを選ぶ簡易ブラウザー（ブラウザー版の入力欄）。フォルダーの名前だけを返す
         case "listDirs":
           return reply(true, await listDirs(msg.args?.path));
-
-        case 'procwayConnections': {
-          return reply(true, await procwayConfig.listConnections(msg.args?.cwd));
-        }
-        // id 付きは既存の接続先の編集。レシートは確認した id にだけ効く
-        case 'procwayCheck': return reply(true, await procwayConfig.checkConnection(msg.args?.connection, { cwd: msg.args?.cwd, id: msg.args?.id ?? null }));
-        case 'procwaySave': {
-          const result = await procwayConfig.saveConnection(msg.args?.connection, msg.args?.receipt, msg.args?.id ?? null);
-          emitGlobal({ type: 'procwayConfigChanged' }); return reply(true, result);
-        }
-        case 'procwayDelete': {
-          const id = String(msg.args?.id ?? '');
-          await procwayConfig.deleteConnection(id);
-          // 消えた接続先を新しい会話の既定にしたままにしない
-          const remembered = (await store.getPrefs()).backends?.procway?.model ?? '';
-          if (remembered === id || remembered.startsWith(id + '/')) await savePref('model', '', 'procway');
-          emitGlobal({ type: 'procwayConfigChanged' }); return reply(true, {});
-        }
-        case 'procwayDefault': {
-          await procwayConfig.setDefaultConnection(msg.args?.id, msg.args?.cwd);
-          await savePref('model', '', 'procway');
-          emitGlobal({ type: 'procwayConfigChanged' }); return reply(true, {});
-        }
-        case 'procwayModelLimits': return reply(true, await procwayConfig.setModelLimits(msg.args?.model, msg.args?.limits, msg.args?.cwd));
-        case 'procwaySettings': {
-          const current = msg.args?.sessionId ? await store.get(msg.args.sessionId) : {};
-          const selection = msg.args?.model ?? current.nextSettings?.model ?? current.model;
-          const changed = selection !== current.model;
-          const config = await procwayConfig.resolveConnection(selection, msg.args?.cwd || current.nextSettings?.cwd || current.cwd, current.nextSettings?.procwayLimits ?? (changed ? undefined : current.procwayLimits));
-          const auto = config.native.session?.autoCompact || {}, stale = config.native.tools?.staleToolResults || {};
-          return reply(true, { model: config.id + '/' + config.model, type: config.provider.type, limits: config.limits || { context: null, output: config.provider.maxTokens ?? (config.provider.type.startsWith('anthropic') ? 2048 : null), compact: auto.enabled ?? false, threshold: auto.estimatedTokens ?? 60000, keep: auto.keepLastMessages ?? 10, condense: stale.enabled ?? false, recent: stale.keepRecent ?? 10, chars: stale.maxChars ?? 6000 } });
-        }
 
         // 認証はエージェントごとに持ち方が違う。持たないものは supported:false を返す
         // （web はボタンごと隠す。「押せるのに何も起きない」を作らない）。
@@ -2124,8 +1970,12 @@ wss.on("connection", (ws) => {
           await store.setPref("backend", backend.id);
           return reply(true, saved);
         }
-        case "prefs":
-          return reply(true, await store.getPrefs());
+        case "prefs": {
+          // 既定のエージェントが無くなっていたら（対応を終えた・無効にした）載せない。web は有効なものへ落とす
+          const prefs = await store.getPrefs();
+          if (prefs.backend && !getBackend(prefs.backend)) delete prefs.backend;
+          return reply(true, prefs);
+        }
 
         /**
          * AI にタイトルを考えてもらう。
@@ -2153,10 +2003,6 @@ wss.on("connection", (ws) => {
             if (backend.capabilities?.claudeAccounts) {
               const account = await claudeAccounts.resolve((await store.get(sessionId)).claudeAccount ?? '');
               if (account) context.oauthToken = account.token;
-            }
-            if (backend.id === 'procway') {
-              context.cwd = (await resolveCwd(sessionId, null, backend)).cwd;
-              context.connection = await resolveModel(sessionId, null, backend, context.cwd);
             }
             title = String(await backend.suggestTitle({ transcript: gist, ...context }) ?? "");
           } catch (err) {
@@ -2282,7 +2128,7 @@ wss.on("connection", (ws) => {
         // モデルの切り替えも人間の操作から。AI 用のツールは生やさない。
         case "setModel": {
           const { sessionId, model } = msg.args ?? {};
-          const backend = await pickBackend(sessionId, msg.args?.backend);
+          const backend = refuseRetired(await pickBackend(sessionId, msg.args?.backend));
           const models = await backend.models();
           if (!(model in models)) return reply(false, `知らないモデル: ${model}`);
           const from = (await store.get(sessionId)).model ?? "";
@@ -2304,7 +2150,7 @@ wss.on("connection", (ws) => {
         // 承認モードの切り替えは人間の操作からしか来ない。AI にツールは生やさない。
         case "setMode": {
           const { sessionId, mode } = msg.args;
-          const backend = await pickBackend(sessionId, msg.args?.backend);
+          const backend = refuseRetired(await pickBackend(sessionId, msg.args?.backend));
           if (!backend.modes()[mode]) return reply(false, `知らない承認モード: ${mode}`);
           const from = (await store.get(sessionId)).mode ?? "default";
           await store.setMode(sessionId, mode);
@@ -2400,7 +2246,7 @@ wss.on("connection", (ws) => {
           forking.add(sessionId);
           try {
             await settingsWrites.get(sessionId);
-            const backend = await pickBackend(sessionId, msg.args?.backend);
+            const backend = refuseRetired(await pickBackend(sessionId, msg.args?.backend));
             if (!backend.fork) return reply(false, "このエージェントは分岐できない");
             const snapshot = running ? {
               messageIds: running.stream.messages.map(m => m.uuid),

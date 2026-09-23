@@ -20,7 +20,6 @@
    `--xxx-bg` / `--xxx-fg` のような同じ語幹のペアは作らない（lint: paired-token）。 */
 :root{
   --ink-brand:#000000;
-  --ink-procway:#393f4c;
   --ink-antigravity:#1a73e8;
   /* -- 面（surface）。参考画像の地 #dcdee8 を白側へ寄せた階調。会話は白、脇は薄いグレー -- */
   --surface-paper:#ffffff;    /* 会話の地。一番長く見る場所なので白。コントラスト優先 */
@@ -94,7 +93,6 @@
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
     --ink-brand:#ffffff;
-    --ink-procway:#ffffff;
     --ink-antigravity:#8ab4f8;
     --surface-paper:#1b1c23;--surface-0:#121318;--surface-1:#222329;--surface-2:#15161c;--surface-3:#2a2b32;
     --surface-hover:#222329;--surface-sel:#2a2b32;
@@ -112,7 +110,6 @@
 /* 利用者が明示的にダークを選んだ。OS の設定より優先する */
 :root[data-theme="dark"]{
   --ink-brand:#ffffff;
-  --ink-procway:#ffffff;
   --ink-antigravity:#8ab4f8;
   --surface-paper:#1b1c23;--surface-0:#121318;--surface-1:#222329;--surface-2:#15161c;--surface-3:#2a2b32;
   --surface-hover:#222329;--surface-sel:#2a2b32;

@@ -16,7 +16,7 @@ const WEB = (f) => path.join(ROOT, "web", f);
 
 // トークンを先頭に置く。定義は渡した全ファイルから集めるので順序は判定に効かないが、
 // 違反の並びが「トークン → 各 CSS → index.html」になって読みやすい
-const FILES = ["tokens.css", "style.css", "tools.css", "tree.css", "context.css", "procway.css", "updates.css", "usage.css", "file-preview.css", "index.html"].map(WEB);
+const FILES = ["tokens.css", "style.css", "tools.css", "tree.css", "context.css", "manage-panel.css", "updates.css", "usage.css", "file-preview.css", "index.html"].map(WEB);
 
 export default function (t) {
   const lines = [];

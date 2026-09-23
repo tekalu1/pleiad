@@ -31,7 +31,7 @@ export default async function (t) {
       c.since(from).some((e) => e.type === "phase" && e.state === "waiting" && e.sessionId === sessionId)
       && c.since(from).some((e) => e.type === "background" && e.sessionId === sessionId));
 
-    // 停止ボタンは、ターンの外に残った作業（procway・Codex）だけでなく、
+    // 停止ボタンは、ターンの外に残った作業（Codex の端末など）だけでなく、
     // 走っているターンが抱えている裏の作業（Claude のバックグラウンドのコマンド）も引ける
     const unknown = await c.cmd("stopBackground", { sessionId, taskId: "そんなタスクは無い" }).then(() => null, (e) => e.message);
     t.ok("知らない id は「もう動いていない」", unknown?.includes("もう動いていません"), String(unknown));

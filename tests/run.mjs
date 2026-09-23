@@ -18,7 +18,7 @@ const cases = [
   await import('./unit/usage.mjs'),
   await import('./unit/antigravity-usage.mjs'),
   await import('./unit/effort.mjs'),
-  await import('./unit/composer-agy-procway.mjs'),
+  await import('./unit/composer-agy.mjs'),
   // 入力欄の設定のチップ: フォルダーの一覧（listDirs）・「既定」の解決・エフォートの既定の段
   await import('./unit/composer-settings.mjs'),
   await import('./unit/context-transports.mjs'),
@@ -31,9 +31,6 @@ const cases = [
   // データ置き場を共有する 2 つのプロセス。本物の子プロセスを 2 本起動する
   await import('./unit/mcp-oauth-processes.mjs'),
   await import('./unit/desktop-updates.mjs'),
-  await import('./unit/procway-mcp.mjs'),
-  await import('./unit/procway-ply-mcp.mjs'),
-  await import('./unit/procway-connections.mjs'),
   await import('./unit/message-queue.mjs'),
   await import('./unit/message-steer.mjs'),
   await import('./unit/visualize.mjs'),
@@ -68,13 +65,11 @@ const cases = [
   await import("./unit/claude-background.mjs"),
   await import("./unit/codex-background.mjs"),
   await import("./unit/codex-terminals.mjs"),
-  await import("./unit/procway-background.mjs"),
   await import("./unit/event-session-id.mjs"),
   await import("./unit/lineage.mjs"),
   await import("./unit/branches.mjs"),
   // 見た目の規則。web/ の CSS と index.html を lint する（docs/design-system.md §5）
   await import("./unit/design-lint.mjs"),
-  await import("./unit/oauth-codex.mjs"),
   await import("./unit/codex-mode.mjs"),
   // model/list のページ送り・覚える長さ・ログイン / ログアウトで捨てる・タイトル生成のモデル選び
   await import("./unit/codex-models.mjs"),
@@ -106,12 +101,7 @@ const cases = [
   await import("./unit/antigravity-onboarding.mjs"),
   // 孤児の agy の掃除。**名前を確かめてからでないと落とさない**
   await import("./unit/antigravity-pids.mjs"),
-  // 本物の procway-code serve を起こす。LLM の代わりに tests/lib/echo-agent.mjs を使う
-  await import("./unit/server-procway.mjs"),
-  // procway serve の身代わり（tests/lib/fake-procway）で、裏の子・wake ターン・送信待ち・ぶつかり・serve の終了を通す
-  await import("./unit/server-procway-wake.mjs"),
   // 同じ身代わりで、ターン途中の送信をその区切りへ差し込む（serve の steer）
-  await import("./unit/server-procway-steer.mjs"),
 ];
 
 const selected = pick(cases, process.argv.slice(2));

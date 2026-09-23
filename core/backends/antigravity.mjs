@@ -108,7 +108,7 @@ let modelCache = null;
 /** ログインを 2 本同時に走らせないための印。 */
 let pendingAuth = null;
 
-/** 端末でのログインを待つ上限。procway と揃える。 */
+/** 端末でのログインを待つ上限。 */
 const LOGIN_TIMEOUT_MS = Number(process.env.AGENT_HOST_AGY_LOGIN_MS ?? 10 * 60_000);
 
 /** 待っている間に `agy models` を叩く間隔。 */
@@ -592,7 +592,7 @@ function rememberModels(list) {
   modelCache = buildAgyModels(list.rows, list.defaultLabel);
 }
 
-// サーバが終わったら、生かしている agy を道連れにする（procway.mjs 末尾と同じ形）。
+// サーバが終わったら、生かしている agy を道連れにする。
 // **SIGINT / SIGTERM のハンドラは足さない**（server はワーカースレッドでも動く。
 // 既定の終了挙動を変えないため、`exit` の範囲に留める）。
 process.once("exit", () => {

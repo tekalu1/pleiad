@@ -1,6 +1,7 @@
 # Pleiad
 
-Pleiad は、複数のコーディングエージェント（Claude Code、OpenAI Codex、Google Antigravity、Procway）を一つの画面で扱うためのデスクトップアプリ。
+Pleiad は、複数のコーディングエージェント（Claude Code、OpenAI Codex、Google Antigravity）を一つの画面で扱うためのデスクトップアプリ。
+Claude Code と Codex は、公式の接続先のほかに互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）を登録して会話ごとに選べる。
 会話の一覧・状態・分岐・承認・成果物の提示を、エージェントの違いを意識せずに同じ操作で扱える。
 
 > セッションを離れずに済むこと —— 見るために離れる／思い出すために離れる／続けるために離れる、を無くす。
@@ -44,14 +45,12 @@ AGENT_HOST_TOKEN   固定トークン（既定: 起動ごとにランダム生�
 AGENT_HOST_PORT    既定 7420。予約済み/使用中なら空きポートへ自動で逃がす
 AGENT_HOST_BIND    既定 127.0.0.1
 AGENT_HOST_DATA    sidecar の置き場（既定 ~/.agent-host）
-AGENT_HOST_BACKENDS 使うバックエンド（カンマ区切り。既定 claude,codex,procway,antigravity。絞るなら例: claude）
+AGENT_HOST_BACKENDS 使うバックエンド（カンマ区切り。既定 claude,codex,antigravity。絞るなら例: claude）
 AGENT_HOST_CODEX_BIN codex の実行ファイル（既定 codex）
 AGENT_HOST_AGY_BIN   Antigravity CLI の実行ファイル（既定 agy）
-AGENT_HOST_PROCWAY_CODE procway-code の src/cli.mjs（既定: インストール済みの procway-code）
 ```
 
 `npm test` は LLM を呼ばない検査（描画の安全性、イベントの選り分け、fake バックエンドでのサーバ往復、見た目の規則の lint）。
-procway の実物を使うテストは、公開の [procway-code](https://github.com/tekalu1/procway-code) の `src/cli.mjs` を `AGENT_HOST_PROCWAY_CODE` で指す（未指定なら `temporary/procway-code/src/cli.mjs`）。
 `npm run test:e2e` はサーバを立てて実際に LLM を呼ぶ。
 
 デスクトップ版は `npm run desktop`。インストーラー生成は `npm run desktop:dist`（対象 OS で実行）。
@@ -146,7 +145,7 @@ Claude バックエンドではメタ情報の正本が `~/.claude`（SDK ネイ
 
 ## サードパーティ
 
-- `core/auth/` の OAuth 関連コード（`pkce.mjs`, `oauth-page.mjs`, `openai-codex-oauth.mjs`）は pi-ai（MIT）に由来する。表記は [`core/auth/LICENSE-pi-ai.md`](core/auth/LICENSE-pi-ai.md)
+- `core/auth/oauth-page.mjs`（OAuth のコールバックに出すページ）は pi-ai（MIT）に由来する。表記は [`core/auth/LICENSE-pi-ai.md`](core/auth/LICENSE-pi-ai.md)
 - `web/brand/` のエージェントのロゴは各社の商標で、それぞれの権利者に帰属する。LobeHub の lobe-icons（MIT）由来のものは [`web/brand/lobe-icons-LICENSE`](web/brand/lobe-icons-LICENSE)、出典は [`web/brand/README.md`](web/brand/README.md)
 - Claude バックエンドは Anthropic の [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript)（`@anthropic-ai/claude-agent-sdk`）を使う。SDK と Claude の利用は Anthropic の利用規約に従う
 - そのほかの npm 依存は、それぞれのライセンスに従う（`package-lock.json`）

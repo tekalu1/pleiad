@@ -5,7 +5,7 @@ import http from 'node:http';
 import { DEFAULT_SCAN, KINDS, containsPath, createContextSettings, defaultKind, matchesGlobs } from '../../core/context-settings.mjs';
 import { resolveRuntime, contextTools, mcpTransportConfig } from '../../core/context-runtime.mjs';
 import { createContextBridge } from '../../core/context-bridge.mjs';
-import { procwayContextSettings, claudeContextOptions, unexpectedNativeMcp } from '../../core/backends/context-options.mjs';
+import { claudeContextOptions, unexpectedNativeMcp } from '../../core/backends/context-options.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 
@@ -51,10 +51,8 @@ export default async function(t) {
     t.ok('URL・パスをスキルの明示指定と誤認しない', ['https://manual', 'C:/manual', './manual', '/manual/file', 'a/manual'].every(prompt => !contextTools(runtime, prompt).prompt.includes('- manual:')));
     t.ok('子階層の指示を範囲付きで必要時に読み込む',(await helpers.call('instructions_for_path',{id:path.join(cwd,'sub')})).content[0].text.includes('SCOPED_SENTINEL'));
     await rejects('範囲外の指示を要求できない',()=>helpers.call('instructions_for_path',{id:tmp}));
-    const native={context:{instructionScanners:[{id:'native'}],skillScanners:[{id:'native'}]},rules:{all:['NATIVE_RULE']},permissions:{deny:['danger']},mcpServers:{native:{command:'no'}}};
     const ctx={owners:policy.owners,prompt:'MANAGED_PROMPT',url:'http://localhost/context',headers:{Authorization:'test'}};
-    const pw=procwayContextSettings(native,ctx),cl=claudeContextOptions(ctx);
-    t.ok('procway の scanner と MCP を置換し権限と元オブジェクトを保持',pw.context.instructionScanners.length===0&&pw.context.skillScanners.length===0&&!pw.mcpServers.native&&pw.permissions.deny[0]==='danger'&&native.context.instructionScanners.length===1);
+    const cl=claudeContextOptions(ctx);
     t.ok('Claude の種類別抑止と明示プロンプト',cl.strictMcpConfig&&cl.skills.length===0&&cl.extraArgs['disable-slash-commands']===null&&cl.settings.claudeMdExcludes.length&&cl.systemPrompt.append==='MANAGED_PROMPT');
     // MCP を Pleiad が担当する Claude の会話: Pleiad 自身が渡した MCP（委譲の ply_agents を含む）はネイティブ扱いしない
     const passed=['host','ply_agents','ply_context'];
