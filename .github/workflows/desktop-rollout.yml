@@ -1,0 +1,47 @@
+name: Desktop publish or rollout
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+        type: string
+      operation:
+        description: Publish a tested draft, or adjust rollout (0 pauses new downloads)
+        type: choice
+        options: [publish, rollout]
+        required: true
+      percentage:
+        description: Rollout percentage (0-100)
+        required: true
+        default: '10'
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    environment: desktop-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      OPERATION: ${{ inputs.operation }}
+      PERCENTAGE: ${{ inputs.percentage }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Download, verify, and publish metadata
+        run: |
+          gh release download "$RELEASE_TAG" --repo "$GH_REPO" --dir release-assets
+          node scripts/release-artifacts.mjs release-assets "${RELEASE_TAG#v}" "$PERCENTAGE"
+          node scripts/release-publish.mjs "$OPERATION" release-assets

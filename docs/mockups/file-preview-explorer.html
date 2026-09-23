@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ファイルプレビュー（エクスプローラー付き）</title>
+<div id="ply-file-preview">
+  <div class="demo-bar">
+    <span>ファイル・ディレクトリプレビュー（エクスプローラー付き） <small>操作モック</small></span>
+    <button type="button" id="fp-theme">配色を切り替え</button>
+  </div>
+  <div class="workspace is-open">
+    <aside class="sidebar" aria-label="会話一覧">
+      <div class="brand">Pleiad<span>＋</span></div>
+      <div class="search-label">会話を検索</div>
+      <div class="group-label">進行中</div>
+      <div class="session selected">ファイルとフォルダの共有体験<small>agent-host</small></div>
+      <div class="session">リリースページの検討<small>website</small></div>
+    </aside>
+
+    <section class="conversation" aria-label="会話">
+      <header class="chat-head"><strong>ファイルとフォルダの共有体験</strong><span>agent-host</span></header>
+      <div class="messages" id="fp-messages">
+        <div class="user-message">ディレクトリプレビュー時にエクスプローラーを表示し、ファイルプレビュー時にも右パネル内にサイドパネルとしてエクスプローラーを出せるようにしたいです。</div>
+        <article class="answer">
+          <div class="speaker">Codex <small>14:32</small></div>
+          <p>ディレクトリおよびファイルのプレビュー案を作成しました。</p>
+          <p>まずはディレクトリ <button class="file-link" data-file="dir_docs">📁 docs/</button> を開いてみてください。右パネル内にエクスプローラー（フォルダ一覧）が表示されます。</p>
+          <div class="file-list">
+            <button class="file-link" data-file="md">📄 preview-plan.md <small>Markdown</small></button>
+            <button class="file-link" data-file="code">📄 file-preview.mjs:42 <small>コード</small></button>
+            <button class="file-link" data-file="dir_web">📁 web/ <small>ディレクトリ</small></button>
+          </div>
+          <p>通常のファイルプレビュー時も、ヘッダーの「📁 ツリー」ボタンで右パネル内のサイドパネル（エクスプローラー）を開閉できます。</p>
+          <small class="answer-foot">完了 · 操作サンプル</small>
+        </article>
+      </div>
+      <div class="composer">
+        <textarea id="fp-draft" aria-label="メッセージの下書き" placeholder="気になったところを、そのまま相談" rows="2"></textarea>
+        <div class="composer-foot"><span>Codex <small>· 既定に従う</small></span><button id="fp-send">↑</button></div>
+      </div>
+    </section>
+
+    <div class="resize-handle" role="separator" aria-label="プレビューの幅" tabindex="0"></div>
+
+    <!-- 右パネル -->
+    <section class="preview" aria-label="ファイルプレビュー" tabindex="-1">
+      <header class="preview-head">
+        <div class="preview-title">
+          <span class="file-symbol" id="fp-symbol">📁</span>
+          <div>
+            <h2 id="fp-name">docs</h2>
+            <p id="fp-path">docs</p>
+          </div>
+        </div>
+        <div class="head-actions">
+          <!-- 右パネル内のエクスプローラー開閉トグル -->
+          <button id="fp-toggle-tree" title="エクスプローラーの表示切替" aria-pressed="true">📁 ツリー</button>
+          <button id="fp-wide" aria-label="プレビューを広げる">広げる</button>
+          <button id="fp-close" aria-label="閉じる">×</button>
+        </div>
+      </header>
+
+      <div class="preview-toolbar">
+        <div class="view-switch" id="fp-switch" aria-label="表示方法">
+          <button id="fp-rendered" aria-pressed="true">プレビュー</button>
+          <button id="fp-source" aria-pressed="false">原文</button>
+        </div>
+        <button id="fp-location" aria-expanded="false">パス</button>
+        <button id="fp-reload">再読み込み</button>
+      </div>
+
+      <div id="fp-fullpath" hidden>
+        <label>完全パス<input aria-label="ファイルの完全パス" readonly value="D:/work/my-app/docs"></label>
+      </div>
+
+      <!-- 2ペインコンテナ：エクスプローラーサイドパネル ＋ メインプレビュー -->
+      <div class="preview-body-layout">
+        <!-- エクスプローラーサイドパネル（web/tree.mjs & tree.css 準拠） -->
+        <nav class="preview-tree-pane" id="fp-tree-pane" aria-label="エクスプローラー">
+          <div class="tree-pane-header">ワークスペース</div>
+          <div class="tree" id="fp-tree-root" role="tree" tabindex="0"></div>
+        </nav>
+
+        <!-- メイン表示領域 -->
+        <div class="preview-scroll" id="fp-content" aria-live="polite"></div>
+      </div>
+
+      <footer class="preview-foot">
+        <span id="fp-status">ディレクトリ · 4 項目</span>
+        <button id="fp-use">会話で使う</button>
+      </footer>
+    </section>
+  </div>
+</div>
+
+<style>
+#ply-file-preview {
+  --paper: light-dark(#fff, #1b1c23);
+  --side: light-dark(#eceef4, #121318);
+  --soft: light-dark(#f4f5f9, #222329);
+  --sunken: light-dark(#e8eaf1, #2a2b32);
+  --ink: light-dark(#1c2247, #dfe3f2);
+  --weak: light-dark(#6b7299, #a1a8c7);
+  --blue: light-dark(#3a499e, #9eabde);
+  --fill: light-dark(#3a499e, #5665cd);
+  --line: light-dark(#9eabde, #454a66);
+  --line-blue: light-dark(#5665cd, #728cd7);
+  color-scheme: light dark;
+  color: var(--ink);
+  font: 14px/1.75 system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  width: 100%;
+}
+#ply-file-preview * { box-sizing: border-box; }
+#ply-file-preview button, #ply-file-preview input, #ply-file-preview textarea { font: inherit; color: inherit; border: 0; }
+#ply-file-preview button { background: transparent; border-radius: 999px; cursor: pointer; padding: 6px 12px; line-height: 1.5; }
+#ply-file-preview button:hover { background: var(--sunken); }
+#ply-file-preview [hidden] { display: none !important; }
+
+#ply-file-preview .demo-bar { display: flex; justify-content: space-between; padding: 8px 12px; background: var(--side); font-size: 12px; }
+#ply-file-preview .workspace { height: 760px; max-height: 92vh; min-height: 540px; display: flex; background: var(--paper); overflow: hidden; border-radius: 14px; position: relative; }
+#ply-file-preview .sidebar { width: 200px; flex-shrink: 0; padding: 20px 14px; background: var(--side); }
+#ply-file-preview .brand { font-size: 26px; font-weight: 650; margin-bottom: 24px; display: flex; justify-content: space-between; }
+#ply-file-preview .search-label { border-radius: 999px; padding: 6px 12px; background: var(--paper); color: var(--weak); font-size: 12px; }
+#ply-file-preview .group-label { margin: 24px 8px 8px; font-size: 12px; color: var(--weak); }
+#ply-file-preview .session { padding: 10px; border-radius: 10px; font-size: 13px; margin-bottom: 4px; }
+#ply-file-preview .session small { display: block; color: var(--weak); font-size: 11px; }
+#ply-file-preview .selected { background: var(--paper); }
+
+#ply-file-preview .conversation { flex: 1; min-width: 320px; display: flex; flex-direction: column; background: var(--paper); }
+#ply-file-preview .chat-head { padding: 18px 24px; display: flex; justify-content: space-between; }
+#ply-file-preview .chat-head span { font-size: 12px; color: var(--weak); }
+#ply-file-preview .messages { overflow: auto; flex: 1; padding: 16px 24px; }
+#ply-file-preview .user-message { margin-left: auto; max-width: 460px; padding: 12px 18px; background: var(--sunken); border-radius: 18px; font-size: 13px; }
+#ply-file-preview .answer { max-width: 620px; margin: 24px auto 0; }
+#ply-file-preview .speaker { font-weight: 600; margin-bottom: 12px; }
+#ply-file-preview .file-link { color: var(--blue); padding: 1px 4px; border-radius: 4px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+#ply-file-preview .file-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 18px; }
+#ply-file-preview .answer-foot { display: block; margin-top: 18px; color: var(--weak); font-size: 11px; }
+#ply-file-preview .composer { margin: 12px 20px 18px; padding: 12px 14px; background: var(--soft); border-radius: 16px; }
+#ply-file-preview textarea { width: 100%; resize: none; background: transparent; min-height: 50px; }
+#ply-file-preview .composer-foot { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+#ply-file-preview #fp-send { background: var(--fill); color: #f4f5ff; width: 32px; height: 32px; padding: 0; }
+
+#ply-file-preview .resize-handle { flex: 0 0 6px; background: var(--side); cursor: col-resize; }
+#ply-file-preview .preview { flex: 0 0 var(--preview-width, 54%); min-width: 0; display: flex; flex-direction: column; background: var(--side); }
+#ply-file-preview .preview-head { display: flex; justify-content: space-between; padding: 14px 16px 10px; align-items: center; }
+#ply-file-preview .preview-title { display: flex; gap: 10px; align-items: center; min-width: 0; }
+#ply-file-preview .file-symbol { font-size: 20px; }
+#ply-file-preview .preview-title h2 { font-size: 14px; margin: 0; font-weight: 600; }
+#ply-file-preview .preview-title p { margin: 0; font-size: 11px; color: var(--weak); }
+#ply-file-preview .head-actions { display: flex; gap: 4px; align-items: center; }
+#ply-file-preview .head-actions button { padding: 4px 8px; font-size: 12px; }
+#ply-file-preview #fp-toggle-tree[aria-pressed="true"] { background: var(--paper); color: var(--blue); }
+
+#ply-file-preview .preview-toolbar { display: flex; gap: 4px; padding: 0 16px 10px; font-size: 12px; align-items: center; }
+#ply-file-preview .view-switch { display: flex; background: var(--sunken); border-radius: 999px; padding: 2px; }
+#ply-file-preview .view-switch [aria-pressed="true"] { background: var(--paper); color: var(--blue); }
+#ply-file-preview #fp-fullpath { padding: 0 16px 8px; font-size: 11px; }
+#ply-file-preview #fp-fullpath input { width: 100%; background: var(--paper); border-radius: 6px; padding: 6px 8px; font-family: monospace; font-size: 11px; }
+
+/* 2ペイン配置 */
+#ply-file-preview .preview-body-layout { flex: 1; display: flex; min-height: 0; overflow: hidden; padding: 0 12px 10px; gap: 8px; }
+#ply-file-preview .preview-tree-pane { width: 180px; flex-shrink: 0; background: var(--soft); border-radius: 10px; padding: 8px 6px; display: flex; flex-direction: column; overflow: auto; transition: width 0.18s ease, padding 0.18s ease; }
+#ply-file-preview .preview-tree-pane.collapsed { width: 0; padding: 0; overflow: hidden; }
+#ply-file-preview .tree-pane-header { font-size: 11px; font-weight: 600; color: var(--weak); padding: 2px 6px 6px; }
+
+/* ツリー部品（web/tree.css 準拠） */
+#ply-file-preview .tree { overflow: auto; min-height: 0; }
+#ply-file-preview .tree ul { margin: 0; padding: 0; list-style: none; }
+#ply-file-preview .tree ul ul { padding-left: 14px; }
+#ply-file-preview .tree-row { display: flex; align-items: center; gap: 4px; min-height: 26px; padding: 3px 6px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+#ply-file-preview .tree-row:hover { background: var(--sunken); }
+#ply-file-preview .tree-row.sel { background: var(--paper); box-shadow: 0 1px 3px rgba(0,0,0,0.08); font-weight: 550; color: var(--blue); }
+#ply-file-preview .tree-row .chev { width: 14px; height: 14px; display: grid; place-items: center; color: var(--weak); }
+#ply-file-preview .tree-row .chev svg { width: 9px; height: 9px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+#ply-file-preview .tree-row[aria-expanded="true"] > .chev { transform: rotate(90deg); }
+#ply-file-preview .tree-row .chev.none { visibility: hidden; }
+#ply-file-preview .tree-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* プレビュー本文 */
+#ply-file-preview .preview-scroll { flex: 1; background: var(--paper); border-radius: 10px; overflow: auto; padding: 20px; font-size: 13px; }
+#ply-file-preview .directory-view h3 { margin: 0 0 4px; font-size: 15px; }
+#ply-file-preview .directory-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin-top: 14px; }
+#ply-file-preview .dir-card { padding: 10px; background: var(--soft); border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12px; }
+#ply-file-preview .dir-card:hover { background: var(--sunken); }
+#ply-file-preview .preview-foot { padding: 8px 16px 12px; display: flex; justify-content: space-between; font-size: 11px; color: var(--weak); }
+#ply-file-preview #fp-use { background: var(--paper); color: var(--blue); font-size: 12px; }
+</style>
+
+<script>
+(() => {
+  const root = document.getElementById('ply-file-preview');
+  const $ = s => root.querySelector(s), $$ = s => [...root.querySelectorAll(s)];
+
+  const treeData = [
+    {
+      id: 'docs', name: 'docs', open: true, kind: 'dir',
+      children: [
+        { id: 'docs/preview-plan.md', name: 'preview-plan.md', kind: 'md' },
+        { id: 'docs/design.md', name: 'design.md', kind: 'md' },
+        { id: 'docs/checklist.csv', name: 'checklist.csv', kind: 'csv' }
+      ]
+    },
+    {
+      id: 'web', name: 'web', open: true, kind: 'dir',
+      children: [
+        { id: 'web/file-preview.mjs', name: 'file-preview.mjs', kind: 'code' },
+        { id: 'web/tree.mjs', name: 'tree.mjs', kind: 'code' },
+        { id: 'web/tree.css', name: 'tree.css', kind: 'code' }
+      ]
+    }
+  ];
+
+  const files = {
+    'docs': { name: 'docs', path: 'docs', kind: 'dir', isDir: true, items: ['preview-plan.md', 'design.md', 'checklist.csv'] },
+    'web': { name: 'web', path: 'web', kind: 'dir', isDir: true, items: ['file-preview.mjs', 'tree.mjs', 'tree.css'] },
+    'docs/preview-plan.md': { name: 'preview-plan.md', path: 'docs/preview-plan.md', kind: 'Markdown', content: '# ファイルとフォルダを横で読む\n\nディレクトリを押した時はエクスプローラーを開き、ファイルを押した時は内容を表示します。' },
+    'web/file-preview.mjs': { name: 'file-preview.mjs', path: 'web/file-preview.mjs', kind: 'JavaScript', content: '// 右パネル内のエクスプローラー統合\nexport function setupFilePreviewWithTree() {\n  // 2ペインレイアウトの構築\n}' }
+  };
+
+  let active = 'docs', source = false;
+
+  function renderTreeNodes(container, nodes) {
+    const ul = document.createElement('ul');
+    nodes.forEach(n => {
+      const li = document.createElement('li');
+      const row = document.createElement('div');
+      row.className = 'tree-row' + (n.id === active ? ' sel' : '');
+      row.dataset.id = n.id;
+      if (n.children) row.setAttribute('aria-expanded', String(n.open));
+
+      const chev = document.createElement('span');
+      chev.className = 'chev' + (n.children ? '' : ' none');
+      chev.innerHTML = '<svg viewBox="0 0 10 10"><path d="M3.5 1.5 7 5l-3.5 3.5"/></svg>';
+      if (n.children) {
+        chev.onclick = (e) => {
+          e.stopPropagation();
+          n.open = !n.open;
+          row.setAttribute('aria-expanded', String(n.open));
+          subUl.style.display = n.open ? 'block' : 'none';
+        };
+      }
+      row.append(chev);
+
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = (n.children ? '📁 ' : '📄 ') + n.name;
+      row.append(nm);
+
+      row.onclick = () => selectNode(n.id);
+      li.append(row);
+
+      let subUl;
+      if (n.children) {
+        subUl = renderTreeNodes(document.createElement('div'), n.children);
+        subUl.style.display = n.open ? 'block' : 'none';
+        li.append(subUl);
+      }
+      ul.append(li);
+    });
+    container.replaceChildren(ul);
+    return ul;
+  }
+
+  function draw() {
+    const f = files[active] || { name: active, path: active, kind: 'ファイル', content: '（内容サンプル）' };
+    $('#fp-name').textContent = f.name;
+    $('#fp-path').textContent = f.path;
+    $('#fp-symbol').textContent = f.isDir ? '📁' : '📄';
+    $('#fp-switch').hidden = f.isDir;
+    $('#fp-fullpath input').value = 'D:/work/my-app/' + f.path;
+    $('#fp-status').textContent = f.isDir ? `ディレクトリ · ${f.items.length} 項目` : `${f.kind} · 現在のファイル`;
+
+    // ツリーの選択行を同期
+    $$('.tree-row').forEach(r => r.classList.toggle('sel', r.dataset.id === active));
+
+    if (f.isDir) {
+      $('#fp-content').innerHTML = `
+        <div class="directory-view">
+          <h3>📁 ${f.name}</h3>
+          <p style="color:var(--weak);font-size:12px;margin:0 0 16px;">ディレクトリのプレビューです。ファイルを選択して表示を切り替えられます。</p>
+          <div class="directory-grid">
+            ${f.items.map(name => `
+              <div class="dir-card" data-sub="${f.path}/${name}">
+                <span>📄</span>
+                <span>${name}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+      $$('.dir-card').forEach(card => card.onclick = () => selectNode(card.dataset.sub));
+    } else {
+      $('#fp-content').innerHTML = source
+        ? `<pre style="font-family:monospace;font-size:12px;">${f.content}</pre>`
+        : `<article><h3>${f.name}</h3><p style="white-space:pre-wrap;">${f.content}</p></article>`;
+    }
+  }
+
+  function selectNode(id) {
+    active = id;
+    source = false;
+    $('#fp-rendered').setAttribute('aria-pressed', 'true');
+    $('#fp-source').setAttribute('aria-pressed', 'false');
+    draw();
+  }
+
+  // エクスプローラー開閉トグル
+  $('#fp-toggle-tree').onclick = () => {
+    const pane = $('#fp-tree-pane');
+    const isCollapsed = pane.classList.toggle('collapsed');
+    $('#fp-toggle-tree').setAttribute('aria-pressed', String(!isCollapsed));
+  };
+
+  $('#fp-rendered').onclick = () => { source = false; $('#fp-rendered').setAttribute('aria-pressed', 'true'); $('#fp-source').setAttribute('aria-pressed', 'false'); draw(); };
+  $('#fp-source').onclick = () => { source = true; $('#fp-rendered').setAttribute('aria-pressed', 'false'); $('#fp-source').setAttribute('aria-pressed', 'true'); draw(); };
+  $('#fp-location').onclick = () => { const el = $('#fp-fullpath'); el.hidden = !el.hidden; };
+  $('#fp-theme').onclick = () => {
+    const isDark = root.style.colorScheme === 'dark' || (!root.style.colorScheme && matchMedia('(prefers-color-scheme:dark)').matches);
+    root.style.colorScheme = isDark ? 'light' : 'dark';
+  };
+
+  // 会話内リンク
+  $$('[data-file]').forEach(b => {
+    b.onclick = () => {
+      const map = { dir_docs: 'docs', md: 'docs/preview-plan.md', code: 'web/file-preview.mjs', dir_web: 'web' };
+      selectNode(map[b.dataset.file] || 'docs');
+    };
+  });
+
+  renderTreeNodes($('#fp-tree-root'), treeData);
+  draw();
+})();
+</script>
+</head>
+<body>
+</body>
+</html>

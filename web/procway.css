@@ -1,0 +1,33 @@
+.pw-panel { padding:20px; margin-top:16px; background:var(--surface-1); border-radius:var(--r-l); }
+.pw-panel h3,.pw-panel p { margin:0 0 12px; }
+.pw-row,.pw-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.pw-row { justify-content:space-between; }
+.pw-actions { justify-content:flex-end; margin-top:18px; }
+.pw-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.pw-field { display:block; min-width:0; margin-top:14px; }
+.pw-field > span { display:block; margin-bottom:6px; }
+.pw-field input:not([type=checkbox]):not([type=radio]) { width:100%; min-width:0; padding:10px 14px; border-radius:var(--r-pill); background:var(--surface-paper); color:var(--ink); }
+.pw-panel small,.pw-note { color:var(--ink-weak); font-size:12px; overflow-wrap:anywhere; }
+.pw-note { margin-top:12px; }
+.pw-card { background:var(--surface-paper); padding:14px; margin:10px 0; border-radius:var(--r-m); }
+.pw-card strong,.pw-card small { display:block; }
+.pw-card > .pw-row { align-items:flex-start; gap:8px; }
+.pw-card-info { flex:1 1 220px; min-width:0; }
+.pw-card-actions { display:flex; gap:4px; align-items:center; flex-wrap:wrap; justify-content:flex-end; margin-left:auto; }
+.pw-card-actions[hidden] { display:none; }
+.pw-confirm { margin-top:12px; padding:10px 14px; background:var(--surface-1); border-radius:var(--r-m);
+  display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:space-between; }
+.pw-confirm p { flex:1 1 220px; margin:0; color:var(--ink-weak); font-size:12px; }
+.pw-panel .pw-warn { color:var(--ink-strong); font-weight:600; overflow-wrap:anywhere; }
+.pw-panel fieldset { border:0; padding:0; margin:16px 0; }
+.pw-panel legend { margin-bottom:8px; }
+.pw-panel label { cursor:pointer; }
+.pw-panel input[type=checkbox],.pw-panel input[type=radio] { accent-color:var(--ink-blue); }
+.pw-panel .combo { width:100%; }
+.pw-panel .pw-state { margin-top:14px; overflow-wrap:anywhere; }
+.pw-panel .pw-state:empty { display:none; }
+.pw-budget-dialog { border:0; width:min(680px,calc(100vw - 24px)); max-height:90vh; padding:0; border-radius:var(--r-l); background:var(--surface-paper); color:var(--ink); }
+.pw-budget-dialog .pw-panel { margin:0; }
+.pw-panel details { margin-top:18px; }
+.pw-panel summary { cursor:pointer; color:var(--ink-blue); }
+@media(max-width:520px) { .pw-grid { grid-template-columns:1fr; } .pw-panel { padding:14px; } }

@@ -1,0 +1,137 @@
+# LLM を呼ばないテストだけを回す。
+# サーバを立てて実際に LLM を呼ぶ側（npm run test:e2e）は認証と使用量が要るので、ここでは回さない。
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # 押すたびには回さない検査（下の safe-storage-macos）を、週に一度だけ拾う
+  schedule:
+    - cron: '17 21 * * 0'
+
+permissions:
+  contents: read
+
+# 同じ枝に続けて押したときは古い実行を止める。main も PR も、見たいのは先端の状態だけ。
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # 週次の起動は safe-storage-macos のためだけ。同じ main をもう一度回さない
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        # 直積（4 本）をやめて 3 本にした。Windows の実行枠は 2 倍で計上されるうえ、
+        # npm test 自体も ubuntu の約 2 倍かかる（150 秒 / 78 秒）ので、1 本あたりの費用は約 4 倍になる。
+        include:
+          # 下限（engines の node>=20.19）と最新。プラットフォーム非依存の壊れ方は実績上ここで捕まる
+          - { os: ubuntu-latest, node: "20" }
+          - { os: ubuntu-latest, node: "24" }
+          # Windows は 1 本だけ残す。core/auth/secret-protection.mjs（powershell 経由の DPAPI）は
+          # win32 でしか実行されず、Linux では throw して環境変数キー経路へ逃げる。main の push と PR で
+          # これを自動で通すのはこのジョブだけ（evaluation-release.yml も Windows で npm test を回すが、
+          # 発火は beta タグのみ）。
+          # node 24 ではなく 20 を残す理由: リリースは node 22、開発機は node 24 なので、
+          # 20 × Windows はここを外すとどこでも検証されなくなる。
+          # 直近30日の Windows 固有の失敗 4 件は node の版と相関していない（20 が 3、24 が 2）。
+          - { os: windows-latest, node: "20" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      # 本物の procway-code serve を起こすテスト（server-procway / procway-mcp / procway-connections）用。
+      # 無いと skip ではなく失敗にする方針なので、Evaluation release と同じ版をここに置く
+      AGENT_HOST_PROCWAY_CODE: ${{ github.workspace }}/temporary/procway-code/src/cli.mjs
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      # 版は evaluation-release.yml と揃える（上げるときは両方）
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: tekalu1/procway-code
+          ref: 309f25f39c11b349fe53063b2e6065d7978513e6
+          path: temporary/procway-code
+          persist-credentials: false
+      - name: Install test backend
+        working-directory: temporary/procway-code
+        run: npm install --ignore-scripts --omit=dev --omit=optional --package-lock=false
+      - run: npm ci
+      - run: npm test
+
+  # 外部 MCP の秘密の暗号化を、本物の Electron の safeStorage で確かめる（tests/desktop/safe-storage-smoke.cjs）。
+  # main ↔ utilityProcess の橋渡し（desktop/secret-bridge.cjs）を通して暗号化・復号が往復するか、
+  # 暗号化できない環境（Linux で鍵束が無い = basic_text）では平文に切り替えて理由を出すかを見る。ウィンドウは出さない。
+  safe-storage:
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS は配布していない（publish-evaluation.ps1 は windows だけを出す）うえ、
+          # macOS の実行枠は 10 倍で計上される。12 秒の検査に 10 分請求されるので、
+          # 押すたびではなく週次・手動の safe-storage-macos に分けた。
+          - { os: windows-latest, name: windows-dpapi, expect: "1" }
+          - { os: ubuntu-latest, name: linux-gnome-keyring, keyring: true, expect: "1" }
+          - { os: ubuntu-latest, name: linux-no-keyring, keyring: false, expect: "0" }
+    name: safe-storage (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    # 鍵束や D-Bus が常駐して終わらなくなったときに、実行枠を占有し続けないための上限
+    timeout-minutes: 15
+    env:
+      SMOKE_EXPECT_ENCRYPTED: ${{ matrix.expect }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - if: runner.os != 'Linux'
+        run: npm run test:safe-storage
+      - name: Install xvfb and gnome-keyring
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb dbus-x11 gnome-keyring libsecret-1-0
+      # 鍵束あり: D-Bus のセッションで gnome-keyring を空のパスワードで解錠し、libsecret を使わせる。
+      # 解錠の途中で gcr の確認画面が立ち上がるため、xvfb は鍵束ごと外側で包む（内側だと「cannot open display」で解錠に失敗する）
+      - name: Smoke (gnome-keyring)
+        if: runner.os == 'Linux' && matrix.keyring
+        run: |
+          # 既定のキーリングを空のパスワードで先に作る。無いと解錠の途中で gcr の確認画面が出て、
+          # 画面があると待ち続け、画面が無いと解錠に失敗する（どちらでもこの検査は終わらない）
+          mkdir -p ~/.local/share/keyrings
+          printf '[keyring]\ndisplay-name=Default keyring\nctime=0\nmtime=0\nlock-on-idle=false\nlock-after=false\n' \
+            > ~/.local/share/keyrings/Default_keyring.keyring
+          printf 'Default_keyring' > ~/.local/share/keyrings/default
+          xvfb-run -a dbus-run-session -- sh -c '
+            echo -n "" | gnome-keyring-daemon --unlock --replace --daemonize --components=secrets > /dev/null
+            npx electron --no-sandbox --password-store=gnome-libsecret tests/desktop/safe-storage-smoke.cjs
+            status=$?; pkill -x gnome-keyring-daemon || true; exit $status'
+          # 止めるのは鍵束だけ。-f だと、同じ文字列を含むこの sh 自身も一緒に殺してしまう（exit 143）
+      # 鍵束なし: D-Bus も鍵束も無い。safeStorage は basic_text に落ちるので、Pleiad は「暗号化できない」と判定するはず
+      - name: Smoke (no keyring)
+        if: runner.os == 'Linux' && !matrix.keyring
+        run: xvfb-run -a npx electron --no-sandbox tests/desktop/safe-storage-smoke.cjs
+
+  # macOS の Keychain 側。配布対象に入っていないので毎回は回さず、週次と手動でだけ確かめる。
+  # macOS を配布に加えるときは、この if を外して safe-storage の matrix に戻すこと。
+  safe-storage-macos:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      SMOKE_EXPECT_ENCRYPTED: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run test:safe-storage

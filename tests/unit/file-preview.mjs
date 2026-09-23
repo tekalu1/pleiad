@@ -1,0 +1,114 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileReference } from '../../web/file-reference.mjs';
+import { parseTable, PREVIEW_CSP, htmlDocument, inlineScripts, previewDocument, previewFrame } from '../../web/file-preview-content.mjs';
+import { VISUALIZE_CSP } from '../../web/visualize-frame.mjs';
+import { renderMarkdown } from '../../web/render.mjs';
+import { startServer } from '../lib/server.mjs';
+export const name = 'file-preview';
+export const title = 'ファイル参照・作業場所・認証・表示上限・ダウンロード';
+
+export default async function(t) {
+  assert.deepEqual(fileReference('D:/日本語/a b.ts:42:9'), {path:'D:/日本語/a b.ts',line:42});
+  assert.deepEqual(fileReference('./docs/readme.md#L12'), {path:'./docs/readme.md',line:12});
+  assert.deepEqual(fileReference('code.mjs:42'), {path:'code.mjs',line:42});
+  assert.deepEqual(fileReference('LICENSE'), {path:'LICENSE',line:null});
+  assert(renderMarkdown('[code](code.mjs:42)').includes('data-file-line="42"'));
+  assert.deepEqual(fileReference('file:///D:/a%20b.md'), {path:'D:/a b.md',line:null});
+  assert.deepEqual(fileReference('/D:/a.md'), {path:'D:/a.md',line:null});
+  for (const input of ['https://example.com/a.md','//host/a','\\\\host\\a','javascript:alert(1)','data:text/html,x','#heading','a\0.md']) assert.equal(fileReference(input),null,input);
+  const markdown = renderMarkdown('[file](<D:/a b.ts:42>) [site](https://example.com)');
+  assert(markdown.includes('data-file-line="42"')); assert.equal((markdown.match(/target="_blank"/g)||[]).length,1);
+  t.ok('Windows・空白・日本語・行指定を保持し、Webリンクと危険なスキームを分離',true);
+  assert.deepEqual(parseTable('a,b\r\n"x,y","one\ntwo"\r\n"a""b",',',').rows,[['a','b'],['x,y','one\ntwo'],['a"b','']]);
+  assert.equal(parseTable('a\nb\nc',',',2).truncated,true);
+  assert.deepEqual(parseTable('a\tb\n1\t2','\t').rows,[['a','b'],['1','2']]);
+  t.ok('CSVの引用符・改行・TSV・表示上限を扱う',true);
+
+  // HTML のプレビューは可視化と同じ隔離でスクリプトを動かす
+  assert.equal(PREVIEW_CSP,VISUALIZE_CSP);
+  for (const rule of ["default-src 'none'","script-src 'unsafe-inline' https://cdnjs.cloudflare.com","connect-src 'none'","frame-src 'none'","object-src 'none'","base-uri 'none'","form-action 'none'"]) assert(PREVIEW_CSP.includes(rule),rule);
+  const wrapped=previewDocument('<meta http-equiv="Content-Security-Policy" content="script-src *"><script>run()</script>');
+  assert(wrapped.indexOf(`content="${PREVIEW_CSP}"`)>0 && wrapped.indexOf(`content="${PREVIEW_CSP}"`)<wrapped.indexOf('<script>run()'));
+  const frame=previewFrame(wrapped,'page.html');
+  assert.equal(frame.getAttribute('sandbox'),'allow-scripts'); assert(!String(frame.getAttribute('sandbox')).includes('allow-same-origin'));
+  assert.equal(frame.getAttribute('referrerpolicy'),'no-referrer'); assert(frame.getAttribute('allow').includes("camera 'none'"));
+  assert.equal(frame.srcdoc,wrapped); assert.equal(frame.className,'file-preview-frame');
+  const scriptTag=(attrs,text)=>{const s=document.createElement('script');for(const [k,v] of Object.entries(attrs))s.setAttribute(k,v);if(text)s.textContent=text;return s;};
+  const root=document.createElement('div');
+  const local=scriptTag({src:'lib/app.js',type:'module'}),cdn=scriptTag({src:'https://cdn.jsdelivr.net/npm/x.js'}),absent=scriptTag({src:'missing.js'}),inline=scriptTag({},'go()'),handler=document.createElement('button');
+  handler.setAttribute('onclick','go()'); root.append(local,cdn,absent,inline,handler);
+  const omitted=new Set(),asked=[];
+  await inlineScripts(root,async raw=>{asked.push(raw);if(raw==='lib/app.js')return {kind:'text',size:40,text:'document.body.append("</script><b>")'};throw new Error('not-found');},omitted);
+  assert.deepEqual(asked,['lib/app.js','missing.js']);
+  assert.equal(local.getAttribute('src'),undefined); assert.equal(local.getAttribute('type'),'module');
+  assert(local.textContent.includes('<\\/script><b>') && !/<\/script/i.test(local.textContent));
+  assert.equal(cdn.getAttribute('src'),'https://cdn.jsdelivr.net/npm/x.js');
+  assert(!root.children.includes(absent) && root.children.includes(inline)); assert.equal(inline.textContent,'go()');
+  assert.equal(handler.getAttribute('onclick'),'go()'); assert.deepEqual([...omitted],['スクリプト']);
+  const big=scriptTag({src:'big.js'}),binary=scriptTag({src:'pic.js'}),root2=document.createElement('div'); root2.append(big,binary);
+  await inlineScripts(root2,async raw=>raw==='big.js'?{kind:'text',size:600*1024,text:'x'}:{kind:'image',size:1,data:''},new Set());
+  assert.equal(root2.children.length,0);
+  // テンプレートを持たない最小 DOM の上で htmlDocument 全体を通す
+  const fragment=document.createElement('div'),create=document.createElement;
+  fragment.append(scriptTag({src:'missing.js'}),scriptTag({},'run()'));
+  document.createElement=tag=>tag==='template'?{set innerHTML(v){},get innerHTML(){return fragment.children.map(c=>c.outerHTML).join('');},content:fragment}:create(tag);
+  let result; try { result=await htmlDocument('',async()=>{throw new Error('not-found');}); } finally { document.createElement=create; }
+  assert(result.document.includes('<script>run()</script>')); assert(!result.document.includes('missing.js'));
+  assert(result.document.indexOf('Content-Security-Policy')<result.document.indexOf('<body>'));
+  assert(result.note.includes('スクリプト') && !result.note.includes('実行しません'));
+  t.ok('HTMLはスクリプト付きで隔離枠に出す。CSPが先頭、ローカルのスクリプトは埋め込み、読めないものは省いて注記',true);
+
+  const scratch=await fs.mkdtemp(path.join(os.tmpdir(),'ply-preview-'));
+  const one=path.join(scratch,'one'),two=path.join(scratch,'two'),data=path.join(scratch,'data');
+  await Promise.all([one,two,data].map(p=>fs.mkdir(p)));
+  await fs.writeFile(path.join(one,'日本語 file.md'),'# old workspace\n\n|a|b|\n|---|---|\n|1|2|');
+  await fs.writeFile(path.join(two,'日本語 file.md'),'# new workspace');
+  await fs.writeFile(path.join(one,'unsafe.html'),'<script>parent.evil=true</script><h1>Test</h1>');
+  await fs.writeFile(path.join(one,'cover.svg'),'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
+  await fs.writeFile(path.join(one,'binary.zip'),Buffer.from([0,1,2,3]));
+  await fs.writeFile(path.join(one,'large.md'),'a'.repeat(8*1024*1024+1));
+  await fs.writeFile(path.join(one,'empty.txt'),'');
+  await fs.writeFile(path.join(one,'large.css'),' '.repeat(600*1024));
+  await fs.writeFile(path.join(scratch,'secret.txt'),'private');
+  await fs.writeFile(path.join(data,'sessions.json'),JSON.stringify({fixture:{cwd:two,backend:'fake',history:[{field:'cwd',at:'2026-09-15T12:00:00Z',from:one,to:two}]}}));
+  const server=await startServer({dataDir:data,env:{AGENT_HOST_BACKENDS:'fake'}});
+  const origin=`http://127.0.0.1:${server.port}`,auth={headers:{cookie:`agent_host_token=${server.token}`}};
+  const url=(file,extra={})=>`${origin}/file-preview?${new URLSearchParams({path:file,sessionId:'fixture',...extra})}`;
+  try {
+    assert.equal((await fetch(url('日本語 file.md'))).status,401);
+    const old=await (await fetch(url('日本語 file.md:2',{at:'2026-09-15T11:00:00Z'}),auth)).json();
+    assert.equal(old.kind,'markdown'); assert.equal(old.line,2); assert.equal(old.path,await fs.realpath(path.join(one,'日本語 file.md'))); assert(old.text.includes('old workspace'));
+    const current=await (await fetch(url('日本語 file.md',{at:'2026-09-15T13:00:00Z'}),auth)).json();
+    assert(current.text.includes('new workspace'));
+    const ambiguous=await (await fetch(url('日本語 file.md'),auth)).json(); assert.equal(ambiguous.error.code,'cwd-unknown');
+    const nested=await (await fetch(url('日本語 file.md',{base:path.join(one,'unsafe.html')}),auth)).json(); assert(nested.text.includes('old workspace'));
+    t.ok('認証が必要。作業場所変更後も発言時点と文書内リンクの基準を保持',true);
+    const html=await (await fetch(url(path.join(one,'unsafe.html')),auth)).json(); assert.equal(html.kind,'html'); assert(html.text.includes('<script>'));
+    const svg=await (await fetch(url(path.join(one,'cover.svg')),auth)).json(); assert.equal(svg.mime,'image/svg+xml'); assert(svg.data);
+    const empty=await (await fetch(url(path.join(one,'empty.txt')),auth)).json(); assert.equal(empty.text,'');
+    const binary=await (await fetch(url(path.join(one,'binary.zip')),auth)).json(); assert.equal(binary.kind,'unsupported'); assert(!binary.text); assert(binary.downloadable);
+    const large=await (await fetch(url(path.join(one,'large.md')),auth)).json(); assert.equal(large.kind,'unsupported'); assert(!large.text); assert(large.downloadable);
+    const resource=await (await fetch(url(path.join(one,'large.css'),{resource:'1'}),auth)).json(); assert.equal(resource.kind,'unsupported'); assert(!resource.text);
+    const missing=await fetch(url(path.join(one,'missing.md')),auth); assert.equal(missing.status,404); assert.equal((await missing.json()).error.code,'not-found');
+    const directory=await (await fetch(url(one),auth)).json();
+    assert.equal(directory.kind,'directory');
+    assert.equal(directory.downloadable,false);
+    assert(Array.isArray(directory.items));
+    assert(directory.items.some(it=>it.name==='日本語 file.md'&&it.kind==='file'));
+    assert(Array.isArray(directory.tree));
+    const outsideDir=await (await fetch(url(scratch),auth)).json(); assert.equal(outsideDir.error.code,'outside-workspace');
+    const outside=await (await fetch(url(path.join(scratch,'secret.txt')),auth)).json(); assert.equal(outside.error.code,'outside-workspace');
+    await fs.symlink(scratch,path.join(one,'escape'),process.platform==='win32'?'junction':'dir');
+    const symlink=await (await fetch(url(path.join(one,'escape/secret.txt')),auth)).json(); assert.equal(symlink.error.code,'outside-workspace');
+    t.ok('種類・空ファイル・大きいファイル・フォルダープレビュー・欠損を区別し、作業場所外とsymlink脱出を拒否',true);
+    const download=await fetch(`${origin}/local-file?${new URLSearchParams({path:path.join(one,'unsafe.html'),download:'1'})}`,auth);
+    assert(download.headers.get('content-disposition').startsWith('attachment')); assert.equal(download.headers.get('content-type'),'application/octet-stream');
+    assert.equal((await fetch(`${origin}/vendor/pdfjs/build/pdf.mjs`)).status,401);
+    assert.equal((await fetch(`${origin}/vendor/pdfjs/build/pdf.mjs`,auth)).status,200);
+    assert.equal((await fetch(`${origin}/vendor/pdfjs/package.json`,auth)).status,404);
+    t.ok('保存は添付として配信。PDFブラウザー資源にも認証が必要',true);
+  } finally {await server.stop();await fs.rm(scratch,{recursive:true,force:true});}
+}

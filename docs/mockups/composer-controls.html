@@ -1,0 +1,298 @@
+<meta charset="utf-8">
+<div id="cmpx">
+<style>
+#cmpx{--paper:#fff;--s0:#eceef4;--s1:#f4f5f9;--s2:#e8eaf1;--s3:#dcdee8;--sel:#e3e5ed;--fill:#3a499e;--on:#f4f5ff;--ink:#1c2247;--strong:#0f1330;--weak:#6b7299;--blue:#3a499e;--lineb:#5665cd;--line:#c9cee0;--shadow:rgba(21,22,28,.16);
+  font-family:"Segoe UI","Hiragino Sans","Yu Gothic UI",sans-serif;color:var(--ink);font-size:14px;line-height:1.5}
+#cmpx *{box-sizing:border-box}
+#cmpx h3{font-size:13px;margin:0 0 8px;color:var(--weak);letter-spacing:.06em;font-weight:600}
+#cmpx .stage{background:var(--s0);border-radius:14px;padding:14px;margin-bottom:18px}
+#cmpx .ctl{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;font-size:12px;color:var(--weak);align-items:center}
+#cmpx .seg{display:inline-flex;background:var(--s2);border-radius:999px;padding:2px}
+#cmpx .seg button{border:0;background:transparent;color:var(--weak);font:inherit;padding:3px 10px;border-radius:999px;cursor:pointer}
+#cmpx .seg button[aria-pressed="true"]{background:var(--paper);color:var(--ink)}
+#cmpx .composer{background:var(--paper);border-radius:12px;padding:12px 14px 12px;position:relative}
+#cmpx textarea{width:100%;border:0;background:var(--s1);border-radius:10px;padding:10px 14px;font:inherit;color:var(--ink);resize:none;height:64px}
+#cmpx textarea:focus{outline:none;background:var(--s2)}
+#cmpx .crow{display:flex;align-items:center;gap:4px;margin-top:8px;flex-wrap:wrap}
+#cmpx .gap{flex:1}
+#cmpx .icon{width:30px;height:30px;border:0;border-radius:50%;background:transparent;color:var(--weak);cursor:pointer;display:inline-grid;place-items:center}
+#cmpx .icon:hover{background:var(--s1);color:var(--ink)}
+#cmpx svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#cmpx .send{width:34px;height:34px;border-radius:50%;border:0;background:var(--fill);color:var(--on);display:grid;place-items:center;margin-left:4px;cursor:pointer}
+/* 現状の再現 */
+#cmpx .old{padding:4px 10px;border-radius:999px;color:var(--weak);white-space:nowrap}
+#cmpx .old.loose{color:var(--blue);font-weight:600}
+#cmpx .old.mono{font-family:Consolas,monospace;font-size:12.5px;flex:1;min-width:120px}
+#cmpx .note{font-size:12px;color:var(--weak);margin:8px 2px 0}
+#cmpx .note b{color:var(--ink)}
+/* 提案のチップ。全部同じ字の色・太さ */
+#cmpx .chip{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--ink);font:inherit;font-size:13px;padding:5px 10px;border-radius:999px;cursor:pointer;white-space:nowrap;max-width:100%}
+#cmpx .chip:hover,#cmpx .chip[aria-expanded="true"]{background:var(--s1)}
+#cmpx .chip .dim{color:var(--weak)}
+#cmpx .chip .caret{color:var(--weak);font-size:10px}
+#cmpx .chip.folder{font-family:Consolas,monospace;font-size:12.5px;min-width:0}
+#cmpx .chip.folder .nm{overflow:hidden;text-overflow:ellipsis}
+#cmpx .chip.danger{color:var(--strong);font-weight:600}
+#cmpx .pop{position:absolute;top:calc(100% - 6px);background:var(--paper);border-radius:12px;box-shadow:0 10px 32px var(--shadow);padding:8px;z-index:5;width:min(360px,calc(100% - 16px))}
+#cmpx .pop[hidden]{display:none}
+#cmpx .pop.left{left:8px}
+#cmpx .pop.right{right:8px}
+#cmpx .ph{font-size:11px;color:var(--weak);letter-spacing:.06em;padding:6px 8px 4px}
+#cmpx .row{display:flex;gap:10px;align-items:baseline;padding:6px 8px;border-radius:7px;cursor:pointer}
+#cmpx .row:hover{background:var(--s1)}
+#cmpx .row.on{background:var(--sel)}
+#cmpx .row .r{margin-left:auto;font-size:11.5px;color:var(--weak);white-space:nowrap}
+#cmpx .row .sub{display:block;font-size:11.5px;color:var(--weak);font-family:Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#cmpx .row .tick{width:12px;color:var(--blue);flex:none}
+#cmpx .sep{height:6px}
+#cmpx .pathin{width:100%;border:0;background:var(--s1);border-radius:8px;padding:7px 10px;font:12.5px Consolas,monospace;color:var(--ink)}
+#cmpx .pathin:focus{outline:2px solid var(--lineb);outline-offset:-2px;background:var(--paper)}
+#cmpx .action{display:flex;gap:8px;align-items:center;padding:7px 8px;border-radius:7px;cursor:pointer;color:var(--blue);font-weight:600}
+#cmpx .action:hover{background:var(--s1)}
+#cmpx .effort{padding:4px 8px 8px}
+#cmpx .effort .top{display:flex;align-items:baseline;gap:8px}
+#cmpx .effort .val{font-weight:600}
+#cmpx .effort .reset{margin-left:auto;border:0;background:none;color:var(--blue);font:inherit;font-size:12px;cursor:pointer;padding:0}
+#cmpx .effort .reset[hidden]{display:none}
+#cmpx input[type=range]{width:100%;accent-color:var(--fill);margin:8px 0 2px}
+#cmpx .ticks{display:flex;justify-content:space-between;font-size:11px;color:var(--weak)}
+#cmpx .ticks span{position:relative;text-align:center;width:0;white-space:nowrap;display:flex;justify-content:center}
+#cmpx .ticks span.def::after{content:"既定";position:absolute;top:14px;font-size:10px;color:var(--blue)}
+#cmpx .ticks{padding:0 12px 16px}
+#cmpx .seg.wide{display:flex;margin:2px 8px 6px}
+#cmpx .seg.wide button{flex:1}
+#cmpx .browser{background:var(--s1);border-radius:8px;margin:4px 0;padding:4px}
+#cmpx .browser .crumb{font:12px Consolas,monospace;color:var(--weak);padding:4px 6px}
+#cmpx .browser .row{padding:4px 6px;font-family:Consolas,monospace;font-size:12.5px}
+#cmpx .browser .go{display:flex;justify-content:flex-end;padding:4px}
+#cmpx .browser .go button{border:0;background:var(--fill);color:var(--on);border-radius:999px;padding:4px 12px;font:inherit;font-size:12px;cursor:pointer}
+#cmpx .compare{width:100%;border-collapse:collapse;font-size:13px;background:var(--paper);border-radius:12px;overflow:hidden}
+#cmpx .compare th,#cmpx .compare td{text-align:left;padding:7px 10px;vertical-align:top}
+#cmpx .compare tr:nth-child(even) td{background:var(--s1)}
+#cmpx .compare th{background:var(--s3);font-size:12px}
+</style>
+
+<h3>現状（再現）— 入力欄の下に 7 個が並ぶ</h3>
+<div class="stage">
+  <div class="composer">
+    <textarea aria-label="入力欄（現状）" placeholder="Ctrl+Enter で送信"></textarea>
+    <div class="crow">
+      <button class="icon" aria-label="添付"><svg viewBox="0 0 24 24"><path d="M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2"/></svg></button>
+      <span class="old mono">D:\work\my-app</span>
+      <span class="old">Claude Code</span>
+      <span class="old loose">Opus</span>
+      <span class="old">ログイン中</span>
+      <span class="old">既定に従う</span>
+      <span class="old loose">編集は自動</span>
+      <span class="send" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg></span>
+    </div>
+  </div>
+  <p class="note">青く太い字は「既定から外れている」という意味ですが、画面のどこにも説明がありません。
+  しかもモデル「既定に従う」が実際に何なのかが見えないので、<b>「Opus」が青い＝既定と違う</b>という情報は判断材料になりません。</p>
+</div>
+
+<h3>提案 — 3 個にまとめ、字の色は揃える（操作できます）</h3>
+<div class="stage">
+  <div class="ctl">
+    <span>エージェント</span>
+    <span class="seg" role="group" aria-label="エージェントの切り替え"><button data-be="claude" aria-pressed="true">Claude</button><button data-be="codex" aria-pressed="false">Codex</button></span>
+    <span style="margin-left:8px">起動形態</span>
+    <span class="seg" role="group" aria-label="起動形態"><button data-env="desktop" aria-pressed="true">デスクトップ版</button><button data-env="web" aria-pressed="false">ブラウザー</button></span>
+  </div>
+  <div class="composer" id="cmpxNew">
+    <textarea aria-label="入力欄（提案）" placeholder="Ctrl+Enter で送信"></textarea>
+    <div class="crow">
+      <button class="icon" aria-label="ファイルを添付"><svg viewBox="0 0 24 24"><path d="M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2"/></svg></button>
+      <button class="chip folder" id="cmpxFolderBtn" aria-expanded="false" aria-controls="cmpxFolder" title="D:\work\my-app">
+        <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm" id="cmpxFolderName">my-app</span><span class="caret">▾</span>
+      </button>
+      <span class="gap"></span>
+      <button class="chip" id="cmpxModelBtn" aria-expanded="false" aria-controls="cmpxModel"><span id="cmpxModelLabel"></span><span class="caret">▾</span></button>
+      <button class="chip" id="cmpxModeBtn" aria-expanded="false" aria-controls="cmpxMode"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/></svg><span id="cmpxModeLabel">都度確認</span><span class="caret">▾</span></button>
+      <button class="send" aria-label="送信"><svg viewBox="0 0 24 24"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg></button>
+    </div>
+
+    <!-- 作業ディレクトリ -->
+    <div class="pop left" id="cmpxFolder" hidden role="dialog" aria-label="作業ディレクトリ">
+      <input class="pathin" id="cmpxPath" aria-label="パスを入力" value="D:\work\my-app">
+      <div class="ph">最近の作業ディレクトリ</div>
+      <div id="cmpxRecent"></div>
+      <div class="sep"></div>
+      <div class="action" id="cmpxPick" role="button" tabindex="0"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg><span id="cmpxPickLabel">フォルダーを選ぶ…</span></div>
+      <div class="browser" id="cmpxBrowser" hidden></div>
+    </div>
+
+    <!-- モデル・エフォート（アカウント・エージェントもここ） -->
+    <div class="pop right" id="cmpxModel" hidden role="dialog" aria-label="モデルとエフォート">
+      <div class="ph">エージェント</div>
+      <div class="seg wide" role="group" aria-label="エージェント" id="cmpxBeSeg"><button data-be="claude">Claude Code</button><button data-be="codex">Codex</button></div>
+      <div class="ph">モデル</div>
+      <div id="cmpxModels"></div>
+      <div class="ph">エフォート（考える量）</div>
+      <div class="effort">
+        <div class="top"><span class="val" id="cmpxEffVal"></span><span class="dim" id="cmpxEffNote" style="font-size:12px;color:var(--weak)"></span><button class="reset" id="cmpxEffReset">既定に戻す</button></div>
+        <input type="range" id="cmpxEff" min="0" max="4" step="1" aria-label="エフォート">
+      </div>
+      <div class="ticks" id="cmpxTicks"></div>
+      <div id="cmpxAccountWrap">
+        <div class="ph">Claude のアカウント</div>
+        <div id="cmpxAccounts"></div>
+      </div>
+    </div>
+
+    <!-- 承認モード -->
+    <div class="pop right" id="cmpxMode" hidden role="dialog" aria-label="承認モード">
+      <div class="ph">承認モード</div>
+      <div id="cmpxModes"></div>
+    </div>
+  </div>
+  <p class="note" id="cmpxExplain"></p>
+</div>
+
+<h3>変えること</h3>
+<table class="compare">
+  <tr><th>ご指摘</th><th>現状の原因</th><th>提案</th></tr>
+  <tr><td>ボタンが多い</td><td>作業ディレクトリ・エージェント・モデル・アカウント・エフォート・承認モードが並列（最大 7 個）</td><td>「どこで」「誰が・どれだけ考えて」「どこまで任せるか」の <b>3 つのチップ</b>に。エージェント・アカウントはモデルのパネルの中へ</td></tr>
+  <tr><td>「既定」が何か分からない</td><td>選択肢の値が空文字（<code>""</code>＝指定しない）で、実体を引いていない</td><td>チップは常に<b>実際に使う値</b>を出す（例: Opus 5.5 · high）。一覧では「既定」は札として添えるだけ。Claude は SDK の <code>supportedModels()</code>（<code>resolvedModel</code>・対応エフォート）、Codex は <code>config/read</code> と <code>model/list</code> で解決できる</td></tr>
+  <tr><td>バージョン名が無い</td><td>ラベルが <code>core/backends/claude.mjs</code> の固定文字列（Opus / Sonnet…）</td><td>SDK の <code>displayName</code> / <code>resolvedModel</code> から「Opus 5.5」と出す。取れないときだけ固定の名前に戻す</td></tr>
+  <tr><td>エフォートをスライダーに</td><td>strict な combo（文字の一覧）</td><td>段階スライダー。段はモデルの <code>supportedEffortLevels</code> に合わせ、既定の位置に目印。非対応モデルでは無効化して理由を出す</td></tr>
+  <tr><td>青太字とグレーの差</td><td>「既定から外れた設定は青く太く」という規則（design-system.md）。説明が無く、既定が見えないので意味が伝わらない</td><td><b>全チップ同じ字</b>にする。差を付けるのは意味がある 1 箇所だけ: 承認モードが YOLO のときに記号と強い字で警告</td></tr>
+  <tr><td>エクスプローラーで選びたい</td><td>最近の履歴と手入力のみ</td><td>パネル下に「フォルダーを選ぶ…」。デスクトップ版は既にある <code>plyDesktop.chooseFolder()</code>（OS のダイアログ）を使う。ブラウザー版はサーバーが一覧を返す簡易ブラウザー</td></tr>
+</table>
+
+<script>
+(() => {
+  const root = document.getElementById('cmpx');
+  const $ = id => root.querySelector('#' + id);
+  const DATA = {
+    claude: {
+      name: 'Claude Code', src: 'Claude Code の設定',
+      models: [
+        { id: 'fable', label: 'Fable 5.1', note: '最上位。いちばん重い作業向き', eff: ['low','medium','high','xhigh','max'], defEff: 'high' },
+        { id: 'opus', label: 'Opus 5.5', note: '賢い。重い作業向き', eff: ['low','medium','high','xhigh','max'], defEff: 'high' },
+        { id: 'sonnet', label: 'Sonnet 5', note: '速さと賢さのつり合い', eff: ['low','medium','high','xhigh','max'], defEff: 'medium' },
+        { id: 'haiku', label: 'Haiku 4.5', note: '軽い。単純な作業向き', eff: [], defEff: null },
+      ], def: 'opus', accounts: true,
+    },
+    codex: {
+      name: 'Codex', src: 'codex の設定（config.toml）',
+      models: [
+        { id: 'gpt-5.3-codex', label: 'GPT-5.3-Codex', note: 'コーディング向け', eff: ['low','medium','high','xhigh'], defEff: 'medium' },
+        { id: 'gpt-5.3', label: 'GPT-5.3', note: '汎用', eff: ['minimal','low','medium','high'], defEff: 'medium' },
+        { id: 'gpt-5.3-mini', label: 'GPT-5.3-mini', note: '軽い', eff: ['low','medium','high'], defEff: 'low' },
+      ], def: 'gpt-5.3-codex', accounts: false,
+    },
+  };
+  const MODES = [
+    { id: 'default', label: '都度確認', note: '危険な操作のたびに聞く' },
+    { id: 'auto', label: 'auto', note: '分類器が判断し、迷うものだけ聞く' },
+    { id: 'acceptEdits', label: '編集は自動', note: 'ファイル編集は自動、他は聞く' },
+    { id: 'plan', label: '計画のみ', note: 'ツールを実行しない' },
+    { id: 'bypass', label: 'YOLO', note: '確認なし・制限なし', danger: true },
+  ];
+  const RECENT = [
+    ['D:\\work\\my-app', '3 分前'], ['D:\\work\\my-app\\temporary\\worktrees\\fix-ui', '1 時間前'],
+    ['D:\\work\\notes-app', '昨日'], ['C:\\Users\\me\\notes', '4 日前'],
+  ];
+  const st = { be: 'claude', env: 'desktop', model: '', effort: '', account: '', mode: 'default', cwd: RECENT[0][0] };
+
+  const cur = () => DATA[st.be];
+  const modelOf = () => cur().models.find(m => m.id === (st.model || cur().def));
+  const effOf = () => { const m = modelOf(); if (!m.eff.length) return null; return st.effort && m.eff.includes(st.effort) ? st.effort : m.defEff; };
+  const base = p => p.split('\\').filter(Boolean).pop();
+
+  function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+  function row({ on, main, sub, right, click }) {
+    const r = el('div', 'row' + (on ? ' on' : '')); r.tabIndex = 0; r.setAttribute('role', 'option'); r.setAttribute('aria-selected', on ? 'true' : 'false');
+    r.append(el('span', 'tick', on ? '✓' : ''));
+    const mid = el('span'); mid.style.minWidth = '0'; mid.append(el('span', '', main)); if (sub) mid.append(el('span', 'sub', sub));
+    r.append(mid); if (right) r.append(el('span', 'r', right));
+    r.onclick = click; r.onkeydown = e => { if (e.key === 'Enter') click(); };
+    return r;
+  }
+
+  function paint() {
+    const m = modelOf(), eff = effOf();
+    $('cmpxModelLabel').textContent = m.label + (eff ? ' · ' + eff : '');
+    root.querySelectorAll('[data-be]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.be === st.be)));
+    root.querySelectorAll('[data-env]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.env === st.env)));
+    // モデル一覧
+    const list = $('cmpxModels'); list.replaceChildren();
+    cur().models.forEach(x => list.append(row({
+      on: x.id === m.id, main: x.label, sub: x.note, right: x.id === cur().def ? '既定' : '',
+      click: () => { st.model = x.id === cur().def ? '' : x.id; st.effort = ''; paint(); },
+    })));
+    // エフォート
+    const s = $('cmpxEff'), ticks = $('cmpxTicks');
+    ticks.replaceChildren();
+    if (!m.eff.length) {
+      s.disabled = true; s.max = 0; s.value = 0;
+      $('cmpxEffVal').textContent = '—'; $('cmpxEffNote').textContent = m.label + ' は段階を選べません';
+      $('cmpxEffReset').hidden = true;
+    } else {
+      s.disabled = false; s.max = m.eff.length - 1; s.value = m.eff.indexOf(eff);
+      m.eff.forEach(v => ticks.append(el('span', v === m.defEff ? 'def' : '', v)));
+      $('cmpxEffVal').textContent = eff;
+      $('cmpxEffNote').textContent = eff === m.defEff ? '（' + m.label + ' の既定）' : '';
+      $('cmpxEffReset').hidden = eff === m.defEff;
+    }
+    // アカウント
+    $('cmpxAccountWrap').hidden = !cur().accounts;
+    const acc = $('cmpxAccounts'); acc.replaceChildren();
+    [['', 'ログイン中のアカウント', 'tekalu（Max）'], ['work', '会社', '']].forEach(([id, label, r]) =>
+      acc.append(row({ on: st.account === id, main: label, right: r, click: () => { st.account = id; paint(); } })));
+    // 承認モード
+    const md = MODES.find(x => x.id === st.mode);
+    $('cmpxModeLabel').textContent = (md.danger ? '⚠ ' : '') + md.label;
+    $('cmpxModeBtn').classList.toggle('danger', !!md.danger);
+    const ml = $('cmpxModes'); ml.replaceChildren();
+    MODES.forEach(x => ml.append(row({ on: x.id === st.mode, main: (x.danger ? '⚠ ' : '') + x.label, sub: x.note, right: x.id === 'default' ? '既定' : '',
+      click: () => { st.mode = x.id; close(); paint(); } })));
+    // 作業ディレクトリ
+    $('cmpxFolderName').textContent = base(st.cwd);
+    $('cmpxFolderBtn').title = st.cwd;
+    $('cmpxPath').value = st.cwd;
+    const rc = $('cmpxRecent'); rc.replaceChildren();
+    RECENT.forEach(([p, t]) => rc.append(row({ on: p === st.cwd, main: base(p), sub: p, right: t, click: () => { st.cwd = p; close(); paint(); } })));
+    $('cmpxPickLabel').textContent = 'フォルダーを選ぶ…';
+    $('cmpxExplain').innerHTML = st.env === 'desktop'
+      ? 'デスクトップ版: 「フォルダーを選ぶ…」で OS のフォルダー選択ダイアログを開きます（既存の <code>ply:choose-folder</code> を流用）。'
+      : 'ブラウザー版: OS のダイアログはブラウザーからは開けないため、サーバーがフォルダーの一覧を返す簡易ブラウザーをパネル内に出します。';
+  }
+
+  const pops = { cmpxFolderBtn: 'cmpxFolder', cmpxModelBtn: 'cmpxModel', cmpxModeBtn: 'cmpxMode' };
+  function close() { Object.entries(pops).forEach(([b, p]) => { $(p).hidden = true; $(b).setAttribute('aria-expanded', 'false'); }); $('cmpxBrowser').hidden = true; }
+  Object.entries(pops).forEach(([b, p]) => $(b).addEventListener('click', e => {
+    e.stopPropagation(); const open = $(p).hidden; close(); if (open) { $(p).hidden = false; $(b).setAttribute('aria-expanded', 'true'); }
+  }));
+  Object.values(pops).forEach(p => $(p).addEventListener('click', e => e.stopPropagation()));
+  root.addEventListener('click', close);
+  root.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+
+  root.querySelectorAll('[data-be]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); st.be = b.dataset.be; st.model = ''; st.effort = ''; paint(); }));
+  root.querySelectorAll('[data-env]').forEach(b => b.addEventListener('click', () => { st.env = b.dataset.env; close(); paint(); }));
+  $('cmpxEff').addEventListener('input', e => { const m = modelOf(); const v = m.eff[+e.target.value]; st.effort = v === m.defEff ? '' : v; paint(); });
+  $('cmpxEffReset').addEventListener('click', () => { st.effort = ''; paint(); });
+  $('cmpxPath').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.value.trim()) { st.cwd = e.target.value.trim(); close(); paint(); } });
+
+  // フォルダー選択
+  const TREE = { 'D:\\work': ['my-app', 'notes-app', 'site', 'sandbox'], 'D:\\work\\my-app': ['core', 'desktop', 'docs', 'web'] };
+  function showBrowser(dir) {
+    const b = $('cmpxBrowser'); b.hidden = false; b.replaceChildren();
+    b.append(el('div', 'crumb', dir));
+    const parent = dir.split('\\').slice(0, -1).join('\\');
+    if (TREE[parent]) b.append(row({ main: '..', click: () => showBrowser(parent) }));
+    (TREE[dir] ?? []).forEach(n => b.append(row({ main: n + '\\', click: () => TREE[dir + '\\' + n] ? showBrowser(dir + '\\' + n) : (st.cwd = dir + '\\' + n, close(), paint()) })));
+    const go = el('div', 'go'); const btn = el('button', '', 'このフォルダーにする'); btn.onclick = () => { st.cwd = dir; close(); paint(); }; go.append(btn); b.append(go);
+  }
+  $('cmpxPick').addEventListener('click', () => {
+    if (st.env === 'web') return showBrowser('D:\\dev');
+    const picked = 'D:\\work\\site';   // OS のダイアログで選んだ体
+    $('cmpxPickLabel').textContent = 'エクスプローラーで選択中…';
+    setTimeout(() => { st.cwd = picked; close(); paint(); }, 700);
+  });
+
+  paint();
+})();
+</script>
+</div>

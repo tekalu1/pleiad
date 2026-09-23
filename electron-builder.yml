@@ -1,0 +1,45 @@
+appId: jp.ply.desktop
+productName: Pleiad
+artifactName: Pleiad-${version}-${os}-${arch}.${ext}
+asar: false
+# node-pty は N-API の prebuild（win32 / darwin の x64・arm64）をそのまま Electron で読む。
+# 既定の npmRebuild はソースからビルドし直して build/Release に置き（prebuild より先に読まれる）、
+# x64 の runner で arm64 をクロスビルドすることになるので止める。ほかの本番依存に再ビルドの要る native モジュールは無い
+npmRebuild: false
+directories:
+  output: dist-desktop
+files:
+  - desktop/**
+  - core/**
+  - web/**
+  - skills/visualize/**
+  - package.json
+  # node-pty のソース・デバッグ情報・使わない ConPTY の DLL は入れない
+  - "!node_modules/node-pty/{src,deps,scripts,third_party,typings}/**"
+  - "!node_modules/node-pty/**/*.pdb"
+  - "!node_modules/node-pty/binding.gyp"
+  # 手元の npm install が置く build/Release/conpty（ビルド機のアーキテクチャの ConPTY DLL）も使わない。読むのは prebuilds だけ
+  - "!node_modules/node-pty/build/**"
+win:
+  icon: desktop/icon.ico
+  # 表示名は Pleiad だが、実行ファイルは改名前の Ply.exe のまま置く。
+  # NSIS は「$INSTDIR\<実行ファイル>」が在るときだけ既存のショートカットを残して新しい名前へ付け替える（KeepShortcuts）。
+  # 名前を変えると改名前からの更新でショートカットが作り直され、タスクバーのピン留め（Ply.exe を指す）が切れる。
+  # 入れ先（レジストリの InstallLocation）・アンインストール情報（appId 由来の GUID）・userData（package.json の name）は元から名前に依らない
+  executableName: Ply
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  include: build/installer.nsh
+mac:
+  icon: desktop/icon.icns
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]

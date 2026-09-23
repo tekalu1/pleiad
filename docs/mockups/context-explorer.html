@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>コンテキスト画面 · design</title>
+<style>
+/* ============ tokens (web/tokens.css と同一。モックアップ内だけ copy) ============ */
+:root{
+  --surface-paper:#ffffff;--surface-0:#eceef4;--surface-1:#f4f5f9;--surface-2:#e8eaf1;--surface-3:#dcdee8;
+  --surface-hover:#f4f5f9;--surface-sel:#e3e5ed;--surface-veil:rgba(21,22,28,.32);
+  --fill-primary:#3a499e;--fill-primary-hover:#2f3c86;--on-fill:#f4f5ff;
+  --ink:#1c2247;--ink-strong:#0f1330;--ink-weak:#6b7299;--ink-blue:#3a499e;--ink-unread:#5665cd;--ink-mark:#aa2678;
+  --ink-code-comment:#7c83a8;--ink-code-string:#535cad;--ink-code-number:#7a4c9e;--ink-code-keyword:#3a499e;
+  --line:#c9cee0;--line-strong:#9eabde;--line-blue:#5665cd;--line-mark:#aa2678;--line-faint:#dfe2ec;
+  --shadow:rgba(58,73,158,.16);
+  --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:24px;--sp-6:32px;
+  --hair:1px;--r-s:8px;--r-m:14px;--r-l:20px;--r-pill:999px;
+  --font:system-ui,"Yu Gothic UI","Segoe UI",sans-serif;--font-mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --fs-xs:11px;--fs-s:12px;--fs:14px;--fs-l:15px;
+}
+:root[data-theme="dark"]{
+  --surface-paper:#1b1c23;--surface-0:#121318;--surface-1:#222329;--surface-2:#15161c;--surface-3:#2a2b32;
+  --surface-hover:#222329;--surface-sel:#2a2b32;--surface-veil:rgba(0,0,0,.55);
+  --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--on-fill:#f4f5ff;
+  --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;
+  --ink-code-comment:#8a91b8;--ink-code-string:#a9b3e8;--ink-code-number:#c9a4e6;--ink-code-keyword:#9eabde;
+  --line:#2c2f3f;--line-strong:#454a66;--line-blue:#728cd7;--line-mark:#c94f9a;--line-faint:#1a1b22;
+  --shadow:rgba(0,0,0,.5);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:70px}
+body{margin:0;background:var(--surface-0);color:var(--ink);font:14px/1.8 var(--font);font-variant-numeric:tabular-nums}
+button,input,textarea{font:inherit;color:inherit;border:0;background:transparent}
+button{cursor:pointer;padding:7px 14px;border-radius:var(--r-pill)}
+button:hover{background:var(--surface-2)}
+button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.btn{background:transparent;color:var(--ink)}
+.btn-quiet{background:var(--surface-2)}
+.btn-primary{background:var(--fill-primary);color:var(--on-fill)}
+.btn-primary:hover{background:var(--fill-primary-hover)}
+.btn-icon{width:30px;height:30px;padding:0;display:inline-grid;place-items:center;color:var(--ink-weak)}
+.btn-icon:hover{color:var(--ink)}
+.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.mono{font-family:var(--font-mono)}
+.muted{color:var(--ink-weak)} small{font-size:var(--fs-xs);color:var(--ink-weak)}
+.wrap{max-width:1240px;margin:auto;padding:0 28px 90px}
+/* doc chrome */
+.topnav{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;background:var(--surface-0);padding:12px 28px}
+.topnav b{letter-spacing:-.3px}
+.topnav .seg{margin-left:auto;display:flex;gap:2px;background:var(--surface-1);padding:3px;border-radius:var(--r-pill)}
+.topnav .seg button{padding:4px 12px;font-size:var(--fs-s)}
+.topnav .seg button.on{background:var(--surface-paper);color:var(--ink-blue);font-weight:600}
+h1{font-size:34px;line-height:1.4;letter-spacing:-.8px;margin:34px 0 6px}
+.lead{font-size:15px;color:var(--ink-weak);margin:0 0 10px;max-width:760px}
+.toc{display:flex;flex-wrap:wrap;gap:4px 22px;margin:18px 0 8px;font-size:13px}
+.toc a{color:var(--ink-blue);text-decoration:none}
+section{margin:56px 0}
+.sh{display:flex;align-items:baseline;gap:12px;margin-bottom:6px}
+.sh .num{font-size:12px;color:var(--ink-blue);letter-spacing:1.5px;font-weight:700}
+.sh h2{font-size:21px;margin:0;font-weight:650;letter-spacing:-.3px}
+.note{font-size:13px;color:var(--ink-weak);max-width:760px}
+ul.tight{margin:8px 0;padding-left:1.2em;font-size:13.5px;max-width:760px}
+ul.tight li{margin:6px 0}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:28px;align-items:start;margin-top:20px}
+table.spec{border-collapse:collapse;width:100%;font-size:13px;background:var(--surface-paper);border-radius:var(--r-m);overflow:hidden;margin-top:14px}
+.spec th{background:var(--surface-3);color:var(--ink-weak);font-size:var(--fs-xs);text-align:left;padding:7px 14px;font-weight:600;letter-spacing:.03em}
+.spec td{padding:8px 14px;vertical-align:top;background:var(--surface-paper)}
+.spec tr:nth-child(even) td{background:var(--surface-1)}
+.spec code{font-family:var(--font-mono);font-size:12px;background:var(--surface-2);padding:1px 6px;border-radius:var(--r-s)}
+/* ============ app frame (web/ の実装を模した miniature) ============ */
+.frame{background:var(--surface-paper);border-radius:var(--r-l);overflow:hidden;box-shadow:0 10px 30px var(--shadow);margin-top:20px}
+.frame.app{display:grid;grid-template-columns:230px minmax(0,1fr);height:560px}
+.frame.app .side{background:var(--surface-0);padding:14px 12px;font-size:13px;position:relative;
+  background-image:radial-gradient(var(--line-faint) 1px,transparent 1px);background-size:24px 24px}
+.side .brand{display:flex;align-items:center;gap:8px;margin:0 6px 14px;font-weight:700;letter-spacing:-.3px}
+.side .brand .mark{width:20px;height:20px;border-radius:6px;background:var(--fill-primary)}
+.side .brand .sp{margin-left:auto;display:flex;gap:2px}
+.side .search{background:var(--surface-paper);border-radius:var(--r-pill);padding:5px 14px;color:var(--ink-weak);font-size:12px;margin:0 2px 12px}
+.side .g{font-weight:650;margin:10px 6px 2px;font-size:12px;display:flex;gap:6px;align-items:center}
+.side .row{padding:5px 10px;margin-left:16px;border-radius:var(--r-s);display:flex;gap:8px;align-items:center;font-size:12.5px;white-space:nowrap;min-width:0}
+.side .row .nm{overflow:hidden;text-overflow:ellipsis}
+.side .row.on{background:var(--surface-paper)}
+.side .row .t{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--ink-weak)}
+.side .row.dim{color:var(--ink-weak)}
+.side .gear{position:absolute;right:18px;top:12px;color:var(--ink-blue)}
+.pane{display:flex;flex-direction:column;min-width:0;min-height:0}
+.pane .top{display:flex;align-items:center;gap:10px;padding:12px 22px 6px}
+.pane .top h2{font-size:15px;margin:0;font-weight:650}
+.pane .top .back{margin-left:auto;font-size:13px}
+.snav{display:flex;gap:2px;padding:4px 22px 10px}
+.snav button{padding:5px 13px;font-size:13px;color:var(--ink-weak)}
+.snav button.on{color:var(--ink-blue);font-weight:600;background:var(--surface-1)}
+.pane .body{flex:1;min-height:0;padding:4px 22px 18px;overflow:auto}
+/* ============ コンテキスト画面 ============ */
+.ctx{display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px;height:100%;min-height:0}
+@media (max-width:760px){.ctx{grid-template-columns:1fr;height:auto}.ctx .explorer{max-height:320px}}
+.ctxhead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px;padding:0 0 10px;font-size:13px;color:var(--ink-weak)}
+.ctxhead .where{font-family:var(--font-mono);color:var(--ink);font-size:13px}
+.ctxhead .act{margin-left:auto;display:flex;gap:2px}
+.ctxhead .act button{padding:4px 12px;font-size:12.5px}
+.ctxhead .act button.on{color:var(--ink-blue)}
+/* -- explorer (tree.mjs) -- */
+.explorer{background:var(--surface-1);border-radius:var(--r-l);display:flex;flex-direction:column;min-height:0;padding:10px}
+.explorer .tools{display:flex;gap:6px;align-items:center;padding:0 2px 8px}
+.explorer .q{flex:1;background:var(--surface-paper);border-radius:var(--r-pill);padding:4px 12px;font-size:12.5px;min-width:0}
+.explorer .q input{width:100%;outline:none;padding:0}
+.chips{display:flex;gap:2px;padding:0 2px 8px}
+.chips button{padding:2px 10px;font-size:12px;color:var(--ink-weak)}
+.chips button.on{color:var(--ink-blue);font-weight:600}
+.tree{flex:1;overflow:auto;min-height:0;outline:none;padding:2px}
+.tree li{list-style:none}
+.tree ul{margin:0;padding:0}
+.tree ul ul{padding-left:16px}
+.node{display:flex;align-items:center;gap:5px;padding:4px 8px 4px 4px;border-radius:var(--r-s);font-size:13px;cursor:default;min-height:28px;color:var(--ink)}
+.node:hover{background:var(--surface-2)}
+.node.sel{background:var(--surface-paper);box-shadow:0 1px 4px var(--shadow)}
+.node .chev{width:16px;height:16px;flex:none;display:grid;place-items:center;color:var(--ink-weak);transition:transform 120ms ease-out}
+.node .chev svg{width:10px;height:10px}
+.node[aria-expanded="true"] .chev{transform:rotate(90deg)}
+.node .chev.none{visibility:hidden}
+.node .ic{width:16px;height:16px;flex:none;color:var(--ink-weak)}
+.node .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.node .st{margin-left:auto;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap;padding-left:8px}
+.node.root .nm{font-weight:650}
+.node.root .pth{font-family:var(--font-mono);font-size:11px;color:var(--ink-weak);margin-left:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node.dim .nm,.node.dim .ic{color:var(--ink-weak);opacity:.7}
+.node.dim .nm{text-decoration:line-through;text-decoration-color:var(--line-strong)}
+.node.hit .nm{color:var(--ink-blue)}
+.tree .cnt{font-family:var(--font-mono);font-size:11px;color:var(--ink-weak);margin-left:6px}
+/* -- preview -- */
+.preview{min-width:0;min-height:0;overflow:auto;display:flex;flex-direction:column}
+.pv-head{padding:2px 6px 10px}
+.pv-head h3{margin:0;font-size:15px;font-weight:650;display:flex;align-items:center;gap:8px}
+.pv-head h3 .kind{font-size:var(--fs-xs);color:var(--ink-weak);font-weight:500;letter-spacing:.04em}
+.pv-head .path{font-family:var(--font-mono);font-size:12px;color:var(--ink-weak);display:flex;align-items:center;gap:4px;word-break:break-all}
+.pv-meta{display:flex;flex-wrap:wrap;gap:2px 18px;font-size:12px;color:var(--ink-weak);margin-top:4px}
+.pv-meta b{color:var(--ink);font-weight:500}
+.pv-act{display:flex;gap:2px;margin-top:8px}
+.pv-act button{padding:4px 12px;font-size:12.5px}
+.pv-body{padding:8px 6px 20px;max-width:760px}
+/* rendered markdown（web/render.mjs の見た目に合わせる） */
+.md{font-size:13.5px;line-height:1.85}
+.md h1{font-size:19px;letter-spacing:-.3px;margin:18px 0 6px;line-height:1.5}
+.md h2{font-size:16px;margin:20px 0 4px;font-weight:650}
+.md h3{font-size:14px;margin:16px 0 2px;font-weight:650}
+.md p{margin:6px 0}
+.md ul,.md ol{margin:4px 0;padding-left:1.4em}
+.md li{margin:2px 0}
+.md code{font-family:var(--font-mono);font-size:12px;background:var(--surface-2);padding:1px 6px;border-radius:var(--r-s)}
+.md pre{background:var(--surface-2);border-radius:var(--r-m);padding:10px 14px;overflow:auto;font-size:12px;line-height:1.6}
+.md pre code{background:transparent;padding:0}
+.md a{color:var(--ink-blue);text-decoration:underline;text-decoration-color:var(--line-strong)}
+.md blockquote{margin:6px 0;padding:2px 14px;background:var(--surface-1);border-radius:var(--r-s);color:var(--ink-weak)}
+.fm{background:var(--surface-1);border-radius:var(--r-m);padding:8px 14px;margin:0 0 12px;font-size:12.5px;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 16px}
+.fm .k{color:var(--ink-weak);font-family:var(--font-mono);font-size:11.5px}
+.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 18px;font-size:13px;margin:6px 0 14px}
+.kv .k{color:var(--ink-weak)}
+.kv .v{font-family:var(--font-mono);font-size:12.5px;word-break:break-all}
+.pv-body details{margin-top:12px}
+.pv-body summary{color:var(--ink-weak);font-size:12.5px;cursor:pointer}
+.code{font-family:var(--font-mono);font-size:12px;background:var(--surface-2);border-radius:var(--r-m);padding:10px 14px;white-space:pre;overflow:auto;line-height:1.6}
+.code .c{color:var(--ink-code-comment)} .code .s{color:var(--ink-code-string)} .code .k{color:var(--ink-code-keyword)}
+/* 探索の設定（プレビュー列に置き換わる。モーダルにしない） */
+.scan{padding:2px 6px 20px;max-width:760px;font-size:13.5px}
+.scan h3{font-size:15px;margin:0 0 2px;font-weight:650}
+.scan .sc{background:var(--surface-1);border-radius:var(--r-l);padding:12px 18px;margin:12px 0}
+.scan .sc h4{margin:0 0 2px;font-size:14px;font-weight:650}
+.scan .sc .p{font-size:12px;color:var(--ink-weak);margin:0 0 8px;font-family:var(--font-mono)}
+.scan fieldset{border:0;padding:0;margin:8px 0;display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center}
+.scan legend{padding:0;font-size:12px;color:var(--ink-weak);width:100%}
+.scan label{display:inline-flex;gap:6px;align-items:center;font-size:13px}
+.scan textarea{width:100%;background:var(--surface-paper);border-radius:var(--r-m);padding:8px 12px;font-family:var(--font-mono);font-size:12px;resize:vertical}
+.scan .acts{display:flex;gap:2px;margin-top:6px}
+.scan .acts button{padding:5px 14px;font-size:13px}
+/* states demo */
+.demo{background:var(--surface-1);border-radius:var(--r-l);padding:10px;margin-top:14px;max-width:420px}
+/* entry from conversation */
+.entry .top{padding:14px 22px 8px}
+.entry .title{flex:1;font-size:15px;font-weight:650}
+.entry .ctxlink{font-size:12.5px;color:var(--ink-weak);display:inline-flex;gap:6px;align-items:center;padding:4px 12px}
+.entry .ctxlink:hover{color:var(--ink)}
+.entry .ctxlink .n{font-family:var(--font-mono)}
+.entry .thread{padding:0 26px 26px 0;display:grid;grid-template-columns:72px minmax(0,1fr)}
+.entry .gutter{position:relative}
+.entry .gutter::before{content:"";position:absolute;left:71px;top:0;bottom:0;width:var(--hair);background:var(--line)}
+.entry .sys{font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.7;padding:8px 0 0 16px}
+.entry .sys b{color:var(--ink);font-weight:600}
+.entry .sys a{color:var(--ink-blue);text-decoration:underline;text-decoration-color:var(--line-strong)}
+</style></head>
+<body>
+<div class="topnav"><b>Pleiad · コンテキスト画面</b><span class="muted" style="font-size:12px">2026-09-15 · 認識合わせ用モックアップ</span>
+  <div class="seg" role="group" aria-label="配色"><button class="on" data-t="light" type="button">明</button><button data-t="dark" type="button">暗</button></div></div>
+<div class="wrap">
+<h1>設定をメインパネルへ。コンテキストはエクスプローラーで見る</h1>
+<p class="lead">設定ダイアログをやめ、画面全体を設定に切り替える（左列が設定メニュー、右列がページ）。コンテキストの画面は「この会話の作業ディレクトリ」を自動で使い、開いた時点でスキャンし、見つかった指示・Skills・MCP をフォルダー階層で並べる。押すと右に中身が出る。</p>
+<div class="toc"><a href="#s1">1 決めたこと</a><a href="#s2">2 全体</a><a href="#s3">3 コンテキスト画面（操作できる）</a><a href="#s4">4 ツリー部品</a><a href="#s5">5 プレビューの種類</a><a href="#s6">6 会話からの入口</a><a href="#s7">7 確認したいこと</a></div>
+
+<section id="s1"><div class="sh"><span class="num">01</span><h2>決めたこと</h2></div>
+<ul class="tight">
+  <li><b>設定はモーダルではなく画面全体。</b> 開くと脇のセッション一覧は消え、その列に設定のメニュー（エージェント設定／使用量／外観／コンテキスト／アプリ情報・更新）が入る。右の列が選んだページ。今のダイアログの 2 列構成をそのまま画面に広げた形で、pill 列は置かない。戻るのは左列の上の「← 会話に戻る」か Esc</li>
+  <li><b>場所の入力欄は無くす。</b> コンテキストの画面は今見ているセッションの作業ディレクトリを使う。セッションを選んでいなければ入力欄の値。見出しに「適用場所」として読み取り専用で出す</li>
+  <li><b>開いたら自動でスキャン。</b>「この場所の設定を開く」「保存済み設定でスキャン」の 2 ボタンをやめる。結果は場所ごとに覚えておき、次に開いたときは前回の結果を先に出してから裏で更新する</li>
+  <li><b>結果はエクスプローラー風のツリー。</b> 一覧の根は「ユーザー」（<code>~</code>）と「この場所」（Git ルート）の 2 つ。追加ルートがあれば 3 つ目以降に並ぶ。実際のフォルダー階層で並べ、見つかったファイルだけを出す（空のフォルダーは出ない）</li>
+  <li><b>設定ファイルの中の登録も階層で出す。</b> <code>.mcp.json</code> や <code>config.toml</code> は展開でき、その中の MCP サーバーが子として並ぶ。ファイルを押せば全文、サーバーを押せばその 1 件</li>
+  <li><b>プレビューは右の列。</b> md はレンダリング（会話の返答と同じ描画 <code>render.mjs</code> を使う）。SKILL.md の frontmatter は表にして本文の上に置く。MCP は項目の表 + 元の記述。JSON / TOML はコードとして色付け</li>
+  <li><b>探索の設定（探索元・対象・追加ルート・除外・読み込み担当）は同じ画面の中で切り替える。</b> 見出し右の「探索の設定」を押すとプレビューの列がその画面に変わる。モーダルは重ねない</li>
+  <li><b>ツリーは部品として切り出す（<code>web/tree.mjs</code>）。</b> データ → DOM、開閉、選択、キーボード、絞り込みだけを持ち、中身の意味（コンテキスト）は知らない。後で「作業ディレクトリのファイルを見る」「添付を選ぶ」に使い回す</li>
+</ul></section>
+
+<section id="s2"><div class="sh"><span class="num">02</span><h2>全体 — 設定が画面全体に出る</h2></div>
+<p class="note">歯車を押すと、脇のセッション一覧が設定のメニューに、会話が選んだページに入れ替わる。列の幅・面の色・行の高さは脇と同じなので、画面が切り替わった感じは列の中身だけで出る。</p>
+<div class="frame app">
+  <div class="side">
+    <div class="brand"><span class="mark"></span>Pleiad<span class="sp"><button class="btn" type="button" style="font-size:12px;padding:3px 10px 3px 6px;color:var(--ink-weak);display:inline-flex;align-items:center;gap:4px"><svg class="i" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M15 5l-7 7 7 7"/></svg>会話に戻る</button></span></div>
+    <div class="g" style="margin-top:6px">設定</div>
+    <div class="row"><span class="nm">エージェント設定</span></div>
+    <div class="row"><span class="nm">使用量</span></div>
+    <div class="row"><span class="nm">外観</span></div>
+    <div class="row on" style="color:var(--ink-blue);font-weight:600"><span class="nm">コンテキスト</span></div>
+    <div class="row"><span class="nm">アプリ情報・更新</span></div>
+  </div>
+  <div class="pane">
+    <div class="top"><h2>コンテキスト</h2></div>
+    <div class="body" style="font-size:13px;color:var(--ink-weak)">
+      <div class="ctxhead"><span>適用場所</span><span class="where">D:\work\my-app</span><span>読み込み担当 <b style="color:var(--ink);font-weight:500">ネイティブ</b></span><span>12 件 · 10:32</span></div>
+      <div class="ctx" style="height:380px">
+        <div class="explorer" style="padding:10px"><div class="tools"><div class="q">検索</div></div><div class="chips"><button class="on" type="button">指示</button><button class="on" type="button">Skills</button><button class="on" type="button">MCP</button></div><div style="padding:6px 8px;font-size:12.5px;color:var(--ink-weak)">（§3 に実物）</div></div>
+        <div class="preview" style="color:var(--ink-weak);font-size:12.5px;padding:6px">（§3 に実物）</div>
+      </div>
+    </div>
+  </div>
+</div>
+<ul class="tight" style="margin-top:14px">
+  <li>左列は脇と同じ面（<code>--surface-0</code> + 点のグリッド）。ロゴの位置に「← 会話に戻る」（文字だけ、触れると面）。Esc でも戻る。戻ると開いていたセッションがそのまま出る</li>
+  <li>メニューの行は脇のセッションの行と同じ高さ・字下げ。選んでいるページだけ白へ持ち上がり青い太字（今のダイアログの左メニューと同じ規則）</li>
+  <li>右列の上にはページの見出し（「コンテキスト」）だけ。「設定」の見出しは左列に 1 つ</li>
+  <li>他のページ（エージェント設定・使用量・外観・更新）は中身を変えない。置き場所だけが変わる。狭い画面（&lt;760px）では脇と同じく左列が畳まれ、見出しの左に戻るボタンが出る</li>
+</ul></section>
+
+<section id="s3"><div class="sh"><span class="num">03</span><h2>コンテキスト画面（操作できる）</h2></div>
+<p class="note">ツリーの行を押す・矢印キーで動く・検索に打つ・種類の chip を切る・「探索の設定」を押す、が動く。データは agent-host の実際の配置を想定したダミー。</p>
+<div class="frame" style="height:640px;display:flex;flex-direction:column">
+  <div class="pane" style="flex:1;min-height:0">
+    <div class="top"><h2>コンテキスト</h2><span class="muted" style="font-size:12px">（右の列だけ。左の設定メニューは §2）</span></div>
+    <div class="body">
+      <div class="ctxhead">
+        <span>適用場所</span><span class="where" title="この会話の作業ディレクトリ。Git ルートは同じ">D:\work\my-app</span>
+        <span>読み込み担当 <b style="color:var(--ink);font-weight:500">ネイティブ</b></span>
+        <span id="count">12 件 · 10:32 にスキャン</span>
+        <span class="act"><button class="btn" type="button" id="rescan">再スキャン</button><button class="btn" type="button" id="scanToggle">探索の設定</button></span>
+      </div>
+      <div class="ctx">
+        <div class="explorer">
+          <div class="tools"><div class="q"><input id="q" placeholder="名前で絞る" aria-label="名前で絞る"></div></div>
+          <div class="chips" id="chips" role="group" aria-label="種類"><button class="on" type="button" data-k="instruction">指示</button><button class="on" type="button" data-k="skill">Skills</button><button class="on" type="button" data-k="mcp">MCP</button></div>
+          <div class="tree" id="tree" role="tree" tabindex="0" aria-label="見つかったコンテキスト"></div>
+        </div>
+        <div class="preview" id="preview"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="cols">
+  <div><h3 style="font-size:15px;margin:0 0 4px">見出し行</h3><ul class="tight">
+    <li><b>適用場所</b>は読み取り専用。Git ルートと違うときは <code>D:\work\my-app › temporary\worktrees\x</code> のように根からの相対を添える（探索は根から作業場所まで）</li>
+    <li><b>読み込み担当</b>はスキャンの結果ではなく、この会話の方針。「共通読み込み」の会話では「Pleiad（指示・Skills）」のように種類を添え、固定された会話では「固定 · 9/14 10:02」と時刻を添える</li>
+    <li><b>件数と時刻</b>は等幅。スキャン中は件数の代わりに走る弧（§6 の印）</li>
+    <li>「再スキャン」「探索の設定」は文字だけ。探索の設定を開いている間はその文字が青くなる</li>
+  </ul></div>
+  <div><h3 style="font-size:15px;margin:0 0 4px">左の列（ツリー）</h3><ul class="tight">
+    <li>面は <code>--surface-1</code>、角丸 20。選んだ行は白（<code>--surface-paper</code>）へ持ち上がる。脇のセッション一覧と同じ約束</li>
+    <li>根の行は太字 + 等幅のパス。根は畳めない（畳むと何も残らない）</li>
+    <li>フォルダーは輪郭のフォルダー、指示は文書、Skill は星、MCP はプラグ。線幅 1.6 の弱い色。右端に「除外」「無効」「override を優先」の一語（候補のときは何も出ない）</li>
+    <li>除外されたものは打ち消し線 + 弱い色で残す（消すと「除外したことを忘れる」）</li>
+    <li>検索は一致した行を青くし、その祖先だけ残す。空になったら「一致なし」の一行</li>
+  </ul></div>
+</div>
+</section>
+
+<section id="s4"><div class="sh"><span class="num">04</span><h2>ツリー部品 <span class="mono muted" style="font-size:13px;font-weight:400">web/tree.mjs</span></h2></div>
+<p class="note">エクスプローラーの左側だけを部品にする。データ → DOM、開閉、選択、キーボード、絞り込み。行の中身（アイコン・右端の一語）は呼び出し側が関数で渡す。コンテキスト以外にも、作業ディレクトリのファイル閲覧・添付の選択・分岐の一覧に使える。</p>
+<div class="cols">
+<div>
+<table class="spec"><tr><th>項目</th><th>内容</th></tr>
+<tr><td>データ</td><td><code>{ id, name, children?, open?, data }</code> の配列。<code>children</code> が無ければ葉。<code>data</code> は部品が触らない</td></tr>
+<tr><td>生成</td><td><code>createTree(root, { nodes, render(node, el), onSelect, onOpen })</code>。<code>render</code> で行の中身を描く。無ければ名前だけ</td></tr>
+<tr><td>DOM</td><td><code>&lt;div role=tree tabindex=0&gt;&lt;ul&gt;&lt;li role=treeitem aria-expanded aria-selected aria-level&gt;</code>。フォーカスは tree 1 つ（roving tabindex を持たない。行が多くても tab 1 回で抜けられる）</td></tr>
+<tr><td>開閉</td><td>chevron を押す、または行をダブルクリック。行の単押しは選択のみ。<code>open</code> の状態は呼び出し側が localStorage に持てるよう <code>tree.state()</code> で返す</td></tr>
+<tr><td>キーボード</td><td>↑↓ 移動、→ 開く／子へ、← 閉じる／親へ、Home / End、Enter = onSelect を再送（プレビューを更新）、文字 = その文字で始まる次の行へ</td></tr>
+<tr><td>絞り込み</td><td><code>tree.filter(pred)</code>。一致した行と祖先だけ表示、一致行に <code>.hit</code>。祖先は自動で開く。解除で元の開閉に戻す</td></tr>
+<tr><td>大きさ</td><td>行の高さ 28、字下げ 16（脇のグループの行と同じ）。chevron 10px、アイコン 16px、隙間 5px</td></tr>
+<tr><td>動き</td><td>chevron の回転 120ms。開閉で高さはアニメーションしない（長い一覧で目が追えない）。<code>prefers-reduced-motion</code> で 0</td></tr>
+</table>
+</div>
+<div>
+<h3 style="font-size:15px;margin:0 0 4px">行の状態</h3>
+<div class="demo"><div class="tree" role="tree" id="demoTree"></div></div>
+<ul class="tight">
+  <li>枠線・片側の線は使わない。選択は白い面と 1px の影だけ</li>
+  <li>今フォーカスしている行は 2px の青い輪（部品の外側と同じ規則）</li>
+  <li>件数はフォルダーの右端に等幅で出せる（呼び出し側が render で決める）。コンテキストでは根だけに出す</li>
+</ul>
+</div>
+</div>
+</section>
+
+<section id="s5"><div class="sh"><span class="num">05</span><h2>プレビューの種類</h2></div>
+<table class="spec"><tr><th>押したもの</th><th>上（見出し）</th><th>本文</th><th>操作</th></tr>
+<tr><td>指示ファイル（<code>CLAUDE.md</code> <code>AGENTS.md</code>）</td><td>名前 + 「指示」、パス、出典・適用範囲・状態・大きさ</td><td>md をレンダリング。<code>@path</code> の参照先があれば末尾に一覧（押すとその行へ）</td><td>除外する／除外を解除、パスをコピー</td></tr>
+<tr><td>Skill（<code>SKILL.md</code>）</td><td>名前は frontmatter の <code>name</code>。「Skill」</td><td>frontmatter を表にして上に置き、本文を md でレンダリング。同じ名前が複数あれば「重複候補」の一行と相手へのリンク</td><td>同上</td></tr>
+<tr><td>MCP の登録（サーバー 1 件）</td><td>サーバー名 + 「MCP」。親の設定ファイルのパス</td><td>接続方式・コマンド・引数・env のキー（値は伏せる）・enabled を表に。下に元の記述（JSON / TOML）を「元の記述」の details に</td><td>除外する、無効なら「元設定で無効」の説明</td></tr>
+<tr><td>設定ファイル（<code>.mcp.json</code> <code>config.toml</code> <code>.claude.json</code>）</td><td>ファイル名 + 「設定」</td><td>ファイル全文をコードとして。MCP 以外の項目もそのまま見える（変えない）</td><td>パスをコピー</td></tr>
+<tr><td>フォルダー</td><td>名前、パス</td><td>直下の一覧（同じツリーの行と同じ見た目）。押すとそこを選ぶ</td><td>—</td></tr>
+<tr><td>スキャンの上限・読めなかったもの</td><td>ツリーの最下部に「読めなかった 2 件」の行</td><td>押すとパスと理由の一覧</td><td>再スキャン</td></tr>
+</table>
+<ul class="tight" style="margin-top:14px">
+  <li>md の描画は会話の返答と同じ <code>renderMarkdown</code>。見出し・コード・表の見た目を二重に持たない</li>
+  <li>本文の幅は返答と同じ最大 760px。長いファイルはプレビューの列だけがスクロールし、見出し行は残る</li>
+  <li>「除外する」は探索の設定の除外パスに 1 行足すだけ。押すと行が打ち消しになり、見出し右の件数が減る。取り消しは同じ場所の「除外を解除」</li>
+</ul>
+</section>
+
+<section id="s6"><div class="sh"><span class="num">06</span><h2>会話からの入口</h2></div>
+<p class="note">「この会話が何を読んだか」は会話側にも出す。タイトル行の右に小さく件数、押すと設定のコンテキスト画面（この会話の作業ディレクトリ）が開く。共通読み込みの会話では最初のターンの下に一行の記録が残る。</p>
+<div class="frame entry" style="height:230px;display:flex;flex-direction:column">
+  <div class="top pane" style="flex-direction:row"><span class="title">コンテキスト画面の設計</span><span class="btn-icon" style="color:var(--ink-weak)"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg></span><button class="btn ctxlink" type="button" title="この会話が読み込むコンテキスト"><svg class="i" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M4 4h9l5 5v11H4z"/><path d="M13 4v5h5"/></svg>コンテキスト <span class="n">12</span></button></div>
+  <div class="thread"><div class="gutter"></div><div class="sys">読み込んだコンテキスト → <b>指示 3 · Skills 7 · MCP 2</b>（Pleiad が共通読み込み・9/14 10:02 に固定）<a href="#s3">中身を見る</a></div></div>
+</div>
+<ul class="tight" style="margin-top:14px">
+  <li>件数のボタンは弱い色。触れると本文色。既定から外れた読み込み（共通読み込み）のときだけ青</li>
+  <li>会話の一行は「作業ディレクトリ → …」の既存の sys 行と同じ書式。ネイティブ読み込みの会話では出さない（Pleiad が把握していないものを断言しない）</li>
+  <li>固定された会話でファイルが変わっていれば、件数の隣に「変更あり」の一語。押した先の見出し行に「9/14 に固定 · CLAUDE.md が変更されています」</li>
+</ul>
+</section>
+
+<section id="s7"><div class="sh"><span class="num">07</span><h2>確認したいこと</h2></div>
+<ul class="tight">
+  <li><s class="muted">設定の切替は上の pill 列でよいか</s> → <b>pill はやめ、設定中は脇のセッション一覧を出さず、その列を設定メニューにする</b>（2026-09-15 決定）</li>
+  <li><b>ツリーの根は「ユーザー」「この場所」の 2 つでよいか。</b> 別案は出典（Claude 形式／Codex 形式／共通）で分ける。フォルダーの実体と一致する前者が「エクスプローラー的」だと考えた。出典はプレビューの見出しで分かる</li>
+  <li><b>設定ファイルの中の MCP 登録を「子」として展開する扱い。</b> ファイルとしての実体は無いが、探せる単位としては 1 件ずつなので子にした。違和感があればファイルを押したときの表の中だけにする</li>
+  <li><b>「除外する」をプレビューから直接できてよいか。</b> 探索の設定に行かずに 1 押しで除外できる。誤操作は同じ場所で戻せる</li>
+  <li><b>他の設定ページも同じ画面に移す</b>（エージェント設定・使用量・外観・更新）。中身は変えない。初回の「Pleiad へようこそ」だけは dialog のまま残す</li>
+</ul>
+</section>
+</div>
+
+<script>
+(() => {
+  // ---- 配色 ----
+  for (const b of document.querySelectorAll('.topnav .seg button')) b.onclick = () => {
+    document.documentElement.dataset.theme = b.dataset.t;
+    for (const x of b.parentElement.children) x.classList.toggle('on', x === b);
+  };
+  // ---- アイコン ----
+  const ICON = {
+    chev: '<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 1.5 7 5l-3.5 3.5"/></svg>',
+    folder: '<svg class="i" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2h9A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>',
+    instruction: '<svg class="i" viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5z"/><path d="M14 3v5h5M8 12h8M8 16h6"/></svg>',
+    skill: '<svg class="i" viewBox="0 0 24 24"><path d="M12 3l2.1 5.7L20 11l-5.9 2.3L12 19l-2.1-5.7L4 11l5.9-2.3z"/></svg>',
+    mcp: '<svg class="i" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v4a6 6 0 0 1-12 0zM12 18v3"/></svg>',
+    config: '<svg class="i" viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5z"/><path d="M14 3v5h5"/><path d="M9 13l-2 2 2 2M15 13l2 2-2 2"/></svg>',
+    root: '<svg class="i" viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>',
+    copy: '<svg class="i" viewBox="0 0 24 24" style="width:13px;height:13px"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>',
+  };
+  const KIND = { instruction: '指示', skill: 'Skill', mcp: 'MCP', config: '設定', folder: 'フォルダー' };
+  const SOURCE = { common: '共通配置', claude: 'Claude 形式', codex: 'Codex 形式', procway: 'procway-code MCP' };
+  const STATUS = { excluded: '除外', shadowed: 'override を優先', disabled: '無効' };
+  // ---- ダミーの中身 ----
+  const CLAUDE_MD = `# ユーザー共通の作業方針
+
+## サブエージェントとモデルの使い分け
+
+- 複数ステップの実装・調査・レビューは main で直接やらず、サブエージェントに委譲する。main は方針決定・計画・委譲・結果検証に徹する。
+- 単発のコマンド実行や 1〜2 ファイルの小さな編集は委譲せず main が直接行う（委譲の固定費の方が高い）。
+
+## Windows 環境でのコマンド実行
+
+- Bash tool の \`/tmp\` と Windows の Python は**別のパスを見る**。両方から見えるパスに置く。
+- python で日本語を print する前に \`PYTHONIOENCODING=utf-8\` を付ける。
+
+\`\`\`sh
+cat file | PYTHONUTF8=1 python3 script.py
+\`\`\`
+`;
+  const AGENTS_MD = `# agent-host
+
+- 最新のローカル \`main\` から、作業ごとに専用ブランチと worktree を作成する。\`main\` の作業ディレクトリで直接修正しない。
+- worktree は \`temporary/worktrees/<作業名>\` に置く。操作時は確認済みの絶対パスを使う。
+- 検証が通った変更をコミットし、メインの作業ディレクトリで \`main\` にマージする。
+
+## 検証
+
+1. \`npm test\`（lint-design を含む）
+2. fake backend で UI を確認する（\`docs/fake-backend.md\`）
+3. マージ後は \`npm start\` で起動して応答を確認する
+`;
+  const DAILY = { fm: { name: 'weekly-summary', description: 'その週の作業のまとめの下書きを作る。課題のチェックリストを正典に、3 ブロックの定型で組み立てる。' },
+    body: `# 週次まとめの下書き
+
+## 手順
+
+1. 課題管理から自分の担当分を取る
+2. 本文のチェックリスト \`- [x] 工程【M/D】\` を今週の日付で拾う
+3. git・gh の今週の活動と突き合わせて計上漏れを出す
+
+## 出力の形
+
+> 終わったこと / 期日を変えたもの / 次にやること
+
+差分の書き込みは**承認されたものだけ**。
+` };
+  const REVIEW = { fm: { name: 'review-changes', description: '成果物（PR 本文・commit・お知らせ・仕様書・UI）を確定する前に見直し、目的に寄与しない要素を取り除く。' },
+    body: `# 成果物の見直し
+
+対話の名残・内部ツール名・AI セッションへの言及・デバッグ残骸・意味の薄い飾りを、目的単位で並列に検査して洗い出す。
+
+- PR 本文・タイトル
+- commit メッセージ
+- リリースノート
+` };
+  const RUN = { fm: { name: 'run', description: 'このプロジェクトのアプリを起動して変更を確かめる。' }, body: `# run
+
+\`npm start\` で起動し、\`http://localhost:3939\` を開く。fake backend は \`PLY_FAKE=1\`。
+` };
+  const VIS = { fm: { name: 'visualize', description: 'HTML の断片を作業ディレクトリに書き、visualize 参照を独立した行に置く。' }, body: `# Visualize
+
+1ファイル 1 MiB、1ターン 32 参照まで。fetch・XHR・親フレームへのアクセスは無い。
+` };
+  const MCP_JSON = `{
+  "mcpServers": {
+    "tracker-mcp": {
+      "command": "npx",
+      "args": ["-y", "example-tracker-mcp"],
+      "env": { "TRACKER_CLIENT_ID": "…", "TRACKER_CLIENT_SECRET": "…" }
+    },
+    "sketch": { "command": "sketch-mcp", "args": [] }
+  }
+}`;
+  const CODEX_TOML = `[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+enabled = false
+
+[mcp_servers.playwright]
+command = "npx"
+args = ["@playwright/mcp@latest"]
+`;
+  const PLY_MCP_JSON = `{
+  "mcpServers": {
+    "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] }
+  }
+}`;
+  const mcp = (name, o) => ({ kind: 'mcp', name, ...o });
+  // ---- ツリーのデータ（実際は scanContext の entries を階層に組み直す） ----
+  const nodes = [
+    { name: 'ユーザー', path: '~', root: true, open: true, children: [
+      { name: '.claude', children: [
+        { name: 'CLAUDE.md', kind: 'instruction', source: 'claude', scope: 'user', bytes: 4210, md: CLAUDE_MD },
+        { name: 'skills', children: [
+          { name: 'weekly-summary', children: [{ name: 'SKILL.md', kind: 'skill', source: 'claude', scope: 'user', bytes: 2980, skill: DAILY }] },
+          { name: 'find-skills', children: [{ name: 'SKILL.md', kind: 'skill', source: 'claude', scope: 'user', status: 'excluded', bytes: 1200, skill: { fm: { name: 'find-skills', description: 'skill を探して入れる' }, body: '# find-skills\n\n除外されている。' } }] },
+          { name: 'review-changes', children: [{ name: 'SKILL.md', kind: 'skill', source: 'claude', scope: 'user', bytes: 3320, skill: REVIEW }] },
+        ] },
+      ] },
+      { name: '.claude.json', kind: 'config', source: 'claude', scope: 'user', code: MCP_JSON, lang: 'json', children: [
+        mcp('tracker-mcp', { source: 'claude', scope: 'user', transport: 'stdio', command: 'npx', args: ['-y', 'example-tracker-mcp'], env: ['TRACKER_CLIENT_ID', 'TRACKER_CLIENT_SECRET'], raw: '"tracker-mcp": {\n  "command": "npx",\n  "args": ["-y", "example-tracker-mcp"],\n  "env": { "TRACKER_CLIENT_ID": "…", "TRACKER_CLIENT_SECRET": "…" }\n}' }),
+        mcp('sketch', { source: 'claude', scope: 'user', transport: 'stdio', command: 'sketch-mcp', args: [], env: [], raw: '"sketch": { "command": "sketch-mcp", "args": [] }' }),
+      ] },
+      { name: '.codex', children: [
+        { name: 'AGENTS.md', kind: 'instruction', source: 'codex', scope: 'user', bytes: 860, md: '# Codex 共通の指示\n\n- 日本語で答える\n- 変更は小さく' },
+        { name: 'config.toml', kind: 'config', source: 'codex', scope: 'user', code: CODEX_TOML, lang: 'toml', children: [
+          mcp('context7', { source: 'codex', scope: 'user', status: 'disabled', transport: 'stdio', command: 'npx', args: ['-y', '@upstash/context7-mcp'], env: [], raw: '[mcp_servers.context7]\ncommand = "npx"\nargs = ["-y", "@upstash/context7-mcp"]\nenabled = false' }),
+          mcp('playwright', { source: 'codex', scope: 'user', status: 'shadowed', transport: 'stdio', command: 'npx', args: ['@playwright/mcp@latest'], env: [], raw: '[mcp_servers.playwright]\ncommand = "npx"\nargs = ["@playwright/mcp@latest"]', shadow: 'D:\\work\\my-app\\.mcp.json の playwright を優先' }),
+        ] },
+      ] },
+    ] },
+    { name: 'この場所', path: 'D:\\work\\my-app', root: true, open: true, children: [
+      { name: 'AGENTS.md', kind: 'instruction', source: 'common', scope: 'directory', bytes: 1730, md: AGENTS_MD },
+      { name: '.agents', children: [{ name: 'skills', children: [
+        { name: 'visualize', children: [{ name: 'SKILL.md', kind: 'skill', source: 'common', scope: 'directory', bytes: 1480, skill: VIS }] },
+      ] }] },
+      { name: '.claude', children: [{ name: 'skills', children: [
+        { name: 'run', children: [{ name: 'SKILL.md', kind: 'skill', source: 'claude', scope: 'directory', bytes: 640, skill: RUN }] },
+      ] }] },
+      { name: '.mcp.json', kind: 'config', source: 'claude', scope: 'directory', code: PLY_MCP_JSON, lang: 'json', children: [
+        mcp('playwright', { source: 'claude', scope: 'directory', transport: 'stdio', command: 'npx', args: ['@playwright/mcp@latest'], env: [], raw: '"playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] }' }),
+      ] },
+    ] },
+    { name: '追加ルート', path: 'D:\\work\\team-skills', root: true, open: false, children: [
+      { name: 'chat-message', children: [{ name: 'SKILL.md', kind: 'skill', source: 'common', scope: 'directory', bytes: 2100, skill: { fm: { name: 'chat-message', description: 'チャットに貼る文面を作る' }, body: '# chat-message\n\n読む人と目的を決めてから素テキストで組む。' } }] },
+    ] },
+  ];
+  // 親パス・id を付ける
+  let seq = 0;
+  (function walk(list, parent, base) {
+    for (const n of list) {
+      n.id = 'n' + (seq++); n.parent = parent;
+      n.fullPath = n.root ? n.path : (n.kind === 'mcp' ? parent.fullPath : base + '\\' + n.name);
+      if (n.children) walk(n.children, n, n.fullPath);
+    }
+  })(nodes, null, '');
+  const leafKind = n => n.kind ?? 'folder';
+  const isExcl = n => n.status === 'excluded';
+
+  // ==== tree.mjs 相当（最小） ====
+  function createTree(root, { nodes, render, onSelect }) {
+    let selected = null, filter = null;
+    const rows = new Map();
+    function visible(n) { return !filter || filter.keep.has(n); }
+    function build(list, level) {
+      const ul = document.createElement('ul'); ul.setAttribute('role', 'group');
+      for (const n of list) {
+        if (!visible(n)) continue;
+        const li = document.createElement('li'); li.setAttribute('role', 'none');
+        const row = document.createElement('div'); row.className = 'node'; row.setAttribute('role', 'treeitem'); row.setAttribute('aria-level', level); row.dataset.id = n.id;
+        const open = filter ? true : (n.open ?? false);
+        if (n.children) row.setAttribute('aria-expanded', open);
+        if (n === selected) row.classList.add('sel');
+        if (filter?.hit.has(n)) row.classList.add('hit');
+        const chev = document.createElement('span'); chev.className = 'chev' + (n.children && !n.root ? '' : ' none'); chev.innerHTML = ICON.chev;
+        chev.onclick = e => { e.stopPropagation(); if (n.root) return; n.open = !open; redraw(); };
+        row.append(chev); render(n, row);
+        row.onclick = () => select(n); row.ondblclick = () => { if (n.children && !n.root) { n.open = !(n.open ?? false); redraw(); } };
+        li.append(row); rows.set(n, row);
+        if (n.children && open) li.append(build(n.children, level + 1));
+        ul.append(li);
+      }
+      return ul;
+    }
+    function redraw() { rows.clear(); root.replaceChildren(build(nodes, 1)); if (filter && !rows.size) { const e = document.createElement('div'); e.className = 'node'; e.style.color = 'var(--ink-weak)'; e.textContent = '一致なし'; root.append(e); } }
+    function select(n) { selected = n; for (const [k, r] of rows) r.classList.toggle('sel', k === n); root.setAttribute('aria-activedescendant', rows.get(n)?.dataset.id ?? ''); rows.get(n)?.scrollIntoView({ block: 'nearest' }); onSelect?.(n); }
+    function flat() { return [...rows.keys()]; }
+    root.addEventListener('keydown', e => {
+      const list = flat(); let i = list.indexOf(selected);
+      if (e.key === 'ArrowDown') { select(list[Math.min(list.length - 1, i + 1)] ?? list[0]); }
+      else if (e.key === 'ArrowUp') { select(list[Math.max(0, i - 1)] ?? list[0]); }
+      else if (e.key === 'Home') select(list[0]); else if (e.key === 'End') select(list[list.length - 1]);
+      else if (e.key === 'ArrowRight' && selected?.children) { if (!selected.root && !(selected.open ?? false)) { selected.open = true; redraw(); } else select(selected.children.find(visible) ?? selected); }
+      else if (e.key === 'ArrowLeft' && selected) { if (selected.children && !selected.root && (selected.open ?? false)) { selected.open = false; redraw(); } else if (selected.parent) select(selected.parent); }
+      else if (e.key === 'Enter') onSelect?.(selected);
+      else return; e.preventDefault();
+    });
+    redraw();
+    return {
+      select, redraw,
+      filter(pred) {
+        if (!pred) { filter = null; redraw(); return; }
+        const keep = new Set(), hit = new Set();
+        (function walk(list) { for (const n of list) { if (n.children) walk(n.children); const h = pred(n); if (h) hit.add(n); if (h || (n.children?.some(c => keep.has(c)))) { keep.add(n); } } })(nodes);
+        // 祖先も残す（keep の伝播は walk 内で子→親の順に行う）
+        filter = { keep, hit }; redraw();
+      },
+    };
+  }
+  // ==== コンテキスト用の行 ====
+  function renderRow(n, row) {
+    const ic = document.createElement('span'); ic.className = 'ic'; ic.innerHTML = ICON[n.root ? 'root' : leafKind(n)];
+    const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = n.name;
+    row.append(ic, nm);
+    if (n.root) { row.classList.add('root'); const p = document.createElement('span'); p.className = 'pth'; p.textContent = n.path; row.append(p); const c = document.createElement('span'); c.className = 'cnt st'; c.textContent = countLeaves(n); row.append(c); return; }
+    if (isExcl(n)) row.classList.add('dim');
+    if (n.status && STATUS[n.status]) { const s = document.createElement('span'); s.className = 'st'; s.textContent = STATUS[n.status]; row.append(s); }
+  }
+  function countLeaves(n) { let c = 0; (function w(x) { if (x.kind && x.kind !== 'config' && !isExcl(x)) c++; x.children?.forEach(w); })(n); return c; }
+
+  // ==== markdown（モック用の最小。実装は render.mjs を使う） ====
+  const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const inline = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  function md(src) {
+    const out = []; const lines = src.split('\n'); let i = 0;
+    while (i < lines.length) {
+      const l = lines[i];
+      if (l.startsWith('```')) { const buf = []; i++; while (i < lines.length && !lines[i].startsWith('```')) buf.push(lines[i++]); i++; out.push(`<pre><code>${esc(buf.join('\n'))}</code></pre>`); continue; }
+      const h = /^(#{1,3}) (.*)/.exec(l); if (h) { out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); i++; continue; }
+      if (/^[-*] /.test(l)) { const items = []; while (i < lines.length && /^[-*] /.test(lines[i])) items.push(`<li>${inline(lines[i++].slice(2))}</li>`); out.push(`<ul>${items.join('')}</ul>`); continue; }
+      if (/^\d+\. /.test(l)) { const items = []; while (i < lines.length && /^\d+\. /.test(lines[i])) items.push(`<li>${inline(lines[i++].replace(/^\d+\. /, ''))}</li>`); out.push(`<ol>${items.join('')}</ol>`); continue; }
+      if (l.startsWith('> ')) { out.push(`<blockquote>${inline(l.slice(2))}</blockquote>`); i++; continue; }
+      if (!l.trim()) { i++; continue; }
+      const buf = []; while (i < lines.length && lines[i].trim() && !/^(#|[-*] |\d+\. |```|> )/.test(lines[i])) buf.push(lines[i++]); out.push(`<p>${inline(buf.join(' '))}</p>`);
+    }
+    return out.join('');
+  }
+  function code(src, lang) {
+    let s = esc(src);
+    s = s.replace(/(#.*$)/gm, '<span class="c">$1</span>').replace(/("[^"]*")/g, '<span class="s">$1</span>').replace(/\b(true|false|null|enabled|command|args|env)\b/g, '<span class="k">$1</span>');
+    return `<div class="code" aria-label="${lang}">${s}</div>`;
+  }
+  // ==== プレビュー ====
+  const preview = document.getElementById('preview');
+  function meta(pairs) { return `<div class="pv-meta">${pairs.filter(p => p[1] != null).map(([k, v]) => `<span>${k} <b>${esc(String(v))}</b></span>`).join('')}</div>`; }
+  function head(n, title, kind, extra = []) {
+    const size = n.bytes ? `${(n.bytes / 1024).toFixed(1)} KB` : null;
+    return `<div class="pv-head"><h3>${esc(title)} <span class="kind">${kind}</span></h3>
+      <div class="path">${esc(n.fullPath)} <button class="btn btn-icon" type="button" title="パスをコピー" aria-label="パスをコピー" style="width:22px;height:22px">${ICON.copy}</button></div>
+      ${meta([['出典', SOURCE[n.source]], ['適用範囲', n.scope === 'user' ? 'ユーザー共通' : n.scope === 'directory' ? 'D:\\work\\my-app' : null], ['状態', n.status ? STATUS[n.status] : (n.kind && n.kind !== 'config' ? '候補' : null)], ['大きさ', size], ...extra])}
+      ${n.kind && n.kind !== 'config' ? `<div class="pv-act"><button class="btn btn-quiet" type="button" data-excl>${isExcl(n) ? '除外を解除' : '除外する'}</button></div>` : ''}</div>`;
+  }
+  function show(n) {
+    let html;
+    if (n.root) html = `<div class="pv-head"><h3>${esc(n.name)} <span class="kind">根</span></h3><div class="path">${esc(n.path)}</div></div><div class="pv-body md"><p class="muted">${countLeaves(n)} 件。左で開いて選ぶか、ここから選ぶ。</p>${folderList(n)}</div>`;
+    else if (!n.kind) html = `<div class="pv-head"><h3>${esc(n.name)} <span class="kind">フォルダー</span></h3><div class="path">${esc(n.fullPath)}</div></div><div class="pv-body md">${folderList(n)}</div>`;
+    else if (n.kind === 'instruction') html = head(n, n.name, '指示') + `<div class="pv-body md">${md(n.md)}</div>`;
+    else if (n.kind === 'skill') html = head(n, n.skill.fm.name, 'Skill') + `<div class="pv-body md"><div class="fm">${Object.entries(n.skill.fm).map(([k, v]) => `<span class="k">${k}</span><span>${esc(v)}</span>`).join('')}</div>${md(n.skill.body)}</div>`;
+    else if (n.kind === 'config') html = head(n, n.name, '設定') + `<div class="pv-body">${code(n.code, n.lang)}</div>`;
+    else if (n.kind === 'mcp') html = head(n, n.name, 'MCP', [['接続方式', n.transport + ' · 未接続']]) + `<div class="pv-body">
+      ${n.shadow ? `<p class="muted" style="font-size:12.5px;margin:0 0 8px">${esc(n.shadow)}</p>` : ''}${n.status === 'disabled' ? `<p class="muted" style="font-size:12.5px;margin:0 0 8px">元の設定で <code style="font-family:var(--font-mono)">enabled = false</code>。Pleiad は変えない。</p>` : ''}
+      <div class="kv"><span class="k">command</span><span class="v">${esc(n.command)}</span><span class="k">args</span><span class="v">${esc(n.args.join(' ') || '—')}</span><span class="k">env</span><span class="v">${n.env.length ? n.env.map(e => esc(e) + '=••••').join('  ') : '—'}</span></div>
+      <details open><summary>元の記述 · ${esc(n.parent.name)}</summary>${code(n.raw, n.parent.lang)}</details></div>`;
+    preview.innerHTML = html;
+    preview.querySelector('[data-excl]')?.addEventListener('click', () => { n.status = isExcl(n) ? undefined : 'excluded'; tree.redraw(); show(n); updateCount(); });
+    for (const b of preview.querySelectorAll('[data-go]')) b.onclick = () => { const t = find(b.dataset.go); openTo(t); tree.select(t); };
+  }
+  function folderList(n) {
+    return `<div class="tree" style="overflow:visible;padding:0;margin-top:6px"><ul>${(n.children ?? []).map(c => `<li><div class="node${isExcl(c) ? ' dim' : ''}" role="button" tabindex="0" data-go="${c.id}"><span class="chev none"></span><span class="ic">${ICON[leafKind(c)]}</span><span class="nm">${esc(c.name)}</span>${c.status ? `<span class="st">${STATUS[c.status]}</span>` : ''}</div></li>`).join('')}</ul></div>`;
+  }
+  function find(id) { let r = null; (function w(l) { for (const n of l) { if (n.id === id) r = n; if (n.children) w(n.children); } })(nodes); return r; }
+  function openTo(n) { for (let p = n.parent; p; p = p.parent) if (!p.root) p.open = true; tree.redraw(); }
+  function updateCount() { let c = 0; for (const r of nodes) c += countLeaves(r); document.getElementById('count').textContent = `${c} 件 · 10:32 にスキャン`; }
+
+  const tree = createTree(document.getElementById('tree'), { nodes, render: renderRow, onSelect: show });
+  // 初期状態: この場所の AGENTS.md を選んでおく
+  const first = find('n0') && nodes[1].children[0]; tree.select(first);
+  // 絞り込み: 名前 × 種類
+  const kinds = new Set(['instruction', 'skill', 'mcp']);
+  function applyFilter() {
+    const q = document.getElementById('q').value.trim().toLowerCase();
+    const all = kinds.size === 3;
+    if (!q && all) return tree.filter(null);
+    tree.filter(n => { if (n.root) return false; const leaf = n.kind && n.kind !== 'config'; if (!leaf) return false; if (!kinds.has(n.kind)) return false; const nm = (n.kind === 'skill' ? n.skill.fm.name : n.name).toLowerCase(); return !q || nm.includes(q) || n.parent?.name.toLowerCase().includes(q); });
+  }
+  document.getElementById('q').oninput = applyFilter;
+  for (const b of document.querySelectorAll('#chips button')) b.onclick = () => { const k = b.dataset.k; if (kinds.has(k)) kinds.delete(k); else kinds.add(k); b.classList.toggle('on', kinds.has(k)); applyFilter(); };
+  // 再スキャン: 件数の代わりに走る弧（ここでは文字で代用）
+  document.getElementById('rescan').onclick = () => { const c = document.getElementById('count'); c.textContent = 'スキャン中…'; setTimeout(updateCount, 700); };
+  // 探索の設定: プレビュー列を置き換える
+  let scanOpen = false, lastNode = first;
+  const SCAN = `<div class="scan"><h3>探索の設定</h3><p class="muted" style="font-size:12.5px;margin:0">スキャンに使う設定。ネイティブのエージェントの設定は変えない。</p>
+    <div class="sc"><h4>読み込み担当</h4><p class="p">新しい会話で誰が読むか。既存の会話は変わらない</p>
+      <fieldset><legend>Pleiad が共通で読み込む種類</legend><label><input type="checkbox">指示</label><label><input type="checkbox">Skills</label><label><input type="checkbox">MCP</label></fieldset></div>
+    <div class="sc"><h4>ユーザースコープ</h4><p class="p">~ · すべての作業場所に共通</p>
+      <fieldset><legend>探索元</legend><label><input type="checkbox" checked>共通配置</label><label><input type="checkbox" checked>Claude 形式</label><label><input type="checkbox" checked>Codex 形式</label><label><input type="checkbox">procway-code MCP</label></fieldset>
+      <fieldset><legend>対象</legend><label><input type="checkbox" checked>指示</label><label><input type="checkbox" checked>Skills</label><label><input type="checkbox" checked>MCP</label></fieldset>
+      <fieldset><legend>追加の作業ルート（1 行に 1 つ）</legend><textarea rows="2" aria-label="追加の作業ルート">D:\\work\\team-skills</textarea></fieldset>
+      <fieldset><legend>除外するファイル・フォルダー（1 行に 1 つ）</legend><textarea rows="2" aria-label="除外するファイル・フォルダー">~\\.claude\\skills\\find-skills</textarea></fieldset>
+      <div class="acts"><button class="btn btn-quiet" type="button">ユーザー設定を保存</button></div></div>
+    <div class="sc"><h4>ディレクトリスコープ</h4><p class="p">D:\\work\\my-app · 設定元：Pleiad の既定</p>
+      <fieldset><legend>探索元</legend><label><input type="checkbox" checked>共通配置</label><label><input type="checkbox" checked>Claude 形式</label><label><input type="checkbox" checked>Codex 形式</label></fieldset>
+      <fieldset><legend>対象</legend><label><input type="checkbox" checked>指示</label><label><input type="checkbox" checked>Skills</label><label><input type="checkbox" checked>MCP</label></fieldset>
+      <fieldset><legend>除外するファイル・フォルダー（1 行に 1 つ）</legend><textarea rows="2" aria-label="除外するファイル・フォルダー"></textarea></fieldset>
+      <div class="acts"><button class="btn btn-quiet" type="button">この場所の設定として保存</button></div></div></div>`;
+  document.getElementById('scanToggle').onclick = e => { scanOpen = !scanOpen; e.currentTarget.classList.toggle('on', scanOpen); if (scanOpen) preview.innerHTML = SCAN; else show(lastNode); };
+  const origShow = show; // 選択したら探索の設定を閉じる
+  tree.select = (s => n => { lastNode = n; scanOpen = false; document.getElementById('scanToggle').classList.remove('on'); s(n); })(tree.select);
+  document.getElementById('tree').addEventListener('click', e => { const r = e.target.closest('.node'); if (r) { lastNode = find(r.dataset.id) ?? lastNode; scanOpen = false; document.getElementById('scanToggle').classList.remove('on'); } });
+
+  // ==== §4 状態の見本 ====
+  const demoNodes = [
+    { name: 'この場所', path: 'D:\\work\\x', root: true, open: true, children: [
+      { name: 'AGENTS.md', kind: 'instruction' },
+      { name: '.claude', open: true, children: [
+        { name: 'skills', open: true, children: [
+          { name: 'run', children: [{ name: 'SKILL.md', kind: 'skill' }] },
+          { name: 'old', children: [{ name: 'SKILL.md', kind: 'skill', status: 'excluded' }] },
+        ] } ] },
+      { name: '.mcp.json', kind: 'config', open: true, children: [{ name: 'playwright', kind: 'mcp' }, { name: 'context7', kind: 'mcp', status: 'disabled' }] },
+      { name: '検索に一致', kind: 'instruction', hit: true },
+    ] } ];
+  let s2 = 0; (function walk(list, parent) { for (const n of list) { n.id = 'd' + (s2++); n.parent = parent; if (n.children) walk(n.children, n); } })(demoNodes, null);
+  const demo = createTree(document.getElementById('demoTree'), { nodes: demoNodes, render: (n, row) => { renderRow(n, row); if (n.hit) row.classList.add('hit'); } });
+  demo.select(demoNodes[0].children[1].children[0].children[0].children[0]);
+})();
+</script>
+</body></html>

@@ -1,0 +1,23 @@
+/* ==================== ツリー（web/tree.mjs） ====================
+   行の高さ 28・字下げ 16 は脇のグループとセッションの行に合わせる。
+   枠線・片側の線は使わない。選んだ行は白い面と 1px の影だけで示す。
+   フォーカスの輪は tree ではなく「今いる行」に出す（フォーカスは tree 1 つなので、
+   輪を外枠に出すとどの行に居るか分からない） */
+.tree{overflow:auto;min-height:0;padding:2px}
+.tree:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.tree:focus-visible:has(.tree-row.sel){outline:none}
+.tree:focus-visible .tree-row.sel{outline:2px solid var(--line-blue);outline-offset:-1px}
+.tree ul{margin:0;padding:0;list-style:none}
+.tree ul ul{padding-left:16px}
+.tree-row{display:flex;align-items:center;gap:5px;min-width:0;min-height:28px;padding:4px 8px 4px 4px;
+  border-radius:var(--r-s);font-size:var(--fs-s);line-height:1.4;color:var(--ink);cursor:default;
+  transition:background-color var(--dur-fast) var(--ease-out)}
+.tree-row:hover{background:var(--surface-2)}
+.tree-row.sel{background:var(--surface-paper);box-shadow:0 1px 4px var(--shadow)}
+.tree-row .chev{width:16px;height:16px;flex:none;display:grid;place-items:center;color:var(--ink-weak);
+  transition:transform var(--dur-fast) var(--ease-out)}
+.tree-row .chev svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.tree-row[aria-expanded=true]>.chev{transform:rotate(90deg)}
+.tree-row .chev.none{visibility:hidden}   /* 葉でも場所は空ける。字下げが揃わないと階層が読めない */
+.tree-row .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree-empty{padding:6px 10px;font-size:var(--fs-s);color:var(--ink-weak)}
