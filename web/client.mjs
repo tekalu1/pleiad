@@ -25,6 +25,7 @@ import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
 import { el, svgEl, relTime } from "./dom.mjs";
+import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
 import { buildItems, attachmentMessageIndex } from "./timeline.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
@@ -686,7 +687,7 @@ function closeThink() {
   const d = state.thinkEl;
   d.classList.remove("live");
   const n = d.querySelector(".think-body").textContent.length;
-  d.querySelector("summary").textContent = `考えた（${n.toLocaleString("ja-JP")} 文字）`;
+  d.querySelector("summary").textContent = `考えた（${fmt.number(n)} 文字）`;
   state.thinkEl = null;
 }
 
@@ -695,7 +696,7 @@ function thinkFromText(text) {
   const d = document.createElement("details");
   d.className = "think";
   const s = document.createElement("summary");
-  s.textContent = `考えた（${text.length.toLocaleString("ja-JP")} 文字）`;
+  s.textContent = `考えた（${fmt.number(text.length)} 文字）`;
   const body = el("div", "think-body", text);
   d.append(s, body);
   return d;
@@ -818,7 +819,7 @@ function onEvent(ev, replay = false) {
   // （覚えずに捨てると、一覧は「承認待ち」なのにカードがどこにも出ない）
   if (ev.type === "permission" && ev.id) state.pendingPerms.set(ev.id, ev);
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); return; }
   // Pleiad に登録した外部 MCP のログインの進み具合。会話には出さず、設定 › コンテキストと会話の右パネル（web/context.mjs・web/session-context.mjs）へ渡す
   if (ev.type === 'mcpAuth') { window.dispatchEvent(new CustomEvent('ply:mcp-auth', { detail: ev })); return; }
   // Claude のアカウントの認可（claude setup-token / 使用量の claude auth login）の進み具合。設定のアカウントの画面へ渡す
@@ -1858,7 +1859,7 @@ async function refreshBackgroundDetail() {
       return;
     }
     const task = data.task;
-    view.status.textContent = `稼働中${task.startedAtMs ? ' · 起動 ' + new Date(task.startedAtMs).toLocaleString() : ''}${task.outputTruncated ? ' · 出力は末尾64K文字' : ''}`;
+    view.status.textContent = `稼働中${task.startedAtMs ? ' · 起動 ' + fmt.dateTime(task.startedAtMs) : ''}${task.outputTruncated ? ' · 出力は末尾64K文字' : ''}`;
     view.command.textContent = task.command || task.label || view.task.label || view.task.id;
     view.cwd.textContent = task.cwd ? `作業場所: ${task.cwd}` : '';
     const text = task.output === null ? 'このエージェントは出力の取得に対応していません。' : task.output || 'まだ出力はありません。';
@@ -1953,6 +1954,46 @@ function initTheme() {
   for (const b of $("themeSeg").querySelectorAll("button")) b.onclick = () => applyTheme(b.dataset.theme);
   // 自動のときは OS の明暗が変わると面の色も変わる。窓のボタンの地も追いかける
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paintTitleBar);
+}
+
+// ---------------------------------------------------------------- 言語
+// 設定値（auto|ja|en）はサーバーの prefs.json に置く。サーバーが OS の言語と合わせて解決した言語が画面の正本で、
+// ready と prefs イベントで届く。今の画面と違う言語が届いたら、写し（localStorage）を直して読み直す。
+// 途中で文言を差し替える経路は持たない（読み直せば全部が確実にその言語になる）。
+
+state.locale = { setting: "auto", lang: uiLang };
+
+function paintLocale() {
+  const { setting, lang } = state.locale;
+  for (const b of $("localeSeg").querySelectorAll("button")) {
+    const v = b.dataset.locale;
+    b.classList.toggle("on", v === setting);
+    b.setAttribute("aria-pressed", String(v === setting));
+    b.textContent = v === "auto"
+      ? setting === "auto" ? t("settings.appearance.language.autoResolved", { lang: languageName(lang) }) : t("settings.appearance.language.auto")
+      : languageName(v);
+  }
+  $("localeNow").textContent = t("settings.appearance.language.current", { lang: languageName(uiLang) });
+}
+
+/** サーバーから届いた言語を受ける。読み直すなら true */
+function applyLocale(info) {
+  if (!info || !["ja", "en"].includes(info.lang)) return false;
+  state.locale = { setting: info.setting ?? "auto", lang: info.lang };
+  // 写しを書けないとき（保存が禁止されている）は読み直しても同じ言語で始まるので、読み直さない（繰り返さないため）
+  if (rememberLang(info.lang) && info.lang !== uiLang) { location.reload(); return true; }
+  paintLocale();
+  return false;
+}
+
+function initLocale() {
+  for (const b of $("localeSeg").querySelectorAll("button")) b.onclick = () => {
+    if (b.dataset.locale === state.locale.setting) return;
+    // 結果は prefs イベントで届く（ほかのタブにも）。ここでは失敗だけ拾う
+    cmd("setPref", { key: "locale", value: b.dataset.locale })
+      .catch((e) => { $("localeNow").textContent = t("settings.appearance.language.saveFailed", { error: e.message }); });
+  };
+  paintLocale();
 }
 
 // ---------------------------------------------------------------- 窓の上端（デスクトップ版）
@@ -3152,6 +3193,8 @@ function connect() {
         return ws.close();
       }
       if (m.homeDir) state.homeDir = m.homeDir;
+      // 画面と違う言語なら読み直すので、ここで止める
+      if (applyLocale(m.locale)) return;
       side.setConnLost(false);
       return refresh().then(async () => {
         if (state.current) return select(state.current, { reload: true });
@@ -3284,7 +3327,9 @@ setupUsage({ $, cmd, getBackends: () => state.backends, endpoints: async (agent)
   // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
   onUsageLogin: accountId => claudeAccounts.open({ usageLogin: accountId }) });
 clearThread();
+applyDom(document);
 initTheme();
+initLocale();
 initSidebar();
 watchTitleBar();
 wireDropZone();

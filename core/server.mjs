@@ -12,6 +12,7 @@ import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS } from './agent-br
 import { canDelegate, resolveDelegatedMode } from './modes.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
+import { localeInfo, setLocale, t, LOCALE_SETTINGS } from './i18n.mjs';
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -53,6 +54,9 @@ await ensureDataSchema(store.dataDir);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
 const WEB = path.join(HERE, "..", "web");
+// 画面の言語（設定値と解決後）。起動時と設定を変えたときに決め直す。ready と prefs イベントで配る（docs/design.md「多言語対応」）
+let locale = localeInfo(await store.getPrefs());
+setLocale(locale.lang);
 
 import { installation, cliCommand } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
@@ -206,6 +210,8 @@ const MIME = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml",
+  // 辞書（web/locales）。fetch().json() で読む
+  ".json": "application/json; charset=utf-8",
 };
 
 function tokenOk(given) {
@@ -284,6 +290,12 @@ const server = http.createServer(async (req, res) => {
       const packageRoot = path.dirname(fileURLToPath(import.meta.resolve('pdfjs-dist/package.json')));
       const body = await fs.readFile(path.join(packageRoot, pdfAsset[1]));
       res.writeHead(200, { 'content-type':pdfAsset[1].endsWith('.mjs') ? 'text/javascript; charset=utf-8' : pdfAsset[1].endsWith('.wasm') ? 'application/wasm' : 'application/octet-stream', 'x-content-type-options':'nosniff' });
+      return res.end(body);
+    }
+    // i18next は依存の無い 1 ファイルの ESM。画面は import map の "i18next" でここを読む（web/index.html）
+    if (url.pathname === '/vendor/i18next.mjs') {
+      const body = await fs.readFile(fileURLToPath(import.meta.resolve('i18next')));
+      res.writeHead(200, { 'content-type':'text/javascript; charset=utf-8', 'x-content-type-options':'nosniff' });
       return res.end(body);
     }
     const rel = path.normalize(name).split(path.sep).filter(Boolean).join(path.sep);
@@ -595,7 +607,9 @@ function sendTo(frame) {
 /** 保存した既定を全画面に通知する。セッション閲覧では既定を書き換えない。 */
 async function savePref(key, value, backendId) {
   const prefs = await store.setPref(key, value, backendId);
-  emitGlobal({ type: "prefs", sessionId: null, prefs });
+  locale = localeInfo(prefs);
+  setLocale(locale.lang);
+  emitGlobal({ type: "prefs", sessionId: null, prefs, locale });
   return prefs;
 }
 
@@ -1526,6 +1540,8 @@ wss.on("connection", (ws) => {
     version: APP_VERSION,
     homeDir: os.homedir(),
     resumedTurn: resumed,
+    // 画面の言語。setting は設定値（auto|ja|en）、lang は実際に使う言語（ja|en）
+    locale,
   });
   ws.on("close", () => detach(ws));
 
@@ -2160,6 +2176,11 @@ wss.on("connection", (ws) => {
             if (!getBackend(value)) return reply(false, "知らないエージェント");
             return reply(true, await savePref(key, value));
           }
+          // 画面の言語。auto は OS に合わせる
+          if (key === "locale") {
+            if (!LOCALE_SETTINGS.includes(value)) return reply(false, t("errors.unknownLocale", { value }));
+            return reply(true, await savePref(key, value));
+          }
           if (backendId && !getBackend(backendId)) return reply(false, "知らないエージェント");
           if (key !== "mode" && key !== "model") return reply(false, `知らない設定: ${key}`);
           // 語彙はエージェントごとに違う。どれか1つでも知っていれば通す
@@ -2416,7 +2437,7 @@ process.parentPort?.on("message", async ({ data }) => {
 
 function announce() {
   const { port } = server.address();
-  process.parentPort?.postMessage({ type: "ready", port, token: TOKEN });
+  process.parentPort?.postMessage({ type: "ready", port, token: TOKEN, locale: locale.lang });
   console.log("");
   // 待ち受けがループバックか全アドレスなら、覚えやすい localhost で案内する（開く先は同じ）
   const shown = /^(127\.0\.0\.1|0\.0\.0\.0|::1?)$/.test(HOST) ? "localhost" : HOST.includes(":") ? `[${HOST}]` : HOST;

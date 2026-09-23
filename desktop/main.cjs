@@ -78,12 +78,19 @@ function titleBar() {
   return { titleBarStyle: 'hidden', titleBarOverlay: { ...titleBarColors(), height: TITLE_BAR_HEIGHT } };
 }
 
+/** OS の表示言語（例 ja-JP）。優先言語の先頭、取れなければ Electron のロケール */
+function systemLanguage() {
+  try { return app.getPreferredSystemLanguages()[0] || app.getLocale() || ''; } catch { return ''; }
+}
+
 async function boot() {
   // 開発版と配布版が同時に動いても互いのポートを奪い合わないよう、記録を分ける
   const portFile = path.join(app.getPath('userData'), app.isPackaged ? 'server-port.json' : 'server-port-dev.json');
   worker = utilityProcess.fork(path.join(__dirname, 'server.cjs'), [], {
     cwd: app.getPath('home'),
-    env: { ...process.env, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)) },
+    // OS の言語はサーバーからは確実に取れない（utilityProcess の Intl は OS の表示言語と一致しないことがある）ので、ここで渡す。
+    // 画面の言語を「OS に合わせる」ときに使う（core/i18n.mjs）
+    env: { ...process.env, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage() },
     stdio: 'pipe', serviceName: 'Pleiad server',
   });
   // Consume logs without exposing the private authentication URL.

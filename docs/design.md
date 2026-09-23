@@ -1,5 +1,20 @@
 # 設計メモ
 
+## 多言語対応（2026-09-23）
+
+画面を日本語と英語で出せるようにする。段階 0（今）は土台と検査だけで、既存の日本語の画面の見た目は変えない（日付・数の書き方だけは画面の言語に揃えた）。文言の置き換えは段階 1 以降（小さい画面 → 会話画面 → 管理画面 → core → desktop → エージェント向け）。
+
+**方式。** i18next（版固定）。キーは意味のキー（`settings.appearance.language.title`）で、日本語が正本（ja の辞書）。辞書は `web/locales/<言語>/<名前空間>.json`（入れ子の JSON。キーの `.` が階層）。名前空間は `ui`（画面）・`server`（core が画面へ返す文言）・`agent`（エージェントに渡す文）・`desktop`（Electron）。対応言語は ja と en、足りないキーは en へ落ちる。複数形は i18next の接尾辞（`_one` / `_other`。言語ごとに `Intl.PluralRules` の分類。ja は `_other` だけ）で `count` を渡す。差し込みは `{{name}}`。訳文は HTML としてエスケープしない（textContent で入れるか escText を通す）。
+- 画面: `web/i18n.mjs`。ビルドしないので、`web/index.html` の import map で `i18next` を `/vendor/i18next.mjs`（core/server.mjs が `node_modules/i18next/dist/esm/i18next.js` を配る。PDF.js と同じ専用の口）へ向ける。モジュールのトップレベルで今の言語と en の `ui` を fetch してから抜けるので、import した側は読み込みの時点から `t()` を使える。静的な HTML は `data-i18n`（中身）・`data-i18n-title`・`data-i18n-aria-label`・`data-i18n-placeholder` にキーを書き、起動時に `applyDom(document)` が埋める。日付・数は `fmt`（number / dateTime / time / list / elapsed / relative）を使い、`toLocaleString` を直接呼ばない。相対時刻の語（「たった今」「3分前」）は辞書にある。
+- サーバー: `core/i18n.mjs`。同じ辞書を fs で読む別のインスタンスで、`t()` の既定の名前空間は `server`。サーバーは全体で 1 つの言語を持つ（ローカルの 1 人の利用者が前提）。
+- ログ（console.*）は訳さない（AGENTS.md がログの文言に依存している）。会話の中身・状態の名前・保存済みの変更理由は訳さない。
+
+**言語の解決。** `prefs.json` の `locale`（`"auto" | "ja" | "en"`、既定 auto = OS に合わせる）。`setPref { key: "locale" }` で変える。実際に使う言語は、`AGENT_HOST_LOCALE`（テスト・手動での強制。設定より優先）→ `locale`（auto 以外）→ `AGENT_HOST_SYSTEM_LOCALE`（デスクトップ版の main が `app.getPreferredSystemLanguages()[0]`、無ければ `app.getLocale()` を utilityProcess に渡す）→ Node の `Intl.DateTimeFormat().resolvedOptions().locale` → en、の最初に決まったもの。先頭の言語サブタグで ja / en に丸め、ja 以外は英語。設定値と解決後は `ready` と `prefs` イベントに `locale: { setting, lang }` で載る。画面はサーバーの解決を正本にし、最初の描画のために `localStorage['agent-host-lang']` へ写す（`web/index.html` のインライン script が `<html lang>` を先に決める。写しが無ければ日本語）。届いた言語が今の画面と違えば写しを直して読み直す（途中で文言を差し替える経路は持たない）。テストは `AGENT_HOST_LOCALE=ja` で日本語に固定する（tests/run.mjs・tests/e2e.mjs・tests/lib/server.mjs）。
+
+**翻訳漏れの検査。** `tests/lint-i18n.mjs`（`npm run lint:i18n`。npm test でも `tests/unit/i18n-lint.mjs` が回す）。
+1. 直書きの日本語のラチェット。web/・core/・desktop/ の文字列・テンプレート・HTML のテキストと title / aria-label / placeholder / alt・CSS の `content:` のうち日本語を含むものを「リテラルの 1 行」単位で数え、`tests/i18n-baseline.json` のファイルごとの件数と比べる。増えた・基準に無いファイルに出た → 失敗（変更した行を file:line で出す）。減った → 「基準を下げてください」で失敗し、`node tests/lint-i18n.mjs --update-baseline` で下げる。基準を上げる更新は拒む（コードを移しただけで合計が増えないときだけ `--moved`）。コメント・`console.*` の引数・正規表現・`web/emoji.mjs`・`core/backends/fake.mjs`・`web/locales/` は数えない。どうしても直書きする行は `// i18n-ignore: 理由`（行末か直前の行。HTML は `<!-- i18n-ignore: 理由 -->`）。理由の無い印は失敗。
+2. 辞書の揃い（全言語・全名前空間で同じキー、複数形の接尾辞が言語の分類どおり）。3. 差し込み `{{name}}` の集合が全言語で同じ。4. 未訳（en に日本語、または ja と同じ値。固有名は `tests/i18n-allow.json` の `sameAsJa` に `名前空間:キー`）。5. コードの静的な `t('キー')`（`i18n.t(` も）と `data-i18n*` のキーが ja にあり、辞書のキーがどこかで使われている。名前空間を書かないキーは置き場で決まる（web/ → ui、core/ → server、desktop/ → desktop）。ほかは `t('agent:キー')`。組み立てるキーは同じファイルに `// i18n-dynamic: 接頭辞` を書く。6. 検査器の自己診断。
+
 ## 互換の接続先（2026-09-23）
 
 procway-code への対応をやめる代わりに、Claude Code と Codex それぞれで互換 URL の接続先を登録し、会話ごとに選べるようにした。UX は承認済みのモック `docs/mockups/compat-endpoints.html` の案 A（入力欄のモデルの面に「接続先」の節。登録は設定 › エージェント設定の各エージェントの行の「接続先」）。画面の規則は design-system.md「入力欄の設定」「互換の接続先の管理」。
