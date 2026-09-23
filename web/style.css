@@ -206,6 +206,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .grp.collapsed .rows{display:none}
 /* 行は見出しより一段右。所属が分かる */
 .rows{display:flex;flex-direction:column;gap:2px;padding-left:16px}
+.pending-new-top{flex:none}
 .row{border-radius:var(--r-m);padding:7px 10px;cursor:pointer;min-width:0;transition:background-color var(--dur-fast) var(--ease-out)}
 .row:hover{background:var(--surface-hover)}
 .row.sel{background:var(--surface-paper);cursor:default}   /* 選ばれているものは白へ持ち上がる */
@@ -247,6 +248,15 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .fam-rows{display:flex;flex-direction:column;gap:2px;padding:0 4px 4px 16px}
 .row-meta{display:flex;align-items:center;gap:6px;margin-top:2px;font-size:var(--fs-xs);color:var(--ink-weak);min-width:0}
 .row-when{font-family:var(--font-mono);flex:none}
+.pending-row .row-t,.pending-row .row-cwd{color:var(--ink-weak)}
+.pending-delete{opacity:.55}
+.pending-status{opacity:.55}
+.pending-label{display:inline-flex;align-items:center;gap:5px;color:var(--ink-weak);font-size:var(--fs-xs);white-space:nowrap;flex:none}
+.pending-label .run{width:14px;height:14px}
+.row.pending-gone{height:0!important;min-height:0;overflow:hidden;padding-top:0;padding-bottom:0;margin:0;opacity:0;transition:height 240ms var(--ease-out),padding 240ms var(--ease-out),opacity 240ms var(--ease-out)}
+@keyframes pending-bounce{0%,100%{transform:translateX(0)}30%{transform:translateX(-4px)}65%{transform:translateX(3px)}}
+.row.pending-bounce{animation:pending-bounce 240ms var(--ease-out)}
+@media (prefers-reduced-motion:reduce){.row.pending-bounce{animation:none}.row.pending-gone{transition:none}}
 .row-cwd{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
 .row-be{flex:none;display:inline-flex;align-items:center;justify-content:center}
 .row-be img{display:block;height:16px;width:auto;max-width:72px;object-fit:contain}
@@ -265,6 +275,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .side-undo{display:flex;align-items:center;gap:6px;justify-content:space-between;margin:6px 10px 10px;padding:8px 10px;
   background:var(--surface-paper);border-radius:var(--r-m);font-size:var(--fs-xs);color:var(--ink-weak);box-shadow:0 1px 4px var(--shadow)}
 .side-undo-text{flex:1;min-width:0;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;line-height:1.5}
+.side-undo.failed .side-undo-text{color:var(--ink);font-weight:600}
 .side-undo .btn{flex:none;color:var(--ink-blue);padding:3px 10px}
 .side-undo .side-undo-close{width:24px;height:24px;padding:0;color:var(--ink-weak)}
 .side-undo .side-undo-close:hover{color:var(--ink)}
@@ -424,6 +435,11 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
   animation:title-think 1.6s var(--ease-organic) infinite}
 @keyframes title-think{from{background-position:100% 0}to{background-position:0 0}}
 @media (prefers-reduced-motion:reduce){.title-field.generating::after{animation:none}}
+.history-skeleton{width:min(100%,680px);padding:10px 14px;margin-bottom:18px}
+.history-lines{display:flex;flex-direction:column;gap:10px}
+.history-line{display:block;height:11px;border-radius:var(--r-pill);background:linear-gradient(90deg,var(--surface-2) 40%,var(--surface-1) 50%,var(--surface-2) 60%) 0 0/300% 100% no-repeat;animation:title-think 1.6s var(--ease-organic) infinite}
+.history-skeleton:first-of-type .history-line:last-child{height:42px;border-radius:var(--r-m)}
+@media (prefers-reduced-motion:reduce){.history-line{animation:none}}
 /* 考えている間。押されたことと動いていることが分かる必要がある。押せないのでホバーの面と色の変化も出さない */
 #titleWand.busy{color:var(--ink-blue);cursor:progress;background:transparent;transition:none}
 

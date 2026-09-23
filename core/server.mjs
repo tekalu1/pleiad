@@ -2452,6 +2452,7 @@ wss.on("connection", (ws, req) => {
           if (typeof from !== "string" || !from) return reply(false, t('statuses.renameFromRequired'));
           const next = typeof to === "string" ? to.trim() : "";
           const hit = (await sessionList({ limit: 500 })).filter((x) => (x.status ?? "") === from);
+          let done = 0;
           for (const x of hit) {
             const backend = getBackend(x.backend);
             if (backend?.capabilities?.tag && backend.setTag) {
@@ -2461,6 +2462,7 @@ wss.on("connection", (ws, req) => {
               by: "human", field: "status", from, to: next || null, backend,
               ...(next ? savedReason('renameStatus', { to: next }) : savedReason('deleteGroup')),
             });
+            emitGlobal({ type: 'statusProgress', from, to: next, done: ++done, total: hit.length });
           }
           // statuses.json の器（アイコン・作った時刻）も一緒に移す。削除なら捨てる（空のグループはこれで消える）
           await store.moveStatus(from, next || null);

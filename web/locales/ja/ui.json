@@ -1,4 +1,23 @@
 {
+  "pending": {
+    "moving": "移動中",
+    "movingProgress": "移動中 {{done}}/{{total}}",
+    "deleting": "削除中",
+    "deletingProgress": "削除中 {{done}}/{{total}}",
+    "creating": "作成中",
+    "creatingBranch": "分岐を作成中",
+    "historyLoading": "履歴を読み込み中",
+    "loading": "読み込み中…",
+    "reloading": "読み込み直し中",
+    "searching": "探索中",
+    "saving": "保存中",
+    "retry": "もう一度",
+    "cancel": "やめる",
+    "failed": "✕ 操作できませんでした · {{reason}}",
+    "newSession": "新しい会話",
+    "deleteStatusConfirm": "「{{status}}」を削除しますか。{{count}} 件の会話は「{{destination}}」へ移ります。",
+    "deletedStatus": "「{{status}}」を削除しました"
+  },
   "settings": {
     "appearance": {
       "language": {
@@ -948,7 +967,6 @@
       "contextRefreshedNames": "指示・Skills が変わったので読み込み直しました（{{names}}）",
       "contextRefreshedNamesMore_other": "指示・Skills が変わったので読み込み直しました（{{names}} ほか {{count}} 件）",
       "modeSaveFailed": "承認モードを保存できませんでした: {{error}}",
-      "historyLoading": "履歴を読み込み中…",
       "historyFailed": "履歴を読めなかった: {{error}}"
     },
     "change": {
@@ -1108,14 +1126,12 @@
       "idCopyFailed": "セッション IDのコピーに失敗した",
       "deleteUnsent": "未送信のセッションを削除…",
       "deleteWithDraft": "下書きも削除する",
-      "deleteFailed": "削除に失敗: {{error}}",
       "newStatusEllipsis": "新しい状態を作る…",
       "statusName": "状態の名前",
       "createStatusFailed": "状態を作れなかった: {{error}}",
       "changeIcon": "アイコンを変える…",
       "renameStatus": "名前を変更…",
       "newName": "新しい名前",
-      "renameStatusFailed": "状態の名前の変更に失敗: {{error}}",
       "deleteStatus": "この状態を削除",
       "deleteStatusHint_other": "{{count}} 件は状態なしへ",
       "empty": "空",
@@ -1124,7 +1140,6 @@
       "endpoint": "接続先（次のターン）",
       "endpointFailed": "接続先の変更に失敗: {{error}}"
     },
-    "saveFailed": "セッションを保存できませんでした: {{error}}",
     "tasksEntry_other": "Pleiad タスク · {{count}}",
     "untitledParen": "（新しいセッション）",
     "terminalEntry_other": "端末 · {{count}}",
@@ -1134,24 +1149,12 @@
     "undo": {
       "status": "「{{title}}」を {{status}} にした",
       "statusLeft": "「{{title}}」を {{status}} にしてグループから外した",
-      "statusFailed": "状態の変更を戻せなかった: {{error}}",
       "groupMoved_other": "「{{title}}」のグループを {{status}} に移した（{{count}} 件）",
-      "groupMoveFailed": "グループの移動を戻せなかった: {{error}}",
       "left": "「{{title}}」をグループから外した",
       "rejoined": "「{{title}}」をグループに戻した",
-      "membershipFailed": "グループの出入りを戻せなかった: {{error}}",
       "joined": "「{{title}}」を「{{group}}」のグループに入れた（状態: {{status}}）",
       "ungrouped_other": "「{{title}}」のグループを解除した（{{count}} 件）",
-      "ungroupFailed": "グループの解除を戻せなかった: {{error}}",
-      "gathered_other": "「{{title}}」のグループを作った（枝 {{count}} 件、状態を {{status}} に揃えた）",
-      "gatherFailed": "グループ作成を戻せなかった: {{error}}"
-    },
-    "group": {
-      "moveFailed": "グループの移動に失敗: {{error}}",
-      "changeFailed": "グループの変更に失敗: {{error}}",
-      "joinFailed": "グループに入れられなかった: {{error}}",
-      "ungroupFailed": "グループを解除できなかった: {{error}}",
-      "gatherFailed": "枝をまとめられなかった: {{error}}"
+      "gathered_other": "「{{title}}」のグループを作った（枝 {{count}} 件、状態を {{status}} に揃えた）"
     },
     "titleFailed": "タイトル変更に失敗: {{error}}",
     "parentChat": "親の会話",

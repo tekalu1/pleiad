@@ -26,6 +26,7 @@ import { setupAttachMenu } from "./attach-menu.mjs";
 import { modelRowIds } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
+import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks } from './work-status.mjs';
 import { createSide } from "./side.mjs";
 import { familiesOf } from "./family.mjs";
@@ -1055,6 +1056,18 @@ function onEvent(ev, replay = false) {
       if (ev.sessionId) changeLine("status", ev.status || t("session.status.none"), ev, { reason: ev.reason });
       return refresh();
 
+    case 'statusProgress': {
+      // i18n-dynamic: pending.movingProgress
+      // i18n-dynamic: pending.deletingProgress
+      const pending = pendingStatuses.get(ev.to || ev.from);
+      if (pending && pending.from === ev.from && pending.to === ev.to) {
+        pending.done = ev.done; pending.total = ev.total;
+        pending.text = t(pending.to ? 'pending.movingProgress' : 'pending.deletingProgress', { done: ev.done, total: ev.total });
+        if (pending.visible) renderSessions();
+      }
+      return;
+    }
+
     case "statusIcon":
       return refresh();
 
@@ -1691,7 +1704,7 @@ const slashSkills = setupSlashSkills({
 // ---------------------------------------------------------------- セッション一覧（web/side.mjs）
 
 const side = createSide({
-  onOpen: (id) => (id == null ? startNew(state.draft) : select(id)),
+  onOpen: (id) => (id == null || id === pendingNewSession?.id ? startNew(state.draft) : select(id)),
   onNew: startNew,
   onSetStatus: (id, status) => {
     if (id == null) {
@@ -1719,13 +1732,16 @@ const side = createSide({
 function renderSessions() {
   side.render(state.sessions, {
     statuses: state.statuses,
-    currentId: state.current,
+    currentId: pendingNewSession && !state.current ? pendingNewSession.id : state.current,
     runningIds: state.runningIds,
     waitingIds: state.waitingIds,
     bgWaiting: state.bgWaiting,
     unreadIds: new Set(state.sessions.filter(s => readCompletions.hasUnread(s)).map(s => s.id)),
     draft: null,      // 新規のときだけ。予約は current が無いときに意味を持つ
     backendLabels: backendLabels(),
+    pendingRows,
+    pendingStatuses,
+    pendingNew: pendingNewSession,
   });
 }
 
@@ -1743,23 +1759,56 @@ document.addEventListener("visibilitychange", () => {
 
 /** 新しいセッション。絞り込みの条件（一意に定まるもの）を引き継ぐ */
 let creatingSession = null;
+let pendingNewSession = null;
 async function startNew({ status = null, cwd = "", backend } = {}) {
   if (state.busy || creatingSession) return creatingSession;
   setDrawer(false);
   saveDraft().catch(() => {});
   const source = state.current;
+  pendingNewSession = { id: `pending-${randomId()}`, title: t('pending.newSession'), status: status ?? '', cwd: cwd || state.cwd || state.homeDir || '',
+    backend: backend ?? state.backendId, lastModified: new Date().toISOString(), unsent: true };
+  state.current = null;
+  state.draft = { status, cwd: pendingNewSession.cwd };
+  state.messages = [];
+  state.contextInfo = null;
+  state.contextInfoId = null;
+  $('prompt').value = '';
+  state.attached = [];
+  renderAttached();
+  clearThread();
+  syncTopbar();
+  pendingRows.set(pendingNewSession.id, { kind: 'new', text: t('pending.creating'), visible: false });
+  renderSessions();
+  $('prompt').focus();
+  const cancel = pendingAfterDelay(pendingRows.get(pendingNewSession.id));
   creatingSession = (async () => {
     try {
       await settingsWrite.catch(() => {});
       await modeWrite;
       const result = await cmd("newSession", { sourceSessionId: source, backend: backend ?? (source ? undefined : state.prefs.backend ?? state.backendId),
         cwd: cwd || state.cwd || state.homeDir || "", status });
+      const draftText = $('prompt').value;
+      const draftAttachments = [...state.attached];
+      pendingRows.delete(pendingNewSession.id);
+      pendingNewSession = null;
       side.keep(status);
-      await refresh();
-      if (state.current === source) { await select(result.sessionId); $("prompt").focus(); }
+      await refresh().catch(() => {});
+      if (state.current === null) {
+        await select(result.sessionId);
+        $('prompt').value = draftText;
+        state.attached = draftAttachments;
+        renderAttached(); fitPrompt();
+        if (draftText || draftAttachments.length) saveDraft().catch(() => {});
+        $("prompt").focus();
+      }
       return result.sessionId;
-    } catch (e) { sys(html.t("session.saveFailed", { error: e.message })); }
-    finally { creatingSession = null; }
+    } catch (e) {
+      if (pendingNewSession) pendingRows.delete(pendingNewSession.id);
+      pendingNewSession = null;
+      renderSessions();
+      side.showUndo(t('pending.failed', { reason: e.message }), () => startNew({ status, cwd, backend }), { retry: true });
+    }
+    finally { cancel(); creatingSession = null; }
   })();
   return creatingSession;
 }
@@ -2446,7 +2495,7 @@ async function dropFolder(entries) {
 
 const contextMenu = createContextMenu();
 const closeMenu = () => contextMenu.close();
-function showMenu(x, y, items, title) { side.closePops(); contextMenu.open(x, y, items, title); }
+function showMenu(x, y, items, title) { side.closePops(); return contextMenu.open(x, y, items, title); }
 
 /** クリップボードへ写し、結果を一行出す。done / failed は出す文（sys に渡す HTML） */
 const copy = (text, done, failed) => {
@@ -2469,16 +2518,68 @@ function setStatusOf(sessionId, status) {
 
 const rowLabel = (s) => (s.title && s.title !== "(no title)" ? s.title : t("session.untitled"));
 const statusWord = (st) => st || t("session.status.none");
+const pendingRows = new Map();
+const pendingPatches = new Map();
+const pendingStatuses = new Map();
+const pendingStatusRenames = new Map();
+const pendingDeletedRows = new Map();
+
+function pendingAfterDelay(entry, repaint = renderSessions) {
+  const timer = setTimeout(() => { entry.visible = true; repaint(); }, 150);
+  return () => clearTimeout(timer);
+}
+
+/** Keep local changes while an older listSessions response is in flight. */
+function applyPendingPatches(sessions) {
+  return overlaySessions(sessions, pendingPatches, pendingDeletedRows);
+}
+function applyPendingStatuses(statuses) {
+  return statuses.map(s => pendingStatusRenames.has(s.status) ? { ...s, status: pendingStatusRenames.get(s.status) } : s);
+}
+
+async function sidebarChange({ rows, patches, kind = 'move', run, success, retry }) {
+  rows = currentRows(rows, state.sessions);
+  if (rows.some(row => pendingRows.has(row.id))) return;
+  side.showUndo(null);
+  const before = snapOf(rows);
+  const label = kind === 'delete' ? t('pending.deleting') : t('pending.moving');
+  for (const row of rows) {
+    const patch = patches.get(row.id) ?? {};
+    pendingPatches.set(row.id, patch);
+    Object.assign(row, patch);
+    pendingRows.set(row.id, { kind, text: label, visible: false });
+  }
+  renderSessions();
+  const timers = rows.map(row => pendingAfterDelay(pendingRows.get(row.id)));
+  try {
+    await run();
+    await refresh().catch(() => {});
+    for (const row of rows) { pendingPatches.delete(row.id); pendingRows.delete(row.id); }
+    renderSessions();
+    if (success) side.showUndo(success, () => restore(before));
+  } catch (e) {
+    for (const row of rows) { pendingPatches.delete(row.id); pendingRows.delete(row.id); }
+    state.sessions = rollbackSessions(state.sessions, before);
+    renderSessions();
+    for (const row of rows) document.querySelector(`[data-session="${CSS.escape(row.id)}"]`)?.classList.add('pending-bounce');
+    await restoreServer(before).catch(() => {});
+    await refresh().catch(() => {});
+    side.showUndo(t('pending.failed', { reason: e.message }), retry, { retry: true });
+  } finally { timers.forEach(cancel => cancel()); }
+}
 
 /** 取り消し用に、触る前の状態と所属を覚える */
 const snapOf = (rows) => rows.map((s) => ({ sessionId: s.id, status: s.status ?? "", ungrouped: Boolean(s.ungrouped) }));
 
 /** 覚えた通りに戻す。1 本ずつ戻すので、途中の伝播（根を動かすと中も動く）は起こさない。failed(エラー文) は失敗の一行（HTML） */
-function restore(before, failed) {
-  Promise.all(before.map(async (b) => {
+function restoreServer(before) {
+  return Promise.all(before.map(async (b) => {
     await cmd("setStatus", { sessionId: b.sessionId, status: b.status, reasonKey: "undo", alone: true });
     await cmd("setGrouped", { sessionId: b.sessionId, ungrouped: b.ungrouped });
-  })).then(refresh).catch((e) => sys(failed(e.message)));
+  }));
+}
+function restore(before) {
+  restoreServer(before).then(refresh).catch((e) => side.showUndo(t('pending.failed', { reason: e.message }), () => restore(before), { retry: true }));
 }
 
 /** その行と同じグループに居る行（描画と同じ規則。web/family.mjs） */
@@ -2494,79 +2595,63 @@ function groupOf(root) {
 function changeStatus(s, status) {
   const fam = familiesOf(state.sessions, state.sessions).find((f) => f.kin.length && f.root.id === s.id);
   if (fam) return moveGroup(s, status);
-  const before = snapOf([s]);
   const wasIn = familiesOf(state.sessions, state.sessions).some((f) => f.kin.some((k) => k.id === s.id));
-  cmd("setStatus", { sessionId: s.id, status, reasonKey: "manual" })
-    .then(() => {
-      refresh();
-      side.showUndo(wasIn ? t("session.undo.statusLeft", { title: rowLabel(s), status: statusWord(status) }) : t("session.undo.status", { title: rowLabel(s), status: statusWord(status) }),
-        () => restore(before, (error) => html.t("session.undo.statusFailed", { error })));
-    })
-    .catch((e) => sys(html.t("session.statusFailed", { error: e.message })));
+  return sidebarChange({ rows: [s], patches: new Map([[s.id, { status }]]),
+    run: () => cmd("setStatus", { sessionId: s.id, status, reasonKey: "manual" }),
+    success: wasIn ? t("session.undo.statusLeft", { title: rowLabel(s), status: statusWord(status) }) : t("session.undo.status", { title: rowLabel(s), status: statusWord(status) }),
+    retry: () => changeStatus(s, status) });
 }
 
 /** グループごと別の状態へ。中の会話も一緒に動く（サーバが根の移動として広げる） */
 function moveGroup(root, status) {
-  const before = snapOf(groupOf(root));
-  cmd("setStatus", { sessionId: root.id, status, reasonKey: "groupMove" })
-    .then(() => {
-      refresh();
-      side.showUndo(t("session.undo.groupMoved", { title: rowLabel(root), status: statusWord(status), count: before.length }),
-        () => restore(before, (error) => html.t("session.undo.groupMoveFailed", { error })));
-    })
-    .catch((e) => sys(html.t("session.group.moveFailed", { error: e.message })));
+  const rows = groupOf(root);
+  return sidebarChange({ rows, patches: new Map(rows.map(s => [s.id, { status }])),
+    run: () => cmd("setStatus", { sessionId: root.id, status, reasonKey: "groupMove" }),
+    success: t("session.undo.groupMoved", { title: rowLabel(root), status: statusWord(status), count: rows.length }),
+    retry: () => moveGroup(root, status) });
 }
 
 /** グループから外す / 戻す。外すだけなら状態は動かさない */
 function setGrouped(s, ungrouped) {
-  const before = snapOf([s]);
-  cmd("setGrouped", { sessionId: s.id, ungrouped })
-    .then(() => {
-      refresh();
-      side.showUndo(ungrouped ? t("session.undo.left", { title: rowLabel(s) }) : t("session.undo.rejoined", { title: rowLabel(s) }),
-        () => restore(before, (error) => html.t("session.undo.membershipFailed", { error })));
-    })
-    .catch((e) => sys(html.t("session.group.changeFailed", { error: e.message })));
+  return sidebarChange({ rows: [s], patches: new Map([[s.id, { ungrouped }]]),
+    run: () => cmd("setGrouped", { sessionId: s.id, ungrouped }),
+    success: ungrouped ? t("session.undo.left", { title: rowLabel(s) }) : t("session.undo.rejoined", { title: rowLabel(s) }),
+    retry: () => setGrouped(s, ungrouped) });
 }
 
 /** そのグループへ入れる。状態を根に合わせるところまでが 1 つの操作 */
 function joinGroup(s, root) {
-  const before = snapOf([s, ...groupOf(s)]);
-  cmd("setGrouped", { sessionId: s.id, ungrouped: false })
-    .then(() => cmd("setStatus", { sessionId: s.id, status: root.status ?? "", reasonKey: "joinGroup" }))
-    .then(() => {
-      refresh();
-      side.showUndo(t("session.undo.joined", { title: rowLabel(s), group: rowLabel(root), status: statusWord(root.status) }),
-        () => restore(before, (error) => html.t("session.undo.membershipFailed", { error })));
-    })
-    .catch((e) => sys(html.t("session.group.joinFailed", { error: e.message })));
+  s = state.sessions.find(row => row.id === s.id) ?? s;
+  root = state.sessions.find(row => row.id === root.id) ?? root;
+  const rows = groupOf(s);
+  return sidebarChange({ rows, patches: new Map(rows.map(row => [row.id, { status: root.status ?? '', ungrouped: false }])),
+    run: async () => { await cmd("setGrouped", { sessionId: s.id, ungrouped: false }); await cmd("setStatus", { sessionId: s.id, status: root.status ?? "", reasonKey: "joinGroup" }); },
+    success: t("session.undo.joined", { title: rowLabel(s), group: rowLabel(root), status: statusWord(root.status) }),
+    retry: () => joinGroup(s, root) });
 }
 
 /** グループを解除する。中の会話は独立した行になり、状態はそのまま */
 function ungroupFamily(root, members) {
-  const before = snapOf(members);
-  Promise.all(members.map((m) => cmd("setGrouped", { sessionId: m.id, ungrouped: true })))
-    .then(() => {
-      refresh();
-      side.showUndo(t("session.undo.ungrouped", { title: rowLabel(root), count: members.length }),
-        () => restore(before, (error) => html.t("session.undo.ungroupFailed", { error })));
-    })
-    .catch((e) => sys(html.t("session.group.ungroupFailed", { error: e.message })));
+  return sidebarChange({ rows: members, patches: new Map(members.map(m => [m.id, { ungrouped: true }])),
+    run: () => Promise.all(members.map(m => cmd("setGrouped", { sessionId: m.id, ungrouped: true }))),
+    success: t("session.undo.ungrouped", { title: rowLabel(root), count: members.length }),
+    retry: () => ungroupFamily(root, members) });
 }
 
 /** 散らばっている枝をまとめてグループにする。状態は根に揃える */
 function gatherKin(root, loose) {
-  const before = snapOf([root, ...loose]);
-  Promise.all([root, ...loose].map(async (m) => {
+  root = state.sessions.find(row => row.id === root.id) ?? root;
+  loose = loose.map(m => state.sessions.find(row => row.id === m.id) ?? m);
+  const rows = [root, ...loose];
+  const different = new Set(rows.filter(m => (m.status ?? null) !== (root.status ?? null)).map(m => m.id));
+  return sidebarChange({ rows, patches: new Map(rows.map(m => [m.id, { ungrouped: false, status: root.status ?? '' }])),
+    run: () => Promise.all(rows.map(async (m) => {
     await cmd("setGrouped", { sessionId: m.id, ungrouped: false });
-    if ((m.status ?? null) !== (root.status ?? null)) {
+    if (different.has(m.id)) {
       await cmd("setStatus", { sessionId: m.id, status: root.status ?? "", reasonKey: "mergeBranches", alone: true });
     }
-  })).then(() => {
-    refresh();
-    side.showUndo(t("session.undo.gathered", { title: rowLabel(root), count: loose.length, status: statusWord(root.status) }),
-      () => restore(before, (error) => html.t("session.undo.gatherFailed", { error })));
-  }).catch((e) => sys(html.t("session.group.gatherFailed", { error: e.message })));
+  })), success: t("session.undo.gathered", { title: rowLabel(root), count: loose.length, status: statusWord(root.status) }),
+    retry: () => gatherKin(root, loose) });
 }
 
 /** その行の系譜（fork でつながった会話。グループに入っているかどうかは見ない） */
@@ -2623,12 +2708,34 @@ function familyMenu(root, members, x, y) {
   ], t("session.menu.groupTitle", { title: rowLabel(root) }));
 }
 
-async function rowMenu(s, x, y) {
-  const actual = await loadVocab(s.backend);
-  const next = s.nextSettings?.backend ? await loadVocab(s.nextSettings.backend) : actual;
-  const vocab = next;
-  const efforts = await cmd("efforts", { backend: s.nextSettings?.backend ?? s.backend, model: s.nextSettings?.model ?? s.model ?? "", cwd: s.nextSettings?.cwd || s.cwd || undefined });
-  const mode = selectedMode(s, s.nextSettings?.backend ?? s.backend, vocab.modes);
+async function deleteUnsentRow(s) {
+  const pending = { kind: 'delete', text: t('pending.deleting'), visible: false };
+  pendingRows.set(s.id, pending);
+  pendingDeletedRows.set(s.id, s);
+  renderSessions();
+  const cancel = pendingAfterDelay(pending);
+  try {
+    await cmd('deleteUnsentSession', { sessionId: s.id });
+    state.drafts.delete(s.id);
+    try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch {}
+    const row = document.querySelector(`[data-session="${CSS.escape(s.id)}"]`);
+    if (row) { row.style.height = `${row.offsetHeight}px`; row.getBoundingClientRect(); row.classList.add('pending-gone'); await new Promise(resolve => setTimeout(resolve, 240)); }
+    pendingRows.delete(s.id); pendingDeletedRows.delete(s.id);
+    state.sessions = state.sessions.filter(row => row.id !== s.id);
+    renderSessions();
+    await refresh().catch(() => {});
+  } catch (e) {
+    pendingRows.delete(s.id); pendingDeletedRows.delete(s.id);
+    await refresh().catch(() => {});
+    renderSessions();
+    document.querySelector(`[data-session="${CSS.escape(s.id)}"]`)?.classList.add('pending-bounce');
+    side.showUndo(t('pending.failed', { reason: e.message }), () => deleteUnsentRow(s), { retry: true });
+  } finally { cancel(); }
+}
+
+function rowMenu(s, x, y) {
+  let vocab = null, efforts = null, endpoints = null, accounts = null;
+  let waitingVisible = false;
   const known = [...new Set(state.sessions.map((z) => z.status).filter(Boolean))];
   // 枝の行き来。親があるか子がある行だけ。家族は開いている間に取り寄せる（メニューは同期で組む）
   const hasKin = Boolean(s.parent?.sessionId) || state.sessions.some((z) => z.parent?.sessionId === s.id);
@@ -2637,6 +2744,8 @@ async function rowMenu(s, x, y) {
   const kinItems = () => !kin ? [{ label: t("session.menu.loading") }]
     : kin.sessions.map((r) => ({ label: r.title && r.title !== "(no title)" ? r.title : t("session.untitled"),
         hint: r.id === s.id ? t("session.menu.thisRow") : r.parent?.sessionId ? t("session.menu.branch") : t("session.menu.root"), checked: r.id === state.current, onClick: () => select(r.id) }));
+  const paint = () => {
+  const mode = vocab ? selectedMode(s, s.nextSettings?.backend ?? s.backend, vocab.modes) : '';
   const items = [
     { label: t("session.menu.open"), onClick: () => select(s.id) },
     ...(s.parent?.sessionId ? [{ label: t("session.menu.openParent"), hint: sessionLabel(s.parent.sessionId).slice(0, 20), onClick: () => select(s.parent.sessionId) }] : []),
@@ -2655,8 +2764,8 @@ async function rowMenu(s, x, y) {
     ...(capsOf(s.backend).fork === false ? [] : [{ label: t("session.menu.forkTail"), onClick: () => forkTail(s.id) }]),
     ...groupItems(s),
     { sep: true },
-    { label: t("session.menu.mode"), hint: vocab.modes[mode]?.label ?? mode, sub: () =>
-      Object.entries(vocab.modes).map(([id, m]) => ({
+    { label: t("session.menu.mode"), pending: !vocab && waitingVisible, hint: vocab?.modes[mode]?.label ?? mode, sub: () =>
+      Object.entries(vocab?.modes ?? {}).map(([id, m]) => ({
         label: m.label, hint: m.note, checked: id === mode,
         onClick: () => (s.nextSettings?.backend && s.nextSettings.backend !== s.backend
           ? cmd("setTurnSettings", { sessionId: s.id, backend: s.nextSettings.backend, mode: id, rememberMode: true })
@@ -2665,18 +2774,18 @@ async function rowMenu(s, x, y) {
       })) },
     // 名前は版付き（入力欄のチップと同じ）。「既定に従う」には実際に当たるモデルを添える。隠した別名は選んでいるときだけ。
     // 段違いを系統にまとめた一覧（antigravity）は系統ごとに 1 行（composer-labels.mjs の modelRowIds）
-    { label: t("session.menu.model"), hint: endpointOf(s) && (s.nextSettings?.model ?? s.model) ? compatModelText(s.nextSettings?.model ?? s.model) : resolvedModel(vocab.models, s.nextSettings?.model ?? s.model ?? "").label, sub: () =>
-      Object.entries(vocab.models).filter(([id]) => id === "" || modelRowIds(vocab.models, s.nextSettings?.model ?? s.model ?? "").includes(id)).map(([id, m]) => ({
-        label: id === "" && m.resolvesTo ? `${m.label}（${vocab.models[m.resolvesTo]?.label ?? m.resolvesTo}）` : m.label,
+    { label: t("session.menu.model"), pending: !vocab && waitingVisible, hint: vocab ? (endpointOf(s) && (s.nextSettings?.model ?? s.model) ? compatModelText(s.nextSettings?.model ?? s.model) : resolvedModel(vocab.models, s.nextSettings?.model ?? s.model ?? "").label) : '', sub: () =>
+      Object.entries(vocab?.models ?? {}).filter(([id]) => id === "" || modelRowIds(vocab.models, s.nextSettings?.model ?? s.model ?? "").includes(id)).map(([id, m]) => ({
+        label: id === "" && m.resolvesTo ? `${m.label}（${vocab?.models[m.resolvesTo]?.label ?? m.resolvesTo}）` : m.label,
         hint: m.note, checked: id === (s.nextSettings?.model ?? s.model ?? ""),
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, backend: s.nextSettings?.backend ?? s.backend, model: id, rememberModel: true })
           .then(refresh).catch((e) => sys(html.t("session.menu.modelFailed", { error: e.message }))),
       })) },
-    ...(await rowEndpointItems(s)),
-    ...(await rowAccountItems(s)),
+    ...(endpoints ?? (capsOf(s.nextSettings?.backend ?? s.backend).compatEndpoints ? [{ label: t('session.menu.endpoint'), pending: waitingVisible, sub: () => [] }] : [])),
+    ...(accounts ?? (capsOf(s.nextSettings?.backend ?? s.backend).claudeAccounts ? [{ label: t('session.menu.account'), pending: waitingVisible, sub: () => [] }] : [])),
     { sep: true },
-    { label: t("session.menu.effort"), hint: (s.nextSettings?.effort ?? s.effort) || efforts[""]?.resolvesTo || t("chat.model.default"), sub: () =>
-      Object.entries(efforts).map(([effort, m]) => ({
+    { label: t("session.menu.effort"), pending: !efforts && waitingVisible, hint: efforts ? ((s.nextSettings?.effort ?? s.effort) || efforts[""]?.resolvesTo || t("chat.model.default")) : '', sub: () =>
+      Object.entries(efforts ?? {}).map(([effort, m]) => ({
         label: effort === "" && m.resolvesTo ? `${m.label}（${m.resolvesTo}）` : m.label,
         hint: m.note, checked: effort === (s.nextSettings?.effort ?? s.effort ?? ""),
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, effort, rememberEffort: true })
@@ -2685,13 +2794,21 @@ async function rowMenu(s, x, y) {
     { label: t("session.menu.copyCwd"), hint: s.cwd ?? "", onClick: () => copy(s.cwd, html.t("session.menu.cwdCopied"), html.t("session.menu.cwdCopyFailed")) },
     { label: t("session.menu.copyId"), onClick: () => copy(s.id, html.t("session.menu.idCopied"), html.t("session.menu.idCopyFailed")) },
     ...(s.unsent ? [{ label: t("session.menu.deleteUnsent"), sub: () => [
-      { label: t("session.menu.deleteWithDraft"), onClick: async () => {
-        try { await cmd("deleteUnsentSession", { sessionId: s.id }); state.drafts.delete(s.id); localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); await refresh(); }
-        catch (e) { sys(html.t("session.menu.deleteFailed", { error: e.message })); }
-      } },
+      { label: t("session.menu.deleteWithDraft"), onClick: () => deleteUnsentRow(s) },
     ] }] : []),
   ];
-  showMenu(x, y, items, s.title && s.title !== "(no title)" ? s.title : t("session.untitled"));
+  return items;
+  };
+  const title = s.title && s.title !== "(no title)" ? s.title : t("session.untitled");
+  const update = showMenu(x, y, paint(), title);
+  const repaint = () => update(paint(), title);
+  setTimeout(() => { waitingVisible = true; repaint(); }, 150);
+  const bid = s.nextSettings?.backend ?? s.backend;
+  (async () => { try { vocab = await loadVocab(bid); } catch { vocab = { modes: {}, models: {} }; } repaint(); })();
+  cmd("efforts", { backend: bid, model: s.nextSettings?.model ?? s.model ?? "", cwd: s.nextSettings?.cwd || s.cwd || undefined })
+    .then(value => { efforts = value; repaint(); }).catch(() => { efforts = {}; repaint(); });
+  rowEndpointItems(s).then(value => { endpoints = value; repaint(); });
+  rowAccountItems(s).then(value => { accounts = value; repaint(); });
 }
 
 /** 「新しいグループを作る…」。その場に名前の欄が出て、Enter で作る。空のままでも一覧に残る（statuses.json） */
@@ -2703,6 +2820,49 @@ function newGroupItem() {
   ] };
 }
 
+async function changeStatusName(from, to) {
+  const next = to.trim();
+  if (!from || next === from || pendingStatuses.has(from) || pendingStatuses.has(next)) return;
+  const rows = state.sessions.filter(s => s.status === from);
+  const deleting = !next;
+  const key = next || from;
+  const pending = { from, to: next, done: 0, total: rows.length, visible: false,
+    text: t(deleting ? 'pending.deletingProgress' : 'pending.movingProgress', { done: 0, total: rows.length }) };
+  pendingStatuses.set(key, pending);
+  if (!deleting) {
+    pendingStatusRenames.set(from, next);
+    state.statuses = applyPendingStatuses(state.statuses);
+    for (const row of rows) { row.status = next; pendingPatches.set(row.id, { status: next }); }
+  }
+  renderSessions();
+  const cancel = pendingAfterDelay(pending);
+  try {
+    await cmd('renameStatus', { from, to: next });
+    if (deleting) {
+      for (const row of rows) row.status = '';
+      state.statuses = state.statuses.filter(s => s.status !== from);
+    }
+    await refresh().catch(() => {});
+    pendingStatuses.delete(key); pendingStatusRenames.delete(from);
+    for (const row of rows) pendingPatches.delete(row.id);
+    renderSessions();
+    if (deleting) side.showUndo(t('pending.deletedStatus', { status: from }));
+  } catch (e) {
+    pendingStatuses.delete(key); pendingStatusRenames.delete(from);
+    for (const row of rows) pendingPatches.delete(row.id);
+    await refresh().catch(() => {});
+    renderSessions();
+    side.showUndo(t('pending.failed', { reason: e.message }), () => changeStatusName(from, next), { retry: true });
+  } finally { cancel(); }
+}
+
+function confirmDeleteStatus(st, count, x, y) {
+  showMenu(x, y, [
+    { label: t('pending.cancel'), onClick: () => {} },
+    { label: t('session.menu.deleteStatus'), onClick: () => changeStatusName(st, '') },
+  ], t('pending.deleteStatusConfirm', { status: st, count, destination: t('session.status.none') }));
+}
+
 function groupMenu(st, x, y) {
   if (st == null) return showMenu(x, y, [newGroupItem()], t("session.status.none"));
   const n = state.sessions.filter((s) => s.status === st).length;
@@ -2710,14 +2870,12 @@ function groupMenu(st, x, y) {
     { label: t("session.menu.changeIcon"), hint: state.statuses.find((s) => s.status === st)?.icon ?? "", onClick: () => side.pickIcon(st) },
     { label: t("session.menu.renameStatus"), sub: () => [
       { input: { placeholder: t("session.menu.newName"), value: st, onCommit: (v) =>
-        cmd("renameStatus", { from: st, to: v }).then(refresh)
-          .catch((e) => sys(html.t("session.menu.renameStatusFailed", { error: e.message }))) } },
+        changeStatusName(st, v) } },
     ] },
     newGroupItem(),
     { sep: true },
     { label: t("session.menu.deleteStatus"), hint: n ? t("session.menu.deleteStatusHint", { count: n }) : t("session.menu.empty"),
-      onClick: () => cmd("renameStatus", { from: st, to: "" }).then(refresh)
-        .catch((e) => sys(html.t("session.menu.deleteFailed", { error: e.message }))) },
+      onClick: () => confirmDeleteStatus(st, n, x, y) },
   ], st);
 }
 
@@ -2916,9 +3074,9 @@ async function refresh() {
     cmd("prefs").catch(() => ({})),
   ]);
   if (version !== refreshVersion) return;
-  state.sessions = sessions;
+  state.sessions = applyPendingPatches(sessions);
   readCompletions.fromSessions(sessions);
-  state.statuses = statuses;
+  state.statuses = applyPendingStatuses(statuses);
   state.prefs = prefs ?? {};
   await loadBackends();
   await syncTopbar();
@@ -3079,15 +3237,26 @@ async function select(id, { keepUpTo, reload = false } = {}) {
     syncTopbar();
     clearThread();
     loadDraft();
-    sys(html.t("chat.sys.historyLoading"));
   }
   sessionLoads.cancel(state.displayLoad);
   const load = sessionLoads.begin(id);
   state.displayLoad = load;
+  const historyTimer = keepUpTo === undefined ? setTimeout(() => {
+    if (state.current !== id || state.displayLoad !== load) return;
+    for (const widths of [[42, 62], [35, 78, 54]]) {
+      const lines = el('div', 'history-lines');
+      for (const width of widths) { const line = el('span', 'history-line'); line.style.width = `${width}%`; lines.append(line); }
+      const skeleton = el('div', 'm history-skeleton');
+      skeleton.append(lines);
+      append(skeleton);
+    }
+    activity.show(t('pending.historyLoading'));
+  }, 150) : null;
   let data;
   try {
     data = await cmd("loadSession", { sessionId: id, live: true });
   } catch (e) {
+    clearTimeout(historyTimer);
     sessionLoads.cancel(load);
     if (state.current !== id || state.displayLoad !== load) return;
     state.loadingSession = null;
@@ -3097,7 +3266,7 @@ async function select(id, { keepUpTo, reload = false } = {}) {
   try {
     if (state.displayLoad !== load || keepUpTo === undefined && state.current !== id) return;
     await paintSession(id, data, { keepUpTo, load });
-  } finally { sessionLoads.cancel(load); }
+  } finally { clearTimeout(historyTimer); sessionLoads.cancel(load); }
 }
 
 /**
@@ -3230,6 +3399,14 @@ async function syncHistory() {
 
 // ---------------------------------------------------------------- 分岐
 
+function forkPending(button) {
+  if (!button) return () => {};
+  const old = [...button.childNodes].map(node => node.cloneNode(true));
+  button.disabled = true;
+  const timer = setTimeout(() => button.replaceChildren(runMark(t('pending.creatingBranch')), t('pending.creatingBranch')), 150);
+  return () => { clearTimeout(timer); if (button.isConnected) button.replaceChildren(...old); button.disabled = false; };
+}
+
 /** Create the actual child first, then grow its edge, reveal its node, and promote it. */
 async function forkFrom(m, { draft } = {}) {
   const uuid = m.dataset.uuid, mw = m.closest('.mw');
@@ -3237,6 +3414,7 @@ async function forkFrom(m, { draft } = {}) {
   const key = mw?.dataset.key ?? '';
   const mi = draft ? draft.index - 1 : key.startsWith('m:') ? Number(key.slice(2)) : state.messages.findIndex(x => x.uuid === uuid);
   const source = state.current;
+  const clearPending = forkPending(m.querySelector('.forkbtn'));
   let sendTo;
   state.busy = true;
   log.classList.add('branch-transition');
@@ -3258,13 +3436,15 @@ async function forkFrom(m, { draft } = {}) {
   } catch (e) {
     placeJunctions();
     sys(html.t("chat.fork.failed", { error: e.message }));
-  } finally { await finishBranchChange(); }
+  } finally { clearPending(); await finishBranchChange(); }
   if (sendTo && state.current === sendTo) await submit();
 }
 
 /** The session menu uses the same creation animation as the message action. */
 async function forkTail(id) {
   if (state.busy) return;
+  const clearPending = forkPending(document.querySelector(`[data-session="${CSS.escape(id)}"] .row-more`) ?? $('sessionMore'));
+  try {
   await select(id);
   if (state.current !== id || state.busy) return;
   const last = [...thread.querySelectorAll('.m[data-uuid]')].at(-1);
@@ -3282,6 +3462,7 @@ async function forkTail(id) {
     await changeBranch(r.sessionId, row);
   } catch (e) { sys(html.t("chat.fork.failed", { error: e.message })); }
   finally { await finishBranchChange(); }
+  } finally { clearPending(); }
 }
 
 async function changeBranch(id, row) {

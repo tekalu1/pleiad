@@ -118,7 +118,7 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   root.append(lead, status, place, cards.instruction, cards.skill, cards.mcp, rootsFold, toast);
   panel.append(root);
 
-  let cwd = null, view = null, level = 'default', scan = null, scanning = false, ply = null, agents = null;
+  let cwd = null, view = null, level = 'default', scan = null, scanning = false, scanVisible = false, ply = null, agents = null;
   const opened = new Set();          // 中身を開いている行（id）
   const expanded = new Set();        // 「すべて見る」を押した種類
   let toastTimer, scanTicket = 0;
@@ -409,6 +409,7 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
     card.dataset.kind = kind;
     const head = el('div', 'cx-khead');
     head.append(el('h4', null, TEXT[kind].title), inheritance(kind));
+    if (scanning && scanVisible) { const label = el('span', 'pending-label'); label.append(runMark(t('pending.searching')), t('pending.searching')); head.append(label); }
     card.append(head, seg(kind, value.owner));
     const agy = antigravityNote(kind, info);
     if (agy) card.append(agy);
@@ -499,6 +500,9 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
     const ticket = ++scanTicket, target = scanCwd();
     if (!target) { scan = { entries: [], configs: [] }; renderAll(); return; }
     scanning = true;
+    scanVisible = false;
+    renderAll();
+    const timer = setTimeout(() => { if (ticket === scanTicket) { scanVisible = true; renderAll(); } }, 150);
     try {
       const [found, list, native] = await Promise.all([
         cmd('scanContext', { cwd: target, ...(isDefault() ? { place: 'default' } : {}) }),
@@ -512,7 +516,7 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
       status.textContent = e.code === 'SCAN_BUSY' ? '' : t('context.scanFailed', { error: e.message });
       if (e.code === 'SCAN_BUSY') { setTimeout(() => { if (ticket === scanTicket) loadScan(); }, 400); return; }
       scan = { entries: [], configs: [] };
-    } finally { if (ticket === scanTicket) scanning = false; }
+    } finally { clearTimeout(timer); if (ticket === scanTicket) { scanning = false; scanVisible = false; } }
     renderAll();
   }
   async function open(target) {
