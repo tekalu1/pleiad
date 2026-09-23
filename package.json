@@ -2,7 +2,7 @@
   "name": "agent-host",
   "private": true,
   "license": "Apache-2.0",
-  "version": "0.1.0-beta.31",
+  "version": "0.1.0-beta.32",
   "type": "module",
   "engines": {
     "node": ">=20.19.0"
@@ -11,6 +11,7 @@
     "start": "node core/server.mjs",
     "test": "node tests/run.mjs",
     "test:e2e": "node tests/e2e.mjs",
+    "lint:i18n": "node tests/lint-i18n.mjs",
     "test:safe-storage": "electron tests/desktop/safe-storage-smoke.cjs",
     "desktop": "electron .",
     "desktop:pack": "electron-builder --dir",
@@ -23,6 +24,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.3.258",
     "@modelcontextprotocol/sdk": "1.30.0",
     "electron-updater": "6.8.9",
+    "i18next": "26.4.2",
     "pdfjs-dist": "5.5.207",
     "smol-toml": "1.8.0",
     "ws": "^8.21.3",

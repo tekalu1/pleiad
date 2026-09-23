@@ -5,6 +5,7 @@ const { Updates } = require('./updates.cjs');
 const { prepareUpdateCheck } = require('./update-auth.cjs');
 const { savedPort, rememberPort } = require('./server-port.cjs');
 const { attachSecretBridge } = require('./secret-bridge.cjs');
+const { attachFileBridge } = require('./file-bridge.cjs');
 let worker, window, origin, updates, quitting = false, closing = false;
 let requestId = 0;
 const { createDesktopNotifications } = require('./notifications.cjs');
@@ -78,12 +79,19 @@ function titleBar() {
   return { titleBarStyle: 'hidden', titleBarOverlay: { ...titleBarColors(), height: TITLE_BAR_HEIGHT } };
 }
 
+/** OS の表示言語（例 ja-JP）。優先言語の先頭、取れなければ Electron のロケール */
+function systemLanguage() {
+  try { return app.getPreferredSystemLanguages()[0] || app.getLocale() || ''; } catch { return ''; }
+}
+
 async function boot() {
   // 開発版と配布版が同時に動いても互いのポートを奪い合わないよう、記録を分ける
   const portFile = path.join(app.getPath('userData'), app.isPackaged ? 'server-port.json' : 'server-port-dev.json');
   worker = utilityProcess.fork(path.join(__dirname, 'server.cjs'), [], {
     cwd: app.getPath('home'),
-    env: { ...process.env, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)) },
+    // OS の言語はサーバーからは確実に取れない（utilityProcess の Intl は OS の表示言語と一致しないことがある）ので、ここで渡す。
+    // 画面の言語を「OS に合わせる」ときに使う（core/i18n.mjs）
+    env: { ...process.env, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage() },
     stdio: 'pipe', serviceName: 'Pleiad server',
   });
   // Consume logs without exposing the private authentication URL.
@@ -91,6 +99,8 @@ async function boot() {
   // 外部 MCP の秘密は safeStorage で暗号化する。safeStorage は main でしか使えないので、サーバーの依頼をここで受ける
   // MCP の OAuth の同意画面も、サーバー（utilityProcess）はブラウザを開けないので頼まれて開く
   attachSecretBridge(worker, { safeStorage, openExternal: url => shell.openExternal(url).catch(() => {}) });
+  // 「エクスプローラーで表示」「ブラウザーで開く」。範囲と接続元はサーバーが確かめ、実行は本体の shell（窓を前に出せる）
+  attachFileBridge(worker, { shell });
   let startupError = '';
   worker.stderr.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });
   const ready = await new Promise((resolve, reject) => {

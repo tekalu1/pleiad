@@ -13,10 +13,10 @@ export const KIND_LABEL = { 'anthropic-messages': 'Anthropic 互換', 'openai-re
 
 /** Claude Code の役割。main は会話の既定（ANTHROPIC_MODEL）、haiku は背景の処理とタイトル生成 */
 export const CLAUDE_ROLES = [
-  { key: 'main', label: 'メイン（会話の既定）', short: 'メイン', help: '入力欄でモデルを選ばない会話で使います。' },
-  { key: 'opus', label: 'Opus 相当', short: 'Opus 相当', help: 'サブエージェントなどが「opus」を指したときに使います。' },
-  { key: 'sonnet', label: 'Sonnet 相当', short: 'Sonnet 相当', help: '「sonnet」を指したときに使います。' },
-  { key: 'haiku', label: 'Haiku 相当（背景の処理・タイトル生成）', short: 'Haiku 相当', help: '軽いモデルを選ぶと速く安くなります。' },
+  { key: 'main', label: 'メイン（会話の既定）', short: 'メイン' },
+  { key: 'opus', label: 'Opus 相当', short: 'Opus 相当' },
+  { key: 'sonnet', label: 'Sonnet 相当', short: 'Sonnet 相当' },
+  { key: 'haiku', label: 'Haiku 相当（背景の処理・タイトル生成）', short: 'Haiku 相当' },
 ];
 export const ROLE_KEYS = { claude: CLAUDE_ROLES.map(r => r.key), codex: ['main'] };
 
@@ -25,12 +25,12 @@ export const AUTH_LABEL = { auto: '自動（確認で判定）', bearer: 'Bearer
 
 /** 互換の接続先で無くなる・分からなくなるもの（画面 4）。Pleiad の画面に出ているものだけを並べる */
 export const LOST = {
-  claude: { gone: ['使用量の表示', 'Fast mode', '料金の目安'], unknown: ['Web 検索'] },
-  codex: { gone: ['使用量の表示', 'Web 検索', '料金の目安'], unknown: [] },
+  claude: { gone: ['使用量', 'Fast mode', '料金の目安'], unknown: ['Web 検索'] },
+  codex: { gone: ['使用量', 'Web 検索', '料金の目安'], unknown: [] },
 };
 export function lostText(agent) {
   const l = LOST[agent] ?? LOST.claude;
-  return l.gone.join(' · ') + (l.unknown.length ? '（' + l.unknown.join(' · ') + ' は不明）' : '');
+  return l.gone.join(' · ') + (l.unknown.length ? ' · ' + l.unknown.map(x => x + '（不明）').join(' · ') : '');
 }
 
 export const CONTEXT_CANDIDATES = [['32768', '32K'], ['131072', '128K'], ['200000', '200K'], ['262144', '256K'], ['1000000', '1M']];
@@ -42,8 +42,7 @@ export const PRESETS = {
     { id: 'zai', name: 'Z.ai (GLM)', hint: 'GLM Coding Plan', urls: [{ value: 'https://api.z.ai/api/anthropic', hint: '海外' }, { value: 'https://open.bigmodel.cn/api/anthropic', hint: '中国本土' }], auth: 'bearer',
       roles: { main: 'glm-5.3', opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3-flash' } },
     { id: 'kimi', name: 'Kimi', hint: 'Moonshot AI', urls: [{ value: 'https://api.moonshot.ai/anthropic', hint: 'プリセット' }], auth: 'bearer', thinking: true,
-      roles: { main: 'kimi-k2.7-code', opus: 'kimi-k2.7-code', sonnet: 'kimi-k2.7-code', haiku: 'kimi-k2.7-turbo' },
-      note: 'kimi-k2.7-code は必ず思考を使うモデルです。「詳しい設定」の「思考を送る」をオンにしてあります。' },
+      roles: { main: 'kimi-k2.7-code', opus: 'kimi-k2.7-code', sonnet: 'kimi-k2.7-code', haiku: 'kimi-k2.7-turbo' } },
     { id: 'deepseek', name: 'DeepSeek', hint: 'api.deepseek.com', urls: [{ value: 'https://api.deepseek.com/anthropic', hint: 'プリセット' }], auth: 'x-api-key',
       roles: { main: 'deepseek-v4-pro', opus: 'deepseek-v4-pro', sonnet: 'deepseek-flash', haiku: 'deepseek-flash' } },
     { id: 'litellm', name: 'LiteLLM', hint: '自前のプロキシ', urls: [{ value: 'http://localhost:4000', hint: 'プリセット' }], auth: 'bearer', roles: {} },
@@ -51,8 +50,7 @@ export const PRESETS = {
     { id: 'custom', name: 'カスタム', hint: 'Anthropic 互換の URL', urls: [], auth: 'auto', roles: {} },
   ],
   codex: [
-    { id: 'openrouter', name: 'OpenRouter', hint: 'openrouter.ai · 多数のモデル', urls: [{ value: 'https://openrouter.ai/api/v1', hint: 'プリセット' }], auth: 'bearer', roles: {},
-      note: 'この接続先は前の応答を覚えません。Codex は毎回会話の全体を送るので、そのまま使えます。' },
+    { id: 'openrouter', name: 'OpenRouter', hint: 'openrouter.ai · 多数のモデル', urls: [{ value: 'https://openrouter.ai/api/v1', hint: 'プリセット' }], auth: 'bearer', roles: {} },
     { id: 'azure', name: 'Azure OpenAI', hint: 'デプロイ名がモデル', urls: [{ value: 'https://<リソース名>.openai.azure.com/openai/v1', hint: 'プリセット' }], auth: 'api-key', roles: {} },
     { id: 'ollama', name: 'Ollama', hint: 'ローカル · キー不要', urls: [{ value: 'http://localhost:11434/v1', hint: 'プリセット' }], auth: 'none', nokey: true, roles: {}, context: '32768' },
     { id: 'lmstudio', name: 'LM Studio', hint: 'ローカル · キー不要', urls: [{ value: 'http://localhost:1234/v1', hint: 'プリセット' }], auth: 'none', nokey: true, roles: {}, context: '32768' },
@@ -73,17 +71,13 @@ export function urlCandidates(agent, presetId) {
   return [...own, ...rest];
 }
 
-/** URL の入力に添える一文（画面 3 の②） */
+/** URL の入力に添える一文（画面 3 の②）。間違いに見えるときだけ。正しそうなら ''（説明文は出さない） */
 export function urlHelp(agent, url) {
   const v = String(url ?? '').trim();
-  if (/<[^>]+>/.test(v)) return '<リソース名> などを実際の値に置き換えてください。';
-  if (agent === 'claude' && /\/v1\/?$/.test(v)) return '末尾の /v1 は要りません（Claude Code が /v1/messages を付けます）。';
-  if (agent === 'codex' && /\/responses\/?$/.test(v)) return '末尾の /responses は要りません（Codex が付けます）。';
-  return agent === 'claude' ? 'Claude Code はこの URL に /v1/messages を付けて送ります。' : 'Codex はこの URL に /responses を付けて送ります。';
+  if (/<[^>]+>/.test(v)) return '<リソース名> を実際の値に置き換えてください。';
+  if (agent === 'claude' && /\/v1\/?$/.test(v)) return '末尾の /v1 は要りません。';
+  if (agent === 'codex' && /\/responses\/?$/.test(v)) return '末尾の /responses は要りません。';
+  return '';
 }
 
-/** チップの字などで使うモデル ID の短い形（`/` より前を省く。全体は title に出す） */
-export function shortModel(id) {
-  const s = String(id ?? '');
-  return s.includes('/') ? s.slice(s.lastIndexOf('/') + 1) : s;
-}
+// モデル ID の表示の形（名前空間と [1m] の扱い）は web/compat-models.mjs の compatModelLabel

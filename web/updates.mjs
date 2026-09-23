@@ -1,4 +1,5 @@
 import { renderMarkdown } from './render.mjs';
+import { fmt } from './i18n.mjs';
 export function setupUpdates({ page, open, lock, flush }) {
   const $ = id => document.getElementById(id), bridge = window.plyDesktop;
   let info, state, busy = false, installing = false, confirming = false, shownNotice = null, failure = '';
@@ -22,7 +23,7 @@ export function setupUpdates({ page, open, lock, flush }) {
       : '';
     $('updateHint').hidden = !$('updateHint').textContent;
     $('updateLastChecked').hidden = !state.lastChecked;
-    $('updateLastChecked').textContent = state.lastChecked ? `最終確認：${new Date(state.lastChecked).toLocaleString('ja-JP')}` : '';
+    $('updateLastChecked').textContent = state.lastChecked ? `最終確認：${fmt.dateTime(state.lastChecked)}` : '';
     // 操作の失敗は、あとから届く状態の知らせ（定期の確認など）で消さない。次の操作を始めるまで残す
     $('updateError').textContent = failure || state.error || '';
     for (const id of ['updateProgress', 'updatePromptProgress']) {

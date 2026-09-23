@@ -18,7 +18,7 @@ export async function effortOptions(backend, model = '', cwd, endpoint = null) {
     const off = endpoint.agent === 'claude' && !endpoint.options?.sendThinking;
     const values = off ? [] : endpoint.agent === 'claude' ? levels.claude : ['low', 'medium', 'high'];
     return Object.fromEntries([['', { label: '既定に従う', note: '接続先の設定を使う',
-      ...(off ? { reason: '互換の接続先には段を送りません（接続先の「思考を送る」がオフのため）' } : {}) }],
+      ...(off ? { reason: '送らない（接続先の設定）' } : {}) }],
       ...values.map(value => [value, { label: value, note: '対応するモデルで使用' }])]);
   }
   let values = levels[backend.id] ?? [];

@@ -39,8 +39,8 @@ export const COMMANDS = new Set([
   'claudeLoginCode',     // { loginId, code } -> {}。ブラウザーに表示されたコードを CLI へ渡す
   'claudeLoginCancel',   // { loginId } -> {}
   // 互換の接続先（エージェントごと。会話ごとに選ぶ。core/compat-endpoints.mjs）。キーは返さない
-  'compatEndpoints',        // { agent? } -> { endpoints: [{ id, agent, kind, name, baseUrl, auth, hasKey, roles, models, options, lastCheck, isDefault, ready }], defaults, storage }
-  'compatEndpointCheck',    // { input, id? } -> { ok: true, receipt, auth, latencyMs, models, lines } | { ok: false, error, lines, code }。本物の 1 リクエストで確かめる
+  'compatEndpoints',        // { agent? } -> { endpoints: [{ id, agent, kind, name, baseUrl, auth, hasKey, roles, models, modelInfo, options, lastCheck, isDefault, ready }], defaults, storage }
+  'compatEndpointCheck',    // { input, id? } -> { ok: true, receipt, auth, latencyMs, models, modelInfo, lines } | { ok: false, error, lines, code }。本物の 1 リクエストで確かめる
   'compatEndpointSave',     // { input, receipt, id? } -> { id }。確認の受領証が今の接続情報と合うときだけ保存する
   'compatEndpointRecheck',  // { id } -> { ok, lines?, error? }。保存済みを確かめ直して結果を記録する
   'compatEndpointDelete',   // { id } -> 一覧。キーも消す。選んでいる会話は次の送信の前に選び直しを求める
@@ -103,6 +103,11 @@ export const COMMANDS = new Set([
   "setModel",        // モデルの切り替え（人間のみ）
   "models",          // 使えるモデルの一覧 { backend, cwd? }。'' には resolvesTo（既定が実際に当たる id）と efforts / defaultEffort
   "listDirs",        // { path? } -> { path, parent, dirs: [名前], truncated, roots }。フォルダーだけ。path が空ならホーム
+  // ファイルの操作（web/file-actions.mjs）。path は会話の中の参照（相対は sessionId・at か base で解く）。許可範囲は /file-preview と同じ
+  "hostCapabilities", // {} -> { osActions }。この接続がサーバーのある PC の画面からか（OS の操作を出してよいか）
+  "resolvePath",      // { path, sessionId?, at?, base? } -> { path（実体）, cwd, kind: file|directory }
+  "revealPath",       // { path, sessionId?, at?, base? } -> { path }。エクスプローラーでファイルを選んだ状態で開く（フォルダーはその中）。遠隔の接続は断る
+  "openPath",         // 同上。HTML だけ、既定のブラウザーで開く。遠隔の接続は断る
   "backends",        // 使えるバックエンドの一覧（capabilities / toolHints 付き）
   "authStatus",      // { backend } -> { supported, loggedIn?, account?, detail? }
   "authLogin",       // { backend }。URL は auth イベントで出る

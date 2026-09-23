@@ -1,14 +1,31 @@
 # 設計メモ
 
+## 多言語対応（2026-09-23）
+
+画面を日本語と英語で出せるようにする。段階 0（今）は土台と検査だけで、既存の日本語の画面の見た目は変えない（日付・数の書き方だけは画面の言語に揃えた）。文言の置き換えは段階 1 以降（小さい画面 → 会話画面 → 管理画面 → core → desktop → エージェント向け）。
+
+**方式。** i18next（版固定）。キーは意味のキー（`settings.appearance.language.title`）で、日本語が正本（ja の辞書）。辞書は `web/locales/<言語>/<名前空間>.json`（入れ子の JSON。キーの `.` が階層）。名前空間は `ui`（画面）・`server`（core が画面へ返す文言）・`agent`（エージェントに渡す文）・`desktop`（Electron）。対応言語は ja と en、足りないキーは en へ落ちる。複数形は i18next の接尾辞（`_one` / `_other`。言語ごとに `Intl.PluralRules` の分類。ja は `_other` だけ）で `count` を渡す。差し込みは `{{name}}`。訳文は HTML としてエスケープしない（textContent で入れるか escText を通す）。
+- 画面: `web/i18n.mjs`。ビルドしないので、`web/index.html` の import map で `i18next` を `/vendor/i18next.mjs`（core/server.mjs が `node_modules/i18next/dist/esm/i18next.js` を配る。PDF.js と同じ専用の口）へ向ける。モジュールのトップレベルで今の言語と en の `ui` を fetch してから抜けるので、import した側は読み込みの時点から `t()` を使える。静的な HTML は `data-i18n`（中身）・`data-i18n-title`・`data-i18n-aria-label`・`data-i18n-placeholder` にキーを書き、起動時に `applyDom(document)` が埋める。日付・数は `fmt`（number / dateTime / time / list / elapsed / relative）を使い、`toLocaleString` を直接呼ばない。相対時刻の語（「たった今」「3分前」）は辞書にある。
+- サーバー: `core/i18n.mjs`。同じ辞書を fs で読む別のインスタンスで、`t()` の既定の名前空間は `server`。サーバーは全体で 1 つの言語を持つ（ローカルの 1 人の利用者が前提）。
+- ログ（console.*）は訳さない（AGENTS.md がログの文言に依存している）。会話の中身・状態の名前・保存済みの変更理由は訳さない。
+
+**言語の解決。** `prefs.json` の `locale`（`"auto" | "ja" | "en"`、既定 auto = OS に合わせる）。`setPref { key: "locale" }` で変える。実際に使う言語は、`AGENT_HOST_LOCALE`（テスト・手動での強制。設定より優先）→ `locale`（auto 以外）→ `AGENT_HOST_SYSTEM_LOCALE`（デスクトップ版の main が `app.getPreferredSystemLanguages()[0]`、無ければ `app.getLocale()` を utilityProcess に渡す）→ Node の `Intl.DateTimeFormat().resolvedOptions().locale` → en、の最初に決まったもの。先頭の言語サブタグで ja / en に丸め、ja 以外は英語。設定値と解決後は `ready` と `prefs` イベントに `locale: { setting, lang }` で載る。画面はサーバーの解決を正本にし、最初の描画のために `localStorage['agent-host-lang']` へ写す（`web/index.html` のインライン script が `<html lang>` を先に決める。写しが無ければ日本語）。届いた言語が今の画面と違えば写しを直して読み直す（途中で文言を差し替える経路は持たない）。テストは `AGENT_HOST_LOCALE=ja` で日本語に固定する（tests/run.mjs・tests/e2e.mjs・tests/lib/server.mjs）。
+
+**翻訳漏れの検査。** `tests/lint-i18n.mjs`（`npm run lint:i18n`。npm test でも `tests/unit/i18n-lint.mjs` が回す）。
+1. 直書きの日本語のラチェット。web/・core/・desktop/ の文字列・テンプレート・HTML のテキストと title / aria-label / placeholder / alt・CSS の `content:` のうち日本語を含むものを「リテラルの 1 行」単位で数え、`tests/i18n-baseline.json` のファイルごとの件数と比べる。増えた・基準に無いファイルに出た → 失敗（変更した行を file:line で出す）。減った → 「基準を下げてください」で失敗し、`node tests/lint-i18n.mjs --update-baseline` で下げる。基準を上げる更新は拒む（コードを移しただけで合計が増えないときだけ `--moved`）。コメント・`console.*` の引数・正規表現・`web/emoji.mjs`・`core/backends/fake.mjs`・`web/locales/` は数えない。どうしても直書きする行は `// i18n-ignore: 理由`（行末か直前の行。HTML は `<!-- i18n-ignore: 理由 -->`）。理由の無い印は失敗。
+2. 辞書の揃い（全言語・全名前空間で同じキー、複数形の接尾辞が言語の分類どおり）。3. 差し込み `{{name}}` の集合が全言語で同じ。4. 未訳（en に日本語、または ja と同じ値。固有名は `tests/i18n-allow.json` の `sameAsJa` に `名前空間:キー`）。5. コードの静的な `t('キー')`（`i18n.t(` も）と `data-i18n*` のキーが ja にあり、辞書のキーがどこかで使われている。名前空間を書かないキーは置き場で決まる（web/ → ui、core/ → server、desktop/ → desktop）。ほかは `t('agent:キー')`。組み立てるキーは同じファイルに `// i18n-dynamic: 接頭辞` を書く。6. 検査器の自己診断。
+
 ## 互換の接続先（2026-09-23）
 
 procway-code への対応をやめる代わりに、Claude Code と Codex それぞれで互換 URL の接続先を登録し、会話ごとに選べるようにした。UX は承認済みのモック `docs/mockups/compat-endpoints.html` の案 A（入力欄のモデルの面に「接続先」の節。登録は設定 › エージェント設定の各エージェントの行の「接続先」）。画面の規則は design-system.md「入力欄の設定」「互換の接続先の管理」。
 
 **形式はエージェントで固定。** Claude Code は Anthropic Messages 互換（CLI が `{URL}/v1/messages` に送る。URL に `/v1` は付けない）、Codex は OpenAI Responses 互換（`{URL}/responses`。codex-cli 0.153 は `wire_api = "chat"` を起動時エラーにするので、Chat Completions だけの先は使えない）。プリセットは Claude: OpenRouter / Z.ai / Kimi / DeepSeek / LiteLLM / Ollama / カスタム、Codex: OpenRouter / Azure OpenAI / Ollama / LM Studio / vLLM / LiteLLM / カスタム（`web/compat-presets.mjs`。Responses に対応していない先は Codex 側に出さない）。
 
-**データ。** 一覧は `<data>/compat-endpoints.json`（`{ version: 1, endpoints: [{ id: 'ep-…', agent, name, preset, baseUrl, authMode, auth, roles, options: { contextTokens?, sendThinking? }, models, verifiedAt, lastCheck: { ok, at, error?, latencyMs?, modelCount? } }], defaults: { claude, codex } }`）。キーは `<data>/compat-endpoint-secrets.json`（`core/secret-store.mjs`。Claude のアカウント・MCP と同じ safeStorage、使えない起動は 0600 の平文）。キーは画面へ返さない（`hasKey` だけ）、ログ・stderr の記録・イベント・エラー文・sidecar に出さない（`redactSecret`）。Claude の役割は main（会話の既定＝`ANTHROPIC_MODEL`）・opus・sonnet・haiku（背景の処理とタイトル生成）で、空の役割があると保存できない（Claude の名前がそのまま送られて失敗するため）。Codex は main（既定のモデル）だけ。実装は `core/compat-endpoints.mjs`。
+**データ。** 一覧は `<data>/compat-endpoints.json`（`{ version: 1, endpoints: [{ id: 'ep-…', agent, name, preset, baseUrl, authMode, auth, roles, options: { contextTokens?, sendThinking? }, models, modelInfo?, verifiedAt, lastCheck: { ok, at, error?, latencyMs?, modelCount? } }], defaults: { claude, codex } }`）。キーは `<data>/compat-endpoint-secrets.json`（`core/secret-store.mjs`。Claude のアカウント・MCP と同じ safeStorage、使えない起動は 0600 の平文）。キーは画面へ返さない（`hasKey` だけ）、ログ・stderr の記録・イベント・エラー文・sidecar に出さない（`redactSecret`）。Claude の役割は main（会話の既定＝`ANTHROPIC_MODEL`）・opus・sonnet・haiku（背景の処理とタイトル生成）で、空の役割があると保存できない（Claude の名前がそのまま送られて失敗するため）。Codex は main（既定のモデル）だけ。実装は `core/compat-endpoints.mjs`。
 
 **接続の確認。** 保存できるのは確認が通った接続情報だけ（確認 → 受領証 receipt → 保存。receipt は agent・URL・認証の送り方・キーのハッシュ・編集中の id に束縛し 15 分・1 回限り。名前・モデル・詳しい設定は変えても確かめ直さない）。確認は本物の 1 リクエスト: Claude は `POST {URL}/v1/messages`（max_tokens 1）を、認証が自動なら Bearer → x-api-key の順に試して通ったほうに決める。Codex は `POST {URL}/responses`（max_output_tokens 16、stream false、store false）で、404/405 なら本文の無い `POST {URL}/chat/completions` で道の有無だけ確かめ（生成しない）、あれば「Chat Completions にしか対応していない」と理由を付けて断る。401/403 はキー違い、404 は URL 違い、5xx は接続先のエラー、モデルが無いという 4xx は「URL とキーは通っている」として成功にする。あわせて `GET /v1/models?limit=1000`（Codex は `/models`）でモデルの一覧を取る（OpenAI 形式・Anthropic 形式のどちらも `data[].id`。取れなくても失敗にしない）。安全策: http(s) だけ、URL に userinfo・クエリ・フラグメントを入れない、公開のアドレスへの http は断る（ループバック・プライベートは可。名前は解決して確かめる）、リダイレクトは追わない（キーを別の宛先へ送らない）、20 秒で打ち切り、応答は 8MB まで。一覧の「接続を確認」は保存済みの値で確かめ直し、結果を `lastCheck` に記録する。
+
+**モデルの表示と検索**（2026-09-23。`web/compat-models.mjs`・`web/search-terms.mjs`）。送る ID は一覧どおりのまま変えず、表示だけを変える。先頭の `anthropic/` は、その残りにさらに `/` があるときだけ隠す（OpenRouter が Claude Code 向けの一覧で他社のモデルに付ける名前空間で、サーバー側で外される。`anthropic/deepseek/deepseek-v4.1-flash` → `deepseek/deepseek-v4.1-flash`。OpenRouter の Claude `anthropic/claude-opus-5.5` は二重ではないのでそのまま）。末尾の `[1m]` は Claude Code の 1M コンテキストの印（CLI が送る前に外す）なので字から外し、小さな「1M」の札で示す（札を置けない字だけの場所では「（1M）」）。この形（`compatModelLabel`）を入力欄のモデルの面・チップ・設定の役割の欄・一覧の「モデル:」・「次のターンから適用」・右クリックメニューのモデルの補足で使い、title には送る ID を出す。一覧取得のときに `display_name`（Anthropic 形式）/ `name`（OpenAI 形式）とコンテキスト長（`max_input_tokens` / `context_length`）があれば `modelInfo: { [id]: { name?, context? } }` に保存し（取れた分だけ。`models` は ID の文字列の配列のまま＝旧形式もそのまま読める。確認し直すと取り直す）、候補の 2 行目と検索に使う。検索は大文字小文字を区別しない部分一致、空白区切りの語は AND（表示名・送る ID・display_name のどれに当たってもよい）。数百件でも重くならないよう描くのは先頭 50 件で、残りは「ほかに N 件。文字を入れて絞り込んでください」。一覧に無い字は Enter でそのまま使える（表示名に当たればその ID。表示名が同じ `x` と `x[1m]` は札の無いほうを先に。触っていない欄は値を変えない）。
 
 **会話ごとの選択。** Claude のアカウントと同じ経路: `setTurnSettings { endpoint }` → `nextSettings.endpoint` → 次の `runTurn` で `compatEndpoints.resolve()`（削除済み・エージェント違い・前回の確認に失敗・キーが読めない → `EndpointError` で送信を止めて理由を返す。黙って公式に戻さない）→ sidecar の `compatEndpoint`（'' = 公式）→ バックエンドへ `endpoint`（キーを含む。受け取れるバックエンドは `capabilities.compatEndpoints`）。接続先を変えるとモデルは ''（接続先のメイン）に戻す。エージェントを変えると、変えた先の既定（下記）。互換の会話のモデルは接続先の一覧＋自由入力なので、`validModel` は形だけを見る（`/` `:` を含む ID・一覧外も可。黙って既定に戻さない）。公式の既定のモデル・段（prefs）は互換の会話へ持ち込まず、互換の会話で選んだモデル・段も prefs に覚えない。段（effortOptions）は互換の接続先では既定の段を作らない（Codex は low / medium / high、Claude は「思考を送る」がオンのときだけ Claude の段）。互換の会話ではアカウント（OAuth）を使わない。
 引き継ぎ: 分岐（`inheritSettings`）と同じエージェントの新しい会話への引き継ぎは接続先も継ぐ（削除済みは継がない）。`ply_delegate` の子は同じエージェントなら親の接続先を継ぎ、違うエージェントなら公式（`delegatedEndpoint`。形式が合わないため）。**新しい会話の既定**は設定の一覧で「既定にする」を押した接続先だけ（`defaults`。入力欄で選んでも既定にならない。サブスクを使っているつもりでキー課金になる事故を避ける）。タイトル生成もその会話の接続先で（Claude は Haiku 相当、Codex は既定のモデル）。使用量（枠）は互換の接続先では出せないので、使用量の画面に接続先ごとの一文を出す。
@@ -25,8 +42,9 @@ procway-code への対応をやめる代わりに、Claude Code と Codex それ
 
 **モックからの差分**
 - 使用量の画面は接続先ごとの見出しと「表示できません」の一文だけで、接続先ごとの tokens の表は出さない（使用実績はエージェントごとの合計に含まれる）。
-- Claude の接続先の「詳しい設定」に「思考を送る」を足し、一覧の行に「思考とエフォート: 送る／送らない」を出す（決定 4）。エフォートの無効の理由も「思考を送る」がオフのためと書く。
-- Codex の追加の流れにも「認証の送り方」（Bearer / api-key ヘッダー）を出す（Azure をカスタムで入れる人のため）。Codex の確認は出力の上限を 16 にした（OpenAI の Responses の最小値）ので「出力 1 トークン」ではなく「ごくわずか」と書く。
+- Claude の接続先の「詳しい設定」に「思考を送る」を足す（決定 4）。一覧の行には出さず（2026-09-23 の説明文の整理で外した）、エフォートの無効の表示は「送らない（接続先の設定）」。
+- Codex の追加の流れにも「認証の送り方」（Bearer / api-key ヘッダー）を出す（Azure をカスタムで入れる人のため）。Codex の確認は出力の上限を 16 にした（OpenAI の Responses の最小値）。画面ではどちらも「確認で短い応答を 1 回だけ生成します」とまとめる。認証の送り方は既定のままで使うことが多いので「詳しい設定」に畳む。
+- **説明文を最小限にした**（2026-09-23。利用者から「説明文が多すぎて読めない」）。一覧・追加の流れ・入力欄の面から仕組みの説明の段落と欄の補足を外し、事故になること（料金・選び直し・暗号化できない起動）と失敗の理由だけを 1 行で残す（design-system.md §2.7）。確認の成功の行も「✓ つながりました · モデル N 件」だけにし、サーバーの `lines` は注意（確認のモデルが受け付けられない・一覧が取れない）と失敗の理由だけを返す。
 - 前回の確認に失敗している接続先を選んでいる会話も、削除と同じく送信を止める（決定の「確認失敗の接続先を指す会話は黙って公式に戻さない」）。入力欄の上の一文と、接続先の行の ⚠ で知らせる。
 - Claude のアカウントの節は、従来どおりアカウントを登録している（または選んでいる）会話だけに出す（モックは常に出していた）。
 - 公開のアドレスへの http の URL は確認の段で断る（キーを平文で送らないため。モックに無い安全策）。
@@ -102,7 +120,7 @@ Codex は実行中のハンドルに `steer` を公開し、`turn/steer` に `ex
 
 受理と「エージェントに渡った」は別の瞬間として扱う。渡った合図を後から出せるバックエンドは `control.steerConfirms = true` を立て、会話に入った時点で `userMessage.delivered { messageId }` を出す。server はこれが立っているときだけ `userMessage` に `pending: true` を載せ、web は渡るまでの間だけ吹き出しの下に回る弧と「次の区切りで AI に渡します」を出す。渡れば消し、渡らないままターンが終わったら「この作業には間に合いませんでした。続けて答えます」に言い換える（その後で渡れば消える）。合図を出せないバックエンドでは `pending` を載せない＝今までどおり「AIへ送信済み」だけを出す。
 
-受理した発言を読まないままターンが死んだとき（中断・失敗・ラウンド上限）は `userMessage.dropped { messageId }` を出す。server はその発言を送信待ちの「保留」へ戻し、web は吹き出しを会話から下げる。勝手には送り直さない（ターンが死んだ直後で、続けて送ってよいか分からない）。
+受理した発言を読まないままターンが死んだとき（中断・失敗・ラウンド上限）は `userMessage.dropped { messageId }` を出す（Claude は中断の interrupt で取り消された分。multi-backend.md §2.2）。server はその発言を送信待ちの「保留」へ戻し、web は吹き出しを会話から下げる。勝手には送り直さない（ターンが死んだ直後で、続けて送ってよいか分からない）。
 
 待機メッセージは取り消し可能。停止・実行失敗では待機を保留し、勝手に再開しない。サーバー再起動時は待機を保留、配送中を結果不明として復元し、人間が会話を確認して再送または取り消せる。送信待ちにエラー・保留がある場合は後続も順序を維持して待つ。新規送信による別ターンの並列起動はしない。各セッションの未処理メッセージは100件まで。送信待ち（`queued`）の画面向けの項目には、何を待っているかを `waiting` として添える: `turn`（この会話のターン・準備・外部ターン）、`order`（先頭が保留・失敗・結果不明）。`waiting` は保存せず、kick のたびに決め直す。会話をまたいだ同時実行の本数には上限を置かない（以前の `AGENT_HOST_MAX_TURNS` は 2026-09-23 に廃止）。
 

@@ -1,5 +1,5 @@
 import { withoutVisualizeReferences } from './visualize-reference.mjs';
-import { fileReference } from './file-reference.mjs';
+import { fileReference, looksLikePath, findWindowsPaths, baseName, dirName, WINDOWS_PATH_SOURCE } from './file-reference.mjs';
 import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs';
 // md 描画と present カードの描画。外部ライブラリを足さない方針なので自前で持つ（設計メモ §11）。
 //
@@ -8,7 +8,8 @@ import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs
 // 「エスケープしてから正規表現で置換する」方式は取らない（実体参照が壊れる／取りこぼす）。
 // 構造をパースし、葉のテキストを出力する瞬間にだけエスケープする。
 import { el } from "./dom.mjs";
-import { copyIcon, downloadIcon, sidePanelIcon } from './icons.mjs';
+import { fmt, t } from "./i18n.mjs";
+import { copyIcon, downloadIcon, sidePanelIcon, moreIcon } from './icons.mjs';
 import { copyText } from './code-copy.mjs';
 
 // ---------------------------------------------------------------- エスケープ
@@ -172,12 +173,33 @@ const INLINE_SRC =
   "|(?<img>!)?\\[(?<label>(?:\\\\.|[^\\]\\\\\\n]){0,500})\\]" +
   "\\((?:<(?<angleHref>[^<>\\n]{1,2000})>|(?<href>(?:\\\\.|[^()\\s\\\\]){0,2000}))(?:\\s+\"(?<title>[^\"\\n]{0,200})\")?\\)" +
   "|<(?<auto>https?:\\/\\/[^\\s<>\"]{1,2000})>" +
+  `|(?<win>${WINDOWS_PATH_SOURCE})` +
   "|(?<st>\\*\\*|__)(?<stb>[\\s\\S]{1,1000}?)\\k<st>" +
   "|(?<em>[*_])(?<emb>[^\\s*_][\\s\\S]{0,1000}?)\\k<em>" +
   "|~~(?<del>[\\s\\S]{1,1000}?)~~";
 
-/** インライン記法を HTML にする。src は生のまま渡すこと（ここでエスケープする） */
-function inline(src, depth = 0) {
+/**
+ * ファイルリンク。Markdown のリンク・自動リンク・所在の一行が同じ形を出す（押すと右パネル、右クリックで操作）。
+ * inner はエスケープ済みの HTML
+ */
+function fileAnchor(ref, inner, extra = "") {
+  const href = safeUrl(ref.path) ?? "";
+  return `<a class="md-link file-link${extra}" href="${esc(href)}" data-file-path="${esc(ref.path)}"${ref.line ? ` data-file-line="${ref.line}"` : ""}>${inner}</a>`;
+}
+
+/** 画像の下に添える所在の一行: ファイル名（右パネルで開く）・フォルダー（全体は title）・⋯（操作） */
+export function whereHtml(path) {
+  const name = baseName(path), dir = dirName(path).replace(/[\\/]+$/, ""), label = esc(t("files.actionsFor", { name }));
+  return `<span class="file-where">${fileAnchor({ path, line: null }, esc(name))}` +
+    (dir ? `<span class="file-where-dir" title="${esc(dir)}">${esc(dir)}</span>` : "") +
+    `<button type="button" class="btn btn-icon file-more" data-file-menu="${esc(path)}" aria-haspopup="menu" aria-label="${label}" title="${label}">${moreIcon}</button></span>`;
+}
+
+/**
+ * インライン記法を HTML にする。src は生のまま渡すこと（ここでエスケープする）。
+ * noLink はリンクの中身を描くとき。パスを自動でリンクにしない（<a> の入れ子を作らない）
+ */
+function inline(src, depth = 0, noLink = false) {
   const s = String(src ?? "");
   if (depth > 4) return text(s); // 病的なネストで止まる
   const re = new RegExp(INLINE_SRC, "g"); // 再帰するので毎回作る（lastIndex の共有を避ける）
@@ -193,19 +215,29 @@ function inline(src, depth = 0) {
     } else if (g.code !== undefined) {
       // 前後に空白が1つずつ付いていたら剥がす（CommonMark 準拠）
       const c = /^ .* $/s.test(g.code) ? g.code.slice(1, -1) : g.code;
-      out.push(`<code>${esc(c)}</code>`);
+      // 中身全体が 1 つのパスならファイルリンク（`web/render.mjs`・`D:\a b\c.md:42`）
+      const ref = noLink ? null : looksLikePath(c);
+      out.push(ref ? fileAnchor(ref, `<code>${esc(c)}</code>`, " code-link") : `<code>${esc(c)}</code>`);
     } else if (g.label !== undefined) {
-      out.push(link(g.img === "!", g.label, g.angleHref ?? g.href, g.title, depth));
+      out.push(link(g.img === "!", g.label, g.angleHref ?? g.href, g.title, depth, noLink));
     } else if (g.auto !== undefined) {
-      out.push(link(false, g.auto, g.auto, undefined, depth));
+      out.push(link(false, g.auto, g.auto, undefined, depth, noLink));
+    } else if (g.win !== undefined) {
+      // 地の文の Windows の絶対パス（docs/mockups/file-actions.html §4）。末尾の句読点は外して、続きから読み直す
+      const found = noLink ? null : findWindowsPaths(g.win)[0];
+      if (!found || found.start !== 0) handled = false;
+      else {
+        out.push(fileAnchor(found, esc(g.win.slice(0, found.end))));
+        re.lastIndex = m.index + found.end;
+      }
     } else if (g.stb !== undefined) {
       if (wordInner(s, m.index, g.st)) handled = false;
-      else out.push(`<strong>${inline(g.stb, depth + 1)}</strong>`);
+      else out.push(`<strong>${inline(g.stb, depth + 1, noLink)}</strong>`);
     } else if (g.emb !== undefined) {
       if (wordInner(s, m.index, g.em)) handled = false;
-      else out.push(`<em>${inline(g.emb, depth + 1)}</em>`);
+      else out.push(`<em>${inline(g.emb, depth + 1, noLink)}</em>`);
     } else if (g.del !== undefined) {
-      out.push(`<del>${inline(g.del, depth + 1)}</del>`);
+      out.push(`<del>${inline(g.del, depth + 1, noLink)}</del>`);
     } else {
       handled = false;
     }
@@ -229,21 +261,23 @@ function wordInner(s, at, delim) {
 }
 
 /** リンク／画像を組み立てる。安全でない URL はリンクにせず、文字として出す */
-function link(isImg, label, href, title, depth) {
+function link(isImg, label, href, title, depth, noLink = false) {
   const raw = String(href ?? "").replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\]^_`{|}~\\])/g, "$1");
   const t = title ? ` title="${esc(title)}"` : "";
   if (isImg) {
     const u = safeImg(raw);
     // 外部 http(s) の画像は勝手に取りに行かない。リンクとして出す（設計メモ §7 の方針に揃える）
-    if (u === null) return `<a class="md-link" href="${esc(safeUrl(raw) ?? "")}" target="_blank" rel="noopener noreferrer nofollow"${t}>${inline(label, depth + 1)}</a>`;
-    return `<img class="md-img" src="${esc(u)}" alt="${esc(label)}"${t} loading="lazy" referrerpolicy="no-referrer">`;
+    if (u === null) return `<a class="md-link" href="${esc(safeUrl(raw) ?? "")}" target="_blank" rel="noopener noreferrer nofollow"${t}>${inline(label, depth + 1, true)}</a>`;
+    // ホストのファイルならパスを持たせ、下に所在の一行を添える（リンクの中では添えない）
+    const file = u.startsWith("/local-file?") ? fileReference(u) : null;
+    const img = `<img class="md-img" src="${esc(u)}" alt="${esc(label)}"${t}${file ? ` data-file-path="${esc(file.path)}"` : ""} loading="lazy" referrerpolicy="no-referrer">`;
+    return file && !noLink ? `<span class="md-figure">${img}${whereHtml(file.path)}</span>` : img;
   }
   const u = safeUrl(raw);
-  const inner = inline(label, depth + 1);
+  const inner = inline(label, depth + 1, true);
   if (u === null) return `<span class="md-link-blocked" title="安全でないリンクのため無効化">${inner}</span>`;
   const file = fileReference(raw);
-  if (file) return `<a class="md-link file-link" href="${esc(u)}" data-file-path="${esc(file.path)}"${file.line ? ` data-file-line="${file.line}"` : ''}${t}>${inner}</a>`;
-  return `<a class="md-link" href="${esc(u)}" target="_blank" rel="noopener noreferrer nofollow"${t}>${inner}</a>`;
+  if (file) return `<a class="md-link file-link" href="${esc(u)}" data-file-path="${esc(file.path)}"${file.line ? ` data-file-line="${file.line}"` : ''}${t}>${inner}</a>`;  return `<a class="md-link" href="${esc(u)}" target="_blank" rel="noopener noreferrer nofollow"${t}>${inner}</a>`;
 }
 
 // -------------------------------------------------------------------- ブロック
@@ -480,6 +514,8 @@ export function renderPresent(ev) {
       img.src = src;
       img.alt = e.caption ?? "";
       img.loading = "lazy";
+      // パスを持たせる（拡大表示の下端・右クリックのメニューが使う）
+      if (e.path && fileReference(String(e.path))) img.dataset.filePath = String(e.path);
       body.append(img);
     }
   } else if (kind === "html") {
@@ -509,13 +545,16 @@ export function renderPresent(ev) {
     body.innerHTML = codeBlock(String(e.content ?? ""), langFromPath(e.path));
   }
 
-  // 所在の記録として元パスを小さく添える（見に行かせるためではない）
+  // 元パスを小さく添える。ファイルリンクなので押すと右パネルで開き、⋯・右クリックで操作が出る
   if (e.path && kind !== "visualization") {
     const p = el("div", "present-path");
-    p.append(el("code", null, String(e.path)));
+    const full = String(e.path), ref = fileReference(full);
+    if (ref) {
+      p.innerHTML = fileAnchor({ path: full, line: null }, `<code>${esc(full)}</code>`, " code-link") +
+        `<button type="button" class="btn btn-icon file-more" data-file-menu="${esc(full)}" aria-haspopup="menu" aria-label="${esc(t("files.actionsFor", { name: baseName(full) }))}" title="${esc(t("files.actionsFor", { name: baseName(full) }))}">${moreIcon}</button>`;
+    } else p.append(el("code", null, full));
     card.append(p);
-  }
-  return card;
+  }  return card;
 }
 
 // ------------------------------------------------------------- ツール呼び出し
@@ -541,7 +580,7 @@ function shortPath(p, keep = 2) {
 }
 
 const lineCount = (s) => (String(s ?? "") ? String(s).split("\n").length : 0);
-const fmtN = (n) => Number(n).toLocaleString("ja-JP");
+const fmtN = (n) => fmt.number(n);
 const firstLine = (s) => String(s ?? "").split("\n").find((l) => l.trim()) ?? "";
 
 /** JSON にして返す。循環などで壊れても表示は止めない */
@@ -562,12 +601,26 @@ function codeSpan(s, cls) {
   return n;
 }
 
-/** パス。見せるのは末尾寄り、全体は title に持たせる（属性値なので解釈されない） */
+/**
+ * パス。見せるのは末尾寄り、全体は title に持たせる（属性値なので解釈されない）。
+ * 読む・書く・編集の対象は必ずファイルなので、ファイルリンクにする（押すと右パネル、右クリックで操作）
+ */
 function pathSpan(p, keep = 2) {
   const full = String(p ?? "");
-  const n = codeSpan(shortPath(full, keep) || "（パスなし）", "tc-main");
-  if (full) n.title = full;
-  return n;
+  // <>"|*? はパスに入らない（入っていれば入力が壊れている）。リンクにせず文字のまま
+  const ref = full && !/[<>"|*?]/.test(full) ? fileReference(full) : null;
+  if (!ref) {
+    const n = codeSpan(shortPath(full, keep) || "（パスなし）", "tc-main");
+    if (full) n.title = full;
+    return n;
+  }
+  const a = el("a", "tc-main tc-code file-link tc-file", shortPath(full, keep));
+  // 押すと右パネルが横取りする。href は認証付きの配信の形にしておく（相対パスでもページ相対の URL を作らない）
+  a.setAttribute("href", `/local-file?path=${encodeURIComponent(ref.path)}`);
+  a.dataset.filePath = ref.path;
+  if (ref.line) a.dataset.fileLine = String(ref.line);
+  a.title = full;
+  return a;
 }
 
 /** 地の文の主役。等幅にしないもの（説明・クエリ・タイトルなど） */
@@ -854,6 +907,10 @@ const TOOL_DRAW = {
   mcp__host__set_title: drawTitle, mcp__host__fork: drawFork,
 };
 
+// 対象がファイルのツール（見出しにファイルリンクを添える）と、入力の中でパスを持つキー（エージェントごとに名前が違う）
+const FILE_DRAWS = new Set([drawRead, drawWrite, drawEdit, drawMultiEdit]);
+const FILE_KEYS = ["file_path", "notebook_path", "path", "AbsolutePath", "TargetFile"];
+
 // バックエンドが宣言する shape -> 描き方。名前が違っても「何をするツールか」は同じなので、
 // Claude 用に書いた描画をそのまま使い回す（入力のキーが違えば summarizeInput へ落ちる）。
 const SHAPE_DRAW = {
@@ -901,6 +958,9 @@ export function renderToolCall(name, input, opts) {
   details.append(head, body);
   card.append(details);
   head.append(el("span", "tc-label", TOOL_LABEL[raw] ?? (raw.startsWith("mcp__") ? "MCP" : clip(raw, 24))));
+  // 読む・書く・編集の対象は、動詞の横にファイルリンクで添える（押すと右パネル、右クリックで操作。docs/mockups/file-actions.html）
+  const target = FILE_DRAWS.has(TOOL_DRAW[raw]) ? FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v) : null;
+  if (target) head.append(pathSpan(target));
 
   body.append(el("div", "tc-section-label", "入力"));
   const inputBody = el("div", "tc-input");
@@ -987,6 +1047,14 @@ export function applyToolResult(node, result) {
     picture.setAttribute("alt", img.caption || "生成画像");
     picture.setAttribute("loading", "lazy");
     preview.append(picture);
+    // 保存先が分かる画像（Codex の savedPath、/local-file の URL）はパスを持たせ、所在の一行を添える
+    const file = img.path ? fileReference(String(img.path)) : src.startsWith("/local-file?") ? fileReference(src) : null;
+    if (file) {
+      picture.dataset.filePath = file.path;
+      const where = el("div");
+      where.innerHTML = whereHtml(file.path);
+      preview.append(where);
+    }
     node.append(preview);
   }
   return node;
