@@ -213,7 +213,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .row.dragging{background:var(--surface-paper);box-shadow:0 8px 28px var(--shadow);opacity:.9}
 .row-title{display:flex;align-items:center;gap:5px;min-width:0;font-size:var(--fs-s);line-height:1.4}
 .row-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row-t:empty::before{content:"新しいセッション";color:var(--ink-weak)}
+.row-t:empty::before{content:var(--i18n-untitled,"");color:var(--ink-weak)}
 /* fork で生まれた会話の印。題の前。グループから外しても状態を変えても消えない（§4.1） */
 .forkmark{width:12px;height:12px;flex:none;fill:none;stroke:var(--ink-weak);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 
@@ -239,7 +239,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .fam-body{flex:1;min-width:0}
 .fam-name{display:flex;align-items:center;gap:5px;min-width:0;font-size:var(--fs-s);line-height:1.4}
 .fam-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fam-t:empty::before{content:"新しいセッション";color:var(--ink-weak)}
+.fam-t:empty::before{content:var(--i18n-untitled,"");color:var(--ink-weak)}
 /* 畳んでいる間だけ出る要約。行の meta と同じ位置に、印と状態ごとの件数（枝の本数は出さない） */
 .fam-sum{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .fam-count{white-space:nowrap}
@@ -680,7 +680,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .ceffort.off .val{color:var(--ink-weak)}
 .ceffort .ticks{display:flex;justify-content:space-between;padding:0 7px 16px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .ceffort .ticks span{position:relative;width:0;display:flex;justify-content:center;white-space:nowrap}
-.ceffort .ticks span.def::after{content:"既定";position:absolute;top:15px;font-size:10px;color:var(--ink-blue)}
+.ceffort .ticks span.def::after{content:var(--i18n-default,"");position:absolute;top:15px;font-size:10px;color:var(--ink-blue)}
 /* 既定の段が分からず既定に従っているとき（composer-labels.mjs の effortStops の unset）: つまみを出さない。動かすと出る */
 .ceffort input[type=range].unset::-webkit-slider-thumb{opacity:0}
 .ceffort input[type=range].unset::-moz-range-thumb{opacity:0}
