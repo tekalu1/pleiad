@@ -60,6 +60,8 @@ export function createContextMenu() {
       }
       const row = el('button', 'li' + (item.checked ? ' on' : ''));
       row.type = 'button'; row.setAttribute('role', 'menuitem');
+      // 今は押せない項目（タイトル行の「…」のタイトルを生成: 生成中・未送信など）
+      if (item.disabled) { row.disabled = true; row.setAttribute('aria-disabled', 'true'); }
       row.append(el('span', 'lbl', item.label));
       if (item.hint) row.append(el('span', 'hint', item.hint));
       if (item.sub) {
