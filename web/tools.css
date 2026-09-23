@@ -1,0 +1,84 @@
+/* ==================== ツール呼び出しの表示（web/render.mjs の renderToolCall） ====================
+   会話の主役は本文なので、ここは一段沈める。動詞のラベル + 等幅の本文色 + 補足 + 右端に結果。
+   失敗は本文を読み飛ばしていても気づける必要があるので、行の面を一段持ち上げ、太字と記号で出す。
+   色は付けない（差し色は「あなたを待っている」だけ）。枠線・片側の線も無い。
+
+   横に長い中身（コマンド・パス・パターン）は必ずこの枠の内側で止める。
+   body に横スクロールを出さないため、入れ子のどこかで min-width:0 が切れないようにする。 */
+
+.tc{font-size:var(--fs-s);color:var(--ink-weak);padding:2px 10px;margin:0 0 4px;border-radius:var(--r-s);max-width:100%;min-width:0}
+.tc.tc-compact{font-size:var(--fs-xs)}
+.tc-details>summary{display:flex;align-items:center}
+.tc-details-body{padding:6px 0;min-width:0}
+.tc-details-body .code-block>pre{max-height:340px;overflow:auto}
+.tc-section-label{margin:6px 0;color:var(--ink-weak)}
+.tc-preview{margin:12px 0;max-width:100%}
+.tc-preview>img{display:block;max-width:100%;max-height:520px;object-fit:contain;border-radius:var(--r-s);cursor:zoom-in}
+
+/* 1行目。折り返してよいが、各要素は自分の中で横スクロールを閉じる */
+.tc-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;min-width:0}
+
+/* ツールの種類。動詞で揃えているので、縦に並ぶと「何をしたか」が読める */
+.tc-label{font-family:var(--font-mono);font-size:var(--fs-xs);letter-spacing:.04em;flex:none;min-width:3.6em;
+  white-space:nowrap;max-width:14em;overflow:hidden;text-overflow:ellipsis}
+
+/* mcp のサーバ名。ツール名と混ざらないよう弱く */
+.tc-server{flex:none;font-size:var(--fs-xs);white-space:nowrap}
+
+.tc-code{font-size:var(--fs-s)}
+
+/* 主役。何をしたかが分かる一番大事な部分なので、ここだけ本文色にする */
+.tc-main{flex:1 1 auto;min-width:0;max-width:100%;color:var(--ink);font-family:var(--font-mono);font-size:var(--fs-s);
+  white-space:pre;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain}
+.tc-main.tc-text{font-family:inherit;white-space:normal;overflow:hidden;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}
+.tc-main.tc-link{white-space:nowrap;text-overflow:ellipsis}
+/* 主役の中の横スクロールバーは細く。太いと行が膨らんで一覧性が落ちる */
+.tc-main::-webkit-scrollbar{height:6px}
+.tc-main::-webkit-scrollbar-thumb{border:0}   /* 共通のつまみ（style.css）は縁を 2px 取る。6px の溝ではつまみを溝いっぱいにする */
+
+/* 補足（行範囲・オプション・description）。溢れたら折り返さず切る */
+.tc-note{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%}
+
+/* 結果。右端に弱く。成功は主張しない */
+.tc-res{flex:none;margin-left:auto;font-family:var(--font-mono);font-size:var(--fs-xs);white-space:nowrap}
+/* 失敗。面を一段持ち上げ、太字と記号で */
+.tc.tc-error{background:var(--surface-1);padding:6px 10px}
+.tc-res-err{color:var(--ink-strong);font-weight:700;white-space:normal;max-width:60%;overflow:hidden;text-overflow:ellipsis}
+
+/* ---- 折りたたみ（コマンド全体・書き込む内容・渡した指示・出力） ---- */
+
+.tc-fold{margin-top:3px;min-width:0;max-width:100%}
+.tc-fold>summary{list-style:none;cursor:pointer;color:var(--ink-weak);font-size:var(--fs-xs);padding:1px 0;user-select:none}
+.tc-fold>summary::-webkit-details-marker{display:none}
+.tc-fold>summary::before{content:"▸";display:inline-block;width:1em;transition:transform var(--dur-fast) var(--ease-out)}
+.tc-fold[open]>summary::before{transform:rotate(90deg)}
+.tc-fold>summary:hover{color:var(--ink)}
+.tc-fold-body{margin:4px 0 6px;min-width:0;max-width:100%}
+.tc-fold-body .code-block{margin:0}
+.tc-fold-body .code-block>pre{padding:8px 12px;max-height:340px;overflow:auto}
+/* 出力は「読みたければ開く」もの。閉じているあいだは存在を主張させない */
+.tc-out>summary{opacity:.8}
+.tc.tc-error>.tc-out>summary{color:var(--ink);opacity:1}
+
+/* ---- 簡易 diff（Edit / MultiEdit）。記号の列と面の階調だけ ---- */
+
+.tc-diff{border-radius:var(--r-m);background:var(--surface-2);padding:6px 0;margin:0;overflow:auto;max-height:340px;
+  font-family:var(--font-mono);font-size:var(--fs-s);line-height:1.6}
+.tc-diff>div{padding:0 12px 0 8px;white-space:pre;display:flex;gap:8px;min-width:min-content}
+.tc-diff .g{width:1em;text-align:center;flex:none;color:var(--ink-weak)}
+.tc-del{color:var(--ink-weak);background:var(--surface-3)}
+.tc-add{color:var(--ink);background:var(--surface-paper)}
+.tc-add .g{color:var(--ink-blue);font-weight:700}
+.tc-diff-more{color:var(--ink-weak)}
+
+/* ---- TodoWrite ---- */
+
+.tc-todo{display:flex;flex-direction:column;gap:2px;font-size:var(--fs-s)}
+.tc-todo-item{display:flex;gap:6px;min-width:0;color:var(--ink-weak)}
+.tc-todo-mark{flex:none;width:1.2em;text-align:center}
+.tc-todo-in_progress{color:var(--ink)}
+.tc-todo-in_progress .tc-todo-mark{color:var(--ink-blue)}
+.tc-todo-completed{opacity:.6}
+
+/* .tc-done は見た目を変えない。結果が返ったことを client.mjs 側が見分けるための印。 */

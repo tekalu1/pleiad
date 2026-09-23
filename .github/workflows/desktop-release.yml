@@ -1,0 +1,124 @@
+name: Desktop signed release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing source tag (v0.1.0-beta.1)
+        required: true
+        type: string
+      platforms:
+        description: Platforms to sign and release
+        required: true
+        type: choice
+        default: windows
+        options: [windows, all]
+      rollout:
+        description: Initial rollout percentage (0-100)
+        default: '10'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+jobs:
+  package:
+    environment: desktop-release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.platforms == 'windows' && '["windows-latest"]' || '["windows-latest","macos-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      PLY_WINDOWS_SIGNING: ${{ vars.PLY_WINDOWS_SIGNING || 'pfx' }}
+      PLY_WIN_PUBLISHER: ${{ vars.PLY_WIN_PUBLISHER }}
+      PLY_AZURE_ENDPOINT: ${{ vars.PLY_AZURE_ENDPOINT }}
+      PLY_AZURE_ACCOUNT: ${{ vars.PLY_AZURE_ACCOUNT }}
+      PLY_AZURE_PROFILE: ${{ vars.PLY_AZURE_PROFILE }}
+      AZURE_TENANT_ID: ${{ matrix.os == 'windows-latest' && secrets.AZURE_TENANT_ID || '' }}
+      AZURE_CLIENT_ID: ${{ matrix.os == 'windows-latest' && secrets.AZURE_CLIENT_ID || '' }}
+      AZURE_CLIENT_SECRET: ${{ matrix.os == 'windows-latest' && secrets.AZURE_CLIENT_SECRET || '' }}
+      CSC_LINK: ${{ (matrix.os == 'windows-latest' && secrets.WIN_CSC_LINK) || (matrix.os == 'macos-latest' && secrets.MAC_CSC_LINK) || '' }}
+      CSC_KEY_PASSWORD: ${{ (matrix.os == 'windows-latest' && secrets.WIN_CSC_KEY_PASSWORD) || (matrix.os == 'macos-latest' && secrets.MAC_CSC_KEY_PASSWORD) || '' }}
+      APPLE_ID: ${{ matrix.os == 'macos-latest' && secrets.APPLE_ID || '' }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+      APPLE_TEAM_ID: ${{ matrix.os == 'macos-latest' && secrets.APPLE_TEAM_ID || '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Validate source version and signing configuration
+        run: node scripts/release-preflight.mjs
+      - run: npm test
+      - run: npm run desktop:dist -- --config electron-builder.release.cjs --publish never
+      - name: Verify Windows signatures
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem dist-desktop -Filter *.exe)
+          $apps = @(Get-ChildItem dist-desktop -Recurse -Filter Ply.exe)
+          if ($installers.Count -eq 0 -or $apps.Count -lt 2) { throw 'Missing Windows installer or architecture' }
+          foreach ($artifact in ($installers + $apps)) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $artifact.FullName
+            if ($signature.Status -ne 'Valid') { throw 'Invalid Windows signature' }
+            if ($signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne $env:PLY_WIN_PUBLISHER) { throw 'Unexpected signing publisher' }
+          }
+      - name: Verify macOS signature and notarization
+        if: runner.os == 'macOS'
+        run: |
+          count=0
+          while IFS= read -r -d '' bundle; do
+            codesign --verify --deep --strict "$bundle"
+            xcrun stapler validate "$bundle"
+            count=$((count + 1))
+          done < <(find dist-desktop -maxdepth 2 -name '*.app' -print0)
+          test "$count" -ge 2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: signed-${{ runner.os }}
+          if-no-files-found: error
+          path: |
+            dist-desktop/*.exe
+            dist-desktop/*.dmg
+            dist-desktop/*.zip
+            dist-desktop/*.blockmap
+            dist-desktop/beta*.yml
+            dist-desktop/latest*.yml
+  draft:
+    needs: package
+    runs-on: ubuntu-latest
+    environment: desktop-release
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      ROLLOUT: ${{ inputs.rollout }}
+      RELEASE_PLATFORMS: ${{ inputs.platforms }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run release:prepare
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: signed-*
+          merge-multiple: true
+          path: release-assets
+      - name: Validate complete release and create draft
+        run: |
+          node scripts/release-artifacts.mjs release-assets "${RELEASE_TAG#v}" "$ROLLOUT" temporary/release-notes.md "$RELEASE_PLATFORMS"
+          node scripts/release-publish.mjs draft release-assets

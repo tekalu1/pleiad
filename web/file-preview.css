@@ -1,0 +1,107 @@
+/* The preview shares the conversation's viewport, with independent scrolling. */
+/* プレビューの列の幅の初期値。開くと file-preview.mjs が実測して body に直接書く。窓の上端の帯（style.css）も同じ値で塗り分ける */
+body{--file-preview-width:40vw}
+body.file-preview-open{grid-template-columns:var(--side-col) minmax(360px,1fr) var(--file-preview-width,40vw)}
+.file-preview{grid-column:3;min-width:0;min-height:0;position:relative;display:flex;flex-direction:column;padding:0 16px 0 12px;background:var(--surface-0);color:var(--ink)}
+.file-preview-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:18px 0 14px}
+.file-preview-title{min-width:0;flex:1}
+.file-preview-title h2{font-size:var(--fs);font-weight:600;line-height:1.6;margin:0;overflow-wrap:anywhere}
+.file-preview-path{font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere;margin-top:3px}
+.file-preview-actions{display:flex;align-items:center;flex-shrink:0}
+.file-preview-actions .btn{padding:5px 8px;font-size:var(--fs-s)}
+.file-preview-actions .btn-icon{width:30px;height:30px;padding:0}
+.file-preview-toolbar{display:flex;gap:4px;align-items:center;flex-wrap:wrap;padding-bottom:12px;font-size:var(--fs-s)}
+.file-preview-switch{display:flex;gap:2px;border-radius:var(--r-pill);background:var(--surface-2);padding:3px;margin-right:auto}
+.file-preview-switch .btn[aria-pressed=true]{background:var(--surface-paper);color:var(--ink-blue)}
+.file-preview-location{display:flex;align-items:center;gap:4px;padding:0 0 12px}
+.file-preview-location input{flex:1;min-width:0;padding:8px 12px;background:var(--surface-paper);border-radius:var(--r-pill);font:var(--fs-s)/1.6 var(--font-mono)}
+.file-preview-location .btn-icon{width:30px;height:30px;padding:0;flex:none}
+.file-preview-body-layout{display:flex;min-height:0;flex:1;gap:8px;position:relative}
+.file-preview-tree-pane{width:220px;flex:0 0 220px;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface-1);border-radius:var(--r-m);padding:8px;overflow:hidden}
+.file-preview-tree-pane.collapsed{display:none}
+.file-preview-tree-header{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 6px;font-size:var(--fs-xs);font-weight:600;color:var(--ink-weak);letter-spacing:.04em}
+.file-preview-tree{flex:1;min-height:0;overflow:auto;scrollbar-width:thin}
+.file-preview.custom .file-preview-tree-pane{display:none}
+.file-preview-content{min-height:0;flex:1;overflow:auto;overscroll-behavior:contain;position:relative;background:var(--surface-paper);border-radius:var(--r-m)}
+.directory-view{padding:28px 32px;max-width:900px;margin:0 auto}
+.dir-head{margin-bottom:20px}
+.dir-title{font-size:var(--fs-l);font-weight:600;margin:0 0 4px;color:var(--ink);overflow-wrap:anywhere}
+.dir-desc{font-size:var(--fs-s);color:var(--ink-weak);margin:0;overflow-wrap:anywhere}
+.directory-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.dir-card{display:flex;align-items:center;gap:10px;padding:12px;background:var(--surface-1);border-radius:var(--r-m);text-align:left;cursor:pointer;min-width:0;transition:background-color var(--dur-fast) var(--ease-out)}
+.dir-card:hover{background:var(--surface-2)}
+.dir-card:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.dir-card-icon{width:24px;height:24px;flex:none;display:grid;place-items:center;color:var(--ink-weak)}
+.dir-card-icon svg.i{width:20px;height:20px}
+.dir-card-info{min-width:0;flex:1;display:flex;flex-direction:column}
+.dir-card-name{font-size:var(--fs);font-weight:500;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dir-card-meta{font-size:var(--fs-xs);color:var(--ink-weak);margin-top:2px}
+.dir-empty{padding:32px 0;text-align:center;color:var(--ink-weak);font-size:var(--fs-s)}
+.file-preview-document{padding:28px 32px;max-width:900px;margin:0 auto}
+.file-preview-document img{max-width:100%;height:auto}
+.file-preview-document table{color:var(--ink)}
+.file-preview-frame,.file-preview .visualize-fill{display:block;width:100%;height:100%;min-height:240px;border:0;background:var(--surface-paper)}
+.file-preview-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 0;font-size:var(--fs-xs);color:var(--ink-weak)}
+.file-preview-foot > span{flex:1;min-width:120px}
+.file-preview-foot .btn{font-size:var(--fs-s)}
+.file-preview-foot button{background:var(--surface-paper);color:var(--ink-blue)}
+.file-preview-note{padding:0 4px 12px;color:var(--ink-weak);font-size:var(--fs-s);overflow-wrap:anywhere}
+.file-preview-state{padding:48px 28px;text-align:center;overflow-wrap:anywhere}
+.file-preview-state h3{margin:0 0 12px;font-size:var(--fs-l)}
+.file-preview-state p{color:var(--ink-weak);line-height:1.8}
+.file-preview-source{margin:0;padding:20px 0;min-height:100%;background:var(--surface-paper);color:var(--ink);font:var(--fs-s)/1.9 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.file-preview-line{display:block;padding:0 16px 0 56px;position:relative;min-height:1.9em}
+.file-preview-line.on{background:var(--surface-2);color:var(--ink-strong)}
+.file-preview-line-number{position:absolute;left:8px;width:36px;text-align:right;color:var(--ink-weak);user-select:none}
+.file-preview-table{padding:20px;overflow:auto}
+.file-preview-table table{width:100%;border-collapse:collapse;color:var(--ink);font-size:var(--fs-s)}
+.file-preview-table th,.file-preview-table td{padding:10px 12px;text-align:left;vertical-align:top;white-space:pre-wrap;min-width:100px;max-width:400px;overflow-wrap:anywhere}
+.file-preview-table th{background:var(--surface-3);font-weight:600}
+.file-preview-table tr:nth-child(even){background:var(--surface-1)}
+.file-preview-media-tools{display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap;padding:12px;font-size:var(--fs-s)}
+.file-preview-image{padding:20px;overflow:auto;min-height:180px}
+.file-preview-image img{display:block;max-width:none;height:auto;margin:auto}
+.file-preview-pdf{overflow:auto;padding:16px}
+.file-preview-pdf canvas{display:block;margin:auto}
+.file-preview-pdf-text{padding:16px;font-size:var(--fs-s);overflow-wrap:anywhere}
+.file-preview-pdf-text summary{cursor:pointer;color:var(--ink-blue)}
+.file-preview-resize{position:absolute;inset:0 auto 0 0;width:8px;cursor:col-resize;touch-action:none;z-index:2}
+/* 掴める幅は 8px のまま、見える印は細い丸い棒。上下は紙の角の丸み（--r-l）の分だけ空け、会話の角に掛からない。
+   フォーカスの輪も四角い 8px の箱ではなく棒に沿わせる（輪の色と太さはボタンと同じ） */
+.file-preview-resize::before{content:'';position:absolute;inset:var(--r-l) 2px;border-radius:var(--r-pill)}
+.file-preview-resize:hover::before,.file-preview-resize:focus-visible::before{background:var(--surface-3)}
+.file-preview-resize:focus-visible{outline:none}
+.file-preview-resize:focus-visible::before{outline:2px solid var(--line-blue);outline-offset:1px}
+.file-link{overflow-wrap:anywhere}
+.file-link::before{content:'▧';display:inline-block;margin-right:4px;text-decoration:none}
+.file-link[aria-current=true]::after{content:' 表示中';display:inline-block;margin-left:4px;text-decoration:none;font-size:var(--fs-xs)}
+body.file-preview-wide{grid-template-columns:var(--side-col) minmax(0,1fr)}
+body.file-preview-wide > main{display:none}
+body.file-preview-wide .file-preview{grid-column:2}
+body.file-preview-wide .file-preview-resize{display:none}
+@media(max-width:1150px) and (min-width:761px){
+  body{--file-preview-width:48vw}
+  body.file-preview-open{grid-template-columns:0 minmax(360px,1fr) var(--file-preview-width,48vw)}
+  body.file-preview-open > #sidebar{visibility:hidden}
+  body.file-preview-wide{grid-template-columns:0 minmax(0,1fr)}
+  /* デスクトップ版は脇を閉じたときと同じ（web/style.css の「窓の枠」）。紙の左上は窓の縁に接し、
+     帯は会話の上だけ紙に、プレビューの上は脇の面のまま。紙が上へ延びるので右上の角も無くなる */
+  :root.desktop body.file-preview-open:not(.file-preview-wide) > .titlebar{background:linear-gradient(to left,var(--surface-0) var(--file-preview-width),var(--surface-paper) 0)}
+  :root.desktop body.file-preview-open > main{--paper-tl:0px;--paper-tr:0px}
+  :root.desktop body.file-preview-wide > .titlebar{background:var(--surface-0)}   /* 広げたプレビューだけが下にある。点は脇の印なので載せない */
+}
+@media(max-width:760px){
+  body.file-preview-open{grid-template-columns:var(--side-col) minmax(0,1fr)}
+  .file-preview{position:fixed;inset:0;z-index:45;padding:0 12px}
+  :root.desktop .file-preview{top:var(--bar-h)}   /* 窓の上端の帯と窓のボタンを残す。帯より上は掴んで動かす場所 */
+  /* 帯の下は全面のプレビュー。帯と、帯に残る脇の見出しから点を外し、点が帯の高さで途切れて見えないようにする */
+  :root.desktop body.file-preview-open > :is(.titlebar,#sidebar){background-image:none}
+  .file-preview-resize,.file-preview-actions .btn-wide{display:none}
+  .file-preview-body-layout{flex-direction:column}
+  .file-preview-tree-pane{width:auto;flex:none;max-height:220px}
+  .directory-view{padding:20px 16px}
+  .directory-grid{grid-template-columns:1fr}
+  .file-preview-document{padding:24px}
+  .file-preview-head{padding:16px 0 12px}
+  .file-preview-foot{padding:10px 0 max(10px,env(safe-area-inset-bottom))}
+}

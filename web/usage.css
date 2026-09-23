@@ -1,0 +1,18 @@
+.usage-card { background: var(--surface-1); border-radius: var(--r-m); padding: 20px; margin-block: 16px; }
+.usage-card h3 { margin: 0 0 16px; }
+.usage-card h4 { margin: 20px 0 8px; }
+.usage-window { display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; margin-block: 16px; }
+.usage-window progress { grid-column: 1 / -1; width: 100%; height: 8px; border: none; border-radius: var(--r-pill); overflow: hidden; appearance: none; }
+.usage-window progress::-webkit-progress-bar { background: var(--surface-3); }
+.usage-window progress::-webkit-progress-value { background: var(--fill-primary); color: var(--on-fill); border-radius: var(--r-pill); }
+.usage-window progress::-moz-progress-bar { background: var(--fill-primary); color: var(--on-fill); border-radius: var(--r-pill); }
+.usage-window small { grid-column: 1 / -1; }
+.usage-note { color: var(--ink-weak); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.usage-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+.usage-table th, .usage-table td { padding: 8px 4px; text-align: right; font-weight: normal; }
+.usage-table th:first-child { text-align: left; }
+@media (max-width: 600px) {
+  .usage-card { padding: 12px; }
+  .usage-window { grid-template-columns: 1fr; }
+  .usage-table { font-size: 11px; }
+}

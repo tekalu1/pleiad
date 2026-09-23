@@ -1,0 +1,447 @@
+<div id="ctxu">
+<style>
+#ctxu{--bg:#eef0f3;--panel:#fff;--soft:#f4f5f7;--soft2:#e9ebef;--ink:#1d2025;--mute:#6b717c;--faint:#9aa0aa;--accent:#2f6fde;--ok:#1f8a4c;--warn:#b86b00;--bad:#c23b3b;
+  font:13.5px/1.55 system-ui,"Segoe UI","Yu Gothic UI",sans-serif;color:var(--ink);}
+#ctxu *{box-sizing:border-box}
+#ctxu [hidden]{display:none!important}
+#ctxu .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}
+#ctxu .tab{border:0;border-radius:999px;padding:7px 14px;background:var(--soft2);color:var(--ink);font:inherit;cursor:pointer}
+#ctxu .tab[aria-selected=true]{background:var(--ink);color:#fff}
+#ctxu .frame{background:var(--bg);border-radius:18px;padding:10px;overflow:hidden}
+#ctxu .view{display:none}#ctxu .view.on{display:block}
+#ctxu .row{display:flex;gap:10px;align-items:stretch}
+#ctxu .surface{background:var(--panel);border-radius:14px}
+#ctxu h3{font-size:15px;margin:0 0 2px}#ctxu h4{font-size:13.5px;margin:0}
+#ctxu p{margin:0}
+#ctxu .mute{color:var(--mute)}#ctxu .small{font-size:12px}#ctxu .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+#ctxu .btn{border:0;border-radius:999px;padding:6px 13px;font:inherit;cursor:pointer;background:var(--soft2);color:var(--ink)}
+#ctxu .btn.pri{background:var(--ink);color:#fff}
+#ctxu .link{border:0;background:none;color:var(--accent);font:inherit;padding:0;cursor:pointer}
+#ctxu svg{flex:none}
+#ctxu .dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+/* switch */
+#ctxu .sw{flex:none;width:34px;height:20px;border-radius:999px;border:0;padding:0;background:var(--soft2);position:relative;cursor:pointer;transition:background .18s}
+#ctxu .sw::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .18s cubic-bezier(.3,.7,.3,1)}
+#ctxu .sw[aria-checked=true]{background:var(--ink)}
+#ctxu .sw[aria-checked=true]::after{transform:translateX(14px)}
+/* ---- chat mock ---- */
+#ctxu .chat{flex:1;min-width:0;padding:18px 20px;display:flex;flex-direction:column;gap:12px;min-height:560px}
+#ctxu .bubble{background:var(--soft);border-radius:16px;padding:10px 14px;max-width:80%}
+#ctxu .bubble.me{align-self:flex-end;background:var(--ink);color:#fff}
+#ctxu .chip-ctx{align-self:flex-start;display:inline-flex;gap:6px;align-items:center;border:0;border-radius:999px;background:var(--soft);padding:4px 11px;font:inherit;font-size:12px;color:var(--mute);cursor:pointer}
+#ctxu .side{width:340px;flex:none;padding:16px;display:flex;flex-direction:column;gap:14px}
+#ctxu .kind{background:var(--soft);border-radius:12px;padding:11px 12px;display:flex;flex-direction:column;gap:6px}
+#ctxu .khead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#ctxu .who{margin-left:auto;font-size:12px;color:var(--mute);display:flex;gap:6px;align-items:center}
+#ctxu .item{display:flex;gap:8px;align-items:flex-start;padding:3px 0}
+#ctxu .item .t{min-width:0;flex:1}#ctxu .p{color:var(--faint);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ctxu .item .dot{margin-top:7px}
+#ctxu .notice{background:#fff6e6;border-radius:12px;padding:11px 12px;display:flex;flex-direction:column;gap:8px}
+#ctxu .notice b{color:var(--warn)}
+#ctxu details summary{cursor:pointer;color:var(--mute);font-size:12px;list-style:none}
+#ctxu details summary::-webkit-details-marker{display:none}
+#ctxu details summary::before{content:"＋ "}#ctxu details[open] summary::before{content:"－ "}
+#ctxu .mini{display:inline-flex;background:var(--soft2);border-radius:999px;padding:2px}
+#ctxu .mini button{border:0;background:none;border-radius:999px;padding:2px 9px;font:inherit;font-size:11.5px;color:var(--mute);cursor:pointer}
+#ctxu .mini button[aria-pressed=true]{background:var(--panel);color:var(--ink)}
+/* ---- settings mock ---- */
+#ctxu .menu{width:160px;flex:none;padding:14px 8px;display:flex;flex-direction:column;gap:2px}
+#ctxu .menu div{padding:7px 12px;border-radius:10px;color:var(--mute);white-space:nowrap}#ctxu .menu .cur{background:var(--panel);color:var(--ink);font-weight:600}
+#ctxu .set{flex:1;min-width:0;padding:20px 22px;display:flex;flex-direction:column;gap:16px;position:relative}
+#ctxu .place{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#ctxu .combo{display:inline-flex;align-items:center;gap:8px;background:var(--soft);border-radius:12px;padding:8px 12px;border:0;font:inherit;cursor:pointer;max-width:100%}
+#ctxu .pop{background:var(--panel);border-radius:14px;box-shadow:0 10px 34px rgba(0,0,0,.16);padding:6px;width:360px;max-width:100%;display:none;position:absolute;z-index:3;margin-top:4px}
+#ctxu .pop.on{display:block}
+#ctxu .pop .opt2{display:flex;flex-direction:column;align-items:flex-start;width:100%;border:0;background:none;padding:7px 10px;border-radius:10px;font:inherit;text-align:left;cursor:pointer;color:var(--ink)}
+#ctxu .pop .opt2:hover,#ctxu .pop .opt2.sel{background:var(--soft)}
+#ctxu .pop hr{border:0;height:1px;background:var(--soft2);margin:5px 6px}
+#ctxu .add{display:flex;gap:8px;align-items:center;width:100%;border:0;background:none;padding:8px 10px;border-radius:10px;font:inherit;color:var(--accent);cursor:pointer}
+#ctxu .add:hover{background:var(--soft)}
+#ctxu .addbox{padding:6px;display:flex;flex-direction:column;gap:6px}
+#ctxu .in{width:100%;border:0;border-radius:10px;background:var(--soft);padding:8px 11px;font:inherit;color:var(--ink);outline:none}
+#ctxu .in:focus{box-shadow:0 0 0 2px var(--ink)}
+#ctxu .card{background:var(--soft);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px}
+#ctxu .seg{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+#ctxu .opt{border:0;border-radius:11px;background:var(--panel);padding:9px 11px;text-align:left;font:inherit;cursor:pointer;color:var(--ink);display:flex;flex-direction:column;gap:2px;opacity:.72}
+#ctxu .opt[aria-pressed=true]{opacity:1;box-shadow:0 0 0 2px var(--ink)}
+#ctxu .opt .d{font-size:11.5px;color:var(--mute)}
+#ctxu .srcs{display:flex;gap:6px;flex-wrap:wrap}
+#ctxu .src{border:0;border-radius:999px;padding:4px 11px;font:inherit;font-size:12px;cursor:pointer;background:var(--panel);color:var(--mute)}
+#ctxu .src[aria-pressed=true]{background:var(--ink);color:#fff}
+#ctxu .list{background:var(--panel);border-radius:11px;padding:2px 12px}
+#ctxu .li{display:flex;gap:10px;align-items:center;padding:8px 0}
+#ctxu .li + .li{box-shadow:0 -1px 0 var(--soft2)}
+#ctxu .li .t{flex:1;min-width:0}
+#ctxu .li.off .nm{color:var(--faint)}
+#ctxu .li .ic{width:26px;height:26px;border-radius:8px;background:var(--soft);display:grid;place-items:center;color:var(--mute);flex:none}
+#ctxu .conf{background:#fff6e6;border-radius:10px;padding:8px 10px;margin:2px 0 8px;display:flex;flex-direction:column;gap:6px;font-size:12px}
+#ctxu .conf label{display:flex;gap:6px;align-items:center;cursor:pointer}
+#ctxu .inh{font-size:12px;color:var(--mute);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+#ctxu .agentnote{background:var(--panel);border-radius:11px;padding:10px 12px;font-size:12.5px;color:var(--mute)}
+#ctxu .cols{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+#ctxu .col{background:var(--panel);border-radius:11px;padding:10px 12px;display:flex;flex-direction:column;gap:4px}
+#ctxu .col .nm2{display:flex;gap:6px;align-items:center;font-size:12.5px}
+#ctxu .only{color:var(--warn);font-size:11px;margin-left:auto}
+#ctxu .toast{position:sticky;bottom:0;align-self:flex-start;background:var(--ink);color:#fff;border-radius:999px;padding:5px 13px;font-size:12px;opacity:0;transition:opacity .25s}
+#ctxu .toast.on{opacity:1}
+/* sheet */
+#ctxu .scrim{position:absolute;inset:0;background:rgba(20,22,26,.28);border-radius:14px;display:flex;align-items:flex-start;justify-content:center;padding:40px 14px;z-index:5}
+#ctxu .sheet{background:var(--panel);border-radius:16px;box-shadow:0 18px 50px rgba(0,0,0,.22);width:440px;max-width:100%;padding:18px;display:flex;flex-direction:column;gap:12px}
+#ctxu .field{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--mute)}
+#ctxu .field .in{color:var(--ink);font-size:13px}
+#ctxu .sug{display:flex;gap:6px;flex-wrap:wrap}
+#ctxu .sug button{border:0;border-radius:999px;background:var(--soft);padding:3px 10px;font:inherit;font-size:12px;cursor:pointer;color:var(--ink)}
+#ctxu .sug button[aria-pressed=true]{background:var(--ink);color:#fff}
+#ctxu .field p.small{color:var(--mute)}
+@media (max-width:760px){
+  #ctxu .row{flex-direction:column}#ctxu .side,#ctxu .menu{width:auto}
+  #ctxu .menu{flex-direction:row;overflow:auto}#ctxu .seg,#ctxu .cols{grid-template-columns:1fr}
+}
+</style>
+
+<div class="tabs" role="tablist" aria-label="モックの画面">
+  <button class="tab" role="tab" aria-selected="true" data-v="a">① 会話の右パネル</button>
+  <button class="tab" role="tab" aria-selected="false" data-v="b">② 設定 › コンテキスト</button>
+</div>
+
+<!-- ============ ① 会話の右パネル ============ -->
+<div class="frame view on" data-view="a">
+  <div class="row">
+    <div class="surface chat">
+      <div class="bubble me">README の構成を見直して</div>
+      <button class="chip-ctx" aria-label="この会話のコンテキストを開く">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h7"/></svg>
+        <span data-chip>指示 2 · Skills 14 · MCP はエージェント任せ</span>
+      </button>
+      <div class="bubble">構成を確認しました。AGENTS.md の方針に沿って…</div>
+      <p class="small mute" style="margin-top:auto">↑ 会話の頭に付く札。押すと右パネルが開く</p>
+    </div>
+
+    <aside class="surface side" aria-label="この会話のコンテキスト">
+      <div>
+        <h3>この会話のコンテキスト</h3>
+        <p class="small mute">開始時（9/20 14:02）に決まり、途中では変わりません</p>
+      </div>
+
+      <div class="notice" role="status">
+        <p><b>開始後に 1 件変わりました</b><br><span class="small">AGENTS.md が 14:31 に更新</span></p>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn pri">新しい内容で会話を続ける</button>
+          <button class="btn">差分を見る</button>
+        </div>
+        <p class="small mute">今までのやり取りを引き継いだまま、最新の内容を読み込み直します</p>
+      </div>
+
+      <div class="kind">
+        <div class="khead"><h4>指示</h4><span class="who"><span class="dot" style="background:var(--ok)"></span>Pleiad が渡した</span></div>
+        <div class="item"><span>✓</span><div class="t"><div>AGENTS.md</div><div class="p">E:\workspace</div></div></div>
+        <div class="item"><span>✓</span><div class="t"><div>CLAUDE.md</div><div class="p">~\.claude</div></div></div>
+      </div>
+
+      <div class="kind">
+        <div class="khead"><h4>Skills</h4><span class="who"><span class="dot" style="background:var(--ok)"></span>Pleiad が案内 14 件</span></div>
+        <p class="small mute">使ったもの</p>
+        <div class="item"><span>●</span><div class="t"><div>review-changes</div><div class="p">~\.claude\skills</div></div></div>
+        <details><summary>使っていない 13 件</summary>
+          <div class="item"><span class="mute">○</span><div class="t"><div>weekly-summary</div></div></div>
+          <div class="item"><span class="mute">○</span><div class="t"><div>chat-message</div></div></div>
+          <div class="item"><span class="mute">○</span><div class="t mute">…ほか 11 件</div></div>
+        </details>
+      </div>
+
+      <div class="kind">
+        <div class="khead"><h4>MCP</h4>
+          <span class="mini" role="group" aria-label="モックの状態切り替え"><button aria-pressed="true" data-m="agent">任せた例</button><button aria-pressed="false" data-m="ply">そろえた例</button></span>
+        </div>
+        <!-- エージェント任せ -->
+        <div data-mcp="agent">
+          <p class="small mute" style="margin-bottom:4px">エージェント任せ。Claude の設定に登録されているのは次の 4 件です（接続の成否は Claude 側が持つため、Pleiad からは見えません）</p>
+          <div class="item"><span class="dot" style="background:var(--faint)"></span><div class="t"><div>sketch</div><div class="p">~\.claude.json</div></div></div>
+          <div class="item"><span class="dot" style="background:var(--faint)"></span><div class="t"><div>tracker-mcp</div><div class="p">~\.claude.json</div></div></div>
+          <details><summary>ほか 2 件</summary><div class="item"><span class="dot" style="background:var(--faint)"></span><div class="t"><div>notion · sentry</div></div></div></details>
+        </div>
+        <!-- Pleiad がそろえる -->
+        <div data-mcp="ply" hidden>
+          <div class="item"><span class="dot" style="background:var(--ok)"></span><div class="t"><div>sketch</div><div class="p">接続中 · ツール 4 · 呼び出し 3 回</div></div></div>
+          <div class="item"><span class="dot" style="background:var(--ok)"></span><div class="t"><div>tracker-mcp</div><div class="p">接続中 · ツール 14 · 未使用</div></div></div>
+          <div class="item"><span class="dot" style="background:var(--warn)"></span><div class="t"><div>sentry</div><div class="p" style="white-space:normal">ログインが必要です（前回のログインの期限が切れました）。この MCP を外して会話は進めています</div>
+            <div style="display:flex;gap:6px;margin-top:5px"><button class="btn pri small">ブラウザでログイン</button><button class="btn small">この会話では外す</button></div></div></div>
+          <p class="small mute">ログインが済むと自動でつなぎ直し、次の返答から使えます。会話を作り直す必要はありません</p>
+        </div>
+      </div>
+
+      <p class="small mute">次の会話から変えたいとき
+        <button class="link" data-go="b">この場所の設定を開く →</button></p>
+    </aside>
+  </div>
+</div>
+
+<!-- ============ ② 設定 › コンテキスト ============ -->
+<div class="frame view" data-view="b">
+  <div class="row">
+    <nav class="menu" aria-label="設定メニュー">
+      <div>一般</div><div>エージェント</div><div class="cur">コンテキスト</div><div>表示</div>
+    </nav>
+    <section class="surface set" id="ctxu-set">
+      <div>
+        <h3>コンテキスト</h3>
+        <p class="mute small">新しい会話を始めるときに、エージェントへ何を渡すかを決めます。始まっている会話は変わりません。</p>
+      </div>
+
+      <div style="position:relative">
+        <div class="place">
+          <span class="small mute">設定する範囲</span>
+          <button class="combo" id="ctxu-combo" aria-haspopup="listbox" aria-expanded="false">
+            <span id="ctxu-place">E:\workspace</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+        </div>
+        <div class="pop" id="ctxu-pop" role="listbox" aria-label="設定する範囲">
+          <div id="ctxu-places"></div>
+          <hr>
+          <button class="add" id="ctxu-add"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>場所を追加</button>
+          <div class="addbox" id="ctxu-addbox" hidden>
+            <input class="in mono" id="ctxu-dir" placeholder="フォルダーのパス" aria-label="追加するフォルダーのパス" autocomplete="off">
+            <p class="small mute" style="padding:0 4px">最近の会話の場所</p>
+            <div id="ctxu-cands"></div>
+            <div style="display:flex;gap:6px;justify-content:flex-end">
+              <button class="btn">フォルダーを選ぶ…</button><button class="btn pri" id="ctxu-addok">追加</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 指示 -->
+      <div class="card" data-kind="inst">
+        <div class="khead"><h4>指示ファイル</h4><span class="who inh" data-inh></span></div>
+        <div class="seg">
+          <button class="opt" data-o="agent"><b>エージェントに任せる</b><span class="d">Claude は CLAUDE.md、Codex は AGENTS.md を各自の決まりで読む</span></button>
+          <button class="opt" data-o="ply"><b>Pleiad がそろえる</b><span class="d">どのエージェントにも同じものを渡す</span></button>
+        </div>
+        <div data-ply>
+          <p class="small mute" style="margin-bottom:6px">探す形式</p>
+          <div class="srcs">
+            <button class="src" aria-pressed="true">AGENTS.md（共通）</button>
+            <button class="src" aria-pressed="true">CLAUDE.md</button>
+            <button class="src" aria-pressed="false">Codex 形式</button>
+          </div>
+          <p class="small mute" style="margin:10px 0 6px">この場所で渡すもの <span data-count></span></p>
+          <div class="list">
+            <div class="li"><div class="t"><div class="nm">AGENTS.md</div><div class="p mono">E:\workspace</div></div><button class="sw" role="switch" aria-checked="true" aria-label="AGENTS.md を渡す"></button></div>
+            <div class="li"><div class="t"><div class="nm">CLAUDE.md</div><div class="p mono">~\.claude</div></div><button class="sw" role="switch" aria-checked="true" aria-label="CLAUDE.md を渡す"></button></div>
+            <div class="li off"><div class="t"><div class="nm">CLAUDE.md</div><div class="p mono">E:\workspace\old</div></div><button class="sw" role="switch" aria-checked="false" aria-label="old の CLAUDE.md を渡す"></button></div>
+          </div>
+        </div>
+        <div class="agentnote" data-agent>Pleiad は何も渡しません。どのファイルが読まれるかはエージェント次第です。</div>
+      </div>
+
+      <!-- Skills -->
+      <div class="card" data-kind="skill">
+        <div class="khead"><h4>Skills</h4><span class="who inh" data-inh></span></div>
+        <div class="seg">
+          <button class="opt" data-o="agent"><b>エージェントに任せる</b><span class="d">各エージェントが自分の skills フォルダーを読む</span></button>
+          <button class="opt" data-o="ply"><b>Pleiad がそろえる</b><span class="d">一覧を渡し、必要な時だけ本文を読ませる</span></button>
+        </div>
+        <div data-ply>
+          <p class="small mute" style="margin-bottom:6px">探す形式</p>
+          <div class="srcs">
+            <button class="src" aria-pressed="true">.agents/skills（共通）</button>
+            <button class="src" aria-pressed="true">.claude/skills</button>
+            <button class="src" aria-pressed="false">.codex/skills</button>
+          </div>
+          <p class="small mute" style="margin:10px 0 6px">この場所で案内するもの <span data-count data-extra="11"></span> <button class="link small">すべて見る</button></p>
+          <div class="list">
+            <div class="li"><div class="t"><div class="nm">review-changes</div><div class="p">変更を確定前に見直す</div></div><button class="sw" role="switch" aria-checked="true" aria-label="review-changes を渡す"></button></div>
+            <div class="li"><div class="t"><div class="nm">weekly-summary</div><div class="p">週次のまとめを作る</div></div><button class="sw" role="switch" aria-checked="true" aria-label="weekly-summary を渡す"></button></div>
+            <div class="li off"><div class="t"><div class="nm">lmstudio-model-load-diagnosis</div><div class="p">LM Studio の読み込み失敗を切り分ける</div></div><button class="sw" role="switch" aria-checked="false" aria-label="lmstudio-model-load-diagnosis を渡す"></button></div>
+          </div>
+        </div>
+        <div class="agentnote" data-agent>Pleiad は何も渡しません。どの Skill が使えるかはエージェント次第です。</div>
+      </div>
+
+      <!-- MCP -->
+      <div class="card" data-kind="mcp">
+        <div class="khead"><h4>外部 MCP</h4><span class="who inh" data-inh></span></div>
+        <div class="seg">
+          <button class="opt" data-o="agent"><b>エージェントに任せる</b><span class="d">各エージェントが自分の MCP 設定どおりに接続する</span></button>
+          <button class="opt" data-o="ply"><b>Pleiad がそろえる</b><span class="d">どのエージェントにも同じ MCP をつなぐ</span></button>
+        </div>
+
+        <!-- 任せる：各エージェントの登録を見比べる（読み取りのみ） -->
+        <div data-agent>
+          <p class="small mute" style="margin-bottom:6px">各エージェントの設定に登録されているもの（Pleiad は読むだけで変えません）</p>
+          <div class="cols">
+            <div class="col"><b class="small">Claude</b>
+              <div class="nm2"><span class="dot" style="background:var(--faint)"></span>sketch</div>
+              <div class="nm2"><span class="dot" style="background:var(--faint)"></span>tracker-mcp<span class="only">Claude だけ</span></div>
+              <div class="nm2"><span class="dot" style="background:var(--faint)"></span>notion</div>
+              <div class="nm2"><span class="dot" style="background:var(--faint)"></span>sentry<span class="only">Claude だけ</span></div>
+            </div>
+            <div class="col"><b class="small">Codex</b>
+              <div class="nm2"><span class="dot" style="background:var(--faint)"></span>sketch</div>
+              <div class="nm2"><span class="dot" style="background:var(--faint)"></span>notion</div>
+            </div>
+          </div>
+          <p class="small mute" style="margin-top:6px">エージェントを切り替えると使える MCP が変わります。そろえたいときは「Pleiad がそろえる」へ</p>
+        </div>
+
+        <!-- そろえる：まとめた一覧＋追加 -->
+        <div data-ply>
+          <p class="small mute" style="margin:0 0 6px">この場所でつなぐもの <span data-count></span></p>
+          <div class="list">
+            <div class="li"><span class="ic" title="手元で動かす"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m5 8 4 4-4 4M12 16h7"/></svg></span>
+              <div class="t"><div class="nm">sketch</div><div class="p">手元で動かす · Claude と Codex の両方に登録</div></div><button class="sw" role="switch" aria-checked="true" aria-label="sketch をつなぐ"></button></div>
+            <div class="li"><span class="ic" title="URL につなぐ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16"/></svg></span>
+              <div class="t"><div class="nm">notion</div><div class="p">URL につなぐ · ログイン済み · 同じ名前で定義が 2 つ</div></div><button class="sw" role="switch" aria-checked="true" aria-label="notion をつなぐ"></button></div>
+            <div class="conf" role="group" aria-label="notion の定義を選ぶ">
+              <span>どちらの定義を使いますか</span>
+              <label><input type="radio" name="ctxu-notion" checked> Claude の設定 <span class="mono mute">mcp.notion.com/mcp</span></label>
+              <label><input type="radio" name="ctxu-notion"> Codex の設定 <span class="mono mute">notion-mcp（手元）</span></label>
+            </div>
+            <div class="li"><span class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m5 8 4 4-4 4M12 16h7"/></svg></span>
+              <div class="t"><div class="nm">tracker-mcp</div><div class="p">手元で動かす · Claude だけに登録</div></div><button class="sw" role="switch" aria-checked="true" aria-label="tracker-mcp をつなぐ"></button></div>
+            <div class="li"><span class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16"/></svg></span>
+              <div class="t"><div class="nm">sentry</div><div class="p" style="white-space:normal"><span style="color:var(--warn)">ログインが必要</span> · URL につなぐ · Claude だけに登録</div></div>
+              <button class="btn small" data-login>ログイン</button><button class="sw" role="switch" aria-checked="true" aria-label="sentry をつなぐ"></button></div>
+            <div class="li off"><span class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16"/></svg></span>
+              <div class="t"><div class="nm">github</div><div class="p">URL につなぐ · トークン · Pleiad に登録</div></div><button class="sw" role="switch" aria-checked="false" aria-label="github をつなぐ"></button></div>
+          </div>
+          <p class="small mute" style="margin-top:6px">antigravity の会話では、ここを「Pleiad がそろえる」にしていてもエージェント任せになります（対応予定）</p>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+            <button class="btn" id="ctxu-mcpadd">＋ MCP を追加</button>
+            <span class="small mute">行を押すと中身の確認・編集（鍵やトークンは伏せて表示）</span>
+          </div>
+          <details style="margin-top:8px"><summary>読み込む設定ファイル</summary>
+            <div class="srcs" style="margin-top:6px"><button class="src" aria-pressed="true">Claude の設定</button><button class="src" aria-pressed="true">Codex の設定</button><button class="src" aria-pressed="false">procway-code</button></div>
+          </details>
+        </div>
+      </div>
+
+      <details>
+        <summary>探す場所を増やす（任意）</summary>
+        <div class="card" style="margin-top:8px">
+          <p class="small mute">Pleiad がそろえる種類について、Git ルートからこの場所までに加えて、次のフォルダーも探します。</p>
+          <div class="list mono" style="padding:8px 12px">D:\shared\agent-rules</div>
+          <button class="btn" style="align-self:flex-start">フォルダーを追加</button>
+        </div>
+      </details>
+
+      <span class="toast" id="ctxu-toast">保存しました · 次の会話から反映</span>
+
+      <!-- MCP 追加シート -->
+      <div class="scrim" id="ctxu-sheet" hidden>
+        <div class="sheet" role="dialog" aria-label="MCP を追加">
+          <h3>MCP を追加</h3>
+          <label class="field">名前<input class="in" value="github" aria-label="名前"></label>
+          <div class="field">つなぎ方
+            <div class="seg"><button class="opt" aria-pressed="false" data-t="url"><b>URL につなぐ</b><span class="d">サービスが公開している MCP</span></button>
+            <button class="opt" aria-pressed="true" data-t="cmd"><b>手元で動かす</b><span class="d">npx などのコマンドを起動</span></button></div>
+          </div>
+          <label class="field" data-tf="cmd">コマンド<input class="in mono" value="npx -y @modelcontextprotocol/server-github" aria-label="コマンド"></label>
+          <label class="field" data-tf="url" hidden>URL<input class="in mono" value="https://api.githubcopilot.com/mcp/" aria-label="URL"></label>
+          <div class="field" data-tf="cmd">環境変数
+            <div class="list mono" style="padding:8px 12px;display:flex;justify-content:space-between">GITHUB_TOKEN <span class="mute">••••••••</span></div>
+          </div>
+          <div class="field" data-tf="url" hidden>認証
+            <div class="sug" role="group" aria-label="認証の方式">
+              <button data-a="oauth">ブラウザでログイン</button><button data-a="token">トークン</button><button data-a="headers">ヘッダー</button><button data-a="none">なし</button>
+            </div>
+            <p class="small" data-ad="oauth">追加するとブラウザが開きます。ログインが済めば、期限の更新は Pleiad が自動で行います</p>
+            <details data-ad="oauth" style="margin-top:2px"><summary>サービス側でアプリ登録が必要なとき</summary>
+              <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+                <input class="in mono" placeholder="クライアント ID" aria-label="クライアント ID"><input class="in mono" placeholder="クライアントシークレット（任意）" aria-label="クライアントシークレット">
+              </div></details>
+            <input class="in mono" data-ad="token" hidden placeholder="トークンを貼り付け" aria-label="トークン">
+            <div class="list mono" data-ad="headers" hidden style="padding:8px 12px;display:flex;justify-content:space-between">X-API-Key <span class="mute">••••••••</span></div>
+            <p class="small" data-ad="none" hidden>認証の要らない MCP に使います</p>
+          </div>
+          <div class="field">使う範囲
+            <div class="sug"><button style="background:var(--ink);color:#fff">この場所だけ</button><button>すべての場所</button></div>
+          </div>
+          <p class="small mute">Pleiad の設定として保存し、どのエージェントにもつなぎます。Claude や Codex の設定ファイルは書き換えません。トークンや鍵は OS の鍵の保管庫（Windows の資格情報、macOS のキーチェーン、Linux の Secret Service）で暗号化して保存します。</p>
+          <div style="display:flex;gap:6px;justify-content:flex-end"><button class="btn" data-close>やめる</button><button class="btn pri" data-close id="ctxu-addgo">追加して試しにつなぐ</button></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+(()=>{
+  const root=document.getElementById('ctxu'),$=s=>root.querySelector(s),$$=s=>[...root.querySelectorAll(s)];
+  const show=v=>{$$('.tab').forEach(t=>t.setAttribute('aria-selected',String(t.dataset.v===v)));
+    $$('.view').forEach(x=>x.classList.toggle('on',x.dataset.view===v));};
+  $$('.tab').forEach(t=>t.onclick=()=>show(t.dataset.v));
+  $$('[data-go]').forEach(b=>b.onclick=()=>show(b.dataset.go));
+  // ① MCP の例切り替え
+  $$('[data-m]').forEach(b=>b.onclick=()=>{$$('[data-m]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+    $$('[data-mcp]').forEach(x=>x.hidden=x.dataset.mcp!==b.dataset.m);
+    $('[data-chip]').textContent=b.dataset.m==='ply'?'指示 2 · Skills 14 · MCP 3（1 件つながらない）':'指示 2 · Skills 14 · MCP はエージェント任せ';});
+  // ② 保存通知
+  const toast=$('#ctxu-toast');let tm;
+  const saved=()=>{toast.classList.add('on');clearTimeout(tm);tm=setTimeout(()=>toast.classList.remove('on'),1600);};
+  // 範囲
+  const places=[{id:'all',name:'すべての場所（既定）',sub:'個別に変えていない場所はこれに従う'},
+    {id:'ws',name:'E:\\workspace',sub:'今の会話の場所'},{id:'ah',name:'D:\\work\\my-app',sub:''}];
+  const cands=['D:\\work\\website','D:\\work\\cli-tool','D:\\work\\notes'];
+  let place='ws';
+  const base={inst:'ply',skill:'agent',mcp:'agent'};
+  const over={ws:{skill:'ply'},ah:{}};
+  const cards=$$('.card[data-kind]');
+  const subOf=p=>{if(p.id==='all')return p.sub;const n=Object.keys(over[p.id]??{}).length;return (p.sub?p.sub+' · ':'')+(n?`${n} 項目を個別に変更`:'すべて既定どおり');};
+  function renderPlaces(){const box=$('#ctxu-places');box.replaceChildren();
+    for(const p of places){const b=document.createElement('button');b.className='opt2'+(p.id===place?' sel':'');b.setAttribute('role','option');b.setAttribute('aria-selected',String(p.id===place));
+      b.innerHTML=`<span></span><span class="small mute"></span>`;b.children[0].textContent=p.name;b.children[1].textContent=subOf(p);
+      b.onclick=()=>{place=p.id;closePop();paint();};box.append(b);}}
+  function count(c){c.querySelectorAll('[data-count]').forEach(s=>{const n=[...c.querySelectorAll('.list .sw')].filter(x=>x.getAttribute('aria-checked')==='true').length+Number(s.dataset.extra??0);s.textContent=`${n} 件`;});}
+  function paint(){
+    $('#ctxu-place').textContent=places.find(p=>p.id===place).name;
+    for(const c of cards){
+      const k=c.dataset.kind,o=place!=='all'&&k in (over[place]??{});
+      const val=place==='all'?base[k]:(o?over[place][k]:base[k]);
+      c.querySelectorAll(':scope > .seg .opt').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.o===val)));
+      c.querySelectorAll(':scope > [data-ply]').forEach(x=>x.hidden=val!=='ply');c.querySelectorAll(':scope > [data-agent]').forEach(x=>x.hidden=val==='ply');
+      const inh=c.querySelector('[data-inh]');inh.replaceChildren();
+      if(place==='all')inh.textContent='個別に変えていない場所すべて';
+      else if(o){inh.append('この場所だけ変更中 · ');const r=document.createElement('button');r.className='link';r.textContent='既定に戻す';
+        r.onclick=()=>{delete over[place][k];paint();saved();};inh.append(r);}
+      else inh.textContent='既定どおり';
+      count(c);
+    }
+    renderPlaces();
+  }
+  cards.forEach(c=>c.querySelectorAll(':scope > .seg .opt').forEach(b=>b.onclick=()=>{
+    const k=c.dataset.kind;if(place==='all')base[k]=b.dataset.o;else (over[place]??={})[k]=b.dataset.o;paint();saved();}));
+  $$('.src').forEach(b=>b.onclick=()=>{b.setAttribute('aria-pressed',String(b.getAttribute('aria-pressed')!=='true'));saved();});
+  $$('.card .sw').forEach(b=>b.onclick=()=>{const on=b.getAttribute('aria-checked')!=='true';b.setAttribute('aria-checked',String(on));
+    b.closest('.li').classList.toggle('off',!on);count(b.closest('.card'));saved();});
+  // プルダウン
+  const combo=$('#ctxu-combo'),pop=$('#ctxu-pop'),addbox=$('#ctxu-addbox'),dir=$('#ctxu-dir');
+  const closePop=()=>{pop.classList.remove('on');combo.setAttribute('aria-expanded','false');addbox.hidden=true;$('#ctxu-add').hidden=false;};
+  combo.onclick=()=>{if(pop.classList.contains('on'))return closePop();renderPlaces();pop.classList.add('on');combo.setAttribute('aria-expanded','true');};
+  function renderCands(){const box=$('#ctxu-cands');box.replaceChildren();const q=dir.value.toLowerCase();
+    for(const c of cands.filter(c=>c.toLowerCase().includes(q))){const b=document.createElement('button');b.className='opt2 mono';b.textContent=c;b.onclick=()=>{dir.value=c;renderCands();};box.append(b);}}
+  $('#ctxu-add').onclick=()=>{$('#ctxu-add').hidden=true;addbox.hidden=false;dir.value='';renderCands();dir.focus();};
+  dir.oninput=renderCands;
+  $('#ctxu-addok').onclick=()=>{const v=dir.value.trim();if(!v)return dir.focus();const id='p'+places.length;
+    places.push({id,name:v,sub:''});over[id]={};const i=cands.indexOf(v);if(i>=0)cands.splice(i,1);place=id;closePop();paint();};
+  // MCP 追加シート
+  const sheet=$('#ctxu-sheet');
+  $('#ctxu-mcpadd').onclick=()=>{sheet.hidden=false;};
+  sheet.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{sheet.hidden=true;});
+  sheet.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{sheet.querySelectorAll('[data-t]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+    sheet.querySelectorAll('[data-tf]').forEach(x=>x.hidden=x.dataset.tf!==b.dataset.t);label();});
+  let auth='oauth',kind='cmd';
+  const label=()=>{kind=sheet.querySelector('[data-t][aria-pressed=true]').dataset.t;
+    $('#ctxu-addgo').textContent=kind==='url'&&auth==='oauth'?'追加してログイン':'追加して試しにつなぐ';};
+  const pick=a=>{auth=a;sheet.querySelectorAll('[data-a]').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.a===a)));
+    sheet.querySelectorAll('[data-ad]').forEach(x=>x.hidden=x.dataset.ad!==a);label();};
+  sheet.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>pick(b.dataset.a));
+  pick('oauth');
+  // 一覧のログイン（モックでは押すとログイン済みに変わる）
+  $$('[data-login]').forEach(b=>b.onclick=()=>{b.textContent='ブラウザで続けてください…';b.disabled=true;
+    setTimeout(()=>{const p=b.closest('.li').querySelector('.p');p.textContent='URL につなぐ · ログイン済み · Claude だけに登録';b.remove();saved();},1400);});
+  paint();
+})();
+</script>
+</div>

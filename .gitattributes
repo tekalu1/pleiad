@@ -1,0 +1,3 @@
+# scripts/release-info.mjs が LF で書き出す生成物で、npm test のたびにも書き直される。
+# core.autocrlf=true の環境では CRLF で取り出されるため、書き直すたびに「変更あり」になる。作業ツリーでも LF に固定する
+web/release-info.json text eol=lf

@@ -1,0 +1,81 @@
+name: Evaluation release
+on:
+  push:
+    tags: ['v*-beta.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing beta tag on main
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main')
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: powershell
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release source
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+-beta\.\d+$') { throw 'Expected beta tag' }
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release source must be on main' }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Validate release notes
+        run: |
+          node scripts/release-info.mjs --require-new-notes
+          if ($LASTEXITCODE -ne 0) { throw 'Release notes are missing, invalid or unchanged' }
+          if ("v$((Get-Content package.json -Raw | ConvertFrom-Json).version)" -ne $env:RELEASE_TAG) { throw 'Tag must match package version' }
+          git diff --exit-code -- web/release-info.json
+          if ($LASTEXITCODE -ne 0) { throw 'Commit the output of npm run release:prepare before tagging' }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: tekalu1/procway-code
+          ref: 309f25f39c11b349fe53063b2e6065d7978513e6
+          path: temporary/procway-code
+          persist-credentials: false
+      - name: Install test backend
+        working-directory: temporary/procway-code
+        run: npm install --ignore-scripts --omit=dev --omit=optional --package-lock=false
+      - name: Configure isolated test paths
+        run: |
+          $testTemp = Join-Path $env:RUNNER_TEMP 'ply-tests'
+          New-Item -ItemType Directory -Force -Path $testTemp | Out-Null
+          "TEMP=$testTemp" >> $env:GITHUB_ENV
+          "TMP=$testTemp" >> $env:GITHUB_ENV
+          "AGENT_HOST_PROCWAY_CODE=$env:GITHUB_WORKSPACE/temporary/procway-code/src/cli.mjs" >> $env:GITHUB_ENV
+      - run: npm ci
+      - run: npm test
+      - name: Sign, verify and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLY_EVALUATION_PFX: ${{ secrets.WIN_CSC_LINK }}
+          PLY_EVALUATION_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          PLY_WIN_PUBLISHER: ${{ vars.PLY_WIN_PUBLISHER }}
+          PLY_WIN_CERTIFICATE_SHA1: ${{ vars.PLY_WIN_CERTIFICATE_SHA1 }}
+        run: |
+          try {
+            ./scripts/import-evaluation-signing.ps1
+            ./scripts/publish-evaluation.ps1 -Tag $env:RELEASE_TAG
+          } finally {
+            ./scripts/import-evaluation-signing.ps1 -Cleanup
+          }

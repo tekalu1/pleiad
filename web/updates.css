@@ -1,0 +1,21 @@
+#appVersion { font-size: 15px; font-weight: 600; }
+#updatePreferences { display: grid; gap: 12px; margin: 20px 0; }
+#updatePreferences label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#updateHint, #updateLastChecked { color: var(--ink-weak); font-size: 12px; }
+#updateConfirm { padding: 16px; margin: 16px 0; background: var(--surface-1); border-radius: 14px; }
+#updateConfirm h3 { margin-top: 0; }
+#updateError { color: var(--ink); font-weight: 600; }
+#updateNotes { overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
+#updateNotes :is(h1, h2, h3) { font-size: 14px; margin: 12px 0 6px; }
+#updateNotes > :first-child { margin-top: 0; }
+#updateProgress, #updatePromptProgress { width: 100%; }
+#updatePromptProgress { margin-top: 8px; }
+#releaseHistory details { padding: 12px 0; }
+#releaseHistory summary { cursor: pointer; overflow-wrap: anywhere; }
+#releaseHistory h4 { margin-bottom: 8px; }
+#releaseHistory li { margin-bottom: 8px; }
+#settings.has-update { position: relative; }
+#settings.has-update::after { content: '•'; position: absolute; top: -4px; right: 0; color: var(--ink); }
+.update-notice { padding: 12px; background: var(--surface-2); border-radius: 14px; font-size: 12px; }
+.update-notice span { display: block; overflow-wrap: anywhere; }
+.update-notice .btn { margin-top: 8px; }

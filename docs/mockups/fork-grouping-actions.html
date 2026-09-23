@@ -1,0 +1,497 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<div id="ply-fam-actions">
+  <div class="demo-bar">
+    <span>グループの操作 <small>提案モック（つかんで状態を変える／入れる・外す・解除する）</small></span>
+    <div class="demo-actions">
+      <button type="button" id="fa-reset">はじめから</button>
+      <button type="button" id="fa-theme">配色を切り替え</button>
+    </div>
+  </div>
+
+  <div class="stage">
+    <aside class="side" aria-label="セッション一覧">
+      <header>
+        <span class="brand">Pleiad</span>
+        <span class="spacer"></span>
+        <button type="button" class="hbtn" aria-label="新しいセッション">＋</button>
+        <button type="button" class="hbtn" aria-label="設定">⋯</button>
+      </header>
+      <div class="search"><span>検索</span><span class="funnel" aria-hidden="true">▽</span></div>
+      <div id="fa-list" class="groups"></div>
+      <div id="fa-undo" class="undo" role="status" hidden></div>
+      <p class="hint">行やグループの見出しは<b>つかんで別の状態へ落とせる</b>。<b>⋯</b>（右クリックでも）で同じことがメニューからできる。</p>
+    </aside>
+
+    <section class="notes" aria-label="提案の中身">
+      <h2>言葉</h2>
+      <p class="p"><b>状態</b> = 見出し（`進行中` `レビュー待ち` … タグそのもの）。<b>グループ</b> = fork でつながった会話のまとまり。
+      「グループを作る／解除する」は会話のまとまりの話、「状態を変える」は見出しの話、と読み分けられる。</p>
+
+      <h2>きまり</h2>
+      <ol>
+        <li><b>グループに居る = 根と同じ状態</b>。fork した子は親の状態を引き継いでグループに入る。</li>
+        <li><b>子の状態を変えると、その子はグループから出る</b>。新しい状態の下に単独の行として並ぶ（会話の枝＝親子関係はそのまま）。</li>
+        <li><b>戻すときは状態を根に合わせる</b>。「◯◯ のグループに入れる」は状態の変更も兼ねる。</li>
+        <li><b>根（グループの見出し）の状態を変えると、グループごと移る</b>。中の会話も一緒に変わる。</li>
+        <li><b>作る</b>: 行のメニューから「◯◯ のグループに入れる」。根の行からは「枝をまとめる」で散らばった枝を一度に。まとめる相手が無い行には、この項目を出さない。</li>
+        <li><b>解除</b>: 見出しのメニューから。中の会話は独立した行になり、状態はそのまま。解除したことは覚える（自動で作り直さない）。</li>
+        <li>どの操作も脇の下に一行出して <b>元に戻す</b>。状態が黙って動く操作なので、取り消せることを見せる。</li>
+      </ol>
+
+      <h2>つかんで動かす</h2>
+      <ul>
+        <li><b>グループの中の行</b> → 別の状態へ落とす: 状態が変わり、グループから出る。</li>
+        <li><b>グループの中の行</b> → 今と同じ状態の空きへ落とす: 状態はそのまま、グループから出るだけ。</li>
+        <li><b>グループの見出し</b> → 別の状態へ落とす: <b>グループごと</b>移る（中の会話も一緒）。</li>
+        <li><b>単独の行</b> → グループの器へ落とす: そのグループに入り、状態が根に揃う。</li>
+        <li>落とせる先は面が一段持ち上がって光る。線は引かない。キーボードからは ⋯ のメニューで同じことができる。</li>
+      </ul>
+
+      <h2>fork の印</h2>
+      <p class="p">fork で生まれた会話は、<b>タイトルの前に枝の印</b>を出す。グループから外しても、状態を変えても消えない
+      （「この会話は誰かの続きだ」という事実は変わらないため）。印を押す必要はなく、見るだけのもの。</p>
+    </section>
+  </div>
+
+  <div id="fa-menu" class="menu" role="menu" hidden></div>
+</div>
+
+<style>
+#ply-fam-actions{
+  --paper:light-dark(#ffffff,#1b1c23);--side:light-dark(#eceef4,#121318);
+  --soft:light-dark(#f4f5f9,#222329);--sunken:light-dark(#e8eaf1,#15161c);--deep:light-dark(#dcdee8,#2a2b32);
+  --ink:light-dark(#1c2247,#dfe3f2);--weak:light-dark(#6b7299,#8a91b8);
+  --blue:light-dark(#3a499e,#9eabde);--mark:light-dark(#aa2678,#e07ab8);
+  --shadow:light-dark(rgba(58,73,158,.16),rgba(0,0,0,.5));
+  color-scheme:light dark;color:var(--ink);background:var(--paper);position:relative;
+  font:14px/1.6 system-ui,'Yu Gothic UI','Segoe UI',sans-serif;font-variant-numeric:tabular-nums;width:100%;border-radius:14px;overflow:hidden}
+#ply-fam-actions *{box-sizing:border-box}
+#ply-fam-actions button{font:inherit;color:inherit;background:transparent;border:0;cursor:pointer;border-radius:999px;line-height:1.4}
+#ply-fam-actions :focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+#ply-fam-actions [hidden]{display:none!important}
+
+#ply-fam-actions .demo-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--side);font-size:12px}
+#ply-fam-actions .demo-bar small{margin-left:8px;color:var(--weak)}
+#ply-fam-actions .demo-actions{display:flex;gap:8px}
+#ply-fam-actions .demo-bar button{padding:5px 12px;font-size:12px}
+#ply-fam-actions .demo-bar button:hover{background:var(--sunken)}
+
+#ply-fam-actions .stage{display:flex;flex-wrap:wrap;align-items:stretch;min-height:640px}
+#ply-fam-actions .side{flex:0 0 320px;max-width:100%;min-width:0;background:var(--side);display:flex;flex-direction:column;padding:0 10px 10px}
+#ply-fam-actions .side header{display:flex;align-items:center;gap:4px;padding:12px 4px 6px}
+#ply-fam-actions .brand{font-size:20px;font-weight:650;letter-spacing:-1px}
+#ply-fam-actions .spacer{flex:1}
+#ply-fam-actions .hbtn{width:28px;height:28px;padding:0;color:var(--weak)}
+#ply-fam-actions .hbtn:hover{background:var(--soft);color:var(--ink)}
+#ply-fam-actions .search{display:flex;align-items:center;justify-content:space-between;background:var(--paper);border-radius:999px;padding:7px 14px;color:var(--weak);font-size:12px;margin-bottom:14px}
+#ply-fam-actions .groups{overflow:auto;flex:1;min-height:0;scrollbar-width:thin}
+#ply-fam-actions .hint{margin:8px 6px 0;font-size:11px;color:var(--weak)}
+#ply-fam-actions .notes{flex:1 1 340px;min-width:0;padding:22px 26px;background:var(--paper)}
+#ply-fam-actions .notes h2{font-size:13px;margin:0 0 10px;color:var(--weak);font-weight:600}
+#ply-fam-actions .notes ol,#ply-fam-actions .notes ul{margin:0 0 22px;padding-left:20px;font-size:13px}
+#ply-fam-actions .notes li{margin-bottom:8px}
+#ply-fam-actions .notes .p{margin:0 0 22px;font-size:13px}
+
+/* 状態（見出し） */
+#ply-fam-actions .grp{margin-bottom:14px;border-radius:14px;transition:background-color .12s ease-out}
+#ply-fam-actions .grp.over{background:var(--soft)}
+#ply-fam-actions .grp-head{display:flex;align-items:center;gap:6px;padding:2px 4px 6px 2px;font-size:12px;min-height:28px}
+#ply-fam-actions .grp-icon{width:22px;height:22px;display:grid;place-items:center;font-size:13px}
+#ply-fam-actions .grp-name{font-weight:600}
+#ply-fam-actions .grp-name.none{font-weight:400;color:var(--weak)}
+#ply-fam-actions .rows{display:flex;flex-direction:column;gap:2px;padding-left:16px;min-height:26px}
+#ply-fam-actions .empty{padding:6px 10px;font-size:11px;color:var(--weak)}
+
+/* 行 */
+#ply-fam-actions .row{display:flex;align-items:flex-start;gap:4px;border-radius:14px;padding:7px 4px 7px 10px;transition:background-color .12s ease-out}
+#ply-fam-actions .row:hover{background:var(--soft)}
+#ply-fam-actions .row.sel{background:var(--paper);box-shadow:0 1px 4px var(--shadow)}
+#ply-fam-actions .row.dragging{background:var(--paper);box-shadow:0 8px 28px var(--shadow);opacity:.9}
+#ply-fam-actions .row.moved{animation:fa-in .6s ease-out}
+@keyframes fa-in{from{background:var(--deep)}to{background:transparent}}
+#ply-fam-actions .row-open{flex:1;min-width:0;text-align:left;border-radius:10px;padding:0}
+#ply-fam-actions .title{display:flex;align-items:center;gap:5px;font-size:12px;line-height:1.4;min-width:0}
+#ply-fam-actions .title .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ply-fam-actions .title.origin .t{color:var(--weak)}
+#ply-fam-actions .forkmark{width:12px;height:12px;flex:none;fill:none;stroke:var(--weak);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+#ply-fam-actions .meta{display:flex;align-items:center;gap:6px;margin-top:2px;font-size:11px;color:var(--weak);min-width:0}
+#ply-fam-actions .when{font-family:ui-monospace,Consolas,monospace;flex:none}
+#ply-fam-actions .cwd{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+#ply-fam-actions .more{width:24px;height:24px;flex:none;padding:0;color:var(--weak);opacity:0;transition:opacity .12s ease-out}
+#ply-fam-actions .row:hover .more,#ply-fam-actions .fam-head:hover .more,#ply-fam-actions .more:focus-visible{opacity:1}
+#ply-fam-actions .more:hover{background:var(--deep);color:var(--ink)}
+
+/* グループの器 */
+#ply-fam-actions .fam{border-radius:14px;transition:background-color .16s ease-out}
+#ply-fam-actions .fam.open{background:var(--sunken)}
+#ply-fam-actions .fam.over{background:var(--deep)}
+#ply-fam-actions .fam-head{display:flex;align-items:flex-start;gap:5px;padding:7px 4px;border-radius:14px;transition:background-color .12s ease-out}
+#ply-fam-actions .fam-head:hover{background:var(--soft)}
+#ply-fam-actions .fam.open>.fam-head:hover{background:var(--deep)}
+#ply-fam-actions .fam-head.dragging{background:var(--paper);box-shadow:0 8px 28px var(--shadow);opacity:.9}
+#ply-fam-actions .fam-toggle{flex:1;min-width:0;display:flex;align-items:flex-start;gap:5px;text-align:left;padding:0;border-radius:10px}
+#ply-fam-actions .fam-chev{width:10px;height:10px;flex:none;margin:5px 3px 0;fill:none;stroke:var(--weak);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;transition:transform .12s ease-out}
+#ply-fam-actions .fam-toggle[aria-expanded=true] .fam-chev{transform:rotate(90deg)}
+#ply-fam-actions .fam-body{flex:1;min-width:0}
+#ply-fam-actions .fam-name{display:flex;align-items:center;gap:5px;font-size:12px;line-height:1.4;min-width:0}
+#ply-fam-actions .fam-name .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ply-fam-actions .fam-sum{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px;font-size:11px;color:var(--weak)}
+#ply-fam-actions .fam-rows{display:flex;flex-direction:column;gap:2px;padding:0 4px 4px 16px}
+
+/* 元に戻す */
+#ply-fam-actions .undo{display:flex;align-items:center;gap:8px;justify-content:space-between;padding:8px 10px;margin-top:6px;
+  background:var(--paper);border-radius:14px;font-size:11px;color:var(--weak);box-shadow:0 1px 4px var(--shadow)}
+#ply-fam-actions .undo b{color:var(--ink);font-weight:500}
+#ply-fam-actions .undo button{flex:none;color:var(--blue);padding:3px 10px;font-size:11px}
+#ply-fam-actions .undo button:hover{background:var(--sunken)}
+
+/* メニュー */
+#ply-fam-actions .menu{position:absolute;z-index:50;min-width:230px;max-width:290px;padding:8px;background:var(--paper);
+  border-radius:14px;box-shadow:0 8px 28px var(--shadow);font-size:12px}
+#ply-fam-actions .menu .mhead{padding:2px 8px 6px;font-size:11px;color:var(--weak);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ply-fam-actions .menu .mi{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 10px;border-radius:8px;color:var(--ink)}
+#ply-fam-actions .menu .mi:hover{background:var(--soft)}
+#ply-fam-actions .menu .mi .lbl{flex:1;min-width:0}
+#ply-fam-actions .menu .mi .note{color:var(--weak);font-size:11px;flex:none}
+#ply-fam-actions .menu .sep{height:1px;margin:6px 8px;background:var(--sunken)}
+@media (max-width:760px){#ply-fam-actions .side{flex:1 1 100%}#ply-fam-actions .notes{flex:1 1 100%}}
+</style>
+
+<script>
+(() => {
+  const root = document.getElementById("ply-fam-actions");
+  const list = root.querySelector("#fa-list");
+  const menuEl = root.querySelector("#fa-menu");
+  const undoEl = root.querySelector("#fa-undo");
+
+  const STATES = [
+    { status: "進行中", icon: "\u{1F680}" },
+    { status: "レビュー待ち", icon: "\u{1F4CB}" },
+    { status: null, icon: "\u{1F4C1}" },
+  ];
+
+  // group: 所属するグループの根の id（null = どのグループにも居ない）。parent: fork 元
+  const START = () => [
+    { id:"r1", title:"エージェントのfork機能の調査", status:"進行中", when:"14分", cwd:"agent-host", parent:null, group:"r1" },
+    { id:"c1", title:"ACP のハンドシェイクだけ試す", status:"進行中", when:"3分", cwd:"agent-host", parent:"r1", group:"r1" },
+    { id:"c2", title:"権限まわりを別案で", status:"進行中", when:"36分", cwd:"agent-host", parent:"r1", group:"r1" },
+    { id:"c3", title:"再接続の扱いを別案で", status:"レビュー待ち", when:"1時間", cwd:"agent-host", parent:"c1", group:null },
+    { id:"s1", title:"リリースノートの下書き", status:"進行中", when:"2時間", cwd:"website", parent:null, group:null },
+    { id:"s2", title:"ファイルプレビューの余白", status:"レビュー待ち", when:"3時間", cwd:"agent-host", parent:null, group:null },
+  ];
+
+  let rows = START();
+  let selected = "c1";
+  let undone = null;
+  let flash = new Set();
+  let drag = null;                   // { kind:"row"|"group", id }
+  const open = new Set(["r1"]);
+
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  const byId = (id) => rows.find((r) => r.id === id);
+  const label = (id) => byId(id)?.title ?? "";
+  const snapshot = () => rows.map((r) => ({ ...r }));
+  const membersOf = (rootId) => rows.filter((r) => r.group === rootId);
+
+  function lineageRoot(r) {
+    let cur = r, guard = 0;
+    while (cur.parent && byId(cur.parent) && guard++ < 32) cur = byId(cur.parent);
+    return cur;
+  }
+  const kinOf = (r) => rows.filter((x) => x.id !== r.id && lineageRoot(x).id === lineageRoot(r).id);
+
+  function act(text, fn, moved = []) {
+    const before = snapshot();
+    fn();
+    undone = { text, before };
+    flash = new Set(moved);
+    render();
+    setTimeout(() => { flash = new Set(); render(); }, 700);
+  }
+
+  // ---- 操作 ---------------------------------------------------------------
+  function setStatus(r, status) {
+    if (r.status === status && !(r.group && r.group !== r.id)) return;
+    if (r.group === r.id) {                       // 根 = グループごと移る
+      const all = membersOf(r.id);
+      act(`「${r.title}」のグループを ${status ?? "状態なし"} に移した（${all.length} 件）`,
+        () => { for (const m of all) m.status = status; }, all.map((m) => m.id));
+      return;
+    }
+    if (r.group) {                                 // 中の行 = 出る
+      const from = label(r.group);
+      const same = r.status === status;
+      act(same ? `「${r.title}」を「${from}」のグループから外した（状態はそのまま）`
+               : `「${r.title}」を ${status ?? "状態なし"} にして「${from}」のグループから外した`,
+        () => { r.status = status; r.group = null; }, [r.id]);
+      return;
+    }
+    act(`「${r.title}」を ${status ?? "状態なし"} にした`, () => { r.status = status; }, [r.id]);
+  }
+
+  const detach = (r) => {
+    const from = label(r.group);
+    act(`「${r.title}」を「${from}」のグループから外した（状態はそのまま）`, () => { r.group = null; }, [r.id]);
+  };
+
+  const joinTo = (r, rootId) => {
+    const rootRow = byId(rootId);
+    act(`「${r.title}」を「${rootRow.title}」のグループに入れた（状態: ${rootRow.status ?? "状態なし"}）`,
+      () => { r.group = rootId; r.status = rootRow.status; if (!rootRow.group) rootRow.group = rootId; open.add(rootId); }, [r.id]);
+  };
+
+  const gatherInto = (rootRow) => {
+    const loose = kinOf(rootRow).filter((x) => x.group !== rootRow.id);
+    act(`「${rootRow.title}」のグループを作った（枝 ${loose.length} 件、状態を ${rootRow.status ?? "状態なし"} に揃えた）`,
+      () => { rootRow.group = rootRow.id; for (const x of loose) { x.group = rootRow.id; x.status = rootRow.status; } open.add(rootRow.id); },
+      loose.map((x) => x.id));
+  };
+
+  const ungroup = (rootId) => {
+    const all = membersOf(rootId);
+    act(`「${label(rootId)}」のグループを解除した（${all.length} 件。状態はそのまま）`,
+      () => { for (const m of all) m.group = null; }, all.map((m) => m.id));
+  };
+
+  const undo = () => { if (!undone) return; rows = undone.before; undone = null; render(); };
+
+  // ---- メニュー -----------------------------------------------------------
+  const closeMenu = () => { menuEl.hidden = true; menuEl.replaceChildren(); };
+  document.addEventListener("click", (e) => { if (!e.target.closest("#fa-menu,.more,.row,.fam-head")) closeMenu(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+
+  function openMenu(x, y, title, items) {
+    menuEl.replaceChildren();
+    menuEl.append(el("div", "mhead", title));
+    for (const it of items) {
+      if (it.sep) { menuEl.append(el("div", "sep")); continue; }
+      const b = el("button", "mi");
+      b.type = "button";
+      b.setAttribute("role", "menuitem");
+      b.append(el("span", "lbl", it.label));
+      if (it.note) b.append(el("span", "note", it.note));
+      b.onclick = () => { closeMenu(); it.onClick(); };
+      menuEl.append(b);
+    }
+    const box = root.getBoundingClientRect();
+    menuEl.hidden = false;
+    menuEl.style.left = `${Math.min(Math.max(8, x - box.left), box.width - menuEl.offsetWidth - 8)}px`;
+    menuEl.style.top = `${Math.min(Math.max(8, y - box.top), box.height - menuEl.offsetHeight - 8)}px`;
+  }
+
+  function rowMenu(r, x, y) {
+    const items = [{ label: "開く", onClick: () => { selected = r.id; render(); } }];
+    for (const s of STATES) {
+      if (s.status === r.status) continue;
+      items.push({
+        label: `状態を ${s.status ?? "状態なし"} に`,
+        note: r.group === r.id ? "グループごと" : r.group ? "グループから出る" : "",
+        onClick: () => setStatus(r, s.status),
+      });
+    }
+    const extra = [];
+    if (r.group && r.group !== r.id) {
+      extra.push({ label: "このグループから外す", note: "状態はそのまま", onClick: () => detach(r) });
+    } else if (r.group === r.id) {
+      extra.push({ label: "グループを解除", note: `${membersOf(r.id).length} 件`, onClick: () => ungroup(r.id) });
+    } else {
+      const kin = kinOf(r);
+      const host = kin.find((x) => x.group === x.id);
+      if (host) extra.push({ label: `「${host.title}」のグループに入れる`, note: `状態も ${host.status ?? "状態なし"} に`, onClick: () => joinTo(r, host.id) });
+      else if (kin.length) extra.push({ label: "枝をまとめる", note: `${kin.length} 件`, onClick: () => gatherInto(lineageRoot(r)) });
+      // まとめる相手が無い行には、この項目そのものを出さない
+    }
+    if (extra.length) items.push({ sep: true }, ...extra);
+    openMenu(x, y, r.title, items);
+  }
+
+  function famMenu(rootId, x, y) {
+    const rootRow = byId(rootId);
+    const all = membersOf(rootId);
+    openMenu(x, y, `${rootRow.title} のグループ`, [
+      { label: "グループを解除", note: `${all.length} 件`, onClick: () => ungroup(rootId) },
+      { sep: true },
+      ...STATES.filter((s) => s.status !== rootRow.status).map((s) => ({
+        label: `グループの状態を ${s.status ?? "状態なし"} に`, note: `${all.length} 件`, onClick: () => setStatus(rootRow, s.status),
+      })),
+    ]);
+  }
+
+  // ---- 描画 ---------------------------------------------------------------
+  const svgEl = (inner, box, cls) => {
+    const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    s.setAttribute("viewBox", box);
+    s.setAttribute("class", cls);
+    s.innerHTML = inner;
+    return s;
+  };
+  /** fork で生まれた会話の印。枝が分かれる形。押せない、見るだけ */
+  function forkMark() {
+    const s = svgEl('<path d="M5 4.6v3.4a3 3 0 0 0 3 3h2.6"/><circle cx="5" cy="3" r="1.5"/><circle cx="12.4" cy="11" r="1.5"/>', "0 0 16 16", "forkmark");
+    s.setAttribute("role", "img");
+    s.setAttribute("aria-label", "fork で生まれた会話");
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    t.textContent = "fork で生まれた会話";
+    s.append(t);
+    return s;
+  }
+
+  function moreButton(name, onOpen) {
+    const b = el("button", "more", "⋯");
+    b.type = "button";
+    b.setAttribute("aria-haspopup", "menu");
+    b.setAttribute("aria-label", `${name} のメニュー`);
+    b.onclick = (e) => { e.stopPropagation(); const r = b.getBoundingClientRect(); onOpen(r.right, r.bottom + 2); };
+    return b;
+  }
+
+  function row(r, { origin = false } = {}) {
+    const wrap = el("div", "row" + (r.id === selected ? " sel" : "") + (flash.has(r.id) ? " moved" : ""));
+    const opener = el("button", "row-open");
+    opener.type = "button";
+    const title = el("div", "title" + (origin ? " origin" : ""));
+    if (r.parent) title.append(forkMark());          // 外に出ても、状態が変わっても付いたまま
+    title.append(el("span", "t", origin ? "はじめの流れ" : r.title));
+    opener.append(title);
+    const meta = el("div", "meta");
+    meta.append(el("span", "when", r.when), el("span", "cwd", r.cwd));
+    opener.append(meta);
+    opener.onclick = () => { selected = r.id; render(); };
+    wrap.append(opener, moreButton(r.title, (x, y) => rowMenu(r, x, y)));
+    wrap.oncontextmenu = (e) => { e.preventDefault(); rowMenu(r, e.clientX, e.clientY); };
+    wrap.draggable = true;
+    wrap.addEventListener("dragstart", (e) => {
+      drag = { kind: "row", id: r.id };
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", r.id);
+      wrap.classList.add("dragging");
+    });
+    wrap.addEventListener("dragend", () => { drag = null; wrap.classList.remove("dragging"); clearOver(); });
+    return wrap;
+  }
+
+  function family(rootRow) {
+    const all = membersOf(rootRow.id);
+    const isOpen = open.has(rootRow.id);
+    const box = el("div", "fam" + (isOpen ? " open" : ""));
+    const head = el("div", "fam-head");
+    const toggle = el("button", "fam-toggle");
+    toggle.type = "button";
+    toggle.setAttribute("aria-expanded", String(isOpen));
+    toggle.append(svgEl('<path d="M3.5 1.5 7 5l-3.5 3.5"/>', "0 0 10 10", "fam-chev"));
+    const body = el("div", "fam-body");
+    const name = el("div", "fam-name");
+    if (rootRow.parent) name.append(forkMark());
+    name.append(el("span", "t", rootRow.title));
+    body.append(name);
+    if (!isOpen) body.append(el("div", "fam-sum", `${rootRow.status ?? "状態なし"} ${all.length}`));
+    toggle.append(body);
+    toggle.onclick = () => { if (isOpen) open.delete(rootRow.id); else open.add(rootRow.id); render(); };
+    head.append(toggle, moreButton(`${rootRow.title} のグループ`, (x, y) => famMenu(rootRow.id, x, y)));
+    head.oncontextmenu = (e) => { e.preventDefault(); famMenu(rootRow.id, e.clientX, e.clientY); };
+    // 見出しをつかむと、グループごと別の状態へ移せる
+    head.draggable = true;
+    head.addEventListener("dragstart", (e) => {
+      drag = { kind: "group", id: rootRow.id };
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", rootRow.id);
+      head.classList.add("dragging");
+    });
+    head.addEventListener("dragend", () => { drag = null; head.classList.remove("dragging"); clearOver(); });
+    box.append(head);
+    if (isOpen) {
+      const kids = el("div", "fam-rows");
+      kids.setAttribute("role", "group");
+      for (const m of [rootRow, ...all.filter((m) => m.id !== rootRow.id)]) kids.append(row(m, { origin: m.id === rootRow.id }));
+      box.append(kids);
+    }
+    // 単独の行をここへ落とすと、このグループに入る（状態も根に揃う）
+    box.addEventListener("dragover", (e) => {
+      if (!drag || drag.kind !== "row") return;
+      const r = byId(drag.id);
+      if (!r || r.group === rootRow.id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "move";
+      clearOver();
+      box.classList.add("over");
+    });
+    box.addEventListener("drop", (e) => {
+      if (!drag || drag.kind !== "row") return;
+      const r = byId(drag.id);
+      if (!r || r.group === rootRow.id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      clearOver();
+      joinTo(r, rootRow.id);
+      drag = null;
+    });
+    return box;
+  }
+
+  const clearOver = () => { for (const n of root.querySelectorAll(".over")) n.classList.remove("over"); };
+
+  function render() {
+    list.replaceChildren();
+    for (const st of STATES) {
+      const sec = el("section", "grp");
+      const head = el("div", "grp-head");
+      head.append(el("span", "grp-icon", st.icon), el("span", "grp-name" + (st.status ? "" : " none"), st.status ?? "状態なし"));
+      sec.append(head);
+      const box = el("div", "rows");
+      let count = 0;
+      for (const r of rows) {
+        if (r.status !== st.status) continue;
+        if (r.group === r.id) { box.append(family(r)); count++; }
+        else if (!r.group) { box.append(row(r)); count++; }
+      }
+      if (!count) box.append(el("div", "empty", "まだ無い"));
+      sec.append(box);
+      // 状態の面へ落とすと、その状態になる（グループの中の行は出る。見出しならグループごと）
+      sec.addEventListener("dragover", (e) => {
+        if (!drag) return;
+        const r = byId(drag.id);
+        if (!r) return;
+        if (drag.kind === "group" && r.status === st.status) return;
+        if (drag.kind === "row" && r.status === st.status && !r.group) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        clearOver();
+        sec.classList.add("over");
+      });
+      sec.addEventListener("dragleave", (e) => { if (!sec.contains(e.relatedTarget)) sec.classList.remove("over"); });
+      sec.addEventListener("drop", (e) => {
+        if (!drag) return;
+        const r = byId(drag.id);
+        e.preventDefault();
+        clearOver();
+        const held = drag;
+        drag = null;
+        if (!r) return;
+        setStatus(r, st.status);
+        void held;
+      });
+      list.append(sec);
+    }
+    undoEl.hidden = !undone;
+    if (undone) {
+      undoEl.replaceChildren();
+      undoEl.append(el("b", null, undone.text));
+      const b = el("button", null, "元に戻す");
+      b.type = "button";
+      b.onclick = undo;
+      undoEl.append(b);
+    }
+  }
+
+  root.querySelector("#fa-reset").onclick = () => {
+    rows = START(); selected = "c1"; undone = null; open.clear(); open.add("r1"); closeMenu(); render();
+  };
+  root.querySelector("#fa-theme").onclick = () => {
+    root.style.colorScheme = root.style.colorScheme === "dark" ? "light" : "dark";
+  };
+
+  render();
+})();
+</script>

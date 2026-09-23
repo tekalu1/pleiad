@@ -1,0 +1,126 @@
+// LLM もサーバも要らないテスト。CI で常時回す。数秒で終わること。
+//
+//   npm test                 全部
+//   npm test -- markdown     名前で絞る（部分一致）
+//
+// 落ちたテストは末尾にまとめて出る。終了コードで成否を返す。
+import { installDomStub } from "./lib/dom-stub.mjs";
+import { runCase, summarize, pick } from "./lib/harness.mjs";
+
+// web/render.mjs はブラウザ前提なので、読み込む**前**に DOM を差し替える。
+installDomStub();
+
+const cases = [
+  await import('./unit/file-preview.mjs'),
+  await import('./unit/modes.mjs'),
+  await import('./unit/agent-tasks.mjs'),
+  await import('./unit/server-agent-tasks.mjs'),
+  await import('./unit/usage.mjs'),
+  await import('./unit/antigravity-usage.mjs'),
+  await import('./unit/effort.mjs'),
+  await import('./unit/composer-agy-procway.mjs'),
+  // 入力欄の設定のチップ: フォルダーの一覧（listDirs）・「既定」の解決・エフォートの既定の段
+  await import('./unit/composer-settings.mjs'),
+  await import('./unit/context-transports.mjs'),
+  await import('./unit/context-runtime.mjs'),
+  // 外部 MCP の認証（担当が Pleiad のとき）。秘密の置き場、OAuth はローカルのモックの認可サーバー・MCP だけと話す
+  await import('./unit/mcp-secret-store.mjs'),
+  await import('./unit/mcp-oauth.mjs'),
+  await import('./unit/mcp-oauth-more.mjs'),
+  await import('./unit/mcp-registry-more.mjs'),
+  // データ置き場を共有する 2 つのプロセス。本物の子プロセスを 2 本起動する
+  await import('./unit/mcp-oauth-processes.mjs'),
+  await import('./unit/desktop-updates.mjs'),
+  await import('./unit/procway-mcp.mjs'),
+  await import('./unit/procway-ply-mcp.mjs'),
+  await import('./unit/procway-connections.mjs'),
+  await import('./unit/message-queue.mjs'),
+  await import('./unit/message-steer.mjs'),
+  await import('./unit/visualize.mjs'),
+  await import('./unit/server-visualize.mjs'),
+  await import('./unit/mcp-config.mjs'),
+  await import('./unit/context-scan.mjs'),
+  // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）
+  await import('./unit/context-settings.mjs'),
+  await import('./unit/server-context.mjs'),
+  await import('./unit/context-ui.mjs'),
+  await import('./unit/slash-skills.mjs'),
+  await import('./unit/notifications.mjs'),
+  await import("./unit/onboarding.mjs"),
+  await import("./unit/tree.mjs"),
+  await import("./unit/family.mjs"),
+  await import("./unit/server-groups.mjs"),
+  await import("./unit/audit-self.mjs"),
+  await import("./unit/markdown-xss.mjs"),
+  await import("./unit/tools-render.mjs"),
+  await import("./unit/timeline-images.mjs"),
+  await import("./unit/attachment-order.mjs"),
+  await import("./unit/unread.mjs"),
+  await import("./unit/desktop-port.mjs"),
+  await import("./unit/stream-routing.mjs"),
+  await import("./unit/stream-prefix.mjs"),
+  await import("./unit/session-stream.mjs"),
+  await import("./unit/work-attribution.mjs"),
+  await import('./unit/work-status.mjs'),
+  await import("./unit/ask-answers.mjs"),
+  await import("./unit/title-clean.mjs"),
+  await import("./unit/claude-normalize.mjs"),
+  await import("./unit/claude-background.mjs"),
+  await import("./unit/codex-background.mjs"),
+  await import("./unit/codex-terminals.mjs"),
+  await import("./unit/procway-background.mjs"),
+  await import("./unit/event-session-id.mjs"),
+  await import("./unit/lineage.mjs"),
+  await import("./unit/branches.mjs"),
+  // 見た目の規則。web/ の CSS と index.html を lint する（docs/design-system.md §5）
+  await import("./unit/design-lint.mjs"),
+  await import("./unit/oauth-codex.mjs"),
+  await import("./unit/codex-mode.mjs"),
+  // model/list のページ送り・覚える長さ・ログイン / ログアウトで捨てる・タイトル生成のモデル選び
+  await import("./unit/codex-models.mjs"),
+  await import("./unit/codex-child-routing.mjs"),
+  // fake バックエンドでサーバを立てる。LLM は呼ばないので、ここに入れてよい
+  await import("./unit/server-fake.mjs"),
+  // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
+  await import('./unit/claude-accounts.mjs'),
+  await import('./unit/server-claude-accounts.mjs'),
+  // アカウントの認可を Pleiad から回す（疑似端末の偽物と、偽の CLI を本物の疑似端末で）
+  await import('./unit/claude-login.mjs'),
+  await import('./unit/server-claude-login.mjs'),
+  await import("./unit/server-background.mjs"),
+  await import("./unit/server-handoff.mjs"),
+  await import("./unit/server-fork.mjs"),
+  await import("./unit/server-ux.mjs"),
+  await import("./unit/conversations.mjs"),
+  await import("./unit/conversations-storage.mjs"),
+  // codex バックエンド。app-server の身代わり（tests/lib/fake-codex.mjs）と話すだけで、
+  // 本物の codex もネットワークも要らない
+  await import("./unit/server-codex.mjs"),
+  // antigravity バックエンド。agy の身代わり（tests/lib/fake-agy.mjs）と話すだけで、
+  // 本物の agy も Google のログインも要らない
+  await import("./unit/server-antigravity.mjs"),
+  // Pleiad の MCP 登録と認証の API、1 件つながらなくても会話が進むこと、antigravity では Pleiad 担当を開かないこと
+  await import("./unit/server-mcp-auth.mjs"),
+  await import("./unit/server-agy-context.mjs"),
+  // インストールからログインまでの導線（未インストール -> 再起動なしで発見 -> 認可コード）
+  await import("./unit/antigravity-onboarding.mjs"),
+  // 孤児の agy の掃除。**名前を確かめてからでないと落とさない**
+  await import("./unit/antigravity-pids.mjs"),
+  // 本物の procway-code serve を起こす。LLM の代わりに tests/lib/echo-agent.mjs を使う
+  await import("./unit/server-procway.mjs"),
+  // procway serve の身代わり（tests/lib/fake-procway）で、裏の子・wake ターン・送信待ち・ぶつかり・serve の終了を通す
+  await import("./unit/server-procway-wake.mjs"),
+  // 同じ身代わりで、ターン途中の送信をその区切りへ差し込む（serve の steer）
+  await import("./unit/server-procway-steer.mjs"),
+];
+
+const selected = pick(cases, process.argv.slice(2));
+if (!selected.length) process.exit(1);
+
+const t0 = Date.now();
+const suites = [];
+for (const mod of selected) suites.push(await runCase(mod));
+
+const code = summarize(suites);
+console.log(`  ${((Date.now() - t0) / 1000).toFixed(1)} 秒`);
+process.exit(code);
