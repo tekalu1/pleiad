@@ -43,8 +43,9 @@ import java.util.concurrent.Executors
  * a document-start script plus a WebMessageListener whose messages are accepted only from the
  * main frame of that origin.
  *
- * Back button: first offered to the page as a cancelable `plyremote:back` event (so it can close a drawer or a menu);
- * if nobody calls preventDefault(), we go back to the host list. Leaving the window closes the host's proxy.
+ * Back button / edge swipe: first offered to the page as a cancelable `plyremote:back` event (so it can close a dialog,
+ * a menu or the drawer); if nobody calls preventDefault(), the app goes to the background like any root screen. It does
+ * not go back to the host list (the host name under the title does that). Leaving the window closes the host's proxy.
  */
 class HostActivity : ComponentActivity() {
     companion object {
@@ -58,11 +59,11 @@ class HostActivity : ComponentActivity() {
     private var proxy: DeviceProxy? = null
     private var web: WebView? = null
     private lateinit var root: FrameLayout
+    private lateinit var frame: FrameLayout
+    private lateinit var topBand: View
     private lateinit var progress: ProgressBar
     @Volatile private var reply: JavaScriptReplyProxy? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
-    private var padBars = false
-    private var lastBars: androidx.core.graphics.Insets? = null
     private val statusListener: (String, LinkStatus) -> Unit = { id, s -> if (id == hostId) runOnUiThread { pushStatus(s) } }
 
     private val pickFiles = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
@@ -74,24 +75,27 @@ class HostActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         hostId = intent.getStringExtra(EXTRA_HOST_ID) ?: return finish()
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        // The system bars are colored, but nothing of the page is drawn under them (2026-09-24): the page sits in `frame`,
+        // padded by the bars, the cutout and the keyboard. The bars show the page's colors instead (topBand for the status
+        // bar, root for the navigation bar and the sides), and their icons follow the page's theme: the system's until the
+        // page reports its own via plyRemote.setTheme (applyBars). The insets are consumed here, so the page's
+        // env(safe-area-inset-*) is 0 and a resized viewport matches the page's interactive-widget=resizes-content.
         root = FrameLayout(this)
-        root.setBackgroundColor(if (isNight()) Color.rgb(0x1c, 0x1c, 0x1c) else Color.rgb(0xf6, 0xf6, 0xf4))
+        topBand = View(this)
+        frame = FrameLayout(this)
         progress = ProgressBar(this).apply { isIndeterminate = true }
-        root.addView(progress, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.CENTER))
+        frame.addView(progress, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.CENTER))
+        root.addView(frame, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        root.addView(topBand, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, android.view.Gravity.TOP))
         setContentView(root)
-        // Edge-to-edge: the host page draws under the system bars and places itself with env(safe-area-inset-*)
-        // (web/style.css). The status-bar area shows the page's own surface (no fill band since 2026-09-23), so the
-        // bar icons follow the page's theme: the system's until the page reports its own via plyRemote.setTheme (applyBars).
-        // Only the keyboard is padded here (the page's interactive-widget=resizes-content expects a resized viewport).
-        // If this WebView reports no safe-area insets, fall back to padding the bars (probeSafeArea).
-        applyBars(isNight())
-        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+        val paper = if (isNight()) Color.rgb(0x1b, 0x1c, 0x23) else Color.WHITE   // --surface-paper (web/tokens.css)
+        applyBars(isNight(), paper, paper)
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-            lastBars = bars
-            if (padBars) v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
-            else v.setPadding(0, 0, 0, if (ime.bottom > 0) ime.bottom else 0)
-            insets
+            frame.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+            topBand.layoutParams = topBand.layoutParams.apply { height = bars.top }
+            WindowInsetsCompat.CONSUMED
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() = offerBack()
@@ -107,8 +111,10 @@ class HostActivity : ComponentActivity() {
         }
     }
 
-    /** Dark page surface -> light icons, light surface -> dark icons (status and navigation bars). */
-    private fun applyBars(dark: Boolean) {
+    /** The bars' colors (top: status bar; bottom: navigation bar and sides) and icons: dark page surface -> light icons. */
+    private fun applyBars(dark: Boolean, top: Int, bottom: Int) {
+        topBand.setBackgroundColor(top)
+        root.setBackgroundColor(bottom)
         val bar = WindowCompat.getInsetsController(window, root)
         bar.isAppearanceLightStatusBars = !dark
         bar.isAppearanceLightNavigationBars = !dark
@@ -118,7 +124,7 @@ class HostActivity : ComponentActivity() {
 
     private fun showError(text: String) {
         progress.visibility = View.GONE
-        root.addView(TextView(this).apply { this.text = text; setPadding(48, 48, 48, 48) })
+        frame.addView(TextView(this).apply { this.text = text; setPadding(48, 48, 48, 48) })
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -153,7 +159,6 @@ class HostActivity : ComponentActivity() {
 
             override fun onPageFinished(view: WebView, url: String) {
                 progress.visibility = View.GONE
-                probeSafeArea(view)
             }
         }
         w.webChromeClient = object : WebChromeClient() {
@@ -181,7 +186,7 @@ class HostActivity : ComponentActivity() {
                 (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
             } catch (_: Exception) {}
         }
-        root.addView(w, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        frame.addView(w, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         w.loadUrl(px.url)
     }
 
@@ -202,7 +207,7 @@ class HostActivity : ComponentActivity() {
             when (type) {
                 "hello" -> { reply = replyProxy; pushStatus(px.link.status) }
                 "retry" -> px.retryNow()
-                "theme" -> { val dark = try { JSONObject(message.data ?: "").optBoolean("dark", isNight()) } catch (_: Exception) { isNight() }; runOnUiThread { applyBars(dark) } }
+                "theme" -> applyTheme(message.data)
                 "back" -> finish()
             }
         }
@@ -230,7 +235,7 @@ class HostActivity : ComponentActivity() {
     retry: () => { post('retry'); return Promise.resolve(); },
     backToHosts: () => post('back'),
     closeWindow: () => post('back'),
-    setTheme: (dark) => post('theme', { dark: dark === true }),
+    setTheme: (dark, colors) => post('theme', { dark: dark === true, top: String((colors && colors.top) || ''), bottom: String((colors && colors.bottom) || '') }),
   });
   Object.defineProperty(window, 'plyRemote', { value: api, writable: false, configurable: false, enumerable: false });
   Object.defineProperty(window, 'backToHosts', { value: api.backToHosts, writable: false, configurable: false, enumerable: false });
@@ -238,18 +243,15 @@ class HostActivity : ComponentActivity() {
 })();
 """
 
-    /** Older WebViews report env(safe-area-inset-top) as 0 even when drawing under the status bar: pad instead. */
-    private fun probeSafeArea(view: WebView) {
-        if (padBars) return
-        val top = lastBars?.top ?: 0
-        if (top <= 0) return
-        val js = "(() => { const d = document.createElement('div'); d.style.cssText = 'position:fixed;top:0;height:0;visibility:hidden;padding-top:env(safe-area-inset-top,0px)';" +
-            " document.documentElement.appendChild(d); const v = parseFloat(getComputedStyle(d).paddingTop) || 0; d.remove(); return v; })()"
-        view.evaluateJavascript(js) { r ->
-            if ((r?.toDoubleOrNull() ?: 0.0) <= 0.0) {
-                padBars = true
-                ViewCompat.requestApplyInsets(root)
-            }
+    /** { dark, top, bottom } from plyRemote.setTheme. Colors are #rrggbb; anything else keeps the current color. */
+    private fun applyTheme(data: String?) {
+        val m = try { JSONObject(data ?: "") } catch (_: Exception) { return }
+        val dark = m.optBoolean("dark", isNight())
+        fun color(key: String, fallback: Int) = m.optString(key).takeIf { Regex("^#[0-9a-fA-F]{6}$").matches(it) }?.let { Color.parseColor(it) } ?: fallback
+        runOnUiThread {
+            val top = color("top", (topBand.background as? android.graphics.drawable.ColorDrawable)?.color ?: Color.WHITE)
+            val bottom = color("bottom", (root.background as? android.graphics.drawable.ColorDrawable)?.color ?: Color.WHITE)
+            applyBars(dark, top, bottom)
         }
     }
 
@@ -261,7 +263,7 @@ class HostActivity : ComponentActivity() {
     private fun offerBack() {
         val w = web ?: return finish()
         w.evaluateJavascript("(() => { try { return !window.dispatchEvent(new CustomEvent('plyremote:back', { cancelable: true })); } catch (e) { return false; } })()") { result ->
-            if (result != "true") finish()
+            if (result != "true") moveTaskToBack(true)
         }
     }
 
