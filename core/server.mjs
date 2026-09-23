@@ -1616,8 +1616,9 @@ wss.on("connection", (ws, req) => {
 
     // Command IDs are scoped to a socket. Broadcast events, never private replies
     // (connection-check receipts and concurrent clients can share the same ID).
-    const reply = (ok, payload) => {
-      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(ok ? { result: payload } : { error: payload }) }));
+    // code: 失敗の種類。画面は文言（言語で変わる）ではなくこれで見分ける
+    const reply = (ok, payload, code) => {
+      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(ok ? { result: payload } : { error: payload, ...(code ? { code } : {}) }) }));
     };
 
     let releaseUpdateGate;
@@ -1715,14 +1716,14 @@ wss.on("connection", (ws, req) => {
         case 'scanContext': {
           // One scan at a time per connection; no changes to running turns.
           // place: 'default' なら場所ごとの上書きを使わず既定だけで探す（設定の「すべての場所」）
-          if (ws.contextScanning) throw new Error(t('scan.busy'));
+          if (ws.contextScanning) throw Object.assign(new Error(t('scan.busy')), { code: 'SCAN_BUSY' });
           ws.contextScanning = true;
           try { return reply(true, await scanContext(await contextSettings.get(msg.args?.cwd ?? process.cwd(), { level: msg.args?.place === 'default' ? 'default' : null }), { plyServers: await plyMcp.scanInput() })); }
           finally { ws.contextScanning = false; }
         }
         case 'slashSkills': {
           // 入力欄の「/」の候補。コンキスト画面と同じ探索をそのまま使い、スキルだけを返す
-          if (ws.contextScanning) throw new Error(t('scan.busy'));
+          if (ws.contextScanning) throw Object.assign(new Error(t('scan.busy')), { code: 'SCAN_BUSY' });
           ws.contextScanning = true;
           try { return reply(true, skillList(await scanContext(await contextSettings.get(msg.args?.cwd ?? process.cwd())))); }
           finally { ws.contextScanning = false; }
@@ -2511,7 +2512,7 @@ wss.on("connection", (ws, req) => {
         }
       }
     } catch (err) {
-      reply(false, String(err?.message ?? err));
+      reply(false, String(err?.message ?? err), typeof err?.code === 'string' ? err.code : undefined);
     } finally { releaseUpdateGate?.(); }
   });
 });

@@ -97,6 +97,696 @@
     "thinkingTokens_other": "考えている（約 {{count}} トークン）",
     "waitingBackground": "裏の作業を待っている"
   },
+  "compat": {
+    "kind": {
+      "anthropic": "Anthropic 互換",
+      "responses": "Responses 互換"
+    },
+    "role": {
+      "mainLabel": "メイン（会話の既定）",
+      "main": "メイン",
+      "opus": "Opus 相当",
+      "sonnet": "Sonnet 相当",
+      "haikuLabel": "Haiku 相当（背景の処理・タイトル生成）",
+      "haiku": "Haiku 相当"
+    },
+    "auth": {
+      "auto": "自動（確認で判定）",
+      "apiKeyHeader": "api-key ヘッダー",
+      "none": "キー不要"
+    },
+    "lost": {
+      "usage": "使用量",
+      "cost": "料金の目安",
+      "webSearch": "Web 検索",
+      "unknown": "{{item}}（不明）"
+    },
+    "urlHelp": {
+      "placeholder": "<リソース名> を実際の値に置き換えてください。",
+      "trailing": "末尾の {{suffix}} は要りません。"
+    },
+    "preset": {
+      "urlPreset": "プリセット",
+      "international": "海外",
+      "china": "中国本土",
+      "openrouter": "openrouter.ai · 多数のモデル",
+      "selfProxy": "自前のプロキシ",
+      "selfServer": "自前のサーバー",
+      "localNoKey": "ローカル · キー不要",
+      "custom": "カスタム",
+      "anthropicUrl": "Anthropic 互換の URL",
+      "responsesUrl": "Responses 互換の URL",
+      "azure": "デプロイ名がモデル",
+      "azureUrl": "https://<リソース名>.openai.azure.com/openai/v1"
+    },
+    "model": {
+      "context": "コンテキスト {{context}}",
+      "oneMTitle": "1M コンテキスト（Claude Code の [1m] の印）",
+      "withOneM": "{{text}}（1M）"
+    },
+    "step": {
+      "kind": "種類",
+      "connection": "接続情報",
+      "check": "接続を確認",
+      "model": "モデル",
+      "save": "保存"
+    },
+    "notSet": "（未設定）",
+    "checking": "確認しています…",
+    "loading": "読み込んでいます…",
+    "check": {
+      "never": "未確認",
+      "ok": "✓ 確認済み（{{when}}）",
+      "failed": "⚠ 確認に失敗: {{error}}（{{when}}）"
+    },
+    "action": {
+      "close": "閉じる",
+      "makeDefault": "既定にする",
+      "edit": "編集",
+      "delete": "削除",
+      "cancel": "やめる",
+      "confirmDelete": "削除する"
+    },
+    "list": {
+      "title": "{{agent}} の接続先",
+      "official": "公式（ログイン中のアカウント）",
+      "isDefault": "新しい会話の既定",
+      "mainLabel": "メイン: ",
+      "modelLabel": "モデル: ",
+      "confirmDelete": "「{{name}}」を削除しますか。選んでいる会話は選び直しが必要になります。",
+      "add": "＋ 接続先を追加",
+      "notEncrypted": "この起動ではキーを暗号化できません（本人だけが読めるファイルに保存します）。",
+      "recheckOk": "「{{name}}」につながりました。",
+      "recheckFailed": "「{{name}}」の確認に失敗: {{error}}",
+      "deleteFailed": "削除できませんでした: {{error}}"
+    },
+    "form": {
+      "modelId": "モデル ID",
+      "modelNotListed": "一覧にありません。Enter でこの ID をそのまま使います。",
+      "editTitle": "「{{name}}」を編集",
+      "endpoint": "接続先",
+      "addTitle": "{{agent}} の接続先を追加",
+      "saved": "✓ 「{{name}}」を保存しました",
+      "savedHint": "入力欄のモデルの面で選べます。",
+      "addAnother": "もう 1 件追加する",
+      "backToList": "一覧に戻る",
+      "kind": "接続先の種類",
+      "name": "名前",
+      "namePlaceholder": "例: 仕事用の LiteLLM",
+      "urlPlaceholder": "https://example.com（/v1 は付けない）",
+      "auth": "認証の送り方",
+      "keyKeep": "変更するときだけ入力（空なら保存済みのキー）",
+      "apiKey": "API キー",
+      "hide": "隠す",
+      "show": "表示",
+      "keyStored": "キーは OS の資格情報に保存します。",
+      "advanced": "詳しい設定",
+      "stale": "接続情報が変わりました。もう一度確認してください。",
+      "connected": "✓ つながりました",
+      "connectedModels_other": "✓ つながりました · モデル {{count}} 件",
+      "roles": "モデルの割り当て",
+      "context": "コンテキスト長",
+      "contextTokens": "コンテキスト長（tokens）",
+      "contextEmptyClaude": "空なら 200,000 として扱います",
+      "contextEmptyCodex": "空なら Codex の既定（小さめ）",
+      "sendThinking": "思考を送る（thinking とエフォート）",
+      "sendThinkingNote": "Claude 以外では失敗することがあります。思考が必須のモデル（kimi-k2.7-code など）ではオンに。",
+      "defaultModelAzure": "既定のモデル（デプロイ名）",
+      "defaultModel": "既定のモデル",
+      "deployment": "デプロイ名",
+      "checkCost": "確認で短い応答を 1 回だけ生成します（わずかに料金がかかることがあります）",
+      "checkAgain": "もう一度確認",
+      "urlRequired": "URL を入力してください",
+      "nameRequired": "名前を入力してください"
+    }
+  },
+  "accounts": {
+    "title": "Claude のアカウント",
+    "close": "閉じる",
+    "intro": "登録したアカウントは、会話の入力欄のモデルの隣で選べます。選ばない会話はログイン中のアカウントで動きます。",
+    "add": "＋ アカウントを追加",
+    "usageNote": "使用量の画面にアカウントごとの残りを出すには、アカウントごとに「使用量の表示を認可」が要ります。環境変数 ANTHROPIC_API_KEY があるときは、そちらが優先されます。",
+    "flowTitle": {
+      "setupToken": "「{{name}}」のトークンを発行",
+      "usageLogin": "「{{name}}」の使用量の表示を認可"
+    },
+    "status": {
+      "token": "トークン登録済み",
+      "noToken": "トークン未登録",
+      "usage": "使用量の表示: 認可済み",
+      "noUsage": "使用量の表示: 未認可"
+    },
+    "owner": {
+      "reissue": "ブラウザーで claude.ai のログインを切り替えてから、トークンを発行し直してください。",
+      "expected": "（使用量の認可は {{email}}）",
+      "email": "（{{email}}）",
+      "named": "このトークンは「{{owner}}」のアカウントで発行されています{{expected}}。{{reissue}}",
+      "loggedIn": "このトークンは、ログイン中のアカウント{{email}}で発行されています{{expected}}。{{reissue}}",
+      "other": "このトークンは、使用量の認可{{email}}とは別のアカウントで発行されています。{{reissue}}",
+      "same": "このトークンは「{{names}}」と同じアカウントで発行されています。別のアカウントとして使うなら、ブラウザーで claude.ai のログインを切り替えてから、トークンを発行し直してください。",
+      "nameJoin": "」「"
+    },
+    "reissue": "トークンを発行し直す",
+    "issue": "トークンを発行",
+    "redoUsage": "使用量の認可をやり直す",
+    "authorizeUsage": "使用量の表示を認可",
+    "edit": "編集",
+    "delete": "削除",
+    "cancel": "やめる",
+    "confirmDelete": "「{{name}}」を削除しますか？ このアカウントを選んでいる会話は、選び直すまで送信できません。使用量の表示の認可も消えます。",
+    "confirmDeleteButton": "削除する",
+    "empty": "まだ登録していません。",
+    "storage": {
+      "encrypted": "トークンは OS の資格情報で暗号化して保存します。",
+      "plain": "この起動では暗号化できないため、トークンは本人だけが読めるファイルに保存します（Pleiad デスクトップで開くと暗号化し直します）。"
+    },
+    "deleteFailed": "削除できませんでした: {{error}}",
+    "loading": "読み込んでいます…",
+    "flow": {
+      "openLink": "ブラウザーが開かないときはこちら",
+      "starting": "Claude Code を起動しています…",
+      "step1Usage": "1. ブラウザーで、このアカウントの Claude にログインして「承認」を押してください。",
+      "step1Token": "1. ブラウザーで、使いたいアカウントの Claude にログインして「承認」を押してください。",
+      "step2": "2. ブラウザーに表示されたコードを貼ってください。",
+      "codePlaceholder": "コードを貼り付け",
+      "codeLabel": "ブラウザーに表示されたコード",
+      "verifying": "確認しています…",
+      "submit": "送信",
+      "tokenDone": "トークンを登録しました。",
+      "usageDoneShort": "使用量の表示を認可しました。",
+      "tokenDoneChoose": "トークンを登録しました。会話の入力欄でこのアカウントを選べます。",
+      "usageNext": "続けて、使用量を表示するための認可をします。使用量の画面にこのアカウントの残りを出すために、もう一度ブラウザーで承認してコードを貼ります（会話に使うトークンとは別の認可です）。",
+      "later": "あとで",
+      "usageDone": "使用量の表示を認可しました。設定の「使用量」にこのアカウントの残りが出ます。",
+      "failed": "認可できませんでした。",
+      "retry": "やり直す",
+      "failedHint": "うまくいかないときは、「アカウントを追加」の「トークンを手動で貼り付ける」から登録できます。",
+      "codeRequired": "ブラウザーに表示されたコードを貼り付けてください"
+    },
+    "form": {
+      "addTitle": "アカウントを追加",
+      "editTitle": "「{{name}}」を編集",
+      "name": "表示名",
+      "namePlaceholder": "仕事用、個人用など",
+      "authNote": "「ブラウザーで認可する」を押すと、Claude のログイン画面が開きます。使いたいアカウントでログインして承認し、表示されたコードをここに貼ると登録できます。",
+      "cancel": "キャンセル",
+      "authorize": "ブラウザーで認可する",
+      "manual": "トークンを手動で貼り付ける",
+      "manualReplace": "トークンを手動で貼り直す",
+      "manualNote": "Pleiad から認可できないときは、使いたいアカウントでターミナルから {{command}} を実行し、表示されたトークンを貼り付けてください。",
+      "token": "トークン",
+      "show": "表示",
+      "hide": "非表示",
+      "save": "保存",
+      "saving": "保存しています…",
+      "newHint": "発行されたトークン（sk-ant-oat01-…）をそのまま貼り付けてください。保存したトークンは表示しません。",
+      "editHint": "変更するときだけ貼り付けてください。空のままなら保存済みのトークンを使います。",
+      "nameRequired": "アカウントの表示名を入力してください"
+    }
+  },
+  "filePreview": {
+    "kind": {
+      "image": "画像",
+      "table": "表",
+      "text": "テキスト",
+      "unsupported": "プレビュー未対応",
+      "directory": "ディレクトリ"
+    },
+    "panel": "ファイルプレビュー",
+    "expand": "広げる",
+    "close": "閉じる",
+    "tree": "ツリー",
+    "viewMode": "表示方法",
+    "preview": "プレビュー",
+    "source": {
+      "truncated": "{{start}}〜{{end}}行を表示（全{{total}}行）。全文は保存して確認できます。",
+      "noLine": "指定された{{line}}行目はありません（全{{total}}行）。"
+    },
+    "path": "パス",
+    "reload": "再読み込み",
+    "fullPath": "ファイルの完全パス",
+    "copyPath": "パスをコピー",
+    "explorer": "エクスプローラー",
+    "contents": "ファイルの内容",
+    "save": "保存",
+    "saveFile": "現在のファイルを保存",
+    "use": "会話で使う",
+    "width": "プレビューの幅",
+    "besideChat": "会話と並べて表示",
+    "backToChat": "会話へ戻る",
+    "closePreview": "プレビューを閉じる",
+    "visualPanel": "可視化のプレビュー",
+    "loading": "読み込み中…",
+    "status": {
+      "directory_other": "ディレクトリ · {{count}} 項目",
+      "folderTitle": "現在のフォルダー · 更新日時 {{date}}",
+      "fetched": "{{kind}} · {{time}}に取得",
+      "fileTitle": "現在のファイル · 更新日時 {{date}}",
+      "failed": "読み込みできません"
+    },
+    "error": {
+      "auth": "接続の認証が切れています。起動時のURLから開き直してください。",
+      "load": "ファイルを読み込めませんでした。",
+      "open": "ファイルを開けません",
+      "unsupported": "このファイルはプレビューできません",
+      "preview": "プレビューを表示できません",
+      "pdfHint": "暗号化・破損・未対応のPDFの可能性があります。保存して確認できます。",
+      "previewHint": "再読み込みするか、原文・保存で確認してください。"
+    },
+    "pdf": {
+      "prev": "前のページ",
+      "next": "次のページ",
+      "zoomOut": "PDFを縮小",
+      "zoomIn": "PDFを拡大",
+      "page": "{{name}} {{page}}ページ目",
+      "text": "このページのテキスト"
+    },
+    "visual": {
+      "source": "可視化の原文",
+      "contents": "可視化の内容",
+      "title": "可視化",
+      "save": "会話に残っている HTML を保存",
+      "status": "保存済みの可視化",
+      "statusTitle": "この回答に保存された内容です。ホスト上のファイルの現在の内容ではありません。"
+    },
+    "dir": {
+      "items_other": "{{count}} 項目",
+      "folder": "フォルダー",
+      "empty": "フォルダーは空です"
+    },
+    "table": {
+      "truncated": "先頭500行・100列まで表示しています。全文は原文または保存で確認できます。",
+      "rows_other": "{{count}}行",
+      "columns_other": "{{count}}列"
+    },
+    "image": {
+      "zoomOut": "画像を縮小",
+      "zoomIn": "画像を拡大",
+      "fit": "全体を表示",
+      "failed": "画像を表示できません",
+      "failedHint": "破損または未対応の画像です。保存して確認できます。"
+    },
+    "unavailableAlt": "{{alt}}（表示できません）",
+    "imageAlt": "画像",
+    "someImages": "一部の画像を表示できません。",
+    "omitted": {
+      "script": "スクリプト",
+      "extraStyle": "追加のスタイル",
+      "imageFont": "画像・フォント",
+      "style": "スタイル",
+      "image": "画像",
+      "media": "メディア",
+      "join": "・",
+      "note": "一部の{{items}}を読み込めません。外部の資源は、許可されたCDNのスクリプト以外は読み込みません。"
+    },
+    "original": "原文"
+  },
+  "sessionContext": {
+    "word": {
+      "instruction": "指示"
+    },
+    "source": {
+      "common": "共通"
+    },
+    "chip": {
+      "mcpBad": "MCP {{n}}（{{bad}} 件つながらない）",
+      "native": "{{kinds}} はエージェント任せ",
+      "join": "・"
+    },
+    "title": "この会話のコンテキスト",
+    "subtitle": {
+      "startedAt": "開始時（{{time}}）に決まり、途中では変わりません",
+      "started": "開始時に決まり、途中では変わりません",
+      "refreshed": "{{text}} · {{time}} に読み込み直し"
+    },
+    "agent": "エージェント",
+    "native": "エージェント任せ",
+    "more_other": "ほか {{count}} 件",
+    "notStarted": "この会話はまだ始まっていません。最初の送信で、何を渡したかをここに記録します。",
+    "guarded": {
+      "title": "この会話では Pleiad がそろえる設定を使っていません",
+      "reason": "{{backend}} は Pleiad がそろえるコンテキストを受け取れないため、エージェント自身の読み込みに任せました"
+    },
+    "failed": {
+      "title": "読み込みか実行が途中で失敗しました",
+      "hint": "下の状態と、会話のエラーを確かめてください。"
+    },
+    "foot": {
+      "lead": "次の会話から変えたいとき ",
+      "link": "この場所の設定を開く →"
+    },
+    "instruction": {
+      "who": "Pleiad が渡した",
+      "native": "{{agent}} が自分の決まりで読みます（Pleiad からは中身が見えません）",
+      "loaded": "{{path}} · 途中で読み込み",
+      "none": "渡した指示ファイルはありません",
+      "notGiven_other": "渡していないもの {{count}} 件"
+    },
+    "skill": {
+      "who_other": "Pleiad が案内 {{count}} 件",
+      "native": "{{agent}} が自分の skills フォルダーを読みます（Pleiad からは中身が見えません）",
+      "used": "使ったもの",
+      "noneUsed": "まだ使っていません",
+      "unused_other": "使っていない {{count}} 件",
+      "manualOnly": "明示したときだけ",
+      "notOffered_other": "案内していないもの {{count}} 件"
+    },
+    "reason": {
+      "conditional": "{{paths}} に当たるファイルを扱うときだけ",
+      "excluded": "外しています",
+      "shadowed": "同名・override が優先",
+      "duplicate": "同じものを 1 つにまとめました",
+      "disabled": "元の設定で無効",
+      "unsupported": "対応していない設定があります"
+    },
+    "mcp": {
+      "who_other": "Pleiad がつなぐ {{count}} 件",
+      "none": "つなぐ MCP はありません",
+      "connected": "接続中 · ツール {{tools}} · {{usage}}",
+      "calls_other": "呼び出し {{count}} 回",
+      "unused": "未使用",
+      "pending": "次の返答でつなぎます",
+      "removed": "この会話では外しています",
+      "failed": "✕ つながりませんでした",
+      "unknownReason": "理由は分かりません",
+      "needsLogin": "ログインが必要です",
+      "authFailed": "認証が通りませんでした",
+      "reasonParen": "（{{reason}}）",
+      "authRest": "{{reason}}。この MCP を外して会話は進めています",
+      "choice": "同じ名前の定義が {{n}} つ · {{source}} の設定の方を使用（{{by}}）",
+      "byPrefer": "設定で選んだもの",
+      "byFirst": "先に見つかった方",
+      "login": "ブラウザでログイン",
+      "openSettings": "設定を開く",
+      "remove": "この会話では外す",
+      "restore": "戻す",
+      "unusedDefs_other": "使わなかった同じ名前の定義 {{count}} 件",
+      "waiting": "ログインが済むと自動でつなぎ直し、次の返答から使えます。会話を作り直す必要はありません"
+    },
+    "nativeMcp": {
+      "unreadable": "エージェント任せ。{{agent}} の MCP の登録は Pleiad から読めません",
+      "reading": "エージェント任せ。{{agent}} の設定を読んでいます…",
+      "none": "エージェント任せ。{{agent}} の設定に MCP の登録はありません",
+      "list_other": "エージェント任せ。{{agent}} の設定に登録されているのは次の {{count}} 件です（接続の成否は {{agent}} 側が持つため、Pleiad からは見えません）",
+      "disabled": "{{path}} · 無効"
+    },
+    "changed": {
+      "title_other": "開始後に {{count}} 件変わりました",
+      "removed": "{{name}} が消えました",
+      "added": "{{name}} が新しく見つかりました",
+      "updatedAt": "{{name}} が {{time}} に更新",
+      "updated": "{{name}} が更新されました",
+      "continue": "新しい内容で会話を続ける",
+      "afterReply": "返答が終わってから押せます",
+      "hideDiff": "差分を閉じる",
+      "showDiff": "差分を見る",
+      "note": "次の送信で自動的に読み込み直します。送信を待たずに今すぐ反映するなら「新しい内容で会話を続ける」（どちらもやり取りは引き継ぎます）"
+    },
+    "diff": {
+      "same_other": "… {{count}} 行同じ",
+      "loading": "差分を読んでいます…",
+      "noChange": "今は開始時と同じ内容です",
+      "beforeMissing": "開始時の中身は残っていません（この版より前に始めた会話）。今の中身だけを出します。",
+      "removed": "このファイルは今はありません",
+      "tooLarge": "大きすぎるため中身を出せません",
+      "failed": "差分を読めませんでした：{{error}}"
+    },
+    "refreshFailed": "読み込み直せませんでした：{{error}}",
+    "login": {
+      "continue": "ブラウザで続けてください… ",
+      "link": "開かないときはこちら",
+      "startFailed": "ログインを始められませんでした：{{error}}",
+      "done": "ログインしました。次の返答から使えます",
+      "failed": "ログインできませんでした",
+      "failedWith": "ログインできませんでした：{{error}}"
+    }
+  },
+  "context": {
+    "owner": {
+      "agent": "エージェントに任せる",
+      "ply": "Pleiad がそろえる"
+    },
+    "instruction": {
+      "title": "指示ファイル",
+      "agent": "Claude は CLAUDE.md、Codex は AGENTS.md を各自の決まりで読む",
+      "ply": "どのエージェントにも同じものを渡す",
+      "note": "Pleiad は何も渡しません。どのファイルが読まれるかはエージェント次第です。",
+      "list": "この場所で渡すもの",
+      "listDefault": "既定で渡すもの",
+      "sourceCommon": "AGENTS.md（共通）",
+      "sourceCodex": "Codex 形式",
+      "none": "この場所で見つかった指示ファイルはありません"
+    },
+    "skill": {
+      "agent": "各エージェントが自分の skills フォルダーを読む",
+      "ply": "一覧を渡し、必要な時だけ本文を読ませる",
+      "note": "Pleiad は何も渡しません。どの Skill が使えるかはエージェント次第です。",
+      "list": "この場所で案内するもの",
+      "listDefault": "既定で案内するもの",
+      "sourceCommon": ".agents/skills（共通）",
+      "none": "この場所で見つかった Skill はありません"
+    },
+    "mcp": {
+      "title": "外部 MCP",
+      "agent": "各エージェントが自分の MCP 設定どおりに接続する",
+      "ply": "どのエージェントにも同じ MCP をつなぐ",
+      "list": "この場所でつなぐもの",
+      "listDefault": "既定でつなぐもの",
+      "sourceClaude": "Claude の設定",
+      "sourceCodex": "Codex の設定"
+    },
+    "copyPath": "パスをコピー",
+    "copied": "コピーしました",
+    "emptyFile": "（空のファイル）",
+    "lead": "新しい会話を始めるときに、エージェントへ何を渡すかを決めます。始まっている会話は変わりません。",
+    "scope": "設定する範囲",
+    "saved": "保存しました · 次の会話から反映",
+    "saveFailed": "保存できませんでした：{{error}}",
+    "cancel": "やめる",
+    "add": "追加",
+    "folderPath": "フォルダーのパス",
+    "chooseFolder": "フォルダーを選ぶ…",
+    "place": {
+      "default": "すべての場所（既定）",
+      "defaultSub": "個別に変えていない場所はこれに従う",
+      "current": "今の会話の場所",
+      "overrides_other": "{{count}} 項目を個別に変更",
+      "allDefault": "すべて既定どおり",
+      "remove": "この場所の設定を消す",
+      "removeAria": "{{path}} の設定を消す",
+      "confirm": "この場所の設定を消しますか？",
+      "confirmOverrides_other": "個別に変えた {{count}} 項目を消し、すべての場所（既定）の設定に従うようにします。始まっている会話は変わりません",
+      "confirmPlain": "一覧から外します。この場所はすべての場所（既定）の設定に従います",
+      "removeButton": "消す",
+      "removeFailed": "消せませんでした：{{error}}",
+      "add": "場所を追加",
+      "addAria": "追加するフォルダーのパス",
+      "recent": "最近の会話の場所",
+      "noMatch": "一致する場所がありません",
+      "noCandidates": "候補はありません",
+      "pathRequired": "フォルダーのパスを入れてください"
+    },
+    "inherit": {
+      "all": "個別に変えていない場所すべて",
+      "override": "この場所だけ変更中 · ",
+      "reset": "既定に戻す",
+      "from": "{{path}} の設定どおり",
+      "default": "既定どおり"
+    },
+    "ownerAria": "{{kind}}を読み込むのは",
+    "configFiles": "読み込む設定ファイル",
+    "formats": "探す形式",
+    "searching": "探しています",
+    "searchingDots": "探しています…",
+    "row": {
+      "shadowed": "同じ場所の override が優先",
+      "conditional": "{{paths}} のときだけ",
+      "offerAria": "{{name}} を案内する",
+      "provideAria": "{{name}} を渡す"
+    },
+    "showAll": "すべて見る（{{n}} 件）",
+    "count_other": "{{count}} 件",
+    "antigravityNote": "antigravity の会話では、指示ファイルも「Pleiad がそろえる」にしたときだけ、ここを Pleiad がそろえます。今は指示ファイルがエージェント任せなので、antigravity ではこの種類もエージェント任せになります（Pleiad から渡すと、agy がワークスペースの AGENTS.md・GEMINI.md を読まなくなるため）",
+    "roots": {
+      "summary": "探す場所を増やす（任意）",
+      "descDefault": "Pleiad がそろえる種類について、どの場所でも次のフォルダーも探します。",
+      "descPlace": "Pleiad がそろえる種類について、Git ルートからこの場所までに加えて、次のフォルダーも探します。",
+      "remove": "外す",
+      "removeAria": "{{path}} を探す場所から外す",
+      "defaults": "すべての場所の設定で探すフォルダー：{{folders}}",
+      "join": "、",
+      "addAria": "追加で探すフォルダー",
+      "add": "フォルダーを追加"
+    },
+    "scanFailed": "探せませんでした：{{error}}",
+    "loadFailed": "コンテキストの設定を読めませんでした：{{error}}"
+  },
+  "mcp": {
+    "state": {
+      "signedIn": "ログイン済み",
+      "signedOut": "ログインが必要",
+      "expired": "ログインが必要（期限切れ）",
+      "pending": "ブラウザでログイン中",
+      "locked": "この起動では鍵を開けません",
+      "error": "ログインの状態を確認できません"
+    },
+    "transport": {
+      "stdio": "手元で動かす",
+      "url": "URL につなぐ",
+      "sse": "URL につなぐ（SSE）"
+    },
+    "join": "・",
+    "agents": {
+      "lead": "各エージェントの設定に登録されているもの（Pleiad は読むだけで変えません）",
+      "none": "登録はありません",
+      "only": "{{agent}} だけ",
+      "disabled": "無効",
+      "foot": "エージェントを切り替えると使える MCP が変わります。そろえたいときは「Pleiad がそろえる」へ"
+    },
+    "list": "この場所でつなぐもの",
+    "listDefault": "既定でつなぐもの",
+    "login": "ログイン",
+    "loginAgain": "ログインし直す",
+    "logout": "ログアウト",
+    "loggedOut": "ログアウトしました",
+    "loggedOutRevoked": "ログアウトしました（トークンを失効）",
+    "switchAria": "{{name}} をつなぐ",
+    "nativeOffTitle": "元の設定で無効になっています（Pleiad は変えません）",
+    "empty": "つなぐ MCP はまだありません。「＋ MCP を追加」から登録するか、読み込む設定ファイルを選んでください",
+    "count_other": "{{count}} 件",
+    "add": "MCP を追加",
+    "rowHint": "行を押すと中身の確認・編集（鍵やトークンは伏せて表示）",
+    "storage": {
+      "noEncryption": "暗号化できない起動",
+      "plainList": "この起動では鍵の保管庫を使えないため、トークンや鍵は所有者だけが読める権限の平文で保存します（{{reason}}）。Pleiad デスクトップで開き直すと暗号化し直します。",
+      "sheetPlain": "Pleiad の設定として保存し、どのエージェントにもつなぎます。Claude や Codex の設定ファイルは書き換えません。この起動では鍵の保管庫を使えないため、トークンや鍵は所有者だけが読める権限の平文で保存します（{{reason}}）。",
+      "sheetEncrypted": "Pleiad の設定として保存し、どのエージェントにもつなぎます。Claude や Codex の設定ファイルは書き換えません。トークンや鍵は OS の鍵の保管庫（Windows の資格情報、macOS のキーチェーン、Linux の Secret Service）で暗号化して保存します。"
+    },
+    "files": {
+      "summary": "読み込む設定ファイル",
+      "desc": "Claude・Codex の設定に登録された MCP も、ここで選んだものは一覧に並びます。同じ名前なら Pleiad に登録したものが優先します。"
+    },
+    "describe": {
+      "needsScope": "追加の権限が必要",
+      "pending": "未入力の値あり",
+      "plyOver": "Pleiad に登録（{{agents}} の同名より優先）",
+      "ply": "Pleiad に登録",
+      "only": "{{agent}} だけに登録",
+      "both": "{{a}} と {{b}} の両方に登録",
+      "many": "{{agents}} に登録",
+      "defsUsing": "同じ名前で定義が {{n}} つ · {{agent}} の設定の方を使用（{{by}}）",
+      "defs": "同じ名前で定義が {{n}} つ",
+      "byPicked": "選んだもの",
+      "byFirst": "先に見つかった方",
+      "nativeOff": "元の設定で無効",
+      "excluded": "外しています"
+    },
+    "auth": {
+      "token": "トークン",
+      "headers": "ヘッダー",
+      "headersWith": "ヘッダー（{{names}}）",
+      "oauth": "ブラウザでログイン",
+      "none": "なし"
+    },
+    "choice": {
+      "aria": "{{name}} の定義を選ぶ",
+      "lead": "どちらの定義を使いますか（選ばなければ先に見つかった方）",
+      "local": "{{command}}（手元）",
+      "settings": "{{agents}} の設定"
+    },
+    "fact": {
+      "transport": "つなぎ方",
+      "endpoint": "接続先",
+      "auth": "認証",
+      "env": "環境変数",
+      "expires": "期限"
+    },
+    "edit": "編集",
+    "rename": "名前を変える",
+    "check": "接続を確認",
+    "delete": "削除",
+    "deleteConfirm": "もう一度押すと削除",
+    "peek": {
+      "config": "{{agent}} の設定 · {{path}}",
+      "masked": "環境変数とヘッダーの値、URL のクエリは伏せています。"
+    },
+    "import": {
+      "button": "Pleiad に取り込む",
+      "failed": "取り込めませんでした",
+      "doneLogin": "Pleiad に取り込みました。ログインしてください",
+      "donePending": "Pleiad に取り込みました。鍵などの値は編集で入れてください",
+      "done": "Pleiad に取り込みました",
+      "note": "取り込むと Pleiad の登録になり、どのエージェントにも同じものをつなぎます。トークンは引き継がないので、ログインが要るものは Pleiad でログインし直します。"
+    },
+    "newName": "新しい名前",
+    "change": "変更",
+    "cancel": "やめる",
+    "save": "保存",
+    "loginFlow": {
+      "continue": "ブラウザで続けてください… ",
+      "link": "開かないときはこちら",
+      "done": "ログインしました",
+      "failed": "ログインできませんでした",
+      "failedWith": "ログインできませんでした：{{error}}"
+    },
+    "checkResult": {
+      "checking": "接続を確かめています…",
+      "connected_other": "つながりました（ツール {{count}} 件）",
+      "needsLogin": "ログインが必要です",
+      "needsLoginWith": "ログインが必要です（{{reason}}）",
+      "failed": "つながりませんでした",
+      "failedWith": "つながりませんでした：{{reason}}"
+    },
+    "advanced": {
+      "summary": "ログインの詳細設定",
+      "desc": "クライアント ID メタデータ文書の URL（任意）。公開した文書の https の URL を入れると、対応するサービスではアプリ登録の代わりに使います。空のままで構いません。",
+      "aria": "クライアント ID メタデータ文書の URL"
+    },
+    "sheet": {
+      "editTitle": "{{name}} を編集",
+      "name": "名前",
+      "value": "値",
+      "registeredIn": "{{agent}} の登録",
+      "copyFrom": "エージェントの登録から写す",
+      "urlDesc": "サービスが公開している MCP",
+      "cmdDesc": "npx などのコマンドを起動",
+      "command": "コマンド",
+      "commandHead": "エージェントの登録にあるコマンド",
+      "addEnv": "環境変数",
+      "urlHead": "エージェントの登録にある接続先",
+      "authAria": "認証の方式",
+      "oauthNote": "追加するとブラウザが開きます。ログインが済めば、期限の更新は Pleiad が自動で行います",
+      "appReg": "サービス側でアプリ登録が必要なとき",
+      "clientId": "クライアント ID",
+      "keep": "変えないときは空のまま",
+      "clientSecretOptional": "クライアントシークレット（任意）",
+      "clientSecret": "クライアントシークレット",
+      "pasteToken": "トークンを貼り付け",
+      "headerName": "ヘッダー名",
+      "addHeader": "ヘッダー",
+      "noneNote": "認証の要らない MCP に使います",
+      "scope": "使う範囲",
+      "here": "この場所だけ",
+      "all": "すべての場所",
+      "json": "JSON で編集（上級者向け）",
+      "jsonAria": "MCP の定義（JSON）",
+      "jsonNote": "秘密の値は伏せ字（••••）のままなら前の値を残します",
+      "addLogin": "追加してログイン",
+      "addTry": "追加して試しにつなぐ",
+      "missing": "未入力",
+      "remove": "外す",
+      "removeAria": "{{label}}を外す"
+    },
+    "error": {
+      "command": "コマンドを入れてください",
+      "url": "URL を入れてください",
+      "token": "トークンを入れてください",
+      "headers": "ヘッダーを 1 つ以上入れてください",
+      "name": "名前を入れてください",
+      "json": "JSON の形が正しくありません"
+    },
+    "oauthReset": "接続先などが変わったため、ログインし直してください"
+  },
   "saved": {
     "reason": {
       "resumeCwd": "再開時に変更",

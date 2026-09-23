@@ -1,6 +1,10 @@
 import { renderMarkdown } from './render.mjs';
 import { fileReference } from './file-reference.mjs';
 import { VISUALIZE_CSP, isolateFrame } from './visualize-frame.mjs';
+import { t } from './i18n.mjs';
+
+/** 読み込めなかった画像の代わりの文字（alt）。「名前（表示できません）」 */
+const unavailableAlt = alt => t('filePreview.unavailableAlt', { alt });
 
 // Same policy as visualizations: inline scripts and the CDN allowlist only, no network access.
 export const PREVIEW_CSP = VISUALIZE_CSP;
@@ -39,7 +43,7 @@ export async function inlineScripts(root, asset, omitted) {
       if (file.kind !== 'text' || typeof file.text !== 'string' || file.size > 512 * 1024) throw new Error('script');
       // Serialized raw inside <script>: keep the text from closing its own element.
       script.textContent = file.text.replace(/<\/(script)/gi, '<\\/$1');
-    } catch { omitted.add('スクリプト'); script.remove(); }
+    } catch { omitted.add(t('filePreview.omitted.script')); script.remove(); }
   }
 }
 
@@ -76,7 +80,7 @@ export async function htmlDocument(text, loadAsset) {
   await inlineScripts(fragment, asset, omitted);
   async function cssText(css, base) {
     // Imports, remote fonts and remote URLs do not make network requests.
-    if (/@import\b/i.test(css)) { omitted.add('追加のスタイル'); css = css.replace(/@import\s+(?:url\([^)]*\)|"[^"]*"|'[^']*')[^;]*;?/gi, ''); }
+    if (/@import\b/i.test(css)) { omitted.add(t('filePreview.omitted.extraStyle')); css = css.replace(/@import\s+(?:url\([^)]*\)|"[^"]*"|'[^']*')[^;]*;?/gi, ''); }
     const refs = [...css.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi)];
     for (const ref of refs) {
       if (/^data:image\//i.test(ref[2]) || /^#/.test(ref[2])) continue;
@@ -85,7 +89,7 @@ export async function htmlDocument(text, loadAsset) {
         const file = await loadAsset(ref[2], base);
         if (++count > 24 || file.kind !== 'image' || file.size > 4 * 1024 * 1024) throw new Error('resource');
         replacement = `url("${dataUrl(file)}")`;
-      } catch { omitted.add('画像・フォント'); }
+      } catch { omitted.add(t('filePreview.omitted.imageFont')); }
       css = css.replace(ref[0], replacement);
     }
     return css;
@@ -96,7 +100,7 @@ export async function htmlDocument(text, loadAsset) {
         const file = await asset(link.getAttribute('href'));
         if (file.kind !== 'text' || file.size > 512 * 1024) throw new Error('stylesheet');
         const style = document.createElement('style'); style.textContent = await cssText(file.text, file.path); link.replaceWith(style);
-      } catch { omitted.add('スタイル'); link.remove(); }
+      } catch { omitted.add(t('filePreview.omitted.style')); link.remove(); }
     } else link.remove();
   }
   for (const style of fragment.querySelectorAll('style')) style.textContent = await cssText(style.textContent);
@@ -116,15 +120,15 @@ export async function htmlDocument(text, loadAsset) {
         const file = await asset(raw);
         if (file.kind !== 'image' || file.size > 4 * 1024 * 1024) throw new Error('image');
         element.setAttribute('src', dataUrl(file));
-      } catch { omitted.add('画像'); element.setAttribute('alt', `${element.getAttribute('alt') || raw || '画像'}（表示できません）`); }
+      } catch { omitted.add(t('filePreview.omitted.image')); element.setAttribute('alt', unavailableAlt(element.getAttribute('alt') || raw || t('filePreview.imageAlt'))); }
     }
     if (['video','audio','source','track','image','use'].includes(element.localName)) {
-      for (const name of ['src','href','xlink:href','poster']) if (element.hasAttribute(name) && !element.getAttribute(name).startsWith('#')) { element.removeAttribute(name); omitted.add('メディア'); }
+      for (const name of ['src','href','xlink:href','poster']) if (element.hasAttribute(name) && !element.getAttribute(name).startsWith('#')) { element.removeAttribute(name); omitted.add(t('filePreview.omitted.media')); }
     }
   }
   return {
     document:previewDocument(template.innerHTML),
-    note:omitted.size ? `一部の${[...omitted].join('・')}を読み込めません。外部の資源は、許可されたCDNのスクリプト以外は読み込みません。` : '',
+    note:omitted.size ? t('filePreview.omitted.note', { items: [...omitted].join(t('filePreview.omitted.join')) }) : '',
   };
 }
 
@@ -141,7 +145,7 @@ export async function markdownContent(text, loadAsset) {
       const file = await loadAsset(fileReference(raw)?.path || raw);
       if (file.kind !== 'image' || file.size > 4 * 1024 * 1024) throw new Error('image');
       img.src = dataUrl(file);
-    } catch { img.alt += '（表示できません）'; notes.push('一部の画像を表示できません。'); }
+    } catch { img.alt = unavailableAlt(img.alt); notes.push(t('filePreview.someImages')); }
   }
   return { article, note:notes[0] || '' };
 }
