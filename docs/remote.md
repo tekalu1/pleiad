@@ -75,15 +75,15 @@
 
 **Noise の既存パターンをそのまま実装する**（自作の組み立てはしない）。
 
-- 通常の接続: `Noise_IK_25519_ChaChaPoly_SHA256`。端末はホストの公開鍵を知っている（IK の前提）。ホストは届いた端末の静的公開鍵が端末一覧にあり、取り消されていないことを確かめる
-- ペアリング: `Noise_IKpsk2_25519_ChaChaPoly_SHA256`。psk = `HKDF(ペアリングの秘密, "pleiad pair psk")`。QR を読んだ端末だけが通る
+- 通常の接続: `Noise_IK_25519_AESGCM_SHA256`。端末はホストの公開鍵を知っている（IK の前提）。ホストは届いた端末の静的公開鍵が端末一覧にあり、取り消されていないことを確かめる
+- ペアリング: `Noise_IKpsk2_25519_AESGCM_SHA256`。psk = `HKDF(ペアリングの秘密, "pleiad pair psk")`。QR を読んだ端末だけが通る
 - prologue: `"pleiad-remote/1" || hostId`。別のホスト・別の版への付け替えを防ぐ
 - メッセージ 1 は再送（リプレイ）されうるが、中身は版と端末名だけで、データはメッセージ 2 以降のホストの一時鍵の上でしか流れないので、再送しても何も得られない。確立後の通信は一時鍵どうしで前方秘匿
 - 鍵を回すのは接続ごと（再接続 = 新しいハンドシェイク）。1 本の接続で 2^32 通を超えたら切って張り直す（実質起きない）
 
 **Node の標準 `crypto` だけで組める。新しい依存は足さない。**
-X25519 は `generateKeyPairSync('x25519')` と `diffieHellman()`（生の 32 バイトは PKCS#8 / SPKI の DER の決まった前置きを付けて出し入れ）、AEAD は `createCipheriv('chacha20-poly1305', key, nonce, { authTagLength: 16 })`、HASH と HKDF は `createHash('sha256')`・`createHmac('sha256')`（Noise の HKDF は HMAC で書く定義どおり）。nonce は Noise の定めどおり 4 バイトの 0 + 64bit 小端の通番。
-AES-GCM ではなく ChaCha20-Poly1305 にするのは、iOS の CryptoKit（`ChaChaPoly`・`Curve25519.KeyAgreement`・`HKDF`）にも揃っていて、3 実装が同じ組を使えるため。実装は公式の試験ベクトル（cacophony の IK / IKpsk2）で確かめる。
+X25519 は `generateKeyPairSync('x25519')` と `diffieHellman()`（生の 32 バイトは PKCS#8 / SPKI の DER の決まった前置きを付けて出し入れ）、AEAD は `createCipheriv('aes-256-gcm', key, nonce, { authTagLength: 16 })`、HASH と HKDF は `createHash('sha256')`・`createHmac('sha256')`（Noise の HKDF は HMAC で書く定義どおり）。nonce は Noise の定めどおり 4 バイトの 0 + 64bit **大端**の通番（AESGCM の定義。ChaChaPoly の小端と取り違えない）。
+AEAD は AES-256-GCM にする（2026-09-23 に ChaChaPoly から変更）。Electron の Node は BoringSSL で `chacha20-poly1305` が無く（electron 44 で `Unknown cipher`）、デスクトップ版の端末（main）もホスト（utilityProcess。`ELECTRON_RUN_AS_NODE` でも同じ BoringSSL）もつなげなかったため。`aes-256-gcm` は Node（OpenSSL）と Electron（BoringSSL）の両方にあり、iOS の CryptoKit（`AES.GCM`・`Curve25519.KeyAgreement`・`HKDF`）と Android の `javax.crypto`（`AES/GCM/NoPadding`）にも揃うので、3 実装が同じ組を使える。タグは 16 バイト、1 通の大きさの上限も変わらない。`tests/unit/remote-noise.mjs` が `crypto.getCiphers()` に入っていることを確かめる。実装は公式の試験ベクトル（cacophony の IK / IKpsk2 の AESGCM）で確かめる。
 
 細部（実装 `core/remote/noise.mjs` で決めたこと。3 実装が揃える。例は `tests/remote/vectors.json` の `pleiad`）:
 
@@ -410,7 +410,7 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 - ホストを選ぶと、殻がそのホストのプロキシを立てて WebView を `http://127.0.0.1:<p>/?token=…` へ移す。殻のプラグインのブリッジはホストの画面に入れない。代わりに小さなスクリプトで `window.plyRemote = { hostId, hostName, shell: 'mobile', backToHosts() }` だけを入れる（`backToHosts` はメッセージハンドラー経由。送り元がそのプロキシのオリジンの本体フレームのときだけ受ける）
 - 画面の上端に今のホスト名の帯（`⇄ desktop-home`）。押すと `backToHosts()` でホスト一覧へ戻る。デスクトップのバッジと同じ部品で、`shell: 'mobile'` のときは safe-area の内側に置く
 - 背面に回るとプロキシとチャネルは OS に止められる。前面に戻ったら張り直し、画面は既存の再接続で追いつく。承認待ちは #11 でホストが待ち続ける
-- 暗号は iOS が CryptoKit、Android が標準の暗号（X25519 は API 31 以上の `XDH`、ChaCha20-Poly1305 は API 28 以上）。どちらも §2.1 の試験ベクトルで Node の実装と突き合わせる
+- 暗号は iOS が CryptoKit、Android が標準の暗号（X25519 は API 31 以上の `XDH`、AES-GCM は `javax.crypto` の `AES/GCM/NoPadding`）。どちらも §2.1 の試験ベクトルで Node の実装と突き合わせる
 - 添付はファイルだけ（`#fileIn`。カメラも可）。フォルダーの送信は出さない
 
 ### 8.3 アプリ内でローカルのプロキシを動かす制約（iOS / Android）
