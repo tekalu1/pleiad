@@ -12,6 +12,7 @@
 // 実行ファイルは AGENT_HOST_CODEX_BIN。既定は `codex`。
 // テストのために `node tests/lib/fake-codex.mjs` のような**コマンド文字列**も受ける。
 import { cliCommand, spawnCli } from "../cli-installation.mjs";
+import { t } from "../i18n.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -143,7 +144,7 @@ export class CodexRpc {
         if (this.proc !== proc) return;
         this.proc = null;
         this.ready = null;
-        const err = new Error(`codex app-server が落ちた: ${why}${this.stderr.length ? NL + this.stderr.join("") : ""}`);
+        const err = new Error(t("codex.errors.appServerDied", { why }) + (this.stderr.length ? NL + this.stderr.join("") : ""));
         // 待っている request を必ず片付ける。ここを握り潰すと runTurn が返らない
         for (const [, p] of [...this.pending]) p.reject(err);
         this.pending.clear();
@@ -195,7 +196,7 @@ export class CodexRpc {
       if (timeoutMs > 0) {
         timer = setTimeout(() => {
           const p = this.pending.get(id);
-          if (p) p.reject(new Error(`codex ${method} が ${timeoutMs}ms で応答しなかった`));
+          if (p) p.reject(new Error(t("codex.errors.timeout", { method, ms: timeoutMs })));
         }, timeoutMs);
         timer.unref?.();
       }
@@ -209,7 +210,7 @@ export class CodexRpc {
 
   #send(frame) {
     const proc = this.proc;
-    if (!proc?.stdin?.writable) throw new Error("codex app-server につながっていない");
+    if (!proc?.stdin?.writable) throw new Error(t("codex.errors.notConnected"));
     proc.stdin.write(JSON.stringify(frame) + NL);
   }
 
@@ -269,7 +270,7 @@ export class CodexRpc {
     if (msg.id !== undefined) {
       Promise.resolve()
         .then(() => {
-          if (!h?.onRequest) throw new Error(`${msg.method} を受け取る相手が居ない`);
+          if (!h?.onRequest) throw new Error(t("codex.errors.noHandler", { method: msg.method }));
           return h.onRequest(msg.method, msg.params ?? {}, child);
         })
         .then(

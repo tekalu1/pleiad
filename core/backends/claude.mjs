@@ -13,6 +13,7 @@ import {
   listSubagents as sdkListSubagents, getSubagentMessages as sdkGetSubagentMessages,
 } from "@anthropic-ai/claude-agent-sdk";
 import { claudeAuth } from '../auth/claude-cli.mjs';
+import { t } from '../i18n.mjs';
 import { readClaudeAccountsUsage } from './claude-usage.mjs';
 import { claudeEnv, redactToken } from '../claude-accounts.mjs';
 import { claudeCompatEnv, writeClaudeFlagSettings, redactSecret } from '../compat-endpoints.mjs';
@@ -67,12 +68,13 @@ const QUESTION_TOOL = "AskUserQuestion";
 // 他のエンジンには YOLO 相当があり、Claude だけ無いと委任のときに「親と同じ強さ」を継げない。
 // そして危険の度合いは軸（full / never / 強制なし）で表せるようになったので、
 // 隠すのではなく「選んだことが見える」形で扱うほうがよい。
+// 表示名と説明は言語が実行中に変わるので、読むたびに引く（ゲッター）
 const MODES = {
-  default:     { label: "都度確認", note: "危険な操作のたびに聞く",              scope: "workspace", autonomy: "ask",   enforced: false },
-  auto:        { label: "auto",     note: "モデルの分類器が判断し、迷うものだけ聞く", scope: "workspace", autonomy: "judge", enforced: false },
-  acceptEdits: { label: "編集は自動", note: "ファイル編集は自動、他は聞く",         scope: "workspace", autonomy: "judge", enforced: false },
-  plan:        { label: "計画のみ", note: "ツールを実行しない",                  scope: "none",      autonomy: "ask",   enforced: false },
-  bypass:      { label: "YOLO",     note: "確認なし・制限なし。Claude Code の権限層を通さない", scope: "full", autonomy: "never", enforced: false },
+  default:     { get label() { return t("modes.ask"); },         get note() { return t("claude.modes.defaultNote"); },     scope: "workspace", autonomy: "ask",   enforced: false },
+  auto:        { label: "auto",                                  get note() { return t("claude.modes.autoNote"); },        scope: "workspace", autonomy: "judge", enforced: false },
+  acceptEdits: { get label() { return t("modes.acceptEdits"); }, get note() { return t("claude.modes.acceptEditsNote"); }, scope: "workspace", autonomy: "judge", enforced: false },
+  plan:        { get label() { return t("modes.plan"); },        get note() { return t("claude.modes.planNote"); },        scope: "none",      autonomy: "ask",   enforced: false },
+  bypass:      { label: "YOLO",                                  get note() { return t("claude.modes.bypassNote"); },      scope: "full", autonomy: "never", enforced: false },
 };
 
 // SDK の PermissionMode 名。食い違うのは bypass だけ。
@@ -158,26 +160,29 @@ async function claudeModels(cwd) {
 // web/render.mjs の TOOL_LABEL / TOOL_DRAW を補うヒント。
 // render.mjs は Claude の名前を既に知っているので、ここは「同じものを別経路でも渡せる」
 // ことの担保でもある（codex はこれしか手がかりが無い）。
+// label は言語が実行中に変わるので、読むたびに辞書（server の tools.*）から引く
+// i18n-dynamic: tools.
+const hint = (key, shape) => ({ get label() { return t(`tools.${key}`); }, shape });
 const TOOL_HINTS = {
-  Bash:         { label: "実行",     shape: "shell" },
-  PowerShell:   { label: "実行",     shape: "shell" },
-  Read:         { label: "読む",     shape: "read" },
-  Write:        { label: "書く",     shape: "write" },
-  Edit:         { label: "編集",     shape: "edit" },
-  MultiEdit:    { label: "編集",     shape: "edit" },
-  NotebookEdit: { label: "編集",     shape: "edit" },
-  Glob:         { label: "探す",     shape: "search" },
-  Grep:         { label: "検索",     shape: "search" },
-  Task:         { label: "委譲",     shape: "delegate" },
-  Agent:        { label: "委譲",     shape: "delegate" },
-  WebFetch:     { label: "取得",     shape: "web" },
-  WebSearch:    { label: "web検索",  shape: "web" },
-  TodoWrite:    { label: "TODO",     shape: "generic" },
-  mcp__host__present:    { label: "提示",     shape: "generic" },
-  mcp__ply__present:     { label: "提示",     shape: "generic" },
-  mcp__host__set_status: { label: "状態",     shape: "generic" },
-  mcp__host__set_title:  { label: "タイトル", shape: "generic" },
-  mcp__host__fork:       { label: "分岐",     shape: "generic" },
+  Bash:         hint("run", "shell"),
+  PowerShell:   hint("run", "shell"),
+  Read:         hint("read", "read"),
+  Write:        hint("write", "write"),
+  Edit:         hint("edit", "edit"),
+  MultiEdit:    hint("edit", "edit"),
+  NotebookEdit: hint("edit", "edit"),
+  Glob:         hint("find", "search"),
+  Grep:         hint("search", "search"),
+  Task:         hint("delegate", "delegate"),
+  Agent:        hint("delegate", "delegate"),
+  WebFetch:     hint("fetch", "web"),
+  WebSearch:    hint("webSearch", "web"),
+  TodoWrite:    { label: "TODO", shape: "generic" },
+  mcp__host__present:    hint("present", "generic"),
+  mcp__ply__present:     hint("present", "generic"),
+  mcp__host__set_status: hint("status", "generic"),
+  mcp__host__set_title:  hint("title", "generic"),
+  mcp__host__fork:       hint("fork", "generic"),
 };
 
 // ---------------------------------------------------------------- host ツール
@@ -288,6 +293,7 @@ function buildToolServer(ctx) {
  */
 function makeCanUseTool(ctx, askPermission) {
   return async (toolName, input, options) =>
+    // i18n-ignore: サーバーのログにだけ出る名前（claude-background.mjs の createHostCalls）
     ctx.hostCalls ? ctx.hostCalls.run(`${toolName} の承認`, () => decidePermission(ctx, askPermission, toolName, input, options))
       : decidePermission(ctx, askPermission, toolName, input, options);
 }
@@ -453,7 +459,7 @@ export const backend = {
   usage: ({ accounts, loginLabel } = {}) => readClaudeAccountsUsage({ accounts, loginLabel }),
   id: "claude",
   label: "Claude Code",
-  description: "公式サブスク認証 · スキル・MCP 連携に対応",
+  get description() { return t("claude.description"); },
 
   capabilities: {
     title: true,       // renameSession / customTitle。公式 CLI・VS Code と共有される
@@ -759,12 +765,12 @@ export const backend = {
         await q.initializationResult();
         if (contextRuntime.owners.instruction === 'ply') {
           const usage = await q.getContextUsage({ detail: 'summary' });
-          if (usage.memoryFiles?.length) throw new Error('Claude のネイティブ指示を停止できませんでした。会話への送信を中止しました');
+          if (usage.memoryFiles?.length) throw new Error(t('claude.errors.nativeInstructions'));
         }
         if (contextRuntime.owners.mcp === 'ply') {
           const native = await q.mcpServerStatus();
           const left = unexpectedNativeMcp(native, Object.keys(plyServers));
-          if (left.length) throw new Error(`Claude のネイティブ MCP を停止できませんでした（${left.join('、')}）`);
+          if (left.length) throw new Error(t('claude.errors.nativeMcp', { names: left.join(t('claude.listSeparator')) }));
         }
         releaseContext();
       }
@@ -777,8 +783,7 @@ export const backend = {
         // （作業ディレクトリを変えて再開したときに起きうる。CLI は cwd のプロジェクトを探す）。
         // 黙って別のセッションに書き続けるより、止めて知らせる
         if (sessionId && message.session_id && message.session_id !== sessionId) {
-          throw new Error(`Claude Code がセッション ${sessionId} を引き継げず、別のセッション ${message.session_id} を始めた。`
-            + "作業ディレクトリを変えた再開は Claude Code 側で見つけられないことがある。元のディレクトリに戻すか、分岐して続ける");
+          throw new Error(t('claude.errors.resumeMismatch', { expected: sessionId, actual: message.session_id }));
         }
         if (message.session_id && ctx.sessionId !== message.session_id) {
           ctx.sessionId = message.session_id;
@@ -846,8 +851,8 @@ export const backend = {
    */
   async stopBackground(sessionId, taskId) {
     const q = liveQueries.get(sessionId);
-    if (!q) throw new Error("この会話のターンはもう走っていない（裏のコマンドは CLI ごと終わっている）");
-    if (typeof q.stopTask !== "function") throw new Error("この Claude Code は裏のコマンドを止められません。`claude update` で更新してください");
+    if (!q) throw new Error(t("claude.errors.turnNotRunning"));
+    if (typeof q.stopTask !== "function") throw new Error(t("claude.errors.stopUnsupported"));
     await q.stopTask(taskId);
     return { stopped: true };
   },

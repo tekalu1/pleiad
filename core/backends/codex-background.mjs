@@ -30,6 +30,8 @@
 // kind は terminal。AIの結果待ちの衛星とは分け、会話ヘッダーから詳細と停止を提供する。
 // ターンの完了とは独立に追跡する。出力は端末ごとに末尾64K文字を保持し、詳細を開いた時だけ返す。
 
+import { t } from "../i18n.mjs";
+
 const LABEL_MAX = 120;
 const OUTPUT_MAX = 64 * 1024;
 
@@ -46,7 +48,7 @@ const isTerminal = (item) =>
 /** 端末の見出し。コマンドをそのまま出す（`npm run dev` / `python -m http.server`）。 */
 export function terminalLabel(command) {
   const s = String(command ?? "").replace(/\s+/g, " ").trim();
-  if (!s) return "バックグラウンド端末";
+  if (!s) return t("codex.terminal");
   return s.length > LABEL_MAX ? `${s.slice(0, LABEL_MAX - 1)}…` : s;
 }
 

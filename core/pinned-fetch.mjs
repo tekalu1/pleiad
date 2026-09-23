@@ -10,6 +10,7 @@ import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import { Readable } from 'node:stream';
+import { t } from './i18n.mjs';
 
 const NO_BODY = new Set([101, 204, 205, 304]);
 
@@ -21,7 +22,7 @@ export function pinnedLookup(addresses) {
     const family = typeof options === 'number' ? options : options?.family;
     const usable = family === 4 || family === 6 ? list.filter(a => a.family === family) : list;
     if (!usable.length) {
-      const error = Object.assign(new Error(`${hostname} の固定したアドレスに IPv${family} がありません`), { code: 'ENOTFOUND' });
+      const error = Object.assign(new Error(t('net.pinned.noFamily', { host: hostname, family })), { code: 'ENOTFOUND' });
       return process.nextTick(callback, error);
     }
     if (options?.all) return process.nextTick(callback, null, usable);
@@ -42,7 +43,7 @@ async function bodyBytes(body, headers) {
     if (body.type && !headers.has('content-type')) headers.set('content-type', body.type);
     return Buffer.from(await body.arrayBuffer());
   }
-  throw new TypeError('この要求の本文の形は、接続先を固定した取得では扱えません');
+  throw new TypeError(t('net.pinned.bodyType'));
 }
 
 /**
@@ -53,7 +54,7 @@ export async function pinnedFetch(input, init = {}, { fetchFn = fetch } = {}) {
   const { pinnedAddresses, ...rest } = init;
   if (!pinnedAddresses?.length) return fetchFn(input, rest);
   const url = new URL(String(input instanceof Request ? input.url : input));
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new TypeError(`${url.protocol} は扱えません`);
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new TypeError(t('net.pinned.protocol', { protocol: url.protocol }));
   const method = (rest.method ?? 'GET').toUpperCase();
   const headers = new Headers(rest.headers ?? {});
   const body = await bodyBytes(rest.body, headers);

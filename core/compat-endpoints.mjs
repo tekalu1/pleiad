@@ -18,6 +18,7 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import { addressKind, isLoopbackHost } from './mcp-url-guard.mjs';
 import { KIND, ROLE_KEYS, COMPAT_AGENTS } from '../web/compat-presets.mjs';
+import { t } from './i18n.mjs';
 
 const SECRET_PREFIX = 'compat-endpoint:';
 const ID = /^ep-[a-f0-9]{12}$/;
@@ -42,7 +43,7 @@ export class CheckError extends Error {
 
 export function redactSecret(text, ...secrets) {
   let s = String(text ?? '');
-  for (const v of secrets) if (v && String(v).length >= 4) s = s.split(String(v)).join('[キー]');
+  for (const v of secrets) if (v && String(v).length >= 4) s = s.split(String(v)).join(t('compat.redactedKey'));
   return s;
 }
 
@@ -53,17 +54,17 @@ export const isModelId = v => typeof v === 'string' && v.length > 0 && v.length 
 /** URL を検査して正規化する（末尾の / を落とす）。名前解決はしない（checkUrlTarget でする） */
 export function normalizeUrl(agent, value) {
   const raw = String(value ?? '').trim();
-  if (!raw) throw new CheckError('URL を入力してください');
-  if (/<[^>]+>/.test(raw)) throw new CheckError('URL の <リソース名> などを実際の値に置き換えてください');
+  if (!raw) throw new CheckError(t('compat.url.empty'));
+  if (/<[^>]+>/.test(raw)) throw new CheckError(t('compat.url.placeholder'));
   let u;
-  try { u = new URL(raw); } catch { throw new CheckError('URL は http:// か https:// で始めてください'); }
-  if (!['http:', 'https:'].includes(u.protocol)) throw new CheckError('URL は http:// か https:// で始めてください');
-  if (u.username || u.password) throw new CheckError('URL にユーザー名やパスワードを入れないでください。キーは「API キー」の欄に入れます');
-  if (u.search || u.hash) throw new CheckError('URL に ? や # 以降を入れないでください');
+  try { u = new URL(raw); } catch { throw new CheckError(t('compat.url.scheme')); }
+  if (!['http:', 'https:'].includes(u.protocol)) throw new CheckError(t('compat.url.scheme'));
+  if (u.username || u.password) throw new CheckError(t('compat.url.credentials'));
+  if (u.search || u.hash) throw new CheckError(t('compat.url.query'));
   const href = u.href.replace(/\/+$/, '');
-  if (agent === 'claude' && /\/v1$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError('URL の末尾の /v1 は要りません（Claude Code が /v1/messages を付けます）');
-  if (agent === 'claude' && /\/v1\/messages$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError('URL の末尾の /v1/messages は要りません（Claude Code が付けます）');
-  if (agent === 'codex' && /\/(responses|chat\/completions)$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError('URL の末尾の /responses などは要りません（Codex が /responses を付けます）');
+  if (agent === 'claude' && /\/v1$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.claudeV1'));
+  if (agent === 'claude' && /\/v1\/messages$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.claudeMessages'));
+  if (agent === 'codex' && /\/(responses|chat\/completions)$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.codexSuffix'));
   return href;
 }
 
@@ -80,24 +81,24 @@ export async function checkUrlTarget(url, { lookup = dns.lookup } = {}) {
   if (net.isIP(host)) addresses = [host];
   else {
     try { addresses = (await lookup(host, { all: true, verbatim: true })).map(a => typeof a === 'string' ? a : a.address); }
-    catch { throw new CheckError(`${u.host} の名前を解決できません。URL とネットワークを確かめてください`); }
+    catch { throw new CheckError(t('compat.url.unresolved', { host: u.host })); }
   }
   if (addresses.some(a => addressKind(a) === 'public')) {
-    throw new CheckError('公開のアドレスには https で接続してください（http ではキーと会話が暗号化されずに送られます）');
+    throw new CheckError(t('compat.url.publicHttp'));
   }
 }
 
 function normalizeName(value) {
   const name = String(value ?? '').trim();
-  if (!name) throw new CheckError('名前を入力してください');
-  if (name.length > MAX_NAME) throw new CheckError(`名前は ${MAX_NAME} 文字以内にしてください`);
-  if (/[\x00-\x1f\x7f]/.test(name)) throw new CheckError('名前に改行などは使えません');
+  if (!name) throw new CheckError(t('compat.name.empty'));
+  if (name.length > MAX_NAME) throw new CheckError(t('compat.name.tooLong', { max: MAX_NAME }));
+  if (/[\x00-\x1f\x7f]/.test(name)) throw new CheckError(t('compat.name.control'));
   return name;
 }
 
 function normalizeKey(value) {
   const key = String(value ?? '').trim();
-  if (key.length > 16000 || /[\s\x00-\x1f\x7f]/.test(key)) throw new CheckError('API キーに空白や改行が含まれています。値だけを貼り付けてください');
+  if (key.length > 16000 || /[\s\x00-\x1f\x7f]/.test(key)) throw new CheckError(t('compat.key.invalid'));
   return key;
 }
 
@@ -111,14 +112,15 @@ export function normalizeRoles(agent, roles, { required = true } = {}) {
   const out = {};
   for (const k of ROLE_KEYS[agent]) {
     const v = String(roles?.[k] ?? '').trim();
-    if (v && !isModelId(v)) throw new CheckError('モデル ID の形式が正しくありません');
+    if (v && !isModelId(v)) throw new CheckError(t('compat.model.invalidId'));
     out[k] = v;
   }
   if (required) {
-    const labels = { main: agent === 'claude' ? 'メイン' : '既定のモデル', opus: 'Opus 相当', sonnet: 'Sonnet 相当', haiku: 'Haiku 相当' };
-    const missing = ROLE_KEYS[agent].filter(k => !out[k]).map(k => labels[k]);
+    // i18n-dynamic: compat.roles.
+    const label = k => k === 'main' ? t(agent === 'claude' ? 'compat.roles.main' : 'compat.roles.default') : t(`compat.roles.${k}`);
+    const missing = ROLE_KEYS[agent].filter(k => !out[k]).map(label);
     // 空の役割があると、Claude Code は Claude のモデル名（claude-…）をそのまま送って失敗する
-    if (missing.length) throw new CheckError(`${missing.join('・')} のモデルを入力してください`);
+    if (missing.length) throw new CheckError(t('compat.roles.missing', { roles: missing.join(t('compat.listSeparator')) }));
   }
   return out;
 }
@@ -128,7 +130,7 @@ export function normalizeOptions(agent, options = {}) {
   const ctx = String(options?.contextTokens ?? '').replace(/[,_\s]/g, '');
   if (ctx) {
     const n = Number(ctx);
-    if (!Number.isInteger(n) || n < 1024 || n > 10_000_000) throw new CheckError('コンテキスト長は 1024 から 10,000,000 までの整数にしてください');
+    if (!Number.isInteger(n) || n < 1024 || n > 10_000_000) throw new CheckError(t('compat.contextTokens.range'));
     out.contextTokens = n;
   }
   if (agent === 'claude' && options?.sendThinking) out.sendThinking = true;
@@ -169,15 +171,15 @@ async function send(fetchImpl, url, { method = 'POST', headers = {}, body, key, 
     res = await fetchImpl(url, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}), redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
   } catch (e) {
     const timeout = e?.name === 'TimeoutError' || e?.name === 'AbortError';
-    throw new CheckError(timeout ? `接続先が ${Math.round(timeoutMs / 1000)} 秒以内に応答しませんでした。URL・ネットワークを確かめてください` : '接続できませんでした。URL・ネットワーク（ローカルの接続先なら起動しているか）を確かめてください',
+    throw new CheckError(timeout ? t('compat.check.timeout', { seconds: Math.round(timeoutMs / 1000) }) : t('compat.check.network'),
       { lines: [redactSecret(String(e?.cause?.code ?? e?.message ?? ''), key).slice(0, 120)].filter(Boolean), code: 'network' });
   }
   if (res.status >= 300 && res.status < 400) {
     await res.body?.cancel?.().catch(() => {});
-    throw new CheckError(`接続先が別の URL へリダイレクトしました（HTTP ${res.status}）。キーを転送しないため追いません。リダイレクト先の URL を直接入れてください`, { code: 'redirect' });
+    throw new CheckError(t('compat.check.redirect', { status: res.status }), { code: 'redirect' });
   }
   let text = '';
-  try { text = await readBody(res); } catch { throw new CheckError('接続先の応答が大きすぎます', { code: 'format' }); }
+  try { text = await readBody(res); } catch { throw new CheckError(t('compat.check.tooLarge'), { code: 'format' }); }
   return { status: res.status, ok: res.ok, text, ms: Date.now() - started };
 }
 
@@ -258,25 +260,26 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
       tried.push({ mode, r });
       if (r.status === 401 || r.status === 403) continue;
       if (r.status === 404 || r.status === 405) {
-        throw new CheckError(`POST ${baseUrl}/v1/messages が ${r.status} を返しました。Anthropic 互換（/v1/messages）の URL か確かめてください`, { code: 'not-found',
-          lines: ['URL には /v1 を付けずに入れます（Claude Code が /v1/messages を付けます）。'] });
+        throw new CheckError(t('compat.check.claudeNotFound', { url: `${baseUrl}/v1/messages`, status: r.status }), { code: 'not-found',
+          lines: [t('compat.check.claudeNotFoundHint')] });
       }
-      if (r.status >= 500) throw new CheckError(`接続先がエラーを返しました（HTTP ${r.status}）`, { lines: [errorText(r.text, key)].filter(Boolean), code: 'server' });
+      if (r.status >= 500) throw new CheckError(t('compat.check.serverError', { status: r.status }), { lines: [errorText(r.text, key)].filter(Boolean), code: 'server' });
       if (!r.ok) {
         const why = errorText(r.text, key);
         lines.push(looksLikeModelError(why) && r.status !== 429
-          ? `確認に使ったモデル ${model} は受け付けられませんでした（HTTP ${r.status}${why ? ': ' + why : ''}）。URL とキーは通っています。モデルは次で割り当てます。`
-          : `確認のリクエストは HTTP ${r.status} でした${why ? `（${why}）` : ''}。URL とキーは通っています。`);
+          ? t('compat.check.claudeModelRejected', { model, status: r.status, reason: why ? ': ' + why : '' })
+          : why ? t('compat.check.probeStatusWithReason', { status: r.status, reason: why }) : t('compat.check.probeStatus', { status: r.status }));
       }
       const auth = mode;
       const models = await fetchModels(fetchImpl, `${baseUrl}/v1/models?limit=1000`, { 'anthropic-version': '2023-06-01', ...authHeaders(auth === 'none' ? 'bearer' : auth, key) }, key);
-      if (!models?.ids.length) lines.push('モデルの一覧は取れませんでした。ID を入力してください。');
+      if (!models?.ids.length) lines.push(t('compat.check.noModels'));
       return { auth, latencyMs: r.ms, models: models?.ids ?? [], modelInfo: models?.info ?? {}, lines };
     }
-    const statuses = [...new Set(tried.map(t => t.r.status))].join('・');
-    throw new CheckError('キーが違います', { code: 'auth', lines: [
-      tried.length > 1 ? `Bearer と x-api-key の両方で試し、どちらも ${statuses} でした。キーを確かめてください。` : `${statuses}（認証に失敗）が返りました。${key ? 'キー' : 'この接続先はキーが要ります。キー'}を確かめてください。`,
-      'URL には届いています。'] });
+    const statuses = [...new Set(tried.map(x => x.r.status))].join(t('compat.listSeparator'));
+    throw new CheckError(t('compat.check.badKey'), { code: 'auth', lines: [
+      // i18n-dynamic: compat.check.authFailed
+      tried.length > 1 ? t('compat.check.authBoth', { statuses }) : t(key ? 'compat.check.authFailed' : 'compat.check.authFailedNoKey', { status: statuses }),
+      t('compat.check.reached')] });
   }
   // Codex: Responses API
   const model = probeModel || 'gpt-probe';
@@ -284,28 +287,29 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
   const headers = { 'content-type': 'application/json', ...authHeaders(auth, key) };
   const r = await send(fetchImpl, `${baseUrl}/responses`, { headers, body: { model, input: 'ping', max_output_tokens: 16, stream: false, store: false }, key });
   if (r.status === 401 || r.status === 403) {
-    throw new CheckError('キーが違います', { code: 'auth', lines: [`${r.status}（認証に失敗）が返りました。${key ? 'キーと送り方（Bearer / api-key）' : 'この接続先はキーが要ります。キー'}を確かめてください。`, 'URL には届いています。'] });
+    // i18n-dynamic: compat.check.codexAuthFailed
+    throw new CheckError(t('compat.check.badKey'), { code: 'auth', lines: [t(key ? 'compat.check.codexAuthFailed' : 'compat.check.authFailedNoKey', { status: r.status }), t('compat.check.reached')] });
   }
   if (r.status === 404 || r.status === 405) {
     // Chat Completions だけの先か見分ける。本文の無い要求なので生成はしない（400 が返れば道はある）
     const chat = await send(fetchImpl, `${baseUrl}/chat/completions`, { headers, body: {}, key }).catch(() => null);
     if (chat && chat.status !== 404 && chat.status !== 405) {
-      throw new CheckError('この接続先は Chat Completions にしか対応していないため Codex では使えません', { code: 'chat-only', lines: [
-        `POST ${baseUrl}/responses が ${r.status} を返しました（/chat/completions は応答します）。`,
-        'LiteLLM などで Responses API に変換すると使えます。'] });
+      throw new CheckError(t('compat.check.chatOnly'), { code: 'chat-only', lines: [
+        t('compat.check.chatOnlyDetail', { url: `${baseUrl}/responses`, status: r.status }),
+        t('compat.check.chatOnlyHint')] });
     }
-    throw new CheckError(`POST ${baseUrl}/responses が ${r.status} を返しました。Responses API（/responses）に対応した URL か確かめてください`, { code: 'not-found',
-      lines: ['多くの接続先では URL の末尾が /v1 です（Codex が /responses を付けます）。'] });
+    throw new CheckError(t('compat.check.codexNotFound', { url: `${baseUrl}/responses`, status: r.status }), { code: 'not-found',
+      lines: [t('compat.check.codexNotFoundHint')] });
   }
-  if (r.status >= 500) throw new CheckError(`接続先がエラーを返しました（HTTP ${r.status}）`, { lines: [errorText(r.text, key)].filter(Boolean), code: 'server' });
+  if (r.status >= 500) throw new CheckError(t('compat.check.serverError', { status: r.status }), { lines: [errorText(r.text, key)].filter(Boolean), code: 'server' });
   if (!r.ok) {
     const why = errorText(r.text, key);
     lines.push(looksLikeModelError(why) && r.status !== 429
-      ? `確認に使ったモデル ${model} は受け付けられませんでした（HTTP ${r.status}${why ? ': ' + why : ''}）。URL とキーは通っています。モデルは次で決めます。`
-      : `確認のリクエストは HTTP ${r.status} でした${why ? `（${why}）` : ''}。URL とキーは通っています。`);
+      ? t('compat.check.codexModelRejected', { model, status: r.status, reason: why ? ': ' + why : '' })
+      : why ? t('compat.check.probeStatusWithReason', { status: r.status, reason: why }) : t('compat.check.probeStatus', { status: r.status }));
   }
   const models = await fetchModels(fetchImpl, `${baseUrl}/models`, authHeaders(auth, key), key);
-  if (!models?.ids.length) lines.push('モデルの一覧は取れませんでした。ID を入力してください。');
+  if (!models?.ids.length) lines.push(t('compat.check.noModels'));
   return { auth, latencyMs: r.ms, models: models?.ids ?? [], modelInfo: models?.info ?? {}, lines };
 }
 
@@ -336,7 +340,7 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
       };
     } catch (e) {
       if (e.code === 'ENOENT') return { version: 1, endpoints: [], defaults: { claude: '', codex: '' } };
-      throw new Error('互換の接続先の一覧を読み込めません。形式が壊れています');
+      throw new Error(t('compat.store.unreadable'));
     }
   }
   async function write(data) {
@@ -372,12 +376,12 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
   /** 確認に使う値をそろえる（id があれば保存済みのキーを流用できる） */
   async function connectionOf(input, id) {
     const agent = COMPAT_AGENTS.includes(input?.agent) ? input.agent : null;
-    if (!agent) throw new CheckError('エージェントを選んでください');
+    if (!agent) throw new CheckError(t('compat.store.agentRequired'));
     let existing = null;
     if (id) {
       existing = (await read()).endpoints.find(e => e.id === id);
-      if (!existing) throw new CheckError('接続先が見つかりません。一覧を開き直してください');
-      if (existing.agent !== agent) throw new CheckError('接続先のエージェントは変えられません');
+      if (!existing) throw new CheckError(t('compat.store.notFound'));
+      if (existing.agent !== agent) throw new CheckError(t('compat.store.agentFixed'));
     }
     const baseUrl = normalizeUrl(agent, input?.baseUrl);
     const authMode = normalizeAuthMode(agent, input?.authMode);
@@ -385,7 +389,7 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
     let keySource = key ? 'input' : 'none';
     // 編集でキー欄が空なら保存済みのキーを使う（keepKey: false でキーを消す）
     if (!key && existing && input?.keepKey !== false) {
-      const saved = await secrets.get(secretKey(existing.id)).catch(e => { throw new CheckError(e.code === 'SECRET_LOCKED' ? e.message : '保存済みのキーを読めません'); });
+      const saved = await secrets.get(secretKey(existing.id)).catch(e => { throw new CheckError(e.code === 'SECRET_LOCKED' ? e.message : t('compat.key.unreadable')); });
       if (saved?.key) { key = saved.key; keySource = 'saved'; }
     }
     return { agent, baseUrl, authMode, key, keySource, existing };
@@ -440,7 +444,7 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
       const c = await connectionOf(input, id);
       const proof = receipts.get(String(receipt ?? ''));
       if (!proof || proof.until < now() || proof.hash !== fingerprint({ agent: c.agent, baseUrl: c.baseUrl, authMode: c.authMode, key: keyHash(c.key), keySource: c.keySource, id: id ?? null })) {
-        throw new CheckError('接続情報が変わったか、確認から時間が経ちました。もう一度「接続を確認」を押してください');
+        throw new CheckError(t('compat.store.receiptStale'));
       }
       const name = normalizeName(input?.name);
       const roles = normalizeRoles(c.agent, input?.roles);
@@ -456,7 +460,7 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
           const entry = { id: created, agent: c.agent, name, preset, baseUrl: c.baseUrl, authMode: c.authMode, auth: proof.auth, roles, options,
             models: proof.models, modelInfo: proof.modelInfo ?? {}, verifiedAt: at, lastCheck: { ok: true, at, latencyMs: proof.latencyMs, modelCount: proof.models.length } };
           const i = data.endpoints.findIndex(e => e.id === created);
-          if (id && i < 0) throw new CheckError('接続先が見つかりません。一覧を開き直してください');
+          if (id && i < 0) throw new CheckError(t('compat.store.notFound'));
           if (i >= 0) data.endpoints[i] = { ...data.endpoints[i], ...entry }; else data.endpoints.push({ ...entry, createdAt: at });
         });
       } catch (e) {
@@ -470,7 +474,7 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
     async recheck(id) {
       const data = await read();
       const e = data.endpoints.find(x => x.id === id);
-      if (!e) throw new CheckError('接続先が見つかりません。一覧を開き直してください');
+      if (!e) throw new CheckError(t('compat.store.notFound'));
       let result, failure = null;
       try { result = await this.check({ agent: e.agent, baseUrl: e.baseUrl, authMode: e.authMode, probeModel: e.roles?.main }, { id }); }
       catch (err) { failure = err; }
@@ -492,7 +496,7 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
       return serial(async () => {
         const data = await read();
         const next = data.endpoints.filter(e => e.id !== id);
-        if (next.length === data.endpoints.length) throw new Error('その接続先は登録されていません');
+        if (next.length === data.endpoints.length) throw new Error(t('compat.store.notRegistered'));
         for (const a of COMPAT_AGENTS) if (data.defaults[a] === id) data.defaults[a] = '';
         await write({ ...data, endpoints: next });
         await secrets.delete(secretKey(id)).catch(() => {});
@@ -500,10 +504,10 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
     },
     /** 新しい会話の既定（'' = 公式）。設定で明示的に「既定にする」を押したときだけ呼ぶ */
     async setDefault(agent, id) {
-      if (!COMPAT_AGENTS.includes(agent)) throw new Error('エージェントが正しくありません');
+      if (!COMPAT_AGENTS.includes(agent)) throw new Error(t('compat.store.badAgent'));
       const target = String(id ?? '');
       await update(data => {
-        if (target && !data.endpoints.some(e => e.id === target && e.agent === agent)) throw new Error('その接続先は登録されていません');
+        if (target && !data.endpoints.some(e => e.id === target && e.agent === agent)) throw new Error(t('compat.store.notRegistered'));
         data.defaults[agent] = target;
       });
     },
@@ -522,12 +526,12 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
       if (!id) return null;
       const data = await read();
       const e = data.endpoints.find(x => x.id === id);
-      if (!e) throw new EndpointError('この会話の接続先は削除されています。入力欄のモデルの面で接続先を選び直してください', 'deleted');
-      if (agent && e.agent !== agent) throw new EndpointError(`この会話の接続先「${e.name}」は ${e.agent === 'claude' ? 'Claude Code' : 'Codex'} 用です。接続先を選び直してください`, 'agent');
-      if (e.lastCheck && e.lastCheck.ok === false) throw new EndpointError(`接続先「${e.name}」は前回の確認に失敗しています。設定 › エージェント設定の「接続先」で確認し直すか、接続先を選び直してください`, 'failed');
+      if (!e) throw new EndpointError(t('compat.resolve.deleted'), 'deleted');
+      if (agent && e.agent !== agent) throw new EndpointError(t('compat.resolve.wrongAgent', { name: e.name, agent: e.agent === 'claude' ? 'Claude Code' : 'Codex' }), 'agent');
+      if (e.lastCheck && e.lastCheck.ok === false) throw new EndpointError(t('compat.resolve.failed', { name: e.name }), 'failed');
       let key = '';
       try { key = (await secrets.get(secretKey(e.id)))?.key ?? ''; }
-      catch (err) { throw new EndpointError(err.code === 'SECRET_LOCKED' ? err.message : `接続先「${e.name}」のキーを読めません`, 'unreadable'); }
+      catch (err) { throw new EndpointError(err.code === 'SECRET_LOCKED' ? err.message : t('compat.resolve.keyUnreadable', { name: e.name }), 'unreadable'); }
       return { id: e.id, agent: e.agent, kind: KIND[e.agent], name: e.name, baseUrl: e.baseUrl, auth: e.auth ?? (key ? 'bearer' : 'none'), key,
         roles: { ...e.roles }, models: storedModels(e).models, options: { ...(e.options ?? {}) } };
     },
