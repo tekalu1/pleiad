@@ -165,6 +165,8 @@
     }
   },
   "activity": {
+    "preparing": "送信準備中",
+    "connectingMcp": "外部 MCP に接続中 {{current}}/{{total}}",
     "thinking": "考えている",
     "writing": "書いている",
     "compacting": "文脈を圧縮している",
@@ -933,6 +935,8 @@
     },
     "thought_other": "考えた（{{chars}} 文字）",
     "delivery": {
+      "sending": "送信中",
+      "failed": "✕ 送れませんでした",
       "pending": "次の区切りで AI に渡します",
       "late": "この作業には間に合いませんでした。続けて答えます",
       "sent": "AIへ送信済み",

@@ -129,6 +129,8 @@
 | 大小無視（検索） | Ignore case |
 | 走っているものがある | Something is running |
 | 再送する | Resend |
+| 送信中 | Sending… |
+| 外部 MCP に接続中 | Connecting to external MCP |
 | Pleiad タスク完了通知 | Pleiad task completion notice |
 | 依頼元（委譲を頼んだ会話） | requester / requesting conversation |
 | 適用範囲（指示の scope） | scope |
