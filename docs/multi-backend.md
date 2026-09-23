@@ -141,14 +141,25 @@ main の開始は 2 回目以降の `system/init` とトップレベルの `mess
   （`priority: "later"` と同じ速さ。実測 2026-09、CLI 2.1.273）。どの場面でも遅れないので、Pleiad は場面で出し分けず常に `next` で流す
 - 折り込まれた瞬間はストリームに合図が無い。`--replay-user-messages`（`extraArgs`）を付けると、折り込みと同時に
   `{ type:'user', isReplay:true, message:{ role:'user', content:'<文字列>' } }` が流れる。流れるのは最初のプロンプトと
-  自分が流し込んだ分だけで、CLI 内部の通知（task-notification など）は replay されない。Pleiad は流し込んだ本文を FIFO で
-  突き合わせ、一致したものを `userMessage.delivered` として出す（画面の「まだ渡っていない」はこれで消える）
+  自分が流し込んだ分だけで、CLI 内部の通知（task-notification など）は replay されない。Pleiad は流し込むフレームに毎回新しい
+  `uuid` を付け、replay の `uuid` で突き合わせて `userMessage.delivered` を出す（画面の「まだ渡っていない」はこれで消える）。
+  区切りが来ないまま内部ターンが終わると、CLI は溜まった分を**まとめて**次の内部ターンとして取り出し、本文を `
+` でつないだ
+  replay を最後のメンバーの `uuid` で 1 本出す（メンバーごとの replay は `uuid` 付きのフレームにだけ出る。実測 2026-09-23、CLI 2.1.280）。
+  答えは同じ Pleiad ターンの中で流れる。本文だけで照合していたころはこれを取りこぼし、答えが返っても「渡します」が残った。
+  保険として本文の一致・つないだ本文の分解でも拾い、それでも残った分は `result` の後の `system/init`（次の内部ターン）で渡ったことにする
 - 折り込まれた発言は transcript に `attachment`（`{ type:'queued_command', prompt, commandMode:'prompt' }`）として残り、
   `getSessionMessages` は返さない（`includeSystemMessages` でも返さない）。`timestamp` は流し込んだ時刻で直前の行より古く、
   時刻では並べ直せない。Pleiad は `parentUuid` の鎖を遡って `getSessionMessages` に出ている最初の祖先を探し、その直後へ差し戻す
   （`claude-normalize.mjs` の `mergeQueuedCommands`）。区切りが来ないままターンが終わった分は待ち行列から外れ、
   普通の user 行として残って次のターンで答えられる（両方に残る形は観測していない＝二重にならない）
 - 入力を閉じた後も、CLI は stdin で受け取り済みのメッセージを処理してから終わる。閉じる判定で「取りかかった」と早めに数えても取りこぼさない
+- 中断は `Query.interrupt({ cancelQueued: true })`（Esc と同じ。d.ts の型に引数は無いが SDK 0.3.258 の実装は受ける）。stdin を閉じるだけでは
+  CLI は今の仕事と待ち行列を片付けてから終わり、Windows の SDK は abort から 2 秒 + 5 秒後に claude.exe を kill するまで動き続けていた
+  （2026-09-23 調査）。そのため SDK には server の AbortController を渡さず、自前のものを渡す（渡すと中断の瞬間に stdin が閉じ、
+  interrupt を書けない）。interrupt の応答か `result` が 2.5 秒のうちに来なければ、入力を閉じて SDK の abort に落とす。受領の後は入力を閉じ、
+  3 秒のうちに終わらなければ同じく落とす。結果はどちらでも `turnResult aborted`。応答の `cancelled` にある `uuid`（折り込まれる前に取り消された
+  途中送信）は `userMessage.dropped` にする。プロセスツリーごとの強制終了はしない（pid は `spawnClaudeCodeProcess` で自前に起動したときしか取れない）
 - `result` は 1 回の query で何度も出る。`total_cost_usd` と `modelUsage` は query 全体の累計で単調に増える（上書きで二重計上にならない）。
   turnResult は「ターンが終わった」の合図なので、Claude は成功の turnResult を query の終わりに 1 回だけ出す
   （途中で出すと server がターンを終わりかけと見なし、途中送信を止める）
@@ -275,7 +286,7 @@ sidecar 側の `setMode` / `setModel` は `exclusive()` を通す（既存の re
 | ツール | `tool_use` / `tool_result` | `item/started` / `item/completed`（`commandExecution`, `fileChange`, `mcpToolCall`, `webSearch` …）+ `item/commandExecution/outputDelta` |
 | 承認 | `canUseTool` | server request `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval` → response で返す |
 | 質問 | `AskUserQuestion` | `item/tool/requestUserInput` |
-| 中断 | AbortController | `turn/interrupt` |
+| 中断 | `Query.interrupt({ cancelQueued })`（応答が無ければ AbortController） | `turn/interrupt` |
 | 完了 | `result` | `turn/completed` |
 | 一覧 | `listSessions` | `thread/list`（name, cwd, createdAt, updatedAt, forkedFromId） |
 | 履歴 | `getSessionMessages` | `thread/read {includeTurns:true}` |
