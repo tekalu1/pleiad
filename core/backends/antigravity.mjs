@@ -229,7 +229,7 @@ export const backend = {
     const fresh = !session;
     if (fresh) {
       // 会話ごとのエージェント定義（Pleiad の置き場）と、中継に渡す接続先・トークン（env）
-      const agent = contextRuntime ? await prepareAgent({ owners: contextRuntime.owners, prompt: contextRuntime.prompt, cwd, url: contextRuntime.url, authorization: contextKey }) : null;
+      const agent = contextRuntime ? await prepareAgent({ owners: contextRuntime.owners, prompt: contextRuntime.prompt, cwd, url: contextRuntime.url, authorization: contextKey, locale: contextRuntime.locale }) : null;
       session = new AgySession({
         cwd,
         conversationId,

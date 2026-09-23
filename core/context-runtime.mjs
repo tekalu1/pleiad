@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { FRONTMATTER, scanContext } from './context-scan.mjs';
 import { DEFAULT_OWNERS, KINDS, containsPath, legacyPlan, matchesGlobs, pathKey } from './context-settings.mjs';
-import { t } from './i18n.mjs';
+import { t, agentT } from './i18n.mjs';
 
 export const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 export const managed = policy => Object.values(policy?.owners ?? {}).includes('ply');
@@ -46,8 +46,8 @@ const properties = { type: 'object', properties: { id: { type: 'string' }, full:
  * **控えは指示欄のプロンプトに一切影響させない。** 影響させるとファイルが同じでもターンごとに前置きが変わり、
  * バックエンド側の prompt caching が毎ターン外れる。差を出してよいのは末尾に積まれるツールの返りだけ
  */
-const AGAIN = 'If you no longer have its text (for example after context compaction), call again with full: true.';
-const alreadyLine = (label, scope) => `Already provided in this conversation: ${label} (scope: ${scope}). Not repeated. ${AGAIN}`;
+// エージェントに渡す文（前置き・ツールの説明・返り）は会話の言語で引く（agent 名前空間。runtime.locale）。en は以前の英語の固定文と同じ
+const alreadyLine = (locale, label, scope) => agentT(locale, 'context.alreadyProvided', { label, scope });
 
 /**
  * 前のターンの方針 previous を、今の設定 settings（contextSettings.get の結果）で解き直す。設定の変更を次のターンから効かせるため。
@@ -142,7 +142,8 @@ export async function resolveRuntime(policy, options = {}) {
   const owners = policy.owners;
   const kinds = Object.keys(owners).filter(k => owners[k] === 'ply');
   const settings = runtimeSettings(policy);
-  const { snapshots, ...scanOptions } = options;
+  // locale は会話の言語（エージェントに渡す前置き・ツールの説明の言語）。探索の設定ではないので scanOptions に入れない
+  const { snapshots, locale, ...scanOptions } = options;
   const scan = await scanContext(settings, { ...scanOptions, runtime: true });
   const removed = new Set(policy.removedMcp ?? []);
   if (scan.limited || scan.diagnostics.length) throw new Error(t('context.runtime.unresolved', { detail: scan.diagnostics[0]?.message ?? t('context.runtime.scanLimit') }));
@@ -186,13 +187,13 @@ export async function resolveRuntime(policy, options = {}) {
     }
   }
   markChoices(report.entries, settings.plan);
-  const prompt = instructions.map(i => `Instructions from ${i.path} (scope: ${i.appliesTo ?? 'all working directories'}):\n${i.content}`).join('\n\n');
+  const prompt = instructions.map(i => agentT(locale, 'context.instructionsFrom', { path: i.path, scope: i.appliesTo ?? agentT(locale, 'context.allDirectories'), content: i.content })).join('\n\n');
   if (Buffer.byteLength(prompt) > 128 * 1024) throw new Error(t('context.runtime.instructionsTooLarge'));
   const pin = contextPin(scan.entries);
   await saveSnapshots(snapshots, scan.entries);
   // scanOptions は instructions_for_path が同じ探索（home など）で解き直すために持つ
   // delivered は渡し済みの本文の控え。会話をまたぐ分は core/server.mjs が差し替える
-  return { policy, owners, report, instructions, conditional, skills, servers, prompt, pin, scanOptions, delivered: {} };
+  return { policy, owners, report, instructions, conditional, skills, servers, prompt, pin, scanOptions, locale, delivered: {} };
 }
 
 /**
@@ -215,16 +216,17 @@ export function contextTools(runtime, userPrompt = '') {
   // Composer slash mentions can occur anywhere, including multiple manual-only skills.
   for (const match of String(userPrompt).matchAll(/(?:^|[\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}（(「『、。，,])\/([\p{L}\p{N}_.:-]+)(?![\p{L}\p{N}_.:\/\\-])/gu)) invoked.add(match[1]);
   const active = runtime.skills.filter(s => !s.metadata?.['disable-model-invocation'] || invoked.has(s.name));
+  const locale = runtime.locale;
   const tools = [];
-  if (runtime.owners.skill === 'ply') tools.push({ name: 'load_skill', description: 'Load a selected Skill before following it. Scripts and references resolve relative to its directory. Skills do not grant extra tool permissions. Text already delivered in this conversation is not repeated unless the file changed; pass full: true to force the full text.', inputSchema: properties });
-  if (runtime.owners.instruction === 'ply') tools.push({ name: 'instructions_for_path', description: 'Before working in a descendant directory or on a file matched by a path-scoped rule, get its scoped AGENTS.md / CLAUDE.md / .claude/rules instructions. Pass the file (preferred) or directory absolute path as id. Text already delivered in this conversation is not repeated unless the file changed; pass full: true to force the full text.', inputSchema: properties });
-  const catalog = active.map(s => `- ${s.name}: ${s.description} (id: ${s.id}, directory: ${path.dirname(s.realPath)})`).join('\n');
+  if (runtime.owners.skill === 'ply') tools.push({ name: 'load_skill', description: agentT(locale, 'context.tools.load_skill'), inputSchema: properties });
+  if (runtime.owners.instruction === 'ply') tools.push({ name: 'instructions_for_path', description: agentT(locale, 'context.tools.instructions_for_path'), inputSchema: properties });
+  const catalog = active.map(s => agentT(locale, 'context.prompt.skillLine', { name: s.name, description: s.description, id: s.id, dir: path.dirname(s.realPath) })).join('\n');
   // paths 付きの rules は本文を渡さず、どのファイルで読み足すべきかだけを示す
-  const scoped = (runtime.conditional ?? []).map(i => `- ${i.paths.join(', ')} (relative to ${i.pathsBase ?? runtime.policy.cwd})`);
+  const scoped = (runtime.conditional ?? []).map(i => agentT(locale, 'context.prompt.scopedLine', { paths: i.paths.join(', '), base: i.pathsBase ?? runtime.policy.cwd }));
   const prompt = [runtime.prompt,
-    runtime.owners.instruction === 'ply' ? 'Before reading or editing a file under a descendant directory, call the ply_context instructions_for_path tool for its absolute path. Apply returned instructions only within their stated scope.' : '',
-    runtime.owners.instruction === 'ply' && scoped.length ? `Path-scoped rules also exist. Before reading or editing a file matching one of these globs, call instructions_for_path with the file's absolute path:\n${[...new Set(scoped)].join('\n')}` : '',
-    runtime.owners.skill === 'ply' ? `Available Skills (use ply_context load_skill with the id before following a skill; load only when relevant):\n${catalog || '(none)'}` : '',
+    runtime.owners.instruction === 'ply' ? agentT(locale, 'context.prompt.descendants') : '',
+    runtime.owners.instruction === 'ply' && scoped.length ? agentT(locale, 'context.prompt.scopedRules', { rules: [...new Set(scoped)].join('\n') }) : '',
+    runtime.owners.skill === 'ply' ? agentT(locale, 'context.prompt.skills', { catalog: catalog || agentT(locale, 'context.prompt.none') }) : '',
   ].filter(Boolean).join('\n\n');
   // 渡し済みの控え。prompt を組み立てた後に触る（プロンプトには影響させない）
   const delivered = runtime.delivered ??= {};
@@ -234,8 +236,8 @@ export function contextTools(runtime, userPrompt = '') {
     const full = args?.full === true;
     if (name === 'load_skill') {
       const item = active.find(s => s.id === args?.id);
-      if (!item) throw new Error('このセッションで利用できない Skill です');
-      if ((await fs.stat(item.realPath)).size > 256 * 1024) throw new Error('Skill exceeds 256 KiB');
+      if (!item) throw new Error(agentT(locale, 'context.errors.skillUnavailable'));
+      if ((await fs.stat(item.realPath)).size > 256 * 1024) throw new Error(agentT(locale, 'context.errors.skillTooLarge'));
       const body = await fs.readFile(item.realPath, 'utf8');
       // 開始時と本文が違っても止めない。今の本文を渡し、記録のハッシュを渡した内容へ直す（固定しているのは名前と説明だけ）
       const digest = hash(body.replace(/^﻿/, ''));
@@ -245,11 +247,11 @@ export function contextTools(runtime, userPrompt = '') {
       delivered[item.id] = digest;
       const dir = path.dirname(item.realPath);
       // 同じ本文を渡し済みなら本文を繰り返さない（会話が長くなるほど同じ Skill が何度も積み上がるため）
-      if (before === digest && !full) return textResult(alreadyLine(`Skill ${item.name}`, `directory ${dir}`));
-      return textResult(`${before && before !== digest ? 'This Skill changed since it was last provided; the current text follows.\n' : ''}Skill directory: ${dir}\n${body}`);
+      if (before === digest && !full) return textResult(alreadyLine(locale, agentT(locale, 'context.skillLabel', { name: item.name }), agentT(locale, 'context.skillScope', { dir })));
+      return textResult(`${before && before !== digest ? agentT(locale, 'context.skillChanged') + '\n' : ''}${agentT(locale, 'context.skillBody', { dir, body })}`);
     }
     if (name === 'instructions_for_path') {
-      if (typeof args?.id !== 'string' || !path.isAbsolute(args.id)) throw new Error('絶対パスを指定してください');
+      if (typeof args?.id !== 'string' || !path.isAbsolute(args.id)) throw new Error(agentT(locale, 'context.errors.absolutePath'));
       // これから作るファイル（paths 付きの rules はその前に読み足す）も求められるよう、無い部分は在る親の実体パスにつなぐ
       let real = null;
       for (let dir = path.resolve(args.id), rest = []; !real; rest.unshift(path.basename(dir)), dir = path.dirname(dir)) {
@@ -257,9 +259,9 @@ export function contextTools(runtime, userPrompt = '') {
       }
       // 要求側は実体パスにしたので、作業場所も実体で比べる（8.3 短縮名・junction 越しの cwd でも中を拒まない）
       const root = await fs.realpath(runtime.policy.cwd).catch(() => runtime.policy.cwd);
-      if (!containsPath(root, real)) throw new Error('このセッションの作業ディレクトリ外です');
+      if (!containsPath(root, real)) throw new Error(agentT(locale, 'context.errors.outsideWorkspace'));
       const cwd = (await fs.stat(real).catch(() => null))?.isDirectory() ? real : path.dirname(real);
-      const child = await resolveRuntime({ ...runtime.policy, cwd, owners: { ...DEFAULT_OWNERS, instruction: 'ply' } }, runtime.scanOptions);
+      const child = await resolveRuntime({ ...runtime.policy, cwd, owners: { ...DEFAULT_OWNERS, instruction: 'ply' } }, { ...runtime.scanOptions, locale });
       // 開始時に渡したものは実体パスでも突き合わせる。子の探索は実体パスの作業場所で解くので、会話の作業場所が
       // 8.3 短縮名・junction 越しだと適用範囲が別の表記になり、id が変わって同じファイルを渡し直してしまう
       const added = child.instructions.filter(i => !runtime.instructions.some(p => p.id === i.id || pathKey(p.realPath) === pathKey(i.realPath)));
@@ -267,19 +269,19 @@ export function contextTools(runtime, userPrompt = '') {
       const rules = child.conditional.filter(i => matchesGlobs(i.paths, i.pathsBase ?? root, real));
       for (const entry of child.report.entries) if (!runtime.report.entries.some(e => e.id === entry.id)) runtime.report.entries.push({ ...entry, status: entry.status === 'supplied' ? 'loaded' : entry.status });
       const wanted = [...added.map(i => ({ item: i, scope: i.appliesTo })),
-        ...rules.map(i => ({ item: i, scope: `files matching ${i.paths.join(', ')} (relative to ${i.pathsBase ?? root})` }))];
+        ...rules.map(i => ({ item: i, scope: agentT(locale, 'context.rulesScope', { paths: i.paths.join(', '), base: i.pathsBase ?? root }) }))];
       // 1 件ずつ、渡し済みの本文と同じなら短い一行だけ返す（rules の多い場所で同じ本文が何度も積み上がるのを防ぐ）
       const parts = wanted.map(({ item, scope }) => {
         const digest = hash(item.content);
         const before = delivered[item.id];
         delivered[item.id] = digest;
         mark(item.id);
-        if (before === digest && !full) return alreadyLine(item.path, scope);
-        return `${before && before !== digest ? 'This file changed since it was last provided; the current text follows.\n' : ''}Scope: ${scope}\nSource: ${item.path}\n${item.content}`;
+        if (before === digest && !full) return alreadyLine(locale, item.path, scope);
+        return `${before && before !== digest ? agentT(locale, 'context.fileChanged') + '\n' : ''}${agentT(locale, 'context.fileBody', { scope, path: item.path, content: item.content })}`;
       });
-      return textResult(parts.join('\n\n') || '追加の指示はありません。開始時の指示を適用してください。');
+      return textResult(parts.join('\n\n') || agentT(locale, 'context.errors.noMore'));
     }
-    throw new Error('Unknown context tool');
+    throw new Error(agentT(locale, 'context.errors.unknownTool'));
   } };
 }
 
