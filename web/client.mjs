@@ -10,6 +10,7 @@ import { setupUsage } from './usage.mjs';
 import { setupOnboarding } from "./onboarding.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
 import { setupCompatEndpoints } from './compat-endpoints.mjs';
+import { setupRemote } from './remote.mjs';
 import { compatModelText } from './compat-models.mjs';
 import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
@@ -880,6 +881,8 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'mcpAuth') { window.dispatchEvent(new CustomEvent('ply:mcp-auth', { detail: ev })); return; }
   // Claude のアカウントの認可（claude setup-token / 使用量の claude auth login）の進み具合。設定のアカウントの画面へ渡す
   if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); return; }
+  // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
+  if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') { remoteSettings.event(ev); return; }
   if (!isMine(ev)) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
@@ -3303,6 +3306,8 @@ function connect() {
       side.setConnLost(false);
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
       cmd("hostCapabilities").then((c) => { state.osActions = c?.osActions === true; filePreview.osChanged(); }).catch(() => {});
+      // 開く前から承認待ちがあれば、ここでダイアログに出す
+      remoteSettings.refresh();
       return refresh().then(async () => {
         if (state.current) return select(state.current, { reload: true });
         let saved;
@@ -3448,6 +3453,7 @@ function openSettings() { onboarding.open(); }
 setupUsage({ $, cmd, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
   onUsageLogin: accountId => claudeAccounts.open({ usageLogin: accountId }) });
+const remoteSettings = setupRemote({ cmd, page: onboarding.page });
 clearThread();
 initTheme();
 initLocale();

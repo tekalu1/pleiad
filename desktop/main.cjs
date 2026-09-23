@@ -6,6 +6,9 @@ const { prepareUpdateCheck } = require('./update-auth.cjs');
 const { savedPort, rememberPort } = require('./server-port.cjs');
 const { attachSecretBridge } = require('./secret-bridge.cjs');
 const { attachFileBridge } = require('./file-bridge.cjs');
+// ホストとして常駐する（リモートが有効な間、窓を閉じてもトレイに残す・スリープを防ぐ。docs/remote.md §6.3）
+const { attachResident } = require('./resident.cjs');
+let resident;
 let worker, window, origin, updates, quitting = false, closing = false;
 let requestId = 0;
 const { createDesktopNotifications } = require('./notifications.cjs');
@@ -101,6 +104,7 @@ async function boot() {
   attachSecretBridge(worker, { safeStorage, openExternal: url => shell.openExternal(url).catch(() => {}) });
   // 「エクスプローラーで表示」「ブラウザーで開く」。範囲と接続元はサーバーが確かめ、実行は本体の shell（窓を前に出せる）
   attachFileBridge(worker, { shell });
+  resident = attachResident({ app, worker, icon: path.join(__dirname, 'icon.png'), getWindow: () => window, quit: () => closeSafely() });
   let startupError = '';
   worker.stderr.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });
   const ready = await new Promise((resolve, reject) => {
@@ -134,6 +138,7 @@ async function boot() {
   window.on('close', event => {
     if (quitting) return;
     event.preventDefault();
+    if (resident?.keepOnClose()) { window.hide(); return; }
     closeSafely();
   });
   worker.once('exit', () => {
