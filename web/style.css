@@ -715,6 +715,59 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .cerr{margin:6px 8px 0;font-size:var(--fs-s);font-weight:600;color:var(--ink);overflow-wrap:anywhere}
 .cerr:empty{display:none}
 .cseg{margin:2px 8px 4px}
+/* ---- 手元のフォルダーを送る（web/folder-upload.mjs、docs/remote.md §8.1。リモートの窓の作業ディレクトリの面） ----
+   上に「ホストのフォルダー / 手元から送る」のタブ（.seg）。送る前は件数と大きさ・除外の札・送り先（combo）、
+   既にあるフォルダーへはその場の確認、送っている間はバーと件数・大きさ。色は塗りのバーと「送る」だけ */
+.fu-tabs{margin:2px 2px 8px}
+.fu-tabs button{font-size:var(--fs-s);padding:5px 10px}
+.fu-tabs button.on{font-weight:600}
+.fu-body{min-width:0}
+.fu-lead{margin:8px}
+.fu-sum{padding:6px 8px 2px;min-width:0}
+.fu-head{display:flex;align-items:baseline;gap:6px;min-width:0}
+.fu-name{font-family:var(--font-mono);font-weight:600;overflow-wrap:anywhere}
+.fu-where{font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
+.fu-num{font-variant-numeric:tabular-nums;font-size:var(--fs-s);color:var(--ink-weak)}
+.fu-skip{margin-left:4px}
+.fu-lab{padding:8px 8px 4px;font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em}
+.fu-tags{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:0 8px}
+.fu-tag{display:inline-flex;align-items:center;gap:2px;padding:2px 4px 2px 10px;border-radius:var(--r-pill);background:var(--surface-2);
+  font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink)}
+.fu-tag button{padding:0 5px;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer;line-height:1.4}
+.fu-tag button:hover{background:var(--surface-3);color:var(--ink)}
+.fu-tagin{width:120px;padding:3px 6px;border-radius:var(--r-pill);background:transparent;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink)}
+.fu-tagin:focus{outline:none;background:var(--surface-1)}
+.fu-tagin::placeholder{color:var(--ink-weak)}
+.fu-warn{color:var(--ink-strong);font-weight:600}
+.combo.fu-dest{display:flex;margin:0 8px}
+.combo.fu-dest input{background:var(--surface-1);color:var(--ink);padding:6px 12px}
+/* 面（.cpop）の中の combo の候補は、面の中に流す（浮かせると面のスクロールで切れる） */
+.cpop .combo .clist{position:static;margin-top:4px;max-width:none;box-shadow:none;background:var(--surface-1)}
+.fu-go{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:6px;padding:6px 4px 2px}
+.fu-go .btn{font-size:var(--fs-s);padding:4px 12px}
+.fu-confirm{margin:8px 4px 2px;padding:10px 12px;border-radius:var(--r-m);background:var(--surface-1);font-size:var(--fs-s);overflow-wrap:anywhere}
+.fu-confirm b{color:var(--ink-strong)}
+.fu-confirm details{margin-top:4px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.fu-confirm summary{cursor:pointer}
+.fu-confirm code{font-size:var(--fs-xs)}
+.fu-path{font-family:var(--font-mono);overflow-wrap:anywhere}
+.fu-confirm .fu-path{font-size:var(--fs-s);font-weight:600}
+.fu-prog{padding:6px 8px;min-width:0}
+.fu-track{height:6px;margin:8px 0 6px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden}
+.fu-track i{display:block;height:100%;width:0;border-radius:var(--r-pill);background:var(--fill-primary);color:var(--on-fill);transition:width var(--dur-fast) linear}
+.fu-track.paused i{opacity:.45}
+.fu-cur{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fu-paused{margin:6px 0 0}
+.fu-paused b{color:var(--ink-strong)}
+.fu-done{padding:8px;min-width:0}
+.fu-ok{font-variant-numeric:tabular-nums}
+.fu-done .cnote{margin:4px 0}
+/* フォルダーを落としたときの問い（小さな白い dialog） */
+.fu-drop{position:fixed;inset:0;margin:auto;height:fit-content;width:min(380px,calc(100vw - 32px));padding:14px 16px;border:0;border-radius:var(--r-m);
+  background:var(--surface-paper);color:var(--ink);box-shadow:0 8px 28px var(--shadow)}
+.fu-drop::backdrop{background:var(--surface-veil)}
+.fu-drop .fu-sub{margin:4px 0 0}
+.fu-drop .fu-acts{justify-content:flex-start;padding:10px 0 0}
 /* エフォートの段。目盛りの下に「既定」の印。段を選べないモデルでは無効にして理由を出す */
 .ceffort{padding:2px 8px 4px}
 .ceffort .etop{display:flex;align-items:baseline;gap:8px;min-width:0}

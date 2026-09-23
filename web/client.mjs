@@ -20,6 +20,7 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints } from "./render.mjs";
 import { createContextMenu } from "./context-menu.mjs";
 import { setupComposerControls, resolvedModel } from "./composer-controls.mjs";
+import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { modelRowIds } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
@@ -1589,9 +1590,37 @@ function endpointView(bid) {
   };
 }
 
+/** 作業ディレクトリを変える（入力欄のチップ・フォルダーを送り終えたとき）。送信済みの会話は次のターンから */
+function applyCwd(v) {
+  state.cwd = v;
+  controls.paint();
+  if (state.current) reserveSettings({ cwd: v });
+  else state.draft.cwd = v;
+}
+
+// 手元のフォルダーをホストへ送る（リモートの窓だけ。web/folder-upload.mjs、docs/remote.md §8.1）。
+// 送り終えたら送り先を、送り始めたときの会話の作業フォルダーにする
+const folderUpload = canSendFolders() ? createFolderUpload({
+  cmd,
+  connected: () => ws?.readyState === WebSocket.OPEN,
+  session: () => state.current ?? null,
+  onDone: async (dest, sessionId) => {
+    if (sessionId === (state.current ?? null)) {
+      const unsent = !sessionId || state.sessions.find((s) => s.id === sessionId)?.unsent;
+      applyCwd(dest);
+      return unsent ? "now" : "next";
+    }
+    if (!sessionId) return "other";
+    await cmd("setTurnSettings", { sessionId, cwd: dest });
+    return "next";
+  },
+  onChange: () => controls.refreshFolder(),
+}) : null;
+
 // 入力欄の設定のチップ（web/composer-controls.mjs）。値は state に持ち、チップは get() で毎回読む
 const controls = setupComposerControls({
   cmd,
+  upload: folderUpload,
   get: () => {
     const bid = state.shownBackend ?? activeBackendId();
     return {
@@ -1607,12 +1636,7 @@ const controls = setupComposerControls({
     };
   },
   on: {
-    cwd: (v) => {
-      state.cwd = v;
-      controls.paint();
-      if (state.current) reserveSettings({ cwd: v });
-      else state.draft.cwd = v;
-    },
+    cwd: applyCwd,
     backend: (v) => { state.shownBackend = v; controls.paint(); reserveSettings({ backend: v, model: "" }); },
     model: (v) => { state.model = v; controls.paint(); reserveSettings({ model: v, rememberModel: true }); },
     // 互換の接続先。'' は公式。モデルは接続先の既定（メイン）に戻る（server も同じ）
@@ -2331,6 +2355,12 @@ function wireDropZone() {
   zone.addEventListener("drop", (e) => {
     if (!e.dataTransfer.files?.length) return;
     e.preventDefault(); depth = 0; show(false);
+    // リモートの窓にフォルダーを落としたら、添付するか作業フォルダーとして送るかを聞く。
+    // webkitGetAsEntry はイベントの中でしか読めないので、先に取っておく
+    if (folderUpload) {
+      const entries = [...e.dataTransfer.items].map((i) => (i.kind === "file" ? i.webkitGetAsEntry?.() : null)).filter(Boolean);
+      if (entries.some((x) => x.isDirectory)) { dropFolder(entries); return; }
+    }
     attachFiles([...e.dataTransfer.files]);
   });
   // 貼り付けでも渡せるようにする。スクショを撮ってそのまま貼る動線が一番短い
@@ -2340,6 +2370,25 @@ function wireDropZone() {
     e.preventDefault();
     attachFiles(files);
   });
+}
+
+/** リモートの窓に落としたフォルダー（最初のフォルダーを送る。添付はフォルダーの中のファイルと、一緒に落としたファイル） */
+async function dropFolder(entries) {
+  const dir = entries.find((x) => x.isDirectory);
+  let picked;
+  try { picked = await entriesFromDirectory(dir); }
+  catch (e) { sys(html.t("upload.dropFailed", { error: e?.message ?? String(e) })); return; }
+  const excludes = folderUpload.state.excludes;
+  const sum = summarize(picked.entries, excludes);
+  const choice = await askDroppedFolder({ name: picked.name, files: sum.files, bytes: sum.bytes, excludes });
+  if (choice === "send") {
+    if (folderUpload.busy) { sys(html.t("upload.busy")); controls.openLocal(); return; }
+    folderUpload.choose(picked);
+    controls.openLocal();
+  } else if (choice === "attach") {
+    const loose = await Promise.all(entries.filter((x) => x.isFile).map((x) => new Promise((res) => x.file(res, () => res(null)))));
+    attachFiles([...sum.included.map((x) => x.file), ...loose.filter(Boolean)]);
+  }
 }
 
 // ---------------------------------------------------------------- 右クリックのメニュー
@@ -3309,6 +3358,8 @@ function connect() {
       // 画面と違う言語なら読み直すので、ここで止める
       if (applyLocale(m.locale)) return;
       side.setConnLost(false);
+      // 切れて止まっていたフォルダーの送信を、受け取り済みの位置から続ける
+      folderUpload?.online();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
       cmd("hostCapabilities").then((c) => { state.osActions = c?.osActions === true && !window.plyRemote; filePreview.osChanged(); }).catch(() => {});
       // 開く前から承認待ちがあれば、ここでダイアログに出す

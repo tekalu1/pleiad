@@ -139,6 +139,10 @@ const cases = [
   await import("./unit/remote-settings.mjs"),
   // リモートの端末側（core/remote/device*.mjs）。中継とホストを立て、端末内プロキシの URL を素の HTTP と ws で叩く
   await import("./unit/remote-device.mjs"),
+  // 手元のフォルダーを送る口（core/folder-uploads.mjs）: パスの検査・送り先・続きから・中断・上書きの確認・掃除、WS での往復
+  await import("./unit/folder-uploads.mjs"),
+  // 同じ口を端末内プロキシ → 中継 → ホストで。50 MiB・2000 件が流量の制御の下で届くこと、中継が落ちても続きから送れること
+  await import("./unit/remote-upload.mjs"),
 ];
 
 const selected = pick(cases, process.argv.slice(2));

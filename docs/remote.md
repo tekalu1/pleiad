@@ -54,6 +54,7 @@
 | ホストの接続口・ペアリング・端末一覧 | `core/remote/connector.mjs`、`core/remote/devices.mjs`。サーバーのプロセス内で動く（`npm start` のホストでも使える） | Node |
 | 端末の資格情報・ペアリング・端末内プロキシ | `core/remote/device.mjs`（置き場・ペアリング・ホストごとのプロキシの管理）、`core/remote/device-link.mjs`（中継への線・張り直し・状態）、`core/remote/device-proxy.mjs`（127.0.0.1 の HTTP と /ws）。デスクトップの main から `import()`、試験からも使う | Node |
 | リモートの窓・ほかのホストにつなぐ窓 | `desktop/remote-windows.cjs`（窓・IPC・印。main プロセス）、`desktop/remote-preload.cjs`（リモートの窓の preload）、`desktop/remote-hosts.html`・`remote-hosts-view.cjs`・`remote-hosts-preload.cjs`（同梱の窓）、`desktop/window-trust.cjs`（窓ごとのオリジンの表）、`desktop/i18n.cjs`（本体の文言）。画面の印は `web/remote-badge.mjs` | Node |
+| 手元のフォルダーを送る（§8.1） | `core/folder-uploads.mjs`（`upload*` コマンドの中身・置き場・パスの検査）、`web/folder-upload.mjs`（作業ディレクトリの面の「手元から送る」とドロップの問い） | Node / JS |
 | モバイルの殻 | `mobile/`（Capacitor。プロキシと暗号は Swift / Kotlin） | Swift / Kotlin / JS |
 | 試験ベクトル | `tests/remote/vectors.json`（Noise の公式ベクトル + フレームの例。3 実装が同じものを読む） | — |
 
@@ -410,6 +411,18 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 | `uploadCancel { uploadId }` | 途中のものを捨てる。7 日たった `.partial` は起動時に掃除 |
 
 パスは信用しない: 相対パスだけ、`..`・絶対パス・ドライブ名・Windows の予約名を拒否、区切り文字を揃え、送り先の外に出ないことを確かめる。シンボリックリンクは送らない（`webkitdirectory` は実体のファイルだけを返す）。
+
+実装（`core/folder-uploads.mjs`・`web/folder-upload.mjs`、2026-09-23）で決めたこと:
+
+- **下見の口 `uploadCheck { name, dest?, paths }`** を足した（送る前に「新しいフォルダーを作ります」/ 上書きの確認を出すため）。`{ dest, root, exists, inRoot, empty, conflicts, sample（先頭 20 件）, needsConfirm }`
+- 置き場の既定は `~/Pleiad/uploads`（`AGENT_HOST_FOLDER_UPLOADS` で変えられる。試験はこれで使い捨ての場所へ）。途中のものは `<置き場>/.partial/<uploadId>/{manifest.json, tree/<相対パス>}`。`uploadId` は `name` と `files`（パス・大きさ・更新時刻）のハッシュなので、同じフォルダーを選び直せば同じ途中のものに当たる
+- **受け取った位置は `tree` に置いたファイルの大きさそのもの**（断片は先頭から順に、位置を指定して書く。抜けのある断片は書かずに今の位置を返す）。`manifest.json` の位置は写しで、30 秒ごとに間引いて書く。サーバーを起動し直しても `uploadStart` を呼べば続きから
+- 送り先の規則: 置き場の中なら新しいフォルダーを作ってよい。置き場の外は**既にあるフォルダーだけ**で、空でも確認（`needsConfirm`）を経る。空でない既存のフォルダーは置き場の中でも確認。置き場そのもの・`.partial`・ドライブの根・ファイルは送り先にできない。`~` はホストのホーム。送り先と置き場はどちらも実体（realpath）で比べるので、置き場の中のリンクが外を指せば外として扱う
+- 既存のフォルダーへ移すときは、ファイルごとに親フォルダーの実体が送り先の中にあることを確かめる（中のジャンクション・シンボリックリンクを辿って外へ書かない）。同じ名前のフォルダーがあれば断る。新しいフォルダーは `tree` を rename 一回（別のドライブなどで失敗したらファイルごとに移す）
+- 上限: 10 万件・合計 32 GiB・1 ファイル 16 GiB・相対パス 1024 字。空き容量（`fs.statfs`）が残りの分 + 64 MiB に足りなければ断る。大文字小文字だけが違う名前、ファイルとフォルダーが同じ名前になる組は断る（Windows・macOS で重なる）。途中のものは 20 個まで（超えたら古いものから捨てる）
+- 断片は 512 KiB を約束し、受け側は倍まで受ける。同じ途中のものへの操作は順に行う（4 つ投げても同じファイルの断片が行き違わない）
+- 画面: 手元のフォルダーは `<input type="file" webkitdirectory>` とドロップの `webkitGetAsEntry()`。どちらもブラウザー（Electron の描画側）の機能なので、ホストが配るページに同じ PC の口を足さない（`showDirectoryPicker` も動くが、権限の扱いが増えるわりに File が読めれば足りるので使わない）。除外は名前（`*`・`?` 可）でどの階層にも当たり、`/` を含めば先頭からのパス。切れたら「接続が切れました」で止め、`ready` で `uploadStart` から続ける。送り終えた先は、送り始めたときの会話の作業フォルダーにする（開いている会話が変わっていれば、その会話へ `setTurnSettings` の `cwd`）
+- 流量: 端末内プロキシ → 中継 → ホストで 50 MiB・2000 件を 4 つ投げて約 3 秒（16 MiB/s 前後。同じ PC の中継、base64 と JSON を含む）。中継は接続を切らず、窓の `/ws` もそのまま（`tests/unit/remote-upload.mjs`）。§11 の 6（バイナリにするか）は、この速さなら当面は要らない
 
 ### 8.2 モバイル版の殻
 

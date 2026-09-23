@@ -42,6 +42,7 @@ import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
 import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
+import { createFolderUploads } from './folder-uploads.mjs';
 import { createVisualizationCollector, VISUALIZE_INSTRUCTIONS } from './visualize.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff } from "./conversations.mjs";
@@ -76,6 +77,11 @@ const COOKIE_NAME = "agent_host_token";
 // 人間が渡したファイルの置き場。作業ディレクトリを汚さないよう外に出す
 const UPLOAD_DIR = path.join(store.dataDir, "uploads");
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+// 手元のフォルダーを送る口（upload* コマンド、docs/remote.md §8.1）。置き場の既定は ~/Pleiad/uploads（作業フォルダーになるので見える場所）。
+// 7 日触られていない途中のものは起動時と 1 日ごとに捨てる
+const folderUploads = createFolderUploads({ root: process.env.AGENT_HOST_FOLDER_UPLOADS || undefined });
+folderUploads.sweep().catch(() => {});
+setInterval(() => folderUploads.sweep().catch(() => {}), 24 * 60 * 60_000).unref();
 const IMAGE_MIME = /^image\//;
 // Native sessions opened outside this host may not have sidecar metadata yet.
 const workspaceRoots = new Set([process.cwd()]);
@@ -2272,6 +2278,18 @@ wss.on("connection", (ws, req) => {
          * 中身は作業ディレクトリではなく uploads/ に置く。
          * 相手のリポジトリに勝手に物を増やさないため。
          */
+        // 手元のフォルダーを送る（core/folder-uploads.mjs）。作業フォルダーにするのは画面（setTurnSettings の cwd / 未送信の会話の下書き）
+        case "uploadCheck":
+          return reply(true, await folderUploads.check(msg.args ?? {}));
+        case "uploadStart":
+          return reply(true, await folderUploads.start(msg.args ?? {}));
+        case "uploadChunk":
+          return reply(true, await folderUploads.chunk(msg.args ?? {}));
+        case "uploadFinish":
+          return reply(true, await folderUploads.finish(msg.args ?? {}));
+        case "uploadCancel":
+          return reply(true, await folderUploads.cancel(msg.args ?? {}));
+
         case "attachFile": {
           const { sessionId, name, mime, data } = msg.args ?? {};
           if (typeof data !== "string" || !data) return reply(false, "中身が無い");
