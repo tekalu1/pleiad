@@ -95,6 +95,10 @@ const cases = [
   // codex バックエンド。app-server の身代わり（tests/lib/fake-codex.mjs）と話すだけで、
   // 本物の codex もネットワークも要らない
   await import("./unit/server-codex.mjs"),
+  // 互換の接続先の配線。codex の身代わりと偽の互換 API だけと話す
+  await import("./unit/server-compat-endpoints.mjs"),
+  // 同じことを本物の Claude Code・Codex の CLI で（送り先は偽の互換 API。入っていなければとばす）
+  await import("./unit/server-compat-real-cli.mjs"),
   // antigravity バックエンド。agy の身代わり（tests/lib/fake-agy.mjs）と話すだけで、
   // 本物の agy も Google のログインも要らない
   await import("./unit/server-antigravity.mjs"),
