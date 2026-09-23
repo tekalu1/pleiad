@@ -39,10 +39,11 @@ export function badgeView(info, status) {
  * バッジと面を作って帯に置く。plyRemote が無ければ何もしない（null）。
  *   remote: window.plyRemote、doc: document
  */
-export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = globalThis.document } = {}) {
+export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = globalThis.document, back } = {}) {
   const info = remoteInfo(remote);
   if (!info || !doc?.body) return null;
   doc.documentElement.classList.add('remote');
+  if (info.shell === 'mobile') return setupHostBar({ info, remote, doc, back });
 
   const badge = el('button', 'remote-badge');
   badge.type = 'button';
@@ -102,4 +103,48 @@ export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = 
   Promise.resolve(remote.status?.()).then(s => { if (s) paint(s); }).catch(() => {});
   remote.onStatus?.(s => paint(s));
   return { badge, pop, paint, view: () => view };
+}
+
+const BACK = 'M15 6l-6 6 6 6';
+
+/**
+ * モバイル版の殻（docs/remote.md §8.2、承認済みのモック docs/mockups/remote-mobile.html の ③）。
+ * 画面の上端に塗りの帯を置き、ホスト名を出す。押すとホスト一覧へ戻る（殻の backToHosts）。
+ * デスクトップ版のバッジと同じ部品・同じ文言で、面（接続の情報・この窓を閉じる）は出さない。帯は safe-area の内側に置く（style.css）
+ *   back: 戻る関数（既定は押したときの window.backToHosts。plyRemote.backToHosts があればそちら）
+ */
+function setupHostBar({ info, remote, doc, back }) {
+  doc.documentElement.classList.add('remote-mobile');
+  const bar = el('div', 'host-bar');
+  bar.id = 'hostBar';
+  const badge = el('button', 'remote-badge host-back');
+  badge.type = 'button';
+  badge.id = 'remoteBadge';
+  const host = el('span', 'host'), suffix = el('span', 'state');
+  const backIcon = icon(BACK);
+  backIcon.classList.add('back');
+  badge.append(backIcon, icon(ARROWS), host, suffix);
+  bar.append(badge);
+
+  let view = badgeView(info, null);
+  function paint(status) {
+    if (status !== undefined) view = badgeView(info, status);
+    host.textContent = view.host;
+    suffix.textContent = view.suffix ? `· ${view.suffix}` : '';
+    suffix.hidden = !view.suffix;
+    badge.title = t('remote.backToHostsTitle', { host: view.host });
+    badge.setAttribute('aria-label', `${t('remote.backToHosts')}: ${view.host}${view.suffix ? ` · ${view.suffix}` : ''}`);
+    badge.dataset.state = view.state;
+  }
+  badge.onclick = () => {
+    // 殻が後から入れても拾えるよう、押したときに探す
+    const fn = back ?? globalThis.window?.backToHosts;
+    const go = typeof remote.backToHosts === 'function' ? () => remote.backToHosts() : typeof fn === 'function' ? fn : null;
+    if (go) Promise.resolve().then(go).catch(() => {});
+  };
+  doc.body.prepend(bar);
+  paint();
+  Promise.resolve(remote.status?.()).then(s => { if (s) paint(s); }).catch(() => {});
+  remote.onStatus?.(s => paint(s));
+  return { bar, badge, pop: null, paint, view: () => view };
 }

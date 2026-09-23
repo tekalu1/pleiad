@@ -715,12 +715,13 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .cerr{margin:6px 8px 0;font-size:var(--fs-s);font-weight:600;color:var(--ink);overflow-wrap:anywhere}
 .cerr:empty{display:none}
 .cseg{margin:2px 8px 4px}
-/* ---- 手元のフォルダーを送る（web/folder-upload.mjs、docs/remote.md §8.1。リモートの窓の作業ディレクトリの面） ----
-   上に「ホストのフォルダー / 手元から送る」のタブ（.seg）。送る前は件数と大きさ・除外の札・送り先（combo）、
-   既にあるフォルダーへはその場の確認、送っている間はバーと件数・大きさ。色は塗りのバーと「送る」だけ */
-.fu-tabs{margin:2px 2px 8px}
-.fu-tabs button{font-size:var(--fs-s);padding:5px 10px}
-.fu-tabs button.on{font-weight:600}
+/* ---- 手元のフォルダーを送る（web/folder-upload.mjs・web/attach-menu.mjs、docs/remote.md §8.1。リモートの窓の添付のボタンの面） ----
+   押すとまず「ファイルを添付… / フォルダーを送る…」（.caction の 2 行）。送る前は件数と大きさ・除外の札・送り先（combo）・
+   「作業フォルダーにする」、既にあるフォルダーへはその場の確認、送っている間はバーと件数・大きさ。色は塗りのバーと「送る」だけ */
+.fu-pop:focus{outline:none}
+.fu-menu .caction{margin-top:0}
+.fu-cwd{display:flex;align-items:center;gap:8px;padding:8px 8px 0;font-size:var(--fs-s);color:var(--ink);cursor:pointer}
+.fu-cwd input{margin:0;accent-color:var(--ink-blue);cursor:pointer}
 .fu-body{min-width:0}
 .fu-lead{margin:8px}
 .fu-sum{padding:6px 8px 2px;min-width:0}
@@ -860,9 +861,8 @@ main.dropping #log{background:var(--surface-1)}
 .row-unsent{font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap;flex:none}
 .next-settings,.settings-error{overflow-wrap:anywhere}
 @media (max-width:700px){
-  body{--side-w:min(38vw,220px)}
-  #sidebar header{flex-wrap:wrap}
-  .brand{flex-basis:100%;padding-bottom:4px}
+  /* 脇は会話の上に重ねる引き出し（下の「狭い画面・タッチ」）。幅は画面の 86% まで */
+  body{--side-w:min(86vw,320px)}
   .top{padding-left:10px;padding-right:10px;gap:4px}
   main > .top:has(:is(#agentTasksEntry,#backgroundEntry):not([hidden])){flex-wrap:wrap}
   main > .top:has(:is(#agentTasksEntry,#backgroundEntry):not([hidden])) .title-field{flex-basis:calc(100% - 40px)}
@@ -870,9 +870,7 @@ main.dropping #log{background:var(--surface-1)}
   #skillList{max-height:240px}
   /* 設定の左列は脇と同じに畳まれる（body の列幅）。ページ側の余白も会話に合わせる */
   .settings-content{padding-left:10px;padding-right:10px}
-  /* デスクトップ版は見出しを帯の高さの 1 行に収める。macOS は信号の分だけ字のロゴを畳む */
-  :root.desktop #sidebar header{flex-wrap:nowrap}
-  :root.desktop .brand{flex-basis:auto;padding-bottom:0}
+  /* macOS は信号の分だけ字のロゴを畳む */
   :root.mac .brand-wordmark{display:none}
   .crow{flex-wrap:wrap}
   .crow .chip.folder{max-width:calc(100% - 40px)}
@@ -881,9 +879,9 @@ main.dropping #log{background:var(--surface-1)}
   .row-meta > span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .row-cwd{text-align:left}
 }
-/* 狭い幅（360px など）の設定: 左のメニューを上に畳む。1 段目に「会話に戻る」、2 段目にページの札を折り返して並べ、
+/* 狭い幅（700px 以下。会話の脇が引き出しになる幅と同じ）の設定: 左のメニューを上に畳む。1 段目に「会話に戻る」、2 段目にページの札を折り返して並べ、
    ページは下の紙いっぱいに使う（左に残すと本文が 200px ほどになり窮屈）。紙の上の角は脇の面に接するので丸める */
-@media (max-width:560px){
+@media (max-width:700px){
   body.settings{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);background:var(--surface-0)}
   body.settings > #sidebar{grid-area:1/1/2/2;width:auto;padding-bottom:8px}
   body.settings > main{grid-area:2/1/3/2;border-radius:var(--r-l) var(--r-l) 0 0;overflow:hidden}
@@ -905,3 +903,101 @@ main.dropping #log{background:var(--surface-1)}
 /* 途中送信がまだエージェントに渡っていない間だけ、回る弧を一言の前に置く（design-system.md §6。色は本文と同じ） */
 .outbox-status-mark { display: flex; align-items: center; gap: 6px; }
 .outbox-status-mark .run, .outbox-status-mark .run svg { width: 12px; height: 12px; }
+
+/* ==================== 狭い画面・タッチ（docs/remote.md §8.4、承認済みのモック docs/mockups/remote-mobile.html） ====================
+   plyRemote の有無ではなく、画面の幅（700px 以下）と入力の種類（hover:none / pointer:coarse）で効かせる。ブラウザー版の狭い窓にも効く。
+   - 脇は会話の上に重ねる引き出し。開閉は client.mjs の setDrawer（:root.side-open）。会話を選ぶ・幕を押す・Esc で閉じる
+   - 上下端は viewport-fit=cover の safe-area の内側。高さは 100dvh（アドレスバーの出入りで下端が隠れない）
+   - 右クリック・ドラッグでしか届かない操作は「…」（.more-btn）で同じメニューを開く。タッチでは常に見せる */
+:root{--top-inset:env(safe-area-inset-top,0px)}
+:root.desktop{--top-inset:var(--bar-h)}
+@supports (height:100dvh){html,body{height:100dvh}}
+body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(safe-area-inset-left,0px)}
+.composer{padding-bottom:max(14px,env(safe-area-inset-bottom,0px))}
+.side-veil{display:none}
+
+/* 「…」。広い画面ではホバー・フォーカスで出る（行の題の右端・状態の見出しの右端・グループの器の右上）。
+   出すときは visible ではなく inherit（脇ごと隠れている間に「…」だけ見えて押せることがないように） */
+.more-btn{color:var(--ink-weak)}
+.row-more{width:22px;height:22px;margin:-3px -4px -3px auto;visibility:hidden}
+.row-more svg.i,.grp-more svg.i,.fam-more svg.i{width:14px;height:14px}
+.row:hover .row-more,.row:focus-within .row-more,.row.sel .row-more,.row-more[aria-expanded=true]{visibility:inherit}
+.grp-more{width:26px;height:26px;visibility:hidden}
+.grp-head:hover .grp-more,.grp-head:focus-within .grp-more{visibility:inherit}
+.fam{position:relative}
+.fam-more{position:absolute;right:4px;top:3px;width:26px;height:26px;visibility:hidden}
+.fam>.fam-head{padding-right:32px}
+.fam:hover>.fam-more,.fam>.fam-head:focus-visible+.fam-more,.fam-more:focus-visible{visibility:inherit}
+#sessionMore{display:none}
+
+/* ---- 入力の種類がタッチ（ホバーが無い・指で押す） ---- */
+@media (hover:none){
+  .row-more,.grp-more,.fam-more{visibility:inherit}   /* 脇が隠れている間は一緒に隠れる */
+  .grp-add{opacity:1}   /* ホバーでしか見えなかった ＋ */
+  #sessionMore:not([hidden]){display:inline-flex}
+  /* 長押しは「…」と同じメニュー（web/long-press.mjs）。文字の選択と OS の吹き出しを出さない */
+  .row,.grp-head,.fam-head,.dir-card,.tree-row{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+}
+@media (pointer:coarse){
+  /* 入力欄の字は 16px 以上。iOS は 16px 未満の欄に触れると画面を拡大する（--fs は 14px）。
+     欄ごとの字の大きさ（等幅の 12px など）は後に読む CSS にもあるので、下限として !important で上書きする */
+  input:not([type=checkbox],[type=radio],[type=range],[type=file],[type=button],[type=submit]),textarea,select{font-size:max(16px,1em) !important}
+  /* 押せる大きさ。行・メニューの行・アイコンのボタンを指の幅に近づける（見た目の字の大きさは変えない） */
+  .btn-icon{min-width:36px;min-height:36px}
+  .row-more,.grp-more,.fam-more{min-width:32px;min-height:32px}
+  .row{padding-top:9px;padding-bottom:9px}
+  .pop .li{min-height:40px}
+  .pop.menu{min-width:min(240px,calc(100vw - 16px))}
+  .settings-menu button{min-height:36px}
+}
+
+/* ---- 狭い画面（700px 以下）: 脇を引き出しに ---- */
+@media (max-width:700px){
+  /* 会話は列 2 に固定し、列 1（脇）は幅 0。脇は列から外して左から重ねる */
+  body:not(.settings){--side-col:0px}
+  body:not(.settings) > main{grid-column:2}
+  body:not(.settings) > #sidebar{position:fixed;left:0;top:var(--top-inset);bottom:0;z-index:41;visibility:hidden;transform:translateX(-102%);
+    padding-left:env(safe-area-inset-left,0px);padding-bottom:env(safe-area-inset-bottom,0px);border-radius:0 var(--r-l) var(--r-l) 0;
+    transition:transform var(--dur) var(--ease-out),visibility var(--dur)}
+  :root.side-open body:not(.settings) > #sidebar{visibility:visible;transform:none;box-shadow:0 8px 28px var(--shadow)}
+  body:not(.settings) > .side-veil{display:block;position:fixed;inset:var(--top-inset) 0 0 0;z-index:40;background:var(--surface-veil);opacity:0;pointer-events:none;
+    transition:opacity var(--dur) var(--ease-out)}
+  :root.side-open body:not(.settings) > .side-veil{opacity:1;pointer-events:auto}
+  /* 開くボタンは常に（広い画面の「閉じている間だけ」ではない） */
+  #openSidebar{display:inline-flex;margin-left:-6px}
+  #sessionMore:not([hidden]){display:inline-flex}
+  /* 脇の見出しは 1 行（引き出しの幅なら入る） */
+  :root.desktop:not(.remote) #sidebar header{-webkit-app-region:no-drag}
+  /* 会話の左の溝を縮める（筋と節の位置はそのまま。左右の余白だけ） */
+  #log{padding-left:2px;padding-right:10px}
+  /* デスクトップ版の紙の角: 脇は重なるだけなので、紙の左上は窓の縁に接する */
+  :root.desktop body:not(.settings) > main{--paper-tl:0px}
+  :root.desktop body:not(.settings,.file-preview-open) > .titlebar{background:var(--surface-paper);--bar-end:var(--surface-paper)}
+  /* 浮く面は画面の幅に収める */
+  #filterPop{width:min(250px,calc(100% - 24px))}
+  #iconPop{width:min(312px,calc(100vw - 16px))}
+  .egrid{grid-template-columns:repeat(auto-fill,30px);justify-content:space-between}
+  .clist{max-width:calc(100vw - 24px)}
+}
+@media (prefers-reduced-motion:reduce){body > #sidebar,.side-veil{transition:none}}
+
+/* ---- モバイル版の殻（plyRemote.shell === 'mobile'、web/remote-badge.mjs の setupHostBar） ----
+   上端にホスト名の塗りの帯（デスクトップ版のバッジと同じ塗りの例外、承認済みのモックの ③）。帯は safe-area の内側に置き、
+   状態バーの下地も同じ塗りにする。押すとホスト一覧へ戻る */
+:root.remote-mobile{--host-bar-h:44px;--top-inset:calc(var(--host-bar-h) + env(safe-area-inset-top,0px))}
+:root.remote-mobile body{padding-top:0;grid-template-rows:auto minmax(0,1fr)}
+:root.remote-mobile body > #sidebar,:root.remote-mobile body > main{grid-row:2}
+:root.remote-mobile body > .file-preview{grid-row:2}
+.host-bar{display:none}
+:root.remote-mobile .host-bar{display:flex;align-items:center;grid-area:1/1/2/-1;min-width:0;min-height:var(--host-bar-h);
+  padding:env(safe-area-inset-top,0px) max(8px,env(safe-area-inset-right,0px)) 0 max(8px,env(safe-area-inset-left,0px));
+  background:var(--fill-primary);color:var(--on-fill)}
+:root.remote-mobile .host-bar .remote-badge{display:inline-flex;margin:0;max-width:100%;min-height:36px;padding:4px 12px 4px 6px;font-size:var(--fs)}
+.remote-badge .i.back{width:16px;height:16px}
+:root.remote-mobile .file-preview{top:var(--top-inset)}
+:root.remote-mobile dialog:modal{max-height:calc(100dvh - var(--top-inset) - 16px)}
+@media (max-width:700px){
+  :root.remote-mobile body.settings{grid-template-rows:auto auto minmax(0,1fr)}
+  :root.remote-mobile body.settings > #sidebar{grid-area:2/1/3/2}
+  :root.remote-mobile body.settings > main{grid-area:3/1/4/2}
+}
