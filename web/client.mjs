@@ -1,7 +1,9 @@
 import { isComposingKey } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
-import { setupCodeCopy } from './code-copy.mjs';
+import { download } from './file-actions.mjs';
+import { fileDownloadUrl } from './file-reference.mjs';
+import { setupCodeCopy, copyText } from './code-copy.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
 import { setupUsage } from './usage.mjs';
@@ -26,6 +28,7 @@ import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
 import { el, svgEl, relTime } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
+import { savedEvent } from "./saved-text.mjs";
 import { buildItems, attachmentMessageIndex } from "./timeline.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
@@ -66,6 +69,12 @@ const token = new URL(location.href).searchParams.get("token") ?? "";
 const $ = (id) => document.getElementById(id);
 const log = $("log");
 const thread = $("thread");
+// 静的な HTML の文言（data-i18n*）を今の言語で埋める。以降の処理が書き換える文言より先に済ませる
+applyDom(document);
+// CSS の content: に出す文言。style.css・file-preview.css が var(--i18n-…) で読む（CSS に言語ごとの文言を持たない）
+for (const [name, text] of [["untitled", t("session.untitled")], ["default", t("chat.model.default")], ["showing", ` ${t("app.previewShowing")}`]]) {
+  document.documentElement.style.setProperty(`--i18n-${name}`, JSON.stringify(text));
+}
 
 const NL = String.fromCharCode(10);
 const PROTOCOL = 3;
@@ -79,6 +88,7 @@ const state = {
   current: null,      // 選択中の sessionId（null = 新規）
   loadingSession: null,
   homeDir: "",
+  osActions: false,   // サーバーのある PC の画面から見ているか（エクスプローラー・ブラウザーで開くを出す）。hostCapabilities で知る
   draft: { status: null, cwd: "" },   // 新規セッションの予約（引き継いだ状態と作業ディレクトリ）。current が null のときだけ意味を持つ
   sessions: [],
   statuses: [],
@@ -185,6 +195,47 @@ function sys(html) {
   return m;
 }
 
+/**
+ * 訳文を sys() に渡す HTML にする。訳文も差し込みの値もエスケープし、bold に挙げた差し込みだけ <b> で包む。
+ * 訳文と HTML を混ぜないため、差し込みは印に置き換えて訳してから、エスケープした値に戻す
+ */
+function tHtml(key, params = {}, bold = []) {
+  const slots = [];
+  const opts = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (k === "count") { opts.count = v; continue; }   // 複数形の選択に使う数。数字だけなのでそのまま
+    opts[k] = `\u{E000}${slots.length}\u{E001}`;
+    slots.push(bold.includes(k) ? `<b>${escText(v)}</b>` : escText(v));
+  }
+  return escText(t(key, opts)).replace(/\u{E000}(\d+)\u{E001}/gu, (_, i) => slots[Number(i)]);
+}
+/** sys(html.t('キー', 差し込み, 太字にする差し込み))。.t の形にしておくと tests/lint-i18n.mjs がキーを拾う */
+const html = { t: tHtml };
+
+/**
+ * 会話の設定が変わった一行（状態・タイトル・承認モード・モデル・作業ディレクトリ）。
+ * 値だけ太字。誰が（by）と理由（reason。保存済みのデータ）は届いたまま出す
+ */
+function changeLine(what, value, ev, { reason, next } = {}) {
+  // i18n-dynamic: chat.change.
+  sys(html.t(`chat.change.${what}${reason ? "Reason" : next ? "Next" : ""}`, { value, by: ev.by, reason }, ["value"]));
+}
+
+/** markedHead() に渡す訳文の差し込み。{{mark}} の位置を示す */
+const MARK = "\u{E000}";
+/**
+ * 見出しの一語だけを差し色にする（承認・質問のカード。docs/design-system.md の差し色）。
+ * text は t(キー, { mark: MARK }) の結果。{{mark}} の位置に差し色の語 mark を置き、前後の文は差し色にしない
+ */
+function markedHead(text, mark) {
+  const [before = "", after = ""] = text.split(MARK);
+  return [
+    ...(before ? [el("span", "card-kind-rest", before)] : []),
+    el("span", "card-kind", mark),
+    ...(after ? [el("span", "card-kind-rest", after)] : []),
+  ];
+}
+
 function clearThread() {
   activity.hide();
   thread.replaceChildren(spine());
@@ -209,12 +260,12 @@ function spine() {
 function forkButton(m) {
   const actions = el('div', 'message-actions');
   actions.hidden = true;
-  const b = el("button", "btn forkbtn", "⑂ ここから分岐");
+  const b = el("button", "btn forkbtn", t("chat.message.fork"));
   b.type = "button";
   b.onclick = () => forkFrom(m);
   actions.append(b);
   if (m.dataset.role === 'user') {
-    for (const [label, className, edit] of [['編集して再送信', 'editbtn', true], ['再送信', 'resendbtn', false]]) {
+    for (const [label, className, edit] of [[t('chat.message.editResend'), 'editbtn', true], [t('chat.message.resend'), 'resendbtn', false]]) {
       const action = el('button', `btn ${className}`, label);
       action.type = 'button';
       action.onclick = async () => {
@@ -225,7 +276,7 @@ function forkButton(m) {
           const data = await cmd('loadSession', { sessionId: source });
           if (state.current !== source || !m.isConnected || state.busy) return;
           const index = data.messages.findIndex(row => row.uuid === m.dataset.uuid);
-          if (index < 0) throw new Error('この発言はまだ保存されていません。少し待って再試行してください');
+          if (index < 0) throw new Error(t('chat.message.notSaved'));
           const attached = data.presents.filter(p => attachmentMessageIndex(data.messages, p) === index)
             .map(p => ({ path: p.path, name: p.caption?.replace(/^添付:\s*/, '') || p.path.split(/[\\/]/).at(-1),
               mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri }));
@@ -238,7 +289,7 @@ function forkButton(m) {
           const draft = { text, attached, index };
           if (edit) editMessage(m, draft);
           else await forkFrom(m, { draft });
-        } catch (e) { sys(`再送信の準備に失敗: ${escText(e.message)}`); }
+        } catch (e) { sys(html.t('chat.message.resendPrepareFailed', { error: e.message })); }
         finally { action.disabled = false; }
       };
       actions.append(action);
@@ -254,13 +305,13 @@ function editMessage(m, draft) {
   const editor = el('div', 'message-editor');
   const input = el('textarea', 'message-edit-input');
   input.value = draft.text;
-  input.setAttribute('aria-label', 'メッセージを編集');
+  input.setAttribute('aria-label', t('chat.message.editLabel'));
   const controls = el('div', 'message-edit-controls');
-  const cancel = el('button', 'btn', '取り消し');
+  const cancel = el('button', 'btn', t('chat.message.editCancel'));
   const send = el('button', 'btn btn-primary');
   send.innerHTML = $('send').innerHTML;
-  send.title = '分岐して送信 (Ctrl+Enter)';
-  send.setAttribute('aria-label', '分岐して送信');
+  send.title = t('chat.message.sendAsBranchTitle');
+  send.setAttribute('aria-label', t('chat.message.sendAsBranch'));
   cancel.type = send.type = 'button';
   const close = () => {
     if (state.busy) return;
@@ -311,7 +362,7 @@ function userMsg(text, { uuid, at } = {}) {
   const m = el("div", "m user");
   m.dataset.role = "user";
   if (at) m.dataset.at = at;
-  m.append(whoLine("あなた", at));
+  m.append(whoLine(t("chat.message.you"), at));
   m.append(el("div", "body", text));
   forkButton(m);
   setUuid(m, uuid);
@@ -370,7 +421,7 @@ function questionCard(ev) {
   const card = el("div", "card");
   m.append(card);
   const head = el("div", "card-head");
-  head.append(el("span", "card-kind", "答えを待っている"));
+  head.append(...markedHead(t("chat.ask.heading", { mark: MARK }), t("chat.ask.headingMark")));
   head.append(el("span", "desc", ev.title ?? ""));
   card.append(head);
 
@@ -382,7 +433,7 @@ function questionCard(ev) {
     const box = el("div", "q");
     box.append(el("div", "q-text", q.question ?? ""));
     const multi = Boolean(q.multiSelect);
-    box.append(el("div", "q-note", `${q.header ? q.header + " · " : ""}${multi ? "複数選べる" : "1 つ選ぶ"}。自由記述も可`));
+    box.append(el("div", "q-note", `${q.header ? q.header + " · " : ""}${multi ? t("chat.ask.pickMany") : t("chat.ask.pickOne")}`));
 
     const opts = el("div", "opts");
     for (const o of q.options ?? []) {
@@ -407,7 +458,7 @@ function questionCard(ev) {
         const d = document.createElement("details");
         d.className = "opt-preview";
         const sm = document.createElement("summary");
-        sm.textContent = `${o.label} の見本`;
+        sm.textContent = t("chat.ask.preview", { label: o.label });
         const pre = el("pre");
         pre.append(el("code", null, o.preview));
         d.append(sm, pre);
@@ -419,16 +470,16 @@ function questionCard(ev) {
     // 「その他」は選択肢に含めない決まりなので、こちらで用意する
     const other = document.createElement("input");
     other.className = "other";
-    other.placeholder = "その他（自由に書ける）";
+    other.placeholder = t("chat.ask.other");
     other.oninput = () => { notes.set(q.question, other.value.trim()); sync(); };
     box.append(other);
     card.append(box);
   }
 
   const actions = el("div", "card-actions");
-  const skip = el("button", "btn", "答えずに進める");
+  const skip = el("button", "btn", t("chat.ask.skip"));
   skip.type = "button";
-  const send = el("button", "btn btn-primary", "回答する");
+  const send = el("button", "btn btn-primary", t("chat.ask.answer"));
   send.type = "button";
   send.disabled = true;
   actions.append(skip, send);
@@ -456,16 +507,17 @@ function questionCard(ev) {
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
-    head.querySelector(".card-kind").textContent = "質問";
+    for (const rest of head.querySelectorAll(".card-kind-rest")) rest.remove();
+    head.querySelector(".card-kind").textContent = t("chat.ask.done");
     const summary = answers
       ? qs.map((q) => `${q.header || q.question}: ${answers[q.question]}`).join(" / ")
-      : "答えずに進めた";
+      : t("chat.ask.skipped");
     actions.replaceChildren(el("span", "res", summary));
     for (const b of card.querySelectorAll("button, input")) b.disabled = true;
-    if (isRunningHere()) activity.show("続きを待っている");
+    if (isRunningHere()) activity.show(t("activity.continuing"));
     state.pendingPerms.delete(ev.id);
     cmd("resolvePermission", { id: ev.id, allow: true, answers: answers ?? {} })
-      .catch((e) => sys(`回答の送信に失敗: ${escText(e.message)}`));
+      .catch((e) => sys(html.t("chat.ask.sendFailed", { error: e.message })));
   }
 
   send.onclick = () => settle(answersNow());
@@ -484,7 +536,7 @@ function permissionCard(ev) {
   const card = el("div", "card");
   m.append(card);
   const head = el("div", "card-head");
-  head.append(el("span", "card-kind", "承認を待っている"));
+  head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.approval.headingMark")));
   head.append(el("span", "tool", ev.toolName ?? ""));
   head.append(el("span", "desc", ev.title ?? ""));
   card.append(head);
@@ -500,12 +552,12 @@ function permissionCard(ev) {
   // 「常に許可」は候補を出せるエージェントでだけ。候補はこちらで組み立てない
   const canAlways = ev.canAlways && capsOf(activeBackendId()).alwaysAllow !== false;
   const actions = el("div", "card-actions");
-  actions.append(el("span", "res", "許可しないと、このターンは止まったまま"));
-  const always = el("button", "btn", "常に許可");
+  actions.append(el("span", "res", t("chat.approval.blocking")));
+  const always = el("button", "btn", t("chat.approval.always"));
   always.type = "button";
-  const deny = el("button", "btn btn-quiet", "拒否");
+  const deny = el("button", "btn btn-quiet", t("chat.approval.deny"));
   deny.type = "button";
-  const allow = el("button", "btn btn-primary", "許可");
+  const allow = el("button", "btn btn-primary", t("chat.approval.allow"));
   allow.type = "button";
   if (canAlways) actions.append(always);
   actions.append(deny, allow);
@@ -515,14 +567,15 @@ function permissionCard(ev) {
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
-    head.querySelector(".card-kind").textContent = "承認";
-    head.append(el("span", "res", `${ok ? (forever ? "常に許可した" : "許可した") : "拒否した"} · ${hhmm(new Date())}`));
+    for (const rest of head.querySelectorAll(".card-kind-rest")) rest.remove();
+    head.querySelector(".card-kind").textContent = t("chat.approval.done");
+    head.append(el("span", "res", `${ok ? (forever ? t("chat.approval.allowedAlways") : t("chat.approval.allowed")) : t("chat.approval.denied")} · ${hhmm(new Date())}`));
     actions.remove();
     code.remove();
-    if (isRunningHere()) activity.show(ok ? `${ev.toolName} を実行中` : "続きを待っている");
+    if (isRunningHere()) activity.show(ok ? t("activity.runningTool", { tool: ev.toolName }) : t("activity.continuing"));
     state.pendingPerms.delete(ev.id);
-    cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, message: ok ? undefined : "ユーザーが拒否した" })
-      .catch((e) => sys(`承認の送信に失敗: ${escText(e.message)}`));
+    cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, message: ok ? undefined : "ユーザーが拒否した" })   // i18n-ignore: エージェントに返す拒否の理由（UI の言語に連動させない）
+      .catch((e) => sys(html.t("chat.approval.sendFailed", { error: e.message })));
   };
   allow.onclick = () => settle(true);
   deny.onclick = () => settle(false);
@@ -541,11 +594,11 @@ function renderPermission(ev) {
   closeTurnEl();
   // 質問は承認ではない。専用のカードで選択肢を出す
   if (ev.kind === "question") {
-    activity.show("あなたの回答を待っている");
+    activity.show(t("activity.waitingAnswer"));
     const card = questionCard(ev);
     if (card) return card;
   }
-  activity.show("承認を待っている");
+  activity.show(t("activity.waitingApproval"));
   return permissionCard(ev);
 }
 
@@ -585,7 +638,7 @@ const activity = {
   ended: 0,          // 同じターンで終わったサブエージェント
   behind: null,      // behindOf() の結果。裏を待っている間だけ
   mark() {
-    return this.behind ? satMark(this.behind.n, `裏で ${this.behind.n} 本が動いている`) : runMark("ターンが走っている");
+    return this.behind ? satMark(this.behind.n, t("activity.behindCount", { count: this.behind.n })) : runMark(t("activity.turnRunning"));
   },
   paint() {
     this.el.querySelector(".txt").textContent = this.behind ? this.behind.label : this.text;
@@ -632,7 +685,7 @@ const activity = {
     this.behind = behindHere();
     if ((was?.n ?? 0) !== (this.behind?.n ?? 0)) this.remark();
     // 待っている間に覚えた text は subagent 側のもの。main が戻ったら一旦中立の語にする
-    if (was && !this.behind) this.text = "動いている";
+    if (was && !this.behind) this.text = ACTIVITY_LABEL.running;
     this.paint();
   },
   /**
@@ -649,9 +702,9 @@ const activity = {
     if (!b) return;
     const behind = backgroundHere().length;
     b.hidden = n === 0 && ended === 0 && behind === 0;
-    if (n) b.textContent = `サブエージェント ${n}`;
-    else if (behind) b.textContent = `裏で動いている ${behind}`;
-    else if (ended) b.textContent = `サブエージェント · 終了 ${ended}`;
+    if (n) b.textContent = t("activity.subagents", { count: n });
+    else if (behind) b.textContent = t("activity.background", { count: behind });
+    else if (ended) b.textContent = t("activity.subagentsEnded", { count: ended });
   },
   hide() {
     clearInterval(this.timer);
@@ -677,7 +730,7 @@ function thinkBox() {
   const d = document.createElement("details");
   d.className = "think live";
   const s = document.createElement("summary");
-  s.textContent = "考えている";
+  s.textContent = ACTIVITY_LABEL.thinking;
   const body = el("div", "think-body");
   d.append(s, body);
   openTurnEl().append(d);
@@ -690,7 +743,7 @@ function closeThink() {
   const d = state.thinkEl;
   d.classList.remove("live");
   const n = d.querySelector(".think-body").textContent.length;
-  d.querySelector("summary").textContent = `考えた（${fmt.number(n)} 文字）`;
+  d.querySelector("summary").textContent = t("chat.thought", { count: n, chars: fmt.number(n) });
   state.thinkEl = null;
 }
 
@@ -699,7 +752,7 @@ function thinkFromText(text) {
   const d = document.createElement("details");
   d.className = "think";
   const s = document.createElement("summary");
-  s.textContent = `考えた（${fmt.number(text.length)} 文字）`;
+  s.textContent = t("chat.thought", { count: text.length, chars: fmt.number(text.length) });
   const body = el("div", "think-body", text);
   d.append(s, body);
   return d;
@@ -710,7 +763,7 @@ function thinkFromText(text) {
 
 function appendText(text) {
   closeThink();
-  activity.show("書いている");
+  activity.show(ACTIVITY_LABEL.writing);
   const stick = atBottom();
   if (!state.streamEl) {
     // 閉じた発言の後は streamEl がリセットされるため、本文を作る前に開く。
@@ -773,9 +826,9 @@ function isMine(ev) {
 // 渡ったら「AIへ送信済み」に戻し、渡らないままターンが終わったら、次のターンで答えることを言う。
 const deliveredEarly = new Set();   // 吹き出しより先に届いた配達の合図
 const DELIVERY = {
-  pending: '次の区切りで AI に渡します',
-  late: 'この作業には間に合いませんでした。続けて答えます',
-  sent: 'AIへ送信済み',
+  pending: t('chat.delivery.pending'),
+  late: t('chat.delivery.late'),
+  sent: t('chat.delivery.sent'),
 };
 const messageRow = (messageId) => (messageId
   ? [...thread.querySelectorAll('.mw[data-message-id]')].find(w => w.dataset.messageId === messageId)
@@ -785,7 +838,7 @@ function markDelivery(row, kind) {
   if (!status) return;
   if (kind === 'pending') row.dataset.deliveryPending = '1';
   else delete row.dataset.deliveryPending;
-  status.replaceChildren(...(kind === 'pending' ? [runMark('まだエージェントに渡っていない')] : []), DELIVERY[kind]);
+  status.replaceChildren(...(kind === 'pending' ? [runMark(t('chat.delivery.notYet'))] : []), DELIVERY[kind]);
   status.classList.toggle('outbox-status-mark', kind === 'pending');
 }
 
@@ -882,7 +935,7 @@ function onEvent(ev, replay = false) {
       return refresh();
     case "backend":
       if (ev.applied) return refresh();
-      sys(`エージェントを ${escText(labelOf(ev.backend))} に変更しました。次の送信から会話を引き継ぎます。`);
+      sys(html.t("chat.sys.agentChanged", { agent: labelOf(ev.backend) }));
       return refresh();
     case "text.delta":
       return appendText(String(ev.text ?? ""));
@@ -902,7 +955,7 @@ function onEvent(ev, replay = false) {
     case "thinking.start":
       state.streamEl = null;
       state.thinkTokens = 0;
-      activity.show("考えている");
+      activity.show(ACTIVITY_LABEL.thinking);
       return;
 
     case "thinking.delta": {
@@ -914,7 +967,7 @@ function onEvent(ev, replay = false) {
         if (state.thinkEl.open) box.scrollTop = box.scrollHeight;
       }
       if (typeof ev.estimatedTokens === "number") state.thinkTokens = ev.estimatedTokens;
-      activity.show(state.thinkTokens ? `考えている（約 ${state.thinkTokens} トークン）` : "考えている");
+      activity.show(state.thinkTokens ? t("activity.thinkingTokens", { count: state.thinkTokens }) : ACTIVITY_LABEL.thinking);
       return;
     }
 
@@ -926,7 +979,7 @@ function onEvent(ev, replay = false) {
       ensureTurnEl().append(card);
       if (stick) log.scrollTop = log.scrollHeight;
       if (ev.id) state.toolCards.set(ev.id, card);
-      activity.show(`${ev.name} を実行中`);
+      activity.show(t("activity.runningTool", { tool: ev.name }));
       return card;
     }
 
@@ -941,17 +994,17 @@ function onEvent(ev, replay = false) {
       if (ev.state === "idle") return activity.hide();
       // 別のタブで押した中断・開き直した会話でも、止まり終えるまで中断ボタンを押せなくする
       if (ev.state === "stopping" && ev.sessionId && isRunningHere()) { state.stopping.add(ev.sessionId); syncRunState(); }
-      return activity.show(ev.label || ACTIVITY_LABEL[ev.state] || "動いている");
+      return activity.show(ev.label || ACTIVITY_LABEL[ev.state] || ACTIVITY_LABEL.running);
 
     case 'taskNotice':
       closeTurnEl();
-      sys('Pleiad タスクの結果を受け取って再開しました');
+      sys(html.t('chat.sys.taskResumed'));
       return;
     case "turnResult": {
       if (ev.outcome === "ok") return;             // 終わったことは稼働表示が消えれば分かる
-      const what = ev.outcome === "aborted" ? "中断した" : `失敗: ${escText(ev.error ?? "理由不明")}`;
       closeTurnEl();
-      sys(what);
+      if (ev.outcome === "aborted") sys(html.t("chat.sys.aborted"));
+      else sys(html.t("chat.sys.failed", { error: ev.error ?? t("chat.sys.unknownReason") }));
       return;
     }
 
@@ -987,7 +1040,7 @@ function onEvent(ev, replay = false) {
       return;
 
     case "status":
-      if (ev.sessionId) sys(`状態 → <b>${escText(ev.status || "状態なし")}</b>（${escText(ev.by)}${ev.reason ? "：" + escText(ev.reason) : ""}）`);
+      if (ev.sessionId) changeLine("status", ev.status || t("session.status.none"), ev, { reason: ev.reason });
       return refresh();
 
     case "statusIcon":
@@ -998,31 +1051,33 @@ function onEvent(ev, replay = false) {
       return refresh();
 
     case "title":
-      sys(`タイトル → <b>${escText(ev.title)}</b>（${escText(ev.by)}${ev.reason ? "：" + escText(ev.reason) : ""}）`);
+      changeLine("title", ev.title, ev, { reason: ev.reason });
       return refresh().then(paintBranchNames);
 
     case "fork":
-      if (ev.by === "ai") sys(`分岐した（ai${ev.reason ? "：" + escText(ev.reason) : ""}）`);
+      if (ev.by === "ai") sys(ev.reason ? html.t("chat.change.forkAiReason", { reason: ev.reason }) : html.t("chat.change.forkAi"));
       // 今の会話の家族が増えたなら系譜を読み直し、分岐点の印を置き直す
       return refresh().then(() => reloadBranches(ev));
 
     case "mode":
-      sys(`承認モード → <b>${escText(state.modes[ev.mode]?.label ?? ev.mode)}</b>（${escText(ev.by)}${ev.live ? "" : "・次のターンから"}）`);
+      changeLine("mode", state.modes[ev.mode]?.label ?? ev.mode, ev, { next: !ev.live });
       return refresh();
 
     case "model":
-      sys(`モデル → <b>${escText(ev.model ? state.models[ev.model]?.label ?? (state.endpoint ? compatModelText(ev.model) : ev.model) : state.models[""]?.resolvesTo ? `既定（${resolvedModel(state.models, "").label}）` : "既定")}</b>（${escText(ev.by)}${ev.live ? "" : "・次のターンから"}）`);
+      changeLine("model", ev.model ? state.models[ev.model]?.label ?? (state.endpoint ? compatModelText(ev.model) : ev.model) : state.models[""]?.resolvesTo ? t("chat.model.defaultResolved", { model: resolvedModel(state.models, "").label }) : t("chat.model.default"), ev, { next: !ev.live });
       return refresh();
 
     case "cwd":
-      sys(`作業ディレクトリ → <b>${escText(ev.cwd)}</b>（${escText(ev.by)}${ev.reason ? "：" + escText(ev.reason) : ""}）`);
+      changeLine("cwd", ev.cwd, ev, { reason: ev.reason });
       return refresh();
 
     // 開始時と指示・Skills が変わっていたので、送信時に自動で読み込み直した（core/server.mjs の runTurn）
     case 'contextRefreshed': {
-      const names = (ev.names ?? []).map(escText).join("・");
-      const rest = ev.count > (ev.names ?? []).length ? ` ほか ${ev.count - (ev.names ?? []).length} 件` : "";
-      sys(`指示・Skills が変わったので読み込み直しました${names ? `（${names}${rest}）` : ""}`);
+      const names = (ev.names ?? []).join(t("app.listSeparator"));
+      const rest = ev.count - (ev.names ?? []).length;
+      if (!names) sys(html.t("chat.sys.contextRefreshed"));
+      else if (rest > 0) sys(html.t("chat.sys.contextRefreshedNamesMore", { names, count: rest }));
+      else sys(html.t("chat.sys.contextRefreshedNames", { names }));
       // 新しい記録はこの直後の contextUsage で届く。ここでは「変更あり」の印だけ先に消す
       if (state.contextInfo && state.contextInfoId === ev.sessionId) {
         state.contextInfo = { ...state.contextInfo, changed: { differs: false, paths: [], files: [] } };
@@ -1128,7 +1183,7 @@ const sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
 function cmd(command, args = {}) {
   const id = String(++seq);
   return new Promise((res, rej) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return rej(new Error("未接続"));
+    if (!ws || ws.readyState !== WebSocket.OPEN) return rej(new Error(t("app.notConnected")));
     pending.set(id, { res, rej });
     ws.send(JSON.stringify({ kind: "command", command, id, args }));
   });
@@ -1238,37 +1293,37 @@ function renderAuth() {
   sec.hidden = targets.length === 0;
   sec.replaceChildren();
   if (!targets.length) { $("authNeed").hidden = true; return; }
-  sec.append(el("div", "head", "エージェント"));
+  sec.append(el("div", "head", t("settings.agents.heading")));
   const need = [];
   for (const b of targets) {
     const st = state.auth.get(b.id) ?? {};
     const row = el("div", "auth-row");
     row.append(el("span", "name", b.label));
-    const text = st.installed === false ? "未インストール" : !st.supported ? (st.error ? `見られない: ${st.error}` : "ログインを扱えない")
-      : st.pending ? "ログインを待っている"
-      : st.loggedIn ? (st.account || "ログイン済み")
-      : "未ログイン";
+    const text = st.installed === false ? t("settings.agents.notInstalled") : !st.supported ? (st.error ? t("settings.agents.statusError", { error: st.error }) : t("settings.agents.loginUnsupported"))
+      : st.pending ? t("settings.agents.loginPending")
+      : st.loggedIn ? (st.account || t("settings.agents.loggedIn"))
+      : t("settings.agents.loggedOut");
     const s2 = el("span", "st", text);
     if (st.detail && st.loggedIn) s2.title = st.detail;
     row.append(s2);
     if (st.installed === false && st.installUrl) {
-      const link = el("a", "btn", "インストール");
+      const link = el("a", "btn", t("settings.agents.install"));
       link.href = st.installUrl; link.target = "_blank"; link.rel = "noreferrer";
       row.append(link);
     } else if (st.supported && !st.pending) {
       const loggedIn = st.loggedIn;
-      const btn = el("button", "btn", loggedIn ? "ログアウト" : "ログイン");
+      const btn = el("button", "btn", loggedIn ? t("settings.agents.signOut") : t("settings.agents.signIn"));
       btn.type = "button";
       btn.onclick = (e) => { e.stopPropagation(); if (loggedIn) authLogout(b); else authLogin(b); };
       row.append(btn);
     }
     // 会話ごとに選べる Claude のアカウント（Pleiad が claude setup-token を回して発行したトークン）
     if (b.capabilities?.claudeAccounts && st.installed !== false) {
-      const button = el('button', 'btn', 'アカウント'); button.type = 'button'; button.onclick = () => claudeAccounts.open(); row.append(button);
+      const button = el('button', 'btn', t('settings.agents.accounts')); button.type = 'button'; button.onclick = () => claudeAccounts.open(); row.append(button);
     }
     // 互換の接続先（Claude Code の Anthropic 互換・Codex の Responses 互換）。同じページの下に管理の面を開く
     if (b.capabilities?.compatEndpoints && st.installed !== false) {
-      const button = el('button', 'btn', '接続先'); button.type = 'button';
+      const button = el('button', 'btn', t('settings.agents.endpoints')); button.type = 'button';
       button.setAttribute('aria-expanded', String(compatEndpoints.openAgent === b.id));
       button.onclick = () => compatEndpoints.open(b.id);
       row.append(button);
@@ -1281,7 +1336,7 @@ function renderAuth() {
   }
   const line = $("authNeed");
   line.hidden = need.length === 0;
-  if (need.length) line.textContent = `${need.join("・")} にログインが要る`;
+  if (need.length) line.textContent = t("app.authNeed", { agents: need.join(t("app.listSeparator")) });
 }
 
 /**
@@ -1308,8 +1363,8 @@ function authUrlBox(id) {
     const paste = el("div", "auth-paste");
     const inp = document.createElement("input");
     inp.className = "field";
-    inp.placeholder = "リダイレクト先の URL か code を貼る";
-    const send = el("button", "btn", "送る");
+    inp.placeholder = t("settings.agents.pasteCode");
+    const send = el("button", "btn", t("settings.agents.submitCode"));
     send.type = "button";
     const submit = async () => {
       const v = inp.value.trim();
@@ -1318,7 +1373,7 @@ function authUrlBox(id) {
       try {
         await cmd("authSubmit", { backend: b.id, input: v });
       } catch (err) {
-        sys(`${escText(b.label)} のログインに失敗: ${escText(err.message)}`);
+        sys(html.t("settings.agents.loginFailed", { agent: b.label, error: err.message }));
         send.disabled = false;
       }
     };
@@ -1337,12 +1392,12 @@ function authLogin(b) {
   onboarding.paint();
   let failure;
   cmd("authLogin", { backend: b.id })
-    .catch((e) => { failure = e; sys(`${escText(b.label)} のログインに失敗: ${escText(e.message)}`); })
+    .catch((e) => { failure = e; sys(html.t("settings.agents.loginFailed", { agent: b.label, error: e.message })); })
     .finally(async () => {
       state.authUrl.delete(b.id);
       forgetVocab(b.id);
       await refreshAuth().catch(() => {});
-      if (failure) $("setupError").textContent = `${b.label} のログインに失敗: ${failure.message}。もう一度ログインしてください。`;
+      if (failure) $("setupError").textContent = t("settings.agents.loginFailedRetry", { agent: b.label, error: failure.message });
     });
 }
 
@@ -1350,7 +1405,7 @@ async function authLogout(b) {
   try {
     await cmd("authLogout", { backend: b.id });
   } catch (e) {
-    sys(`${escText(b.label)} のログアウトに失敗: ${escText(e.message)}`);
+    sys(html.t("settings.agents.logoutFailed", { agent: b.label, error: e.message }));
   }
   forgetVocab(b.id);
   await refreshAuth().catch(() => {});
@@ -1365,7 +1420,7 @@ function onAuthEvent(ev) {
     renderAuth();
     onboarding.paint();             // 初期設定ダイアログの中でログインを始めたときは、そちらに出す
     openSettings();                 // 進め方が見える場所に居てもらう
-    const row = el("div", "m sys", `${name} のログイン: `);
+    const row = el("div", "m sys", t("settings.agents.loginUrl", { agent: name }));
     const url = String(ev.url ?? "");
     const a = el("a", null, url);
     if (/^https?:\/\//i.test(url)) { a.href = url; a.target = "_blank"; a.rel = "noreferrer"; }
@@ -1374,8 +1429,8 @@ function onAuthEvent(ev) {
     return append(row);
   }
   state.authUrl.delete(ev.backend);
-  if (ev.phase === "error") sys(`${escText(name)} のログインに失敗: ${escText(ev.message ?? "")}`);
-  else sys(`${escText(name)}: ${escText(ev.message ?? "ログインした")}`);
+  if (ev.phase === "error") sys(html.t("settings.agents.loginFailed", { agent: name, error: ev.message ?? "" }));
+  else sys(html.t("settings.agents.loginMessage", { agent: name, message: ev.message ?? t("settings.agents.loginDone") }));
   refreshAuth().catch(() => {});
 }
 
@@ -1401,7 +1456,7 @@ function reserveSettings(patch) {
     settingsFailure = id;
     failedSettingsPatch = patch;
     if (state.current === id) {
-      $("settingsError").textContent = `設定を保存できませんでした: ${e.message}`;
+      $("settingsError").textContent = t("chat.next.saveFailed", { error: e.message });
       $("retrySettings").hidden = false;
     }
   });
@@ -1414,18 +1469,18 @@ function paintSettingsNotice() {
   if (next) {
     const changes = [];
     // 既定のモデルは実際に当たる名前を添える（分からなければ「既定」だけ）
-    const fallback = state.models[""]?.resolvesTo || state.models[""]?.resolvedLabel ? `既定（${resolvedModel(state.models, "").label}）` : "既定";
+    const fallback = state.models[""]?.resolvesTo || state.models[""]?.resolvedLabel ? t("chat.model.defaultResolved", { model: resolvedModel(state.models, "").label }) : t("chat.model.default");
     const nextEndpoint = next.endpoint ?? (next.backend !== s.backend ? "" : s.compatEndpoint ?? "");
     // 互換の接続先のモデルは表示名（web/compat-models.mjs。札を置けないので 1M は（1M））
     const epMain = nextEndpoint ? compatEndpoints.get(nextEndpoint)?.roles?.main : "";
-    const epFallback = nextEndpoint ? `既定（${epMain ? compatModelText(epMain) : "接続先のメイン"}）` : fallback;
-    if (next.backend !== s.backend || next.model !== (s.model ?? "")) changes.push(`${labelOf(next.backend)} / ${next.model ? (nextEndpoint ? compatModelText(next.model) : state.models[next.model]?.label ?? next.model) : epFallback}${next.backend !== s.backend && !next.model && fallback === "既定" ? "（変更先の既定モデル）" : ""}`);
-    if (next.effort !== undefined && next.effort !== (s.effort ?? "")) changes.push(`エフォート: ${next.effort || "既定に従う"}`);
-    if (next.cwd) changes.push(`作業ディレクトリ: ${next.cwd}`);
-    if (next.mode !== undefined) changes.push(`承認モード: ${state.modes[next.mode]?.label ?? next.mode}`);
-    if (next.endpoint !== undefined) changes.push(`接続先: ${endpointLabel(next.endpoint)}`);
-    if (next.account !== undefined) changes.push(`アカウント: ${accountLabel(next.account)}`);
-    $("nextSettingsText").textContent = `${changes.join(" · ")} · 次に送信すると適用されます`;
+    const epFallback = nextEndpoint ? t("chat.model.defaultResolved", { model: epMain ? compatModelText(epMain) : t("chat.next.endpointMain") }) : fallback;
+    if (next.backend !== s.backend || next.model !== (s.model ?? "")) changes.push(`${labelOf(next.backend)} / ${next.model ? (nextEndpoint ? compatModelText(next.model) : state.models[next.model]?.label ?? next.model) : epFallback}${next.backend !== s.backend && !next.model && fallback === t("chat.model.default") ? t("chat.next.targetDefault") : ""}`);
+    if (next.effort !== undefined && next.effort !== (s.effort ?? "")) changes.push(t("chat.next.effort", { value: next.effort || t("chat.next.useDefault") }));
+    if (next.cwd) changes.push(t("chat.next.cwd", { value: next.cwd }));
+    if (next.mode !== undefined) changes.push(t("chat.next.mode", { value: state.modes[next.mode]?.label ?? next.mode }));
+    if (next.endpoint !== undefined) changes.push(t("chat.next.endpoint", { value: endpointLabel(next.endpoint) }));
+    if (next.account !== undefined) changes.push(t("chat.next.account", { value: accountLabel(next.account) }));
+    $("nextSettingsText").textContent = t("chat.next.summary", { changes: changes.join(" · ") });
   }
 }
 $("cancelSettings").onclick = () => reserveSettings({ cancel: true });
@@ -1451,14 +1506,14 @@ function accountOptions() {
   const value = s?.nextSettings?.account ?? s?.claudeAccount ?? "";
   const list = claudeAccounts.list();
   return [
-    { value: "", label: "ログイン中", hint: "ログイン中のアカウント" },
-    ...list.map((a) => ({ value: a.id, label: a.name, hint: a.hasToken ? "" : "トークン未登録" })),
-    ...(value && !list.some((a) => a.id === value) ? [{ value, label: "削除されたアカウント", hint: "選び直してください" }] : []),
+    { value: "", label: t("chat.account.signedIn"), hint: t("chat.account.signedInAccount") },
+    ...list.map((a) => ({ value: a.id, label: a.name, hint: a.hasToken ? "" : t("chat.account.noToken") })),
+    ...(value && !list.some((a) => a.id === value) ? [{ value, label: t("chat.account.deleted"), hint: t("chat.account.chooseAgain") }] : []),
   ];
 }
 function accountLabel(id) {
-  if (!id) return "ログイン中のアカウント";
-  return claudeAccounts.list().find((a) => a.id === id)?.name ?? "削除されたアカウント";
+  if (!id) return t("chat.account.signedInAccount");
+  return claudeAccounts.list().find((a) => a.id === id)?.name ?? t("chat.account.deleted");
 }
 let accountWarning = "";
 /** 入力欄のアカウントの出し分け。登録が無く、選んでもいない会話には、モデルの面にアカウントの節を出さない */
@@ -1468,8 +1523,8 @@ async function syncAccount(s, bid) {
   const value = s?.nextSettings?.account ?? s?.claudeAccount ?? "";
   state.accountShown = Boolean(s) && supported && (list.length > 0 || Boolean(value));
   const chosen = list.find((a) => a.id === value);
-  const warning = !state.accountShown || !value ? "" : !chosen ? "選択中の Claude のアカウントは削除されています。アカウントを選び直してください"
-    : !chosen.hasToken ? `Claude のアカウント「${chosen.name}」のトークンが未登録です。設定から貼り付けてください` : "";
+  const warning = !state.accountShown || !value ? "" : !chosen ? t("chat.account.deletedWarning")
+    : !chosen.hasToken ? t("chat.account.noTokenWarning", { name: chosen.name }) : "";
   if (accountWarning && $("settingsError").textContent === accountWarning) $("settingsError").textContent = "";
   accountWarning = warning;
   if (warning) $("settingsError").textContent = warning;
@@ -1480,11 +1535,11 @@ async function syncAccount(s, bid) {
 const compatEndpoints = setupCompatEndpoints({ cmd,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
   onChange: () => { syncTopbar().catch(() => {}); },
-  officialLine: (agent) => { const st = state.auth.get(agent); return st?.loggedIn ? (st.account || 'ログイン済み') : ''; } });
+  officialLine: (agent) => { const st = state.auth.get(agent); return st?.loggedIn ? (st.account || t('settings.agents.loggedIn')) : ''; } });
 compatEndpoints.onOpen(() => renderAuth());
 function endpointLabel(id) {
-  if (!id) return "公式";
-  return compatEndpoints.get(id)?.name ?? "削除された接続先";
+  if (!id) return t("chat.endpoint.official");
+  return compatEndpoints.get(id)?.name ?? t("chat.endpoint.deleted");
 }
 /** 会話の次のターンの接続先（予約があればそれ。エージェントを変える予約で接続先が書かれていなければ公式） */
 function endpointOf(s) {
@@ -1500,8 +1555,8 @@ async function syncEndpoint(s, bid) {
   const value = supported ? endpointOf(s) : "";
   state.endpointShown = Boolean(s) && supported;
   const chosen = list.find((e) => e.id === value);
-  const warning = !value ? "" : !chosen ? "選択中の接続先は削除されています。モデルのチップの面で接続先を選び直してください"
-    : chosen.ready === false ? `接続先「${chosen.name}」は前回の確認に失敗しています。設定 › エージェント設定の「接続先」で確認し直してください` : "";
+  const warning = !value ? "" : !chosen ? t("chat.endpoint.deletedWarning")
+    : chosen.ready === false ? t("chat.endpoint.failedWarning", { name: chosen.name }) : "";
   if (endpointWarning && $("settingsError").textContent === endpointWarning) $("settingsError").textContent = "";
   endpointWarning = warning;
   if (warning) $("settingsError").textContent = warning;
@@ -1513,15 +1568,15 @@ function endpointView(bid) {
   const list = compatEndpoints.list(bid);
   const defaults = compatEndpoints.defaults();
   const row = list.find((e) => e.id === state.endpoint) ?? null;
-  const official = bid === "claude" ? "Anthropic · ログイン中のアカウントで使う" : "OpenAI · ChatGPT のログインで使う";
+  const official = bid === "claude" ? t("chat.endpoint.officialClaude") : t("chat.endpoint.officialCodex");
   return {
     selected: state.endpoint, row, lost: lostText(bid),
     roleNames: bid === "claude" ? CLAUDE_ROLES.map((r) => [r.key, r.short]) : [],
     options: [
-      { value: "", label: "公式", sub: official, isDefault: !defaults[bid] },
+      { value: "", label: t("chat.endpoint.official"), sub: official, isDefault: !defaults[bid] },
       ...list.map((e) => ({ value: e.id, label: e.name, isDefault: defaults[bid] === e.id, warn: e.ready === false,
-        sub: `${KIND_LABEL[e.kind]} · ${e.baseUrl.replace(/^https?:\/\//, "")}${e.ready === false ? " · ⚠ 確認に失敗しています" : ""}`, title: `${e.name}（${e.baseUrl}）` })),
-      ...(state.endpoint && !row ? [{ value: state.endpoint, label: "削除された接続先", sub: "選び直してください", gone: true }] : []),
+        sub: `${KIND_LABEL[e.kind]} · ${e.baseUrl.replace(/^https?:\/\//, "")}${e.ready === false ? t("chat.endpoint.failedSuffix") : ""}`, title: `${e.name}（${e.baseUrl}）` })),
+      ...(state.endpoint && !row ? [{ value: state.endpoint, label: t("chat.endpoint.deleted"), sub: t("chat.account.chooseAgain"), gone: true }] : []),
     ],
     manage: () => compatEndpoints.open(bid),
   };
@@ -1569,9 +1624,9 @@ const controls = setupComposerControls({
       }
       // 既存セッションなら覚えさせる。新規はこの後の最初の runTurn に載る
       modeWrite = modeWrite.catch(() => {}).then(() => sessionId
-        ? cmd("setMode", { sessionId, mode: v, reason: "手動で変更" })
+        ? cmd("setMode", { sessionId, mode: v, reason: "手動で変更" })   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
         : cmd("setPref", { key: "mode", value: v, backend }));
-      modeWrite.catch(e => sys(`承認モードを保存できませんでした: ${escText(e.message)}`));
+      modeWrite.catch(e => sys(html.t("chat.sys.modeSaveFailed", { error: e.message })));
     },
     // モデルの面を開いた。候補を裏で取り直し、変わっていたら描き直す
     openModel: () => revalidateVocab(state.shownBackend ?? activeBackendId()),
@@ -1604,7 +1659,7 @@ const side = createSide({
     setStatusOf(id, status);
   },
   onSetIcon: (status, icon) => cmd("setStatusIcon", { status, icon })
-    .catch((e) => sys(`アイコンの変更に失敗: ${escText(e.message)}`)),
+    .catch((e) => sys(html.t("session.menu.iconFailed", { error: e.message }))),
   onContext: (s, x, y) => rowMenu(s, x, y),
   onGroupContext: (st, x, y) => groupMenu(st, x, y),
   onFamilyContext: (root, members, x, y) => familyMenu(root, members, x, y),
@@ -1660,7 +1715,7 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
       await refresh();
       if (state.current === source) { await select(result.sessionId); $("prompt").focus(); }
       return result.sessionId;
-    } catch (e) { sys(`セッションを保存できませんでした: ${escText(e.message)}`); }
+    } catch (e) { sys(html.t("session.saveFailed", { error: e.message })); }
     finally { creatingSession = null; }
   })();
   return creatingSession;
@@ -1695,10 +1750,10 @@ const subagentLive = (a) => a.status === "running" || a.status == null;
  * 終わった子は静止した印。status が null（分からない）なら印を置かない
  */
 const STATE_MARK = {
-  running: { label: "実行中" },
-  completed: { shape: "done", label: "完了" },
-  failed: { shape: "fail", label: "失敗" },
-  stopped: { shape: "stop", label: "停止" },
+  running: { label: t("dialog.work.state.running") },
+  completed: { shape: "done", label: t("dialog.work.state.completed") },
+  failed: { shape: "fail", label: t("dialog.work.state.failed") },
+  stopped: { shape: "stop", label: t("dialog.work.state.stopped") },
 };
 function stateMark(status) {
   const m = STATE_MARK[status];
@@ -1714,26 +1769,28 @@ const plyTasksHere = () => (state.work.tasks ?? []).filter(t => t.parentSessionI
 function syncAgentTasks() {
   const tasks = plyTasksHere();
   $('agentTasksEntry').hidden = !tasks.length;
-  $('agentTasksEntry').textContent = `Pleiad タスク · ${tasks.length}`;
+  $('agentTasksEntry').textContent = t('session.tasksEntry', { count: tasks.length });
 }
-const TASK_STATUS = { queued: '待機中', running: '実行中', cancelling: '停止中', waiting: '承認待ち', completed: '完了', failed: '失敗', cancelled: '停止済み', interrupted: '中断' };
+const TASK_STATUS = { queued: t('dialog.tasks.status.queued'), running: t('dialog.tasks.status.running'), cancelling: t('dialog.tasks.status.cancelling'),
+  waiting: t('dialog.tasks.status.waiting'), completed: t('dialog.tasks.status.completed'), failed: t('dialog.tasks.status.failed'),
+  cancelled: t('dialog.tasks.status.cancelled'), interrupted: t('dialog.tasks.status.interrupted') };
 // Pleiad タスクの状態 -> 行の印（サブエージェント行と同じ語彙）。まだ終わっていないものは弧、文字の状態はそのまま残す
 const TASK_MARK = { queued: 'running', running: 'running', cancelling: 'running', waiting: 'running',
   completed: 'completed', failed: 'failed', cancelled: 'stopped', interrupted: 'stopped' };
 function renderAgentTasks() {
   const body = $('workBody');
-  $('workTitle').textContent = 'Pleiad タスク';
+  $('workTitle').textContent = t('dialog.tasks.title');
   body.dataset.view = 'ply-tasks';
   body.replaceChildren();
   for (const task of plyTasksHere()) {
     const group = el('div', 'sec ply-task');
-    group.append(workRow(task.task, `Pleiad 管理 · ${labelOf(task.backend)} · ${TASK_STATUS[task.status] ?? task.status}`,
-      () => { $('workDialog').close(); select(task.sessionId); }, '会話を見る', stateMark(TASK_MARK[task.status])));
-    if (task.sessionId === state.current) group.append(workRow('依頼元の会話', sessionLabel(task.parentSessionId), () => { $('workDialog').close(); select(task.parentSessionId); }, '開く'));
+    group.append(workRow(task.task, t('dialog.tasks.sub', { agent: labelOf(task.backend), status: TASK_STATUS[task.status] ?? task.status }),
+      () => { $('workDialog').close(); select(task.sessionId); }, t('dialog.work.viewChat'), stateMark(TASK_MARK[task.status])));
+    if (task.sessionId === state.current) group.append(workRow(t('dialog.tasks.parent'), sessionLabel(task.parentSessionId), () => { $('workDialog').close(); select(task.parentSessionId); }, t('dialog.tasks.open')));
     if (task.error) group.append(el('div', 'work-head', task.error));
-    if (task.notification === 'unknown') group.append(el('div', 'work-head', '完了通知の配送結果は不明です。子の会話で結果を確認してください。'));
+    if (task.notification === 'unknown') group.append(el('div', 'work-head', t('dialog.tasks.notificationUnknown')));
     if (['queued', 'running'].includes(task.status)) {
-      const stop = el('button', 'btn btn-quiet', 'タスクを停止'); stop.type = 'button';
+      const stop = el('button', 'btn btn-quiet', t('dialog.tasks.stop')); stop.type = 'button';
       stop.onclick = async () => {
         stop.disabled = true;
         try { await cmd('cancelAgentTask', { taskId: task.taskId }); }
@@ -1747,7 +1804,7 @@ function renderAgentTasks() {
 $('agentTasksEntry').onclick = () => { renderAgentTasks(); $('workDialog').showModal(); };
 
 function sessionLabel(id) {
-  if (!id) return "（新しいセッション）";
+  if (!id) return t("session.untitledParen");
   return state.sessions.find((x) => x.id === id)?.title ?? id.slice(0, 8);
 }
 
@@ -1769,25 +1826,25 @@ function renderWorkDialog() {
   backgroundView = null;
   const body = $("workBody");
   const behind = backgroundHere();
-  $("workTitle").textContent = behind.length ? "裏で動いているもの" : "サブエージェント";
+  $("workTitle").textContent = behind.length ? t("dialog.work.backgroundTitle") : t("dialog.work.subagents");
   body.dataset.view = "list";
   body.replaceChildren(...subagentsHere().map((a) => workRow(a.description || a.id,
-    `${a.messages} メッセージ${a.lastAt ? " · 最終 " + relTime(a.lastAt) : ""}`,
-    () => openSubagent(a), "会話を見る", stateMark(a.status))));
+    a.lastAt ? t("dialog.work.messagesLast", { count: a.messages, last: relTime(a.lastAt) }) : t("dialog.work.messages", { count: a.messages }),
+    () => openSubagent(a), t("dialog.work.viewChat"), stateMark(a.status))));
 
   // 行は詳細を見る操作。停止は独立したボタンだけで実行する。
   for (const { task, entry } of behind) {
     const canStop = Boolean(capsOf(entry.backend).stopBackground);
     const group = el('div', 'work-task');
-    const row = workRow(task.label || task.id, KIND_SUB[task.kind] ?? "裏で動いている",
-      () => openBackground(task, entry), '詳細を見る');
+    const row = workRow(task.label || task.id, KIND_SUB[task.kind] ?? t("dialog.work.running"),
+      () => openBackground(task, entry), t('dialog.work.details'));
     group.append(row);
     if (canStop) group.append(backgroundStopButton(entry.sessionId, task));
     body.append(group);
   }
 
   // 終わった子もターンが終わるまでは並ぶので「動いている」とは言わない。ターンが終わると一覧から外れる
-  if (!body.childElementCount) body.append(el("div", "work-head", "このターンのサブエージェントはありません"));
+  if (!body.childElementCount) body.append(el("div", "work-head", t("dialog.work.none")));
 }
 
 /**
@@ -1813,14 +1870,14 @@ function syncBackgroundEntry() {
   const tasks = backgroundHere();
   const button = $('backgroundEntry');
   button.hidden = !tasks.length;
-  button.textContent = `${tasks.every(x => x.task.kind === 'terminal') ? '端末' : 'バックグラウンド'} · ${tasks.length}`;
+  button.textContent = tasks.every(x => x.task.kind === 'terminal') ? t('session.terminalEntry', { count: tasks.length }) : t('session.backgroundEntry', { count: tasks.length });
 }
 $('backgroundEntry').onclick = openWork;
 
 function backgroundStopButton(sessionId, task) {
-  const button = el('button', 'btn btn-quiet work-stop', '停止');
+  const button = el('button', 'btn btn-quiet work-stop', t('dialog.work.stop'));
   button.type = 'button';
-  button.setAttribute('aria-label', `${task.label || task.id} を停止`);
+  button.setAttribute('aria-label', t('dialog.work.stopLabel', { name: task.label || task.id }));
   button.onclick = () => stopBackground(button, sessionId, task);
   return button;
 }
@@ -1829,25 +1886,25 @@ let backgroundView = null;
 function openBackground(task, entry) {
   const body = $('workBody');
   body.dataset.view = 'background';
-  $('workTitle').textContent = KIND_SUB[task.kind] ?? 'バックグラウンド';
+  $('workTitle').textContent = KIND_SUB[task.kind] ?? t('dialog.work.background');
   const actions = el('div', 'work-actions');
-  const back = el('button', 'btn work-back', '← 一覧へ戻る');
+  const back = el('button', 'btn work-back', t('dialog.work.backToList'));
   back.type = 'button';
   back.onclick = renderWorkDialog;
-  const reload = el('button', 'btn', '更新');
+  const reload = el('button', 'btn', t('dialog.work.reload'));
   reload.type = 'button';
   reload.onclick = () => refreshBackgroundDetail();
   const stop = capsOf(entry.backend).stopBackground ? backgroundStopButton(entry.sessionId, task) : null;
   actions.append(back, reload);
   if (stop) actions.append(stop);
-  const status = el('div', 'work-head', '読み込み中…');
+  const status = el('div', 'work-head', t('dialog.work.loading'));
   status.setAttribute('role', 'status');
   const command = el('pre', 'work-command', task.label || task.id);
   const cwd = el('div', 'work-location');
   const output = el('pre', 'work-output', '');
-  output.setAttribute('aria-label', '端末の出力');
-  body.replaceChildren(actions, status, el('div', 'work-head', 'コマンド'), command, cwd,
-    el('div', 'work-head', '出力'), output);
+  output.setAttribute('aria-label', t('dialog.work.outputLabel'));
+  body.replaceChildren(actions, status, el('div', 'work-head', t('dialog.work.command')), command, cwd,
+    el('div', 'work-head', t('dialog.work.output')), output);
   backgroundView = { task, entry, status, command, cwd, output, stop, reload, busy: false };
   refreshBackgroundDetail();
 }
@@ -1865,18 +1922,19 @@ async function refreshBackgroundDetail() {
       : { task: live ? { ...view.task, output: null } : null };
     if (backgroundView !== view) return;
     if (!data.task) {
-      view.status.textContent = '終了しました。出力は最後に取得した内容です。';
+      view.status.textContent = t('dialog.work.ended');
       if (view.stop) view.stop.disabled = true;
       return;
     }
     const task = data.task;
-    view.status.textContent = `稼働中${task.startedAtMs ? ' · 起動 ' + fmt.dateTime(task.startedAtMs) : ''}${task.outputTruncated ? ' · 出力は末尾64K文字' : ''}`;
+    view.status.textContent = [t('dialog.work.live'), ...(task.startedAtMs ? [t('dialog.work.startedAt', { time: fmt.dateTime(task.startedAtMs) })] : []),
+      ...(task.outputTruncated ? [t('dialog.work.truncated')] : [])].join(' · ');
     view.command.textContent = task.command || task.label || view.task.label || view.task.id;
-    view.cwd.textContent = task.cwd ? `作業場所: ${task.cwd}` : '';
-    const text = task.output === null ? 'このエージェントは出力の取得に対応していません。' : task.output || 'まだ出力はありません。';
+    view.cwd.textContent = task.cwd ? t('dialog.work.cwd', { cwd: task.cwd }) : '';
+    const text = task.output === null ? t('dialog.work.outputUnsupported') : task.output || t('dialog.work.noOutput');
     if (view.output.textContent !== text) view.output.textContent = text;
   } catch (e) {
-    if (backgroundView === view) view.status.textContent = `読み込めませんでした: ${e.message}`;
+    if (backgroundView === view) view.status.textContent = t('dialog.work.loadFailed', { error: e.message });
   } finally {
     view.busy = false;
     view.reload.disabled = false;
@@ -1884,10 +1942,10 @@ async function refreshBackgroundDetail() {
 }
 
 const KIND_SUB = {
-  terminal: "バックグラウンド端末",
-  agent: "サブエージェント",
-  shell: "バックグラウンドのコマンド",
-  other: "裏の作業",
+  terminal: t("dialog.work.kind.terminal"),
+  agent: t("dialog.work.kind.agent"),
+  shell: t("dialog.work.kind.shell"),
+  other: t("dialog.work.kind.other"),
 };
 
 /**
@@ -1897,31 +1955,31 @@ const KIND_SUB = {
  */
 async function stopBackground(button, sessionId, task) {
   button.disabled = true;
-  button.textContent = "停止中…";
+  button.textContent = t("dialog.work.stopping");
   try {
     const result = await cmd("stopBackground", { sessionId, taskId: task.id });
-    if (result.stopped === false) throw new Error('停止を確認できませんでした');
-    button.textContent = '停止要求済み';
+    if (result.stopped === false) throw new Error(t('dialog.work.stopUnconfirmed'));
+    button.textContent = t('dialog.work.stopRequested');
     await refreshBackgroundDetail();
   } catch (e) {
-    button.textContent = "再度停止";
+    button.textContent = t("dialog.work.stopAgain");
     button.disabled = false;
-    $("workBody").append(el("div", "work-head", `止められなかった: ${e.message}`));
+    $("workBody").append(el("div", "work-head", t("dialog.work.stopFailed", { error: e.message })));
   }
 }
 
 async function openSubagent(a) {
   const body = $("workBody");
   body.dataset.view = "agent";
-  $("workTitle").textContent = `サブエージェント${a.description ? " — " + a.description.slice(0, 40) : ""}`;
-  body.replaceChildren(el("div", "work-head", "読み込み中…"));
+  $("workTitle").textContent = a.description ? t("dialog.work.subagentNamed", { name: a.description.slice(0, 40) }) : t("dialog.work.subagents");
+  body.replaceChildren(el("div", "work-head", t("dialog.work.loading")));
   let data;
   try {
     data = await cmd("loadSubagent", { sessionId: a.sessionId, agentId: a.id });
   } catch (e) {
-    return body.replaceChildren(el("div", "work-head", `読めなかった: ${e.message}`));
+    return body.replaceChildren(el("div", "work-head", t("dialog.work.readFailed", { error: e.message })));
   }
-  const back = el("button", "btn work-back", "← 一覧へ戻る");
+  const back = el("button", "btn work-back", t("dialog.work.backToList"));
   back.type = "button";
   back.onclick = renderWorkDialog;
   body.replaceChildren(back);
@@ -2088,7 +2146,7 @@ function persistDraft(id, value) {
   state.drafts.set(id, value);
   try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch { /* report server result below */ }
   if (!id) return Promise.resolve();
-  if (state.current === id) $("draftSaved").textContent = "保存中…";
+  if (state.current === id) $("draftSaved").textContent = t("chat.draft.saving");
   const work = (draftWrites.get(id) ?? Promise.resolve()).catch(() => {}).then(() => cmd("saveDraft", { sessionId: id, ...value }));
   draftWrites.set(id, work);
   work.then(() => {
@@ -2098,9 +2156,9 @@ function persistDraft(id, value) {
     }
     const s = state.sessions.find(s => s.id === id);
     if (s) s.hasDraft = Boolean(value.text || value.attached.length);
-    if (state.current === id && draftWrites.get(id) === work) $("draftSaved").textContent = "保存済み";
+    if (state.current === id && draftWrites.get(id) === work) $("draftSaved").textContent = t("chat.draft.saved");
   }, () => {
-    if (state.current === id) $("draftSaved").textContent = "保存できませんでした。入力を保持しています · 再試行";
+    if (state.current === id) $("draftSaved").textContent = t("chat.draft.saveFailed");
   });
   return work;
 }
@@ -2110,16 +2168,20 @@ function loadDraft() {
   fitPrompt();
   state.attached = Array.isArray(d?.attached) ? d.attached.slice() : [];
   renderAttached();
-  $("draftSaved").textContent = d?.text || d?.attached?.length ? "下書きを復元しました" : "";
+  $("draftSaved").textContent = d?.text || d?.attached?.length ? t("chat.draft.restored") : "";
 }
 $("draftSaved").onclick = () => saveDraft().catch(() => {});
 const filePreview = setupFilePreview({
   getContext: anchor => ({ sessionId:state.current, at:anchor?.closest('.m')?.dataset.at }),
   onLayout: () => requestAnimationFrame(relayoutBranches),
+  // ファイルの操作メニューは会話一覧と同じ 1 つを使う。OS の操作はサーバーが「この PC の画面」と答えたときだけ
+  showMenu: (x, y, items, title) => showMenu(x, y, items, title),
+  cmd: (command, args) => cmd(command, args),
+  osActions: () => state.osActions === true,
   useFile: file => {
     if ($('prompt').disabled) return;
     if (!state.attached.some(a => a.path === file.path)) {
-      if (state.attached.length >= 20) { $('draftSaved').textContent = '添付は20件までです。不要な添付を外してください。'; return; }
+      if (state.attached.length >= 20) { $('draftSaved').textContent = t('chat.attach.tooMany', { count: 20 }); return; }
       state.attached.push({ path:file.path, name:file.name, kind:'file', mime:file.mime ?? '' });
       renderAttached(); saveDraft().catch(() => {});
     }
@@ -2140,36 +2202,54 @@ function renderAttached() {
     if (a.dataUri) {
       const b = el("button", "att-thumb");
       b.type = "button";
-      b.title = `${a.name}（押すと大きく見る）`;
+      b.title = t("chat.attach.enlarge", { name: a.name });
       const img = el("img");
       img.src = a.dataUri;
       img.alt = a.name;
       b.append(img);
-      b.onclick = () => openLightbox(a.dataUri, a.name);
+      b.onclick = () => openLightbox(a.dataUri, a.name, a.path);
       item.append(b);
     } else {
       item.append(el("span", "att-name", a.name));
     }
     const x = el("button", "x", "×");
     x.type = "button";
-    x.title = "外す";
+    x.title = t("chat.attach.remove");
     x.onclick = () => { state.attached.splice(i, 1); renderAttached(); saveDraft().catch(() => {}); };
     item.append(x);
     return item;
   }));
 }
 
-/** 画像を大きく見る。閲覧だけ。会話の present も入力欄の添付も同じ */
-function openLightbox(src, caption) {
+/**
+ * 画像を大きく見る。会話の present・生成画像・本文の画像も入力欄の添付も同じ。
+ * 下端に所在（フルパスとコピー）と操作（右パネルで開く・エクスプローラーで表示・保存）を並べる。
+ * パスが分からない画像（data URI だけ）は保存だけ。origin は会話の中の元の画像（発言の時刻で相対パスを解く）
+ */
+let lightboxFile = null;
+function openLightbox(src, caption, path, origin) {
   const d = $("lightbox");
   d.querySelector("img").src = src;
   d.querySelector(".lb-cap").textContent = caption ?? "";
+  lightboxFile = path ? { path, element: origin ?? null } : null;
+  const where = d.querySelector(".lb-path");
+  where.hidden = !path;
+  d.querySelector(".lb-path-text").textContent = path ?? "";
+  d.querySelector(".lb-path-text").title = path ?? "";
+  d.querySelector(".lb-panel").hidden = !path;
+  d.querySelector(".lb-reveal").hidden = !path || state.osActions !== true;
+  const save = d.querySelector(".lb-save");
+  const name = (path ?? caption ?? "image").split(/[\\/]/).at(-1) || "image";
+  // 絶対パスは認証付きの /local-file?download=1、パスの無い画像は data URI をそのまま保存する
+  const absolute = path && /^(?:[a-z]:[\\/]|\/)/i.test(path);
+  save.hidden = !absolute && !/^data:image\//.test(src);
+  save.onclick = (e) => { e.preventDefault(); download(absolute ? fileDownloadUrl(path) : src, name); };
   d.showModal();
 }
 
 const readAsDataUri = (file) => new Promise((res, rej) => {
   const fr = new FileReader();
-  fr.onerror = () => rej(new Error("読めなかった"));
+  fr.onerror = () => rej(new Error(t("chat.attach.readFailed")));
   fr.onload = () => res(String(fr.result));
   fr.readAsDataURL(file);
 });
@@ -2178,7 +2258,7 @@ async function attachFiles(files) {
   const sessionId = state.current;
   for (const file of files) {
     if (file.size > 8 * 1024 * 1024) {
-      sys(`${escText(file.name)} は大きすぎる（上限 8MB）`);
+      sys(html.t("chat.attach.tooLarge", { name: file.name }));
       continue;
     }
     try {
@@ -2194,7 +2274,7 @@ async function attachFiles(files) {
         await cmd("saveDraft", { sessionId, ...draft });
       }
     } catch (e) {
-      sys(`${escText(file.name)} を渡せなかった: ${escText(e.message)}`);
+      sys(html.t("chat.attach.failed", { name: file.name, error: e.message }));
     }
   }
 }
@@ -2215,12 +2295,20 @@ function wireDropZone() {
   // 会話に載った画像も同じライトボックスで大きく見る
   log.addEventListener("click", (e) => {
     const img = e.target.closest(".present-body > img, .tc-preview > img, .md-img");
-    if (img) openLightbox(img.src, img.alt);
+    if (img) openLightbox(img.src, img.alt, img.dataset.filePath, img);
   });
   const lb = $("lightbox");
   lb.addEventListener("click", (e) => {
     if (e.target === lb || e.target.closest("[data-close]")) lb.close();
   });
+  lb.querySelector(".lb-copy").onclick = (e) => copyText(e.currentTarget, lightboxFile?.path ?? "", t("files.menu.copyPath"));
+  lb.querySelector(".lb-panel").onclick = () => {
+    const target = lightboxFile;
+    if (!target) return;
+    lb.close();
+    filePreview.open({ path: target.path, line: null }, target.element?.isConnected ? target.element : null);
+  };
+  lb.querySelector(".lb-reveal").onclick = () => { if (lightboxFile) filePreview.reveal(lightboxFile); };
   const zone = document.querySelector("main");
   let depth = 0;
   const show = (on) => zone.classList.toggle("dropping", on);
@@ -2254,17 +2342,18 @@ const contextMenu = createContextMenu();
 const closeMenu = () => contextMenu.close();
 function showMenu(x, y, items, title) { side.closePops(); contextMenu.open(x, y, items, title); }
 
-const copy = (text, what) => {
+/** クリップボードへ写し、結果を一行出す。done / failed は出す文（sys に渡す HTML） */
+const copy = (text, done, failed) => {
   navigator.clipboard?.writeText(String(text ?? ""))
-    .then(() => sys(`${what}をコピーした`))
-    .catch(() => sys(`${what}のコピーに失敗した`));
+    .then(() => sys(done))
+    .catch(() => sys(failed));
 };
 
 function setStatusOf(sessionId, status) {
   const s = state.sessions.find((x) => x.id === sessionId);
   if (s) return changeStatus(s, status);
-  cmd("setStatus", { sessionId, status, reason: "メニューから変更" })
-    .catch((e) => sys(`状態変更に失敗: ${escText(e.message)}`));
+  cmd("setStatus", { sessionId, status, reason: "メニューから変更" })   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+    .catch((e) => sys(html.t("session.statusFailed", { error: e.message })));
 }
 
 // ---------------------------------------------------------------- グループ（fork のまとまり、§4.1）
@@ -2272,18 +2361,18 @@ function setStatusOf(sessionId, status) {
 // 状態を変える（setStatus）と、外した印を付け外しする（setGrouped）。
 // 状態が黙って動く操作なので、どれも脇の下に「元に戻す」を出す。
 
-const rowLabel = (s) => (s.title && s.title !== "(no title)" ? s.title : "新しいセッション");
-const statusWord = (st) => st || "状態なし";
+const rowLabel = (s) => (s.title && s.title !== "(no title)" ? s.title : t("session.untitled"));
+const statusWord = (st) => st || t("session.status.none");
 
 /** 取り消し用に、触る前の状態と所属を覚える */
 const snapOf = (rows) => rows.map((s) => ({ sessionId: s.id, status: s.status ?? "", ungrouped: Boolean(s.ungrouped) }));
 
-/** 覚えた通りに戻す。1 本ずつ戻すので、途中の伝播（根を動かすと中も動く）は起こさない */
-function restore(before, what) {
+/** 覚えた通りに戻す。1 本ずつ戻すので、途中の伝播（根を動かすと中も動く）は起こさない。failed(エラー文) は失敗の一行（HTML） */
+function restore(before, failed) {
   Promise.all(before.map(async (b) => {
-    await cmd("setStatus", { sessionId: b.sessionId, status: b.status, reason: "元に戻す", alone: true });
+    await cmd("setStatus", { sessionId: b.sessionId, status: b.status, reason: "元に戻す", alone: true });   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
     await cmd("setGrouped", { sessionId: b.sessionId, ungrouped: b.ungrouped });
-  })).then(refresh).catch((e) => sys(`${what}を戻せなかった: ${escText(e.message)}`));
+  })).then(refresh).catch((e) => sys(failed(e.message)));
 }
 
 /** その行と同じグループに居る行（描画と同じ規則。web/family.mjs） */
@@ -2301,26 +2390,25 @@ function changeStatus(s, status) {
   if (fam) return moveGroup(s, status);
   const before = snapOf([s]);
   const wasIn = familiesOf(state.sessions, state.sessions).some((f) => f.kin.some((k) => k.id === s.id));
-  cmd("setStatus", { sessionId: s.id, status, reason: "手動で変更" })
+  cmd("setStatus", { sessionId: s.id, status, reason: "手動で変更" })   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
     .then(() => {
       refresh();
-      side.showUndo(wasIn ? `「${rowLabel(s)}」を ${statusWord(status)} にしてグループから外した`
-                          : `「${rowLabel(s)}」を ${statusWord(status)} にした`,
-        () => restore(before, "状態の変更"));
+      side.showUndo(wasIn ? t("session.undo.statusLeft", { title: rowLabel(s), status: statusWord(status) }) : t("session.undo.status", { title: rowLabel(s), status: statusWord(status) }),
+        () => restore(before, (error) => html.t("session.undo.statusFailed", { error })));
     })
-    .catch((e) => sys(`状態変更に失敗: ${escText(e.message)}`));
+    .catch((e) => sys(html.t("session.statusFailed", { error: e.message })));
 }
 
 /** グループごと別の状態へ。中の会話も一緒に動く（サーバが根の移動として広げる） */
 function moveGroup(root, status) {
   const before = snapOf(groupOf(root));
-  cmd("setStatus", { sessionId: root.id, status, reason: "グループごと移動" })
+  cmd("setStatus", { sessionId: root.id, status, reason: "グループごと移動" })   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
     .then(() => {
       refresh();
-      side.showUndo(`「${rowLabel(root)}」のグループを ${statusWord(status)} に移した（${before.length} 件）`,
-        () => restore(before, "グループの移動"));
+      side.showUndo(t("session.undo.groupMoved", { title: rowLabel(root), status: statusWord(status), count: before.length }),
+        () => restore(before, (error) => html.t("session.undo.groupMoveFailed", { error })));
     })
-    .catch((e) => sys(`グループの移動に失敗: ${escText(e.message)}`));
+    .catch((e) => sys(html.t("session.group.moveFailed", { error: e.message })));
 }
 
 /** グループから外す / 戻す。外すだけなら状態は動かさない */
@@ -2329,23 +2417,23 @@ function setGrouped(s, ungrouped) {
   cmd("setGrouped", { sessionId: s.id, ungrouped })
     .then(() => {
       refresh();
-      side.showUndo(ungrouped ? `「${rowLabel(s)}」をグループから外した` : `「${rowLabel(s)}」をグループに戻した`,
-        () => restore(before, "グループの出入り"));
+      side.showUndo(ungrouped ? t("session.undo.left", { title: rowLabel(s) }) : t("session.undo.rejoined", { title: rowLabel(s) }),
+        () => restore(before, (error) => html.t("session.undo.membershipFailed", { error })));
     })
-    .catch((e) => sys(`グループの変更に失敗: ${escText(e.message)}`));
+    .catch((e) => sys(html.t("session.group.changeFailed", { error: e.message })));
 }
 
 /** そのグループへ入れる。状態を根に合わせるところまでが 1 つの操作 */
 function joinGroup(s, root) {
   const before = snapOf([s, ...groupOf(s)]);
   cmd("setGrouped", { sessionId: s.id, ungrouped: false })
-    .then(() => cmd("setStatus", { sessionId: s.id, status: root.status ?? "", reason: "グループに入れる" }))
+    .then(() => cmd("setStatus", { sessionId: s.id, status: root.status ?? "", reason: "グループに入れる" }))   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
     .then(() => {
       refresh();
-      side.showUndo(`「${rowLabel(s)}」を「${rowLabel(root)}」のグループに入れた（状態: ${statusWord(root.status)}）`,
-        () => restore(before, "グループの出入り"));
+      side.showUndo(t("session.undo.joined", { title: rowLabel(s), group: rowLabel(root), status: statusWord(root.status) }),
+        () => restore(before, (error) => html.t("session.undo.membershipFailed", { error })));
     })
-    .catch((e) => sys(`グループに入れられなかった: ${escText(e.message)}`));
+    .catch((e) => sys(html.t("session.group.joinFailed", { error: e.message })));
 }
 
 /** グループを解除する。中の会話は独立した行になり、状態はそのまま */
@@ -2354,10 +2442,10 @@ function ungroupFamily(root, members) {
   Promise.all(members.map((m) => cmd("setGrouped", { sessionId: m.id, ungrouped: true })))
     .then(() => {
       refresh();
-      side.showUndo(`「${rowLabel(root)}」のグループを解除した（${members.length} 件）`,
-        () => restore(before, "グループの解除"));
+      side.showUndo(t("session.undo.ungrouped", { title: rowLabel(root), count: members.length }),
+        () => restore(before, (error) => html.t("session.undo.ungroupFailed", { error })));
     })
-    .catch((e) => sys(`グループを解除できなかった: ${escText(e.message)}`));
+    .catch((e) => sys(html.t("session.group.ungroupFailed", { error: e.message })));
 }
 
 /** 散らばっている枝をまとめてグループにする。状態は根に揃える */
@@ -2366,13 +2454,13 @@ function gatherKin(root, loose) {
   Promise.all([root, ...loose].map(async (m) => {
     await cmd("setGrouped", { sessionId: m.id, ungrouped: false });
     if ((m.status ?? null) !== (root.status ?? null)) {
-      await cmd("setStatus", { sessionId: m.id, status: root.status ?? "", reason: "枝をまとめる", alone: true });
+      await cmd("setStatus", { sessionId: m.id, status: root.status ?? "", reason: "枝をまとめる", alone: true });   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
     }
   })).then(() => {
     refresh();
-    side.showUndo(`「${rowLabel(root)}」のグループを作った（枝 ${loose.length} 件、状態を ${statusWord(root.status)} に揃えた）`,
-      () => restore(before, "グループ作成"));
-  }).catch((e) => sys(`枝をまとめられなかった: ${escText(e.message)}`));
+    side.showUndo(t("session.undo.gathered", { title: rowLabel(root), count: loose.length, status: statusWord(root.status) }),
+      () => restore(before, (error) => html.t("session.undo.gatherFailed", { error })));
+  }).catch((e) => sys(html.t("session.group.gatherFailed", { error: e.message })));
 }
 
 /** その行の系譜（fork でつながった会話。グループに入っているかどうかは見ない） */
@@ -2399,34 +2487,34 @@ function groupItems(s) {
   const mine = fams.find((f) => f.kin.length && (f.root.id === s.id || f.kin.some((k) => k.id === s.id)));
   if (mine && mine.root.id === s.id) {
     const members = [mine.root, ...mine.kin];
-    return [{ label: "グループを解除", hint: `${members.length} 件`, onClick: () => ungroupFamily(mine.root, members) }];
+    return [{ label: t("session.menu.ungroup"), hint: t("session.menu.count", { count: members.length }), onClick: () => ungroupFamily(mine.root, members) }];
   }
-  if (mine) return [{ label: "このグループから外す", hint: "状態はそのまま", onClick: () => setGrouped(s, true) }];
+  if (mine) return [{ label: t("session.menu.leaveGroup"), hint: t("session.menu.keepStatus"), onClick: () => setGrouped(s, true) }];
   // 外に居る行。入れる先（同じ系譜にできているグループ）があれば入れる、無ければ枝をまとめる
   const { root, all } = kinOf(s);
   if (all.length < 2) return [];
   const host = fams.find((f) => f.kin.length && all.some((r) => r.id === f.root.id));
-  if (host) return [{ label: `「${rowLabel(host.root)}」のグループに入れる`, hint: `状態も ${statusWord(host.root.status)} に`,
+  if (host) return [{ label: t("session.menu.joinGroup", { title: rowLabel(host.root) }), hint: t("session.menu.joinStatus", { status: statusWord(host.root.status) }),
     onClick: () => joinGroup(s, host.root) }];
   const loose = all.filter((r) => r.id !== root.id);
-  return [{ label: "枝をまとめる", hint: `${loose.length} 件`, onClick: () => gatherKin(root, loose) }];
+  return [{ label: t("session.menu.gather"), hint: t("session.menu.count", { count: loose.length }), onClick: () => gatherKin(root, loose) }];
 }
 
 /** グループの見出しの右クリック。解除と、まとまりごとの状態変更 */
 function familyMenu(root, members, x, y) {
   const known = [...new Set(state.sessions.map((z) => z.status).filter(Boolean))];
   showMenu(x, y, [
-    { label: "グループを解除", hint: `${members.length} 件`, onClick: () => ungroupFamily(root, members) },
+    { label: t("session.menu.ungroup"), hint: t("session.menu.count", { count: members.length }), onClick: () => ungroupFamily(root, members) },
     { sep: true },
-    { label: "グループの状態を変更", hint: statusWord(root.status), sub: () => [
-      { input: { placeholder: "新しい状態を作る", onCommit: (v) => moveGroup(root, v) } },
-      ...known.map((k) => ({ label: k, hint: `${members.length} 件`, checked: k === root.status, onClick: () => moveGroup(root, k) })),
+    { label: t("session.menu.groupStatus"), hint: statusWord(root.status), sub: () => [
+      { input: { placeholder: t("session.menu.newStatus"), onCommit: (v) => moveGroup(root, v) } },
+      ...known.map((k) => ({ label: k, hint: t("session.menu.count", { count: members.length }), checked: k === root.status, onClick: () => moveGroup(root, k) })),
       { sep: true },
-      { label: "状態なしにする", onClick: () => moveGroup(root, "") },
+      { label: t("session.menu.clearStatus"), onClick: () => moveGroup(root, "") },
     ] },
     { sep: true },
-    { label: "根の会話を開く", hint: rowLabel(root), onClick: () => select(root.id) },
-  ], `${rowLabel(root)} のグループ`);
+    { label: t("session.menu.openRoot"), hint: rowLabel(root), onClick: () => select(root.id) },
+  ], t("session.menu.groupTitle", { title: rowLabel(root) }));
 }
 
 async function rowMenu(s, x, y) {
@@ -2440,90 +2528,90 @@ async function rowMenu(s, x, y) {
   const hasKin = Boolean(s.parent?.sessionId) || state.sessions.some((z) => z.parent?.sessionId === s.id);
   let kin = null;
   if (hasKin) cmd("lineage", { sessionId: s.id }).then((r) => { kin = r; }).catch(() => {});
-  const kinItems = () => !kin ? [{ label: "読み込んでいる…" }]
-    : kin.sessions.map((r) => ({ label: r.title && r.title !== "(no title)" ? r.title : "新しいセッション",
-        hint: r.id === s.id ? "この行" : r.parent?.sessionId ? "枝" : "根", checked: r.id === state.current, onClick: () => select(r.id) }));
+  const kinItems = () => !kin ? [{ label: t("session.menu.loading") }]
+    : kin.sessions.map((r) => ({ label: r.title && r.title !== "(no title)" ? r.title : t("session.untitled"),
+        hint: r.id === s.id ? t("session.menu.thisRow") : r.parent?.sessionId ? t("session.menu.branch") : t("session.menu.root"), checked: r.id === state.current, onClick: () => select(r.id) }));
   const items = [
-    { label: "開く", onClick: () => select(s.id) },
-    ...(s.parent?.sessionId ? [{ label: "親の枝を開く", hint: sessionLabel(s.parent.sessionId).slice(0, 20), onClick: () => select(s.parent.sessionId) }] : []),
-    ...(hasKin ? [{ label: "枝の一覧", sub: kinItems }] : []),
-    { label: "タイトルを変更…", sub: () => [
-      { input: { placeholder: "新しいタイトル", value: s.title === "(no title)" ? "" : s.title, onCommit: (v) =>
-        cmd("setTitle", { sessionId: s.id, title: v, reason: "メニューから変更" })
-          .catch((e) => sys(`タイトル変更に失敗: ${escText(e.message)}`)) } },
+    { label: t("session.menu.open"), onClick: () => select(s.id) },
+    ...(s.parent?.sessionId ? [{ label: t("session.menu.openParent"), hint: sessionLabel(s.parent.sessionId).slice(0, 20), onClick: () => select(s.parent.sessionId) }] : []),
+    ...(hasKin ? [{ label: t("session.menu.branches"), sub: kinItems }] : []),
+    { label: t("session.menu.rename"), sub: () => [
+      { input: { placeholder: t("session.menu.newTitle"), value: s.title === "(no title)" ? "" : s.title, onCommit: (v) =>
+        cmd("setTitle", { sessionId: s.id, title: v, reason: "メニューから変更" })   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+          .catch((e) => sys(html.t("session.titleFailed", { error: e.message }))) } },
     ] },
-    { label: "状態を変更", hint: s.status ?? "状態なし", sub: () => [
-      { input: { placeholder: "新しい状態を作る", onCommit: (v) => setStatusOf(s.id, v) } },
+    { label: t("session.menu.changeStatus"), hint: s.status ?? t("session.status.none"), sub: () => [
+      { input: { placeholder: t("session.menu.newStatus"), onCommit: (v) => setStatusOf(s.id, v) } },
       ...known.map((k) => ({ label: k, checked: k === s.status, onClick: () => setStatusOf(s.id, k) })),
       { sep: true },
-      { label: "状態なしにする", onClick: () => setStatusOf(s.id, "") },
+      { label: t("session.menu.clearStatus"), onClick: () => setStatusOf(s.id, "") },
     ] },
-    ...(capsOf(s.backend).fork === false ? [] : [{ label: "末尾から分岐", onClick: () => forkTail(s.id) }]),
+    ...(capsOf(s.backend).fork === false ? [] : [{ label: t("session.menu.forkTail"), onClick: () => forkTail(s.id) }]),
     ...groupItems(s),
     { sep: true },
-    { label: "承認モード", hint: vocab.modes[mode]?.label ?? mode, sub: () =>
+    { label: t("session.menu.mode"), hint: vocab.modes[mode]?.label ?? mode, sub: () =>
       Object.entries(vocab.modes).map(([id, m]) => ({
         label: m.label, hint: m.note, checked: id === mode,
         onClick: () => (s.nextSettings?.backend && s.nextSettings.backend !== s.backend
           ? cmd("setTurnSettings", { sessionId: s.id, backend: s.nextSettings.backend, mode: id, rememberMode: true })
-          : cmd("setMode", { sessionId: s.id, mode: id, reason: "メニューから変更" }))
-          .then(refresh).catch((e) => sys(`承認モードの変更に失敗: ${escText(e.message)}`)),
+          : cmd("setMode", { sessionId: s.id, mode: id, reason: "メニューから変更" }))   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+          .then(refresh).catch((e) => sys(html.t("session.menu.modeFailed", { error: e.message }))),
       })) },
     // 名前は版付き（入力欄のチップと同じ）。「既定に従う」には実際に当たるモデルを添える。隠した別名は選んでいるときだけ。
     // 段違いを系統にまとめた一覧（antigravity）は系統ごとに 1 行（composer-labels.mjs の modelRowIds）
-    { label: "モデル（次のターン）", hint: endpointOf(s) && (s.nextSettings?.model ?? s.model) ? compatModelText(s.nextSettings?.model ?? s.model) : resolvedModel(vocab.models, s.nextSettings?.model ?? s.model ?? "").label, sub: () =>
+    { label: t("session.menu.model"), hint: endpointOf(s) && (s.nextSettings?.model ?? s.model) ? compatModelText(s.nextSettings?.model ?? s.model) : resolvedModel(vocab.models, s.nextSettings?.model ?? s.model ?? "").label, sub: () =>
       Object.entries(vocab.models).filter(([id]) => id === "" || modelRowIds(vocab.models, s.nextSettings?.model ?? s.model ?? "").includes(id)).map(([id, m]) => ({
         label: id === "" && m.resolvesTo ? `${m.label}（${vocab.models[m.resolvesTo]?.label ?? m.resolvesTo}）` : m.label,
         hint: m.note, checked: id === (s.nextSettings?.model ?? s.model ?? ""),
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, backend: s.nextSettings?.backend ?? s.backend, model: id, rememberModel: true })
-          .then(refresh).catch((e) => sys(`モデルの変更に失敗: ${escText(e.message)}`)),
+          .then(refresh).catch((e) => sys(html.t("session.menu.modelFailed", { error: e.message }))),
       })) },
     ...(await rowEndpointItems(s)),
     ...(await rowAccountItems(s)),
     { sep: true },
-    { label: "エフォート（次のターン）", hint: (s.nextSettings?.effort ?? s.effort) || efforts[""]?.resolvesTo || "既定", sub: () =>
+    { label: t("session.menu.effort"), hint: (s.nextSettings?.effort ?? s.effort) || efforts[""]?.resolvesTo || t("chat.model.default"), sub: () =>
       Object.entries(efforts).map(([effort, m]) => ({
         label: effort === "" && m.resolvesTo ? `${m.label}（${m.resolvesTo}）` : m.label,
         hint: m.note, checked: effort === (s.nextSettings?.effort ?? s.effort ?? ""),
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, effort, rememberEffort: true })
-          .then(refresh).catch(e => sys(`エフォートの変更に失敗: ${escText(e.message)}`)),
+          .then(refresh).catch(e => sys(html.t("session.menu.effortFailed", { error: e.message }))),
       })) },
-    { label: "作業ディレクトリをコピー", hint: s.cwd ?? "", onClick: () => copy(s.cwd, "作業ディレクトリ") },
-    { label: "セッション ID をコピー", onClick: () => copy(s.id, "セッション ID") },
-    ...(s.unsent ? [{ label: "未送信のセッションを削除…", sub: () => [
-      { label: "下書きも削除する", onClick: async () => {
+    { label: t("session.menu.copyCwd"), hint: s.cwd ?? "", onClick: () => copy(s.cwd, html.t("session.menu.cwdCopied"), html.t("session.menu.cwdCopyFailed")) },
+    { label: t("session.menu.copyId"), onClick: () => copy(s.id, html.t("session.menu.idCopied"), html.t("session.menu.idCopyFailed")) },
+    ...(s.unsent ? [{ label: t("session.menu.deleteUnsent"), sub: () => [
+      { label: t("session.menu.deleteWithDraft"), onClick: async () => {
         try { await cmd("deleteUnsentSession", { sessionId: s.id }); state.drafts.delete(s.id); localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); await refresh(); }
-        catch (e) { sys(`削除に失敗: ${escText(e.message)}`); }
+        catch (e) { sys(html.t("session.menu.deleteFailed", { error: e.message })); }
       } },
     ] }] : []),
   ];
-  showMenu(x, y, items, s.title && s.title !== "(no title)" ? s.title : "新しいセッション");
+  showMenu(x, y, items, s.title && s.title !== "(no title)" ? s.title : t("session.untitled"));
 }
 
 /** 「新しいグループを作る…」。その場に名前の欄が出て、Enter で作る。空のままでも一覧に残る（statuses.json） */
 function newGroupItem() {
-  return { label: "新しい状態を作る…", sub: () => [
-    { input: { placeholder: "状態の名前", onCommit: (v) =>
+  return { label: t("session.menu.newStatusEllipsis"), sub: () => [
+    { input: { placeholder: t("session.menu.statusName"), onCommit: (v) =>
       cmd("createStatus", { status: v }).then(refresh)
-        .catch((e) => sys(`状態を作れなかった: ${escText(e.message)}`)) } },
+        .catch((e) => sys(html.t("session.menu.createStatusFailed", { error: e.message }))) } },
   ] };
 }
 
 function groupMenu(st, x, y) {
-  if (st == null) return showMenu(x, y, [newGroupItem()], "状態なし");
+  if (st == null) return showMenu(x, y, [newGroupItem()], t("session.status.none"));
   const n = state.sessions.filter((s) => s.status === st).length;
   showMenu(x, y, [
-    { label: "アイコンを変える…", hint: state.statuses.find((s) => s.status === st)?.icon ?? "", onClick: () => side.pickIcon(st) },
-    { label: "名前を変更…", sub: () => [
-      { input: { placeholder: "新しい名前", value: st, onCommit: (v) =>
+    { label: t("session.menu.changeIcon"), hint: state.statuses.find((s) => s.status === st)?.icon ?? "", onClick: () => side.pickIcon(st) },
+    { label: t("session.menu.renameStatus"), sub: () => [
+      { input: { placeholder: t("session.menu.newName"), value: st, onCommit: (v) =>
         cmd("renameStatus", { from: st, to: v }).then(refresh)
-          .catch((e) => sys(`状態の名前の変更に失敗: ${escText(e.message)}`)) } },
+          .catch((e) => sys(html.t("session.menu.renameStatusFailed", { error: e.message }))) } },
     ] },
     newGroupItem(),
     { sep: true },
-    { label: "この状態を削除", hint: n ? `${n} 件は状態なしへ` : "空",
+    { label: t("session.menu.deleteStatus"), hint: n ? t("session.menu.deleteStatusHint", { count: n }) : t("session.menu.empty"),
       onClick: () => cmd("renameStatus", { from: st, to: "" }).then(refresh)
-        .catch((e) => sys(`削除に失敗: ${escText(e.message)}`)) },
+        .catch((e) => sys(html.t("session.menu.deleteFailed", { error: e.message }))) },
   ], st);
 }
 
@@ -2531,11 +2619,11 @@ function groupMenu(st, x, y) {
 // タイトル行の入口と、共通読み込みの会話に残る一行（docs/design-system.md §9）。
 // 出所はどちらも sessionContext の記録で、ターンの開始に届く contextUsage で更新する。
 
-const CTX_WORDS = { instruction: '指示', skill: 'Skills', mcp: 'MCP' };
+const CTX_KINDS = ['instruction', 'skill', 'mcp'];
 // 実際に渡ったものだけ数える。除外・重複・未対応・接続できなかった MCP は数に入れない
 const CTX_LOADED = { instruction: ['supplied', 'loaded'], skill: ['available', 'manual-only', 'loaded'], mcp: ['pending', 'connected'] };
 // Pleiad が担当する種類だけ数える（エージェント任せの種類は Pleiad が中身を把握していない）
-const contextTotal = (report) => Object.keys(CTX_WORDS).filter((kind) => report?.owners?.[kind] === 'ply')
+const contextTotal = (report) => CTX_KINDS.filter((kind) => report?.owners?.[kind] === 'ply')
   .reduce((sum, kind) => sum + (report.entries ?? []).filter((e) => e.kind === kind && CTX_LOADED[kind].includes(e.status)).length, 0);
 // エージェント任せの会話（と、Pleiad 担当を受け取れなかった antigravity の会話）
 const isManagedContext = (report) => Boolean(report) && report.status !== 'native';
@@ -2551,7 +2639,7 @@ function paintContextEntry() {
   if (button.hidden) return;
   const managed = isManagedContext(report);
   button.classList.toggle('ply', managed);
-  button.title = report ? `この会話のコンテキスト：${chipText(state.contextInfo)}` : 'この会話のコンテキスト';
+  button.title = report ? t('session.context.titleWith', { summary: chipText(state.contextInfo) }) : t('session.context.title');
   $('contextEntryCount').hidden = !managed;
   $('contextEntryCount').textContent = managed ? String(contextTotal(report)) : '';
   $('contextEntryChanged').hidden = !state.contextInfo?.changed?.differs;
@@ -2568,8 +2656,8 @@ function paintContextLine() {
   m.type = 'button';
   m.innerHTML = CHIP_ICON;
   m.append(el('span', null, chipText(state.contextInfo)));
-  if (state.contextInfo?.changed?.differs) m.append(el('span', 'chg', '· 変更あり'));
-  m.setAttribute('aria-label', `この会話のコンテキストを開く：${chipText(state.contextInfo)}`);
+  if (state.contextInfo?.changed?.differs) m.append(el('span', 'chg', t('session.context.changedSuffix')));
+  m.setAttribute('aria-label', t('session.context.open', { summary: chipText(state.contextInfo) }));
   m.setAttribute('aria-expanded', String(sessionContext.isOpen()));
   m.onclick = () => sessionContext.toggle(m);
   // 分岐点の行は同じ発言の後ろに入る。その後ろに置いて順番を保つ
@@ -2605,11 +2693,11 @@ async function rowAccountItems(s) {
   const list = await claudeAccounts.load().catch(() => []);
   const value = s.nextSettings?.account ?? s.claudeAccount ?? "";
   if (!list.length && !value) return [];
-  const choices = [{ value: "", label: "ログイン中のアカウント", note: "" }, ...list.map((a) => ({ value: a.id, label: a.name, note: a.hasToken ? "" : "トークン未登録" }))];
-  return [{ label: "アカウント（次のターン）", hint: accountLabel(value), sub: () => choices.map((c) => ({
+  const choices = [{ value: "", label: t("chat.account.signedInAccount"), note: "" }, ...list.map((a) => ({ value: a.id, label: a.name, note: a.hasToken ? "" : t("chat.account.noToken") }))];
+  return [{ label: t("session.menu.account"), hint: accountLabel(value), sub: () => choices.map((c) => ({
     label: c.label, hint: c.note, checked: c.value === value,
     onClick: () => cmd("setTurnSettings", { sessionId: s.id, account: c.value })
-      .then(refresh).catch((e) => sys(`アカウントの変更に失敗: ${escText(e.message)}`)),
+      .then(refresh).catch((e) => sys(html.t("session.menu.accountFailed", { error: e.message }))),
   })) }];
 }
 
@@ -2622,8 +2710,8 @@ function noteEndpointFailure(card, result) {
   const s = state.sessions.find((x) => x.id === state.current);
   const e = s?.compatEndpoint ? compatEndpoints.get(s.compatEndpoint) : null;
   if (!e || card.querySelector(".tc-note")) return;
-  const note = el("p", "tc-note", `この接続先（${e.name}）では Web 検索を使えません。`);
-  const more = el("button", "clink", "接続先の詳細"); more.type = "button";
+  const note = el("p", "tc-note", t("chat.endpoint.noWebSearch", { name: e.name }));
+  const more = el("button", "clink", t("chat.endpoint.details")); more.type = "button";
   more.onclick = () => compatEndpoints.open(e.agent);
   note.append(" ", more);
   card.append(note);   // 畳んだ詳細（details）の外に置く。畳んでいても見える
@@ -2636,11 +2724,11 @@ async function rowEndpointItems(s) {
   const list = (await compatEndpoints.load().catch(() => [])).filter((e) => e.agent === bid);
   const value = endpointOf(s);
   if (!list.length && !value) return [];
-  const choices = [{ value: "", label: "公式", note: "" }, ...list.map((e) => ({ value: e.id, label: e.name, note: e.ready === false ? "⚠ 確認に失敗" : "" }))];
-  return [{ label: "接続先（次のターン）", hint: endpointLabel(value), sub: () => choices.map((c) => ({
+  const choices = [{ value: "", label: t("chat.endpoint.official"), note: "" }, ...list.map((e) => ({ value: e.id, label: e.name, note: e.ready === false ? t("chat.endpoint.failedNote") : "" }))];
+  return [{ label: t("session.menu.endpoint"), hint: endpointLabel(value), sub: () => choices.map((c) => ({
     label: c.label, hint: c.note, checked: c.value === value,
     onClick: () => cmd("setTurnSettings", { sessionId: s.id, endpoint: c.value })
-      .then(refresh).catch((e) => sys(`接続先の変更に失敗: ${escText(e.message)}`)),
+      .then(refresh).catch((e) => sys(html.t("session.menu.endpointFailed", { error: e.message }))),
   })) }];
 }
 
@@ -2697,7 +2785,7 @@ async function syncTopbar() {
   if (state.current !== id || version !== topbarVersion) return;
   // 互換の接続先のモデルは接続先の一覧＋自由入力なので、公式の一覧に無くても戻さない
   if (!state.endpoint && !(state.model in models)) state.model = "" in models ? "" : Object.keys(models)[0] ?? "";
-  const efforts = await cmd('efforts', { backend: bid, model: state.model, cwd: s?.nextSettings?.cwd || s?.cwd || undefined, ...(state.endpoint ? { endpoint: state.endpoint } : {}) }).catch(() => ({ '': { label: '既定に従う' } }));
+  const efforts = await cmd('efforts', { backend: bid, model: state.model, cwd: s?.nextSettings?.cwd || s?.cwd || undefined, ...(state.endpoint ? { endpoint: state.endpoint } : {}) }).catch(() => ({ '': { label: t('chat.next.useDefault') } }));
   if (state.current !== id || version !== topbarVersion) return;
   state.efforts = efforts;
   state.effort = s?.nextSettings?.effort ?? s?.effort ?? '';
@@ -2778,7 +2866,7 @@ function paintHistory(fromMi = 0) {
     if (it.kind === "present") {
       if (it.anchorMi >= 0 && it.anchorMi < fromMi) continue;
       if (it.anchorMi < 0 && startAt && new Date(it.p.at ?? 0) < startAt) continue;
-      const wrapper = append(renderPresent(it.p), `p:${it.pi}`);
+      const wrapper = append(renderPresent(savedEvent(it.p)), `p:${it.pi}`);
       if (it.p.by === "human") wrapper.dataset.humanAttachment = "true";
       added.push(wrapper);
       continue;
@@ -2786,7 +2874,7 @@ function paintHistory(fromMi = 0) {
     if (it.mi < fromMi) continue;
     const m = it.m;
     if (m.internalTaskNotice) {
-      added.push(append(el('div', 'm sys', 'Pleiad タスクの結果を受け取って再開しました'), `m:${it.mi}`));
+      added.push(append(el('div', 'm sys', t('chat.sys.taskResumed')), `m:${it.mi}`));
       prevRole = null;
       continue;
     }
@@ -2831,7 +2919,7 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
   const byNode = nodeKeys(branches.junctions(state.current), state.messages.length);
   if (!byNode.size) {
     const parent = state.sessions.find(x => x.id === state.current)?.parent?.sessionId;
-    if (parent) byNode.set(0, [{ id: parent, name: '親の会話', n: 0, back: true }]);
+    if (parent) byNode.set(0, [{ id: parent, name: t('session.parentChat'), n: 0, back: true }]);
   }
   // Empty forks still have a selectable group before their first message.
   if (!state.messages.length && branches.has(state.current)) {
@@ -2881,7 +2969,7 @@ async function select(id, { keepUpTo, reload = false } = {}) {
     syncTopbar();
     clearThread();
     loadDraft();
-    sys("履歴を読み込み中…");
+    sys(html.t("chat.sys.historyLoading"));
   }
   sessionLoads.cancel(state.displayLoad);
   const load = sessionLoads.begin(id);
@@ -2894,7 +2982,7 @@ async function select(id, { keepUpTo, reload = false } = {}) {
     if (state.current !== id || state.displayLoad !== load) return;
     state.loadingSession = null;
     clearThread();
-    return sys(`履歴を読めなかった: ${escText(e.message)}`);
+    return sys(html.t("chat.sys.historyFailed", { error: e.message }));
   }
   try {
     if (state.displayLoad !== load || keepUpTo === undefined && state.current !== id) return;
@@ -2976,10 +3064,10 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   paintContextLine();
   refreshContextEntry({ force: true }).catch(() => {});
   thread.classList.toggle("branched", branches.has(id));   // 枝があるとき、筋は「今いる枝」として青く太い
-  if (isRunningHere()) activity.show(activity.text || "動いている");   // 走っている会話を開いたら末尾に弧
-  else if (behindHere()) activity.show("裏の作業を待っている");     // ターンは終わったが裏の子が残っている会話は衛星
+  if (isRunningHere()) activity.show(activity.text || ACTIVITY_LABEL.running);   // 走っている会話を開いたら末尾に弧
+  else if (behindHere()) activity.show(t("activity.waitingBackground"));     // ターンは終わったが裏の子が残っている会話は衛星
   relayoutBranches();     // 稼働表示が出た後の高さで、今いる枝の終端ノードを置き直す
-  $("prompt").placeholder = branchIsFresh(id) ? `${branches.nameOf(id)} の最初の発言を書く` : "Ctrl+Enter で送信";
+  $("prompt").placeholder = branchIsFresh(id) ? t("chat.composer.firstMessage", { name: branches.nameOf(id) }) : t("chat.composer.placeholder");
   // 対応を終えたエージェントの会話は読むだけ。入力欄を閉じ、理由を末尾に出す（送信はサーバーも断る）
   const retired = data?.retired ?? null;
   if (retired) { sys(escText(retired)); $("prompt").disabled = true; $("prompt").placeholder = retired; }
@@ -3047,7 +3135,7 @@ async function forkFrom(m, { draft } = {}) {
     await modeWrite;
     const boundary = draft ? { beforeMessageId: uuid } : { upToMessageId: uuid };
     const result = await cmd('fork', { sessionId: source, ...boundary });
-    if (!result?.sessionId) throw new Error('分岐先の id が返らなかった');
+    if (!result?.sessionId) throw new Error(t('chat.fork.noId'));
     if (draft) await persistDraft(result.sessionId, { text: draft.text, attached: draft.attached, dirty: true });
     await refresh();
     await branches.load(source, state.messages);
@@ -3059,7 +3147,7 @@ async function forkFrom(m, { draft } = {}) {
     $('prompt').focus({ preventScroll: true });
   } catch (e) {
     placeJunctions();
-    sys(`分岐に失敗: ${escText(e.message)}`);
+    sys(html.t("chat.fork.failed", { error: e.message }));
   } finally { await finishBranchChange(); }
   if (sendTo && state.current === sendTo) await submit();
 }
@@ -3082,7 +3170,7 @@ async function forkTail(id) {
     const row = placeJunctions().at(-1);
     if (row) await row.grow(r.sessionId);
     await changeBranch(r.sessionId, row);
-  } catch (e) { sys(`分岐に失敗: ${escText(e.message)}`); }
+  } catch (e) { sys(html.t("chat.fork.failed", { error: e.message })); }
   finally { await finishBranchChange(); }
 }
 
@@ -3112,7 +3200,7 @@ async function switchTo(id, row) {
   state.busy = true; row?.lock();
   log.classList.add('branch-transition');
   try { await changeBranch(id, row); }
-  catch (e) { row?.unlock(); sys(`切り替えに失敗: ${escText(e.message)}`); }
+  catch (e) { row?.unlock(); sys(html.t("chat.fork.switchFailed", { error: e.message })); }
   finally { await finishBranchChange(); }
 }
 
@@ -3141,7 +3229,7 @@ function syncRunState() {
   if (!here) {
     closeTurnEl();
     // ターンは終わったが裏の作業が残っている。末尾の節は消さずに衛星にする（中断は出さない）
-    if (behindHere() && !state.loadingSession) activity.show(activity.text || "裏の作業を待っている");
+    if (behindHere() && !state.loadingSession) activity.show(activity.text || t("activity.waitingBackground"));
     else activity.hide();
   }
 }
@@ -3168,13 +3256,14 @@ async function submit() {
     const text = $('prompt').value;
     const attachments = state.attached.map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
     if (!text.trim() && !attachments.length) return;
+    // i18n-ignore: エージェントに渡す添付の印。forkButton の読み戻し（/^\[添付\]/）と揃える
     const full = [text.trim(), attachments.map(a => `[添付] ${a.path}`).join(NL)].filter(Boolean).join(NL + NL);
     const args = { sessionId, prompt: full, cwd: state.cwd.trim() || undefined, mode: state.mode,
       ...(attachments.length ? { attachments } : {}) };
     const previous = receipts.get(sessionId);
     if (previous) {
       const known = (await refreshOutbox(sessionId)).find(m => m.id === previous.messageId);
-      if (!known && previous.prompt !== full) throw new Error('前の送信結果を確認できません。元の入力で再試行してください。');
+      if (!known && previous.prompt !== full) throw new Error(t('chat.send.unknownPrevious'));
       if (known && previous.prompt === full) {
         await clearSentDraft(sessionId, text, attachments);
         receipts.delete(sessionId); saveReceipts();
@@ -3188,7 +3277,7 @@ async function submit() {
     receipts.delete(sessionId); saveReceipts();
     $('settingsError').textContent = '';
   } catch (e) {
-    $('settingsError').textContent = `送信を確認できませんでした。入力は保持しています: ${e.message}`;
+    $('settingsError').textContent = t('chat.send.failed', { error: e.message });
   } finally {
     submittingMessages.delete(sessionId);
     syncRunState();
@@ -3206,23 +3295,26 @@ function connect() {
     if (m.kind === "ready") {
       // protocolVersion は必ず gate する。想定外なら黙って誤動作させない
       if (m.protocolVersion !== PROTOCOL) {
-        sys(`未対応の protocolVersion: ${escText(m.protocolVersion)}`);
+        sys(html.t("app.protocolUnsupported", { version: m.protocolVersion }));
         return ws.close();
       }
       if (m.homeDir) state.homeDir = m.homeDir;
       // 画面と違う言語なら読み直すので、ここで止める
       if (applyLocale(m.locale)) return;
       side.setConnLost(false);
+      // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
+      cmd("hostCapabilities").then((c) => { state.osActions = c?.osActions === true; filePreview.osChanged(); }).catch(() => {});
       return refresh().then(async () => {
         if (state.current) return select(state.current, { reload: true });
         let saved;
         try { saved = localStorage.getItem("agent-host-current"); } catch {}
         if (saved && state.sessions.some(s => s.id === saved)) await select(saved);
         else await startNew();
-      }).catch(e => sys(`初期化に失敗: ${escText(e.message)}`));
+      }).catch(e => sys(html.t("app.initFailed", { error: e.message })));
     }
 
-    if (m.kind === "event") return onEvent(m.event);
+    // 保存される文言（変更の理由・添付の見出し）を今の言語に（web/saved-text.mjs）
+    if (m.kind === "event") return onEvent(savedEvent(m.event));
 
     if (m.kind === "response") {
       const p = pending.get(m.id);
@@ -3236,7 +3328,7 @@ function connect() {
   ws.onclose = () => {
     // 困っているときだけ出す。切れても向こうは走り続けている（猶予の間）ので実行中の印は消さない
     side.setConnLost(true);
-    for (const [, p] of pending) p.rej(new Error("切断"));
+    for (const [, p] of pending) p.rej(new Error(t("app.disconnected")));
     pending.clear();
     setTimeout(connect, 1500);
   };
@@ -3299,8 +3391,8 @@ async function commitTitle() {
   const v = $("titleEdit").value.trim();
   if (!state.current || !v || v === s?.title || v === titleSent) return;
   titleSent = v;
-  await cmd("setTitle", { sessionId: state.current, title: v, reason: "手動で変更" })
-    .catch((e) => sys(`タイトル変更に失敗: ${escText(e.message)}`));
+  await cmd("setTitle", { sessionId: state.current, title: v, reason: "手動で変更" })   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+    .catch((e) => sys(html.t("session.titleFailed", { error: e.message })));
 }
 $("titleEdit").onchange = commitTitle;
 $("titleEdit").onblur = commitTitle;
@@ -3316,7 +3408,7 @@ $("titleWand").onclick = async () => {
   try {
     result = await cmd("suggestTitle", { sessionId: id });
   } catch (e) {
-    sys(`タイトルを考えられなかった: ${escText(e.message)}`);
+    sys(html.t("session.titleSuggestFailed", { error: e.message }));
   } finally {
     titleGenerating.delete(id);
     syncTitleControls();
@@ -3331,9 +3423,9 @@ $("titleWand").onclick = async () => {
 
 const onboarding = setupOnboarding({ cmd, refreshAuth, getAuth: () => state.auth, authLogin, authUrlBox,
   begin: async (settings, prompt) => {
-    if (state.busy || creatingSession) throw new Error("実行中の作業が完了してから、新しい会話を始めてください。");
+    if (state.busy || creatingSession) throw new Error(t("dialog.onboarding.busy"));
     const id = await startNew(settings);
-    if (!id || state.current !== id) throw new Error("新しい会話を開けませんでした。もう一度お試しください。");
+    if (!id || state.current !== id) throw new Error(t("dialog.onboarding.openFailed"));
     $("prompt").value = prompt;
     $("prompt").dispatchEvent(new Event("input", { bubbles: true }));
   },
@@ -3343,12 +3435,13 @@ setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lo
   if (work.count > 0) {
     // どの会話が止めているかを名前で出す。数だけだと、どこを待てばよいか探し回ることになる
     const ids = [...new Set([...work.turns, ...work.permissions.filter(p => !p.relay), ...work.subagents].map(w => w.sessionId).filter(Boolean))];
-    const names = ids.slice(0, 3).map(id => `「${rowLabel(state.sessions.find(s => s.id === id) ?? {})}」`).join('');
-    const where = names ? `${names}${ids.length > 3 ? ` ほか ${ids.length - 3} 件` : ''}で作業か承認待ちが続いています` : '委譲した作業が続いています';
-    throw new Error(`更新できません：${where}。完了してから再起動してください。更新は準備済みのまま残ります。`);
+    const titles = ids.slice(0, 3).map(id => rowLabel(state.sessions.find(s => s.id === id) ?? {}));
+    const names = t('app.update.names', { names: titles.join(t('app.update.namesJoin')) });
+    throw new Error(!titles.length ? t('app.update.blockedDelegated')
+      : ids.length > 3 ? t('app.update.blockedBusyMore', { names, count: ids.length - 3 }) : t('app.update.blockedBusy', { names }));
   }
-  if (creatingSession || state.loadingSession) throw new Error('会話の読み込みが完了してから更新してください。');
-  if (!state.current && ($('prompt').value || state.attached.length)) throw new Error('下書きを保存する会話を開いてから更新してください。');
+  if (creatingSession || state.loadingSession) throw new Error(t('app.update.loading'));
+  if (!state.current && ($('prompt').value || state.attached.length)) throw new Error(t('app.update.draftNoSession'));
   await saveDraft();
   await Promise.all([settingsWrite, modeWrite, ...[...state.drafts].filter(([id, draft]) => id && draft.dirty).map(([id, draft]) => persistDraft(id, draft))]);
   await Promise.all([...draftWrites.values()]);
@@ -3358,7 +3451,6 @@ setupUsage({ $, cmd, getBackends: () => state.backends, endpoints: async (agent)
   // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
   onUsageLogin: accountId => claudeAccounts.open({ usageLogin: accountId }) });
 clearThread();
-applyDom(document);
 initTheme();
 initLocale();
 initSidebar();

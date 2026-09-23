@@ -16,6 +16,8 @@ installDomStub();
 
 const cases = [
   await import('./unit/file-preview.mjs'),
+  // パスの自動リンク・画像の所在・ファイルの操作メニュー・OS で開く口（OS の窓は開かない）
+  await import('./unit/file-actions.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
@@ -83,6 +85,8 @@ const cases = [
   // 多言語対応。翻訳漏れの lint（直書きの日本語のラチェット・辞書の揃い）と、言語の解決・書式・setPref locale
   await import("./unit/i18n-lint.mjs"),
   await import("./unit/i18n.mjs"),
+  // core・desktop の文言の言語切り替えと、保存される文言（変更の理由・添付の見出し・既定のタイトル）
+  await import("./unit/i18n-server.mjs"),
   await import("./unit/codex-mode.mjs"),
   // model/list のページ送り・覚える長さ・ログイン / ログアウトで捨てる・タイトル生成のモデル選び
   await import("./unit/codex-models.mjs"),

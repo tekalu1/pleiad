@@ -6,6 +6,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { t } from "./i18n.mjs";
 
 const MAX_ENTRIES = 2000;
 
@@ -22,10 +23,10 @@ async function driveRoots() {
 
 function reason(err, dir) {
   switch (err?.code) {
-    case "ENOENT": return `フォルダーが見つかりません: ${dir}`;
-    case "ENOTDIR": return `フォルダーではありません: ${dir}`;
-    case "EACCES": case "EPERM": return `フォルダーを開けません（アクセスが許可されていません）: ${dir}`;
-    default: return `フォルダーを開けません: ${dir}`;
+    case "ENOENT": return t("dirs.notFound", { dir });
+    case "ENOTDIR": return t("dirs.notDirectory", { dir });
+    case "EACCES": case "EPERM": return t("dirs.accessDenied", { dir });
+    default: return t("dirs.openFailed", { dir });
   }
 }
 
@@ -35,8 +36,8 @@ function reason(err, dir) {
  * @returns {Promise<{ path: string, parent: string|null, dirs: string[], truncated: boolean, roots: string[] }>}
  */
 export async function listDirs(requested, { fallback } = {}) {
-  if (requested != null && typeof requested !== "string") throw new Error("パスの指定が不正です");
-  if (requested && (requested.length > 8192 || requested.includes("\0"))) throw new Error("パスの指定が不正です");
+  if (requested != null && typeof requested !== "string") throw new Error(t("dirs.invalidPath"));
+  if (requested && (requested.length > 8192 || requested.includes("\0"))) throw new Error(t("dirs.invalidPath"));
   const dir = path.resolve(String(requested || fallback || os.homedir()).trim());
   let entries;
   try {

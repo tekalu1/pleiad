@@ -16,6 +16,11 @@ const cases = [
   ["XSS: 画像記法で js", `![x](javascript:alert(1))`],
   ["XSS: 見出しに混入", `# <img src=x onerror=alert(1)>`],
   ["XSS: 表セルに混入", "| a |\n|---|\n| <script>x</script> |"],
+  // パスの自動リンク（インラインコード・地の文の Windows の絶対パス）。data-file-path に値として入るだけ
+  ["XSS: 地の文のパスに引用符とタグ", String.raw`D:\a\"><script>alert(1)</script>.md と D:\x'onmouseover='alert(1)'.md`],
+  ["XSS: インラインコードのパスに引用符", "`D:\\it's\\a&b.md` と `./x'y\" onclick=\"alert(1).md` と `web/a'b.md:3`"],
+  ["XSS: 強調の中のパス", String.raw`**D:\a\<img src=x onerror=alert(1)>.md**`],
+  ["パスの自動リンク", "`web/render.mjs` と D:\\dev\\a.md と `npm test`"],
   ["見出し", "# h1\n## h2\n### h3"],
   ["表", "| a | b |\n|---|---|\n| 1 | 2 |"],
   ["ネストリスト", "- x\n  - y\n- z"],

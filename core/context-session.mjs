@@ -9,23 +9,24 @@ import fs from 'node:fs/promises';
 import { scanContext } from './context-scan.mjs';
 import { KINDS } from './context-settings.mjs';
 import { pinChanges, readSnapshot, resolveRuntime } from './context-runtime.mjs';
+import { t } from './i18n.mjs';
 
 const MAX_TEXT = 256 * 1024;
 const NAME = /^[a-zA-Z0-9_.-]{1,128}$/;
 
 export function createContextSession({ store, snapshots, plyServers = async () => null, liveRecord = () => null, isRunning = () => false, scanOptions = {} }) {
   async function saved(sessionId) {
-    if (typeof sessionId !== 'string' || !sessionId) throw new Error('会話を指定してください');
+    if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('context.session.sessionRequired'));
     const record = (await store.get(sessionId)).contextSession;
-    if (!record?.report) throw new Error('この会話にはコンテキストの記録がありません');
+    if (!record?.report) throw new Error(t('context.session.noRecord'));
     return record;
   }
 
   /** 指示・Skills を読み込み直す。返答中は受け付けない（ターンの終わりに古い記録で上書きされるため） */
   async function refresh(sessionId) {
     const record = await saved(sessionId);
-    if (!record.pin) throw new Error('この会話では Pleiad が指示・Skills をそろえていません');
-    if (isRunning(sessionId)) throw new Error('返答中は読み込み直せません。返答が終わってから押してください');
+    if (!record.pin) throw new Error(t('context.session.notManaged'));
+    if (isRunning(sessionId)) throw new Error(t('context.session.busy'));
     const runtime = await resolveRuntime(record.policy, { ...scanOptions, plyServers: await plyServers(), snapshots });
     // MCP は次のターンでつなぎ直す。それまでは直前のターンの様子（接続中・要ログイン・失敗と回数）を残す
     const before = new Map((record.report?.entries ?? []).filter(e => e.kind === 'mcp').map(e => [e.id, e]));
@@ -62,7 +63,7 @@ export function createContextSession({ store, snapshots, plyServers = async () =
    * （ターンの終わりに記録を書き戻すので、片方だけ直すと戻ってしまう）
    */
   async function setMcp(sessionId, name, removed) {
-    if (typeof name !== 'string' || !NAME.test(name)) throw new Error('MCP の名前が不正です');
+    if (typeof name !== 'string' || !NAME.test(name)) throw new Error(t('context.session.invalidMcpName'));
     const live = liveRecord(sessionId);
     const record = live ?? await saved(sessionId);
     const list = new Set(record.policy?.removedMcp ?? []);
@@ -70,8 +71,8 @@ export function createContextSession({ store, snapshots, plyServers = async () =
     record.policy = { ...record.policy, removedMcp: [...list].sort() };
     for (const row of record.report?.entries ?? []) {
       if (row.kind !== 'mcp' || row.name !== name) continue;
-      if (removed && row.status !== 'shadowed' && row.status !== 'excluded' && row.status !== 'disabled') { row.status = 'removed'; row.reason = 'この会話では外しました'; row.tools = 0; }
-      else if (!removed && row.status === 'removed') { row.status = 'pending'; row.reason = '次の返答からつなぎます'; }
+      if (removed && row.status !== 'shadowed' && row.status !== 'excluded' && row.status !== 'disabled') { row.status = 'removed'; row.reason = t('context.removedHere'); row.tools = 0; }
+      else if (!removed && row.status === 'removed') { row.status = 'pending'; row.reason = t('context.session.reconnectNext'); }
     }
     await store.setSessionData(sessionId, 'contextSession', record);
     return record;

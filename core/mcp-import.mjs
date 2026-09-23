@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { FORBIDDEN_HEADERS } from './ply-mcp.mjs';
 import { pathKey } from './context-settings.mjs';
+import { t } from './i18n.mjs';
 
 const record = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const strings = v => Array.isArray(v) && v.every(x => typeof x === 'string');
@@ -37,7 +38,7 @@ function expand(text, env, missing) {
  * @returns {{ value: object, notes: string[], authHint?: string }}
  */
 export function convertNative(format, native, { includeSecrets = false, env = process.env } = {}) {
-  if (!record(native)) throw new Error('MCP の定義が不正です');
+  if (!record(native)) throw new Error(t('mcp.import.invalid'));
   const notes = [];
   const value = {};
   const secret = (label, raw) => {
@@ -47,19 +48,19 @@ export function convertNative(format, native, { includeSecrets = false, env = pr
     if (format !== 'claude') return raw;
     const missing = [];
     const out = expand(raw, env, missing);
-    if (missing.length) { notes.push(`${label} の環境変数 ${missing.join(', ')} が見つからないため、未入力にしました`); return null; }
+    if (missing.length) { notes.push(t('mcp.import.secretMissing', { label, names: missing.join(', ') })); return null; }
     return out;
   };
   const fromEnv = (label, variable) => {
     if (!includeSecrets) return null;
-    if (env[variable] === undefined) { notes.push(`${label} の環境変数 ${variable} が見つからないため、未入力にしました`); return null; }
+    if (env[variable] === undefined) { notes.push(t('mcp.import.secretMissing', { label, names: variable })); return null; }
     return env[variable];
   };
   const plain = (label, raw) => {
     if (format !== 'claude' || typeof raw !== 'string') return raw;
     const missing = [];
     const out = expand(raw, env, missing);
-    if (missing.length) throw new Error(`${label} の環境変数 ${missing.join(', ')} が見つかりません`);
+    if (missing.length) throw new Error(t('mcp.import.envMissing', { label, names: missing.join(', ') }));
     return out;
   };
   const known = new Set();
@@ -69,36 +70,36 @@ export function convertNative(format, native, { includeSecrets = false, env = pr
   if (format === 'claude') {
     take('type', 'command', 'args', 'env', 'url', 'headers', 'oauth');
     const type = native.type ?? (stdio ? 'stdio' : 'http');
-    if (!['stdio', 'http', 'sse'].includes(type)) throw new Error(`接続方式（${type}）は取り込めません`);
+    if (!['stdio', 'http', 'sse'].includes(type)) throw new Error(t('mcp.import.transport', { type }));
     value.transport = type;
   } else if (format === 'codex') {
     take('command', 'args', 'env', 'env_vars', 'cwd', 'url', 'bearer_token_env_var', 'http_headers', 'env_http_headers', 'scopes', 'oauth_resource',
       'enabled', 'startup_timeout_sec', 'startup_timeout_ms', 'tool_timeout_sec', 'enabled_tools', 'disabled_tools');
     value.transport = stdio ? 'stdio' : 'http';
-  } else throw new Error('取り込めるのは Claude と Codex の登録です');
+  } else throw new Error(t('mcp.import.format'));
 
   if (value.transport === 'stdio') {
     value.command = plain('command', native.command);
-    if (native.args !== undefined) { if (!strings(native.args)) throw new Error('args が文字列の配列ではありません'); value.args = native.args.map(a => plain('args', a)); }
+    if (native.args !== undefined) { if (!strings(native.args)) throw new Error(t('mcp.import.args')); value.args = native.args.map(a => plain('args', a)); }
     if (typeof native.cwd === 'string') value.cwd = native.cwd;
     const envOut = {};
-    if (record(native.env)) for (const [k, v] of Object.entries(native.env)) envOut[k] = secret(`env「${k}」`, String(v));
+    if (record(native.env)) for (const [k, v] of Object.entries(native.env)) envOut[k] = secret(t('mcp.import.labelEnv', { name: k }), String(v));
     // Codex の env_vars は「親の環境からそのまま渡す変数名」。値は Pleiad を動かしている環境から写す
-    if (format === 'codex' && strings(native.env_vars)) for (const k of native.env_vars) envOut[k] ??= fromEnv(`env「${k}」`, k);
+    if (format === 'codex' && strings(native.env_vars)) for (const k of native.env_vars) envOut[k] ??= fromEnv(t('mcp.import.labelEnv', { name: k }), k);
     if (Object.keys(envOut).length) value.env = envOut;
     value.auth = 'none';
   } else {
-    if (typeof native.url !== 'string') throw new Error('url がありません');
+    if (typeof native.url !== 'string') throw new Error(t('mcp.import.noUrl'));
     value.url = plain('url', native.url);
     const headers = {};
     const addHeader = (name, v) => {
-      if (FORBIDDEN_HEADERS.has(name.toLowerCase())) { notes.push(`ヘッダー ${name} は Pleiad では指定できないため外しました`); return; }
+      if (FORBIDDEN_HEADERS.has(name.toLowerCase())) { notes.push(t('mcp.import.forbiddenHeader', { name })); return; }
       headers[name] = v;
     };
-    if (record(native.headers)) for (const [k, v] of Object.entries(native.headers)) addHeader(k, secret(`ヘッダー「${k}」`, String(v)));
+    if (record(native.headers)) for (const [k, v] of Object.entries(native.headers)) addHeader(k, secret(t('mcp.import.labelHeader', { name: k }), String(v)));
     if (format === 'codex') {
-      if (record(native.http_headers)) for (const [k, v] of Object.entries(native.http_headers)) addHeader(k, secret(`ヘッダー「${k}」`, String(v)));
-      if (record(native.env_http_headers)) for (const [k, variable] of Object.entries(native.env_http_headers)) addHeader(k, fromEnv(`ヘッダー「${k}」`, String(variable)));
+      if (record(native.http_headers)) for (const [k, v] of Object.entries(native.http_headers)) addHeader(k, secret(t('mcp.import.labelHeader', { name: k }), String(v)));
+      if (record(native.env_http_headers)) for (const [k, variable] of Object.entries(native.env_http_headers)) addHeader(k, fromEnv(t('mcp.import.labelHeader', { name: k }), String(variable)));
     }
     const bearerVar = format === 'codex' && typeof native.bearer_token_env_var === 'string' ? native.bearer_token_env_var : null;
     const oauthHint = format === 'claude' ? record(native.oauth) : (native.scopes !== undefined || native.oauth_resource !== undefined);
@@ -110,22 +111,22 @@ export function convertNative(format, native, { includeSecrets = false, env = pr
           if (k === 'clientId' && typeof v === 'string' && v) o.clientId = v;
           else if (k === 'callbackPort' && Number.isInteger(v)) o.callbackPort = v;
           else if (k === 'scope' && typeof v === 'string' && v) o.scope = v;
-          else notes.push(`Claude の oauth.${k} は取り込めないため外しました`);
+          else notes.push(t('mcp.import.oauthField', { key: k }));
         }
         // Claude のクライアントシークレットは設定ファイルではなく資格情報の保管庫にある
-        if (o.clientId) notes.push('clientSecret が要る認可サーバーなら、登録を編集して oauth.clientSecret を入力してください');
+        if (o.clientId) notes.push(t('mcp.import.clientSecret'));
       } else {
         if (strings(native.scopes) && native.scopes.length) o.scope = native.scopes.join(' ');
         if (typeof native.oauth_resource === 'string' && native.oauth_resource) o.resource = native.oauth_resource;
       }
       if (Object.keys(o).length) value.oauth = o;
-      if (Object.keys(headers).length || bearerVar) notes.push('OAuth の登録ではヘッダーと bearer を併用できないため、外しました');
+      if (Object.keys(headers).length || bearerVar) notes.push(t('mcp.import.oauthHeaders'));
     } else if (bearerVar && !Object.keys(headers).length) {
       value.auth = 'bearer';
       value.bearerToken = fromEnv('bearer', bearerVar);
     } else if (bearerVar || Object.keys(headers).length) {
       // bearer とほかのヘッダーの併用は、Authorization ヘッダーとしてまとめる
-      if (bearerVar) { const t = fromEnv('bearer', bearerVar); headers.Authorization = t === null ? null : `Bearer ${t}`; }
+      if (bearerVar) { const token = fromEnv('bearer', bearerVar); headers.Authorization = token === null ? null : `Bearer ${token}`; }
       value.auth = 'headers';
       value.headers = headers;
     }
@@ -139,7 +140,7 @@ export function convertNative(format, native, { includeSecrets = false, env = pr
     if (strings(native.disabled_tools)) value.disabled_tools = native.disabled_tools;
   }
   const ignored = Object.keys(native).filter(k => !known.has(k));
-  if (ignored.length) notes.push(`取り込まなかった項目：${ignored.join(', ')}`);
+  if (ignored.length) notes.push(t('mcp.import.ignored', { keys: ignored.join(', ') }));
   return { value, notes };
 }
 
@@ -147,10 +148,10 @@ export function convertNative(format, native, { includeSecrets = false, env = pr
 async function claudeLocal(home, cwd, name) {
   let config;
   try { config = JSON.parse((await fs.readFile(path.join(home, '.claude.json'), 'utf8')).replace(/^﻿/, '')); }
-  catch { throw new Error('~/.claude.json を読み込めません'); }
+  catch { throw new Error(t('mcp.import.claudeJson')); }
   const project = Object.entries(config?.projects ?? {}).find(([p]) => pathKey(p) === pathKey(cwd))?.[1];
   const value = project?.mcpServers?.[name];
-  if (!record(value)) throw new Error('取り込む MCP が見つかりません');
+  if (!record(value)) throw new Error(t('mcp.import.notFound'));
   return value;
 }
 
@@ -164,7 +165,7 @@ async function claudeLocal(home, cwd, name) {
  * @param {(definition: object) => Promise<{ oauth: boolean }>} [o.detect] 認証の手がかりが無い HTTP の MCP に 1 回つないで OAuth か見る
  */
 export async function importNativeMcp({ items, includeSecrets = false, mcpConfig, plyMcp, detect, env = process.env, home = os.homedir() }) {
-  if (!Array.isArray(items) || !items.length || items.length > 64) throw Object.assign(new Error('取り込む MCP を 1〜64 件指定してください'), { code: 'INVALID' });
+  if (!Array.isArray(items) || !items.length || items.length > 64) throw Object.assign(new Error(t('mcp.import.count')), { code: 'INVALID' });
   const results = [];
   for (const item of items) {
     const from = { format: item?.format, scope: item?.scope, name: item?.name };
@@ -175,13 +176,13 @@ export async function importNativeMcp({ items, includeSecrets = false, mcpConfig
         : (await mcpConfig.get({ cwd, format: item.format, scope: item.scope, name: item.name })).value;
       const { value, notes } = convertNative(item.format, native, { includeSecrets, env });
       if (item.auth !== undefined) {
-        if (!['none', 'oauth'].includes(item.auth) || value.transport === 'stdio' || (value.auth && value.auth !== 'none' && value.auth !== item.auth)) throw new Error('auth で指定できるのは、認証の手がかりが無い HTTP の MCP に対する none か oauth です');
+        if (!['none', 'oauth'].includes(item.auth) || value.transport === 'stdio' || (value.auth && value.auth !== 'none' && value.auth !== item.auth)) throw new Error(t('mcp.import.auth'));
         value.auth = item.auth;
       } else if (!value.auth) {
         // 手がかりが無い HTTP の MCP。Claude はつないでみて 401 なら OAuth に進むので、同じく 1 回つないで決める
         const found = detect ? await detect({ transport: value.transport, url: value.url }).catch(() => ({ oauth: false })) : { oauth: false };
         value.auth = found.oauth ? 'oauth' : 'none';
-        notes.push(found.oauth ? 'MCP が OAuth のログインを求めたため、OAuth として取り込みました' : '認証の指定が無いため、認証なしとして取り込みました');
+        notes.push(found.oauth ? t('mcp.import.detectedOauth') : t('mcp.import.detectedNone'));
       }
       const saved = await plyMcp.save({ name, mode: 'add', value });
       results.push({ ok: true, name, from, auth: value.auth, pending: saved.registration.pending ?? [], notes,
