@@ -13,6 +13,9 @@ import { runCase, summarize, pick } from "./lib/harness.mjs";
 import { startServer, ROOT } from "./lib/server.mjs";
 import { open } from "./lib/ws-client.mjs";
 
+// 言語は日本語に固定する（tests/run.mjs と同じ理由）。起動するサーバーへも引き継がれる
+process.env.AGENT_HOST_LOCALE ||= "ja";
+
 const cases = [
   await import('./e2e/agent-delegation.mjs'),
   await import('./e2e/usage.mjs'),

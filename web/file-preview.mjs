@@ -1,4 +1,5 @@
 import { el } from './dom.mjs';
+import { fmt } from './i18n.mjs';
 import { isComposingKey } from './keyboard.mjs';
 import { fileReference, fileDownloadUrl } from './file-reference.mjs';
 import { htmlDocument, markdownContent, parseTable, previewFrame } from './file-preview-content.mjs';
@@ -144,10 +145,10 @@ export function setupFilePreview({ getContext, useFile, onLayout }) {
       save.title = '現在のファイルを保存';
       if (data.kind === 'directory') {
         status.textContent = `ディレクトリ · ${(data.items || []).length} 項目`;
-        status.title = `現在のフォルダー · 更新日時 ${new Date(data.modifiedAt).toLocaleString('ja-JP')}`;
+        status.title = `現在のフォルダー · 更新日時 ${fmt.dateTime(data.modifiedAt)}`;
       } else {
-        status.textContent = `${KIND[data.kind] || data.kind} · ${new Date(data.fetchedAt).toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' })}に取得`;
-        status.title = `現在のファイル · 更新日時 ${new Date(data.modifiedAt).toLocaleString('ja-JP')}`;
+        status.textContent = `${KIND[data.kind] || data.kind} · ${fmt.time(data.fetchedAt)}に取得`;
+        status.title = `現在のファイル · 更新日時 ${fmt.dateTime(data.modifiedAt)}`;
       }
       source = !!reference.line && typeof data.text === 'string';
       if (data.tree) {
