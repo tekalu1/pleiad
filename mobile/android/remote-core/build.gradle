@@ -1,0 +1,36 @@
+// Pleiad remote device side (docs/remote.md §3・§4・§7・§8.2). Pure JVM so the protocol can be unit-tested with Gradle
+// on the desktop against tests/remote/vectors.json and a real Node relay + host (interop test). The Android app depends on it.
+plugins {
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+}
+
+dependencies {
+    implementation "com.squareup.okhttp3:okhttp:$okhttpVersion"
+    // Android has org.json in the platform. On the JVM (tests) it comes from Maven.
+    compileOnly "org.json:json:$orgJsonVersion"
+    testImplementation "org.json:json:$orgJsonVersion"
+    testImplementation "junit:junit:$junitVersion"
+}
+
+test {
+    // Shared vectors (Node / Swift / Kotlin read the same file) and the interop host script.
+    systemProperty 'pleiad.vectors', rootProject.file('../../tests/remote/vectors.json').absolutePath
+    systemProperty 'pleiad.repo', rootProject.file('../..').absolutePath
+    systemProperty 'pleiad.interop', System.getenv('PLEIAD_INTEROP') ?: 'auto'
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+        showStandardStreams = false
+    }
+}
