@@ -6,7 +6,6 @@ const labels = {
 // 送信待ちが何を待っているか（core/message-queue.mjs の waiting）
 function queuedLabel(wait) {
   if (wait?.reason === 'turn') return '送信待ち — 作業が終わると自動で送信';
-  if (wait?.reason === 'limit') return `送信待ち — 同時に実行できる上限（${wait.limit}本）に達しています。ほかの会話の作業が終わると自動で送信`;
   if (wait?.reason === 'order') return '送信待ち — 前のメッセージが送られてから送信';
   return labels.queued;
 }
