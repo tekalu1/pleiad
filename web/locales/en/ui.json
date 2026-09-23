@@ -620,12 +620,12 @@
     "updateOnHost": "Update the host's Pleiad on the host."
   },
   "upload": {
-    "tabs": {
-      "label": "Where the working folder is",
-      "host": "Host folder",
-      "local": "Send from this PC"
+    "menu": {
+      "label": "Attach",
+      "files": "Attach files…",
+      "folder": "Send a folder…"
     },
-    "lead": "Send a folder on this PC to the host and make it this conversation's working folder.",
+    "lead": "Send a folder on this PC to the host.",
     "choose": "Choose a folder…",
     "defaultDest": "By default it goes into a new folder under ~/Pleiad/uploads on the host.",
     "thisPc": "(this PC)",
@@ -657,6 +657,7 @@
     "andMore_other": "{{files}} more",
     "changeDest": "Change destination",
     "overwriteSend": "Overwrite and send",
+    "makeCwd": "Make the sent folder the working folder",
     "sendingTitle": "Sending {{name}}",
     "pausedTitle": "Sending {{name}} is paused",
     "progressLabel": "Upload progress",
@@ -685,6 +686,7 @@
       "attachNote": "Attachments are up to 8MB per file. Each file is attached separately; the folder isn't attached as a whole."
     },
     "busy": "Another folder is being sent.",
+    "sentNotice": "Sent the folder to {{dest}} on the host.",
     "dropFailed": "Couldn't read the folder ({{error}})"
   }
 }
