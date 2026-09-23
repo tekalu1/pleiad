@@ -530,9 +530,7 @@ async function resolveCwd(resume, given, backend) {
 // 居ないあいだは待たせ、戻ってきたら聞き直し、戻らなければターンごと止める。
 const HOST_GRACE_MS = Number(process.env.AGENT_HOST_GRACE_MS ?? 60_000);
 const EVENT_BUFFER_MAX = 500;
-// 並行して回せるターン数。10 本前後を並行で扱う前提だが、
-// 無制限にすると API のレート上限とマシンを一度に食い潰すので上限を置く。
-const MAX_TURNS = Number(process.env.AGENT_HOST_MAX_TURNS ?? 8);
+// 同時に回せるターン数に上限は置かない（2026-09-23 に廃止。委譲した子で埋まり、利用者の送信が待たされていた）
 
 const runtime = {
   sockets: new Set(),    // つながっている host。タブが複数あってもよい
@@ -1031,8 +1029,6 @@ const outbox = createMessageQueue({
     const turn = runtime.turns.get(id);
     if (!turn) {
       if (switching.has(id) || forking.has(id)) return { blocked: true, wait: { reason: 'turn' } };
-      // ほかの会話（委譲した子のターンも数える）で上限まで埋まっている。この会話は何も走っていなくても待つ
-      if (runtime.turns.size >= MAX_TURNS) return { blocked: true, wait: { reason: 'limit', limit: MAX_TURNS } };
       return null;
     }
     const steer = turn.control.steer;
@@ -1096,7 +1092,7 @@ agentTasks = await createAgentTasks({
   },
   execute: async (task, prompt, signal) => {
     if (signal.aborted) return { outcome: 'aborted' };
-    if (sessionBusy(task.sessionId) || runtime.turns.size >= MAX_TURNS) return { requeue: true };
+    if (sessionBusy(task.sessionId)) return { requeue: true };
     const execution = { outcome: null, error: null };
     taskExecutions.set(task.sessionId, execution);
     const stopChild = () => {
@@ -1120,7 +1116,7 @@ agentTasks = await createAgentTasks({
   },
   deliver: async task => {
     const owner = task.parentSessionId;
-    if (sessionBusy(owner) || runtime.background.has(owner) || runtime.turns.size >= MAX_TURNS || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status))) return 'requeue';
+    if (sessionBusy(owner) || runtime.background.has(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status))) return 'requeue';
     const prompt = `[Pleiad タスク完了通知 / ${task.taskId}]\n実行先: ${task.backend}\n状態: ${task.status}\n依頼: ${task.task}\n結果（子エージェントの報告）:\n${task.result.slice(0, 16000)}${task.result.length > 16000 ? '\n続きは ply_task_status の offset: 16000 で取得できます。' : ''}\n${task.error ?? ''}\n元の依頼に必要な作業を続けてください。`;
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
@@ -1144,11 +1140,10 @@ async function runTurn(args, onStarted = () => {}, hooks = {}) {
 
 async function runTurnInternal(args, onStarted, hooks) {
   const { prompt, sessionId = null } = args ?? {};
-  if ((hooks.internal || hooks.signal) && (sessionBusy(sessionId) || runtime.turns.size >= MAX_TURNS)) return 'requeue';
+  if ((hooks.internal || hooks.signal) && (sessionBusy(sessionId))) return 'requeue';
   if (switching.has(sessionId) || forking.has(sessionId)) throw new Error("エージェントを切り替え中です");
   // 同じセッションの二重実行は防ぐ。別のセッションなら並行して回してよい
   if (sessionId && runtime.turns.has(sessionId)) throw new Error("このセッションは実行中");
-  if (runtime.turns.size >= MAX_TURNS) throw new Error(`同時に回せるのは ${MAX_TURNS} 本まで`);
   if (sessionId) switching.add(sessionId);
   try {
 
@@ -1242,7 +1237,6 @@ async function runTurnInternal(args, onStarted, hooks) {
     const contextRecord = { policy: refreshedContext ? { ...policy, refreshedAt: new Date().toISOString() } : policy,
       pin: resolvedContext?.pin ?? (plyContext ? null : previousContext?.pin ?? null), report: resolvedContext?.report ?? nativeContextReport(policy, cwd, backend),
       delivered: { backend: backend.id, entries: delivered } };
-    if ((hooks.signal || hooks.internal) && runtime.turns.size >= MAX_TURNS) return 'requeue';
     if (refreshedContext) {
       // 何が変わったかは前の記録と今の記録の突き合わせで出す（pinChanges を呼ぶと同じターンで探索がもう一度走る）
       const changed = pinnedChanges(previousContext.report?.entries ?? [], resolvedContext.report.entries);
