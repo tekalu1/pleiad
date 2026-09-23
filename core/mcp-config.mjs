@@ -39,9 +39,9 @@ function renderToml(text, config, name, value) {
 export function createMcpConfig({ home = os.homedir(), codexHome = process.env.CODEX_HOME ?? path.join(home, '.codex') } = {}) {
   let writes = Promise.resolve();
   async function target(args) {
-    if (!['claude', 'codex', 'procway'].includes(args?.format) || !['user', 'directory'].includes(args?.scope)) throw new Error('保存形式とスコープを選んでください');
+    if (!['claude', 'codex'].includes(args?.format) || !['user', 'directory'].includes(args?.scope)) throw new Error('保存形式とスコープを選んでください');
     const cwd = await scanDirectory(args.cwd);
-    const file = args.format === 'procway' ? path.join(args.scope === 'user' ? process.env.AGENT_HOST_PROCWAY_HOME ?? home : cwd, '.procway', 'ai-agent', 'settings.json') : args.format === 'codex'
+    const file = args.format === 'codex'
       ? path.join(args.scope === 'user' ? codexHome : path.join(cwd, '.codex'), 'config.toml')
       : args.scope === 'user' ? path.join(home, '.claude.json') : path.join(cwd, '.mcp.json');
     return { cwd, path: file, format: args.format, scope: args.scope };
@@ -92,15 +92,14 @@ export function createMcpConfig({ home = os.homedir(), codexHome = process.env.C
       if (typeof name !== 'string' || !/^[a-zA-Z0-9_.-]{1,128}$/.test(name) || ['__proto__', 'constructor', 'prototype', 'host', 'ply'].includes(name)) throw new Error('名前は英数字・_・.・- の128文字以内で指定してください（host・plyは内蔵MCPの予約名です）');
       if (!record(value) || Buffer.byteLength(JSON.stringify(value)) > 65536) throw new Error('MCP 定義は64 KiB以内の JSON オブジェクトで指定してください');
       const stdio = typeof value.command === 'string' && value.command.trim();
-      const endpoint = args.format === 'procway' ? value.baseUrl : value.url;
+      const endpoint = value.url;
       const http = typeof endpoint === 'string' && /^https?:\/\//.test(endpoint);
-      if ((!stdio && !http) || (stdio && (own(value, 'url') || own(value, 'baseUrl'))) || (http && own(value, 'command'))) throw new Error('command または HTTP(S) の url（procway は baseUrl）のどちらかを指定してください');
+      if ((!stdio && !http) || (stdio && own(value, 'url')) || (http && own(value, 'command'))) throw new Error('command または HTTP(S) の url のどちらかを指定してください');
       if (own(value, 'args') && (!Array.isArray(value.args) || !value.args.every(v => typeof v === 'string'))) throw new Error('args は文字列の配列で指定してください');
       if (own(value, 'env') && (!record(value.env) || !Object.values(value.env).every(v => typeof v === 'string'))) throw new Error('env は文字列の値を持つオブジェクトで指定してください');
       if (!['add', 'edit'].includes(operation)) throw new Error('追加または編集を指定してください');
       const data = await read(args);
-      const definition = data.info.format === 'claude' ? { type: stdio ? 'stdio' : 'http', ...value } : data.info.format === 'procway' ? { transport: stdio ? 'stdio' : 'http', ...value } : value;
-      if (data.info.format === 'procway' && (stdio ? definition.transport !== 'stdio' : !['http','sse'].includes(definition.transport))) throw new Error('transport と command / baseUrl が一致しません');
+      const definition = data.info.format === 'claude' ? { type: stdio ? 'stdio' : 'http', ...value } : value;
       if (data.info.format === 'claude' && (stdio ? definition.type !== 'stdio' : !['http', 'sse'].includes(definition.type))) throw new Error('接続方式の type と command / url が一致しません');
       if (revision !== data.revision) throw new Error('保存先が変更されています。一覧を再読込してから編集してください');
       if (own(data.servers, name) !== (operation === 'edit')) throw new Error(operation === 'add' ? '同名の MCP が存在します。編集から開いてください' : '編集する MCP が見つかりません');

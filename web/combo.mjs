@@ -19,7 +19,7 @@ import { el } from "./dom.mjs";
  * @param {() => Array<{value:string,label?:string,hint?:string}>} o.options 候補
  * @param {(value:string, opt:object|null) => void} [o.onCommit] 値が確定した（変わったときだけ）
  * @param {string} [o.head] 候補一覧の見出し
- * @param {boolean} [o.strict] 候補に無い値を受け付けない（procway の接続先など）
+ * @param {boolean} [o.strict] 候補に無い値を受け付けない
  * @param {string} [o.value] 初期値
  */
 export function combo(root, { options, onCommit, head, strict = false, value } = {}) {

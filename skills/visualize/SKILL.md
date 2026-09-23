@@ -7,7 +7,7 @@ description: Create interactive diagrams, charts and UI previews inside a Pleiad
 
 Pleiad supports the Visualize reference format for all its agents. For an inline visual, write a UTF-8 HTML fragment under the current working directory (for example `output/visualizations/comparison.html`), then output a standalone line: `visualize{"path":"<absolute-path>/comparison.html","title":"Comparison"}`. When the user supplies an existing HTML file for display, reference that file directly without recreating it.
 
-The Codex native form `visualize{"path":"<absolute-path>/comparison.html","title":"Comparison"}` is equivalent. Prefer the ASCII form with Claude/procway or when the transport drops special Unicode markers. Both forms use exactly the same renderer and storage.
+The Codex native form `visualize{"path":"<absolute-path>/comparison.html","title":"Comparison"}` is equivalent. Prefer the ASCII form with Claude or when the transport drops special Unicode markers. Both forms use exactly the same renderer and storage.
 
 Output the reference as response content, NOT as a code sample: no backticks, no Markdown code fence, no indentation, no list prefix. Pleiad deliberately leaves fenced examples as text and will not display a visual from them.
 

@@ -76,7 +76,7 @@ async function say(emit, text, uuid) {
 
 const STEER_LATENCY_MS = 300;
 // 途中送信を「受理」してから「渡った」までの間を作る（ミリ秒）。指定したときだけ steerConfirms を立て、
-// 本物（claude / codex / procway）と同じ pending → userMessage.delivered の順で流す。画面の確認とテスト用
+// 本物（claude / codex）と同じ pending → userMessage.delivered の順で流す。画面の確認とテスト用
 const STEER_CONFIRM_MS = Number(process.env.AGENT_HOST_FAKE_STEER_CONFIRM_MS) || 0;
 
 /**
@@ -188,7 +188,7 @@ export const backend = {
 
   // 出し分けの経路を全部通せるように、hostTools 以外は持てることにする。
   // hostTools だけ false なのは、AI 側から present / set_status を呼ぶ口が無い
-  // バックエンド（codex / procway）と同じ形を、テストでも踏むため。
+  // バックエンド（codex）と同じ形を、テストでも踏むため。
   capabilities: {
     title: true,
     tag: true,

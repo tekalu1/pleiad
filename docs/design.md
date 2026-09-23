@@ -1,5 +1,44 @@
 # 設計メモ
 
+## 互換の接続先（2026-09-23）
+
+procway-code への対応をやめる代わりに、Claude Code と Codex それぞれで互換 URL の接続先を登録し、会話ごとに選べるようにした。UX は承認済みのモック `docs/mockups/compat-endpoints.html` の案 A（入力欄のモデルの面に「接続先」の節。登録は設定 › エージェント設定の各エージェントの行の「接続先」）。画面の規則は design-system.md「入力欄の設定」「互換の接続先の管理」。
+
+**形式はエージェントで固定。** Claude Code は Anthropic Messages 互換（CLI が `{URL}/v1/messages` に送る。URL に `/v1` は付けない）、Codex は OpenAI Responses 互換（`{URL}/responses`。codex-cli 0.153 は `wire_api = "chat"` を起動時エラーにするので、Chat Completions だけの先は使えない）。プリセットは Claude: OpenRouter / Z.ai / Kimi / DeepSeek / LiteLLM / Ollama / カスタム、Codex: OpenRouter / Azure OpenAI / Ollama / LM Studio / vLLM / LiteLLM / カスタム（`web/compat-presets.mjs`。Responses に対応していない先は Codex 側に出さない）。
+
+**データ。** 一覧は `<data>/compat-endpoints.json`（`{ version: 1, endpoints: [{ id: 'ep-…', agent, name, preset, baseUrl, authMode, auth, roles, options: { contextTokens?, sendThinking? }, models, verifiedAt, lastCheck: { ok, at, error?, latencyMs?, modelCount? } }], defaults: { claude, codex } }`）。キーは `<data>/compat-endpoint-secrets.json`（`core/secret-store.mjs`。Claude のアカウント・MCP と同じ safeStorage、使えない起動は 0600 の平文）。キーは画面へ返さない（`hasKey` だけ）、ログ・stderr の記録・イベント・エラー文・sidecar に出さない（`redactSecret`）。Claude の役割は main（会話の既定＝`ANTHROPIC_MODEL`）・opus・sonnet・haiku（背景の処理とタイトル生成）で、空の役割があると保存できない（Claude の名前がそのまま送られて失敗するため）。Codex は main（既定のモデル）だけ。実装は `core/compat-endpoints.mjs`。
+
+**接続の確認。** 保存できるのは確認が通った接続情報だけ（確認 → 受領証 receipt → 保存。receipt は agent・URL・認証の送り方・キーのハッシュ・編集中の id に束縛し 15 分・1 回限り。名前・モデル・詳しい設定は変えても確かめ直さない）。確認は本物の 1 リクエスト: Claude は `POST {URL}/v1/messages`（max_tokens 1）を、認証が自動なら Bearer → x-api-key の順に試して通ったほうに決める。Codex は `POST {URL}/responses`（max_output_tokens 16、stream false、store false）で、404/405 なら本文の無い `POST {URL}/chat/completions` で道の有無だけ確かめ（生成しない）、あれば「Chat Completions にしか対応していない」と理由を付けて断る。401/403 はキー違い、404 は URL 違い、5xx は接続先のエラー、モデルが無いという 4xx は「URL とキーは通っている」として成功にする。あわせて `GET /v1/models?limit=1000`（Codex は `/models`）でモデルの一覧を取る（OpenAI 形式・Anthropic 形式のどちらも `data[].id`。取れなくても失敗にしない）。安全策: http(s) だけ、URL に userinfo・クエリ・フラグメントを入れない、公開のアドレスへの http は断る（ループバック・プライベートは可。名前は解決して確かめる）、リダイレクトは追わない（キーを別の宛先へ送らない）、20 秒で打ち切り、応答は 8MB まで。一覧の「接続を確認」は保存済みの値で確かめ直し、結果を `lastCheck` に記録する。
+
+**会話ごとの選択。** Claude のアカウントと同じ経路: `setTurnSettings { endpoint }` → `nextSettings.endpoint` → 次の `runTurn` で `compatEndpoints.resolve()`（削除済み・エージェント違い・前回の確認に失敗・キーが読めない → `EndpointError` で送信を止めて理由を返す。黙って公式に戻さない）→ sidecar の `compatEndpoint`（'' = 公式）→ バックエンドへ `endpoint`（キーを含む。受け取れるバックエンドは `capabilities.compatEndpoints`）。接続先を変えるとモデルは ''（接続先のメイン）に戻す。エージェントを変えると、変えた先の既定（下記）。互換の会話のモデルは接続先の一覧＋自由入力なので、`validModel` は形だけを見る（`/` `:` を含む ID・一覧外も可。黙って既定に戻さない）。公式の既定のモデル・段（prefs）は互換の会話へ持ち込まず、互換の会話で選んだモデル・段も prefs に覚えない。段（effortOptions）は互換の接続先では既定の段を作らない（Codex は low / medium / high、Claude は「思考を送る」がオンのときだけ Claude の段）。互換の会話ではアカウント（OAuth）を使わない。
+引き継ぎ: 分岐（`inheritSettings`）と同じエージェントの新しい会話への引き継ぎは接続先も継ぐ（削除済みは継がない）。`ply_delegate` の子は同じエージェントなら親の接続先を継ぎ、違うエージェントなら公式（`delegatedEndpoint`。形式が合わないため）。**新しい会話の既定**は設定の一覧で「既定にする」を押した接続先だけ（`defaults`。入力欄で選んでも既定にならない。サブスクを使っているつもりでキー課金になる事故を避ける）。タイトル生成もその会話の接続先で（Claude は Haiku 相当、Codex は既定のモデル）。使用量（枠）は互換の接続先では出せないので、使用量の画面に接続先ごとの一文を出す。
+
+**Claude への注入**（`core/backends/claude.mjs`、`claudeCompatEnv` / `writeClaudeFlagSettings`）。`options.env` は親の `ANTHROPIC_*`・`CLAUDE_CODE_USE_*`・`CLAUDE_CODE_OAUTH_TOKEN` などを外してから、`ANTHROPIC_BASE_URL`、キー（Bearer は `ANTHROPIC_AUTH_TOKEN`＋`ANTHROPIC_API_KEY=""`、x-api-key は逆。キーの無い先にもダミーの Bearer を入れる。入れないとログイン中の OAuth が送られうる）、役割のモデル（`ANTHROPIC_MODEL`・`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL`）、安定化（`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`・`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`・`CLAUDE_CODE_ATTRIBUTION_HEADER=0`）、コンテキスト長（`CLAUDE_CODE_MAX_CONTEXT_TOKENS`）を入れる。**同じ値を「フラグ設定」（`--settings`）のファイルにも書く**: 利用者の `~/.claude/settings.json` の `env` は `options.env` に勝つが、フラグ設定の `env` には負ける（スパイクで確認）。`options.settings` をオブジェクトで渡すと argv に JSON のまま載ってキーがプロセス一覧に出るので、データ置き場の `run/claude-compat-<uuid>.json`（0600）に書いてパスを渡し、ターンの終わりに消す（消し損ねは起動時に片付ける）。Pleiad が指示を担当するときのフラグ設定（`claudeMdExcludes` など）も同じファイルに入れる。`settingSources` は変えない（skills・hooks・memory はそのまま）。モデルは明示して渡す（'' ならメイン）。
+思考とエフォート（決定 4）: 既定では送らない。CLI はオプションを渡さなくても `thinking: {type:"adaptive"}` と `output_config.effort` を送るので、`CLAUDE_CODE_DISABLE_THINKING=1` と `CLAUDE_CODE_EFFORT_LEVEL=unset` で止める（スパイクで本文から消えることを確認）。接続先の「詳しい設定」の「思考を送る」をオンにした先（思考が必須の Kimi、この接続先経由の Claude など）には従来どおり送り、段も選べる。
+
+**Codex への注入**（`core/backends/codex.mjs`、`codexCompatThread`）。app-server は全会話で 1 本の共有のまま、スレッドごとに `thread/start`・`thread/resume` に `modelProvider: 'ply_<接続先 id>_<接続情報のハッシュ>'` と `config['model_providers.<id>'] = { name, base_url, wire_api: 'responses', requires_openai_auth: false, supports_websockets: false, experimental_bearer_token | http_headers: { 'api-key' } }` を渡す（鍵は JSON-RPC の stdin に載り、argv・環境に出ない。`env_key` は app-server の環境を読むので会話ごとに変えられない）。互換の会話では `web_search = "disabled"`（互換の先は Responses のネイティブ web_search を持たないことが多い）と、あれば `model_context_window`。公式の `model/list` は互換の先のモデルを返さないので使わず、`''` の段の既定を公式の config から持ち込まない。
+ロード済みのスレッドへの `thread/resume` は `modelProvider`・`config` を無視する（スパイクで確認）ので、スレッドがどの provider で読み込まれているかを覚え、接続先が変わった（互換 ↔ 公式、別の互換、URL・キーの変更＝provider の id が変わる）スレッドは `thread/unsubscribe` してから resume する。互換から公式へ戻すときは `config/read` の `model_provider`（無ければ `openai`）を明示する。これで会話の途中でも次のターンから接続先を変えられる。
+
+**スパイクの結論（2026-09-23、codex-cli 0.153.2 / Agent SDK 0.3.258。実 LLM は呼ばずダミーのサーバーで）**
+- Codex: 共有の app-server のまま、スレッドごとの `modelProvider`＋`config` で別の接続先に届き、並べた公式のスレッドは公式のまま。`experimental_bearer_token`・`env_key`・`http_headers` のどれでも鍵が届く。ロード済みのスレッドの resume は provider の変更を無視し、`thread/unsubscribe` 後の resume なら効く。新しい app-server で provider を渡さずに resume すると、スレッドに記録された provider ではなく設定の既定で動く。→ 接続先ごとに app-server を分ける必要はない。
+- Claude: `options.env` の値で `POST /v1/messages?beta=true` がダミーに届き、`model: 'haiku'` は `ANTHROPIC_DEFAULT_HAIKU_MODEL` に置き換わる。利用者の settings.json の `env` が `options.env` に勝ち、フラグ設定の `env` はそれにも勝つ。`CLAUDE_CODE_OAUTH_TOKEN` が残っていても `ANTHROPIC_AUTH_TOKEN` が優先される（それでも外す）。
+
+**モックからの差分**
+- 使用量の画面は接続先ごとの見出しと「表示できません」の一文だけで、接続先ごとの tokens の表は出さない（使用実績はエージェントごとの合計に含まれる）。
+- Claude の接続先の「詳しい設定」に「思考を送る」を足し、一覧の行に「思考とエフォート: 送る／送らない」を出す（決定 4）。エフォートの無効の理由も「思考を送る」がオフのためと書く。
+- Codex の追加の流れにも「認証の送り方」（Bearer / api-key ヘッダー）を出す（Azure をカスタムで入れる人のため）。Codex の確認は出力の上限を 16 にした（OpenAI の Responses の最小値）ので「出力 1 トークン」ではなく「ごくわずか」と書く。
+- 前回の確認に失敗している接続先を選んでいる会話も、削除と同じく送信を止める（決定の「確認失敗の接続先を指す会話は黙って公式に戻さない」）。入力欄の上の一文と、接続先の行の ⚠ で知らせる。
+- Claude のアカウントの節は、従来どおりアカウントを登録している（または選んでいる）会話だけに出す（モックは常に出していた）。
+- 公開のアドレスへの http の URL は確認の段で断る（キーを平文で送らないため。モックに無い安全策）。
+
+**既知の制約**
+- 利用者の settings.json に `apiKeyHelper` があると、互換の会話でもそちらのキーが使われる可能性がある（フラグ設定で打ち消す口が無い。未確認）。
+- 使用実績（Pleiad が数えた tokens）はエージェントごとの合計で、接続先ごとには分けていない。参考費用は互換の接続先では当てにならない。
+- Web 検索・Fast mode・MCP の tool search など Anthropic 側の機能は互換の先では使えない・不明。Web 検索の失敗には一文を足すが、事前には隠さない。
+- Codex の互換の先の多くはステートレス（`previous_response_id` 不可）。Codex は毎回全体を送るので通常の会話は動くが、サーバー側の状態を前提にした機能は保証しない。
+- 会話の途中で Claude の接続先を変えると、前の接続先の thinking の署名が次の先で拒否されうる（Claude Code は署名の拒否を検知して thinking を落として再試行する）。
+- 旧 procway の会話は一覧に残し、開くと「procway-code への対応は終了しました。この会話は続けられません。」と読むだけ（`core/backends/index.mjs` の `RETIRED`。送信・設定の変更は断る）。
+
 ## Claude のアカウント切り替え（2026-09-22）
 
 仕事用と個人用のように複数の Claude サブスクを、モデルと同じく会話ごとに選べるようにする。アカウントごとに `claude setup-token` で発行した長期 OAuth トークンを登録し、その会話の `query()` の `env` にだけ `CLAUDE_CODE_OAUTH_TOKEN` を入れる。`process.env` は書き換えない（Pleiad から起動するすべての会話がそのアカウントになるため）。`CLAUDE_CONFIG_DIR` は切り替えないので、transcript・CLAUDE.md・skills・MCP は両アカウントで共有し、会話の途中でアカウントを変えても resume で続く。選択肢の既定は「ログイン中のアカウント」（トークンを入れない＝従来の動作）。`ANTHROPIC_API_KEY` がある環境では CLI の優先順位どおりそちらが勝つ。
@@ -24,7 +63,6 @@ setup-token が発行するトークンの scope は `user:inference` だけで�
 
 明示操作のタイトル候補生成は、会話のモデル・エフォートを引き継がず、生成側の軽量モデルを使う。Claude は `haiku`、Codex は `gpt-5.6-luna` / `low`。Codex は `model/list` から選び、`gpt-5.6-luna` が無ければ名前に luna / mini / nano / spark を含むもの（この順）、それも無ければ model を渡さず codex の既定（config.toml / isDefault。会話のモデルではない）に任せる。`low` は選んだモデルが対応する（または段が分からない）ときだけ渡す。一覧に無いモデルを名指しして生成ごと落ちるのを避けるため。Codex は一時スレッドで実行する。モデル選定: https://learn.chatgpt.com/docs/models 。
 
-procway は他のエージェントに代行させず、会話で選択中の接続先・資格情報で生成する。実行中の serve とは別の使い捨てプロセスから provider を1回だけ呼び、セッション・ツール・MCP・履歴は作らない。会話の容量設定と推論量は引き継がない。公式接続は最軽量モデルに差し替える（`openai-codex` は `gpt-5.6-luna` / `low`、`openai` は `gpt-5.4-nano` / `low`、`anthropic` は `claude-haiku-4-5`）。互換 API・ローカル・CLI 接続は共通の最軽量モデルを判定できないため、選択中のモデルをそのまま使う。provider のエラー本文は資格情報を含み得るので、画面にもログにも出さない。
 
 ## 使用量（2026-09-14）
 
@@ -32,9 +70,8 @@ procway は他のエージェントに代行させず、会話で選択中の接
 
 Codex は公式 app-server の `account/rateLimits/read` の複数バケットを使う（https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt）。期間は返却された分数に従い、5時間／週次を推測しない。Claude はインストール済み SDK の `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET` を使う。プロンプトを送らない専用プロセスで制御コマンドのみを実行し、終了時に閉じる。実験的 API の未対応・権限不足は取得失敗として扱う。
 
-procway はネイティブ設定の openai-codex 接続と Pleiad の codex 認証プロファイルについて、独自の OAuth 資格情報で ChatGPT の使用量を照会する。経路は公式 Codex 実装の `https://chatgpt.com/backend-api/wham/usage`（https://github.com/openai/codex/blob/main/codex-rs/backend-client/src/client/rate_limit_resets.rs）。送信先は固定、リダイレクトは禁止。表示のためには認証ファイルを書き換えず、期限切れは procway 側での更新を案内する。API／CLI 接続の残量には共通 API がない。同じ ChatGPT アカウントを使う Codex と procway の枠は共有なので合算しない。資格情報・生の認証エラーはブラウザーにも使用量記録にも返さない。
 
-使用実績は導入後にこの Pleiad で完了した実行のみを `usage.json` に記録する。過去履歴・他端末・Pleiad 外の実行・実行途中の値は含めない。取得できなかった数値は null、計測済み実行だけの合計は「一部」と表示する。サブスク残率へ換算せず、推計費用も請求額と区別する。入力トークンはキャッシュを含む。Claude は result の modelUsage（サブエージェントを含む）を使用し、Codex は thread 累計の差分から前の実行分と重複通知を除き、procway は usage.recorded を合算する。実行IDで重複保存を防ぎ、直列化した一時ファイルへの書き込みと rename で保存する。
+使用実績は導入後にこの Pleiad で完了した実行のみを `usage.json` に記録する。過去履歴・他端末・Pleiad 外の実行・実行途中の値は含めない。取得できなかった数値は null、計測済み実行だけの合計は「一部」と表示する。サブスク残率へ換算せず、推計費用も請求額と区別する。入力トークンはキャッシュを含む。Claude は result の modelUsage（サブエージェントを含む）を使用し、Codex は thread 累計の差分から前の実行分と重複通知を除く。実行IDで重複保存を防ぎ、直列化した一時ファイルへの書き込みと rename で保存する。
 
 Antigravity は `agy --print /usage --output-format json` の読み取り専用コマンドで、モデルグループごとの5時間／週次の残率・リセット日時を取得する。同じグループのモデルは枠を共有するので合算しない。`--version` で 1.1.11 以降を確認してから照会し、古い版で `/usage` がモデルへの依頼になるのを防ぐ。`status: SUCCESS`・`num_turns: 0`・`command.name: usage` の構造化応答だけを採用する。欠損や範囲外の残率は不明。取得には時間・出力サイズの上限を設け、資格情報・生のエラーは返さない。公式変更履歴: https://github.com/google-antigravity/antigravity-cli/blob/main/CHANGELOG.md （1.1.11）。
 
@@ -44,7 +81,6 @@ Antigravity は `agy --print /usage --output-format json` の読み取り専用�
 
 Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/start.effort` へ渡す。`model/list` は `nextCursor` を追って全ページ読み、引けた結果だけを 5 分覚える（1 ページでも失敗したら全体を失敗とし、前に引けた一覧があればそれを返す）。ログイン完了とログアウトで捨てる。画面は語彙をエージェントごとに覚え、モデルの面を開くたびに裏で取り直して変わっていれば描き直す。ログイン・ログアウトの後は捨てて取り直す。既定へ戻す際は `config/read` とモデルの既定を解決して毎ターン指定し、ロード済み thread の以前の指定を上書きする。仕様: https://learn.chatgpt.com/docs/app-server 。Claude Code は Agent SDK の `options.effort`（low / medium / high / xhigh / max）を使う。モデルによる対応範囲の違いは SDK が扱う。
 
-procway code は minimal / low / medium / high を接続先の `reasoningEffort` に渡す。ネイティブ設定ファイルは変更せず、会話専用プロセスの設定に反映する。変更時は次のターンでその会話のプロセスを更新し、既定に戻す際は接続先の元の設定へ戻る。Anthropic 系は procway の思考トークン量への変換に従い、CLI 接続は既定のみ。API 側での対応可否は使用するモデルによる。
 
 保存時と実行前に値を検証する。エージェント・モデル変更時に以前の値が非対応なら既定へ戻し、明示的な不正値は拒否する。
 
@@ -56,27 +92,17 @@ Electron main が electron-updater と更新設定を持ち、sandbox preload �
 安定版・先行版と段階配信の公開手順、署名資格情報、データ形式の互換性は `docs/desktop-releases.md`。
 コードと配布先は public リポジトリ `tekalu1/pleiad` にまとめ、自己署名の評価版を Releases で配布する。Actions は自分のリポジトリ（`github.repository`）へ標準の GITHUB_TOKEN でアップロードする。アプリに焼き込む更新フィードはアップロード先と分け、既定は `tekalu1/pleiad`（`PLY_RELEASE_REPOSITORY` で上書き）。正式配布版の更新認証は Electron main で起動環境または GitHub CLI から毎回取得し、画面・設定保存・サーバーへ渡さない。未認証時は再ログインを案内する。非公開GitHubプロバイダー用のメタデータ名は先行版も `latest*.yml` とする。
 
-## procway の MCP（2026-09-12）
-
-procway の会話専用 serve 子プロセスに、ターン開始時点の MCP 定義を settings として注入する。可視化は Claude / Codex と同じ Visualize 参照で配信・保存する。`hostTools` は状態・タイトル・fork が未接続なので引き続き false。
-
-外部登録は MCP 管理の保存先（Claude の `.claude.json` / `.mcp.json`、Codex の `config.toml`）から読み、ネイティブファイルは変更しない。優先順位は procway の既存設定 < ユーザー Claude < ユーザー Codex < 作業ディレクトリ Claude < 作業ディレクトリ Codex。同名の `enabled: false` / `disabled: true` は低優先度の登録も無効化する。別ディレクトリの登録は渡さない。`ply` / `host` は外部・procway 設定で上書きできない予約名とする。
-
-stdio の command / args / env、HTTP(S) と SSE の URL / headers、Codex の http_headers / env_http_headers / bearer_token_env_var、Claude の環境変数展開を変換する。環境変数は子プロセスで資格情報を読み込んだ後に解決する。procway が強制できない enabled_tools / disabled_tools / cwd は黙って無視せず、送信時に未対応として拒否する。
-
-登録と内蔵 MCP の有効状態を子プロセスの設定ハッシュに含め、変更は対象会話の次ターンで再起動して反映する。実行中・park の承認待ちでは設定を読み直さず、別会話のプロセスも停止しない。MCP の接続依存は子プロセス内に留め、web のイベント形式は変えない。
-
 ## 作業中のメッセージ送信（2026-09-12）
 
 画面の送信は `sendMessage` で受け付け、実行を開始する `runTurn` と分ける。セッションごとの `outbox` を sidecar に保存してから受領応答を返す。送信IDはブラウザーでも保持し、同じIDの再送を重複実行しない。本文・添付・送信時刻・配送状態を保持する。
 
 途中送信は `control.steer(item)` で渡す。`item` は outbox の項目そのもの（`{ id, args }`）で、バックエンドは本文に `item.args.prompt` を、相手に預ける照合用の id に `item.id` を使う。返りは true = 受理 / false = 受理できない（送信待ちへ戻す）/ throw = 結果不明。
 
-Codex は実行中のハンドルに `steer` を公開し、`turn/steer` に `expectedTurnId` と `clientUserMessageId`（= `item.id`）を付けて途中入力する。公式仕様: https://learn.chatgpt.com/docs/app-server#steer-an-active-turn 。Claude（2026-09〜）もターンの間 CLI の入力を開けたままにして `steer` を公開し、開いた入力へ user メッセージを `priority: "next"` で流す。走っているツールの結果の区切り（承認待ちなら承認が返った区切り）で今のターンに折り込まれ、**そのターンの中で**答える。main が止まっていればその場が区切りになり、すぐ答える。入力を閉じた後（ターンの終わり際）は受け付けず、次のターンへ回す（詳細は multi-backend.md §2.2）。procway は serve の `steer` コマンド（`{ prompt, clientMessageId }`）で区切りの継ぎ目へ差し込む。`ready` の `commands` に `steer` が無い古い procway、Pleiad が始めていない区切り（wake）の最中、および Antigravity（agy は 1 行 1 ターンで、途中の入力は今のターンが終わってから別のターンとして走る。実測 2026-09）と次ターン設定が予約されている場合は、現在のターンが終わってから順番に実行する。古い Codex がプロトコル上明示的に拒否した場合も待機する。通信切断・タイムアウトなど、受領結果が不明な場合は自動再送しない。
+Codex は実行中のハンドルに `steer` を公開し、`turn/steer` に `expectedTurnId` と `clientUserMessageId`（= `item.id`）を付けて途中入力する。公式仕様: https://learn.chatgpt.com/docs/app-server#steer-an-active-turn 。Claude（2026-09〜）もターンの間 CLI の入力を開けたままにして `steer` を公開し、開いた入力へ user メッセージを `priority: "next"` で流す。走っているツールの結果の区切り（承認待ちなら承認が返った区切り）で今のターンに折り込まれ、**そのターンの中で**答える。main が止まっていればその場が区切りになり、すぐ答える。入力を閉じた後（ターンの終わり際）は受け付けず、次のターンへ回す（詳細は multi-backend.md §2.2）。Antigravity（agy は 1 行 1 ターンで、途中の入力は今のターンが終わってから別のターンとして走る。実測 2026-09）と次ターン設定が予約されている場合は、現在のターンが終わってから順番に実行する。古い Codex がプロトコル上明示的に拒否した場合も待機する。通信切断・タイムアウトなど、受領結果が不明な場合は自動再送しない。
 
 受理と「エージェントに渡った」は別の瞬間として扱う。渡った合図を後から出せるバックエンドは `control.steerConfirms = true` を立て、会話に入った時点で `userMessage.delivered { messageId }` を出す。server はこれが立っているときだけ `userMessage` に `pending: true` を載せ、web は渡るまでの間だけ吹き出しの下に回る弧と「次の区切りで AI に渡します」を出す。渡れば消し、渡らないままターンが終わったら「この作業には間に合いませんでした。続けて答えます」に言い換える（その後で渡れば消える）。合図を出せないバックエンドでは `pending` を載せない＝今までどおり「AIへ送信済み」だけを出す。
 
-受理した発言を読まないままターンが死んだとき（procway の `steer.dropped`。中断・失敗・ラウンド上限）は `userMessage.dropped { messageId }` を出す。server はその発言を送信待ちの「保留」へ戻し、web は吹き出しを会話から下げる。勝手には送り直さない（ターンが死んだ直後で、続けて送ってよいか分からない）。
+受理した発言を読まないままターンが死んだとき（中断・失敗・ラウンド上限）は `userMessage.dropped { messageId }` を出す。server はその発言を送信待ちの「保留」へ戻し、web は吹き出しを会話から下げる。勝手には送り直さない（ターンが死んだ直後で、続けて送ってよいか分からない）。
 
 待機メッセージは取り消し可能。停止・実行失敗では待機を保留し、勝手に再開しない。サーバー再起動時は待機を保留、配送中を結果不明として復元し、人間が会話を確認して再送または取り消せる。送信待ちにエラー・保留がある場合は後続も順序を維持して待つ。新規送信による別ターンの並列起動はしない。各セッションの未処理メッセージは100件まで。送信待ち（`queued`）の画面向けの項目には、何を待っているかを `waiting` として添える: `turn`（この会話のターン・準備・外部ターン）、`order`（先頭が保留・失敗・結果不明）。`waiting` は保存せず、kick のたびに決め直す。会話をまたいだ同時実行の本数には上限を置かない（以前の `AGENT_HOST_MAX_TURNS` は 2026-09-23 に廃止）。
 
@@ -136,7 +162,7 @@ Claude Code を **セッションを離れずに扱えるようにするブラ�
 
 - 公式クライアントの完全代替。差分表示・エディタ統合は VS Code に戻る
 - マルチプロバイダ。コアを Agent SDK と決めた時点で当面外す
-  - **v3 で改訂した**（`docs/multi-backend.md`）。`AgentBackend` を切り、Claude / Codex / procway-code を並べる
+  - **v3 で改訂した**（`docs/multi-backend.md`）。`AgentBackend` を切り、Claude / Codex / Antigravity を並べる（procway-code も並べていたが 2026-09 に対応を終えた）
 - タイトルの**暗黙の**自動更新。ターンごとに勝手に書き換わる挙動は入れない（人間が追えなくなる）。
   明示的な変更は人間・AI とも可
 - グループ機能。R3 と R5 で代替する。両方持つと「グループに入れる手間」= P2 の元凶が残る
@@ -164,7 +190,7 @@ host が store を更新して描画。**core は現在のステータスを保�
 人間が UI から変えたときも、host が store を更新して同じイベントを描画する。
 **経路は違っても、通る先は同じ**（思想 2.2）。これでコアを差し替えても host 側の資産が生き残る。
 
-**プロトコル**は procway-code の Host Contract に倣う。設計をゼロから起こさない。
+**プロトコル**は procway-code の Host Contract に倣った（procway-code への対応は 2026-09 に終えたが、形はそのまま）。設計をゼロから起こさない。
 
 - `ready` に `protocolVersion`（整数）。host は必ずこれで gate する
 - server → client: `ready` / `event` / `response` / `error`
@@ -235,7 +261,7 @@ sidecar が持つのは次の3つだけ。**いずれも後から追加すると
 
 ## 7. 成果物の提示（R2）
 
-図・グラフ・UI プレビューは共通の Visualize 参照で表示する。Claude・Codex・procway に同じスキル本文を注入し、回答に置いた参照を core が検証・読み込み・保存して会話内へ配信する。公開 MCP `present` は廃止。詳細は [可視化仕様](visualize.md)。
+図・グラフ・UI プレビューは共通の Visualize 参照で表示する。Claude・Codex に同じスキル本文を注入し、回答に置いた参照を core が検証・読み込み・保存して会話内へ配信する。公開 MCP `present` は廃止。詳細は [可視化仕様](visualize.md)。
 
 内容は `~/.agent-host/presents/<sessionId>.jsonl` に保存し、元ファイルの変更や削除から独立した履歴にする。新しい可視化は1 MiB以内のHTMLで、JavaScriptをopaque sandbox内で実行する。親画面の権限は渡さない。旧HTML履歴は静的sandboxのまま維持する。
 
@@ -389,5 +415,5 @@ Pleiadでターンが終了すると（成功・失敗・中断を含む）、�
 
 ## エージェント間の委譲（2026-09-15）
 
-Claude・Codex・procway 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作成・継続・停止する。
+Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作成・継続・停止する。
 ネイティブの `spawn_agent` / `agent_job` と名前・ID・完了通知の管理元を分ける。詳細は [agent-delegation.md](agent-delegation.md)。

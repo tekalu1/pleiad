@@ -3,7 +3,7 @@
 export const streamEvents = new Set([
   // 配達の合図も replay する（開き直したときに、渡り終えた発言が「渡していない」まま固まらないように）
   "userMessage", "userMessage.delivered", "userMessage.dropped", "text.delta", "text.end", "thinking.start", "thinking.delta",
-  "tool.start", "tool.result", "activity", "present", "turnResult", "turnEnd", "resumed", "taskNotice",
+  "tool.start", "tool.result", "activity", "present", "turnResult", "turnEnd", "taskNotice",
 ]);
 
 /** Keep events until the history AND branch layout have finished loading. */

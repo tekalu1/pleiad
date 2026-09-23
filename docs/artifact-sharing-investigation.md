@@ -10,7 +10,7 @@ Claude・Codex共通の内蔵MCP `ply` が `present` を提供する。設定 �
 
 共通処理は `core/present.mjs`、接続は `core/ply-mcp.mjs` の `/mcp/ply`（Stateless Streamable HTTP）。Claudeの `mcpServers.ply` とCodexの新規・再開時の `config['mcp_servers.ply']` に実行時注入する。[Codex公式MCP設定](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。実験的dynamicToolsは使用しない。
 
-認証は会話ごとに発行し、実行中のみ有効。提示先はその会話に固定する。再開時は接続を引き継ぎ、キャッシュされた呼出も無効設定なら拒否する。接続URL・認証値はネイティブ設定ファイルに書かない。外部MCPの編集とは独立したPleiad内蔵の設定で、予約名plyの接続を実行時に使用する。procway-codeには今回接続していない。
+認証は会話ごとに発行し、実行中のみ有効。提示先はその会話に固定する。再開時は接続を引き継ぎ、キャッシュされた呼出も無効設定なら拒否する。接続URL・認証値はネイティブ設定ファイルに書かない。外部MCPの編集とは独立したPleiad内蔵の設定で、予約名plyの接続を実行時に使用する。
 
 ファイルは会話の現在の作業場所、アップロード領域、Codex生成画像領域の実パスに限定する。提示は履歴保存後に画面へ流して成功を返す。旧host.presentの履歴描画は維持する。HTMLの静的sandbox、Markdownの画像・ファイルリンク、Visualize参照を変換しない点は下記調査時の仕様を維持する。
 
@@ -33,7 +33,7 @@ Claude・Codex共通の内蔵MCP `ply` が `present` を提供する。設定 �
 | 画像生成ツールの構造化結果 | 結果形式次第 | 対応経路あり | 対応した画像結果をツール詳細の外に表示 |
 | Visualizeの専用参照 | Pleiad側に対応処理なし | Pleiad側に対応処理なし | 参照を貼ってもHTMLカードにならない |
 
-根拠: `core/backends/claude.mjs` の `buildToolServer` と `mcpServers`、`core/backends/codex.mjs` の `capabilities.hostTools: false`、`web/render.mjs` の `renderPresent` / Markdown処理、`core/local-files.mjs`。procway-codeも現在は `hostTools: false`。
+根拠: `core/backends/claude.mjs` の `buildToolServer` と `mcpServers`、`core/backends/codex.mjs` の `capabilities.hostTools: false`、`web/render.mjs` の `renderPresent` / Markdown処理、`core/local-files.mjs`。
 
 Claudeの呼び出し例（このツールが公開されているセッション内で使う）:
 

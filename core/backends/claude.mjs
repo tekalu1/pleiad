@@ -15,6 +15,7 @@ import {
 import { claudeAuth } from '../auth/claude-cli.mjs';
 import { readClaudeAccountsUsage } from './claude-usage.mjs';
 import { claudeEnv, redactToken } from '../claude-accounts.mjs';
+import { claudeCompatEnv, writeClaudeFlagSettings, redactSecret } from '../compat-endpoints.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
 import { claudeContextOptions, unexpectedNativeMcp } from './context-options.mjs';
 import { z } from "zod";
@@ -145,7 +146,7 @@ async function claudeModels(cwd) {
 
 // web/render.mjs の TOOL_LABEL / TOOL_DRAW を補うヒント。
 // render.mjs は Claude の名前を既に知っているので、ここは「同じものを別経路でも渡せる」
-// ことの担保でもある（codex / procway はこれしか手がかりが無い）。
+// ことの担保でもある（codex はこれしか手がかりが無い）。
 const TOOL_HINTS = {
   Bash:         { label: "実行",     shape: "shell" },
   PowerShell:   { label: "実行",     shape: "shell" },
@@ -456,6 +457,8 @@ export const backend = {
     login: true,
     // 会話ごとのアカウント（claude setup-token のトークン）を選べる。server は oauthToken を渡す（core/claude-accounts.mjs）
     claudeAccounts: true,
+    // 互換の接続先（Anthropic 互換）を会話ごとに選べる。server は endpoint を渡す（core/compat-endpoints.mjs）
+    compatEndpoints: true,
   },
 
   // 親側の Task の説明を拾ってサブエージェントの見出しにする（server.mjs）。
@@ -480,7 +483,7 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, contextRuntime, agentRuntime, oauthToken }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, contextRuntime, agentRuntime, oauthToken, endpoint = null }) {
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend };
     let releaseContext;
     const readyContext = new Promise(resolve => { releaseContext = resolve; });
@@ -516,16 +519,25 @@ export const backend = {
 
     // Pleiad 自身が渡す MCP。MCP を Pleiad が担当するときの「ネイティブ MCP を止められたか」の確認でも、これらは除く
     const plyServers = { host: buildToolServer(ctx), ...(agentRuntime ? { ply_agents: { type: "http", url: agentRuntime.url, headers: agentRuntime.headers } } : {}), ...(contextRuntime ? { ply_context: { type: 'http', url: contextRuntime.url, headers: contextRuntime.headers } } : {}) };
-    const q = query({
+    // 互換の接続先（core/compat-endpoints.mjs）。env を組み替え（親の ANTHROPIC_* と OAuth トークンを外して接続先の値を入れる）、
+    // 同じ値をフラグ設定のファイルにも書く（ユーザーの settings.json の env が options.env に勝つため。オブジェクトで渡すと argv にキーが載る）。
+    // Pleiad の担当の設定（claudeContextOptions の settings）も同じファイルに入れる
+    const contextOptions = claudeContextOptions(contextRuntime);
+    const flag = endpoint ? await writeClaudeFlagSettings(store.dataDir, endpoint, contextOptions.settings) : null;
+    const hide = text => redactSecret(redactToken(text, oauthToken), endpoint?.key);
+    // query の組み立てで例外になっても、鍵を含むフラグ設定のファイルを残さない（ターンの終わりの finally まで届かないため）
+    let q;
+    try { q = query({
       prompt: promptStream(),
       options: {
         pathToClaudeCodeExecutable: claudeExecutable(),
         // env は置き換え（足し算ではない）なので process.env を必ず広げる。
         // 待ちの上限は 0 = 無し。入力を開けている限り CLI は上限を見ないが、閉じた後の保険として外す。
         // 会話で選んだアカウントのトークンは、この会話の env にだけ入れる（process.env は触らない。core/claude-accounts.mjs）
-        env: claudeEnv(process.env, { token: oauthToken, extra: { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" } }),
-        // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークンが紛れても伏せる
-        stderr: createStderrLog({ secrets: oauthToken ? [oauthToken] : [] }),
+        env: endpoint ? claudeCompatEnv(process.env, endpoint, { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" })
+          : claudeEnv(process.env, { token: oauthToken, extra: { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" } }),
+        // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークン・接続先のキーが紛れても伏せる
+        stderr: createStderrLog({ secrets: [oauthToken, endpoint?.key].filter(Boolean) }),
         resume: sessionId ?? undefined,
         cwd,
         abortController: signal,
@@ -538,24 +550,26 @@ export const backend = {
         // ~/.claude と .claude を読ませる。R1（skill / command / hooks / memory）はここで効く。
         settingSources: ["user", "project", "local"],
         skills: "all",
-        ...claudeContextOptions(contextRuntime),
+        ...contextOptions,
+        ...(flag ? { settings: flag.file } : {}),
         ...((visualizeInstructions || contextRuntime?.prompt || agentRuntime?.instructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, agentRuntime?.instructions].filter(Boolean).join('\n\n') } } : {}),
         // adaptive = モデルが必要な分だけ考える。
         // 注意: このモデルの thinking ブロックは署名だけで平文が入らない（2026-08 時点、
         // display の有無を問わず `thinking` は空文字）。したがって思考の中身は表示できない。
         // 使えるのは「考えている」ことと thinking.delta の estimatedTokens だけ。
-        thinking: { type: "adaptive" },
+        // 互換の接続先は「思考を送る」をオンにした先にだけ送る（決定 4。オフの先は env で thinking・effort を止めてある）
+        ...(!endpoint || endpoint.options?.sendThinking ? { thinking: { type: "adaptive" } } : {}),
         // 承認モード。既定は都度確認。切り替えは人間だけができる（server 側で担保）。
         // SDK 側が先に判断し、なお迷うものだけが canUseTool に来る（bypass では来ない）。
         permissionMode: sdkMode(mode),
         ...(sdkMode(mode) === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
         // 未指定なら SDK の既定に任せる（設定を上書きしない）
-        ...(model ? { model } : {}),
-        ...(effort ? { effort } : {}),
+        ...(model || endpoint?.roles?.main ? { model: model || endpoint.roles.main } : {}),
+        ...(effort && (!endpoint || endpoint.options?.sendThinking) ? { effort } : {}),
         includePartialMessages: true,
         canUseTool: makeCanUseTool(ctx, askPermission),
       },
-    });
+    }); } catch (e) { await flag?.dispose(); throw e; }
 
     // 実行中に承認モードやモデルを変えられるようにする。
     // ターン開始時の options だけだと、走り出した後の切り替えが効かない。
@@ -681,11 +695,12 @@ export const backend = {
         emit({ type: "turnResult", outcome: "aborted" });
         return { sessionId: ctx.sessionId };
       }
-      const message = redactToken(err?.message ?? err, oauthToken);
+      const message = hide(err?.message ?? err);
       emit({ type: "turnResult", outcome: "error", error: message });
-      if (oauthToken && err?.message && message !== err.message) throw new Error(message);
+      if ((oauthToken || endpoint) && err?.message && message !== err.message) throw new Error(message);
       throw err;
     } finally {
+      await flag?.dispose();
       signal?.signal?.removeEventListener?.("abort", closeInput);
       for (const [id, x] of liveQueries) if (x === q) liveQueries.delete(id);
       closeInput();
@@ -779,7 +794,7 @@ export const backend = {
    * 道具も設定も要らないので settingSources / allowedTools を切って軽く回す。
    * 返すのは生成された生のテキスト。前後の記号を落とす整形は server 側（バックエンド非依存）。
    */
-  async suggestTitle({ transcript, oauthToken }) {
+  async suggestTitle({ transcript, oauthToken, endpoint = null }) {
     let title = "";
     try {
       for await (const m of query({
@@ -788,14 +803,16 @@ export const backend = {
           "20文字以内。記号や引用符で囲まず、タイトルだけを返すこと。" + NL + NL + transcript,
         options: {
           pathToClaudeCodeExecutable: claudeExecutable(), model: "haiku", settingSources: [], allowedTools: [], permissionMode: "default",
-          // その会話で選んだアカウントで回す。選んでいなければ env を渡さない（今までどおり SDK が process.env を使う）
-          ...(oauthToken ? { env: claudeEnv(process.env, { token: oauthToken }) } : {}) },
+          // その会話で選んだアカウントで回す。選んでいなければ env を渡さない（今までどおり SDK が process.env を使う）。
+          // 互換の接続先の会話は、その接続先の Haiku 相当のモデル（"haiku" が ANTHROPIC_DEFAULT_HAIKU_MODEL に置き換わる）。
+          // settingSources が空なのでユーザーの settings.json は読まれず、env だけで足りる
+          ...(endpoint ? { env: claudeCompatEnv(process.env, endpoint) } : oauthToken ? { env: claudeEnv(process.env, { token: oauthToken }) } : {}) },
       })) {
         if (m.type !== "assistant") continue;
         for (const b of m.message?.content ?? []) if (b.type === "text") title += b.text;
       }
     } catch (err) {
-      if (oauthToken) throw new Error(redactToken(err?.message ?? err, oauthToken));
+      if (oauthToken || endpoint) throw new Error(redactSecret(redactToken(err?.message ?? err, oauthToken), endpoint?.key));
       throw err;
     }
     return title;

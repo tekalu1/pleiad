@@ -57,7 +57,23 @@ function renderLocal(parent, local) {
   table.append(body); parent.append(table);
   parent.append(el('p', 'usage-note', `${local.since ? '記録開始: ' + new Date(local.since).toLocaleString() : 'まだ使用実績がありません'}。この機能の導入後に Pleiad で完了した実行のみ。入力はキャッシュを含みます。参考費用はエージェントの推計で、サブスクの請求額ではありません。`));
 }
-export function setupUsage({ $, cmd, getBackends, page, isOpen, onUsageLogin }) {
+/**
+ * 互換の接続先ごとの見出しと「使用量は表示できません」（画面 4 の③）。枠（サブスクの使用率）は互換の先から返らない。
+ * ローカル（localhost 等）は枠そのものが無い。Pleiad での使用実績はエージェントごとの表に含まれる（接続先ごとには分けていない）
+ */
+export function renderEndpoints(parent, endpoints) {
+  if (!endpoints?.length) return;
+  for (const e of endpoints) {
+    parent.append(el('h4', null, `接続先 ${e.name}`));
+    let local = false;
+    try { local = ['localhost', '127.0.0.1', '[::1]'].includes(new URL(e.baseUrl).hostname); } catch {}
+    parent.append(el('p', 'usage-note', local
+      ? 'この接続先の使用量は表示できません。手元で動いているため枠がありません。'
+      : `この接続先の使用量は表示できません。互換の接続先は枠の情報を返さないためです。残高や請求は ${e.name} の管理画面で確認してください。`));
+  }
+  parent.append(el('p', 'usage-note', '互換の接続先で動かした分も「Pleiad での使用実績」に含まれます。その参考費用はモデルの単価が分からないため当てになりません。'));
+}
+export function setupUsage({ $, cmd, getBackends, page, isOpen, onUsageLogin, endpoints = async () => [] }) {
   let loading = false;
   async function refresh() {
     if (loading) return;
@@ -73,6 +89,7 @@ export function setupUsage({ $, cmd, getBackends, page, isOpen, onUsageLogin }) 
           card.replaceChildren(el('h3', null, result.label));
           renderQuota(card, result.quota, onUsageLogin);
           if (result.quota.checkedAt) card.append(el('p', 'usage-note', `最終取得: ${new Date(result.quota.checkedAt).toLocaleString()}`));
+          renderEndpoints(card, await endpoints(backend.id).catch(() => []));
           renderLocal(card, result.local);
         } catch { card.replaceChildren(el('h3', null, backend.label), el('p', 'usage-note', '取得できませんでした。接続を確認して更新してください。')); }
       }));

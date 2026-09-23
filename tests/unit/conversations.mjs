@@ -12,8 +12,8 @@ export default function(t) {
   t.ok("発言の生成元を保存", r.messages[2].backend === "codex");
   const noIds = { base: 0, messages: [] };
   const repeated = [{ role: "user", text: "again" }, { role: "user", text: "again" }];
-  mergeMessages(noIds, repeated, "procway");
-  mergeMessages(noIds, repeated, "procway");
+  mergeMessages(noIds, repeated, "codex");
+  mergeMessages(noIds, repeated, "codex");
   t.ok("IDがない同文の発言もそれぞれ残す", noIds.messages.length === 2);
   const reused = { base: 1, nativeId: "child", messages: [{ role: "user", uuid: "u1", text: "prefix" }] };
   mergeMessages(reused, [{ role: "user", uuid: "u1", text: "continuation" }], "codex");

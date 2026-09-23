@@ -1,6 +1,6 @@
 // ==================== 外部 MCP のカード（設定 › コンテキスト）と、追加・編集のシート ====================
 // docs/mockups/context-unified.html の②「外部 MCP」。
-//   エージェントに任せる: 各エージェント（Claude・Codex・procway-code）の登録を並べて見比べるだけ（読み取りのみ）。
+//   エージェントに任せる: 各エージェント（Claude・Codex）の登録を並べて見比べるだけ（読み取りのみ）。
 //   Pleiad がそろえる: この場所でつなぐものを名前ごとに 1 行。スイッチ（オフ = 名前で外す）、同じ名前の定義が複数あれば
 //   どれを使うか、Pleiad に登録したものはログイン・編集・名前の変更・削除・ログアウト・接続の確認、エージェントの登録は「Pleiad に取り込む」。
 // 登録は Pleiad 自身の設定（core/ply-mcp.mjs）。Claude や Codex の設定ファイルは書き換えない。秘密は伏せ字（••••）でしか返ってこない。
@@ -17,7 +17,7 @@ function withPlus(b, text) {
 }
 
 const MASK = '••••';
-const AGENTS = [['claude', 'Claude'], ['codex', 'Codex'], ['procway', 'procway-code']];
+const AGENTS = [['claude', 'Claude'], ['codex', 'Codex']];
 const agentName = id => AGENTS.find(([k]) => k === id)?.[1] ?? id;
 const STATES = { 'signed-in': 'ログイン済み', 'signed-out': 'ログインが必要', expired: 'ログインが必要（期限切れ）', pending: 'ブラウザでログイン中', locked: 'この起動では鍵を開けません', error: 'ログインの状態を確認できません' };
 
@@ -74,7 +74,7 @@ export function createMcpSection() {
     block.append(el('p', 'cx-sub', '各エージェントの設定に登録されているもの（Pleiad は読むだけで変えません）'));
     if (!ctx.agents) { block.append(ctx.loading()); return; }
     const lists = Object.fromEntries(AGENTS.map(([id]) => [id, ctx.agents.agents?.[id] ?? []]));
-    const shown = AGENTS.filter(([id]) => id !== 'procway' || lists.procway.length);
+    const shown = AGENTS;
     const cols = el('div', 'cx-cols');
     for (const [id, label] of shown) {
       const col = el('div', 'cx-col');
@@ -91,11 +91,6 @@ export function createMcpSection() {
       cols.append(col);
     }
     block.append(cols, el('p', 'cx-sub', 'エージェントを切り替えると使える MCP が変わります。そろえたいときは「Pleiad がそろえる」へ'));
-    // procway-code だけは、エージェント任せでも同名の Pleiad の登録の接続先とログインを使う（core/procway-mcp.mjs の withPlyCredentials）
-    const registered = (ctx.ply?.servers ?? []).map(s => s.name);
-    if (ctx.backends.some(b => b.id === 'procway')) block.append(el('p', 'cx-sub', registered.length
-      ? `procway-code の会話では、ここに並ぶ登録と同じ名前で Pleiad に登録した MCP（${registered.join('、')}）があれば、その接続先とログインを使います。Pleiad にだけ登録したものは足しません`
-      : 'procway-code の会話では、ここに並ぶ登録と同じ名前で Pleiad に登録した MCP があれば、その接続先とログインを使います'));
   }
 
   /** Pleiad がそろえる: 名前ごとの一覧・追加・読み込む設定ファイル */
@@ -151,7 +146,7 @@ export function createMcpSection() {
     const files = el('details', 'cx-fold');
     files.append(el('summary', null, '読み込む設定ファイル'));
     const filesBlock = el('div', 'cx-block');
-    filesBlock.append(el('p', 'cx-sub', 'Claude・Codex・procway-code の設定に登録された MCP も、ここで選んだものは一覧に並びます。同じ名前なら Pleiad に登録したものが優先します。'), ctx.sourceChips(value));
+    filesBlock.append(el('p', 'cx-sub', 'Claude・Codex の設定に登録された MCP も、ここで選んだものは一覧に並びます。同じ名前なら Pleiad に登録したものが優先します。'), ctx.sourceChips(value));
     files.append(filesBlock);
     block.append(files, advanced(ctx));
   }

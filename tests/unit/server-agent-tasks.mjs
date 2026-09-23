@@ -8,9 +8,8 @@ export const title = 'Pleiad MCP 経由の委譲から結果通知・子会話�
 const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 export default async function(t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-delegation-'));
-  const home = path.join(scratch, 'home'); await fs.mkdir(home);
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake,procway,antigravity', AGENT_HOST_PROCWAY_HOME: home,
-    AGENT_HOST_PROCWAY_CODE: path.join(ROOT, 'tests/lib/fake-procway/cli.mjs'),
+
+  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake,antigravity',
     AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"` }, dataDir: scratch });
   // 親より強い子を委譲するときは、親の会話で1回だけ承認カードが出る。
   // それを数えたうえで許可する（止まったままだと委譲が始まらない）。
@@ -71,18 +70,6 @@ export default async function(t) {
     await c.cmd('cancelAgentTask', { taskId: slow.taskId });
     await awaitTasks(rows => rows.find(r => r.taskId === slow.taskId)?.status === 'cancelled');
     t.ok('UI の停止コマンドが子の実行を止める', !(await c.cmd('running')).turns.some(r => r.sessionId === slow.sessionId));
-    await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { backend: 'procway', task: 'bg 1 700 600' }) });
-    rows = await awaitTasks(rows => rows.some(r => r.backend === 'procway' && r.notification === 'sent'));
-    const native = rows.find(r => r.backend === 'procway');
-    t.ok('委譲先 procway の内部の子と wake も待つ', native.status === 'completed' && native.result.includes('再開した:'),
-      JSON.stringify({ status: native.status, error: native.error, result: native.result }));
-    await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { backend: 'procway', task: 'bg 1 60000 500' }) });
-    rows = await awaitTasks(rows => rows.some(r => r.task === 'bg 1 60000 500' && r.status === 'running'));
-    const nativeSlow = rows.find(r => r.task === 'bg 1 60000 500');
-    await c.waitFor(e => e.type === 'running' && e.background?.some(b => b.sessionId === nativeSlow.sessionId), { ms: 15000 });
-    await c.cmd('cancelAgentTask', { taskId: nativeSlow.taskId });
-    await awaitTasks(rows => rows.find(r => r.taskId === nativeSlow.taskId)?.status === 'cancelled');
-    t.ok('委譲先の内部バックグラウンドジョブも停止する', !(await c.cmd('running')).background.some(b => b.sessionId === nativeSlow.sessionId));
     for (let i = 0; i < 100; i++) { if (!(await c.cmd('running')).turns.some(t => t.sessionId === sid)) break; await sleep(50); }
     t.ok('親の強さに収まる委譲では聞かない', escalations.length === 0, `${escalations.length} 件聞かれた`);
     await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { backend: 'antigravity', task: 'agy-test-task' }) });

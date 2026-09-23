@@ -18,7 +18,9 @@ const cases = [
   await import('./unit/usage.mjs'),
   await import('./unit/antigravity-usage.mjs'),
   await import('./unit/effort.mjs'),
-  await import('./unit/composer-agy-procway.mjs'),
+  await import('./unit/composer-agy.mjs'),
+  // 互換の接続先（保存・確認・キーを出さない・env と Codex の上書き）。偽の互換 API とだけ話す
+  await import('./unit/compat-endpoints.mjs'),
   // 入力欄の設定のチップ: フォルダーの一覧（listDirs）・「既定」の解決・エフォートの既定の段
   await import('./unit/composer-settings.mjs'),
   await import('./unit/context-transports.mjs'),
@@ -31,9 +33,6 @@ const cases = [
   // データ置き場を共有する 2 つのプロセス。本物の子プロセスを 2 本起動する
   await import('./unit/mcp-oauth-processes.mjs'),
   await import('./unit/desktop-updates.mjs'),
-  await import('./unit/procway-mcp.mjs'),
-  await import('./unit/procway-ply-mcp.mjs'),
-  await import('./unit/procway-connections.mjs'),
   await import('./unit/message-queue.mjs'),
   await import('./unit/message-steer.mjs'),
   await import('./unit/visualize.mjs'),
@@ -68,13 +67,11 @@ const cases = [
   await import("./unit/claude-background.mjs"),
   await import("./unit/codex-background.mjs"),
   await import("./unit/codex-terminals.mjs"),
-  await import("./unit/procway-background.mjs"),
   await import("./unit/event-session-id.mjs"),
   await import("./unit/lineage.mjs"),
   await import("./unit/branches.mjs"),
   // 見た目の規則。web/ の CSS と index.html を lint する（docs/design-system.md §5）
   await import("./unit/design-lint.mjs"),
-  await import("./unit/oauth-codex.mjs"),
   await import("./unit/codex-mode.mjs"),
   // model/list のページ送り・覚える長さ・ログイン / ログアウトで捨てる・タイトル生成のモデル選び
   await import("./unit/codex-models.mjs"),
@@ -89,6 +86,8 @@ const cases = [
   await import('./unit/server-claude-login.mjs'),
   await import("./unit/server-background.mjs"),
   await import("./unit/server-handoff.mjs"),
+  // 対応を終えた procway-code の会話・設定が残っていても安全に動く
+  await import("./unit/server-retired.mjs"),
   await import("./unit/server-fork.mjs"),
   await import("./unit/server-ux.mjs"),
   await import("./unit/conversations.mjs"),
@@ -96,6 +95,10 @@ const cases = [
   // codex バックエンド。app-server の身代わり（tests/lib/fake-codex.mjs）と話すだけで、
   // 本物の codex もネットワークも要らない
   await import("./unit/server-codex.mjs"),
+  // 互換の接続先の配線。codex の身代わりと偽の互換 API だけと話す
+  await import("./unit/server-compat-endpoints.mjs"),
+  // 同じことを本物の Claude Code・Codex の CLI で（送り先は偽の互換 API。入っていなければとばす）
+  await import("./unit/server-compat-real-cli.mjs"),
   // antigravity バックエンド。agy の身代わり（tests/lib/fake-agy.mjs）と話すだけで、
   // 本物の agy も Google のログインも要らない
   await import("./unit/server-antigravity.mjs"),
@@ -106,12 +109,7 @@ const cases = [
   await import("./unit/antigravity-onboarding.mjs"),
   // 孤児の agy の掃除。**名前を確かめてからでないと落とさない**
   await import("./unit/antigravity-pids.mjs"),
-  // 本物の procway-code serve を起こす。LLM の代わりに tests/lib/echo-agent.mjs を使う
-  await import("./unit/server-procway.mjs"),
-  // procway serve の身代わり（tests/lib/fake-procway）で、裏の子・wake ターン・送信待ち・ぶつかり・serve の終了を通す
-  await import("./unit/server-procway-wake.mjs"),
   // 同じ身代わりで、ターン途中の送信をその区切りへ差し込む（serve の steer）
-  await import("./unit/server-procway-steer.mjs"),
 ];
 
 const selected = pick(cases, process.argv.slice(2));
