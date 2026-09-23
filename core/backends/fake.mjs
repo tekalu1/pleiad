@@ -230,7 +230,8 @@ export const backend = {
     if (control) control.handle = handle;
 
     push(s, { role: "user", text: String(prompt ?? "") });
-    onPromptDelivered?.();
+    // silent: は渡った合図を出さないバックエンド（antigravity）の代わり。server は返答の中身で渡ったとみなす
+    if (!String(prompt ?? "").trim().startsWith("silent:")) onPromptDelivered?.();
     emit({ type: "activity", state: "thinking" });
 
     const text = String(prompt ?? "").trim();
