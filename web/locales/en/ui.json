@@ -193,6 +193,748 @@
     "thinkingTokens_other": "Thinking (about {{count}} tokens)",
     "waitingBackground": "Waiting for background tasks"
   },
+  "compat": {
+    "kind": {
+      "anthropic": "Anthropic-compatible",
+      "responses": "Responses-compatible"
+    },
+    "role": {
+      "mainLabel": "Main (conversation default)",
+      "main": "Main",
+      "opus": "Opus equivalent",
+      "sonnet": "Sonnet equivalent",
+      "haikuLabel": "Haiku equivalent (background tasks, title generation)",
+      "haiku": "Haiku equivalent"
+    },
+    "auth": {
+      "auto": "Auto (detected on check)",
+      "apiKeyHeader": "api-key header",
+      "none": "No key needed"
+    },
+    "lost": {
+      "usage": "Usage",
+      "cost": "Cost estimate",
+      "webSearch": "Web search",
+      "unknown": "{{item}} (unknown)"
+    },
+    "urlHelp": {
+      "placeholder": "Replace <resource-name> with the actual value.",
+      "trailing": "The trailing {{suffix}} is not needed."
+    },
+    "preset": {
+      "urlPreset": "Preset",
+      "international": "International",
+      "china": "Mainland China",
+      "openrouter": "openrouter.ai · many models",
+      "selfProxy": "Self-hosted proxy",
+      "selfServer": "Self-hosted server",
+      "localNoKey": "Local · no key needed",
+      "custom": "Custom",
+      "anthropicUrl": "Anthropic-compatible URL",
+      "responsesUrl": "Responses-compatible URL",
+      "azure": "Deployment name is the model",
+      "azureUrl": "https://<resource-name>.openai.azure.com/openai/v1"
+    },
+    "model": {
+      "context": "Context {{context}}",
+      "oneMTitle": "1M context (Claude Code's [1m] marker)",
+      "withOneM": "{{text}} (1M)"
+    },
+    "step": {
+      "kind": "Type",
+      "connection": "Connection",
+      "check": "Check connection",
+      "model": "Model",
+      "save": "Save"
+    },
+    "notSet": "(not set)",
+    "checking": "Checking…",
+    "loading": "Loading…",
+    "check": {
+      "never": "Not checked",
+      "ok": "✓ Checked ({{when}})",
+      "failed": "⚠ Check failed: {{error}} ({{when}})"
+    },
+    "action": {
+      "close": "Close",
+      "makeDefault": "Make default",
+      "edit": "Edit",
+      "delete": "Delete",
+      "cancel": "Cancel",
+      "confirmDelete": "Delete"
+    },
+    "list": {
+      "title": "{{agent}} endpoints",
+      "official": "Official (signed-in account)",
+      "isDefault": "default for new conversations",
+      "mainLabel": "Main: ",
+      "modelLabel": "Model: ",
+      "confirmDelete": "Delete “{{name}}”? Conversations using it will need to choose another endpoint.",
+      "add": "＋ Add endpoint",
+      "notEncrypted": "Keys can't be encrypted in this session (they are saved to a file only you can read).",
+      "recheckOk": "Connected to “{{name}}”.",
+      "recheckFailed": "Check failed for “{{name}}”: {{error}}",
+      "deleteFailed": "Couldn't delete: {{error}}"
+    },
+    "form": {
+      "modelId": "Model ID",
+      "modelNotListed": "Not in the list. Press Enter to use this ID as is.",
+      "editTitle": "Edit “{{name}}”",
+      "endpoint": "endpoint",
+      "addTitle": "Add {{agent}} endpoint",
+      "saved": "✓ Saved “{{name}}”",
+      "savedHint": "You can choose it from the model menu in the composer.",
+      "addAnother": "Add another",
+      "backToList": "Back to list",
+      "kind": "Endpoint type",
+      "name": "Name",
+      "namePlaceholder": "e.g. LiteLLM for work",
+      "urlPlaceholder": "https://example.com (without /v1)",
+      "auth": "Auth method",
+      "keyKeep": "Enter only to change it (empty keeps the saved key)",
+      "apiKey": "API key",
+      "hide": "Hide",
+      "show": "Show",
+      "keyStored": "The key is stored in the OS credential store.",
+      "advanced": "Advanced settings",
+      "stale": "The connection details changed. Check again.",
+      "connected": "✓ Connected",
+      "connectedModels_one": "✓ Connected · {{count}} model",
+      "connectedModels_other": "✓ Connected · {{count}} models",
+      "roles": "Model assignments",
+      "context": "Context length",
+      "contextTokens": "Context length (tokens)",
+      "contextEmptyClaude": "Empty means 200,000",
+      "contextEmptyCodex": "Empty uses the Codex default (smaller)",
+      "sendThinking": "Send thinking (thinking and effort)",
+      "sendThinkingNote": "This may fail with non-Claude models. Turn it on for models that require thinking (such as kimi-k2.7-code).",
+      "defaultModelAzure": "Default model (deployment name)",
+      "defaultModel": "Default model",
+      "deployment": "Deployment name",
+      "checkCost": "Checking generates one short response (this may cost a little).",
+      "checkAgain": "Check again",
+      "urlRequired": "Enter a URL.",
+      "nameRequired": "Enter a name."
+    }
+  },
+  "accounts": {
+    "title": "Claude accounts",
+    "close": "Close",
+    "intro": "You can choose a registered account next to the model in the composer. Conversations without one use the signed-in account.",
+    "add": "＋ Add account",
+    "usageNote": "To show each account's remaining usage on the Usage screen, authorize usage display for each account. If the ANTHROPIC_API_KEY environment variable is set, it takes precedence.",
+    "flowTitle": {
+      "setupToken": "Issue token for “{{name}}”",
+      "usageLogin": "Authorize usage display for “{{name}}”"
+    },
+    "status": {
+      "token": "Token registered",
+      "noToken": "No token",
+      "usage": "Usage display: authorized",
+      "noUsage": "Usage display: not authorized"
+    },
+    "owner": {
+      "reissue": "Switch the claude.ai account signed in to your browser, then issue the token again.",
+      "expected": " (usage is authorized as {{email}})",
+      "email": " ({{email}})",
+      "named": "This token was issued by the account “{{owner}}”{{expected}}. {{reissue}}",
+      "loggedIn": "This token was issued by the signed-in account{{email}}{{expected}}. {{reissue}}",
+      "other": "This token was issued by a different account from the usage authorization{{email}}. {{reissue}}",
+      "same": "This token was issued by the same account as “{{names}}”. To use it as a separate account, switch the claude.ai account signed in to your browser, then issue the token again.",
+      "nameJoin": "”, “"
+    },
+    "reissue": "Issue token again",
+    "issue": "Issue token",
+    "redoUsage": "Redo usage authorization",
+    "authorizeUsage": "Authorize usage display",
+    "edit": "Edit",
+    "delete": "Delete",
+    "cancel": "Cancel",
+    "confirmDelete": "Delete “{{name}}”? Conversations using this account can't send until you choose another. The usage display authorization is also removed.",
+    "confirmDeleteButton": "Delete",
+    "empty": "No accounts yet.",
+    "storage": {
+      "encrypted": "Tokens are encrypted with the OS credential store.",
+      "plain": "Encryption isn't available in this session, so tokens are saved to a file only you can read (opening Pleiad Desktop encrypts them again)."
+    },
+    "deleteFailed": "Couldn't delete: {{error}}",
+    "loading": "Loading…",
+    "flow": {
+      "openLink": "Click here if the browser doesn't open",
+      "starting": "Starting Claude Code…",
+      "step1Usage": "1. In the browser, sign in to Claude with this account and click “Authorize”.",
+      "step1Token": "1. In the browser, sign in to Claude with the account you want to use and click “Authorize”.",
+      "step2": "2. Paste the code shown in the browser.",
+      "codePlaceholder": "Paste the code",
+      "codeLabel": "Code shown in the browser",
+      "verifying": "Checking…",
+      "submit": "Send",
+      "tokenDone": "Token registered.",
+      "usageDoneShort": "Usage display authorized.",
+      "tokenDoneChoose": "Token registered. You can choose this account in the composer.",
+      "usageNext": "Next, authorize usage display. To show this account's remaining usage on the Usage screen, approve once more in the browser and paste the code (this is separate from the token used for conversations).",
+      "later": "Later",
+      "usageDone": "Usage display authorized. This account's remaining usage appears under Usage in Settings.",
+      "failed": "Couldn't authorize.",
+      "retry": "Try again",
+      "failedHint": "If this doesn't work, you can register via “Paste a token manually” under “Add account”.",
+      "codeRequired": "Paste the code shown in the browser."
+    },
+    "form": {
+      "addTitle": "Add account",
+      "editTitle": "Edit “{{name}}”",
+      "name": "Display name",
+      "namePlaceholder": "Work, personal, etc.",
+      "authNote": "Clicking “Authorize in browser” opens the Claude sign-in page. Sign in with the account you want to use, approve, and paste the code shown here to register it.",
+      "cancel": "Cancel",
+      "authorize": "Authorize in browser",
+      "manual": "Paste a token manually",
+      "manualReplace": "Paste a new token manually",
+      "manualNote": "If Pleiad can't authorize, run {{command}} in a terminal with the account you want to use and paste the token it shows.",
+      "token": "Token",
+      "show": "Show",
+      "hide": "Hide",
+      "save": "Save",
+      "saving": "Saving…",
+      "newHint": "Paste the issued token (sk-ant-oat01-…) as is. Saved tokens are never shown.",
+      "editHint": "Paste only to change it. If left empty, the saved token is used.",
+      "nameRequired": "Enter a display name for the account."
+    }
+  },
+  "filePreview": {
+    "kind": {
+      "image": "Image",
+      "table": "Table",
+      "text": "Text",
+      "unsupported": "Preview not supported",
+      "directory": "Directory"
+    },
+    "panel": "File preview",
+    "expand": "Expand",
+    "close": "Close",
+    "tree": "Tree",
+    "viewMode": "View mode",
+    "preview": "Preview",
+    "source": {
+      "truncated": "Showing lines {{start}}–{{end}} of {{total}}. Save the file to see all of it.",
+      "noLine": "Line {{line}} doesn't exist ({{total}} lines total)."
+    },
+    "path": "Path",
+    "reload": "Reload",
+    "fullPath": "Full file path",
+    "copyPath": "Copy path",
+    "explorer": "Explorer",
+    "contents": "File contents",
+    "save": "Save",
+    "saveFile": "Save the current file",
+    "use": "Use in chat",
+    "width": "Preview width",
+    "besideChat": "Show beside chat",
+    "backToChat": "Back to chat",
+    "closePreview": "Close preview",
+    "visualPanel": "Visualization preview",
+    "loading": "Loading…",
+    "status": {
+      "directory_one": "Directory · {{count}} item",
+      "directory_other": "Directory · {{count}} items",
+      "folderTitle": "Current folder · modified {{date}}",
+      "fetched": "{{kind}} · fetched at {{time}}",
+      "fileTitle": "Current file · modified {{date}}",
+      "failed": "Can't load"
+    },
+    "error": {
+      "auth": "The connection's authentication has expired. Reopen the URL shown at startup.",
+      "load": "Couldn't load the file.",
+      "open": "Can't open the file",
+      "unsupported": "This file can't be previewed",
+      "preview": "Can't display the preview",
+      "pdfHint": "The PDF may be encrypted, corrupt, or unsupported. Save it to check.",
+      "previewHint": "Reload, or check it with Source or Save."
+    },
+    "pdf": {
+      "prev": "Previous page",
+      "next": "Next page",
+      "zoomOut": "Zoom out PDF",
+      "zoomIn": "Zoom in PDF",
+      "page": "{{name}}, page {{page}}",
+      "text": "Text on this page"
+    },
+    "visual": {
+      "source": "Visualization source",
+      "contents": "Visualization contents",
+      "title": "Visualization",
+      "save": "Save the HTML kept in the conversation",
+      "status": "Saved visualization",
+      "statusTitle": "This is the content saved with this reply, not the current content of the file on the host."
+    },
+    "dir": {
+      "items_one": "{{count}} item",
+      "items_other": "{{count}} items",
+      "folder": "Folder",
+      "empty": "The folder is empty"
+    },
+    "table": {
+      "truncated": "Showing the first 500 rows and 100 columns. Use Source or Save to see everything.",
+      "rows_one": "{{count}} row",
+      "rows_other": "{{count}} rows",
+      "columns_one": "{{count}} column",
+      "columns_other": "{{count}} columns"
+    },
+    "image": {
+      "zoomOut": "Zoom out image",
+      "zoomIn": "Zoom in image",
+      "fit": "Fit to view",
+      "failed": "Can't display the image",
+      "failedHint": "The image is corrupt or unsupported. Save it to check."
+    },
+    "unavailableAlt": "{{alt}} (can't display)",
+    "imageAlt": "Image",
+    "someImages": "Some images can't be displayed.",
+    "omitted": {
+      "script": "scripts",
+      "extraStyle": "additional styles",
+      "imageFont": "images and fonts",
+      "style": "styles",
+      "image": "images",
+      "media": "media",
+      "join": ", ",
+      "note": "Some {{items}} couldn't be loaded. External resources other than scripts from allowed CDNs are not loaded."
+    },
+    "original": "Source"
+  },
+  "sessionContext": {
+    "word": {
+      "instruction": "Instructions"
+    },
+    "source": {
+      "common": "Shared"
+    },
+    "chip": {
+      "mcpBad": "MCP {{n}} ({{bad}} not connecting)",
+      "native": "{{kinds}} left to the agent",
+      "join": ", "
+    },
+    "title": "Context for this conversation",
+    "subtitle": {
+      "startedAt": "Started {{time}} · settings changes apply from the next turn",
+      "started": "Settings changes apply from the next turn",
+      "refreshed": "{{text}} · reloaded {{time}}"
+    },
+    "agent": "The agent",
+    "native": "Left to the agent",
+    "more_one": "{{count}} more",
+    "more_other": "{{count}} more",
+    "notStarted": "This conversation hasn't started yet. What Pleiad provides is recorded here on the first send.",
+    "guarded": {
+      "title": "This conversation doesn't use the settings Pleiad provides",
+      "reason": "{{backend}} can't receive the context Pleiad provides, so loading was left to the agent itself."
+    },
+    "failed": {
+      "title": "Loading or running failed partway",
+      "hint": "Check the status below and the errors in the conversation."
+    },
+    "foot": {
+      "lead": "To change this (applies from the next turn): ",
+      "link": "Open context settings →"
+    },
+    "instruction": {
+      "who": "Provided by Pleiad",
+      "native": "{{agent}} reads them by its own rules (Pleiad can't see the contents).",
+      "loaded": "{{path}} · loaded midway",
+      "none": "No instruction files were provided",
+      "notGiven_one": "{{count}} not provided",
+      "notGiven_other": "{{count}} not provided"
+    },
+    "skill": {
+      "who_one": "{{count}} offered by Pleiad",
+      "who_other": "{{count}} offered by Pleiad",
+      "native": "{{agent}} reads its own skills folder (Pleiad can't see the contents).",
+      "used": "Used",
+      "noneUsed": "None used yet",
+      "unused_one": "{{count}} not used",
+      "unused_other": "{{count}} not used",
+      "manualOnly": "Only when named explicitly",
+      "notOffered_one": "{{count}} not offered",
+      "notOffered_other": "{{count}} not offered"
+    },
+    "reason": {
+      "conditional": "Only when working with files matching {{paths}}",
+      "excluded": "Excluded",
+      "shadowed": "A same-name item or override takes precedence",
+      "duplicate": "Duplicates merged into one",
+      "disabled": "Disabled in the original settings",
+      "unsupported": "Contains unsupported settings"
+    },
+    "mcp": {
+      "who_one": "{{count}} connected by Pleiad",
+      "who_other": "{{count}} connected by Pleiad",
+      "none": "No MCP servers to connect",
+      "connected": "Connected · tools: {{tools}} · {{usage}}",
+      "calls_one": "{{count}} call",
+      "calls_other": "{{count}} calls",
+      "unused": "not used",
+      "pending": "Connects on the next reply",
+      "removed": "Removed from this conversation",
+      "failed": "✕ Couldn't connect",
+      "unknownReason": "reason unknown",
+      "needsLogin": "Sign-in required",
+      "authFailed": "Authentication failed",
+      "reasonParen": " ({{reason}})",
+      "authRest": "{{reason}}. The conversation continues without this MCP server",
+      "choice": "{{n}} definitions with the same name · using the one from {{source}} settings ({{by}})",
+      "byPrefer": "chosen in settings",
+      "byFirst": "found first",
+      "login": "Sign in with browser",
+      "openSettings": "Open settings",
+      "remove": "Remove from this conversation",
+      "restore": "Restore",
+      "unusedDefs_one": "{{count}} unused definition with the same name",
+      "unusedDefs_other": "{{count}} unused definitions with the same name",
+      "waiting": "After you sign in, it reconnects automatically and is available from the next reply. You don't need to recreate the conversation."
+    },
+    "nativeMcp": {
+      "unreadable": "Left to the agent. Pleiad can't read {{agent}}'s MCP registrations.",
+      "reading": "Left to the agent. Reading {{agent}}'s settings…",
+      "none": "Left to the agent. {{agent}}'s settings have no MCP servers registered.",
+      "list_one": "Left to the agent. {{agent}}'s settings register the following server (connection status is kept by {{agent}}, so Pleiad can't see it).",
+      "list_other": "Left to the agent. {{agent}}'s settings register the following {{count}} servers (connection status is kept by {{agent}}, so Pleiad can't see it).",
+      "disabled": "{{path}} · disabled"
+    },
+    "changed": {
+      "title_one": "{{count}} file changed since the start",
+      "title_other": "{{count}} files changed since the start",
+      "removed": "{{name}} was removed",
+      "added": "{{name}} was newly found",
+      "updatedAt": "{{name}} was updated {{time}}",
+      "updated": "{{name}} was updated",
+      "continue": "Continue with the new content",
+      "afterReply": "Available after the reply finishes",
+      "hideDiff": "Hide diff",
+      "showDiff": "Show diff",
+      "note": "It reloads automatically on the next send. To apply it now without waiting, use “Continue with the new content” (both keep the conversation history)."
+    },
+    "diff": {
+      "same_one": "… {{count}} unchanged line",
+      "same_other": "… {{count}} unchanged lines",
+      "loading": "Loading diff…",
+      "noChange": "The content is currently the same as at the start",
+      "beforeMissing": "The content at the start wasn't kept (the conversation started before this version). Showing only the current content.",
+      "removed": "This file no longer exists",
+      "tooLarge": "Too large to show the contents",
+      "failed": "Couldn't load the diff: {{error}}"
+    },
+    "refreshFailed": "Couldn't reload: {{error}}",
+    "login": {
+      "continue": "Continue in the browser… ",
+      "link": "Click here if it doesn't open",
+      "startFailed": "Couldn't start sign-in: {{error}}",
+      "done": "Signed in. Available from the next reply",
+      "failed": "Couldn't sign in",
+      "failedWith": "Couldn't sign in: {{error}}"
+    }
+  },
+  "context": {
+    "owner": {
+      "agent": "Leave to the agent",
+      "ply": "Managed by Pleiad"
+    },
+    "instruction": {
+      "title": "Instruction files",
+      "agent": "Claude reads CLAUDE.md and Codex reads AGENTS.md by their own rules",
+      "ply": "Give every agent the same files",
+      "note": "Pleiad provides nothing. Which files are read depends on the agent.",
+      "list": "Provided in this location",
+      "listDefault": "Provided by default",
+      "sourceCommon": "AGENTS.md (shared)",
+      "sourceCodex": "Codex format",
+      "none": "No instruction files found in this location"
+    },
+    "skill": {
+      "agent": "Each agent reads its own skills folder",
+      "ply": "Provide the list and load the body only when needed",
+      "note": "Pleiad provides nothing. Which skills are available depends on the agent.",
+      "list": "Offered in this location",
+      "listDefault": "Offered by default",
+      "sourceCommon": ".agents/skills (shared)",
+      "none": "No skills found in this location"
+    },
+    "mcp": {
+      "title": "External MCP",
+      "agent": "Each agent connects according to its own MCP settings",
+      "ply": "Connect the same MCP servers to every agent",
+      "list": "Connected in this location",
+      "listDefault": "Connected by default",
+      "sourceClaude": "Claude settings",
+      "sourceCodex": "Codex settings"
+    },
+    "copyPath": "Copy path",
+    "copied": "Copied",
+    "emptyFile": "(empty file)",
+    "lead": "Choose what to provide to agents. Conversations already started pick up changes from their next turn.",
+    "scope": "Scope",
+    "saved": "Saved · applies from the next turn",
+    "saveFailed": "Couldn't save: {{error}}",
+    "cancel": "Cancel",
+    "add": "Add",
+    "folderPath": "Folder path",
+    "chooseFolder": "Choose folder…",
+    "place": {
+      "default": "Global settings",
+      "defaultSub": "Followed wherever a folder has no settings of its own",
+      "current": "Current conversation's location",
+      "overrides_one": "{{count}} item changed for this folder only",
+      "overrides_other": "{{count}} items changed for this folder only",
+      "allDefault": "All follow the global settings",
+      "remove": "Remove settings for this location",
+      "removeAria": "Remove settings for {{path}}",
+      "confirm": "Remove settings for this location?",
+      "confirmOverrides_one": "The {{count}} item changed for this folder only is removed, and this location follows the global settings. Conversations already started pick this up from their next turn.",
+      "confirmOverrides_other": "The {{count}} items changed for this folder only are removed, and this location follows the global settings. Conversations already started pick this up from their next turn.",
+      "confirmPlain": "It is removed from the list. This location follows the global settings.",
+      "removeButton": "Remove",
+      "removeFailed": "Couldn't remove: {{error}}",
+      "add": "Add location",
+      "addAria": "Path of the folder to add",
+      "recent": "Recent conversation locations",
+      "noMatch": "No matching locations",
+      "noCandidates": "No suggestions",
+      "pathRequired": "Enter a folder path."
+    },
+    "inherit": {
+      "all": "Applies wherever a folder has no settings of its own",
+      "hereOverride": "This conversation's folder ({{path}}) uses its own settings for this · ",
+      "override": "Settings for this folder only · ",
+      "reset": "Use global settings",
+      "resetParent": "Use the parent folder's settings",
+      "from": "As set for {{path}}",
+      "default": "Same as global settings",
+      "willOverride": " · Changing it creates settings for this folder only"
+    },
+    "ownerAria": "Who loads {{kind}}",
+    "configFiles": "Settings files to read",
+    "formats": "Formats to search",
+    "searching": "Searching",
+    "searchingDots": "Searching…",
+    "row": {
+      "shadowed": "An override in the same location takes precedence",
+      "conditional": "Only for {{paths}}",
+      "offerAria": "Offer {{name}}",
+      "provideAria": "Provide {{name}}"
+    },
+    "showAll": "Show all ({{n}})",
+    "count_one": "{{count}} item",
+    "count_other": "{{count}} items",
+    "antigravityNote": "In antigravity conversations, Pleiad manages this only when instruction files are also set to “Managed by Pleiad”. Instruction files are currently left to the agent, so in antigravity this kind is also left to the agent (if Pleiad provided it, agy would stop reading AGENTS.md and GEMINI.md in the workspace).",
+    "roots": {
+      "summary": "Search more locations (optional)",
+      "descDefault": "For kinds managed by Pleiad, also search the following folders in every location.",
+      "descPlace": "For kinds managed by Pleiad, also search the following folders in addition to the Git root through this location.",
+      "remove": "Remove",
+      "removeAria": "Remove {{path}} from the search locations",
+      "defaults": "Folders searched by the global settings: {{folders}}",
+      "join": ", ",
+      "addAria": "Additional folder to search",
+      "add": "Add folder"
+    },
+    "scanFailed": "Couldn't search: {{error}}",
+    "loadFailed": "Couldn't load the context settings: {{error}}"
+  },
+  "mcp": {
+    "state": {
+      "signedIn": "Signed in",
+      "signedOut": "Sign-in required",
+      "expired": "Sign-in required (expired)",
+      "pending": "Signing in with browser",
+      "locked": "Can't unlock the keychain in this session",
+      "error": "Can't check the sign-in status"
+    },
+    "transport": {
+      "stdio": "Run locally",
+      "url": "Connect to URL",
+      "sse": "Connect to URL (SSE)"
+    },
+    "join": ", ",
+    "agents": {
+      "lead": "Registered in each agent's settings (Pleiad only reads them and doesn't change them)",
+      "none": "None registered",
+      "only": "{{agent}} only",
+      "disabled": "Disabled",
+      "foot": "Available MCP servers change when you switch agents. To keep them the same, choose “Managed by Pleiad”."
+    },
+    "list": "Connected in this location",
+    "listDefault": "Connected by default",
+    "login": "Sign in",
+    "loginAgain": "Sign in again",
+    "logout": "Sign out",
+    "loggedOut": "Signed out",
+    "loggedOutRevoked": "Signed out (token revoked)",
+    "switchAria": "Connect {{name}}",
+    "nativeOffTitle": "Disabled in the original settings (Pleiad doesn't change this)",
+    "empty": "No MCP servers to connect yet. Register one with “＋ Add MCP” or choose settings files to read.",
+    "count_one": "{{count}} item",
+    "count_other": "{{count}} items",
+    "add": "Add MCP",
+    "rowHint": "Click a row to view or edit it (keys and tokens are masked)",
+    "storage": {
+      "noEncryption": "encryption unavailable in this session",
+      "plainList": "The keychain isn't available in this session, so tokens and keys are saved in plain text readable only by the owner ({{reason}}). Reopening in Pleiad Desktop encrypts them again.",
+      "sheetPlain": "Saved as a Pleiad setting and connected to every agent. The Claude and Codex settings files are not changed. The keychain isn't available in this session, so tokens and keys are saved in plain text readable only by the owner ({{reason}}).",
+      "sheetEncrypted": "Saved as a Pleiad setting and connected to every agent. The Claude and Codex settings files are not changed. Tokens and keys are encrypted in the OS keychain (Windows Credential Manager, macOS Keychain, or Linux Secret Service)."
+    },
+    "files": {
+      "summary": "Settings files to read",
+      "desc": "MCP servers registered in the Claude and Codex settings you choose here also appear in the list. For the same name, the one registered in Pleiad takes precedence."
+    },
+    "describe": {
+      "needsScope": "Additional permissions required",
+      "pending": "Some values missing",
+      "plyOver": "Registered in Pleiad (takes precedence over the same name in {{agents}})",
+      "ply": "Registered in Pleiad",
+      "only": "Registered only in {{agent}}",
+      "both": "Registered in both {{a}} and {{b}}",
+      "many": "Registered in {{agents}}",
+      "defsUsing": "{{n}} definitions with the same name · using the one from {{agent}} settings ({{by}})",
+      "defs": "{{n}} definitions with the same name",
+      "byPicked": "your choice",
+      "byFirst": "found first",
+      "nativeOff": "Disabled in the original settings",
+      "excluded": "Excluded"
+    },
+    "auth": {
+      "token": "Token",
+      "headers": "Headers",
+      "headersWith": "Headers ({{names}})",
+      "oauth": "Sign in with browser",
+      "none": "None"
+    },
+    "choice": {
+      "aria": "Choose the definition for {{name}}",
+      "lead": "Which definition should be used? (If you don't choose, the one found first)",
+      "local": "{{command}} (local)",
+      "settings": "{{agents}} settings"
+    },
+    "fact": {
+      "transport": "Connection",
+      "endpoint": "Endpoint",
+      "auth": "Authentication",
+      "env": "Environment variables",
+      "expires": "Expires"
+    },
+    "edit": "Edit",
+    "rename": "Rename",
+    "check": "Check connection",
+    "delete": "Delete",
+    "deleteConfirm": "Click again to delete",
+    "peek": {
+      "config": "{{agent}} settings · {{path}}",
+      "masked": "Environment variable values, header values, and URL queries are masked."
+    },
+    "import": {
+      "button": "Import into Pleiad",
+      "failed": "Couldn't import",
+      "doneLogin": "Imported into Pleiad. Please sign in.",
+      "donePending": "Imported into Pleiad. Enter keys and other values by editing it.",
+      "done": "Imported into Pleiad",
+      "note": "Importing makes it a Pleiad registration and connects it to every agent. Tokens aren't carried over, so sign in again in Pleiad where needed."
+    },
+    "newName": "New name",
+    "change": "Rename",
+    "cancel": "Cancel",
+    "save": "Save",
+    "loginFlow": {
+      "continue": "Continue in the browser… ",
+      "link": "Click here if it doesn't open",
+      "done": "Signed in",
+      "failed": "Couldn't sign in",
+      "failedWith": "Couldn't sign in: {{error}}"
+    },
+    "checkResult": {
+      "checking": "Checking the connection…",
+      "connected_one": "Connected ({{count}} tool)",
+      "connected_other": "Connected ({{count}} tools)",
+      "needsLogin": "Sign-in required",
+      "needsLoginWith": "Sign-in required ({{reason}})",
+      "failed": "Couldn't connect",
+      "failedWith": "Couldn't connect: {{reason}}"
+    },
+    "advanced": {
+      "summary": "Advanced sign-in settings",
+      "desc": "Client ID metadata document URL (optional). If you enter the https URL of a published document, supported services use it instead of app registration. You can leave it empty.",
+      "aria": "Client ID metadata document URL"
+    },
+    "sheet": {
+      "editTitle": "Edit {{name}}",
+      "name": "Name",
+      "value": "Value",
+      "registeredIn": "Registered in {{agent}}",
+      "copyFrom": "Copy from an agent's registration",
+      "urlDesc": "An MCP server published by a service",
+      "cmdDesc": "Launch a command such as npx",
+      "command": "Command",
+      "commandHead": "Commands in agent registrations",
+      "addEnv": "Environment variable",
+      "urlHead": "Endpoints in agent registrations",
+      "authAria": "Authentication method",
+      "oauthNote": "Adding it opens the browser. Once you sign in, Pleiad renews it automatically.",
+      "appReg": "When the service requires app registration",
+      "clientId": "Client ID",
+      "keep": "Leave empty to keep it",
+      "clientSecretOptional": "Client secret (optional)",
+      "clientSecret": "Client secret",
+      "pasteToken": "Paste the token",
+      "headerName": "Header name",
+      "addHeader": "Header",
+      "noneNote": "For MCP servers that don't need authentication",
+      "scope": "Scope",
+      "here": "This location only",
+      "all": "All locations",
+      "json": "Edit as JSON (advanced)",
+      "jsonAria": "MCP definition (JSON)",
+      "jsonNote": "Secret values left masked (••••) keep their previous values",
+      "addLogin": "Add and sign in",
+      "addTry": "Add and test connection",
+      "missing": "Not entered",
+      "remove": "Remove",
+      "removeAria": "Remove {{label}}"
+    },
+    "error": {
+      "command": "Enter a command.",
+      "url": "Enter a URL.",
+      "token": "Enter a token.",
+      "headers": "Enter at least one header.",
+      "name": "Enter a name.",
+      "json": "The JSON is not valid."
+    },
+    "oauthReset": "The endpoint or other settings changed. Please sign in again."
+  },
+  "saved": {
+    "reason": {
+      "resumeCwd": "Changed on resume",
+      "cwdFrom": "from {{from}}",
+      "contextReloaded": "Reloaded instructions and Skills",
+      "contextSettingsApplied": "Applied context settings changes",
+      "contextChanged": "{{names}}",
+      "contextChangedMore_one": "{{names}} and {{count}} more",
+      "contextChangedMore_other": "{{names}} and {{count}} more",
+      "inheritedStatus": "Carried over to a new session",
+      "renameStatus": "Renamed status to \"{{to}}\"",
+      "deleteGroup": "Deleted group",
+      "renamedGroup": "Renamed \"{{from}}\" to \"{{to}}\"",
+      "deletedGroup": "Deleted \"{{from}}\"",
+      "groupMove": "Moved with its group",
+      "createdGroup": "Created group",
+      "manual": "Changed manually",
+      "menu": "Changed from menu",
+      "undo": "Undo",
+      "joinGroup": "Added to group",
+      "mergeBranches": "Merged branches"
+    },
+    "caption": {
+      "attachment": "Attachment: {{name}}"
+    },
+    "separator": ", ",
+    "defaultTitle": "New session"
+  },
   "chat": {
     "ask": {
       "heading": "{{mark}}",
@@ -235,6 +977,7 @@
       "failed": "Failed: {{error}}",
       "unknownReason": "unknown reason",
       "contextRefreshed": "Instructions or Skills changed, so they were reloaded",
+      "contextSettingsApplied": "Context settings changes apply from this turn",
       "contextRefreshedNames": "Instructions or Skills changed, so they were reloaded ({{names}})",
       "contextRefreshedNamesMore_one": "Instructions or Skills changed, so they were reloaded ({{names}} and {{count}} more)",
       "contextRefreshedNamesMore_other": "Instructions or Skills changed, so they were reloaded ({{names}} and {{count}} more)",
@@ -599,6 +1342,343 @@
     "noRelative": "This file is outside the working directory, so it has no relative path",
     "actionFailed": "The action failed"
   },
+  "timeline": {
+    "code": {
+      "copy": "Copy code",
+      "copied": "Copied",
+      "copyFailed": "Couldn't copy",
+      "selected": "Code selected. Press Ctrl+C / ⌘C to copy"
+    },
+    "link": {
+      "blocked": "Disabled because the link is unsafe"
+    },
+    "present": {
+      "height": {
+        "small": "S",
+        "medium": "M",
+        "large": "L"
+      },
+      "kind": {
+        "image": "Image",
+        "text": "Text",
+        "file": "File",
+        "visualization": "Visualization"
+      },
+      "copyPath": "Copy path",
+      "download": "Download HTML",
+      "sidePanel": "Show in side panel",
+      "truncated": "Omitted because it's too large.",
+      "badImage": "This image can't be displayed."
+    },
+    "tool": {
+      "label": {
+        "run": "Run",
+        "read": "Read",
+        "write": "Write",
+        "edit": "Edit",
+        "find": "Search",
+        "grep": "Grep",
+        "delegate": "Delegate",
+        "fetch": "Fetch",
+        "webSearch": "Web search",
+        "present": "Show",
+        "status": "Status",
+        "title": "Title",
+        "fork": "Branch"
+      },
+      "noPath": "(no path)",
+      "diff": "Diff (−{{del}} / +{{add}})",
+      "diffMore_one": "…{{n}} more line",
+      "diffMore_other": "…{{n}} more lines",
+      "background": "In background",
+      "fullCommand_one": "Full command ({{n}} line)",
+      "fullCommand_other": "Full command ({{n}} lines)",
+      "lineRange": "Lines {{from}}–{{to}}",
+      "firstLines_one": "First {{n}} line",
+      "firstLines_other": "First {{n}} lines",
+      "fromLine": "From line {{n}}",
+      "lines_one": "{{n}} line",
+      "lines_other": "{{n}} lines",
+      "writeContent": "Content to write",
+      "editLines": "{{from}} → {{to}} lines",
+      "replaceAll": "Replace all",
+      "edits_one": "{{n}} edit",
+      "edits_other": "{{n}} edits",
+      "grepMode": {
+        "content": "Content",
+        "files": "File names",
+        "count": "Count"
+      },
+      "ignoreCase": "Ignore case",
+      "multiline": "Multiline",
+      "context_one": "±{{n}} line",
+      "context_other": "±{{n}} lines",
+      "headLimit": "Top {{n}}",
+      "subagent": "Subagent",
+      "prompt": "Instructions given",
+      "domainsAllowed": "Only: {{domains}}",
+      "domainsBlocked": "Excluding: {{domains}}",
+      "todoCount_one": "{{n}} item",
+      "todoCount_other": "{{n}} items",
+      "todoDone": "{{done}}/{{total}} done",
+      "todoItems": "Items ({{n}})",
+      "forkHere": "Carry this conversation over up to here",
+      "input": "Input"
+    },
+    "result": {
+      "empty": "No output",
+      "count_one": "{{n}} result",
+      "count_other": "{{n}} results",
+      "saved": "Saved",
+      "edited": "Edited",
+      "updated": "Updated",
+      "ran": "Done",
+      "lines_one": "{{n}} line",
+      "lines_other": "{{n}} lines",
+      "failed": "✕ Failed",
+      "output": "Output",
+      "outputPartial": "Output (partial)",
+      "generatedImage": "Generated image"
+    },
+    "branch": {
+      "pick": "Choose the conversation to continue",
+      "switchTo_one": "Switch to {{name}} ({{count}} message)",
+      "switchTo_other": "Switch to {{name}} ({{count}} messages)",
+      "current": "Current conversation",
+      "continues_one": "{{count}} more message",
+      "continues_other": "{{count}} more messages",
+      "root": "Original",
+      "numbered": "Branch {{n}}"
+    },
+    "behind": {
+      "subagents": "Waiting for subagents",
+      "commands": "Waiting for background commands"
+    }
+  },
+  "composer": {
+    "cwd": {
+      "placeholder": "Working directory path",
+      "inputLabel": "Working directory path (Enter to set)",
+      "choose": "Choose folder…",
+      "recent": "Recent working directories",
+      "noRecent": "None yet",
+      "up": "Up one level",
+      "drive": "Drive",
+      "useThis": "Use this folder",
+      "foldersIn": "Folders in {{path}}",
+      "noFolders": "No folders",
+      "truncated": "Too many to show them all. Type a path.",
+      "chipTitle": "{{cwd}} (changes apply from the next turn)",
+      "chipAria": "Working directory: {{cwd}}",
+      "unset": "Not set"
+    },
+    "agent": "Agent",
+    "account": {
+      "title": "Claude account",
+      "compatOff": "Accounts aren't used with compatible endpoints"
+    },
+    "endpoint": {
+      "title": "Endpoint",
+      "manage": "Manage endpoints…",
+      "lost": "Not available: {{items}}",
+      "pick": "Choose endpoint"
+    },
+    "model": {
+      "title": "Model",
+      "searchMain": "Search or enter an ID (empty uses the main model, {{model}})",
+      "search": "Search or enter an ID",
+      "searchLabel": "Search models or enter an ID (Enter to set)",
+      "candidates": "Model suggestions",
+      "notListed": "Not in the list. Press Enter to use this ID as is.",
+      "noList": "No list available. Enter an ID.",
+      "chipTitle": "{{label}} (agent, model, effort; applies from the next turn)",
+      "chipAria": "Model and effort: {{label}}"
+    },
+    "effort": {
+      "title": "Effort",
+      "label": "Effort",
+      "reset": "Reset to default",
+      "follow": {
+        "endpoint": "(uses the endpoint's setting)",
+        "agy": "(uses agy's setting)",
+        "agent": "(uses the agent's setting)"
+      },
+      "defaultFollow": {
+        "endpoint": "Default (uses the endpoint's setting)",
+        "agy": "Default (uses agy's setting)",
+        "agent": "Default (uses the agent's setting)"
+      },
+      "modelDefault": "({{model}} default)",
+      "levelDefault": "{{level}} (default)",
+      "noLevels": "{{model}} has no effort levels"
+    },
+    "mode": {
+      "dangerTitle": "Approval mode: no confirmation, no restrictions",
+      "chipAria": "Approval mode: {{mode}}",
+      "chipAriaDanger": "Approval mode: {{mode}} (no confirmation, no restrictions)"
+    },
+    "skills": {
+      "none": "No matching skills",
+      "failed": "Couldn't get the skills list",
+      "args": "Arguments  {{hint}}"
+    }
+  },
+  "sidebar": {
+    "unread": "Finished, not yet viewed",
+    "somethingRunning": "Something is running",
+    "empty": "Nothing yet",
+    "noMatch": "No matches",
+    "forked": "Conversation created by a fork",
+    "waiting": "Waiting for approval",
+    "waitingCount_one": "{{count}} waiting for approval",
+    "waitingCount_other": "{{count}} waiting for approval",
+    "staleDays_one": "{{count}}d",
+    "staleDays_other": "{{count}}d",
+    "unsent": "Unsent",
+    "unsentDraft": "Unsent · draft",
+    "undo": "Undo",
+    "undoClose": "Close",
+    "undoCloseLabel": "Close this notice",
+    "group": {
+      "pickIcon": "Choose icon",
+      "newSession": "New session with this status"
+    },
+    "family": {
+      "collapse": "Collapse branches",
+      "expand": "Expand branches",
+      "hereInside": "The current conversation is in here. Click to expand"
+    },
+    "filter": {
+      "remove": "Remove",
+      "agent": "Agent",
+      "place": "Location",
+      "status": "Status",
+      "placeholder": "Filter",
+      "inputLabel": "Filter options",
+      "agents": "Agents (multiple)",
+      "all": "All"
+    },
+    "emoji": {
+      "title": "Icon for \"{{status}}\"",
+      "placeholder": "Search (English, Japanese, or paste an emoji)",
+      "search": "Search emoji",
+      "loadingMark": "Loading the list",
+      "loading": "Loading",
+      "reset": "Reset to default",
+      "folder": "Folder",
+      "loadFailed": "Couldn't load the list",
+      "recent": "Recently used",
+      "hits_one": "{{count}} result",
+      "hits_other": "{{count}} results",
+      "category": {
+        "smileys": "Smileys & people",
+        "nature": "Animals & nature",
+        "food": "Food & drink",
+        "activity": "Activities",
+        "travel": "Travel & places",
+        "objects": "Objects",
+        "symbols": "Symbols",
+        "flags": "Flags"
+      }
+    }
+  },
+  "usage": {
+    "unknown": "Unknown",
+    "expired": "Past the reset time · waiting for refresh",
+    "percentUnknown": "Usage and remaining: unknown",
+    "percent": "{{used}}% used · {{remaining}}% left",
+    "plan": "Plan: {{plan}}",
+    "meter": "{{label}} usage",
+    "resetsAt": "Resets: {{when}}",
+    "resetsUnknown": "Reset time: unknown",
+    "redoAuth": "Authorize again",
+    "local": {
+      "title": "Usage in Pleiad",
+      "period": "Period",
+      "input": "Input tokens",
+      "output": "Output tokens",
+      "cost": "Est. cost",
+      "fiveHour": "Last 5 hours",
+      "sevenDay": "Last 7 days",
+      "none": "No records",
+      "partial": " (partial)",
+      "measured_one": "Measured {{measured}} of {{count}} completed run",
+      "measured_other": "Measured {{measured}} of {{count}} completed runs",
+      "noteSince": "Recorded since {{when}}. Only runs completed in Pleiad after this feature was added. Input includes cache. Estimated cost is the agent's estimate, not your subscription bill.",
+      "noteEmpty": "No usage yet. Only runs completed in Pleiad after this feature was added. Input includes cache. Estimated cost is the agent's estimate, not your subscription bill."
+    },
+    "endpoint": "Endpoint {{name}}",
+    "endpointLocal": "Usage can't be shown (local).",
+    "endpointRemote": "Usage can't be shown. Check your balance in the {{name}} dashboard.",
+    "endpointCost": "Estimated costs for compatible endpoints aren't reliable (unit prices are unknown).",
+    "waiting": "Waiting for agents to connect. Refresh after they connect.",
+    "loading": "Loading…",
+    "checkedAt": "Last fetched: {{when}}",
+    "failed": "Couldn't fetch. Check the connection and refresh."
+  },
+  "updates": {
+    "phase": {
+      "idle": "You can check for updates",
+      "checking": "Checking for updates…",
+      "current": "You're up to date",
+      "available": "A new version is available",
+      "downloading": "Downloading",
+      "downloaded": "Restart to apply the update",
+      "installing": "Preparing the update…",
+      "error": "Couldn't get the update",
+      "unavailable": "Automatic updates are available in the released desktop app"
+    },
+    "stage": {
+      "installing": "Preparing to apply the update…",
+      "saving": "Saving conversations and drafts…",
+      "downloading": "Downloading…",
+      "downloadingPercent": "Downloading · {{percent}}%"
+    },
+    "hint": {
+      "applying": "Please wait while saving and preparing the update. After Pleiad quits, the update is applied and Pleiad restarts automatically.",
+      "downloading": "You can keep working. You'll be notified when it's ready.",
+      "noAutoUpdate": "This preview build doesn't support automatic updates. Update with a new installer.",
+      "browser": "In the browser version, you can view the release history."
+    },
+    "lastChecked": "Last checked: {{when}}",
+    "retry": "Retry",
+    "settingsHasUpdate": "Settings · update available",
+    "updated": "Updated to Pleiad {{version}}",
+    "promptReady": "Pleiad {{target}} is ready to install",
+    "promptAvailable": "Pleiad {{target}} is available",
+    "notesFailed": "Couldn't load the release notes."
+  },
+  "outbox": {
+    "status": {
+      "queued": "Waiting to be sent",
+      "sending": "Sending to the AI",
+      "paused": "Sending paused",
+      "failed": "Couldn't send",
+      "unknown": "Can't confirm whether it was sent"
+    },
+    "waitTurn": "Waiting to be sent — sends automatically when the current work finishes",
+    "waitOrder": "Waiting to be sent — sends after the previous message is sent",
+    "unknownHint": "Check the conversation. Resending may deliver the same instruction twice.",
+    "retry": "Resend",
+    "cancel": "Cancel"
+  },
+  "onboarding": {
+    "installHint": "Install this agent, then recheck its status in Settings.",
+    "waitingLogin": "Waiting for sign-in to finish.",
+    "signInHint": "Sign in to this agent.",
+    "seenFailed": "Couldn't save that the welcome screen was shown: {{error}}"
+  },
+  "common": {
+    "input": "Input",
+    "noMatch": "No matches",
+    "loading": "Loading…",
+    "moreMatches_one": "{{count}} more. Type to narrow down",
+    "moreMatches_other": "{{count}} more. Type to narrow down"
+  },
+  "notify": {
+    "completed": "Work finished",
+    "untitled": "Pleiad conversation"
+  },
   "remote": {
     "badgeLabel": "Remote:",
     "badgeTitle": "Connected to the remote host {{host}}",
@@ -664,7 +1744,7 @@
     "andMore_other": "{{files}} more",
     "changeDest": "Change destination",
     "overwriteSend": "Overwrite and send",
-    "makeCwd": "Make the sent folder the working folder",
+    "makeCwd": "Make the sent folder the working directory",
     "sendingTitle": "Sending {{name}}",
     "pausedTitle": "Sending {{name}} is paused",
     "progressLabel": "Upload progress",
@@ -678,16 +1758,16 @@
     "readFailed": "Couldn't read a file on this PC: {{path}} (choose the folder again)",
     "done": "Sent",
     "applied": {
-      "now": "This conversation's working folder is now {{dest}}.",
-      "next": "This conversation's working folder is now {{dest}} (from the next turn).",
-      "other": "Sent to {{dest}}. The working folder was not changed."
+      "now": "This conversation's working directory is now {{dest}}.",
+      "next": "This conversation's working directory is now {{dest}} (from the next turn).",
+      "other": "Sent to {{dest}}. The working directory was not changed."
     },
     "close": "Close",
     "drop": {
       "label": "Dropped folder",
       "question": "What should happen to {{name}}?",
       "summaryExcluding": "{{summary}} (excluding {{excludes}})",
-      "send": "Send as working folder",
+      "send": "Send as working directory",
       "attach": "Attach",
       "cancel": "Cancel",
       "attachNote": "Attachments are up to 8MB per file. Each file is attached separately; the folder isn't attached as a whole."

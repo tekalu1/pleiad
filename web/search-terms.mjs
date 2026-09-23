@@ -2,6 +2,8 @@
 // 大文字小文字を区別しない部分一致。空白で区切った語はすべて当たるもの（AND）。語ごとに、どの字に当たってもよい。
 // 数百件の一覧でも重くならないよう、描画するのは先頭の limit 件だけ（残りの件数を返し、画面は「ほかに N 件」を出す）。
 
+import { t } from './i18n.mjs';
+
 /** 描画する件数の上限の既定 */
 export const SHOW_LIMIT = 50;
 
@@ -31,4 +33,4 @@ export function filterLimited(items, query, textsOf, limit = SHOW_LIMIT) {
 }
 
 /** 「ほかに N 件」の文言 */
-export const moreText = (n) => `ほかに ${n} 件。文字を入れて絞り込んでください`;
+export const moreText = (n) => t('common.moreMatches', { count: n });

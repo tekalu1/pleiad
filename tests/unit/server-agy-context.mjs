@@ -98,7 +98,8 @@ export default async function (t) {
     const echo = await client.runTurn({ prompt: 'mcp-call:fixture / echo', sessionId, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
     t.ok('2 ターン目以降も同じ agy のまま、外部 MCP を Pleiad の登録（秘密の env）で呼べる', echo.outcome === 'ok' && echo.events.some(e => e.type === 'tool.result' && e.text.includes('echo:AGY_ENV_SECRET')),
       JSON.stringify(echo.events.filter(e => e.type === 'tool.result' || e.type === 'turnResult')));
-    const skillId = /demo: Demo skill for the agy test \(id: ([^,]+),/.exec(body)?.[1];
+    // 会話の言語は日本語（テストは AGENT_HOST_LOCALE=ja）なので、Skills の一覧も日本語の書式（core/context-runtime.mjs の context.prompt.skillLine）
+    const skillId = /demo: Demo skill for the agy test（id: ([^、]+)、/.exec(body)?.[1];
     const skill = await client.runTurn({ prompt: `mcp-call:load_skill ${JSON.stringify({ id: skillId })}`, sessionId, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
     t.ok('Skill の本文を ply_context から読める', skill.events.some(e => e.type === 'tool.result' && e.text.includes('DEMO-SKILL-BODY')), JSON.stringify(skill.events.filter(e => e.type === 'tool.result')).slice(0, 300));
     const pids = JSON.parse(await fs.readFile(pidFile, 'utf8'));

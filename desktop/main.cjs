@@ -5,6 +5,7 @@ const { Updates } = require('./updates.cjs');
 const { prepareUpdateCheck } = require('./update-auth.cjs');
 const { savedPort, rememberPort } = require('./server-port.cjs');
 const { attachSecretBridge } = require('./secret-bridge.cjs');
+const { t, setLocale, resolveLocale, initDesktopI18n } = require('./i18n.cjs');
 const { attachFileBridge } = require('./file-bridge.cjs');
 // ホストとして常駐する（リモートが有効な間、窓を閉じてもトレイに残す・スリープを防ぐ。docs/remote.md §6.3）
 const { attachResident } = require('./resident.cjs');
@@ -12,7 +13,6 @@ let resident;
 // 窓ごとのオリジンの表と、ほかのホストへつなぐ端末の窓（docs/remote.md §7。desktop/remote-windows.cjs）
 const { createWindowTrust } = require('./window-trust.cjs');
 const { createRemoteWindows } = require('./remote-windows.cjs');
-const { initDesktopI18n } = require('./i18n.cjs');
 const trust = createWindowTrust();
 let remoteWindows;
 let worker, window, origin, updates, quitting = false, closing = false;
@@ -33,7 +33,7 @@ function workerRequest(type) {
       if (message.type !== type || message.id !== id) return;
       clearTimeout(timer); worker.off('message', done); resolve(message);
     };
-    const timer = setTimeout(() => { worker.off('message', done); reject(new Error('実行状態を確認できませんでした。再試行してください。')); }, 10000);
+    const timer = setTimeout(() => { worker.off('message', done); reject(new Error(t('errors.runningCheckFailed'))); }, 10000);
     worker.on('message', done); worker.postMessage({ type, id });
   });
 }
@@ -41,7 +41,7 @@ function workerRequest(type) {
 async function installUpdate() {
   try {
     const lock = await workerRequest('update-lock');
-    if (!lock.ok) throw new Error(`更新できません：${lock.reason}。完了してから更新してください。更新は準備済みのまま残ります。`);
+    if (!lock.ok) throw new Error(t('update.blocked', { reason: lock.reason }));
     // The renderer flushes drafts before invoking this operation. The lease now
     // rejects new server commands until shutdown, eliminating the idle-check race.
     const updater = require('electron-updater').autoUpdater;
@@ -54,7 +54,7 @@ async function installUpdate() {
         // MacUpdater registers an install callback while Squirrel stages the ZIP.
         // Remove that callback after failure so a late event cannot quit the app.
         for (const listener of native.listeners('update-downloaded')) if (!before.has(listener)) native.off('update-downloaded', listener);
-        reject(new Error('更新を適用できませんでした。再試行してください。'));
+        reject(new Error(t('update.applyFailed')));
       };
       const ready = () => { cleanup(); quitting = true; worker.postMessage({ type: 'shutdown' }); resolve(); };
       updater.once('error', failed); native.once('before-quit-for-update', ready);
@@ -93,7 +93,9 @@ function systemLanguage() {
 }
 
 async function boot() {
-  await initDesktopI18n({ systemLanguage: systemLanguage() }).catch(() => {});
+  // サーバーが起動するまでは、設定（prefs.json）と OS の言語で決める。起動後はサーバーが解決した言語に合わせる（desktop/i18n.cjs）。
+  // main の中のリモートの端末側（core/remote/device.mjs）が引く core/i18n.mjs もここで同じ言語にそろえる
+  await initDesktopI18n({ systemLanguage: systemLanguage() }).catch(() => setLocale(resolveLocale({ system: systemLanguage() })));
   // 開発版と配布版が同時に動いても互いのポートを奪い合わないよう、記録を分ける
   const portFile = path.join(app.getPath('userData'), app.isPackaged ? 'server-port.json' : 'server-port-dev.json');
   worker = utilityProcess.fork(path.join(__dirname, 'server.cjs'), [], {
@@ -114,10 +116,13 @@ async function boot() {
   let startupError = '';
   worker.stderr.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });
   const ready = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('サーバーの起動が時間切れになりました')), 60_000);
+    const timer = setTimeout(() => reject(new Error(t('server.startTimeout'))), 60_000);
     worker.on('message', message => { if (message.type === 'ready') { clearTimeout(timer); resolve(message); } });
-    worker.once('exit', () => { clearTimeout(timer); reject(new Error(`サーバーを起動できませんでした\n${startupError}`)); });
+    worker.once('exit', () => { clearTimeout(timer); reject(new Error(t('server.startFailed', { detail: startupError }))); });
   });
+  if (ready.locale) setLocale(ready.locale);
+  // 画面で言語を変えたら、サーバーが解決し直した言語が届く（core/server.mjs の savePref）
+  worker.on('message', message => { if (message?.type === 'locale' && message.locale) setLocale(message.locale); });
   origin = `http://127.0.0.1:${ready.port}`;
   rememberPort(portFile, ready.port);
   window = new BrowserWindow({ width: 1200, height: 850, minWidth: 640, minHeight: 480, title: 'Pleiad', icon: path.join(__dirname, 'icon.png'), show: false,
@@ -153,7 +158,7 @@ async function boot() {
   });
   worker.once('exit', () => {
     if (quitting) return;
-    dialog.showErrorBox('Pleiad', 'サーバーが終了しました。Pleiad を起動し直してください。保存済みの会話は残っています。');
+    dialog.showErrorBox('Pleiad', t('server.exited'));
     quitting = true; app.quit();
   });
   await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}`);
@@ -185,15 +190,15 @@ async function closeSafely() {
   try {
     const work = await new Promise((resolve, reject) => {
       const onMessage = message => { if (message.type === 'running') { clearTimeout(timer); worker.off('message', onMessage); resolve(message.work); } };
-      const timer = setTimeout(() => { worker.off('message', onMessage); reject(new Error('実行状態を確認できませんでした。少し待ってから閉じてください。')); }, 10_000);
+      const timer = setTimeout(() => { worker.off('message', onMessage); reject(new Error(t('quit.checkFailed'))); }, 10_000);
       worker.on('message', onMessage); worker.postMessage({ type: 'running' });
     });
     if (work.count > 0) {
-      await dialog.showMessageBox(window, { type: 'info', title: '作業が実行中です', message: '会話の作業が完了してから終了してください。中断する場合は会話内の「中断」を使えます。', buttons: ['作業に戻る'] });
+      await dialog.showMessageBox(window, { type: 'info', title: t('quit.busyTitle'), message: t('quit.busyMessage'), buttons: [t('quit.backToWork')] });
       return;
     }
     quitting = true; worker.postMessage({ type: 'shutdown' }); app.quit();
-  } catch (e) { await dialog.showMessageBox(window, { message: e.message, buttons: ['戻る'] }); }
+  } catch (e) { await dialog.showMessageBox(window, { message: e.message, buttons: [t('common.back')] }); }
   finally { closing = false; }
 }
 
@@ -210,7 +215,7 @@ ipcMain.handle('ply:update', async (event, action, value) => {
   trusted(event);
   if (!updates) return { version: app.getVersion(), enabled: false, phase: 'unavailable', channel: app.getVersion().includes('-') ? 'beta' : 'stable' };
   try { return await updates.command(action, value); }
-  catch (e) { throw new Error(['check', 'download'].includes(action) ? updates.snapshot().error || '更新を取得できませんでした。接続と配布先の閲覧権限を確認して再試行してください。' : e.message); }
+  catch (e) { throw new Error(['check', 'download'].includes(action) ? updates.snapshot().error || t('update.fetchFailed') : e.message); }
 });
 // 画面の配色（自動・明・暗）や帯の下の面（脇の開閉・プレビュー）が変わるたびに、重ねたボタンの地と記号の色を合わせ直す
 ipcMain.on('ply:title-bar', (event, colors) => {
@@ -224,5 +229,5 @@ if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { if (!quitting && window) { event.preventDefault(); closeSafely(); } });
-  app.whenReady().then(boot).catch(e => { console.error(e.message); dialog.showErrorBox('Pleiad の起動に失敗しました', e.message); quitting = true; worker?.kill(); app.quit(); });
+  app.whenReady().then(boot).catch(e => { console.error(e.message); dialog.showErrorBox(t('boot.failedTitle'), e.message); quitting = true; worker?.kill(); app.quit(); });
 }

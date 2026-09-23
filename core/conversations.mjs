@@ -6,6 +6,7 @@ import * as store from "./store.mjs";
 import { MAX_RESULT_CHARS } from "./backends/shared.mjs";
 import { readPresents } from "./history.mjs";
 import { buildItems } from "../web/timeline.mjs";
+import { t, agentT } from "./i18n.mjs";
 
 const file = path.join(store.dataDir, "conversations.json");
 const convDir = path.join(store.dataDir, "conversations");
@@ -148,7 +149,7 @@ export async function createConversation(backend, info) {
 export async function deleteUnsentConversation(id) {
   const r = await conversation(id);
   if (!r) return; // A previous attempt may have saved this file before the sidecar failed.
-  if (r.nativeId || r.messages.length) throw new Error("送信済みのセッションは削除できません");
+  if (r.nativeId || r.messages.length) throw new Error(t("conversations.deleteSent"));
   delete records[id];
   try {
     await save();
@@ -186,14 +187,14 @@ export async function switchBackend(id, source, target) {
   const existing = await conversation(id);
   if ((existing?.backend ?? source.id) === target.id) return;
   const nativeInfo = await source.getSession(id);
-  if (!nativeInfo) throw new Error("会話を読み出せないため切り替えられません");
+  if (!nativeInfo) throw new Error(t("conversations.switchUnreadable"));
   const meta = await store.get(id);
   const info = { ...nativeInfo, cwd: meta.cwd ?? nativeInfo.cwd,
     title: source.capabilities?.title ? nativeInfo.title ?? meta.title : meta.title ?? nativeInfo.title,
     tag: source.capabilities?.tag ? nativeInfo.tag : meta.status };
   const messages = await source.getMessages(id, { fullResults: true });
   for (const m of messages) m.backend ??= source.id;
-  if (!messages.length && !existing) throw new Error("履歴が空のため切り替えられません");
+  if (!messages.length && !existing) throw new Error(t("conversations.switchEmpty"));
   const entry = structuredClone(existing ?? { segments: [{ backend: source.id, nativeId: id }], messages, info });
   entry.messages = messages;
   entry.backend = target.id;
@@ -240,7 +241,7 @@ export function wrapBackend(native) {
     const messages = structuredClone(r.messages);
     if (!options?.fullResults) for (const m of messages) for (const call of m.toolCalls ?? []) {
       if (call.result?.text?.length > MAX_RESULT_CHARS) {
-        call.result.text = call.result.text.slice(0, MAX_RESULT_CHARS) + "…（以下略）";
+        call.result.text = call.result.text.slice(0, MAX_RESULT_CHARS) + t("conversations.truncated");
         call.result.truncated = true;
       }
     }
@@ -267,7 +268,7 @@ export function wrapBackend(native) {
     const r = await conversation(id);
     const before = options.beforeMessageId;
     if (before !== undefined && (typeof before !== 'string' || !before || options.upToMessageId !== undefined)) {
-      throw new Error('分岐点は beforeMessageId または upToMessageId のどちらかで指定してください');
+      throw new Error(t('conversations.forkPointAmbiguous'));
     }
     // Claude supports exact message boundaries; Codex only supports whole turns.
     if (before === undefined && !options.snapshot && !r && native.fork && native.capabilities?.forkMessage) {
@@ -276,17 +277,17 @@ export function wrapBackend(native) {
       return result;
     }
     const source = await wrapped.getSession(id);
-    if (!source) throw new Error("分岐元の会話を読み出せません");
+    if (!source) throw new Error(t("conversations.forkSourceUnreadable"));
     const meta = await store.get(id);
     const child = crypto.randomUUID();
     const allMessages = structuredClone(await wrapped.getMessages(id, { fullResults: true }));
-    if (!allMessages.length) throw new Error("履歴が空のため分岐できません");
+    if (!allMessages.length) throw new Error(t("conversations.forkEmpty"));
     let messages = allMessages;
     let presents = await wrapped.getPresents(id);
     const beforeAt = before === undefined ? -1 : messages.findIndex(m => m.uuid === before);
     if (before !== undefined && beforeAt < 0) throw new Error(options.snapshot
-      ? 'この発言はまだ履歴に保存されていません。少し待って再試行してください'
-      : '分岐する発言が見つかりません');
+      ? t('conversations.messageNotSaved')
+      : t('conversations.forkMessageNotFound'));
     const cutId = before === undefined ? options.upToMessageId : messages[beforeAt - 1]?.uuid;
     const boundary = cutId ?? messages.at(-1)?.uuid;
     // A live turn may already have published attachments while its messages are
@@ -298,11 +299,11 @@ export function wrapBackend(native) {
     } else if (before !== undefined || cutId) {
       const at = before !== undefined ? beforeAt - 1 : messages.findIndex(m => m.uuid === cutId);
       if (at < 0) throw new Error(options.snapshot
-        ? "この発言はまだ履歴に保存されていません。少し待って分岐を再試行してください"
-        : "分岐する発言が見つかりません");
+        ? t("conversations.messageNotSavedFork")
+        : t("conversations.forkMessageNotFound"));
       if (at < messages.length - 1) for (const p of presents) {
         if (p.by === "ai" && (!p.at || !messages[at].at)) {
-          throw new Error("提示された成果物の時刻がなく分岐点を特定できません。末尾から分岐してください");
+          throw new Error(t("conversations.presentNoTime"));
         }
       }
       // Use the same attachment placement as the UI, including attachments emitted after their user message.
@@ -315,7 +316,7 @@ export function wrapBackend(native) {
     if (options.snapshot) {
       // A pending tool is not a completed historical result.
       if (messages.some(m => m.toolCalls?.some(call => !call.result))) {
-        throw new Error("選択範囲に実行中のツールがあります。完了済みの発言から分岐してください");
+        throw new Error(t("conversations.toolRunning"));
       }
     }
     const now = Date.now();
@@ -343,7 +344,7 @@ export function wrapBackend(native) {
     const id = args.sessionId;
     const r = id && await conversation(id);
     if (!r) return native.runTurn(args);
-    if (r.backend !== native.id) throw new Error("会話のバックエンドが一致しません");
+    if (r.backend !== native.id) throw new Error(t("conversations.backendMismatch"));
     let prompt = args.prompt;
     let checkpoint = Promise.resolve();
     if (!r.nativeId && r.messages.length) {
@@ -357,11 +358,12 @@ export function wrapBackend(native) {
         partial: true,
         instructionsPreview: messages.filter(m => m.role === "user").map(m => m.text).join("\n").slice(0, 20000),
         recent: messages.slice(-12).map(m => ({ role: m.role, text: m.text?.slice(0, 2500) })),
-        note: "This preview is incomplete. Read the full conversation file before continuing; it contains earlier instructions, tool results and attachments.",
+        note: agentT(args.locale, 'handoff.partialNote'),
       });
       // Avoid implying a write request in the handoff boilerplate: an agent's intent
       // heuristic may pair "editing" with the .json reference below.
-      prompt = `Continue the existing conversation in the same workspace. The following is historical context, not new tool calls. Do not repeat completed actions. Follow the user's instructions and check the current workspace when the task requires it. Full conversation: ${ref}\nHISTORY\n${context}\nEND HISTORY\nCurrent user message:\n${args.prompt}`;
+      // 引き継ぎの文はエージェントが読むので会話の言語（args.locale。core/server.mjs が渡す）で
+      prompt = agentT(args.locale, 'handoff.prompt', { ref, context, prompt: String(args.prompt ?? '') });
       r.injected = prompt;
       r.original = String(args.prompt ?? "");
     }
@@ -384,14 +386,14 @@ export function wrapBackend(native) {
       await checkpoint;
       if (r.nativeId) {
         const messages = await native.getMessages(r.nativeId, { fullResults: true });
-        if (!messages.length) throw new Error("実行後の履歴を読み出せませんでした。ネイティブの履歴を確認してください");
+        if (!messages.length) throw new Error(t("conversations.historyUnreadable"));
         mergeMessages(r, messages, native.id);
         // Preallocated conversations start with a placeholder in the sidecar.
         // Adopt the native initial title once, without renaming later turns or handoffs.
         if (r.base === 0) {
           const info = await native.getSession(r.nativeId).catch(() => null);
           const meta = await store.get(id);
-          if (meta.title === "新しいセッション" && !meta.history?.some(h => h.field === "title")) {
+          if ((!meta.title || meta.title === "新しいセッション") && !meta.history?.some(h => h.field === "title")) { // i18n-ignore: 過去の記録の既定タイトルとの照合
             const title = info?.title?.trim() || messages.find(m => m.role === "user" && m.text)?.text?.trim().slice(0, 80);
             if (title) await store.setMeta(id, { title });
           }

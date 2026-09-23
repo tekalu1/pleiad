@@ -1,4 +1,49 @@
 {
+  "errors": {
+    "runningCheckFailed": "実行状態を確認できませんでした。再試行してください。"
+  },
+  "server": {
+    "startTimeout": "サーバーの起動が時間切れになりました",
+    "startFailed": "サーバーを起動できませんでした\n{{detail}}",
+    "exited": "サーバーが終了しました。Pleiad を起動し直してください。保存済みの会話は残っています。"
+  },
+  "boot": {
+    "failedTitle": "Pleiad の起動に失敗しました"
+  },
+  "quit": {
+    "checkFailed": "実行状態を確認できませんでした。少し待ってから閉じてください。",
+    "busyTitle": "作業が実行中です",
+    "busyMessage": "会話の作業が完了してから終了してください。中断する場合は会話内の「中断」を使えます。",
+    "backToWork": "作業に戻る"
+  },
+  "common": {
+    "back": "戻る"
+  },
+  "notifications": {
+    "completed": "作業が完了しました"
+  },
+  "secrets": {
+    "unavailable": "OS の暗号化機能（safeStorage）が使えません",
+    "noKeyring": "OS の鍵束が見つからないため、暗号化できません（basic_text）",
+    "decryptFailed": "秘密情報を復号できませんでした（別のユーザー・別の PC で暗号化された可能性があります）",
+    "encryptFailed": "暗号化できませんでした"
+  },
+  "update": {
+    "blocked": "更新できません：{{reason}}。完了してから更新してください。更新は準備済みのまま残ります。",
+    "applyFailed": "更新を適用できませんでした。再試行してください。",
+    "fetchFailed": "更新を取得できませんでした。接続と配布先の閲覧権限を確認して再試行してください。",
+    "authRequired": "更新の確認に GitHub の認証が必要です。GitHub CLI で gh auth login --hostname github.com を実行してから再試行してください。",
+    "settingsReadFailed": "更新設定を読み込めませんでした。設定ファイルを確認してください。",
+    "busy": "更新の処理中です。完了をお待ちください。",
+    "invalidSettings": "更新設定が正しくありません。",
+    "applyDownloadedFirst": "ダウンロードした更新を適用してから変更してください。",
+    "unavailable": "この起動方法では自動更新を利用できません。",
+    "checkFirst": "更新を確認してからダウンロードしてください。",
+    "notDownloaded": "更新のダウンロードが完了していません。",
+    "unknownAction": "不明な更新操作です。",
+    "verifyFailed": "更新ファイルの安全性を確認できなかったため、適用を中止しました。現在のバージョンを引き続き利用できます。時間をおいて再確認してください。",
+    "networkFailed": "更新を取得できませんでした。現在のバージョンを引き続き利用できます。ネットワーク接続を確認して再試行してください。"
+  },
   "resident": {
     "summary": "中継 {{relay}} · 接続中の端末 {{devices}} · 実行中 {{running}}",
     "open": "Pleiad を開く",

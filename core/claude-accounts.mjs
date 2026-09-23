@@ -28,6 +28,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { t } from './i18n.mjs';
 
 export const TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
 const SECRET_PREFIX = 'claude-account:';
@@ -53,22 +54,22 @@ export function claudeEnv(base = process.env, { token, extra = {} } = {}) {
 /** 文字列の中のトークンを伏せる。エラーメッセージ・stderr の記録に使う */
 export function redactToken(text, token) {
   const s = String(text ?? '');
-  return token ? s.split(token).join('[トークン]') : s;
+  return token ? s.split(token).join(t('claude.redacted.token')) : s;
 }
 
 export function normalizeToken(value) {
   const token = String(value ?? '').trim();
   // setup-token が出すのは sk-ant-oat01-… の 1 行。空白や改行が混じるのは貼り間違い
   if (!/^[\x21-\x7e]{20,4096}$/.test(token)) {
-    throw new Error('トークンの形式が正しくありません。`claude setup-token` が表示した値をそのまま貼り付けてください');
+    throw new Error(t('claude.accounts.badToken'));
   }
   return token;
 }
 
 export function normalizeName(value) {
   const name = String(value ?? '').trim();
-  if (!name) throw new Error('アカウントの表示名を入力してください');
-  if (name.length > MAX_NAME) throw new Error(`表示名は ${MAX_NAME} 文字以内にしてください`);
+  if (!name) throw new Error(t('claude.accounts.nameRequired'));
+  if (name.length > MAX_NAME) throw new Error(t('claude.accounts.nameTooLong', { max: MAX_NAME }));
   return name;
 }
 
@@ -83,11 +84,11 @@ export async function fetchTokenOrg(token, { fetch = globalThis.fetch, baseUrl =
       headers: { authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', 'anthropic-version': '2023-06-01' },
       signal: AbortSignal.timeout(timeoutMs),
     });
-  } catch (e) { throw new Error(`トークンの持ち主を確認できません（${redactToken(e?.message ?? e, token)}）`); }
+  } catch (e) { throw new Error(t('claude.accounts.ownerUnknown', { message: redactToken(e?.message ?? e, token) })); }
   const org = res.headers?.get?.('anthropic-organization-id') ?? '';
   try { await res.body?.cancel?.(); } catch {}
-  if (!res.ok) throw new Error(`トークンの持ち主を確認できません（HTTP ${res.status}）`);
-  if (!ORG.test(org)) throw new Error('トークンの持ち主を確認できません（応答に組織がありません）');
+  if (!res.ok) throw new Error(t('claude.accounts.ownerHttp', { status: res.status }));
+  if (!ORG.test(org)) throw new Error(t('claude.accounts.ownerNoOrg'));
   return org;
 }
 
@@ -173,7 +174,7 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
       return { version: 1, accounts: raw.accounts.filter(a => ID.test(a?.id ?? '') && typeof a.name === 'string') };
     } catch (e) {
       if (e.code === 'ENOENT') return { version: 1, accounts: [] };
-      throw new Error('Claude のアカウント一覧を読み込めません。形式が壊れています');
+      throw new Error(t('claude.accounts.listBroken'));
     }
   }
   async function write(data) {
@@ -193,7 +194,7 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
   const key = id => SECRET_PREFIX + id;
   const usageRoot = path.join(dataDir, 'claude-usage');
   const usageDir = id => {
-    if (!ID.test(id ?? '')) throw new Error('アカウントの id が正しくありません');
+    if (!ID.test(id ?? '')) throw new Error(t('claude.accounts.badId'));
     return path.join(usageRoot, id);
   };
   const usageMarker = id => path.join(usageDir(id), USAGE_MARKER);
@@ -252,7 +253,7 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
       const label = normalizeName(name);
       if (id !== undefined && id !== null && id !== '') {
         const entry = data.accounts.find(a => a.id === id);
-        if (!entry) throw new Error('そのアカウントは登録されていません');
+        if (!entry) throw new Error(t('claude.accounts.notRegistered'));
         let tokenChanged = false;
         if (token !== undefined && token !== null && String(token).trim() !== '') {
           await secrets.set(key(id), { token: normalizeToken(token) });
@@ -315,7 +316,7 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
       return serial(async () => {
         const data = await read();
         const next = data.accounts.filter(a => a.id !== id);
-        if (next.length === data.accounts.length) throw new Error('そのアカウントは登録されていません');
+        if (next.length === data.accounts.length) throw new Error(t('claude.accounts.notRegistered'));
         await write({ ...data, accounts: next });
         bump(id);
         // 消すだけなら復号は要らない（復号できない起動でも消せる）
@@ -329,7 +330,7 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
     hasUsageLogin,
     /** 使用量の認可（`claude auth login`）が済んだ印を置く */
     async markUsageLogin(id) {
-      if (!(await read()).accounts.some(a => a.id === id)) throw new Error('そのアカウントは登録されていません');
+      if (!(await read()).accounts.some(a => a.id === id)) throw new Error(t('claude.accounts.notRegistered'));
       await fs.mkdir(usageDir(id), { recursive: true });
       await fs.writeFile(usageMarker(id), JSON.stringify({ at: new Date().toISOString() }) + '\n', { mode: 0o600 });
     },
@@ -345,13 +346,13 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
     async resolve(id) {
       if (!id) return null;
       const entry = (await read()).accounts.find(a => a.id === id);
-      if (!entry) throw new AccountError('この会話で選んでいる Claude のアカウントは削除されています。アカウントを選び直してください', 'deleted');
+      if (!entry) throw new AccountError(t('claude.accounts.deleted'), 'deleted');
       let value;
       try { value = await secrets.get(key(id)); }
       catch (e) {
-        throw new AccountError(`Claude のアカウント「${entry.name}」のトークンを読み込めません（${e.message}）。設定のアカウント一覧で貼り直すか、別のアカウントを選んでください`, 'unreadable');
+        throw new AccountError(t('claude.accounts.tokenUnreadable', { name: entry.name, message: e.message }), 'unreadable');
       }
-      if (!value?.token) throw new AccountError(`Claude のアカウント「${entry.name}」のトークンが登録されていません。設定のアカウント一覧で貼り付けてください`, 'missing-token');
+      if (!value?.token) throw new AccountError(t('claude.accounts.tokenMissing', { name: entry.name }), 'missing-token');
       return { id, name: entry.name, token: value.token };
     },
   };

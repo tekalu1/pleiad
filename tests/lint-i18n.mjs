@@ -173,7 +173,8 @@ export function scanJs(text, lineOffset = 0) {
       const isConsole = h.length === 3 && h[0] === 'id:console' && h[1] === '.' && h[2].startsWith('id:');
       const callee = last().startsWith('id:') ? last().slice(3) : null;
       const member = hist[hist.length - 2] === '.';
-      stack.push({ k: '(', console: isConsole });
+      // agentT(会話の言語, '…')。キーは 2 つ目の引数（名前空間の既定は agent）。最初の , でキーを待つ
+      stack.push({ k: '(', console: isConsole, ...(callee === 'agentT' && !member ? { agentT: true } : {}) });
       if (isConsole) consoleDepth++;
       push('(');
       i++;
@@ -196,6 +197,8 @@ export function scanJs(text, lineOffset = 0) {
     // そのほかの記号。?.( は呼び出しとして読み飛ばし、?. は . と同じに扱う
     if (ch === '?' && nx === '.' && text[i + 2] === '(') { i += 2; continue; }
     if (ch === '?' && nx === '.' && !/[0-9]/.test(text[i + 2] ?? '')) { push('.'); i += 2; continue; }
+    const top = stack[stack.length - 1];
+    if (ch === ',' && top?.agentT) { delete top.agentT; push(ch); i++; pendingCall = { callee: 'agentT', first: true }; continue; }
     push(ch); i++; pendingCall = null;
   }
   return { literals, comments, calls };
@@ -299,7 +302,7 @@ export function scanFile(name, text) {
   // 使っているキー
   const ns = DEFAULT_NS.find(([re]) => re.test(name))?.[1] ?? 'ui';
   const used = [];
-  for (const c of r.calls) used.push({ file: name, line: c.line, ...splitKey(c.arg, ns) });
+  for (const c of r.calls) used.push({ file: name, line: c.line, ...splitKey(c.arg, c.callee === 'agentT' ? 'agent' : ns) });
   const attrKeys = r.keys ?? [];
   // JS の中の data-i18n*="…"（innerHTML で組む塊）と dataset.i18n* = '…'
   if (ext !== '.html') for (const l of r.literals) for (const m of l.text.matchAll(/data-i18n(?:-[\w-]+)?=\\?["']([\w.:-]+)\\?["']/g)) attrKeys.push({ line: l.line, key: m[1] });
@@ -558,6 +561,10 @@ export function selftest(log = console.log) {
     ['console.* の引数は数えない', () => count('web/a.mjs', "console.log('ログ', `x ${'中'}`);\nconsole.error?.('失敗');\nfoo('数える');") === 1],
     ['正規表現の中は数えない', () => count('web/a.mjs', "const re = /[ぁ-ん]+/u; const x = a / b / c; const s = '数える';") === 1],
     ['i18n-ignore（行末・直前行）で外せる', () => count('web/a.mjs', "const a = '外す'; // i18n-ignore: 固有名\n// i18n-ignore: 検索語\nconst b = '外す';\nconst c = '数える';") === 1],
+    ['agentT(言語, キー) は 2 つ目の引数を agent のキーとして読む', () => {
+      const used = scanFile('core/a.mjs', "agentT(locale, 'tasks.x', { n }); agentT(lng, 'server:y'); t('z', agentT(l, 'w'));").used.map((u) => `${u.ns}:${u.key}`).join(',');
+      return used === 'agent:tasks.x,server:y,server:z,agent:w';
+    }],
     ['理由の無い i18n-ignore は落ちる', () => scanFile('web/a.mjs', "const a = '外す'; // i18n-ignore").problems.some((p) => p.rule === 'ignore-reason')],
     ['HTML のテキストと属性を数え、コメントとほかの属性は数えない', () => count('web/a.html', '<!-- コメント -->\n<p title="題" data-x="値">本文</p>\n<input placeholder="入力" aria-label="欄" alt="絵">\n<script>const s = \'中\';</script>\n<style>.a::before{content:"既定"}</style>') === 7],
     ['CSS の content: を数え、コメントは数えない', () => count('web/a.css', '/* content:"注" */\n.a::before{content:"既定"}\n.b::after{content:"✓"}') === 1],

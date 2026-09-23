@@ -28,6 +28,7 @@
 //
 // 実行ファイルは AGENT_HOST_AGY_BIN。既定は `agy`。
 import { cliCommand, spawnCli } from "../cli-installation.mjs";
+import { t } from "../i18n.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -127,7 +128,7 @@ export class AgySession {
     const die = (why) => {
       if (this.proc !== proc) return;
       this.proc = null;
-      this.exited = new Error(`agy が終了した: ${why}${this.stderr.length ? NL + this.stderr.join("") : ""}`);
+      this.exited = new Error(t("antigravity.errors.exited", { why }) + (this.stderr.length ? NL + this.stderr.join("") : ""));
       this.onExit?.(this.exited);
     };
     proc.on("exit", (code, sig) => die(`exit=${code} signal=${sig}`));
@@ -160,7 +161,7 @@ export class AgySession {
 
   #write(line) {
     const proc = this.proc;
-    if (!proc?.stdin?.writable) throw new Error("agy につながっていない");
+    if (!proc?.stdin?.writable) throw new Error(t("antigravity.errors.notConnected"));
     proc.stdin.write(line + NL);
   }
 

@@ -359,6 +359,7 @@ export function createHostCalls({ log = console.error, onIdle = null } = {}) {
         return await work();
       } finally {
         inflight -= 1;
+        // i18n-ignore: サーバーのログ（log は console.error）
         if (closed) log(`  [claude] ${label} の結果を CLI へ返せない（入力を閉じた後に終わった）`);
         else if (inflight === 0) idle?.();
       }
@@ -372,6 +373,7 @@ export function createHostCalls({ log = console.error, onIdle = null } = {}) {
  */
 export function createStderrLog({ log = console.error, prefix = "  [claude stderr] ", maxLine = 300, maxLines = 40, secrets = [] } = {}) {
   // 会話で選んだアカウントのトークン（core/claude-accounts.mjs）が出力に紛れても記録に残さない。切り詰める前に伏せる
+  // i18n-ignore: サーバーのログ（stderr の記録）の伏せ字
   const hide = (line) => secrets.reduce((s, secret) => secret ? s.split(secret).join("[トークン]") : s, line);
   let count = 0;
   let rest = "";
@@ -384,6 +386,7 @@ export function createStderrLog({ log = console.error, prefix = "  [claude stder
       if (!line) continue;
       count += 1;
       if (count > maxLines) {
+        // i18n-ignore: サーバーのログ（stderr の記録）
         if (count === maxLines + 1) log(`${prefix}（以降の出力は省略）`);
         continue;
       }

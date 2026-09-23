@@ -1,13 +1,14 @@
-const labels = {
-  queued: '送信待ち', sending: 'AIへ送信中',
-  paused: '送信を保留中', failed: '送信できませんでした', unknown: '送信結果を確認できません',
-};
+import { t } from './i18n.mjs';
+
+// i18n-dynamic: outbox.status.
+const STATUSES = ['queued', 'sending', 'paused', 'failed', 'unknown'];
+const statusLabel = (status) => (STATUSES.includes(status) ? t(`outbox.status.${status}`) : status);
 
 // 送信待ちが何を待っているか（core/message-queue.mjs の waiting）
 function queuedLabel(wait) {
-  if (wait?.reason === 'turn') return '送信待ち — 作業が終わると自動で送信';
-  if (wait?.reason === 'order') return '送信待ち — 前のメッセージが送られてから送信';
-  return labels.queued;
+  if (wait?.reason === 'turn') return t('outbox.waitTurn');
+  if (wait?.reason === 'order') return t('outbox.waitOrder');
+  return statusLabel('queued');
 }
 
 export function renderOutbox(root, messages, action) {
@@ -20,7 +21,7 @@ export function renderOutbox(root, messages, action) {
     text.textContent = item.args.prompt;
     const status = document.createElement('div');
     status.className = 'outbox-status';
-    status.textContent = item.status === 'queued' ? queuedLabel(item.waiting) : labels[item.status] ?? item.status;
+    status.textContent = item.status === 'queued' ? queuedLabel(item.waiting) : statusLabel(item.status);
     row.append(text, status);
     if (item.error) {
       const error = document.createElement('div');
@@ -31,11 +32,11 @@ export function renderOutbox(root, messages, action) {
     if (item.status === 'unknown') {
       const hint = document.createElement('div');
       hint.className = 'outbox-status';
-      hint.textContent = '会話を確認してください。再送すると同じ指示が2回届くことがあります。';
+      hint.textContent = t('outbox.unknownHint');
       row.append(hint);
     }
     for (const [name, label] of item.status === 'sending' ? [] : [
-      ...(item.status !== 'queued' ? [['retry', '再送する']] : []), ['cancel', '取り消す'],
+      ...(item.status !== 'queued' ? [['retry', t('outbox.retry')]] : []), ['cancel', t('outbox.cancel')],
     ]) {
       const button = document.createElement('button');
       button.type = 'button';

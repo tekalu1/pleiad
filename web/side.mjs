@@ -52,9 +52,9 @@ function backendLogo(id, label) {
 }
 
 function unreadMark() {
-  const mark = svgEl("svg", { viewBox: "0 0 14 14", class: "unread-mark", role: "img", "aria-label": "完了・未確認" });
+  const mark = svgEl("svg", { viewBox: "0 0 14 14", class: "unread-mark", role: "img", "aria-label": t("sidebar.unread") });
   const title = svgEl("title");
-  title.textContent = "完了・未確認";
+  title.textContent = t("sidebar.unread");
   mark.append(title, svgEl("circle", { cx: 7, cy: 7, r: 4.5, fill: "currentColor" }));
   return mark;
 }
@@ -62,6 +62,10 @@ function unreadMark() {
 // 絵文字の一覧（1363 件）は重いので、起動後の空き時間に先読みし、押した瞬間は面と弧を先に出す
 let emojiMod = null;
 const loadEmoji = () => (emojiMod ??= import("./emoji.mjs"));
+/** 絵文字のカテゴリの名前。辞書に無い id は emoji.mjs の名前のまま */
+// i18n-dynamic: sidebar.emoji.category.
+const CATEGORY_IDS = ["smileys", "nature", "food", "activity", "travel", "objects", "symbols", "flags"];
+const categoryLabel = (c) => (CATEGORY_IDS.includes(c.id) ? t(`sidebar.emoji.category.${c.id}`) : c.label);
 (globalThis.requestIdleCallback ?? ((f) => setTimeout(f, 1500)))(() => { loadEmoji().catch(() => {}); });
 const sections = new Map();   // カテゴリ id -> 一度作った格子。2 回目以降は作り直さない
 
@@ -202,21 +206,21 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const ic = el("button", "grp-icon", iconOf(st) ?? "");
       if (!iconOf(st)) ic.append(icon(FOLDER));
       ic.type = "button";
-      ic.title = "アイコンを選ぶ";
+      ic.title = t("sidebar.group.pickIcon");
       ic.onclick = (e) => { e.stopPropagation(); openIconPicker(st, ic); };
-      const name = el("button", "grp-name" + (st == null ? " none" : ""), st ?? "状態なし");
+      const name = el("button", "grp-name" + (st == null ? " none" : ""), st ?? t("session.status.none"));
       name.type = "button";
       name.onclick = () => { const k = st ?? ""; collapsed.has(k) ? collapsed.delete(k) : collapsed.add(k); save(); render(); };
       head.append(ic, name);
       // 畳んだ中に走っているものがあれば見出しに弧。走っていないときは印そのものを置かない（置くと回り続ける）
       // 動いているものが 1 つでもあれば弧、裏を待っているだけなら衛星（docs/design-system.md §6）
-      if (isCollapsed && active) head.append(runMark("走っているものがある"));
-      else if (isCollapsed && behind) head.append(satMark(behind, `裏で ${behind} 本が動いている`));
+      if (isCollapsed && active) head.append(runMark(t("sidebar.somethingRunning")));
+      else if (isCollapsed && behind) head.append(satMark(behind, t("activity.behindCount", { count: behind })));
       else if (isCollapsed && rows.some(s => last.unreadIds.has(s.id))) head.append(unreadMark());
       if (st != null) {
         const add = el("button", "btn btn-icon grp-add");
         add.type = "button";
-        add.title = "この状態で新しいセッション";
+        add.title = t("sidebar.group.newSession");
         add.append(icon(PLUS));
         add.onclick = (e) => { e.stopPropagation(); onNew?.({ status: st, cwd: filter.dir ?? cwdNow?.() ?? "", backend: filter.backends.length === 1 ? filter.backends[0] : undefined }); };
         head.append(add);
@@ -262,11 +266,11 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const rowsEl = el("div", "rows");
       if (draftHere) rowsEl.append(row({ id: null, title: "", cwd: last.draft.cwd, status: last.draft.status }));
       for (const fam of fams) rowsEl.append(fam.kin.length ? family(fam) : row(fam.root));
-      if (!rows.length && !draftHere) rowsEl.append(el("div", "empty", "まだ無い"));
+      if (!rows.length && !draftHere) rowsEl.append(el("div", "empty", t("sidebar.empty")));
       sec.append(rowsEl);
       root.append(sec);
     }
-    if (!root.childElementCount) root.append(el("div", "empty", filtering() || q ? "該当なし" : "まだ無い"));
+    if (!root.childElementCount) root.append(el("div", "empty", filtering() || q ? t("sidebar.noMatch") : t("sidebar.empty")));
 
     $("filterBtn").classList.toggle("on", filtering());
     renderChips();
@@ -290,9 +294,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
    * （「この会話は誰かの続き」という事実は変わらないため）。押せない、見るだけの印
    */
   function forkMark() {
-    const svg = svgEl("svg", { class: "forkmark", viewBox: "0 0 16 16", role: "img", "aria-label": "fork で生まれた会話" });
+    const svg = svgEl("svg", { class: "forkmark", viewBox: "0 0 16 16", role: "img", "aria-label": t("sidebar.forked") });
     const title = svgEl("title");
-    title.textContent = "fork で生まれた会話";
+    title.textContent = t("sidebar.forked");
     svg.append(title,
       svgEl("path", { d: "M5 4.6v3.4a3 3 0 0 0 3 3h2.6" }),
       svgEl("circle", { cx: 5, cy: 3, r: 1.5 }),
@@ -309,7 +313,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   /** 承認待ちの印。器の見出しでは文言を出さず ◆ だけ（2 件以上なら数を添える） */
   function waitMark(n) {
-    const label = n > 1 ? `承認待ち ${n} 件` : "承認待ち";
+    const label = n > 1 ? t("sidebar.waitingCount", { count: n }) : t("sidebar.waiting");
     const m = el("span", "wait only", n > 1 ? String(n) : "");
     m.setAttribute("role", "img");
     m.setAttribute("aria-label", label);
@@ -326,13 +330,13 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const active = list.some((s) => last.runningIds.has(s.id) && !last.bgWaiting.has(s.id));
     const behind = list.reduce((n, s) => n + (last.bgWaiting.get(s.id) ?? 0), 0);
     const waiting = list.filter((s) => last.waitingIds.has(s.id)).length;
-    if (active) sum.append(runMark("走っているものがある"));
-    else if (behind) sum.append(satMark(behind, `裏で ${behind} 本が動いている`));
+    if (active) sum.append(runMark(t("sidebar.somethingRunning")));
+    else if (behind) sum.append(satMark(behind, t("activity.behindCount", { count: behind })));
     else if (list.some((s) => last.unreadIds.has(s.id))) sum.append(unreadMark());
     if (waiting) sum.append(waitMark(waiting));
     const counts = new Map();
     for (const s of list) { const k = statusKey(s); counts.set(k, (counts.get(k) ?? 0) + 1); }
-    for (const [k, n] of counts) sum.append(el("span", "fam-count", `${k ?? "状態なし"} ${n}`));
+    for (const [k, n] of counts) sum.append(el("span", "fam-count", `${k ?? t("session.status.none")} ${n}`));
     return sum;
   }
 
@@ -349,7 +353,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     head.type = "button";
     head.setAttribute("aria-expanded", String(open));
     head.setAttribute("aria-controls", `fam-${id}`);
-    head.title = open ? "枝を畳む" : here ? "今いる会話はこの中。押すと開く" : "枝を開く";
+    head.title = open ? t("sidebar.family.collapse") : here ? t("sidebar.family.hereInside") : t("sidebar.family.expand");
     const body = el("div", "fam-body");
     const name = el("div", "fam-name");
     if (fam.root.parent?.sessionId) name.append(forkMark());
@@ -434,16 +438,16 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const meta = el("div", "row-meta");
     // 走っていれば弧。裏だけを待っていれば衛星（ターンが終わっても裏の作業が残っている会話を含む）
     const behind = last.bgWaiting.get(s.id);
-    if (last.runningIds.has(s.id) || behind) meta.append(behind ? satMark(behind, `裏で ${behind} 本が動いている`) : runMark("ターンが走っている"));
+    if (last.runningIds.has(s.id) || behind) meta.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
     else if (last.unreadIds.has(s.id)) meta.append(unreadMark());
-    if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", "承認待ち"));
-    if (isStale(s)) meta.append(el("span", "stale", `${staleDays(s.statusChangedAt)}日`));
+    if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", t("sidebar.waiting")));
+    if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
     else meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
     if (last.backendLabels && s.backend) meta.append(backendLogo(s.backend, last.backendLabels[s.backend] ?? s.backend));
     const cwd = el("span", "row-cwd", shortDir(s.cwd));
     if (s.cwd) cwd.title = s.cwd;
     meta.append(cwd);
-    if (s.unsent) meta.append(el("span", "row-unsent", s.hasDraft ? "未送信 · 下書きあり" : "未送信"));
+    if (s.unsent) meta.append(el("span", "row-unsent", s.hasDraft ? t("sidebar.unsentDraft") : t("sidebar.unsent")));
     r.append(meta);
 
     r.onclick = () => { if (s.id !== last.currentId) onOpen?.(s.id); };
@@ -484,16 +488,16 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       c.append(el("span", "k", k), el("span", "v", v));
       const x = el("button", "x", "×");
       x.type = "button";
-      x.title = "外す";
+      x.title = t("sidebar.filter.remove");
       x.onclick = () => { clear(); save(); render(); };
       c.append(x);
       box.append(c);
     };
-    for (const id of filter.backends) chip("エージェント", last.backendLabels?.[id] ?? id, () => { filter.backends = filter.backends.filter(x => x !== id); });
+    for (const id of filter.backends) chip(t("sidebar.filter.agent"), last.backendLabels?.[id] ?? id, () => { filter.backends = filter.backends.filter(x => x !== id); });
     const current = last.sessions.find(s => s.id === last.currentId);
     $("filterOutside").hidden = !current || matchesFilter(current);
-    if (filter.dir != null) chip("場所", shortDir(filter.dir) || filter.dir, () => { filter.dir = null; });
-    if (filter.status !== undefined) chip("状態", filter.status ?? "状態なし", () => { filter.status = undefined; });
+    if (filter.dir != null) chip(t("sidebar.filter.place"), shortDir(filter.dir) || filter.dir, () => { filter.dir = null; });
+    if (filter.status !== undefined) chip(t("sidebar.filter.status"), filter.status ?? t("session.status.none"), () => { filter.status = undefined; });
   }
 
   // ---- 浮く面 --------------------------------------------------------------
@@ -529,8 +533,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     p.replaceChildren();
     const q = document.createElement("input");
     q.className = "field";
-    q.placeholder = "絞り込む";
-    q.setAttribute("aria-label", "候補を絞り込む");
+    q.placeholder = t("sidebar.filter.placeholder");
+    q.setAttribute("aria-label", t("sidebar.filter.inputLabel"));
     const body = el("div", "pop-body");
     p.append(q, body);
     const dirs = new Map();
@@ -542,10 +546,10 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const needle = q.value.trim().toLowerCase();
       const hit = (s) => !needle || s.toLowerCase().includes(needle);
       body.replaceChildren();
-      body.append(el("div", "head", "エージェント（複数選択）"));
+      body.append(el("div", "head", t("sidebar.filter.agents")));
       const agents = new Map(Object.entries(last.backendLabels ?? {}));
       for (const s of last.sessions) if (s.backend && !agents.has(s.backend)) agents.set(s.backend, s.backend);
-      if (!needle) body.append(li("すべて", null, !filter.backends.length, () => { filter.backends = []; save(); render(); paint(); }));
+      if (!needle) body.append(li(t("sidebar.filter.all"), null, !filter.backends.length, () => { filter.backends = []; save(); render(); paint(); }));
       for (const [id, label] of agents) {
         if (!hit(label) && !hit(id)) continue;
         const on = filter.backends.includes(id);
@@ -555,19 +559,19 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         });
         b.dataset.backend = id; b.setAttribute("aria-pressed", String(on)); body.append(b);
       }
-      body.append(el("div", "head", "作業ディレクトリ"));
-      if (!needle) body.append(li("すべて", null, filter.dir == null, () => pick(() => { filter.dir = null; })));
+      body.append(el("div", "head", t("chat.composer.cwd")));
+      if (!needle) body.append(li(t("sidebar.filter.all"), null, filter.dir == null, () => pick(() => { filter.dir = null; })));
       for (const [d, n] of [...dirs].sort((a, b) => b[1] - a[1])) {
         if (!hit(d)) continue;
         const b = li(shortDir(d) || d, String(n), filter.dir === d, () => pick(() => { filter.dir = d; }));
         b.title = d;
         body.append(b);
       }
-      body.append(el("div", "head", "状態"));
-      if (!needle) body.append(li("すべて", null, filter.status === undefined, () => pick(() => { filter.status = undefined; })));
+      body.append(el("div", "head", t("sidebar.filter.status")));
+      if (!needle) body.append(li(t("sidebar.filter.all"), null, filter.status === undefined, () => pick(() => { filter.status = undefined; })));
       for (const st of groupOrder()) {
-        if (!hit(st ?? "状態なし")) continue;
-        body.append(li(st ?? "状態なし", String(counts.get(st) ?? 0), filter.status === st, () => pick(() => { filter.status = st; })));
+        if (!hit(st ?? t("session.status.none"))) continue;
+        body.append(li(st ?? t("session.status.none"), String(counts.get(st) ?? 0), filter.status === st, () => pick(() => { filter.status = st; })));
       }
     };
     q.oninput = paint;
@@ -604,28 +608,28 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const choose = (e) => { p.hidden = true; pushRecent(e); onSetIcon?.(st, e); };
 
     // 押した瞬間に面を出す。一覧の読み込みを待つ間は弧
-    p.replaceChildren(el("div", "head", `「${st}」のアイコン`));
+    p.replaceChildren(el("div", "head", t("sidebar.emoji.title", { status: st })));
     const q = document.createElement("input");
     q.className = "field";
-    q.placeholder = "検索（日本語・英語・絵文字の貼り付け）";
-    q.setAttribute("aria-label", "絵文字を検索");
+    q.placeholder = t("sidebar.emoji.placeholder");
+    q.setAttribute("aria-label", t("sidebar.emoji.search"));
     p.append(q);
     const tabs = el("div", "etabs");
     const body = el("div", "ebody");
     const wait = el("div", "empty ewait");
-    wait.append(runMark("一覧を読んでいる"), el("span", null, "読み込んでいる"));
+    wait.append(runMark(t("sidebar.emoji.loadingMark")), el("span", null, t("sidebar.emoji.loading")));
     body.append(wait);
     p.append(tabs, body);
     const reset = el("button", "li");
     reset.type = "button";
-    reset.append(icon(FOLDER), el("span", "lbl", "既定に戻す"), el("span", "hint", "フォルダ"));
+    reset.append(icon(FOLDER), el("span", "lbl", t("sidebar.emoji.reset")), el("span", "hint", t("sidebar.emoji.folder")));
     reset.onclick = () => { p.hidden = true; onSetIcon?.(st, ""); };
     p.append(reset);
     setTimeout(() => q.focus(), 0);
 
     const opened = (p.dataset.seq = String(Number(p.dataset.seq ?? 0) + 1));
     let mod;
-    try { mod = await loadEmoji(); } catch { wait.textContent = "一覧を読めなかった"; return; }
+    try { mod = await loadEmoji(); } catch { wait.textContent = t("sidebar.emoji.loadFailed"); return; }
     if (p.hidden || p.dataset.seq !== opened) return;      // 待っている間に閉じた・別のを開いた
     const { CATEGORIES, EMOJI_RE } = mod;
 
@@ -649,7 +653,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     };
     // カテゴリの格子は一度作ったら使い回す（1363 個のボタンを毎回作らない）
     const cached = (c) => {
-      if (!sections.has(c.id)) sections.set(c.id, section(c.id, c.label, c.items));
+      if (!sections.has(c.id)) sections.set(c.id, section(c.id, categoryLabel(c), c.items));
       return sections.get(c.id);
     };
     body.onclick = (e) => {
@@ -662,11 +666,11 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     };
 
     for (const c of CATEGORIES) {
-      const t = el("button", "etab", c.icon);
-      t.type = "button";
-      t.title = c.label;
-      t.onclick = () => { q.value = ""; renderAll(); body.querySelector(`.esec[data-cat="${c.id}"]`)?.scrollIntoView({ block: "start" }); };
-      tabs.append(t);
+      const tab = el("button", "etab", c.icon);
+      tab.type = "button";
+      tab.title = categoryLabel(c);
+      tab.onclick = () => { q.value = ""; renderAll(); body.querySelector(`.esec[data-cat="${c.id}"]`)?.scrollIntoView({ block: "start" }); };
+      tabs.append(tab);
     }
 
     const renderAll = () => {
@@ -674,7 +678,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const recent = loadRecent();
       if (recent.length) {
         const all = new Map(CATEGORIES.flatMap((c) => c.items).map((it) => [it[0], it]));
-        body.append(section("recent", "最近使った", recent.map((e) => all.get(e) ?? [e, "", ""])));
+        body.append(section("recent", t("sidebar.emoji.recent"), recent.map((e) => all.get(e) ?? [e, "", ""])));
       }
       for (const c of CATEGORIES) body.append(cached(c));
       markCurrent();
@@ -692,7 +696,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
           })
         : [];
       const items = [...pasted.map((e) => [e, "", ""]), ...hits];
-      body.append(items.length ? section("search", `${items.length} 件`, items) : el("div", "empty", "該当なし"));
+      body.append(items.length ? section("search", t("sidebar.emoji.hits", { count: items.length }), items) : el("div", "empty", t("sidebar.noMatch")));
       markCurrent();
     };
     q.oninput = () => (q.value.trim() ? renderSearch(q.value) : renderAll());
@@ -768,15 +772,15 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       box.replaceChildren();
       if (!text) { box.hidden = true; return; }
       box.append(el("span", "side-undo-text", text));
-      const b = el("button", "btn", "元に戻す");
+      const b = el("button", "btn", t("sidebar.undo"));
       b.type = "button";
       b.onclick = () => { hide(); fn?.(); };
       box.append(b);
       // 待たずに消したい人のための×。取り消しはせず、この一行を閉じるだけ
       const close = el("button", "btn btn-icon side-undo-close");
       close.type = "button";
-      close.title = "閉じる";
-      close.setAttribute("aria-label", "この知らせを閉じる");
+      close.title = t("sidebar.undoClose");
+      close.setAttribute("aria-label", t("sidebar.undoCloseLabel"));
       close.append(icon("M6 6l12 12M18 6L6 18"));
       close.onclick = hide;
       box.append(close);

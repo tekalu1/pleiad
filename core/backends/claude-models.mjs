@@ -9,20 +9,23 @@
 //   ''（既定に従う）には resolvesTo（実際に使われる id）と、その efforts / defaultEffort を写す。
 // hidden は「一覧には出さないが、保存済みの値としては有効」（以前の固定の別名 fable / opus …）。
 
+import { t } from "../i18n.mjs";
+
 // 取れないときの一覧（以前の固定の語彙）。エイリアスで渡すと SDK 側が実 ID に解決する。
+// 表示名と説明は言語が実行中に変わるので、読むたびに引く（ゲッター。スプレッドしても値になる）
 export const FALLBACK_MODELS = {
-  "":       { label: "既定に従う", note: "Claude Code の設定をそのまま使う" },
-  fable:    { label: "Fable",  note: "Claude 5 の最上位。いちばん重い作業向き" },
-  opus:     { label: "Opus",   note: "賢い。重い作業向き" },
-  sonnet:   { label: "Sonnet", note: "速さと賢さのつり合い" },
-  haiku:    { label: "Haiku",  note: "軽い。単純な作業向き" },
+  "":       { get label() { return t("models.default"); }, get note() { return t("claude.models.defaultNote"); } },
+  fable:    { label: "Fable",  get note() { return t("claude.models.fableFallback"); } },
+  opus:     { label: "Opus",   get note() { return t("claude.models.opus"); } },
+  sonnet:   { label: "Sonnet", get note() { return t("claude.models.sonnet"); } },
+  haiku:    { label: "Haiku",  get note() { return t("claude.models.haiku"); } },
 };
 const ALIASES = ["fable", "opus", "sonnet", "haiku"];
 const NOTES = {
-  fable: "最上位。いちばん重い作業向き",
-  opus: "賢い。重い作業向き",
-  sonnet: "速さと賢さのつり合い",
-  haiku: "軽い。単純な作業向き",
+  get fable() { return t("claude.models.fable"); },
+  get opus() { return t("claude.models.opus"); },
+  get sonnet() { return t("claude.models.sonnet"); },
+  get haiku() { return t("claude.models.haiku"); },
 };
 
 /** 'opus[1m]' / 'claude-opus-5-5[1m]' → 'opus'。知らない系統は null */

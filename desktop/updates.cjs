@@ -1,7 +1,8 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { AUTH_MESSAGE } = require('./update-auth.cjs');
+const { authMessage } = require('./update-auth.cjs');
+const { t } = require('./i18n.cjs');
 
 // No Electron dependency: the state machine is tested with a fake updater.
 class Updates extends EventEmitter {
@@ -27,7 +28,7 @@ class Updates extends EventEmitter {
   async init() {
     let saved = {};
     try { saved = JSON.parse(await fs.readFile(this.file, 'utf8')); }
-    catch (e) { if (e.code !== 'ENOENT') throw new Error('更新設定を読み込めませんでした。設定ファイルを確認してください。'); }
+    catch (e) { if (e.code !== 'ENOENT') throw new Error(t('update.settingsReadFailed')); }
     this.state.channel = ['stable', 'beta'].includes(saved.channel) ? saved.channel : this.state.channel;
     this.state.autoDownload = saved.autoDownload !== false;
     this.state.autoCheck = saved.autoCheck !== false;
@@ -60,20 +61,20 @@ class Updates extends EventEmitter {
   }
   async command(action, value) {
     if (action === 'status') return this.snapshot();
-    if (this.busy) throw new Error('更新の処理中です。完了をお待ちください。');
+    if (this.busy) throw new Error(t('update.busy'));
     this.busy = true;
     try {
       if (action === 'dismiss') { this.patch({ notice: false }); return this.snapshot(); }
       if (action === 'preferences') {
-        if (!['stable', 'beta'].includes(value?.channel) || typeof value.autoDownload !== 'boolean' || typeof value.autoCheck !== 'boolean') throw new Error('更新設定が正しくありません。');
-        if (['downloaded', 'downloading', 'installing'].includes(this.state.phase)) throw new Error('ダウンロードした更新を適用してから変更してください。');
+        if (!['stable', 'beta'].includes(value?.channel) || typeof value.autoDownload !== 'boolean' || typeof value.autoCheck !== 'boolean') throw new Error(t('update.invalidSettings'));
+        if (['downloaded', 'downloading', 'installing'].includes(this.state.phase)) throw new Error(t('update.applyDownloadedFirst'));
         const previous = this.snapshot();
         Object.assign(this.state, { channel: value.channel, autoCheck: value.autoCheck, autoDownload: value.autoDownload });
         try { await this.save(); } catch (e) { this.state = previous; throw e; }
         this.applyChannel();
         this.patch({ phase: this.enabled ? 'idle' : 'unavailable', target: null, notes: '', error: null });
       } else {
-        if (!this.enabled) throw new Error('この起動方法では自動更新を利用できません。');
+        if (!this.enabled) throw new Error(t('update.unavailable'));
         if (action === 'check') {
           // ダウンロード済みでも確認は続ける。その後に出た新しい版を見逃さないため。
           // 確認に失敗しても、準備済みの更新はそのまま適用できる
@@ -91,14 +92,14 @@ class Updates extends EventEmitter {
           this.patch({ lastChecked: new Date().toISOString() });
           if (this.state.phase === 'available' && this.state.autoDownload) await this.download();
         } else if (action === 'download') {
-          if (this.state.phase !== 'available') throw new Error('更新を確認してからダウンロードしてください。');
+          if (this.state.phase !== 'available') throw new Error(t('update.checkFirst'));
           await this.download();
         } else if (action === 'install') {
-          if (this.state.phase !== 'downloaded') throw new Error('更新のダウンロードが完了していません。');
+          if (this.state.phase !== 'downloaded') throw new Error(t('update.notDownloaded'));
           this.patch({ phase: 'installing', error: null });
           try { await this.install(); }
           catch (e) { this.patch({ phase: 'downloaded', error: e.message }); throw e; }
-        } else throw new Error('不明な更新操作です。');
+        } else throw new Error(t('update.unknownAction'));
       }
       return this.snapshot();
     } catch (e) {
@@ -109,9 +110,9 @@ class Updates extends EventEmitter {
   async download() { this.patch({ phase: 'downloading', progress: 0 }); await this.updater.downloadUpdate(); }
 }
 function updateError(error) {
-  if (error?.code === 'PLY_UPDATE_AUTH' || [401, 403, 404].includes(error?.statusCode)) return AUTH_MESSAGE;
-  if (['ERR_UPDATER_INVALID_SIGNATURE', 'ERR_CHECKSUM_MISMATCH', 'ERR_UPDATER_NO_CHECKSUM'].includes(error?.code)) return '更新ファイルの安全性を確認できなかったため、適用を中止しました。現在のバージョンを引き続き利用できます。時間をおいて再確認してください。';
-  return '更新を取得できませんでした。現在のバージョンを引き続き利用できます。ネットワーク接続を確認して再試行してください。';
+  if (error?.code === 'PLY_UPDATE_AUTH' || [401, 403, 404].includes(error?.statusCode)) return authMessage();
+  if (['ERR_UPDATER_INVALID_SIGNATURE', 'ERR_CHECKSUM_MISMATCH', 'ERR_UPDATER_NO_CHECKSUM'].includes(error?.code)) return t('update.verifyFailed');
+  return t('update.networkFailed');
 }
 function notesText(notes) {
   return (typeof notes === 'string' ? notes : Array.isArray(notes) ? notes.map(n => `${n.version}\n${n.note || ''}`).join('\n\n') : '').slice(0, 30000);

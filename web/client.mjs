@@ -33,7 +33,8 @@ import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
 import { el, svgEl, relTime, randomId } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
-import { buildItems, attachmentMessageIndex } from "./timeline.mjs";
+import { savedEvent, savedTitle } from "./saved-text.mjs";
+import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE } from "./timeline.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
 import { createReadCompletions, READ_STORE } from "./unread.mjs";
@@ -282,12 +283,13 @@ function forkButton(m) {
           const index = data.messages.findIndex(row => row.uuid === m.dataset.uuid);
           if (index < 0) throw new Error(t('chat.message.notSaved'));
           const attached = data.presents.filter(p => attachmentMessageIndex(data.messages, p) === index)
-            .map(p => ({ path: p.path, name: p.caption?.replace(/^添付:\s*/, '') || p.path.split(/[\\/]/).at(-1),
+            // 名前は captionParams.name（新しい記録）。無い過去の記録は保存された見出し「添付: 名前」から取る
+            .map(p => ({ path: p.path, name: p.captionParams?.name || p.caption?.replace(/^添付:\s*/, '') || p.path.split(/[\\/]/).at(-1),
               mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri }));
-          // 自動で付いた添付行だけを除く。本文に書かれた [添付] の説明は残す。
+          // 自動で付いた添付行（[添付] / [Attachment]）だけを除く。本文に書かれた説明は残す。
           const paths = new Set(attached.map(p => p.path.replace(/\\/g, '/').toLowerCase()));
           const text = (data.messages[index].text ?? '').split(/\r?\n/).filter(line => {
-            const match = /^\[添付\]\s+(.+)$/.exec(line.trim());
+            const match = ATTACHMENT_LINE.exec(line.trim());
             return !match || !paths.has(match[1].replace(/\\/g, '/').toLowerCase());
           }).join('\n').trimEnd();
           const draft = { text, attached, index };
@@ -578,7 +580,8 @@ function permissionCard(ev) {
     code.remove();
     if (isRunningHere()) activity.show(ok ? t("activity.runningTool", { tool: ev.toolName }) : t("activity.continuing"));
     state.pendingPerms.delete(ev.id);
-    cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, message: ok ? undefined : "ユーザーが拒否した" })   // i18n-ignore: エージェントに返す拒否の理由（UI の言語に連動させない）
+    // 拒否の理由はエージェントに返る。画面の言語ではなく会話の言語で返すよう、文ではなく印を送る（サーバーが会話の言語で訳す）
+    cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, ...(ok ? {} : { messageKey: "userDenied" }) })
       .catch((e) => sys(html.t("chat.approval.sendFailed", { error: e.message })));
   };
   allow.onclick = () => settle(true);
@@ -1077,11 +1080,12 @@ function onEvent(ev, replay = false) {
       changeLine("cwd", ev.cwd, ev, { reason: ev.reason });
       return refresh();
 
-    // 開始時と指示・Skills が変わっていたので、送信時に自動で読み込み直した（core/server.mjs の runTurn）
+    // 開始時と指示・Skills が変わっていた、またはコンテキストの設定が変わったので、送信時に自動で読み込み直した（core/server.mjs の runTurn）
     case 'contextRefreshed': {
       const names = (ev.names ?? []).join(t("app.listSeparator"));
       const rest = ev.count - (ev.names ?? []).length;
-      if (!names) sys(html.t("chat.sys.contextRefreshed"));
+      if (ev.settings) sys(html.t("chat.sys.contextSettingsApplied"));
+      else if (!names) sys(html.t("chat.sys.contextRefreshed"));
       else if (rest > 0) sys(html.t("chat.sys.contextRefreshedNamesMore", { names, count: rest }));
       else sys(html.t("chat.sys.contextRefreshedNames", { names }));
       // 新しい記録はこの直後の contextUsage で届く。ここでは「変更あり」の印だけ先に消す
@@ -1662,7 +1666,7 @@ const controls = setupComposerControls({
       }
       // 既存セッションなら覚えさせる。新規はこの後の最初の runTurn に載る
       modeWrite = modeWrite.catch(() => {}).then(() => sessionId
-        ? cmd("setMode", { sessionId, mode: v, reason: "手動で変更" })   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+        ? cmd("setMode", { sessionId, mode: v, reasonKey: "manual" })
         : cmd("setPref", { key: "mode", value: v, backend }));
       modeWrite.catch(e => sys(html.t("chat.sys.modeSaveFailed", { error: e.message })));
     },
@@ -1844,7 +1848,8 @@ $('agentTasksEntry').onclick = () => { renderAgentTasks(); $('workDialog').showM
 
 function sessionLabel(id) {
   if (!id) return t("session.untitledParen");
-  return state.sessions.find((x) => x.id === id)?.title ?? id.slice(0, 8);
+  const s = state.sessions.find((x) => x.id === id);
+  return s ? savedTitle(s.title) : id.slice(0, 8);
 }
 
 function workRow(label, sub, onClick, badge, mark = null) {
@@ -2453,7 +2458,7 @@ const copy = (text, done, failed) => {
 function setStatusOf(sessionId, status) {
   const s = state.sessions.find((x) => x.id === sessionId);
   if (s) return changeStatus(s, status);
-  cmd("setStatus", { sessionId, status, reason: "メニューから変更" })   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+  cmd("setStatus", { sessionId, status, reasonKey: "menu" })
     .catch((e) => sys(html.t("session.statusFailed", { error: e.message })));
 }
 
@@ -2471,7 +2476,7 @@ const snapOf = (rows) => rows.map((s) => ({ sessionId: s.id, status: s.status ??
 /** 覚えた通りに戻す。1 本ずつ戻すので、途中の伝播（根を動かすと中も動く）は起こさない。failed(エラー文) は失敗の一行（HTML） */
 function restore(before, failed) {
   Promise.all(before.map(async (b) => {
-    await cmd("setStatus", { sessionId: b.sessionId, status: b.status, reason: "元に戻す", alone: true });   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+    await cmd("setStatus", { sessionId: b.sessionId, status: b.status, reasonKey: "undo", alone: true });
     await cmd("setGrouped", { sessionId: b.sessionId, ungrouped: b.ungrouped });
   })).then(refresh).catch((e) => sys(failed(e.message)));
 }
@@ -2491,7 +2496,7 @@ function changeStatus(s, status) {
   if (fam) return moveGroup(s, status);
   const before = snapOf([s]);
   const wasIn = familiesOf(state.sessions, state.sessions).some((f) => f.kin.some((k) => k.id === s.id));
-  cmd("setStatus", { sessionId: s.id, status, reason: "手動で変更" })   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+  cmd("setStatus", { sessionId: s.id, status, reasonKey: "manual" })
     .then(() => {
       refresh();
       side.showUndo(wasIn ? t("session.undo.statusLeft", { title: rowLabel(s), status: statusWord(status) }) : t("session.undo.status", { title: rowLabel(s), status: statusWord(status) }),
@@ -2503,7 +2508,7 @@ function changeStatus(s, status) {
 /** グループごと別の状態へ。中の会話も一緒に動く（サーバが根の移動として広げる） */
 function moveGroup(root, status) {
   const before = snapOf(groupOf(root));
-  cmd("setStatus", { sessionId: root.id, status, reason: "グループごと移動" })   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+  cmd("setStatus", { sessionId: root.id, status, reasonKey: "groupMove" })
     .then(() => {
       refresh();
       side.showUndo(t("session.undo.groupMoved", { title: rowLabel(root), status: statusWord(status), count: before.length }),
@@ -2528,7 +2533,7 @@ function setGrouped(s, ungrouped) {
 function joinGroup(s, root) {
   const before = snapOf([s, ...groupOf(s)]);
   cmd("setGrouped", { sessionId: s.id, ungrouped: false })
-    .then(() => cmd("setStatus", { sessionId: s.id, status: root.status ?? "", reason: "グループに入れる" }))   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+    .then(() => cmd("setStatus", { sessionId: s.id, status: root.status ?? "", reasonKey: "joinGroup" }))
     .then(() => {
       refresh();
       side.showUndo(t("session.undo.joined", { title: rowLabel(s), group: rowLabel(root), status: statusWord(root.status) }),
@@ -2555,7 +2560,7 @@ function gatherKin(root, loose) {
   Promise.all([root, ...loose].map(async (m) => {
     await cmd("setGrouped", { sessionId: m.id, ungrouped: false });
     if ((m.status ?? null) !== (root.status ?? null)) {
-      await cmd("setStatus", { sessionId: m.id, status: root.status ?? "", reason: "枝をまとめる", alone: true });   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+      await cmd("setStatus", { sessionId: m.id, status: root.status ?? "", reasonKey: "mergeBranches", alone: true });
     }
   })).then(() => {
     refresh();
@@ -2638,7 +2643,7 @@ async function rowMenu(s, x, y) {
     ...(hasKin ? [{ label: t("session.menu.branches"), sub: kinItems }] : []),
     { label: t("session.menu.rename"), sub: () => [
       { input: { placeholder: t("session.menu.newTitle"), value: s.title === "(no title)" ? "" : s.title, onCommit: (v) =>
-        cmd("setTitle", { sessionId: s.id, title: v, reason: "メニューから変更" })   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+        cmd("setTitle", { sessionId: s.id, title: v, reasonKey: "menu" })
           .catch((e) => sys(html.t("session.titleFailed", { error: e.message }))) } },
     ] },
     { label: t("session.menu.changeStatus"), hint: s.status ?? t("session.status.none"), sub: () => [
@@ -2655,7 +2660,7 @@ async function rowMenu(s, x, y) {
         label: m.label, hint: m.note, checked: id === mode,
         onClick: () => (s.nextSettings?.backend && s.nextSettings.backend !== s.backend
           ? cmd("setTurnSettings", { sessionId: s.id, backend: s.nextSettings.backend, mode: id, rememberMode: true })
-          : cmd("setMode", { sessionId: s.id, mode: id, reason: "メニューから変更" }))   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+          : cmd("setMode", { sessionId: s.id, mode: id, reasonKey: "menu" }))
           .then(refresh).catch((e) => sys(html.t("session.menu.modeFailed", { error: e.message }))),
       })) },
     // 名前は版付き（入力欄のチップと同じ）。「既定に従う」には実際に当たるモデルを添える。隠した別名は選んでいるときだけ。
@@ -2969,7 +2974,7 @@ function paintHistory(fromMi = 0) {
     if (it.kind === "present") {
       if (it.anchorMi >= 0 && it.anchorMi < fromMi) continue;
       if (it.anchorMi < 0 && startAt && new Date(it.p.at ?? 0) < startAt) continue;
-      const wrapper = append(renderPresent(it.p), `p:${it.pi}`);
+      const wrapper = append(renderPresent(savedEvent(it.p)), `p:${it.pi}`);
       if (it.p.by === "human") wrapper.dataset.humanAttachment = "true";
       added.push(wrapper);
       continue;
@@ -3360,8 +3365,9 @@ async function submit() {
     const text = $('prompt').value;
     const attachments = state.attached.map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
     if (!text.trim() && !attachments.length) return;
-    // i18n-ignore: エージェントに渡す添付の印。forkButton の読み戻し（/^\[添付\]/）と揃える
-    const full = [text.trim(), attachments.map(a => `[添付] ${a.path}`).join(NL)].filter(Boolean).join(NL + NL);
+    // 添付の印はエージェントが読むので会話の言語で（まだ決まっていない会話は、サーバーが決めるのと同じ画面の言語）
+    const agentLang = state.sessions.find(s => s.id === sessionId)?.agentLocale ?? uiLang;
+    const full = [text.trim(), attachments.map(a => attachmentLine(agentLang, a.path)).join(NL)].filter(Boolean).join(NL + NL);
     const args = { sessionId, prompt: full, cwd: state.cwd.trim() || undefined, mode: state.mode,
       ...(attachments.length ? { attachments } : {}) };
     const previous = receipts.get(sessionId);
@@ -3421,12 +3427,13 @@ function connect() {
       }).catch(e => sys(html.t("app.initFailed", { error: e.message })));
     }
 
-    if (m.kind === "event") return onEvent(m.event);
+    // 保存される文言（変更の理由・添付の見出し）を今の言語に（web/saved-text.mjs）
+    if (m.kind === "event") return onEvent(savedEvent(m.event));
 
     if (m.kind === "response") {
       const p = pending.get(m.id);
       pending.delete(m.id);
-      return m.ok ? p?.res(m.result) : p?.rej(new Error(String(m.error)));
+      return m.ok ? p?.res(m.result) : p?.rej(Object.assign(new Error(String(m.error)), m.code ? { code: m.code } : {}));
     }
 
     if (m.kind === "error") sys(`error: ${escText(m.error)}`);
@@ -3498,7 +3505,7 @@ async function commitTitle() {
   const v = $("titleEdit").value.trim();
   if (!state.current || !v || v === s?.title || v === titleSent) return;
   titleSent = v;
-  await cmd("setTitle", { sessionId: state.current, title: v, reason: "手動で変更" })   // i18n-ignore: 変更履歴に保存する理由（データ。server 側で扱う）
+  await cmd("setTitle", { sessionId: state.current, title: v, reasonKey: "manual" })
     .catch((e) => sys(html.t("session.titleFailed", { error: e.message })));
 }
 $("titleEdit").onchange = commitTitle;

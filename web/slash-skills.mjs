@@ -1,5 +1,6 @@
 import { isComposingKey } from "./keyboard.mjs";
 import { el } from "./dom.mjs";
+import { t } from "./i18n.mjs";
 // カーソル位置の「/名前」だけを補完する（前後の文章・他のスキルは保持）。
 //
 // 日本語の文中は空白なしでも使える。URL・パスの内部では出さない。
@@ -95,9 +96,9 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", now 
   const paint = (q) => {
     list.replaceChildren();
     const head = el("li", "head");
-    head.append(el("span", null, "スキル"), el("span", "n", String(items.length)));
+    head.append(el("span", null, t("chat.composer.skills")), el("span", "n", String(items.length)));
     list.append(head);
-    if (!items.length) list.append(el("li", "none", "一致するスキルがありません"));
+    if (!items.length) list.append(el("li", "none", t("composer.skills.none")));
     for (const extra of list.children) if (!extra.classList.contains("it") && extra !== head) extra.setAttribute("role", "presentation");
     items.forEach((s, i) => {
       const li = el("li", "it" + (i === active ? " on" : ""));
@@ -134,7 +135,7 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", now 
     items = [];
     input.removeAttribute("aria-activedescendant");
     list.hidden = false;
-    list.replaceChildren(el("li", "head"), el("li", "none", "読み込み中…"));
+    list.replaceChildren(el("li", "head"), el("li", "none", t("common.loading")));
     input.setAttribute("aria-expanded", "true");
     try {
       const got = await load(key);
@@ -147,7 +148,7 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", now 
       skillsKey = key;
       skillsAt = now();
       skills = [];
-      list.replaceChildren(el("li", "none", "スキル一覧を取得できませんでした"));
+      list.replaceChildren(el("li", "none", t("composer.skills.failed")));
       input.setAttribute("aria-expanded", "true");
       return;
     } finally {
@@ -169,7 +170,7 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", now 
     input.value = input.value.slice(0, at.start) + insertion + suffix;
     const caret = at.start + insertion.length + (/^\s/.test(suffix) ? 1 : 0);
     chosen = { value: input.value };
-    if (hint) hint.textContent = s.hint ? `引数  ${s.hint}` : "";
+    if (hint) hint.textContent = s.hint ? t("composer.skills.args", { hint: s.hint }) : "";
     close();
     input.focus?.();
     input.setSelectionRange?.(caret, caret);
