@@ -262,7 +262,6 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
           lines: ['URL には /v1 を付けずに入れます（Claude Code が /v1/messages を付けます）。'] });
       }
       if (r.status >= 500) throw new CheckError(`接続先がエラーを返しました（HTTP ${r.status}）`, { lines: [errorText(r.text, key)].filter(Boolean), code: 'server' });
-      lines.push(`POST /v1/messages に応答しました（${(r.ms / 1000).toFixed(1)} 秒）。`);
       if (!r.ok) {
         const why = errorText(r.text, key);
         lines.push(looksLikeModelError(why) && r.status !== 429
@@ -270,9 +269,8 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
           : `確認のリクエストは HTTP ${r.status} でした${why ? `（${why}）` : ''}。URL とキーは通っています。`);
       }
       const auth = mode;
-      lines.push('認証: ' + (auth === 'none' ? 'キーなしで通りました' : auth === 'bearer' ? 'Bearer（Authorization ヘッダー）' : 'x-api-key ヘッダー') + (authMode === 'auto' && key ? '。自動で判定しました' : ''));
       const models = await fetchModels(fetchImpl, `${baseUrl}/v1/models?limit=1000`, { 'anthropic-version': '2023-06-01', ...authHeaders(auth === 'none' ? 'bearer' : auth, key) }, key);
-      lines.push(models?.ids.length ? `モデルの一覧: ${models.ids.length} 件を取りました。` : 'モデルの一覧は取れませんでした（GET /v1/models に未対応）。ID を入力してください。');
+      if (!models?.ids.length) lines.push('モデルの一覧は取れませんでした。ID を入力してください。');
       return { auth, latencyMs: r.ms, models: models?.ids ?? [], modelInfo: models?.info ?? {}, lines };
     }
     const statuses = [...new Set(tried.map(t => t.r.status))].join('・');
@@ -294,22 +292,20 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
     if (chat && chat.status !== 404 && chat.status !== 405) {
       throw new CheckError('この接続先は Chat Completions にしか対応していないため Codex では使えません', { code: 'chat-only', lines: [
         `POST ${baseUrl}/responses が ${r.status} を返しました（/chat/completions は応答します）。`,
-        'LiteLLM などで Responses API に変換すると使えます。Claude Code 用の接続先としては、Anthropic 互換の URL で登録できます。'] });
+        'LiteLLM などで Responses API に変換すると使えます。'] });
     }
     throw new CheckError(`POST ${baseUrl}/responses が ${r.status} を返しました。Responses API（/responses）に対応した URL か確かめてください`, { code: 'not-found',
       lines: ['多くの接続先では URL の末尾が /v1 です（Codex が /responses を付けます）。'] });
   }
   if (r.status >= 500) throw new CheckError(`接続先がエラーを返しました（HTTP ${r.status}）`, { lines: [errorText(r.text, key)].filter(Boolean), code: 'server' });
-  lines.push(`POST /responses に応答しました（${(r.ms / 1000).toFixed(1)} 秒）。`);
   if (!r.ok) {
     const why = errorText(r.text, key);
     lines.push(looksLikeModelError(why) && r.status !== 429
       ? `確認に使ったモデル ${model} は受け付けられませんでした（HTTP ${r.status}${why ? ': ' + why : ''}）。URL とキーは通っています。モデルは次で決めます。`
       : `確認のリクエストは HTTP ${r.status} でした${why ? `（${why}）` : ''}。URL とキーは通っています。`);
   }
-  lines.push('認証: ' + (auth === 'none' ? 'キーなしで通りました' : auth === 'api-key' ? 'api-key ヘッダー' : 'Bearer（Authorization ヘッダー）'));
   const models = await fetchModels(fetchImpl, `${baseUrl}/models`, authHeaders(auth, key), key);
-  lines.push(models?.ids.length ? `モデルの一覧: ${models.ids.length} 件を取りました。` : 'モデルの一覧は取れませんでした（GET /models に未対応）。ID を入力してください。');
+  if (!models?.ids.length) lines.push('モデルの一覧は取れませんでした。ID を入力してください。');
   return { auth, latencyMs: r.ms, models: models?.ids ?? [], modelInfo: models?.info ?? {}, lines };
 }
 

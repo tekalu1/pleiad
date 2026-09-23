@@ -6,6 +6,7 @@
 //   - エージェント任せの MCP は、そのエージェントの設定に登録されているものを読み取りのみで並べる（agentMcp）
 //   - antigravity で Pleiad 担当を扱わなかった会話は、その理由
 import { el } from './dom.mjs';
+import { fmt } from './i18n.mjs';
 
 const KEY = 'session-context';
 const WORD = { instruction: '指示', skill: 'Skills', mcp: 'MCP' };
@@ -13,12 +14,10 @@ const COUNTED = { instruction: ['supplied', 'loaded'], skill: ['available', 'man
 const AGENT_FILES = { claude: 'claude', codex: 'codex' };
 const SOURCE = { claude: 'Claude', codex: 'Codex', common: '共通', ply: 'Pleiad' };
 
-const two = n => String(n).padStart(2, '0');
+// 「9/23 09:05」か「09:05」
 function stamp(at, withDay = true) {
-  const d = new Date(at ?? 0);
-  if (Number.isNaN(d.getTime()) || !at) return '';
-  const time = `${two(d.getHours())}:${two(d.getMinutes())}`;
-  return withDay ? `${d.getMonth() + 1}/${d.getDate()} ${time}` : time;
+  if (!at) return '';
+  return withDay ? fmt.dateTime(at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : fmt.time(at);
 }
 const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
 const base = p => String(p ?? '').split(/[\\/]/).pop();

@@ -8,6 +8,7 @@ import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs
 // 「エスケープしてから正規表現で置換する」方式は取らない（実体参照が壊れる／取りこぼす）。
 // 構造をパースし、葉のテキストを出力する瞬間にだけエスケープする。
 import { el } from "./dom.mjs";
+import { fmt } from "./i18n.mjs";
 import { copyIcon, downloadIcon, sidePanelIcon, moreIcon } from './icons.mjs';
 import { copyText } from './code-copy.mjs';
 
@@ -579,7 +580,7 @@ function shortPath(p, keep = 2) {
 }
 
 const lineCount = (s) => (String(s ?? "") ? String(s).split("\n").length : 0);
-const fmtN = (n) => Number(n).toLocaleString("ja-JP");
+const fmtN = (n) => fmt.number(n);
 const firstLine = (s) => String(s ?? "").split("\n").find((l) => l.trim()) ?? "";
 
 /** JSON にして返す。循環などで壊れても表示は止めない */

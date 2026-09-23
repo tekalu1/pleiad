@@ -1,0 +1,5 @@
+{
+  "errors": {
+    "unknownLocale": "知らない言語: {{value}}"
+  }
+}
