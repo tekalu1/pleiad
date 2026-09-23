@@ -86,6 +86,8 @@ const cases = [
   await import('./unit/server-claude-login.mjs'),
   await import("./unit/server-background.mjs"),
   await import("./unit/server-handoff.mjs"),
+  // 対応を終えた procway-code の会話・設定が残っていても安全に動く
+  await import("./unit/server-retired.mjs"),
   await import("./unit/server-fork.mjs"),
   await import("./unit/server-ux.mjs"),
   await import("./unit/conversations.mjs"),
