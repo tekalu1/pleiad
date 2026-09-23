@@ -19,6 +19,7 @@ import { EventEmitter } from 'node:events';
 import WebSocket, { WebSocketServer } from 'ws';
 import { RESET_CODE } from './frames.mjs';
 import { DeviceLink } from './device-link.mjs';
+import { t, currentLocale } from '../i18n.mjs';
 
 export const PROXY_COOKIE = 'pleiad_remote_token';
 const WS_RELEASE_BELOW = 64 * 1024;
@@ -58,14 +59,14 @@ const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<':
 /** ホストにつながらないときの案内（§7.4）。取り消し以外は 5 秒ごとに読み直し、つながれば画面に移る。 */
 export function unavailablePage({ state, hostName = '' }) {
   const revoked = state === 'revoked';
-  const title = revoked ? 'この端末はホストで取り消されました' : 'ホストにつながりません';
+  const title = revoked ? t('remote.device.revoked') : t('remote.device.hostOffline');
   const body = revoked
-    ? 'もう一度ペアリングしてください。'
+    ? t('remote.device.page.revoked')
     : state === 'host-offline'
-      ? 'ホストの Pleiad が起動しているか確かめてください。つながり次第、自動で開きます。'
-      : '中継につながりません。ネットワークを確かめてください。つながり次第、自動で開きます。';
+      ? t('remote.device.page.hostOffline')
+      : t('remote.device.page.offline');
   return `<!doctype html>
-<html lang="ja"><head><meta charset="utf-8">${revoked ? '' : '<meta http-equiv="refresh" content="5">'}
+<html lang="${escapeHtml(currentLocale())}"><head><meta charset="utf-8">${revoked ? '' : '<meta http-equiv="refresh" content="5">'}
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title>
 <style>body{font:14px/1.6 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;color:#333;background:#f6f6f4}
 main{max-width:28rem;padding:24px}h1{font-size:16px;margin:0 0 8px}p{margin:0;color:#666}
@@ -116,7 +117,7 @@ export class DeviceProxy extends EventEmitter {
     try { await listen(this.wantPort); }
     catch (e) {
       if (!this.wantPort || !['EADDRINUSE', 'EACCES'].includes(e.code)) throw e;
-      this.log(`remote proxy: port ${this.wantPort} は使えない (${e.code})`);
+      this.log(`remote proxy: port ${this.wantPort} は使えない (${e.code})`);   // i18n-ignore: ログは訳さない（docs/design.md「多言語対応」）
       await listen(0);
     }
     this.port = this.server.address().port;
@@ -159,7 +160,7 @@ export class DeviceProxy extends EventEmitter {
       return res.end(unavailablePage({ state, hostName: this.creds.hostName ?? '' }));
     }
     res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-pleiad-remote-state': state });
-    res.end(err?.message ?? 'ホストにつながりません');
+    res.end(err?.message ?? t('remote.device.hostOffline'));
   }
 
   // ── HTTP ──
@@ -174,7 +175,7 @@ export class DeviceProxy extends EventEmitter {
     const queryOk = tokenEq(viaQuery, this.token);
     if (!queryOk && !tokenEq(tokenFromCookie(req.headers.cookie), this.token)) {
       res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' });
-      return res.end('トークンが要る（アプリから開いてください）');
+      return res.end(t('remote.device.tokenRequired'));
     }
     const method = req.method.toUpperCase();
     if (method !== 'GET' && method !== 'HEAD') {
@@ -214,7 +215,7 @@ export class DeviceProxy extends EventEmitter {
       finished = true;
       if (res.headersSent) return res.destroy();
       if (code === RESET_CODE.FORBIDDEN) { res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }); return res.end('forbidden'); }
-      if (code === RESET_CODE.CHANNEL_CLOSED) return this.#unavailable(req, res, { state: this.link.state === 'connected' ? 'offline' : this.link.state, message: 'ホストとの接続が切れました' });
+      if (code === RESET_CODE.CHANNEL_CLOSED) return this.#unavailable(req, res, { state: this.link.state === 'connected' ? 'offline' : this.link.state, message: t('remote.device.lost') });
       res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
       res.end('bad gateway');
     });

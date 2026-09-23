@@ -19,6 +19,7 @@ import { parsePairingPayload, relayWsUrl, cleanLabel, PAIRING_TTL_MS } from './p
 import { openRelaySocket } from './device-link.mjs';
 import { DeviceProxy } from './device-proxy.mjs';
 import { readJson, writeJson } from './devices.mjs';
+import { t } from '../i18n.mjs';
 
 const HOST_ID = /^[a-z2-7]{26}$/;
 
@@ -40,7 +41,7 @@ export function createDeviceStore({ dir, cipher = plainCipher }) {
 
   async function readHosts() {
     const raw = await readJson(hostsFile, { version: 1, hosts: [] });
-    if (raw?.version !== 1 || !Array.isArray(raw.hosts)) throw new Error('hosts.json の形式が違います');
+    if (raw?.version !== 1 || !Array.isArray(raw.hosts)) throw new Error(t('remote.store.badFormat', { file: 'hosts.json' }));
     return raw;
   }
 
@@ -72,7 +73,7 @@ export function createDeviceStore({ dir, cipher = plainCipher }) {
 
     /** ペアリングの結果を置く。同じホストを組み直したときは資格を差し替え、覚えたポートと名前は残す。 */
     async saveHost(creds) {
-      if (!HOST_ID.test(creds.hostId ?? '')) throw new Error('hostId の形が違います');
+      if (!HOST_ID.test(creds.hostId ?? '')) throw new Error('invalid hostId');
       await secrets.set(`host:${creds.hostId}`, { token: creds.token });
       return locked(async () => {
         const data = await readHosts();
@@ -120,10 +121,10 @@ function pairError(code, message, extra = {}) {
 }
 
 function pairErrorForClose(closeCode) {
-  if (closeCode === 4401) return pairError('ticket', 'このペアリングのコードは使えません（使用済みか期限切れ）。ホストで作り直してください', { closeCode });
-  if (closeCode === 4429) return pairError('rate', 'ペアリングの試行が多すぎます。少し待ってから試してください', { closeCode });
-  if (closeCode === 4404 || closeCode === 4408) return pairError('host-offline', 'ホストにつながりません。ホストの Pleiad が起動しているか確かめてください', { closeCode });
-  return pairError('cancelled', 'ペアリングの途中で接続が切れました', { closeCode });
+  if (closeCode === 4401) return pairError('ticket', t('remote.pair.ticket'), { closeCode });
+  if (closeCode === 4429) return pairError('rate', t('remote.pair.rate'), { closeCode });
+  if (closeCode === 4404 || closeCode === 4408) return pairError('host-offline', t('remote.pair.hostOffline'), { closeCode });
+  return pairError('cancelled', t('remote.pair.cancelled'), { closeCode });
 }
 
 /**
@@ -137,7 +138,7 @@ export async function pairWithHost({ payload, keyPair, name = '', platform = 'de
   try { p = parsePairingPayload(payload); }
   catch (e) { throw pairError('payload', e.message); }
   const { psk, ticket } = derivePairing(p.secret);
-  if (signal?.aborted) throw pairError('aborted', 'ペアリングを中止しました');
+  if (signal?.aborted) throw pairError('aborted', t('remote.pair.aborted'));
   const sock = openRelaySocket(relayWsUrl(p.relayUrl, '/v1/device'), {
     'x-pleiad-host': p.hostId, 'x-pleiad-pairing': ticket.toString('base64url'),
   }, { openTimeoutMs: connectTimeoutMs });
@@ -145,22 +146,22 @@ export async function pairWithHost({ payload, keyPair, name = '', platform = 'de
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
     const o = await sock.opened;
-    if (signal?.aborted) throw pairError('aborted', 'ペアリングを中止しました');
+    if (signal?.aborted) throw pairError('aborted', t('remote.pair.aborted'));
     if (!o.open) {
       if (o.closeCode != null) throw pairErrorForClose(o.closeCode);
-      throw pairError('offline', '中継につながりません', o.status ? { httpStatus: o.status } : {});
+      throw pairError('offline', t('remote.device.offline'), o.status ? { httpStatus: o.status } : {});
     }
     const hs = new Handshake({ pattern: 'IKpsk2', initiator: true, prologue: prologueFor(p.hostId), staticKey: keyPair, remoteStatic: p.publicKey, psk });
     sock.ws.send(hs.writeMessage(Buffer.from(JSON.stringify({ proto: 1, name: cleanLabel(name), platform, app: String(app) }))));
     let m2;
     try { m2 = await sock.next(connectTimeoutMs); }
     catch (e) {
-      if (signal?.aborted) throw pairError('aborted', 'ペアリングを中止しました');
+      if (signal?.aborted) throw pairError('aborted', t('remote.pair.aborted'));
       if (e.closeCode != null) throw pairErrorForClose(e.closeCode);
-      throw pairError('host-offline', 'ホストから応答がありません');
+      throw pairError('host-offline', t('remote.pair.noResponse'));
     }
     try { hs.readMessage(m2); }
-    catch { throw pairError('handshake', 'ホストの鍵がペアリングのコードと合いません'); }
+    catch { throw pairError('handshake', t('remote.pair.keyMismatch')); }
     const transport = hs.split();
     const code = confirmationCode(hs.handshakeHash);
     sock.ws.send(transport.encrypt(Buffer.from(JSON.stringify({ type: 'pair' }))));
@@ -168,14 +169,14 @@ export async function pairWithHost({ payload, keyPair, name = '', platform = 'de
     let msg;
     try { msg = JSON.parse(transport.decrypt(await sock.next(timeoutMs)).toString('utf8')); }
     catch (e) {
-      if (signal?.aborted) throw pairError('aborted', 'ペアリングを中止しました');
+      if (signal?.aborted) throw pairError('aborted', t('remote.pair.aborted'));
       if (e.closeCode != null) throw pairErrorForClose(e.closeCode);
-      if (e.code === 'timeout') throw pairError('timeout', 'ホストの承認を待ちきれませんでした');
-      throw pairError('handshake', 'ホストの応答を読めません');
+      if (e.code === 'timeout') throw pairError('timeout', t('remote.pair.timeout'));
+      throw pairError('handshake', t('remote.pair.unreadable'));
     }
-    if (msg?.type === 'denied') throw pairError('denied', 'ホストで拒否されました');
-    if (msg?.type === 'expired') throw pairError('expired', 'ホストの承認を待つ間に期限が切れました');
-    if (msg?.type !== 'approved' || typeof msg.deviceId !== 'string' || typeof msg.token !== 'string') throw pairError('handshake', 'ホストの応答の形が違います');
+    if (msg?.type === 'denied') throw pairError('denied', t('remote.pair.denied'));
+    if (msg?.type === 'expired') throw pairError('expired', t('remote.pair.expired'));
+    if (msg?.type !== 'approved' || typeof msg.deviceId !== 'string' || typeof msg.token !== 'string') throw pairError('handshake', t('remote.pair.badResponse'));
     return {
       hostId: p.hostId, hostPublicKey: p.publicKey, relayUrl: p.relayUrl,
       deviceId: msg.deviceId, token: msg.token, hostName: cleanLabel(msg.hostName || p.hostName),
@@ -211,7 +212,7 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     if (proxies.has(hostId)) return proxies.get(hostId);
     const run = (async () => {
       const creds = await store.credentials(hostId);
-      if (!creds) throw Object.assign(new Error('このホストはペアリングされていません'), { code: 'unknown-host' });
+      if (!creds) throw Object.assign(new Error(t('remote.device.unknownHost')), { code: 'unknown-host' });
       const keyPair = await store.identity();
       const px = new DeviceProxy({ creds, keyPair, port: creds.port, app, name, shell: platform === 'desktop' ? 'desktop' : 'mobile', log, ...proxyOptions });
       px.on('status', s => {

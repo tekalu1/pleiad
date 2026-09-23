@@ -12,5 +12,77 @@
     "launchFailed": "Couldn't start the app ({{reason}})",
     "openFailed": "Couldn't open it ({{reason}})",
     "noResponse": "No response"
+  },
+  "remote": {
+    "relayUrl": {
+      "invalid": "The relay URL is not valid",
+      "httpsOnly": "The relay URL must start with https://",
+      "httpsOnlyLoopback": "The relay URL must start with https:// (http is only allowed for a relay on this PC)",
+      "noUserinfo": "The relay URL can't contain a user name or password",
+      "noQuery": "The relay URL can't contain ? or #"
+    },
+    "pairingCode": {
+      "notCode": "This is not a pairing code",
+      "unsupportedVersion": "This pairing code is from an unsupported version",
+      "broken": "The pairing code is corrupted",
+      "hostIdMismatch": "The pairing code's hostId doesn't match its public key"
+    },
+    "relay": {
+      "closed": {
+        "badRequest": "The relay didn't understand the request (possibly a version mismatch)",
+        "unauthorized": "The relay rejected the enrollment secret",
+        "replaced": "Replaced by another connection from the same host (are two Pleiad instances running with the same data folder?)",
+        "full": "The relay has reached its host limit",
+        "shutdown": "The relay shut down",
+        "lost": "Lost the connection to the relay",
+        "other": "The relay connection closed ({{code}})"
+      },
+      "rateLimited": "The relay is temporarily refusing connections (too many failed authentications)",
+      "rejected": "The relay refused the connection (HTTP {{status}})",
+      "unreachable": "Can't reach the relay ({{reason}})"
+    },
+    "unnamedDevice": "Unnamed device",
+    "settings": {
+      "needConfig": "Enter the relay URL and the enrollment secret",
+      "secretWhitespace": "The enrollment secret can't contain spaces",
+      "needConfigToEnable": "Enter the relay URL and the enrollment secret before turning this on",
+      "disabled": "Remote access is turned off",
+      "notConnected": "Not connected to the relay"
+    },
+    "pairing": {
+      "requestGone": "That pairing request no longer exists"
+    },
+    "device": {
+      "revoked": "This device was removed on the host",
+      "hostOffline": "Can't reach the host",
+      "stopped": "Connection stopped",
+      "offline": "Can't reach the relay",
+      "lost": "Lost the connection to the host",
+      "tokenRequired": "A token is required (open this from the app)",
+      "unknownHost": "This host is not paired",
+      "page": {
+        "revoked": "Pair this device again.",
+        "hostOffline": "Make sure Pleiad is running on the host. This page opens automatically once connected.",
+        "offline": "Can't reach the relay. Check your network. This page opens automatically once connected."
+      }
+    },
+    "pair": {
+      "ticket": "This pairing code can't be used (already used or expired). Create a new one on the host",
+      "rate": "Too many pairing attempts. Wait a moment and try again",
+      "hostOffline": "Can't reach the host. Make sure Pleiad is running on the host",
+      "cancelled": "The connection dropped during pairing",
+      "aborted": "Pairing was canceled",
+      "noResponse": "No response from the host",
+      "keyMismatch": "The host's key doesn't match the pairing code",
+      "timeout": "Timed out waiting for approval on the host",
+      "unreadable": "Couldn't read the host's response",
+      "denied": "The host declined the request",
+      "expired": "The request expired while waiting for approval on the host",
+      "badResponse": "The host's response was malformed"
+    },
+    "store": {
+      "unreadable": "Can't read {{file}} (the file is corrupted)",
+      "badFormat": "{{file}} has an unexpected format"
+    }
   }
 }

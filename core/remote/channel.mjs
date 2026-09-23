@@ -41,7 +41,7 @@ export class ChannelError extends Error {
 
 class StreamResetError extends Error {
   constructor(code) {
-    super(`ストリームが捨てられた（${code}）`);
+    super(`stream reset (${code})`);
     this.code = code;
   }
 }
@@ -51,7 +51,7 @@ function toBytes(v) {
   if (typeof v === 'string') return Buffer.from(v, 'utf8');
   if (Buffer.isBuffer(v) || v instanceof Uint8Array) return Buffer.from(v);
   if (v instanceof ArrayBuffer) return Buffer.from(new Uint8Array(v));
-  throw new TypeError('バイト列か文字列を渡す');
+  throw new TypeError('expected bytes or a string');
 }
 
 /**
@@ -99,7 +99,7 @@ export class Stream extends EventEmitter {
   /** 本文の断片。窓が空くまで待ち、送り終えたら解決する（背圧）。 */
   write(data) {
     this.#expect('http');
-    if (this.localDone) return Promise.reject(new Error('この向きは既に終わっている'));
+    if (this.localDone) return Promise.reject(new Error('this direction has already ended'));
     return this.#enqueue({ kind: 'data', data: toBytes(data), off: 0 });
   }
 
@@ -128,7 +128,7 @@ export class Stream extends EventEmitter {
   /** WebSocket の 1 メッセージ。60 KiB ごとの断片に分けて送り、送り終えたら解決する。 */
   send(data, { text = typeof data === 'string' } = {}) {
     this.#expect('ws');
-    if (this.localDone) return Promise.reject(new Error('WebSocket は既に閉じている'));
+    if (this.localDone) return Promise.reject(new Error('WebSocket is already closed'));
     return this.#enqueue({ kind: 'ws', data: toBytes(data), off: 0, text, started: false });
   }
 
@@ -148,8 +148,8 @@ export class Stream extends EventEmitter {
   }
 
   #expect(kind, incoming) {
-    if (this.kind !== kind) throw new Error(`${this.kind} のストリームには使えない`);
-    if (incoming === false) throw new Error('受けた側だけが使える');
+    if (this.kind !== kind) throw new Error(`not available on a ${this.kind} stream`);
+    if (incoming === false) throw new Error('only the receiving side can use this');
   }
 
   #ctl(type, payload, after) {
@@ -221,7 +221,7 @@ export class Stream extends EventEmitter {
   }
 
   _onFlow(n) {
-    if (n > this.recvWindow) throw new ChannelError('protocol', `stream ${this.id} の窓を超えた`);
+    if (n > this.recvWindow) throw new ChannelError('protocol', `stream ${this.id} exceeded its window`);
     this.recvWindow -= n;
   }
 
@@ -262,8 +262,8 @@ export class Channel extends EventEmitter {
     bufferedAmount = null, maxBuffered = MAX_BUFFERED, maxWsMessage = MAX_WS_MESSAGE,
   }) {
     super();
-    if (role !== 'device' && role !== 'host') throw new TypeError("role は 'device' か 'host'");
-    if (typeof send !== 'function') throw new TypeError('send(bytes) が要る');
+    if (role !== 'device' && role !== 'host') throw new TypeError("role must be 'device' or 'host'");
+    if (typeof send !== 'function') throw new TypeError('send(bytes) is required');
     this.role = role;
     this.sendFn = send;
     this.transport = transport;
@@ -309,10 +309,10 @@ export class Channel extends EventEmitter {
   openWs(head) { return this.#open('ws', T.WS_OPEN, head); }
 
   #open(kind, type, head) {
-    if (!this.started) throw new Error('start() の前には開けない');
-    if (this.closed) throw new ChannelError('closed', 'チャネルは閉じている');
-    if (this.role !== 'device') throw new Error('今はホストからストリームを開かない');
-    if (this.streams.size >= this.maxStreams) throw new ChannelError('streams', '同時ストリームの上限');
+    if (!this.started) throw new Error('cannot open before start()');
+    if (this.closed) throw new ChannelError('closed', 'channel is closed');
+    if (this.role !== 'device') throw new Error('the host does not open streams');
+    if (this.streams.size >= this.maxStreams) throw new ChannelError('streams', 'too many concurrent streams');
     const id = this.nextId;
     this.nextId += 2;
     const s = new Stream(this, id, kind, head, false);
@@ -323,7 +323,7 @@ export class Channel extends EventEmitter {
 
   /** 生存確認。PONG までの時間（ms）で解決する。 */
   ping() {
-    if (this.closed) return Promise.reject(new ChannelError('closed', 'チャネルは閉じている'));
+    if (this.closed) return Promise.reject(new ChannelError('closed', 'channel is closed'));
     const data = crypto.randomBytes(8);
     const key = data.toString('hex');
     const t0 = Date.now();
@@ -336,7 +336,7 @@ export class Channel extends EventEmitter {
   #tick() {
     if (this.closed) return;
     if (this.missedPings >= this.pingMisses) {
-      this.close(new ChannelError('timeout', `PING に ${this.pingMisses} 回返らなかった`));
+      this.close(new ChannelError('timeout', `${this.pingMisses} PINGs went unanswered`));
       return;
     }
     this.missedPings++;
@@ -358,7 +358,7 @@ export class Channel extends EventEmitter {
     clearInterval(this.pingTimer);
     clearTimeout(this.retryTimer);
     for (const s of [...this.streams.values()]) s._destroy(RESET_CODE.CHANNEL_CLOSED, false);
-    for (const p of this.pings.values()) p.reject(err ?? new ChannelError('closed', 'チャネルは閉じた'));
+    for (const p of this.pings.values()) p.reject(err ?? new ChannelError('closed', 'channel closed'));
     this.pings.clear();
     this.emit('close', err);
   }
@@ -442,18 +442,18 @@ export class Channel extends EventEmitter {
   }
 
   #dispatch({ type, stream: id, payload }) {
-    if (!this.peerHello && type !== T.HELLO) throw new ChannelError('protocol', '最初のフレームが HELLO ではない');
+    if (!this.peerHello && type !== T.HELLO) throw new ChannelError('protocol', 'first frame is not HELLO');
     switch (type) {
       case T.HELLO: {
-        if (this.peerHello) throw new ChannelError('protocol', 'HELLO が 2 回来た');
+        if (this.peerHello) throw new ChannelError('protocol', 'duplicate HELLO');
         const h = json.decode(payload);
         this.peerHello = h;
-        if (h.proto !== PROTO) { this.goaway('version', `proto ${h.proto} には対応しない`); return; }
+        if (h.proto !== PROTO) { this.goaway('version', `unsupported proto ${h.proto}`); return; }
         this.emit('hello', h);
         return;
       }
       case T.PING:
-        if (payload.length !== 8) throw new FrameError('PING は 8 バイト');
+        if (payload.length !== 8) throw new FrameError('PING must be 8 bytes');
         this._sendNow(T.PONG, 0, payload);
         return;
       case T.PONG: {
@@ -472,14 +472,14 @@ export class Channel extends EventEmitter {
       }
       case T.WINDOW: {
         const inc = readU32(payload);
-        if (inc === 0) throw new FrameError('WINDOW の増分が 0');
+        if (inc === 0) throw new FrameError('WINDOW increment is 0');
         if (id === 0) {
-          if (this.sendWindow + inc > MAX_WINDOW) throw new FrameError('チャネルの窓があふれた');
+          if (this.sendWindow + inc > MAX_WINDOW) throw new FrameError('channel window overflow');
           this.sendWindow += inc;
         } else {
           const s = this.streams.get(id);
           if (!s) { this.#checkKnown(id); return; }
-          if (s.sendWindow + inc > MAX_WINDOW) throw new FrameError('ストリームの窓があふれた');
+          if (s.sendWindow + inc > MAX_WINDOW) throw new FrameError('stream window overflow');
           s.sendWindow += inc;
         }
         this._pump();
@@ -492,7 +492,7 @@ export class Channel extends EventEmitter {
     }
 
     const flow = type === T.DATA || type === T.WS_MSG ? payload.length : 0;
-    if (flow > this.recvWindow) throw new ChannelError('protocol', 'チャネルの窓を超えた');
+    if (flow > this.recvWindow) throw new ChannelError('protocol', 'channel window exceeded');
     this.recvWindow -= flow;
     const s = this.streams.get(id);
     if (!s) {
@@ -534,7 +534,7 @@ export class Channel extends EventEmitter {
         const status = readU16(payload);
         s.remoteDone = true;
         s.localDone = true;
-        s.queue.splice(0).forEach(item => item.reject(new Error(`WebSocket を断られた（${status}）`)));
+        s.queue.splice(0).forEach(item => item.reject(new Error(`WebSocket rejected (${status})`)));
         s.emit('reject', status);
         s._maybeFinish();
         return;
@@ -543,7 +543,7 @@ export class Channel extends EventEmitter {
         this.#need(s, 'ws', !s.remoteDone && (s.incoming || s.accepted));
         let msg;
         try { msg = s.assembler.push(payload); } catch (e) {
-          if (e instanceof FrameError && /上限/.test(e.message)) {
+          if (e instanceof FrameError && e.code === 'too-large') {
             s._releaser(flow)();   // 窓は返してから捨てる
             s.reset(RESET_CODE.TOO_LARGE);
             return;
@@ -569,22 +569,22 @@ export class Channel extends EventEmitter {
         return;
       }
     }
-    throw new FrameError(`${TYPE_NAMES[type]} はここでは使えない`);
+    throw new FrameError(`${TYPE_NAMES[type]} is not allowed here`);
   }
 
   #need(s, kind, ok) {
-    if (s.kind !== kind || !ok) throw new ChannelError('protocol', `stream ${s.id} に合わないフレーム`);
+    if (s.kind !== kind || !ok) throw new ChannelError('protocol', `frame does not match stream ${s.id}`);
   }
 
   /** 相手の番号で、まだ開かれていないストリームへのフレームは誤り。こちらの番号で未使用のものも誤り。 */
   #checkKnown(id) {
     const mine = (id % 2 === 1) === (this.role === 'device');
-    if (mine ? id >= this.nextId : id > this.lastPeerId) throw new ChannelError('protocol', `開かれていない stream ${id}`);
+    if (mine ? id >= this.nextId : id > this.lastPeerId) throw new ChannelError('protocol', `stream ${id} is not open`);
   }
 
   #onOpen(type, id, payload) {
-    if (this.role !== 'host') throw new ChannelError('protocol', '端末はストリームを受けない');
-    if (id % 2 !== 1 || id <= this.lastPeerId) throw new ChannelError('protocol', `stream ${id} の番号が不正`);
+    if (this.role !== 'host') throw new ChannelError('protocol', 'devices do not accept streams');
+    if (id % 2 !== 1 || id <= this.lastPeerId) throw new ChannelError('protocol', `invalid stream id ${id}`);
     this.lastPeerId = id;
     const head = json.decode(payload);
     if (this.streams.size >= this.maxStreams || !this.listenerCount('stream')) {
