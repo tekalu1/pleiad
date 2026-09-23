@@ -26,7 +26,7 @@ import { setupAttachMenu } from "./attach-menu.mjs";
 import { modelRowIds } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
-import { behindOfTasks } from './work-status.mjs';
+import { behindOfTasks, liveTasksOf } from './work-status.mjs';
 import { createSide } from "./side.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
@@ -625,7 +625,9 @@ function paintPendingPerms(id) {
 // その間に来る show()（subagent 側のツール名など）は text に覚えるだけで、見出しは変えない。
 
 /** ターン行 -> 裏を待っているなら { n, label }、そうでなければ null */
-const behindOf = (t) => (t?.phase === "waiting" ? behindOfTasks(t.background, { waiting: true }) : null);
+// 委譲した Pleiad タスク（ply_delegate の子の会話）も、この会話の裏で動いている子として数える
+const behindOf = (t) => (t?.phase === "waiting"
+  ? behindOfTasks([...(t.background ?? []), ...liveTasksOf(state.work.tasks, t.sessionId)], { waiting: true }) : null);
 /**
  * この画面の会話が裏を待っているか。ターンが走っていればターン行（Claude の phase: waiting）、
  * 走っていなければ running の background（Codex: ターンは終わったがバックグラウンド端末が残っている）
@@ -634,7 +636,8 @@ function behindHere() {
   const t = (state.work.turns ?? []).find(belongsHere);
   if (t) return behindOf(t);
   const b = (state.work.background ?? []).find(belongsHere);
-  return b ? behindOfTasks(b.tasks) : null;
+  const all = [...(b?.tasks ?? []), ...liveTasksOf(state.work.tasks, state.current)];
+  return all.length ? behindOfTasks(all) : null;
 }
 
 const activity = {
@@ -709,9 +712,13 @@ const activity = {
     const b = this.el?.querySelector(".work");
     if (!b) return;
     const behind = backgroundHere().length;
-    b.hidden = n === 0 && ended === 0 && behind === 0;
+    const tasks = liveTasksOf(state.work.tasks, state.current).length;
+    b.hidden = n === 0 && ended === 0 && behind === 0 && tasks === 0;
+    // 委譲したタスクだけが残っているときは、タスクの一覧を開く（右上の入口と同じ）
+    b.onclick = !n && !behind && tasks ? openAgentTasks : openWork;
     if (n) b.textContent = t("activity.subagents", { count: n });
     else if (behind) b.textContent = t("activity.background", { count: behind });
+    else if (tasks) b.textContent = t("activity.tasks", { count: tasks });
     else if (ended) b.textContent = t("activity.subagentsEnded", { count: ended });
   },
   hide() {
@@ -1152,10 +1159,13 @@ function applyRunning(work) {
     if (b && t.sessionId) behind.set(t.sessionId, b.n);
   }
   // ターンの外で裏に残っている作業（Codex の端末）。ターンが走っていればそちらが優先（弧）
-  for (const x of state.work.background ?? []) {
-    if (!x.sessionId || running.has(x.sessionId)) continue;
-    const b = behindOfTasks(x.tasks);
-    if (b) behind.set(x.sessionId, b.n);
+  // 委譲したタスクが終わっていない依頼元の会話も衛星（ターンが走っていれば behindOf が数える）
+  const idle = new Set([...(state.work.background ?? []).map((x) => x.sessionId), ...(state.work.tasks ?? []).map((x) => x.parentSessionId)]);
+  for (const id of idle) {
+    if (!id || running.has(id)) continue;
+    const tasks = [...((state.work.background ?? []).find((x) => x.sessionId === id)?.tasks ?? []), ...liveTasksOf(state.work.tasks, id)];
+    const b = behindOfTasks(tasks);
+    if (b) behind.set(id, b.n);
   }
   // 4 秒ごとの放送で印が変わっていなければ一覧を描き直さない
   const changed = !sameSet(running, state.runningIds) || !sameSet(waiting, state.waitingIds)
@@ -1844,7 +1854,8 @@ function renderAgentTasks() {
     body.append(group);
   }
 }
-$('agentTasksEntry').onclick = () => { renderAgentTasks(); $('workDialog').showModal(); };
+function openAgentTasks() { renderAgentTasks(); $('workDialog').showModal(); }
+$('agentTasksEntry').onclick = openAgentTasks;
 
 function sessionLabel(id) {
   if (!id) return t("session.untitledParen");
