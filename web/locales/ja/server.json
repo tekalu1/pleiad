@@ -1,5 +1,772 @@
 {
   "errors": {
     "unknownLocale": "知らない言語: {{value}}"
+  },
+  "tools": {
+    "run": "実行",
+    "read": "読む",
+    "write": "書く",
+    "edit": "編集",
+    "find": "探す",
+    "search": "検索",
+    "list": "一覧",
+    "delegate": "委譲",
+    "fetch": "取得",
+    "webSearch": "web検索",
+    "present": "提示",
+    "status": "状態",
+    "title": "タイトル",
+    "fork": "分岐",
+    "image": "画像",
+    "imageGeneration": "画像生成",
+    "tool": "ツール",
+    "sleep": "待つ"
+  },
+  "activity": {
+    "tool": "{{label}} 中",
+    "waitingAnswer": "あなたの回答を待っている",
+    "waitingApproval": "承認を待っている"
+  },
+  "modes": {
+    "ask": "都度確認",
+    "full": "全部自動",
+    "readonly": "読むだけ",
+    "acceptEdits": "編集は自動",
+    "plan": "計画のみ"
+  },
+  "models": {
+    "default": "既定に従う"
+  },
+  "auth": {
+    "tokenRequired": "トークンが要る（起動時に出た URL を使う）"
+  },
+  "accounts": {
+    "deleted": "そのアカウントは削除されています",
+    "notRegistered": "そのアカウントは登録されていません"
+  },
+  "permission": {
+    "delegateEscalation": "この委譲は {{agent}} を「{{mode}}（{{modeId}}）」で動かします",
+    "childConversation": "委譲した子の会話",
+    "relayTitle": "委譲先「{{child}}」",
+    "relayTitleWith": "委譲先「{{child}}」 / {{title}}"
+  },
+  "quota": {
+    "unsupported": "このエージェントは使用枠の取得に対応していません。",
+    "localFailed": "使用実績を読み込めませんでした。"
+  },
+  "agents": {
+    "switchViaCommand": "エージェントは切り替え操作で変更してください",
+    "unknownForSession": "セッション {{sessionId}} のエージェントが分からない",
+    "unknownId": "知らないエージェント: {{id}}",
+    "required": "エージェントの指定が要る",
+    "notFound": "エージェントが見つかりません",
+    "unknown": "知らないエージェント",
+    "installRequired": "エージェントをインストールしてください",
+    "checkLogin": "ログイン状態を再確認してください",
+    "switching": "エージェントを切り替え中です"
+  },
+  "cwd": {
+    "missing": "作業ディレクトリが無い: {{cwd}}",
+    "notDirectory": "作業ディレクトリではない: {{cwd}}",
+    "required": "作業ディレクトリを入力してください"
+  },
+  "session": {
+    "running": "このセッションは実行中",
+    "required": "セッションが要る",
+    "requiredForStatus": "セッションが要る（新規なら runTurn の status に載せる）",
+    "notFound": "セッションが見つかりません",
+    "preparingSettings": "送信の準備中です。設定変更を再試行してください",
+    "draftTooLarge": "下書きが大きすぎます",
+    "attachmentInfoTooLarge": "添付の情報が大きすぎます",
+    "cannotDeleteBusy": "実行中または送信待ちのセッションは削除できません",
+    "onlyUnsentDeletable": "未送信のセッションだけ削除できます",
+    "finishBeforeSwitch": "実行が終わってから切り替えてください",
+    "sourceNotFound": "引き継ぎ元のセッションが見つかりません",
+    "preparingFork": "会話の準備中です。分岐を再試行してください",
+    "cannotFork": "このエージェントは分岐できない"
+  },
+  "turn": {
+    "reservedInvalid": "予約した設定は使用できません。選び直してください",
+    "aborted": "中断しました",
+    "visualizationSaveFailed": "可視化を保存できませんでした: {{error}}",
+    "contextSaveFailed": "コンテキストの利用記録を保存できませんでした"
+  },
+  "scan": {
+    "busy": "スキャン中です"
+  },
+  "settings": {
+    "modeUnavailable": "選択した承認モードは使用できません",
+    "endpointInvalid": "接続先の指定が不正です",
+    "endpointNotRegistered": "選択した接続先は登録されていません",
+    "modelUnavailable": "選択したモデルは使用できません",
+    "accountInvalid": "アカウントの指定が不正です",
+    "accountNotRegistered": "選択したアカウントは登録されていません",
+    "unknownPref": "知らない設定: {{key}}",
+    "unknownMode": "知らない承認モード: {{value}}",
+    "unknownModel": "知らないモデル: {{value}}"
+  },
+  "send": {
+    "messageIdRequired": "送信IDが必要です",
+    "messageRequired": "メッセージを入力してください",
+    "tooManyAttachments": "添付は{{max}}件までです"
+  },
+  "delegation": {
+    "taskNotFound": "Pleiad タスクが見つかりません"
+  },
+  "approval": {
+    "alreadyResolved": "その承認は既に解決済み"
+  },
+  "title": {
+    "unsupported": "このエージェントはタイトル生成に対応していません",
+    "noContent": "まだ中身が無いので付けられない",
+    "failed": "考えられなかった: {{error}}",
+    "empty": "空のタイトルが返ってきた"
+  },
+  "attach": {
+    "noContent": "中身が無い",
+    "tooLarge": "大きすぎる（{{size}}MB / 上限 {{limit}}MB）"
+  },
+  "statuses": {
+    "renameFromRequired": "改名元の状態が要る",
+    "statusRequired": "状態が要る",
+    "groupNameRequired": "グループの名前が要る"
+  },
+  "background": {
+    "idsRequired": "sessionId と taskId が要る",
+    "notRunning": "その裏の作業はもう動いていません",
+    "cannotStop": "{{backend}} は裏の作業を止められません",
+    "agentIdsRequired": "sessionId と agentId が要る"
+  },
+  "updateLock": {
+    "turns_other": "実行中の会話が {{count}} 件あります",
+    "approvals_other": "承認待ちが {{count}} 件あります",
+    "delegation": "委譲した作業か、その完了の知らせを親の会話へ届ける処理が終わっていません",
+    "steer": "途中送信したメッセージを処理しています",
+    "switching": "会話の切り替えか分岐を処理しています",
+    "other": "ほかの操作を処理しています"
+  },
+  "compat": {
+    "redactedKey": "[キー]",
+    "listSeparator": "・",
+    "url": {
+      "empty": "URL を入力してください",
+      "placeholder": "URL の <リソース名> などを実際の値に置き換えてください",
+      "scheme": "URL は http:// か https:// で始めてください",
+      "credentials": "URL にユーザー名やパスワードを入れないでください。キーは「API キー」の欄に入れます",
+      "query": "URL に ? や # 以降を入れないでください",
+      "claudeV1": "URL の末尾の /v1 は要りません（Claude Code が /v1/messages を付けます）",
+      "claudeMessages": "URL の末尾の /v1/messages は要りません（Claude Code が付けます）",
+      "codexSuffix": "URL の末尾の /responses などは要りません（Codex が /responses を付けます）",
+      "unresolved": "{{host}} の名前を解決できません。URL とネットワークを確かめてください",
+      "publicHttp": "公開のアドレスには https で接続してください（http ではキーと会話が暗号化されずに送られます）"
+    },
+    "name": {
+      "empty": "名前を入力してください",
+      "tooLong": "名前は {{max}} 文字以内にしてください",
+      "control": "名前に改行などは使えません"
+    },
+    "key": {
+      "invalid": "API キーに空白や改行が含まれています。値だけを貼り付けてください",
+      "unreadable": "保存済みのキーを読めません"
+    },
+    "model": {
+      "invalidId": "モデル ID の形式が正しくありません"
+    },
+    "roles": {
+      "main": "メイン",
+      "default": "既定のモデル",
+      "opus": "Opus 相当",
+      "sonnet": "Sonnet 相当",
+      "haiku": "Haiku 相当",
+      "missing": "{{roles}} のモデルを入力してください"
+    },
+    "contextTokens": {
+      "range": "コンテキスト長は 1024 から 10,000,000 までの整数にしてください"
+    },
+    "check": {
+      "timeout": "接続先が {{seconds}} 秒以内に応答しませんでした。URL・ネットワークを確かめてください",
+      "network": "接続できませんでした。URL・ネットワーク（ローカルの接続先なら起動しているか）を確かめてください",
+      "redirect": "接続先が別の URL へリダイレクトしました（HTTP {{status}}）。キーを転送しないため追いません。リダイレクト先の URL を直接入れてください",
+      "tooLarge": "接続先の応答が大きすぎます",
+      "serverError": "接続先がエラーを返しました（HTTP {{status}}）",
+      "claudeNotFound": "POST {{url}} が {{status}} を返しました。Anthropic 互換（/v1/messages）の URL か確かめてください",
+      "claudeNotFoundHint": "URL には /v1 を付けずに入れます（Claude Code が /v1/messages を付けます）。",
+      "claudeModelRejected": "確認に使ったモデル {{model}} は受け付けられませんでした（HTTP {{status}}{{reason}}）。URL とキーは通っています。モデルは次で割り当てます。",
+      "codexModelRejected": "確認に使ったモデル {{model}} は受け付けられませんでした（HTTP {{status}}{{reason}}）。URL とキーは通っています。モデルは次で決めます。",
+      "probeStatus": "確認のリクエストは HTTP {{status}} でした。URL とキーは通っています。",
+      "probeStatusWithReason": "確認のリクエストは HTTP {{status}} でした（{{reason}}）。URL とキーは通っています。",
+      "noModels": "モデルの一覧は取れませんでした。ID を入力してください。",
+      "badKey": "キーが違います",
+      "authBoth": "Bearer と x-api-key の両方で試し、どちらも {{statuses}} でした。キーを確かめてください。",
+      "authFailed": "{{status}}（認証に失敗）が返りました。キーを確かめてください。",
+      "authFailedNoKey": "{{status}}（認証に失敗）が返りました。この接続先はキーが要ります。キーを確かめてください。",
+      "codexAuthFailed": "{{status}}（認証に失敗）が返りました。キーと送り方（Bearer / api-key）を確かめてください。",
+      "reached": "URL には届いています。",
+      "chatOnly": "この接続先は Chat Completions にしか対応していないため Codex では使えません",
+      "chatOnlyDetail": "POST {{url}} が {{status}} を返しました（/chat/completions は応答します）。",
+      "chatOnlyHint": "LiteLLM などで Responses API に変換すると使えます。",
+      "codexNotFound": "POST {{url}} が {{status}} を返しました。Responses API（/responses）に対応した URL か確かめてください",
+      "codexNotFoundHint": "多くの接続先では URL の末尾が /v1 です（Codex が /responses を付けます）。"
+    },
+    "store": {
+      "unreadable": "互換の接続先の一覧を読み込めません。形式が壊れています",
+      "agentRequired": "エージェントを選んでください",
+      "notFound": "接続先が見つかりません。一覧を開き直してください",
+      "agentFixed": "接続先のエージェントは変えられません",
+      "receiptStale": "接続情報が変わったか、確認から時間が経ちました。もう一度「接続を確認」を押してください",
+      "notRegistered": "その接続先は登録されていません",
+      "badAgent": "エージェントが正しくありません"
+    },
+    "resolve": {
+      "deleted": "この会話の接続先は削除されています。入力欄のモデルの面で接続先を選び直してください",
+      "wrongAgent": "この会話の接続先「{{name}}」は {{agent}} 用です。接続先を選び直してください",
+      "failed": "接続先「{{name}}」は前回の確認に失敗しています。設定 › エージェント設定の「接続先」で確認し直すか、接続先を選び直してください",
+      "keyUnreadable": "接続先「{{name}}」のキーを読めません"
+    }
+  },
+  "mcp": {
+    "oauth": {
+      "loginRequired": "ログインが必要です。設定 › コンテキストの外部 MCP から「ログイン」してください",
+      "registrationMissing": "registration_client_uri / registration_access_token がありません",
+      "labelRegistration": "登録管理の URL",
+      "labelAuthorization": "認可エンドポイント",
+      "notOauth": "この MCP の認証方式は OAuth ではありません",
+      "callbackPort": "戻り先のポート {{port}} が使えません。ほかのアプリを閉じるか、callbackPort を変えてください",
+      "resourceMismatch": "保護リソースメタデータの resource（{{resource}}）が接続先と一致しません",
+      "noAuthUrl": "認可 URL を作れませんでした",
+      "noDcr": "この認可サーバーは動的クライアント登録に対応していません。MCP の登録で oauth.clientId（必要なら clientSecret）を指定してください",
+      "prepareFailed": "認可の準備に失敗しました：{{error}}",
+      "timeout": "ログインの待ち時間（10 分）を過ぎました。もう一度「ログイン」してください",
+      "denied": "認可サーバーが拒否しました：{{error}}",
+      "noToken": "トークンを受け取れませんでした",
+      "tokenFailed": "トークンの取得に失敗しました：{{error}}",
+      "tokenExpired": "トークンの期限が切れました。もう一度「ログイン」してください",
+      "noClient": "クライアント情報がありません。もう一度「ログイン」してください",
+      "sessionExpired": "ログインの有効期限が切れました。もう一度「ログイン」してください",
+      "tokenRejected": "MCP がトークンを受け付けません。もう一度「ログイン」してください",
+      "scope": "権限（scope）が足りません。もう一度「ログイン」すると、今の権限と合わせて求めます",
+      "scopeWith": "権限（scope: {{scope}}）が足りません。もう一度「ログイン」すると、今の権限と合わせて求めます",
+      "stepUp": "追加の権限（{{scope}}）が必要です。もう一度「ログイン」すると、今の権限と合わせて求めます",
+      "noRevocation": "revocation_endpoint がありません",
+      "localCleared": "{{reason}}（ローカルのトークンは消しました）",
+      "revokeFailed": "失効の要求に失敗しました（ローカルのトークンは消しました）",
+      "notSignedIn": "ログインしていません"
+    },
+    "import": {
+      "invalid": "MCP の定義が不正です",
+      "labelEnv": "env「{{name}}」",
+      "labelHeader": "ヘッダー「{{name}}」",
+      "secretMissing": "{{label}} の環境変数 {{names}} が見つからないため、未入力にしました",
+      "envMissing": "{{label}} の環境変数 {{names}} が見つかりません",
+      "transport": "接続方式（{{type}}）は取り込めません",
+      "format": "取り込めるのは Claude と Codex の登録です",
+      "args": "args が文字列の配列ではありません",
+      "noUrl": "url がありません",
+      "forbiddenHeader": "ヘッダー {{name}} は Pleiad では指定できないため外しました",
+      "oauthField": "Claude の oauth.{{key}} は取り込めないため外しました",
+      "clientSecret": "clientSecret が要る認可サーバーなら、登録を編集して oauth.clientSecret を入力してください",
+      "oauthHeaders": "OAuth の登録ではヘッダーと bearer を併用できないため、外しました",
+      "ignored": "取り込まなかった項目：{{keys}}",
+      "claudeJson": "~/.claude.json を読み込めません",
+      "notFound": "取り込む MCP が見つかりません",
+      "count": "取り込む MCP を 1〜64 件指定してください",
+      "auth": "auth で指定できるのは、認証の手がかりが無い HTTP の MCP に対する none か oauth です",
+      "detectedOauth": "MCP が OAuth のログインを求めたため、OAuth として取り込みました",
+      "detectedNone": "認証の指定が無いため、認証なしとして取り込みました"
+    },
+    "config": {
+      "target": "保存形式とスコープを選んでください",
+      "unreadable": "MCP 設定ファイルを読み込めません（上限 1 MiB）",
+      "link": "MCP 設定のリンク先を読み込めません",
+      "syntax": "MCP 設定の構文が不正です。元ファイルを確認してください",
+      "format": "MCP 設定の形式が不正です",
+      "notFound": "編集する MCP が見つかりません",
+      "name": "名前は英数字・_・.・- の128文字以内で指定してください（host・plyは内蔵MCPの予約名です）",
+      "definition": "MCP 定義は64 KiB以内の JSON オブジェクトで指定してください",
+      "transport": "command または HTTP(S) の url のどちらかを指定してください",
+      "args": "args は文字列の配列で指定してください",
+      "env": "env は文字列の値を持つオブジェクトで指定してください",
+      "operation": "追加または編集を指定してください",
+      "typeMismatch": "接続方式の type と command / url が一致しません",
+      "changed": "保存先が変更されています。一覧を再読込してから編集してください",
+      "exists": "同名の MCP が存在します。編集から開いてください",
+      "reformat": "この TOML 配置ではファイル全体の再整形が必要です。再整形を許可して保存してください",
+      "tooLarge": "保存後の設定が1 MiBを超えます",
+      "changedReload": "保存先が変更されています。一覧を再読込してください"
+    }
+  },
+  "net": {
+    "guard": {
+      "defaultLabel": "探索で得た URL",
+      "authServer": "認可サーバー",
+      "invalid": "{{label}} が URL として不正です",
+      "credentials": "{{label}}（{{url}}）に認証情報が含まれているため使いません",
+      "httpLoopbackOnly": "{{label}}（{{url}}）が https ではないため使いません（http はループバックで動かす MCP のときだけ許可）",
+      "notHttps": "{{label}}（{{url}}）は https ではないため使いません",
+      "unresolved": "{{label}}（{{url}}）の名前を解決できません",
+      "internal": "{{label}}（{{url}}）が{{kind}}アドレス（{{address}}）を指しているため使いません。公開された MCP から内部のアドレスへは接続しません",
+      "redirect": "{{label}} が {{method}} の要求をリダイレクトしました。追わずに止めます",
+      "tooManyRedirects": "リダイレクトが多すぎます"
+    },
+    "addressKind": {
+      "loopback": "ループバック",
+      "private": "プライベート",
+      "link-local": "リンクローカル",
+      "unspecified": "未指定",
+      "reserved": "予約済み",
+      "unknown": "不明"
+    },
+    "pinned": {
+      "noFamily": "{{host}} の固定したアドレスに IPv{{family}} がありません",
+      "bodyType": "この要求の本文の形は、接続先を固定した取得では扱えません",
+      "protocol": "{{protocol}} は扱えません"
+    }
+  },
+  "secrets": {
+    "busy": "秘密情報のファイルが別の処理に使われています。少し待ってから再試行してください",
+    "plainReason": "Electron の safeStorage が使えない起動（npm start など）です",
+    "cryptoFailed": "秘密情報を暗号化・復号できませんでした",
+    "noResponse": "秘密情報の暗号化が応答しませんでした",
+    "osUnavailable": "OS の暗号化機能が使えません",
+    "fileBroken": "秘密情報のファイルを読み込めません。形式が壊れています",
+    "locked": "暗号化して保存した秘密情報を、この起動では復号できません。Pleiad デスクトップから開いてください",
+    "unknownFormat": "秘密情報の形式が不明です"
+  },
+  "claude": {
+    "description": "公式サブスク認証 · スキル・MCP 連携に対応",
+    "listSeparator": "、",
+    "modes": {
+      "defaultNote": "危険な操作のたびに聞く",
+      "autoNote": "モデルの分類器が判断し、迷うものだけ聞く",
+      "acceptEditsNote": "ファイル編集は自動、他は聞く",
+      "planNote": "ツールを実行しない",
+      "bypassNote": "確認なし・制限なし。Claude Code の権限層を通さない"
+    },
+    "errors": {
+      "nativeInstructions": "Claude のネイティブ指示を停止できませんでした。会話への送信を中止しました",
+      "nativeMcp": "Claude のネイティブ MCP を停止できませんでした（{{names}}）",
+      "resumeMismatch": "Claude Code がセッション {{expected}} を引き継げず、別のセッション {{actual}} を始めた。作業ディレクトリを変えた再開は Claude Code 側で見つけられないことがある。元のディレクトリに戻すか、分岐して続ける",
+      "turnNotRunning": "この会話のターンはもう走っていない（裏のコマンドは CLI ごと終わっている）",
+      "stopUnsupported": "この Claude Code は裏のコマンドを止められません。`claude update` で更新してください"
+    },
+    "models": {
+      "defaultNote": "Claude Code の設定をそのまま使う",
+      "fableFallback": "Claude 5 の最上位。いちばん重い作業向き",
+      "fable": "最上位。いちばん重い作業向き",
+      "opus": "賢い。重い作業向き",
+      "sonnet": "速さと賢さのつり合い",
+      "haiku": "軽い。単純な作業向き"
+    },
+    "usage": {
+      "timeout": "使用量の取得が時間切れです",
+      "needsLogin": "使用量を表示するには、設定の「Claude のアカウント」で「使用量の表示を認可」を済ませてください。",
+      "loginAccount": "ログイン中のアカウント",
+      "failed": "取得できませんでした: {{message}}",
+      "failedReauth": "取得できませんでした: {{message}}。続くときは「使用量の表示を認可」をやり直してください。"
+    },
+    "redacted": {
+      "token": "[トークン]",
+      "secret": "[伏せ字]"
+    },
+    "truncated": "…（以下略）",
+    "auth": {
+      "timeout": "時間切れです。ログインをやり直してください",
+      "statusUnreadable": "Claude Code の認証状態を確認できません。CLI を更新して再確認してください",
+      "loginPending": "ログインは既に進行中です",
+      "loginFailed": "ログインを完了できませんでした。もう一度お試しください",
+      "loggedIn": "ログインしました",
+      "waitLogin": "ログインの完了を待ってください",
+      "logoutFailed": "ログアウトできませんでした"
+    },
+    "login": {
+      "pasteCode": "ブラウザーに表示されたコードを貼り付けてください",
+      "badCode": "コードの形式が正しくありません。ブラウザーに表示されたコードをそのまま貼り付けてください",
+      "tokenUnreadable": "トークンを読み取れませんでした",
+      "saveFailed": "保存できませんでした: {{message}}",
+      "codeRejected": "コードを受け付けませんでした。もう一度貼り付けてください",
+      "codeRejectedDetail": "コードを受け付けませんでした。もう一度貼り付けてください（{{detail}}）",
+      "launchFailed": "Claude Code を起動できませんでした（{{message}}）",
+      "exited": "Claude Code が終了しました（終了コード {{code}}）",
+      "exitedDetail": "Claude Code が終了しました（終了コード {{code}}）: {{detail}}",
+      "unknownCode": "不明",
+      "badKind": "認可の種類が正しくありません",
+      "accountRequired": "アカウントを指定してください",
+      "notInstalled": "Claude Code が見つかりません。インストールしてから、もう一度お試しください",
+      "noPty": "この環境では疑似端末（node-pty）を使えないため、Pleiad からトークンを発行できません。ターミナルで `claude setup-token` を実行し、表示されたトークンを「トークンを貼り付ける」から登録してください",
+      "timeout": "時間切れになりました（10 分）。もう一度やり直してください",
+      "ended": "この認可は終了しています。もう一度やり直してください",
+      "notReady": "まだ認可の準備ができていません。少し待ってからもう一度お試しください"
+    },
+    "accounts": {
+      "badToken": "トークンの形式が正しくありません。`claude setup-token` が表示した値をそのまま貼り付けてください",
+      "nameRequired": "アカウントの表示名を入力してください",
+      "nameTooLong": "表示名は {{max}} 文字以内にしてください",
+      "ownerUnknown": "トークンの持ち主を確認できません（{{message}}）",
+      "ownerHttp": "トークンの持ち主を確認できません（HTTP {{status}}）",
+      "ownerNoOrg": "トークンの持ち主を確認できません（応答に組織がありません）",
+      "listBroken": "Claude のアカウント一覧を読み込めません。形式が壊れています",
+      "badId": "アカウントの id が正しくありません",
+      "notRegistered": "そのアカウントは登録されていません",
+      "deleted": "この会話で選んでいる Claude のアカウントは削除されています。アカウントを選び直してください",
+      "tokenUnreadable": "Claude のアカウント「{{name}}」のトークンを読み込めません（{{message}}）。設定のアカウント一覧で貼り直すか、別のアカウントを選んでください",
+      "tokenMissing": "Claude のアカウント「{{name}}」のトークンが登録されていません。設定のアカウント一覧で貼り付けてください"
+    }
+  },
+  "effort": {
+    "useEndpoint": "接続先の設定を使う",
+    "notSent": "送らない（接続先の設定）",
+    "supported": "対応するモデルで使用",
+    "useAgentEndpoint": "エージェント・接続先の設定を使う",
+    "unavailable": "選択したエフォートは使用できません。選び直してください"
+  },
+  "backends": {
+    "retired": {
+      "procway": "procway-code への対応は終了しました。この会話は続けられません。"
+    },
+    "context": {
+      "codexSkills": "Codex の Skills 一覧を確認できず、探索を停止できません",
+      "codexMcp": "Codex の MCP 設定を確認できず、接続を停止できません"
+    }
+  },
+  "cli": {
+    "claudeNotInstalled": "Claude Code をインストールしてください",
+    "installAgent": "エージェントをインストールし、状態を再確認してください",
+    "badArgument": "CLI の引数に使用できない文字があります"
+  },
+  "codex": {
+    "description": "ChatGPT のサブスク枠を使う",
+    "modes": {
+      "ask": "信頼済み以外は毎回聞く",
+      "auto": "モデルが必要と判断したときだけ聞く",
+      "full": "聞かない。作業ディレクトリには書ける",
+      "yolo": "確認なし・Codexの制限なし（全ファイル・ネットワーク）",
+      "readonly": "書き込みを sandbox で止める"
+    },
+    "models": {
+      "defaultNote": "codex の設定をそのまま使う",
+      "configured": "codex の設定（{{model}}）"
+    },
+    "truncated": "…（以下略）",
+    "terminal": "バックグラウンド端末",
+    "subagent": {
+      "name": "サブエージェント",
+      "named": "サブエージェント {{name}}",
+      "withKind": "{{name}}（{{kind}}）",
+      "collab": "{{verb}} {{names}}"
+    },
+    "activity": {
+      "started": "起動",
+      "interacted": "追加の指示",
+      "completed": "完了",
+      "interrupted": "中断"
+    },
+    "collab": {
+      "spawnAgent": "起動",
+      "sendInput": "追加の指示",
+      "sendMessage": "メッセージ",
+      "followupTask": "追加の依頼",
+      "resumeAgent": "再開",
+      "wait": "待つ",
+      "closeAgent": "終了",
+      "interruptAgent": "中断",
+      "listAgents": "一覧"
+    },
+    "errors": {
+      "tooManyPages": "{{pages}} ページで読み切れない",
+      "notWatching": "この会話の裏の端末を見張っていない",
+      "noProcessId": "この端末の processId が分からない（古い会話は止められない）",
+      "cannotStopBackground": "この codex はバックグラウンド端末を止められません。`codex update` で更新してください",
+      "failed": "codex が失敗した",
+      "errorReturned": "codex がエラーを返した",
+      "noApprover": "承認先が無い",
+      "unsubscribeFailed": "接続先を切り替えられませんでした（codex が会話を外せませんでした: {{reason}}）。裏で動いている端末があれば止めてから、もう一度送ってください",
+      "noResponse": "応答なし",
+      "stillOldEndpoint": "接続先を切り替えられませんでした（codex が前の接続先のまま会話を読み込みました）。裏で動いている端末があれば止めてから、もう一度送ってください",
+      "noThreadId": "{{method}} が threadId を返さなかった",
+      "titleAborted": "タイトル生成を中断しました",
+      "historyUnreadable": "Codex の履歴を読み出せません",
+      "forkMidway": "codex は途中の発言からは分岐できない（末尾からなら分岐できる）",
+      "authReadFailed": "codex の認証状態を読めなかった: {{message}}",
+      "appServerDied": "codex app-server が落ちた: {{why}}",
+      "timeout": "codex {{method}} が {{ms}}ms で応答しなかった",
+      "notConnected": "codex app-server につながっていない",
+      "noHandler": "{{method}} を受け取る相手が居ない"
+    },
+    "auth": {
+      "notLoggedIn": "codex にログインしていない",
+      "loggedIn": "ログインした",
+      "openBrowser": "ブラウザで開いて許可してください",
+      "loginFailed": "ログインに失敗した"
+    }
+  },
+  "antigravity": {
+    "description": "Google AI Pro / Ultra の枠を使う",
+    "modes": {
+      "yolo": "確認しない。すべてのツールを通す（agy のヘッドレスはこれ以外だと黙って拒否される）"
+    },
+    "truncated": "…（以下略）",
+    "errors": {
+      "endedWith": "agy が {{status}} で終わった",
+      "unknownStatus": "不明な状態",
+      "printTimeout": "agy が出力を打ち切りました（--print-timeout）。返答は途中までで、agy 側ではこのターンがまだ続いている可能性があります。取り違えないよう、この agy は終了しました（会話は残っているので続けられます）。長いターンを扱うには AGENT_HOST_AGY_PRINT_TIMEOUT を伸ばしてください（Go の duration 文字列。既定は 24h）。",
+      "startTimeout": "agy が {{ms}}ms で応答しなかった",
+      "noModels": "agy models が何も返さなかった",
+      "exited": "agy が終了した: {{why}}",
+      "notConnected": "agy につながっていない",
+      "badConversationId": "使えない会話 id: {{id}}"
+    },
+    "auth": {
+      "notLoggedInTurn": "Antigravity にログインしていません。このコマンドを端末で実行してログインしてください。",
+      "account": "Google アカウント",
+      "detail": "Antigravity（サブスクの枠を使う）",
+      "notLoggedIn": "agy にログインしていない（端末で agy を実行してログイン）",
+      "loginRunning": "ログインが既に走っている",
+      "alreadyLoggedIn": "すでにログインしている",
+      "runCommand": "このコマンドを端末で実行し、画面の案内に沿って Google にログインしてください。（Antigravity のログインは端末からしか行えません。終わるとここが自動で切り替わります）",
+      "loggedIn": "ログインした",
+      "loginTimeout": "端末でのログインが終わらなかった（もう一度お試しください）",
+      "logoutInAgy": "Antigravity のログアウトは agy 側で行ってください（資格情報は OS の資格情報ストアにあります）"
+    },
+    "models": {
+      "levels": "段: {{levels}}",
+      "defaultNote": "agy の設定をそのまま使う",
+      "unknownDefault": "既定（agy の設定）",
+      "unknownDefaultNote": "agy の設定をそのまま使う（Pleiad からは読めない）",
+      "effortReason": "agy の既定のモデルが分からないため、段はモデルを選ぶと選べます"
+    },
+    "usage": {
+      "badResponse": "使用枠の応答形式が不正です",
+      "fiveHours": "5時間",
+      "weekly": "週次（7日間）",
+      "unknownPeriod": "期間不明",
+      "model": "モデル",
+      "shared": "同じモデルグループ内で使用枠を共有します。5時間と週次の両方の制限が適用されます。",
+      "none": "Antigravity の使用枠が返されませんでした。ログイン状態と契約を確認してください。",
+      "timeout": "使用枠の取得が時間切れです",
+      "tooLarge": "使用枠の応答が大きすぎます",
+      "cannotStart": "Antigravity を起動できません",
+      "cannotRead": "Antigravity の使用枠を取得できません",
+      "needsUpdate": "使用枠の表示には Antigravity CLI 1.1.11 以降が必要です。端末で agy update を実行してください。"
+    },
+    "contextRefusal": "Antigravity に Pleiad のコンテキストを渡すと、ワークスペースの指示（AGENTS.md・GEMINI.md）を agy が読み込まなくなります。指示の担当がエージェントのままなので、この会話ではエージェント自身の読み込みに任せました。Skills や外部 MCP を Pleiad に任せるには、指示の担当も Pleiad にしてください"
+  },
+  "context": {
+    "removedHere": "この会話では外しました",
+    "scan": {
+      "limitReached": "スキャン上限に達しました。探索元を絞って再実行してください",
+      "tooLarge": "サイズ上限のため未読",
+      "fileUnreadable": "ファイルを読み込めません",
+      "dirUnreadable": "ディレクトリを読み込めません",
+      "gitRootFailed": "Git ルートの確認に失敗しました",
+      "circularReference": "指示ファイルの参照が循環しています",
+      "complexImport": "複雑な @参照は未展開です",
+      "urlImport": "URL の @参照は未展開です",
+      "importDepth": "@参照の深さ上限に達しました",
+      "importUnreadable": "@参照先を読み込めません",
+      "ruleFrontmatter": "rules の frontmatter を解析できません",
+      "rulePaths": "rules の paths を解釈できません",
+      "skillFrontmatter": "Skill の frontmatter を解析できません",
+      "mcpParse": "MCP 設定を解析できません（内容は非表示）",
+      "mcpInvalid": "MCP 設定の形式が不正です",
+      "mcpServersInvalid": "MCP サーバー一覧の形式が不正です",
+      "mcpServerInvalid": "MCP サーバー設定の形式が不正です",
+      "conflictInstruction": "同じ本文・適用範囲を確認",
+      "conflictName": "同名の別定義・優先元を確認",
+      "fromUser": "ユーザー",
+      "fromProject": "プロジェクト",
+      "fromCommon": "共通",
+      "requiredArgs": "<引数>（欠けると聞かれます）",
+      "limitations": {
+        "preview": "探索結果のプレビューです。エージェントが実際に読み込んだ一覧ではありません。",
+        "excluded": "plugin・管理者設定・自動メモリ・子ディレクトリの遅延読み込みは対象外です。",
+        "unsupported": "Codex の trust・profile・fallback、Claude の複雑な @参照による解決は未対応です。",
+        "rules": "Claude の rules のうち paths 付きのものは、当たるファイルを扱うときだけ渡します（開始時には渡しません）。",
+        "directories": "ディレクトリ探索は Git ルート〜作業場所です。Git が無ければ作業場所のみ。Claude が読むルート外の親ファイルは含みません。",
+        "mcp": "MCP は設定を読むだけで接続は行いません。設定ファイルは MCP 登録だけを書き出して示し、環境変数とヘッダーの値、URL のクエリは伏せます。",
+        "ply": "Pleiad に登録した MCP は同名のエージェント側の登録より優先します。秘密（トークン・ヘッダー値など）は登録ファイルに含めません。"
+      }
+    },
+    "settings": {
+      "cwdRequired": "作業ディレクトリを指定してください",
+      "dirRequired": "ディレクトリを指定してください",
+      "scanInvalid": "スキャン設定の形式が不正です",
+      "unknownKind": "種類が不正です",
+      "kindInvalid": "コンテキストの設定の形式が不正です",
+      "disabledMcpOnly": "名前で外す設定は外部 MCP だけです",
+      "rootsInvalid": "追加で探すフォルダーの形式が不正です",
+      "defaultPlace": "既定",
+      "migrateDiffers": "コンテキストの設定を新しい形式へ移せませんでした（{{place}} で結果が変わるため）。元の設定は変更していません",
+      "migrateUnverified": "コンテキストの設定の移行を確かめられませんでした。元の設定は変更していません",
+      "unreadable": "コンテキストの設定を読み込めません。context-scans.json を確認してください",
+      "nothingToChange": "変更する項目を指定してください"
+    },
+    "session": {
+      "sessionRequired": "会話を指定してください",
+      "noRecord": "この会話にはコンテキストの記録がありません",
+      "notManaged": "この会話では Pleiad が指示・Skills をそろえていません",
+      "busy": "返答中は読み込み直せません。返答が終わってから押してください",
+      "invalidMcpName": "MCP の名前が不正です",
+      "reconnectNext": "次の返答からつなぎます"
+    },
+    "runtime": {
+      "refused": "{{backend}} は Pleiad が担当するコンテキスト（指示・Skills・外部 MCP）を受け取れないため、この会話ではエージェント自身の読み込みに任せました",
+      "choicePrefer": "同じ名前の定義が複数あり、{{source}} の設定の方を使いました（設定で選んだもの）",
+      "choiceFirst": "同じ名前の定義が複数あり、{{source}} の設定の方を使いました（選んでいないので先に見つかった方）",
+      "otherSource": "別",
+      "unresolved": "コンテキストを完全に解決できません。探索結果を確認してください：{{detail}}",
+      "scanLimit": "探索上限",
+      "duplicateName": "同名の {{kind}}「{{name}}」があります。探索設定の除外パスで使用する定義を1つに絞ってください",
+      "skillUnsupported": "固有の実行設定：{{keys}}",
+      "manualOnly": "自動呼び出し不可。ユーザーの依頼に $名前 があるターンのみ公開",
+      "instructionsTooLarge": "指示ファイルの合計が128 KiBを超えます。探索対象を絞ってください",
+      "mcpUnsupported": "MCP「{{name}}」の未対応設定：{{keys}}",
+      "mcpEnvMissing": "MCP「{{name}}」の環境変数 {{key}} が未設定です",
+      "mcpAuthEnvMissing": "MCP「{{name}}」の認証環境変数が未設定です",
+      "mcpTimeoutInvalid": "MCP「{{name}}」の待機時間が不正です",
+      "mcpUrlInvalid": "MCP「{{name}}」の接続先が不正です"
+    },
+    "bridge": {
+      "plyUnavailable": "Pleiad の MCP 登録を読み込めません",
+      "oauthUnavailable": "OAuth を扱えない起動です",
+      "configUnreadable": "接続設定を読み込めません",
+      "unsupportedHint": "{{message}}。認証の設定が要る MCP は、設定 › コンテキストの外部 MCP で「Pleiad に取り込む」と Pleiad 側で認証できます",
+      "authRequiredPly": "MCP が認証を求めています。設定 › コンテキストの外部 MCP で認証の方式と値を確かめてください",
+      "authRequiredNative": "MCP が認証を求めています。設定 › コンテキストの外部 MCP で「Pleiad に取り込む」とログインできます。または外部 MCP をエージェントに任せてください",
+      "tooManyTools": "ツールが多すぎます（{{max}} 件まで）",
+      "connectFailed": "MCP に接続できません。接続先・認証・起動コマンドを確認してください",
+      "invalidToken": "コンテキストのトークンが不正です",
+      "tooManyServers": "MCP は1セッション32件までです。探索対象を絞ってください",
+      "aborted": "中断しました",
+      "toolTotalExceeded": "ツールの合計が上限（{{max}} 件）を超えるため外しました"
+    },
+    "mcp": {
+      "plainValue": "{{label}} は改行を含まない 8 KiB 以内の文字列で指定してください",
+      "stringMapObject": "{{label}} は文字列の値を持つオブジェクトで指定してください",
+      "stringMapMax": "{{label}} は {{max}} 件までです",
+      "stringMapKey": "{{label}} の名前「{{key}}」は使えません",
+      "valueLabel": "{{label}}「{{key}}」の値",
+      "seconds": "{{label}} は 1〜3600 の秒数で指定してください",
+      "stringArray": "{{label}} は文字列の配列で指定してください",
+      "definitionObject": "MCP の定義を JSON オブジェクトで指定してください",
+      "definitionTooLarge": "MCP の定義は 64 KiB 以内にしてください",
+      "unknownFields": "未対応の項目：{{keys}}",
+      "previousValueMissing": "{{label}}「{{keys}}」の前の値がありません。値を入力してください",
+      "transportInvalid": "transport は http・sse・stdio のどれかです",
+      "authInvalid": "auth は none・bearer・headers・oauth のどれかです",
+      "stdioCommand": "stdio は command を指定し、url は指定しません",
+      "stdioAuth": "stdio の MCP の認証は env で渡してください（auth は none）",
+      "httpNoCommand": "HTTP の MCP には command・args・env を指定しません",
+      "urlRequired": "url を指定してください",
+      "urlInvalid": "url が不正です",
+      "urlScheme": "url は認証情報を含まない http(s) で指定してください",
+      "bearerRequired": "bearer の場合は bearerToken を指定してください",
+      "bearerOnly": "bearerToken は auth が bearer のときだけ指定します",
+      "headersRequired": "headers の場合は 1 つ以上のヘッダーを指定してください",
+      "headerForbidden": "このヘッダーは指定できません：{{names}}",
+      "headerLabel": "ヘッダー",
+      "headersTooLarge": "ヘッダーの合計は 16 KiB 以内にしてください",
+      "headersOnly": "headers は auth が headers のときだけ指定します",
+      "oauthObject": "oauth はオブジェクトで指定してください",
+      "oauthUnknown": "oauth の未対応の項目：{{keys}}",
+      "callbackPort": "oauth.callbackPort は 1024〜65535 の整数です",
+      "resourceUrl": "oauth.resource は URL で指定してください",
+      "resourceScheme": "oauth.resource は # を含まない http(s) の URL で指定してください",
+      "clientSecretNeedsId": "clientSecret は clientId と一緒に指定してください",
+      "oauthOnly": "oauth は auth が oauth のときだけ指定します",
+      "registryBroken": "Pleiad の MCP 登録ファイルを読み込めません。形式が壊れています",
+      "notRegistered": "その名前の MCP は Pleiad に登録されていません",
+      "invalidName": "名前は英数字・_・.・- の128文字以内で指定してください（host・ply などは予約名です）",
+      "modeRequired": "追加または編集を指定してください",
+      "revisionChanged": "登録が変更されています。一覧を再読込してから編集してください",
+      "alreadyRegistered": "同名の MCP が登録済みです。編集から開いてください",
+      "editNotFound": "編集する MCP が見つかりません",
+      "sameName": "同じ名前です",
+      "nameTaken": "その名前の MCP は登録済みです",
+      "settingsObject": "設定はオブジェクトで指定してください",
+      "metadataUrl": "clientMetadataUrl は URL で指定してください",
+      "metadataUrlScheme": "clientMetadataUrl は、パスを持つ https の URL で指定してください（例: https://example.com/ply/oauth-client.json）",
+      "pendingValues": "未入力の値があります（{{keys}}）。設定 › コンテキストの外部 MCP で登録を編集して入力してください",
+      "bearerMissing": "bearer トークンが保存されていません。MCP の登録を編集して入力してください"
+    }
+  },
+  "filePreview": {
+    "cwdAtUnknown": "この発言の作業場所を特定できません。絶対パスで開いてください。",
+    "invalidPath": "このファイルパスを読み取れません。",
+    "otherOs": "このパスは別のOSの形式です。接続先のファイルパスを確認してください。",
+    "noDrive": "このパスにはドライブ名がありません。接続先の絶対パスを確認してください。",
+    "relativeUnknownCwd": "作業場所が不明なため、相対パスを解決できません。絶対パスで開いてください。",
+    "outsideWorkspace": "このファイルはアクセスできる作業場所の外にあります。",
+    "notFile": "ファイルまたはフォルダーを選んでください。",
+    "tooLarge": "ファイルが表示上限を超えています。",
+    "overLimitDownload": "表示上限（{{mb}} MB）を超えています。保存して確認できます。",
+    "overLimitHost": "表示上限（{{mb}} MB）を超えています。ホスト上のファイルを確認してください。",
+    "unsupportedEncoding": "この文字コードまたはファイル形式はプレビューに対応していません。保存して確認できます。",
+    "unsupportedType": "このファイル形式はプレビューに対応していません。保存して確認できます。",
+    "notFound": "ファイルが見つかりません。移動または削除された可能性があります。",
+    "accessDenied": "このファイルを読み取れません。ホストのアクセス権を確認してください。",
+    "readFailed": "ファイルを読み込めませんでした。再読み込みしてください。",
+    "visualize": {
+      "htmlRequired": "可視化には HTML ファイルを指定してください",
+      "notUtf8": "可視化を UTF-8 の HTML として読めません",
+      "tooMany": "可視化は1ターン{{max}}件までです",
+      "caption": "可視化"
+    }
+  },
+  "usage": {
+    "window": {
+      "fiveHour": "5時間",
+      "weekly": "週次（7日間）",
+      "hours": "{{hours}}時間",
+      "unknown": "期間不明",
+      "oauthAppsWeekly": "OAuth アプリ・週次",
+      "modelWeekly": "{{model}}・週次"
+    },
+    "codexUnavailable": "使用枠を取得できません。API 接続や未対応のアカウントでは表示されません。",
+    "claudeUnavailable": "使用枠を取得できません。API 接続・権限不足・未対応の CLI では表示されません。",
+    "authChanged": "認証状態が変わりました。更新してください。",
+    "fetchFailed": "取得に失敗しました。ログイン状態を確認し、しばらくして更新してください。",
+    "recordInvalid": "使用量記録の形式が不正です"
+  },
+  "conversations": {
+    "deleteSent": "送信済みのセッションは削除できません",
+    "switchUnreadable": "会話を読み出せないため切り替えられません",
+    "switchEmpty": "履歴が空のため切り替えられません",
+    "truncated": "…（以下略）",
+    "forkPointAmbiguous": "分岐点は beforeMessageId または upToMessageId のどちらかで指定してください",
+    "forkSourceUnreadable": "分岐元の会話を読み出せません",
+    "forkEmpty": "履歴が空のため分岐できません",
+    "messageNotSaved": "この発言はまだ履歴に保存されていません。少し待って再試行してください",
+    "messageNotSavedFork": "この発言はまだ履歴に保存されていません。少し待って分岐を再試行してください",
+    "forkMessageNotFound": "分岐する発言が見つかりません",
+    "presentNoTime": "提示された成果物の時刻がなく分岐点を特定できません。末尾から分岐してください",
+    "toolRunning": "選択範囲に実行中のツールがあります。完了済みの発言から分岐してください",
+    "backendMismatch": "会話のバックエンドが一致しません",
+    "historyUnreadable": "実行後の履歴を読み出せませんでした。ネイティブの履歴を確認してください"
+  },
+  "tasks": {
+    "interruptedByRestart": "Pleiad が再起動したため中断しました。実際の変更を確認してから追加指示してください"
+  },
+  "dirs": {
+    "notFound": "フォルダーが見つかりません: {{dir}}",
+    "notDirectory": "フォルダーではありません: {{dir}}",
+    "accessDenied": "フォルダーを開けません（アクセスが許可されていません）: {{dir}}",
+    "openFailed": "フォルダーを開けません: {{dir}}",
+    "invalidPath": "パスの指定が不正です"
+  },
+  "queue": {
+    "idConflict": "同じ送信IDで内容を変更できません",
+    "full": "送信待ちは{{max}}件までです",
+    "notEditable": "このメッセージは変更できません",
+    "invalidAction": "不正な操作です"
+  },
+  "data": {
+    "schemaUnreadable": "保存データの形式を確認できません。data-schema.json を確認してください。",
+    "schemaMismatch": "この保存データは別の形式です。対応する新しい Pleiad を使用してください。データは変更していません。"
+  },
+  "update": {
+    "preparing": "更新の準備中です。少し待ってから操作してください。"
+  },
+  "store": {
+    "invalidSessionField": "不正なセッション設定"
   }
 }

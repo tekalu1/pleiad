@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { t } from './i18n.mjs';
 
 const ACTIVE = new Set(['queued', 'running', 'cancelling']);
 const text = (value, name, max = 60000) => {
@@ -29,7 +30,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     for (const fn of [...listeners]) fn();
   };
   for (const r of Object.values(records)) {
-    if (ACTIVE.has(r.status)) { r.status = 'interrupted'; r.error = 'Pleiad が再起動したため中断しました。実際の変更を確認してから追加指示してください'; r.queue = []; }
+    if (ACTIVE.has(r.status)) { r.status = 'interrupted'; r.error = t('tasks.interruptedByRestart'); r.queue = []; }
     if (['pending', 'delivering'].includes(r.notification)) r.notification = 'unknown';
   }
   await serial(save);

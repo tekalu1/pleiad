@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dir } from './antigravity-store.mjs';
+import { t } from '../i18n.mjs';
 
 export const AGENT_NAME = 'ply-context';
 const RELAY = fileURLToPath(new URL('../agy-context-relay.mjs', import.meta.url));
@@ -58,8 +59,7 @@ const TOOLS = [
 export function contextRefusal(owners = {}) {
   const ply = Object.values(owners).some(owner => owner === 'ply');
   if (!ply || owners.instruction === 'ply') return null;
-  return 'Antigravity に Pleiad のコンテキストを渡すと、ワークスペースの指示（AGENTS.md・GEMINI.md）を agy が読み込まなくなります。'
-    + '指示の担当がエージェントのままなので、この会話ではエージェント自身の読み込みに任せました。Skills や外部 MCP を Pleiad に任せるには、指示の担当も Pleiad にしてください';
+  return t('antigravity.contextRefusal');
 }
 
 /** agent.md の中身。frontmatter の値は JSON で書く（YAML としても読める） */

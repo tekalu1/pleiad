@@ -10,6 +10,7 @@
 //
 // 正規化イベントの一覧は docs/multi-backend.md §2.2。
 import { MAX_RESULT_CHARS } from "./shared.mjs";
+import { t } from "../i18n.mjs";
 
 /** tool_result の content は string か [{type:"text"}] で来る。文字列に均す */
 export function resultText(c) {
@@ -169,7 +170,7 @@ function extract(entry, fullResults = false) {
         const raw = resultText(block.content);
         results.push({
           id: String(block.tool_use_id),
-          text: !fullResults && raw.length > MAX_RESULT_CHARS ? raw.slice(0, MAX_RESULT_CHARS) + "…（以下略）" : raw,
+          text: !fullResults && raw.length > MAX_RESULT_CHARS ? raw.slice(0, MAX_RESULT_CHARS) + t("claude.truncated") : raw,
           isError: Boolean(block.is_error),
           truncated: !fullResults && raw.length > MAX_RESULT_CHARS,
         });

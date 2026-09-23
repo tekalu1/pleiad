@@ -23,6 +23,7 @@ import { realpath as realpathCallback } from 'node:fs';
 // 表示用の実体パス。Windows では大文字小文字を実際の表記に戻す（キーは小文字に寄せて持つ）
 const realpathNative = promisify(realpathCallback.native);
 import { z } from 'zod';
+import { t } from './i18n.mjs';
 
 export const KINDS = ['instruction', 'skill', 'mcp'];
 export const SOURCES = ['common', 'claude', 'codex'];
@@ -89,9 +90,9 @@ export function resolveScanPath(p, base, home = os.homedir()) {
   return path.resolve(base, p === '~' ? home : /^~[/\\]/.test(p) ? path.join(home, p.slice(2)) : p);
 }
 export async function scanDirectory(p) {
-  if (typeof p !== 'string' || !p.trim()) throw new Error('作業ディレクトリを指定してください');
+  if (typeof p !== 'string' || !p.trim()) throw new Error(t('context.settings.cwdRequired'));
   const dir = await fs.realpath(resolveScanPath(p.trim(), process.cwd()));
-  if (!(await fs.stat(dir)).isDirectory()) throw new Error('ディレクトリを指定してください');
+  if (!(await fs.stat(dir)).isDirectory()) throw new Error(t('context.settings.dirRequired'));
   return dir;
 }
 const unique = list => [...new Set(list)];
@@ -100,18 +101,18 @@ const resolveAll = (list, base, home) => unique(list.map(p => resolveScanPath(p,
 /** 形式 1 の探索設定 1 つ（検査して、相対パスを保存元の場所から解決する） */
 export function normalizeScan(value, base, home = os.homedir()) {
   const parsed = legacySpec.safeParse(value);
-  if (!parsed.success) throw new Error('スキャン設定の形式が不正です');
+  if (!parsed.success) throw new Error(t('context.settings.scanInvalid'));
   const v = parsed.data;
   return { sources: liveSources(v.sources), kinds: unique(v.kinds), additionalRoots: resolveAll(v.additionalRoots, base, home), excludePaths: resolveAll(v.excludePaths, base, home) };
 }
 
 /** 種類 1 つの設定を検査する。相対パスは保存先の場所（既定なら home）から解決する */
 export function normalizeKind(kind, value, base, home = os.homedir()) {
-  if (!KINDS.includes(kind)) throw new Error('種類が不正です');
+  if (!KINDS.includes(kind)) throw new Error(t('context.settings.unknownKind'));
   const parsed = kindSchema.safeParse(value);
-  if (!parsed.success) throw new Error('コンテキストの設定の形式が不正です');
+  if (!parsed.success) throw new Error(t('context.settings.kindInvalid'));
   const v = parsed.data;
-  if (kind !== 'mcp' && (v.disabled || v.prefer)) throw new Error('名前で外す設定は外部 MCP だけです');
+  if (kind !== 'mcp' && (v.disabled || v.prefer)) throw new Error(t('context.settings.disabledMcpOnly'));
   const scope = s => s && { sources: liveSources(s.sources), excludePaths: resolveAll(s.excludePaths, base, home) };
   const out = { owner: v.owner, user: scope(v.user), directory: scope(v.directory) };
   if (v.disabled?.length) out.disabled = unique(v.disabled).sort();
@@ -120,7 +121,7 @@ export function normalizeKind(kind, value, base, home = os.homedir()) {
 }
 function normalizeRoots(value, base, home) {
   const parsed = paths.safeParse(value);
-  if (!parsed.success) throw new Error('追加で探すフォルダーの形式が不正です');
+  if (!parsed.success) throw new Error(t('context.settings.rootsInvalid'));
   return resolveAll(parsed.data, base, home);
 }
 
@@ -200,7 +201,7 @@ export function sameMeaning(old, config) {
   const keys = [null, ...Object.keys(old.directoryOwners), ...Object.keys(old.directories)];
   for (const key of keys) {
     const before = legacyEffective(old, key), after = resolveConfig(config, key);
-    if (!isDeepStrictEqual(before.owners, after.owners) || !isDeepStrictEqual(before.plan, after.plan)) return key ?? '既定';
+    if (!isDeepStrictEqual(before.owners, after.owners) || !isDeepStrictEqual(before.plan, after.plan)) return key ?? t('context.settings.defaultPlace');
   }
   return null;
 }
@@ -255,12 +256,12 @@ export function createContextSettings(dataDir, home = os.homedir()) {
     const names = Object.fromEntries(await Promise.all(unique([...Object.keys(old.directoryOwners), ...Object.keys(old.directories)]).map(async k => [k, await display(k)])));
     const config = migrateV1(old, k => names[k] ?? k);
     const differs = sameMeaning(old, config);
-    if (differs) throw new Error(`コンテキストの設定を新しい形式へ移せませんでした（${differs} で結果が変わるため）。元の設定は変更していません`);
+    if (differs) throw Object.assign(new Error(t('context.settings.migrateDiffers', { place: differs })), { migration: true });
     const tmp = `${file}.migrate.${process.pid}.tmp`;
     try {
       await fs.writeFile(tmp, JSON.stringify(config, null, 2), { encoding: 'utf8', mode: 0o600 });
       const check = await readV2(JSON.parse(await fs.readFile(tmp, 'utf8')));
-      if (sameMeaning(old, check)) throw new Error('コンテキストの設定の移行を確かめられませんでした。元の設定は変更していません');
+      if (sameMeaning(old, check)) throw Object.assign(new Error(t('context.settings.migrateUnverified')), { migration: true });
       // 読んでから置き換えるまでの間に別の Pleiad が書き換えていないか（同じ内容のときだけ置き換える）
       if ((await fs.readFile(file, 'utf8')) !== text) throw Object.assign(new Error('changed'), { retry: true });
       await fs.rename(tmp, file);
@@ -270,18 +271,18 @@ export function createContextSettings(dataDir, home = os.homedir()) {
   async function read() {
     let text;
     try { text = await fs.readFile(file, 'utf8'); }
-    catch (e) { if (e.code === 'ENOENT') return empty(); throw new Error('コンテキストの設定を読み込めません。context-scans.json を確認してください'); }
+    catch (e) { if (e.code === 'ENOENT') return empty(); throw new Error(t('context.settings.unreadable')); }
     let raw;
-    try { raw = JSON.parse(text); } catch { throw new Error('コンテキストの設定を読み込めません。context-scans.json を確認してください'); }
+    try { raw = JSON.parse(text); } catch { throw new Error(t('context.settings.unreadable')); }
     try {
       if (raw?.version === 2) return await readV2(raw);
       if (raw?.version !== 1) throw new Error('invalid');
-    } catch { throw new Error('コンテキストの設定を読み込めません。context-scans.json を確認してください'); }
+    } catch { throw new Error(t('context.settings.unreadable')); }
     try { return await migrate(text, raw); }
     catch (e) {
       if (e.retry) return read();
-      if (/移|確かめ/.test(e.message)) throw e;
-      throw new Error('コンテキストの設定を読み込めません。context-scans.json を確認してください', { cause: e });
+      if (e.migration) throw e;
+      throw new Error(t('context.settings.unreadable'), { cause: e });
     }
   }
   // 読むのも書き込みの列に並べる。形式 1 の移行（書き込み）と保存が重ならないように
@@ -339,7 +340,7 @@ export function createContextSettings(dataDir, home = os.homedir()) {
         target = config.places[key] ??= { path: dir, kinds: {} };
       }
       if (kind !== undefined) {
-        if (!KINDS.includes(kind)) throw new Error('種類が不正です');
+        if (!KINDS.includes(kind)) throw new Error(t('context.settings.unknownKind'));
         if (args.value === null) { if (place === null) target.kinds[kind] = defaultKind(); else delete target.kinds[kind]; }
         else target.kinds[kind] = normalizeKind(kind, args.value, base, home);
       }
@@ -347,7 +348,7 @@ export function createContextSettings(dataDir, home = os.homedir()) {
         if (args.roots === null) { if (place === null) target.roots = []; else delete target.roots; }
         else target.roots = normalizeRoots(args.roots, base, home);
       }
-      if (kind === undefined && !Object.hasOwn(args, 'roots') && !args.add) throw new Error('変更する項目を指定してください');
+      if (kind === undefined && !Object.hasOwn(args, 'roots') && !args.add) throw new Error(t('context.settings.nothingToChange'));
       await write(config);
     // 外した場所を「今の場所」として一覧に戻さないよう、外したときは cwd だけで画面の形を作る
     }).then(async () => ({ ...(await view(args.cwd ?? (args.remove ? null : args.place || null))), place: placed }));

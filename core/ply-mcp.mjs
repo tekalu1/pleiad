@@ -11,6 +11,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { withFileLock } from './secret-store.mjs';
+import { t } from './i18n.mjs';
 
 export const MASK = '••••';
 const record = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -26,29 +27,29 @@ const secretKey = (name, part) => `mcp:${name}:${part}`;
 
 function invalid(message) { return Object.assign(new Error(message), { code: 'INVALID' }); }
 function plainValue(v, label) {
-  if (typeof v !== 'string' || v.length > 8192 || /[\r\n\0]/.test(v)) throw invalid(`${label} は改行を含まない 8 KiB 以内の文字列で指定してください`);
+  if (typeof v !== 'string' || v.length > 8192 || /[\r\n\0]/.test(v)) throw invalid(t('context.mcp.plainValue', { label }));
   return v;
 }
 function stringMap(v, label, { keyPattern, max = 20, nullable = false } = {}) {
   if (v === undefined) return {};
-  if (!record(v)) throw invalid(`${label} は文字列の値を持つオブジェクトで指定してください`);
+  if (!record(v)) throw invalid(t('context.mcp.stringMapObject', { label }));
   const entries = Object.entries(v);
-  if (entries.length > max) throw invalid(`${label} は ${max} 件までです`);
+  if (entries.length > max) throw invalid(t('context.mcp.stringMapMax', { label, max }));
   for (const [k, s] of entries) {
-    if (keyPattern && !keyPattern.test(k)) throw invalid(`${label} の名前「${k.slice(0, 40)}」は使えません`);
+    if (keyPattern && !keyPattern.test(k)) throw invalid(t('context.mcp.stringMapKey', { label, key: k.slice(0, 40) }));
     // null は「値はまだ入れていない」（ネイティブ登録を秘密なしで取り込んだもの）
-    if (!(nullable && s === null)) plainValue(s, `${label}「${k}」の値`);
+    if (!(nullable && s === null)) plainValue(s, t('context.mcp.valueLabel', { label, key: k }));
   }
   return Object.fromEntries(entries);
 }
 function seconds(v, label) {
   if (v === undefined) return undefined;
-  if (!Number.isFinite(v) || v <= 0 || v > 3600) throw invalid(`${label} は 1〜3600 の秒数で指定してください`);
+  if (!Number.isFinite(v) || v <= 0 || v > 3600) throw invalid(t('context.mcp.seconds', { label }));
   return v;
 }
 function names(v, label) {
   if (v === undefined) return undefined;
-  if (!Array.isArray(v) || v.length > 500 || !v.every(s => typeof s === 'string' && s.length <= 256)) throw invalid(`${label} は文字列の配列で指定してください`);
+  if (!Array.isArray(v) || v.length > 500 || !v.every(s => typeof s === 'string' && s.length <= 256)) throw invalid(t('context.mcp.stringArray', { label }));
   return v;
 }
 
@@ -57,11 +58,11 @@ function names(v, label) {
  * previous は編集前の { definition, secrets }。伏せ字の値と、伏せ字にした URL は前の値を残す。
  */
 export function splitRegistration(value, previous = null) {
-  if (!record(value)) throw invalid('MCP の定義を JSON オブジェクトで指定してください');
-  if (Buffer.byteLength(JSON.stringify(value)) > 65536) throw invalid('MCP の定義は 64 KiB 以内にしてください');
+  if (!record(value)) throw invalid(t('context.mcp.definitionObject'));
+  if (Buffer.byteLength(JSON.stringify(value)) > 65536) throw invalid(t('context.mcp.definitionTooLarge'));
   const allowed = ['transport', 'url', 'command', 'args', 'cwd', 'env', 'auth', 'bearerToken', 'headers', 'oauth', 'enabled', 'startup_timeout_sec', 'tool_timeout_sec', 'enabled_tools', 'disabled_tools'];
   const unknown = Object.keys(value).filter(k => !allowed.includes(k));
-  if (unknown.length) throw invalid(`未対応の項目：${unknown.join(', ')}`);
+  if (unknown.length) throw invalid(t('context.mcp.unknownFields', { keys: unknown.join(', ') }));
   const before = previous?.definition, oldSecrets = previous?.secrets ?? {};
   // 秘密の値の読み方: 文字列 = その値、伏せ字 = 前の値を残す、null = まだ入れていない（未入力のまま保存し、接続はしない）
   const pending = [];
@@ -78,21 +79,21 @@ export function splitRegistration(value, previous = null) {
   const collect = (entries, key, old, label) => {
     const out = {}, lost = [];
     for (const [k, v] of entries) { const r = secretValue(key(k), v, old?.[k]); if (r === LOST) lost.push(k); else if (r !== undefined) out[k] = r; }
-    if (lost.length) throw invalid(`${label}「${lost.join(', ')}」の前の値がありません。値を入力してください`);
+    if (lost.length) throw invalid(t('context.mcp.previousValueMissing', { label, keys: lost.join(', ') }));
     return out;
   };
   const transport = value.transport ?? (typeof value.command === 'string' ? 'stdio' : 'http');
-  if (!['http', 'sse', 'stdio'].includes(transport)) throw invalid('transport は http・sse・stdio のどれかです');
+  if (!['http', 'sse', 'stdio'].includes(transport)) throw invalid(t('context.mcp.transportInvalid'));
   const auth = value.auth ?? 'none';
-  if (!AUTH_KINDS.includes(auth)) throw invalid(`auth は ${AUTH_KINDS.join('・')} のどれかです`);
+  if (!AUTH_KINDS.includes(auth)) throw invalid(t('context.mcp.authInvalid'));
   const definition = { transport, auth, enabled: value.enabled !== false };
   const secrets = {};
   if (transport === 'stdio') {
-    if (typeof value.command !== 'string' || !value.command.trim() || own(value, 'url')) throw invalid('stdio は command を指定し、url は指定しません');
-    if (auth !== 'none') throw invalid('stdio の MCP の認証は env で渡してください（auth は none）');
+    if (typeof value.command !== 'string' || !value.command.trim() || own(value, 'url')) throw invalid(t('context.mcp.stdioCommand'));
+    if (auth !== 'none') throw invalid(t('context.mcp.stdioAuth'));
     definition.command = plainValue(value.command, 'command');
     if (own(value, 'args')) {
-      if (!Array.isArray(value.args) || value.args.length > 200 || !value.args.every(a => typeof a === 'string')) throw invalid('args は文字列の配列で指定してください');
+      if (!Array.isArray(value.args) || value.args.length > 200 || !value.args.every(a => typeof a === 'string')) throw invalid(t('context.mcp.stringArray', { label: 'args' }));
       definition.args = value.args;
     }
     if (own(value, 'cwd')) definition.cwd = plainValue(value.cwd, 'cwd');
@@ -103,55 +104,55 @@ export function splitRegistration(value, previous = null) {
       if (Object.keys(values).length) secrets.env = values;
     }
   } else {
-    if (own(value, 'command') || own(value, 'args') || own(value, 'env')) throw invalid('HTTP の MCP には command・args・env を指定しません');
+    if (own(value, 'command') || own(value, 'args') || own(value, 'env')) throw invalid(t('context.mcp.httpNoCommand'));
     let url = value.url;
     if (before && url === maskQuery(before.url)) url = before.url;
-    if (typeof url !== 'string' || url.length > 4096) throw invalid('url を指定してください');
+    if (typeof url !== 'string' || url.length > 4096) throw invalid(t('context.mcp.urlRequired'));
     let parsed;
-    try { parsed = new URL(url); } catch { throw invalid('url が不正です'); }
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw invalid('url は認証情報を含まない http(s) で指定してください');
+    try { parsed = new URL(url); } catch { throw invalid(t('context.mcp.urlInvalid')); }
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw invalid(t('context.mcp.urlScheme'));
     definition.url = url;
     if (auth === 'bearer') {
       const token = secretValue('bearer', value.bearerToken === undefined ? MASK : value.bearerToken, oldSecrets.bearer);
-      if (token === LOST || token === '') throw invalid('bearer の場合は bearerToken を指定してください');
+      if (token === LOST || token === '') throw invalid(t('context.mcp.bearerRequired'));
       if (token !== undefined) secrets.bearer = plainValue(token, 'bearerToken');
-    } else if (own(value, 'bearerToken')) throw invalid('bearerToken は auth が bearer のときだけ指定します');
+    } else if (own(value, 'bearerToken')) throw invalid(t('context.mcp.bearerOnly'));
     if (auth === 'headers') {
       const headers = stringMap(value.headers, 'headers', { keyPattern: HEADER_NAME, nullable: true });
-      if (!Object.keys(headers).length) throw invalid('headers の場合は 1 つ以上のヘッダーを指定してください');
+      if (!Object.keys(headers).length) throw invalid(t('context.mcp.headersRequired'));
       const bad = Object.keys(headers).filter(k => FORBIDDEN_HEADERS.has(k.toLowerCase()));
-      if (bad.length) throw invalid(`このヘッダーは指定できません：${bad.join(', ')}`);
-      const values = collect(Object.entries(headers), k => `header:${k}`, oldSecrets.headers, 'ヘッダー');
+      if (bad.length) throw invalid(t('context.mcp.headerForbidden', { names: bad.join(', ') }));
+      const values = collect(Object.entries(headers), k => `header:${k}`, oldSecrets.headers, t('context.mcp.headerLabel'));
       if (Object.keys(values).length) secrets.headers = values;
-      if (Buffer.byteLength(JSON.stringify(secrets.headers ?? {})) > 16384) throw invalid('ヘッダーの合計は 16 KiB 以内にしてください');
+      if (Buffer.byteLength(JSON.stringify(secrets.headers ?? {})) > 16384) throw invalid(t('context.mcp.headersTooLarge'));
       definition.headerNames = Object.keys(headers);
-    } else if (own(value, 'headers')) throw invalid('headers は auth が headers のときだけ指定します');
+    } else if (own(value, 'headers')) throw invalid(t('context.mcp.headersOnly'));
     if (auth === 'oauth') {
       const o = value.oauth ?? {};
-      if (!record(o)) throw invalid('oauth はオブジェクトで指定してください');
+      if (!record(o)) throw invalid(t('context.mcp.oauthObject'));
       const extra = Object.keys(o).filter(k => !['clientId', 'clientSecret', 'scope', 'callbackPort', 'resource'].includes(k));
-      if (extra.length) throw invalid(`oauth の未対応の項目：${extra.join(', ')}`);
+      if (extra.length) throw invalid(t('context.mcp.oauthUnknown', { keys: extra.join(', ') }));
       definition.oauth = {};
       if (o.clientId !== undefined && o.clientId !== '') definition.oauth.clientId = plainValue(o.clientId, 'oauth.clientId');
       if (o.scope !== undefined && o.scope !== '') definition.oauth.scope = plainValue(o.scope, 'oauth.scope');
       if (o.callbackPort !== undefined && o.callbackPort !== null) {
-        if (!Number.isInteger(o.callbackPort) || o.callbackPort < 1024 || o.callbackPort > 65535) throw invalid('oauth.callbackPort は 1024〜65535 の整数です');
+        if (!Number.isInteger(o.callbackPort) || o.callbackPort < 1024 || o.callbackPort > 65535) throw invalid(t('context.mcp.callbackPort'));
         definition.oauth.callbackPort = o.callbackPort;
       }
       // RFC 8707 の resource を固定する（Codex の oauth_resource を取り込んだもの）。無ければ MCP の URL・保護リソースメタデータから決める
       if (o.resource !== undefined && o.resource !== '') {
         let r;
-        try { r = new URL(plainValue(o.resource, 'oauth.resource')); } catch { throw invalid('oauth.resource は URL で指定してください'); }
-        if (!['http:', 'https:'].includes(r.protocol) || r.hash) throw invalid('oauth.resource は # を含まない http(s) の URL で指定してください');
+        try { r = new URL(plainValue(o.resource, 'oauth.resource')); } catch { throw invalid(t('context.mcp.resourceUrl')); }
+        if (!['http:', 'https:'].includes(r.protocol) || r.hash) throw invalid(t('context.mcp.resourceScheme'));
         definition.oauth.resource = o.resource;
       }
       const secret = o.clientSecret === MASK ? oldSecrets.clientSecret : o.clientSecret;
       if (secret) {
-        if (!definition.oauth.clientId) throw invalid('clientSecret は clientId と一緒に指定してください');
+        if (!definition.oauth.clientId) throw invalid(t('context.mcp.clientSecretNeedsId'));
         secrets.clientSecret = plainValue(secret, 'oauth.clientSecret');
         definition.oauth.clientSecret = true;
       }
-    } else if (own(value, 'oauth')) throw invalid('oauth は auth が oauth のときだけ指定します');
+    } else if (own(value, 'oauth')) throw invalid(t('context.mcp.oauthOnly'));
   }
   for (const key of ['startup_timeout_sec', 'tool_timeout_sec']) { const v = seconds(value[key], key); if (v !== undefined) definition[key] = v; }
   for (const key of ['enabled_tools', 'disabled_tools']) { const v = names(value[key], key); if (v !== undefined) definition[key] = v; }
@@ -200,7 +201,7 @@ export function createPlyMcp({ dataDir, secrets }) {
       return raw;
     } catch (e) {
       if (e.code === 'ENOENT') return { version: 1, servers: {} };
-      throw new Error('Pleiad の MCP 登録ファイルを読み込めません。形式が壊れています');
+      throw new Error(t('context.mcp.registryBroken'));
     }
   }
   async function write(data) {
@@ -215,7 +216,7 @@ export function createPlyMcp({ dataDir, secrets }) {
   function serial(fn) { const run = writes.catch(() => {}).then(() => withFileLock(`${file}.lock`, fn)); writes = run; return run; }
   async function registration(name) {
     const data = await read();
-    if (typeof name !== 'string' || !own(data.servers, name)) throw invalid('その名前の MCP は Pleiad に登録されていません');
+    if (typeof name !== 'string' || !own(data.servers, name)) throw invalid(t('context.mcp.notRegistered'));
     return data.servers[name];
   }
   return {
@@ -228,18 +229,18 @@ export function createPlyMcp({ dataDir, secrets }) {
     async read(name) {
       await writes.catch(() => {});
       const data = await read();
-      if (!own(data.servers, name)) throw invalid('その名前の MCP は Pleiad に登録されていません');
+      if (!own(data.servers, name)) throw invalid(t('context.mcp.notRegistered'));
       return { ...editableRegistration(name, data.servers[name]), revision: revision(data) };
     },
     registration,
     /** 追加・編集。戻り値の oauthReset は OAuth の状態（トークン・登録済みクライアント）を捨てたか */
     save({ name, value, mode, revision: expected } = {}) {
       return serial(async () => {
-        if (typeof name !== 'string' || !NAME.test(name) || RESERVED.includes(name)) throw invalid('名前は英数字・_・.・- の128文字以内で指定してください（host・ply などは予約名です）');
-        if (!['add', 'edit'].includes(mode)) throw invalid('追加または編集を指定してください');
+        if (typeof name !== 'string' || !NAME.test(name) || RESERVED.includes(name)) throw invalid(t('context.mcp.invalidName'));
+        if (!['add', 'edit'].includes(mode)) throw invalid(t('context.mcp.modeRequired'));
         const data = await read();
-        if (expected !== undefined && expected !== revision(data)) throw invalid('登録が変更されています。一覧を再読込してから編集してください');
-        if (own(data.servers, name) !== (mode === 'edit')) throw invalid(mode === 'add' ? '同名の MCP が登録済みです。編集から開いてください' : '編集する MCP が見つかりません');
+        if (expected !== undefined && expected !== revision(data)) throw invalid(t('context.mcp.revisionChanged'));
+        if (own(data.servers, name) !== (mode === 'edit')) throw invalid(mode === 'add' ? t('context.mcp.alreadyRegistered') : t('context.mcp.editNotFound'));
         const before = data.servers[name];
         const oldSecrets = before ? await secrets.get(secretKey(name, 'static')) ?? {} : {};
         const { definition, secrets: next } = splitRegistration(value, before ? { definition: before, secrets: oldSecrets } : null);
@@ -260,11 +261,11 @@ export function createPlyMcp({ dataDir, secrets }) {
      */
     rename(name, to, { guard = (definition, fn) => fn() } = {}) {
       return serial(async () => {
-        if (typeof to !== 'string' || !NAME.test(to) || RESERVED.includes(to)) throw invalid('名前は英数字・_・.・- の128文字以内で指定してください（host・ply などは予約名です）');
+        if (typeof to !== 'string' || !NAME.test(to) || RESERVED.includes(to)) throw invalid(t('context.mcp.invalidName'));
         const data = await read();
-        if (typeof name !== 'string' || !own(data.servers, name)) throw invalid('その名前の MCP は Pleiad に登録されていません');
-        if (name === to) throw invalid('同じ名前です');
-        if (own(data.servers, to)) throw invalid('その名前の MCP は登録済みです');
+        if (typeof name !== 'string' || !own(data.servers, name)) throw invalid(t('context.mcp.notRegistered'));
+        if (name === to) throw invalid(t('context.mcp.sameName'));
+        if (own(data.servers, to)) throw invalid(t('context.mcp.nameTaken'));
         const before = data.servers[name];
         const definition = { ...before, lockId: before.lockId ?? name, updatedAt: new Date().toISOString() };
         await guard(before, async () => {
@@ -284,9 +285,9 @@ export function createPlyMcp({ dataDir, secrets }) {
     },
     setSettings(value = {}) {
       return serial(async () => {
-        if (!record(value)) throw invalid('設定はオブジェクトで指定してください');
+        if (!record(value)) throw invalid(t('context.mcp.settingsObject'));
         const unknown = Object.keys(value).filter(k => k !== 'clientMetadataUrl');
-        if (unknown.length) throw invalid(`未対応の項目：${unknown.join(', ')}`);
+        if (unknown.length) throw invalid(t('context.mcp.unknownFields', { keys: unknown.join(', ') }));
         const data = await read();
         const settings = { ...(data.settings ?? {}) };
         if (own(value, 'clientMetadataUrl')) {
@@ -294,9 +295,9 @@ export function createPlyMcp({ dataDir, secrets }) {
           if (v === null || v === '') delete settings.clientMetadataUrl;
           else {
             let u;
-            try { u = new URL(plainValue(v, 'clientMetadataUrl')); } catch { throw invalid('clientMetadataUrl は URL で指定してください'); }
+            try { u = new URL(plainValue(v, 'clientMetadataUrl')); } catch { throw invalid(t('context.mcp.metadataUrl')); }
             // draft-ietf-oauth-client-id-metadata-document: client_id は https で、パスを持つ URL（フラグメント・認証情報なし）
-            if (u.protocol !== 'https:' || u.pathname === '/' || u.hash || u.username || u.password) throw invalid('clientMetadataUrl は、パスを持つ https の URL で指定してください（例: https://example.com/ply/oauth-client.json）');
+            if (u.protocol !== 'https:' || u.pathname === '/' || u.hash || u.username || u.password) throw invalid(t('context.mcp.metadataUrlScheme'));
             settings.clientMetadataUrl = u.href;
           }
         }
@@ -308,7 +309,7 @@ export function createPlyMcp({ dataDir, secrets }) {
     remove(name) {
       return serial(async () => {
         const data = await read();
-        if (!own(data.servers, name)) throw invalid('その名前の MCP は Pleiad に登録されていません');
+        if (!own(data.servers, name)) throw invalid(t('context.mcp.notRegistered'));
         delete data.servers[name];
         await write(data);
         await secrets.deletePrefix(`mcp:${name}:`);
@@ -327,7 +328,7 @@ export function createPlyMcp({ dataDir, secrets }) {
     async connection(name, cwd) {
       const definition = await registration(name);
       // 秘密なしで取り込んだ登録は、値を入れるまでつながない（空の値で送ると、認証の失敗が接続先に記録される）
-      if (definition.pending?.length) throw Object.assign(new Error(`未入力の値があります（${definition.pending.join(', ')}）。設定 › コンテキストの外部 MCP で登録を編集して入力してください`), { code: 'MCP_AUTH_REQUIRED' });
+      if (definition.pending?.length) throw Object.assign(new Error(t('context.mcp.pendingValues', { keys: definition.pending.join(', ') })), { code: 'MCP_AUTH_REQUIRED' });
       const stored = await secrets.get(secretKey(name, 'static')) ?? {};
       const timeout = Math.min(60000, (definition.startup_timeout_sec ?? 20) * 1000);
       if (definition.transport === 'stdio') {
@@ -336,7 +337,7 @@ export function createPlyMcp({ dataDir, secrets }) {
       }
       const headers = { ...(definition.auth === 'headers' ? stored.headers ?? {} : {}) };
       if (definition.auth === 'bearer') {
-        if (!stored.bearer) throw Object.assign(new Error('bearer トークンが保存されていません。MCP の登録を編集して入力してください'), { code: 'MCP_AUTH_REQUIRED' });
+        if (!stored.bearer) throw Object.assign(new Error(t('context.mcp.bearerMissing')), { code: 'MCP_AUTH_REQUIRED' });
         headers.Authorization = `Bearer ${stored.bearer}`;
       }
       return { type: definition.transport, url: definition.url, headers, timeout, definition,

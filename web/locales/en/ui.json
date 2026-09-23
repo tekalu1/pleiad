@@ -32,5 +32,32 @@
     "waiting": "Waiting for your reply",
     "running": "Running",
     "stopping": "Stopping"
+  },
+  "saved": {
+    "reason": {
+      "resumeCwd": "Changed on resume",
+      "cwdFrom": "from {{from}}",
+      "contextReloaded": "Reloaded instructions and Skills",
+      "contextChanged": "{{names}}",
+      "contextChangedMore_one": "{{names}} and {{count}} more",
+      "contextChangedMore_other": "{{names}} and {{count}} more",
+      "inheritedStatus": "Carried over to a new session",
+      "renameStatus": "Renamed status to \"{{to}}\"",
+      "deleteGroup": "Deleted group",
+      "renamedGroup": "Renamed \"{{from}}\" to \"{{to}}\"",
+      "deletedGroup": "Deleted \"{{from}}\"",
+      "groupMove": "Moved with its group",
+      "createdGroup": "Created group",
+      "manual": "Changed manually",
+      "menu": "Changed from menu",
+      "undo": "Undo",
+      "joinGroup": "Added to group",
+      "mergeBranches": "Merged branches"
+    },
+    "caption": {
+      "attachment": "Attachment: {{name}}"
+    },
+    "separator": ", ",
+    "defaultTitle": "New session"
   }
 }

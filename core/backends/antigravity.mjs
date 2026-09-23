@@ -24,6 +24,7 @@ import * as pids from "./antigravity-pids.mjs";
 import * as transcript from "./antigravity-store.mjs";
 import { AGY_LEVELS, agyTarget, buildAgyModels, defaultLabelFromLog, parseAgyModels } from "./antigravity-models.mjs";
 import { MAX_RESULT_CHARS } from "./shared.mjs";
+import { t } from "../i18n.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -54,8 +55,9 @@ const LATE = Symbol("late");
  */
 const MODES = {
   yolo: {
-    label: "全部自動",
-    note: "確認しない。すべてのツールを通す（agy のヘッドレスはこれ以外だと黙って拒否される）",
+    // label / note はゲッター（サーバーの言語は実行中に変わる。core/i18n.mjs）
+    get label() { return t("modes.full"); },
+    get note() { return t("antigravity.modes.yolo"); },
     skip: true,
     // 軸（core/modes.mjs）。範囲を絞る手段が無いので full、強制もできない。
     scope: "full",
@@ -74,17 +76,20 @@ const EFFORTS = AGY_LEVELS;
  * ツールの表示ヒント。`agy` は `tool_name` を素の文字列で出す
  * （実機の例では `run_command`）。よく出るものだけ名前で拾い、残りは総称にする。
  */
+// label はゲッター（共有キー tools.*。言語は実行中に変わる）
+// i18n-dynamic: tools.
+const hint = (key, shape) => ({ get label() { return t(`tools.${key}`); }, shape });
 const TOOL_HINTS = {
-  run_command:   { label: "実行",   shape: "shell" },
-  read_file:     { label: "読む",   shape: "read" },
-  write_file:    { label: "書く",   shape: "write" },
-  edit_file:     { label: "編集",   shape: "edit" },
-  replace:       { label: "編集",   shape: "edit" },
-  grep_search:   { label: "検索",   shape: "search" },
-  find_by_name:  { label: "探す",   shape: "search" },
-  list_dir:      { label: "一覧",   shape: "read" },
-  read_url:      { label: "取得",   shape: "web" },
-  search_web:    { label: "web検索", shape: "web" },
+  run_command:   hint("run", "shell"),
+  read_file:     hint("read", "read"),
+  write_file:    hint("write", "write"),
+  edit_file:     hint("edit", "edit"),
+  replace:       hint("edit", "edit"),
+  grep_search:   hint("search", "search"),
+  find_by_name:  hint("find", "search"),
+  list_dir:      hint("list", "read"),
+  read_url:      hint("fetch", "web"),
+  search_web:    hint("webSearch", "web"),
 };
 
 /** 会話ごとの生きたプロセス。**1 プロセス = 1 会話**（antigravity-cli.mjs 冒頭）。 */
@@ -117,7 +122,7 @@ const LOGIN_POLL_MS = Number(process.env.AGENT_HOST_AGY_POLL_MS ?? 3_000);
 const cut = (s) => {
   const text = String(s ?? "");
   return text.length > MAX_RESULT_CHARS
-    ? { text: text.slice(0, MAX_RESULT_CHARS) + "…（以下略）", truncated: true }
+    ? { text: text.slice(0, MAX_RESULT_CHARS) + t("antigravity.truncated"), truncated: true }
     : { text, truncated: false };
 };
 
@@ -131,7 +136,7 @@ function turnResultFor(result) {
   if (status === "CANCELED" || status === "INTERRUPTED") return { type: "turnResult", outcome: "aborted", turns: 1 };
   return {
     type: "turnResult", outcome: "error", turns: result?.num_turns ?? 1,
-    error: String(result?.error || `agy が ${status ?? "不明な状態"} で終わった`),
+    error: String(result?.error || t("antigravity.errors.endedWith", { status: status ?? t("antigravity.errors.unknownStatus") })),
   };
 }
 
@@ -154,7 +159,7 @@ const toolName = (name) => (name && Object.hasOwn(TOOL_HINTS, name) ? name : nam
 export const backend = {
   id: "antigravity",
   label: "Antigravity",
-  description: "Google AI Pro / Ultra の枠を使う",
+  get description() { return t("antigravity.description"); },
 
   async usage() { return (await import('./antigravity-usage.mjs')).readAntigravityUsage(); },
 
@@ -283,7 +288,7 @@ export const backend = {
 
             if (!started.has(id)) {
               started.set(id, { name, input });
-              emit({ type: "activity", state: "running", label: `${TOOL_HINTS[name]?.label ?? name} 中` });
+              emit({ type: "activity", state: "running", label: t("activity.tool", { label: TOOL_HINTS[name]?.label ?? name }) });
               emit({ type: "tool.start", id, name, input });
             }
             if (!done) return;
@@ -330,7 +335,7 @@ export const backend = {
       emit({
         type: "auth", backend: "antigravity", phase: "url",
         url: argv ? argv.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ") : "agy",
-        message: "Antigravity にログインしていません。このコマンドを端末で実行してログインしてください。",
+        message: t("antigravity.auth.notLoggedInTurn"),
       });
     };
 
@@ -345,11 +350,7 @@ export const backend = {
       if (timedOut || failed || closed) return;
       timedOut = true;
       if (sawText) emit({ type: "text.end" });
-      const message = "agy が出力を打ち切りました（--print-timeout）。"
-        + "返答は途中までで、agy 側ではこのターンがまだ続いている可能性があります。"
-        + "取り違えないよう、この agy は終了しました（会話は残っているので続けられます）。"
-        + "長いターンを扱うには AGENT_HOST_AGY_PRINT_TIMEOUT を伸ばしてください"
-        + "（Go の duration 文字列。既定は 24h）。";
+      const message = t("antigravity.errors.printTimeout");
       failed = new Error(message);
       emit({ type: "turnResult", outcome: "error", error: message });
       // **裏で走り続ける agy を残さない。** 放っておくと Pleiad の見ていない所でファイルを
@@ -381,7 +382,7 @@ export const backend = {
     else signal?.signal?.addEventListener?.("abort", abort, { once: true });
 
     const timer = setTimeout(() => {
-      if (!conversationId) { failed = new Error(`agy が ${START_TIMEOUT_MS}ms で応答しなかった`); abort(); settle?.(); }
+      if (!conversationId) { failed = new Error(t("antigravity.errors.startTimeout", { ms: START_TIMEOUT_MS })); abort(); settle?.(); }
     }, START_TIMEOUT_MS);
     timer.unref?.();
 
@@ -459,11 +460,11 @@ export const backend = {
     async status() {
       try {
         rememberModels(await listModels());
-        return { loggedIn: true, account: "Google アカウント", detail: "Antigravity（サブスクの枠を使う）" };
+        return { loggedIn: true, account: t("antigravity.auth.account"), detail: t("antigravity.auth.detail") };
       } catch (err) {
         const message = String(err?.message ?? err);
         if (/sign in/i.test(message)) {
-          return { loggedIn: false, account: null, detail: "agy にログインしていない（端末で agy を実行してログイン）" };
+          return { loggedIn: false, account: null, detail: t("antigravity.auth.notLoggedIn") };
         }
         // 落ちた理由が分からないときは「ログインしていない」と断定しない
         return { loggedIn: false, account: null, detail: message.slice(0, 200) };
@@ -486,11 +487,11 @@ export const backend = {
      * `agy models` が通るようになるまで見張る（利用者は「再確認」を押さなくてよい）。
      */
     async login({ emit }) {
-      if (pendingAuth) throw new Error("ログインが既に走っている");
+      if (pendingAuth) throw new Error(t("antigravity.auth.loginRunning"));
       pendingAuth = {};
       try {
         if (await signedIn()) {
-          emit?.({ type: "auth", phase: "done", message: "すでにログインしている" });
+          emit?.({ type: "auth", phase: "done", message: t("antigravity.auth.alreadyLoggedIn") });
           return;
         }
 
@@ -500,19 +501,18 @@ export const backend = {
         const command = argv ? argv.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ") : "agy";
         emit?.({
           type: "auth", phase: "url", url: command,
-          message: "このコマンドを端末で実行し、画面の案内に沿って Google にログインしてください。"
-            + "（Antigravity のログインは端末からしか行えません。終わるとここが自動で切り替わります）",
+          message: t("antigravity.auth.runCommand"),
         });
 
         const until = Date.now() + LOGIN_TIMEOUT_MS;
         while (Date.now() < until) {
           await new Promise((r) => { const t = setTimeout(r, LOGIN_POLL_MS); t.unref?.(); });
           if (await signedIn()) {
-            emit?.({ type: "auth", phase: "done", message: "ログインした" });
+            emit?.({ type: "auth", phase: "done", message: t("antigravity.auth.loggedIn") });
             return;
           }
         }
-        const message = "端末でのログインが終わらなかった（もう一度お試しください）";
+        const message = t("antigravity.auth.loginTimeout");
         emit?.({ type: "auth", phase: "error", message });
         throw new Error(message);
       } finally {
@@ -525,7 +525,7 @@ export const backend = {
      * Pleiad からは消せないので、そのことを伝える。
      */
     async logout() {
-      throw new Error("Antigravity のログアウトは agy 側で行ってください（資格情報は OS の資格情報ストアにあります）");
+      throw new Error(t("antigravity.auth.logoutInAgy"));
     },
   },
 };
@@ -575,7 +575,7 @@ function listModels() {
       // 一覧は stdout から読む。stdout に何も無いときだけ stderr も見る（以前の読み方）
       const fromOut = parseAgyModels(out);
       const rows = fromOut.length ? fromOut : parseAgyModels(text);
-      if (!rows.length) return reject(new Error(text.trim() || "agy models が何も返さなかった"));
+      if (!rows.length) return reject(new Error(text.trim() || t("antigravity.errors.noModels")));
       resolve({ rows, defaultLabel });
     });
   });

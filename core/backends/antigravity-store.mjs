@@ -17,6 +17,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { MAX_RESULT_CHARS } from "./shared.mjs";
+import { t } from "../i18n.mjs";
 
 /** 控えの置き場。**agy がらみの控えはすべてここに揃える**（pid の控えも: antigravity-pids.mjs）。 */
 export function dir() {
@@ -27,7 +28,7 @@ export function dir() {
 /** conversation_id はサーバ生成の id。念のためファイル名に使える文字だけに落とす。 */
 function fileFor(conversationId) {
   const safe = String(conversationId).replace(/[^A-Za-z0-9._-]/g, "_");
-  if (!safe || safe === "." || safe === "..") throw new Error(`使えない会話 id: ${conversationId}`);
+  if (!safe || safe === "." || safe === "..") throw new Error(t("antigravity.errors.badConversationId", { id: conversationId }));
   return path.join(dir(), `${safe}.json`);
 }
 
@@ -95,7 +96,7 @@ export async function getMessages(conversationId, { fullResults = false } = {}) 
     for (const m of messages) {
       for (const call of m.toolCalls ?? []) {
         if (call.result?.text?.length > MAX_RESULT_CHARS) {
-          call.result.text = call.result.text.slice(0, MAX_RESULT_CHARS) + "…（以下略）";
+          call.result.text = call.result.text.slice(0, MAX_RESULT_CHARS) + t("antigravity.truncated");
           call.result.truncated = true;
         }
       }

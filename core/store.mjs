@@ -16,6 +16,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { t } from "./i18n.mjs";
 
 const DIR = process.env.AGENT_HOST_DATA ?? path.join(os.homedir(), ".agent-host");
 const FILE = path.join(DIR, "sessions.json");
@@ -213,7 +214,7 @@ async function resolveFrom(sessionId, entry, field, to, backend) {
  * `from` を渡さない（または null の）場合は直前の値をこちらで補う。
  * `backend` はバックエンドのオブジェクト。from の復元と、行がどこのものかの記録に使う。
  */
-export async function recordChange(sessionId, { by, field, from, to, reason, backend }) {
+export async function recordChange(sessionId, { by, field, from, to, reason, reasonKey, reasonParams, backend }) {
   return exclusive(async () => {
     const all = await load();
     const entry = (all[sessionId] ??= { history: [] });
@@ -229,6 +230,8 @@ export async function recordChange(sessionId, { by, field, from, to, reason, bac
       from: resolved ?? null,
       to: to ?? null,
       reason: reason ?? null,
+      // 新しい記録は理由をキーでも持つ（画面が今の言語で出す。web/saved-text.mjs）。reason は従来どおりの日本語の文
+      ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}),
     });
     if (backend?.id) entry.backend = backend.id;
     // ネイティブに持てるバックエンドでも sidecar に写す。
@@ -330,7 +333,7 @@ export const dataDir = DIR;
 
 /** Host-only data; durable before acknowledging the client. Roll back a failed write. */
 export async function setSessionData(sessionId, field, value) {
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint"].includes(field)) throw new Error("不正なセッション設定");
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];

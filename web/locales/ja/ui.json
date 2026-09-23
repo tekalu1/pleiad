@@ -28,5 +28,31 @@
     "waiting": "あなたの応答を待っている",
     "running": "動いている",
     "stopping": "中断している"
+  },
+  "saved": {
+    "reason": {
+      "resumeCwd": "再開時に変更",
+      "cwdFrom": "{{from}} から",
+      "contextReloaded": "指示・Skills を読み込み直した",
+      "contextChanged": "{{names}}",
+      "contextChangedMore_other": "{{names}} ほか {{count}} 件",
+      "inheritedStatus": "新しいセッションに引き継いだ",
+      "renameStatus": "状態を「{{to}}」に改名",
+      "deleteGroup": "グループを削除",
+      "renamedGroup": "「{{from}}」を「{{to}}」に改名",
+      "deletedGroup": "「{{from}}」を削除",
+      "groupMove": "グループごと移動",
+      "createdGroup": "グループを作った",
+      "manual": "手動で変更",
+      "menu": "メニューから変更",
+      "undo": "元に戻す",
+      "joinGroup": "グループに入れる",
+      "mergeBranches": "枝をまとめる"
+    },
+    "caption": {
+      "attachment": "添付: {{name}}"
+    },
+    "separator": "・",
+    "defaultTitle": "新しいセッション"
   }
 }

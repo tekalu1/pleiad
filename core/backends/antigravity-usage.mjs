@@ -1,5 +1,6 @@
 import { cliCommand, spawnCli } from '../cli-installation.mjs';
 import { number, usageWindow } from '../usage.mjs';
+import { t } from '../i18n.mjs';
 
 // Read-only print commands landed in 1.1.11. Older CLIs send /usage to the
 // model as a prompt, so check the version before ever submitting the command.
@@ -12,17 +13,17 @@ export function supportsUsage(version) {
 
 export function antigravityQuota(result) {
   if (result?.status !== 'SUCCESS' || result.num_turns !== 0 || result.command?.name !== 'usage'
-    || !Array.isArray(result.command.data?.groups)) throw new Error('使用枠の応答形式が不正です');
+    || !Array.isArray(result.command.data?.groups)) throw new Error(t('antigravity.usage.badResponse'));
   const windows = result.command.data.groups.flatMap(group => (Array.isArray(group?.buckets) ? group.buckets : []).map(bucket => {
     const fraction = number(bucket?.remaining_fraction);
     const used = fraction != null && fraction <= 1 ? (1 - fraction) * 100 : null;
     const minutes = bucket?.window === '5h' ? 300 : bucket?.window === 'weekly' ? 10080 : null;
-    const period = minutes === 300 ? '5時間' : minutes === 10080 ? '週次（7日間）' : bucket?.name || '期間不明';
-    return usageWindow(`${group.name || 'モデル'} · ${period}`, used, bucket?.reset_time, minutes);
+    const period = minutes === 300 ? t('antigravity.usage.fiveHours') : minutes === 10080 ? t('antigravity.usage.weekly') : bucket?.name || t('antigravity.usage.unknownPeriod');
+    return usageWindow(`${group.name || t('antigravity.usage.model')} · ${period}`, used, bucket?.reset_time, minutes);
   }));
   return { windows, message: windows.length
-    ? '同じモデルグループ内で使用枠を共有します。5時間と週次の両方の制限が適用されます。'
-    : 'Antigravity の使用枠が返されませんでした。ログイン状態と契約を確認してください。' };
+    ? t('antigravity.usage.shared')
+    : t('antigravity.usage.none') };
 }
 
 // Never expose stderr: authentication errors can contain credentials/URLs.
@@ -36,22 +37,22 @@ function capture(argv, args, timeoutMs) {
       settled = true; clearTimeout(timer);
       if (error) { proc.kill(); reject(error); } else resolve(output.trim());
     };
-    const timer = setTimeout(() => finish(new Error('使用枠の取得が時間切れです')), timeoutMs);
+    const timer = setTimeout(() => finish(new Error(t('antigravity.usage.timeout'))), timeoutMs);
     proc.stdout.setEncoding('utf8');
     proc.stdout.on('data', chunk => {
       bytes += Buffer.byteLength(chunk);
-      if (bytes > 1024 * 1024) return finish(new Error('使用枠の応答が大きすぎます'));
+      if (bytes > 1024 * 1024) return finish(new Error(t('antigravity.usage.tooLarge')));
       output += chunk;
     });
     proc.stderr.on('data', () => {});
-    proc.on('error', () => finish(new Error('Antigravity を起動できません')));
-    proc.on('close', code => finish(code === 0 ? null : new Error('Antigravity の使用枠を取得できません')));
+    proc.on('error', () => finish(new Error(t('antigravity.usage.cannotStart'))));
+    proc.on('close', code => finish(code === 0 ? null : new Error(t('antigravity.usage.cannotRead'))));
   });
 }
 
 export async function readAntigravityUsage({ argv = cliCommand('antigravity'), timeoutMs = 25_000 } = {}) {
   const version = await capture(argv, ['--version'], timeoutMs);
-  if (!supportsUsage(version)) return { windows: [], message: '使用枠の表示には Antigravity CLI 1.1.11 以降が必要です。端末で agy update を実行してください。' };
+  if (!supportsUsage(version)) return { windows: [], message: t('antigravity.usage.needsUpdate') };
   const output = await capture(argv, ['--print', '/usage', '--output-format', 'json', '--print-timeout', '20s'], timeoutMs);
   return antigravityQuota(JSON.parse(output));
 }
