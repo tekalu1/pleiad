@@ -14,6 +14,7 @@ import { Handshake, prologueFor, derivePairing, confirmationCode } from './noise
 import { Channel } from './channel.mjs';
 import { forwardStream } from './forward.mjs';
 import { createRemoteStore } from './devices.mjs';
+import { t } from '../i18n.mjs';
 import { normalizeRelayUrl, relayWsUrl, pairingPayload, cleanLabel, PAIRING_TTL_MS } from './pairing.mjs';
 
 /** ホストが閉じるときの close code。中継は 3000–4999 をそのまま端末へ渡す（§5.1）。 */
@@ -26,13 +27,13 @@ const DATA_MAX_PAYLOAD = 70_000;
 
 function describeClose(code) {
   switch (code) {
-    case 4400: return '中継との取り決めが合いません（版の違いかもしれません）';
-    case 4401: return '中継が登録用の秘密を受け付けませんでした';
-    case 4409: return '同じホストの別の接続に置き換わりました（同じデータ置き場の Pleiad が 2 つ動いていませんか）';
-    case 4429: return '中継のホスト数の上限に達しています';
-    case 1001: return '中継が終了しました';
-    case 1006: return '中継との接続が切れました';
-    default: return `中継との接続が閉じました（${code}）`;
+    case 4400: return t('remote.relay.closed.badRequest');
+    case 4401: return t('remote.relay.closed.unauthorized');
+    case 4409: return t('remote.relay.closed.replaced');
+    case 4429: return t('remote.relay.closed.full');
+    case 1001: return t('remote.relay.closed.shutdown');
+    case 1006: return t('remote.relay.closed.lost');
+    default: return t('remote.relay.closed.other', { code });
   }
 }
 
@@ -149,11 +150,11 @@ export function createRemoteHost({
     control = ws;
     let failure = null;
     ws.on('unexpected-response', (req, res) => {
-      failure = res.statusCode === 429 ? '中継が一時的に接続を止めています（認証の失敗が続いたため）' : `中継が接続を受け付けませんでした（HTTP ${res.statusCode}）`;
+      failure = res.statusCode === 429 ? t('remote.relay.rateLimited') : t('remote.relay.rejected', { status: res.statusCode });
       res.resume();
       req.destroy();
     });
-    ws.on('error', e => { failure ??= `中継につながりません（${e.code || e.message}）`; });
+    ws.on('error', e => { failure ??= t('remote.relay.unreachable', { reason: e.code || e.message }); });
     ws.on('open', () => {
       if (gen !== generation) return closeWs(ws, 1000);
       controlOpenedAt = Date.now();
@@ -209,7 +210,7 @@ export function createRemoteHost({
     retryAt = null;
     attempt = 0;
     if (control) { closeWs(control, 1000); control = null; }
-    for (const set of channels.values()) for (const { ch } of set) ch.goaway('shutdown', 'リモートを止めました');
+    for (const set of channels.values()) for (const { ch } of set) ch.goaway('shutdown', 'remote stopped');
     for (const ws of dataConns) closeWs(ws, HOST_CLOSE.SHUTDOWN);
     dataConns.clear();
     clearOffer(false);
@@ -326,7 +327,7 @@ export function createRemoteHost({
         const now = Date.now();
         const r = {
           id: crypto.randomBytes(9).toString('base64url'),
-          name: cleanLabel(hello.name) || '名前のない端末',
+          name: cleanLabel(hello.name) || t('remote.unnamedDevice'),
           platform: cleanLabel(hello.platform, 32) || 'unknown',
           app: cleanLabel(hello.app, 32) || null,
           code, createdAt: new Date(now).toISOString(), expiresAt: new Date(now + PAIRING_TTL_MS).toISOString(),
@@ -388,7 +389,7 @@ export function createRemoteHost({
       try {
         await loadConfig();
         if (!cfg.enabled) { setPhase('disabled'); return; }
-        if (!cfg.relayUrl || !cfg.secret) { setPhase('error', { code: 'config', message: '中継の URL と登録用の秘密を入れてください' }); return; }
+        if (!cfg.relayUrl || !cfg.secret) { setPhase('error', { code: 'config', message: t('remote.settings.needConfig') }); return; }
         normalizeRelayUrl(cfg.relayUrl);
         identity = await store.identity();
         connect();
@@ -414,14 +415,14 @@ export function createRemoteHost({
       if (args.enabled !== undefined) patch.enabled = args.enabled === true;
       if (args.enrollSecret !== undefined) {
         const secret = args.enrollSecret == null ? '' : String(args.enrollSecret).trim();
-        if (/[\s]/.test(secret) || secret.length > 1024) throw new Error('登録用の秘密に空白は入れられません');
+        if (/[\s]/.test(secret) || secret.length > 1024) throw new Error(t('remote.settings.secretWhitespace'));
         await store.setEnrollSecret(secret);
       }
       if (patch.enabled) {
         const s = await store.settings();
         const url = patch.relayUrl ?? (s.relayUrl || env.AGENT_HOST_RELAY_URL || '');
         const secret = (await store.enrollSecret()) || env.AGENT_HOST_RELAY_SECRET || '';
-        if (!url || !secret) throw new Error('中継の URL と登録用の秘密を入れてから有効にしてください');
+        if (!url || !secret) throw new Error(t('remote.settings.needConfigToEnable'));
       }
       if (Object.keys(patch).length) await store.saveSettings(patch);
       await apply();
@@ -430,8 +431,8 @@ export function createRemoteHost({
 
     /** 端末を追加する。QR に入れる文字列と期限を返す。 */
     async startPairing() {
-      if (!cfg.enabled) throw new Error('リモートが無効です');
-      if (phase !== 'connected') throw new Error('中継につながっていません');
+      if (!cfg.enabled) throw new Error(t('remote.settings.disabled'));
+      if (phase !== 'connected') throw new Error(t('remote.settings.notConnected'));
       const secret = crypto.randomBytes(32);
       const { psk, ticketHash } = derivePairing(secret);
       clearOffer(false);
@@ -458,7 +459,7 @@ export function createRemoteHost({
     /** 承認。deviceId と中継用トークンを発行し、端末一覧・中継へ登録して端末へ渡す。 */
     async approve(id) {
       const r = requests.get(String(id ?? ''));
-      if (!r) throw new Error('その承認待ちはもうありません');
+      if (!r) throw new Error(t('remote.pairing.requestGone'));
       const raw = crypto.randomBytes(32);
       const device = {
         id: `d${crypto.randomBytes(12).toString('base64url')}`,
@@ -477,7 +478,7 @@ export function createRemoteHost({
     },
     async deny(id) {
       const r = requests.get(String(id ?? ''));
-      if (!r) throw new Error('その承認待ちはもうありません');
+      if (!r) throw new Error(t('remote.pairing.requestGone'));
       finishRequest(r, 'denied');
       return status();
     },
@@ -490,7 +491,7 @@ export function createRemoteHost({
       deviceCache.delete(id);   // 照合は先に止める（消し終わるのを待つ間にハンドシェイクを通さない）
       await store.removeDevice(id);
       sendControl({ type: 'revoke', id });
-      for (const { ch } of channels.get(id) ?? []) ch.goaway('revoked', 'この端末は取り消されました');
+      for (const { ch } of channels.get(id) ?? []) ch.goaway('revoked', 'device revoked');
       queueStatus();
       return status();
     },

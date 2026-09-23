@@ -12,12 +12,13 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createSecretStore, plainCipher, withFileLock } from '../secret-store.mjs';
 import { generateKeyPair, keyPairFromPrivate, hostIdFor } from './noise.mjs';
+import { t } from '../i18n.mjs';
 
 export async function readJson(file, fallback) {
   try { return JSON.parse(await fs.readFile(file, 'utf8')); }
   catch (e) {
     if (e.code === 'ENOENT') return fallback;
-    throw new Error(`${path.basename(file)} を読み込めません（形式が壊れています）`);
+    throw new Error(t('remote.store.unreadable', { file: path.basename(file) }));
   }
 }
 
@@ -60,7 +61,7 @@ export function createRemoteStore({ dataDir, cipher = plainCipher }) {
 
   async function readDevices() {
     const raw = await readJson(devicesFile, { version: 1, devices: [] });
-    if (raw?.version !== 1 || !Array.isArray(raw.devices)) throw new Error('devices.json の形式が違います');
+    if (raw?.version !== 1 || !Array.isArray(raw.devices)) throw new Error(t('remote.store.badFormat', { file: 'devices.json' }));
     return raw;
   }
 

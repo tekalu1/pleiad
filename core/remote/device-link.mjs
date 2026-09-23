@@ -22,6 +22,7 @@ import WebSocket from 'ws';
 import { Handshake, prologueFor } from './noise.mjs';
 import { Channel, ChannelError } from './channel.mjs';
 import { relayWsUrl } from './pairing.mjs';
+import { t } from '../i18n.mjs';
 
 /** 中継への WebSocket の 1 メッセージの上限（中継の 66,000 に余裕を持たせる）。 */
 const RELAY_MAX_PAYLOAD = 70_000;
@@ -68,13 +69,13 @@ export function openRelaySocket(url, headers, { openTimeoutMs = 10_000, WebSocke
   /** 次の 1 通。閉じられたら reject（closeCode 付き）、ms を過ぎても reject。 */
   const next = (ms = 10_000) => new Promise((resolve, reject) => {
     if (inbox.length) return resolve(inbox.shift());
-    const fail = c => reject(Object.assign(new Error(`中継との接続が閉じられました（${c.code}）`), { closeCode: c.code }));
+    const fail = c => reject(Object.assign(new Error(`relay connection closed (${c.code})`), { closeCode: c.code }));
     if (isClosed) return fail(isClosed);
     const w = (buf, c) => { clearTimeout(timer); if (buf) resolve(buf); else fail(c); };
     const timer = setTimeout(() => {
       const i = waiters.indexOf(w);
       if (i >= 0) waiters.splice(i, 1);
-      reject(Object.assign(new Error('ホストから応答がありません'), { code: 'timeout' }));
+      reject(Object.assign(new Error('no response from host'), { code: 'timeout' }));
     }, ms);
     timer.unref?.();
     waiters.push(w);
@@ -88,14 +89,14 @@ export function openRelaySocket(url, headers, { openTimeoutMs = 10_000, WebSocke
 function closeSocket(ws, code = 1000) {
   if (ws.readyState === WebSocket.CLOSED) return;
   try { ws.readyState === WebSocket.CONNECTING ? ws.terminate() : ws.close(code); } catch { ws.terminate(); }
-  const t = setTimeout(() => { try { ws.terminate(); } catch {} }, 2000);
-  t.unref?.();
+  const timer = setTimeout(() => { try { ws.terminate(); } catch {} }, 2000);
+  timer.unref?.();
 }
 
 function errorFor(state, detail) {
-  const e = new Error(state === 'revoked' ? 'この端末はホストで取り消されました'
-    : state === 'host-offline' ? 'ホストにつながりません'
-      : state === 'stopped' ? '接続を止めました' : '中継につながりません');
+  const e = new Error(state === 'revoked' ? t('remote.device.revoked')
+    : state === 'host-offline' ? t('remote.device.hostOffline')
+      : state === 'stopped' ? t('remote.device.stopped') : t('remote.device.offline'));
   e.state = state;
   if (detail?.closeCode != null) e.closeCode = detail.closeCode;
   return e;
@@ -156,7 +157,7 @@ export class DeviceLink extends EventEmitter {
     this.retryTimer = null;
     const ch = this.channel;
     this.channel = null;
-    ch?.close(new ChannelError('closed', '接続を止めました'));
+    ch?.close(new ChannelError('closed', 'link stopped'));
     if (this.socket) closeSocket(this.socket, 1000);
     this.socket = null;
     this.#setStatus('stopped');
@@ -172,7 +173,7 @@ export class DeviceLink extends EventEmitter {
     this.retryTimer = null;
     const ch = this.channel;
     this.channel = null;
-    ch?.close(new ChannelError('closed', 'つなぎ直します'));
+    ch?.close(new ChannelError('closed', 'reconnecting'));
     if (this.socket) closeSocket(this.socket, 1000);
     this.socket = null;
     this.attempt = 0;
@@ -278,7 +279,7 @@ export class DeviceLink extends EventEmitter {
     });
     ch.on('goaway', g => { goaway = String(g?.code ?? ''); });
     ch.on('close', () => closeSocket(sock.ws, 1000));
-    sock.ws.on('close', () => ch.close(new ChannelError('transport', '中継との接続が切れました')));
+    sock.ws.on('close', () => ch.close(new ChannelError('transport', 'relay connection lost')));
     sock.closed.then(c => {
       if (settled) {
         // つながっていたチャネルが切れた
@@ -296,7 +297,7 @@ export class DeviceLink extends EventEmitter {
     if (!live()) { ch.close(); return closeSocket(sock.ws); }
     if (!h.hello) {
       ch.close();
-      const c = await Promise.race([sock.closed, new Promise(r => { const t = setTimeout(r, 1000, null); t.unref?.(); })]);
+      const c = await Promise.race([sock.closed, new Promise(r => { const timer = setTimeout(r, 1000, null); timer.unref?.(); })]);
       if (!live()) return;
       const closeCode = c?.code ?? null;
       return fail(h.timeout && closeCode == null ? 'host-offline' : classifyClose({ closeCode, goaway }), { ...(closeCode != null ? { closeCode } : {}), ...(goaway ? { goaway } : {}), ...(h.timeout ? { reason: 'timeout' } : {}) });

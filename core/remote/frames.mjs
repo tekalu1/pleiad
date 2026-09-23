@@ -61,14 +61,14 @@ function bytes(v) {
   if (Buffer.isBuffer(v)) return v;
   if (v instanceof Uint8Array) return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
   if (typeof v === 'string') return Buffer.from(v, 'utf8');
-  throw new TypeError('payload はバイト列か文字列');
+  throw new TypeError('payload must be bytes or a string');
 }
 
 export function encodeFrame(type, stream, payload) {
-  if (!TYPE_NAMES[type]) throw new FrameError(`知らない型: ${type}`);
-  if (!Number.isInteger(stream) || stream < 0 || stream > 0xffffffff) throw new FrameError(`stream が範囲外: ${stream}`);
+  if (!TYPE_NAMES[type]) throw new FrameError(`unknown type: ${type}`);
+  if (!Number.isInteger(stream) || stream < 0 || stream > 0xffffffff) throw new FrameError(`stream out of range: ${stream}`);
   const body = bytes(payload);
-  if (body.length > MAX_PAYLOAD) throw new FrameError(`payload が大きすぎる（${body.length} > ${MAX_PAYLOAD}）`);
+  if (body.length > MAX_PAYLOAD) throw new FrameError(`payload too large (${body.length} > ${MAX_PAYLOAD})`);
   const out = Buffer.allocUnsafe(HEADER_BYTES + body.length);
   out.writeUInt8(type, 0);
   out.writeUInt32BE(stream, 1);
@@ -79,13 +79,13 @@ export function encodeFrame(type, stream, payload) {
 /** バイト列 → `{ type, stream, payload }`。形の誤り（短い・知らない型・stream の取り違え）は FrameError。 */
 export function decodeFrame(buf) {
   buf = bytes(buf);
-  if (buf.length < HEADER_BYTES) throw new FrameError('フレームが短すぎる');
-  if (buf.length > MAX_FRAME) throw new FrameError('フレームが大きすぎる');
+  if (buf.length < HEADER_BYTES) throw new FrameError('frame too short');
+  if (buf.length > MAX_FRAME) throw new FrameError('frame too large');
   const type = buf.readUInt8(0);
   const stream = buf.readUInt32BE(1);
-  if (!TYPE_NAMES[type]) throw new FrameError(`知らない型: 0x${type.toString(16)}`);
-  if (CHANNEL_ONLY.has(type) && stream !== 0) throw new FrameError(`${TYPE_NAMES[type]} は stream 0 だけ`);
-  if (!CHANNEL_ONLY.has(type) && type !== T.WINDOW && stream === 0) throw new FrameError(`${TYPE_NAMES[type]} は stream 0 に載らない`);
+  if (!TYPE_NAMES[type]) throw new FrameError(`unknown type: 0x${type.toString(16)}`);
+  if (CHANNEL_ONLY.has(type) && stream !== 0) throw new FrameError(`${TYPE_NAMES[type]} is only allowed on stream 0`);
+  if (!CHANNEL_ONLY.has(type) && type !== T.WINDOW && stream === 0) throw new FrameError(`${TYPE_NAMES[type]} is not allowed on stream 0`);
   return { type, stream, payload: buf.subarray(HEADER_BYTES) };
 }
 
@@ -95,20 +95,20 @@ export const json = {
   encode: v => Buffer.from(JSON.stringify(v), 'utf8'),
   decode(buf) {
     let v;
-    try { v = JSON.parse(bytes(buf).toString('utf8')); } catch { throw new FrameError('JSON として読めない'); }
-    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new FrameError('JSON のオブジェクトではない');
+    try { v = JSON.parse(bytes(buf).toString('utf8')); } catch { throw new FrameError('invalid JSON'); }
+    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new FrameError('not a JSON object');
     return v;
   },
 };
 
 export function u16(n) { const b = Buffer.alloc(2); b.writeUInt16BE(n); return b; }
 export function readU16(buf) {
-  if (buf.length !== 2) throw new FrameError('u16 の長さが違う');
+  if (buf.length !== 2) throw new FrameError('bad u16 length');
   return buf.readUInt16BE(0);
 }
 export function u32(n) { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; }
 export function readU32(buf) {
-  if (buf.length !== 4) throw new FrameError('u32 の長さが違う');
+  if (buf.length !== 4) throw new FrameError('bad u32 length');
   return buf.readUInt32BE(0);
 }
 
@@ -119,7 +119,7 @@ export function encodeWsClose(code = 1000, reason = '') {
   return Buffer.concat([u16(code), r]);
 }
 export function decodeWsClose(buf) {
-  if (buf.length < 2) throw new FrameError('WS_CLOSE が短すぎる');
+  if (buf.length < 2) throw new FrameError('WS_CLOSE too short');
   return { code: buf.readUInt16BE(0), reason: buf.subarray(2).toString('utf8') };
 }
 
@@ -128,9 +128,9 @@ export function encodeWsFragment(chunk, { text = false, fin = true } = {}) {
   return Buffer.concat([Buffer.from([(text ? WS_TEXT : 0) | (fin ? WS_FIN : 0)]), bytes(chunk)]);
 }
 export function decodeWsFragment(buf) {
-  if (buf.length < 1) throw new FrameError('WS_MSG が短すぎる');
+  if (buf.length < 1) throw new FrameError('WS_MSG too short');
   const flags = buf.readUInt8(0);
-  if (flags & ~(WS_TEXT | WS_FIN)) throw new FrameError('WS_MSG の印に知らないビット');
+  if (flags & ~(WS_TEXT | WS_FIN)) throw new FrameError('unknown WS_MSG flag bits');
   return { text: Boolean(flags & WS_TEXT), fin: Boolean(flags & WS_FIN), data: buf.subarray(1) };
 }
 
@@ -165,9 +165,9 @@ export class WsAssembler {
   push(payload) {
     const f = decodeWsFragment(bytes(payload));
     if (this.text == null) this.text = f.text;
-    else if (this.text !== f.text) throw new FrameError('WS_MSG の文字 / バイナリが途中で変わった');
+    else if (this.text !== f.text) throw new FrameError('WS_MSG switched between text and binary mid-message');
     this.size += f.data.length;
-    if (this.size > this.maxBytes) throw new FrameError('WebSocket のメッセージが上限を超えた');
+    if (this.size > this.maxBytes) throw Object.assign(new FrameError('WebSocket message exceeds the limit'), { code: 'too-large' });
     this.parts.push(f.data);
     if (!f.fin) return null;
     const data = this.parts.length === 1 ? Buffer.from(this.parts[0]) : Buffer.concat(this.parts);

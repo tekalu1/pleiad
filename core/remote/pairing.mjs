@@ -11,6 +11,7 @@
 // 通常の接続（IK）は、メッセージ 1（payload: JSON { proto: 1, name?, app? }）・メッセージ 2（payload: 空）のあと
 // channel.mjs の Channel（最初のフレームは HELLO）に移る。
 import { hostIdFor } from './noise.mjs';
+import { t } from '../i18n.mjs';
 
 export const PAIR_SCHEME = 'pleiad://pair';
 export const PAIR_VERSION = '1';
@@ -27,13 +28,13 @@ export function normalizeRelayUrl(value) {
   const raw = String(value ?? '').trim();
   if (!raw) return '';
   let u;
-  try { u = new URL(raw); } catch { throw new Error('中継の URL の形が違います'); }
+  try { u = new URL(raw); } catch { throw new Error(t('remote.relayUrl.invalid')); }
   const secure = u.protocol === 'https:' || u.protocol === 'wss:';
   const plain = u.protocol === 'http:' || u.protocol === 'ws:';
-  if (!secure && !plain) throw new Error('中継の URL は https:// で始めてください');
-  if (plain && !LOOPBACK.has(u.hostname)) throw new Error('中継の URL は https:// で始めてください（http はこの PC の中継だけ）');
-  if (u.username || u.password) throw new Error('中継の URL に利用者名やパスワードは入れられません');
-  if (u.search || u.hash) throw new Error('中継の URL に ? や # は入れられません');
+  if (!secure && !plain) throw new Error(t('remote.relayUrl.httpsOnly'));
+  if (plain && !LOOPBACK.has(u.hostname)) throw new Error(t('remote.relayUrl.httpsOnlyLoopback'));
+  if (u.username || u.password) throw new Error(t('remote.relayUrl.noUserinfo'));
+  if (u.search || u.hash) throw new Error(t('remote.relayUrl.noQuery'));
   return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`;
 }
 
@@ -61,14 +62,14 @@ export function pairingPayload({ relayUrl, hostId, publicKey, secret, hostName }
 /** QR の文字列を読む。形が違えば投げる。hostId が公開鍵と合うことも確かめる。 */
 export function parsePairingPayload(text) {
   const s = String(text ?? '').trim();
-  if (!s.startsWith(`${PAIR_SCHEME}?`)) throw new Error('ペアリングのコードではありません');
+  if (!s.startsWith(`${PAIR_SCHEME}?`)) throw new Error(t('remote.pairingCode.notCode'));
   const q = new URLSearchParams(s.slice(PAIR_SCHEME.length + 1));
-  if (q.get('v') !== PAIR_VERSION) throw new Error('対応していない版のペアリングのコードです');
+  if (q.get('v') !== PAIR_VERSION) throw new Error(t('remote.pairingCode.unsupportedVersion'));
   const publicKey = Buffer.from(q.get('k') ?? '', 'base64url');
   const secret = Buffer.from(q.get('s') ?? '', 'base64url');
-  if (publicKey.length !== 32 || secret.length !== 32) throw new Error('ペアリングのコードが壊れています');
+  if (publicKey.length !== 32 || secret.length !== 32) throw new Error(t('remote.pairingCode.broken'));
   const hostId = String(q.get('h') ?? '').toLowerCase();
-  if (hostId !== hostIdFor(publicKey)) throw new Error('ペアリングのコードの hostId が公開鍵と合いません');
+  if (hostId !== hostIdFor(publicKey)) throw new Error(t('remote.pairingCode.hostIdMismatch'));
   return { relayUrl: normalizeRelayUrl(q.get('r')), hostId, publicKey, secret, hostName: q.get('n') ?? '' };
 }
 
