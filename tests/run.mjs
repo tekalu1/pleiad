@@ -143,6 +143,8 @@ const cases = [
   await import("./unit/folder-uploads.mjs"),
   // 同じ口を端末内プロキシ → 中継 → ホストで。50 MiB・2000 件が流量の制御の下で届くこと、中継が落ちても続きから送れること
   await import("./unit/remote-upload.mjs"),
+  // モバイルの殻（mobile/）の取り決め: plyRemote の形・平文はループバックだけ・依存の版の固定・殻の辞書
+  await import("./unit/mobile-shell.mjs"),
 ];
 
 const selected = pick(cases, process.argv.slice(2));

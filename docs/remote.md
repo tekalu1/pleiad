@@ -55,7 +55,7 @@
 | 端末の資格情報・ペアリング・端末内プロキシ | `core/remote/device.mjs`（置き場・ペアリング・ホストごとのプロキシの管理）、`core/remote/device-link.mjs`（中継への線・張り直し・状態）、`core/remote/device-proxy.mjs`（127.0.0.1 の HTTP と /ws）。デスクトップの main から `import()`、試験からも使う | Node |
 | リモートの窓・ほかのホストにつなぐ窓 | `desktop/remote-windows.cjs`（窓・IPC・印。main プロセス）、`desktop/remote-preload.cjs`（リモートの窓の preload）、`desktop/remote-hosts.html`・`remote-hosts-view.cjs`・`remote-hosts-preload.cjs`（同梱の窓）、`desktop/window-trust.cjs`（窓ごとのオリジンの表）、`desktop/i18n.cjs`（本体の文言）。画面の印は `web/remote-badge.mjs` | Node |
 | 手元のフォルダーを送る（§8.1） | `core/folder-uploads.mjs`（`upload*` コマンドの中身・置き場・パスの検査）、`web/folder-upload.mjs`（作業ディレクトリの面の「手元から送る」とドロップの問い） | Node / JS |
-| モバイルの殻 | `mobile/`（Capacitor。プロキシと暗号は Swift / Kotlin） | Swift / Kotlin / JS |
+| モバイルの殻 | `mobile/`（Capacitor 8。独立した `package.json`）。Android: `mobile/android/remote-core/`（端末側の Kotlin 移植。純粋な JVM で Gradle の試験）、`mobile/android/app/`（殻・ホストの窓・Keystore）、`mobile/www/`（同梱のホスト一覧）、`mobile/scripts/fake-host.mjs`（試験用の中継 + fake のホスト）。iOS は未着手 | Kotlin / JS（iOS は Swift） |
 | 試験ベクトル | `tests/remote/vectors.json`（Noise の公式ベクトル + フレームの例。3 実装が同じものを読む） | — |
 
 ## 3. 暗号とペアリング
@@ -434,7 +434,7 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 - ホストを選ぶと、殻がそのホストのプロキシを立てて WebView を `http://127.0.0.1:<p>/?token=…` へ移す。殻のプラグインのブリッジはホストの画面に入れない。代わりに小さなスクリプトで `window.plyRemote = { hostId, hostName, shell: 'mobile', backToHosts() }` だけを入れる（`backToHosts` はメッセージハンドラー経由。送り元がそのプロキシのオリジンの本体フレームのときだけ受ける）
 - 画面の上端に今のホスト名の帯（`⇄ desktop-home`）。押すと `backToHosts()` でホスト一覧へ戻る。デスクトップのバッジと同じ部品で、`shell: 'mobile'` のときは safe-area の内側に置く
 - 背面に回るとプロキシとチャネルは OS に止められる。前面に戻ったら張り直し、画面は既存の再接続で追いつく。承認待ちは #11 でホストが待ち続ける
-- 暗号は iOS が CryptoKit、Android が標準の暗号（X25519 は API 31 以上の `XDH`、AES-GCM は `javax.crypto` の `AES/GCM/NoPadding`）。どちらも §2.1 の試験ベクトルで Node の実装と突き合わせる
+- 暗号は iOS が CryptoKit、Android が標準の暗号（X25519 は `XDH`、AES-GCM は `javax.crypto` の `AES/GCM/NoPadding`）。どちらも §2.1 の試験ベクトルで Node の実装と突き合わせる。**Android の `XDH` は API 33 から**（developer.android.com の KeyAgreement の表。当初 31 と書いたのは誤り）なので、API 31–32 では TweetNaCl の `crypto_scalarmult` を移した実装に落とす（下の「実装」）
 - 添付はファイルだけ（`#fileIn`。カメラも可）。フォルダーの送信は出さない
 
 ### 8.3 アプリ内でローカルのプロキシを動かす制約（iOS / Android）
@@ -450,6 +450,22 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 
 **A 案を推奨する。** デスクトップと同じ仕組み・同じ試験で済み、`web/` に手を入れない。B 案は「他のアプリから届かない」利点はあるが、トークンで塞げる危険と引き換えに、WebSocket の再実装と secure context の不確かさを抱える。
 A 案で WKWebView が `127.0.0.1` を secure context と見なさなかった場合に備え、`crypto.randomUUID()`（`web/client.mjs:3123`）には `crypto.getRandomValues` で作る代わりを置いておく（数行。ブラウザー版の LAN 利用でも効く）。それでも詰まる箇所が出たら B 案に切り替える（プロキシの内側 = トンネルとフレームはどちらの案でも同じ）。
+
+実装（Android、2026-09-23、issue #16。iOS は Mac と iPhone が無いので後回し）:
+
+- **端末側は Kotlin に移した**（`mobile/android/remote-core/`）。JS のモジュールをアプリの中で動かす案（nodejs-mobile・隠した WebView）は採らない。nodejs-mobile は Node 一式（ABI ごとに数十 MB）を抱え、プロセスに 1 つで作り直せず、Android 15 以降の 16 KB ページの要件を外の prebuild に頼ることになる。隠した WebView は `node:crypto`・`node:http`・`ws` の代わりが要り、待ち受けと中継への線はどのみちネイティブで、フレームごとに JS と行き来する糊の方が本体より大きくなる。iOS も Swift で書き直すので、重なるのは同じ量。取り決めのずれは共有のベクトルと、Node の中継・ホストとの往復の試験で押さえる
+- 移したもの: `X25519.kt`（JCA の `XDH`。生の鍵は noise.mjs と同じ PKCS#8 / SPKI の前置きで出し入れ。`XDH` が無い API 31–32 は TweetNaCl の移植。両方を RFC 7748 のベクトルと互いの一致で確かめる）、`Noise.kt`、`Frames.kt`、`Channel.kt`（1 本のスレッドの `Loop` に閉じ込める。Node のイベントループの代わり）、`RelaySocket.kt`（OkHttp 4.12.0。届いた順に溜め、聞き手を付けてから流す）、`Pairing.kt`、`DeviceLink.kt`、`DeviceProxy.kt` + `WebSocketFrames.kt`（127.0.0.1 の HTTP/1.1 と RFC 6455 の小さなサーバー。認証・`Host` の照合・GET/HEAD だけ・案内のページはデスクトップと同じ。HTTP の応答はどれも `Connection: close`）、`RemoteDevice.kt`（`hosts.json` はデスクトップと同じ形、秘密は `secrets.bin` に封じる）
+- 試験（`cd mobile/android && ./gradlew :remote-core:test`、JDK 17 以上）: ベクトル（cacophony の IK / IKpsk2、Pleiad の導出、フレーム 17 例）、メモリの管でつないだチャネル（窓より大きい本文・大きい WebSocket のメッセージ）、**Node の本物の中継と fake のホストとの往復**（`InteropTest`。`mobile/scripts/fake-host.mjs` を子プロセスで立て、ペアリング・プロキシの認証と防火壁・`/ws` の `ready` とコマンド・900 KB のメッセージ・取り消しまで。`node` が無ければ飛ばす）。`npm test` の `mobile-shell` は plyRemote の形・平文の許可・版の固定・殻の辞書を見る
+- 資格情報: `noBackupFilesDir/remote/`。秘密は Android Keystore の AES-256-GCM の鍵で封じる（`KeystoreCipher`）。Keystore の鍵はバックアップされないので `allowBackup=false` と data extraction rules でバックアップ・端末の移行から外す
+- 平文: `network_security_config` で `127.0.0.1` だけ（ループバックのプロキシと、試験で `adb reverse` した中継）。利用者の入れた CA は信じない
+- 殻の画面（`mobile/www/`、モック ①②）: ホスト一覧（状態・最後に使った時刻・「…」で名前を変える / 削除）、「ホストを追加」（ML Kit の `scan()` で QR、カメラの許可を求め、Google のスキャナーのモジュールが無ければ入れ始める。貼り付けも可）、ペアリング中は確認コード 6 桁と「やめる」。`pleiad://pair?...` のリンク（端末のカメラで QR を開いたとき）でも開き、そのときとペアリング済みのホストのときは先に確かめる。文言は殻の辞書 `mobile/www/i18n.js`（ja / en）、ネイティブは失敗を決まったコードで返して殻が訳す
+- ホストの窓（`HostActivity`）: Capacitor の入らない素の WebView で `http://127.0.0.1:<p>/?token=…` を開く。入れるのは `window.plyRemote` だけで、`WebViewCompat.addDocumentStartJavaScript` と `addWebMessageListener` をどちらもプロキシのオリジンに限り、受け口は本体フレームからのメッセージだけを受ける。形は `{ hostId, hostName, relay, device, shell: 'mobile', status(), onStatus(fn), retry(), backToHosts(), closeWindow() }`（`closeWindow` = `backToHosts`。凍結し再定義できない）。帯のバッジはこれでデスクトップと同じ部品が動く
+- 戻るボタン: まず画面に取り消せる `plyremote:back` のイベント（`window`）を投げ、`preventDefault()` されなければホスト一覧へ戻る（引き出し・メニューを先に閉じたいときは web/ が受ける）。窓を離れたらそのホストのプロキシを閉じる。前面に戻ったとき `offline` / `host-offline` なら待たずに張り直す
+- 画面の端: WebView をシステムバー・切り欠き・キーボードの分だけ内側に置くので、Android では `env(safe-area-inset-*)` は 0（web/ はこれに頼らなくてよい）
+- 添付は WebView のファイル選択（`#fileIn`）、ダウンロードは DownloadManager にプロキシの Cookie を付けて渡す。外へのリンクはブラウザーで開く
+- 版: Capacitor 8.5.2、@capacitor/app 8.1.1、@capacitor-mlkit/barcode-scanning 8.2.1、AGP 8.13.0、Gradle 8.14.3、Kotlin 2.2.21、OkHttp 4.12.0、compile / target 36、**minSdk 31**。アプリ ID `com.procway.pleiad`（デスクトップは `jp.ply.desktop`。ストアに出す前に揃えるか決める）
+
+- ビルドと手元の確認: `cd mobile && npm ci && npx cap sync android && cd android && gradlew assembleDebug`（JDK 17 以上。`local.properties` に `sdk.dir`）。本番の中継を使わずに確かめるなら `node mobile/scripts/fake-host.mjs --relay-port 8787` と `adb reverse tcp:8787 tcp:8787` で、端末の `http://127.0.0.1:8787` が手元の中継になる（出てくる `pleiad://pair?...` を `adb shell am start -a android.intent.action.VIEW -d '<それ>'` で渡すか貼り付ける）
 
 App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の保管・接続の案内を持つ「自分のホストのクライアント」として出す（中身の無い殻の扱いを避ける）。審査用に fake バックエンドで動くデモのホストと、ペアリング済みの状態を用意する。
 
@@ -496,7 +512,7 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 
 1. **リモートの帯の色**: 案は `--fill-primary`（§7.2）。「塗りは 1 画面に 1 つ」の例外になる。代案は無彩色の濃い帯（新しいトークン `--surface-remote`）で、塗りの規則は守れるがローカルの暗い配色と見分けにくい
 2. ~~**QR を作る部品**~~ 決定（2026-09-23）: `web/vendor/qrcode-generator.mjs`（MIT）を同梱（§6.1）。読み取りはモバイルのネイティブ（Capacitor のバーコードのプラグイン）
-3. **Android の最低版**: API 31 以上なら標準の暗号だけで済む。それより古い端末も対象にするなら Tink（依存）が要る
+3. ~~**Android の最低版**~~ 決定: API 31（Android 12）以上。ただし `XDH` は API 33 からなので、31–32 は X25519 だけ移植の実装（§8.2 の実装）。移植を持ちたくなければ minSdk を 33 に上げるか、31–32 だけ Tink を使う
 4. **WKWebView と `127.0.0.1` の secure context**: 実機で確かめる。だめなら §8.3 の代わりの UUID、それでもだめなら B 案
 5. **通知**: 背面のモバイルには完了・承認待ちが届かない。APNs / FCM の鍵を持つ中継が要るので、この中継に載せるかは別に決める（中身は端末の鍵で暗号化して載せる）
 6. **送信の効率**: フォルダーの送信は base64 の WS コマンド（約 33% 増える）。バイナリのフレームにするかは、実際の速さを見てから
