@@ -1,7 +1,9 @@
 // ==================== 設定 › コンテキスト（docs/mockups/context-unified.html の②） ====================
 // 新しい会話を始めるときに、エージェントへ何を渡すかを種類ごと（指示・Skills・外部 MCP）に決める 1 画面。
-// 範囲は「すべての場所（既定）」か場所ごと。場所では種類ごとに「既定どおり／この場所だけ変更中」。
-// 変更はその場で保存し（setContextSettings）、「保存しました · 次の会話から反映」を出す。始まっている会話は変わらない。
+// 範囲は「全体の設定」か場所ごと。開いたときは全体の設定で、場所の設定はプルダウンでその場所を選んだときだけ作る。
+// 場所では種類ごとに「全体の設定どおり／このフォルダーだけの設定」。全体の設定を見ているときも、今の会話のフォルダーで
+// フォルダーだけの設定が効いている種類には印と「全体の設定に戻す」を出す。
+// 変更はその場で保存し（setContextSettings）、「保存しました · 次のターンから反映」を出す。始まっている会話にも次のターンから効く。
 // 設定の形と継承は core/context-settings.mjs、外部 MCP のカードの中身と追加シートは web/mcp-config.mjs。
 import { el } from './dom.mjs';
 import { runMark } from './arc.mjs';
@@ -152,8 +154,8 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
     renderAll();
     if (rescan) await loadScan();
   }
-  async function resetKind(kind) {
-    view = await cmd('setContextSettings', { cwd, place: level, kind, value: null });
+  async function resetKind(kind, at = level) {
+    view = await cmd('setContextSettings', { cwd, place: at, kind, value: null });
     saved();
     renderAll();
     await loadScan();
@@ -302,14 +304,25 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   document.addEventListener('mousedown', e => { if (!pop.hidden && !place.contains(e.target)) closePop(); });
 
   // ---------------------------------------------------------------- 種類のカード
+  /** 場所 at の上に、この種類を個別に変えた場所があるか（あれば「全体の設定に戻す」ではなく「上の設定に戻す」） */
+  const parentOverride = (kind, at) => view.places.some(p => p.saved && p.kinds[kind].override && pathKey(p.path) !== pathKey(at) && within(p.path, at));
+  const resetLabel = (kind, at) => parentOverride(kind, at) ? t('context.inherit.resetParent') : t('context.inherit.reset');
   function inheritance(kind) {
     const info = levelInfo(), wrap = el('span', 'cx-inh');
-    if (isDefault()) { wrap.textContent = t('context.inherit.all'); return wrap; }
+    if (isDefault()) {
+      // 全体の設定を見ていても、今の会話のフォルダーでフォルダーだけの設定が効いていれば、全体の変更はそこには効かない
+      const here = view.places.find(p => p.current), from = here?.kinds[kind].from;
+      if (!from) { wrap.textContent = t('context.inherit.all'); return wrap; }
+      wrap.classList.add('over');
+      wrap.append(t('context.inherit.hereOverride', { path: short(from) }),
+        button(resetLabel(kind, from), 'cx-link', () => work(() => resetKind(kind, from))));
+      return wrap;
+    }
     const k = info.kinds[kind];
     if (k.override) {
       wrap.classList.add('over');
-      wrap.append(t('context.inherit.override'), button(t('context.inherit.reset'), 'cx-link', () => work(() => resetKind(kind))));
-    } else wrap.textContent = k.from ? t('context.inherit.from', { path: short(k.from) }) : t('context.inherit.default');
+      wrap.append(t('context.inherit.override'), button(resetLabel(kind, level), 'cx-link', () => work(() => resetKind(kind))));
+    } else wrap.textContent = `${k.from ? t('context.inherit.from', { path: short(k.from) }) : t('context.inherit.default')}${t('context.inherit.willOverride')}`;
     return wrap;
   }
   function seg(kind, owner) {
@@ -512,10 +525,9 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
       status.textContent = t('context.loadFailed', { error: e.message });
       return;
     }
-    const wanted = target ?? (level !== 'default' && view.places.some(p => pathKey(p.path) === pathKey(level)) ? level : null);
-    const here = view.places.find(p => p.current);
-    level = wanted && view.places.some(p => pathKey(p.path) === pathKey(wanted)) ? view.places.find(p => pathKey(p.path) === pathKey(wanted)).path
-      : here?.path ?? 'default';
+    // 既定の編集先は全体の設定。場所を渡されたときだけその場所を選ぶ（会話から開いても、黙って場所の設定を作らない）
+    const wanted = target && view.places.find(p => pathKey(p.path) === pathKey(target));
+    level = wanted ? wanted.path : 'default';
     scan = null; opened.clear(); expanded.clear();
     renderAll();
     await loadScan();

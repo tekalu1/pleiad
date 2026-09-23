@@ -429,8 +429,8 @@
     },
     "title": "Context for this conversation",
     "subtitle": {
-      "startedAt": "Set at the start ({{time}}) and doesn't change during the conversation",
-      "started": "Set at the start and doesn't change during the conversation",
+      "startedAt": "Started {{time}} · settings changes apply from the next turn",
+      "started": "Settings changes apply from the next turn",
       "refreshed": "{{text}} · reloaded {{time}}"
     },
     "agent": "The agent",
@@ -447,8 +447,8 @@
       "hint": "Check the status below and the errors in the conversation."
     },
     "foot": {
-      "lead": "To change this for future conversations: ",
-      "link": "Open settings for this location →"
+      "lead": "To change this (applies from the next turn): ",
+      "link": "Open context settings →"
     },
     "instruction": {
       "who": "Provided by Pleiad",
@@ -583,27 +583,27 @@
     "copyPath": "Copy path",
     "copied": "Copied",
     "emptyFile": "(empty file)",
-    "lead": "Choose what to provide to agents when a new conversation starts. Conversations already started don't change.",
+    "lead": "Choose what to provide to agents. Conversations already started pick up changes from their next turn.",
     "scope": "Scope",
-    "saved": "Saved · applies from the next conversation",
+    "saved": "Saved · applies from the next turn",
     "saveFailed": "Couldn't save: {{error}}",
     "cancel": "Cancel",
     "add": "Add",
     "folderPath": "Folder path",
     "chooseFolder": "Choose folder…",
     "place": {
-      "default": "All locations (default)",
-      "defaultSub": "Locations without their own changes follow this",
+      "default": "Global settings",
+      "defaultSub": "Followed wherever a folder has no settings of its own",
       "current": "Current conversation's location",
-      "overrides_one": "{{count}} item changed here",
-      "overrides_other": "{{count}} items changed here",
-      "allDefault": "All default",
+      "overrides_one": "{{count}} item changed for this folder only",
+      "overrides_other": "{{count}} items changed for this folder only",
+      "allDefault": "All follow the global settings",
       "remove": "Remove settings for this location",
       "removeAria": "Remove settings for {{path}}",
       "confirm": "Remove settings for this location?",
-      "confirmOverrides_one": "The {{count}} item changed here is removed, and this location follows All locations (default). Conversations already started don't change.",
-      "confirmOverrides_other": "The {{count}} items changed here are removed, and this location follows All locations (default). Conversations already started don't change.",
-      "confirmPlain": "It is removed from the list. This location follows All locations (default).",
+      "confirmOverrides_one": "The {{count}} item changed for this folder only is removed, and this location follows the global settings. Conversations already started pick this up from their next turn.",
+      "confirmOverrides_other": "The {{count}} items changed for this folder only are removed, and this location follows the global settings. Conversations already started pick this up from their next turn.",
+      "confirmPlain": "It is removed from the list. This location follows the global settings.",
       "removeButton": "Remove",
       "removeFailed": "Couldn't remove: {{error}}",
       "add": "Add location",
@@ -614,11 +614,14 @@
       "pathRequired": "Enter a folder path."
     },
     "inherit": {
-      "all": "All locations without their own changes",
-      "override": "Changed for this location only · ",
-      "reset": "Reset to default",
+      "all": "Applies wherever a folder has no settings of its own",
+      "hereOverride": "This conversation's folder ({{path}}) uses its own settings for this · ",
+      "override": "Settings for this folder only · ",
+      "reset": "Use global settings",
+      "resetParent": "Use the parent folder's settings",
       "from": "As set for {{path}}",
-      "default": "Default"
+      "default": "Same as global settings",
+      "willOverride": " · Changing it creates settings for this folder only"
     },
     "ownerAria": "Who loads {{kind}}",
     "configFiles": "Settings files to read",
@@ -641,7 +644,7 @@
       "descPlace": "For kinds managed by Pleiad, also search the following folders in addition to the Git root through this location.",
       "remove": "Remove",
       "removeAria": "Remove {{path}} from the search locations",
-      "defaults": "Folders searched by the All locations settings: {{folders}}",
+      "defaults": "Folders searched by the global settings: {{folders}}",
       "join": ", ",
       "addAria": "Additional folder to search",
       "add": "Add folder"
@@ -822,6 +825,7 @@
       "resumeCwd": "Changed on resume",
       "cwdFrom": "from {{from}}",
       "contextReloaded": "Reloaded instructions and Skills",
+      "contextSettingsApplied": "Applied context settings changes",
       "contextChanged": "{{names}}",
       "contextChangedMore_one": "{{names}} and {{count}} more",
       "contextChangedMore_other": "{{names}} and {{count}} more",
@@ -886,6 +890,7 @@
       "failed": "Failed: {{error}}",
       "unknownReason": "unknown reason",
       "contextRefreshed": "Instructions or Skills changed, so they were reloaded",
+      "contextSettingsApplied": "Context settings changes apply from this turn",
       "contextRefreshedNames": "Instructions or Skills changed, so they were reloaded ({{names}})",
       "contextRefreshedNamesMore_one": "Instructions or Skills changed, so they were reloaded ({{names}} and {{count}} more)",
       "contextRefreshedNamesMore_other": "Instructions or Skills changed, so they were reloaded ({{names}} and {{count}} more)",

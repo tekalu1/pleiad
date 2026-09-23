@@ -8,7 +8,7 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { createContextSettings, containsPath, defaultKind, legacyPlan, migrateV1, sameMeaning, pathKey, KINDS } from '../../core/context-settings.mjs';
 import { scanContext } from '../../core/context-scan.mjs';
-import { resolveRuntime } from '../../core/context-runtime.mjs';
+import { followSettings, resolveRuntime } from '../../core/context-runtime.mjs';
 
 export const name = 'context-settings';
 export const title = 'コンテキストの設定: 形式 1 からの移行で意味が変わらない・種類ごとの継承・即時保存';
@@ -168,6 +168,43 @@ export default async function (t) {
     const afterCurrent = await fresh.set({ place: ab, remove: true });
     t.ok('外した場所を「今の場所」として一覧に戻さない（cwd を渡さないとき）', !afterCurrent.places.some(p => pathKey(p.path) === pathKey(ab)));
     t.ok('既定だけで解く（設定の「すべての場所」）', (await fresh.get(abc, { level: 'default' })).owners.instruction === 'native');
+    // ---- 受け継ぐ値と同じ上書きは書かない（全体を変えたつもりで場所の設定ができ、以後の全体の変更が効かなくなるのを防ぐ）
+    const prune = createContextSettings(path.join(tmp, 'prune'), home), pruneFile = path.join(tmp, 'prune', 'context-scans.json');
+    const stored = async () => JSON.parse(await fs.readFile(pruneFile, 'utf8'));
+    await prune.set({ place: null, kind: 'skill', value: { ...defaultKind(), owner: 'ply' } });
+    await prune.set({ place: ab, kind: 'skill', value: { ...defaultKind(), owner: 'ply' } });
+    t.ok('全体と同じ値を場所に保存しても、場所の設定は作らない', !Object.hasOwn((await stored()).places, pathKey(ab)));
+    await prune.set({ place: null, kind: 'skill', value: defaultKind() });
+    t.ok('だから全体の変更がその場所にもそのまま効く', (await prune.get(abc)).owners.skill === 'native' && (await prune.get(abc)).kinds.skill.from === null);
+    await prune.set({ place: a, kind: 'mcp', value: { ...defaultKind(), owner: 'ply' } });
+    await prune.set({ place: a, kind: 'instruction', value: defaultKind() });
+    t.ok('場所で 1 項目変えても、ほかの項目は場所の設定にならない', Object.keys((await stored()).places[pathKey(a)].kinds).join() === 'mcp');
+    await prune.set({ place: ab, kind: 'mcp', value: { ...defaultKind(), owner: 'ply' } });
+    t.ok('上の場所と同じ値も書かない', !Object.hasOwn((await stored()).places, pathKey(ab)));
+    await prune.set({ place: other, add: true });
+    await prune.set({ place: other, kind: 'skill', value: defaultKind() });
+    t.ok('一覧に足した場所は、上書きが無くても一覧に残る', Object.hasOwn((await stored()).places, pathKey(other)));
+    // 前の版が保存した「全体と同じ上書き」は、読み込んだときに一度だけ掃除する
+    const dirty = await stored();
+    dirty.places[pathKey(ab)] = { path: ab, kinds: { skill: structuredClone(dirty.defaults.kinds.skill), mcp: { ...defaultKind(), owner: 'ply' } } };
+    dirty.places[pathKey(x)] = { path: x, kinds: { instruction: structuredClone(dirty.defaults.kinds.instruction) }, roots: [] };
+    await fs.writeFile(pruneFile, JSON.stringify(dirty));
+    const cleaned = (await prune.view(null), await stored());
+    t.ok('読み込み時に、受け継ぐ値と同じ上書きを消す（上の場所と同じものも）', !Object.hasOwn(cleaned.places, pathKey(ab)) && !Object.hasOwn(cleaned.places, pathKey(x)), JSON.stringify(Object.keys(cleaned.places)));
+    t.ok('違いのある上書きと、一覧に足しただけの場所は残す', cleaned.places[pathKey(a)]?.kinds.mcp.owner === 'ply' && Object.hasOwn(cleaned.places, pathKey(other)));
+
+    // ---- 始まっている会話の方針を、今の設定で解き直す（次のターンから効かせる）
+    const first = followSettings(null, await prune.get(abc)).policy;
+    await prune.set({ place: null, kind: 'instruction', value: { ...defaultKind(), owner: 'ply' } });
+    const next = followSettings({ ...first, at: 'T0', removedMcp: ['gone'] }, await prune.get(abc));
+    t.ok('設定の変更で担当が変わった種類を返し、会話ごとの決めごとは引き継ぐ', next.changed.join() === 'instruction' && next.policy.owners.instruction === 'ply'
+      && next.policy.at === 'T0' && next.policy.removedMcp.join() === 'gone', JSON.stringify(next.changed));
+    t.ok('変わっていなければ何も返さない', followSettings(next.policy, await prune.get(abc)).changed.length === 0);
+    const legacyNative = followSettings(null, await prune.get(abc), { keepNative: true }).policy;
+    const legacyNext = followSettings(legacyNative, await prune.get(abc)).policy;
+    t.ok('記録の無いまま送信済みだった会話はエージェント任せのまま', KINDS.every(k => legacyNative.owners[k] === 'native' && legacyNext.owners[k] === 'native'));
+    t.ok('作業場所が変わっただけなら設定の変更とは数えない', followSettings({ ...first, cwd: x }, await prune.get(abc)).changed.length === 0);
+
     // 形式 1 のまま記録された会話の方針も読める（計画に直す）
     const legacy = legacyPlan({ sources: ['common'], kinds: ['skill'], additionalRoots: [], excludePaths: [] }, { sources: [], kinds: [], additionalRoots: [], excludePaths: [] });
     t.ok('形式 1 の方針を計画に直す', legacy.user.kinds.skill.sources.join() === 'common' && legacy.user.kinds.instruction === null && legacy.directory.kinds.mcp === null);

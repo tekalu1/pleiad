@@ -139,7 +139,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     }
     box.append(instructions(data), skills(data), mcp(data));
     const foot = el('p', 'scx-foot');
-    foot.append(t('sessionContext.foot.lead'), button(t('sessionContext.foot.link'), 'cx-link', () => openSettings(report.cwd ?? session()?.cwd)));
+    foot.append(t('sessionContext.foot.lead'), button(t('sessionContext.foot.link'), 'cx-link', () => openSettings()));
     box.append(foot);
     return box;
   }
@@ -230,7 +230,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       const acts = el('div', 'acts');
       const fromPly = e.origins?.[0]?.source === 'ply';
       if (e.status === 'needs-auth' && fromPly && e.auth === 'oauth' && !login?.dataset?.done) acts.append(button(t('sessionContext.mcp.login'), primaryFree ? 'btn btn-primary' : 'btn btn-quiet', () => startLogin(e.name)));
-      if (e.status === 'needs-auth' && e.auth !== 'oauth') acts.append(button(t('sessionContext.mcp.openSettings'), 'btn', () => openSettings(data.report.cwd ?? session()?.cwd)));
+      if (e.status === 'needs-auth' && e.auth !== 'oauth') acts.append(button(t('sessionContext.mcp.openSettings'), 'btn', () => openSettings()));
       if (e.status === 'needs-auth' || e.status === 'failed') acts.append(button(t('sessionContext.mcp.remove'), 'btn', () => setRemoved(e.name, true)));
       if (e.status === 'removed') acts.append(button(t('sessionContext.mcp.restore'), 'btn', () => setRemoved(e.name, false)));
       if (acts.childNodes.length) body.append(acts);
