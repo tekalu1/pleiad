@@ -1359,6 +1359,9 @@ async function runTurn(args, onStarted = () => {}, hooks = {}) {
   } finally { releaseUpdateGate(); }
 }
 
+// バックエンドがプロンプトを受け取った後にしか出せないイベント。初回の発言の「渡った」合図の代わりに使う
+const ANSWER_EVENTS = new Set(['text.delta', 'text.end', 'thinking.delta', 'tool.start']);
+
 async function runTurnInternal(args, onStarted, hooks) {
   const { prompt, sessionId = null } = args ?? {};
   if ((hooks.internal || hooks.signal) && (sessionBusy(sessionId))) return 'requeue';
@@ -1570,7 +1573,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         mode: permissionMode,
         model: model || undefined,
         effort,
-        emit,
+        // 渡った合図（onPromptDelivered）を呼ばないバックエンド（antigravity）もある。返答の中身が届いたら渡ったとみなす
+        emit: (event, opts) => { if (ANSWER_EVENTS.has(event?.type)) onPromptDelivered(); return emit(event, opts); },
         onPromptDelivered,
         // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
         askPermission: request => askPermission({ ...request, locale: agentLocale }),

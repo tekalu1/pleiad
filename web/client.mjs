@@ -875,6 +875,8 @@ function markDelivery(row, kind) {
   clearTimeout(deliveryTimers.get(row));
   if (kind === 'pending') row.dataset.deliveryPending = '1';
   else delete row.dataset.deliveryPending;
+  if (kind === 'sending') row.dataset.deliverySending = '1';
+  else delete row.dataset.deliverySending;
   const waiting = kind === 'pending' || kind === 'sending';
   status.replaceChildren(DELIVERY[kind]);
   status.classList.remove('outbox-status-failed');
@@ -899,6 +901,7 @@ function markFailedMessage(row, item) {
   const status = row.querySelector('.outbox-status');
   clearTimeout(deliveryTimers.get(row));
   delete row.dataset.deliveryPending;
+  delete row.dataset.deliverySending;
   status.classList.remove('outbox-status-mark');
   status.classList.add('outbox-status-failed');
   const reason = item.error ? ` · ${item.error}` : '';
@@ -948,6 +951,10 @@ function onEvent(ev, replay = false) {
     return;
   }
   if (ev.type === "turnEnd" && ev.sessionId) {
+    // ターンが終わったのに「送信中」のままの吹き出し（渡った合図が来なかった）は片付ける。失敗なら outbox が先に失敗へ替えている
+    if (ev.sessionId === state.current && !ev.requeued) {
+      for (const row of thread.querySelectorAll('.mw[data-delivery-sending]')) markDelivery(row, 'sent');
+    }
     const s = state.sessions.find(s => s.id === ev.sessionId);
     completionNotifications.completed(ev, s, replay);
     // requeued は完了ではない（何も届かず送信待ちへ戻った）。完了時刻も既読も触らない

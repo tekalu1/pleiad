@@ -100,6 +100,14 @@ export default async function(t) {
     await lc.waitFor(e => e.type === 'outbox' && e.sessionId === fresh.sessionId && e.messages[0]?.status === 'sent', { ms: 5000 });
     await lc.waitFor(e => e.type === 'userMessage.delivered' && e.messageId === 'message-0101', { ms: 5000, from: freshFrom });
     const freshEvents = lc.events.slice(freshFrom).filter(e => e.sessionId === fresh.sessionId);
+    // 渡った合図を出さないバックエンドでも、返答が届いた時点で「送信中」を外す
+    const silent = await lc.cmd('newSession', { backend: 'fake', cwd: ROOT });
+    const silentFrom = lc.mark();
+    await lc.cmd('sendMessage', { sessionId: silent.sessionId, messageId: 'message-0102', prompt: 'silent:hello' });
+    await lc.waitFor(e => e.type === 'turnEnd' && e.sessionId === silent.sessionId, { ms: 5000, from: silentFrom });
+    const silentEvents = lc.events.slice(silentFrom).filter(e => e.sessionId === silent.sessionId).map(e => e.type);
+    t.ok('合図の無いバックエンドは返答の中身で渡ったとみなす',
+      silentEvents.includes('userMessage.delivered') && silentEvents.indexOf('userMessage.delivered') < silentEvents.indexOf('turnEnd'), JSON.stringify(silentEvents));
     const initial = freshEvents.find(e => e.type === 'userMessage' && e.messageId === 'message-0101');
     t.ok('初回発言も送信中として流し、準備後に同じ ID の配達を知らせる', initial?.pending === true
       && freshEvents.findIndex(e => e === initial) < freshEvents.findIndex(e => e.type === 'userMessage.delivered' && e.messageId === 'message-0101'));
