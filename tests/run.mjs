@@ -60,6 +60,7 @@ const cases = [
   await import("./unit/onboarding.mjs"),
   await import("./unit/tree.mjs"),
   await import("./unit/family.mjs"),
+  await import("./unit/pending-sidebar.mjs"),
   await import("./unit/server-groups.mjs"),
   await import("./unit/audit-self.mjs"),
   await import("./unit/markdown-xss.mjs"),

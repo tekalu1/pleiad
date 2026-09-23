@@ -24,6 +24,7 @@ export default async function (t) {
   const state = { current: "other", sessions: [], drafts: new Map(), toolCards: new Map(), runningIds: new Set(["target"]), stopping: new Set(), pendingPerms: new Map() };
   const loads = createSessionLoads();
   const context = vm.createContext({
+    setTimeout: () => 1, clearTimeout: noop,
     completionNotifications,
     filePreview: { sessionChanged: noop },
     // 狭い画面の引き出し（client.mjs の setDrawer）。会話を開くと閉じる。このテストの対象外

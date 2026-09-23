@@ -1,10 +1,11 @@
 import { isComposingKey } from "./keyboard.mjs";
 import { el } from "./dom.mjs";
 import { t } from "./i18n.mjs";
+import { runMark } from './arc.mjs';
 
 /** One menu chain, shared by pointer, touch, and keyboard. */
 export function createContextMenu() {
-  let panels = [], opener, openTimer, closeTimer;
+  let panels = [], opener, openTimer, closeTimer, generation = 0;
   // Pointer hover must not destroy the field that owns keyboard focus.
   const editing = () => panels.some(p => p.contains(document.activeElement) && document.activeElement?.matches('input, textarea, [contenteditable]'));
   const cancelTimers = () => { clearTimeout(openTimer); clearTimeout(closeTimer); };
@@ -17,6 +18,7 @@ export function createContextMenu() {
     for (const p of panels.splice(depth)) { p.trigger?.setAttribute('aria-expanded', 'false'); p.remove(); }
   }
   function close(restore = false) {
+    generation++;
     clearTimeout(openTimer); clearTimeout(closeTimer); trim(0);
     document.removeEventListener('pointerdown', outside, true);
     document.removeEventListener('keydown', key, true);
@@ -41,7 +43,8 @@ export function createContextMenu() {
     trim(depth);
     const panel = el('div', 'pop menu');
     panel.setAttribute('role', 'menu'); panel.trigger = trigger;
-    if (title) panel.append(el('div', 'head', title));
+    // 見出しは 1 行で省略する。確認文のように全文を読ませたいものは { text, wrap: true } で渡す
+    if (title) panel.append(typeof title === 'object' ? el('div', 'head' + (title.wrap ? ' wrap' : ''), title.text) : el('div', 'head', title));
     panel.onpointerenter = () => { clearTimeout(closeTimer); };
     panel.onfocusin = cancelTimers;
     panel.onpointerleave = e => {
@@ -54,7 +57,7 @@ export function createContextMenu() {
       if (item.input) {
         const input = el('input', 'field');
         input.placeholder = item.input.placeholder ?? ''; input.value = item.input.value ?? '';
-        input.setAttribute('aria-label', input.placeholder || title || t('common.input'));
+        input.setAttribute('aria-label', input.placeholder || (typeof title === 'object' ? title?.text : title) || t('common.input'));
         input.onkeydown = e => { if (isComposingKey(e)) return; if (e.key === 'Enter') { e.preventDefault(); const v = input.value.trim(); if (v) { close(true); item.input.onCommit(v); } } };
         panel.append(input); continue;
       }
@@ -63,7 +66,8 @@ export function createContextMenu() {
       // 今は押せない項目（タイトル行の「…」のタイトルを生成: 生成中・未送信など）
       if (item.disabled) { row.disabled = true; row.setAttribute('aria-disabled', 'true'); }
       row.append(el('span', 'lbl', item.label));
-      if (item.hint) row.append(el('span', 'hint', item.hint));
+      if (item.pending) { const label = el('span', 'hint pending-label'); label.append(runMark(t('pending.loading')), t('pending.loading')); row.append(label); }
+      else if (item.hint) row.append(el('span', 'hint', item.hint));
       if (item.sub) {
         row.append(el('span', 'more', '▸'));
         row.setAttribute('aria-haspopup', 'menu'); row.setAttribute('aria-expanded', 'false');
@@ -71,7 +75,7 @@ export function createContextMenu() {
           clearTimeout(openTimer); clearTimeout(closeTimer);
           if (panels[depth + 1]?.trigger !== row) {
             const r = row.getBoundingClientRect();
-            const sub = panelAt(item.sub(), item.label, depth + 1, r.right + 6, r.top, row);
+            const sub = panelAt(item.pending ? [{ label: '', pending: true }] : item.sub(), item.label, depth + 1, r.right + 6, r.top, row);
             row.setAttribute('aria-expanded', 'true');
             if (focus) buttons(sub)[0]?.focus();
           } else if (focus) buttons(panels[depth + 1])[0]?.focus();
@@ -100,9 +104,23 @@ export function createContextMenu() {
   }
   return { close, open(x, y, items, title) {
     close(); opener = document.activeElement;
+    const own = generation;
     const panel = panelAt(items, title, 0, x, y);
     document.addEventListener('pointerdown', outside, true);
     document.addEventListener('keydown', key, true);
     buttons(panel)[0]?.focus({ preventScroll: true });
+    return (nextItems, nextTitle = title) => {
+      if (generation !== own || !panels.length) return;
+      if (editing()) return;
+      const focused = document.activeElement?.closest('button')?.querySelector('.lbl')?.textContent;
+      const openLabel = panels[1]?.trigger?.querySelector('.lbl')?.textContent;
+      const next = panelAt(nextItems, nextTitle, 0, x, y);
+      const rootRows = [...next.querySelectorAll(':scope > button')];
+      const openRow = rootRows.find(b => b.querySelector('.lbl')?.textContent === openLabel);
+      openRow?.openSub(false);
+      const targetPanel = panels.at(-1);
+      ([...targetPanel.querySelectorAll(':scope > button')].find(b => b.querySelector('.lbl')?.textContent === focused)
+        ?? openRow ?? buttons(targetPanel)[0])?.focus({ preventScroll: true });
+    };
   } };
 }

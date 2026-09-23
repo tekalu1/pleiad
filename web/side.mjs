@@ -126,7 +126,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const expanded = prefs.expanded;              // 開いている家族（根の sessionId）。既定は畳んだ状態
   const decided = new Set();                    // 人が開閉を決めた家族。決めるまで、今いる会話の器は開いたまま
   const made = new Set();                       // この画面で作った（まだ誰も付いていない）仮の状態
-  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), unreadIds: new Set(), draft: null, backendLabels: null };
+  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), unreadIds: new Set(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null };
 
   const save = () => {
     try {
@@ -151,7 +151,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
    */
   function groupOrder() {
     const inUse = new Set(last.sessions.map(statusKey).filter(Boolean));
-    const known = last.statuses.filter((x) => inUse.has(x.status) || x.kept).map((x) => x.status);
+    const known = [...new Set(last.statuses.filter((x) => inUse.has(x.status) || x.kept).map((x) => x.status))];
     const extra = new Set(inUse);
     if (last.draft?.status) extra.add(last.draft.status);
     for (const k of made) extra.add(k);
@@ -172,6 +172,11 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   function render() {
     const q = $("q").value.trim().toLowerCase();
     root.replaceChildren();
+    if (last.pendingNew) {
+      const top = el('div', 'rows pending-new-top');
+      top.append(row(last.pendingNew));
+      root.append(top);
+    }
     const groups = groupOrder();
     const visibleGroups = filter.status === undefined ? groups : groups.filter((g) => g === filter.status);
 
@@ -212,6 +217,11 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       name.type = "button";
       name.onclick = () => { const k = st ?? ""; collapsed.has(k) ? collapsed.delete(k) : collapsed.add(k); save(); render(); };
       head.append(ic, name);
+      const pendingStatus = last.pendingStatuses.get(st);
+      if (pendingStatus) {
+        head.classList.add('pending-status');
+        if (pendingStatus.visible) { const label = el('span', 'pending-label'); label.append(runMark(pendingStatus.text), pendingStatus.text); head.append(label); }
+      }
       // 畳んだ中に走っているものがあれば見出しに弧。走っていないときは印そのものを置かない（置くと回り続ける）
       // 動いているものが 1 つでもあれば弧、裏を待っているだけなら衛星（docs/design-system.md §6）
       if (isCollapsed && active) head.append(runMark(t("sidebar.somethingRunning")));
@@ -422,6 +432,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
    */
   function row(s) {
     const r = el("div", "row" + (s.id === last.currentId ? " sel" : ""));
+    const pendingRow = last.pendingRows.get(s.id);
+    const interactive = s.id != null && pendingRow?.kind !== 'new';
+    if (pendingRow) r.classList.add('pending-row', `pending-${pendingRow.kind ?? 'move'}`);
     r.tabIndex = 0;
     r.dataset.session = s.id ?? "";
     const title = el("div", "row-title");
@@ -429,7 +442,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (s.parent?.sessionId) title.append(forkMark());
     title.append(el("span", "row-t", titleOf(s)));
     // 右クリックと同じメニューを開く「…」。Tab は行で止まる（行では ContextMenu・Shift+F10 で同じメニュー）
-    if (onContext && s.id != null) {
+    if (onContext && interactive) {
       const more = moreButton("row-more", t("session.rowMore", { title: titleOf(s) || t("session.untitled") }), (x, y) => onContext(s, x, y));
       more.tabIndex = -1;
       title.append(more);
@@ -441,7 +454,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (last.runningIds.has(s.id) || behind) meta.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
     else if (last.unreadIds.has(s.id)) meta.append(unreadMark());
     if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", t("sidebar.waiting")));
-    if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
+    if (pendingRow?.visible) { const label = el('span', 'pending-label'); label.append(runMark(pendingRow.text), pendingRow.text); meta.append(label); }
+    else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
     else meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
     if (last.backendLabels && s.backend) meta.append(backendLogo(s.backend, last.backendLabels[s.backend] ?? s.backend));
     const cwd = el("span", "row-cwd", shortDir(s.cwd));
@@ -453,12 +467,12 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     r.onclick = () => { if (s.id !== last.currentId) onOpen?.(s.id); };
     r.onkeydown = e => {
       if (e.key === "Enter" && s.id !== last.currentId) onOpen?.(s.id);
-      if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+      if (interactive && (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10"))) {
         e.preventDefault(); const rect = r.getBoundingClientRect(); onContext?.(s, rect.right, rect.top);
       }
     };
-    r.oncontextmenu = (e) => { if (!onContext || s.id == null) return; e.preventDefault(); onContext(s, e.clientX, e.clientY); };
-    if (s.id == null) return r;
+    r.oncontextmenu = (e) => { if (!onContext || !interactive) return; e.preventDefault(); onContext(s, e.clientX, e.clientY); };
+    if (!interactive) return r;
 
     // つかんで別の状態へ落とすと状態が変わる（グループの中の行はそこで外れる）。
     // 同じ状態の空きへ落とせば、状態はそのままグループから外れるだけ。
@@ -752,6 +766,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         unreadIds: o.unreadIds ?? new Set(),
         draft: o.draft ?? null,
         backendLabels: o.backendLabels ?? null,
+        pendingRows: o.pendingRows ?? new Map(),
+        pendingStatuses: o.pendingStatuses ?? new Map(),
+        pendingNew: o.pendingNew ?? null,
       };
       // 使われなくなった仮のグループは捨てる。使われ始めたものは statuses 側に移る
       for (const k of made) if (sessions.some((s) => statusKey(s) === k)) made.delete(k);
@@ -765,17 +782,20 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
      * 直前の操作を取り消す一行。状態が黙って動く操作（グループの出入り・移動）でだけ出す。
      * 押すか、閉じるか、次の操作か、しばらく経つと消える
      */
-    showUndo(text, fn) {
+    showUndo(text, fn, { retry = false } = {}) {
       const box = $("sideUndo");
       const hide = () => { clearTimeout(undoTimer); box.hidden = true; };
       clearTimeout(undoTimer);
       box.replaceChildren();
       if (!text) { box.hidden = true; return; }
       box.append(el("span", "side-undo-text", text));
-      const b = el("button", "btn", t("sidebar.undo"));
-      b.type = "button";
-      b.onclick = () => { hide(); fn?.(); };
-      box.append(b);
+      if (fn) {
+        const b = el("button", "btn", retry ? t('pending.retry') : t("sidebar.undo"));
+        b.type = "button";
+        b.onclick = () => { hide(); fn(); };
+        box.append(b);
+      }
+      box.classList.toggle('failed', retry);
       // 待たずに消したい人のための×。取り消しはせず、この一行を閉じるだけ
       const close = el("button", "btn btn-icon side-undo-close");
       close.type = "button";
