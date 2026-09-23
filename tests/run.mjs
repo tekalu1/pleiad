@@ -21,6 +21,8 @@ const cases = [
   await import('./unit/composer-agy.mjs'),
   // 互換の接続先（保存・確認・キーを出さない・env と Codex の上書き）。偽の互換 API とだけ話す
   await import('./unit/compat-endpoints.mjs'),
+  // 互換の接続先のモデルの表示名（anthropic/ と [1m]）・検索（AND・件数の上限・自由入力）・display_name の保存と旧形式
+  await import('./unit/compat-models.mjs'),
   // 入力欄の設定のチップ: フォルダーの一覧（listDirs）・「既定」の解決・エフォートの既定の段
   await import('./unit/composer-settings.mjs'),
   await import('./unit/context-transports.mjs'),

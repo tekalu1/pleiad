@@ -12,7 +12,7 @@
 import { el, svgEl, relTime } from "./dom.mjs";
 import { isComposingKey } from "./keyboard.mjs";
 import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, endpointChipLabel } from "./composer-labels.mjs";
-import { shortModel } from "./compat-presets.mjs";
+import { compatModelLabel, modelCandidates, searchModels, resolveTyped, moreText, ONE_M_TITLE } from "./compat-models.mjs";
 
 const FOLDER = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
 const FOLDER_ADD = "M12 11v5M9.5 13.5h5";
@@ -89,11 +89,13 @@ function panel(chip, pop, { align = "left", render, onShow }) {
     if (isComposingKey(e)) return;
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); self.hide(); return; }
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-    // 一覧の中を移る。入力欄からは ↓ で直下の一覧の先頭へ
+    // 一覧の中を移る。入力欄からは ↓ で入力欄より後ろにある最初の一覧の先頭へ（互換の接続先のモデルの欄は
+    // 接続先の一覧の下にあるので、面の最初の一覧ではなく直下のモデルの候補へ）。一覧の先頭で ↑ は直前の入力欄へ
     const from = e.target.closest?.("[role=option]");
     const list = from?.closest("[role=listbox]");
+    const after = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
     if (!from && e.target.matches?.("input:not([type=range])") && e.key === "ArrowDown") {
-      const first = pop.querySelector("[role=listbox]:not([hidden]) [role=option]");
+      const first = [...pop.querySelectorAll("[role=listbox]:not([hidden]) [role=option]:not(:disabled)")].find((o) => after(e.target, o));
       if (first) { e.preventDefault(); first.focus(); }
       return;
     }
@@ -101,7 +103,7 @@ function panel(chip, pop, { align = "left", render, onShow }) {
     e.preventDefault();
     const rows = [...list.querySelectorAll("[role=option]:not(:disabled)")];
     const i = rows.indexOf(from) + (e.key === "ArrowDown" ? 1 : -1);
-    if (i < 0) { pop.querySelector("input:not([type=range])")?.focus(); return; }
+    if (i < 0) { [...pop.querySelectorAll("input:not([type=range])")].filter((n) => after(n, list)).pop()?.focus(); return; }
     rows[Math.min(i, rows.length - 1)]?.focus();
   });
   return self;
@@ -116,7 +118,7 @@ document.addEventListener("pointerdown", (e) => {
 window.addEventListener("resize", () => openPanel?.place());
 
 /** 一覧の行。main（名前）+ sub（補足）+ right（札・時刻）。選ばれていれば ✓ */
-function row({ on, main, sub, right, tag, mono, danger, onPick, title, key, disabled }) {
+function row({ on, main, sub, right, tag, mono, danger, onPick, title, key, disabled, badge }) {
   const b = el("button", "copt" + (mono ? " cmono" : "") + (danger ? " danger" : ""));
   b.type = "button";
   // 選べない行（互換の接続先を選んでいる間の Claude のアカウント）。弱い字で ✓ を付けない
@@ -127,7 +129,14 @@ function row({ on, main, sub, right, tag, mono, danger, onPick, title, key, disa
   if (title) b.title = title;
   b.append(el("span", "tick", on ? "✓" : ""));
   const mid = el("span", "cbody");
-  mid.append(el("span", "main", main));
+  if (badge) {
+    // 字の横の小さな札（互換の接続先のモデルの「1M」）。字だけを詰め、札は残す
+    const m = el("span", "main hasb");
+    const b = el("span", "cbadge", badge.text);
+    if (badge.title) b.title = badge.title;
+    m.append(el("span", "txt", main), b);
+    mid.append(m);
+  } else mid.append(el("span", "main", main));
   if (sub) mid.append(el("span", "sub", sub));
   b.append(mid);
   if (tag) b.append(el("span", "tag", tag));
@@ -329,45 +338,65 @@ export function setupComposerControls({ cmd, get, on }) {
     return out;
   }
 
-  /** 互換の接続先のモデル: ID の入力欄（Enter で決める）＋接続先の一覧。空はメインのモデル（「既定」の札） */
+  /**
+   * 互換の接続先のモデル: 検索と ID の入力を兼ねる欄＋接続先の一覧。空はメインのモデル（「既定」の札）。
+   * 字は表示名（web/compat-models.mjs。`anthropic/` の名前空間と [1m] を隠し、1M は札）、送るのは一覧どおりの ID（title）。
+   * 打った字で絞る（大文字小文字を区別しない部分一致、空白区切りは AND。表示名・送る ID・display_name のどれでも）。
+   * 描くのは先頭の SHOW_LIMIT 件だけ。↓ で一覧へ、Enter は打った字（一覧の ID か表示名に当たればその ID、無ければそのまま）
+   */
   function compatModelSection(d) {
     const ep = d.endpoint;
     const out = [head("モデル")];
     const main = ep.row.roles?.main ?? "";
+    const cur = d.model || main;
+    // メイン → 今のモデル → 一覧の順（今のものは絞らなくても見える）
+    const cands = modelCandidates(ep.row.models ?? [], ep.row.modelInfo ?? {}, [main, cur]);
+    const initial = d.model ? compatModelLabel(d.model).text : "";
     const input = el("input", "cpath");
-    input.value = d.model ?? "";
-    input.placeholder = main ? `モデル ID（空ならメインの ${shortModel(main)}）` : "モデル ID";
-    input.setAttribute("aria-label", "モデル ID（Enter で決める）");
+    input.value = initial;
+    if (d.model) input.title = d.model;
+    input.placeholder = main ? `検索、または ID（空ならメインの ${compatModelLabel(main).text}）` : "検索、または ID";
+    input.setAttribute("aria-label", "モデルを検索、または ID を入力（Enter で決める）");
     input.dataset.key = "epmodel";
     input.autocomplete = "off"; input.spellcheck = false;
     const box = el("div");
     const roleOf = (id) => ep.roleNames.filter(([k]) => ep.row.roles?.[k] === id && k !== "main").map(([, n]) => n).join("・");
-    const commit = (value) => {
-      const v = String(value ?? "").trim();
+    const commit = (id) => {
+      const v = String(id ?? "").trim();
       const next = v === main ? "" : v;
       if (next !== (d.model ?? "")) on.model(next);
     };
+    const commitTyped = () => {
+      const typed = input.value.trim();
+      // 触っていない（今のモデルの表示名のまま）なら変えない。表示名が同じ候補（x と x[1m]）を取り違えないため
+      if (typed === initial) return;
+      commit(resolveTyped(cands, typed));
+    };
     const paintList = () => {
       const q = input.value.trim().toLowerCase();
-      const all = [...new Set([main, ...(ep.row.models ?? [])].filter(Boolean))];
-      const exact = all.some((m) => m.toLowerCase() === q);
-      const shown = q && !exact ? all.filter((m) => m.toLowerCase().includes(q)) : all;
-      const cur = d.model || main;
-      box.replaceChildren(...(shown.length ? [listbox("モデルの候補", shown.slice(0, 200).map((m) => row({
-        on: m === cur, main: m, mono: true, key: `epmodel:${m}`, title: m, tag: m === main ? "既定" : "", right: roleOf(m),
-        onPick: () => commit(m),
-      })))] : [el("p", "cnote", q ? "一覧にありません。Enter でこの ID を使います。" : "一覧がありません。ID を入力してください。")]));
+      // 今の値のままなら全部（先頭の SHOW_LIMIT 件）を出す
+      const exact = !q || q === initial.toLowerCase() || cands.some((c) => c.id.toLowerCase() === q);
+      const { shown, more } = searchModels(cands, exact ? "" : q);
+      const rows = shown.map((c) => row({
+        on: c.id === cur, main: c.text, sub: c.sub, key: `epmodel:${c.id}`, title: c.id, tag: c.id === main ? "既定" : "", right: roleOf(c.id),
+        badge: c.oneM ? { text: "1M", title: ONE_M_TITLE } : null,
+        onPick: () => commit(c.id),
+      }));
+      const notes = [];
+      if (more > 0) notes.push(el("p", "cnote", moreText(more)));
+      box.replaceChildren(...(rows.length ? [listbox("モデルの候補", rows)] : [el("p", "cnote", q ? "一覧にありません。Enter でこの ID をそのまま使います。" : "一覧がありません。ID を入力してください。")]), ...notes);
     };
+    input.addEventListener("focus", () => input.select());
     input.addEventListener("input", paintList);
     input.addEventListener("keydown", (e) => {
       if (isComposingKey(e) || e.key !== "Enter") return;
       e.preventDefault();     // フォームの送信にしない
-      commit(input.value);
+      commitTyped();
     });
     paintList();
     out.push(input, box, el("p", "cnote", d.backend === "claude"
-      ? "一覧は接続を確認したときに取ったものです。Opus・Sonnet・Haiku 相当は接続先の設定で割り当てます。"
-      : "一覧は接続を確認したときに取ったものです。"));
+      ? "一覧は接続を確認したときに取ったものです。↓ で候補へ、Enter で決めます。Opus・Sonnet・Haiku 相当は接続先の設定で割り当てます。"
+      : "一覧は接続を確認したときに取ったものです。↓ で候補へ、Enter で決めます。"));
     return out;
   }
 
@@ -483,12 +512,17 @@ export function setupComposerControls({ cmd, get, on }) {
     chips.cwd.dataset.value = cwd;
     chips.cwd.disabled = Boolean(d.cwdDisabled);
     // モデル
-    // 互換の接続先は「接続先 · モデル · 段」。モデル ID の `/` より前は省き、全体は title に出す
+    // 互換の接続先は「接続先 · モデル · 段」。モデルは表示名（web/compat-models.mjs）で、1M は札。送る ID を含む全体は title に出す
     const row = d.endpoint?.row;
-    const epLabel = row ? endpointChipLabel({ connection: row.name, model: shortModel(d.model || row.roles?.main || ""), fullModel: d.model || row.roles?.main || "", effort: effortStops(d.efforts, d.effort).current }) : null;
+    const epModel = row ? compatModelLabel(d.model || row.roles?.main || "") : null;
+    const epLabel = row ? endpointChipLabel({ connection: row.name, model: epModel.text, fullModel: epModel.id, effort: effortStops(d.efforts, d.effort).current }) : null;
     const label = epLabel ? epLabel.text : modelChipLabel(d.models, d.model, d.efforts, d.effort);
     const full = epLabel ? epLabel.full : label;
-    modelName.textContent = label;
+    if (epLabel && epModel.oneM) {
+      const b = el("span", "cbadge", "1M");
+      b.title = ONE_M_TITLE;
+      modelName.replaceChildren(epLabel.head, b, epLabel.tail ? ` · ${epLabel.tail}` : "");
+    } else modelName.textContent = label;
     chips.model.title = `${full}（エージェント・モデル・エフォート。次のターンから適用）`;
     chips.model.setAttribute("aria-label", `モデルとエフォート: ${full}`);
     chips.model.dataset.value = d.model ?? "";

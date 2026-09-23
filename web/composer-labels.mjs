@@ -73,13 +73,15 @@ export function middleEllipsis(text, max) {
 /**
  * 接続先を選ぶエージェントのモデルのチップの字: 「接続先 · モデル」（段が決まっていれば「 · 段」）。
  * 接続先の名前とモデル ID はそれぞれ長さを詰め、段は削らない（末尾が切れると段が見えなくなるため）。
- * 全体の字は title に出す（full。モデルは省かない元の ID）
- * @returns {{ text: string, full: string }}
+ * 全体の字は title に出す（full。モデルは省かない元の ID）。
+ * head は「接続先 · モデル」まで、tail は段（札をモデルの直後に挟むため。text は head と tail をつないだもの）
+ * @returns {{ text: string, full: string, head: string, tail: string }}
  */
 export function endpointChipLabel({ connection, model, fullModel, effort } = {}) {
-  // model はチップに出す短い形（ID の `/` より前を省いたもの）、fullModel は title に出す元の ID
+  // model はチップに出す表示名（web/compat-models.mjs の compatModelLabel）、fullModel は title に出す送る ID
   const parts = [connection || "接続先を選ぶ", fullModel || model, effort].filter(Boolean);
   const full = parts.join(" · ");
-  const text = [middleEllipsis(connection || "接続先を選ぶ", 18), model ? middleEllipsis(model, 26) : "", effort || ""].filter(Boolean).join(" · ");
-  return { text, full };
+  const head = [middleEllipsis(connection || "接続先を選ぶ", 18), model ? middleEllipsis(model, 26) : ""].filter(Boolean).join(" · ");
+  const tail = effort || "";
+  return { text: [head, tail].filter(Boolean).join(" · "), full, head, tail };
 }
