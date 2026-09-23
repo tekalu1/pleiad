@@ -135,6 +135,13 @@ export default async function(t) {
     const chosen=await resolveRuntime(dupPolicy({dup:unusedFirst.path}),{home:dupHome});
     const usedChosen=chosen.report.entries.find(e=>e.name==='dup'&&e.choice);
     t.ok('設定で選んだ定義を使い、「設定で選んだもの」と記録する',usedChosen?.path===unusedFirst.path&&usedChosen.choice.by==='prefer'&&/設定で選んだもの/.test(chosen.report.entries.find(e=>e.name==='dup'&&e.shadowedBy==='choice')?.reason??''));
+    // 作業場所が home そのもの: ~/.claude/skills は user と directory の両方で見つかるが、同じ実体なので 1 つとして渡す
+    const selfHome=path.join(tmp,'self-home');
+    await write(path.join(selfHome,'.claude/skills/twice/SKILL.md'),'---\nname: twice\ndescription: found twice\n---\nTWICE_BODY');
+    const skillOnly={sources:['claude'],excludePaths:[]};
+    const homeRuntime=await resolveRuntime({version:2,cwd:selfHome,owners:{instruction:'native',skill:'ply',mcp:'native'},
+      plan:{user:{roots:[],kinds:{instruction:null,skill:skillOnly,mcp:null}},directory:{roots:[],kinds:{instruction:null,skill:skillOnly,mcp:null}}}},{home:selfHome});
+    t.ok('作業場所が home でも同じ Skill を同名の重複として止めない',homeRuntime.skills.filter(s=>s.name==='twice').length===1&&homeRuntime.report.entries.filter(e=>e.name==='twice').some(e=>e.status==='duplicate'),JSON.stringify(homeRuntime.report.entries));
     // Claude の .claude/rules。paths の無いものは開始時に渡し、paths 付きは当たるファイルを instructions_for_path で求めたときだけ返す
     t.ok('rules の glob（**・*・?・{a,b}）',[['src/**/*.{ts,tsx}','src/a/b/c.tsx',true],['src/**/*.ts','src/c.ts',true],['src/*.ts','src/a/c.ts',false],['**/*.md','a.md',true],['a?.js','ab.js',true],['apps/main/**','apps/main',true],['docs/**','src/x.ts',false]]
       .every(([g,p,want])=>matchesGlobs([g],tmp,path.join(tmp,p))===want));
