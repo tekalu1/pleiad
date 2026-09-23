@@ -13,6 +13,9 @@ body.file-preview-open{grid-template-columns:var(--side-col) minmax(360px,1fr) v
 .file-preview-toolbar{display:flex;gap:4px;align-items:center;flex-wrap:wrap;padding-bottom:12px;font-size:var(--fs-s)}
 .file-preview-switch{display:flex;gap:2px;border-radius:var(--r-pill);background:var(--surface-2);padding:3px;margin-right:auto}
 .file-preview-switch .btn[aria-pressed=true]{background:var(--surface-paper);color:var(--ink-blue)}
+/* HTML の「ブラウザーで開く」は切り替えの隣に置き、パス・再読み込みは右へ寄せたまま */
+.file-preview-toolbar:has(.file-preview-browser:not([hidden])) .file-preview-switch{margin-right:0}
+.file-preview-browser{margin-right:auto}
 .file-preview-location{display:flex;align-items:center;gap:4px;padding:0 0 12px}
 .file-preview-location input{flex:1;min-width:0;padding:8px 12px;background:var(--surface-paper);border-radius:var(--r-pill);font:var(--fs-s)/1.6 var(--font-mono)}
 .file-preview-location .btn-icon{width:30px;height:30px;padding:0;flex:none}

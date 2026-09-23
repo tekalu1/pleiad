@@ -19,6 +19,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { readLocalFile } from "./local-files.mjs";
+import { isLocalRequest, defaultOpener, createRateLimit, OPENABLE } from './os-open.mjs';
 import { readPreview, resolveReference, cwdAt, inspectFile, previewFailure } from './file-preview.mjs';
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
@@ -230,6 +231,41 @@ function tokenFromCookie(header) {
   return null;
 }
 
+/**
+ * 会話のファイルを読める範囲（/local-file・/file-preview・ファイルの操作で共通）。
+ * 作業ディレクトリ・添付の置き場・Codex の生成画像・全会話の cwd とその変更履歴
+ */
+function fileRoots(sessions) {
+  return [...workspaceRoots, UPLOAD_DIR,
+    path.join(process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), "generated_images"),
+    ...Object.values(sessions).flatMap(s => [s.cwd, ...(s.history ?? []).filter(h => h.field === 'cwd').flatMap(h => [h.from, h.to])])];
+}
+
+/**
+ * 会話の中のファイル参照を絶対パスにする（/file-preview とファイルの操作で共通）。roots には会話の今の cwd を足す。
+ * 相対パスは発言の時刻（at）の cwd か、プレビュー中の文書（base）のフォルダーで解く。
+ * @returns {{ path, line, cwd }} cwd は解決の基準（相対パスの表示に使う）
+ */
+async function resolveSessionFile({ path: requested, sessionId, at, base }, sessions, roots) {
+  const meta = sessions[sessionId] ?? {};
+  const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
+  const info = !meta.cwd && backend ? await backend.getSession(sessionId).catch(() => null) : null;
+  const currentCwd = meta.cwd || info?.cwd;
+  if (currentCwd) roots.push(currentCwd);
+  let cwd = currentCwd;
+  // Only relative references need a historical cwd. An explicit path
+  // stays useful even when a native transcript has no timestamps.
+  if (base != null) {
+    const baseFile = await inspectFile(base, roots);
+    cwd = path.dirname(baseFile.file);
+  } else if (!/^(?:[a-z]:[\\/]|\/|file:)/i.test(requested ?? '')) cwd = cwdAt({ ...meta, cwd:currentCwd }, at);
+  return { ...resolveReference(requested, cwd), cwd };
+}
+
+// サーバーのある PC で開く（エクスプローラー・既定のブラウザー）。デスクトップ版は本体に頼む。連打は断る
+const openOnHost = defaultOpener();
+const osActionAllowed = createRateLimit({ limit: 5, windowMs: 10_000 });
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (url.pathname === AGENTS_MCP_PATH) return agentBridge.handle(req, res);
@@ -249,30 +285,15 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.pathname === "/local-file" || url.pathname === '/file-preview') {
       const sessions = await store.getAll();
-      const roots = [...workspaceRoots, UPLOAD_DIR,
-        path.join(process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), "generated_images"),
-        ...Object.values(sessions).flatMap(s => [s.cwd, ...(s.history ?? []).filter(h => h.field === 'cwd').flatMap(h => [h.from, h.to])])];
+      const roots = fileRoots(sessions);
       if (url.pathname === '/file-preview') {
         let resolved;
         try {
-          const sessionId = url.searchParams.get('sessionId');
-          const meta = sessions[sessionId] ?? {};
-          const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
-          const info = !meta.cwd && backend ? await backend.getSession(sessionId).catch(() => null) : null;
-          const currentCwd = meta.cwd || info?.cwd;
-          if (currentCwd) roots.push(currentCwd);
-          let base = currentCwd;
-          const requested = url.searchParams.get('path');
-          // Only relative references need a historical cwd. An explicit path
-          // stays useful even when a native transcript has no timestamps.
-          if (url.searchParams.has('base')) {
-            const baseFile = await inspectFile(url.searchParams.get('base'), roots);
-            base = path.dirname(baseFile.file);
-          } else if (!/^(?:[a-z]:[\\/]|\/|file:)/i.test(requested ?? '')) base = cwdAt({ ...meta, cwd:currentCwd }, url.searchParams.get('at'));
-          resolved = resolveReference(requested, base);
+          resolved = await resolveSessionFile({ path:url.searchParams.get('path'), sessionId:url.searchParams.get('sessionId'),
+            at:url.searchParams.get('at'), base:url.searchParams.get('base') }, sessions, roots);
           const preview = await readPreview(resolved.path, roots, { resource:url.searchParams.get('resource') === '1' });
           res.writeHead(200, { 'content-type':'application/json; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' });
-          return res.end(JSON.stringify({ ...preview, line:resolved.line, cwd:base }));
+          return res.end(JSON.stringify({ ...preview, line:resolved.line, cwd:resolved.cwd }));
         } catch (error) {
           const failure = previewFailure(error);
           res.writeHead(failure.code === 'not-found' ? 404 : 400, { 'content-type':'application/json; charset=utf-8', 'cache-control':'private, no-store' });
@@ -1528,7 +1549,9 @@ function emitOutsideTurn(sessionId, event) {
   emitGlobal({ ...event, sessionId });
 }
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+  // OS の操作（revealPath / openPath）を許すのは、サーバーのある PC の画面からの接続だけ（core/os-open.mjs）
+  const local = isLocalRequest(req);
   // 古い接続を閉じてはいけない。クライアントは切れると自動再接続するので、
   // 「新しい方に付け替える」と互いに閉じ合って永久に落ち着かなくなる。
   // タブが複数あってもよい設計にして、イベントは全部に配る。
@@ -2039,6 +2062,31 @@ wss.on("connection", (ws) => {
         // 作業ディレクトリを選ぶ簡易ブラウザー（ブラウザー版の入力欄）。フォルダーの名前だけを返す
         case "listDirs":
           return reply(true, await listDirs(msg.args?.path));
+
+        // ファイルの操作（web/file-actions.mjs）。範囲は /file-preview と同じで、実体を解決した後のパスで確かめる。
+        // OS の操作は遠隔の接続から断る（画面で隠すだけにしない）。開けるのは HTML だけ
+        case "hostCapabilities":
+          return reply(true, { osActions: local });
+        case "resolvePath": case "revealPath": case "openPath": {
+          const hostAction = msg.command !== 'resolvePath';
+          if (hostAction && !local) return reply(false, t('files.remoteOnly'));
+          try {
+            const sessions = await store.getAll();
+            const roots = fileRoots(sessions);
+            const args = msg.args ?? {};
+            const resolved = await resolveSessionFile({ path: args.path, sessionId: args.sessionId, at: args.at, base: args.base }, sessions, roots);
+            const { file, stat } = await inspectFile(resolved.path, roots);
+            const directory = stat.isDirectory();
+            if (!hostAction) return reply(true, { path: file, cwd: resolved.cwd ?? null, kind: directory ? 'directory' : 'file' });
+            if (msg.command === 'openPath' && (directory || !OPENABLE.test(file))) return reply(false, t('files.htmlOnly'));
+            if (!osActionAllowed()) return reply(false, t('files.tooMany'));
+            await openOnHost(msg.command === 'openPath' ? 'open' : 'reveal', file, { directory });
+            return reply(true, { path: file });
+          } catch (error) {
+            const failure = previewFailure(error);
+            return reply(false, failure.code === 'read-failed' && error?.message ? error.message : failure.message);
+          }
+        }
 
         // 認証はエージェントごとに持ち方が違う。持たないものは supported:false を返す
         // （web はボタンごと隠す。「押せるのに何も起きない」を作らない）。
