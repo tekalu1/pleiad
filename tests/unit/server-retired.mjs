@@ -16,6 +16,8 @@ export default async function (t) {
   const now = Date.now();
   await fs.writeFile(path.join(scratch, "sessions.json"), JSON.stringify({
     "old-procway": { backend: "procway", title: "procway の古い会話", cwd: ROOT, createdAt: now - 1000, lastModified: now - 1000, model: "ply-x/gpt-5", procwayLimits: { context: 1000 } },
+    // 旧版で「次のターンから procway」を予約したまま残った、使えるエージェントの会話
+    "reserved-procway": { backend: "fake", title: "procway を予約した会話", cwd: ROOT, createdAt: now - 500, lastModified: now - 500, nextSettings: { backend: "procway", model: "ply-x/gpt-5" } },
   }));
   await fs.writeFile(path.join(scratch, "prefs.json"), JSON.stringify({ backend: "procway", backends: { procway: { model: "ply-x/gpt-5" } } }));
   const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: "fake,procway" } });
@@ -34,6 +36,8 @@ export default async function (t) {
     t.ok("設定の変更も断る", String(settings?.message ?? "").includes("対応は終了"), settings?.message);
     await c.cmd("setTitle", { sessionId: "old-procway", title: "名前を変えた" });
     t.ok("タイトルは変えられる", (await c.cmd("listSessions")).find(r => r.id === "old-procway")?.title === "名前を変えた");
+    const cancelled = await c.cmd("setTurnSettings", { sessionId: "reserved-procway", cancel: true }).catch(e => ({ error: e.message }));
+    t.ok("procway への予約が残った会話でも予約を取り消せる", cancelled === null, JSON.stringify(cancelled));
     const fresh = await c.cmd("newSession", { cwd: ROOT });
     const created = (await c.cmd("listSessions")).find(r => r.id === fresh.sessionId);
     t.ok("既定が procway のままでも、新しい会話は使えるエージェントで作る", created?.backend === "fake", created?.backend);

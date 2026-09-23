@@ -426,7 +426,8 @@ async function handle(method, params) {
         approvalsReviewer: "user",
         cwd: t.cwd,
         model: "fake-model-1",
-        modelProvider: "openai",
+        // 実際に効いている接続先（本物もロード済みなら前の provider を返す）
+        modelProvider: t.provider?.id ?? "openai",
         sandbox: { type: "workspaceWrite" },
       };
     }
@@ -483,7 +484,11 @@ async function handle(method, params) {
 
     case "thread/unsubscribe": {
       const gone = threads.get(params?.threadId);
-      if (gone) gone.loaded = false;
+      // FAKE_CODEX_CONTROL のファイルに sticky があれば、外したと答えてもロードしたまま（接続先の変更を無視する本物の場面の再現）。
+      // unsubscribe-fail があれば失敗を返す
+      const control = process.env.FAKE_CODEX_CONTROL ? (() => { try { return fs.readFileSync(process.env.FAKE_CODEX_CONTROL, "utf8"); } catch { return ""; } })() : "";
+      if (control.includes("unsubscribe-fail")) throw new RpcError("thread is busy", -32000);
+      if (gone && !control.includes("sticky")) gone.loaded = false;
       record({ method, threadId: params?.threadId });
       if (gone?.ephemeral) threads.delete(params.threadId);
       return { status: "unsubscribed" };

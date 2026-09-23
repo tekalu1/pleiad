@@ -135,6 +135,10 @@ export default async function (t) {
     t.ok('削除するとキーも消える', (await secrets.get('compat-endpoint:' + id)) === undefined);
     const deleted = await rejects(() => eps.resolve(id, 'claude'));
     t.ok('削除済みの接続先は止める', deleted instanceof EndpointError && deleted.code === 'deleted');
+    await fs.writeFile(path.join(dir, 'compat-endpoints.json'), '{broken');
+    t.ok('一覧のファイルが壊れていても新しい会話の既定は公式（止めない）', (await eps.defaultFor('claude')) === '');
+    t.ok('一覧のファイルが壊れていれば resolve は止める', (await rejects(() => eps.resolve('ep-000000000000', 'claude'))) !== null);
+    await fs.writeFile(path.join(dir, 'compat-endpoints.json'), JSON.stringify({ version: 1, endpoints: [], defaults: {} }));
 
     // ---- 委譲の規則（決定 3）
     t.ok('同じエージェントへの委譲は親の接続先を継ぐ', delegatedEndpoint('claude', 'claude', 'ep-x') === 'ep-x' && delegatedEndpoint('codex', 'codex', 'ep-y') === 'ep-y');
@@ -151,6 +155,7 @@ export default async function (t) {
     t.ok('OAuth トークンを互換の先へ渡さない', env.CLAUDE_CODE_OAUTH_TOKEN === '' && !Object.values(env).includes('sk-ant-oat01-parent'));
     t.ok('CLAUDE_CODE_USE_* を消す', env.CLAUDE_CODE_USE_BEDROCK === '');
     t.ok('役割のモデルを入れる', env.ANTHROPIC_MODEL === 'm/main' && env.ANTHROPIC_DEFAULT_HAIKU_MODEL === 'm/haiku' && env.ANTHROPIC_DEFAULT_OPUS_MODEL === 'm/opus');
+    t.ok('settings.json から効く認証ヘッダー・別の宛先の変数を空で打ち消す', env.ANTHROPIC_CUSTOM_HEADERS === '' && env.ANTHROPIC_BETAS === '' && env.ANTHROPIC_BEDROCK_BASE_URL === '');
     t.ok('安定化の変数を入れる', env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS === '1' && env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC === '1');
     t.ok('思考を送らない既定では thinking と effort を止める', env.CLAUDE_CODE_DISABLE_THINKING === '1' && env.CLAUDE_CODE_EFFORT_LEVEL === 'unset');
     t.ok('extra と他の変数は残す', env.PATH === '/bin' && env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS === '0');
@@ -170,6 +175,7 @@ export default async function (t) {
     await flag.dispose();
     t.ok('dispose でフラグ設定のファイルを消す', await fs.access(flag.file).then(() => false, () => true));
     const stale = await writeClaudeFlagSettings(dir, ep);
+    t.ok('起動時の掃除は新しいファイル（別の Pleiad の実行中のもの）を消さない', (await sweepClaudeFlagSettings(dir, { olderThanMs: 60_000 })) === 0 && await fs.access(stale.file).then(() => true, () => false));
     t.ok('残ったフラグ設定のファイルを起動時に片付ける', (await sweepClaudeFlagSettings(dir)) === 1 && await fs.access(stale.file).then(() => false, () => true));
 
     // ---- Codex への注入

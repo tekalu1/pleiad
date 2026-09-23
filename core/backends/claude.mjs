@@ -525,7 +525,9 @@ export const backend = {
     const contextOptions = claudeContextOptions(contextRuntime);
     const flag = endpoint ? await writeClaudeFlagSettings(store.dataDir, endpoint, contextOptions.settings) : null;
     const hide = text => redactSecret(redactToken(text, oauthToken), endpoint?.key);
-    const q = query({
+    // query の組み立てで例外になっても、鍵を含むフラグ設定のファイルを残さない（ターンの終わりの finally まで届かないため）
+    let q;
+    try { q = query({
       prompt: promptStream(),
       options: {
         pathToClaudeCodeExecutable: claudeExecutable(),
@@ -567,7 +569,7 @@ export const backend = {
         includePartialMessages: true,
         canUseTool: makeCanUseTool(ctx, askPermission),
       },
-    });
+    }); } catch (e) { await flag?.dispose(); throw e; }
 
     // 実行中に承認モードやモデルを変えられるようにする。
     // ターン開始時の options だけだと、走り出した後の切り替えが効かない。
