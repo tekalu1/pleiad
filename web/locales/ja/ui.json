@@ -28,5 +28,27 @@
     "waiting": "あなたの応答を待っている",
     "running": "動いている",
     "stopping": "中断している"
+  },
+  "files": {
+    "menu": {
+      "openInPanel": "右パネルで開く",
+      "openInBrowser": "ブラウザーで開く",
+      "revealFile": "エクスプローラーで表示",
+      "revealFolder": "エクスプローラーで開く",
+      "copyPath": "パスをコピー",
+      "copyRelative": "相対パスをコピー",
+      "save": "保存",
+      "use": "会話で使う"
+    },
+    "actionsFor": "{{name}} の操作",
+    "currentActions": "このファイルの操作",
+    "browserTitle": "この PC の既定のブラウザーで開きます",
+    "revealTitle": "この PC のエクスプローラーで、ファイルを選んだ状態で開きます",
+    "copiedPath": "パスをコピーしました",
+    "copiedRelative": "相対パスをコピーしました",
+    "copyPathFailed": "パスをコピーできませんでした",
+    "copyRelativeFailed": "相対パスをコピーできませんでした",
+    "noRelative": "作業ディレクトリの外にあるため、相対パスはありません",
+    "actionFailed": "操作できませんでした"
   }
 }

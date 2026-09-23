@@ -16,6 +16,8 @@ installDomStub();
 
 const cases = [
   await import('./unit/file-preview.mjs'),
+  // パスの自動リンク・画像の所在・ファイルの操作メニュー・OS で開く口（OS の窓は開かない）
+  await import('./unit/file-actions.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
   await import('./unit/server-agent-tasks.mjs'),

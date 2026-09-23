@@ -1,5 +1,16 @@
 {
   "errors": {
     "unknownLocale": "知らない言語: {{value}}"
+  },
+  "files": {
+    "remoteOnly": "この操作はサーバーのある PC の画面からだけ使えます。保存かパスのコピーを使ってください。",
+    "htmlOnly": "ブラウザーで開けるのは HTML だけです。",
+    "tooMany": "続けて開きすぎています。少し待ってからもう一度押してください。",
+    "invalidPath": "このパスは開けません。",
+    "notFound": "ファイルが見つかりません。",
+    "notFileOrFolder": "ファイルまたはフォルダーを選んでください。",
+    "launchFailed": "起動できませんでした（{{reason}}）",
+    "openFailed": "開けませんでした（{{reason}}）",
+    "noResponse": "応答がありませんでした"
   }
 }

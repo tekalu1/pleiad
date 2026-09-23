@@ -1,7 +1,9 @@
 import { isComposingKey } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
-import { setupCodeCopy } from './code-copy.mjs';
+import { download } from './file-actions.mjs';
+import { fileDownloadUrl } from './file-reference.mjs';
+import { setupCodeCopy, copyText } from './code-copy.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
 import { setupUsage } from './usage.mjs';
@@ -79,6 +81,7 @@ const state = {
   current: null,      // 選択中の sessionId（null = 新規）
   loadingSession: null,
   homeDir: "",
+  osActions: false,   // サーバーのある PC の画面から見ているか（エクスプローラー・ブラウザーで開くを出す）。hostCapabilities で知る
   draft: { status: null, cwd: "" },   // 新規セッションの予約（引き継いだ状態と作業ディレクトリ）。current が null のときだけ意味を持つ
   sessions: [],
   statuses: [],
@@ -2116,6 +2119,10 @@ $("draftSaved").onclick = () => saveDraft().catch(() => {});
 const filePreview = setupFilePreview({
   getContext: anchor => ({ sessionId:state.current, at:anchor?.closest('.m')?.dataset.at }),
   onLayout: () => requestAnimationFrame(relayoutBranches),
+  // ファイルの操作メニューは会話一覧と同じ 1 つを使う。OS の操作はサーバーが「この PC の画面」と答えたときだけ
+  showMenu: (x, y, items, title) => showMenu(x, y, items, title),
+  cmd: (command, args) => cmd(command, args),
+  osActions: () => state.osActions === true,
   useFile: file => {
     if ($('prompt').disabled) return;
     if (!state.attached.some(a => a.path === file.path)) {
@@ -2145,7 +2152,7 @@ function renderAttached() {
       img.src = a.dataUri;
       img.alt = a.name;
       b.append(img);
-      b.onclick = () => openLightbox(a.dataUri, a.name);
+      b.onclick = () => openLightbox(a.dataUri, a.name, a.path);
       item.append(b);
     } else {
       item.append(el("span", "att-name", a.name));
@@ -2159,11 +2166,29 @@ function renderAttached() {
   }));
 }
 
-/** 画像を大きく見る。閲覧だけ。会話の present も入力欄の添付も同じ */
-function openLightbox(src, caption) {
+/**
+ * 画像を大きく見る。会話の present・生成画像・本文の画像も入力欄の添付も同じ。
+ * 下端に所在（フルパスとコピー）と操作（右パネルで開く・エクスプローラーで表示・保存）を並べる。
+ * パスが分からない画像（data URI だけ）は保存だけ。origin は会話の中の元の画像（発言の時刻で相対パスを解く）
+ */
+let lightboxFile = null;
+function openLightbox(src, caption, path, origin) {
   const d = $("lightbox");
   d.querySelector("img").src = src;
   d.querySelector(".lb-cap").textContent = caption ?? "";
+  lightboxFile = path ? { path, element: origin ?? null } : null;
+  const where = d.querySelector(".lb-path");
+  where.hidden = !path;
+  d.querySelector(".lb-path-text").textContent = path ?? "";
+  d.querySelector(".lb-path-text").title = path ?? "";
+  d.querySelector(".lb-panel").hidden = !path;
+  d.querySelector(".lb-reveal").hidden = !path || state.osActions !== true;
+  const save = d.querySelector(".lb-save");
+  const name = (path ?? caption ?? "image").split(/[\\/]/).at(-1) || "image";
+  // 絶対パスは認証付きの /local-file?download=1、パスの無い画像は data URI をそのまま保存する
+  const absolute = path && /^(?:[a-z]:[\\/]|\/)/i.test(path);
+  save.hidden = !absolute && !/^data:image\//.test(src);
+  save.onclick = (e) => { e.preventDefault(); download(absolute ? fileDownloadUrl(path) : src, name); };
   d.showModal();
 }
 
@@ -2215,12 +2240,20 @@ function wireDropZone() {
   // 会話に載った画像も同じライトボックスで大きく見る
   log.addEventListener("click", (e) => {
     const img = e.target.closest(".present-body > img, .tc-preview > img, .md-img");
-    if (img) openLightbox(img.src, img.alt);
+    if (img) openLightbox(img.src, img.alt, img.dataset.filePath, img);
   });
   const lb = $("lightbox");
   lb.addEventListener("click", (e) => {
     if (e.target === lb || e.target.closest("[data-close]")) lb.close();
   });
+  lb.querySelector(".lb-copy").onclick = (e) => copyText(e.currentTarget, lightboxFile?.path ?? "", t("files.menu.copyPath"));
+  lb.querySelector(".lb-panel").onclick = () => {
+    const target = lightboxFile;
+    if (!target) return;
+    lb.close();
+    filePreview.open({ path: target.path, line: null }, target.element?.isConnected ? target.element : null);
+  };
+  lb.querySelector(".lb-reveal").onclick = () => { if (lightboxFile) filePreview.reveal(lightboxFile); };
   const zone = document.querySelector("main");
   let depth = 0;
   const show = (on) => zone.classList.toggle("dropping", on);
@@ -3213,6 +3246,8 @@ function connect() {
       // 画面と違う言語なら読み直すので、ここで止める
       if (applyLocale(m.locale)) return;
       side.setConnLost(false);
+      // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
+      cmd("hostCapabilities").then((c) => { state.osActions = c?.osActions === true; filePreview.osChanged(); }).catch(() => {});
       return refresh().then(async () => {
         if (state.current) return select(state.current, { reload: true });
         let saved;
