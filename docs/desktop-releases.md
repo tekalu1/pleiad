@@ -177,7 +177,6 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 他の評価端末ではReleaseの `Pleiad-Evaluation.cer` と `evaluation-certificate.ps1` を取得し、別途確認した指紋を指定して `-Action Trust -CertificateFile ... -ExpectedThumbprint ...` を実行する。
 `SIGNING-INFO.json` は公開証明書の指紋と有効期限、`BUILD-INFO.json` はソースコミットとActions実行URLを記録する。
 
-テストのprocway実装は公開 `tekalu1/procway-code` の固定コミットから取得する。LLM接続や別リポジトリの秘密のトークンは不要。
 リリースジョブは所有者のタグpushまたはmainからの手動実行に限定し、タグがmainに含まれることも検証する。PRから署名ジョブは実行しない。
 
 ### 認証局の署名・段階配布
