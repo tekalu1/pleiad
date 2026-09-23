@@ -11,7 +11,7 @@ import WebSocket from 'ws';
 import { looksLikePath, findWindowsPaths, fileReference } from '../../web/file-reference.mjs';
 import { renderMarkdown, renderToolCall, renderPresent, applyToolResult } from '../../web/render.mjs';
 import { fileMenuItems, relativeTo, samePath } from '../../web/file-actions.mjs';
-import { launchPlan, launch, isLocalRequest, createRateLimit } from '../../core/os-open.mjs';
+import { launchPlan, launch, isLocalRequest, createRateLimit, bridgeError } from '../../core/os-open.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open as openWs } from '../lib/ws-client.mjs';
 
@@ -143,8 +143,11 @@ export default async function (t) {
   const handle = createFileHandler({ shell, stat: stat('file') });
   assert.deepEqual(await handle({ id: 1, action: 'reveal', path: path.resolve('/x/a.png') }), { type: 'os-open', id: 1, ok: true });
   assert.deepEqual(await handle({ id: 2, action: 'open', path: path.resolve('/x/a.html') }), { type: 'os-open', id: 2, ok: true });
-  assert.equal((await handle({ id: 3, action: 'open', path: path.resolve('/x/broken.html') })).error, 'no handler');
-  assert.equal((await handle({ id: 4, action: 'open', path: path.resolve('/x/a.exe') })).ok, false);
+  assert.deepEqual(await handle({ id: 3, action: 'open', path: path.resolve('/x/broken.html') }), { type: 'os-open', id: 3, ok: false, code: 'open-failed', detail: 'no handler' });
+  assert.equal((await handle({ id: 4, action: 'open', path: path.resolve('/x/a.exe') })).code, 'html-only');
+  // 本体は言語を知らない。文言はサーバーが code から引く
+  assert.match(bridgeError({ code: 'html-only' }), /HTML/);
+  assert.match(bridgeError({ code: 'open-failed', detail: 'no handler' }), /no handler/);
   assert.deepEqual(calls.map(c => c[0]), ['show', 'open', 'open']);
   t.ok('デスクトップ版: 本体も絶対パス・実在・HTML だけを確かめ、showItemInFolder / openPath を使う', true);
 

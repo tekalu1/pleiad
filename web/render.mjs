@@ -8,7 +8,7 @@ import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs
 // 「エスケープしてから正規表現で置換する」方式は取らない（実体参照が壊れる／取りこぼす）。
 // 構造をパースし、葉のテキストを出力する瞬間にだけエスケープする。
 import { el } from "./dom.mjs";
-import { fmt } from "./i18n.mjs";
+import { fmt, t } from "./i18n.mjs";
 import { copyIcon, downloadIcon, sidePanelIcon, moreIcon } from './icons.mjs';
 import { copyText } from './code-copy.mjs';
 
@@ -189,7 +189,7 @@ function fileAnchor(ref, inner, extra = "") {
 
 /** 画像の下に添える所在の一行: ファイル名（右パネルで開く）・フォルダー（全体は title）・⋯（操作） */
 export function whereHtml(path) {
-  const name = baseName(path), dir = dirName(path).replace(/[\\/]+$/, ""), label = esc(`${name} の操作`);
+  const name = baseName(path), dir = dirName(path).replace(/[\\/]+$/, ""), label = esc(t("files.actionsFor", { name }));
   return `<span class="file-where">${fileAnchor({ path, line: null }, esc(name))}` +
     (dir ? `<span class="file-where-dir" title="${esc(dir)}">${esc(dir)}</span>` : "") +
     `<button type="button" class="btn btn-icon file-more" data-file-menu="${esc(path)}" aria-haspopup="menu" aria-label="${label}" title="${label}">${moreIcon}</button></span>`;
@@ -551,7 +551,7 @@ export function renderPresent(ev) {
     const full = String(e.path), ref = fileReference(full);
     if (ref) {
       p.innerHTML = fileAnchor({ path: full, line: null }, `<code>${esc(full)}</code>`, " code-link") +
-        `<button type="button" class="btn btn-icon file-more" data-file-menu="${esc(full)}" aria-haspopup="menu" aria-label="${esc(`${baseName(full)} の操作`)}" title="${esc(`${baseName(full)} の操作`)}">${moreIcon}</button>`;
+        `<button type="button" class="btn btn-icon file-more" data-file-menu="${esc(full)}" aria-haspopup="menu" aria-label="${esc(t("files.actionsFor", { name: baseName(full) }))}" title="${esc(t("files.actionsFor", { name: baseName(full) }))}">${moreIcon}</button>`;
     } else p.append(el("code", null, full));
     card.append(p);
   }  return card;

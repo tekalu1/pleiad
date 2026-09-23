@@ -2246,7 +2246,7 @@ function wireDropZone() {
   lb.addEventListener("click", (e) => {
     if (e.target === lb || e.target.closest("[data-close]")) lb.close();
   });
-  lb.querySelector(".lb-copy").onclick = (e) => copyText(e.currentTarget, lightboxFile?.path ?? "", "パスをコピー");
+  lb.querySelector(".lb-copy").onclick = (e) => copyText(e.currentTarget, lightboxFile?.path ?? "", t("files.menu.copyPath"));
   lb.querySelector(".lb-panel").onclick = () => {
     const target = lightboxFile;
     if (!target) return;
