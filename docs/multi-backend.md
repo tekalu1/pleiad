@@ -4,12 +4,11 @@
 切り替え済み会話では会話IDとネイティブIDを分離し、本文の正本をアプリに移す（本書 §2.1 の例外）。
 
 作成 2026-09-11。`design.md` §3「やらない: マルチプロバイダ」を**改訂する**。
-Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-server）と
-**procway-code**（`procway-code serve`）をバックエンドとして駆動できるようにする。
+Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-server）をバックエンドとして駆動できるようにする。
 2026-09 に **Antigravity CLI**（`agy`）を足した（§2.8）。
 同時期に入れた Gemini CLI（ACP）は、個人向けログインの終了により廃止した。
 
-元になった調査: `temporary/inv-agent-host.md`, `temporary/inv-procway.md`（追跡外）。
+元になった調査: `temporary/inv-agent-host.md`（追跡外）。
 
 ---
 
@@ -19,7 +18,7 @@ SDK は 2 つの役割を兼ねていた（棚卸しの結論）。
 
 1. **実行エンジン** — `query()` を回してストリームを吐く。差し替えは `runTurn` 1 本で済む。
 2. **セッション管理データベース** — 一覧・タイトル・状態タグ・履歴・fork・サブエージェントを
-   `~/.claude` の JSONL に外注していた。codex / procway-code には等価物が無い。
+   `~/.claude` の JSONL に外注していた。codex には等価物が無い。
 
 さらに `core/session.mjs` が **生の SDK メッセージを web へ素通し**しており、
 `web/client.mjs` が Anthropic の API ストリーム型（`content_block_start` / `text_delta` …）を直接パースしていた。
@@ -41,7 +40,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 
 **セッション id はバックエンドのネイティブ id をそのまま使い、行に `backend` を付ける。**
 複合キーにしない（web の `s.id` 依存を壊さない）。衝突は実質起きない
-（Claude: UUID、Codex: UUIDv7、procway: `YYYYMMDD-xxxxxx`、Antigravity: UUID）。
+（Claude: UUID、Codex: UUIDv7、Antigravity: UUID）。
 サーバは `sessionId → backend` を sidecar で引き、無ければ各バックエンドの `getSession` を順に当てる。
 
 ### 2.2 core → web は正規化イベントだけを流す（プロトコル v2）
@@ -63,26 +62,25 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `session` | `{ sessionId, first?, model? }` | 既存 + モデル通知 |
 | `background` | `{ tasks: [{ id, kind: "agent"\|"shell"\|"terminal"\|"other", label, waitable? }] }` 裏で生きているタスクの**全量**。受けたら丸ごと置き換える。`ambient` のタスクは含めない。`waitable: true` = 終わりの通知が必ず来るので待てる（下の kind の表） | Claude `system/background_tasks_changed`（保険に `task_started` / `task_updated` / `task_notification`） |
 | `phase` | `{ state: "active"\|"waiting" }` `waiting` = main は返答を終えて止まっていて、かつ裏のタスクが 1 本以上生きている。それ以外は `active` | 新規（main の区切りと上の一覧から導く） |
-| `resumed` | `{ }` エージェントが**自分で**ターンを再開した（Pleiad は送っていない。procway の wake: 裏の子が終わった）。差し込まれた本文は利用者の発言ではないので `userMessage` にしない。web は「サブエージェントが終わって再開した」の一行を出す | procway `user.prompt.submitted` の `wake: true` |
-| `userMessage.delivered` | `{ messageId }` 途中送信が**エージェントに渡った**（走っているターンの会話に入った）。`messageId` は outbox の item の id | 新規（2026-09。Claude の replay、Codex の `item/started`、procway の `user.prompt.submitted`） |
-| `userMessage.dropped` | `{ messageId }` 受理した途中送信を、エージェントが読まないままターンが死んだ。server は送信待ちの保留へ戻す | 新規（2026-09。procway の `steer.dropped`。ターンの終わりより後に届くことがある） |
+| `userMessage.delivered` | `{ messageId }` 途中送信が**エージェントに渡った**（走っているターンの会話に入った）。`messageId` は outbox の item の id | 新規（2026-09。Claude の replay、Codex の `item/started`） |
+| `userMessage.dropped` | `{ messageId }` 受理した途中送信を、エージェントが読まないままターンが死んだ。server は送信待ちの保留へ戻す | 新規（2026-09。ターンの終わりより後に届くことがある。受け口は server と web に残るが、今これを出すバックエンドは無い） |
 
 `present` / `status` / `title` / `fork` / `mode` / `model` / `running` / `turnEnd` はそのまま。
 
 **`background` / `phase`（2026-09）**: どちらも変わったときだけ出る。ターンの中の裏（Claude: main がターンを保持したまま待つ）の印で、
-`phase` を出さないバックエンド（Codex・procway）はずっと `active` のまま扱う。server はターンごとに `phase` と `background` を持ち、`running` のターン行
+`phase` を出さないバックエンド（Codex・Antigravity）はずっと `active` のまま扱う。server はターンごとに `phase` と `background` を持ち、`running` のターン行
 （`{ kind: "turn", …, phase, background }`）に載せ、変わった時点で `running` を配り直す（4 秒ごとの定期便を待たない）。
 web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧を衛星（design-system.md §6）に替える。
 `waiting` の間もターンは終わっていない。同じ会話への送信は途中送信（`control.steer`）で届く。
-**ターンが終わった後も裏が残る**バックエンド（procway・Codex）は、これではなく §2.7 の会話単位の background を使う。
+**ターンが終わった後も裏が残る**バックエンド（Codex）は、これではなく §2.7 の会話単位の background を使う。
 
 **`kind` の語彙（2026-09）**: web が衛星に数えるかどうかがここで決まる（`behindOfTasks`）。
 
 | kind | 何 | 衛星に数えるか |
 |---|---|---|
-| `agent` | サブエージェント（Claude `local_agent`、procway の裏の子） | 数える |
+| `agent` | サブエージェント（Claude `local_agent`） | 数える |
 | `terminal` | ターンをまたいで生きる端末（Codex `unified_exec`） | **数えない**（ターンの終わった後の設備。会話ヘッダーの「端末 · 件数」から開く） |
-| `shell` | 裏のシェル（Claude `local_bash`、procway `run_shell` の `runInBackground`） | `waitable: true` のときだけ数える |
+| `shell` | 裏のシェル（Claude `local_bash`） | `waitable: true` のときだけ数える |
 | `other` | 上のどれでもない（ワークフロー・MCP タスクなど） | 数える |
 
 `shell` の扱いは**終わりの合図があるかどうか**で分かれる（2026-09 に直した）。
@@ -93,13 +91,11 @@ web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧�
   いまは `canCloseInput` が shell も待つので入力は開いたまま、完了通知で main が再開して報告できる。
   タスクには `waitable: true` を付けて出す。終わらないコマンド（`npm run dev`）の逃げ道はタイムアウトではなく
   作業ダイアログの**停止ボタン**（`stopBackground` → SDK の `Query.stopTask`）
-- **procway の裏のシェルは数えない**。終わりを知る手段が無く（`shell_job` で見に行かないと分からない）、
-  数えると印が消えなくなる。`waitable` を付けないので今までどおり
 - 見出し（`behindOfTasks` の `label`）は、全部 `agent` なら「サブエージェントを待っている」、
   全部 `shell` なら「バックグラウンドのコマンドを待っている」、混在なら「裏の作業を待っている」
 
 **`running` の形（2026-09）**: `{ turns, permissions, subagents, background, count }`。
-`turns` の行は外部ターン（§2.7）なら `external: true` を持つ。`background` は `[{ kind: "background", sessionId, backend, tasks, since }]`
+`background` は `[{ kind: "background", sessionId, backend, tasks, since }]`
 （ターンの外で裏に残っている作業、§2.7）。`count` に `background` は入れない（下の理由）。
 `subagents` の行は `{ id, kind: "subagent", sessionId, messages, description, saying, lastAt, status, startedAt, endedAt }`（2026-09-22 に後ろの 3 つを足した）。
 `status` は `"running" | "completed" | "failed" | "stopped" | null`。`getSubagentState` を持たないバックエンド・分からない子は `null`。
@@ -107,7 +103,6 @@ web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧�
 `count` のサブエージェント分は **`status` が `"running"` か `null` の行だけ**を数える。終わった子を数えると更新のゲート
 （web の `count > 0`）が閉じたままになる。`null` を数えるのは、状態を出さないバックエンドでゲートを緩めないため。
 `turnEnd` は `{ completedAt, requeued? }`。`requeued: true` は完了ではない（§2.7 の requeue。`completedAt` は `null`）。
-履歴の `NormalizedMessage` は `resumed?: true` を持ちうる（エージェントが自分で再開したターンの最初の返答。web はその前に `resumed` と同じ一行を置く）。
 
 Claude の判定は `core/backends/claude-background.mjs`（SDK 非依存、`tests/unit/claude-background.mjs`）。
 実測（`output/bg-tasks/claude-report.md` §3、2026-09、SDK 0.3.258 / Claude Code 2.1.268）に沿う:
@@ -177,7 +172,7 @@ questions: [{ question, header?, multiSelect?, options: [{ label, description?, 
 ```
 
 回答は `resolvePermission { id, allow: true, answers: { [question]: "a, b" }, annotations? }`。
-バックエンドが自分の形（Codex `item/tool/requestUserInput` の response、procway `interaction.resolve` の response）へ戻す。
+バックエンドが自分の形（Codex なら `item/tool/requestUserInput` の response）へ戻す。
 
 ### 2.3 `AgentBackend` インターフェース
 
@@ -185,7 +180,7 @@ questions: [{ question, header?, multiSelect?, options: [{ label, description?, 
 
 ```js
 export const backend = {
-  id: "claude" | "codex" | "procway" | "fake",
+  id: "claude" | "codex" | "antigravity" | "fake",
   label: "Claude Code",
   capabilities: {
     title: bool,        // ネイティブにタイトルを持てる（持てなければ sidecar が正本）
@@ -232,7 +227,7 @@ export const backend = {
     status(): Promise<{ loggedIn: bool, account?: string, detail?: string }>,
     login({ emit }): Promise<void>,   // emit({type:"auth", phase:"url", url}) で URL を出し、完了まで待つ
     logout(): Promise<void>,
-    submitCode?(input): Promise<void>, // コールバックが取れないときの手貼り（procway 用）
+    submitCode?(input): Promise<void>, // コールバックが取れないときの手貼り（今これを持つバックエンドは無い）
   },
 
   // ---- 表示ヒント（web/render.mjs の TOOL_LABEL を補う）
@@ -270,27 +265,27 @@ sidecar 側の `setMode` / `setModel` は `exclusive()` を通す（既存の re
 
 ### 2.5 バックエンド別の対応表
 
-| | Claude | Codex | procway-code |
-|---|---|---|---|
-| プロセス | in-process SDK | `codex app-server`（stdio JSON-RPC 2.0、**1 プロセスを全セッションで共有**、threadId で多重化、落ちたら再起動） | `procway-code serve --port <空き>`（1 プロセス共有）+ セッションごとに WS `?session=<id>&cwd=` |
-| 新規 | `query({prompt})` | `thread/start {cwd, model, approvalPolicy, sandbox}` → `turn/start` | `?session=<自前 id>` で接続 → `runTurn` |
-| 再開 | `resume` | `thread/resume {threadId}` → `turn/start` | `?session=<id>` |
-| 本文 | `text_delta` | `item/agentMessage/delta` | `assistant.message.delta` |
-| 思考 | `thinking_delta` | `item/reasoning/summaryTextDelta` | `assistant.reasoning.delta` |
-| ツール | `tool_use` / `tool_result` | `item/started` / `item/completed`（`commandExecution`, `fileChange`, `mcpToolCall`, `webSearch` …）+ `item/commandExecution/outputDelta` | `tool.call.scheduled|started` / `tool.call.completed` |
-| 承認 | `canUseTool` | server request `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval` → response で返す | `approval.requested` → `approve {requestId, decision: allow\|deny\|always-allow}` |
-| 質問 | `AskUserQuestion` | `item/tool/requestUserInput` | `interaction.requested` → `interaction.resolve` |
-| 中断 | AbortController | `turn/interrupt` | `abort` |
-| 完了 | `result` | `turn/completed` | `turn.completed` / `turn.failed` |
-| 一覧 | `listSessions` | `thread/list`（name, cwd, createdAt, updatedAt, forkedFromId） | `listSessions` コマンド or `~/.procway/ai-agent/sessions/index.json` |
-| 履歴 | `getSessionMessages` | `thread/read {includeTurns:true}` | `loadSession` → `session.resumed.messages` or `snapshot.json` |
-| タイトル | `renameSession` | `thread/name/set` | 無し → sidecar |
-| 状態タグ | `tagSession` | 無し → sidecar | 無し → sidecar |
-| fork | `forkSession` | `thread/fork` | 無し |
-| モード | `default/auto/acceptEdits/plan/bypass`（`bypass` は SDK の `bypassPermissions`。`allowDangerouslySkipPermissions: true` を同時に渡す） | `approvalPolicy` × `sandbox` の組を id 化: `ask`(untrusted/workspace-write) / `auto`(on-request/workspace-write) / `full`(never/workspace-write) / `yolo`(never/danger-full-access) / `readonly`(on-request/read-only)。各 turn/start にも承認と sandbox の設定を送る | `always-ask` / `auto-readonly` / `full-auto` |
-| モデル | fable/opus/sonnet/haiku（SDK のエイリアス。実 ID への解決は SDK） | `model/list` | settings の provider × defaultModel（**`serve --provider <id> --model <m>` で渡す**。`PROCWAY_CODE_PROVIDER` / `PROCWAY_CODE_MODEL` は user スコープの settings.json に負けるので効かない。P2b で実機確認済み） |
-| host ツール | in-process MCP。可視化は共通参照 | 可視化は共通参照（§2.6） | 未接続 |
-| 認証 | Claude Code のログイン | `account/read` / `account/login/start {type:"chatgpt"}` → `authUrl` → `account/login/completed` / `account/logout`。**`~/.codex/auth.json` は codex が書く** | `~/.procway/ai-agent/auth-profiles.json` の profile `codex`。pi-ai 由来の OAuth（MIT）を `core/auth/openai-codex-oauth.mjs` に移植して書く |
+| | Claude | Codex |
+|---|---|---|
+| プロセス | in-process SDK | `codex app-server`（stdio JSON-RPC 2.0、**1 プロセスを全セッションで共有**、threadId で多重化、落ちたら再起動） |
+| 新規 | `query({prompt})` | `thread/start {cwd, model, approvalPolicy, sandbox}` → `turn/start` |
+| 再開 | `resume` | `thread/resume {threadId}` → `turn/start` |
+| 本文 | `text_delta` | `item/agentMessage/delta` |
+| 思考 | `thinking_delta` | `item/reasoning/summaryTextDelta` |
+| ツール | `tool_use` / `tool_result` | `item/started` / `item/completed`（`commandExecution`, `fileChange`, `mcpToolCall`, `webSearch` …）+ `item/commandExecution/outputDelta` |
+| 承認 | `canUseTool` | server request `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval` → response で返す |
+| 質問 | `AskUserQuestion` | `item/tool/requestUserInput` |
+| 中断 | AbortController | `turn/interrupt` |
+| 完了 | `result` | `turn/completed` |
+| 一覧 | `listSessions` | `thread/list`（name, cwd, createdAt, updatedAt, forkedFromId） |
+| 履歴 | `getSessionMessages` | `thread/read {includeTurns:true}` |
+| タイトル | `renameSession` | `thread/name/set` |
+| 状態タグ | `tagSession` | 無し → sidecar |
+| fork | `forkSession` | `thread/fork` |
+| モード | `default/auto/acceptEdits/plan/bypass`（`bypass` は SDK の `bypassPermissions`。`allowDangerouslySkipPermissions: true` を同時に渡す） | `approvalPolicy` × `sandbox` の組を id 化: `ask`(untrusted/workspace-write) / `auto`(on-request/workspace-write) / `full`(never/workspace-write) / `yolo`(never/danger-full-access) / `readonly`(on-request/read-only)。各 turn/start にも承認と sandbox の設定を送る |
+| モデル | fable/opus/sonnet/haiku（SDK のエイリアス。実 ID への解決は SDK） | `model/list` |
+| host ツール | in-process MCP。可視化は共通参照 | 可視化は共通参照（§2.6） |
+| 認証 | Claude Code のログイン | `account/read` / `account/login/start {type:"chatgpt"}` → `authUrl` → `account/login/completed` / `account/logout`。**`~/.codex/auth.json` は codex が書く** |
 
 #### 承認モードの2軸
 
@@ -314,12 +309,9 @@ sidecar 側の `setMode` / `setModel` は `exclusive()` を通す（既存の re
 | Codex | `full` | workspace | never | ✓ |
 | Codex | `yolo` | full | never | – |
 | Codex | `readonly` | readonly | judge | ✓ |
-| procway-code | `always-ask` | workspace | ask | – |
-| procway-code | `auto-readonly` | readonly | judge | – |
-| procway-code | `full-auto` | workspace | never | – |
 | Antigravity | `yolo` | full | never | – |
 
-強制できるのは sandbox を持つ Codex だけ。Claude・procway-code・Antigravity の範囲は宣言であり、
+強制できるのは sandbox を持つ Codex だけ。Claude・Antigravity の範囲は宣言であり、
 超えたことを機械的に止める手段が無い。委譲の規則はこの違いを見て「聞くかどうか」を変える。
 
 Codex の app-server プロトコルは `codex app-server generate-json-schema --out <dir>` で得られる
@@ -371,33 +363,29 @@ Codex の app-server プロトコルは `codex app-server generate-json-schema -
 - **thread/start の応答待ちの間は、見知らぬ `threadId` の frame を預かる。** 応答の id と一致したものだけを、届いた順に新しいセッションへ渡す（`adopt`）。
   残りは捨て、request にはエラーを返す。`threadId` を持たない通知は受け皿に渡さない。
 
-**procway-code の起動パス**は `AGENT_HOST_PROCWAY_CODE`（`cli.mjs` の絶対パス。未指定ならインストール済みの procway-code を使う。テストでは未指定時に `temporary/procway-code/src/cli.mjs` を見る）。
 **codex の実行ファイル**は `AGENT_HOST_CODEX_BIN`（既定 `codex`）。
 **agy の実行ファイル**は `AGENT_HOST_AGY_BIN`（既定 `agy`）。
 **agy の `--print-timeout`** は `AGENT_HOST_AGY_PRINT_TIMEOUT`（既定 `24h`。Go の duration 文字列。§2.8）。
 
-### 2.7 ターンの外: 外部ターンと、会話に残る裏の作業（2026-09）
+### 2.7 ターンの外: 会話に残る裏の作業（2026-09）
 
-Claude は裏の subagent を待つ間ターンを保持する（§2.2 の `phase: waiting`）。procway は違う。
-**裏の子（`spawn_agent` の `runInBackground: true`）を残したままターンを終え、子が終わると procway が自分で次のターン（wake）を始める。**
-Pleiad が送っていないターンと、ターンの外に残る作業を扱うために、server はバックエンドに口を渡す。バックエンド非依存で、
-procway（裏の子と wake ターン）と Codex（バックグラウンド端末、issue #6）が使う。
+Claude は裏の subagent を待つ間ターンを保持する（§2.2 の `phase: waiting`）。Codex は違い、
+**バックグラウンド端末（issue #6）がターンの終わった後も残る。**
+ターンの外に残る作業を扱うために、server はバックエンドに口を渡す。バックエンド非依存で、今は Codex が使う。
 
 ```js
 backend.attachHost?.(host)   // server の起動時に 1 回。wrapBackend の後の各バックエンドに渡す
 host = {
   background(sessionId, tasks),  // その会話でターンの外に残っている裏の作業の全量（tasks は §2.2 background と同じ形）。空で消える
-  externalTurn(sessionId, run),  // バックエンドが自分で始めたターン。Promise<outcome>
   event(sessionId, event),       // ターンの外で起きた、会話に属する正規化イベント
 }
-run({ emit, askPermission, signal, control })  // runTurn と同じ約束: 正規化イベントを emit し、ターンが終わったら resolve する
 
 backend.stopBackground?.(sessionId, taskId)   // その裏の作業を 1 本止める -> { stopped }。WS の stopBackground コマンドから
 backend.getBackgroundTask?.(sessionId, taskId) // WS loadBackground から端末の詳細を読む。停止や再開はしない
 ```
 
 `stopBackground` / `loadBackground` が探す先は 2 つある（server の `findBackgroundTask`）。
-ターンの外に残っているもの（`runtime.background`。procway・Codex）と、**走っているターンが抱えているもの**
+ターンの外に残っているもの（`runtime.background`。Codex）と、**走っているターンが抱えているもの**
 （`turn.info.background`。Claude の `phase: waiting`）。画面はどちらも作業ダイアログの同じ行として並べる。
 
 **Claude の停止**（`core/backends/claude.mjs`、2026-09）: バックグラウンドのコマンドはターンが保持しているので、
@@ -417,52 +405,20 @@ SDK の `perTaskStopAffordance` は**宣言しない**。宣言すると中断�
 
 **会話単位の background**（`setBackground`）:
 - server は `runtime.background` に会話ごとに持ち、`running.background` に載せる。変わったらすぐ `running` を配る。これがある間は 4 秒の定期便も回る
-- `count` には入れない。デスクトップは `count > 0` の間は終了させないが、ターンの外の子は Pleiad から止める口が無い（止められないものに終了を塞がせない）
-- web: ターンが走っていない会話でも、待てるもの（§2.2 の `behindOfTasks`）が 1 本以上あれば衛星（一覧の行・畳んだ見出し・稼働表示「サブエージェントを待っている」）。
-  ターンが走っていればターン行が優先（弧、または Claude の `waiting` なら衛星）。中断は出さない。「動いているもの」に「裏で動いているサブエージェント N」
+- `count` には入れない。デスクトップは `count > 0` の間は終了させない。ターンの外の作業（dev サーバの端末など）に終了を塞がせない
+- web: ターンが走っていない会話でも、待てるもの（§2.2 の `behindOfTasks`）が 1 本以上あれば衛星（一覧の行・畳んだ見出し・稼働表示）。
+  ターンが走っていればターン行が優先（弧、または Claude の `waiting` なら衛星）。中断は出さない。
+  Codex の端末は `kind: "terminal"` で待てるものに数えないので、端末だけなら衛星は出ない（会話ヘッダーの「端末 · 件数」から開く）
 
-**外部ターン**（`externalTurn`）:
-- 同じ会話のターン（準備中を含む）が終わってから登録する（`whenFree`）。登録を待つ間は送信待ちの kick を止める（`pendingExternal`）。
-  そうしないと Pleiad のターンを始めて、相手に撥ねられる
-- 登録した後は Pleiad のターンと同じに扱う: `running` のターン行（`external: true`）、弧、ライブの流れ、live スナップショット（`user` は無い）、
-  承認（その場で聞く）、中断、送信待ち（steer は無いので終わってから送る）、可視化、使用量の記録、`completedAt`、`turnEnd`。
-  失敗しても送信待ちは保留しない（外部ターンの失敗は利用者の送信と関係が無い）。中断は `abort` コマンドが従来どおり保留する
-
-**requeue**（送信とぶつかった）:
-- `runTurn` が `{ requeue: true }` を返したら「相手が Pleiad の送っていないターンを走らせていて、何も届かなかった」
-- server は完了として扱わない: 使用量も `completedAt` も残さない、後続の送信待ちも保留しない。`turnEnd { requeued: true, completedAt: null }` を出す
-- message-queue はその送信を `queued` に戻す。そのターン（外部ターン）が終わると改めて kick される
+**requeue**（送れなかった）:
+- server がターンを始められない（同じ会話が走っている・裏の作業が残っている・同時ターンの上限）とき、委譲の依頼と完了通知は `'requeue'` を返し、
+  後で送り直す（[agent-delegation.md](agent-delegation.md)）
+- バックエンドの `runTurn` が `{ requeue: true }`（相手が別のターンを走らせていて何も届かなかった）を返す口も残っている。今これを返すバックエンドは無い
+- その場合 server は完了として扱わない: 使用量も `completedAt` も残さない、後続の送信待ちも保留しない。`turnEnd { requeued: true, completedAt: null }` を出す
+- message-queue はその送信を `queued` に戻し、会話が空いたら改めて kick する
 - web は出していた吹き出し（`userMessage` の `messageId`）を引っ込め、送信待ちの側に出す（届いてから改めて出る）
 
-**procway での対応**（`core/backends/procway.mjs`、`core/backends/procway-background.mjs`、2026-09、procway-code main eea5ab04 のコード読みと身代わりの serve で確認）:
-- procway の「区切り」は `user.prompt.submitted`（または park した承認の続き）から `turn.completed` / `turn.failed` まで。**同時に 1 本しか走らない**。
-  走っている間は `runTurn` が `{ code: "turn_in_progress" }` で撥ねられ、`approve` は `accepted: false` になる
-- イベントは**接続に常駐する振り分け**（`connect` の `route`）が受ける。Pleiad のターンの間だけ付けるハンドラでは、wake のイベントを全部捨てていた。
-  - `user.prompt.submitted`（wake なし）→ 自分の送信の返りを待っている Pleiad のターン
-  - `user.prompt.submitted`（`wake: true`）→ 受け付け済みの Pleiad のターンがあれば取り込む（承認・質問の待ちの途中に来た wake）。無ければ外部ターン
-  - `approval.resolved` → その承認を聞いた側（続きの区切りはそこへ）。区切りのイベントで持ち主が居なければ外部ターンを起こす
-  - 接続時の `session.resumed.runningTurn === true` → いま走っているものを外部ターンとして受ける
-- Pleiad の送信が `turn_in_progress` で撥ねられた（最初の送信を procway が受け付ける前）、または接続した時点で別の区切りが走っていると分かっている → requeue
-- 承認・質問の回答は、別の区切りが走っている間は送らない（終わってから）。質問の回答を投げ直す途中で wake に撥ねられたら、その区切りの後で投げ直す
-- **wake ターンの承認モード**: wake は `runTurn` の options を持たず、procway の `settings.approvalMode` で走る（WS に変える口は無い）。
-  Pleiad は serve を自前の起動口（`core/procway-serve.mjs`）で起こしているので、その `settings.approvalMode` を Pleiad が選んだモードに合わせる
-  （起動時は `PLY_PROCWAY_RUNTIME`、以後は stdin の 1 行 JSON）。procway の ApprovalCoordinator はツールを止める時点で settings を読むので、
-  次の wake から効く。serve の起動 key には入れない（モードを変えただけで serve を入れ替えると、裏の子が道連れになる）。
-  反映されるのは Pleiad からそのモードでターンを送ったとき（ターンの無い間に承認モードの選択だけを変えても、次の送信までは前のモード）
-- **裏の子の数え方**（`procway-background.mjs`）: 足すのは `tool.call.completed` の `result.kind === "spawn_agent" && data.background === true`（id は `data.jobId`、見出しは `data.task`）。
-  引くのは `agent_job` の結果（status / wait が `running` 以外、jobId が無い、kill、list に running で載っていない）と、wake の本文の
-  `- child agent <jobId> — <status>` の行。**文面は procway の内部仕様**なので読めたものだけ引く。読めない wake で 1 本しか数えていなければそれが終わった
-  （wake 印が付くのは裏の子だけで、Pleiad は run の wake を送らない）
-- 全部消すのは serve が終わった・入れ替わったとき（走っていた job は失われ、settle も wake も来ない）と、**接続が切れたとき**
-  （切れている間に来た wake は見えないので、数えたままにすると印が消えなくなる。0 から数え直す）
-- **裏のシェルは数えない**（`run_shell` の `runInBackground`）。終わったことを知らせる信号が serve に無く（`shell_job` で見に行ったときにしか分からない）、
-  主な用途が dev サーバのような終わらないものなので、数えると印が消えない。Claude も shell は `waiting` に数えない
-- 履歴（`getMessages`）: `wake: true` の user メッセージは発言にしない。直後の返答に `resumed: true` を付ける
-
-**限界**: 子の終わりは wake の文面か、モデルが `agent_job` を呼んだときにしか分からない（2 本以上を数えていて文面が読めなければ、接続断・serve の終了まで残る）。
-シェルの終わりは分からない。正確にするには procway に `jobs.updated` イベントか `listJobs` コマンドを足してもらう（`output/bg-tasks/procway-report.md` §5.3）。
-serve protocol v2（procway の develop、prompt queue）は未対応のまま（`protocolVersion !== 1` は接続を断る）。
-
+procway-code への対応は 2026-09 に終了した（旧会話は読むだけ。`core/backends/index.mjs` の `RETIRED`）。
 
 **Codex での対応**（`core/backends/codex.mjs`、`core/backends/codex-background.mjs`、issue #6）:
 - Codex の `unified_exec`（既定で有効）が起こした端末は、**ターンが終わっても動き続ける**（dev サーバ、`python -m http.server` など）。
@@ -571,7 +527,7 @@ serve protocol v2（procway の develop、prompt queue）は未対応のまま�
 
 | | Antigravity CLI |
 |---|---|
-| プロセス | `agy` のヘッドレス。**1 プロセス = 1 会話**（procway の serve と同じ形。codex / claude の共有 1 プロセスとは違う） |
+| プロセス | `agy` のヘッドレス。**1 プロセス = 1 会話**（codex / claude の共有 1 プロセスとは違う） |
 | 新規 | 引数なしで起動 → `init` の `conversation_id` |
 | 再開 | `--conversation <id>` |
 | 本文 | `step_update` の `step_type: "agent_response"` + `text_delta`（**真のデルタ**） |
@@ -639,7 +595,7 @@ gemini では本体が書いた記録を**読んだ**が、agy には読める�
 - `installation()` は **backend.id で引かれる**ので、`INSTALL_URLS` の鍵も `antigravity` にする。
   実行ファイル名が `agy` だからと鍵を `agy` にすると、`installation("antigravity")` が
   「URL を持たない = 常にインストール済み」になり、**インストール導線が一度も出ない**
-- 実行ファイル名だけが違うので、既定のコマンド名は `{ procway: "procway-code", antigravity: "agy" }` で引く
+- 実行ファイル名だけが違うので、既定のコマンド名は `{ antigravity: "agy" }` で引く
 - Windows のインストーラ（`install.ps1`）は `%LOCALAPPDATA%gyin` へ置き、PATH はそのあと
   `agy install` が書く。**起動済みの Pleiad は PATH の変更を拾えない**ので、
   findExecutable はこの置き場を直接見る。見ないと「入れたのに未インストールのまま」になり、
@@ -648,7 +604,7 @@ gemini では本体が書いた記録を**読んだ**が、agy には読める�
 **孤児の `agy` を残さない**（`core/backends/antigravity-pids.mjs`）:
 1 プロセス = 1 会話なので、Pleiad が落ちると agy が裏に取り残される（前の起動のものが走り続けていた実例あり）。
 
-- サーバ終了時に、生かしている AgySession を全部落とす（`process.once("exit")`。procway と同じ形）。
+- サーバ終了時に、生かしている AgySession を全部落とす（`process.once("exit")`）。
   **`SIGINT` / `SIGTERM` のハンドラは足さない**（server はワーカースレッドでも動くので、既定の終了挙動を変えない）
 - それでは強制終了・クラッシュで取り残されるので、生かしている pid を
   `AGENT_HOST_DATA/antigravity/pids.json` に控え、**次の起動で生き残りを落とす**
@@ -670,9 +626,9 @@ gemini では本体が書いた記録を**読んだ**が、agy には読める�
 
 ### 2.6 host ツールの非対称（v3 の既知の穴）
 
-公開 `present` MCP は廃止した。Claude・Codex・procway 共通の Visualize 参照で表示・保存する。詳細は [可視化仕様](visualize.md)。
+公開 `present` MCP は廃止した。Claude・Codex 共通の Visualize 参照で表示・保存する。詳細は [可視化仕様](visualize.md)。
 Codexの新規・再開スレッドは `config['mcp_servers.ply']`、Claudeは `mcpServers.ply` で接続する。
-Codexの `set_status / set_title / fork` とprocway-codeのhostツールは未接続なので、
+Codexの `set_status / set_title / fork` は未接続なので、
 `capabilities.hostTools: false` は維持する。成果物提示の詳細は [共有仕様](artifact-sharing-investigation.md) を参照。
 
 ## 3. 段階
@@ -681,11 +637,10 @@ Codexの `set_status / set_title / fork` とprocway-codeのhostツールは未�
 |---|---|---|
 | **P1** | `AgentBackend` 導入。Claude 実装を `core/backends/claude.mjs` へ移す。正規化イベント + プロトコル v2。`web/client.mjs` の `onSdk` を正規化ハンドラに置き換え。`fake` バックエンドで **LLM 無しに server 全体をテスト**。sidecar 拡張。web に backend 選択（新規時）と一覧の backend 表示、capabilities による出し分け（fork / suggestTitle / subagents / 常に許可） | `npm test` に server 経由の unit を足す。既存 e2e が通る |
 | **P2a** | `core/backends/codex.mjs`（app-server クライアント）+ 認証 UI（`authStatus` / `authLogin` / `authLogout` コマンド、`auth` イベント） | fake の app-server 相当をテストで stub。実機で 1 ターン |
-| **P2b** | `core/backends/procway.mjs`（serve クライアント。`ws` を使う）+ `core/auth/openai-codex-oauth.mjs` の移植（MIT、LICENSE 同梱）と auth-profiles.json 書き込み | procway-code の serve をテストで spawn |
 | **P3** | host ツールの MCP ブリッジ（§2.6） | — |
 | **P4** | `core/backends/antigravity.mjs` + `antigravity-cli.mjs`（ヘッドレスの stream-json）+ `antigravity-store.mjs`（Pleiad が控える一覧と履歴）。§2.8 | agy の身代わり（`tests/lib/fake-agy.mjs`）と話す `tests/unit/server-antigravity.mjs`。実機の 1 ターンは Google のログインが要るので未実施 |
 
-P2a と P2b は独立なので並行。P1 が土台。
+P1 が土台。
 
 ## 4. 変えないこと
 

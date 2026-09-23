@@ -47,13 +47,11 @@ Node integration 無効、context isolation と sandbox 有効。公開するIPC
 | WSL内にだけCLIがある | Windows側のインストールを案内 | WSLの自動橋渡しは未対応 |
 
 インストール先: [Codex公式](https://developers.openai.com/codex/cli/)、
-[Claude Code公式](https://code.claude.com/docs/en/setup)、
-[Procway Code GitHub](https://github.com/tekalu1/procway-code)。
+[Claude Code公式](https://code.claude.com/docs/en/setup)。
 Claudeは [公式CLI](https://code.claude.com/docs/en/cli-reference) の `auth status --json` / `auth login` / `auth logout` を使用する。
 認証トークンをアプリで抽出・複製しない。ログイン中の重複実行を拒否し、10分で時間切れにする。
 
-独自CLI: `AGENT_HOST_CLAUDE_BIN`、`AGENT_HOST_CODEX_BIN`、`AGENT_HOST_PROCWAY_CODE`（cli.mjsの絶対パス）。
-Procwayの旧開発機固定パスを廃止し、通常はPATH上の `procway-code` を使う。
+独自CLI: `AGENT_HOST_CLAUDE_BIN`、`AGENT_HOST_CODEX_BIN`。
 
 ## 利用開始後の業務パターン
 

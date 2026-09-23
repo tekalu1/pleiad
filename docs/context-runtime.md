@@ -14,7 +14,7 @@
 
 ### 新しい内容で会話を続ける（`refreshContext`）
 
-送信を待たずに**今すぐ**最新の内容を読み込み直す操作（次の送信でも自動で読み込み直すので、右パネルで内容を確かめてから反映したいとき用）。今までのやり取りは引き継ぐ。会話の方針（担当・探索の計画）はそのままに、今のファイルで解き直して pin と記録を取り直し、`policy.refreshedAt` を残す。次のターンから新しい指示がバックエンドの指示欄（Claude の append・Codex の developerInstructions・procway のセッション rules）に渡る。MCP の行は次のターンでつなぎ直すまで直前のターンの様子を残す。返答中は受け付けない（ターンの終わりに古い記録で上書きされるため）。
+送信を待たずに**今すぐ**最新の内容を読み込み直す操作（次の送信でも自動で読み込み直すので、右パネルで内容を確かめてから反映したいとき用）。今までのやり取りは引き継ぐ。会話の方針（担当・探索の計画）はそのままに、今のファイルで解き直して pin と記録を取り直し、`policy.refreshedAt` を残す。次のターンから新しい指示がバックエンドの指示欄（Claude の append・Codex の developerInstructions）に渡る。MCP の行は次のターンでつなぎ直すまで直前のターンの様子を残す。返答中は受け付けない（ターンの終わりに古い記録で上書きされるため）。
 
 既存の仕組みとの関係: fork（分岐）は元の会話の `contextSession` を引き継ぐので、分岐した直後の pin は古いまま。バックエンドの切り替え（引き継ぎ）も方針と pin を保つ。どちらも次の送信で自動的に読み込み直される。
 
@@ -54,30 +54,28 @@ console.log(await pinChanges(all['<sessionId>'].contextSession, {}));
 
 Skills は名前・説明・ID・元のディレクトリのみを一覧として渡す。`load_skill` は選択済み ID のファイルを必要時に読み、**そのときの本文**を返して記録の行のハッシュを渡した内容へ直す（開始時と違っても止めない。固定しているのはカタログだけなので、本文の編集はそのまま次の読み込みに効く）。スクリプト・参照は元のディレクトリを基準にし、コピーは作らない。ツール権限は緩和しない。`disable-model-invocation` はユーザーの依頼に `$名前` があるターンだけ公開。`context: fork` などネイティブ固有の実行設定は適用したことにせず、未対応として記録し公開しない。
 
-`instructions_for_path` と `load_skill` は、同じ会話で渡し済みの本文を繰り返さない。渡した本文のハッシュを行の id ごとに `contextSession.delivered`（`{ backend, entries }`）へ残してターンをまたいで持ち越し、同じ本文なら `Already provided in this conversation: <パス> (scope: …). Not repeated. …` の一行だけを返す（記録の行は `loaded` のまま、`calls` に頼まれた回数）。ファイルが変わっていれば本文を「変わった」の一言付きで渡し直し、`full: true` なら必ず本文を返す。控えを捨てる（次は本文を渡し直す）のは、文脈の圧縮（Claude の `activity: compacting`、procway の `compact.started`）、履歴を引き継ぎの文で渡し直すターン（バックエンドの切り替え・ホスト側で写した分岐の最初のターン。`pendingHandoff`）、「新しい内容で会話を続ける」、編集して再送信（`fork` の `beforeMessageId`）。Codex・antigravity の圧縮は Pleiad から見えないので、エージェントが `full: true` で取り直す。**控えは指示欄のプロンプト（`contextTools` の `prompt`）に一切影響させない**。ファイルが同じならプロンプトはターンをまたいで同じバイト列のままにし、prompt caching を外さない（変わるのは末尾に積まれるツールの返りだけ）。
+`instructions_for_path` と `load_skill` は、同じ会話で渡し済みの本文を繰り返さない。渡した本文のハッシュを行の id ごとに `contextSession.delivered`（`{ backend, entries }`）へ残してターンをまたいで持ち越し、同じ本文なら `Already provided in this conversation: <パス> (scope: …). Not repeated. …` の一行だけを返す（記録の行は `loaded` のまま、`calls` に頼まれた回数）。ファイルが変わっていれば本文を「変わった」の一言付きで渡し直し、`full: true` なら必ず本文を返す。控えを捨てる（次は本文を渡し直す）のは、文脈の圧縮（Claude の `activity: compacting`）、履歴を引き継ぎの文で渡し直すターン（バックエンドの切り替え・ホスト側で写した分岐の最初のターン。`pendingHandoff`）、「新しい内容で会話を続ける」、編集して再送信（`fork` の `beforeMessageId`）。Codex・antigravity の圧縮は Pleiad から見えないので、エージェントが `full: true` で取り直す。**控えは指示欄のプロンプト（`contextTools` の `prompt`）に一切影響させない**。ファイルが同じならプロンプトはターンをまたいで同じバイト列のままにし、prompt caching を外さない（変わるのは末尾に積まれるツールの返りだけ）。
 
 ## MCP
 
-公式 TypeScript SDK のクライアントで stdio / Streamable HTTP / SSE に接続する。Claude・Codex・procway の既存登録を読み、command / args / cwd / env、URL / headers、Codex の環境変数ヘッダー・bearer token 環境変数をメモリ内で解決する。環境変数参照は `${VAR}` / `${VAR:-fallback}` / `${env:VAR}` に対応。Codex の enabled_tools / disabled_tools を反映する。不明な設定を黙って落とさずエラーにする。
+公式 TypeScript SDK のクライアントで stdio / Streamable HTTP / SSE に接続する。Claude・Codex の既存登録を読み、command / args / cwd / env、URL / headers、Codex の環境変数ヘッダー・bearer token 環境変数をメモリ内で解決する。環境変数参照は `${VAR}` / `${VAR:-fallback}` / `${env:VAR}` に対応。Codex の enabled_tools / disabled_tools を反映する。不明な設定を黙って落とさずエラーにする。
 
 接続はターンごとに1回。つながらない 1 件（要ログイン・起動失敗・接続失敗）はその場で外して会話を進め、状態と理由を記録する（`connected` / `needs-auth` / `failed`）。サーバー数32、公開ツール500（超える 1 件は外す）、初期接続の待機は最大60秒。同じ名前の外部 MCP が複数あるときは、設定で選んだ定義（`prefer`）、無ければ先に見つかった方を使い、残りは `shadowed`（`shadowedBy: 'choice'`）にする。Pleiad に登録した同名があれば Pleiad の登録が優先（`shadowedBy: 'ply'`）。終了・中断時に接続を閉じる。Pleiad と各バックエンド間の接続は `/mcp/context`。ターン限定のランダムな資格情報で認証し、別会話からの利用や終了後の利用を拒否する。サーバー名・ツール名の衝突を避けるため安定した ID を使い、説明には元の名前を添える。
 
 ツールに加えて resources / prompts の一覧・取得を中継する。ツールしか使わないバックエンドにも `mcp_resources` / `mcp_prompts` で提供する。外部 MCP の stdout / stderr や認証値を利用記録には保存しない。認証が要る MCP は Pleiad に登録して Pleiad でログインする（OAuth 2.1: 保護リソースメタデータ・認可サーバーの探索、動的クライアント登録、PKCE、リフレッシュ。トークンは OS の鍵の保管庫で暗号化して保存。詳細は `core/mcp-oauth.mjs` の先頭のコメントと `docs/context-management.md`「外部 MCP の画面」）。エージェントのネイティブ登録の OAuth 設定や、他クライアントが持つトークン保管庫は読まない（「Pleiad に取り込む」で登録を写し、Pleiad でログインし直す）。ネイティブ登録の HTTP MCP が 401 を返したときは `needs-auth` とし、取り込みを案内する。sampling・elicitation・タスク・リソース購読は共通接続のクライアント能力として宣言しない。
 
-Claude・procway はネイティブの承認経路を使う。Codex の共通 MCP は Pleiad 側で外部ツール呼び出しを承認し、full / yolo のみ確認を省略する。ask / auto / readonly は呼び出しごとに元のサーバー名・ツール名・引数を表示して確認する。共通の指示・Skill 読み込みツールは選択済みファイルの読み取りだけを行う。
+Claude はネイティブの承認経路を使う。Codex の共通 MCP は Pleiad 側で外部ツール呼び出しを承認し、full / yolo のみ確認を省略する。ask / auto / readonly は呼び出しごとに元のサーバー名・ツール名・引数を表示して確認する。共通の指示・Skill 読み込みツールは選択済みファイルの読み取りだけを行う。
 
 ## バックエンドの抑止
 
-| 対象 | Claude | Codex | procway-code |
-|---|---|---|---|
-| 指示 | claudeMdExcludes、autoMemoryEnabled=false | project_doc_max_bytes=0 | instructionScanners=[]、ネイティブ rules を置換 |
-| Skills | skills=[]、disable-slash-commands、Skill を非公開 | 発見済み SKILL.md の skills.config.enabled=false | skillScanners=[] |
-| MCP | strictMcpConfig=true | ネイティブ登録を無効なプレースホルダーに置換 | 明示 registry でネイティブ・配布由来の MCP を置換 |
-| 指示の注入 | claude_code preset append | thread developerInstructions | セッション rules |
+| 対象 | Claude | Codex |
+|---|---|---|
+| 指示 | claudeMdExcludes、autoMemoryEnabled=false | project_doc_max_bytes=0 |
+| Skills | skills=[]、disable-slash-commands、Skill を非公開 | 発見済み SKILL.md の skills.config.enabled=false |
+| MCP | strictMcpConfig=true | ネイティブ登録を無効なプレースホルダーに置換 |
+| 指示の注入 | claude_code preset append | thread developerInstructions |
 
-Claude は設定ソースと権限を保持し、Pleiad 管理時は初期化結果を確認するまでユーザー入力を送らない。Codex は管理対象のターン専用 app-server を作り、共有 RPC や他会話の設定を書き換えない。Skills または MCP の共通管理では plugins を無効にするため、その影響を設定画面に明示する。procway は会話専用の子プロセスで元のネイティブ sessionFactory と同等の再開情報を引き継ぎ、MCP 管理時は配布元由来の登録の自動追加も止める。元の設定ファイルを書き換える抑止は行わない。
-
-procway-code は MCP がエージェント任せのときも、エージェント側に同名の登録がある MCP に限り、接続先と認証を Pleiad の登録で差し替える（`core/procway-mcp.mjs` の `withPlyCredentials`。資格情報は会話ごとのトークンで `/mcp/credentials` から引き、401 のたびに引き直す）。Pleiad にだけ登録した MCP は足さない。
+Claude は設定ソースと権限を保持し、Pleiad 管理時は初期化結果を確認するまでユーザー入力を送らない。Codex は管理対象のターン専用 app-server を作り、共有 RPC や他会話の設定を書き換えない。Skills または MCP の共通管理では plugins を無効にするため、その影響を設定画面に明示する。元の設定ファイルを書き換える抑止は行わない。
 
 Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad の置き場の `.agents/agents/ply-context/agent.md`、`--add-dir <置き場> --agent ply-context`）で Pleiad のコンテキストを受け取る（`core/backends/antigravity-context.mjs`）。本文に指示と Skills の一覧、`mcpServers` に ply_context への stdio 中継（`core/agy-context-relay.mjs`）を書き、Skills・MCP がエージェント担当なら `inheritCustomizations` / `inheritMcp` で agy 自身の読み込みを残す。カスタムエージェントはワークスペースの AGENTS.md・GEMINI.md を読まないため、**指示も Pleiad 担当のときだけ**受け取る。指示がエージェント担当のまま Skills か MCP だけを Pleiad にした組み合わせは、その会話をエージェント任せにして理由を記録に残す（`guardedBackend` / `reason`。設定画面の Skills・MCP のカードと会話の右パネルにも出る）。
 
@@ -92,4 +90,4 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 - `node tests/manual/context-runtime-probe.mjs`：インストール済み3バックエンドの初期化・抑止を検証。モデルへの送信なし。
 - `npm run test:e2e -- context-runtime`：3バックエンドの実サービスで共通指示・Skills・MCP の往復を確認。
 
-一次資料：[Claude SDK](https://platform.claude.com/docs/en/agent-sdk/typescript)、[Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference)、[Agent Skills](https://agentskills.io/client-implementation/adding-skills-support)、[MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk/tree/v1.x)、procway-code のインストール済み `context/scanner-config.mjs`・`mcp/registry.mjs`・`adapters/serve/server.mjs`。
+一次資料：[Claude SDK](https://platform.claude.com/docs/en/agent-sdk/typescript)、[Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference)、[Agent Skills](https://agentskills.io/client-implementation/adding-skills-support)、[MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk/tree/v1.x)。
