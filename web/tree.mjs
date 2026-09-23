@@ -8,6 +8,7 @@
 // フォーカスは tree 1 つだけ（roving tabindex は持たない）。行が何百あっても tab 1 回で抜けられる。
 // 今いる行は aria-activedescendant で支援技術に伝え、見た目は選択と同じ白い面で示す。
 import { el, svgEl } from "./dom.mjs";
+import { t } from "./i18n.mjs";
 
 let seq = 0;
 
@@ -28,7 +29,7 @@ function chevron() {
  *          onContext?:(node:any, x:number, y:number, row:HTMLElement)=>void}} opts
  *   onContext は行のメニュー。右クリック・ContextMenu キー・Shift+F10 で呼ぶ（行は選ぶが onSelect は呼ばない）
  */
-export function createTree(root, { nodes = [], open = [], empty = "一致なし", render, onSelect, onOpen, onContext } = {}) {
+export function createTree(root, { nodes = [], open = [], empty = t("common.noMatch"), render, onSelect, onOpen, onContext } = {}) {
   const prefix = `tree${++seq}`;
   const opened = new Set(open);                       // 開いている節の id。呼び出し側が state() で持ち出せる
   const parents = new Map(), rows = new Map(), byId = new Map();
