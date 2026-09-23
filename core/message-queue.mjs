@@ -95,6 +95,15 @@ export function createMessageQueue({ store, active, start, changed, delivered })
   return {
     get busy() { return locks.size > 0; },
     list: id => serial(id, async () => view(id, await list(id))), kick, pause,
+    // ターンは始めたが、バックエンドがプロンプトを渡す前に失敗した。送っていないので失敗として残し、再送か取り消しを選ばせる
+    undelivered: (id, messageId, error) => serial(id, async () => {
+      const items = await list(id);
+      const item = items.find(m => m.id === messageId);
+      if (!item || item.status !== 'sent') return;
+      item.status = 'failed';
+      item.error = error;
+      await save(id, items);
+    }),
     // 受理された途中送信が、読まれないまま捨てられた。勝手に送り直さず、保留にして利用者に選ばせる
     // （ターンが死んだ直後なので、続けて送ってよいかは分からない）
     returned: (id, messageId) => serial(id, async () => {
