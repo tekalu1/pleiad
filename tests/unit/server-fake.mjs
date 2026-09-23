@@ -211,6 +211,29 @@ export default async function (t) {
     t.ok("削除すると空のグループは消える",
       !(await c.cmd("listStatuses")).some((s) => s.status === "レビュー済み"));
 
+    // 進み具合は各行の保存後に届き、完了の status イベントより前に並ぶ。
+    const progressA = (await c.cmd('newSession', { backend: 'fake', cwd: ROOT })).sessionId;
+    const progressB = (await c.cmd('newSession', { backend: 'fake', cwd: ROOT })).sessionId;
+    await c.cmd('setStatus', { sessionId: progressA, status: '進捗テスト' });
+    await c.cmd('setStatus', { sessionId: progressB, status: '進捗テスト' });
+    const renameAt = c.mark();
+    const renameResult = await c.cmd('renameStatus', { from: '進捗テスト', to: '進捗確認' });
+    const renameEvents = c.since(renameAt);
+    const renameSteps = renameEvents.filter(e => e.type === 'statusProgress');
+    t.ok('状態名の変更は 1 件ごとの進み具合を出す', renameResult.moved === 2
+      && JSON.stringify(renameSteps.map(e => [e.from, e.to, e.done, e.total]))
+        === JSON.stringify([['進捗テスト', '進捗確認', 1, 2], ['進捗テスト', '進捗確認', 2, 2]]));
+    t.ok('変更の進み具合は完了イベントより前に届く', renameEvents.findIndex(e => e.type === 'statusProgress' && e.done === 2)
+      < renameEvents.findIndex(e => e.type === 'status' && e.bulk === 2));
+    const deleteAt = c.mark();
+    const deleteResult = await c.cmd('renameStatus', { from: '進捗確認', to: '' });
+    const deleteEvents = c.since(deleteAt);
+    t.ok('状態の削除も 1 件ごとの進み具合を出す', deleteResult.moved === 2
+      && JSON.stringify(deleteEvents.filter(e => e.type === 'statusProgress').map(e => [e.to, e.done, e.total]))
+        === JSON.stringify([['', 1, 2], ['', 2, 2]]));
+    await c.cmd('deleteUnsentSession', { sessionId: progressA });
+    await c.cmd('deleteUnsentSession', { sessionId: progressB });
+
     // ---- 新規セッションに最初から状態を付ける（runTurn の status）
     const tagged = await c.runTurn(
       { prompt: "echo:引き継ぎ", sessionId: null, cwd: ROOT, backend: "fake", status: "レビュー待ち" },
