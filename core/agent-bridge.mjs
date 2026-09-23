@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
 export const AGENTS_MCP_PATH = '/mcp/agents';
-export const AGENT_INSTRUCTIONS = `Pleiad delegation tools (ply_agents MCP): use ply_delegate with an explicit backend (claude, codex, antigravity) to create a Pleiad-managed child conversation. This is distinct from native spawn_agent / agent_job / Agent and their IDs. Use only ply_task_* with ply-task- IDs. ply_delegate returns immediately; Pleiad delivers completion results to this conversation in a later turn. You may continue other work or finish your response. ply_task_wait waits at most 30 seconds, and returns as soon as the child is waiting for a human approval (status: waiting); then tell the user which conversation holds the approval instead of waiting again. ply_task_send queues an additional instruction on the same child conversation. Pass the necessary task context explicitly; private reasoning and the parent transcript are not copied. cwd defaults to this conversation's workspace; use separate worktrees for concurrent edits. Do not delegate again merely to acknowledge a task completion. Use delegation only when authorized by the user's task and applicable instructions.`;
+export const AGENT_INSTRUCTIONS = `Pleiad delegation tools (ply_agents MCP): use ply_delegate with an explicit backend (claude, codex, antigravity) to create a Pleiad-managed child conversation. This is distinct from native spawn_agent / agent_job / Agent and their IDs. Use only ply_task_* with ply-task- IDs. ply_delegate returns immediately; Pleiad delivers completion results to this conversation in a later turn. You may continue other work or finish your response. ply_task_wait waits at most 30 seconds, and returns as soon as the child is waiting for a human approval (status: waiting); then tell the user which conversation holds the approval instead of waiting again. ply_task_send queues an additional instruction on the same child conversation. Pass the necessary task context explicitly; private reasoning and the parent transcript are not copied. cwd defaults to this conversation's workspace; use separate worktrees for concurrent edits. ply_usage reads each backend's quota usage (read-only, up to 60 seconds old); check it before heavy or parallel delegation. Do not delegate again merely to acknowledge a task completion. Use delegation only when authorized by the user's task and applicable instructions.`;
 const str = { type: 'string' };
 const tool = (name, description, properties, required = []) => ({ name, description, inputSchema: { type: 'object', properties, required, additionalProperties: false } });
 export const AGENT_TOOLS = [
@@ -11,7 +11,11 @@ export const AGENT_TOOLS = [
   tool('ply_task_send', 'Queue an additional instruction for the same Pleiad child conversation, including after completion.', { taskId: str, message: str }, ['taskId', 'message']),
   tool('ply_task_cancel', 'Cancel a Pleiad task and its descendant Pleiad tasks.', { taskId: str }, ['taskId']),
   tool('ply_task_list', 'List only the Pleiad tasks created by this conversation. Does not list native subagent jobs.', {}),
+  tool('ply_usage', 'Read subscription quota usage (usedPercent, resetsAt) per backend, or all usable backends when backend is omitted. Call before heavy or parallel delegation and avoid backends that are close to their limit. Values may be up to 60 seconds old.', { backend: str }),
 ];
+// 子タスクを始める・動かすツール。読み取り・計画モードの会話からは呼ばせない（core/server.mjs）。
+// ply_usage や ply_task_status などの読むだけのツールは含めない
+export const DELEGATING_TOOLS = ['ply_delegate', 'ply_task_send'];
 
 // Dedicated, stable names: never remap these tools through the external-MCP hash bridge.
 export function createAgentBridge({ call }) {

@@ -79,6 +79,43 @@ export function createQuotaCache({ now = Date.now, ttl = 60_000 } = {}) {
   return read;
 }
 
+// エージェント（ply_usage）へ渡す使用枠。委譲先を選ぶ判断に要る分だけに絞る（残率・期間の分・ローカル実績は落とす）。
+// Claude のアカウントの見出しは人が付けた表示名なので、メールアドレスを書いていることがある。
+// 会話へそのまま流さないよう、ローカル部を1文字だけ残して伏せる（見出しとして見分けは付く）
+const maskEmail = text => typeof text === 'string' ? text.replace(/([^\s@<>()"'「」（）]?)[^\s@<>()"'「」（）]*@([^\s@<>()"'「」（）]+\.[A-Za-z]{2,})/g, '$1***@$2') : null;
+// 使用率は小数第 1 位まで（残率から逆算した 9.999999999999998 のような端数を渡さない）
+const percent = value => number(value) == null ? null : Math.round(value * 10) / 10;
+// リセット時刻を過ぎた枠の使用率は今の値ではない。画面（web/usage.mjs）と同じく不明（null）として渡す
+const expired = (w, now) => w.resetsAt != null && new Date(w.resetsAt).getTime() <= now;
+export function compactQuota(quota, now = Date.now()) {
+  const windows = list => (Array.isArray(list) ? list : []).map(w => ({ label: maskEmail(w.label),
+    usedPercent: expired(w, now) ? null : percent(w.usedPercent), resetsAt: w.resetsAt ?? null }));
+  return { plan: quota?.plan ?? null, windows: windows(quota?.windows),
+    ...(Array.isArray(quota?.accounts) ? { accounts: quota.accounts.map(a => ({ label: maskEmail(a.label), plan: a.plan ?? null, windows: windows(a.windows), message: maskEmail(a.message) })) } : {}),
+    checkedAt: iso(quota?.checkedAt), message: maskEmail(quota?.message) };
+}
+
+/**
+ * ply_usage の本体。backend を省けば使用枠を読めるバックエンドすべて。
+ * read は providerUsage と同じ取得（同じ quotaCache を通す）。1 つが失敗しても他は返す
+ */
+export async function agentUsage({ backend, list, get, read }) {
+  let targets;
+  if (backend === undefined) targets = list().filter(b => b.usage);
+  else {
+    const found = typeof backend === 'string' ? get(backend) : null;
+    if (!found) throw new Error(`知らないバックエンドです: ${String(backend)}（使えるもの: ${list().map(b => b.id).join(', ')}）`);
+    targets = [found];
+  }
+  const backends = await Promise.all(targets.map(async b => {
+    let quota;
+    try { quota = await read(b); }
+    catch { quota = { windows: [], checkedAt: null, message: '取得に失敗しました。' }; }
+    return { backend: b.id, label: b.label, ...compactQuota(quota) };
+  }));
+  return { backends };
+}
+
 export function createUsageStore(dir, { now = Date.now } = {}) {
   const file = path.join(dir, 'usage.json');
   let writes = Promise.resolve();
