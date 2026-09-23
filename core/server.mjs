@@ -118,7 +118,8 @@ process.on('exit', () => claudeLogin.cancelAll());
 const compatSecrets = createSecretStore({ file: path.join(store.dataDir, 'compat-endpoint-secrets.json'), cipher: secretCipher });
 compatSecrets.migrate().catch(() => {});
 const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets: compatSecrets });
-sweepClaudeFlagSettings(store.dataDir).catch(() => {});
+// 同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、走っている会話のファイルは消さない（1 日より古いものだけ）
+sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000 }).catch(() => {});
 const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.dataDir, 'mcp-locks'),
   // Client ID Metadata Document の URL（設定値。既定は無し。公開する文書のひな形は docs/mcp-oauth-client-metadata.json）
   clientMetadataUrl: async () => (await plyMcp.settings().catch(() => ({}))).clientMetadataUrl ?? undefined,
@@ -1068,7 +1069,9 @@ agentTasks = await createAgentTasks({
     // 接続先（決定 3）: 同じエージェントへの委譲なら親の会話の接続先を継ぐ。違うエージェントへは公式に戻す（形式が合わない）
     const parentEndpoint = (await store.get(owner)).compatEndpoint ?? '';
     const inherited = endpointCapable(backend) ? delegatedEndpoint(parent.backend?.id, backend.id, parentEndpoint) : '';
-    const endpoint = inherited && await compatEndpoints.has(inherited, backend.id) ? inherited : '';
+    // 継ぐべき接続先が消えていたら委譲を断る（黙って公式で走らせない）
+    if (inherited && !(await compatEndpoints.has(inherited, backend.id))) throw new Error('依頼元の会話の接続先は削除されています。依頼元の会話で接続先を選び直してください');
+    const endpoint = inherited;
     const model = await resolveModel(null, args.model, backend, cwd, endpoint);
     const effort = await resolveEffort(null, args.effort, backend, model, cwd, await endpointRow(endpoint));
     // 承認モードは委譲を受け付けた側（agentBridge の call）が親の強さから決めてある。
@@ -1714,7 +1717,9 @@ wss.on("connection", (ws) => {
           const work = (settingsWrites.get(sessionId) ?? Promise.resolve()).catch(() => {}).then(async () => {
             const source = refuseRetired(await resolveBackendForSession(sessionId));
             if (!source) throw new Error("セッションが見つかりません");
-            const current = await store.get(sessionId);
+            const current = { ...(await store.get(sessionId)) };
+            // 予約の行き先が今は無いエージェント（対応を終えた procway など）なら、予約は無かったものとして扱う（取り消し・選び直しができるように）
+            if (current.nextSettings?.backend && !getBackend(current.nextSettings.backend)) current.nextSettings = null;
             const target = getBackend(targetId ?? current.nextSettings?.backend ?? source.id);
             if (!target) throw new Error("エージェントが見つかりません");
             const selectedMode = mode ?? (target.id === (current.nextSettings?.backend ?? source.id)
@@ -1813,6 +1818,8 @@ wss.on("connection", (ws) => {
             const target = getBackend(targetId);
             if (!source || !target) throw new Error("エージェントが見つかりません");
             await switchBackend(sessionId, source, target);
+            // 接続先はエージェントごとの形式なので、エージェントが変わったら変えた先の既定（「既定にする」を押したもの。無ければ公式）に置き直す
+            if (source.id !== target.id) await store.setSessionData(sessionId, 'compatEndpoint', endpointCapable(target) ? await compatEndpoints.defaultFor(target.id) : '');
             await savePref("backend", target.id);
             emitGlobal({ type: "backend", sessionId, backend: target.id });
             return reply(true, { sessionId, backend: target.id });

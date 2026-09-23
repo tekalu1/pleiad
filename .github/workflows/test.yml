@@ -32,9 +32,8 @@ jobs:
           # 下限（engines の node>=20.19）と最新。プラットフォーム非依存の壊れ方は実績上ここで捕まる
           - { os: ubuntu-latest, node: "20" }
           - { os: ubuntu-latest, node: "24" }
-          # Windows は 1 本だけ残す。core/auth/secret-protection.mjs（powershell 経由の DPAPI）は
-          # win32 でしか実行されず、Linux では throw して環境変数キー経路へ逃げる。main の push と PR で
-          # これを自動で通すのはこのジョブだけ（evaluation-release.yml も Windows で npm test を回すが、
+          # Windows は 1 本だけ残す。Windows 固有の経路（パス・ファイルの掴み合い・疑似端末など）を
+          # main の push と PR で自動で通すのはこのジョブだけ（evaluation-release.yml も Windows で npm test を回すが、
           # 発火は beta タグのみ）。
           # node 24 ではなく 20 を残す理由: リリースは node 22、開発機は node 24 なので、
           # 20 × Windows はここを外すとどこでも検証されなくなる。

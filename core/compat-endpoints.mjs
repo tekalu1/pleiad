@@ -472,7 +472,9 @@ export function createCompatEndpoints({ dataDir, secrets, fetchImpl = fetch, loo
       });
     },
     async defaultFor(agent) {
-      const data = await read();
+      // 一覧のファイルが読めなくても、新しい会話とエージェントの切り替えは公式で続けられるようにする（resolve は今どおり止める）
+      const data = await read().catch(() => null);
+      if (!data) return '';
       const id = data.defaults[agent] ?? '';
       return id && data.endpoints.some(e => e.id === id && e.agent === agent) ? id : '';
     },
@@ -531,6 +533,12 @@ export function claudeCompatVars(endpoint) {
     ANTHROPIC_DEFAULT_HAIKU_MODEL: r.haiku || main,
     ANTHROPIC_DEFAULT_FABLE_MODEL: r.opus || main,
     ANTHROPIC_SMALL_FAST_MODEL: r.haiku || main,
+    // 利用者・プロジェクトの settings.json の env から効く、資格情報を載せたり別の宛先へ送ったりする値は空で打ち消す
+    // （社内ゲートウェイの認証ヘッダーなどを第三者の接続先へ送らない）
+    ANTHROPIC_CUSTOM_HEADERS: '',
+    ANTHROPIC_BETAS: '',
+    ANTHROPIC_BEDROCK_BASE_URL: '', ANTHROPIC_VERTEX_BASE_URL: '', ANTHROPIC_FOUNDRY_BASE_URL: '', ANTHROPIC_FOUNDRY_API_KEY: '', ANTHROPIC_FOUNDRY_AUTH_TOKEN: '',
+    ANTHROPIC_AWS_BASE_URL: '', ANTHROPIC_AWS_API_KEY: '',
     CLAUDE_CODE_SUBAGENT_MODEL: '',
     // 非 Anthropic の先で 400 になりやすい beta・余計な通信・帰属ブロックを止める（research §5-8）
     CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',

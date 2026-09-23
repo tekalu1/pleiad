@@ -1306,12 +1306,23 @@ export const backend = {
         // 外さずに resume すると前の接続先のまま走る（スパイクで確認）
         const known = rpc === nativeRpc ? loadedProvider.get(threadId) : undefined;
         if (known !== undefined && known !== providerKey) {
-          await rpc.request('thread/unsubscribe', { threadId }).catch(() => {});
+          // 外せなかったら、この後の resume は接続先の変更を黙って無視する。前の接続先へ送らないよう、ここで止める
+          const out = await rpc.request('thread/unsubscribe', { threadId }).catch(e => ({ error: e }));
+          if (out?.error || !['unsubscribed', 'notLoaded', 'notSubscribed'].includes(out?.status)) {
+            throw new Error(`接続先を切り替えられませんでした（codex が会話を外せませんでした: ${out?.error?.message ?? out?.status ?? '応答なし'}）。裏で動いている端末があれば止めてから、もう一度送ってください`);
+          }
           loadedProvider.delete(threadId);
         }
         // 互換から公式へ戻すときは公式の provider を明示する（スレッドに記録された互換の provider を使わせない）
         const back = !compat && known !== undefined && known !== 'default' ? { modelProvider: await defaultProvider(rpc, cwd) } : {};
         const resumed = await rpc.request("thread/resume", { threadId, ...common, ...back });
+        // 実際に効いた接続先を確かめる。違えばターンを始めない（互換の会話が公式へ、公式へ戻した会話が互換の先へ送られるのを防ぐ）
+        const expected = compat ? compat.modelProvider : back.modelProvider;
+        if (expected && typeof resumed?.modelProvider === 'string' && resumed.modelProvider !== expected) {
+          // 実際にロードされている接続先を覚えておく（次の送信でもう一度外してから読み直す）
+          if (rpc === nativeRpc) loadedProvider.set(threadId, resumed.modelProvider.startsWith('ply_') ? resumed.modelProvider : 'default');
+          throw new Error(`接続先を切り替えられませんでした（codex が前の接続先のまま会話を読み込みました）。裏で動いている端末があれば止めてから、もう一度送ってください`);
+        }
         effectiveSandbox = resumed?.sandbox;
         if (rpc === nativeRpc && !ephemeral) loadedProvider.set(threadId, providerKey);
       } else {

@@ -26,7 +26,11 @@ export default async function (t) {
   const claudeDir = path.join(scratch, "claude"), codexHome = path.join(scratch, "codex"), work = path.join(scratch, "work"), data = path.join(scratch, "data");
   await Promise.all([claudeDir, codexHome, work, data].map(d => fs.mkdir(d, { recursive: true })));
   // 利用者の settings.json に別の接続先が書いてある（勝たせてはいけない）
-  await fs.writeFile(path.join(claudeDir, "settings.json"), JSON.stringify({ env: { ANTHROPIC_BASE_URL: wrong.url, ANTHROPIC_AUTH_TOKEN: "sk-user-settings-token", ANTHROPIC_MODEL: "user-settings-model" } }));
+  // 社内ゲートウェイの認証ヘッダー（ANTHROPIC_CUSTOM_HEADERS）も、利用者とプロジェクトの settings に書いてある（互換の接続先へは送らない）
+  await fs.writeFile(path.join(claudeDir, "settings.json"), JSON.stringify({ env: { ANTHROPIC_BASE_URL: wrong.url, ANTHROPIC_AUTH_TOKEN: "sk-user-settings-token", ANTHROPIC_MODEL: "user-settings-model",
+    ANTHROPIC_CUSTOM_HEADERS: "x-gateway-key: sk-user-gateway-secret" } }));
+  await fs.mkdir(path.join(work, ".claude"), { recursive: true });
+  await fs.writeFile(path.join(work, ".claude", "settings.json"), JSON.stringify({ env: { ANTHROPIC_CUSTOM_HEADERS: "x-project-key: sk-project-gateway-secret" } }));
   const backends = Object.keys(have).filter(k => have[k]).join(",");
   const server = await startServer({ dataDir: data, timeoutMs: 120_000, env: { AGENT_HOST_BACKENDS: backends, CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: codexHome,
     // 親の環境の資格情報（互換の会話へは渡さない）
@@ -52,6 +56,8 @@ export default async function (t) {
       t.ok("Claude: 利用者の settings.json の接続先へは送らない", !wrong.requests.some(r => r.method === "POST"));
       const all = JSON.stringify(api.requests.map(r => r.headers));
       t.ok("Claude: 親の環境の API キー・OAuth トークンを送らない", !all.includes("sk-parent-env-key") && !all.includes("sk-ant-oat01-parent-oauth") && !all.includes("sk-user-settings-token"));
+      t.ok("Claude: settings.json の ANTHROPIC_CUSTOM_HEADERS（利用者・プロジェクト）を互換の接続先へ送らない",
+        api.requests.length > 0 && !all.includes("sk-user-gateway-secret") && !all.includes("sk-project-gateway-secret") && !api.requests.some(r => r.headers["x-gateway-key"] || r.headers["x-project-key"]));
       t.ok("Claude: 思考とエフォートを送らない（「思考を送る」がオフ）", main && main.body.thinking === undefined && main.body.output_config?.effort === undefined, JSON.stringify({ thinking: main?.body?.thinking, output: main?.body?.output_config }));
       const left = await fs.readdir(path.join(data, "run")).catch(() => []);
       t.ok("Claude: キーを含むフラグ設定のファイルはターンの後に残らない", left.length === 0, left.join(","));

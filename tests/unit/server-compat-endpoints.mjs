@@ -18,9 +18,10 @@ async function rejects(p) { try { await p; return null; } catch (e) { return e; 
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "agent-host-compat-"));
   const log = path.join(scratch, "fake-codex.log");
+  const control = path.join(scratch, "fake-codex.control");
   const api = await startFakeCompatApi({ keys: [KEY], auth: "bearer", models: ["vendor/fake-large", "fake-small"] });
   const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: "fake,codex",
-    AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, "tests/lib/fake-codex.mjs")}"`, FAKE_CODEX_LOG: log } });
+    AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, "tests/lib/fake-codex.mjs")}"`, FAKE_CODEX_LOG: log, FAKE_CODEX_CONTROL: control } });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
   const replies = [];
   const cmd = async (command, args) => { const r = await c.cmd(command, args); replies.push(r); return r; };
@@ -81,6 +82,25 @@ export default async function (t) {
     const again = await lastTurn(official.threadId);
     t.ok("もう一度互換へ切り替えられ、選んだ段は送る", again?.provider?.baseUrl === api.url + "/v1" && again.effort === "high");
 
+    // ---- 切り替えが効かなかったら止める（黙って前の接続先へ送らない）
+    const turnsBefore = (await entries()).filter(e => e.method === "turn/start").length;
+    await fs.writeFile(control, "sticky");
+    await cmd("setTurnSettings", { sessionId, endpoint: "" });
+    const failText = (r) => r?.message ?? r?.events?.find(e => e.type === "turnResult")?.error ?? "";
+    const stuck = await c.runTurn({ sessionId, prompt: "should not go to the old endpoint" }).catch(e => e);
+    t.ok("外したのに前の接続先のまま読み込まれたら、ターンを始めず理由を返す", String(failText(stuck)).includes("接続先を切り替えられませんでした"), failText(stuck));
+    t.ok("そのとき前の接続先へは何も送らない", (await entries()).filter(e => e.method === "turn/start").length === turnsBefore);
+    await fs.writeFile(control, "unsubscribe-fail");
+    const busy = await c.runTurn({ sessionId, prompt: "unsubscribe fails" }).catch(e => e);
+    t.ok("外せなかったときもターンを始めず理由を返す", String(failText(busy)).includes("外せませんでした"), failText(busy));
+    t.ok("そのときも何も送らない", (await entries()).filter(e => e.method === "turn/start").length === turnsBefore);
+    await fs.writeFile(control, "");
+    const retried = await c.runTurn({ sessionId, prompt: "retry official" });
+    t.ok("外せるようになれば公式で送れる", retried.outcome === "ok" && (await lastTurn(official.threadId))?.provider?.id === "openai");
+    await cmd("setTurnSettings", { sessionId, endpoint: id });
+    await c.runTurn({ sessionId, prompt: "compat once more" });
+    t.ok("もう一度互換へ戻せる", (await lastTurn(official.threadId))?.provider?.baseUrl === api.url + "/v1");
+
     // ---- 引き継ぎ
     const child = await cmd("fork", { sessionId });
     const forked = (await cmd("listSessions")).find(s => s.id === child.sessionId);
@@ -89,6 +109,8 @@ export default async function (t) {
     t.ok("同じエージェントの新しい会話への引き継ぎは接続先を継ぐ", (await cmd("listSessions")).find(s => s.id === carried.sessionId)?.compatEndpoint === id);
     const other = await cmd("newSession", { sourceSessionId: sessionId, backend: "fake", cwd: ROOT });
     t.ok("別のエージェントの新しい会話へは継がない", (await cmd("listSessions")).find(s => s.id === other.sessionId)?.compatEndpoint === "");
+    await cmd("switchBackend", { sessionId: carried.sessionId, backend: "fake" });
+    t.ok("switchBackend でエージェントを変えても、前のエージェントの接続先を残さない", (await cmd("listSessions")).find(s => s.id === carried.sessionId)?.compatEndpoint === "");
     const switched = await cmd("setTurnSettings", { sessionId, backend: "fake" });
     t.ok("会話のエージェントを変えると接続先は外れる", switched?.backend === "fake" && switched.endpoint === "");
     await cmd("setTurnSettings", { sessionId, cancel: true });
