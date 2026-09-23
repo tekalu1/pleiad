@@ -1,5 +1,6 @@
 // Session lineage and fork boundaries. Rendering and motion live in branch-view.mjs.
 // Claude forks reassign UUIDs, so shared history is compared by role, content and tools.
+import { t } from "./i18n.mjs";
 const toolNames = (m) => (m.toolCalls ?? []).map((c) => c.name).concat(m.tools ?? []).join("\0");
 
 /**
@@ -134,10 +135,10 @@ export function createBranches({ cmd, titleOf }) {
    * 仮の名前は保存しない。名前はバックエンドが付けるか、人が上の欄で書く
    */
   function nameOf(id) {
-    const t = titleOf?.(id) ?? family?.rows.get(id)?.title ?? null;
-    if (t && t !== "(no title)") return t;
+    const title = titleOf?.(id) ?? family?.rows.get(id)?.title ?? null;
+    if (title && title !== "(no title)") return title;
     const i = ordered().findIndex((r) => r.id === id);
-    return i <= 0 ? "はじめの流れ" : `枝 ${i + 1}`;
+    return i <= 0 ? t("timeline.branch.root") : t("timeline.branch.numbered", { n: i + 1 });
   }
 
   /** A known fork cut wins even if two branches happen to repeat the same text. */

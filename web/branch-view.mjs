@@ -1,4 +1,5 @@
 import { el, svgEl } from "./dom.mjs";
+import { t } from "./i18n.mjs";
 
 export const BRANCH = { X: 20, SPLIT: 16, Y: 96, HEIGHT: 176, STEP: 104 };
 export const EASING = "cubic-bezier(.22,.72,.18,1)";
@@ -52,7 +53,7 @@ export function makeBranchRow(key, entries, selected, onPick, previous) {
   const row = el("div", "branch-row");
   row.dataset.key = key;
   row.setAttribute("role", "group");
-  row.setAttribute("aria-label", "この先の会話を選択");
+  row.setAttribute("aria-label", t("timeline.branch.pick"));
   const track = el("div", "branch-track"), svg = svgEl("svg", { class: "branch-edges", "aria-hidden": "true" });
   track.append(svg); row.append(track);
   const order = branchOrder(entries.map(e => e.id), selected, previous?.order);
@@ -61,11 +62,11 @@ export function makeBranchRow(key, entries, selected, onPick, previous) {
     tip.type = "button";
     tip.dataset.session = entry.id;
     tip.setAttribute("aria-pressed", String(entry.id === selected));
-    tip.setAttribute("aria-label", `${entry.name} に切り替える（${entry.n} 件）`);
+    tip.setAttribute("aria-label", t("timeline.branch.switchTo", { name: entry.name, count: entry.n }));
     tip.title = entry.name;
     const ring = svgEl("svg", { class: "branch-ring", viewBox: "0 0 16 16", "aria-hidden": "true" });
     ring.append(svgEl("circle", { cx: 8, cy: 8, r: 5 }));
-    tip.append(ring, el("span", "branch-name", entry.name), el("span", "branch-note", entry.id === selected ? "現在の会話" : `${entry.n} 件の続き`));
+    tip.append(ring, el("span", "branch-name", entry.name), el("span", "branch-note", entry.id === selected ? t("timeline.branch.current") : t("timeline.branch.continues", { count: entry.n })));
     tip.onclick = () => { if (!row.locked && entry.id !== selected) onPick(entry.id, row); };
     tip.onkeydown = e => {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;

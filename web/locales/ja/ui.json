@@ -1199,5 +1199,326 @@
     "copyRelativeFailed": "相対パスをコピーできませんでした",
     "noRelative": "作業ディレクトリの外にあるため、相対パスはありません",
     "actionFailed": "操作できませんでした"
+  },
+  "timeline": {
+    "code": {
+      "copy": "コードをコピー",
+      "copied": "コピーしました",
+      "copyFailed": "コピーできませんでした",
+      "selected": "コードを選択しました。Ctrl+C / ⌘C でコピー"
+    },
+    "link": {
+      "blocked": "安全でないリンクのため無効化"
+    },
+    "present": {
+      "height": {
+        "small": "小",
+        "medium": "中",
+        "large": "大"
+      },
+      "kind": {
+        "image": "画像",
+        "text": "テキスト",
+        "file": "ファイル",
+        "visualization": "可視化"
+      },
+      "copyPath": "パスをコピー",
+      "download": "HTML をダウンロード",
+      "sidePanel": "サイドパネルに表示",
+      "truncated": "大きすぎるため省略されました",
+      "badImage": "表示できない画像です"
+    },
+    "tool": {
+      "label": {
+        "run": "実行",
+        "read": "読む",
+        "write": "書く",
+        "edit": "編集",
+        "find": "探す",
+        "grep": "検索",
+        "delegate": "委譲",
+        "fetch": "取得",
+        "webSearch": "web検索",
+        "present": "提示",
+        "status": "状態",
+        "title": "タイトル",
+        "fork": "分岐"
+      },
+      "noPath": "（パスなし）",
+      "diff": "差分（−{{del}} / +{{add}}）",
+      "diffMore_other": "…あと {{n}} 行",
+      "background": "背景で実行",
+      "fullCommand_other": "コマンド全体（{{n}} 行）",
+      "lineRange": "{{from}}–{{to}} 行",
+      "firstLines_other": "先頭 {{n}} 行",
+      "fromLine": "{{n}} 行目から",
+      "lines_other": "{{n}} 行",
+      "writeContent": "書き込む内容",
+      "editLines": "{{from}} 行 → {{to}} 行",
+      "replaceAll": "全置換",
+      "edits_other": "{{n}} 箇所",
+      "grepMode": {
+        "content": "内容",
+        "files": "ファイル名",
+        "count": "件数"
+      },
+      "ignoreCase": "大小無視",
+      "multiline": "複数行",
+      "context_other": "前後 {{n}} 行",
+      "headLimit": "上位 {{n}}",
+      "subagent": "サブエージェント",
+      "prompt": "渡した指示",
+      "domainsAllowed": "限定: {{domains}}",
+      "domainsBlocked": "除外: {{domains}}",
+      "todoCount_other": "{{n}} 件",
+      "todoDone": "{{done}}/{{total}} 完了",
+      "todoItems": "項目（{{n}}）",
+      "forkHere": "この会話をここまで引き継ぐ",
+      "input": "入力"
+    },
+    "result": {
+      "empty": "出力なし",
+      "count_other": "{{n}} 件",
+      "saved": "保存した",
+      "edited": "編集した",
+      "updated": "更新した",
+      "ran": "実行した",
+      "lines_other": "{{n}} 行",
+      "failed": "✕ 失敗",
+      "output": "出力",
+      "outputPartial": "出力（途中まで）",
+      "generatedImage": "生成画像"
+    },
+    "branch": {
+      "pick": "この先の会話を選択",
+      "switchTo_other": "{{name}} に切り替える（{{count}} 件）",
+      "current": "現在の会話",
+      "continues_other": "{{count}} 件の続き",
+      "root": "はじめの流れ",
+      "numbered": "枝 {{n}}"
+    },
+    "behind": {
+      "subagents": "サブエージェントを待っている",
+      "commands": "バックグラウンドのコマンドを待っている"
+    }
+  },
+  "composer": {
+    "cwd": {
+      "placeholder": "作業ディレクトリのパス",
+      "inputLabel": "作業ディレクトリのパス（Enter で決める）",
+      "choose": "フォルダーを選ぶ…",
+      "recent": "最近の作業ディレクトリ",
+      "noRecent": "まだありません",
+      "up": "ひとつ上へ",
+      "drive": "ドライブ",
+      "useThis": "このフォルダーにする",
+      "foldersIn": "{{path}} の中のフォルダー",
+      "noFolders": "フォルダーがありません",
+      "truncated": "多すぎるため途中まで表示しています。パスを入力してください",
+      "chipTitle": "{{cwd}}（変更は次のターンから適用）",
+      "chipAria": "作業ディレクトリ: {{cwd}}",
+      "unset": "未指定"
+    },
+    "agent": "エージェント",
+    "account": {
+      "title": "Claude のアカウント",
+      "compatOff": "互換の接続先ではアカウントを使いません"
+    },
+    "endpoint": {
+      "title": "接続先",
+      "manage": "接続先を管理…",
+      "lost": "使えないもの: {{items}}",
+      "pick": "接続先を選ぶ"
+    },
+    "model": {
+      "title": "モデル",
+      "searchMain": "検索、または ID（空ならメインの {{model}}）",
+      "search": "検索、または ID",
+      "searchLabel": "モデルを検索、または ID を入力（Enter で決める）",
+      "candidates": "モデルの候補",
+      "notListed": "一覧にありません。Enter でこの ID をそのまま使います。",
+      "noList": "一覧がありません。ID を入力してください。",
+      "chipTitle": "{{label}}（エージェント・モデル・エフォート。次のターンから適用）",
+      "chipAria": "モデルとエフォート: {{label}}"
+    },
+    "effort": {
+      "title": "エフォート（考える量）",
+      "label": "エフォート",
+      "reset": "既定に戻す",
+      "follow": {
+        "endpoint": "（接続先の設定に従う）",
+        "agy": "（agy の設定に従う）",
+        "agent": "（エージェントの設定に従う）"
+      },
+      "defaultFollow": {
+        "endpoint": "既定（接続先の設定に従う）",
+        "agy": "既定（agy の設定に従う）",
+        "agent": "既定（エージェントの設定に従う）"
+      },
+      "modelDefault": "（{{model}} の既定）",
+      "levelDefault": "{{level}}（既定）",
+      "noLevels": "{{model}} は段を選べません"
+    },
+    "mode": {
+      "dangerTitle": "承認モード: 確認なし・制限なし",
+      "chipAria": "承認モード: {{mode}}",
+      "chipAriaDanger": "承認モード: {{mode}}（確認なし・制限なし）"
+    },
+    "skills": {
+      "none": "一致するスキルがありません",
+      "failed": "スキル一覧を取得できませんでした",
+      "args": "引数  {{hint}}"
+    }
+  },
+  "sidebar": {
+    "unread": "完了・未確認",
+    "somethingRunning": "走っているものがある",
+    "empty": "まだ無い",
+    "noMatch": "該当なし",
+    "forked": "fork で生まれた会話",
+    "waiting": "承認待ち",
+    "waitingCount_other": "承認待ち {{count}} 件",
+    "staleDays_other": "{{count}}日",
+    "unsent": "未送信",
+    "unsentDraft": "未送信 · 下書きあり",
+    "undo": "元に戻す",
+    "undoClose": "閉じる",
+    "undoCloseLabel": "この知らせを閉じる",
+    "group": {
+      "pickIcon": "アイコンを選ぶ",
+      "newSession": "この状態で新しいセッション"
+    },
+    "family": {
+      "collapse": "枝を畳む",
+      "expand": "枝を開く",
+      "hereInside": "今いる会話はこの中。押すと開く"
+    },
+    "filter": {
+      "remove": "外す",
+      "agent": "エージェント",
+      "place": "場所",
+      "status": "状態",
+      "placeholder": "絞り込む",
+      "inputLabel": "候補を絞り込む",
+      "agents": "エージェント（複数選択）",
+      "all": "すべて"
+    },
+    "emoji": {
+      "title": "「{{status}}」のアイコン",
+      "placeholder": "検索（日本語・英語・絵文字の貼り付け）",
+      "search": "絵文字を検索",
+      "loadingMark": "一覧を読んでいる",
+      "loading": "読み込んでいる",
+      "reset": "既定に戻す",
+      "folder": "フォルダ",
+      "loadFailed": "一覧を読めなかった",
+      "recent": "最近使った",
+      "hits_other": "{{count}} 件",
+      "category": {
+        "smileys": "スマイリーと人",
+        "nature": "動物と自然",
+        "food": "食べ物と飲み物",
+        "activity": "活動",
+        "travel": "旅行と場所",
+        "objects": "オブジェクト",
+        "symbols": "記号",
+        "flags": "旗"
+      }
+    }
+  },
+  "usage": {
+    "unknown": "不明",
+    "expired": "リセット時刻を過ぎています・更新待ち",
+    "percentUnknown": "使用率・残量: 不明",
+    "percent": "使用 {{used}}% · 残り {{remaining}}%",
+    "plan": "プラン: {{plan}}",
+    "meter": "{{label}}の使用率",
+    "resetsAt": "リセット: {{when}}",
+    "resetsUnknown": "リセット日時: 不明",
+    "redoAuth": "認可をやり直す",
+    "local": {
+      "title": "Pleiad での使用実績",
+      "period": "期間",
+      "input": "入力 tokens",
+      "output": "出力 tokens",
+      "cost": "参考費用",
+      "fiveHour": "直近5時間",
+      "sevenDay": "直近7日間",
+      "none": "記録なし",
+      "partial": "（一部）",
+      "measured_other": "{{count}} 回の完了した実行のうち {{measured}} 回を計測",
+      "noteSince": "記録開始: {{when}}。この機能の導入後に Pleiad で完了した実行のみ。入力はキャッシュを含みます。参考費用はエージェントの推計で、サブスクの請求額ではありません。",
+      "noteEmpty": "まだ使用実績がありません。この機能の導入後に Pleiad で完了した実行のみ。入力はキャッシュを含みます。参考費用はエージェントの推計で、サブスクの請求額ではありません。"
+    },
+    "endpoint": "接続先 {{name}}",
+    "endpointLocal": "使用量は表示できません（ローカル）。",
+    "endpointRemote": "使用量は表示できません。残高は {{name}} の管理画面で確認してください。",
+    "endpointCost": "互換の接続先の分の参考費用は当てになりません（単価が不明）。",
+    "waiting": "エージェントの接続を待っています。接続後に更新してください。",
+    "loading": "取得中…",
+    "checkedAt": "最終取得: {{when}}",
+    "failed": "取得できませんでした。接続を確認して更新してください。"
+  },
+  "updates": {
+    "phase": {
+      "idle": "更新を確認できます",
+      "checking": "更新を確認しています…",
+      "current": "最新バージョンです",
+      "available": "新しいバージョンがあります",
+      "downloading": "ダウンロード中",
+      "downloaded": "再起動すると更新を適用できます",
+      "installing": "更新を準備しています…",
+      "error": "更新を取得できませんでした",
+      "unavailable": "自動更新は配布版のデスクトップアプリで利用できます"
+    },
+    "stage": {
+      "installing": "更新を適用する準備をしています…",
+      "saving": "会話と下書きを保存しています…",
+      "downloading": "ダウンロード中…",
+      "downloadingPercent": "ダウンロード中 · {{percent}}%"
+    },
+    "hint": {
+      "applying": "保存と更新の準備が終わるまでお待ちください。Pleiadが終了した後、更新を適用して自動で起動し直します。",
+      "downloading": "このまま作業を続けられます。準備ができたらお知らせします。",
+      "noAutoUpdate": "この評価版は自動更新に対応していません。新しいインストーラーで更新してください。",
+      "browser": "ブラウザー版では更新履歴を確認できます。"
+    },
+    "lastChecked": "最終確認：{{when}}",
+    "retry": "再試行",
+    "settingsHasUpdate": "設定・更新があります",
+    "updated": "Pleiad {{version}} に更新しました",
+    "promptReady": "Pleiad {{target}} の更新準備ができました",
+    "promptAvailable": "Pleiad {{target}} を利用できます",
+    "notesFailed": "リリースノートを読み込めませんでした。"
+  },
+  "outbox": {
+    "status": {
+      "queued": "送信待ち",
+      "sending": "AIへ送信中",
+      "paused": "送信を保留中",
+      "failed": "送信できませんでした",
+      "unknown": "送信結果を確認できません"
+    },
+    "waitTurn": "送信待ち — 作業が終わると自動で送信",
+    "waitOrder": "送信待ち — 前のメッセージが送られてから送信",
+    "unknownHint": "会話を確認してください。再送すると同じ指示が2回届くことがあります。",
+    "retry": "再送する",
+    "cancel": "取り消す"
+  },
+  "onboarding": {
+    "installHint": "このエージェントをインストールし、設定から状態を再確認してください。",
+    "waitingLogin": "ログインの完了を待っています。",
+    "signInHint": "このエージェントにログインしてください。",
+    "seenFailed": "初回表示の記録を保存できませんでした: {{error}}"
+  },
+  "common": {
+    "input": "入力",
+    "noMatch": "一致なし",
+    "loading": "読み込み中…",
+    "moreMatches_other": "ほかに {{count}} 件。文字を入れて絞り込んでください"
+  },
+  "notify": {
+    "completed": "作業が完了しました",
+    "untitled": "Pleiad の会話"
   }
 }

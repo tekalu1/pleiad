@@ -160,7 +160,7 @@ function highlight(code, lang) {
  */
 export function codeBlock(code, lang) {
   const label = lang ? `<span class="code-lang">${esc(lang)}</span>` : "";
-  return `<div class="code-block"><div class="code-actions">${label}<button type="button" class="btn code-copy" aria-label="コードをコピー" title="コードをコピー">${copyIcon}</button></div><pre><code>${highlight(code, lang)}</code></pre></div>`;
+  return `<div class="code-block"><div class="code-actions">${label}<button type="button" class="btn code-copy" aria-label="${esc(t("timeline.code.copy"))}" title="${esc(t("timeline.code.copy"))}">${copyIcon}</button></div><pre><code>${highlight(code, lang)}</code></pre></div>`;
 }
 
 // ------------------------------------------------------------------ インライン
@@ -263,21 +263,21 @@ function wordInner(s, at, delim) {
 /** リンク／画像を組み立てる。安全でない URL はリンクにせず、文字として出す */
 function link(isImg, label, href, title, depth, noLink = false) {
   const raw = String(href ?? "").replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\]^_`{|}~\\])/g, "$1");
-  const t = title ? ` title="${esc(title)}"` : "";
+  const tt = title ? ` title="${esc(title)}"` : "";
   if (isImg) {
     const u = safeImg(raw);
     // 外部 http(s) の画像は勝手に取りに行かない。リンクとして出す（設計メモ §7 の方針に揃える）
-    if (u === null) return `<a class="md-link" href="${esc(safeUrl(raw) ?? "")}" target="_blank" rel="noopener noreferrer nofollow"${t}>${inline(label, depth + 1, true)}</a>`;
+    if (u === null) return `<a class="md-link" href="${esc(safeUrl(raw) ?? "")}" target="_blank" rel="noopener noreferrer nofollow"${tt}>${inline(label, depth + 1, true)}</a>`;
     // ホストのファイルならパスを持たせ、下に所在の一行を添える（リンクの中では添えない）
     const file = u.startsWith("/local-file?") ? fileReference(u) : null;
-    const img = `<img class="md-img" src="${esc(u)}" alt="${esc(label)}"${t}${file ? ` data-file-path="${esc(file.path)}"` : ""} loading="lazy" referrerpolicy="no-referrer">`;
+    const img = `<img class="md-img" src="${esc(u)}" alt="${esc(label)}"${tt}${file ? ` data-file-path="${esc(file.path)}"` : ""} loading="lazy" referrerpolicy="no-referrer">`;
     return file && !noLink ? `<span class="md-figure">${img}${whereHtml(file.path)}</span>` : img;
   }
   const u = safeUrl(raw);
   const inner = inline(label, depth + 1, true);
-  if (u === null) return `<span class="md-link-blocked" title="安全でないリンクのため無効化">${inner}</span>`;
+  if (u === null) return `<span class="md-link-blocked" title="${esc(t("timeline.link.blocked"))}">${inner}</span>`;
   const file = fileReference(raw);
-  if (file) return `<a class="md-link file-link" href="${esc(u)}" data-file-path="${esc(file.path)}"${file.line ? ` data-file-line="${file.line}"` : ''}${t}>${inner}</a>`;  return `<a class="md-link" href="${esc(u)}" target="_blank" rel="noopener noreferrer nofollow"${t}>${inner}</a>`;
+  if (file) return `<a class="md-link file-link" href="${esc(u)}" data-file-path="${esc(file.path)}"${file.line ? ` data-file-line="${file.line}"` : ''}${tt}>${inner}</a>`;  return `<a class="md-link" href="${esc(u)}" target="_blank" rel="noopener noreferrer nofollow"${tt}>${inner}</a>`;
 }
 
 // -------------------------------------------------------------------- ブロック
@@ -443,9 +443,11 @@ export function renderMarkdown(src) {
 
 // iframe の中身の高さは sandbox かつスクリプト無しでは測れない。
 // 妥協案として固定高 + 縦スクロールにし、段階的に高さを選べるようにする。
-const HEIGHTS = [["小", 240], ["中", 440], ["大", 760]];
+const HEIGHTS = [["small", 240], ["medium", 440], ["large", 760]];
 
-const KIND_LABEL = { image: "画像", html: "HTML", text: "テキスト", file: "ファイル", visualization: "可視化" };
+// i18n-dynamic: timeline.present.kind.
+// i18n-dynamic: timeline.present.height.
+const kindLabel = (kind) => (kind === "html" ? "HTML" : t(`timeline.present.kind.${kind}`));
 
 /** モデル生成 HTML に CSP を差し込む。head があればその直後、無ければ先頭に置く */
 function withCsp(html) {
@@ -468,7 +470,7 @@ export function renderPresent(ev) {
   const card = el("figure", `present present-${kind}`);
 
   const cap = el("figcaption", "present-cap");
-  cap.append(el("span", "present-kind", KIND_LABEL[kind]));
+  cap.append(el("span", "present-kind", kindLabel(kind)));
   cap.append(el("span", "present-title", e.caption ?? ""));
   card.append(cap);
 
@@ -488,16 +490,16 @@ export function renderPresent(ev) {
         controls.append(b);
         return b;
       };
-      if (e.path) tool(copyIcon, 'パスをコピー').onclick = ev => copyText(ev.currentTarget, e.path, 'パスをコピー');
+      if (e.path) tool(copyIcon, t('timeline.present.copyPath')).onclick = ev => copyText(ev.currentTarget, e.path, t('timeline.present.copyPath'));
 
       // 保存されるのは会話に残っている HTML。元のファイルは変わっていることがある。
       // 会話には可視化がいくつも並ぶので、URL は押したときだけ作ってすぐ捨てる
-      tool(downloadIcon, 'HTML をダウンロード').onclick =
+      tool(downloadIcon, t('timeline.present.download')).onclick =
         () => downloadVisualization({ path: e.path, title: e.caption, content: e.content ?? '' });
 
       // 開くのは右のプレビューパネル。ここは会話に載る面だけを組み立て、
       // 開く側とは要求イベントで繋ぐ（ファイルリンクと同じ一枚の面に集める）。
-      const expand = tool(sidePanelIcon, 'サイドパネルに表示', 'visualize-expand');
+      const expand = tool(sidePanelIcon, t('timeline.present.sidePanel'), 'visualize-expand');
       expand.onclick = () => expand.dispatchEvent(new CustomEvent('ply-visualize-expand', {
         bubbles: true, detail: { content: e.content ?? '', title: e.caption ?? '', path: e.path ?? '' },
       }));
@@ -505,10 +507,10 @@ export function renderPresent(ev) {
       if (e.mode === 'wide') card.classList.add('visualize-wide');
     }
   } else if (e.truncated) {
-    body.append(el("div", "present-note", "大きすぎるため省略されました"));
+    body.append(el("div", "present-note", t("timeline.present.truncated")));
   } else if (kind === "image") {
     const src = presentImg(e.dataUri ?? e.path);
-    if (src === null) body.append(el("div", "present-note", "表示できない画像です"));
+    if (src === null) body.append(el("div", "present-note", t("timeline.present.badImage")));
     else {
       const img = el("img");
       img.src = src;
@@ -531,7 +533,7 @@ export function renderPresent(ev) {
     // 高さを段階的に選ばせる。中身の高さは測れないので、これが現実的な落とし所
     const tools = el("span", "present-tools");
     for (const [label, px] of HEIGHTS) {
-      const b = el("button", "h-btn", label);
+      const b = el("button", "h-btn", t(`timeline.present.height.${label}`));
       b.type = "button";
       if (px === HEIGHTS[1][1]) b.classList.add("on");
       b.onclick = () => {
@@ -610,7 +612,7 @@ function pathSpan(p, keep = 2) {
   // <>"|*? はパスに入らない（入っていれば入力が壊れている）。リンクにせず文字のまま
   const ref = full && !/[<>"|*?]/.test(full) ? fileReference(full) : null;
   if (!ref) {
-    const n = codeSpan(shortPath(full, keep) || "（パスなし）", "tc-main");
+    const n = codeSpan(shortPath(full, keep) || t("timeline.tool.noPath"), "tc-main");
     if (full) n.title = full;
     return n;
   }
@@ -675,7 +677,7 @@ function diffLines(oldS, newS) {
 /** 記号の列（+ / −）と面の階調だけで見せる。色は付けない（docs/design-system.md §2.2） */
 function diffFold(oldS, newS) {
   const { del, add } = diffLines(oldS, newS);
-  const d = fold(`差分（−${fmtN(del.length)} / +${fmtN(add.length)}）`);
+  const d = fold(t("timeline.tool.diff", { del: fmtN(del.length), add: fmtN(add.length) }));
   const box = el("div", "tc-diff");
   const put = (arr, cls, mark) => {
     for (const line of arr.slice(0, DIFF_MAX)) {
@@ -683,7 +685,7 @@ function diffFold(oldS, newS) {
       row.append(el("span", "g", mark), el("span", null, clip(line, 400)));
       box.append(row);
     }
-    if (arr.length > DIFF_MAX) box.append(el("div", "tc-diff-more", `…あと ${fmtN(arr.length - DIFF_MAX)} 行`));
+    if (arr.length > DIFF_MAX) box.append(el("div", "tc-diff-more", t("timeline.tool.diffMore", { count: arr.length - DIFF_MAX, n: fmtN(arr.length - DIFF_MAX) })));
   };
   put(del, "tc-del", "−");
   put(add, "tc-add", "+");
@@ -717,11 +719,11 @@ function drawShell(card, head, inp, name) {
 
   const notes = [];
   if (name === "PowerShell") notes.push("PowerShell");
-  if (inp.run_in_background) notes.push("背景で実行");
+  if (inp.run_in_background) notes.push(t("timeline.tool.background"));
   if (inp.description) notes.push(String(inp.description));
   if (notes.length) head.append(noteSpan(notes.join(" · ")));
 
-  if (folded) card.append(foldCode(`コマンド全体（${fmtN(lineCount(cmd))} 行）`, cmd, "bash"));
+  if (folded) card.append(foldCode(t("timeline.tool.fullCommand", { count: lineCount(cmd), n: fmtN(lineCount(cmd)) }), cmd, "bash"));
 }
 
 function drawRead(card, head, inp) {
@@ -730,25 +732,25 @@ function drawRead(card, head, inp) {
   if (inp.pages) bits.push(`p.${clip(inp.pages, 20)}`);
   const off = Number(inp.offset);
   const lim = Number(inp.limit);
-  if (Number.isFinite(off) && Number.isFinite(lim)) bits.push(`${fmtN(off)}–${fmtN(off + lim)} 行`);
-  else if (Number.isFinite(lim)) bits.push(`先頭 ${fmtN(lim)} 行`);
-  else if (Number.isFinite(off)) bits.push(`${fmtN(off)} 行目から`);
+  if (Number.isFinite(off) && Number.isFinite(lim)) bits.push(t("timeline.tool.lineRange", { from: fmtN(off), to: fmtN(off + lim) }));
+  else if (Number.isFinite(lim)) bits.push(t("timeline.tool.firstLines", { count: lim, n: fmtN(lim) }));
+  else if (Number.isFinite(off)) bits.push(t("timeline.tool.fromLine", { n: fmtN(off) }));
   if (bits.length) head.append(noteSpan(bits.join(" · ")));
 }
 
 function drawWrite(card, head, inp) {
   head.append(pathSpan(inp.file_path));
   const body = String(inp.content ?? "");
-  head.append(noteSpan(`${fmtN(lineCount(body))} 行`));
-  if (body) card.append(foldCode("書き込む内容", body, langFromPath(inp.file_path)));
+  head.append(noteSpan(t("timeline.tool.lines", { count: lineCount(body), n: fmtN(lineCount(body)) })));
+  if (body) card.append(foldCode(t("timeline.tool.writeContent"), body, langFromPath(inp.file_path)));
 }
 
 function drawEdit(card, head, inp) {
   head.append(pathSpan(inp.file_path));
   const a = String(inp.old_string ?? "");
   const b = String(inp.new_string ?? "");
-  const bits = [`${fmtN(lineCount(a))} 行 → ${fmtN(lineCount(b))} 行`];
-  if (inp.replace_all) bits.push("全置換");
+  const bits = [t("timeline.tool.editLines", { from: fmtN(lineCount(a)), to: fmtN(lineCount(b)) })];
+  if (inp.replace_all) bits.push(t("timeline.tool.replaceAll"));
   head.append(noteSpan(bits.join(" · ")));
   if (a || b) card.append(diffFold(a, b));
 }
@@ -756,7 +758,7 @@ function drawEdit(card, head, inp) {
 function drawMultiEdit(card, head, inp) {
   head.append(pathSpan(inp.file_path));
   const edits = Array.isArray(inp.edits) ? inp.edits : [];
-  head.append(noteSpan(`${fmtN(edits.length)} 箇所`));
+  head.append(noteSpan(t("timeline.tool.edits", { count: edits.length, n: fmtN(edits.length) })));
   for (const [i, e] of edits.slice(0, 10).entries()) {
     const d = diffFold(e?.old_string, e?.new_string);
     d.firstChild.textContent = `${i + 1}. ${d.firstChild.textContent}`;
@@ -769,7 +771,8 @@ function drawGlob(card, head, inp) {
   if (inp.path) head.append(noteSpan(shortPath(inp.path, 3), inp.path));
 }
 
-const GREP_MODE = { content: "内容", files_with_matches: "ファイル名", count: "件数" };
+// i18n-dynamic: timeline.tool.grepMode.
+const GREP_MODE = { content: "content", files_with_matches: "files", count: "count" };
 
 function drawGrep(card, head, inp) {
   head.append(codeSpan(clip(inp.pattern ?? "", 160), "tc-main"));
@@ -777,23 +780,23 @@ function drawGrep(card, head, inp) {
   if (inp.path) bits.push(shortPath(inp.path, 2));
   if (inp.glob) bits.push(String(inp.glob));
   if (inp.type) bits.push(String(inp.type));
-  if (GREP_MODE[inp.output_mode]) bits.push(GREP_MODE[inp.output_mode]);
-  if (inp["-i"]) bits.push("大小無視");
-  if (inp.multiline) bits.push("複数行");
+  if (GREP_MODE[inp.output_mode]) bits.push(t(`timeline.tool.grepMode.${GREP_MODE[inp.output_mode]}`));
+  if (inp["-i"]) bits.push(t("timeline.tool.ignoreCase"));
+  if (inp.multiline) bits.push(t("timeline.tool.multiline"));
   const ctx = inp["-C"] ?? inp.context ?? inp["-A"] ?? inp["-B"];
-  if (ctx != null && Number.isFinite(Number(ctx))) bits.push(`前後 ${fmtN(ctx)} 行`);
-  if (inp.head_limit) bits.push(`上位 ${fmtN(inp.head_limit)}`);
+  if (ctx != null && Number.isFinite(Number(ctx))) bits.push(t("timeline.tool.context", { count: Number(ctx), n: fmtN(ctx) }));
+  if (inp.head_limit) bits.push(t("timeline.tool.headLimit", { n: fmtN(inp.head_limit) }));
   if (bits.length) head.append(noteSpan(bits.join(" · "), inp.path ? String(inp.path) : null));
 }
 
 function drawTask(card, head, inp) {
-  head.append(textMain(inp.description || "サブエージェント"));
+  head.append(textMain(inp.description || t("timeline.tool.subagent")));
   const bits = [];
   for (const k of ["subagent_type", "name", "model", "isolation"]) {
     if (inp[k]) bits.push(String(inp[k]));
   }
   if (bits.length) head.append(noteSpan(bits.join(" · ")));
-  if (inp.prompt) card.append(foldCode("渡した指示", String(inp.prompt), "md"));
+  if (inp.prompt) card.append(foldCode(t("timeline.tool.prompt"), String(inp.prompt), "md"));
 }
 
 function drawWebFetch(card, head, inp) {
@@ -818,7 +821,7 @@ function drawWebSearch(card, head, inp) {
   head.append(textMain(clip(inp.query ?? "", 200)));
   const dom = inp.allowed_domains ?? inp.blocked_domains;
   if (Array.isArray(dom) && dom.length) {
-    head.append(noteSpan(`${inp.allowed_domains ? "限定" : "除外"}: ${clip(dom.join(", "), 60)}`));
+    head.append(noteSpan((inp.allowed_domains ? t("timeline.tool.domainsAllowed", { domains: clip(dom.join(", "), 60) }) : t("timeline.tool.domainsBlocked", { domains: clip(dom.join(", "), 60) }))));
   }
 }
 
@@ -828,11 +831,11 @@ function drawTodo(card, head, inp) {
   const todos = Array.isArray(inp.todos) ? inp.todos : [];
   const cur = todos.find((t) => t?.status === "in_progress");
   const done = todos.filter((t) => t?.status === "completed").length;
-  head.append(textMain(cur ? String(cur.activeForm || cur.content || "") : `${fmtN(todos.length)} 件`));
-  head.append(noteSpan(`${fmtN(done)}/${fmtN(todos.length)} 完了`));
+  head.append(textMain(cur ? String(cur.activeForm || cur.content || "") : t("timeline.tool.todoCount", { count: todos.length, n: fmtN(todos.length) })));
+  head.append(noteSpan(t("timeline.tool.todoDone", { done: fmtN(done), total: fmtN(todos.length) })));
 
   if (!todos.length) return;
-  const d = fold(`項目（${fmtN(todos.length)}）`);
+  const d = fold(t("timeline.tool.todoItems", { n: fmtN(todos.length) }));
   const list = el("div", "tc-todo");
   for (const t of todos.slice(0, 50)) {
     const status = String(t?.status ?? "");
@@ -846,12 +849,11 @@ function drawTodo(card, head, inp) {
 }
 
 // このアプリ自身のツール。何をしたかを日本語でそのまま出す（設計メモ 2.2）
-const PRESENT_KIND = { image: "画像", html: "HTML", text: "テキスト", file: "ファイル", visualization: "可視化" };
 
 function drawPresent(card, head, inp) {
   const cap = String(inp.caption ?? "").trim();
   head.append(cap ? textMain(cap) : pathSpan(inp.path));
-  const bits = [PRESENT_KIND[inp.kind] ?? String(inp.kind ?? "")];
+  const bits = [["image", "html", "text", "file", "visualization"].includes(inp.kind) ? kindLabel(inp.kind) : String(inp.kind ?? "")];
   if (cap && inp.path) bits.push(shortPath(inp.path, 2));
   head.append(noteSpan(bits.filter(Boolean).join(" · "), inp.path ? String(inp.path) : null));
 }
@@ -867,7 +869,7 @@ function drawTitle(card, head, inp) {
 }
 
 function drawFork(card, head, inp) {
-  head.append(textMain(inp.title ? `→ ${String(inp.title)}` : "この会話をここまで引き継ぐ"));
+  head.append(textMain(inp.title ? `→ ${String(inp.title)}` : t("timeline.tool.forkHere")));
   if (inp.reason) head.append(noteSpan(clip(inp.reason, 80), String(inp.reason)));
 }
 
@@ -878,22 +880,26 @@ function drawMcp(card, head, inp, name) {
   head.append(textMain(parts.slice(2).join("__") || name));
   const s = summarizeInput(inp);
   if (s) head.append(noteSpan(s));
-  if (Object.keys(inp).length) card.append(foldCode("入力", toJson(inp), "json"));
+  if (Object.keys(inp).length) card.append(foldCode(t("timeline.tool.input"), toJson(inp), "json"));
 }
 
 function drawUnknown(card, head, inp) {
   const s = summarizeInput(inp);
   if (s) head.append(textMain(s));
-  if (Object.keys(inp).length) card.append(foldCode("入力", toJson(inp), "json"));
+  if (Object.keys(inp).length) card.append(foldCode(t("timeline.tool.input"), toJson(inp), "json"));
 }
 
 // 動詞で揃える。並んだときに「何をしたか」が縦に読める
 const TOOL_LABEL = {
-  Bash: "実行", PowerShell: "実行", Read: "読む", Write: "書く", Edit: "編集",
-  MultiEdit: "編集", NotebookEdit: "編集", Glob: "探す", Grep: "検索",
-  Task: "委譲", Agent: "委譲", WebFetch: "取得", WebSearch: "web検索", TodoWrite: "TODO",
-  mcp__ply__present: "提示", mcp__host__present: "提示", mcp__host__set_status: "状態",
-  mcp__host__set_title: "タイトル", mcp__host__fork: "分岐",
+  Bash: t("timeline.tool.label.run"), PowerShell: t("timeline.tool.label.run"), Read: t("timeline.tool.label.read"),
+  Write: t("timeline.tool.label.write"), Edit: t("timeline.tool.label.edit"),
+  MultiEdit: t("timeline.tool.label.edit"), NotebookEdit: t("timeline.tool.label.edit"),
+  Glob: t("timeline.tool.label.find"), Grep: t("timeline.tool.label.grep"),
+  Task: t("timeline.tool.label.delegate"), Agent: t("timeline.tool.label.delegate"),
+  WebFetch: t("timeline.tool.label.fetch"), WebSearch: t("timeline.tool.label.webSearch"), TodoWrite: "TODO",
+  mcp__ply__present: t("timeline.tool.label.present"), mcp__host__present: t("timeline.tool.label.present"),
+  mcp__host__set_status: t("timeline.tool.label.status"),
+  mcp__host__set_title: t("timeline.tool.label.title"), mcp__host__fork: t("timeline.tool.label.fork"),
 };
 
 const TOOL_DRAW = {
@@ -962,7 +968,7 @@ export function renderToolCall(name, input, opts) {
   const target = FILE_DRAWS.has(TOOL_DRAW[raw]) ? FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v) : null;
   if (target) head.append(pathSpan(target));
 
-  body.append(el("div", "tc-section-label", "入力"));
+  body.append(el("div", "tc-section-label", t("timeline.tool.input")));
   const inputBody = el("div", "tc-input");
   inputBody.innerHTML = codeBlock(JSON.stringify(inp, null, 2), "json");
   body.append(inputBody);
@@ -985,21 +991,21 @@ function resultText(r) {
 
 /** 結果の要約。全文は出さない。行数・件数・成否だけ分かればよい */
 function summarizeResult(tool, body, n) {
-  const t = body.trim();
-  if (!t) return "出力なし";
-  if (/^No (matches|files) found/i.test(t)) return "0 件";
-  const found = /^Found (\d+) /.exec(t);
-  if (found) return `${fmtN(found[1])} 件`;
+  const out = body.trim();
+  if (!out) return t("timeline.result.empty");
+  if (/^No (matches|files) found/i.test(out)) return t("timeline.result.count", { count: 0, n: fmtN(0) });
+  const found = /^Found (\d+) /.exec(out);
+  if (found) return t("timeline.result.count", { count: Number(found[1]), n: fmtN(found[1]) });
 
   switch (tool) {
-    case "Glob": return `${fmtN(n)} 件`;
-    case "Write": return "保存した";
-    case "Edit": case "MultiEdit": case "NotebookEdit": return "編集した";
-    case "TodoWrite": return "更新した";
+    case "Glob": return t("timeline.result.count", { count: n, n: fmtN(n) });
+    case "Write": return t("timeline.result.saved");
+    case "Edit": case "MultiEdit": case "NotebookEdit": return t("timeline.result.edited");
+    case "TodoWrite": return t("timeline.result.updated");
     default:
       // このアプリのツールは「〜した」という短い返事を返すので、それをそのまま見せる
-      if (String(tool ?? "").startsWith("mcp__")) return t.length <= 60 ? clip(firstLine(t), 60) : "実行した";
-      return `${fmtN(n)} 行`;
+      if (String(tool ?? "").startsWith("mcp__")) return out.length <= 60 ? clip(firstLine(out), 60) : t("timeline.result.ran");
+      return t("timeline.result.lines", { count: n, n: fmtN(n) });
   }
 }
 
@@ -1027,15 +1033,15 @@ export function applyToolResult(node, result) {
   const badge = el("span", isError ? "tc-res tc-res-err" : "tc-res");
   // 失敗は記号と太字で。色は付けない（差し色は「あなたを待っている」だけ）
   badge.textContent = isError
-    ? "✕ 失敗"
+    ? t("timeline.result.failed")
     : "";
   if (isError) head.append(badge);
 
   // 短い出力も詳細内に残す。画像だけは折りたたみの外に置く。
   const output = el("div", "tc-out");
-  output.append(el("div", "tc-section-label", `出力${cut ? "（途中まで）" : ""}`));
+  output.append(el("div", "tc-section-label", (cut ? t("timeline.result.outputPartial") : t("timeline.result.output"))));
   const code = el("div", "tc-output");
-  code.innerHTML = codeBlock(body || "出力なし", "");
+  code.innerHTML = codeBlock(body || t("timeline.result.empty"), "");
   output.append(code);
   (node.querySelector(".tc-details-body") ?? node).append(output);
   for (const img of result?.images ?? []) {
@@ -1044,7 +1050,7 @@ export function applyToolResult(node, result) {
     const preview = el("div", "tc-preview");
     const picture = document.createElement("img");
     picture.setAttribute("src", src);
-    picture.setAttribute("alt", img.caption || "生成画像");
+    picture.setAttribute("alt", img.caption || t("timeline.result.generatedImage"));
     picture.setAttribute("loading", "lazy");
     preview.append(picture);
     // 保存先が分かる画像（Codex の savedPath、/local-file の URL）はパスを持たせ、所在の一行を添える
