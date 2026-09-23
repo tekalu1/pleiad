@@ -71,6 +71,8 @@ const cases = [
   await import("./unit/title-clean.mjs"),
   await import("./unit/claude-normalize.mjs"),
   await import("./unit/claude-background.mjs"),
+  // Claude の途中送信の渡った合図（uuid・まとめ取り出し・次の内部ターン）と中断の interrupt。SDK の query を身代わりにする
+  await import("./unit/claude-steer-stop.mjs"),
   await import("./unit/codex-background.mjs"),
   await import("./unit/codex-terminals.mjs"),
   await import("./unit/event-session-id.mjs"),
@@ -87,6 +89,8 @@ const cases = [
   await import("./unit/codex-child-routing.mjs"),
   // fake バックエンドでサーバを立てる。LLM は呼ばないので、ここに入れてよい
   await import("./unit/server-fake.mjs"),
+  // 中断の順序（実際の中断が先、Pleiad タスクの後始末は後）と「中断している」の知らせ。fake バックエンドだけ
+  await import("./unit/server-abort.mjs"),
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
   await import('./unit/claude-accounts.mjs'),
   await import('./unit/server-claude-accounts.mjs'),
