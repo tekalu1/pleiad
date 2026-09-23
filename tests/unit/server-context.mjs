@@ -83,6 +83,20 @@ export default async function (t) {
     turn = await client.runTurn({ ...session, prompt: 'echo:after' }, { ms: 60_000 });
     const messages = (await client.cmd('loadSession', session)).messages;
     t.ok('読み込み直したあとも同じ会話で続けられる（やり取りは引き継ぐ）', turn.outcome === 'ok' && messages.some(m => m.text === 'echo:one') && messages.some(m => m.text === 'echo:after'), JSON.stringify(messages.map(m => m.text)));
+
+    // ---- 再開で作業場所を変える → 止めずに新しい場所で探し直す（担当は会話の方針のまま）
+    const moved = path.join(tmp, 'moved');
+    await fs.mkdir(path.join(moved, '.git'), { recursive: true });
+    await write(path.join(moved, 'AGENTS.md'), 'MOVED_VERSION');
+    await client.cmd('setContextSettings', { cwd: moved, place: moved, kind: 'instruction', value: { owner: 'native', user: none, directory: { sources: ['common'], excludePaths: [] } } });
+    await client.cmd('setContextSettings', { cwd: moved, place: moved, kind: 'mcp', value: { owner: 'ply', user: none, directory: none } });
+    turn = await client.runTurn({ ...session, cwd: moved, prompt: 'echo:moved' }, { ms: 60_000 });
+    record = await client.cmd('sessionContext', session);
+    const movedReal = await fs.realpath(moved);
+    t.ok('共通コンテキストの会話も作業場所を変えて送れる', turn.outcome === 'ok', turn.outcome);
+    t.ok('新しい作業場所で指示を探し直す（担当は開始時のまま）', record.report.cwd === movedReal && record.report.owners.instruction === 'ply'
+      && record.report.entries.some(e => e.kind === 'instruction' && e.path === path.join(movedReal, 'AGENTS.md'))
+      && !record.report.entries.some(e => e.path === path.join(cwd, 'AGENTS.md')) && record.startedAt === startedAt, JSON.stringify(record.report.entries.map(e => e.path)));
     const native = await client.cmd('newSession', { cwd: tmp, backend: 'fake' });
     await client.runTurn({ ...native, prompt: 'echo:native' }, { ms: 60_000 });
     await client.cmd('refreshContext', native).then(() => t.ok('Pleiad がそろえていない会話は読み込み直せない', false), () => t.ok('Pleiad がそろえていない会話は読み込み直せない', true));

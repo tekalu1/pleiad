@@ -18,7 +18,7 @@
 - テストは必ず作業用 worktree の中で実行する。`main` の作業ディレクトリで `npm test` を走らせても worktree の変更は検証できない（worktree を編集しながら `main` でテストを走らせ、通ったことにしてしまった例がある）。
 - 設計は `docs/design.md`、画面の変更は `docs/design-system.md` を参照する。
 - コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。
-- procway の実物を使うテストは、公開の procway-code の `src/cli.mjs` を `AGENT_HOST_PROCWAY_CODE` で指す。未指定なら `temporary/procway-code/src/cli.mjs`（CI と同じ置き場所）を見る。
+- procway の実物を使うテストは、公開の procway-code の `src/cli.mjs` を `AGENT_HOST_PROCWAY_CODE` で指す。未指定なら `temporary/procway-code/src/cli.mjs`（CI と同じ置き場所）を見る。この既定は作業ディレクトリ基準なので、worktree で `npm test` を走らせると worktree 側の `temporary/` を探して procway 系のテストが落ちる（`procway-code をインストールしてください`）。worktree では Bash tool から `AGENT_HOST_PROCWAY_CODE='D:/dev/pleiad/temporary/procway-code/src/cli.mjs' npm test` のようにメインの作業ディレクトリの実物を指す（2026-09-23 確認）。
 - `npm run test:e2e` は実際の LLM を呼び出すため、実サービスとの接続確認が必要な変更で実行する。
 - 現在は独立したビルドコマンドはない。文書のみの変更では、内容と `git diff --check` の確認を行えばよい。
 - UI の変更では必要に応じてブラウザーで表示・操作を確認する。ブラウザー自動化は、まずシェルで `playwright-cli` と `agent-browser` の利用可否を調べ、前者があれば優先し、なければ後者を使う。ユーザーによるツール・ブラウザー指定があればそれに従う。

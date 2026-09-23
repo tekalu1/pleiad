@@ -1204,13 +1204,20 @@ async function runTurnInternal(args, onStarted, hooks) {
     const pastSubagents = new Set(sessionId && backend.listSubagents
       ? await backend.listSubagents(sessionId).catch(() => []) : []);
     const previousContext = sessionId ? (await store.get(sessionId)).contextSession : null;
-    const policy = previousContext?.policy ?? contextPolicy(await contextSettings.get(cwd));
+    let policy = previousContext?.policy ?? contextPolicy(await contextSettings.get(cwd));
     if (!previousContext && baseline.messages.length) policy.owners = { ...DEFAULT_OWNERS };
+    // 再開で作業場所が変わった。担当（owners）と「この会話では外す」MCP は会話の方針として保ち、探索の計画だけを
+    // 新しい場所の設定で解き直す（作業場所側の探索元・除外・追加フォルダーは場所ごとの設定のため）。
+    // 探し直した結果は下の読み込み直し（refreshedContext）と同じ扱いで記録・通知される。
+    // policy.cwd は実体パス（contextSettings.get が realpath する）。cwd は渡された表記のままなので、実体どうしで比べる
+    if (previousContext && managed(policy) && pathKey(policy.cwd) !== pathKey(await fs.realpath(cwd).catch(() => cwd))) {
+      const here = await contextSettings.get(cwd);
+      const { user, directory, ...rest } = policy;
+      policy = { ...rest, version: 2, cwd: here.cwd, plan: here.plan };
+    }
     // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
     // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
     const plyContext = managed(policy) && acceptsPlyContext(backend, policy);
-    // policy.cwd は実体パス（contextSettings.get が realpath する）。cwd は渡された表記のままなので、実体どうしで比べる
-    if (plyContext && pathKey(policy.cwd) !== pathKey(await fs.realpath(cwd).catch(() => cwd))) throw new Error('共通コンテキストを使う会話の作業場所は固定です。新しいセッションを作成してください');
     const resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS }) : null;
     // 開始時の固定と違う＝指示・Skills が変わった。止めずに今の内容で続ける（resolvedContext が今のファイルで解き直した結果なので、
     // 記録も pin も自動で新しくなる）。指示本文は毎ターン指示欄へ渡し直し、Skills はカタログしか渡していないので技術的な制約は無い。
