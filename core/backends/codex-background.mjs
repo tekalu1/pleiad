@@ -1,6 +1,6 @@
 // Codex のバックグラウンド端末（`unified_exec`）を、スレッドごとに数える。
 //
-// **app-server を import しない**。claude-background.mjs / procway-background.mjs と同じく
+// **app-server を import しない**。claude-background.mjs と同じく
 // 純粋な部品で、tests/unit/codex-background.mjs から通知の形だけを渡して直接呼べる。
 //
 // 何が起きるか（issue #6）:

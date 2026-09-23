@@ -9,7 +9,7 @@ export default function (t) {
   t.ok('混在時はサブエージェントだけを数える', behindOfTasks([terminal, agent]).n === 1);
   t.ok('実行中のターンのwaitingは引き続き表示する', behindOfTasks([], { waiting: true }).n === 1);
 
-  // Claude の local_bash は完了通知が必ず来るので待てる（waitable）。procway の裏のシェルには合図が無い
+  // Claude の local_bash は完了通知が必ず来るので待てる（waitable）。合図の無い裏のシェルは待てない
   const command = { kind: 'shell', waitable: true };
   t.ok('待てる印の付いたシェルは数える', behindOfTasks([command]).n === 1);
   t.ok('見出しはコマンドを待っていると分かる語',

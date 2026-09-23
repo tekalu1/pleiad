@@ -10,9 +10,6 @@ import { fileURLToPath } from "node:url";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-// 実物の procway-code（公開の procway-code の src/cli.mjs）。AGENT_HOST_PROCWAY_CODE で指す。
-// 未指定なら CI と同じ置き場所（temporary/procway-code、追跡外）を見る。
-export const PROCWAY_CLI = process.env.AGENT_HOST_PROCWAY_CODE || path.join(ROOT, "temporary", "procway-code", "src", "cli.mjs");
 
 const LAUNCHED = /http:\/\/(localhost|[\d.]+|\[[\da-f:]+\]):(\d+)\/\?token=(\S+)/i;
 

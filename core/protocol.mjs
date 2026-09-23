@@ -1,4 +1,4 @@
-// host <-> core のプロトコル。procway-code の Host Contract に倣う。
+// host <-> core のプロトコル。
 // 互換のある追加は番号を据え置き、既存メッセージの意味が変わるときに上げる。
 //
 // v2: `sdk`（生の SDK メッセージ素通し）を廃止し、正規化イベントに置き換えた。
@@ -38,14 +38,20 @@ export const COMMANDS = new Set([
   'claudeLoginStart',    // { kind: setup-token|usage-login, accountId?, name?, open? } -> { loginId }。setup-token は accountId 無しなら name で新規追加
   'claudeLoginCode',     // { loginId, code } -> {}。ブラウザーに表示されたコードを CLI へ渡す
   'claudeLoginCancel',   // { loginId } -> {}
-  'procwayConnections', 'procwayCheck', 'procwaySave', 'procwayDelete', 'procwayDefault', 'procwayModelLimits', 'procwaySettings',
+  // 互換の接続先（エージェントごと。会話ごとに選ぶ。core/compat-endpoints.mjs）。キーは返さない
+  'compatEndpoints',        // { agent? } -> { endpoints: [{ id, agent, kind, name, baseUrl, auth, hasKey, roles, models, options, lastCheck, isDefault, ready }], defaults, storage }
+  'compatEndpointCheck',    // { input, id? } -> { ok: true, receipt, auth, latencyMs, models, lines } | { ok: false, error, lines, code }。本物の 1 リクエストで確かめる
+  'compatEndpointSave',     // { input, receipt, id? } -> { id }。確認の受領証が今の接続情報と合うときだけ保存する
+  'compatEndpointRecheck',  // { id } -> { ok, lines?, error? }。保存済みを確かめ直して結果を記録する
+  'compatEndpointDelete',   // { id } -> 一覧。キーも消す。選んでいる会話は次の送信の前に選び直しを求める
+  'compatEndpointDefault',  // { agent, id } -> 一覧。新しい会話の既定（'' = 公式）
   'contextSettings', // { cwd? } -> { defaults, places: [{ id, path, kinds: { <kind>: { value, override, from } }, roots, overrides, current }] } 種類ごとの設定と継承（core/context-settings.mjs）
   'slashSkills',     // { cwd } -> 入力欄「/」の候補。コンテキスト画面と同じ探索結果からのスキル一覧（説明文付き）
   'sessionContext', // { sessionId } -> { report, owners, pinned, changed, startedAt, refreshedAt, removedMcp } この会話が読み込んだ記録。固定された会話では今のファイルと突き合わせる
   'refreshContext', // { sessionId } -> 開始後に変わった指示・Skills を、やり取りを引き継いだまま読み込み直す（固定を取り直す）。返答中は不可
   'contextDiff',    // { sessionId } -> { files: [{ path, name, kind, modifiedAt, before, after, beforeMissing, removed }] } 開始時と今の中身
   'setSessionMcp',  // { sessionId, name, removed } -> この会話だけ外部 MCP を外す（ply_context に出さない）/ 戻す。次のターンから効く
-  'agentMcp',       // { cwd } -> { agents: { claude|codex|procway: [{ name, transport, endpoint, command, path, scope, disabled }] } } 各エージェントの登録（読むだけ）
+  'agentMcp',       // { cwd } -> { agents: { claude|codex: [{ name, transport, endpoint, command, path, scope, disabled }] } } 各エージェントの登録（読むだけ）
   'listMcpConfig', // { cwd, format, scope } -> native path, revision and names (no secrets)
   'readMcpServer', // { cwd, format, scope, name } -> explicitly opened server definition
   'saveMcpServer', // { cwd, format, scope, name, value, revision, mode } -> native registration
@@ -132,6 +138,7 @@ export const EVENTS = new Set([
   "backend",      // { backend } 会話の実行先が変わった
   "nextSettings",
   "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す
+  "compatEndpointsChanged", // 互換の接続先の一覧・既定が変わった（sessionId は null）。中身は compatEndpoints コマンドで取り直す
   "claudeLogin",  // { loginId, kind, accountId, phase: url|code|verifying|done|error|cancelled, url?, message? } アカウントの認可の進み具合（sessionId は null）。トークンは載せない
   "sessionsChanged",
   "present",      // 成果物の提示

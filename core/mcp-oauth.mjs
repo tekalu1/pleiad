@@ -16,8 +16,6 @@
 //     （SDK の transport は 401 で auth() を呼び、ブラウザへ飛ぶ流れまで進めてしまう。ターンの中では開かない）
 //   - 403 insufficient_scope の scope を覚えて、次のログインで今の scope と合わせて求める（ステップアップ）
 //   - ログアウト時の失効（RFC 7009）
-// 流れの組み立ては上流の Procway の MCP 接続（OAuth）の実装に合わせた。
-// コードはこのリポジトリ向けに書き直している。
 import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';

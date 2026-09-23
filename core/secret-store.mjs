@@ -8,7 +8,6 @@
 //
 // 書き込みは一時ファイル＋rename。同じプロセスの中は直列にし、プロセスをまたいでは <file>.lock で排他する
 // （開発版と配布版の Pleiad が同じデータ置き場を見ることがある）。
-// ロックの形は procway-code の ai-agent/src/auth/token-store.mjs（Apache-2.0）に倣った。
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';

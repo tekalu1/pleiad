@@ -1,7 +1,7 @@
 # Pleiad のエージェント間委譲
 
-Claude・Codex・procway-code の会話から、`ply_agents` MCP の `ply_delegate` で別の子会話を作成できる。
-`backend` は `claude` / `codex` / `procway` / `antigravity` を明示する。同じバックエンドへの委譲もできる。
+Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の子会話を作成できる。
+`backend` は `claude` / `codex` / `antigravity` を明示する。同じバックエンドへの委譲もできる。
 エージェントがシェルから別の CLI を起動する必要はなく、Pleiad の既存バックエンド接続を使う。
 
 ## ツール
@@ -15,9 +15,8 @@ Claude・Codex・procway-code の会話から、`ply_agents` MCP の `ply_delega
 | `ply_task_cancel` | `taskId` | タスクと、その配下の Pleiad タスクを停止する |
 | `ply_task_list` | なし | 呼び出し元が作成した Pleiad タスクだけを列挙する |
 
-タスク ID は `ply-task-<UUID>`。procway の `spawn_agent` / `agent_job` と `jobId`、Claude / Codex のネイティブサブエージェントとは別に管理する。
+タスク ID は `ply-task-<UUID>`。Claude / Codex のネイティブサブエージェントとは別に管理する。
 `ply_agents` は専用の接続で注入するため、外部 MCP 中継のハッシュ化されたツール名にならない。
-procway では `mcp__ply_agents__ply_delegate` とネイティブ `spawn_agent` をそれぞれ呼べる。
 
 ## 会話・権限・作業場所
 
@@ -40,7 +39,7 @@ Antigravity は対話承認を持たず常に全部自動（`yolo`）なので�
 Codex の親は `full` / `yolo` 以外では必ず確認する。Codex は MCP のツール呼び出しを自前の承認に通さず、これが無いと委譲が起きたことに気づけないため。
 
 親の自動許可・承認済み操作そのものは引き継がない。実行中の承認は子の会話で通常の Pleiad カードとして表示する。
-範囲が `none` / `readonly` の親（Claude の `plan`、Codex の `readonly`、procway の `auto-readonly`）から
+範囲が `none` / `readonly` の親（Claude の `plan`、Codex の `readonly`）から
 `ply_delegate` / `ply_task_send` は受け付けない。異なるエンジンの子による権限の拡大を防ぐため。
 タスクを操作できる MCP 接続は作成元の会話に限定する。接続資格情報は会話にひもづく能力であり、バックエンドがそれをネイティブ子に継承する場合も同じ作成元として扱う。
 接続は会話ごとに使い回し、ターンが終わっても閉じない。再開したセッションが同じ URL とトークンを持ち続けるため、ターン終了で閉じると次のターンの委譲が 401 になる。閉じるのは会話を削除したときだけ。接続にターンそのものを持たせず、呼ばれた時点で走っているターンを鍵から引く（持たせると終わったターンが回収されない）。
@@ -64,18 +63,15 @@ Codex の親は `full` / `yolo` 以外では必ず確認する。Codex は MCP �
 `waiting` は「いま承認を待っているか」から導く見せかけの状態で、保存する状態（`queued` / `running` …）は変えない。
 `ACTIVE` の集合と、再起動時に実行中を `interrupted` にする扱いを壊さないため。
 
-## 完了通知と procway の自動再開
+## 完了通知
 
 Pleiad は結果を保存し、親が空いたときに専用の完了通知で次のターンを開始する。
 子がさらに Pleiad の子を作った場合は、その結果通知と子の回答が終わるまで待ち、最終回答を依頼元へ返す。
 親の人間からの送信待ちを優先する。通知は画面で「Pleiad タスクの結果を受け取って再開しました」と表示し、人間の発言と区別する。
 バックエンドのネイティブ履歴には、この通知が入力メッセージとして残る。
 
-procway の内部の子の完了通知は従来どおり procway が担当する。Pleiad はその外部ターンと自分の通知を同時に走らせない。
+親が走っている・裏の作業が残っている・送信待ちがあるときは通知を送らない。
 送信が `requeue`（未受領）で返った場合だけ再送し、受領が不明な失敗は自動再送しない。
-委譲先の procway が内部の子を残した場合は、既存の background 追跡と外部ターンの終了を待って結果を取得する。
-内部ジョブの追跡には既存の制限がある（[multi-backend.md](multi-backend.md) §2.7）。
-停止はその会話専用の procway worker にも伝え、内部のバックグラウンドジョブを残さない。他の会話の worker は停止しない。
 
 ## 保存・画面・再起動
 
@@ -90,5 +86,5 @@ procway の内部の子の完了通知は従来どおり procway が担当する
 ## 検証
 
 `npm test` でタスクの管理と SDK MCP クライアント接続、fake を使ったサーバー全体の委譲・継続・停止と、承認の中継・`waiting` を検証する。
-`npm run test:e2e -- agent-delegation` は実サービスを呼び、Claude → Codex、Codex → procway、procway → Claude と結果通知による再開を確認する。
-procway のケースではネイティブ `spawn_agent` も併用する。単独確認には `E2E_DELEGATION_PARENT=procway` を使える。
+`npm run test:e2e -- agent-delegation` は実サービスを呼び、Claude → Codex、Codex → Claude と結果通知による再開を確認する。
+単独確認には `E2E_DELEGATION_PARENT=codex` などを使える。

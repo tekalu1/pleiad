@@ -6,8 +6,9 @@ setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
 import { setupUsage } from './usage.mjs';
 import { setupOnboarding } from "./onboarding.mjs";
-import { setupProcway } from './procway.mjs';
 import { setupClaudeAccounts } from './claude-accounts.mjs';
+import { setupCompatEndpoints } from './compat-endpoints.mjs';
+import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
@@ -94,6 +95,8 @@ const state = {
   effortDisabled: false,
   account: "",         // 次のターンの Claude のアカウント（空 = ログイン中のアカウント）
   accountShown: false, // アカウントの選択を出すか（登録が無く、選んでもいない会話には出さない）
+  endpoint: "",        // 次のターンの互換の接続先（空 = 公式）。Claude Code・Codex だけ
+  endpointShown: false, // 接続先の節を出すか（接続先を選べるエージェントのとき）
   prefs: {},           // 新しいセッションを始めるときの既定
   awaitingSession: false,  // 新規セッションの id 待ち（自分が送った直後だけ真）
   toolCards: new Map(),// tool_use_id -> 描いたカード（結果を後から差し込む）
@@ -561,7 +564,7 @@ function paintPendingPerms(id) {
 const behindOf = (t) => (t?.phase === "waiting" ? behindOfTasks(t.background, { waiting: true }) : null);
 /**
  * この画面の会話が裏を待っているか。ターンが走っていればターン行（Claude の phase: waiting）、
- * 走っていなければ running の background（procway: ターンは終わったが裏の子が残っている。終わると procway が自分で再開する）
+ * 走っていなければ running の background（Codex: ターンは終わったがバックグラウンド端末が残っている）
  */
 function behindHere() {
   const t = (state.work.turns ?? []).find(belongsHere);
@@ -593,7 +596,7 @@ const activity = {
     if (!this.t0) this.t0 = Date.now();
     const was = this.behind;
     this.behind = behindHere();
-    // ターンが終わって裏だけが残った（procway）、またはその逆。出ている節の印を差し替える
+    // ターンが終わって裏だけが残った、またはその逆。出ている節の印を差し替える
     if (this.el?.isConnected && (was?.n ?? 0) !== (this.behind?.n ?? 0)) this.remark();
     if (!this.el?.isConnected) {
       const m = el("div", "m activity");
@@ -716,8 +719,6 @@ function appendText(text) {
   if (stick) log.scrollTop = log.scrollHeight;
 }
 
-const RESUMED_LINE = "サブエージェントが終わって再開した";
-
 const ACTIVITY_LABEL = {
   thinking: "考えている",
   writing: "書いている",
@@ -786,7 +787,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'outbox') {
     outboxes.set(ev.sessionId, ev.messages);
     if (state.current === ev.sessionId) {
-      // 送ったつもりが届かず送信待ちへ戻ったもの（procway が自分で始めたターンと重なった）。
+      // 送ったつもりが届かず送信待ちへ戻ったもの（エージェントが別のターンを走らせていた）。
       // 会話の吹き出しを引っ込め、送信待ちの側に出す。そのターンが終わると改めて送られる
       const back = new Set((ev.messages ?? []).filter(m => m.status === 'queued').map(m => m.id));
       let withdrawn = false;
@@ -866,9 +867,10 @@ function onEvent(ev, replay = false) {
       claudeAccounts.invalidate();
       syncTopbar().catch(() => {});
       break;
-    case 'procwayConfigChanged':
-      state.vocab.delete('procway'); procway.invalidate();
+    case 'compatEndpointsChanged':
+      compatEndpoints.invalidate();
       syncTopbar().catch(() => {});
+      renderAuth();
       break;
     case "nextSettings":
       return refresh();
@@ -925,7 +927,7 @@ function onEvent(ev, replay = false) {
     // ツールの戻り。対応するカードに結果を差し込む（別の吹き出しにはしない）
     case "tool.result": {
       const card = state.toolCards.get(ev.id);
-      if (card) applyToolResult(card, ev);
+      if (card) { applyToolResult(card, ev); noteEndpointFailure(card, ev); }
       return;
     }
 
@@ -937,13 +939,6 @@ function onEvent(ev, replay = false) {
       closeTurnEl();
       sys('Pleiad タスクの結果を受け取って再開しました');
       return;
-    case "resumed":
-      // エージェントが自分でターンを再開した（procway: 裏の子が終わった）。差し込まれた本文は利用者の発言ではないので、
-      // 吹き出しにせず一行だけ出す。履歴では再開後の返答の resumed が同じ一行になる（paintHistory）
-      closeTurnEl();
-      sys(RESUMED_LINE);
-      return;
-
     case "turnResult": {
       if (ev.outcome === "ok") return;             // 終わったことは稼働表示が消えれば分かる
       const what = ev.outcome === "aborted" ? "中断した" : `失敗: ${escText(ev.error ?? "理由不明")}`;
@@ -1078,7 +1073,7 @@ function applyRunning(work) {
     const b = behindOf(t);
     if (b && t.sessionId) behind.set(t.sessionId, b.n);
   }
-  // ターンの外で裏に残っている作業（procway）。ターンが走っていればそちらが優先（弧）
+  // ターンの外で裏に残っている作業（Codex の端末）。ターンが走っていればそちらが優先（弧）
   for (const x of state.work.background ?? []) {
     if (!x.sessionId || running.has(x.sessionId)) continue;
     const b = behindOfTasks(x.tasks);
@@ -1130,6 +1125,11 @@ function cmd(command, args = {}) {
 // 実行先と次ターンの予約を区別する。履歴の発言は生成したエージェントを表示する。
 // できること（fork / タイトル提案 / 常に許可 / サブエージェント）はエージェントごとに違うので、
 // capabilities を見て口を出し分ける。押せるのに何も起きない口は作らない。
+
+/** 今の会話が対応を終えたエージェントのものなら、続けられない理由（core/backends/index.mjs の RETIRED） */
+function retiredHere() {
+  return state.sessions.find((x) => x.id === state.current)?.retired ?? null;
+}
 
 function activeBackendId() {
   const s = state.sessions.find((x) => x.id === state.current);
@@ -1204,7 +1204,7 @@ function forgetVocab(id) {
 
 // ---------------------------------------------------------------- エージェントの認証
 // ログインの持ち方はエージェントごとに違う（Claude は Claude Code のログインをそのまま、
-// codex は app-server 越しに ChatGPT、procway はローカルのコールバック）。capabilities.login が真のものだけ。
+// codex は app-server 越しに ChatGPT）。capabilities.login が真のものだけ。
 // 置き場は設定メニューの中。常設しない。ログインが要るときだけ脇の下に一行で知らせる。
 // 設定モーダル内にURLを出し、コールバックを取れないときは手貼りの欄を出す。
 
@@ -1243,18 +1243,22 @@ function renderAuth() {
       link.href = st.installUrl; link.target = "_blank"; link.rel = "noreferrer";
       row.append(link);
     } else if (st.supported && !st.pending) {
-      const loggedIn = b.id === 'procway' ? st.oauthLoggedIn : st.loggedIn;
-      const btn = el("button", "btn", b.id === 'procway' ? (loggedIn ? 'ChatGPT ログアウト' : 'ChatGPT ログイン') : loggedIn ? "ログアウト" : "ログイン");
+      const loggedIn = st.loggedIn;
+      const btn = el("button", "btn", loggedIn ? "ログアウト" : "ログイン");
       btn.type = "button";
       btn.onclick = (e) => { e.stopPropagation(); if (loggedIn) authLogout(b); else authLogin(b); };
       row.append(btn);
     }
-    if (b.id === 'procway' && st.installed !== false) {
-      const button = el('button', 'btn', '接続先を設定'); button.type = 'button'; button.onclick = () => procway.open(); row.append(button);
-    }
     // 会話ごとに選べる Claude のアカウント（Pleiad が claude setup-token を回して発行したトークン）
     if (b.capabilities?.claudeAccounts && st.installed !== false) {
       const button = el('button', 'btn', 'アカウント'); button.type = 'button'; button.onclick = () => claudeAccounts.open(); row.append(button);
+    }
+    // 互換の接続先（Claude Code の Anthropic 互換・Codex の Responses 互換）。同じページの下に管理の面を開く
+    if (b.capabilities?.compatEndpoints && st.installed !== false) {
+      const button = el('button', 'btn', '接続先'); button.type = 'button';
+      button.setAttribute('aria-expanded', String(compatEndpoints.openAgent === b.id));
+      button.onclick = () => compatEndpoints.open(b.id);
+      row.append(button);
     }
     sec.append(row);
     if (st.installed !== false && st.supported && !st.loggedIn && !st.pending) need.push(b.label);
@@ -1398,15 +1402,14 @@ function paintSettingsNotice() {
     const changes = [];
     // 既定のモデルは実際に当たる名前を添える（分からなければ「既定」だけ）
     const fallback = state.models[""]?.resolvesTo || state.models[""]?.resolvedLabel ? `既定（${resolvedModel(state.models, "").label}）` : "既定";
-    if (next.backend !== s.backend || next.model !== (s.model ?? "")) changes.push(`${labelOf(next.backend)} / ${next.model ? state.models[next.model]?.label ?? next.model : fallback}${next.backend !== s.backend && !next.model && fallback === "既定" ? "（変更先の既定モデル）" : ""}`);
+    const nextEndpoint = next.endpoint ?? (next.backend !== s.backend ? "" : s.compatEndpoint ?? "");
+    const epFallback = nextEndpoint ? `既定（${compatEndpoints.get(nextEndpoint)?.roles?.main || "接続先のメイン"}）` : fallback;
+    if (next.backend !== s.backend || next.model !== (s.model ?? "")) changes.push(`${labelOf(next.backend)} / ${next.model ? (nextEndpoint ? next.model : state.models[next.model]?.label ?? next.model) : epFallback}${next.backend !== s.backend && !next.model && fallback === "既定" ? "（変更先の既定モデル）" : ""}`);
     if (next.effort !== undefined && next.effort !== (s.effort ?? "")) changes.push(`エフォート: ${next.effort || "既定に従う"}`);
     if (next.cwd) changes.push(`作業ディレクトリ: ${next.cwd}`);
     if (next.mode !== undefined) changes.push(`承認モード: ${state.modes[next.mode]?.label ?? next.mode}`);
+    if (next.endpoint !== undefined) changes.push(`接続先: ${endpointLabel(next.endpoint)}`);
     if (next.account !== undefined) changes.push(`アカウント: ${accountLabel(next.account)}`);
-    if (next.procwayLimits) {
-      const b = next.procwayLimits;
-      changes.push(`コンテキスト: ${b.context?.toLocaleString() ?? '未指定'} / 出力予約: ${b.output?.toLocaleString() ?? '既定'} / 自動要約: ${b.compact ? b.threshold?.toLocaleString() : 'オフ'}`);
-    }
     $("nextSettingsText").textContent = `${changes.join(" · ")} · 次に送信すると適用されます`;
   }
 }
@@ -1458,8 +1461,57 @@ async function syncAccount(s, bid) {
   state.account = value;
 }
 
-// procway-code の接続先・モデル（web/procway.mjs の view()）。procway は下の方で作るので、できるまでは null
-let procwayView = null;
+// 互換の接続先の設定（web/compat-endpoints.mjs）。入力欄の面が候補を引くので、controls より先に作る
+const compatEndpoints = setupCompatEndpoints({ cmd,
+  openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
+  onChange: () => { syncTopbar().catch(() => {}); },
+  officialLine: (agent) => { const st = state.auth.get(agent); return st?.loggedIn ? (st.account || 'ログイン済み') : ''; } });
+compatEndpoints.onOpen(() => renderAuth());
+function endpointLabel(id) {
+  if (!id) return "公式";
+  return compatEndpoints.get(id)?.name ?? "削除された接続先";
+}
+/** 会話の次のターンの接続先（予約があればそれ。エージェントを変える予約で接続先が書かれていなければ公式） */
+function endpointOf(s) {
+  if (!s) return "";
+  const next = s.nextSettings;
+  return next?.endpoint ?? (next && next.backend !== s.backend ? "" : s.compatEndpoint ?? "");
+}
+let endpointWarning = "";
+/** 入力欄の接続先の出し分け。選べないエージェントでは節を出さない。消えた・確認に失敗した接続先は入力欄の上に一文 */
+async function syncEndpoint(s, bid) {
+  const supported = Boolean(capsOf(bid).compatEndpoints);
+  const list = supported ? await compatEndpoints.load().catch(() => []) : [];
+  const value = supported ? endpointOf(s) : "";
+  state.endpointShown = Boolean(s) && supported;
+  const chosen = list.find((e) => e.id === value);
+  const warning = !value ? "" : !chosen ? "選択中の接続先は削除されています。モデルのチップの面で接続先を選び直してください"
+    : chosen.ready === false ? `接続先「${chosen.name}」は前回の確認に失敗しています。設定 › エージェント設定の「接続先」で確認し直してください` : "";
+  if (endpointWarning && $("settingsError").textContent === endpointWarning) $("settingsError").textContent = "";
+  endpointWarning = warning;
+  if (warning) $("settingsError").textContent = warning;
+  state.endpoint = value;
+}
+/** 入力欄のモデルの面に渡す接続先の値と口（web/composer-controls.mjs の endpointSection / compatModelSection） */
+function endpointView(bid) {
+  if (!state.endpointShown) return null;
+  const list = compatEndpoints.list(bid);
+  const defaults = compatEndpoints.defaults();
+  const row = list.find((e) => e.id === state.endpoint) ?? null;
+  const official = bid === "claude" ? "Anthropic · ログイン中のアカウントで使う" : "OpenAI · ChatGPT のログインで使う";
+  return {
+    selected: state.endpoint, row, lost: lostText(bid),
+    roleNames: bid === "claude" ? CLAUDE_ROLES.map((r) => [r.key, r.short]) : [],
+    options: [
+      { value: "", label: "公式", sub: official, isDefault: !defaults[bid] },
+      ...list.map((e) => ({ value: e.id, label: e.name, isDefault: defaults[bid] === e.id, warn: e.ready === false,
+        sub: `${KIND_LABEL[e.kind]} · ${e.baseUrl.replace(/^https?:\/\//, "")}${e.ready === false ? " · ⚠ 確認に失敗しています" : ""}`, title: `${e.name}（${e.baseUrl}）` })),
+      ...(state.endpoint && !row ? [{ value: state.endpoint, label: "削除された接続先", sub: "選び直してください", gone: true }] : []),
+    ],
+    manage: () => compatEndpoints.open(bid),
+  };
+}
+
 // 入力欄の設定のチップ（web/composer-controls.mjs）。値は state に持ち、チップは get() で毎回読む
 const controls = setupComposerControls({
   cmd,
@@ -1470,11 +1522,10 @@ const controls = setupComposerControls({
       backends: state.backends, backend: bid,
       // エージェントが 1 つしか無ければ選ぶ口を出さない
       backendSwitchable: state.backends.length > 1,
-      // procway-code は接続先・モデルの値と口（面の「接続先」「モデル」と下の「コンテキスト…」「接続設定…」）
-      procway: bid === "procway" && procwayView ? procwayView() : null,
       models: state.models, model: state.model,
       efforts: state.efforts, effort: state.effort, effortDisabled: state.effortDisabled,
       accounts: state.accountShown ? accountOptions() : null, account: state.account,
+      endpoint: endpointView(bid),
       modes: state.modes, mode: state.mode,
     };
   },
@@ -1487,6 +1538,8 @@ const controls = setupComposerControls({
     },
     backend: (v) => { state.shownBackend = v; controls.paint(); reserveSettings({ backend: v, model: "" }); },
     model: (v) => { state.model = v; controls.paint(); reserveSettings({ model: v, rememberModel: true }); },
+    // 互換の接続先。'' は公式。モデルは接続先の既定（メイン）に戻る（server も同じ）
+    endpoint: (v) => { state.endpoint = v; state.model = ""; state.effort = ""; controls.paint(); reserveSettings({ endpoint: v }); },
     // Claude のアカウント。'' はログイン中のアカウント（既定）
     account: (v) => { state.account = v; controls.paint(); reserveSettings({ account: v }); },
     effort: (effort) => { state.effort = effort; controls.paint(); reserveSettings({ effort, rememberEffort: true }); },
@@ -1725,7 +1778,7 @@ function renderWorkDialog() {
 /**
  * この会話で裏に動いているものを、行ごとに平らにする。
  *
- * 2 つある。ターンの外に残っているもの（procway の裏の子・Codex の端末）と、
+ * 2 つある。ターンの外に残っているもの（Codex の端末）と、
  * 走っているターンが抱えているもの（Claude のバックグラウンドのコマンド）。
  * ターンの中のサブエージェントは会話を読む専用の行が別にあるので、ここでは重ねない。
  */
@@ -1867,7 +1920,7 @@ async function openSubagent(a) {
       if (m.text) { const b = el("div", "body"); b.innerHTML = renderAssistantMarkdown(m.text, []); ai.append(b); }
       for (const c of m.toolCalls ?? []) {
         const card = renderToolCall(c.name, c.input, { id: c.id });
-        if (c.result) applyToolResult(card, c.result);
+        if (c.result) { applyToolResult(card, c.result); noteEndpointFailure(card, c.result); }
         ai.append(card);
       }
       if (!m.toolCalls) for (const t of m.tools ?? []) ai.append(renderToolCall(t, null));
@@ -2370,6 +2423,7 @@ async function rowMenu(s, x, y) {
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, backend: s.nextSettings?.backend ?? s.backend, model: id, rememberModel: true })
           .then(refresh).catch((e) => sys(`モデルの変更に失敗: ${escText(e.message)}`)),
       })) },
+    ...(await rowEndpointItems(s)),
     ...(await rowAccountItems(s)),
     { sep: true },
     { label: "エフォート（次のターン）", hint: (s.nextSettings?.effort ?? s.effort) || efforts[""]?.resolvesTo || "既定", sub: () =>
@@ -2504,6 +2558,37 @@ async function rowAccountItems(s) {
   })) }];
 }
 
+/**
+ * 互換の接続先の会話で Web 検索が失敗したら、そのカードに理由を一文足す（画面 4）。
+ * エージェントの失敗文だけでは接続先が原因だと分からないため。公式の会話では何もしない
+ */
+function noteEndpointFailure(card, result) {
+  if (!card || !(result?.isError ?? result?.is_error) || !/^(WebSearch|webSearch|web_search)$/.test(card.dataset?.tool ?? "")) return;
+  const s = state.sessions.find((x) => x.id === state.current);
+  const e = s?.compatEndpoint ? compatEndpoints.get(s.compatEndpoint) : null;
+  if (!e || card.querySelector(".tc-note")) return;
+  const note = el("p", "tc-note", `この接続先（${e.name}）では Web 検索を使えません。`);
+  const more = el("button", "clink", "接続先の詳細"); more.type = "button";
+  more.onclick = () => compatEndpoints.open(e.agent);
+  note.append(" ", more);
+  card.append(note);   // 畳んだ詳細（details）の外に置く。畳んでいても見える
+}
+
+/** 右クリックメニューの接続先（入力欄と同じ選択肢。接続先を選べるエージェントの会話だけ） */
+async function rowEndpointItems(s) {
+  const bid = s.nextSettings?.backend ?? s.backend;
+  if (!capsOf(bid).compatEndpoints) return [];
+  const list = (await compatEndpoints.load().catch(() => [])).filter((e) => e.agent === bid);
+  const value = endpointOf(s);
+  if (!list.length && !value) return [];
+  const choices = [{ value: "", label: "公式", note: "" }, ...list.map((e) => ({ value: e.id, label: e.name, note: e.ready === false ? "⚠ 確認に失敗" : "" }))];
+  return [{ label: "接続先（次のターン）", hint: endpointLabel(value), sub: () => choices.map((c) => ({
+    label: c.label, hint: c.note, checked: c.value === value,
+    onClick: () => cmd("setTurnSettings", { sessionId: s.id, endpoint: c.value })
+      .then(refresh).catch((e) => sys(`接続先の変更に失敗: ${escText(e.message)}`)),
+  })) }];
+}
+
 // AI がタイトルを考えている会話。その間は欄に書き込ませず、途中で一覧が更新されても開け直さない
 const titleGenerating = new Set();
 function syncTitleControls() {
@@ -2553,14 +2638,16 @@ async function syncTopbar() {
   if (s) { state.mode = s.mode ?? "default"; state.model = s.nextSettings?.model ?? s.model ?? ""; }
   else { const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {}; state.mode = prefs.mode ?? "default"; state.model = prefs.model ?? ""; }
   state.mode = selectedMode(s, bid, modes);
-  if (bid !== 'procway' && !(state.model in models)) state.model = "" in models ? "" : Object.keys(models)[0] ?? "";
-  const efforts = await cmd('efforts', { backend: bid, model: state.model, cwd: s?.nextSettings?.cwd || s?.cwd || undefined }).catch(() => ({ '': { label: '既定に従う' } }));
+  await syncEndpoint(s, bid);
+  if (state.current !== id || version !== topbarVersion) return;
+  // 互換の接続先のモデルは接続先の一覧＋自由入力なので、公式の一覧に無くても戻さない
+  if (!state.endpoint && !(state.model in models)) state.model = "" in models ? "" : Object.keys(models)[0] ?? "";
+  const efforts = await cmd('efforts', { backend: bid, model: state.model, cwd: s?.nextSettings?.cwd || s?.cwd || undefined, ...(state.endpoint ? { endpoint: state.endpoint } : {}) }).catch(() => ({ '': { label: '既定に従う' } }));
   if (state.current !== id || version !== topbarVersion) return;
   state.efforts = efforts;
   state.effort = s?.nextSettings?.effort ?? s?.effort ?? '';
   state.effortDisabled = Object.keys(efforts).length <= 1;
   controls.paint();
-  await procway.sync(bid);
   await syncAccount(s, bid);
   if (state.current !== id || version !== topbarVersion) return;
   controls.paint();
@@ -2648,11 +2735,6 @@ function paintHistory(fromMi = 0) {
       prevRole = null;
       continue;
     }
-    // エージェントが自分で再開したターンの返答（procway の wake）。差し込まれた本文は履歴に出さず、一行だけ置く
-    if (m.resumed) {
-      added.push(append(el("div", "m sys", RESUMED_LINE)));
-      prevRole = null;
-    }
     let node;
     if (m.role === "user") node = userMsg(m.text, { uuid: m.uuid, at: m.at });
     else {
@@ -2660,7 +2742,7 @@ function paintHistory(fromMi = 0) {
       if (m.thinking) node.append(thinkFromText(m.thinking));
       for (const c of m.toolCalls ?? []) {
         const card = renderToolCall(c.name, c.input, { id: c.id });
-        if (c.result) applyToolResult(card, c.result);
+        if (c.result) { applyToolResult(card, c.result); noteEndpointFailure(card, c.result); }
         node.append(card);
         if (c.id) state.toolCards.set(c.id, card);
       }
@@ -2843,6 +2925,9 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   else if (behindHere()) activity.show("裏の作業を待っている");     // ターンは終わったが裏の子が残っている会話は衛星
   relayoutBranches();     // 稼働表示が出た後の高さで、今いる枝の終端ノードを置き直す
   $("prompt").placeholder = branchIsFresh(id) ? `${branches.nameOf(id)} の最初の発言を書く` : "Ctrl+Enter で送信";
+  // 対応を終えたエージェントの会話は読むだけ。入力欄を閉じ、理由を末尾に出す（送信はサーバーも断る）
+  const retired = data?.retired ?? null;
+  if (retired) { sys(escText(retired)); $("prompt").disabled = true; $("prompt").placeholder = retired; }
   log.scrollTop = keepUpTo === undefined ? log.scrollHeight : scrollAt;
   if (moving) await moving.promote(transition.snapshot);
 }
@@ -2989,11 +3074,12 @@ const isWaitingHere = () => (state.work.permissions ?? []).some(belongsHere);
 function syncRunState() {
   const here = isRunningHere();
   // エージェント・作業ディレクトリは実行中も次のターンの分を予約できる（チップは無効にしない）
-  $("send").disabled = submittingMessages.has(state.current) || state.loadingSession === state.current && Boolean(state.current);
+  $("send").disabled = submittingMessages.has(state.current) || state.loadingSession === state.current && Boolean(state.current)
+    || Boolean(retiredHere());
   $("abort").hidden = !(here || isWaitingHere());
   if (!here) {
     closeTurnEl();
-    // ターンは終わったが裏の子が残っている（procway）。末尾の節は消さずに衛星にする（中断は出さない。止める口が無い）
+    // ターンは終わったが裏の作業が残っている。末尾の節は消さずに衛星にする（中断は出さない）
     if (behindHere() && !state.loadingSession) activity.show(activity.text || "裏の作業を待っている");
     else activity.hide();
   }
@@ -3009,7 +3095,7 @@ async function submit() {
   if ($('prompt').value.trim() || state.attached.length) completionNotifications.requestPermission();
   if (!state.current) { await startNew(); if (!state.current) return; }
   const sessionId = state.current;
-  if (submittingMessages.has(sessionId) || state.busy || state.loadingSession) return;
+  if (submittingMessages.has(sessionId) || state.busy || state.loadingSession || retiredHere()) return;
   submittingMessages.add(sessionId);
   syncRunState();
   try {
@@ -3190,13 +3276,8 @@ setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lo
   await Promise.all([settingsWrite, modeWrite, ...[...state.drafts].filter(([id, draft]) => id && draft.dirty).map(([id, draft]) => persistDraft(id, draft))]);
   await Promise.all([...draftWrites.values()]);
 } });
-const procway = setupProcway({ cmd, reserve: reserveSettings,
-  current: () => state.sessions.find(s => s.id === state.current), cwd: () => state.cwd,
-  openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
-  refreshAuth, invalidateVocab: () => state.vocab.delete('procway'), onChange: () => controls.paint() });
-procwayView = procway.view;
 function openSettings() { onboarding.open(); }
-setupUsage({ $, cmd, getBackends: () => state.backends, page: onboarding.page, isOpen: onboarding.isOpen,
+setupUsage({ $, cmd, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
   onUsageLogin: accountId => claudeAccounts.open({ usageLogin: accountId }) });
 clearThread();

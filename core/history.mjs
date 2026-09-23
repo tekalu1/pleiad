@@ -119,7 +119,7 @@ export async function recordPresent(sessionId, payload) {
   return record;
 }
 
-/** Bind human attachments to a durable message UUID (timestamps are absent in procway). */
+/** Bind human attachments to a durable message UUID (some agents do not record timestamps). */
 export async function anchorAttachments(sessionId, turnKey, messageId) {
   if (!messageId) return;
   const file = presentFile(sessionId);

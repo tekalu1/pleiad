@@ -22,7 +22,6 @@ import { familiesOf } from "./family.mjs";
 const backendLogos = {
   codex: "./brand/openai.svg",
   claude: "./brand/claude.svg",
-  procway: "./brand/procway-icon.svg",
   antigravity: "./brand/antigravity.svg",
 };
 
@@ -32,8 +31,8 @@ function backendLogo(id, label) {
   const src = Object.hasOwn(backendLogos, id) ? backendLogos[id] : null;
   if (src) {
     mark.classList.add(`row-be-${id}`);
-    if (id === "codex" || id === "procway" || id === "antigravity") {
-      const svg = svgEl("svg", { viewBox: id === "procway" ? "0 0 208 192" : "0 0 24 24", role: "img", "aria-label": label });
+    if (id === "codex" || id === "antigravity") {
+      const svg = svgEl("svg", { viewBox: "0 0 24 24", role: "img", "aria-label": label });
       svg.append(svgEl("use", { href: `${src}#mark` }));
       mark.append(svg);
       return mark;
@@ -193,7 +192,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const sec = el("section", "grp");
       const isCollapsed = collapsed.has(st ?? "");
       // 動いている行（main が作業中）と、main は返答済みで裏だけを待っている行を分ける
-      // bgWaiting は、ターンが裏を待っている行と、ターンは終わったが裏の子が残っている行（procway）
+      // bgWaiting は、ターンが裏を待っている行と、ターンは終わったが裏の作業が残っている行（Codex の端末）
       const active = rows.some((s) => last.runningIds.has(s.id) && !last.bgWaiting.has(s.id));
       const behind = rows.reduce((n, s) => n + (last.bgWaiting.get(s.id) ?? 0), 0);
       if (isCollapsed) sec.classList.add("collapsed");
@@ -422,7 +421,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     title.append(el("span", "row-t", titleOf(s)));
     r.append(title);
     const meta = el("div", "row-meta");
-    // 走っていれば弧。裏だけを待っていれば衛星（ターンが終わっても裏の子が残っている procway の会話を含む）
+    // 走っていれば弧。裏だけを待っていれば衛星（ターンが終わっても裏の作業が残っている会話を含む）
     const behind = last.bgWaiting.get(s.id);
     if (last.runningIds.has(s.id) || behind) meta.append(behind ? satMark(behind, `裏で ${behind} 本が動いている`) : runMark("ターンが走っている"));
     else if (last.unreadIds.has(s.id)) meta.append(unreadMark());

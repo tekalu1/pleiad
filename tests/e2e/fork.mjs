@@ -1,15 +1,15 @@
 import crypto from "node:crypto";
 
 export const name = "fork";
-export const title = "Codex / procway の実モデルで途中分岐を再開";
-export const serverEnv = { AGENT_HOST_BACKENDS: "codex,procway" };
+export const title = "Codex の実モデルで途中分岐を再開";
+export const serverEnv = { AGENT_HOST_BACKENDS: "codex" };
 export default async function(t, ctx) {
   const c = await ctx.open({ autoAllow: true });
   try {
-    for (const backend of (process.env.AGENT_HOST_E2E_FORK_BACKENDS ?? "codex,procway").split(",")) {
+    for (const backend of (process.env.AGENT_HOST_E2E_FORK_BACKENDS ?? "codex").split(",")) {
       const keep = `violet_${crypto.randomBytes(4).toString("hex")}`;
       const omit = `amber_${crypto.randomBytes(4).toString("hex")}`;
-      const model = backend === "procway" ? process.env.AGENT_HOST_E2E_PROCWAY_MODEL : process.env.AGENT_HOST_E2E_CODEX_MODEL;
+      const model = process.env.AGENT_HOST_E2E_CODEX_MODEL;
       const first = await c.runTurn({ backend, cwd: ctx.work, model,
         prompt: `This is a conversation-memory test. Remember the code ${keep}. Reply with READY only. Do not use tools or modify files.` });
       t.ok(`${backend}: first turn`, first.outcome === "ok", first.events.find(e => e.error)?.error);

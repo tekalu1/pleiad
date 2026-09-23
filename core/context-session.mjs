@@ -78,14 +78,14 @@ export function createContextSession({ store, snapshots, plyServers = async () =
   }
 
   /**
-   * 各エージェントの設定に登録されている外部 MCP（Claude・Codex・procway-code）。担当がエージェントのときに見比べる用。
+   * 各エージェントの設定に登録されている外部 MCP（Claude・Codex）。担当がエージェントのときに見比べる用。
    * 探索の設定（探す形式・除外）には従わず、登録されているものをそのまま並べる。接続・起動はしない
    */
   async function agentMcp(cwd) {
-    const scope = { sources: ['claude', 'codex', 'procway'], excludePaths: [] };
+    const scope = { sources: ['claude', 'codex'], excludePaths: [] };
     const kinds = Object.fromEntries(KINDS.map(k => [k, k === 'mcp' ? scope : null]));
     const scan = await scanContext({ cwd, plan: { user: { roots: [], kinds }, directory: { roots: [], kinds }, mcp: { disabled: [], prefer: {} } } }, scanOptions);
-    const agents = { claude: [], codex: [], procway: [] };
+    const agents = { claude: [], codex: [] };
     for (const e of scan.entries) {
       if (e.kind !== 'mcp') continue;
       for (const source of new Set(e.origins.map(o => o.source))) {

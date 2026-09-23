@@ -213,10 +213,6 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     const spec = { kinds };
     const ctx = { source, scope, appliesTo: scope === 'user' ? null : custom ? cwd : base };
     const user = scope === 'user';
-    if (source === 'procway') {
-      if (spec.kinds.includes('mcp')) await mcp(path.join(user && !custom ? process.env.AGENT_HOST_PROCWAY_HOME ?? base : base, '.procway', 'ai-agent', 'settings.json'), ctx, v => v.mcpServers);
-      return;
-    }
     if (source === 'common') {
       if (spec.kinds.includes('instruction') && (!user || custom)) {
         searched.push({ path: base, kind: 'instruction', ...ctx });

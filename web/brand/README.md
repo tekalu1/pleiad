@@ -13,10 +13,5 @@ their respective owners and are stored locally to avoid runtime third-party requ
   (https://github.com/lobehub/lobe-icons, MIT). Added a path ID for SVG `use`; the path
   geometry is unchanged. Rendered in the Google blue.
 - `claude.svg`: Claude mark, downloaded unchanged from https://claude.ai/favicon.svg
-- `procway-wordmark.svg`: Procway wordmark, downloaded unchanged from the Procway web
-  app (`/brand/procway-wordmark.svg`)
-- `procway-icon.svg`: the `logo-p-black` group from that wordmark, extracted at
-  the user's request. Path geometry and orange dot are unchanged. The line uses
-  its original color in light mode and white in dark mode, without a background.
 
 Retrieved 2026-09-12 (`antigravity.svg`: 2026-09-16). Original colors and aspect ratios are preserved.

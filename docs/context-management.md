@@ -14,7 +14,7 @@
     "places": { "<pathKey>": { "path": "<表示用の実体パス>", "roots": [ /* その場所から下で探す追加ルート */ ],
                                "kinds": { /* 上書きした種類だけ */ "skill": K } } } }
   // K = { owner: "native" | "ply",
-  //       user:      { sources: ["common"|"claude"|"codex"|"procway"], excludePaths: [...] } | null,   // home の探索
+  //       user:      { sources: ["common"|"claude"|"codex"], excludePaths: [...] } | null,   // home の探索。対応を終えたエージェントの探索元（RETIRED_SOURCES）は読んだところで落とす
   //       directory: { sources: [...], excludePaths: [...] } | null,                                   // Git ルート〜作業場所の探索
   //       disabled?: ["名前"],            // 外部 MCP だけ。名前で外す（同じ設定ファイルの他の登録は残す）
   //       prefer?:   { "名前": "設定ファイル" } }  // 外部 MCP だけ。同じ名前の定義が複数あるときに使う方（無ければ先に見つかった方）
@@ -49,7 +49,6 @@
 | 共通配置 | `~/.agents/skills/*/SKILL.md` | `AGENTS.md`, `.agents/skills/*/SKILL.md` |
 | Claude | `CLAUDE_CONFIG_DIR` または `~/.claude` の `CLAUDE.md`, `rules/**/*.md`, `skills/*/SKILL.md`。MCP は `~/.claude.json` の `mcpServers` | `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`, `.claude/rules/**/*.md`, `.claude/skills/*/SKILL.md`, `.mcp.json`。cwd に一致する `~/.claude.json` の project MCP |
 | Codex | `CODEX_HOME` または `~/.codex` の `AGENTS.override.md`, `AGENTS.md`, `skills/*/SKILL.md`, `config.toml`。加えて `~/.agents/skills` | `AGENTS.override.md`, `AGENTS.md`, `.codex/skills`, `.agents/skills`, `.codex/config.toml` |
-| procway | `~/.procway/ai-agent/settings.json` の mcpServers | 各階層の `.procway/ai-agent/settings.json` の mcpServers |
 
 これは候補の一覧であり、各エージェントの有効プロンプトの完全再現ではない。元の `enabled: false` の MCP と override に隠される AGENTS.md は状態付きで残す。
 
@@ -76,7 +75,7 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
 - `contextSettings { cwd? }`：画面の形。`defaults` と `places[]`（保存した場所と今の場所）それぞれで、種類ごとの `{ value, override, from }`、追加ルート、「個別に変更」の数（`overrides`）、`current`（今の場所）、`saved`。
 - `setContextSettings`：1 か所だけ変えて即時保存し、`contextSettings` と同じ形（と `place`）を返す。`{ place: null | パス, kind, value: K | null }`（場所で `null` は既定に戻す）、`{ place, roots: [...] | null }`、`{ place, add: true }` / `{ place, remove: true }`。
 - `scanContext { cwd, place?: "default" }`：保存済み設定から候補・出典・診断・探索場所・根（`home` / `root`）・MCP 設定ファイルごとの登録の書き出し（`configs`）を返す。`place: "default"` は場所の上書きを使わず既定だけで探す（設定の「すべての場所」）。同一接続の重複スキャンは拒否する。
-- `agentMcp { cwd }`：各エージェント（Claude・Codex・procway-code）の設定に登録されている外部 MCP。探索の設定に関係なく読むだけ（接続・起動しない）。設定の「エージェントに任せる」と会話の右パネルが見比べに使う。
+- `agentMcp { cwd }`：各エージェント（Claude・Codex）の設定に登録されている外部 MCP。探索の設定に関係なく読むだけ（接続・起動しない）。設定の「エージェントに任せる」と会話の右パネルが見比べに使う。
 - `slashSkills { cwd }`：同じ探索結果から、入力欄の先頭 `/` に出すスキルだけを名前順に返す（`skillList()`）。各項目は `{ name, description, hint, from }`。同名は先に見つかった置き場所だけを返し、除外・shadowed は含めない。`hint` は frontmatter の `argument-hint`、または引数の定義から作る。
 - `sessionContext { sessionId }`：その会話の読み込み記録・担当・固定の有無と、固定された会話だけ行う今のファイルとの突き合わせ（`changed`）を返す。詳細は `docs/context-runtime.md`。
 - `listMcpConfig { cwd, format, scope }`：保存先・リビジョン・登録名のみを返す。
@@ -87,8 +86,8 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
 ## 外部 MCP の画面（2026-09-20）
 
 設定 › コンテキストの「外部 MCP」カードに集約した（旧「MCP 管理」の JSON 直書き画面は廃止）。
-- **エージェントに任せる**: `agentMcp` で各エージェントの登録を 2 列（procway-code に登録があれば 3 列）で見比べる。片方にしか無いものに「Claude だけ」。Pleiad は読むだけで変えない。
-- **Pleiad がそろえる**: この場所でつなぐものを名前ごとに 1 行。手元で動かす／URL の区別、どの設定由来か（Pleiad に登録・Claude だけに登録・両方に登録）、ログインの状態と「ログイン」、同じ名前で中身の違う定義があれば「どちらの定義を使いますか」（`prefer`）、スイッチ（オフ = `disabled`）。行を押すと中身: Pleiad の登録は編集・名前を変える・ログイン／ログアウト・接続を確認・削除、エージェントの登録は伏せ字の定義と「Pleiad に取り込む」（`importPlyMcp`。トークンは引き継がない）。「読み込む設定ファイル」（Claude・Codex・procway-code）と「ログインの詳細設定」（Client ID Metadata Document の URL。既定は空）は折りたたみの奥。暗号化されない起動では平文で保存することを注記する。
+- **エージェントに任せる**: `agentMcp` で各エージェントの登録を 2 列で見比べる。片方にしか無いものに「Claude だけ」。Pleiad は読むだけで変えない。
+- **Pleiad がそろえる**: この場所でつなぐものを名前ごとに 1 行。手元で動かす／URL の区別、どの設定由来か（Pleiad に登録・Claude だけに登録・両方に登録）、ログインの状態と「ログイン」、同じ名前で中身の違う定義があれば「どちらの定義を使いますか」（`prefer`）、スイッチ（オフ = `disabled`）。行を押すと中身: Pleiad の登録は編集・名前を変える・ログイン／ログアウト・接続を確認・削除、エージェントの登録は伏せ字の定義と「Pleiad に取り込む」（`importPlyMcp`。トークンは引き継がない）。「読み込む設定ファイル」（Claude・Codex）と「ログインの詳細設定」（Client ID Metadata Document の URL。既定は空）は折りたたみの奥。暗号化されない起動では平文で保存することを注記する。
 - **名前を変えたとき**（`renamePlyMcp`）: 既定と各場所の設定で名前で指したものも追随させる（`contextSettings.renameMcp`）。`disabled` は新しい名前も外す（古い名前は残す。同じ名前のエージェント側の登録は前と同じく外れたまま）。`prefer` は Pleiad の登録を選んでいたものだけ新しい名前へ移す。戻り値の `settingsUpdated` は書き換えた箇所の数。始まっている会話の方針（`plan.mcp`・`removedMcp`）は開始時のまま変えない。
 - **同じ名前の定義が複数あるとき**: 選んだ定義（`prefer`）、無ければ先に見つかった方を使い、残りは `shadowedBy: 'choice'` で渡さない（以前は実行時に「同名の MCP があります」で止めていた）。どれを使ったかは設定の行（「〜の定義を使っています」）と会話の右パネル（「渡していないもの」に理由）に出す。Pleiad の登録と同じ名前のエージェント側の登録は、従来どおり Pleiad の登録が優先。
 - **＋ MCP を追加**（シート）: 名前（エージェントの登録から候補を出し、選ぶとつなぎ方を写す）、つなぎ方（URL につなぐ／手元で動かす）、コマンド・環境変数、または URL・認証（ブラウザでログイン／トークン／ヘッダー／なし。アプリ登録が要るときの clientId は折りたたみ）、使う範囲（この場所だけ／すべての場所。この場所だけは「既定では名前で外し、この場所では外さない」で表す）、保存先と暗号化の説明、「追加してログイン」（OAuth）または「追加して試しにつなぐ」。JSON で直接書きたいときは「JSON で編集（上級者向け）」を開く。
@@ -97,9 +96,9 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
 
 同じMCP管理欄に、Claude・Codex共通の「Pleiadの成果物提示」を内蔵機能として表示する。既定は有効で、切り替えはPleiadの設定に保存し、すべての作業場所の次ターンから反映する。`plyMcpSettings` / `setPlyMcpSettings` で読み書きする。外部MCPの形式・保存スコープ選択とは独立している。
 
-可視化の共通スキル本文はターン開始時に注入する。提示用の内蔵 `ply.present` MCP は廃止した。外部登録の `ply` と `host` は予約名として拒否する。Codex の再開済みスレッドと procway の旧 `ply` 接続は無効化する。外部MCPの探索・編集仕様は以下のとおり。
+可視化の共通スキル本文はターン開始時に注入する。提示用の内蔵 `ply.present` MCP は廃止した。外部登録の `ply` と `host` は予約名として拒否する。Codex の再開済みスレッドの旧 `ply` 接続は無効化する。外部MCPの探索・編集仕様は以下のとおり。
 
-保存形式（claude / codex / procway）と保存スコープ（user / directory）は会話の実行バックエンドとは独立。directory の保存先は画面で選んだ cwd そのもの（Git ルートへの暗黙の変更なし）。Claude は `~/.claude.json` のトップレベル `mcpServers` または cwd の `.mcp.json`、Codex は `CODEX_HOME/config.toml`（既定 `~/.codex`）または cwd の `.codex/config.toml` の `mcp_servers` に保存する。Claude のプロジェクト個人用登録は探索対象だが、この編集画面の保存先には含めない。
+保存形式（claude / codex）と保存スコープ（user / directory）は会話の実行バックエンドとは独立。directory の保存先は画面で選んだ cwd そのもの（Git ルートへの暗黙の変更なし）。Claude は `~/.claude.json` のトップレベル `mcpServers` または cwd の `.mcp.json`、Codex は `CODEX_HOME/config.toml`（既定 `~/.codex`）または cwd の `.codex/config.toml` の `mcp_servers` に保存する。Claude のプロジェクト個人用登録は探索対象だが、この編集画面の保存先には含めない。
 
 名前と1件のサーバー定義を JSON で編集する。stdio / HTTP のひな形を用意し、保存先形式の追加オプションを保持する。基本的な command / url / args / env の型を検証するが、認証・接続成功は保証しない。登録の削除・名前変更はこの画面の対象外。
 
@@ -107,7 +106,7 @@ JSON は他のキーを保持して整形保存。通常の TOML テーブルで
 
 保存は直列化し、読み込んだファイル全体の SHA-256 リビジョンと保存直前に再照合する。一時ファイルへの書き込み後に rename。既存ファイルのアクセスモードとシンボリックリンクの実体を保持する。外部プロセスとの OS レベルの協調ロックではないため、最終確認と rename の間の競合まで保証するものではない。構文不正のファイルは上書きしない。読込・保存上限は1 MiB、1件の入力定義は64 KiB。
 
-登録の保存だけでは接続しない。Pleiad 管理の場合は、次の実行時に登録を解決して接続する。procway 形式の保存先はユーザー／作業場所の `.procway/ai-agent/settings.json`。
+登録の保存だけでは接続しない。Pleiad 管理の場合は、次の実行時に登録を解決して接続する。
 
 `core/context-settings.mjs` が設定の保存・継承・移行、`core/context-scan.mjs` が探索、`core/mcp-config.mjs` がエージェント側の登録の読み書き、`core/context-session.mjs` が会話ごとの操作。UI は `web/context.mjs`（設定 › コンテキスト）、`web/mcp-config.mjs`（外部 MCP のカードとシート）、`web/session-context.mjs`（会話の右パネル）。実行時は `core/context-runtime.mjs` と `core/context-bridge.mjs` を介して各バックエンドに供給し、会話に利用記録を保存する。TOML / YAML は `smol-toml` / `yaml` で解析し、設定を正規表現だけで読まない。
 

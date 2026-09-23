@@ -5,7 +5,7 @@
 //     defaults: { roots: [..], kinds: { instruction: K, skill: K, mcp: K } },
 //     places: { <pathKey>: { path, roots?: [..], kinds: { <kind>?: K } } } }
 //   K = { owner: native|ply, user: S|null, directory: S|null, disabled?: [名前], prefer?: { 名前: 設定ファイル } }
-//   S = { sources: [common|claude|codex|procway], excludePaths: [..] }
+//   S = { sources: [common|claude|codex], excludePaths: [..] }
 // user は home（ユーザー共通）の探索、directory は Git ルート〜作業場所の探索。null はその範囲を探さない
 // （形式 1 の「対象（kinds）」から外していた種類。移行で意味を保つためだけに残る）。
 // 種類ごとに、作業場所に一番近い上書きを持つ場所が勝ち、無ければ既定。追加ルートも同じ（defaults.roots は
@@ -25,7 +25,11 @@ const realpathNative = promisify(realpathCallback.native);
 import { z } from 'zod';
 
 export const KINDS = ['instruction', 'skill', 'mcp'];
-export const SOURCES = ['common', 'claude', 'codex', 'procway'];
+export const SOURCES = ['common', 'claude', 'codex'];
+// 対応を終えたエージェントの探索元。前の版で保存した設定を読めるように受け付け、読んだところで落とす
+const RETIRED_SOURCES = ['procway'];
+const storedSource = z.enum([...SOURCES, ...RETIRED_SOURCES]);
+const liveSources = sources => unique(sources.filter(s => SOURCES.includes(s)));
 export const DEFAULT_SOURCES = ['common', 'claude', 'codex'];
 /** 形式 1 の探索設定の既定。移行と、形式 1 のまま記録された会話の方針（contextSession.policy）を読むのに使う */
 export const DEFAULT_SCAN = { sources: [...DEFAULT_SOURCES], kinds: [...KINDS], additionalRoots: [], excludePaths: [] };
@@ -33,7 +37,7 @@ export const DEFAULT_OWNERS = { instruction: 'native', skill: 'native', mcp: 'na
 export const defaultKind = () => ({ owner: 'native', user: { sources: [...DEFAULT_SOURCES], excludePaths: [] }, directory: { sources: [...DEFAULT_SOURCES], excludePaths: [] } });
 
 const paths = z.array(z.string().trim().min(1).max(4096)).max(64);
-const scopeSchema = z.object({ sources: z.array(z.enum(SOURCES)).max(4), excludePaths: paths }).strict();
+const scopeSchema = z.object({ sources: z.array(storedSource).max(4), excludePaths: paths }).strict();
 const NAME = z.string().min(1).max(128);
 const kindSchema = z.object({
   owner: z.enum(['native', 'ply']),
@@ -43,7 +47,7 @@ const kindSchema = z.object({
   prefer: z.record(NAME, z.string().min(1).max(4096)).optional(),
 }).strict();
 const legacySpec = z.object({
-  sources: z.array(z.enum(['common', 'claude', 'codex', 'procway'])).max(4),
+  sources: z.array(storedSource).max(4),
   kinds: z.array(z.enum(KINDS)).max(3),
   additionalRoots: paths,
   excludePaths: paths,
@@ -98,7 +102,7 @@ export function normalizeScan(value, base, home = os.homedir()) {
   const parsed = legacySpec.safeParse(value);
   if (!parsed.success) throw new Error('スキャン設定の形式が不正です');
   const v = parsed.data;
-  return { sources: unique(v.sources), kinds: unique(v.kinds), additionalRoots: resolveAll(v.additionalRoots, base, home), excludePaths: resolveAll(v.excludePaths, base, home) };
+  return { sources: liveSources(v.sources), kinds: unique(v.kinds), additionalRoots: resolveAll(v.additionalRoots, base, home), excludePaths: resolveAll(v.excludePaths, base, home) };
 }
 
 /** 種類 1 つの設定を検査する。相対パスは保存先の場所（既定なら home）から解決する */
@@ -108,7 +112,7 @@ export function normalizeKind(kind, value, base, home = os.homedir()) {
   if (!parsed.success) throw new Error('コンテキストの設定の形式が不正です');
   const v = parsed.data;
   if (kind !== 'mcp' && (v.disabled || v.prefer)) throw new Error('名前で外す設定は外部 MCP だけです');
-  const scope = s => s && { sources: unique(s.sources), excludePaths: resolveAll(s.excludePaths, base, home) };
+  const scope = s => s && { sources: liveSources(s.sources), excludePaths: resolveAll(s.excludePaths, base, home) };
   const out = { owner: v.owner, user: scope(v.user), directory: scope(v.directory) };
   if (v.disabled?.length) out.disabled = unique(v.disabled).sort();
   if (v.prefer && Object.keys(v.prefer).length) out.prefer = Object.fromEntries(Object.entries(v.prefer).map(([n, p]) => [n, resolveScanPath(p, base, home)]));

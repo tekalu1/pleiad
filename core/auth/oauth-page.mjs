@@ -1,5 +1,4 @@
 // Vendored from @earendil-works/pi-ai (packages/ai/src/utils/oauth/oauth-page.ts),
-// by way of procway-code (ai-agent/src/auth/oauth/oauth-page.mjs).
 // Copyright (c) 2025 Mario Zechner — MIT. See LICENSE-pi-ai.md in this directory.
 //
 // ブラウザのコールバックに出す 1 枚もの。ここは agent-host の web/ とは無関係で、

@@ -368,6 +368,21 @@ function seedSubagents(cwd) {
 
 // ---- ディスパッチ -----------------------------------------------------------
 
+// 接続先（modelProvider）の扱いを本物に寄せる（スパイク 2026-09-23）: ロード済みのスレッドへの thread/resume は
+// modelProvider・config を無視し、thread/unsubscribe の後の resume なら新しい接続先が効く。
+// FAKE_CODEX_LOG があれば、そのファイルへ 1 行 JSON で記録する（テストが「どの接続先・鍵・モデルでターンが走ったか」を見る）
+import fs from "node:fs";
+const LOG = process.env.FAKE_CODEX_LOG;
+const record = (entry) => { if (LOG) fs.appendFileSync(LOG, JSON.stringify(entry) + NL); };
+function applyProvider(t, params) {
+  if (t.loaded) return;
+  t.loaded = true;
+  const id = params?.modelProvider ?? "openai";
+  const def = params?.config?.[`model_providers.${id}`] ?? null;
+  t.provider = { id, baseUrl: def?.base_url ?? null, bearer: def?.experimental_bearer_token ?? null, headers: def?.http_headers ?? null,
+    contextWindow: params?.config?.model_context_window ?? null, webSearch: params?.config?.web_search ?? null };
+}
+
 async function handle(method, params) {
   calls.set(method, (calls.get(method) ?? 0) + 1);
   switch (method) {
@@ -386,6 +401,8 @@ async function handle(method, params) {
       t.plyConfig = params?.config?.['mcp_servers.ply'];
       t.ephemeral = Boolean(params?.ephemeral);
       t.model = params?.model;
+      applyProvider(t, params);
+      record({ method, threadId: t.id, modelProvider: params?.modelProvider ?? null, model: params?.model ?? null, ephemeral: t.ephemeral });
       return {
         thread: wire(t, false),
         approvalPolicy: params?.approvalPolicy ?? "untrusted",
@@ -400,13 +417,17 @@ async function handle(method, params) {
     case "thread/resume": {
       const t = threads.get(params?.threadId);
       if (!t) throw new Error(`知らない threadId: ${params?.threadId}`);
+      if (params?.model) t.model = params.model;
+      applyProvider(t, params);
+      record({ method, threadId: t.id, modelProvider: params?.modelProvider ?? null, model: params?.model ?? null });
       return {
         thread: wire(t, false),
         approvalPolicy: params?.approvalPolicy ?? "untrusted",
         approvalsReviewer: "user",
         cwd: t.cwd,
         model: "fake-model-1",
-        modelProvider: "openai",
+        // 実際に効いている接続先（本物もロード済みなら前の provider を返す）
+        modelProvider: t.provider?.id ?? "openai",
         sandbox: { type: "workspaceWrite" },
       };
     }
@@ -417,6 +438,7 @@ async function handle(method, params) {
       if (params?.cwd) t.cwd = params.cwd;
       const turnId = `tn_${++seq}`;
       const text = (params?.input ?? []).filter((i) => i?.type === "text").map((i) => i.text).join("");
+      record({ method, threadId: t.id, provider: t.provider ?? null, model: t.model ?? null, effort: params?.effort ?? null, ephemeral: Boolean(t.ephemeral) });
       if (t.ephemeral && process.env.FAKE_CODEX_CHECK_TITLE === "1") {
         if (t.model !== "gpt-5.6-luna" || params?.effort !== "low") {
           throw new Error("Title generation must use Luna with low effort");
@@ -461,7 +483,14 @@ async function handle(method, params) {
     }
 
     case "thread/unsubscribe": {
-      if (threads.get(params?.threadId)?.ephemeral) threads.delete(params.threadId);
+      const gone = threads.get(params?.threadId);
+      // FAKE_CODEX_CONTROL のファイルに sticky があれば、外したと答えてもロードしたまま（接続先の変更を無視する本物の場面の再現）。
+      // unsubscribe-fail があれば失敗を返す
+      const control = process.env.FAKE_CODEX_CONTROL ? (() => { try { return fs.readFileSync(process.env.FAKE_CODEX_CONTROL, "utf8"); } catch { return ""; } })() : "";
+      if (control.includes("unsubscribe-fail")) throw new RpcError("thread is busy", -32000);
+      if (gone && !control.includes("sticky")) gone.loaded = false;
+      record({ method, threadId: params?.threadId });
+      if (gone?.ephemeral) threads.delete(params.threadId);
       return { status: "unsubscribed" };
     }
 

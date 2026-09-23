@@ -1,6 +1,6 @@
 # 会話内の可視化
 
-Pleiad の可視化は、Claude・Codex・procway 共通の Visualize 参照で表示する。公開 MCP ツール `present` と `/mcp/ply`、その有効化設定は廃止した。外部 MCP の設定は変更しない。旧 `plyPresentEnabled` の値は使用しない。
+Pleiad の可視化は、Claude・Codex 共通の Visualize 参照で表示する。公開 MCP ツール `present` と `/mcp/ply`、その有効化設定は廃止した。外部 MCP の設定は変更しない。旧 `plyPresentEnabled` の値は使用しない。
 
 ## 作り方
 
@@ -18,7 +18,7 @@ Codex の専用形式も同じ経路で受け取る。
 
 上のコードブロックは説明用。実際の回答ではコードフェンス・インラインコード・リストに入れず出力する。コード例とユーザー発言からファイルを読み込むことはない。Claude の実接続では専用 Unicode 記号が落ちる場合があるため ASCII 形式を使えるようにした。
 
-共通スキルは `skills/visualize/SKILL.md`。ターン開始時に Claude の system prompt append、Codex の developerInstructions、procway の session rules に同じ本文を注入する。ネイティブのスキル・指示は既存のコンテキスト設定に従い、可視化の表示契約を追加する。ユーザーのスキルディレクトリを書き換えたり、OpenAI プラグインのコードをコピーしたりしない。
+共通スキルは `skills/visualize/SKILL.md`。ターン開始時に Claude の system prompt append、Codex の developerInstructions に同じ本文を注入する。ネイティブのスキル・指示は既存のコンテキスト設定に従い、可視化の表示契約を追加する。ユーザーのスキルディレクトリを書き換えたり、OpenAI プラグインのコードをコピーしたりしない。
 
 ## 表示・保存
 
@@ -46,6 +46,6 @@ Codex の専用形式も同じ経路で受け取る。
 
 ## 検証
 
-`npm test` は分割参照、コード例、不正入力、サイズ・パス制限、保存と再開、タイムライン、旧 HTML と新しい可視化の隔離を検証する。`npm run test:e2e -- visualize` は Claude・Codex・procway の実サービスに接続して新規・再開・履歴の各版と旧ツールを使わないことを確認する。
+`npm test` は分割参照、コード例、不正入力、サイズ・パス制限、保存と再開、タイムライン、旧 HTML と新しい可視化の隔離を検証する。`npm run test:e2e -- visualize` は Claude・Codex の実サービスに接続して新規・再開・履歴の各版と旧ツールを使わないことを確認する。
 
 ブラウザーでは操作、親 DOM と fetch の遮断、旧 HTML のスクリプト禁止、パネルで開く・広げる・Esc・狭い画面、パスのコピーと保存の中身、ファイルとの往復で残らないこと（保存用 URL の解放を含む）を確認する。過去の `docs/artifact-sharing-investigation.md` は移行前の調査記録として残す。

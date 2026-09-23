@@ -6,14 +6,14 @@
 //
 // **codex / gemini との決定的な違い: 1 プロセス = 1 会話。**
 // stream-json は「1 行 1 プロンプト、1 行につき 1 ターン」を**同じ会話の中で**回す。
-// 会話ごとに独立したプロセスを立て、生かしたまま次のターンを待つ（procway の serve と同じ形）。
+// 会話ごとに独立したプロセスを立て、生かしたまま次のターンを待つ。
 //
 // 実機（agy 1.2.4 / windows-x64）で確かめたこと:
 //   - **`--print` は次のフラグを prompt として飲み込む。** `--print` と書くと
 //     `--input-format` が prompt 扱いになり、`agy` 自身がそう警告してくる。
 //     **`--print=`（空値を付ける）が正しい**
 //   - 未ログインだと stderr に OAuth の URL を出し、**stdin で認可コードを待つ**（既定 60 秒）。
-//     つまりログインもここから駆動できる（procway の手貼りと同じ経路に載る）
+//     つまりログインもここから駆動できる（認可コードの手貼りの経路に載る）
 //   - 認証に失敗しても `{"event":"result","result":{…,"status":"ERROR","error":…}}` は必ず出る
 //   - **`--print-timeout`（既定 5m0s）がターンを打ち切る。** 打ち切られると stderr に
 //     `[agy] print timeout after 5m0s with turn in progress; returning partial output` を出し、
