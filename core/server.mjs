@@ -1,6 +1,6 @@
 import { effortOptions, validateEffort } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
-import { createQuotaCache, createUsageStore } from './usage.mjs';
+import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
 // HTTP（web/ の配信）+ WebSocket（/ws）。token gate は constant-time 比較、既定は localhost bind。
 //
 // ここは**エージェント非依存**。エージェントの実行もセッション管理も core/backends/<id>.mjs が持ち、
@@ -8,7 +8,7 @@ import { createQuotaCache, createUsageStore } from './usage.mjs';
 // 承認の保留・猶予・中断（設計メモ §8.5）だけはここに残す。エージェントに散らすと
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
 import { createAgentTasks } from './agent-tasks.mjs';
-import { createAgentBridge, AGENTS_MCP_PATH } from './agent-bridge.mjs';
+import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS } from './agent-bridge.mjs';
 import { canDelegate, resolveDelegatedMode } from './modes.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
@@ -138,7 +138,9 @@ const taskExecutions = new Map();
 const agentBridge = createAgentBridge({ call: async (owner, name, args) => {
   const turn = runtime.turns.get(owner);
   if (!turn || turn.ac.signal.aborted) throw new Error('この会話は実行中ではありません');
-  const mutation = ['ply_delegate', 'ply_task_send'].includes(name);
+  // 使用枠は読むだけなので、読み取り・計画モードでも答える。providerUsage と同じキャッシュを通す
+  if (name === 'ply_usage') return agentUsage({ backend: args.backend, list: listBackends, get: getBackend, read: providerQuota });
+  const mutation = DELEGATING_TOOLS.includes(name);
   if (mutation && !canDelegate(turn.backend.modes()[turn.info.mode])) throw new Error('読み取り・計画モードでは Pleiad の子タスクを開始できません');
   // 子の承認モードは「親の強さまで継ぐ、それを超えない」（core/modes.mjs）。
   // 決めるのはここだけ。prepare は決まった結果をそのまま使う（同じ判定を二度しない）。
@@ -399,6 +401,15 @@ async function sessionList({ limit = 100 } = {}) {
 async function usageAccounts() {
   const accounts = await claudeAccounts.usageTargets().catch(() => []);
   return accounts.length ? { accounts } : {};
+}
+
+/**
+ * プロバイダーの使用枠。設定の画面（providerUsage）とエージェント（ply_usage）が同じ quotaCache を通すので、
+ * どちらから何度呼んでも各サービスへの問い合わせは 1 分に 1 回まで
+ */
+async function providerQuota(backend) {
+  if (!backend.usage) return { windows: [], checkedAt: null, message: 'このエージェントは使用枠の取得に対応していません。' };
+  return quotaCache(backend.id, async () => backend.usage({ cwd: process.cwd(), ...(backend.capabilities?.claudeAccounts ? await usageAccounts() : {}) }));
 }
 
 /**
@@ -1699,9 +1710,7 @@ wss.on("connection", (ws) => {
         case 'providerUsage': {
           const backend = getBackend(msg.args?.backend);
           if (!backend) throw new Error('エージェントが見つかりません');
-          const quota = backend.usage
-            ? await quotaCache(backend.id, async () => backend.usage({ cwd: process.cwd(), ...(backend.capabilities?.claudeAccounts ? await usageAccounts() : {}) }))
-            : { windows: [], checkedAt: null, message: 'このエージェントは使用枠の取得に対応していません。' };
+          const quota = await providerQuota(backend);
           let local;
           try { local = await usageStore.summary(backend.id); }
           catch { local = { error: '使用実績を読み込めませんでした。' }; }
