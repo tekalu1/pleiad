@@ -1,6 +1,7 @@
 import { el } from './dom.mjs';
+import { fmt } from './i18n.mjs';
 
-const format = n => n == null ? '不明' : n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+const format = n => n == null ? '不明' : fmt.number(n, { maximumFractionDigits: 1 });
 export function quotaText(window, now = Date.now()) {
   const expired = window.resetsAt && new Date(window.resetsAt).getTime() <= now;
   return expired ? 'リセット時刻を過ぎています・更新待ち'
@@ -20,7 +21,7 @@ function renderQuota(parent, quota, onUsageLogin) {
       row.append(meter);
     }
     row.append(el('small', 'usage-note', w.resetsAt
-      ? `リセット: ${new Date(w.resetsAt).toLocaleString()}` : 'リセット日時: 不明'));
+      ? `リセット: ${fmt.dateTime(w.resetsAt)}` : 'リセット日時: 不明'));
     parent.append(row);
   }
   for (const account of quota.accounts ?? []) {
@@ -55,7 +56,7 @@ function renderLocal(parent, local) {
     body.append(row);
   }
   table.append(body); parent.append(table);
-  parent.append(el('p', 'usage-note', `${local.since ? '記録開始: ' + new Date(local.since).toLocaleString() : 'まだ使用実績がありません'}。この機能の導入後に Pleiad で完了した実行のみ。入力はキャッシュを含みます。参考費用はエージェントの推計で、サブスクの請求額ではありません。`));
+  parent.append(el('p', 'usage-note', `${local.since ? '記録開始: ' + fmt.dateTime(local.since) : 'まだ使用実績がありません'}。この機能の導入後に Pleiad で完了した実行のみ。入力はキャッシュを含みます。参考費用はエージェントの推計で、サブスクの請求額ではありません。`));
 }
 /**
  * 互換の接続先ごとの見出しと「使用量は表示できません」（画面 4 の③）。枠（サブスクの使用率）は互換の先から返らない。
@@ -67,11 +68,9 @@ export function renderEndpoints(parent, endpoints) {
     parent.append(el('h4', null, `接続先 ${e.name}`));
     let local = false;
     try { local = ['localhost', '127.0.0.1', '[::1]'].includes(new URL(e.baseUrl).hostname); } catch {}
-    parent.append(el('p', 'usage-note', local
-      ? 'この接続先の使用量は表示できません。手元で動いているため枠がありません。'
-      : `この接続先の使用量は表示できません。互換の接続先は枠の情報を返さないためです。残高や請求は ${e.name} の管理画面で確認してください。`));
+    parent.append(el('p', 'usage-note', local ? '使用量は表示できません（ローカル）。' : `使用量は表示できません。残高は ${e.name} の管理画面で確認してください。`));
   }
-  parent.append(el('p', 'usage-note', '互換の接続先で動かした分も「Pleiad での使用実績」に含まれます。その参考費用はモデルの単価が分からないため当てになりません。'));
+  parent.append(el('p', 'usage-note', '互換の接続先の分の参考費用は当てになりません（単価が不明）。'));
 }
 export function setupUsage({ $, cmd, getBackends, page, isOpen, onUsageLogin, endpoints = async () => [] }) {
   let loading = false;
@@ -88,7 +87,7 @@ export function setupUsage({ $, cmd, getBackends, page, isOpen, onUsageLogin, en
           const result = await cmd('providerUsage', { backend: backend.id });
           card.replaceChildren(el('h3', null, result.label));
           renderQuota(card, result.quota, onUsageLogin);
-          if (result.quota.checkedAt) card.append(el('p', 'usage-note', `最終取得: ${new Date(result.quota.checkedAt).toLocaleString()}`));
+          if (result.quota.checkedAt) card.append(el('p', 'usage-note', `最終取得: ${fmt.dateTime(result.quota.checkedAt)}`));
           renderEndpoints(card, await endpoints(backend.id).catch(() => []));
           renderLocal(card, result.local);
         } catch { card.replaceChildren(el('h3', null, backend.label), el('p', 'usage-note', '取得できませんでした。接続を確認して更新してください。')); }

@@ -1,0 +1,32 @@
+{
+  "settings": {
+    "appearance": {
+      "language": {
+        "title": "言語",
+        "description": "画面の文言と、日付・数の書き方に使います。",
+        "auto": "OS に合わせる",
+        "autoResolved": "OS に合わせる（{{lang}}）",
+        "current": "今は {{lang}} で表示しています",
+        "saveFailed": "言語を保存できませんでした: {{error}}"
+      }
+    }
+  },
+  "time": {
+    "justNow": "たった今",
+    "ago": "{{elapsed}}前",
+    "elapsed": {
+      "second_other": "{{count}}秒",
+      "minute_other": "{{count}}分",
+      "hour_other": "{{count}}時間",
+      "day_other": "{{count}}日"
+    }
+  },
+  "activity": {
+    "thinking": "考えている",
+    "writing": "書いている",
+    "compacting": "文脈を圧縮している",
+    "waiting": "あなたの応答を待っている",
+    "running": "動いている",
+    "stopping": "中断している"
+  }
+}

@@ -27,6 +27,7 @@ import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
 import { el, svgEl, relTime } from "./dom.mjs";
+import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
 import { buildItems, attachmentMessageIndex } from "./timeline.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
@@ -109,6 +110,7 @@ const state = {
   askedFor: new Set(), // 一覧に無いセッションのために取り直した記録（取り直しの繰り返しを防ぐ）
   work: { count: 0, turns: [], permissions: [], subagents: [], background: [] },
   runningIds: new Set(),   // いま走っているセッション（サーバの running が正）
+  stopping: new Set(),     // 中断を頼んだが、まだ止まり終えていないセッション（押した瞬間と、サーバの running の stopping）
   bgWaiting: new Map(),    // 裏を待っているセッション -> 待っている本数（running のターン行の phase と background が正）
   waitingIds: new Set(),   // 承認・回答を待っているセッション
   // 未解決の承認: id -> permission イベントの中身。会話を開き直すたびに描き直す材料。
@@ -596,6 +598,8 @@ const activity = {
     this.el?.closest(".mw")?.querySelector(".activity-tip")?.replaceChildren(this.mark());
   },
   show(text) {
+    // 中断を頼んだ後は、止まり終えるまで何が流れてきても「中断している」のまま出す
+    if (stoppingHere()) text = ACTIVITY_LABEL.stopping;
     this.text = text;
     if (!this.t0) this.t0 = Date.now();
     const was = this.behind;
@@ -689,7 +693,7 @@ function closeThink() {
   const d = state.thinkEl;
   d.classList.remove("live");
   const n = d.querySelector(".think-body").textContent.length;
-  d.querySelector("summary").textContent = `考えた（${n.toLocaleString("ja-JP")} 文字）`;
+  d.querySelector("summary").textContent = `考えた（${fmt.number(n)} 文字）`;
   state.thinkEl = null;
 }
 
@@ -698,7 +702,7 @@ function thinkFromText(text) {
   const d = document.createElement("details");
   d.className = "think";
   const s = document.createElement("summary");
-  s.textContent = `考えた（${text.length.toLocaleString("ja-JP")} 文字）`;
+  s.textContent = `考えた（${fmt.number(text.length)} 文字）`;
   const body = el("div", "think-body", text);
   d.append(s, body);
   return d;
@@ -724,11 +728,12 @@ function appendText(text) {
 }
 
 const ACTIVITY_LABEL = {
-  thinking: "考えている",
-  writing: "書いている",
-  compacting: "文脈を圧縮している",
-  waiting: "あなたの応答を待っている",
-  running: "動いている",
+  thinking: t("activity.thinking"),
+  writing: t("activity.writing"),
+  compacting: t("activity.compacting"),
+  waiting: t("activity.waiting"),
+  running: t("activity.running"),
+  stopping: t("activity.stopping"),   // 中断を受け付けた。バックエンドが止まり終えるまで（server の abort が出す）
 };
 
 // ---------------------------------------------------------------- イベント
@@ -821,7 +826,7 @@ function onEvent(ev, replay = false) {
   // （覚えずに捨てると、一覧は「承認待ち」なのにカードがどこにも出ない）
   if (ev.type === "permission" && ev.id) state.pendingPerms.set(ev.id, ev);
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); return; }
   // Pleiad に登録した外部 MCP のログインの進み具合。会話には出さず、設定 › コンテキストと会話の右パネル（web/context.mjs・web/session-context.mjs）へ渡す
   if (ev.type === 'mcpAuth') { window.dispatchEvent(new CustomEvent('ply:mcp-auth', { detail: ev })); return; }
   // Claude のアカウントの認可（claude setup-token / 使用量の claude auth login）の進み具合。設定のアカウントの画面へ渡す
@@ -937,6 +942,8 @@ function onEvent(ev, replay = false) {
 
     case "activity":
       if (ev.state === "idle") return activity.hide();
+      // 別のタブで押した中断・開き直した会話でも、止まり終えるまで中断ボタンを押せなくする
+      if (ev.state === "stopping" && ev.sessionId && isRunningHere()) { state.stopping.add(ev.sessionId); syncRunState(); }
       return activity.show(ev.label || ACTIVITY_LABEL[ev.state] || "動いている");
 
     case 'taskNotice':
@@ -1049,12 +1056,14 @@ function onEvent(ev, replay = false) {
 
     case "turnEnd":
       closeTurnEl();
-      // 区切りが来ないままターンが終わった分。エージェントは次のターンとして答える（claude で実測）。
+      // 渡った合図が来ないままターンが終わった分。Codex などは次のターンとして答える。
+      // Claude は区切りで取り出された分にも同じターンの中で答え、渡った合図も出す（取りこぼしても、
+      // 次の内部ターンが始まった時点で出す。core/backends/claude.mjs の takeLeftovers）ので、普通はここに残らない。
       // 待っているものは何も走っていないので、回る弧はここで外す
       for (const row of thread.querySelectorAll('.mw[data-delivery-pending]')) markDelivery(row, 'late');
       state.awaitingSession = false;
       state.submitting = false;
-      if (ev.sessionId) state.runningIds.delete(ev.sessionId);
+      if (ev.sessionId) { state.runningIds.delete(ev.sessionId); state.stopping.delete(ev.sessionId); }
       syncRunState();
       syncHistory();
       return refresh();
@@ -1088,6 +1097,9 @@ function applyRunning(work) {
     || behind.size !== state.bgWaiting.size || [...behind].some(([id, n]) => state.bgWaiting.get(id) !== n);
   state.runningIds = running;
   state.waitingIds = waiting;
+  // 中断中の印はサーバの turn.info.stopping が正。走り終えた会話の分は外す
+  for (const t of state.work.turns ?? []) if (t.stopping && t.sessionId) state.stopping.add(t.sessionId);
+  for (const id of [...state.stopping]) if (!running.has(id)) state.stopping.delete(id);
   state.bgWaiting = behind;
   if (state.current && state.runningIds.has(state.current)) state.submitting = false;
   syncRunState();
@@ -1861,7 +1873,7 @@ async function refreshBackgroundDetail() {
       return;
     }
     const task = data.task;
-    view.status.textContent = `稼働中${task.startedAtMs ? ' · 起動 ' + new Date(task.startedAtMs).toLocaleString() : ''}${task.outputTruncated ? ' · 出力は末尾64K文字' : ''}`;
+    view.status.textContent = `稼働中${task.startedAtMs ? ' · 起動 ' + fmt.dateTime(task.startedAtMs) : ''}${task.outputTruncated ? ' · 出力は末尾64K文字' : ''}`;
     view.command.textContent = task.command || task.label || view.task.label || view.task.id;
     view.cwd.textContent = task.cwd ? `作業場所: ${task.cwd}` : '';
     const text = task.output === null ? 'このエージェントは出力の取得に対応していません。' : task.output || 'まだ出力はありません。';
@@ -1956,6 +1968,46 @@ function initTheme() {
   for (const b of $("themeSeg").querySelectorAll("button")) b.onclick = () => applyTheme(b.dataset.theme);
   // 自動のときは OS の明暗が変わると面の色も変わる。窓のボタンの地も追いかける
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paintTitleBar);
+}
+
+// ---------------------------------------------------------------- 言語
+// 設定値（auto|ja|en）はサーバーの prefs.json に置く。サーバーが OS の言語と合わせて解決した言語が画面の正本で、
+// ready と prefs イベントで届く。今の画面と違う言語が届いたら、写し（localStorage）を直して読み直す。
+// 途中で文言を差し替える経路は持たない（読み直せば全部が確実にその言語になる）。
+
+state.locale = { setting: "auto", lang: uiLang };
+
+function paintLocale() {
+  const { setting, lang } = state.locale;
+  for (const b of $("localeSeg").querySelectorAll("button")) {
+    const v = b.dataset.locale;
+    b.classList.toggle("on", v === setting);
+    b.setAttribute("aria-pressed", String(v === setting));
+    b.textContent = v === "auto"
+      ? setting === "auto" ? t("settings.appearance.language.autoResolved", { lang: languageName(lang) }) : t("settings.appearance.language.auto")
+      : languageName(v);
+  }
+  $("localeNow").textContent = t("settings.appearance.language.current", { lang: languageName(uiLang) });
+}
+
+/** サーバーから届いた言語を受ける。読み直すなら true */
+function applyLocale(info) {
+  if (!info || !["ja", "en"].includes(info.lang)) return false;
+  state.locale = { setting: info.setting ?? "auto", lang: info.lang };
+  // 写しを書けないとき（保存が禁止されている）は読み直しても同じ言語で始まるので、読み直さない（繰り返さないため）
+  if (rememberLang(info.lang) && info.lang !== uiLang) { location.reload(); return true; }
+  paintLocale();
+  return false;
+}
+
+function initLocale() {
+  for (const b of $("localeSeg").querySelectorAll("button")) b.onclick = () => {
+    if (b.dataset.locale === state.locale.setting) return;
+    // 結果は prefs イベントで届く（ほかのタブにも）。ここでは失敗だけ拾う
+    cmd("setPref", { key: "locale", value: b.dataset.locale })
+      .catch((e) => { $("localeNow").textContent = t("settings.appearance.language.saveFailed", { error: e.message }); });
+  };
+  paintLocale();
 }
 
 // ---------------------------------------------------------------- 窓の上端（デスクトップ版）
@@ -3105,6 +3157,10 @@ function isRunningHere() {
 }
 
 const isWaitingHere = () => (state.work.permissions ?? []).some(belongsHere);
+/** いま表示している会話の中断を受け付けて、止まり終えるのを待っているか */
+function stoppingHere() {
+  return Boolean(state.current) && state.stopping.has(state.current);
+}
 
 /** 実行状態から見た目を合わせる。走っている本数ではなく「この画面が走っているか」で決める。 */
 function syncRunState() {
@@ -3113,6 +3169,8 @@ function syncRunState() {
   $("send").disabled = submittingMessages.has(state.current) || state.loadingSession === state.current && Boolean(state.current)
     || Boolean(retiredHere());
   $("abort").hidden = !(here || isWaitingHere());
+  // 受け付けた中断は取り消せない。止まり終えるまで押せないようにする（稼働表示は「中断している」）
+  $("abort").disabled = here && stoppingHere();
   if (!here) {
     closeTurnEl();
     // ターンは終わったが裏の作業が残っている。末尾の節は消さずに衛星にする（中断は出さない）
@@ -3185,6 +3243,8 @@ function connect() {
         return ws.close();
       }
       if (m.homeDir) state.homeDir = m.homeDir;
+      // 画面と違う言語なら読み直すので、ここで止める
+      if (applyLocale(m.locale)) return;
       side.setConnLost(false);
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
       cmd("hostCapabilities").then((c) => { state.osActions = c?.osActions === true; filePreview.osChanged(); }).catch(() => {});
@@ -3241,7 +3301,21 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   isRunning: () => Boolean(state.current && state.runningIds.has(state.current)) });
 $('contextEntry').onclick = () => sessionContext.toggle($('contextEntry'));
 // 止めるのは今見ているセッションだけ。他のセッションは走らせたままにする
-$("abort").onclick = () => cmd("abort", { sessionId: state.current }).catch(() => {});
+$("abort").onclick = () => {
+  const sessionId = state.current;
+  // 走っているターンの中断は、押した瞬間に受け付けた見た目にする（サーバの running が追って確かめる）。
+  // 承認を待っているだけ（ターンの外）なら止まり終える待ちは無いので印を立てない
+  const running = isRunningHere();
+  if (sessionId && running) {
+    state.stopping.add(sessionId);
+    syncRunState();
+    activity.show(ACTIVITY_LABEL.stopping);
+  }
+  cmd("abort", { sessionId }).catch(() => {
+    if (sessionId) state.stopping.delete(sessionId);
+    syncRunState();
+  });
+};
 
 $("authNeed").onclick = (e) => { e.stopPropagation(); side.closePops(); openSettings(); };
 
@@ -3319,7 +3393,9 @@ setupUsage({ $, cmd, getBackends: () => state.backends, endpoints: async (agent)
   // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
   onUsageLogin: accountId => claudeAccounts.open({ usageLogin: accountId }) });
 clearThread();
+applyDom(document);
 initTheme();
+initLocale();
 initSidebar();
 watchTitleBar();
 wireDropZone();

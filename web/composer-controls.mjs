@@ -293,7 +293,7 @@ export function setupComposerControls({ cmd, get, on }) {
       }
       parts.push(seg);
     }
-    // 互換の接続先（Claude Code・Codex）。先頭は「公式」、下に登録した接続先。選んでいる間は使えないものを一行で出す
+    // 互換の接続先（Claude Code・Codex）。先頭は「公式」、下に登録した接続先。選んでいる間は使えないものを短い一行で出す
     const ep = d.endpoint;
     if (ep) parts.push(...endpointSection(d));
     if (ep?.row) parts.push(...compatModelSection(d));
@@ -304,7 +304,7 @@ export function setupComposerControls({ cmd, get, on }) {
       parts.push(head("Claude のアカウント"));
       // 互換の接続先ではアカウントを使わない（接続先のキーで送る）。節は残し、選べない見た目と理由を出す
       const off = Boolean(ep?.row);
-      if (off) parts.push(el("p", "cnote", "互換の接続先ではアカウントを使いません。接続先に登録したキーで送ります。"));
+      if (off) parts.push(el("p", "cnote", "互換の接続先ではアカウントを使いません"));
       parts.push(listbox("Claude のアカウント", d.accounts.map((a) => row({
         on: !off && a.value === d.account, main: a.label, right: off ? "" : a.hint, tag: !off && a.value === "" ? "既定" : "", key: `account:${a.value}`, disabled: off,
         onPick: () => { if (!off && a.value !== d.account) on.account(a.value); },
@@ -331,9 +331,7 @@ export function setupComposerControls({ cmd, get, on }) {
       onPick: () => { if (o.value !== ep.selected && !o.gone) on.endpoint(o.value); },
     }))));
     if (ep.row) {
-      const lost = el("p", "cnote");
-      lost.append(el("b", null, "この接続先で使えないもの: "), ep.lost);
-      out.push(lost);
+      out.push(el("p", "cnote", `使えないもの: ${ep.lost}`));
     }
     return out;
   }
@@ -394,9 +392,7 @@ export function setupComposerControls({ cmd, get, on }) {
       commitTyped();
     });
     paintList();
-    out.push(input, box, el("p", "cnote", d.backend === "claude"
-      ? "一覧は接続を確認したときに取ったものです。↓ で候補へ、Enter で決めます。Opus・Sonnet・Haiku 相当は接続先の設定で割り当てます。"
-      : "一覧は接続を確認したときに取ったものです。↓ で候補へ、Enter で決めます。"));
+    out.push(input, box);
     return out;
   }
 

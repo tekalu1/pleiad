@@ -50,6 +50,7 @@
 .mp-keyrow input { flex:1; }
 .mp-seg { display:inline-flex; max-width:100%; flex-wrap:wrap; background:var(--surface-2); }
 .mp-field > small { display:block; margin-top:4px; }
+.mp-field > small:empty { display:none; }
 .mp-seg button { flex:none; padding:4px 12px; }
 .mp-check { display:flex; gap:8px; align-items:center; margin-top:14px; }
 .mp-link { color:var(--ink-blue); }
