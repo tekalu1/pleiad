@@ -21,6 +21,10 @@ const cases = [
   await import('./unit/composer-agy.mjs'),
   // 互換の接続先（保存・確認・キーを出さない・env と Codex の上書き）。偽の互換 API とだけ話す
   await import('./unit/compat-endpoints.mjs'),
+  // リモート接続の暗号・フレーム・チャネル（core/remote/）。Noise の公式ベクトルと、メモリの管でつないだ往復
+  await import('./unit/remote-noise.mjs'),
+  await import('./unit/remote-frames.mjs'),
+  await import('./unit/remote-channel.mjs'),
   // 入力欄の設定のチップ: フォルダーの一覧（listDirs）・「既定」の解決・エフォートの既定の段
   await import('./unit/composer-settings.mjs'),
   await import('./unit/context-transports.mjs'),
@@ -110,6 +114,8 @@ const cases = [
   // 孤児の agy の掃除。**名前を確かめてからでないと落とさない**
   await import("./unit/antigravity-pids.mjs"),
   // 同じ身代わりで、ターン途中の送信をその区切りへ差し込む（serve の steer）
+  // リモートの中継（relay/server.mjs）。空きポートで立て、素の WebSocket で照合・行き先・上限を叩く
+  await import("./unit/relay.mjs"),
 ];
 
 const selected = pick(cases, process.argv.slice(2));
