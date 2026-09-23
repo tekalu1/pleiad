@@ -117,7 +117,8 @@ export default async function (t) {
     const ask = (extra = {}) => `context:${JSON.stringify({ name: 'instructions_for_path', arguments: { id: path.join(dedup, 'sub', 'x.ts'), ...extra } })}`;
     const said = r => r.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
     const fetchSub = async (s, extra) => said(await client.runTurn({ ...s, prompt: ask(extra) }, { ms: 60_000 }));
-    const isShort = text => text.startsWith('Already provided in this conversation: ') && !text.includes('DEDUP_SUB');
+    // 会話の言語は日本語（テストは AGENT_HOST_LOCALE=ja）。英語の会話では 'Already provided in this conversation: '（tests/unit/i18n-agent.mjs）
+    const isShort = text => text.startsWith('この会話で渡し済み: ') && !text.includes('DEDUP_SUB');
     const dd = await client.cmd('newSession', { cwd: dedup, backend: 'fake' });
     t.ok('初回は子階層の指示の本文を渡す', (await fetchSub(dd)).includes('DEDUP_SUB'));
     let text = await fetchSub(dd);

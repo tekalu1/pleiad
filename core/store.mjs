@@ -13,6 +13,8 @@
 //   ungrouped       … 人が「グループから外した／解除した」と決めた印。グループは親子と状態から自動で決まるので、
 //                     外したことだけを覚える（docs/design-system.md §4.1）
 //   mode / model    … 承認モードとモデルの記憶（人間だけが変えられる）
+//   agentLocale     … 会話の言語（ja|en）。エージェントに渡す文（指示・ツールの説明・通知）の言語。会話を始めたときに
+//                     画面の言語で決め、以後は変えない（core/server.mjs。docs/design.md「多言語対応」）
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -312,6 +314,9 @@ export async function inheritSettings(sourceId, childId) {
     // 互換の接続先（core/compat-endpoints.mjs）。分岐は同じエージェントなので、同じ接続先で続ける
     if (source.compatEndpoint) entry.compatEndpoint = source.compatEndpoint;
     else delete entry.compatEndpoint;
+    // 会話の言語（エージェントに渡す文の言語。core/server.mjs）。分岐・切り替えた先も同じ言語で続ける（履歴と同じ言語のまま）
+    if (source.agentLocale) entry.agentLocale = source.agentLocale;
+    else delete entry.agentLocale;
     entry.contextSession = structuredClone(source.contextSession ?? null);
     await flush();
   });
@@ -333,7 +338,7 @@ export const dataDir = DIR;
 
 /** Host-only data; durable before acknowledging the client. Roll back a failed write. */
 export async function setSessionData(sessionId, field, value) {
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint"].includes(field)) throw new Error(t("store.invalidSessionField"));
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];

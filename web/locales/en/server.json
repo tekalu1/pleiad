@@ -781,5 +781,8 @@
     "launchFailed": "Couldn't start the app ({{reason}})",
     "openFailed": "Couldn't open it ({{reason}})",
     "noResponse": "No response"
+  },
+  "agentRuntime": {
+    "visualizeNotStarted": "The conversation has not started yet."
   }
 }
