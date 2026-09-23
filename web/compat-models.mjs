@@ -8,6 +8,7 @@
 // 検索は大文字小文字を区別しない部分一致。空白で区切った語はすべて当たるもの（AND）。表示名・送る ID・display_name のどれでもよい。
 
 import { filterLimited, SHOW_LIMIT } from './search-terms.mjs';
+import { t } from './i18n.mjs';
 
 export { searchTerms, matchesTerms, filterLimited, moreText, SHOW_LIMIT } from './search-terms.mjs';
 
@@ -29,7 +30,7 @@ export function compatModelLabel(id) {
 /** 札を置けない字だけの場所（「次のターンから適用」の文言など）の形。1M は（1M）と書く */
 export function compatModelText(id) {
   const { text, oneM } = compatModelLabel(id);
-  return oneM ? `${text}（1M）` : text;
+  return oneM ? t('compat.model.withOneM', { text }) : text;
 }
 
 /** コンテキスト長の短い字（1000000 → 1M、262144 → 256K、200000 → 200K）。無ければ '' */
@@ -54,7 +55,7 @@ export function modelCandidates(models = [], info = {}, extra = []) {
     const i = info?.[id] ?? {};
     const name = typeof i.name === 'string' && i.name && i.name !== id && i.name !== text ? i.name : '';
     const context = contextLabel(i.context);
-    return { id, text, oneM, name, context, sub: [name, context && `コンテキスト ${context}`].filter(Boolean).join(' · ') };
+    return { id, text, oneM, name, context, sub: [name, context && t('compat.model.context', { context })].filter(Boolean).join(' · ') };
   });
 }
 
@@ -76,7 +77,7 @@ export function resolveTyped(cands, typed) {
 }
 
 /** 札の「1M」の説明（title） */
-export const ONE_M_TITLE = '1M コンテキスト（Claude Code の [1m] の印）';
+export const ONE_M_TITLE = t('compat.model.oneMTitle');
 
 /** combo（web/combo.mjs）の候補の形に。字は表示名、確定する値は送る ID、札は 1M、2 行目は display_name とコンテキスト長 */
 export const comboModelOptions = (cands) => cands.map(c => ({
