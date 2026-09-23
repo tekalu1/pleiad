@@ -257,7 +257,7 @@ function toolResult(item) {
   if (item?.type === "imageGeneration") {
     const images = [];
     if (item.status === "completed") {
-      if (item.savedPath) images.push({ url: `/local-file?path=${encodeURIComponent(item.savedPath)}` });
+      if (item.savedPath) images.push({ url: `/local-file?path=${encodeURIComponent(item.savedPath)}`, path: item.savedPath });
       else if (typeof item.result === "string" && /^[A-Za-z0-9+/=\r\n]+$/.test(item.result)) {
         images.push({ dataUri: `data:image/png;base64,${item.result}` });
       }
