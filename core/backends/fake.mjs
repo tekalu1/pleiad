@@ -28,7 +28,7 @@ const iso = () => new Date().toISOString();
 const wait = (ms) => new Promise((r) => setTimeout(r, ms).unref?.());
 
 const MODES = {
-  default: { label: "都度確認", note: "全部聞く",     scope: "workspace", autonomy: "ask",   enforced: false },
+  default: { label: "都度確認", short: "都度", note: "全部聞く",     scope: "workspace", autonomy: "ask",   enforced: false },
   auto:    { label: "auto",     note: "聞かずに進む", scope: "workspace", autonomy: "never", enforced: false },
 };
 

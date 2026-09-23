@@ -686,7 +686,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .abort{flex:none}
 .abort svg.i{display:none;width:18px;height:18px}
 /* 「保存済み」: 行の空きに弱い字で。詰めるときは最初に消える（字が詰まる） */
-.crow .draft-saved{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:var(--fs-xs);color:var(--ink-weak);padding:2px 6px}
+.crow .draft-saved{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:var(--fs-xs);color:var(--ink-weak);padding:2px 6px}
 /* ---- 入力欄の設定のチップ（web/composer-controls.mjs、design-system.md「入力欄の設定」） ----
    作業ディレクトリ・モデル・承認モードの 3 つ。3 つとも同じ書体（本文）・大きさ（14px）・太さ（400）・高さ（マウス 30px / タッチ 36px。
    添付・中断と同じ）・余白・アイコン（15px の線画）・▾（12px）。既定から外れても色を変えない。
@@ -705,9 +705,17 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .chip .v .ef{flex:none;white-space:pre}
 .chip svg.i{width:15px;height:15px;color:var(--ink-weak);flex:none}
 .chip svg.caret{width:12px;height:12px}
-.chip.folder{flex-shrink:6}
-.chip.model{flex-shrink:2}
+/* 縮めるのはモデル → 作業ディレクトリの順（最小の幅は composer-controls.mjs の fitRow が決める）。承認モードは縮めない */
+.chip.folder{flex-shrink:1}
+.chip.model{flex-shrink:20}
 .chip.mode{flex-shrink:0}
+.chip.mode .v .short{display:none}
+.crow.fit-short .chip.mode .v .full:has(+ .short){display:none}
+.crow.fit-short .chip.mode .v .short{display:inline}
+.crow.fit-noef .chip .v .ef{display:none}
+/* 縮める前の幅を測る間だけ（fitRow）。「保存済み」は測らない（入らなければ消えるだけ） */
+.crow.measuring > *{flex-shrink:0}
+.crow.measuring > .draft-saved{display:none}
 .chip.danger{color:var(--ink-strong)}
 .chip.danger svg.i{color:var(--ink-strong)}
 /* 浮く面。チップの上に画面に対して置く（位置と幅は composer-controls.mjs が決める。幅は画面に収める） */

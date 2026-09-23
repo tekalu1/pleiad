@@ -57,6 +57,7 @@ const MODES = {
   yolo: {
     // label / note はゲッター（サーバーの言語は実行中に変わる。core/i18n.mjs）
     get label() { return t("modes.full"); },
+    get short() { return t("modesShort.full"); },
     get note() { return t("antigravity.modes.yolo"); },
     skip: true,
     // 軸（core/modes.mjs）。範囲を絞る手段が無いので full、強制もできない。

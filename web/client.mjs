@@ -3477,6 +3477,7 @@ function syncRunState() {
   $("abort").hidden = !(here || isWaitingHere());
   // 受け付けた中断は取り消せない。止まり終えるまで押せないようにする（稼働表示は「中断している」）
   $("abort").disabled = here && stoppingHere();
+  controls.fit();   // 中断が出入りすると行の幅の配分が変わる
   if (!here) {
     closeTurnEl();
     // ターンは終わったが裏の作業が残っている。末尾の節は消さずに衛星にする（中断は出さない）
