@@ -3319,7 +3319,7 @@ function connect() {
     if (m.kind === "response") {
       const p = pending.get(m.id);
       pending.delete(m.id);
-      return m.ok ? p?.res(m.result) : p?.rej(new Error(String(m.error)));
+      return m.ok ? p?.res(m.result) : p?.rej(Object.assign(new Error(String(m.error)), m.code ? { code: m.code } : {}));
     }
 
     if (m.kind === "error") sys(`error: ${escText(m.error)}`);
