@@ -1,1 +1,50 @@
-<!doctype html><title>Pleiad</title>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pleiad</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- The shell's own screen (docs/remote.md §8.2, mock docs/mockups/remote-mobile.html ① ②). Bundled in the app;
+     no host ever serves it. Host UIs open in a separate WebView without this bridge. -->
+<main id="list" class="shell">
+  <header class="top"><i class="logo"></i><b data-t="hosts.title"></b></header>
+  <div id="hosts" class="card list" role="list"></div>
+  <p id="empty" class="weak" hidden data-t="hosts.empty"></p>
+  <button id="add" class="add" type="button"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span data-t="hosts.add"></span></button>
+  <p class="foot weak" data-t="hosts.foot"></p>
+  <p id="plain" class="foot weak" hidden data-t="hosts.notEncrypted"></p>
+</main>
+
+<main id="pair" class="shell" hidden>
+  <header class="top"><button id="pairBack" class="ib" type="button" data-t-label="common.back"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><b data-t="pair.title"></b></header>
+  <section id="pairStart" class="card">
+    <button id="scan" class="add" type="button"><svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/></svg><span data-t="pair.scan"></span></button>
+    <p id="scanNote" class="weak" hidden></p>
+    <label class="lbl" for="code" data-t="pair.pasteLabel"></label>
+    <textarea id="code" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" data-t-placeholder="pair.pastePlaceholder"></textarea>
+    <button id="usePaste" class="btn" type="button" data-t="pair.add"></button>
+  </section>
+  <section id="pairConfirm" class="card" hidden>
+    <p><span data-t="pair.confirmLead"></span> <b id="confirmName" class="mono"></b></p>
+    <p class="weak"><span data-t="pair.relay"></span> <span id="confirmRelay" class="mono"></span></p>
+    <p id="confirmKnown" class="weak" hidden data-t="pair.known"></p>
+    <div class="acts"><button id="confirmYes" class="btn fill" type="button" data-t="pair.add"></button><button id="confirmNo" class="btn" type="button" data-t="common.cancel"></button></div>
+  </section>
+  <section id="pairWait" class="card" hidden>
+    <p id="waitLead"></p>
+    <div id="waitCode" class="code" aria-live="polite"></div>
+    <p id="waitNote" class="weak center"></p>
+    <button id="pairCancel" class="btn" type="button" data-t="common.cancel"></button>
+  </section>
+  <p id="pairError" class="error" role="alert" hidden></p>
+  <p class="foot weak" data-t="pair.fullAccess"></p>
+</main>
+
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
