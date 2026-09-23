@@ -72,7 +72,7 @@ Claude はネイティブの承認経路を使う。Codex の共通 MCP は Plei
 
 | 対象 | Claude | Codex |
 |---|---|---|
-| 指示 | claudeMdExcludes、autoMemoryEnabled=false | project_doc_max_bytes=0 |
+| 指示 | claudeMdExcludes（CLAUDE.md・CLAUDE.local.md・AGENTS.md・.claude/rules）、autoMemoryEnabled=false | project_doc_max_bytes=0 |
 | Skills | skills=[]、disable-slash-commands、Skill を非公開 | 発見済み SKILL.md の skills.config.enabled=false |
 | MCP | strictMcpConfig=true | ネイティブ登録を無効なプレースホルダーに置換 |
 | 指示の注入 | claude_code preset append | thread developerInstructions |
