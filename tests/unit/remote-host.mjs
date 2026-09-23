@@ -170,8 +170,12 @@ export default async function (t) {
     t.ok('中継が落ちると端末の接続も切れる', Boolean(dropped));
     from = c.mark();
     await sleep(200);
+    // 立て直した後に connected になった知らせだけを待つ（since で見分ける）。端末のチャネルが切れたときの知らせ（touch）は、
+    // ホストが制御用の接続の切断をまだ処理していないと古い connected のまま届く。それを拾うと sync 前の中継へ端末をつなぎ 4404 になる
+    const restartedAt = Date.now();
     ({ relay } = await within(startRelay(relayPort), 5000, '中継の立て直し'));
-    const back = await c.waitFor(e => e.type === 'remoteStatus' && e.status.connection.state === 'connected', { from, ms: 15_000 }).catch(() => null);
+    const back = await c.waitFor(e => e.type === 'remoteStatus' && e.status.connection.state === 'connected'
+      && Date.parse(e.status.connection.since) >= restartedAt, { from, ms: 15_000 }).catch(() => null);
     t.ok('ホストが中継へ張り直す', Boolean(back));
     const dB2 = back ? await connectDevice(credsB).catch(e => e) : null;
     if (dB2 && !(dB2 instanceof Error)) devices.push(dB2);

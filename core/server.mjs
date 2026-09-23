@@ -2485,7 +2485,9 @@ wss.on("connection", (ws, req) => {
           if (size > ATTACH_MAX_BYTES) return reply(false, t('attach.tooLarge', { size: Math.round(size / 1024 / 1024), limit: ATTACH_MAX_BYTES / 1024 / 1024 }));
           const { bucket, dir, rel } = attachTarget(sessionId, name);
           const r = await attachUploads.start({ name: bucket, dest: dir, files: [{ path: rel, size, mtime: 0 }], overwrite: true });
-          const file = path.join(r.dest, rel);
+          // 返すパスは置き場（UPLOAD_DIR）からたどった形にする。r.dest は realpath 済みで、データ置き場の途中にジャンクション・
+          // 8.3 の短い名前（CI の Windows の TEMP など）があると UPLOAD_DIR と字面が違い、送信時の presentAttachments が置き場の外として落とすため
+          const file = path.join(dir, rel);
           attachPending.set(r.uploadId, { file, mime: String(mime ?? "") });
           return reply(true, { uploadId: r.uploadId, path: file, received: r.received[0], chunkBytes: r.chunkBytes });
         }
