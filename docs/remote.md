@@ -332,7 +332,7 @@ main は `desktop/resident.cjs`: トレイ（Windows・Linux は押すと窓を�
 ### 7.1 窓と保存領域
 
 - **ホストごとに別の窓。** ローカルの窓とは混ぜない。同じホストを 2 度開いたら既存の窓を前に出す
-- ホストごとに `session.fromPartition('persist:remote-<hostId>')`。Cookie はポートで分かれない（`127.0.0.1` 単位）ので、分けないとローカルの窓の `agent_host_token` と混ざる。localStorage（既読・テーマ・開いていた会話）もホストごとに分かれる
+- ホストごとに `session.fromPartition('persist:remote-<hostId>')`。Cookie はポートで分かれない（`127.0.0.1` 単位）ので、分けないとローカルの窓の `agent_host_token` と混ざる。localStorage（テーマ・開いていた会話など）もホストごとに分かれる。既読（完了の確認）はホスト側に持つので、どの窓・端末でも同じ（docs/design.md「完了・未確認」）
 - 端末内プロキシは main プロセスで、ホストごとに `127.0.0.1` の空きポートで待ち受ける。ポートはホストごとに覚えて再利用する（localStorage はオリジン = ポート単位のため。ローカルの `desktop/server-port.cjs` と同じ理由）
 - プロキシは起動ごとの乱数トークンを持ち、窓は `http://127.0.0.1:<p>/?token=<それ>` を開く。**プロキシの認証は今のサーバーと同じ形**（`?token=` か HttpOnly・SameSite=Strict の Cookie、`/ws` は `?token=`）なので、`web/` は変えずに済む。加えて `Host` が `127.0.0.1:<p>` 以外なら 403（DNS rebinding 対策）
 - 同じ PC の別プロセスもループバックには届くが、トークンが無ければ 401。同じ利用者の悪意あるプロセスは対象外（その時点で保管庫も読める）

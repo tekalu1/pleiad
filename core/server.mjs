@@ -428,6 +428,8 @@ function sessionRow(b, s, extra = {}) {
     status: (b.capabilities?.tag && s ? s.tag : extra.status ?? s?.tag) ?? null,
     statusChangedAt: extra.statusChangedAt ?? null,
     completedAt: extra.completedAt ?? null,
+    // 確認済みの完了時刻。ホストに 1 つで、どの端末から見ても同じ（store.markRead・docs/design.md「完了・未確認」）
+    readAt: Number.isFinite(extra.readAt) ? extra.readAt : null,
     parent: extra.parent ?? s?.parent ?? null,
     // 人が外した／解除したグループ。まとまり自体は親子と状態から決まる（web/family.mjs）
     ungrouped: Boolean(extra.ungrouped),
@@ -2561,6 +2563,16 @@ wss.on("connection", (ws, req) => {
             await applyStatus(b, r.id, status, reason.reason === null ? savedReason('groupMove') : reason).catch(() => {});
           }
           return reply(true, { moved: kin.map((r) => r.id) });
+        }
+
+        // 完了を確認した。ホストに 1 つで、別の窓・別の端末にも read で知らせる（store.markRead が巻き戻さない）。
+        // 旧版がブラウザーに持っていた確認済みも、最初につないだときにここへまとめて届く（web/unread.mjs）
+        case "markRead": {
+          const a = msg.args ?? {};
+          const reads = Array.isArray(a.reads) ? a.reads.slice(0, 5000) : [[a.sessionId, a.at]];
+          const changed = await store.markRead(reads);
+          if (changed.length) emitGlobal({ type: "read", sessionId: null, reads: changed });
+          return reply(true, { reads: changed });
         }
 
         // グループから外す / 戻す。まとまりは親子と状態から決まるので、覚えるのは「外した」ことだけ

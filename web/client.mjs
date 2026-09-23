@@ -37,7 +37,7 @@ import { savedEvent, savedTitle } from "./saved-text.mjs";
 import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE } from "./timeline.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
-import { createReadCompletions, READ_STORE } from "./unread.mjs";
+import { createReadCompletions } from "./unread.mjs";
 import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { renderOutbox } from './outbox.mjs';
@@ -67,7 +67,8 @@ async function refreshOutbox(id) {
 
 let readStorage;
 try { readStorage = localStorage; } catch {}
-const readCompletions = createReadCompletions(readStorage);
+// 確認済みはホストのもの（markRead / read イベント / 一覧の readAt）。どの窓・端末から見ても同じ（web/unread.mjs）
+const readCompletions = createReadCompletions({ storage: readStorage, send: reads => cmd("markRead", { reads }) });
 const displayedCompletions = new Map();
 
 const token = new URL(location.href).searchParams.get("token") ?? "";
@@ -884,6 +885,8 @@ function onEvent(ev, replay = false) {
   if (ev.type === "permission" && ev.id) state.pendingPerms.set(ev.id, ev);
   if (!replay && sessionLoads.capture(ev, state.current)) return;
   if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); return; }
+  // 別の窓・別の端末（この窓も含む）で完了を確認した。一覧の青い丸だけが変わる
+  if (ev.type === "read") { if (readCompletions.apply(ev.reads)) renderSessions(); return; }
   // Pleiad に登録した外部 MCP のログインの進み具合。会話には出さず、設定 › コンテキストと会話の右パネル（web/context.mjs・web/session-context.mjs）へ渡す
   if (ev.type === 'mcpAuth') { window.dispatchEvent(new CustomEvent('ply:mcp-auth', { detail: ev })); return; }
   // Claude のアカウントの認可（claude setup-token / 使用量の claude auth login）の進み具合。設定のアカウントの画面へ渡す
@@ -1736,9 +1739,6 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state.current && !state.loadingSession) {
     acknowledgeDisplayed(state.current, displayedCompletions.get(state.current));
   }
-});
-window.addEventListener("storage", ev => {
-  if (ev.key === READ_STORE) { readCompletions.merge(ev.newValue); renderSessions(); }
 });
 
 /** 新しいセッション。絞り込みの条件（一意に定まるもの）を引き継ぐ */
@@ -2917,6 +2917,7 @@ async function refresh() {
   ]);
   if (version !== refreshVersion) return;
   state.sessions = sessions;
+  readCompletions.fromSessions(sessions);
   state.statuses = statuses;
   state.prefs = prefs ?? {};
   await loadBackends();
@@ -3412,6 +3413,8 @@ function connect() {
       // 画面と違う言語なら読み直すので、ここで止める
       if (applyLocale(m.locale)) return;
       side.setConnLost(false);
+      // 切れている間の確認と、旧版がこのブラウザーに持っていた確認済みを送る（受け取られたら旧版の分は消す）
+      readCompletions.flush();
       // 切れて止まっていたフォルダーの送信を、受け取り済みの位置から続ける
       folderUpload?.online();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）

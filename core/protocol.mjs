@@ -93,6 +93,7 @@ export const COMMANDS = new Set([
   "deleteUnsentSession",
   "setTurnSettings", // durable agent/model/cwd/account choice, applied at the next runTurn（account: '' = ログイン中の Claude アカウント）
   "setStatus",
+  "markRead",     // { reads: [[sessionId, completedAt], ...] } -> { reads: 変わった分 }。完了を確認した（ホストに 1 つ・大きい方だけ）。read イベントで全接続へ
   "setGrouped",   // { sessionId, ungrouped }。fork のグループから外す / 戻す（§4.1）
   "setTitle",
   "fork",
@@ -166,6 +167,7 @@ export const EVENTS = new Set([
   "sessionsChanged",
   "present",      // 成果物の提示
   "status",       // 状態が変わった
+  "read",         // { reads: [[sessionId, readAt], ...] } 完了を確認した。どの端末・窓からの確認も全接続へ（sessionId は null）
   "group",        // { ungrouped } fork のグループから外れた / 戻った
   "statusIcon",   // { status, icon } 状態グループのアイコンが変わった（sessionId は null）
   "title",        // タイトルが変わった

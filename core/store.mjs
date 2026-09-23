@@ -13,6 +13,8 @@
 //   ungrouped       … 人が「グループから外した／解除した」と決めた印。グループは親子と状態から自動で決まるので、
 //                     外したことだけを覚える（docs/design-system.md §4.1）
 //   mode / model    … 承認モードとモデルの記憶（人間だけが変えられる）
+//   readAt          … 確認済みの完了時刻（completedAt のうち人が見たもの）。ホストに 1 つで、どの端末・窓から見ても同じ
+//                     （markRead。大きい方だけを採り、completedAt を超えない。docs/design.md「完了・未確認」）
 //   agentLocale     … 会話の言語（ja|en）。エージェントに渡す文（指示・ツールの説明・通知）の言語。会話を始めたときに
 //                     画面の言語で決め、以後は変えない（core/server.mjs。docs/design.md「多言語対応」）
 import fs from "node:fs/promises";
@@ -346,6 +348,40 @@ export async function setSessionData(sessionId, field, value) {
     all[sessionId] = entry;
     try { await flush(); } catch (e) { if (before) all[sessionId] = before; else delete all[sessionId]; throw e; }
     return entry[field];
+  });
+}
+
+/**
+ * 完了を確認した印（readAt）を付ける。reads は [[sessionId, completedAt], ...]。
+ * 何度送っても同じで（冪等）、巻き戻らない（大きい方だけ）。記録に無い会話・完了していない会話には付けず、
+ * その会話の completedAt を超える値は completedAt に丸める（先の完了まで見たことにさせない）。
+ * 変わった分だけを [[sessionId, readAt], ...] で返す。1 件でも変われば 1 回だけ書く。
+ */
+export async function markRead(reads) {
+  const list = Array.isArray(reads) ? reads : [];
+  return exclusive(async () => {
+    const all = await load();
+    const changed = new Map(), before = new Map();
+    for (const pair of list) {
+      const [id, at] = Array.isArray(pair) ? pair : [];
+      if (typeof id === "string" && Object.hasOwn(all, id) && Number.isFinite(at) && at > 0) {
+        const entry = all[id];
+        if (!Number.isFinite(entry?.completedAt)) continue;
+        const next = Math.min(at, entry.completedAt);
+        if (next <= (Number.isFinite(entry.readAt) ? entry.readAt : 0)) continue;
+        if (!before.has(id)) before.set(id, entry.readAt);
+        entry.readAt = next;
+        changed.set(id, next);
+      }
+    }
+    // 書けなければ元に戻す（確認済みと答えたのに再起動で戻る、を作らない）
+    if (changed.size) {
+      try { await flush(); } catch (e) {
+        for (const [id, prev] of before) { if (prev === undefined) delete all[id].readAt; else all[id].readAt = prev; }
+        throw e;
+      }
+    }
+    return [...changed];
   });
 }
 
