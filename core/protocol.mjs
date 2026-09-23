@@ -94,6 +94,11 @@ export const COMMANDS = new Set([
   "setModel",        // モデルの切り替え（人間のみ）
   "models",          // 使えるモデルの一覧 { backend, cwd? }。'' には resolvesTo（既定が実際に当たる id）と efforts / defaultEffort
   "listDirs",        // { path? } -> { path, parent, dirs: [名前], truncated, roots }。フォルダーだけ。path が空ならホーム
+  // ファイルの操作（web/file-actions.mjs）。path は会話の中の参照（相対は sessionId・at か base で解く）。許可範囲は /file-preview と同じ
+  "hostCapabilities", // {} -> { osActions }。この接続がサーバーのある PC の画面からか（OS の操作を出してよいか）
+  "resolvePath",      // { path, sessionId?, at?, base? } -> { path（実体）, cwd, kind: file|directory }
+  "revealPath",       // { path, sessionId?, at?, base? } -> { path }。エクスプローラーでファイルを選んだ状態で開く（フォルダーはその中）。遠隔の接続は断る
+  "openPath",         // 同上。HTML だけ、既定のブラウザーで開く。遠隔の接続は断る
   "backends",        // 使えるバックエンドの一覧（capabilities / toolHints 付き）
   "authStatus",      // { backend } -> { supported, loggedIn?, account?, detail? }
   "authLogin",       // { backend }。URL は auth イベントで出る
