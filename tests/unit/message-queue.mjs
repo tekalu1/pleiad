@@ -50,6 +50,15 @@ export default async function(t) {
     await c.cmd('sendMessage', { sessionId: bad.sessionId, messageId: 'message-0005', prompt: 'echo:kept', cwd: path.join(scratch, 'missing') });
     await c.waitFor(e => e.type === 'outbox' && e.messages.some(m => m.status === 'failed'), { ms: 3000 });
     t.ok('開始失敗でも入力が再送可能な状態で残る', (await c.cmd('listMessages', { sessionId: bad.sessionId }))[0].status === 'failed');
+    // バックエンドがプロンプトを渡す前に失敗した。送信済みのまま消さず、失敗として残す。失敗の表示は 1 回だけ
+    const lost = await c.cmd('newSession', { backend: 'fake', cwd: ROOT });
+    const lostFrom = c.mark();
+    await c.cmd('sendMessage', { sessionId: lost.sessionId, messageId: 'message-0006', prompt: 'undelivered' });
+    await c.waitFor(e => e.type === 'turnEnd', { from: lostFrom, ms: 3000 });
+    const lostItem = (await c.cmd('listMessages', { sessionId: lost.sessionId }))[0];
+    t.ok('渡す前の失敗は送信済みにせず、エラー付きの失敗で残す', lostItem.status === 'failed' && lostItem.error?.includes('before the prompt'), JSON.stringify(lostItem));
+    const errors = c.events.slice(lostFrom).filter(e => e.type === 'turnResult' && e.outcome === 'error');
+    t.ok('同じ失敗を 2 回知らせない', errors.length === 1, String(errors.length));
   } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 
   // 会話をまたいだ同時実行の本数に上限は無い。ほかの会話が走っていても、新しい会話の送信は待たずに届く
