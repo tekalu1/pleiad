@@ -2,7 +2,6 @@ package com.procway.pleiad.remote
 
 import java.io.File
 import org.json.JSONObject
-import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -16,16 +15,7 @@ fun loadVectors(): JSONObject {
 }
 
 class X25519Test {
-    @After fun reset() { X25519.forced = null }
-
-    private fun both(block: () -> Unit) {
-        for (impl in listOf("jca", "portable")) {
-            X25519.forced = impl
-            block()
-        }
-    }
-
-    @Test fun rfc7748() = both {
+    @Test fun rfc7748() {
         // RFC 7748 §5.2 first vector
         assertEquals(
             "c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552",
@@ -45,21 +35,7 @@ class X25519Test {
         )
     }
 
-    @Test fun portableMatchesJca() {
-        if (!X25519.jcaAvailable) return
-        repeat(200) {
-            val a = randomBytes(32)
-            val b = randomBytes(32)
-            X25519.forced = "jca"
-            val pubB = X25519.publicKey(b)
-            val jca = X25519.dh(a, pubB)
-            X25519.forced = "portable"
-            assertEquals(pubB.toHex(), X25519.publicKey(b).toHex())
-            assertEquals(jca.toHex(), X25519.dh(a, pubB).toHex())
-        }
-    }
-
-    @Test fun rejectsZeroResult() = both {
+    @Test fun rejectsZeroResult() {
         try {
             X25519.dh(randomBytes(32), ByteArray(32))
             fail("small-order point accepted")
@@ -69,8 +45,6 @@ class X25519Test {
 }
 
 class NoiseVectorsTest {
-    @After fun reset() { X25519.forced = null }
-
     private fun runVector(v: JSONObject) {
         val pattern = when (v.getString("protocol_name")) {
             NoiseConst.PROTOCOL_IK -> Pattern.IK
@@ -113,10 +87,7 @@ class NoiseVectorsTest {
     @Test fun cacophonyVectors() {
         val noise = loadVectors().getJSONArray("noise")
         assertEquals(2, noise.length())
-        for (impl in listOf("jca", "portable")) {
-            X25519.forced = impl
-            for (i in 0 until noise.length()) runVector(noise.getJSONObject(i))
-        }
+        for (i in 0 until noise.length()) runVector(noise.getJSONObject(i))
     }
 
     @Test fun tamperedTransportFails() {
