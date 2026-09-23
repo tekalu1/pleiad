@@ -9,9 +9,22 @@ export function createMessageQueue({ store, active, start, changed, delivered })
     return next;
   };
   const list = async id => structuredClone((await store.get(id)).outbox ?? []);
+  // 送信待ちが何を待っているか（sessionId -> { reason, limit? }）。保存しない。kick のたびに決め直し、
+  // 画面へ渡すときだけ queued の項目に waiting として添える（同じ「送信待ち」でも、この会話の作業待ちと
+  // 同時実行の上限待ちでは利用者が取れる手が違う）
+  const waits = new Map();
+  const view = (id, items) => {
+    const wait = waits.get(id);
+    return wait ? items.map(m => (m.status === 'queued' ? { ...m, waiting: wait } : m)) : items;
+  };
   const save = async (id, items) => {
     await store.setSessionData(id, 'outbox', items);
-    changed(id, items);
+    changed(id, view(id, items));
+  };
+  const setWait = async (id, wait) => {
+    if (JSON.stringify(waits.get(id) ?? null) === JSON.stringify(wait)) return;
+    if (wait) waits.set(id, wait); else waits.delete(id);
+    changed(id, view(id, await list(id)));
   };
   async function update(id, messageId, patch) {
     const items = await list(id);
@@ -24,10 +37,14 @@ export function createMessageQueue({ store, active, start, changed, delivered })
     for (;;) {
       const items = await list(id);
       const item = items.find(m => !['sent', 'cancelled'].includes(m.status));
-      if (!item || item.status !== 'queued') return;
+      if (!item || item.status !== 'queued') {
+        // 先頭が保留・失敗・結果不明なら、後ろの送信待ちは順序を守ってそれを待つ
+        return setWait(id, items.some(m => m.status === 'queued') ? { reason: 'order' } : null);
+      }
       const turn = active(id);
-      if (turn?.blocked) return;
-      if (turn && (!turn.steer || (await store.get(id)).nextSettings)) return;
+      if (turn?.blocked) return setWait(id, turn.wait ?? { reason: 'turn' });
+      if (turn && (!turn.steer || (await store.get(id)).nextSettings)) return setWait(id, { reason: 'turn' });
+      waits.delete(id);
       await update(id, item.id, { status: 'sending', error: null });
       if (turn) {
         try {
@@ -76,7 +93,7 @@ export function createMessageQueue({ store, active, start, changed, delivered })
   });
   return {
     get busy() { return locks.size > 0; },
-    list: id => serial(id, () => list(id)), kick, pause,
+    list: id => serial(id, async () => view(id, await list(id))), kick, pause,
     // 受理された途中送信が、読まれないまま捨てられた。勝手に送り直さず、保留にして利用者に選ばせる
     // （ターンが死んだ直後なので、続けて送ってよいかは分からない）
     returned: (id, messageId) => serial(id, async () => {

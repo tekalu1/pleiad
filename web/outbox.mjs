@@ -1,7 +1,15 @@
 const labels = {
-  queued: '送信待ち — 作業が終わると自動で送信', sending: 'AIへ送信中',
+  queued: '送信待ち', sending: 'AIへ送信中',
   paused: '送信を保留中', failed: '送信できませんでした', unknown: '送信結果を確認できません',
 };
+
+// 送信待ちが何を待っているか（core/message-queue.mjs の waiting）
+function queuedLabel(wait) {
+  if (wait?.reason === 'turn') return '送信待ち — 作業が終わると自動で送信';
+  if (wait?.reason === 'limit') return `送信待ち — 同時に実行できる上限（${wait.limit}本）に達しています。ほかの会話の作業が終わると自動で送信`;
+  if (wait?.reason === 'order') return '送信待ち — 前のメッセージが送られてから送信';
+  return labels.queued;
+}
 
 export function renderOutbox(root, messages, action) {
   root.replaceChildren();
@@ -13,7 +21,7 @@ export function renderOutbox(root, messages, action) {
     text.textContent = item.args.prompt;
     const status = document.createElement('div');
     status.className = 'outbox-status';
-    status.textContent = labels[item.status] ?? item.status;
+    status.textContent = item.status === 'queued' ? queuedLabel(item.waiting) : labels[item.status] ?? item.status;
     row.append(text, status);
     if (item.error) {
       const error = document.createElement('div');
