@@ -43,7 +43,7 @@ interface ProxyTexts {
 }
 
 object DefaultTexts : ProxyTexts {
-    override fun title(state: String) = if (state == "revoked") "This device was removed on the host" else "Can't reach the host"
+    override fun title(state: String) = if (state == "revoked") "This device was revoked on the host" else "Can't reach the host"
     override fun body(state: String) = when (state) {
         "revoked" -> "Pair this device again."
         "host-offline" -> "Make sure Pleiad is running on the host. This page opens automatically once connected."
