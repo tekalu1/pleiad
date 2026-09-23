@@ -9,6 +9,7 @@ import { t, fmt } from './i18n.mjs';
 import { codeBlock, langFromPath } from './render.mjs';
 import { createCombo } from './combo.mjs';
 import { closeIcon } from './icons.mjs';
+import { runMark } from './arc.mjs';
 
 // リモートの窓（docs/remote.md §7.3）: OAuth の戻り先はホストの 127.0.0.1 なので、ログインはホストの PC で行う
 const remoteWindow = () => Boolean(globalThis.window?.plyRemote);
@@ -261,7 +262,16 @@ export function createMcpSection() {
       del.onclick = () => {
         if (!armed) { del.textContent = t('mcp.deleteConfirm'); armed = setTimeout(() => { armed = null; del.textContent = t('mcp.delete'); }, 3000); return; }
         clearTimeout(armed);
-        ctx.work(async () => { await ctx.cmd('deletePlyMcp', { name }); messages.delete(name); ctx.opened.delete(`mcp:${name}`); await ctx.reload(); ctx.toast(); });
+        del.disabled = true;
+        box.classList.add('pending-delete');
+        const mark = el('span', 'pending-label');
+        mark.append(runMark(t('pending.deleting')), t('pending.deleting'));
+        const timer = setTimeout(() => acts.append(mark), 150);
+        ctx.work(async () => {
+          try { await ctx.cmd('deletePlyMcp', { name }); messages.delete(name); ctx.opened.delete(`mcp:${name}`); await ctx.reload(); ctx.toast(); }
+          catch (e) { box.classList.remove('pending-delete'); del.disabled = false; throw e; }
+          finally { clearTimeout(timer); mark.remove(); }
+        });
       };
       acts.append(del);
       box.append(acts);

@@ -7,6 +7,7 @@
 //   - antigravity で Pleiad 担当を扱わなかった会話は、その理由
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
+import { runMark } from './arc.mjs';
 
 const KEY = 'session-context';
 const WORD = { instruction: t('sessionContext.word.instruction'), skill: 'Skills', mcp: 'MCP' };
@@ -104,6 +105,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   const logins = new Map();     // MCP 名 -> ログインの進み具合（ブラウザで続けてください… / ログインしました）
   const agentCache = new Map(); // cwd -> agentMcp の結果
   let diff = null, diffOpen = false, busy = false, notice = '';
+  let refreshLoadingVisible = false;
+  const removedPending = new Map();
   let chip = null;
 
   const title = t('sessionContext.title');
@@ -118,7 +121,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   let shownFor = null;
   function render() {
     // 別の会話へ移った。前の会話の差分・ログインの途中経過は持ち越さない
-    if (session()?.id !== shownFor) { shownFor = session()?.id ?? null; diff = null; diffOpen = false; notice = ''; logins.clear(); }
+    if (session()?.id !== shownFor) { shownFor = session()?.id ?? null; diff = null; diffOpen = false; notice = ''; logins.clear(); removedPending.clear(); }
     const data = info();
     const box = el('div', 'scx');
     if (!data?.report) {
@@ -205,7 +208,9 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     if (!rows.length) k.append(el('p', 'cx-sub', t('sessionContext.mcp.none')));
     const primaryFree = !data.changed?.differs;
     let waiting = false;
-    for (const e of rows) {
+    for (const raw of rows) {
+      const pending = removedPending.get(raw.name);
+      const e = pending ? { ...raw, status: pending.removed ? 'removed' : (raw.status === 'removed' ? 'connected' : raw.status) } : raw;
       const row = el('div', 'scx-item');
       const dot = el('span', 'cx-dot' + (e.status === 'connected' ? ' on' : e.status === 'failed' ? '' : ' off'));
       const body = el('div', 't');
@@ -231,8 +236,14 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       const fromPly = e.origins?.[0]?.source === 'ply';
       if (e.status === 'needs-auth' && fromPly && e.auth === 'oauth' && !login?.dataset?.done) acts.append(button(t('sessionContext.mcp.login'), primaryFree ? 'btn btn-primary' : 'btn btn-quiet', () => startLogin(e.name)));
       if (e.status === 'needs-auth' && e.auth !== 'oauth') acts.append(button(t('sessionContext.mcp.openSettings'), 'btn', () => openSettings()));
-      if (e.status === 'needs-auth' || e.status === 'failed') acts.append(button(t('sessionContext.mcp.remove'), 'btn', () => setRemoved(e.name, true)));
-      if (e.status === 'removed') acts.append(button(t('sessionContext.mcp.restore'), 'btn', () => setRemoved(e.name, false)));
+      if (['needs-auth', 'failed', 'removed'].includes(raw.status) || pending) {
+        const sw = button('', 'cx-sw', () => setRemoved(e.name, e.status !== 'removed'));
+        sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(e.status !== 'removed'));
+        sw.setAttribute('aria-label', e.status === 'removed' ? t('sessionContext.mcp.restore') : t('sessionContext.mcp.remove'));
+        sw.disabled = Boolean(pending);
+        acts.append(sw);
+        if (pending?.visible) { const label = el('span', 'pending-label'); label.append(runMark(t('pending.saving')), t('pending.saving')); acts.append(label); }
+      }
       if (acts.childNodes.length) body.append(acts);
       row.append(dot, body);
       k.append(row);
@@ -276,6 +287,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     if (files.length > 3) head.append(el('br'), el('span', 'cx-sub', t('sessionContext.more', { count: files.length - 3 })));
     const acts = el('div', 'acts');
     const go = button(t('sessionContext.changed.continue'), 'btn btn-primary', () => refreshNow(go));
+    if (busy && refreshLoadingVisible) go.replaceChildren(runMark(t('pending.reloading')), t('pending.reloading'));
     go.disabled = busy || isRunning();
     if (isRunning()) go.title = t('sessionContext.changed.afterReply');
     acts.append(go, button(diffOpen ? t('sessionContext.changed.hideDiff') : t('sessionContext.changed.showDiff'), 'btn', toggleDiff));
@@ -310,20 +322,28 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   async function refreshNow(go) {
     if (busy) return;
     busy = true; go.disabled = true; notice = '';
+    refreshLoadingVisible = false;
+    const timer = setTimeout(() => { refreshLoadingVisible = true; refresh(); }, 150);
     const id = session()?.id;
     try {
       await cmd('refreshContext', { sessionId: id });
       diff = null; diffOpen = false;
       await refreshInfo(true);
     } catch (e) { notice = t('sessionContext.refreshFailed', { error: e.message }); }
-    finally { busy = false; refresh(); }
+    finally { clearTimeout(timer); busy = false; refreshLoadingVisible = false; refresh(); }
   }
   async function setRemoved(name, removed) {
+    if (removedPending.has(name)) return;
     notice = '';
+    const pending = { removed, visible: false };
+    removedPending.set(name, pending);
+    refresh();
+    const timer = setTimeout(() => { pending.visible = true; refresh(); }, 150);
     try {
       await cmd('setSessionMcp', { sessionId: session()?.id, name, removed });
       await refreshInfo(true);
     } catch (e) { notice = e.message; }
+    finally { clearTimeout(timer); removedPending.delete(name); }
     refresh();
   }
   async function startLogin(name) {

@@ -1,4 +1,23 @@
 {
+  "pending": {
+    "moving": "Moving…",
+    "movingProgress": "Moving… {{done}}/{{total}}",
+    "deleting": "Deleting…",
+    "deletingProgress": "Deleting… {{done}}/{{total}}",
+    "creating": "Creating…",
+    "creatingBranch": "Creating branch…",
+    "historyLoading": "Loading history…",
+    "loading": "Loading…",
+    "reloading": "Reloading…",
+    "searching": "Searching…",
+    "saving": "Saving…",
+    "retry": "Try again",
+    "cancel": "Cancel",
+    "failed": "✕ Could not complete the action · {{reason}}",
+    "newSession": "New conversation",
+    "deleteStatusConfirm": "Delete “{{status}}”? Conversations to move: {{count}}. Destination: “{{destination}}”.",
+    "deletedStatus": "Deleted “{{status}}”"
+  },
   "settings": {
     "appearance": {
       "language": {
@@ -982,7 +1001,6 @@
       "contextRefreshedNamesMore_one": "Instructions or Skills changed, so they were reloaded ({{names}} and {{count}} more)",
       "contextRefreshedNamesMore_other": "Instructions or Skills changed, so they were reloaded ({{names}} and {{count}} more)",
       "modeSaveFailed": "Couldn't save the approval mode: {{error}}",
-      "historyLoading": "Loading history…",
       "historyFailed": "Couldn't load the history: {{error}}"
     },
     "change": {
@@ -1144,14 +1162,12 @@
       "idCopyFailed": "Couldn't copy the session ID",
       "deleteUnsent": "Delete unsent session…",
       "deleteWithDraft": "Delete it and its draft",
-      "deleteFailed": "Couldn't delete: {{error}}",
       "newStatusEllipsis": "New status…",
       "statusName": "Status name",
       "createStatusFailed": "Couldn't create the status: {{error}}",
       "changeIcon": "Change icon…",
       "renameStatus": "Rename…",
       "newName": "New name",
-      "renameStatusFailed": "Couldn't rename the status: {{error}}",
       "deleteStatus": "Delete this status",
       "deleteStatusHint_one": "{{count}} session becomes No status",
       "deleteStatusHint_other": "{{count}} sessions become No status",
@@ -1161,7 +1177,6 @@
       "endpoint": "Endpoint (next turn)",
       "endpointFailed": "Couldn't change the endpoint: {{error}}"
     },
-    "saveFailed": "Couldn't save the session: {{error}}",
     "tasksEntry_one": "Pleiad tasks · {{count}}",
     "tasksEntry_other": "Pleiad tasks · {{count}}",
     "untitledParen": "(New session)",
@@ -1174,27 +1189,15 @@
     "undo": {
       "status": "Set \"{{title}}\" to {{status}}",
       "statusLeft": "Set \"{{title}}\" to {{status}} and removed it from the group",
-      "statusFailed": "Couldn't undo the status change: {{error}}",
       "groupMoved_one": "Moved the \"{{title}}\" group to {{status}} ({{count}} session)",
       "groupMoved_other": "Moved the \"{{title}}\" group to {{status}} ({{count}} sessions)",
-      "groupMoveFailed": "Couldn't undo the group move: {{error}}",
       "left": "Removed \"{{title}}\" from the group",
       "rejoined": "Returned \"{{title}}\" to the group",
-      "membershipFailed": "Couldn't undo the group change: {{error}}",
       "joined": "Added \"{{title}}\" to the \"{{group}}\" group (status: {{status}})",
       "ungrouped_one": "Ungrouped \"{{title}}\" ({{count}} session)",
       "ungrouped_other": "Ungrouped \"{{title}}\" ({{count}} sessions)",
-      "ungroupFailed": "Couldn't undo the ungrouping: {{error}}",
       "gathered_one": "Grouped \"{{title}}\" ({{count}} branch, status set to {{status}})",
-      "gathered_other": "Grouped \"{{title}}\" ({{count}} branches, status set to {{status}})",
-      "gatherFailed": "Couldn't undo the grouping: {{error}}"
-    },
-    "group": {
-      "moveFailed": "Couldn't move the group: {{error}}",
-      "changeFailed": "Couldn't change the group: {{error}}",
-      "joinFailed": "Couldn't add it to the group: {{error}}",
-      "ungroupFailed": "Couldn't ungroup: {{error}}",
-      "gatherFailed": "Couldn't group the branches: {{error}}"
+      "gathered_other": "Grouped \"{{title}}\" ({{count}} branches, status set to {{status}})"
     },
     "titleFailed": "Couldn't change the title: {{error}}",
     "parentChat": "Parent conversation",
