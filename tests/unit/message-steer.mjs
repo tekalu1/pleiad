@@ -26,8 +26,8 @@ export default async function(t) {
     t.ok('渡るまでは pending として届く', said.pending === true, JSON.stringify(said));
     const delivered = await c.waitFor(e => e.type === 'userMessage.delivered' && e.messageId === request.messageId, { from, ms: 5000 });
     t.ok('会話に入ったら配達を知らせる', delivered.sessionId === sessionId);
-    t.ok('最初のプロンプトでは配達を知らせない',
-      !c.events.some(e => e.type === 'userMessage.delivered' && e.messageId === 'initial-0001'));
+    t.ok('最初のプロンプトも準備後に配達を知らせる',
+      c.events.some(e => e.type === 'userMessage.delivered' && e.messageId === 'initial-0001'));
     const loaded = await c.cmd('loadSession', { sessionId, live: true });
     t.ok('途中で開いても初回発言と追加発言を復元できる', loaded.initialMessageId === 'initial-0001'
       && loaded.stream.events.some(e => e.type === 'userMessage' && e.text === request.prompt));

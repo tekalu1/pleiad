@@ -170,6 +170,8 @@
     }
   },
   "activity": {
+    "preparing": "Preparing to send…",
+    "connectingMcp": "Connecting to external MCP {{current}}/{{total}}",
     "thinking": "Thinking",
     "writing": "Writing",
     "compacting": "Compacting context",
@@ -967,6 +969,8 @@
     "thought_one": "Thought ({{chars}} char)",
     "thought_other": "Thought ({{chars}} chars)",
     "delivery": {
+      "sending": "Sending…",
+      "failed": "✕ Couldn't send",
       "pending": "Will pass to the AI at the next break",
       "late": "Too late for this task. The AI will answer next.",
       "sent": "Sent to the AI",
