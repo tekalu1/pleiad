@@ -13,6 +13,8 @@ import { el, svgEl, relTime } from "./dom.mjs";
 import { isComposingKey } from "./keyboard.mjs";
 import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, endpointChipLabel } from "./composer-labels.mjs";
 import { compatModelLabel, modelCandidates, searchModels, resolveTyped, moreText, ONE_M_TITLE } from "./compat-models.mjs";
+import { t } from "./i18n.mjs";
+import { renderLocal } from "./folder-upload.mjs";
 
 const FOLDER = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
 const FOLDER_ADD = "M12 11v5M9.5 13.5h5";
@@ -162,8 +164,9 @@ const head = (text) => el("div", "chead", text);
  * @param {(command:string, args?:object) => Promise<any>} o.cmd
  * @param {() => object} o.get 今の値と候補（client.mjs の状態を読む）
  * @param {object} o.on 変更を返す口 { cwd, backend, model, effort, account, mode }。openModel はモデルの面を開いたとき
+ * @param {object} [o.upload] 手元のフォルダーを送る作業（web/folder-upload.mjs）。リモートの窓だけ。あれば作業ディレクトリの面にタブを出す
  */
-export function setupComposerControls({ cmd, get, on }) {
+export function setupComposerControls({ cmd, get, on, upload = null }) {
   const $ = (id) => document.getElementById(id);
   const chips = { cwd: $("cwdChip"), model: $("modelChip"), mode: $("modeChip") };
   const pops = { cwd: $("cwdPop"), model: $("modelPop"), mode: $("modePop") };
@@ -182,6 +185,28 @@ export function setupComposerControls({ cmd, get, on }) {
   // ---- 作業ディレクトリ
   let browsing = null;          // 簡易ブラウザーで開いているフォルダー（ブラウザー版だけ）
   let browseSeq = 0;
+  // リモートの窓: 「ホストのフォルダー」（既定。下の面そのもの）/「手元から送る」のタブ（docs/remote.md §8.1）
+  let folderTab = "host";
+  let localBox = null;
+  function folderTabs(pop) {
+    const seg = el("div", "seg cseg fu-tabs");
+    seg.setAttribute("role", "tablist");
+    seg.setAttribute("aria-label", t("upload.tabs.label"));
+    const body = el("div", "fu-body");
+    body.setAttribute("role", "tabpanel");
+    for (const [key, label] of [["host", t("upload.tabs.host")], ["local", t("upload.tabs.local")]]) {
+      const b = el("button", key === folderTab ? "on" : "", label);
+      b.type = "button";
+      b.id = `cwdTab-${key}`;
+      b.dataset.key = `tab:${key}`;
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(key === folderTab));
+      b.onclick = () => { if (folderTab !== key) { folderTab = key; renderFolder(); folder.place(); pop.querySelector(`#cwdTab-${key}`)?.focus(); } };
+      seg.append(b);
+    }
+    body.setAttribute("aria-labelledby", `cwdTab-${folderTab}`);
+    return { seg, body };
+  }
   const commitCwd = (v) => {
     const value = String(v ?? "").trim();
     if (!value) return;
@@ -191,6 +216,22 @@ export function setupComposerControls({ cmd, get, on }) {
   function renderFolder() {
     const d = get();
     const pop = pops.cwd;
+    localBox = null;
+    if (upload) {
+      const { seg, body } = folderTabs(pop);
+      if (folderTab === "local") {
+        localBox = body;
+        pop.replaceChildren(seg, body);
+        renderLocal(body, upload, { glyph: (paths) => glyph(...paths), recent: () => get().recent, close: () => folder.hide() });
+        return;
+      }
+      // ホストのフォルダー: 今の面をタブの下に描く
+      renderHost(d, { replaceChildren: (...parts) => { body.replaceChildren(...parts); pop.replaceChildren(seg, body); } });
+      return;
+    }
+    renderHost(d, pop);
+  }
+  function renderHost(d, pop) {
     const input = el("input", "cpath");
     input.value = d.cwd ?? "";
     input.placeholder = "作業ディレクトリのパス";
@@ -271,7 +312,23 @@ export function setupComposerControls({ cmd, get, on }) {
     }
   }
   const folder = panel(chips.cwd, pops.cwd, { align: "left", render: renderFolder });
-  chips.cwd.addEventListener("click", () => { if (!folder.open) browsing = null; });
+  chips.cwd.addEventListener("click", () => {
+    if (!folder.open) browsing = null;
+    // 送っている途中なら、開いたときに進み具合を見せる
+    else if (upload?.busy) { folderTab = "local"; renderFolder(); folder.place(); }
+  });
+  /** 送る作業の状態が変わった。面が開いていて「手元から送る」なら描き直す */
+  function refreshFolder() {
+    if (!folder.open || !localBox) return;
+    renderLocal(localBox, upload, { glyph: (paths) => glyph(...paths), recent: () => get().recent, close: () => folder.hide() });
+    folder.place();
+  }
+  /** 「手元から送る」のタブで面を開く（フォルダーのドロップから） */
+  function openLocal() {
+    if (!upload) return;
+    folderTab = "local";
+    if (folder.open) { renderFolder(); folder.place(); } else folder.show();
+  }
 
   // ---- エージェント・モデル・エフォート・アカウント
   function renderModel() {
@@ -542,5 +599,5 @@ export function setupComposerControls({ cmd, get, on }) {
     folder.place();
   }
 
-  return { paint, close: () => openPanel?.hide(false), panels: { folder, model, mode } };
+  return { paint, close: () => openPanel?.hide(false), panels: { folder, model, mode }, refreshFolder, openLocal };
 }

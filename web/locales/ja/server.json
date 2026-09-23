@@ -84,5 +84,25 @@
       "unreadable": "{{file}} を読み込めません（形式が壊れています）",
       "badFormat": "{{file}} の形式が違います"
     }
+  },
+  "upload": {
+    "invalidName": "フォルダーの名前に使えない字が入っています。",
+    "noFiles": "送るファイルがありません。",
+    "tooManyFiles": "ファイルが多すぎます（上限 {{max}} 件）。除外を見直してください。",
+    "invalidPath": "送れない名前のファイルがあります: {{path}}",
+    "invalidSize": "ファイルの大きさが読めません: {{path}}",
+    "fileTooLarge": "大きすぎるファイルがあります: {{path}}",
+    "totalTooLarge": "合計が大きすぎます。除外を見直してください。",
+    "duplicatePath": "大文字と小文字だけが違う名前が重なっています: {{path}}",
+    "fileDirClash": "ファイルとフォルダーが同じ名前です: {{path}}",
+    "destInvalid": "この送り先には送れません。",
+    "destNotFolder": "送り先がフォルダーではありません: {{path}}",
+    "destOutside": "{{root}} の外には、既にあるフォルダーだけを選べます: {{path}}",
+    "noSpace": "ホストの空き容量が足りません。",
+    "unknownUpload": "途中の送信が見つかりません。もう一度フォルダーを選んでください。",
+    "badChunk": "送られた断片の形が違います。",
+    "incomplete": "まだ受け取っていないファイルがあります（{{count}} 件）。",
+    "escape": "送り先の外を指すリンクがあるため書けません: {{path}}",
+    "conflictDir": "送り先に同じ名前のフォルダーがあります: {{path}}"
   }
 }

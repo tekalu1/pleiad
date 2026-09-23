@@ -122,6 +122,12 @@ export const COMMANDS = new Set([
   "prefs",           // 次に新しく始めるときの既定
   "setPref",         // その既定を変える
   "attachFile",      // 人間が会話へ渡すファイル
+  // 手元のフォルダーをホストへ送る（core/folder-uploads.mjs、docs/remote.md §8.1）。リモート専用ではない一般の口
+  "uploadCheck",     // { name, dest?, paths } -> { dest, root, exists, inRoot, empty, conflicts, sample, needsConfirm }。送る前の下見
+  "uploadStart",     // { name, dest?, files: [{ path, size, mtime }], overwrite } -> { uploadId, dest, received: [バイト], resumed, chunkBytes } | { needsConfirm, ... }
+  "uploadChunk",     // { uploadId, file（files の位置）, offset, data（base64・512 KiB）} -> { received }。抜けがあれば書かずに今の位置
+  "uploadFinish",    // { uploadId } -> { dest, files, bytes }。送り先へ移し、途中の置き場を消す
+  "uploadCancel",    // { uploadId } -> { cancelled }
   "suggestTitle",    // AI にタイトルを考えてもらう
   "setStatusIcon",   // { status, icon }。空なら「なし」（既定）に戻す
   "createStatus",    // { status }。空のグループを作る（statuses.json にある限り存在する）

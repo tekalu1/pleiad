@@ -84,5 +84,25 @@
       "unreadable": "Can't read {{file}} (the file is corrupted)",
       "badFormat": "{{file}} has an unexpected format"
     }
+  },
+  "upload": {
+    "invalidName": "The folder name contains characters that can't be used.",
+    "noFiles": "There are no files to send.",
+    "tooManyFiles": "Too many files (limit {{max}}). Review the exclusions.",
+    "invalidPath": "A file has a name that can't be sent: {{path}}",
+    "invalidSize": "Couldn't read the size of a file: {{path}}",
+    "fileTooLarge": "A file is too large: {{path}}",
+    "totalTooLarge": "The total is too large. Review the exclusions.",
+    "duplicatePath": "Two names differ only in upper and lower case: {{path}}",
+    "fileDirClash": "A file and a folder have the same name: {{path}}",
+    "destInvalid": "Files can't be sent to this destination.",
+    "destNotFolder": "The destination is not a folder: {{path}}",
+    "destOutside": "Outside {{root}}, only an existing folder can be chosen: {{path}}",
+    "noSpace": "The host doesn't have enough free space.",
+    "unknownUpload": "The unfinished upload wasn't found. Choose the folder again.",
+    "badChunk": "A received piece is malformed.",
+    "incomplete": "Some files haven't been received yet ({{count}}).",
+    "escape": "Can't write because a link points outside the destination: {{path}}",
+    "conflictDir": "The destination has a folder with the same name: {{path}}"
   }
 }
