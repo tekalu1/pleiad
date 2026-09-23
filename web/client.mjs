@@ -2254,16 +2254,24 @@ const filePreview = setupFilePreview({
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   cmd: (command, args) => cmd(command, args),
   osActions: () => state.osActions === true,
-  useFile: file => {
-    if ($('prompt').disabled) return;
-    if (!state.attached.some(a => a.path === file.path)) {
-      if (state.attached.length >= 20) { $('draftSaved').textContent = t('chat.attach.tooMany', { count: 20 }); return; }
-      state.attached.push({ path:file.path, name:file.name, kind:'file', mime:file.mime ?? '' });
-      renderAttached(); saveDraft().catch(() => {});
-    }
-    $('prompt').focus();
-  },
+  useFile: file => { if (attachHostFiles([file])) $('prompt').focus(); },
 });
+
+/**
+ * ホストのファイルをパスのまま添付に積む（送らない。ファイルプレビューの「会話で使う」とホストのファイルの面）。
+ * 件数の上限は無い。同じパスは 1 つだけ。積めたら true
+ */
+function attachHostFiles(files) {
+  if ($('prompt').disabled) return false;
+  let added = 0;
+  for (const file of files) {
+    if (!file?.path || state.attached.some(a => a.path === file.path)) continue;
+    state.attached.push({ path: file.path, name: file.name, kind: 'file', mime: file.mime ?? '', from: 'host' });
+    added++;
+  }
+  if (added) { renderAttached(); saveDraft().catch(() => {}); }
+  return true;
+}
 $("prompt").addEventListener("input", () => saveDraft().catch(() => {}));
 addEventListener("pagehide", () => saveDraft().catch(() => {}));
 
@@ -2333,9 +2341,6 @@ const readAsDataUri = (file) => new Promise((res, rej) => {
 async function attachFiles(files) {
   const sessionId = state.current;
   for (const file of files) {
-    // 下書きの添付はサーバーが 20 件までしか保存しない。越えた分は送らずに止める（フォルダーを落とすと一度に来る）
-    const count = state.current === sessionId ? state.attached.length : (state.drafts.get(sessionId)?.attached.length ?? 0);
-    if (count >= 20) { $('draftSaved').textContent = t('chat.attach.tooMany', { count: 20 }); break; }
     if (file.size > 8 * 1024 * 1024) {
       sys(html.t("chat.attach.tooLarge", { name: file.name }));
       continue;
@@ -2344,7 +2349,7 @@ async function attachFiles(files) {
       const dataUri = await readAsDataUri(file);
       const data = dataUri.split(",")[1] ?? "";
       const r = await cmd("attachFile", { sessionId, name: file.name, mime: file.type, data });
-      const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, ...(r.kind === "image" ? { dataUri } : {}) };
+      const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: "device", ...(r.kind === "image" ? { dataUri } : {}) };
       if (state.current === sessionId) { state.attached.push(item); renderAttached(); saveDraft().catch(() => {}); }
       else {
         const draft = state.drafts.get(sessionId) ?? { text: "", attached: [] };

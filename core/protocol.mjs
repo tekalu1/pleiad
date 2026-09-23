@@ -104,9 +104,9 @@ export const COMMANDS = new Set([
   "modes",           // 使える承認モードの一覧 { backend }
   "setModel",        // モデルの切り替え（人間のみ）
   "models",          // 使えるモデルの一覧 { backend, cwd? }。'' には resolvesTo（既定が実際に当たる id）と efforts / defaultEffort
-  "listDirs",        // { path? } -> { path, parent, dirs: [名前], truncated, roots }。フォルダーだけ。path が空ならホーム
+  "listDirs",        // { path?, files? } -> { path, parent, dirs: [名前], files?: [{ name, size, mtime }], truncated, roots }。files が true のときだけファイルも。path が空ならホーム
   // ファイルの操作（web/file-actions.mjs）。path は会話の中の参照（相対は sessionId・at か base で解く）。許可範囲は /file-preview と同じ
-  "hostCapabilities", // {} -> { osActions }。この接続がサーバーのある PC の画面からか（OS の操作を出してよいか）
+  "hostCapabilities", // {} -> { osActions, hostName }。この接続がサーバーのある PC の画面からか（OS の操作を出してよいか・添付の出どころを選ばせるか）
   "resolvePath",      // { path, sessionId?, at?, base? } -> { path（実体）, cwd, kind: file|directory }
   "revealPath",       // { path, sessionId?, at?, base? } -> { path }。エクスプローラーでファイルを選んだ状態で開く（フォルダーはその中）。遠隔の接続は断る
   "openPath",         // 同上。HTML だけ、既定のブラウザーで開く。遠隔の接続は断る

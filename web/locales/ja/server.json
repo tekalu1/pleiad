@@ -108,7 +108,7 @@
   "send": {
     "messageIdRequired": "送信IDが必要です",
     "messageRequired": "メッセージを入力してください",
-    "tooManyAttachments": "添付は{{max}}件までです"
+    "invalidAttachments": "添付の形式が正しくありません"
   },
   "delegation": {
     "taskNotFound": "Pleiad タスクが見つかりません"

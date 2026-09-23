@@ -66,6 +66,8 @@ const cases = [
   await import("./unit/tools-render.mjs"),
   await import("./unit/timeline-images.mjs"),
   await import("./unit/attachment-order.mjs"),
+  // 添付の件数に上限が無い（下書き・送信）。出どころの印。1 件 8MB の上限は残る
+  await import("./unit/attach-no-limit.mjs"),
   await import("./unit/unread.mjs"),
   // 確認済み（既読）の置き場と、2 本の接続で共有されること（fake バックエンド）
   await import("./unit/read-store.mjs"),
