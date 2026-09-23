@@ -192,11 +192,19 @@
     </section>
   </main>
 
-  <!-- 画像を大きく見る（閲覧だけ。承認ではないので dialog でよい）。× と Esc と外側のクリックで閉じる -->
+  <!-- 画像を大きく見る（承認ではないので dialog でよい）。× と Esc と外側のクリックで閉じる。
+       下端に所在（フルパスとコピー）と操作を並べる（docs/mockups/file-actions.html）。中身は web/client.mjs の openLightbox -->
   <dialog id="lightbox">
     <button type="button" class="btn btn-icon lb-close" data-close title="閉じる（Esc）"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <img alt="">
     <div class="lb-cap"></div>
+    <div class="lb-foot">
+      <div class="lb-path"><span class="lb-path-text"></span><button type="button" class="btn btn-icon lb-copy" title="パスをコピー" aria-label="パスをコピー"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 8h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button></div>
+      <button type="button" class="btn lb-panel">右パネルで開く</button>
+      <span class="lb-gap"></span>
+      <button type="button" class="btn lb-reveal" title="この PC のエクスプローラーで、ファイルを選んだ状態で開きます">エクスプローラーで表示</button>
+      <a class="btn lb-save" href="#" download>保存</a>
+    </div>
   </dialog>
 
   <!-- このセッションのサブエージェント（一覧と会話を読む）。承認ではないので dialog でよい -->
