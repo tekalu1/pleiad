@@ -483,5 +483,30 @@
     "copyRelativeFailed": "相対パスをコピーできませんでした",
     "noRelative": "作業ディレクトリの外にあるため、相対パスはありません",
     "actionFailed": "操作できませんでした"
+  },
+  "remote": {
+    "badgeLabel": "リモート:",
+    "badgeTitle": "リモートのホスト {{host}} につないでいます",
+    "state": {
+      "connecting": "つないでいます…",
+      "connected": "接続中",
+      "offline": "中継につながりません",
+      "host-offline": "ホストがオフライン",
+      "revoked": "取り消されました",
+      "stopped": "接続を止めました"
+    },
+    "pop": {
+      "label": "リモートの接続",
+      "relay": "中継",
+      "connectedAt": "つないだ時刻",
+      "device": "この端末",
+      "state": "状態",
+      "retry": "再試行",
+      "close": "この窓を閉じる"
+    },
+    "loginOnHostShort": "ホストの PC でログイン",
+    "loginOnHost": "このログインはホストの PC で行ってください。ログインの戻り先がホストの PC なので、この端末からは完了できません。",
+    "updateStatus": "ホストで動いている Pleiad の版です",
+    "updateOnHost": "ホストの Pleiad の更新はホストで行います。"
   }
 }
