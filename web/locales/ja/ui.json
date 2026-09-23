@@ -415,8 +415,8 @@
     },
     "title": "この会話のコンテキスト",
     "subtitle": {
-      "startedAt": "開始時（{{time}}）に決まり、途中では変わりません",
-      "started": "開始時に決まり、途中では変わりません",
+      "startedAt": "{{time}} に開始 · 設定の変更は次のターンから反映",
+      "started": "設定の変更は次のターンから反映",
       "refreshed": "{{text}} · {{time}} に読み込み直し"
     },
     "agent": "エージェント",
@@ -432,8 +432,8 @@
       "hint": "下の状態と、会話のエラーを確かめてください。"
     },
     "foot": {
-      "lead": "次の会話から変えたいとき ",
-      "link": "この場所の設定を開く →"
+      "lead": "変えたいとき（次のターンから反映） ",
+      "link": "コンテキストの設定を開く →"
     },
     "instruction": {
       "who": "Pleiad が渡した",
@@ -558,25 +558,25 @@
     "copyPath": "パスをコピー",
     "copied": "コピーしました",
     "emptyFile": "（空のファイル）",
-    "lead": "新しい会話を始めるときに、エージェントへ何を渡すかを決めます。始まっている会話は変わりません。",
+    "lead": "エージェントへ何を渡すかを決めます。始まっている会話にも次のターンから反映します。",
     "scope": "設定する範囲",
-    "saved": "保存しました · 次の会話から反映",
+    "saved": "保存しました · 次のターンから反映",
     "saveFailed": "保存できませんでした：{{error}}",
     "cancel": "やめる",
     "add": "追加",
     "folderPath": "フォルダーのパス",
     "chooseFolder": "フォルダーを選ぶ…",
     "place": {
-      "default": "すべての場所（既定）",
-      "defaultSub": "個別に変えていない場所はこれに従う",
+      "default": "全体の設定",
+      "defaultSub": "フォルダーだけの設定が無いところはこれに従う",
       "current": "今の会話の場所",
-      "overrides_other": "{{count}} 項目を個別に変更",
-      "allDefault": "すべて既定どおり",
+      "overrides_other": "{{count}} 項目をこのフォルダーだけ変更",
+      "allDefault": "すべて全体の設定どおり",
       "remove": "この場所の設定を消す",
       "removeAria": "{{path}} の設定を消す",
       "confirm": "この場所の設定を消しますか？",
-      "confirmOverrides_other": "個別に変えた {{count}} 項目を消し、すべての場所（既定）の設定に従うようにします。始まっている会話は変わりません",
-      "confirmPlain": "一覧から外します。この場所はすべての場所（既定）の設定に従います",
+      "confirmOverrides_other": "このフォルダーだけ変えた {{count}} 項目を消し、全体の設定に従うようにします。始まっている会話にも次のターンから反映します",
+      "confirmPlain": "一覧から外します。この場所は全体の設定に従います",
       "removeButton": "消す",
       "removeFailed": "消せませんでした：{{error}}",
       "add": "場所を追加",
@@ -587,11 +587,14 @@
       "pathRequired": "フォルダーのパスを入れてください"
     },
     "inherit": {
-      "all": "個別に変えていない場所すべて",
-      "override": "この場所だけ変更中 · ",
-      "reset": "既定に戻す",
+      "all": "フォルダーだけの設定が無いところすべてに効きます",
+      "hereOverride": "この会話のフォルダー（{{path}}）では、このフォルダーだけの設定が効いています · ",
+      "override": "このフォルダーだけの設定 · ",
+      "reset": "全体の設定に戻す",
+      "resetParent": "上のフォルダーの設定に戻す",
       "from": "{{path}} の設定どおり",
-      "default": "既定どおり"
+      "default": "全体の設定どおり",
+      "willOverride": " · 変えると、このフォルダーだけの設定になります"
     },
     "ownerAria": "{{kind}}を読み込むのは",
     "configFiles": "読み込む設定ファイル",
@@ -613,7 +616,7 @@
       "descPlace": "Pleiad がそろえる種類について、Git ルートからこの場所までに加えて、次のフォルダーも探します。",
       "remove": "外す",
       "removeAria": "{{path}} を探す場所から外す",
-      "defaults": "すべての場所の設定で探すフォルダー：{{folders}}",
+      "defaults": "全体の設定で探すフォルダー：{{folders}}",
       "join": "、",
       "addAria": "追加で探すフォルダー",
       "add": "フォルダーを追加"
@@ -792,6 +795,7 @@
       "resumeCwd": "再開時に変更",
       "cwdFrom": "{{from}} から",
       "contextReloaded": "指示・Skills を読み込み直した",
+      "contextSettingsApplied": "コンテキストの設定の変更を反映した",
       "contextChanged": "{{names}}",
       "contextChangedMore_other": "{{names}} ほか {{count}} 件",
       "inheritedStatus": "新しいセッションに引き継いだ",
@@ -854,6 +858,7 @@
       "failed": "失敗: {{error}}",
       "unknownReason": "理由不明",
       "contextRefreshed": "指示・Skills が変わったので読み込み直しました",
+      "contextSettingsApplied": "コンテキストの設定の変更を、このターンから反映しました",
       "contextRefreshedNames": "指示・Skills が変わったので読み込み直しました（{{names}}）",
       "contextRefreshedNamesMore_other": "指示・Skills が変わったので読み込み直しました（{{names}} ほか {{count}} 件）",
       "modeSaveFailed": "承認モードを保存できませんでした: {{error}}",

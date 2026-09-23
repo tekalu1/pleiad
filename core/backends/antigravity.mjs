@@ -221,9 +221,10 @@ export const backend = {
     // 生きているプロセスを使い回す。落ちていれば立て直す（会話は --conversation で拾える）
     let session = conversationId ? live.get(conversationId) : null;
     if (session && !session.proc) { live.delete(conversationId); session = null; }
-    // Pleiad のコンテキストは起動時にしか渡せない（エージェント定義と env）。起動時と違う渡し方になるなら起こし直す
-    const contextKey = contextRuntime?.headers?.Authorization ?? null;
-    if (session && (session.contextKey ?? null) !== contextKey) { session.kill(); release(conversationId, session); session = null; }
+    // Pleiad のコンテキストは起動時にしか渡せない（エージェント定義と env）。起動時と違う渡し方になるなら起こし直す。
+    // 担当や渡すツール（shape）が変わったときも同じ（コンテキストの設定の変更を次のターンから効かせる。会話は --conversation で続く）
+    const contextKey = contextRuntime?.headers?.Authorization ?? null, contextShape = contextRuntime?.shape ?? null;
+    if (session && ((session.contextKey ?? null) !== contextKey || (session.contextShape ?? null) !== contextShape)) { session.kill(); release(conversationId, session); session = null; }
 
     const fresh = !session;
     if (fresh) {
@@ -241,6 +242,7 @@ export const backend = {
         ...(agent ? { addDirs: [...(cwd ? [cwd] : []), agent.home], agent: AGENT_NAME, env: agent.env, onGone: agent.cleanup } : {}),
       });
       session.contextKey = contextKey;
+      session.contextShape = contextShape;
     }
 
     const handle = (ev) => {

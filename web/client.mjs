@@ -1072,11 +1072,12 @@ function onEvent(ev, replay = false) {
       changeLine("cwd", ev.cwd, ev, { reason: ev.reason });
       return refresh();
 
-    // 開始時と指示・Skills が変わっていたので、送信時に自動で読み込み直した（core/server.mjs の runTurn）
+    // 開始時と指示・Skills が変わっていた、またはコンテキストの設定が変わったので、送信時に自動で読み込み直した（core/server.mjs の runTurn）
     case 'contextRefreshed': {
       const names = (ev.names ?? []).join(t("app.listSeparator"));
       const rest = ev.count - (ev.names ?? []).length;
-      if (!names) sys(html.t("chat.sys.contextRefreshed"));
+      if (ev.settings) sys(html.t("chat.sys.contextSettingsApplied"));
+      else if (!names) sys(html.t("chat.sys.contextRefreshed"));
       else if (rest > 0) sys(html.t("chat.sys.contextRefreshedNamesMore", { names, count: rest }));
       else sys(html.t("chat.sys.contextRefreshedNames", { names }));
       // 新しい記録はこの直後の contextUsage で届く。ここでは「変更あり」の印だけ先に消す
