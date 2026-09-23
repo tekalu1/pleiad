@@ -296,7 +296,8 @@
       "model": "Agent, model, and effort",
       "mode": "Approval mode",
       "firstMessage": "Write the first message for {{name}}",
-      "placeholder": "Ctrl+Enter to send"
+      "placeholder": "Ctrl+Enter to send",
+      "placeholderTouch": "Write a message"
     },
     "account": {
       "signedIn": "Signed in",
@@ -454,7 +455,11 @@
     },
     "titleFailed": "Couldn't change the title: {{error}}",
     "parentChat": "Parent conversation",
-    "titleSuggestFailed": "Couldn't suggest a title: {{error}}"
+    "titleSuggestFailed": "Couldn't suggest a title: {{error}}",
+    "more": "Actions for this conversation",
+    "rowMore": "Actions for \"{{title}}\"",
+    "groupMore": "Actions for status \"{{status}}\"",
+    "familyMore": "Actions for group \"{{title}}\""
   },
   "app": {
     "listSeparator": ", ",
@@ -617,7 +622,9 @@
     "loginOnHostShort": "Sign in on the host PC",
     "loginOnHost": "Sign in on the host PC. The sign-in returns to the host PC, so it can't be completed from this device.",
     "updateStatus": "Version of Pleiad running on the host",
-    "updateOnHost": "Update the host's Pleiad on the host."
+    "updateOnHost": "Update the host's Pleiad on the host.",
+    "backToHosts": "Back to hosts",
+    "backToHostsTitle": "Leave {{host}} and go back to the host list"
   },
   "upload": {
     "tabs": {
