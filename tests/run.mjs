@@ -116,6 +116,8 @@ const cases = [
   // 同じ身代わりで、ターン途中の送信をその区切りへ差し込む（serve の steer）
   // リモートの中継（relay/server.mjs）。空きポートで立て、素の WebSocket で照合・行き先・上限を叩く
   await import("./unit/relay.mjs"),
+  // リモートのホスト側（core/remote/connector.mjs）。中継をこのプロセスで、fake のサーバーを別プロセスで立て、試験用の端末で往復する
+  await import("./unit/remote-host.mjs"),
 ];
 
 const selected = pick(cases, process.argv.slice(2));
