@@ -1,7 +1,7 @@
 // 添付の件数に上限が無いこと（2026-09-23 に 20 件の上限を外した。docs/design-system.md「入力欄」）。
 //   - 下書き（saveDraft）は 20 件を超えても保存し、札の出どころ（from: host / device）だけを残す
 //   - 送信（sendMessage）は 20 件を超えても受け取り、全部を会話に載せる（以前は 21 件目から黙って落としていた）
-//   - 形の違う添付（配列でない）は理由の一文で断る。1 件 8MB の上限は残る
+//   - 形の違う添付（配列でない）は理由の一文で断る。中身を 1 通で送る古い口（attachFile）の 8MB は残る（今の画面は断片で 100MB まで。attach-chunked.mjs）
 // fake バックエンドだけ。LLM は呼ばない。
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -30,7 +30,7 @@ export default async function (t) {
     const ups = [];
     for (let i = 0; i < N; i++) ups.push(await c.cmd('attachFile', { sessionId, name: `u${i}.txt`, mime: 'text/plain', data: Buffer.from(`x${i}`).toString('base64') }));
     const big = await c.cmd('attachFile', { sessionId, name: 'big.bin', mime: 'application/octet-stream', data: Buffer.alloc(8 * 1024 * 1024 + 1).toString('base64') }).then(() => null, (e) => e.message);
-    t.ok('1 件 8MB の上限は残る', /8/.test(big ?? ''), big);
+    t.ok('中身を 1 通で送る古い口（attachFile）は 8MB を超えると断る', /上限 8MB/.test(big ?? ''), big);
 
     const bad = await c.cmd('sendMessage', { sessionId, messageId: 'nolimit-bad-01', prompt: 'echo:x', attachments: 'nope' }).then(() => null, (e) => e.message);
     t.ok('送信: 配列でない添付は理由の一文で断る', /添付の形式/.test(bad ?? ''), bad);
