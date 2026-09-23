@@ -47,6 +47,11 @@ export default async function (t) {
     let turn = await client.runTurn({ ...session, prompt: 'echo:one' }, { ms: 60_000 });
     let record = await client.cmd('sessionContext', session);
     t.ok('会話が始まり、MCP がつながる', turn.outcome === 'ok' && record.report.entries.find(e => e.name === 'fixture')?.status === 'connected' && await count() === 1);
+    const progress = turn.events.filter(e => e.type === 'activity' && e.state === 'preparing');
+    t.ok('MCP 接続の進み具合を発言の後に流し、接続後は考え中に戻る',
+      progress.some(e => e.current === 1 && e.total === 1)
+      && turn.events.findIndex(e => e.type === 'userMessage') < turn.events.indexOf(progress.find(e => e.current === 1))
+      && turn.events.some(e => e.type === 'activity' && e.state === 'thinking' && turn.events.indexOf(e) > turn.events.indexOf(progress.find(p => p.current === 1))));
     t.ok('方針を決めた時刻が記録に残る', typeof record.startedAt === 'string' && record.refreshedAt === null);
     const startedAt = record.startedAt;
 

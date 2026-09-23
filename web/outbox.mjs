@@ -11,9 +11,9 @@ function queuedLabel(wait) {
   return statusLabel('queued');
 }
 
-export function renderOutbox(root, messages, action) {
+export function renderOutbox(root, messages, action, shown = new Set()) {
   root.replaceChildren();
-  for (const item of messages.filter(m => !['sent', 'cancelled'].includes(m.status))) {
+  for (const item of messages.filter(m => !['sent', 'cancelled'].includes(m.status) && !shown.has(m.id))) {
     const row = document.createElement('div');
     row.className = 'outbox-message';
     const text = document.createElement('div');

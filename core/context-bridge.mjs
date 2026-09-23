@@ -80,7 +80,7 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
    * 1 本生かし、起動時に受け取った値をターンをまたいで使い続ける）。受け付けるのはこの open が開いている間だけ。
    * 省略時はターンごとに新しい値を作る
    */
-  async function open({ runtime, prompt, origin, isActive, changed = async () => {}, authorize = async () => true, signal, token: fixed }) {
+  async function open({ runtime, prompt, origin, isActive, changed = async () => {}, progress = () => {}, authorize = async () => true, signal, token: fixed }) {
     if (fixed !== undefined && !/^[a-f0-9]{64}$/.test(fixed)) throw new Error(t('context.bridge.invalidToken'));
     const token = fixed ?? crypto.randomBytes(32).toString('hex'), helpers = contextTools(runtime, prompt);
     const binding = { origin, isActive, runtime, helpers, tools: [...helpers.tools], clients: [], entries: new Map(), calls: new Map(), pending: new Set(), changed, authorize, closed: false };
@@ -95,8 +95,9 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
     signal?.addEventListener('abort', () => { void close(); }, { once: true });
     try {
       if (runtime.servers.length > 32) throw new Error(t('context.bridge.tooManyServers'));
-      for (const item of runtime.servers) {
+      for (const [index, item] of runtime.servers.entries()) {
         if (signal?.aborted || binding.closed) throw new Error(t('context.bridge.aborted'));
+        progress({ current: index + 1, total: runtime.servers.length, name: item.name });
         const row = runtime.report.entries.find(e => e.id === item.id);
         const result = await connectServer(item, { cwd: runtime.policy.cwd, plyMcp, oauth });
         if (result.status === 'connected' && binding.closed) { await result.client.close().catch(() => {}); throw new Error(t('context.bridge.aborted')); }

@@ -36,9 +36,12 @@ export default async function(t) {
     const origin=`http://127.0.0.1:${host.address().port}`;
     for(const type of ['http','sse']){
       const item={id:'a123',name:'fixture',origins:[{source:'claude'}],definition:{type,url:`http://127.0.0.1:${upstream.address().port}/${type}`,headers:{Authorization:'Bearer fixture'}}};
-      const runtime={owners:{mcp:'ply'},policy:{cwd:process.cwd()},prompt:'',skills:[],servers:[item],report:{entries:[{id:item.id}]}};
+      const servers=type==='http'?[item,{...item,id:'b456',name:'second'}]:[item];
+      const runtime={owners:{mcp:'ply'},policy:{cwd:process.cwd()},prompt:'',skills:[],servers,report:{entries:servers.map(({id})=>({id}))}};
       let allowed=true;
-      connection=await bridge.open({runtime,prompt:'',origin,isActive:()=>true,authorize:async()=>allowed});
+      const progress=[];
+      connection=await bridge.open({runtime,prompt:'',origin,isActive:()=>true,authorize:async()=>allowed,progress:p=>progress.push(p)});
+      t.ok(`${type}: MCP 接続の開始を順番と総数で知らせる`, progress.length===servers.length && progress.every((p,i)=>p.current===i+1&&p.total===servers.length&&p.name===servers[i].name),JSON.stringify(progress));
       const request=async(method,params={})=>(await(await fetch(connection.url,{method:'POST',headers:{...connection.headers,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})})).json()).result;
       const tool=(await request('tools/list')).tools.find(t=>t.name.startsWith('m_'));
       t.ok(`${type}: 認証ヘッダーを渡してツールを呼べる`,(await request('tools/call',{name:tool.name})).content[0].text==='TOOL_OK');
