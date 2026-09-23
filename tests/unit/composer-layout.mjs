@@ -52,6 +52,11 @@ export default async function (t) {
   const chip = /\n\.chip\{([^}]*)\}/.exec(css)?.[1] ?? '';
   t.ok('チップは 3 つとも同じ字（本文の書体・14px・400）と高さ 30px・余白 0 8px', /font:400 var\(--fs\)\/1\.5 var\(--font\)/.test(chip) && /height:30px/.test(chip) && /padding:0 8px/.test(chip), chip);
   t.ok('YOLO は太字にしない（逸脱 b）', /\.chip\.danger\{color:var\(--ink-strong\)\}/.test(css) && !/\.chip\.danger\{[^}]*font-weight/.test(css));
+  t.ok('1 行に収める順: 承認モードの短い名前 → モデルの段を外す → モデル名 → 作業ディレクトリ（fitRow の印と縮める比）',
+    /\.crow\.fit-short \.chip\.mode \.v \.short\{display:inline\}/.test(css) && /\.crow\.fit-noef \.chip \.v \.ef\{display:none\}/.test(css)
+      && /\.crow\.measuring > \*\{flex-shrink:0\}/.test(css) && /\.chip\.model\{flex-shrink:20\}/.test(css) && /\.chip\.folder\{flex-shrink:1\}/.test(css) && /\.chip\.mode\{flex-shrink:0\}/.test(css));
+  const controlsSrc = fs.readFileSync(new URL('../../web/composer-controls.mjs', import.meta.url), 'utf8');
+  t.ok('名前の最小の幅は作業ディレクトリ 9 字・モデル 6 字から段々に下げる', /\[\[9, 6\], \[7, 4\], \[5, 3\], \[3, 2\]\]/.test(controlsSrc) && /fit-short/.test(controlsSrc) && /fit-noef/.test(controlsSrc));
   t.ok('タッチではチップも 36px', /@media \(pointer:coarse\)\{[^@]*\.chip\{height:36px\}/s.test(css));
   t.ok('480px 以下は ▾ を省き、中断はアイコンだけ', /@media \(max-width:480px\)\{[^@]*\.chip svg\.caret\{display:none\}[^@]*\.abort span\{display:none\}/s.test(css));
   t.ok('700px 以下は「保存済み」を出さない（失敗だけ出す）', /\.crow \.draft-saved:not\(\[data-state=failed\]\)\{display:none\}/.test(css));

@@ -550,7 +550,10 @@ export function setupComposerControls({ cmd, get, on }) {
     const m = d.modes?.[d.mode];
     const danger = isDanger(m);
     // YOLO: 盾を ⚠ の線画に替え、強い字にする（字の頭に ⚠ は書かない・太字にしない）
-    modeName.textContent = m?.label ?? d.mode ?? "";
+    // 狭い行では短い名前（サーバーの short。「都度」など）に替える（fitRow）。読み上げは長い名前のまま
+    const modeFull = m?.label ?? d.mode ?? "";
+    const modeShort = m?.short && m.short !== modeFull ? m.short : "";
+    modeName.replaceChildren(el("span", "full", modeFull), ...(modeShort ? [el("span", "short", modeShort)] : []));
     const icon = danger ? warn : shield;
     if (chips.mode.firstChild !== icon) chips.mode.firstChild.replaceWith(icon);
     chips.mode.classList.toggle("danger", danger);
@@ -566,7 +569,49 @@ export function setupComposerControls({ cmd, get, on }) {
       if (key) (p.pop.querySelector(`[data-key="${CSS.escape(key)}"]:not([hidden]):not(:disabled)`) ?? p.pop.querySelector('[aria-selected="true"]'))?.focus();
     }
     folder.place();
+    fitRow();
   }
 
-  return { paint, close: () => openPanel?.hide(false), panels: { folder, model, mode } };
+  /**
+   * チップの行を 1 行に収める（docs/design-system.md「入力欄と上端」）。短い値は詰めない。足りない分だけ、この順に削る:
+   *   1. 承認モードを短い名前に（都度確認 → 都度）  2. モデルの「 · 段」を外す
+   *   3. モデル名を … で詰める（「Smart…」くらいまで）  4. 作業ディレクトリの名前を … で詰める（9 字くらいまでは残す）
+   * 縮める前の幅は、チップを縮めない状態（.measuring）で測る。行の幅・中身が変わるたびに呼ぶ（paint・窓の幅・中断の出入り）
+   */
+  function fitRow() {
+    const row = chips.cwd.parentElement;
+    if (!row || !row.isConnected || !row.offsetParent) return;
+    const cwd = chips.cwd, mdl = chips.model;
+    row.classList.remove("fit-short", "fit-noef");
+    cwd.style.minWidth = ""; mdl.style.minWidth = "";
+    row.classList.add("measuring");
+    // 最後の部品（送信）の右端が行の右端に収まるか（scrollWidth は整数に丸められ、1px 足りないのを見逃す）
+    const fits = () => {
+      const last = [...row.children].reverse().find((n) => n.offsetParent);
+      return !last || last.getBoundingClientRect().right <= row.getBoundingClientRect().right + 0.01;
+    };
+    if (!fits()) row.classList.add("fit-short");
+    if (!fits()) row.classList.add("fit-noef");
+    let size = null;
+    if (!fits()) {
+      const w = (n) => n.getBoundingClientRect().width;
+      const v = (n) => w(n.querySelector(".v"));
+      size = { cwd: [w(cwd), w(cwd) - v(cwd)], mdl: [w(mdl), w(mdl) - v(mdl)] };
+    }
+    row.classList.remove("measuring");
+    if (!size) return;
+    // 名前の最小の幅は字の幅（ch）で決める（作業ディレクトリ 9 字・モデル 6 字）。もともと短い名前はそのまま。
+    // それでも入らない（とても狭い・中断が出ている）ときは、両方の最小を段々に下げる
+    const min = ([whole, frame], ch) => `min(${whole}px, calc(${frame}px + ${ch}ch))`;
+    for (const [a, b] of [[9, 6], [7, 4], [5, 3], [3, 2]]) {
+      cwd.style.minWidth = min(size.cwd, a);
+      mdl.style.minWidth = min(size.mdl, b);
+      if (fits()) return;
+    }
+    cwd.style.minWidth = ""; mdl.style.minWidth = "";
+  }
+  window.addEventListener("resize", fitRow);
+  if (typeof ResizeObserver === "function") new ResizeObserver(() => fitRow()).observe(chips.cwd.parentElement);
+
+  return { paint, fit: fitRow, close: () => openPanel?.hide(false), panels: { folder, model, mode } };
 }

@@ -876,5 +876,12 @@
     "incomplete": "Some files haven't been received yet ({{count}}).",
     "escape": "Can't write because a link points outside the destination: {{path}}",
     "conflictDir": "The destination has a folder with the same name: {{path}}"
+  },
+  "modesShort": {
+    "ask": "Ask",
+    "full": "Auto",
+    "readonly": "Read",
+    "acceptEdits": "Edits",
+    "plan": "Plan"
   }
 }
