@@ -39,8 +39,8 @@ export const COMMANDS = new Set([
   'claudeLoginCode',     // { loginId, code } -> {}。ブラウザーに表示されたコードを CLI へ渡す
   'claudeLoginCancel',   // { loginId } -> {}
   // 互換の接続先（エージェントごと。会話ごとに選ぶ。core/compat-endpoints.mjs）。キーは返さない
-  'compatEndpoints',        // { agent? } -> { endpoints: [{ id, agent, kind, name, baseUrl, auth, hasKey, roles, models, options, lastCheck, isDefault, ready }], defaults, storage }
-  'compatEndpointCheck',    // { input, id? } -> { ok: true, receipt, auth, latencyMs, models, lines } | { ok: false, error, lines, code }。本物の 1 リクエストで確かめる
+  'compatEndpoints',        // { agent? } -> { endpoints: [{ id, agent, kind, name, baseUrl, auth, hasKey, roles, models, modelInfo, options, lastCheck, isDefault, ready }], defaults, storage }
+  'compatEndpointCheck',    // { input, id? } -> { ok: true, receipt, auth, latencyMs, models, modelInfo, lines } | { ok: false, error, lines, code }。本物の 1 リクエストで確かめる
   'compatEndpointSave',     // { input, receipt, id? } -> { id }。確認の受領証が今の接続情報と合うときだけ保存する
   'compatEndpointRecheck',  // { id } -> { ok, lines?, error? }。保存済みを確かめ直して結果を記録する
   'compatEndpointDelete',   // { id } -> 一覧。キーも消す。選んでいる会話は次の送信の前に選び直しを求める

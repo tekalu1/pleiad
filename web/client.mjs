@@ -8,6 +8,7 @@ import { setupUsage } from './usage.mjs';
 import { setupOnboarding } from "./onboarding.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
 import { setupCompatEndpoints } from './compat-endpoints.mjs';
+import { compatModelText } from './compat-models.mjs';
 import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
@@ -1003,7 +1004,7 @@ function onEvent(ev, replay = false) {
       return refresh();
 
     case "model":
-      sys(`モデル → <b>${escText(ev.model ? state.models[ev.model]?.label ?? ev.model : state.models[""]?.resolvesTo ? `既定（${resolvedModel(state.models, "").label}）` : "既定")}</b>（${escText(ev.by)}${ev.live ? "" : "・次のターンから"}）`);
+      sys(`モデル → <b>${escText(ev.model ? state.models[ev.model]?.label ?? (state.endpoint ? compatModelText(ev.model) : ev.model) : state.models[""]?.resolvesTo ? `既定（${resolvedModel(state.models, "").label}）` : "既定")}</b>（${escText(ev.by)}${ev.live ? "" : "・次のターンから"}）`);
       return refresh();
 
     case "cwd":
@@ -1403,8 +1404,10 @@ function paintSettingsNotice() {
     // 既定のモデルは実際に当たる名前を添える（分からなければ「既定」だけ）
     const fallback = state.models[""]?.resolvesTo || state.models[""]?.resolvedLabel ? `既定（${resolvedModel(state.models, "").label}）` : "既定";
     const nextEndpoint = next.endpoint ?? (next.backend !== s.backend ? "" : s.compatEndpoint ?? "");
-    const epFallback = nextEndpoint ? `既定（${compatEndpoints.get(nextEndpoint)?.roles?.main || "接続先のメイン"}）` : fallback;
-    if (next.backend !== s.backend || next.model !== (s.model ?? "")) changes.push(`${labelOf(next.backend)} / ${next.model ? (nextEndpoint ? next.model : state.models[next.model]?.label ?? next.model) : epFallback}${next.backend !== s.backend && !next.model && fallback === "既定" ? "（変更先の既定モデル）" : ""}`);
+    // 互換の接続先のモデルは表示名（web/compat-models.mjs。札を置けないので 1M は（1M））
+    const epMain = nextEndpoint ? compatEndpoints.get(nextEndpoint)?.roles?.main : "";
+    const epFallback = nextEndpoint ? `既定（${epMain ? compatModelText(epMain) : "接続先のメイン"}）` : fallback;
+    if (next.backend !== s.backend || next.model !== (s.model ?? "")) changes.push(`${labelOf(next.backend)} / ${next.model ? (nextEndpoint ? compatModelText(next.model) : state.models[next.model]?.label ?? next.model) : epFallback}${next.backend !== s.backend && !next.model && fallback === "既定" ? "（変更先の既定モデル）" : ""}`);
     if (next.effort !== undefined && next.effort !== (s.effort ?? "")) changes.push(`エフォート: ${next.effort || "既定に従う"}`);
     if (next.cwd) changes.push(`作業ディレクトリ: ${next.cwd}`);
     if (next.mode !== undefined) changes.push(`承認モード: ${state.modes[next.mode]?.label ?? next.mode}`);
@@ -2416,7 +2419,7 @@ async function rowMenu(s, x, y) {
       })) },
     // 名前は版付き（入力欄のチップと同じ）。「既定に従う」には実際に当たるモデルを添える。隠した別名は選んでいるときだけ。
     // 段違いを系統にまとめた一覧（antigravity）は系統ごとに 1 行（composer-labels.mjs の modelRowIds）
-    { label: "モデル（次のターン）", hint: resolvedModel(vocab.models, s.nextSettings?.model ?? s.model ?? "").label, sub: () =>
+    { label: "モデル（次のターン）", hint: endpointOf(s) && (s.nextSettings?.model ?? s.model) ? compatModelText(s.nextSettings?.model ?? s.model) : resolvedModel(vocab.models, s.nextSettings?.model ?? s.model ?? "").label, sub: () =>
       Object.entries(vocab.models).filter(([id]) => id === "" || modelRowIds(vocab.models, s.nextSettings?.model ?? s.model ?? "").includes(id)).map(([id, m]) => ({
         label: id === "" && m.resolvesTo ? `${m.label}（${vocab.models[m.resolvesTo]?.label ?? m.resolvesTo}）` : m.label,
         hint: m.note, checked: id === (s.nextSettings?.model ?? s.model ?? ""),
