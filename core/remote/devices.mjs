@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import { createSecretStore, plainCipher, withFileLock } from '../secret-store.mjs';
 import { generateKeyPair, keyPairFromPrivate, hostIdFor } from './noise.mjs';
 
-async function readJson(file, fallback) {
+export async function readJson(file, fallback) {
   try { return JSON.parse(await fs.readFile(file, 'utf8')); }
   catch (e) {
     if (e.code === 'ENOENT') return fallback;
@@ -21,7 +21,7 @@ async function readJson(file, fallback) {
   }
 }
 
-async function writeJson(file, data) {
+export async function writeJson(file, data) {
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${crypto.randomUUID()}.tmp`;
   try {
