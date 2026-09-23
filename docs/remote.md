@@ -50,7 +50,7 @@
 | 部品 | 場所 | 言語 |
 |---|---|---|
 | 中継 | `relay/`（独立した `package.json`、依存は `ws` だけ。`Dockerfile`） | Node |
-| 暗号・フレーム（共有） | `core/remote/noise.mjs`、`core/remote/frames.mjs` | Node（ESM。デスクトップの main からは `import()`） |
+| 暗号・フレーム・チャネル（共有） | `core/remote/noise.mjs`、`core/remote/frames.mjs`、`core/remote/channel.mjs`（ストリームの多重化と流量の制御。運び手に依存しない） | Node（ESM。デスクトップの main からは `import()`） |
 | ホストの接続口・ペアリング・端末一覧 | `core/remote/connector.mjs`、`core/remote/devices.mjs`。サーバーのプロセス内で動く（`npm start` のホストでも使える） | Node |
 | デスクトップの端末内プロキシ・リモートの窓 | `desktop/remote/`（main プロセス） | Node |
 | モバイルの殻 | `mobile/`（Capacitor。プロキシと暗号は Swift / Kotlin） | Swift / Kotlin / JS |
@@ -81,8 +81,15 @@
 - 鍵を回すのは接続ごと（再接続 = 新しいハンドシェイク）。1 本の接続で 2^32 通を超えたら切って張り直す（実質起きない）
 
 **Node の標準 `crypto` だけで組める。新しい依存は足さない。**
-X25519 は `generateKeyPairSync('x25519')` と `diffieHellman()`（生の 32 バイトは JWK の `OKP`/`X25519` で出し入れ）、AEAD は `createCipheriv('chacha20-poly1305', key, nonce, { authTagLength: 16 })`、HASH と HKDF は `createHash('sha256')`・`createHmac('sha256')`（Noise の HKDF は HMAC で書く定義どおり）。nonce は Noise の定めどおり 4 バイトの 0 + 64bit 小端の通番。
+X25519 は `generateKeyPairSync('x25519')` と `diffieHellman()`（生の 32 バイトは PKCS#8 / SPKI の DER の決まった前置きを付けて出し入れ）、AEAD は `createCipheriv('chacha20-poly1305', key, nonce, { authTagLength: 16 })`、HASH と HKDF は `createHash('sha256')`・`createHmac('sha256')`（Noise の HKDF は HMAC で書く定義どおり）。nonce は Noise の定めどおり 4 バイトの 0 + 64bit 小端の通番。
 AES-GCM ではなく ChaCha20-Poly1305 にするのは、iOS の CryptoKit（`ChaChaPoly`・`Curve25519.KeyAgreement`・`HKDF`）にも揃っていて、3 実装が同じ組を使えるため。実装は公式の試験ベクトル（cacophony の IK / IKpsk2）で確かめる。
+
+細部（実装 `core/remote/noise.mjs` で決めたこと。3 実装が揃える。例は `tests/remote/vectors.json` の `pleiad`）:
+
+- psk と入場券の `HKDF(秘密, 札)` は RFC 5869 の HKDF-SHA256（salt は空、info は札の UTF-8、長さ 32）。Noise の内側の HKDF とは別物
+- `hostId` の base32 は RFC 4648 の字母を小文字で、埋めなし
+- 確認コード = `HMAC-SHA256(key = ハンドシェイクのハッシュ h, "pleiad pair code")` の先頭 4 バイト（BE）を 10^6 で割った余りを 0 埋め 6 桁。表示は 3 桁ずつ区切る
+- 2^32 通の上限は送り・受けの nonce ごと。達したら暗号化・復号が例外になり、呼び側はチャネルを閉じて張り直す
 
 ### 3.3 ペアリングの流れ
 
@@ -136,6 +143,14 @@ stream 0 はチャネル自体。端末が開くストリームは奇数、ホ�
 | 0x24 | WS_CLOSE | 両方 | u16 の close code + 理由 |
 | 0x30 | WINDOW | 両方 | u32 の増分。stream 0 はチャネル全体 |
 
+細部（実装 `core/remote/frames.mjs`・`channel.mjs` で決めたこと）:
+
+- 最初のフレームは HELLO でなければならない。形の誤り（知らない型・HELLO / PING / PONG / GOAWAY が stream 0 以外・それ以外が stream 0・開いていないストリーム・番号の逆行・窓超え・増分 0・ストリームの種類に合わないフレーム）は GOAWAY `protocol` で閉じる。復号の失敗は何も送らずに閉じる
+- GOAWAY の `code` は文字列（`protocol`・`version`・`revoked`・`shutdown` など）。GOAWAY は送っても受けてもチャネルの終わりで、処理中のストリームは捨てる
+- RESET の理由: 0 取り消し、1 決まり違反、2 受け付けない（同時ストリームの上限・受ける者が居ない）、3 防火壁が通さない（§4.2）、4 受け側の失敗、5 窓超え、6 チャネルが閉じた（ローカルだけ）、7 組み立てた WebSocket のメッセージが上限（64 MiB）を超えた
+- WebSocket のストリームは両方が WS_CLOSE を送れば終わる（受けた側が自分の WS_CLOSE を返す）。WS_REJECT は両方向の終わり
+- 捨てたストリームに行き違いで届いた DATA / WS_MSG は読み捨て、チャネルの窓だけ返す
+
 ### 4.2 ホストの接続口が通すもの（ここが防火壁）
 
 接続口は復号したストリームを `127.0.0.1:<PORT>` への HTTP / WebSocket に組み立て直す。そのとき:
@@ -155,6 +170,9 @@ stream 0 はチャネル自体。端末が開くストリームは奇数、ホ�
 - 送り側は中継への WebSocket の `bufferedAmount` が 4 MiB を超えたら全ストリームを止める
 - これで中継に溜まるのは向きごとに最大 1 MiB 程度に抑えられる。中継はさらに相手側の `bufferedAmount` が上限（8 MiB）を超えた接続を切る
 - 同時ストリームは 64 まで（ブラウザーは 1 オリジンに HTTP/1.1 を 6 本までしか張らないので、実際はそれより少ない）
+- 窓の初期値は取り決めの定数で、交渉しない（HELLO にも載せない）。WS_MSG は印の 1 バイトも数える
+- WS_MSG の途中の断片は、組み立ての入れ物に入れた時点で窓を返す（メッセージが窓より大きいと詰まるため）。下流を待って返すのは最後の断片の分
+- `bufferedAmount` で止めるのはストリームのフレーム（HTTP_RES・END なども順序を保つため一緒に止まる）。チャネルの制御フレーム（PING・WINDOW・GOAWAY）は止めない
 
 今のサーバーは `ws.bufferedAmount` を見ずに送る（`sendTo()` `core/server.mjs:586`）が、相手はループバックの接続口なので速く読み出され、背圧は接続口のところで効く。
 
