@@ -1,0 +1,193 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>リモートの窓 — モック</title>
+<div id="rw">
+<style>
+#rw{--paper:#fff;--s0:#eceef4;--s1:#f4f5f9;--s2:#e8eaf1;--s3:#dcdee8;--sel:#e3e5ed;--fill:#3a499e;--on:#f4f5ff;--ink:#1c2247;--strong:#0f1330;--weak:#6b7299;--blue:#3a499e;--lineb:#5665cd;--line:#c9cee0;--faint:#dfe2ec;--mark:#aa2678;--shadow:rgba(21,22,28,.16);
+  font-family:"Segoe UI","Hiragino Sans","Yu Gothic UI",sans-serif;color:var(--ink);font-size:14px;line-height:1.5;max-width:1180px;margin:0 auto;padding:16px}
+#rw[data-theme="dark"]{--paper:#1b1c23;--s0:#121318;--s1:#222329;--s2:#15161c;--s3:#2a2b32;--sel:#2a2b32;--fill:#5665cd;--on:#f4f5ff;--ink:#dfe3f2;--strong:#f4f6ff;--weak:#8a91b8;--blue:#9eabde;--lineb:#728cd7;--line:#2c2f3f;--faint:#1a1b22;--mark:#e07ab8;--shadow:rgba(0,0,0,.5);background:#0b0c10}
+html:has(#rw[data-theme="dark"]){background:#0b0c10}
+#rw *{box-sizing:border-box}
+#rw h2{font-size:18px;margin:0 0 4px}
+#rw h3{font-size:13px;margin:22px 0 8px;color:var(--weak);letter-spacing:.06em;font-weight:600}
+#rw p.lead{margin:0 0 12px;color:var(--weak);font-size:13px}
+#rw .ctl{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--weak);margin-bottom:12px;flex-wrap:wrap}
+#rw .seg{display:inline-flex;background:var(--s2);border-radius:999px;padding:2px}
+#rw .seg button{border:0;background:transparent;color:var(--weak);font:inherit;padding:3px 10px;border-radius:999px;cursor:pointer}
+#rw .seg button[aria-pressed="true"]{background:var(--paper);color:var(--ink)}
+#rw svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* 窓 */
+#rw .win{border-radius:10px;overflow:hidden;box-shadow:0 8px 28px var(--shadow);background:var(--paper);display:grid;grid-template-columns:240px 1fr;grid-template-rows:36px 1fr;height:520px}
+#rw .bar{grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:0 0 0 12px;background:var(--s0);background-image:radial-gradient(var(--faint) 1px,transparent 1.2px);background-size:24px 24px;color:var(--ink)}
+#rw .win.remote .bar{background:var(--fill);background-image:none;color:var(--on)}
+#rw .badge{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;padding:3px 10px 3px 8px;border-radius:999px;border:0;background:transparent;color:inherit;font-family:inherit;cursor:pointer;white-space:nowrap}
+#rw .badge:hover{background:rgba(255,255,255,.14)}
+#rw .badge .host{font-family:Consolas,monospace;font-weight:600}
+#rw .bar .gap{flex:1}
+#rw .wbtn{width:46px;height:36px;display:grid;place-items:center;color:inherit;opacity:.9}
+#rw .wbtn svg{width:12px;height:12px;stroke-width:1.2}
+#rw .side{background:var(--s0);background-image:radial-gradient(var(--faint) 1px,transparent 1.2px);background-size:24px 24px;padding:10px 8px;overflow:hidden}
+#rw .logo{display:flex;align-items:center;gap:8px;padding:2px 6px 10px;font-weight:700;letter-spacing:.02em}
+#rw .logo i{width:20px;height:20px;border-radius:6px;background:var(--fill);display:inline-block}
+#rw .search{background:var(--paper);border-radius:999px;padding:6px 12px;color:var(--weak);font-size:13px;margin-bottom:10px}
+#rw .sh{font-weight:600;padding:6px 6px 2px;font-size:13px}
+#rw .r{padding:6px 10px 6px 22px;border-radius:8px;font-size:13px;display:flex;gap:8px;align-items:baseline}
+#rw .r.on{background:var(--paper)}
+#rw .r .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#rw .r .m{font-size:11px;color:var(--weak);font-variant-numeric:tabular-nums}
+#rw .r .wait{color:var(--mark);font-size:11px}
+#rw .main{display:flex;flex-direction:column;min-width:0}
+#rw .head{padding:12px 22px 6px;font-size:15px;font-weight:600}
+#rw .thread{flex:1;padding:4px 22px;overflow:hidden}
+#rw .you{background:var(--s2);border-radius:20px;padding:9px 16px;max-width:560px;margin:10px 0}
+#rw .ai{margin:10px 0;max-width:640px}
+#rw .tool{font-size:13px;color:var(--weak)}
+#rw .tool b{color:var(--ink);font-weight:600}
+#rw .composer{margin:8px 22px 16px;background:var(--s1);border-radius:14px;padding:10px 12px}
+#rw .composer .in{color:var(--weak);font-size:13px;height:40px}
+#rw .crow{display:flex;align-items:center;gap:4px}
+#rw .chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:5px 10px;border-radius:999px;color:var(--ink);white-space:nowrap}
+#rw .chip.mono{font-family:Consolas,monospace;font-size:12.5px}
+#rw .send{width:34px;height:34px;border-radius:50%;background:var(--fill);color:var(--on);display:grid;place-items:center;margin-left:auto}
+
+/* バッジの面 */
+#rw .stagewrap{position:relative}
+#rw .pop{position:absolute;left:12px;top:40px;width:300px;background:var(--paper);color:var(--ink);border-radius:14px;box-shadow:0 8px 28px var(--shadow);padding:12px 14px;z-index:3;font-size:13px}
+#rw .pop[hidden]{display:none}
+#rw .pop dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:6px 0 10px}
+#rw .pop dt{color:var(--weak)}
+#rw .pop dd{margin:0;font-family:Consolas,monospace;font-size:12.5px;overflow-wrap:anywhere}
+#rw .pop .acts{display:flex;gap:6px;justify-content:flex-end}
+#rw .btn{border:0;background:transparent;color:var(--ink);font:inherit;font-size:13px;padding:5px 12px;border-radius:999px;cursor:pointer}
+#rw .btn:hover{background:var(--s1)}
+
+/* 小さい比較・OS */
+#rw .row2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+#rw .mini{border-radius:10px;overflow:hidden;box-shadow:0 4px 16px var(--shadow);background:var(--paper)}
+#rw .mini .bar{height:32px}
+#rw .mini .body{height:70px;display:grid;grid-template-columns:90px 1fr}
+#rw .mini .body .side{padding:0}
+#rw .cap{font-size:12px;color:var(--weak);margin:6px 2px 0}
+#rw .os{background:#1f2937;color:#e5e7eb;border-radius:10px;padding:10px 12px;display:flex;gap:18px;align-items:flex-end;flex-wrap:wrap}
+#rw .tb{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;color:#cbd5e1}
+#rw .tb .ico{position:relative;width:40px;height:40px;border-radius:8px;background:#374151;display:grid;place-items:center}
+#rw .tb .ico i{width:22px;height:22px;border-radius:6px;background:#5665cd;display:block}
+#rw .tb .ov{position:absolute;right:-3px;bottom:-3px;width:18px;height:18px;border-radius:50%;background:#f4f5ff;color:#3a499e;display:grid;place-items:center;font-size:11px;font-weight:700}
+#rw .tb .ttl{max-width:180px;text-align:center}
+#rw .note{background:var(--s1);border-radius:14px;padding:12px 16px;font-size:13px}
+#rw .note .rowx{display:flex;gap:10px;align-items:baseline;padding:6px 0}
+#rw .note .rowx b{min-width:110px}
+#rw .note .hint{color:var(--weak)}
+#rw table{width:100%;border-collapse:collapse;font-size:13px;background:var(--paper);border-radius:12px;overflow:hidden}
+#rw th,#rw td{text-align:left;padding:7px 10px;vertical-align:top}
+#rw th{background:var(--s3);font-size:12px}
+#rw tr:nth-child(even) td{background:var(--s1)}
+</style>
+
+<h2>リモートの窓</h2>
+<p class="lead">ホストごとの別窓。上端の帯を塗りの色にし、左にホスト名のバッジを常に出す（閉じられない）。窓タイトルとタスクバーにも印。docs/remote.md §7.2。</p>
+<div class="ctl">配色 <span class="seg" role="group" aria-label="配色"><button data-theme="light" aria-pressed="true">明</button><button data-theme="dark" aria-pressed="false">暗</button></span>
+  <span style="margin-left:8px">窓</span> <span class="seg" role="group" aria-label="窓の種類"><button data-kind="remote" aria-pressed="true">リモート</button><button data-kind="local" aria-pressed="false">ローカル</button></span></div>
+
+<div class="stagewrap">
+<div class="win remote" id="rwWin">
+  <div class="bar">
+    <button class="badge" id="rwBadge" aria-expanded="false" aria-controls="rwPop" title="リモートのホスト desktop-home につないでいます">
+      <svg viewBox="0 0 24 24"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg>リモート: <span class="host">desktop-home</span>
+    </button>
+    <span class="gap"></span>
+    <span class="wbtn" aria-hidden="true"><svg viewBox="0 0 12 12"><path d="M1 6h10"/></svg></span>
+    <span class="wbtn" aria-hidden="true"><svg viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9"/></svg></span>
+    <span class="wbtn" aria-hidden="true"><svg viewBox="0 0 12 12"><path d="M1.5 1.5l9 9M10.5 1.5l-9 9"/></svg></span>
+  </div>
+  <aside class="side">
+    <div class="logo"><i></i>Pleiad</div>
+    <div class="search">検索</div>
+    <div class="sh">進行中</div>
+    <div class="r on"><span class="t">リモートの設計を書く</span><span class="m">12:04</span></div>
+    <div class="r"><span class="t">中継の Dockerfile</span><span class="wait">◆ 承認待ち</span></div>
+    <div class="r"><span class="t">モバイルの画面の手直し</span><span class="m">昨日</span></div>
+    <div class="sh">状態なし</div>
+    <div class="r"><span class="t">使用量の表示</span><span class="m">3 日</span></div>
+  </aside>
+  <section class="main">
+    <div class="head">リモートの設計を書く</div>
+    <div class="thread">
+      <div class="you">docs/remote.md の §4 を読みやすくして</div>
+      <div class="ai"><div class="tool"><b>読む</b> docs/remote.md</div>
+        <p style="margin:6px 0">§4 のフレームの表を 1 つにまとめ、流量の制御を別の節に分けました。</p></div>
+    </div>
+    <div class="composer">
+      <div class="in">続きを書く…</div>
+      <div class="crow">
+        <span class="chip"><svg viewBox="0 0 24 24"><path d="M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2"/></svg></span>
+        <span class="chip mono" title="C:\Users\tekalu\dev\pleiad"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>pleiad ▾</span>
+        <span class="chip">Opus 5.5 · high ▾</span>
+        <span class="chip"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/></svg>都度確認 ▾</span>
+        <span class="send"><svg viewBox="0 0 24 24"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg></span>
+      </div>
+    </div>
+  </section>
+</div>
+<div class="pop" id="rwPop" hidden role="dialog" aria-label="リモートの接続">
+  <b>desktop-home</b> につないでいます
+  <dl><dt>中継</dt><dd>relay.example.net</dd><dt>つないだ時刻</dt><dd>12:01</dd><dt>この端末</dt><dd>ThinkPad (tekalu)</dd></dl>
+  <div class="acts"><button class="btn" id="rwPopClose">この窓を閉じる</button></div>
+</div>
+</div>
+
+<h3>ローカルの窓との比較</h3>
+<div class="row2">
+  <div><div class="mini"><div class="bar"><span style="font-size:12px;color:var(--weak)">（帯は脇と同じ面・点のグリッド。何も書かない）</span></div><div class="body"><div class="side"></div><div></div></div></div><p class="cap">ローカル: 今のまま</p></div>
+  <div><div class="mini win remote" style="display:block;height:auto"><div class="bar"><span class="badge"><svg viewBox="0 0 24 24"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg>リモート: <span class="host">desktop-home</span></span></div><div class="body"><div class="side"></div><div></div></div></div><p class="cap">リモート: 帯は <code>--fill-primary</code>、字と窓のボタンは <code>--on-fill</code>（既存の <code>setTitleBar</code> で送る）</p></div>
+</div>
+
+<h3>OS の窓タイトルとタスクバー（Windows）</h3>
+<div class="os">
+  <div class="tb"><div class="ico"><i></i></div><span class="ttl">Pleiad</span></div>
+  <div class="tb"><div class="ico"><i></i><span class="ov" aria-label="リモート">⇄</span></div><span class="ttl">Pleiad — リモート: desktop-home</span></div>
+  <div class="tb"><div class="ico"><i></i><span class="ov" aria-label="リモート">⇄</span></div><span class="ttl">Pleiad — リモート: office-ws</span></div>
+</div>
+<p class="cap">ホストごとに窓が分かれ、タスクバーのボタンに <code>setOverlayIcon</code> の ⇄。macOS はタイトルと Dock の窓の名前で見分ける。</p>
+
+<h3>リモートの窓で、ホストで済ませるログイン（設定 › エージェント設定）</h3>
+<div class="note">
+  <div class="rowx"><b>Claude Code</b><span>未ログイン</span></div>
+  <div class="rowx hint">このログインはホストの PC で行ってください。ログインの戻り先がホストの PC なので、この端末からは完了できません。</div>
+  <div class="rowx"><b>Codex</b><span>ログイン済み · tekalu@example.com</span></div>
+  <div class="rowx"><b>Claude のアカウント</b><span>「ブラウザーで認可する」はそのまま使える（コードを貼り戻す方式）</span></div>
+</div>
+
+<h3>リモートの窓で変わるもの</h3>
+<table>
+  <tr><th>もの</th><th>リモートの窓</th></tr>
+  <tr><td>フォルダーを選ぶ…</td><td>OS のダイアログではなく、ホストのフォルダーを辿る面（ブラウザー版と同じ）。上に「ホストのフォルダー / 手元から送る」のタブ</td></tr>
+  <tr><td>アプリ情報・更新</td><td>ホストの版を出し「ホストの Pleiad の更新はホストで行います」</td></tr>
+  <tr><td>完了通知</td><td>手元の OS 通知。本文の頭にホスト名</td></tr>
+  <tr><td>窓を閉じる</td><td>確認なしで閉じる。ホストの作業は止まらない</td></tr>
+</table>
+
+<script>
+(() => {
+  const root = document.getElementById('rw');
+  const $ = s => root.querySelector(s);
+  root.querySelectorAll('[data-theme]').forEach(b => b.addEventListener('click', () => {
+    root.dataset.theme = b.dataset.theme;
+    root.querySelectorAll('[data-theme]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  }));
+  root.querySelectorAll('[data-kind]').forEach(b => b.addEventListener('click', () => {
+    const remote = b.dataset.kind === 'remote';
+    $('#rwWin').classList.toggle('remote', remote);
+    $('#rwBadge').hidden = !remote; $('#rwPop').hidden = true;
+    root.querySelectorAll('[data-kind]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  }));
+  $('#rwBadge').addEventListener('click', e => { e.stopPropagation(); const p = $('#rwPop'); p.hidden = !p.hidden; $('#rwBadge').setAttribute('aria-expanded', String(!p.hidden)); });
+  $('#rwPop').addEventListener('click', e => e.stopPropagation());
+  $('#rwPopClose').addEventListener('click', () => { $('#rwPop').hidden = true; });
+  document.addEventListener('click', () => { $('#rwPop').hidden = true; $('#rwBadge').setAttribute('aria-expanded', 'false'); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#rwPop').hidden = true; });
+})();
+</script>
+</div>
