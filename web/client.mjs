@@ -2234,15 +2234,42 @@ function applyTheme(mode) {
 }
 
 /**
- * モバイル版の殻へ、今の配色が暗いかを知らせる（状態バー・ナビゲーションバーの記号の明暗を画面の面に合わせる。
- * 上端に塗りを使わなくなったので、状態バーの下地は紙の色。mobile/android の HostActivity）。古い殻には口が無いので黙って何もしない
+ * モバイル版の殻へ、今の配色が暗いかと、画面の上端・下端の地の色を知らせる。殻は状態バー・ナビゲーションバーの下に画面を描かず
+ * （2026-09-24）、バーをこの色で塗り、記号の明暗を合わせる（mobile/android の HostActivity）。古い殻には口が無いので黙って何もしない
  */
+let shellThemeSent = "";
 function paintShellTheme() {
   const setTheme = window.plyRemote?.setTheme;
   if (typeof setTheme !== "function") return;
   const m = document.documentElement.dataset.theme;
   const dark = m === "dark" || (m !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
-  try { setTheme(dark); } catch { /* 殻が受けなくても画面は動く */ }
+  const colors = { top: edgeColor(0), bottom: edgeColor(innerHeight - 1) };
+  const key = JSON.stringify([dark, colors]);
+  if (key === shellThemeSent) return;
+  shellThemeSent = key;
+  try { setTheme(dark, colors); } catch { /* 殻が受けなくても画面は動く */ }
+}
+
+/** 画面の横の中ほど、高さ y にある地の色（#rrggbb）。透ける面（幕など）は飛ばして下の面を見る */
+function edgeColor(y) {
+  for (let node = document.elementFromPoint(innerWidth / 2, y); node; node = node.parentElement) {
+    const c = getComputedStyle(node).backgroundColor.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/);
+    if (c && (c[4] === undefined || Number(c[4]) >= 1)) return `#${c.slice(1, 4).map(n => Number(n).toString(16).padStart(2, "0")).join("")}`;
+  }
+  return "";
+}
+
+/** 地の色が変わりうるとき（脇・設定の開閉、幅の変化、動きの終わり）に、次の描画で送り直す。送るのは変わったときだけ */
+function watchShellTheme() {
+  if (typeof window.plyRemote?.setTheme !== "function") return;
+  let frame = 0;
+  const soon = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; paintShellTheme(); }); };
+  const watch = new MutationObserver(soon);
+  watch.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
+  watch.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  addEventListener("resize", soon);
+  document.addEventListener("transitionend", soon);
+  soon();
 }
 
 function initTheme() {
@@ -3469,12 +3496,15 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
 /**
  * セッションを開く。keepUpTo を渡すと、その添字より前の発言は画面に残したまま続きだけ描く
  * （枝の切り替え。共通部分は動かさない）。
+ * reload は同じ会話の読み直し（つなぎ直したとき）。今の表示・入力欄・引き出しはそのままにして裏で読み、
+ * 読めたら 1 回で描き替える。入力欄を止めない（止めると書いている途中でスマホのキーボードが閉じる）
  */
 async function select(id, { keepUpTo, reload = false } = {}) {
   if (state.busy || (id === state.current && keepUpTo === undefined && !reload)) return;
-  if (keepUpTo === undefined) setDrawer(false);
+  const quiet = reload && id === state.current && keepUpTo === undefined && !state.loadingSession;
+  if (keepUpTo === undefined && !quiet) setDrawer(false);
   filePreview.sessionChanged(id);
-  if (keepUpTo === undefined) {
+  if (keepUpTo === undefined && !quiet) {
     // 開き直し: 先に空にして「読み込み中」。切り替え（keepUpTo）は剥がれた後に一緒に描くので、ここでは触らない
     saveDraft().catch(() => {});
     state.current = id;
@@ -3493,7 +3523,7 @@ async function select(id, { keepUpTo, reload = false } = {}) {
   sessionLoads.cancel(state.displayLoad);
   const load = sessionLoads.begin(id);
   state.displayLoad = load;
-  const historyTimer = keepUpTo === undefined ? setTimeout(() => {
+  const historyTimer = keepUpTo === undefined && !quiet ? setTimeout(() => {
     if (state.current !== id || state.displayLoad !== load) return;
     for (const widths of [[42, 62], [35, 78, 54]]) {
       const lines = el('div', 'history-lines');
@@ -3511,13 +3541,15 @@ async function select(id, { keepUpTo, reload = false } = {}) {
     clearTimeout(historyTimer);
     sessionLoads.cancel(load);
     if (state.current !== id || state.displayLoad !== load) return;
+    // 読み直しが切れただけなら、今の表示を残す（つながり直せばもう一度読む）
+    if (quiet) return;
     state.loadingSession = null;
     clearThread();
     return sys(html.t("chat.sys.historyFailed", { error: e.message }));
   }
   try {
     if (state.displayLoad !== load || keepUpTo === undefined && state.current !== id) return;
-    await paintSession(id, data, { keepUpTo, load });
+    await paintSession(id, data, { keepUpTo, load, quiet });
   } finally { clearTimeout(historyTimer); sessionLoads.cancel(load); }
 }
 
@@ -3526,7 +3558,7 @@ async function select(id, { keepUpTo, reload = false } = {}) {
  * 続きだけ描く。タイトル・一覧の選択・入力欄もここで一緒に切り替わる（= 描画の最終コマと同じタイミング）。
  * transition は選択前のノード座標。本文の高さを畳まず、ノードを横移動する。
  */
-async function paintSession(id, data, { keepUpTo, transition, loaded = false, load } = {}) {
+async function paintSession(id, data, { keepUpTo, transition, loaded = false, load, quiet = false } = {}) {
   filePreview.sessionChanged(id);
   const snapshots = branchSnapshots();
   if (keepUpTo !== undefined) saveDraft().catch(() => {});
@@ -3536,7 +3568,8 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   refreshOutbox(id).catch(() => {});
   try { localStorage.setItem("agent-host-current", id); } catch {}
   const localDraft = state.drafts.get(id);
-  if (!localDraft?.dirty) {
+  // 読み直しでは、入力欄に今ある字が正本（読んでいる間に書き足した分がサーバーの下書きより新しい）
+  if (!localDraft?.dirty && !quiet) {
     const restored = data?.draft ?? { text: "", attached: [] };
     restored.attached = (restored.attached ?? []).map(a => ({ ...a, dataUri: localDraft?.attached?.find(old => old.path === a.path)?.dataUri }));
     state.drafts.set(id, restored);
@@ -3554,6 +3587,8 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   syncTopbar();
 
   const scrollAt = log.scrollTop;
+  // 読み直しは、末尾を見ていたなら末尾へ、読み返していたならその位置のまま描き替える
+  const atEnd = log.scrollHeight - log.clientHeight - log.scrollTop < 40;
   if (keepUpTo === undefined) clearThread();
   else {
     const last = keepUpTo > 0 ? branchAnchor(keepUpTo - 1) : null;
@@ -3575,7 +3610,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
       setUuid(m, message.uuid);
     }
   }
-  loadDraft();
+  if (!quiet) loadDraft();
   closeTurnEl();
   const added = paintHistory(keepUpTo ?? 0);
   if (state.initialMessageId) {
@@ -3607,7 +3642,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   // 対応を終えたエージェントの会話は読むだけ。入力欄を閉じ、理由を末尾に出す（送信はサーバーも断る）
   const retired = data?.retired ?? null;
   if (retired) { sys(escText(retired)); $("prompt").disabled = true; $("prompt").placeholder = retired; }
-  log.scrollTop = keepUpTo === undefined ? log.scrollHeight : scrollAt;
+  log.scrollTop = keepUpTo === undefined && (!quiet || atEnd) ? log.scrollHeight : scrollAt;
   if (moving) await moving.promote(transition.snapshot);
 }
 
@@ -3991,6 +4026,33 @@ function backToHosts() {
   const fn = typeof window.plyRemote?.backToHosts === "function" ? () => window.plyRemote.backToHosts() : window.backToHosts;
   if (typeof fn === "function") Promise.resolve().then(fn).catch(() => {});
 }
+
+/**
+ * モバイル版の殻の戻る（戻るボタン・画面端のスワイプ）。開いている面を手前から 1 つ閉じる:
+ * ダイアログ → メニュー・浮く面 → ファイルのプレビュー・設定 → 引き出し。どれも Esc と同じ閉じ方にする。
+ * 閉じるものが無ければ取り消さず、殻がアプリを背面へ回す（ホスト一覧へは戻らない。戻るのはタイトルの下のホスト名から）
+ */
+function watchShellBack() {
+  const escape = target => target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+  addEventListener("plyremote:back", (e) => {
+    const dialog = [...document.querySelectorAll("dialog[open]")].at(-1);
+    if (dialog) {
+      e.preventDefault();
+      if (typeof dialog.requestClose === "function") dialog.requestClose();
+      else if (dialog.dispatchEvent(new Event("cancel", { cancelable: true }))) dialog.close();
+      return;
+    }
+    const pop = document.querySelector(".pop.menu, .pop:not([hidden])");
+    if (pop) {
+      const focus = document.activeElement;
+      escape(pop.contains(focus) ? focus : pop);
+      // Esc で閉じない面が残っていても、戻るを飲み込み続けない
+      if (!pop.isConnected || pop.hidden) return e.preventDefault();
+    }
+    if (!$("filePreview").hidden || onboarding.isOpen()) { e.preventDefault(); escape(document); return; }
+    if (drawerOpen()) { e.preventDefault(); setDrawer(false); }
+  });
+}
 $("titleWand").onclick = async () => {
   const id = state.current;
   if (!id || titleGenerating.has(id)) return;
@@ -4053,6 +4115,8 @@ setupLongPress();
 // リモートの窓（端末のアプリが plyRemote を渡したとき）の帯のバッジ。帯の色を送るより先に置く
 setupRemoteBadge();
 watchTitleBar();
+watchShellTheme();
+watchShellBack();
 wireDropZone();
 fitPrompt();
 connect();
