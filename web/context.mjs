@@ -496,8 +496,8 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
       scan = found; ply = list; agents = native;
     } catch (e) {
       if (ticket !== scanTicket) return;
-      status.textContent = /スキャン中/.test(e.message) ? '' : t('context.scanFailed', { error: e.message });
-      if (/スキャン中/.test(e.message)) { setTimeout(() => { if (ticket === scanTicket) loadScan(); }, 400); return; }
+      status.textContent = e.code === 'SCAN_BUSY' ? '' : t('context.scanFailed', { error: e.message });
+      if (e.code === 'SCAN_BUSY') { setTimeout(() => { if (ticket === scanTicket) loadScan(); }, 400); return; }
       scan = { entries: [], configs: [] };
     } finally { if (ticket === scanTicket) scanning = false; }
     renderAll();

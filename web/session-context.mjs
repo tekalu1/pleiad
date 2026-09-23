@@ -221,7 +221,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         const oauth = e.auth === 'oauth';
         if (login) p.append(login);
         else p.append(el('span', 'cx-strong', oauth ? t('sessionContext.mcp.needsLogin') : t('sessionContext.mcp.authFailed')),
-          t('sessionContext.mcp.authRest', { reason: e.reason && !/ログインが必要/.test(e.reason) ? t('sessionContext.mcp.reasonParen', { reason: e.reason }) : '' }));
+          t('sessionContext.mcp.authRest', { reason: e.reason && e.reasonCode !== 'MCP_AUTH_REQUIRED' ? t('sessionContext.mcp.reasonParen', { reason: e.reason }) : '' }));
       }
       body.append(p);
       // 同じ名前の定義が複数あったとき、どれを使ったか（core/context-runtime.mjs の markChoices）
