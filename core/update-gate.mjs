@@ -1,9 +1,11 @@
+import { t } from './i18n.mjs';
+
 // A synchronous lease prevents new work between the idle check and shutdown.
 export function createUpdateGate() {
   let active = 0, locked = false;
   return {
     enter() {
-      if (locked) throw new Error('更新の準備中です。少し待ってから操作してください。');
+      if (locked) throw new Error(t('update.preparing'));
       active++;
       let released = false;
       return () => { if (!released) { released = true; active--; } };

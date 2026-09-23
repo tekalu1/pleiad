@@ -11,6 +11,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { t } from './i18n.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -33,7 +34,7 @@ export async function withFileLock(lockPath, fn, { timeoutMs = 5000, staleMs = 3
       const stat = await fs.stat(lockPath).catch(() => null);
       // 壊せなかったときは次の待ちへ回す。掴まれている間は rm も同じ理由で失敗する
       if (stat && Date.now() - stat.mtimeMs > staleMs && await fs.rm(lockPath, { force: true }).then(() => true, () => false)) continue;
-      if (Date.now() > deadline) throw Object.assign(new Error('秘密情報のファイルが別の処理に使われています。少し待ってから再試行してください'), { cause: e });
+      if (Date.now() > deadline) throw Object.assign(new Error(t('secrets.busy')), { cause: e });
       await sleep(intervalMs);
     }
   }
@@ -48,7 +49,7 @@ export async function withFileLock(lockPath, fn, { timeoutMs = 5000, staleMs = 3
 
 /** 暗号化できないときの置き方。値はそのまま（ファイル権限 0600 だけで守る） */
 export const plainCipher = {
-  async status() { return { encrypted: false, backend: 'none', reason: 'Electron の safeStorage が使えない起動（npm start など）です' }; },
+  async status() { return { encrypted: false, backend: 'none', reason: t('secrets.plainReason') }; },
   async encrypt() { throw new Error('encryption unavailable'); },
   async decrypt() { throw new Error('encryption unavailable'); },
 };
@@ -65,21 +66,23 @@ export function parentPortCipher(port, { timeoutMs = 10000 } = {}) {
     if (data?.type !== 'secret' || !waiting.has(data.id)) return;
     const { resolve, reject, timer } = waiting.get(data.id);
     waiting.delete(data.id); clearTimeout(timer);
-    if (data.ok) resolve(data.value); else reject(new Error(data.error || '秘密情報を暗号化・復号できませんでした'));
+    if (data.ok) resolve(data.value); else reject(new Error(data.error || t('secrets.cryptoFailed')));
   });
   const request = (op, value) => new Promise((resolve, reject) => {
     const id = `s${++seq}`;
-    const timer = setTimeout(() => { waiting.delete(id); reject(new Error('秘密情報の暗号化が応答しませんでした')); }, timeoutMs);
+    const timer = setTimeout(() => { waiting.delete(id); reject(new Error(t('secrets.noResponse'))); }, timeoutMs);
     waiting.set(id, { resolve, reject, timer });
     port.postMessage({ type: 'secret', id, op, ...(value === undefined ? {} : { value }) });
   });
   return {
     async status() {
       // 暗号化の可否は起動中に変わらない。main が答えない（古い版など）のも同じなので、失敗も覚えて平文扱いにする
+      // 覚えるのは答えだけ。既定の理由の文は、言語が途中で変わってもよいよう返すたびに引く
       cached ??= request('status').then(
-        s => ({ encrypted: Boolean(s?.available), backend: s?.backend ?? 'unknown', ...(s?.available ? {} : { reason: s?.reason ?? 'OS の暗号化機能が使えません' }) }),
+        s => ({ encrypted: Boolean(s?.available), backend: s?.backend ?? 'unknown', ...(s?.available ? {} : { reason: s?.reason }) }),
         e => ({ encrypted: false, backend: 'unknown', reason: e.message }));
-      return cached;
+      const state = await cached;
+      return state.encrypted ? state : { ...state, reason: state.reason ?? t('secrets.osUnavailable') };
     },
     encrypt: value => request('encrypt', value),
     decrypt: value => request('decrypt', value),
@@ -106,7 +109,7 @@ export function createSecretStore({ file, cipher = plainCipher }) {
     } catch (e) {
       if (e.code === 'ENOENT') return { version: 1, entries: {} };
       // 壊れたファイルを黙って空で上書きしない（トークンを失うより、止まって知らせる方がよい）
-      throw new Error('秘密情報のファイルを読み込めません。形式が壊れています');
+      throw new Error(t('secrets.fileBroken'));
     }
   }
   async function writeFile(data) {
@@ -131,10 +134,10 @@ export function createSecretStore({ file, cipher = plainCipher }) {
     if (entry.enc === 'plain') return JSON.parse(entry.data);
     if (entry.enc === 'safeStorage') {
       const state = await cipher.status();
-      if (!state.encrypted) throw Object.assign(new Error('暗号化して保存した秘密情報を、この起動では復号できません。Pleiad デスクトップから開いてください'), { code: 'SECRET_LOCKED' });
+      if (!state.encrypted) throw Object.assign(new Error(t('secrets.locked')), { code: 'SECRET_LOCKED' });
       return JSON.parse(await cipher.decrypt(entry.data));
     }
-    throw new Error('秘密情報の形式が不明です');
+    throw new Error(t('secrets.unknownFormat'));
   }
   async function seal(value) {
     const text = JSON.stringify(value);

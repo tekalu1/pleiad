@@ -3,8 +3,10 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { parse } = require('yaml');
+const { t } = require('./i18n.cjs');
 
-const AUTH_MESSAGE = '更新の確認に GitHub の認証が必要です。GitHub CLI で gh auth login --hostname github.com を実行してから再試行してください。';
+/** GitHub の認証が要るときの文。今の言語で（読むたびに引く） */
+const authMessage = () => t('update.authRequired');
 const runFile = promisify(execFile);
 
 async function resolveGitHubToken({ env = process.env, run = runFile, platform = process.platform } = {}) {
@@ -25,7 +27,7 @@ async function resolveGitHubToken({ env = process.env, run = runFile, platform =
       if (stdout.trim()) return stdout.trim();
     } catch { /* CLI errors can contain credentials; never forward them. */ }
   }
-  const error = new Error(AUTH_MESSAGE);
+  const error = new Error(authMessage());
   error.code = 'PLY_UPDATE_AUTH';
   throw error;
 }
@@ -67,4 +69,4 @@ async function prepareUpdateCheck(updater, configFile, authOptions) {
   updater.setFeedURL({ ...config, token, provider: 'custom', updateProvider: newestReleaseProvider() });
 }
 
-module.exports = { AUTH_MESSAGE, resolveGitHubToken, prepareUpdateCheck, newestRelease };
+module.exports = { get AUTH_MESSAGE() { return authMessage(); }, authMessage, resolveGitHubToken, prepareUpdateCheck, newestRelease };

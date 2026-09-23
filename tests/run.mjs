@@ -85,6 +85,8 @@ const cases = [
   // 多言語対応。翻訳漏れの lint（直書きの日本語のラチェット・辞書の揃い）と、言語の解決・書式・setPref locale
   await import("./unit/i18n-lint.mjs"),
   await import("./unit/i18n.mjs"),
+  // core・desktop の文言の言語切り替えと、保存される文言（変更の理由・添付の見出し・既定のタイトル）
+  await import("./unit/i18n-server.mjs"),
   await import("./unit/codex-mode.mjs"),
   // model/list のページ送り・覚える長さ・ログイン / ログアウトで捨てる・タイトル生成のモデル選び
   await import("./unit/codex-models.mjs"),

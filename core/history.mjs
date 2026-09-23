@@ -95,6 +95,8 @@ export async function recordPresent(sessionId, payload) {
     at: new Date().toISOString(),
     kind: payload.kind ?? "text",
     caption: payload.caption ?? null,
+    // 添付の caption は日本語の文のまま残し、画面はキーで今の言語に訳す（core/server.mjs presentAttachments・web/saved-text.mjs）
+    ...(payload.captionKey ? { captionKey: payload.captionKey, captionParams: payload.captionParams ?? null } : {}),
     path: payload.path ?? null,
     ...(payload.kind === 'visualization' ? { mode: payload.mode, error: payload.error, reference: payload.reference } : {}),
     // 誰が置いたか。人間の添付と AI の提示は同じ流れに並ぶので、履歴でも区別できるようにする

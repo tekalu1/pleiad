@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseCommand } from './command-line.mjs';
+import { t } from './i18n.mjs';
 
 export const INSTALL_URLS = {
   codex: 'https://developers.openai.com/codex/cli/',
@@ -55,7 +56,7 @@ export function cliCommand(id) {
 
 export function claudeExecutable() {
   const argv = cliCommand('claude');
-  if (!argv) throw new Error('Claude Code をインストールしてください');
+  if (!argv) throw new Error(t('cli.claudeNotInstalled'));
   return argv[0] === process.execPath && argv[1] ? argv[1] : argv[0];
 }
 
@@ -64,11 +65,11 @@ export function installation(id) {
 }
 
 export function spawnCli(argv, args, options = {}) {
-  if (!argv) throw new Error('エージェントをインストールし、状態を再確認してください');
+  if (!argv) throw new Error(t('cli.installAgent'));
   const [command, ...prefix] = argv;
   if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(command)) {
     const quote = value => {
-      if (/["%\r\n]/.test(value)) throw new Error('CLI の引数に使用できない文字があります');
+      if (/["%\r\n]/.test(value)) throw new Error(t('cli.badArgument'));
       return `"${value}"`;
     };
     return spawn([command, ...prefix, ...args].map(quote).join(' '), { ...options, shell: true, windowsHide: true });
