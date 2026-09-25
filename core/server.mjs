@@ -701,7 +701,7 @@ const runtime = {
 // Turn = 走っている1本。
 // 新規セッションは走り出すまで id が無いので、仮キーで登録して後から差し替える。
 // { key, ac, backend, control:{handle}, info:{sessionId,backend,startedAt,cwd,mode,model},
-//   taskHints: Map<tool_use id, 見出し>, pastSubagents: Set<agentId>, subagentOrigins: Map<agentId, tool_use id> }
+//   taskHints: Map<tool_use id, { label, prompt, model }>, pastSubagents: Set<agentId>, subagentOrigins: Map<agentId, tool_use id> }
 
 /** host が居ない時間が猶予を超えたか。タイマーに頼らず、その場で判定する。猶予が無効（既定）なら常に false。 */
 function graceExpired() {
@@ -929,7 +929,12 @@ function makeEmit(turn) {
     // どのサブエージェントの分かは tool_use id で引く（runningWork）
     if (event?.type === "tool.start" && event.id && turn.backend.listSubagents
         && (turn.backend.subagentTools ?? []).includes(event.name)) {
-      turn.taskHints.set(event.id, String(event.input?.description ?? event.input?.prompt ?? "").slice(0, 120));
+      // 依頼文の全体とモデルも覚える。依頼文は会話を読む画面の最初の発言に、モデルは記録にモデルが無い子の一覧の表示に使う
+      turn.taskHints.set(event.id, {
+        label: String(event.input?.description ?? event.input?.prompt ?? "").slice(0, 120),
+        prompt: typeof event.input?.prompt === "string" ? event.input.prompt.slice(0, 20_000) : null,
+        model: typeof event.input?.model === "string" && event.input.model ? event.input.model : null,
+      });
     }
 
     if (event?.type === "present" && event.sessionId && !recorded) {
@@ -1044,14 +1049,20 @@ async function runningWork() {
       // 依頼文（親の委譲ツールの説明）を優先し、無ければ本人の最初の発言を見出しにする。
       // 依頼文は生んだ委譲ツールの id で引く。listSubagents の並びは起動順ではないので、順番では当てない
       const said = msgs.map((m) => m.text).find(Boolean);
-      const hint = t.taskHints.get(await subagentOrigin(t, sessionId, agentId));
+      const origin = await subagentOrigin(t, sessionId, agentId);
+      const hint = t.taskHints.get(origin);
       const state = await subagentState(t, sessionId, agentId);
       return {
         id: agentId,
         kind: "subagent",
         sessionId,
+        backend: t.backend.id,
+        // 生んだ委譲ツールの tool_use id。画面はこれで会話の中のツールカードと結ぶ
+        origin: origin ?? null,
+        // 答えたモデル。記録（Claude は assistant 行の message.model）を先に見て、無ければ依頼のときの指定。どちらも無ければ null（親と同じ）
+        model: msgs.findLast((m) => m.model)?.model ?? hint?.model ?? null,
         messages: msgs.length,
-        description: (hint || said || "").slice(0, 120) || null,
+        description: (hint?.label || said || "").slice(0, 120) || null,
         saying: said ? said.slice(0, 120) : null,
         lastAt: last?.at ?? null,
         // 状態を返せないバックエンド・分からない子は null（web は印を出さず、count は走っている側に数える）
@@ -2625,12 +2636,29 @@ wss.on("connection", (ws, req) => {
           const messages = [];
           for (const m of raw) {
             const tools = (m.toolCalls ?? []).map((c) => c.name);
-            if (!m.text && tools.length === 0) continue;   // ツールの戻りだけの行は出さない
+            if (!m.text && !m.thinking && tools.length === 0) continue;   // ツールの戻りだけの行は出さない
             // 入力と結果も渡す。名前だけだと、画面のカードが空の入力 {} になって何をしたのか読めない
             messages.push({ role: m.role, text: m.text, tools: tools.length ? tools : null,
-              ...(m.toolCalls?.length ? { toolCalls: m.toolCalls } : {}), at: m.at ?? null });
+              ...(m.toolCalls?.length ? { toolCalls: m.toolCalls } : {}), ...(m.thinking ? { thinking: m.thinking } : {}),
+              ...(m.model ? { model: m.model } : {}), at: m.at ?? null });
           }
-          return reply(true, { agentId, sessionId, messages });
+          // 依頼文。記録に依頼の発言が入らないエージェントがあるので、走っているターンが覚えた委譲ツールの入力から渡す。
+          // ターンが終わった後は web が親の会話のツール呼び出し（origin の id）から拾う
+          const turn = runtime.turns.get(sessionId);
+          const origin = turn?.subagentOrigins.get(agentId) ?? null;
+          return reply(true, { agentId, sessionId, origin, prompt: origin ? turn.taskHints.get(origin)?.prompt ?? null : null, messages });
+        }
+
+        // 会話の中の委譲ツールのカードから、それが生んだサブエージェントを引く（終わってターンの一覧から外れた子を開くため）
+        case "findSubagent": {
+          const { sessionId, toolId } = msg.args ?? {};
+          if (!sessionId || !toolId) return reply(false, t('background.agentIdsRequired'));
+          const backend = await resolveBackendForSession(sessionId);
+          if (!backend?.listSubagents || !backend.getSubagentOrigin) return reply(true, { agentId: null });
+          for (const id of await backend.listSubagents(sessionId).catch(() => [])) {
+            if (await backend.getSubagentOrigin(sessionId, id).catch(() => null) === toolId) return reply(true, { agentId: id });
+          }
+          return reply(true, { agentId: null });
         }
 
         // モデルの切り替えも人間の操作から。AI 用のツールは生やさない。
