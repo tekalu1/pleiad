@@ -33,7 +33,9 @@ export function codexQuota(data) {
     const w = bucket?.[key];
     if (!w) return [];
     const label = `${bucket.limitName || (bucket.limitId !== 'codex' && bucket.limitId) || ''} ${duration(w.windowDurationMins)}`.trim();
-    return [usageWindow(label, w.usedPercent, number(w.resetsAt) == null ? null : w.resetsAt * 1000, w.windowDurationMins)];
+    // limitId / limitName は委譲の振り分けがどのモデルに効く枠かを見分けるため（core/delegation-routing.mjs の windowsFor）
+    return [{ ...usageWindow(label, w.usedPercent, number(w.resetsAt) == null ? null : w.resetsAt * 1000, w.windowDurationMins),
+      ...(bucket.limitId ? { limitId: String(bucket.limitId) } : {}), ...(bucket.limitName ? { limitName: String(bucket.limitName) } : {}) }];
   }));
   return { plan: buckets[0]?.planType ?? null, windows,
     message: windows.length ? null : t('usage.codexUnavailable') };
@@ -51,11 +53,12 @@ export function whamQuota(data) {
 }
 export function claudeQuota(data) {
   const limits = data?.rate_limits;
+  // model は、そのモデルの系統にだけ効く枠（委譲の振り分けが候補ごとに枠を選ぶ。core/delegation-routing.mjs の windowsFor）
   const labels = { five_hour: [t('usage.window.fiveHour'), 300], seven_day: [t('usage.window.weekly'), 10080],
-    seven_day_oauth_apps: [t('usage.window.oauthAppsWeekly'), 10080], seven_day_opus: [t('usage.window.modelWeekly', { model: 'Opus' }), 10080], seven_day_sonnet: [t('usage.window.modelWeekly', { model: 'Sonnet' }), 10080] };
-  const windows = Object.entries(labels).flatMap(([key, [label, minutes]]) => limits?.[key]
-    ? [usageWindow(label, limits[key].utilization, limits[key].resets_at, minutes)] : []);
-  for (const w of limits?.model_scoped ?? []) windows.push(usageWindow(t('usage.window.modelWeekly', { model: w.display_name }), w.utilization, w.resets_at, 10080));
+    seven_day_oauth_apps: [t('usage.window.oauthAppsWeekly'), 10080], seven_day_opus: [t('usage.window.modelWeekly', { model: 'Opus' }), 10080, 'opus'], seven_day_sonnet: [t('usage.window.modelWeekly', { model: 'Sonnet' }), 10080, 'sonnet'] };
+  const windows = Object.entries(labels).flatMap(([key, [label, minutes, model]]) => limits?.[key]
+    ? [{ ...usageWindow(label, limits[key].utilization, limits[key].resets_at, minutes), ...(model ? { model } : {}) }] : []);
+  for (const w of limits?.model_scoped ?? []) windows.push({ ...usageWindow(t('usage.window.modelWeekly', { model: w.display_name }), w.utilization, w.resets_at, 10080), model: String(w.display_name ?? '') });
   return { plan: data?.subscription_type ?? null, windows,
     message: windows.length ? null : t('usage.claudeUnavailable') };
 }
@@ -83,7 +86,7 @@ export function createQuotaCache({ now = Date.now, ttl = 60_000 } = {}) {
 // エージェント（ply_usage）へ渡す使用枠。委譲先を選ぶ判断に要る分だけに絞る（残率・期間の分・ローカル実績は落とす）。
 // Claude のアカウントの見出しは人が付けた表示名なので、メールアドレスを書いていることがある。
 // 会話へそのまま流さないよう、ローカル部を1文字だけ残して伏せる（見出しとして見分けは付く）
-const maskEmail = text => typeof text === 'string' ? text.replace(/([^\s@<>()"'「」（）]?)[^\s@<>()"'「」（）]*@([^\s@<>()"'「」（）]+\.[A-Za-z]{2,})/g, '$1***@$2') : null;
+export const maskEmail = text => typeof text === 'string' ? text.replace(/([^\s@<>()"'「」（）]?)[^\s@<>()"'「」（）]*@([^\s@<>()"'「」（）]+\.[A-Za-z]{2,})/g, '$1***@$2') : null;
 // 使用率は小数第 1 位まで（残率から逆算した 9.999999999999998 のような端数を渡さない）
 const percent = value => number(value) == null ? null : Math.round(value * 10) / 10;
 // リセット時刻を過ぎた枠の使用率は今の値ではない。画面（web/usage.mjs）と同じく不明（null）として渡す

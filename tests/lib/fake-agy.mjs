@@ -78,6 +78,8 @@ if (argv.includes("models")) {
     "fake-antigravity-2" + TAB + "Fake Antigravity 2 (Thinking)",
     "fake-flash-high" + TAB + "Fake Flash (High)",
     "fake-flash-low" + TAB + "Fake Flash (Low)",
+    // 足すモデルの id（カンマ区切り）。委譲の振り分けのテストが、本物の名前（gemini-…）の候補を選ばせるのに使う
+    ...String(process.env.FAKE_AGY_EXTRA_MODELS ?? "").split(",").filter(Boolean).map((id) => id + TAB + id),
   ].join(NL) + NL);
   // 本物は起動のたびにログへ選ばれているモデルの表示名を書く（Pleiad はここから既定を読む）。
   // FAKE_AGY_DEFAULT_LABEL が空なら書かない（既定が分からない場合の再現）
