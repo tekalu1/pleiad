@@ -204,17 +204,14 @@
     "behindCount_one": "{{count}} task running in the background",
     "behindCount_other": "{{count}} tasks running in the background",
     "turnRunning": "Turn in progress",
-    "subagents_one": "Subagents {{count}}",
-    "subagents_other": "Subagents {{count}}",
-    "tasks_one": "Tasks {{count}}",
-    "tasks_other": "Tasks {{count}}",
     "background_one": "Background {{count}}",
     "background_other": "Background {{count}}",
-    "subagentsEnded_one": "Subagents · done {{count}}",
-    "subagentsEnded_other": "Subagents · done {{count}}",
     "thinkingTokens_one": "Thinking (about {{count}} token)",
     "thinkingTokens_other": "Thinking (about {{count}} tokens)",
-    "waitingBackground": "Waiting for background tasks"
+    "waitingBackground": "Waiting for background tasks",
+    "backgroundEnded_one": "Background · done {{count}}",
+    "backgroundEnded_other": "Background · done {{count}}",
+    "backgroundOnly": "Commands running in the background"
   },
   "compat": {
     "kind": {
@@ -1171,7 +1168,6 @@
       "changedSuffix": "· Changed",
       "open": "Open context for this conversation: {{summary}}"
     },
-    "terminal": "Terminal",
     "menu": {
       "iconFailed": "Couldn't change the icon: {{error}}",
       "ungroup": "Ungroup",
@@ -1227,13 +1223,6 @@
       "endpoint": "Endpoint (next turn)",
       "endpointFailed": "Couldn't change the endpoint: {{error}}"
     },
-    "tasksEntry_one": "Pleiad tasks · {{count}}",
-    "tasksEntry_other": "Pleiad tasks · {{count}}",
-    "untitledParen": "(New session)",
-    "terminalEntry_one": "Terminal · {{count}}",
-    "terminalEntry_other": "Terminals · {{count}}",
-    "backgroundEntry_one": "Background · {{count}}",
-    "backgroundEntry_other": "Background · {{count}}",
     "statusFailed": "Couldn't change the status: {{error}}",
     "untitled": "New session",
     "undo": {
@@ -1313,22 +1302,10 @@
         "failed": "Failed",
         "stopped": "Stopped"
       },
-      "backgroundTitle": "Running in the background",
-      "subagents": "Subagents",
-      "subagentNamed": "Subagent — {{name}}",
-      "messages_one": "{{count}} message",
-      "messages_other": "{{count}} messages",
-      "messagesLast_one": "{{count}} message · last {{last}}",
-      "messagesLast_other": "{{count}} messages · last {{last}}",
-      "viewChat": "View conversation",
-      "running": "Running in the background",
-      "details": "Details",
-      "none": "No subagents in this turn",
+      "none": "Nothing is running in the background",
       "stop": "Stop",
       "stopLabel": "Stop {{name}}",
-      "background": "Background",
-      "backToList": "← Back to list",
-      "reload": "Refresh",
+      "backToList": "Back to list",
       "loading": "Loading…",
       "outputLabel": "Terminal output",
       "command": "Command",
@@ -1340,7 +1317,6 @@
       "cwd": "Location: {{cwd}}",
       "outputUnsupported": "This agent doesn't support reading the output.",
       "noOutput": "No output yet.",
-      "loadFailed": "Couldn't load: {{error}}",
       "kind": {
         "terminal": "Background terminal",
         "agent": "Subagent",
@@ -1352,7 +1328,19 @@
       "stopRequested": "Stop requested",
       "stopAgain": "Stop again",
       "stopFailed": "Couldn't stop: {{error}}",
-      "readFailed": "Couldn't read: {{error}}"
+      "readFailed": "Couldn't read: {{error}}",
+      "title": "Background",
+      "count": "{{live}} running · {{ended}} done",
+      "listLabel": "Background list",
+      "groupAgents": "Subagents",
+      "groupCommands": "Commands",
+      "openChat": "Open as conversation",
+      "request": "Request",
+      "noMessages": "No messages yet.",
+      "open": "Open",
+      "notFound": "No record of this subagent was found",
+      "openFailed": "Could not open the subagent: {{error}}",
+      "countLive": "{{live}} running"
     },
     "tasks": {
       "status": {
@@ -1365,12 +1353,8 @@
         "cancelled": "Stopped",
         "interrupted": "Interrupted"
       },
-      "title": "Pleiad tasks",
-      "sub": "Managed by Pleiad · {{agent}} · {{status}}",
       "parent": "Requesting conversation",
-      "open": "Open",
-      "notificationUnknown": "It's unknown whether the completion notice was delivered. Check the result in the child conversation.",
-      "stop": "Stop task"
+      "notificationUnknown": "It's unknown whether the completion notice was delivered. Check the result in the child conversation."
     }
   },
   "files": {
@@ -1508,8 +1492,7 @@
     },
     "behind": {
       "subagents": "Waiting for subagents",
-      "commands": "Waiting for background commands",
-      "tasks": "Waiting for tasks"
+      "commands": "Waiting for background commands"
     }
   },
   "composer": {
