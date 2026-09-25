@@ -29,6 +29,36 @@ export function fileMenuItems(target, { osActions, current = false, canUse = tru
   return groups.flatMap((group, i) => (i ? [{ sep: true }, ...group] : group));
 }
 
+/**
+ * 会話に保存された可視化の操作メニュー（右パネルの ⋯。docs/mockups/side-panel-shell.html）。
+ * 対象は元のパス（origin）。元が分からなければパス・元のファイル・会話で使うは出さない。
+ * 並びはファイルと同じ考え方: 写す → 開く → 持ち出す。run(action) は web/file-preview.mjs
+ * @param {{ origin?:string|null }} target
+ * @param {{ osActions:boolean, canUse?:boolean, canBrowse?:boolean, run:(action:string)=>void }} env
+ */
+export function visualizationMenuItems({ origin = null } = {}, { osActions, canUse = true, canBrowse = true, run }) {
+  const item = (label, action) => ({ label, onClick: () => run(action) });
+  const groups = [
+    origin ? [item(t('files.menu.copyOriginPath'), 'copy'), item(t('files.menu.copyRelative'), 'copyRelative')] : [],
+    [
+      canBrowse && item(t('files.menu.openInBrowser'), 'browser'),
+      origin && item(t('files.menu.openOrigin'), 'origin'),
+      origin && osActions && item(t('files.menu.revealFile'), 'reveal'),
+    ],
+    [item(t('files.menu.saveHtml'), 'saveHtml'), origin && canUse && item(t('files.menu.use'), 'use')],
+  ].map(group => group.filter(Boolean)).filter(group => group.length);
+  return groups.flatMap((group, i) => (i ? [{ sep: true }, ...group] : group));
+}
+
+/**
+ * パスをクリップボードへ写し、短い知らせを出す。relative は相対パスか（知らせの文言だけが違う）。
+ * 右パネルの ⋯・会話の可視化のカードが同じものを使う（挙動と文言をそろえる）
+ */
+export async function copyPathText(text, relative = false) {
+  try { await navigator.clipboard.writeText(text); notify(relative ? t('files.copiedRelative') : t('files.copiedPath')); }
+  catch { notify(relative ? t('files.copyRelativeFailed') : t('files.copyPathFailed')); }
+}
+
 /** 作業ディレクトリからの相対パス。外にあれば null */
 export function relativeTo(path, cwd) {
   if (!path || !cwd) return null;
