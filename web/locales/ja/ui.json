@@ -475,7 +475,14 @@
       "title": "可視化",
       "save": "会話に残っている HTML を保存",
       "status": "保存済みの可視化",
-      "statusTitle": "この回答に保存された内容です。ホスト上のファイルの現在の内容ではありません。"
+      "statusTitle": "この回答に保存された内容です。ホスト上のファイルの現在の内容ではありません。",
+      "note": "会話に保存された時点の写しです。今のファイルは「元のファイルを開く」で見られます。",
+      "noOrigin": "会話に保存された表示",
+      "savedAt": "{{time}} に保存した表示",
+      "browserTitle": "会話に保存された写しを新しいタブで開きます（元のファイルではありません）",
+      "originTitle": "元のファイルの今の内容を、このパネルで開きます",
+      "popupBlocked": "新しいタブを開けませんでした。ブラウザーがポップアップを止めていないか確かめてください。",
+      "actions": "この可視化の操作"
     },
     "dir": {
       "items_other": "{{count}} 項目",
@@ -507,7 +514,11 @@
       "join": "・",
       "note": "一部の{{items}}を読み込めません。外部の資源は、許可されたCDNのスクリプト以外は読み込みません。"
     },
-    "original": "原文"
+    "original": "原文",
+    "mode": {
+      "file": "ファイル",
+      "visualization": "可視化"
+    }
   },
   "sessionContext": {
     "word": {
@@ -1323,7 +1334,10 @@
       "copyPath": "パスをコピー",
       "copyRelative": "相対パスをコピー",
       "save": "保存",
-      "use": "会話で使う"
+      "use": "会話で使う",
+      "copyOriginPath": "元のパスをコピー",
+      "openOrigin": "元のファイルを開く",
+      "saveHtml": "HTML を保存"
     },
     "actionsFor": "{{name}} の操作",
     "currentActions": "このファイルの操作",
@@ -1359,7 +1373,7 @@
         "visualization": "可視化"
       },
       "copyPath": "パスをコピー",
-      "download": "HTML をダウンロード",
+      "download": "HTML を保存",
       "sidePanel": "サイドパネルに表示",
       "truncated": "大きすぎるため省略されました",
       "badImage": "表示できない画像です"
