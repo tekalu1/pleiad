@@ -2190,6 +2190,7 @@ async function stopBackground(button, sessionId, task) {
 async function openSubagent(a) {
   const body = $("workBody");
   body.dataset.view = "agent";
+  body.dataset.sessionId = a.sessionId;
   $("workTitle").textContent = a.description ? t("dialog.work.subagentNamed", { name: a.description.slice(0, 40) }) : t("dialog.work.subagents");
   body.replaceChildren(el("div", "work-head", t("dialog.work.loading")));
   let data;
@@ -2471,7 +2472,8 @@ function loadDraft() {
 }
 $("draftSaved").onclick = () => saveDraft().catch(() => {});
 const filePreview = setupFilePreview({
-  getContext: anchor => ({ sessionId:state.current, at:anchor?.closest('.m')?.dataset.at }),
+  // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
+  getContext: anchor => ({ sessionId:anchor?.closest('#workBody')?.dataset.sessionId || state.current, at:anchor?.closest('.m')?.dataset.at }),
   onLayout: () => requestAnimationFrame(relayoutBranches),
   // ファイルの操作メニューは会話一覧と同じ 1 つを使う。OS の操作はサーバーが「この PC の画面」と答えたときだけ
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
@@ -2698,10 +2700,13 @@ function wireDropZone() {
   syncAttachButton();
   $("fileIn").onchange = () => { attachFiles([...$("fileIn").files]); $("fileIn").value = ""; };
   // 会話に載った画像も同じライトボックスで大きく見る
-  log.addEventListener("click", (e) => {
+  const zoomImage = (e) => {
     const img = e.target.closest(".present-body > img, .tc-preview > img, .md-img");
     if (img) openLightbox(img.src, img.alt, img.dataset.filePath, img);
-  });
+  };
+  log.addEventListener("click", zoomImage);
+  // サブエージェントの会話（作業のダイアログ）の画像も。ライトボックスはダイアログの上に重なる
+  $("workBody").addEventListener("click", zoomImage);
   const lb = $("lightbox");
   lb.addEventListener("click", (e) => {
     if (e.target === lb || e.target.closest("[data-close]")) lb.close();
@@ -2711,6 +2716,8 @@ function wireDropZone() {
     const target = lightboxFile;
     if (!target) return;
     lb.close();
+    // 作業のダイアログの画像なら、ダイアログも閉じないと右パネルがその裏に隠れる
+    target.element?.closest("dialog[open]")?.close();
     filePreview.open({ path: target.path, line: null }, target.element?.isConnected ? target.element : null);
   };
   lb.querySelector(".lb-reveal").onclick = () => { if (lightboxFile) filePreview.reveal(lightboxFile); };
