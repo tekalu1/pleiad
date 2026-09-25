@@ -123,7 +123,7 @@
     <tr><td>見出しの下の行</td><td>作業ディレクトリからの相対パス</td><td class="no">絶対パス（元が無ければ空）</td><td class="ok">相対パス。元が無ければ「会話に保存された表示」</td></tr>
     <tr><td>見出しの右のボタン</td><td>ツリー・⋯・広げる・閉じる</td><td class="no">広げる・閉じる のみ（⋯ が無い）</td><td class="ok">⋯・広げる・閉じる（ツリーは中身が無いので出さない）</td></tr>
     <tr><td>エクスプローラー</td><td>出す（畳める）</td><td class="no">切り替えは消えるが、枠が残る（前のファイルのツリーか空の箱）</td><td class="ok">出さない（枠ごと消す）</td></tr>
-    <tr><td>道具の列</td><td>表示の切り替え・パス・再読み込み</td><td>表示の切り替え・パス</td><td class="ok">表示の切り替え・パス・<b>元のファイルを開く</b>（元がホスト上にあるとき）</td></tr>
+    <tr><td>道具の列</td><td>表示の切り替え・パス・再読み込み</td><td>表示の切り替え・パス</td><td class="ok">表示の切り替え・<b>ブラウザーで開く</b>（HTML のファイルと同じ位置）・パス・<b>元のファイルを開く</b>（元がホスト上にあるとき）</td></tr>
     <tr><td>⋯ の中</td><td>パス・相対パスのコピー、エクスプローラーで表示、ブラウザーで開く…</td><td class="no">無し</td><td class="ok">ファイルと同じ並び。使えない項目は出さない</td></tr>
     <tr><td>下の行</td><td>取得した時刻 · エクスプローラーで表示 · 保存 · 会話で使う</td><td>保存済みの可視化 · 保存</td><td class="ok">保存した時刻 · 保存 · 会話で使う（元があるとき）</td></tr>
     <tr><td>種類の印</td><td>無し</td><td>無し</td><td class="ok">見出しの横に小さく「ファイル」「可視化」。写しなのか今のファイルなのかを区別する</td></tr>
@@ -137,6 +137,7 @@
   <ul>
     <li><b>枠</b>（web/side-panel.mjs）：見出し・下の行・⋯・広げる・閉じる・道具の列・ツリーの枠・本文・下端・幅・Esc・狭い画面での全面表示を持つ。<code>show({title, subtitle, kind, views, toolbar, menu, aside, body, footer})</code> を受け、<b>渡されなかった部品は必ず隠す</b>。</li>
     <li><b>中身ごとの差分</b>だけを各ファイルに置く。ファイル＝取得・種類ごとの描画・ツリー・再読み込み。可視化＝iframe・Blob の写し・「元のファイルを開く」。コンテキスト＝本文だけ。</li>
+    <li><b>ブラウザーで開く</b>は、可視化では常に出す（中身は必ず HTML なので）。開くのは<b>パネルに見えている写し</b>で、元のファイルではない（元は後から書き換わっていることがある）。サーバーが写しを <code>Content-Security-Policy: sandbox allow-scripts</code> を付けて返し、新しいタブで開く。Blob の URL をそのまま開くと Pleiad と同じオリジンで動き、中のスクリプトが保存領域やトークンに触れるため使わない。この形ならリモート（スマホ）からでも開ける。</li>
     <li>⋯ の中身は <code>file-actions.mjs</code> の並びを使い回し、可視化では「元のパス」を対象にする。カードの 3 つのボタンも同じ処理を呼ぶ。</li>
     <li>このモックの右パネルは、実際に 1 つの <code>render(config)</code> で描いている。ファイルと可視化の違いは渡す設定だけ。</li>
   </ul>
@@ -184,12 +185,12 @@
     visualNew: () => ({
       kind:'可視化', title:'四半期の売上', subtitle:'output/visualizations/q-sales.html', subtitleNew:true,
       head:['more','wide','close'], headNew:true,
-      views:true, toolbar:[btn('パス'), btn('元のファイルを開く', 'diff', 'origin')],
+      views:true, lead:[btn('ブラウザーで開く', 'diff', 'browser')], toolbar:[btn('パス'), btn('元のファイルを開く', 'diff', 'origin')],
       aside:null,
       note:'会話に保存された時点の写しです。今のファイルは「元のファイルを開く」で見られます。',
       body: state.view === 'source' ? visualSource : visualRendered,
       footer:{ status:'14:31 に保存した表示', actions:[btn('保存'), btn('会話で使う', 'diff')] },
-      menu:['元のパスをコピー','相対パスをコピー','sep','元のファイルを開く','エクスプローラーで表示','sep','HTML を保存','会話で使う'],
+      menu:['元のパスをコピー','相対パスをコピー','sep','ブラウザーで開く','元のファイルを開く','エクスプローラーで表示','sep','HTML を保存','会話で使う'],
     }),
   };
 
@@ -208,8 +209,8 @@
         <div class="acts ${c.headBad ? 'diff bad' : ''}">${head}</div>
       </header>
       <div class="bar">
-        ${c.views ? `<div class="sw" role="group" aria-label="表示">${btn('プレビュー','', 'v-rendered').replace('<button', `<button aria-pressed="${state.view === 'rendered'}"`)}${btn('原文','', 'v-source').replace('<button', `<button aria-pressed="${state.view === 'source'}"`)}</div>` : ''}
-        ${c.toolbar.join('')}
+        ${c.views ? `<div class="sw" role="group" aria-label="表示"${c.lead ? ' style="margin-right:0"' : ''}>${btn('プレビュー','', 'v-rendered').replace('<button', `<button aria-pressed="${state.view === 'rendered'}"`)}${btn('原文','', 'v-source').replace('<button', `<button aria-pressed="${state.view === 'source'}"`)}</div>` : ''}
+        ${c.lead ? `<span style="margin-right:auto;display:inline-flex">${c.lead.join('')}</span>` : ''}${c.toolbar.join('')}
       </div>
       ${c.note ? `<div class="note diff" style="border-radius:8px">${c.note}</div>` : ''}
       <div class="body">${aside}<div class="content">${c.body}</div></div>
