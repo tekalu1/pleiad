@@ -198,12 +198,11 @@
     "waitingApproval": "承認を待っている",
     "behindCount_other": "裏で {{count}} 本が動いている",
     "turnRunning": "ターンが走っている",
-    "subagents_other": "サブエージェント {{count}}",
-    "tasks_other": "タスク {{count}}",
-    "background_other": "裏で動いている {{count}}",
-    "subagentsEnded_other": "サブエージェント · 終了 {{count}}",
+    "background_other": "バックグラウンド {{count}}",
     "thinkingTokens_other": "考えている（約 {{count}} トークン）",
-    "waitingBackground": "裏の作業を待っている"
+    "waitingBackground": "裏の作業を待っている",
+    "backgroundEnded_other": "バックグラウンド · 終了 {{count}}",
+    "backgroundOnly": "裏でコマンドが動いている"
   },
   "compat": {
     "kind": {
@@ -1134,7 +1133,6 @@
       "changedSuffix": "· 変更あり",
       "open": "この会話のコンテキストを開く：{{summary}}"
     },
-    "terminal": "端末",
     "menu": {
       "iconFailed": "アイコンの変更に失敗: {{error}}",
       "ungroup": "グループを解除",
@@ -1188,10 +1186,6 @@
       "endpoint": "接続先（次のターン）",
       "endpointFailed": "接続先の変更に失敗: {{error}}"
     },
-    "tasksEntry_other": "Pleiad タスク · {{count}}",
-    "untitledParen": "（新しいセッション）",
-    "terminalEntry_other": "端末 · {{count}}",
-    "backgroundEntry_other": "バックグラウンド · {{count}}",
     "statusFailed": "状態変更に失敗: {{error}}",
     "untitled": "新しいセッション",
     "undo": {
@@ -1267,20 +1261,10 @@
         "failed": "失敗",
         "stopped": "停止"
       },
-      "backgroundTitle": "裏で動いているもの",
-      "subagents": "サブエージェント",
-      "subagentNamed": "サブエージェント — {{name}}",
-      "messages_other": "{{count}} メッセージ",
-      "messagesLast_other": "{{count}} メッセージ · 最終 {{last}}",
-      "viewChat": "会話を見る",
-      "running": "裏で動いている",
-      "details": "詳細を見る",
-      "none": "このターンのサブエージェントはありません",
+      "none": "バックグラウンドで動いているものはありません",
       "stop": "停止",
       "stopLabel": "{{name}} を停止",
-      "background": "バックグラウンド",
-      "backToList": "← 一覧へ戻る",
-      "reload": "更新",
+      "backToList": "一覧へ戻る",
       "loading": "読み込み中…",
       "outputLabel": "端末の出力",
       "command": "コマンド",
@@ -1292,7 +1276,6 @@
       "cwd": "作業場所: {{cwd}}",
       "outputUnsupported": "このエージェントは出力の取得に対応していません。",
       "noOutput": "まだ出力はありません。",
-      "loadFailed": "読み込めませんでした: {{error}}",
       "kind": {
         "terminal": "バックグラウンド端末",
         "agent": "サブエージェント",
@@ -1304,7 +1287,19 @@
       "stopRequested": "停止要求済み",
       "stopAgain": "再度停止",
       "stopFailed": "止められなかった: {{error}}",
-      "readFailed": "読めなかった: {{error}}"
+      "readFailed": "読めなかった: {{error}}",
+      "title": "バックグラウンド",
+      "count": "動いている {{live}} · 終了 {{ended}}",
+      "listLabel": "バックグラウンドの一覧",
+      "groupAgents": "サブエージェント",
+      "groupCommands": "コマンド",
+      "openChat": "会話として開く",
+      "request": "依頼",
+      "noMessages": "まだ発言はありません。",
+      "open": "開く",
+      "notFound": "このサブエージェントの記録が見つかりません",
+      "openFailed": "サブエージェントを開けませんでした: {{error}}",
+      "countLive": "動いている {{live}}"
     },
     "tasks": {
       "status": {
@@ -1317,12 +1312,8 @@
         "cancelled": "停止済み",
         "interrupted": "中断"
       },
-      "title": "Pleiad タスク",
-      "sub": "Pleiad 管理 · {{agent}} · {{status}}",
       "parent": "依頼元の会話",
-      "open": "開く",
-      "notificationUnknown": "完了通知の配送結果は不明です。子の会話で結果を確認してください。",
-      "stop": "タスクを停止"
+      "notificationUnknown": "完了通知の配送結果は不明です。子の会話で結果を確認してください。"
     }
   },
   "files": {
@@ -1449,8 +1440,7 @@
     },
     "behind": {
       "subagents": "サブエージェントを待っている",
-      "commands": "バックグラウンドのコマンドを待っている",
-      "tasks": "タスクを待機中"
+      "commands": "バックグラウンドのコマンドを待っている"
     }
   },
   "composer": {

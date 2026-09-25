@@ -86,6 +86,14 @@ export default async function (t) {
     t.ok("1 ターン目: そのターンのサブエージェントが載る", first.length === 2, JSON.stringify(first));
     t.ok("見出しは生んだ委譲ツールの説明（並び順で当てない）", await matches(first),
       first.map((a) => `${a.id}=${a.description}`).join(" "));
+    // バックグラウンドのダイアログ: エージェントと生んだツールの id を載せ、ターンが終わった子もツールの id から引ける
+    const calls = c.since(from).filter((e) => e.type === "tool.start" && e.name === "Agent");
+    t.ok("子にエージェントと生んだ委譲ツールの id が付く", first.every((a) => a.backend === "fake" && calls.some((x) => x.id === a.origin)),
+      JSON.stringify(first.map((a) => [a.backend, a.origin])));
+    t.ok("モデルが分からない子は null（親と同じ）", first.every((a) => a.model === null));
+    const found = await Promise.all(first.map((a) => c.cmd("findSubagent", { sessionId, toolId: a.origin })));
+    t.ok("終わったターンの子を委譲ツールの id から引ける", found.every((x, i) => x.agentId === first[i].id), JSON.stringify(found));
+    t.ok("知らないツールの id なら null", (await c.cmd("findSubagent", { sessionId, toolId: "no-such-call" })).agentId === null);
 
     const from2 = c.mark();
     await c.cmd("sendMessage", { sessionId, messageId: "bg-second-0001", prompt: "bg 3 1" });

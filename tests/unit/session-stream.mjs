@@ -46,7 +46,7 @@ export default async function (t) {
     branches: { load: () => new Promise(r => { releaseBranches = r; }), has: () => false },
     $: () => ({}), syncRunState: noop, syncTopbar: noop, log: { scrollTop: 0, scrollHeight: 0 },
     loadDraft: noop, saveDraft: async () => {}, settingsFailure: null, sys: noop,
-    paintHistory: () => [], placeJunctions: () => [], isRunningHere: () => false, behindHere: () => null,
+    paintHistory: () => [], placeJunctions: () => [], isRunningHere: () => false, behindHere: () => null, backgroundCounts: () => ({ live: 0, ended: 0 }),
     relayoutBranches: noop, branchIsFresh: () => false, setUuid: noop,
     paintContextLine: noop, paintContextEntry: noop, refreshContextEntry: async () => null, isManagedContext: () => false,
     syncHistory: () => { syncs++; }, refresh: async () => {},

@@ -12,8 +12,8 @@ export function behindOfTasks(tasks, { waiting = false } = {}) {
   if (!live.length && !waiting) return null;
   return {
     n: Math.max(1, live.length),
-    label: live.every(x => x.kind === 'agent') ? t('timeline.behind.subagents')
-      : live.every(x => x.kind === 'task') ? t('timeline.behind.tasks')
+    // 委譲した Pleiad タスクも利用者から見ればサブエージェント。呼び分けない（docs/design-system.md「バックグラウンド」）
+    label: live.every(x => x.kind === 'agent' || x.kind === 'task') ? t('timeline.behind.subagents')
       : live.every(x => x.kind === 'shell') ? t('timeline.behind.commands')
       : t('activity.waitingBackground'),
   };

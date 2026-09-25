@@ -14,6 +14,19 @@ export function resolvedModel(models, value) {
 }
 
 /**
+ * 記録にある生のモデル id（claude-sonnet-5 など）を画面の名前にする。一覧にあればその名前、
+ * 無ければ Claude の id の形（claude-<系統>-<版>[-<版>][-<日付>]）を「Sonnet 5」「Haiku 4.5」と読む。どちらでもなければ id のまま
+ */
+export function modelDisplayName(models, id) {
+  if (!id) return "";
+  const entry = models?.[id] ?? Object.entries(models ?? {}).find(([k, m]) => k && m?.resolvedModel === id)?.[1];
+  if (entry?.label) return entry.label;
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id);
+  if (m) return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ""}`;
+  return id;
+}
+
+/**
  * エフォートの段。efforts は core/effort.mjs の effortOptions の形。
  * 既定の段が分からない（resolvesTo が無い）ときは「既定」の段を作らない（本当の段ではないため）。
  * そのとき値が ''（既定に従う）なら unset: スライダーのつまみはどの段も指さない

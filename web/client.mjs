@@ -27,12 +27,12 @@ import { setupAttachMenu } from "./attach-menu.mjs";
 import { promptMaxHeight, attachSources, attachOrigin } from "./composer-layout.mjs";
 import { sendAttachment, ATTACH_MAX_BYTES } from "./attach-upload.mjs";
 import { formatBytes } from "./folder-upload.mjs";
-import { modelRowIds } from "./composer-labels.mjs";
+import { modelRowIds, modelDisplayName } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
-import { createSide } from "./side.mjs";
+import { createSide, backendLogo } from "./side.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
@@ -437,7 +437,14 @@ function closeTurnEl() {
 // 承認チャネルはそのまま使い（core は保留・猶予をこの経路で面倒を見ている）、
 // UI だけ専用のものにする。core が permission.kind === "question" として正規化して送ってくる。
 
-function questionCard(ev) {
+/** 承認・質問のカードを置く。into を渡すとその筋（バックグラウンドのダイアログの子の会話）へ、無ければ会話へ */
+function placeCard(m, ev, into) {
+  if (into) { into.append(wrap(m, `perm:${ev.id}`)); return; }
+  append(m, `perm:${ev.id}`);
+  m.scrollIntoView({ block: "nearest" });   // あなたを待っている。見えていないと止まったまま
+}
+
+function questionCard(ev, into = null) {
   const qs = Array.isArray(ev.questions) ? ev.questions : [];
   if (!qs.length) return null;
 
@@ -546,8 +553,7 @@ function questionCard(ev) {
 
   send.onclick = () => settle(answersNow());
   skip.onclick = () => settle(null);
-  append(m, `perm:${ev.id}`);
-  m.scrollIntoView({ block: "nearest" });   // あなたを待っている。見えていないと止まったまま
+  placeCard(m, ev, into);
   return m;
 }
 
@@ -555,7 +561,7 @@ function questionCard(ev) {
 // モーダルは使わない。ブラウザのダイアログは以降のイベントを止めるうえ、
 // 会話の流れから目を離させる（＝離れさせない、という価値命題に反する）。
 
-function permissionCard(ev) {
+function permissionCard(ev, into = null) {
   const m = el("div", "m card");
   const card = el("div", "card");
   m.append(card);
@@ -605,8 +611,7 @@ function permissionCard(ev) {
   allow.onclick = () => settle(true);
   deny.onclick = () => settle(false);
   always.onclick = () => settle(true, true);
-  append(m, `perm:${ev.id}`);
-  m.scrollIntoView({ block: "nearest" });
+  placeCard(m, ev, into);
   return m;
 }
 
@@ -663,16 +668,25 @@ const activity = {
   markTimer: null,
   el: null,          // .m.activity
   text: "",
-  subagents: 0,
-  ended: 0,          // 同じターンで終わったサブエージェント
   behind: null,      // behindOf() の結果。裏を待っている間だけ
+  shape: "",         // 今の印（run / sat:N / none）。変わったときだけ差し替える
+  /** ターンは終わり、待てない裏の作業（端末・裏のコマンド）だけが残っている。印も経過時間も出さない（§6.1） */
+  idleOnly() {
+    return !this.behind && !isRunningHere() && backgroundCounts().live > 0;
+  },
+  shapeNow() {
+    return this.behind ? `sat:${this.behind.n}` : this.idleOnly() ? "none" : "run";
+  },
   mark() {
-    return this.behind ? satMark(this.behind.n, t("activity.behindCount", { count: this.behind.n })) : runMark(t("activity.turnRunning"));
+    this.shape = this.shapeNow();
+    if (this.behind) return satMark(this.behind.n, t("activity.behindCount", { count: this.behind.n }));
+    return this.shape === "none" ? el("span", "activity-none") : runMark(t("activity.turnRunning"));
   },
   paint() {
-    this.el.querySelector(".txt").textContent = this.behind ? this.behind.label : this.text;
+    this.el.querySelector(".txt").textContent = this.behind ? this.behind.label : this.idleOnly() ? t("activity.backgroundOnly") : this.text;
+    this.el.querySelector(".el").hidden = this.idleOnly();
   },
-  /** 印を今の状態（弧 / 衛星）に差し替える */
+  /** 印を今の状態（弧 / 衛星 / なし）に差し替える */
   remark() {
     this.el?.closest(".mw")?.querySelector(".activity-tip")?.replaceChildren(this.mark());
   },
@@ -681,16 +695,15 @@ const activity = {
     if (stoppingHere()) text = ACTIVITY_LABEL.stopping;
     this.text = text;
     if (!this.t0) this.t0 = Date.now();
-    const was = this.behind;
     this.behind = behindHere();
     // ターンが終わって裏だけが残った、またはその逆。出ている節の印を差し替える
-    if (this.el?.isConnected && (was?.n ?? 0) !== (this.behind?.n ?? 0)) this.remark();
+    if (this.el?.isConnected && this.shape !== this.shapeNow()) this.remark();
     if (!this.el?.isConnected) {
       const m = el("div", "m activity");
       const work = el("button", "btn work");
       work.type = "button";
       work.hidden = true;
-      work.onclick = openWork;
+      work.onclick = () => openWork();
       m.append(el("span", "txt"), work, el("span", "el"));
       const w = append(m, "activity");
       const tip = el("span", "activity-tip");
@@ -711,7 +724,7 @@ const activity = {
     }
     this.paint();
     relayoutBranches();
-    this.work(this.subagents, this.ended);
+    this.work();
     this.timer ??= setInterval(() => {
       const s = Math.round((Date.now() - this.t0) / 1000);
       const e = this.el?.querySelector(".el");
@@ -723,32 +736,23 @@ const activity = {
     if (!this.el?.isConnected) return;
     const was = this.behind;
     this.behind = behindHere();
-    if ((was?.n ?? 0) !== (this.behind?.n ?? 0)) this.remark();
+    if (this.shape !== this.shapeNow()) this.remark();
     // 待っている間に覚えた text は subagent 側のもの。main が戻ったら一旦中立の語にする
     if (was && !this.behind) this.text = ACTIVITY_LABEL.running;
     this.paint();
+    this.work();
   },
   /**
-   * この会話のサブエージェントの数。n は走っている子だけ（状態が分からない子を含む）、
-   * ended は同じターンで終わった子。どちらも 0 なら文字ボタンを出さない。
-   * 終わった子だけが残っているときも、ダイアログで結果の会話を読めるようにボタンは残す。
-   * ターンの外に残っている裏の作業（Codex のバックグラウンド端末）もここから開けるようにする
-   * ——止める口はこのダイアログにしか無いので、出さないと押せない。
+   * 「バックグラウンド N」の文字ボタン。サブエージェント・委譲したタスク・裏のコマンドを 1 つに数える（N は動いている本数）。
+   * 動いているものが無く、同じターンで終わったサブエージェントだけが残っているときも、結果の会話を読めるように
+   * 「バックグラウンド · 終了 N」として残す。どちらも 0 なら出さない
    */
-  work(n, ended = 0) {
-    this.subagents = n;
-    this.ended = ended;
+  work() {
     const b = this.el?.querySelector(".work");
     if (!b) return;
-    const behind = backgroundHere().length;
-    const tasks = liveTasksOf(state.work.tasks, state.current).length;
-    b.hidden = n === 0 && ended === 0 && behind === 0 && tasks === 0;
-    // 委譲したタスクだけが残っているときは、タスクの一覧を開く（右上の入口と同じ）
-    b.onclick = !n && !behind && tasks ? openAgentTasks : openWork;
-    if (n) b.textContent = t("activity.subagents", { count: n });
-    else if (behind) b.textContent = t("activity.background", { count: behind });
-    else if (tasks) b.textContent = t("activity.tasks", { count: tasks });
-    else if (ended) b.textContent = t("activity.subagentsEnded", { count: ended });
+    const { live, ended } = backgroundCounts();
+    b.hidden = live === 0 && ended === 0;
+    b.textContent = live ? t("activity.background", { count: live }) : t("activity.backgroundEnded", { count: ended });
   },
   hide() {
     clearInterval(this.timer);
@@ -758,15 +762,11 @@ const activity = {
     this.t0 = 0;
     this.text = "";
     this.behind = null;
+    this.shape = "";
     this.el?.closest(".mw")?.remove();
     this.el = null;
   },
 };
-
-function openWork() {
-  renderWorkDialog();
-  $("workDialog").showModal();
-}
 
 // ---------------------------------------------------------------- thinking
 // 既定は閉じておく。読みたいときだけ開ける（畳んだままでも「考えた」ことは見える）。
@@ -1103,6 +1103,7 @@ function onEvent(ev, replay = false) {
       state.streamEl = null;
       const stick = atBottom();
       const card = renderToolCall(ev.name, ev.input, { id: ev.id });
+      linkDelegateCard(card, ev.input);
       ensureTurnEl().append(card);
       if (stick) log.scrollTop = log.scrollHeight;
       if (ev.id) state.toolCards.set(ev.id, card);
@@ -1113,7 +1114,7 @@ function onEvent(ev, replay = false) {
     // ツールの戻り。対応するカードに結果を差し込む（別の吹き出しにはしない）
     case "tool.result": {
       const card = state.toolCards.get(ev.id);
-      if (card) { applyToolResult(card, ev); noteEndpointFailure(card, ev); }
+      if (card) { applyToolResult(card, ev); noteEndpointFailure(card, ev); linkDelegateCard(card); }
       return;
     }
 
@@ -1272,8 +1273,6 @@ function onEvent(ev, replay = false) {
 /** running イベント / running コマンドの戻り。走っているもの・待っているものを一覧と稼働表示へ */
 function applyRunning(work) {
   state.work = work ?? { count: 0, turns: [], permissions: [], subagents: [], background: [] };
-  syncAgentTasks();
-  syncBackgroundEntry();
   const running = new Set((state.work.turns ?? []).map((t) => t.sessionId).filter(Boolean));
   const waiting = new Set((state.work.permissions ?? []).map((p) => p.sessionId).filter(Boolean));
   // 誰が答えたか（別のタブ・中断）に関わらず、残っている承認はサーバが正。
@@ -1308,15 +1307,10 @@ function applyRunning(work) {
   activity.sync();
   paintSettingsNotice();
   if (changed) renderSessions();
-  // サブエージェントはこの会話の分だけ稼働表示に出す。他所の分は一覧の行に付く
-  // 数は走っている子だけ（status が null＝分からない子も走っている側）。終わった子はダイアログに並ぶだけ
-  const subs = subagentsHere();
-  const live = subs.filter(subagentLive).length;
-  activity.work(live, subs.length - live);
-  // 会話を読んでいる間は描き直さない（4 秒ごとの配信で一覧へ戻されてしまう）
-  if ($("workDialog").open && $("workBody").dataset.view === "list" && !$("workBody").contains(document.activeElement)) renderWorkDialog();
-  if ($("workDialog").open && $("workBody").dataset.view === "background") refreshBackgroundDetail();
-  if ($("workDialog").open && $("workBody").dataset.view === 'ply-tasks' && !$("workBody").contains(document.activeElement)) renderAgentTasks();
+  // バックグラウンドはこの会話の分だけ稼働表示に出す。他所の分は一覧の行に付く
+  activity.work();
+  // 開いているダイアログは一覧を描き直し、選んでいる子が動いていれば続きを読み直す（読んでいる位置は保つ）
+  if ($("workDialog").open) renderBackground();
   // 走り出したばかりのセッションはまだ一覧に無い。そのときだけ取り直す
   for (const id of state.runningIds) {
     if (state.sessions.some((x) => x.id === id) || state.askedFor.has(id)) continue;
@@ -1963,8 +1957,11 @@ function branchIsFresh(id) {
   return Boolean(r) && r.messages.length === r.k + 1;
 }
 
-// ---------------------------------------------------------------- サブエージェント
-// 会話が終わってもサブエージェントが残ることがある。この会話の分は稼働表示から辿れるようにする。
+// ---------------------------------------------------------------- バックグラウンド
+// サブエージェント・委譲した Pleiad タスク・裏で動くコマンドを 1 つのダイアログ（左に一覧、右に詳細）にまとめる。
+// 利用者から見ればネイティブのサブエージェントと Pleiad タスクの違いは要らないので、どちらも「サブエージェント」として並べ、
+// モデル名で見分けられるようにする。入口は会話末尾の「バックグラウンド N」と、会話の中の委譲のツールカード。
+// 詳細はメインパネルと同じ部品（筋・節・発言者と時刻・考えた内容・ツールカード・画像）で描く（docs/design-system.md「バックグラウンド」）。
 
 /**
  * いま開いている画面に属する項目か。
@@ -2002,92 +1999,27 @@ function stateMark(status) {
   return run;
 }
 
-const plyTasksHere = () => (state.work.tasks ?? []).filter(t => t.parentSessionId === state.current || t.sessionId === state.current);
-function syncAgentTasks() {
-  const tasks = plyTasksHere();
-  $('agentTasksEntry').hidden = !tasks.length;
-  $('agentTasksEntry').textContent = t('session.tasksEntry', { count: tasks.length });
-}
+// Pleiad タスクの状態 -> 行の印（サブエージェントと同じ語彙）。まだ終わっていないものは弧、文字の状態はそのまま残す
 const TASK_STATUS = { queued: t('dialog.tasks.status.queued'), running: t('dialog.tasks.status.running'), cancelling: t('dialog.tasks.status.cancelling'),
   waiting: t('dialog.tasks.status.waiting'), completed: t('dialog.tasks.status.completed'), failed: t('dialog.tasks.status.failed'),
   cancelled: t('dialog.tasks.status.cancelled'), interrupted: t('dialog.tasks.status.interrupted') };
-// Pleiad タスクの状態 -> 行の印（サブエージェント行と同じ語彙）。まだ終わっていないものは弧、文字の状態はそのまま残す
 const TASK_MARK = { queued: 'running', running: 'running', cancelling: 'running', waiting: 'running',
   completed: 'completed', failed: 'failed', cancelled: 'stopped', interrupted: 'stopped' };
-function renderAgentTasks() {
-  const body = $('workBody');
-  $('workTitle').textContent = t('dialog.tasks.title');
-  body.dataset.view = 'ply-tasks';
-  body.replaceChildren();
-  for (const task of plyTasksHere()) {
-    const group = el('div', 'sec ply-task');
-    group.append(workRow(task.task, t('dialog.tasks.sub', { agent: labelOf(task.backend), status: TASK_STATUS[task.status] ?? task.status }),
-      () => { $('workDialog').close(); select(task.sessionId); }, t('dialog.work.viewChat'), stateMark(TASK_MARK[task.status])));
-    if (task.sessionId === state.current) group.append(workRow(t('dialog.tasks.parent'), sessionLabel(task.parentSessionId), () => { $('workDialog').close(); select(task.parentSessionId); }, t('dialog.tasks.open')));
-    if (task.error) group.append(el('div', 'work-head', task.error));
-    if (task.notification === 'unknown') group.append(el('div', 'work-head', t('dialog.tasks.notificationUnknown')));
-    if (['queued', 'running'].includes(task.status)) {
-      const stop = el('button', 'btn btn-quiet', t('dialog.tasks.stop')); stop.type = 'button';
-      stop.onclick = async () => {
-        stop.disabled = true;
-        try { await cmd('cancelAgentTask', { taskId: task.taskId }); }
-        catch (e) { group.append(el('div', 'work-head', e.message)); stop.disabled = false; }
-      };
-      group.append(stop);
-    }
-    body.append(group);
-  }
-}
-function openAgentTasks() { renderAgentTasks(); $('workDialog').showModal(); }
-$('agentTasksEntry').onclick = openAgentTasks;
+const TASK_LIVE = new Set(['queued', 'running', 'cancelling']);
+/** この会話が委譲したタスク。完了したものも残す（終わった結果を読み返せるように） */
+const plyTasksHere = () => (state.work.tasks ?? []).filter(x => state.current && x.parentSessionId === state.current);
+/** 子の会話が人間の承認を待っているか。work.tasks の status は保存した値なので、承認の一覧から引く */
+const taskWaiting = (task) => (state.work.permissions ?? []).some(p => p.sessionId === task.sessionId && !p.relay);
 
-function sessionLabel(id) {
-  if (!id) return t("session.untitledParen");
-  const s = state.sessions.find((x) => x.id === id);
-  return s ? savedTitle(s.title) : id.slice(0, 8);
-}
-
-function workRow(label, sub, onClick, badge, mark = null) {
-  const row = el("button", "work-row");
-  row.type = "button";
-  if (mark) { row.classList.add("has-mark"); row.append(mark); }
-  row.append(el("span", "work-label", label), el("span", "work-sub", sub ?? ""));
-  if (badge) row.append(el("span", "work-badge", badge));
-  row.onclick = onClick;
-  return row;
-}
+const KIND_SUB = {
+  terminal: t("dialog.work.kind.terminal"),
+  agent: t("dialog.work.kind.agent"),
+  shell: t("dialog.work.kind.shell"),
+  other: t("dialog.work.kind.other"),
+};
 
 /**
- * 一覧。このセッションのサブエージェントと、ターンの外に残っている裏の作業を出す。
- * main のターンと承認待ちは稼働表示と承認カードで見えているので載せない。
- */
-function renderWorkDialog() {
-  backgroundView = null;
-  const body = $("workBody");
-  const behind = backgroundHere();
-  $("workTitle").textContent = behind.length ? t("dialog.work.backgroundTitle") : t("dialog.work.subagents");
-  body.dataset.view = "list";
-  body.replaceChildren(...subagentsHere().map((a) => workRow(a.description || a.id,
-    a.lastAt ? t("dialog.work.messagesLast", { count: a.messages, last: relTime(a.lastAt) }) : t("dialog.work.messages", { count: a.messages }),
-    () => openSubagent(a), t("dialog.work.viewChat"), stateMark(a.status))));
-
-  // 行は詳細を見る操作。停止は独立したボタンだけで実行する。
-  for (const { task, entry } of behind) {
-    const canStop = Boolean(capsOf(entry.backend).stopBackground);
-    const group = el('div', 'work-task');
-    const row = workRow(task.label || task.id, KIND_SUB[task.kind] ?? t("dialog.work.running"),
-      () => openBackground(task, entry), t('dialog.work.details'));
-    group.append(row);
-    if (canStop) group.append(backgroundStopButton(entry.sessionId, task));
-    body.append(group);
-  }
-
-  // 終わった子もターンが終わるまでは並ぶので「動いている」とは言わない。ターンが終わると一覧から外れる
-  if (!body.childElementCount) body.append(el("div", "work-head", t("dialog.work.none")));
-}
-
-/**
- * この会話で裏に動いているものを、行ごとに平らにする。
+ * この会話で裏に動いているコマンドを、行ごとに平らにする。
  *
  * 2 つある。ターンの外に残っているもの（Codex の端末）と、
  * 走っているターンが抱えているもの（Claude のバックグラウンドのコマンド）。
@@ -2096,22 +2028,394 @@ function renderWorkDialog() {
 function backgroundHere() {
   const rows = (state.work.background ?? []).filter(belongsHere)
     .flatMap((entry) => (entry.tasks ?? []).map((task) => ({ task, entry })));
-  for (const t of (state.work.turns ?? []).filter(belongsHere)) {
-    for (const task of t.background ?? []) {
+  for (const turn of (state.work.turns ?? []).filter(belongsHere)) {
+    for (const task of turn.background ?? []) {
       if (task.kind === "agent") continue;
-      rows.push({ task, entry: { sessionId: t.sessionId, backend: t.backend } });
+      rows.push({ task, entry: { sessionId: turn.sessionId, backend: turn.backend } });
     }
   }
   return rows;
 }
 
-function syncBackgroundEntry() {
-  const tasks = backgroundHere();
-  const button = $('backgroundEntry');
-  button.hidden = !tasks.length;
-  button.textContent = tasks.every(x => x.task.kind === 'terminal') ? t('session.terminalEntry', { count: tasks.length }) : t('session.backgroundEntry', { count: tasks.length });
+const timeOf = (v) => (v ? new Date(v).getTime() || 0 : 0);
+
+/** ダイアログの状態。extra は会話の中のカードから開いた、もう一覧（このターンの分）に居ない子 */
+const bg = { selected: null, extra: new Map(), view: null, narrowDetail: false };
+
+/**
+ * 一覧の項目。種類ごとの違いはここで吸収し、描く側は同じ形だけを見る。
+ * group: agent（サブエージェント。ネイティブと Pleiad タスクを区別しない）| command（裏のコマンド・端末）
+ */
+function backgroundItems() {
+  const items = [];
+  for (const a of subagentsHere()) items.push({
+    key: `a:${a.sessionId}:${a.id}`, group: 'agent', source: 'native', title: a.description || a.saying || a.id,
+    backend: a.backend ?? activeBackendId(), model: a.model ?? null, effort: null, status: a.status ?? null,
+    live: subagentLive(a), startedAt: a.startedAt ?? null, endedAt: a.endedAt ?? null, messages: a.messages,
+    origin: a.origin ?? null, parentId: a.sessionId, agentId: a.id,
+  });
+  for (const task of plyTasksHere()) {
+    const live = TASK_LIVE.has(task.status);
+    const waiting = live && taskWaiting(task);
+    items.push({
+      key: `t:${task.taskId}`, group: 'agent', source: 'task', title: task.task, backend: task.backend,
+      model: task.model || null, effort: task.effort || null, status: TASK_MARK[task.status] ?? null,
+      taskStatus: waiting ? 'waiting' : task.status, live, waiting, startedAt: task.createdAt ?? null, endedAt: live ? null : task.updatedAt ?? null,
+      childId: task.sessionId, taskId: task.taskId, error: task.error, notification: task.notification,
+    });
+  }
+  for (const { task, entry } of backgroundHere()) items.push({
+    key: `c:${entry.sessionId}:${task.id}`, group: 'command', title: task.label || task.id, kindLabel: KIND_SUB[task.kind] ?? KIND_SUB.other,
+    status: 'running', live: true, startedAt: task.startedAtMs ?? null, task, entry,
+  });
+  for (const x of bg.extra.values()) if (!items.some(i => i.key === x.key)) items.push(x);
+  // 動いているものを上に。同じ側では新しいものを上
+  return items.sort((a, b) => Number(!a.live) - Number(!b.live) || timeOf(b.startedAt) - timeOf(a.startedAt));
 }
-$('backgroundEntry').onclick = openWork;
+
+/**
+ * 稼働表示の「バックグラウンド N」と、ターンの後に末尾の行を残すかに使う数。
+ * live は動いている本数（サブエージェント・タスク・コマンドの合計）。ended はこのターンで終わったサブエージェント
+ * （結果の会話を読めるようにボタンを残す）。終わった Pleiad タスクは会話の中のカードから開くので数えない
+ */
+function backgroundCounts() {
+  const items = backgroundItems().filter(x => !x.extra);
+  return { live: items.filter(x => x.live).length, ended: items.filter(x => !x.live && x.source === 'native').length };
+}
+
+/** 委譲された子の会話では、ヘッダーに依頼元の会話へ戻る口を出す（子の会話は脇の一覧に出ないため） */
+function syncParentEntry() {
+  const parent = state.sessions.find(s => s.id === state.current)?.delegation?.parentSessionId;
+  $('parentChatEntry').hidden = !parent;
+  $('parentChatEntry').onclick = parent ? () => select(parent) : null;
+}
+
+const vocabAsked = new Set();
+/** モデルの表示名。語彙がまだ無いエージェントは取りに行き、取れたら描き直す */
+function modelText(item) {
+  const vocab = state.vocab.get(item.backend);
+  if (!vocab && item.backend && !vocabAsked.has(item.backend)) {
+    vocabAsked.add(item.backend);
+    loadVocab(item.backend).then(() => { if ($('workDialog').open) renderBackground(); }).catch(() => {});
+  }
+  const models = vocab?.models ?? {};
+  const name = item.model ? modelDisplayName(models, item.model) : item.source === 'task' ? resolvedModel(models, '').label : '';
+  return name && item.effort ? `${name} · ${item.effort}` : name;
+}
+
+/** 状態の一語。承認待ちは差し色（あなたを待っている、§1） */
+function statusText(item) {
+  if (item.group === 'command') return item.kindLabel;
+  if (item.source === 'task') return TASK_STATUS[item.taskStatus] ?? item.taskStatus ?? '';
+  return item.status ? t(`dialog.work.state.${item.status}`) : '';
+}
+// i18n-dynamic: dialog.work.state.
+
+/** 経過時間（等幅）。走っている間は今まで、終わったら終わった時刻まで */
+function elapsedText(item) {
+  const start = timeOf(item.startedAt);
+  if (!start) return '';
+  const s = Math.max(0, Math.round(((item.live ? Date.now() : timeOf(item.endedAt) || Date.now()) - start) / 1000));
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+    : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function markOf(item) {
+  if (item.waiting) {
+    const m = stateMark('running');
+    m?.classList.add('waiting');
+    if (m) m.setAttribute('aria-label', TASK_STATUS.waiting);
+    return m;
+  }
+  return stateMark(item.status);
+}
+
+function listRow(item) {
+  const row = el('button', 'bg-row');
+  row.type = 'button';
+  row.dataset.key = item.key;
+  if (item.key === bg.selected) row.setAttribute('aria-current', 'true');
+  row.append(markOf(item) ?? el('span', 'bg-nomark'));
+  row.append(el('span', `bg-row-title${item.group === 'command' ? ' mono' : ''}`, item.title));
+  row.append(el('span', 'bg-row-time mono', elapsedText(item)));
+  const meta = el('span', 'bg-row-meta');
+  if (item.group === 'agent') {
+    meta.append(backendLogo(item.backend, labelOf(item.backend)));
+    const model = modelText(item);
+    if (model) meta.append(el('span', 'bg-model', model));
+    const status = statusText(item);
+    if (status) meta.append(el('span', item.waiting ? 'bg-waiting' : null, status));
+  } else {
+    meta.append(el('span', null, item.kindLabel));
+    if (item.task?.cwd) meta.append(el('span', 'mono', item.task.cwd));
+  }
+  row.append(meta);
+  row.onclick = () => selectBackground(item.key);
+  return row;
+}
+
+/** 一覧を描き直す。詳細は選んでいる項目が変わったときだけ描き直す（読んでいる位置を保つ） */
+function renderBackground() {
+  const items = backgroundItems();
+  if (!items.some(x => x.key === bg.selected)) bg.selected = items[0]?.key ?? null;
+  const live = items.filter(x => x.live).length;
+  const ended = items.length - live;
+  $('workCount').textContent = ended ? t('dialog.work.count', { live, ended }) : t('dialog.work.countLive', { live });
+  const list = $('workList');
+  list.replaceChildren();
+  for (const [group, label] of [['agent', t('dialog.work.groupAgents')], ['command', t('dialog.work.groupCommands')]]) {
+    const rows = items.filter(x => x.group === group);
+    if (!rows.length) continue;
+    list.append(el('div', 'bg-group', label), ...rows.map(listRow));
+  }
+  if (!items.length) list.append(el('div', 'bg-empty', t('dialog.work.none')));
+  $('workSplit').classList.toggle('showing', bg.narrowDetail && Boolean(bg.selected));
+  const item = items.find(x => x.key === bg.selected) ?? null;
+  if (bg.view?.key !== item?.key) return openDetail(item);
+  // 同じ項目。見出し（状態・経過時間）だけ更新し、動いている子は続きを読み直す
+  bg.view.item = item;
+  paintDetailHead(item);
+  if (item?.live || bg.view.wasLive) refreshDetail();
+}
+
+function selectBackground(key) {
+  bg.selected = key;
+  bg.narrowDetail = true;
+  renderBackground();
+}
+
+/** ダイアログを開く。key を渡すとその項目を選んだ状態で開く（会話の中のカードから） */
+function openWork(key) {
+  bg.narrowDetail = typeof key === 'string';
+  if (typeof key === 'string') bg.selected = key;
+  else if (!bg.selected || !backgroundItems().some(x => x.key === bg.selected && x.live)) bg.selected = backgroundItems()[0]?.key ?? null;
+  bg.view = null;
+  // 先に開く。詳細の読み込みは開いているときだけ走る
+  if (!$('workDialog').open) $('workDialog').showModal();
+  renderBackground();
+}
+
+function paintDetailHead(item) {
+  const head = $('workHead');
+  head.replaceChildren();
+  if (!item) return;
+  const back = el('button', 'btn btn-icon bg-back');
+  back.type = 'button';
+  back.setAttribute('aria-label', t('dialog.work.backToList'));
+  back.append(icon('M15 5l-7 7 7 7'));
+  back.onclick = () => { bg.narrowDetail = false; $('workSplit').classList.remove('showing'); };
+  const title = el('div', 'bg-dt');
+  const h = el('h3', 'bg-dt-title');
+  const mark = markOf(item);
+  if (mark) h.append(mark);
+  h.append(el('span', item.group === 'command' ? 'mono' : null, item.title));
+  const meta = el('div', 'bg-dt-meta');
+  if (item.group === 'agent') {
+    const who = el('span', 'bg-model');
+    who.append(backendLogo(item.backend, labelOf(item.backend)), el('span', null, modelText(item) || labelOf(item.backend)));
+    meta.append(who);
+  }
+  const status = statusText(item);
+  if (status) meta.append(el('span', item.waiting ? 'bg-waiting' : null, status));
+  const elapsed = elapsedText(item);
+  if (elapsed) meta.append(el('span', 'mono', elapsed));
+  title.append(h, meta);
+  head.append(back, title);
+  const actions = el('div', 'bg-dt-actions');
+  if (item.source === 'task') {
+    const open = el('button', 'btn', t('dialog.work.openChat'));
+    open.type = 'button';
+    open.onclick = () => { $('workDialog').close(); select(item.childId); };
+    actions.append(open);
+    if (['queued', 'running'].includes(item.taskStatus) || item.waiting) {
+      const stop = el('button', 'btn btn-quiet', t('dialog.work.stop'));
+      stop.type = 'button';
+      stop.setAttribute('aria-label', t('dialog.work.stopLabel', { name: item.title }));
+      stop.onclick = async () => {
+        stop.disabled = true;
+        try { await cmd('cancelAgentTask', { taskId: item.taskId }); }
+        catch (e) { detailNote(e.message); stop.disabled = false; }
+      };
+      actions.append(stop);
+    }
+  }
+  if (item.group === 'command' && capsOf(item.entry.backend).stopBackground) {
+    actions.append(backgroundStopButton(item.entry.sessionId, item.task));
+  }
+  head.append(actions);
+}
+
+/** 詳細の下に一行（失敗の理由など）。読み直しで消える */
+function detailNote(text) {
+  $('workBody').append(el('div', 'work-head', text));
+}
+
+/** 詳細を描く。項目の種類ごとに読み方が違うだけで、描く部品は会話と同じ */
+function openDetail(item) {
+  const body = $('workBody');
+  bg.view = item ? { key: item.key, item, busy: false, wasLive: item.live, at: 0 } : null;
+  body.replaceChildren();
+  delete body.dataset.sessionId;
+  paintDetailHead(item);
+  if (!item) return;
+  body.append(el('div', 'work-head', t('dialog.work.loading')));
+  refreshDetail({ first: true });
+}
+
+/** 読み直しの間隔。走っている子は running の配信（4 秒ごと）に合わせて読み直す */
+const DETAIL_MIN_MS = 2500;
+
+async function refreshDetail({ first = false } = {}) {
+  const view = bg.view;
+  if (!view || view.busy || !$('workDialog').open) return;
+  if (!first && Date.now() - view.at < DETAIL_MIN_MS) return;
+  view.busy = true;
+  view.at = Date.now();
+  const body = $('workBody');
+  const stick = first || body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  try {
+    const item = view.item;
+    if (item.group === 'command') await paintCommandDetail(view);
+    else {
+      const content = item.source === 'task' ? await taskThread(item) : await subagentThread(item);
+      if (bg.view !== view) return;
+      body.replaceChildren(content);
+    }
+    view.wasLive = view.item.live;
+    if (stick) body.scrollTop = body.scrollHeight;
+  } catch (e) {
+    if (bg.view === view) body.replaceChildren(el('div', 'work-head', t('dialog.work.readFailed', { error: e.message })));
+  } finally { view.busy = false; }
+}
+
+/** ネイティブのサブエージェントの会話。依頼文は記録に入らないエージェントがあるので、親の委譲ツールの入力から補う */
+async function subagentThread(item) {
+  const data = await cmd('loadSubagent', { sessionId: item.parentId, agentId: item.agentId });
+  $('workBody').dataset.sessionId = item.parentId;
+  const origin = data.origin ?? item.origin;
+  const prompt = data.prompt ?? requestOf(origin);
+  // モデルは記録から分かることがある（一覧の配信より先に読めたとき）
+  const model = (data.messages ?? []).findLast(m => m.model)?.model;
+  if (model && !item.model) { item.model = model; paintDetailHead(item); }
+  return readonlyThread(data.messages ?? [], { backend: item.backend, prompt, live: item.live, item });
+}
+
+/** 親の会話のツール呼び出し（id）の入力にある依頼文 */
+function requestOf(toolId) {
+  if (!toolId) return null;
+  for (const m of state.messages ?? []) {
+    const call = (m.toolCalls ?? []).find(c => c.id === toolId);
+    if (call) return typeof call.input?.prompt === 'string' ? call.input.prompt : null;
+  }
+  return null;
+}
+
+/** Pleiad タスクの子の会話。普通の会話なので、会話を開くときと同じ読み込みの結果を描く */
+async function taskThread(item) {
+  const data = await cmd('loadSession', { sessionId: item.childId });
+  $('workBody').dataset.sessionId = item.childId;
+  const th = readonlyThread(data.messages ?? [], { presents: data.presents ?? [], backend: item.backend, live: item.live, item });
+  // 子が承認を待っていれば、ここで答えられる（子の会話へ移らなくてよい）。同じ承認は依頼元の会話にも中継されている
+  for (const ev of [...(data.permissions ?? []), ...state.pendingPerms.values()]) {
+    if (ev.sessionId !== item.childId || th.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"]`)) continue;
+    const card = ev.kind === 'question' ? questionCard(ev, th) : permissionCard(ev, th);
+    if (card) th.querySelector('.mw.activity')?.before(card.closest('.mw'));
+  }
+  if (item.error) th.append(wrap(el('div', 'm sys', item.error)));
+  if (item.notification === 'unknown') th.append(wrap(el('div', 'm sys', t('dialog.tasks.notificationUnknown'))));
+  return th;
+}
+
+/**
+ * 読むだけの筋。メインパネルの paintHistory と同じ部品（wrap・userMsg・aiMsg・考えた内容・ツールカード・画像）で、描く先だけを変える。
+ * 分岐・編集・再送は出さない（この会話の発言ではない）。走っている子は末尾に稼働表示（弧と経過時間）を置く
+ */
+function readonlyThread(messages, { presents = [], backend, prompt = null, live = false, item } = {}) {
+  const th = el('div', 'thread bg-thread');
+  const spine = svgEl('svg', { class: 'spine', 'aria-hidden': 'true' });
+  spine.append(svgEl('line', { x1: 20, y1: 0, x2: 20, y2: '100%' }));
+  th.append(spine);
+  const put = (node, key) => { const w = wrap(node, key); th.append(w); return w; };
+  const readOnly = (m) => { m.querySelector(':scope > .message-actions')?.remove(); return m; };
+  const requestNode = (text, at) => {
+    const m = readOnly(userMsg(text, { at }));
+    m.querySelector('.who > span').textContent = t('dialog.work.request');
+    return m;
+  };
+  let prevRole = null;
+  if (prompt && messages[0]?.role !== 'user') { put(requestNode(prompt, messages[0]?.at), 'request'); prevRole = 'user'; }
+  const refs = presents.map(p => p.reference);
+  for (const it of buildItems(messages, presents)) {
+    if (it.kind === 'present') { put(renderPresent(savedEvent(it.p)), `p:${it.pi}`); continue; }
+    const m = it.m;
+    if (m.internalTaskNotice) { put(el('div', 'm sys', t('chat.sys.taskResumed')), `m:${it.mi}`); prevRole = null; continue; }
+    let node;
+    if (m.role === 'user') node = it.mi === 0 ? requestNode(m.text, m.at) : readOnly(userMsg(m.text, { at: m.at }));
+    else {
+      node = readOnly(aiMsg({ at: m.at, backend: m.backend ?? backend, cont: prevRole === 'assistant' }));
+      // 発言者はモデル名で出す（どのモデルが答えたかを見分けるため）。分からなければエージェント名のまま
+      if (m.model) node.querySelector('.who > span').textContent = modelDisplayName(state.vocab.get(backend)?.models ?? {}, m.model);
+      if (m.thinking) node.append(thinkFromText(m.thinking));
+      for (const c of m.toolCalls ?? []) {
+        const card = renderToolCall(c.name, c.input, { id: c.id });
+        if (c.result) applyToolResult(card, c.result);
+        node.append(card);
+      }
+      if (!m.toolCalls) for (const name of m.tools ?? []) node.append(renderToolCall(name, null));
+      if (m.text) { const b = el('div', 'body'); b.innerHTML = renderAssistantMarkdown(m.text, refs); node.append(b); }
+    }
+    prevRole = m.role;
+    put(node, `m:${it.mi}`);
+  }
+  if (live) {
+    const act = el('div', 'm activity');
+    act.append(el('span', 'txt', item?.waiting ? t('activity.waitingApproval') : t('activity.running')));
+    const elapsed = elapsedText(item ?? {});
+    if (elapsed) act.append(el('span', 'el', elapsed));
+    const w = put(act, 'activity');
+    const tip = el('span', 'activity-tip');
+    tip.append(runMark(t('activity.turnRunning')));
+    w.querySelector('.mw-gutter').append(tip);
+  }
+  if (th.childElementCount === 1) th.append(el('div', 'work-head', t('dialog.work.noMessages')));
+  return th;
+}
+
+/** 裏のコマンドの詳細: コマンド・作業場所・起動時刻・取れた出力。表示中は running の配信のたびに取り直す */
+async function paintCommandDetail(view) {
+  const body = $('workBody');
+  const { task, entry } = view.item;
+  if (!view.nodes) {
+    const status = el('div', 'work-head');
+    status.setAttribute('role', 'status');
+    const command = el('pre', 'work-command', task.label || task.id);
+    const cwd = el('div', 'work-location');
+    const output = el('pre', 'work-output', '');
+    output.setAttribute('aria-label', t('dialog.work.outputLabel'));
+    view.nodes = { status, command, cwd, output };
+    body.replaceChildren(status, el('div', 'work-head', t('dialog.work.command')), command, cwd,
+      el('div', 'work-head', t('dialog.work.output')), output);
+  }
+  const { status, command, cwd, output } = view.nodes;
+  const canRead = capsOf(entry.backend).backgroundDetails;
+  const live = backgroundHere().some(x => x.entry.sessionId === entry.sessionId && x.task.id === task.id);
+  const data = canRead
+    ? await cmd('loadBackground', { sessionId: entry.sessionId, taskId: task.id })
+    : { task: live ? { ...task, output: null } : null };
+  if (bg.view !== view) return;
+  if (!data.task) {
+    status.textContent = t('dialog.work.ended');
+    for (const b of $('workHead').querySelectorAll('.work-stop')) b.disabled = true;
+    return;
+  }
+  const got = data.task;
+  status.textContent = [t('dialog.work.live'), ...(got.startedAtMs ? [t('dialog.work.startedAt', { time: fmt.dateTime(got.startedAtMs) })] : []),
+    ...(got.outputTruncated ? [t('dialog.work.truncated')] : [])].join(' · ');
+  command.textContent = got.command || got.label || task.label || task.id;
+  cwd.textContent = got.cwd ? t('dialog.work.cwd', { cwd: got.cwd }) : '';
+  const text = got.output === null ? t('dialog.work.outputUnsupported') : got.output || t('dialog.work.noOutput');
+  if (output.textContent !== text) output.textContent = text;
+}
 
 function backgroundStopButton(sessionId, task) {
   const button = el('button', 'btn btn-quiet work-stop', t('dialog.work.stop'));
@@ -2120,72 +2424,6 @@ function backgroundStopButton(sessionId, task) {
   button.onclick = () => stopBackground(button, sessionId, task);
   return button;
 }
-
-let backgroundView = null;
-function openBackground(task, entry) {
-  const body = $('workBody');
-  body.dataset.view = 'background';
-  $('workTitle').textContent = KIND_SUB[task.kind] ?? t('dialog.work.background');
-  const actions = el('div', 'work-actions');
-  const back = el('button', 'btn work-back', t('dialog.work.backToList'));
-  back.type = 'button';
-  back.onclick = renderWorkDialog;
-  const reload = el('button', 'btn', t('dialog.work.reload'));
-  reload.type = 'button';
-  reload.onclick = () => refreshBackgroundDetail();
-  const stop = capsOf(entry.backend).stopBackground ? backgroundStopButton(entry.sessionId, task) : null;
-  actions.append(back, reload);
-  if (stop) actions.append(stop);
-  const status = el('div', 'work-head', t('dialog.work.loading'));
-  status.setAttribute('role', 'status');
-  const command = el('pre', 'work-command', task.label || task.id);
-  const cwd = el('div', 'work-location');
-  const output = el('pre', 'work-output', '');
-  output.setAttribute('aria-label', t('dialog.work.outputLabel'));
-  body.replaceChildren(actions, status, el('div', 'work-head', t('dialog.work.command')), command, cwd,
-    el('div', 'work-head', t('dialog.work.output')), output);
-  backgroundView = { task, entry, status, command, cwd, output, stop, reload, busy: false };
-  refreshBackgroundDetail();
-}
-
-async function refreshBackgroundDetail() {
-  const view = backgroundView;
-  if (!view || view.busy || !$('workDialog').open || $('workBody').dataset.view !== 'background') return;
-  view.busy = true;
-  view.reload.disabled = true;
-  try {
-    const canRead = capsOf(view.entry.backend).backgroundDetails;
-    const live = backgroundHere().some(x => x.entry.sessionId === view.entry.sessionId && x.task.id === view.task.id);
-    const data = canRead
-      ? await cmd('loadBackground', { sessionId: view.entry.sessionId, taskId: view.task.id })
-      : { task: live ? { ...view.task, output: null } : null };
-    if (backgroundView !== view) return;
-    if (!data.task) {
-      view.status.textContent = t('dialog.work.ended');
-      if (view.stop) view.stop.disabled = true;
-      return;
-    }
-    const task = data.task;
-    view.status.textContent = [t('dialog.work.live'), ...(task.startedAtMs ? [t('dialog.work.startedAt', { time: fmt.dateTime(task.startedAtMs) })] : []),
-      ...(task.outputTruncated ? [t('dialog.work.truncated')] : [])].join(' · ');
-    view.command.textContent = task.command || task.label || view.task.label || view.task.id;
-    view.cwd.textContent = task.cwd ? t('dialog.work.cwd', { cwd: task.cwd }) : '';
-    const text = task.output === null ? t('dialog.work.outputUnsupported') : task.output || t('dialog.work.noOutput');
-    if (view.output.textContent !== text) view.output.textContent = text;
-  } catch (e) {
-    if (backgroundView === view) view.status.textContent = t('dialog.work.loadFailed', { error: e.message });
-  } finally {
-    view.busy = false;
-    view.reload.disabled = false;
-  }
-}
-
-const KIND_SUB = {
-  terminal: t("dialog.work.kind.terminal"),
-  agent: t("dialog.work.kind.agent"),
-  shell: t("dialog.work.kind.shell"),
-  other: t("dialog.work.kind.other"),
-};
 
 /**
  * 裏の作業を 1 本止める。
@@ -2199,48 +2437,61 @@ async function stopBackground(button, sessionId, task) {
     const result = await cmd("stopBackground", { sessionId, taskId: task.id });
     if (result.stopped === false) throw new Error(t('dialog.work.stopUnconfirmed'));
     button.textContent = t('dialog.work.stopRequested');
-    await refreshBackgroundDetail();
+    if (bg.view) { bg.view.at = 0; await refreshDetail(); }
   } catch (e) {
     button.textContent = t("dialog.work.stopAgain");
     button.disabled = false;
-    $("workBody").append(el("div", "work-head", t("dialog.work.stopFailed", { error: e.message })));
+    detailNote(t("dialog.work.stopFailed", { error: e.message }));
   }
 }
 
-async function openSubagent(a) {
-  const body = $("workBody");
-  body.dataset.view = "agent";
-  body.dataset.sessionId = a.sessionId;
-  $("workTitle").textContent = a.description ? t("dialog.work.subagentNamed", { name: a.description.slice(0, 40) }) : t("dialog.work.subagents");
-  body.replaceChildren(el("div", "work-head", t("dialog.work.loading")));
-  let data;
-  try {
-    data = await cmd("loadSubagent", { sessionId: a.sessionId, agentId: a.id });
-  } catch (e) {
-    return body.replaceChildren(el("div", "work-head", t("dialog.work.readFailed", { error: e.message })));
-  }
-  const back = el("button", "btn work-back", t("dialog.work.backToList"));
-  back.type = "button";
-  back.onclick = renderWorkDialog;
-  body.replaceChildren(back);
-  for (const m of data.messages ?? []) {
-    if (m.role === "user") {
-      const u = el("div", "m user");
-      u.append(el("div", "body", m.text));
-      body.append(u);
-    } else {
-      const ai = el("div", "m ai");
-      if (m.text) { const b = el("div", "body"); b.innerHTML = renderAssistantMarkdown(m.text, []); ai.append(b); }
-      for (const c of m.toolCalls ?? []) {
-        const card = renderToolCall(c.name, c.input, { id: c.id });
-        if (c.result) { applyToolResult(card, c.result); noteEndpointFailure(card, c.result); }
-        ai.append(card);
-      }
-      if (!m.toolCalls) for (const t of m.tools ?? []) ai.append(renderToolCall(t, null));
-      body.append(ai);
-    }
-  }
+// ---- 会話の中の委譲のカードから開く
+
+/** ネイティブのサブエージェントを生む委譲ツール（Claude の Task / Agent、Codex の子スレッド） */
+const SUBAGENT_TOOLS = new Set(['Task', 'Agent', 'collabAgentToolCall', 'subAgentActivity']);
+const isDelegateTool = (name) => /(^|[_./])ply_delegate$/.test(String(name ?? ''));
+
+/**
+ * 委譲のカードに「開く」を足す。押すとバックグラウンドのダイアログでその子を選んだ状態になる。
+ * Pleiad タスクは結果（taskId）が届いてから押せるようにする。メインの会話のカードだけに付ける
+ */
+function linkDelegateCard(card, input = null) {
+  const name = card?.dataset.tool;
+  // 一覧の見出しに使う依頼の一行（結果が後から届くカードは、始まったときに覚えた分を使う）
+  const said = input?.description || input?.task || (typeof input?.prompt === 'string' ? input.prompt.split(/\r?\n/).find(Boolean) : '');
+  if (said && card) card.dataset.bgTitle = String(said).slice(0, 120);
+  if (!name || card.querySelector(':scope .tc-open')) return;
+  if (isDelegateTool(name)) {
+    const id = /ply-task-[0-9a-f-]{36}/.exec(card.querySelector('.tc-output, .tc-result, .tc-details-body')?.textContent ?? '')?.[0];
+    if (!id) return;
+    card.dataset.taskId = id;
+  } else if (!SUBAGENT_TOOLS.has(name) || !card.dataset.id || capsOf(activeBackendId()).subagents === false) return;
+  const open = el('button', 'btn tc-open', t('dialog.work.open'));
+  open.type = 'button';
+  open.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openFromCard(card, open); };
+  card.querySelector('.tc-head')?.append(open);
 }
+
+async function openFromCard(card, button) {
+  if (card.dataset.taskId) return openWork(`t:${card.dataset.taskId}`);
+  const toolId = card.dataset.id;
+  const live = backgroundItems().find(x => x.origin === toolId);
+  if (live) return openWork(live.key);
+  const sessionId = state.current;
+  button.disabled = true;
+  try {
+    const { agentId } = await cmd('findSubagent', { sessionId, toolId });
+    if (!agentId) throw new Error(t('dialog.work.notFound'));
+    const key = `a:${sessionId}:${agentId}`;
+    const title = card.dataset.bgTitle;
+    bg.extra.set(key, { key, group: 'agent', source: 'native', title: title || agentId, backend: activeBackendId(), model: null, effort: null,
+      status: card.classList.contains('tc-fail') ? 'failed' : 'completed', live: false, extra: true, origin: toolId, parentId: sessionId, agentId });
+    openWork(key);
+  } catch (e) { sys(html.t('dialog.work.openFailed', { error: e.message })); }
+  finally { button.disabled = false; }
+}
+
+$('workDialog').addEventListener('close', () => { bg.view = null; bg.extra.clear(); });
 
 // ---------------------------------------------------------------- 配色
 // 明示的に選んだらそれを守る。選んでいなければ OS の設定に従う。端末ごとの好みなのでブラウザ側に覚える。
@@ -3339,8 +3590,7 @@ function selectedMode(s, bid, modes) {
   return mode in modes ? mode : "default" in modes ? "default" : Object.keys(modes)[0] ?? "";
 }
 async function syncTopbar() {
-  syncAgentTasks();
-  syncBackgroundEntry();
+  syncParentEntry();
   const version = ++topbarVersion;
   const s = state.sessions.find((x) => x.id === state.current);
   const on = Boolean(state.current);
@@ -3475,6 +3725,7 @@ function paintHistory(fromMi = 0) {
       for (const c of m.toolCalls ?? []) {
         const card = renderToolCall(c.name, c.input, { id: c.id });
         if (c.result) { applyToolResult(card, c.result); noteEndpointFailure(card, c.result); }
+        linkDelegateCard(card, c.input);
         node.append(card);
         if (c.id) state.toolCards.set(c.id, card);
       }
@@ -3705,7 +3956,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   refreshContextEntry({ force: true }).catch(() => {});
   thread.classList.toggle("branched", branches.has(id));   // 枝があるとき、筋は「今いる枝」として青く太い
   if (isRunningHere()) activity.show(activity.text || ACTIVITY_LABEL.running);   // 走っている会話を開いたら末尾に弧
-  else if (behindHere()) activity.show(t("activity.waitingBackground"));     // ターンは終わったが裏の子が残っている会話は衛星
+  else if (behindHere() || backgroundCounts().live) activity.show(t("activity.waitingBackground"));     // ターンは終わったが裏の子が残っている会話は衛星（待てないものだけなら印なし）
   relayoutBranches();     // 稼働表示が出た後の高さで、今いる枝の終端ノードを置き直す
   $("prompt").placeholder = branchIsFresh(id) ? t("chat.composer.firstMessage", { name: branches.nameOf(id) }) : promptPlaceholder();
   // 対応を終えたエージェントの会話は読むだけ。入力欄を閉じ、理由を末尾に出す（送信はサーバーも断る）
@@ -3884,7 +4135,8 @@ function syncRunState() {
   if (!here) {
     closeTurnEl();
     // ターンは終わったが裏の作業が残っている。末尾の節は消さずに衛星にする（中断は出さない）
-    if (behindHere() && !state.loadingSession) activity.show(activity.text || t("activity.waitingBackground"));
+    // 待てないもの（端末・裏のコマンド）だけが残っているときも、止める口（バックグラウンド N）のために行を残す
+    if ((behindHere() || backgroundCounts().live) && !state.loadingSession) activity.show(activity.text || t("activity.waitingBackground"));
     else activity.hide();
   }
 }
@@ -4075,7 +4327,6 @@ addEventListener("resize", fitPrompt);
 $("workDialog").addEventListener("click", (e) => {
   if (e.target.dataset?.close !== undefined || e.target === $("workDialog")) $("workDialog").close();
 });
-$('workDialog').addEventListener('close', () => { backgroundView = null; });
 
 // タイトルは人間もその場で変えられる。AI 用ツールと同じ store を通る（設計メモ 2.2）
 let titleSent = null;   // 送ったばかりの値。Enter → blur で change と blur の両方から呼ばれても 1 回にする

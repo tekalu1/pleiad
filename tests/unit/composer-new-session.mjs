@@ -71,7 +71,7 @@ export default async function (t) {
     log: { scrollTop: 0, scrollHeight: 0, clientHeight: 0 }, thread: { children: [], querySelectorAll: () => [], classList: { toggle: noop } },
     setUuid: noop, closeTurnEl: noop, paintHistory: () => [], syncOutboxRows: noop, outboxes: new Map(), onEvent: noop, paintPendingPerms: noop,
     acknowledgeDisplayed: noop, placeJunctions: () => [], paintContextLine: noop, refreshContextEntry: async () => null,
-    isRunningHere: () => false, behindHere: () => null, relayoutBranches: noop, branchIsFresh: () => true, promptPlaceholder: () => '',
+    isRunningHere: () => false, behindHere: () => null, backgroundCounts: () => ({ live: 0, ended: 0 }), relayoutBranches: noop, branchIsFresh: () => true, promptPlaceholder: () => '',
     ACTIVITY_LABEL: {}, attachMenu: null, setDraftNote: noop,
     isWaitingHere: () => false, stoppingHere: () => false, controls: { fit: noop }, retiredHere: () => null, submittingMessages: new Set(),
     completionNotifications: { requestPermission: noop }, slashSkills: { close: noop }, uiLang: 'ja', attachmentLine: (l, p) => p,

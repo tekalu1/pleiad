@@ -118,6 +118,7 @@ export const COMMANDS = new Set([
   "authSubmit",      // { backend, input }。コールバックを取れないときの手貼り
   "running",         // いま動いているものの一覧
   "loadSubagent",    // サブエージェントの会話を読む
+  "findSubagent",    // { sessionId, toolId } -> { agentId }。委譲ツールの tool_use id から、それが生んだサブエージェントを引く
   "loadBackground",  // { sessionId, taskId } 裏の作業のコマンド・出力を読む
   "stopBackground",  // { sessionId, taskId } ターンの外で動いている裏の作業を 1 本止める
   "renameStatus",    // 状態の一括改名（to が空なら状態を外す＝グループ削除）
