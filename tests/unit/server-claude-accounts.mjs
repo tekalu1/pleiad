@@ -90,7 +90,7 @@ export default async function (t) {
     t.ok('新しい会話は前回選んだアカウントで始まる', (await row(fresh)).claudeAccount === work);
 
     // 委譲した子の会話も親のアカウントを継ぐ
-    await c.runTurn({ sessionId: plain, prompt: prompt('ply_delegate', { backend: 'fake', task: 'whoami' }) });
+    await c.runTurn({ sessionId: plain, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'whoami' }) });
     let task;
     for (let i = 0; i < 600 && !(task = (await c.cmd('agentTasks')).find(r => r.parentSessionId === plain && r.notification === 'sent')); i++) await sleep(50);
     t.ok('委譲した子の会話は親のアカウントで走る', task?.result === fingerprint(TOKEN), task ? `${task.status} ${task.result}` : 'no task');

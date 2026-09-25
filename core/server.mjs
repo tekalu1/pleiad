@@ -8,7 +8,10 @@ import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
 // 承認の保留・猶予・中断（設計メモ §8.5）だけはここに残す。エージェントに散らすと
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
 import { createAgentTasks } from './agent-tasks.mjs';
-import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS } from './agent-bridge.mjs';
+import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
+import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RoutingSettingsError, pinnedRouting, route, candidateStates, settingsWarnings } from './delegation-routing.mjs';
+import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
+import { createUsageMonitor } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode } from './modes.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
@@ -206,6 +209,9 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale
   if (name === 'ply_usage') return agentUsage({ backend: args.backend, list: listBackends, get: getBackend, read: providerQuota, locale: lng });
   const mutation = DELEGATING_TOOLS.includes(name);
   if (mutation && !canDelegate(turn.backend.modes()[turn.info.mode])) throw new Error(agentT(lng, 'delegation.readOnly'));
+  // 委譲先の自動振り分け（docs/agent-delegation.md「委譲先の自動振り分け」）。backend を省けばここで選ぶ。
+  // 選んだ後は、書いた backend と同じく下の承認の強さの判定・承認カードを通る
+  if (name === 'ply_delegate') args = await routeDelegation(args, lng, path.resolve(turn.info.cwd ?? process.cwd(), typeof args.cwd === 'string' ? args.cwd : '.'));
   // 子の承認モードは「親の強さまで継ぐ、それを超えない」（core/modes.mjs）。
   // 決めるのはここだけ。prepare は決まった結果をそのまま使う（同じ判定を二度しない）。
   const child = name === 'ply_delegate' ? getBackend(args.backend) : null;
@@ -219,8 +225,87 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale
     const answer = await askPermission({ toolName: name, input: args, title, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng });
     if (!answer.allow) throw new Error(agentT(lng, 'delegation.denied'));
   }
-  return agentTasks.call(owner, name, decided?.mode ? { ...args, mode: decided.mode } : args, turn.ac.signal, lng);
+  const result = await agentTasks.call(owner, name, decided?.mode ? { ...args, mode: decided.mode } : args, turn.ac.signal, lng);
+  // 子が使い始めるので、振り分けに使う使用量を取り直しておく（待たない）
+  if (name === 'ply_delegate' && routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
+  return result;
 } });
+
+// ---- 委譲先の自動振り分け ------------------------------------------------------
+// 設定は prefs.json の delegationRouting（未設定の項目は既定値）。判定器のキーは互換の接続先と同じ秘密の置き場
+// （compat-endpoint-secrets.json）に delegation-routing:<service> で置き、画面へは hasKey だけ返す
+let routingSettingsCache = normalizeSettings((await store.getPrefs()).delegationRouting);
+const ROUTING_SERVICES = Object.values(JUDGE_SERVICE);
+const routingKey = async service => (await compatSecrets.get(ROUTING_SECRET_PREFIX + service))?.key ?? null;
+const lastWarm = new Map();
+const routingUsage = createUsageMonitor({
+  backends: listBackends,
+  installed: id => installation(id).installed,
+  read: providerQuota,
+  candidates: () => [...new Set(TIERS.flatMap(tier => routingSettingsCache.tiers[tier] ?? []))],
+  modelKnown: (b, model) => validModel(b, model, process.cwd()),
+  // 一覧をまだ引いていないバックエンド（agy はログインの確認で一覧を覚える）だけ、確かめ直す。
+  // 確かめられたら 30 分は繰り返さない。未ログイン・失敗なら次の取り直し（5 分後）でまた確かめる
+  warm: async b => {
+    if (!b.auth?.status || Date.now() - (lastWarm.get(b.id) ?? 0) < 30 * 60_000) return;
+    const status = await b.auth.status().catch(() => null);
+    if (status?.loggedIn) lastWarm.set(b.id, Date.now()); else lastWarm.delete(b.id);
+  },
+  claudeIdentities: () => claudeAccounts.identities(),
+  onChange: () => emitGlobal({ type: 'delegationRoutingChanged', sessionId: null }),
+});
+// 取り始めるのは待ち受けてから（announce）。onChange が画面へ配るので、runtime ができる前に呼ばない。
+// AGENT_HOST_ROUTING_USAGE=off なら定期的には取らない（テストの既定。agy などの子プロセスを勝手に起こさない）
+const ROUTING_USAGE_AUTO = process.env.AGENT_HOST_ROUTING_USAGE !== 'off';
+
+/**
+ * kind を確かめ、backend が無ければ委譲先を選ぶ。返すのは agentTasks.call に渡す引数（routing・account を足したもの）。
+ * cwd は委譲先の作業場所（モデルの一覧は場所の設定で変わりうるので、選んだモデルをそこで確かめ直す）
+ */
+async function routeDelegation(args, lng, cwd) {
+  if (!KINDS.includes(args.kind)) throw new Error(agentT(lng, 'routing.kindRequired', { kinds: kindList(lng) }));
+  if (args.backend !== undefined) return { ...args, routing: pinnedRouting({ kind: args.kind, backend: args.backend, model: args.model }) };
+  const settings = routingSettingsCache;
+  if (!settings.enabled) throw new Error(agentT(lng, 'routing.backendRequired'));
+  if (args.model !== undefined || args.effort !== undefined) throw new Error(agentT(lng, 'routing.pinOnly'));
+  // 依頼文は判定器へ送る前に確かめる（agentTasks と同じ上限）
+  if (typeof args.task !== 'string' || !args.task.trim() || args.task.length > 60000) throw new Error(agentT(lng, 'tasks.textLength', { name: 'task', max: 60000 }));
+  const [judged] = await Promise.all([
+    judgeDifficulty({ kind: args.kind, task: args.task, judge: settings.judgeByKind[args.kind], escalate: settings.escalateToCerebras, keyOf: routingKey }),
+    // 起動直後でまだ一度も使用量を取れていなければ、判定と同じだけ待つ
+    routingUsage.warmUp(JUDGE_TIMEOUT_MS),
+  ]);
+  // 選んだ候補のモデルを委譲先の場所で確かめ直す。取り置きの後に一覧から消えていたら、既定に落とさず次の候補へ
+  const rejected = {};
+  let ok, routing;
+  for (;;) {
+    ({ ok, routing } = route({ kind: args.kind, judged, settings, usage: routingUsage.snapshot(), now: Date.now(), rejected }));
+    if (!ok) break;
+    const picked = getBackend(routing.target.backend);
+    if (picked && await validModel(picked, routing.target.model, cwd).catch(() => false)) break;
+    rejected[`${routing.target.backend}:${routing.target.model}`] = picked ? 'model_unknown' : 'unavailable';
+  }
+  if (!ok) {
+    const skipped = routing.skipped.map(s => `- ${s.candidate} (${s.tier}): ${s.reason}${s.window?.usedPercent != null ? ` ${s.window.label ?? ''} ${s.window.usedPercent}%` : ''}${s.window?.pace != null ? ` pace ${s.window.pace}` : ''}`).join('\n');
+    throw new Error(agentT(lng, 'routing.exhausted', { kind: args.kind, difficulty: routing.difficulty, skipped }));
+  }
+  const { backend, model, account } = routing.target;
+  return { ...args, backend, model, account: account ?? '', routing };
+}
+
+/** 設定 › 委譲（段 B の画面）が読む今の状態。キーは hasKey だけ */
+async function delegationRoutingState() {
+  const settings = routingSettingsCache;
+  const usage = routingUsage.snapshot();
+  const stored = new Set(await compatSecrets.keys(ROUTING_SECRET_PREFIX).catch(() => []));
+  const storage = await compatSecrets.status().catch(() => null);
+  return { settings, defaults: normalizeSettings({}), kinds: KINDS, judges: JUDGES, tiers: TIERS, signals: SIGNALS,
+    keys: Object.fromEntries(ROUTING_SERVICES.map(s => [s, { hasKey: stored.has(ROUTING_SECRET_PREFIX + s) }])),
+    storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
+    warnings: settingsWarnings({ settings, usage }), candidates: candidateStates({ settings, usage, now: Date.now() }) };
+}
+// i18n-dynamic: server:routing.settings.
+const routingSettingsError = e => e instanceof RoutingSettingsError ? new Error(t(`routing.settings.${e.code}`, e.detail)) : e;
 function agentConnection(turn) {
   return conversationConnection(turn).runtime;
 }
@@ -471,6 +556,8 @@ function sessionRow(b, s, extra = {}) {
     // 人が外した／解除したグループ。まとまり自体は親子と状態から決まる（web/family.mjs）
     ungrouped: Boolean(extra.ungrouped),
     delegation: extra.delegation ?? null,
+    // 委譲の子の会話がどう選ばれたか（自動の振り分け・固定。core/delegation-routing.mjs）
+    routing: extra.routing ?? null,
     mode: extra.mode ?? "default",
     model: extra.model ?? "",
     effort: extra.effort ?? "",
@@ -1304,18 +1391,28 @@ agentTasks = await createAgentTasks({
     if (!backend) throw new Error(agentT(lng, 'delegation.backendDisabled'));
     const cwd = path.resolve(parent.info.cwd, args.cwd ?? '.');
     if (!(await fs.stat(cwd)).isDirectory()) throw new Error(agentT(lng, 'delegation.cwdNotDirectory'));
+    // 自動の振り分けで選んだ委譲先（agentBridge の call の routeDelegation）。候補は公式の使用枠で選んでいるので、
+    // 接続先は継がず公式で走らせ、アカウントも選んだものを使う（docs/agent-delegation.md「委譲先の自動振り分け」）
+    const auto = args.routing?.mode === 'auto';
     // 接続先（決定 3）: 同じエージェントへの委譲なら親の会話の接続先を継ぐ。違うエージェントへは公式に戻す（形式が合わない）
     const parentEndpoint = (await store.get(owner)).compatEndpoint ?? '';
-    const inherited = endpointCapable(backend) ? delegatedEndpoint(parent.backend?.id, backend.id, parentEndpoint) : '';
+    const inherited = endpointCapable(backend) && !auto ? delegatedEndpoint(parent.backend?.id, backend.id, parentEndpoint) : '';
     // 継ぐべき接続先が消えていたら委譲を断る（黙って公式で走らせない）
     if (inherited && !(await compatEndpoints.has(inherited, backend.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
     const endpoint = inherited;
     const model = await resolveModel(null, args.model, backend, cwd, endpoint);
+    // 選んだモデルを使えなくなっていたら、黙って既定に落とさず断る
+    if (auto && model !== args.model) throw new Error(agentT(lng, 'routing.modelUnavailable', { model: args.model, backend: backend.id }));
     const effort = await resolveEffort(null, args.effort, backend, model, cwd, await endpointRow(endpoint));
     // 承認モードは委譲を受け付けた側（agentBridge の call）が親の強さから決めてある。
     // ここで決め直すと「聞いた内容」と「実際に動く強さ」がずれるので、来た値をそのまま使う。
     const modes = backend.modes();
     const mode = modes[args.mode] ? args.mode : firstMode(modes);
+    // 子は親の会話のアカウントで走る（親が別のエージェントでも、その会話で選んであるものを継ぐ）。
+    // 自動で Claude を選んだときは、使用量で選んだアカウント（'' はログイン中のアカウント）
+    const account = auto && backend.id === 'claude' ? args.account ?? '' : (await store.get(owner)).claudeAccount ?? '';
+    // 振り分けの記録（タスクと子の会話に残す）。委譲先は実際に使う値で書く（固定のときのモデルの既定への戻り・継いだアカウントも）
+    const routing = args.routing ? { ...args.routing, target: { backend: backend.id, model, account: backend.id === 'claude' ? account : null } } : null;
     const info = { title: args.task.slice(0, 80), cwd, createdAt: Date.now(), lastModified: Date.now() };
     const sessionId = await createConversation(backend, info);
     try {
@@ -1324,13 +1421,12 @@ agentTasks = await createAgentTasks({
       await store.setSessionData(sessionId, 'effort', effort);
       await store.setSessionData(sessionId, 'delegation', { taskId, parentSessionId: owner, manager: 'ply' });
       await store.setSessionData(sessionId, 'agentLocale', lng);
-      // 子は親の会話のアカウントで走る（親が別のエージェントでも、その会話で選んであるものを継ぐ）
-      const parentAccount = (await store.get(owner)).claudeAccount ?? '';
-      if (parentAccount) await store.setSessionData(sessionId, 'claudeAccount', parentAccount);
+      if (account) await store.setSessionData(sessionId, 'claudeAccount', account);
       if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
+      if (routing) await store.setSessionData(sessionId, 'routing', routing);
       if (signal?.aborted) throw new Error(agentT(lng, 'delegation.aborted'));
     } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
-    return { backend: backend.id, model, effort, cwd, mode, sessionId };
+    return { backend: backend.id, model, effort, cwd, mode, sessionId, ...(routing ? { routing } : {}) };
   },
   execute: async (task, prompt, signal) => {
     if (signal.aborted) return { outcome: 'aborted' };
@@ -2189,6 +2285,41 @@ wss.on("connection", (ws, req) => {
           if (!task) throw new Error(t('delegation.taskNotFound'));
           await agentTasks.cancel(task.taskId); return reply(true, agentTasks.get(task.taskId));
         }
+
+        // 委譲先の自動振り分けの設定（設定 › 委譲）。タスクごとの振り分けの記録は agentTasks の各行の routing。
+        // キーは返さない（hasKey だけ）。refresh: true なら使用量を取り直してから返す
+        case 'delegationRouting':
+          if (msg.args?.refresh && routingSettingsCache.enabled) await routingUsage.refresh();
+          return reply(true, await delegationRoutingState());
+        // settings は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する
+        case 'setDelegationRouting': {
+          const patch = msg.args?.settings;
+          if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error(t('routing.settings.notObject', { key: 'settings' }));
+          const raw = { ...((await store.getPrefs()).delegationRouting ?? {}) };
+          for (const [key, value] of Object.entries(patch)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
+          let settings;
+          try { settings = normalizeSettings(raw, { strict: true }); } catch (e) { throw routingSettingsError(e); }
+          await savePref('delegationRouting', Object.keys(raw).length ? raw : null);
+          routingSettingsCache = settings;
+          if (!settings.enabled) routingUsage.stop();
+          else { if (ROUTING_USAGE_AUTO) routingUsage.start(); await routingUsage.refresh().catch(() => {}); }
+          emitGlobal({ type: 'delegationRoutingChanged', sessionId: null });
+          return reply(true, await delegationRoutingState());
+        }
+        // 判定器のキー（service: openrouter = Jev / cerebras）。登録が外部送信の同意になる（キーが無ければ何も送らない）
+        case 'setDelegationRoutingKey':
+        case 'deleteDelegationRoutingKey': {
+          const service = String(msg.args?.service ?? '');
+          if (!ROUTING_SERVICES.includes(service)) throw new Error(t('routing.key.unknownService', { service }));
+          if (msg.command === 'deleteDelegationRoutingKey') await compatSecrets.delete(ROUTING_SECRET_PREFIX + service);
+          else {
+            const key = normalizeKey(msg.args?.key);
+            if (!key) throw new Error(t('routing.key.invalid'));
+            await compatSecrets.set(ROUTING_SECRET_PREFIX + service, { key });
+          }
+          emitGlobal({ type: 'delegationRoutingChanged', sessionId: null });
+          return reply(true, await delegationRoutingState());
+        }
         case "resolvePermission": {
           const { id, allow, always, message, messageKey, answers, annotations, response } = msg.args ?? {};
           const w = runtime.waiting.get(id);
@@ -2858,6 +2989,7 @@ function announce() {
   const { port } = server.address();
   process.parentPort?.postMessage({ type: "ready", port, token: TOKEN, locale: locale.lang });
   remote.start().catch(() => {});
+  if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();
   // 起動直後の常駐の状態（リモートが無効でも送る。main はそれを見てトレイを出さない）
   if (process.parentPort) Promise.all([residentPrefs.loaded, remote.status(), runningWork()])
     .then(([, status, work]) => postResident({ status: withResident(status), work })).catch(() => {});

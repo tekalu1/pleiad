@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { agentT } from './i18n.mjs';
+import { KINDS } from './delegation-routing.mjs';
 
 export const AGENTS_MCP_PATH = '/mcp/agents';
 // 文はエージェントに渡すので会話の言語で引く（agent 名前空間。docs/design.md「多言語対応」）。en は以前の英語の固定文と同じ
@@ -7,9 +8,14 @@ export const AGENTS_MCP_PATH = '/mcp/agents';
 export const agentInstructions = locale => agentT(locale, 'bridge.instructions');
 const str = { type: 'string' };
 const tool = (name, description, properties, required = []) => ({ name, description, inputSchema: { type: 'object', properties, required, additionalProperties: false } });
+// i18n-dynamic: agent:bridge.kinds.
+/** kind の一覧と定義（ツールの説明と、kind が無い・不正なときのエラーに載せる。docs/agent-delegation.md「委譲先の自動振り分け」） */
+export const kindList = locale => KINDS.map(k => `- ${k}: ${agentT(locale, `bridge.kinds.${k}`)}`).join('\n');
+const delegateDescription = locale => [agentT(locale, 'bridge.tools.ply_delegate'), agentT(locale, 'bridge.kindsIntro'), kindList(locale), agentT(locale, 'bridge.kindBoundaries')].join('\n');
 /** ツールの定義。説明は会話の言語。名前と引数（inputSchema）は言語に依らない */
 export const agentTools = locale => [
-  tool('ply_delegate', agentT(locale, 'bridge.tools.ply_delegate'), { backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, task: str, context: str, cwd: str, model: str, effort: str }, ['backend', 'task']),
+  // backend を省けば Pleiad が委譲先を選ぶ（core/delegation-routing.mjs）。kind はどちらでも必須（振り分けの記録にも残す）
+  tool('ply_delegate', delegateDescription(locale), { kind: { type: 'string', enum: [...KINDS] }, task: str, backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, context: str, cwd: str, model: str, effort: str }, ['kind', 'task']),
   tool('ply_task_status', agentT(locale, 'bridge.tools.ply_task_status'), { taskId: str, offset: { type: 'integer', minimum: 0 } }, ['taskId']),
   tool('ply_task_wait', agentT(locale, 'bridge.tools.ply_task_wait'), { taskId: str, seconds: { type: 'integer', minimum: 1, maximum: 30 } }, ['taskId']),
   tool('ply_task_send', agentT(locale, 'bridge.tools.ply_task_send'), { taskId: str, message: str }, ['taskId', 'message']),

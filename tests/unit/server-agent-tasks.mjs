@@ -43,7 +43,7 @@ export default async function(t) {
     return JSON.parse(ev.text);
   };
   try {
-    const first = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { backend: 'fake', task: 'echo:CHILD_RESULT' }) });
+    const first = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:CHILD_RESULT' }) });
     const sid = first.sessionId;
     let rows = await awaitTasks(rows => rows.length === 1 && rows[0].notification === 'sent');
     const child = rows[0];
@@ -60,8 +60,8 @@ export default async function(t) {
     t.ok('追加指示が同じ子に届く', rows[0].sessionId === child.sessionId);
     const history = await c.cmd('loadSession', { sessionId: child.sessionId });
     t.ok('子会話に両方の依頼と結果が残る', history.messages.filter(m => m.role === 'user').length === 2);
-    const nestedPrompt = prompt('ply_delegate', { backend: 'fake', task: 'echo:DEEP_RESULT' });
-    await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { backend: 'fake', task: nestedPrompt }) });
+    const nestedPrompt = prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:DEEP_RESULT' });
+    await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: nestedPrompt }) });
     rows = await awaitTasks(rows => rows.some(r => r.task === nestedPrompt && r.notification === 'sent'));
     const nestedResult = rows.find(r => r.task === nestedPrompt).result;
     // 完了通知の文は会話の言語で変わる（tests/unit/i18n-agent.mjs）。ここでは言語に依らない孫の taskId で見分ける
@@ -69,7 +69,7 @@ export default async function(t) {
     t.ok('孫の結果を受け取った子の最終回答を親へ返す', Boolean(grandchild) && nestedResult.includes(grandchild.taskId) && nestedResult.includes('DEEP_RESULT') && grandchild.notification === 'sent', nestedResult.slice(0, 200));
     const other = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_task_status', { taskId: child.taskId }) });
     t.ok('別会話の taskId を MCP から操作できない', other.events.some(e => e.type === 'tool.result' && e.isError));
-    await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { backend: 'fake', task: 'slow' }) });
+    await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'slow' }) });
     rows = await awaitTasks(rows => rows.some(r => r.task === 'slow' && r.status === 'running'));
     const slow = rows.find(r => r.task === 'slow');
     await c.cmd('cancelAgentTask', { taskId: slow.taskId });
@@ -77,7 +77,7 @@ export default async function(t) {
     t.ok('UI の停止コマンドが子の実行を止める', !(await c.cmd('running')).turns.some(r => r.sessionId === slow.sessionId));
     for (let i = 0; i < 100; i++) { if (!(await c.cmd('running')).turns.some(t => t.sessionId === sid)) break; await sleep(50); }
     t.ok('親の強さに収まる委譲では聞かない', escalations.length === 0, `${escalations.length} 件聞かれた`);
-    await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { backend: 'antigravity', task: 'agy-test-task' }) });
+    await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'antigravity', task: 'agy-test-task' }) });
     rows = await awaitTasks(rows => rows.some(r => r.backend === 'antigravity' && r.notification === 'sent'));
     const agyChild = rows.find(r => r.backend === 'antigravity');
     t.ok('委譲先 antigravity で子会話を開始し結果を受け取る', agyChild.status === 'completed' && agyChild.result.includes('agy-test-task'));
@@ -87,7 +87,7 @@ export default async function(t) {
     t.ok('親より強い委譲は親の会話で1回だけ聞き、何をどの強さで動かすか見せる',
       escalations.length === 1 && String(asked?.title ?? '').includes('Antigravity') && String(asked?.title ?? '').includes('yolo'), asked?.title ?? '聞かれなかった');
     // 親が auto（聞かずに進む）なら、子も既定の default ではなく auto で始まる
-    await c.runTurn({ sessionId: sid, mode: 'auto', prompt: prompt('ply_delegate', { backend: 'fake', task: 'echo:INHERITED' }) });
+    await c.runTurn({ sessionId: sid, mode: 'auto', prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:INHERITED' }) });
     rows = await awaitTasks(rows => rows.some(r => r.task === 'echo:INHERITED' && r.notification === 'sent'));
     const inherited = rows.find(r => r.task === 'echo:INHERITED');
     t.ok('子は親の承認モードの強さを継ぐ', inherited.mode === 'auto',
@@ -107,7 +107,7 @@ export default async function(t) {
 
     // ---- 承認の中継と、依頼元への「承認待ち」の伝達
     hold = true;
-    const top = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { backend: 'fake', task: 'ask-slow' }) })).sessionId;
+    const top = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'ask-slow' }) })).sessionId;
     rows = await awaitTasks(rows => rows.some(r => r.parentSessionId === top));
     const asker = rows.find(r => r.parentSessionId === top);
     const relayed = await awaitPerms(p => [top, asker.sessionId].every(id => p.some(x => x.sessionId === id)));
@@ -128,7 +128,7 @@ export default async function(t) {
 
     // 孫の承認は、子と依頼元の両方まで届く。答えるのはどの会話でもよい
     held.clear();
-    const deepTop = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { backend: 'fake', task: prompt('ply_delegate', { backend: 'fake', task: 'ask' }) }) })).sessionId;
+    const deepTop = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'ask' }) }) })).sessionId;
     rows = await awaitTasks(rows => rows.some(r => r.parentSessionId === deepTop));
     const mid = rows.find(r => r.parentSessionId === deepTop);
     rows = await awaitTasks(rows => rows.some(r => r.parentSessionId === mid.sessionId));
@@ -142,7 +142,7 @@ export default async function(t) {
 
     // 中断の後片付けで、祖先側の複製が取り残されない
     held.clear();
-    const cancelTop = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { backend: 'fake', task: 'ask' }) })).sessionId;
+    const cancelTop = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'ask' }) })).sessionId;
     rows = await awaitTasks(rows => rows.some(r => r.parentSessionId === cancelTop));
     const doomed = rows.find(r => r.parentSessionId === cancelTop);
     await awaitPerms(p => [cancelTop, doomed.sessionId].every(id => p.some(x => x.sessionId === id)));
