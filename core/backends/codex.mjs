@@ -509,7 +509,10 @@ nativeRpc.onNotify(observeSubagents);
 // 接続先が変わったスレッドは thread/unsubscribe してから resume すると新しい接続先が効くので、その判断に使う。
 // app-server が落ちたら全部アンロードされるので捨てる
 const loadedProvider = new Map();
-nativeRpc.onDown(() => loadedProvider.clear());
+// 同じく、ロード済みのスレッドに渡した developerInstructions。Pleiad が入れる指示（委譲の指示。core/added-context.mjs）は
+// 設定・承認モードでターンごとに変わるので、前と違えば接続先と同じく外してから読み直す（始まっている会話にも次のターンから効かせる）
+const loadedInstructions = new Map();
+nativeRpc.onDown(() => { loadedProvider.clear(); loadedInstructions.clear(); });
 /** 公式の provider の id（config.toml の model_provider、無ければ openai）。互換から公式へ戻すときに明示する */
 async function defaultProvider(rpc, cwd) {
   const { config } = await rpc.request('config/read', { cwd, includeLayers: false }).catch(() => ({}));
@@ -936,6 +939,7 @@ export const backend = {
     liveModel: false,   // 走っている最中の切り替えは app-server に口が無い
     liveMode: false,
     hostTools: false,   // set_status / set_title / fork は未接続。可視化は共通の参照形式で提供
+    plyAgents: true,    // ply_agents を mcp_servers に、その instructions を developerInstructions に渡す
     alwaysAllow: true,  // acceptForSession
     login: true,
     // 互換の接続先（OpenAI Responses 互換）を会話ごとに選べる（core/compat-endpoints.mjs）
@@ -1318,13 +1322,16 @@ export const backend = {
         // 接続先が変わった（互換 ↔ 公式、別の互換、キーや URL の変更）ロード済みのスレッドは、いったん外してから読み直す。
         // 外さずに resume すると前の接続先のまま走る（スパイクで確認）
         const known = rpc === nativeRpc ? loadedProvider.get(threadId) : undefined;
-        if (known !== undefined && known !== providerKey) {
-          // 外せなかったら、この後の resume は接続先の変更を黙って無視する。前の接続先へ送らないよう、ここで止める
+        const instructionsChanged = rpc === nativeRpc && loadedInstructions.has(threadId) && loadedInstructions.get(threadId) !== (common.developerInstructions ?? '');
+        if (known !== undefined && (known !== providerKey || instructionsChanged)) {
           const out = await rpc.request('thread/unsubscribe', { threadId }).catch(e => ({ error: e }));
-          if (out?.error || !['unsubscribed', 'notLoaded', 'notSubscribed'].includes(out?.status)) {
+          const unloaded = !out?.error && ['unsubscribed', 'notLoaded', 'notSubscribed'].includes(out?.status);
+          // 接続先が変わったのに外せなかったら、この後の resume は接続先の変更を黙って無視する。前の接続先へ送らないよう、ここで止める。
+          // 指示だけが変わったときは止めない（前の指示のまま続け、次のターンでもう一度外す）
+          if (!unloaded && known !== providerKey) {
             throw new Error(t("codex.errors.unsubscribeFailed", { reason: out?.error?.message ?? out?.status ?? t("codex.errors.noResponse") }));
           }
-          loadedProvider.delete(threadId);
+          if (unloaded) { loadedProvider.delete(threadId); loadedInstructions.delete(threadId); }
         }
         // 互換から公式へ戻すときは公式の provider を明示する（スレッドに記録された互換の provider を使わせない）
         const back = !compat && known !== undefined && known !== 'default' ? { modelProvider: await defaultProvider(rpc, cwd) } : {};
@@ -1337,13 +1344,13 @@ export const backend = {
           throw new Error(t("codex.errors.stillOldEndpoint"));
         }
         effectiveSandbox = resumed?.sandbox;
-        if (rpc === nativeRpc && !ephemeral) loadedProvider.set(threadId, providerKey);
+        if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, common.developerInstructions ?? ''); }
       } else {
         const started = await rpc.request("thread/start", { ...common, ...(ephemeral ? { ephemeral: true } : {}) });
         effectiveSandbox = started?.sandbox;
         threadId = started?.thread?.id ?? null;
         if (!threadId) throw new Error(t("codex.errors.noThreadId", { method: "thread/start" }));
-        if (rpc === nativeRpc && !ephemeral) loadedProvider.set(threadId, providerKey);
+        if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, common.developerInstructions ?? ''); }
         // 受け皿を取り下げる前に attach する。逆にすると、預かっていた自分の通知が捨てられる
         detach = rpc.adopt(threadId, handlers);
         // **これを出さないと web が id を受け取れない**（P1 §5.1）。turn/start より前に出す。

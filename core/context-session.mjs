@@ -36,7 +36,8 @@ export function createContextSession({ store, snapshots, plyServers = async () =
       for (const k of ['status', 'reason', 'reasonCode', 'tools', 'calls', 'capabilities']) if (was[k] !== undefined) row[k] = was[k];
     }
     // 渡し済みの控え（delivered）は引き継がない。読み込み直した後は instructions_for_path / load_skill が本文をもう一度渡す
-    const next = { policy: { ...record.policy, refreshedAt: new Date().toISOString() }, pin: runtime.pin, report: runtime.report };
+    // Pleiad が入れた指示（added）は指示ファイルの読み込み直しと関係が無いので、直前のターンの記録のまま残す
+    const next = { policy: { ...record.policy, refreshedAt: new Date().toISOString() }, pin: runtime.pin, report: runtime.report, ...(record.added ? { added: record.added } : {}) };
     await store.setSessionData(sessionId, 'contextSession', next);
     return next;
   }

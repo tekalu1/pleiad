@@ -2,6 +2,7 @@
 
 2026-09-12。第1段階として、設定の「コンテキスト」ページから探索元を保存し、指示ファイル・Skills・MCP の候補を確認できる。
 2026-09-15 にツリーとプレビューの 2 列にした画面は、2026-09-20 に承認済みの 1 画面へ置き換えた（ツリー・「読み込み担当」「探索の設定」・保存ボタン 4 つを廃止）。範囲（すべての場所／場所ごと）を選び、種類ごと（指示ファイル・Skills・外部 MCP）に「エージェントに任せる／Pleiad がそろえる」、探す形式、渡すもの（スイッチ）を決める。変更はその場で保存し「保存しました · 次のターンから反映」を出す（2026-09-23 から、始まっている会話にも次のターンから効く。`docs/context-runtime.md`）。見た目の規則は `docs/design-system.md` §9「コンテキスト」。理由は [ADR 0014](adr/0014-context-default-agent-managed.md)。
+画面の末尾に「Pleiad が入れる指示」（委譲の指示。種類の担当・場所によらない 1 つのスイッチ）。仕様は [共通コンテキストの実行](context-runtime.md)「Pleiad が入れる指示」、理由は [ADR 0023](adr/0023-pleiad-added-delegation-instructions.md)。
 探索 API は `previewOnly: true` の候補一覧。Pleiad がそろえる種類は実行時に解決して会話へ渡す。実行時の抑止・適用時期・利用記録・会話の右パネルは [共通コンテキストの実行](context-runtime.md) を参照。既定はエージェント任せのまま。
 
 ## 保存と継承（形式 2）
@@ -78,7 +79,8 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
 - `scanContext { cwd, place?: "default" }`：保存済み設定から候補・出典・診断・探索場所・根（`home` / `root`）・MCP 設定ファイルごとの登録の書き出し（`configs`）を返す。`place: "default"` は場所の上書きを使わず既定だけで探す（設定の「すべての場所」）。同一接続の重複スキャンは拒否する。
 - `agentMcp { cwd }`：各エージェント（Claude・Codex）の設定に登録されている外部 MCP。探索の設定に関係なく読むだけ（接続・起動しない）。設定の「エージェントに任せる」と会話の右パネルが見比べに使う。
 - `slashSkills { cwd }`：同じ探索結果から、入力欄の先頭 `/` に出すスキルだけを名前順に返す（`skillList()`）。各項目は `{ name, description, hint, from }`。同名は先に見つかった置き場所だけを返し、除外・shadowed は含めない。`hint` は frontmatter の `argument-hint`、または引数の定義から作る。
-- `sessionContext { sessionId }`：その会話の読み込み記録・担当・固定の有無と、固定された会話だけ行う今のファイルとの突き合わせ（`changed`）を返す。詳細は `docs/context-runtime.md`。
+- `sessionContext { sessionId }`：その会話の読み込み記録・担当・固定の有無と、固定された会話だけ行う今のファイルとの突き合わせ（`changed`）、Pleiad が入れた指示（`added`）を返す。詳細は `docs/context-runtime.md`。
+- `addedContext {}` / `setAddedContext { delegation }`：Pleiad が入れる指示を入れるかどうかと、画面の言語の文（依頼元の会話・委譲された会話）。`docs/context-runtime.md`「Pleiad が入れる指示」。
 - `listMcpConfig { cwd, format, scope }`：保存先・リビジョン・登録名のみを返す。
 - `readMcpServer { cwd, format, scope, name }`：明示的に開いた1件の定義を返す。認証情報を含むことがあるため一覧・探索・ログに流用しない。
 - `saveMcpServer { cwd, format, scope, name, value, revision, mode, allowReformat? }`：`mode` は add / edit。既存登録を誤って上書きしないよう区別する。

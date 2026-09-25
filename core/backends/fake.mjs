@@ -199,6 +199,7 @@ export const backend = {
     liveModel: true,
     liveMode: true,
     hostTools: false,
+    plyAgents: true,
     alwaysAllow: true,
     login: true,
     // Claude と同じく会話ごとのアカウントを受け取れることにする（server の配線と画面をテストで通すため）
@@ -263,6 +264,10 @@ export const backend = {
         const params = JSON.parse(text.slice(text.lastIndexOf('context:') + 8));
         const response = await fetch(contextRuntime.url, { method: 'POST', headers: { ...contextRuntime.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params }) });
         out.text = (await response.json()).result.content[0].text;
+        await say(emit, out.text, out.uuid);
+      } else if (text === 'instructions') {
+        // 実際に渡った ply_agents の instructions（Pleiad が入れた指示を含む）をそのまま返す。親と子で中身が違うことを確かめる台本
+        out.text = agentRuntime?.instructions ?? '(none)';
         await say(emit, out.text, out.uuid);
       } else if (text === 'compact') {
         emit({ type: 'activity', state: 'compacting' });
