@@ -898,6 +898,13 @@
     "key": {
       "unknownService": "知らない判定サービスです: {{service}}",
       "invalid": "キーの形が不正です（空白を含まない 500 文字まで）"
+    },
+    "retry": {
+      "badCandidate": "候補の形が不正です（backend:model）",
+      "same": "元と同じ委譲先です。別の候補を選んでください",
+      "unusable": "{{candidate}} は今使えません（{{reason}}）",
+      "readOnly": "依頼元の会話が読み取り・計画モードなので、やり直せません",
+      "stopChoice": "元のタスクが実行中です。止めるかどうかを選んでください"
     }
   }
 }

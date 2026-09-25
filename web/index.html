@@ -67,6 +67,7 @@
       <h2 data-i18n="app.settings"></h2>
       <button type="button" id="setupTab" aria-controls="setupPanel" data-i18n="settings.nav.agents"></button>
       <button type="button" id="usageTab" aria-controls="usagePanel" data-i18n="settings.nav.usage"></button>
+      <button type="button" id="delegationTab" aria-controls="delegationPanel" data-i18n="settings.nav.delegation"></button>
       <button type="button" id="appearanceTab" aria-controls="appearancePanel" data-i18n="settings.nav.appearance"></button>
       <button type="button" id="openContext" aria-controls="contextPanel" data-i18n="settings.nav.context"></button>
       <button type="button" id="remoteTab" aria-controls="remotePanel" data-i18n="settings.nav.remote"></button>
@@ -184,6 +185,8 @@
           <p class="usage-note" data-i18n="settings.usage.note"></p>
           <div id="usageCards" aria-live="polite"></div>
         </section>
+        <!-- 委譲先の自動振り分け。中身は web/delegation-settings.mjs が作る -->
+        <section id="delegationPanel" data-i18n-aria-label="settings.nav.delegation" hidden></section>
         <section id="setupPanel" data-i18n-aria-label="settings.nav.agents">
           <p data-i18n="settings.agents.description"></p>
           <div id="settingsAgentSlot">

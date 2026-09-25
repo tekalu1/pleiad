@@ -27,6 +27,8 @@ const cases = [
   await import('./unit/delegation-routing.mjs'),
   // 同じくサーバー全体: kind の検査・自動で選んで子を作る・記録・設定とキーの口（偽の判定器と偽の agy）
   await import('./unit/server-delegation-routing.mjs'),
+  // 同じく画面: 委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分（web/delegation-routing-view.mjs）
+  await import('./unit/delegation-routing-view.mjs'),
   await import('./unit/usage.mjs'),
   await import('./unit/antigravity-usage.mjs'),
   // 会話のヘッダーの使用量のチップ（web/header-usage.mjs）: 枠の選び方・アカウント・上限・グループのまとめ

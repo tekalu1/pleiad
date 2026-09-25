@@ -29,6 +29,7 @@ export const COMMAND = "command";
 
 export const COMMANDS = new Set([
   'agentTasks', 'cancelAgentTask',
+  'retryAgentTask',             // { taskId, candidate: 'backend:model', stop?, approved? } -> { task } | { confirm: { agent, mode } }。委譲カードの「別の候補でやり直す」（routing.mode: manual・routing.retry に元のタスク）
   // 委譲先の自動振り分け（core/delegation-routing.mjs。docs/agent-delegation.md「委譲先の自動振り分け」）。判定器のキーは返さない（hasKey だけ）
   'delegationRouting',          // { refresh? } -> { settings, defaults, kinds, judges, tiers, signals, keys: { openrouter|cerebras: { hasKey } }, storage, warnings, candidates }
   'setDelegationRouting',       // { settings } -> 同上。prefs.json の delegationRouting に重ねて保存（null の項目は既定に戻す）。不正なら全体を断る

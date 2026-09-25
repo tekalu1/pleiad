@@ -41,7 +41,8 @@
       "appearance": "外観",
       "context": "コンテキスト",
       "remote": "リモート",
-      "about": "アプリ情報・更新"
+      "about": "アプリ情報・更新",
+      "delegation": "委譲"
     },
     "usage": {
       "description": "サブスクの枠はアカウント全体の値です。使用率・残量・リセット日時を表示します。",
@@ -1772,5 +1773,165 @@
     "busy": "ほかのフォルダーを送っている途中です。",
     "sentNotice": "フォルダーをホストの {{dest}} に送りました。",
     "dropFailed": "フォルダーを読めませんでした（{{error}}）"
+  },
+  "routing": {
+    "auto": "自動",
+    "autoTitle": "委譲先を自動で選んだ",
+    "kind": {
+      "trivial": "単純作業",
+      "mechanical": "機械的な作業",
+      "investigate": "調査",
+      "implement": "実装",
+      "review": "レビュー",
+      "design": "設計",
+      "ux_change": "画面の手直し",
+      "ux_new": "新しい画面",
+      "visual": "画像・図"
+    },
+    "difficulty": {
+      "low": "低",
+      "mid": "中",
+      "high": "高"
+    },
+    "tier": {
+      "t1": "段 1",
+      "t2": "段 2",
+      "t3": "段 3",
+      "t4": "段 4",
+      "tv": "画像・新しい画面"
+    },
+    "tierShort": {
+      "t1": "1",
+      "t2": "2",
+      "t3": "3",
+      "t4": "4",
+      "tv": "画像"
+    },
+    "judge": {
+      "jev": "Jev",
+      "cerebras": "Cerebras",
+      "none": "判定しない"
+    },
+    "signal": {
+      "diagnose": "原因探し",
+      "choose": "やり方の選択",
+      "long_procedure": "長い手順",
+      "many_parts": "部品が多い",
+      "writes_shared": "共有物への書き込み",
+      "security_gate": "安全の最終確認"
+    },
+    "fallback": {
+      "no_key": "キーが無い",
+      "key_unreadable": "キーを読めない",
+      "timeout": "時間切れ",
+      "network": "つながらない",
+      "http": "HTTP {{status}}",
+      "bad_response": "応答の形が違う",
+      "judge_none": "判定しない種類"
+    },
+    "skip": {
+      "unavailable": "使えない",
+      "model_unknown": "モデルが一覧に無い",
+      "usage_unknown": "使用量が分からない",
+      "usage_stale": "使用量が古い",
+      "quota_high": "使用量が多い",
+      "pace_high": "ペースが速い",
+      "pace_unknown": "ペースが分からない"
+    },
+    "line": {
+      "head": "{{kind}}・{{difficulty}} → {{target}}",
+      "skippedWindow": "{{name}} は{{window}} {{percent}}% で飛ばした",
+      "skippedPace": "{{name}} は{{window}}のペースが {{pace}} 倍で飛ばした",
+      "skippedReason": "{{name}} は{{reason}}ため飛ばした",
+      "join": " · "
+    },
+    "detail": {
+      "label": "振り分けの内訳",
+      "kind": "種類",
+      "difficulty": "難しさ",
+      "tier": "段",
+      "tierRaised": "{{tier}}（表では {{base}}。候補が使えず上げた）",
+      "judge": "判定",
+      "judgeFailed": "{{judge}} · {{first}}: {{reason}}",
+      "judgeEscalated": "{{judge}}（Jev が迷ったので聞き直した）",
+      "judgeNone": "判定しない種類（難しさは中）",
+      "judgeUnavailable": "判定できなかった: {{reason}}（難しさは中）",
+      "signals": "はいだった手がかり",
+      "noSignals": "なし",
+      "usageAt": "使用量の取得",
+      "used": "使った",
+      "skipped": "飛ばした · {{reason}}",
+      "pace": "ペース {{pace}} 倍",
+      "loginAccount": "ログイン中のアカウント",
+      "account": "アカウント: {{name}}",
+      "retried": "やり直し"
+    },
+    "retry": {
+      "open": "別の候補でやり直す",
+      "title": "やり直す候補",
+      "none": "今使える候補がありません。",
+      "run": "{{name}} でやり直す",
+      "stopAndRun": "止めて {{name}} でやり直す",
+      "keepAndRun": "止めずにやり直す",
+      "running": "元のタスクは実行中です。",
+      "cancel": "やめる",
+      "escalation": "{{agent}} を「{{mode}}」で動かします。依頼元の会話より強い承認モードです。",
+      "approve": "承認してやり直す",
+      "failed": "やり直せませんでした: {{error}}"
+    },
+    "settings": {
+      "enable": "委譲先を自動で選ぶ",
+      "judgeTitle": "難しさの判定",
+      "escalate": "Jev が迷ったら Cerebras に聞き直す",
+      "judgeNoKey": "{{service}} のキーが無いので、{{judge}} を選んだ種類は難しさを「中」として扱います。",
+      "judgeLabel": "{{kind}} の判定",
+      "keysTitle": "判定器のキー",
+      "keySend": "キーを登録すると、委譲の依頼文と種類がそのサービスに送られます。",
+      "service": {
+        "openrouter": "OpenRouter（Jev）",
+        "cerebras": "Cerebras"
+      },
+      "keySaved": "キー: 登録済み",
+      "keyNone": "キー: 未登録",
+      "keyAdd": "登録",
+      "keyChange": "変更",
+      "keyDelete": "削除",
+      "keySave": "保存",
+      "keyCancel": "やめる",
+      "keyShow": "表示",
+      "keyHide": "隠す",
+      "keyInput": "{{service}} のキー",
+      "keyDeleteConfirm": "{{service}} のキーを削除しますか。この判定器は使われなくなります。",
+      "notEncrypted": "この起動ではキーを暗号化できません（本人だけが読めるファイルに保存します）。",
+      "advanced": "詳しい設定",
+      "tiersTitle": "段ごとの候補",
+      "tiersOrder": "上から順に試す",
+      "usageAt": "使用量の取得: {{time}}",
+      "usageNever": "使用量はまだ取得していません",
+      "refresh": "取り直す",
+      "refreshing": "取得中…",
+      "candidateUp": "{{name}} を上へ",
+      "candidateDown": "{{name}} を下へ",
+      "candidateRemove": "{{name}} を外す",
+      "addCandidate": "＋ 候補を追加",
+      "addTitle": "{{tier}} に追加",
+      "addInput": "backend:model",
+      "noModels": "モデルの一覧を読めません",
+      "empty": "候補がありません",
+      "tableTitle": "種類 × 難しさ",
+      "tableKind": "種類",
+      "tableCell": "{{kind}}・{{difficulty}}: {{tier}}",
+      "policyTitle": "使用量の方針",
+      "avoid": "避ける使用率",
+      "avoidUnit": "% 以上",
+      "pace": "週次のペース",
+      "paceUnit": "倍を超えたら避ける",
+      "stale": "古いとみなす",
+      "staleUnit": "分を超えたら",
+      "reset": "既定に戻す",
+      "resetConfirm": "委譲の設定を既定に戻しますか。キーは残ります。",
+      "saveFailed": "保存できませんでした: {{error}}",
+      "loadFailed": "読み込めませんでした: {{error}}"
+    }
   }
 }

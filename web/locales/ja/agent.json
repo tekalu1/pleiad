@@ -36,8 +36,9 @@
     "endpointDeleted": "依頼元の会話の接続先は削除されています。依頼元の会話で接続先を選び直してください",
     "aborted": "中断しました",
     "noticeUnknown": "子タスクの完了通知を確認できませんでした。子の会話を確認してください",
-    "notice": "[Pleiad タスク完了通知 / {{taskId}}]\n実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n元の依頼に必要な作業を続けてください。",
-    "noticeMore": "\n続きは ply_task_status の offset: {{offset}} で取得できます。"
+    "notice": "[Pleiad タスク完了通知 / {{taskId}}]\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n元の依頼に必要な作業を続けてください。",
+    "noticeMore": "\n続きは ply_task_status の offset: {{offset}} で取得できます。",
+    "noticeRetry": "利用者が {{of}} を別の委譲先でやり直したタスク\n"
   },
   "tasks": {
     "textLength": "{{name}} は1〜{{max}}文字で指定してください",

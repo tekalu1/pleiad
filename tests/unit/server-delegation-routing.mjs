@@ -31,7 +31,7 @@ export default async function (t) {
   await new Promise(r => jev.listen(0, '127.0.0.1', r));
   const server = await startServer({ dataDir: scratch, env: {
     AGENT_HOST_BACKENDS: 'fake,antigravity', AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"`,
-    FAKE_AGY_EXTRA_MODELS: 'gemini-3.8-flash-high', AGENT_HOST_ROUTING_USAGE: 'on',
+    FAKE_AGY_EXTRA_MODELS: 'gemini-3.8-flash-high,gemini-3.8-pro-high', AGENT_HOST_ROUTING_USAGE: 'on',
     AGENT_HOST_OPENROUTER_API: `http://127.0.0.1:${jev.address().port}/api` } });
   // antigravity の子は親より強い（yolo）ので、委譲のたびに親の会話で 1 回聞かれる。ここでは許す
   const c = await open({ port: server.port, token: server.token, onEvent: async (ev, api) => {
@@ -115,6 +115,51 @@ export default async function (t) {
     await sleep(100);
     const listed = await turnOn(sid, prompt('ply_task_status', { taskId: status.data.taskId }));
     t.ok('ply_task_status でも routing を読める', JSON.parse(listed.events.find(e => e.type === 'tool.result').text).routing?.mode === 'auto');
+
+    t.ok('選んだ候補に効いた枠の使用率を routing に残す（委譲カードの内訳）', r.targetWindows?.length === 2 && r.targetWindows.every(w => typeof w.usedPercent === 'number' && w.label), JSON.stringify(r.targetWindows));
+
+    // ---- 別の候補でやり直す（委譲カードの操作。retryAgentTask）
+    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-pro-high'] } } });
+    let pro;
+    for (let i = 0; i < 100; i++) {
+      pro = (await c.cmd('delegationRouting')).candidates.find(x => x.candidate === 'antigravity:gemini-3.8-pro-high');
+      if (pro?.usable) break;
+      await sleep(100);
+    }
+    t.ok('足した候補も使用量を読んで使えるかを返す', pro?.usable === true, JSON.stringify(pro));
+    const origin = await call(sid, { kind: 'trivial', task: 'agy-retry-origin', context: 'CTX-RETRY-7' });
+    const retryErr = async (args, re, label) => c.cmd('retryAgentTask', { taskId: origin.data.taskId, ...args })
+      .then(() => t.ok(label, false), e => t.ok(label, re.test(e.message), e.message));
+    await retryErr({ candidate: 'antigravity:gemini-3.8-flash-high' }, /同じ/, '元と同じ委譲先ではやり直さない');
+    await retryErr({ candidate: 'claude:haiku' }, /使えません/, '今使えない候補ではやり直さない');
+    await retryErr({ candidate: 'nope' }, /形/, '候補の形が不正なら断る');
+    for (let i = 0; i < 200 && (await c.cmd('agentTasks')).find(x => x.taskId === origin.data.taskId)?.status !== 'completed'; i++) await sleep(100);
+    const asked = await c.cmd('retryAgentTask', { taskId: origin.data.taskId, candidate: 'antigravity:gemini-3.8-pro-high' });
+    t.ok('依頼元より強い承認モードになるなら、作らずに確かめる（confirm）', asked.confirm?.agent && asked.confirm.mode && !asked.task
+      && (await c.cmd('agentTasks')).every(x => x.routing?.retry?.of !== origin.data.taskId), JSON.stringify(asked));
+    const retried = await c.cmd('retryAgentTask', { taskId: origin.data.taskId, candidate: 'antigravity:gemini-3.8-pro-high', approved: true });
+    const rr = retried.task?.routing;
+    t.ok('やり直しは新しいタスク。元のタスクと「人が委譲先を変えた」を routing に残す', retried.task?.taskId !== origin.data.taskId && rr?.mode === 'manual'
+      && rr.retry?.of === origin.data.taskId && rr.retry.by === 'user' && rr.retry.from?.model === 'gemini-3.8-flash-high' && rr.kind === 'trivial'
+      && rr.target.model === 'gemini-3.8-pro-high' && retried.task.model === 'gemini-3.8-pro-high' && retried.task.parentSessionId === sid, JSON.stringify(retried));
+    // 完了通知のターンが終わるまで待ち、依頼元の会話に届いた通知の本文を見る。
+    // agent-tasks.json はサーバーが書き換えている最中に読むと Windows で書き換えが失敗するので、ここでは読まない
+    for (let i = 0; i < 1200 && (await c.cmd('agentTasks')).find(x => x.taskId === retried.task.taskId)?.notification !== 'sent'; i++) await sleep(100);
+    const retriedRow = (await c.cmd('agentTasks')).find(x => x.taskId === retried.task.taskId);
+    t.ok('同じ依頼（context も）を渡し直す。context は一覧・状態には載せない', retriedRow?.task === 'agy-retry-origin' && retriedRow.result.includes('CTX-RETRY-7')
+      && (await c.cmd('agentTasks')).every(x => !('context' in x)), retriedRow?.result);
+    const parentText = JSON.stringify((await c.cmd('loadSession', { sessionId: sid })).messages ?? []);
+    t.ok('やり直したタスクの完了通知には、人がやり直したことを添える', parentText.includes(`${origin.data.taskId} を別の委譲先でやり直した`), retriedRow?.notification);
+    // 動いている元のタスク: 止めるかどうかを選ばせる
+    const slow = await call(null, { kind: 'trivial', backend: 'fake', task: 'slow' });
+    t.ok('（準備）止まらない子を固定で作る', Boolean(slow.data?.taskId), slow.text.slice(0, 200));
+    for (let i = 0; i < 200 && (await c.cmd('agentTasks')).find(x => x.taskId === slow.data.taskId)?.status !== 'running'; i++) await sleep(50);
+    await c.cmd('retryAgentTask', { taskId: slow.data.taskId, candidate: 'antigravity:gemini-3.8-pro-high', approved: true })
+      .then(() => t.ok('動いている元のタスクは、止めるかどうかを選ばないと断る', false), e => t.ok('動いている元のタスクは、止めるかどうかを選ばないと断る', /止める/.test(e.message), e.message));
+    const stopped = await c.cmd('retryAgentTask', { taskId: slow.data.taskId, candidate: 'antigravity:gemini-3.8-pro-high', approved: true, stop: true });
+    const slowRow = (await c.cmd('agentTasks')).find(x => x.taskId === slow.data.taskId);
+    t.ok('stop なら元のタスクを止めてからやり直す', stopped.task?.routing?.retry?.of === slow.data.taskId && ['cancelling', 'cancelled'].includes(slowRow.status), slowRow.status);
+    await c.cmd('setDelegationRouting', { settings: { tiers: null } });
 
     // ---- 全部だめ・無効
     await c.cmd('setDelegationRouting', { settings: { avoidPercent: 0 } }).then(() => t.ok('不正な設定は断る', false), e => t.ok('不正な設定は断る', /avoidPercent/.test(e.message), e.message));
