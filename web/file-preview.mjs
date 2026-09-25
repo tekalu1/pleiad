@@ -526,10 +526,13 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   });
   document.addEventListener('click', event => {
     const anchor = event.target.closest('a');
-    if (!anchor || (!anchor.closest('#log') && !anchor.closest('.file-preview-document'))) return;
+    if (!anchor || (!anchor.closest('#log') && !anchor.closest('#workBody') && !anchor.closest('.file-preview-document'))) return;
     const ref = anchor.dataset.filePath ? { path:anchor.dataset.filePath, line:Number(anchor.dataset.fileLine) || null } : fileReference(anchor.getAttribute('href'));
     if (!ref) return;
     event.preventDefault();
+    // サブエージェントの会話（作業のダイアログ）のリンクは、ダイアログを閉じて右パネルで開く。
+    // 横取りしないとページごとファイルへ移り、アプリの殻では戻る手段が無くなる
+    anchor.closest('dialog[open]')?.close();
     const base = anchor.closest('.file-preview-document') ? file?.path : null;
     open(ref, anchor, base);
   });
