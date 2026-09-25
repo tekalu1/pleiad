@@ -1651,7 +1651,30 @@
     "waiting": "Waiting for agents to connect. Refresh after they connect.",
     "loading": "Loading…",
     "checkedAt": "Last fetched: {{when}}",
-    "failed": "Couldn't fetch. Check the connection and refresh."
+    "failed": "Couldn't fetch. Check the connection and refresh.",
+    "header": {
+      "title": "Usage",
+      "unauthorized": "Not authorized",
+      "chipLabel": "{{agent}} usage: {{text}}",
+      "chipTitle": "{{agent}} · {{label}} {{percent}} used / {{reset}}",
+      "limitUntil": "Limit until {{time}}",
+      "limitShort": "Limit {{time}}",
+      "stale": "Couldn't fetch (value from {{when}})",
+      "hoursMinutes": "{{hours}} h {{minutes}} min",
+      "hours": "{{hours}} h",
+      "minutes": "{{minutes}} min",
+      "resetIn": "Resets in {{duration}}",
+      "resetAtIn": "Resets at {{time}} (in {{duration}})",
+      "resetOn": "Resets {{when}}",
+      "refresh": "Refresh usage",
+      "thisConversation": "This conversation",
+      "group": "{{name}} group",
+      "otherGroups_one": "{{count}} other group",
+      "otherGroups_other": "{{count}} other groups",
+      "otherGroupsBelow_one": "{{count}} other group (under {{percent}}%)",
+      "otherGroupsBelow_other": "{{count}} other groups (all under {{percent}}%)",
+      "openSettings": "See tokens and cost in Settings →"
+    }
   },
   "updates": {
     "phase": {

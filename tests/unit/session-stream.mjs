@@ -26,6 +26,8 @@ export default async function (t) {
   const context = vm.createContext({
     setTimeout: () => 1, clearTimeout: noop,
     completionNotifications,
+    // ヘッダーの使用量のチップ（web/header-usage.mjs）。ターンの終わりで取り直す。このテストの対象外
+    headerUsage: { turnEnded: noop },
     filePreview: { sessionChanged: noop },
     // 狭い画面の引き出し（client.mjs の setDrawer）。会話を開くと閉じる。このテストの対象外
     setDrawer: noop,

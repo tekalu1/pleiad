@@ -23,6 +23,8 @@ const cases = [
   await import('./unit/server-agent-tasks.mjs'),
   await import('./unit/usage.mjs'),
   await import('./unit/antigravity-usage.mjs'),
+  // 会話のヘッダーの使用量のチップ（web/header-usage.mjs）: 枠の選び方・アカウント・上限・グループのまとめ
+  await import('./unit/header-usage.mjs'),
   await import('./unit/effort.mjs'),
   await import('./unit/composer-agy.mjs'),
   // 互換の接続先（保存・確認・キーを出さない・env と Codex の上書き）。偽の互換 API とだけ話す

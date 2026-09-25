@@ -120,6 +120,10 @@
       <button type="button" class="btn ctxlink" id="contextEntry" data-i18n-title="session.context.entryTitle" hidden><svg class="i" viewBox="0 0 24 24"><path d="M4 4h9l5 5v11H4z"/><path d="M13 4v5h5"/></svg><span data-i18n="session.context.label"></span><span class="n mono" id="contextEntryCount" hidden></span><span class="chg" id="contextEntryChanged" hidden data-i18n="session.context.changed"></span></button>
       <button type="button" class="btn" id="agentTasksEntry" hidden data-i18n="dialog.tasks.title"></button>
       <button type="button" class="btn" id="backgroundEntry" hidden data-i18n="session.terminal"></button>
+      <!-- 使用量のチップ（web/header-usage.mjs、docs/design-system.md「ヘッダーの使用量」）。この会話のエージェントの枠のうち使用率がいちばん高いもの。
+           枠を 1 つも持たないエージェント（互換の接続先・未対応）では出さない。押すと全エージェントの一覧（#usagePop） -->
+      <button type="button" class="btn usage-chip" id="usageChip" hidden aria-haspopup="dialog" aria-expanded="false" aria-controls="usagePop"></button>
+      <div class="pop usage-pop" id="usagePop" role="dialog" data-i18n-aria-label="usage.header.title" hidden></div>
       <!-- この会話の操作（脇の行の右クリックと同じメニュー）。狭い画面・タッチのときだけ出す（脇が引き出しで隠れているため） -->
       <button type="button" class="btn btn-icon more-btn" id="sessionMore" hidden aria-haspopup="menu" data-i18n-title="session.more" data-i18n-aria-label="session.more"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></button>
     </header>
