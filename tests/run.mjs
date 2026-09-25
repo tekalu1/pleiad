@@ -23,6 +23,10 @@ const cases = [
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
+  // 委譲先の自動振り分け: 規則・段・使用量で飛ばす・Claude のアカウント・判定器（偽の fetch）・使用量の取り置き
+  await import('./unit/delegation-routing.mjs'),
+  // 同じくサーバー全体: kind の検査・自動で選んで子を作る・記録・設定とキーの口（偽の判定器と偽の agy）
+  await import('./unit/server-delegation-routing.mjs'),
   await import('./unit/usage.mjs'),
   await import('./unit/antigravity-usage.mjs'),
   // 会話のヘッダーの使用量のチップ（web/header-usage.mjs）: 枠の選び方・アカウント・上限・グループのまとめ

@@ -15,6 +15,7 @@
 //   mode / model    … 承認モードとモデルの記憶（人間だけが変えられる）
 //   readAt          … 確認済みの完了時刻（completedAt のうち人が見たもの）。ホストに 1 つで、どの端末・窓から見ても同じ
 //                     （markRead。大きい方だけを採り、completedAt を超えない。docs/design.md「完了・未確認」）
+//   routing         … 委譲の子の会話が、どう選ばれたか（ply_delegate の返り値の routing と同じ形。core/delegation-routing.mjs）
 //   agentLocale     … 会話の言語（ja|en）。エージェントに渡す文（指示・ツールの説明・通知）の言語。会話を始めたときに
 //                     画面の言語で決め、以後は変えない（core/server.mjs。docs/design.md「多言語対応」）
 import fs from "node:fs/promises";
@@ -340,7 +341,7 @@ export const dataDir = DIR;
 
 /** Host-only data; durable before acknowledging the client. Roll back a failed write. */
 export async function setSessionData(sessionId, field, value) {
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale"].includes(field)) throw new Error(t("store.invalidSessionField"));
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];

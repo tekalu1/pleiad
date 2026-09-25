@@ -28,6 +28,11 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000 } = {}
       AGENT_HOST_TOKEN: token,
       // Claude のトークンの持ち主の確認（api.anthropic.com）へは送らない。確かめるテストは偽の送り先を渡す
       AGENT_HOST_ANTHROPIC_API: "off",
+      // 委譲の振り分け用の使用量を定期的に取らない（agy などの子プロセスを勝手に起こさない）。確かめるテストは "on" を渡す
+      AGENT_HOST_ROUTING_USAGE: "off",
+      // 判定器（OpenRouter の Jev・Cerebras）へは送らない。キーを登録するテストは偽の判定器を渡す
+      AGENT_HOST_OPENROUTER_API: "http://127.0.0.1:9",
+      AGENT_HOST_CEREBRAS_API: "http://127.0.0.1:9",
       // 言語は日本語に固定する。テストは日本語の文言に依存している（CI の OS の言語で変わらないように）
       AGENT_HOST_LOCALE: process.env.AGENT_HOST_LOCALE || "ja",
       ...(dataDir ? { AGENT_HOST_DATA: dataDir } : {}),
