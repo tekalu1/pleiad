@@ -9,7 +9,7 @@ import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
 import { createAgentTasks } from './agent-tasks.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
-import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RoutingSettingsError, pinnedRouting, route, candidateStates, settingsWarnings } from './delegation-routing.mjs';
+import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode } from './modes.mjs';
@@ -306,6 +306,42 @@ async function delegationRoutingState() {
 }
 // i18n-dynamic: server:routing.settings.
 const routingSettingsError = e => e instanceof RoutingSettingsError ? new Error(t(`routing.settings.${e.code}`, e.detail)) : e;
+
+/**
+ * 委譲カードの「別の候補でやり直す」（docs/agent-delegation.md「別の候補でやり直す」）。人が選んだ候補で、同じ依頼を
+ * 新しいタスクとして作る。元のタスクと「人が委譲先を変えた」ことは新しいタスクの routing.retry に残す（mode: manual）。
+ * - 候補は今使えるものだけ（使用量の取り置きで確かめる）。元と同じ委譲先は断る
+ * - 元のタスクが動いていれば、止めるかどうか（stop）を画面で確かめてから来る。stop が無ければ断る
+ * - 子の承認モードは ply_delegate と同じく依頼元の会話の強さまで。それを超えるなら { confirm } を返し、approved で来たら作る
+ */
+async function retryAgentTask({ taskId, candidate, stop, approved } = {}) {
+  const original = agentTasks.get(taskId);
+  if (!original) throw new Error(t('delegation.taskNotFound'));
+  const parsed = parseCandidate(candidate);
+  if (!parsed) throw new Error(t('routing.retry.badCandidate'));
+  const from = original.routing?.target ?? { backend: original.backend, model: original.model, account: null };
+  if (parsed.backend === from.backend && parsed.model === from.model) throw new Error(t('routing.retry.same'));
+  const check = checkCandidate(candidate, { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now() });
+  const child = getBackend(parsed.backend);
+  if (!check.ok || !child) throw new Error(t('routing.retry.unusable', { candidate, reason: check.ok ? 'unavailable' : check.reason }));
+  const owner = original.parentSessionId;
+  const parentBackend = await resolveBackendForSession(owner);
+  const parentMode = await resolveMode(owner, undefined, parentBackend);
+  if (!canDelegate(parentBackend.modes()[parentMode])) throw new Error(t('routing.retry.readOnly'));
+  const decided = resolveDelegatedMode({ parentMode, parentModes: parentBackend.modes(), childModes: child.modes() });
+  if (decided.escalation && approved !== true) return { confirm: { agent: child.label, mode: child.modes()[decided.mode]?.label ?? decided.mode } };
+  if (['queued', 'running', 'cancelling'].includes(original.status)) {
+    if (typeof stop !== 'boolean') throw new Error(t('routing.retry.stopChoice'));
+    if (stop) await agentTasks.cancel(original.taskId);
+  }
+  const request = agentTasks.request(original.taskId);
+  const routing = manualRouting({ kind: original.routing?.kind ?? null, candidate, check, of: original.taskId, from });
+  const task = await agentTasks.call(owner, 'ply_delegate', { kind: routing.kind, task: request.task, ...(request.context ? { context: request.context } : {}),
+    cwd: original.cwd, backend: parsed.backend, model: parsed.model, account: check.account ?? '', routing, mode: decided.mode }, undefined, await agentLocaleFor(owner));
+  // 子が使い始めるので、振り分けに使う使用量を取り直しておく（待たない）
+  if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
+  return { task };
+}
 function agentConnection(turn) {
   return conversationConnection(turn).runtime;
 }
@@ -1386,17 +1422,21 @@ agentTasks = await createAgentTasks({
     const parent = runtime.turns.get(owner);
     // エラーは ply_delegate の結果として依頼元のエージェントが読む。子の会話は依頼元の会話の言語を継ぐ
     const lng = parent?.agentLocale ?? await agentLocaleFor(owner);
-    if (!parent || signal?.aborted) throw new Error(agentT(lng, 'delegation.parentEnded'));
+    // 人が委譲カードの「別の候補でやり直す」で作るタスク（retryAgentTask）は、依頼元のターンの外で作る。
+    // 作業場所は元のタスクの絶対パスを渡すので、依頼元のターンが無くても決まる
+    const manual = args.routing?.mode === 'manual';
+    if ((!parent && !manual) || signal?.aborted) throw new Error(agentT(lng, 'delegation.parentEnded'));
     const backend = getBackend(args.backend);
     if (!backend) throw new Error(agentT(lng, 'delegation.backendDisabled'));
-    const cwd = path.resolve(parent.info.cwd, args.cwd ?? '.');
+    const cwd = path.resolve(parent?.info.cwd ?? (await store.get(owner)).cwd ?? process.cwd(), args.cwd ?? '.');
     if (!(await fs.stat(cwd)).isDirectory()) throw new Error(agentT(lng, 'delegation.cwdNotDirectory'));
-    // 自動の振り分けで選んだ委譲先（agentBridge の call の routeDelegation）。候補は公式の使用枠で選んでいるので、
-    // 接続先は継がず公式で走らせ、アカウントも選んだものを使う（docs/agent-delegation.md「委譲先の自動振り分け」）
-    const auto = args.routing?.mode === 'auto';
+    // 自動の振り分けで選んだ委譲先（agentBridge の call の routeDelegation）と、人が使用量を見て選び直した委譲先。
+    // 候補は公式の使用枠で選んでいるので、接続先は継がず公式で走らせ、アカウントも選んだものを使う
+    // （docs/agent-delegation.md「委譲先の自動振り分け」）
+    const auto = args.routing?.mode === 'auto' || manual;
     // 接続先（決定 3）: 同じエージェントへの委譲なら親の会話の接続先を継ぐ。違うエージェントへは公式に戻す（形式が合わない）
     const parentEndpoint = (await store.get(owner)).compatEndpoint ?? '';
-    const inherited = endpointCapable(backend) && !auto ? delegatedEndpoint(parent.backend?.id, backend.id, parentEndpoint) : '';
+    const inherited = endpointCapable(backend) && !auto ? delegatedEndpoint(parent?.backend?.id, backend.id, parentEndpoint) : '';
     // 継ぐべき接続先が消えていたら委譲を断る（黙って公式で走らせない）
     if (inherited && !(await compatEndpoints.has(inherited, backend.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
     const endpoint = inherited;
@@ -1459,8 +1499,10 @@ agentTasks = await createAgentTasks({
     // 完了通知は依頼元の会話の言語で。人間の発言と見分ける印は文言ではなく、送った本文のハッシュ（taskNotices。runTurn の internal）
     const lng = await ensureAgentLocale(owner);
     const more = task.result.length > 16000 ? agentT(lng, 'delegation.noticeMore', { offset: 16000 }) : '';
+    // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
+    const retry = task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '';
     const prompt = agentT(lng, 'delegation.notice', { taskId: task.taskId, backend: task.backend, status: task.status, task: task.task,
-      result: task.result.slice(0, 16000), more, error: task.error ?? '' });
+      result: task.result.slice(0, 16000), more, error: task.error ?? '', retry });
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
 });
@@ -2285,6 +2327,8 @@ wss.on("connection", (ws, req) => {
           if (!task) throw new Error(t('delegation.taskNotFound'));
           await agentTasks.cancel(task.taskId); return reply(true, agentTasks.get(task.taskId));
         }
+        // 委譲カードの「別の候補でやり直す」。{ taskId, candidate, stop?, approved? } -> { task } か、承認モードが強くなるときは { confirm }
+        case 'retryAgentTask': return reply(true, await retryAgentTask(msg.args ?? {}));
 
         // 委譲先の自動振り分けの設定（設定 › 委譲）。タスクごとの振り分けの記録は agentTasks の各行の routing。
         // キーは返さない（hasKey だけ）。refresh: true なら使用量を取り直してから返す

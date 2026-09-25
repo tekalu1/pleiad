@@ -965,6 +965,56 @@ main.dropping #log{background:var(--surface-1)}
 .activity-tip:has(.activity-none){display:none}
 /* 会話の中の委譲のカードから、その子をバックグラウンドのダイアログで開く */
 .tc-open{margin-left:auto;font-size:var(--fs-xs);padding:0 8px;color:var(--ink-blue)}
+/* 委譲先を自動で選んだカード（docs/design-system.md「委譲カード」）。「自動」は「既定」の札と同じ弱い字。
+   1 行の理由は見出しの残りの幅に入れ、入らなければ … で切る（全文は title と開いた内訳に） */
+.tc-auto,.bg-auto{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
+.bg-row-meta>.bg-auto{flex:none;overflow:visible}
+.tc-route{flex:1 1 12em;min-width:0;color:var(--ink);font-size:var(--fs-s);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-detail{margin:4px 0 10px;color:var(--ink);font-size:var(--fs-s)}
+.rt-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px 16px;margin:0 0 10px}
+.rt-facts>div{min-width:0}
+.rt-facts dt{font-size:var(--fs-xs);color:var(--ink-weak)}
+.rt-facts dd{margin:0;overflow-wrap:anywhere}
+.rt-cands{display:flex;flex-direction:column;gap:6px}
+.rt-cand{background:var(--surface-1);border-radius:var(--r-m);padding:8px 12px;min-width:0}
+.rt-cand.used{background:var(--surface-2)}
+.rt-cand-head{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
+.rt-cand-head b{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.rt-n{color:var(--ink-weak);font-size:var(--fs-xs);min-width:1em}
+.rt-state{margin-left:auto;font-size:var(--fs-xs);color:var(--ink-weak)}
+.rt-state.used{color:var(--ink);font-weight:600}
+.rt-state.used::before{content:"✓ ";color:var(--ink-blue)}
+.rt-usage{margin-top:6px}
+.rt-usage.usage-rows .wl{max-width:min(20em,40vw)}
+.rt-note{display:block;margin-top:4px;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
+.rt-retried:empty{display:none}
+.rt-retried{margin-top:8px;display:flex;flex-direction:column;gap:2px}
+.rt-retried-row{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
+.rt-retried-label,.rt-retried-state{font-size:var(--fs-xs);color:var(--ink-weak)}
+.rt-retried-row .btn{font-size:var(--fs-xs);padding:0 8px;color:var(--ink-blue)}
+.rt-actions{display:flex;justify-content:flex-end;margin-top:8px}
+.rt-actions .btn{color:var(--ink-blue);font-size:var(--fs-s)}
+.rt-retry{margin-top:8px;padding:12px 14px;background:var(--surface-1);border-radius:var(--r-m)}
+.rt-retry-title{font-weight:600;margin-bottom:6px}
+.rt-retry-list{display:flex;flex-direction:column;gap:2px}
+.rt-option{display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border-radius:var(--r-s);cursor:pointer;min-width:0}
+.rt-option:hover{background:var(--surface-2)}
+.rt-option input{margin-top:3px;accent-color:var(--ink-blue);flex:none}
+.rt-option-text{display:flex;flex-direction:column;min-width:0}
+.rt-option-name{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.rt-option small{font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
+.rt-retry p{margin:8px 0 0}
+.rt-retry-running,.rt-retry-empty,.rt-retry-note{color:var(--ink-weak);font-size:var(--fs-xs)}
+.rt-retry-note:empty{display:none}
+.rt-retry-warn{color:var(--ink-strong);font-weight:600;font-size:var(--fs-xs)}
+.rt-retry-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-top:10px}
+/* 狭い画面: 理由の行は見出しの下の 1 行に回す。内訳は 2 列、使用量は枠の名前を上の行に */
+@media (max-width:520px){
+  .tc-route{order:3;flex-basis:100%;padding-left:1em}
+  .rt-facts{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .rt-usage.usage-rows{grid-template-columns:minmax(0,1fr) auto}
+  .rt-usage.usage-rows .wl{grid-column:1/-1;max-width:none}
+}
 .work-head{font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.04em;margin-top:6px}
 /* 行の左端の状態の印（design-system §2.2）。弧（.run）と同じ 14px。終わった子は静止した線画 */
 .state-mark{display:inline-grid;place-items:center;width:14px;height:14px;color:var(--ink);flex:none}

@@ -1,0 +1,64 @@
+// 委譲カードの振り分けの理由と設定 › 委譲の組み立て（web/delegation-routing-view.mjs・web/delegation-settings.mjs）。DOM の大半は触らず、文と並びだけ見る
+import assert from 'node:assert/strict';
+import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackText, retryCandidates, usageSummary, isAutoRouting, fallbackName, routingDetail } from '../../web/delegation-routing-view.mjs';
+import { diffFromDefaults } from '../../web/delegation-settings.mjs';
+
+export const name = 'delegation-routing-view';
+export const title = '委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分';
+
+export default async function (t) {
+  const names = { backend: id => ({ codex: 'Codex', claude: 'Claude Code' })[id] ?? id, model: (_b, m) => ({ sonnet: 'Sonnet', 'gpt-6-sol': 'gpt-6-sol' })[m] ?? m };
+  const routing = { mode: 'auto', kind: 'implement', judge: 'jev', signals: { diagnose: false, choose: true, long_procedure: false, many_parts: false, writes_shared: true, security_gate: false },
+    difficulty: 'mid', baseTier: 't3', tier: 't3', target: { backend: 'codex', model: 'gpt-6-sol', account: null },
+    skipped: [{ candidate: 'claude:sonnet', tier: 't3', reason: 'quota_high', window: { label: '週次', minutes: 10080, usedPercent: 73.4 } }], usageAt: '2026-09-26T05:32:08.000Z', fallback: null };
+  assert.equal(routingLine(routing, names), '実装・中 → Codex gpt-6-sol · Sonnet は週次 73% で飛ばした');
+  assert.equal(routingLine({ ...routing, skipped: [] }, names), '実装・中 → Codex gpt-6-sol');
+  assert.equal(skippedPhrase({ candidate: 'claude:sonnet', reason: 'pace_high', window: { label: '週次', pace: 1.83 } }, names), 'Sonnet は週次のペースが 1.83 倍で飛ばした');
+  assert.equal(skippedPhrase({ candidate: 'claude:sonnet', reason: 'unavailable' }, names), 'Sonnet は使えないため飛ばした');
+  t.ok('1 行の理由は「種類・難しさ → 委譲先」と、飛ばした最初の候補と理由', true);
+
+  assert.equal(judgeLine(routing), 'Jev');
+  assert.equal(judgeLine({ ...routing, judge: 'cerebras', fallback: 'timeout' }), 'Cerebras · Jev: 時間切れ');
+  assert.equal(judgeLine({ ...routing, judge: 'cerebras', escalated: true }), 'Cerebras（Jev が迷ったので聞き直した）');
+  assert.equal(judgeLine({ ...routing, judge: 'none', fallback: 'judge_none' }), '判定しない種類（難しさは中）');
+  assert.equal(judgeLine({ ...routing, judge: 'none', fallback: 'no_key' }), '判定できなかった: キーが無い（難しさは中）');
+  assert.equal(fallbackText('http_503'), 'HTTP 503');
+  assert.equal(fallbackText('something_new'), 'something_new', '知らない理由はコードのまま');
+  assert.deepEqual(yesSignals(routing), ['やり方の選択', '共有物への書き込み']);
+  assert.equal(tierLine({ ...routing, tier: 't4' }), '段 4（表では 段 3。候補が使えず上げた）');
+  t.ok('判定の一行（使った判定器・もう一方に落ちた・聞き直した・判定しない・失敗）と手がかり・段', true);
+
+  assert.equal(isAutoRouting(routing), true);
+  assert.equal(isAutoRouting({ ...routing, mode: 'pinned' }), false);
+  assert.equal(isAutoRouting({ ...routing, mode: 'manual' }), false, '人が選び直したものは「自動」ではない');
+  assert.equal(isAutoRouting(null), false);
+  assert.equal(fallbackName('backend', 'claude', 'claude'), 'Claude Code');
+  assert.equal(fallbackName('model', 'claude', 'opus'), 'Opus');
+  assert.equal(fallbackName('model', 'codex', 'gpt-6-sol'), 'gpt-6-sol');
+  t.ok('自動の印は mode: auto だけ。語彙を読めないエージェントの名前を補う', true);
+
+  const cands = [
+    { candidate: 'antigravity:gemini-3.8-flash-high', backend: 'antigravity', model: 'gemini-3.8-flash-high', tiers: ['t1', 't2'], usable: true, windows: [] },
+    { candidate: 'codex:gpt-6-sol', backend: 'codex', model: 'gpt-6-sol', tiers: ['t3'], usable: true, windows: [] },
+    { candidate: 'claude:sonnet', backend: 'claude', model: 'sonnet', tiers: ['t2', 't3'], usable: false, reason: 'quota_high', windows: [] },
+    { candidate: 'claude:opus', backend: 'claude', model: 'opus', tiers: ['t4'], usable: true, account: 'work',
+      accounts: [{ account: '', windows: [{ label: '週次', usedPercent: 90 }] }, { account: 'work', windows: [{ label: '週次', usedPercent: 12.4 }, { label: '5時間', usedPercent: null }] }] },
+    { candidate: 'codex:gpt-6-astra', backend: 'codex', model: 'gpt-6-astra', tiers: ['tv'], usable: true, windows: [] },
+  ];
+  assert.deepEqual(retryCandidates(cands, routing).map(c => c.candidate), ['claude:opus', 'codex:gpt-6-astra', 'antigravity:gemini-3.8-flash-high'],
+    '使えるものだけ・元の委譲先を除く・元の段から上、次に下');
+  assert.equal(usageSummary(cands[3]), '週次 12%', 'Claude は使うアカウントの枠。率の分からない枠は出さない');
+  t.ok('やり直しの候補は、今使えるものを元の段から上へ、次に下の段の順', true);
+
+  const detail = routingDetail(routing, { names });
+  const listed = detail.querySelectorAll('.rt-cand');
+  assert.ok(listed.length === 2 && listed[1].className.includes('used') && !listed[0].className.includes('used'), '飛ばした候補と使った候補を順に');
+  assert.equal(detail.querySelector('.rt-retry-open'), null, 'onRetry が無ければやり直しの口を出さない');
+  t.ok('内訳は試した候補を順に並べ、使ったものに印', true);
+
+  const defaults = { judgeByKind: { trivial: 'jev', visual: 'none' }, tiers: { t1: ['a:b'], t2: ['c:d'] }, avoidPercent: 80 };
+  assert.deepEqual(diffFromDefaults({ trivial: 'cerebras', visual: 'none' }, defaults.judgeByKind), { trivial: 'cerebras' });
+  assert.equal(diffFromDefaults({ trivial: 'jev', visual: 'none' }, defaults.judgeByKind), null, '全部既定なら null（既定に戻す）');
+  assert.deepEqual(diffFromDefaults({ t1: ['a:b'], t2: ['d:e', 'c:d'] }, defaults.tiers), { t2: ['d:e', 'c:d'] });
+  t.ok('設定は既定と違う項目だけを送る（既定値を凍らせない）', true);
+}

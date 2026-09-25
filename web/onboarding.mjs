@@ -1,7 +1,7 @@
 import { isComposingKey } from './keyboard.mjs';
 import { t } from './i18n.mjs';
 
-const pages = [['setup', 'setupTab', 'setupPanel'], ['usage', 'usageTab', 'usagePanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['context', 'openContext', 'contextPanel'], ['remote', 'remoteTab', 'remotePanel'], ['updates', 'updatesTab', 'updatesPanel']];
+const pages = [['setup', 'setupTab', 'setupPanel'], ['usage', 'usageTab', 'usagePanel'], ['delegation', 'delegationTab', 'delegationPanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['context', 'openContext', 'contextPanel'], ['remote', 'remoteTab', 'remotePanel'], ['updates', 'updatesTab', 'updatesPanel']];
 
 // A failed status check is not evidence that the account is unconfigured.
 export function shouldShowOnboarding(status, auth) {

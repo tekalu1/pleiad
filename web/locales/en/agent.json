@@ -36,8 +36,9 @@
     "endpointDeleted": "The endpoint of the requesting conversation has been deleted. Choose an endpoint again in the requesting conversation.",
     "aborted": "Aborted.",
     "noticeUnknown": "Could not confirm the completion notices of the child tasks. Check the child conversation.",
-    "notice": "[Pleiad task completion notice / {{taskId}}]\nBackend: {{backend}}\nStatus: {{status}}\nTask: {{task}}\nResult (the child agent's report):\n{{result}}{{more}}\n{{error}}\nContinue the work needed for the original request.",
-    "noticeMore": "\nRead the rest with ply_task_status and offset: {{offset}}."
+    "notice": "[Pleiad task completion notice / {{taskId}}]\n{{retry}}Backend: {{backend}}\nStatus: {{status}}\nTask: {{task}}\nResult (the child agent's report):\n{{result}}{{more}}\n{{error}}\nContinue the work needed for the original request.",
+    "noticeMore": "\nRead the rest with ply_task_status and offset: {{offset}}.",
+    "noticeRetry": "The user retried {{of}} with another delegate.\n"
   },
   "tasks": {
     "textLength": "{{name}} must be 1 to {{max}} characters.",

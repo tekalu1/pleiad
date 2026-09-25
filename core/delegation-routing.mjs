@@ -266,16 +266,30 @@ export function checkCandidate(candidate, { usage, settings, now }) {
         accounts: results.map(({ account, label, reason, window }) => ({ account, label, reason, ...(window ? { window } : {}) })) };
     }
     usable.sort((a, b) => weeklyPace(a.windows, now) - weeklyPace(b.windows, now) || fiveHour(a.windows, now) - fiveHour(b.windows, now));
-    return { ok: true, account: usable[0].account, checkedAt };
+    return { ok: true, account: usable[0].account, checkedAt, windows: usable[0].windows.map(w => brief(w, usedNow(w, now))) };
   }
-  const verdict = judgeWindows(windowsFor(parsed.backend, parsed.model, entry.windows), policy);
-  return { ...verdict, account: parsed.backend === 'claude' ? '' : null, checkedAt };
+  const windows = windowsFor(parsed.backend, parsed.model, entry.windows);
+  const verdict = judgeWindows(windows, policy);
+  return { ...verdict, account: parsed.backend === 'claude' ? '' : null, checkedAt, ...(verdict.ok ? { windows: windows.map(w => brief(w, usedNow(w, now))) } : {}) };
 }
 
 /** 振り分けの記録（ply_delegate の返り値の routing。タスクと子会話のメタデータにも同じ形で残す） */
 export function pinnedRouting({ kind, backend, model = null }) {
   return { mode: 'pinned', kind, judge: null, signals: null, probabilities: null, difficulty: null, tier: null,
     target: { backend, model: model ?? null, account: null }, skipped: [], usageAt: null, fallback: null };
+}
+
+/**
+ * 人が委譲カードの「別の候補でやり直す」で選んだ委譲先の記録。元のタスク（retry.of）と、元の委譲先（retry.from）に結び付ける。
+ * 判定はしていないので judge などは null。check は checkCandidate の結果（使える候補だけを渡す）
+ */
+export function manualRouting({ kind, candidate, check, of, from }) {
+  const { backend, model } = parseCandidate(candidate);
+  return { mode: 'manual', kind, judge: null, signals: null, probabilities: null, difficulty: null, tier: null,
+    target: { backend, model, account: check.account ?? null }, skipped: [],
+    usageAt: check.checkedAt == null ? null : new Date(check.checkedAt).toISOString(), fallback: null,
+    ...(check.windows ? { targetWindows: check.windows } : {}),
+    retry: { of, from: from ? { backend: from.backend ?? null, model: from.model ?? null, account: from.account ?? null } : null, by: 'user' } };
 }
 
 /**
@@ -296,7 +310,10 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
     const times = seen.filter(v => v != null);
     return { mode: 'auto', kind, judge: judged.judge ?? 'none', signals: judged.signals ?? null, probabilities: judged.probabilities ?? null,
       difficulty, baseTier: base, tier: target?.tier ?? null, target: target ? { backend: target.backend, model: target.model, account: target.account } : null,
-      skipped, usageAt: target ? iso(target.checkedAt) : times.length ? iso(Math.min(...times)) : null, fallback: judged.fallback ?? null };
+      // 選んだ候補に効いた枠の今の使用率（委譲カードの内訳に出す。飛ばした候補は skipped[].window）
+      ...(target?.windows ? { targetWindows: target.windows } : {}),
+      skipped, usageAt: target ? iso(target.checkedAt) : times.length ? iso(Math.min(...times)) : null, fallback: judged.fallback ?? null,
+      ...(judged.escalated ? { escalated: true } : {}) };
   };
   for (const tier of sequence) {
     for (const candidate of settings.tiers[tier] ?? []) {
@@ -304,7 +321,7 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
       if (check.checkedAt != null) seen.push(check.checkedAt);
       if (check.ok) {
         const { backend, model } = parseCandidate(candidate);
-        return { ok: true, routing: routing({ tier, backend, model, account: check.account, checkedAt: check.checkedAt }) };
+        return { ok: true, routing: routing({ tier, backend, model, account: check.account, checkedAt: check.checkedAt, windows: check.windows }) };
       }
       skipped.push({ candidate, tier, reason: check.reason, ...(check.window ? { window: check.window } : {}), ...(check.accounts ? { accounts: check.accounts } : {}),
         ...(check.checkedAt != null ? { checkedAt: iso(check.checkedAt) } : {}) });

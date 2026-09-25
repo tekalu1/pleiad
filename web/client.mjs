@@ -32,6 +32,8 @@ import { setupSlashSkills } from "./slash-skills.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
+import { isAutoRouting, routingLine, routingDetail, retryPanel, retryCandidates, splitCandidate, fallbackName } from './delegation-routing-view.mjs';
+import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
@@ -995,6 +997,8 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); return; }
   // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
   if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') { remoteSettings.event(ev); return; }
+  // 委譲の振り分けの設定・キー・使用量が変わった。設定 › 委譲を開いていれば取り直す
+  if (ev.type === 'delegationRoutingChanged') { delegationSettings.event(ev); return; }
   if (!isMine(ev)) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
@@ -1114,7 +1118,7 @@ function onEvent(ev, replay = false) {
     // ツールの戻り。対応するカードに結果を差し込む（別の吹き出しにはしない）
     case "tool.result": {
       const card = state.toolCards.get(ev.id);
-      if (card) { applyToolResult(card, ev); noteEndpointFailure(card, ev); linkDelegateCard(card); }
+      if (card) { applyToolResult(card, ev); noteEndpointFailure(card, ev); linkDelegateCard(card, null, ev); }
       return;
     }
 
@@ -1311,6 +1315,8 @@ function applyRunning(work) {
   activity.work();
   // 開いているダイアログは一覧を描き直し、選んでいる子が動いていれば続きを読み直す（読んでいる位置は保つ）
   if ($("workDialog").open) renderBackground();
+  // 会話の中の委譲カード（振り分けの記録・やり直しの行）
+  paintDelegateCards();
   // 走り出したばかりのセッションはまだ一覧に無い。そのときだけ取り直す
   for (const id of state.runningIds) {
     if (state.sessions.some((x) => x.id === id) || state.askedFor.has(id)) continue;
@@ -2061,7 +2067,7 @@ function backgroundItems() {
       key: `t:${task.taskId}`, group: 'agent', source: 'task', title: task.task, backend: task.backend,
       model: task.model || null, effort: task.effort || null, status: TASK_MARK[task.status] ?? null,
       taskStatus: waiting ? 'waiting' : task.status, live, waiting, startedAt: task.createdAt ?? null, endedAt: live ? null : task.updatedAt ?? null,
-      childId: task.sessionId, taskId: task.taskId, error: task.error, notification: task.notification,
+      childId: task.sessionId, taskId: task.taskId, error: task.error, notification: task.notification, routing: task.routing ?? null,
     });
   }
   for (const { task, entry } of backgroundHere()) items.push({
@@ -2140,6 +2146,12 @@ function listRow(item) {
   row.append(el('span', 'bg-row-time mono', elapsedText(item)));
   const meta = el('span', 'bg-row-meta');
   if (item.group === 'agent') {
+    // 委譲先を自動で選んだタスクは、モデル名の前に「自動」（docs/design-system.md「バックグラウンド」）
+    if (isAutoRouting(item.routing)) {
+      const auto = el('span', 'bg-auto', t('routing.auto'));
+      auto.title = t('routing.autoTitle');
+      meta.append(auto);
+    }
     meta.append(backendLogo(item.backend, labelOf(item.backend)));
     const model = modelText(item);
     if (model) meta.append(el('span', 'bg-model', model));
@@ -2455,7 +2467,7 @@ const isDelegateTool = (name) => /(^|[_./])ply_delegate$/.test(String(name ?? ''
  * 委譲のカードに「開く」を足す。押すとバックグラウンドのダイアログでその子を選んだ状態になる。
  * Pleiad タスクは結果（taskId）が届いてから押せるようにする。メインの会話のカードだけに付ける
  */
-function linkDelegateCard(card, input = null) {
+function linkDelegateCard(card, input = null, result = null) {
   const name = card?.dataset.tool;
   // 一覧の見出しに使う依頼の一行（結果が後から届くカードは、始まったときに覚えた分を使う）
   const said = input?.description || input?.task || (typeof input?.prompt === 'string' ? input.prompt.split(/\r?\n/).find(Boolean) : '');
@@ -2465,11 +2477,122 @@ function linkDelegateCard(card, input = null) {
     const id = /ply-task-[0-9a-f-]{36}/.exec(card.querySelector('.tc-output, .tc-result, .tc-details-body')?.textContent ?? '')?.[0];
     if (!id) return;
     card.dataset.taskId = id;
+    // 振り分けの記録。ply_delegate の結果（JSON）にある。タスクの一覧（running）にあればそちらを使う
+    const routing = delegateResult(result)?.routing;
+    if (routing) cardRouting.set(card, routing);
   } else if (!SUBAGENT_TOOLS.has(name) || !card.dataset.id || capsOf(activeBackendId()).subagents === false) return;
   const open = el('button', 'btn tc-open', t('dialog.work.open'));
   open.type = 'button';
   open.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openFromCard(card, open); };
   card.querySelector('.tc-head')?.append(open);
+  if (card.dataset.taskId) decorateDelegateCard(card);
+}
+
+// ---- 委譲カードの振り分けの理由（docs/design-system.md「委譲カード」）
+// 自動で選んだときだけ「自動」の印と 1 行の理由を足し、開くと内訳（web/delegation-routing-view.mjs）。固定のときは今の見た目のまま
+
+/** カード -> 結果から読んだ routing（タスクの一覧から外れていても出せるように） */
+const cardRouting = new WeakMap();
+/** ply_delegate の結果の JSON。エラーの文なら null */
+function delegateResult(result) {
+  const text = typeof result === 'string' ? result : typeof result?.text === 'string' ? result.text : '';
+  if (!text.trim().startsWith('{')) return null;
+  try { return JSON.parse(text); } catch { return null; }
+}
+const routingNames = {
+  backend: (id) => fallbackName('backend', id, labelOf(id)),
+  model: (backend, model) => (model ? fallbackName('model', backend, modelDisplayName(state.vocab.get(backend)?.models ?? {}, model)) : ''),
+};
+function routingLogo(backend) { return backendLogo(backend, routingNames.backend(backend)); }
+function decorateDelegateCard(card) {
+  const taskId = card.dataset.taskId;
+  const routing = (state.work.tasks ?? []).find(x => x.taskId === taskId)?.routing ?? cardRouting.get(card);
+  if (!isAutoRouting(routing) || card.dataset.routed) return;
+  card.dataset.routed = '1';
+  // モデルの表示名は語彙から。まだ無ければ取りに行き、届いたら理由の行を書き直す
+  const missing = [routing.target, ...(routing.skipped ?? []).map(s => splitCandidate(s.candidate))].map(x => x?.backend).filter(b => b && !state.vocab.has(b));
+  for (const b of new Set(missing)) loadVocab(b).then(() => paintRouteLine(card, routing)).catch(() => {});
+  const head = card.querySelector('.tc-head');
+  const label = head.querySelector('.tc-label');
+  label.textContent = t('timeline.tool.label.delegate');
+  const auto = el('span', 'tc-auto', t('routing.auto'));
+  auto.title = t('routing.autoTitle');
+  label.after(auto);
+  const line = el('span', 'tc-route');
+  const openButton = head.querySelector('.tc-open');
+  if (openButton) openButton.before(line); else head.append(line);
+  paintRouteLine(card, routing);
+  const detail = routingDetail(routing, { names: routingNames, logo: routingLogo, onRetry: (root, button) => toggleRetry(card, root, button) });
+  card.querySelector('.tc-details-body')?.prepend(detail);
+  paintRetried(card);
+}
+function paintRouteLine(card, routing) {
+  const line = card.querySelector('.tc-route');
+  if (!line) return;
+  line.textContent = routingLine(routing, routingNames);
+  line.title = line.textContent;
+  // 内訳の候補の名前も語彙が届いてから書き直す（開いていないので作り直してよい。やり直しの面を開いていたら触らない）
+  const detail = card.querySelector('.rt-detail');
+  if (detail && !detail.querySelector('.rt-retry')) {
+    const fresh = routingDetail(routing, { names: routingNames, logo: routingLogo, onRetry: (root, button) => toggleRetry(card, root, button) });
+    detail.replaceWith(fresh);
+    paintRetried(card);
+  }
+}
+/** 内訳の「やり直し」の行（このタスクを人が別の候補でやり直したもの）。タスクの一覧が変わるたびに書き直す */
+function paintRetried(card) {
+  const box = card.querySelector('.rt-retried');
+  if (!box) return;
+  const retries = (state.work.tasks ?? []).filter(x => x.routing?.retry?.of === card.dataset.taskId);
+  // 4 秒ごとの放送で変わっていなければ触らない（「開く」のフォーカスを奪わない）
+  const sig = retries.map(x => `${x.taskId}:${x.status}:${x.model}`).join();
+  if (box.dataset.sig === sig && box.childElementCount === retries.length) return;
+  box.dataset.sig = sig;
+  box.replaceChildren(...retries.map(task => {
+    const row = el('div', 'rt-retried-row');
+    row.append(el('span', 'rt-retried-label', t('routing.detail.retried')), routingLogo(task.backend),
+      el('span', 'rt-retried-model', routingNames.model(task.backend, task.model) || task.model || labelOf(task.backend)),
+      el('span', 'rt-retried-state', TASK_STATUS[task.status] ?? task.status ?? ''));
+    const open = el('button', 'btn', t('dialog.work.open'));
+    open.type = 'button';
+    open.onclick = (e) => { e.preventDefault(); openWork(`t:${task.taskId}`); };
+    row.append(open);
+    return row;
+  }));
+}
+/** タスクの一覧が変わったら、会話の中の委譲カードを追いつかせる（記録が後から届いたカード・やり直しの行） */
+function paintDelegateCards() {
+  for (const card of thread.querySelectorAll('.tc[data-task-id]')) {
+    if (card.dataset.routed) paintRetried(card);
+    else decorateDelegateCard(card);
+  }
+}
+/** 「別の候補でやり直す」の面を開閉する。候補は設定 › 委譲と同じ一覧から、今使えるものだけ */
+async function toggleRetry(card, root, button) {
+  const opened = root.querySelector('.rt-retry');
+  if (opened) { opened.remove(); button.setAttribute('aria-expanded', 'false'); return; }
+  button.disabled = true;
+  try {
+    const data = await cmd('delegationRouting');
+    const taskId = card.dataset.taskId;
+    const task = (state.work.tasks ?? []).find(x => x.taskId === taskId);
+    const routing = task?.routing ?? cardRouting.get(card);
+    for (const b of new Set((data.candidates ?? []).map(c => c.backend).filter(b => b && !state.vocab.has(b)))) await loadVocab(b).catch(() => {});
+    const panel = retryPanel({ candidates: retryCandidates(data.candidates, routing, data.tiers), running: TASK_LIVE.has(task?.status),
+      names: routingNames, logo: routingLogo,
+      run: (args) => cmd('retryAgentTask', { taskId, ...args }),
+      close: (result) => {
+        panel.remove();
+        button.setAttribute('aria-expanded', 'false');
+        button.focus();
+        if (result?.task && !(state.work.tasks ?? []).some(x => x.taskId === result.task.taskId)) (state.work.tasks ??= []).push(result.task);
+        paintRetried(card);
+      } });
+    root.querySelector('.rt-actions').after(panel);
+    button.setAttribute('aria-expanded', 'true');
+    panel.querySelector('input:checked, button')?.focus();
+  } catch (e) { sys(html.t('routing.retry.failed', { error: e.message })); }
+  finally { button.disabled = false; }
 }
 
 async function openFromCard(card, button) {
@@ -3725,7 +3848,7 @@ function paintHistory(fromMi = 0) {
       for (const c of m.toolCalls ?? []) {
         const card = renderToolCall(c.name, c.input, { id: c.id });
         if (c.result) { applyToolResult(card, c.result); noteEndpointFailure(card, c.result); }
-        linkDelegateCard(card, c.input);
+        linkDelegateCard(card, c.input, c.result);
         node.append(card);
         if (c.id) state.toolCards.set(c.id, card);
       }
@@ -4451,6 +4574,10 @@ const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () =
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   onUsageLogin: usageLogin });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page });
+// 設定 › 委譲（委譲先の自動振り分け）。モデルの名前は入力欄と同じ語彙から
+const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
+  modelsOf: async (id) => (state.backends.some((b) => b.id === id) ? (await loadVocab(id)).models : null),
+  modelName: (backend, model) => routingNames.model(backend, model) });
 clearThread();
 initTheme();
 initLocale();
