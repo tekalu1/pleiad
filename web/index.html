@@ -137,12 +137,16 @@
       <button type="button" class="btn" id="retrySettings" hidden data-i18n="chat.next.retry"></button>
       <!-- 入力欄の先頭が / の間だけ出るスキル候補（web/slash-skills.mjs）。面は .clist と同じ -->
       <ul class="clist" id="skillList" role="listbox" data-i18n-aria-label="chat.composer.skills" hidden></ul>
+      <!-- 欄の上の一行（web/composer-wait.mjs）: 作成中の送信の予約「会話ができしだい送ります · 取り消す」、読み込みの失敗「… · もう一度読む」 -->
+      <div class="composer-note" id="composerNote" role="status" hidden></div>
       <!-- 入力の箱（承認済みのモック docs/mockups/phone-composer-header.html の v2）。1 つの角丸の面に
            送る前の添付 → 字の欄（1 行から伸びる）→ チップと送信の行 を入れる。デスクトップもスマホも同じ -->
       <div class="cbox" id="cbox">
         <!-- 送る前の添付。会話にはまだ出ない（送信で present として載る） -->
         <div class="attached" id="attached"></div>
         <textarea id="prompt" data-i18n-placeholder="chat.composer.placeholder" rows="1" aria-autocomplete="list" aria-controls="skillList" aria-expanded="false"></textarea>
+        <!-- 書けない待ち（会話を開いている・初めて接続するまで）。150ms を越えたら字の欄の上に重ねる（web/composer-wait.mjs） -->
+        <div class="composer-busy" id="composerBusy" hidden><span class="composer-busy-text" id="composerBusyText"></span></div>
         <!-- 候補を選んだ直後だけ、引数の書き方を薄く出す -->
         <div class="slash-hint" id="slashHint"></div>
         <div class="crow">
