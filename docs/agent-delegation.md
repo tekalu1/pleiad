@@ -85,21 +85,31 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 **`routing`**（返り値・`agent-tasks.json` のタスク・子の会話のメタデータ `routing`・会話の一覧の行に同じ形）:
 
 ```jsonc
-{ "mode": "auto" | "pinned", "kind": "implement",
+{ "mode": "auto" | "pinned" | "manual", "kind": "implement",   // manual は人が「別の候補でやり直す」で選んだもの（下）
   "judge": "jev" | "cerebras" | "none" | null,          // 答えを使った判定器。固定なら null
   "signals": { "diagnose": false, … } | null, "probabilities": { "diagnose": 0.12, … } | null,  // 確率は Jev のとき
   "difficulty": "low" | "mid" | "high" | null, "baseTier": "t2", "tier": "t3",   // baseTier は表の段、tier は選んだ候補の段（自動のときだけ）
   "target": { "backend": "codex", "model": "gpt-6-sol", "account": null },       // account は Claude のときだけ（'' = ログイン中）
+  "targetWindows": [{ "label": "…", "minutes": 10080, "usedPercent": 11 }],      // 選んだ候補に効いた枠の、選んだ時点の使用率（委譲カードの内訳）
   "skipped": [{ "candidate": "antigravity:gemini-3.8-flash-high", "tier": "t2", "reason": "quota_high",
                 "window": { "label": "…", "minutes": 300, "usedPercent": 85 }, "accounts": [ … ] }],
   "usageAt": "2026-09-26T03:00:00.000Z",   // 選んだ候補の使用量の取得時刻（選べなければ見た中で最も古いもの）。skipped[] にも各自の checkedAt
   "fallback": null,                        // 判定器を使えなかった理由（no_key など）
-  "escalated": true }                      // 「Jev が迷ったら Cerebras」で聞き直したときだけ
+  "escalated": true,                       // 「Jev が迷ったら Cerebras」で聞き直したときだけ
+  "retry": { "of": "ply-task-…", "from": { "backend": "…", "model": "…", "account": null }, "by": "user" } }  // manual のときだけ
 ```
 
 依頼文・判定器の生の応答・キーは保存しない。アカウントの見出しに含まれるメールアドレスは `ply_usage` と同じく伏せる。
 固定（`mode: "pinned"`）の `target` は実際に使う値（モデルが既定に戻った、継いだアカウント）で書く。
-後で規則を見直すため、失敗はタスクの `status`（`failed`）と `routing` で数えられる。人が別の候補でやり直した記録は、やり直しの操作（次の段の画面）で足す。
+後で規則を見直すため、失敗はタスクの `status`（`failed`）と `routing` で数えられる。人が別の候補でやり直したことは、やり直したタスクの `routing.retry`（`of` が元のタスク、`from` が元の委譲先）で数え、元のタスクの `routing` と `of` で結び付ける。集計の画面はまだ無い。
+
+**別の候補でやり直す**（委譲カードの操作。画面は design-system.md「委譲カード」、WebSocket の `retryAgentTask { taskId, candidate, stop?, approved? }`。`core/server.mjs` の `retryAgentTask`）:
+- 自動で選んだ委譲のカードからだけ出す。候補は設定 › 委譲と同じ一覧（`delegationRouting` の `candidates`）のうち、今使えるもの（使用量の取り置きで確かめる）で、元の委譲先は除く。サーバーでも同じ確かめをし、使えない・元と同じ・形が不正なら断る
+- 同じ依頼（`task` と `context`）で**新しいタスク**を作る。元のタスクは書き換えない。タスクは最初の `context` を持つ（`agent-tasks.json` の `context`。一覧・`ply_task_status` には載せない）。`context` を持つ前に作ったタスクは `task` だけを渡す
+- 依頼元は元のタスクと同じ会話（`parentSessionId`）。依頼元のターンの外で作る（`prepare` は `routing.mode: manual` のときだけ依頼元のターンを求めない）。作業場所は元のタスクの `cwd`。自動のときと同じく接続先は継がず公式で走り、Claude なら使用量で選んだアカウント
+- 子の承認モードは `ply_delegate` と同じく依頼元の会話の強さまで（`resolveDelegatedMode`）。それを超えるなら作らずに `{ confirm: { agent, mode } }` を返し、画面が 1 行で示して `approved: true` で頼み直す。依頼元の会話が読み取り・計画モードなら断る
+- 元のタスクが動いている（`queued` / `running` / `cancelling`）ときは `stop`（真偽）が要る。画面で「止めて◯◯でやり直す」「止めずにやり直す」を選ばせる。`stop: true` なら元のタスクを止めてから作る（止めたタスクの完了通知は出さない）
+- やり直したタスクの完了通知は依頼元のエージェントに届く。依頼元が作ったタスクではないので、通知の 2 行目に「利用者が <元の taskId> を別の委譲先でやり直したタスク」を添える（`agent:delegation.noticeRetry`）。依頼元は `ply_task_*` で同じように読める
 
 **設定**（`prefs.json` の `delegationRouting`。未設定の項目は既定値。画面から `null` を送った項目は既定に戻す。読むときに不正な項目は既定に戻し、保存のときは全体を断る）:
 
@@ -112,7 +122,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
   "table": { "trivial": ["t1", "t1", "t2"], … } }                               // low・mid・high の段
 ```
 
-画面（段 B）が使う WebSocket のコマンド（`core/protocol.mjs`）: `delegationRouting { refresh? }`（設定・既定値・一覧・キーの `hasKey`・秘密の置き場の状態・今のモデル一覧に無い候補と使えないバックエンド `warnings`・候補ごとの今の使用量と使えるかどうか `candidates`）、`setDelegationRouting { settings }`、`setDelegationRoutingKey { service, key }`・`deleteDelegationRoutingKey { service }`（`service` は `openrouter`（Jev）/ `cerebras`）。変わったら `delegationRoutingChanged` イベント（使用量を取り直したときも）。タスクごとの `routing` は `agentTasks` の各行。
+画面（委譲カード・設定 › 委譲。design-system.md）が使う WebSocket のコマンド（`core/protocol.mjs`）: `delegationRouting { refresh? }`（設定・既定値・一覧・キーの `hasKey`・秘密の置き場の状態・今のモデル一覧に無い候補と使えないバックエンド `warnings`・候補ごとの今の使用量と使えるかどうか `candidates`）、`setDelegationRouting { settings }`、`setDelegationRoutingKey { service, key }`・`deleteDelegationRoutingKey { service }`（`service` は `openrouter`（Jev）/ `cerebras`）。変わったら `delegationRoutingChanged` イベント（使用量を取り直したときも）。タスクごとの `routing` は `agentTasks` の各行（`running` の配信の `tasks` にも同じ形）。やり直しは `retryAgentTask`（上）。
 
 **鍵と外部送信。** 判定器のキーは互換の接続先と同じ秘密の置き場（`compat-endpoint-secrets.json`。`delegation-routing:openrouter` / `delegation-routing:cerebras`）に置き、画面には `hasKey` だけ返す。キーの中身は確かめない（確かめると登録の時点で外へ送ることになる）。キーをログ・タスク・会話の記録・エラーに出さない。**外部送信の同意はキーの登録**: キーが無ければ外へは何も送らず、難しさは `mid`。送り先の URL は固定で、リダイレクトは追わない。
 
@@ -174,7 +184,7 @@ Pleiad は結果を保存し、親が空いたときに専用の完了通知で�
 
 ## 保存・画面・再起動
 
-`AGENT_HOST_DATA/agent-tasks.json` にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）を保存する。
+`AGENT_HOST_DATA/agent-tasks.json` にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）を保存する。
 会話メタデータの `delegation` に親とタスク ID を、`routing` にどう選ばれたかを記録する。会話の分岐を表す `parent` とは別にする。
 会話末尾の「バックグラウンド N」（design-system.md「バックグラウンド」）で子の会話を読む・停止する・承認に答える。「会話として開く」で子の会話そのものへ移り、子からはヘッダーの「依頼元の会話」で戻れる。完了後は依頼元の会話の `ply_delegate` のカードの「開く」から確認できる。
 
@@ -185,6 +195,6 @@ Pleiad は結果を保存し、親が空いたときに専用の完了通知で�
 ## 検証
 
 `npm test` でタスクの管理と SDK MCP クライアント接続、fake を使ったサーバー全体の委譲・継続・停止と、承認の中継・`waiting` を検証する。
-振り分けは `tests/unit/delegation-routing.mjs`（規則・段・使用量・アカウント。判定器は偽の fetch）と `tests/unit/server-delegation-routing.mjs`（偽の Jev と偽の agy でサーバー全体）。テストのサーバーは使用量を定期的に取らず（`AGENT_HOST_ROUTING_USAGE=off`）、判定器の送り先を手元に向ける（`AGENT_HOST_OPENROUTER_API` / `AGENT_HOST_CEREBRAS_API`。本物へは送らない）。
+振り分けは `tests/unit/delegation-routing.mjs`（規則・段・使用量・アカウント。判定器は偽の fetch）と `tests/unit/server-delegation-routing.mjs`（偽の Jev と偽の agy でサーバー全体。別の候補でやり直す・承認モードの確かめ・動いている元のタスク・完了通知の一行も）、画面の文と並びは `tests/unit/delegation-routing-view.mjs`。テストのサーバーは使用量を定期的に取らず（`AGENT_HOST_ROUTING_USAGE=off`）、判定器の送り先を手元に向ける（`AGENT_HOST_OPENROUTER_API` / `AGENT_HOST_CEREBRAS_API`。本物へは送らない）。
 `npm run test:e2e -- agent-delegation` は実サービスを呼び、Claude → Codex、Codex → Claude と結果通知による再開を確認する。
 単独確認には `E2E_DELEGATION_PARENT=codex` などを使える。

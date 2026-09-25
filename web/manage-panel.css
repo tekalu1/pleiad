@@ -55,6 +55,47 @@
 .mp-check { display:flex; gap:8px; align-items:center; margin-top:14px; }
 .mp-link { color:var(--ink-blue); }
 @media(max-width:520px) { .mp-grid { grid-template-columns:1fr; } .mp-panel { padding:14px; } .mp-presets { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+/* 設定 › 委譲（web/delegation-settings.mjs）。種類ごとの判定器・キー・段ごとの候補・種類 × 難しさ・使用量の方針 */
+#delegationPanel .rm-state:empty,#delegationPanel [hidden]{display:none}
+.rt-judge-list{display:flex;flex-direction:column;gap:6px}
+.rt-judge-row{display:flex;align-items:center;justify-content:space-between;gap:6px 16px;flex-wrap:wrap}
+.rt-judge-kind{min-width:0}
+.rt-seg{flex:0 1 300px;background:var(--surface-2)}
+.rt-seg button{padding:4px 10px;white-space:nowrap}
+.mp-panel .rt-warn{margin:12px 0 0;font-size:var(--fs-s)}
+.rt-key-form{margin-top:10px}
+.rt-key-form .mp-keyrow input{min-width:0;padding:10px 14px;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink)}
+.rt-key-form .mp-card-actions{margin-top:10px}
+.rt-advanced>summary{font-weight:600}
+.rt-advanced h3{margin:0}
+.rt-sub-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:18px}
+.rt-sub-title{margin-top:24px !important;margin-bottom:10px !important}
+.rt-usage-at{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 6px}
+.rt-usage-at .btn{color:var(--ink-blue);font-size:var(--fs-s);padding:2px 8px}
+.rt-tier{margin-top:14px}
+.rt-tier-name{font-size:var(--fs-s);font-weight:600;margin-bottom:6px}
+.rt-cand-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.rt-cand-row{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;background:var(--surface-paper);border-radius:var(--r-m);min-width:0}
+.rt-cand-row.off .rt-cand-name{color:var(--ink-weak)}
+.rt-cand-info{flex:1;min-width:0}
+.rt-cand-name{display:flex;align-items:center;gap:6px;min-width:0;overflow-wrap:anywhere}
+.rt-cand-info small{display:block;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
+.rt-cand-info small.rt-strong{color:var(--ink-strong);font-weight:600}
+.rt-cand-actions{display:flex;flex:none}
+.rt-move{width:30px;height:30px;padding:0}
+.rt-add{margin-top:4px;color:var(--ink-blue);font-size:var(--fs-s)}
+.rt-table{margin:0}
+.rt-table th,.rt-table td{padding:4px 10px}
+.rt-table tbody th{text-align:left;font-weight:400;color:var(--ink);background:transparent;white-space:normal}
+.rt-table tbody tr:nth-child(even) th{background:var(--surface-2)}
+.rt-cell{min-width:3em;padding:3px 10px;font-size:var(--fs-s);color:var(--ink)}
+.rt-policy{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 16px}
+.rt-policy .mp-field{margin-top:6px}
+.rt-number-row{display:flex;align-items:center;gap:8px}
+.mp-field .rt-number-row input:not([type=checkbox]){width:90px;flex:none}
+.rt-unit{font-size:var(--fs-s);color:var(--ink-weak)}
+.rt-reset{margin:18px 0 8px}
+.rt-reset>.btn{color:var(--ink-blue)}
 /* 設定 › リモート（web/remote.mjs）。スイッチの行・状態の一行・端末の行・ペアリングの面・承認のダイアログ */
 .rm-switch { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:8px; }
 .rm-switch-label { font-weight:600; cursor:pointer; }

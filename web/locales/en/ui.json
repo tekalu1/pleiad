@@ -41,7 +41,8 @@
       "appearance": "Appearance",
       "context": "Context",
       "remote": "Remote",
-      "about": "About & updates"
+      "about": "About & updates",
+      "delegation": "Delegation"
     },
     "usage": {
       "description": "Subscription limits apply to the whole account. Shows usage, remaining amount, and reset time.",
@@ -1837,5 +1838,165 @@
     "busy": "Another folder is being sent.",
     "sentNotice": "Sent the folder to {{dest}} on the host.",
     "dropFailed": "Couldn't read the folder ({{error}})"
+  },
+  "routing": {
+    "auto": "Auto",
+    "autoTitle": "Delegate chosen automatically",
+    "kind": {
+      "trivial": "Trivial",
+      "mechanical": "Mechanical",
+      "investigate": "Investigate",
+      "implement": "Implement",
+      "review": "Review",
+      "design": "Design",
+      "ux_change": "UX change",
+      "ux_new": "New UX",
+      "visual": "Visual"
+    },
+    "difficulty": {
+      "low": "Low",
+      "mid": "Mid",
+      "high": "High"
+    },
+    "tier": {
+      "t1": "Tier 1",
+      "t2": "Tier 2",
+      "t3": "Tier 3",
+      "t4": "Tier 4",
+      "tv": "Images & new UX"
+    },
+    "tierShort": {
+      "t1": "1",
+      "t2": "2",
+      "t3": "3",
+      "t4": "4",
+      "tv": "Visual"
+    },
+    "judge": {
+      "jev": "Jev",
+      "cerebras": "Cerebras",
+      "none": "Don't judge"
+    },
+    "signal": {
+      "diagnose": "Find a cause",
+      "choose": "Choose an approach",
+      "long_procedure": "Long procedure",
+      "many_parts": "Many parts",
+      "writes_shared": "Writes to shared",
+      "security_gate": "Final safety check"
+    },
+    "fallback": {
+      "no_key": "no key",
+      "key_unreadable": "key unreadable",
+      "timeout": "timed out",
+      "network": "can't connect",
+      "http": "HTTP {{status}}",
+      "bad_response": "unexpected response",
+      "judge_none": "not judged for this kind"
+    },
+    "skip": {
+      "unavailable": "unavailable",
+      "model_unknown": "model not listed",
+      "usage_unknown": "usage unknown",
+      "usage_stale": "usage out of date",
+      "quota_high": "usage high",
+      "pace_high": "pace too fast",
+      "pace_unknown": "pace unknown"
+    },
+    "line": {
+      "head": "{{kind}} · {{difficulty}} → {{target}}",
+      "skippedWindow": "skipped {{name}} ({{window}} {{percent}}%)",
+      "skippedPace": "skipped {{name}} ({{window}} pace {{pace}}×)",
+      "skippedReason": "skipped {{name}} ({{reason}})",
+      "join": " · "
+    },
+    "detail": {
+      "label": "Routing details",
+      "kind": "Kind",
+      "difficulty": "Difficulty",
+      "tier": "Tier",
+      "tierRaised": "{{tier}} (table says {{base}}; raised because no candidate was usable)",
+      "judge": "Judge",
+      "judgeFailed": "{{judge}} · {{first}}: {{reason}}",
+      "judgeEscalated": "{{judge}} (asked again because Jev was unsure)",
+      "judgeNone": "Not judged for this kind (difficulty mid)",
+      "judgeUnavailable": "Couldn't judge: {{reason}} (difficulty mid)",
+      "signals": "Signals that were yes",
+      "noSignals": "None",
+      "usageAt": "Usage checked",
+      "used": "Used",
+      "skipped": "Skipped · {{reason}}",
+      "pace": "pace {{pace}}×",
+      "loginAccount": "Signed-in account",
+      "account": "Account: {{name}}",
+      "retried": "Retried"
+    },
+    "retry": {
+      "open": "Retry with another candidate",
+      "title": "Candidates to retry with",
+      "none": "No candidate is usable now.",
+      "run": "Retry with {{name}}",
+      "stopAndRun": "Stop and retry with {{name}}",
+      "keepAndRun": "Retry without stopping",
+      "running": "The original task is still running.",
+      "cancel": "Cancel",
+      "escalation": "{{agent}} will run in \"{{mode}}\", a stronger approval mode than the requesting conversation.",
+      "approve": "Approve and retry",
+      "failed": "Couldn't retry: {{error}}"
+    },
+    "settings": {
+      "enable": "Choose the delegate automatically",
+      "judgeTitle": "Difficulty judge",
+      "escalate": "Ask Cerebras again when Jev is unsure",
+      "judgeNoKey": "There is no {{service}} key, so kinds set to {{judge}} are treated as mid difficulty.",
+      "judgeLabel": "Judge for {{kind}}",
+      "keysTitle": "Judge keys",
+      "keySend": "When you add a key, the task text and kind of each delegation are sent to that service.",
+      "service": {
+        "openrouter": "OpenRouter (Jev)",
+        "cerebras": "Cerebras"
+      },
+      "keySaved": "Key: saved",
+      "keyNone": "Key: not added",
+      "keyAdd": "Add",
+      "keyChange": "Change",
+      "keyDelete": "Delete",
+      "keySave": "Save",
+      "keyCancel": "Cancel",
+      "keyShow": "Show",
+      "keyHide": "Hide",
+      "keyInput": "{{service}} key",
+      "keyDeleteConfirm": "Delete the {{service}} key? This judge will no longer be used.",
+      "notEncrypted": "Keys can't be encrypted in this session (they are saved to a file only you can read).",
+      "advanced": "Advanced settings",
+      "tiersTitle": "Candidates by tier",
+      "tiersOrder": "Tried from the top",
+      "usageAt": "Usage checked: {{time}}",
+      "usageNever": "Usage hasn't been checked yet",
+      "refresh": "Check again",
+      "refreshing": "Checking…",
+      "candidateUp": "Move {{name}} up",
+      "candidateDown": "Move {{name}} down",
+      "candidateRemove": "Remove {{name}}",
+      "addCandidate": "+ Add candidate",
+      "addTitle": "Add to {{tier}}",
+      "addInput": "backend:model",
+      "noModels": "Can't read the model list",
+      "empty": "No candidates",
+      "tableTitle": "Kind × difficulty",
+      "tableKind": "Kind",
+      "tableCell": "{{kind}} · {{difficulty}}: {{tier}}",
+      "policyTitle": "Usage policy",
+      "avoid": "Avoid at usage",
+      "avoidUnit": "% or more",
+      "pace": "Weekly pace",
+      "paceUnit": "× or faster",
+      "stale": "Treat as out of date",
+      "staleUnit": "minutes old",
+      "reset": "Reset to default",
+      "resetConfirm": "Reset the delegation settings to default? Keys are kept.",
+      "saveFailed": "Couldn't save: {{error}}",
+      "loadFailed": "Couldn't load: {{error}}"
+    }
   }
 }
