@@ -56,6 +56,8 @@
 .cx-row .nm{overflow-wrap:anywhere}
 .cx-row .p{font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 .cx-row.off .nm{color:var(--ink-weak)}
+/* 「Pleiad が追加」の札。形は .cbadge（灰の pill・弱い字）のまま、字は本文の書体（等幅は ID 用） */
+.cx-row .nm .cbadge{font-family:var(--font)}
 .cx-row>.btn{flex:none;padding:3px 10px;font-size:var(--fs-s)}
 .cx-ic{flex:none;display:grid;place-items:center;width:26px;height:26px;border-radius:var(--r-s);background:var(--surface-1);color:var(--ink-weak)}
 .cx-ic svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
@@ -239,6 +241,11 @@
 .scx-lines .add{background:var(--surface-paper)}
 .scx-lines .skip{color:var(--ink-weak)}
 .scx-foot{margin:0;color:var(--ink-weak);line-height:1.7}
+/* Pleiad が入れた指示の文（畳んだ中）。本文は Markdown のまま、面の階調で区切る */
+.scx-added{margin-top:4px;padding:8px 10px;background:var(--surface-1);border-radius:var(--r-s);font-size:var(--fs-xs);line-height:1.7;overflow-wrap:anywhere}
+.scx-added>:first-child{margin-top:0}
+.scx-added>:last-child{margin-bottom:0}
+.scx-added ul,.scx-added ol{padding-left:18px}
 
 /* ---- 狭い画面。2 列を縦に積む ---- */
 @media (max-width:760px){

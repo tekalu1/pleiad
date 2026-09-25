@@ -5,9 +5,11 @@
 //   - MCP: 接続中（ツール数・呼び出し回数）／要ログイン（ブラウザでログイン・この会話では外す）／失敗（理由）
 //   - エージェント任せの MCP は、そのエージェントの設定に登録されているものを読み取りのみで並べる（agentMcp）
 //   - antigravity で Pleiad 担当を扱わなかった会話は、その理由
+//   - Pleiad が入れた指示（委譲の指示。担当によらない）: 直前のターンで入れた文と、入れなかったときの理由
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { runMark } from './arc.mjs';
+import { renderMarkdown } from './render.mjs';
 
 const KEY = 'session-context';
 const WORD = { instruction: t('sessionContext.word.instruction'), skill: 'Skills', mcp: 'MCP' };
@@ -42,7 +44,7 @@ const REASON = {
 /** Pleiad が担当した種類か（antigravity で扱わなかった会話は、担当が Pleiad でもエージェント任せ） */
 const managed = (info, kind) => info?.report?.status !== 'native' && (info.owners ?? info.report?.owners ?? {})[kind] === 'ply';
 
-/** 札の文言。「指示 2 · Skills 14 · MCP 3（1 件つながらない）」「MCP はエージェント任せ」 */
+/** 札の文言。「指示 2 · Skills 14 · MCP 3（1 件つながらない）」「MCP はエージェント任せ」、Pleiad が入れた指示があれば「Pleiad が追加 1」 */
 export function chipText(info) {
   const report = info?.report;
   if (!report) return '';
@@ -56,6 +58,8 @@ export function chipText(info) {
     parts.push(bad ? t('sessionContext.chip.mcpBad', { n, bad }) : `MCP ${n}`);
   }
   if (natives.length) parts.push(t('sessionContext.chip.native', { kinds: natives.join(t('sessionContext.chip.join')) }));
+  const added = (info.added ?? []).filter(a => a.variant).length;
+  if (added) parts.push(t('sessionContext.chip.added', { n: added }));
   return parts.join(' · ');
 }
 
@@ -141,6 +145,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       box.append(n);
     }
     box.append(instructions(data), skills(data), mcp(data));
+    if (data.added?.length) box.append(addedBox(data));
     const foot = el('p', 'scx-foot');
     foot.append(t('sessionContext.foot.lead'), button(t('sessionContext.foot.link'), 'cx-link', () => openSettings()));
     box.append(foot);
@@ -252,6 +257,25 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     if (unused.length) k.append(fold(t('sessionContext.mcp.unusedDefs', { count: unused.length }), unused.map(e => item('○', e.name, `${shortPath(e.path)} · ${reasonOf(e)}`).row)));
     if (waiting) k.append(el('p', 'cx-sub', t('sessionContext.mcp.waiting')));
     if (notice) k.append(el('p', 'cx-strong', notice));
+    return k;
+  }
+  /** Pleiad が入れた指示（core/added-context.mjs）。直前のターンの記録。入れた文は畳んで出す */
+  // i18n-dynamic: sessionContext.added.variant.
+  // i18n-dynamic: sessionContext.added.reason.
+  // i18n-dynamic: sessionContext.added.delegation
+  function addedBox(data) {
+    const given = data.added.filter(a => a.variant);
+    const k = kindBox(t('sessionContext.added.title'), given.length ? t('sessionContext.added.who') : t('sessionContext.added.none'), given.length > 0);
+    for (const a of data.added) {
+      const sub = a.variant ? t(`sessionContext.added.variant.${a.variant}`) : t(`sessionContext.added.reason.${a.reason}`);
+      const { row, body } = item(a.variant ? '✓' : '○', t(`sessionContext.added.${a.id}`), sub, { on: Boolean(a.variant) });
+      if (a.text) {
+        const text = el('div', 'scx-added');
+        text.innerHTML = renderMarkdown(a.text);
+        body.append(fold(t('sessionContext.added.show'), [text]));
+      }
+      k.append(row);
+    }
     return k;
   }
   /** エージェント任せの MCP。そのエージェントの設定に登録されているもの（読むだけ） */

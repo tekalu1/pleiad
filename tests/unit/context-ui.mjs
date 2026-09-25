@@ -20,6 +20,8 @@ export default function (t) {
   const guarded = { report: { ...report, status: 'native', guardedBackend: 'antigravity' }, owners: report.owners };
   t.ok('Pleiad 担当を受け取れなかった会話はエージェント任せとして言う', chipText(guarded) === '指示・Skills・MCP はエージェント任せ', chipText(guarded));
   t.ok('記録が無ければ札を出さない', chipText(null) === '' && chipText({}) === '');
+  t.ok('Pleiad が入れた指示は担当によらず数える（入れなかったターンは数えない）', chipText({ ...guarded, added: [{ id: 'delegation', variant: 'child', text: 'x' }] }) === '指示・Skills・MCP はエージェント任せ · Pleiad が追加 1'
+    && chipText({ ...guarded, added: [{ id: 'delegation', variant: null, reason: 'off' }] }) === '指示・Skills・MCP はエージェント任せ');
 
   const ops = lineDiff('a\nb\nc\nd', 'a\nB\nc\nd\ne');
   t.ok('変わった行だけ − / + にする', ops.map(o => o.t + o.s).join('|') === ' a|-b|+B| c| d|+e', ops.map(o => o.t + o.s).join('|'));

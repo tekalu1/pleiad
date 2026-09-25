@@ -29,6 +29,8 @@ const cases = [
   await import('./unit/server-delegation-routing.mjs'),
   // 同じく画面: 委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分（web/delegation-routing-view.mjs）
   await import('./unit/delegation-routing-view.mjs'),
+  // Pleiad が入れる委譲の指示: 担当によらず届く・依頼元と子で違う・切り替えと振り分けの有無・Codex のロード済みスレッド
+  await import('./unit/server-added-context.mjs'),
   await import('./unit/usage.mjs'),
   await import('./unit/antigravity-usage.mjs'),
   // 会話のヘッダーの使用量のチップ（web/header-usage.mjs）: 枠の選び方・アカウント・上限・グループのまとめ
