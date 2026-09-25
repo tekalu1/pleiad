@@ -40,8 +40,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     if (!r || r.parentSessionId !== owner) throw new Error(agentT(locale, 'tasks.notOwned'));
     return r;
   };
+  // context は「別の候補でやり直す」で同じ依頼を渡し直すために持つだけ（長いので一覧・状態には載せない）
   const view = (r, offset = 0) => {
-    const { result = '', queue, ...rest } = r;
+    const { result = '', queue, context, ...rest } = r;
     return { ...rest, pendingMessages: queue.length, result: result.slice(offset, offset + 16000), resultOffset: offset,
       resultLength: result.length, nextOffset: offset + 16000 < result.length ? offset + 16000 : null };
   };
@@ -112,6 +113,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     get busy() { return live.size > 0 || notices.size > 0 || Object.values(records).some(r => ACTIVE.has(r.status) || r.notification === 'pending'); },
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
     get(taskId) { return records[taskId] ? view(records[taskId]) : null; },
+    /** 最初の依頼（task と context）。やり直しで同じ依頼を渡す。context を持つ前に作ったタスクは task だけ */
+    request(taskId) { const r = records[taskId]; return r ? { task: r.task, context: r.context ?? null } : null; },
     // locale は呼び出した会話（owner）の言語。子の会話も同じ言語を継ぐので、子への依頼文もこれで作る
     async call(owner, name, args = {}, signal, locale) {
       if (closed || signal?.aborted) throw new Error(agentT(locale, 'tasks.halted'));
@@ -128,7 +131,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           const prepared = await prepare(owner, args, taskId, signal);
           try {
           if (signal?.aborted) throw new Error(agentT(locale, 'tasks.aborted'));
-          const row = { ...prepared, taskId, parentSessionId: owner, manager: 'ply', depth, task: args.task,
+          const row = { ...prepared, taskId, parentSessionId: owner, manager: 'ply', depth, task: args.task, ...(args.context !== undefined ? { context: args.context } : {}),
             createdAt: Date.now(), updatedAt: Date.now(), status: 'queued', notification: 'none',
             result: '', error: null, queue: [args.context ? agentT(locale, 'tasks.withContext', { task: args.task, context: args.context }) : args.task] };
           records[taskId] = row; await save(); return view(row);

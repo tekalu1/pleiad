@@ -149,6 +149,16 @@
 | 常駐（窓を閉じてもホストを続ける） | keep running (in the tray) |
 | フォルダーを送る | Send a folder |
 | 作業フォルダー | working directory |
+| 自動（委譲先を自動で選んだ印） | Auto |
+| 種類（委譲の仕事の種類 kind） | kind |
+| 難しさ（低・中・高） | difficulty (Low / Mid / High) |
+| 段（委譲の候補の段 t1〜t4） | tier |
+| 候補（委譲先の候補） | candidate |
+| 判定器 / 判定しない | judge / Don't judge |
+| 手がかり（難しさの） | signal |
+| 飛ばした（候補） | skipped |
+| 別の候補でやり直す | Retry with another candidate |
+| 避ける使用率 / 週次のペース | Avoid at usage / Weekly pace |
 
 ## 揺れ（未統一）
 - 使用枠: `usage`（辞書での使用が多数派。例 server:antigravity.usage.badResponse・shared・none・timeout・tooLarge・cannotRead・needsUpdate） / `usage limits`（例 server:antigravity.usage.unsupported、server:usage.codexUnavailable、server:usage.claudeUnavailable）。本表には多い方の `usage` を採ったが、辞書は直していないので `usage limits` の箇所も残っている

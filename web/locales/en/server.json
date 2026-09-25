@@ -900,6 +900,13 @@
     "key": {
       "unknownService": "Unknown judge service: {{service}}",
       "invalid": "Invalid key (up to 500 characters without spaces)."
+    },
+    "retry": {
+      "badCandidate": "Invalid candidate (backend:model).",
+      "same": "This is the same delegate as before. Choose another candidate.",
+      "unusable": "{{candidate}} can't be used now ({{reason}}).",
+      "readOnly": "Can't retry because the requesting conversation is in read-only or plan mode.",
+      "stopChoice": "The original task is still running. Choose whether to stop it."
     }
   }
 }
