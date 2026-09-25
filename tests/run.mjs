@@ -95,6 +95,7 @@ const cases = [
   await import("./unit/session-stream.mjs"),
   await import("./unit/work-attribution.mjs"),
   await import('./unit/work-status.mjs'),
+  await import('./unit/background-labels.mjs'),
   await import("./unit/ask-answers.mjs"),
   await import("./unit/title-clean.mjs"),
   await import("./unit/claude-normalize.mjs"),

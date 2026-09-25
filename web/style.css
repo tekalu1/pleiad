@@ -921,39 +921,67 @@ main.dropping #log{background:var(--surface-1)}
 #lightbox .lb-close{position:absolute;right:8px;top:8px;background:var(--surface-paper)}
 .present-body>img{cursor:zoom-in}
 
-/* ---- このセッションのサブエージェント（一覧と会話を読む）。承認ではないので dialog でよい ---- */
-#workDialog{width:min(760px,92vw);max-height:82vh;padding:0;border:0;
-  border-radius:var(--r-l);background:var(--surface-paper);color:var(--ink);box-shadow:0 16px 48px var(--shadow)}
+/* ---- バックグラウンド（サブエージェント・委譲したタスク・裏のコマンド）。左に一覧、右に詳細。承認ではないので dialog でよい ----
+   枠は脇のパネルと同じ灰（--surface-0）。詳細は白い面で、メインパネルと同じく左上だけを丸める（docs/design-system.md「バックグラウンド」） */
+#workDialog{width:min(1040px,94vw);height:min(720px,86vh);max-width:none;max-height:none;padding:0;border:0;
+  border-radius:var(--r-l);background:var(--surface-0);color:var(--ink);box-shadow:0 16px 48px var(--shadow);overflow:hidden}
+#workDialog[open]{display:flex;flex-direction:column}
 #workDialog::backdrop{background:var(--surface-veil)}
-#workDialog header{display:flex;align-items:center;gap:12px;padding:12px 18px 8px;position:sticky;top:0;background:var(--surface-paper)}
-#workDialog header strong{flex:1;font-size:var(--fs-s);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#workBody{padding:4px 18px 18px;overflow-y:auto;max-height:calc(82vh - 48px);display:flex;flex-direction:column;gap:8px}
+#workDialog header{display:flex;align-items:center;gap:8px;padding:12px 14px 8px 18px;flex:none}
+#workDialog header strong{font-size:var(--fs-s);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.work-count{flex:1;min-width:0;font-size:var(--fs-xs);color:var(--ink-weak)}
+.work-split{flex:1;display:flex;min-height:0}
+.work-list{width:320px;flex:none;overflow-y:auto;padding:0 8px 12px}
+.bg-group{font-size:var(--fs-xs);color:var(--ink-weak);font-weight:600;letter-spacing:.05em;padding:10px 8px 4px}
+.bg-empty{font-size:var(--fs-s);color:var(--ink-weak);padding:10px 8px}
+.bg-row{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:2px 10px;align-items:center;width:100%;padding:8px 10px;border:0;
+  border-radius:var(--r-m);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.bg-row:hover{background:var(--surface-1)}
+.bg-row[aria-current="true"]{background:var(--surface-paper)}
+.bg-nomark{width:14px;height:14px}
+.bg-row-title{font-size:var(--fs-s);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bg-row-time{font-size:var(--fs-xs);color:var(--ink-weak)}
+.bg-row-meta{grid-column:2/4;display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--ink-weak);min-width:0;overflow:hidden;white-space:nowrap}
+.bg-row-meta>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.bg-model{color:var(--ink);display:inline-flex;align-items:center;gap:5px;min-width:0}
+/* 承認待ちだけ差し色（あなたを待っている、§1）。弧も同じ色 */
+.bg-waiting,.run.waiting{color:var(--ink-mark)}
+.work-detail{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--surface-paper);border-radius:var(--r-l) 0 0 0;overflow:hidden}
+.work-dh{display:flex;align-items:flex-start;gap:8px;padding:12px 16px 6px 22px;flex:none}
+.work-dh:empty{display:none}
+.bg-back{display:none}
+.bg-dt{flex:1;min-width:0}
+.bg-dt-title{margin:0;font-size:var(--fs-m);font-weight:600;display:flex;align-items:center;gap:8px;min-width:0}
+.bg-dt-title>span{min-width:0;overflow-wrap:anywhere}
+.bg-dt-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:var(--fs-xs);color:var(--ink-weak);margin-top:3px}
+.bg-dt-actions{display:flex;align-items:center;gap:6px;flex:none}
+#workBody{flex:1;min-height:0;overflow-y:auto;padding:4px 18px 18px 8px;display:flex;flex-direction:column;gap:8px}
 #workBody>*{flex:0 0 auto}
+#workBody>.work-head,#workBody>pre,#workBody>.work-location{margin-left:14px}
+/* 詳細の会話はメインパネルの筋と同じ部品。筋は高さに追従する 1 本の線（枝は無い） */
+.bg-thread{max-width:none}
+.bg-thread .spine line{stroke:var(--line);stroke-width:var(--hair)}
+/* ターンが終わり、待てない裏の作業だけが残った末尾の行は印を置かない（§6.1） */
+.activity-tip:has(.activity-none){display:none}
+/* 会話の中の委譲のカードから、その子をバックグラウンドのダイアログで開く */
+.tc-open{margin-left:auto;font-size:var(--fs-xs);padding:0 8px;color:var(--ink-blue)}
 .work-head{font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.04em;margin-top:6px}
-.work-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--surface-1);border-radius:var(--r-m);padding:9px 14px;cursor:pointer;min-width:0}
-.work-row:hover{background:var(--surface-2)}
-.work-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ply-task .work-row{flex-wrap:wrap}
-.ply-task .work-label{flex-basis:100%;white-space:normal;overflow-wrap:anywhere}
-.work-sub{color:var(--ink-weak);font-size:var(--fs-xs);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.work-badge{flex:0 0 auto;font-size:var(--fs-xs);color:var(--ink-blue)}
-.work-back{align-self:flex-start;font-size:var(--fs-s);padding:4px 10px}
-.work-task{display:flex;align-items:center;gap:8px;min-width:0}
-.work-task .work-row{flex:1;flex-wrap:wrap}
-.work-task .work-label{flex-basis:100%;white-space:normal;overflow-wrap:anywhere}
 /* 行の左端の状態の印（design-system §2.2）。弧（.run）と同じ 14px。終わった子は静止した線画 */
 .state-mark{display:inline-grid;place-items:center;width:14px;height:14px;color:var(--ink);flex:none}
 .state-mark svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
-/* Pleiad タスクの行は見出しが 1 行ぶんを使う。印と見出しを 1 行目に並べ、副題は見出しの下に揃える（14px + gap 10px） */
-.ply-task .work-row.has-mark .work-label{flex-basis:calc(100% - 24px)}
-.ply-task .work-row.has-mark .work-sub{margin-left:24px}
 .work-stop{flex:none}
-.work-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.work-actions .work-stop{margin-left:auto}
 .work-command,.work-output{margin:0;padding:12px;background:var(--surface-1);border-radius:var(--r-m);white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-xs);min-width:0}
-.work-output{max-height:40vh;overflow:auto}
+.work-output{max-height:none;overflow:auto}
 .work-location{font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
-#workBody .m{margin-bottom:10px}
+@media (max-width:700px){
+  #workDialog{width:100vw;height:100dvh;border-radius:0}
+  .work-list{width:100%}
+  .work-split:not(.showing) .work-detail{display:none}
+  .work-split.showing .work-list{display:none}
+  .work-detail{border-radius:var(--r-l) var(--r-l) 0 0}
+  .work-dh{padding-left:8px}
+  .bg-back{display:inline-flex}
+}
 
 /* Approved UX proposal: choices, durable next-turn notice, and draft feedback. */
 .combo.strict input:not(:disabled):not(:focus){cursor:pointer}

@@ -26,7 +26,8 @@ const backendLogos = {
   antigravity: "./brand/antigravity.svg",
 };
 
-function backendLogo(id, label) {
+/** エージェントのロゴ（14px）。一覧の行とバックグラウンドのダイアログで使う */
+export function backendLogo(id, label) {
   const mark = el("span", "row-be");
   mark.title = label;
   const src = Object.hasOwn(backendLogos, id) ? backendLogos[id] : null;
