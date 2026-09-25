@@ -381,6 +381,8 @@ function applyProvider(t, params) {
   const def = params?.config?.[`model_providers.${id}`] ?? null;
   t.provider = { id, baseUrl: def?.base_url ?? null, bearer: def?.experimental_bearer_token ?? null, headers: def?.http_headers ?? null,
     contextWindow: params?.config?.model_context_window ?? null, webSearch: params?.config?.web_search ?? null };
+  // developerInstructions も読み込んだときのものだけが効く（ロード済みの resume では変わらない）
+  t.developerInstructions = params?.developerInstructions ?? null;
 }
 
 async function handle(method, params) {
@@ -438,7 +440,7 @@ async function handle(method, params) {
       if (params?.cwd) t.cwd = params.cwd;
       const turnId = `tn_${++seq}`;
       const text = (params?.input ?? []).filter((i) => i?.type === "text").map((i) => i.text).join("");
-      record({ method, threadId: t.id, provider: t.provider ?? null, model: t.model ?? null, effort: params?.effort ?? null, ephemeral: Boolean(t.ephemeral) });
+      record({ method, threadId: t.id, provider: t.provider ?? null, model: t.model ?? null, effort: params?.effort ?? null, ephemeral: Boolean(t.ephemeral), developerInstructions: t.developerInstructions ?? null });
       if (t.ephemeral && process.env.FAKE_CODEX_CHECK_TITLE === "1") {
         if (t.model !== "gpt-5.6-luna" || params?.effort !== "low") {
           throw new Error("Title generation must use Luna with low effort");

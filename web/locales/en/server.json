@@ -908,5 +908,8 @@
       "readOnly": "Can't retry because the requesting conversation is in read-only or plan mode.",
       "stopChoice": "The original task is still running. Choose whether to stop it."
     }
+  },
+  "addedContext": {
+    "invalid": "delegation must be true or false."
   }
 }

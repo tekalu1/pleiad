@@ -544,6 +544,7 @@
     "chip": {
       "mcpBad": "MCP {{n}} ({{bad}} not connecting)",
       "native": "{{kinds}} left to the agent",
+      "added": "Added by Pleiad {{n}}",
       "join": ", "
     },
     "title": "Context for this conversation",
@@ -632,6 +633,22 @@
       "list_other": "Left to the agent. {{agent}}'s settings register the following {{count}} servers (connection status is kept by {{agent}}, so Pleiad can't see it).",
       "disabled": "{{path}} · disabled"
     },
+    "added": {
+      "title": "Added by Pleiad",
+      "who": "Provided by Pleiad",
+      "none": "Not provided",
+      "delegation": "Delegation instructions",
+      "show": "Text provided",
+      "variant": {
+        "parent": "For a requesting conversation",
+        "parentManual": "For a requesting conversation · automatic routing is off",
+        "child": "For a delegated conversation"
+      },
+      "reason": {
+        "off": "Turned off in settings",
+        "readOnly": "Not added in read-only or plan mode"
+      }
+    },
     "changed": {
       "title_one": "{{count}} file changed since the start",
       "title_other": "{{count}} files changed since the start",
@@ -674,7 +691,7 @@
       "title": "Instruction files",
       "agent": "Claude reads CLAUDE.md and Codex reads AGENTS.md by their own rules",
       "ply": "Give every agent the same files",
-      "note": "Pleiad provides nothing. Which files are read depends on the agent.",
+      "note": "Pleiad provides no instruction files. Which files are read depends on the agent.",
       "list": "Provided in this location",
       "listDefault": "Provided by default",
       "sourceCommon": "AGENTS.md (shared)",
@@ -767,6 +784,18 @@
       "join": ", ",
       "addAria": "Additional folder to search",
       "add": "Add folder"
+    },
+    "added": {
+      "title": "Instructions Pleiad adds",
+      "scope": "Shared by all places",
+      "badge": "Added by Pleiad",
+      "delegation": {
+        "name": "Delegation instructions",
+        "sub": "Added to Claude Code and Codex conversations, whoever handles instruction files",
+        "aria": "Add delegation instructions",
+        "parent": "Requesting conversation",
+        "child": "Delegated conversation"
+      }
     },
     "scanFailed": "Couldn't search: {{error}}",
     "loadFailed": "Couldn't load the context settings: {{error}}"

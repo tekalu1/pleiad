@@ -63,7 +63,10 @@ export const COMMANDS = new Set([
   'setRemoteResident',     // { keepRunning?, sleep?: 'working'|'always'|'off' } -> RemoteStatus。常駐の設定（§6.3。RemoteStatus.resident に { available, keepRunning, sleep }）
   'contextSettings', // { cwd? } -> { defaults, places: [{ id, path, kinds: { <kind>: { value, override, from } }, roots, overrides, current }] } 種類ごとの設定と継承（core/context-settings.mjs）
   'slashSkills',     // { cwd } -> 入力欄「/」の候補。コンテキスト画面と同じ探索結果からのスキル一覧（説明文付き）
-  'sessionContext', // { sessionId } -> { report, owners, pinned, changed, startedAt, refreshedAt, removedMcp } この会話が読み込んだ記録。固定された会話では今のファイルと突き合わせる
+  'sessionContext', // { sessionId } -> { report, owners, pinned, changed, startedAt, refreshedAt, removedMcp, added } この会話が読み込んだ記録。固定された会話では今のファイルと突き合わせる。added は Pleiad が入れた指示（直前のターン）
+  // Pleiad が入れる指示（core/added-context.mjs。今は委譲の指示）。担当によらず ply_agents を持つ会話へ入る。すべての場所に共通
+  'addedContext',    // {} -> { settings: { delegation }, routing, items: [{ id, enabled, parent, child }] }（文は画面の言語。parent は委譲先の自動選択の有無を反映）
+  'setAddedContext', // { delegation: boolean } -> 同上。prefs.json の addedContext に保存。始まっている会話にも次のターンから効く
   'refreshContext', // { sessionId } -> 開始後に変わった指示・Skills を、やり取りを引き継いだまま読み込み直す（固定を取り直す）。返答中は不可
   'contextDiff',    // { sessionId } -> { files: [{ path, name, kind, modifiedAt, before, after, beforeMissing, removed }] } 開始時と今の中身
   'setSessionMcp',  // { sessionId, name, removed } -> この会話だけ外部 MCP を外す（ply_context に出さない）/ 戻す。次のターンから効く

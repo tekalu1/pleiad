@@ -493,6 +493,7 @@ export const backend = {
     liveModel: true,
     liveMode: true,
     hostTools: true,
+    plyAgents: true,   // ply_agents を mcpServers に、その instructions を append に渡す
     alwaysAllow: true,
     login: true,
     // 会話ごとのアカウント（claude setup-token のトークン）を選べる。server は oauthToken を渡す（core/claude-accounts.mjs）

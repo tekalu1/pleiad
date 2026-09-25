@@ -5,6 +5,7 @@
 // フォルダーだけの設定が効いている種類には印と「全体の設定に戻す」を出す。
 // 変更はその場で保存し（setContextSettings）、「保存しました · 次のターンから反映」を出す。始まっている会話にも次のターンから効く。
 // 設定の形と継承は core/context-settings.mjs、外部 MCP のカードの中身と追加シートは web/mcp-config.mjs。
+// 末尾の「Pleiad が入れる指示」（委譲の指示。core/added-context.mjs）は種類の担当・場所によらない 1 つの設定で、スイッチで入れるかだけを選ぶ（中身は編集しない）。
 import { el } from './dom.mjs';
 import { runMark } from './arc.mjs';
 import { renderMarkdown } from './render.mjs';
@@ -113,12 +114,13 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   const pop = el('div', 'pop cx-pop'); pop.hidden = true; pop.setAttribute('role', 'listbox'); pop.setAttribute('aria-label', t('context.scope'));
   place.append(el('span', 'cx-sub', t('context.scope')), combo, pop);
   const cards = Object.fromEntries(KINDS.map(k => [k, el('div', 'cx-card')]));
+  const addedCard = el('div', 'cx-card cx-added');
   const rootsFold = el('details', 'cx-fold');
   const toast = el('div', 'cx-toast', t('context.saved')); toast.setAttribute('role', 'status');
-  root.append(lead, status, place, cards.instruction, cards.skill, cards.mcp, rootsFold, toast);
+  root.append(lead, status, place, cards.instruction, cards.skill, cards.mcp, addedCard, rootsFold, toast);
   panel.append(root);
 
-  let cwd = null, view = null, level = 'default', scan = null, scanning = false, scanVisible = false, ply = null, agents = null;
+  let cwd = null, view = null, level = 'default', scan = null, scanning = false, scanVisible = false, ply = null, agents = null, added = null;
   const opened = new Set();          // 中身を開いている行（id）
   const expanded = new Set();        // 「すべて見る」を押した種類
   let toastTimer, scanTicket = 0;
@@ -437,6 +439,54 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
   }
   const mcp = createMcpSection();
 
+  // ---------------------------------------------------------------- Pleiad が入れる指示
+  /**
+   * 委譲の指示。すべての場所に共通で、指示ファイルの担当によらず入る（core/added-context.mjs）。
+   * 行を押すと、依頼元の会話と委譲された会話に入る文をそのまま出す。スイッチは入れるかどうかだけ
+   */
+  // i18n-dynamic: context.added.delegation.
+  function renderAdded() {
+    addedCard.replaceChildren();
+    if (!added) return;
+    const head = el('div', 'cx-khead');
+    head.append(el('h4', null, t('context.added.title')), el('span', 'cx-inh', t('context.added.scope')));
+    addedCard.append(head);
+    const list = el('div', 'cx-list');
+    for (const item of added.items) {
+      const row = el('div', 'cx-row' + (item.enabled ? '' : ' off'));
+      const open = button('', 'cx-open');
+      const key = `added:${item.id}`;
+      open.setAttribute('aria-expanded', String(opened.has(key)));
+      const body = el('span', 't');
+      const name = el('span', 'nm', t(`context.added.${item.id}.name`));
+      name.append(el('span', 'cbadge', t('context.added.badge')));
+      body.append(name, el('span', 'p', t(`context.added.${item.id}.sub`)));
+      open.append(body);
+      open.onclick = () => { if (opened.has(key)) opened.delete(key); else opened.add(key); renderAdded(); };
+      const sw = button('', 'cx-sw');
+      sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(item.enabled)); sw.setAttribute('aria-label', t(`context.added.${item.id}.aria`));
+      sw.onclick = () => work(async () => {
+        sw.setAttribute('aria-checked', String(!item.enabled));
+        added = await cmd('setAddedContext', { [item.id]: !item.enabled });
+        saved();
+        renderAdded();
+      });
+      row.append(open, sw);
+      list.append(row);
+      if (opened.has(key)) list.append(peekAdded(item));
+    }
+    addedCard.append(list);
+  }
+  function peekAdded(item) {
+    const box = el('div', 'cx-peek');
+    for (const [label, text] of [[t('context.added.delegation.parent'), item.parent], [t('context.added.delegation.child'), item.child]]) {
+      const body = el('div', 'body');
+      body.innerHTML = renderMarkdown(text);
+      box.append(el('p', 'cx-sub', label), body);
+    }
+    return box;
+  }
+
   // ---------------------------------------------------------------- 探す場所を増やす（任意）
   function renderRoots() {
     const info = levelInfo(), roots = info.roots;
@@ -492,6 +542,7 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
     if (!view) return;
     renderCombo();
     for (const kind of KINDS) renderCard(kind);
+    renderAdded();
     renderRoots();
   }
 
@@ -523,7 +574,7 @@ export function setupContext({ button: openButton, cmd, current, session = () =>
     cwd = session()?.cwd || current() || null;
     status.textContent = '';
     try {
-      view = await cmd('contextSettings', { cwd });
+      [view, added] = await Promise.all([cmd('contextSettings', { cwd }), cmd('addedContext', {}).catch(() => null)]);
     } catch (e) {
       view = null;
       status.textContent = t('context.loadFailed', { error: e.message });
