@@ -48,6 +48,7 @@
 #bgp .thread{position:relative;padding:6px 16px 10px 0;flex:1}
 #bgp .thread::before{content:"";position:absolute;left:20px;top:0;bottom:0;width:1px;background:var(--line)}
 #bgp .mw{display:grid;grid-template-columns:52px 1fr;position:relative;margin:6px 0}
+#bgp .mw>div{min-width:0}
 #bgp .gut{position:relative}
 #bgp .gut .node{position:absolute;left:17px;top:9px;width:7px;height:7px;border-radius:50%;background:var(--s3)}
 #bgp .gut .tip{position:absolute;left:13.5px;top:5px;background:var(--paper);border-radius:50%;display:flex}
@@ -65,7 +66,7 @@
 #bgp .tool.link:hover{background:var(--s2)}
 #bgp .tool.link .open{color:var(--blue)}
 #bgp .think{background:var(--s1);border-radius:14px;padding:6px 12px;font-size:12px;color:var(--weak);margin:4px 0;width:fit-content}
-#bgp pre.code{background:var(--s2);border-radius:14px;padding:10px 12px;margin:6px 0;font:11.5px/1.6 ui-monospace,Consolas,monospace;white-space:pre-wrap;position:relative}
+#bgp pre.code{background:var(--s2);border-radius:14px;padding:10px 48px 10px 12px;margin:6px 0;font:11.5px/1.6 ui-monospace,Consolas,monospace;white-space:pre-wrap;position:relative}
 #bgp pre.code .lang{position:absolute;right:8px;top:6px;background:var(--s3);border-radius:999px;padding:0 8px;font-size:10.5px;color:var(--weak)}
 #bgp .act{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--ink)}
 #bgp .act .el{color:var(--weak);font-size:12px}
@@ -84,12 +85,12 @@
 #bgp .diamond{position:absolute;left:16px;top:8px;width:9px;height:9px;background:var(--mark);transform:rotate(45deg);border-radius:1px}
 /* モーダル */
 #bgp .veil{background:var(--veil);border-radius:12px;padding:22px;display:flex;justify-content:center}
-#bgp .dlg{background:var(--paper);border-radius:20px;box-shadow:0 18px 48px var(--shadow);width:100%;max-width:1040px;height:620px;display:flex;flex-direction:column;overflow:hidden}
+#bgp .dlg{background:var(--s0);border-radius:20px;box-shadow:0 18px 48px var(--shadow);width:100%;max-width:1040px;height:620px;display:flex;flex-direction:column;overflow:hidden}
 #bgp .dlg>header{display:flex;align-items:center;gap:8px;padding:12px 14px 8px 18px}
 #bgp .dlg>header strong{font-size:14px;font-weight:600;margin-right:auto}
 #bgp .dlg>header .cnt{font-size:12px;color:var(--weak);font-weight:400;margin-left:6px}
 #bgp .split{flex:1;display:flex;min-height:0}
-#bgp .list{width:330px;flex:none;background:var(--s0);padding:6px 8px 12px;overflow:auto;border-radius:0 14px 0 0}
+#bgp .list{width:330px;flex:none;padding:0 8px 12px;overflow:auto}
 #bgp .list .gh{font-size:11px;color:var(--weak);font-weight:600;letter-spacing:.05em;padding:10px 8px 4px}
 #bgp .it{display:grid;grid-template-columns:14px 1fr auto;gap:2px 10px;align-items:center;padding:8px 10px;border-radius:14px;cursor:pointer;border:0;background:transparent;font:inherit;color:inherit;text-align:left;width:100%}
 #bgp .it:hover{background:var(--s1)}
@@ -100,7 +101,8 @@
 #bgp .it .meta .w{color:var(--mark)}
 #bgp .it .tm{font-size:11px;color:var(--weak);font-family:ui-monospace,Consolas,monospace}
 #bgp .it .cmd{font-family:ui-monospace,Consolas,monospace;font-size:12px}
-#bgp .detail{flex:1;min-width:0;display:flex;flex-direction:column}
+/* 詳細は白い面。脇のパネル（灰）に対するメインパネルと同じく左上だけを丸める */
+#bgp .detail{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--paper);border-radius:20px 0 0 0;overflow:hidden}
 #bgp .dh{display:flex;align-items:flex-start;gap:8px;padding:12px 16px 8px 22px}
 #bgp .dh .t{flex:1;min-width:0}
 #bgp .dh h4{margin:0;font-size:14px;font-weight:600;display:flex;gap:8px;align-items:center}
@@ -120,7 +122,8 @@
 /* 狭い画面: 一覧 → 詳細の 2 段 */
 #bgp .veil.narrow{padding:12px 0}
 #bgp .veil.narrow .dlg{max-width:360px;height:640px}
-#bgp .veil.narrow .list{width:100%;border-radius:0}
+#bgp .veil.narrow .list{width:100%}
+#bgp .veil.narrow .detail{border-radius:20px 20px 0 0}
 #bgp .veil.narrow .split:not(.showing) .detail{display:none}
 #bgp .veil.narrow .split.showing .list{display:none}
 #bgp .veil.narrow .dh{padding-left:10px}
