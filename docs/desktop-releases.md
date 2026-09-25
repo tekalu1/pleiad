@@ -122,22 +122,10 @@ AzureにはCertificate Profile Signerの権限とPublic Trustプロファイル�
 アップロード先（`GH_REPO`）は Actions の `github.repository`。フィードとアップロード先を分けることで、別リポジトリの Actions で作った版も `tekalu1/pleiad` を見に行く。
 Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参照しない。
 
-## 旧リポジトリからの移行（橋渡し版）
+## 製品名と識別子
 
-以前は非公開の旧リポジトリで開発・配布していた。公開にあたり、現在のツリーを履歴なしで public の `tekalu1/pleiad` に移した。
-旧リポジトリは非公開のまま残し、そこから一度だけ「橋渡し版」を配布する。橋渡し版は旧リポジトリの Releases へアップロードされるが、焼き込む更新フィードは `tekalu1/pleiad` なので、それ以降の更新は `tekalu1/pleiad` から受け取る。
-旧版の利用者は、旧リポジトリから橋渡し版へ自動更新し、次の版から `tekalu1/pleiad` に切り替わる。`tekalu1/pleiad` の最初の版は橋渡し版より新しいバージョン番号にする。
-`tekalu1/pleiad` でも同じ評価用の署名証明書（同じ発行元・拇印）を使い、Secrets / Variables を登録し直す（`scripts/setup-evaluation-secrets.ps1` の既定は `tekalu1/pleiad`）。アプリは更新の署名を発行元名（CN）で照合するため、発行元名を変えると旧版が更新を拒否する。鍵を替える場合も同じ発行元名にし、利用者には新しい公開証明書の信頼を求める。
-
-## 製品名の変更（Ply → Pleiad）
-
-表示名（`productName`、画面・窓・通知・ショートカット・アンインストール一覧）と配布物の名前は Pleiad にした。改名前の版からの更新とデータを保つため、次は変えない。
-
-- `appId: jp.ply.desktop`: AUMID（タスクバー・通知）と、アンインストール情報のキー（appId から作る GUID）がこれで決まる。変えると別のアプリとして並んで入る。
-- package.json の `name: agent-host`: パッケージ版も `productName` を package.json に持たないため、Electron の userData（`%APPDATA%\agent-host`。safeStorage の鍵の `Local State`、`server-port.json`、`updates.json`）と更新のキャッシュ（`%LOCALAPPDATA%\agent-host-updater`）はこの名前で決まる。
-- Windows の実行ファイル名 `Ply.exe`（`win.executableName`）: NSIS は `$INSTDIR\<実行ファイル>` が在るときだけ、既存のショートカットを残して新しい名前（`Pleiad.lnk`）へ付け替える。名前を変えると改名前からの更新でショートカットが作り直され、タスクバーのピン留めが切れる。アンインストーラーも `Uninstall Ply.exe` のまま。
-- 入れ先は前回のレジストリ（`InstallLocation`）を引き継ぐので、既存の利用者は `%LOCALAPPDATA%\Programs\Ply` のまま。新規インストールの既定の入れ先も実行ファイル名から決まるため `Ply` になる。
-- 署名証明書の発行元名（`CN=Ply Evaluation …`）と `PLY_*` の環境変数・Variables、データ置き場（`~/.agent-host`）と `AGENT_HOST_*`、MCP のサーバー名・ツール名（`ply_agents`、`ply_delegate` など）。
+表示名と配布物の名前は Pleiad。改名前の版からの更新とデータを保つため、`appId: jp.ply.desktop`・package.json の `name: agent-host`・実行ファイル名 `Ply.exe`・署名証明書の発行元名（`CN=Ply Evaluation …`）・`PLY_*` と `AGENT_HOST_*`・データ置き場（`~/.agent-host`）・MCP のサーバー名とツール名は変えない。
+アプリは更新の署名を発行元名で照合するので、鍵を替えるときも同じ発行元名にし、利用者には新しい公開証明書の信頼を求める。旧リポジトリ（非公開）からは橋渡し版を一度だけ配り、以後は `tekalu1/pleiad` から更新する（[ADR 0019](adr/0019-rename-ply-to-pleiad-keep-identifiers.md)）。
 
 ## 配布と利用者認証
 
@@ -223,6 +211,7 @@ betaから安定版へ戻しても古い版へ戻さず、現在より新しい�
 通常テストでは状態機械・保存・配布物照合・ロックを検証する。ブラウザーではIPCを模した画面状態を検証する。
 未署名Windowsパッケージ生成は署名済みのOS更新テストの代わりにはならない。
 選んだOSで署名済み旧版から新版へのインストール試験が終わるまで一般公開しない。macOSを追加するときは実機・公証も確認する。
+自己署名版の更新（2026-09-18、beta.2）で未確認: GitHub Releases からの実際の配信での更新、Windows ARM64。
 
 ### インストーラー画面の手元確認（Windows）
 

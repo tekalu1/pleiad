@@ -2,7 +2,7 @@
 
 ## 多言語対応（2026-09-23）
 
-画面を日本語と英語で出せるようにする。段階 0（今）は土台と検査だけで、既存の日本語の画面の見た目は変えない（日付・数の書き方だけは画面の言語に揃えた）。文言の置き換えは段階 1 以降（小さい画面 → 会話画面 → 管理画面 → core → desktop → エージェント向け）。
+画面を日本語と英語で出せるようにする。段階 0（今）は土台と検査だけで、既存の日本語の画面の見た目は変えない（日付・数の書き方だけは画面の言語に揃えた）。文言の置き換えは段階 1 以降（小さい画面 → 会話画面 → 管理画面 → core → desktop → エージェント向け）。理由は [ADR 0020](adr/0020-i18n-dictionary-and-ratchet.md)。
 
 **方式。** i18next（版固定）。キーは意味のキー（`settings.appearance.language.title`）で、日本語が正本（ja の辞書）。辞書は `web/locales/<言語>/<名前空間>.json`（入れ子の JSON。キーの `.` が階層）。名前空間は `ui`（画面）・`server`（core が画面へ返す文言）・`agent`（エージェントに渡す文）・`desktop`（Electron）。対応言語は ja と en、足りないキーは en へ落ちる。複数形は i18next の接尾辞（`_one` / `_other`。言語ごとに `Intl.PluralRules` の分類。ja は `_other` だけ）で `count` を渡す。差し込みは `{{name}}`。訳文は HTML としてエスケープしない（textContent で入れるか escText を通す）。
 - 画面: `web/i18n.mjs`。ビルドしないので、`web/index.html` の import map で `i18next` を `/vendor/i18next.mjs`（core/server.mjs が `node_modules/i18next/dist/esm/i18next.js` を配る。PDF.js と同じ専用の口）へ向ける。モジュールのトップレベルで今の言語と en の `ui` を fetch してから抜けるので、import した側は読み込みの時点から `t()` を使える。静的な HTML は `data-i18n`（中身）・`data-i18n-title`・`data-i18n-aria-label`・`data-i18n-placeholder` にキーを書き、起動時に `applyDom(document)` が埋める。日付・数は `fmt`（number / dateTime / time / list / elapsed / relative）を使い、`toLocaleString` を直接呼ばない。相対時刻の語（「たった今」「3分前」）は辞書にある。
@@ -32,7 +32,7 @@
 
 ## 互換の接続先（2026-09-23）
 
-procway-code への対応をやめる代わりに、Claude Code と Codex それぞれで互換 URL の接続先を登録し、会話ごとに選べるようにした。UX は承認済みの案（入力欄のモデルの面に「接続先」の節。登録は設定 › エージェント設定の各エージェントの行の「接続先」）。画面の規則は design-system.md「入力欄の設定」「互換の接続先の管理」。
+procway-code への対応をやめる代わりに、Claude Code と Codex それぞれで互換 URL の接続先を登録し、会話ごとに選べるようにした。UX は承認済みの案（[ADR 0011](adr/0011-compat-endpoints.md)。入力欄のモデルの面に「接続先」の節。登録は設定 › エージェント設定の各エージェントの行の「接続先」）。画面の規則は design-system.md「入力欄の設定」「互換の接続先の管理」。
 
 **形式はエージェントで固定。** Claude Code は Anthropic Messages 互換（CLI が `{URL}/v1/messages` に送る。URL に `/v1` は付けない）、Codex は OpenAI Responses 互換（`{URL}/responses`。codex-cli 0.153 は `wire_api = "chat"` を起動時エラーにするので、Chat Completions だけの先は使えない）。プリセットは Claude: OpenRouter / Z.ai / Kimi / DeepSeek / LiteLLM / Ollama / カスタム、Codex: OpenRouter / Azure OpenAI / Ollama / LM Studio / vLLM / LiteLLM / カスタム（`web/compat-presets.mjs`。Responses に対応していない先は Codex 側に出さない）。
 
@@ -51,18 +51,9 @@ procway-code への対応をやめる代わりに、Claude Code と Codex それ
 **Codex への注入**（`core/backends/codex.mjs`、`codexCompatThread`）。app-server は全会話で 1 本の共有のまま、スレッドごとに `thread/start`・`thread/resume` に `modelProvider: 'ply_<接続先 id>_<接続情報のハッシュ>'` と `config['model_providers.<id>'] = { name, base_url, wire_api: 'responses', requires_openai_auth: false, supports_websockets: false, experimental_bearer_token | http_headers: { 'api-key' } }` を渡す（鍵は JSON-RPC の stdin に載り、argv・環境に出ない。`env_key` は app-server の環境を読むので会話ごとに変えられない）。互換の会話では `web_search = "disabled"`（互換の先は Responses のネイティブ web_search を持たないことが多い）と、あれば `model_context_window`。公式の `model/list` は互換の先のモデルを返さないので使わず、`''` の段の既定を公式の config から持ち込まない。
 ロード済みのスレッドへの `thread/resume` は `modelProvider`・`config` を無視する（スパイクで確認）ので、スレッドがどの provider で読み込まれているかを覚え、接続先が変わった（互換 ↔ 公式、別の互換、URL・キーの変更＝provider の id が変わる）スレッドは `thread/unsubscribe` してから resume する。互換から公式へ戻すときは `config/read` の `model_provider`（無ければ `openai`）を明示する。これで会話の途中でも次のターンから接続先を変えられる。
 
-**スパイクの結論（2026-09-23、codex-cli 0.153.2 / Agent SDK 0.3.258。実 LLM は呼ばずダミーのサーバーで）**
-- Codex: 共有の app-server のまま、スレッドごとの `modelProvider`＋`config` で別の接続先に届き、並べた公式のスレッドは公式のまま。`experimental_bearer_token`・`env_key`・`http_headers` のどれでも鍵が届く。ロード済みのスレッドの resume は provider の変更を無視し、`thread/unsubscribe` 後の resume なら効く。新しい app-server で provider を渡さずに resume すると、スレッドに記録された provider ではなく設定の既定で動く。→ 接続先ごとに app-server を分ける必要はない。
-- Claude: `options.env` の値で `POST /v1/messages?beta=true` がダミーに届き、`model: 'haiku'` は `ANTHROPIC_DEFAULT_HAIKU_MODEL` に置き換わる。利用者の settings.json の `env` が `options.env` に勝ち、フラグ設定の `env` はそれにも勝つ。`CLAUDE_CODE_OAUTH_TOKEN` が残っていても `ANTHROPIC_AUTH_TOKEN` が優先される（それでも外す）。
+スパイクの結論（2026-09-23）は [ADR 0012](adr/0012-compat-endpoint-key-injection.md)。
 
-**承認済みの案からの差分**
-- 使用量の画面は接続先ごとの見出しと「表示できません」の一文だけで、接続先ごとの tokens の表は出さない（使用実績はエージェントごとの合計に含まれる）。
-- Claude の接続先の「詳しい設定」に「思考を送る」を足す（決定 4）。一覧の行には出さず（2026-09-23 の説明文の整理で外した）、エフォートの無効の表示は「送らない（接続先の設定）」。
-- Codex の追加の流れにも「認証の送り方」（Bearer / api-key ヘッダー）を出す（Azure をカスタムで入れる人のため）。Codex の確認は出力の上限を 16 にした（OpenAI の Responses の最小値）。画面ではどちらも「確認で短い応答を 1 回だけ生成します」とまとめる。認証の送り方は既定のままで使うことが多いので「詳しい設定」に畳む。
-- **説明文を最小限にした**（2026-09-23。利用者から「説明文が多すぎて読めない」）。一覧・追加の流れ・入力欄の面から仕組みの説明の段落と欄の補足を外し、事故になること（料金・選び直し・暗号化できない起動）と失敗の理由だけを 1 行で残す（design-system.md §2.7）。確認の成功の行も「✓ つながりました · モデル N 件」だけにし、サーバーの `lines` は注意（確認のモデルが受け付けられない・一覧が取れない）と失敗の理由だけを返す。
-- 前回の確認に失敗している接続先を選んでいる会話も、削除と同じく送信を止める（決定の「確認失敗の接続先を指す会話は黙って公式に戻さない」）。入力欄の上の一文と、接続先の行の ⚠ で知らせる。
-- Claude のアカウントの節は、従来どおりアカウントを登録している（または選んでいる）会話だけに出す（案では常に出していた）。
-- 公開のアドレスへの http の URL は確認の段で断る（キーを平文で送らないため。案に無い安全策）。
+承認済みの案から変えたことは [ADR 0011](adr/0011-compat-endpoints.md)。
 
 **既知の制約**
 - 利用者の settings.json に `apiKeyHelper` があると、互換の会話でもそちらのキーが使われる可能性がある（フラグ設定で打ち消す口が無い。未確認）。
@@ -163,7 +154,7 @@ Claude Code を **セッションを離れずに扱えるようにするブラ�
 > 続けるために離れる（分岐の行方を追う）
 > —— この3つを無くす。
 
-機能の採否はこれで判定する。3つに寄与しないものは入れない。
+機能の採否はこれで判定する。3つに寄与しないものは入れない（[ADR 0007](adr/0007-symmetric-ai-and-human.md)）。
 
 ### 2.2 AI は人間と同じパートナー
 
@@ -197,7 +188,7 @@ Claude Code を **セッションを離れずに扱えるようにするブラ�
 
 - 公式クライアントの完全代替。差分表示・エディタ統合は VS Code に戻る
 - マルチプロバイダ。コアを Agent SDK と決めた時点で当面外す
-  - **v3 で改訂した**（`docs/multi-backend.md`）。`AgentBackend` を切り、Claude / Codex / Antigravity を並べる（procway-code も並べていたが 2026-09 に対応を終えた）
+  - **v3 で改訂した**（`docs/multi-backend.md`、[ADR 0004](adr/0004-multiple-agent-backends.md)）。`AgentBackend` を切り、Claude / Codex / Antigravity を並べる（procway-code も並べていたが 2026-09 に対応を終えた）
 - タイトルの**暗黙の**自動更新。ターンごとに勝手に書き換わる挙動は入れない（人間が追えなくなる）。
   明示的な変更は人間・AI とも可
 - グループ機能。R3 と R5 で代替する。両方持つと「グループに入れる手間」= P2 の元凶が残る
@@ -236,6 +227,8 @@ WebSocket を選ぶ理由: SDK のストリーム（思考・ツール呼び出�
 **承認応答と中断が逆向きに必要**だから。片方向で足りるなら SSE でよいが、足りない。
 
 ## 5. セッションのデータモデル
+
+v3 で再改訂した（multi-backend.md §2.1、[ADR 0005](adr/0005-source-of-truth-for-sessions.md)）。以下は v1 の決定と、今も sidecar に残るもの。
 
 **SDK が持っているものは SDK に持たせる。** v0 の実装時に判明した事実:
 
@@ -304,7 +297,7 @@ sidecar が持つのは次の3つだけ。**いずれも後から追加すると
 
 画像は通常のMarkdown画像、ファイルはリンク、テキストは通常の回答を使う。ユーザー添付と旧提示カードのイベント・保存形式は保持する。
 
-ファイルリンクは会話の右パネルで開く。Markdown・HTML・画像・CSV/TSV・原文・PDFを内容に合った形で表示する。相対パスは発言時点の作業場所から解決し、原文・保存・会話への添付を同じパネルで提供する。認証と実パスによるアクセス範囲を維持し、HTMLは可視化と同じ隔離（`allow-scripts` のみの sandbox と同じ CSP）でスクリプトを実行する。Visualizeの履歴保存とは異なり、現在のファイルを明示的に読み込む。詳細と制限は [ファイルプレビュー](file-preview-proposal.md)。
+ファイルリンクは会話の右パネルで開く。Markdown・HTML・画像・CSV/TSV・原文・PDFを内容に合った形で表示する。相対パスは発言時点の作業場所から解決し、原文・保存・会話への添付を同じパネルで提供する。認証と実パスによるアクセス範囲を維持し、HTMLは可視化と同じ隔離（`allow-scripts` のみの sandbox と同じ CSP）でスクリプトを実行する。Visualizeの履歴保存とは異なり、現在のファイルを明示的に読み込む。詳細と制限は [ファイルプレビュー](file-preview.md)。
 
 ## 8. グラフ（R5）のスコープ
 
@@ -388,26 +381,7 @@ WS が切れているあいだ、承認が要るツールを**その場で deny 
 拒否は前に進んでいるように見えて何も進んでいない。待つか、止めるかのどちらかにする。
 既定は待つ。止めたいときだけ `AGENT_HOST_GRACE_MS` で止める。
 
-## 9. Walking skeleton（Step 3）
-
-1本で R1・R2・R3 と境界を同時に検証する。これが通れば残りは量の問題になる。
-
-1. Node で SDK セッションを1本張る（`ANTHROPIC_API_KEY` 無しでサブスク認証が通ることを確認）
-2. `~/.claude/skills` の skill が1つ発火する
-3. Markdown の画像リンクで画像を1枚インライン表示する
-4. `set_status` ツールで **その場で作った新しいステータス**を設定し、host の一覧に反映される
-   （事前定義なしの経路を通すことが検証の主目的）
-5. ブラウザから token 付き WebSocket で接続し、上記が全部流れる
-
-## 10. 段階
-
-| | 内容 |
-|---|---|
-| v0 | walking skeleton |
-| v1 | R1・R2・R3・R4 + md レンダリング。`parent` は記録のみ |
-| v2 | R5 グラフビュー、リモートアクセス、ステータス復帰の外部トリガー |
-
-## 11. 決めたこと・残っていること
+## 9. 決めたこと・残っていること
 
 ### サブエージェントの状態の印（2026-09-22）
 
@@ -425,7 +399,7 @@ WS が切れているあいだ、承認が要るツールを**その場で deny 
 ### バックグラウンドの統合（2026-09-26）
 
 サブエージェント・`ply_delegate` の子・裏のコマンドの入口が 3 つ（末尾の「サブエージェント N / タスク N / 裏で動いている N」、ヘッダーの「Pleiad タスク」「端末」）に分かれ、同じダイアログを別の中身で開いていた。
-利用者にとってネイティブのサブエージェントと Pleiad タスクの違いは意味が無いので、末尾の「バックグラウンド N」1 つにまとめ、どちらも「サブエージェント」と呼ぶ。代わりにモデル名を出す。
+利用者にとってネイティブのサブエージェントと Pleiad タスクの違いは意味が無いので、末尾の「バックグラウンド N」1 つにまとめ、どちらも「サブエージェント」と呼ぶ（[ADR 0021](adr/0021-unified-background-entry.md)）。代わりにモデル名を出す。
 モデル名は、Claude は子の記録の assistant 行の `message.model`、Codex は委譲ツールの入力の `model`、Pleiad タスクは記録の `model`（空なら既定の解決先）から取る（`running.subagents[].model`）。
 終わった子はターンの一覧から外れるので、会話の中の委譲のツールカードから開く。サーバーは子を生んだツールの id（`origin`）を配り、終わった子は `findSubagent`（ツールの id → 子）で引き直す。
 詳細はメインパネルと同じ部品で描く。Pleiad タスクの子は普通の会話なので、会話を開くときと同じ読み込み（`loadSession`）の結果を描き、承認待ちならその場で答えられる。
