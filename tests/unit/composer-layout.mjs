@@ -1,4 +1,4 @@
-// 入力欄と上端の見直し（承認済みのモック docs/mockups/phone-composer-header.html、docs/design-system.md「入力欄」「入力欄の設定」）。
+// 入力欄と上端の見直し（docs/design-system.md「入力欄と上端」「入力欄の設定」）。
 //   - 字の欄の上限（マウス 10 行・タッチ 6 行・画面の 40%）、モデルのチップの「名前 · 段」の分け方
 //   - 添付の出どころを選ばせる接続の判定（plyRemote・osActions === false）と札の出どころ
 //   - ホストのファイルの面のパンくず・パスのつなぎ方

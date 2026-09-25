@@ -1,5 +1,4 @@
-// リモートの窓の印（docs/remote.md §7.2 の 1。承認済みのモック docs/mockups/remote-window.html と、
-// 塗りをやめた docs/mockups/phone-composer-header.html の「H1・塗りなし」）。
+// リモートの窓の印（docs/remote.md §7.2 の 1。2026-09-23 から「H1・塗りなし」）。
 // 端末のアプリ（デスクトップ版の desktop/remote-preload.cjs）が window.plyRemote を渡したときだけ描く。
 // 帯の左に差しの青のホスト名のバッジを常に出す（閉じるボタンは無い）。押すと接続の情報と「この窓を閉じる」の小さな面。
 // 帯の色は脇と同じ面（style.css の :root.desktop.remote .titlebar。client.mjs の paintTitleBar が読んで OS へ送る）。
@@ -109,7 +108,7 @@ export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = 
 const BACK = 'M15 6l-6 6 6 6';
 
 /**
- * モバイル版の殻（docs/remote.md §8.2、承認済みのモック docs/mockups/phone-composer-header.html の H1 配置・塗りなし）。
+ * モバイル版の殻（docs/remote.md §8.2 の H1 配置・塗りなし）。
  * ホスト名を 2 か所に置き、見せる方は画面の幅で CSS が決める（style.css の「モバイル版の殻」）:
  *   - 701px 以上: 上端の帯（脇と同じ面）の左に「‹ ⇄ ホスト名」の pill（.host-bar の .remote-badge）
  *   - 700px 以下: タイトルの下に差しの青の添え字「⇄ ホスト名」（.title-col の .host-sub）
