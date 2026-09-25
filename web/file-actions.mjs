@@ -1,4 +1,4 @@
-// ファイルの操作メニュー（docs/mockups/file-actions.html §2）。
+// ファイルの操作メニュー（docs/design-system.md「ファイルの操作」）。
 // ⋯ ボタン・右クリック・Shift+F10 のどれでも同じ中身を開く。場所（右パネルの頭・ツリー・画像・会話のリンク）で変えない。
 // 開くのは web/client.mjs の showMenu（会話一覧と同じ 1 つのメニュー。2 つ持つと同時に開きうる）。
 // OS の操作（エクスプローラー・ブラウザー）はサーバーのある PC の画面から見ているときだけ出す。
@@ -30,7 +30,7 @@ export function fileMenuItems(target, { osActions, current = false, canUse = tru
 }
 
 /**
- * 会話に保存された可視化の操作メニュー（右パネルの ⋯。docs/mockups/side-panel-shell.html）。
+ * 会話に保存された可視化の操作メニュー（右パネルの ⋯。docs/design-system.md「右パネルの枠」）。
  * 対象は元のパス（origin）。元が分からなければパス・元のファイル・会話で使うは出さない。
  * 並びはファイルと同じ考え方: 写す → 開く → 持ち出す。run(action) は web/file-preview.mjs
  * @param {{ origin?:string|null }} target

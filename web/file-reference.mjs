@@ -29,7 +29,7 @@ export function fileDownloadUrl(path) {
   return `/local-file?path=${encodeURIComponent(path)}&download=1`;
 }
 
-// ---- 自動リンク用の厳しい判定（docs/mockups/file-actions.html §4）
+// ---- 自動リンク用の厳しい判定（docs/design-system.md「ファイルの操作」）
 // fileReference は書き手が明示したリンクの中で使う寛容なもの（サーバーも使う）。地の文やインラインコードに
 // そのまま当てると Node.js や and/or までパスになるので、こちらは「パスと断定できるもの」だけを通す。
 // 存在は確かめない（押したときに右パネルが確かめる）。

@@ -1,5 +1,5 @@
 // playwright-cli run-code --filename=tests/browser/composer-loading.cjs
-// 入力欄の待ち（docs/mockups/composer-loading.html、docs/design-system.md「入力欄の待ち」）。
+// 入力欄の待ち（docs/design-system.md「入力欄の待ち」）。
 // fake バックエンドを別ポート・別のデータ置き場で立て、最初の案内を済ませてから流す（AGENTS.md）。
 // fake は即座に答えるので、ページ上で WebSocket.prototype.send を包んでコマンドを遅らせる・失敗させる。
 // 撮った画面は temporary/composer-loading-shots/ に置く（playwright-cli を起動した作業ディレクトリからの相対）。

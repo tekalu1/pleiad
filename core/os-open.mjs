@@ -1,4 +1,4 @@
-// サーバーのある PC で「エクスプローラーで表示」「ブラウザーで開く」を実行する（docs/mockups/file-actions.html §5）。
+// サーバーのある PC で「エクスプローラーで表示」「ブラウザーで開く」を実行する（docs/design-system.md「ファイルの操作」）。
 //
 // 判定はサーバー（core/server.mjs の revealPath / openPath）、実行は OS 側。ここに来るのは、許可範囲の中にあると
 // 確かめ、実体を解決した後の絶対パスだけ。それでも次を守る:

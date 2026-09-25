@@ -223,7 +223,7 @@ function inline(src, depth = 0, noLink = false) {
     } else if (g.auto !== undefined) {
       out.push(link(false, g.auto, g.auto, undefined, depth, noLink));
     } else if (g.win !== undefined) {
-      // 地の文の Windows の絶対パス（docs/mockups/file-actions.html §4）。末尾の句読点は外して、続きから読み直す
+      // 地の文の Windows の絶対パス（docs/design-system.md「ファイルの操作」）。末尾の句読点は外して、続きから読み直す
       const found = noLink ? null : findWindowsPaths(g.win)[0];
       if (!found || found.start !== 0) handled = false;
       else {
@@ -966,7 +966,7 @@ export function renderToolCall(name, input, opts) {
   details.append(head, body);
   card.append(details);
   head.append(el("span", "tc-label", TOOL_LABEL[raw] ?? (raw.startsWith("mcp__") ? "MCP" : clip(raw, 24))));
-  // 読む・書く・編集の対象は、動詞の横にファイルリンクで添える（押すと右パネル、右クリックで操作。docs/mockups/file-actions.html）
+  // 読む・書く・編集の対象は、動詞の横にファイルリンクで添える（押すと右パネル、右クリックで操作。docs/design-system.md「ファイルの操作」）
   const target = FILE_DRAWS.has(TOOL_DRAW[raw]) ? FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v) : null;
   if (target) head.append(pathSpan(target));
 
