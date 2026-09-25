@@ -1,7 +1,7 @@
 # コンテキスト管理：標準配置の探索と MCP 登録
 
 2026-09-12。第1段階として、設定の「コンテキスト」ページから探索元を保存し、指示ファイル・Skills・MCP の候補を確認できる。
-2026-09-15 にツリーとプレビューの 2 列にした画面は、2026-09-20 に承認済みの 1 画面へ置き換えた（ツリー・「読み込み担当」「探索の設定」・保存ボタン 4 つを廃止）。範囲（すべての場所／場所ごと）を選び、種類ごと（指示ファイル・Skills・外部 MCP）に「エージェントに任せる／Pleiad がそろえる」、探す形式、渡すもの（スイッチ）を決める。変更はその場で保存し「保存しました · 次のターンから反映」を出す（2026-09-23 から、始まっている会話にも次のターンから効く。`docs/context-runtime.md`）。見た目の規則は `docs/design-system.md` §9「コンテキスト」。
+2026-09-15 にツリーとプレビューの 2 列にした画面は、2026-09-20 に承認済みの 1 画面へ置き換えた（ツリー・「読み込み担当」「探索の設定」・保存ボタン 4 つを廃止）。範囲（すべての場所／場所ごと）を選び、種類ごと（指示ファイル・Skills・外部 MCP）に「エージェントに任せる／Pleiad がそろえる」、探す形式、渡すもの（スイッチ）を決める。変更はその場で保存し「保存しました · 次のターンから反映」を出す（2026-09-23 から、始まっている会話にも次のターンから効く。`docs/context-runtime.md`）。見た目の規則は `docs/design-system.md` §9「コンテキスト」。理由は [ADR 0014](adr/0014-context-default-agent-managed.md)。
 探索 API は `previewOnly: true` の候補一覧。Pleiad がそろえる種類は実行時に解決して会話へ渡す。実行時の抑止・適用時期・利用記録・会話の右パネルは [共通コンテキストの実行](context-runtime.md) を参照。既定はエージェント任せのまま。
 
 ## 保存と継承（形式 2）
@@ -111,33 +111,6 @@ JSON は他のキーを保持して整形保存。通常の TOML テーブルで
 
 `core/context-settings.mjs` が設定の保存・継承・移行、`core/context-scan.mjs` が探索、`core/mcp-config.mjs` がエージェント側の登録の読み書き、`core/context-session.mjs` が会話ごとの操作。UI は `web/context.mjs`（設定 › コンテキスト）、`web/mcp-config.mjs`（外部 MCP のカードとシート）、`web/session-context.mjs`（会話の右パネル）。実行時は `core/context-runtime.mjs` と `core/context-bridge.mjs` を介して各バックエンドに供給し、会話に利用記録を保存する。TOML / YAML は `smol-toml` / `yaml` で解析し、設定を正規表現だけで読まない。
 
-## 初期調査時のネイティブ抑止の実機確認
+## 検証
 
-以下は実装前の観測。現在の抑止方式と追加検証は [context-runtime.md](context-runtime.md) を参照。
-
-`node tests/manual/context-probe.mjs` を明示実行する。通常の `npm test` には含めない。
-使い捨ての設定・指示・Skill と、固定応答のローカル MCP サーバーで初期化を確認する。ユーザーターンは送信しない。Claude のコンテキスト照会は `detail: "summary"` でトークン計数 API を呼ばない。ネイティブ初期化自体のネットワーク通信を完全に遮断するテストではない。
-
-確認環境：Windows、Claude Agent SDK 0.3.258、Codex CLI 0.153.2。
-
-| 経路 | 観測 |
-|---|---|
-| Claude 通常 | ユーザー・プロジェクトの memoryFiles、fixture Skill が一覧とコンテキストに存在。ディスク由来の fixture MCP が connected |
-| Claude `settingSources: []`, `skills: []`, `strictMcpConfig: true` | memoryFiles は空。fixture Skill は一覧に無い。ディスク MCP は無い |
-| Claude settingSources を維持し `claudeMdExcludes`、`skills: []`、strict MCP と明示 MCP | memoryFiles は空。ディスク MCP は無く、明示した MCP のみ connected。ただし fixture Skill は supportedCommands に残った。summary の Skill 情報は欠落したため、Skill ツールの実行拒否までは確認できていない |
-| Codex `skills.config.path` にフォルダーを指定して enabled=false | skills/list は enabled=true のまま |
-| Codex 同じ設定でパスを `SKILL.md` まで指定 | skills/list は enabled=false |
-| Codex `project_doc_max_bytes=0` | config/read で 0 を確認。最終プロンプトから全スコープの指示が消えることは未検証 |
-
-Claude の通常初期化は一時ホーム以外の祖先 CLAUDE.md も検出した。ホームだけを変更して完全隔離できるとは扱わない。
-
-公式資料：[Claude memory](https://code.claude.com/docs/en/memory)、[SDK system prompts](https://code.claude.com/docs/en/agent-sdk/modifying-system-prompts)、[Codex config](https://learn.chatgpt.com/docs/config-file/config-reference)、[Codex Skills](https://learn.chatgpt.com/docs/build-skills)。公式設定説明とローカルバージョンの観測が違う箇所は、対応バージョン別に検証する。
-
-## 実行段階へ進める際の確認事項（実装済みの詳細は context-runtime.md）
-
-1. 指示・Skills・MCP ごとに所有者とバックエンドの対応能力を持たせる。抑止が未確認なら共通管理を有効にしない。
-2. Claude の設定維持時の Skill フィルター、再開・subagent・plugin 経由の読み込みと、Codex の全スコープ指示抑止・スレッド間分離を検証する。
-3. 解決済みマニフェストをセッションに記録し、指示の適用範囲・優先順位・Skill の遅延ロードと MCP の明示接続をバックエンドへ渡す。
-4. 既存セッションの指示履歴を消したことにはせず、設定変更の反映方式（新規セッションを含む）を決める。
-
-検証：`npm test` に探索・参照循環・リンク・競合・秘密値非公開・保存継承・同時保存・再起動復元・通常ターン非干渉のテストを追加。ブラウザーで両スコープの未保存変更の保持、保存・スキャン、390px 幅、明暗表示、コンソールエラー無しを確認した。
+`npm test` に探索・参照循環・リンク・競合・秘密値非公開・保存継承・同時保存・再起動復元・通常ターン非干渉のテストを追加。ブラウザーで両スコープの未保存変更の保持、保存・スキャン、390px 幅、明暗表示、コンソールエラー無しを確認した。
