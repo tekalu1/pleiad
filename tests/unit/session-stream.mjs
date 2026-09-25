@@ -12,7 +12,7 @@ export const title = "途中で開いたセッションを履歴と受信イベ�
 
 export default async function (t) {
   const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
-  const functions = ["onEvent", "isMine", "appendText", "openTurnEl", "closeTurnEl", "clearThread", "paintSession", "select"].map(name => {
+  const functions = ["onEvent", "isMine", "appendText", "openTurnEl", "closeTurnEl", "clearThread", "paintSession", "select", "loadAndPaint"].map(name => {
     let start = source.indexOf(`function ${name}(`);
     if (source.slice(start - 6, start) === "async ") start -= 6;
     return source.slice(start, source.indexOf("\n}", start) + 2);
@@ -31,6 +31,8 @@ export default async function (t) {
     filePreview: { sessionChanged: noop },
     // 狭い画面の引き出し（client.mjs の setDrawer）。会話を開くと閉じる。このテストの対象外
     setDrawer: noop,
+    // 入力欄の待ち（web/composer-wait.mjs）。tests/unit/composer-wait.mjs が見る。このテストの対象外
+    composerWait: { busy: noop, idle: noop, failed: noop, cancel: noop, queued: false }, freshSessionId: null,
     promptPlaceholder: () => "chat.composer.placeholder",
     state, sessionLoads: loads, outboxes: new Map(), paintOutbox: noop, syncOutboxRows: noop, refreshOutbox: async () => [],
     displayedCompletions: new Map(), document: { visibilityState: "visible" },

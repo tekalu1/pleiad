@@ -694,6 +694,26 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .composer textarea{width:100%;display:block;background:transparent;border-radius:var(--r-m);padding:9px 12px 3px;resize:none;line-height:1.6;overflow-y:hidden}
 .composer textarea:focus{outline:none}
 .composer textarea::placeholder{color:var(--ink-weak)}
+/* 入力欄の待ち（承認済みのモック docs/mockups/composer-loading.html、web/composer-wait.mjs、design-system.md「入力欄の待ち」）。
+   書けない待ち（会話を開いている・初めて接続するまで）は欄を readonly にし、箱に aria-busy。150ms を越えたら（data-wait）
+   中の字と案内を隠して、弧・待機文言・流れる棒（タイトル生成と同じ光）を重ねる。面は変えない。新しい色は足さない */
+.cbox{position:relative}
+.cbox[data-wait],.cbox[data-wait] textarea{cursor:progress}
+.cbox[data-wait] textarea,.cbox[data-wait] textarea::placeholder{color:transparent}
+.composer-busy{position:absolute;left:16px;right:56px;top:10px;display:flex;align-items:center;gap:8px;font-size:var(--fs-s);color:var(--ink-weak);pointer-events:none;min-width:0}
+.composer-busy[hidden]{display:none}
+.composer-busy-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.composer-busy-bar{display:block;flex:0 1 220px;min-width:40px;height:10px;border-radius:var(--r-pill);
+  background:linear-gradient(90deg,var(--surface-2) 40%,var(--surface-1) 50%,var(--surface-2) 60%) 0 0/300% 100% no-repeat;
+  animation:title-think 1.6s var(--ease-organic) infinite}
+@media (prefers-reduced-motion:reduce){.composer-busy-bar{animation:none}}
+/* 欄の上の一行。作成中の送信の予約（弧・強くない本文の字・取り消す）と、読み込みの失敗（理由・もう一度読む） */
+.composer-note{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:var(--fs-xs);color:var(--ink-weak);padding:0 6px 6px;min-height:22px}
+.composer-note[hidden]{display:none}
+.composer-note b{color:var(--ink);font-weight:500}
+.composer-note .composer-note-action{color:var(--ink-blue);padding:0 6px;font-size:var(--fs-xs)}
+/* 予約した送信。塗りをやめて弧を中に（押せないのではなく、待っている） */
+.send.wait,.send.wait:hover{background:var(--surface-3);color:var(--ink);cursor:progress}
 /* チップと送信の行。折り返さない。送信は常に右端 */
 .crow{display:flex;align-items:center;gap:2px;min-width:0;flex-wrap:nowrap}
 .send{width:34px;height:34px;border-radius:50%;padding:0;margin-left:4px;flex:none}   /* 唯一の塗り */

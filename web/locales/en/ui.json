@@ -1075,7 +1075,13 @@
       "mode": "Approval mode",
       "firstMessage": "Write the first message for {{name}}",
       "placeholder": "Ctrl+Enter to send",
-      "placeholderTouch": "Write a message"
+      "placeholderTouch": "Write a message",
+      "queued": "Will send once the conversation is ready",
+      "queuedCancel": "Cancel",
+      "historyLoading": "Loading history…",
+      "connecting": "Connecting…",
+      "historyNotLoaded": "The history isn't loaded yet, so this can't be sent.",
+      "historyRetry": "Load again"
     },
     "account": {
       "signedIn": "Signed in",
