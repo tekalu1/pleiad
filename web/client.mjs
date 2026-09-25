@@ -46,6 +46,7 @@ import { createReadCompletions } from "./unread.mjs";
 import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { renderOutbox } from './outbox.mjs';
+import { createComposerWait } from './composer-wait.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
 const submittingMessages = new Set();
@@ -88,6 +89,15 @@ applyDom(document);
 for (const [name, text] of [["untitled", t("session.untitled")], ["default", t("chat.model.default")], ["showing", ` ${t("app.previewShowing")}`]]) {
   document.documentElement.style.setProperty(`--i18n-${name}`, JSON.stringify(text));
 }
+
+// 入力欄の待ち（web/composer-wait.mjs）。書けない待ちは disabled ではなく readonly + aria-busy。
+// 初めて接続して会話を開くまでは「接続しています…」（その間に書いた字は、開いた会話の下書きで上書きされるため）
+const composerWait = createComposerWait({ box: $("cbox"), prompt: $("prompt"), send: $("send"), note: $("composerNote"),
+  busyLine: $("composerBusy"), busyText: $("composerBusyText"), t, runMark, onChange: () => syncRunState() });
+// 作ったばかりで、いま select している会話の id。開き直しと違い入力欄が正本（saveDraft・送信の予約・送信ボタンが見る）
+let freshSessionId = null;
+// 新しい会話を作っている間に押された送信の予約（submit）。「取り消す」で null
+let queuedSend = null;
 
 const NL = String.fromCharCode(10);
 const PROTOCOL = 3;
@@ -1897,9 +1907,15 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
   state.messages = [];
   state.contextInfo = null;
   state.contextInfoId = null;
-  $('prompt').value = '';
-  state.attached = [];
-  renderAttached();
+  // 入力欄は作っている間もずっと書ける（読み込むものが無い）。空にするのは別の会話から移ってきたときだけ。
+  // もう新しい会話の欄にいる（作成に失敗してやり直す・最初の接続）なら、書いてある字と添付はそのまま新しい会話の下書きになる
+  composerWait.idle();
+  if (source) {
+    $('prompt').value = '';
+    state.attached = [];
+    renderAttached();
+    fitPrompt();
+  }
   clearThread();
   syncTopbar();
   pendingRows.set(pendingNewSession.id, { kind: 'new', text: t('pending.creating'), visible: false });
@@ -1912,19 +1928,23 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
       await modeWrite;
       const result = await cmd("newSession", { sourceSessionId: source, backend: backend ?? (source ? undefined : state.prefs.backend ?? state.backendId),
         cwd: cwd || state.cwd || state.homeDir || "", status });
-      const draftText = $('prompt').value;
-      const draftAttachments = [...state.attached];
       pendingRows.delete(pendingNewSession.id);
       pendingNewSession = null;
       side.keep(status);
       await refresh().catch(() => {});
       if (state.current === null) {
-        await select(result.sessionId);
-        $('prompt').value = draftText;
-        state.attached = draftAttachments;
-        renderAttached(); fitPrompt();
-        if (draftText || draftAttachments.length) saveDraft().catch(() => {});
-        $("prompt").focus();
+        // 開き直しと違い、欄に触らない（無効にしない・下書きを読み直さない）。写しも取らない:
+        // 作っている間に書いた字は、終わった時点で欄にあるものがそのまま、この会話の下書きになる
+        await select(result.sessionId, { fresh: true });
+        if (state.current === result.sessionId) {
+          if ($('prompt').value || state.attached.length) await saveDraft().catch(() => {});
+          dropBlankDraft();
+        }
+      } else if (state.drafts.get("")) {
+        // 作っている間に別の会話へ移った。新しい会話の欄に書いてあった分（"" の下書き）は、この会話の下書きへ移す
+        const blank = state.drafts.get("");
+        if (blank.text || blank.attached?.length) persistDraft(result.sessionId, { ...blank, dirty: true }).catch(() => {});
+        dropBlankDraft();
       }
       return result.sessionId;
     } catch (e) {
@@ -2430,7 +2450,8 @@ try { state.drafts = new Map(JSON.parse(localStorage.getItem(DRAFT_STORE) ?? "[]
 const draftWrites = new Map();
 function saveDraft() {
   const id = draftKey();
-  if (id && state.loadingSession === id) return Promise.resolve();
+  // 開いている途中の欄は前の下書きの写しなので保存しない。作ったばかりの会話（freshSessionId）は欄が正本なので保存する
+  if (id && state.loadingSession === id && id !== freshSessionId) return Promise.resolve();
   const value = { text: $("prompt").value, attached: state.attached.slice(), dirty: true };
   return persistDraft(id, value);
 }
@@ -2453,6 +2474,14 @@ function persistDraft(id, value) {
     if (state.current === id) setDraftNote(t("chat.draft.saveFailed"), "failed");
   });
   return work;
+}
+/**
+ * 新しい会話の欄の下書き（キー ""）を消す。本物の会話が引き取った後に残すと、
+ * 後で current が null に戻ったとき（開いていた会話が消された等）に古い字が欄に戻ってくる
+ */
+function dropBlankDraft() {
+  if (!state.drafts.delete("")) return;
+  try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch {}
 }
 /** 入力欄の行の「保存済み」。state は saving | saved | failed | restored（700px 以下では failed だけ見せる。style.css） */
 function setDraftNote(text, st) {
@@ -2487,7 +2516,7 @@ const filePreview = setupFilePreview({
  * 件数の上限は無い。同じパスは 1 つだけ。積めたら true
  */
 function attachHostFiles(files) {
-  if ($('prompt').disabled) return false;
+  if ($('prompt').disabled || !composerWait.accepts()) return false;
   let added = 0;
   for (const file of files) {
     if (!file?.path || state.attached.some(a => a.path === file.path)) continue;
@@ -2634,6 +2663,8 @@ function openLightbox(src, caption, path, origin) {
  * 中身は断片で送る（web/attach-upload.mjs）。送っている間は札に進み具合を出し、終わったら普通の札にする
  */
 async function attachFiles(files) {
+  // 書けない待ち（会話を開いている・送信を予約した）の間に積むと、開いた会話の下書きで消されるか予約した送信に紛れる
+  if (!composerWait.accepts()) return;
   const sessionId = state.current;
   for (const file of files) {
     if (file.size > ATTACH_MAX_BYTES) {
@@ -3510,19 +3541,26 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
  * （枝の切り替え。共通部分は動かさない）。
  * reload は同じ会話の読み直し（つなぎ直したとき）。今の表示・入力欄・引き出しはそのままにして裏で読み、
  * 読めたら 1 回で描き替える。入力欄を止めない（止めると書いている途中でスマホのキーボードが閉じる）
+ * fresh は作ったばかりの会話（startNew）。空なので骨組みも「読み込み中」も出さず、入力欄に触らない（書いている字が正本）。
+ * retry は読み込みに失敗した今の会話を読み直す（「もう一度読む」。開き直しと同じ見せ方）
  */
-async function select(id, { keepUpTo, reload = false } = {}) {
-  if (state.busy || (id === state.current && keepUpTo === undefined && !reload)) return;
-  const quiet = reload && id === state.current && keepUpTo === undefined && !state.loadingSession;
-  if (keepUpTo === undefined && !quiet) setDrawer(false);
+async function select(id, { keepUpTo, reload = false, fresh = false, retry = false } = {}) {
+  if (state.busy || (id === state.current && keepUpTo === undefined && !reload && !retry)) return;
+  const quiet = reload && !retry && id === state.current && keepUpTo === undefined && !state.loadingSession;
+  if (keepUpTo === undefined && !quiet && !fresh) setDrawer(false);
   filePreview.sessionChanged(id);
   if (keepUpTo === undefined && !quiet) {
     // 開き直し: 先に空にして「読み込み中」。切り替え（keepUpTo）は剥がれた後に一緒に描くので、ここでは触らない
-    saveDraft().catch(() => {});
+    // 作っている間の送信の予約は、別の会話へ移ったら取り消す（字は "" の下書きに残り、作った会話へ移る。startNew）
+    if (!fresh && composerWait.queued) composerWait.cancel();
+    if (!fresh) saveDraft().catch(() => {});
     state.current = id;
     try { localStorage.setItem("agent-host-current", id); } catch {}
     state.loadingSession = id;
-    $("prompt").disabled = true;
+    if (fresh) freshSessionId = id;
+    // 前の会話の下書きで上書きするまで、書いた字は保てない。disabled にはしない（打鍵が黙って捨てられ、キーボードが閉じる）。
+    // readonly + aria-busy にして、150ms を越えたら欄の中に「履歴を読み込み中…」を出す（web/composer-wait.mjs）
+    if (fresh) composerWait.idle(); else composerWait.busy("history");
     $("settingsError").textContent = "";
     $("retrySettings").hidden = settingsFailure !== id;
     state.awaitingSession = false;
@@ -3530,12 +3568,18 @@ async function select(id, { keepUpTo, reload = false } = {}) {
     syncRunState();
     syncTopbar();
     clearThread();
-    loadDraft();
+    if (!fresh) loadDraft();
   }
+  try {
+    await loadAndPaint(id, { keepUpTo, quiet, fresh });
+  } finally { if (freshSessionId === id) freshSessionId = null; }
+}
+
+async function loadAndPaint(id, { keepUpTo, quiet, fresh }) {
   sessionLoads.cancel(state.displayLoad);
   const load = sessionLoads.begin(id);
   state.displayLoad = load;
-  const historyTimer = keepUpTo === undefined && !quiet ? setTimeout(() => {
+  const historyTimer = keepUpTo === undefined && !quiet && !fresh ? setTimeout(() => {
     if (state.current !== id || state.displayLoad !== load) return;
     for (const widths of [[42, 62], [35, 78, 54]]) {
       const lines = el('div', 'history-lines');
@@ -3557,11 +3601,21 @@ async function select(id, { keepUpTo, reload = false } = {}) {
     if (quiet) return;
     state.loadingSession = null;
     clearThread();
+    // 欄は書けるように戻す（以前は無効のまま戻らなかった）。送信は読み込めるまで押せない。欄の上に理由と「もう一度読む」
+    if (keepUpTo === undefined) composerWait.failed(() => select(id, { retry: true }));
+    syncRunState();
     return sys(html.t("chat.sys.historyFailed", { error: e.message }));
   }
   try {
     if (state.displayLoad !== load || keepUpTo === undefined && state.current !== id) return;
-    await paintSession(id, data, { keepUpTo, load, quiet });
+    await paintSession(id, data, { keepUpTo, load, quiet, fresh });
+  } catch (e) {
+    // 描く途中（枝の読み込みなど）で落ちても、欄を待ちのまま残さない
+    if (state.current === id && state.loadingSession === id && keepUpTo === undefined && !quiet) {
+      state.loadingSession = null;
+      composerWait.failed(() => select(id, { retry: true }));
+      sys(html.t("chat.sys.historyFailed", { error: e.message }));
+    } else throw e;
   } finally { clearTimeout(historyTimer); sessionLoads.cancel(load); }
 }
 
@@ -3570,7 +3624,7 @@ async function select(id, { keepUpTo, reload = false } = {}) {
  * 続きだけ描く。タイトル・一覧の選択・入力欄もここで一緒に切り替わる（= 描画の最終コマと同じタイミング）。
  * transition は選択前のノード座標。本文の高さを畳まず、ノードを横移動する。
  */
-async function paintSession(id, data, { keepUpTo, transition, loaded = false, load, quiet = false } = {}) {
+async function paintSession(id, data, { keepUpTo, transition, loaded = false, load, quiet = false, fresh = false } = {}) {
   filePreview.sessionChanged(id);
   const snapshots = branchSnapshots();
   if (keepUpTo !== undefined) saveDraft().catch(() => {});
@@ -3580,8 +3634,9 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   refreshOutbox(id).catch(() => {});
   try { localStorage.setItem("agent-host-current", id); } catch {}
   const localDraft = state.drafts.get(id);
-  // 読み直しでは、入力欄に今ある字が正本（読んでいる間に書き足した分がサーバーの下書きより新しい）
-  if (!localDraft?.dirty && !quiet) {
+  // 読み直しと作ったばかりの会話では、入力欄に今ある字が正本（読んでいる間に書き足した分がサーバーの下書きより新しい）
+  const keepComposer = quiet || fresh;
+  if (!localDraft?.dirty && !keepComposer) {
     const restored = data?.draft ?? { text: "", attached: [] };
     restored.attached = (restored.attached ?? []).map(a => ({ ...a, dataUri: localDraft?.attached?.find(old => old.path === a.path)?.dataUri }));
     state.drafts.set(id, restored);
@@ -3594,7 +3649,9 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   if (!loaded) await branches.load(id, state.messages);
   if (state.current !== id || load && state.displayLoad !== load) return;
   state.loadingSession = null;
+  // 対応を終えたエージェントの会話で閉じた欄（下の retired）は、別の会話を開いたら戻す
   $("prompt").disabled = false;
+  composerWait.idle();
   syncRunState();
   syncTopbar();
 
@@ -3622,7 +3679,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
       setUuid(m, message.uuid);
     }
   }
-  if (!quiet) loadDraft();
+  if (!keepComposer) loadDraft();
   closeTurnEl();
   const added = paintHistory(keepUpTo ?? 0);
   if (state.initialMessageId) {
@@ -3816,8 +3873,10 @@ function stoppingHere() {
 function syncRunState() {
   const here = isRunningHere();
   // エージェント・作業ディレクトリは実行中も次のターンの分を予約できる（チップは無効にしない）
-  $("send").disabled = submittingMessages.has(state.current) || state.loadingSession === state.current && Boolean(state.current)
-    || Boolean(retiredHere());
+  // 作ったばかりの会話（freshSessionId）を開いている間は押せる（送信を予約する。submit）
+  $("send").disabled = submittingMessages.has(state.current)
+    || state.loadingSession === state.current && Boolean(state.current) && state.current !== freshSessionId
+    || composerWait.blocksSend() || Boolean(retiredHere());
   $("abort").hidden = !(here || isWaitingHere());
   // 受け付けた中断は取り消せない。止まり終えるまで押せないようにする（稼働表示は「中断している」）
   $("abort").disabled = here && stoppingHere();
@@ -3838,9 +3897,24 @@ async function clearSentDraft(id, text, attachments) {
 }
 async function submit() {
   if ($('prompt').value.trim() || state.attached.length) completionNotifications.requestPermission();
-  if (!state.current) { await startNew(); if (!state.current) return; }
+  if (!state.current || state.current === freshSessionId) {
+    // 新しい会話を作っている間の送信は予約する（docs/design-system.md「入力欄の待ち」）。欄は readonly にして字を保ち、
+    // 150ms を越えたら送信ボタンに弧、欄の上に「会話ができしだい送ります · 取り消す」。できしだい下の続きで送る
+    if (queuedSend) return;
+    const hasContent = Boolean($('prompt').value.trim() || state.attached.length);
+    const ticket = { cancelled: false };
+    if (hasContent) {
+      queuedSend = ticket;
+      composerWait.queue(() => { ticket.cancelled = true; if (queuedSend === ticket) queuedSend = null; });
+    }
+    let created = null;
+    try { created = await (creatingSession ?? startNew()); }
+    finally { if (queuedSend === ticket) { queuedSend = null; composerWait.unqueue(); } }
+    // 取り消した・作れなかった（脇の帯に理由とやり直し）・その間に別の会話へ移ったなら送らない。字は欄に残っている
+    if (ticket.cancelled || !created || state.current !== created || state.current === freshSessionId) return;
+  }
   const sessionId = state.current;
-  if (submittingMessages.has(sessionId) || state.busy || state.loadingSession || retiredHere()) return;
+  if (submittingMessages.has(sessionId) || state.busy || state.loadingSession || composerWait.blocksSend() || retiredHere()) return;
   submittingMessages.add(sessionId);
   syncRunState();
   try {
@@ -3925,7 +3999,11 @@ function connect() {
         try { saved = localStorage.getItem("agent-host-current"); } catch {}
         if (saved && state.sessions.some(s => s.id === saved)) await select(saved);
         else await startNew();
-      }).catch(e => sys(html.t("app.initFailed", { error: e.message })));
+      }).catch(e => {
+        // 最初の接続の待ち（「接続しています…」）を残さない。開けなかった会話の待ちは select が解く
+        if (composerWait.mode === "connect") composerWait.idle();
+        sys(html.t("app.initFailed", { error: e.message }));
+      });
     }
 
     // 保存される文言（変更の理由・添付の見出し）を今の言語に（web/saved-text.mjs）
@@ -4136,4 +4214,6 @@ watchShellTheme();
 watchShellBack();
 wireDropZone();
 fitPrompt();
+// 初めて接続して会話を開く（または新しい会話を始める）までは書けない。書いても開いた会話の下書きで上書きされる
+composerWait.busy("connect");
 connect();
