@@ -90,13 +90,22 @@ const sdkMode = (mode) => (MODES[mode] ? SDK_MODES[mode] ?? mode : "default");
 // 空文字は「指定しない」＝ Claude Code の設定に従う。引けないときは固定の一覧（エイリアス）に戻す。
 const MODELS = FALLBACK_MODELS;
 
-// SDK の supportedModels() は CLI を起こさないと取れない。1 回起こして（LLM は呼ばない。会話も残さない）、
-// 一覧と、モデルごとに CLI が既定で使うエフォート（getSettings の applied.effort）を覚える。
-// 設定（settingSources）は読ませない: hooks や MCP を起動させないため。利用者の設定のモデルは
-// resolveSettings（CLI を起こさない）で別に読む。
+// SDK の supportedModels() は CLI を起こさないと取れない。1 回起こして（LLM に問いは送らない。会話も残さない）、
+// 一覧と、モデルごとに CLI が実際に当てるエフォート（getSettings の applied.effort）を覚える。
+// 段は利用者の設定のもとで引く。settings.json の effortLevel をそのまま既定と見なすと外れるため
+// （2026-09-25: effortLevel が high でも claude-opus-5-5 には medium が当たり、画面は high と出ていた。
+//  同じ値をフラグの設定で渡すと high になるので、CLI の規則を外から真似せず CLI に聞く）。
+// 設定を読ませても hooks は止め（disableAllHooks）、MCP は起こさない（strictMcpConfig + 空）。
+// ただし設定が別の接続先（ANTHROPIC_BASE_URL・Bedrock など）を指すときは設定を読ませない: setModel は
+// モデルの確かめに接続先へ POST /v1/messages を送るので、利用者の接続先へ裏で投げてしまう。
+// そのときの段は settings.json の effortLevel で補う（applied: false）。
 const CATALOG_TTL = 30 * 60_000, CATALOG_RETRY = 60_000, CATALOG_WAIT = 8_000;
-let catalog = null, catalogAt = 0, catalogFailed = 0, catalogProbe = null;
-async function probeCatalog() {
+const PROVIDER_ENV = ["ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_GATEWAY"];
+// 引く条件（作業場所・段に効く設定）ごとに 1 件。{ value, at, failed, probe }
+const catalogs = new Map();
+let anyCatalog = null;   // どれか 1 件でも取れたか（validModel が保存済みの id を通すかどうか）
+async function probeCatalog(cwd, withSettings) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 30_000);
   const idle = async function* () { await new Promise((resolve) => ac.signal.addEventListener("abort", resolve, { once: true })); };
@@ -104,7 +113,10 @@ async function probeCatalog() {
   try {
     q = query({ prompt: idle(), options: {
       pathToClaudeCodeExecutable: claudeExecutable(), env: claudeEnv(process.env), abortController: ac,
-      settingSources: [], persistSession: false, stderr: () => {},
+      ...(withSettings
+        ? { settingSources: ["user", "project", "local"], settings: { disableAllHooks: true }, strictMcpConfig: true, mcpServers: {}, ...(cwd ? { cwd } : {}) }
+        : { settingSources: [] }),
+      persistSession: false, stderr: () => {},
     } });
     const init = await q.initializationResult();
     const rows = Array.isArray(init?.models) && init.models.length ? init.models : await q.supportedModels();
@@ -116,26 +128,34 @@ async function probeCatalog() {
         catch { /* 既定のエフォートが分からないだけ。一覧は使える */ }
       }
     }
-    return { rows, efforts };
+    return { rows, efforts, applied: withSettings };
   } finally {
     clearTimeout(timer);
     try { q?.close?.(); } catch { /* 既に閉じている */ }
     ac.abort();
   }
 }
-function loadCatalog() {
-  const now = Date.now();
-  if (catalog && now - catalogAt < CATALOG_TTL) return Promise.resolve(catalog);
-  if (!catalog && now - catalogFailed < CATALOG_RETRY) return Promise.resolve(null);
-  catalogProbe ??= probeCatalog()
-    .then((c) => { catalog = c; catalogAt = Date.now(); return c; })
-    .catch((err) => { catalogFailed = Date.now(); console.error("  Claude のモデル一覧を取れなかった:", String(err?.message ?? err)); return catalog; })
-    .finally(() => { catalogProbe = null; });
-  // 起動直後の最初の 1 回だけ待つ。長く掛かる（未ログイン・未導入）ときは固定の一覧で先に答える
-  return Promise.race([catalogProbe, new Promise((resolve) => setTimeout(() => resolve(catalog), CATALOG_WAIT).unref?.())]);
+function loadCatalog(cwd, pref) {
+  // 別の接続先のときは設定を読まないので、作業場所で結果は変わらない
+  const key = pref.custom ? "custom" : `${cwd || ""}|${pref.sig}`, now = Date.now();
+  let e = catalogs.get(key);
+  if (e?.value && now - e.at < CATALOG_TTL) return Promise.resolve(e.value);
+  if (e && !e.value && now - e.failed < CATALOG_RETRY) return Promise.resolve(null);
+  if (!e) {
+    if (catalogs.size >= 32) catalogs.delete(catalogs.keys().next().value);
+    e = { value: null, at: 0, failed: 0, probe: null }; catalogs.set(key, e);
+  }
+  e.probe ??= probeCatalog(cwd, !pref.custom)
+    .then((c) => { e.value = anyCatalog = c; e.at = Date.now(); return c; })
+    .catch((err) => { e.failed = Date.now(); console.error("  Claude のモデル一覧を取れなかった:", String(err?.message ?? err)); return e.value; })
+    .finally(() => { e.probe = null; });
+  // 初めの 1 回だけ待つ。長く掛かる（未ログイン・未導入）ときは、別の条件で取れた一覧か固定の一覧で先に答える
+  const stand = () => e.value ?? (anyCatalog && { ...anyCatalog, applied: false });
+  return Promise.race([e.probe.then((v) => v ?? stand()), new Promise((resolve) => setTimeout(() => resolve(stand()), CATALOG_WAIT).unref?.())]);
 }
 // 利用者の設定のモデルとエフォート。env が settings.json より強い（CLI と同じ順）。作業場所ごとに違いうるので cwd で引く。
-// 一覧を引く CLI は設定を読まずに起こすので、settings.json の effortLevel はここで拾って既定の段に重ねる
+// effort は段を利用者の設定のもとで引けなかったとき（applied: false）だけ既定の段に重ねる。
+// sig は段に効く設定の写し（変わったら一覧を引き直す）。custom は設定か env が別の接続先を指すか
 const preferredCache = new Map();
 async function preferredSettings(cwd) {
   const key = cwd || "";
@@ -144,18 +164,21 @@ async function preferredSettings(cwd) {
   let effective = null;
   try { ({ effective } = await resolveSettings({ ...(cwd ? { cwd } : {}), settingSources: ["user", "project", "local"] })); }
   catch { /* 読めなければ SDK の既定の行と段に任せる */ }
+  const on = (v) => Boolean(v) && v !== "0" && String(v).toLowerCase() !== "false";
   const value = {
     model: process.env.ANTHROPIC_MODEL || effective?.env?.ANTHROPIC_MODEL || effective?.model || null,
     effort: process.env.CLAUDE_CODE_EFFORT_LEVEL || effective?.env?.CLAUDE_CODE_EFFORT_LEVEL || effective?.effortLevel || null,
+    custom: PROVIDER_ENV.some((k) => on(process.env[k]) || on(effective?.env?.[k])),
   };
+  value.sig = JSON.stringify([value.model, value.effort, effective?.modelSettings ?? null]);
   preferredCache.set(key, { value, at: Date.now() });
   return value;
 }
 async function claudeModels(cwd) {
-  const c = await loadCatalog();
-  if (!c) return MODELS;
   const pref = await preferredSettings(cwd);
-  return buildClaudeModels({ rows: c.rows, efforts: c.efforts, preferred: pref.model, preferredEffort: pref.effort });
+  const c = await loadCatalog(cwd, pref);
+  if (!c) return MODELS;
+  return buildClaudeModels({ rows: c.rows, efforts: c.efforts, preferred: pref.model, preferredEffort: c.applied ? null : pref.effort });
 }
 
 // web/render.mjs の TOOL_LABEL / TOOL_DRAW を補うヒント。
@@ -491,7 +514,7 @@ export const backend = {
   async validModel(model, cwd) {
     if (typeof model !== "string" || model.length > 200 || /[\r\n\x00]/.test(model)) return false;
     if (!model) return true;
-    return Object.hasOwn(await claudeModels(cwd), model) || (!catalog && /^[\w.\-\[\]]+$/.test(model));
+    return Object.hasOwn(await claudeModels(cwd), model) || (!anyCatalog && /^[\w.\-\[\]]+$/.test(model));
   },
 
   // ---- 実行 ---------------------------------------------------------------
