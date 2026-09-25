@@ -1,4 +1,4 @@
-/* ==================== コンテキスト（docs/mockups/context-unified.html） ====================
+/* ==================== コンテキスト（docs/design-system.md「コンテキスト」） ====================
    ① 会話の右パネル「この会話のコンテキスト」（web/session-context.mjs）
    ② 設定 › コンテキスト（web/context.mjs）と、外部 MCP のカード・追加シート（web/mcp-config.mjs）
    枠線・片側の線は使わない。区切りは余白と面の階調（--surface-*）だけ。角は全部丸い。

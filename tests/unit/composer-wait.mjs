@@ -1,4 +1,4 @@
-// 入力欄の待ち（web/composer-wait.mjs、承認済みのモック docs/mockups/composer-loading.html）。
+// 入力欄の待ち（web/composer-wait.mjs、docs/design-system.md「入力欄の待ち」）。
 //   - 書けない待ち（会話を開く・初めて接続するまで）は readonly + aria-busy。disabled にしない。150ms を越えてから見せる
 //   - 読み込みの失敗で欄を書けるように戻し、欄の上に理由と「もう一度読む」。送信は押せない（理由を title に）
 //   - 作成中の送信の予約: readonly、150ms を越えたら送信に弧と「会話ができしだい送ります · 取り消す」。取り消すと字はそのまま

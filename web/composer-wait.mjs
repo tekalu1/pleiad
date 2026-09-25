@@ -1,4 +1,4 @@
-// 入力欄の待ち（承認済みのモック docs/mockups/composer-loading.html、docs/design-system.md「入力欄の待ち」）。
+// 入力欄の待ち（docs/design-system.md「入力欄の待ち」）。
 //
 // 3 つの場面を 1 か所で持つ。どれも disabled は使わない（無効にすると打鍵が黙って捨てられ、スマホのキーボードが閉じ、
 // 変換中の IME が切れる）。

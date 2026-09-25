@@ -469,7 +469,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     catch { v.where = null; }
     return v.where;
   }
-  // ---- 可視化の操作（道具の列・⋯・下の行。docs/mockups/side-panel-shell.html）
+  // ---- 可視化の操作（道具の列・⋯・下の行。docs/design-system.md「右パネルの枠」）
   /** 写しを引く印。会話と、記録の id（以前の記録は at）。どちらかが無ければ引けない */
   function snapshotQuery(v) {
     const sessionId = context.sessionId;
@@ -524,7 +524,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
       }
     } catch (error) { failed(error); }
   }
-  // ---- ファイルの操作（docs/mockups/file-actions.html）。メニューの中身は web/file-actions.mjs
+  // ---- ファイルの操作（docs/design-system.md「ファイルの操作」）。メニューの中身は web/file-actions.mjs
   /** サーバーへ渡す場所の手がかり。相対パスは発言の時刻（at）かプレビュー中の文書（base）で解く */
   const whereFrom = target => {
     const ctx = target.element ? getContext(target.element) : context;

@@ -1,4 +1,4 @@
-// 手元のフォルダーをホストへ送る（docs/remote.md §8.1、issue #15。承認済みのモック docs/mockups/remote-folder-picker.html）。
+// 手元のフォルダーをホストへ送る（docs/remote.md §8.1、issue #15）。
 //
 // リモートの窓（window.plyRemote があり、shell が mobile ではない）だけで使う。手元のファイルを渡すのは添付と同じ種類の操作なので、
 // 入口は添付（クリップ）のボタン: 押すと小さなメニュー「ファイルを添付… / フォルダーを送る…」（web/attach-menu.mjs）。
