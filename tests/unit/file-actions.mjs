@@ -1,4 +1,4 @@
-// ファイルの操作（docs/mockups/file-actions.html）: パスの自動リンクの判定、画像の所在、操作メニューの中身、
+// ファイルの操作（docs/design-system.md「ファイルの操作」）: パスの自動リンクの判定、画像の所在、操作メニューの中身、
 // OS で開く口（起動の組み立て・接続元の判定・連打の制限・デスクトップ版の確かめ直し）と、サーバーの revealPath / openPath。
 // OS の窓は開かない（起動は組み立てだけ確かめ、サーバーは AGENT_HOST_OS_OPEN=dry で起動する）。
 import assert from 'node:assert/strict';

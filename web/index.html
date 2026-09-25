@@ -139,7 +139,7 @@
       <ul class="clist" id="skillList" role="listbox" data-i18n-aria-label="chat.composer.skills" hidden></ul>
       <!-- 欄の上の一行（web/composer-wait.mjs）: 作成中の送信の予約「会話ができしだい送ります · 取り消す」、読み込みの失敗「… · もう一度読む」 -->
       <div class="composer-note" id="composerNote" role="status" hidden></div>
-      <!-- 入力の箱（承認済みのモック docs/mockups/phone-composer-header.html の v2）。1 つの角丸の面に
+      <!-- 入力の箱（docs/design-system.md「入力欄と上端」）。1 つの角丸の面に
            送る前の添付 → 字の欄（1 行から伸びる）→ チップと送信の行 を入れる。デスクトップもスマホも同じ -->
       <div class="cbox" id="cbox">
         <!-- 送る前の添付。会話にはまだ出ない（送信で present として載る） -->
@@ -234,7 +234,7 @@
   </main>
 
   <!-- 画像を大きく見る（承認ではないので dialog でよい）。× と Esc と外側のクリックで閉じる。
-       下端に所在（フルパスとコピー）と操作を並べる（docs/mockups/file-actions.html）。中身は web/client.mjs の openLightbox -->
+       下端に所在（フルパスとコピー）と操作を並べる（docs/design-system.md「ファイルの操作」）。中身は web/client.mjs の openLightbox -->
   <dialog id="lightbox">
     <button type="button" class="btn btn-icon lb-close" data-close data-i18n-title="dialog.closeEsc"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <img alt="">

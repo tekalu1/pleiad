@@ -1,5 +1,5 @@
-// 入力欄と上端の、DOM を触らない決まり（承認済みのモック docs/mockups/phone-composer-header.html、
-// docs/design-system.md「入力欄」「入力欄の設定」）。client.mjs・composer-controls.mjs・attach-menu.mjs が使い、
+// 入力欄と上端の、DOM を触らない決まり（docs/design-system.md「入力欄と上端」
+// 「入力欄の設定」）。client.mjs・composer-controls.mjs・attach-menu.mjs が使い、
 // tests/unit/composer-layout.mjs が直接確かめる。
 
 /** 字の欄の上限の行数。マウスは 10 行、タッチは 6 行。その先は欄の中でスクロール */

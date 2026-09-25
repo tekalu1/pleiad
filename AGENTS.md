@@ -22,7 +22,7 @@
 - `npm run test:e2e` は実際の LLM を呼び出すため、実サービスとの接続確認が必要な変更で実行する。
 - 現在は独立したビルドコマンドはない。文書のみの変更では、内容と `git diff --check` の確認を行えばよい。
 - UI の変更では必要に応じてブラウザーで表示・操作を確認する。ブラウザー自動化は、まずシェルで `playwright-cli` と `agent-browser` の利用可否を調べ、前者があれば優先し、なければ後者を使う。ユーザーによるツール・ブラウザー指定があればそれに従う。
-  - `playwright-cli` は `file:` を開けない（"Access to file: protocol is blocked"）。`docs/mockups/` の HTML を見るときは `python -m http.server 8799` をそのディレクトリで起動して `goto http://127.0.0.1:8799/<name>.html` で開く。`eval` は式の文字列ではなく `"() => { … }"` の関数を渡す（式だと `UtilityScript` のエラーで落ちる）。確認したら `playwright-cli close` とサーバー停止まで行う。
+  - `playwright-cli` は `file:` を開けない（"Access to file: protocol is blocked"）。`temporary/mockups/` のモックを見るときは `python -m http.server 8799` をそのディレクトリで起動して `goto http://127.0.0.1:8799/<name>.html` で開く。`eval` は式の文字列ではなく `"() => { … }"` の関数を渡す（式だと `UtilityScript` のエラーで落ちる）。確認したら `playwright-cli close` とサーバー停止まで行う。
   - `playwright-cli` の `type` は対象を取らない（`type <text>` だけ）。欄を指定して入れるなら `fill <ref> <text>`。
   - 右クリックメニューの子メニュー（`状態を変更 ▸` など）は、親の項目を `.click()` しても開かないことがある。`eval` の中で `[...document.querySelectorAll('.pop.menu .li')].find(n => n.textContent.includes('…'))` を取り、`web/context-menu.mjs` が生やす `row.openSub(false)` を呼ぶ。`新しい状態を作る` は `.li` ではなく入力欄なので、`input[placeholder]` を探して値を入れ `keydown` の Enter を送る。
   - 数秒で消える表示（脇の下の「元に戻す」は 12 秒）は、出す `eval` と `screenshot` を 1 回のコマンドでつなげて撮る。別々に打つと撮る前に消える。
@@ -31,6 +31,13 @@
   - fake は初回「未ログイン」で最初の案内が開き、作業ディレクトリも空のため、そのまま送った会話は「未送信」に残り、送信済みが前提の操作（タイトル生成など）が押せない。案内の「ログイン」→「あとで」→ 入力欄で作業ディレクトリを指定してから送る。
   - fake の応答は即座に返り、処理中の表示が一瞬で消える。見るときはページ上で `WebSocket.prototype.send` を包み、対象コマンド（例: `suggestTitle`）の送信を数秒遅らせる。
 - コミット前に差分を確認し、対象ファイルを明示してステージする。検証が失敗した場合は原因を調べ、未解決のまま完了扱いにしない。
+
+## 使い捨てのもの（temporary/）
+
+- モック・調査や提案のメモ・スクリーンショット・一回きりのスクリプトは、メインの作業ディレクトリの `temporary/` に置き、コミットしない（`.gitignore` 済み）。worktree の中の `temporary/` は worktree と一緒に消えるので、worktree で作業していても絶対パスでメイン側に書く。
+- 置き場は `temporary/mockups/<題>.html`・`temporary/reports/<題>.md`・`temporary/screenshots/<題>-<場面>.png`・`temporary/scripts/`。題は英小文字とハイフン（例 `background-panel`）。改訂は上書きし、並べて比べる版だけ `-v2` などを付ける。
+- コミットするのはコード・テストと、今の動きを書いた文書（`docs/`）だけ。モックで承認された形は、モックへのリンクではなく決まった形と日付を `docs/design-system.md` などの本文に書く（「承認済み（2026-09-25）」）。コード・テストのコメントもモックではなく文書の節を指す。
+- 調査の結論のうち残すものは、要点だけを該当する文書に書く。経過と材料は `temporary/reports/` に残す。
 
 ## main への反映
 

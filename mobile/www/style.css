@@ -1,4 +1,4 @@
-/* The shell's screens (mock: docs/mockups/remote-mobile.html ① ②). Colors follow web/tokens.css's palette. */
+/* The shell's screens (docs/remote.md §8.2). Colors follow web/tokens.css's palette. */
 :root {
   --paper: #fff; --s0: #eceef4; --s1: #f4f5f9; --s2: #e8eaf1; --s3: #dcdee8;
   --fill: #3a499e; --on: #f4f5ff; --ink: #1c2247; --weak: #6b7299; --faint: #dfe2ec; --lineb: #5665cd;
