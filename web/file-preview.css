@@ -6,6 +6,10 @@ body.file-preview-open{grid-template-columns:var(--side-col) minmax(360px,1fr) v
 .file-preview-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:18px 0 14px}
 .file-preview-title{min-width:0;flex:1}
 .file-preview-title h2{font-size:var(--fs);font-weight:600;line-height:1.6;margin:0;overflow-wrap:anywhere}
+/* 見出しの横の種類の印（ファイル・可視化）。写しなのか今のファイルなのかを見分ける。色は面と弱い文字だけ */
+.file-preview-title h2{display:flex;align-items:baseline;flex-wrap:wrap;column-gap:6px}
+.file-preview-name{min-width:0}
+.file-preview-kind{flex:none;font-size:var(--fs-xs);font-weight:400;line-height:1.7;color:var(--ink-weak);background:var(--surface-2);border-radius:var(--r-pill);padding:0 8px}
 .file-preview-path{font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere;margin-top:3px}
 .file-preview-actions{display:flex;align-items:center;flex-shrink:0}
 .file-preview-actions .btn{padding:5px 8px;font-size:var(--fs-s)}
@@ -16,6 +20,8 @@ body.file-preview-open{grid-template-columns:var(--side-col) minmax(360px,1fr) v
 /* HTML の「ブラウザーで開く」は切り替えの隣に置き、パス・再読み込みは右へ寄せたまま */
 .file-preview-toolbar:has(.file-preview-browser:not([hidden])) .file-preview-switch{margin-right:0}
 .file-preview-browser{margin-right:auto}
+/* 道具の列・下の行のボタンの入れ物（web/side-panel.mjs が中身を並べ替える）。並びの上では無いものとして扱う */
+.file-preview-tools,.file-preview-foot-actions{display:contents}
 .file-preview-location{display:flex;align-items:center;gap:4px;padding:0 0 12px}
 .file-preview-location input{flex:1;min-width:0;padding:8px 12px;background:var(--surface-paper);border-radius:var(--r-pill);font:var(--fs-s)/1.6 var(--font-mono)}
 .file-preview-location .btn-icon{width:30px;height:30px;padding:0;flex:none}
@@ -24,7 +30,6 @@ body.file-preview-open{grid-template-columns:var(--side-col) minmax(360px,1fr) v
 .file-preview-tree-pane.collapsed{display:none}
 .file-preview-tree-header{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 6px;font-size:var(--fs-xs);font-weight:600;color:var(--ink-weak);letter-spacing:.04em}
 .file-preview-tree{flex:1;min-height:0;overflow:auto;scrollbar-width:thin}
-.file-preview.custom .file-preview-tree-pane{display:none}
 .file-preview-content{min-height:0;flex:1;overflow:auto;overscroll-behavior:contain;position:relative;background:var(--surface-paper);border-radius:var(--r-m)}
 .directory-view{padding:28px 32px;max-width:900px;margin:0 auto}
 .dir-head{margin-bottom:20px}

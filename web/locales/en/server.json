@@ -711,7 +711,8 @@
       "htmlRequired": "Specify an HTML file for the visualization.",
       "notUtf8": "Cannot read the visualization as UTF-8 HTML.",
       "tooMany": "Up to {{max}} visualizations per turn.",
-      "caption": "Visualization"
+      "caption": "Visualization",
+      "snapshotNotFound": "The visualization saved in this conversation can't be found."
     }
   },
   "usage": {

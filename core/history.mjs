@@ -98,7 +98,8 @@ export async function recordPresent(sessionId, payload) {
     // 添付の caption は日本語の文のまま残し、画面はキーで今の言語に訳す（core/server.mjs presentAttachments・web/saved-text.mjs）
     ...(payload.captionKey ? { captionKey: payload.captionKey, captionParams: payload.captionParams ?? null } : {}),
     path: payload.path ?? null,
-    ...(payload.kind === 'visualization' ? { mode: payload.mode, error: payload.error, reference: payload.reference } : {}),
+    // id は写しを後から指すため（core/server.mjs の /visualization-snapshot。別タブで開く）。以前の記録は at で指す
+    ...(payload.kind === 'visualization' ? { id: crypto.randomUUID(), mode: payload.mode, error: payload.error, reference: payload.reference } : {}),
     // 誰が置いたか。人間の添付と AI の提示は同じ流れに並ぶので、履歴でも区別できるようにする
     by: payload.by === "human" ? "human" : "ai",
     ...(payload.turnKey ? { turnKey: payload.turnKey } : {}),
@@ -120,6 +121,17 @@ export async function recordPresent(sessionId, payload) {
     await fs.appendFile(file, JSON.stringify(record) + "\n", "utf8");
   });
   return record;
+}
+
+/**
+ * 会話に保存された可視化の写しを 1 つ探す（別タブで開く /visualization-snapshot）。
+ * id（新しい記録）か at（id の無い以前の記録。同じ時刻が複数あれば最初）で指す。中身の無いもの・エラーのカードは null
+ */
+export async function findVisualization(sessionId, backend, { id, at } = {}) {
+  if (!sessionId || (!id && !at)) return null;
+  const presents = backend?.getPresents ? await backend.getPresents(sessionId) : await readPresents(sessionId);
+  const found = presents.find(p => p?.kind === 'visualization' && (id ? p.id === id : p.at === at));
+  return found && typeof found.content === 'string' && !found.error ? found : null;
 }
 
 /** Bind human attachments to a durable message UUID (some agents do not record timestamps). */

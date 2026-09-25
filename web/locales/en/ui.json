@@ -488,7 +488,14 @@
       "title": "Visualization",
       "save": "Save the HTML kept in the conversation",
       "status": "Saved visualization",
-      "statusTitle": "This is the content saved with this reply, not the current content of the file on the host."
+      "statusTitle": "This is the content saved with this reply, not the current content of the file on the host.",
+      "note": "This is a copy saved in the conversation. To see the current file, use “Open original file”.",
+      "noOrigin": "Saved in the conversation",
+      "savedAt": "Saved at {{time}}",
+      "browserTitle": "Opens the copy saved in the conversation in a new tab (not the original file)",
+      "originTitle": "Opens the current content of the original file in this panel",
+      "popupBlocked": "Couldn't open a new tab. Check whether the browser is blocking pop-ups.",
+      "actions": "Actions for this visualization"
     },
     "dir": {
       "items_one": "{{count}} item",
@@ -523,7 +530,11 @@
       "join": ", ",
       "note": "Some {{items}} couldn't be loaded. External resources other than scripts from allowed CDNs are not loaded."
     },
-    "original": "Source"
+    "original": "Source",
+    "mode": {
+      "file": "File",
+      "visualization": "Visualization"
+    }
   },
   "sessionContext": {
     "word": {
@@ -1365,7 +1376,10 @@
       "copyPath": "Copy path",
       "copyRelative": "Copy relative path",
       "save": "Save",
-      "use": "Use in conversation"
+      "use": "Use in conversation",
+      "copyOriginPath": "Copy original path",
+      "openOrigin": "Open original file",
+      "saveHtml": "Save HTML"
     },
     "actionsFor": "Actions for {{name}}",
     "currentActions": "Actions for this file",
@@ -1401,7 +1415,7 @@
         "visualization": "Visualization"
       },
       "copyPath": "Copy path",
-      "download": "Download HTML",
+      "download": "Save HTML",
       "sidePanel": "Show in side panel",
       "truncated": "Omitted because it's too large.",
       "badImage": "This image can't be displayed."

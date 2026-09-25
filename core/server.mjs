@@ -43,7 +43,7 @@ import { createMcpConfig } from './mcp-config.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
 import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
-import { createVisualizationCollector, visualizeInstructions } from './visualize.mjs';
+import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
@@ -383,6 +383,21 @@ const server = http.createServer(async (req, res) => {
       const { body, headers } = await readLocalFile(url.searchParams.get("path"), roots, { download:url.searchParams.get('download') === '1' });
       res.writeHead(200, headers);
       return res.end(body);
+    }
+    // 会話に保存された可視化の写しを単体で返す（右パネルの「ブラウザーで開く」）。中身はサーバーの記録から引き、
+    // 画面から HTML を受け取らない（リモートの接続口は GET だけを通す）。守りは応答ヘッダーの sandbox（core/visualize.mjs）
+    if (url.pathname === '/visualization-snapshot') {
+      const sessionId = url.searchParams.get('sessionId'), id = url.searchParams.get('id'), at = url.searchParams.get('at');
+      const record = sessionId && (id || at)
+        ? await history.findVisualization(sessionId, await resolveBackendForSession(sessionId).catch(() => null), { id, at }).catch(() => null)
+        : null;
+      if (!record) {
+        res.writeHead(sessionId && (id || at) ? 404 : 400, { 'content-type':'text/plain; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' });
+        return res.end(t('filePreview.visualize.snapshotNotFound'));
+      }
+      const { headers, body } = snapshotResponse(record);
+      res.writeHead(200, headers);
+      return res.end(req.method === 'HEAD' ? undefined : body);
     }
     // PDF.js is loaded only when a PDF is opened. Expose its browser assets,
     // not arbitrary files from node_modules. Cookies protect these too.
@@ -2314,6 +2329,8 @@ wss.on("connection", (ws, req) => {
             const roots = fileRoots(sessions);
             const args = msg.args ?? {};
             const resolved = await resolveSessionFile({ path: args.path, sessionId: args.sessionId, at: args.at, base: args.base }, sessions, roots);
+            // lenient: 在り処だけを知りたい（可視化の元のパス。元のファイルは消えていることがある）。読まないので範囲も問わない
+            if (!hostAction && args.lenient === true) return reply(true, { path: resolved.path, cwd: resolved.cwd ?? null });
             const { file, stat } = await inspectFile(resolved.path, roots);
             const directory = stat.isDirectory();
             if (!hostAction) return reply(true, { path: file, cwd: resolved.cwd ?? null, kind: directory ? 'directory' : 'file' });
@@ -2324,6 +2341,23 @@ wss.on("connection", (ws, req) => {
           } catch (error) {
             const failure = previewFailure(error);
             return reply(false, failure.code === 'read-failed' && error?.message ? error.message : failure.message);
+          }
+        }
+
+        // 可視化の写しを、サーバーのある PC の既定のブラウザーで開く。殻（デスクトップ版）は新しい窓を開かないので、
+        // 画面は /visualization-snapshot の代わりにこれを使う。写しはデータ置き場へ書いたファイル（CSP は文書の meta）
+        case "openVisualization": {
+          if (!local) return reply(false, t('files.remoteOnly'));
+          const args = msg.args ?? {};
+          try {
+            const record = await history.findVisualization(args.sessionId, await resolveBackendForSession(args.sessionId).catch(() => null), { id: args.id, at: args.at });
+            if (!record) return reply(false, t('filePreview.visualize.snapshotNotFound'));
+            if (!osActionAllowed()) return reply(false, t('files.tooMany'));
+            const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'));
+            await openOnHost('open', file, { directory: false });
+            return reply(true, { path: file });
+          } catch (error) {
+            return reply(false, String(error?.message ?? error));
           }
         }
 

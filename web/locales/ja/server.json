@@ -709,7 +709,8 @@
       "htmlRequired": "可視化には HTML ファイルを指定してください",
       "notUtf8": "可視化を UTF-8 の HTML として読めません",
       "tooMany": "可視化は1ターン{{max}}件までです",
-      "caption": "可視化"
+      "caption": "可視化",
+      "snapshotNotFound": "会話に保存された可視化が見つかりません。"
     }
   },
   "usage": {
