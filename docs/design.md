@@ -32,7 +32,7 @@
 
 ## 互換の接続先（2026-09-23）
 
-procway-code への対応をやめる代わりに、Claude Code と Codex それぞれで互換 URL の接続先を登録し、会話ごとに選べるようにした。UX は承認済みのモック `docs/mockups/compat-endpoints.html` の案 A（入力欄のモデルの面に「接続先」の節。登録は設定 › エージェント設定の各エージェントの行の「接続先」）。画面の規則は design-system.md「入力欄の設定」「互換の接続先の管理」。
+procway-code への対応をやめる代わりに、Claude Code と Codex それぞれで互換 URL の接続先を登録し、会話ごとに選べるようにした。UX は承認済みの案（入力欄のモデルの面に「接続先」の節。登録は設定 › エージェント設定の各エージェントの行の「接続先」）。画面の規則は design-system.md「入力欄の設定」「互換の接続先の管理」。
 
 **形式はエージェントで固定。** Claude Code は Anthropic Messages 互換（CLI が `{URL}/v1/messages` に送る。URL に `/v1` は付けない）、Codex は OpenAI Responses 互換（`{URL}/responses`。codex-cli 0.153 は `wire_api = "chat"` を起動時エラーにするので、Chat Completions だけの先は使えない）。プリセットは Claude: OpenRouter / Z.ai / Kimi / DeepSeek / LiteLLM / Ollama / カスタム、Codex: OpenRouter / Azure OpenAI / Ollama / LM Studio / vLLM / LiteLLM / カスタム（`web/compat-presets.mjs`。Responses に対応していない先は Codex 側に出さない）。
 
@@ -55,14 +55,14 @@ procway-code への対応をやめる代わりに、Claude Code と Codex それ
 - Codex: 共有の app-server のまま、スレッドごとの `modelProvider`＋`config` で別の接続先に届き、並べた公式のスレッドは公式のまま。`experimental_bearer_token`・`env_key`・`http_headers` のどれでも鍵が届く。ロード済みのスレッドの resume は provider の変更を無視し、`thread/unsubscribe` 後の resume なら効く。新しい app-server で provider を渡さずに resume すると、スレッドに記録された provider ではなく設定の既定で動く。→ 接続先ごとに app-server を分ける必要はない。
 - Claude: `options.env` の値で `POST /v1/messages?beta=true` がダミーに届き、`model: 'haiku'` は `ANTHROPIC_DEFAULT_HAIKU_MODEL` に置き換わる。利用者の settings.json の `env` が `options.env` に勝ち、フラグ設定の `env` はそれにも勝つ。`CLAUDE_CODE_OAUTH_TOKEN` が残っていても `ANTHROPIC_AUTH_TOKEN` が優先される（それでも外す）。
 
-**モックからの差分**
+**承認済みの案からの差分**
 - 使用量の画面は接続先ごとの見出しと「表示できません」の一文だけで、接続先ごとの tokens の表は出さない（使用実績はエージェントごとの合計に含まれる）。
 - Claude の接続先の「詳しい設定」に「思考を送る」を足す（決定 4）。一覧の行には出さず（2026-09-23 の説明文の整理で外した）、エフォートの無効の表示は「送らない（接続先の設定）」。
 - Codex の追加の流れにも「認証の送り方」（Bearer / api-key ヘッダー）を出す（Azure をカスタムで入れる人のため）。Codex の確認は出力の上限を 16 にした（OpenAI の Responses の最小値）。画面ではどちらも「確認で短い応答を 1 回だけ生成します」とまとめる。認証の送り方は既定のままで使うことが多いので「詳しい設定」に畳む。
 - **説明文を最小限にした**（2026-09-23。利用者から「説明文が多すぎて読めない」）。一覧・追加の流れ・入力欄の面から仕組みの説明の段落と欄の補足を外し、事故になること（料金・選び直し・暗号化できない起動）と失敗の理由だけを 1 行で残す（design-system.md §2.7）。確認の成功の行も「✓ つながりました · モデル N 件」だけにし、サーバーの `lines` は注意（確認のモデルが受け付けられない・一覧が取れない）と失敗の理由だけを返す。
 - 前回の確認に失敗している接続先を選んでいる会話も、削除と同じく送信を止める（決定の「確認失敗の接続先を指す会話は黙って公式に戻さない」）。入力欄の上の一文と、接続先の行の ⚠ で知らせる。
-- Claude のアカウントの節は、従来どおりアカウントを登録している（または選んでいる）会話だけに出す（モックは常に出していた）。
-- 公開のアドレスへの http の URL は確認の段で断る（キーを平文で送らないため。モックに無い安全策）。
+- Claude のアカウントの節は、従来どおりアカウントを登録している（または選んでいる）会話だけに出す（案では常に出していた）。
+- 公開のアドレスへの http の URL は確認の段で断る（キーを平文で送らないため。案に無い安全策）。
 
 **既知の制約**
 - 利用者の settings.json に `apiKeyHelper` があると、互換の会話でもそちらのキーが使われる可能性がある（フラグ設定で打ち消す口が無い。未確認）。
