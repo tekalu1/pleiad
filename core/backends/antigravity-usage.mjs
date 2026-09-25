@@ -19,7 +19,9 @@ export function antigravityQuota(result) {
     const used = fraction != null && fraction <= 1 ? (1 - fraction) * 100 : null;
     const minutes = bucket?.window === '5h' ? 300 : bucket?.window === 'weekly' ? 10080 : null;
     const period = minutes === 300 ? t('antigravity.usage.fiveHours') : minutes === 10080 ? t('antigravity.usage.weekly') : bucket?.name || t('antigravity.usage.unknownPeriod');
-    return usageWindow(`${group.name || t('antigravity.usage.model')} · ${period}`, used, bucket?.reset_time, minutes);
+    // group は画面（web/header-usage.mjs）がグループごとにまとめるための名前。label には同じ名前を頭に付けてある
+    const name = group.name || t('antigravity.usage.model');
+    return { ...usageWindow(`${name} · ${period}`, used, bucket?.reset_time, minutes), group: name };
   }));
   return { windows, message: windows.length
     ? t('antigravity.usage.shared')
