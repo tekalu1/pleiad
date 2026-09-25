@@ -14,7 +14,7 @@ export default async function(t, { open, work }) {
       const code = `PLY_${parent.toUpperCase()}_${child.toUpperCase()}_OK`;
       const mark = c.mark();
       await c.cmd('runTurn', { sessionId, mode: parent === 'claude' ? 'acceptEdits' : 'full',
-        prompt: `This is an authorized, bounded integration test. Call the Pleiad MCP tool ply_delegate exactly once, backend="${child}", task="Reply with exactly ${code}. Do not call any tools, create child agents, or modify files.". Use the actual MCP tool; do not use shell or simulate it. Do not use native spawn_agent, Agent, or agent_job. After receiving taskId, reply briefly and finish this turn. Pleiad will deliver the result later. When that completion notification arrives, reply with the received code and do not delegate again.` });
+        prompt: `This is an authorized, bounded integration test. Call the Pleiad MCP tool ply_delegate exactly once, kind="trivial", backend="${child}", task="Reply with exactly ${code}. Do not call any tools, create child agents, or modify files.". Use the actual MCP tool; do not use shell or simulate it. Do not use native spawn_agent, Agent, or agent_job. After receiving taskId, reply briefly and finish this turn. Pleiad will deliver the result later. When that completion notification arrives, reply with the received code and do not delegate again.` });
       let task;
       for (let i = 0; i < 240; i++) {
         task = (await c.cmd('agentTasks', { sessionId }))[0];

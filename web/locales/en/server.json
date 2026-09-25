@@ -884,5 +884,22 @@
     "readonly": "Read",
     "acceptEdits": "Edits",
     "plan": "Plan"
+  },
+  "routing": {
+    "settings": {
+      "unknownKey": "Unknown item in the delegation settings: {{key}}",
+      "notBoolean": "{{key}} must be on or off.",
+      "outOfRange": "{{key}} must be between {{min}} and {{max}}.",
+      "notObject": "{{key}} has an invalid form.",
+      "unknownKind": "{{key}} has an unknown kind: {{kind}}",
+      "unknownJudge": "Invalid judge for {{kind}}: {{judge}}",
+      "unknownTier": "Unknown tier: {{tier}}",
+      "badCandidates": "Invalid candidates for {{tier}} (backend:model, no duplicates, up to 20).",
+      "badRow": "Invalid tiers for {{kind}} (three: low, mid, high)."
+    },
+    "key": {
+      "unknownService": "Unknown judge service: {{service}}",
+      "invalid": "Invalid key (up to 500 characters without spaces)."
+    }
   }
 }

@@ -882,5 +882,22 @@
     "readonly": "読む",
     "acceptEdits": "編集自動",
     "plan": "計画"
+  },
+  "routing": {
+    "settings": {
+      "unknownKey": "委譲の設定に知らない項目があります: {{key}}",
+      "notBoolean": "{{key}} はオン・オフで指定してください",
+      "outOfRange": "{{key}} は {{min}}〜{{max}} で指定してください",
+      "notObject": "{{key}} の形が不正です",
+      "unknownKind": "{{key}} に知らない種類があります: {{kind}}",
+      "unknownJudge": "{{kind}} の判定器が不正です: {{judge}}",
+      "unknownTier": "知らない段です: {{tier}}",
+      "badCandidates": "{{tier}} の候補が不正です（backend:model の形で、重複なし、20 件まで）",
+      "badRow": "{{kind}} の段の並びが不正です（低・中・高の 3 つ）"
+    },
+    "key": {
+      "unknownService": "知らない判定サービスです: {{service}}",
+      "invalid": "キーの形が不正です（空白を含まない 500 文字まで）"
+    }
   }
 }

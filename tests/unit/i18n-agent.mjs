@@ -31,12 +31,15 @@ export default async function (t) {
 
   // ---- ply_agents の instructions とツールの説明
   const en = agentInstructions("en"), ja = agentInstructions("ja");
-  t.ok("en の instructions は以前の英語の文", en.startsWith("Pleiad delegation tools (ply_agents MCP): use ply_delegate with an explicit backend (claude, codex, antigravity)")
+  t.ok("en の instructions は英語の文", en.startsWith("Pleiad delegation tools (ply_agents MCP): use ply_delegate to create a Pleiad-managed child conversation. Always give kind")
     && en.endsWith("Use delegation only when authorized by the user's task and applicable instructions.") && !JP.test(en), en.slice(0, 80));
   t.ok("ja の instructions は日本語で、ツール名・ID の形は訳さない", ja.startsWith("Pleiad の委譲ツール（ply_agents MCP）") && ["ply_delegate", "ply_task_*", "ply-task-", "status: waiting", "ply_usage"].every(s => ja.includes(s)), ja.slice(0, 80));
   const toolsEn = agentTools("en"), toolsJa = agentTools("ja");
   t.ok("ツールの名前と引数は言語に依らない", JSON.stringify(toolsEn.map(x => [x.name, x.inputSchema])) === JSON.stringify(toolsJa.map(x => [x.name, x.inputSchema])));
-  t.ok("en のツールの説明は以前の英語", toolsEn.find(x => x.name === "ply_delegate").description.startsWith("Start a Pleiad-managed task using the explicitly selected backend.") && toolsEn.every(x => !JP.test(x.description)));
+  t.ok("en のツールの説明は英語", toolsEn.find(x => x.name === "ply_delegate").description.startsWith("Start a Pleiad-managed task.") && toolsEn.every(x => !JP.test(x.description)));
+  // kind の 9 種類の定義と境目は、ツールの説明に会話の言語で載る（kind の値そのものは訳さない）
+  t.ok("ply_delegate の説明に 9 種類の kind が載る", ["trivial", "mechanical", "investigate", "implement", "review", "design", "ux_change", "ux_new", "visual"]
+    .every(k => toolsEn.find(x => x.name === "ply_delegate").description.includes(`- ${k}: `) && toolsJa.find(x => x.name === "ply_delegate").description.includes(`- ${k}: `)));
   t.ok("ja のツールの説明は日本語", toolsJa.every(x => JP.test(x.description)), toolsJa.map(x => x.description.slice(0, 20)).join(" / "));
 
   // 橋は会話ごとに開く。接続した会話の言語で instructions・一覧・エラーを返す
@@ -134,7 +137,7 @@ export default async function (t) {
   try {
     // 英語の画面で始めた会話
     await c.cmd("setPref", { key: "locale", value: "en" });
-    const enTurn = await c.runTurn({ backend: "fake", cwd: ROOT, prompt: ply("ply_delegate", { backend: "fake", task: "echo:EN_CHILD" }) });
+    const enTurn = await c.runTurn({ backend: "fake", cwd: ROOT, prompt: ply("ply_delegate", { kind: "mechanical", backend: "fake", task: "echo:EN_CHILD" }) });
     const enId = enTurn.sessionId;
     let rows = await awaitTasks(rows => rows.some(r => r.parentSessionId === enId && r.notification === "sent"));
     const enChild = rows.find(r => r.parentSessionId === enId);
@@ -156,7 +159,7 @@ export default async function (t) {
     t.ok("承認の拒否の理由は会話の言語（画面は印だけを送る）", said(enDenied).endsWith("The user denied it"), said(enDenied));
 
     // 日本語の画面で始めた会話
-    const jaTurn = await c.runTurn({ backend: "fake", cwd: ROOT, prompt: ply("ply_delegate", { backend: "fake", task: "echo:JA_CHILD" }) });
+    const jaTurn = await c.runTurn({ backend: "fake", cwd: ROOT, prompt: ply("ply_delegate", { kind: "mechanical", backend: "fake", task: "echo:JA_CHILD" }) });
     const jaId = jaTurn.sessionId;
     rows = await awaitTasks(rows => rows.some(r => r.parentSessionId === jaId && r.notification === "sent"));
     const jaChild = rows.find(r => r.parentSessionId === jaId);

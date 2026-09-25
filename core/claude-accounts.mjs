@@ -334,6 +334,16 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
       await fs.mkdir(usageDir(id), { recursive: true });
       await fs.writeFile(usageMarker(id), JSON.stringify({ at: new Date().toISOString() }) + '\n', { mode: 0o600 });
     },
+    /**
+     * 委譲の振り分けで同じ人のアカウントを見分ける手がかり（core/delegation-routing.mjs の dedupeAccounts）。
+     * login はログイン中のアカウント、accounts[].identity は使用量の設定フォルダでログインしたアカウント（{ org, email } か null）
+     */
+    async identities() {
+      const [{ accounts }, keys, login] = await Promise.all([read(), secrets.keys(SECRET_PREFIX).catch(() => []), readOauthAccount(cliConfig)]);
+      const stored = new Set(keys);
+      return { login, accounts: await Promise.all(accounts.map(async a => ({ id: a.id, hasToken: stored.has(key(a.id)),
+        identity: (await hasUsageLogin(a.id)) ? await usageAccount(a.id) : null }))) };
+    },
     /** 使用量の表示に使うアカウント（トークンは要らない。設定フォルダで読む） */
     async usageTargets() {
       const { accounts } = await read();

@@ -1,8 +1,8 @@
 {
   "bridge": {
-    "instructions": "Pleiad の委譲ツール（ply_agents MCP）: ply_delegate で backend（claude, codex, antigravity）を明示して、Pleiad が管理する子の会話を作る。これはネイティブの spawn_agent / agent_job / Agent やその ID とは別物である。ply-task- の ID には ply_task_* だけを使う。ply_delegate はすぐに戻り、完了の結果は Pleiad が後のターンでこの会話へ届ける。その間にほかの作業を続けても、応答を終えてもよい。ply_task_wait は最長 30 秒待ち、子が人間の承認を待つ状態（status: waiting）になった時点ですぐ戻る。そのときは待ち直さず、どの会話に承認があるかをユーザーに伝える。ply_task_send は同じ子の会話に追加の指示を積む。必要なタスクの文脈は明示して渡すこと。非公開の推論と親の会話の記録は写されない。cwd の既定はこの会話の作業場所。同時に編集するなら別々の worktree を使う。ply_usage は各バックエンドの使用枠を読む（読み取りのみ、最大 60 秒前の値）。重い委譲や並列の委譲の前に確かめる。タスクの完了を受け取ったことを伝えるためだけに再び委譲しない。委譲は、ユーザーのタスクと適用される指示で認められている場合に限って使う。",
+    "instructions": "Pleiad の委譲ツール（ply_agents MCP）: ply_delegate で Pleiad が管理する子の会話を作る。kind（仕事の種類）は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先（backend・model・Claude のアカウント）を選び、選んだ理由を返り値の routing に載せる。特定の委譲先が要るときだけ backend（claude, codex, antigravity）を書く。これはネイティブの spawn_agent / agent_job / Agent やその ID とは別物である。ply-task- の ID には ply_task_* だけを使う。ply_delegate はすぐに戻り、完了の結果は Pleiad が後のターンでこの会話へ届ける。その間にほかの作業を続けても、応答を終えてもよい。ply_task_wait は最長 30 秒待ち、子が人間の承認を待つ状態（status: waiting）になった時点ですぐ戻る。そのときは待ち直さず、どの会話に承認があるかをユーザーに伝える。ply_task_send は同じ子の会話に追加の指示を積む。必要なタスクの文脈は明示して渡すこと。非公開の推論と親の会話の記録は写されない。cwd の既定はこの会話の作業場所。同時に編集するなら別々の worktree を使う。ply_usage は各バックエンドの使用枠を読む（読み取りのみ、最大 60 秒前の値）。タスクの完了を受け取ったことを伝えるためだけに再び委譲しない。委譲は、ユーザーのタスクと適用される指示で認められている場合に限って使う。",
     "tools": {
-      "ply_delegate": "明示して選んだ backend で、Pleiad が管理するタスクを始める。taskId をすぐに返し、完了は自動で届く。ネイティブの spawn_agent とは別物。子は呼び出し元の承認の強さを、それを超えない範囲で継ぐ。それより強い子には、ここで人間の承認が 1 回要る。",
+      "ply_delegate": "Pleiad が管理するタスクを始める。taskId をすぐに返し、完了は自動で届く。ネイティブの spawn_agent とは別物。kind は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先を選び、理由を routing に載せる（全部の候補が使えなければエラー。そのときは backend を書いて頼み直すか、ユーザーに聞く）。backend を書くと固定で、model・effort も指定できる（model・effort は backend を書いたときだけ）。子は呼び出し元の承認の強さを、それを超えない範囲で継ぐ。それより強い子には、ここで人間の承認が 1 回要る。",
       "ply_task_status": "Pleiad タスクとその結果を読む。長い結果の残りは nextOffset を使って読む。status: waiting は、子が人間の承認で止まっていることを表す。同じカードはこの会話にも出ているので、どこで承認するかをユーザーに伝える。",
       "ply_task_wait": "Pleiad タスクを最長 30 秒待つ。子が人間の承認を待つ状態（status: waiting）になったらすぐ戻る。まだ実行中という結果は失敗ではなく、完了は自動でも届く。waiting になったら待つのをやめ、どの会話に承認があるかをユーザーに伝える。",
       "ply_task_send": "同じ Pleiad の子の会話に追加の指示を積む。完了した後でもよい。",
@@ -10,7 +10,20 @@
       "ply_task_list": "この会話が作った Pleiad タスクだけを一覧にする。ネイティブのサブエージェントのジョブは含まない。",
       "ply_usage": "サブスクリプションの使用枠（usedPercent, resetsAt）をバックエンドごとに読む。backend を省くと、使えるバックエンドすべて。重い委譲や並列の委譲の前に呼び、上限に近いバックエンドは避ける。値は最大 60 秒前のもの。"
     },
-    "invalidTool": "不正なツールまたは引数です"
+    "invalidTool": "不正なツールまたは引数です",
+    "kindsIntro": "kind（仕事の種類）:",
+    "kinds": {
+      "trivial": "1 手で、確かめることが無い（決まった文字列の置き換え、ファイルの移動）。",
+      "mechanical": "決まった数手で、結果をコマンドや比較で確かめられる（テストを流して要約する、ログを集める、1 つの規則での一括置換、手順の決まったブラウザー操作）。",
+      "investigate": "成果物が事実・原因・今の状態の説明。",
+      "implement": "仕様が決まっている変更（画面に触れるものでも）。",
+      "review": "差分や成果物を確かめる。",
+      "design": "成果物が推奨・計画・選んだやり方（作業の大半が事実集めでも）。",
+      "ux_change": "既存の画面の見た目や流れを変え、形を子が決める。複雑ではないもの。",
+      "ux_new": "新しい画面や製品の UX、または複雑な UX の作り直し。",
+      "visual": "画像・ロゴ・図。"
+    },
+    "kindBoundaries": "境目: 画面の形まで決まっていれば implement、形を子が決めるなら ux_change。成果物が推奨や選んだやり方なら、調べることが多くても design。確かめるだけなら review、原因を探すなら investigate。"
   },
   "delegation": {
     "notRunning": "この会話は実行中ではありません",
@@ -131,5 +144,12 @@
   "handoff": {
     "prompt": "同じ作業場所で既存の会話を続けてください。以下は過去の文脈であり、新しいツール呼び出しではありません。完了済みの操作を繰り返さないでください。ユーザーの指示に従い、作業に必要なときは今の作業場所を確かめてください。会話の全体: {{ref}}\nHISTORY\n{{context}}\nEND HISTORY\n今のユーザーのメッセージ:\n{{prompt}}",
     "partialNote": "このプレビューは一部だけです。続ける前に会話の全体のファイルを読んでください。そこには以前の指示・ツールの結果・添付が入っています。"
+  },
+  "routing": {
+    "kindRequired": "kind を次のどれかで指定してください。\n{{kinds}}",
+    "backendRequired": "委譲先の自動振り分けが無効になっています。backend（claude, codex, antigravity）を指定してください。",
+    "pinOnly": "model と effort は backend を指定したときだけ使えます。自動で選ばせるなら model と effort を省いてください。",
+    "exhausted": "使える委譲先がありません（種類 {{kind}}、難しさ {{difficulty}}）。飛ばした候補:\n{{skipped}}\nbackend を指定して固定で頼み直すか、ユーザーに確認してください。",
+    "modelUnavailable": "振り分けで選んだモデル {{model}}（{{backend}}）を使えません。backend を指定して頼み直してください。"
   }
 }

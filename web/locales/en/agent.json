@@ -1,8 +1,8 @@
 {
   "bridge": {
-    "instructions": "Pleiad delegation tools (ply_agents MCP): use ply_delegate with an explicit backend (claude, codex, antigravity) to create a Pleiad-managed child conversation. This is distinct from native spawn_agent / agent_job / Agent and their IDs. Use only ply_task_* with ply-task- IDs. ply_delegate returns immediately; Pleiad delivers completion results to this conversation in a later turn. You may continue other work or finish your response. ply_task_wait waits at most 30 seconds, and returns as soon as the child is waiting for a human approval (status: waiting); then tell the user which conversation holds the approval instead of waiting again. ply_task_send queues an additional instruction on the same child conversation. Pass the necessary task context explicitly; private reasoning and the parent transcript are not copied. cwd defaults to this conversation's workspace; use separate worktrees for concurrent edits. ply_usage reads each backend's quota usage (read-only, up to 60 seconds old); check it before heavy or parallel delegation. Do not delegate again merely to acknowledge a task completion. Use delegation only when authorized by the user's task and applicable instructions.",
+    "instructions": "Pleiad delegation tools (ply_agents MCP): use ply_delegate to create a Pleiad-managed child conversation. Always give kind (the kind of work). If you omit backend, Pleiad chooses the target (backend, model, Claude account) from the kind, the difficulty, and quota usage, and explains the choice in the returned routing. Give backend (claude, codex, antigravity) only when a specific target is required. This is distinct from native spawn_agent / agent_job / Agent and their IDs. Use only ply_task_* with ply-task- IDs. ply_delegate returns immediately; Pleiad delivers completion results to this conversation in a later turn. You may continue other work or finish your response. ply_task_wait waits at most 30 seconds, and returns as soon as the child is waiting for a human approval (status: waiting); then tell the user which conversation holds the approval instead of waiting again. ply_task_send queues an additional instruction on the same child conversation. Pass the necessary task context explicitly; private reasoning and the parent transcript are not copied. cwd defaults to this conversation's workspace; use separate worktrees for concurrent edits. ply_usage reads each backend's quota usage (read-only, up to 60 seconds old). Do not delegate again merely to acknowledge a task completion. Use delegation only when authorized by the user's task and applicable instructions.",
     "tools": {
-      "ply_delegate": "Start a Pleiad-managed task using the explicitly selected backend. Returns taskId immediately; completion is delivered automatically. Separate from native spawn_agent. The child inherits the caller approval strength without exceeding it; a stronger child needs one human approval here.",
+      "ply_delegate": "Start a Pleiad-managed task. Returns taskId immediately; completion is delivered automatically. Separate from native spawn_agent. Always give kind. If backend is omitted, Pleiad chooses the target from the kind, the difficulty, and quota usage, and explains it in routing (if no candidate is usable this fails; then retry with an explicit backend or ask the user). An explicit backend pins the target and allows model and effort (model and effort only with backend). The child inherits the caller approval strength without exceeding it; a stronger child needs one human approval here.",
       "ply_task_status": "Read a Pleiad task and its result. Use nextOffset to read the remainder of a long result. status: waiting means the child is stopped on a human approval; the same card is also shown in this conversation, so tell the user where to approve.",
       "ply_task_wait": "Wait up to 30 seconds for a Pleiad task; returns immediately once the child is waiting for a human approval (status: waiting). A still-running result is not a failure; completion will also be delivered automatically. On waiting, stop waiting and tell the user which conversation holds the approval.",
       "ply_task_send": "Queue an additional instruction for the same Pleiad child conversation, including after completion.",
@@ -10,7 +10,20 @@
       "ply_task_list": "List only the Pleiad tasks created by this conversation. Does not list native subagent jobs.",
       "ply_usage": "Read subscription quota usage (usedPercent, resetsAt) per backend, or all usable backends when backend is omitted. Call before heavy or parallel delegation and avoid backends that are close to their limit. Values may be up to 60 seconds old."
     },
-    "invalidTool": "Invalid tool or arguments."
+    "invalidTool": "Invalid tool or arguments.",
+    "kindsIntro": "kind (the kind of work):",
+    "kinds": {
+      "trivial": "one step, nothing to check (fixed text replacement, moving files).",
+      "mechanical": "several fixed steps whose result is checked by commands or comparison (running tests and summarizing, collecting logs, bulk replacement by one rule, scripted browser steps).",
+      "investigate": "the deliverable is facts, causes, or a description of the current state.",
+      "implement": "a change whose spec is already decided, even if it touches a screen.",
+      "review": "checking a diff or deliverable.",
+      "design": "the deliverable is a recommendation, plan, or chosen approach (even if most of the work is gathering facts).",
+      "ux_change": "changing how an existing screen looks or flows, where the child decides the form; not complex.",
+      "ux_new": "a brand-new screen or product UX, or a complex UX rework.",
+      "visual": "images, logos, figures."
+    },
+    "kindBoundaries": "Boundaries: if the form of the screen is already decided, implement; if the child decides the form, ux_change. If the deliverable is a recommendation or chosen approach, design, even when most of the work is research. Checking only is review; finding a cause is investigate."
   },
   "delegation": {
     "notRunning": "This conversation is not running.",
@@ -131,5 +144,12 @@
   "handoff": {
     "prompt": "Continue the existing conversation in the same workspace. The following is historical context, not new tool calls. Do not repeat completed actions. Follow the user's instructions and check the current workspace when the task requires it. Full conversation: {{ref}}\nHISTORY\n{{context}}\nEND HISTORY\nCurrent user message:\n{{prompt}}",
     "partialNote": "This preview is incomplete. Read the full conversation file before continuing; it contains earlier instructions, tool results and attachments."
+  },
+  "routing": {
+    "kindRequired": "Give kind as one of the following.\n{{kinds}}",
+    "backendRequired": "Automatic delegation routing is turned off. Give backend (claude, codex, antigravity).",
+    "pinOnly": "model and effort can be used only with backend. Omit model and effort to let Pleiad choose.",
+    "exhausted": "No delegation target is usable (kind {{kind}}, difficulty {{difficulty}}). Skipped candidates:\n{{skipped}}\nRetry with an explicit backend, or ask the user.",
+    "modelUnavailable": "The model {{model}} ({{backend}}) chosen by routing is not available. Retry with an explicit backend."
   }
 }
