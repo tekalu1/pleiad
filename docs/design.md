@@ -298,7 +298,9 @@ sidecar が持つのは次の3つだけ。**いずれも後から追加すると
 
 図・グラフ・UI プレビューは共通の Visualize 参照で表示する。Claude・Codex に同じスキル本文を注入し、回答に置いた参照を core が検証・読み込み・保存して会話内へ配信する。公開 MCP `present` は廃止。詳細は [可視化仕様](visualize.md)。
 
-内容は `~/.agent-host/presents/<sessionId>.jsonl` に保存し、元ファイルの変更や削除から独立した履歴にする。新しい可視化は1 MiB以内のHTMLで、JavaScriptをopaque sandbox内で実行する。親画面の権限は渡さない。旧HTML履歴は静的sandboxのまま維持する。
+内容は `~/.agent-host/presents/<sessionId>.jsonl` に保存し、元ファイルの変更や削除から独立した履歴にする。新しい可視化は1 MiB以内のHTMLで、JavaScriptをopaque sandbox内で実行する。親画面の権限は渡さない。旧HTML履歴は静的sandboxのまま維持する。保存された写しを別タブで開くときも、サーバーが記録から引いて応答ヘッダーの `sandbox allow-scripts`（`allow-same-origin` 無し）で返し、Pleiad のオリジンでは動かさない（`/visualization-snapshot`）。
+
+ファイル・可視化・会話のコンテキストは同じ右パネルの枠を使い、モードごとに出す部品は `web/side-panel.mjs` の表だけが決める（渡さない部品は隠す）。可視化は写しであることを示し、元の在り処が分かれば元のファイルをファイルとして同じパネルで開ける。
 
 画像は通常のMarkdown画像、ファイルはリンク、テキストは通常の回答を使う。ユーザー添付と旧提示カードのイベント・保存形式は保持する。
 

@@ -10,7 +10,7 @@ import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs
 import { el } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { copyIcon, downloadIcon, sidePanelIcon, moreIcon } from './icons.mjs';
-import { copyText } from './code-copy.mjs';
+import { copyPathText } from './file-actions.mjs';
 
 // ---------------------------------------------------------------- エスケープ
 
@@ -490,7 +490,8 @@ export function renderPresent(ev) {
         controls.append(b);
         return b;
       };
-      if (e.path) tool(copyIcon, t('timeline.present.copyPath')).onclick = ev => copyText(ev.currentTarget, e.path, t('timeline.present.copyPath'));
+      // コピーと保存は右パネル（⋯・下の行）と同じ処理を呼ぶ。知らせの文言も同じ（web/file-actions.mjs・web/visualize-frame.mjs）
+      if (e.path) tool(copyIcon, t('timeline.present.copyPath')).onclick = () => copyPathText(String(e.path));
 
       // 保存されるのは会話に残っている HTML。元のファイルは変わっていることがある。
       // 会話には可視化がいくつも並ぶので、URL は押したときだけ作ってすぐ捨てる
@@ -499,9 +500,10 @@ export function renderPresent(ev) {
 
       // 開くのは右のプレビューパネル。ここは会話に載る面だけを組み立て、
       // 開く側とは要求イベントで繋ぐ（ファイルリンクと同じ一枚の面に集める）。
+      // at・id は会話の記録の印。右パネルの「ブラウザーで開く」がサーバーから写しを引く（core/server.mjs /visualization-snapshot）
       const expand = tool(sidePanelIcon, t('timeline.present.sidePanel'), 'visualize-expand');
       expand.onclick = () => expand.dispatchEvent(new CustomEvent('ply-visualize-expand', {
-        bubbles: true, detail: { content: e.content ?? '', title: e.caption ?? '', path: e.path ?? '' },
+        bubbles: true, detail: { content: e.content ?? '', title: e.caption ?? '', path: e.path ?? '', at: e.at ?? null, id: e.id ?? null },
       }));
       cap.append(controls);
       if (e.mode === 'wide') card.classList.add('visualize-wide');
