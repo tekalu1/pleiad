@@ -530,6 +530,7 @@
     "chip": {
       "mcpBad": "MCP {{n}}（{{bad}} 件つながらない）",
       "native": "{{kinds}} はエージェント任せ",
+      "added": "Pleiad が追加 {{n}}",
       "join": "・"
     },
     "title": "この会話のコンテキスト",
@@ -609,6 +610,22 @@
       "list_other": "エージェント任せ。{{agent}} の設定に登録されているのは次の {{count}} 件です（接続の成否は {{agent}} 側が持つため、Pleiad からは見えません）",
       "disabled": "{{path}} · 無効"
     },
+    "added": {
+      "title": "Pleiad が追加",
+      "who": "Pleiad が渡した",
+      "none": "渡していない",
+      "delegation": "委譲の指示",
+      "show": "渡した文",
+      "variant": {
+        "parent": "依頼元の会話向け",
+        "parentManual": "依頼元の会話向け · 委譲先の自動選択はオフ",
+        "child": "委譲された会話向け"
+      },
+      "reason": {
+        "off": "設定で切っています",
+        "readOnly": "読み取り・計画モードなので入れていません"
+      }
+    },
     "changed": {
       "title_other": "開始後に {{count}} 件変わりました",
       "removed": "{{name}} が消えました",
@@ -649,7 +666,7 @@
       "title": "指示ファイル",
       "agent": "Claude は CLAUDE.md、Codex は AGENTS.md を各自の決まりで読む",
       "ply": "どのエージェントにも同じものを渡す",
-      "note": "Pleiad は何も渡しません。どのファイルが読まれるかはエージェント次第です。",
+      "note": "Pleiad は指示ファイルを渡しません。どのファイルが読まれるかはエージェント次第です。",
       "list": "この場所で渡すもの",
       "listDefault": "既定で渡すもの",
       "sourceCommon": "AGENTS.md（共通）",
@@ -739,6 +756,18 @@
       "join": "、",
       "addAria": "追加で探すフォルダー",
       "add": "フォルダーを追加"
+    },
+    "added": {
+      "title": "Pleiad が入れる指示",
+      "scope": "すべての場所に共通",
+      "badge": "Pleiad が追加",
+      "delegation": {
+        "name": "委譲の指示",
+        "sub": "指示ファイルの担当によらず、Claude Code・Codex の会話に入ります",
+        "aria": "委譲の指示を入れる",
+        "parent": "依頼元の会話",
+        "child": "委譲された会話"
+      }
     },
     "scanFailed": "探せませんでした：{{error}}",
     "loadFailed": "コンテキストの設定を読めませんでした：{{error}}"

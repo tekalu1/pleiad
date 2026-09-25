@@ -152,5 +152,12 @@
     "pinOnly": "model and effort can be used only with backend. Omit model and effort to let Pleiad choose.",
     "exhausted": "No delegation target is usable (kind {{kind}}, difficulty {{difficulty}}). Skipped candidates:\n{{skipped}}\nRetry with an explicit backend, or ask the user.",
     "modelUnavailable": "The model {{model}} ({{backend}}) chosen by routing is not available. Retry with an explicit backend."
+  },
+  "guide": {
+    "lead": "How to delegate (instructions added by Pleiad):",
+    "delegate": "Delegate by default. For anything larger than a single command or a small edit to 1–2 files, don't do it yourself; hand it off with ply_delegate.",
+    "main": "In this conversation, do only these yourself: decide the direction, check delegated results, irreversible actions (sending, deleting, paying; confirm with the user first), and one-off tasks with small output. Delegate multi-step work and operations with large output (browser operation, screenshots, long logs, large MCP responses), and have the child return only a summary and evidence.",
+    "route": "When delegating, give ply_delegate a kind and leave out backend (Pleiad chooses). Write backend only when the user asks for a specific agent or model. If it reports that no candidate has quota left, tell the user. Use ply_delegate, not native subagents (such as Claude's Agent tool).",
+    "child": "You are a delegated child conversation, so do not delegate further."
   }
 }
