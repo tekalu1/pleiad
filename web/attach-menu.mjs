@@ -1,5 +1,5 @@
-// 添付（クリップ）のボタンのメニュー（承認済みのモック docs/mockups/phone-composer-header.html の「添付の出どころ」、
-// docs/remote.md §8.1、docs/design-system.md「添付の出どころ」）。
+// 添付（クリップ）のボタンのメニュー（docs/remote.md §8.1、
+// docs/design-system.md「添付の出どころ」）。
 //
 // 出どころを選べる接続（composer-layout.mjs の attachSources）でだけ開く:
 //   - デスクトップ版のリモートの窓・モバイル版の殻（plyRemote）

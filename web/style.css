@@ -375,8 +375,8 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 :root.desktop #lightbox img{max-height:calc(92vh - 124px - var(--bar-h))}
 
 /* ==================== リモートの窓（docs/remote.md §7.2。web/remote-badge.mjs、desktop/remote-preload.cjs の plyRemote） ====================
-   帯を窓の幅いっぱいの 1 行にし、左（脇の列の上）にホスト名のバッジ、右（会話の列の上）にタイトル行を上げる（承認済みのモック
-   phone-composer-header.html の「H1・塗りなし」。2026-09-23 に塗りをやめた）。帯は脇と同じ面（--surface-0 と点）のまま、
+   帯を窓の幅いっぱいの 1 行にし、左（脇の列の上）にホスト名のバッジ、右（会話の列の上）にタイトル行を上げる（「H1・塗りなし」。
+   2026-09-23 に塗りをやめた）。帯は脇と同じ面（--surface-0 と点）のまま、
    脇を閉じても・プレビューを並べても変えない。リモートの印は差しの青（--ink-blue）の「⇄ リモート: ホスト名」と、
    OS の窓タイトル（Pleiad — リモート: ホスト名）・タスクバーの重ねアイコン（desktop/remote-windows.cjs）。
    帯の地と記号の色は、ローカルと同じく paintTitleBar が .titlebar の --bar-end と --ink を読んで OS へ送る。
@@ -526,7 +526,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 許可していないスキームのリンク。押せない字として残す */
 .md-link-blocked{color:var(--ink-weak);text-decoration:line-through dotted;cursor:help}
 .md-img{display:block;max-width:100%;border-radius:var(--r-s);margin:.4em 0}
-/* 画像の下の所在の一行（docs/mockups/file-actions.html）。ファイル名はファイルリンク、フォルダーは弱い字、⋯ で操作 */
+/* 画像の下の所在の一行（docs/design-system.md「ファイルの操作」）。ファイル名はファイルリンク、フォルダーは弱い字、⋯ で操作 */
 .md-figure{display:block;margin:.4em 0}
 .md-figure>.md-img{margin:0}
 .file-where{display:flex;align-items:center;gap:6px;margin-top:4px;max-width:min(100%,480px);min-width:0;font-size:var(--fs-xs);color:var(--ink-weak)}
@@ -667,7 +667,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .branch-tip.growing .branch-ring{transform:scale(var(--reveal));opacity:var(--reveal)}
 .branch-tip.growing :is(.branch-name,.branch-note){opacity:var(--reveal)}
 
-/* ---- 入力欄（承認済みのモック docs/mockups/phone-composer-header.html の v2。design-system.md「入力欄」） ----
+/* ---- 入力欄（design-system.md「入力欄と上端」） ----
    1 つの角丸の箱（--surface-1・--r-l）の中に、送る前の添付 → 字の欄 → チップと送信の行を入れる。デスクトップもスマホも同じ */
 .composer{flex:none;padding:4px 18px 12px;min-width:0;position:relative}   /* 候補（.clist）を入力欄の上に浮かせる基準 */
 .cbox{background:var(--surface-1);border-radius:var(--r-l);padding:2px 4px 4px;min-width:0}
@@ -694,7 +694,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .composer textarea{width:100%;display:block;background:transparent;border-radius:var(--r-m);padding:9px 12px 3px;resize:none;line-height:1.6;overflow-y:hidden}
 .composer textarea:focus{outline:none}
 .composer textarea::placeholder{color:var(--ink-weak)}
-/* 入力欄の待ち（承認済みのモック docs/mockups/composer-loading.html、web/composer-wait.mjs、design-system.md「入力欄の待ち」）。
+/* 入力欄の待ち（web/composer-wait.mjs、design-system.md「入力欄の待ち」）。
    書けない待ち（会話を開いている・初めて接続するまで）は欄を readonly にし、箱に aria-busy。150ms を越えたら（data-wait）
    中の字と案内を隠して、弧・待機文言・流れる棒（タイトル生成と同じ光）を重ねる。面は変えない。新しい色は足さない */
 .cbox{position:relative}
@@ -846,7 +846,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .fu-done{padding:8px;min-width:0}
 .fu-ok{font-variant-numeric:tabular-nums}
 .fu-done .cnote{margin:4px 0}
-/* ---- 添付の出どころ（web/attach-menu.mjs、承認済みのモック phone-composer-header.html）: 「この端末から / ホストから <ホスト名>」の見出しで分け、
+/* ---- 添付の出どころ（web/attach-menu.mjs）: 「この端末から / ホストから <ホスト名>」の見出しで分け、
    「ファイルを選ぶ…」で同じ面がホストのファイルの一覧に替わる。スマホは画面の幅、広い幅は 360px ---- */
 .at-menu .chead:first-child{padding-top:2px}
 .at-host{font-family:var(--font-mono);letter-spacing:0}
@@ -1014,7 +1014,7 @@ main.dropping #log{background:var(--surface-1)}
 .outbox-status-failed b { color: var(--ink-strong); }
 .outbox-status-failed button { font-size: 12px; padding: 1px 10px; }
 
-/* ==================== 狭い画面・タッチ（docs/remote.md §8.4、承認済みのモック docs/mockups/remote-mobile.html） ====================
+/* ==================== 狭い画面・タッチ（docs/remote.md §8.4） ====================
    plyRemote の有無ではなく、画面の幅（700px 以下）と入力の種類（hover:none / pointer:coarse）で効かせる。ブラウザー版の狭い窓にも効く。
    - 脇は会話の上に重ねる引き出し。開閉は client.mjs の setDrawer（:root.side-open）。会話を選ぶ・幕を押す・Esc で閉じる
    - 上下端は viewport-fit=cover の safe-area の内側。高さは 100dvh（アドレスバーの出入りで下端が隠れない）
@@ -1106,7 +1106,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .chip{padding:0 5px;gap:4px}
 }
 
-/* ---- モバイル版の殻（plyRemote.shell === 'mobile'、web/remote-badge.mjs の setupHostBar。承認済みのモック phone-composer-header.html） ----
+/* ---- モバイル版の殻（plyRemote.shell === 'mobile'、web/remote-badge.mjs の setupHostBar） ----
    塗りは使わない（2026-09-23）。状態バーの下地は紙の色で、記号の明暗は殻が画面の配色に合わせる（plyRemote.setTheme）。
    - 700px 以下（スマホ）: 帯は置かない。タイトル行 1 本に、タイトルの下の差しの青の添え字「⇄ ホスト名」（等幅。押すとホスト一覧へ）
    - 701px 以上（タブレット）: 上端に帯（脇と同じ面）。左（脇の列の上）に「‹ ⇄ ホスト名」、右（会話の列の上）にタイトル行を上げる */
