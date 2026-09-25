@@ -25,7 +25,9 @@ export default function (t) {
     { taskId: 'd', parentSessionId: 'q', status: 'running' },
   ];
   t.ok('依頼元の会話の終わっていないタスクだけを拾う', JSON.stringify(liveTasksOf(tasks, 'p').map(x => x.taskId)) === '["a","b"]');
-  t.ok('タスクだけなら衛星の数と見出し', behindOfTasks(liveTasksOf(tasks, 'p')).n === 2 && behindOfTasks(liveTasksOf(tasks, 'p')).label === 'タスクを待機中');
+  // 利用者から見ればタスクもサブエージェント。呼び分けない（docs/design-system.md「バックグラウンド」）
+  t.ok('タスクだけでもサブエージェントとして数えて見出しを出す', behindOfTasks(liveTasksOf(tasks, 'p')).n === 2 && behindOfTasks(liveTasksOf(tasks, 'p')).label === 'サブエージェントを待っている');
   t.ok('終わったタスクだけなら衛星を出さない', behindOfTasks(liveTasksOf([tasks[2]], 'p')) === null);
-  t.ok('サブエージェントと混ざれば裏の作業', behindOfTasks([agent, ...liveTasksOf(tasks, 'p')]).label === '裏の作業を待っている');
+  t.ok('サブエージェントと混ざってもサブエージェント', behindOfTasks([agent, ...liveTasksOf(tasks, 'p')]).label === 'サブエージェントを待っている');
+  t.ok('コマンドと混ざれば裏の作業', behindOfTasks([command, ...liveTasksOf(tasks, 'p')]).label === '裏の作業を待っている');
 }

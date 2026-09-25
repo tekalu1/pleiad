@@ -118,8 +118,8 @@
       <button type="button" class="btn btn-icon" id="titleWand" data-i18n-title="session.titleWand" disabled><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></button>
       <!-- 会話の右パネル「この会話のコンテキスト」の入口（web/session-context.mjs）。件数と「変更あり」は client.mjs が入れる -->
       <button type="button" class="btn ctxlink" id="contextEntry" data-i18n-title="session.context.entryTitle" hidden><svg class="i" viewBox="0 0 24 24"><path d="M4 4h9l5 5v11H4z"/><path d="M13 4v5h5"/></svg><span data-i18n="session.context.label"></span><span class="n mono" id="contextEntryCount" hidden></span><span class="chg" id="contextEntryChanged" hidden data-i18n="session.context.changed"></span></button>
-      <button type="button" class="btn" id="agentTasksEntry" hidden data-i18n="dialog.tasks.title"></button>
-      <button type="button" class="btn" id="backgroundEntry" hidden data-i18n="session.terminal"></button>
+      <!-- 委譲された子の会話でだけ出す、依頼元の会話へ戻る口（子の会話は脇の一覧に出ない）。サブエージェント・タスク・裏のコマンドの一覧は会話末尾の「バックグラウンド N」 -->
+      <button type="button" class="btn" id="parentChatEntry" hidden data-i18n="dialog.tasks.parent"></button>
       <!-- 使用量のチップ（web/header-usage.mjs、docs/design-system.md「ヘッダーの使用量」）。この会話のエージェントの枠のうち使用率がいちばん高いもの。
            枠を 1 つも持たないエージェント（互換の接続先・未対応）では出さない。押すと全エージェントの一覧（#usagePop） -->
       <button type="button" class="btn usage-chip" id="usageChip" hidden aria-haspopup="dialog" aria-expanded="false" aria-controls="usagePop"></button>
@@ -248,13 +248,21 @@
     </div>
   </dialog>
 
-  <!-- このセッションのサブエージェント（一覧と会話を読む）。承認ではないので dialog でよい -->
-  <dialog id="workDialog">
+  <!-- バックグラウンド（サブエージェント・委譲したタスク・裏のコマンド）。左に一覧、右に詳細（docs/design-system.md「バックグラウンド」）。
+       承認ではないので dialog でよい。詳細の中身（#workBody）は会話と同じ部品で描く -->
+  <dialog id="workDialog" aria-labelledby="workTitle">
     <header>
-      <strong id="workTitle" data-i18n="dialog.work.subagents"></strong>
+      <strong id="workTitle" data-i18n="dialog.work.title"></strong>
+      <span class="work-count" id="workCount"></span>
       <button type="button" class="btn" data-close data-i18n="dialog.close"></button>
     </header>
-    <div id="workBody"></div>
+    <div class="work-split" id="workSplit">
+      <nav class="work-list" id="workList" data-i18n-aria-label="dialog.work.listLabel"></nav>
+      <section class="work-detail">
+        <div class="work-dh" id="workHead"></div>
+        <div id="workBody"></div>
+      </section>
+    </div>
   </dialog>
 
   <script type="module" src="/client.mjs"></script>

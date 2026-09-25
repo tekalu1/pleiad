@@ -251,6 +251,9 @@ export function transcriptToMessages(entries, { includeNested = false, fullResul
     }
 
     const msg = { role, text: got.text, uuid: entry.uuid, at };
+    // 答えたモデル（サブエージェントの一覧に出す）。CLI が作った合成の行（<synthetic>）はモデルではない
+    const model = role === "assistant" ? entry.message?.model : null;
+    if (model && model !== "<synthetic>") msg.model = model;
     if (got.thinking) msg.thinking = got.thinking;
     if (got.tools) msg.tools = got.tools;
     if (got.toolCalls) msg.toolCalls = got.toolCalls;
