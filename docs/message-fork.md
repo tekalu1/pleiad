@@ -25,17 +25,11 @@
 正規化済みの履歴を複製する。SDK・実行アダプターは継続して使い、初回の再開だけ文脈を渡す。
 内部推論・実行中のツール・プロセス・作業ファイルの過去の状態は複製しない。作業場所は同じ。
 
-## Codex の境界調査
+## Codex の境界
 
-2026-09-11、インストール済み `codex-cli 0.153.2` の
-`codex app-server generate-json-schema` が出す `v2/ThreadForkParams.json` と
-[公式 App Server 仕様](https://learn.chatgpt.com/docs/app-server) を確認した。
-`lastTurnId` は完了ターンを含むところまで指定できる。一方、UI の UUID は userMessage / agentMessage
-の item.id、ツールだけの発言は先頭ツールの item.id、思考だけの発言は turn.id に接尾辞を付けた値。
-1ターンに複数の確定発言があるため、任意の発言IDを turn.id に置き換えると後続の情報が混ざる。
-Codex の分岐は末尾も含めホスト経路へ統一し、ネイティブ `thread/fork` 実装は残す。
+Codex の UI の発言 ID は 1 ターンに複数ある（userMessage / agentMessage の item.id、ツールだけの発言は先頭ツールの item.id、思考だけの発言は turn.id に接尾辞を付けた値）が、ネイティブの `thread/fork` は `lastTurnId`（ターン単位）でしか切れない。任意の発言をターンに置き換えると後続が混ざるので、Codex の分岐は末尾も含めホスト経路に統一し、ネイティブの `thread/fork` の実装は残す（codex-cli 0.153.2、2026-09-11 に確認）。
 
-## Antigravity の境界調査
+## Antigravity の境界
 
 2026-09-17、実機の `agy` で確かめた。分岐の口は無いままなので `capabilities.fork` は `false` で、
 写しの経路に相乗りする。相乗りしているだけで固有の実装を持たないから、共通契約を
@@ -45,20 +39,7 @@ Codex の分岐は末尾も含めホスト経路へ統一し、ネイティブ `
 終了時刻で両方打つと、ターンの途中で出た提示（生成時刻を持つ）がユーザー発言より前に並び、
 その発言で切った枝に、まだ走っていないはずの成果物が入る。ユーザー発言は送信時、AI の発言は完了時。
 
-ネイティブ分岐の見込み（**未実装**）:
-
-- 会話は `~/.gemini/antigravity-cli/conversations/<conversation_id>.db`。1 会話 1 SQLite
-- `trajectory_meta.cascade_id` が `--conversation` に渡す id（`trajectory_id` は別の内部 id）
-- `steps(idx INTEGER PRIMARY KEY, step_type, status, step_payload BLOB, …)` の `idx` は、
-  バックエンドが既に受け取っている `step_update.step_index` と同じ番号
-- db を新しい id へ複製して `cascade_id` を書き換えると、`agy --conversation <新id>` が記憶を保ったまま再開する。
-  `delete from steps where idx > <切り口>` で切ると**切った先の記憶だけが消える**（合言葉を2つ覚えさせ、
-  片方だけ落ちることで確認）。元の会話は無傷。protobuf のペイロードは解かなくてよい（行ごと落とすだけ）
-- `conversation_summaries` へ自分で登録する必要は無い。初回の再開で `agy` 自身が書く。
-  同じ表に `parent_conversation_id` / `nesting_depth` / `group_id` があり、agy 側にも親子の概念がある
-- 実装に要るのは**発言 -> step 番号の対応**。今の控えは `step_index` を捨てているので、
-  分岐点の発言がどの `idx` までかを控えに残すことから始まる（ユーザー発言は `step_type` 14、本文は 15 だった）
-- 未確認: `agy` の更新でスキーマが変わったときの壊れ方と、走っているプロセスが db を掴んでいる間の複製
+ネイティブの分岐（会話の SQLite を複製して切り口の先の step を落とす）は見込みを調べたが未実装。
 
 ## 状態とグループ
 
