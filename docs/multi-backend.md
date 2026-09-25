@@ -3,12 +3,10 @@
 途中のバックエンド切り替えは [backend-handoff.md](backend-handoff.md) を参照。
 切り替え済み会話では会話IDとネイティブIDを分離し、本文の正本をアプリに移す（本書 §2.1 の例外）。
 
-作成 2026-09-11。`design.md` §3「やらない: マルチプロバイダ」を**改訂する**。
+作成 2026-09-11。`design.md` §3「やらない: マルチプロバイダ」を**改訂する**（[ADR 0004](adr/0004-multiple-agent-backends.md)）。
 Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-server）をバックエンドとして駆動できるようにする。
 2026-09 に **Antigravity CLI**（`agy`）を足した（§2.8）。
 同時期に入れた Gemini CLI（ACP）は、個人向けログインの終了により廃止した。
-
-元になった調査: `temporary/inv-agent-host.md`（追跡外）。
 
 ---
 
@@ -28,6 +26,8 @@ SDK は 2 つの役割を兼ねていた（棚卸しの結論）。
 
 ### 2.1 正本の所在（design.md §5 の再改訂）
 
+理由は [ADR 0005](adr/0005-source-of-truth-for-sessions.md)。
+
 | | 旧（v1） | 新（v3） |
 |---|---|---|
 | セッションの存在・一覧 | `~/.claude`（SDK `listSessions`） | **各バックエンドのネイティブ一覧 ∪ sidecar**。sidecar `sessions.json` が全バックエンド横断のインデックス |
@@ -45,7 +45,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 
 ### 2.2 core → web は正規化イベントだけを流す（プロトコル v2）
 
-`sdk` イベントを廃止し、以下に置き換える。`PROTOCOL_VERSION` は **2**。
+`sdk` イベントを廃止し、以下に置き換える（[ADR 0006](adr/0006-normalized-events-protocol.md)）。`PROTOCOL_VERSION` は **2**。
 
 | type | ペイロード（`sessionId` は emitGlobal が必ず補う） | 置き換える旧経路 |
 |---|---|---|
@@ -328,7 +328,7 @@ sidecar 側の `setMode` / `setModel` は `exclusive()` を通す（既存の re
 Codex の app-server プロトコルは `codex app-server generate-json-schema --out <dir>` で得られる
 （`temporary/codex-schema/`、追跡外）。`ClientRequest` / `ServerRequest` / `ServerNotification` の `method` を正とする。
 
-**P2a の実装で分かった、この表からの実際のずれ**（codex-cli 0.153.2 で確認）:
+**Codex の実装で分かった、この表からの実際のずれ**（codex-cli 0.153.2 で確認）:
 
 - `AskForApproval` に **`on-failure` は無い**（`untrusted` / `on-request` / `never` / `granular` の4つ）。
   上の表の auto を `on-failure` としていたのは古い。聞く回数の順が保たれるよう
@@ -640,20 +640,9 @@ gemini では本体が書いた記録を**読んだ**が、agy には読める�
 公開 `present` MCP は廃止した。Claude・Codex 共通の Visualize 参照で表示・保存する。詳細は [可視化仕様](visualize.md)。
 Codexの新規・再開スレッドは `config['mcp_servers.ply']`、Claudeは `mcpServers.ply` で接続する。
 Codexの `set_status / set_title / fork` は未接続なので、
-`capabilities.hostTools: false` は維持する。成果物提示の詳細は [共有仕様](artifact-sharing-investigation.md) を参照。
+`capabilities.hostTools: false` は維持する。可視化へ移した理由は [ADR 0008](adr/0008-retire-present-mcp-for-visualize.md)。
 
-## 3. 段階
-
-| 段 | 内容 | 検証 |
-|---|---|---|
-| **P1** | `AgentBackend` 導入。Claude 実装を `core/backends/claude.mjs` へ移す。正規化イベント + プロトコル v2。`web/client.mjs` の `onSdk` を正規化ハンドラに置き換え。`fake` バックエンドで **LLM 無しに server 全体をテスト**。sidecar 拡張。web に backend 選択（新規時）と一覧の backend 表示、capabilities による出し分け（fork / suggestTitle / subagents / 常に許可） | `npm test` に server 経由の unit を足す。既存 e2e が通る |
-| **P2a** | `core/backends/codex.mjs`（app-server クライアント）+ 認証 UI（`authStatus` / `authLogin` / `authLogout` コマンド、`auth` イベント） | fake の app-server 相当をテストで stub。実機で 1 ターン |
-| **P3** | host ツールの MCP ブリッジ（§2.6） | — |
-| **P4** | `core/backends/antigravity.mjs` + `antigravity-cli.mjs`（ヘッドレスの stream-json）+ `antigravity-store.mjs`（Pleiad が控える一覧と履歴）。§2.8 | agy の身代わり（`tests/lib/fake-agy.mjs`）と話す `tests/unit/server-antigravity.mjs`。実機の 1 ターンは Google のログインが要るので未実施 |
-
-P1 が土台。
-
-## 4. 変えないこと
+## 3. 変えないこと
 
 - 承認の保留・猶予・中断（design.md §8.5）。`server.mjs` の
   `graceExpired` / `giveUp` / `attach` / `detach` / `settleAll` / `askPermission` は触らない

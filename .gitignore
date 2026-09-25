@@ -22,6 +22,3 @@ dist-desktop/
 # 作業の出力とブラウザー自動化のログ（使い捨て）
 output/
 .playwright-cli/
-
-# compact 仕様の下書き（リポジトリに入れない）
-docs/compact-spec.md
