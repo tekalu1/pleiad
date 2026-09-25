@@ -1588,7 +1588,28 @@
     "waiting": "エージェントの接続を待っています。接続後に更新してください。",
     "loading": "取得中…",
     "checkedAt": "最終取得: {{when}}",
-    "failed": "取得できませんでした。接続を確認して更新してください。"
+    "failed": "取得できませんでした。接続を確認して更新してください。",
+    "header": {
+      "title": "使用量",
+      "unauthorized": "未認可",
+      "chipLabel": "{{agent}} の使用量: {{text}}",
+      "chipTitle": "{{agent}} · {{label}}の枠 {{percent}} 使用 ／ {{reset}}",
+      "limitUntil": "{{time}} まで上限",
+      "limitShort": "上限 {{time}}",
+      "stale": "取得できませんでした（{{when}}の値）",
+      "hoursMinutes": "{{hours}} 時間 {{minutes}} 分",
+      "hours": "{{hours}} 時間",
+      "minutes": "{{minutes}} 分",
+      "resetIn": "あと {{duration}}で回復",
+      "resetAtIn": "{{time}} に回復（あと {{duration}}）",
+      "resetOn": "{{when}} に回復",
+      "refresh": "使用量を読み直す",
+      "thisConversation": "この会話",
+      "group": "{{name}} のグループ",
+      "otherGroups_other": "ほか {{count}} グループ",
+      "otherGroupsBelow_other": "ほか {{count}} グループ（いずれも {{percent}}% 未満）",
+      "openSettings": "トークン数・費用を設定で見る →"
+    }
   },
   "updates": {
     "phase": {

@@ -2,9 +2,10 @@ import { el } from './dom.mjs';
 import { fmt, t } from './i18n.mjs';
 
 const format = n => n == null ? t('usage.unknown') : fmt.number(n, { maximumFractionDigits: 1 });
+/** リセット時刻を過ぎた枠。使用率は今の値ではない（更新待ち） */
+export const isExpired = (window, now = Date.now()) => Boolean(window.resetsAt) && new Date(window.resetsAt).getTime() <= now;
 export function quotaText(window, now = Date.now()) {
-  const expired = window.resetsAt && new Date(window.resetsAt).getTime() <= now;
-  return expired ? t('usage.expired')
+  return isExpired(window, now) ? t('usage.expired')
     : window.usedPercent == null ? t('usage.percentUnknown')
     : t('usage.percent', { used: format(window.usedPercent), remaining: format(window.remainingPercent) });
 }
@@ -13,8 +14,7 @@ function renderQuota(parent, quota, onUsageLogin) {
   for (const w of quota.windows ?? []) {
     const row = el('div', 'usage-window');
     row.append(el('strong', null, w.label), el('span', 'usage-value', quotaText(w)));
-    const expired = w.resetsAt && new Date(w.resetsAt).getTime() <= Date.now();
-    if (w.usedPercent != null && !expired) {
+    if (w.usedPercent != null && !isExpired(w)) {
       const meter = document.createElement('progress');
       meter.max = 100; meter.value = Math.min(100, w.usedPercent);
       meter.setAttribute('aria-label', t('usage.meter', { label: w.label }));
@@ -72,7 +72,23 @@ export function renderEndpoints(parent, endpoints) {
   }
   parent.append(el('p', 'usage-note', t('usage.endpointCost')));
 }
-export function setupUsage({ $, cmd, getBackends, page, isOpen, onUsageLogin, endpoints = async () => [] }) {
+/**
+ * providerUsage の取得。設定の「使用量」と会話のヘッダーのチップ（web/header-usage.mjs）が共有する。
+ * 同じエージェントの取得が走っている間は、それに相乗りする（同時に 2 本投げない）。届いた結果は onResult で両方へ配る
+ */
+export function createUsageSource(cmd) {
+  const pending = new Map(), listeners = new Set();
+  function load(backend) {
+    if (pending.has(backend)) return pending.get(backend);
+    const task = cmd('providerUsage', { backend }).then(result => {
+      for (const listener of listeners) listener(backend, result);
+      return result;
+    }).finally(() => pending.delete(backend));
+    pending.set(backend, task); return task;
+  }
+  return { load, onResult: listener => listeners.add(listener) };
+}
+export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackends, page, isOpen, onUsageLogin, endpoints = async () => [] }) {
   let loading = false;
   async function refresh() {
     if (loading) return;
@@ -84,7 +100,7 @@ export function setupUsage({ $, cmd, getBackends, page, isOpen, onUsageLogin, en
         const card = el('section', 'usage-card');
         card.append(el('h3', null, backend.label), el('p', 'usage-note', t('usage.loading'))); root.append(card);
         try {
-          const result = await cmd('providerUsage', { backend: backend.id });
+          const result = await source.load(backend.id);
           card.replaceChildren(el('h3', null, result.label));
           renderQuota(card, result.quota, onUsageLogin);
           if (result.quota.checkedAt) card.append(el('p', 'usage-note', t('usage.checkedAt', { when: fmt.dateTime(result.quota.checkedAt) })));

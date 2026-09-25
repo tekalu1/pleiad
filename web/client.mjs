@@ -7,7 +7,8 @@ import { setupCodeCopy, copyText } from './code-copy.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
 import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
-import { setupUsage } from './usage.mjs';
+import { setupUsage, createUsageSource } from './usage.mjs';
+import { setupHeaderUsage } from './header-usage.mjs';
 import { setupOnboarding } from "./onboarding.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
 import { setupCompatEndpoints } from './compat-endpoints.mjs';
@@ -966,6 +967,8 @@ function onEvent(ev, replay = false) {
     }
     // Process completion for every session, before filtering events to the open conversation.
     state.runningIds.delete(ev.sessionId);
+    // ターンを回した分だけ使用量が動く。ヘッダーのチップをそのエージェントの分だけ取り直す（読み直しの再生では取らない）
+    if (!replay && !ev.requeued) headerUsage.turnEnded(s?.backend);
     renderSessions();
     if (ev.sessionId !== state.current) refresh();
   }
@@ -3311,6 +3314,8 @@ async function syncTopbar() {
   syncTitleControls();
 
   if (bid) state.shownBackend = bid;
+  // ヘッダーの使用量のチップは、この会話（予約があれば次のターン）のエージェントとアカウントの枠を出す
+  headerUsage.show({ backend: bid, account: s?.nextSettings?.account ?? s?.claudeAccount ?? "", endpoint: endpointOf(s) });
 
   // 予約があれば次のターンの作業場所を表示する。
   if (s) state.cwd = s.nextSettings?.cwd ?? s.cwd ?? state.homeDir ?? "";
@@ -4101,9 +4106,14 @@ setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lo
   await Promise.all([...draftWrites.values()]);
 } });
 function openSettings() { onboarding.open(); }
-setupUsage({ $, cmd, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
-  // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
-  onUsageLogin: accountId => claudeAccounts.open({ usageLogin: accountId }) });
+// 使用量の取得は設定の「使用量」とヘッダーのチップで共有する（同じエージェントの取得が走っていれば相乗り）
+const usageSource = createUsageSource(cmd);
+// 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
+const usageLogin = accountId => claudeAccounts.open({ usageLogin: accountId });
+const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,
+  openSettings: () => { onboarding.open('usage'); $('usageTab').click(); } });
+setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
+  onUsageLogin: usageLogin });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page });
 clearThread();
 initTheme();

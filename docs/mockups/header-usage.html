@@ -1,0 +1,194 @@
+<meta charset="utf-8">
+<div id="husg">
+<style>
+#husg{--paper:#fff;--s0:#eceef4;--s1:#f4f5f9;--s2:#e8eaf1;--s3:#dcdee8;--sel:#e3e5ed;--fill:#3a499e;--on:#f4f5ff;--ink:#1c2247;--strong:#0f1330;--weak:#6b7299;--blue:#3a499e;--lineb:#5665cd;--line:#c9cee0;--shadow:rgba(58,73,158,.16);
+  font-family:system-ui,"Yu Gothic UI","Segoe UI",sans-serif;color:var(--ink);font-size:14px;line-height:1.5}
+#husg *{box-sizing:border-box}
+#husg h3{font-size:13px;margin:18px 0 8px;color:var(--weak);letter-spacing:.06em;font-weight:600}
+#husg .ctl{display:flex;flex-wrap:wrap;gap:8px 14px;margin-bottom:10px;font-size:12px;color:var(--weak);align-items:center}
+#husg .seg{display:inline-flex;flex-wrap:wrap;background:var(--s2);border-radius:999px;padding:2px}
+#husg .seg button{border:0;background:transparent;color:var(--weak);font:inherit;padding:3px 10px;border-radius:999px;cursor:pointer}
+#husg .seg button[aria-pressed="true"]{background:var(--paper);color:var(--ink)}
+#husg .stage{background:var(--s3);border-radius:14px;padding:12px}
+#husg .win{display:flex;background:var(--paper);border-radius:12px;overflow:visible;min-height:560px;margin-inline:auto;transition:max-width .2s}
+#husg .win.phone{max-width:360px}
+#husg .side{width:190px;flex:none;background:var(--s0);border-radius:12px 0 0 12px;padding:10px;font-size:12.5px;display:flex;flex-direction:column;gap:2px}
+#husg .win.phone .side{display:none}
+#husg .side .brand{font-weight:700;letter-spacing:.04em;padding:4px 6px 10px;display:flex;justify-content:space-between;color:var(--ink)}
+#husg .side .brand span{color:var(--weak);font-weight:400}
+#husg .side .it{padding:5px 8px;border-radius:8px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#husg .side .it.on{background:var(--paper)}
+#husg .side .gh{color:var(--weak);font-size:11px;padding:8px 8px 2px}
+#husg .main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+#husg .top{display:flex;align-items:center;gap:4px;padding:10px 14px 4px}
+#husg .title{flex:1;min-width:0;font-weight:600;font-size:15px;padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#husg .hbtn{border:0;background:transparent;color:var(--ink);font:inherit;font-size:13px;padding:5px 10px;border-radius:999px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+#husg .hbtn:hover,#husg .hbtn[aria-expanded="true"]{background:var(--s1)}
+#husg .hbtn .n{color:var(--weak)}
+#husg .icon{width:30px;height:30px;padding:0;justify-content:center}
+#husg svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+#husg .mini{width:22px;height:6px;flex:none;background:var(--s3);border-radius:999px;overflow:hidden}
+#husg .mini i{display:block;height:100%;background:var(--fill);border-radius:999px}
+#husg .chip .lb{color:var(--weak)}
+#husg .chip .pc{font-variant-numeric:tabular-nums}
+#husg .chip.hi .pc,#husg .chip.hi .lb{color:var(--strong)}
+#husg .chip.hi .mini i{background:var(--strong)}
+#husg .chip.dim{color:var(--weak)}
+#husg .chip[hidden]{display:none}
+#husg .win.phone .chip .lb{display:none}
+#husg .thread{flex:1;padding:12px 22px;color:var(--weak);font-size:13px}
+#husg .thread .u{background:var(--s2);color:var(--ink);border-radius:12px;padding:8px 12px;margin:0 0 10px auto;max-width:70%;width:fit-content}
+#husg .thread p{margin:0 0 8px;color:var(--ink)}
+#husg .comp{margin:0 14px 14px;background:var(--s1);border-radius:12px;padding:10px 12px;color:var(--weak);font-size:13px}
+/* ポップオーバー */
+#husg .pop{position:absolute;top:44px;right:10px;width:min(340px,calc(100% - 20px));background:var(--paper);border-radius:14px;box-shadow:0 10px 32px var(--shadow);padding:12px 14px;z-index:5;font-size:13px}
+#husg .pop[hidden]{display:none}
+#husg .ph{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}
+#husg .ph b{font-size:14px}
+#husg .ph .when{margin-left:auto;font-size:11.5px;color:var(--weak)}
+#husg .ph .rf{border:0;background:none;color:var(--blue);cursor:pointer;font:inherit;font-size:12px;padding:0}
+#husg .ag{padding:8px 0 4px}
+#husg .ag + .ag{margin-top:10px}
+#husg .ag .an{display:flex;gap:8px;align-items:baseline;font-weight:600}
+#husg .ag .an small{font-weight:400;color:var(--weak);font-size:11.5px}
+#husg .wr{display:grid;grid-template-columns:56px 1fr 42px;gap:2px 10px;align-items:center;margin-top:6px}
+#husg .wr .wl{color:var(--weak);font-size:12px}
+#husg .wr .bar{height:6px;background:var(--s3);border-radius:999px;overflow:hidden}
+#husg .wr .bar i{display:block;height:100%;background:var(--fill);border-radius:999px}
+#husg .wr.hi .bar i{background:var(--strong)}
+#husg .wr .v{text-align:right;font-variant-numeric:tabular-nums;font-size:12.5px}
+#husg .wr.hi .v{color:var(--strong)}
+#husg .wr .rs{grid-column:2 / -1;font-size:11.5px;color:var(--weak)}
+#husg .wr.hi .rs{color:var(--ink)}
+#husg .more{font-size:11.5px;color:var(--weak);margin-top:4px}
+#husg .note{font-size:12px;color:var(--weak);margin:4px 0}
+#husg .pbtn{border:0;background:var(--s1);color:var(--ink);font:inherit;font-size:12.5px;padding:5px 12px;border-radius:999px;cursor:pointer;margin-top:6px}
+#husg .foot{margin-top:10px;padding-top:8px;display:flex;justify-content:flex-end}
+#husg .foot button{border:0;background:none;color:var(--blue);font:inherit;font-size:12.5px;cursor:pointer;padding:2px 0}
+#husg .rules{font-size:12.5px;color:var(--ink);margin:10px 2px 0;padding-left:18px}
+#husg .rules li{margin:3px 0}
+#husg .rules b{font-weight:600}
+</style>
+
+<div class="ctl">
+  <span>状態</span>
+  <div class="seg" role="group" aria-label="使用量の状態" id="husgState">
+    <button type="button" data-v="ok" aria-pressed="true">余裕あり</button>
+    <button type="button" data-v="hi" aria-pressed="false">残り少ない</button>
+    <button type="button" data-v="max" aria-pressed="false">上限</button>
+    <button type="button" data-v="auth" aria-pressed="false">未認可</button>
+  </div>
+</div>
+<div class="ctl">
+  <span>幅</span>
+  <div class="seg" role="group" aria-label="画面の幅" id="husgWidth">
+    <button type="button" data-v="desk" aria-pressed="true">デスクトップ</button>
+    <button type="button" data-v="phone" aria-pressed="false">スマホ</button>
+  </div>
+  <span>出し方</span>
+  <div class="seg" role="group" aria-label="ヘッダーに出す条件" id="husgMode">
+    <button type="button" data-v="always" aria-pressed="true">常に出す</button>
+    <button type="button" data-v="quiet" aria-pressed="false">80% 以上だけ</button>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="win" id="husgWin">
+    <div class="side">
+      <div class="brand">Pleiad <span>＋ ⚙</span></div>
+      <div class="gh">進行中</div>
+      <div class="it on">ヘッダーに使用量を出す</div>
+      <div class="it">Android の殻の戻る操作</div>
+      <div class="gh">完了</div>
+      <div class="it">添付の置き場の不具合</div>
+    </div>
+    <div class="main">
+      <div class="top">
+        <div class="title">ヘッダーに使用量を出す</div>
+        <button type="button" class="hbtn">コンテキスト <span class="n">3</span></button>
+        <button type="button" class="hbtn chip" id="husgChip" aria-haspopup="dialog" aria-expanded="false" aria-controls="husgPop"></button>
+        <button type="button" class="hbtn icon" aria-label="この会話の操作"><svg class="i" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+      </div>
+      <div class="pop" id="husgPop" role="dialog" aria-label="使用量" hidden></div>
+      <div class="thread">
+        <div class="u">使用量をヘッダーで見たい</div>
+        <p>了解しました。まず今の使用量の画面を確認します…</p>
+      </div>
+      <div class="comp">Claude · Opus 5.5 ／ 返信を入力</div>
+    </div>
+  </div>
+</div>
+
+<ol class="rules">
+  <li><b>置き場所は会話のヘッダーの右</b>。「コンテキスト」と「…」の間に置く。送る直前に目に入る位置で、脇を閉じていても、スマホでも見える。</li>
+  <li><b>チップはこの会話のエージェントだけを出す</b>。5 時間と週次のうち、使用率が高いほうを 1 つだけ（例「5時間 62%」）。スマホでは短い棒と数字だけ（上限に達したら「上限 14:30」）。</li>
+  <li><b>80% 以上で濃い色（太字にはしない）</b>。差し色（赤紫）は「あなたを待っている」専用なので使わない。上限に達したら、率の代わりに回復する時刻を出す。</li>
+  <li><b>押すと全エージェントの一覧</b>。この会話のエージェントを先頭に置く。トークン数・費用などの詳しい数字は、これまでどおり設定の「使用量」で見る。</li>
+  <li><b>更新の頻度</b>: 5 分ごと、ターンが終わった直後、一覧を開いたとき。取得に失敗したら直前の値を薄く出し、時刻を添える。</li>
+</ol>
+
+<script>
+(() => {
+  const root = document.getElementById('husg');
+  const chip = root.querySelector('#husgChip'), pop = root.querySelector('#husgPop'), win = root.querySelector('#husgWin');
+  let state = 'ok', mode = 'always';
+  const DATA = {
+    ok:  { claude: [['5時間', 38, 'あと 3 時間 10 分で回復'], ['週次', 22, '9/29（月）9:00 に回復']], codex: [['5時間', 12, 'あと 4 時間で回復'], ['週次', 47, '9/30（火）18:00 に回復']] },
+    hi:  { claude: [['5時間', 86, 'あと 1 時間 20 分で回復'], ['週次', 54, '9/29（月）9:00 に回復']], codex: [['5時間', 12, 'あと 4 時間で回復'], ['週次', 47, '9/30（火）18:00 に回復']] },
+    max: { claude: [['5時間', 100, '14:30 に回復（あと 42 分）'], ['週次', 71, '9/29（月）9:00 に回復']], codex: [['5時間', 12, 'あと 4 時間で回復'], ['週次', 47, '9/30（火）18:00 に回復']] },
+  };
+  const AG = [['Gemini 3.8 Pro', '5時間', 30, 'あと 2 時間で回復'], ['週次', 18]];
+  const ring = p => `<span class="mini" aria-hidden="true"><i style="width:${p}%"></i></span>`;
+  const row = ([label, p, reset]) => `<div class="wr${p >= 80 ? ' hi' : ''}"><span class="wl">${label}</span><span class="bar"><i style="width:${p}%"></i></span><span class="v">${p}%</span><span class="rs">${reset}</span></div>`;
+
+  function renderChip() {
+    chip.className = 'hbtn chip';
+    if (state === 'auth') {
+      chip.hidden = mode === 'quiet';
+      chip.classList.add('dim');
+      chip.innerHTML = `${ring(0)}<span class="lb">使用量</span><span class="pc">—</span>`;
+      chip.setAttribute('aria-label', 'Claude の使用量: 未認可');
+      return;
+    }
+    const top = DATA[state].claude.reduce((a, b) => (b[1] > a[1] ? b : a));
+    chip.hidden = mode === 'quiet' && top[1] < 80;
+    if (top[1] >= 80) chip.classList.add('hi');
+    const text = top[1] >= 100 ? (win.classList.contains('phone') ? '上限 14:30' : '14:30 まで上限') : `${top[1]}%`;
+    chip.innerHTML = `${ring(top[1])}<span class="lb">${top[1] >= 100 ? '' : top[0]}</span><span class="pc">${text}</span>`;
+    chip.setAttribute('aria-label', `Claude の使用量: ${top[0]} ${text}`);
+    chip.title = `Claude · ${top[0]}の枠 ${top[1]}% 使用 ／ ${top[2]}`;
+  }
+  function renderPop() {
+    const claude = state === 'auth'
+      ? `<p class="note">使用量を表示するには、このアカウントで使用量の表示を認可してください。</p><button type="button" class="pbtn">使用量の表示を認可</button>`
+      : DATA[state].claude.map(row).join('');
+    const codex = (DATA[state] ?? DATA.ok).codex.map(row).join('');
+    pop.innerHTML = `
+      <div class="ph"><b>使用量</b><span class="when">1 分前</span><button type="button" class="rf" aria-label="使用量を読み直す">↻</button></div>
+      <div class="ag"><div class="an">Claude <small>この会話 · 個人のアカウント</small></div>${claude}</div>
+      <div class="ag"><div class="an">Codex</div>${codex}</div>
+      <div class="ag"><div class="an">Antigravity <small>Gemini 3.8 Pro のグループ</small></div>${row(['5時間', 30, 'あと 2 時間で回復'])}${row(['週次', 18, '9/28（日）12:00 に回復'])}<div class="more">ほか 2 グループ（いずれも 20% 未満）</div></div>
+      <div class="foot"><button type="button">トークン数・費用を設定で見る →</button></div>`;
+  }
+  function render() { renderChip(); renderPop(); }
+  chip.onclick = () => {
+    const open = pop.hidden;
+    pop.hidden = !open; chip.setAttribute('aria-expanded', String(open));
+  };
+  root.addEventListener('keydown', e => { if (e.key === 'Escape' && !pop.hidden) { pop.hidden = true; chip.setAttribute('aria-expanded', 'false'); chip.focus(); } });
+  function seg(id, fn) {
+    const g = root.querySelector(id);
+    g.addEventListener('click', e => {
+      const b = e.target.closest('button'); if (!b) return;
+      g.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      fn(b.dataset.v); render();
+    });
+  }
+  seg('#husgState', v => { state = v; });
+  seg('#husgMode', v => { mode = v; });
+  seg('#husgWidth', v => { win.classList.toggle('phone', v === 'phone'); });
+  render();
+  pop.hidden = false; chip.setAttribute('aria-expanded', 'true');
+})();
+</script>
+</div>
