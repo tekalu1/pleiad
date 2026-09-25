@@ -56,7 +56,8 @@ export function labelOf(row) {
 function entryOf(row, efforts, preferredEffort) {
   const family = familyOf(row.resolvedModel ?? row.value);
   const levels = row.supportsEffort === false ? [] : [...(row.supportedEffortLevels ?? [])];
-  // 利用者の設定（effortLevel）が対応する段なら、CLI もそれを使う
+  // preferredEffort は、CLI が実際に当てる段（efforts）を利用者の設定のもとで引けなかったときの代わり。
+  // effortLevel がそのまま効くとは限らない（claude.mjs の appliedFor）
   const effort = levels.includes(preferredEffort) ? preferredEffort : efforts?.[row.value];
   return {
     label: labelOf(row),
@@ -83,7 +84,8 @@ function match(out, listed, name) {
  * @param {Array} o.rows       SDK の ModelInfo[]。空・無しなら固定の一覧
  * @param {Record<string,string>} [o.efforts] モデルの value → CLI が既定で使うエフォート
  * @param {string|null} [o.preferred] 利用者の設定のモデル（ANTHROPIC_MODEL / settings.json の model）
- * @param {string|null} [o.preferredEffort] 利用者の設定のエフォート（CLAUDE_CODE_EFFORT_LEVEL / settings.json の effortLevel）
+ * @param {string|null} [o.preferredEffort] 利用者の設定のエフォート（CLAUDE_CODE_EFFORT_LEVEL / settings.json の effortLevel）。
+ *   efforts を利用者の設定のもとで引けなかったときだけ渡す（渡すと efforts より優先する）
  */
 export function buildClaudeModels({ rows, efforts = {}, preferred = null, preferredEffort = null } = {}) {
   if (!Array.isArray(rows) || !rows.some((r) => r?.value && r.value !== "default")) return FALLBACK_MODELS;
