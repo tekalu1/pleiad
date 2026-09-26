@@ -1289,6 +1289,7 @@
     "connLost": "接続が切れた。再接続している…",
     "openSidebarTitle": "サイドバーを開く（Ctrl+B）",
     "openSidebar": "サイドバーを開く",
+    "openSidebarWith": "サイドバーを開く（{{detail}}）",
     "previewShowing": "表示中",
     "authNeed": "{{agents}} にログインが要る",
     "protocolUnsupported": "未対応の protocolVersion: {{version}}",
@@ -1572,6 +1573,7 @@
   },
   "sidebar": {
     "unread": "完了・未確認",
+    "unreadCount_other": "完了・未確認 {{count}} 件",
     "somethingRunning": "走っているものがある",
     "empty": "まだ無い",
     "noMatch": "該当なし",
