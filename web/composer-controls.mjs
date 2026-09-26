@@ -15,6 +15,7 @@ import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, 
 import { compatModelLabel, modelCandidates, searchModels, resolveTyped, moreText, ONE_M_TITLE } from "./compat-models.mjs";
 import { t } from "./i18n.mjs";
 import { splitChipLabel } from "./composer-layout.mjs";
+import { runMark } from "./arc.mjs";
 
 /** 一覧の「既定」の札 */
 const DEFAULT_TAG = () => t("chat.model.default");
@@ -32,6 +33,16 @@ function glyph(...paths) {
   const svg = svgEl("svg", { class: "i", viewBox: "0 0 24 24", "aria-hidden": "true" });
   for (const d of paths) svg.append(svgEl("path", { d }));
   return svg;
+}
+
+/** ひとつ上のフォルダー（D:\work\my-app → D:\work、D:\work → D:\）。根なら null */
+export function parentOf(p) {
+  const s = String(p ?? "").replace(/[\\/]+$/, "");
+  const at = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/"));
+  if (at < 0) return null;
+  const up = s.slice(0, at);
+  if (/^[A-Za-z]:$/.test(up)) return `${up}\\`;
+  return up || (s.startsWith("/") ? "/" : null);
 }
 
 /** パスの末尾（D:\work\my-app → my-app）。ドライブの根はそのまま */
@@ -249,12 +260,66 @@ export function setupComposerControls({ cmd, get, on }) {
 
   // ---- 作業ディレクトリ
   let browsing = null;          // 簡易ブラウザーで開いているフォルダー（ブラウザー版だけ）
+  let checkSeq = 0;             // 打ったパス・最近の行を確かめている番号（新しく確かめ始めたら前の結果は捨てる）
   const commitCwd = (v) => {
     const value = String(v ?? "").trim();
     if (!value) return;
     folder.hide();
     if (value !== get().cwd) on.cwd(value);
   };
+  /**
+   * 打ったパス・最近の行は、決める前にサーバーでフォルダーがあるか確かめる（listDirs）。無ければ面を開いたまま、
+   * 欄の下に理由と、あるところまでのパス・「ここから選ぶ」を出す。150ms を越えたら欄の右端に弧と「確認しています…」
+   */
+  async function checkAndCommit(value, { input, msg, browse }) {
+    value = String(value ?? "").trim();
+    if (!value) return;
+    if (value === get().cwd) { folder.hide(); return; }
+    const seq = ++checkSeq;
+    msg.replaceChildren();
+    const wrap = input.parentElement;
+    const timer = setTimeout(() => {
+      if (seq !== checkSeq) return;
+      wrap.querySelector(".run")?.remove();
+      wrap.append(runMark(t("composer.cwd.checking")));
+      msg.replaceChildren(el("p", "cmsg checking", t("composer.cwd.checking")));
+    }, 150);
+    const done = () => { clearTimeout(timer); wrap.querySelector(".run")?.remove(); };
+    let found = null;
+    try { found = await cmd("listDirs", { path: value }); }
+    catch (e) {
+      if (seq !== checkSeq) return;
+      // あるところまで上へたどる（ENOENT のときだけ。権限などはそのフォルダーの理由を出す）
+      let nearest = null;
+      if (e.code === "ENOENT") {
+        for (let dir = parentOf(value), n = 0; dir && n < 12; dir = parentOf(dir), n++) {
+          const r = await cmd("listDirs", { path: dir }).catch(() => null);
+          if (seq !== checkSeq) return;
+          if (r) { nearest = r.path; break; }
+        }
+      }
+      done();
+      const fail = el("p", "cmsg fail", `✕ ${e.code === "ENOENT" ? t("composer.cwd.notFound") : e.message}`);
+      const out = [fail];
+      if (nearest) {
+        const hint = el("p", "cmsg hint");
+        const from = el("button", "btn link", t("composer.cwd.chooseFrom"));
+        from.type = "button";
+        from.onclick = () => browse(nearest);
+        hint.append(el("code", null, nearest), ` ${t("composer.cwd.exists")}`, from);
+        out.push(hint);
+      }
+      msg.replaceChildren(...out);
+      input.setAttribute("aria-invalid", "true");
+      if (pops.cwd.contains(document.activeElement) || document.activeElement === document.body) input.focus();
+      return;
+    }
+    if (seq !== checkSeq) return;
+    done();
+    msg.replaceChildren();
+    input.removeAttribute("aria-invalid");
+    commitCwd(found?.path || value);
+  }
   function renderFolder() {
     const d = get();
     const pop = pops.cwd;
@@ -263,14 +328,21 @@ export function setupComposerControls({ cmd, get, on }) {
     input.placeholder = t("composer.cwd.placeholder");
     input.setAttribute("aria-label", t("composer.cwd.inputLabel"));
     input.autocomplete = "off"; input.spellcheck = false;
+    // 欄と弧（確かめている間）の入れ物。欄の下に確かめた結果（無いフォルダー・あるところまで）
+    const inputWrap = el("div", "cpath-wrap");
+    inputWrap.append(input);
+    const msg = el("div", "cmsgs");
+    msg.setAttribute("role", "status");
+    const check = (value) => checkAndCommit(value, { input, msg, browse: (dir) => browse(dir) });
     input.addEventListener("keydown", (e) => {
       if (isComposingKey(e) || e.key !== "Enter") return;
       e.preventDefault();     // フォームの送信にしない
-      commitCwd(input.value);
+      check(input.value);
     });
+    input.addEventListener("input", () => { checkSeq++; input.removeAttribute("aria-invalid"); msg.replaceChildren(); inputWrap.querySelector(".run")?.remove(); });
     const recent = (d.recent ?? []).map((r) => row({
       on: r.value === d.cwd, main: baseName(r.value), sub: r.value, right: r.time ? relTime(r.time) : "", mono: true, title: r.value,
-      onPick: () => commitCwd(r.value),
+      onPick: () => { input.value = r.value; check(r.value); },
     }));
     const pick = el("button", "caction");
     pick.type = "button";
@@ -291,13 +363,21 @@ export function setupComposerControls({ cmd, get, on }) {
     const box = el("div", "cbrowse");
     box.hidden = true;
     const browse = folderBrowser({ cmd, box, err, onChoose: commitCwd, onAt: (dir) => { browsing = dir; }, closed: () => pops.cwd.hidden });
-    pop.replaceChildren(input, head(t("composer.cwd.recent")),
+    pop.replaceChildren(inputWrap, msg, head(t("composer.cwd.recent")),
       recent.length ? listbox(t("composer.cwd.recent"), recent) : el("p", "cnote", t("composer.cwd.noRecent")),
       pick, box, err);
     if (browsing != null) browse(browsing);
   }
   const folder = panel(chips.cwd, pops.cwd, { align: "left", render: renderFolder });
   chips.cwd.addEventListener("click", () => { if (!folder.open) browsing = null; });
+  /** 面の欄にパスを入れて選んだ状態にする（保存できなかった作業ディレクトリを「選び直す」） */
+  function typeCwd(value) {
+    const input = pops.cwd.querySelector(".cpath");
+    if (!input) return;
+    input.value = String(value ?? "");
+    input.focus();
+    input.select?.();
+  }
 
   // ---- エージェント・モデル・エフォート・アカウント
   function renderModel() {
@@ -624,5 +704,5 @@ export function setupComposerControls({ cmd, get, on }) {
   window.addEventListener("resize", fitRow);
   if (typeof ResizeObserver === "function") new ResizeObserver(() => fitRow()).observe(chips.cwd.parentElement);
 
-  return { paint, fit: fitRow, close: () => openPanel?.hide(false), panels: { folder, model, mode } };
+  return { paint, fit: fitRow, close: () => openPanel?.hide(false), panels: { folder, model, mode }, typeCwd };
 }

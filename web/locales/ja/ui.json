@@ -960,7 +960,12 @@
       "name": "名前を入れてください",
       "json": "JSON の形が正しくありません"
     },
-    "oauthReset": "接続先などが変わったため、ログインし直してください"
+    "oauthReset": "接続先などが変わったため、ログインし直してください",
+    "unify": {
+      "question_other": "次の {{count}} 件を、すべてのエージェントにつなぎます",
+      "confirm_other": "{{count}} 件でそろえる",
+      "spread": "ほかのエージェントにも広がります"
+    }
   },
   "saved": {
     "reason": {
@@ -1001,7 +1006,8 @@
       "answer": "回答する",
       "done": "質問",
       "skipped": "答えずに進めた",
-      "sendFailed": "回答の送信に失敗: {{error}}"
+      "sending": "回答を送っています…",
+      "sendFailedInline": "回答を送れませんでした · {{error}}"
     },
     "approval": {
       "heading": "{{mark}}",
@@ -1014,7 +1020,8 @@
       "allowedAlways": "常に許可した",
       "allowed": "許可した",
       "denied": "拒否した",
-      "sendFailed": "承認の送信に失敗: {{error}}"
+      "sending": "{{action}}を送っています…",
+      "sendFailedInline": "{{action}}を送れませんでした · {{error}}"
     },
     "thought_other": "考えた（{{chars}} 文字）",
     "delivery": {
@@ -1071,8 +1078,6 @@
     "next": {
       "title": "次のターンから適用",
       "cancel": "取り消す",
-      "retry": "設定の保存を再試行",
-      "saveFailed": "設定を保存できませんでした: {{error}}",
       "endpointMain": "接続先のメイン",
       "targetDefault": "（変更先の既定モデル）",
       "effort": "エフォート: {{value}}",
@@ -1092,6 +1097,13 @@
         "change": "変わる",
         "changeValue": "モデルと承認モードは {{to}} の設定になります"
       }
+    },
+    "settingsHold": {
+      "cwd": "作業ディレクトリを変更できなかったため、送信できません · {{error}}",
+      "settings": "設定を保存できなかったため、送信できません · {{error}}",
+      "retry": "再試行",
+      "rechoose": "選び直す",
+      "cancel": "取り消す"
     },
     "composer": {
       "skills": "スキル",
@@ -1538,6 +1550,10 @@
     "cwd": {
       "placeholder": "作業ディレクトリのパス",
       "inputLabel": "作業ディレクトリのパス（Enter で決める）",
+      "checking": "確認しています…",
+      "notFound": "このフォルダーは見つかりません",
+      "exists": "は存在します",
+      "chooseFrom": "ここから選ぶ",
       "choose": "フォルダーを選ぶ…",
       "recent": "最近の作業ディレクトリ",
       "noRecent": "まだありません",
@@ -1937,6 +1953,12 @@
       "pace_high": "ペースが速い",
       "pace_unknown": "ペースが分からない"
     },
+    "skipWithDetail": "{{reason}}（{{detail}}）",
+    "unavailable": {
+      "disabled": "無効",
+      "not_installed": "未インストール",
+      "no_token": "トークン未登録"
+    },
     "line": {
       "head": "{{kind}}・{{difficulty}} → {{target}}",
       "skippedWindow": "{{name}} は{{window}} {{percent}}% で飛ばした",
@@ -1984,11 +2006,28 @@
       "approve": "承認してやり直す",
       "failed": "やり直せませんでした: {{error}}"
     },
+    "failure": {
+      "none": "使える委譲先がありません",
+      "count": "{{name}} {{n}}",
+      "withDetail": "{{text}}（{{detail}}）",
+      "percent": "{{name}} {{window}} {{percent}}%",
+      "pace": "{{name}} {{window}} {{pace}} 倍",
+      "noCandidates": "試す候補がありません。設定 › 委譲で候補を追加してください。",
+      "tried_other": "試した候補 {{count}} 件",
+      "openAgents": "エージェント設定を開く",
+      "openDelegation": "委譲の設定を開く",
+      "openUsage": "使用量を開く"
+    },
     "settings": {
       "enable": "委譲先を自動で選ぶ",
       "judgeTitle": "難しさの判定",
       "escalate": "Jev が迷ったら Cerebras に聞き直す",
-      "judgeNoKey": "{{service}} のキーが無いので、{{judge}} を選んだ種類は難しさを「中」として扱います。",
+      "effective": {
+        "noKey": "{{service}} のキーが登録されていないため、{{judge}} を選んだ種類は難しさを「中」として扱います。",
+        "addKey": "キーを登録",
+        "noCandidates": "使える委譲先がないため、自動の委譲はすべて失敗します。",
+        "viewCandidates": "候補を見る"
+      },
       "judgeLabel": "{{kind}} の判定",
       "keysTitle": "判定器のキー",
       "keySend": "キーを登録すると、委譲の依頼文と種類がそのサービスに送られます。",

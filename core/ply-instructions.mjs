@@ -4,14 +4,16 @@
 // Codex は developerInstructions で受け取る。保存は prefs.json の plyInstructions（すべての場所に共通。場所ごとには持たない）。
 //
 // 項目は 3 種類:
-//   - 既定（delegate: 委譲の進め方 / child: 委譲した会話では任せない）。Pleiad が最初から入れている。編集でき、編集していなければ
+//   - 既定（delegate: 委譲の進め方 / child: 委譲した会話では任せない / codexPolicy: Codex の実行前の拒否（Codex の子だけ））。
+//     Pleiad が最初から入れている。編集でき、編集していなければ
 //     文面は辞書（agent:guide.*）から会話の言語で引く（Pleiad の更新で新しい文面になる）。編集したら保存した文のまま（「既定に戻す」で戻る）。
 //   - 委譲と連動（route: 委譲の振り分けの使い方）。ply_delegate の約束なので編集・スイッチは無く、委譲先の自動選択が有効なときだけ入る。
 //     並びはいつも最後。保存もしない。
 //   - 自分で足したもの（u-…）。名前・本文・入れる会話（すべて／依頼元だけ／委譲された会話だけ）・エージェント（Claude Code・Codex）。
 //
 // 保存の形 { items: [{ id, on, name?, body?, target?, agents? }] }（並びが入る順）。既定の項目は編集したときだけ name などを持つ。
-// plyInstructions が無い間は、前の版の addedContext（{ delegation: false } で委譲の指示を切っていた）から作る（既定の 2 項目のスイッチに写す）。
+// plyInstructions が無い間は、前の版の addedContext（{ delegation: false } で委譲の指示を切っていた）から作る（委譲の既定の 2 項目のスイッチに写す。
+// codexPolicy は前の版に無かった項目なので入れたまま）。
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { agentT, t } from './i18n.mjs';
@@ -19,7 +21,9 @@ import { estimateTokens } from '../web/token-estimate.mjs';
 
 export const TARGETS = ['all', 'parent', 'child'];
 export const AGENTS = ['claude', 'codex'];
-const BUILTIN = { delegate: { target: 'parent' }, child: { target: 'child' } };
+// agents を持たない既定の項目はどちらのエージェントにも入る
+const BUILTIN = { delegate: { target: 'parent' }, child: { target: 'child' }, codexPolicy: { target: 'child', agents: ['codex'] } };
+const builtinAgents = id => [...(BUILTIN[id].agents ?? AGENTS)];
 const LINKED = 'route';
 const MAX_ITEMS = 50, MAX_BODY = 32 * 1024, MAX_NAME = 80;
 
@@ -28,6 +32,7 @@ const builtinName = (locale, id) => agentT(locale, `guide.names.${id}`);
 function builtinBody(locale, id) {
   if (id === 'delegate') return [`- ${agentT(locale, 'guide.delegate')}`, `- ${agentT(locale, 'guide.main')}`].join('\n');
   if (id === 'child') return agentT(locale, 'guide.child');
+  if (id === 'codexPolicy') return agentT(locale, 'guide.codexPolicy');
   return `- ${agentT(locale, 'guide.route')}`;
 }
 const isBuiltin = id => Object.hasOwn(BUILTIN, id);
@@ -35,7 +40,7 @@ const edited = item => ['name', 'body', 'target', 'agents'].some(k => item[k] !=
 
 const agentsSchema = z.array(z.enum(AGENTS)).min(1).max(AGENTS.length);
 const storedSchema = z.object({
-  id: z.string().regex(/^(?:delegate|child|u-[a-z0-9]{4,32})$/),
+  id: z.string().regex(/^(?:delegate|child|codexPolicy|u-[a-z0-9]{4,32})$/),
   on: z.boolean().optional(),
   name: z.string().trim().min(1).max(MAX_NAME).optional(),
   body: z.string().min(1).max(MAX_BODY).optional(),
@@ -43,8 +48,8 @@ const storedSchema = z.object({
   agents: agentsSchema.optional(),
 });
 
-/** 既定の並び（前の版の委譲の指示のスイッチ on を既定の 2 項目に写す） */
-const defaults = (on = true) => [{ id: 'delegate', on }, { id: 'child', on }];
+/** 既定の並び（前の版の委譲の指示のスイッチ on を委譲の既定の 2 項目に写す） */
+const defaults = (on = true) => [{ id: 'delegate', on }, { id: 'child', on }, { id: 'codexPolicy', on: true }];
 
 /**
  * 保存された値（prefs.json の plyInstructions）を読む。壊れた項目は落とし、既定の項目が欠けていれば足す。
@@ -71,7 +76,7 @@ export function resolvePlyInstructions(list, locale) {
   const items = list.map(item => {
     if (!isBuiltin(item.id)) return { id: item.id, tag: null, modified: false, name: item.name, body: item.body, target: item.target, agents: [...item.agents], on: item.on };
     return { id: item.id, tag: 'default', modified: edited(item), name: item.name ?? builtinName(locale, item.id), body: item.body ?? builtinBody(locale, item.id),
-      target: item.target ?? BUILTIN[item.id].target, agents: item.agents ? [...item.agents] : [...AGENTS], on: item.on };
+      target: item.target ?? BUILTIN[item.id].target, agents: item.agents ? [...item.agents] : builtinAgents(item.id), on: item.on };
   });
   items.push({ id: LINKED, tag: 'linked', modified: false, name: builtinName(locale, LINKED), body: builtinBody(locale, LINKED), target: 'parent', agents: [...AGENTS], on: true });
   return items;
@@ -154,7 +159,7 @@ export function changePlyInstructions(list, args, locale) {
       else {
         const plain = { id: item.id, on: item.on };
         const same = value.name === builtinName(locale, item.id) && value.body === builtinBody(locale, item.id).trim()
-          && value.target === BUILTIN[item.id].target && value.agents.length === AGENTS.length;
+          && value.target === BUILTIN[item.id].target && value.agents.join() === builtinAgents(item.id).join();
         next[i] = same ? plain : { ...plain, ...value };
       }
     }

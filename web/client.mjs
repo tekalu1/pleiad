@@ -30,10 +30,11 @@ import { formatBytes } from "./folder-upload.mjs";
 import { modelRowIds, modelDisplayName } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
+import { approvalTarget } from "./approval-summary.mjs";
 import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
-import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, retryCandidates, splitCandidate, fallbackName } from './delegation-routing-view.mjs';
+import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, retryCandidates, splitCandidate, fallbackName, parseRoutingFailure, routingFailureParts, kindText, difficultyText } from './delegation-routing-view.mjs';
 import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
 import { familiesOf } from "./family.mjs";
@@ -573,7 +574,31 @@ function questionCard(ev, into = null) {
     send.disabled = Object.keys(answersNow()).length < qs.length;
   }
 
-  function settle(answers) {
+  // 承認カードと同じく、サーバーが受け取るまで「◯◯を送っています…」、受け取ってから決着。失敗したら戻して理由をカードの中に
+  const res = el("span", "res");
+  actions.prepend(res);
+  async function settle(answers) {
+    if (card.dataset.sending) return;
+    card.dataset.sending = "1";
+    const inputs = [...card.querySelectorAll("button, input")];
+    const was = inputs.map((b) => b.disabled);
+    for (const b of inputs) b.disabled = true;
+    res.className = "res";
+    res.removeAttribute("role");
+    res.replaceChildren(el("span", null, t("chat.ask.sending")));
+    const arc = setTimeout(() => res.prepend(runMark()), 150);
+    try {
+      await cmd("resolvePermission", { id: ev.id, allow: true, answers: answers ?? {} });
+    } catch (e) {
+      clearTimeout(arc);
+      delete card.dataset.sending;
+      inputs.forEach((b, i) => { b.disabled = was[i]; });
+      res.className = "res fail";
+      res.setAttribute("role", "alert");
+      res.replaceChildren(`✕ ${t("chat.ask.sendFailedInline", { error: e.message })}`);
+      return;
+    }
+    clearTimeout(arc);
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
@@ -583,11 +608,8 @@ function questionCard(ev, into = null) {
       ? qs.map((q) => `${q.header || q.question}: ${answers[q.question]}`).join(" / ")
       : t("chat.ask.skipped");
     actions.replaceChildren(el("span", "res", summary));
-    for (const b of card.querySelectorAll("button, input")) b.disabled = true;
     if (isRunningHere()) activity.show(t("activity.continuing"));
     state.pendingPerms.delete(ev.id);
-    cmd("resolvePermission", { id: ev.id, allow: true, answers: answers ?? {} })
-      .catch((e) => sys(html.t("chat.ask.sendFailed", { error: e.message })));
   }
 
   send.onclick = () => settle(answersNow());
@@ -599,6 +621,40 @@ function questionCard(ev, into = null) {
 // ---------------------------------------------------------------- 承認カード
 // モーダルは使わない。ブラウザのダイアログは以降のイベントを止めるうえ、
 // 会話の流れから目を離させる（＝離れさせない、という価値命題に反する）。
+
+let foldSeq = 0;
+/**
+ * 決着した承認カードの見出しを押せる一行にし、入力（code）を中に畳む。ツール名の後ろに対象の要約（等幅の弱い字、全体は title）。
+ * ▸ はツールの行の折りたたみと同じ。Enter・Space でも開閉する。開いている間は 55% に沈めない（style.css）
+ */
+function foldSettledCard(card, head, code, target) {
+  const caret = el("span", "caret", "▸");
+  caret.setAttribute("aria-hidden", "true");
+  head.prepend(caret);
+  if (target) {
+    const sum = el("span", "sum", target);
+    sum.title = target;
+    (head.querySelector(".tool") ?? head.querySelector(".card-kind")).after(sum);
+  }
+  const body = el("div", "done-body");
+  body.id = `permDone${++foldSeq}`;
+  body.hidden = true;
+  body.append(code);
+  card.append(body);
+  head.classList.add("done-toggle");
+  head.setAttribute("role", "button");
+  head.tabIndex = 0;
+  head.setAttribute("aria-expanded", "false");
+  head.setAttribute("aria-controls", body.id);
+  const toggle = () => {
+    const open = head.getAttribute("aria-expanded") !== "true";
+    head.setAttribute("aria-expanded", String(open));
+    body.hidden = !open;
+    card.classList.toggle("open", open);
+  };
+  head.onclick = toggle;
+  head.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
+}
 
 function permissionCard(ev, into = null) {
   const m = el("div", "m card");
@@ -632,7 +688,32 @@ function permissionCard(ev, into = null) {
   actions.append(deny, allow);
   card.append(actions);
 
-  const settle = (ok, forever = false) => {
+  // 押したらサーバーが受け取るまで「◯◯を送っています…」（ボタンは止め、カードは待っている形のまま）。
+  // 受け取ってから決着の一行に畳む。失敗したら押す前の形に戻し、左端の一行を理由に替えて押し直せるようにする
+  // （docs/design-system.md §4.5。自動で送り直さない。承認は判断なので、つながった後に利用者がもう一度押す）
+  const res = actions.querySelector(".res");
+  const buttons = [always, deny, allow];
+  const verb = (ok, forever) => (ok ? (forever ? t("chat.approval.always") : t("chat.approval.allow")) : t("chat.approval.deny"));
+  const settle = async (ok, forever = false) => {
+    if (card.dataset.sending) return;
+    card.dataset.sending = "1";
+    for (const b of buttons) b.disabled = true;
+    res.className = "res";
+    res.replaceChildren(el("span", null, t("chat.approval.sending", { action: verb(ok, forever) })));
+    const arc = setTimeout(() => res.prepend(runMark()), 150);
+    try {
+      // 拒否の理由はエージェントに返る。画面の言語ではなく会話の言語で返すよう、文ではなく印を送る（サーバーが会話の言語で訳す）
+      await cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, ...(ok ? {} : { messageKey: "userDenied" }) });
+    } catch (e) {
+      clearTimeout(arc);
+      delete card.dataset.sending;
+      for (const b of buttons) b.disabled = false;
+      res.className = "res fail";
+      res.setAttribute("role", "alert");
+      res.replaceChildren(`✕ ${t("chat.approval.sendFailedInline", { action: verb(ok, forever), error: e.message })}`);
+      return;
+    }
+    clearTimeout(arc);
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
@@ -640,12 +721,10 @@ function permissionCard(ev, into = null) {
     head.querySelector(".card-kind").textContent = t("chat.approval.done");
     head.append(el("span", "res", `${ok ? (forever ? t("chat.approval.allowedAlways") : t("chat.approval.allowed")) : t("chat.approval.denied")} · ${hhmm(new Date())}`));
     actions.remove();
-    code.remove();
+    // 決着後は一行に畳み、押せば承認したときの入力をその場で開ける（何を許可・拒否したかを後からたどれる）
+    foldSettledCard(card, head, code, approvalTarget(ev.input));
     if (isRunningHere()) activity.show(ok ? t("activity.runningTool", { tool: ev.toolName }) : t("activity.continuing"));
     state.pendingPerms.delete(ev.id);
-    // 拒否の理由はエージェントに返る。画面の言語ではなく会話の言語で返すよう、文ではなく印を送る（サーバーが会話の言語で訳す）
-    cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, ...(ok ? {} : { messageKey: "userDenied" }) })
-      .catch((e) => sys(html.t("chat.approval.sendFailed", { error: e.message })));
   };
   allow.onclick = () => settle(true);
   deny.onclick = () => settle(false);
@@ -1618,26 +1697,42 @@ let settingsWrite = Promise.resolve();
 let modeWrite = Promise.resolve();
 let settingsFailure = null;
 let failedSettingsPatch = null;
+let failedSettingsError = "";
+let cwdSaving = 0;   // 作業ディレクトリを保存している間、チップの字を弱くする（docs/design-system.md §4.6）
 function reserveSettings(patch) {
   const id = state.current;
   if (!id) return;
-  settingsWrite = settingsWrite.catch(() => {}).then(async () => {
+  const write = settingsWrite.catch(() => {}).then(async () => {
     const s = state.sessions.find(s => s.id === id);
     const value = await cmd("setTurnSettings", { sessionId: id, ...patch });
     if (s) s.nextSettings = value;
     settingsFailure = null;
-    $("retrySettings").hidden = true;
-    if (state.current === id) { $("settingsError").textContent = ""; await syncTopbar(); }
+    failedSettingsPatch = null;
+    if (state.current === id) { syncSettingsHold(); await syncTopbar(); }
   });
-  settingsWrite.catch(e => {
+  settingsWrite = write;
+  write.catch(e => {
     settingsFailure = id;
     failedSettingsPatch = patch;
-    if (state.current === id) {
-      $("settingsError").textContent = t("chat.next.saveFailed", { error: e.message });
-      $("retrySettings").hidden = false;
-    }
+    failedSettingsError = e.message;
+    // チップは保存できた値に戻し（§4.6「失敗時は元の位置へ戻す」）、欄の上に理由と操作。解決するまで送らせない
+    if (state.current === id) { syncSettingsHold(); syncTopbar().catch(() => {}); }
   });
-  return settingsWrite;
+  return write;
+}
+/**
+ * 設定を保存できなかった会話では、入力欄の上に理由と「再試行」「選び直す」（作業ディレクトリのとき）「取り消す」を出し、
+ * 送信を止める（web/composer-wait.mjs の hold。docs/design-system.md「入力欄の待ち」）。開いている会話に合わせて出し入れする
+ */
+function syncSettingsHold() {
+  if (!state.current || settingsFailure !== state.current || !failedSettingsPatch) { composerWait.release(); return; }
+  const patch = failedSettingsPatch, cwd = typeof patch.cwd === "string" ? patch.cwd : null;
+  const drop = () => { settingsFailure = null; failedSettingsPatch = null; composerWait.release(); };
+  const actions = [{ label: t("chat.settingsHold.retry"), onClick: () => { drop(); if (cwd != null) applyCwd(cwd); else reserveSettings(patch); } }];
+  if (cwd != null) actions.push({ label: t("chat.settingsHold.rechoose"), onClick: () => { drop(); syncTopbar().catch(() => {}); controls.panels.folder.show(); controls.typeCwd(cwd); } });
+  actions.push({ label: t("chat.settingsHold.cancel"), onClick: () => { drop(); syncTopbar().catch(() => {}); $("prompt").focus(); } });
+  const reason = cwd != null ? t("chat.settingsHold.cwd", { error: failedSettingsError }) : t("chat.settingsHold.settings", { error: failedSettingsError });
+  composerWait.hold(`✕ ${reason}`, actions);
 }
 function paintSettingsNotice() {
   const s = state.sessions.find(s => s.id === state.current);
@@ -1692,7 +1787,6 @@ function paintHandoffNote(s, next) {
   box.replaceChildren(summary, rows);
 }
 $("cancelSettings").onclick = () => reserveSettings({ cancel: true });
-$("retrySettings").onclick = () => { if (settingsFailure === state.current) reserveSettings(failedSettingsPatch); };
 
 /** 最近使った作業ディレクトリ。いつ使ったかを添える */
 function cwdOptions() {
@@ -1794,8 +1888,11 @@ function endpointView(bid) {
 function applyCwd(v) {
   state.cwd = v;
   controls.paint();
-  if (state.current) reserveSettings({ cwd: v });
-  else state.draft.cwd = v;
+  if (!state.current) { state.draft.cwd = v; return; }
+  // 保存できるまでは弱い字。失敗したら reserveSettings がチップを元の値へ戻す
+  const ticket = ++cwdSaving;
+  $("cwdChip").classList.add("saving");
+  reserveSettings({ cwd: v })?.catch(() => {}).finally(() => { if (ticket === cwdSaving) $("cwdChip").classList.remove("saving"); });
 }
 
 // 手元のフォルダーをホストへ送る（リモートの窓だけ。入口は添付のボタンのメニュー。web/folder-upload.mjs・web/attach-menu.mjs、
@@ -2640,7 +2737,7 @@ function linkDelegateCard(card, input = null, result = null) {
   if (!name || card.querySelector(':scope .tc-open')) return;
   if (isDelegateTool(name)) {
     const id = /ply-task-[0-9a-f-]{36}/.exec(card.querySelector('.tc-output, .tc-result, .tc-details-body')?.textContent ?? '')?.[0];
-    if (!id) return;
+    if (!id) { decorateFailedDelegate(card, result); return; }
     card.dataset.taskId = id;
     // 振り分けの記録。ply_delegate の結果（JSON）にある。タスクの一覧（running）にあればそちらを使う
     const routing = delegateResult(result)?.routing;
@@ -2755,6 +2852,46 @@ function decorateDelegateCard(card) {
   card.querySelector('.tc-details-body')?.prepend(...(request ? [request] : []), delegateDetail(card, routing));
   paintRouteLine(card, routing);
   paintRetried(card);
+}
+/**
+ * 自動の振り分けで使える委譲先が無かったカード（タスクはできていない）。見出しを成功と同じ「委譲 · 自動 · 種類・難しさ →」にして
+ * 行き先の代わりに「使える委譲先がありません」、開かなくても見える位置に理由ごとの行と直す場所への入口、候補ごとの一覧は折りたたむ。
+ * エージェント向けのエラー文（内部の理由のコード）はツールカードの出力に畳んだまま（docs/design-system.md「委譲カード」）
+ */
+function decorateFailedDelegate(card, result) {
+  if (!result || card.dataset.routed || !(result.isError ?? result.is_error)) return;
+  const failure = parseRoutingFailure(typeof result === 'string' ? result : result.text);
+  if (!failure) return;
+  card.dataset.routed = '1';
+  card.classList.add('tc-route-failed');
+  const head = card.querySelector('.tc-head');
+  const label = head.querySelector('.tc-label');
+  label.textContent = t('timeline.tool.label.delegate');
+  const auto = el('span', 'tc-auto', t('routing.auto'));
+  auto.title = t('routing.autoTitle');
+  label.after(auto);
+  const line = el('span', 'tc-route', t('routing.line.head', { kind: kindText(failure.kind), difficulty: difficultyText(failure.difficulty), target: t('routing.failure.none') }));
+  line.title = line.textContent;
+  const badge = head.querySelector('.tc-res');
+  if (badge) badge.before(line); else head.append(line);
+  const open = (reason) => {
+    if (reason === 'unavailable') return { label: t('routing.failure.openAgents'), run: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open('setup'); } };
+    if (reason === 'model_unknown') return { label: t('routing.failure.openDelegation'), run: () => { onboarding.open('delegation'); $('delegationTab').click(); } };
+    if (['quota_high', 'pace_high', 'pace_unknown'].includes(reason)) return { label: t('routing.failure.openUsage'), run: () => { onboarding.open('usage'); $('usageTab').click(); } };
+    return null;
+  };
+  const paint = () => {
+    for (const n of card.querySelectorAll(':scope > .tc-why, :scope > .tc-cands-fold')) n.remove();
+    card.append(...routingFailureParts(failure, { names: routingNames, open }));
+  };
+  paint();
+  // モデルの表示名は語彙から。まだ無ければ取りに行き、届いたら書き直す（折りたたみを開いていれば開いたまま）
+  const missing = [...new Set(failure.skipped.map(s => splitCandidate(s.candidate).backend).filter(b => b && !state.vocab.has(b)))];
+  for (const b of missing) loadVocab(b).then(() => {
+    const wasOpen = card.querySelector(':scope > .tc-cands-fold')?.open;
+    paint();
+    if (wasOpen) card.querySelector(':scope > .tc-cands-fold').open = true;
+  }).catch(() => {});
 }
 function paintRouteLine(card, routing) {
   const line = card.querySelector('.tc-route');
@@ -4204,7 +4341,7 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     // readonly + aria-busy にして、150ms を越えたら欄の中に「履歴を読み込み中…」を出す（web/composer-wait.mjs）
     if (fresh) composerWait.idle(); else composerWait.busy("history");
     $("settingsError").textContent = "";
-    $("retrySettings").hidden = settingsFailure !== id;
+    syncSettingsHold();
     state.awaitingSession = false;
     state.submitting = false;
     syncRunState();
@@ -4564,6 +4701,8 @@ async function clearSentDraft(id, text, attachments) {
 }
 async function submit() {
   if ($('prompt').value.trim() || state.attached.length) completionNotifications.requestPermission();
+  // 設定を保存できず止めている間は送らない。理由の一行へフォーカスを移す（web/composer-wait.mjs の hold）
+  if (composerWait.held) { composerWait.point(); return; }
   if (!state.current || state.current === freshSessionId) {
     // 新しい会話を作っている間の送信は予約する（docs/design-system.md「入力欄の待ち」）。欄は readonly にして字を保ち、
     // 150ms を越えたら送信ボタンに弧、欄の上に「会話ができしだい送ります · 取り消す」。できしだい下の続きで送る
@@ -4587,7 +4726,8 @@ async function submit() {
   try {
     await settingsWrite.catch(() => {});
     await modeWrite;
-    if (state.current !== sessionId || settingsFailure === sessionId) return;
+    if (state.current !== sessionId) return;
+    if (settingsFailure === sessionId) { composerWait.point(); return; }
     // 候補が開いたまま blur した場合の後片付けが先に走ると、送信の入力が書き換わる
     slashSkills.close();
     const text = $('prompt').value;
