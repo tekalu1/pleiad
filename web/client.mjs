@@ -50,6 +50,8 @@ import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { renderOutbox } from './outbox.mjs';
 import { createComposerWait } from './composer-wait.mjs';
+import { createConnectionStatus } from './connection-status.mjs';
+import { attentionCounts, paintOpenSidebar } from './open-sidebar-mark.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
 const submittingMessages = new Set();
@@ -97,6 +99,9 @@ for (const [name, text] of [["untitled", t("session.untitled")], ["default", t("
 // 初めて接続して会話を開くまでは「接続しています…」（その間に書いた字は、開いた会話の下書きで上書きされるため）
 const composerWait = createComposerWait({ box: $("cbox"), prompt: $("prompt"), send: $("send"), note: $("composerNote"),
   busyLine: $("composerBusy"), busyText: $("composerBusyText"), t, runMark, onChange: () => syncRunState() });
+// 接続の状態（web/connection-status.mjs）。切れた一行は 1.5 秒続いてから、トークンが古いと分かったら案内に替えて再接続をやめる
+const connStatus = createConnectionStatus({ note: $("connNote"), sideLine: $("connLost"), live: $("connLive"), t, runMark,
+  time: (ms) => fmt.time(ms), check: checkToken, reconnect: () => connect(), onChange: () => syncRunState() });
 // 作ったばかりで、いま select している会話の id。開き直しと違い入力欄が正本（saveDraft・送信の予約・送信ボタンが見る）
 let freshSessionId = null;
 // 新しい会話を作っている間に押された送信の予約（submit）。「取り消す」で null
@@ -1914,13 +1919,17 @@ const side = createSide({
 function renderSessions() {
   // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から
   const listed = state.sessions.filter(s => !s.delegation);
+  const unreadIds = new Set(listed.filter(s => readCompletions.hasUnread(s)).map(s => s.id));
+  // 脇が見えていない間の印（web/open-sidebar-mark.mjs）。今の会話は数えない
+  paintOpenSidebar($("openSidebar"), attentionCounts(listed, { currentId: state.current, waitingIds: state.waitingIds, unreadIds,
+    busyIds: new Set([...state.runningIds, ...state.bgWaiting.keys()]) }), t);
   side.render(listed, {
     statuses: state.statuses,
     currentId: pendingNewSession && !state.current ? pendingNewSession.id : state.current,
     runningIds: state.runningIds,
     waitingIds: state.waitingIds,
     bgWaiting: state.bgWaiting,
-    unreadIds: new Set(listed.filter(s => readCompletions.hasUnread(s)).map(s => s.id)),
+    unreadIds,
     draft: null,      // 新規のときだけ。予約は current が無いときに意味を持つ
     backendLabels: backendLabels(),
     pendingRows,
@@ -2982,15 +2991,17 @@ let sidebarMoving;
 const narrowView = matchMedia("(max-width:700px)");
 const drawerOpen = () => document.documentElement.classList.contains("side-open");
 
-function setDrawer(open) {
+function setDrawer(open, { refocus = true } = {}) {
   const root = document.documentElement;
   if (drawerOpen() === open) return;
   root.classList.toggle("side-open", open);
   $("openSidebar").setAttribute("aria-expanded", String(open));
+  // 開いている間は背後を inert にする。Tab は脇の中だけを巡り、見えない会話を操作させない（設定で会話を覆うときと同じ手）
+  for (const n of document.body.children) if (n.matches("main, .file-preview, .host-bar, #remoteBadge")) n.inert = open;
   const from = document.activeElement;
-  // 検索欄には置かない（スマホでキーボードが出る）。閉じるボタンへ
+  // 検索欄には置かない（スマホでキーボードが出る）。閉じるボタンへ。閉じたら開いたボタンへ戻す
   if (open) $("closeSidebar").focus({ preventScroll: true });
-  else if ($("sidebar").contains(from)) $("openSidebar").focus({ preventScroll: true });
+  else if (refocus && (!from || from === document.body || $("sidebar").contains(from))) $("openSidebar").focus({ preventScroll: true });
 }
 
 function setSidebar(open) {
@@ -3024,7 +3035,7 @@ function initSidebar() {
     setDrawer(false);
   });
   // 広い画面へ戻ったら引き出しの印を外す（幕が残らないように）
-  narrowView.addEventListener("change", () => setDrawer(false));
+  narrowView.addEventListener("change", () => setDrawer(false, { refocus: false }));
   // Ctrl+B（macOS は ⌘B）。入力欄でも太字などの既定の意味は無いので、どこからでも効かせる。
   // macOS の Ctrl+B は入力欄で「1 文字戻る」なので奪わない
   const mac = /Mac/.test(navigator.platform);
@@ -3793,6 +3804,8 @@ function groupMenu(st, x, y) {
   if (st == null) return showMenu(x, y, [newGroupItem()], t("session.status.none"));
   const n = state.sessions.filter((s) => s.status === st).length;
   showMenu(x, y, [
+    // 見出しの ＋ と同じ。キーボード（Shift+F10）からも届くように
+    { label: t("sidebar.group.newSession"), onClick: () => side.newIn(st) },
     { label: t("session.menu.changeIcon"), hint: state.statuses.find((s) => s.status === st)?.icon ?? "", onClick: () => side.pickIcon(st) },
     { label: t("session.menu.renameStatus"), sub: () => [
       { input: { placeholder: t("session.menu.newName"), value: st, onCommit: (v) =>
@@ -4146,7 +4159,8 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
   const added = [];
   for (const [mi, entries] of [...byNode].sort((a,b) => a[0]-b[0])) {
     const key = `m:${mi}`;
-    const all = [{ id: state.current, name: branches.nameOf(state.current), n: Math.max(0, state.messages.length-mi-1) }, ...entries];
+    const all = branches.distinguish([{ id: state.current, name: branches.nameOf(state.current), n: Math.max(0, state.messages.length-mi-1) }, ...entries],
+      { id: state.current, messages: state.messages });
     const row = makeBranchRow(key, all, state.current, switchTo, snapshots.get(key));
     const anchor = mi >= 0 ? branchAnchor(mi) : null;
     // Two boundaries may share one live DOM row; keep their order.
@@ -4528,7 +4542,7 @@ function syncRunState() {
   // 作ったばかりの会話（freshSessionId）を開いている間は押せる（送信を予約する。submit）
   $("send").disabled = submittingMessages.has(state.current)
     || state.loadingSession === state.current && Boolean(state.current) && state.current !== freshSessionId
-    || composerWait.blocksSend() || Boolean(retiredHere());
+    || composerWait.blocksSend() || Boolean(retiredHere()) || connStatus.blocksSend();
   $("abort").hidden = !(here || isWaitingHere());
   // 受け付けた中断は取り消せない。止まり終えるまで押せないようにする（稼働表示は「中断している」）
   $("abort").disabled = here && stoppingHere();
@@ -4614,8 +4628,22 @@ async function submit() {
 
 // ---------------------------------------------------------------- 接続
 
+/**
+ * このページのトークンが HTTP で通るか（web/connection-status.mjs が、続けて開けなかったときに 1 回だけ聞く）。
+ * Cookie は送らない（別のタブが新しいトークンの Cookie を置いていても、このページの WebSocket は ?token= で開くため）
+ */
+async function checkToken() {
+  try {
+    const res = await fetch(`/auth-check?token=${encodeURIComponent(token)}`,
+      { method: "HEAD", cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(5000) });
+    if (res.status === 401) return "denied";
+    return res.status >= 500 ? "unreachable" : "ok";
+  } catch { return "unreachable"; }
+}
+
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}`);
+  ws.onopen = () => connStatus.opened();
 
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
@@ -4629,7 +4657,7 @@ function connect() {
       if (m.homeDir) state.homeDir = m.homeDir;
       // 画面と違う言語なら読み直すので、ここで止める
       if (applyLocale(m.locale)) return;
-      side.setConnLost(false);
+      connStatus.ready();
       // 切れている間の確認と、旧版がこのブラウザーに持っていた確認済みを送る（受け取られたら旧版の分は消す）
       readCompletions.flush();
       // 切れて止まっていたフォルダーの送信・添付の送信を、受け取り済みの位置から続ける
@@ -4672,11 +4700,11 @@ function connect() {
   };
 
   ws.onclose = () => {
-    // 困っているときだけ出す。切れても向こうは走り続けている（既定では戻るまで待ち続ける）ので実行中の印は消さない
-    side.setConnLost(true);
+    // 困っているときだけ出す。切れても向こうは走り続けている（既定では戻るまで待ち続ける）ので実行中の印は消さない。
+    // 開き直すのは connStatus（1.5 秒ごと。トークンが古いと分かったら開き直さない）
     for (const [, p] of pending) p.rej(new Error(t("app.disconnected")));
     pending.clear();
-    setTimeout(connect, 1500);
+    connStatus.closed();
   };
 
   ws.onerror = () => ws.close();
@@ -4846,6 +4874,14 @@ setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lo
 // 狭い画面の引き出しから開いたなら閉じておく（docs/design-system.md「幕・会話の行・設定・Esc で閉じる」）。
 // 設定の間は引き出しの見た目が効かないので、閉じないと「会話に戻る」で会話ではなく引き出しが出ていた
 function openSettings() { setDrawer(false); onboarding.open(); }
+/** リモートの窓: 中継・ホストにつながらない間は、切れた一行もバッジと同じ理由の語で書く（web/remote-badge.mjs の状態） */
+function watchRemoteReason() {
+  const remote = window.plyRemote;
+  if (!remoteInfo(remote)) return;
+  const apply = (s) => connStatus.setReason(s?.state === "offline" ? "relay" : s?.state === "host-offline" ? "host" : null);
+  Promise.resolve(remote.status?.()).then(apply).catch(() => {});
+  remote.onStatus?.(apply);
+}
 // 使用量の取得は設定の「使用量」とヘッダーのチップで共有する（同じエージェントの取得が走っていれば相乗り）
 const usageSource = createUsageSource(cmd);
 // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
@@ -4868,6 +4904,7 @@ $("prompt").placeholder = promptPlaceholder();
 setupLongPress();
 // リモートの窓（端末のアプリが plyRemote を渡したとき）の帯のバッジ。帯の色を送るより先に置く
 setupRemoteBadge();
+watchRemoteReason();
 watchTitleBar();
 watchShellTheme();
 watchShellBack();
