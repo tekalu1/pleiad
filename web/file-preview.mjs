@@ -42,12 +42,15 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   const wide = iconButton(expandIcon, t('filePreview.expand'), () => { document.body.classList.toggle('file-preview-wide'); layout(); });
   wide.classList.add('btn-wide');
   const closeButton = iconButton(closeIcon, t('filePreview.close'), () => close());
-  const treeToggle = iconButton(folderIcon, t('filePreview.tree'), () => {
-    treePane.classList.toggle('collapsed');
-    const collapsed = treePane.classList.contains('collapsed');
-    treeToggle.setAttribute('aria-expanded', String(!collapsed));
-  });
-  treeToggle.setAttribute('aria-expanded', 'true');
+  // ツリーは畳んで始める（本文を広く読む）。開いたら今のファイルまで祖先を開いて、その行を見える位置へ送る。
+  // 開閉は同じパネルの中では保ち、閉じたら畳みに戻す（docs/design-system.md「右パネル」）
+  const setTreeOpen = (on) => {
+    treePane.classList.toggle('collapsed', !on);
+    treeToggle.setAttribute('aria-expanded', String(on));
+    if (on && file?.path && tree.reveal(file.path)) tree.select(file.path, false);
+  };
+  const treeToggle = iconButton(folderIcon, t('filePreview.tree'), () => setTreeOpen(treePane.classList.contains('collapsed')));
+  treeToggle.setAttribute('aria-expanded', 'false');
   // 今のファイル・可視化の操作。道具の列を増やさず、ツリー・会話のリンクと同じメニューにまとめる
   const more = iconButton(moreIcon, t('files.currentActions'), () => {
     const r = more.getBoundingClientRect();
@@ -81,7 +84,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   location.append(fullPath, copyPath);
   const note = el('div', 'file-preview-note'); note.hidden = true; note.setAttribute('role', 'status');
   const bodyLayout = el('div', 'file-preview-body-layout');
-  const treePane = el('div', 'file-preview-tree-pane');
+  const treePane = el('div', 'file-preview-tree-pane collapsed');
   const treeHeader = el('div', 'file-preview-tree-header');
   treeHeader.append(el('span', null, t('filePreview.explorer')));
   const treeRoot = el('div', 'tree file-preview-tree');
@@ -176,7 +179,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     document.body.classList.remove('file-preview-open','file-preview-wide');
     clearCurrent();
     const was = custom; leaveCustom();
-    content.replaceChildren(); file = null; visual = null; layout();
+    content.replaceChildren(); file = null; visual = null; setTreeOpen(false); layout();
     was?.onClose?.();
     if (restore && opener?.isConnected) opener.focus({ preventScroll:true });
   }
