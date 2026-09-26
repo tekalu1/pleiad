@@ -1654,6 +1654,37 @@ function paintSettingsNotice() {
     if (next.account !== undefined) changes.push(t("chat.next.account", { value: accountLabel(next.account) }));
     $("nextSettingsText").textContent = t("chat.next.summary", { changes: changes.join(" · ") });
   }
+  paintHandoffNote(s, next);
+}
+/**
+ * エージェントを変える予約のときだけ、引き継がないものを 1 行で出し、残りは「詳しく」に畳む（既定は閉じる。デスクトップもスマホも）。
+ * 境界は docs/backend-handoff.md（発言・ツールの記録は渡す。過去の承認・考えた内容・元のエージェントの内部の状態は渡さない）
+ */
+function paintHandoffNote(s, next) {
+  const box = $("nextHandoff");
+  const switching = Boolean(next?.backend) && next.backend !== s?.backend;
+  box.hidden = !switching;
+  if (!switching) { box.replaceChildren(); delete box.dataset.key; return; }
+  const from = labelOf(s.backend), to = labelOf(next.backend);
+  // 同じ切り替えなら作り直さない（開いた「詳しく」を閉じない）
+  const key = `${s.backend}>${next.backend}`;
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.open = false;
+  const summary = el("summary");
+  summary.append(el("span", null, t("chat.next.handoff.line")), el("span", "more", t("chat.next.handoff.more")));
+  const rows = el("dl");
+  const facts = [
+    [t("chat.next.handoff.keep"), t("chat.next.handoff.keepValue")],
+    [t("chat.next.handoff.drop"), t("chat.next.handoff.dropValue", { from, to })],
+    [t("chat.next.handoff.change"), t("chat.next.handoff.changeValue", { to })],
+  ];
+  for (const [label, value] of facts) {
+    const row = el("div");
+    row.append(el("dt", null, label), el("dd", null, value));
+    rows.append(row);
+  }
+  box.replaceChildren(summary, rows);
 }
 $("cancelSettings").onclick = () => reserveSettings({ cancel: true });
 $("retrySettings").onclick = () => { if (settingsFailure === state.current) reserveSettings(failedSettingsPatch); };
