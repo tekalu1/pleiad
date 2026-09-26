@@ -1494,8 +1494,10 @@
       "switchTo_other": "{{name}} に切り替える（{{count}} 件）",
       "current": "現在の会話",
       "continues_other": "{{count}} 件の続き",
-      "root": "はじめの流れ",
-      "numbered": "枝 {{n}}"
+      "root": "オリジナル",
+      "numbered": "枝 {{n}}",
+      "numberedCount_other": "{{name}} · {{count}} 件",
+      "switchToExcerpt_other": "{{name}}「{{excerpt}}」に切り替える（{{count}} 件）"
     },
     "behind": {
       "subagents": "サブエージェントを待っている",
@@ -1584,6 +1586,14 @@
     "undo": "元に戻す",
     "undoClose": "閉じる",
     "undoCloseLabel": "この知らせを閉じる",
+    "list": "会話",
+    "menuKey": "{{label}}（Shift+F10）",
+    "keyHint": {
+      "move": "移動",
+      "open": "開く",
+      "menu": "メニュー",
+      "sidebar": "サイドバー"
+    },
     "group": {
       "pickIcon": "アイコンを選ぶ",
       "newSession": "この状態で新しいセッション"
