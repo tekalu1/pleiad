@@ -62,11 +62,18 @@ export function makeBranchRow(key, entries, selected, onPick, previous) {
     tip.type = "button";
     tip.dataset.session = entry.id;
     tip.setAttribute("aria-pressed", String(entry.id === selected));
-    tip.setAttribute("aria-label", t("timeline.branch.switchTo", { name: entry.name, count: entry.n }));
-    tip.title = entry.name;
+    // 兄弟と名前がぶつかる枝（branches.distinguish が label を付けたもの）は、分岐後の最初の自分の発言と「枝 N · M 件」で見分ける
+    const name = entry.label ? entry.excerpt ?? entry.label : entry.name;
+    const note = entry.id === selected ? t("timeline.branch.current")
+      : entry.excerpt ? t("timeline.branch.numberedCount", { name: entry.label, count: entry.n })
+      : t("timeline.branch.continues", { count: entry.n });
+    tip.setAttribute("aria-label", entry.excerpt
+      ? t("timeline.branch.switchToExcerpt", { name: entry.label, excerpt: entry.excerpt, count: entry.n })
+      : t("timeline.branch.switchTo", { name, count: entry.n }));
+    tip.title = name;
     const ring = svgEl("svg", { class: "branch-ring", viewBox: "0 0 16 16", "aria-hidden": "true" });
     ring.append(svgEl("circle", { cx: 8, cy: 8, r: 5 }));
-    tip.append(ring, el("span", "branch-name", entry.name), el("span", "branch-note", entry.id === selected ? t("timeline.branch.current") : t("timeline.branch.continues", { count: entry.n })));
+    tip.append(ring, el("span", "branch-name" + (entry.excerpt ? " ex" : ""), name), el("span", "branch-note", note));
     tip.onclick = () => { if (!row.locked && entry.id !== selected) onPick(entry.id, row); };
     tip.onkeydown = e => {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
@@ -83,7 +90,10 @@ export function makeBranchRow(key, entries, selected, onPick, previous) {
   const step = () => Math.min(BRANCH.STEP, Math.max(64, (row.clientWidth - 48) / Math.max(1, nodes.length - 1)));
   const target = n => BRANCH.X + order.indexOf(n.id) * step();
   function draw() {
-    const width = Math.max(row.clientWidth, 48 + (nodes.length - 1) * step());
+    const gap = step();
+    const width = Math.max(row.clientWidth, 48 + (nodes.length - 1) * gap);
+    // 札の幅は並びの間隔に合わせる（最大 92px = 間隔 104 − 12）。詰まっていれば 64px
+    row.style.setProperty("--tip-w", `${gap >= 76 ? gap - 12 : 64}px`);
     track.style.width = `${width}px`;
     svg.setAttribute("width", String(width));
     svg.replaceChildren();
