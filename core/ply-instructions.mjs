@@ -1,4 +1,4 @@
-// Pleiad の指示（設定 › コンテキストの「指示」のカード。docs/context-runtime.md「Pleiad の指示」、ADR 0025）。
+// Pleiad の指示（設定 › コンテキストの「指示」のカード。docs/context-runtime.md「Pleiad の指示」、ADR 0026）。
 // 指示ファイル・Skills・外部 MCP の担当（ADR 0014）によらず、ply_agents を持つ会話（Claude Code・Codex）へ毎ターン入れる。
 // 入れる経路は ADR 0023 のまま: core/server.mjs の runTurn が ply_agents の instructions の後ろに足し、Claude は append、
 // Codex は developerInstructions で受け取る。保存は prefs.json の plyInstructions（すべての場所に共通。場所ごとには持たない）。
