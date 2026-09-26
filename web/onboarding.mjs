@@ -24,12 +24,15 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
   const currentCwd = () => chosenCwd || status?.cwd || status?.homeDir || '';
   const error = message => { $('onboardingError').textContent = message; };
   const isOpen = () => document.body.classList.contains('settings');
+  // 別のページへ移ったら本文を先頭に戻す（前のページの位置のまま途中から始まらないように）。同じページを押し直したときは動かさない
+  let shown = null;
   function page(active = 'setup') {
     for (const [name, button, panel] of pages) {
       $(panel).hidden = name !== active;
       $(button).setAttribute('aria-pressed', String(name === active));
       if (name === active) $('settingsPageTitle').textContent = $(button).textContent;
     }
+    if (active !== shown) { shown = active; const content = document.querySelector('.settings-content'); if (content) content.scrollTop = 0; }
   }
   // 設定は画面全体。脇の一覧がメニューに、会話がページに入れ替わる。
   // 会話は伏せずにページで覆う（style.css「設定の画面」）ので、キーボードと読み上げが覆った会話へ届かないよう inert にする
