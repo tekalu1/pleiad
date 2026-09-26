@@ -3706,10 +3706,10 @@ const contextTotal = (report) => CTX_KINDS.filter((kind) => report?.owners?.[kin
   .reduce((sum, kind) => sum + (report.entries ?? []).filter((e) => e.kind === kind && CTX_LOADED[kind].includes(e.status)).length, 0);
 // エージェント任せの会話（と、Pleiad 担当を受け取れなかった antigravity の会話）
 const isManagedContext = (report) => Boolean(report) && report.status !== 'native';
-/** 設定のコンテキストのページを開く。place を渡すとその場所の設定を選んだ状態で */
-function openContextPage(place) {
+/** 設定のコンテキストのページ（全体の設定）を開く */
+function openContextPage() {
   onboarding.open('context');
-  context.openPage(typeof place === 'string' ? place : undefined);
+  context.openPage();
 }
 /** タイトル行の右の入口。押すと右パネル「この会話のコンテキスト」を開閉する。セッションを選んでいないときは出さない */
 function paintContextEntry() {
@@ -4580,16 +4580,17 @@ $("prompt").onkeydown = (e) => {
   if (slashSkills.keydown(e)) return;
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); }
 };
-// コンテキストの画面は今見ているセッションの作業ディレクトリを使う。無ければ入力欄の値
-const context = setupContext({ button: $('openContext'), cmd, current: () => state.cwd,
-  session: () => state.sessions.find(s => s.id === state.current) ?? null,
-  show: () => onboarding.page('context'), recentPlaces: cwdOptions, backends: () => state.backends });
+// 設定 › コンテキストは全体の設定だけ（フォルダーごとは会話の右パネルの「この場所だけ変える」）。
+// 最近の会話の場所は「探す場所を足す」の候補、「設定 › 委譲で変える →」は委譲のページへ
+const context = setupContext({ button: $('openContext'), cmd,
+  show: () => onboarding.page('context'), recentPlaces: cwdOptions, backends: () => state.backends,
+  openDelegation: () => { $('delegationTab').click(); $('delegationTab').focus(); } });
 // 会話の右パネル「この会話のコンテキスト」。札とタイトル行の入口から開く
 const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   session: () => state.sessions.find(s => s.id === state.current) ?? null,
   info: () => (state.contextInfoId === state.current ? state.contextInfo : null),
   refreshInfo: (force) => refreshContextEntry({ force }),
-  openSettings: (place) => openContextPage(place), labelOf,
+  openSettings: () => openContextPage(), labelOf,
   isRunning: () => Boolean(state.current && state.runningIds.has(state.current)) });
 $('contextEntry').onclick = () => sessionContext.toggle($('contextEntry'));
 // 止めるのは今見ているセッションだけ。他のセッションは走らせたままにする

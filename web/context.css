@@ -56,7 +56,7 @@
 .cx-row .nm{overflow-wrap:anywhere}
 .cx-row .p{font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 .cx-row.off .nm{color:var(--ink-weak)}
-/* 「Pleiad が追加」の札。形は .cbadge（灰の pill・弱い字）のまま、字は本文の書体（等幅は ID 用） */
+/* 行の札（Pleiad の指示の「既定」「委譲と連動」など）。形は .cbadge（灰の pill・弱い字）のまま、字は本文の書体（等幅は ID 用） */
 .cx-row .nm .cbadge{font-family:var(--font)}
 .cx-row>.btn{flex:none;padding:3px 10px;font-size:var(--fs-s)}
 .cx-ic{flex:none;display:grid;place-items:center;width:26px;height:26px;border-radius:var(--r-s);background:var(--surface-1);color:var(--ink-weak)}
@@ -93,35 +93,12 @@
 .cx-lead{margin:0;font-size:var(--fs-s);color:var(--ink-weak);line-height:1.8}
 .cx-status{margin:0;font-size:var(--fs-s);color:var(--ink-strong)}
 .cx-status:empty{display:none}
-/* 設定する範囲。独自のプルダウン（場所は 2 段: パスと「n 項目を個別に変更」） */
-.cx-place{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
-.cx-place>.cx-sub{flex:none}
-.cx-combo{display:inline-flex;align-items:center;gap:8px;min-width:0;max-width:100%;padding:6px 14px;border-radius:var(--r-pill);
-  background:var(--surface-1);color:var(--ink);cursor:pointer;white-space:nowrap}
-.cx-combo:hover,.cx-combo[aria-expanded=true]{background:var(--surface-2);color:var(--ink)}
-.cx-combo .v{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.cx-combo svg{flex:none;width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;color:var(--ink-weak)}
-.cx-pop{top:calc(100% + 6px);left:0;width:min(420px,100%);max-height:min(480px,70vh);overflow-y:auto;display:flex;flex-direction:column;gap:2px}
-.cx-pop[hidden]{display:none}
+/* 候補の行（探す場所を足すときの「最近の会話の場所」） */
 .cx-opt2{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;min-width:0;padding:7px 10px;border-radius:var(--r-s);
   background:transparent;color:var(--ink);text-align:left;cursor:pointer;white-space:normal}
 .cx-opt2 .v{max-width:100%;overflow-wrap:anywhere}
 .cx-opt2 .s{font-size:var(--fs-xs);color:var(--ink-weak)}
-.cx-opt2:hover,.cx-opt2.on{background:var(--surface-hover)}
-.cx-opt2[aria-selected=true]{background:var(--surface-sel)}
-.cx-opt2[aria-selected=true] .v::before{content:"✓ ";color:var(--ink-blue)}
-.cx-optrow{display:flex;align-items:center;gap:2px;min-width:0}
-.cx-optrow>.cx-opt2{flex:1}
-.cx-optdel{flex:none;display:grid;place-items:center;width:30px;height:30px;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer}
-.cx-optdel .i{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.cx-optdel:hover,.cx-optdel:focus-visible{background:var(--surface-hover);color:var(--ink)}
-.cx-confirm{display:flex;flex-direction:column;gap:8px;padding:9px 10px;border-radius:var(--r-s);background:var(--surface-1)}
-.cx-confirm .t{display:flex;flex-direction:column;gap:2px;min-width:0}
-.cx-confirm .v{font-family:var(--font-mono);font-size:var(--fs-s);overflow-wrap:anywhere}
-.cx-confirm .err{margin:0;font-size:var(--fs-s);color:var(--ink-strong)}
-.cx-confirm .err:empty{display:none}
-.cx-confirm .acts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px}
-.cx-pop .gap{height:6px;flex:none}
+.cx-opt2:hover{background:var(--surface-hover)}
 .cx-add{display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;border-radius:var(--r-s);background:transparent;color:var(--ink-blue);cursor:pointer;text-align:left}
 .cx-add:hover{background:var(--surface-hover);color:var(--ink-blue)}
 .cx-add svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round}
@@ -142,12 +119,32 @@
 .cx-card{display:flex;flex-direction:column;gap:10px;min-width:0;padding:14px;background:var(--surface-1);border-radius:var(--r-l)}
 .cx-khead{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
 .cx-khead h4{margin:0;font-size:var(--fs);font-weight:650}
-.cx-inh{margin-left:auto;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;font-size:var(--fs-s);color:var(--ink-weak)}
-.cx-inh.over{color:var(--ink-blue)}
 .cx-block{display:flex;flex-direction:column;gap:6px;min-width:0}
 .cx-block[hidden]{display:none}
 .cx-block>.cx-sub{margin-top:4px}
 .cx-block .cx-sub .n{color:var(--ink)}
+.cx-block+.cx-block{margin-top:10px}
+/* 「指示」のカードの中の区分（Pleiad の指示／ファイルの指示）。本文色の小さな見出し、右に弱い字 */
+.cx-sec{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px}
+.cx-sec .n{font-size:var(--fs-s);font-weight:600;color:var(--ink)}
+.cx-sec .r{margin-left:auto;font-size:var(--fs-s);color:var(--ink-weak)}
+/* 担当の下の 2 段（ユーザー／作業場所）。見出しは候補一覧の見出しと同じ弱い小さな字 */
+.cx-tier{display:flex;flex-direction:column;gap:6px;min-width:0}
+.cx-tier+.cx-tier{margin-top:6px}
+.cx-tierh{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.cx-tierh .n{font-weight:600;letter-spacing:.06em}
+/* 探す形式。ラベルと札を 1 行に */
+.cx-fmt{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
+.cx-fmt>.cx-sub{flex:none}
+/* 足したのに何も見つからない場所の行 */
+.cx-root .nm{font-family:var(--font-mono);font-size:var(--fs-s)}
+/* Pleiad の指示の並べ替えの取っ手。弱い字の 6 点。触れると本文色 */
+.cx-grip{flex:none;display:grid;place-items:center;width:18px;height:28px;margin:0 -4px;padding:0;border-radius:var(--r-s);background:transparent;color:var(--ink-weak);cursor:grab;opacity:.7}
+.cx-grip svg{width:8px;height:14px;fill:currentColor}
+.cx-grip:hover,.cx-grip:focus-visible{color:var(--ink);opacity:1;background:transparent}
+.cx-grip-gap{flex:none;width:18px;margin:0 -4px}
+.cx-row.dragging{opacity:.5}
+.cx-row.drop-before{box-shadow:0 -2px 0 var(--line-blue)}
 /* 外部 MCP・エージェント任せ: 各エージェントの登録を並べて見比べる */
 .cx-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px}
 .cx-col{display:flex;flex-direction:column;gap:4px;min-width:0;padding:10px 12px;background:var(--surface-paper);border-radius:var(--r-m)}
@@ -160,10 +157,7 @@
 .cx-choice{display:flex;flex-direction:column;gap:4px;margin:0 8px 4px 44px;padding:8px 10px;background:var(--surface-1);border-radius:var(--r-s);font-size:var(--fs-s)}
 .cx-choice label{display:flex;align-items:baseline;gap:6px;min-width:0;cursor:pointer;overflow-wrap:anywhere}
 .cx-choice .cx-mono{color:var(--ink-weak)}
-.cx-foot{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
-.cx-foot>.btn{font-size:var(--fs-s)}
-.cx-foot>.btn svg,.mcp-pairs>.btn svg{width:13px;height:13px}
-.cx-roots .nm{font-family:var(--font-mono);font-size:var(--fs-s)}
+.mcp-pairs>.btn svg{width:13px;height:13px}
 .cx-inline{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0}
 .cx-inline>input{flex:1 1 220px;min-width:0;padding:6px 12px;background:var(--surface-paper);border-radius:var(--r-pill);font-family:var(--font-mono);font-size:var(--fs-s)}
 .cx-inline>input:focus{background:var(--surface-2)}
@@ -194,6 +188,11 @@
 .mcp-field .cx-opt[aria-checked=true]{background:var(--surface-paper)}
 .mcp-field .cx-chip{background:var(--surface-1)}
 .mcp-field p{margin:0;line-height:1.7}
+.mcp-field .cnt{align-self:flex-end;font-size:var(--fs-xs);color:var(--ink-weak)}
+.mcp-field .cx-chip:disabled{opacity:.45;cursor:not-allowed}
+.mcp-field .cx-chip:disabled:hover{color:var(--ink-weak)}
+.mcp-field .cx-chip[aria-checked=true]{color:var(--ink);font-weight:600}
+.mcp-field .cx-chip[aria-checked=true]::before{content:"✓ ";color:var(--ink-blue)}
 .mcp-field .cx-fold input{width:100%;margin-top:6px;padding:7px 12px;background:var(--surface-1);border-radius:var(--r-pill);font-family:var(--font-mono);font-size:var(--fs-s);color:var(--ink)}
 .mcp-pairs{display:flex;flex-direction:column;gap:4px}
 .mcp-pair{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr) auto;gap:4px;align-items:center}
@@ -246,6 +245,25 @@
 .scx-added>:first-child{margin-top:0}
 .scx-added>:last-child{margin-bottom:0}
 .scx-added ul,.scx-added ol{padding-left:18px}
+/* 出どころの区切り（ユーザー／この場所と親フォルダー／追加した場所）。弱い小さな字。線は引かない */
+.scx-grp{margin:6px 0 0;font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em;font-weight:600}
+.scx-kind>.cx-khead+.scx-grp,.scx-kind>.cx-seg+.scx-grp{margin-top:2px}
+/* 作業場所の面（この場所だけ変える） */
+.scx-place{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 14px;background:var(--surface-paper);border-radius:var(--r-m)}
+.scx-place .t{flex:1 1 180px;min-width:0}
+.scx-place .cx-path{font-size:var(--fs-s);color:var(--ink)}
+.scx-place .p{font-size:var(--fs-xs);color:var(--ink-weak)}
+.scx-place .p.over{color:var(--ink-blue)}
+.scx-place .acts{display:flex;flex-wrap:wrap;gap:4px;margin-left:auto}
+.scx-place .acts .btn{padding:3px 10px;font-size:var(--fs-s)}
+/* 変えているとき: 行の右にスイッチ、面の頭に担当の 2 択 */
+.scx-item .cx-sw{margin-top:2px}
+.scx-item.off .nm{color:var(--ink-weak)}
+.scx-kind .cx-seg{background:var(--surface-1)}
+.scx-kind .cx-opt{padding:6px 10px}
+.scx-kind .cx-opt:hover{background:var(--surface-2)}
+.scx-kind .cx-opt[aria-checked=true]{background:var(--surface-paper)}
+.scx-toast{position:sticky;bottom:12px;margin:0 auto;width:max-content;max-width:100%}
 
 /* ---- 狭い画面。2 列を縦に積む ---- */
 @media (max-width:760px){
@@ -255,7 +273,7 @@
   .cx-row>.btn,.cx-row>.btn+.cx-sw,.cx-row>.cx-open+.cx-sw{margin-left:auto}
   .cx-seg{grid-template-columns:minmax(0,1fr)}
   .cx-cols{grid-template-columns:minmax(0,1fr)}
-  .cx-inh{margin-left:0}
+  .cx-sec .r{margin-left:0}
   .cx-choice{margin-left:8px}
   .cx-card{padding:12px}
 }

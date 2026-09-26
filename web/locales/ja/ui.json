@@ -530,7 +530,7 @@
     "chip": {
       "mcpBad": "MCP {{n}}（{{bad}} 件つながらない）",
       "native": "{{kinds}} はエージェント任せ",
-      "added": "Pleiad が追加 {{n}}",
+      "added": "Pleiad の指示 {{n}}",
       "join": "・"
     },
     "title": "この会話のコンテキスト",
@@ -552,24 +552,23 @@
       "hint": "下の状態と、会話のエラーを確かめてください。"
     },
     "foot": {
-      "lead": "変えたいとき（次のターンから反映） ",
+      "lead": "すべての場所の設定は ",
       "link": "コンテキストの設定を開く →"
     },
     "instruction": {
-      "who": "Pleiad が渡した",
       "native": "{{agent}} が自分の決まりで読みます（Pleiad からは中身が見えません）",
       "loaded": "{{path}} · 途中で読み込み",
       "none": "渡した指示ファイルはありません",
-      "notGiven_other": "渡していないもの {{count}} 件"
+      "notGiven_other": "渡していないもの {{count}} 件",
+      "who_other": "Pleiad が渡した {{count}} 件"
     },
     "skill": {
       "who_other": "Pleiad が案内 {{count}} 件",
       "native": "{{agent}} が自分の skills フォルダーを読みます（Pleiad からは中身が見えません）",
-      "used": "使ったもの",
-      "noneUsed": "まだ使っていません",
-      "unused_other": "使っていない {{count}} 件",
       "manualOnly": "明示したときだけ",
-      "notOffered_other": "案内していないもの {{count}} 件"
+      "notOffered_other": "案内していないもの {{count}} 件",
+      "usedMark": "使った",
+      "noneOffered": "案内した Skill はありません"
     },
     "reason": {
       "conditional": "{{paths}} に当たるファイルを扱うときだけ",
@@ -611,19 +610,22 @@
       "disabled": "{{path}} · 無効"
     },
     "added": {
-      "title": "Pleiad が追加",
-      "who": "Pleiad が渡した",
-      "none": "渡していない",
+      "title": "Pleiad の指示",
+      "scope": "すべての場所に共通",
+      "who_other": "入れた {{count}} 件",
+      "none": "入れていない",
       "delegation": "委譲の指示",
-      "show": "渡した文",
-      "variant": {
-        "parent": "依頼元の会話向け",
-        "parentManual": "依頼元の会話向け · 委譲先の自動選択はオフ",
-        "child": "委譲された会話向け"
-      },
+      "show": "渡した文（{{tokens}} トークン）",
+      "inserted": "入れた",
+      "linked": " · 委譲と連動",
+      "settings": "全体の設定で変える →",
       "reason": {
-        "off": "設定で切っています",
-        "readOnly": "読み取り・計画モードなので入れていません"
+        "off": "切っている",
+        "readOnly": "読み取り・計画モードなので入れていない",
+        "forChild": "委譲された会話向けなので入れていない",
+        "forParent": "依頼元の会話向けなので入れていない",
+        "agent": "このエージェントには入れない設定",
+        "routingOff": "委譲の自動選択がオフなので入れていない"
       }
     },
     "changed": {
@@ -655,6 +657,30 @@
       "done": "ログインしました。次の返答から使えます",
       "failed": "ログインできませんでした",
       "failedWith": "ログインできませんでした：{{error}}"
+    },
+    "group": {
+      "user": "ユーザー",
+      "dir": "この場所と親フォルダー",
+      "extra": "追加した場所"
+    },
+    "place": {
+      "aria": "作業場所",
+      "default": "全体の設定どおり",
+      "from": "{{path}} の設定どおり",
+      "override_other": "このフォルダーだけの設定 · {{count}} 項目",
+      "willOverride": " · 変えると、このフォルダーだけの設定になります",
+      "start": "この場所だけ変える",
+      "reset": "全体の設定に戻す",
+      "done": "終わる",
+      "scanFailed": "探せませんでした：{{error}}",
+      "ownerAria": "この場所で{{kind}}を読み込むのは",
+      "plyWho": "Pleiad がそろえる",
+      "nativeNote": "{{agent}} が自分の決まりで読みます",
+      "loading": "読んでいます…",
+      "offHere": "この場所では外しています",
+      "offGlobal": "全体の設定で外しています",
+      "none": "見つかったものはありません",
+      "switchAria": "この場所で {{path}} の {{name}} を使う"
     }
   },
   "context": {
@@ -663,31 +689,27 @@
       "ply": "Pleiad がそろえる"
     },
     "instruction": {
-      "title": "指示ファイル",
       "agent": "Claude は CLAUDE.md、Codex は AGENTS.md を各自の決まりで読む",
       "ply": "どのエージェントにも同じものを渡す",
       "note": "Pleiad は指示ファイルを渡しません。どのファイルが読まれるかはエージェント次第です。",
-      "list": "この場所で渡すもの",
-      "listDefault": "既定で渡すもの",
       "sourceCommon": "AGENTS.md（共通）",
       "sourceCodex": "Codex 形式",
-      "none": "この場所で見つかった指示ファイルはありません"
+      "title": "指示",
+      "files": "指示ファイル",
+      "fileTitle": "ファイルの指示（CLAUDE.md・AGENTS.md）",
+      "none": "見つかった指示ファイルはありません"
     },
     "skill": {
       "agent": "各エージェントが自分の skills フォルダーを読む",
       "ply": "一覧を渡し、必要な時だけ本文を読ませる",
       "note": "Pleiad は何も渡しません。どの Skill が使えるかはエージェント次第です。",
-      "list": "この場所で案内するもの",
-      "listDefault": "既定で案内するもの",
       "sourceCommon": ".agents/skills（共通）",
-      "none": "この場所で見つかった Skill はありません"
+      "none": "見つかった Skill はありません"
     },
     "mcp": {
       "title": "外部 MCP",
       "agent": "各エージェントが自分の MCP 設定どおりに接続する",
       "ply": "どのエージェントにも同じ MCP をつなぐ",
-      "list": "この場所でつなぐもの",
-      "listDefault": "既定でつなぐもの",
       "sourceClaude": "Claude の設定",
       "sourceCodex": "Codex の設定"
     },
@@ -695,7 +717,6 @@
     "copied": "コピーしました",
     "emptyFile": "（空のファイル）",
     "lead": "エージェントへ何を渡すかを決めます。始まっている会話にも次のターンから反映します。",
-    "scope": "設定する範囲",
     "saved": "保存しました · 次のターンから反映",
     "saveFailed": "保存できませんでした：{{error}}",
     "cancel": "やめる",
@@ -703,37 +724,12 @@
     "folderPath": "フォルダーのパス",
     "chooseFolder": "フォルダーを選ぶ…",
     "place": {
-      "default": "全体の設定",
-      "defaultSub": "フォルダーだけの設定が無いところはこれに従う",
-      "current": "今の会話の場所",
-      "overrides_other": "{{count}} 項目をこのフォルダーだけ変更",
-      "allDefault": "すべて全体の設定どおり",
-      "remove": "この場所の設定を消す",
-      "removeAria": "{{path}} の設定を消す",
-      "confirm": "この場所の設定を消しますか？",
-      "confirmOverrides_other": "このフォルダーだけ変えた {{count}} 項目を消し、全体の設定に従うようにします。始まっている会話にも次のターンから反映します",
-      "confirmPlain": "一覧から外します。この場所は全体の設定に従います",
-      "removeButton": "消す",
-      "removeFailed": "消せませんでした：{{error}}",
-      "add": "場所を追加",
-      "addAria": "追加するフォルダーのパス",
       "recent": "最近の会話の場所",
       "noMatch": "一致する場所がありません",
       "noCandidates": "候補はありません",
       "pathRequired": "フォルダーのパスを入れてください"
     },
-    "inherit": {
-      "all": "フォルダーだけの設定が無いところすべてに効きます",
-      "hereOverride": "この会話のフォルダー（{{path}}）では、このフォルダーだけの設定が効いています · ",
-      "override": "このフォルダーだけの設定 · ",
-      "reset": "全体の設定に戻す",
-      "resetParent": "上のフォルダーの設定に戻す",
-      "from": "{{path}} の設定どおり",
-      "default": "全体の設定どおり",
-      "willOverride": " · 変えると、このフォルダーだけの設定になります"
-    },
     "ownerAria": "{{kind}}を読み込むのは",
-    "configFiles": "読み込む設定ファイル",
     "formats": "探す形式",
     "searching": "探しています",
     "searchingDots": "探しています…",
@@ -744,33 +740,72 @@
       "provideAria": "{{name}} を渡す"
     },
     "showAll": "すべて見る（{{n}} 件）",
-    "count_other": "{{count}} 件",
     "antigravityNote": "antigravity の会話では、指示ファイルも「Pleiad がそろえる」にしたときだけ、ここを Pleiad がそろえます。今は指示ファイルがエージェント任せなので、antigravity ではこの種類もエージェント任せになります（Pleiad から渡すと、agy がワークスペースの AGENTS.md・GEMINI.md を読まなくなるため）",
     "roots": {
-      "summary": "探す場所を増やす（任意）",
-      "descDefault": "Pleiad がそろえる種類について、どの場所でも次のフォルダーも探します。",
-      "descPlace": "Pleiad がそろえる種類について、Git ルートからこの場所までに加えて、次のフォルダーも探します。",
-      "remove": "外す",
+      "add": "探す場所を足す",
+      "addAria": "探すフォルダーのパス",
+      "remove": "この場所を外す",
       "removeAria": "{{path}} を探す場所から外す",
-      "defaults": "全体の設定で探すフォルダー：{{folders}}",
-      "join": "、",
-      "addAria": "追加で探すフォルダー",
-      "add": "フォルダーを追加"
-    },
-    "added": {
-      "title": "Pleiad が入れる指示",
-      "scope": "すべての場所に共通",
-      "badge": "Pleiad が追加",
-      "delegation": {
-        "name": "委譲の指示",
-        "sub": "指示ファイルの担当によらず、Claude Code・Codex の会話に入ります",
-        "aria": "委譲の指示を入れる",
-        "parent": "依頼元の会話",
-        "child": "委譲された会話"
-      }
+      "extra": "追加した場所",
+      "nothing": "足した場所 · 見つかったものはありません"
     },
     "scanFailed": "探せませんでした：{{error}}",
-    "loadFailed": "コンテキストの設定を読めませんでした：{{error}}"
+    "loadFailed": "コンテキストの設定を読めませんでした：{{error}}",
+    "tier": {
+      "user": "ユーザー",
+      "place": "作業場所",
+      "placeSub": "Git のルートから作業フォルダーまで",
+      "formatsAria": "{{tier}}で探す形式",
+      "listAria": "ユーザーで見つかった{{kind}}"
+    },
+    "ply": {
+      "title": "Pleiad の指示",
+      "scope": "すべての場所に共通 · {{tokens}} トークン",
+      "scopePlain": "すべての場所に共通",
+      "unavailable": "Pleiad の指示を読めませんでした",
+      "add": "指示を追加",
+      "heavy": "毎ターン入るので、長いとそのぶん使用量が増えます",
+      "badge": {
+        "default": "既定",
+        "modified": "既定から変更",
+        "linked": "委譲と連動"
+      },
+      "target": {
+        "all": "すべての会話",
+        "parent": "依頼元の会話",
+        "child": "委譲された会話"
+      },
+      "targetOpt": {
+        "all": "すべて",
+        "parent": "依頼元の会話だけ",
+        "child": "委譲された会話だけ"
+      },
+      "onlyAgent": "{{agent}} だけ",
+      "agentJoin": "・",
+      "routingOff": "委譲の自動選択がオフなので入りません",
+      "gripAria": "「{{name}}」の順番（↑↓ で動かす）",
+      "gripTitle": "ドラッグか ↑↓ で並べ替え",
+      "switchAria": "「{{name}}」を入れる",
+      "edit": "編集",
+      "delete": "削除",
+      "deleteConfirm": "もう一度押して削除",
+      "reset": "既定に戻す",
+      "gotoDelegation": "設定 › 委譲で変える →",
+      "sheet": {
+        "addTitle": "指示を追加",
+        "editTitle": "指示を編集",
+        "name": "名前",
+        "namePlaceholder": "一覧に出る名前",
+        "body": "本文（Markdown）",
+        "tokens": "{{tokens}} トークン",
+        "target": "入れる会話",
+        "agents": "エージェント",
+        "agyWhy": "Antigravity には会話ごとの指示を渡す口が無いので選べません",
+        "save": "保存",
+        "nameRequired": "名前を入れてください",
+        "bodyRequired": "本文を入れてください"
+      }
+    }
   },
   "mcp": {
     "state": {
@@ -794,8 +829,6 @@
       "disabled": "無効",
       "foot": "エージェントを切り替えると使える MCP が変わります。そろえたいときは「Pleiad がそろえる」へ"
     },
-    "list": "この場所でつなぐもの",
-    "listDefault": "既定でつなぐもの",
     "login": "ログイン",
     "loginAgain": "ログインし直す",
     "logout": "ログアウト",
@@ -804,18 +837,12 @@
     "switchAria": "{{name}} をつなぐ",
     "nativeOffTitle": "元の設定で無効になっています（Pleiad は変えません）",
     "empty": "つなぐ MCP はまだありません。「＋ MCP を追加」から登録するか、読み込む設定ファイルを選んでください",
-    "count_other": "{{count}} 件",
     "add": "MCP を追加",
-    "rowHint": "行を押すと中身の確認・編集（鍵やトークンは伏せて表示）",
     "storage": {
       "noEncryption": "暗号化できない起動",
       "plainList": "この起動では鍵の保管庫を使えないため、トークンや鍵は所有者だけが読める権限の平文で保存します（{{reason}}）。Pleiad デスクトップで開き直すと暗号化し直します。",
       "sheetPlain": "Pleiad の設定として保存し、どのエージェントにもつなぎます。Claude や Codex の設定ファイルは書き換えません。この起動では鍵の保管庫を使えないため、トークンや鍵は所有者だけが読める権限の平文で保存します（{{reason}}）。",
       "sheetEncrypted": "Pleiad の設定として保存し、どのエージェントにもつなぎます。Claude や Codex の設定ファイルは書き換えません。トークンや鍵は OS の鍵の保管庫（Windows の資格情報、macOS のキーチェーン、Linux の Secret Service）で暗号化して保存します。"
-    },
-    "files": {
-      "summary": "読み込む設定ファイル",
-      "desc": "Claude・Codex の設定に登録された MCP も、ここで選んだものは一覧に並びます。同じ名前なら Pleiad に登録したものが優先します。"
     },
     "describe": {
       "needsScope": "追加の権限が必要",
@@ -916,9 +943,6 @@
       "headerName": "ヘッダー名",
       "addHeader": "ヘッダー",
       "noneNote": "認証の要らない MCP に使います",
-      "scope": "使う範囲",
-      "here": "この場所だけ",
-      "all": "すべての場所",
       "json": "JSON で編集（上級者向け）",
       "jsonAria": "MCP の定義（JSON）",
       "jsonNote": "秘密の値は伏せ字（••••）のままなら前の値を残します",

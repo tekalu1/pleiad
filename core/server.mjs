@@ -33,7 +33,7 @@ import { createMessageQueue } from "./message-queue.mjs";
 import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
-import { delegationChildText, delegationGuide, delegationParentText, normalizeAddedContext, withAdded } from './added-context.mjs';
+import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, withAdded } from './ply-instructions.mjs';
 import { DEFAULT_OWNERS, pathKey } from './context-settings.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createContextSession } from './context-session.mjs';
@@ -236,14 +236,10 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale
 // 設定は prefs.json の delegationRouting（未設定の項目は既定値）。判定器のキーは互換の接続先と同じ秘密の置き場
 // （compat-endpoint-secrets.json）に delegation-routing:<service> で置き、画面へは hasKey だけ返す
 let routingSettingsCache = normalizeSettings((await store.getPrefs()).delegationRouting);
-// Pleiad が入れる指示（委譲の指示）を入れるか。prefs.json の addedContext（既定で入れる。core/added-context.mjs）
-let addedContextCache = normalizeAddedContext((await store.getPrefs()).addedContext);
-/** 設定 › コンテキストの「Pleiad が入れる指示」。文は画面の言語で、依頼元の文は今の委譲先の自動選択の有無を反映する */
-function addedContextState() {
-  const lng = currentLocale();
-  return { settings: { ...addedContextCache }, routing: routingSettingsCache.enabled,
-    items: [{ id: 'delegation', enabled: addedContextCache.delegation, parent: delegationParentText(lng, { routing: routingSettingsCache.enabled }), child: delegationChildText(lng) }] };
-}
+// Pleiad の指示（core/ply-instructions.mjs）。prefs.json の plyInstructions。まだ無ければ前の版の addedContext（委譲の指示のスイッチ）から作る
+let plyInstructionsCache = await (async () => { const prefs = await store.getPrefs(); return normalizePlyInstructions(prefs.plyInstructions, prefs.addedContext); })();
+/** 設定 › コンテキストの「Pleiad の指示」。文は画面の言語。委譲と連動の項目は今の委譲先の自動選択の有無を反映する */
+const plyInstructionsState = () => plyInstructionsScreen(plyInstructionsCache, currentLocale(), { routing: routingSettingsCache.enabled });
 const ROUTING_SERVICES = Object.values(JUDGE_SERVICE);
 const routingKey = async service => (await compatSecrets.get(ROUTING_SECRET_PREFIX + service))?.key ?? null;
 const lastWarm = new Map();
@@ -1676,12 +1672,12 @@ async function runTurnInternal(args, onStarted, hooks) {
     const contextRecord = { policy: refreshedContext || appliedSettings ? { ...policy, refreshedAt: new Date().toISOString() } : policy,
       pin: resolvedContext?.pin ?? (plyContext ? null : previousContext?.pin ?? null), report: resolvedContext?.report ?? nativeContextReport(policy, cwd, backend),
       delivered: { backend: backend.id, entries: delivered } };
-    // Pleiad が入れる指示（委譲の指示。core/added-context.mjs）。担当によらず、ターンごとに今の設定・モード・子かどうかで決める。
-    // 渡すのは ply_agents の instructions の後ろ（下の agentRuntime）。何を入れたかは会話の記録に残し、右パネルに出す
-    const guide = delegationGuide({ locale: agentLocale, enabled: addedContextCache.delegation, routing: routingSettingsCache.enabled,
+    // Pleiad の指示（core/ply-instructions.mjs）。担当によらず、ターンごとに今の設定・モード・子かどうか・エージェントで決める。
+    // 渡すのは ply_agents の instructions の後ろ（下の agentRuntime）。項目ごとに入れたか（入れなかった理由）を会話の記録に残し、右パネルに出す
+    const added = turnInstructions({ list: plyInstructionsCache, locale: agentLocale, routing: routingSettingsCache.enabled,
       child: Boolean(sessionId && (await store.get(sessionId)).delegation), supported: Boolean(backend.capabilities?.plyAgents),
-      canDelegate: canDelegate(backend.modes()[permissionMode]) });
-    if (guide) contextRecord.added = [guide];
+      canDelegate: canDelegate(backend.modes()[permissionMode]), agent: INSTRUCTION_AGENTS.includes(backend.id) ? backend.id : null });
+    if (added) contextRecord.added = added;
     if (appliedSettings) {
       await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin ?? null, to: contextRecord.pin,
         ...savedReason('contextSettingsApplied'), backend });
@@ -1806,7 +1802,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         locale: agentLocale,
         visualizeInstructions: visualizeInstructions(agentLocale),
         contextRuntime: runtimeContext,
-        // 橋は会話ごとに使い回すので、Pleiad が入れる指示はターンごとにここで足す（設定の変更が始まっている会話にも次のターンから効く）
+        // 橋は会話ごとに使い回すので、Pleiad の指示はターンごとにここで足す（設定の変更が始まっている会話にも次のターンから効く）
         agentRuntime: (runtime => ({ ...runtime, instructions: withAdded(runtime.instructions, contextRecord.added) }))(agentConnection(turn)),
         // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
         ...(account ? { oauthToken: account.token } : {}),
@@ -2089,14 +2085,15 @@ wss.on("connection", (ws, req) => {
           return reply(true, { report: saved.report, owners: saved.policy?.owners ?? saved.report.owners, pinned: Boolean(saved.pin), changed,
             startedAt: saved.policy?.at ?? null, refreshedAt: saved.policy?.refreshedAt ?? null, removedMcp: saved.policy?.removedMcp ?? [], added: saved.added ?? [] });
         }
-        case 'addedContext':
-          return reply(true, addedContextState());
-        case 'setAddedContext': {
-          if (typeof msg.args?.delegation !== 'boolean') throw new Error(t('addedContext.invalid'));
-          addedContextCache = normalizeAddedContext({ ...addedContextCache, delegation: msg.args.delegation });
-          // 既定（入れる）なら保存しない
-          await savePref('addedContext', addedContextCache.delegation ? null : { delegation: false });
-          return reply(true, addedContextState());
+        case 'plyInstructions':
+          return reply(true, plyInstructionsState());
+        case 'setPlyInstructions': {
+          const next = changePlyInstructions(plyInstructionsCache, msg.args, currentLocale());
+          await savePref('plyInstructions', { items: next });
+          // 前の版の委譲の指示のスイッチは plyInstructions に写したので消す（残すと古い版に戻したときだけ効く）
+          await savePref('addedContext', null);
+          plyInstructionsCache = next;
+          return reply(true, plyInstructionsState());
         }
         case 'refreshContext':
           await contextSession.refresh(msg.args?.sessionId);
@@ -2115,7 +2112,9 @@ wss.on("connection", (ws, req) => {
           // place: 'default' なら場所ごとの上書きを使わず既定だけで探す（設定の「すべての場所」）
           if (ws.contextScanning) throw Object.assign(new Error(t('scan.busy')), { code: 'SCAN_BUSY' });
           ws.contextScanning = true;
-          try { return reply(true, await scanContext(await contextSettings.get(msg.args?.cwd ?? process.cwd(), { level: msg.args?.place === 'default' ? 'default' : null }), { plyServers: await plyMcp.scanInput() })); }
+          // scope: 'user' ならユーザーの範囲（home と足した場所）だけ（設定の画面のユーザーの段。作業場所のファイルを混ぜない）
+          try { return reply(true, await scanContext(await contextSettings.get(msg.args?.cwd ?? process.cwd(), { level: msg.args?.place === 'default' ? 'default' : null }),
+            { plyServers: await plyMcp.scanInput(), ...(msg.args?.scope === 'user' ? { scopes: ['user'] } : {}) })); }
           finally { ws.contextScanning = false; }
         }
         case 'slashSkills': {
