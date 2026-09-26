@@ -988,7 +988,14 @@
       "name": "Enter a name.",
       "json": "The JSON is not valid."
     },
-    "oauthReset": "The endpoint or other settings changed. Please sign in again."
+    "oauthReset": "The endpoint or other settings changed. Please sign in again.",
+    "unify": {
+      "question_one": "The following {{count}} server will be connected to every agent",
+      "question_other": "The following {{count}} servers will be connected to every agent",
+      "confirm_one": "Manage {{count}} with Pleiad",
+      "confirm_other": "Manage {{count}} with Pleiad",
+      "spread": "Will also be available to other agents"
+    }
   },
   "saved": {
     "reason": {
@@ -1030,7 +1037,8 @@
       "answer": "Answer",
       "done": "Question",
       "skipped": "Continued without answering",
-      "sendFailed": "Couldn't send the answer: {{error}}"
+      "sending": "Sending your answer…",
+      "sendFailedInline": "Couldn't send your answer · {{error}}"
     },
     "approval": {
       "heading": "{{mark}}",
@@ -1043,7 +1051,8 @@
       "allowedAlways": "Always allowed",
       "allowed": "Allowed",
       "denied": "Denied",
-      "sendFailed": "Couldn't send the approval: {{error}}"
+      "sending": "Sending “{{action}}”…",
+      "sendFailedInline": "Couldn't send “{{action}}” · {{error}}"
     },
     "thought_one": "Thought ({{chars}} char)",
     "thought_other": "Thought ({{chars}} chars)",
@@ -1102,8 +1111,6 @@
     "next": {
       "title": "Applies from the next turn",
       "cancel": "Cancel",
-      "retry": "Retry saving settings",
-      "saveFailed": "Couldn't save the settings: {{error}}",
       "endpointMain": "endpoint's main model",
       "targetDefault": " (the new agent's default model)",
       "effort": "Effort: {{value}}",
@@ -1113,6 +1120,13 @@
       "endpoint": "Endpoint: {{value}}",
       "account": "Account: {{value}}",
       "summary": "{{changes}} · Applies when you send next"
+    },
+    "settingsHold": {
+      "cwd": "Couldn't change the working directory, so this can't be sent · {{error}}",
+      "settings": "Couldn't save the settings, so this can't be sent · {{error}}",
+      "retry": "Retry",
+      "rechoose": "Choose again",
+      "cancel": "Cancel"
     },
     "composer": {
       "skills": "Skills",
@@ -1573,6 +1587,10 @@
     "cwd": {
       "placeholder": "Working directory path",
       "inputLabel": "Working directory path (Enter to set)",
+      "checking": "Checking…",
+      "notFound": "Folder not found",
+      "exists": "exists",
+      "chooseFrom": "Choose from here",
       "choose": "Choose folder…",
       "recent": "Recent working directories",
       "noRecent": "None yet",
@@ -1986,6 +2004,12 @@
       "pace_high": "pace too fast",
       "pace_unknown": "pace unknown"
     },
+    "skipWithDetail": "{{reason}} ({{detail}})",
+    "unavailable": {
+      "disabled": "not enabled",
+      "not_installed": "not installed",
+      "no_token": "no token"
+    },
     "line": {
       "head": "{{kind}} · {{difficulty}} → {{target}}",
       "skippedWindow": "skipped {{name}} ({{window}} {{percent}}%)",
@@ -2027,11 +2051,29 @@
       "approve": "Approve and retry",
       "failed": "Couldn't retry: {{error}}"
     },
+    "failure": {
+      "none": "No delegate available",
+      "count": "{{name}} {{n}}",
+      "withDetail": "{{text}} ({{detail}})",
+      "percent": "{{name}} {{window}} {{percent}}%",
+      "pace": "{{name}} {{window}} {{pace}}×",
+      "noCandidates": "There are no candidates to try. Add candidates in Settings › Delegation.",
+      "tried_one": "Tried {{count}} candidate",
+      "tried_other": "Tried {{count}} candidates",
+      "openAgents": "Open Agents",
+      "openDelegation": "Open Delegation settings",
+      "openUsage": "Open Usage"
+    },
     "settings": {
       "enable": "Choose the delegate automatically",
       "judgeTitle": "Difficulty judge",
       "escalate": "Ask Cerebras again when Jev is unsure",
-      "judgeNoKey": "There is no {{service}} key, so kinds set to {{judge}} are treated as mid difficulty.",
+      "effective": {
+        "noKey": "No {{service}} key is registered, so kinds set to {{judge}} are treated as mid difficulty.",
+        "addKey": "Add key",
+        "noCandidates": "No delegates are available, so automatic delegation will fail.",
+        "viewCandidates": "View candidates"
+      },
       "judgeLabel": "Judge for {{kind}}",
       "keysTitle": "Judge keys",
       "keySend": "When you add a key, the task text and kind of each delegation are sent to that service.",
