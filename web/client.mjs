@@ -91,6 +91,8 @@ const log = $("log");
 const thread = $("thread");
 // 静的な HTML の文言（data-i18n*）を今の言語で埋める。以降の処理が書き換える文言より先に済ませる
 applyDom(document);
+// 「サイドバーを開く」の名前は件数を入れて書く（web/open-sidebar-mark.mjs）ので、HTML の data-i18n には置かない。一覧が届くまでは件数なし
+paintOpenSidebar($("openSidebar"), {}, t);
 // CSS の content: に出す文言。style.css・file-preview.css が var(--i18n-…) で読む（CSS に言語ごとの文言を持たない）
 for (const [name, text] of [["untitled", t("session.untitled")], ["default", t("chat.model.default")], ["showing", ` ${t("app.previewShowing")}`]]) {
   document.documentElement.style.setProperty(`--i18n-${name}`, JSON.stringify(text));
