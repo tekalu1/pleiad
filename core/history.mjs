@@ -11,6 +11,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from 'node:crypto';
 import * as store from "./store.mjs";
+import { writeAtomic } from "./atomic-file.mjs";
 
 const PRESENT_DIR = path.join(store.dataDir, "presents");
 
@@ -144,8 +145,8 @@ export async function anchorAttachments(sessionId, turnKey, messageId) {
     catch (e) { if (e.code === "ENOENT") return; throw e; }
     const rows = raw.split("\n").filter(Boolean).map(line => JSON.parse(line));
     for (const row of rows) if (row.turnKey === turnKey && row.by === "human") row.messageId = messageId;
-    await fs.writeFile(file + ".tmp", rows.map(row => JSON.stringify(row)).join("\n") + "\n");
-    await fs.rename(file + ".tmp", file);
+    // 一意な一時ファイル＋一時的に開けないときだけ rename をやり直す（core/atomic-file.mjs）
+    await writeAtomic(file, rows.map(row => JSON.stringify(row)).join("\n") + "\n");
   });
 }
 

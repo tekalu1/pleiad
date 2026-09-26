@@ -183,19 +183,43 @@ Pleiad は結果を保存し、親が空いたときに専用の完了通知で�
 親が走っている・裏の作業が残っている・送信待ちがあるときは通知を送らない。
 送信が `requeue`（未受領）で返った場合だけ再送し、受領が不明な失敗は自動再送しない。
 
+通知の状態は `none` → `pending`（届ける結果がある）→ `delivering`（送っている）→ `sent` / `unknown`（受領が不明）。止めたタスクは `suppressed`。
+親が受け取れない間（上の 3 つ。サーバーが `ready` で渡す）は `pending` のまま何も書かない。
+送る直前に `delivering` を保存し、保存できなければ送らない。送ったか分からないまま落ちたときに、再起動で `unknown` にして再送しないため。
+`deliver` が `requeue` を返したら（受け取る直前に親が動き出した）、メモリだけ `pending` に戻し、ファイルは `delivering` のまま書かない。
+次に送るとき、ファイルがすでに `delivering` なら書き直さない。以前は親が忙しい間、500ms ごとにファイル全体を 2 回ずつ書き直していた（2026-09-27）。
+
 ## 保存・画面・再起動
 
 `AGENT_HOST_DATA/agent-tasks.json` にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）を保存する。
 会話メタデータの `delegation` に親とタスク ID を、`routing` にどう選ばれたかを記録する。会話の分岐を表す `parent` とは別にする。
 入力欄の上の「バックグラウンド N」（全件終了後は「バックグラウンド · 完了 M」。design-system.md「バックグラウンド」）で子の会話を読む・停止する・承認に答える。「会話として開く」で子の会話そのものへ移り、子からはヘッダーの「依頼元の会話」で戻れる。完了後も札と、依頼元の会話の `ply_delegate` のカードの「開く」から確認できる。
 
-再起動時に実行中・待機中だったタスクは `interrupted`、配送途中の通知は `unknown` にする。未確認の変更を自動再実行しない。
+保存は一意な名前の一時ファイルに書いてから置き換える（`core/atomic-file.mjs`。`conversations.json`・`conversations/`・`presents/` の書き直しも同じ）。
+Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-Content` など）が置き換え先を開いている間だけ rename が `EPERM` / `EBUSY` / `EACCES` になる。
+この 3 つに限り、20ms から伸ばして合計 1.1 秒ほどやり直す。やり直すのは保存であり、子の実行や完了通知ではない。
+
+それでも保存できないとき（保存障害）も、委譲の管理は閉じない。閉じるのはサーバーの終了（`close()`）だけ。
+以前は 1 回の失敗で閉じ、再起動するまで全部の会話で委譲が「実行は中断されています」になっていた（2026-09-27）。
+
+- 先へ進む前に保存が要る書き換え（新しい委譲・追加指示の受け付け、子の実行の開始、通知を送る前の `delivering`）は、失敗したらメモリを戻して進まない。
+  依頼元には `ply_delegate` / `ply_task_send` のエラーとして理由を返す（`agent:tasks.storageFailed`）。障害中は、子の会話を作る前に書けるかを確かめる。
+- 起きたことの記録（子の結果、送った通知、止めたこと）は取り消せないので、メモリはそのままにしてファイルを後で書き直す。
+  利用者・依頼元の停止は、保存できなくても子に届く。
+- 障害の間、スケジューラーは子の開始と通知の配送を止め、保存だけを間隔を空けて（500ms から倍にして最大 15 秒）やり直す。書けたら次のタイマーから再開する。
+- `ply_task_list` / `ply_task_status` / `ply_task_wait` はメモリの状態を返し、障害中は `storageFault`（理由の文・`code`・`since`）を添える。所有権の制限は変わらない。
+- 元の例外は errno・操作・タスク ID・時刻だけを stderr と `AGENT_HOST_DATA/agent-tasks-errors.log`（64KB を超えたら新しい半分を残す）に書く。パス・依頼文・結果・秘密は書かない。デスクトップ版はサーバーの stderr をファイルに残さないため。
+
+再起動時に実行中・待機中だったタスクは `interrupted` にする。未確認の変更を自動再実行しない。
+通知は、渡ったか分からない `delivering` だけを `unknown` にする。まだ親に渡っていない `pending` はそのまま、親が空いたら送り直す。
+メモリだけにあった記録は再起動で失われるが、ファイルに残った状態から上の規則で安全な側に落ちる（実行中なら `interrupted`、送っている途中なら `unknown`）。
 実際のファイルと子の会話を確認した後、`ply_task_send` で明示的に再開できる。
 更新・終了の稼働判定には Pleiad タスクも含める。
 
 ## 検証
 
 `npm test` でタスクの管理と SDK MCP クライアント接続、fake を使ったサーバー全体の委譲・継続・停止と、承認の中継・`waiting` を検証する。
+保存障害は `tests/unit/agent-tasks-storage.mjs`（rename に EPERM を差し込む。回復・閉じない・障害中の読み取りと断り・requeue を書かない・再起動後の送り直し）。
 振り分けは `tests/unit/delegation-routing.mjs`（規則・段・使用量・アカウント。判定器は偽の fetch）と `tests/unit/server-delegation-routing.mjs`（偽の Jev と偽の agy でサーバー全体。別の候補でやり直す・承認モードの確かめ・動いている元のタスク・完了通知の一行も）、画面の文と並びは `tests/unit/delegation-routing-view.mjs`。テストのサーバーは使用量を定期的に取らず（`AGENT_HOST_ROUTING_USAGE=off`）、判定器の送り先を手元に向ける（`AGENT_HOST_OPENROUTER_API` / `AGENT_HOST_CEREBRAS_API`。本物へは送らない）。
 `npm run test:e2e -- agent-delegation` は実サービスを呼び、Claude → Codex、Codex → Claude と結果通知による再開を確認する。
 単独確認には `E2E_DELEGATION_PARENT=codex` などを使える。
