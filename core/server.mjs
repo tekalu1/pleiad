@@ -41,6 +41,7 @@ import { createSecretStore, defaultCipher } from './secret-store.mjs';
 import { createCompatEndpoints, sweepClaudeFlagSettings, isModelId, redactSecret, CheckError, delegatedEndpoint } from './compat-endpoints.mjs';
 import { createClaudeAccounts, redactToken, normalizeName as normalizeAccountName, fetchTokenOrg, ANTHROPIC_API } from './claude-accounts.mjs';
 import { createPlyMcp } from './ply-mcp.mjs';
+import { redactForPeer } from './redact.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
@@ -201,6 +202,23 @@ const mcpConfig = createMcpConfig();
 let agentTasks;
 const agentConnections = new Map();
 const taskExecutions = new Map();
+// 実行前に拒否されたコマンド（Codex。core/backends/codex-rejections.mjs）を依頼元へ返す形（docs/agent-delegation.md「実行前に拒否されたコマンド」）。
+// 依頼元は別のエージェント・別の提供元のモデルのこともあるので、command・reason・raw は形で秘密を伏せて切る
+const REJECTION_TEXT_MAX = 300;
+const pick = (v, max = 100) => (typeof v === 'string' && v ? v.slice(0, max) : null);
+const peerRejection = r => ({
+  tool: pick(r.tool), via: pick(r.via), command: redactForPeer(r.command ?? null, REJECTION_TEXT_MAX), shell: pick(r.shell),
+  kind: ['policy', 'spawn', 'other'].includes(r.kind) ? r.kind : 'other', reason: redactForPeer(r.reason ?? null, REJECTION_TEXT_MAX),
+  raw: redactForPeer(r.raw ?? null, REJECTION_TEXT_MAX), approvalRequested: r.approvalRequested === true, callId: pick(r.callId, 200), turnId: pick(r.turnId, 200),
+});
+// 完了通知に載せる拒否の件数（先頭から）。全件は ply_task_status の rejections で読む
+const NOTICE_REJECTIONS = 3;
+function rejectionNotice(lng, list) {
+  if (!Array.isArray(list) || !list.length) return '';
+  const items = list.slice(0, NOTICE_REJECTIONS).map(r => agentT(lng, 'delegation.noticeRejection', {
+    command: r.command ?? r.raw ?? '', reason: r.reason ?? r.kind ?? '' })).join('\n');
+  return agentT(lng, 'delegation.noticeRejections', { count: list.length, items }) + '\n';
+}
 // エラー・結果の文はツールの結果としてエージェントが読むので、会話の言語で引く（agent 名前空間。橋は会話ごとに開き、locale はその会話の言語）
 const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale } = {}) => {
   const turn = runtime.turns.get(owner);
@@ -1056,6 +1074,10 @@ function makeEmit(turn) {
       const execution = taskExecutions.get(turn.info.sessionId);
       if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; }
     }
+    // 委譲の子で、バックエンドが実行前に拒否されたコマンドを知らせた（Codex。tool.result の rejection）。依頼元へ返す結果に集める
+    if (event?.type === "tool.result" && event.rejection && typeof event.rejection === "object") {
+      taskExecutions.get(turn.info.sessionId)?.rejections.push(event.rejection);
+    }
     // main の状態と裏で動いているもの（docs/multi-backend.md §2.2）。一覧と稼働表示は running の
     // ターン行から読むので、変わったらすぐ配る（4 秒ごとの定期便を待たない）
     if (event?.type === "phase" || event?.type === "background") {
@@ -1526,7 +1548,7 @@ agentTasks = await createAgentTasks({
   execute: async (task, prompt, signal) => {
     if (signal.aborted) return { outcome: 'aborted' };
     if (sessionBusy(task.sessionId)) return { requeue: true };
-    const execution = { outcome: null, error: null };
+    const execution = { outcome: null, error: null, rejections: [] };
     taskExecutions.set(task.sessionId, execution);
     const stopChild = () => {
       runtime.turns.get(task.sessionId)?.ac.abort();
@@ -1544,8 +1566,9 @@ agentTasks = await createAgentTasks({
       const messages = await backend.getMessages(task.sessionId, { fullResults: true });
       const last = messages.findLast(m => m.role === 'assistant' && m.text);
       // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
-      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text: last?.text ?? '', error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown') };
-      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text: last?.text ?? '', error: execution.error };
+      const rejections = execution.rejections.map(peerRejection);
+      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text: last?.text ?? '', error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown'), rejections };
+      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text: last?.text ?? '', error: execution.error, rejections };
     } finally { signal.removeEventListener('abort', stopChild); taskExecutions.delete(task.sessionId); }
   },
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
@@ -1559,7 +1582,7 @@ agentTasks = await createAgentTasks({
     // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
     const retry = task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '';
     const prompt = agentT(lng, 'delegation.notice', { taskId: task.taskId, backend: task.backend, status: task.status, task: task.task,
-      result: task.result.slice(0, 16000), more, error: task.error ?? '', retry });
+      result: task.result.slice(0, 16000), more, error: task.error ?? '', retry, rejections: rejectionNotice(lng, task.rejections) });
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
 });
