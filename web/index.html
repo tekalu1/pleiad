@@ -125,8 +125,9 @@
   <!-- ==================== 会話 ==================== -->
   <main>
     <header class="top">
-      <!-- 脇を閉じている間だけ出る。閉じるボタンと同じ絵 -->
-      <button type="button" class="btn btn-icon side-toggle" id="openSidebar" data-i18n-title="app.openSidebarTitle" data-i18n-aria-label="app.openSidebar" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
+      <!-- 脇を閉じている間だけ出る。閉じるボタンと同じ絵。名前（aria-label）は件数を入れて client.mjs が書く（web/open-sidebar-mark.mjs）。
+           data-i18n-aria-label は置かない（訳し直しで件数の無い名前に戻るため） -->
+      <button type="button" class="btn btn-icon side-toggle" id="openSidebar" data-i18n-title="app.openSidebarTitle" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
       <!-- タイトルの列。モバイル版の殻の 700px 以下では、タイトルの下に差しの青の「⇄ ホスト名」（押すとホスト一覧へ。web/remote-badge.mjs）を置く -->
       <div class="title-col">
         <span class="title-field" id="titleField"><input id="titleEdit" data-i18n-placeholder="session.untitled" data-i18n-aria-label="session.titleLabel" autocomplete="off" disabled></span>
