@@ -137,6 +137,13 @@ export default async function (t) {
   t.ok('週次ペースの低いアカウントを選ぶ', pick([acc('', [h5(10), week(40, 50)]), acc('a', [h5(50), week(20, 50)])]).account === 'a');
   t.ok('週次ペースが同じなら 5 時間の低い方', pick([acc('', [h5(30), week(20, 50)]), acc('a', [h5(10), week(20, 50)])]).account === 'a' && pick([acc('', [h5(5), week(20, 50)]), acc('a', [h5(10), week(20, 50)])]).account === '');
   t.ok('トークンの無いアカウントは使えない（unavailable）', pick([acc('', [h5(95)]), acc('a', [h5(0), week(0, 50)], null, false)]).ok === false);
+  // 「使えない」の中身（画面が「使えない（未インストール）」と添える）
+  t.ok('使えない理由の中身: 有効でない・入っていない・トークンが無い',
+    checkCandidate('codex:gpt-6-sol', { usage: { claude: { available: true, checkedAt: NOW, windows: [], models: {} } }, settings, now: NOW }).detail === 'disabled'
+    && checkCandidate('codex:gpt-6-sol', { usage: {}, settings, now: NOW }).detail === undefined
+    && checkCandidate('codex:gpt-6-sol', { usage: { codex: { available: false, checkedAt: null, windows: [], models: {} } }, settings, now: NOW }).detail === 'not_installed'
+    && pick([acc('a', [h5(0), week(0, 50)], null, false)]).detail === 'no_token'
+    && checkCandidate('claude:opus', { usage: claudeOnly([acc('', [h5(95)])]), settings, now: NOW }).detail === undefined);
   const same = { org: 'org-1', email: 'Me@example.com' };
   t.ok('ログイン中と同じ人（組織とメールが一致）の登録アカウントは 1 つにまとめる', dedupeAccounts([acc('', [], same), acc('a', [], { org: 'org-1', email: 'me@example.com' }), acc('b', [], { org: 'org-2', email: 'x@example.com' })]).map(a => a.account).join() === ',b');
   // ログイン中の方だけ使用量の取得に失敗した。同じ人の登録アカウントが使えるなら、そちらを残して使う

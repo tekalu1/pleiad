@@ -34,7 +34,7 @@ import { approvalTarget } from "./approval-summary.mjs";
 import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
-import { isAutoRouting, routingLine, routingDetail, retryPanel, retryCandidates, splitCandidate, fallbackName } from './delegation-routing-view.mjs';
+import { isAutoRouting, routingLine, routingDetail, retryPanel, retryCandidates, splitCandidate, fallbackName, parseRoutingFailure, routingFailureParts, kindText, difficultyText } from './delegation-routing-view.mjs';
 import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
 import { familiesOf } from "./family.mjs";
@@ -2694,7 +2694,7 @@ function linkDelegateCard(card, input = null, result = null) {
   if (!name || card.querySelector(':scope .tc-open')) return;
   if (isDelegateTool(name)) {
     const id = /ply-task-[0-9a-f-]{36}/.exec(card.querySelector('.tc-output, .tc-result, .tc-details-body')?.textContent ?? '')?.[0];
-    if (!id) return;
+    if (!id) { decorateFailedDelegate(card, result); return; }
     card.dataset.taskId = id;
     // 振り分けの記録。ply_delegate の結果（JSON）にある。タスクの一覧（running）にあればそちらを使う
     const routing = delegateResult(result)?.routing;
@@ -2744,6 +2744,46 @@ function decorateDelegateCard(card) {
   const detail = routingDetail(routing, { names: routingNames, logo: routingLogo, onRetry: (root, button) => toggleRetry(card, root, button) });
   card.querySelector('.tc-details-body')?.prepend(detail);
   paintRetried(card);
+}
+/**
+ * 自動の振り分けで使える委譲先が無かったカード（タスクはできていない）。見出しを成功と同じ「委譲 · 自動 · 種類・難しさ →」にして
+ * 行き先の代わりに「使える委譲先がありません」、開かなくても見える位置に理由ごとの行と直す場所への入口、候補ごとの一覧は折りたたむ。
+ * エージェント向けのエラー文（内部の理由のコード）はツールカードの出力に畳んだまま（docs/design-system.md「委譲カード」）
+ */
+function decorateFailedDelegate(card, result) {
+  if (!result || card.dataset.routed || !(result.isError ?? result.is_error)) return;
+  const failure = parseRoutingFailure(typeof result === 'string' ? result : result.text);
+  if (!failure) return;
+  card.dataset.routed = '1';
+  card.classList.add('tc-route-failed');
+  const head = card.querySelector('.tc-head');
+  const label = head.querySelector('.tc-label');
+  label.textContent = t('timeline.tool.label.delegate');
+  const auto = el('span', 'tc-auto', t('routing.auto'));
+  auto.title = t('routing.autoTitle');
+  label.after(auto);
+  const line = el('span', 'tc-route', t('routing.line.head', { kind: kindText(failure.kind), difficulty: difficultyText(failure.difficulty), target: t('routing.failure.none') }));
+  line.title = line.textContent;
+  const badge = head.querySelector('.tc-res');
+  if (badge) badge.before(line); else head.append(line);
+  const open = (reason) => {
+    if (reason === 'unavailable') return { label: t('routing.failure.openAgents'), run: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open('setup'); } };
+    if (reason === 'model_unknown') return { label: t('routing.failure.openDelegation'), run: () => { onboarding.open('delegation'); $('delegationTab').click(); } };
+    if (['quota_high', 'pace_high', 'pace_unknown'].includes(reason)) return { label: t('routing.failure.openUsage'), run: () => { onboarding.open('usage'); $('usageTab').click(); } };
+    return null;
+  };
+  const paint = () => {
+    for (const n of card.querySelectorAll(':scope > .tc-why, :scope > .tc-cands-fold')) n.remove();
+    card.append(...routingFailureParts(failure, { names: routingNames, open }));
+  };
+  paint();
+  // モデルの表示名は語彙から。まだ無ければ取りに行き、届いたら書き直す（折りたたみを開いていれば開いたまま）
+  const missing = [...new Set(failure.skipped.map(s => splitCandidate(s.candidate).backend).filter(b => b && !state.vocab.has(b)))];
+  for (const b of missing) loadVocab(b).then(() => {
+    const wasOpen = card.querySelector(':scope > .tc-cands-fold')?.open;
+    paint();
+    if (wasOpen) card.querySelector(':scope > .tc-cands-fold').open = true;
+  }).catch(() => {});
 }
 function paintRouteLine(card, routing) {
   const line = card.querySelector('.tc-route');
