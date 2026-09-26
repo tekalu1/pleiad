@@ -960,7 +960,12 @@
       "name": "名前を入れてください",
       "json": "JSON の形が正しくありません"
     },
-    "oauthReset": "接続先などが変わったため、ログインし直してください"
+    "oauthReset": "接続先などが変わったため、ログインし直してください",
+    "unify": {
+      "question_other": "次の {{count}} 件を、すべてのエージェントにつなぎます",
+      "confirm_other": "{{count}} 件でそろえる",
+      "spread": "ほかのエージェントにも広がります"
+    }
   },
   "saved": {
     "reason": {
