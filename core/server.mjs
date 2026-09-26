@@ -1464,6 +1464,8 @@ const outbox = createMessageQueue({
   },
 });
 await outbox.recover();
+// 親が走っている・裏の作業が残っている・送信待ちがあるときは完了通知を送らない（docs/agent-delegation.md「完了通知」）
+const noticeBlocked = async owner => sessionBusy(owner) || runtime.background.has(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
   changed: () => { broadcastRunning(); },
@@ -1546,9 +1548,11 @@ agentTasks = await createAgentTasks({
       return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text: last?.text ?? '', error: execution.error };
     } finally { signal.removeEventListener('abort', stopChild); taskExecutions.delete(task.sessionId); }
   },
+  // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
+  ready: async task => !(await noticeBlocked(task.parentSessionId)),
   deliver: async task => {
     const owner = task.parentSessionId;
-    if (sessionBusy(owner) || runtime.background.has(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status))) return 'requeue';
+    if (await noticeBlocked(owner)) return 'requeue';
     // 完了通知は依頼元の会話の言語で。人間の発言と見分ける印は文言ではなく、送った本文のハッシュ（taskNotices。runTurn の internal）
     const lng = await ensureAgentLocale(owner);
     const more = task.result.length > 16000 ? agentT(lng, 'delegation.noticeMore', { offset: 16000 }) : '';

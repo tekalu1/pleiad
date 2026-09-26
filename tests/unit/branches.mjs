@@ -7,6 +7,8 @@
 // uuid だけで照合すると共通接頭辞が 0 になり、分岐点の印が出ず、戻る経路も無かった。
 import { branchOrder, curve, ease } from "../../web/branch-view.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "../../web/branches.mjs";
+import { t as i18n } from "../../web/i18n.mjs";
+import { readFileSync } from "node:fs";
 
 export const name = "branches";
 export const title = "uuid が付け直された枝でも分岐点が出て、必ず戻れる";
@@ -146,4 +148,30 @@ export default async function (t) {
   await retry.load('P', parent); fail = false;
   await retry.load('P', parent);
   t.ok("失敗した履歴取得を空の成功としてキャッシュしない", retry.family.rows.get('C').messages.length === child.length);
+
+  // ---- 分岐点の札: 兄弟と名前がぶつかるときだけ、分岐後の最初の自分の発言と「枝 N」（docs/design-system.md §7）
+  const same = { rootId: "P", sessions: [
+    { id: "P", title: "同じ題", parent: null, createdAt: "2026-01-01T00:00:00Z", lastModified: 1 },
+    { id: "C", title: "同じ題", parent: { sessionId: "P", atMessage: "p3" }, createdAt: "2026-01-02T00:00:00Z", lastModified: 2 },
+    { id: "D", title: "同じ題", parent: { sessionId: "P", atMessage: "p3" }, createdAt: "2026-01-03T00:00:00Z", lastModified: 3 },
+    { id: "E", title: "別の題", parent: { sessionId: "P", atMessage: "p3" }, createdAt: "2026-01-04T00:00:00Z", lastModified: 4 },
+  ] };
+  const said = (who, text) => [...parent.slice(0, 4).map((m, i) => ({ ...m, uuid: `${who}${i}` })), msg("user", text, `${who}u`), msg("assistant", "はい", `${who}a`)];
+  const hist = { P: parent, C: said("c", "React のまま\n  直して"), D: said("d", "Vue で書き直して"), E: said("e", "テストから") };
+  b = createBranches({ cmd: fakeCmd(same, hist), titleOf: (id) => same.sessions.find((s) => s.id === id)?.title });
+  await b.load("C", hist.C);
+  const cut = b.junctions("C").get(3) ?? [];
+  const tips = b.distinguish([{ id: "C", name: b.nameOf("C"), n: 2 }, ...cut], { id: "C", messages: hist.C });
+  const tip = (id) => tips.find((e) => e.id === id);
+  t.ok("ぶつかる枝は分岐後の最初の自分の発言を 1 行に畳んで持つ",
+    tip("C")?.excerpt === "React のまま 直して" && tip("D")?.excerpt === "Vue で書き直して", JSON.stringify(tips));
+  t.ok("ぶつかる枝の番号は仮の名前（根はオリジナル、他は並び順の枝 N）",
+    tip("C")?.label === i18n("timeline.branch.numbered", { n: 2 }) && tip("D")?.label === i18n("timeline.branch.numbered", { n: 3 })
+      && tip("P")?.label === i18n("timeline.branch.root"), JSON.stringify(tips));
+  t.ok("親の札も分岐後の自分の発言を持つ", tip("P")?.excerpt === "続けて", JSON.stringify(tip("P")));
+  t.ok("名前がぶつからない枝はそのまま（抜粋も番号も足さない）", tip("E") && !("label" in tip("E")) && !("excerpt" in tip("E")), JSON.stringify(tip("E")));
+  const fresh = b.distinguish([{ id: "C", name: "同じ題", n: 0 }, { id: "D", name: "同じ題", n: 0 }]);
+  t.ok("分岐後に発言がまだ無ければ抜粋は無く、仮の名前だけ", fresh.every((e) => e.excerpt === null && e.label), JSON.stringify(fresh));
+  const ja = JSON.parse(readFileSync(new URL("../../web/locales/ja/ui.json", import.meta.url), "utf8")).timeline.branch;
+  t.ok("根の枝の既定名は「オリジナル」", ja.root === "オリジナル", ja.root);
 }
