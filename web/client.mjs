@@ -2462,6 +2462,9 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
     const bubble = m.querySelector('.body');
     if (bubble) {
       bubble.classList.add('bg-request');
+      const text = el('span', 'bg-request-text');
+      text.append(...bubble.childNodes);
+      bubble.append(text);
       const toggle = el('button', 'bg-request-toggle', t('dialog.work.showFull'));
       toggle.type = 'button'; toggle.hidden = true;
       toggle.onclick = () => {
@@ -2469,7 +2472,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
         toggle.textContent = expanded ? t('dialog.work.collapse') : t('dialog.work.showFull');
       };
       bubble.after(toggle);
-      requestAnimationFrame(() => { toggle.hidden = bubble.scrollHeight <= bubble.clientHeight + 1; });
+      requestAnimationFrame(() => { toggle.hidden = text.scrollHeight <= text.clientHeight + 1; });
     }
     return m;
   };

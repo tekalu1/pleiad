@@ -1,6 +1,6 @@
 {
   "bridge": {
-    "instructions": "Pleiad の委譲ツール（ply_agents MCP）: ply_delegate で Pleiad が管理する子の会話を作る。kind（仕事の種類）は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先（backend・model・Claude のアカウント）を選び、選んだ理由を返り値の routing に載せる。特定の委譲先が要るときだけ backend（claude, codex, antigravity）を書く。これはネイティブの spawn_agent / agent_job / Agent やその ID とは別物である。ply-task- の ID には ply_task_* だけを使う。ply_delegate はすぐに戻り、完了の結果は Pleiad が後のターンでこの会話へ届ける。その間にほかの作業を続けても、応答を終えてもよい。ply_task_wait は最長 30 秒待ち、子が人間の承認を待つ状態（status: waiting）になった時点ですぐ戻る。そのときは待ち直さず、どの会話に承認があるかをユーザーに伝える。ply_task_send は同じ子の会話に追加の指示を積む。必要なタスクの文脈は明示して渡すこと。非公開の推論と親の会話の記録は写されない。cwd の既定はこの会話の作業場所。同時に編集するなら別々の worktree を使う。ply_usage は各バックエンドの使用枠を読む（読み取りのみ、最大 60 秒前の値）。タスクの完了を受け取ったことを伝えるためだけに再び委譲しない。ply_delegate には一覧と子の会話に使う短い title を付ける。 委譲は、ユーザーのタスクと適用される指示で認められている場合に限って使う。",
+    "instructions": "Pleiad の委譲ツール（ply_agents MCP）: ply_delegate で Pleiad が管理する子の会話を作る。kind（仕事の種類）は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先（backend・model・Claude のアカウント）を選び、選んだ理由を返り値の routing に載せる。特定の委譲先が要るときだけ backend（claude, codex, antigravity）を書く。これはネイティブの spawn_agent / agent_job / Agent やその ID とは別物である。ply-task- の ID には ply_task_* だけを使う。ply_delegate はすぐに戻り、完了の結果は Pleiad が後のターンでこの会話へ届ける。その間にほかの作業を続けても、応答を終えてもよい。ply_task_wait は最長 30 秒待ち、子が人間の承認を待つ状態（status: waiting）になった時点ですぐ戻る。そのときは待ち直さず、どの会話に承認があるかをユーザーに伝える。ply_task_send は同じ子の会話に追加の指示を積む。必要なタスクの文脈は明示して渡すこと。非公開の推論と親の会話の記録は写されない。cwd の既定はこの会話の作業場所。同時に編集するなら別々の worktree を使う。ply_usage は各バックエンドの使用枠を読む（読み取りのみ、最大 60 秒前の値）。タスクの完了を受け取ったことを伝えるためだけに再び委譲しない。ply_delegate には一覧と子の会話に使う短い title を付ける。委譲は、ユーザーのタスクと適用される指示で認められている場合に限って使う。",
     "title": "一覧と会話のタイトルに使う短い名前。30 字程度。",
     "tools": {
       "ply_delegate": "Pleiad が管理するタスクを始める。taskId をすぐに返し、完了は自動で届く。ネイティブの spawn_agent とは別物。kind は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先を選び、理由を routing に載せる（全部の候補が使えなければエラー。そのときは backend を書いて頼み直すか、ユーザーに聞く）。backend を書くと固定で、model・effort も指定できる（model・effort は backend を書いたときだけ）。子は呼び出し元の承認の強さを、それを超えない範囲で継ぐ。それより強い子には、ここで人間の承認が 1 回要る。",
@@ -158,7 +158,7 @@
     "lead": "委譲の進め方（Pleiad が追加した指示）:",
     "delegate": "委譲を基本にする。コマンド 1 回や 1〜2 ファイルの小さな編集より大きい作業は、自分でやらずに ply_delegate で任せる。",
     "main": "この会話で自分でやるのは、方針を決める・任せた結果を確かめる・取り消せない操作（送信・削除・支払い。先にユーザーに確認する）・結果が小さい単発の作業だけ。複数手順の作業と、結果が大きい操作（ブラウザー操作・スクリーンショット・長いログ・大きな MCP 応答）は任せ、子には要約と証拠だけを返させる。",
-    "route": "任せるときは ply_delegate に kind を付け、backend は書かない（Pleiad が選ぶ）。backend を書くのはユーザーがエージェントやモデルを指定したときだけ。どの候補も枠が無いと返されたら、ユーザーに伝える。ネイティブのサブエージェント（Claude の Agent tool など）ではなく ply_delegate を使う。 ply_delegate には一覧に出る短い title を付ける。",
+    "route": "任せるときは ply_delegate に kind を付け、backend は書かない（Pleiad が選ぶ）。backend を書くのはユーザーがエージェントやモデルを指定したときだけ。どの候補も枠が無いと返されたら、ユーザーに伝える。ネイティブのサブエージェント（Claude の Agent tool など）ではなく ply_delegate を使う。ply_delegate には一覧に出る短い title を付ける。",
     "child": "あなたは委譲された子の会話なので、さらに委譲しない。"
   }
 }

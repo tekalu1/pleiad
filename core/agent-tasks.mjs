@@ -134,7 +134,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           const prepared = await prepare(owner, args, taskId, signal);
           try {
           if (signal?.aborted) throw new Error(agentT(locale, 'tasks.aborted'));
-           const row = { ...prepared, taskId, parentSessionId: owner, manager: 'ply', depth, task: args.task, title: args.title, ...(args.context !== undefined ? { context: args.context } : {}),
+          const row = { ...prepared, taskId, parentSessionId: owner, manager: 'ply', depth, task: args.task, title: args.title, ...(args.context !== undefined ? { context: args.context } : {}),
             createdAt: Date.now(), updatedAt: Date.now(), status: 'queued', notification: 'none',
             result: '', error: null, queue: [args.context ? agentT(locale, 'tasks.withContext', { task: args.task, context: args.context }) : args.task] };
           records[taskId] = row; await save(); return view(row);
