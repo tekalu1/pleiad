@@ -11,7 +11,7 @@ import { el } from './dom.mjs';
 import { runMark } from './arc.mjs';
 import { renderMarkdown } from './render.mjs';
 import { copyIcon } from './icons.mjs';
-import { createMcpSection } from './mcp-config.mjs';
+import { createMcpSection, unifyConfirm, toggleMcp } from './mcp-config.mjs';
 import { createPlyInstructions } from './ply-instructions-card.mjs';
 import { t } from './i18n.mjs';
 
@@ -116,6 +116,8 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
   panel.append(root);
 
   let view = null, scan = null, scanning = false, scanVisible = false, ply = null, agents = null, adding = null;
+  // 外部 MCP を「Pleiad がそろえる」へ切り替える前の確認を開いているか（ADR 0031。担当はまだ変えていない）
+  let unifying = false;
   const opened = new Set();          // 中身を開いている行（id）
   const expanded = new Set();        // 「すべて見る」を押した種類
   let toastTimer, scanTicket = 0;
@@ -163,7 +165,23 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
       const b = button('', 'cx-opt');
       b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(owner === id));
       b.append(el('b', null, title), el('span', null, desc));
-      b.onclick = () => { if (owner !== id) work(() => saveKind(kind, v => { v.owner = id; }, { rescan: kind === 'mcp' && !agents })); };
+      b.dataset.owner = id;
+      b.onclick = () => {
+        // 外部 MCP を Pleiad にそろえると、どのエージェントにも同じ MCP がつながる。切り替える前にその場で確かめる（ADR 0031）。
+        // 戻すとき（エージェントに任せる）は各エージェントの元の設定に戻るだけで広がらないので、確かめない
+        // 探している途中（scan がまだ無い）も確かめる側に倒す（探し終えたら確かめの面を描く）
+        if (kind === 'mcp' && id === 'ply' && owner !== 'ply' && !unifying && (!scan || scan.entries.some(e => e.kind === 'mcp'))) {
+          unifying = true; renderCard('mcp');
+          cards.mcp.querySelector('.cx-confirm .btn-primary:not(:disabled)')?.focus();
+          return;
+        }
+        if (kind === 'mcp' && unifying) {
+          if (id !== 'ply') { unifying = false; renderCard('mcp'); cards.mcp.querySelector(`[data-owner=${id}]`)?.focus(); }
+          else cards.mcp.querySelector('.cx-confirm .btn-primary:not(:disabled)')?.focus();
+          return;
+        }
+        if (owner !== id) work(() => saveKind(kind, v => { v.owner = id; }, { rescan: kind === 'mcp' && !agents }));
+      };
       box.append(b);
     }
     return box;
@@ -357,7 +375,22 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
     const agy = antigravityNote(kind);
     if (agy) host.append(agy);
     if (value.owner !== 'ply') {
-      if (kind === 'mcp') mcp.renderAgents(host, mcpContext());
+      if (kind === 'mcp' && unifying && !scan) host.append(loading());
+      else if (kind === 'mcp' && unifying) host.append(unifyConfirm({ entries: scan.entries,
+        onCancel: () => { unifying = false; renderCard('mcp'); cards.mcp.querySelector('[data-owner=ply]')?.focus(); },
+        // 担当と除外をまとめて 1 回で保存する
+        onConfirm: ({ on, off }) => work(async () => {
+          const all = scan.entries;
+          const of = name => all.filter(e => e.kind === 'mcp' && e.name === name);
+          await saveKind('mcp', v => {
+            v.owner = 'ply';
+            for (const name of off) toggleMcp(v, name, of(name), false, all);
+            for (const name of on) toggleMcp(v, name, of(name), true, all);
+          }, { rescan: !agents || on.length > 0 || off.length > 0 });   // 外した・戻したものがあれば探し直す（行の状態が変わる）
+          unifying = false;
+          renderCard('mcp');
+        }) }));
+      else if (kind === 'mcp') mcp.renderAgents(host, mcpContext());
       else host.append(el('p', 'cx-note', TEXT[kind].note));
       return;
     }
@@ -411,7 +444,7 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
       status.textContent = t('context.loadFailed', { error: e.message });
       return;
     }
-    scan = null; adding = null; opened.clear(); expanded.clear();
+    scan = null; adding = null; unifying = false; opened.clear(); expanded.clear();
     renderAll();
     await Promise.all([plyInstructions.load(), loadScan()]);
   }

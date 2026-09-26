@@ -136,9 +136,21 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
     draw();
     panel.scrollIntoView({ block: 'nearest' });
   }
-  /** 接続情報（URL・キー・認証）が変わった。確認済みなら確認前に戻す */
+  /**
+   * 接続情報（URL・キー・認証）が変わった。確認済みなら確認前に戻す。
+   * キーを打ち始めた 1 文字目で描き直すので、打っていた欄へフォーカスと字の位置を戻す（戻さないと 2 文字目から欄の外に打つことになる）
+   */
   function invalidate() {
-    if (form.phase === 'ok' || form.phase === 'fail') { form.stale = form.phase === 'ok'; form.phase = 'edit'; form.result = null; draw(); }
+    if (form.phase !== 'ok' && form.phase !== 'fail') return;
+    form.stale = form.phase === 'ok'; form.phase = 'edit'; form.result = null;
+    const active = panel.contains(document.activeElement) ? document.activeElement : null;
+    const field = active?.dataset?.field ?? null;
+    const at = field ? [active.selectionStart, active.selectionEnd] : null;
+    draw();
+    if (!field) return;
+    const again = panel.querySelector(`[data-field="${field}"]`);
+    again?.focus();
+    if (at?.[0] != null) again?.setSelectionRange?.(at[0], at[1]);
   }
   const field = (label, control, help) => { const f = el('label', 'mp-field'); f.append(el('span', null, label), control); if (help) f.append(help); return f; };
   const step = (n, text) => { const s = el('div', 'mp-step'); s.append(`${n}. `, el('b', null, text)); return s; };
@@ -211,6 +223,7 @@ export function setupCompatEndpoints({ cmd, openSettings, onChange = () => {}, o
     authField.append(seg);
     const key = el('input'); key.type = form.show ? 'text' : 'password'; key.value = form.key; key.autocomplete = 'new-password'; key.spellcheck = false;
     key.placeholder = editing && form.hasKey ? t('compat.form.keyKeep') : P.nokey ? t('compat.auth.none') : t('compat.form.apiKey');
+    key.dataset.field = 'key';
     key.oninput = () => { form.key = key.value; invalidate(); };
     const kr = el('div', 'mp-keyrow'); kr.append(key, button(form.show ? t('compat.form.hide') : t('compat.form.show'), () => { form.show = !form.show; draw(); }));
     out.push(field(t('compat.form.apiKey'), kr, P.nokey ? null : el('small', null, t('compat.form.keyStored'))));

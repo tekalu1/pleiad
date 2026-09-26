@@ -87,6 +87,75 @@ export function toggleMcp(value, name, entries, turnOn, all = []) {
   value.disabled = [...disabled];
 }
 
+/**
+ * 「Pleiad がそろえる」へ切り替える前の、その場の確認（設定 › コンテキストと、会話の右パネルの「この場所だけ変える」。ADR 0031）。
+ * 切り替えると、どのエージェントにも同じ MCP がつながる。何が広がるのかを先に全部見せ、行ごとにその場でオフにできる。
+ * entries は探索の行（kind: mcp）。決めると onConfirm({ on, off })（最初の状態から変えた名前）を呼ぶ。担当と除外は呼ぶ側が 1 回で保存する
+ */
+export function unifyConfirm({ entries, onConfirm, onCancel }) {
+  const groups = new Map();
+  for (const e of (entries ?? []).filter(e => e.kind === 'mcp' && e.status !== 'duplicate')) groups.set(e.name, [...(groups.get(e.name) ?? []), e]);
+  const rows = [...groups].map(([name, list]) => {
+    const active = list.find(e => e.status === 'candidate') ?? null;
+    const shown = active ?? list[0];
+    const sources = [...new Set(list.flatMap(e => e.origins?.map(o => o.source) ?? []))];
+    const agents = sources.filter(s => s !== 'ply');
+    return { name, list, initial: Boolean(active), on: Boolean(active), locked: !active && list.every(e => e.status === 'disabled'),
+      transport: shown.transport, sources, spread: agents.length === 1 && !sources.includes('ply') };
+  });
+  const box = el('div', 'cx-confirm');
+  box.setAttribute('role', 'group');
+  const q = el('p', 'q');
+  q.id = `mcpUnify${Math.random().toString(36).slice(2, 8)}`;
+  box.setAttribute('aria-labelledby', q.id);
+  const list = el('div', 'cx-list');
+  const cancel = button(t('mcp.cancel'), 'btn', () => onCancel());
+  const ok = button('', 'btn btn-primary', () => {
+    const on = rows.filter(r => r.on && !r.initial).map(r => r.name);
+    const off = rows.filter(r => !r.on && r.initial).map(r => r.name);
+    onConfirm({ on, off }, ok);
+  });
+  const count = () => rows.filter(r => r.on).length;
+  const paint = () => {
+    q.textContent = t('mcp.unify.question', { count: count() });
+    ok.textContent = t('mcp.unify.confirm', { count: count() });
+    ok.disabled = rows.length > 0 && count() === 0;
+  };
+  for (const r of rows) {
+    const row = el('div', 'cx-row' + (r.on ? '' : ' off'));
+    const body = el('span', 't');
+    body.append(el('span', 'nm', r.name));
+    const p = el('span', 'p');
+    const bits = [transportText(r.transport)];
+    if (r.sources.includes('ply')) bits.push(t('mcp.describe.ply'));
+    else if (r.sources.length === 1) bits.push(t('mcp.describe.only', { agent: agentName(r.sources[0]) }));
+    else if (r.sources.length === 2) bits.push(t('mcp.describe.both', { a: agentName(r.sources[0]), b: agentName(r.sources[1]) }));
+    else if (r.sources.length) bits.push(t('mcp.describe.many', { agents: agentList(r.sources) }));
+    if (r.locked) bits.push(t('mcp.describe.nativeOff'));
+    p.append(bits.join(' · '));
+    // 片方のエージェントにだけ登録していたものは、切り替えるとほかのエージェントにも広がる
+    if (r.spread && !r.locked) p.append(el('span', 'spread', ` · ${t('mcp.unify.spread')}`));
+    body.append(p);
+    const sw = button('', 'cx-sw', () => {
+      r.on = !r.on;
+      sw.setAttribute('aria-checked', String(r.on));
+      row.classList.toggle('off', !r.on);
+      paint();
+    });
+    sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(r.on)); sw.setAttribute('aria-label', t('mcp.switchAria', { name: r.name }));
+    sw.disabled = r.locked;
+    if (r.locked) sw.title = t('mcp.nativeOffTitle');
+    row.append(icon(r.transport === 'stdio' ? 'stdio' : 'http'), body, sw);
+    list.append(row);
+  }
+  if (!rows.length) list.append(el('p', 'cx-empty', t('mcp.empty')));
+  const acts = el('div', 'acts');
+  acts.append(cancel, ok);
+  paint();
+  box.append(q, list, acts);
+  return box;
+}
+
 export function createMcpSection() {
   const messages = new Map();   // 行に出す直近の結果（接続の確認・取り込み・ログイン）
 

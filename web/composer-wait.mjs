@@ -7,6 +7,8 @@
 //   failed()    読み込みに失敗した。欄は書ける。欄の上に理由と「もう一度読む」。送信は読み込めるまで押せない（理由を title に）
 //   queue()     新しい会話を作っている間に送信が押された。欄は readonly、150ms を越えたら送信ボタンに弧、
 //               欄の上に「会話ができしだい送ります」と「取り消す」
+//   hold()      設定（作業ディレクトリなど）を保存できず、解決するまで送らせない。欄は書ける。欄の上に強い字の理由と操作
+//               （再試行・選び直す・取り消す）。送信は押せない見た目（aria-disabled）で、押されたらこの一行へフォーカスを移す
 // 新しい会話を作っている間そのものは、ここでは何もしない（欄は書けるまま）。
 //
 // DOM は触る要素だけ受け取る（tests/unit/composer-wait.mjs が最小の DOM で回す）。
@@ -30,6 +32,8 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
   let busyTimer = null, queueTimer = null;
   let sendIcon = null;      // 弧に差し替える前の送信ボタンの中身
   let sendTitle = null;     // failed の間に差し替える前の title
+  let held = null;          // hold() の { text, actions }。予約・読み込みの失敗の一行が優先し、それが消えたら出し直す
+  let heldTitle = null;     // hold の間に差し替える前の送信の title
 
   const syncReadOnly = () => { prompt.readOnly = mode === 'history' || mode === 'connect' || Boolean(queued); };
 
@@ -48,7 +52,20 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
     if (sendTitle !== null) { send.setAttribute('title', sendTitle); sendTitle = null; }
     if (!queued) clearNote();
   }
-  function clearNote() { note.replaceChildren(); note.hidden = true; delete note.dataset.kind; note.removeAttribute('data-kind'); }
+  function clearNote() { note.replaceChildren(); note.hidden = true; delete note.dataset.kind; note.removeAttribute('data-kind'); note.setAttribute('role', 'status'); paintHeld(); }
+  /** 保留の一行を出す（予約・読み込みの失敗の一行が出ていないときだけ） */
+  function paintHeld() {
+    if (!held || queued || mode === 'failed' || (note.dataset.kind && note.dataset.kind !== 'held')) return;
+    note.replaceChildren();
+    const b = document.createElement('b');
+    b.className = 'composer-note-strong';
+    b.textContent = held.text;
+    note.append(b, ...held.actions.map((a) => noteButton(a.label, a.onClick)));
+    note.dataset.kind = 'held';
+    note.setAttribute('role', 'alert');
+    note.setAttribute('tabindex', '-1');
+    note.hidden = false;
+  }
   function noteButton(label, onClick) {
     const b = document.createElement('button');
     b.type = 'button';
@@ -78,6 +95,7 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
       busyLine.append(bar);
       busyLine.hidden = false;
     }, delay);
+    paintHeld();
     onChange();
   }
 
@@ -87,6 +105,7 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
     clearBusy();
     mode = null;
     syncReadOnly();
+    paintHeld();
     onChange();
   }
 
@@ -145,8 +164,40 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
     q?.onCancel?.();
   }
 
+  /** 送らせない理由と操作を欄の上に出す。text は強い字の理由、actions は [{ label, onClick }] */
+  function hold(text, actions = []) {
+    held = { text, actions };
+    if (heldTitle === null) heldTitle = send.getAttribute('title') ?? '';
+    send.setAttribute('title', text);
+    send.setAttribute('aria-disabled', 'true');
+    send.classList.add('blocked');
+    if (note.dataset.kind === 'held') delete note.dataset.kind;
+    paintHeld();
+    onChange();
+  }
+  /** 保留を解く */
+  function release() {
+    if (!held) return;
+    held = null;
+    if (heldTitle !== null) { send.setAttribute('title', heldTitle); heldTitle = null; }
+    send.removeAttribute('aria-disabled');
+    send.classList.remove('blocked');
+    if (note.dataset.kind === 'held') clearNote();
+    onChange();
+  }
+  /** 保留の間に送信が押された。理由の一行へフォーカスを移して知らせる */
+  function point() {
+    if (note.dataset.kind !== 'held') return;
+    note.classList.remove('flash');
+    void note.offsetWidth;
+    note.classList.add('flash');
+    note.focus?.();
+  }
+
   return {
-    busy, idle, failed, queue, unqueue, cancel,
+    busy, idle, failed, queue, unqueue, cancel, hold, release, point,
+    /** 設定を保存できず送らせない間 */
+    get held() { return Boolean(held); },
     get mode() { return mode; },
     get queued() { return Boolean(queued); },
     /** 送信を押せない（書けない待ち・読み込みの失敗） */
