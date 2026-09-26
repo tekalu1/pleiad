@@ -135,6 +135,10 @@ const cases = [
   // model/list のページ送り・覚える長さ・ログイン / ログアウトで捨てる・タイトル生成のモデル選び
   await import("./unit/codex-models.mjs"),
   await import("./unit/codex-child-routing.mjs"),
+  // Codex の実行前の拒否: rollout の解析（code mode・直接・wait・プロセス作成の失敗・引用の除外）・読む範囲・伏せ方・Codex の子への指示
+  await import("./unit/codex-rejections.mjs"),
+  // 同じくサーバー全体: 会話にツールのエラーとして出す・委譲の rejections・完了通知・ply_task_send の次の回（Codex は身代わり）
+  await import("./unit/server-codex-rejections.mjs"),
   // fake バックエンドでサーバを立てる。LLM は呼ばないので、ここに入れてよい
   await import("./unit/server-fake.mjs"),
   // 中断の順序（実際の中断が先、Pleiad タスクの後始末は後）と「中断している」の知らせ。fake バックエンドだけ

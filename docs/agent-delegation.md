@@ -10,11 +10,11 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 | ツール | 引数 | 動作 |
 |---|---|---|
 | `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort` | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ |
-| `ply_task_status` | `taskId`, 任意の `offset` | 状態と結果。結果は16,000文字ずつ返し、`nextOffset` で続きへ進む |
+| `ply_task_status` | `taskId`, 任意の `offset` | 状態と結果。結果は16,000文字ずつ返し、`nextOffset` で続きへ進む。子で実行前に拒否されたコマンドは `rejections`（下の「実行前に拒否されたコマンド」） |
 | `ply_task_wait` | `taskId`, 任意の `seconds`（1〜30、既定30） | 上限まで待つ。承認待ちになったらすぐ戻る。未完了なら現在の状態を返す |
 | `ply_task_send` | `taskId`, `message` | 同じ子会話に追加指示。実行中なら順番に待ち、完了後なら再開する |
 | `ply_task_cancel` | `taskId` | タスクと、その配下の Pleiad タスクを停止する |
-| `ply_task_list` | なし | 呼び出し元が作成した Pleiad タスクだけを列挙する |
+| `ply_task_list` | なし | 呼び出し元が作成した Pleiad タスクだけを列挙する。結果の本文は載せず、拒否は件数（`rejectionCount`）だけ |
 | `ply_usage` | 任意の `backend` | 各バックエンドの使用枠（枠ごとの `usedPercent`・`resetsAt`、`plan`、`checkedAt`、`message`）。省略時は使用枠を読めるバックエンドすべて |
 
 `ply_usage` は重い委譲・並列委譲の前に、使用率の高いバックエンドを避けるために呼ぶ。読むだけなので、読み取り・計画モードの会話からも呼べる（`ply_delegate` / `ply_task_send` だけが `DELEGATING_TOOLS` として制限される）。
@@ -22,7 +22,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 ローカルの使用実績（トークン数・参考費用）は返さない。Claude でアカウントを登録していれば `accounts` にアカウントごとの枠を並べ、表示名にメールアドレスが含まれる場合はローカル部を1文字残して伏せる。アカウント ID・資格情報は返さない。
 不明な `backend` はエラー。1つのバックエンドの取得失敗はそのバックエンドの `message` に入れ、他は返す。
 
-**委譲の指示**: 委譲の使い方は、利用者の指示ファイルではなく Pleiad の指示の既定の項目として Pleiad が入れる（[ADR 0023](adr/0023-pleiad-added-delegation-instructions.md) を [ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md) で置き換え）。`ply_agents` の instructions の後ろに毎ターン足す。依頼元の会話には「委譲の進め方」（委譲を基本にする・この会話でやること。編集できる）と「委譲の振り分けの使い方」（`kind` を付けて `backend` を書かない。委譲と連動で編集できず、振り分けが無効なら入れない）、委譲された子の会話には「委譲した会話では任せない」（さらに委譲しない。編集できる）。項目・スイッチ・記録は context-runtime.md「Pleiad の指示」。
+**委譲の指示**: 委譲の使い方は、利用者の指示ファイルではなく Pleiad の指示の既定の項目として Pleiad が入れる（[ADR 0023](adr/0023-pleiad-added-delegation-instructions.md) を [ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md) で置き換え）。`ply_agents` の instructions の後ろに毎ターン足す。依頼元の会話には「委譲の進め方」（委譲を基本にする・この会話でやること。編集できる）と「委譲の振り分けの使い方」（`kind` を付けて `backend` を書かない。委譲と連動で編集できず、振り分けが無効なら入れない）、委譲された子の会話には「委譲した会話では任せない」（さらに委譲しない。編集できる）、Codex の子にだけ「Codex の実行前の拒否」（承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。編集・切り替えできる）。項目・スイッチ・記録は context-runtime.md「Pleiad の指示」。
 
 タスク ID は `ply-task-<UUID>`。Claude / Codex のネイティブサブエージェントとは別に管理する。
 `ply_agents` は専用の接続で注入するため、外部 MCP 中継のハッシュ化されたツール名にならない。
@@ -189,9 +189,43 @@ Pleiad は結果を保存し、親が空いたときに専用の完了通知で�
 `deliver` が `requeue` を返したら（受け取る直前に親が動き出した）、メモリだけ `pending` に戻し、ファイルは `delivering` のまま書かない。
 次に送るとき、ファイルがすでに `delivering` なら書き直さない。以前は親が忙しい間、500ms ごとにファイル全体を 2 回ずつ書き直していた（2026-09-27）。
 
+子で実行前に拒否されたコマンドがあれば、通知の本文の最後（「元の依頼に必要な作業を続けてください。」の前）に 1 段落足す（`agent:delegation.noticeRejections`）。
+件数と、先頭 3 件の `command`（伏せて切ったもの）と `reason` だけを並べ、全件は `ply_task_status` の `rejections` で読むよう案内する。拒否が無ければ何も足さない。
+
+## 実行前に拒否されたコマンド
+
+Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の安全判定で一部のコマンドをプロセスを作る前に拒否する（`blocked by policy` など。削除に限らず `Stop-Process`・`Start-Process` なども）。
+この拒否はアイテムにならず、通知にも `thread/read` にも出ないので、Pleiad は Codex の rollout から拾う（docs/multi-backend.md「Codex の実行前の拒否」、[ADR 0027](adr/0027-read-codex-rollout-for-rejections.md)）。
+委譲の子で拾ったものは、`execute` がターンの `tool.result` の `rejection` から集め、タスクの行の `rejections` に保存する。
+
+```json
+"rejections": [
+  {
+    "tool": "exec_command",
+    "via": "code_mode",
+    "command": "Remove-Item -LiteralPath 'C:\\work\\tmp\\cache.bin' -Force",
+    "shell": "powershell.exe",
+    "kind": "policy",
+    "reason": "blocked by policy",
+    "raw": "exec_command failed: CreateProcess { message: \"Rejected(…)\" }",
+    "approvalRequested": false,
+    "callId": "call_…",
+    "turnId": "01a0…"
+  }
+]
+```
+
+- `via`: `code_mode`（custom tool の `exec` の中の `tools.exec_command`、またはその続きを待つ `wait`）/ `direct`（`exec_command` を直接）。
+- `kind`: `policy`（ポリシーの拒否。`reason` は Codex の理由）/ `spawn`（プロセス作成の失敗。同じ形に包まれて来る）/ `other`。`command` は描かれたコマンドを `[shell, -Command, script]` に戻せれば script、戻せなければ描かれた文字列。分からなければ `null`。
+- `approvalRequested`: 同じターンで同じ call id の承認を求められたか。`never` の拒否は承認を経ないので、今は `false` になる。
+- 依頼元は別のエージェント・別の提供元のモデルのこともあるので、`command`・`reason`・`raw` は形で秘密を伏せてから 300 字で切る（`core/redact.mjs`。URL の userinfo とクエリの値、`Bearer …`、`sk-…`、`ghp_…`・`github_pat_…` などの既知のトークン、`password=` などの名前付きの値）。形を知らない秘密は残りうる。子の会話の画面は今までどおり伏せない。
+- 1 タスク 50 件まで（超えた分は `rejectionsDropped` に数だけ）。
+- 前の完了通知の後に走った回の分を足していく。`ply_task_send` を受けたとき、前の回の分をすでに依頼元へ渡していれば（通知が `delivering` / `sent` / `unknown` / `suppressed`）、次の回の分で置き換える。まだ渡していなければ（走っている・通知の前）足す。
+- 拾えないもの: code mode のスクリプトが例外を握りつぶしたとき（形が崩れる）、1 つのセルで複数拒否されたときの 2 件目以降（最初の例外で止まる）、rollout を読めないとき（読めなければ黙って空）。
+
 ## 保存・画面・再起動
 
-`AGENT_HOST_DATA/agent-tasks.json` にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）を保存する。
+`AGENT_HOST_DATA/agent-tasks.json` にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）、実行前に拒否されたコマンド（`rejections`。伏せて切ったもの）を保存する。
 会話メタデータの `delegation` に親とタスク ID を、`routing` にどう選ばれたかを記録する。会話の分岐を表す `parent` とは別にする。
 入力欄の上の「バックグラウンド N」（全件終了後は「バックグラウンド · 完了 M」。design-system.md「バックグラウンド」）で子の会話を読む・停止する・承認に答える。「会話として開く」で子の会話そのものへ移り、子からはヘッダーの「依頼元の会話」で戻れる。完了後も札と、依頼元の会話の `ply_delegate` のカードの「開く」から確認できる。
 
@@ -220,6 +254,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 
 `npm test` でタスクの管理と SDK MCP クライアント接続、fake を使ったサーバー全体の委譲・継続・停止と、承認の中継・`waiting` を検証する。
 保存障害は `tests/unit/agent-tasks-storage.mjs`（rename に EPERM を差し込む。回復・閉じない・障害中の読み取りと断り・requeue を書かない・再起動後の送り直し）。
+実行前の拒否は `tests/unit/codex-rejections.mjs`（rollout の解析・読む範囲・伏せ方）と `tests/unit/server-codex-rejections.mjs`（身代わりの Codex が rollout に拒否を書き、会話・`ply_task_status`・完了通知・`ply_task_send` の次の回まで）。
 振り分けは `tests/unit/delegation-routing.mjs`（規則・段・使用量・アカウント。判定器は偽の fetch）と `tests/unit/server-delegation-routing.mjs`（偽の Jev と偽の agy でサーバー全体。別の候補でやり直す・承認モードの確かめ・動いている元のタスク・完了通知の一行も）、画面の文と並びは `tests/unit/delegation-routing-view.mjs`。テストのサーバーは使用量を定期的に取らず（`AGENT_HOST_ROUTING_USAGE=off`）、判定器の送り先を手元に向ける（`AGENT_HOST_OPENROUTER_API` / `AGENT_HOST_CEREBRAS_API`。本物へは送らない）。
 `npm run test:e2e -- agent-delegation` は実サービスを呼び、Claude → Codex、Codex → Claude と結果通知による再開を確認する。
 単独確認には `E2E_DELEGATION_PARENT=codex` などを使える。
