@@ -3,7 +3,7 @@
 // Codex 0.156.1 は承認なしのモード（approvalPolicy never）でも、組み込みの危険コマンドの判定で一部のコマンドを
 // プロセスを作る前に `blocked by policy` などで拒否する。拒否はアイテム（item/*）にならず、thread/read にも残らない。
 // 残るのは rollout の response_item（ツールの出力）だけなので、ターンの後にこのターンの分を読んで拾う
-// （docs/multi-backend.md「Codex の実行前の拒否」、ADR 0027）。
+// （docs/multi-backend.md「Codex の実行前の拒否」、ADR 0028）。
 //
 // 拾うのは出力の先頭（exec_command を直接呼んだとき）か `Script error:\n` の直後（code mode の exec・wait）にある
 // `exec_command failed: CreateProcess { message: "…" }` だけ。出力の途中に引用されただけの同じ文（issue の本文を読んだ結果など）は拾わない。
