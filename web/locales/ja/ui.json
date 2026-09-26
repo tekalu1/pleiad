@@ -1584,6 +1584,14 @@
     "undo": "元に戻す",
     "undoClose": "閉じる",
     "undoCloseLabel": "この知らせを閉じる",
+    "list": "会話",
+    "menuKey": "{{label}}（Shift+F10）",
+    "keyHint": {
+      "move": "移動",
+      "open": "開く",
+      "menu": "メニュー",
+      "sidebar": "サイドバー"
+    },
     "group": {
       "pickIcon": "アイコンを選ぶ",
       "newSession": "この状態で新しいセッション"

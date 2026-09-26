@@ -1636,6 +1636,14 @@
     "undo": "Undo",
     "undoClose": "Close",
     "undoCloseLabel": "Close this notice",
+    "list": "Conversations",
+    "menuKey": "{{label}} (Shift+F10)",
+    "keyHint": {
+      "move": "Move",
+      "open": "Open",
+      "menu": "Menu",
+      "sidebar": "Sidebar"
+    },
     "group": {
       "pickIcon": "Choose icon",
       "newSession": "New session with this status"
