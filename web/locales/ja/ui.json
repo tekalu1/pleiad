@@ -1905,7 +1905,8 @@
       "skippedWindow": "{{name}} は{{window}} {{percent}}% で飛ばした",
       "skippedPace": "{{name}} は{{window}}のペースが {{pace}} 倍で飛ばした",
       "skippedReason": "{{name}} は{{reason}}ため飛ばした",
-      "join": " · "
+      "join": " · ",
+      "pinned": "{{kind}} → {{target}}"
     },
     "detail": {
       "label": "振り分けの内訳",
@@ -1926,7 +1927,12 @@
       "pace": "ペース {{pace}} 倍",
       "loginAccount": "ログイン中のアカウント",
       "account": "アカウント: {{name}}",
-      "retried": "やり直し"
+      "retried": "やり直し",
+      "target": "委譲先",
+      "targetPinned": "{{target}}（依頼元が指定）",
+      "mode": "承認モード",
+      "cwd": "作業場所",
+      "json": "入力・出力（JSON）"
     },
     "retry": {
       "open": "別の候補でやり直す",

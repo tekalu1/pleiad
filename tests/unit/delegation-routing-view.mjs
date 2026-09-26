@@ -1,6 +1,6 @@
 // 委譲カードの振り分けの理由と設定 › 委譲の組み立て（web/delegation-routing-view.mjs・web/delegation-settings.mjs）。DOM の大半は触らず、文と並びだけ見る
 import assert from 'node:assert/strict';
-import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackText, retryCandidates, usageSummary, isAutoRouting, fallbackName, routingDetail } from '../../web/delegation-routing-view.mjs';
+import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackText, retryCandidates, usageSummary, isAutoRouting, fallbackName, routingDetail, pinnedDetail } from '../../web/delegation-routing-view.mjs';
 import { diffFromDefaults, setupDelegationSettings } from '../../web/delegation-settings.mjs';
 import { el } from '../../web/dom.mjs';
 import { N } from '../lib/dom-stub.mjs';
@@ -57,6 +57,17 @@ export default async function (t) {
   assert.ok(listed.length === 2 && listed[1].className.includes('used') && !listed[0].className.includes('used'), '飛ばした候補と使った候補を順に');
   assert.equal(detail.querySelector('.rt-retry-open'), null, 'onRetry が無ければやり直しの口を出さない');
   t.ok('内訳は試した候補を順に並べ、使ったものに印', true);
+
+  // 依頼元が委譲先を書いた（固定の）委譲: 自動と同じ「委譲」の形で、1 行は「種類 → 委譲先」。内訳は種類・委譲先・承認モード・作業場所だけ
+  const pinned = { mode: 'pinned', kind: 'implement', difficulty: null, tier: null, target: { backend: 'codex', model: null }, skipped: [] };
+  assert.equal(routingLine(pinned, names), '実装 → Codex');
+  assert.equal(routingLine({ ...pinned, target: { backend: 'codex', model: 'gpt-6-sol' } }, names), '実装 → Codex gpt-6-sol');
+  const facts = pinnedDetail(pinned, { names, mode: '都度確認', cwd: String.raw`D:\dev\pleiad` });
+  const factText = facts.textContent;
+  assert.ok(factText.includes('Codex（依頼元が指定）') && factText.includes('都度確認') && factText.includes('pleiad'), factText);
+  assert.equal(facts.querySelectorAll('.rt-cand').length, 0, '候補は出さない');
+  assert.equal(facts.querySelector('.rt-retry-open'), null, 'やり直しは出さない');
+  t.ok('固定の委譲の 1 行と内訳（判定・候補・やり直しは出さない）', true);
 
   const defaults = { judgeByKind: { trivial: 'jev', visual: 'none' }, tiers: { t1: ['a:b'], t2: ['c:d'] }, avoidPercent: 80 };
   assert.deepEqual(diffFromDefaults({ trivial: 'cerebras', visual: 'none' }, defaults.judgeByKind), { trivial: 'cerebras' });

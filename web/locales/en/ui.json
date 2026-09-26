@@ -1968,7 +1968,8 @@
       "skippedWindow": "skipped {{name}} ({{window}} {{percent}}%)",
       "skippedPace": "skipped {{name}} ({{window}} pace {{pace}}×)",
       "skippedReason": "skipped {{name}} ({{reason}})",
-      "join": " · "
+      "join": " · ",
+      "pinned": "{{kind}} → {{target}}"
     },
     "detail": {
       "label": "Routing details",
@@ -1989,7 +1990,12 @@
       "pace": "pace {{pace}}×",
       "loginAccount": "Signed-in account",
       "account": "Account: {{name}}",
-      "retried": "Retried"
+      "retried": "Retried",
+      "target": "Delegated to",
+      "targetPinned": "{{target}} (chosen by the requester)",
+      "mode": "Approval mode",
+      "cwd": "Working directory",
+      "json": "Input and output (JSON)"
     },
     "retry": {
       "open": "Retry with another candidate",

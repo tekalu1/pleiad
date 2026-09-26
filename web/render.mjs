@@ -1075,7 +1075,8 @@ export function applyToolResult(node, result) {
   const code = el("div", "tc-output");
   code.innerHTML = codeBlock(body || t("timeline.result.empty"), "");
   output.append(code);
-  (node.querySelector(".tc-details-body") ?? node).append(output);
+  // 委譲のカードは入力・出力を「入力・出力（JSON）」の折りたたみに入れている（client.mjs の foldDelegateJson）
+  (node.querySelector(".tc-json-body") ?? node.querySelector(".tc-details-body") ?? node).append(output);
   for (const img of result?.images ?? []) {
     const src = presentImg(img.url ?? img.dataUri ?? "");
     if (!src) continue;

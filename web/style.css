@@ -997,7 +997,13 @@ main.dropping #log{background:var(--surface-1)}
    1 行の理由は見出しの残りの幅に入れ、入らなければ … で切る（全文は title と開いた内訳に） */
 .tc-auto,.bg-auto{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
 .bg-row-meta>.bg-auto{flex:none;overflow:visible}
-.tc-route{flex:1 1 12em;min-width:0;color:var(--ink);font-size:var(--fs-s);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-route{flex:1 1 12em;min-width:0;display:flex;align-items:center;gap:5px;color:var(--ink);font-size:var(--fs-s)}
+.tc-route-text{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 開いた委譲カードの先頭の「依頼」（4 行で切る。バックグラウンドの詳細と同じ）と、奥に畳んだ入力・出力の JSON */
+.rt-request{margin:4px 0 10px;font-size:var(--fs-s);color:var(--ink)}
+.rt-request-label{font-size:var(--fs-xs);color:var(--ink-weak)}
+.rt-request-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.rt-request:not(.expanded)>.rt-request-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
 .rt-detail{margin:4px 0 10px;color:var(--ink);font-size:var(--fs-s)}
 .rt-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px 16px;margin:0 0 10px}
 .rt-facts>div{min-width:0}
