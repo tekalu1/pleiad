@@ -1207,7 +1207,7 @@
       "removeNamed": "Remove {{name}}",
       "removeNamedIn": "Remove {{name}} ({{folder}})",
       "deviceFolder": "this device",
-      "already": "Already attached"
+      "already": "This file is already attached"
     },
     "fork": {
       "noId": "The new branch's id wasn't returned",
