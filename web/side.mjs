@@ -943,7 +943,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     /** この画面で作った、まだ誰も付いていない状態を一覧に出す */
     keep(status) { if (status) made.add(status); },
     get filter() { return { ...filter }; },
-    setConnLost(lost) { $("connLost").hidden = !lost; },
     /**
      * 直前の操作を取り消す一行。状態が黙って動く操作（グループの出入り・移動）でだけ出す。
      * 押すか、閉じるか、次の操作か、しばらく経つと消える

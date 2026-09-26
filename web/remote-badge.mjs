@@ -18,9 +18,12 @@ export function remoteInfo(remote) {
   return { hostId: remote.hostId, host: text(remote.hostName) || remote.hostId.slice(0, 8), relay: text(remote.relay), device: text(remote.device), shell: text(remote.shell) || 'desktop' };
 }
 
-/** バッジと面に出すもの。status は plyRemote.status() / onStatus の値（無ければ接続中とみなす） */
+/**
+ * バッジと面に出すもの。status は plyRemote.status() / onStatus の値。
+ * まだ受け取っていない（無い）間は「接続しています…」を添える（つながる前から平常の形に見せない）。知らない状態はつながっているとみなす
+ */
 export function badgeView(info, status) {
-  const state = STATES.has(status?.state) ? status.state : 'connected';
+  const state = status == null ? 'connecting' : STATES.has(status.state) ? status.state : 'connected';
   return {
     host: info.host,
     label: t('remote.badgeLabel'),
