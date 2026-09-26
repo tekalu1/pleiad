@@ -107,8 +107,13 @@
 | Pleiad がそろえる / エージェントに任せる | Managed by Pleiad / Leave to the agent |
 | エージェント任せ | Left to the agent |
 | 指示 / 指示ファイル | Instructions / Instruction files |
-| すべての場所（既定） / 設定する範囲 | All locations (default) / Scope |
-| この場所だけ変更中 | Changed for this location only |
+| 全体の設定 / すべての場所に共通 | Global settings / Shared by all locations |
+| この場所だけ変える / このフォルダーだけの設定 | Change for this location only / Settings for this folder only |
+| Pleiad の指示 / ファイルの指示 | Pleiad's instructions / Instructions from files |
+| 既定 / 既定から変更 / 委譲と連動（Pleiad の指示の札） | Default / Changed from default / Linked to delegation |
+| 入れる会話（すべて / 依頼元だけ / 委譲された会話だけ） | Add to (All / Requesting conversations only / Delegated conversations only) |
+| ユーザー / 作業場所（コンテキストの段） | User / Working directory |
+| 探す場所を足す / 追加した場所 | Add a location to search / Added location |
 | 手元で動かす / URL につなぐ | Run locally / Connect to URL |
 | 伏せ字（で表示） | masked |
 | 鍵の保管庫 / OS の資格情報 | keychain / OS credential store |

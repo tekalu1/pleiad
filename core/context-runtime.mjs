@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { FRONTMATTER, scanContext } from './context-scan.mjs';
-import { DEFAULT_OWNERS, KINDS, containsPath, legacyPlan, matchesGlobs, pathKey } from './context-settings.mjs';
+import { DEFAULT_OWNERS, KINDS, containsPath, legacyPlan, matchesGlobs, normalizePlan, pathKey } from './context-settings.mjs';
 import { t, agentT } from './i18n.mjs';
 
 export const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
@@ -65,17 +65,16 @@ export function followSettings(previous, settings, { keepNative = false } = {}) 
   // 作業場所が変わったときは、場所ごとの設定の違いを設定の変更とは数えない（探し直しの結果は pin の突き合わせで知らせる）
   if (pathKey(previous.cwd ?? '') !== pathKey(policy.cwd ?? '')) return { policy, changed: [] };
   const before = runtimeSettings(previous).plan, after = runtimeSettings(policy).plan;
+  // 追加で探すフォルダーは種類ごと。Pleiad が探している種類でだけ数える
   const changed = KINDS.filter(k => (previous.owners?.[k] ?? 'native') !== policy.owners[k]
     || !isDeepStrictEqual(before.user.kinds[k], after.user.kinds[k]) || !isDeepStrictEqual(before.directory.kinds[k], after.directory.kinds[k])
-    || (k === 'mcp' && policy.owners.mcp === 'ply' && !isDeepStrictEqual(before.mcp, after.mcp)));
-  // 追加で探すフォルダーは種類を問わない。Pleiad が探している種類すべてに効く
-  if (!changed.length && (!isDeepStrictEqual(before.user.roots, after.user.roots) || !isDeepStrictEqual(before.directory.roots, after.directory.roots)))
-    changed.push(...KINDS.filter(k => policy.owners[k] === 'ply'));
+    || (k === 'mcp' && policy.owners.mcp === 'ply' && !isDeepStrictEqual(before.mcp, after.mcp))
+    || (policy.owners[k] === 'ply' && (!isDeepStrictEqual(before.user.roots[k], after.user.roots[k]) || !isDeepStrictEqual(before.directory.roots[k], after.directory.roots[k]))));
   return { policy, changed };
 }
 /** 会話の方針から探索設定を作る。Pleiad が担当する種類だけを探す（担当がエージェントの種類は探さない） */
 export function runtimeSettings(policy) {
-  const plan = structuredClone(policy.plan ?? legacyPlan(policy.user, policy.directory));
+  const plan = normalizePlan(structuredClone(policy.plan ?? legacyPlan(policy.user, policy.directory)));
   for (const scope of ['user', 'directory']) for (const k of KINDS) if (policy.owners?.[k] !== 'ply') plan[scope].kinds[k] = null;
   return { cwd: policy.cwd, plan };
 }
@@ -152,8 +151,9 @@ export async function resolveRuntime(policy, options = {}) {
   // 渡す本文。@参照の行（参照先は探索で別の行になっている）と、rules の frontmatter（paths は範囲として別に示す）を除く
   const body = item => (item.rule ? item.content.replace(FRONTMATTER, '') : item.content).split(/\r?\n/).filter(l => !/^\s*@(?:"[^"]+"|\S+)\s*$/.test(l)).join('\n');
   for (const item of scan.entries) {
-    const row = { id: item.id, kind: item.kind, name: item.name, path: item.path, appliesTo: item.appliesTo, status: item.status, hash: item.hash, origins: item.origins,
-      ...(item.paths ? { paths: item.paths } : {}),
+    // scope と root は会話の右パネルが出どころ（ユーザー／この場所と親フォルダー／追加した場所）で分けるのに使う
+    const row = { id: item.id, kind: item.kind, name: item.name, path: item.path, scope: item.scope, appliesTo: item.appliesTo, status: item.status, hash: item.hash, origins: item.origins,
+      ...(item.root ? { root: item.root } : {}), ...(item.paths ? { paths: item.paths } : {}),
       ...(item.kind === 'mcp' && item.auth ? { auth: item.auth } : {}), ...(item.shadowedBy ? { shadowedBy: item.shadowedBy } : {}) };
     report.entries.push(row);
     // paths 付きの rules は開始時に渡さない。instructions_for_path が当たるファイルのときだけ返す（行は conditional のまま）

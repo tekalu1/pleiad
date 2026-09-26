@@ -14,7 +14,7 @@ export const NO_CAPABILITIES = {
   liveModel: false,
   liveMode: false,
   hostTools: false,
-  // ply_agents（委譲の橋）を受け取れるか。受け取れる会話にだけ Pleiad が委譲の指示を入れる（core/added-context.mjs）
+  // ply_agents（委譲の橋）を受け取れるか。受け取れる会話にだけ Pleiad の指示を入れる（core/ply-instructions.mjs）
   plyAgents: false,
   alwaysAllow: false,
   login: false,

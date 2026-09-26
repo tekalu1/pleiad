@@ -544,7 +544,7 @@
     "chip": {
       "mcpBad": "MCP {{n}} ({{bad}} not connecting)",
       "native": "{{kinds}} left to the agent",
-      "added": "Added by Pleiad {{n}}",
+      "added": "Pleiad's instructions {{n}}",
       "join": ", "
     },
     "title": "Context for this conversation",
@@ -567,28 +567,27 @@
       "hint": "Check the status below and the errors in the conversation."
     },
     "foot": {
-      "lead": "To change this (applies from the next turn): ",
+      "lead": "Settings for all locations: ",
       "link": "Open context settings →"
     },
     "instruction": {
-      "who": "Provided by Pleiad",
       "native": "{{agent}} reads them by its own rules (Pleiad can't see the contents).",
       "loaded": "{{path}} · loaded midway",
       "none": "No instruction files were provided",
       "notGiven_one": "{{count}} not provided",
-      "notGiven_other": "{{count}} not provided"
+      "notGiven_other": "{{count}} not provided",
+      "who_one": "{{count}} provided by Pleiad",
+      "who_other": "{{count}} provided by Pleiad"
     },
     "skill": {
       "who_one": "{{count}} offered by Pleiad",
       "who_other": "{{count}} offered by Pleiad",
       "native": "{{agent}} reads its own skills folder (Pleiad can't see the contents).",
-      "used": "Used",
-      "noneUsed": "None used yet",
-      "unused_one": "{{count}} not used",
-      "unused_other": "{{count}} not used",
       "manualOnly": "Only when named explicitly",
       "notOffered_one": "{{count}} not offered",
-      "notOffered_other": "{{count}} not offered"
+      "notOffered_other": "{{count}} not offered",
+      "usedMark": "used",
+      "noneOffered": "No skills offered"
     },
     "reason": {
       "conditional": "Only when working with files matching {{paths}}",
@@ -634,19 +633,23 @@
       "disabled": "{{path}} · disabled"
     },
     "added": {
-      "title": "Added by Pleiad",
-      "who": "Provided by Pleiad",
-      "none": "Not provided",
+      "title": "Pleiad's instructions",
+      "scope": "Shared by all locations",
+      "who_one": "{{count}} added",
+      "who_other": "{{count}} added",
+      "none": "Not added",
       "delegation": "Delegation instructions",
-      "show": "Text provided",
-      "variant": {
-        "parent": "For a requesting conversation",
-        "parentManual": "For a requesting conversation · automatic routing is off",
-        "child": "For a delegated conversation"
-      },
+      "show": "Text passed ({{tokens}} tokens)",
+      "inserted": "Added",
+      "linked": " · linked to delegation",
+      "settings": "Change in the global settings →",
       "reason": {
-        "off": "Turned off in settings",
-        "readOnly": "Not added in read-only or plan mode"
+        "off": "Turned off",
+        "readOnly": "Not added in read-only or plan mode",
+        "forChild": "Not added: for delegated conversations",
+        "forParent": "Not added: for requesting conversations",
+        "agent": "Not added for this agent",
+        "routingOff": "Not added: automatic delegation routing is off"
       }
     },
     "changed": {
@@ -680,6 +683,31 @@
       "done": "Signed in. Available from the next reply",
       "failed": "Couldn't sign in",
       "failedWith": "Couldn't sign in: {{error}}"
+    },
+    "group": {
+      "user": "User",
+      "dir": "This location and its parent folders",
+      "extra": "Added locations"
+    },
+    "place": {
+      "aria": "Working directory",
+      "default": "Follows the global settings",
+      "from": "Follows the settings of {{path}}",
+      "override_one": "Settings for this folder only · {{count}} item",
+      "override_other": "Settings for this folder only · {{count}} items",
+      "willOverride": " · Changes apply to this folder only",
+      "start": "Change for this location only",
+      "reset": "Reset to the global settings",
+      "done": "Done",
+      "scanFailed": "Couldn't search: {{error}}",
+      "ownerAria": "Who loads {{kind}} in this location",
+      "plyWho": "Managed by Pleiad",
+      "nativeNote": "{{agent}} reads them by its own rules",
+      "loading": "Loading…",
+      "offHere": "Turned off for this location",
+      "offGlobal": "Turned off in the global settings",
+      "none": "Nothing found",
+      "switchAria": "Use {{name}} in {{path}} for this location"
     }
   },
   "context": {
@@ -688,31 +716,27 @@
       "ply": "Managed by Pleiad"
     },
     "instruction": {
-      "title": "Instruction files",
       "agent": "Claude reads CLAUDE.md and Codex reads AGENTS.md by their own rules",
       "ply": "Give every agent the same files",
       "note": "Pleiad provides no instruction files. Which files are read depends on the agent.",
-      "list": "Provided in this location",
-      "listDefault": "Provided by default",
       "sourceCommon": "AGENTS.md (shared)",
       "sourceCodex": "Codex format",
-      "none": "No instruction files found in this location"
+      "title": "Instructions",
+      "files": "instruction files",
+      "fileTitle": "Instructions from files (CLAUDE.md, AGENTS.md)",
+      "none": "No instruction files found"
     },
     "skill": {
       "agent": "Each agent reads its own skills folder",
       "ply": "Provide the list and load the body only when needed",
       "note": "Pleiad provides nothing. Which skills are available depends on the agent.",
-      "list": "Offered in this location",
-      "listDefault": "Offered by default",
       "sourceCommon": ".agents/skills (shared)",
-      "none": "No skills found in this location"
+      "none": "No skills found"
     },
     "mcp": {
       "title": "External MCP",
       "agent": "Each agent connects according to its own MCP settings",
       "ply": "Connect the same MCP servers to every agent",
-      "list": "Connected in this location",
-      "listDefault": "Connected by default",
       "sourceClaude": "Claude settings",
       "sourceCodex": "Codex settings"
     },
@@ -720,7 +744,6 @@
     "copied": "Copied",
     "emptyFile": "(empty file)",
     "lead": "Choose what to provide to agents. Conversations already started pick up changes from their next turn.",
-    "scope": "Scope",
     "saved": "Saved · applies from the next turn",
     "saveFailed": "Couldn't save: {{error}}",
     "cancel": "Cancel",
@@ -728,39 +751,12 @@
     "folderPath": "Folder path",
     "chooseFolder": "Choose folder…",
     "place": {
-      "default": "Global settings",
-      "defaultSub": "Followed wherever a folder has no settings of its own",
-      "current": "Current conversation's location",
-      "overrides_one": "{{count}} item changed for this folder only",
-      "overrides_other": "{{count}} items changed for this folder only",
-      "allDefault": "All follow the global settings",
-      "remove": "Remove settings for this location",
-      "removeAria": "Remove settings for {{path}}",
-      "confirm": "Remove settings for this location?",
-      "confirmOverrides_one": "The {{count}} item changed for this folder only is removed, and this location follows the global settings. Conversations already started pick this up from their next turn.",
-      "confirmOverrides_other": "The {{count}} items changed for this folder only are removed, and this location follows the global settings. Conversations already started pick this up from their next turn.",
-      "confirmPlain": "It is removed from the list. This location follows the global settings.",
-      "removeButton": "Remove",
-      "removeFailed": "Couldn't remove: {{error}}",
-      "add": "Add location",
-      "addAria": "Path of the folder to add",
       "recent": "Recent conversation locations",
       "noMatch": "No matching locations",
       "noCandidates": "No suggestions",
       "pathRequired": "Enter a folder path."
     },
-    "inherit": {
-      "all": "Applies wherever a folder has no settings of its own",
-      "hereOverride": "This conversation's folder ({{path}}) uses its own settings for this · ",
-      "override": "Settings for this folder only · ",
-      "reset": "Use global settings",
-      "resetParent": "Use the parent folder's settings",
-      "from": "As set for {{path}}",
-      "default": "Same as global settings",
-      "willOverride": " · Changing it creates settings for this folder only"
-    },
     "ownerAria": "Who loads {{kind}}",
-    "configFiles": "Settings files to read",
     "formats": "Formats to search",
     "searching": "Searching",
     "searchingDots": "Searching…",
@@ -771,34 +767,72 @@
       "provideAria": "Provide {{name}}"
     },
     "showAll": "Show all ({{n}})",
-    "count_one": "{{count}} item",
-    "count_other": "{{count}} items",
     "antigravityNote": "In antigravity conversations, Pleiad manages this only when instruction files are also set to “Managed by Pleiad”. Instruction files are currently left to the agent, so in antigravity this kind is also left to the agent (if Pleiad provided it, agy would stop reading AGENTS.md and GEMINI.md in the workspace).",
     "roots": {
-      "summary": "Search more locations (optional)",
-      "descDefault": "For kinds managed by Pleiad, also search the following folders in every location.",
-      "descPlace": "For kinds managed by Pleiad, also search the following folders in addition to the Git root through this location.",
-      "remove": "Remove",
+      "add": "Add a location to search",
+      "addAria": "Path of the folder to search",
+      "remove": "Remove this location",
       "removeAria": "Remove {{path}} from the search locations",
-      "defaults": "Folders searched by the global settings: {{folders}}",
-      "join": ", ",
-      "addAria": "Additional folder to search",
-      "add": "Add folder"
-    },
-    "added": {
-      "title": "Instructions Pleiad adds",
-      "scope": "Shared by all places",
-      "badge": "Added by Pleiad",
-      "delegation": {
-        "name": "Delegation instructions",
-        "sub": "Added to Claude Code and Codex conversations, whoever handles instruction files",
-        "aria": "Add delegation instructions",
-        "parent": "Requesting conversation",
-        "child": "Delegated conversation"
-      }
+      "extra": "Added location",
+      "nothing": "Added location · nothing found"
     },
     "scanFailed": "Couldn't search: {{error}}",
-    "loadFailed": "Couldn't load the context settings: {{error}}"
+    "loadFailed": "Couldn't load the context settings: {{error}}",
+    "tier": {
+      "user": "User",
+      "place": "Working directory",
+      "placeSub": "From the Git root to the working folder",
+      "formatsAria": "Formats to search in {{tier}}",
+      "listAria": "{{kind}} found for the user"
+    },
+    "ply": {
+      "title": "Pleiad's instructions",
+      "scope": "Shared by all locations · {{tokens}} tokens",
+      "scopePlain": "Shared by all locations",
+      "unavailable": "Couldn't read Pleiad's instructions",
+      "add": "Add instruction",
+      "heavy": "These are added every turn, so long ones use more of your quota.",
+      "badge": {
+        "default": "Default",
+        "modified": "Changed from default",
+        "linked": "Linked to delegation"
+      },
+      "target": {
+        "all": "All conversations",
+        "parent": "Requesting conversations",
+        "child": "Delegated conversations"
+      },
+      "targetOpt": {
+        "all": "All",
+        "parent": "Requesting conversations only",
+        "child": "Delegated conversations only"
+      },
+      "onlyAgent": "{{agent}} only",
+      "agentJoin": ", ",
+      "routingOff": "Not added because automatic delegation routing is off",
+      "gripAria": "Order of “{{name}}” (move with ↑↓)",
+      "gripTitle": "Drag or use ↑↓ to reorder",
+      "switchAria": "Add “{{name}}”",
+      "edit": "Edit",
+      "delete": "Delete",
+      "deleteConfirm": "Press again to delete",
+      "reset": "Reset to default",
+      "gotoDelegation": "Change in Settings › Delegation →",
+      "sheet": {
+        "addTitle": "Add instruction",
+        "editTitle": "Edit instruction",
+        "name": "Name",
+        "namePlaceholder": "Name shown in the list",
+        "body": "Text (Markdown)",
+        "tokens": "{{tokens}} tokens",
+        "target": "Add to",
+        "agents": "Agents",
+        "agyWhy": "Antigravity can't be selected because there is no way to pass per-conversation instructions to it.",
+        "save": "Save",
+        "nameRequired": "Enter a name.",
+        "bodyRequired": "Enter the text."
+      }
+    }
   },
   "mcp": {
     "state": {
@@ -822,8 +856,6 @@
       "disabled": "Disabled",
       "foot": "Available MCP servers change when you switch agents. To keep them the same, choose “Managed by Pleiad”."
     },
-    "list": "Connected in this location",
-    "listDefault": "Connected by default",
     "login": "Sign in",
     "loginAgain": "Sign in again",
     "logout": "Sign out",
@@ -832,19 +864,12 @@
     "switchAria": "Connect {{name}}",
     "nativeOffTitle": "Disabled in the original settings (Pleiad doesn't change this)",
     "empty": "No MCP servers to connect yet. Register one with “＋ Add MCP” or choose settings files to read.",
-    "count_one": "{{count}} item",
-    "count_other": "{{count}} items",
     "add": "Add MCP",
-    "rowHint": "Click a row to view or edit it (keys and tokens are masked)",
     "storage": {
       "noEncryption": "encryption unavailable in this session",
       "plainList": "The keychain isn't available in this session, so tokens and keys are saved in plain text readable only by the owner ({{reason}}). Reopening in Pleiad Desktop encrypts them again.",
       "sheetPlain": "Saved as a Pleiad setting and connected to every agent. The Claude and Codex settings files are not changed. The keychain isn't available in this session, so tokens and keys are saved in plain text readable only by the owner ({{reason}}).",
       "sheetEncrypted": "Saved as a Pleiad setting and connected to every agent. The Claude and Codex settings files are not changed. Tokens and keys are encrypted in the OS keychain (Windows Credential Manager, macOS Keychain, or Linux Secret Service)."
-    },
-    "files": {
-      "summary": "Settings files to read",
-      "desc": "MCP servers registered in the Claude and Codex settings you choose here also appear in the list. For the same name, the one registered in Pleiad takes precedence."
     },
     "describe": {
       "needsScope": "Additional permissions required",
@@ -946,9 +971,6 @@
       "headerName": "Header name",
       "addHeader": "Header",
       "noneNote": "For MCP servers that don't need authentication",
-      "scope": "Scope",
-      "here": "This location only",
-      "all": "All locations",
       "json": "Edit as JSON (advanced)",
       "jsonAria": "MCP definition (JSON)",
       "jsonNote": "Secret values left masked (••••) keep their previous values",

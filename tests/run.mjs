@@ -29,7 +29,7 @@ const cases = [
   await import('./unit/server-delegation-routing.mjs'),
   // 同じく画面: 委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分（web/delegation-routing-view.mjs）
   await import('./unit/delegation-routing-view.mjs'),
-  // Pleiad が入れる委譲の指示: 担当によらず届く・依頼元と子で違う・切り替えと振り分けの有無・Codex のロード済みスレッド
+  // Pleiad の指示: 担当によらず届く・依頼元と子で違う・足した指示・既定の編集・前の版のスイッチ・Codex のロード済みスレッド
   await import('./unit/server-added-context.mjs'),
   await import('./unit/usage.mjs'),
   await import('./unit/antigravity-usage.mjs'),
@@ -65,6 +65,8 @@ const cases = [
   await import('./unit/context-scan.mjs'),
   // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）
   await import('./unit/context-settings.mjs'),
+  // 探す場所を足す（追加ルート）: 種類ごと・探す形式に従う・形式 2 からの移行
+  await import('./unit/context-roots.mjs'),
   await import('./unit/server-context.mjs'),
   await import('./unit/context-ui.mjs'),
   await import('./unit/slash-skills.mjs'),

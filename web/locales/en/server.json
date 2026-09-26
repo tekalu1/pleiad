@@ -909,7 +909,10 @@
       "stopChoice": "The original task is still running. Choose whether to stop it."
     }
   },
-  "addedContext": {
-    "invalid": "delegation must be true or false."
+  "plyInstructions": {
+    "invalid": "Couldn't read the change to Pleiad's instructions.",
+    "notFound": "That instruction does not exist.",
+    "builtinDelete": "Default instructions can't be deleted. Turn them off with the switch.",
+    "tooMany": "You can have up to {{count}} instructions."
   }
 }

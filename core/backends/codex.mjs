@@ -509,7 +509,7 @@ nativeRpc.onNotify(observeSubagents);
 // 接続先が変わったスレッドは thread/unsubscribe してから resume すると新しい接続先が効くので、その判断に使う。
 // app-server が落ちたら全部アンロードされるので捨てる
 const loadedProvider = new Map();
-// 同じく、ロード済みのスレッドに渡した developerInstructions。Pleiad が入れる指示（委譲の指示。core/added-context.mjs）は
+// 同じく、ロード済みのスレッドに渡した developerInstructions。Pleiad の指示（core/ply-instructions.mjs）は
 // 設定・承認モードでターンごとに変わるので、前と違えば接続先と同じく外してから読み直す（始まっている会話にも次のターンから効かせる）
 const loadedInstructions = new Map();
 nativeRpc.onDown(() => { loadedProvider.clear(); loadedInstructions.clear(); });

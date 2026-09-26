@@ -78,7 +78,7 @@ export default async function (t) {
 
     const settings = createContextSettings(dataDir, home);
     const migrated = await settings.get(ab);
-    t.ok('読み込むと形式 2 に置き換わる', JSON.parse(await fs.readFile(file, 'utf8')).version === 2 && migrated.owners.skill === 'ply');
+    t.ok('読み込むと形式 3 に置き換わる', JSON.parse(await fs.readFile(file, 'utf8')).version === 3 && migrated.owners.skill === 'ply');
     t.ok('移行の前にバックアップを取る（元のバイト列のまま）', (await fs.readFile(path.join(dataDir, 'context-scans.v1-backup.json'), 'utf8')) === original);
     let same = true;
     for (const dir of places) {
@@ -94,7 +94,7 @@ export default async function (t) {
     t.ok('対象から外していた種類は探さないまま（ユーザー側の Skills）', (await settings.get(other)).plan.user.kinds.skill === null);
     const view = await settings.view(ab);
     t.ok('受け継ぐ値と同じ上書きは残さない（画面の「個別に変更」が実際の違いだけ）', view.places.find(p => p.path === ab)?.overrides >= 1
-      && view.places.every(p => p.overrides <= 4));
+      && view.places.every(p => p.overrides <= 6));
 
     // 移行は 1 回だけ。2 回目の読み込みでバックアップを作り直さない
     await fs.writeFile(path.join(dataDir, 'context-scans.v1-backup.json'), 'KEEP');
@@ -138,9 +138,10 @@ export default async function (t) {
     here = await fresh.get(abc);
     t.ok('「既定に戻す」で上の設定に従う', here.owners.skill === 'ply' && here.kinds.skill.from === null);
     await fresh.set({ place: null, roots: ['~/extra-root'] });
-    await fresh.set({ place: a, roots: ['sub-root'] });
+    await fresh.set({ place: a, kind: 'skill', roots: ['sub-root'] });
     here = await fresh.get(abc);
-    t.ok('追加ルート: 既定は home 基準、場所は保存した場所基準で解決して継承', here.plan.user.roots[0] === path.join(home, 'extra-root') && here.plan.directory.roots[0] === path.join(a, 'sub-root'));
+    t.ok('追加ルート: 既定は home 基準、場所は保存した場所基準で解決して継承', KINDS.every(k => here.plan.user.roots[k][0] === path.join(home, 'extra-root')) && here.plan.directory.roots.skill[0] === path.join(a, 'sub-root'));
+    t.ok('追加ルートは種類ごと（kind を付けて足した場所はその種類にだけ効く）', here.plan.directory.roots.instruction.length === 0 && here.plan.directory.roots.mcp.length === 0 && here.roots.skill.from === pathKey(a));
     await fresh.set({ place: null, kind: 'mcp', value: { ...defaultKind(), owner: 'ply', disabled: ['b', 'a', 'a'], prefer: { dup: 'x/.mcp.json' } } });
     here = await fresh.get(abc);
     t.ok('外部 MCP の名前での除外と、同名の定義の選択を持てる', here.plan.mcp.disabled.join() === 'a,b' && here.plan.mcp.prefer.dup === path.join(home, 'x/.mcp.json'));
@@ -187,7 +188,7 @@ export default async function (t) {
     // 前の版が保存した「全体と同じ上書き」は、読み込んだときに一度だけ掃除する
     const dirty = await stored();
     dirty.places[pathKey(ab)] = { path: ab, kinds: { skill: structuredClone(dirty.defaults.kinds.skill), mcp: { ...defaultKind(), owner: 'ply' } } };
-    dirty.places[pathKey(x)] = { path: x, kinds: { instruction: structuredClone(dirty.defaults.kinds.instruction) }, roots: [] };
+    dirty.places[pathKey(x)] = { path: x, kinds: { instruction: structuredClone(dirty.defaults.kinds.instruction) }, roots: { skill: [] } };
     await fs.writeFile(pruneFile, JSON.stringify(dirty));
     const cleaned = (await prune.view(null), await stored());
     t.ok('読み込み時に、受け継ぐ値と同じ上書きを消す（上の場所と同じものも）', !Object.hasOwn(cleaned.places, pathKey(ab)) && !Object.hasOwn(cleaned.places, pathKey(x)), JSON.stringify(Object.keys(cleaned.places)));
