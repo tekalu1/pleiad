@@ -22,7 +22,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 ローカルの使用実績（トークン数・参考費用）は返さない。Claude でアカウントを登録していれば `accounts` にアカウントごとの枠を並べ、表示名にメールアドレスが含まれる場合はローカル部を1文字残して伏せる。アカウント ID・資格情報は返さない。
 不明な `backend` はエラー。1つのバックエンドの取得失敗はそのバックエンドの `message` に入れ、他は返す。
 
-**委譲の指示**: 委譲の使い方は、利用者の指示ファイルではなく Pleiad の指示の既定の項目として Pleiad が入れる（[ADR 0023](adr/0023-pleiad-added-delegation-instructions.md) を [ADR 0025](adr/0025-context-global-settings-and-ply-instructions.md) で置き換え）。`ply_agents` の instructions の後ろに毎ターン足す。依頼元の会話には「委譲の進め方」（委譲を基本にする・この会話でやること。編集できる）と「委譲の振り分けの使い方」（`kind` を付けて `backend` を書かない。委譲と連動で編集できず、振り分けが無効なら入れない）、委譲された子の会話には「委譲した会話では任せない」（さらに委譲しない。編集できる）。項目・スイッチ・記録は context-runtime.md「Pleiad の指示」。
+**委譲の指示**: 委譲の使い方は、利用者の指示ファイルではなく Pleiad の指示の既定の項目として Pleiad が入れる（[ADR 0023](adr/0023-pleiad-added-delegation-instructions.md) を [ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md) で置き換え）。`ply_agents` の instructions の後ろに毎ターン足す。依頼元の会話には「委譲の進め方」（委譲を基本にする・この会話でやること。編集できる）と「委譲の振り分けの使い方」（`kind` を付けて `backend` を書かない。委譲と連動で編集できず、振り分けが無効なら入れない）、委譲された子の会話には「委譲した会話では任せない」（さらに委譲しない。編集できる）。項目・スイッチ・記録は context-runtime.md「Pleiad の指示」。
 
 タスク ID は `ply-task-<UUID>`。Claude / Codex のネイティブサブエージェントとは別に管理する。
 `ply_agents` は専用の接続で注入するため、外部 MCP 中継のハッシュ化されたツール名にならない。

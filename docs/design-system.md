@@ -750,7 +750,7 @@ angle_i(t) = θ(t·0.5) + i·360/n + 14·sin(1.3t + 2.1i)     θ は弧と同じ
 
 ### コンテキスト（2026-09-20。承認済み）
 
-理由は [ADR 0014](adr/0014-context-default-agent-managed.md)、全体の設定だけにした画面と Pleiad の指示は [ADR 0025](adr/0025-context-global-settings-and-ply-instructions.md)（承認済み、2026-09-27）。
+理由は [ADR 0014](adr/0014-context-default-agent-managed.md)、全体の設定だけにした画面と Pleiad の指示は [ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md)（承認済み、2026-09-27）。
 
 2026-09-15 のツリー（左）とプレビュー（右）の 2 列、「読み込み担当」「探索の設定」、スコープごとの保存ボタンは廃止し、次の 2 つにした。理由: 利用者の問いは「どこに何があるか」ではなく「次の会話に何を渡すか」と「この会話に何が渡ったか」で、前者は設定、後者は会話の側にある。
 
