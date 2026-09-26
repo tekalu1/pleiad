@@ -342,6 +342,14 @@ body.settings .settings-view{display:flex;flex-direction:column;position:absolut
 :root.side-closed body:not(.settings) > #sidebar{visibility:hidden}
 #openSidebar{display:none}
 :root.side-closed #openSidebar{display:inline-flex;margin-left:-6px}   /* タイトルの字の頭と左の余白を揃えたまま置く */
+/* 脇が見えていない間の印（web/open-sidebar-mark.mjs）。未確認は一覧と同じ青い丸（地との間に紙の色の 2px の切り欠き）、
+   承認待ちは ◆（差し色。2 件以上なら数）。件数はボタンの名前に入れ、印は読み上げない */
+#openSidebar{position:relative}
+.side-mark{position:absolute;pointer-events:none}
+.side-mark[data-kind=unread]{top:3px;right:2px;width:9px;height:9px;border-radius:50%;color:var(--ink-unread);background:currentColor;box-shadow:0 0 0 2px var(--surface-paper)}
+.side-mark[data-kind=wait]{top:-1px;right:-5px;display:inline-flex;align-items:center;gap:1px;padding:0 3px;border-radius:var(--r-pill);
+  background:var(--surface-paper);color:var(--ink-mark);font:600 10px/14px var(--font)}
+.side-mark[data-kind=wait]::before{content:"◆";font-size:9px}
 /* 開閉の操作の間だけ動かす。常に付けると、プレビューの幅を掴むときや窓の幅を変えるときまで遅れて追いかける。
    visibility は「どちらかが visible の間は visible」なので、閉じるときは滑り終わってから消える */
 body.side-moving{transition:grid-template-columns var(--dur) var(--ease-out)}
@@ -1166,6 +1174,8 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .pop .li{min-height:40px}
   .pop.menu{min-width:min(240px,calc(100vw - 16px))}
   .settings-menu button{min-height:36px}
+  .side-mark[data-kind=unread]{top:5px;right:4px}
+  .side-mark[data-kind=wait]{top:1px;right:-3px}
 }
 
 /* ---- 狭い画面（700px 以下）: 脇を引き出しに ---- */

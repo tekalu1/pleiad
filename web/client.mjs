@@ -50,6 +50,7 @@ import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { renderOutbox } from './outbox.mjs';
 import { createComposerWait } from './composer-wait.mjs';
+import { attentionCounts, paintOpenSidebar } from './open-sidebar-mark.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
 const submittingMessages = new Set();
@@ -1880,13 +1881,17 @@ const side = createSide({
 function renderSessions() {
   // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から
   const listed = state.sessions.filter(s => !s.delegation);
+  const unreadIds = new Set(listed.filter(s => readCompletions.hasUnread(s)).map(s => s.id));
+  // 脇が見えていない間の印（web/open-sidebar-mark.mjs）。今の会話は数えない
+  paintOpenSidebar($("openSidebar"), attentionCounts(listed, { currentId: state.current, waitingIds: state.waitingIds, unreadIds,
+    busyIds: new Set([...state.runningIds, ...state.bgWaiting.keys()]) }), t);
   side.render(listed, {
     statuses: state.statuses,
     currentId: pendingNewSession && !state.current ? pendingNewSession.id : state.current,
     runningIds: state.runningIds,
     waitingIds: state.waitingIds,
     bgWaiting: state.bgWaiting,
-    unreadIds: new Set(listed.filter(s => readCompletions.hasUnread(s)).map(s => s.id)),
+    unreadIds,
     draft: null,      // 新規のときだけ。予約は current が無いときに意味を持つ
     backendLabels: backendLabels(),
     pendingRows,
