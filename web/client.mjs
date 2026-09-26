@@ -30,6 +30,7 @@ import { formatBytes } from "./folder-upload.mjs";
 import { modelRowIds, modelDisplayName } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
+import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
 import { isAutoRouting, routingLine, routingDetail, retryPanel, retryCandidates, splitCandidate, fallbackName } from './delegation-routing-view.mjs';
@@ -730,11 +731,7 @@ const activity = {
     if (this.el?.isConnected && this.shape !== this.shapeNow()) this.remark();
     if (!this.el?.isConnected) {
       const m = el("div", "m activity");
-      const work = el("button", "btn work");
-      work.type = "button";
-      work.hidden = true;
-      work.onclick = () => openWork();
-      m.append(el("span", "txt"), work, el("span", "el"));
+      m.append(el("span", "txt"), el("span", "el"));
       const w = append(m, "activity");
       const tip = el("span", "activity-tip");
       if (!delayMark) tip.append(this.mark());
@@ -754,7 +751,7 @@ const activity = {
     }
     this.paint();
     relayoutBranches();
-    this.work();
+    syncWorkEntry();
     this.timer ??= setInterval(() => {
       const s = Math.round((Date.now() - this.t0) / 1000);
       const e = this.el?.querySelector(".el");
@@ -770,19 +767,7 @@ const activity = {
     // 待っている間に覚えた text は subagent 側のもの。main が戻ったら一旦中立の語にする
     if (was && !this.behind) this.text = ACTIVITY_LABEL.running;
     this.paint();
-    this.work();
-  },
-  /**
-   * 「バックグラウンド N」の文字ボタン。サブエージェント・委譲したタスク・裏のコマンドを 1 つに数える（N は動いている本数）。
-   * 動いているものが無く、同じターンで終わったサブエージェントだけが残っているときも、結果の会話を読めるように
-   * 「バックグラウンド · 終了 N」として残す。どちらも 0 なら出さない
-   */
-  work() {
-    const b = this.el?.querySelector(".work");
-    if (!b) return;
-    const { live, ended } = backgroundCounts();
-    b.hidden = live === 0 && ended === 0;
-    b.textContent = live ? t("activity.background", { count: live }) : t("activity.backgroundEnded", { count: ended });
+    syncWorkEntry();
   },
   hide() {
     clearInterval(this.timer);
@@ -884,6 +869,7 @@ function isMine(ev) {
   // 再開ターンのモデル通知でも流れるので、それを掴むと他所の id を自分のものにしてしまう）。
   if (state.awaitingSession && ev.type === "session" && ev.first) {
     state.current = id;
+    syncWorkEntry();
     state.awaitingSession = false;
     // 自分が走らせたターン。サーバの running が id を載せて来るまでの間も「走っている」扱いにする
     // （ここで止まっていると見なすと、追記中の発言が途中で閉じられる）
@@ -1340,7 +1326,8 @@ function applyRunning(work) {
   paintSettingsNotice();
   if (changed) renderSessions();
   // バックグラウンドはこの会話の分だけ稼働表示に出す。他所の分は一覧の行に付く
-  activity.work();
+  syncWorkEntry();
+  restorePastSubagents(state.current);
   // 開いているダイアログは一覧を描き直し、選んでいる子が動いていれば続きを読み直す（読んでいる位置は保つ）
   if ($("workDialog").open) renderBackground();
   // 会話の中の委譲カード（振り分けの記録・やり直しの行）
@@ -2040,8 +2027,8 @@ const TASK_STATUS = { queued: t('dialog.tasks.status.queued'), running: t('dialo
 const TASK_MARK = { queued: 'running', running: 'running', cancelling: 'running', waiting: 'running',
   completed: 'completed', failed: 'failed', cancelled: 'stopped', interrupted: 'stopped' };
 const TASK_LIVE = new Set(['queued', 'running', 'cancelling']);
-/** この会話が委譲したタスク。完了したものも残す（終わった結果を読み返せるように） */
-const plyTasksHere = () => (state.work.tasks ?? []).filter(x => state.current && x.parentSessionId === state.current);
+/** 子の会話を親として辿り、この会話からの委譲とその子孫を集める。 */
+const plyTasksHere = () => state.current ? taskTree(state.work.tasks, state.current) : [];
 /** 子の会話が人間の承認を待っているか。work.tasks の status は保存した値なので、承認の一覧から引く */
 const taskWaiting = (task) => (state.work.permissions ?? []).some(p => p.sessionId === task.sessionId && !p.relay);
 
@@ -2073,8 +2060,31 @@ function backgroundHere() {
 
 const timeOf = (v) => (v ? new Date(v).getTime() || 0 : 0);
 
-/** ダイアログの状態。extra は会話の中のカードから開いた、もう一覧（このターンの分）に居ない子 */
-const bg = { selected: null, extra: new Map(), view: null, narrowDetail: false };
+/** history は過去のツールカードから findSubagent で引き直した子。 */
+const bg = { selected: null, extra: new Map(), history: new Map(), finding: new Set(), notFound: new Set(), view: null, narrowDetail: false, shownEnded: 10 };
+
+/** Past native subagents no longer appear in runningWork; resolve their tool IDs from the loaded history. */
+function restorePastSubagents(sessionId) {
+  if (!sessionId || state.current !== sessionId) return;
+  if (isRunningHere()) return;
+  const backend = activeBackendId();
+  const liveOrigins = new Set(subagentsHere().map(a => a.origin));
+  for (const message of state.messages ?? []) for (const call of message.toolCalls ?? []) {
+    if (!SUBAGENT_TOOLS.has(call.name) || !call.id || liveOrigins.has(call.id)) continue;
+    const lookup = `${sessionId}:${call.id}`;
+    if ((bg.history.has(lookup) && !subagentLive(bg.history.get(lookup))) || bg.finding.has(lookup) || bg.notFound.has(lookup)) continue;
+    bg.finding.add(lookup);
+    cmd('findSubagent', { sessionId, toolId: call.id }).then(({ agentId, status, startedAt, endedAt }) => {
+      if (!agentId) { if (call.result) bg.notFound.add(lookup); return; }
+      const said = call.input?.description || call.input?.task || call.input?.prompt;
+      bg.history.set(lookup, { id: agentId, sessionId, backend, origin: call.id,
+        description: String(said ?? agentId).split(/\r?\n/).find(Boolean)?.slice(0, 120) ?? agentId,
+        status: status ?? (call.result?.isError ? 'failed' : 'completed'), startedAt: startedAt ?? message.at ?? null,
+        endedAt: endedAt ?? message.at ?? null });
+      if (state.current === sessionId) { syncWorkEntry(); if ($('workDialog').open) renderBackground(); }
+    }).catch(() => {}).finally(() => bg.finding.delete(lookup));
+  }
+}
 
 /**
  * 一覧の項目。種類ごとの違いはここで吸収し、描く側は同じ形だけを見る。
@@ -2082,17 +2092,18 @@ const bg = { selected: null, extra: new Map(), view: null, narrowDetail: false }
  */
 function backgroundItems() {
   const items = [];
-  for (const a of subagentsHere()) items.push({
+  for (const a of [...subagentsHere(), ...bg.history.values()].filter(a => a.sessionId === state.current)) items.push({
     key: `a:${a.sessionId}:${a.id}`, group: 'agent', source: 'native', title: a.description || a.saying || a.id,
     backend: a.backend ?? activeBackendId(), model: a.model ?? null, effort: null, status: a.status ?? null,
     live: subagentLive(a), startedAt: a.startedAt ?? null, endedAt: a.endedAt ?? null, messages: a.messages,
     origin: a.origin ?? null, parentId: a.sessionId, agentId: a.id,
   });
-  for (const task of plyTasksHere()) {
+  for (const { task, depth, rootLive, childCount } of plyTasksHere()) {
     const live = TASK_LIVE.has(task.status);
     const waiting = live && taskWaiting(task);
     items.push({
-      key: `t:${task.taskId}`, group: 'agent', source: 'task', title: task.task, backend: task.backend,
+      key: `t:${task.taskId}`, group: 'agent', source: 'task', title: backgroundTitle(task), request: task.task,
+      depth, rootLive, childCount, parentSessionId: task.parentSessionId, backend: task.backend,
       model: task.model || null, effort: task.effort || null, status: TASK_MARK[task.status] ?? null,
       taskStatus: waiting ? 'waiting' : task.status, live, waiting, startedAt: task.createdAt ?? null, endedAt: live ? null : task.updatedAt ?? null,
       childId: task.sessionId, taskId: task.taskId, error: task.error, notification: task.notification, routing: task.routing ?? null,
@@ -2103,19 +2114,45 @@ function backgroundItems() {
     status: 'running', live: true, startedAt: task.startedAtMs ?? null, task, entry,
   });
   for (const x of bg.extra.values()) if (!items.some(i => i.key === x.key)) items.push(x);
-  // 動いているものを上に。同じ側では新しいものを上
-  return items.sort((a, b) => Number(!a.live) - Number(!b.live) || timeOf(b.startedAt) - timeOf(a.startedAt));
+  // 親を区分・時刻で並べ、子孫はその直後に置く。途中の子が終わっても親から離さない。
+  const roots = [], children = new Map();
+  for (const item of items) {
+    if (item.depth > 0) {
+      const siblings = children.get(item.parentSessionId) ?? [];
+      siblings.push(item); children.set(item.parentSessionId, siblings);
+    } else roots.push(item);
+  }
+  roots.sort((a, b) => Number(!a.live) - Number(!b.live) || timeOf(b.startedAt) - timeOf(a.startedAt));
+  const ordered = [], seen = new Set();
+  const add = item => {
+    if (seen.has(item.key)) return;
+    seen.add(item.key); ordered.push(item);
+    for (const child of children.get(item.childId) ?? []) add(child);
+  };
+  roots.forEach(add);
+  return ordered;
 }
 
-/**
- * 稼働表示の「バックグラウンド N」と、ターンの後に末尾の行を残すかに使う数。
- * live は動いている本数（サブエージェント・タスク・コマンドの合計）。ended はこのターンで終わったサブエージェント
- * （結果の会話を読めるようにボタンを残す）。終わった Pleiad タスクは会話の中のカードから開くので数えない
- */
 function backgroundCounts() {
-  const items = backgroundItems().filter(x => !x.extra);
-  return { live: items.filter(x => x.live).length, ended: items.filter(x => !x.live && x.source === 'native').length };
+  return backgroundTotals(backgroundItems());
 }
+
+function syncWorkEntry() {
+  const { live, ended } = backgroundCounts();
+  const row = $('workEntry'), button = $('workEntryButton');
+  row.hidden = !live && !ended;
+  if (row.hidden) return;
+  const label = live ? t('activity.background', { count: live }) : t('activity.backgroundEnded', { count: ended });
+  const key = `${state.current}:${live}:${ended}`;
+  if (button.dataset.state !== key) {
+    button.dataset.state = key;
+    button.replaceChildren();
+    if (live) button.append(runMark(label));
+    button.append(label);
+    button.classList.toggle('ended', !live);
+  }
+}
+$('workEntryButton').onclick = () => openWork();
 
 /** 委譲された子の会話では、ヘッダーに依頼元の会話へ戻る口を出す（子の会話は脇の一覧に出ないため） */
 function syncParentEntry() {
@@ -2147,6 +2184,15 @@ function statusText(item) {
 
 /** 経過時間（等幅）。走っている間は今まで、終わったら終わった時刻まで */
 function elapsedText(item) {
+  if (!item.live) {
+    const end = timeOf(item.endedAt);
+    if (!end) return '';
+    const date = new Date(end), now = new Date();
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    if (end >= day) return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    if (end >= day - 86400000) return t('dialog.work.yesterday');
+    return `${date.getMonth() + 1}/${date.getDate()}`;
+  }
   const start = timeOf(item.startedAt);
   if (!start) return '';
   const s = Math.max(0, Math.round(((item.live ? Date.now() : timeOf(item.endedAt) || Date.now()) - start) / 1000));
@@ -2166,6 +2212,10 @@ function markOf(item) {
 
 function listRow(item) {
   const row = el('button', 'bg-row');
+  if (item.depth) {
+    row.classList.add('sub');
+    row.style.setProperty('--bg-depth', item.depth);
+  }
   row.type = 'button';
   row.dataset.key = item.key;
   if (item.key === bg.selected) row.setAttribute('aria-current', 'true');
@@ -2185,6 +2235,7 @@ function listRow(item) {
     if (model) meta.append(el('span', 'bg-model', model));
     const status = statusText(item);
     if (status) meta.append(el('span', item.waiting ? 'bg-waiting' : null, status));
+    if (item.childCount) meta.append(el('span', null, t('dialog.work.delegated', { count: item.childCount })));
   } else {
     meta.append(el('span', null, item.kindLabel));
     if (item.task?.cwd) meta.append(el('span', 'mono', item.task.cwd));
@@ -2198,16 +2249,32 @@ function listRow(item) {
 function renderBackground() {
   const items = backgroundItems();
   if (!items.some(x => x.key === bg.selected)) bg.selected = items[0]?.key ?? null;
-  const live = items.filter(x => x.live).length;
-  const ended = items.length - live;
-  $('workCount').textContent = ended ? t('dialog.work.count', { live, ended }) : t('dialog.work.countLive', { live });
+  const { live, ended } = backgroundTotals(items);
+  $('workCount').textContent = t('dialog.work.count', { live, ended });
   const list = $('workList');
   list.replaceChildren();
-  for (const [group, label] of [['agent', t('dialog.work.groupAgents')], ['command', t('dialog.work.groupCommands')]]) {
-    const rows = items.filter(x => x.group === group);
-    if (!rows.length) continue;
-    list.append(el('div', 'bg-group', label), ...rows.map(listRow));
+  const agents = items.filter(x => x.group === 'agent');
+  const active = agents.filter(x => x.rootLive ?? x.live);
+  const finished = agents.filter(x => !(x.rootLive ?? x.live));
+  if (active.length) list.append(el('div', 'bg-group', t('dialog.work.groupRunning')), ...active.map(listRow));
+  const finishedRoots = finished.filter(x => !x.depth);
+  const shownRootKeys = new Set(finishedRoots.slice(0, bg.shownEnded).map(x => x.key));
+  let currentRoot = null;
+  const visibleFinished = finished.filter(x => {
+    if (!x.depth) { currentRoot = x.key; return shownRootKeys.has(x.key); }
+    return shownRootKeys.has(currentRoot);
+  });
+  if (finished.length) {
+    list.append(el('div', 'bg-group', t('dialog.work.groupEnded')), ...visibleFinished.map(listRow));
+    const remaining = finishedRoots.length - shownRootKeys.size;
+    if (remaining > 0) {
+      const more = el('button', 'btn bg-more', t('dialog.work.showMore', { count: remaining }));
+      more.type = 'button'; more.onclick = () => { bg.shownEnded += 10; renderBackground(); };
+      list.append(more);
+    }
   }
+  const commands = items.filter(x => x.group === 'command');
+  if (commands.length) list.append(el('div', 'bg-group', t('dialog.work.groupCommands')), ...commands.map(listRow));
   if (!items.length) list.append(el('div', 'bg-empty', t('dialog.work.none')));
   $('workSplit').classList.toggle('showing', bg.narrowDetail && Boolean(bg.selected));
   const item = items.find(x => x.key === bg.selected) ?? null;
@@ -2226,6 +2293,15 @@ function selectBackground(key) {
 
 /** ダイアログを開く。key を渡すとその項目を選んだ状態で開く（会話の中のカードから） */
 function openWork(key) {
+  bg.shownEnded = 10;
+  if (typeof key === 'string') {
+    const rows = backgroundItems().filter(x => x.group === 'agent' && !(x.rootLive ?? x.live));
+    let root = 0;
+    for (const row of rows) {
+      if (!row.depth) root++;
+      if (row.key === key) { bg.shownEnded = Math.max(10, Math.ceil(root / 10) * 10); break; }
+    }
+  }
   bg.narrowDetail = typeof key === 'string';
   if (typeof key === 'string') bg.selected = key;
   else if (!bg.selected || !backgroundItems().some(x => x.key === bg.selected && x.live)) bg.selected = backgroundItems()[0]?.key ?? null;
@@ -2233,6 +2309,8 @@ function openWork(key) {
   // 先に開く。詳細の読み込みは開いているときだけ走る
   if (!$('workDialog').open) $('workDialog').showModal();
   renderBackground();
+  if (typeof key !== 'string') $('workList').scrollTop = 0;
+  else $('workList').querySelector(`[data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'nearest' });
 }
 
 function paintDetailHead(item) {
@@ -2248,6 +2326,7 @@ function paintDetailHead(item) {
   const h = el('h3', 'bg-dt-title');
   const mark = markOf(item);
   if (mark) h.append(mark);
+  h.title = item.request ?? item.title;
   h.append(el('span', item.group === 'command' ? 'mono' : null, item.title));
   const meta = el('div', 'bg-dt-meta');
   if (item.group === 'agent') {
@@ -2380,6 +2459,21 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   const requestNode = (text, at) => {
     const m = readOnly(userMsg(text, { at }));
     m.querySelector('.who > span').textContent = t('dialog.work.request');
+    const bubble = m.querySelector('.body');
+    if (bubble) {
+      bubble.classList.add('bg-request');
+      const text = el('span', 'bg-request-text');
+      text.append(...bubble.childNodes);
+      bubble.append(text);
+      const toggle = el('button', 'bg-request-toggle', t('dialog.work.showFull'));
+      toggle.type = 'button'; toggle.hidden = true;
+      toggle.onclick = () => {
+        const expanded = bubble.classList.toggle('expanded');
+        toggle.textContent = expanded ? t('dialog.work.collapse') : t('dialog.work.showFull');
+      };
+      bubble.after(toggle);
+      requestAnimationFrame(() => { toggle.hidden = text.scrollHeight <= text.clientHeight + 1; });
+    }
     return m;
   };
   let prevRole = null;
@@ -2631,12 +2725,13 @@ async function openFromCard(card, button) {
   const sessionId = state.current;
   button.disabled = true;
   try {
-    const { agentId } = await cmd('findSubagent', { sessionId, toolId });
+    const { agentId, status, startedAt, endedAt } = await cmd('findSubagent', { sessionId, toolId });
     if (!agentId) throw new Error(t('dialog.work.notFound'));
     const key = `a:${sessionId}:${agentId}`;
     const title = card.dataset.bgTitle;
     bg.extra.set(key, { key, group: 'agent', source: 'native', title: title || agentId, backend: activeBackendId(), model: null, effort: null,
-      status: card.classList.contains('tc-fail') ? 'failed' : 'completed', live: false, extra: true, origin: toolId, parentId: sessionId, agentId });
+      status: status ?? (card.classList.contains('tc-fail') ? 'failed' : 'completed'), live: status === 'running', extra: true,
+      startedAt: startedAt ?? null, endedAt: endedAt ?? null, origin: toolId, parentId: sessionId, agentId });
     openWork(key);
   } catch (e) { sys(html.t('dialog.work.openFailed', { error: e.message })); }
   finally { button.disabled = false; }
@@ -3977,6 +4072,7 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     if (!fresh) saveDraft().catch(() => {});
     state.current = id;
     try { localStorage.setItem("agent-host-current", id); } catch {}
+    syncWorkEntry();
     state.loadingSession = id;
     if (fresh) freshSessionId = id;
     // 前の会話の下書きで上書きするまで、書いた字は保てない。disabled にはしない（打鍵が黙って捨てられ、キーボードが閉じる）。
@@ -4050,6 +4146,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   const snapshots = branchSnapshots();
   if (keepUpTo !== undefined) saveDraft().catch(() => {});
   state.current = id;
+  syncWorkEntry();
   if (state.contextInfoId !== id) { state.contextInfo = null; state.contextInfoId = null; }   // 前の会話の記録を持ち越さない
   paintOutbox();
   refreshOutbox(id).catch(() => {});
@@ -4065,6 +4162,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   state.awaitingSession = false;
   state.submitting = false;
   state.messages = data?.messages ?? [];
+  restorePastSubagents(id);
   state.initialMessageId = data?.initialMessageId;
   state.presents = data?.presents ?? [];
   // 系譜（lineage）は待たずに本文を先に描き、分岐点の印は届いてから付ける（下の family）。
@@ -4166,6 +4264,7 @@ async function syncHistory() {
   if (!data || state.current !== id) return;
   if (state.busy) { pendingHistorySync = true; return; }
   state.messages = data.messages ?? [];
+  restorePastSubagents(id);
   state.presents = data.presents ?? [];
   const claimed = new Set();
   // text.end で uuid が分かっていた発言は、履歴の添字を uuid で引く

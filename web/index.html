@@ -131,6 +131,7 @@
     <!-- 稼働表示（考えている・経過時間）は会話の筋の末尾の節として client.mjs が描く。固定の帯は置かない -->
     <div id="log"><div class="thread" id="thread"></div></div>
 
+    <div class="work-entry" id="workEntry" hidden><button type="button" class="btn work" id="workEntryButton" aria-controls="workDialog"></button></div>
     <form class="composer" id="composer">
       <div id="outbox" class="outbox" aria-live="polite" hidden></div>
       <div class="next-settings" id="nextSettings" role="status" hidden><div><b data-i18n="chat.next.title"></b><div id="nextSettingsText"></div></div><button type="button" class="btn" id="cancelSettings" data-i18n="chat.next.cancel"></button></div>

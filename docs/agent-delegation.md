@@ -9,7 +9,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 | ツール | 引数 | 動作 |
 |---|---|---|
-| `ply_delegate` | `kind`, `task`, 任意の `backend`, `context`, `cwd`, `model`, `effort` | 子会話を作り、すぐ `taskId` と `routing`（どう選んだか）を返す。`model` / `effort` は `backend` を書いたときだけ |
+| `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort` | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ |
 | `ply_task_status` | `taskId`, 任意の `offset` | 状態と結果。結果は16,000文字ずつ返し、`nextOffset` で続きへ進む |
 | `ply_task_wait` | `taskId`, 任意の `seconds`（1〜30、既定30） | 上限まで待つ。承認待ちになったらすぐ戻る。未完了なら現在の状態を返す |
 | `ply_task_send` | `taskId`, `message` | 同じ子会話に追加指示。実行中なら順番に待ち、完了後なら再開する |
@@ -187,7 +187,7 @@ Pleiad は結果を保存し、親が空いたときに専用の完了通知で�
 
 `AGENT_HOST_DATA/agent-tasks.json` にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）を保存する。
 会話メタデータの `delegation` に親とタスク ID を、`routing` にどう選ばれたかを記録する。会話の分岐を表す `parent` とは別にする。
-会話末尾の「バックグラウンド N」（design-system.md「バックグラウンド」）で子の会話を読む・停止する・承認に答える。「会話として開く」で子の会話そのものへ移り、子からはヘッダーの「依頼元の会話」で戻れる。完了後は依頼元の会話の `ply_delegate` のカードの「開く」から確認できる。
+入力欄の上の「バックグラウンド N」（全件終了後は「バックグラウンド · 完了 M」。design-system.md「バックグラウンド」）で子の会話を読む・停止する・承認に答える。「会話として開く」で子の会話そのものへ移り、子からはヘッダーの「依頼元の会話」で戻れる。完了後も札と、依頼元の会話の `ply_delegate` のカードの「開く」から確認できる。
 
 再起動時に実行中・待機中だったタスクは `interrupted`、配送途中の通知は `unknown` にする。未確認の変更を自動再実行しない。
 実際のファイルと子の会話を確認した後、`ply_task_send` で明示的に再開できる。
