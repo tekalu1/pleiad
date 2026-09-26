@@ -1178,6 +1178,9 @@ main.dropping #log{background:var(--surface-1)}
 .settings-error{font-size:var(--fs-s);font-weight:600;color:var(--ink);margin-bottom:8px}
 .settings-error:empty{display:none}
 .draft-saved:empty{display:none}
+/* 下書きを保存できなかった一行（700px 以下だけ。上の「狭い画面」）。字は本文色、「再試行」は字だけの青 */
+.draft-fail{display:none;align-items:baseline;flex-wrap:wrap;gap:0 6px;margin:0;padding:2px 6px 4px;font-size:var(--fs-xs);color:var(--ink);overflow-wrap:anywhere}
+.draft-fail .draft-fail-retry{color:var(--ink-blue);padding:0 6px;font-size:var(--fs-xs)}
 .filter-outside{font-size:var(--fs-xs);padding:8px 14px;color:var(--ink-weak)}
 .filter-outside .btn{font-size:var(--fs-xs);color:var(--ink-blue)}
 .row-unsent{font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap;flex:none}
@@ -1190,8 +1193,10 @@ main.dropping #log{background:var(--surface-1)}
   main > .top:has(:is(#agentTasksEntry,#backgroundEntry):not([hidden])) .title-field{flex-basis:calc(100% - 40px)}
   .composer{padding-left:8px;padding-right:8px}
   #skillList{max-height:240px}
-  /* 「保存済み」は出さない（下書きがあることは脇の行の「未送信」で分かる）。保存に失敗したときだけ出す */
-  .crow .draft-saved:not([data-state=failed]){display:none}
+  /* 「保存済み」は出さない（下書きがあることは脇の行の「未送信」で分かる）。保存の失敗は行の隙間では文が途中で切れるので、
+     チップの行の上の一行（#draftFail）に出す */
+  .crow .draft-saved{display:none}
+  .draft-fail:not([hidden]){display:flex}
   /* 設定の左列は脇と同じに畳まれる（body の列幅）。ページ側の余白も会話に合わせる */
   .settings-content{padding-left:10px;padding-right:10px}
   /* macOS は信号の分だけ字のロゴを畳む */
