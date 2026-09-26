@@ -876,6 +876,8 @@ button.att-name:hover{text-decoration:underline}
 .cbrowse .crumb{padding:4px 6px;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 .cbrowse .clistbox{max-height:220px;overflow-y:auto;overscroll-behavior:contain}
 .cbrowse .copt{padding:4px 6px}
+/* 一覧はスクロールの箱なので、外へ出る輪は上下左右の端で切れる。行の内側に描く */
+.cbrowse .copt:focus-visible{outline-offset:-2px}
 .cbrowse .copt:hover{background:var(--surface-2)}
 .cbrowse .copt .main{font-family:var(--font-mono);font-size:var(--fs-s)}
 .cbrowse .go{display:flex;justify-content:flex-end;padding:4px}

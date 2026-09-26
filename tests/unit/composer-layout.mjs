@@ -81,4 +81,5 @@ export default async function (t) {
   t.ok('リモートの帯を塗らない（--fill-primary を帯・殻の帯に使わない）', !/:root\.remote \.titlebar\{[^}]*fill-primary/.test(css) && !/\.host-bar\{[^}]*fill-primary/.test(css)
     && /:root\.desktop\.remote body > \.titlebar\{background:var\(--surface-0\)/.test(css));
   t.ok('リモートの窓の 701px 以上はタイトル行を帯に上げる', /@media \(min-width:701px\)\{[^@]*:root\.desktop\.remote:not\(\.remote-mobile\) body > main > \.top\{position:fixed;top:0/s.test(css));
+  t.ok('簡易ブラウザーの行の輪は内側に描く（一覧のスクロールの箱の端で切れていた）', /\.cbrowse \.copt:focus-visible\{outline-offset:-2px\}/.test(css));
 }
