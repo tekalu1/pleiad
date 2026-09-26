@@ -638,6 +638,18 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .card.done{opacity:.55}
 .card.done:hover{opacity:1}
 .card.done .card-kind{color:var(--ink-weak)}
+/* 送っている間の一行（弧を添える）と、送れなかった理由（強い字）。ボタンは押し直せる */
+.card-actions .res{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.card-actions .res.fail{color:var(--ink-strong);font-weight:600}
+/* 決着した承認の一行は押して入力を開閉できる（▸ はツールの行と同じ）。開いている・触れている間は沈めない */
+.card-head.done-toggle{cursor:pointer;border-radius:var(--r-l)}
+.card-head.done-toggle .caret{flex:none;display:inline-block;width:1em;color:var(--ink-weak);font-size:var(--fs-xs);transition:transform var(--dur-fast) var(--ease-out)}
+.card-head.done-toggle[aria-expanded=true] .caret{transform:rotate(90deg)}
+.card-head .sum{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);color:var(--ink-weak)}
+.card .done-body{padding:0 0 12px}
+.card.done:focus-within,.card.done:has(.done-toggle[aria-expanded=true]){opacity:1}
+/* 入れ物（.mw・.m）にも .card が付くので、沈めるのは一番外だけ（重ねると 55% の 3 乗で読めなくなる） */
+.card.done .card.done{opacity:1}
 /* 承認カードへ連れて行ったときに一瞬光らせる */
 .card.flash{outline:2px solid var(--line-blue);outline-offset:2px}
 .q{padding:4px 16px 8px}

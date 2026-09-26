@@ -1030,7 +1030,8 @@
       "answer": "Answer",
       "done": "Question",
       "skipped": "Continued without answering",
-      "sendFailed": "Couldn't send the answer: {{error}}"
+      "sending": "Sending your answer…",
+      "sendFailedInline": "Couldn't send your answer · {{error}}"
     },
     "approval": {
       "heading": "{{mark}}",
@@ -1043,7 +1044,8 @@
       "allowedAlways": "Always allowed",
       "allowed": "Allowed",
       "denied": "Denied",
-      "sendFailed": "Couldn't send the approval: {{error}}"
+      "sending": "Sending “{{action}}”…",
+      "sendFailedInline": "Couldn't send “{{action}}” · {{error}}"
     },
     "thought_one": "Thought ({{chars}} char)",
     "thought_other": "Thought ({{chars}} chars)",

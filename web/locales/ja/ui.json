@@ -1001,7 +1001,8 @@
       "answer": "回答する",
       "done": "質問",
       "skipped": "答えずに進めた",
-      "sendFailed": "回答の送信に失敗: {{error}}"
+      "sending": "回答を送っています…",
+      "sendFailedInline": "回答を送れませんでした · {{error}}"
     },
     "approval": {
       "heading": "{{mark}}",
@@ -1014,7 +1015,8 @@
       "allowedAlways": "常に許可した",
       "allowed": "許可した",
       "denied": "拒否した",
-      "sendFailed": "承認の送信に失敗: {{error}}"
+      "sending": "{{action}}を送っています…",
+      "sendFailedInline": "{{action}}を送れませんでした · {{error}}"
     },
     "thought_other": "考えた（{{chars}} 文字）",
     "delivery": {

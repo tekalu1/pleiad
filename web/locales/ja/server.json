@@ -114,7 +114,7 @@
     "taskNotFound": "Pleiad タスクが見つかりません"
   },
   "approval": {
-    "alreadyResolved": "その承認は既に解決済み"
+    "alreadyResolved": "この承認はすでに処理されています"
   },
   "title": {
     "unsupported": "このエージェントはタイトル生成に対応していません",
