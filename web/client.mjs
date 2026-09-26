@@ -30,6 +30,7 @@ import { formatBytes } from "./folder-upload.mjs";
 import { modelRowIds, modelDisplayName } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
+import { approvalTarget } from "./approval-summary.mjs";
 import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
@@ -565,7 +566,31 @@ function questionCard(ev, into = null) {
     send.disabled = Object.keys(answersNow()).length < qs.length;
   }
 
-  function settle(answers) {
+  // 承認カードと同じく、サーバーが受け取るまで「◯◯を送っています…」、受け取ってから決着。失敗したら戻して理由をカードの中に
+  const res = el("span", "res");
+  actions.prepend(res);
+  async function settle(answers) {
+    if (card.dataset.sending) return;
+    card.dataset.sending = "1";
+    const inputs = [...card.querySelectorAll("button, input")];
+    const was = inputs.map((b) => b.disabled);
+    for (const b of inputs) b.disabled = true;
+    res.className = "res";
+    res.removeAttribute("role");
+    res.replaceChildren(el("span", null, t("chat.ask.sending")));
+    const arc = setTimeout(() => res.prepend(runMark()), 150);
+    try {
+      await cmd("resolvePermission", { id: ev.id, allow: true, answers: answers ?? {} });
+    } catch (e) {
+      clearTimeout(arc);
+      delete card.dataset.sending;
+      inputs.forEach((b, i) => { b.disabled = was[i]; });
+      res.className = "res fail";
+      res.setAttribute("role", "alert");
+      res.replaceChildren(`✕ ${t("chat.ask.sendFailedInline", { error: e.message })}`);
+      return;
+    }
+    clearTimeout(arc);
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
@@ -575,11 +600,8 @@ function questionCard(ev, into = null) {
       ? qs.map((q) => `${q.header || q.question}: ${answers[q.question]}`).join(" / ")
       : t("chat.ask.skipped");
     actions.replaceChildren(el("span", "res", summary));
-    for (const b of card.querySelectorAll("button, input")) b.disabled = true;
     if (isRunningHere()) activity.show(t("activity.continuing"));
     state.pendingPerms.delete(ev.id);
-    cmd("resolvePermission", { id: ev.id, allow: true, answers: answers ?? {} })
-      .catch((e) => sys(html.t("chat.ask.sendFailed", { error: e.message })));
   }
 
   send.onclick = () => settle(answersNow());
@@ -591,6 +613,40 @@ function questionCard(ev, into = null) {
 // ---------------------------------------------------------------- 承認カード
 // モーダルは使わない。ブラウザのダイアログは以降のイベントを止めるうえ、
 // 会話の流れから目を離させる（＝離れさせない、という価値命題に反する）。
+
+let foldSeq = 0;
+/**
+ * 決着した承認カードの見出しを押せる一行にし、入力（code）を中に畳む。ツール名の後ろに対象の要約（等幅の弱い字、全体は title）。
+ * ▸ はツールの行の折りたたみと同じ。Enter・Space でも開閉する。開いている間は 55% に沈めない（style.css）
+ */
+function foldSettledCard(card, head, code, target) {
+  const caret = el("span", "caret", "▸");
+  caret.setAttribute("aria-hidden", "true");
+  head.prepend(caret);
+  if (target) {
+    const sum = el("span", "sum", target);
+    sum.title = target;
+    (head.querySelector(".tool") ?? head.querySelector(".card-kind")).after(sum);
+  }
+  const body = el("div", "done-body");
+  body.id = `permDone${++foldSeq}`;
+  body.hidden = true;
+  body.append(code);
+  card.append(body);
+  head.classList.add("done-toggle");
+  head.setAttribute("role", "button");
+  head.tabIndex = 0;
+  head.setAttribute("aria-expanded", "false");
+  head.setAttribute("aria-controls", body.id);
+  const toggle = () => {
+    const open = head.getAttribute("aria-expanded") !== "true";
+    head.setAttribute("aria-expanded", String(open));
+    body.hidden = !open;
+    card.classList.toggle("open", open);
+  };
+  head.onclick = toggle;
+  head.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
+}
 
 function permissionCard(ev, into = null) {
   const m = el("div", "m card");
@@ -624,7 +680,32 @@ function permissionCard(ev, into = null) {
   actions.append(deny, allow);
   card.append(actions);
 
-  const settle = (ok, forever = false) => {
+  // 押したらサーバーが受け取るまで「◯◯を送っています…」（ボタンは止め、カードは待っている形のまま）。
+  // 受け取ってから決着の一行に畳む。失敗したら押す前の形に戻し、左端の一行を理由に替えて押し直せるようにする
+  // （docs/design-system.md §4.5。自動で送り直さない。承認は判断なので、つながった後に利用者がもう一度押す）
+  const res = actions.querySelector(".res");
+  const buttons = [always, deny, allow];
+  const verb = (ok, forever) => (ok ? (forever ? t("chat.approval.always") : t("chat.approval.allow")) : t("chat.approval.deny"));
+  const settle = async (ok, forever = false) => {
+    if (card.dataset.sending) return;
+    card.dataset.sending = "1";
+    for (const b of buttons) b.disabled = true;
+    res.className = "res";
+    res.replaceChildren(el("span", null, t("chat.approval.sending", { action: verb(ok, forever) })));
+    const arc = setTimeout(() => res.prepend(runMark()), 150);
+    try {
+      // 拒否の理由はエージェントに返る。画面の言語ではなく会話の言語で返すよう、文ではなく印を送る（サーバーが会話の言語で訳す）
+      await cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, ...(ok ? {} : { messageKey: "userDenied" }) });
+    } catch (e) {
+      clearTimeout(arc);
+      delete card.dataset.sending;
+      for (const b of buttons) b.disabled = false;
+      res.className = "res fail";
+      res.setAttribute("role", "alert");
+      res.replaceChildren(`✕ ${t("chat.approval.sendFailedInline", { action: verb(ok, forever), error: e.message })}`);
+      return;
+    }
+    clearTimeout(arc);
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
@@ -632,12 +713,10 @@ function permissionCard(ev, into = null) {
     head.querySelector(".card-kind").textContent = t("chat.approval.done");
     head.append(el("span", "res", `${ok ? (forever ? t("chat.approval.allowedAlways") : t("chat.approval.allowed")) : t("chat.approval.denied")} · ${hhmm(new Date())}`));
     actions.remove();
-    code.remove();
+    // 決着後は一行に畳み、押せば承認したときの入力をその場で開ける（何を許可・拒否したかを後からたどれる）
+    foldSettledCard(card, head, code, approvalTarget(ev.input));
     if (isRunningHere()) activity.show(ok ? t("activity.runningTool", { tool: ev.toolName }) : t("activity.continuing"));
     state.pendingPerms.delete(ev.id);
-    // 拒否の理由はエージェントに返る。画面の言語ではなく会話の言語で返すよう、文ではなく印を送る（サーバーが会話の言語で訳す）
-    cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, ...(ok ? {} : { messageKey: "userDenied" }) })
-      .catch((e) => sys(html.t("chat.approval.sendFailed", { error: e.message })));
   };
   allow.onclick = () => settle(true);
   deny.onclick = () => settle(false);
