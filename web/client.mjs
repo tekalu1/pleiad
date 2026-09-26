@@ -2889,15 +2889,17 @@ let sidebarMoving;
 const narrowView = matchMedia("(max-width:700px)");
 const drawerOpen = () => document.documentElement.classList.contains("side-open");
 
-function setDrawer(open) {
+function setDrawer(open, { refocus = true } = {}) {
   const root = document.documentElement;
   if (drawerOpen() === open) return;
   root.classList.toggle("side-open", open);
   $("openSidebar").setAttribute("aria-expanded", String(open));
+  // 開いている間は背後を inert にする。Tab は脇の中だけを巡り、見えない会話を操作させない（設定で会話を覆うときと同じ手）
+  for (const n of document.body.children) if (n.matches("main, .file-preview, .host-bar, #remoteBadge")) n.inert = open;
   const from = document.activeElement;
-  // 検索欄には置かない（スマホでキーボードが出る）。閉じるボタンへ
+  // 検索欄には置かない（スマホでキーボードが出る）。閉じるボタンへ。閉じたら開いたボタンへ戻す
   if (open) $("closeSidebar").focus({ preventScroll: true });
-  else if ($("sidebar").contains(from)) $("openSidebar").focus({ preventScroll: true });
+  else if (refocus && (!from || from === document.body || $("sidebar").contains(from))) $("openSidebar").focus({ preventScroll: true });
 }
 
 function setSidebar(open) {
@@ -2931,7 +2933,7 @@ function initSidebar() {
     setDrawer(false);
   });
   // 広い画面へ戻ったら引き出しの印を外す（幕が残らないように）
-  narrowView.addEventListener("change", () => setDrawer(false));
+  narrowView.addEventListener("change", () => setDrawer(false, { refocus: false }));
   // Ctrl+B（macOS は ⌘B）。入力欄でも太字などの既定の意味は無いので、どこからでも効かせる。
   // macOS の Ctrl+B は入力欄で「1 文字戻る」なので奪わない
   const mac = /Mac/.test(navigator.platform);
