@@ -35,6 +35,11 @@ html{-webkit-tap-highlight-color:transparent}
 /* 脇の列の幅。--side-w は脇そのものの幅で、閉じても変えない（列だけ 0 にして会話の下へ隠す）。
    脇の中身が開閉の途中で折り返し直さないため */
 body{--side-w:292px;--side-col:var(--side-w)}
+/* 開閉・設定で値が変わる変数は、使う要素（--side-col は body、--paper-* は main）の外へ受け継がない。
+   受け継ぐ変数が変わると子孫すべてのスタイルを計算し直すので、長い会話を開いたまま脇を開閉すると止まっていた */
+@property --side-col{syntax:'*';inherits:false}
+@property --paper-tl{syntax:'*';inherits:false}
+@property --paper-tr{syntax:'*';inherits:false}
 body{margin:0;display:grid;grid-template-columns:var(--side-col) minmax(0,1fr);overflow:hidden;
   background:var(--surface-paper);color:var(--ink);
   font:var(--fs)/var(--lh) var(--font);font-variant-numeric:tabular-nums}
@@ -212,6 +217,8 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .rows{display:flex;flex-direction:column;gap:2px;padding-left:16px}
 .pending-new-top{flex:none}
 .row{border-radius:var(--r-m);padding:7px 10px;cursor:pointer;min-width:0;transition:background-color var(--dur-fast) var(--ease-out)}
+/* 画面の外の行はレイアウトと描画を省く。設定から戻る・脇を開くたびに数百行を組み直していた。高さは一度描いた値を覚える */
+#groups .row{content-visibility:auto;contain-intrinsic-size:auto 52px}
 .row:hover{background:var(--surface-hover)}
 .row.sel{background:var(--surface-paper);cursor:default}   /* 選ばれているものは白へ持ち上がる */
 /* 掴んでいる行。影で持ち上げる（浮いているものにだけ影） */
@@ -303,8 +310,9 @@ button.conn-lost:hover{color:var(--ink)}
 .settings-menu,.settings-view,.back-chat{display:none}
 body.settings > #sidebar > :is(.search,.fchips,.filter-outside,.groups,#authNeed),
 body.settings .brand,body.settings #newSession,body.settings #settings,body.settings #closeSidebar{display:none}
-/* 会話は場所を残したまま伏せる。display:none にすると筋のスクロール位置と入力欄の高さが失われる */
-body.settings > main > :is(.top,#log,.composer){visibility:hidden}
+/* 会話は場所も描いた状態も残したまま、設定のページで覆う（下の .settings-view）。display:none にすると筋のスクロール位置と
+   入力欄の高さが失われる。visibility:hidden で伏せると、開閉のたびに会話の全要素のスタイルを計算し直して止まっていた。
+   キーボードと読み上げは inert で届かなくする（web/onboarding.mjs） */
 /* ロゴの位置。文字だけのボタン */
 body.settings .back-chat{display:inline-flex;align-items:center;gap:4px;margin-right:auto;flex:none;
   padding:4px 10px 4px 6px;font-size:var(--fs-s);color:var(--ink-weak);background:transparent;border-radius:var(--r-pill);cursor:pointer}
@@ -318,7 +326,7 @@ body.settings .settings-menu{display:flex;flex-direction:column;gap:2px;flex:1;m
 .settings-menu button:hover{background:var(--surface-hover)}
 .settings-menu [aria-pressed=true]{background:var(--surface-paper);color:var(--ink-blue);font-weight:600}   /* 選ばれたページは白へ持ち上がる */
 /* ページ。伏せた会話の上に重ねる。見出し行は会話のタイトル行と同じ高さ・余白 */
-body.settings .settings-view{display:flex;flex-direction:column;position:absolute;inset:0}
+body.settings .settings-view{display:flex;flex-direction:column;position:absolute;inset:0;z-index:1;background:var(--surface-paper);border-radius:inherit}
 .settings-view .top h2{flex:1;min-width:0;margin:0;padding:5px 10px;font-size:var(--fs-l);font-weight:600;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .settings-content{flex:1;min-height:0;overflow-y:auto;padding:4px 18px 28px;max-width:760px}   /* 本文の幅は会話の返答と同じ */
