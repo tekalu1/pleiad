@@ -50,7 +50,9 @@
     "offsetInvalid": "offset must be an integer of 0 or more.",
     "secondsInvalid": "seconds must be from 1 to 30.",
     "stopping": "The task is stopping. Wait a moment.",
-    "unknownTool": "Unknown Pleiad task tool."
+    "unknownTool": "Unknown Pleiad task tool.",
+    "storageFailed": "Could not save the delegation record, so this was not accepted ({{code}}). Wait a moment and try again. Running child tasks have not stopped.",
+    "storageFault": "The delegation record cannot be saved ({{code}}, since {{since}}). The state shown here may not be saved yet, and child tasks may still be running."
   },
   "approval": {
     "hostAway": "Stopped because the host did not come back for {{seconds}} seconds",
