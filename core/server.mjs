@@ -627,6 +627,27 @@ function sessionRow(b, s, extra = {}) {
 }
 
 /**
+ * エージェントごとのネイティブ一覧を使い回す。読むのに時間がかかり（Codex の thread/list は 1 秒前後）、
+ * 一覧・系譜（lineage）・他の会話の出来事のたびの取り直しで同じものを何度も読んでいた。
+ * 一覧に効く出来事（emitGlobal のうち LIST_NEUTRAL_EVENTS 以外）で捨てる。Pleiad の外（CLI）で動いた分は
+ * NATIVE_LIST_TTL_MS で読み直す。同時に来た読み出しは 1 回にまとまる。sidecar（store）はメモリにあるので毎回読む
+ */
+const NATIVE_LIST_TTL_MS = 10_000;
+const nativeLists = new Map();   // `${backend.id}\0${limit}` -> { at, generation, rows: Promise<Array> }
+let nativeListGeneration = 0;
+function nativeSessions(b, limit) {
+  const key = `${b.id}\0${limit}`;
+  const hit = nativeLists.get(key);
+  if (hit && hit.generation === nativeListGeneration && Date.now() - hit.at < NATIVE_LIST_TTL_MS) return hit.rows;
+  const entry = { at: Date.now(), generation: nativeListGeneration, rows: null };
+  // 読めなかった分は覚えない（次の呼び出しで読み直す）
+  entry.rows = b.listSessions({ limit }).catch(() => { if (nativeLists.get(key) === entry) nativeLists.delete(key); return []; });
+  nativeLists.set(key, entry);
+  return entry.rows;
+}
+function invalidateSessionLists() { nativeListGeneration++; }
+
+/**
  * 全エージェントのネイティブ一覧と sidecar を1つに合わせる（docs/multi-backend.md §2.1）。
  * ネイティブ一覧に出ないセッション（sidecar にしか無いもの）も落とさずに足す。
  */
@@ -634,7 +655,7 @@ async function sessionList({ limit = 100 } = {}) {
   const backends = listBackends();
   const [side, ...lists] = await Promise.all([
     store.getAll().catch(() => ({})),
-    ...backends.map((b) => b.listSessions({ limit }).catch(() => [])),
+    ...backends.map((b) => nativeSessions(b, limit)),
   ]);
 
   const rows = new Map();
@@ -855,12 +876,33 @@ function giveUp() {
   console.log(`  host が ${seconds} 秒戻らなかったので中断した`);
 }
 
-/** つながっている host 全部に送る。1つでも届けば true。 */
+// 会話の一覧の行を変えない、数の多い出来事。これ以外の出来事ではネイティブ一覧の使い回しを捨てる（nativeSessions）
+const LIST_NEUTRAL_EVENTS = new Set([
+  "text.delta", "text.end", "thinking.start", "thinking.delta", "tool.start", "tool.result", "activity",
+  "userMessage.delivered", "running", "permission", "outbox", "mcpAuth", "claudeLogin",
+]);
+
+// 接続ごとに、いま開いている会話（loadSession の watch）。宣言した接続には、流れの出来事（streamEvents）を
+// その会話の分だけ送る。画面は開いていない会話の流れを捨てていたが、全部の会話の文字の流れが全端末へ届き、
+// 中継を通るスマホでは通信と処理の重さになっていた（ADR 0024）。
+// 完了（turnEnd）は一覧・通知に使うので全部送る。宣言していない接続（古い画面・テスト）には今までどおり全部送る
+const watching = new WeakMap();   // ws -> sessionId
+const WATCH_EXEMPT = new Set(["turnEnd"]);
+function wanted(ws, event) {
+  if (!watching.has(ws) || !event?.sessionId || !streamEvents.has(event.type) || WATCH_EXEMPT.has(event.type)) return true;
+  return watching.get(ws) === event.sessionId;
+}
+
+/** つながっている host 全部に送る（開いている会話を宣言した接続には、その会話の流れだけ）。1つでも届けば true。 */
 function sendTo(frame) {
   const text = JSON.stringify(frame);
+  const event = frame.kind === P.EVENT ? frame.event : null;
   let sent = false;
   for (const ws of runtime.sockets) {
-    if (ws.readyState === ws.OPEN) { ws.send(text); sent = true; }
+    if (ws.readyState !== ws.OPEN) continue;
+    // 見ていない会話の分は送らないが、届け先が居たことにする（誰も居ないときだけ溜める）
+    sent = true;
+    if (!event || wanted(ws, event)) ws.send(text);
   }
   return sent;
 }
@@ -880,6 +922,7 @@ async function savePref(key, value, backendId) {
 const liveReads = new Set();
 let streamSequence = 0;
 function emitGlobal(event) {
+  if (!LIST_NEUTRAL_EVENTS.has(event.type)) invalidateSessionLists();
   if (streamEvents.has(event.type)) event = { ...event, streamSeq: ++streamSequence };
   const live = runtime.turns.get(event.sessionId);
   if (live && streamEvents.has(event.type)) live.stream.events.push(event);
@@ -1938,7 +1981,7 @@ wss.on("connection", (ws, req) => {
   const local = isLocalRequest(req);
   // 古い接続を閉じてはいけない。クライアントは切れると自動再接続するので、
   // 「新しい方に付け替える」と互いに閉じ合って永久に落ち着かなくなる。
-  // タブが複数あってもよい設計にして、イベントは全部に配る。
+  // タブが複数あってもよい設計にして、イベントは全部に配る（流れの出来事だけは開いている会話の分。sendTo）。
   const resumed = runtime.turns.size > 0;
   attach(ws);
   // ready はこの接続にだけ返す。全部に配ると、受けた側のクライアントは初期化し直す
@@ -2409,9 +2452,21 @@ wss.on("connection", (ws, req) => {
           return reply(true, "ok");
         }
 
+        // 開いている会話を登録し直す（読み直しは要らないとき。loadSession の watch と同じ）
+        case "watchSession": {
+          const { sessionId } = msg.args ?? {};
+          if (sessionId) watching.set(ws, sessionId); else watching.delete(ws);
+          return reply(true, "ok");
+        }
+
         // 履歴を読み直す。sessionId が無いときは空（新規セッション相当）。
         case "loadSession": {
           const { sessionId } = msg.args ?? {};
+          // watch: この接続がいま開いている会話（sendTo の watching）。読み出しを待つ前に決める。
+          // 以後の流れはこの会話の分だけが届き、読み出しの間に来た分は streamCursor で重複を除く
+          if (msg.args?.watch) {
+            if (sessionId) watching.set(ws, sessionId); else watching.delete(ws);
+          }
           if (!sessionId) return reply(true, { messages: [], presents: [] });
           // Hold the reference even if the turn ends during the asynchronous reads.
           const read = { sessionId, turn: runtime.turns.get(sessionId) };
@@ -2506,7 +2561,7 @@ wss.on("connection", (ws, req) => {
 
         // 既出の状態一覧。事前定義ではなく補完候補（設計メモ §6）。
         case "listStatuses":
-          return reply(true, await history.listStatuses(listBackends()));
+          return reply(true, await history.listStatuses(listBackends(), { list: nativeSessions }));
 
         case "modes": {
           const backend = await pickBackend(null, msg.args?.backend);

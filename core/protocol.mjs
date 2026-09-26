@@ -96,7 +96,8 @@ export const COMMANDS = new Set([
   "switchBackend",   // idle conversation -> a new native execution segment
   "abort",
   "listSessions",
-  "loadSession",     // 履歴（本文 + present）を読み直す。outline: true は系譜の照合用に骨だけ返す
+  "loadSession",     // 履歴（本文 + present）を読み直す。outline: true は系譜の照合用に骨だけ返す。watch: true はこの接続が開いた会話として登録する（下の watchSession）
+  "watchSession",    // { sessionId } 開いている会話を登録し直す。登録した接続には、流れの出来事をその会話の分だけ送る（turnEnd は全部。ADR 0024）
   "newSession",      // 空のセッションを開始する（最初の runTurn まで id は無い）
   "saveDraft",
   "deleteUnsentSession",

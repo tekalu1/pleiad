@@ -43,7 +43,8 @@ export default async function (t) {
     ensureTurnEl: () => ({ append: x => bodies.push(x) }),
     thread: { replaceChildren: () => { bodies = []; }, classList: { toggle: noop, remove: noop }, querySelectorAll: () => [] },
     spine: noop, branchSnapshots: () => [], localStorage: { setItem: noop },
-    branches: { load: () => new Promise(r => { releaseBranches = r; }), has: () => false },
+    // 系譜は待たずに描く（paintSession）。届くのは描いた後
+    branches: { load: () => new Promise(r => { releaseBranches = r; }), reset: noop, has: () => false }, scrollToEnd: noop,
     $: () => ({}), syncRunState: noop, syncTopbar: noop, log: { scrollTop: 0, scrollHeight: 0 },
     loadDraft: noop, saveDraft: async () => {}, settingsFailure: null, sys: noop,
     paintHistory: () => [], placeJunctions: () => [], isRunningHere: () => false, behindHere: () => null, backgroundCounts: () => ({ live: 0, ended: 0 }),
@@ -69,16 +70,17 @@ export default async function (t) {
   deliver(event("・続き", 4));
   t.ok("先頭・取得中・描画待ち・続きが一度ずつ同じ本文に入る", bodies.length === 1 && bodies[0].dataset.raw === "先頭・取得中・分岐読込中・続き");
 
-  // A completion during the async layout must run after snapshot reconstruction.
+  // A completion while the history is loading must run after snapshot reconstruction.
   state.current = "other";
   const next = vm.runInContext("select('target')", context);
-  releaseHistory({ messages: [], presents: [], stream: { events: [event("全文", 5)] }, streamCursor: 5 });
-  await new Promise(setImmediate);
   deliver({ type: "text.end", sessionId: "target", streamSeq: 6 });
   deliver({ type: "turnEnd", sessionId: "target", streamSeq: 7, outcome: 'ok', completedAt: 100 });
   t.ok("読込中の終了による同期は復元まで待つ", syncs === 0);
-  releaseBranches();
+  releaseHistory({ messages: [], presents: [], stream: { events: [event("全文", 5)] }, streamCursor: 5 });
   await next;
+  t.ok("系譜を待たずに描き終える", syncs === 1);
+  releaseBranches();
+  await new Promise(setImmediate);
   t.ok("読込中に終了しても全文を残して履歴同期する", bodies[0]?.dataset.raw === "全文" && syncs === 1);
   t.ok('履歴読込中の完了も一度だけ通知する', notices.length === 1 && notices[0].sessionId === 'target');
 
