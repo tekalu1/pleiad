@@ -50,7 +50,9 @@
     "offsetInvalid": "offset は0以上の整数です",
     "secondsInvalid": "seconds は1〜30です",
     "stopping": "停止処理中です。少し待ってください",
-    "unknownTool": "不明な Pleiad タスクツールです"
+    "unknownTool": "不明な Pleiad タスクツールです",
+    "storageFailed": "委譲の記録を保存できないため、受け付けませんでした（{{code}}）。少し待ってからやり直してください。動いている子は止まっていません",
+    "storageFault": "委譲の記録を保存できていません（{{code}}、{{since}} から）。ここに出ている状態はまだ保存できていないことがあり、子は動き続けている可能性があります"
   },
   "approval": {
     "hostAway": "host が {{seconds}} 秒戻らなかったので中断した",

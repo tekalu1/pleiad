@@ -15,8 +15,10 @@ export default async function(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-tasks-'));
   let seq = 0, release, rolledBack = 0;
   const calls = [], notifications = [];
-  let notifyBlocked = true, retry = true, gated;
-  const options = { dataDir: dir, prepare: async (_owner, a) => ({ sessionId: `child-${++seq}`, backend: a.backend }),
+  let notifyBlocked = true, retry = true, gated, renameBroken = false;
+  // 保存の失敗は rename に差し込む（一時ファイルの名前は毎回変わるので、置き場に物を置いては塞げない）
+  const io = { ...fs, rename: async (from, to) => { if (renameBroken) throw Object.assign(new Error('injected'), { code: 'ENOSPC', syscall: 'rename' }); return fs.rename(from, to); } };
+  const options = { dataDir: dir, io, log: () => {}, prepare: async (_owner, a) => ({ sessionId: `child-${++seq}`, backend: a.backend }),
     rollback: async () => { rolledBack++; },
     execute: async (r, prompt, signal) => {
       calls.push([r.taskId, prompt]);
@@ -86,11 +88,11 @@ export default async function(t) {
     const before = calls.length;
     manager = await createAgentTasks(options);
     t.ok('再起動で実行を再送せず中断・配送不明にする', manager.get(slow.taskId).status === 'interrupted' && manager.get(slow.taskId).notification === 'unknown' && calls.length === before);
-    await fs.mkdir(path.join(dir, 'agent-tasks.json.tmp'));
+    renameBroken = true;
     const count = manager.list().length;
     const rejected = await manager.call('parent', 'ply_delegate', { backend: 'codex', task: 'must not run' }).then(() => false, () => true);
     t.ok('保存失敗で未受領のタスクを実行しない', rejected && manager.list().length === count && rolledBack === 1 && calls.length === before);
-    await fs.rmdir(path.join(dir, 'agent-tasks.json.tmp'));
+    renameBroken = false;
     // 件数・深さ・追加指示に上限は置かない（docs/agent-delegation.md「会話・権限・作業場所」）
     let openGate; gated = new Promise(resolve => { openGate = resolve; });
     const many = [];
