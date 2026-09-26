@@ -51,7 +51,8 @@ function renderServers(file, servers) {
   }
   return JSON.stringify({ mcpServers: servers }, null, 2);
 }
-export async function scanContext(settings, { home = os.homedir(), codexHome = process.env.CODEX_HOME ?? path.join(home, '.codex'), claudeHome = process.env.CLAUDE_CONFIG_DIR ?? path.join(home, '.claude'), runtime = false, plyServers = null } = {}) {
+// scopes: 探す範囲。既定は両方。設定の画面のユーザーの段は ['user'] だけ（作業場所のファイルを混ぜない）
+export async function scanContext(settings, { home = os.homedir(), codexHome = process.env.CODEX_HOME ?? path.join(home, '.codex'), claudeHome = process.env.CLAUDE_CONFIG_DIR ?? path.join(home, '.claude'), runtime = false, plyServers = null, scopes = ['user', 'directory'] } = {}) {
   const { cwd } = settings;
   // 種類ごと・範囲（user = home / directory = Git ルート〜作業場所）ごとの探し方。形式 1 の { user, directory } も受け付ける
   const plan = scanPlan(settings);
@@ -112,9 +113,10 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     const id = digest([kind, pathKey(data.real), ctx.appliesTo ? pathKey(ctx.appliesTo) : '', name].join('\0')).slice(0, 24);
     const same = entries.find(e => e.id === id && e.status !== 'excluded' && !excluded);
     if (same) { if (status === 'shadowed') same.status = status; if (!same.origins.some(o => o.path === file && o.source === ctx.source && o.scope === ctx.scope)) same.origins.push({ path: file, source: ctx.source, scope: ctx.scope }); return same; }
+    // root: 足した場所（探す場所を足す）で見つかったとき、その場所。画面が「追加した場所」として分けて出す
     const item = { id, kind, name, path: file, realPath: data.real, scope: ctx.scope, appliesTo: ctx.appliesTo,
       origins: [{ path: file, source: ctx.source, scope: ctx.scope }], status: excluded ? 'excluded' : status,
-      owner: 'native', ...more };
+      owner: 'native', ...(ctx.root ? { root: ctx.root } : {}), ...more };
     entries.push(item); return item;
   }
   // more は行に足す項目（rules の rule / paths / pathsBase）。@参照先にも paths を引き継ぎ、同じ条件でだけ渡す
@@ -212,7 +214,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
   // kinds はこの (base, source) で探す種類。種類ごとに探す形式が違うので、呼ぶ側が絞って渡す
   async function scanBase(base, source, scope, kinds, custom = false) {
     const spec = { kinds };
-    const ctx = { source, scope, appliesTo: scope === 'user' ? null : custom ? cwd : base };
+    const ctx = { source, scope, appliesTo: scope === 'user' ? null : custom ? cwd : base, ...(custom ? { root: base } : {}) };
     const user = scope === 'user';
     if (source === 'common') {
       if (spec.kinds.includes('instruction') && (!user || custom)) {
@@ -251,7 +253,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
       }
     }
   }
-  for (const scope of ['user', 'directory']) {
+  for (const scope of ['user', 'directory'].filter(s => scopes.includes(s))) {
     const spec = plan[scope];
     // 探す形式は種類ごと。並びは種類の順に初めて出てきた順（形式 1 は全種類で同じ並び）
     const sources = [...new Set(KINDS.flatMap(k => spec.kinds[k]?.sources ?? []))];
@@ -259,14 +261,17 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
       const kinds = KINDS.filter(k => spec.kinds[k]?.sources.includes(source));
       for (const base of scope === 'user' ? [home] : ancestors) await scanBase(base, source, scope, kinds);
     }
-    const active = KINDS.filter(k => spec.kinds[k]);
-    for (const base of active.length ? spec.roots : []) {
-      // Additional roots use existing project layouts, independent of default sources.
-      for (const source of SOURCES) await scanBase(base, source, scope, active, true);
+    // 足した場所（探す場所を足す）は種類ごと。その種類の、この範囲の探す形式で、プロジェクトと同じ置き方を探す
+    const roots = [...new Set(KINDS.flatMap(k => spec.kinds[k] ? spec.roots[k] ?? [] : []))];
+    for (const base of roots) {
+      for (const source of SOURCES) {
+        const kinds = KINDS.filter(k => spec.kinds[k]?.sources.includes(source) && (spec.roots[k] ?? []).includes(base));
+        if (kinds.length) await scanBase(base, source, scope, kinds, true);
+      }
     }
   }
   // Pleiad 自身の登録（core/ply-mcp.mjs）。ユーザー全体に効き、同名のネイティブ登録より優先する
-  if (plyServers?.servers?.length && plan.user.kinds.mcp) {
+  if (plyServers?.servers?.length && plan.user.kinds.mcp && scopes.includes('user')) {
     const file = plyServers.file, ctx = { source: 'ply', scope: 'user', appliesTo: null }, shown = {};
     searched.push({ path: file, kind: 'mcp', ...ctx });
     for (const { name, definition } of plyServers.servers) {

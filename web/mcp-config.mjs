@@ -1,8 +1,9 @@
 // ==================== 外部 MCP のカード（設定 › コンテキスト）と、追加・編集のシート ====================
-// docs/design-system.md「コンテキスト」の「外部 MCP」。
-//   エージェントに任せる: 各エージェント（Claude・Codex）の登録を並べて見比べるだけ（読み取りのみ）。
-//   Pleiad がそろえる: この場所でつなぐものを名前ごとに 1 行。スイッチ（オフ = 名前で外す）、同じ名前の定義が複数あれば
+// docs/design-system.md「コンテキスト」の「外部 MCP」。カードの枠・担当・段（ユーザー／作業場所）・探す形式は web/context.mjs。
+//   エージェントに任せる: 各エージェント（Claude・Codex）の登録を並べて見比べるだけ（読み取りのみ）。renderAgents
+//   Pleiad がそろえる: ユーザーの段の一覧に、つなぐものを名前ごとに 1 行（renderList）。スイッチ（オフ = 名前で外す）、同じ名前の定義が複数あれば
 //   どれを使うか、Pleiad に登録したものはログイン・編集・名前の変更・削除・ログアウト・接続の確認、エージェントの登録は「Pleiad に取り込む」。
+//   段の下に、暗号化されない起動の注記とログインの詳細設定（renderExtras）。
 // 登録は Pleiad 自身の設定（core/ply-mcp.mjs）。Claude や Codex の設定ファイルは書き換えない。秘密は伏せ字（••••）でしか返ってこない。
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
@@ -66,20 +67,34 @@ export function splitCommand(line) {
 }
 export const joinCommand = (command, args = []) => [command, ...args].filter(v => v !== undefined && v !== '').map(a => /\s/.test(a) ? `"${a}"` : a).join(' ');
 
+/**
+ * 外部 MCP の行のスイッチ（設定のカードと、会話の右パネルの「この場所だけ変える」）。value は種類の設定 K で、書き換える。
+ * オフは名前で外す（disabled）。オンは名前の除外と、設定ファイルごとの除外（移行した設定にある）も外す。all は探索の行すべて
+ */
+export function toggleMcp(value, name, entries, turnOn, all = []) {
+  const disabled = new Set(value.disabled ?? []);
+  if (!turnOn) { disabled.add(name); value.disabled = [...disabled]; return; }
+  disabled.delete(name);
+  for (const e of entries.filter(e => e.status === 'excluded')) {
+    const scope = e.scope === 'user' ? 'user' : 'directory';
+    const list = value[scope]?.excludePaths ?? [];
+    const hits = list.filter(p => within(p, e.path));
+    if (!hits.length) continue;
+    value[scope].excludePaths = list.filter(p => !hits.includes(p));
+    // 同じ設定ファイルの他の登録は、外したままにする（名前で外す）
+    for (const other of all) if (other.kind === 'mcp' && other.name !== name && other.status === 'excluded' && hits.some(p => within(p, other.path))) disabled.add(other.name);
+  }
+  value.disabled = [...disabled];
+}
+
 export function createMcpSection() {
   const messages = new Map();   // 行に出す直近の結果（接続の確認・取り込み・ログイン）
 
   // ---------------------------------------------------------------- 描画
-  function render(card, ctx) {
-    const value = ctx.info.kinds.mcp.value, ply = value.owner === 'ply';
-    const agentBlock = el('div', 'cx-block'), plyBlock = el('div', 'cx-block');
-    agentBlock.hidden = ply; plyBlock.hidden = !ply;
-    if (!ply) renderAgents(agentBlock, ctx); else renderPly(plyBlock, ctx, value);
-    card.append(agentBlock, plyBlock);
-  }
-
   /** エージェント任せ: 各エージェントの登録を並べる（Pleiad は読むだけ） */
-  function renderAgents(block, ctx) {
+  function renderAgents(host, ctx) {
+    const block = el('div', 'cx-block');
+    host.append(block);
     block.append(el('p', 'cx-sub', t('mcp.agents.lead')));
     if (!ctx.agents) { block.append(ctx.loading()); return; }
     const lists = Object.fromEntries(AGENTS.map(([id]) => [id, ctx.agents.agents?.[id] ?? []]));
@@ -102,23 +117,18 @@ export function createMcpSection() {
     block.append(cols, el('p', 'cx-sub', t('mcp.agents.foot')));
   }
 
-  /** Pleiad がそろえる: 名前ごとの一覧・追加・読み込む設定ファイル */
-  function renderPly(block, ctx, value) {
-    const label = el('p', 'cx-sub', ctx.isDefault ? t('mcp.listDefault') : t('mcp.list'));
-    block.append(label);
-    if (!ctx.scan) { block.append(ctx.loading()); return; }
+  /** Pleiad がそろえる: ユーザーの段の一覧（web/context.mjs の list）に、名前ごとの行と「＋ MCP を追加」を足す */
+  function renderList(list, ctx) {
+    const value = ctx.info.kinds.mcp.value;
     const groups = new Map();
     for (const e of ctx.scan.entries.filter(e => e.kind === 'mcp')) groups.set(e.name, [...(groups.get(e.name) ?? []), e]);
     const registry = new Map((ctx.ply?.servers ?? []).map(s => [s.name, s]));
-    const list = el('div', 'cx-list');
-    let on = 0;
     for (const [name, entries] of groups) {
       const fromPly = entries.find(e => e.origins?.[0]?.source === 'ply');
       const active = entries.find(e => e.status === 'candidate') ?? null;
       const disabledByName = Boolean(value.disabled?.includes(name));
       const excluded = !active && entries.some(e => e.status === 'excluded');
       const nativeOff = !active && !excluded && entries.every(e => e.status === 'disabled');
-      if (active) on++;
       const shown = active ?? fromPly ?? entries[0];
       const row = el('div', 'cx-row' + (active ? '' : ' off'));
       const open = button('', 'cx-open');
@@ -146,18 +156,17 @@ export function createMcpSection() {
       if (ctx.opened.has(key)) list.append(peek(ctx, name, entries, fromPly, reg));
     }
     if (!groups.size) list.append(el('p', 'cx-empty', t('mcp.empty')));
-    label.append(' ', el('span', 'n', t('mcp.count', { count: on })));
-    block.append(list);
-    const foot = el('div', 'cx-foot');
-    foot.append(withPlus(button('', 'btn btn-quiet', () => openSheet(ctx)), t('mcp.add')), el('span', 'cx-sub', t('mcp.rowHint')));
-    block.append(foot);
-    if (ctx.ply?.storage && ctx.ply.storage.encrypted === false) block.append(el('p', 'cx-note', t('mcp.storage.plainList', { reason: ctx.ply.storage.reason ?? t('mcp.storage.noEncryption') })));
-    const files = el('details', 'cx-fold');
-    files.append(el('summary', null, t('mcp.files.summary')));
-    const filesBlock = el('div', 'cx-block');
-    filesBlock.append(el('p', 'cx-sub', t('mcp.files.desc')), ctx.sourceChips(value));
-    files.append(filesBlock);
-    block.append(files, advanced(ctx));
+  }
+  /** 一覧の下の「＋ MCP を追加」（シートを開く） */
+  function addButton(ctx) {
+    const add = withPlus(button('', 'cx-add', () => openSheet(ctx)), t('mcp.add'));
+    add.querySelector('svg')?.classList.remove('i');
+    return add;
+  }
+  /** 段の下: 暗号化されない起動の注記と、ログインの詳細設定 */
+  function renderExtras(host, ctx) {
+    if (ctx.ply?.storage && ctx.ply.storage.encrypted === false) host.append(el('p', 'cx-note', t('mcp.storage.plainList', { reason: ctx.ply.storage.reason ?? t('mcp.storage.noEncryption') })));
+    host.append(advanced(ctx));
   }
 
   function describe(p, { entries, shown, fromPly, registry, active, nativeOff, disabledByName, value }) {
@@ -192,22 +201,7 @@ export function createMcpSection() {
     bits.forEach((b, i) => { if (i) p.append(' · '); p.append(b); });
   }
 
-  /** スイッチ。オフは名前で外す（disabled）。オンは名前の除外と、設定ファイルごとの除外（移行した設定にある）も外す */
-  function toggle(value, name, entries, turnOn, ctx) {
-    const disabled = new Set(value.disabled ?? []);
-    if (!turnOn) { disabled.add(name); value.disabled = [...disabled]; return; }
-    disabled.delete(name);
-    for (const e of entries.filter(e => e.status === 'excluded')) {
-      const scope = e.scope === 'user' ? 'user' : 'directory';
-      const list = value[scope]?.excludePaths ?? [];
-      const hits = list.filter(p => within(p, e.path));
-      if (!hits.length) continue;
-      value[scope].excludePaths = list.filter(p => !hits.includes(p));
-      // 同じ設定ファイルの他の登録は、外したままにする（名前で外す）
-      for (const other of ctx.scan.entries) if (other.kind === 'mcp' && other.name !== name && other.status === 'excluded' && hits.some(p => within(p, other.path))) disabled.add(other.name);
-    }
-    value.disabled = [...disabled];
-  }
+  const toggle = (value, name, entries, turnOn, ctx) => toggleMcp(value, name, entries, turnOn, ctx.scan.entries);
 
   /** 同じ名前で中身の違う定義が複数あるとき、どれを使うか */
   function choices(name, entries, ctx) {
@@ -381,7 +375,6 @@ export function createMcpSection() {
     const state = {
       kind: existing ? (v.transport === 'stdio' ? 'cmd' : 'url') : 'url',
       auth: existing ? ({ bearer: 'token', headers: 'headers', oauth: 'oauth', none: 'none' }[v.auth] ?? 'none') : 'oauth',
-      scope: ctx.isDefault ? 'all' : 'here',
     };
     const natives = (ctx.scan?.entries ?? []).filter(e => e.kind === 'mcp' && e.origins?.[0]?.source !== 'ply');
     // 見出しに居場所を置く（名前の欄に置くと候補がすぐ開き、下の欄を覆う）
@@ -450,20 +443,7 @@ export function createMcpSection() {
     const headers = pairs(headerWrap, { keyLabel: t('mcp.sheet.headerName'), valueLabel: t('mcp.sheet.value'), keyOptions: () => [{ value: 'X-API-Key' }, { value: 'Authorization' }], initial: Object.entries(v.headers ?? {}), addLabel: t('mcp.sheet.addHeader') });
     const noneNote = el('p', 'mcp-note', t('mcp.sheet.noneNote'));
     authField.append(authChips, oauthNote, appReg, tokenWrap, headerWrap, noneNote);
-    // 使う範囲（場所を選んで追加するときだけ）
-    const scopeField = el('div', 'mcp-field');
-    scopeField.append(t('mcp.sheet.scope'));
-    const scopeChips = el('div', 'cx-chips'); scopeChips.setAttribute('role', 'group'); scopeChips.setAttribute('aria-label', t('mcp.sheet.scope'));
-    const scopeButtons = [['here', t('mcp.sheet.here')], ['all', t('mcp.sheet.all')]].map(([id, label]) => {
-      const b = button(label, 'cx-chip'); b.dataset.s = id;
-      b.onclick = () => { state.scope = id; paint(); };
-      scopeChips.append(b);
-      return b;
-    });
-    scopeField.append(scopeChips);
-    if (!ctx.isDefault) { const where = el('p', 'mcp-note cx-mono', ctx.short(ctx.level)); where.title = ctx.level; scopeField.append(where); }
-    scopeField.hidden = Boolean(existing) || ctx.isDefault;
-    // 保存先と暗号化の説明
+    // 保存先と暗号化の説明（登録はすべての場所に効く。この場所だけ外すのは会話の右パネルの「この場所だけ変える」）
     const storage = ctx.ply?.storage;
     const where = el('p', 'mcp-note', storage && storage.encrypted === false
       ? t('mcp.storage.sheetPlain', { reason: storage.reason ?? t('mcp.storage.noEncryption') })
@@ -481,7 +461,7 @@ export function createMcpSection() {
     const go = button('', 'btn btn-primary');
     go.type = 'submit';
     acts.append(button(t('mcp.cancel'), 'btn', () => dialog.close()), go);
-    form.append(nameField, kindField, cmdField, envField, urlField, authField, scopeField, where, json, error, acts);
+    form.append(nameField, kindField, cmdField, envField, urlField, authField, where, json, error, acts);
 
     function fill(src) {
       if (src.transport === 'stdio') { state.kind = 'cmd'; if (!command.value && src.command) command.set(joinCommand(src.command, src.args)); }
@@ -491,7 +471,6 @@ export function createMcpSection() {
     function paint() {
       for (const b of kindButtons) b.setAttribute('aria-checked', String(b.dataset.k === state.kind));
       for (const b of authButtons) b.setAttribute('aria-pressed', String(b.dataset.a === state.auth));
-      for (const b of scopeButtons) b.setAttribute('aria-pressed', String(b.dataset.s === state.scope));
       const isUrl = state.kind === 'url';
       cmdField.hidden = isUrl; envField.hidden = isUrl; urlField.hidden = !isUrl; authField.hidden = !isUrl;
       oauthNote.hidden = state.auth !== 'oauth'; appReg.hidden = state.auth !== 'oauth';
@@ -541,7 +520,6 @@ export function createMcpSection() {
       go.disabled = true;
       try {
         const saved = await ctx.cmd('savePlyMcp', { name: n, value, mode: existing ? 'edit' : 'add', revision: ctx.ply?.revision });
-        if (!existing && state.scope === 'here' && !ctx.isDefault) await onlyHere(ctx, n);
         dialog.close();
         ctx.opened.add(`mcp:${n}`);
         if (saved.oauthReset) messages.set(n, t('mcp.oauthReset'));
@@ -557,17 +535,6 @@ export function createMcpSection() {
     paint();
     dialog.showModal();
     heading.focus();
-  }
-  /** 「この場所だけ」: 既定では名前で外し、この場所では外さない（この場所の上書きを作る） */
-  async function onlyHere(ctx, name) {
-    const view = await ctx.cmd('contextSettings', { cwd: ctx.cwd });
-    const defaults = structuredClone(view.defaults.kinds.mcp.value);
-    defaults.disabled = [...new Set([...(defaults.disabled ?? []), name])];
-    const after = await ctx.cmd('setContextSettings', { cwd: ctx.cwd, place: null, kind: 'mcp', value: defaults });
-    const here = after.places.find(p => pathKey(p.path) === pathKey(ctx.level));
-    const value = structuredClone(here?.kinds.mcp.value ?? defaults);
-    value.disabled = (value.disabled ?? []).filter(x => x !== name);
-    await ctx.cmd('setContextSettings', { cwd: ctx.cwd, place: ctx.level, kind: 'mcp', value });
   }
   /** 名前と値の組（環境変数・ヘッダー）。値は伏せ字で返ってくるので、空のまま = 前の値を残す */
   function pairs(field, { keyLabel, valueLabel, keyOptions, initial, addLabel }) {
@@ -594,5 +561,5 @@ export function createMcpSection() {
     return { value: () => Object.fromEntries(rows.filter(r => r.key.value.trim()).map(r => [r.key.value.trim(), r.input.value || (r.masked ? MASK : r.missing ? null : '')])) };
   }
 
-  return { render, openSheet, authEvent };
+  return { renderAgents, renderList, addButton, renderExtras, openSheet, authEvent };
 }
