@@ -46,7 +46,10 @@ export async function listDirs(requested, { fallback, files: withFiles = false }
   try {
     if (!(await fs.stat(dir)).isDirectory()) throw Object.assign(new Error("not a directory"), { code: "ENOTDIR" });
     entries = await fs.readdir(dir, { withFileTypes: true });
-  } catch (err) { throw new Error(reason(err, dir)); }
+  } catch (err) {
+    // 理由の種類（ENOENT など）も返す。入力欄の作業ディレクトリの面が「無い」ときだけ、あるところまで上へたどる
+    throw Object.assign(new Error(reason(err, dir)), typeof err?.code === "string" ? { code: err.code } : {});
+  }
   const dirs = [];
   const files = [];
   let truncated = false;

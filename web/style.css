@@ -671,6 +671,18 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .card.done{opacity:.55}
 .card.done:hover{opacity:1}
 .card.done .card-kind{color:var(--ink-weak)}
+/* 送っている間の一行（弧を添える）と、送れなかった理由（強い字）。ボタンは押し直せる */
+.card-actions .res{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.card-actions .res.fail{color:var(--ink-strong);font-weight:600}
+/* 決着した承認の一行は押して入力を開閉できる（▸ はツールの行と同じ）。開いている・触れている間は沈めない */
+.card-head.done-toggle{cursor:pointer;border-radius:var(--r-l)}
+.card-head.done-toggle .caret{flex:none;display:inline-block;width:1em;color:var(--ink-weak);font-size:var(--fs-xs);transition:transform var(--dur-fast) var(--ease-out)}
+.card-head.done-toggle[aria-expanded=true] .caret{transform:rotate(90deg)}
+.card-head .sum{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);color:var(--ink-weak)}
+.card .done-body{padding:0 0 12px}
+.card.done:focus-within,.card.done:has(.done-toggle[aria-expanded=true]){opacity:1}
+/* 入れ物（.mw・.m）にも .card が付くので、沈めるのは一番外だけ（重ねると 55% の 3 乗で読めなくなる） */
+.card.done .card.done{opacity:1}
 /* 承認カードへ連れて行ったときに一瞬光らせる */
 .card.flash{outline:2px solid var(--line-blue);outline-offset:2px}
 .q{padding:4px 16px 8px}
@@ -768,6 +780,14 @@ button.att-name:hover{text-decoration:underline}
 .composer-note[hidden]{display:none}
 .composer-note b{color:var(--ink);font-weight:500}
 .composer-note .composer-note-action{color:var(--ink-blue);padding:0 6px;font-size:var(--fs-xs)}
+/* 設定を保存できず送らせない一行（hold）。理由は強い字。送信が押されたらここへフォーカスを移し、一度だけ輪を光らせる */
+.composer-note .composer-note-strong{color:var(--ink-strong);font-weight:600;overflow-wrap:anywhere}
+.composer-note[data-kind=held]:focus{outline:none}
+.composer-note.flash{border-radius:var(--r-s);animation:note-flash 1.2s var(--ease-out)}
+@keyframes note-flash{0%,40%{box-shadow:0 0 0 2px var(--line-blue)}100%{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion:reduce){.composer-note.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
+/* 送らせない間の送信。塗りをやめ、押せない見た目（disabled にはしない。押すと理由の一行へ） */
+.send.blocked,.send.blocked:hover{background:var(--surface-3);color:var(--ink-weak);cursor:not-allowed}
 /* 欄の上の接続の一行（web/connection-status.mjs）。切れた（自動で戻る）は本文の字と弧で、脇が見えていないときだけ
    （700px 以下の引き出し・広い画面で閉じたとき）。トークンが古い（操作が要る）は .next-settings と同じ面に強い字の見出しと次の一手で、脇の幅によらず出す */
 .conn-note{display:flex;align-items:center;gap:6px;font-size:var(--fs-s);color:var(--ink);padding:0 6px 6px;min-height:22px}
@@ -864,6 +884,18 @@ button.att-name:hover{text-decoration:underline}
 .cnote b{color:var(--ink);font-weight:600}
 .cerr{margin:6px 8px 0;font-size:var(--fs-s);font-weight:600;color:var(--ink);overflow-wrap:anywhere}
 .cerr:empty{display:none}
+/* 打ったパスを確かめる間の弧（欄の右端）と、確かめた結果（無いフォルダー・あるところまで・ここから選ぶ） */
+.cpath-wrap{position:relative}
+.cpath-wrap .cpath{padding-right:34px}
+.cpath-wrap .run{position:absolute;right:12px;top:50%;margin-top:-7px;color:var(--ink)}
+.cmsg{margin:6px 8px 0;font-size:var(--fs-s);overflow-wrap:anywhere}
+.cmsg.checking{color:var(--ink-weak)}
+.cmsg.fail{color:var(--ink-strong);font-weight:600}
+.cmsg.hint{margin-top:2px;color:var(--ink-weak)}
+.cmsg.hint code{font-family:var(--font-mono);font-size:var(--fs-xs)}
+.cmsg.hint .btn{color:var(--ink-blue);padding:1px 6px;font-size:inherit}
+/* 作業ディレクトリを保存している間のチップ（§4.6 の保存中は弱い字） */
+.chip.saving .v{color:var(--ink-weak)}
 .cseg{margin:2px 8px 4px}
 /* ---- 手元のフォルダーを送る（web/folder-upload.mjs・web/attach-menu.mjs、docs/remote.md §8.1。リモートの窓の添付のボタンの面） ----
    押すとまず「ファイルを添付… / フォルダーを送る…」（.caction の 2 行）。送る前は件数と大きさ・除外の札・送り先（combo）・
@@ -1088,6 +1120,18 @@ main.dropping #log{background:var(--surface-1)}
 .rt-retry-note:empty{display:none}
 .rt-retry-warn{color:var(--ink-strong);font-weight:600;font-size:var(--fs-xs)}
 .rt-retry-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-top:10px}
+/* 使える委譲先が無かった自動の委譲。開かなくても見える理由ごとの行（直す場所への文字だけのボタン）と、候補ごとの一覧の折りたたみ */
+.tc-why{list-style:none;margin:6px 0 2px;padding:0 0 0 1.4em;display:flex;flex-direction:column;gap:3px;font-size:var(--fs-s)}
+.tc-why li{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;color:var(--ink);min-width:0}
+.tc-why li b{font-weight:600}
+.tc-why .n{color:var(--ink-weak);overflow-wrap:anywhere;min-width:0}
+.tc-why .btn{color:var(--ink-blue);font-size:var(--fs-s);padding:0 6px}
+.tc-cands-fold{margin:4px 0 0 1.4em}
+.tc-cands{list-style:none;margin:4px 0;padding:0;display:flex;flex-direction:column;gap:2px;font-size:var(--fs-xs)}
+.tc-cands li{display:flex;gap:4px 8px;flex-wrap:wrap;padding:3px 8px;background:var(--surface-paper);border-radius:var(--r-s);min-width:0}
+.tc-cands .tier{color:var(--ink-weak);flex:none}
+.tc-cands .nm{color:var(--ink);min-width:0;overflow-wrap:anywhere}
+.tc-cands .rs{margin-left:auto;color:var(--ink-weak)}
 /* 狭い画面: 理由の行は見出しの下の 1 行に回す。内訳は 2 列、使用量は枠の名前を上の行に */
 @media (max-width:520px){
   .tc-route{order:3;flex-basis:100%;padding-left:1em}

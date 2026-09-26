@@ -151,10 +151,9 @@
       <div id="outbox" class="outbox" aria-live="polite" hidden></div>
       <div class="next-settings" id="nextSettings" role="status" hidden><div><b data-i18n="chat.next.title"></b><div id="nextSettingsText"></div><details class="next-handoff" id="nextHandoff" hidden></details></div><button type="button" class="btn" id="cancelSettings" data-i18n="chat.next.cancel"></button></div>
       <div class="settings-error" id="settingsError" role="alert"></div>
-      <button type="button" class="btn" id="retrySettings" hidden data-i18n="chat.next.retry"></button>
       <!-- 入力欄の先頭が / の間だけ出るスキル候補（web/slash-skills.mjs）。面は .clist と同じ -->
       <ul class="clist" id="skillList" role="listbox" data-i18n-aria-label="chat.composer.skills" hidden></ul>
-      <!-- 欄の上の一行（web/composer-wait.mjs）: 作成中の送信の予約「会話ができしだい送ります · 取り消す」、読み込みの失敗「… · もう一度読む」 -->
+      <!-- 欄の上の一行（web/composer-wait.mjs）: 作成中の送信の予約「会話ができしだい送ります · 取り消す」、読み込みの失敗「… · もう一度読む」、設定を保存できなかった「… · 再試行 · 選び直す · 取り消す」 -->
       <div class="composer-note" id="composerNote" role="status" hidden></div>
       <!-- 接続の一行（脇が見えていないときだけ）と、トークンが古いときの案内（脇の幅によらず）。web/connection-status.mjs -->
       <div class="conn-note" id="connNote" hidden></div>

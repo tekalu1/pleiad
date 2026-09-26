@@ -240,14 +240,17 @@ export function dedupeAccounts(accounts = [], prefer = () => false) {
 }
 
 /**
- * 1 つの候補を見る。{ ok, reason?, account?, window?, checkedAt }
+ * 1 つの候補を見る。{ ok, reason?, detail?, account?, window?, checkedAt }
+ * detail は unavailable の中身（画面が「使えない（入っていない）」と添える）: disabled（エージェントが有効でない）・
+ * not_installed（CLI が入っていない）・no_token（登録したアカウントにトークンが無い）
  * usage は core/delegation-usage.mjs の snapshot()：
  *   { [backend]: { available, checkedAt, windows, accounts?: [{ account, label, windows, identity, runnable }], models: { [model]: bool } } }
  */
 export function checkCandidate(candidate, { usage, settings, now }) {
   const parsed = parseCandidate(candidate);
   const entry = parsed ? usage?.[parsed.backend] : null;
-  if (!parsed || !entry?.available) return { ok: false, reason: 'unavailable' };
+  // 使用量をまだ一度も取っていない（取り置きが空）ときは、有効かどうかも分からないので中身を付けない
+  if (!parsed || !entry?.available) return { ok: false, reason: 'unavailable', ...(!parsed ? {} : entry ? { detail: 'not_installed' } : Object.keys(usage ?? {}).length ? { detail: 'disabled' } : {}) };
   if (entry.models?.[parsed.model] !== true) return { ok: false, reason: 'model_unknown' };
   const checkedAt = entry.checkedAt ?? null;
   if (checkedAt == null) return { ok: false, reason: 'usage_unknown' };
@@ -262,7 +265,7 @@ export function checkCandidate(candidate, { usage, settings, now }) {
     const usable = results.filter(r => r.ok);
     if (!usable.length) {
       const first = results.find(r => r.reason !== 'unavailable') ?? results[0];
-      return { ok: false, reason: first?.reason ?? 'usage_unknown', ...(first?.window ? { window: first.window } : {}), checkedAt,
+      return { ok: false, reason: first?.reason ?? 'usage_unknown', ...(first?.reason === 'unavailable' ? { detail: 'no_token' } : {}), ...(first?.window ? { window: first.window } : {}), checkedAt,
         accounts: results.map(({ account, label, reason, window }) => ({ account, label, reason, ...(window ? { window } : {}) })) };
     }
     usable.sort((a, b) => weeklyPace(a.windows, now) - weeklyPace(b.windows, now) || fiveHour(a.windows, now) - fiveHour(b.windows, now));
@@ -323,7 +326,7 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
         const { backend, model } = parseCandidate(candidate);
         return { ok: true, routing: routing({ tier, backend, model, account: check.account, checkedAt: check.checkedAt, windows: check.windows }) };
       }
-      skipped.push({ candidate, tier, reason: check.reason, ...(check.window ? { window: check.window } : {}), ...(check.accounts ? { accounts: check.accounts } : {}),
+      skipped.push({ candidate, tier, reason: check.reason, ...(check.detail ? { detail: check.detail } : {}), ...(check.window ? { window: check.window } : {}), ...(check.accounts ? { accounts: check.accounts } : {}),
         ...(check.checkedAt != null ? { checkedAt: iso(check.checkedAt) } : {}) });
     }
   }
@@ -342,7 +345,7 @@ export function candidateStates({ settings, usage, now = Date.now() }) {
     const accountRows = parsed?.backend === 'claude' && Array.isArray(entry?.accounts) ? dedupeAccounts(entry.accounts) : null;
     return { candidate, backend: parsed?.backend ?? null, model: parsed?.model ?? null,
       tiers: TIERS.filter(tier => (settings.tiers[tier] ?? []).includes(candidate)),
-      usable: check.ok, reason: check.ok ? null : check.reason, account: check.ok ? check.account ?? null : null,
+      usable: check.ok, reason: check.ok ? null : check.reason, ...(check.detail ? { detail: check.detail } : {}), account: check.ok ? check.account ?? null : null,
       ...(check.window ? { window: check.window } : {}),
       checkedAt: entry?.checkedAt ? new Date(entry.checkedAt).toISOString() : null,
       windows: parsed && !accountRows ? windowsFor(parsed.backend, parsed.model, entry?.windows).map(w => brief(w, usedNow(w, now))) : [],
