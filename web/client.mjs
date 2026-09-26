@@ -1728,7 +1728,15 @@ function syncSettingsHold() {
   if (!state.current || settingsFailure !== state.current || !failedSettingsPatch) { composerWait.release(); return; }
   const patch = failedSettingsPatch, cwd = typeof patch.cwd === "string" ? patch.cwd : null;
   const drop = () => { settingsFailure = null; failedSettingsPatch = null; composerWait.release(); };
-  const actions = [{ label: t("chat.settingsHold.retry"), onClick: () => { drop(); if (cwd != null) applyCwd(cwd); else reserveSettings(patch); } }];
+  // 押したボタンは一行ごと消える。結果が出たら、また失敗なら出し直した一行の「再試行」へ、通れば入力欄へフォーカスを移す
+  // （その間にほかへ移っていたら動かさない）
+  const retry = () => {
+    drop();
+    const work = cwd != null ? applyCwd(cwd) : reserveSettings(patch);
+    const lost = () => !document.activeElement || document.activeElement === document.body;
+    Promise.resolve(work).then(() => { if (lost()) $("prompt").focus(); }, () => { if (lost() && !composerWait.focusAction()) $("prompt").focus(); });
+  };
+  const actions = [{ label: t("chat.settingsHold.retry"), onClick: retry }];
   if (cwd != null) actions.push({ label: t("chat.settingsHold.rechoose"), onClick: () => { drop(); syncTopbar().catch(() => {}); controls.panels.folder.show(); controls.typeCwd(cwd); } });
   actions.push({ label: t("chat.settingsHold.cancel"), onClick: () => { drop(); syncTopbar().catch(() => {}); $("prompt").focus(); } });
   const reason = cwd != null ? t("chat.settingsHold.cwd", { error: failedSettingsError }) : t("chat.settingsHold.settings", { error: failedSettingsError });
@@ -1892,7 +1900,9 @@ function applyCwd(v) {
   // 保存できるまでは弱い字。失敗したら reserveSettings がチップを元の値へ戻す
   const ticket = ++cwdSaving;
   $("cwdChip").classList.add("saving");
-  reserveSettings({ cwd: v })?.catch(() => {}).finally(() => { if (ticket === cwdSaving) $("cwdChip").classList.remove("saving"); });
+  const write = reserveSettings({ cwd: v });
+  write?.catch(() => {}).finally(() => { if (ticket === cwdSaving) $("cwdChip").classList.remove("saving"); });
+  return write;
 }
 
 // 手元のフォルダーをホストへ送る（リモートの窓だけ。入口は添付のボタンのメニュー。web/folder-upload.mjs・web/attach-menu.mjs、

@@ -8,7 +8,8 @@
 //   queue()     新しい会話を作っている間に送信が押された。欄は readonly、150ms を越えたら送信ボタンに弧、
 //               欄の上に「会話ができしだい送ります」と「取り消す」
 //   hold()      設定（作業ディレクトリなど）を保存できず、解決するまで送らせない。欄は書ける。欄の上に強い字の理由と操作
-//               （再試行・選び直す・取り消す）。送信は押せない見た目（aria-disabled）で、押されたらこの一行へフォーカスを移す
+//               （再試行・選び直す・取り消す）。送信は押せない見た目（aria-disabled）で、押されたらこの一行へフォーカスを移す。
+//               「再試行」がまた失敗したら focusAction() で出し直した一行の先頭のボタンへ（client.mjs の syncSettingsHold）
 // 新しい会話を作っている間そのものは、ここでは何もしない（欄は書けるまま）。
 //
 // DOM は触る要素だけ受け取る（tests/unit/composer-wait.mjs が最小の DOM で回す）。
@@ -193,9 +194,17 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
     note.classList.add('flash');
     note.focus?.();
   }
+  /** 保留の一行の先頭の操作（「再試行」）へフォーカスを移す。一行が出ていなければ false */
+  function focusAction() {
+    if (note.dataset.kind !== 'held' || note.hidden) return false;
+    const first = note.querySelector('button');
+    if (!first) return false;
+    first.focus?.();
+    return true;
+  }
 
   return {
-    busy, idle, failed, queue, unqueue, cancel, hold, release, point,
+    busy, idle, failed, queue, unqueue, cancel, hold, release, point, focusAction,
     /** 設定を保存できず送らせない間 */
     get held() { return Boolean(held); },
     get mode() { return mode; },
