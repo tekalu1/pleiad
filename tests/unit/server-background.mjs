@@ -93,6 +93,7 @@ export default async function (t) {
     t.ok("モデルが分からない子は null（親と同じ）", first.every((a) => a.model === null));
     const found = await Promise.all(first.map((a) => c.cmd("findSubagent", { sessionId, toolId: a.origin })));
     t.ok("終わったターンの子を委譲ツールの id から引ける", found.every((x, i) => x.agentId === first[i].id), JSON.stringify(found));
+    t.ok("引き直した子の最新状態と開始・終了時刻も返す", found.every(x => x.status === 'completed' && x.startedAt && x.endedAt && Date.parse(x.endedAt) >= Date.parse(x.startedAt)));
     t.ok("知らないツールの id なら null", (await c.cmd("findSubagent", { sessionId, toolId: "no-such-call" })).agentId === null);
 
     const from2 = c.mark();

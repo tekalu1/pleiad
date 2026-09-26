@@ -345,7 +345,7 @@ async function retryAgentTask({ taskId, candidate, stop, approved } = {}) {
   }
   const request = agentTasks.request(original.taskId);
   const routing = manualRouting({ kind: original.routing?.kind ?? null, candidate, check, of: original.taskId, from });
-  const task = await agentTasks.call(owner, 'ply_delegate', { kind: routing.kind, task: request.task, ...(request.context ? { context: request.context } : {}),
+  const task = await agentTasks.call(owner, 'ply_delegate', { kind: routing.kind, task: request.task, ...(request.title ? { title: request.title } : {}), ...(request.context ? { context: request.context } : {}),
     cwd: original.cwd, backend: parsed.backend, model: parsed.model, account: check.account ?? '', routing, mode: decided.mode }, undefined, await agentLocaleFor(owner));
   // 子が使い始めるので、振り分けに使う使用量を取り直しておく（待たない）
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
@@ -1505,7 +1505,7 @@ agentTasks = await createAgentTasks({
     const account = auto && backend.id === 'claude' ? args.account ?? '' : (await store.get(owner)).claudeAccount ?? '';
     // 振り分けの記録（タスクと子の会話に残す）。委譲先は実際に使う値で書く（固定のときのモデルの既定への戻り・継いだアカウントも）
     const routing = args.routing ? { ...args.routing, target: { backend: backend.id, model, account: backend.id === 'claude' ? account : null } } : null;
-    const info = { title: args.task.slice(0, 80), cwd, createdAt: Date.now(), lastModified: Date.now() };
+    const info = { title: args.title, cwd, createdAt: Date.now(), lastModified: Date.now() };
     const sessionId = await createConversation(backend, info);
     try {
       await store.setMeta(sessionId, { ...info, backend: backend.id, unsent: true });
@@ -2911,7 +2911,11 @@ wss.on("connection", (ws, req) => {
           const backend = await resolveBackendForSession(sessionId);
           if (!backend?.listSubagents || !backend.getSubagentOrigin) return reply(true, { agentId: null });
           for (const id of await backend.listSubagents(sessionId).catch(() => [])) {
-            if (await backend.getSubagentOrigin(sessionId, id).catch(() => null) === toolId) return reply(true, { agentId: id });
+            if (await backend.getSubagentOrigin(sessionId, id).catch(() => null) === toolId) {
+              const raw = typeof backend.getSubagentState === 'function' ? await backend.getSubagentState(sessionId, id).catch(() => null) : null;
+              const state = raw && SUBAGENT_STATUS.has(raw.status) ? raw : null;
+              return reply(true, { agentId: id, status: state?.status ?? null, startedAt: state?.startedAt ?? null, endedAt: state?.endedAt ?? null });
+            }
           }
           return reply(true, { agentId: null });
         }

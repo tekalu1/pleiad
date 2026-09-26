@@ -210,8 +210,8 @@
     "thinkingTokens_one": "Thinking (about {{count}} token)",
     "thinkingTokens_other": "Thinking (about {{count}} tokens)",
     "waitingBackground": "Waiting for background tasks",
-    "backgroundEnded_one": "Background · done {{count}}",
-    "backgroundEnded_other": "Background · done {{count}}",
+    "backgroundEnded_one": "Background · completed {{count}}",
+    "backgroundEnded_other": "Background · completed {{count}}",
     "backgroundOnly": "Commands running in the background"
   },
   "compat": {
@@ -1360,17 +1360,22 @@
       "stopFailed": "Couldn't stop: {{error}}",
       "readFailed": "Couldn't read: {{error}}",
       "title": "Background",
-      "count": "{{live}} running · {{ended}} done",
+      "count": "Running {{live}} · Completed {{ended}}",
       "listLabel": "Background list",
-      "groupAgents": "Subagents",
+      "groupRunning": "Running",
+      "groupEnded": "Finished",
+      "showMore": "Show {{count}} more",
+      "delegated": "· {{count}} delegated",
+      "yesterday": "Yesterday",
+      "showFull": "Show full request",
+      "collapse": "Collapse",
       "groupCommands": "Commands",
       "openChat": "Open as conversation",
       "request": "Request",
       "noMessages": "No messages yet.",
       "open": "Open",
       "notFound": "No record of this subagent was found",
-      "openFailed": "Could not open the subagent: {{error}}",
-      "countLive": "{{live}} running"
+      "openFailed": "Could not open the subagent: {{error}}"
     },
     "tasks": {
       "status": {

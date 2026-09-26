@@ -684,6 +684,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* ---- 入力欄（design-system.md「入力欄と上端」） ----
    1 つの角丸の箱（--surface-1・--r-l）の中に、送る前の添付 → 字の欄 → チップと送信の行を入れる。デスクトップもスマホも同じ */
 .composer{flex:none;padding:4px 18px 12px;min-width:0;position:relative}   /* 候補（.clist）を入力欄の上に浮かせる基準 */
+.work-entry{display:flex;justify-content:flex-end;padding:0 18px;flex:none}
+.work-entry[hidden]{display:none}
+.work-entry .work{font-size:var(--fs-xs);display:inline-flex;align-items:center;gap:6px}
+.work-entry .work.ended{color:var(--ink-weak)}
 .cbox{background:var(--surface-1);border-radius:var(--r-l);padding:2px 4px 4px;min-width:0}
 /* 送る前の添付。画像は 56px の角丸の縮小（押すと大きく見る）、それ以外はファイル名の札。× で外す。
    出どころを選べる接続（リモート・ホストの画面ではないブラウザー）では札の頭に出どころのアイコン（⇄ ホスト / 端末） */
@@ -957,6 +961,9 @@ main.dropping #log{background:var(--surface-1)}
 .bg-row-time{font-size:var(--fs-xs);color:var(--ink-weak)}
 .bg-row-meta{grid-column:2/4;display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--ink-weak);min-width:0;overflow:hidden;white-space:nowrap}
 .bg-row-meta>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.bg-row.sub{position:relative;margin-left:calc(20px * var(--bg-depth));width:calc(100% - 20px * var(--bg-depth))}
+.bg-row.sub::before{content:"";position:absolute;left:-12px;top:0;width:11px;height:21px;background:linear-gradient(var(--line),var(--line)) left top/1px 21px no-repeat,linear-gradient(var(--line),var(--line)) left bottom/11px 1px no-repeat}
+.bg-more{margin:4px 8px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .bg-model{color:var(--ink);display:inline-flex;align-items:center;gap:5px;min-width:0}
 /* 承認待ちだけ差し色（あなたを待っている、§1）。弧も同じ色 */
 .bg-waiting,.run.waiting{color:var(--ink-mark)}
@@ -966,7 +973,10 @@ main.dropping #log{background:var(--surface-1)}
 .bg-back{display:none}
 .bg-dt{flex:1;min-width:0}
 .bg-dt-title{margin:0;font-size:var(--fs-m);font-weight:600;display:flex;align-items:center;gap:8px;min-width:0}
-.bg-dt-title>span{min-width:0;overflow-wrap:anywhere}
+.bg-dt-title>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bg-request:not(.expanded){display:-webkit-box!important;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
+.bg-request-toggle{display:block;border:0;background:none;color:var(--ink-blue);font:inherit;font-size:var(--fs-xs);padding:3px 0;cursor:pointer}
+.bg-request-toggle[hidden]{display:none}
 .bg-dt-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:var(--fs-xs);color:var(--ink-weak);margin-top:3px}
 .bg-dt-actions{display:flex;align-items:center;gap:6px;flex:none}
 #workBody{flex:1;min-height:0;overflow-y:auto;padding:4px 18px 18px 8px;display:flex;flex-direction:column;gap:8px}
