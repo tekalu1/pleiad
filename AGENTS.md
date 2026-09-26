@@ -23,6 +23,7 @@
 - 現在は独立したビルドコマンドはない。文書のみの変更では、内容と `git diff --check` の確認を行えばよい。
 - UI の変更では必要に応じてブラウザーで表示・操作を確認する。ブラウザー自動化は、まずシェルで `playwright-cli` と `agent-browser` の利用可否を調べ、前者があれば優先し、なければ後者を使う。ユーザーによるツール・ブラウザー指定があればそれに従う。
   - `playwright-cli` は `file:` を開けない（"Access to file: protocol is blocked"）。`temporary/mockups/` のモックを見るときは `python -m http.server 8799` をそのディレクトリで起動して `goto http://127.0.0.1:8799/<name>.html` で開く。`eval` は式の文字列ではなく `"() => { … }"` の関数を渡す（式だと `UtilityScript` のエラーで落ちる）。確認したら `playwright-cli close` とサーバー停止まで行う。
+  - Visualize 向けに `<html>` の無い断片で書いたモックは、先頭に `<meta charset="utf-8">` を置く。無いと http.server で開いたとき日本語が文字化けし、`text=…` のセレクターも当たらない（2026-09-27）。
   - `playwright-cli` の `type` は対象を取らない（`type <text>` だけ）。欄を指定して入れるなら `fill <ref> <text>`。
   - 右クリックメニューの子メニュー（`状態を変更 ▸` など）は、親の項目を `.click()` しても開かないことがある。`eval` の中で `[...document.querySelectorAll('.pop.menu .li')].find(n => n.textContent.includes('…'))` を取り、`web/context-menu.mjs` が生やす `row.openSub(false)` を呼ぶ。`新しい状態を作る` は `.li` ではなく入力欄なので、`input[placeholder]` を探して値を入れ `keydown` の Enter を送る。
   - 数秒で消える表示（脇の下の「元に戻す」は 12 秒）は、出す `eval` と `screenshot` を 1 回のコマンドでつなげて撮る。別々に打つと撮る前に消える。
