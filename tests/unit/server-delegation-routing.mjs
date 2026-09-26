@@ -47,10 +47,13 @@ export default async function (t) {
   const call = async (sessionId, args) => {
     const from = c.mark();
     const turn = await turnOn(sessionId, prompt('ply_delegate', args));
-    const ev = await c.waitFor(e => e.type === 'tool.result' && e.sessionId === turn.sessionId, { from, ms: 60000 });
+    // 会話が分かっているならその会話で待つ。runTurn はどの会話の turnEnd でも返り、区間の最初の session から id を拾うので、
+    // 前に任せた子（agy）が並んで動いていると子の id を拾い、依頼元に届く tool.result を見逃す
+    const id = sessionId ?? turn.sessionId;
+    const ev = await c.waitFor(e => e.type === 'tool.result' && e.sessionId === id, { from, ms: 60000 });
     let data = null;
     try { data = JSON.parse(ev.text); } catch { /* エラーは文 */ }
-    return { sessionId: turn.sessionId, isError: ev.isError, text: ev.text, data };
+    return { sessionId: id, isError: ev.isError, text: ev.text, data };
   };
   try {
     // ---- 設定と使用量（段 B の画面が読む口）
