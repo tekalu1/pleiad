@@ -45,16 +45,11 @@
     "textLength": "{{name}} must be 1 to {{max}} characters.",
     "notOwned": "This Pleiad task was not created by this conversation.",
     "halted": "Execution has been stopped.",
-    "maxActive": "Up to {{max}} Pleiad delegations can run at the same time.",
-    "maxPerConversation": "A conversation can have up to {{max}} Pleiad tasks.",
-    "maxDepth": "Pleiad delegation can be nested up to {{max}} levels.",
     "aborted": "Aborted.",
     "withContext": "{{task}}\n\nContext from the requester:\n{{context}}",
     "offsetInvalid": "offset must be an integer of 0 or more.",
     "secondsInvalid": "seconds must be from 1 to 30.",
     "stopping": "The task is stopping. Wait a moment.",
-    "maxQueued": "Up to 20 additional instructions can be queued.",
-    "limitReached": "The limit of concurrent runs has been reached.",
     "unknownTool": "Unknown Pleiad task tool."
   },
   "approval": {

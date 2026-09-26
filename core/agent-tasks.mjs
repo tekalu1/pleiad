@@ -13,7 +13,7 @@ const text = (locale, value, name, max = 60000) => {
 
 // Pleiad owns these tasks, independently of each engine's native subagent registry.
 // Writes are serialized; only the scheduler starts work. No blind replay after a crash.
-export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, changed = () => {}, waiting = () => false, maxActive = 8 }) {
+export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, changed = () => {}, waiting = () => false }) {
   const file = path.join(dataDir, 'agent-tasks.json');
   let records = {};
   try { records = JSON.parse(await fs.readFile(file, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
@@ -125,11 +125,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         if (args.title !== undefined && typeof args.title !== 'string') throw new Error(agentT(locale, 'tasks.textLength', { name: 'title', max: 40 }));
         args = { ...args, title: taskTitle(args.title, args.task) };
         const row = await serial(async () => {
-          if (Object.values(records).filter(r => ACTIVE.has(r.status)).length >= maxActive) throw new Error(agentT(locale, 'tasks.maxActive', { max: maxActive }));
-          if (Object.values(records).filter(r => r.parentSessionId === owner).length >= 100) throw new Error(agentT(locale, 'tasks.maxPerConversation', { max: 100 }));
+          // 同時の件数・1 会話の件数・深さに上限は置かない（2026-09-27 に廃止。depth は記録だけ残す）
           const parent = Object.values(records).find(r => r.sessionId === owner);
           const depth = (parent?.depth ?? 0) + 1;
-          if (depth > 4) throw new Error(agentT(locale, 'tasks.maxDepth', { max: 4 }));
           const taskId = `ply-task-${crypto.randomUUID()}`;
           const prepared = await prepare(owner, args, taskId, signal);
           try {
@@ -166,8 +164,6 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         text(locale, args.message, 'message');
         await update(r.taskId, row => {
           if (row.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
-          if (row.queue.length >= 20) throw new Error(agentT(locale, 'tasks.maxQueued'));
-          if (!ACTIVE.has(row.status) && Object.values(records).filter(r => ACTIVE.has(r.status)).length >= maxActive) throw new Error(agentT(locale, 'tasks.limitReached'));
           row.revision = (row.revision ?? 0) + 1;
           row.queue.push(args.message); row.notification = 'none'; row.error = null;
           if (!live.has(row.taskId) || !ACTIVE.has(row.status)) row.status = 'queued';

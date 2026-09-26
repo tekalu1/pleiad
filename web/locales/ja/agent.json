@@ -45,16 +45,11 @@
     "textLength": "{{name}} は1〜{{max}}文字で指定してください",
     "notOwned": "この会話が作成した Pleiad タスクではありません",
     "halted": "実行は中断されています",
-    "maxActive": "Pleiad の委譲は同時に{{max}}件までです",
-    "maxPerConversation": "1会話の Pleiad タスクは{{max}}件までです",
-    "maxDepth": "Pleiad の委譲は{{max}}階層までです",
     "aborted": "中断しました",
     "withContext": "{{task}}\n\n依頼元からのコンテキスト:\n{{context}}",
     "offsetInvalid": "offset は0以上の整数です",
     "secondsInvalid": "seconds は1〜30です",
     "stopping": "停止処理中です。少し待ってください",
-    "maxQueued": "追加指示は20件までです",
-    "limitReached": "同時実行の上限に達しました",
     "unknownTool": "不明な Pleiad タスクツールです"
   },
   "approval": {

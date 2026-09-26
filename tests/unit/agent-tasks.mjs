@@ -15,13 +15,14 @@ export default async function(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-tasks-'));
   let seq = 0, release, rolledBack = 0;
   const calls = [], notifications = [];
-  let notifyBlocked = true, retry = true;
+  let notifyBlocked = true, retry = true, gated;
   const options = { dataDir: dir, prepare: async (_owner, a) => ({ sessionId: `child-${++seq}`, backend: a.backend }),
     rollback: async () => { rolledBack++; },
     execute: async (r, prompt, signal) => {
       calls.push([r.taskId, prompt]);
       if (prompt === 'retry' && retry) { retry = false; return { requeue: true }; }
       if (prompt === 'hold') await new Promise(resolve => { release = resolve; signal.addEventListener('abort', resolve, { once: true }); });
+      if (prompt === 'gate') await Promise.race([gated, new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }))]);
       if (prompt === 'error') throw new Error('fixture failure');
       return { outcome: signal.aborted ? 'aborted' : 'ok', text: prompt === 'large' ? 'x'.repeat(40000) : prompt };
     },
@@ -90,6 +91,20 @@ export default async function(t) {
     const rejected = await manager.call('parent', 'ply_delegate', { backend: 'codex', task: 'must not run' }).then(() => false, () => true);
     t.ok('保存失敗で未受領のタスクを実行しない', rejected && manager.list().length === count && rolledBack === 1 && calls.length === before);
     await fs.rmdir(path.join(dir, 'agent-tasks.json.tmp'));
+    // 件数・深さ・追加指示に上限は置かない（docs/agent-delegation.md「会話・権限・作業場所」）
+    let openGate; gated = new Promise(resolve => { openGate = resolve; });
+    const many = [];
+    for (let i = 0; i < 12; i++) many.push(await manager.call('parent', 'ply_delegate', { backend: 'codex', task: 'gate' }));
+    await until(() => many.every(j => manager.get(j.taskId).status === 'running'));
+    t.ok('同時に動く委譲の件数に上限が無い（12 件が同時に実行中）', many.length === 12);
+    for (let i = 0; i < 25; i++) await manager.call('parent', 'ply_task_send', { taskId: many[0].taskId, message: `more ${i}` });
+    t.ok('追加指示の件数に上限が無い（25 件積める）', manager.get(many[0].taskId).pendingMessages === 25);
+    let owner = 'parent', deepest;
+    for (let i = 0; i < 6; i++) { deepest = await manager.call(owner, 'ply_delegate', { backend: 'codex', task: 'deep' }); owner = deepest.sessionId; }
+    t.ok('委譲の深さに上限が無い（6 階層まで委譲できる）', deepest.depth === 6);
+    openGate();
+    await until(() => many.every(j => manager.get(j.taskId).status === 'completed'));
+    t.ok('積んだ追加指示を順に全部実行する', manager.get(many[0].taskId).result === 'more 24');
     const japanese = '日本語の依頼';
     const payload = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'ply_delegate', arguments: { backend: 'claude', task: japanese } } }));
     const split = payload.indexOf(Buffer.from(japanese)) + 1;
