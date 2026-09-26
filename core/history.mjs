@@ -167,13 +167,14 @@ export async function anchorAttachments(sessionId, turnKey, messageId) {
  *   sidecar history         … いつ変えたかが分かる。同じ状態を何度使ったかも数えられる
  *   バックエンドの tag       … 公式 CLI など agent-host の外で付けたものも拾える
  *                              （ネイティブに tag を持てるバックエンドだけ）
+ * list はネイティブ一覧の読み方。サーバーは使い回しの一覧（core/server.mjs の nativeSessions）を渡す
  */
-export async function listStatuses(backends = []) {
+export async function listStatuses(backends = [], { list = (b, limit) => b.listSessions({ limit }) } = {}) {
   const [side, entries, ...lists] = await Promise.all([
     store.getAll().catch(() => ({})),
     store.getStatusEntries().catch(() => ({})),
     ...backends.map((b) =>
-      b.capabilities?.tag ? b.listSessions({ limit: 500 }).catch(() => []) : Promise.resolve([]),
+      b.capabilities?.tag ? Promise.resolve().then(() => list(b, 500)).catch(() => []) : Promise.resolve([]),
     ),
   ]);
 

@@ -471,6 +471,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
    高さを畳むために中身は overflow:hidden を持つ。節は溝の側にあるので切られない */
 .mw{display:grid;grid-template-columns:72px minmax(0,1fr);grid-template-rows:1fr;opacity:1;transform:none;min-width:0;
   transition:grid-template-rows var(--dur-slow) var(--ease-organic),opacity var(--dur-slow) var(--ease-organic),transform var(--dur-slow) var(--ease-organic)}
+/* 画面の外の発言はレイアウトと描画を省く。数百件の履歴では全体のレイアウトだけで数秒かかっていた（スマホで顕著）。
+   高さは一度描いた値を覚える（auto）。中身は元から overflow:hidden で、メニューは body に出すので、閉じ込めで切れるものは無い。
+   稼働表示は筋の終端の位置を読むので外す */
+#thread > .mw:not(.activity){content-visibility:auto;contain-intrinsic-size:auto 160px}
 .mw-gutter,.mw-body{min-height:0;overflow:hidden;min-width:0}
 .mw-gutter{position:relative}
 .mw-body{transition:transform var(--dur-fast) var(--ease-out)}

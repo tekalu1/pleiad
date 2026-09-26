@@ -196,6 +196,29 @@ function wrap(node, key) {
 
 const atBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 40;
 
+/**
+ * 末尾へ送り、高さが落ち着くまで末尾に合わせ直す。画面の外の発言は仮の高さで並び（style.css の content-visibility）、
+ * 末尾へ送ったあとに見えた分が本当の高さに伸びるので、1 回送るだけでは末尾から外れる。
+ * 利用者がスクロールし始めたら（ホイール・タッチ・キー）そこでやめる
+ */
+let settling = null;
+function scrollToEnd() {
+  settling?.abort();
+  const run = settling = new AbortController();
+  log.scrollTop = log.scrollHeight;
+  for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) log.addEventListener(type, () => run.abort(), { signal: run.signal, passive: true });
+  let last = log.scrollHeight, calm = 0, frames = 0;
+  const tick = () => {
+    if (run.signal.aborted) return;
+    if (++frames > 60) return run.abort();
+    const height = log.scrollHeight;
+    if (height !== last || !atBottom()) { log.scrollTop = height; last = height; calm = 0; }
+    else if (++calm >= 3) return run.abort();
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
 /** 筋の末尾に置く。稼働表示（走っている間だけある）は常に一番下に残す */
 function place(w) {
   const act = thread.querySelector(".mw.activity");
@@ -203,7 +226,12 @@ function place(w) {
   else thread.append(w);
 }
 
+// 履歴をまとめて描く間は、1 件ごとに筋を貼り直さない。筋の位置と末尾の判定はレイアウトを読むので、
+// 1 件ごとにやると件数の 2 乗でレイアウトが走り、大きな会話を開くのに数秒かかっていた。paintHistory が最後に 1 回貼る
+let paintingHistory = false;
+
 function append(node, key) {
+  if (paintingHistory) { const w = wrap(node, key); place(w); return w; }
   const stick = !state.busy && atBottom();
   const w = wrap(node, key);
   place(w);
@@ -3759,10 +3787,21 @@ async function syncTopbar() {
   renderSessions();
 }
 
+/**
+ * 一覧・状態・設定を取り直す。他の会話の出来事（完了・状態・タイトル…）のたびに呼ばれ、続けて来ることが多い。
+ * 1 回ごとに一覧（数百 KB）と入力欄の上の設定を往復するので、中継を通るスマホでは重なると操作全体が重くなっていた。
+ * 走っている取り直しがあれば、それが終わった後に 1 回だけ取り直す（その間に来た呼び出しは全部その 1 回を待つ）。
+ * 走っている分は呼ばれる前に始まったので、それだけを待つと、呼んだ側が直前にした変更（fork など）が載らない
+ */
+let refreshRun = null, refreshAgain = null;
+function refresh() {
+  if (!refreshRun) return refreshRun = runRefresh().finally(() => { refreshRun = null; });
+  return refreshAgain ??= refreshRun.catch(() => {}).then(() => { refreshAgain = null; return refresh(); });
+}
+
 let refreshVersion = 0;
-async function refresh() {
+async function runRefresh() {
   const version = ++refreshVersion;
-  const t0 = performance.now();
   const [sessions, statuses, prefs] = await Promise.all([
     cmd("listSessions"),
     cmd("listStatuses").catch(() => []),
@@ -3820,6 +3859,12 @@ function paintBranchNames() {
 
 /** 履歴を描く。from 以降の添字（messages の mi）だけ。返すのは足した要素 */
 function paintHistory(fromMi = 0) {
+  paintingHistory = true;
+  try { return paintHistoryRows(fromMi); }
+  finally { paintingHistory = false; relayoutBranches(); }
+}
+
+function paintHistoryRows(fromMi) {
   const items = buildItems(state.messages, state.presents);
   const added = [];
   let prevRole = fromMi > 0 ? state.messages[fromMi - 1]?.role : null;
@@ -3966,7 +4011,7 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh }) {
   }, 150) : null;
   let data;
   try {
-    data = await cmd("loadSession", { sessionId: id, live: true });
+    data = await cmd("loadSession", { sessionId: id, live: true, watch: true });
   } catch (e) {
     clearTimeout(historyTimer);
     sessionLoads.cancel(load);
@@ -4020,7 +4065,14 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   state.messages = data?.messages ?? [];
   state.initialMessageId = data?.initialMessageId;
   state.presents = data?.presents ?? [];
-  if (!loaded) await branches.load(id, state.messages);
+  // 系譜（lineage）は待たずに本文を先に描き、分岐点の印は届いてから付ける（下の family）。
+  // 系譜はサーバーが全エージェントの一覧から組むので、待つと開くたびに 1〜3 秒止まっていた。
+  // 別の家族の会話へ移ったなら、前の家族で分岐点を描かないように先に忘れる
+  let family = null;
+  if (!loaded) {
+    if (!branches.has(id)) branches.reset();
+    family = branches.load(id, state.messages).catch(() => null);
+  }
   if (state.current !== id || load && state.displayLoad !== load) return;
   state.loadingSession = null;
   // 対応を終えたエージェントの会話で閉じた欄（下の retired）は、別の会話を開いたら戻す
@@ -4085,7 +4137,15 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   // 対応を終えたエージェントの会話は読むだけ。入力欄を閉じ、理由を末尾に出す（送信はサーバーも断る）
   const retired = data?.retired ?? null;
   if (retired) { sys(escText(retired)); $("prompt").disabled = true; $("prompt").placeholder = retired; }
-  log.scrollTop = keepUpTo === undefined && (!quiet || atEnd) ? log.scrollHeight : scrollAt;
+  if (keepUpTo === undefined && (!quiet || atEnd)) scrollToEnd(); else log.scrollTop = scrollAt;
+  if (family) family.then(() => {
+    if (state.current !== id || load && state.displayLoad !== load) return;
+    if (state.busy) { pendingBranchReload = true; return; }
+    const stick = atBottom();
+    placeJunctions();
+    if (!retired) $("prompt").placeholder = branchIsFresh(id) ? t("chat.composer.firstMessage", { name: branches.nameOf(id) }) : promptPlaceholder();
+    if (stick) scrollToEnd();
+  });
   if (moving) await moving.promote(transition.snapshot);
 }
 
@@ -4206,8 +4266,9 @@ async function changeBranch(id, row) {
   sessionLoads.cancel(state.displayLoad);
   const load = sessionLoads.begin(id);
   state.displayLoad = load;
+  let painted = false;
   try {
-    const data = await cmd('loadSession', { sessionId: id, live: true });
+    const data = await cmd('loadSession', { sessionId: id, live: true, watch: true });
     const target = data?.messages ?? [];
     let keep = commonPrefix(state.messages, target);
     const cut = branches.boundary(source, id);
@@ -4219,7 +4280,12 @@ async function changeBranch(id, row) {
     await branches.load(id, target);
     if (state.current !== source) return;
     await paintSession(id, data, { keepUpTo: keep, transition, loaded: true, load });
-  } finally { sessionLoads.cancel(load); }
+    painted = true;
+  } finally {
+    sessionLoads.cancel(load);
+    // 読んだ時点でサーバーは移り先を開いたものとして流れを絞っている。移れなかったなら元の会話に戻す
+    if (!painted && state.current === source) cmd('watchSession', { sessionId: source }).catch(() => {});
+  }
 }
 async function switchTo(id, row) {
   if (state.busy || id === state.current) return;
