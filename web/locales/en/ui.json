@@ -988,7 +988,14 @@
       "name": "Enter a name.",
       "json": "The JSON is not valid."
     },
-    "oauthReset": "The endpoint or other settings changed. Please sign in again."
+    "oauthReset": "The endpoint or other settings changed. Please sign in again.",
+    "unify": {
+      "question_one": "The following {{count}} server will be connected to every agent",
+      "question_other": "The following {{count}} servers will be connected to every agent",
+      "confirm_one": "Manage {{count}} with Pleiad",
+      "confirm_other": "Manage {{count}} with Pleiad",
+      "spread": "Will also be available to other agents"
+    }
   },
   "saved": {
     "reason": {

@@ -15,7 +15,7 @@ import { runMark } from './arc.mjs';
 import { renderMarkdown } from './render.mjs';
 import { estimateTokens } from './token-estimate.mjs';
 import { toggleExclude } from './context.mjs';
-import { toggleMcp } from './mcp-config.mjs';
+import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
 
 const KEY = 'session-context';
 const KINDS = ['instruction', 'skill', 'mcp'];
@@ -148,6 +148,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   let chip = null;
   // 作業場所の設定（contextSettings）と、「この場所だけ変える」の間の探索結果
   let place = { cwd: null, view: null, loading: false }, edit = false, editScan = null, editBusy = false, toastTimer = null, toastOn = false;
+  // この場所の外部 MCP を「Pleiad がそろえる」へ切り替える前の確認を開いているか（ADR 0031）
+  let unifying = false;
 
   const title = t('sessionContext.title');
   function subtitle(data) {
@@ -163,7 +165,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   let shownFor = null;
   function render() {
     // 別の会話へ移った。前の会話の差分・ログインの途中経過・変えている途中は持ち越さない
-    if (session()?.id !== shownFor) { shownFor = session()?.id ?? null; diff = null; diffOpen = false; notice = ''; logins.clear(); removedPending.clear(); edit = false; editScan = null; }
+    if (session()?.id !== shownFor) { shownFor = session()?.id ?? null; diff = null; diffOpen = false; notice = ''; logins.clear(); removedPending.clear(); edit = false; editScan = null; unifying = false; }
     const data = info();
     const box = el('div', 'scx');
     if (!data?.report) {
@@ -258,7 +260,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     return face;
   }
   async function startEdit() {
-    edit = true; editScan = null;
+    edit = true; editScan = null; unifying = false;
     refresh();
     focusIn('[data-act=placeDone]');
     await loadEditScan();
@@ -305,7 +307,19 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       const b = button('', 'cx-opt');
       b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(owner === id)); b.dataset.owner = `${kind}:${id}`;
       b.append(el('b', null, OWNER[id][0]), el('span', null, OWNER[id][1][kind]));
-      b.onclick = () => { if (owner !== id) savePlaceKind(kind, v => { v.owner = id; }, `[data-owner="${kind}:${id}"]`); };
+      b.onclick = () => {
+        // 外部 MCP を Pleiad にそろえる前に、この場所でつながるものをその場で確かめる（設定 › コンテキストと同じ。ADR 0031）
+        if (kind === 'mcp' && unifying) {
+          if (id !== 'ply') { unifying = false; refresh(); focusIn(`[data-owner="mcp:${id}"]`); }
+          else focusIn('.cx-confirm .btn-primary:not(:disabled)');
+          return;
+        }
+        if (kind === 'mcp' && id === 'ply' && owner !== 'ply' && (!editScan || (editScan.entries ?? []).some(e => e.kind === 'mcp'))) {
+          unifying = true; refresh(); focusIn('.cx-confirm .btn-primary:not(:disabled)');
+          return;
+        }
+        if (owner !== id) savePlaceKind(kind, v => { v.owner = id; }, `[data-owner="${kind}:${id}"]`);
+      };
       box.append(b);
     }
     return box;
@@ -316,6 +330,20 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const k = kindBox(WORD[kind], ply ? t('sessionContext.place.plyWho') : t('sessionContext.native'), ply);
     if (!value) { k.append(el('p', 'cx-sub', t('sessionContext.place.loading'))); return k; }
     k.append(ownerSeg(kind, value.owner));
+    if (!ply && kind === 'mcp' && unifying && !editScan) { const p = el('p', 'cx-sub'); p.append(runMark(t('context.searching')), document.createTextNode(' ' + t('context.searchingDots'))); k.append(p); return k; }
+    if (!ply && kind === 'mcp' && unifying) {
+      const all = editScan.entries ?? [];
+      const of = name => all.filter(e => e.kind === 'mcp' && e.name === name);
+      k.append(unifyConfirm({ entries: all,
+        onCancel: () => { unifying = false; refresh(); focusIn('[data-owner="mcp:ply"]'); },
+        // 担当と除外をまとめて 1 回で保存する
+        onConfirm: ({ on, off }) => { unifying = false; savePlaceKind('mcp', v => {
+          v.owner = 'ply';
+          for (const name of off) toggleMcp(v, name, of(name), false, all);
+          for (const name of on) toggleMcp(v, name, of(name), true, all);
+        }, '[data-owner="mcp:ply"]'); } }));
+      return k;
+    }
     if (!ply) { k.append(el('p', 'cx-sub', t('sessionContext.place.nativeNote', { agent: backendLabel() }))); return k; }
     if (!editScan) { const p = el('p', 'cx-sub'); p.append(runMark(t('context.searching')), document.createTextNode(' ' + t('context.searchingDots'))); k.append(p); return k; }
     const own = Boolean(here()?.saved && here().kinds[kind].override);
@@ -605,7 +633,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     // 開くたびに作業場所の設定を読み直す（設定の画面や別の窓で変わっていることがある）
     place = { cwd: null, view: null, loading: false };
     preview.openPanel({ key: KEY, title, subtitle: data.report ? subtitle(data) : '', body: render(), label: title, element: chip,
-      onClose: () => { chip?.setAttribute('aria-expanded', 'false'); edit = false; editScan = null; } });
+      onClose: () => { chip?.setAttribute('aria-expanded', 'false'); edit = false; editScan = null; unifying = false; } });
   }
   function toggle(element) {
     if (preview.panelOpen(KEY)) preview.close();
