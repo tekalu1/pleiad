@@ -294,6 +294,16 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .conn-lost{padding:8px 14px;font-size:var(--fs-xs);color:var(--ink-weak);background:transparent;text-align:left;width:100%}
 button.conn-lost{cursor:pointer}
 button.conn-lost:hover{color:var(--ink)}
+/* 会話一覧はひとつのツリー（フォーカスは #groups 1 つ、web/side.mjs）。指している項目はキーボードのときだけ 2px の輪（§8）。
+   開いている会話の白い面（.sel）とは別に示す。内側に描くので脇の端で切れない */
+#groups:focus{outline:none}
+#groups.kbd:focus .is-active{outline:2px solid var(--line-blue);outline-offset:-1px}
+#groups.kbd:focus:not(:has(.is-active)){outline:2px solid var(--line-blue);outline-offset:-2px}
+#groups .grp-head{border-radius:var(--r-s)}
+/* 一覧にキーボードがある間だけ、脇の下に操作キーの一行 */
+.key-hint{display:flex;flex-wrap:wrap;gap:3px 10px;padding:8px 14px 10px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.key-hint>span{white-space:nowrap}
+.key-hint kbd{font-family:var(--font-mono);font-size:var(--fs-xs);background:var(--surface-paper);border-radius:var(--r-pill);padding:0 6px;margin-right:3px;color:var(--ink)}
 /* 設定メニューの中のバックエンド認証。名前 + 状態 + 文字だけのボタン。URL と手貼りの欄はその下 */
 .auth-row{display:flex;align-items:center;gap:8px;padding:4px 8px;min-width:0}
 .auth-row .name{flex:none;color:var(--ink)}

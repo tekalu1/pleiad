@@ -3682,6 +3682,8 @@ function groupMenu(st, x, y) {
   if (st == null) return showMenu(x, y, [newGroupItem()], t("session.status.none"));
   const n = state.sessions.filter((s) => s.status === st).length;
   showMenu(x, y, [
+    // 見出しの ＋ と同じ。キーボード（Shift+F10）からも届くように
+    { label: t("sidebar.group.newSession"), onClick: () => side.newIn(st) },
     { label: t("session.menu.changeIcon"), hint: state.statuses.find((s) => s.status === st)?.icon ?? "", onClick: () => side.pickIcon(st) },
     { label: t("session.menu.renameStatus"), sub: () => [
       { input: { placeholder: t("session.menu.newName"), value: st, onCommit: (v) =>
