@@ -25,16 +25,22 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
       if (name === active) $('settingsPageTitle').textContent = $(button).textContent;
     }
   }
-  // 設定は画面全体。脇の一覧がメニューに、会話がページに入れ替わる
+  // 設定は画面全体。脇の一覧がメニューに、会話がページに入れ替わる。
+  // 会話は伏せずにページで覆う（style.css「設定の画面」）ので、キーボードと読み上げが覆った会話へ届かないよう inert にする
+  // main の直下だけを見る（文書全体を探すと長い会話ではそれだけで重い）。要素は作り直さないので一度拾えば足りる
+  let coveredNodes;
+  const covered = () => coveredNodes ??= [...(document.querySelector('body > main')?.children ?? [])].filter(n => n.matches('.top, #log, .composer'));
   function open(active = 'setup') {
     if (welcome.open) return;
     page(active);
     document.body.classList.add('settings');
+    for (const node of covered()) node.inert = true;
     $('settingsNav').querySelector('[aria-pressed=true]')?.focus();
   }
   function close() {
     if (locked || !isOpen()) return;
     document.body.classList.remove('settings');
+    for (const node of covered()) node.inert = false;
     $('settings').focus();
   }
   // 更新の適用中は途中で再起動するので、会話へ戻る道を塞ぐ

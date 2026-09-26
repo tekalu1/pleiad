@@ -2811,9 +2811,9 @@ function setSidebar(open) {
   const from = document.activeElement;
   if (!open && $("sidebar").contains(from)) $("openSidebar").focus();
   else if (open && from === $("openSidebar")) $("closeSidebar").focus();
-  // 動き終わったら動きを外し、会話の幅が変わった分だけプレビューの幅を測り直す。--dur（240ms）より少し待つ
+  // 動き終わったら動きを外し、会話の幅が変わった分だけプレビューの幅と枝のグラフを測り直す。--dur（240ms）より少し待つ
   clearTimeout(sidebarMoving);
-  sidebarMoving = setTimeout(() => { document.body.classList.remove("side-moving"); filePreview.layout(); }, motionDuration(240) + 40);
+  sidebarMoving = setTimeout(() => { document.body.classList.remove("side-moving"); filePreview.layout(); relayoutBranches(); }, motionDuration(240) + 40);
 }
 
 function initSidebar() {
@@ -3824,8 +3824,10 @@ const branches = createBranches({
   // 枝の名前は一覧のタイトル。refresh() が保つものを読むだけで、筋の側に写しは持たない
   titleOf: (id) => state.sessions.find((x) => x.id === id)?.title ?? null,
 });
-// 発言の高さが変わったら（画像の読み込み・折り畳み・返答が伸びる）枝のグラフを貼り直す
-if (typeof ResizeObserver === "function") new ResizeObserver(() => relayoutBranches()).observe(thread);
+// 発言の高さが変わったら（画像の読み込み・折り畳み・返答が伸びる）枝のグラフを貼り直す。
+// 脇の開閉で会話の幅が動いている間は毎コマ変わるので貼らず、動き終わりに 1 回貼る（setSidebar）。
+// 貼るたびに分岐点の行の位置を読むので、毎コマだと長い会話で開閉が止まっていた
+if (typeof ResizeObserver === "function") new ResizeObserver(() => { if (!document.body.classList.contains("side-moving")) relayoutBranches(); }).observe(thread);
 
 /** Layout runs on append as well as resize; the spine exists even before the first turn. */
 function relayoutBranches() { layoutBranchSpine(thread); }
@@ -4630,7 +4632,9 @@ setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lo
   await Promise.all([settingsWrite, modeWrite, ...[...state.drafts].filter(([id, draft]) => id && draft.dirty).map(([id, draft]) => persistDraft(id, draft))]);
   await Promise.all([...draftWrites.values()]);
 } });
-function openSettings() { onboarding.open(); }
+// 狭い画面の引き出しから開いたなら閉じておく（docs/design-system.md「幕・会話の行・設定・Esc で閉じる」）。
+// 設定の間は引き出しの見た目が効かないので、閉じないと「会話に戻る」で会話ではなく引き出しが出ていた
+function openSettings() { setDrawer(false); onboarding.open(); }
 // 使用量の取得は設定の「使用量」とヘッダーのチップで共有する（同じエージェントの取得が走っていれば相乗り）
 const usageSource = createUsageSource(cmd);
 // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
