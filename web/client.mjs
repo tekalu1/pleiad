@@ -21,7 +21,7 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, plainTextHtml } from "./render.mjs";
 import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
-import { setupComposerControls, resolvedModel } from "./composer-controls.mjs";
+import { setupComposerControls, resolvedModel, folderBrowser } from "./composer-controls.mjs";
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { setupAttachMenu } from "./attach-menu.mjs";
 import { promptMaxHeight, attachSources, attachOrigin, attachFolderHints } from "./composer-layout.mjs";
@@ -4787,7 +4787,7 @@ $("titleWand").onclick = async () => {
   $("titleEdit").select();
 };
 
-const onboarding = setupOnboarding({ cmd, refreshAuth, getAuth: () => state.auth, authLogin, authUrlBox,
+const onboarding = setupOnboarding({ cmd, refreshAuth, getAuth: () => state.auth, authLogin, authUrlBox, folderBrowser,
   begin: async (settings, prompt) => {
     if (state.busy || creatingSession) throw new Error(t("dialog.onboarding.busy"));
     const id = await startNew(settings);

@@ -1341,13 +1341,16 @@
   "dialog": {
     "onboarding": {
       "title": "Welcome to Pleiad",
-      "subtitle": "Choose an agent and start your first conversation.",
+      "subtitle": "Choose an agent and a working directory, then start your first conversation.",
       "later": "Later",
       "agents": "Agent to use",
       "note": "You can change the agent and working directory in the conversation at any time",
       "start": "Start conversation",
       "busy": "Wait for the running work to finish, then start a new conversation.",
-      "openFailed": "Couldn't open a new conversation. Please try again."
+      "openFailed": "Couldn't open a new conversation. Please try again.",
+      "cwd": "Working directory",
+      "cwdHome": "Home",
+      "cwdNote": "The agent reads and writes files in this folder."
     },
     "closeEsc": "Close (Esc)",
     "close": "Close",

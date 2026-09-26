@@ -22,6 +22,17 @@
 .onboarding-agent-item .agent-desc{font-size:var(--fs-s);color:var(--ink-weak);margin-top:2px}
 .onboarding-agent-item .agent-state{font-size:var(--fs-s);color:var(--ink-weak);text-align:right;flex:none}
 .onboarding-auth:not(:empty){background:var(--surface-1);border-radius:var(--r-m);padding:10px 8px;margin-bottom:16px}
+/* 初回の案内の作業ディレクトリ（docs/design-system.md §10）。見出しは弱い字、行はエージェントの一覧と同じグレーの地に
+   フォルダーのアイコン・等幅のフルパス（ホームなら弱い字の「ホーム」）・「フォルダーを選ぶ…」。簡易ブラウザーはその下に開く */
+.onboarding-cwd{margin:0 0 4px}
+.onboarding-cwd-label{padding:0 4px 6px;font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em}
+.onboarding-cwd-row{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 14px;border-radius:var(--r-m);background:var(--surface-0)}
+.onboarding-cwd-row svg.i{flex:none;width:16px;height:16px;color:var(--ink-weak)}
+.onboarding-cwd-path{flex:1;min-width:0;font-family:var(--font-mono);font-size:var(--fs-s);overflow-wrap:anywhere}
+.onboarding-cwd-home{font-family:var(--font);font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
+.onboarding-cwd-row .btn{flex:none;font-size:var(--fs-s)}
+.onboarding-cwd-note{margin:6px 4px 0;font-size:var(--fs-s);color:var(--ink-weak)}
+.onboarding-browse .clistbox{display:flex;flex-direction:column;gap:1px}
 .onboarding-actions{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:24px}
 #agentControls .head{margin-top:20px}
 #agentControls .auth-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 0}
