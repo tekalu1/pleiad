@@ -33,7 +33,7 @@ import { runMark, satMark, stillMark } from "./arc.mjs";
 import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
-import { isAutoRouting, routingLine, routingDetail, retryPanel, retryCandidates, splitCandidate, fallbackName } from './delegation-routing-view.mjs';
+import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, retryCandidates, splitCandidate, fallbackName } from './delegation-routing-view.mjs';
 import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
 import { familiesOf } from "./family.mjs";
@@ -2614,7 +2614,8 @@ function linkDelegateCard(card, input = null, result = null) {
 }
 
 // ---- 委譲カードの振り分けの理由（docs/design-system.md「委譲カード」）
-// 自動で選んだときだけ「自動」の印と 1 行の理由を足し、開くと内訳（web/delegation-routing-view.mjs）。固定のときは今の見た目のまま
+// 見出しを「委譲」にし、委譲先のロゴと 1 行（「種類 → 委譲先」）を足す。開くと「依頼」と内訳（web/delegation-routing-view.mjs）、
+// 入力・出力の JSON は折りたたみの奥。自動で選んだときだけ「自動」の印・判定・候補・やり直し（固定の委譲には持ち込まない）
 
 /** カード -> 結果から読んだ routing（タスクの一覧から外れていても出せるように） */
 const cardRouting = new WeakMap();
@@ -2629,38 +2630,101 @@ const routingNames = {
   model: (backend, model) => (model ? fallbackName('model', backend, modelDisplayName(state.vocab.get(backend)?.models ?? {}, model)) : ''),
 };
 function routingLogo(backend) { return backendLogo(backend, routingNames.backend(backend)); }
+/** カードの入力・出力の JSON（ツールカードの .tc-input / .tc-output の文字）。読めなければ null */
+function cardJson(card, selector) {
+  const text = card.querySelector(`${selector} pre`)?.textContent ?? '';
+  if (!text.trim().startsWith('{')) return null;
+  try { return JSON.parse(text); } catch { return null; }
+}
+/** routing の無い古いタスクでも、依頼元が委譲先を書いていれば固定の委譲として見せる */
+function inputRouting(card) {
+  const input = cardJson(card, '.tc-input');
+  if (typeof input?.backend !== 'string' || !input.backend) return null;
+  return { mode: 'pinned', kind: input.kind ?? '', target: { backend: input.backend, model: input.model ?? null } };
+}
+/** 固定の委譲の内訳（承認モード・作業場所）。ply_delegate の返り値から、無ければタスクの一覧から */
+function pinnedFacts(card, routing) {
+  const result = cardJson(card, '.tc-output') ?? {};
+  const task = (state.work.tasks ?? []).find(x => x.taskId === card.dataset.taskId) ?? {};
+  const mode = result.mode ?? task.mode ?? '';
+  return { names: routingNames, mode: mode ? state.vocab.get(routing.target.backend)?.modes?.[mode]?.label ?? mode : '', cwd: result.cwd ?? task.cwd ?? '' };
+}
+function delegateDetail(card, routing) {
+  return isAutoRouting(routing)
+    ? routingDetail(routing, { names: routingNames, logo: routingLogo, onRetry: (root, button) => toggleRetry(card, root, button) })
+    : pinnedDetail(routing, pinnedFacts(card, routing));
+}
+/** 開いた内訳の先頭の「依頼」。4 行で切り、はみ出すときだけ「全文を表示」（バックグラウンドの詳細と同じ） */
+function delegateRequest(card) {
+  const task = cardJson(card, '.tc-input')?.task;
+  if (typeof task !== 'string' || !task.trim()) return null;
+  const box = el('div', 'rt-request');
+  const text = el('div', 'rt-request-text', task.trim());
+  box.append(el('div', 'rt-request-label', t('dialog.work.request')), text);
+  const toggle = el('button', 'bg-request-toggle', t('dialog.work.showFull'));
+  toggle.type = 'button'; toggle.hidden = true;
+  toggle.onclick = (e) => {
+    e.preventDefault();
+    const expanded = box.classList.toggle('expanded');
+    toggle.textContent = expanded ? t('dialog.work.collapse') : t('dialog.work.showFull');
+  };
+  box.append(toggle);
+  // 閉じたカードでは高さを測れないので、開いたときに測る
+  const measure = () => { if (!box.classList.contains('expanded')) toggle.hidden = text.scrollHeight <= text.clientHeight + 1; };
+  card.querySelector('.tc-details')?.addEventListener('toggle', measure);
+  requestAnimationFrame(measure);
+  return box;
+}
+/** 入力・出力の JSON は「入力・出力（JSON）」の折りたたみの奥へ（消さずに残す）。結果の読み直しもこの中に入る（render.mjs の applyToolResult） */
+function foldDelegateJson(card) {
+  const body = card.querySelector('.tc-details-body');
+  if (!body || body.querySelector(':scope > .tc-json')) return;
+  const fold = el('details', 'tc-fold tc-json');
+  const summary = el('summary', null, t('routing.detail.json'));
+  const inner = el('div', 'tc-json-body');
+  inner.append(...[...body.children].filter(n => n.matches('.tc-section-label, .tc-input, .tc-out')));
+  fold.append(summary, inner);
+  body.append(fold);
+}
 function decorateDelegateCard(card) {
   const taskId = card.dataset.taskId;
-  const routing = (state.work.tasks ?? []).find(x => x.taskId === taskId)?.routing ?? cardRouting.get(card);
-  if (!isAutoRouting(routing) || card.dataset.routed) return;
+  const routing = (state.work.tasks ?? []).find(x => x.taskId === taskId)?.routing ?? cardRouting.get(card) ?? inputRouting(card);
+  if (!routing?.target || card.dataset.routed) return;
   card.dataset.routed = '1';
-  // モデルの表示名は語彙から。まだ無ければ取りに行き、届いたら理由の行を書き直す
+  const auto = isAutoRouting(routing);
+  // モデル・承認モードの表示名は語彙から。まだ無ければ取りに行き、届いたら理由の行を書き直す
   const missing = [routing.target, ...(routing.skipped ?? []).map(s => splitCandidate(s.candidate))].map(x => x?.backend).filter(b => b && !state.vocab.has(b));
   for (const b of new Set(missing)) loadVocab(b).then(() => paintRouteLine(card, routing)).catch(() => {});
   const head = card.querySelector('.tc-head');
   const label = head.querySelector('.tc-label');
   label.textContent = t('timeline.tool.label.delegate');
-  const auto = el('span', 'tc-auto', t('routing.auto'));
-  auto.title = t('routing.autoTitle');
-  label.after(auto);
+  if (auto) {
+    const mark = el('span', 'tc-auto', t('routing.auto'));
+    mark.title = t('routing.autoTitle');
+    label.after(mark);
+  }
+  // 1 行の頭に委譲先のロゴ。名前は 1 行の字にあるので読み上げには出さない
+  const logo = routingLogo(routing.target.backend);
+  logo.setAttribute('aria-hidden', 'true');
   const line = el('span', 'tc-route');
+  line.append(logo, el('span', 'tc-route-text'));
   const openButton = head.querySelector('.tc-open');
   if (openButton) openButton.before(line); else head.append(line);
+  foldDelegateJson(card);
+  const request = delegateRequest(card);
+  card.querySelector('.tc-details-body')?.prepend(...(request ? [request] : []), delegateDetail(card, routing));
   paintRouteLine(card, routing);
-  const detail = routingDetail(routing, { names: routingNames, logo: routingLogo, onRetry: (root, button) => toggleRetry(card, root, button) });
-  card.querySelector('.tc-details-body')?.prepend(detail);
   paintRetried(card);
 }
 function paintRouteLine(card, routing) {
   const line = card.querySelector('.tc-route');
   if (!line) return;
-  line.textContent = routingLine(routing, routingNames);
-  line.title = line.textContent;
+  line.lastChild.textContent = routingLine(routing, routingNames);
+  line.title = line.lastChild.textContent;
   // 内訳の候補の名前も語彙が届いてから書き直す（開いていないので作り直してよい。やり直しの面を開いていたら触らない）
   const detail = card.querySelector('.rt-detail');
   if (detail && !detail.querySelector('.rt-retry')) {
-    const fresh = routingDetail(routing, { names: routingNames, logo: routingLogo, onRetry: (root, button) => toggleRetry(card, root, button) });
-    detail.replaceWith(fresh);
+    detail.replaceWith(delegateDetail(card, routing));
     paintRetried(card);
   }
 }
