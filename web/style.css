@@ -1083,6 +1083,17 @@ main.dropping #log{background:var(--surface-1)}
 .next-settings{display:flex;align-items:center;gap:12px;background:var(--surface-2);border-radius:var(--r-m);padding:10px 16px;margin-bottom:10px;font-size:var(--fs-s)}
 .next-settings .btn{margin-left:auto;flex:none;font-size:var(--fs-s)}
 .next-settings b{font-weight:600}
+/* エージェントを変える予約のときの引き継ぎの 1 行と「詳しく」（既定は閉じる。docs/design-system.md「入力欄の設定」） */
+.next-handoff{margin-top:4px;color:var(--ink-weak)}
+.next-handoff>summary{list-style:none;cursor:pointer}
+.next-handoff>summary::-webkit-details-marker{display:none}
+.next-handoff>summary .more{margin-left:6px;color:var(--ink-blue);white-space:nowrap}
+.next-handoff>summary .more::after{content:"▸";display:inline-block;margin-left:2px;transition:transform var(--dur-fast) var(--ease-out)}
+.next-handoff[open]>summary .more::after{transform:rotate(90deg)}
+.next-handoff dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 12px;margin:6px 0 0}
+.next-handoff dl>div{display:contents}
+.next-handoff dt{white-space:nowrap}
+.next-handoff dd{margin:0;color:var(--ink)}
 .settings-error{font-size:var(--fs-s);font-weight:600;color:var(--ink);margin-bottom:8px}
 .settings-error:empty{display:none}
 .draft-saved:empty{display:none}

@@ -1112,7 +1112,17 @@
       "mode": "Approval mode: {{value}}",
       "endpoint": "Endpoint: {{value}}",
       "account": "Account: {{value}}",
-      "summary": "{{changes}} · Applies when you send next"
+      "summary": "{{changes}} · Applies when you send next",
+      "handoff": {
+        "line": "Messages and tool records carry over. \"Always allow\" approvals and thinking don't.",
+        "more": "Details",
+        "keep": "Carries over",
+        "keepValue": "Messages, tool inputs and results, attachments and shown files, title, status, and working directory",
+        "drop": "Doesn't carry over",
+        "dropValue": "Past approvals such as \"Always allow\" ({{to}} asks again), thinking, and state only {{from}} keeps (such as TODOs)",
+        "change": "Changes",
+        "changeValue": "The model and approval mode switch to {{to}}'s settings"
+      }
     },
     "composer": {
       "skills": "Skills",
