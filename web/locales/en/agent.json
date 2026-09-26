@@ -37,9 +37,11 @@
     "endpointDeleted": "The endpoint of the requesting conversation has been deleted. Choose an endpoint again in the requesting conversation.",
     "aborted": "Aborted.",
     "noticeUnknown": "Could not confirm the completion notices of the child tasks. Check the child conversation.",
-    "notice": "[Pleiad task completion notice / {{taskId}}]\n{{retry}}Backend: {{backend}}\nStatus: {{status}}\nTask: {{task}}\nResult (the child agent's report):\n{{result}}{{more}}\n{{error}}\nContinue the work needed for the original request.",
+    "notice": "[Pleiad task completion notice / {{taskId}}]\n{{retry}}Backend: {{backend}}\nStatus: {{status}}\nTask: {{task}}\nResult (the child agent's report):\n{{result}}{{more}}\n{{error}}\n{{rejections}}Continue the work needed for the original request.",
     "noticeMore": "\nRead the rest with ply_task_status and offset: {{offset}}.",
-    "noticeRetry": "The user retried {{of}} with another delegate.\n"
+    "noticeRetry": "The user retried {{of}} with another delegate.\n",
+    "noticeRejections": "Commands rejected before running (for example by Codex's own safety check): {{count}}\n{{items}}\nRead them all in rejections from ply_task_status.",
+    "noticeRejection": "- {{command}} ({{reason}})"
   },
   "tasks": {
     "textLength": "{{name}} must be 1 to {{max}} characters.",
@@ -156,11 +158,13 @@
     "names": {
       "delegate": "How to delegate",
       "child": "Don't delegate from a delegated conversation",
-      "route": "Using delegation routing"
+      "route": "Using delegation routing",
+      "codexPolicy": "Commands Codex rejects before running"
     },
     "delegate": "Delegate by default. For anything larger than a single command or a small edit to 1–2 files, don't do it yourself; hand it off with ply_delegate.",
     "main": "In this conversation, do only these yourself: decide the direction, check delegated results, irreversible actions (sending, deleting, paying; confirm with the user first), and one-off tasks with small output. Delegate multi-step work and operations with large output (browser operation, screenshots, long logs, large MCP responses), and have the child return only a summary and evidence.",
     "route": "When delegating, give ply_delegate a kind and leave out backend (Pleiad chooses). Write backend only when the user asks for a specific agent or model. If it reports that no candidate has quota left, tell the user. Use ply_delegate, not native subagents (such as Claude's Agent tool). Give ply_delegate a short title for the background list.",
-    "child": "You are a delegated child conversation, so do not delegate further."
+    "child": "You are a delegated child conversation, so do not delegate further.",
+    "codexPolicy": "Even in Codex modes without approvals (full, YOLO), Codex's own safety check may reject some commands before they run (for example `blocked by policy`). If a command is rejected, do not try to get around it by rewording it or using a different command. Report the commands that could not run, the reasons, and what was left behind as a result (files that could not be deleted, processes that could not be stopped, and so on)."
   }
 }

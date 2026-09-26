@@ -10,6 +10,10 @@ const ACTIVE = new Set(['queued', 'running', 'cancelling']);
 const RETRY_MAX = 15000;
 // 保存障害の記録（agent-tasks-errors.log）の大きさの上限。超えたら新しい半分だけ残す
 const LOG_MAX = 64 * 1024;
+// 1 タスクに持つ実行前の拒否（rejections）の上限。超えた分は捨て、rejectionsDropped に数だけ残す
+const MAX_REJECTIONS = 50;
+// これらの通知の状態なら、今の rejections は依頼元へ渡した（か、止めた）。ply_task_send で始まる次の回は新しく数え直す
+const NOTICED = new Set(['delivering', 'sent', 'unknown', 'suppressed']);
 // call() のエラーと子への依頼文はエージェントが読むので、会話の言語（locale）で引く（agent 名前空間）
 const text = (locale, value, name, max = 60000) => {
   if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(agentT(locale, 'tasks.textLength', { name, max }));
@@ -87,8 +91,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   };
   // context は「別の候補でやり直す」で同じ依頼を渡し直すために持つだけ（長いので一覧・状態には載せない）
   const view = (r, offset = 0) => {
-    const { result = '', queue, context, ...rest } = r;
-    return { ...rest, pendingMessages: queue.length, result: result.slice(offset, offset + 16000), resultOffset: offset,
+    const { result = '', queue, context, rejections = [], ...rest } = r;
+    return { ...rest, rejections, pendingMessages: queue.length, result: result.slice(offset, offset + 16000), resultOffset: offset,
       resultLength: result.length, nextOffset: offset + 16000 < result.length ? offset + 16000 : null };
   };
   // 依頼元のエージェントへ返す形。人間の承認待ちは「いま待っているか」から導く見せかけの状態で、
@@ -131,6 +135,13 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         }
         await record(r.taskId, row => {
           row.result = String(result?.text ?? ''); row.error = result?.error ?? null;
+          // 実行前に拒否されたコマンド。前の完了通知の後に走った回の分を足していく（通知の前に続けて走った回の分も落とさない）
+          const got = Array.isArray(result?.rejections) ? result.rejections : [];
+          if (got.length) {
+            const all = [...(row.rejections ?? []), ...got];
+            row.rejections = all.slice(0, MAX_REJECTIONS);
+            if (all.length > MAX_REJECTIONS) row.rejectionsDropped = (row.rejectionsDropped ?? 0) + all.length - MAX_REJECTIONS;
+          }
           row.status = controller.signal.aborted ? 'cancelled' : result?.outcome === 'ok' ? (row.queue.length ? 'queued' : 'completed') : 'failed';
           if (['failed', 'cancelled'].includes(row.status)) row.queue = [];
         }, 'run.result');
@@ -235,7 +246,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         kick(); return row;
       }
       // 読み取りは保存障害の間も答える。状態はメモリのもので、障害中なら storageFault を添える
-      if (name === 'ply_task_list') return { tasks: Object.values(records).filter(r => r.parentSessionId === owner).map(r => { const { result, ...rest } = shown(r); return rest; }), ...storage(locale) };
+      // 一覧は短く保つ。拒否は件数だけ（中身は ply_task_status）
+      if (name === 'ply_task_list') return { tasks: Object.values(records).filter(r => r.parentSessionId === owner).map(r => { const { result, rejections, ...rest } = shown(r); return { ...rest, rejectionCount: rejections.length }; }), ...storage(locale) };
       const r = owned(owner, text(locale, args.taskId, 'taskId', 100), locale);
       if (name === 'ply_task_status') {
         const offset = args.offset ?? 0;
@@ -261,6 +273,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         await commit(r.taskId, row => {
           if (row.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
           row.revision = (row.revision ?? 0) + 1;
+          // 前の回の拒否を依頼元へ渡し終えていれば、この指示で走る回の分で置き換える。まだ渡していなければ（走っている・通知の前）足していく
+          if (NOTICED.has(row.notification)) { delete row.rejections; delete row.rejectionsDropped; }
           row.queue.push(args.message); row.notification = 'none'; row.error = null;
           if (!live.has(row.taskId) || !ACTIVE.has(row.status)) row.status = 'queued';
         }, 'send', locale);

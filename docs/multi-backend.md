@@ -58,7 +58,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `thinking.start` | `{ }` | `content_block_start(thinking)` |
 | `thinking.delta` | `{ text?, estimatedTokens? }` | `thinking_delta` |
 | `tool.start` | `{ id, name, input }` | `assistant` の `tool_use` |
-| `tool.result` | `{ id, text, isError, truncated }` | `user` の `tool_result` |
+| `tool.result` | `{ id, text, isError, truncated, rejection? }` `rejection` は実行前に拒否されたコマンドの構造（Codex だけ。§2.5「Codex の実行前の拒否」）。server が委譲の結果に集める | `user` の `tool_result` |
 | `activity` | `{ state: "thinking"\|"writing"\|"compacting"\|"waiting"\|"running"\|"idle", label? }` | `system/status`, `session_state_changed` |
 | `turnResult` | `{ outcome: "ok"\|"error"\|"aborted", turns?, costUsd?, error? }` | `result` |
 | `permission` | `{ id, kind: "tool"\|"question", toolName, input, title?, canAlways, questions? }` | 既存 + AskUserQuestion の特別扱い |
@@ -298,7 +298,7 @@ sidecar 側の `setMode` / `setModel` は `exclusive()` を通す（既存の re
 | タイトル | `renameSession` | `thread/name/set` |
 | 状態タグ | `tagSession` | 無し → sidecar |
 | fork | `forkSession` | `thread/fork` |
-| モード | `default/auto/acceptEdits/plan/bypass`（`bypass` は SDK の `bypassPermissions`。`allowDangerouslySkipPermissions: true` を同時に渡す） | `approvalPolicy` × `sandbox` の組を id 化: `ask`(untrusted/workspace-write) / `auto`(on-request/workspace-write) / `full`(never/workspace-write) / `yolo`(never/danger-full-access) / `readonly`(on-request/read-only)。各 turn/start にも承認と sandbox の設定を送る |
+| モード | `default/auto/acceptEdits/plan/bypass`（`bypass` は SDK の `bypassPermissions`。`allowDangerouslySkipPermissions: true` を同時に渡す） | `approvalPolicy` × `sandbox` の組を id 化: `ask`(untrusted/workspace-write) / `auto`(on-request/workspace-write) / `full`(never/workspace-write) / `yolo`(never/danger-full-access) / `readonly`(on-request/read-only)。各 turn/start にも承認と sandbox の設定を送る。`full`・`yolo` でも Codex 自身の安全判定で実行前に拒否されるコマンドがある（下の「Codex の実行前の拒否」） |
 | モデル | fable/opus/sonnet/haiku（SDK のエイリアス。実 ID への解決は SDK） | `model/list` |
 | host ツール | in-process MCP。可視化は共通参照 | 可視化は共通参照（§2.6） |
 | 認証 | Claude Code のログイン | `account/read` / `account/login/start {type:"chatgpt"}` → `authUrl` → `account/login/completed` / `account/logout`。**`~/.codex/auth.json` は codex が書く** |
@@ -378,6 +378,31 @@ Codex の app-server プロトコルは `codex app-server generate-json-schema -
     `collabAgentToolCall` は `prompt` / `model` も渡す（spawn の開始時は `receiverThreadIds` が空なので、見出しは prompt の 1 行目）。
 - **thread/start の応答待ちの間は、見知らぬ `threadId` の frame を預かる。** 応答の id と一致したものだけを、届いた順に新しいセッションへ渡す（`adopt`）。
   残りは捨て、request にはエラーを返す。`threadId` を持たない通知は受け皿に渡さない。
+
+#### Codex の実行前の拒否（2026-09、issue #24）
+
+**`yolo`（never / danger-full-access）でも、Codex は組み込みの危険コマンドの判定で一部のコマンドをプロセスを作る前に拒否する**
+（codex-cli 0.156.1 で確認。理由は `blocked by policy` など。削除に限らず `Stop-Process`・`Start-Process`・`New-Item` なども）。
+拒否は承認に回らず、`item/started`・`item/completed` のアイテムを作らない。`error` 通知にもならず、ターンは `completed` で終わる。
+`thread/read` にも残らない。モデルへのツールの出力（`` exec_command failed: CreateProcess { message: "Rejected(\"`…` rejected: blocked by policy\")" } ``）として、
+Codex の rollout（`~/.codex/sessions/…/rollout-*.jsonl` の `response_item`）にだけ残る。
+
+Pleiad はターンの後で rollout を読んで拾う（`core/backends/codex-rejections.mjs`、[ADR 0027](adr/0027-read-codex-rollout-for-rejections.md)）。
+
+- `thread/start`・`thread/resume` の応答の `thread.path`（[UNSTABLE]）を覚える。ephemeral（タイトル生成）では読まない。
+- `turn/start` の直前にファイルの長さを取り、`turn/completed` の後にその位置から末尾までだけを読む（まだ無ければ 0 から。最初のターンでファイルができる）。
+  最後の改行より後（書きかけ）は捨てる。`internal_chat_message_metadata_passthrough.turn_id` がこのターンのものだけを見る。
+- 呼び出しの行はあるのに出力の行がまだ無ければ（rollout の書き込みの遅れ）、50ms から伸ばして合計 0.75 秒まで読み直す。ターンの終わりの行（`task_complete` / `turn_aborted`）があれば待たない。
+- 拾うのは出力の先頭（`exec_command` を直接呼んだ `function_call_output`）か `Script error:\n` の直後（code mode の `exec` の `custom_tool_call_output`、続きを待つ `wait` の `function_call_output`）にある文だけ。
+  途中に引用されただけの同じ文（issue の本文を読んだ結果など）は拾わない。Rust の Debug 形式を 2 段戻し、`` `<描いたコマンド>` rejected: <理由> `` はポリシーの拒否、
+  `Failed to create unified exec process: …` はプロセス作成の失敗（同じ形に包まれて来る）、それ以外は `other`。描いたコマンドは POSIX の語分けで `[shell, -Command, script]` に戻す。
+- 見つけたら `turnResult` の前に、会話へ `tool.start`（`name: "commandExecution"`、`input: { command, cwd: null, rejected: true }`、`id` は call id）と
+  `tool.result`（`isError: true`、本文は「Codex の安全判定で実行前に拒否された（理由）」と生の文、`rejection` に構造）を出す。
+  **会話を開き直すと消える**（履歴は `thread/read` から作り、そこに拒否は無い）。残すには Pleiad 側に別の記録を持って履歴に差し込む必要があり、
+  差し込む位置（どの発言の間か）が `thread/read` の items からは決まらないので、今はしない。委譲の結果（`rejections`）には残る（docs/agent-delegation.md「実行前に拒否されたコマンド」）。
+- 読めない・形が違うときは黙って諦める。ターンの結果は変えない。rollout の行の形は公開の約束ではないので、Codex の版で変わりうる。
+- `approvalRequested` は、同じターンで同じ call id（承認要求の `itemId`）の承認を求められたか。
+- 上流が拒否を `commandExecution`（`declined`）のアイテムとして出すようになれば、この読み取りは要らなくなる。
 
 **codex の実行ファイル**は `AGENT_HOST_CODEX_BIN`（既定 `codex`）。
 **agy の実行ファイル**は `AGENT_HOST_AGY_BIN`（既定 `agy`）。
