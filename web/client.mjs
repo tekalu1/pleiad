@@ -2866,7 +2866,7 @@ function decorateDelegateCard(card) {
 /**
  * 自動の振り分けで使える委譲先が無かったカード（タスクはできていない）。見出しを成功と同じ「委譲 · 自動 · 種類・難しさ →」にして
  * 行き先の代わりに「使える委譲先がありません」、開かなくても見える位置に理由ごとの行と直す場所への入口、候補ごとの一覧は折りたたむ。
- * エージェント向けのエラー文（内部の理由のコード）はツールカードの出力に畳んだまま（docs/design-system.md「委譲カード」）
+ * エージェント向けのエラー文（内部の理由のコード）は、開いた中の「入力・出力（JSON）」の折りたたみの奥に残す（docs/design-system.md「委譲カード」）
  */
 function decorateFailedDelegate(card, result) {
   if (!result || card.dataset.routed || !(result.isError ?? result.is_error)) return;
@@ -2884,6 +2884,8 @@ function decorateFailedDelegate(card, result) {
   line.title = line.textContent;
   const badge = head.querySelector('.tc-res');
   if (badge) badge.before(line); else head.append(line);
+  // 入力と返り値（エージェント向けのエラー文）は、成功・固定のカードと同じ「入力・出力（JSON）」の折りたたみの奥へ
+  foldDelegateJson(card);
   const open = (reason) => {
     if (reason === 'unavailable') return { label: t('routing.failure.openAgents'), run: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open('setup'); } };
     if (reason === 'model_unknown') return { label: t('routing.failure.openDelegation'), run: () => { onboarding.open('delegation'); $('delegationTab').click(); } };

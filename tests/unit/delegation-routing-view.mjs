@@ -5,6 +5,7 @@ import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackTe
 import { diffFromDefaults, setupDelegationSettings } from '../../web/delegation-settings.mjs';
 import { el } from '../../web/dom.mjs';
 import { N } from '../lib/dom-stub.mjs';
+import { readFileSync } from 'node:fs';
 
 export const name = 'delegation-routing-view';
 export const title = '委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分と判定器の面の描き直し';
@@ -219,5 +220,14 @@ async function judgePanel(t) {
     document.getElementById = saved.getElementById;
     document.activeElement = saved.activeElement;
     N.prototype.focus = saved.focus;
+  }
+
+  // ---- 配線（client.mjs）: 失敗したカードも入力・出力を「入力・出力（JSON）」の折りたたみの奥へ
+  {
+    const client = readFileSync(new URL('../../web/client.mjs', import.meta.url), 'utf8');
+    const failed = client.slice(client.indexOf('function decorateFailedDelegate('), client.indexOf('function paintRouteLine('));
+    const ok = client.slice(client.indexOf('function decorateDelegateCard('), client.indexOf('function decorateFailedDelegate('));
+    t.ok('自動の委譲が失敗したカードも、成功・固定のカードと同じく JSON を折りたたみの奥へ（開くとそのまま出ていた）',
+      /foldDelegateJson\(card\);/.test(failed) && /foldDelegateJson\(card\);/.test(ok));
   }
 }
