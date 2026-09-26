@@ -22,6 +22,8 @@ const cases = [
   await import('./unit/side-panel.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
+  // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）
+  await import('./unit/agent-tasks-storage.mjs'),
   await import('./unit/background-model.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
   // 委譲先の自動振り分け: 規則・段・使用量で飛ばす・Claude のアカウント・判定器（偽の fetch）・使用量の取り置き
@@ -78,6 +80,8 @@ const cases = [
   await import("./unit/pending-sidebar.mjs"),
   // 入力欄の待ち（web/composer-wait.mjs）: 会話を開く・初めての接続・読み込みの失敗・作成中の送信の予約
   await import("./unit/composer-wait.mjs"),
+  // 接続の状態（web/connection-status.mjs）: 切れた一行・読み上げ・古いトークンの案内と再確認、開くボタンの印、/auth-check
+  await import("./unit/connection-status.mjs"),
   // 新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る（client.mjs を vm で流す）
   await import("./unit/composer-new-session.mjs"),
   await import("./unit/server-groups.mjs"),

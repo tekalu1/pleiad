@@ -80,7 +80,8 @@ export default async function (t) {
   t.ok("候補が開く", m.slash.isOpen() === true && m.list.hidden === false);
   t.ok("全件を出す", m.options().length === 3, String(m.options().length));
   t.ok("見出しに件数を出す", m.list.querySelector(".head").textContent === "スキル3");
-  t.ok("aria を一致させる", m.input.getAttribute("aria-expanded") === "true"
+  // textarea（textbox）は aria-expanded を持てない（axe の aria-allowed-attr）。開いているかは一覧の hidden で伝える
+  t.ok("aria を一致させる", !m.input.hasAttribute("aria-expanded")
     && m.input.getAttribute("aria-activedescendant") === "slash-option-0");
   const first = m.options()[0];
   t.ok("1 行目に /名前・引数・見つかった場所", first.querySelector(".name").textContent === "/visualize"

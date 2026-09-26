@@ -125,7 +125,7 @@
 | 原文（ファイルプレビュー） | Source |
 | 会話で使う | Use in chat |
 | 提示（ツール表示の動詞。present） | Show |
-| はじめの流れ（根の枝の既定名） | Original |
+| オリジナル（根の枝の既定名） | Original |
 | 枝 N（枝の既定名） | Branch N |
 | 背景で実行 | In background |
 | 完了・未確認（未読の印） | Finished, not yet viewed |
@@ -136,6 +136,9 @@
 | 再送する | Resend |
 | 送信中 | Sending… |
 | 外部 MCP に接続中 | Connecting to external MCP |
+| 再接続する / 再接続しました | reconnect / Reconnected |
+| このページの認証（起動ごとの UI トークン） | this page's access token |
+| 再確認（ボタン） | Check again |
 | Pleiad タスク完了通知 | Pleiad task completion notice |
 | 依頼元（委譲を頼んだ会話） | requester / requesting conversation |
 | 適用範囲（指示の scope） | scope |
