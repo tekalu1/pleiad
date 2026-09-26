@@ -12,18 +12,27 @@ export function shouldShowOnboarding(status, auth) {
   });
 }
 
-export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlBox, begin }) {
+/**
+ * folderBrowser はブラウザー版の「フォルダーを選ぶ…」の簡易ブラウザー（web/composer-controls.mjs。入力欄の面と同じ部品）
+ */
+export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlBox, begin, folderBrowser }) {
   const $ = id => document.getElementById(id);
   const welcome = $('onboardingDialog');
   let status = null, selected = '', checked = false, locked = false;
+  // 初回の案内で選んだ作業ディレクトリ。選ぶまでは前に決めたもの、無ければホーム（docs/desktop-onboarding.md）
+  let chosenCwd = '';
+  const currentCwd = () => chosenCwd || status?.cwd || status?.homeDir || '';
   const error = message => { $('onboardingError').textContent = message; };
   const isOpen = () => document.body.classList.contains('settings');
+  // 別のページへ移ったら本文を先頭に戻す（前のページの位置のまま途中から始まらないように）。同じページを押し直したときは動かさない
+  let shown = null;
   function page(active = 'setup') {
     for (const [name, button, panel] of pages) {
       $(panel).hidden = name !== active;
       $(button).setAttribute('aria-pressed', String(name === active));
       if (name === active) $('settingsPageTitle').textContent = $(button).textContent;
     }
+    if (active !== shown) { shown = active; const content = document.querySelector('.settings-content'); if (content) content.scrollTop = 0; }
   }
   // 設定は画面全体。脇の一覧がメニューに、会話がページに入れ替わる。
   // 会話は伏せずにページで覆う（style.css「設定の画面」）ので、キーボードと読み上げが覆った会話へ届かないよう inert にする
@@ -150,6 +159,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
   }
   async function refresh() {
     status = await cmd('onboardingStatus');
+    paintCwd();
     if (!checked) {
       checked = true;
       if (shouldShowOnboarding(status, getAuth())) {
@@ -185,13 +195,52 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
   $('completeSetup').onclick = async () => {
     $('completeSetup').disabled = true;
     try {
-      status = { ...status, ...await cmd('completeSetup', { backend: selected }) };
+      status = { ...status, ...await cmd('completeSetup', { backend: selected, ...(currentCwd() ? { cwd: currentCwd() } : {}) }) };
       await begin({ backend: status.backend, cwd: status.cwd }, '');
       welcome.close();
       $('prompt').focus();
     } catch (e) { error(e.message); }
     finally { $('completeSetup').disabled = false; }
   };
+  // ---- 作業ディレクトリ。フルパスを出し、ホームなら弱い字の「ホーム」を添える。変えるのは「フォルダーを選ぶ…」
+  const trimEnd = (p) => String(p ?? '').replace(/[\\/]+$/, '').toLowerCase();
+  const samePath = (a, b) => trimEnd(a) === trimEnd(b);
+  function paintCwd() {
+    const cwd = currentCwd();
+    const home = Boolean(status?.homeDir) && samePath(cwd, status.homeDir);
+    const tag = document.createElement('span');
+    tag.className = 'onboarding-cwd-home';
+    tag.textContent = t('dialog.onboarding.cwdHome');
+    $('onboardingCwdPath').replaceChildren(document.createTextNode(cwd), ...(home ? [' ', tag] : []));
+    $('onboardingCwdPath').title = cwd;
+  }
+  const cwdError = $('onboardingCwdError');
+  const browseBox = $('onboardingBrowse');
+  const useCwd = (value) => {
+    const v = String(value ?? '').trim();
+    if (!v) return;
+    chosenCwd = v;
+    browseBox.hidden = true;
+    browseBox.replaceChildren();
+    cwdError.textContent = '';
+    paintCwd();
+    $('onboardingCwdChoose').focus();
+  };
+  const browse = folderBrowser?.({ cmd, box: browseBox, err: cwdError, onChoose: useCwd, closed: () => !welcome.open });
+  $('onboardingCwdChoose').onclick = async () => {
+    cwdError.textContent = '';
+    // デスクトップ版は OS のダイアログ。ブラウザー版（リモートの窓も）は簡易ブラウザーを案内の中に開く。開いていれば閉じる
+    if (globalThis.window?.plyDesktop?.chooseFolder) {
+      const picked = await window.plyDesktop.chooseFolder().catch(() => null);
+      const path = typeof picked === 'string' ? picked : picked?.path ?? picked?.[0];
+      if (path) useCwd(path);
+      return;
+    }
+    if (!browseBox.hidden) { browseBox.hidden = true; browseBox.replaceChildren(); return; }
+    browse?.(currentCwd());
+  };
+  welcome.addEventListener('close', () => { browseBox.hidden = true; browseBox.replaceChildren(); cwdError.textContent = ''; });
+
   page();
   return { open, close, isOpen, lock, refresh, paint, page };
 }

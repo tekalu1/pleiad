@@ -76,9 +76,13 @@ export function skippedPhrase(skipped, names = defaultNames) {
   return t('routing.line.skippedReason', { name, reason: skipText(skipped.reason) });
 }
 
-/** 委譲カードの 1 行の理由（「実装・中 → Codex gpt-6-sol · Sonnet は週次 73% で飛ばした」）。飛ばした候補は最初の 1 つだけ */
+/**
+ * 委譲カードの 1 行の理由（「実装・中 → Codex gpt-6-sol · Sonnet は週次 73% で飛ばした」）。飛ばした候補は最初の 1 つだけ。
+ * 自動でない委譲（依頼元が委譲先を書いた）は難しさを判定していないので「種類 → 委譲先」だけ（「実装 → Codex」）
+ */
 export function routingLine(routing, names = defaultNames) {
   if (!routing?.target) return '';
+  if (!isAutoRouting(routing)) return t('routing.line.pinned', { kind: kindText(routing.kind), target: targetText(routing.target, names) });
   const head = t('routing.line.head', { kind: kindText(routing.kind), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) });
   const first = routing.skipped?.[0];
   return first ? head + t('routing.line.join') + skippedPhrase(first, names) : head;
@@ -311,6 +315,24 @@ export function routingDetail(routing, { names = defaultNames, logo = () => el('
     actions.append(open);
     root.append(actions);
   }
+  return root;
+}
+
+/**
+ * 自動でない委譲を開いたときの内訳。種類・委譲先（依頼元が指定）・承認モード・作業場所の格子だけ。
+ * 判定・候補・やり直しは自動のときだけの部品なので出さない。mode は表示名、cwd は子の作業場所（分からなければ出さない）
+ */
+export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '' } = {}) {
+  const root = el('div', 'rt-detail');
+  root.setAttribute('role', 'group');
+  root.setAttribute('aria-label', t('routing.detail.label'));
+  const facts = el('dl', 'rt-facts');
+  const target = targetText(routing?.target, names);
+  facts.append(fact(t('routing.detail.kind'), kindText(routing?.kind)),
+    fact(t('routing.detail.target'), routing?.mode === 'pinned' ? t('routing.detail.targetPinned', { target }) : target));
+  if (mode) facts.append(fact(t('routing.detail.mode'), mode));
+  if (cwd) facts.append(fact(t('routing.detail.cwd'), cwd));
+  root.append(facts);
   return root;
 }
 

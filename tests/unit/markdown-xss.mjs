@@ -1,5 +1,5 @@
 // md 描画の XSS 監査。ブラウザも LLM も要らないので CI で常時回す。
-import { renderMarkdown } from "../../web/render.mjs";
+import { renderMarkdown, plainTextHtml } from "../../web/render.mjs";
 import { audit } from "../lib/audit.mjs";
 
 export const name = "markdown-xss";
@@ -46,4 +46,20 @@ export default async function (t) {
   const out = renderMarkdown(long);
   const li = (out.match(/<li/g) ?? []).length;
   t.ok("長文 400 行でも監査を通る", audit(out).length === 0 && li === 400, `${out.length} 文字 / li ${li} 個`);
+
+  // 自分の発言（平文）。Markdown としては解釈せず、パスだけをファイルリンクにする（web/render.mjs の plainTextHtml）
+  const plain = [
+    String.raw`<script>alert(1)</script> と D:\a\"><img src=x onerror=alert(1)>.md`,
+    String.raw`${"`"}D:\it's\a&b.md${"`"} と ${"`"}./x'y" onclick="alert(1).md${"`"}`,
+  ];
+  for (const src of plain) {
+    const problems = audit(plainTextHtml(src));
+    t.ok(`XSS: 自分の発言 ${src.slice(0, 24)}`, problems.length === 0, problems.join(" / "));
+  }
+  const mine = String.raw`見て D:\dev\a.md と ${"`"}web/render.mjs${"`"} と ${"`"}npm test${"`"} と **太字** と # 見出し`;
+  const html = plainTextHtml(mine);
+  const unescaped = html.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  t.ok("自分の発言: 字は書いたとおり（` も **・# も残す）", unescaped === mine, unescaped);
+  t.ok("自分の発言: 地の文の Windows の絶対パスと、` の中身全体のパスだけリンク", (html.match(/class="md-link file-link"/g) ?? []).length === 2
+    && html.includes(String.raw`data-file-path="D:\dev\a.md"`) && html.includes('data-file-path="web/render.mjs"') && !html.includes("<strong>"), html);
 }

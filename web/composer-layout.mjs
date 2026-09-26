@@ -79,3 +79,30 @@ export function joinPath(dir, name) {
   const sep = d.includes('\\') || /^[a-z]:/i.test(d) ? '\\' : '/';
   return d.replace(/[\\/]+$/, '') + sep + name;
 }
+
+/**
+ * 添付の札に添える、見分けのためのフォルダー（docs/design-system.md「添付の札」）。
+ * 名前が重なった札にだけ、ほかと違いが出るところまで親のフォルダーを遡って返す（a/x/f と b/x/f → 'a/x' と 'b/x'）。
+ * 名前が重ならない札・置き場まで同じ札は ''。items は { name, path, from }、返すのは同じ順の文字列の配列。
+ * 端末から送った札（from: 'device'）は置き場のフォルダー名に意味が無いので、deviceLabel（「この端末」）を場所にする
+ */
+export function attachFolderHints(items, { deviceLabel = '' } = {}) {
+  const list = Array.isArray(items) ? items : [];
+  const key = (a) => String(a?.name ?? '').toLowerCase();
+  const parents = (a) => a?.from === 'device' && deviceLabel ? [deviceLabel]
+    : String(a?.path ?? '').split(/[\\/]+/).filter(Boolean).slice(0, -1).reverse();
+  const groups = new Map();
+  list.forEach((a, i) => { const k = key(a); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
+  const out = list.map(() => '');
+  for (const idx of groups.values()) {
+    if (idx.length < 2) continue;
+    const ps = idx.map(i => parents(list[i]));
+    const same = (x, y, n) => x.slice(0, n).join('/').toLowerCase() === y.slice(0, n).join('/').toLowerCase() && Math.min(x.length, n) === Math.min(y.length, n);
+    ps.forEach((p, j) => {
+      for (let n = 1; n <= p.length; n++) {
+        if (ps.every((q, m) => m === j || !same(p, q, n))) { out[idx[j]] = p.slice(0, n).reverse().join('/'); return; }
+      }
+    });
+  }
+  return out;
+}

@@ -110,7 +110,12 @@ export default function (t) {
     t.ok('読み込みの失敗の一行が優先する', s.note.dataset.kind === 'failed');
     s.w.busy('history'); s.w.idle();
     t.ok('失敗が解けたら保留の一行を出し直す', !s.note.hidden && s.note.dataset.kind === 'held');
+    const first = s.note.querySelector('button');
+    let focused = null;
+    first.focus = () => { focused = first; };
+    t.ok('保留: focusAction で一行の先頭の操作（再試行）へ', s.w.focusAction() === true && focused === first);
     s.w.release();
+    t.ok('保留が無ければ focusAction は何もしない', s.w.focusAction() === false);
     t.ok('解くと一行を消し、送信を元に戻す', !s.w.held && s.note.hidden && !s.send.hasAttribute('aria-disabled') && !s.send.classList.contains('blocked') && s.send.getAttribute('title') === 'send');
   }
 
@@ -127,6 +132,12 @@ export default function (t) {
   t.ok('初めての接続まで「接続しています…」', /composerWait\.busy\("connect"\);\s*connect\(\);/.test(client));
   t.ok('作成中の送信は予約する', /composerWait\.queue\(/.test(client) && /creatingSession \?\? startNew\(\)/.test(client));
   t.ok('設定を保存できなかった会話は送らず、理由の一行へフォーカス（composerWait.hold・point）', /composerWait\.hold\(/.test(client) && /if \(composerWait\.held\) \{ composerWait\.point\(\); return; \}/.test(client));
+  const hold = client.slice(client.indexOf('function syncSettingsHold('), client.indexOf('function paintSettingsNotice('));
+  t.ok('「再試行」: また失敗したら出し直した一行の先頭のボタンへ、通ったら入力欄へ（押したボタンが消えて body に落ちていた）',
+    /const retry = \(\) => \{\s*drop\(\);/.test(hold) && /Promise\.resolve\(work\)\.then\(\(\) => \{ if \(lost\(\)\) \$\("prompt"\)\.focus\(\); \}, \(\) => \{ if \(lost\(\) && !composerWait\.focusAction\(\)\) \$\("prompt"\)\.focus\(\); \}\)/.test(hold)
+      && /onClick: retry/.test(hold));
+  const applyCwd = client.slice(client.indexOf('function applyCwd('), client.indexOf('function applyCwd(') + 800);
+  t.ok('applyCwd は保存の結果（reserveSettings の約束）を返す', /return write;/.test(applyCwd));
   const html = read('web/index.html');
   t.ok('index.html に欄の上の一行と欄の中の待機表示', /id="composerNote"[^>]*role="status"/.test(html) && /id="composerBusy"/.test(html) && /id="composerBusyText"/.test(html));
   const css = read('web/style.css');
