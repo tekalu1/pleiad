@@ -202,7 +202,7 @@
     "background_other": "バックグラウンド {{count}}",
     "thinkingTokens_other": "考えている（約 {{count}} トークン）",
     "waitingBackground": "裏の作業を待っている",
-    "backgroundEnded_other": "バックグラウンド · 終了 {{count}}",
+    "backgroundEnded_other": "バックグラウンド · 完了 {{count}}",
     "backgroundOnly": "裏でコマンドが動いている"
   },
   "compat": {
@@ -1343,17 +1343,22 @@
       "stopFailed": "止められなかった: {{error}}",
       "readFailed": "読めなかった: {{error}}",
       "title": "バックグラウンド",
-      "count": "動いている {{live}} · 終了 {{ended}}",
+      "count": "実行中 {{live}} · 完了 {{ended}}",
       "listLabel": "バックグラウンドの一覧",
-      "groupAgents": "サブエージェント",
+      "groupRunning": "動いている",
+      "groupEnded": "終わった",
+      "showMore": "さらに {{count}} 件を表示",
+      "delegated": "· 委譲 {{count}}",
+      "yesterday": "昨日",
+      "showFull": "全文を表示",
+      "collapse": "たたむ",
       "groupCommands": "コマンド",
       "openChat": "会話として開く",
       "request": "依頼",
       "noMessages": "まだ発言はありません。",
       "open": "開く",
       "notFound": "このサブエージェントの記録が見つかりません",
-      "openFailed": "サブエージェントを開けませんでした: {{error}}",
-      "countLive": "動いている {{live}}"
+      "openFailed": "サブエージェントを開けませんでした: {{error}}"
     },
     "tasks": {
       "status": {

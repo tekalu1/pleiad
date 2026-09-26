@@ -1,10 +1,12 @@
 // 委譲カードの振り分けの理由と設定 › 委譲の組み立て（web/delegation-routing-view.mjs・web/delegation-settings.mjs）。DOM の大半は触らず、文と並びだけ見る
 import assert from 'node:assert/strict';
 import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackText, retryCandidates, usageSummary, isAutoRouting, fallbackName, routingDetail } from '../../web/delegation-routing-view.mjs';
-import { diffFromDefaults } from '../../web/delegation-settings.mjs';
+import { diffFromDefaults, setupDelegationSettings } from '../../web/delegation-settings.mjs';
+import { el } from '../../web/dom.mjs';
+import { N } from '../lib/dom-stub.mjs';
 
 export const name = 'delegation-routing-view';
-export const title = '委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分';
+export const title = '委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分と判定器の面の描き直し';
 
 export default async function (t) {
   const names = { backend: id => ({ codex: 'Codex', claude: 'Claude Code' })[id] ?? id, model: (_b, m) => ({ sonnet: 'Sonnet', 'gpt-6-sol': 'gpt-6-sol' })[m] ?? m };
@@ -61,4 +63,69 @@ export default async function (t) {
   assert.equal(diffFromDefaults({ trivial: 'jev', visual: 'none' }, defaults.judgeByKind), null, '全部既定なら null（既定に戻す）');
   assert.deepEqual(diffFromDefaults({ t1: ['a:b'], t2: ['d:e', 'c:d'] }, defaults.tiers), { t2: ['d:e', 'c:d'] });
   t.ok('設定は既定と違う項目だけを送る（既定値を凍らせない）', true);
+
+  await judgePanel(t);
+}
+
+/** 設定 › 委譲の判定器の面。押したボタンにフォーカスが残っていても、選び直しが画面に出てフォーカスが戻る */
+async function judgePanel(t) {
+  const judgeDefaults = { implement: 'jev', review: 'jev' };
+  const defaults = { enabled: true, judgeByKind: judgeDefaults, escalateToCerebras: false, tiers: { t1: [] }, table: { implement: ['t1', 't1', 't1'], review: ['t1', 't1', 't1'] },
+    avoidPercent: 80, paceLimit: 1.5, staleMinutes: 10 };
+  let settings = structuredClone(defaults);
+  const state = () => structuredClone({ settings, defaults, kinds: ['implement', 'review'], judges: ['jev', 'cerebras', 'none'], tiers: ['t1'], candidates: [],
+    keys: { openrouter: { hasKey: true }, cerebras: { hasKey: true } }, storage: { encrypted: true } });
+  let release = null;
+  const cmd = async (name, args) => {
+    if (name === 'setDelegationRouting') {
+      await new Promise(r => { release = r; });
+      const { judgeByKind, ...rest } = args.settings;
+      if (judgeByKind !== undefined) settings.judgeByKind = { ...judgeDefaults, ...(judgeByKind ?? {}) };
+      Object.assign(settings, rest);
+    }
+    return state();
+  };
+  const root = el('div'), tab = el('button');
+  const saved = { getElementById: document.getElementById, activeElement: document.activeElement, focus: N.prototype.focus };
+  document.getElementById = id => ({ delegationPanel: root, delegationTab: tab })[id] ?? null;
+  N.prototype.focus = function () { if (!this.disabled) document.activeElement = this; };
+  try {
+    const ui = setupDelegationSettings({ cmd, page() {}, showMenu() {}, labelOf: id => id, logo: () => el('span'), modelsOf: async () => ({}), modelName: () => '' });
+    await ui.refresh();
+    // 並びで引く（種類の行 × 判定器のボタン、聞き直しは面の最初の入力欄）
+    const control = key => {
+      if (key === 'escalate') return root.querySelector('.rt-judges').querySelector('input');
+      const [kind, judge] = key.split(':');
+      const row = root.querySelectorAll('.rt-judge-row')[['implement', 'review'].indexOf(kind)];
+      return row.querySelector('.rt-seg').children[['jev', 'cerebras', 'none'].indexOf(judge)];
+    };
+    const tick = () => new Promise(r => setImmediate(r));
+
+    // クリックでボタンにフォーカスが移る（Chromium）。その状態で保存が返ってくる
+    const cerebras = control('implement:cerebras');
+    document.activeElement = cerebras;
+    cerebras.onclick();
+    t.ok('保存中は判定器のボタンを押せない', control('implement:cerebras').disabled === true && control('review:none').disabled === true);
+    release(); await tick();
+    const after = control('implement:cerebras');
+    t.ok('押した判定器に選択が移る', after.classList.contains('on') && after.getAttribute('aria-pressed') === 'true'
+      && !control('implement:jev').classList.contains('on') && settings.judgeByKind.implement === 'cerebras');
+    t.ok('描き直した後も押したボタンにフォーカスが残る', document.activeElement === after);
+
+    // 別の画面から変わった（delegationRoutingChanged）ときも、フォーカスが面の中にあっても描き直す
+    settings.judgeByKind.review = 'none';
+    await ui.refresh();
+    t.ok('フォーカスが面の中にあっても、届いた設定を描き直す', control('review:none').classList.contains('on') && document.activeElement === control('implement:cerebras'));
+
+    const box = control('escalate');
+    document.activeElement = box;
+    box.checked = true;
+    box.onchange();
+    release(); await tick();
+    t.ok('聞き直しのチェックも保存して描き直し、フォーカスを戻す', control('escalate').checked === true && settings.escalateToCerebras === true && document.activeElement === control('escalate'));
+  } finally {
+    document.getElementById = saved.getElementById;
+    document.activeElement = saved.activeElement;
+    N.prototype.focus = saved.focus;
+  }
 }

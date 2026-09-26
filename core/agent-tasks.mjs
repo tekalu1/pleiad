@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { t, agentT } from './i18n.mjs';
+import { taskTitle } from './task-title.mjs';
 
 const ACTIVE = new Set(['queued', 'running', 'cancelling']);
 // call() のエラーと子への依頼文はエージェントが読むので、会話の言語（locale）で引く（agent 名前空間）
@@ -12,7 +13,7 @@ const text = (locale, value, name, max = 60000) => {
 
 // Pleiad owns these tasks, independently of each engine's native subagent registry.
 // Writes are serialized; only the scheduler starts work. No blind replay after a crash.
-export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, changed = () => {}, waiting = () => false, maxActive = 8 }) {
+export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, changed = () => {}, waiting = () => false }) {
   const file = path.join(dataDir, 'agent-tasks.json');
   let records = {};
   try { records = JSON.parse(await fs.readFile(file, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
@@ -114,24 +115,24 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
     get(taskId) { return records[taskId] ? view(records[taskId]) : null; },
     /** 最初の依頼（task と context）。やり直しで同じ依頼を渡す。context を持つ前に作ったタスクは task だけ */
-    request(taskId) { const r = records[taskId]; return r ? { task: r.task, context: r.context ?? null } : null; },
+    request(taskId) { const r = records[taskId]; return r ? { task: r.task, title: r.title ?? null, context: r.context ?? null } : null; },
     // locale は呼び出した会話（owner）の言語。子の会話も同じ言語を継ぐので、子への依頼文もこれで作る
     async call(owner, name, args = {}, signal, locale) {
       if (closed || signal?.aborted) throw new Error(agentT(locale, 'tasks.halted'));
       if (name === 'ply_delegate') {
         text(locale, args.backend, 'backend', 40); text(locale, args.task, 'task');
         if (args.context !== undefined) text(locale, args.context, 'context');
+        if (args.title !== undefined && typeof args.title !== 'string') throw new Error(agentT(locale, 'tasks.textLength', { name: 'title', max: 40 }));
+        args = { ...args, title: taskTitle(args.title, args.task) };
         const row = await serial(async () => {
-          if (Object.values(records).filter(r => ACTIVE.has(r.status)).length >= maxActive) throw new Error(agentT(locale, 'tasks.maxActive', { max: maxActive }));
-          if (Object.values(records).filter(r => r.parentSessionId === owner).length >= 100) throw new Error(agentT(locale, 'tasks.maxPerConversation', { max: 100 }));
+          // 同時の件数・1 会話の件数・深さに上限は置かない（2026-09-27 に廃止。depth は記録だけ残す）
           const parent = Object.values(records).find(r => r.sessionId === owner);
           const depth = (parent?.depth ?? 0) + 1;
-          if (depth > 4) throw new Error(agentT(locale, 'tasks.maxDepth', { max: 4 }));
           const taskId = `ply-task-${crypto.randomUUID()}`;
           const prepared = await prepare(owner, args, taskId, signal);
           try {
           if (signal?.aborted) throw new Error(agentT(locale, 'tasks.aborted'));
-          const row = { ...prepared, taskId, parentSessionId: owner, manager: 'ply', depth, task: args.task, ...(args.context !== undefined ? { context: args.context } : {}),
+          const row = { ...prepared, taskId, parentSessionId: owner, manager: 'ply', depth, task: args.task, title: args.title, ...(args.context !== undefined ? { context: args.context } : {}),
             createdAt: Date.now(), updatedAt: Date.now(), status: 'queued', notification: 'none',
             result: '', error: null, queue: [args.context ? agentT(locale, 'tasks.withContext', { task: args.task, context: args.context }) : args.task] };
           records[taskId] = row; await save(); return view(row);
@@ -163,8 +164,6 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         text(locale, args.message, 'message');
         await update(r.taskId, row => {
           if (row.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
-          if (row.queue.length >= 20) throw new Error(agentT(locale, 'tasks.maxQueued'));
-          if (!ACTIVE.has(row.status) && Object.values(records).filter(r => ACTIVE.has(r.status)).length >= maxActive) throw new Error(agentT(locale, 'tasks.limitReached'));
           row.revision = (row.revision ?? 0) + 1;
           row.queue.push(args.message); row.notification = 'none'; row.error = null;
           if (!live.has(row.taskId) || !ACTIVE.has(row.status)) row.status = 'queued';
