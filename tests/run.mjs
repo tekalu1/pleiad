@@ -22,6 +22,7 @@ const cases = [
   await import('./unit/side-panel.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
+  await import('./unit/background-model.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
   // 委譲先の自動振り分け: 規則・段・使用量で飛ばす・Claude のアカウント・判定器（偽の fetch）・使用量の取り置き
   await import('./unit/delegation-routing.mjs'),

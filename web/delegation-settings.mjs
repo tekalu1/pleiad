@@ -48,6 +48,8 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   const $ = id => document.getElementById(id);
   const root = $('delegationPanel');
   let data = null, busy = false, message = '', editingKey = '', confirmingKey = '', confirmingReset = false, refreshing = false;
+  // 判定器の面で押した部品（`${kind}:${judge}` か 'escalate'）。保存中は押せないので、保存が終わって描き直したときにフォーカスを戻す
+  let judgeFocus = '';
   const names = { backend: id => labelOf(id), model: (backend, model) => modelName(backend, model) || model };
 
   // ---- 骨組み
@@ -99,8 +101,9 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     stateLine.hidden = !message;
     if (!s) { for (const p of [judges, keys, advanced, reset]) p.hidden = true; return; }
     for (const p of [judges, keys, advanced, reset]) p.hidden = false;
-    // 入力の途中（欄にフォーカス）で描き直すと打った値が消えるので、そのときは面ごとに飛ばす
-    if (!judges.contains(document.activeElement)) paintJudges();
+    // 入力の途中（欄にフォーカス）で描き直すと打った値が消えるので、そのときは面ごとに飛ばす。
+    // 判定器の面には打つ欄が無いので常に描き直す（押したボタンにフォーカスが残り、選び直しが画面に出なかった）
+    paintJudges();
     if (!keys.contains(document.activeElement) || !editingKey) paintKeys();
     if (!advancedBody.contains(document.activeElement) || !document.activeElement.matches('input')) paintAdvanced();
     paintReset();
@@ -108,6 +111,10 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
 
   function paintJudges() {
     const s = data.settings;
+    // 部品を作り直すので、フォーカスがあった部品（保存中なら押した部品）へ戻す
+    const active = document.activeElement;
+    const focusKey = judgeFocus || (active && judges.contains(active) ? active.dataset?.focusKey ?? '' : '');
+    const controls = new Map();
     const out = [el('h3', null, t('routing.settings.judgeTitle'))];
     const list = el('div', 'rt-judge-list');
     for (const kind of data.kinds) {
@@ -117,10 +124,17 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       seg.setAttribute('role', 'group');
       seg.setAttribute('aria-label', t('routing.settings.judgeLabel', { kind: kindText(kind) }));
       for (const judge of data.judges) {
-        const b = button(judgeText(judge), () => { if (s.judgeByKind[kind] !== judge) saveNested('judgeByKind', { ...s.judgeByKind, [kind]: judge }); }, '');
+        const key = `${kind}:${judge}`;
+        const b = button(judgeText(judge), () => {
+          if (s.judgeByKind[kind] === judge) return;
+          judgeFocus = key;
+          saveNested('judgeByKind', { ...s.judgeByKind, [kind]: judge });
+        }, '');
         b.classList.toggle('on', s.judgeByKind[kind] === judge);
         b.setAttribute('aria-pressed', String(s.judgeByKind[kind] === judge));
         b.disabled = busy;
+        b.dataset.focusKey = key;
+        controls.set(key, b);
         seg.append(b);
       }
       row.append(seg);
@@ -132,7 +146,9 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     box.type = 'checkbox';
     box.checked = s.escalateToCerebras;
     box.disabled = busy;
-    box.onchange = () => save({ escalateToCerebras: box.checked });
+    box.onchange = () => { judgeFocus = 'escalate'; save({ escalateToCerebras: box.checked }); };
+    box.dataset.focusKey = 'escalate';
+    controls.set('escalate', box);
     check.append(box, el('span', null, t('routing.settings.escalate')));
     out.push(check);
     // 選んだ判定器のキーが無い（外へは送らず、難しさは中になる）。その状況のときだけ出す
@@ -142,6 +158,10 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
         out.push(el('p', 'mp-warn rt-warn', `⚠ ${t('routing.settings.judgeNoKey', { service: t(`routing.settings.service.${service}`), judge: judgeText(judge) })}`));
     }
     judges.replaceChildren(...out);
+    // 保存中は押せない（disabled にはフォーカスが乗らない）ので、押せるようになった次の描き直しまで持ち越す
+    const target = controls.get(focusKey);
+    if (target?.disabled) judgeFocus = focusKey;
+    else { judgeFocus = ''; target?.focus(); }
   }
   // i18n-dynamic: routing.settings.service.
 

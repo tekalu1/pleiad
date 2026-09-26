@@ -11,11 +11,11 @@ const tool = (name, description, properties, required = []) => ({ name, descript
 // i18n-dynamic: agent:bridge.kinds.
 /** kind の一覧と定義（ツールの説明と、kind が無い・不正なときのエラーに載せる。docs/agent-delegation.md「委譲先の自動振り分け」） */
 export const kindList = locale => KINDS.map(k => `- ${k}: ${agentT(locale, `bridge.kinds.${k}`)}`).join('\n');
-const delegateDescription = locale => [agentT(locale, 'bridge.tools.ply_delegate'), agentT(locale, 'bridge.kindsIntro'), kindList(locale), agentT(locale, 'bridge.kindBoundaries')].join('\n');
+const delegateDescription = locale => [agentT(locale, 'bridge.tools.ply_delegate'), agentT(locale, 'bridge.title'), agentT(locale, 'bridge.kindsIntro'), kindList(locale), agentT(locale, 'bridge.kindBoundaries')].join('\n');
 /** ツールの定義。説明は会話の言語。名前と引数（inputSchema）は言語に依らない */
 export const agentTools = locale => [
   // backend を省けば Pleiad が委譲先を選ぶ（core/delegation-routing.mjs）。kind はどちらでも必須（振り分けの記録にも残す）
-  tool('ply_delegate', delegateDescription(locale), { kind: { type: 'string', enum: [...KINDS] }, task: str, backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, context: str, cwd: str, model: str, effort: str }, ['kind', 'task']),
+  tool('ply_delegate', delegateDescription(locale), { kind: { type: 'string', enum: [...KINDS] }, task: str, title: str, backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, context: str, cwd: str, model: str, effort: str }, ['kind', 'task']),
   tool('ply_task_status', agentT(locale, 'bridge.tools.ply_task_status'), { taskId: str, offset: { type: 'integer', minimum: 0 } }, ['taskId']),
   tool('ply_task_wait', agentT(locale, 'bridge.tools.ply_task_wait'), { taskId: str, seconds: { type: 'integer', minimum: 1, maximum: 30 } }, ['taskId']),
   tool('ply_task_send', agentT(locale, 'bridge.tools.ply_task_send'), { taskId: str, message: str }, ['taskId', 'message']),
