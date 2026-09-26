@@ -74,7 +74,18 @@ export default async function (t) {
       && /found = await cmd\("listDirs", \{ path: value \}\);[\s\S]*?if \(seq !== checkSeq\) return;\s*done\(\);\s*msg\.replaceChildren\(\);[\s\S]*?commitCwd\(/.test(controlsSrc));
   t.ok('タッチではチップも 36px', /@media \(pointer:coarse\)\{[^@]*\.chip\{height:36px\}/s.test(css));
   t.ok('480px 以下は ▾ を省き、中断はアイコンだけ', /@media \(max-width:480px\)\{[^@]*\.chip svg\.caret\{display:none\}[^@]*\.abort span\{display:none\}/s.test(css));
-  t.ok('700px 以下は「保存済み」を出さない（失敗だけ出す）', /\.crow \.draft-saved:not\(\[data-state=failed\]\)\{display:none\}/.test(css));
+  t.ok('700px 以下は行に「保存済み」を出さず、失敗はチップの行の上の一行に（行の隙間では文が途中で切れた）',
+    /@media \(max-width:700px\)\{[^@]*\.crow \.draft-saved\{display:none\}[^@]*\.draft-fail:not\(\[hidden\]\)\{display:flex\}/s.test(css)
+      && /\n\.draft-fail\{display:none;/.test(css)
+      && box.indexOf('id="draftFail"') > box.indexOf('id="prompt"') && box.indexOf('id="draftFail"') < box.indexOf('class="crow"')
+      && /id="draftFail"[^>]*role="status"[^>]*hidden/.test(html) && /id="draftFailRetry"[^>]*data-i18n="chat\.draft\.retry"/.test(html));
+  const clientSrc = fs.readFileSync(new URL('../../web/client.mjs', import.meta.url), 'utf8');
+  const noteFn = clientSrc.slice(clientSrc.indexOf('function setDraftNote('), clientSrc.indexOf('function loadDraft('));
+  t.ok('保存の失敗の一行は failed のときだけ出し、字はそのときに入れる（読み上げのため）',
+    /\$\("draftFail"\)\.hidden = !failed/.test(noteFn) && /\$\("draftFailText"\)\.textContent = failed \? t\("chat\.draft\.saveFailedNote"\) : ""/.test(noteFn)
+      && /\$\("draftFailRetry"\)\.onclick = \(\) => \{ \$\("prompt"\)\.focus\(\); saveDraft\(\)/.test(clientSrc));
+  const locales = ['ja', 'en'].map((l) => JSON.parse(fs.readFileSync(new URL(`../../web/locales/${l}/ui.json`, import.meta.url), 'utf8')).chat.draft);
+  t.ok('文言（下書きを保存できなかった一行・再試行）は ja・en の辞書にある', locales.every((d) => d.saveFailedNote && d.retry));
   t.ok('700px 以下は ✦ を隠し、コンテキストをアイコン + 数字に', /#titleWand\{display:none\}/.test(css) && /\.ctxlink > span:not\(\.n,\.chg\)\{display:none\}/.test(css));
   t.ok('モバイル版の殻の 700px 以下はタイトルの下の添え字（帯は 701px 以上だけ）', /@media \(max-width:700px\)\{[^@]*:root\.remote-mobile \.host-sub\{display:inline-flex\}/s.test(css)
     && /@media \(min-width:701px\)\{[^@]*:root\.remote-mobile \.host-bar\{display:flex/s.test(css));

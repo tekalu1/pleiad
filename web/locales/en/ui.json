@@ -1181,6 +1181,8 @@
       "saving": "Saving…",
       "saved": "Saved",
       "saveFailed": "Couldn't save. Your text is kept · Retry",
+      "saveFailedNote": "Couldn't save the draft. Your text is kept.",
+      "retry": "Retry",
       "restored": "Draft restored"
     },
     "attach": {

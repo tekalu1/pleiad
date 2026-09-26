@@ -167,6 +167,8 @@
         <div class="composer-busy" id="composerBusy" hidden><span class="composer-busy-text" id="composerBusyText"></span></div>
         <!-- 候補を選んだ直後だけ、引数の書き方を薄く出す -->
         <div class="slash-hint" id="slashHint"></div>
+        <!-- 下書きを保存できなかった（700px 以下だけ。チップの行には入らないので、その上に一行で。広い幅は行の「保存済み」の位置に出す） -->
+        <p class="draft-fail" id="draftFail" role="status" hidden><span id="draftFailText"></span><button type="button" class="btn draft-fail-retry" id="draftFailRetry" data-i18n="chat.draft.retry"></button></p>
         <div class="crow">
           <button type="button" class="btn btn-icon" id="attach" data-i18n-title="chat.composer.attach" data-i18n-aria-label="chat.composer.attach"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2"/></svg></button>
           <input type="file" id="fileIn" multiple hidden>
@@ -176,7 +178,7 @@
                1 行に並べ、折り返さない。足りなければ作業ディレクトリ → モデル名の順に … で詰める（送信は常に右端） -->
           <button type="button" class="chip folder" id="cwdChip" aria-controls="cwdPop"></button>
           <span class="crow-gap"></span>
-          <!-- 「保存済み」: 行の空きに弱い字で。700px 以下では出さない（保存に失敗したときだけ出す） -->
+          <!-- 「保存済み」: 行の空きに弱い字で。700px 以下では出さない（保存の失敗は上の #draftFail） -->
           <button type="button" class="btn draft-saved" id="draftSaved" aria-live="polite"></button>
           <!-- 接続先（互換の接続先）はモデルのチップの面の中で選ぶ（入力欄の行に専用の欄は置かない） -->
           <button type="button" class="chip model" id="modelChip" aria-controls="modelPop"></button>

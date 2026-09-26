@@ -3241,11 +3241,17 @@ function dropBlankDraft() {
   if (!state.drafts.delete("")) return;
   try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch {}
 }
-/** 入力欄の行の「保存済み」。state は saving | saved | failed | restored（700px 以下では failed だけ見せる。style.css） */
+/**
+ * 入力欄の行の「保存済み」。state は saving | saved | failed | restored。
+ * 700px 以下は行に出さず、失敗だけをチップの行の上の一行（#draftFail）に出す（行の隙間では文が途中で切れるため。style.css）
+ */
 function setDraftNote(text, st) {
   const b = $("draftSaved");
   b.textContent = text;
   b.dataset.state = st;
+  const failed = st === "failed";
+  $("draftFail").hidden = !failed;
+  $("draftFailText").textContent = failed ? t("chat.draft.saveFailedNote") : "";
 }
 function loadDraft() {
   const d = state.drafts.get(draftKey());
@@ -3258,6 +3264,8 @@ function loadDraft() {
   setDraftNote(d?.text || d?.attached?.length ? t("chat.draft.restored") : "", "restored");
 }
 $("draftSaved").onclick = () => saveDraft().catch(() => {});
+// 狭い幅の「再試行」。押すと一行は「保存中…」で消えるので、フォーカスは入力欄へ（失敗すれば一行が出直す）
+$("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() => {}); };
 const filePreview = setupFilePreview({
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   getContext: anchor => ({ sessionId:anchor?.closest('#workBody')?.dataset.sessionId || state.current, at:anchor?.closest('.m')?.dataset.at }),
