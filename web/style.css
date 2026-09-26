@@ -30,6 +30,8 @@
 #setupError,#onboardingError{font-size:var(--fs-s)}
 @media(max-width:520px){.onboarding-dialog{padding:16px}.onboarding-actions{flex-direction:column-reverse;align-items:stretch}}
 html,body{height:100%}
+/* スマホのブラウザーが押している間に塗る青い面を消す。押した手応えは各部品の :hover / 選択の地で出す */
+html{-webkit-tap-highlight-color:transparent}
 /* 脇の列の幅。--side-w は脇そのものの幅で、閉じても変えない（列だけ 0 にして会話の下へ隠す）。
    脇の中身が開閉の途中で折り返し直さないため */
 body{--side-w:292px;--side-col:var(--side-w)}
