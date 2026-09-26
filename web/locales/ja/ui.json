@@ -1071,8 +1071,6 @@
     "next": {
       "title": "次のターンから適用",
       "cancel": "取り消す",
-      "retry": "設定の保存を再試行",
-      "saveFailed": "設定を保存できませんでした: {{error}}",
       "endpointMain": "接続先のメイン",
       "targetDefault": "（変更先の既定モデル）",
       "effort": "エフォート: {{value}}",
@@ -1082,6 +1080,13 @@
       "endpoint": "接続先: {{value}}",
       "account": "アカウント: {{value}}",
       "summary": "{{changes}} · 次に送信すると適用されます"
+    },
+    "settingsHold": {
+      "cwd": "作業ディレクトリを変更できなかったため、送信できません · {{error}}",
+      "settings": "設定を保存できなかったため、送信できません · {{error}}",
+      "retry": "再試行",
+      "rechoose": "選び直す",
+      "cancel": "取り消す"
     },
     "composer": {
       "skills": "スキル",
@@ -1506,6 +1511,10 @@
     "cwd": {
       "placeholder": "作業ディレクトリのパス",
       "inputLabel": "作業ディレクトリのパス（Enter で決める）",
+      "checking": "確認しています…",
+      "notFound": "このフォルダーは見つかりません",
+      "exists": "は存在します",
+      "chooseFrom": "ここから選ぶ",
       "choose": "フォルダーを選ぶ…",
       "recent": "最近の作業ディレクトリ",
       "noRecent": "まだありません",

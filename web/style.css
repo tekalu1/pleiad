@@ -730,6 +730,14 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .composer-note[hidden]{display:none}
 .composer-note b{color:var(--ink);font-weight:500}
 .composer-note .composer-note-action{color:var(--ink-blue);padding:0 6px;font-size:var(--fs-xs)}
+/* 設定を保存できず送らせない一行（hold）。理由は強い字。送信が押されたらここへフォーカスを移し、一度だけ輪を光らせる */
+.composer-note .composer-note-strong{color:var(--ink-strong);font-weight:600;overflow-wrap:anywhere}
+.composer-note[data-kind=held]:focus{outline:none}
+.composer-note.flash{border-radius:var(--r-s);animation:note-flash 1.2s var(--ease-out)}
+@keyframes note-flash{0%,40%{box-shadow:0 0 0 2px var(--line-blue)}100%{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion:reduce){.composer-note.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
+/* 送らせない間の送信。塗りをやめ、押せない見た目（disabled にはしない。押すと理由の一行へ） */
+.send.blocked,.send.blocked:hover{background:var(--surface-3);color:var(--ink-weak);cursor:not-allowed}
 /* 予約した送信。塗りをやめて弧を中に（押せないのではなく、待っている） */
 .send.wait,.send.wait:hover{background:var(--surface-3);color:var(--ink);cursor:progress}
 /* チップと送信の行。折り返さない。送信は常に右端 */
@@ -815,6 +823,18 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .cnote b{color:var(--ink);font-weight:600}
 .cerr{margin:6px 8px 0;font-size:var(--fs-s);font-weight:600;color:var(--ink);overflow-wrap:anywhere}
 .cerr:empty{display:none}
+/* 打ったパスを確かめる間の弧（欄の右端）と、確かめた結果（無いフォルダー・あるところまで・ここから選ぶ） */
+.cpath-wrap{position:relative}
+.cpath-wrap .cpath{padding-right:34px}
+.cpath-wrap .run{position:absolute;right:12px;top:50%;margin-top:-7px;color:var(--ink)}
+.cmsg{margin:6px 8px 0;font-size:var(--fs-s);overflow-wrap:anywhere}
+.cmsg.checking{color:var(--ink-weak)}
+.cmsg.fail{color:var(--ink-strong);font-weight:600}
+.cmsg.hint{margin-top:2px;color:var(--ink-weak)}
+.cmsg.hint code{font-family:var(--font-mono);font-size:var(--fs-xs)}
+.cmsg.hint .btn{color:var(--ink-blue);padding:1px 6px;font-size:inherit}
+/* 作業ディレクトリを保存している間のチップ（§4.6 の保存中は弱い字） */
+.chip.saving .v{color:var(--ink-weak)}
 .cseg{margin:2px 8px 4px}
 /* ---- 手元のフォルダーを送る（web/folder-upload.mjs・web/attach-menu.mjs、docs/remote.md §8.1。リモートの窓の添付のボタンの面） ----
    押すとまず「ファイルを添付… / フォルダーを送る…」（.caction の 2 行）。送る前は件数と大きさ・除外の札・送り先（combo）・
