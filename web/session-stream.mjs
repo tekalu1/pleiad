@@ -6,7 +6,7 @@ export const streamEvents = new Set([
   "tool.start", "tool.result", "activity", "present", "turnResult", "turnEnd", "taskNotice",
 ]);
 
-/** Keep events until the history AND branch layout have finished loading. */
+/** Keep events until the history has been painted (branch junctions are placed afterwards). */
 export function createSessionLoads() {
   const pending = new Set();
   return {

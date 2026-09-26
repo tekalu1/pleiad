@@ -43,6 +43,10 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 （Claude: UUID、Codex: UUIDv7、Antigravity: UUID）。
 サーバは `sessionId → backend` を sidecar で引き、無ければ各バックエンドの `getSession` を順に当てる。
 
+ネイティブ一覧は読むのに時間がかかる（Codex の `thread/list` は 1 秒前後、2026-09-26 実測）ので、サーバーはバックエンドと件数ごとに使い回す（`core/server.mjs` の `nativeSessions`）。
+一覧の行に効く出来事（本文の流れ・`running`・承認など数の多いもの以外）が出たら捨て、Pleiad の外（公式 CLI）で動いた分のために 10 秒で読み直す。
+一覧・系譜（`lineage`）・状態の候補（`listStatuses`）が同じものを使う。sidecar はメモリにあるので毎回読む。
+
 ### 2.2 core → web は正規化イベントだけを流す（プロトコル v2）
 
 `sdk` イベントを廃止し、以下に置き換える（[ADR 0006](adr/0006-normalized-events-protocol.md)）。`PROTOCOL_VERSION` は **2**。
@@ -175,6 +179,7 @@ web の `isMine` は新規セッションの id を `first` の付いた session
 （新規でも init が最初に来れば id とモデルが同時に確定する）。
 
 v3 で `statusIcon { status, icon }`（状態グループのアイコン。sidecar `statuses.json`）、`lineage`、`setStatusIcon`、runTurn の `status`、`text.end` の `uuid` を足した。`PROTOCOL_VERSION` は **3**。
+その後、番号を据え置いたまま `loadSession` の `watch` と `watchSession` を足した。宣言した接続には、流れの出来事を開いている会話の分だけ送る（[ADR 0024](adr/0024-watch-open-session-stream.md)）。
 
 **`permission.kind === "question"` の `questions` の形**（web の questionCard が読む形。Claude の AskUserQuestion 入力をそのまま正規形にする）:
 
