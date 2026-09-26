@@ -95,6 +95,24 @@ export default function (t) {
     s.w.unqueue();
     t.ok('150ms より前に作り終えたら何も出さない', s.pending() === 0 && s.note.hidden && s.send.children[0] === s.icon && !s.prompt.readOnly);
   }
+  {
+    // 設定（作業ディレクトリ）を保存できなかった: 欄は書ける、欄の上に強い字の理由と操作、送信は押せない見た目（disabled にしない）
+    const s = setup();
+    let retried = 0;
+    s.w.hold('✕ reason', [{ label: 'retry', onClick: () => retried++ }, { label: 'cancel', onClick: () => {} }]);
+    t.ok('保留: 欄は書ける・送信は disabled にせず aria-disabled と理由の title', s.w.held && s.w.accepts() && !s.prompt.readOnly && !s.send.disabled
+      && s.send.getAttribute('aria-disabled') === 'true' && s.send.classList.contains('blocked') && s.send.getAttribute('title') === '✕ reason');
+    t.ok('保留: 欄の上に理由（強い字）と操作', !s.note.hidden && s.note.dataset.kind === 'held' && s.note.querySelector('b')?.textContent === '✕ reason'
+      && s.note.querySelectorAll('button').length === 2);
+    s.note.querySelector('button').onclick();
+    t.ok('保留: 操作のボタンを押せる', retried === 1);
+    s.w.busy('history'); s.flush(); s.w.failed(() => {});
+    t.ok('読み込みの失敗の一行が優先する', s.note.dataset.kind === 'failed');
+    s.w.busy('history'); s.w.idle();
+    t.ok('失敗が解けたら保留の一行を出し直す', !s.note.hidden && s.note.dataset.kind === 'held');
+    s.w.release();
+    t.ok('解くと一行を消し、送信を元に戻す', !s.w.held && s.note.hidden && !s.send.hasAttribute('aria-disabled') && !s.send.classList.contains('blocked') && s.send.getAttribute('title') === 'send');
+  }
 
   // ---------------------------------------------------------------- 配線（client.mjs・index.html・style.css・辞書）
   const client = read('web/client.mjs');
@@ -108,6 +126,7 @@ export default function (t) {
   t.ok('読み込みの失敗: 欄を戻して「もう一度読む」（composerWait.failed → select retry）', /composerWait\.failed\(\(\) => select\(id, \{ retry: true \}\)\)/.test(select));
   t.ok('初めての接続まで「接続しています…」', /composerWait\.busy\("connect"\);\s*connect\(\);/.test(client));
   t.ok('作成中の送信は予約する', /composerWait\.queue\(/.test(client) && /creatingSession \?\? startNew\(\)/.test(client));
+  t.ok('設定を保存できなかった会話は送らず、理由の一行へフォーカス（composerWait.hold・point）', /composerWait\.hold\(/.test(client) && /if \(composerWait\.held\) \{ composerWait\.point\(\); return; \}/.test(client));
   const html = read('web/index.html');
   t.ok('index.html に欄の上の一行と欄の中の待機表示', /id="composerNote"[^>]*role="status"/.test(html) && /id="composerBusy"/.test(html) && /id="composerBusyText"/.test(html));
   const css = read('web/style.css');
