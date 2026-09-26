@@ -3136,8 +3136,13 @@ function setDrawer(open, { refocus = true } = {}) {
   // 開いている間は背後を inert にする。Tab は脇の中だけを巡り、見えない会話を操作させない（設定で会話を覆うときと同じ手）
   for (const n of document.body.children) if (n.matches("main, .file-preview, .host-bar, #remoteBadge")) n.inert = open;
   const from = document.activeElement;
-  // 検索欄には置かない（スマホでキーボードが出る）。閉じるボタンへ。閉じたら開いたボタンへ戻す
-  if (open) $("closeSidebar").focus({ preventScroll: true });
+  // 検索欄には置かない（スマホでキーボードが出る）。閉じるボタンへ。閉じたら開いたボタンへ戻す。
+  // 開くときは style.css が visibility をすぐ visible にするので、この場で置ける。置けなかったら（まだ隠れていた）次のフレームで置き直す
+  if (open) {
+    const close = $("closeSidebar");
+    close.focus({ preventScroll: true });
+    if (document.activeElement !== close) requestAnimationFrame(() => { if (drawerOpen() && !$("sidebar").contains(document.activeElement)) close.focus({ preventScroll: true }); });
+  }
   else if (refocus && (!from || from === document.body || $("sidebar").contains(from))) $("openSidebar").focus({ preventScroll: true });
 }
 

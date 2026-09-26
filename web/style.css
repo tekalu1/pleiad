@@ -1298,6 +1298,9 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
     padding-left:env(safe-area-inset-left,0px);padding-bottom:env(safe-area-inset-bottom,0px);border-radius:0 var(--r-l) var(--r-l) 0;
     transition:transform var(--dur) var(--ease-out),visibility var(--dur)}
   :root.side-open body:not(.settings) > #sidebar{visibility:visible;transform:none;box-shadow:0 8px 28px var(--shadow)}
+  /* 開くときは visibility を遷移させず、すぐ見える状態にする（開いた瞬間に閉じるボタンへフォーカスを置けるように。client.mjs の setDrawer）。
+     閉じるときは上の規則のまま、滑り終わってから隠れる */
+  :root.side-open body:not(.settings) > #sidebar{transition:transform var(--dur) var(--ease-out),visibility 0s}
   body:not(.settings) > .side-veil{display:block;position:fixed;inset:var(--top-inset) 0 0 0;z-index:40;background:var(--surface-veil);opacity:0;pointer-events:none;
     transition:opacity var(--dur) var(--ease-out)}
   :root.side-open body:not(.settings) > .side-veil{opacity:1;pointer-events:auto}
