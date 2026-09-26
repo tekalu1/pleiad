@@ -59,7 +59,7 @@ export default async function (t) {
   const storage = new Map();
   const context = vm.createContext({
     state, $, cmd, refresh, t: k => k, html: { t: k => k }, sys: noop, escText: x => x, NL: '\n',
-    creatingSession: null, pendingNewSession: null, freshSessionId: null, queuedSend: null, settingsFailure: null,
+    creatingSession: null, pendingNewSession: null, freshSessionId: null, queuedSend: null, settingsFailure: null, syncSettingsHold: noop,
     settingsWrite: Promise.resolve(), modeWrite: Promise.resolve(),
     DRAFT_STORE: 'drafts', draftWrites: new Map(), draftKey: () => state.current ?? '',
     localStorage: { setItem: (k, v) => storage.set(k, v), getItem: k => storage.get(k) ?? null },

@@ -1610,26 +1610,42 @@ let settingsWrite = Promise.resolve();
 let modeWrite = Promise.resolve();
 let settingsFailure = null;
 let failedSettingsPatch = null;
+let failedSettingsError = "";
+let cwdSaving = 0;   // 作業ディレクトリを保存している間、チップの字を弱くする（docs/design-system.md §4.6）
 function reserveSettings(patch) {
   const id = state.current;
   if (!id) return;
-  settingsWrite = settingsWrite.catch(() => {}).then(async () => {
+  const write = settingsWrite.catch(() => {}).then(async () => {
     const s = state.sessions.find(s => s.id === id);
     const value = await cmd("setTurnSettings", { sessionId: id, ...patch });
     if (s) s.nextSettings = value;
     settingsFailure = null;
-    $("retrySettings").hidden = true;
-    if (state.current === id) { $("settingsError").textContent = ""; await syncTopbar(); }
+    failedSettingsPatch = null;
+    if (state.current === id) { syncSettingsHold(); await syncTopbar(); }
   });
-  settingsWrite.catch(e => {
+  settingsWrite = write;
+  write.catch(e => {
     settingsFailure = id;
     failedSettingsPatch = patch;
-    if (state.current === id) {
-      $("settingsError").textContent = t("chat.next.saveFailed", { error: e.message });
-      $("retrySettings").hidden = false;
-    }
+    failedSettingsError = e.message;
+    // チップは保存できた値に戻し（§4.6「失敗時は元の位置へ戻す」）、欄の上に理由と操作。解決するまで送らせない
+    if (state.current === id) { syncSettingsHold(); syncTopbar().catch(() => {}); }
   });
-  return settingsWrite;
+  return write;
+}
+/**
+ * 設定を保存できなかった会話では、入力欄の上に理由と「再試行」「選び直す」（作業ディレクトリのとき）「取り消す」を出し、
+ * 送信を止める（web/composer-wait.mjs の hold。docs/design-system.md「入力欄の待ち」）。開いている会話に合わせて出し入れする
+ */
+function syncSettingsHold() {
+  if (!state.current || settingsFailure !== state.current || !failedSettingsPatch) { composerWait.release(); return; }
+  const patch = failedSettingsPatch, cwd = typeof patch.cwd === "string" ? patch.cwd : null;
+  const drop = () => { settingsFailure = null; failedSettingsPatch = null; composerWait.release(); };
+  const actions = [{ label: t("chat.settingsHold.retry"), onClick: () => { drop(); if (cwd != null) applyCwd(cwd); else reserveSettings(patch); } }];
+  if (cwd != null) actions.push({ label: t("chat.settingsHold.rechoose"), onClick: () => { drop(); syncTopbar().catch(() => {}); controls.panels.folder.show(); controls.typeCwd(cwd); } });
+  actions.push({ label: t("chat.settingsHold.cancel"), onClick: () => { drop(); syncTopbar().catch(() => {}); $("prompt").focus(); } });
+  const reason = cwd != null ? t("chat.settingsHold.cwd", { error: failedSettingsError }) : t("chat.settingsHold.settings", { error: failedSettingsError });
+  composerWait.hold(`✕ ${reason}`, actions);
 }
 function paintSettingsNotice() {
   const s = state.sessions.find(s => s.id === state.current);
@@ -1653,7 +1669,6 @@ function paintSettingsNotice() {
   }
 }
 $("cancelSettings").onclick = () => reserveSettings({ cancel: true });
-$("retrySettings").onclick = () => { if (settingsFailure === state.current) reserveSettings(failedSettingsPatch); };
 
 /** 最近使った作業ディレクトリ。いつ使ったかを添える */
 function cwdOptions() {
@@ -1755,8 +1770,11 @@ function endpointView(bid) {
 function applyCwd(v) {
   state.cwd = v;
   controls.paint();
-  if (state.current) reserveSettings({ cwd: v });
-  else state.draft.cwd = v;
+  if (!state.current) { state.draft.cwd = v; return; }
+  // 保存できるまでは弱い字。失敗したら reserveSettings がチップを元の値へ戻す
+  const ticket = ++cwdSaving;
+  $("cwdChip").classList.add("saving");
+  reserveSettings({ cwd: v })?.catch(() => {}).finally(() => { if (ticket === cwdSaving) $("cwdChip").classList.remove("saving"); });
 }
 
 // 手元のフォルダーをホストへ送る（リモートの窓だけ。入口は添付のボタンのメニュー。web/folder-upload.mjs・web/attach-menu.mjs、
@@ -4079,7 +4097,7 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     // readonly + aria-busy にして、150ms を越えたら欄の中に「履歴を読み込み中…」を出す（web/composer-wait.mjs）
     if (fresh) composerWait.idle(); else composerWait.busy("history");
     $("settingsError").textContent = "";
-    $("retrySettings").hidden = settingsFailure !== id;
+    syncSettingsHold();
     state.awaitingSession = false;
     state.submitting = false;
     syncRunState();
@@ -4439,6 +4457,8 @@ async function clearSentDraft(id, text, attachments) {
 }
 async function submit() {
   if ($('prompt').value.trim() || state.attached.length) completionNotifications.requestPermission();
+  // 設定を保存できず止めている間は送らない。理由の一行へフォーカスを移す（web/composer-wait.mjs の hold）
+  if (composerWait.held) { composerWait.point(); return; }
   if (!state.current || state.current === freshSessionId) {
     // 新しい会話を作っている間の送信は予約する（docs/design-system.md「入力欄の待ち」）。欄は readonly にして字を保ち、
     // 150ms を越えたら送信ボタンに弧、欄の上に「会話ができしだい送ります · 取り消す」。できしだい下の続きで送る
@@ -4462,7 +4482,8 @@ async function submit() {
   try {
     await settingsWrite.catch(() => {});
     await modeWrite;
-    if (state.current !== sessionId || settingsFailure === sessionId) return;
+    if (state.current !== sessionId) return;
+    if (settingsFailure === sessionId) { composerWait.point(); return; }
     // 候補が開いたまま blur した場合の後片付けが先に走ると、送信の入力が書き換わる
     slashSkills.close();
     const text = $('prompt').value;

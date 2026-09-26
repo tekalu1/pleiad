@@ -1102,8 +1102,6 @@
     "next": {
       "title": "Applies from the next turn",
       "cancel": "Cancel",
-      "retry": "Retry saving settings",
-      "saveFailed": "Couldn't save the settings: {{error}}",
       "endpointMain": "endpoint's main model",
       "targetDefault": " (the new agent's default model)",
       "effort": "Effort: {{value}}",
@@ -1113,6 +1111,13 @@
       "endpoint": "Endpoint: {{value}}",
       "account": "Account: {{value}}",
       "summary": "{{changes}} · Applies when you send next"
+    },
+    "settingsHold": {
+      "cwd": "Couldn't change the working directory, so this can't be sent · {{error}}",
+      "settings": "Couldn't save the settings, so this can't be sent · {{error}}",
+      "retry": "Retry",
+      "rechoose": "Choose again",
+      "cancel": "Cancel"
     },
     "composer": {
       "skills": "Skills",
@@ -1556,6 +1561,10 @@
     "cwd": {
       "placeholder": "Working directory path",
       "inputLabel": "Working directory path (Enter to set)",
+      "checking": "Checking…",
+      "notFound": "Folder not found",
+      "exists": "exists",
+      "chooseFrom": "Choose from here",
       "choose": "Choose folder…",
       "recent": "Recent working directories",
       "noRecent": "None yet",

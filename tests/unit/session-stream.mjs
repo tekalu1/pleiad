@@ -46,7 +46,7 @@ export default async function (t) {
     // 系譜は待たずに描く（paintSession）。届くのは描いた後
     branches: { load: () => new Promise(r => { releaseBranches = r; }), reset: noop, has: () => false }, scrollToEnd: noop,
     $: () => ({}), syncRunState: noop, syncTopbar: noop, syncWorkEntry: noop, restorePastSubagents: noop, log: { scrollTop: 0, scrollHeight: 0 },
-    loadDraft: noop, saveDraft: async () => {}, settingsFailure: null, sys: noop,
+    loadDraft: noop, saveDraft: async () => {}, settingsFailure: null, syncSettingsHold: noop, sys: noop,
     paintHistory: () => [], placeJunctions: () => [], isRunningHere: () => false, behindHere: () => null, backgroundCounts: () => ({ live: 0, ended: 0 }),
     relayoutBranches: noop, branchIsFresh: () => false, setUuid: noop,
     paintContextLine: noop, paintContextEntry: noop, refreshContextEntry: async () => null, isManagedContext: () => false,

@@ -66,8 +66,8 @@
     "switching": "エージェントを切り替え中です"
   },
   "cwd": {
-    "missing": "作業ディレクトリが無い: {{cwd}}",
-    "notDirectory": "作業ディレクトリではない: {{cwd}}",
+    "missing": "作業ディレクトリが見つかりません: {{cwd}}",
+    "notDirectory": "作業ディレクトリがフォルダーではありません: {{cwd}}",
     "required": "作業ディレクトリを入力してください"
   },
   "session": {
