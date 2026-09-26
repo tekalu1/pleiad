@@ -78,6 +78,8 @@ const cases = [
   await import("./unit/pending-sidebar.mjs"),
   // 入力欄の待ち（web/composer-wait.mjs）: 会話を開く・初めての接続・読み込みの失敗・作成中の送信の予約
   await import("./unit/composer-wait.mjs"),
+  // 接続の状態（web/connection-status.mjs）: 切れた一行・読み上げ・古いトークンの案内と再確認、開くボタンの印、/auth-check
+  await import("./unit/connection-status.mjs"),
   // 新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る（client.mjs を vm で流す）
   await import("./unit/composer-new-session.mjs"),
   await import("./unit/server-groups.mjs"),

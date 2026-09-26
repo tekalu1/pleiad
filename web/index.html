@@ -83,7 +83,8 @@
     </div>
     <!-- 直前の操作を取り消す一行（グループの出入り・状態の移動）。操作したときだけ出る -->
     <div class="side-undo" id="sideUndo" role="status" hidden></div>
-    <div class="conn-lost" id="connLost" hidden data-i18n="app.connLost"></div>
+    <!-- 接続が切れた一行・トークンが古い案内の短い文（web/connection-status.mjs）。読み上げは #connLive だけ -->
+    <div class="conn-lost" id="connLost" hidden></div>
     <!-- ログインが要るエージェントがあるときだけ。押すと設定メニューが開く -->
     <button type="button" class="conn-lost" id="authNeed" hidden></button>
   </aside>
@@ -141,6 +142,8 @@
       <ul class="clist" id="skillList" role="listbox" data-i18n-aria-label="chat.composer.skills" hidden></ul>
       <!-- 欄の上の一行（web/composer-wait.mjs）: 作成中の送信の予約「会話ができしだい送ります · 取り消す」、読み込みの失敗「… · もう一度読む」 -->
       <div class="composer-note" id="composerNote" role="status" hidden></div>
+      <!-- 接続の一行（脇が見えていないときだけ）と、トークンが古いときの案内（脇の幅によらず）。web/connection-status.mjs -->
+      <div class="conn-note" id="connNote" hidden></div>
       <!-- 入力の箱（docs/design-system.md「入力欄と上端」）。1 つの角丸の面に
            送る前の添付 → 字の欄（1 行から伸びる）→ チップと送信の行 を入れる。デスクトップもスマホも同じ -->
       <div class="cbox" id="cbox">
@@ -268,6 +271,9 @@
       </section>
     </div>
   </dialog>
+
+  <!-- 接続の状態の読み上げ（画面の外。切れた・戻った・案内・確かめた結果を 1 回ずつ）。web/connection-status.mjs -->
+  <div class="visually-hidden" id="connLive" role="status"></div>
 
   <script type="module" src="/client.mjs"></script>
 </body>

@@ -486,6 +486,11 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
     return res.end(t('auth.tokenRequired'));
   }
+  // 画面が「このページのトークンがまだ通るか」を確かめる口（web/connection-status.mjs）。通れば 204、通らなければ上の 401。本文は返さない
+  if (url.pathname === "/auth-check") {
+    res.writeHead(204, { "cache-control": "no-store" });
+    return res.end();
+  }
 
   const name = url.pathname === "/" ? "/index.html" : url.pathname;
   try {

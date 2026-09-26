@@ -136,6 +136,9 @@
 | 再送する | Resend |
 | 送信中 | Sending… |
 | 外部 MCP に接続中 | Connecting to external MCP |
+| 再接続する / 再接続しました | reconnect / Reconnected |
+| このページの認証（起動ごとの UI トークン） | this page's access token |
+| 再確認（ボタン） | Check again |
 | Pleiad タスク完了通知 | Pleiad task completion notice |
 | 依頼元（委譲を頼んだ会話） | requester / requesting conversation |
 | 適用範囲（指示の scope） | scope |
