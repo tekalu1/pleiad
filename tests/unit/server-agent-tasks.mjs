@@ -43,13 +43,14 @@ export default async function(t) {
     return JSON.parse(ev.text);
   };
   try {
-    const first = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:CHILD_RESULT' }) });
+    const first = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:CHILD_RESULT', title: '  子の  短い\n名前  ' }) });
     const sid = first.sessionId;
     let rows = await awaitTasks(rows => rows.length === 1 && rows[0].notification === 'sent');
     const child = rows[0];
     t.ok('MCP 委譲で別の子会話を開始する', child.sessionId !== sid && child.parentSessionId === sid && child.result === 'CHILD_RESULT');
     const sessions = await c.cmd('listSessions');
     t.ok('一覧に管理元と親を保存する', sessions.find(s => s.id === child.sessionId)?.delegation?.parentSessionId === sid);
+    t.ok('タスクと子会話で整形したタイトルが一致する', child.title === '子の 短い 名前' && sessions.find(s => s.id === child.sessionId)?.title === child.title);
     const ends = c.events.filter(e => e.type === 'turnEnd');
     t.ok('子の会話の turnEnd には delegated が付き、親には付かない',
       ends.some(e => e.sessionId === child.sessionId && e.delegated === true) && ends.filter(e => e.sessionId === sid).every(e => !e.delegated));
