@@ -67,9 +67,10 @@ let openPanel = null;   // 同時に開くのは 1 枚だけ
 /**
  * チップ（押すもの）の上に浮く面。同時に開くのは 1 枚だけで、面の外を押すと閉じる。
  * width は面の幅（px。関数なら開くたび・置き直すたびに読む）。添付のメニュー（web/attach-menu.mjs）も使う。
- * when は開いてよいか（false なら押しても開かない。添付のメニューはホストの画面では開かず、クリップがすぐファイルを選ぶ）
+ * when は開いてよいか（false なら押しても開かない。添付のメニューはホストの画面では開かず、クリップがすぐファイルを選ぶ）。
+ * onHide は閉じたとき（Esc・面の外・チップ・選んで閉じた、のどれでも）
  */
-export function panel(chip, pop, { align = "left", render, onShow, width: wantWidth = 360, when }) {
+export function panel(chip, pop, { align = "left", render, onShow, onHide, width: wantWidth = 360, when }) {
   const self = {
     chip, pop,
     get open() { return !pop.hidden; },
@@ -88,6 +89,7 @@ export function panel(chip, pop, { align = "left", render, onShow, width: wantWi
       pop.hidden = true;
       chip.setAttribute("aria-expanded", "false");
       if (openPanel === self) openPanel = null;
+      onHide?.();
       if (returnFocus) chip.focus();
     },
     /** チップの上に浮かせる。幅は画面に収め、チップの端に揃える（右のチップは右端） */
@@ -368,7 +370,8 @@ export function setupComposerControls({ cmd, get, on }) {
       pick, box, err);
     if (browsing != null) browse(browsing);
   }
-  const folder = panel(chips.cwd, pops.cwd, { align: "left", render: renderFolder });
+  // 閉じたら確かめている途中のパスは取り消す（Esc・面の外で閉じたのに、後から確かめが通って変わらないように）
+  const folder = panel(chips.cwd, pops.cwd, { align: "left", render: renderFolder, onHide: () => { checkSeq++; } });
   chips.cwd.addEventListener("click", () => { if (!folder.open) browsing = null; });
   /** 面の欄にパスを入れて選んだ状態にする（保存できなかった作業ディレクトリを「選び直す」） */
   function typeCwd(value) {

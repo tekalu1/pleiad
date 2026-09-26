@@ -66,6 +66,12 @@ export default async function (t) {
       && /\.crow\.measuring > \*\{flex-shrink:0\}/.test(css) && /\.chip\.model\{flex-shrink:20\}/.test(css) && /\.chip\.folder\{flex-shrink:1\}/.test(css) && /\.chip\.mode\{flex-shrink:0\}/.test(css));
   const controlsSrc = fs.readFileSync(new URL('../../web/composer-controls.mjs', import.meta.url), 'utf8');
   t.ok('名前の最小の幅は作業ディレクトリ 9 字・モデル 6 字から段々に下げる', /\[\[9, 6\], \[7, 4\], \[5, 3\], \[3, 2\]\]/.test(controlsSrc) && /fit-short/.test(controlsSrc) && /fit-noef/.test(controlsSrc));
+  const hideFn = controlsSrc.slice(controlsSrc.indexOf('hide(returnFocus = true) {'), controlsSrc.indexOf('place() {'));
+  t.ok('面を閉じたら（Esc・面の外・チップのどれでも hide を通る）onHide を呼ぶ', /onHide\?\.\(\);/.test(hideFn)
+    && /export function panel\(chip, pop, \{[^}]*onHide[^}]*\}\)/.test(controlsSrc) && /if \(e\.key === "Escape"\) \{[^}]*self\.hide\(\)/.test(controlsSrc) && /openPanel\.hide\(false\)/.test(controlsSrc));
+  t.ok('作業ディレクトリの面を閉じたら確かめている途中のパスを取り消す（閉じた後に通って変わっていた）',
+    /const folder = panel\(chips\.cwd, pops\.cwd, \{[^\n]*onHide: \(\) => \{ checkSeq\+\+; \}/.test(controlsSrc)
+      && /found = await cmd\("listDirs", \{ path: value \}\);[\s\S]*?if \(seq !== checkSeq\) return;\s*done\(\);\s*msg\.replaceChildren\(\);[\s\S]*?commitCwd\(/.test(controlsSrc));
   t.ok('タッチではチップも 36px', /@media \(pointer:coarse\)\{[^@]*\.chip\{height:36px\}/s.test(css));
   t.ok('480px 以下は ▾ を省き、中断はアイコンだけ', /@media \(max-width:480px\)\{[^@]*\.chip svg\.caret\{display:none\}[^@]*\.abort span\{display:none\}/s.test(css));
   t.ok('700px 以下は「保存済み」を出さない（失敗だけ出す）', /\.crow \.draft-saved:not\(\[data-state=failed\]\)\{display:none\}/.test(css));
