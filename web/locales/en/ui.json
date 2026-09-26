@@ -1326,8 +1326,21 @@
       "draftNoSession": "Open a conversation to save the draft to, then update."
     },
     "connLost": "Disconnected. Reconnecting…",
+    "connLostRelay": "Can't reach the relay. Reconnecting…",
+    "connLostHost": "Host is offline. Reconnecting…",
+    "reconnected": "Reconnected.",
+    "reconnectedAt": "Reconnected at {{time}}.",
+    "authStale": {
+      "title": "This page's access token is out of date, so it can't connect.",
+      "body": "Reopen the page with the URL shown when the server started. Your unsent text is kept.",
+      "recheck": "Check again",
+      "checking": "Checking…",
+      "stillStale": "Checked at {{time}}. You still need to reopen the page.",
+      "unreachable": "Checked at {{time}}. Couldn't reach the server."
+    },
     "openSidebarTitle": "Open sidebar (Ctrl+B)",
     "openSidebar": "Open sidebar",
+    "openSidebarWith": "Open sidebar ({{detail}})",
     "previewShowing": "Viewing",
     "authNeed": "Sign in to {{agents}}",
     "protocolUnsupported": "Unsupported protocolVersion: {{version}}",
@@ -1626,6 +1639,8 @@
   },
   "sidebar": {
     "unread": "Finished, not yet viewed",
+    "unreadCount_one": "{{count}} finished, not yet viewed",
+    "unreadCount_other": "{{count}} finished, not yet viewed",
     "somethingRunning": "Something is running",
     "empty": "Nothing yet",
     "noMatch": "No matches",

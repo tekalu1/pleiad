@@ -1286,9 +1286,22 @@
       "loading": "会話の読み込みが完了してから更新してください。",
       "draftNoSession": "下書きを保存する会話を開いてから更新してください。"
     },
-    "connLost": "接続が切れた。再接続している…",
+    "connLost": "接続が切れました。再接続しています…",
+    "connLostRelay": "中継につながりません。再接続しています…",
+    "connLostHost": "ホストがオフラインです。再接続しています…",
+    "reconnected": "再接続しました。",
+    "reconnectedAt": "{{time}} に再接続しました。",
+    "authStale": {
+      "title": "このページの認証が古いため、接続できません。",
+      "body": "サーバーの起動時に表示された URL で、ページを開き直してください。書きかけの文章は残ります。",
+      "recheck": "再確認",
+      "checking": "確認しています…",
+      "stillStale": "{{time}} に確認しました。まだ開き直しが必要です。",
+      "unreachable": "{{time}} に確認しました。サーバーに接続できませんでした。"
+    },
     "openSidebarTitle": "サイドバーを開く（Ctrl+B）",
     "openSidebar": "サイドバーを開く",
+    "openSidebarWith": "サイドバーを開く（{{detail}}）",
     "previewShowing": "表示中",
     "authNeed": "{{agents}} にログインが要る",
     "protocolUnsupported": "未対応の protocolVersion: {{version}}",
@@ -1574,6 +1587,7 @@
   },
   "sidebar": {
     "unread": "完了・未確認",
+    "unreadCount_other": "完了・未確認 {{count}} 件",
     "somethingRunning": "走っているものがある",
     "empty": "まだ無い",
     "noMatch": "該当なし",
@@ -1756,8 +1770,8 @@
     "badgeLabel": "リモート:",
     "badgeTitle": "リモートのホスト {{host}} につないでいます",
     "state": {
-      "connecting": "つないでいます…",
-      "connected": "接続中",
+      "connecting": "接続しています…",
+      "connected": "接続済み",
       "offline": "中継につながりません",
       "host-offline": "ホストがオフライン",
       "revoked": "取り消されました",

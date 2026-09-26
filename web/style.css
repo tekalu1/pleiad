@@ -294,6 +294,10 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .conn-lost{padding:8px 14px;font-size:var(--fs-xs);color:var(--ink-weak);background:transparent;text-align:left;width:100%}
 button.conn-lost{cursor:pointer}
 button.conn-lost:hover{color:var(--ink)}
+/* トークンが古い（操作が要る）ときの脇の下の一行。自動で戻る「切れた」と差を付けて強い字にする（web/connection-status.mjs） */
+.conn-lost[data-kind=stale]{color:var(--ink-strong);font-weight:600}
+/* 画面には出さず、読み上げにだけ渡す（接続の状態の role=status） */
+.visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 /* 会話一覧はひとつのツリー（フォーカスは #groups 1 つ、web/side.mjs）。指している項目はキーボードのときだけ 2px の輪（§8）。
    開いている会話の白い面（.sel）とは別に示す。内側に描くので脇の端で切れない */
 #groups:focus{outline:none}
@@ -352,6 +356,14 @@ body.settings .settings-view{display:flex;flex-direction:column;position:absolut
 :root.side-closed body:not(.settings) > #sidebar{visibility:hidden}
 #openSidebar{display:none}
 :root.side-closed #openSidebar{display:inline-flex;margin-left:-6px}   /* タイトルの字の頭と左の余白を揃えたまま置く */
+/* 脇が見えていない間の印（web/open-sidebar-mark.mjs）。未確認は一覧と同じ青い丸（地との間に紙の色の 2px の切り欠き）、
+   承認待ちは ◆（差し色。2 件以上なら数）。件数はボタンの名前に入れ、印は読み上げない */
+#openSidebar{position:relative}
+.side-mark{position:absolute;pointer-events:none}
+.side-mark[data-kind=unread]{top:3px;right:2px;width:9px;height:9px;border-radius:50%;color:var(--ink-unread);background:currentColor;box-shadow:0 0 0 2px var(--surface-paper)}
+.side-mark[data-kind=wait]{top:-1px;right:-5px;display:inline-flex;align-items:center;gap:1px;padding:0 3px;border-radius:var(--r-pill);
+  background:var(--surface-paper);color:var(--ink-mark);font:600 10px/14px var(--font)}
+.side-mark[data-kind=wait]::before{content:"◆";font-size:9px}
 /* 開閉の操作の間だけ動かす。常に付けると、プレビューの幅を掴むときや窓の幅を変えるときまで遅れて追いかける。
    visibility は「どちらかが visible の間は visible」なので、閉じるときは滑り終わってから消える */
 body.side-moving{transition:grid-template-columns var(--dur) var(--ease-out)}
@@ -742,6 +754,17 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .composer-note[hidden]{display:none}
 .composer-note b{color:var(--ink);font-weight:500}
 .composer-note .composer-note-action{color:var(--ink-blue);padding:0 6px;font-size:var(--fs-xs)}
+/* 欄の上の接続の一行（web/connection-status.mjs）。切れた（自動で戻る）は本文の字と弧で、脇が見えていないときだけ
+   （700px 以下の引き出し・広い画面で閉じたとき）。トークンが古い（操作が要る）は .next-settings と同じ面に強い字の見出しと次の一手で、脇の幅によらず出す */
+.conn-note{display:flex;align-items:center;gap:6px;font-size:var(--fs-s);color:var(--ink);padding:0 6px 6px;min-height:22px}
+.conn-note[hidden]{display:none}
+.conn-note[data-kind=lost]{display:none}
+:root.side-closed .conn-note[data-kind=lost]:not([hidden]){display:flex}
+.conn-note[data-kind=stale]{gap:12px;background:var(--surface-2);border-radius:var(--r-m);padding:10px 16px;margin-bottom:10px;overflow-wrap:anywhere}
+.conn-note[data-kind=stale] b{display:block;font-weight:600;color:var(--ink-strong)}
+.conn-note .conn-result{margin-top:4px;color:var(--ink-weak)}
+.conn-note[data-kind=stale] .btn{margin-left:auto;flex:none;font-size:var(--fs-s);color:var(--ink-blue)}
+.conn-note .btn[aria-disabled=true]{cursor:progress}
 /* 予約した送信。塗りをやめて弧を中に（押せないのではなく、待っている） */
 .send.wait,.send.wait:hover{background:var(--surface-3);color:var(--ink);cursor:progress}
 /* チップと送信の行。折り返さない。送信は常に右端 */
@@ -1097,6 +1120,8 @@ main.dropping #log{background:var(--surface-1)}
   /* macOS は信号の分だけ字のロゴを畳む */
   :root.mac .brand-wordmark{display:none}
   .next-settings{flex-wrap:wrap;padding:10px}
+  .conn-note[data-kind=lost]:not([hidden]){display:flex}
+  .conn-note[data-kind=stale]{flex-wrap:wrap;padding:10px}
   .row-meta{flex-wrap:wrap}
   .row-meta > span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .row-cwd{text-align:left}
@@ -1178,6 +1203,15 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .pop .li{min-height:40px}
   .pop.menu{min-width:min(240px,calc(100vw - 16px))}
   .settings-menu button{min-height:36px}
+  /* タイトル行と入力欄の行: 見た目は 36px のまま、押せる範囲を上下に 4px ずつ広げて 44px にする。
+     左右は隣と重ならない範囲（隙間の半分）まで。タイトル行は隙間を 8px にして 44×44（::after は設定の更新の点が使う） */
+  .top{gap:8px}
+  .top > .btn-icon,.top > .ctxlink,.crow > .btn-icon,.crow > .chip,.crow > .abort,.crow > .send{position:relative}
+  .top > .btn-icon::before,.top > .ctxlink::before{content:"";position:absolute;inset:-4px}
+  .crow > .btn-icon::before,.crow > .chip::before,.crow > .abort::before,.crow > .send::before{content:"";position:absolute;inset:-4px -1px}
+  .send{width:36px;height:36px}
+  .side-mark[data-kind=unread]{top:5px;right:4px}
+  .side-mark[data-kind=wait]{top:1px;right:-3px}
 }
 
 /* ---- 狭い画面（700px 以下）: 脇を引き出しに ---- */
