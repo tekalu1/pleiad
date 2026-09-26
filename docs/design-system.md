@@ -407,7 +407,7 @@ Codex は OpenAI Blossom、Claude Code は Claude マーク、Antigravity は An
 |---|---|---|---|
 | `--ink` | `#1c2247` | `#dfe3f2` | 本文 |
 | `--ink-strong` | `#0f1330` | `#f4f6ff` | strong・失敗の一語 |
-| `--ink-weak` | `#6b7299` | `#8a91b8` | 補足・時刻・パス・ラベル |
+| `--ink-weak` | `#596089` | `#8a91b8` | 補足・時刻・パス・ラベル。どの面（最も沈んだ `--surface-3` まで）の上でも 4.5:1 以上（2026-09-27 に `#6b7299` から濃くした。12px の補助文字が `--surface-2` の上で 3.9:1 だった） |
 | `--ink-blue` | `#3a499e` | `#9eabde` | リンク・今いる枝・効いているフィルター・選んだ印 ✓ |
 | `--ink-mark` | `#aa2678` | `#e07ab8` | 差し色。「あなたを待っている」にだけ |
 | `--ink-code-*` | 青の族で 4 段 | | comment / string / number / keyword / fn |

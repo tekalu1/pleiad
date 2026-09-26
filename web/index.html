@@ -146,7 +146,7 @@
       <div class="cbox" id="cbox">
         <!-- 送る前の添付。会話にはまだ出ない（送信で present として載る） -->
         <div class="attached" id="attached"></div>
-        <textarea id="prompt" data-i18n-placeholder="chat.composer.placeholder" rows="1" aria-autocomplete="list" aria-controls="skillList" aria-expanded="false"></textarea>
+        <textarea id="prompt" data-i18n-placeholder="chat.composer.placeholder" rows="1" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="skillList"></textarea>
         <!-- 書けない待ち（会話を開いている・初めて接続するまで）。150ms を越えたら字の欄の上に重ねる（web/composer-wait.mjs） -->
         <div class="composer-busy" id="composerBusy" hidden><span class="composer-busy-text" id="composerBusyText"></span></div>
         <!-- 候補を選んだ直後だけ、引数の書き方を薄く出す -->
