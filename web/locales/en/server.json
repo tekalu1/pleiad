@@ -441,12 +441,17 @@
       "ask": "Asks every time unless the command is trusted.",
       "auto": "Asks only when the model decides it needs to.",
       "full": "Never asks. Can write to the working directory.",
-      "yolo": "No approvals and no Codex restrictions (all files and network).",
+      "yolo": "No approvals and no sandbox (all files and network). Codex's own safety check still rejects some commands before they run.",
       "readonly": "Blocks writes with the sandbox."
     },
     "models": {
       "defaultNote": "Uses your codex settings as is.",
       "configured": "codex settings ({{model}})"
+    },
+    "rejected": {
+      "policy": "Rejected by Codex's safety check before running ({{reason}})",
+      "spawn": "Codex could not start the process ({{reason}})",
+      "other": "Rejected by Codex before running"
     },
     "truncated": "… (truncated)",
     "terminal": "Background terminal",

@@ -7,6 +7,7 @@ import { MAX_RESULT_CHARS } from "./backends/shared.mjs";
 import { readPresents } from "./history.mjs";
 import { buildItems } from "../web/timeline.mjs";
 import { t, agentT } from "./i18n.mjs";
+import { writeAtomic } from "./atomic-file.mjs";
 
 const file = path.join(store.dataDir, "conversations.json");
 const convDir = path.join(store.dataDir, "conversations");
@@ -67,16 +68,11 @@ async function all() {
         for (const m of messages) {
           for (const c of m.toolCalls ?? []) if (c.result) sanitizeToolResult(c.result);
         }
-        const sessFile = sessionFilePath(id);
-        const sessTmp = `${sessFile}.${process.pid}.tmp`;
         const payload = { messages, ...(presents ? { presents } : {}) };
-        await fs.writeFile(sessTmp, JSON.stringify(payload));
-        await fs.rename(sessTmp, sessFile);
+        await writeAtomic(sessionFilePath(id), JSON.stringify(payload));
       }
       await fs.mkdir(store.dataDir, { recursive: true });
-      const tmp = file + ".tmp";
-      await fs.writeFile(tmp, JSON.stringify(indexOnly));
-      await fs.rename(tmp, file);
+      await writeAtomic(file, JSON.stringify(indexOnly));
     }
     return records;
   })();
@@ -91,14 +87,12 @@ async function save(additions = {}) {
     const targetIds = new Set(Object.keys(additions));
     for (const [id, r] of Object.entries(entries)) {
       if (r._dirty || targetIds.has(id)) {
-        const sessFile = sessionFilePath(id);
-        const sessTmp = `${sessFile}.${process.pid}.tmp`;
         const payload = {
           messages: r.messages ?? [],
           ...(r.presents ? { presents: r.presents } : {}),
         };
-        await fs.writeFile(sessTmp, JSON.stringify(payload));
-        await fs.rename(sessTmp, sessFile);
+        // 一意な一時ファイル＋一時的に開けないときだけ rename をやり直す（core/atomic-file.mjs）
+        await writeAtomic(sessionFilePath(id), JSON.stringify(payload));
         r._dirty = false;
       }
     }
@@ -109,8 +103,7 @@ async function save(additions = {}) {
     }
     const json = JSON.stringify(indexOnly);
     await fs.mkdir(store.dataDir, { recursive: true });
-    await fs.writeFile(file + ".tmp", json);
-    await fs.rename(file + ".tmp", file);
+    await writeAtomic(file, json);
   });
   writes = next.catch(() => {});
   return next;

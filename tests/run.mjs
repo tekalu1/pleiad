@@ -22,6 +22,8 @@ const cases = [
   await import('./unit/side-panel.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
+  // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）
+  await import('./unit/agent-tasks-storage.mjs'),
   await import('./unit/background-model.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
   // 委譲先の自動振り分け: 規則・段・使用量で飛ばす・Claude のアカウント・判定器（偽の fetch）・使用量の取り置き
@@ -80,6 +82,8 @@ const cases = [
   await import("./unit/composer-wait.mjs"),
   // 承認カード: 受け取られるまで送信中・失敗はカードの中・決着後の一行に対象と開閉
   await import("./unit/approval-card.mjs"),
+  // 接続の状態（web/connection-status.mjs）: 切れた一行・読み上げ・古いトークンの案内と再確認、開くボタンの印、/auth-check
+  await import("./unit/connection-status.mjs"),
   // 新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る（client.mjs を vm で流す）
   await import("./unit/composer-new-session.mjs"),
   await import("./unit/server-groups.mjs"),
@@ -135,6 +139,10 @@ const cases = [
   // model/list のページ送り・覚える長さ・ログイン / ログアウトで捨てる・タイトル生成のモデル選び
   await import("./unit/codex-models.mjs"),
   await import("./unit/codex-child-routing.mjs"),
+  // Codex の実行前の拒否: rollout の解析（code mode・直接・wait・プロセス作成の失敗・引用の除外）・読む範囲・伏せ方・Codex の子への指示
+  await import("./unit/codex-rejections.mjs"),
+  // 同じくサーバー全体: 会話にツールのエラーとして出す・委譲の rejections・完了通知・ply_task_send の次の回（Codex は身代わり）
+  await import("./unit/server-codex-rejections.mjs"),
   // fake バックエンドでサーバを立てる。LLM は呼ばないので、ここに入れてよい
   await import("./unit/server-fake.mjs"),
   // 中断の順序（実際の中断が先、Pleiad タスクの後始末は後）と「中断している」の知らせ。fake バックエンドだけ

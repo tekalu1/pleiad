@@ -8,6 +8,9 @@ import { t } from "./i18n.mjs";
 //
 // 確定は Enter / Tab / クリック。`/名前 ` まで入り、続けて引数を打てる。
 // Ctrl+Enter は候補が開いていても送信のまま（keydown が false を返す）。
+//
+// 入力欄は textarea（役割は textbox）なので aria-expanded を持てない（textarea には combobox の役割も付けられない）。
+// 開いているかは候補の一覧（listbox）が出ているかで伝え、欄には aria-controls・aria-haspopup・今指している候補（aria-activedescendant）だけを置く。
 
 /** 入力欄の値から打ち込まれた名前を取り出す。候補を出す条件を満たさなければ null */
 export function parseQuery(value, caret, end) {
@@ -83,7 +86,6 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", now 
     list.hidden = true;
     list.replaceChildren();
     items = [];
-    input.setAttribute("aria-expanded", "false");
     input.removeAttribute("aria-activedescendant");
   };
 
@@ -115,7 +117,6 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", now 
       list.append(li);
     });
     list.hidden = false;
-    input.setAttribute("aria-expanded", "true");
     input.removeAttribute("aria-activedescendant");
     if (items.length) input.setAttribute("aria-activedescendant", `slash-option-${active}`);
     list.children[active + 1]?.scrollIntoView?.({ block: "nearest" });
@@ -136,7 +137,6 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", now 
     input.removeAttribute("aria-activedescendant");
     list.hidden = false;
     list.replaceChildren(el("li", "head"), el("li", "none", t("common.loading")));
-    input.setAttribute("aria-expanded", "true");
     try {
       const got = await load(key);
       if (loadingKey !== key) return;
@@ -149,7 +149,6 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", now 
       skillsAt = now();
       skills = [];
       list.replaceChildren(el("li", "none", t("composer.skills.failed")));
-      input.setAttribute("aria-expanded", "true");
       return;
     } finally {
       if (loadingKey === key) loadingKey = null;

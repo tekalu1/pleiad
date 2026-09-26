@@ -38,6 +38,9 @@ export function nodeKeys(junctions, messageCount) {
   return out;
 }
 
+/** 札に出す発言の抜粋。1 行に畳み、長ければ切る（札は省略で縮むので、全文は title と読み上げ名で渡す） */
+export const excerptOf = (text) => String(text ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+
 export function createBranches({ cmd, titleOf }) {
   const cache = new Map();     // sessionId -> { lastModified, messages }
   let family = null;           // { rootId, rows: Map<id, { id, title, parent, createdAt, messages, k }> }
@@ -131,14 +134,37 @@ export function createBranches({ cmd, titleOf }) {
   }
 
   /**
-   * 枝の表示名。一覧のタイトルがあればそれ。無ければ根は「はじめの流れ」、他は並び順で「枝 N」。
+   * 枝の表示名。一覧のタイトルがあればそれ。無ければ仮の名前（ordinalName）。
    * 仮の名前は保存しない。名前はバックエンドが付けるか、人が上の欄で書く
    */
   function nameOf(id) {
     const title = titleOf?.(id) ?? family?.rows.get(id)?.title ?? null;
     if (title && title !== "(no title)") return title;
+    return ordinalName(id);
+  }
+
+  /** 仮の名前。根は「オリジナル」、他は並び順で「枝 N」 */
+  function ordinalName(id) {
     const i = ordered().findIndex((r) => r.id === id);
     return i <= 0 ? t("timeline.branch.root") : t("timeline.branch.numbered", { n: i + 1 });
+  }
+
+  /**
+   * 分岐点の札で、名前が兄弟とぶつかる枝だけに見分けを足す（docs/design-system.md §7）。
+   * label は仮の名前（「枝 N」）、excerpt は分岐後の最初の自分の発言（無ければ null）。ぶつからない枝はそのまま返す。
+   * entries の n は分岐後の件数（履歴の末尾 n 件が分岐後）。current は今の枝の最新の履歴（家族の写しより新しい）
+   * @param {Array<{id:string,name:string,n:number}>} entries
+   * @param {{id:string, messages:Array}} [current]
+   */
+  function distinguish(entries, current) {
+    const count = new Map();
+    for (const e of entries) count.set(e.name, (count.get(e.name) ?? 0) + 1);
+    return entries.map((e) => {
+      if (count.get(e.name) < 2 || !family?.rows.has(e.id)) return e;
+      const messages = (e.id === current?.id ? current.messages : family.rows.get(e.id).messages) ?? [];
+      const prompt = messages.slice(Math.max(0, messages.length - e.n)).find((m) => m.role === "user" && String(m.text ?? "").trim());
+      return { ...e, label: ordinalName(e.id), excerpt: prompt ? excerptOf(prompt.text) : null };
+    });
   }
 
   /** A known fork cut wins even if two branches happen to repeat the same text. */
@@ -191,6 +217,6 @@ export function createBranches({ cmd, titleOf }) {
     return out;
   }
 
-  return { load, reset, update, has, nameOf, junctions, boundary,
+  return { load, reset, update, has, nameOf, distinguish, junctions, boundary,
     get family() { return family; } };
 }

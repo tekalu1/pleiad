@@ -75,6 +75,7 @@ export default async function (t) {
     isRunningHere: () => false, behindHere: () => null, backgroundCounts: () => ({ live: 0, ended: 0 }), relayoutBranches: noop, branchIsFresh: () => true, promptPlaceholder: () => '',
     ACTIVITY_LABEL: {}, attachMenu: null, setDraftNote: noop,
     isWaitingHere: () => false, stoppingHere: () => false, controls: { fit: noop }, retiredHere: () => null, submittingMessages: new Set(),
+    connStatus: { blocksSend: () => false },
     completionNotifications: { requestPermission: noop }, slashSkills: { close: noop }, uiLang: 'ja', attachmentLine: (l, p) => p,
     receipts: new Map(), saveReceipts: noop, messageRow: () => true, ensureMessageRow: noop, markDelivery: noop,
     createComposerWait,
