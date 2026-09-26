@@ -22,6 +22,17 @@
 .onboarding-agent-item .agent-desc{font-size:var(--fs-s);color:var(--ink-weak);margin-top:2px}
 .onboarding-agent-item .agent-state{font-size:var(--fs-s);color:var(--ink-weak);text-align:right;flex:none}
 .onboarding-auth:not(:empty){background:var(--surface-1);border-radius:var(--r-m);padding:10px 8px;margin-bottom:16px}
+/* 初回の案内の作業ディレクトリ（docs/design-system.md §10）。見出しは弱い字、行はエージェントの一覧と同じグレーの地に
+   フォルダーのアイコン・等幅のフルパス（ホームなら弱い字の「ホーム」）・「フォルダーを選ぶ…」。簡易ブラウザーはその下に開く */
+.onboarding-cwd{margin:0 0 4px}
+.onboarding-cwd-label{padding:0 4px 6px;font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em}
+.onboarding-cwd-row{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 14px;border-radius:var(--r-m);background:var(--surface-0)}
+.onboarding-cwd-row svg.i{flex:none;width:16px;height:16px;color:var(--ink-weak)}
+.onboarding-cwd-path{flex:1;min-width:0;font-family:var(--font-mono);font-size:var(--fs-s);overflow-wrap:anywhere}
+.onboarding-cwd-home{font-family:var(--font);font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
+.onboarding-cwd-row .btn{flex:none;font-size:var(--fs-s)}
+.onboarding-cwd-note{margin:6px 4px 0;font-size:var(--fs-s);color:var(--ink-weak)}
+.onboarding-browse .clistbox{display:flex;flex-direction:column;gap:1px}
 .onboarding-actions{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:24px}
 #agentControls .head{margin-top:20px}
 #agentControls .auth-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 0}
@@ -735,6 +746,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .att-from svg.i{width:13px;height:13px}
 .att.att-img .att-from{padding-left:3px}
 .att-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+button.att-name{background:transparent;color:inherit;font:inherit;padding:0;cursor:pointer;min-width:0}
+button.att-name:hover{text-decoration:underline}
+.att-dir{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);color:var(--ink-weak)}
 /* 送っている途中の札（web/attach-upload.mjs）。名前の後ろに等幅の「42%」、札の下端に塗りの細い進み具合（フォルダーを送るバーと同じ色） */
 .att-sending{position:relative;overflow:hidden;padding-bottom:5px}
 .att-pct{flex:none;font-family:var(--font-mono);color:var(--ink-weak)}
@@ -862,6 +876,8 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .cbrowse .crumb{padding:4px 6px;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 .cbrowse .clistbox{max-height:220px;overflow-y:auto;overscroll-behavior:contain}
 .cbrowse .copt{padding:4px 6px}
+/* 一覧はスクロールの箱なので、外へ出る輪は上下左右の端で切れる。行の内側に描く */
+.cbrowse .copt:focus-visible{outline-offset:-2px}
 .cbrowse .copt:hover{background:var(--surface-2)}
 .cbrowse .copt .main{font-family:var(--font-mono);font-size:var(--fs-s)}
 .cbrowse .go{display:flex;justify-content:flex-end;padding:4px}
@@ -1061,7 +1077,13 @@ main.dropping #log{background:var(--surface-1)}
    1 行の理由は見出しの残りの幅に入れ、入らなければ … で切る（全文は title と開いた内訳に） */
 .tc-auto,.bg-auto{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
 .bg-row-meta>.bg-auto{flex:none;overflow:visible}
-.tc-route{flex:1 1 12em;min-width:0;color:var(--ink);font-size:var(--fs-s);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-route{flex:1 1 12em;min-width:0;display:flex;align-items:center;gap:5px;color:var(--ink);font-size:var(--fs-s)}
+.tc-route-text{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 開いた委譲カードの先頭の「依頼」（4 行で切る。バックグラウンドの詳細と同じ）と、奥に畳んだ入力・出力の JSON */
+.rt-request{margin:4px 0 10px;font-size:var(--fs-s);color:var(--ink)}
+.rt-request-label{font-size:var(--fs-xs);color:var(--ink-weak)}
+.rt-request-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.rt-request:not(.expanded)>.rt-request-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
 .rt-detail{margin:4px 0 10px;color:var(--ink);font-size:var(--fs-s)}
 .rt-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px 16px;margin:0 0 10px}
 .rt-facts>div{min-width:0}
@@ -1142,9 +1164,23 @@ main.dropping #log{background:var(--surface-1)}
 .next-settings{display:flex;align-items:center;gap:12px;background:var(--surface-2);border-radius:var(--r-m);padding:10px 16px;margin-bottom:10px;font-size:var(--fs-s)}
 .next-settings .btn{margin-left:auto;flex:none;font-size:var(--fs-s)}
 .next-settings b{font-weight:600}
+/* エージェントを変える予約のときの引き継ぎの 1 行と「詳しく」（既定は閉じる。docs/design-system.md「入力欄の設定」） */
+.next-handoff{margin-top:4px;color:var(--ink-weak)}
+.next-handoff>summary{list-style:none;cursor:pointer}
+.next-handoff>summary::-webkit-details-marker{display:none}
+.next-handoff>summary .more{margin-left:6px;color:var(--ink-blue);white-space:nowrap}
+.next-handoff>summary .more::after{content:"▸";display:inline-block;margin-left:2px;transition:transform var(--dur-fast) var(--ease-out)}
+.next-handoff[open]>summary .more::after{transform:rotate(90deg)}
+.next-handoff dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 12px;margin:6px 0 0}
+.next-handoff dl>div{display:contents}
+.next-handoff dt{white-space:nowrap}
+.next-handoff dd{margin:0;color:var(--ink)}
 .settings-error{font-size:var(--fs-s);font-weight:600;color:var(--ink);margin-bottom:8px}
 .settings-error:empty{display:none}
 .draft-saved:empty{display:none}
+/* 下書きを保存できなかった一行（700px 以下だけ。上の「狭い画面」）。字は本文色、「再試行」は字だけの青 */
+.draft-fail{display:none;align-items:baseline;flex-wrap:wrap;gap:0 6px;margin:0;padding:2px 6px 4px;font-size:var(--fs-xs);color:var(--ink);overflow-wrap:anywhere}
+.draft-fail .draft-fail-retry{color:var(--ink-blue);padding:0 6px;font-size:var(--fs-xs)}
 .filter-outside{font-size:var(--fs-xs);padding:8px 14px;color:var(--ink-weak)}
 .filter-outside .btn{font-size:var(--fs-xs);color:var(--ink-blue)}
 .row-unsent{font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap;flex:none}
@@ -1157,8 +1193,10 @@ main.dropping #log{background:var(--surface-1)}
   main > .top:has(:is(#agentTasksEntry,#backgroundEntry):not([hidden])) .title-field{flex-basis:calc(100% - 40px)}
   .composer{padding-left:8px;padding-right:8px}
   #skillList{max-height:240px}
-  /* 「保存済み」は出さない（下書きがあることは脇の行の「未送信」で分かる）。保存に失敗したときだけ出す */
-  .crow .draft-saved:not([data-state=failed]){display:none}
+  /* 「保存済み」は出さない（下書きがあることは脇の行の「未送信」で分かる）。保存の失敗は行の隙間では文が途中で切れるので、
+     チップの行の上の一行（#draftFail）に出す */
+  .crow .draft-saved{display:none}
+  .draft-fail:not([hidden]){display:flex}
   /* 設定の左列は脇と同じに畳まれる（body の列幅）。ページ側の余白も会話に合わせる */
   .settings-content{padding-left:10px;padding-right:10px}
   /* macOS は信号の分だけ字のロゴを畳む */
@@ -1267,6 +1305,9 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
     padding-left:env(safe-area-inset-left,0px);padding-bottom:env(safe-area-inset-bottom,0px);border-radius:0 var(--r-l) var(--r-l) 0;
     transition:transform var(--dur) var(--ease-out),visibility var(--dur)}
   :root.side-open body:not(.settings) > #sidebar{visibility:visible;transform:none;box-shadow:0 8px 28px var(--shadow)}
+  /* 開くときは visibility を遷移させず、すぐ見える状態にする（開いた瞬間に閉じるボタンへフォーカスを置けるように。client.mjs の setDrawer）。
+     閉じるときは上の規則のまま、滑り終わってから隠れる */
+  :root.side-open body:not(.settings) > #sidebar{transition:transform var(--dur) var(--ease-out),visibility 0s}
   body:not(.settings) > .side-veil{display:block;position:fixed;inset:var(--top-inset) 0 0 0;z-index:40;background:var(--surface-veil);opacity:0;pointer-events:none;
     transition:opacity var(--dur) var(--ease-out)}
   :root.side-open body:not(.settings) > .side-veil{opacity:1;pointer-events:auto}

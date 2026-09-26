@@ -127,6 +127,12 @@ export default async function (t) {
   t.ok("viewport-fit=cover", /name="viewport"[^>]*viewport-fit=cover/.test(html));
   t.ok("safe-area と 100dvh", css.includes("env(safe-area-inset-bottom") && css.includes("env(safe-area-inset-top") && css.includes("100dvh"));
   t.ok("700px 以下で脇を引き出しに（:root.side-open で開く）", /@media \(max-width:700px\)\{[^@]*position:fixed[^@]*:root\.side-open body:not\(\.settings\) > #sidebar/s.test(css));
+  t.ok("引き出しは開くとき visibility を遷移させない（隠れたままで閉じるボタンにフォーカスが入らず body に落ちていた）",
+    /@media \(max-width:700px\)\{[^@]*:root\.side-open body:not\(\.settings\) > #sidebar\{transition:transform var\(--dur\) var\(--ease-out\),visibility 0s\}/s.test(css));
+  const client = fs.readFileSync(new URL("../../web/client.mjs", import.meta.url), "utf8");
+  const drawer = client.slice(client.indexOf("function setDrawer("), client.indexOf("function setSidebar("));
+  t.ok("引き出しを開いたら閉じるボタンへ。置けなければ次のフレームで置き直す",
+    /close\.focus\(\{ preventScroll: true \}\);\s*if \(document\.activeElement !== close\) requestAnimationFrame\(/.test(drawer));
   t.ok("pointer:coarse で入力欄を 16px 以上", /@media \(pointer:coarse\)\{[^@]*font-size:max\(16px/s.test(css));
   t.ok("hover:none で「…」と ＋ を常に見せる", /@media \(hover:none\)\{[^@]*\.row-more[^@]*\.grp-add\{opacity:1\}/s.test(css));
   t.ok("モバイル版の殻の帯（.host-bar）", css.includes(":root.remote-mobile .host-bar"));

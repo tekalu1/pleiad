@@ -126,6 +126,12 @@ export default async function (t) {
       && button.getAttribute('aria-label') === 'app.openSidebarWith(sidebar.waitingCount(2) · sidebar.unreadCount(1))', button.getAttribute('aria-label'));
     paintOpenSidebar(button, { waiting: 0, unread: 0 }, tr);
     t.ok('何も無ければ印を外し、名前を戻す', !button.querySelector('.side-mark') && button.getAttribute('aria-label') === 'app.openSidebar');
+    // 名前は件数を入れて書くので、HTML の訳し直し（applyDom）の対象にしない。初めの名前は起動時に paintOpenSidebar で
+    const html = await fs.readFile(new URL('../../web/index.html', import.meta.url), 'utf8');
+    const client = await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8');
+    const tag = /<button[^>]*id="openSidebar"[^>]*>/.exec(html)?.[0] ?? '';
+    t.ok('「サイドバーを開く」に data-i18n-aria-label を置かない（訳し直すと件数の無い名前に戻っていた）', tag && !/data-i18n-aria-label/.test(tag) && /data-i18n-title="app\.openSidebarTitle"/.test(tag));
+    t.ok('起動時に件数なしの名前を書く（applyDom の直後）', /applyDom\(document\);[\s\S]{0,200}paintOpenSidebar\(\$\("openSidebar"\), \{\}, t\);/.test(client));
   }
   // ---- サーバーの /auth-check
   {

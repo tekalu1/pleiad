@@ -103,6 +103,18 @@
     </div>
     <div id="onboardingAgentList" class="onboarding-agent-list" role="radiogroup" data-i18n-aria-label="dialog.onboarding.agents"></div>
     <div id="onboardingAuth" class="onboarding-auth"></div>
+    <!-- 作業ディレクトリ（web/onboarding.mjs。既定はホーム）。デスクトップ版は OS のダイアログ、ブラウザー版は簡易ブラウザー -->
+    <div class="onboarding-cwd" role="group" aria-labelledby="onboardingCwdLabel">
+      <div class="onboarding-cwd-label" id="onboardingCwdLabel" data-i18n="dialog.onboarding.cwd"></div>
+      <div class="onboarding-cwd-row">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span class="onboarding-cwd-path" id="onboardingCwdPath"></span>
+        <button type="button" class="btn" id="onboardingCwdChoose" aria-describedby="onboardingCwdPath" data-i18n="composer.cwd.choose"></button>
+      </div>
+      <div class="cbrowse onboarding-browse" id="onboardingBrowse" hidden></div>
+      <p class="onboarding-cwd-note" data-i18n="dialog.onboarding.cwdNote"></p>
+      <p class="cerr" id="onboardingCwdError" role="alert"></p>
+    </div>
     <p id="onboardingError" role="status" aria-live="polite"></p>
     <div class="onboarding-actions">
       <small class="muted" data-i18n="dialog.onboarding.note"></small>
@@ -113,8 +125,9 @@
   <!-- ==================== 会話 ==================== -->
   <main>
     <header class="top">
-      <!-- 脇を閉じている間だけ出る。閉じるボタンと同じ絵 -->
-      <button type="button" class="btn btn-icon side-toggle" id="openSidebar" data-i18n-title="app.openSidebarTitle" data-i18n-aria-label="app.openSidebar" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
+      <!-- 脇を閉じている間だけ出る。閉じるボタンと同じ絵。名前（aria-label）は件数を入れて client.mjs が書く（web/open-sidebar-mark.mjs）。
+           data-i18n-aria-label は置かない（訳し直しで件数の無い名前に戻るため） -->
+      <button type="button" class="btn btn-icon side-toggle" id="openSidebar" data-i18n-title="app.openSidebarTitle" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
       <!-- タイトルの列。モバイル版の殻の 700px 以下では、タイトルの下に差しの青の「⇄ ホスト名」（押すとホスト一覧へ。web/remote-badge.mjs）を置く -->
       <div class="title-col">
         <span class="title-field" id="titleField"><input id="titleEdit" data-i18n-placeholder="session.untitled" data-i18n-aria-label="session.titleLabel" autocomplete="off" disabled></span>
@@ -137,7 +150,7 @@
     <div class="work-entry" id="workEntry" hidden><button type="button" class="btn work" id="workEntryButton" aria-controls="workDialog"></button></div>
     <form class="composer" id="composer">
       <div id="outbox" class="outbox" aria-live="polite" hidden></div>
-      <div class="next-settings" id="nextSettings" role="status" hidden><div><b data-i18n="chat.next.title"></b><div id="nextSettingsText"></div></div><button type="button" class="btn" id="cancelSettings" data-i18n="chat.next.cancel"></button></div>
+      <div class="next-settings" id="nextSettings" role="status" hidden><div><b data-i18n="chat.next.title"></b><div id="nextSettingsText"></div><details class="next-handoff" id="nextHandoff" hidden></details></div><button type="button" class="btn" id="cancelSettings" data-i18n="chat.next.cancel"></button></div>
       <div class="settings-error" id="settingsError" role="alert"></div>
       <!-- 入力欄の先頭が / の間だけ出るスキル候補（web/slash-skills.mjs）。面は .clist と同じ -->
       <ul class="clist" id="skillList" role="listbox" data-i18n-aria-label="chat.composer.skills" hidden></ul>
@@ -155,6 +168,8 @@
         <div class="composer-busy" id="composerBusy" hidden><span class="composer-busy-text" id="composerBusyText"></span></div>
         <!-- 候補を選んだ直後だけ、引数の書き方を薄く出す -->
         <div class="slash-hint" id="slashHint"></div>
+        <!-- 下書きを保存できなかった（700px 以下だけ。チップの行には入らないので、その上に一行で。広い幅は行の「保存済み」の位置に出す） -->
+        <p class="draft-fail" id="draftFail" role="status" hidden><span id="draftFailText"></span><button type="button" class="btn draft-fail-retry" id="draftFailRetry" data-i18n="chat.draft.retry"></button></p>
         <div class="crow">
           <button type="button" class="btn btn-icon" id="attach" data-i18n-title="chat.composer.attach" data-i18n-aria-label="chat.composer.attach"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2"/></svg></button>
           <input type="file" id="fileIn" multiple hidden>
@@ -164,7 +179,7 @@
                1 行に並べ、折り返さない。足りなければ作業ディレクトリ → モデル名の順に … で詰める（送信は常に右端） -->
           <button type="button" class="chip folder" id="cwdChip" aria-controls="cwdPop"></button>
           <span class="crow-gap"></span>
-          <!-- 「保存済み」: 行の空きに弱い字で。700px 以下では出さない（保存に失敗したときだけ出す） -->
+          <!-- 「保存済み」: 行の空きに弱い字で。700px 以下では出さない（保存の失敗は上の #draftFail） -->
           <button type="button" class="btn draft-saved" id="draftSaved" aria-live="polite"></button>
           <!-- 接続先（互換の接続先）はモデルのチップの面の中で選ぶ（入力欄の行に専用の欄は置かない） -->
           <button type="button" class="chip model" id="modelChip" aria-controls="modelPop"></button>

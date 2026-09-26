@@ -67,9 +67,10 @@ let openPanel = null;   // 同時に開くのは 1 枚だけ
 /**
  * チップ（押すもの）の上に浮く面。同時に開くのは 1 枚だけで、面の外を押すと閉じる。
  * width は面の幅（px。関数なら開くたび・置き直すたびに読む）。添付のメニュー（web/attach-menu.mjs）も使う。
- * when は開いてよいか（false なら押しても開かない。添付のメニューはホストの画面では開かず、クリップがすぐファイルを選ぶ）
+ * when は開いてよいか（false なら押しても開かない。添付のメニューはホストの画面では開かず、クリップがすぐファイルを選ぶ）。
+ * onHide は閉じたとき（Esc・面の外・チップ・選んで閉じた、のどれでも）
  */
-export function panel(chip, pop, { align = "left", render, onShow, width: wantWidth = 360, when }) {
+export function panel(chip, pop, { align = "left", render, onShow, onHide, width: wantWidth = 360, when }) {
   const self = {
     chip, pop,
     get open() { return !pop.hidden; },
@@ -88,6 +89,7 @@ export function panel(chip, pop, { align = "left", render, onShow, width: wantWi
       pop.hidden = true;
       chip.setAttribute("aria-expanded", "false");
       if (openPanel === self) openPanel = null;
+      onHide?.();
       if (returnFocus) chip.focus();
     },
     /** チップの上に浮かせる。幅は画面に収め、チップの端に揃える（右のチップは右端） */
@@ -180,6 +182,59 @@ function listbox(label, rows) {
 
 const head = (text) => el("div", "chead", text);
 
+/**
+ * フォルダーの簡易ブラウザー（ブラウザー版の「フォルダーを選ぶ…」。docs/design-system.md「入力欄の設定」）。
+ * box にパンくず・フォルダーの一覧（..・ドライブ・中のフォルダー）・「このフォルダーにする」を描き、返す browse(dir) で辿る。
+ * 入力欄の作業ディレクトリの面と、初回の案内（web/onboarding.mjs）が使う。
+ *   onChoose(path): 「このフォルダーにする」 / onAt(path): 開いているフォルダーが変わった / closed(): 面が閉じたか（閉じたら描かない）
+ */
+export function folderBrowser({ cmd, box, err, onChoose, onAt = () => {}, closed = () => false }) {
+  let seq = 0, at = null;
+  const move = (dir) => { at = dir; onAt(dir); };
+  async function browse(dir, { keepError = false } = {}) {
+    const mine = ++seq;
+    const prev = box.querySelector(".crumb") ? at : null;
+    move(dir);
+    box.hidden = false;
+    box.setAttribute("aria-busy", "true");
+    let r;
+    try { r = await cmd("listDirs", { path: dir }); }
+    catch (e) {
+      if (mine !== seq) return;
+      box.removeAttribute("aria-busy");
+      err.textContent = e.message;
+      // 開けなかったら、開けていたところに留まる（最初から開けなければホーム）
+      move(prev);
+      if (prev == null && dir) browse("", { keepError: true });
+      return;
+    }
+    if (mine !== seq || !box.isConnected || closed()) return;
+    box.removeAttribute("aria-busy");
+    if (!keepError) err.textContent = "";
+    move(r.path);
+    const rows = [];
+    if (r.parent) rows.push(row({ main: "..", sub: t("composer.cwd.up"), mono: true, onPick: () => browse(r.parent) }));
+    for (const root of r.roots ?? []) if (root !== r.path) rows.push(row({ main: root, sub: t("composer.cwd.drive"), mono: true, onPick: () => browse(root) }));
+    for (const name of r.dirs) {
+      const full = r.path.replace(/[\\/]+$/, "") + (r.path.includes("\\") ? "\\" : "/") + name;
+      rows.push(row({ main: name, mono: true, title: full, onPick: () => browse(full) }));
+    }
+    const crumb = el("div", "crumb", r.path);
+    crumb.title = r.path;
+    const go = el("div", "go");
+    const choose = el("button", "btn btn-primary", t("composer.cwd.useThis"));
+    choose.type = "button";
+    choose.onclick = () => onChoose(r.path);
+    go.append(choose);
+    box.replaceChildren(crumb,
+      rows.length ? listbox(t("composer.cwd.foldersIn", { path: r.path }), rows) : el("p", "cnote", t("composer.cwd.noFolders")),
+      ...(r.truncated ? [el("p", "cnote", t("composer.cwd.truncated"))] : []),
+      go);
+    (box.querySelector("[role=option]") ?? choose).focus();
+  }
+  return browse;
+}
+
 // ---------------------------------------------------------------- 本体
 
 /**
@@ -207,7 +262,6 @@ export function setupComposerControls({ cmd, get, on }) {
 
   // ---- 作業ディレクトリ
   let browsing = null;          // 簡易ブラウザーで開いているフォルダー（ブラウザー版だけ）
-  let browseSeq = 0;
   let checkSeq = 0;             // 打ったパス・最近の行を確かめている番号（新しく確かめ始めたら前の結果は捨てる）
   const commitCwd = (v) => {
     const value = String(v ?? "").trim();
@@ -310,54 +364,14 @@ export function setupComposerControls({ cmd, get, on }) {
     };
     const box = el("div", "cbrowse");
     box.hidden = true;
+    const browse = folderBrowser({ cmd, box, err, onChoose: commitCwd, onAt: (dir) => { browsing = dir; }, closed: () => pops.cwd.hidden });
     pop.replaceChildren(inputWrap, msg, head(t("composer.cwd.recent")),
       recent.length ? listbox(t("composer.cwd.recent"), recent) : el("p", "cnote", t("composer.cwd.noRecent")),
       pick, box, err);
     if (browsing != null) browse(browsing);
-
-    async function browse(dir, { keepError = false } = {}) {
-      const seq = ++browseSeq;
-      const prev = box.querySelector(".crumb") ? browsing : null;
-      browsing = dir;
-      box.hidden = false;
-      box.setAttribute("aria-busy", "true");
-      let r;
-      try { r = await cmd("listDirs", { path: dir }); }
-      catch (e) {
-        if (seq !== browseSeq) return;
-        box.removeAttribute("aria-busy");
-        err.textContent = e.message;
-        // 開けなかったら、開けていたところに留まる（最初から開けなければホーム）
-        browsing = prev;
-        if (prev == null && dir) browse("", { keepError: true });
-        return;
-      }
-      if (seq !== browseSeq || pops.cwd.hidden) return;
-      box.removeAttribute("aria-busy");
-      if (!keepError) err.textContent = "";
-      browsing = r.path;
-      const rows = [];
-      if (r.parent) rows.push(row({ main: "..", sub: t("composer.cwd.up"), mono: true, onPick: () => browse(r.parent) }));
-      for (const root of r.roots ?? []) if (root !== r.path) rows.push(row({ main: root, sub: t("composer.cwd.drive"), mono: true, onPick: () => browse(root) }));
-      for (const name of r.dirs) {
-        const full = r.path.replace(/[\\/]+$/, "") + (r.path.includes("\\") ? "\\" : "/") + name;
-        rows.push(row({ main: name, mono: true, title: full, onPick: () => browse(full) }));
-      }
-      const crumb = el("div", "crumb", r.path);
-      crumb.title = r.path;
-      const go = el("div", "go");
-      const choose = el("button", "btn btn-primary", t("composer.cwd.useThis"));
-      choose.type = "button";
-      choose.onclick = () => commitCwd(r.path);
-      go.append(choose);
-      box.replaceChildren(crumb,
-        rows.length ? listbox(t("composer.cwd.foldersIn", { path: r.path }), rows) : el("p", "cnote", t("composer.cwd.noFolders")),
-        ...(r.truncated ? [el("p", "cnote", t("composer.cwd.truncated"))] : []),
-        go);
-      (box.querySelector("[role=option]") ?? choose).focus();
-    }
   }
-  const folder = panel(chips.cwd, pops.cwd, { align: "left", render: renderFolder });
+  // 閉じたら確かめている途中のパスは取り消す（Esc・面の外で閉じたのに、後から確かめが通って変わらないように）
+  const folder = panel(chips.cwd, pops.cwd, { align: "left", render: renderFolder, onHide: () => { checkSeq++; } });
   chips.cwd.addEventListener("click", () => { if (!folder.open) browsing = null; });
   /** 面の欄にパスを入れて選んだ状態にする（保存できなかった作業ディレクトリを「選び直す」） */
   function typeCwd(value) {
