@@ -4,7 +4,7 @@
 //   - ホストのファイルの面のパンくず・パスのつなぎ方
 //   - 規則が載っているか（箱・1 行・チップの字をそろえる・700px 以下のタイトル行・塗りをやめた帯）。見た目は tests/browser と手で確かめる
 import fs from 'node:fs';
-import { promptMaxHeight, PROMPT_LINES, splitChipLabel, attachSources, attachOrigin, crumbs, joinPath } from '../../web/composer-layout.mjs';
+import { promptMaxHeight, PROMPT_LINES, splitChipLabel, attachSources, attachOrigin, attachFolderHints, crumbs, joinPath } from '../../web/composer-layout.mjs';
 
 export const name = 'composer-layout';
 export const title = '入力欄と上端: 字の欄の上限・チップの字・添付の出どころ・パンくず・規則';
@@ -33,6 +33,15 @@ export default async function (t) {
   t.ok('札の出どころ: 印があればそれ', attachOrigin({ from: 'host' }, on) === 'host' && attachOrigin({ from: 'device' }, on) === 'device');
   t.ok('札の出どころ: 印の無い古い下書きは画像だけ端末', attachOrigin({ dataUri: 'data:image/png;base64,' }, on) === 'device' && attachOrigin({ path: 'x' }, on) === null);
   t.ok('札の出どころ: 選べない接続（ホストの画面）では付けない', attachOrigin({ from: 'host' }, null) === null);
+
+  // ---- 同じ名前の札に添えるフォルダー
+  const hints = (items, o) => JSON.stringify(attachFolderHints(items, o));
+  t.ok('名前が重ならない札には添えない', hints([{ name: 'a.md', path: String.raw`D:\x\a.md` }, { name: 'b.md', path: String.raw`D:\y\b.md` }]) === '["",""]');
+  t.ok('名前が重なった札には親のフォルダー', hints([{ name: 'r.md', path: String.raw`D:\dev\temporary\r.md` }, { name: 'r.md', path: 'D:/dev/temporary/reports/r.md' }, { name: 'd.md', path: String.raw`D:\d.md` }]) === '["temporary","reports",""]');
+  t.ok('親まで同じなら違いが出るところまで遡る（a/x と b/x）', hints([{ name: 'f.md', path: '/p/a/x/f.md' }, { name: 'f.md', path: '/p/b/x/f.md' }]) === '["a/x","b/x"]');
+  t.ok('名前の大文字・小文字は同じとみなす', hints([{ name: 'F.md', path: '/a/F.md' }, { name: 'f.md', path: '/b/f.md' }]) === '["a","b"]');
+  t.ok('端末から送った札は「この端末」を場所にする', hints([{ name: 'f.png', path: '/data/uploads/_new/2026_f.png', from: 'device' }, { name: 'f.png', path: '/home/me/f.png', from: 'host' }], { deviceLabel: 'この端末' }) === '["この端末","me"]');
+  t.ok('置き場まで同じなら添えない', hints([{ name: 'f.png', path: '/u/1_f.png', from: 'device' }, { name: 'f.png', path: '/u/2_f.png', from: 'device' }], { deviceLabel: 'この端末' }) === '["",""]');
 
   // ---- パンくず
   t.ok('Windows のパンくず: ドライブから', JSON.stringify(crumbs('D:\\dev\\pleiad')) === JSON.stringify([{ name: 'D:', path: 'D:\\' }, { name: 'dev', path: 'D:\\dev' }, { name: 'pleiad', path: 'D:\\dev\\pleiad' }]), JSON.stringify(crumbs('D:\\dev\\pleiad')));

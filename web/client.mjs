@@ -1,7 +1,7 @@
 import { isComposingKey } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
-import { download } from './file-actions.mjs';
+import { download, notify } from './file-actions.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 setupCodeCopy();
@@ -24,7 +24,7 @@ import { setupLongPress } from "./long-press.mjs";
 import { setupComposerControls, resolvedModel } from "./composer-controls.mjs";
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { setupAttachMenu } from "./attach-menu.mjs";
-import { promptMaxHeight, attachSources, attachOrigin } from "./composer-layout.mjs";
+import { promptMaxHeight, attachSources, attachOrigin, attachFolderHints } from "./composer-layout.mjs";
 import { sendAttachment, ATTACH_MAX_BYTES } from "./attach-upload.mjs";
 import { formatBytes } from "./folder-upload.mjs";
 import { modelRowIds, modelDisplayName } from "./composer-labels.mjs";
@@ -3014,13 +3014,16 @@ const filePreview = setupFilePreview({
  */
 function attachHostFiles(files) {
   if ($('prompt').disabled || !composerWait.accepts()) return false;
-  let added = 0;
+  let added = 0, already = 0;
   for (const file of files) {
-    if (!file?.path || state.attached.some(a => a.path === file.path)) continue;
+    if (!file?.path) continue;
+    // 同じパスは札を増やさず、画面下の短い知らせで伝える
+    if (state.attached.some(a => a.path === file.path)) { already++; continue; }
     state.attached.push({ path: file.path, name: file.name, kind: 'file', mime: file.mime ?? '', from: 'host' });
     added++;
   }
   if (added) { renderAttached(); saveDraft().catch(() => {}); }
+  if (already && !added) notify(t("chat.attach.already"));
   return true;
 }
 $("prompt").addEventListener("input", () => saveDraft().catch(() => {}));
@@ -3038,6 +3041,8 @@ const currentAttachSources = () => attachSources({ remote: window.plyRemote, osA
 function renderAttached() {
   const box = $("attached");
   const sources = currentAttachSources();
+  // 同じ名前の札にだけ、見分けの付くフォルダーを添える（composer-layout.mjs の attachFolderHints）
+  const folders = attachFolderHints(state.attached, { deviceLabel: t("chat.attach.deviceFolder") });
   box.replaceChildren(...state.attached.map((a, i) => {
     const item = el("span", "att" + (a.dataUri ? " att-img" : ""));
     const origin = attachOrigin(a, sources);
@@ -3047,7 +3052,7 @@ function renderAttached() {
       mark.firstChild.setAttribute("aria-hidden", "true");
       item.append(mark);
       item.title = origin === "host" ? t("chat.attach.fromHost", { path: a.path }) : t("chat.attach.fromDevice", { name: a.name });
-    }
+    } else if (a.path) item.title = a.path;
     if (a.dataUri) {
       const b = el("button", "att-thumb");
       b.type = "button";
@@ -3058,12 +3063,20 @@ function renderAttached() {
       b.append(img);
       b.onclick = () => openLightbox(attachedImageSrc(a), a.name, a.path);
       item.append(b);
+    } else if (a.path) {
+      // 名前を押すと右パネルで中身を開く（会話のファイルリンクと同じ）
+      const open = el("button", "att-name", a.name);
+      open.type = "button";
+      open.onclick = () => filePreview.open({ path: a.path, line: null }, item);
+      item.append(open);
     } else {
       item.append(el("span", "att-name", a.name));
     }
+    if (folders[i]) item.append(el("span", "att-dir", folders[i]));
     const x = el("button", "x", "×");
     x.type = "button";
     x.title = t("chat.attach.remove");
+    x.setAttribute("aria-label", folders[i] ? t("chat.attach.removeNamedIn", { name: a.name, folder: folders[i] }) : t("chat.attach.removeNamed", { name: a.name }));
     x.onclick = () => { state.attached.splice(i, 1); renderAttached(); saveDraft().catch(() => {}); };
     item.append(x);
     return item;

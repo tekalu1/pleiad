@@ -699,6 +699,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .att-from svg.i{width:13px;height:13px}
 .att.att-img .att-from{padding-left:3px}
 .att-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+button.att-name{background:transparent;color:inherit;font:inherit;padding:0;cursor:pointer;min-width:0}
+button.att-name:hover{text-decoration:underline}
+.att-dir{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);color:var(--ink-weak)}
 /* 送っている途中の札（web/attach-upload.mjs）。名前の後ろに等幅の「42%」、札の下端に塗りの細い進み具合（フォルダーを送るバーと同じ色） */
 .att-sending{position:relative;overflow:hidden;padding-bottom:5px}
 .att-pct{flex:none;font-family:var(--font-mono);color:var(--ink-weak)}

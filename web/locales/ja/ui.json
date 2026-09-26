@@ -1160,7 +1160,11 @@
       "sending": "{{percent}}%",
       "sendingTitle": "{{name}}（{{size}}）をホストへ送っています",
       "cancelSending": "送るのをやめる",
-      "largeImage": "{{name}}（{{size}}）を添付しました。エージェントは画像をパスから読みます。5MB を超える画像は、エージェントによっては画像として読めないことがあります。そのときは小さくしてから添付してください。"
+      "largeImage": "{{name}}（{{size}}）を添付しました。エージェントは画像をパスから読みます。5MB を超える画像は、エージェントによっては画像として読めないことがあります。そのときは小さくしてから添付してください。",
+      "removeNamed": "外す: {{name}}",
+      "removeNamedIn": "外す: {{name}}（{{folder}}）",
+      "deviceFolder": "この端末",
+      "already": "既に添付しています"
     },
     "fork": {
       "noId": "分岐先の id が返らなかった",
