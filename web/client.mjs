@@ -18,7 +18,7 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
-import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints } from "./render.mjs";
+import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, plainTextHtml } from "./render.mjs";
 import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
 import { setupComposerControls, resolvedModel } from "./composer-controls.mjs";
@@ -418,7 +418,10 @@ function userMsg(text, { uuid, at } = {}) {
   m.dataset.role = "user";
   if (at) m.dataset.at = at;
   m.append(whoLine(t("chat.message.you"), at));
-  m.append(el("div", "body", text));
+  // 字は書いたとおり。パスだけ AI の本文と同じ判定でファイルリンクにする（render.mjs の plainTextHtml）
+  const body = el("div", "body");
+  body.innerHTML = plainTextHtml(text);
+  m.append(body);
   forkButton(m);
   setUuid(m, uuid);
   return m;
@@ -1039,7 +1042,7 @@ function onEvent(ev, replay = false) {
         : append(userMsg(ev.text, { at: ev.at }), `live:${++liveSeq}`);
       if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
       row.dataset.messageStarted = '1';
-      row.querySelector('.m.user .body').textContent = ev.text;
+      row.querySelector('.m.user .body').innerHTML = plainTextHtml(ev.text);
       if (ev.at) { row.querySelector('.m').dataset.at = ev.at; row.querySelector('.who .when').textContent = hhmm(ev.at); }
       // pending = 受理はしたが、まだエージェントに渡っていない（userMessage.delivered を待つ）。
       // 配達の合図が先に来ていた分（速いバックエンド）はここで消化する

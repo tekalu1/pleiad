@@ -255,6 +255,36 @@ function inline(src, depth = 0, noLink = false) {
   return out.join("");
 }
 
+/**
+ * 自分の発言の本文（平文）を HTML にする。Markdown としては解釈せず、字は書いたとおりに残す（改行は CSS の pre-wrap）。
+ * パスだけは AI の本文と同じ厳しい判定でファイルリンクにする: 地の文の Windows の絶対パスと、` で囲んだ中身全体が 1 つのパス
+ * （` は書いたまま残し、中身だけをリンクにする）。docs/design-system.md「ファイルの操作」。返すのはエスケープ済みの HTML
+ */
+export function plainTextHtml(src) {
+  const s = String(src ?? "");
+  if (s.length > 100_000) return esc(s);
+  const re = new RegExp(`(?<ticks>\`+)(?<code>[^\\n]{1,1024}?)\\k<ticks>(?!\`)|(?<win>${WINDOWS_PATH_SOURCE})`, "g");
+  const out = [];
+  let last = 0, m;
+  while ((m = re.exec(s))) {
+    const g = m.groups;
+    if (g.code !== undefined) {
+      const c = /^ .* $/s.test(g.code) ? g.code.slice(1, -1) : g.code;
+      const ref = looksLikePath(c);
+      if (!ref) continue;   // パスでない ` はそのまま（続きから読む）
+      out.push(esc(s.slice(last, m.index)), esc(g.ticks), fileAnchor(ref, esc(g.code)), esc(g.ticks));
+      last = re.lastIndex;
+      continue;
+    }
+    const found = findWindowsPaths(g.win)[0];
+    if (!found || found.start !== 0) { re.lastIndex = m.index + 1; continue; }
+    out.push(esc(s.slice(last, m.index)), fileAnchor(found, esc(g.win.slice(0, found.end))));
+    last = re.lastIndex = m.index + found.end;
+  }
+  out.push(esc(s.slice(last)));
+  return out.join("");
+}
+
 /** snake_case の途中の _ を強調にしないための判定 */
 function wordInner(s, at, delim) {
   return delim[0] === "_" && at > 0 && /[\w\u3040-\u30ff\u4e00-\u9fff]/.test(s[at - 1]);
