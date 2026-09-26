@@ -974,7 +974,8 @@ main.dropping #log{background:var(--surface-1)}
 .bg-dt{flex:1;min-width:0}
 .bg-dt-title{margin:0;font-size:var(--fs-m);font-weight:600;display:flex;align-items:center;gap:8px;min-width:0}
 .bg-dt-title>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bg-request:not(.expanded){display:-webkit-box!important;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
+/* 切るのは吹き出しの中の字の包み。吹き出しそのものを切ると、overflow が padding の内側までしか切らず 5 行目が下の余白にのぞく */
+.bg-request:not(.expanded)>.bg-request-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
 .bg-request-toggle{display:block;border:0;background:none;color:var(--ink-blue);font:inherit;font-size:var(--fs-xs);padding:3px 0;cursor:pointer}
 .bg-request-toggle[hidden]{display:none}
 .bg-dt-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:var(--fs-xs);color:var(--ink-weak);margin-top:3px}
