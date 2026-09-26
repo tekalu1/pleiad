@@ -1746,8 +1746,8 @@
     "badgeLabel": "リモート:",
     "badgeTitle": "リモートのホスト {{host}} につないでいます",
     "state": {
-      "connecting": "つないでいます…",
-      "connected": "接続中",
+      "connecting": "接続しています…",
+      "connected": "接続済み",
       "offline": "中継につながりません",
       "host-offline": "ホストがオフライン",
       "revoked": "取り消されました",

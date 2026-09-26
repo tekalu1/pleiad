@@ -182,12 +182,14 @@ export default async function (t) {
       closeWindow: () => { closed++; }, retry: () => { retried++; } };
     const doc = mkDoc();
     const ui = setupRemoteBadge({ remote, doc });
+    t.ok('状態を受け取るまでは「接続しています…」を添える（つながる前から平常の形に見せない）',
+      ui.badge.textContent.includes('接続しています…') && ui.badge.attrs['data-state'] === 'connecting', ui.badge.textContent);
     await new Promise(r => setTimeout(r, 0));
     t.ok('html に .remote を付ける', doc.documentElement.classList.contains('remote'));
     t.ok('バッジは帯の直後（押せる要素。帯は aria-hidden のまま）', doc.body.children[1] === ui.badge && doc.body.children[2] === ui.pop);
     t.ok('バッジ: 「リモート: desktop-home」、つながっている間は状態を添えない', ui.badge.textContent === 'リモート:desktop-home' && ui.badge.getAttribute('aria-expanded') === 'false', ui.badge.textContent);
     t.ok('バッジの title にホスト名', String(ui.badge.attrs.title).includes('desktop-home'));
-    t.ok('面: ホスト名・状態・中継・つないだ時刻・この端末', ['desktop-home', '接続中', 'relay.example.net', 'thinkpad'].every(s => ui.pop.textContent.includes(s)) && ui.pop.textContent.includes('つないだ時刻'));
+    t.ok('面: ホスト名・状態・中継・つないだ時刻・この端末', ['desktop-home', '接続済み', 'relay.example.net', 'thinkpad'].every(s => ui.pop.textContent.includes(s)) && ui.pop.textContent.includes('つないだ時刻'));
     const [retryBtn, closeBtn] = ui.pop.querySelector('.acts').children;
     t.ok('つながっている間は再試行を出さない', retryBtn.hidden === true);
     ui.badge.onclick({ stopPropagation() {} });
@@ -208,7 +210,10 @@ export default async function (t) {
     const mobile = setupRemoteBadge({ remote: { hostId: HOST_ID, hostName: 'desktop-home', shell: 'mobile' }, doc: mdoc, back: () => { backs++; } });
     t.ok('モバイル: html に .remote と .remote-mobile', mdoc.documentElement.classList.contains('remote') && mdoc.documentElement.classList.contains('remote-mobile'));
     t.ok('モバイル: 帯は body の先頭、面は作らない', mdoc.body.children[0] === mobile.bar && mobile.pop === null && mobile.bar.children[0] === mobile.badge);
-    t.ok('モバイル: 帯にホスト名、読み上げは「ホスト一覧に戻る」', mobile.badge.textContent === 'desktop-home' && String(mobile.badge.attrs['aria-label']).startsWith('ホスト一覧に戻る'), mobile.badge.textContent);
+    t.ok('モバイル: 帯にホスト名、読み上げは「ホスト一覧に戻る」', mobile.badge.textContent.startsWith('desktop-home') && String(mobile.badge.attrs['aria-label']).startsWith('ホスト一覧に戻る'), mobile.badge.textContent);
+    t.ok('モバイル: 状態が届くまでは「接続しています…」', mobile.badge.textContent === 'desktop-home· 接続しています…', mobile.badge.textContent);
+    mobile.paint({ state: 'connected' });
+    t.ok('モバイル: つながったら状態を書かない', mobile.badge.textContent === 'desktop-home', mobile.badge.textContent);
     mobile.badge.onclick();
     await new Promise(r => setTimeout(r, 0));
     t.ok('モバイル: 押すと backToHosts', backs === 1);
@@ -216,7 +221,7 @@ export default async function (t) {
     const m2 = setupRemoteBadge({ remote: { hostId: HOST_ID, shell: 'mobile', backToHosts: () => { viaRemote++; } }, doc: mkDoc(), back: () => { backs++; } });
     m2.badge.onclick();
     await new Promise(r => setTimeout(r, 0));
-    t.ok('モバイル: plyRemote.backToHosts があればそちら（名前が無ければ hostId の頭）', viaRemote === 1 && backs === 1 && m2.badge.textContent === HOST_ID.slice(0, 8));
+    t.ok('モバイル: plyRemote.backToHosts があればそちら（名前が無ければ hostId の頭）', viaRemote === 1 && backs === 1 && m2.badge.textContent.startsWith(HOST_ID.slice(0, 8)));
     // 塗りなしの H1 配置（2026-09-23）: タイトルの列があれば、タイトルの下に差しの青の添え字「⇄ ホスト名」も置く（700px 以下で見せる）
     const tdoc = mkDoc();
     const col = new N('div');
