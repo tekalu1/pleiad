@@ -100,6 +100,18 @@
     </div>
     <div id="onboardingAgentList" class="onboarding-agent-list" role="radiogroup" data-i18n-aria-label="dialog.onboarding.agents"></div>
     <div id="onboardingAuth" class="onboarding-auth"></div>
+    <!-- 作業ディレクトリ（web/onboarding.mjs。既定はホーム）。デスクトップ版は OS のダイアログ、ブラウザー版は簡易ブラウザー -->
+    <div class="onboarding-cwd" role="group" aria-labelledby="onboardingCwdLabel">
+      <div class="onboarding-cwd-label" id="onboardingCwdLabel" data-i18n="dialog.onboarding.cwd"></div>
+      <div class="onboarding-cwd-row">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span class="onboarding-cwd-path" id="onboardingCwdPath"></span>
+        <button type="button" class="btn" id="onboardingCwdChoose" aria-describedby="onboardingCwdPath" data-i18n="composer.cwd.choose"></button>
+      </div>
+      <div class="cbrowse onboarding-browse" id="onboardingBrowse" hidden></div>
+      <p class="onboarding-cwd-note" data-i18n="dialog.onboarding.cwdNote"></p>
+      <p class="cerr" id="onboardingCwdError" role="alert"></p>
+    </div>
     <p id="onboardingError" role="status" aria-live="polite"></p>
     <div class="onboarding-actions">
       <small class="muted" data-i18n="dialog.onboarding.note"></small>

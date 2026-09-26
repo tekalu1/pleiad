@@ -12,10 +12,16 @@ export function shouldShowOnboarding(status, auth) {
   });
 }
 
-export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlBox, begin }) {
+/**
+ * folderBrowser はブラウザー版の「フォルダーを選ぶ…」の簡易ブラウザー（web/composer-controls.mjs。入力欄の面と同じ部品）
+ */
+export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlBox, begin, folderBrowser }) {
   const $ = id => document.getElementById(id);
   const welcome = $('onboardingDialog');
   let status = null, selected = '', checked = false, locked = false;
+  // 初回の案内で選んだ作業ディレクトリ。選ぶまでは前に決めたもの、無ければホーム（docs/desktop-onboarding.md）
+  let chosenCwd = '';
+  const currentCwd = () => chosenCwd || status?.cwd || status?.homeDir || '';
   const error = message => { $('onboardingError').textContent = message; };
   const isOpen = () => document.body.classList.contains('settings');
   function page(active = 'setup') {
@@ -150,6 +156,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
   }
   async function refresh() {
     status = await cmd('onboardingStatus');
+    paintCwd();
     if (!checked) {
       checked = true;
       if (shouldShowOnboarding(status, getAuth())) {
@@ -185,13 +192,52 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
   $('completeSetup').onclick = async () => {
     $('completeSetup').disabled = true;
     try {
-      status = { ...status, ...await cmd('completeSetup', { backend: selected }) };
+      status = { ...status, ...await cmd('completeSetup', { backend: selected, ...(currentCwd() ? { cwd: currentCwd() } : {}) }) };
       await begin({ backend: status.backend, cwd: status.cwd }, '');
       welcome.close();
       $('prompt').focus();
     } catch (e) { error(e.message); }
     finally { $('completeSetup').disabled = false; }
   };
+  // ---- 作業ディレクトリ。フルパスを出し、ホームなら弱い字の「ホーム」を添える。変えるのは「フォルダーを選ぶ…」
+  const trimEnd = (p) => String(p ?? '').replace(/[\\/]+$/, '').toLowerCase();
+  const samePath = (a, b) => trimEnd(a) === trimEnd(b);
+  function paintCwd() {
+    const cwd = currentCwd();
+    const home = Boolean(status?.homeDir) && samePath(cwd, status.homeDir);
+    const tag = document.createElement('span');
+    tag.className = 'onboarding-cwd-home';
+    tag.textContent = t('dialog.onboarding.cwdHome');
+    $('onboardingCwdPath').replaceChildren(document.createTextNode(cwd), ...(home ? [' ', tag] : []));
+    $('onboardingCwdPath').title = cwd;
+  }
+  const cwdError = $('onboardingCwdError');
+  const browseBox = $('onboardingBrowse');
+  const useCwd = (value) => {
+    const v = String(value ?? '').trim();
+    if (!v) return;
+    chosenCwd = v;
+    browseBox.hidden = true;
+    browseBox.replaceChildren();
+    cwdError.textContent = '';
+    paintCwd();
+    $('onboardingCwdChoose').focus();
+  };
+  const browse = folderBrowser?.({ cmd, box: browseBox, err: cwdError, onChoose: useCwd, closed: () => !welcome.open });
+  $('onboardingCwdChoose').onclick = async () => {
+    cwdError.textContent = '';
+    // デスクトップ版は OS のダイアログ。ブラウザー版（リモートの窓も）は簡易ブラウザーを案内の中に開く。開いていれば閉じる
+    if (globalThis.window?.plyDesktop?.chooseFolder) {
+      const picked = await window.plyDesktop.chooseFolder().catch(() => null);
+      const path = typeof picked === 'string' ? picked : picked?.path ?? picked?.[0];
+      if (path) useCwd(path);
+      return;
+    }
+    if (!browseBox.hidden) { browseBox.hidden = true; browseBox.replaceChildren(); return; }
+    browse?.(currentCwd());
+  };
+  welcome.addEventListener('close', () => { browseBox.hidden = true; browseBox.replaceChildren(); cwdError.textContent = ''; });
+
   page();
   return { open, close, isOpen, lock, refresh, paint, page };
 }
