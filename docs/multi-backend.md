@@ -387,7 +387,7 @@ Codex の app-server プロトコルは `codex app-server generate-json-schema -
 `thread/read` にも残らない。モデルへのツールの出力（`` exec_command failed: CreateProcess { message: "Rejected(\"`…` rejected: blocked by policy\")" } ``）として、
 Codex の rollout（`~/.codex/sessions/…/rollout-*.jsonl` の `response_item`）にだけ残る。
 
-Pleiad はターンの後で rollout を読んで拾う（`core/backends/codex-rejections.mjs`、[ADR 0028](adr/0028-read-codex-rollout-for-rejections.md)）。
+Pleiad はターンの後で rollout を読んで拾う（`core/backends/codex-rejections.mjs`、[ADR 0035](adr/0035-read-codex-rollout-for-rejections.md)）。
 
 - `thread/start`・`thread/resume` の応答の `thread.path`（[UNSTABLE]）を覚える。ephemeral（タイトル生成）では読まない。
 - `turn/start` の直前にファイルの長さを取り、`turn/completed` の後にその位置から末尾までだけを読む（まだ無ければ 0 から。最初のターンでファイルができる）。

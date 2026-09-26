@@ -195,7 +195,7 @@ Pleiad は結果を保存し、親が空いたときに専用の完了通知で�
 ## 実行前に拒否されたコマンド
 
 Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の安全判定で一部のコマンドをプロセスを作る前に拒否する（`blocked by policy` など。削除に限らず `Stop-Process`・`Start-Process` なども）。
-この拒否はアイテムにならず、通知にも `thread/read` にも出ないので、Pleiad は Codex の rollout から拾う（docs/multi-backend.md「Codex の実行前の拒否」、[ADR 0028](adr/0028-read-codex-rollout-for-rejections.md)）。
+この拒否はアイテムにならず、通知にも `thread/read` にも出ないので、Pleiad は Codex の rollout から拾う（docs/multi-backend.md「Codex の実行前の拒否」、[ADR 0035](adr/0035-read-codex-rollout-for-rejections.md)）。
 委譲の子で拾ったものは、`execute` がターンの `tool.result` の `rejection` から集め、タスクの行の `rejections` に保存する。
 
 ```json
