@@ -15,6 +15,10 @@ import { isComposingKey } from "./keyboard.mjs";
 //
 // 絞り込み（作業ディレクトリ × 状態、AND）と畳んだ状態・開いたグループは端末ごとの好みなので
 // localStorage に持つ。
+//
+// 一覧はひとつのツリー（role=tree、フォーカスは #groups 1 つ）。状態の見出し・グループの器・行が treeitem で、
+// 指している項目は aria-activedescendant で伝える。Tab 1 回で入って 1 回で抜ける（行が何百あっても）。
+// 矢印は指す項目を動かすだけで会話は開かない。Enter / Space で開く（docs/design-system.md §4.1「キーボード」）。
 import { runMark, satMark } from "./arc.mjs";
 import { el, icon, moreButton, relTime, svgEl } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
@@ -122,6 +126,10 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   let dragKind = null;                          // "row" = 1 本 / "group" = グループごと
   const inFamily = new Set();                   // いまグループの器の中に描かれている行
   let undoTimer = null;                         // 「元に戻す」の一行を消すタイマー
+  let activeKey = null;                         // 一覧の中で指している項目（行 "s:<id>"・状態の見出し "g:<状態>"・器 "f:<根の id>"）
+  let keyboard = false;                         // キーボードで一覧に入った・触っている（輪と下の一行を出す）
+  let typed = "", typedAt = 0;                  // 打った文字で行へ飛ぶ（web/tree.mjs と同じ 800ms）
+  let itemSeq = 0;                              // aria-activedescendant が指す id の連番
   const filter = prefs.filter;                 // { dir: string|null, status: string|null|undefined }
   const collapsed = prefs.collapsed;
   const expanded = prefs.expanded;              // 開いている家族（根の sessionId）。既定は畳んだ状態
@@ -173,9 +181,11 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   function render() {
     const q = $("q").value.trim().toLowerCase();
     root.replaceChildren();
+    itemSeq = 0;
     if (last.pendingNew) {
       const top = el('div', 'rows pending-new-top');
-      top.append(row(last.pendingNew));
+      top.setAttribute("role", "none");
+      top.append(row(last.pendingNew, 1));
       root.append(top);
     }
     const groups = groupOrder();
@@ -201,6 +211,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       if (!rows.length && !draftHere && (filtering() || q)) continue;   // 絞っているときは空のグループを出さない
 
       const sec = el("section", "grp");
+      sec.setAttribute("role", "none");
       const isCollapsed = collapsed.has(st ?? "");
       // 動いている行（main が作業中）と、main は返答済みで裏だけを待っている行を分ける
       // bgWaiting は、ターンが裏を待っている行と、ターンは終わったが裏の作業が残っている行（Codex の端末）
@@ -209,14 +220,22 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       if (isCollapsed) sec.classList.add("collapsed");
 
       const head = el("div", "grp-head");
+      const setOpen = (open) => { const k = st ?? ""; if (open) collapsed.delete(k); else collapsed.add(k); save(); render(); };
+      treeItem(head, `g:${st ?? ""}`, 1, {
+        expanded: !isCollapsed,
+        open: () => setOpen(isCollapsed),
+        expand: setOpen,
+        menu: onGroupContext && ((x, y) => onGroupContext(st, x, y)),
+      });
+      // アイコン・＋・… はマウスとタッチのためのもの。キーボードは見出しの Shift+F10 のメニューから同じことをする
       const ic = el("button", "grp-icon", iconOf(st) ?? "");
       if (!iconOf(st)) ic.append(icon(FOLDER));
       ic.type = "button";
+      ic.tabIndex = -1;
       ic.title = t("sidebar.group.pickIcon");
       ic.onclick = (e) => { e.stopPropagation(); openIconPicker(st, ic); };
-      const name = el("button", "grp-name" + (st == null ? " none" : ""), st ?? t("session.status.none"));
-      name.type = "button";
-      name.onclick = () => { const k = st ?? ""; collapsed.has(k) ? collapsed.delete(k) : collapsed.add(k); save(); render(); };
+      const name = el("span", "grp-name" + (st == null ? " none" : ""), st ?? t("session.status.none"));
+      name.onclick = () => setOpen(isCollapsed);
       head.append(ic, name);
       const pendingStatus = last.pendingStatuses.get(st);
       if (pendingStatus) {
@@ -231,6 +250,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       if (st != null) {
         const add = el("button", "btn btn-icon grp-add");
         add.type = "button";
+        add.tabIndex = -1;
         add.title = t("sidebar.group.newSession");
         add.append(icon(PLUS));
         add.onclick = (e) => { e.stopPropagation(); onNew?.({ status: st, cwd: filter.dir ?? cwdNow?.() ?? "", backend: filter.backends.length === 1 ? filter.backends[0] : undefined }); };
@@ -238,8 +258,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       }
       if (st != null) ic.dataset.status = st;
       // 右クリックと同じメニューを開く「…」。タッチでは右クリックもドラッグも届かない（docs/remote.md §8.4）
-      if (onGroupContext) head.append(moreButton("grp-more", t("session.groupMore", { status: st ?? t("session.status.none") }), (x, y) => onGroupContext(st, x, y)));
+      if (onGroupContext) head.append(menuButton("grp-more", t("session.groupMore", { status: st ?? t("session.status.none") }), (x, y) => onGroupContext(st, x, y)));
       head.oncontextmenu = (e) => { if (!onGroupContext) return; e.preventDefault(); onGroupContext(st, e.clientX, e.clientY); };
+      head.setAttribute("aria-label", spoken([...head.children].filter((c) => c.tagName !== "BUTTON")));
       sec.append(head);
       // 行とグループの見出しを落とせる先。掴んでいる間、上に来た状態の面が一段持ち上がる。
       // 同じ状態へ落とすのは「グループから外すだけ」の意味になる（中の行のときだけ受ける）
@@ -275,8 +296,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       });
 
       const rowsEl = el("div", "rows");
-      if (draftHere) rowsEl.append(row({ id: null, title: "", cwd: last.draft.cwd, status: last.draft.status }));
-      for (const fam of fams) rowsEl.append(fam.kin.length ? family(fam) : row(fam.root));
+      rowsEl.setAttribute("role", "group");
+      if (draftHere) rowsEl.append(row({ id: null, title: "", cwd: last.draft.cwd, status: last.draft.status }, 2));
+      for (const fam of fams) rowsEl.append(fam.kin.length ? family(fam) : row(fam.root, 2));
       if (!rows.length && !draftHere) rowsEl.append(el("div", "empty", t("sidebar.empty")));
       sec.append(rowsEl);
       root.append(sec);
@@ -285,7 +307,143 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
     $("filterBtn").classList.toggle("on", filtering());
     renderChips();
+    paintActive();
   }
+
+  // ---- キーボード（一覧をひとつのツリーとして扱う。web/tree.mjs と同じ規則） ----------------------
+
+  /**
+   * 項目を treeitem にする。o.open は Enter / Space、o.expand(open) は → / ←（開閉できる項目だけ）、
+   * o.menu(x, y) は Shift+F10・メニューキー
+   */
+  function treeItem(node, key, level, o) {
+    node.id = `side-item-${++itemSeq}`;
+    node.dataset.key = key;
+    node.setAttribute("role", "treeitem");
+    node.setAttribute("aria-level", String(level));
+    if (o.expanded != null) node.setAttribute("aria-expanded", String(o.expanded));
+    node.treeOpen = o.open;
+    node.treeExpand = o.expand;
+    node.treeMenu = o.menu || null;
+  }
+
+  /** 読み上げの名前。印は aria-label か title、それ以外は字 */
+  const spoken = (nodes) => nodes.map((c) => c.getAttribute?.("aria-label") || c.textContent.trim() || c.title || "")
+    .filter(Boolean).join(", ");
+
+  /** 「…」。右クリックと同じメニュー。Tab には入れず、title にキーボードの入口を添える */
+  function menuButton(cls, label, open) {
+    const b = moreButton(cls, label, open);
+    b.tabIndex = -1;
+    b.title = t("sidebar.menuKey", { label });
+    return b;
+  }
+
+  /** 今見えている項目（畳んだ状態の中の行は除く）。上から順 */
+  const treeItems = () => [...root.querySelectorAll("[role=treeitem]")].filter((n) => !n.closest(".grp.collapsed > .rows"));
+
+  /** 一覧に入ったときに指す項目。開いている会話の行、見えなければ先頭の行 */
+  function entryItem(items = treeItems()) {
+    return items.find((n) => n.classList.contains("sel")) ?? items.find((n) => n.classList.contains("row")) ?? items[0] ?? null;
+  }
+
+  /** 指している項目に印を付け、aria-activedescendant を向ける。scroll なら見えるところまで送る */
+  function paintActive(scroll = false) {
+    const item = activeKey == null ? null : treeItems().find((n) => n.dataset.key === activeKey) ?? null;
+    for (const n of root.querySelectorAll(".is-active")) if (n !== item) n.classList.remove("is-active");
+    if (item) { item.classList.add("is-active"); root.setAttribute("aria-activedescendant", item.id); }
+    else root.removeAttribute("aria-activedescendant");
+    if (scroll) item?.scrollIntoView({ block: "nearest" });
+    syncKeyboard();
+    return item;
+  }
+
+  /** 輪と脇の下の操作の一行は、キーボードで一覧にいる間だけ */
+  function syncKeyboard() {
+    root.classList.toggle("kbd", keyboard);
+    $("keyHint").hidden = !(keyboard && document.activeElement === root);
+  }
+
+  /** 親の項目（行 → 器の見出し・状態の見出し、器の見出し → 状態の見出し） */
+  function parentItem(n) {
+    if (n.classList.contains("row") && n.closest(".fam")) return n.closest(".fam").querySelector(":scope > .fam-head");
+    return n.closest(".grp")?.querySelector(":scope > .grp-head") ?? null;
+  }
+
+  root.setAttribute("role", "tree");
+  root.tabIndex = 0;
+  root.setAttribute("aria-label", t("sidebar.list"));
+  root.addEventListener("focus", () => {
+    if (root.matches(":focus-visible")) keyboard = true;
+    const items = treeItems();
+    if (!items.some((n) => n.dataset.key === activeKey)) activeKey = entryItem(items)?.dataset.key ?? null;
+    paintActive(keyboard);
+  });
+  root.addEventListener("blur", syncKeyboard);
+  root.addEventListener("pointerdown", () => { keyboard = false; syncKeyboard(); });
+  // 押した・右クリックした項目を指す（描き直しても同じ項目を指し続ける）。各項目の処理より先に決める
+  const pointAt = (e) => { const n = e.target.closest?.("[role=treeitem]"); if (n && root.contains(n)) { activeKey = n.dataset.key; paintActive(); } };
+  root.addEventListener("click", pointAt, true);
+  root.addEventListener("contextmenu", pointAt, true);
+  root.addEventListener("keydown", (e) => {
+    if (e.target !== root || isComposingKey(e)) return;
+    const items = treeItems();
+    if (!items.length) return;
+    const cur = items.find((n) => n.dataset.key === activeKey) ?? null;
+    const at = items.indexOf(cur);
+    const go = (n) => { if (!n) return; activeKey = n.dataset.key; paintActive(true); };
+    if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey)) {
+      if (!cur?.treeMenu) return;
+      e.preventDefault();
+      const r = cur.getBoundingClientRect();
+      cur.treeMenu(r.left + 24, r.bottom);
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const key = e.key;
+    if (key === "ArrowDown") go(cur ? items[Math.min(items.length - 1, at + 1)] : entryItem(items));
+    else if (key === "ArrowUp") go(cur ? items[Math.max(0, at - 1)] : entryItem(items));
+    else if (key === "Home") go(items[0]);
+    else if (key === "End") go(items[items.length - 1]);
+    else if (key === "ArrowRight") {
+      if (!cur) go(entryItem(items));
+      else if (!cur.hasAttribute("aria-expanded")) return;
+      else if (cur.getAttribute("aria-expanded") === "false") cur.treeExpand(true);
+      else go(Number(items[at + 1]?.getAttribute("aria-level")) > Number(cur.getAttribute("aria-level")) ? items[at + 1] : null);
+    } else if (key === "ArrowLeft") {
+      if (!cur) return;
+      if (cur.getAttribute("aria-expanded") === "true") cur.treeExpand(false);
+      else if (parentItem(cur)) go(parentItem(cur));
+      else return;
+    } else if (key === "Enter" || key === " ") {
+      if (!cur) return;
+      cur.treeOpen();
+    } else if (key.length === 1 && /\S/.test(key)) {
+      // 打った文字で始まる次の項目へ。続けて打つと語で絞る
+      const now = Date.now();
+      typed = now - typedAt < 800 ? typed + key : key;
+      typedAt = now;
+      const from = at + 1;
+      const found = [...items.slice(from), ...items.slice(0, from)]
+        .find((n) => (n.querySelector(".row-t, .grp-name, .fam-t")?.textContent ?? "").toLowerCase().startsWith(typed.toLowerCase()));
+      if (!found) return;
+      go(found);
+    } else return;
+    e.preventDefault();
+    keyboard = true;
+    syncKeyboard();
+  });
+  // 検索欄の ↓ で一覧の先頭の行へ入る
+  $("q").addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowDown" || isComposingKey(e) || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    const first = treeItems().find((n) => n.classList.contains("row"));
+    if (!first) return;
+    e.preventDefault();
+    activeKey = first.dataset.key;
+    keyboard = true;
+    root.focus();
+    paintActive(true);
+  });
 
   const isStale = (s) => Boolean(s.status) && staleDays(s.statusChangedAt) >= STALE_DAYS;
 
@@ -360,9 +518,20 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const open = expanded.has(id) || (!decided.has(id) && here);
     // 畳んだまま中の会話を見ていることがある。器の面を白へ持ち上げて「今いるのはこの中」を示す
     const box = el("div", "fam" + (open ? " open" : "") + (here && !open ? " here" : ""));
-    const head = el("button", "fam-head");
-    head.type = "button";
-    head.setAttribute("aria-expanded", String(open));
+    box.setAttribute("role", "none");
+    const head = el("div", "fam-head");
+    const setOpen = (next) => {
+      decided.add(id);
+      if (next) expanded.add(id); else expanded.delete(id);
+      save();
+      render();
+    };
+    treeItem(head, `f:${id}`, 2, {
+      expanded: open,
+      open: () => setOpen(!open),
+      expand: setOpen,
+      menu: onFamilyContext && ((x, y) => onFamilyContext(fam.root, list, x, y)),
+    });
     head.setAttribute("aria-controls", `fam-${id}`);
     head.title = open ? t("sidebar.family.collapse") : here ? t("sidebar.family.hereInside") : t("sidebar.family.expand");
     const body = el("div", "fam-body");
@@ -372,12 +541,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     body.append(name);
     if (!open) body.append(famSummary(list));   // 開けば中の行が同じことを言うので、畳んでいる間だけ
     head.append(chevron(), body);
-    head.onclick = () => {
-      decided.add(id);
-      if (open) expanded.delete(id); else expanded.add(id);
-      save();
-      render();
-    };
+    head.setAttribute("aria-label", spoken([...name.children, ...(body.querySelector(".fam-sum")?.children ?? [])]) || t("session.untitled"));
+    head.onclick = () => setOpen(!open);
     head.oncontextmenu = (e) => { if (!onFamilyContext) return; e.preventDefault(); onFamilyContext(fam.root, list, e.clientX, e.clientY); };
     // 見出しをつかむと、グループごと別の状態へ移せる（中の会話も一緒に動く）
     head.draggable = true;
@@ -395,8 +560,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       for (const g of root.querySelectorAll(".over")) g.classList.remove("over");
     });
     box.append(head);
-    // 見出しはボタンなので「…」は中に入れられない。器の右上に重ねる
-    if (onFamilyContext) box.append(moreButton("fam-more", t("session.familyMore", { title: titleOf(fam.root) || t("session.untitled") }), (x, y) => onFamilyContext(fam.root, list, x, y)));
+    // 「…」は見出しの外に置き、器の右上に重ねる
+    if (onFamilyContext) box.append(menuButton("fam-more", t("session.familyMore", { title: titleOf(fam.root) || t("session.untitled") }), (x, y) => onFamilyContext(fam.root, list, x, y)));
     // 外にある枝をここへ落とすと、このグループに入る（状態も根に揃う）
     box.addEventListener("dragover", (e) => {
       if (dragId == null || dragKind !== "row" || inFamily.has(dragId)) return;
@@ -421,7 +586,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const kids = el("div", "fam-rows");
       kids.id = `fam-${id}`;
       kids.setAttribute("role", "group");
-      for (const s of list) kids.append(row(s));
+      for (const s of list) kids.append(row(s, 3));
       box.append(kids);
     }
     return box;
@@ -429,25 +594,28 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   /**
    * 一覧の行。id が null なら、まだ id の無い新しいセッション（印は付かず、掴めない）
-   * @param {object} [o]
+   * @param {number} level ツリーの深さ（先頭の作成中 1・状態の見出しの下 2・器の中 3）
    */
-  function row(s) {
-    const r = el("div", "row" + (s.id === last.currentId ? " sel" : ""));
+  function row(s, level) {
+    const open = s.id === last.currentId;
+    const r = el("div", "row" + (open ? " sel" : ""));
     const pendingRow = last.pendingRows.get(s.id);
     const interactive = s.id != null && pendingRow?.kind !== 'new';
     if (pendingRow) r.classList.add('pending-row', `pending-${pendingRow.kind ?? 'move'}`);
-    r.tabIndex = 0;
+    // 開いている会話は白い面（.sel）と aria-selected・aria-current。指している項目（キーボード）とは別に示す
+    treeItem(r, `s:${s.id ?? ""}`, level, {
+      open: () => { if (!open) onOpen?.(s.id); },
+      menu: onContext && interactive && ((x, y) => onContext(s, x, y)),
+    });
+    r.setAttribute("aria-selected", String(open));
+    if (open) r.setAttribute("aria-current", "page");
     r.dataset.session = s.id ?? "";
     const title = el("div", "row-title");
     // fork で生まれた会話の印。グループから外しても状態を変えても消えない（§4.1）
     if (s.parent?.sessionId) title.append(forkMark());
     title.append(el("span", "row-t", titleOf(s)));
-    // 右クリックと同じメニューを開く「…」。Tab は行で止まる（行では ContextMenu・Shift+F10 で同じメニュー）
-    if (onContext && interactive) {
-      const more = moreButton("row-more", t("session.rowMore", { title: titleOf(s) || t("session.untitled") }), (x, y) => onContext(s, x, y));
-      more.tabIndex = -1;
-      title.append(more);
-    }
+    // 右クリックと同じメニューを開く「…」。キーボードは一覧の Shift+F10・メニューキーで同じメニュー
+    if (onContext && interactive) title.append(menuButton("row-more", t("session.rowMore", { title: titleOf(s) || t("session.untitled") }), (x, y) => onContext(s, x, y)));
     r.append(title);
     const meta = el("div", "row-meta");
     // 走っていれば弧。裏だけを待っていれば衛星（ターンが終わっても裏の作業が残っている会話を含む）
@@ -464,14 +632,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     meta.append(cwd);
     if (s.unsent) meta.append(el("span", "row-unsent", s.hasDraft ? t("sidebar.unsentDraft") : t("sidebar.unsent")));
     r.append(meta);
+    r.setAttribute("aria-label", [titleOf(s) || t("session.untitled"), spoken([...meta.children])].filter(Boolean).join(", "));
 
-    r.onclick = () => { if (s.id !== last.currentId) onOpen?.(s.id); };
-    r.onkeydown = e => {
-      if (e.key === "Enter" && s.id !== last.currentId) onOpen?.(s.id);
-      if (interactive && (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10"))) {
-        e.preventDefault(); const rect = r.getBoundingClientRect(); onContext?.(s, rect.right, rect.top);
-      }
-    };
+    r.onclick = () => { if (!open) onOpen?.(s.id); };
     r.oncontextmenu = (e) => { if (!onContext || !interactive) return; e.preventDefault(); onContext(s, e.clientX, e.clientY); };
     if (!interactive) return r;
 
@@ -739,6 +902,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   };
 
   return {
+    /** この状態で新しいセッション（見出しのメニューから。見出しの ＋ と同じ） */
+    newIn(status) { onNew?.({ status, cwd: filter.dir ?? cwdNow?.() ?? "", backend: filter.backends.length === 1 ? filter.backends[0] : undefined }); },
     /** グループのアイコン選択を開く（右クリックのメニューから。見出しのアイコンを押したのと同じ） */
     pickIcon(status) {
       const anchor = [...root.querySelectorAll(".grp-icon")].find((b) => b.dataset.status === status);
