@@ -1193,7 +1193,11 @@
       "sending": "{{percent}}%",
       "sendingTitle": "Sending {{name}} ({{size}}) to the host",
       "cancelSending": "Stop sending",
-      "largeImage": "Attached {{name}} ({{size}}). Agents read images from the path. Some agents can't read images over 5 MB as images; if that happens, shrink the image and attach it again."
+      "largeImage": "Attached {{name}} ({{size}}). Agents read images from the path. Some agents can't read images over 5 MB as images; if that happens, shrink the image and attach it again.",
+      "removeNamed": "Remove {{name}}",
+      "removeNamedIn": "Remove {{name}} ({{folder}})",
+      "deviceFolder": "this device",
+      "already": "Already attached"
     },
     "fork": {
       "noId": "The new branch's id wasn't returned",
