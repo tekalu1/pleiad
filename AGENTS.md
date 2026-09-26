@@ -32,6 +32,7 @@
   - エージェントに実際に渡った `ply_agents` の instructions（Pleiad が入れる委譲の指示を含む）は、fake の会話に `instructions` と送ると返答にそのまま出る。子の会話の分は `ply:{"name":"ply_delegate","arguments":{"kind":"mechanical","backend":"fake","task":"instructions"}}` で委譲すると完了通知に出る。Codex の developerInstructions は身代わり（`tests/lib/fake-codex.mjs`）の `FAKE_CODEX_LOG` の `turn/start` 行で見る。理由: 本物の LLM を呼ばずに、会話ごとに違う指示が届いたかを文面で確かめられる（2026-09-26）。
   - fake は初回「未ログイン」で最初の案内が開き、作業ディレクトリも空のため、そのまま送った会話は「未送信」に残り、送信済みが前提の操作（タイトル生成など）が押せない。案内の「ログイン」→「あとで」→ 入力欄で作業ディレクトリを指定してから送る。
   - fake の応答は即座に返り、処理中の表示が一瞬で消える。見るときはページ上で `WebSocket.prototype.send` を包み、対象コマンド（例: `suggestTitle`）の送信を数秒遅らせる。
+  - 画面の重さ（会話を開く時間など）を実データで測るときは、`~/.agent-host` を `temporary/` の下へ写す。写しから `remote/` と `agent-tasks.json` を消し、`AGENT_HOST_DATA=<写し> AGENT_HOST_PORT=7499 node core/server.mjs` で立てる。理由: 写しに残ったホストの鍵で中継へつなぎ、本物のホストの接続とぶつかるおそれがある（未確認。消してから測った）。委譲の続きも走らせないため。写しには秘密の写しも入るので、測り終えたら消す。時間は Playwright の CDP で測る。`Emulation.setCPUThrottlingRate`（4 倍でスマホの目安）をかけ、`Profiler.start` / `stop` で取ったサンプルを関数ごとに self・inclusive で集計すると、原因の関数まで出る。2026-09-26 はこれで、描画のたびに `layoutBranchSpine` が強制レイアウトを起こしているのを突き止めた。スクリプトは `temporary/scripts/session-open-*.mjs`。
 - コミット前に差分を確認し、対象ファイルを明示してステージする。検証が失敗した場合は原因を調べ、未解決のまま完了扱いにしない。
 
 ## 使い捨てのもの（temporary/）
