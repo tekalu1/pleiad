@@ -37,9 +37,11 @@
     "endpointDeleted": "依頼元の会話の接続先は削除されています。依頼元の会話で接続先を選び直してください",
     "aborted": "中断しました",
     "noticeUnknown": "子タスクの完了通知を確認できませんでした。子の会話を確認してください",
-    "notice": "[Pleiad タスク完了通知 / {{taskId}}]\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n元の依頼に必要な作業を続けてください。",
+    "notice": "[Pleiad タスク完了通知 / {{taskId}}]\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n{{rejections}}元の依頼に必要な作業を続けてください。",
     "noticeMore": "\n続きは ply_task_status の offset: {{offset}} で取得できます。",
-    "noticeRetry": "利用者が {{of}} を別の委譲先でやり直したタスク\n"
+    "noticeRetry": "利用者が {{of}} を別の委譲先でやり直したタスク\n",
+    "noticeRejections": "実行前に拒否されたコマンド（Codex 自身の安全判定など）: {{count}} 件\n{{items}}\n全件は ply_task_status の rejections で読めます。",
+    "noticeRejection": "- {{command}}（{{reason}}）"
   },
   "tasks": {
     "textLength": "{{name}} は1〜{{max}}文字で指定してください",
@@ -50,7 +52,9 @@
     "offsetInvalid": "offset は0以上の整数です",
     "secondsInvalid": "seconds は1〜30です",
     "stopping": "停止処理中です。少し待ってください",
-    "unknownTool": "不明な Pleiad タスクツールです"
+    "unknownTool": "不明な Pleiad タスクツールです",
+    "storageFailed": "委譲の記録を保存できないため、受け付けませんでした（{{code}}）。少し待ってからやり直してください。動いている子は止まっていません",
+    "storageFault": "委譲の記録を保存できていません（{{code}}、{{since}} から）。ここに出ている状態はまだ保存できていないことがあり、子は動き続けている可能性があります"
   },
   "approval": {
     "hostAway": "host が {{seconds}} 秒戻らなかったので中断した",
@@ -154,11 +158,13 @@
     "names": {
       "delegate": "委譲の進め方",
       "child": "委譲した会話では任せない",
-      "route": "委譲の振り分けの使い方"
+      "route": "委譲の振り分けの使い方",
+      "codexPolicy": "Codex の実行前の拒否"
     },
     "delegate": "委譲を基本にする。コマンド 1 回や 1〜2 ファイルの小さな編集より大きい作業は、自分でやらずに ply_delegate で任せる。",
     "main": "この会話で自分でやるのは、方針を決める・任せた結果を確かめる・取り消せない操作（送信・削除・支払い。先にユーザーに確認する）・結果が小さい単発の作業だけ。複数手順の作業と、結果が大きい操作（ブラウザー操作・スクリーンショット・長いログ・大きな MCP 応答）は任せ、子には要約と証拠だけを返させる。",
     "route": "任せるときは ply_delegate に kind を付け、backend は書かない（Pleiad が選ぶ）。backend を書くのはユーザーがエージェントやモデルを指定したときだけ。どの候補も枠が無いと返されたら、ユーザーに伝える。ネイティブのサブエージェント（Claude の Agent tool など）ではなく ply_delegate を使う。ply_delegate には一覧に出る短い title を付ける。",
-    "child": "あなたは委譲された子の会話なので、さらに委譲しない。"
+    "child": "あなたは委譲された子の会話なので、さらに委譲しない。",
+    "codexPolicy": "Codex の承認なしのモード（full・YOLO）でも、Codex 自身の安全判定で一部のコマンドが実行前に拒否されることがある（`blocked by policy` など）。拒否されたら、言い換えや別のコマンドで回避しようとしない。実行できなかったコマンドと理由、その結果残ったもの（消せなかったファイル・止められなかったプロセスなど）を報告する。"
   }
 }

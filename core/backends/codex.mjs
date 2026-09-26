@@ -21,6 +21,7 @@ import { codexContextRpc } from './context-options.mjs';
 import { undelivered } from './undelivered.mjs';
 import { codexCompatThread, redactSecret } from '../compat-endpoints.mjs';
 import { MAX_RESULT_CHARS } from "./shared.mjs";
+import { readTurnRejections, rolloutPathOf, rolloutSize } from "./codex-rejections.mjs";
 import { t, agentT } from "../i18n.mjs";
 
 const NL = String.fromCharCode(10);
@@ -1102,6 +1103,11 @@ export const backend = {
     let sawText = false;
     let turnId = null;
     let settleTurn = null;
+    // 実行前の拒否を拾う rollout（thread.path）と、turn/start の直前の長さ（ここから後がこのターンの分）。ephemeral では持たない
+    let rolloutPath = null;
+    let rolloutFrom = null;
+    // このターンで承認を求められたアイテム（call id）。拒否の approvalRequested に使う
+    const asked = new Set();
     const finished = new Promise((resolve) => { settleTurn = resolve; });
 
     const openThinking = () => {
@@ -1109,6 +1115,24 @@ export const backend = {
       thinkingOpen = true;
       emit({ type: "thinking.start" });
       emit({ type: "activity", state: "thinking" });
+    };
+
+    // 実行前の拒否（アイテムにならず、通知にも thread/read にも出ない。core/backends/codex-rejections.mjs）。
+    // 会話の画面にはツールのエラーとして出し、tool.result の rejection に構造を載せる（server が委譲の結果に集める）。
+    // 会話を開き直すと thread/read から作る履歴には残らない（docs/multi-backend.md「Codex の実行前の拒否」）
+    const reportRejections = async () => {
+      const found = await readTurnRejections({ file: rolloutPath, from: rolloutFrom, turnId });
+      const ids = new Set();
+      for (const [i, r] of found.entries()) {
+        const rejection = { ...r, approvalRequested: Boolean(r.callId && asked.has(r.callId)) };
+        let id = r.callId ?? `rejected-${turnId}-${i}`;
+        if (ids.has(id) || items.has(id)) id = `${id}-rejected-${i}`;
+        ids.add(id);
+        emit({ type: "tool.start", id, name: "commandExecution", input: { command: r.command ?? "", cwd: null, rejected: true } });
+        // i18n-dynamic: codex.rejected.
+        const head = t(`codex.rejected.${r.kind}`, { reason: r.reason ?? "" });
+        emit({ type: "tool.result", id, ...cut(`${head}${NL}${r.raw}`), isError: true, rejection });
+      }
     };
 
     // 途中送信した outbox item の id。turn/steer に clientUserMessageId として預けると、
@@ -1181,16 +1205,16 @@ export const backend = {
           const status = params?.turn?.status ?? "completed";
           const err = params?.turn?.error;
           if (sawText) emit({ type: "text.end" });
-          emit(
+          const result =
             status === "interrupted" ? { type: "turnResult", outcome: "aborted", turns: 1 }
             : status === "failed" ? {
                 type: "turnResult", outcome: "error", turns: 1,
                 error: hide(String(err?.message ?? err?.type ?? t("codex.errors.failed"))),
               }
             // costUsd は app-server が出さない（token 数だけ）。turns だけ載せる
-            : { type: "turnResult", outcome: "ok", turns: 1 },
-          );
-          return settleTurn?.();
+            : { type: "turnResult", outcome: "ok", turns: 1 };
+          // 実行前に拒否されたコマンドを rollout から拾ってから、ターンを閉じる（拾えなくても結果は変えない）
+          return void reportRejections().finally(() => { emit(result); settleTurn?.(); });
         }
 
         case "error": {
@@ -1254,6 +1278,7 @@ export const backend = {
       }
 
       emit({ type: "activity", state: "waiting", label: t("activity.waitingApproval") });
+      if (!child && params?.itemId) asked.add(String(params.itemId));
       const item = !params?.itemId ? null
         : child ? childItems.get(childKey(child, params.itemId)) : items.get(params.itemId);
       const toolName =
@@ -1344,10 +1369,12 @@ export const backend = {
           throw new Error(t("codex.errors.stillOldEndpoint"));
         }
         effectiveSandbox = resumed?.sandbox;
+        if (!ephemeral) rolloutPath = rolloutPathOf(resumed);
         if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, common.developerInstructions ?? ''); }
       } else {
         const started = await rpc.request("thread/start", { ...common, ...(ephemeral ? { ephemeral: true } : {}) });
         effectiveSandbox = started?.sandbox;
+        if (!ephemeral) rolloutPath = rolloutPathOf(started);
         threadId = started?.thread?.id ?? null;
         if (!threadId) throw new Error(t("codex.errors.noThreadId", { method: "thread/start" }));
         if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, common.developerInstructions ?? ''); }
@@ -1388,6 +1415,7 @@ export const backend = {
         effectiveEffort = config?.model_reasoning_effort ?? selected?.defaultEffort;
       }
       emit({ type: "activity", state: "thinking" });
+      rolloutFrom = await rolloutSize(rolloutPath);
       // ここから先の失敗は、プロンプトが渡ったかどうか分からない（応答だけ失われた場合がある）
       promptSent = true;
       const res = await rpc.request("turn/start", {
