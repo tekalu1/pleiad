@@ -64,9 +64,9 @@ export const COMMANDS = new Set([
   'contextSettings', // { cwd? } -> { defaults, places: [{ id, path, kinds: { <kind>: { value, override, from } }, roots, overrides, current }] } 種類ごとの設定と継承（core/context-settings.mjs）
   'slashSkills',     // { cwd } -> 入力欄「/」の候補。コンテキスト画面と同じ探索結果からのスキル一覧（説明文付き）
   'sessionContext', // { sessionId } -> { report, owners, pinned, changed, startedAt, refreshedAt, removedMcp, added } この会話が読み込んだ記録。固定された会話では今のファイルと突き合わせる。added は Pleiad が入れた指示（直前のターン）
-  // Pleiad が入れる指示（core/added-context.mjs。今は委譲の指示）。担当によらず ply_agents を持つ会話へ入る。すべての場所に共通
-  'addedContext',    // {} -> { settings: { delegation }, routing, items: [{ id, enabled, parent, child }] }（文は画面の言語。parent は委譲先の自動選択の有無を反映）
-  'setAddedContext', // { delegation: boolean } -> 同上。prefs.json の addedContext に保存。始まっている会話にも次のターンから効く
+  // Pleiad の指示（core/ply-instructions.mjs）。担当によらず ply_agents を持つ会話へ毎ターン入る。すべての場所に共通
+  'plyInstructions',    // {} -> { items: [{ id, tag: 'default'|'linked'|null, modified, name, body, target, agents, on, tokens }], total, routing }（文は画面の言語）
+  'setPlyInstructions', // { action: 'save'|'toggle'|'delete'|'reset'|'order', … } -> 同上。prefs.json の plyInstructions に保存。始まっている会話にも次のターンから効く
   'refreshContext', // { sessionId } -> 開始後に変わった指示・Skills を、やり取りを引き継いだまま読み込み直す（固定を取り直す）。返答中は不可
   'contextDiff',    // { sessionId } -> { files: [{ path, name, kind, modifiedAt, before, after, beforeMissing, removed }] } 開始時と今の中身
   'setSessionMcp',  // { sessionId, name, removed } -> この会話だけ外部 MCP を外す（ply_context に出さない）/ 戻す。次のターンから効く
@@ -86,8 +86,8 @@ export const COMMANDS = new Set([
   'renamePlyMcp',  // { name, to } -> { name, from, registration }。秘密・OAuth の状態・ロック名を引き継ぐ
   'importPlyMcp',  // { items: [{ format: claude|codex, scope: user|directory|local, cwd?, name, as?, auth? }], includeSecrets? } -> { results: [{ ok, name, auth, pending, needsLogin?, notes, error? }] }。トークンは流用しない
   'setPlyMcpSettings', // { clientMetadataUrl: https URL | null } -> 設定。Client ID Metadata Document の URL（既定は無し）
-  'setContextSettings', // { place: null|path, kind, value|null } / { place, roots|null } / { place, add|remove } -> 即時保存し contextSettings と同じ形を返す
-  'scanContext', // { cwd, place?: 'default' } -> bounded inventory (entries, the home / Git roots and the MCP config file bodies); never launches tools or changes agents
+  'setContextSettings', // { place: null|path, kind, value|null } / { place, kind?, roots|null } / { place, add|remove } -> 即時保存し contextSettings と同じ形を返す
+  'scanContext', // { cwd, place?: 'default', scope?: 'user' } -> bounded inventory (entries, the home / Git roots and the MCP config file bodies); never launches tools or changes agents
   "onboardingStatus",
   "onboardingSeen",
   "completeSetup",

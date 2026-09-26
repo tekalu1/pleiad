@@ -907,7 +907,10 @@
       "stopChoice": "元のタスクが実行中です。止めるかどうかを選んでください"
     }
   },
-  "addedContext": {
-    "invalid": "delegation は true か false で指定してください"
+  "plyInstructions": {
+    "invalid": "Pleiad の指示の変更を読み取れません",
+    "notFound": "その指示はありません",
+    "builtinDelete": "既定の指示は削除できません。スイッチで切ってください",
+    "tooMany": "指示は {{count}} 件までです"
   }
 }
