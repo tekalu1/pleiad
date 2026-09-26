@@ -93,6 +93,8 @@ const cases = [
   // 確認済み（既読）の置き場と、2 本の接続で共有されること（fake バックエンド）
   await import("./unit/read-store.mjs"),
   await import("./unit/server-read.mjs"),
+  // 開いている会話の宣言（流れの出来事を絞る）と、会話の一覧の使い回し（ADR 0024）
+  await import("./unit/server-watch.mjs"),
   await import("./unit/desktop-port.mjs"),
   // デスクトップ版の端末（リモートの窓）: 窓ごとの信頼・preload の出し分け・バッジ。Electron は起こさない
   await import("./unit/desktop-remote.mjs"),
