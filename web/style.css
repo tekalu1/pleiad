@@ -1174,6 +1174,13 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .pop .li{min-height:40px}
   .pop.menu{min-width:min(240px,calc(100vw - 16px))}
   .settings-menu button{min-height:36px}
+  /* タイトル行と入力欄の行: 見た目は 36px のまま、押せる範囲を上下に 4px ずつ広げて 44px にする。
+     左右は隣と重ならない範囲（隙間の半分）まで。タイトル行は隙間を 8px にして 44×44（::after は設定の更新の点が使う） */
+  .top{gap:8px}
+  .top > .btn-icon,.top > .ctxlink,.crow > .btn-icon,.crow > .chip,.crow > .abort,.crow > .send{position:relative}
+  .top > .btn-icon::before,.top > .ctxlink::before{content:"";position:absolute;inset:-4px}
+  .crow > .btn-icon::before,.crow > .chip::before,.crow > .abort::before,.crow > .send::before{content:"";position:absolute;inset:-4px -1px}
+  .send{width:36px;height:36px}
   .side-mark[data-kind=unread]{top:5px;right:4px}
   .side-mark[data-kind=wait]{top:1px;right:-3px}
 }
