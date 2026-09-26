@@ -180,7 +180,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 #sidebar header{display:flex;align-items:center;justify-content:flex-end;gap:4px;padding:10px 12px 4px;position:relative}
 .brand{display:flex;align-items:center;gap:6px;margin-right:auto;flex:none;color:var(--ink)}
 .brand-icon{display:block;width:24px;height:24px}
-.brand-wordmark{display:block;width:79.8px;height:24px}
+.brand-wordmark{display:block;width:86.5px;height:26px}
 .search{display:flex;align-items:center;gap:4px;padding:4px 12px 6px;position:relative}
 .search input{flex:1;min-width:0;background:var(--surface-paper);border-radius:var(--r-pill);padding:6px 12px;font-size:var(--fs-s)}
 .search input::placeholder{color:var(--ink-weak)}
