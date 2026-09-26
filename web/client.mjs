@@ -4037,7 +4037,8 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
   const added = [];
   for (const [mi, entries] of [...byNode].sort((a,b) => a[0]-b[0])) {
     const key = `m:${mi}`;
-    const all = [{ id: state.current, name: branches.nameOf(state.current), n: Math.max(0, state.messages.length-mi-1) }, ...entries];
+    const all = branches.distinguish([{ id: state.current, name: branches.nameOf(state.current), n: Math.max(0, state.messages.length-mi-1) }, ...entries],
+      { id: state.current, messages: state.messages });
     const row = makeBranchRow(key, all, state.current, switchTo, snapshots.get(key));
     const anchor = mi >= 0 ? branchAnchor(mi) : null;
     // Two boundaries may share one live DOM row; keep their order.

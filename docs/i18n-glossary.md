@@ -125,7 +125,7 @@
 | 原文（ファイルプレビュー） | Source |
 | 会話で使う | Use in chat |
 | 提示（ツール表示の動詞。present） | Show |
-| はじめの流れ（根の枝の既定名） | Original |
+| オリジナル（根の枝の既定名） | Original |
 | 枝 N（枝の既定名） | Branch N |
 | 背景で実行 | In background |
 | 完了・未確認（未読の印） | Finished, not yet viewed |
