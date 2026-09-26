@@ -43,11 +43,13 @@ export default async function(t) {
     t.ok('ply_usage は backend を任意の文字列で受ける', usageTool?.inputSchema?.properties?.backend?.type === 'string' && usageTool.inputSchema.required.length === 0);
     t.ok('ply_usage は読み取り・計画モードの制限に掛けない', !DELEGATING_TOOLS.includes('ply_usage') && DELEGATING_TOOLS.includes('ply_delegate'));
     const delegateTool = tools.find(t => t.name === 'ply_delegate');
+    t.ok('任意の title 引数を公開する', delegateTool?.inputSchema?.properties?.title?.type === 'string' && !delegateTool.inputSchema.required.includes('title'));
     t.ok('backend enum に antigravity が含まれる', delegateTool?.inputSchema?.properties?.backend?.enum?.includes('antigravity'));
     t.ok('backend enum に procway は無い（対応を終えた）', !delegateTool?.inputSchema?.properties?.backend?.enum?.includes('procway'));
     const result = await client.callTool({ name: 'ply_delegate', arguments: { backend: 'codex', task: 'hold' } });
     const job = JSON.parse(result.content[0].text);
     t.ok('結果を待たずに Pleiad の ID を返す', job.taskId.startsWith('ply-task-'));
+    t.ok('title 未指定は依頼文に戻して返す', job.title === 'hold');
     await until(() => release);
     const denied = await manager.call('stranger', 'ply_task_status', { taskId: job.taskId }).catch(e => e.message);
     t.ok('別の親からタスクにアクセスできない', typeof denied === 'string');
