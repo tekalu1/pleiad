@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title">
   <title id="title">Pleiad — Fold</title>
-  <g id="mark">
-    <path fill="var(--ink, #1c2247)" d="M8 8H57C77 8 88 22 88 42C88 48 87 53 84 58C80 44 68 33 55 32H31C16 32 8 24 8 8Z"/>
-    <path fill="var(--ink-blue, #3a499e)" d="M55 32C67 32 80 44 84 58C78 68 65 72 48 75L30 78V55L50 50C61 47 66 36 55 32Z"/>
+  <g id="mark" transform="translate(0 -3)">
+    <path fill="var(--ink, #1c2247)" d="M8 8H57C77 8 88 22 88 42C88 48 87 53 84 58C78 68 65 72 48 75L30 78C30 85 20 91 8 94V73C8 64 16 58 30 55L50 50C61 47 66 36 55 32H31C16 32 8 24 8 8Z"/>
+    <path fill="var(--ink-blue, #3a499e)" d="M55 32C68 33 80 44 84 58C78 68 65 72 48 75L30 78V55L50 50C61 47 66 36 55 32Z"/>
     <path fill="var(--fill-primary, #3a499e)" d="M30 55V78C30 85 20 91 8 94V73C8 64 16 58 30 55Z"/>
   </g>
 </svg>
