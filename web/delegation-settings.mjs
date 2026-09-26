@@ -64,6 +64,9 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   const stateLine = el('p', 'rm-state rm-strong');
   stateLine.setAttribute('role', 'status');
   stateLine.setAttribute('aria-live', 'polite');
+  // 自動で選ぶのに効いていない理由（判定器のキーが無い・使える候補が無い）。スイッチの直下に、問題があるときだけ ⚠ と直す入口
+  const effective = el('div', 'rt-eff');
+  effective.setAttribute('role', 'status');
 
   const judges = el('section', 'mp-panel rt-judges');
   const keys = el('section', 'mp-panel rt-keys');
@@ -72,7 +75,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   const advancedBody = el('div');
   advanced.append(summary, advancedBody);
   const reset = el('div', 'rt-reset');
-  root.append(head, stateLine, judges, keys, advanced, reset);
+  root.append(head, stateLine, effective, judges, keys, advanced, reset);
 
   async function refresh(args = {}) {
     try { data = await cmd('delegationRouting', args); message = ''; }
@@ -99,6 +102,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     sw.disabled = busy || !s;
     stateLine.textContent = message;
     stateLine.hidden = !message;
+    paintEffective();
     if (!s) { for (const p of [judges, keys, advanced, reset]) p.hidden = true; return; }
     for (const p of [judges, keys, advanced, reset]) p.hidden = false;
     // 入力の途中（欄にフォーカス）で描き直すと打った値が消えるので、そのときは面ごとに飛ばす。
@@ -151,12 +155,6 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     controls.set('escalate', box);
     check.append(box, el('span', null, t('routing.settings.escalate')));
     out.push(check);
-    // 選んだ判定器のキーが無い（外へは送らず、難しさは中になる）。その状況のときだけ出す
-    for (const service of SERVICES) {
-      const judge = SERVICE_JUDGE[service];
-      if (!data.keys[service]?.hasKey && Object.values(s.judgeByKind).includes(judge))
-        out.push(el('p', 'mp-warn rt-warn', `⚠ ${t('routing.settings.judgeNoKey', { service: t(`routing.settings.service.${service}`), judge: judgeText(judge) })}`));
-    }
     judges.replaceChildren(...out);
     // 保存中は押せない（disabled にはフォーカスが乗らない）ので、押せるようになった次の描き直しまで持ち越す
     const target = controls.get(focusKey);
@@ -164,6 +162,45 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     else { judgeFocus = ''; target?.focus(); }
   }
   // i18n-dynamic: routing.settings.service.
+
+  /**
+   * スイッチの直下の「効いていない理由」。オンのときだけ、選んでいる判定器のキーが無い・使える候補が無い、を 1 行ずつ。
+   * 右に直す入口（キーの登録の欄を開く・詳しい設定の候補へ）。平常時・オフのときは何も出さない（docs/design-system.md「設定 › 委譲」）
+   */
+  function paintEffective() {
+    const s = data?.settings;
+    const lines = [];
+    if (s?.enabled) {
+      for (const service of SERVICES) {
+        const judge = SERVICE_JUDGE[service];
+        if (data.keys[service]?.hasKey || !Object.values(s.judgeByKind).includes(judge)) continue;
+        lines.push(effLine(t('routing.settings.effective.noKey', { service: t(`routing.settings.service.${service}`), judge: judgeText(judge) }),
+          t('routing.settings.effective.addKey'), () => goKey(service)));
+      }
+      if (!data.candidates.some(c => c.usable))
+        lines.push(effLine(t('routing.settings.effective.noCandidates'), t('routing.settings.effective.viewCandidates'), goCandidates));
+    }
+    effective.replaceChildren(...lines);
+    effective.hidden = !lines.length;
+  }
+  function effLine(text, action, onClick) {
+    const p = el('p', null, `⚠ ${text}`);
+    p.append(button(action, onClick, 'btn link'));
+    return p;
+  }
+  /** 判定器のキーのカードへ移り、登録の欄を開いてフォーカス */
+  function goKey(service) {
+    editingKey = service; confirmingKey = '';
+    paintKeys();
+    keys.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    keys.querySelector('.rt-key-form input')?.focus({ preventScroll: true });
+  }
+  /** 「詳しい設定」を開いて段ごとの候補へ */
+  function goCandidates() {
+    advanced.open = true;
+    advanced.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    summary.focus({ preventScroll: true });
+  }
 
   function paintKeys() {
     const out = [el('h3', null, t('routing.settings.keysTitle'))];
@@ -272,7 +309,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       title.title = candidate;
       const sub = [labelOf(backend)];
       if (st?.usable) { const u = usageSummary(st); if (u) sub.push(u); }
-      else if (st) sub.push(skipText(st.reason));
+      else if (st) sub.push(skipText(st.reason, st.detail));
       const small = el('small', st && ['model_unknown'].includes(st.reason) ? 'rt-strong' : null, (st?.reason === 'model_unknown' ? '⚠ ' : '') + sub.join(t('routing.line.join')));
       info.append(title, small);
       const actions = el('div', 'rt-cand-actions');

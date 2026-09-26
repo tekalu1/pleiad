@@ -1065,6 +1065,18 @@ main.dropping #log{background:var(--surface-1)}
 .rt-retry-note:empty{display:none}
 .rt-retry-warn{color:var(--ink-strong);font-weight:600;font-size:var(--fs-xs)}
 .rt-retry-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-top:10px}
+/* 使える委譲先が無かった自動の委譲。開かなくても見える理由ごとの行（直す場所への文字だけのボタン）と、候補ごとの一覧の折りたたみ */
+.tc-why{list-style:none;margin:6px 0 2px;padding:0 0 0 1.4em;display:flex;flex-direction:column;gap:3px;font-size:var(--fs-s)}
+.tc-why li{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;color:var(--ink);min-width:0}
+.tc-why li b{font-weight:600}
+.tc-why .n{color:var(--ink-weak);overflow-wrap:anywhere;min-width:0}
+.tc-why .btn{color:var(--ink-blue);font-size:var(--fs-s);padding:0 6px}
+.tc-cands-fold{margin:4px 0 0 1.4em}
+.tc-cands{list-style:none;margin:4px 0;padding:0;display:flex;flex-direction:column;gap:2px;font-size:var(--fs-xs)}
+.tc-cands li{display:flex;gap:4px 8px;flex-wrap:wrap;padding:3px 8px;background:var(--surface-paper);border-radius:var(--r-s);min-width:0}
+.tc-cands .tier{color:var(--ink-weak);flex:none}
+.tc-cands .nm{color:var(--ink);min-width:0;overflow-wrap:anywhere}
+.tc-cands .rs{margin-left:auto;color:var(--ink-weak)}
 /* 狭い画面: 理由の行は見出しの下の 1 行に回す。内訳は 2 列、使用量は枠の名前を上の行に */
 @media (max-width:520px){
   .tc-route{order:3;flex-basis:100%;padding-left:1em}

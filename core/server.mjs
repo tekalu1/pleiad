@@ -291,7 +291,8 @@ async function routeDelegation(args, lng, cwd) {
     rejected[`${routing.target.backend}:${routing.target.model}`] = picked ? 'model_unknown' : 'unavailable';
   }
   if (!ok) {
-    const skipped = routing.skipped.map(s => `- ${s.candidate} (${s.tier}): ${s.reason}${s.window?.usedPercent != null ? ` ${s.window.label ?? ''} ${s.window.usedPercent}%` : ''}${s.window?.pace != null ? ` pace ${s.window.pace}` : ''}`).join('\n');
+    // 候補の行は言語によらない形（画面の委譲カードがこの行を読んで理由ごとにまとめる。web/delegation-routing-view.mjs の parseRoutingFailure）
+    const skipped = routing.skipped.map(s => `- ${s.candidate} (${s.tier}): ${s.reason}${s.detail ? ` (${s.detail})` : ''}${s.window?.usedPercent != null ? ` ${s.window.label ?? ''} ${s.window.usedPercent}%` : ''}${s.window?.pace != null ? ` pace ${s.window.pace}` : ''}`).join('\n');
     throw new Error(agentT(lng, 'routing.exhausted', { kind: args.kind, difficulty: routing.difficulty, skipped }));
   }
   const { backend, model, account } = routing.target;
