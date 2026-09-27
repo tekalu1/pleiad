@@ -331,8 +331,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     node.treeMenu = o.menu || null;
   }
 
-  /** 読み上げの名前。印は aria-label か title、それ以外は字 */
-  const spoken = (nodes) => nodes.map((c) => c.getAttribute?.("aria-label") || c.textContent.trim() || c.title || "")
+  /** 読み上げの名前。印は aria-label か title、それ以外は字。aria-hidden の字（印と同じことを言う字）は読まない */
+  const spoken = (nodes) => nodes.filter((c) => c.getAttribute?.("aria-hidden") !== "true").map((c) => c.getAttribute?.("aria-label") || c.textContent.trim() || c.title || "")
     .filter(Boolean).join(", ");
 
   /** 「…」。右クリックと同じメニュー。Tab には入れず、title にキーボードの入口を添える */
@@ -639,8 +639,12 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (moving) meta.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
     else if (stopped) meta.append(warnMark(interruptLabel(stopped), { read: !stopped.unread }));
     else if (last.unreadIds.has(s.id)) meta.append(unreadMark());
-    // 自分で押した中断でないもの（更新・終了・再起動）は理由の字も出す
-    if (stopped && !moving && showsReasonInMeta(stopped)) meta.append(el("span", "row-why", interruptLabel(stopped)));
+    // 自分で押した中断でないもの（更新・終了・再起動）は理由の字も出す。読み上げは三角の名前が同じことを言うので読ませない
+    if (stopped && !moving && showsReasonInMeta(stopped)) {
+      const why = el("span", "row-why", interruptLabel(stopped));
+      why.setAttribute("aria-hidden", "true");
+      meta.append(why);
+    }
     if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", t("sidebar.waiting")));
     if (pendingRow?.visible) { const label = el('span', 'pending-label'); label.append(runMark(pendingRow.text), pendingRow.text); meta.append(label); }
     else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
