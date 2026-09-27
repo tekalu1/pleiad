@@ -20,6 +20,22 @@ export function resultText(c) {
   return "";
 }
 
+/** A headless slash command can finish without a compaction boundary or assistant reply. */
+export function createClaudeCompactDiagnostic() {
+  let output = '', boundary = false, answer = false;
+  return {
+    observe(m) {
+      if (m?.type === 'system' && m.subtype === 'compact_boundary') boundary = true;
+      else if (m?.type === 'system' && m.subtype === 'local_command_output' && typeof m.content === 'string') {
+        const raw = m.content.trim();
+        const reason = (raw.match(/^<local-command-stdout>([\s\S]*?)<\/local-command-stdout>$/)?.[1] ?? raw).trim();
+        if (reason.startsWith('/compact ') && reason.length <= 500) output = reason;
+      } else if (m?.type === 'assistant' || (m?.type === 'stream_event' && m.event?.delta?.type === 'text_delta')) answer = true;
+    },
+    reason() { return !boundary && !answer ? output : ''; },
+  };
+}
+
 /**
  * SDK メッセージ1件 -> 正規化イベントの配列（0件以上）。
  *
