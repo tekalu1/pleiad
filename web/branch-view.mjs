@@ -150,19 +150,32 @@ export function makeBranchRow(key, entries, selected, onPick, previous) {
 }
 
 // The spine is segmented around each group; no straight line runs behind a moving node.
+const spineGeometry = new WeakMap();
 export function layoutBranchSpine(thread) {
-  const svg = thread.querySelector(".spine");
+  const svg = thread.firstElementChild?.classList.contains("spine") ? thread.firstElementChild : thread.querySelector(".spine");
   if (!svg) return;
-  svg.replaceChildren();
-  let y = 0;
-  const segment = to => {
-    if (to > y) svg.append(svgEl("path", { d: curve({ x: BRANCH.X, y }, { x: BRANCH.X, y: to }) }));
-  };
-  for (const row of thread.querySelectorAll(".branch-row")) {
-    row.layout(); segment(row.offsetTop + BRANCH.SPLIT); y = row.offsetTop + BRANCH.HEIGHT;
-  }
-  const last = [...thread.querySelectorAll(".mw.node,.mw.activity")].at(-1);
+  const rows = (thread.classList.contains("branched") ? [...thread.querySelectorAll(".branch-row")] : []).map(row => ({
+    row, top: row.offsetTop, width: row.clientWidth,
+  }));
+  let last = thread.lastElementChild;
+  while (last && !last.matches(".mw.node,.mw.activity")) last = last.previousElementSibling;
   const tip = last?.querySelector(".activity-tip");
   // Follow the circle's actual position, including its 1px outer outline.
-  segment(Math.max(y, last ? last.offsetTop + (tip ? tip.offsetTop - 1 : 16) : thread.offsetHeight));
+  const end = last ? last.offsetTop + (tip ? tip.offsetTop - 1 : 16) : thread.offsetHeight;
+  const previous = spineGeometry.get(svg);
+  if (previous?.end === end && previous.rows.length === rows.length &&
+      rows.every((item, i) => item.row === previous.rows[i].row &&
+        item.top === previous.rows[i].top && item.width === previous.rows[i].width)) return;
+  spineGeometry.set(svg, { rows, end });
+
+  const paths = [];
+  let y = 0;
+  const segment = to => {
+    if (to > y) paths.push(svgEl("path", { d: curve({ x: BRANCH.X, y }, { x: BRANCH.X, y: to }) }));
+  };
+  for (const { row, top } of rows) {
+    row.layout(); segment(top + BRANCH.SPLIT); y = top + BRANCH.HEIGHT;
+  }
+  segment(Math.max(y, end));
+  svg.replaceChildren(...paths);
 }

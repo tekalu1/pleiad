@@ -5,10 +5,11 @@
 //   - 分岐点は sidecar の parent.atMessage（親の uuid）。子の履歴にはその uuid は無い
 //   - thinking だけの entry（本文が空）、ツール呼び出しだけの entry（本文が空、toolCalls あり）が挟まる
 // uuid だけで照合すると共通接頭辞が 0 になり、分岐点の印が出ず、戻る経路も無かった。
-import { branchOrder, curve, ease } from "../../web/branch-view.mjs";
+import { branchOrder, curve, ease, layoutBranchSpine } from "../../web/branch-view.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "../../web/branches.mjs";
 import { t as i18n } from "../../web/i18n.mjs";
 import { readFileSync } from "node:fs";
+import { N } from "../lib/dom-stub.mjs";
 
 export const name = "branches";
 export const title = "uuid が付け直された枝でも分岐点が出て、必ず戻れる";
@@ -49,6 +50,21 @@ export default async function (t) {
   t.ok("下のエッジも縦の接線を持つ曲線", lower === 'M200,96 C200,134.4 20,137.6 20,176', lower);
   const easing = Array.from({length:101},(_,i)=>ease(i/100));
   t.ok("加減速は端点を保ち逆行・オーバーシュートしない", easing[0] === 0 && easing[100] === 1 && easing.every((v,i)=>v>=0 && v<=1 && (!i||v>=easing[i-1])));
+
+  const spine = new N('svg'); spine.classList.add('spine');
+  const active = new N('div'); active.offsetTop = 100;
+  active.matches = selector => selector === '.mw.node,.mw.activity';
+  const activityTip = new N('span'); activityTip.classList.add('activity-tip'); activityTip.offsetTop = 36; active.append(activityTip);
+  const thread = { firstElementChild: spine, lastElementChild: active,
+    classList: { contains: () => false }, querySelectorAll: () => { throw Error('unbranched thread should not scan rows'); } };
+  layoutBranchSpine(thread);
+  const firstPath = spine.firstChild;
+  t.ok('稼働表示の輪の位置まで筋を引く', firstPath.getAttribute('d').endsWith('20,135'));
+  layoutBranchSpine(thread);
+  t.ok('位置が変わらなければ筋を描き直さない', spine.firstChild === firstPath);
+  active.offsetTop = 120;
+  layoutBranchSpine(thread);
+  t.ok('稼働表示が動いたら筋の終端を更新する', spine.firstChild !== firstPath && spine.firstChild.getAttribute('d').endsWith('20,155'));
 
   // ---- head / tail を印を付ける発言の添字にまとめる。同じ発言に集まれば 1 つの .jx
   const nk = nodeKeys(new Map([[3, [{ id: "a" }]], ["head", [{ id: "b" }]], ["tail", [{ id: "c" }]], [0, [{ id: "d" }]]]), 6);
