@@ -46,6 +46,7 @@ if (has('--version')) {
   process.exit(0);
 }
 if (flag('--print') === '/usage') {
+  if (process.env.FAKE_AGY_USAGE_DELAY_MS) await new Promise(r => setTimeout(r, Number(process.env.FAKE_AGY_USAGE_DELAY_MS)));
   console.log(JSON.stringify({ status: 'SUCCESS', num_turns: 0, command: { name: 'usage', data: { groups: [
     { name: 'Gemini Models', buckets: [
       { window: 'weekly', remaining_fraction: .9, reset_time: '2030-09-23T06:31:30Z' },

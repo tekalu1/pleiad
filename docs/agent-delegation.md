@@ -125,7 +125,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
   "table": { "trivial": ["t1", "t1", "t2"], … } }                               // low・mid・high の段
 ```
 
-画面（委譲カード・設定 › 委譲。design-system.md）が使う WebSocket のコマンド（`core/protocol.mjs`）: `delegationRouting { refresh? }`（設定・既定値・一覧・キーの `hasKey`・秘密の置き場の状態・今のモデル一覧に無い候補と使えないバックエンド `warnings`・候補ごとの今の使用量と使えるかどうか `candidates`）、`setDelegationRouting { settings }`、`setDelegationRoutingKey { service, key }`・`deleteDelegationRoutingKey { service }`（`service` は `openrouter`（Jev）/ `cerebras`）。変わったら `delegationRoutingChanged` イベント（使用量を取り直したときも）。タスクごとの `routing` は `agentTasks` の各行（`running` の配信の `tasks` にも同じ形）。やり直しは `retryAgentTask`（上）。
+画面（委譲カード・設定 › 委譲。design-system.md）が使う WebSocket のコマンド（`core/protocol.mjs`）: `delegationRouting { refresh? }`（設定・既定値・一覧・キーの `hasKey`・秘密の置き場の状態・今のモデル一覧に無い候補と使えないバックエンド `warnings`・候補ごとの今の使用量と使えるかどうか `candidates`）、`setDelegationRouting { settings }`、`setDelegationRoutingKey { service, key }`・`deleteDelegationRoutingKey { service }`（`service` は `openrouter`（Jev）/ `cerebras`）。変わったら `delegationRoutingChanged` イベント（`change: 'settings'`）。使用量の取り直しが終わったときは同じイベントの `change: 'usage'`。種類のない旧イベントは設定の変更として扱える。設定保存は使用量の取得を待たない。自動選択をオンにしたとき、または使用量をまだ持たない候補を増やしたときだけ裏で取り直す。タスクごとの `routing` は `agentTasks` の各行（`running` の配信の `tasks` にも同じ形）。やり直しは `retryAgentTask`（上）。
 
 **鍵と外部送信。** 判定器のキーは互換の接続先と同じ秘密の置き場（`compat-endpoint-secrets.json`。`delegation-routing:openrouter` / `delegation-routing:cerebras`）に置き、画面には `hasKey` だけ返す。キーの中身は確かめない（確かめると登録の時点で外へ送ることになる）。キーをログ・タスク・会話の記録・エラーに出さない。**外部送信の同意はキーの登録**: キーが無ければ外へは何も送らず、難しさは `mid`。送り先の URL は固定で、リダイレクトは追わない。
 

@@ -179,7 +179,7 @@ export const EVENTS = new Set([
   "nextSettings",
   "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す
   "compatEndpointsChanged", // 互換の接続先の一覧・既定が変わった（sessionId は null）。中身は compatEndpoints コマンドで取り直す
-  "delegationRoutingChanged", // 委譲の振り分けの設定・キー・使用量の取り置きが変わった（sessionId は null）。中身は delegationRouting コマンドで取り直す
+  "delegationRoutingChanged", // change: settings|usage（旧送信元では省略）。sessionId は null。中身は delegationRouting コマンドで取り直す
   "claudeLogin",  // { loginId, kind, accountId, phase: url|code|verifying|done|error|cancelled, url?, message? } アカウントの認可の進み具合（sessionId は null）。トークンは載せない
   "remoteStatus",  // { status: RemoteStatus } リモートの設定・中継との接続・承認待ち・端末一覧が変わった（sessionId は null）
   "remotePairing", // { phase: connecting|request|approved|denied|cancelled|expired, request?, device? } ペアリングの進み具合。request のときに承認のダイアログを出す（sessionId は null）

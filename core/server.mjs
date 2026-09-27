@@ -277,7 +277,7 @@ const routingUsage = createUsageMonitor({
     if (status?.loggedIn) lastWarm.set(b.id, Date.now()); else lastWarm.delete(b.id);
   },
   claudeIdentities: () => claudeAccounts.identities(),
-  onChange: () => emitGlobal({ type: 'delegationRoutingChanged', sessionId: null }),
+  onChange: () => emitGlobal({ type: 'delegationRoutingChanged', change: 'usage', sessionId: null }),
 });
 // 取り始めるのは待ち受けてから（announce）。onChange が画面へ配るので、runtime ができる前に呼ばない。
 // AGENT_HOST_ROUTING_USAGE=off なら定期的には取らない（テストの既定。agy などの子プロセスを勝手に起こさない）
@@ -2617,11 +2617,22 @@ wss.on("connection", (ws, req) => {
           for (const [key, value] of Object.entries(patch)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
           let settings;
           try { settings = normalizeSettings(raw, { strict: true }); } catch (e) { throw routingSettingsError(e); }
+          const previous = routingSettingsCache;
+          const known = routingUsage.snapshot();
+          const oldCandidates = new Set(TIERS.flatMap(tier => previous.tiers[tier] ?? []));
+          const missingCandidate = TIERS.flatMap(tier => settings.tiers[tier] ?? []).some(candidate => {
+            if (oldCandidates.has(candidate)) return false;
+            const at = candidate.indexOf(':');
+            return !Object.hasOwn(known[candidate.slice(0, at)]?.models ?? {}, candidate.slice(at + 1));
+          });
           await savePref('delegationRouting', Object.keys(raw).length ? raw : null);
           routingSettingsCache = settings;
           if (!settings.enabled) routingUsage.stop();
-          else { if (ROUTING_USAGE_AUTO) routingUsage.start(); await routingUsage.refresh().catch(() => {}); }
-          emitGlobal({ type: 'delegationRoutingChanged', sessionId: null });
+          else if (ROUTING_USAGE_AUTO) {
+            routingUsage.start();
+            if (previous.enabled && missingCandidate) routingUsage.refresh().catch(() => {});
+          }
+          emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
           return reply(true, await delegationRoutingState());
         }
         // 判定器のキー（service: openrouter = Jev / cerebras）。登録が外部送信の同意になる（キーが無ければ何も送らない）
@@ -2635,7 +2646,7 @@ wss.on("connection", (ws, req) => {
             if (!key) throw new Error(t('routing.key.invalid'));
             await compatSecrets.set(ROUTING_SECRET_PREFIX + service, { key });
           }
-          emitGlobal({ type: 'delegationRoutingChanged', sessionId: null });
+          emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
           return reply(true, await delegationRoutingState());
         }
         case "resolvePermission": {
