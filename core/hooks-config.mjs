@@ -16,7 +16,7 @@ import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { parse as tomlParse, stringify as tomlStringify } from 'smol-toml';
 import { parse as yaml } from 'yaml';
-import { pathKey, scanDirectory } from './context-settings.mjs';
+import { pathKey, scanDirectory, containsPath } from './context-settings.mjs';
 import { FRONTMATTER } from './context-scan.mjs';
 import { redactSecrets } from './redact.mjs';
 import { renameRetry } from './atomic-file.mjs';
@@ -52,15 +52,85 @@ const MASK = '••••';
 const SECRET_KEYS = new Set(['env', 'headers']);
 
 // コマンドの引数で渡す秘密（--token 値・--api-key 値）。= で書く形は core/redact.mjs が伏せる
-const FLAG_VALUE = /((?:^|\s)--?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|auth(?:orization)?)[\w-]*\s+)(?!-)("[^"]*"|'[^']*'|\S+)/gi;
+const FLAG_NAME = '--?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|auth(?:orization)?)[\\w-]*';
+// 前は行頭・空白・引用符（JSON の文字列の中の "--token 値" も）。値は引用符の手前まで
+const FLAG_VALUE = new RegExp(`((?:^|[\\s"'])${FLAG_NAME}\\s+)(?!-)("[^"]*"|'[^']*'|[^\\s"']+)`, 'gi');
+const FLAG_ALONE = new RegExp(`^${FLAG_NAME}$`, 'i');
+// キーの名前で分かる秘密（入れ子の record・知らないキーを含む）。値が文字列のものだけ伏せる
+const SECRET_NAME = /(token|secret|password|passwd|api[_-]?key|authorization|cookie)/i;
+// 値を丸ごと伏せる表（env・headers。Codex の MCP の http_headers なども）
+const SECRET_TABLES = new Set(['env', 'headers', 'http_headers', 'env_http_headers']);
 /** 文字列 1 つの伏せ字。形で分かる秘密だけ（伏せ漏れはありうる） */
 export const maskText = s => redactSecrets(String(s)).replace(FLAG_VALUE, `$1${MASK}`);
-/** 画面に出す形。env・headers の値は伏せ、文字列は形で秘密を伏せる。元の値は変えない */
+/** 画面に出す形。env・headers の値、秘密らしい名前のキーの値、args の秘密のフラグの次の要素を伏せ、文字列は形で伏せる。元の値は変えない */
 export function maskDefinition(value) {
-  if (Array.isArray(value)) return value.map(maskDefinition);
+  if (Array.isArray(value)) return value.map((v, i) => typeof v === 'string' && typeof value[i - 1] === 'string' && FLAG_ALONE.test(value[i - 1]) ? MASK : maskDefinition(v));
   if (record(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) =>
-    [k, SECRET_KEYS.has(k) && record(v) ? Object.fromEntries(Object.keys(v).map(n => [n, MASK])) : maskDefinition(v)]));
+    [k, SECRET_KEYS.has(k) && record(v) ? Object.fromEntries(Object.keys(v).map(n => [n, MASK])) : typeof v === 'string' && SECRET_NAME.test(k) ? MASK : maskDefinition(v)]));
   return typeof value === 'string' ? maskText(value) : value;
+}
+/**
+ * 設定ファイルの本文の伏せ字（書く前の確認の差分用）。行を保ったまま、env・headers の表とインラインの表の値、
+ * 秘密らしい名前のキーの文字列の値、形で分かる秘密（maskText）を伏せる。前後の本文に同じように通すので、変わらない行は同じになる
+ */
+export function maskFileText(text, format) {
+  const lines = String(text ?? '').split(/(\r?\n)/);
+  const quoted = '"(?:\\\\.|[^"\\\\])*"|\'[^\']*\'';
+  if (format === 'toml') {
+    let table = [];
+    return lines.map(part => {
+      if (/^\r?\n$/.test(part) || /^\s*#/.test(part)) return part;
+      const header = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?/.exec(part);
+      if (header) { table = header[1].split('.').map(s => s.trim().replace(/^["']|["']$/g, '')); return maskText(part); }
+      const kv = new RegExp(`^(\\s*(${quoted}|[A-Za-z0-9_-]+)\\s*=\\s*)(.*)$`).exec(part);
+      if (kv) {
+        const key = kv[2].replace(/^["']|["']$/g, ''), value = kv[3].trim();
+        if (SECRET_TABLES.has(table.at(-1)) || (SECRET_NAME.test(key) && /^["']/.test(value))) return `${kv[1]}"${MASK}"`;
+        if (SECRET_TABLES.has(key) && value.startsWith('{')) return kv[1] + kv[3].replace(new RegExp(`(=\\s*)(${quoted})`, 'g'), `$1"${MASK}"`);
+      }
+      return maskText(part);
+    }).join('');
+  }
+  let out = String(text ?? '').replace(new RegExp(`("(?:${[...SECRET_TABLES].join('|')})"\\s*:\\s*\\{)([^{}]*)(\\})`, 'g'),
+    (m, head, body, tail) => head + body.replace(new RegExp(`(:\\s*)(${quoted})`, 'g'), `$1"${MASK}"`) + tail);
+  out = out.replace(new RegExp(`("((?:\\\\.|[^"\\\\])*)"\\s*:\\s*)(${quoted})`, 'g'), (m, head, key) => SECRET_NAME.test(key) ? `${head}"${MASK}"` : m);
+  return out.split(/(\r?\n)/).map(p => /\n/.test(p) ? p : maskText(p)).join('');
+}
+/** 読んだ本文の書式（改行・字下げ・BOM）。書くときに戻す */
+function styleOf(text) {
+  const src = String(text ?? '');
+  const indent = /^([ \t]+)["[{]/m.exec(src.replace(/^﻿/, ''))?.[1];
+  return { bom: src.startsWith('﻿') ? '﻿' : '', eol: /\r\n/.test(src) ? '\r\n' : '\n', indent: indent ? (indent.startsWith('\t') ? '\t' : indent.length) : 2 };
+}
+/**
+ * JSON の書き直しで、元の本文の値が変わるか（有効桁を超える整数・重複したキー）。変わるなら書き直しの許可を求める。
+ * 文字列の中は飛ばし、オブジェクトごとにキーを覚える簡単な走査
+ */
+export function jsonLossy(text) {
+  const src = String(text ?? '').replace(/^﻿/, '');
+  const stack = [];
+  let expectKey = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"') {
+      let j = i + 1, s = '';
+      for (; j < src.length && src[j] !== '"'; j++) { if (src[j] === '\\') { s += src[j] + src[j + 1]; j++; } else s += src[j]; }
+      const top = stack.at(-1);
+      if (top && top.type === 'object' && expectKey) {
+        const rest = /^\s*:/.test(src.slice(j + 1, j + 40));
+        if (rest) { if (top.keys.has(s)) return true; top.keys.add(s); expectKey = false; }
+      }
+      i = j;
+    } else if (c === '{') { stack.push({ type: 'object', keys: new Set() }); expectKey = true; }
+    else if (c === '[') { stack.push({ type: 'array' }); }
+    else if (c === '}' || c === ']') { stack.pop(); }
+    else if (c === ',') { expectKey = stack.at(-1)?.type === 'object'; }
+    else if (/[-0-9]/.test(c)) {
+      const m = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(src.slice(i));
+      if (m) { if (/^-?\d+$/.test(m[0]) && !Number.isSafeInteger(Number(m[0]))) return true; i += m[0].length - 1; }
+    }
+  }
+  return false;
 }
 const handlerType = h => (typeof h?.type === 'string' ? h.type : 'command');
 const commandOf = h => typeof h?.command === 'string' ? h.command : Array.isArray(h?.args) ? h.args.join(' ') : '';
@@ -143,14 +213,31 @@ function rowsOf(agent, map, base) {
   return { rows, problems };
 }
 
-export function createHooksConfig({ home = os.homedir(), codexHome = process.env.CODEX_HOME ?? path.join(home, '.codex'),
-  claudeHome = process.env.CLAUDE_CONFIG_DIR ?? path.join(home, '.claude'), geminiHome = path.join(home, '.gemini') } = {}) {
+/**
+ * プロジェクトの置き場所（.claude・.codex・.agents）がリンクで base の外を指していないか。
+ * 無いファイルでも、一番近くの有る親の実体で確かめる（リンクのフォルダーの下に新しく作ると外へ書くため）
+ */
+async function insideBase(file, base) {
+  let dir = file;
+  for (;;) {
+    const real = await fs.realpath(dir).catch(e => (['ENOENT', 'ENOTDIR'].includes(e.code) ? null : ''));
+    if (real === '') return false;
+    if (real) return containsPath(await fs.realpath(base).catch(() => base), real);
+    const up = path.dirname(dir);
+    if (up === dir) return false;
+    dir = up;
+  }
+}
+
+export function createHooksConfig({ home = os.homedir(), codexHome = process.env.CODEX_HOME || path.join(home, '.codex'),
+  claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), geminiHome = path.join(home, '.gemini') } = {}) {
   const places = { home, codexHome, claudeHome, geminiHome };
   let writes = Promise.resolve();
 
-  /** ファイルを読む。無ければ exists: false。読めない・形が違うときは error（原文の中身は出さない） */
-  async function load(file) {
+  /** ファイルを読む。無ければ exists: false。読めない・形が違うときは error（原文の中身は出さない）。base があれば、その外の実体は読まない */
+  async function load(file, base = null) {
     let text = '', real = file.path, mode = 0o600, exists = false;
+    if (base && !await insideBase(file.path, base)) return { ...file, real, exists: true, error: t('hooks.file.outside') };
     try {
       real = await fs.realpath(file.path);
       const handle = await fs.open(real, 'r');
@@ -196,7 +283,7 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
     }
     const visit = async (agent, scope, base) => {
       for (const file of hookFiles(places, agent, scope, base)) {
-        const data = await load(file);
+        const data = await load(file, scope === 'user' ? null : base);
         const info = { agent, scope, base: base ?? null, path: file.path, format: file.format, kind: file.kind, exists: data.exists, revision: data.revision ?? null };
         if (data.error) { files.push({ ...info, status: 'error', error: data.error, count: 0 }); continue; }
         // 全体の停止（Claude の disableAllHooks・Codex の [features] hooks = false）は行ごとの状態ではないので、ファイルに付ける
@@ -256,19 +343,25 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
     const dir = await resolveBase(scope, base);
     const list = hookFiles(places, agent, scope, dir);
     if (!list.length) throw new Error(t('hooks.write.target'));
+    // プロジェクトのスコープで、置き場所がリンクで作業場所の外を指していれば書かない（見えているのと別のファイルへ書くため）。
+    // ユーザーのスコープのリンク（dotfiles の管理）は正当な使い方なので確かめない
+    const chosen = async f => {
+      if (dir && !await insideBase(f.path, dir)) throw new Error(t('hooks.file.outside'));
+      return { ...f, base: dir };
+    };
     if (file) {
       const hit = list.find(f => pathKey(f.path) === pathKey(file));
       if (!hit) throw new Error(t('hooks.write.target'));
-      return { ...hit, base: dir };
+      return chosen(hit);
     }
     // 追加の既定の書き先。すでに定義を置いているファイルがあればそちら（Codex の TOML、agy の CLI の settings.json）。二重に登録しない
     if (list.length > 1) {
       for (const f of list.slice(1)) {
-        const data = await load(f);
-        if (!data.error && data.declared && Object.keys(data.map).length) return { ...f, base: dir };
+        const data = await load(f, dir);
+        if (!data.error && data.declared && Object.keys(data.map).length) return chosen(f);
       }
     }
-    return { ...list[0], base: dir };
+    return chosen(list[0]);
   }
   /** 追加・編集の前に書き先を見せる（シートの「書き先」） */
   async function targets({ scope, base, agents = HOOK_AGENTS }) {
@@ -287,7 +380,9 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
     const out = { ...previous, type: 'command', command };
     // type を省いた定義（agy は省略で command）には type を足さない
     if (!own(previous, 'type') && Object.keys(previous).length) delete out.type;
-    if (input.timeout === null || input.timeout === undefined || input.timeout === '') delete out.timeout;
+    // keepTimeout: 元の timeout がシートの欄で扱えない値（文字列・小数）のとき、欄を空のまま保存すれば元の値を残す
+    if (input.keepTimeout === true) { if (own(previous, 'timeout')) out.timeout = previous.timeout; }
+    else if (input.timeout === null || input.timeout === undefined || input.timeout === '') delete out.timeout;
     else {
       const n = Number(input.timeout);
       if (!Number.isInteger(n) || n < 1 || n > 86400) throw new Error(t('hooks.write.timeout'));
@@ -305,11 +400,12 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
     return m.trim();
   };
 
-  /** 指し先の handler。無い・command でないときは例外（別の人が変えた・読み取りのみ） */
+  /** 指し先の handler。無い・command でないときは例外（別の人が変えた・読み取りのみ）。自分のキーだけを引く（__proto__ などで prototype を触らない） */
   function locate(agent, map, loc) {
-    const holder = agent === 'antigravity' ? map[loc.name] : map;
+    if (!Number.isInteger(loc.handler) || !(loc.group === -1 || Number.isInteger(loc.group))) throw new Error(t('hooks.write.notFound'));
+    const holder = agent === 'antigravity' ? (typeof loc.name === 'string' && own(map, loc.name) ? map[loc.name] : null) : map;
     if (!record(holder)) throw new Error(t('hooks.write.notFound'));
-    const list = holder[loc.event];
+    const list = typeof loc.event === 'string' && own(holder, loc.event) ? holder[loc.event] : null;
     if (!Array.isArray(list)) throw new Error(t('hooks.write.notFound'));
     if (loc.group === -1) {
       const h = list[loc.handler];
@@ -330,37 +426,44 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
     if (!found.list.length) delete found.holder[loc.event];
     return found;
   }
+  /** 足す。足した group（TOML の末尾に 1 ブロックだけ足すときに使う。agy の非ツールのイベントは handler） */
   function insert(agent, map, { name, event, matcher }, handler) {
     let holder = map;
     if (agent === 'antigravity') {
       if (!validName(name)) throw new Error(t('hooks.write.name'));
       if (own(map, name) && !record(map[name])) throw new Error(t('hooks.write.format'));
-      holder = map[name] ??= {};
+      if (!own(map, name)) map[name] = {};
+      holder = map[name];
     }
     if (own(holder, event) && !Array.isArray(holder[event])) throw new Error(t('hooks.write.format'));
-    const list = holder[event] ??= [];
-    if (agent === 'antigravity' && !AGY_TOOL_EVENTS.has(event)) list.push(handler);
-    else list.push({ ...(matcher || (agent === 'antigravity') ? { matcher: matcher || '*' } : {}), hooks: [handler] });
+    if (!own(holder, event)) holder[event] = [];
+    const list = holder[event];
+    const entry = agent === 'antigravity' && !AGY_TOOL_EVENTS.has(event) ? handler
+      : { ...(matcher || (agent === 'antigravity') ? { matcher: matcher || '*' } : {}), hooks: [handler] };
+    list.push(entry);
+    return entry;
   }
 
   /**
    * 1 件の変更を組み立てる（書かない）。op: add / edit / delete / enable。
-   * 返すのは書き込む本文と、画面の差分に使う前後の hooks（そのイベント・名前だけ。伏せ字）
+   * 返すのは書き込む本文と、書く前の確認に使う前後の本文（伏せ字）
    */
   async function plan(item) {
     const op = item?.op;
     if (!['add', 'edit', 'delete', 'enable'].includes(op)) throw new Error(t('hooks.write.operation'));
+    const loc = record(item.loc) ? item.loc : {};
+    // 予約の名前（__proto__ など）は、どの経路でもキーとして使わない
+    if ([loc.name, loc.event, item.name, item.event].some(k => typeof k === 'string' && RESERVED.has(k))) throw new Error(t('hooks.write.operation'));
     const file = await target({ agent: item.agent, scope: item.scope, base: item.base, file: op === 'add' ? item.file : item.file ?? '\0' });
-    const data = await load(file);
+    const data = await load(file, file.base);
     if (data.error) throw new Error(data.error);
     if (op !== 'add' && item.revision !== data.revision) throw new Error(t('hooks.write.changed'));
     if (op === 'add' && item.revision !== undefined && item.revision !== data.revision) throw new Error(t('hooks.write.changed'));
     const agent = item.agent;
     const map = structuredClone(data.map);
-    const before = structuredClone(data.map);
-    const loc = item.loc ?? {};
+    let added = null;
     if (op === 'enable') {
-      if (agent !== 'antigravity' || !record(map[loc.name])) throw new Error(t('hooks.write.notFound'));
+      if (agent !== 'antigravity' || !validName(loc.name) || !own(map, loc.name) || !record(map[loc.name])) throw new Error(t('hooks.write.notFound'));
       map[loc.name].enabled = item.enabled !== false;
     } else if (op === 'delete') {
       const { handler } = locate(agent, map, loc);
@@ -372,7 +475,7 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       if (!supportsEvent(agent, event)) throw new Error(t('hooks.write.event'));
       const matcher = cleanMatcher(item.matcher);
       const name = agent === 'antigravity' ? item.name : undefined;
-      if (op === 'add') insert(agent, map, { name, event, matcher }, cleanHandler(item, agent));
+      if (op === 'add') added = insert(agent, map, { name, event, matcher }, cleanHandler(item, agent));
       else {
         const found = locate(agent, map, loc);
         if (handlerType(found.handler) !== 'command' || typeof found.handler.command !== 'string') throw new Error(t('hooks.write.readOnly'));
@@ -385,24 +488,35 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
           if (matcher || agent === 'antigravity') found.group.matcher = matcher || '*'; else delete found.group.matcher;
           found.group.hooks[0] = next;
         } else {
-          // イベント・名前が変わった、または他の handler と group を共有している: 取り出して新しい group に入れる
+          // イベント・名前が変わった、または他の handler と group を共有している: 取り出して新しい group に入れる。
+          // agy の改名は enabled（名前単位の停止）を引き継ぐ。移し先の名前が別の enabled を持っていれば断る（黙って止めたり動かしたりしない）
+          const renamed = agent === 'antigravity' && name !== loc.name;
+          const wasOff = renamed && map[loc.name].enabled === false;
+          if (renamed && own(map, name) && record(map[name]) && (map[name].enabled === false) !== wasOff) throw new Error(t('hooks.write.renameEnabled'));
           removeAt(agent, map, loc);
-          if (agent === 'antigravity' && name !== loc.name && record(map[loc.name]) && !Object.keys(map[loc.name]).some(k => k !== 'enabled')) delete map[loc.name];
+          if (renamed && record(map[loc.name]) && !Object.keys(map[loc.name]).some(k => k !== 'enabled')) delete map[loc.name];
           insert(agent, map, { name: name ?? loc.name, event, matcher }, next);
+          if (wasOff) map[name].enabled = false;
         }
       }
     }
     const config = withHooks(file.kind, data.config ?? {}, map);
-    const rendered = file.format === 'toml' ? renderToml(data.text, config) : { text: JSON.stringify(config, null, 2) + '\n', reformatsFile: false };
+    const style = styleOf(data.text);
+    let rendered;
+    if (file.format === 'toml') rendered = renderToml(data.text, config, added && op === 'add' ? { op, event: item.event, entry: added } : null);
+    else {
+      const body = JSON.stringify(config, null, style.indent).replace(/\n/g, style.eol) + style.eol;
+      // 読み直して値が変わる（有効桁を超える整数・重複したキー）なら、書き直しの許可を求める
+      const lossy = data.exists && jsonLossy(data.text);
+      rendered = { text: style.bom + body, reformatsFile: lossy, ...(lossy ? { reason: 'jsonValues' } : {}) };
+    }
     if (Buffer.byteLength(rendered.text) > LIMIT) throw new Error(t('hooks.write.tooLarge'));
-    const pick = m => {
-      const keys = agent === 'antigravity' ? [...new Set([loc.name, item.name].filter(Boolean))] : [...new Set([loc.event, item.event].filter(Boolean))];
-      return maskDefinition(Object.fromEntries(keys.filter(k => own(m, k)).map(k => [k, m[k]])));
-    };
-    return { file, data, text: rendered.text, reformatsFile: rendered.reformatsFile, before: pick(before), after: pick(map) };
+    const before = maskFileText(data.text.replace(/^﻿/, ''), file.format), after = maskFileText(rendered.text.replace(/^﻿/, ''), file.format);
+    return { file, data, text: rendered.text, reformatsFile: rendered.reformatsFile, reason: rendered.reason ?? null, lostComments: rendered.lostComments ?? 0,
+      before, after, hiddenChange: before === after && data.text !== rendered.text };
   }
   /**
-   * 変更をまとめて受ける。dryRun なら書かずに書き先・前後の差分・書き直しの要否だけ返す。
+   * 変更をまとめて受ける。dryRun なら書かずに書き先・前後の本文（伏せ字）・書き直しの要否だけ返す。
    * 複数の書き先は 1 件ずつ書き、失敗しても書けた先はそのまま結果に残す（部分成功を明示する）
    */
   function save({ items, dryRun = false, allowReformat = false } = {}) {
@@ -412,7 +526,8 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       for (const item of items) {
         try {
           const p = await plan(item);
-          const base = { agent: item.agent, op: item.op, path: p.file.path, format: p.file.format, reformatsFile: p.reformatsFile, before: p.before, after: p.after, revision: p.data.revision };
+          const base = { agent: item.agent, op: item.op, path: p.file.path, format: p.file.format, reformatsFile: p.reformatsFile, reason: p.reason,
+            lostComments: p.lostComments, hiddenChange: p.hiddenChange, before: p.before, after: p.after, revision: p.data.revision };
           if (dryRun) { results.push({ ...base, ok: true }); continue; }
           if (p.reformatsFile && !allowReformat) throw new Error(t('hooks.write.reformat'));
           await commit(p, item);
@@ -429,23 +544,44 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
     const tmp = `${p.data.real}.${crypto.randomUUID()}.tmp`;
     try {
       await fs.writeFile(tmp, p.text, { encoding: 'utf8', mode: p.data.mode, flag: 'wx' });
-      const current = await load(p.file);
+      const current = await load(p.file, p.file.base);
       if (current.revision !== p.data.revision || pathKey(current.real) !== pathKey(p.data.real)) throw new Error(t('hooks.write.changedReload'));
       await renameRetry(tmp, p.data.real);
     } finally { await fs.rm(tmp, { force: true }); }
   }
-  /** 編集のシートを開くときだけ、指した handler の元の値を返す（一覧は伏せ字だけ） */
+  /**
+   * 編集のシートを開くときだけ、指した handler の command・timeout・async とキーの名前を返す。
+   * env・headers などほかの値は返さない（保存は元のファイルの handler を土台にするので要らない）
+   */
   async function read({ agent, scope, base, file, loc }) {
     await writes.catch(() => {});
+    const where = record(loc) ? loc : {};
+    if ([where.name, where.event].some(k => typeof k === 'string' && RESERVED.has(k))) throw new Error(t('hooks.write.notFound'));
     const f = await target({ agent, scope, base, file: file ?? '\0' });
-    const data = await load(f);
+    const data = await load(f, f.base);
     if (data.error) throw new Error(data.error);
-    const found = locate(agent, data.map, loc ?? {});
-    return { agent, scope, path: f.path, revision: data.revision, event: loc.event, name: loc.name ?? null, matcher: found.group?.matcher ?? null,
-      handler: found.handler, editable: handlerType(found.handler) === 'command' && typeof found.handler.command === 'string',
-      ...(agent === 'antigravity' ? { enabled: data.map[loc.name]?.enabled !== false } : {}) };
+    const found = locate(agent, data.map, where);
+    const h = found.handler;
+    return { agent, scope, path: f.path, revision: data.revision, event: where.event, name: where.name ?? null, matcher: found.group?.matcher ?? null,
+      command: typeof h.command === 'string' ? h.command : null, timeout: own(h, 'timeout') ? h.timeout : null, async: h.async === true, keys: Object.keys(h),
+      editable: handlerType(h) === 'command' && typeof h.command === 'string',
+      ...(agent === 'antigravity' ? { enabled: data.map[where.name]?.enabled !== false } : {}) };
   }
   return { scan, save, read, targets, places };
+}
+
+// 1 つの会話に残す hooks の発火の記録の上限（core/server.mjs）
+export const HOOK_RUNS_MAX = 60;
+/** 発火の記録を上限まで減らす。古いほうから、開始と応答の組ごとに捨てる（片方だけ残さない）。新しいほうを残す */
+export function trimHookRuns(list, max = HOOK_RUNS_MAX) {
+  while (list.length > max) {
+    const first = list.shift();
+    if (first?.phase === 'started' && first.hookId) {
+      const i = list.findIndex(r => r.phase === 'response' && r.hookId === first.hookId);
+      if (i >= 0) list.splice(i, 1);
+    }
+  }
+  return list;
 }
 
 const CODEX_READ_ONLY = { plugin: 'plugin', system: 'managed', mdm: 'managed', cloudRequirements: 'managed', cloudManagedConfig: 'managed',
@@ -481,32 +617,68 @@ export function applyCodexHooks(report, data, error = null) {
   return report;
 }
 
+/** 1 行が TOML のコメントを持つか（行全体のコメントと、文字列の外の行末のコメント） */
+const hasComment = line => /#/.test(line.replace(/"""[^]*?"""|'''[^]*?'''|"(?:\\.|[^"\\])*"|'[^']*'/g, ''));
+/** hooks の表の見出しか（[hooks] / [hooks.X] / [[hooks.X]] / [[hooks.X.hooks]]） */
+function hooksHeader(text, index, header) {
+  try {
+    tomlParse(text.slice(0, index)); // 複数行の文字列の中の見かけの見出しは除く
+    return own(tomlParse(header), 'hooks');
+  } catch {
+    // 見出しだけで読めないもの。hooks の表の形なら抜く対象にする（抜いた結果は下で読み直して確かめる）
+    return /^\s*\[\[?\s*hooks\s*[.\]]/.test(header);
+  }
+}
+
 /**
- * Codex の config.toml の hooks だけを置き換える。[hooks…] の表（[[hooks.X]] を含む）を抜いて末尾に書き直し、
- * 読み直した結果が期待どおりのときだけ使う。インライン・ドットの定義など、局所的に置き換えられなければ全体の書き直しを返す
+ * Codex の config.toml へ書く本文を作る。hooks 以外の本文・コメント・改行コード・BOM はそのまま残す。
+ *  - add（hint あり）: 既存の表に触らず、末尾に [[hooks.<イベント>]] の 1 ブロックだけ足す（TOML の配列の表は離れた位置で続けて書ける）
+ *  - それ以外・足すだけでは合わないとき: hooks の表（見出しから次の見出しの手前まで。末尾のコメント行と空行は残す）を抜き、
+ *    最初の hooks の表の位置に書き直す。抜く範囲にコメントがあれば消える行数を lostComments に数え、reformatsFile にする（画面で許可を取る）
+ * どちらも読み直した結果が期待どおりのときだけ使う。インライン・ドットの定義などで合わなければ、全体の書き直し（reformatsFile）
  */
-export function renderToml(text, config) {
-  const blocks = [];
-  for (const match of String(text ?? '').matchAll(/^\s*\[[^\r\n]+\][^\r\n]*(?:\r?\n|$)/gm)) {
-    try {
-      tomlParse(text.slice(0, match.index)); // 複数行の文字列の中の見かけの見出しは除く
-      const header = tomlParse(match[0]);
-      blocks.push({ start: match.index, target: own(header, 'hooks') });
-    } catch {
-      // 見出しだけで読めないもの。hooks の表の形なら抜く対象にする（抜いた結果は下で読み直して確かめる）
-      blocks.push({ start: match.index, target: /^\s*\[\[?\s*hooks\s*[.\]]/.test(match[0]) });
-    }
+export function renderToml(source, config, hint = null) {
+  const src = String(source ?? '');
+  const bom = src.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const text = src.replace(/^\uFEFF/, '');
+  const eol = /\r\n/.test(text) ? '\r\n' : '\n';
+  const toEol = s => s.replace(/\r?\n/g, eol);
+  const same = body => { try { return isDeepStrictEqual(tomlParse(body), config); } catch { return false; } };
+  const out = (body, extra) => ({ text: bom + body, ...extra });
+  if (hint?.op === 'add' && hint.entry) {
+    const block = toEol(tomlStringify({ hooks: { [hint.event]: [hint.entry] } })).replace(/\s*$/, '');
+    const body = `${text.trim() ? `${text.replace(/\s*$/, '')}${eol}${eol}` : ''}${block}${eol}`;
+    if (same(body)) return out(body, { reformatsFile: false, lostComments: 0 });
   }
-  let next = '', offset = 0;
-  for (let i = 0; i < blocks.length; i++) {
-    if (!blocks[i].target) continue;
-    next += text.slice(offset, blocks[i].start);
-    offset = blocks[i + 1]?.start ?? text.length;
-  }
-  next += text.slice(offset);
+  const heads = [];
+  for (const match of text.matchAll(/^[ \t]*\[[^\r\n]+\][^\r\n]*(?:\r?\n|$)/gm)) heads.push({ start: match.index, target: hooksHeader(text, match.index, match[0]) });
+  const cuts = [];
+  let lost = 0;
+  heads.forEach((h, i) => {
+    if (!h.target) return;
+    const end = heads[i + 1]?.start ?? text.length;
+    const lines = text.slice(h.start, end).split(/(?<=\n)/);
+    // 末尾のコメント行と空行は次の表の側に返す（次の表の説明のことが多い。コメントで止めた定義もここに来る）
+    let keep = lines.length;
+    while (keep > 1 && /^\s*(#.*)?(\r?\n)?$/.test(lines[keep - 1])) keep--;
+    // 次も hooks の表で、間が空行だけなら、その空行も抜く（書き直した表の間に空行がたまらないように）
+    if (heads[i + 1]?.target && !lines.slice(keep).some(l => l.includes('#'))) keep = lines.length;
+    const cut = lines.slice(0, keep);
+    lost += cut.filter(hasComment).length;
+    cuts.push({ start: h.start, end: h.start + cut.join('').length });
+  });
   const hooks = config.hooks;
-  next = hooks && Object.keys(hooks).length ? `${next.trimEnd()}\n\n${tomlStringify({ hooks })}`.trimStart() : next;
-  if (!next.endsWith('\n')) next += '\n';
-  try { if (isDeepStrictEqual(tomlParse(next), config)) return { text: next, reformatsFile: false }; } catch {}
-  return { text: tomlStringify(config), reformatsFile: true };
+  const block = hooks && Object.keys(hooks).length ? toEol(tomlStringify({ hooks })).replace(/\s*$/, '') + eol : '';
+  let body;
+  if (cuts.length) {
+    const head = text.slice(0, cuts[0].start);
+    let rest = '', pos = cuts[0].end;
+    for (let i = 1; i < cuts.length; i++) { rest += text.slice(pos, cuts[i].start); pos = cuts[i].end; }
+    rest += text.slice(pos);
+    // 書き直した表の後ろに空行を 1 つ置く（次の表・コメントとくっつかないように）
+    body = head + block + (block && rest && !/^\r?\n/.test(rest) ? eol : '') + rest;
+  } else body = block ? `${text.trim() ? `${text.replace(/\s*$/, '')}${eol}${eol}` : ''}${block}` : text;
+  if (!body.endsWith('\n')) body += eol;
+  if (same(body)) return out(body, { reformatsFile: lost > 0, lostComments: lost, ...(lost ? { reason: 'comments' } : {}) });
+  return out(toEol(tomlStringify(config)), { reformatsFile: true, lostComments: text.split(/\n/).filter(hasComment).length, reason: 'rewrite' });
 }

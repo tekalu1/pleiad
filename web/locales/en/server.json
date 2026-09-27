@@ -943,7 +943,8 @@
       "link": "The link target is missing.",
       "syntax": "The file has a syntax error and can't be read.",
       "format": "The hooks in this file have an unexpected shape.",
-      "partial": "Skipped definitions with an unexpected shape."
+      "partial": "Skipped definitions with an unexpected shape.",
+      "outside": "This location links outside the workspace, so it isn't read or written."
     },
     "write": {
       "target": "Can't decide where to write. Check the agent, scope, and location.",
@@ -960,7 +961,8 @@
       "readOnly": "This definition can't be edited from Pleiad.",
       "event": "This agent doesn't support the selected event.",
       "tooLarge": "The settings file would be too large.",
-      "reformat": "Only the hooks part of this file can't be rewritten. Confirm rewriting the whole file."
+      "reformat": "Only the hooks part of this file can't be rewritten. Confirm rewriting the whole file.",
+      "renameEnabled": "The target name has a different enabled state, so the name can't be changed. Pick a name with the same state, or align enabled first."
     }
   }
 }

@@ -44,7 +44,9 @@ export default async function (t) {
     t.ok('hooks を読めないエージェントの会話は定義を探さない', fake.agent === null && fake.report === null);
     const claude = await client.cmd('sessionHooks', { sessionId: session.sessionId, cwd, backend: 'claude' });
     t.ok('Claude の会話: ユーザーと作業場所の定義、発火は観測できる', claude.observable && claude.report.entries.some(e => e.scope === 'project' && e.event === 'PostToolUse') && claude.report.entries.some(e => e.scope === 'user'));
-    const codexSide = await client.cmd('sessionHooks', { sessionId: session.sessionId, cwd, backend: 'codex' });
+    const pending = await client.cmd('sessionHooks', { sessionId: session.sessionId, cwd, backend: 'codex' });
+    t.ok('一覧は先に返し、Codex の信頼状態は「確かめています」の印だけ付ける', pending.report.trustPending === true && pending.report.entries.every(e => e.trustPending && !('trust' in e)));
+    const codexSide = await client.cmd('sessionHooks', { sessionId: session.sessionId, cwd, backend: 'codex', trust: true });
     t.ok('Codex の会話は観測できない（定義だけ）', codexSide.observable === false && codexSide.report.entries.every(e => e.agent === 'codex'));
     t.ok('Codex を使わない構成では信頼状態は「取得できません」', codexSide.report.entries.every(e => e.trust === null));
     client.close(); await host.stop(); client = null; host = null;
@@ -55,7 +57,7 @@ export default async function (t) {
       CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests', 'lib', 'fake-codex.mjs')}"`,
       FAKE_CODEX_HOOK_TRUST: 'untrusted', FAKE_CODEX_PLUGIN_HOOK: '1' } });
     client = await open(host);
-    const trusted = await client.cmd('sessionHooks', { cwd, backend: 'codex' });
+    const trusted = await client.cmd('sessionHooks', { cwd, backend: 'codex', trust: true });
     const project = trusted.report.entries.find(e => e.scope === 'project' && e.event === 'PreToolUse');
     t.ok('Codex の会話: hooks/list の trustStatus を行に付ける', project?.trust?.status === 'untrusted' && project.trust.enabled === true, JSON.stringify(project?.trust));
     t.ok('Codex のプラグインの hooks も読み取りのみの行で出す（秘密は伏せる）', trusted.report.entries.some(e => e.scope === 'plugin' && e.readOnly) && !JSON.stringify(trusted).includes('SECRET-PLUGIN'));

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { parse } from 'smol-toml';
-import { createHooksConfig, renderToml, applyCodexHooks } from '../../core/hooks-config.mjs';
+import { createHooksConfig, renderToml, applyCodexHooks, maskDefinition, trimHookRuns } from '../../core/hooks-config.mjs';
 import { containsPath } from '../../core/context-settings.mjs';
 export const name = 'hooks-config';
 export const title = 'Hooks の探索（3 エージェント × スコープ・壊れたファイル・伏せ字）と元ファイルへの書き込み（JSON / TOML・競合・enabled）';
@@ -80,7 +80,7 @@ export default async function(t) {
     const claudeFile = path.join(home, '.claude', 'settings.json');
     const add = { op: 'add', agent: 'claude', scope: 'user', event: 'PostToolUse', matcher: 'Edit|Write', command: 'node changes.cjs', timeout: 20 };
     const dry = await svc.save({ items: [add], dryRun: true });
-    t.ok('dryRun は書かずに書き先と前後の差分を返す', dry.results[0].ok && dry.results[0].path === claudeFile && dry.results[0].after.PostToolUse && !(await readJson(claudeFile)).hooks.PostToolUse);
+    t.ok('dryRun は書かずに書き先と前後の差分を返す', dry.results[0].ok && dry.results[0].path === claudeFile && dry.results[0].after.includes('"PostToolUse"') && !dry.results[0].before.includes('"PostToolUse"') && !(await readJson(claudeFile)).hooks.PostToolUse);
     await svc.save({ items: [{ ...add, revision: dry.results[0].revision }] });
     let cj = await readJson(claudeFile);
     t.ok('Claude に追加し、他のキー（model・permissions・他の hooks・知らないキー）を残す', cj.model === 'keep' && cj.permissions.allow[0] === 'Bash'
@@ -93,7 +93,7 @@ export default async function(t) {
     let scan = await svc.scan({ scopes: ['user'] });
     const audit = scan.entries.find(e => e.agent === 'claude' && e.command.startsWith('node audit'));
     const opened = await svc.read({ agent: 'claude', scope: 'user', file: audit.path, loc: { event: audit.event, group: audit.group, handler: audit.handler } });
-    t.ok('read は開いた handler の元の値を返す', opened.handler.command.includes('SECRET-TOKEN-123456'));
+    t.ok('read は開いた handler の元の値を返す', opened.command.includes('SECRET-TOKEN-123456'));
     await svc.save({ items: [{ op: 'edit', agent: 'claude', scope: 'user', file: audit.path, revision: opened.revision, loc: { event: 'PreToolUse', group: 0, handler: 0 }, event: 'PreToolUse', matcher: '*', command: 'node audit2.cjs', timeout: 15 }] });
     cj = await readJson(claudeFile);
     t.ok('編集は command・timeout だけ変え、同じ group の他の handler と知らないキーを残す', cj.hooks.PreToolUse[0].hooks[0].command === 'node audit2.cjs' && cj.hooks.PreToolUse[0].hooks[0].statusMessage === 'keep-me' && cj.hooks.PreToolUse[0].hooks[1].type === 'http');
@@ -146,6 +146,98 @@ export default async function(t) {
     // 部分成功: 書けた先は ok のまま、失敗した先だけ理由を返す
     const mixed = await svc.save({ items: [{ op: 'add', agent: 'claude', scope: 'project', base: repo, event: 'Stop', command: 'echo p' }, { op: 'add', agent: 'antigravity', scope: 'project', base: repo, name: 'x', event: 'Stop', command: 'x' }] });
     t.ok('複数の書き先は 1 件ずつ。書けた先と失敗した先を分けて返す', mixed.results[0].ok && !mixed.results[1].ok && (await readJson(path.join(repo, '.claude', 'settings.json'))).hooks.Stop[0].hooks[0].command === 'echo p');
+
+    // ==== レビュー対応（2026-09-27）
+    // ---- 予約のキー（__proto__ など）で prototype を触らない
+    const polluted = await svc.save({ dryRun: true, items: [
+      { op: 'enable', agent: 'antigravity', scope: 'user', file: agyFile, revision: 'missing', loc: { name: '__proto__' }, enabled: false },
+      { op: 'delete', agent: 'claude', scope: 'user', file: claudeFile, revision: 'x', loc: { event: '__proto__', group: 0, handler: 0 } },
+      { op: 'add', agent: 'antigravity', scope: 'user', name: 'constructor', event: 'Stop', command: 'x' },
+    ] });
+    t.ok('__proto__ などの名前・イベントは断り、Object.prototype を変えない', polluted.results.every(r => !r.ok) && ({}).enabled === undefined && !Object.hasOwn(Object.prototype, 'enabled'));
+
+    // ---- Codex の TOML: 足すときは既存の表に触らない。書き直すときは消えるコメントを数えて許可を求める
+    const tomlRepo = path.join(tmp, 'toml-repo');
+    const tomlPath = path.join(tomlRepo, '.codex', 'config.toml');
+    const tomlSource = ['# top comment', 'model = "gpt"', '', '[[hooks.PreToolUse]]', 'matcher = "Bash"', '[[hooks.PreToolUse.hooks]]', 'type = "command"',
+      'command = "python guard.py" # inline note', '', '# [[hooks.Stop]]  <- disabled for now', '# command = "old"', '', '# ==== my projects (keep this) ====',
+      '[projects."D:/dev/x"]', 'trust_level = "trusted"', '', '[mcp_servers.gh]', 'command = "npx"', '[mcp_servers.gh.env]', 'GITHUB_TOKEN = "ghp_SECRETSECRETSECRET1"', ''].join('\r\n');
+    await write(tomlPath, tomlSource);
+    const tomlAdd = { op: 'add', agent: 'codex', scope: 'project', base: tomlRepo, event: 'Stop', command: 'echo stop' };
+    const tomlDry = (await svc.save({ items: [tomlAdd], dryRun: true })).results[0];
+    t.ok('dryRun の前後は実際に書く本文（TOML のまま・伏せ字済み）', tomlDry.format === 'toml' && tomlDry.after.includes('[[hooks.Stop]]') && tomlDry.before.includes('# ==== my projects (keep this) ====')
+      && !tomlDry.after.includes('"matcher":') && !tomlDry.before.includes('ghp_SECRET') && !tomlDry.after.includes('ghp_SECRET'), tomlDry.error);
+    await svc.save({ items: [{ ...tomlAdd, revision: tomlDry.revision }] });
+    let rtText = await fs.readFile(tomlPath, 'utf8');
+    t.ok('足すときは既存の表・コメント・行末のコメントに触らず末尾に 1 ブロック足す（改行コードも保つ）', rtText.startsWith(tomlSource.trimEnd()) && rtText.includes('[[hooks.Stop]]')
+      && !/[^\r]\n/.test(rtText) && parse(rtText).hooks.Stop[0].hooks[0].command === 'echo stop');
+    const tomlRev = (await svc.scan({ cwd: tomlRepo })).files.find(f => f.path === tomlPath).revision;
+    const tomlEdit = { op: 'edit', agent: 'codex', scope: 'project', base: tomlRepo, file: tomlPath, revision: tomlRev, loc: { event: 'PreToolUse', group: 0, handler: 0 }, event: 'PreToolUse', matcher: 'Bash', command: 'python guard2.py' };
+    const editDry = (await svc.save({ items: [tomlEdit], dryRun: true })).results[0];
+    t.ok('表の中のコメント（行末）が消える書き直しは、行数を数えて許可を求める', editDry.reformatsFile && editDry.reason === 'comments' && editDry.lostComments === 1);
+    const refused = await svc.save({ items: [tomlEdit] });
+    t.ok('許可なしには書き直さない', !refused.results[0].ok && await fs.readFile(tomlPath, 'utf8') === rtText);
+    await svc.save({ items: [tomlEdit], allowReformat: true });
+    rtText = await fs.readFile(tomlPath, 'utf8');
+    t.ok('表の後ろのコメント付きの [projects] とコメントで止めた hook は残る', rtText.includes('# ==== my projects (keep this) ====\r\n[projects."D:/dev/x"]')
+      && rtText.includes('# [[hooks.Stop]]  <- disabled for now') && rtText.includes('# command = "old"') && parse(rtText).hooks.PreToolUse[0].hooks[0].command === 'python guard2.py');
+    const tomlRev2 = (await svc.scan({ cwd: tomlRepo })).files.find(f => f.path === tomlPath).revision;
+    const noComment = (await svc.save({ dryRun: true, items: [{ ...tomlEdit, revision: tomlRev2, command: 'python guard3.py' }] })).results[0];
+    t.ok('表の中にコメントが無ければ、書き直しの許可は要らない', noComment.ok && !noComment.reformatsFile);
+
+    // ---- JSON: BOM・CRLF・字下げを保つ。値が変わる書き直し（桁の多い数・重複したキー）は許可を求める
+    const styled = path.join(tmp, 'styled'), styledFile = path.join(styled, '.claude', 'settings.json');
+    await write(styledFile, '\uFEFF{\r\n    "model": "keep",\r\n    "hooks": {}\r\n}\r\n');
+    await svc.save({ items: [{ op: 'add', agent: 'claude', scope: 'project', base: styled, event: 'Stop', command: 'echo s' }] });
+    const styledText = await fs.readFile(styledFile, 'utf8');
+    t.ok('JSON は BOM・CRLF・4 字の字下げを保つ', styledText.startsWith('\uFEFF{\r\n    "model"') && !/[^\r]\n/.test(styledText) && JSON.parse(styledText.slice(1)).hooks.Stop[0].hooks[0].command === 'echo s');
+    await write(styledFile, '{"n": 12345678901234567890, "hooks": {}}');
+    const lossy = (await svc.save({ dryRun: true, items: [{ op: 'add', agent: 'claude', scope: 'project', base: styled, event: 'Stop', command: 'echo s' }] })).results[0];
+    t.ok('読み直して値が変わる JSON は書き直しの許可を求める', lossy.reformatsFile && lossy.reason === 'jsonValues');
+
+    // ---- プロジェクトの置き場所がリンクで作業場所の外を指していたら、読まず書かない
+    const linked = path.join(tmp, 'linked'), outsideDir = path.join(tmp, 'outsideDir');
+    await fs.mkdir(linked, { recursive: true });
+    await write(path.join(outsideDir, 'settings.json'), '{"victim":true}');
+    await fs.symlink(outsideDir, path.join(linked, '.claude'), 'junction');
+    const linkedAdd = await svc.save({ items: [{ op: 'add', agent: 'claude', scope: 'project', base: linked, event: 'Stop', command: 'echo x' }] });
+    const linkedScan = await svc.scan({ cwd: linked, agents: ['claude'] });
+    t.ok('リンクの先が作業場所の外なら書かない・一覧はエラーにする', !linkedAdd.results[0].ok && await fs.readFile(path.join(outsideDir, 'settings.json'), 'utf8') === '{"victim":true}'
+      && linkedScan.files.find(f => f.scope === 'project')?.status === 'error');
+    await fs.rm(path.join(linked, '.claude'));
+
+    // ---- agy の改名で enabled を引き継ぐ。移し先の enabled が違えば断る
+    const agyRepo = path.join(tmp, 'agy-repo'), agyPath = path.join(agyRepo, '.agents', 'hooks.json');
+    await write(agyPath, { audit: { enabled: false, Stop: [{ command: 'node s.cjs' }] }, live: { Stop: [{ command: 'node l.cjs' }] } });
+    const agyRev = () => svc.scan({ cwd: agyRepo, agents: ['antigravity'] }).then(r => r.files.find(f => f.path === agyPath).revision);
+    const rename = async (to, revision) => (await svc.save({ items: [{ op: 'edit', agent: 'antigravity', scope: 'project', base: agyRepo, file: agyPath, revision,
+      loc: { name: 'audit', event: 'Stop', group: -1, handler: 0 }, name: to, event: 'Stop', command: 'node s.cjs' }] })).results[0];
+    const clash = await rename('live', await agyRev());
+    t.ok('止めてある名前を、有効な既存の名前へ移すのは断る', !clash.ok);
+    await rename('audit2', await agyRev());
+    const agyJson = await readJson(agyPath);
+    t.ok('改名しても enabled: false を引き継ぐ（止めていた hook を動かさない）', agyJson.audit2?.enabled === false && !agyJson.audit && agyJson.audit2.Stop[0].command === 'node s.cjs');
+
+    // ---- readHook は command・timeout・async とキーの名前だけ。timeout が欄で扱えない値なら元の値を保てる
+    const oddRepo = path.join(tmp, 'odd'), oddFile = path.join(oddRepo, '.claude', 'settings.json');
+    await write(oddFile, { hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo odd', timeout: '30', env: { API_KEY: 'SECRET-READ' } }] }] } });
+    const oddScan = await svc.scan({ cwd: oddRepo, agents: ['claude'] });
+    const oddRead = await svc.read({ agent: 'claude', scope: 'project', base: oddRepo, file: oddFile, loc: { event: 'Stop', group: 0, handler: 0 } });
+    t.ok('readHook は env などの値を返さない（キーの名前だけ）', !JSON.stringify(oddRead).includes('SECRET-READ') && oddRead.keys.includes('env') && oddRead.command === 'echo odd' && oddRead.timeout === '30');
+    await svc.save({ items: [{ op: 'edit', agent: 'claude', scope: 'project', base: oddRepo, file: oddFile, revision: oddScan.files.find(f => f.path === oddFile).revision,
+      loc: { event: 'Stop', group: 0, handler: 0 }, event: 'Stop', matcher: '', command: 'echo odd2', keepTimeout: true }] });
+    const oddJson = await readJson(oddFile);
+    t.ok('keepTimeout なら扱えない timeout も元の値のまま残す', oddJson.hooks.Stop[0].hooks[0].timeout === '30' && oddJson.hooks.Stop[0].hooks[0].command === 'echo odd2' && oddJson.hooks.Stop[0].hooks[0].env.API_KEY === 'SECRET-READ');
+
+    // ---- 伏せ字: args の秘密のフラグの次・秘密らしい名前のキー（入れ子も）
+    const masked = JSON.stringify(maskDefinition({ args: ['--token', 'SECRETARG', '-v'], extra: { apiKey: 'SECRETNESTED', deep: { password: 'hunter2' } } }));
+    t.ok('args の --token の次の要素と、秘密らしい名前のキーの値を伏せる', !/SECRETARG|SECRETNESTED|hunter2/.test(masked) && masked.includes('-v'));
+
+    // ---- 発火の記録は新しいほうを残し、開始と応答を組ごとに捨てる
+    const runs = [];
+    for (let i = 0; i < 40; i++) runs.push({ phase: 'started', hookId: `h${i}` }, { phase: 'response', hookId: `h${i}` });
+    trimHookRuns(runs);
+    t.ok('発火の記録は上限まで古いほうから組ごとに捨てる', runs.length === 60 && runs[0].hookId === 'h10' && runs[0].phase === 'started' && runs.at(-1).hookId === 'h39');
   } finally {
     if (!containsPath(os.tmpdir(), tmp) || !path.basename(tmp).startsWith('ply-hooks-config-')) throw new Error('unexpected test path');
     await fs.rm(tmp, { recursive: true });
