@@ -23,7 +23,8 @@
     "back": "Back"
   },
   "notifications": {
-    "completed": "Work finished"
+    "completed": "Work finished",
+    "waitingReply": "Waiting for your reply"
   },
   "secrets": {
     "unavailable": "The OS encryption feature (safeStorage) is not available.",

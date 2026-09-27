@@ -8,6 +8,7 @@ import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
 // 承認の保留・猶予・中断（設計メモ §8.5）だけはここに残す。エージェントに散らすと
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
 import { createAgentTasks } from './agent-tasks.mjs';
+import { createCompletionNotices, hasPendingChild } from './completion-notices.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
 import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
@@ -944,6 +945,10 @@ function sendTo(frame) {
   }
   return sent;
 }
+const completionNotices = createCompletionNotices({
+  busy: sessionId => sessionBusy(sessionId) || runtime.background.has(sessionId) || hasPendingChild(agentTasks?.list(sessionId) ?? []),
+  send: event => sendTo({ kind: P.EVENT, event }),
+});
 
 /** 保存した既定を全画面に通知する。セッション閲覧では既定を書き換えない。 */
 async function savePref(key, value, backendId) {
@@ -1343,9 +1348,13 @@ function attach(ws) {
   runtime.graceTimer = null;
 
   for (const frame of runtime.buffer.splice(0)) sendTo(frame);
+  completionNotices.changed();
 
   // 待たせていた承認を聞き直す。取りこぼすとツールが無期限に止まる
-  for (const [id, w] of runtime.waiting) sendTo({ kind: P.EVENT, event: { ...w.payload, id } });
+  for (const [id, w] of runtime.waiting) {
+    const firstNotice = !w.relay && !w.notified;
+    if (sendTo({ kind: P.EVENT, event: { ...w.payload, id, ...(firstNotice ? { notifyReply: true } : {}) } }) && firstNotice) w.notified = true;
+  }
   if (runtime.waiting.size) console.log(`  承認 ${runtime.waiting.size} 件を聞き直した`);
   if (hadGrace) console.log(HOST_GRACE_MS > 0 ? "  猶予を解除した（host が戻った）" : "  host が戻った");
 }
@@ -1426,6 +1435,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
   const ancestors = sessionId ? await delegationAncestors(sessionId) : [];
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
+  const conversationTitle = sessionId ? (await store.get(sessionId).catch(() => null))?.title ?? '' : '';
   // 拒否・中断の理由はエージェントに返るので、承認を求めた会話の言語で訳す（settle には messageKey で来る）
   const lng = agentLocaleOf(locale) ?? await agentLocaleFor(sessionId);
   // i18n-dynamic: agent:approval.
@@ -1441,6 +1451,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       sessionId: sessionId ?? null,
       toolUseID,
       title,
+      conversationTitle,
       canAlways: Boolean(canAlways),
       ...(questions ? { questions } : {}),
     };
@@ -1466,13 +1477,19 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       permissionsChanged();
     };
 
-    for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay });
+    for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false });
     signal?.addEventListener?.("abort", onAbort, { once: true });
 
     // 送れなければ黙って待つ。戻ってきたら attach() が聞き直す。
     // 既定では戻るまで待ち続け、AGENT_HOST_GRACE_MS を指定したときだけ猶予切れがターンごと中断する。
     let sent = false;
-    for (const card of cards) if (sendTo({ kind: P.EVENT, event: { ...card.payload, id: card.id } })) sent = true;
+    for (const card of cards) {
+      const firstNotice = !card.relay;
+      if (sendTo({ kind: P.EVENT, event: { ...card.payload, id: card.id, ...(firstNotice ? { notifyReply: true } : {}) } })) {
+        sent = true;
+        if (firstNotice) runtime.waiting.get(card.id).notified = true;
+      }
+    }
     if (!sent) {
       if (graceExpired()) return giveUp();
       console.log(`  host が居ないので承認を保留: ${toolName}`);
@@ -1526,7 +1543,7 @@ await outbox.recover();
 const noticeBlocked = async owner => sessionBusy(owner) || runtime.background.has(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
-  changed: () => { broadcastRunning(); },
+  changed: () => { broadcastRunning(); completionNotices.changed(); },
   // 人間の承認を待っているか。承認は core/server.mjs 側にしかないので判定を渡す。
   // 中継の複製も数える（孫が止まっていれば、その子も止まっている）
   waiting: sessionId => [...runtime.waiting.values()].some(w => w.payload.sessionId === sessionId),
@@ -1930,6 +1947,7 @@ async function runTurnInternal(args, onStarted, hooks) {
     return turn.outcome;
   } finally {
     switching.delete(sessionId);
+    completionNotices.changed(sessionId);
     notifyFree(sessionId);
     await kickQueued();
   }
@@ -1968,6 +1986,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 片付けるのはこのセッションの承認待ちだけ。他のターンの分は残す
   settleAll('turnEnded', turn.info.sessionId);
   broadcastRunning();
+  if (!delegated) completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt);
 }
 
 /** 送信待ちが残っている会話を全部 kick する。ターンが終わるたびに呼ぶ。 */
@@ -2028,6 +2047,7 @@ function setBackground(backend, sessionId, tasks) {
   }
   syncRunningPoll();
   broadcastRunning();
+  completionNotices.changed(sessionId);
 }
 
 /**
@@ -2539,7 +2559,7 @@ wss.on("connection", (ws, req) => {
             releaseAgentConnection(sessionId);
             emitGlobal({ type: "sessionsChanged", sessionId: null, deleted: sessionId });
             return reply(true, "deleted");
-          } finally { switching.delete(sessionId); }
+          } finally { switching.delete(sessionId); completionNotices.changed(sessionId); }
         }
 
         case "switchBackend": {
@@ -2557,7 +2577,7 @@ wss.on("connection", (ws, req) => {
             await savePref("backend", target.id);
             emitGlobal({ type: "backend", sessionId, backend: target.id });
             return reply(true, { sessionId, backend: target.id });
-          } finally { switching.delete(sessionId); }
+          } finally { switching.delete(sessionId); completionNotices.changed(sessionId); }
         }
 
         case "runTurn":
@@ -3300,6 +3320,7 @@ wss.on("connection", (ws, req) => {
             return reply(true, { sessionId: child });
           } finally {
             forking.delete(sessionId);
+            completionNotices.changed(sessionId);
             outbox.kick(sessionId).catch(() => {});
           }
         }

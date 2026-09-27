@@ -95,6 +95,7 @@
 | 探索（コンテキスト） | scan / search |
 | 送信待ち | waiting to be sent |
 | 作業が完了しました（通知） | Work finished |
+| 返事を待っています（通知） | Waiting for your reply |
 | 鍵束（OS） | keyring |
 | 変更の理由（保存される） | reason |
 | グループごと移動 | Moved with its group |

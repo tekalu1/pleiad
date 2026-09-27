@@ -1111,6 +1111,10 @@ function syncOutboxRows(messages) {
 }
 
 function onEvent(ev, replay = false) {
+  if (ev.type === 'completionReady') {
+    completionNotifications.completed(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
+    return;
+  }
   if (ev.type === 'outbox') {
     outboxes.set(ev.sessionId, ev.messages);
     if (state.current === ev.sessionId) syncOutboxRows(ev.messages);
@@ -1122,7 +1126,6 @@ function onEvent(ev, replay = false) {
       for (const row of thread.querySelectorAll('.mw[data-delivery-sending]')) markDelivery(row, 'sent');
     }
     const s = state.sessions.find(s => s.id === ev.sessionId);
-    completionNotifications.completed(ev, s, replay);
     // requeued は完了ではない（何も届かず送信待ちへ戻った）。完了時刻も既読も触らない
     if (s && !ev.requeued) s.completedAt = ev.completedAt;
     // 中断で終わったら {at, reason}、ほかは null（docs/design-system.md「中断と再開」）。載せない古いサーバーでは触らない
@@ -1140,7 +1143,10 @@ function onEvent(ev, replay = false) {
   }
   // 承認は一度きりしか届かない。開いていない会話の分も覚えておき、開いたときに描く
   // （覚えずに捨てると、一覧は「承認待ち」なのにカードがどこにも出ない）
-  if (ev.type === "permission" && ev.id) state.pendingPerms.set(ev.id, ev);
+  if (ev.type === "permission" && ev.id) {
+    state.pendingPerms.set(ev.id, ev);
+    completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
+  }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
   if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); return; }
   // 別の窓・別の端末（この窓も含む）で完了を確認した。一覧の青い丸だけが変わる
