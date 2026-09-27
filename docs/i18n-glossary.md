@@ -48,6 +48,7 @@
 | アプリ情報・更新 | About & updates |
 | 添付 | attachment |
 | 送信 / 中断 | Send / Stop |
+| 再開 / 中断しました | Resume / Stopped |
 | 未送信 | Unsent |
 | 次のターンから適用 | Applies from the next turn |
 | 考えた（N 文字） | Thought (N chars) |

@@ -19,3 +19,17 @@
 .update-notice { padding: 12px; background: var(--surface-2); border-radius: 14px; font-size: 12px; }
 .update-notice span { display: block; overflow-wrap: anywhere; }
 .update-notice .btn { margin-top: 8px; }
+.update-notice .sub { color: var(--ink-weak); font-size: 11px; margin-top: 2px; }
+.update-notice .sub[hidden] { display: none; }
+/* 確認の段: 止まる作業（名前・実行中/承認待ち・エージェント）。surface-1 の塊の上に置くので一段沈めた面 */
+.update-work { background: var(--surface-paper); border-radius: 14px; padding: 10px 14px 12px; margin: 0 0 10px; }
+.update-work h4 { margin: 0 0 4px; font-size: 12px; color: var(--ink-weak); font-weight: 600; }
+.update-work-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; min-width: 0; }
+.update-work-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.update-work-state { flex: none; font-size: 11px; color: var(--ink-weak); }
+.update-work-state.mark, .update-work-dia { color: var(--ink-mark); }
+.update-work-dia { width: 14px; flex: none; text-align: center; font-size: 9px; }
+.update-work-more { font-size: 11px; color: var(--ink-weak); padding-top: 2px; }
+.update-work-after { font-size: 12px; color: var(--ink-weak); margin: 0 2px 4px; }
+.update-work-after .warn-mark { vertical-align: -2px; margin: 0 1px; }
+.update-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }

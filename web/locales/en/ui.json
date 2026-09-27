@@ -80,7 +80,7 @@
       "download": "Download",
       "install": "Restart to update",
       "confirmTitle": "Restart to update?",
-      "confirmBody": "Saves your conversations and drafts, then restarts Pleiad. If work is running or waiting for approval, you'll be told instead of updating.",
+      "confirmBody": "Saves your conversations and drafts, then restarts Pleiad.",
       "confirmInstall": "Save and restart",
       "later": "Later",
       "autoCheck": "Check for updates automatically",
@@ -1067,7 +1067,6 @@
     "sys": {
       "agentChanged": "Changed the agent to {{agent}}. It takes over the conversation from your next message.",
       "taskResumed": "Received the Pleiad task result and resumed",
-      "aborted": "Stopped",
       "failed": "Failed: {{error}}",
       "unknownReason": "unknown reason",
       "contextRefreshed": "Instructions or Skills changed, so they were reloaded",
@@ -1830,7 +1829,22 @@
     "updated": "Updated to Pleiad {{version}}",
     "promptReady": "Pleiad {{target}} is ready to install",
     "promptAvailable": "Pleiad {{target}} is available",
-    "notesFailed": "Couldn't load the release notes."
+    "notesFailed": "Couldn't load the release notes.",
+    "workTitle": "Work in progress",
+    "workRunning": "Running · {{agent}}",
+    "workRunningOnly": "Running",
+    "workWaiting": "Waiting for approval",
+    "workMore_one": "and {{count}} more",
+    "workMore_other": "and {{count}} more",
+    "workAfter": "Stopped conversations stay marked with {{mark}} after the restart, and Resume continues where they left off. Pending approvals are denied.",
+    "interruptInstall": "Stop and update",
+    "interrupting": "Stopping work… {{done}} / {{total}}",
+    "interruptTimeout": "Some work didn't stop within 30 seconds. The update stays ready.",
+    "promptRunning_one": "{{count}} running",
+    "promptRunning_other": "{{count}} running",
+    "promptWaiting_one": "{{count}} waiting for approval",
+    "promptWaiting_other": "{{count}} waiting for approval",
+    "promptJoin": " · "
   },
   "outbox": {
     "status": {
@@ -2148,5 +2162,37 @@
       "saveFailed": "Couldn't save: {{error}}",
       "loadFailed": "Couldn't load: {{error}}"
     }
+  },
+  "interrupt": {
+    "label": {
+      "user": "Stopped",
+      "update": "Stopped for update",
+      "quit": "Stopped on quit",
+      "restart": "Stopped by restart",
+      "hostAway": "Stopped on disconnect"
+    },
+    "line": {
+      "user": "Stopped",
+      "update": "Stopped for the Pleiad update",
+      "quit": "Stopped because Pleiad quit",
+      "restart": "Stopped because Pleiad restarted",
+      "hostAway": "Stopped because the connection was lost"
+    },
+    "resume": "Resume",
+    "resumeOutbox_one": "Send {{count}} held message and resume",
+    "resumeOutbox_other": "Send {{count}} held messages and resume",
+    "resumeNote": "Sending continues with this instruction",
+    "resumeNoteHeld_one": "Sending continues with this instruction after {{count}} held message",
+    "resumeNoteHeld_other": "Sending continues with this instruction after {{count}} held messages",
+    "placeholder": "Change the instruction and continue…",
+    "resumeFailed": "Couldn't resume: {{error}}",
+    "groupMark": "A conversation inside was stopped",
+    "strip_one": "{{count}} conversation was stopped for the update",
+    "strip_other": "{{count}} conversations were stopped for the update",
+    "resumeAll": "Resume all",
+    "stripClose": "Close",
+    "resumeAllFailed_one": "Couldn't resume {{count}} conversation: {{error}}",
+    "resumeAllFailed_other": "Couldn't resume {{count}} conversations: {{error}}",
+    "markName": "warning triangle"
   }
 }

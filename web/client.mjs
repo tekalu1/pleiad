@@ -47,6 +47,8 @@ import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE } f
 import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
 import { createReadCompletions } from "./unread.mjs";
+import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel,
+  resumeNoteText, resumeVisible, updateInterrupted } from './interrupt.mjs';
 import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { renderOutbox } from './outbox.mjs';
@@ -71,6 +73,8 @@ function paintOutbox() {
   renderOutbox($('outbox'), outboxes.get(id) ?? [], async (messageId, action) => {
     await cmd('messageAction', { sessionId: id, messageId, action });
   }, shown);
+  // 保留の件数で「再開」の字が変わる（renderSessions より先に届くこともある）
+  syncResume();
 }
 async function refreshOutbox(id) {
   const messages = await cmd('listMessages', { sessionId: id });
@@ -84,6 +88,8 @@ try { readStorage = localStorage; } catch {}
 // 確認済みはホストのもの（markRead / read イベント / 一覧の readAt）。どの窓・端末から見ても同じ（web/unread.mjs）
 const readCompletions = createReadCompletions({ storage: readStorage, send: reads => cmd("markRead", { reads }) });
 const displayedCompletions = new Map();
+// 更新の知らせ（web/updates.mjs）。実行中の件数が変わったら脇の知らせの一行を描き直す。setupUpdates が下で入れる
+let updatesUi = null;
 
 const token = new URL(location.href).searchParams.get("token") ?? "";
 const $ = (id) => document.getElementById(id);
@@ -122,6 +128,7 @@ const state = {
   current: null,      // 選択中の sessionId（null = 新規）
   loadingSession: null,
   homeDir: "",
+  serverStartedAt: null,   // サーバーの起動時刻（ready の startedAt）
   osActions: false,   // サーバーのある PC の画面から見ているか（エクスプローラー・ブラウザーで開くを出す）。hostCapabilities で知る
   draft: { status: null, cwd: "" },   // 新規セッションの予約（引き継いだ状態と作業ディレクトリ）。current が null のときだけ意味を持つ
   sessions: [],
@@ -1076,6 +1083,8 @@ function onEvent(ev, replay = false) {
     completionNotifications.completed(ev, s, replay);
     // requeued は完了ではない（何も届かず送信待ちへ戻った）。完了時刻も既読も触らない
     if (s && !ev.requeued) s.completedAt = ev.completedAt;
+    // 中断で終わったら {at, reason}、ほかは null（docs/design-system.md「中断と再開」）。載せない古いサーバーでは触らない
+    if (s && !ev.requeued && 'interrupted' in ev) s.interrupted = ev.interrupted ?? null;
     if (ev.sessionId === state.current && !state.loadingSession && !ev.requeued) {
       displayedCompletions.set(ev.sessionId, ev.completedAt);
       if (document.visibilityState === "visible") readCompletions.mark(ev.sessionId, ev.completedAt);
@@ -1240,7 +1249,8 @@ function onEvent(ev, replay = false) {
     case "turnResult": {
       if (ev.outcome === "ok") return;             // 終わったことは稼働表示が消えれば分かる
       closeTurnEl();
-      if (ev.outcome === "aborted") sys(html.t("chat.sys.aborted"));
+      // 中断の一行は保存された状態と同じ形で描く（paintInterruptLine が二重に出さない）
+      if (ev.outcome === "aborted") paintInterruptLine({ at: ev.at ?? Date.now(), reason: ev.reason });
       else {
         const node = sys(html.t("chat.sys.failed", { error: ev.error ?? t("chat.sys.unknownReason") }));
         if (ev.sessionId) turnErrorRows.set(ev.sessionId, { messageId: ev.messageId, node });
@@ -1370,8 +1380,9 @@ function onEvent(ev, replay = false) {
       for (const row of thread.querySelectorAll('.mw[data-delivery-pending]')) markDelivery(row, 'late');
       state.awaitingSession = false;
       state.submitting = false;
-      if (ev.sessionId) { state.runningIds.delete(ev.sessionId); state.stopping.delete(ev.sessionId); }
+      if (ev.sessionId) { state.runningIds.delete(ev.sessionId); state.stopping.delete(ev.sessionId); resumeSettled(ev.sessionId); }
       syncRunState();
+      paintInterruptLine();
       syncHistory();
       return refresh();
   }
@@ -1400,8 +1411,12 @@ function applyRunning(work) {
     const b = behindOfTasks(tasks);
     if (b) behind.set(id, b.n);
   }
+  // ターンが始まった会話は中断ではなくなる（サーバーも次の一覧で null を返す）
+  let resumed = false;
+  for (const s of state.sessions) if (s.interrupted && running.has(s.id)) { s.interrupted = null; resumed = true; }
+  for (const id of running) if (resumeSettled(id)) resumed = true;
   // 4 秒ごとの放送で印が変わっていなければ一覧を描き直さない
-  const changed = !sameSet(running, state.runningIds) || !sameSet(waiting, state.waitingIds)
+  const changed = resumed || !sameSet(running, state.runningIds) || !sameSet(waiting, state.waitingIds)
     || behind.size !== state.bgWaiting.size || [...behind].some(([id, n]) => state.bgWaiting.get(id) !== n);
   state.runningIds = running;
   state.waitingIds = waiting;
@@ -1414,6 +1429,7 @@ function applyRunning(work) {
   activity.sync();
   paintSettingsNotice();
   if (changed) renderSessions();
+  updatesUi?.workChanged();
   // バックグラウンドはこの会話の分だけ稼働表示に出す。他所の分は一覧の行に付く
   syncWorkEntry();
   restorePastSubagents(state.current);
@@ -2039,13 +2055,155 @@ function renderSessions() {
     waitingIds: state.waitingIds,
     bgWaiting: state.bgWaiting,
     unreadIds,
+    // 中断した会話（注意の三角）。未読は --ink、既読は --ink-weak（web/interrupt.mjs）
+    interrupted: new Map(listed.filter(isInterrupted).map(s => [s.id, { ...s.interrupted, unread: interruptUnread(s, readCompletions.readAt(s.id)) }])),
     draft: null,      // 新規のときだけ。予約は current が無いときに意味を持つ
     backendLabels: backendLabels(),
     pendingRows,
     pendingStatuses,
     pendingNew: pendingNewSession,
   });
+  syncResumeStrip();
+  syncResume();
 }
+
+// ---------------------------------------------------------------- 中断と再開（docs/design-system.md「中断と再開」）
+
+const currentSession = () => state.sessions.find(s => s.id === state.current) ?? null;
+// 再開を送った会話 -> 待ちの上限のタイマー。送ってからターンが始まる（applyRunning）か終わる（turnEnd）まで、
+// 再開ボタンを押せないままにする（中断の印はサーバーが消すまで下ろさない。先に下ろすと、何も始まらなかったときに嘘になる）
+const resuming = new Map();
+const RESUME_HOLD_MS = 15000;
+function resumeSettled(sessionId) {
+  if (!resuming.has(sessionId)) return false;
+  clearTimeout(resuming.get(sessionId));
+  resuming.delete(sessionId);
+  return true;
+}
+
+/**
+ * 会話の末尾の「■ 中断しました · 14:32」。保存された中断（セッションの interrupted）から描くので読み直しても消えない。
+ * ライブの中断（turnResult）も同じ関数で描く。最後の人間の発言より後に既に 1 行あれば、文だけ合わせて足さない
+ */
+function paintInterruptLine(live) {
+  const s = currentSession();
+  const interrupted = live ?? (isInterrupted(s) ? s.interrupted : null);
+  if (!interrupted || (!live && isRunningHere())) return;
+  const last = [...thread.querySelectorAll('.m.sys[data-interrupted]')].at(-1);
+  const lastUser = [...thread.querySelectorAll('.m.user')].at(-1);
+  const line = last && (!lastUser || lastUser.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING) ? last : null;
+  // ライブの行は届いた理由・時刻で描いてある。保存された方が正なので、同じ行を描き直す
+  const m = line ?? el('div', 'm sys interrupted');
+  m.dataset.interrupted = reasonOf(interrupted);
+  const at = Number(interrupted.at);
+  m.replaceChildren(stopMark(), el('span', null, interruptLineText(interrupted)));
+  if (Number.isFinite(at) && at > 0) m.append(el('span', null, '·'), el('span', 't', hhmm(at)));
+  if (!line) append(m);
+}
+
+/**
+ * 入力欄の「▶ 再開」。中断状態・走っていない・欄が空のときだけ「中断」の位置に出す。
+ * 保留の未送信があれば「保留中の N 件を送って再開」。字を書いたら隠し、欄の下に「送ると、この指示で続けます」。
+ * 中断中だけプレースホルダを「指示を変えて続ける…」にする
+ */
+function syncResume() {
+  const s = currentSession();
+  const interrupted = isInterrupted(s) && !retiredHere() && state.current !== freshSessionId;
+  const running = isRunningHere() || submittingMessages.has(state.current);
+  const text = $('prompt').value;
+  const attached = state.attached.length > 0;
+  const show = resumeVisible({ interrupted, running, waiting: isWaitingHere(), text, attached });
+  const button = $('resume');
+  const paused = interrupted ? pausedCount(outboxes.get(state.current)) : 0;
+  const label = resumeLabel(paused);
+  if ($('resumeLabel').textContent !== label) {
+    $('resumeLabel').textContent = label;
+    button.title = label;
+    button.setAttribute('aria-label', label);
+  }
+  button.disabled = resuming.has(state.current);
+  const note = $('resumeNote');
+  note.hidden = !interrupted || running;
+  // 保留があれば、送った指示は保留の後ろに並ぶ（サーバーが保留を先に送り直す。sendMessage）
+  const noteText = resumeNoteText(paused);
+  if (note.textContent !== noteText) note.textContent = noteText;
+  // 書いていない間も高さは取っておく（書き始めたときに入力欄が跳ねない）
+  note.classList.toggle('quiet', !(text.trim() || attached));
+  const placeholder = t('interrupt.placeholder');
+  if (!$('prompt').disabled) {
+    if (interrupted && !running) $('prompt').placeholder = placeholder;
+    else if ($('prompt').placeholder === placeholder) $('prompt').placeholder = promptPlaceholder();
+  }
+  if (button.hidden === show) { button.hidden = !show; controls.fit(); }
+}
+
+/**
+ * 再開。サーバーが保留・送れなかった未送信を送るか、理由に合った「続けて」の文を普通の送信で送る（WS resume）。
+ * 中断の印はここでは下ろさない。ターンが始まれば applyRunning と turnEnd が下ろす。それまでボタンは押せない
+ */
+async function resumeSession(sessionId) {
+  if (!sessionId || resuming.has(sessionId)) return false;
+  resuming.set(sessionId, null);
+  syncResume();
+  try {
+    await cmd('resume', { sessionId });
+  } catch (e) {
+    resumeSettled(sessionId);
+    renderSessions();
+    throw e;
+  }
+  // 始まらないまま（同時実行の上限待ちなど）でも、ずっと押せないままにはしない
+  if (resuming.has(sessionId)) resuming.set(sessionId, setTimeout(() => { if (resumeSettled(sessionId)) syncResume(); }, RESUME_HOLD_MS));
+  renderSessions();
+  return true;
+}
+
+$('resume').onclick = () => {
+  const sessionId = state.current;
+  completionNotifications.requestPermission();
+  $('settingsError').textContent = '';
+  resumeSession(sessionId).catch(e => { $('settingsError').textContent = t('interrupt.resumeFailed', { error: e.message }); });
+};
+
+/** 脇の下の「更新で中断した会話が N 件あります［まとめて再開］［×］」。× は閉じたときの最大の at を覚える */
+const RESUME_STRIP_KEY = 'ply-update-interrupts-dismissed';
+function resumeStripDismissed() {
+  try { return Number(localStorage.getItem(RESUME_STRIP_KEY)) || 0; } catch { return 0; }
+}
+let resumeStripError = '';
+// 更新で Pleiad が再起動した後だけ出す: サーバーの起動（ready の startedAt）より前の中断だけを数え、
+// この画面で更新を進めている間（作業の中断・保存・インストール）は出さない
+const updateInterruptedNow = (dismissedAt) => updateInterrupted(state.sessions, dismissedAt, { startedAt: state.serverStartedAt ?? 0 });
+function syncResumeStrip() {
+  const { ids, maxAt, show } = updateInterruptedNow(resumeStripDismissed());
+  const strip = $('resumeStrip');
+  strip.hidden = updatesUi?.applying || (!show && !resumeStripError);
+  if (strip.hidden) return;
+  $('resumeStripText').textContent = resumeStripError || t('interrupt.strip', { count: ids.length });
+  strip.classList.toggle('failed', Boolean(resumeStripError));
+  $('resumeAll').hidden = !ids.length;
+  strip.dataset.maxAt = String(maxAt);
+}
+$('resumeAll').onclick = async () => {
+  const { ids } = updateInterruptedNow(0);
+  $('resumeAll').disabled = true;
+  resumeStripError = '';
+  const failed = [];
+  for (const id of ids) {
+    // 押した後に別の所（入力欄の再開・別の端末）で続いた会話は飛ばす。失敗には数えない
+    if (!isInterrupted(state.sessions.find(s => s.id === id)) || resuming.has(id)) continue;
+    await resumeSession(id).catch(e => { if (e.code !== 'NOT_INTERRUPTED') failed.push(e); });
+  }
+  $('resumeAll').disabled = false;
+  if (failed.length) resumeStripError = t('interrupt.resumeAllFailed', { count: failed.length, error: failed[0].message });
+  syncResumeStrip();
+};
+$('closeResumeStrip').onclick = () => {
+  const { maxAt } = updateInterruptedNow(0);
+  try { localStorage.setItem(RESUME_STRIP_KEY, String(Math.max(maxAt, resumeStripDismissed()))); } catch {}
+  resumeStripError = '';
+  syncResumeStrip();
+};
 
 function acknowledgeDisplayed(id, completedAt) {
   displayedCompletions.set(id, Math.max(displayedCompletions.get(id) ?? 0, completedAt ?? 0));
@@ -4509,7 +4667,11 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   // loadSession が返す保留中の一覧から拾える
   for (const ev of data?.permissions ?? []) if (ev.id) state.pendingPerms.set(ev.id, ev);
   paintPendingPerms(id);
-  acknowledgeDisplayed(id, data?.completedAt);
+  // 中断した会話は末尾に「■ 中断しました」（保存された状態から。読み直しても消えない）。loadSession の値が一覧より新しい
+  const opened = state.sessions.find(s => s.id === id);
+  if (opened && data && 'interrupted' in data) opened.interrupted = data.interrupted ?? null;
+  paintInterruptLine();
+  acknowledgeDisplayed(id, Math.max(data?.completedAt ?? 0, isInterrupted(opened) ? interruptReadPoint(opened) : 0) || data?.completedAt);
   const groups = placeJunctions({ snapshots });
   const moving = transition ? groups.find(r => r.dataset.key === transition.key) : null;
   if (transition) {
@@ -4526,6 +4688,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   // 対応を終えたエージェントの会話は読むだけ。入力欄を閉じ、理由を末尾に出す（送信はサーバーも断る）
   const retired = data?.retired ?? null;
   if (retired) { sys(escText(retired)); $("prompt").disabled = true; $("prompt").placeholder = retired; }
+  syncResume();
   if (keepUpTo === undefined && (!quiet || atEnd)) scrollToEnd(); else log.scrollTop = scrollAt;
   if (family) family.then(() => {
     if (state.current !== id || load && state.displayLoad !== load) return;
@@ -4533,6 +4696,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
     const stick = atBottom();
     placeJunctions();
     if (!retired) $("prompt").placeholder = branchIsFresh(id) ? t("chat.composer.firstMessage", { name: branches.nameOf(id) }) : promptPlaceholder();
+    syncResume();
     if (stick) scrollToEnd();
   });
   if (moving) await moving.promote(transition.snapshot);
@@ -4710,6 +4874,7 @@ function syncRunState() {
   $("abort").hidden = !(here || isWaitingHere());
   // 受け付けた中断は取り消せない。止まり終えるまで押せないようにする（稼働表示は「中断している」）
   $("abort").disabled = here && stoppingHere();
+  syncResume();     // 中断状態なら同じ位置に「再開」
   controls.fit();   // 中断が出入りすると行の幅の配分が変わる
   if (!here) {
     closeTurnEl();
@@ -4822,6 +4987,8 @@ function connect() {
         return ws.close();
       }
       if (m.homeDir) state.homeDir = m.homeDir;
+      // サーバーの起動時刻。これより前の更新による中断だけを「更新の後」の一行に数える（syncResumeStrip）
+      state.serverStartedAt = Number.isFinite(m.startedAt) ? m.startedAt : null;
       // 画面と違う言語なら読み直すので、ここで止める
       if (applyLocale(m.locale)) return;
       connStatus.ready();
@@ -4919,6 +5086,7 @@ $("abort").onclick = () => {
 $("authNeed").onclick = (e) => { e.stopPropagation(); side.closePops(); openSettings(); };
 
 $("prompt").addEventListener("input", fitPrompt);
+$("prompt").addEventListener("input", () => syncResume());
 addEventListener("resize", fitPrompt);
 
 $("workDialog").addEventListener("click", (e) => {
@@ -5022,7 +5190,13 @@ const onboarding = setupOnboarding({ cmd, refreshAuth, getAuth: () => state.auth
     $("prompt").dispatchEvent(new Event("input", { bubbles: true }));
   },
 });
-setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lock, flush: async () => {
+// 実行中でも更新できる（ADR 0036）。確認の段で止まる作業を並べ、「中断して更新」で全部を reason update で中断してから保存へ進む。
+// 下の flush の count > 0 の断りは、中断が済んだ後の安全網（サーバーの更新ロックも残る）
+updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lock, cmd,
+  work: () => state.work,
+  sessionName: (id) => rowLabel(state.sessions.find(s => s.id === id) ?? {}),
+  agentName: (id) => (id ? labelOf(id) : ''),
+  flush: async () => {
   const work = await cmd('running');
   if (work.count > 0) {
     // どの会話が止めているかを名前で出す。数だけだと、どこを待てばよいか探し回ることになる

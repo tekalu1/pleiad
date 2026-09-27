@@ -19,7 +19,7 @@ export function stampSessionId(event, fallback) {
 }
 
 // server -> client
-export const READY = "ready";
+export const READY = "ready";   // { protocolVersion, version, homeDir, resumedTurn, startedAt（サーバーの起動時刻 ms）, locale }
 export const EVENT = "event";
 export const RESPONSE = "response";
 export const ERROR = "error";
@@ -94,7 +94,8 @@ export const COMMANDS = new Set([
   "runTurn",
   "sendMessage", "messageAction", "listMessages",
   "switchBackend",   // idle conversation -> a new native execution segment
-  "abort",
+  "abort",           // { sessionId?, reason?: user|update|quit } -> { aborted, reason }。sessionId 省略は全部。reason 省略・不正は user。止めた会話は interrupted { at, reason } で残る
+  "resume",          // { sessionId } -> { sent: "outbox"|"text", count }。中断した会話を続ける（保留・送れなかった未送信を送り直す。無ければ理由ごとの文を送る）。実行中（SESSION_RUNNING）・中断していない（NOT_INTERRUPTED）・結果不明の未送信がある（OUTBOX_UNKNOWN）会話は断る
   "listSessions",
   "loadSession",     // 履歴（本文 + present）を読み直す。outline: true は系譜の照合用に骨だけ返す。watch: true はこの接続が開いた会話として登録する（下の watchSession）
   "watchSession",    // { sessionId } 開いている会話を登録し直す。登録した接続には、流れの出来事をその会話の分だけ送る（turnEnd は全部。ADR 0024）
@@ -170,7 +171,7 @@ export const EVENTS = new Set([
   "tool.start",      // { id, name, input }
   "tool.result",     // { id, text, isError, truncated }
   "activity",        // { state: thinking|writing|compacting|waiting|running|idle, label? }
-  "turnResult",      // { outcome: ok|error|aborted, turns?, costUsd?, error? }
+  "turnResult",      // { outcome: ok|error|aborted, turns?, costUsd?, error?, reason? }。reason は aborted のときの中断の理由（user|update|quit|hostAway）
 
   // ---- セッションとメタ情報
   "session",      // sessionId が確定した { sessionId, model? }（model は実際に解決されたもの）
@@ -199,5 +200,5 @@ export const EVENTS = new Set([
   // { names, count } 開始時と指示・Skills が変わっていたので、送信時に自動で読み込み直した（core/server.mjs の runTurn）
   "contextRefreshed",
   "running",      // 動いているものが増減した
-  "turnEnd",
+  "turnEnd",       // { completedAt, outcome, interrupted: { at, reason } | null, requeued?, delegated? }
 ]);

@@ -92,8 +92,27 @@ export function createMessageQueue({ store, active, start, changed, delivered })
     for (const item of items) if (item.status === 'queued') item.status = 'paused';
     await save(id, items);
   });
+  // 保留（paused）を全部、並びのまま送信待ちへ戻す。1 件ずつの「再送する」（action の retry）と同じ書き換えを、
+  // 中断した会話の「再開」と、中断した会話への新しい送信でまとめて行う（core/server.mjs の resumeSession・sendMessage）。
+  // failed: true なら送れなかった（failed）ものも戻す。failed はエージェントに渡っていない（undelivered）ので送り直してよい。
+  // 結果不明（unknown）は戻さない（届いているかもしれない。人が確かめて選ぶ）。戻した項目の id を並びのまま返す
+  const retryPaused = async (id, { failed = false } = {}) => {
+    const released = await serial(id, async () => {
+      const items = await list(id);
+      const ids = [];
+      for (const item of items) {
+        if (item.status !== 'paused' && !(failed && item.status === 'failed')) continue;
+        item.status = 'queued'; item.error = null; ids.push(item.id);
+      }
+      if (ids.length) await save(id, items);
+      return ids;
+    });
+    if (released.length) kick(id).catch(() => {});
+    return released;
+  };
   return {
     get busy() { return locks.size > 0; },
+    retryPaused,
     list: id => serial(id, async () => view(id, await list(id))), kick, pause,
     // ターンは始めたが、バックエンドがプロンプトを渡す前に失敗した。送っていないので失敗として残し、再送か取り消しを選ばせる
     undelivered: (id, messageId, error) => serial(id, async () => {
