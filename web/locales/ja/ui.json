@@ -2640,7 +2640,8 @@
         "runPleiad": "Pleiad · {{name}}",
         "leakRun": "止めたはずの定義",
         "foot": "止めたのは Pleiad から起動したこの会話だけです。元のファイルは変えていません。",
-        "viaAdapter": "アダプター越し"
+        "viaAdapter": "アダプター越し",
+        "blocked": "完了 · ツールを止めた"
       },
       "placeSwitchAria": "この場所で {{name}} を渡す"
     }

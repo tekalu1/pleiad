@@ -647,8 +647,10 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     };
     const make = run => {
       const r = run.response ?? run.started, done = run.response;
-      const mark = !done ? '○' : done.outcome === 'success' ? '✓' : done.outcome === 'cancelled' ? '–' : '×';
+      const mark = !done ? '○' : done.outcome === 'success' || done.outcome === 'blocked' ? '✓' : done.outcome === 'cancelled' ? '–' : '×';
+      // blocked は Codex の「hook がツールを止めた」（hook 自身は動いて答えた）
       const what = !done ? t('sessionContext.hooks.startedOnly') : done.outcome === 'success' ? t('sessionContext.hooks.done')
+        : done.outcome === 'blocked' ? t('hooks.unify.session.blocked')
         : done.outcome === 'cancelled' ? t('sessionContext.hooks.cancelled') : t('sessionContext.hooks.failedRun');
       const bits = [stamp(run.started?.at ?? r.at, false), r.event, what, r.leak ? t('hooks.unify.session.leakRun') : null,
         !r.pleiad && r.source && r.source !== 'unknown' ? t(`hooks.scope.${r.source === 'user' || r.source === 'project' || r.source === 'plugin' ? r.source : 'managed'}`) : null];

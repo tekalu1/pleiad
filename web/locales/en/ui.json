@@ -2716,7 +2716,8 @@
         "runPleiad": "From Pleiad · {{name}}",
         "leakRun": "should have been off",
         "foot": "Turned off only in this conversation started from Pleiad. The original files are unchanged.",
-        "viaAdapter": "through the adapter"
+        "viaAdapter": "through the adapter",
+        "blocked": "Done · blocked the tool"
       },
       "placeSwitchAria": "Pass {{name}} in this location"
     }
