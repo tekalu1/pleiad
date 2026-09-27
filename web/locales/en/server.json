@@ -964,6 +964,10 @@
       "tooLarge": "The settings file would be too large.",
       "reformat": "Only the hooks part of this file can't be rewritten. Confirm rewriting the whole file.",
       "renameEnabled": "The target name has a different enabled state, so the name can't be changed. Pick a name with the same state, or align enabled first."
+    },
+    "copy": {
+      "notReady": "This copy is not ready yet. Check the reasons on the review screen",
+      "adapterConflict": "An adapter file with the same name but different content already exists, so it was not overwritten"
     }
   }
 }
