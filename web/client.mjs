@@ -284,7 +284,7 @@ function acceptCompaction(event) {
 }
 function paintAutoCompactionSettings() {
   const settings = state.prefs.autoCompaction ?? { enabled: true, minTokens: 40_000,
-    claude: { enabled: true, delayMinutes: 50 }, codex: { enabled: false, delayMinutes: 50 } };
+    claude: { enabled: true, delayMinutes: 50 }, codex: { enabled: false, delayMinutes: 25 } };
   $('autoCompactionEnabled').setAttribute('aria-checked', String(settings.enabled));
   $('autoCompactionMin').value = String(settings.minTokens / 1000);
   for (const id of ['claude', 'codex']) {
