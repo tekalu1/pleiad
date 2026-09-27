@@ -97,9 +97,24 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 
 ## Hooks
 
-hooks は Pleiad から渡さない（担当は「エージェントに任せる」だけ。[ADR 0045](adr/0045-hooks-management.md)）。各エージェントが自分の設定の hooks を実行する。Claude の会話は `query()` に `includeHookEvents: true` を渡し、hooks の開始（`hook_started`）と応答（`hook_response`）を受け取る。`claude-normalize.mjs` がこれを `hookRun`（`{ phase: started|response, hookId, name, event, outcome?: success|error|cancelled, exitCode? }`）にする。出力（stdout・stderr・output）は秘密を含みうるので持ち出さない。通知は設定ファイルの hooks の分だけ届き、Pleiad 自身が `query()` に渡す SDK のコールバック（PreCompact / PostCompact）の分は届かない（実機で確認、2026-09-27。設定とコールバックが同じイベントで走っても通知は 1 組）。server は `hookRun` を画面の流れへは出さず、ターンに集めて終わりに会話の `hookRuns` へ足す（最新 60 件。ターンの中でも古いほうから、開始と応答の組ごとに捨てる。`trimHookRuns`）。
+担当が「エージェントに任せる」の場所（既定）では、hooks は Pleiad から渡さない（[ADR 0045](adr/0045-hooks-management.md)）。各エージェントが自分の設定の hooks を実行する。担当が「Pleiad がそろえる」の場所では、下の「Pleiad がそろえる会話」のとおり。Claude の会話は `query()` に `includeHookEvents: true` を渡し、hooks の開始（`hook_started`）と応答（`hook_response`）を受け取る。`claude-normalize.mjs` がこれを `hookRun`（`{ phase: started|response, hookId, name, event, outcome?: success|error|cancelled, exitCode? }`）にする。出力（stdout・stderr・output）は秘密を含みうるので持ち出さない。通知は設定ファイルの hooks の分だけ届き、Pleiad 自身が `query()` に渡す SDK のコールバック（PreCompact / PostCompact）の分は届かない（実機で確認、2026-09-27。設定とコールバックが同じイベントで走っても通知は 1 組）。server は `hookRun` を画面の流れへは出さず、ターンに集めて終わりに会話の `hookRuns` へ足す（最新 60 件。ターンの中でも古いほうから、開始と応答の組ごとに捨てる。`trimHookRuns`）。
 
-`sessionHooks { sessionId, cwd, backend }` は会話の右パネル用に、その会話のエージェントで cwd に見つかる定義（`scanHooks` と同じ行）と `hookRuns`（走っているターンの分を含む）を返す。`observable` は発火の通知を受け取れる接続か（今は Claude だけ）。定義は「登録あり · 読み込み未確認」までで、読み込まれた・実行されたとは扱わない。発火の記録は開始と応答を `hookId` で組にし、応答が無いものを完了と推定しない。通知には設定ファイルのパスも command も無い。`hook_name` は「イベント:matcher」（例 `PreToolUse:Bash`）なので、その会話の場所で同じイベント・matcher の Claude の定義が 1 つだけのときその定義の名前で出し、結べなければイベントだけを出す。Codex と Antigravity は通知を受け取れないので「観測できません」とし、0 件・未実行とは書かない。
+`sessionHooks { sessionId, cwd, backend }` は会話の右パネル用に、その会話のエージェントで cwd に見つかる定義（`scanHooks` と同じ行）と `hookRuns`（走っているターンの分を含む）を返す。`observable` は発火の通知を受け取れる接続か（Claude と Codex。Antigravity は Pleiad がそろえた会話で Pleiad が渡した分だけ: `observed: 'pleiad'`）。定義は「登録あり · 読み込み未確認」までで、読み込まれた・実行されたとは扱わない。発火の記録は開始と応答を `hookId` で組にし、応答が無いものを完了と推定しない。通知には設定ファイルのパスも command も無い。`hook_name` は「イベント:matcher」（例 `PreToolUse:Bash`）なので、その会話の場所で同じイベント・matcher の Claude の定義が 1 つだけのときその定義の名前で出し、結べなければイベントだけを出す。Codex は app-server の `hook/started`・`hook/completed`（`run.id`・`eventName`・`source`・`status`・`durationMs`）を同じ `hookRun` にする（`codexHookRun`。`source` を残し、出力の `entries` は持ち出さない）。Antigravity は通知を受け取れないので「観測できません」とし、0 件・未実行とは書かない。
+
+### Pleiad がそろえる会話（[ADR 0048](adr/0048-hooks-pleiad-managed.md)）
+
+ターンの開始ごとに、その場所の担当（`core/ply-hooks.mjs` の `resolve`）が Pleiad なら、`prepareHooksTurn`（`core/hooks-unify.mjs`）がそのエージェントへ渡す登録（`targets` に含み、オンで、その場所で外していないもの）を組み立て、会話の記録 `contextSession.hooks`（`{ owner: 'ply', at, agent, from, revision, supplied, unsupported, skipped, stopped, kept, leaks, untrusted? }`）に残してバックエンドへ `hooksRuntime` を渡す。担当がエージェントのターンは何も渡さない。組み立てに失敗したらターンを始めない（`hooksUnify.prepareFailed`）。変換は第 2 段と同じ（`deliverable` = `convertHook`。同じ形のコマンドはそのまま）。設定の変更は次のターンから効く。
+
+| エージェント | ネイティブの止め方 | 登録の渡し方 | 発火の記録 |
+|---|---|---|---|
+| Claude Code | フラグ設定の `disableAllHooks: true`（`claudeContextOptions` の `hooks`。互換先はフラグ設定のファイル）。ユーザー・プロジェクト・ローカル・プラグインが止まる。管理者は止まらない | `query()` の `hooks` にコールバック（`claudeHookCallbacks`。Pleiad 自身の PreCompact / PostCompact と合わせる）。同じ形のコマンドは子プロセスで動かしてコマンドの hook の約束（exit 2 で止める・理由は stderr、ほかの exit・timeout は止めない）どおりに答える。別の形はアダプターの処理（`adapt`）を同じプロセスで通す。SessionStart・Setup は渡せない | コールバックの入口と出口で自分で記録（`pleiad: true`・登録の `id`）。`hook_started` が届いたら漏れ（`leak`） |
+| Codex | ターンごとに、その会話の app-server の `hooks/list`（その cwd）を取り、`source` が `user`・`project` の key に `enabled: false`。プラグイン・管理者は止めない。`features.hooks=false` は使わない | `thread/start`・`thread/resume` の `config` の `hooks`（表。登録 1 件を 1 つの group）と `hooks.state` の `trusted_hash`。hash は同じ表を起動の `-c hooks=…` で渡した app-server（プローブ）の `hooks/list` の `currentHash`（`source: sessionFlags`。表ごとに覚える）。アダプター越しは `node "<data>/hooks-runtime/hook-adapter-<hash>.mjs" …`（PATH の node） | `hook/started`・`hook/completed`。`source: sessionFlags` は Pleiad の分、`user`・`project` は漏れ |
+| Antigravity | 一時の置き場（`--add-dir`）の `.agents/hooks.json` に、ユーザーと作業場所の定義の名前ごとの `{ "enabled": false }`（プラグインの名前は入れない）。カスタムエージェントは使わない（コンテキストを Pleiad が渡すときだけ今までどおり） | 同じファイルの `pleiad-<id>` の名前で、置き場の `.agents/pleiad-hooks/hook-adapter-<hash>.mjs` を相対パス（引用なし）で動かす。アダプターは stdin の `workspacePaths` から利用者の作業場所に直し、PreToolUse で何も言わなければ `allow` を返す | アダプターが 6 番目の引数（登録の id）で置き場の `runs.jsonl` に書き、ターンの終わりに読む。ネイティブの発火は観測できない |
+
+- **Codex のロード済みのスレッド**: resume は hooks の `config` を無視するので、渡した hooks の config の指紋（`loadedHooks`。渡さないときは空）が前と違えば `thread/unsubscribe` してから resume する。外せなければターンを始めない（`codex.errors.hooksUnsubscribeFailed`）。担当を戻したときも同じ。Codex の `hooks/list` を取れなければターンを始めない。信頼の hash を取れなかった登録は数を `untrusted` に残す（Codex はその登録を動かさない）。
+- **agy の起こし直し**: 置き場の `hooks.json` は起動時にしか読まれない。登録・止める名前が前のターンと違えば（`shape`）agy を起こし直す（会話は `--conversation` で続く）。起動後に足されたネイティブの名前は、次に起こし直すまで止まらない。
+- **止められないもの**: Claude の管理者の hooks、Codex・agy のプラグイン・管理者の hooks。会話の記録の `kept` と、切り替えの確認の「止めずに動き続けるもの」に出す。
+- 右パネル（`sessionHooks`）は、走っているターンか保存した `contextSession.hooks` を `unify`、今の場所の担当を `owner` として返す。画面は design-system.md「Hooks」。
 
 ## 利用記録と検証
 
