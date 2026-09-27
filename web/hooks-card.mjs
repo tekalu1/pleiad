@@ -703,8 +703,10 @@ export async function openCopySheet(ctx, entry) {
     // 元 → 写した後
     const facts = el('div', 'fm facts');
     const put = (k, v) => facts.append(el('span', 'k', k), el('span', 'v', v));
-    put(t('hooks.fact.event'), r.event);
-    if (!blocked || r.matcherStatus) put('matcher', `${matcherText(dry.source.matcher)} → ${r.matcher === null ? t('hooks.fact.none') : r.matcher === '' && r.matcherStatus === 'review' ? '—' : matcherText(r.matcher)}`);
+    // 対応するイベントが無い先は、matcher を並べない（写した後の形が無い）
+    const noEvent = r.reasons?.some(x => x.code === 'event');
+    put(t('hooks.fact.event'), noEvent ? `${r.event} → ${t('hooks.copy.noEvent')}` : r.event);
+    if (!noEvent) put('matcher', `${matcherText(dry.source.matcher)} → ${r.matcher === null ? t('hooks.fact.none') : r.matcher === '' && r.matcherStatus === 'review' ? '—' : matcherText(r.matcher)}`);
     if (!blocked) {
       put('timeout', `${seconds(dry.source.timeout)} → ${seconds(r.timeout)}${r.innerTimeout ? ` ${t('hooks.copy.innerTimeout', { n: r.innerTimeout })}` : ''}`);
       if (r.name) put(t('hooks.sheet.name'), r.name);
@@ -717,7 +719,9 @@ export async function openCopySheet(ctx, entry) {
       card.append(redo(t('hooks.copy.matcher', { agent: agentLabel(a) }), st.matcher, a === 'antigravity' ? 'run_command' : 'Bash', v => { st.matcher = v; }));
     if (r.adapter) card.append(el('p', 'mcp-note', r.adapter.exists ? t('hooks.copy.adapterReuse', { path: ctx.short(r.adapter.path) }) : t('hooks.copy.adapterWrite', { path: ctx.short(r.adapter.path) })));
     // 実際に書く本文の差分（伏せ字済み）
-    if (r.after !== undefined) {
+    // matcher を確かめる前は、仮の matcher（全件）で作った本文を見せない
+    if (r.reasons?.some(x => x.review === 'matcher')) card.append(el('p', 'mcp-note', t('hooks.copy.diffPending')));
+    else if (r.after !== undefined) {
       card.append(el('span', 'hk-lang', t('hooks.copy.diff', { format: String(r.format ?? '').toUpperCase() })), diffView(lineDiff(r.before ?? '', r.after ?? '')));
       if (r.hiddenChange) card.append(el('p', 'mcp-note cx-strong', t('hooks.confirm.hiddenChange')));
     }

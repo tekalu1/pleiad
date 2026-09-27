@@ -2586,7 +2586,9 @@
         "inputShape": "Tool input is converted to the closest shape (shell, file and search tools). Other tools get their input as it is.",
         "scriptMissing": "The file the command points to ({{path}}) was not found. The script is not copied, so it will not run in the target either.",
         "scriptRelative": "The command uses a relative path ({{path}}). The folder it is relative to changes in the target."
-      }
+      },
+      "noEvent": "No matching event",
+      "diffPending": "Enter the target matcher and press Check to see the diff of the text to write."
     }
   },
   "browser": {
