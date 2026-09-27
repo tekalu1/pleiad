@@ -28,6 +28,10 @@ const cases = [
   await import('./unit/agent-tasks-storage.mjs'),
   await import('./unit/background-model.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
+  // 委譲の子に裏の作業が残るとき: 終わらないコマンドは上限まで待って止める・サブエージェントは止めない・端末は待たない（子にも親にも）
+  await import('./unit/server-delegation-background.mjs'),
+  // 委譲の結果に選ぶ返答: Stop フックの続き（調べものだけ）は飛ばす・中身の仕事をした続きは選ぶ（Claude の transcript の印）
+  await import('./unit/delegation-result.mjs'),
   // 委譲先の自動振り分け: 規則・段・使用量で飛ばす・Claude のアカウント・判定器（偽の fetch）・使用量の取り置き
   await import('./unit/delegation-routing.mjs'),
   // 同じくサーバー全体: kind の検査・自動で選んで子を作る・記録・設定とキーの口（偽の判定器と偽の agy）
@@ -126,6 +130,8 @@ const cases = [
   await import("./unit/claude-background.mjs"),
   // Claude の途中送信の渡った合図（uuid・まとめ取り出し・次の内部ターン）と中断の interrupt。SDK の query を身代わりにする
   await import("./unit/claude-steer-stop.mjs"),
+  // Claude のターンの終わり: Stop フックの続き・裏へ回ったまま終わらないコマンド（stopTask で終わる）
+  await import("./unit/claude-turn-end.mjs"),
   await import("./unit/codex-background.mjs"),
   await import("./unit/codex-terminals.mjs"),
   await import("./unit/event-session-id.mjs"),

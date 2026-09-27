@@ -7,7 +7,7 @@ import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
 // server は「どのエージェントに聞くか」を決めて、正規化イベントを web へ配るだけ。
 // 承認の保留・猶予・中断（設計メモ §8.5）だけはここに残す。エージェントに散らすと
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
-import { createAgentTasks } from './agent-tasks.mjs';
+import { createAgentTasks, finalReply } from './agent-tasks.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
 import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
@@ -233,6 +233,17 @@ function rejectionNotice(lng, list) {
   const items = list.slice(0, NOTICE_REJECTIONS).map(r => agentT(lng, 'delegation.noticeRejection', {
     command: r.command ?? r.raw ?? '', reason: r.reason ?? r.kind ?? '' })).join('\n');
   return agentT(lng, 'delegation.noticeRejections', { count: list.length, items }) + '\n';
+}
+// 委譲の子で main が返答を終え、裏の作業だけを待っている（phase: waiting）ときに待つ上限（docs/agent-delegation.md「子に残った裏の作業」）。
+// 過ぎたらサブエージェント以外（終わらないことがあるコマンドなど）を止める。止めると完了通知で main が再開し、ターンが終わる。
+// 既定は Claude Code の print モードが裏の作業を待つ上限（CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS の既定 600 秒）と同じ。テストは縮める
+const DELEGATION_BACKGROUND_WAIT_MS = Number(process.env.AGENT_HOST_DELEGATION_BACKGROUND_WAIT_MS) > 0 ? Number(process.env.AGENT_HOST_DELEGATION_BACKGROUND_WAIT_MS) : 600_000;
+// 止めた裏の作業を依頼元へ返す形。見出しはコマンドのことがあるので、拒否と同じく秘密を伏せて切る
+const peerBackground = x => ({ kind: pick(x.kind, 20) ?? 'other', label: redactForPeer(String(x.label ?? ''), REJECTION_TEXT_MAX) ?? '' });
+function stoppedBackgroundNotice(lng, list) {
+  if (!Array.isArray(list) || !list.length) return '';
+  const items = list.slice(0, NOTICE_REJECTIONS).map(x => agentT(lng, 'delegation.noticeStoppedItem', { label: x.label || x.kind })).join('\n');
+  return agentT(lng, 'delegation.noticeStoppedBackground', { count: list.length, minutes: Math.max(1, Math.round(DELEGATION_BACKGROUND_WAIT_MS / 60000)), items }) + '\n';
 }
 // エラー・結果の文はツールの結果としてエージェントが読むので、会話の言語で引く（agent 名前空間。橋は会話ごとに開き、locale はその会話の言語）
 const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale } = {}) => {
@@ -1150,6 +1161,7 @@ function makeEmit(turn) {
     if (event?.type === "phase" || event?.type === "background") {
       if (event.type === "phase") turn.info.phase = event.state === "waiting" ? "waiting" : "active";
       else turn.info.background = Array.isArray(event.tasks) ? event.tasks : [];
+      if (event.type === "phase") watchChildBackground(turn);
       broadcastRunning();
     }
     // 新規セッションは走り出してから id が決まる。仮キーを本物へ差し替える。
@@ -1570,7 +1582,7 @@ await outbox.recover();
   if (recovered.length) console.log(`  前の起動で終わらなかったターン ${recovered.length} 件を中断として残した`);
 }
 // 親が走っている・裏の作業が残っている・送信待ちがあるときは完了通知を送らない（docs/agent-delegation.md「完了通知」）
-const noticeBlocked = async owner => sessionBusy(owner) || runtime.background.has(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
+const noticeBlocked = async owner => sessionBusy(owner) || awaitedBackground(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
   changed: () => { broadcastRunning(); },
@@ -1631,7 +1643,8 @@ agentTasks = await createAgentTasks({
   execute: async (task, prompt, signal) => {
     if (signal.aborted) return { outcome: 'aborted' };
     if (sessionBusy(task.sessionId)) return { requeue: true };
-    const execution = { outcome: null, error: null, rejections: [] };
+    // stopped / reply / timer: 子に残った裏の作業を止めたもの・止める前の返答・待つ上限のタイマー（watchChildBackground）
+    const execution = { outcome: null, error: null, rejections: [], stopped: [], reply: null, timer: null };
     taskExecutions.set(task.sessionId, execution);
     const stopChild = () => {
       const child = runtime.turns.get(task.sessionId);
@@ -1649,15 +1662,17 @@ agentTasks = await createAgentTasks({
       // A child can itself delegate. Its result is final only after those results
       // have been delivered and it has finished responding to them.
       const childrenBusy = () => agentTasks.list(task.sessionId).some(r => ['queued', 'running', 'cancelling'].includes(r.status) || ['pending', 'delivering'].includes(r.notification));
-      while (!signal.aborted && (sessionBusy(task.sessionId) || runtime.background.has(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
-      const backend = await resolveBackendForSession(task.sessionId);
-      const messages = await backend.getMessages(task.sessionId, { fullResults: true });
-      const last = messages.findLast(m => m.role === 'assistant' && m.text);
+      // ターンの外に残る端末（Codex）は待たない。終わっても main は再開せず、結果は変わらない（awaitedBackground）
+      while (!signal.aborted && (sessionBusy(task.sessionId) || awaitedBackground(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
+      const last = await lastReply(task.sessionId);
+      // 裏の作業を止める前の返答（報告）を残す。止めた後に main が再開して足した一言だけが結果にならないように
+      const text = execution.reply && execution.reply !== last ? [execution.reply, last].filter(Boolean).join('\n\n') : last;
       // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
       const rejections = execution.rejections.map(peerRejection);
-      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text: last?.text ?? '', error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown'), rejections };
-      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text: last?.text ?? '', error: execution.error, rejections };
-    } finally { signal.removeEventListener('abort', stopChild); taskExecutions.delete(task.sessionId); }
+      const stoppedBackground = execution.stopped.map(peerBackground);
+      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown'), rejections, stoppedBackground };
+      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: execution.error, rejections, stoppedBackground };
+    } finally { signal.removeEventListener('abort', stopChild); clearTimeout(execution.timer); taskExecutions.delete(task.sessionId); }
   },
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
   ready: async task => !(await noticeBlocked(task.parentSessionId)),
@@ -1670,7 +1685,7 @@ agentTasks = await createAgentTasks({
     // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
     const retry = task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '';
     const prompt = agentT(lng, 'delegation.notice', { taskId: task.taskId, backend: task.backend, status: task.status, task: task.task,
-      result: task.result.slice(0, 16000), more, error: task.error ?? '', retry, rejections: rejectionNotice(lng, task.rejections) });
+      result: task.result.slice(0, 16000), more, error: task.error ?? '', retry, rejections: rejectionNotice(lng, task.rejections) + stoppedBackgroundNotice(lng, task.stoppedBackground) });
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
 });
@@ -2133,6 +2148,57 @@ function waitFree(id, ms) {
     timer.unref?.();
     set.add(done);
   });
+}
+
+/**
+ * ターンの外に残っている裏の作業のうち、終わりを待つもの（web/work-status.mjs の behindOfTasks と同じ基準）。
+ * Codex の端末（kind: terminal）は数えない。dev サーバーのように終わらないことがあり、終わっても main は再開しない。
+ * 以前は端末があるだけで委譲の子の結果を待ち続け（running のまま）、端末のある親には完了通知を送らなかった（2026-09-27）
+ */
+function awaitedBackground(sessionId) {
+  return (runtime.background.get(sessionId)?.tasks ?? []).some((x) => x.waitable === true || (x.kind !== "shell" && x.kind !== "terminal"));
+}
+
+/** 委譲の結果にする子の返答（agent-tasks.mjs の finalReply。Stop フックの続きの一言は飛ばす）。無ければ空文字 */
+async function lastReply(sessionId) {
+  const backend = await resolveBackendForSession(sessionId);
+  return finalReply(await backend.getMessages(sessionId, { fullResults: true }));
+}
+
+/**
+ * 委譲の子のターンで、main が返答を終えて裏の作業だけを待つ（phase: waiting）時間を測る。
+ * DELEGATION_BACKGROUND_WAIT_MS を過ぎたら、サブエージェント以外の裏の作業を止める（作業ダイアログの停止ボタンと同じ stopBackground）。
+ * Claude はそれまでターンを保持するので、裏へ回ったまま終わらないコマンドが 1 本あると、子の報告が済んでいてもタスクが running のまま残り、
+ * 依頼元へ完了通知が届かなかった（2026-09-27。docs/agent-delegation.md「子に残った裏の作業」）。人が見ている会話では止めない（委譲の子だけ）
+ */
+function watchChildBackground(turn) {
+  const execution = taskExecutions.get(turn.info.sessionId);
+  if (!execution) return;
+  if (turn.info.phase !== "waiting") { clearTimeout(execution.timer); execution.timer = null; return; }
+  if (execution.timer) return;
+  execution.timer = setTimeout(() => { execution.timer = null; void stopChildBackground(turn, execution); }, DELEGATION_BACKGROUND_WAIT_MS);
+  execution.timer.unref?.();
+}
+
+async function stopChildBackground(turn, execution) {
+  const sessionId = turn.info.sessionId;
+  if (runtime.turns.get(sessionId) !== turn || taskExecutions.get(sessionId) !== execution || turn.info.phase !== "waiting") return;
+  // サブエージェントは自分で終わるので止めない（止めると仕事を失う）
+  const targets = (turn.info.background ?? []).filter((x) => x.kind !== "agent");
+  if (!targets.length || typeof turn.backend.stopBackground !== "function") return;
+  // 止めると main が再開して一言足すことがある。止める前の返答（報告）を控えておく
+  execution.reply ??= await lastReply(sessionId).catch(() => null);
+  for (const x of targets) {
+    try {
+      await turn.backend.stopBackground(sessionId, x.id);
+      execution.stopped.push(x);
+      // i18n-ignore: サーバーのログ
+      console.error(`  [delegation] 子 ${sessionId} の裏の作業（${x.kind}）を ${Math.round(DELEGATION_BACKGROUND_WAIT_MS / 1000)} 秒待って止めた`);
+    } catch (err) {
+      // i18n-ignore: サーバーのログ
+      console.error(`  [delegation] 子 ${sessionId} の裏の作業（${x.kind}）を止められなかった: ${String(err?.message ?? err).slice(0, 200)}`);
+    }
+  }
 }
 
 /**
