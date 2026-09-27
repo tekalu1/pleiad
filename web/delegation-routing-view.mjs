@@ -82,10 +82,24 @@ export function skippedPhrase(skipped, names = defaultNames) {
  */
 export function routingLine(routing, names = defaultNames) {
   if (!routing?.target) return '';
-  if (!isAutoRouting(routing)) return t('routing.line.pinned', { kind: kindText(routing.kind), target: targetText(routing.target, names) });
+  if (!isAutoRouting(routing)) {
+    const head = t('routing.line.pinned', { kind: kindText(routing.kind), target: targetText(routing.target, names) });
+    return routing.selectedWithLowHeadroom ? [head, lowHeadroomText(routing.selectedWithLowHeadroom)].join(t('routing.line.join')) : head;
+  }
   const head = t('routing.line.head', { kind: kindText(routing.kind), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) });
+  const notes = [];
+  const low = routing.selectedWithLowHeadroom;
+  if (low) notes.push(lowHeadroomText(low));
+  if (routing.baseTier && routing.tier && ['t1', 't2', 't3', 't4'].indexOf(routing.tier) < ['t1', 't2', 't3', 't4'].indexOf(routing.baseTier))
+    notes.push(t('routing.line.selectedLower'));
   const first = routing.skipped?.[0];
-  return first ? head + t('routing.line.join') + skippedPhrase(first, names) : head;
+  if (first && !low && !notes.length) notes.push(skippedPhrase(first, names));
+  return [head, ...notes].join(t('routing.line.join'));
+}
+function lowHeadroomText(low) {
+  return low.reason === 'quota_high' && percent(low.window?.usedPercent) != null
+    ? t('routing.line.selectedHigh', { window: low.window.label ?? '', percent: percent(low.window.usedPercent), avoidPercent: low.avoidPercent })
+    : t('routing.line.selectedLow', { reason: skipText(low.reason) });
 }
 
 /** 判定の一行（どの判定器の答えを使ったか・使えなかった理由） */
@@ -108,10 +122,15 @@ export function yesSignals(routing) {
 }
 
 /** 段の一言。表の段から上げたときはそれも */
+// i18n-dynamic: routing.detail.tierRaised
+// i18n-dynamic: routing.detail.tierLowered
 export function tierLine(routing) {
   if (!routing?.tier) return '';
-  return routing.baseTier && routing.baseTier !== routing.tier
-    ? t('routing.detail.tierRaised', { tier: tierText(routing.tier), base: tierText(routing.baseTier) }) : tierText(routing.tier);
+  if (routing.baseTier && routing.baseTier !== routing.tier) {
+    const lower = ['t1', 't2', 't3', 't4'].indexOf(routing.tier) < ['t1', 't2', 't3', 't4'].indexOf(routing.baseTier);
+    return t(lower ? 'routing.detail.tierLowered' : 'routing.detail.tierRaised', { tier: tierText(routing.tier), base: tierText(routing.baseTier) });
+  }
+  return tierText(routing.tier);
 }
 
 /**
@@ -146,6 +165,13 @@ export function parseRoutingFailure(text) {
   if (!head) return null;
   const skipped = [];
   for (const line of s.split(/\r?\n/)) {
+    const account = /^  account (.*?): ([a-z_]+)(?: \(([a-z_]+)\))?(?: (.*?) (\d+(?:\.\d+)?)%)?(?: pace (\d+(?:\.\d+)?))?\s*$/.exec(line);
+    if (account && skipped.length) {
+      const [, label, reason, detail, windowLabel, used, pace] = account;
+      const window = used != null || pace != null ? { label: windowLabel ?? '', ...(used != null ? { usedPercent: Number(used) } : {}), ...(pace != null ? { pace: Number(pace) } : {}) } : null;
+      (skipped.at(-1).accounts ??= []).push({ label, reason, ...(detail ? { detail } : {}), ...(window ? { window } : {}) });
+      continue;
+    }
     const m = /^- ([a-z]+:\S+) \((t\d|tv)\): ([a-z_]+)(?: \(([a-z_]+)\))?(?: (.*?) (\d+(?:\.\d+)?)%)?(?: pace (\d+(?:\.\d+)?))?\s*$/.exec(line);
     if (!m) continue;
     const [, candidate, tier, reason, detail, label, used, pace] = m;
@@ -156,7 +182,7 @@ export function parseRoutingFailure(text) {
 }
 
 // 直せば通るもの（設定）を先に、待てば戻るもの（使用量）を後に
-const FAILURE_ORDER = ['unavailable', 'model_unknown', 'quota_high', 'pace_high', 'pace_unknown', 'usage_stale', 'usage_unknown'];
+const FAILURE_ORDER = ['unavailable', 'model_unknown', 'quota_full', 'quota_high', 'pace_high', 'pace_unknown', 'usage_stale', 'usage_unknown'];
 /** 飛ばした候補を理由ごとにまとめる。[{ reason, items }]（理由の順は FAILURE_ORDER、知らない理由は後ろ） */
 export function groupSkipped(skipped) {
   const groups = new Map();
@@ -168,7 +194,7 @@ export function groupSkipped(skipped) {
 /** まとめた行の中身。使えない・使用量が分からない等はエージェントごとの件数、使用量・ペースは候補ごとの値 */
 export function groupText({ reason, items }, names = defaultNames) {
   const join = t('routing.line.join');
-  if (['quota_high', 'pace_high', 'pace_unknown'].includes(reason)) {
+  if (['quota_full', 'quota_high', 'pace_high', 'pace_unknown'].includes(reason)) {
     return items.map(s => {
       const { backend, model } = splitCandidate(s.candidate);
       const name = names.model(backend, model) || model;
@@ -226,6 +252,11 @@ export function routingFailureParts(failure, { names = defaultNames, open = () =
     const reason = skipText(s.reason, s.detail) + (w?.pace != null && s.reason === 'pace_high' ? `${t('routing.line.join')}${w.label ?? ''} ${t('routing.detail.pace', { pace: w.pace })}`
       : percent(w?.usedPercent) != null ? `${t('routing.line.join')}${w.label ?? ''} ${percent(w.usedPercent)}%` : '');
     li.append(el('span', 'tier', tierText(s.tier)), el('span', 'nm', `${names.model(backend, model) || model}${t('routing.line.join')}${names.backend(backend)}`), el('span', 'rs', reason));
+    for (const a of s.accounts ?? []) {
+      const name = a.label || a.account || t('routing.detail.loginAccount');
+      const percentText = percent(a.window?.usedPercent);
+      li.append(el('small', 'n', `${t('routing.detail.account', { name })}${t('routing.line.join')}${skipText(a.reason, a.detail)}${percentText == null ? '' : ` ${a.window.label ?? ''} ${percentText}%`}`));
+    }
     list.append(li);
   }
   fold.append(list);
@@ -273,7 +304,7 @@ function candidateCard({ n, backend, model, used, skipped, windows, usageAt }, {
   for (const a of skipped?.accounts ?? []) {
     const name = a.account === '' ? t('routing.detail.loginAccount') : a.label || a.account;
     const w = a.window && percent(a.window.usedPercent) != null ? ` ${a.window.label ?? ''} ${percent(a.window.usedPercent)}%` : '';
-    notes.push(`${t('routing.detail.account', { name })} · ${skipText(a.reason)}${w}`);
+    notes.push(`${t('routing.detail.account', { name })} · ${skipText(a.reason, a.detail)}${w}`);
   }
   // 取得時刻は上の「使用量の取得」と違うときだけ（古くて飛ばした候補など）
   if (skipped?.checkedAt && skipped.checkedAt !== usageAt) notes.push(`${t('routing.detail.usageAt')} ${fmt.dateTime(skipped.checkedAt)}`);
@@ -370,7 +401,7 @@ export function retryPanel({ candidates, running, names = defaultNames, logo = (
     const text = el('span', 'rt-option-text');
     const title = el('span', 'rt-option-name');
     title.append(logo(c.backend), el('span', null, names.model(c.backend, c.model) || c.model));
-    const sub = [...(c.tiers ?? []).map(tierText), usageSummary(c)].filter(Boolean).join(t('routing.line.join'));
+    const sub = [...(c.tiers ?? []).map(tierText), ...(c.deferred ? [t('routing.retry.lowHeadroom', { reason: skipText(c.reason) })] : []), usageSummary(c)].filter(Boolean).join(t('routing.line.join'));
     text.append(title, el('small', null, sub));
     label.append(input, text);
     group.append(label);

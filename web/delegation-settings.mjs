@@ -332,7 +332,10 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     const st = stateOf(candidate);
     const { backend } = splitCandidate(candidate);
     const sub = [labelOf(backend)];
-    if (st?.usable) { const u = usageSummary(st); if (u) sub.push(u); }
+    if (st?.usable) {
+      if (st.deferred) sub.push(t('routing.settings.lowHeadroom', { reason: skipText(st.reason) }));
+      const u = usageSummary(st); if (u) sub.push(u);
+    }
     else if (st) sub.push(skipText(st.reason, st.detail));
     return { st, text: (st?.reason === 'model_unknown' ? '⚠ ' : '') + sub.join(t('routing.line.join')) };
   }

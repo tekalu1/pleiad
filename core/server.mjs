@@ -9,7 +9,7 @@ import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
 import { createAgentTasks } from './agent-tasks.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
-import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate } from './delegation-routing.mjs';
+import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode } from './modes.mjs';
@@ -312,8 +312,8 @@ async function routeDelegation(args, lng, cwd) {
   }
   if (!ok) {
     // 候補の行は言語によらない形（画面の委譲カードがこの行を読んで理由ごとにまとめる。web/delegation-routing-view.mjs の parseRoutingFailure）
-    const skipped = routing.skipped.map(s => `- ${s.candidate} (${s.tier}): ${s.reason}${s.detail ? ` (${s.detail})` : ''}${s.window?.usedPercent != null ? ` ${s.window.label ?? ''} ${s.window.usedPercent}%` : ''}${s.window?.pace != null ? ` pace ${s.window.pace}` : ''}`).join('\n');
-    throw new Error(agentT(lng, 'routing.exhausted', { kind: args.kind, difficulty: routing.difficulty, skipped }));
+    const skipped = formatSkippedCandidates(routing.skipped);
+    throw new Error(agentT(lng, 'routing.exhausted', { kind: args.kind, difficulty: routing.difficulty, avoidPercent: settings.avoidPercent, skipped }));
   }
   const { backend, model, account } = routing.target;
   return { ...args, backend, model, account: account ?? '', routing };

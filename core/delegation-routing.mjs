@@ -186,14 +186,16 @@ export function windowsFor(backend, model, windows = []) {
 
 /**
  * 枠の集まりで使えるか。{ ok, reason?, window? }。
- *   どれかの枠が「避ける線」以上 → quota_high
+ *   どれかの枠が 100% 以上 → quota_full（使えない）。後回しの線以上 → quota_high
  *   週次の枠のペースが上限を超える（経過率 20% 未満は見ない）→ pace_high
- *   経過率が出せない週次の枠は、使用率が 20% × 上限以下ならペースで落ちることが無いので通し、超えれば pace_unknown
+ *   経過率が出せない週次の枠は、使用率が 20% × 上限以下ならペースで後回しにならず、超えれば pace_unknown
  *   使用率が分からない枠がある・枠が 1 つも無い → usage_unknown
  */
 export function judgeWindows(windows, { now, avoidPercent, paceLimit }) {
   if (!windows.length) return { ok: false, reason: 'usage_unknown' };
   const rows = windows.map(w => ({ w, used: usedNow(w, now) }));
+  const full = rows.filter(r => r.used >= 100).sort((a, b) => b.used - a.used)[0];
+  if (full) return { ok: false, reason: 'quota_full', window: brief(full.w, full.used) };
   const unknown = rows.find(r => r.used == null);
   if (unknown) return { ok: false, reason: 'usage_unknown', window: brief(unknown.w, null) };
   const high = rows.filter(r => r.used >= avoidPercent).sort((a, b) => b.used - a.used)[0];
@@ -225,10 +227,19 @@ function fiveHour(windows, now) {
   return used.length ? Math.max(...used) : Infinity;
 }
 
+const SOFT_REASONS = new Set(['quota_high', 'pace_high', 'pace_unknown', 'usage_unknown', 'usage_stale']);
+const selectable = verdict => SOFT_REASONS.has(verdict.reason)
+  ? { ...verdict, ok: true, deferred: true } : verdict;
+const maxUsage = (windows, now) => Math.max(...(windows ?? []).map(w => usedNow(w, now)).filter(v => v != null), 0);
+const pressure = (a, b, now) =>
+  Number(['usage_unknown', 'usage_stale'].includes(a.reason)) - Number(['usage_unknown', 'usage_stale'].includes(b.reason))
+  || (a.maxUsed ?? maxUsage(a.windows, now)) - (b.maxUsed ?? maxUsage(b.windows, now))
+  || (a.weeklyRate ?? weeklyPace(a.windows ?? [], now)) - (b.weeklyRate ?? weeklyPace(b.windows ?? [], now));
+
 /**
  * Claude のアカウントの重複を落とす。今の使用量では「ログイン中のアカウント」と、登録したアカウントのうち同じ人のものが
  * 同じ値で並ぶ。組織（organizationUuid）とメールの両方が分かって一致するものだけを同一とし、1 つだけ残す。
- * 残すのは prefer を満たすもの（振り分けでは使えるもの。片方だけ使用量の取得に失敗していることがある）のうち先頭、
+ * 残すのは prefer を満たすもの（振り分けでは余裕あり、無ければ余裕が少ないもの）のうち先頭、
  * 無ければログイン中の方。どちらかが分からなければまとめない（docs/agent-delegation.md）
  */
 export function dedupeAccounts(accounts = [], prefer = () => false) {
@@ -253,17 +264,30 @@ export function checkCandidate(candidate, { usage, settings, now }) {
   if (!parsed || !entry?.available) return { ok: false, reason: 'unavailable', ...(!parsed ? {} : entry ? { detail: 'not_installed' } : Object.keys(usage ?? {}).length ? { detail: 'disabled' } : {}) };
   if (entry.models?.[parsed.model] !== true) return { ok: false, reason: 'model_unknown' };
   const checkedAt = entry.checkedAt ?? null;
-  if (checkedAt == null) return { ok: false, reason: 'usage_unknown' };
-  if (now - checkedAt > settings.staleMinutes * 60_000) return { ok: false, reason: 'usage_stale', checkedAt };
+  const staleReason = checkedAt == null ? 'usage_unknown' : now - checkedAt > settings.staleMinutes * 60_000 ? 'usage_stale' : null;
   const policy = { now, avoidPercent: settings.avoidPercent, paceLimit: settings.paceLimit };
   if (parsed.backend === 'claude' && Array.isArray(entry.accounts)) {
-    const results = dedupeAccounts(entry.accounts.map(a => {
+    const assessed = entry.accounts.map(a => {
       if (!a.runnable) return { account: a.account, label: a.label ?? null, identity: a.identity, ok: false, reason: 'unavailable' };
       const windows = windowsFor('claude', parsed.model, a.windows);
-      return { account: a.account, label: a.label ?? null, identity: a.identity, windows, ...judgeWindows(windows, policy) };
-    }), r => r.ok);
-    const usable = results.filter(r => r.ok);
+      const verdict = judgeWindows(windows, policy);
+      return { account: a.account, label: a.label ?? null, identity: a.identity, windows,
+        ...selectable(verdict.reason === 'quota_full' ? verdict : staleReason ? { ok: false, reason: staleReason } : verdict) };
+    });
+    let results = dedupeAccounts(assessed, r => r.ok && !r.deferred);
+    if (!results.some(r => r.ok && !r.deferred)) results = dedupeAccounts(assessed, r => r.ok);
+    const usable = results.filter(r => r.ok && !r.deferred);
+    const deferred = results.filter(r => r.deferred);
     if (!usable.length) {
+      if (deferred.length) {
+        deferred.sort((a, b) => pressure(a, b, now));
+        const chosen = deferred[0];
+        return { ok: true, deferred: true, reason: chosen.reason, ...(chosen.window ? { window: chosen.window } : {}),
+          account: chosen.account, checkedAt, avoidPercent: settings.avoidPercent,
+          maxUsed: maxUsage(chosen.windows, now), weeklyRate: weeklyPace(chosen.windows, now),
+          windows: chosen.windows.map(w => brief(w, usedNow(w, now))),
+          accounts: results.map(({ account, label, reason, window }) => ({ account, label, reason, ...(window ? { window } : {}) })) };
+      }
       const first = results.find(r => r.reason !== 'unavailable') ?? results[0];
       return { ok: false, reason: first?.reason ?? 'usage_unknown', ...(first?.reason === 'unavailable' ? { detail: 'no_token' } : {}), ...(first?.window ? { window: first.window } : {}), checkedAt,
         accounts: results.map(({ account, label, reason, window }) => ({ account, label, reason, ...(window ? { window } : {}) })) };
@@ -273,7 +297,10 @@ export function checkCandidate(candidate, { usage, settings, now }) {
   }
   const windows = windowsFor(parsed.backend, parsed.model, entry.windows);
   const verdict = judgeWindows(windows, policy);
-  return { ...verdict, account: parsed.backend === 'claude' ? '' : null, checkedAt, ...(verdict.ok ? { windows: windows.map(w => brief(w, usedNow(w, now))) } : {}) };
+  const check = selectable(verdict.reason === 'quota_full' ? verdict : staleReason ? { ok: false, reason: staleReason } : verdict);
+  return { ...check, account: parsed.backend === 'claude' ? '' : null, checkedAt,
+    ...(check.deferred ? { avoidPercent: settings.avoidPercent, maxUsed: maxUsage(windows, now), weeklyRate: weeklyPace(windows, now) } : {}),
+    ...(check.ok ? { windows: windows.map(w => brief(w, usedNow(w, now))) } : {}) };
 }
 
 /** 振り分けの記録（ply_delegate の返り値の routing。タスクと子会話のメタデータにも同じ形で残す） */
@@ -292,6 +319,7 @@ export function manualRouting({ kind, candidate, check, of, from }) {
     target: { backend, model, account: check.account ?? null }, skipped: [],
     usageAt: check.checkedAt == null ? null : new Date(check.checkedAt).toISOString(), fallback: null,
     ...(check.windows ? { targetWindows: check.windows } : {}),
+    ...(check.deferred ? { selectedWithLowHeadroom: { reason: check.reason, ...(check.window ? { window: check.window } : {}), avoidPercent: check.avoidPercent } } : {}),
     retry: { of, from: from ? { backend: from.backend ?? null, model: from.model ?? null, account: from.account ?? null } : null, by: 'user' } };
 }
 
@@ -305,7 +333,8 @@ export function manualRouting({ kind, candidate, check, of, from }) {
 export function route({ kind, judged = {}, settings, usage, now = Date.now(), rejected = {} }) {
   const difficulty = judged.signals ? difficultyOf(judged.signals) : 'mid';
   const base = settings.table[kind][DIFFICULTIES.indexOf(difficulty)];
-  const sequence = base === 'tv' ? ['tv'] : LADDER.slice(LADDER.indexOf(base));
+  const index = LADDER.indexOf(base);
+  const sequence = base === 'tv' ? ['tv'] : LADDER.slice(index);
   const skipped = [];
   const seen = [];
   const iso = v => v == null ? null : new Date(v).toISOString();
@@ -315,20 +344,43 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
       difficulty, baseTier: base, tier: target?.tier ?? null, target: target ? { backend: target.backend, model: target.model, account: target.account } : null,
       // 選んだ候補に効いた枠の今の使用率（委譲カードの内訳に出す。飛ばした候補は skipped[].window）
       ...(target?.windows ? { targetWindows: target.windows } : {}),
+      ...(target?.deferred ? { selectedWithLowHeadroom: { reason: target.reason,
+        ...(target.window ? { window: target.window } : {}), avoidPercent: settings.avoidPercent } } : {}),
       skipped, usageAt: target ? iso(target.checkedAt) : times.length ? iso(Math.min(...times)) : null, fallback: judged.fallback ?? null,
       ...(judged.escalated ? { escalated: true } : {}) };
   };
-  for (const tier of sequence) {
+  const soft = [];
+  const inspect = (tier, chooseSoft) => {
+    const localSoft = [];
     for (const candidate of settings.tiers[tier] ?? []) {
       const check = Object.hasOwn(rejected, candidate) ? { ok: false, reason: rejected[candidate] } : checkCandidate(candidate, { usage, settings, now });
       if (check.checkedAt != null) seen.push(check.checkedAt);
-      if (check.ok) {
+      if (check.ok && !check.deferred) {
         const { backend, model } = parseCandidate(candidate);
-        return { ok: true, routing: routing({ tier, backend, model, account: check.account, checkedAt: check.checkedAt, windows: check.windows }) };
+        return { tier, backend, model, ...check };
       }
+      if (check.deferred) localSoft.push({ tier, candidate, check });
       skipped.push({ candidate, tier, reason: check.reason, ...(check.detail ? { detail: check.detail } : {}), ...(check.window ? { window: check.window } : {}), ...(check.accounts ? { accounts: check.accounts } : {}),
         ...(check.checkedAt != null ? { checkedAt: iso(check.checkedAt) } : {}) });
     }
+    if (chooseSoft && localSoft.length) return pickSoft(localSoft);
+    soft.push(...localSoft);
+    return null;
+  };
+  const pickSoft = rows => {
+    rows.sort((a, b) => pressure(a.check, b.check, now));
+    const { tier, candidate, check } = rows[0];
+    skipped.splice(skipped.findIndex(s => s.tier === tier && s.candidate === candidate), 1);
+    return { tier, ...parseCandidate(candidate), ...check };
+  };
+  for (const tier of sequence) {
+    const target = inspect(tier, false);
+    if (target) return { ok: true, routing: routing(target) };
+  }
+  if (soft.length) return { ok: true, routing: routing(pickSoft(soft.filter(s => s.tier === soft[0].tier))) };
+  for (const tier of (base === 'tv' ? [] : LADDER.slice(0, index).reverse())) {
+    const target = inspect(tier, true);
+    if (target) return { ok: true, routing: routing(target) };
   }
   return { ok: false, routing: routing(null) };
 }
@@ -342,16 +394,24 @@ export function candidateStates({ settings, usage, now = Date.now() }) {
     const parsed = parseCandidate(candidate);
     const check = checkCandidate(candidate, { usage, settings, now });
     const entry = parsed ? usage?.[parsed.backend] : null;
-    const accountRows = parsed?.backend === 'claude' && Array.isArray(entry?.accounts) ? dedupeAccounts(entry.accounts) : null;
+    const accountRows = parsed?.backend === 'claude' && Array.isArray(entry?.accounts)
+      ? dedupeAccounts(entry.accounts, a => a.account === check.account) : null;
     return { candidate, backend: parsed?.backend ?? null, model: parsed?.model ?? null,
       tiers: TIERS.filter(tier => (settings.tiers[tier] ?? []).includes(candidate)),
-      usable: check.ok, reason: check.ok ? null : check.reason, ...(check.detail ? { detail: check.detail } : {}), account: check.ok ? check.account ?? null : null,
+      usable: check.ok, deferred: Boolean(check.deferred), reason: check.reason ?? null, ...(check.detail ? { detail: check.detail } : {}), account: check.ok ? check.account ?? null : null,
       ...(check.window ? { window: check.window } : {}),
       checkedAt: entry?.checkedAt ? new Date(entry.checkedAt).toISOString() : null,
       windows: parsed && !accountRows ? windowsFor(parsed.backend, parsed.model, entry?.windows).map(w => brief(w, usedNow(w, now))) : [],
       ...(accountRows ? { accounts: accountRows.map(a => ({ account: a.account, label: a.label ?? null, runnable: Boolean(a.runnable),
         windows: windowsFor('claude', parsed.model, a.windows).map(w => brief(w, usedNow(w, now))) })) } : {}) };
   });
+}
+
+/** エージェント向けエラーの言語によらない行。画面もこの形を読む。 */
+export function formatSkippedCandidates(skipped) {
+  const reasonLine = s => `${s.reason}${s.detail ? ` (${s.detail})` : ''}${s.window?.usedPercent != null ? ` ${s.window.label ?? ''} ${s.window.usedPercent}%` : ''}${s.window?.pace != null ? ` pace ${s.window.pace}` : ''}`;
+  return skipped.map(s => [`- ${s.candidate} (${s.tier}): ${reasonLine(s)}`,
+    ...(s.accounts ?? []).map(a => `  account ${a.label || a.account || 'login'}: ${reasonLine(a)}`)].join('\n')).join('\n');
 }
 
 /** 設定の検証で知らせること（今のモデル一覧に無い候補・使えないバックエンド）。黙って消さない */

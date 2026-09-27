@@ -3091,7 +3091,7 @@ function decorateFailedDelegate(card, result) {
   const open = (reason) => {
     if (reason === 'unavailable') return { label: t('routing.failure.openAgents'), run: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open('setup'); } };
     if (reason === 'model_unknown') return { label: t('routing.failure.openDelegation'), run: () => { onboarding.open('delegation'); $('delegationTab').click(); } };
-    if (['quota_high', 'pace_high', 'pace_unknown'].includes(reason)) return { label: t('routing.failure.openUsage'), run: () => { onboarding.open('usage'); $('usageTab').click(); } };
+    if (['quota_full', 'quota_high', 'pace_high', 'pace_unknown'].includes(reason)) return { label: t('routing.failure.openUsage'), run: () => { onboarding.open('usage'); $('usageTab').click(); } };
     return null;
   };
   const paint = () => {

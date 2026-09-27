@@ -150,7 +150,7 @@
     "kindRequired": "kind を次のどれかで指定してください。\n{{kinds}}",
     "backendRequired": "委譲先の自動振り分けが無効になっています。backend（claude, codex, antigravity）を指定してください。",
     "pinOnly": "model と effort は backend を指定したときだけ使えます。自動で選ばせるなら model と effort を省いてください。",
-    "exhausted": "使える委譲先がありません（種類 {{kind}}、難しさ {{difficulty}}）。飛ばした候補:\n{{skipped}}\nbackend を指定して固定で頼み直すか、ユーザーに確認してください。",
+    "exhausted": "使える委譲先がありません（種類 {{kind}}、難しさ {{difficulty}}、後回しの線 {{avoidPercent}}%）。候補とアカウントごとの理由:\n{{skipped}}\nbackend を指定して固定で頼み直すか、ユーザーに確認してください。",
     "modelUnavailable": "振り分けで選んだモデル {{model}}（{{backend}}）を使えません。backend を指定して頼み直してください。"
   },
   "guide": {
