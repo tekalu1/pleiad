@@ -85,7 +85,11 @@ function wire(t, includeTurns) {
 }
 
 // ---- rollout（FAKE_CODEX_ROLLOUT_DIR）。本物と同じく、最初のターンで初めてファイルができる
-const writeRollout = (t, rows) => { if (t.path) fs.appendFileSync(t.path, jsonl(rows)); };
+const writeRollout = (t, rows) => {
+  if (!t.path) return;
+  if (!fs.existsSync(t.path)) fs.appendFileSync(t.path, jsonl([{ timestamp: new Date().toISOString(), type: 'session_meta', payload: { cli_version: '0.156.1' } }]));
+  fs.appendFileSync(t.path, jsonl(rows));
+};
 
 /**
  * 実行前に拒否されるターン（承認なしのモード。承認は求めない）。拒否はアイテムにならず、通知にも thread/read にも出ない。

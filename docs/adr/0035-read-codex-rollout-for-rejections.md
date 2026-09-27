@@ -1,6 +1,6 @@
 # 0035 Codex の実行前の拒否は、ターンの後に rollout を読んで拾う
 
-- 状態: 提案
+- 状態: 承認（2026-09-27）
 
 ## 状況
 
@@ -18,10 +18,10 @@ Pleiad は今まで rollout を直接読んでいなかった。読むと、公�
 ## 決定
 
 - **B を採る。** Codex のバックエンドは `thread/start`・`thread/resume` の応答の `thread.path` を覚え、`turn/start` の直前のファイルの長さから `turn/completed` の後の末尾までだけを読む。このターンの `turn_id` の行だけを見て、出力の先頭か `Script error:\n` の直後にある `exec_command failed: CreateProcess { … Rejected(…) }` を拾う（docs/multi-backend.md「Codex の実行前の拒否」）。ephemeral のスレッドでは読まない。
-- **読めない・形が違うときは黙って諦め、ターンの結果は変えない。** 版で形が変わったら、拒否が拾えなくなるだけで、会話と委譲は今までどおり動く。
+- **読めない・形が違うときはターンの結果を変えない。** 版で形が変わったら拒否が拾えなくなるが、会話と委譲は続ける。形の不一致は [ADR 0037](0037-manage-external-agent-versions.md) に従い診断ログに残す。
 - 見つけたものは会話にツールのエラーとして出し（開き直すと消える）、委譲の子なら依頼元へ返す結果（`ply_task_status` の `rejections`）と完了通知に載せる。依頼元へ渡す文は形で秘密を伏せ、300 字で切る（docs/agent-delegation.md「実行前に拒否されたコマンド」）。
 - Codex の子には既定の指示「Codex の実行前の拒否」（言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する）を入れる。特定のコマンドを名指ししない。
-- A（`experimentalRawEvents`）は使わない。上流には拒否を `commandExecution`（`declined`）のアイテムとして出すよう求める（E。親が確認してから登録する）。入れば B の読み取りは外す。
+- A（`experimentalRawEvents`）は使わない。上流へ拒否を `commandExecution`（`declined`）のアイテムとして出すよう求める issue の登録は見送った（2026-09-27）。
 
 ## 理由
 

@@ -22,6 +22,7 @@ import { undelivered } from './undelivered.mjs';
 import { codexCompatThread, redactSecret } from '../compat-endpoints.mjs';
 import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { readTurnRejections, rolloutPathOf, rolloutSize } from "./codex-rejections.mjs";
+import * as store from '../store.mjs';
 import { t, agentT } from "../i18n.mjs";
 
 const NL = String.fromCharCode(10);
@@ -1121,7 +1122,7 @@ export const backend = {
     // 会話の画面にはツールのエラーとして出し、tool.result の rejection に構造を載せる（server が委譲の結果に集める）。
     // 会話を開き直すと thread/read から作る履歴には残らない（docs/multi-backend.md「Codex の実行前の拒否」）
     const reportRejections = async () => {
-      const found = await readTurnRejections({ file: rolloutPath, from: rolloutFrom, turnId });
+      const found = await readTurnRejections({ file: rolloutPath, from: rolloutFrom, turnId, dataDir: store.dataDir });
       const ids = new Set();
       for (const [i, r] of found.entries()) {
         const rejection = { ...r, approvalRequested: Boolean(r.callId && asked.has(r.callId)) };
