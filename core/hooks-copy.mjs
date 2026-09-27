@@ -199,13 +199,14 @@ function meaningWarnings(from, to, event, adapter) {
 // ---------------------------------------------------------------- アダプターのコマンド
 const b64 = s => Buffer.from(String(s), 'utf8').toString('base64url');
 /**
- * 写した先の設定に書くコマンド。アダプターのパスはスラッシュ区切り（Antigravity は引用符付きのバックスラッシュのパスを解決できない）。
- * 元のコマンドは base64url で 1 つの引数にする（どのシェルでも引用符を気にせず渡せ、写した定義の中に収まるので Codex の信頼の hash にも入る）
+ * 写した先に書くコマンド。Windows の Antigravity だけは引用付きのパスを解決できないため、検証済みの空白の無いパスを引用せずに渡す。
+ * 元のコマンドは base64url で 1 つの引数にする（どのシェルでも引用符を気にせず渡せ、写した定義の中に収まるので Codex の信頼の hash にも入る）。
  */
-export const safeAdapterPath = p => /^[A-Za-z0-9_ ./:+@~,-]+$/.test(String(p).replace(/\\/g, '/'));
-export function adapterCommand({ adapterPath, from, to, event, innerTimeout, command, node = 'node' }) {
+export const safeAdapterPath = p => /^[\p{L}\p{N}\p{M}_ ./:+@~,-]+$/u.test(String(p).replace(/\\/g, '/'));
+export function adapterCommand({ adapterPath, from, to, event, innerTimeout, command, node = 'node', unquoted = false }) {
   const p = String(adapterPath).replace(/\\/g, '/');
-  return `${node === 'node' ? node : `"${String(node).replace(/\\/g, '/')}"`} "${p}" ${from} ${to} ${event} ${innerTimeout} ${b64(command)}`;
+  const executable = node === 'node' ? node : unquoted ? String(node).replace(/\\/g, '/') : `"${String(node).replace(/\\/g, '/')}"`;
+  return `${executable} ${unquoted ? p : `"${p}"`} ${from} ${to} ${event} ${innerTimeout} ${b64(command)}`;
 }
 const ADAPTER_RE = /(?:^|[\s"'/\\])hook-adapter-[0-9a-f]{8,}\.mjs["']?\s+(claude|codex|antigravity)\s+(claude|codex|antigravity)\s+([A-Za-z]+)\s+(\d+)\s+([A-Za-z0-9_-]+)\s*$/;
 /** アダプター越しのコマンドを読む（一覧・詳細で元のコマンドを見せる）。違えば null */

@@ -76,11 +76,16 @@ export default async function(t) {
   t.ok('CLAUDE_PROJECT_DIR を使うコマンドはアダプター無しでは写せない', convertHook({ agent: 'claude', event: 'Stop', handler: { type: 'command', command: '"$CLAUDE_PROJECT_DIR"/x.sh' } }, 'codex').reasons.some(r => r.code === 'claudeEnv'));
   t.ok('プラグインの環境変数を使うコマンドは写せない', conv({ command: '${CLAUDE_PLUGIN_ROOT}/x' }, 'antigravity').reasons.some(r => r.code === 'pluginEnv'));
   t.ok('Windows の Claude のコマンドは元と同じシェルで動かす', !convertHook({ agent: 'claude', event: 'PreToolUse', matcher: 'Bash', handler: { type: 'command', command: 'node ~/x.mjs' } }, 'antigravity', { platform: 'win32' }).warnings.some(w => w.code === 'shellSyntax'));
-  t.ok('アダプターのパスはシェルの特殊文字を拒む', safeAdapterPath('C:/plain/with space/x.mjs') && !safeAdapterPath('C:/R&D/x.mjs') && !safeAdapterPath("C:/O'Brien/x.mjs"));
+  t.ok('アダプターのパスは日本語を受け、シェルの特殊文字を拒む', safeAdapterPath('C:/日本語/with space/x.mjs') && !safeAdapterPath('C:/R&D/x.mjs') && !safeAdapterPath("C:/O'Brien/x.mjs"));
+  t.ok('引用しないアダプターパスにシェルの制御文字を入れない', ['"', "'", '%', '!', '^', '&', '|', '<', '>', '(', ')', '$', '`', ';', '=']
+    .every(ch => !safeAdapterPath(`C:/hook${ch}dir/x.mjs`)));
   const rev = convertHook({ agent: 'claude', event: 'PreToolUse', matcher: 'Bash|Notebook.*', handler: { type: 'command', command: 'x' } }, 'antigravity', { platform: 'linux' });
   const chosen = convertHook({ agent: 'claude', event: 'PreToolUse', matcher: 'Bash|Notebook.*', handler: { type: 'command', command: 'x' } }, 'antigravity', { platform: 'linux', matcher: 'run_command' });
   t.ok('確認が必要な matcher は、写す先の matcher を入れると写せる', rev.status === 'review' && chosen.status === 'ready' && chosen.matcher === 'run_command' && chosen.matcherStatus === 'chosen');
   const cmd = adapterCommand({ adapterPath: 'C:\\Users\\a b\\.claude\\pleiad-hooks\\hook-adapter-0123456789ab.mjs', from: 'antigravity', to: 'claude', event: 'PreToolUse', innerTimeout: 30, command: 'node "D:/x y/a.mjs" --v \'q\'' });
+  const agyCmd = adapterCommand({ adapterPath: 'pleiad-hooks/hook-adapter-0123456789ab.mjs', from: 'claude', to: 'antigravity', event: 'PreToolUse', innerTimeout: 30, command: 'echo hi', unquoted: true });
+  t.ok('Windows の agy のコマンドは node と相対アダプターパスを引用しない', agyCmd.startsWith('node pleiad-hooks/hook-adapter-0123456789ab.mjs claude antigravity')
+    && parseAdapterCommand(agyCmd)?.command === 'echo hi');
   t.ok('アダプターのコマンドはスラッシュ区切り・空白は引用符、元のコマンドは 1 つの引数', cmd.startsWith('node "C:/Users/a b/.claude/pleiad-hooks/hook-adapter-0123456789ab.mjs" antigravity claude PreToolUse 30 ') && !cmd.includes('\\'));
   t.ok('アダプターのコマンドから元のコマンドを読める', parseAdapterCommand(cmd)?.command === 'node "D:/x y/a.mjs" --v \'q\'' && parseAdapterCommand('node x.mjs') === null);
   t.ok('写した定義をもう一度写すことはしない', convertHook({ agent: 'antigravity', event: 'PreToolUse', matcher: 'run_command', handler: { command: cmd } }, 'codex').reasons.some(r => r.code === 'alreadyCopy'));
@@ -325,11 +330,21 @@ process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{d
       targets: [{ agent: 'claude', scope: 'project', base: repo }], dryRun: true });
     t.ok('指すスクリプトが無ければ警告（写しても動かない）', miss.results[0].status === 'ready' && miss.results[0].warnings.some(w => w.code === 'scriptMissing'), JSON.stringify(miss.results[0].warnings));
     t.ok('Claude のプロジェクトには移動しても動く変数のパスを書く', miss.results[0].written.includes('"$CLAUDE_PROJECT_DIR/.claude/pleiad-hooks/'));
-    const win = createHooksConfig({ home, codexHome: path.join(home, '.codex'), claudeHome: path.join(home, '.claude'), geminiHome: path.join(home, '.gemini'),
-      findNode: async () => 'C:/node/node.exe', platform: 'win32' });
-    const wa = await win.copy({ source, targets: [{ agent: 'antigravity', scope: 'user', name: 'win-quoted' }], dryRun: true });
-    t.ok('Windows の agy へは引用付きパスを解決できないので写さない', wa.results[0].reasons.some(r => r.code === 'agyQuotedPath'));
+    const win = createHooksConfig({ home, codexHome: path.join(home, '.codex'), claudeHome: path.join(home, '.claude'), geminiHome: path.join(tmp, 'win-home', '.gemini'),
+      findNode: async () => 'C:/Program Files/nodejs/node.exe', platform: 'win32' });
+    const wa = await win.copy({ source, targets: [{ agent: 'antigravity', scope: 'user', name: 'win-unquoted' }], dryRun: true });
+    t.ok('Windows の agy ユーザーへは空白の無い絶対パスと PATH の node で写せる', wa.results[0].status === 'ready'
+      && /^node [^"\s]+\/pleiad-hooks\/hook-adapter-[0-9a-f]{12}\.mjs claude antigravity /.test(wa.results[0].written),
+      JSON.stringify({ status: wa.results[0].status, reasons: wa.results[0].reasons, written: wa.results[0].written?.match(/node [^"\s]+hook-adapter-[0-9a-f]{12}\.mjs claude antigravity /)?.[0] }));
+    const spacedWin = createHooksConfig({ home, codexHome: path.join(home, '.codex'), claudeHome: path.join(home, '.claude'),
+      geminiHome: path.join(tmp, 'space home', '.gemini'), findNode: async () => 'C:/Program Files/nodejs/node.exe', platform: 'win32' });
+    const spaced = await spacedWin.copy({ source, targets: [{ agent: 'antigravity', scope: 'user', name: 'win-spaced' }], dryRun: true });
+    t.ok('Windows の agy ユーザーへは空白を含むアダプターパスを写さない', spaced.results[0].reasons.some(r => r.code === 'adapterPath'));
     await write(path.join(repo, '.claude', 'settings.json'), { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo hi' }] }] } });
+    const wp = await win.copy({ source: { agent: 'claude', scope: 'project', base: repo, file: path.join(repo, '.claude', 'settings.json'), loc: { event: 'PreToolUse', group: 0, handler: 0 } },
+      targets: [{ agent: 'antigravity', scope: 'project', base: repo, name: 'win-project' }], dryRun: true });
+    t.ok('Windows の agy プロジェクトへは .agents からの引用符なし相対パスで写せる', wp.results[0].status === 'ready'
+      && wp.results[0].written.includes('node pleiad-hooks/hook-adapter-') && !wp.results[0].written.includes('node "pleiad-hooks/'));
     const wc = await win.copy({ source: { agent: 'claude', scope: 'project', base: repo, file: path.join(repo, '.claude', 'settings.json'), loc: { event: 'PreToolUse', group: 0, handler: 0 } },
       targets: [{ agent: 'codex', scope: 'project', base: repo }], dryRun: true });
     t.ok('Codex のプロジェクトへはアダプターの基準フォルダーが不明で写さない', wc.results[0].reasons.some(r => r.code === 'adapterProjectCodex'));

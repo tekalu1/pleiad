@@ -647,8 +647,11 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       const adapterPath = path.join(path.dirname(file.path), 'pleiad-hooks', adapterFile.name);
       const current = await readAdapter(adapterPath, file.base);
       out.adapter = { path: adapterPath, exists: Boolean(current.exists) };
-      if (!safeAdapterPath(adapterPath) || (to === 'antigravity' && /\s/.test(adapterPath))) reasons.push({ code: 'adapterPath', blocks: true });
-      if (platform === 'win32' && to === 'antigravity') reasons.push({ code: 'agyQuotedPath', blocks: true });
+      const unquoted = platform === 'win32' && to === 'antigravity';
+      const commandPath = scope === 'user' ? adapterPath : to === 'antigravity' ? `pleiad-hooks/${adapterFile.name}`
+        : `$CLAUDE_PROJECT_DIR/.claude/pleiad-hooks/${adapterFile.name}`;
+      if (!safeAdapterPath(unquoted ? commandPath : adapterPath) || (unquoted && /\s/u.test(commandPath)))
+        reasons.push({ code: 'adapterPath', blocks: true });
       if (scope !== 'user' && to === 'codex') reasons.push({ code: 'adapterProjectCodex', blocks: true });
       if (platform === 'win32') {
         const shell = src.agent === 'claude' ? process.env.CLAUDE_CODE_GIT_BASH_PATH ? [process.env.CLAUDE_CODE_GIT_BASH_PATH]
@@ -662,11 +665,10 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       const node = await findNode();
       out.node = node;
       if (!node) reasons.push({ code: 'noNode', blocks: true });
-      if (scope === 'user' && node && (!path.isAbsolute(node) || !safeAdapterPath(node) || (to === 'antigravity' && /\s/.test(node)))) reasons.push({ code: 'adapterPath', blocks: true });
-      const commandPath = scope === 'user' ? adapterPath : to === 'antigravity' ? `pleiad-hooks/${adapterFile.name}`
-        : `$CLAUDE_PROJECT_DIR/.claude/pleiad-hooks/${adapterFile.name}`;
+      if (to !== 'antigravity' && scope === 'user' && node && (!path.isAbsolute(node) || !safeAdapterPath(node)))
+        reasons.push({ code: 'adapterPath', blocks: true });
       command = adapterCommand({ adapterPath: commandPath, from: src.agent, to, event: conv.event, innerTimeout: conv.innerTimeout,
-        command: conv.command, node: scope === 'user' && node ? node : 'node' });
+        command: conv.command, node: to !== 'antigravity' && scope === 'user' && node ? node : 'node', unquoted });
     }
     // 同じイベントに同じコマンドが既にあれば写さない（前に写したもの。Codex・agy は同じ定義を重ねると 2 回走る）
     const existing = await load(file, file.base);
