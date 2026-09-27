@@ -27,6 +27,7 @@ const cases = [
   await import('./unit/inapp-browser.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
+  await import('./unit/agent-tasks-silence.mjs'),
   // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）
   await import('./unit/agent-tasks-storage.mjs'),
   await import('./unit/background-model.mjs'),

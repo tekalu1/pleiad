@@ -1134,6 +1134,9 @@ function clientReason(args) {
  */
 function makeEmit(turn) {
   const emit = (event, { recorded = false } = {}) => {
+    if (event?.type) agentTasks?.activity(turn.info.sessionId);
+    // Antigravity can report a step without a normalized conversation event.
+    if (event?.type === 'task.activity') return;
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
     if (event?.type === 'contextWindow' && Number.isFinite(event.usedTokens) && Number.isFinite(event.windowTokens)) {
       turn.contextWindow = { usedTokens: event.usedTokens, windowTokens: event.windowTokens };
@@ -1740,6 +1743,13 @@ agentTasks = await createAgentTasks({
       result: task.result.slice(0, 16000), more, error: task.error ?? '', retry, rejections: rejectionNotice(lng, task.rejections) + stoppedBackgroundNotice(lng, task.stoppedBackground) });
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
+  deliverSilence: async (task, minutes) => {
+    const owner = task.parentSessionId;
+    if (await noticeBlocked(owner)) return 'requeue';
+    const lng = await ensureAgentLocale(owner);
+    const prompt = agentT(lng, 'delegation.silenceNotice', { taskId: task.taskId, title: task.title, minutes });
+    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
+  },
 });
 
 // ターンの外で起きたことをバックエンドから受け取る口（docs/multi-backend.md §2.7）。
@@ -2318,6 +2328,7 @@ function findBackgroundTask(sessionId, taskId) {
 const OUTSIDE_TURN_EVENTS = new Set(["tool.result"]);
 function emitOutsideTurn(sessionId, event) {
   if (!sessionId || !OUTSIDE_TURN_EVENTS.has(event?.type)) return;
+  agentTasks?.activity(sessionId);
   emitGlobal({ ...event, sessionId });
 }
 
