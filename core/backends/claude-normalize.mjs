@@ -321,6 +321,36 @@ export function mergeQueuedCommands(entries, rows) {
   return merged;
 }
 
+/** 書きかけの末尾を除き、サブエージェントのメッセージ行の最低限の形を調べる。 */
+export function invalidSubagentTranscript(text) {
+  let messages = 0;
+  const lines = String(text ?? '').split('\n');
+  for (const [i, line] of lines.entries()) {
+    if (!line.trim()) continue;
+    let row;
+    try { row = JSON.parse(line); }
+    catch { if (i < lines.length - 1) return true; else continue; }
+    if (row?.type !== 'user' && row?.type !== 'assistant') continue;
+    messages++;
+    if (typeof row.uuid !== 'string' || !row.message || typeof row.message !== 'object') return true;
+  }
+  return messages === 0 && String(text ?? '').includes('"message"');
+}
+
+/** queued_command の attachment が期待する形で読めたか。 */
+export function invalidQueuedCommandTranscript(text) {
+  let candidates = 0, valid = 0;
+  for (const line of String(text ?? '').split('\n')) {
+    if (!line.includes('"attachment"') || !line.includes('queued_command')) continue;
+    candidates++;
+    try {
+      const row = JSON.parse(line);
+      if (row?.type === 'attachment' && typeof row.uuid === 'string' && row.attachment?.type === 'queued_command' && typeof row.attachment.prompt === 'string') valid++;
+    } catch {}
+  }
+  return candidates > 0 && valid !== candidates;
+}
+
 /**
  * サブエージェントの transcript（`<sessionId>/subagents/agent-<id>.jsonl` の中身）を、
  * SDK の getSubagentMessages と同じ形のエントリ列にする。

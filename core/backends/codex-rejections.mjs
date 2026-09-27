@@ -7,9 +7,10 @@
 //
 // 拾うのは出力の先頭（exec_command を直接呼んだとき）か `Script error:\n` の直後（code mode の exec・wait）にある
 // `exec_command failed: CreateProcess { message: "…" }` だけ。出力の途中に引用されただけの同じ文（issue の本文を読んだ結果など）は拾わない。
-// 形は Codex の Rust の Debug 表示で、公開の約束ではない。形が違えば拾わない（黙って空を返す）。
+// 形は Codex の Rust の Debug 表示で、公開の約束ではない。形が違えば拾わず、診断ログに記録する。
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 
 const HEAD = 'exec_command failed: CreateProcess { message: "';
 const FAILED = /^exec_command failed: CreateProcess \{ message: "((?:[^"\\]|\\.)*)" \}/;
@@ -131,6 +132,7 @@ export function rejectionsFromRollout(lines, turnId) {
   const rejections = [];
   const seen = new Set();
   let complete = false;
+  let turnRows = 0;
   for (const line of lines) {
     if (!line || (!line.includes('"response_item"') && !line.includes('"event_msg"'))) continue;
     let o;
@@ -144,6 +146,7 @@ export function rejectionsFromRollout(lines, turnId) {
     if (o.type !== 'response_item') continue;
     const turn = p.internal_chat_message_metadata_passthrough?.turn_id ?? null;
     if (turnId && turn !== turnId) continue;
+    turnRows++;
     if (CALLS.has(p.type)) {
       if (typeof p.call_id === 'string') calls.set(p.call_id, { type: p.type, name: p.name, arguments: p.arguments });
       continue;
@@ -172,7 +175,7 @@ export function rejectionsFromRollout(lines, turnId) {
     }
   }
   const pending = [...calls.keys()].filter(id => !answered.has(id)).length;
-  return { rejections, complete, pending };
+  return { rejections, complete, pending, turnRows };
 }
 
 // ---------------------------------------------------------------- ファイルを読む
@@ -220,15 +223,35 @@ async function linesFrom(file, from) {
 
 /**
  * このターンの拒否を rollout から読む。出力の行がまだ書かれていなければ少し待って読み直す。
- * 読めない・形が違うときは黙って [] を返す（ターンの結果は変えない。Codex の版で形が変わっても壊れない）
+ * 読めない・形が違うときは診断ログに記録して [] を返す（ターンの結果は変えない）。
  */
-export async function readTurnRejections({ file, from, turnId, waits = WAITS }) {
+async function rolloutVersion(file) {
+  const fh = await fs.open(file, 'r');
+  try {
+    const buf = Buffer.alloc(64 * 1024);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+    const first = buf.subarray(0, bytesRead).toString('utf8').split('\n')[0];
+    const row = JSON.parse(first);
+    return row?.type === 'session_meta' ? row.payload?.cli_version ?? null : null;
+  } catch { return null; }
+  finally { await fh.close(); }
+}
+
+export async function readTurnRejections({ file, from, turnId, waits = WAITS, dataDir = null }) {
   if (!file || !Number.isFinite(from) || !turnId) return [];
   try {
+    const version = await rolloutVersion(file);
+    if (!version) await recordBackendShapeMismatch({ dataDir, backend: 'codex', kind: 'rollout-session-meta', detectedVersion: null });
     for (let i = 0; ; i++) {
       const got = rejectionsFromRollout(await linesFrom(file, from), turnId);
-      if (got.complete || !got.pending || i >= waits.length) return got.rejections;
+      if (got.complete || (got.turnRows && !got.pending) || i >= waits.length) {
+        if (!got.turnRows) await recordBackendShapeMismatch({ dataDir, backend: 'codex', kind: 'rollout-turn-id', detectedVersion: version });
+        return got.rejections;
+      }
       await new Promise(resolve => setTimeout(resolve, waits[i]));
     }
-  } catch { return []; }
+  } catch {
+    await recordBackendShapeMismatch({ dataDir, backend: 'codex', kind: 'rollout-unreadable', detectedVersion: null });
+    return [];
+  }
 }

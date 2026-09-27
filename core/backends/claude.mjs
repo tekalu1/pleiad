@@ -26,8 +26,9 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import * as store from "../store.mjs";
+import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { buildClaudeModels, FALLBACK_MODELS } from "./claude-models.mjs";
-import { normalizeSdkMessage, transcriptToMessages, mergeQueuedCommands, subagentEntries } from "./claude-normalize.mjs";
+import { normalizeSdkMessage, transcriptToMessages, mergeQueuedCommands, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript } from "./claude-normalize.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog } from "./claude-background.mjs";
 
 const NL = String.fromCharCode(10);
@@ -396,6 +397,13 @@ const subagentReads = new Map();   // "sessionId/agentId:limit" -> { stamp, entr
  * （claude-normalize.mjs の subagentEntries）。見つからなければ null（呼び出し側が SDK へ落とす）。
  * 置き場は readQueuedCommandRows と同じく、組み立てずに projects の下を探す。
  */
+function transcriptVersion(text) {
+  for (const line of String(text).split('\n').slice(0, 20)) {
+    try { const row = JSON.parse(line); if (typeof row?.version === 'string') return row.version; } catch {}
+  }
+  return null;
+}
+
 async function readSubagentEntries(sessionId, agentId, { limit = 0 } = {}) {
   if (!SAFE_ID.test(String(sessionId ?? "")) || !SAFE_ID.test(String(agentId ?? ""))) return null;
   const key = `${sessionId}/${agentId}`;
@@ -417,13 +425,21 @@ async function readSubagentEntries(sessionId, agentId, { limit = 0 } = {}) {
     const slot = `${key}:${limit}`;
     if (subagentReads.get(slot)?.stamp === stamp) return subagentReads.get(slot).entries;
     const text = await fs.readFile(file, "utf8");
-    const meta = await fs.readFile(file.replace(/\.jsonl$/, ".meta.json"), "utf8").then(JSON.parse).catch(() => null);
-    const entries = subagentEntries(text, { toolUseId: typeof meta?.toolUseId === "string" ? meta.toolUseId : null, limit });
+    const version = transcriptVersion(text);
+    if (invalidSubagentTranscript(text)) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-shape', detectedVersion: version });
+    const metaText = await fs.readFile(file.replace(/\.jsonl$/, ".meta.json"), "utf8").catch(() => null);
+    let meta = null;
+    if (metaText !== null) {
+      try { meta = JSON.parse(metaText); } catch {}
+    }
+    if (typeof meta?.toolUseId !== 'string') await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-meta', detectedVersion: version });
+    const withOrigin = subagentEntries(text, { toolUseId: typeof meta?.toolUseId === "string" ? meta.toolUseId : null, limit });
     subagentReads.delete(slot);
-    subagentReads.set(slot, { stamp, entries });
+    subagentReads.set(slot, { stamp, entries: withOrigin });
     if (subagentReads.size > 24) subagentReads.delete(subagentReads.keys().next().value);   // 古いものから捨てる
-    return entries;
+    return withOrigin;
   } catch {
+    if (subagentFiles.has(key)) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-unreadable', detectedVersion: null });
     subagentFiles.delete(key);
     return null;
   }
@@ -445,10 +461,15 @@ async function readQueuedCommandRows(sessionId) {
     const projects = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects");
     let text = null;
     for (const dir of await fs.readdir(projects)) {
-      text = await fs.readFile(path.join(projects, dir, `${sessionId}.jsonl`), "utf8").catch(() => null);
+      try { text = await fs.readFile(path.join(projects, dir, `${sessionId}.jsonl`), "utf8"); }
+      catch (error) {
+        if (error?.code !== 'ENOENT') await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'transcript-unreadable', detectedVersion: null });
+        text = null;
+      }
       if (text !== null) break;
     }
-    if (!text || !text.includes("queued_command")) return [];
+    if (!text || !text.split('\n').some(line => line.includes('"attachment"') && line.includes('queued_command'))) return [];
+    const version = transcriptVersion(text);
     const rows = [];
     // 親子の鎖を遡るのに要るのは attachment 行だけ（間に挟まるのは CLI が足す attachment）。
     // 本文やツール結果の行は大きいので parse しない
@@ -459,6 +480,7 @@ async function readQueuedCommandRows(sessionId) {
         if (row?.type === "attachment" && row.uuid) rows.push(row);
       } catch { /* 壊れた行は飛ばす */ }
     }
+    if (invalidQueuedCommandTranscript(text)) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'transcript-shape', detectedVersion: version });
     return rows;
   } catch {
     return [];

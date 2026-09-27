@@ -143,6 +143,7 @@ const cases = [
   await import("./unit/codex-child-routing.mjs"),
   // Codex の実行前の拒否: rollout の解析（code mode・直接・wait・プロセス作成の失敗・引用の除外）・読む範囲・伏せ方・Codex の子への指示
   await import("./unit/codex-rejections.mjs"),
+  await import("./unit/backend-shape-diagnostics.mjs"),
   // 同じくサーバー全体: 会話にツールのエラーとして出す・委譲の rejections・完了通知・ply_task_send の次の回（Codex は身代わり）
   await import("./unit/server-codex-rejections.mjs"),
   // fake バックエンドでサーバを立てる。LLM は呼ばないので、ここに入れてよい
