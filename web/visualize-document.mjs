@@ -2,9 +2,7 @@
 // DOM も i18n も使わない（サーバーの core/server.mjs からも読む）。
 // Interactive documents always have an opaque sandbox origin. Never add
 // allow-same-origin: the surrounding app carries authenticated cookies.
-const CDNS = ['cdnjs.cloudflare.com', 'esm.sh', 'cdn.jsdelivr.net', 'unpkg.com',
-  'fonts.googleapis.com', 'fonts.gstatic.com', 'fonts.bunny.net'].map(h => `https://${h}`).join(' ');
-export const VISUALIZE_CSP = `default-src 'none'; script-src 'unsafe-inline' ${CDNS}; style-src 'unsafe-inline' ${CDNS}; img-src data: blob:; font-src data: ${CDNS}; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`;
+export const VISUALIZE_CSP = "default-src 'none'; script-src 'unsafe-inline' https:; style-src 'unsafe-inline' https:; img-src https: data: blob:; font-src https: data: blob:; connect-src https:; frame-src https:; media-src https: data: blob:; worker-src https: blob:; object-src 'none'; base-uri 'none'; form-action 'none'";
 // 下の BASE の ::-webkit-scrollbar 以降: スクロールバーは本体（style.css）と同じ。溝と端の矢印は出さず、丸いつまみだけ。
 // 色は tokens.css の --surface-thumb / --surface-thumb-hover。Chromium は scrollbar-color があると ::-webkit-scrollbar を無視するので、
 // 標準の指定は持たないブラウザーにだけ当てる（iframe の中身に日本語のコメントを持ち込まないため、ここに書く）
@@ -13,6 +11,8 @@ const BASE = `
 ::-webkit-scrollbar{width:10px;height:10px;background:transparent}::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}::-webkit-scrollbar-thumb{background:light-dark(#c9cbd2,#35373f);background-clip:padding-box;border:2px solid transparent;border-radius:999px}::-webkit-scrollbar-thumb:hover{background-color:light-dark(#acaeb7,#4a4c54)}::-webkit-scrollbar-button{display:none}@supports not selector(::-webkit-scrollbar){html{scrollbar-color:light-dark(#c9cbd2,#35373f) transparent}}*{box-sizing:border-box}body{margin:0;padding:16px;font:14px/1.5 var(--font-sans);color:var(--foreground);background:var(--background);overflow-wrap:anywhere}svg,canvas,img{max-width:100%}button,input,select{font:inherit}button,select,input{color:var(--foreground);accent-color:var(--primary)}button{cursor:pointer}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--primary);outline-offset:2px}.card{background:var(--card);padding:16px;border-radius:var(--radius)}.btn{background:var(--muted);color:var(--foreground);border:1px solid var(--border);border-radius:6px;padding:6px 12px}.row,.flex{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.grid{display:grid;gap:16px}.stack{display:flex;flex-direction:column;gap:12px}.muted{color:var(--muted-foreground)}.tooltip{background:var(--popover);color:var(--popover-foreground);padding:6px 10px;border-radius:6px}
 `;
 const RESIZE = `<script>(()=>{let queued=false;const report=()=>{if(queued)return;queued=true;requestAnimationFrame(()=>{queued=false;parent.postMessage({type:'ply-visualize-height',height:Math.ceil(document.body.getBoundingClientRect().height)},'*')})};new ResizeObserver(report).observe(document.body);addEventListener('load',report);report()})()</script>`;
+// Only framed documents need the bridge. Standalone snapshots keep ordinary links.
+export const LINK_BRIDGE = `<script>(()=>{const send=(url,newWindow)=>{try{const parsed=new URL(url);if(parsed.protocol!=='http:'&&parsed.protocol!=='https:')return;parent.postMessage({type:'ply-preview-open-link',url:parsed.href,newWindow},'*')}catch{}};document.addEventListener('click',event=>{const link=event.target.closest?.('a[href]');if(!link)return;const raw=link.getAttribute('href');if(raw?.startsWith('#')){event.preventDefault();location.hash=raw;return}event.preventDefault();if(!/^https?:\\/\\//i.test(raw||''))return;send(raw,link.target==='_blank'||event.ctrlKey||event.metaKey)},true);window.open=(url,target)=>{send(url,target==='_blank');return null}})()</script>`;
 
 // resize: false for a document opened on its own (a browser tab): nobody listens
 // for its height, so it gets no reporting script at all.
@@ -22,6 +22,6 @@ export function visualizationDocument(content, { theme = '', resize = true, titl
   const scheme = ['light', 'dark'].includes(theme) ? `:root{color-scheme:${theme}}` : '';
   // Place policy before ALL model content, even full documents with an existing
   // head, scripts or meta refresh. Nothing from the model enters the parent DOM.
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${VISUALIZE_CSP}"><meta name="viewport" content="width=device-width,initial-scale=1">${title ? `<title>${escapeText(title)}</title>` : ''}<style>${BASE}${scheme}</style></head><body>${String(content)}${resize ? RESIZE : ''}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${VISUALIZE_CSP}"><meta name="viewport" content="width=device-width,initial-scale=1">${title ? `<title>${escapeText(title)}</title>` : ''}<style>${BASE}${scheme}</style>${resize ? LINK_BRIDGE : ''}</head><body>${String(content)}${resize ? RESIZE : ''}</body></html>`;
 }
 
