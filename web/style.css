@@ -276,7 +276,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .pending-label{display:inline-flex;align-items:center;gap:5px;color:var(--ink-weak);font-size:var(--fs-xs);white-space:nowrap;flex:none}
 .pending-label .run{width:14px;height:14px}
 /* 脇の一覧の保存待ち（移動中・削除中・作成中）。回る弧は「動いている会話」の印なので置かず、
-   語の上をタイトル生成と同じ光が通る（design-system.md §4.6、ADR 0036）。色は変えず mask の濃淡だけを流す */
+   語の上をタイトル生成と同じ光が通る（design-system.md §4.6、ADR 0037）。色は変えず mask の濃淡だけを流す */
 .pending-glint{color:var(--ink);
   -webkit-mask-image:linear-gradient(90deg,rgba(0,0,0,.5) 35%,#000 50%,rgba(0,0,0,.5) 65%);
   mask-image:linear-gradient(90deg,rgba(0,0,0,.5) 35%,#000 50%,rgba(0,0,0,.5) 65%);
