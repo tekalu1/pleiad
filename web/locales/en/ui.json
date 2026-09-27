@@ -1876,6 +1876,7 @@
   },
   "notify": {
     "completed": "Work finished",
+    "waitingReply": "Waiting for your reply",
     "untitled": "Pleiad conversation"
   },
   "remote": {

@@ -22,7 +22,8 @@
     "back": "戻る"
   },
   "notifications": {
-    "completed": "作業が完了しました"
+    "completed": "作業が完了しました",
+    "waitingReply": "返事を待っています"
   },
   "secrets": {
     "unavailable": "OS の暗号化機能（safeStorage）が使えません",

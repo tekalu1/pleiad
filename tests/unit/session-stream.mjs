@@ -79,6 +79,8 @@ export default async function (t) {
   const next = vm.runInContext("select('target')", context);
   deliver({ type: "text.end", sessionId: "target", streamSeq: 6 });
   deliver({ type: "turnEnd", sessionId: "target", streamSeq: 7, outcome: 'ok', completedAt: 100 });
+  t.ok('turnEnd 自体は OS 通知を出さない', notices.length === 0);
+  deliver({ type: 'completionReady', sessionId: 'target', completedAt: 100 });
   t.ok("読込中の終了による同期は復元まで待つ", syncs === 0);
   releaseHistory({ messages: [], presents: [], stream: { events: [event("全文", 5)] }, streamCursor: 5 });
   await next;
