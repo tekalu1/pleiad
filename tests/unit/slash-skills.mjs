@@ -16,7 +16,7 @@ const SKILLS = [
   { name: "daily-report", description: "進捗報告の下書きを作る。レビュー観点も添える", hint: "<日付>", from: "プロジェクト" },
 ];
 
-function mount({ cwd = "D:/work", load, now } = {}) {
+function mount({ cwd = "D:/work", load, now, canCompact = () => true } = {}) {
   const input = el("textarea");
   input.value = "";
   input.setSelectionRange = (start, end) => { input.selectionStart = start; input.selectionEnd = end; };
@@ -25,7 +25,7 @@ function mount({ cwd = "D:/work", load, now } = {}) {
   const hint = el("div", "slash-hint");
   const calls = [];
   const slash = setupSlashSkills({
-    input, list, hint, cwd: () => cwd, now,
+    input, list, hint, cwd: () => cwd, now, canCompact,
     load: async (key) => { calls.push(key); return load ? load(key) : SKILLS; },
   });
   const type = (value, caret = value.length) => { input.value = value; input.setSelectionRange(caret, caret); input.dispatchEvent({ type: "input" }); };
@@ -78,15 +78,21 @@ export default async function (t) {
   await m.settle();
   t.ok("作業ディレクトリを渡して候補を取りに行く", m.calls.join() === "D:/work", m.calls.join());
   t.ok("候補が開く", m.slash.isOpen() === true && m.list.hidden === false);
-  t.ok("全件を出す", m.options().length === 3, String(m.options().length));
-  t.ok("見出しに件数を出す", m.list.querySelector(".head").textContent === "スキル3");
+  t.ok("Pleiad のコマンドとスキルを出す", m.options().length === 4, String(m.options().length));
+  t.ok("コマンドの組を先に出す", m.list.querySelector(".head").textContent === "Pleiad のコマンド");
   // textarea（textbox）は aria-expanded を持てない（axe の aria-allowed-attr）。開いているかは一覧の hidden で伝える
   t.ok("aria を一致させる", !m.input.hasAttribute("aria-expanded")
     && m.input.getAttribute("aria-activedescendant") === "slash-option-0");
   const first = m.options()[0];
-  t.ok("1 行目に /名前・引数・見つかった場所", first.querySelector(".name").textContent === "/visualize"
-    && first.querySelector(".from").textContent === "ユーザー");
-  t.ok("2 行目に説明", first.querySelector(".desc").textContent === "会話の中に図を出す");
+  t.ok("/compact を空白なしで確定できる", first.querySelector(".name").textContent === "/compact"
+    && first.querySelector(".desc").textContent === "会話を圧縮");
+  t.ok("スキルは次の組に残る", m.options()[1].querySelector(".desc").textContent === "会話の中に図を出す");
+  const agy = mount({ canCompact: () => false });
+  agy.type('/'); await agy.settle();
+  t.ok('Antigravity では圧縮候補を選べず理由が見える', agy.options()[0].getAttribute('aria-disabled') === 'true'
+    && agy.options()[0].querySelector('.desc').textContent.includes('Antigravity'));
+  agy.key('Enter');
+  t.ok('押しても入力欄を圧縮コマンドに変えない', agy.input.value === '/');
 
   m.type("/re");
   await m.settle();
@@ -119,14 +125,16 @@ export default async function (t) {
   m.key("Enter");
   t.ok("日本語の前文を残して確定", m.input.value === "これを/visualize ");
   m.type(m.input.value + "と /co");
+  m.key("ArrowDown");
   m.key("Tab");
   t.ok("2つ目を確定しても1つ目と文章が残る", m.input.value === "これを/visualize と /code-review ");
   t.ok("文中でも引数ヒントが出る", m.hint.textContent === "引数  [PR番号]");
   m.type("前文 /co 後文 /visualize", 6);
-  m.options()[0].onmousedown({ preventDefault() {} });
+  m.options()[1].onmousedown({ preventDefault() {} });
   t.ok("クリック確定も前後を保ち余分な空白を増やさない", m.input.value === "前文 /code-review 後文 /visualize");
   t.ok("カーソルは補完したスキルの直後", m.input.selectionStart === "前文 /code-review ".length);
   m.type("前文 /code-review 後文", 6);
+  m.key("ArrowDown");
   m.key("Tab");
   t.ok("名前の途中からの補完で古い語尾を残さない", m.input.value === "前文 /code-review 後文");
   m.type("/vi 後文");

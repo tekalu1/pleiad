@@ -65,6 +65,22 @@ function unreadMark() {
   return mark;
 }
 
+function compactionMark(s) {
+  const mark = el('span', 'row-compaction');
+  const svg = svgEl('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+  if (s.compactionAt) {
+    const time = new Date(s.compactionAt).toLocaleTimeString(document.documentElement.lang, { hour: '2-digit', minute: '2-digit' });
+    svg.append(svgEl('circle', { cx: 12, cy: 12, r: 8 }), svgEl('path', { d: 'M12 7v5l3 2' }));
+    mark.append(svg, document.createTextNode(time));
+    mark.setAttribute('aria-label', t('compaction.scheduled', { time }));
+  } else {
+    svg.append(svgEl('rect', { x: 4, y: 4, width: 16, height: 16, rx: 3 }),
+      svgEl('path', { d: 'M8 12h8M10 8l2 2 2-2M10 16l2-2 2 2' }));
+    mark.append(svg, document.createTextNode(t('compaction.sidebarDone')));
+  }
+  return mark;
+}
+
 /** 保存待ちの語（移動中・削除中・作成中）。回る弧は「動いている会話」の印なので置かず、語の上を光が通る（design-system.md §4.6） */
 function pendingLabel(text) {
   const label = el("span", "pending-label");
@@ -661,6 +677,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (s.cwd) cwd.title = s.cwd;
     meta.append(cwd);
     if (s.unsent) meta.append(el("span", "row-unsent", s.hasDraft ? t("sidebar.unsentDraft") : t("sidebar.unsent")));
+    if (s.compactionAt || s.compacted) meta.append(compactionMark(s));
     r.append(meta);
     r.setAttribute("aria-label", [titleOf(s) || t("session.untitled"), spoken([...meta.children])].filter(Boolean).join(", "));
 

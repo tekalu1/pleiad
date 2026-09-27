@@ -42,7 +42,10 @@
 | 接続先 / 互換の接続先 / 公式 | endpoint / compatible endpoint / Official |
 | 接続先を管理… | Manage endpoints… |
 | 使用量 | usage |
-| コンテキスト | context |
+| プラグイン（指示・Skills・MCP の入口） | Plugins |
+| 文脈（会話の LLM 窓の占有） | Context |
+| コンテキスト長（モデルの窓の上限） | Context length |
+| 圧縮 / 自動圧縮 | compaction / auto compaction |
 | スキル | skills |
 | 外観 / 配色 / 言語 | Appearance / Theme / Language |
 | アプリ情報・更新 | About & updates |
