@@ -1493,7 +1493,8 @@
       "selected": "Code selected. Press Ctrl+C / ⌘C to copy"
     },
     "link": {
-      "blocked": "Disabled because the link is unsafe"
+      "blocked": "Disabled because the link is unsafe",
+      "hostOnly": "localhost links open only on the host's PC."
     },
     "present": {
       "height": {

@@ -2,6 +2,7 @@ import { isComposingKey } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
 import { download, notify } from './file-actions.mjs';
+import { watchHostOnlyLinks } from './host-only-links.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 setupCodeCopy();
@@ -5509,6 +5510,8 @@ watchRemoteReason();
 watchTitleBar();
 watchShellTheme();
 watchShellBack();
+// localhost のリンクは、サーバーのある PC の画面でなければ開かずに知らせる（docs/remote.md §8.5）
+watchHostOnlyLinks({ onHostScreen: () => state.osActions === true, notify });
 wireDropZone();
 fitPrompt();
 // 初めて接続して会話を開く（または新しい会話を始める）までは書けない。書いても開いた会話の下書きで上書きされる
