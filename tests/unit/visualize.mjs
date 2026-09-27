@@ -44,7 +44,7 @@ export default async function(t) {
     const visual = renderPresent(saved[0]);
     assert.equal(old.querySelector('iframe').getAttribute('sandbox'), '');
     assert.equal(visual.querySelector('iframe').getAttribute('sandbox'), 'allow-scripts');
-    assert(visual.querySelector('iframe').srcdoc.includes("connect-src 'none'"));
+    assert(visual.querySelector('iframe').srcdoc.includes('connect-src https:'));
     t.ok('既存HTMLは静的なまま、新しい図だけopaque sandboxで実行', true);
     const messages = [{role:'assistant',text:ref,uuid:'a'}, {role:'user',text:'次'}, {role:'assistant',text:ref,uuid:'b'}];
     const items = buildItems(messages, [saved[0], saved[0]]);

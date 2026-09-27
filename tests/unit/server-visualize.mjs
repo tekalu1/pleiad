@@ -38,7 +38,7 @@ export default async function(t) {
     assert.equal(byId.status, 200);
     const csp = byId.headers.get('content-security-policy');
     assert.match(csp, /^sandbox allow-scripts;/); assert(!/allow-same-origin/.test(csp));
-    assert.match(csp, /connect-src 'none'/); assert.match(csp, /frame-ancestors 'none'/);
+    assert.match(csp, /connect-src https:/); assert.match(csp, /frame-ancestors 'none'/);
     assert.match(byId.headers.get('content-type'), /^text\/html/);
     assert.equal(byId.headers.get('cache-control'), 'private, no-store');
     assert.equal(byId.headers.get('x-content-type-options'), 'nosniff');
