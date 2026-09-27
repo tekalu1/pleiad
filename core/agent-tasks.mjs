@@ -66,7 +66,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     if (instruction && instruction.state !== state) { instruction.state = state; r.instructionRevision = (r.instructionRevision ?? 0) + 1; }
   };
   const dropInstructions = r => {
-    for (const instruction of r.instructions ?? []) if (['queued', 'sending'].includes(instruction.state)) setInstruction(r, instruction.id, 'dropped');
+    for (const instruction of r.instructions ?? []) if (instruction.state === 'queued') setInstruction(r, instruction.id, 'dropped');
     r.queue = [];
   };
   let writes = Promise.resolve(), closed = false, mutating = false, probing = false;
@@ -114,7 +114,11 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // 再起動: 実行中だったものは再実行しない。まだ親に渡っていない pending はそのまま送り直す。
   // 渡ったか分からない delivering だけを unknown にする（二重に届けない）
   for (const r of Object.values(records)) {
-    if (ACTIVE.has(r.status)) { r.status = 'interrupted'; r.error = t('tasks.interruptedByRestart'); dropInstructions(r); }
+    if (ACTIVE.has(r.status)) {
+      r.status = 'interrupted'; r.error = t('tasks.interruptedByRestart');
+      for (const instruction of r.instructions ?? []) if (instruction.state === 'sending') setInstruction(r, instruction.id, 'delivered');
+      dropInstructions(r);
+    }
     if (r.notification === 'delivering') r.notification = 'unknown';
   }
   await serial(() => persist('restore'));
@@ -156,7 +160,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   }
   async function run(r, controller) {
     // stalled: 実行の開始を保存できなかった。子は動かしていないので queued のまま、次のタイマーでやり直す
-    let stalled = false;
+    let stalled = false, activeInstructionId;
     try {
       while (!controller.signal.aborted) {
         let prompt, instructionId;
@@ -168,14 +172,16 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           row.status = 'running';
         }, 'run.start'); }
         catch { stalled = true; break; }
+        activeInstructionId = instructionId;
         const result = await execute(structuredClone(r), prompt, controller.signal);
         if (result?.requeue) {
           await record(r.taskId, row => { row.queue.unshift(instructionId ? { instructionId } : prompt); setInstruction(row, instructionId, 'queued'); row.status = 'queued'; }, 'run.requeue');
+          activeInstructionId = undefined;
           return;
         }
         await record(r.taskId, row => {
           row.result = String(result?.text ?? ''); row.error = result?.error ?? null;
-          setInstruction(row, instructionId, controller.signal.aborted ? 'dropped' : 'delivered');
+          setInstruction(row, instructionId, 'delivered');
           // 実行前に拒否されたコマンド。前の完了通知の後に走った回の分を足していく（通知の前に続けて走った回の分も落とさない）
           const got = Array.isArray(result?.rejections) ? result.rejections : [];
           if (got.length) {
@@ -189,10 +195,11 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           row.status = controller.signal.aborted ? 'cancelled' : result?.outcome === 'ok' ? (row.queue.length ? 'queued' : 'completed') : 'failed';
           if (['failed', 'cancelled'].includes(row.status)) dropInstructions(row);
         }, 'run.result');
+        activeInstructionId = undefined;
         if (r.status !== 'queued') break;
       }
     } catch (e) {
-      await record(r.taskId, row => { row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); dropInstructions(row); }, 'run.error');
+      await record(r.taskId, row => { row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); setInstruction(row, activeInstructionId, 'dropped'); dropInstructions(row); }, 'run.error');
     } finally {
       if (r.status === 'cancelling' || controller.signal.aborted) await record(r.taskId, row => { row.status = 'cancelled'; dropInstructions(row); }, 'run.cancelled');
       live.delete(r.taskId);

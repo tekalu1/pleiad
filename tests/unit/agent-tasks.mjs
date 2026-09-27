@@ -87,6 +87,19 @@ export default async function(t) {
     t.ok('停止を実行に伝播する', manager.get(slow.taskId).notification === 'suppressed');
     t.ok('停止後も未配送の本文を残す', manager.instructions(slow.taskId).instructions[0]?.state === 'dropped'
       && manager.instructions(slow.taskId).instructions[0]?.text === 'stop pending');
+    await manager.call('parent', 'ply_task_send', { taskId: slow.taskId, message: 'after stop' });
+    await until(() => manager.get(slow.taskId).status === 'completed');
+    t.ok('停止で未配送になった指示を、後の配送後も残す', manager.instructions(slow.taskId).instructions.map(x => x.state).join() === 'dropped,delivered'
+      && calls.some(([taskId, prompt]) => taskId === slow.taskId && prompt === 'after stop'));
+    release = null;
+    const stoppedSending = await manager.call('parent', 'ply_delegate', { backend: 'claude', task: 'hold' });
+    await until(() => release);
+    await manager.call('parent', 'ply_task_send', { taskId: stoppedSending.taskId, message: 'hold' });
+    const firstRelease = release; release = null; firstRelease();
+    await until(() => manager.instructions(stoppedSending.taskId).instructions[0]?.state === 'sending' && release);
+    await manager.call('parent', 'ply_task_cancel', { taskId: stoppedSending.taskId });
+    await until(() => manager.get(stoppedSending.taskId).status === 'cancelled');
+    t.ok('送信中に停止しても履歴へ渡った指示は配送済みのまま', manager.instructions(stoppedSending.taskId).instructions[0]?.state === 'delivered');
     release = null;
     const failing = await manager.call('parent', 'ply_delegate', { backend: 'codex', task: 'hold-fail' });
     await until(() => release);
@@ -95,6 +108,13 @@ export default async function(t) {
     await until(() => manager.get(failing.taskId).status === 'failed');
     t.ok('失敗時も後続の指示を未配送で残す', manager.instructions(failing.taskId).instructions[0]?.state === 'dropped'
       && manager.instructions(failing.taskId).instructions[0]?.text === 'failure pending');
+    release = null;
+    const throwing = await manager.call('parent', 'ply_delegate', { backend: 'codex', task: 'hold' });
+    await until(() => release);
+    await manager.call('parent', 'ply_task_send', { taskId: throwing.taskId, message: 'error' });
+    release();
+    await until(() => manager.get(throwing.taskId).status === 'failed');
+    t.ok('実行が例外を投げた追加指示は未配送で残す', manager.instructions(throwing.taskId).instructions[0]?.state === 'dropped');
     const failed = await manager.call('parent', 'ply_delegate', { backend: 'codex', task: 'error' });
     await until(() => manager.get(failed.taskId).status === 'failed');
     t.ok('実行失敗を成功として扱わない', manager.get(failed.taskId).error === 'fixture failure');
@@ -103,12 +123,17 @@ export default async function(t) {
     const raw = JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'));
     raw[slow.taskId].status = 'running'; raw[slow.taskId].notification = 'delivering';
     raw[slow.taskId].queue = ['legacy pending']; delete raw[slow.taskId].instructions;
+    raw[failing.taskId].status = 'running';
+    raw[failing.taskId].instructions = [{ id: 'restarting-sending', text: 'already started', at: Date.now(), state: 'sending' }];
+    raw[failing.taskId].queue = [];
     await fs.writeFile(path.join(dir, 'agent-tasks.json'), JSON.stringify(raw));
     const before = calls.length;
     manager = await createAgentTasks(options);
     t.ok('再起動で実行を再送せず中断・配送不明にする', manager.get(slow.taskId).status === 'interrupted' && manager.get(slow.taskId).notification === 'unknown' && calls.length === before);
     t.ok('旧形式の queue を読み、再起動で未配送として残す', manager.instructions(slow.taskId).instructions[0]?.text === 'legacy pending'
       && manager.instructions(slow.taskId).instructions[0]?.state === 'dropped');
+    t.ok('再起動前に送信を始めた指示は配送済みとして残す', manager.get(failing.taskId).status === 'interrupted'
+      && manager.instructions(failing.taskId).instructions[0]?.state === 'delivered');
     renameBroken = true;
     const count = manager.list().length;
     const rejected = await manager.call('parent', 'ply_delegate', { backend: 'codex', task: 'must not run' }).then(() => false, () => true);
