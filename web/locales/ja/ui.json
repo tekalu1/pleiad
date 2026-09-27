@@ -1965,7 +1965,8 @@
       "quota_high": "使用量が多い",
       "quota_full": "使用枠を使い切った",
       "pace_high": "ペースが速い",
-      "pace_unknown": "ペースが分からない"
+      "pace_unknown": "ペースが分からない",
+      "lower_priority": "ほかの認証を優先した"
     },
     "skipWithDetail": "{{reason}}（{{detail}}）",
     "unavailable": {

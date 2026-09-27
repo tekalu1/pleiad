@@ -62,13 +62,15 @@ const defaultNames = { backend: id => id ?? '', model: (_backend, model) => mode
 /** 「Codex gpt-6-sol」。names は { backend(id), model(backend, model) } */
 export function targetText(target, names = defaultNames) {
   if (!target) return '';
-  return [names.backend(target.backend), names.model(target.backend, target.model)].filter(Boolean).join(' ');
+  const base = [names.backend(target.backend), names.model(target.backend, target.model)].filter(Boolean).join(' ');
+  return target.backend === 'claude' && target.accountLabel ? [base, target.accountLabel].join(t('routing.line.join')) : base;
 }
+const accountName = row => row.accountLabel || (row.account === '' ? t('routing.detail.loginAccount') : row.account ?? '');
 
 /** 飛ばした候補の一言（「Sonnet は週次 73% で飛ばした」） */
 export function skippedPhrase(skipped, names = defaultNames) {
   const { backend, model } = splitCandidate(skipped.candidate);
-  const name = names.model(backend, model) || model;
+  const name = [names.model(backend, model) || model, ...(skipped.account !== undefined ? [accountName(skipped)] : [])].filter(Boolean).join(t('routing.line.join'));
   const w = skipped.window;
   if (skipped.reason === 'pace_high' && w?.pace != null) return t('routing.line.skippedPace', { name, window: w.label ?? '', pace: w.pace });
   if (['quota_high', 'pace_unknown'].includes(skipped.reason) && percent(w?.usedPercent) != null)
@@ -142,7 +144,10 @@ export function retryCandidates(candidates, routing, tiers = ['t1', 't2', 't3', 
   const at = Math.max(0, tiers.indexOf(routing?.tier ?? routing?.baseTier));
   const order = [...tiers.slice(at), ...tiers.slice(0, at).reverse()];
   const rank = c => Math.min(...(c.tiers ?? []).map(tier => order.indexOf(tier)).filter(i => i >= 0), order.length);
-  return (candidates ?? []).filter(c => c.usable && c.candidate !== used)
+  const expanded = (candidates ?? []).flatMap(c => c.backend === 'claude' && c.accounts?.length
+    ? c.accounts.map(a => { const { accounts, ...base } = c; return { ...base, ...a, usable: a.usable ?? a.ok, accountLabel: a.label, windows: a.windows }; })
+    : [c]);
+  return expanded.filter(c => c.usable && !(c.candidate === used && (c.account ?? null) === (routing?.target?.account ?? null)))
     .map((c, i) => ({ c, i, r: rank(c) })).sort((a, b) => a.r - b.r || a.i - b.i).map(x => x.c);
 }
 
@@ -172,11 +177,11 @@ export function parseRoutingFailure(text) {
       (skipped.at(-1).accounts ??= []).push({ label, reason, ...(detail ? { detail } : {}), ...(window ? { window } : {}) });
       continue;
     }
-    const m = /^- ([a-z]+:\S+) \((t\d|tv)\): ([a-z_]+)(?: \(([a-z_]+)\))?(?: (.*?) (\d+(?:\.\d+)?)%)?(?: pace (\d+(?:\.\d+)?))?\s*$/.exec(line);
+    const m = /^- ([a-z]+:\S+)(?: \[([^\]]+)\])? \((t\d|tv)\): ([a-z_]+)(?: \(([a-z_]+)\))?(?: (.*?) (\d+(?:\.\d+)?)%)?(?: pace (\d+(?:\.\d+)?))?\s*$/.exec(line);
     if (!m) continue;
-    const [, candidate, tier, reason, detail, label, used, pace] = m;
+    const [, candidate, accountLabel, tier, reason, detail, label, used, pace] = m;
     const window = used != null || pace != null ? { label: label ?? '', ...(used != null ? { usedPercent: Number(used) } : {}), ...(pace != null ? { pace: Number(pace) } : {}) } : null;
-    skipped.push({ candidate, tier, reason, ...(detail ? { detail } : {}), ...(window ? { window } : {}) });
+    skipped.push({ candidate, ...(accountLabel ? { accountLabel } : {}), tier, reason, ...(detail ? { detail } : {}), ...(window ? { window } : {}) });
   }
   return { kind: head[1], difficulty: head[2], skipped };
 }
@@ -197,7 +202,7 @@ export function groupText({ reason, items }, names = defaultNames) {
   if (['quota_full', 'quota_high', 'pace_high', 'pace_unknown'].includes(reason)) {
     return items.map(s => {
       const { backend, model } = splitCandidate(s.candidate);
-      const name = names.model(backend, model) || model;
+      const name = [names.model(backend, model) || model, s.accountLabel].filter(Boolean).join(join);
       const w = s.window;
       if (reason === 'pace_high' && w?.pace != null) return t('routing.failure.pace', { name, window: w.label ?? '', pace: w.pace });
       if (percent(w?.usedPercent) != null) return t('routing.failure.percent', { name, window: w.label ?? '', percent: percent(w.usedPercent) });
@@ -207,14 +212,18 @@ export function groupText({ reason, items }, names = defaultNames) {
   const byBackend = new Map();
   for (const s of items) {
     const { backend } = splitCandidate(s.candidate);
+    if (s.accountLabel) {
+      byBackend.set(`${backend}:${s.accountLabel}`, { name: `${names.backend(backend)}${join}${s.accountLabel}`, ids: new Set([s.candidate]), details: new Set(s.detail ? [s.detail] : []) });
+      continue;
+    }
     // 同じ候補が複数の段に並んでいても 1 つと数える
     const row = byBackend.get(backend) ?? { ids: new Set(), details: new Set() };
     row.ids.add(s.candidate);
     if (s.detail) row.details.add(s.detail);
     byBackend.set(backend, row);
   }
-  return [...byBackend].map(([backend, { ids, details }]) => {
-    const name = t('routing.failure.count', { name: names.backend(backend), n: ids.size });
+  return [...byBackend].map(([backend, { name: accountNameText, ids, details }]) => {
+    const name = accountNameText ?? t('routing.failure.count', { name: names.backend(backend), n: ids.size });
     // 使えない理由がエージェントの中で 1 つに決まれば添える（「Codex 2（入っていない）」）
     const [only] = details;
     return details.size === 1 && reason === 'unavailable' ? t('routing.failure.withDetail', { text: name, detail: t(`routing.unavailable.${only}`) }) : name;
@@ -251,7 +260,7 @@ export function routingFailureParts(failure, { names = defaultNames, open = () =
     const w = s.window;
     const reason = skipText(s.reason, s.detail) + (w?.pace != null && s.reason === 'pace_high' ? `${t('routing.line.join')}${w.label ?? ''} ${t('routing.detail.pace', { pace: w.pace })}`
       : percent(w?.usedPercent) != null ? `${t('routing.line.join')}${w.label ?? ''} ${percent(w.usedPercent)}%` : '');
-    li.append(el('span', 'tier', tierText(s.tier)), el('span', 'nm', `${names.model(backend, model) || model}${t('routing.line.join')}${names.backend(backend)}`), el('span', 'rs', reason));
+    li.append(el('span', 'tier', tierText(s.tier)), el('span', 'nm', [names.model(backend, model) || model, names.backend(backend), s.accountLabel].filter(Boolean).join(t('routing.line.join'))), el('span', 'rs', reason));
     for (const a of s.accounts ?? []) {
       const name = a.label || a.account || t('routing.detail.loginAccount');
       const percentText = percent(a.window?.usedPercent);
@@ -290,11 +299,11 @@ function fact(label, value) {
 }
 
 /** 候補 1 つ（使った・飛ばした）。n は試した順 */
-function candidateCard({ n, backend, model, used, skipped, windows, usageAt }, { names, logo }) {
+function candidateCard({ n, backend, model, used, skipped, account, accountLabel, windows, usageAt }, { names, logo }) {
   const card = el('div', 'rt-cand' + (used ? ' used' : ''));
   const head = el('div', 'rt-cand-head');
   head.append(el('span', 'rt-n', String(n)), logo(backend));
-  head.append(el('b', null, names.model(backend, model) || model));
+  head.append(el('b', null, [names.model(backend, model) || model, ...(account !== undefined ? [accountName({ account, accountLabel })] : [])].filter(Boolean).join(t('routing.line.join'))));
   const state = used ? t('routing.detail.used') : t('routing.detail.skipped', { reason: skipText(skipped.reason, skipped.detail) });
   head.append(el('span', 'rt-state' + (used ? ' used' : ''), state));
   card.append(head);
@@ -331,9 +340,12 @@ export function routingDetail(routing, { names = defaultNames, logo = () => el('
   let n = 0;
   for (const s of routing.skipped ?? []) {
     const { backend, model } = splitCandidate(s.candidate);
-    list.append(candidateCard({ n: ++n, backend, model, used: false, skipped: s, usageAt: routing.usageAt, windows: s.window && percent(s.window.usedPercent) != null ? [s.window] : [] }, { names, logo }));
+    list.append(candidateCard({ n: ++n, backend, model, used: false, skipped: s, account: s.account, accountLabel: s.accountLabel,
+      usageAt: routing.usageAt, windows: s.windows ?? (s.window && percent(s.window.usedPercent) != null ? [s.window] : []) }, { names, logo }));
   }
-  if (routing.target) list.append(candidateCard({ n: ++n, backend: routing.target.backend, model: routing.target.model, used: true, windows: routing.targetWindows ?? [] }, { names, logo }));
+  if (routing.target) list.append(candidateCard({ n: ++n, backend: routing.target.backend, model: routing.target.model, used: true,
+    account: routing.target.backend === 'claude' ? routing.target.account : undefined, accountLabel: routing.target.accountLabel,
+    windows: routing.targetWindows ?? [] }, { names, logo }));
   root.append(list);
   // やり直したタスク（client.mjs の paintRetried が中身を入れる）
   root.append(el('div', 'rt-retried'));
@@ -369,7 +381,7 @@ export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '
 
 /**
  * 「別の候補でやり直す」の面。candidates は retryCandidates の結果（今使えるもの）。
- * run({ candidate, stop, approved }) はサーバーへ頼む関数で、{ confirm } が返れば承認の一行を出して待つ。
+ * run({ candidate, account?, stop, approved }) はサーバーへ頼む関数で、{ confirm } が返れば承認の一行を出して待つ。
  * running は元のタスクが動いているか（止めるかどうかを選ばせる）
  */
 export function retryPanel({ candidates, running, names = defaultNames, logo = () => el('span'), run, close }) {
@@ -392,15 +404,16 @@ export function retryPanel({ candidates, running, names = defaultNames, logo = (
   group.setAttribute('aria-label', t('routing.retry.title'));
   const name = `rt-${Math.random().toString(36).slice(2)}`;
   // approved: 承認モードが強くなることを見せた後。stopChoice: そのときに選んだ「止める・止めない」（承認で同じ選び方のまま頼む）
-  let chosen = candidates[0].candidate, approved = false, stopChoice = true;
-  for (const c of candidates) {
+  let chosen = 0, approved = false, stopChoice = true;
+  for (const [index, c] of candidates.entries()) {
     const label = el('label', 'rt-option');
     const input = el('input');
-    input.type = 'radio'; input.name = name; input.value = c.candidate; input.checked = c.candidate === chosen;
-    input.onchange = () => { chosen = c.candidate; approved = false; paint(); };
+    input.type = 'radio'; input.name = name; input.value = String(index); input.checked = index === chosen;
+    input.onchange = () => { chosen = index; approved = false; paint(); };
     const text = el('span', 'rt-option-text');
     const title = el('span', 'rt-option-name');
-    title.append(logo(c.backend), el('span', null, names.model(c.backend, c.model) || c.model));
+    title.append(logo(c.backend), el('span', null, [names.model(c.backend, c.model) || c.model,
+      ...(c.backend === 'claude' ? [accountName({ account: c.account, accountLabel: c.accountLabel })] : [])].filter(Boolean).join(t('routing.line.join'))));
     const sub = [...(c.tiers ?? []).map(tierText), ...(c.deferred ? [t('routing.retry.lowHeadroom', { reason: skipText(c.reason) })] : []), usageSummary(c)].filter(Boolean).join(t('routing.line.join'));
     text.append(title, el('small', null, sub));
     label.append(input, text);
@@ -412,13 +425,16 @@ export function retryPanel({ candidates, running, names = defaultNames, logo = (
   warn.hidden = true;
   const actions = el('div', 'rt-retry-actions');
   panel.append(warn, actions, note);
-  const nameOf = () => { const c = candidates.find(x => x.candidate === chosen); return names.model(c.backend, c.model) || c.model; };
+  const nameOf = () => { const c = candidates[chosen]; return [names.model(c.backend, c.model) || c.model,
+    ...(c.backend === 'claude' ? [accountName({ account: c.account, accountLabel: c.accountLabel })] : [])].filter(Boolean).join(t('routing.line.join')); };
   const go = async (stop, button) => {
     stopChoice = stop;
     for (const b of actions.querySelectorAll('button')) b.disabled = true;
     note.textContent = '';
     try {
-      const result = await run({ candidate: chosen, ...(running ? { stop } : {}), ...(approved ? { approved: true } : {}) });
+      const c = candidates[chosen];
+      const result = await run({ candidate: c.candidate, ...(c.backend === 'claude' && c.account != null ? { account: c.account } : {}),
+        ...(running ? { stop } : {}), ...(approved ? { approved: true } : {}) });
       if (result?.confirm) {
         approved = true;
         warn.textContent = `⚠ ${t('routing.retry.escalation', result.confirm)}`;

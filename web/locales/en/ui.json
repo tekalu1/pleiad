@@ -2036,7 +2036,8 @@
       "quota_high": "usage high",
       "quota_full": "quota exhausted",
       "pace_high": "pace too fast",
-      "pace_unknown": "pace unknown"
+      "pace_unknown": "pace unknown",
+      "lower_priority": "another account preferred"
     },
     "skipWithDetail": "{{reason}} ({{detail}})",
     "unavailable": {

@@ -23,3 +23,4 @@
 
 - 0022 の「使用量の線で飛ばす／上の段が全部だめならエラー」を置き換える。判定器と種類・難しさの規則はそのまま。
 - 現行仕様は [agent-delegation.md](../agent-delegation.md) と [design-system.md](../design-system.md) に記す。
+- 追加仕様（2026-09-27、[ADR 0041](0041-account-level-delegation.md)）: Claude の異なる認証は重複をまとめた後、カード・設定・エラー・再試行で別々の候補として扱う。

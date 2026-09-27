@@ -1,6 +1,6 @@
 // 委譲先の自動振り分け（core/delegation-routing.mjs・delegation-judges.mjs・delegation-usage.mjs）。
 // 判定器は偽の fetch とだけ話す（本物の OpenRouter・Cerebras へは送らない）。LLM は呼ばない
-import { KINDS, SIGNALS, DEFAULTS, normalizeSettings, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, dedupeAccounts,
+import { KINDS, SIGNALS, DEFAULTS, normalizeSettings, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, selectRetryAccount, dedupeAccounts,
   route, pinnedRouting, manualRouting, candidateStates, settingsWarnings, parseCandidate, elapsedPercent, formatSkippedCandidates } from '../../core/delegation-routing.mjs';
 import { askJev, askCerebras, judgeDifficulty, normalizeKey, TASK_LIMIT, JEV_MODEL, CEREBRAS_MODEL } from '../../core/delegation-judges.mjs';
 import { createUsageMonitor } from '../../core/delegation-usage.mjs';
@@ -108,6 +108,10 @@ export default async function (t) {
   // ---- 振り分け（検証の場面 S1〜S4 と同じ答え。temporary の policy.mjs の自己テスト）
   t.ok('S1: 種類 trivial・低 → Antigravity Gemini Flash', target(routeAt('trivial', 'low', S1)) === 'antigravity:gemini-3.8-flash-high');
   t.ok('S1: design・高 → Opus を週次ペースの低いアカウント（oz）で', target(routeAt('design', 'high', S1)) === 'claude:opus@acct-oz');
+  const readyAccounts = routeAt('design', 'high', S1).routing;
+  t.ok('同じモデルの別の余裕あり認証は、選ばれなかった理由つきで 1 行残す', readyAccounts.skipped.length === 1
+    && readyAccounts.skipped[0].account === '' && readyAccounts.skipped[0].reason === 'lower_priority'
+    && readyAccounts.target.accountLabel === 'acct-oz');
   const s2 = routeAt('design', 'high', S2);
   t.ok('S2: 5 時間 96% でも週次に余裕のある OZ を選ぶ', target(s2) === 'claude:opus@acct-oz'
     && !s2.routing.selectedWithLowHeadroom, JSON.stringify(s2.routing));
@@ -126,6 +130,10 @@ export default async function (t) {
     && st.routing.skipped[0].checkedAt === new Date(NOW - 16 * 60_000).toISOString());
   const again = route({ kind: 'trivial', judged: { judge: 'jev', signals: zero }, settings, usage: S1, now: NOW, rejected: { 'antigravity:gemini-3.8-flash-high': 'model_unknown' } });
   t.ok('選んだ後の確かめで落ちた候補（rejected）は理由を付けて飛ばし、次の候補へ', target(again) === 'claude:haiku@acct-oz' && again.routing.skipped[0].reason === 'model_unknown');
+  const rejectedClaude = route({ kind: 'design', judged: { judge: 'jev', signals: byDifficulty.high }, settings, usage: S1, now: NOW,
+    rejected: { 'claude:opus': 'model_unknown' } });
+  t.ok('Claude のモデル再確認で落ちた場合も認証ごとの行に残す', rejectedClaude.routing.skipped.filter(s => s.candidate === 'claude:opus').length === 2
+    && rejectedClaude.routing.skipped.filter(s => s.candidate === 'claude:opus').every(s => s.reason === 'model_unknown'));
   const unknownModel = { ...S1, antigravity: { ...S1.antigravity, models: { 'gemini-3.8-flash-high': false } } };
   t.ok('一覧に無いモデルは model_unknown で飛ばす（黙って既定に落とさない）', routeAt('trivial', 'low', unknownModel).routing.skipped[0].reason === 'model_unknown');
   const gone = { ...S1, antigravity: { available: false, checkedAt: null, windows: [], models: {} } };
@@ -133,7 +141,7 @@ export default async function (t) {
   const climb = { ...S1, antigravity: { ...S1.antigravity, windows: [week(90, 80, { group: 'Gemini Models' }), week(90, 80, { group: 'Claude and GPT models' })] },
     claude: { ...S1.claude, accounts: S1.claude.accounts.map(a => ({ ...a, windows: [h5(95), week(90, 80)] })) } };
   const up = routeAt('trivial', 'low', climb);
-  t.ok('段の候補が全部だめなら 1 つ上の段へ（t1 → t2 の Codex luna）', target(up) === 'codex:gpt-6-luna' && up.routing.tier === 't2' && up.routing.baseTier === 't1' && up.routing.skipped.length === 3, JSON.stringify(up.routing.skipped.map(s => s.candidate + ':' + s.reason)));
+  t.ok('段の候補が全部だめなら 1 つ上の段へ（t1 → t2 の Codex luna）', target(up) === 'codex:gpt-6-luna' && up.routing.tier === 't2' && up.routing.baseTier === 't1' && up.routing.skipped.length === 4, JSON.stringify(up.routing.skipped.map(s => s.candidate + ':' + s.reason)));
   const softSettings = normalizeSettings({ avoidPercent: 70, tiers: { t4: ['claude:opus', 'claude:fable'], t3: ['codex:gpt-6-sol'] } });
   const softUsage = { ...S1, claude: { ...S1.claude, accounts: [
     { account: '', label: 'main', runnable: true, windows: [h5(20), week(83, 70)] },
@@ -142,8 +150,13 @@ export default async function (t) {
   ] } };
   const softPicked = routeAt('design', 'mid', softUsage, softSettings);
   t.ok('実例: 週次 83% の 2 アカウントより、週次 64%・5 時間 87% の OZ を余裕ありとして選ぶ', softPicked.ok
-    && softPicked.routing.target.account === 'oz' && !softPicked.routing.selectedWithLowHeadroom && softPicked.routing.skipped.length === 0,
+    && softPicked.routing.target.account === 'oz' && !softPicked.routing.selectedWithLowHeadroom && softPicked.routing.skipped.length === 2
+    && softPicked.routing.skipped.every(s => s.candidate === 'claude:opus' && s.reason === 'quota_high'),
     JSON.stringify(softPicked.routing));
+  const ozFull = routeAt('design', 'mid', { ...softUsage, claude: { ...softUsage.claude, accounts: softUsage.claude.accounts.map(a =>
+    a.account === 'oz' ? { ...a, windows: [h5(100), week(64, 70)] } : a) } }, softSettings);
+  t.ok('OZ だけ 5 時間枠が満杯なら、その認証の理由を独立した行に残す', ozFull.routing.target.account === ''
+    && ozFull.routing.skipped.some(s => s.account === 'oz' && s.reason === 'quota_full' && s.window.minutes === 300));
   const knownFirst = routeAt('design', 'mid', { ...softUsage, claude: { ...softUsage.claude, accounts: [
     { account: 'unknown', label: 'unknown', runnable: true, windows: [] },
     { account: 'known', label: 'known', runnable: true, windows: [h5(92), week(83, 70)] },
@@ -179,7 +192,7 @@ export default async function (t) {
   const exhausted = routeAt('design', 'mid', { ...fullUsage, codex: { ...S1.codex, windows: [week(100, 50, { limitId: 'codex' })] },
     antigravity: { ...S1.antigravity, windows: [h5(100, { group: 'Gemini Models' }), h5(100, { group: 'Claude and GPT models' })] } }, softSettings);
   t.ok('見た全部の段が使えないときだけ失敗し、Claude の理由をアカウントごとに残す', !exhausted.ok
-    && exhausted.routing.skipped.filter(s => s.candidate === 'claude:opus')[0].accounts.length === 2
+    && exhausted.routing.skipped.filter(s => s.candidate === 'claude:opus').length === 2
     && exhausted.routing.skipped.some(s => s.tier === 't1'));
   const mixedReasons = checkCandidate('claude:opus', { usage: { claude: { ...S1.claude, accounts: [
     { account: 'week', label: 'week', runnable: true, windows: [h5(20), week(100, 70)] },
@@ -188,9 +201,21 @@ export default async function (t) {
   t.ok('アカウントごとに異なる枠の 100% を記録する', !mixedReasons.ok
     && mixedReasons.accounts.find(a => a.account === 'week')?.window.label === 'week'
     && mixedReasons.accounts.find(a => a.account === 'five')?.window.label === '5h');
-  const reasonLines = formatSkippedCandidates([{ candidate: 'claude:opus', tier: 't4', ...mixedReasons }]);
-  t.ok('エラー用の候補行はアカウントごとに異なる理由と枠を全部出す', reasonLines.includes('account week: quota_full week 100%')
-    && reasonLines.includes('account five: quota_full 5h 100%'), reasonLines);
+  const reasonLines = formatSkippedCandidates(mixedReasons.accounts.map(a => ({ candidate: 'claude:opus', tier: 't4', account: a.account, accountLabel: a.label,
+    reason: a.reason, window: a.window })));
+  t.ok('エラー用の候補行はアカウントごとに異なる理由と枠を全部出す', reasonLines.includes('- claude:opus [week] (t4): quota_full week 100%')
+    && reasonLines.includes('- claude:opus [five] (t4): quota_full 5h 100%'), reasonLines);
+  const perAccountStates = candidateStates({ settings: softSettings, usage: fullUsage, now: NOW }).find(s => s.candidate === 'claude:opus');
+  t.ok('設定の状態は Claude の認証ごとに使えるか・理由と枠を持つ', perAccountStates.accounts.length === 2
+    && perAccountStates.accounts.every(a => !a.usable && a.reason === 'quota_full' && a.window.usedPercent === 100));
+  const retryBase = checkCandidate('claude:opus', { usage: S1, settings: softSettings, now: NOW });
+  const retryMain = selectRetryAccount(retryBase, 'claude', '');
+  t.ok('同じモデルでも選んだ認証の判定でやり直せる', retryBase.account === 'acct-oz' && retryMain.ok && retryMain.account === ''
+    && manualRouting({ kind: 'design', candidate: 'claude:opus', check: retryMain, of: 'old', from: null }).target.account === '');
+  t.ok('使えない認証や存在しない認証をやり直しで選べない', !selectRetryAccount(checkCandidate('claude:opus', { usage: fullUsage, settings: softSettings, now: NOW }), 'claude', '').ok
+    && !selectRetryAccount(retryBase, 'claude', 'missing').ok);
+  const loginOnly = checkCandidate('claude:opus', { usage: { claude: { ...S1.claude, accounts: undefined, windows: [h5(10), week(10, 70)] } }, settings: softSettings, now: NOW });
+  t.ok('認証一覧の無い Claude もログイン中の認証でやり直せる', selectRetryAccount(loginOnly, 'claude', '').ok);
   t.ok('判定が無い（signals が null）なら難しさは mid', route({ kind: 'implement', judged: { judge: 'none', signals: null, fallback: 'no_key' }, settings, usage: S1, now: NOW }).routing.difficulty === 'mid');
   t.ok('ux_change は判定に関係なく t4', routeAt('ux_change', 'low', S1).routing.tier === 't4');
 
@@ -305,7 +330,7 @@ export default async function (t) {
   t.ok('取得に失敗した値は「不明」（checkedAt が null）', snap.antigravity.checkedAt === null && snap.antigravity.windows.length === 0);
   t.ok('一覧に無いモデルは、一覧を確かめ直して（warm）から見直す', snap.antigravity.models['gemini-3.8-flash-high'] === true && warmed === 1 && snap.claude.models.opus === true);
   t.ok('CLI が入っていないバックエンドは使えない（使用量も取らない）', snap.codex.available === false && reads === 2);
-  t.ok('同じ人のアカウントは振り分けのときに 1 つにまとまる', checkCandidate('claude:opus', { usage: snap, settings, now: NOW }).accounts === undefined
+  t.ok('同じ人のアカウントは振り分けのときに 1 つにまとまる', checkCandidate('claude:opus', { usage: snap, settings, now: NOW }).accounts.length === 2
     && dedupeAccounts(snap.claude.accounts).map(a => a.account).join() === ',acct-2');
   t.ok('9 種類の kind', KINDS.length === 9);
 }
