@@ -154,7 +154,9 @@ const spineGeometry = new WeakMap();
 export function layoutBranchSpine(thread) {
   const svg = thread.firstElementChild?.classList.contains("spine") ? thread.firstElementChild : thread.querySelector(".spine");
   if (!svg) return;
-  const rows = (thread.classList.contains("branched") ? [...thread.querySelectorAll(".branch-row")] : []).map(row => ({
+  // Rows sit directly under the thread, also the way back to the parent chat in an unbranched one.
+  // Walking the children avoids scanning every descendant of a long history.
+  const rows = [...thread.children].filter(row => row.classList.contains("branch-row")).map(row => ({
     row, top: row.offsetTop, width: row.clientWidth,
   }));
   let last = thread.lastElementChild;

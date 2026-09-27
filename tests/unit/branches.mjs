@@ -55,8 +55,8 @@ export default async function (t) {
   const active = new N('div'); active.offsetTop = 100;
   active.matches = selector => selector === '.mw.node,.mw.activity';
   const activityTip = new N('span'); activityTip.classList.add('activity-tip'); activityTip.offsetTop = 36; active.append(activityTip);
-  const thread = { firstElementChild: spine, lastElementChild: active,
-    classList: { contains: () => false }, querySelectorAll: () => { throw Error('unbranched thread should not scan rows'); } };
+  const thread = { firstElementChild: spine, lastElementChild: active, children: [spine, active],
+    classList: { contains: () => false }, querySelectorAll: () => { throw Error('spine layout should not scan every descendant'); } };
   layoutBranchSpine(thread);
   const firstPath = spine.firstChild;
   t.ok('稼働表示の輪の位置まで筋を引く', firstPath.getAttribute('d').endsWith('20,135'));
@@ -65,6 +65,12 @@ export default async function (t) {
   active.offsetTop = 120;
   layoutBranchSpine(thread);
   t.ok('稼働表示が動いたら筋の終端を更新する', spine.firstChild !== firstPath && spine.firstChild.getAttribute('d').endsWith('20,155'));
+  // 枝の無い会話でも、親の会話へ戻る行があれば筋をその前後で区切る
+  const back = new N('div'); back.classList.add('branch-row'); back.offsetTop = 40; back.clientWidth = 300;
+  let laidOut = 0; back.layout = () => { laidOut++; };
+  thread.children = [spine, back, active]; active.offsetTop = 300;
+  layoutBranchSpine(thread);
+  t.ok('枝の無い会話でも戻る行の前後で筋を区切る', laidOut === 1 && spine.children.length === 2);
 
   // ---- head / tail を印を付ける発言の添字にまとめる。同じ発言に集まれば 1 つの .jx
   const nk = nodeKeys(new Map([[3, [{ id: "a" }]], ["head", [{ id: "b" }]], ["tail", [{ id: "c" }]], [0, [{ id: "d" }]]]), 6);
