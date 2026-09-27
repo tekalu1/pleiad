@@ -272,9 +272,17 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .row-when{font-family:var(--font-mono);flex:none}
 .pending-row .row-t,.pending-row .row-cwd{color:var(--ink-weak)}
 .pending-delete{opacity:.55}
-.pending-status{opacity:.55}
+.pending-status>:not(.pending-label){opacity:.55}
 .pending-label{display:inline-flex;align-items:center;gap:5px;color:var(--ink-weak);font-size:var(--fs-xs);white-space:nowrap;flex:none}
 .pending-label .run{width:14px;height:14px}
+/* 脇の一覧の保存待ち（移動中・削除中・作成中）。回る弧は「動いている会話」の印なので置かず、
+   語の上をタイトル生成と同じ光が通る（design-system.md §4.6、ADR 0038）。色は変えず mask の濃淡だけを流す */
+.pending-glint{color:var(--ink);
+  -webkit-mask-image:linear-gradient(90deg,rgba(0,0,0,.5) 35%,#000 50%,rgba(0,0,0,.5) 65%);
+  mask-image:linear-gradient(90deg,rgba(0,0,0,.5) 35%,#000 50%,rgba(0,0,0,.5) 65%);
+  -webkit-mask-size:300% 100%;mask-size:300% 100%;animation:pending-glint 1.6s var(--ease-organic) infinite}
+@keyframes pending-glint{from{-webkit-mask-position:100% 0;mask-position:100% 0}to{-webkit-mask-position:0 0;mask-position:0 0}}
+@media (prefers-reduced-motion:reduce){.pending-glint{animation:none;-webkit-mask-image:none;mask-image:none;color:var(--ink-weak)}}
 .row.pending-gone{height:0!important;min-height:0;overflow:hidden;padding-top:0;padding-bottom:0;margin:0;opacity:0;transition:height 240ms var(--ease-out),padding 240ms var(--ease-out),opacity 240ms var(--ease-out)}
 @keyframes pending-bounce{0%,100%{transform:translateX(0)}30%{transform:translateX(-4px)}65%{transform:translateX(3px)}}
 .row.pending-bounce{animation:pending-bounce 240ms var(--ease-out)}
