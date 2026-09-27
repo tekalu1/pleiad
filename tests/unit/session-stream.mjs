@@ -24,7 +24,7 @@ export default async function (t) {
   const state = { current: "other", sessions: [], drafts: new Map(), toolCards: new Map(), runningIds: new Set(["target"]), stopping: new Set(), pendingPerms: new Map() };
   const loads = createSessionLoads();
   const context = vm.createContext({
-    setTimeout: () => 1, clearTimeout: noop,
+    setTimeout: () => 1, clearTimeout: noop, heightPreparationVersion: 0, heightPreparationTimer: null, prepareHistoryHeights: noop,
     completionNotifications,
     // ヘッダーの使用量のチップ（web/header-usage.mjs）。ターンの終わりで取り直す。このテストの対象外
     headerUsage: { turnEnded: noop },

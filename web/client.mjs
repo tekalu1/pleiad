@@ -305,7 +305,49 @@ function markedHead(text, mark) {
   ];
 }
 
+let heightPreparationVersion = 0, heightPreparationTimer = null, lastHistoryInput = -Infinity;
+for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) {
+  log.addEventListener(type, () => { lastHistoryInput = performance.now(); }, { passive: true });
+}
+
+function prepareHistoryHeights() {
+  const version = ++heightPreparationVersion;
+  if (heightPreparationTimer !== null) clearTimeout(heightPreparationTimer);
+  const rows = [...thread.querySelectorAll(':scope > .mw:not(.activity):not(.height-ready)')].reverse();
+  let index = 0;
+  const next = () => {
+    heightPreparationTimer = null;
+    if (version !== heightPreparationVersion) return;
+    const quietFor = performance.now() - lastHistoryInput;
+    if (quietFor < 350) {
+      heightPreparationTimer = setTimeout(next, 350 - quietFor);
+      return;
+    }
+    const box = log.getBoundingClientRect();
+    const anchor = document.elementFromPoint(box.left + box.width / 2, box.top + Math.min(80, box.height / 3))?.closest('.mw');
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    let last = null;
+    for (let n = 0; n < 16 && index < rows.length; n++) {
+      const row = rows[index++];
+      if (!row.isConnected) continue;
+      row.classList.add('height-ready');
+      last = row;
+    }
+    if (last) {
+      void last.offsetHeight;
+      if (anchor?.isConnected) log.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+    }
+    if (index < rows.length) heightPreparationTimer = setTimeout(next, 0);
+  };
+  if (rows.length) requestAnimationFrame(() => {
+    if (version === heightPreparationVersion) heightPreparationTimer = setTimeout(next, 0);
+  });
+}
+
 function clearThread() {
+  heightPreparationVersion++;
+  if (heightPreparationTimer !== null) clearTimeout(heightPreparationTimer);
+  heightPreparationTimer = null;
   activity.hide();
   thread.replaceChildren(spine());
   thread.classList.remove("branched");
@@ -4365,10 +4407,17 @@ const branches = createBranches({
   // 枝の名前は一覧のタイトル。refresh() が保つものを読むだけで、筋の側に写しは持たない
   titleOf: (id) => state.sessions.find((x) => x.id === id)?.title ?? null,
 });
-// 発言の高さが変わったら（画像の読み込み・折り畳み・返答が伸びる）枝のグラフを貼り直す。
+// 発言の高さが変わったら（画像の読み込み・折り畳み・返答が伸びる）筋の位置を確かめる。
 // 脇の開閉で会話の幅が動いている間は毎コマ変わるので貼らず、動き終わりに 1 回貼る（setSidebar）。
-// 貼るたびに分岐点の行の位置を読むので、毎コマだと長い会話で開閉が止まっていた
-if (typeof ResizeObserver === "function") new ResizeObserver(() => { if (!document.body.classList.contains("side-moving")) relayoutBranches(); }).observe(thread);
+// 同じフレームの高さ変化はまとめ、位置が変わらなければ branch-view 側で SVG 更新を省く。
+let branchResizeFrame = null;
+if (typeof ResizeObserver === "function") new ResizeObserver(() => {
+  if (document.body.classList.contains("side-moving") || branchResizeFrame !== null) return;
+  branchResizeFrame = requestAnimationFrame(() => {
+    branchResizeFrame = null;
+    if (!document.body.classList.contains("side-moving")) relayoutBranches();
+  });
+}).observe(thread);
 
 /** Layout runs on append as well as resize; the spine exists even before the first turn. */
 function relayoutBranches() { layoutBranchSpine(thread); }
@@ -4690,6 +4739,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   if (retired) { sys(escText(retired)); $("prompt").disabled = true; $("prompt").placeholder = retired; }
   syncResume();
   if (keepUpTo === undefined && (!quiet || atEnd)) scrollToEnd(); else log.scrollTop = scrollAt;
+  prepareHistoryHeights();
   if (family) family.then(() => {
     if (state.current !== id || load && state.displayLoad !== load) return;
     if (state.busy) { pendingBranchReload = true; return; }
