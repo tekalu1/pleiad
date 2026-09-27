@@ -28,6 +28,7 @@ const cases = [
   await import('./unit/agent-browser-relay.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
+  await import('./unit/agent-tasks-silence.mjs'),
   // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）
   await import('./unit/agent-tasks-storage.mjs'),
   await import('./unit/background-model.mjs'),
@@ -72,6 +73,7 @@ const cases = [
   // データ置き場を共有する 2 つのプロセス。本物の子プロセスを 2 本起動する
   await import('./unit/mcp-oauth-processes.mjs'),
   await import('./unit/desktop-updates.mjs'),
+  await import('./unit/desktop-exit-dialog.mjs'),
   await import('./unit/message-queue.mjs'),
   await import('./unit/message-steer.mjs'),
   await import('./unit/visualize.mjs'),

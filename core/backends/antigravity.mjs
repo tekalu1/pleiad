@@ -251,6 +251,8 @@ export const backend = {
     }
 
     const handle = (ev) => {
+      // Step updates without a history entry still show that the child is active.
+      emit({ type: 'task.activity' });
       switch (ev?.event) {
         case "init": {
           const id = ev.conversation_id ?? ev.init?.conversation_id ?? null;

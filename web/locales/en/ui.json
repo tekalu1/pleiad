@@ -1520,7 +1520,7 @@
     },
     "actionsFor": "Actions for {{name}}",
     "currentActions": "Actions for this file",
-    "browserTitle": "Opens in this PC's default browser",
+    "browserTitle": "Opens in a browser",
     "revealTitle": "Opens File Explorer on this PC with the file selected",
     "copiedPath": "Path copied",
     "copiedRelative": "Relative path copied",

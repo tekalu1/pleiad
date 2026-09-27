@@ -42,12 +42,15 @@ export function finalReply(messages) {
 // - 障害の間は、スケジューラーは間隔を空けて保存をやり直すだけにする。list / status はメモリの状態を障害中の印付きで返す。
 // ready は「親が完了通知を受け取れるか」。受け取れない間は delivering にせず、ファイルも書かない。
 // io・log・renameDelays・retryMax はテストで失敗を差し込み、記録を読み、待ちを縮めるためのもの
-export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, ready = async () => true, changed = () => {}, waiting = () => false,
+export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', ready = async () => true, changed = () => {}, waiting = () => false,
+  now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 15),
   io = fs, log = line => console.error(line), renameDelays = RENAME_DELAYS, retryMax = RETRY_MAX }) {
+  const silenceMs = Number.isFinite(silenceMinutes) && silenceMinutes > 0 ? silenceMinutes * 60000 : 0;
   const file = path.join(dataDir, 'agent-tasks.json');
   const logFile = path.join(dataDir, 'agent-tasks-errors.log');
   let records = {};
   try { records = JSON.parse(await io.readFile(file, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  const bySession = new Map(Object.values(records).map(r => [r.sessionId, r]));
   // Older files kept only prompt strings in queue. Preserve their order and make
   // pending follow-ups visible without replaying the initial delegation request.
   for (const r of Object.values(records)) {
@@ -74,7 +77,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   let fault = null, dirty = false;
   // ファイルに書けた通知の状態（taskId → notification）。ファイルがすでに delivering なら送る前に書き直さない
   let persisted = new Map(Object.values(records).map(r => [r.taskId, r.notification]));
-  const live = new Map(), notices = new Set(), listeners = new Set();
+  const live = new Map(), notices = new Set(), silenceNotices = new Set(), silenceWaiting = new Map(), listeners = new Set();
   const serial = fn => {
     const next = writes.then(async () => { mutating = true; try { return await fn(); } finally { mutating = false; } });
     writes = next.catch(() => {});
@@ -129,8 +132,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   };
   // context は「別の候補でやり直す」で同じ依頼を渡し直すために持つだけ（長いので一覧・状態には載せない）
   const view = (r, offset = 0) => {
-    const { result = '', queue, context, instructions, rejections = [], ...rest } = r;
-    return { ...rest, rejections, pendingMessages: instructions.filter(x => x.state === 'queued').length, result: result.slice(offset, offset + 16000), resultOffset: offset,
+    const { result = '', queue, context, instructions, rejections = [], silenceNotifiedAt, ...rest } = r;
+    return { ...rest, silenceMinutes: r.status === 'running' && !waiting(r.sessionId) && r.lastActivityAt != null
+      ? Math.max(0, Math.floor((now() - r.lastActivityAt) / 60000)) : null,
+      rejections, pendingMessages: instructions.filter(x => x.state === 'queued').length, result: result.slice(offset, offset + 16000), resultOffset: offset,
       resultLength: result.length, nextOffset: offset + 16000 < result.length ? offset + 16000 : null };
   };
   // 依頼元のエージェントへ返す形。人間の承認待ちは「いま待っているか」から導く見せかけの状態で、
@@ -169,7 +174,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           instructionId = entry?.instructionId;
           prompt = instructionId ? row.instructions.find(x => x.id === instructionId)?.text : entry;
           setInstruction(row, instructionId, 'sending');
-          row.status = 'running';
+          row.status = 'running'; row.lastActivityAt = now(); row.silenceNotifiedAt = null;
         }, 'run.start'); }
         catch { stalled = true; break; }
         activeInstructionId = instructionId;
@@ -240,6 +245,20 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       await record(r.taskId, row => { if ((row.revision ?? 0) === revision) row.notification = outcome === 'ok' ? 'sent' : 'unknown'; }, 'notify.done');
     } finally { notices.delete(r.taskId); }
   }
+  async function notifySilence(r) {
+    silenceNotices.add(r.taskId);
+    const activityAt = r.lastActivityAt;
+    try {
+      if (!(await ready(structuredClone(r)).catch(() => false))) return;
+      if (r.status !== 'running' || waiting(r.sessionId) || r.lastActivityAt !== activityAt || r.silenceNotifiedAt === activityAt) return;
+      // Mark before delivery, as with completion notices: an uncertain delivery must not be repeated.
+      try { await commit(r.taskId, row => { row.silenceNotifiedAt = activityAt; }, 'silence.notice'); }
+      catch { return; }
+      if (r.status !== 'running' || waiting(r.sessionId) || r.lastActivityAt !== activityAt) return;
+      const outcome = await deliverSilence(structuredClone(r), Math.max(1, Math.floor((now() - activityAt) / 60000))).catch(() => 'error');
+      if (outcome === 'requeue' && r.lastActivityAt === activityAt) await record(r.taskId, row => { row.silenceNotifiedAt = null; }, 'silence.requeue');
+    } finally { silenceNotices.delete(r.taskId); }
+  }
   // 保存障害の間は、間隔を空けて保存だけをやり直す（1 回に 1 秒ほど待つ保存を、500ms ごとに仕事の数だけ重ねない）。
   // 書けたら障害を解き、次のタイマーから実行の開始と通知を再開する
   function probe() {
@@ -252,6 +271,18 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     if (closed || mutating) return;
     if (fault) { probe(); return; }
     for (const r of Object.values(records)) {
+      if (r.status === 'running') {
+        const isWaiting = waiting(r.sessionId);
+        if (isWaiting) {
+          if (!silenceWaiting.has(r.taskId)) { r.lastActivityAt = now(); r.silenceNotifiedAt = null; }
+          silenceWaiting.set(r.taskId, true);
+        }
+        else if (silenceWaiting.delete(r.taskId)) { r.lastActivityAt = now(); r.silenceNotifiedAt = null; }
+        if (silenceMs && !isWaiting && r.lastActivityAt != null && now() - r.lastActivityAt >= silenceMs
+          && r.silenceNotifiedAt !== r.lastActivityAt && !silenceNotices.has(r.taskId)) {
+          void notifySilence(r).catch(e => report({ event: 'unexpected', operation: 'silence', taskId: r.taskId, code: e?.code ?? null }));
+        }
+      } else silenceWaiting.delete(r.taskId);
       if (r.status === 'queued' && !live.has(r.taskId)) {
         const ac = new AbortController(); live.set(r.taskId, ac);
         void run(r, ac).catch(e => { live.delete(r.taskId); report({ event: 'unexpected', operation: 'run', taskId: r.taskId, code: e?.code ?? null }); });
@@ -263,9 +294,14 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   }
   const timer = setInterval(kick, 500); timer.unref();
   return {
-    get busy() { return live.size > 0 || notices.size > 0 || Object.values(records).some(r => ACTIVE.has(r.status) || r.notification === 'pending'); },
+    get busy() { return live.size > 0 || notices.size > 0 || silenceNotices.size > 0 || Object.values(records).some(r => ACTIVE.has(r.status) || r.notification === 'pending'); },
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
     get(taskId) { return records[taskId] ? view(records[taskId]) : null; },
+    activity(sessionId) {
+      const r = bySession.get(sessionId);
+      if (r?.status === 'running') { r.lastActivityAt = now(); r.silenceNotifiedAt = null; }
+    },
+    checkSilence: kick,
     instructions(taskId) { const r = records[taskId]; return r ? { taskId, revision: r.instructionRevision ?? 0, instructions: structuredClone(r.instructions) } : null; },
     /** 最初の依頼（task と context）。やり直しで同じ依頼を渡す。context を持つ前に作ったタスクは task だけ */
     request(taskId) { const r = records[taskId]; return r ? { task: r.task, title: r.title ?? null, context: r.context ?? null } : null; },
@@ -291,10 +327,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
             createdAt: Date.now(), updatedAt: Date.now(), status: 'queued', notification: 'none',
             result: '', error: null, instructions: [], instructionRevision: 0,
             queue: [args.context ? agentT(locale, 'tasks.withContext', { task: args.task, context: args.context }) : args.task] };
-          records[taskId] = row;
+          records[taskId] = row; bySession.set(row.sessionId, row);
           try { await write(); } catch (e) { failed(e, 'delegate', taskId); throw refused(locale); }
           touched(); return view(row);
-          } catch (e) { delete records[taskId]; await rollback(prepared); throw e; }
+          } catch (e) { delete records[taskId]; bySession.delete(prepared.sessionId); await rollback(prepared); throw e; }
         });
         kick(); return row;
       }

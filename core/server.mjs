@@ -1139,6 +1139,9 @@ function clientReason(args) {
  */
 function makeEmit(turn) {
   const emit = (event, { recorded = false } = {}) => {
+    if (event?.type) agentTasks?.activity(turn.info.sessionId);
+    // Antigravity can report a step without a normalized conversation event.
+    if (event?.type === 'task.activity') return;
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
     if (event?.type === 'contextWindow' && Number.isFinite(event.usedTokens) && Number.isFinite(event.windowTokens)) {
       turn.contextWindow = { usedTokens: event.usedTokens, windowTokens: event.windowTokens };
@@ -1746,6 +1749,13 @@ agentTasks = await createAgentTasks({
       result: task.result.slice(0, 16000), more, error: task.error ?? '', retry, rejections: rejectionNotice(lng, task.rejections) + stoppedBackgroundNotice(lng, task.stoppedBackground) });
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
+  deliverSilence: async (task, minutes) => {
+    const owner = task.parentSessionId;
+    if (await noticeBlocked(owner)) return 'requeue';
+    const lng = await ensureAgentLocale(owner);
+    const prompt = agentT(lng, 'delegation.silenceNotice', { taskId: task.taskId, title: task.title, minutes });
+    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
+  },
 });
 
 // ターンの外で起きたことをバックエンドから受け取る口（docs/multi-backend.md §2.7）。
@@ -2331,6 +2341,7 @@ function findBackgroundTask(sessionId, taskId) {
 const OUTSIDE_TURN_EVENTS = new Set(["tool.result"]);
 function emitOutsideTurn(sessionId, event) {
   if (!sessionId || !OUTSIDE_TURN_EVENTS.has(event?.type)) return;
+  agentTasks?.activity(sessionId);
   emitGlobal({ ...event, sessionId });
 }
 
@@ -3143,7 +3154,7 @@ wss.on("connection", (ws, req) => {
           return reply(true, await listDirs(msg.args?.path, { files: msg.args?.files === true }));
 
         // ファイルの操作（web/file-actions.mjs）。範囲は /file-preview と同じで、実体を解決した後のパスで確かめる。
-        // OS の操作は遠隔の接続から断る（画面で隠すだけにしない）。開けるのは HTML だけ
+        // ホストで開く・検査済みのパスを画面へ返す操作は遠隔から断る。開けるのは HTML だけ
         case "hostCapabilities":
           // hostName は添付の「ホストから <ホスト名>」の見出し（リモートの印の無いブラウザーで使う）
           return reply(true, { osActions: local, hostName: os.hostname() });
@@ -3162,7 +3173,9 @@ wss.on("connection", (ws, req) => {
             if (!hostAction) return reply(true, { path: file, cwd: resolved.cwd ?? null, kind: directory ? 'directory' : 'file' });
             if (msg.command === 'openPath' && (directory || !OPENABLE.test(file))) return reply(false, t('files.htmlOnly'));
             if (!osActionAllowed()) return reply(false, t('files.tooMany'));
-            await openOnHost(msg.command === 'openPath' ? 'open' : 'reveal', file, { directory });
+            if (msg.command !== 'openPath' || args.returnPath !== true) {
+              await openOnHost(msg.command === 'openPath' ? 'open' : 'reveal', file, { directory });
+            }
             return reply(true, { path: file });
           } catch (error) {
             const failure = previewFailure(error);
@@ -3170,8 +3183,8 @@ wss.on("connection", (ws, req) => {
           }
         }
 
-        // 可視化の写しを、サーバーのある PC の既定のブラウザーで開く。殻（デスクトップ版）は新しい窓を開かないので、
-        // 画面は /visualization-snapshot の代わりにこれを使う。写しはデータ置き場へ書いたファイル（CSP は文書の meta）
+        // 可視化の写しをデータ置き場へ書く。returnPath:true なら内蔵ブラウザーへ渡すパスを返し、
+        // そうでなければ既定のブラウザーで開く。写しの CSP は文書の meta に含める。
         case "openVisualization": {
           if (!local) return reply(false, t('files.remoteOnly'));
           const args = msg.args ?? {};
@@ -3180,7 +3193,7 @@ wss.on("connection", (ws, req) => {
             if (!record) return reply(false, t('filePreview.visualize.snapshotNotFound'));
             if (!osActionAllowed()) return reply(false, t('files.tooMany'));
             const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'));
-            await openOnHost('open', file, { directory: false });
+            if (args.returnPath !== true) await openOnHost('open', file, { directory: false });
             return reply(true, { path: file });
           } catch (error) {
             return reply(false, String(error?.message ?? error));

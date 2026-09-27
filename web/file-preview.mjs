@@ -5,7 +5,9 @@ import { fileReference, fileDownloadUrl } from './file-reference.mjs';
 import { htmlDocument, markdownContent, parseTable, previewFrame } from './file-preview-content.mjs';
 import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs';
 import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fileIcon, moreIcon } from './icons.mjs';
-import { fileMenuItems, visualizationMenuItems, copyPathText, relativeTo, samePath, notify, download } from './file-actions.mjs';
+import { fileMenuItems, visualizationMenuItems, copyPathText, relativeTo, samePath, notify, download, openHostFile } from './file-actions.mjs';
+import { browserPanelAvailable, openInBrowserPanel } from './browser-panel.mjs';
+import { linkOpenTarget } from './browser-address.mjs';
 import { applySlots, fileSlots, visualizationSlots, customSlots, browserSlots, subtitleFor } from './side-panel.mjs';
 import { copyText } from './code-copy.mjs';
 import { createTree } from './tree.mjs';
@@ -32,7 +34,7 @@ const iconButton = (icon, label, action, className = 'btn btn-icon') => {
  * osActions() はサーバーのある PC の画面から見ているか（OS の操作を出してよいか。判定はサーバー）
  * browser は内蔵ブラウザーの部品（web/browser-panel.mjs の createBrowserPanel）。デスクトップ版のホストの画面だけで渡る
  */
-export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd, osActions = () => false, browser = null }) {
+export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd, osActions = () => false, getPrefs = () => ({}), browser = null }) {
   const panel = el('aside', 'file-preview'); panel.id = 'filePreview'; panel.hidden = true;
   panel.setAttribute('aria-label', t('filePreview.panel')); panel.tabIndex = -1;
   const head = el('header', 'file-preview-head'), title = el('div', 'file-preview-title');
@@ -69,10 +71,10 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   const locationButton = button(t('filePreview.path'), () => { location.hidden = !location.hidden; locationButton.setAttribute('aria-expanded', String(!location.hidden)); if (!location.hidden) { fullPath.focus(); fullPath.select(); } });
   locationButton.setAttribute('aria-expanded', 'false');
   const reload = button(t('filePreview.reload'), () => load());
-  // HTML だけ。サーバーのある PC の既定のブラウザーで開く（相対のリンク・読み込みもそのまま動く）
-  const htmlBrowser = button(t('files.menu.openInBrowser'), () => file && osAction('openPath', { path:file.path }));
+  // HTML はサーバーが実体を解決した file: URL で開く（相対のリンク・読み込みも動く）。
+  const htmlBrowser = button(t('files.menu.openInBrowser'), () => file && openHtml({ path:file.path }));
   htmlBrowser.title = t('files.browserTitle'); htmlBrowser.classList.add('file-preview-browser');
-  // 可視化: 開くのは見えている写し（元のファイルではない）。サーバーが sandbox 付きで返す（openSnapshot）
+  // 可視化: 開くのは会話に残った写し（元のファイルではない）。
   const visualBrowser = button(t('files.menu.openInBrowser'), () => visual && openSnapshot(visual));
   visualBrowser.title = t('filePreview.visual.browserTitle'); visualBrowser.classList.add('file-preview-browser');
   const originButton = button(t('files.menu.openOrigin'), () => visual?.origin && openOrigin(visual));
@@ -522,6 +524,11 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   function openSnapshot(v) {
     const query = snapshotQuery(v);
     if (!query) return;
+    if (useInAppBrowser()) {
+      return openHostFile('openVisualization', Object.fromEntries(query), {
+        cmd, inApp:true, openInPanel:openInBrowserPanel,
+      }).catch(failed);
+    }
     if (window.plyRemote) {
       window.open(new URL(`/visualization-snapshot?${query}`, window.location.href).href, '_blank', 'noopener');
       return;
@@ -572,6 +579,13 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     return { path:target.path, ...(ctx.sessionId ? { sessionId:ctx.sessionId } : {}), ...(ctx.at ? { at:ctx.at } : {}), ...(target.base ? { base:target.base } : {}) };
   };
   const failed = error => notify(String(error?.message || error || t('files.actionFailed')));
+  const useInAppBrowser = () => linkOpenTarget({ available:!!browser && browserPanelAvailable() && osActions(), prefs:getPrefs() }) === 'inapp';
+  async function openHtml(target) {
+    if (!cmd) return;
+    try {
+      await openHostFile('openPath', whereFrom(target), { cmd, inApp:useInAppBrowser(), openInPanel:openInBrowserPanel });
+    } catch (error) { failed(error); }
+  }
   async function osAction(command, target) {
     if (!cmd) return;
     try { await cmd(command, whereFrom(target)); }
@@ -587,7 +601,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     try {
       if (action === 'panel') return open({ path:target.path, line:target.line ?? null }, target.element, target.base);
       if (action === 'reveal') return osAction('revealPath', target);
-      if (action === 'browser') return osAction('openPath', target);
+      if (action === 'browser') return openHtml(target);
       if (action === 'copy') return copy(/^(?:[a-z]:[\\/]|\/)/i.test(target.path) ? target.path : (await resolve(target)).path);
       if (action === 'copyRelative') {
         // 書かれたとおりの相対パスは、そのまま発言の時点の作業ディレクトリからの相対

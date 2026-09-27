@@ -3680,6 +3680,7 @@ const filePreview = setupFilePreview({
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   cmd: (command, args) => cmd(command, args),
   osActions: () => state.osActions === true,
+  getPrefs: () => state.prefs,
   useFile: file => { if (attachHostFiles([file])) $('prompt').focus(); },
 });
 // 設定 › ブラウザー（リンクの開き先）。内蔵ブラウザーが使える画面だけ脇に項目を出す
