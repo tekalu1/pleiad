@@ -71,6 +71,7 @@
 - 既存サーバーがある場合は、対象リポジトリのプロセスとポートを確認する。文書のみの変更など、再起動が不要なら既存サーバーの応答確認でよい。
 - インストール版の Pleiad から起動されたエージェントのシェルには、Pleiad 自身の `AGENT_HOST_PORT`（例: 56454）と `AGENT_HOST_BIND` が引き継がれている（2026-09-22 確認）。そのまま `npm start` すると EADDRINUSE で空きポートへ移り、データ置き場も既定の `~/.agent-host` になって、実データを使う 2 台目が立つ。ポートの持ち主が `Ply.exe` ならリポジトリのサーバーではないので止めない。main から動かして確かめるなら、別ポート・別のデータ置き場で起動する（fake バックエンドの手順と同じ）。`web/` はリクエストごとにディスクから読むため、リポジトリのサーバーなら画面だけの変更に再起動は要らない。インストール版には更新まで反映されない。
 - 同じく `ELECTRON_RUN_AS_NODE=1` も引き継がれている（2026-09-27 確認）。そのまま `electron.exe` を起動すると Node として動き、`require('electron').app` が undefined で落ちる。デスクトップ版を起こすときは `env -u ELECTRON_RUN_AS_NODE <repo>/node_modules/electron/dist/electron.exe <入口>` で外す。実機で確かめる入口は、`app.setPath('userData', <一時ディレクトリ>)`・`AGENT_HOST_DATA`・`AGENT_HOST_BACKENDS=fake` を決め、`shell.openExternal` を記録だけに差し替えてから `desktop/main.cjs` を require する小さな `.cjs` にすると、本物のデータとインストール版に触れず、窓は `executeJavaScript` で操作できる（2026-09-27 に内蔵ブラウザーで使ったものは `temporary/scripts/inapp-browser/harness.cjs`）。
+- 確認用スクリプトの終わりは `app.quit()` を使い、起動したプロセスは必ず上限時間付きで待つ（`Start-Process -Wait` を上限なしで使わない）。`app.exit()` はサーバー終了時の同期通知で止まったことがあり、無期限の待機は調査自体を止めるため。
 - **再起動すると実行中のターンが終了する。** 停止前に UI の実行中表示または WebSocket の `running` コマンドで実行中の作業が 0 件であることを確認する。実行中なら完了を待つ。確認できない場合や中断が必要な場合は、理由を伝えてユーザーに確認する。
 - 再起動時は確認済みの対象サーバーだけを停止する。他の Node.js プロセスを一括停止しない。Windows でバックグラウンド起動する場合は `Start-Process -WindowStyle Hidden` を使う。
 

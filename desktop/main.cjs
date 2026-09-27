@@ -18,7 +18,13 @@ const { createBrowserPanel } = require('./browser-panel.cjs');
 let browserPanel;
 const trust = createWindowTrust();
 let remoteWindows;
-let worker, window, origin, updates, quitting = false, closing = false;
+let worker, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
+const nativeExit = app.exit.bind(app);
+app.exit = (...args) => { exitInProgress = true; return nativeExit(...args); };
+function showFatalError(title, message) {
+  const options = { type: 'error', title, message };
+  return window && !window.isDestroyed() ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options);
+}
 let requestId = 0;
 const { createDesktopNotifications } = require('./notifications.cjs');
 const notifyCompletion = createDesktopNotifications({ Notification, getWindow: () => window, icon: path.join(__dirname, 'icon.png') });
@@ -189,10 +195,11 @@ async function boot() {
     if (resident?.keepOnClose()) { window.hide(); return; }
     closeSafely();
   });
+  window.on('session-end', () => { quitting = true; worker.postMessage({ type: 'shutdown' }); });
   worker.once('exit', () => {
-    if (quitting) return;
-    dialog.showErrorBox('Pleiad', t('server.exited'));
-    quitting = true; app.quit();
+    if (quitting || exitInProgress) return;
+    quitting = true;
+    void showFatalError('Pleiad', t('server.exited')).catch(e => console.error(e)).finally(() => app.quit());
   });
   await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}`);
   window.show();
@@ -231,7 +238,7 @@ async function closeSafely() {
     }
     quitting = true; worker.postMessage({ type: 'shutdown' }); app.quit();
   } catch (e) { await dialog.showMessageBox(window, { message: e.message, buttons: [t('common.back')] }); }
-  finally { closing = false; }
+  finally { closing = false; if (!quitting) exitInProgress = false; }
 }
 
 ipcMain.handle('ply:choose-folder', async event => {
@@ -260,6 +267,12 @@ ipcMain.on('ply:title-bar', (event, colors) => {
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
-  app.on('before-quit', event => { if (!quitting && window) { event.preventDefault(); closeSafely(); } });
-  app.whenReady().then(boot).catch(e => { console.error(e.message); dialog.showErrorBox(t('boot.failedTitle'), e.message); quitting = true; worker?.kill(); app.quit(); });
+  app.on('before-quit', event => { exitInProgress = true; if (!quitting && window) { event.preventDefault(); void closeSafely(); } });
+  app.on('will-quit', () => { exitInProgress = true; });
+  app.whenReady().then(boot).catch(e => {
+    console.error(e.message);
+    if (quitting || exitInProgress) return;
+    quitting = true; worker?.kill();
+    void showFatalError(t('boot.failedTitle'), e.message).catch(error => console.error(error)).finally(() => app.quit());
+  });
 }
