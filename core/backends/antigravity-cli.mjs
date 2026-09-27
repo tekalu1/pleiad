@@ -56,6 +56,15 @@ const START_TIMEOUT_MS = Number(process.env.AGENT_HOST_AGY_START_MS ?? 120_000);
  * 中断の口はプロトコルに無い（公式ドキュメントにも記載が無い）ので、**プロセスを落とす**。
  * 会話はサーバ側に残っていて `--conversation <id>` で拾い直せるので、これで失われない。
  */
+export function invalidAgyEvent(msg) {
+  if (!msg || !['init', 'step_update', 'result'].includes(msg.event)) return false;
+  const body = msg[msg.event];
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return true;
+  if (msg.event === 'result') return typeof body.status !== 'string';
+  if (msg.event === 'step_update') return typeof body.step_type !== 'string';
+  return typeof msg.conversation_id !== 'string';
+}
+
 export class AgySession {
   constructor({ cwd, conversationId = null, model, effort, mode, skipPermissions, addDirs = [], agent = null, env = null, onGone = null }) {
     this.cwd = cwd;
@@ -76,6 +85,7 @@ export class AgySession {
     this.exited = null;        // 落ちた理由（Error）。落ちていなければ null
 
     this.onEvent = null;       // (event) => void
+    this.onShapeMismatch = null;
     this.onAuthUrl = null;     // (url) => void
     this.onPrintTimeout = null; // () => void
     this.onExit = null;        // (err) => void
@@ -193,6 +203,10 @@ export class AgySession {
         continue;
       }
       try {
+        if (invalidAgyEvent(msg)) {
+          this.onShapeMismatch?.();
+          continue;
+        }
         this.onEvent?.(msg);
       } catch (err) {
         console.error("  agy イベントの処理で例外:", String(err?.message ?? err));

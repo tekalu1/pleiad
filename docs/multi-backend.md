@@ -8,6 +8,18 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 2026-09 に **Antigravity CLI**（`agy`）を足した（§2.8）。
 同時期に入れた Gemini CLI（ACP）は、個人向けログインの終了により廃止した。
 
+## 外部エージェントの版
+
+利用者が CLI を管理する。下表は確認した範囲であり、上限は設けない（[ADR 0037](adr/0037-manage-external-agent-versions.md)）。
+
+| バックエンド | つなぎ方 | 検証した版 | 最低の版 | 頼っている非公開のもの |
+|---|---|---|---|---|
+| Codex | `codex app-server` | CLI 0.156.1 | なし | rollout の `session_meta.cli_version`、`response_item` の `turn_id` とツール出力。拒否の読み取り（[ADR 0035](adr/0035-read-codex-rollout-for-rejections.md)） |
+| Claude Code | Agent SDK の `query()` と利用者の `claude` CLI | SDK 0.3.258、CLI 2.1.282 | なし | `projects/*.jsonl` の attachment、`subagents/*.jsonl` の親子鎖、`*.meta.json` の `toolUseId` |
+| Antigravity | `agy --print= --input-format stream-json --output-format stream-json` | CLI 1.2.8（実機の動作記録）、1.2.11（この PC の版表示） | 1.1.11（古い版では `/usage` がモデルへの依頼になる） | ファイルなし。stream-json のイベント形 |
+
+非公開形式の不一致は `AGENT_HOST_DATA/backend-shape-errors.log` に、バックエンド・種類・検知した版・検証した版・時刻だけを記録する。同じ組合せはログに残る間は一度だけ記録する。Claude の transcript は行の `version`、Codex の rollout は先頭の `session_meta.cli_version` を使う。Antigravity の stream-json には版がないため `unknown` と記録する。
+
 ---
 
 ## 1. 何が問題か
@@ -402,7 +414,7 @@ Pleiad はターンの後で rollout を読んで拾う（`core/backends/codex-r
   `tool.result`（`isError: true`、本文は「Codex の安全判定で実行前に拒否された（理由）」と生の文、`rejection` に構造）を出す。
   **会話を開き直すと消える**（履歴は `thread/read` から作り、そこに拒否は無い）。残すには Pleiad 側に別の記録を持って履歴に差し込む必要があり、
   差し込む位置（どの発言の間か）が `thread/read` の items からは決まらないので、今はしない。委譲の結果（`rejections`）には残る（docs/agent-delegation.md「実行前に拒否されたコマンド」）。
-- 読めない・形が違うときは黙って諦める。ターンの結果は変えない。rollout の行の形は公開の約束ではないので、Codex の版で変わりうる。
+- 読めない・形が違うときは診断ログに記録し、ターンの結果は変えない。rollout の行の形は公開の約束ではないので、Codex の版で変わりうる。
 - `approvalRequested` は、同じターンで同じ call id（承認要求の `itemId`）の承認を求められたか。
 - 上流が拒否を `commandExecution`（`declined`）のアイテムとして出すようになれば、この読み取りは要らなくなる。
 
