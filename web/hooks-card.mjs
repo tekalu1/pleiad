@@ -630,12 +630,12 @@ export async function openCopySheet(ctx, entry) {
   scopeSelect.value = state.scope;
   const base = el('input'); base.className = 'hk-input mono'; base.value = state.base; base.placeholder = t('context.folderPath'); base.autocomplete = 'off'; base.spellcheck = false;
   const baseField = field(t('hooks.sheet.base'), base);
-  scopeSelect.onchange = () => { state.scope = scopeSelect.value; baseField.hidden = state.scope === 'user'; refresh(); };
-  base.onchange = () => { state.base = base.value.trim(); refresh(); };
+  const changed = () => { ack.checked = false; for (const row of Object.values(state.rows)) { row.on = false; row.allow = false; } refresh(); };
+  scopeSelect.onchange = () => { state.scope = scopeSelect.value; baseField.hidden = state.scope === 'user'; changed(); };
+  base.onchange = () => { state.base = base.value.trim(); changed(); };
   baseField.hidden = state.scope === 'user';
   const range = el('p', 'cx-strong hk-warn');
   const rowsBox = el('div', 'hk-copyrows');
-  rowsBox.setAttribute('aria-live', 'polite');
   const ackLabel = el('label', 'hk-check'), ack = el('input'); ack.type = 'checkbox';
   ackLabel.append(ack, document.createTextNode(t('hooks.copy.ack')));
   ack.onchange = () => paintGo();
@@ -676,7 +676,7 @@ export async function openCopySheet(ctx, entry) {
     const line = el('div', 'hk-redo');
     const i = el('input'); i.className = 'hk-input mono'; i.value = value; i.placeholder = placeholder; i.autocomplete = 'off'; i.spellcheck = false;
     const l = el('label', 'hk-label'); l.append(label, i);
-    const b = button(t('hooks.copy.recheck'), 'btn', () => { apply(i.value.trim()); refresh(); });
+    const b = button(t('hooks.copy.recheck'), 'btn', () => { apply(i.value.trim()); changed(); });
     i.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); b.click(); } };
     line.append(l, b);
     return line;
@@ -698,6 +698,7 @@ export async function openCopySheet(ctx, entry) {
       const ul = el('ul', 'hk-reasons cx-strong');
       for (const x of r.reasons) ul.append(el('li', null, t(`hooks.copy.reason.${x.code}`, x.params ?? {})));
       card.append(ul);
+      if (!selectable(r)) sw.setAttribute('aria-describedby', ul.id = `hk-copy-reason-${a}`);
     }
     const blocked = r.status === 'blocked';
     // 元 → 写した後
@@ -717,7 +718,10 @@ export async function openCopySheet(ctx, entry) {
     if (!blocked && a === 'antigravity') card.append(redo(t('hooks.copy.name'), st.name || r.name || '', 'audit', v => { st.name = v; }));
     if (!blocked && (r.reasons.some(x => x.review === 'matcher') || r.matcherStatus === 'chosen'))
       card.append(redo(t('hooks.copy.matcher', { agent: agentLabel(a) }), st.matcher, a === 'antigravity' ? 'run_command' : 'Bash', v => { st.matcher = v; }));
-    if (r.adapter) card.append(el('p', 'mcp-note', r.adapter.exists ? t('hooks.copy.adapterReuse', { path: ctx.short(r.adapter.path) }) : t('hooks.copy.adapterWrite', { path: ctx.short(r.adapter.path) })));
+    if (r.adapter && !blocked) {
+      card.append(el('p', 'mcp-note', r.adapter.exists ? t('hooks.copy.adapterReuse', { path: ctx.short(r.adapter.path) }) : t('hooks.copy.adapterWrite', { path: ctx.short(r.adapter.path) })));
+      if (state.scope === 'project') card.append(el('p', 'cx-strong', t('hooks.copy.projectAdapterRepo')));
+    }
     // 実際に書く本文の差分（伏せ字済み）
     // matcher を確かめる前は、仮の matcher（全件）で作った本文を見せない
     if (r.reasons?.some(x => x.review === 'matcher')) card.append(el('p', 'mcp-note', t('hooks.copy.diffPending')));
@@ -761,7 +765,7 @@ export async function openCopySheet(ctx, entry) {
       const card = el('div', 'hk-target');
       const h = el('div', 'row-line');
       h.append(el('b', null, t('hooks.copy.to', { agent: agentLabel(r.agent) })), el('span', 'cx-path', r.path ? ctx.short(r.path) : ''));
-      card.append(h, el('p', r.ok ? 'cx-sub' : 'cx-strong', r.ok ? t('hooks.copy.written') : t('hooks.confirm.failed', { error: r.error ?? r.reasons?.map(x => t(`hooks.copy.reason.${x.code}`, x.params ?? {})).join(' ') })));
+      card.append(h, el('p', r.ok ? 'cx-sub' : 'cx-strong', r.ok ? t('hooks.copy.written') : t('hooks.confirm.failed', { error: r.error || r.reasons?.map(x => t(`hooks.copy.reason.${x.code}`, x.params ?? {})).join(' ') || t('hooks.copy.status.blocked') })));
       if (r.ok && r.agent === 'codex') card.append(el('p', 'cx-strong', t('hooks.copy.codexAfter')));
       if (r.ok && r.name) card.append(el('p', 'cx-sub', t('hooks.copy.agyAfter', { name: r.name })));
       done.append(card);

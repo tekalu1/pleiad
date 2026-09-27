@@ -1,6 +1,6 @@
 # 0047 Hooks を他のエージェントへ写すときは、入出力のアダプターを挟み、意味が合わない制御は安全な側に倒す
 
-- 状態: 提案
+- 状態: 承認（2026-09-27）
 
 ## 状況
 
@@ -18,10 +18,11 @@
 - **写すのは command 型の 1 つの定義を、利用者が確認した写し先へだけ。** 管理者・プラグイン・Skill の定義、command 以外の型、写した定義（アダプター越し）からは写さない。元の定義は変えない。
 - **イベントは同じ名前のものにだけ写す。** Claude Code ↔ Codex は両方にあるイベントすべて、agy とは PreToolUse・PostToolUse・Stop だけ。対応が無いイベントを別のイベントに読み替えない（SessionStart を PreInvocation にしない）。
 - **matcher はツール名の対応表で置き換える。** 意味が一致するのはシェルだけ（`Bash` ↔ `run_command`）で、ほかは警告を付ける。正規表現・知らない名前・一部だけ対応が無いものは自動で訳さず、利用者が写す先の matcher を入れるまで選べない。
-- **Antigravity との間と、Claude Code → Codex の PreToolUse には、入出力のアダプターを挟む。** アダプターは Node の標準モジュールだけを使う 1 つのスクリプト（`core/hook-adapter.mjs` をそのまま）で、写した先の設定ファイルの隣の `pleiad-hooks/hook-adapter-<中身の hash>.mjs` に書き出す。写した定義のコマンドは `node <アダプター> <元> <先> <イベント> <元の timeout> <元のコマンドの base64url>`。アダプターは、写した先の stdin を元の形に直し、元のエージェントと同じ作業フォルダー（agy なら `.agents`）と環境変数（`CLAUDE_PROJECT_DIR`・`ANTIGRAVITY_CONVERSATION_ID`）で元のコマンドを動かし、答えを写した先の形に直して、いつも exit 0 と JSON で返す。外側の timeout は元の秒数に 5 秒足す。ほかの Claude Code ↔ Codex はコマンドをそのまま写す。
+- **Antigravity との間と、Claude Code ↔ Codex の PreToolUse には、入出力のアダプターを挟む。** アダプターは Node の標準モジュールだけを使う 1 つのスクリプト（`core/hook-adapter.mjs` をそのまま）で、写した先の設定ファイルの隣の `pleiad-hooks/hook-adapter-<中身の hash>.mjs` に書き出す。起動時に自分の SHA-256 とファイル名を照合する。写した定義のコマンドは `node "<アダプター>" <元> <先> <イベント> <元の timeout> <元のコマンドの base64url>`。アダプターは、写した先の stdin を元の形に直し、元のエージェントと同じ作業フォルダー・シェル・環境変数で元のコマンドを動かし、答えを写した先の形に直して、いつも exit 0 と JSON で返す。Windows の Claude Code の元コマンドは Git Bash で動かす。確認できないシェルの組み合わせは写さない。外側の timeout は元の秒数に 5 秒足し、内側は最大 86395 秒にする。ほかの Claude Code ↔ Codex はコマンドをそのまま写す。
+- **プロジェクトの写しは、置き場所を移しても動くパスにする。** Antigravity は `.agents` からの相対パス、Claude Code は `$CLAUDE_PROJECT_DIR` からのパスを使う。ただし Windows の Antigravity は引用付きのパスを相対パスとして誤読するため、Windows ではアダプター越しに写さない。Codex のプロジェクト scope は hook の作業フォルダーが一定と確認できないため、アダプター越しには写さない。アダプターや Node の実パスに、どのシェルでも安全に引用できない文字があれば写さない。
 - **意味が一致しない制御は、黙って別の意味に変えない。** アダプターで安全な側（ツールを止める・何もしない・止まらせる）に倒すか、写せないとして選べなくする。
-  - PreToolUse: 写した先が扱えない `ask`（Codex）、agy で使えない `updatedInput`、timeout・起動できない・エージェントの入力が壊れている → deny。agy の元のコマンドの失敗（exit ≠ 0・壊れた JSON・決まっていない答え）は agy と同じく deny。agy の `allow` は Claude Code・Codex では何も言わない扱い（権限の確認はそのまま）、Claude Code・Codex の `allow` は agy の `allow`（agy の確認は残る）。
-  - Stop: 失敗したら止まらせる（続けない）。「続ける」は `decision: block` ↔ `decision: continue` を互いに直す。
+  - PreToolUse: 写した先が扱えない `ask`（Codex）、agy で使えない `updatedInput`、timeout・起動できない・コマンドが見つからない・出力が 1 MiB を超える・エージェントの入力が壊れている → deny。agy の元のコマンドの失敗（exit ≠ 0・壊れた JSON・決まっていない答え）は agy と同じく deny。agy の `allow` は Claude Code・Codex では何も言わない扱い（権限の確認はそのまま）、Codex の `allow` も Claude Code では何も言わない扱い。Claude Code・Codex の `allow` は agy の `allow`（agy の確認は残る）。
+  - Stop: 失敗したら止まらせる（続けない）。「続ける」は `decision: block` ↔ `decision: continue` を互いに直す。会話ごとの連続した「続け」を一時ファイルで数え、5 回で止まらせる。Antigravity へ渡す `executionNum` はその回数を使う。
   - PostToolUse: agy は答えを読まないので、agy との間では何も返さない。Claude Code の PostToolUse は成功したときだけなので、agy の失敗したツールでは元のコマンドを動かさない。
   - 写せないもの: 実行の条件や止め方を変えるキー（`if`・`asyncRewake`・`once`・`commandWindows` など）・知らないキー・matcher group のほかのキー、agy への `async`、Codex の `apply_patch` と agy のファイル操作の間（入力を相互に直せない）、プラグインの環境変数を使うコマンド、アダプター無しで `CLAUDE_PROJECT_DIR` を使うコマンド、写す先の同じイベントに同じコマンドが既にあるもの。
 - **写す前に確認の面を通す。** 写す先ごとに、元 → 写した後、実際に書く本文の差分（伏せ字）、書き先、写せない・確認が必要な理由、意味の違い（警告）を並べる。スイッチは既定オフ、写せる行だけ選べ、実行範囲（Pleiad 以外から起動する会話にも効く）の確認を入れるまで書かない。agy の写しには名前を付け、既にある名前には写さない。Codex に写した定義は「未審査」で、`/hooks` で信頼するまで動かないことを出す。
@@ -39,6 +40,6 @@
 
 - 変換は `core/hooks-copy.mjs`（純粋な関数）、アダプターは `core/hook-adapter.mjs`、書き込みは `core/hooks-config.mjs` の `copy`（`copyHooks`）。確認の面は `web/hooks-card.mjs` の `openCopySheet`。動きは docs/context-management.md「Hooks」、形は docs/design-system.md「Hooks」。
 - 一覧・差分では、アダプターのコマンドの base64url の引数も伏せ字にかける（元のコマンドに伏せる値があれば引数ごと伏せる）。写した定義の行は元のコマンドと「<元のエージェント> から写した定義」を出す。
-- アダプターは写した先のエージェントが `node` を PATH から起動する。写すときに Pleiad が `node` を見つけられなければ写せない。写した後に `node` やアダプターのファイルが無くなると、Claude Code と Codex は止めない失敗として扱う（ツールは進む）。agy は止める。
+- ユーザー scope の写しには、見つけた Node の絶対パスを書く。プロジェクト scope は `node` を使う。写すときに Pleiad が `node` を見つけられなければ写せない。写した後に Node やアダプターのファイルが無くなると、Claude Code と Codex は止めない失敗として扱うことがある（ツールは進む）。agy は止める。
 - Codex の `/hooks` の審査では、元のコマンドは base64url の形で見える。Pleiad の行の詳細の「元のコマンド」で読める。
 - 写した定義を元の定義に合わせて直す（同期）、写した定義をまとめて消す、は第 2 段では行わない。
