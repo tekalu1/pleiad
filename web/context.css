@@ -359,7 +359,7 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
   .hk-pair,.hk-maprow{grid-template-columns:minmax(0,1fr)}
   .hk-maprow{gap:2px}
 }
-/* Pleiad がそろえる（ADR 0048）: 切り替えの確認・登録の一覧・右パネル */
+/* Pleiad がそろえる（ADR 0049）: 切り替えの確認・登録の一覧・右パネル */
 .hk-unify .hk-warn{margin:0}
 .hk-unify>.cx-sub,.hk-unify>.cx-note{margin:0}
 .hk-unify-sec>summary{color:var(--ink);font-weight:600}

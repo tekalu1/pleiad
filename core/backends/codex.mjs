@@ -518,7 +518,7 @@ const loadedProvider = new Map();
 // 同じく、ロード済みのスレッドに渡した developerInstructions。Pleiad の指示（core/ply-instructions.mjs）は
 // 設定・承認モードでターンごとに変わるので、前と違えば接続先と同じく外してから読み直す（始まっている会話にも次のターンから効かせる）
 const loadedInstructions = new Map();
-// 同じく、ロード済みのスレッドに渡した hooks の config の指紋（'' は渡していない）。Hooks を Pleiad がそろえる会話（ADR 0048）は
+// 同じく、ロード済みのスレッドに渡した hooks の config の指紋（'' は渡していない）。Hooks を Pleiad がそろえる会話（ADR 0049）は
 // thread の config で hooks と hooks.state を渡すが、ロード済みのスレッドへの resume は config を無視する（実機で確認。2026-09-28）。
 // 指紋が変わったら外してから読み直し、外せなければターンを始めない（二重実行か未実行になるため）
 const loadedHooks = new Map();
@@ -540,7 +540,7 @@ async function probeHookHashes(table, cwd) {
 }
 /**
  * Hooks を Pleiad がそろえるターンの config の hooks。ターンごとに hooks/list（その会話の app-server・その cwd）を取り直し、
- * ユーザー・プロジェクトの定義の key を enabled:false にする。自分の定義には trusted_hash を付ける（ADR 0048。Pleiad の画面で確かめた登録だけ）
+ * ユーザー・プロジェクトの定義の key を enabled:false にする。自分の定義には trusted_hash を付ける（ADR 0049。Pleiad の画面で確かめた登録だけ）
  */
 export async function codexHooksConfig(runtime, rpc, cwd, { probe = probeHookHashes } = {}) {
   const list = (await rpc.request('hooks/list', { cwds: [cwd] }, 15_000))?.data;

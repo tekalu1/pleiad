@@ -101,7 +101,7 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 
 `sessionHooks { sessionId, cwd, backend }` は会話の右パネル用に、その会話のエージェントで cwd に見つかる定義（`scanHooks` と同じ行）と `hookRuns`（走っているターンの分を含む）を返す。`observable` は発火の通知を受け取れる接続か（Claude と Codex。Antigravity は Pleiad がそろえた会話で Pleiad が渡した分だけ: `observed: 'pleiad'`）。定義は「登録あり · 読み込み未確認」までで、読み込まれた・実行されたとは扱わない。発火の記録は開始と応答を `hookId` で組にし、応答が無いものを完了と推定しない。通知には設定ファイルのパスも command も無い。`hook_name` は「イベント:matcher」（例 `PreToolUse:Bash`）なので、その会話の場所で同じイベント・matcher の Claude の定義が 1 つだけのときその定義の名前で出し、結べなければイベントだけを出す。Codex は app-server の `hook/started`・`hook/completed`（`run.id`・`eventName`・`source`・`status`・`durationMs`）を同じ `hookRun` にする（`codexHookRun`。`source` を残し、出力の `entries` は持ち出さない）。Antigravity は通知を受け取れないので「観測できません」とし、0 件・未実行とは書かない。
 
-### Pleiad がそろえる会話（[ADR 0048](adr/0048-hooks-pleiad-managed.md)）
+### Pleiad がそろえる会話（[ADR 0049](adr/0049-hooks-pleiad-managed.md)）
 
 ターンの開始ごとに、その場所の担当（`core/ply-hooks.mjs` の `resolve`）が Pleiad なら、`prepareHooksTurn`（`core/hooks-unify.mjs`）がそのエージェントへ渡す登録（`targets` に含み、オンで、その場所で外していないもの）を組み立て、会話の記録 `contextSession.hooks`（`{ owner: 'ply', at, agent, from, revision, supplied, unsupported, skipped, stopped, kept, leaks, untrusted? }`）に残してバックエンドへ `hooksRuntime` を渡す。担当がエージェントのターンは何も渡さない。組み立てに失敗したらターンを始めない（`hooksUnify.prepareFailed`）。変換は第 2 段と同じ（`deliverable` = `convertHook`。同じ形のコマンドはそのまま）。設定の変更は次のターンから効く。
 

@@ -243,7 +243,7 @@ export const backend = {
     // Pleiad のコンテキストは起動時にしか渡せない（エージェント定義と env）。起動時と違う渡し方になるなら起こし直す。
     // 担当や渡すツール（shape）が変わったときも同じ（コンテキストの設定の変更を次のターンから効かせる。会話は --conversation で続く）
     const contextKey = contextRuntime?.headers?.Authorization ?? null, contextShape = contextRuntime?.shape ?? null;
-    // Hooks を Pleiad がそろえる会話（ADR 0048）も、置き場の .agents/hooks.json は起動時にしか読まれない。登録・止める名前が変われば起こし直す
+    // Hooks を Pleiad がそろえる会話（ADR 0049）も、置き場の .agents/hooks.json は起動時にしか読まれない。登録・止める名前が変われば起こし直す
     const hooksShape = hooksRuntime?.shape ?? null;
     if (session && ((session.contextKey ?? null) !== contextKey || (session.contextShape ?? null) !== contextShape || (session.hooksShape ?? null) !== hooksShape)) { session.kill(); release(conversationId, session); session = null; }
 

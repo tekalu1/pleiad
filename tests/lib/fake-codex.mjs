@@ -433,7 +433,7 @@ function seedSubagents(cwd) {
 
 // ---- ディスパッチ -----------------------------------------------------------
 
-// ---- hooks（Hooks を Pleiad がそろえる会話。ADR 0048）
+// ---- hooks（Hooks を Pleiad がそろえる会話。ADR 0049）
 // 起動の -c hooks=<表>（本物では source: sessionFlags・sourcePath "<session-flags>/config.toml"）。プローブが hash を取るのに使う
 import { parse as tomlParse } from "smol-toml";
 import crypto from "node:crypto";

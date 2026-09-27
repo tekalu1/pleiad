@@ -385,7 +385,7 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       }
     }
     // Claude のプラグインの hooks（有効にしたプラグインの hooks/hooks.json と plugin.json の hooks）。読むだけ。
-    // 「Pleiad がそろえる」ではフラグ設定の disableAllHooks で一緒に止まるので、切り替えの確認に並べる（ADR 0048）
+    // 「Pleiad がそろえる」ではフラグ設定の disableAllHooks で一緒に止まるので、切り替えの確認に並べる（ADR 0049）
     if (agents.includes('claude') && scopes.includes('user')) entries.push(...await claudePluginRows(ancestors, diagnostics));
     // agy の enabled: false は、ユーザーと作業場所にある同じ名前の定義をまとめて止める（実機で確認。2026-09-27）
     const offNames = new Set(entries.filter(e => e.agent === 'antigravity' && e.enabled === false).map(e => e.name));

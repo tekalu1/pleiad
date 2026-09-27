@@ -1,4 +1,4 @@
-// 「Pleiad がそろえる」のサーバー側（ADR 0048、docs/context-runtime.md「Hooks」）。
+// 「Pleiad がそろえる」のサーバー側（ADR 0049、docs/context-runtime.md「Hooks」）。
 //   - 切り替えの確認（unifyPreview）: 止まるネイティブの hooks・動き続けるもの・Pleiad の登録として動くもの・エージェントごとに渡せないもの
 //   - 取り込み（importCandidate）: ネイティブの定義を Pleiad の登録の形にする（サーバーがファイルから読み直した元の定義だけを使う）
 //   - ターンの準備（prepareHooksTurn）: その会話のエージェントへ渡す形（Claude のコールバック・Codex の表・agy の hooks.json）と会話の記録

@@ -1,4 +1,4 @@
-// 「Pleiad がそろえる」の組み立て（ADR 0048、docs/context-runtime.md「Hooks」）。純粋な関数だけを置く（ファイルもプロセスも触らない）。
+// 「Pleiad がそろえる」の組み立て（ADR 0049、docs/context-runtime.md「Hooks」）。純粋な関数だけを置く（ファイルもプロセスも触らない）。
 //   Claude Code: query() の hooks コールバックで Pleiad の登録を渡し、ネイティブはフラグ設定の disableAllHooks で止める
 //   Codex:       thread/start・thread/resume の config に hooks（登録）と hooks.state（自分の定義に trusted_hash、ユーザー・プロジェクトの key に enabled:false）
 //   Antigravity: Pleiad の一時の置き場（--add-dir）の .agents/hooks.json に、登録（pleiad-<id>、アダプター越し）と、ネイティブの名前ごとの { enabled: false }
@@ -149,7 +149,7 @@ export function claudeIdentityOutput(event, result) {
   return {};
 }
 
-/** 担当の切り替えで止まる・動き続けるネイティブの行の区分（ADR 0048）。止め方の無い出どころは「動き続ける」 */
+/** 担当の切り替えで止まる・動き続けるネイティブの行の区分（ADR 0049）。止め方の無い出どころは「動き続ける」 */
 export function nativeFate(row) {
   if (row.agent === 'claude') return row.scope === 'managed' ? 'kept' : 'stopped';
   if (row.agent === 'codex') return ['user', 'project'].includes(row.scope) ? 'stopped' : 'kept';

@@ -603,7 +603,7 @@ export const backend = {
     // 互換の接続先（core/compat-endpoints.mjs）。env を組み替え（親の ANTHROPIC_* と OAuth トークンを外して接続先の値を入れる）、
     // 同じ値をフラグ設定のファイルにも書く（ユーザーの settings.json の env が options.env に勝つため。オブジェクトで渡すと argv にキーが載る）。
     // Pleiad の担当の設定（claudeContextOptions の settings）も同じファイルに入れる
-    // Hooks を Pleiad がそろえる会話（hooksRuntime。ADR 0048）は、ネイティブの hooks をフラグ設定の disableAllHooks で止め、登録をコールバックで渡す
+    // Hooks を Pleiad がそろえる会話（hooksRuntime。ADR 0049）は、ネイティブの hooks をフラグ設定の disableAllHooks で止め、登録をコールバックで渡す
     const contextOptions = claudeContextOptions(contextRuntime, { compact: Boolean(compact), hooks: Boolean(hooksRuntime) });
     const compactDiagnostic = compact ? createClaudeCompactDiagnostic() : null;
     const flag = endpoint ? await writeClaudeFlagSettings(store.dataDir, endpoint, contextOptions.settings) : null;

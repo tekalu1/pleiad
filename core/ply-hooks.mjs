@@ -1,4 +1,4 @@
-// Pleiad 自身の Hooks の登録（正本）と、Hooks の担当（エージェントに任せる／Pleiad がそろえる）の保存（ADR 0048）。
+// Pleiad 自身の Hooks の登録（正本）と、Hooks の担当（エージェントに任せる／Pleiad がそろえる）の保存（ADR 0049）。
 // 各エージェントの設定ファイルは書き換えない。登録は「担当が Pleiad」の場所で、Pleiad から起動する会話にだけ渡す
 // （core/hooks-plan.mjs が組み立て、各バックエンドが渡す）。
 //

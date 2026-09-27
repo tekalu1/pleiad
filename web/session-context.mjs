@@ -157,7 +157,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   let unifying = false;
   // Hooks（sessionHooks の戻り）。会話・場所・実行中かが変わったら取り直す
   let hooks = { key: null, data: null };
-  // 「この場所だけ変える」の間の Hooks の担当（plyHooks { cwd }）と、開いている切り替えの確認（'ply' | 'native' | null。ADR 0048）
+  // 「この場所だけ変える」の間の Hooks の担当（plyHooks { cwd }）と、開いている切り替えの確認（'ply' | 'native' | null。ADR 0049）
   let hooksPlace = { cwd: null, view: null }, hooksConfirm = null;
 
   const title = t('sessionContext.title');

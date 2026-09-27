@@ -8,7 +8,7 @@
 // The script rewrites the input into the <from> shape, runs the original command with the <from> agent's working folder,
 // then rewrites the command's result into what <to> understands. It only uses Node's own modules, so it runs without Pleiad.
 //
-// Pleiad also runs hooks it registers itself through this script (ADR 0048, "Pleiad manages hooks"):
+// Pleiad also runs hooks it registers itself through this script (ADR 0049, "Pleiad manages hooks"):
 //   - <from> may equal <to>. The command then gets the runner's input unchanged, in the runner's own working folder
 //     (Antigravity: <workspace>/.agents, not Pleiad's temporary folder), and its result goes back unchanged. The one change:
 //     an Antigravity PreToolUse that says nothing (exit 0 with no decision) becomes "allow", because Antigravity would deny it.
@@ -287,7 +287,7 @@ export function decodeCommand(text) {
 }
 
 /**
- * The same agent on both sides (Pleiad's own registrations, ADR 0048): the command gets the input unchanged in the runner's working folder,
+ * The same agent on both sides (Pleiad's own registrations, ADR 0049): the command gets the input unchanged in the runner's working folder,
  * and its output and exit code go back unchanged. Antigravity: a PreToolUse with no decision becomes allow (Antigravity denies on "{}").
  */
 export function sameAgentRun({ to, event, input, processCwd = process.cwd(), exists = fs.existsSync }) {

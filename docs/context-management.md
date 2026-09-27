@@ -120,7 +120,7 @@ JSON は他のキーを保持して整形保存。通常の TOML テーブルで
 
 ## Hooks（2026-09-27）
 
-設定 › コンテキストの「Hooks」カードと会話の右パネルの Hooks の面（[ADR 0045](adr/0045-hooks-management.md)、画面は design-system.md「Hooks」）。第 1 段は見える化とネイティブ編集、第 2 段は他のエージェントへ写す、第 3 段は Pleiad がそろえる（下の節）。探索と書き込みは `core/hooks-config.mjs`。hooks の担当と Pleiad の登録は `context-scans.json` ではなく `<data>/hooks.json` に持つ（下の「Pleiad がそろえる」。[ADR 0048](adr/0048-hooks-pleiad-managed.md)）。
+設定 › コンテキストの「Hooks」カードと会話の右パネルの Hooks の面（[ADR 0045](adr/0045-hooks-management.md)、画面は design-system.md「Hooks」）。第 1 段は見える化とネイティブ編集、第 2 段は他のエージェントへ写す、第 3 段は Pleiad がそろえる（下の節）。探索と書き込みは `core/hooks-config.mjs`。hooks の担当と Pleiad の登録は `context-scans.json` ではなく `<data>/hooks.json` に持つ（下の「Pleiad がそろえる」。[ADR 0049](adr/0049-hooks-pleiad-managed.md)）。
 
 **探す場所**（ユーザーは home、作業場所は Git のルートから cwd までの各フォルダー）:
 
@@ -144,7 +144,7 @@ Claude の Skill の frontmatter の `hooks`（ユーザーの `skills/*/SKILL.m
 
 ### Pleiad がそろえる（第 3 段、2026-09-28）
 
-担当を「Pleiad がそろえる」にした場所では、Pleiad から起動する Claude Code・Codex・Antigravity の会話で、各エージェント自身の設定の hooks（ネイティブ）を止め、Pleiad の登録だけを渡す（[ADR 0048](adr/0048-hooks-pleiad-managed.md)。渡し方は [共通コンテキストの実行](context-runtime.md)「Hooks」）。エージェントの設定ファイルは書き換えず、Pleiad 以外から起動する会話は今までどおり。
+担当を「Pleiad がそろえる」にした場所では、Pleiad から起動する Claude Code・Codex・Antigravity の会話で、各エージェント自身の設定の hooks（ネイティブ）を止め、Pleiad の登録だけを渡す（[ADR 0049](adr/0049-hooks-pleiad-managed.md)。渡し方は [共通コンテキストの実行](context-runtime.md)「Hooks」）。エージェントの設定ファイルは書き換えず、Pleiad 以外から起動する会話は今までどおり。
 
 - **保存**（`core/ply-hooks.mjs`）: `<data>/hooks.json`（形式 1、0600）。`context-scans.json`（形式 3）には入れない（前の版がそのファイルごと読めなくなるのを避ける。前の版は `hooks.json` を無視し、hooks はエージェント任せに戻る）。
   ```jsonc

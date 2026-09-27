@@ -95,7 +95,7 @@ export const COMMANDS = new Set([
   'saveHooks',    // { items: [{ op: add|edit|delete|enable, agent, scope, base?, file?, revision?, loc?, event, matcher, name?, command, timeout, async, enabled? }], dryRun?, allowReformat? } -> { results: [{ ok, path, before, after, reformatsFile, error? }] }
   'copyHooks',    // { source: { agent, scope, base?, file, loc, revision? }, targets: [{ agent, scope, base?, name?, matcher?, revision? }], dryRun?, allowReformat? } -> { source, results: [{ agent, status: ready|review|blocked, reasons, warnings, event, matcher, name?, path, adapter?, before, after, revision, ok, written?, error? }] }。元の定義はファイルから読み直す
   'sessionHooks', // { sessionId, cwd, backend, trust? } -> { agent, cwd, report, observable, observed: all|pleiad|null, owner, unify（Pleiad がそろえた会話の記録）, runs: [{ phase, hookId, name, event, outcome?, exitCode?, pleiad?, id?, source?, leak?, ms?, at }] }
-  // Pleiad の Hooks の登録と担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0048）。エージェントの設定ファイルは書かない
+  // Pleiad の Hooks の登録と担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0049）。エージェントの設定ファイルは書かない
   'plyHooks',          // { cwd? } -> { defaults: { value: { owner, disabled } }, place: { value, override, from } | null, hooks: [登録（コマンドは伏せ字）], revision }
   'readPlyHook',       // { id } -> 登録 1 件（元のコマンド）。編集のシートを開くときだけ
   'savePlyHook',       // { value: { id?, name, agent, event, matcher, command, timeout?, async?, targets, matchers?, enabled }, cwd? } -> plyHooks と同じ形と id

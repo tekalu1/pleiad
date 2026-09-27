@@ -221,7 +221,7 @@ const contextSession = createContextSession({ store, snapshots: CONTEXT_SNAPSHOT
 const mcpConfig = createMcpConfig();
 // Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。読むのと、利用者が明示した編集だけ
 const hooksConfig = createHooksConfig();
-// Pleiad 自身の Hooks の登録と、Hooks の担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0048）
+// Pleiad 自身の Hooks の登録と、Hooks の担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0049）
 const plyHooks = createPlyHooks(store.dataDir);
 const HOOK_LEAKS_MAX = 20;
 /**
@@ -1904,7 +1904,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       child: Boolean(sessionId && (await store.get(sessionId)).delegation), supported: Boolean(backend.capabilities?.plyAgents),
       canDelegate: canDelegate(backend.modes()[permissionMode]), agent: INSTRUCTION_AGENTS.includes(backend.id) ? backend.id : null });
     if (added) contextRecord.added = added;
-    // Hooks の担当が Pleiad の場所（ADR 0048）。このエージェントへ渡す登録・止めるネイティブ・渡せないものを組み立て、会話の記録に残す。
+    // Hooks の担当が Pleiad の場所（ADR 0049）。このエージェントへ渡す登録・止めるネイティブ・渡せないものを組み立て、会話の記録に残す。
     // 組み立てられなければ送らない（ネイティブと登録が二重に動くか、どちらも動かないため）
     let hooksTurn = null;
     try { hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath } }); }
@@ -2663,7 +2663,7 @@ wss.on("connection", (ws, req) => {
           const observable = agent === 'claude' || agent === 'codex' ? 'all' : agent === 'antigravity' && unify?.owner === 'ply' ? 'pleiad' : null;
           return reply(true, { agent, cwd, report, observable: Boolean(observable), observed: observable, owner, unify, runs: trimHookRuns([...(saved.hookRuns ?? []), ...(live?.hookRuns ?? [])]) });
         }
-        // ---- Pleiad の Hooks の登録と担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0048）。エージェントの設定ファイルは書かない
+        // ---- Pleiad の Hooks の登録と担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0049）。エージェントの設定ファイルは書かない
         case 'plyHooks':
           return reply(true, await plyHooks.view(msg.args?.cwd ?? null));
         case 'readPlyHook':

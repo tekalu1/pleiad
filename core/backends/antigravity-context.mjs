@@ -99,7 +99,7 @@ export async function prepareAgent({ owners, prompt, cwd, url, authorization, lo
     await fs.promises.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
     await fs.promises.writeFile(file, agentDefinition({ owners, prompt, cwd, home, locale }), { encoding: 'utf8', mode: 0o600 });
   }
-  // Hooks を Pleiad がそろえる会話（ADR 0048）: 置き場の .agents/hooks.json に登録（pleiad-<id>、アダプター越し）と、ネイティブの名前ごとの
+  // Hooks を Pleiad がそろえる会話（ADR 0049）: 置き場の .agents/hooks.json に登録（pleiad-<id>、アダプター越し）と、ネイティブの名前ごとの
   // { enabled: false } を書く。agy は --add-dir の .agents/hooks.json も読み、同じ名前の enabled:false はスコープをまたいで止める（実機で確認。2026-09-28）。
   // アダプターは置き場の .agents/pleiad-hooks/ に置き、発火の記録（runs.jsonl）もそこに書かせる
   let runs = null;

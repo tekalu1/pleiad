@@ -1,4 +1,4 @@
-// Hooks を Pleiad がそろえる（ADR 0048）をサーバー越しに通す。LLM は呼ばない（Codex・agy は身代わり。ホームは使い捨ての場所）。
+// Hooks を Pleiad がそろえる（ADR 0049）をサーバー越しに通す。LLM は呼ばない（Codex・agy は身代わり。ホームは使い捨ての場所）。
 //   - 切り替えの確認（止まる・動き続ける・取り込める）→ 担当と取り込みを 1 回で保存
 //   - Codex: thread の config に hooks（登録）と state（自分の定義に trusted_hash、ネイティブに enabled:false）。発火は Pleiad の分だけ・漏れなし。
 //            担当を戻すとロード済みのスレッドを外して読み直し、ネイティブが戻る
