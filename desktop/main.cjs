@@ -15,7 +15,10 @@ const { createWindowTrust } = require('./window-trust.cjs');
 const { createRemoteWindows } = require('./remote-windows.cjs');
 // 内蔵ブラウザー（右パネルに重ねる WebContentsView。docs/inapp-browser.md、ADR 0041）。ローカルの窓にだけ置く
 const { createBrowserPanel } = require('./browser-panel.cjs');
+const { attachAgentBrowserBridge } = require('./agent-browser-bridge.cjs');
+const { prepareAgentBrowserBin } = require('./agent-browser-bin.cjs');
 let browserPanel;
+let agentBrowserBridge;
 const trust = createWindowTrust();
 let remoteWindows;
 let worker, window, origin, updates, quitting = false, closing = false;
@@ -129,11 +132,12 @@ async function boot() {
   await initDesktopI18n({ systemLanguage: systemLanguage() }).catch(() => setLocale(resolveLocale({ system: systemLanguage() })));
   // 開発版と配布版が同時に動いても互いのポートを奪い合わないよう、記録を分ける
   const portFile = path.join(app.getPath('userData'), app.isPackaged ? 'server-port.json' : 'server-port-dev.json');
+  const agentBrowserBin = prepareAgentBrowserBin({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, root: path.join(__dirname, '..'), dataDir: app.getPath('userData') });
   worker = utilityProcess.fork(path.join(__dirname, 'server.cjs'), [], {
     cwd: app.getPath('home'),
     // OS の言語はサーバーからは確実に取れない（utilityProcess の Intl は OS の表示言語と一致しないことがある）ので、ここで渡す。
     // 画面の言語を「OS に合わせる」ときに使う（core/i18n.mjs）
-    env: { ...process.env, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage() },
+    env: { ...process.env, PATH: `${agentBrowserBin}${path.delimiter}${process.env.PATH || ''}`, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage() },
     stdio: 'pipe', serviceName: 'Pleiad server',
   });
   // Consume logs without exposing the private authentication URL.
@@ -170,8 +174,9 @@ async function boot() {
   remoteWindows = createRemoteWindows({ app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust,
     icon: path.join(__dirname, 'icon.png'), external });
   remoteWindows.attach();
-  browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png') });
+  browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png'), agentControl: (action, id) => agentBrowserBridge?.[action]?.(id) });
   browserPanel.attach();
+  agentBrowserBridge = attachAgentBrowserBridge(worker, browserPanel);
   window.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
   window.webContents.on('will-navigate', (event, url) => {
     if (new URL(url).origin !== origin) { event.preventDefault(); external(url); }
@@ -259,6 +264,7 @@ ipcMain.on('ply:title-bar', (event, colors) => {
 });
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
+  app.on('will-quit', () => agentBrowserBridge?.close());
   app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { if (!quitting && window) { event.preventDefault(); closeSafely(); } });
   app.whenReady().then(boot).catch(e => { console.error(e.message); dialog.showErrorBox(t('boot.failedTitle'), e.message); quitting = true; worker?.kill(); app.quit(); });

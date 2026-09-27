@@ -183,7 +183,8 @@
         "external": "既定のブラウザー",
         "note": "内蔵ブラウザーは会話の右に開き、ログインはこのアプリの中に残ります。Pleiad 本体の保存領域とは分けています。"
       },
-      "saveFailed": "保存できませんでした: {{error}}"
+      "saveFailed": "保存できませんでした: {{error}}",
+      "agentOperation": { "title": "エージェントの操作", "bundled": "agent-browser {{version}} · 同梱" }
     }
   },
   "time": {
@@ -2520,6 +2521,7 @@
     }
   },
   "browser": {
+    "agent": { "working": "エージェントが操作中", "status": "{{name}} が操作中", "stop": "止める", "takeOver": "引き継ぐ" },
     "panel": "ブラウザー",
     "tabs": "ブラウザーのタブ",
     "newTab": "新しいタブ",

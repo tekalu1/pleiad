@@ -15,7 +15,7 @@
 import os from "node:os";
 import { codexQuota, createCodexMeter } from '../usage.mjs';
 import { rpc } from "./codex-rpc.mjs";
-import { rpc as nativeRpc } from './codex-rpc.mjs';
+import { rpc as nativeRpc, CodexRpc } from './codex-rpc.mjs';
 import { createTerminalTracker } from "./codex-background.mjs";
 import { codexContextRpc } from './context-options.mjs';
 import { undelivered } from './undelivered.mjs';
@@ -1140,8 +1140,8 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, contextRuntime, agentRuntime, endpoint = null }) {
-    const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, endpoint = null }) {
+    const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc, browserEnv).catch(e => { throw undelivered(e); }) : browserEnv ? new CodexRpc({}, browserEnv) : nativeRpc;
     // 互換の接続先（core/compat-endpoints.mjs）。スレッドごとに modelProvider と model_providers.<id> を渡す（app-server は共有のまま）。
     // 鍵は experimental_bearer_token / http_headers で JSON-RPC に載る（argv・環境に出ない）。エラー文からは伏せる
     const compat = endpoint ? codexCompatThread(endpoint) : null;
@@ -1393,7 +1393,7 @@ export const backend = {
           ...(compat ? compat.config : {}),
         },
         ...(compat ? { modelProvider: compat.modelProvider } : {}),
-        ...((visualizeInstructions || contextRuntime?.prompt || agentRuntime?.instructions) ? { developerInstructions: [contextRuntime?.prompt, visualizeInstructions, agentRuntime?.instructions].filter(Boolean).join('\n\n') } : {}),
+        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions) ? { developerInstructions: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions].filter(Boolean).join('\n\n') } : {}),
         approvalPolicy: m.approvalPolicy,
         sandbox: m.sandbox,
         ...(model ? { model } : {}),
@@ -1530,7 +1530,7 @@ export const backend = {
       if (!contextRuntime && !ephemeral) endTurn(threadId);
       if (ephemeral && threadId) await rpc.request("thread/unsubscribe", { threadId }).catch(() => {});
       if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
-      if (contextRuntime) rpc.stop();
+      if (rpc !== nativeRpc) rpc.stop();
     }
 
     return { sessionId: threadId };

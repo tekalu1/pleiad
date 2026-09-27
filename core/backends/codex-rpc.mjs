@@ -39,13 +39,14 @@ export function tomlValue(v) {
   if (v && typeof v === 'object') return '{' + Object.entries(v).map(([k,s]) => JSON.stringify(k) + '=' + tomlValue(s)).join(',') + '}';
   return JSON.stringify(v);
 }
-function launch(config = {}) {
-  return spawnCli(cliCommand("codex"), ["app-server", ...Object.entries(config).flatMap(([k,v]) => ['-c', `${k}=${tomlValue(v)}`])], { stdio: ["pipe", "pipe", "pipe"] });
+function launch(config = {}, env = null) {
+  return spawnCli(cliCommand("codex"), ["app-server", ...Object.entries(config).flatMap(([k,v]) => ['-c', `${k}=${tomlValue(v)}`])], { stdio: ["pipe", "pipe", "pipe"], ...(env ? { env: { ...process.env, ...env } } : {}) });
 }
 
 export class CodexRpc {
-  constructor(config = {}) {
+  constructor(config = {}, env = null) {
     this.config = config;
+    this.env = env;
     this.proc = null;
     this.ready = null;          // 起動中の Promise。並行して呼ばれても1回しか立てない
     this.nextId = 0;
@@ -127,7 +128,7 @@ export class CodexRpc {
     if (this.ready) return this.ready;
 
     this.ready = (async () => {
-    const proc = launch(this.config);
+    const proc = launch(this.config, this.env);
       this.proc = proc;
       this.buf = "";
       this.stderr = [];

@@ -66,7 +66,7 @@ export function contextRefusal(owners = {}) {
  * agent.md の中身。frontmatter の値は JSON で書く（YAML としても読める）。
  * locale は会話の言語（説明・見出し・注意書きはエージェントが読むので、その言語で書く。agent 名前空間）
  */
-export function agentDefinition({ owners, prompt, cwd, home, locale, execPath = process.execPath, electron = Boolean(process.versions.electron) }) {
+export function agentDefinition({ owners, prompt, cwd, home, locale, contextEnabled = true, execPath = process.execPath, electron = Boolean(process.versions.electron) }) {
   const server = { serverName: 'ply_context', command: execPath, args: [RELAY],
     // 配布版の Pleiad は Electron。Node として動かす印が無いと、中継ではなく Pleiad 本体が立ち上がる
     ...(electron ? { env: { ELECTRON_RUN_AS_NODE: '1' } } : {}) };
@@ -79,7 +79,7 @@ export function agentDefinition({ owners, prompt, cwd, home, locale, execPath = 
     // Skills を Pleiad が持つならネイティブの Skills（と plugins・subagents）を切る。MCP は別に切り替える
     `inheritCustomizations: ${owners.skill !== 'ply'}`,
     `inheritMcp: ${owners.mcp !== 'ply'}`,
-    `mcpServers: ${JSON.stringify([server])}`,
+    `mcpServers: ${JSON.stringify(contextEnabled ? [server] : [])}`,
     // 書かないと書き込み系ツールが 1 つも渡らない（TOOLS のコメント）
     `tools: ${JSON.stringify(TOOLS)}`,
   ];
@@ -95,11 +95,11 @@ export async function prepareAgent({ owners, prompt, cwd, url, authorization, lo
   const home = path.join(root(), `${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
   const file = path.join(home, '.agents', 'agents', AGENT_NAME, 'agent.md');
   await fs.promises.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-  await fs.promises.writeFile(file, agentDefinition({ owners, prompt, cwd, home, locale }), { encoding: 'utf8', mode: 0o600 });
+  await fs.promises.writeFile(file, agentDefinition({ owners, prompt, cwd, home, locale, contextEnabled: Boolean(url) }), { encoding: 'utf8', mode: 0o600 });
   return {
     home,
     // PLY_CONTEXT_LOCALE は中継が agy へ返すエラーの言語（会話の言語。core/agy-context-relay.mjs）
-    env: { PLY_CONTEXT_URL: url, PLY_CONTEXT_AUTHORIZATION: authorization, ...(locale ? { PLY_CONTEXT_LOCALE: locale } : {}) },
+    env: { ...(url ? { PLY_CONTEXT_URL: url, PLY_CONTEXT_AUTHORIZATION: authorization } : {}), ...(locale ? { PLY_CONTEXT_LOCALE: locale } : {}) },
     cleanup: () => fs.rmSync(home, { recursive: true, force: true, maxRetries: 3 }),
   };
 }

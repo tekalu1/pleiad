@@ -25,6 +25,7 @@ const cases = [
   await import('./unit/side-panel.mjs'),
   // 内蔵ブラウザー: 右パネルの表・アドレス欄・リンクの開き先・使える画面・main のタブと位置（偽の electron）
   await import('./unit/inapp-browser.mjs'),
+  await import('./unit/agent-browser-relay.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
   // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）
