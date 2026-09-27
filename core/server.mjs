@@ -54,6 +54,7 @@ import { createRemoteHost } from './remote/connector.mjs';
 import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
 import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
+import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
@@ -67,6 +68,10 @@ const usageStore = createUsageStore(store.dataDir);
 await ensureDataSchema(store.dataDir);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
+const agentBrowser = parentPortBrowser(process.parentPort);
+// A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
+delete process.env.AGENT_BROWSER_CONFIG;
+delete process.env.AGENT_BROWSER_SESSION;
 // このサーバーが起動した時刻。ready で配る。画面は、これより前の更新による中断だけを「更新の後」とみなす（web/interrupt.mjs の updateInterrupted）
 const SERVER_STARTED_AT = Date.now();
 const WEB = path.join(HERE, "..", "web");
@@ -1212,6 +1217,7 @@ function makeEmit(turn) {
     // （差し替えると sidecar に "null" キーの行が生える）。
     if (event?.type === "session" && event.sessionId && !turn.info.sessionId) {
       turn.info.sessionId = event.sessionId;
+      if (turn.browserRelayId && turn.browserRelayId !== event.sessionId) agentBrowser?.rebind(turn.browserRelayId, event.sessionId);
       turn.compactionRevision = compactionScheduler.revision(event.sessionId);
       for (const read of liveReads) if (read.sessionId === event.sessionId) read.turn = turn;
       runtime.turns.delete(turn.key);
@@ -2015,6 +2021,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
         locale: agentLocale,
         visualizeInstructions: visualizeInstructions(agentLocale),
+        browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
+        browserInstructions: null,
         contextRuntime: runtimeContext,
         // 橋は会話ごとに使い回すので、Pleiad の指示はターンごとにここで足す（設定の変更が始まっている会話にも次のターンから効く）
         agentRuntime: (runtime => ({ ...runtime, instructions: withAdded(runtime.instructions, contextRecord.added) }))(agentConnection(turn)),
@@ -2023,6 +2031,11 @@ async function runTurnInternal(args, onStarted, hooks) {
         // 互換の接続先（キーを含む。backend の中でだけ使い、ログ・イベントには出さない。core/compat-endpoints.mjs）
         ...(endpoint ? { endpoint } : {}),
       };
+      if (runArgs.browserEnv) {
+        turn.browserRelayId = runArgs.browserEnv.AGENT_BROWSER_SESSION;
+        // i18n-dynamic: agent:browser.instructions
+        runArgs.browserInstructions = browserInstruction(runArgs.browserEnv, agentLocale, agentT);
+      }
       // Preparation can await context and settings. A send or cancellation may have invalidated
       // an idle reservation since the first check; do not invoke the backend in that case.
       if (hooks.canInvoke && !hooks.canInvoke()) {

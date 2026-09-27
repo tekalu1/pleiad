@@ -58,8 +58,8 @@ const button = (icon, label, action, className = 'btn btn-icon') => {
  * getSessionId は今開いている会話（タブがどの会話から開かれたかを main が覚える）。
  * openPanel は右パネルをブラウザーのモードにする関数（web/file-preview.mjs が後から入れる）。onEmpty は最後のタブを閉じたとき
  */
-export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMenu, getSessionId = () => null } = {}) {
-  let state = { tabs: [], current: null };
+export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMenu, getSessionId = () => null, getAgentName = () => 'Agent' } = {}) {
+  let state = { tabs: [], current: null, agent: null };
   let shown = false, covered = false, freezing = null, editing = false;
   let hooks = { openPanel: () => {}, onEmpty: () => {} };
   const current = () => state.tabs.find(tab => tab.id === state.current) ?? null;
@@ -71,6 +71,13 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   const tabList = el('div', 'browser-tab-list'); tabList.setAttribute('role', 'tablist'); tabList.setAttribute('aria-label', t('browser.tabs'));
   const newTab = button(ICON.plus, t('browser.newTab'), () => run('newTab').then(() => focusAddress()).catch(failed), 'btn btn-icon browser-new-tab');
   tabsRow.append(tabList, newTab);
+  const agentRow = el('div', 'browser-agent-row'); agentRow.hidden = true;
+  const agentStatus = el('span', 'browser-agent-status');
+  const agentStop = el('button', 'btn', t('browser.agent.stop')); agentStop.type = 'button';
+  agentStop.onclick = () => run('agentStop').catch(failed);
+  const agentTakeOver = el('button', 'btn', t('browser.agent.takeOver')); agentTakeOver.type = 'button';
+  agentTakeOver.onclick = () => run('agentTakeOver').catch(failed);
+  agentRow.append(agentStatus, agentStop, agentTakeOver);
 
   // ---- 道具の列: 戻る・進む・再読み込み・アドレス欄・既定のブラウザーで開く・⋯
   const back = button(backIcon, t('browser.back'), () => run('back').catch(failed));
@@ -138,7 +145,8 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
       pick.setAttribute('role', 'tab'); pick.setAttribute('aria-selected', String(selected)); pick.tabIndex = selected ? 0 : -1;
       pick.title = tab.url ? `${label}\n${tab.url}` : label;
       const ic = el('span', 'browser-tab-mark');
-      if (tab.loading) ic.append(runMark(t('browser.loading'))); else ic.innerHTML = ICON[addressParts(tab.url).kind] ?? ICON.blank;
+      if (state.agent?.tabId === tab.id) ic.append(runMark(t('browser.agent.working')));
+      else if (tab.loading) ic.append(runMark(t('browser.loading'))); else ic.innerHTML = ICON[addressParts(tab.url).kind] ?? ICON.blank;
       pick.append(ic, el('span', 'browser-tab-name', label));
       pick.onclick = () => run('select', { id: tab.id }).catch(failed);
       pick.onkeydown = event => {
@@ -158,7 +166,14 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
 
   function paint(next) {
     const before = state;
-    state = { tabs: Array.isArray(next?.tabs) ? next.tabs : [], current: next?.current ?? null };
+    state = { tabs: Array.isArray(next?.tabs) ? next.tabs : [], current: next?.current ?? null, agent: next?.agent ?? null };
+    const active = !!state.agent && state.agent.sessionId === getSessionId();
+    agentRow.hidden = !active;
+    agentStatus.replaceChildren();
+    if (active) {
+      agentStatus.append(runMark(t('browser.agent.working')), document.createTextNode(t('browser.agent.status', { name: getAgentName() })));
+      if (!shown) hooks.openPanel();
+    }
     const tab = current();
     back.disabled = !tab?.canGoBack; forward.disabled = !tab?.canGoForward;
     reload.disabled = !tab?.url;
@@ -231,14 +246,15 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
 
   const api = {
     buttons: { back, forward, reloadPage: reload, address, openExternal, browserMore: more },
-    tabsRow, body,
+    tabsRow, agentRow, body,
     /** file-preview がパネルを開く関数と、最後のタブを閉じたときの関数を入れる */
     connect(next) { hooks = { ...hooks, ...next }; },
     /** パネルがブラウザーのモードで見えるようになった・隠れた */
     show() {
       if (shown) return sync();
       shown = true; lastSent = ''; watch(true);
-      bridge.command('context', { sessionId: getSessionId() }).catch(() => {});
+      agentRow.hidden = !(state.agent && state.agent.sessionId === getSessionId());
+      bridge.command('context', { sessionId: getSessionId() }).then(paint).catch(() => {});
       sync();
     },
     hide() {
@@ -251,7 +267,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
     /** 位置を測り直す（パネルの幅・広げる・狭い画面の全面表示のあと） */
     sync,
     /** 今開いている会話が変わった（これから開くタブがどの会話のものかを main が覚える） */
-    sessionChanged(sessionId) { bridge.command('context', { sessionId: sessionId ?? null }).catch(() => {}); },
+    sessionChanged(sessionId) { bridge.command('context', { sessionId: sessionId ?? null }).then(paint).catch(() => {}); },
     async open({ url = '', newTab: fresh = false } = {}) {
       hooks.openPanel();
       if (url) await run('open', { url, newTab: fresh }).catch(failed);

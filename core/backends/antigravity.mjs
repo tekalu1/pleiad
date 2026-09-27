@@ -200,7 +200,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions }) {
     const m = MODES[modeFor(mode)];
 
     // **控えはターンの終わりに書くが、送信の時刻はここで取る。**
@@ -227,12 +227,12 @@ export const backend = {
     // Pleiad のコンテキストは起動時にしか渡せない（エージェント定義と env）。起動時と違う渡し方になるなら起こし直す。
     // 担当や渡すツール（shape）が変わったときも同じ（コンテキストの設定の変更を次のターンから効かせる。会話は --conversation で続く）
     const contextKey = contextRuntime?.headers?.Authorization ?? null, contextShape = contextRuntime?.shape ?? null;
-    if (session && ((session.contextKey ?? null) !== contextKey || (session.contextShape ?? null) !== contextShape)) { session.kill(); release(conversationId, session); session = null; }
+    if (session && ((session.contextKey ?? null) !== contextKey || (session.contextShape ?? null) !== contextShape || (session.browserConfig ?? null) !== (browserEnv?.AGENT_BROWSER_CONFIG ?? null))) { session.kill(); release(conversationId, session); session = null; }
 
     const fresh = !session;
     if (fresh) {
       // 会話ごとのエージェント定義（Pleiad の置き場）と、中継に渡す接続先・トークン（env）
-      const agent = contextRuntime ? await prepareAgent({ owners: contextRuntime.owners, prompt: contextRuntime.prompt, cwd, url: contextRuntime.url, authorization: contextKey, locale: contextRuntime.locale }) : null;
+      const agent = contextRuntime || browserInstructions ? await prepareAgent({ owners: contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' }, prompt: [contextRuntime?.prompt, browserInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale }) : null;
       session = new AgySession({
         cwd,
         conversationId,
@@ -242,11 +242,12 @@ export const backend = {
         skipPermissions: Boolean(m.skip),
         // agy のヘッドレスは cwd だけではワークスペースを設定しないため、--add-dir で渡す
         addDirs: cwd ? [cwd] : [],
-        ...(agent ? { addDirs: [...(cwd ? [cwd] : []), agent.home], agent: AGENT_NAME, env: agent.env, onGone: agent.cleanup } : {}),
+        ...(agent ? { addDirs: [...(cwd ? [cwd] : []), agent.home], agent: AGENT_NAME, env: { ...agent.env, ...browserEnv }, onGone: agent.cleanup } : browserEnv ? { env: browserEnv } : {}),
       });
       session.onShapeMismatch = () => { void recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'antigravity', kind: 'stream-json-shape', detectedVersion: null }); };
       session.contextKey = contextKey;
       session.contextShape = contextShape;
+      session.browserConfig = browserEnv?.AGENT_BROWSER_CONFIG ?? null;
     }
 
     const handle = (ev) => {

@@ -184,7 +184,8 @@
         "external": "Default browser",
         "note": "The built-in browser opens beside the conversation, and sign-ins stay in this app. Its storage is separate from Pleiad itself."
       },
-      "saveFailed": "Couldn't save: {{error}}"
+      "saveFailed": "Couldn't save: {{error}}",
+      "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" }
     }
   },
   "time": {
@@ -2596,6 +2597,7 @@
     }
   },
   "browser": {
+    "agent": { "working": "Agent operating", "status": "{{name}} is operating", "stop": "Stop", "takeOver": "Take over" },
     "panel": "Browser",
     "tabs": "Browser tabs",
     "newTab": "New tab",

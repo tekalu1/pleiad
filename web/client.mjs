@@ -3669,7 +3669,7 @@ $("draftSaved").onclick = () => saveDraft().catch(() => {});
 $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() => {}); };
 // 内蔵ブラウザー（web/browser-panel.mjs）。デスクトップ版のホストの画面だけ。右パネルの 1 つのモードになる
 const browserPanel = browserPanelAvailable()
-  ? createBrowserPanel({ showMenu: (x, y, items, title) => showMenu(x, y, items, title), getSessionId: () => state.current ?? null })
+  ? createBrowserPanel({ showMenu: (x, y, items, title) => showMenu(x, y, items, title), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()) })
   : null;
 const filePreview = setupFilePreview({
   browser: browserPanel,

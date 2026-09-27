@@ -163,3 +163,7 @@ body.file-preview-wide .file-preview-resize{display:none}
 .browser-setting{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;max-width:560px;margin:8px 0}
 .browser-link-open{min-width:260px}
 .browser-setting-note{color:var(--ink-weak);font-size:var(--fs-s)}
+.browser-agent-row{display:flex;align-items:center;gap:8px;padding:5px 10px;color:var(--ink-weak);font-size:var(--fs-s)}
+.browser-agent-row[hidden]{display:none}
+.browser-agent-status{display:flex;align-items:center;gap:7px;flex:1;min-width:0;color:var(--ink)}
+.browser-agent-row .btn{padding:3px 8px;font-size:var(--fs-s)}
