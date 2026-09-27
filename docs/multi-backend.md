@@ -83,6 +83,8 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 
 `present` / `status` / `title` / `fork` / `mode` / `model` / `running` / `turnEnd` はそのまま。
 
+バックエンドが出しても web へは流さないものに `hookRun`（Claude の hooks の開始・応答。server が会話の `hookRuns` に集める。docs/context-runtime.md「Hooks」）がある。
+
 **`background` / `phase`（2026-09）**: どちらも変わったときだけ出る。ターンの中の裏（Claude: main がターンを保持したまま待つ）の印で、
 `phase` を出さないバックエンド（Codex・Antigravity）はずっと `active` のまま扱う。server はターンごとに `phase` と `background` を持ち、`running` のターン行
 （`{ kind: "turn", …, phase, background }`）に載せ、変わった時点で `running` を配り直す（4 秒ごとの定期便を待たない）。
