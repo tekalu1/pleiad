@@ -1,4 +1,4 @@
-// 中断を会話の状態として残し、「再開」で続ける（docs/design.md「中断と再開」・ADR 0027）。
+// 中断を会話の状態として残し、「再開」で続ける（docs/design.md「中断と再開」・ADR 0036）。
 // fake バックエンドだけで、LLM は呼ばない。
 //   - 中断で終わったターンは sidecar に interrupted { at, reason } を残し、一覧・turnEnd・loadSession に載る。at は completedAt と同じ
 //   - turnResult aborted に reason が載る。abort の reason は user|update|quit だけ（ほかは user）

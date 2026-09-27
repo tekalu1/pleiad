@@ -27,7 +27,11 @@ export const tierText = tier => known('routing.tier', tier);
 export const tierShortText = tier => known('routing.tierShort', tier);
 export const judgeText = judge => known('routing.judge', judge);
 export const signalText = signal => known('routing.signal', signal);
-export const skipText = reason => known('routing.skip', reason);
+// i18n-dynamic: routing.unavailable.
+/** 飛ばした理由。「使えない」は中身（detail: disabled・not_installed・no_token）が分かれば添える */
+export const skipText = (reason, detail) => (reason === 'unavailable' && detail && t(`routing.unavailable.${detail}`) !== `routing.unavailable.${detail}`
+  ? t('routing.skipWithDetail', { reason: known('routing.skip', reason), detail: t(`routing.unavailable.${detail}`) })
+  : known('routing.skip', reason));
 /** 判定器を使えなかった理由（no_key・http_503 …） */
 export function fallbackText(code) {
   const http = /^http_(\d+)$/.exec(String(code ?? ''));
@@ -72,9 +76,13 @@ export function skippedPhrase(skipped, names = defaultNames) {
   return t('routing.line.skippedReason', { name, reason: skipText(skipped.reason) });
 }
 
-/** 委譲カードの 1 行の理由（「実装・中 → Codex gpt-6-sol · Sonnet は週次 73% で飛ばした」）。飛ばした候補は最初の 1 つだけ */
+/**
+ * 委譲カードの 1 行の理由（「実装・中 → Codex gpt-6-sol · Sonnet は週次 73% で飛ばした」）。飛ばした候補は最初の 1 つだけ。
+ * 自動でない委譲（依頼元が委譲先を書いた）は難しさを判定していないので「種類 → 委譲先」だけ（「実装 → Codex」）
+ */
 export function routingLine(routing, names = defaultNames) {
   if (!routing?.target) return '';
+  if (!isAutoRouting(routing)) return t('routing.line.pinned', { kind: kindText(routing.kind), target: targetText(routing.target, names) });
   const head = t('routing.line.head', { kind: kindText(routing.kind), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) });
   const first = routing.skipped?.[0];
   return first ? head + t('routing.line.join') + skippedPhrase(first, names) : head;
@@ -125,6 +133,105 @@ export function usageSummary(state) {
   return windows.filter(w => percent(w.usedPercent) != null).map(w => `${w.label ?? ''} ${percent(w.usedPercent)}%`).join(t('routing.line.join'));
 }
 
+// ---------------------------------------------------------------- 自動の振り分けの失敗
+
+/**
+ * 使える委譲先が無かった ply_delegate のエラー文（エージェント向け。core/server.mjs の routeDelegation）を読む。
+ * 文は会話の言語だが、種類・難しさの値と候補の行（`- backend:model (t2): reason (detail) 週次 84% pace 1.4`）は言語によらない。
+ * 当たらなければ null。{ kind, difficulty, skipped: [{ candidate, tier, reason, detail?, window?: { label, usedPercent, pace? } }] }
+ */
+export function parseRoutingFailure(text) {
+  const s = String(text ?? '');
+  const head = /(?:kind|種類) ([a-z_]+)[,、]\s*(?:difficulty|難しさ) (low|mid|high)/.exec(s);
+  if (!head) return null;
+  const skipped = [];
+  for (const line of s.split(/\r?\n/)) {
+    const m = /^- ([a-z]+:\S+) \((t\d|tv)\): ([a-z_]+)(?: \(([a-z_]+)\))?(?: (.*?) (\d+(?:\.\d+)?)%)?(?: pace (\d+(?:\.\d+)?))?\s*$/.exec(line);
+    if (!m) continue;
+    const [, candidate, tier, reason, detail, label, used, pace] = m;
+    const window = used != null || pace != null ? { label: label ?? '', ...(used != null ? { usedPercent: Number(used) } : {}), ...(pace != null ? { pace: Number(pace) } : {}) } : null;
+    skipped.push({ candidate, tier, reason, ...(detail ? { detail } : {}), ...(window ? { window } : {}) });
+  }
+  return { kind: head[1], difficulty: head[2], skipped };
+}
+
+// 直せば通るもの（設定）を先に、待てば戻るもの（使用量）を後に
+const FAILURE_ORDER = ['unavailable', 'model_unknown', 'quota_high', 'pace_high', 'pace_unknown', 'usage_stale', 'usage_unknown'];
+/** 飛ばした候補を理由ごとにまとめる。[{ reason, items }]（理由の順は FAILURE_ORDER、知らない理由は後ろ） */
+export function groupSkipped(skipped) {
+  const groups = new Map();
+  for (const s of skipped ?? []) groups.set(s.reason, [...(groups.get(s.reason) ?? []), s]);
+  const rank = r => { const i = FAILURE_ORDER.indexOf(r); return i < 0 ? FAILURE_ORDER.length : i; };
+  return [...groups].sort((a, b) => rank(a[0]) - rank(b[0])).map(([reason, items]) => ({ reason, items }));
+}
+
+/** まとめた行の中身。使えない・使用量が分からない等はエージェントごとの件数、使用量・ペースは候補ごとの値 */
+export function groupText({ reason, items }, names = defaultNames) {
+  const join = t('routing.line.join');
+  if (['quota_high', 'pace_high', 'pace_unknown'].includes(reason)) {
+    return items.map(s => {
+      const { backend, model } = splitCandidate(s.candidate);
+      const name = names.model(backend, model) || model;
+      const w = s.window;
+      if (reason === 'pace_high' && w?.pace != null) return t('routing.failure.pace', { name, window: w.label ?? '', pace: w.pace });
+      if (percent(w?.usedPercent) != null) return t('routing.failure.percent', { name, window: w.label ?? '', percent: percent(w.usedPercent) });
+      return name;
+    }).join(join);
+  }
+  const byBackend = new Map();
+  for (const s of items) {
+    const { backend } = splitCandidate(s.candidate);
+    // 同じ候補が複数の段に並んでいても 1 つと数える
+    const row = byBackend.get(backend) ?? { ids: new Set(), details: new Set() };
+    row.ids.add(s.candidate);
+    if (s.detail) row.details.add(s.detail);
+    byBackend.set(backend, row);
+  }
+  return [...byBackend].map(([backend, { ids, details }]) => {
+    const name = t('routing.failure.count', { name: names.backend(backend), n: ids.size });
+    // 使えない理由がエージェントの中で 1 つに決まれば添える（「Codex 2（入っていない）」）
+    const [only] = details;
+    return details.size === 1 && reason === 'unavailable' ? t('routing.failure.withDetail', { text: name, detail: t(`routing.unavailable.${only}`) }) : name;
+  }).join(join);
+}
+
+/**
+ * 失敗した自動の委譲のカードに足す部品（docs/design-system.md「委譲カード」）。開かなくても見える、理由ごとにまとめた行と、
+ * 候補ごとの一覧の折りたたみ。open(reason) は直す場所を開く口を返す（{ label, run } か null）
+ */
+export function routingFailureParts(failure, { names = defaultNames, open = () => null } = {}) {
+  const why = el('ul', 'tc-why');
+  for (const group of groupSkipped(failure.skipped)) {
+    const li = el('li');
+    li.append(el('b', null, skipText(group.reason)), el('span', 'n', groupText(group, names)));
+    const go = open(group.reason);
+    if (go) {
+      const b = el('button', 'btn link', go.label);
+      b.type = 'button';
+      b.onclick = e => { e.preventDefault(); e.stopPropagation(); go.run(); };
+      li.append(b);
+    }
+    why.append(li);
+  }
+  if (!failure.skipped.length) why.append(el('li', 'n', t('routing.failure.noCandidates')));
+  const fold = document.createElement('details');
+  fold.className = 'tc-fold tc-cands-fold';
+  fold.append(el('summary', null, t('routing.failure.tried', { count: failure.skipped.length })));
+  const list = el('ul', 'tc-cands');
+  for (const s of failure.skipped) {
+    const { backend, model } = splitCandidate(s.candidate);
+    const li = el('li');
+    li.title = s.candidate;
+    const w = s.window;
+    const reason = skipText(s.reason, s.detail) + (w?.pace != null && s.reason === 'pace_high' ? `${t('routing.line.join')}${w.label ?? ''} ${t('routing.detail.pace', { pace: w.pace })}`
+      : percent(w?.usedPercent) != null ? `${t('routing.line.join')}${w.label ?? ''} ${percent(w.usedPercent)}%` : '');
+    li.append(el('span', 'tier', tierText(s.tier)), el('span', 'nm', `${names.model(backend, model) || model}${t('routing.line.join')}${names.backend(backend)}`), el('span', 'rs', reason));
+    list.append(li);
+  }
+  fold.append(list);
+  return failure.skipped.length ? [why, fold] : [why];
+}
+
 // ---------------------------------------------------------------- DOM
 
 /** 使用量の行（枠の名前・棒・率）。ヘッダーの使用量の面と同じ部品（web/usage.css の .usage-rows） */
@@ -157,7 +264,7 @@ function candidateCard({ n, backend, model, used, skipped, windows, usageAt }, {
   const head = el('div', 'rt-cand-head');
   head.append(el('span', 'rt-n', String(n)), logo(backend));
   head.append(el('b', null, names.model(backend, model) || model));
-  const state = used ? t('routing.detail.used') : t('routing.detail.skipped', { reason: skipText(skipped.reason) });
+  const state = used ? t('routing.detail.used') : t('routing.detail.skipped', { reason: skipText(skipped.reason, skipped.detail) });
   head.append(el('span', 'rt-state' + (used ? ' used' : ''), state));
   card.append(head);
   if (windows?.length) card.append(usageRows(windows));
@@ -208,6 +315,24 @@ export function routingDetail(routing, { names = defaultNames, logo = () => el('
     actions.append(open);
     root.append(actions);
   }
+  return root;
+}
+
+/**
+ * 自動でない委譲を開いたときの内訳。種類・委譲先（依頼元が指定）・承認モード・作業場所の格子だけ。
+ * 判定・候補・やり直しは自動のときだけの部品なので出さない。mode は表示名、cwd は子の作業場所（分からなければ出さない）
+ */
+export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '' } = {}) {
+  const root = el('div', 'rt-detail');
+  root.setAttribute('role', 'group');
+  root.setAttribute('aria-label', t('routing.detail.label'));
+  const facts = el('dl', 'rt-facts');
+  const target = targetText(routing?.target, names);
+  facts.append(fact(t('routing.detail.kind'), kindText(routing?.kind)),
+    fact(t('routing.detail.target'), routing?.mode === 'pinned' ? t('routing.detail.targetPinned', { target }) : target));
+  if (mode) facts.append(fact(t('routing.detail.mode'), mode));
+  if (cwd) facts.append(fact(t('routing.detail.cwd'), cwd));
+  root.append(facts);
   return root;
 }
 

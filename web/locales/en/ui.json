@@ -988,7 +988,14 @@
       "name": "Enter a name.",
       "json": "The JSON is not valid."
     },
-    "oauthReset": "The endpoint or other settings changed. Please sign in again."
+    "oauthReset": "The endpoint or other settings changed. Please sign in again.",
+    "unify": {
+      "question_one": "The following {{count}} server will be connected to every agent",
+      "question_other": "The following {{count}} servers will be connected to every agent",
+      "confirm_one": "Manage {{count}} with Pleiad",
+      "confirm_other": "Manage {{count}} with Pleiad",
+      "spread": "Will also be available to other agents"
+    }
   },
   "saved": {
     "reason": {
@@ -1030,7 +1037,8 @@
       "answer": "Answer",
       "done": "Question",
       "skipped": "Continued without answering",
-      "sendFailed": "Couldn't send the answer: {{error}}"
+      "sending": "Sending your answer…",
+      "sendFailedInline": "Couldn't send your answer · {{error}}"
     },
     "approval": {
       "heading": "{{mark}}",
@@ -1043,7 +1051,8 @@
       "allowedAlways": "Always allowed",
       "allowed": "Allowed",
       "denied": "Denied",
-      "sendFailed": "Couldn't send the approval: {{error}}"
+      "sending": "Sending “{{action}}”…",
+      "sendFailedInline": "Couldn't send “{{action}}” · {{error}}"
     },
     "thought_one": "Thought ({{chars}} char)",
     "thought_other": "Thought ({{chars}} chars)",
@@ -1101,8 +1110,6 @@
     "next": {
       "title": "Applies from the next turn",
       "cancel": "Cancel",
-      "retry": "Retry saving settings",
-      "saveFailed": "Couldn't save the settings: {{error}}",
       "endpointMain": "endpoint's main model",
       "targetDefault": " (the new agent's default model)",
       "effort": "Effort: {{value}}",
@@ -1111,7 +1118,24 @@
       "mode": "Approval mode: {{value}}",
       "endpoint": "Endpoint: {{value}}",
       "account": "Account: {{value}}",
-      "summary": "{{changes}} · Applies when you send next"
+      "summary": "{{changes}} · Applies when you send next",
+      "handoff": {
+        "line": "Messages and tool records carry over. \"Always allow\" approvals and thinking don't.",
+        "more": "Details",
+        "keep": "Carries over",
+        "keepValue": "Messages, tool inputs and results, attachments and shown files, title, status, and working directory",
+        "drop": "Doesn't carry over",
+        "dropValue": "Past approvals such as \"Always allow\" ({{to}} asks again), thinking, and state only {{from}} keeps (such as TODOs)",
+        "change": "Changes",
+        "changeValue": "The model and approval mode switch to {{to}}'s settings"
+      }
+    },
+    "settingsHold": {
+      "cwd": "Couldn't change the working directory, so this can't be sent · {{error}}",
+      "settings": "Couldn't save the settings, so this can't be sent · {{error}}",
+      "retry": "Retry",
+      "rechoose": "Choose again",
+      "cancel": "Cancel"
     },
     "composer": {
       "skills": "Skills",
@@ -1156,6 +1180,8 @@
       "saving": "Saving…",
       "saved": "Saved",
       "saveFailed": "Couldn't save. Your text is kept · Retry",
+      "saveFailedNote": "Couldn't save the draft. Your text is kept.",
+      "retry": "Retry",
       "restored": "Draft restored"
     },
     "attach": {
@@ -1192,7 +1218,11 @@
       "sending": "{{percent}}%",
       "sendingTitle": "Sending {{name}} ({{size}}) to the host",
       "cancelSending": "Stop sending",
-      "largeImage": "Attached {{name}} ({{size}}). Agents read images from the path. Some agents can't read images over 5 MB as images; if that happens, shrink the image and attach it again."
+      "largeImage": "Attached {{name}} ({{size}}). Agents read images from the path. Some agents can't read images over 5 MB as images; if that happens, shrink the image and attach it again.",
+      "removeNamed": "Remove {{name}}",
+      "removeNamedIn": "Remove {{name}} ({{folder}})",
+      "deviceFolder": "this device",
+      "already": "This file is already attached"
     },
     "fork": {
       "noId": "The new branch's id wasn't returned",
@@ -1325,8 +1355,21 @@
       "draftNoSession": "Open a conversation to save the draft to, then update."
     },
     "connLost": "Disconnected. Reconnecting…",
+    "connLostRelay": "Can't reach the relay. Reconnecting…",
+    "connLostHost": "Host is offline. Reconnecting…",
+    "reconnected": "Reconnected.",
+    "reconnectedAt": "Reconnected at {{time}}.",
+    "authStale": {
+      "title": "This page's access token is out of date, so it can't connect.",
+      "body": "Reopen the page with the URL shown when the server started. Your unsent text is kept.",
+      "recheck": "Check again",
+      "checking": "Checking…",
+      "stillStale": "Checked at {{time}}. You still need to reopen the page.",
+      "unreachable": "Checked at {{time}}. Couldn't reach the server."
+    },
     "openSidebarTitle": "Open sidebar (Ctrl+B)",
     "openSidebar": "Open sidebar",
+    "openSidebarWith": "Open sidebar ({{detail}})",
     "previewShowing": "Viewing",
     "authNeed": "Sign in to {{agents}}",
     "protocolUnsupported": "Unsupported protocolVersion: {{version}}",
@@ -1336,13 +1379,16 @@
   "dialog": {
     "onboarding": {
       "title": "Welcome to Pleiad",
-      "subtitle": "Choose an agent and start your first conversation.",
+      "subtitle": "Choose an agent and a working directory, then start your first conversation.",
       "later": "Later",
       "agents": "Agent to use",
       "note": "You can change the agent and working directory in the conversation at any time",
       "start": "Start conversation",
       "busy": "Wait for the running work to finish, then start a new conversation.",
-      "openFailed": "Couldn't open a new conversation. Please try again."
+      "openFailed": "Couldn't open a new conversation. Please try again.",
+      "cwd": "Working directory",
+      "cwdHome": "Home",
+      "cwdNote": "The agent reads and writes files in this folder."
     },
     "closeEsc": "Close (Esc)",
     "close": "Close",
@@ -1544,7 +1590,11 @@
       "continues_one": "{{count}} more message",
       "continues_other": "{{count}} more messages",
       "root": "Original",
-      "numbered": "Branch {{n}}"
+      "numbered": "Branch {{n}}",
+      "numberedCount_one": "{{name}} · {{count}} message",
+      "numberedCount_other": "{{name}} · {{count}} messages",
+      "switchToExcerpt_one": "Switch to {{name}} \"{{excerpt}}\" ({{count}} message)",
+      "switchToExcerpt_other": "Switch to {{name}} \"{{excerpt}}\" ({{count}} messages)"
     },
     "behind": {
       "subagents": "Waiting for subagents",
@@ -1555,6 +1605,10 @@
     "cwd": {
       "placeholder": "Working directory path",
       "inputLabel": "Working directory path (Enter to set)",
+      "checking": "Checking…",
+      "notFound": "Folder not found",
+      "exists": "exists",
+      "chooseFrom": "Choose from here",
       "choose": "Choose folder…",
       "recent": "Recent working directories",
       "noRecent": "None yet",
@@ -1621,6 +1675,8 @@
   },
   "sidebar": {
     "unread": "Finished, not yet viewed",
+    "unreadCount_one": "{{count}} finished, not yet viewed",
+    "unreadCount_other": "{{count}} finished, not yet viewed",
     "somethingRunning": "Something is running",
     "empty": "Nothing yet",
     "noMatch": "No matches",
@@ -1635,6 +1691,14 @@
     "undo": "Undo",
     "undoClose": "Close",
     "undoCloseLabel": "Close this notice",
+    "list": "Conversations",
+    "menuKey": "{{label}} (Shift+F10)",
+    "keyHint": {
+      "move": "Move",
+      "open": "Open",
+      "menu": "Menu",
+      "sidebar": "Sidebar"
+    },
     "group": {
       "pickIcon": "Choose icon",
       "newSession": "New session with this status"
@@ -1973,12 +2037,19 @@
       "pace_high": "pace too fast",
       "pace_unknown": "pace unknown"
     },
+    "skipWithDetail": "{{reason}} ({{detail}})",
+    "unavailable": {
+      "disabled": "not enabled",
+      "not_installed": "not installed",
+      "no_token": "no token"
+    },
     "line": {
       "head": "{{kind}} · {{difficulty}} → {{target}}",
       "skippedWindow": "skipped {{name}} ({{window}} {{percent}}%)",
       "skippedPace": "skipped {{name}} ({{window}} pace {{pace}}×)",
       "skippedReason": "skipped {{name}} ({{reason}})",
-      "join": " · "
+      "join": " · ",
+      "pinned": "{{kind}} → {{target}}"
     },
     "detail": {
       "label": "Routing details",
@@ -1999,7 +2070,12 @@
       "pace": "pace {{pace}}×",
       "loginAccount": "Signed-in account",
       "account": "Account: {{name}}",
-      "retried": "Retried"
+      "retried": "Retried",
+      "target": "Delegated to",
+      "targetPinned": "{{target}} (chosen by the requester)",
+      "mode": "Approval mode",
+      "cwd": "Working directory",
+      "json": "Input and output (JSON)"
     },
     "retry": {
       "open": "Retry with another candidate",
@@ -2014,11 +2090,29 @@
       "approve": "Approve and retry",
       "failed": "Couldn't retry: {{error}}"
     },
+    "failure": {
+      "none": "No delegate available",
+      "count": "{{name}} {{n}}",
+      "withDetail": "{{text}} ({{detail}})",
+      "percent": "{{name}} {{window}} {{percent}}%",
+      "pace": "{{name}} {{window}} {{pace}}×",
+      "noCandidates": "There are no candidates to try. Add candidates in Settings › Delegation.",
+      "tried_one": "Tried {{count}} candidate",
+      "tried_other": "Tried {{count}} candidates",
+      "openAgents": "Open Agents",
+      "openDelegation": "Open Delegation settings",
+      "openUsage": "Open Usage"
+    },
     "settings": {
       "enable": "Choose the delegate automatically",
       "judgeTitle": "Difficulty judge",
       "escalate": "Ask Cerebras again when Jev is unsure",
-      "judgeNoKey": "There is no {{service}} key, so kinds set to {{judge}} are treated as mid difficulty.",
+      "effective": {
+        "noKey": "No {{service}} key is registered, so kinds set to {{judge}} are treated as mid difficulty.",
+        "addKey": "Add key",
+        "noCandidates": "No delegates are available, so automatic delegation will fail.",
+        "viewCandidates": "View candidates"
+      },
       "judgeLabel": "Judge for {{kind}}",
       "keysTitle": "Judge keys",
       "keySend": "When you add a key, the task text and kind of each delegation are sent to that service.",

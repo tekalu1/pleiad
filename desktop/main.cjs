@@ -218,7 +218,7 @@ async function closeSafely() {
   try {
     const work = await runningWork();
     if (work.count > 0) {
-      // 「作業に戻る」か「中断して終了」（reason: quit。中断した会話は次の起動で残り、「再開」で続けられる。ADR 0027）
+      // 「作業に戻る」か「中断して終了」（reason: quit。中断した会話は次の起動で残り、「再開」で続けられる。ADR 0036）
       const { response } = await dialog.showMessageBox(window, { type: 'info', title: t('quit.busyTitle'), message: t('quit.busyMessage'),
         buttons: [t('quit.backToWork'), t('quit.abortAndQuit')], defaultId: 0, cancelId: 0, noLink: true });
       if (response !== 1) return;

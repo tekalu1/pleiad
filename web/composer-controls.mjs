@@ -15,6 +15,7 @@ import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, 
 import { compatModelLabel, modelCandidates, searchModels, resolveTyped, moreText, ONE_M_TITLE } from "./compat-models.mjs";
 import { t } from "./i18n.mjs";
 import { splitChipLabel } from "./composer-layout.mjs";
+import { runMark } from "./arc.mjs";
 
 /** 一覧の「既定」の札 */
 const DEFAULT_TAG = () => t("chat.model.default");
@@ -32,6 +33,16 @@ function glyph(...paths) {
   const svg = svgEl("svg", { class: "i", viewBox: "0 0 24 24", "aria-hidden": "true" });
   for (const d of paths) svg.append(svgEl("path", { d }));
   return svg;
+}
+
+/** ひとつ上のフォルダー（D:\work\my-app → D:\work、D:\work → D:\）。根なら null */
+export function parentOf(p) {
+  const s = String(p ?? "").replace(/[\\/]+$/, "");
+  const at = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/"));
+  if (at < 0) return null;
+  const up = s.slice(0, at);
+  if (/^[A-Za-z]:$/.test(up)) return `${up}\\`;
+  return up || (s.startsWith("/") ? "/" : null);
 }
 
 /** パスの末尾（D:\work\my-app → my-app）。ドライブの根はそのまま */
@@ -56,9 +67,10 @@ let openPanel = null;   // 同時に開くのは 1 枚だけ
 /**
  * チップ（押すもの）の上に浮く面。同時に開くのは 1 枚だけで、面の外を押すと閉じる。
  * width は面の幅（px。関数なら開くたび・置き直すたびに読む）。添付のメニュー（web/attach-menu.mjs）も使う。
- * when は開いてよいか（false なら押しても開かない。添付のメニューはホストの画面では開かず、クリップがすぐファイルを選ぶ）
+ * when は開いてよいか（false なら押しても開かない。添付のメニューはホストの画面では開かず、クリップがすぐファイルを選ぶ）。
+ * onHide は閉じたとき（Esc・面の外・チップ・選んで閉じた、のどれでも）
  */
-export function panel(chip, pop, { align = "left", render, onShow, width: wantWidth = 360, when }) {
+export function panel(chip, pop, { align = "left", render, onShow, onHide, width: wantWidth = 360, when }) {
   const self = {
     chip, pop,
     get open() { return !pop.hidden; },
@@ -77,6 +89,7 @@ export function panel(chip, pop, { align = "left", render, onShow, width: wantWi
       pop.hidden = true;
       chip.setAttribute("aria-expanded", "false");
       if (openPanel === self) openPanel = null;
+      onHide?.();
       if (returnFocus) chip.focus();
     },
     /** チップの上に浮かせる。幅は画面に収め、チップの端に揃える（右のチップは右端） */
@@ -169,6 +182,59 @@ function listbox(label, rows) {
 
 const head = (text) => el("div", "chead", text);
 
+/**
+ * フォルダーの簡易ブラウザー（ブラウザー版の「フォルダーを選ぶ…」。docs/design-system.md「入力欄の設定」）。
+ * box にパンくず・フォルダーの一覧（..・ドライブ・中のフォルダー）・「このフォルダーにする」を描き、返す browse(dir) で辿る。
+ * 入力欄の作業ディレクトリの面と、初回の案内（web/onboarding.mjs）が使う。
+ *   onChoose(path): 「このフォルダーにする」 / onAt(path): 開いているフォルダーが変わった / closed(): 面が閉じたか（閉じたら描かない）
+ */
+export function folderBrowser({ cmd, box, err, onChoose, onAt = () => {}, closed = () => false }) {
+  let seq = 0, at = null;
+  const move = (dir) => { at = dir; onAt(dir); };
+  async function browse(dir, { keepError = false } = {}) {
+    const mine = ++seq;
+    const prev = box.querySelector(".crumb") ? at : null;
+    move(dir);
+    box.hidden = false;
+    box.setAttribute("aria-busy", "true");
+    let r;
+    try { r = await cmd("listDirs", { path: dir }); }
+    catch (e) {
+      if (mine !== seq) return;
+      box.removeAttribute("aria-busy");
+      err.textContent = e.message;
+      // 開けなかったら、開けていたところに留まる（最初から開けなければホーム）
+      move(prev);
+      if (prev == null && dir) browse("", { keepError: true });
+      return;
+    }
+    if (mine !== seq || !box.isConnected || closed()) return;
+    box.removeAttribute("aria-busy");
+    if (!keepError) err.textContent = "";
+    move(r.path);
+    const rows = [];
+    if (r.parent) rows.push(row({ main: "..", sub: t("composer.cwd.up"), mono: true, onPick: () => browse(r.parent) }));
+    for (const root of r.roots ?? []) if (root !== r.path) rows.push(row({ main: root, sub: t("composer.cwd.drive"), mono: true, onPick: () => browse(root) }));
+    for (const name of r.dirs) {
+      const full = r.path.replace(/[\\/]+$/, "") + (r.path.includes("\\") ? "\\" : "/") + name;
+      rows.push(row({ main: name, mono: true, title: full, onPick: () => browse(full) }));
+    }
+    const crumb = el("div", "crumb", r.path);
+    crumb.title = r.path;
+    const go = el("div", "go");
+    const choose = el("button", "btn btn-primary", t("composer.cwd.useThis"));
+    choose.type = "button";
+    choose.onclick = () => onChoose(r.path);
+    go.append(choose);
+    box.replaceChildren(crumb,
+      rows.length ? listbox(t("composer.cwd.foldersIn", { path: r.path }), rows) : el("p", "cnote", t("composer.cwd.noFolders")),
+      ...(r.truncated ? [el("p", "cnote", t("composer.cwd.truncated"))] : []),
+      go);
+    (box.querySelector("[role=option]") ?? choose).focus();
+  }
+  return browse;
+}
+
 // ---------------------------------------------------------------- 本体
 
 /**
@@ -196,13 +262,66 @@ export function setupComposerControls({ cmd, get, on }) {
 
   // ---- 作業ディレクトリ
   let browsing = null;          // 簡易ブラウザーで開いているフォルダー（ブラウザー版だけ）
-  let browseSeq = 0;
+  let checkSeq = 0;             // 打ったパス・最近の行を確かめている番号（新しく確かめ始めたら前の結果は捨てる）
   const commitCwd = (v) => {
     const value = String(v ?? "").trim();
     if (!value) return;
     folder.hide();
     if (value !== get().cwd) on.cwd(value);
   };
+  /**
+   * 打ったパス・最近の行は、決める前にサーバーでフォルダーがあるか確かめる（listDirs）。無ければ面を開いたまま、
+   * 欄の下に理由と、あるところまでのパス・「ここから選ぶ」を出す。150ms を越えたら欄の右端に弧と「確認しています…」
+   */
+  async function checkAndCommit(value, { input, msg, browse }) {
+    value = String(value ?? "").trim();
+    if (!value) return;
+    if (value === get().cwd) { folder.hide(); return; }
+    const seq = ++checkSeq;
+    msg.replaceChildren();
+    const wrap = input.parentElement;
+    const timer = setTimeout(() => {
+      if (seq !== checkSeq) return;
+      wrap.querySelector(".run")?.remove();
+      wrap.append(runMark(t("composer.cwd.checking")));
+      msg.replaceChildren(el("p", "cmsg checking", t("composer.cwd.checking")));
+    }, 150);
+    const done = () => { clearTimeout(timer); wrap.querySelector(".run")?.remove(); };
+    let found = null;
+    try { found = await cmd("listDirs", { path: value }); }
+    catch (e) {
+      if (seq !== checkSeq) return;
+      // あるところまで上へたどる（ENOENT のときだけ。権限などはそのフォルダーの理由を出す）
+      let nearest = null;
+      if (e.code === "ENOENT") {
+        for (let dir = parentOf(value), n = 0; dir && n < 12; dir = parentOf(dir), n++) {
+          const r = await cmd("listDirs", { path: dir }).catch(() => null);
+          if (seq !== checkSeq) return;
+          if (r) { nearest = r.path; break; }
+        }
+      }
+      done();
+      const fail = el("p", "cmsg fail", `✕ ${e.code === "ENOENT" ? t("composer.cwd.notFound") : e.message}`);
+      const out = [fail];
+      if (nearest) {
+        const hint = el("p", "cmsg hint");
+        const from = el("button", "btn link", t("composer.cwd.chooseFrom"));
+        from.type = "button";
+        from.onclick = () => browse(nearest);
+        hint.append(el("code", null, nearest), ` ${t("composer.cwd.exists")}`, from);
+        out.push(hint);
+      }
+      msg.replaceChildren(...out);
+      input.setAttribute("aria-invalid", "true");
+      if (pops.cwd.contains(document.activeElement) || document.activeElement === document.body) input.focus();
+      return;
+    }
+    if (seq !== checkSeq) return;
+    done();
+    msg.replaceChildren();
+    input.removeAttribute("aria-invalid");
+    commitCwd(found?.path || value);
+  }
   function renderFolder() {
     const d = get();
     const pop = pops.cwd;
@@ -211,14 +330,21 @@ export function setupComposerControls({ cmd, get, on }) {
     input.placeholder = t("composer.cwd.placeholder");
     input.setAttribute("aria-label", t("composer.cwd.inputLabel"));
     input.autocomplete = "off"; input.spellcheck = false;
+    // 欄と弧（確かめている間）の入れ物。欄の下に確かめた結果（無いフォルダー・あるところまで）
+    const inputWrap = el("div", "cpath-wrap");
+    inputWrap.append(input);
+    const msg = el("div", "cmsgs");
+    msg.setAttribute("role", "status");
+    const check = (value) => checkAndCommit(value, { input, msg, browse: (dir) => browse(dir) });
     input.addEventListener("keydown", (e) => {
       if (isComposingKey(e) || e.key !== "Enter") return;
       e.preventDefault();     // フォームの送信にしない
-      commitCwd(input.value);
+      check(input.value);
     });
+    input.addEventListener("input", () => { checkSeq++; input.removeAttribute("aria-invalid"); msg.replaceChildren(); inputWrap.querySelector(".run")?.remove(); });
     const recent = (d.recent ?? []).map((r) => row({
       on: r.value === d.cwd, main: baseName(r.value), sub: r.value, right: r.time ? relTime(r.time) : "", mono: true, title: r.value,
-      onPick: () => commitCwd(r.value),
+      onPick: () => { input.value = r.value; check(r.value); },
     }));
     const pick = el("button", "caction");
     pick.type = "button";
@@ -238,55 +364,23 @@ export function setupComposerControls({ cmd, get, on }) {
     };
     const box = el("div", "cbrowse");
     box.hidden = true;
-    pop.replaceChildren(input, head(t("composer.cwd.recent")),
+    const browse = folderBrowser({ cmd, box, err, onChoose: commitCwd, onAt: (dir) => { browsing = dir; }, closed: () => pops.cwd.hidden });
+    pop.replaceChildren(inputWrap, msg, head(t("composer.cwd.recent")),
       recent.length ? listbox(t("composer.cwd.recent"), recent) : el("p", "cnote", t("composer.cwd.noRecent")),
       pick, box, err);
     if (browsing != null) browse(browsing);
-
-    async function browse(dir, { keepError = false } = {}) {
-      const seq = ++browseSeq;
-      const prev = box.querySelector(".crumb") ? browsing : null;
-      browsing = dir;
-      box.hidden = false;
-      box.setAttribute("aria-busy", "true");
-      let r;
-      try { r = await cmd("listDirs", { path: dir }); }
-      catch (e) {
-        if (seq !== browseSeq) return;
-        box.removeAttribute("aria-busy");
-        err.textContent = e.message;
-        // 開けなかったら、開けていたところに留まる（最初から開けなければホーム）
-        browsing = prev;
-        if (prev == null && dir) browse("", { keepError: true });
-        return;
-      }
-      if (seq !== browseSeq || pops.cwd.hidden) return;
-      box.removeAttribute("aria-busy");
-      if (!keepError) err.textContent = "";
-      browsing = r.path;
-      const rows = [];
-      if (r.parent) rows.push(row({ main: "..", sub: t("composer.cwd.up"), mono: true, onPick: () => browse(r.parent) }));
-      for (const root of r.roots ?? []) if (root !== r.path) rows.push(row({ main: root, sub: t("composer.cwd.drive"), mono: true, onPick: () => browse(root) }));
-      for (const name of r.dirs) {
-        const full = r.path.replace(/[\\/]+$/, "") + (r.path.includes("\\") ? "\\" : "/") + name;
-        rows.push(row({ main: name, mono: true, title: full, onPick: () => browse(full) }));
-      }
-      const crumb = el("div", "crumb", r.path);
-      crumb.title = r.path;
-      const go = el("div", "go");
-      const choose = el("button", "btn btn-primary", t("composer.cwd.useThis"));
-      choose.type = "button";
-      choose.onclick = () => commitCwd(r.path);
-      go.append(choose);
-      box.replaceChildren(crumb,
-        rows.length ? listbox(t("composer.cwd.foldersIn", { path: r.path }), rows) : el("p", "cnote", t("composer.cwd.noFolders")),
-        ...(r.truncated ? [el("p", "cnote", t("composer.cwd.truncated"))] : []),
-        go);
-      (box.querySelector("[role=option]") ?? choose).focus();
-    }
   }
-  const folder = panel(chips.cwd, pops.cwd, { align: "left", render: renderFolder });
+  // 閉じたら確かめている途中のパスは取り消す（Esc・面の外で閉じたのに、後から確かめが通って変わらないように）
+  const folder = panel(chips.cwd, pops.cwd, { align: "left", render: renderFolder, onHide: () => { checkSeq++; } });
   chips.cwd.addEventListener("click", () => { if (!folder.open) browsing = null; });
+  /** 面の欄にパスを入れて選んだ状態にする（保存できなかった作業ディレクトリを「選び直す」） */
+  function typeCwd(value) {
+    const input = pops.cwd.querySelector(".cpath");
+    if (!input) return;
+    input.value = String(value ?? "");
+    input.focus();
+    input.select?.();
+  }
 
   // ---- エージェント・モデル・エフォート・アカウント
   function renderModel() {
@@ -613,5 +707,5 @@ export function setupComposerControls({ cmd, get, on }) {
   window.addEventListener("resize", fitRow);
   if (typeof ResizeObserver === "function") new ResizeObserver(() => fitRow()).observe(chips.cwd.parentElement);
 
-  return { paint, fit: fitRow, close: () => openPanel?.hide(false), panels: { folder, model, mode } };
+  return { paint, fit: fitRow, close: () => openPanel?.hide(false), panels: { folder, model, mode }, typeCwd };
 }

@@ -960,7 +960,12 @@
       "name": "名前を入れてください",
       "json": "JSON の形が正しくありません"
     },
-    "oauthReset": "接続先などが変わったため、ログインし直してください"
+    "oauthReset": "接続先などが変わったため、ログインし直してください",
+    "unify": {
+      "question_other": "次の {{count}} 件を、すべてのエージェントにつなぎます",
+      "confirm_other": "{{count}} 件でそろえる",
+      "spread": "ほかのエージェントにも広がります"
+    }
   },
   "saved": {
     "reason": {
@@ -1001,7 +1006,8 @@
       "answer": "回答する",
       "done": "質問",
       "skipped": "答えずに進めた",
-      "sendFailed": "回答の送信に失敗: {{error}}"
+      "sending": "回答を送っています…",
+      "sendFailedInline": "回答を送れませんでした · {{error}}"
     },
     "approval": {
       "heading": "{{mark}}",
@@ -1014,7 +1020,8 @@
       "allowedAlways": "常に許可した",
       "allowed": "許可した",
       "denied": "拒否した",
-      "sendFailed": "承認の送信に失敗: {{error}}"
+      "sending": "{{action}}を送っています…",
+      "sendFailedInline": "{{action}}を送れませんでした · {{error}}"
     },
     "thought_other": "考えた（{{chars}} 文字）",
     "delivery": {
@@ -1070,8 +1077,6 @@
     "next": {
       "title": "次のターンから適用",
       "cancel": "取り消す",
-      "retry": "設定の保存を再試行",
-      "saveFailed": "設定を保存できませんでした: {{error}}",
       "endpointMain": "接続先のメイン",
       "targetDefault": "（変更先の既定モデル）",
       "effort": "エフォート: {{value}}",
@@ -1080,7 +1085,24 @@
       "mode": "承認モード: {{value}}",
       "endpoint": "接続先: {{value}}",
       "account": "アカウント: {{value}}",
-      "summary": "{{changes}} · 次に送信すると適用されます"
+      "summary": "{{changes}} · 次に送信すると適用されます",
+      "handoff": {
+        "line": "発言とツールの記録は引き継ぎます。「常に許可」などの承認と、考えた内容は引き継ぎません。",
+        "more": "詳しく",
+        "keep": "引き継ぐ",
+        "keepValue": "発言・ツールの入力と結果・添付と提示の記録・タイトル・状態・作業ディレクトリ",
+        "drop": "引き継がない",
+        "dropValue": "「常に許可」などの過去の承認（{{to}} でもう一度確認します）・考えた内容・{{from}} だけが持つ状態（TODO など）",
+        "change": "変わる",
+        "changeValue": "モデルと承認モードは {{to}} の設定になります"
+      }
+    },
+    "settingsHold": {
+      "cwd": "作業ディレクトリを変更できなかったため、送信できません · {{error}}",
+      "settings": "設定を保存できなかったため、送信できません · {{error}}",
+      "retry": "再試行",
+      "rechoose": "選び直す",
+      "cancel": "取り消す"
     },
     "composer": {
       "skills": "スキル",
@@ -1125,6 +1147,8 @@
       "saving": "保存中…",
       "saved": "保存済み",
       "saveFailed": "保存できませんでした。入力を保持しています · 再試行",
+      "saveFailedNote": "下書きを保存できませんでした。入力は保持しています。",
+      "retry": "再試行",
       "restored": "下書きを復元しました"
     },
     "attach": {
@@ -1159,7 +1183,11 @@
       "sending": "{{percent}}%",
       "sendingTitle": "{{name}}（{{size}}）をホストへ送っています",
       "cancelSending": "送るのをやめる",
-      "largeImage": "{{name}}（{{size}}）を添付しました。エージェントは画像をパスから読みます。5MB を超える画像は、エージェントによっては画像として読めないことがあります。そのときは小さくしてから添付してください。"
+      "largeImage": "{{name}}（{{size}}）を添付しました。エージェントは画像をパスから読みます。5MB を超える画像は、エージェントによっては画像として読めないことがあります。そのときは小さくしてから添付してください。",
+      "removeNamed": "外す: {{name}}",
+      "removeNamedIn": "外す: {{name}}（{{folder}}）",
+      "deviceFolder": "この端末",
+      "already": "このファイルはすでに添付されています"
     },
     "fork": {
       "noId": "分岐先の id が返らなかった",
@@ -1285,9 +1313,22 @@
       "loading": "会話の読み込みが完了してから更新してください。",
       "draftNoSession": "下書きを保存する会話を開いてから更新してください。"
     },
-    "connLost": "接続が切れた。再接続している…",
+    "connLost": "接続が切れました。再接続しています…",
+    "connLostRelay": "中継につながりません。再接続しています…",
+    "connLostHost": "ホストがオフラインです。再接続しています…",
+    "reconnected": "再接続しました。",
+    "reconnectedAt": "{{time}} に再接続しました。",
+    "authStale": {
+      "title": "このページの認証が古いため、接続できません。",
+      "body": "サーバーの起動時に表示された URL で、ページを開き直してください。書きかけの文章は残ります。",
+      "recheck": "再確認",
+      "checking": "確認しています…",
+      "stillStale": "{{time}} に確認しました。まだ開き直しが必要です。",
+      "unreachable": "{{time}} に確認しました。サーバーに接続できませんでした。"
+    },
     "openSidebarTitle": "サイドバーを開く（Ctrl+B）",
     "openSidebar": "サイドバーを開く",
+    "openSidebarWith": "サイドバーを開く（{{detail}}）",
     "previewShowing": "表示中",
     "authNeed": "{{agents}} にログインが要る",
     "protocolUnsupported": "未対応の protocolVersion: {{version}}",
@@ -1297,13 +1338,16 @@
   "dialog": {
     "onboarding": {
       "title": "Pleiad へようこそ",
-      "subtitle": "使用するエージェントを選んで、最初の会話を始めましょう。",
+      "subtitle": "使用するエージェントと作業ディレクトリを選んで、最初の会話を始めましょう。",
       "later": "あとで",
       "agents": "使用するエージェント",
-      "note": "エージェントや作業場所は会話画面でいつでも変更できます",
+      "note": "エージェントと作業ディレクトリは、会話画面でいつでも変更できます",
       "start": "会話を始める",
       "busy": "実行中の作業が完了してから、新しい会話を始めてください。",
-      "openFailed": "新しい会話を開けませんでした。もう一度お試しください。"
+      "openFailed": "新しい会話を開けませんでした。もう一度お試しください。",
+      "cwd": "作業ディレクトリ",
+      "cwdHome": "ホーム",
+      "cwdNote": "エージェントはこのフォルダーの中のファイルを読み書きします。"
     },
     "closeEsc": "閉じる（Esc）",
     "close": "閉じる",
@@ -1493,8 +1537,10 @@
       "switchTo_other": "{{name}} に切り替える（{{count}} 件）",
       "current": "現在の会話",
       "continues_other": "{{count}} 件の続き",
-      "root": "はじめの流れ",
-      "numbered": "枝 {{n}}"
+      "root": "オリジナル",
+      "numbered": "枝 {{n}}",
+      "numberedCount_other": "{{name}} · {{count}} 件",
+      "switchToExcerpt_other": "{{name}}「{{excerpt}}」に切り替える（{{count}} 件）"
     },
     "behind": {
       "subagents": "サブエージェントを待っている",
@@ -1505,6 +1551,10 @@
     "cwd": {
       "placeholder": "作業ディレクトリのパス",
       "inputLabel": "作業ディレクトリのパス（Enter で決める）",
+      "checking": "確認しています…",
+      "notFound": "このフォルダーは見つかりません",
+      "exists": "は存在します",
+      "chooseFrom": "ここから選ぶ",
       "choose": "フォルダーを選ぶ…",
       "recent": "最近の作業ディレクトリ",
       "noRecent": "まだありません",
@@ -1571,6 +1621,7 @@
   },
   "sidebar": {
     "unread": "完了・未確認",
+    "unreadCount_other": "完了・未確認 {{count}} 件",
     "somethingRunning": "走っているものがある",
     "empty": "まだ無い",
     "noMatch": "該当なし",
@@ -1583,6 +1634,14 @@
     "undo": "元に戻す",
     "undoClose": "閉じる",
     "undoCloseLabel": "この知らせを閉じる",
+    "list": "会話",
+    "menuKey": "{{label}}（Shift+F10）",
+    "keyHint": {
+      "move": "移動",
+      "open": "開く",
+      "menu": "メニュー",
+      "sidebar": "サイドバー"
+    },
     "group": {
       "pickIcon": "アイコンを選ぶ",
       "newSession": "この状態で新しいセッション"
@@ -1757,8 +1816,8 @@
     "badgeLabel": "リモート:",
     "badgeTitle": "リモートのホスト {{host}} につないでいます",
     "state": {
-      "connecting": "つないでいます…",
-      "connected": "接続中",
+      "connecting": "接続しています…",
+      "connected": "接続済み",
       "offline": "中継につながりません",
       "host-offline": "ホストがオフライン",
       "revoked": "取り消されました",
@@ -1907,12 +1966,19 @@
       "pace_high": "ペースが速い",
       "pace_unknown": "ペースが分からない"
     },
+    "skipWithDetail": "{{reason}}（{{detail}}）",
+    "unavailable": {
+      "disabled": "無効",
+      "not_installed": "未インストール",
+      "no_token": "トークン未登録"
+    },
     "line": {
       "head": "{{kind}}・{{difficulty}} → {{target}}",
       "skippedWindow": "{{name}} は{{window}} {{percent}}% で飛ばした",
       "skippedPace": "{{name}} は{{window}}のペースが {{pace}} 倍で飛ばした",
       "skippedReason": "{{name}} は{{reason}}ため飛ばした",
-      "join": " · "
+      "join": " · ",
+      "pinned": "{{kind}} → {{target}}"
     },
     "detail": {
       "label": "振り分けの内訳",
@@ -1933,7 +1999,12 @@
       "pace": "ペース {{pace}} 倍",
       "loginAccount": "ログイン中のアカウント",
       "account": "アカウント: {{name}}",
-      "retried": "やり直し"
+      "retried": "やり直し",
+      "target": "委譲先",
+      "targetPinned": "{{target}}（依頼元が指定）",
+      "mode": "承認モード",
+      "cwd": "作業場所",
+      "json": "入力・出力（JSON）"
     },
     "retry": {
       "open": "別の候補でやり直す",
@@ -1948,11 +2019,28 @@
       "approve": "承認してやり直す",
       "failed": "やり直せませんでした: {{error}}"
     },
+    "failure": {
+      "none": "使える委譲先がありません",
+      "count": "{{name}} {{n}}",
+      "withDetail": "{{text}}（{{detail}}）",
+      "percent": "{{name}} {{window}} {{percent}}%",
+      "pace": "{{name}} {{window}} {{pace}} 倍",
+      "noCandidates": "試す候補がありません。設定 › 委譲で候補を追加してください。",
+      "tried_other": "試した候補 {{count}} 件",
+      "openAgents": "エージェント設定を開く",
+      "openDelegation": "委譲の設定を開く",
+      "openUsage": "使用量を開く"
+    },
     "settings": {
       "enable": "委譲先を自動で選ぶ",
       "judgeTitle": "難しさの判定",
       "escalate": "Jev が迷ったら Cerebras に聞き直す",
-      "judgeNoKey": "{{service}} のキーが無いので、{{judge}} を選んだ種類は難しさを「中」として扱います。",
+      "effective": {
+        "noKey": "{{service}} のキーが登録されていないため、{{judge}} を選んだ種類は難しさを「中」として扱います。",
+        "addKey": "キーを登録",
+        "noCandidates": "使える委譲先がないため、自動の委譲はすべて失敗します。",
+        "viewCandidates": "候補を見る"
+      },
       "judgeLabel": "{{kind}} の判定",
       "keysTitle": "判定器のキー",
       "keySend": "キーを登録すると、委譲の依頼文と種類がそのサービスに送られます。",

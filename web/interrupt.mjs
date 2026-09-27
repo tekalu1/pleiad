@@ -1,4 +1,4 @@
-// 中断した会話の見せ方（docs/design-system.md「中断と再開」、ADR 0027）。
+// 中断した会話の見せ方（docs/design-system.md「中断と再開」、ADR 0036）。
 // 中断はサーバーが会話ごとの状態として持つ（client のセッションの interrupted: {at, reason} | null、turnEnd にも載る）。
 // 次のターンが始まったら消える。ここは印・文言・数え方だけを持ち、DOM の置き場所は client.mjs と side.mjs が決める。
 import { svgEl } from "./dom.mjs";

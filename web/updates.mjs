@@ -8,7 +8,7 @@ import { warnMark, workRows, workCounts, interruptProgress } from './interrupt.m
 const PHASES = ['idle', 'checking', 'current', 'available', 'downloading', 'downloaded', 'installing', 'error', 'unavailable'];
 // 確認の段に並べる作業の行の上限。越えた分は「ほか N 件」
 const WORK_ROWS = 6;
-// 「中断して更新」で全部のターンが終わるのを待つ上限（ADR 0027）
+// 「中断して更新」で全部のターンが終わるのを待つ上限（ADR 0036）
 const STOP_WAIT_MS = 30000;
 // 訳文の {{mark}} を三角に置き換えるための印（私用領域の 1 文字）
 const MARK = '\u{E000}';
@@ -176,7 +176,7 @@ export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork =
   $('downloadUpdate').onclick = () => action('download');
   $('installUpdate').onclick = async () => {
     confirming = true; confirmWork = currentWork(); paint(state); $('updateConfirmTitle').focus();
-    // 止まる作業を並べる（実行中でも断らない。ADR 0027）。放送を待たずに今の分を取り直す
+    // 止まる作業を並べる（実行中でも断らない。ADR 0036）。放送を待たずに今の分を取り直す
     const now = cmd ? await cmd('running').catch(() => null) : null;
     if (now) confirmWork = now;
     if (confirming) paint(state);

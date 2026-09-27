@@ -10,6 +10,8 @@
 // 使い方: AGENT_HOST_CODEX_BIN="node tests/lib/fake-codex.mjs" で codex.mjs から起動される。
 // 引数の "app-server" は無視する。
 import process from "node:process";
+import path from "node:path";
+import { lines as rl, jsonl, policyRejection, spawnRejection } from "./codex-rollout.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -77,7 +79,62 @@ function wire(t, includeTurns) {
     ...(parentFilter === "ignore" ? {} : { parentThreadId: t.parentThreadId }),
     ...(t.spawn ? { agentNickname: t.spawn.agent_nickname, agentRole: t.spawn.agent_role } : {}),
     turns: includeTurns ? t.turns : [],
+    // rollout の置き場（[UNSTABLE] Thread.path）。FAKE_CODEX_ROLLOUT_DIR があるときだけ
+    path: t.path ?? null,
   };
+}
+
+// ---- rollout（FAKE_CODEX_ROLLOUT_DIR）。本物と同じく、最初のターンで初めてファイルができる
+const writeRollout = (t, rows) => { if (t.path) fs.appendFileSync(t.path, jsonl(rows)); };
+
+/**
+ * 実行前に拒否されるターン（承認なしのモード。承認は求めない）。拒否はアイテムにならず、通知にも thread/read にも出ない。
+ * rollout にだけ残る（codex-cli 0.156.1 の形。tests/lib/codex-rollout.mjs）。
+ *   reject        code mode の exec の拒否（秘密を含むコマンド）+ wait に出たプロセス作成の失敗 + 引用されただけの文
+ *   reject-direct exec_command を直接呼んで拒否
+ *   reject-ask    同じ call id の承認を求めてから拒否（approvalRequested）
+ *   reject-late   出力とターンの終わりの行を turn/completed の後に書く（書き込みの遅れ）
+ */
+async function runRejectTurn(t, turnId, text) {
+  notify("turn/started", { threadId: t.id, turn: { id: turnId, items: [], status: "inProgress" } });
+  const kind = text.split(/\s/)[0];
+  const n = ++seq;
+  const script = `Remove-Item -LiteralPath 'C:\\work\\tmp\\cache-${n}.bin' -Force`;
+  const head = [rl.taskStarted(turnId), rl.userMessage(turnId, text)];
+  let body = [], late = [];
+  if (kind === "reject-direct") {
+    body = [rl.directCall(turnId, `call_direct_${n}`, script), rl.directOutput(turnId, `call_direct_${n}`, policyRejection(script))];
+  } else if (kind === "reject-ask") {
+    try {
+      await ask("item/commandExecution/requestApproval", {
+        threadId: t.id, turnId, itemId: `call_ask_${n}`, command: script, cwd: t.cwd ?? ".",
+        startedAtMs: Date.now(), approvalId: null, reason: "テスト用の承認",
+      });
+    } catch { /* 答えによらず拒否する */ }
+    body = [rl.codeCall(turnId, `call_ask_${n}`, script), rl.codeOutput(turnId, `call_ask_${n}`, policyRejection(script))];
+  } else if (kind === "reject-late") {
+    body = [rl.codeCall(turnId, `call_late_${n}`, script)];
+    late = [rl.codeOutput(turnId, `call_late_${n}`, policyRejection(script))];
+  } else {
+    const secret = 'Stop-Process -Id 4242; curl.exe -H "Authorization: Bearer fake-token-0123456789" "https://user:pass@example.invalid/x?token=abc&q=1"';
+    body = [
+      rl.codeCall(turnId, `call_code_${n}`, secret), rl.codeOutput(turnId, `call_code_${n}`, policyRejection(secret)),
+      rl.waitCall(turnId, `call_wait_${n}`), rl.waitOutput(turnId, `call_wait_${n}`, spawnRejection()),
+      rl.codeCall(turnId, `call_quote_${n}`, "gh issue view 24"), rl.quotedOutput(turnId, `call_quote_${n}`, policyRejection("Remove-Item x")),
+    ];
+  }
+  const reply = `拒否された: ${kind}`;
+  notify("item/agentMessage/delta", { threadId: t.id, turnId, itemId: "it_m1", delta: reply });
+  notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item: { id: "it_m1", type: "agentMessage", text: reply } });
+  t.turns.push({ id: turnId, status: "completed", startedAt: secs(), completedAt: secs(),
+    items: [{ id: `it_u${n}`, type: "userMessage", content: [{ type: "text", text }] }, { id: "it_m1", type: "agentMessage", text: reply }] });
+  t.updatedAt = secs();
+  const tail = [rl.assistant(turnId, reply), rl.taskComplete(turnId)];
+  if (late.length) {
+    writeRollout(t, [...head, ...body]);
+    setTimeout(() => writeRollout(t, [...late, ...tail]), 150);
+  } else writeRollout(t, [...head, ...body, ...tail]);
+  notify("turn/completed", { threadId: t.id, turn: { id: turnId, items: [], status: "completed", startedAt: secs(), completedAt: secs() } });
 }
 
 /** 親の turn に残る subAgentActivity（rollout と thread/read の形。kind=started の id は spawn の call id） */
@@ -146,6 +203,8 @@ async function runTurn(t, turnId, text) {
       total: { cachedInputTokens: 0, inputTokens: 10, outputTokens: 5, reasoningOutputTokens: 2, totalTokens: 15 },
     },
   });
+
+  writeRollout(t, [rl.taskStarted(turnId), rl.userMessage(turnId, text), rl.assistant(turnId, body), rl.taskComplete(turnId)]);
 
   // 履歴に残す。thread/read {includeTurns:true} で読み直せることを測るため
   t.turns.push({
@@ -403,6 +462,7 @@ async function handle(method, params) {
       t.plyConfig = params?.config?.['mcp_servers.ply'];
       t.ephemeral = Boolean(params?.ephemeral);
       t.model = params?.model;
+      if (process.env.FAKE_CODEX_ROLLOUT_DIR && !t.ephemeral) t.path = path.join(process.env.FAKE_CODEX_ROLLOUT_DIR, `rollout-${t.id}.jsonl`);
       applyProvider(t, params);
       record({ method, threadId: t.id, modelProvider: params?.modelProvider ?? null, model: params?.model ?? null, ephemeral: t.ephemeral });
       return {
@@ -451,6 +511,7 @@ async function handle(method, params) {
         : text.startsWith("question") ? runQuestionTurn(t, turnId)
         : text.startsWith("subagent-slow") ? runSubagentTurn(t, turnId, { slow: true })
         : text.startsWith("subagent") ? runSubagentTurn(t, turnId)
+        : text.startsWith("reject") ? runRejectTurn(t, turnId, text)
         : runTurn(t, turnId, text);
       script.catch((err) => notify("error", {
         threadId: t.id, turnId, willRetry: false, error: { message: String(err?.message ?? err) },

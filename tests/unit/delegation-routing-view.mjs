@@ -1,9 +1,11 @@
 // 委譲カードの振り分けの理由と設定 › 委譲の組み立て（web/delegation-routing-view.mjs・web/delegation-settings.mjs）。DOM の大半は触らず、文と並びだけ見る
 import assert from 'node:assert/strict';
-import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackText, retryCandidates, usageSummary, isAutoRouting, fallbackName, routingDetail } from '../../web/delegation-routing-view.mjs';
+import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackText, retryCandidates, usageSummary, isAutoRouting, fallbackName, routingDetail, pinnedDetail,
+  skipText, parseRoutingFailure, groupSkipped, groupText, routingFailureParts } from '../../web/delegation-routing-view.mjs';
 import { diffFromDefaults, setupDelegationSettings } from '../../web/delegation-settings.mjs';
 import { el } from '../../web/dom.mjs';
 import { N } from '../lib/dom-stub.mjs';
+import { readFileSync } from 'node:fs';
 
 export const name = 'delegation-routing-view';
 export const title = '委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分と判定器の面の描き直し';
@@ -58,13 +60,104 @@ export default async function (t) {
   assert.equal(detail.querySelector('.rt-retry-open'), null, 'onRetry が無ければやり直しの口を出さない');
   t.ok('内訳は試した候補を順に並べ、使ったものに印', true);
 
+  // 依頼元が委譲先を書いた（固定の）委譲: 自動と同じ「委譲」の形で、1 行は「種類 → 委譲先」。内訳は種類・委譲先・承認モード・作業場所だけ
+  const pinned = { mode: 'pinned', kind: 'implement', difficulty: null, tier: null, target: { backend: 'codex', model: null }, skipped: [] };
+  assert.equal(routingLine(pinned, names), '実装 → Codex');
+  assert.equal(routingLine({ ...pinned, target: { backend: 'codex', model: 'gpt-6-sol' } }, names), '実装 → Codex gpt-6-sol');
+  const facts = pinnedDetail(pinned, { names, mode: '都度確認', cwd: String.raw`D:\dev\pleiad` });
+  const factText = facts.textContent;
+  assert.ok(factText.includes('Codex（依頼元が指定）') && factText.includes('都度確認') && factText.includes('pleiad'), factText);
+  assert.equal(facts.querySelectorAll('.rt-cand').length, 0, '候補は出さない');
+  assert.equal(facts.querySelector('.rt-retry-open'), null, 'やり直しは出さない');
+  t.ok('固定の委譲の 1 行と内訳（判定・候補・やり直しは出さない）', true);
+
   const defaults = { judgeByKind: { trivial: 'jev', visual: 'none' }, tiers: { t1: ['a:b'], t2: ['c:d'] }, avoidPercent: 80 };
   assert.deepEqual(diffFromDefaults({ trivial: 'cerebras', visual: 'none' }, defaults.judgeByKind), { trivial: 'cerebras' });
   assert.equal(diffFromDefaults({ trivial: 'jev', visual: 'none' }, defaults.judgeByKind), null, '全部既定なら null（既定に戻す）');
   assert.deepEqual(diffFromDefaults({ t1: ['a:b'], t2: ['d:e', 'c:d'] }, defaults.tiers), { t2: ['d:e', 'c:d'] });
   t.ok('設定は既定と違う項目だけを送る（既定値を凍らせない）', true);
 
+  failure(t, names);
   await judgePanel(t);
+  await effectiveLines(t);
+}
+
+/** 使える委譲先が無かった自動の委譲（エージェント向けのエラー文を読み、理由ごとにまとめる） */
+function failure(t, names) {
+  assert.equal(skipText('unavailable', 'not_installed'), '使えない（未インストール）');
+  assert.equal(skipText('unavailable'), '使えない');
+  assert.equal(skipText('quota_high', 'not_installed'), '使用量が多い', '中身を添えるのは「使えない」だけ');
+  t.ok('「使えない」に中身（無効・未インストール・トークン未登録）を添える', true);
+
+  const ja = ['使える委譲先がありません（種類 mechanical、難しさ mid）。飛ばした候補:',
+    '- antigravity:gemini-3.8-flash-high (t2): usage_unknown',
+    '- codex:gpt-6-luna (t2): unavailable (disabled)',
+    '- claude:sonnet (t2): quota_high 週次 84%',
+    '- claude:fable (t4): pace_high 週次 12% pace 1.4',
+    '- codex:gpt-6-sol (t3): unavailable (disabled)',
+    'backend を指定して固定で頼み直すか、ユーザーに確認してください。'].join('\n');
+  const parsed = parseRoutingFailure(ja);
+  assert.equal(parsed.kind, 'mechanical');
+  assert.equal(parsed.difficulty, 'mid');
+  assert.equal(parsed.skipped.length, 5);
+  assert.deepEqual(parsed.skipped[1], { candidate: 'codex:gpt-6-luna', tier: 't2', reason: 'unavailable', detail: 'disabled' });
+  assert.deepEqual(parsed.skipped[2].window, { label: '週次', usedPercent: 84 });
+  assert.deepEqual(parsed.skipped[3].window, { label: '週次', usedPercent: 12, pace: 1.4 });
+  const en = 'No delegation target is usable (kind implement, difficulty high). Skipped candidates:\n- claude:opus (t4): unavailable\nRetry with an explicit backend, or ask the user.';
+  assert.deepEqual(parseRoutingFailure(en), { kind: 'implement', difficulty: 'high', skipped: [{ candidate: 'claude:opus', tier: 't4', reason: 'unavailable' }] });
+  assert.equal(parseRoutingFailure('kind は必須です'), null, '振り分けの失敗でない文は読まない');
+  t.ok('エラー文から種類・難しさ・候補の行（理由・中身・枠・ペース）を読む。文の言語によらない', true);
+
+  const groups = groupSkipped(parsed.skipped);
+  assert.deepEqual(groups.map(g => g.reason), ['unavailable', 'quota_high', 'pace_high', 'usage_unknown'], '直せば通るもの → 待てば戻るものの順');
+  assert.equal(groupText(groups[0], names), 'Codex 2（無効）');
+  assert.equal(groupText(groups[1], names), 'Sonnet 週次 84%');
+  assert.equal(groupText(groups[2], names), 'fable 週次 1.4 倍');
+  t.ok('理由ごとに 1 行。使えないものはエージェントごとの件数、使用量は候補ごとの値', true);
+
+  const opened = [];
+  const [why, fold] = routingFailureParts(parsed, { names, open: reason => (reason === 'unavailable' ? { label: 'エージェント設定を開く', run: () => opened.push(reason) } : null) });
+  const rows = why.querySelectorAll('li');
+  assert.equal(rows.length, 4);
+  assert.ok(!why.textContent.includes('unavailable') && !why.textContent.includes('quota_high'), '内部の理由のコードは見える行に出さない');
+  rows[0].querySelector('button').onclick({ preventDefault() {}, stopPropagation() {} });
+  assert.deepEqual(opened, ['unavailable']);
+  assert.equal(fold.tagName.toLowerCase(), 'details');
+  assert.equal(fold.querySelectorAll('li').length, 5, '候補ごとの一覧は折りたたみの中');
+  t.ok('開かなくても見える理由の行と直す入口、候補ごとの一覧は折りたたむ', true);
+}
+
+/** 設定 › 委譲のスイッチの直下: 効いていない理由だけを出す（平常時・オフのときは何も出さない） */
+async function effectiveLines(t) {
+  const defaults = { enabled: true, judgeByKind: { implement: 'jev' }, escalateToCerebras: false, tiers: { t1: ['codex:gpt-6-sol'] }, table: { implement: ['t1', 't1', 't1'] },
+    avoidPercent: 80, paceLimit: 1.5, staleMinutes: 10 };
+  let settings = structuredClone(defaults), hasKey = false, usable = false;
+  const state = () => structuredClone({ settings, defaults, kinds: ['implement'], judges: ['jev', 'cerebras', 'none'], tiers: ['t1'],
+    candidates: [{ candidate: 'codex:gpt-6-sol', backend: 'codex', model: 'gpt-6-sol', tiers: ['t1'], usable, reason: usable ? null : 'unavailable', detail: 'disabled', windows: [] }],
+    keys: { openrouter: { hasKey }, cerebras: { hasKey: false } }, storage: { encrypted: true } });
+  const root = el('div'), tab = el('button');
+  const saved = document.getElementById;
+  document.getElementById = id => ({ delegationPanel: root, delegationTab: tab })[id] ?? null;
+  try {
+    const ui = setupDelegationSettings({ cmd: async () => state(), page() {}, showMenu() {}, labelOf: id => id, logo: () => el('span'), modelsOf: async () => ({}), modelName: () => '' });
+    await ui.refresh();
+    const eff = root.querySelector('.rt-eff');
+    t.ok('キーが無い・使える候補が無い: スイッチの直下に ⚠ の行が 2 つと直す入口', eff && !eff.hidden && eff.querySelectorAll('p').length === 2
+      && eff.querySelectorAll('button').length === 2 && eff.textContent.includes('⚠'));
+    t.ok('判定表の下の同じ警告は出さない', !root.querySelector('.rt-judges').textContent.includes('⚠'));
+    hasKey = true; usable = true;
+    await ui.refresh();
+    t.ok('平常時は何も出さない', root.querySelector('.rt-eff').hidden === true);
+    hasKey = false; settings.enabled = false;
+    await ui.refresh();
+    t.ok('スイッチがオフなら何も出さない', root.querySelector('.rt-eff').hidden === true);
+    settings.enabled = true; usable = false;
+    await ui.refresh();
+    const detail = root.querySelector('.rt-advanced').textContent;
+    t.ok('詳しい設定の候補の「使えない」に中身を添える', detail.includes('使えない（無効）'));
+  } finally {
+    document.getElementById = saved;
+  }
 }
 
 /** 設定 › 委譲の判定器の面。押したボタンにフォーカスが残っていても、選び直しが画面に出てフォーカスが戻る */
@@ -127,5 +220,14 @@ async function judgePanel(t) {
     document.getElementById = saved.getElementById;
     document.activeElement = saved.activeElement;
     N.prototype.focus = saved.focus;
+  }
+
+  // ---- 配線（client.mjs）: 失敗したカードも入力・出力を「入力・出力（JSON）」の折りたたみの奥へ
+  {
+    const client = readFileSync(new URL('../../web/client.mjs', import.meta.url), 'utf8');
+    const failed = client.slice(client.indexOf('function decorateFailedDelegate('), client.indexOf('function paintRouteLine('));
+    const ok = client.slice(client.indexOf('function decorateDelegateCard('), client.indexOf('function decorateFailedDelegate('));
+    t.ok('自動の委譲が失敗したカードも、成功・固定のカードと同じく JSON を折りたたみの奥へ（開くとそのまま出ていた）',
+      /foldDelegateJson\(card\);/.test(failed) && /foldDelegateJson\(card\);/.test(ok));
   }
 }
