@@ -1,0 +1,128 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+import { EventEmitter } from 'node:events';
+import { fileURLToPath } from 'node:url';
+
+export const name = 'desktop-exit-dialog';
+export const title = 'サーバー終了の通知は非同期で、終了中は表示しない';
+
+const source = fs.readFileSync(new URL('../../desktop/main.cjs', import.meta.url), 'utf8');
+const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../desktop');
+const tick = () => new Promise(resolve => setImmediate(resolve));
+
+async function start({ ready = true } = {}) {
+  const calls = { dialogs: [], messages: [], quits: 0, syncDialogs: 0 };
+  const worker = new EventEmitter();
+  worker.stdout = new EventEmitter();
+  worker.stderr = new EventEmitter();
+  worker.postMessage = message => {
+    calls.messages.push(message);
+    if (message.type === 'running') queueMicrotask(() => worker.emit('message', { type: 'running', work: { count: 0 } }));
+  };
+  worker.kill = () => {};
+  const app = new EventEmitter();
+  Object.assign(app, {
+    isPackaged: false,
+    exit: () => {},
+    quit: () => { calls.quits++; },
+    requestSingleInstanceLock: () => true,
+    whenReady: () => Promise.resolve(),
+    getPath: name => name === 'userData' ? 'test-user' : 'test-home',
+    getPreferredSystemLanguages: () => ['ja-JP'],
+    getVersion: () => '0.1.0',
+  });
+  class BrowserWindow extends EventEmitter {
+    constructor() {
+      super();
+      calls.window = this;
+      this.webContents = new EventEmitter();
+      this.webContents.setWindowOpenHandler = () => {};
+      this.webContents.session = { setPermissionRequestHandler: () => {} };
+      this.webContents.send = () => {};
+    }
+    isDestroyed() { return false; }
+    removeMenu() {}
+    loadURL() { return Promise.resolve(); }
+    show() {}
+  }
+  let resolveDialog;
+  const dialog = {
+    showErrorBox: () => { calls.syncDialogs++; throw new Error('synchronous dialog'); },
+    showMessageBox: (...args) => {
+      calls.dialogs.push(args);
+      return new Promise(resolve => { resolveDialog = resolve; });
+    },
+  };
+  const electron = {
+    app, BrowserWindow, WebContentsView: class {}, dialog,
+    utilityProcess: { fork: () => { queueMicrotask(() => worker.emit(ready ? 'message' : 'exit', ready ? { type: 'ready', port: 7499, token: 'test' } : undefined)); return worker; } },
+    shell: { openExternal: () => Promise.resolve() },
+    ipcMain: { on: () => {}, handle: () => {} },
+    Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {},
+  };
+  const modules = {
+    './updates.cjs': { Updates: class { constructor() { this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } } },
+    './update-auth.cjs': { prepareUpdateCheck: () => {} },
+    './server-port.cjs': { savedPort: () => 7499, rememberPort: () => {} },
+    './secret-bridge.cjs': { attachSecretBridge: () => {} },
+    './i18n.cjs': { t: key => key, setLocale: () => {}, resolveLocale: () => 'ja', initDesktopI18n: async () => {} },
+    './file-bridge.cjs': { attachFileBridge: () => {} },
+    './resident.cjs': { attachResident: () => ({ keepOnClose: () => false }) },
+    './window-trust.cjs': { createWindowTrust: () => ({ register: () => {} }) },
+    './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, handleArgv: () => false }) },
+    './browser-panel.cjs': { createBrowserPanel: () => ({ attach: () => {} }) },
+    './notifications.cjs': { createDesktopNotifications: () => () => {} },
+    'electron-updater': { autoUpdater: {} },
+  };
+  const require = id => {
+    if (id === 'electron') return electron;
+    if (id.startsWith('node:')) return id === 'node:path' ? path : fs;
+    if (id === '../package.json') return {};
+    if (id in modules) return modules[id];
+    throw new Error(`unexpected require ${id}`);
+  };
+  vm.runInNewContext(source, { require, __dirname: desktop, process: { platform: 'linux', argv: [], env: {}, resourcesPath: '' },
+    console: { error: () => {} }, setTimeout, clearTimeout, setInterval, queueMicrotask, URL });
+  await tick();
+  await tick();
+  return { app, worker, calls, resolveDialog: () => resolveDialog?.({ response: 0 }) };
+}
+
+export default async function (t) {
+  {
+    const { worker, calls, resolveDialog } = await start();
+    worker.emit('exit');
+    await tick();
+    t.ok('サーバー異常終了は本体の窓を親に非同期の通知を出す', calls.dialogs.length === 1 && calls.dialogs[0][0] === calls.window && calls.dialogs[0][1].message === 'server.exited');
+    t.ok('通知を閉じるまでイベントループとアプリが動く', calls.syncDialogs === 0 && calls.quits === 0);
+    resolveDialog();
+    await tick();
+    t.ok('通知を閉じると終了する', calls.quits === 1);
+  }
+  for (const [label, begin] of [
+    ['app.exit', ({ app }) => app.exit(0)],
+    ['before-quit', ({ app }) => app.emit('before-quit', { preventDefault() {} })],
+    ['will-quit', ({ app }) => app.emit('will-quit')],
+  ]) {
+    const state = await start();
+    begin(state);
+    state.worker.emit('exit');
+    await tick();
+    t.ok(`${label} の後は通知しない`, state.calls.dialogs.length === 0 && state.calls.syncDialogs === 0);
+  }
+  {
+    const { worker, calls } = await start();
+    calls.window.emit('session-end');
+    worker.emit('exit');
+    await tick();
+    t.ok('session-end は shutdown を送り、サーバー終了を通知しない', calls.messages.some(m => m.type === 'shutdown') && calls.dialogs.length === 0);
+  }
+  {
+    const { calls, resolveDialog } = await start({ ready: false });
+    t.ok('起動失敗も親なしの非同期通知を出す', calls.dialogs.length === 1 && calls.dialogs[0][0].message === 'server.startFailed' && calls.syncDialogs === 0);
+    resolveDialog();
+    await tick();
+    t.ok('起動失敗の通知を閉じると終了する', calls.quits === 1);
+  }
+}

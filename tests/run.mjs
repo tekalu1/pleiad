@@ -71,6 +71,7 @@ const cases = [
   // データ置き場を共有する 2 つのプロセス。本物の子プロセスを 2 本起動する
   await import('./unit/mcp-oauth-processes.mjs'),
   await import('./unit/desktop-updates.mjs'),
+  await import('./unit/desktop-exit-dialog.mjs'),
   await import('./unit/message-queue.mjs'),
   await import('./unit/message-steer.mjs'),
   await import('./unit/visualize.mjs'),
