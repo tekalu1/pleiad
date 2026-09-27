@@ -199,9 +199,10 @@ function paintContextStrip() {
   $('contextMeter').hidden = !usage;
   if (usage) {
     const rate = Math.round(100 * usage.usedTokens / usage.windowTokens);
+    const caret = el('span', 'context-meter-caret', '⌄'); caret.setAttribute('aria-hidden', 'true');
     $('contextMeter').replaceChildren(document.createTextNode(t('compaction.context')),
       (() => { const bar = el('span', 'context-meter-bar'); const fill = el('span'); fill.style.width = `${Math.min(100, Math.max(0, rate))}%`; bar.append(fill); return bar; })(),
-      document.createTextNode(t('compaction.meter', { rate, used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) })));
+      document.createTextNode(t('compaction.meter', { rate, used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) })), caret);
   }
   const status = $('contextStripStatus'); status.replaceChildren();
   const action = (label, run) => { const button = el('button', null, label); button.type = 'button'; button.onclick = run; status.append(button); };
@@ -278,20 +279,20 @@ function acceptCompaction(event) {
 function paintAutoCompactionSettings() {
   const settings = state.prefs.autoCompaction ?? { enabled: true, minTokens: 40_000,
     claude: { enabled: true, delayMinutes: 50 }, codex: { enabled: false, delayMinutes: 50 } };
-  $('autoCompactionEnabled').checked = settings.enabled;
+  $('autoCompactionEnabled').setAttribute('aria-checked', String(settings.enabled));
   $('autoCompactionMin').value = String(settings.minTokens / 1000);
   for (const id of ['claude', 'codex']) {
     const name = id[0].toUpperCase() + id.slice(1);
-    $(`autoCompaction${name}`).checked = settings[id].enabled;
+    $(`autoCompaction${name}`).setAttribute('aria-checked', String(settings[id].enabled));
     $(`autoCompaction${name}Delay`).value = String(settings[id].delayMinutes);
   }
-  for (const input of $('autoCompactionPanel').querySelectorAll('input:not(#autoCompactionEnabled)')) input.disabled = !settings.enabled;
+  for (const control of $('autoCompactionPanel').querySelectorAll('input, .auto-compaction-agents .cx-sw')) control.disabled = !settings.enabled;
 }
 async function saveAutoCompactionSettings() {
-  const settings = { enabled: $('autoCompactionEnabled').checked,
+  const settings = { enabled: $('autoCompactionEnabled').getAttribute('aria-checked') === 'true',
     minTokens: Number($('autoCompactionMin').value) * 1000,
-    claude: { enabled: $('autoCompactionClaude').checked, delayMinutes: Number($('autoCompactionClaudeDelay').value) },
-    codex: { enabled: $('autoCompactionCodex').checked, delayMinutes: Number($('autoCompactionCodexDelay').value) } };
+    claude: { enabled: $('autoCompactionClaude').getAttribute('aria-checked') === 'true', delayMinutes: Number($('autoCompactionClaudeDelay').value) },
+    codex: { enabled: $('autoCompactionCodex').getAttribute('aria-checked') === 'true', delayMinutes: Number($('autoCompactionCodexDelay').value) } };
   try {
     const saved = await cmd('setAutoCompaction', { settings });
     state.prefs.autoCompaction = saved;
@@ -4207,6 +4208,7 @@ function rowMenu(s, x, y, lead = []) {
     ] },
     { label: t('compaction.compact'), disabled: !capsOf(s.backend).compact,
       hint: !capsOf(s.backend).compact ? t('compaction.antigravityManaged') : '',
+      hintWrap: !capsOf(s.backend).compact,
       onClick: () => cmd('compactConversation', { sessionId: s.id }).catch(error => showRowCompactionError(s, error)) },
     ...(s.backend === 'antigravity' ? [] : [{ label: t('compaction.disableConversation'), checked: Boolean(s.autoCompactionOff),
       onClick: () => cmd('setConversationAutoCompaction', { sessionId: s.id, off: !s.autoCompactionOff })
@@ -5315,6 +5317,10 @@ document.addEventListener('keydown', event => {
   }
 });
 for (const input of $('autoCompactionPanel').querySelectorAll('input')) input.addEventListener('change', saveAutoCompactionSettings);
+for (const button of $('autoCompactionPanel').querySelectorAll('.cx-sw')) button.addEventListener('click', () => {
+  button.setAttribute('aria-checked', String(button.getAttribute('aria-checked') !== 'true'));
+  saveAutoCompactionSettings();
+});
 // 止めるのは今見ているセッションだけ。他のセッションは走らせたままにする
 $("abort").onclick = () => {
   const sessionId = state.current;

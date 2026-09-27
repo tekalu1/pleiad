@@ -161,8 +161,8 @@
     <form class="composer" id="composer">
       <div class="context-strip" id="contextStrip" hidden>
         <div class="context-meter-wrap"><button type="button" class="context-meter" id="contextMeter" aria-haspopup="menu" aria-expanded="false" aria-controls="contextMeterPop"></button>
-          <div class="pop menu context-meter-pop" id="contextMeterPop" role="menu" hidden>
-            <button type="button" role="menuitem" id="meterCompact" data-i18n="compaction.compact"></button>
+          <div class="pop menu context-meter-pop" id="contextMeterPop" role="menu" data-i18n-aria-label="compaction.meterMenu" hidden>
+            <button type="button" role="menuitem" id="meterCompact" data-i18n="compaction.compactNow"></button>
             <button type="button" role="menuitem" id="meterSettings" data-i18n="compaction.settings"></button>
           </div></div>
         <div class="context-strip-status" id="contextStripStatus" role="status"></div>
@@ -279,13 +279,23 @@
         <section id="contextPanel" data-i18n-aria-label="settings.nav.context" hidden></section>
         <section id="autoCompactionPanel" data-i18n-aria-label="settings.nav.autoCompaction" hidden>
           <div class="auto-compaction-settings">
-            <label class="setting-line"><span data-i18n="compaction.autoEnabled"></span><input type="checkbox" id="autoCompactionEnabled"></label>
-            <label class="setting-line"><span data-i18n="compaction.minSize"></span><span><input type="number" id="autoCompactionMin" min="1" max="10000"> <span data-i18n="compaction.kTokens"></span></span></label>
-            <div class="auto-compaction-head"><span data-i18n="compaction.agent"></span><span data-i18n="compaction.enabled"></span><span data-i18n="compaction.delay"></span></div>
-            <label class="auto-compaction-row"><span>Claude Code</span><input type="checkbox" id="autoCompactionClaude"><span><input type="number" id="autoCompactionClaudeDelay" min="1" max="10080" data-i18n-aria-label="compaction.claudeDelay"> <span data-i18n="compaction.minutes"></span></span></label>
-            <label class="auto-compaction-row"><span>Codex</span><input type="checkbox" id="autoCompactionCodex"><span><input type="number" id="autoCompactionCodexDelay" min="1" max="10080" data-i18n-aria-label="compaction.codexDelay"> <span data-i18n="compaction.minutes"></span></span></label>
-            <div class="auto-compaction-managed" data-i18n="compaction.antigravityAutoManaged"></div>
-            <p id="autoCompactionError" role="status"></p>
+            <div class="rm-switch"><label class="rm-switch-label" for="autoCompactionEnabled" data-i18n="compaction.autoEnabled"></label><button type="button" class="cx-sw" id="autoCompactionEnabled" role="switch" data-i18n-aria-label="compaction.autoEnabled"></button></div>
+            <section class="mp-panel auto-compaction-minimum">
+              <label for="autoCompactionMin" data-i18n="compaction.minSize"></label>
+              <span class="rt-number-row"><input type="number" id="autoCompactionMin" min="1" max="10000" data-i18n-aria-label="compaction.minSize"> <span class="rt-unit" data-i18n="compaction.kTokens"></span></span>
+            </section>
+            <section class="mp-panel auto-compaction-agents">
+              <div class="auto-compaction-head"><span data-i18n="compaction.agent"></span><span data-i18n="compaction.enabled"></span><span data-i18n="compaction.delay"></span></div>
+              <div class="auto-compaction-row"><span>Claude Code</span><button type="button" class="cx-sw" id="autoCompactionClaude" role="switch" data-i18n-aria-label="compaction.claudeEnabled"></button><label class="rt-number-row"><input type="number" id="autoCompactionClaudeDelay" min="1" max="10080" data-i18n-aria-label="compaction.claudeDelay"> <span class="rt-unit" data-i18n="compaction.minutes"></span></label></div>
+              <div class="auto-compaction-row"><span>Codex</span><button type="button" class="cx-sw" id="autoCompactionCodex" role="switch" data-i18n-aria-label="compaction.codexEnabled"></button><label class="rt-number-row"><input type="number" id="autoCompactionCodexDelay" min="1" max="10080" data-i18n-aria-label="compaction.codexDelay"> <span class="rt-unit" data-i18n="compaction.minutes"></span></label></div>
+              <div class="auto-compaction-managed" data-i18n="compaction.antigravityAutoManaged"></div>
+            </section>
+            <dl class="auto-compaction-rules mp-note">
+              <div><dt data-i18n="compaction.ruleExcludedTitle"></dt><dd data-i18n="compaction.ruleExcluded"></dd></div>
+              <div><dt data-i18n="compaction.ruleSkipTitle"></dt><dd data-i18n="compaction.ruleSkip"></dd></div>
+              <div><dt data-i18n="compaction.ruleOnceTitle"></dt><dd data-i18n="compaction.ruleOnce"></dd></div>
+            </dl>
+            <p class="rm-state rm-strong" id="autoCompactionError" role="status"></p>
           </div>
         </section>
         <!-- 中身は web/remote.mjs が作る -->

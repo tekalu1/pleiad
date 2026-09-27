@@ -61,7 +61,7 @@ export function createContextMenu() {
         input.onkeydown = e => { if (isComposingKey(e)) return; if (e.key === 'Enter') { e.preventDefault(); const v = input.value.trim(); if (v) { close(true); item.input.onCommit(v); } } };
         panel.append(input); continue;
       }
-      const row = el('button', 'li' + (item.checked ? ' on' : ''));
+      const row = el('button', 'li' + (item.checked ? ' on' : '') + (item.hintWrap ? ' hint-wrap' : ''));
       row.type = 'button'; row.setAttribute('role', 'menuitem');
       // 今は押せない項目（タイトル行の「…」のタイトルを生成: 生成中・未送信など）
       if (item.disabled) { row.disabled = true; row.setAttribute('aria-disabled', 'true'); }
