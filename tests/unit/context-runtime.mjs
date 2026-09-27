@@ -5,7 +5,7 @@ import http from 'node:http';
 import { DEFAULT_SCAN, KINDS, containsPath, createContextSettings, defaultKind, matchesGlobs } from '../../core/context-settings.mjs';
 import { resolveRuntime, contextTools, mcpTransportConfig } from '../../core/context-runtime.mjs';
 import { createContextBridge } from '../../core/context-bridge.mjs';
-import { claudeContextOptions, unexpectedNativeMcp } from '../../core/backends/context-options.mjs';
+import { claudeContextOptions, claudeQueryExtraArgs, unexpectedNativeMcp } from '../../core/backends/context-options.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 
@@ -54,6 +54,15 @@ export default async function(t) {
     const ctx={owners:policy.owners,prompt:'MANAGED_PROMPT',url:'http://localhost/context',headers:{Authorization:'test'}};
     const cl=claudeContextOptions(ctx);
     t.ok('Claude の種類別抑止と明示プロンプト',cl.strictMcpConfig&&cl.skills.length===0&&cl.extraArgs['disable-slash-commands']===null&&cl.settings.claudeMdExcludes.length&&cl.systemPrompt.append==='MANAGED_PROMPT');
+    const compactCl=claudeContextOptions(ctx,{compact:true});
+    t.ok('圧縮ターンだけスラッシュコマンドを有効にし Skill ツールは止める',!Object.hasOwn(compactCl,'extraArgs')
+      &&compactCl.skills.length===0&&compactCl.disallowedTools.includes('Skill'));
+    t.ok('通常ターンは replay とスラッシュ抑止の両方を CLI に渡す',
+      Object.hasOwn(claudeQueryExtraArgs(cl),'replay-user-messages')
+      &&Object.hasOwn(claudeQueryExtraArgs(cl),'disable-slash-commands'));
+    t.ok('圧縮ターンも replay を渡しスラッシュ抑止だけを外す',
+      Object.hasOwn(claudeQueryExtraArgs(compactCl),'replay-user-messages')
+      &&!Object.hasOwn(claudeQueryExtraArgs(compactCl),'disable-slash-commands'));
     t.ok('Claude が自分で読む AGENTS.md も止める',cl.settings.claudeMdExcludes.includes('**/AGENTS.md'));
     // MCP を Pleiad が担当する Claude の会話: Pleiad 自身が渡した MCP（委譲の ply_agents を含む）はネイティブ扱いしない
     const passed=['host','ply_agents','ply_context'];

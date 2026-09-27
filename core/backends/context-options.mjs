@@ -6,16 +6,21 @@ import { t } from '../i18n.mjs';
 // 読んだかどうかは最初のプロンプトを処理するまで memoryFiles に出ないので、claude.mjs の起動時の確認では見逃す
 export const CLAUDE_MD_EXCLUDES = ['**/CLAUDE.md', '**/CLAUDE.local.md', '**/AGENTS.md', '**/.claude/rules/**'];
 
-export function claudeContextOptions(context) {
+export function claudeContextOptions(context, { compact = false } = {}) {
   if (!context) return {};
   const { owners } = context;
   return {
     ...(owners.instruction === 'ply' ? { settings: { claudeMdExcludes: CLAUDE_MD_EXCLUDES, autoMemoryEnabled: false } } : {}),
-    ...(owners.skill === 'ply' ? { skills: [], extraArgs: { 'disable-slash-commands': null }, disallowedTools: ['Skill'] } : {}),
+    ...(owners.skill === 'ply' ? { skills: [], ...(!compact ? { extraArgs: { 'disable-slash-commands': null } } : {}), disallowedTools: ['Skill'] } : {}),
     ...(owners.mcp === 'ply' ? { strictMcpConfig: true } : {}),
     ...(context.prompt ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: context.prompt } } : {}),
   };
 }
+
+export function claudeQueryExtraArgs(contextOptions) {
+  return { 'replay-user-messages': null, ...contextOptions.extraArgs };
+}
+
 /**
  * MCP を Pleiad が担当する Claude の会話で、止められなかったネイティブ MCP の名前。
  * Pleiad 自身が渡したもの（host・ply_agents・ply_context など mcpServers に入れた名前）はネイティブではない。
