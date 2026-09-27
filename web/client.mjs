@@ -1581,6 +1581,8 @@ function onEvent(ev, replay = false) {
       syncRunState();
       paintInterruptLine();
       syncHistory();
+      // 右パネルの Hooks の「発火の記録」はターンの終わりに会話へ残る。開いていれば取り直す
+      if (ev.sessionId && ev.sessionId === state.current && sessionContext.isOpen()) sessionContext.refresh();
       return refresh();
   }
 }

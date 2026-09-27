@@ -271,6 +271,54 @@
 .scx-kind .cx-opt[aria-checked=true]{background:var(--surface-paper)}
 .scx-toast{position:sticky;bottom:12px;margin:0 auto;width:max-content;max-width:100%}
 
+/* ==================== Hooks（設定 › コンテキストのカード・追加のシート。web/hooks-card.mjs、ADR 0041） ==================== */
+.hk-card .cx-khead .hk-lead{margin-left:auto}
+.hk-card .cx-opt:disabled{cursor:not-allowed;opacity:.6}
+.hk-card .cx-opt:disabled:hover{background:transparent;color:var(--ink-weak)}
+/* 件数と並べ方の札 */
+.hk-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 8px}
+/* イベントの見出し（一覧の中の区切り）。弱い小さな字に、イベント名の等幅 */
+.hk-ev{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;padding:10px 8px 2px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.hk-ev:first-child{padding-top:4px}
+.hk-ev b{font-size:var(--fs-s);font-weight:600;color:var(--ink)}
+.hk-cmd{font-family:var(--font-mono);font-size:var(--fs-s);overflow-wrap:anywhere}
+.cx-row .p.hk-cmd{font-size:var(--fs-xs)}
+.hk-state{flex:none;font-size:var(--fs-xs);color:var(--ink-weak)}
+.hk-cols .cx-list{padding:0;background:transparent}
+.hk-cols .cx-col>b{display:flex;align-items:center;gap:4px}
+.hk-cols .cx-row{flex-wrap:wrap}
+.hk-cols .hk-state{width:100%;text-align:right}
+.hk-peek .hk-toggle{justify-content:space-between}
+/* 追加・編集のシート */
+.hk-sheet{width:min(560px,calc(100vw - 24px))}
+.hk-input{width:100%;min-width:0;padding:7px 12px;background:var(--surface-1);border-radius:var(--r-pill);color:var(--ink);font-size:var(--fs)}
+.hk-input.mono{font-family:var(--font-mono);font-size:var(--fs-s)}
+.hk-input:focus{background:var(--surface-2)}
+.hk-input:disabled{opacity:.55;cursor:not-allowed}
+select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--fs)}
+.hk-fieldset{margin:0;padding:0;border:0;min-width:0}
+.hk-fieldset legend{padding:0;margin-bottom:5px}
+.hk-check{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink);font-size:var(--fs-s);cursor:pointer}
+.hk-check input{accent-color:var(--fill-primary);margin:0}
+.hk-support{color:var(--ink)}
+.hk-map{display:flex;flex-direction:column;gap:6px;padding:10px;background:var(--surface-1);border-radius:var(--r-m)}
+.hk-maprow{display:grid;grid-template-columns:110px minmax(0,1fr);align-items:center;gap:8px;color:var(--ink);font-size:var(--fs-s)}
+.hk-map .hk-input{background:var(--surface-paper)}
+.hk-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.hk-where{display:flex;flex-direction:column;gap:4px;background:var(--surface-1)}
+.hk-where b{color:var(--ink)}
+.hk-where p{margin:0}
+.hk-whereline{display:flex;flex-wrap:wrap;gap:2px 10px;align-items:baseline}
+.hk-whereline .cx-mono{overflow-wrap:anywhere;color:var(--ink)}
+/* 書く前の確認 */
+.hk-confirm{display:flex;flex-direction:column;gap:10px}
+.hk-confirm .hk-q{margin:0;font-weight:600}
+.hk-confirm .hk-warn{margin:0}
+.hk-target{display:flex;flex-direction:column;gap:6px;padding:10px 12px;background:var(--surface-1);border-radius:var(--r-m)}
+.hk-target p{margin:0}
+.hk-target .scx-lines{background:var(--surface-paper)}
+.hk-confirm>.hk-check{align-self:flex-start;border-radius:var(--r-m)}
+
 /* ---- 狭い画面。2 列を縦に積む ---- */
 @media (max-width:760px){
   /* 設定の左列が残るので本文は 200px ほどになる。行は折り返し、スイッチとログインは次の段の右へ回す */
@@ -282,4 +330,8 @@
   .cx-sec .r{margin-left:0}
   .cx-choice{margin-left:8px}
   .cx-card{padding:12px}
+  .hk-card .cx-khead .hk-lead{margin-left:0}
+  .cx-row>.hk-state{margin-left:auto}
+  .hk-pair,.hk-maprow{grid-template-columns:minmax(0,1fr)}
+  .hk-maprow{gap:2px}
 }
