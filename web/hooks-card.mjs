@@ -1,7 +1,8 @@
 // ==================== Hooks のカード（設定 › コンテキスト）と、追加・編集のシート ====================
 // docs/design-system.md「コンテキスト」の「Hooks」、ADR 0045。
 // 実行するのは各エージェント。Pleiad は元の設定ファイル（core/hooks-config.mjs）を読み、利用者が明示した編集だけを書く。
-//   担当の 2 択は「設定を誰が用意するか」。今は「エージェントに任せる」だけで、「Pleiad がそろえる」は選べない（理由を出す）
+//   担当の 2 択は「設定を誰が用意するか」。「Pleiad がそろえる」へ変える前・戻す前は、その場の確認の面を出す（web/hooks-unify-ui.mjs。ADR 0048）。
+//   担当が Pleiad のときは、Pleiad の登録の一覧と、止めているネイティブの hooks を出す
 //   ユーザーの段: 見つかった定義を イベント順（既定）／エージェント別 3 列 で並べる。行を押すと定義・出どころ・状態（②）
 //   止める操作はエージェントごと: Claude Code はスイッチなし、Codex は信頼状態を取れないので /hooks を案内、Antigravity は名前単位の enabled
 //   作業場所の段: 探すファイルの形だけ。場所ごとの定義は会話の右パネル（web/session-context.mjs）
@@ -12,6 +13,7 @@ import { runMark } from './arc.mjs';
 import { codeBlock } from './render.mjs';
 import { copyIcon } from './icons.mjs';
 import { lineDiff } from './session-context.mjs';
+import { unifyConfirmPanel, plyRegistryTier } from './hooks-unify-ui.mjs';
 
 export const HOOK_AGENTS = [['claude', 'Claude Code'], ['codex', 'Codex'], ['antigravity', 'Antigravity']];
 export const agentLabel = id => HOOK_AGENTS.find(([k]) => k === id)?.[1] ?? id;
@@ -162,6 +164,8 @@ export function createHooksCard({ cmd, work, saved, opened }) {
   const root = el('section', 'cx-card hk-card');
   root.dataset.kind = 'hooks';
   let scan = null, loading = false, layout = 'events', expanded = false, home = '';
+  // Pleiad の登録と担当（plyHooks）。confirm は開いている切り替えの確認（'ply' | 'native' | null）
+  let ply = null, confirm = null;
   const short = p => (home && String(p).toLowerCase().replace(/\\/g, '/').startsWith(home.toLowerCase().replace(/\\/g, '/')) ? `~${String(p).slice(home.length)}` : String(p ?? ''));
 
   let ticket = 0;
@@ -169,7 +173,7 @@ export function createHooksCard({ cmd, work, saved, opened }) {
   async function load() {
     const mine = ++ticket;
     loading = true; render();
-    try { const first = await cmd('scanHooks', { scope: 'user' }); if (mine !== ticket) return; scan = first; home = scan.home ?? ''; }
+    try { const [first, view] = await Promise.all([cmd('scanHooks', { scope: 'user' }), cmd('plyHooks', {}).catch(() => null)]); if (mine !== ticket) return; scan = first; ply = view; home = scan.home ?? ''; }
     catch (e) { if (mine !== ticket) return; scan = { entries: [], files: [], failed: e.message }; }
     finally { if (mine === ticket) loading = false; }
     render();
@@ -191,14 +195,20 @@ export function createHooksCard({ cmd, work, saved, opened }) {
   }
   const sheetCtx = () => ({ cmd, scan, short, onSaved: async () => { saved(); await reload(); } });
 
+  const owner = () => ply?.defaults?.value?.owner ?? 'native';
   function seg() {
     const box = el('div', 'cx-seg'); box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', t('hooks.ownerAria'));
     for (const [id, title, desc] of [['native', t('context.owner.agent'), t('hooks.owner.agent')], ['ply', t('context.owner.ply'), t('hooks.owner.ply')]]) {
       const b = button('', 'cx-opt');
-      b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(id === 'native')); b.dataset.owner = id;
+      // 確認の面を開いている間も、選んでいるのは今の担当（決めるまで切り替えない。ADR 0031）
+      b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(id === owner())); b.dataset.owner = id;
       b.append(el('b', null, title), el('span', null, desc));
-      // 第 1 段では選べない（ADR 0045）。押せない理由は下の文で示す
-      if (id === 'ply') { b.disabled = true; b.setAttribute('aria-describedby', 'hkOwnerNote'); }
+      b.disabled = !ply;
+      b.onclick = () => {
+        if (id === owner()) { if (confirm) { confirm = null; render(); } return; }
+        confirm = id; render();
+        root.querySelector('.hk-unify')?.scrollIntoView?.({ block: 'nearest' });
+      };
       box.append(b);
     }
     return box;
@@ -275,8 +285,22 @@ export function createHooksCard({ cmd, work, saved, opened }) {
     head.append(title, el('span', 'cx-sub hk-lead', t('hooks.lead')));
     if (loading && scan) { const label = el('span', 'pending-label'); label.append(runMark(t('pending.searching')), t('pending.searching')); head.append(label); }
     root.append(head, seg());
-    const note = el('p', 'cx-sub', t('hooks.owner.plyLater')); note.id = 'hkOwnerNote';
-    root.append(note, el('p', 'cx-sub', t('hooks.runBy')));
+    root.append(el('p', 'cx-sub', t('hooks.runBy')));
+    if (confirm) root.append(unifyConfirmPanel({ cmd, direction: confirm, short,
+      onDone: view => { ply = view; confirm = null; saved(); render(); root.querySelector(`[data-owner="${owner()}"]`)?.focus(); },
+      onCancel: () => { confirm = null; render(); root.querySelector(`[data-owner="${owner()}"]`)?.focus(); } }));
+    // 担当が Pleiad: Pleiad の登録と、止めているネイティブの hooks（ユーザーの範囲。作業場所の分は会話の右パネル）
+    if (owner() === 'ply' && scan && !confirm) {
+      root.append(plyRegistryTier({ cmd, view: ply, opened, short, work,
+        stopped: (scan.entries ?? []).filter(e => e.agent === 'claude' || ['user', 'project'].includes(e.scope)),
+        onChanged: (view, didSave) => { ply = view; if (didSave) saved(); render(); } }));
+      const place = el('div', 'cx-tier');
+      const ph = el('div', 'cx-tierh');
+      ph.append(el('span', 'n', t('context.tier.place')), el('span', null, t('context.tier.placeSub')));
+      place.append(ph, el('p', 'cx-sub', t('hooks.unify.placeNote')));
+      root.append(place);
+      return;
+    }
     const tier = el('div', 'cx-tier');
     const entries = (scan?.entries ?? []).slice().sort((a, b) => order(scan, a.event) - order(scan, b.event));
     const counts = HOOK_AGENTS.map(([id, label]) => t('hooks.agentCount', { agent: label, n: entries.filter(e => e.agent === id).length })).join(' / ');
