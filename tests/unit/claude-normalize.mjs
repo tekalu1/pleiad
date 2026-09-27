@@ -16,6 +16,13 @@ const one = (m) => normalizeSdkMessage(m);
 const types = (m) => one(m).map((e) => e.type).join(",");
 
 export default function (t) {
+  // ---- hooks の発火（includeHookEvents）。出力は持ち出さない。圧縮前後は Pleiad 自身のコールバックと区別できないので落とす
+  const started = one({ type: 'system', subtype: 'hook_started', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', uuid: 'u', session_id: 's' });
+  const done = one({ type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', output: 'SECRET-OUT', stdout: 'SECRET-OUT', stderr: '', exit_code: 2, outcome: 'error', uuid: 'u', session_id: 's' });
+  t.ok('hook_started / hook_response が hookRun になり、出力は持ち出さない', started[0]?.type === 'hookRun' && started[0].phase === 'started' && done[0]?.phase === 'response'
+    && done[0].outcome === 'error' && done[0].exitCode === 2 && !JSON.stringify(done).includes('SECRET-OUT'));
+  t.ok('hook_progress は捨て、圧縮前後の発火は記録しない', !one({ type: 'system', subtype: 'hook_progress', hook_id: 'h1', stdout: 'x' }).length
+    && !one({ type: 'system', subtype: 'hook_started', hook_id: 'h2', hook_event: 'PreCompact' }).length);
   // ---- 部分メッセージ
   t.ok("thinking の開始が thinking.start + activity になる",
     types({ type: "stream_event", event: { type: "content_block_start", content_block: { type: "thinking" } } })

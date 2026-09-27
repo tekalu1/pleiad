@@ -647,6 +647,8 @@ export const backend = {
         ...(model || endpoint?.roles?.main ? { model: model || endpoint.roles.main } : {}),
         ...(effort && (!endpoint || endpoint.options?.sendThinking) ? { effort } : {}),
         includePartialMessages: true,
+        // hooks の発火（hook_started / hook_response）を受け取る。会話の右パネルの「発火の記録」に使う（claude-normalize.mjs）
+        includeHookEvents: true,
         hooks: {
           PreCompact: [{ hooks: [async input => {
             emit({ type: 'compaction', phase: 'start', trigger: input.trigger === 'manual' ? 'manual' : 'auto' });
