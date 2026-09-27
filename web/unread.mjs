@@ -62,6 +62,10 @@ export function createReadCompletions({ storage, send } = {}) {
       put(pending, id, at);
       flush();
     },
+    /** 確認済みの完了時刻（無ければ 0）。中断の三角の未読・既読に使う（web/interrupt.mjs） */
+    readAt(id) {
+      return read.get(id) ?? 0;
+    },
     hasUnread(session) {
       return Number.isFinite(session.completedAt) && session.completedAt > (read.get(session.id) ?? 0);
     },

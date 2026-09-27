@@ -13,7 +13,10 @@
   "quit": {
     "checkFailed": "Could not check what is running. Wait a moment, then close again.",
     "busyTitle": "Work is still running",
-    "busyMessage": "Wait for the conversation to finish before quitting. To cancel it, use Stop in the conversation.",
+    "busyMessage": "Work is still running. If you stop it and quit, the stopped conversations are kept with ⚠ the next time you start Pleiad, and Resume continues from where they left off. Waiting approvals are denied.",
+    "abortAndQuit": "Stop and quit",
+    "abortTimeout_one": "Did not quit because {{count}} task did not stop within {{seconds}} seconds. Check the conversations, then close again.",
+    "abortTimeout_other": "Did not quit because {{count}} tasks did not stop within {{seconds}} seconds. Check the conversations, then close again.",
     "backToWork": "Back to work"
   },
   "common": {

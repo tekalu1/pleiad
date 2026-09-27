@@ -1,11 +1,22 @@
 import { renderMarkdown } from './render.mjs';
 import { fmt, t } from './i18n.mjs';
+import { runMark } from './arc.mjs';
+import { el } from './dom.mjs';
+import { warnMark, workRows, workCounts, interruptProgress } from './interrupt.mjs';
 
 // i18n-dynamic: updates.phase.
 const PHASES = ['idle', 'checking', 'current', 'available', 'downloading', 'downloaded', 'installing', 'error', 'unavailable'];
-export function setupUpdates({ page, open, lock, flush }) {
+// 確認の段に並べる作業の行の上限。越えた分は「ほか N 件」
+const WORK_ROWS = 6;
+// 「中断して更新」で全部のターンが終わるのを待つ上限（ADR 0036）
+const STOP_WAIT_MS = 30000;
+// 訳文の {{mark}} を三角に置き換えるための印（私用領域の 1 文字）
+const MARK = '\u{E000}';
+export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork = () => null, sessionName = id => id, agentName = id => id }) {
   const $ = id => document.getElementById(id), bridge = window.plyDesktop;
   let info, state, busy = false, installing = false, confirming = false, shownNotice = null, failure = '';
+  // 確認の段で見せた実行中の作業（running の戻り）。中断の進み { done, total } は押した後だけ
+  let confirmWork = null, stopping = null;
   const deferred = new Set();
   function paint(value) {
     state = value;
@@ -13,7 +24,8 @@ export function setupUpdates({ page, open, lock, flush }) {
     const downloading = state.phase === 'downloading';
     const progressing = applying || downloading;
     const progress = Number.isFinite(state.progress) ? Math.max(0, Math.min(100, Math.round(state.progress))) : null;
-    const stage = applying ? (state.phase === 'installing' ? t('updates.stage.installing') : t('updates.stage.saving'))
+    const stage = stopping ? t('updates.interrupting', { done: stopping.done, total: stopping.total })
+      : applying ? (state.phase === 'installing' ? t('updates.stage.installing') : t('updates.stage.saving'))
       : progress === null ? t('updates.stage.downloading') : t('updates.stage.downloadingPercent', { percent: progress });
     lock(applying);
     $('appVersion').textContent = `Pleiad ${state.version || info?.version || ''}`;
@@ -59,6 +71,7 @@ export function setupUpdates({ page, open, lock, flush }) {
     $('installUpdate').disabled = working;
     $('updateConfirm').hidden = !confirming;
     $('confirmInstallUpdate').disabled = $('cancelInstallUpdate').disabled = working;
+    paintConfirmWork();
     $('settings').classList.toggle('has-update', ['available', 'downloaded'].includes(state.phase));
     $('settings').title = ['available', 'downloaded'].includes(state.phase) ? t('updates.settingsHasUpdate') : t('app.settings');
     let alreadyShown = false;
@@ -76,12 +89,80 @@ export function setupUpdates({ page, open, lock, flush }) {
       : ready ? t('updates.promptReady', { target: state.target }) : t('updates.promptAvailable', { target: state.target });
     $('viewAvailableUpdate').hidden = applying;
     $('deferUpdate').hidden = progressing;
+    paintPromptWork();
+  }
+  /** 脇の更新の知らせに「実行中 N 件・承認待ち M 件」。止まる作業があることを押す前に知らせる */
+  function paintPromptWork() {
+    const line = $('updatePromptWork');
+    if (!state) { line.hidden = true; return; }
+    const progressing = installing || ['installing', 'downloading'].includes(state.phase);
+    const { running, waiting } = workCounts(currentWork());
+    const parts = [running && t('updates.promptRunning', { count: running }), waiting && t('updates.promptWaiting', { count: waiting })].filter(Boolean);
+    line.hidden = progressing || !parts.length;
+    line.textContent = parts.join(t('updates.promptJoin'));
+  }
+  /** 確認の段: 止まる作業の一覧（名前・実行中/承認待ち・エージェント）と、中断した会話がどう残るかの 1 行 */
+  function paintConfirmWork() {
+    const rows = confirming ? workRows(confirmWork) : [];
+    const stops = confirming && (confirmWork?.count ?? 0) > 0;
+    $('updateWork').hidden = !rows.length;
+    $('updateWorkAfter').hidden = !stops;
+    $('confirmInstallUpdate').textContent = stops ? t('updates.interruptInstall') : t('settings.updates.confirmInstall');
+    if (!confirming) return;
+    const list = $('updateWorkList');
+    list.replaceChildren(...rows.slice(0, WORK_ROWS).map(row => {
+      const line = el('div', 'update-work-row');
+      const waiting = row.state === 'waiting';
+      const mark = waiting ? el('span', 'update-work-dia', '◆') : runMark(t('updates.workRunningOnly'));
+      if (waiting) mark.setAttribute('aria-hidden', 'true');
+      line.append(mark, el('span', 'update-work-name', sessionName(row.sessionId)),
+        el('span', 'update-work-state' + (waiting ? ' mark' : ''), waiting ? t('updates.workWaiting')
+          : row.backend ? t('updates.workRunning', { agent: agentName(row.backend) }) : t('updates.workRunningOnly')));
+      return line;
+    }));
+    if (rows.length > WORK_ROWS) list.append(el('div', 'update-work-more', t('updates.workMore', { count: rows.length - WORK_ROWS })));
+    // 「中断した会話は再起動後に ⚠ で残り…」。訳文の {{mark}} の位置に三角を置く
+    const [before, after = ''] = t('updates.workAfter', { mark: MARK }).split(MARK);
+    $('updateWorkAfter').replaceChildren(before, warnMark(t('interrupt.markName')), after);
+  }
+  /**
+   * 「中断して更新」: 全部を reason update で中断し、running の count が 0 になるまで「作業を中断しています… N / M」を出して待つ。
+   * 30 秒で止まらなければ理由を出してやめる（更新は準備済みのまま）。確認の段で作業を見せていなければ中断しない
+   * （見せていない作業は止めない。後の flush が今までどおり断る）
+   */
+  async function stopWork() {
+    if (!cmd || !((confirmWork?.count ?? 0) > 0)) return;
+    const first = await cmd('running').catch(() => null);
+    if (!first || !(first.count > 0)) return;
+    const rows = workRows(first).length;
+    const total = rows || first.count;
+    // 行で数えるとき、行が消えてもサブエージェントなどが残っていれば最後の 1 件は済ませない
+    const remaining = (w) => (!(w.count > 0) ? 0 : rows ? Math.max(workRows(w).length, 1) : w.count);
+    stopping = interruptProgress(total, remaining(first));
+    paint(state);
+    try {
+      await cmd('abort', { reason: 'update' });
+      const until = Date.now() + STOP_WAIT_MS;
+      for (;;) {
+        const now = await cmd('running').catch(() => null);
+        if (now) {
+          stopping = interruptProgress(total, remaining(now), stopping.done);
+          paint(state);
+          if (!(now.count > 0)) return;
+        }
+        if (Date.now() > until) throw new Error(t('updates.interruptTimeout'));
+        await new Promise(r => setTimeout(r, 400));
+        // 待つ間に始まったターン（別のタブ・端末からの送信、委譲の完了の届け、送信待ち）も止める。
+        // 中断は何度送っても同じ（止め始めたものには何もしない。理由も最初のまま）
+        await cmd('abort', { reason: 'update' }).catch(() => {});
+      }
+    } finally { stopping = null; }
   }
   async function action(name, value) {
     if (busy) return;
     busy = true; failure = ''; if (state) paint(state);
     try {
-      if (name === 'install') { confirming = false; installing = true; paint(state); await flush(); }
+      if (name === 'install') { confirming = false; installing = true; paint(state); await stopWork(); paint(state); await flush(); }
       paint(await bridge.update(name, value));
     } catch (e) {
       // Electron は invoke の失敗に「Error invoking remote method …」を前置きする。利用者に要るのは本文だけ
@@ -93,7 +174,13 @@ export function setupUpdates({ page, open, lock, flush }) {
   $('updatesTab').onclick = () => page('updates');
   $('checkUpdate').onclick = () => action('check');
   $('downloadUpdate').onclick = () => action('download');
-  $('installUpdate').onclick = () => { confirming = true; paint(state); $('updateConfirmTitle').focus(); };
+  $('installUpdate').onclick = async () => {
+    confirming = true; confirmWork = currentWork(); paint(state); $('updateConfirmTitle').focus();
+    // 止まる作業を並べる（実行中でも断らない。ADR 0036）。放送を待たずに今の分を取り直す
+    const now = cmd ? await cmd('running').catch(() => null) : null;
+    if (now) confirmWork = now;
+    if (confirming) paint(state);
+  };
   $('confirmInstallUpdate').onclick = () => action('install');
   $('cancelInstallUpdate').onclick = () => { confirming = false; paint(state); $('installUpdate').focus(); };
   $('viewAvailableUpdate').onclick = () => { $('onboardingDialog').close(); open('updates'); };
@@ -128,4 +215,14 @@ export function setupUpdates({ page, open, lock, flush }) {
     }
     paint(bridge?.update ? await bridge.update('status') : { version: info.version, phase: 'unavailable', enabled: false });
   })().catch(e => { $('updateError').textContent = e.message; });
+  return {
+    /** この画面で更新を進めている（作業を中断している・保存している・入れている）。その間は「更新で中断した会話」を出さない */
+    get applying() { return installing || Boolean(stopping) || state?.phase === 'installing'; },
+    /** running が変わった（client.mjs の applyRunning）。脇の件数と、開いている確認の段の一覧を合わせる */
+    workChanged() {
+      if (!state) return;
+      paintPromptWork();
+      if (confirming && !busy && !installing) { confirmWork = currentWork() ?? confirmWork; paintConfirmWork(); }
+    },
+  };
 }
