@@ -513,6 +513,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.sys{margin-bottom:8px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .m.sys b{color:var(--ink);font-weight:500}
 .m.sys code{font-size:var(--fs-xs)}
+/* 「■ 中断しました · 14:32」。保存された中断から描く一行（client.mjs の paintInterruptLine） */
+.m.sys.interrupted{display:flex;align-items:center;gap:6px}
+.m.sys .stop-mark{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linejoin:round}
+.m.sys.interrupted .t{font-family:var(--font-mono)}
 /* 一行の中から画面を開く（コンテキストの記録の「中身を見る」）。押すのはボタン、見た目はリンク */
 .m.sys .lnk{padding:0;font-size:var(--fs-xs);color:var(--ink-blue);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
 .m.sys .lnk:hover{background:transparent;color:var(--ink-blue);text-decoration-color:var(--line-blue)}
@@ -578,6 +582,11 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 
 /* ---- 提示カード（成果物。design.md §7）。白い提示 HTML が地に溶けないよう --surface-1 の面に置く ---- */
 .unread-mark{display:inline-block;width:14px;height:14px;flex:none;color:var(--ink-unread)}
+/* 中断した会話の注意の三角（web/interrupt.mjs の warnMark）。弧と同じ 14px・線 1.6・端は丸。
+   未読は本文の字の色、開いた後は弱い字の色。差し色（--ink-mark）は承認待ちだけのものなので使わない */
+.warn-mark{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:var(--ink)}
+.warn-mark.read{color:var(--ink-weak)}
+.row-why{flex:none;white-space:nowrap}
 .present{margin:0 0 4px;background:var(--surface-1);border-radius:var(--r-m);overflow:hidden;min-width:0;max-width:100%}
 .present-cap{display:flex;align-items:center;gap:8px;min-width:0;padding:6px 14px;font-size:var(--fs-s);color:var(--ink-weak)}
 .present-kind{flex:none;font-size:var(--fs-xs);letter-spacing:.06em}
@@ -740,6 +749,13 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 中断。広い幅は字だけ、480px 以下は四角のアイコンだけ（下の「狭い画面」） */
 .abort{flex:none}
 .abort svg.i{display:none;width:18px;height:18px}
+/* 再開。中断と同じ位置・同じ薄い面。再生の三角と字（480px 以下は三角だけ） */
+.resume{flex:none;margin-left:4px}
+.resume svg.i{width:16px;height:16px}
+/* 中断中に字を書いたときの「送ると、この指示で続けます」。入力の箱の下に小さく。書いていない間も高さは保つ */
+.resume-note{font-size:var(--fs-xs);color:var(--ink-weak);padding:4px 10px 0;min-height:22px}
+.resume-note[hidden]{display:none}
+.resume-note.quiet{visibility:hidden}
 /* 「保存済み」: 行の空きに弱い字で。詰めるときは最初に消える（字が詰まる） */
 .crow .draft-saved{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:var(--fs-xs);color:var(--ink-weak);padding:2px 6px}
 /* ---- 入力欄の設定のチップ（web/composer-controls.mjs、design-system.md「入力欄の設定」） ----
@@ -1159,7 +1175,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .btn-icon{min-width:36px;min-height:36px}
   /* 入力欄のチップ・中断は添付と同じ 36px。字の欄は 16px の字で 1.5 行間（上限 6 行は fitPrompt） */
   .chip{height:36px}
-  .abort{min-height:36px}
+  .abort,.resume{min-height:36px}
   .composer textarea{line-height:1.5}
   .row-more,.grp-more,.fam-more{min-width:32px;min-height:32px}
   .row{padding-top:9px;padding-bottom:9px}
@@ -1204,6 +1220,8 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .abort{width:36px;height:36px;padding:0;border-radius:50%}
   .abort svg.i{display:block}
   .abort span{display:none}
+  .resume{width:36px;height:36px;padding:0;border-radius:50%}
+  .resume span{display:none}
 }
 @media (max-width:399px){
   .chip{padding:0 5px;gap:4px}

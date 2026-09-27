@@ -19,6 +19,7 @@ import { runMark, satMark } from "./arc.mjs";
 import { el, icon, moreButton, relTime, svgEl } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { familiesOf } from "./family.mjs";
+import { warnMark, interruptLabel, showsReasonInMeta } from "./interrupt.mjs";
 
 const backendLogos = {
   codex: "./brand/openai.svg",
@@ -127,7 +128,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const expanded = prefs.expanded;              // 開いている家族（根の sessionId）。既定は畳んだ状態
   const decided = new Set();                    // 人が開閉を決めた家族。決めるまで、今いる会話の器は開いたまま
   const made = new Set();                       // この画面で作った（まだ誰も付いていない）仮の状態
-  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), unreadIds: new Set(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null };
+  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), unreadIds: new Set(), interrupted: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null };
 
   const save = () => {
     try {
@@ -225,8 +226,11 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       }
       // 畳んだ中に走っているものがあれば見出しに弧。走っていないときは印そのものを置かない（置くと回り続ける）
       // 動いているものが 1 つでもあれば弧、裏を待っているだけなら衛星（docs/design-system.md §6）
+      // 印は 1 つだけ。弧 → 衛星 → 中断の三角 → 未読の順に強い
+      let stoppedMark = null;
       if (isCollapsed && active) head.append(runMark(t("sidebar.somethingRunning")));
       else if (isCollapsed && behind) head.append(satMark(behind, t("activity.behindCount", { count: behind })));
+      else if (isCollapsed && (stoppedMark = stoppedIn(rows))) head.append(stoppedMark);
       else if (isCollapsed && rows.some(s => last.unreadIds.has(s.id))) head.append(unreadMark());
       if (st != null) {
         const add = el("button", "btn btn-icon grp-add");
@@ -332,6 +336,13 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     return m;
   }
 
+  /** 畳んだ中に中断した会話があれば三角（中に未読の中断が 1 つでもあれば --ink）。無ければ null */
+  function stoppedIn(list) {
+    const stopped = list.map((s) => last.interrupted.get(s.id)).filter(Boolean);
+    if (!stopped.length) return null;
+    return warnMark(t("interrupt.groupMark"), { read: !stopped.some((x) => x.unread) });
+  }
+
   /**
    * 畳んだ器の見出しに出す要約。中の様子を開かずに読めるようにする。
    * 印（走っている・裏で待っている・未確認・承認待ち）と、状態ごとの件数。枝の本数そのものは出さない
@@ -341,8 +352,10 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const active = list.some((s) => last.runningIds.has(s.id) && !last.bgWaiting.has(s.id));
     const behind = list.reduce((n, s) => n + (last.bgWaiting.get(s.id) ?? 0), 0);
     const waiting = list.filter((s) => last.waitingIds.has(s.id)).length;
+    let stoppedMark = null;
     if (active) sum.append(runMark(t("sidebar.somethingRunning")));
     else if (behind) sum.append(satMark(behind, t("activity.behindCount", { count: behind })));
+    else if ((stoppedMark = stoppedIn(list))) sum.append(stoppedMark);
     else if (list.some((s) => last.unreadIds.has(s.id))) sum.append(unreadMark());
     if (waiting) sum.append(waitMark(waiting));
     const counts = new Map();
@@ -452,8 +465,14 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const meta = el("div", "row-meta");
     // 走っていれば弧。裏だけを待っていれば衛星（ターンが終わっても裏の作業が残っている会話を含む）
     const behind = last.bgWaiting.get(s.id);
-    if (last.runningIds.has(s.id) || behind) meta.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
+    // 中断した会話は注意の三角（未読は --ink、開いた後は --ink-weak）。次のターンが始まるまで残る。走っていればそちらが先
+    const stopped = last.interrupted.get(s.id);
+    const moving = last.runningIds.has(s.id) || behind;
+    if (moving) meta.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
+    else if (stopped) meta.append(warnMark(interruptLabel(stopped), { read: !stopped.unread }));
     else if (last.unreadIds.has(s.id)) meta.append(unreadMark());
+    // 自分で押した中断でないもの（更新・終了・再起動）は理由の字も出す
+    if (stopped && !moving && showsReasonInMeta(stopped)) meta.append(el("span", "row-why", interruptLabel(stopped)));
     if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", t("sidebar.waiting")));
     if (pendingRow?.visible) { const label = el('span', 'pending-label'); label.append(runMark(pendingRow.text), pendingRow.text); meta.append(label); }
     else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
@@ -753,6 +772,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
      * @param {Set<string>} o.waitingIds
      * @param {Map<string,number>} o.bgWaiting  main は返答済みで裏を待っているセッション -> 待っている本数
      * @param {Set<string>} o.unreadIds
+     * @param {Map<string,{at:number,reason:string,unread:boolean}>} [o.interrupted]  中断した会話（web/interrupt.mjs）
      * @param {{status:string|null,cwd:string}|null} o.draft  まだ id の無い新しいセッション
      * @param {object|null} o.backendLabels  バックエンドが 2 つ以上のときだけ
      */
@@ -765,6 +785,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         waitingIds: o.waitingIds ?? new Set(),
         bgWaiting: o.bgWaiting ?? new Map(),
         unreadIds: o.unreadIds ?? new Set(),
+        interrupted: o.interrupted ?? new Map(),
         draft: o.draft ?? null,
         backendLabels: o.backendLabels ?? null,
         pendingRows: o.pendingRows ?? new Map(),

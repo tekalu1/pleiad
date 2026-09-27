@@ -80,7 +80,7 @@
       "download": "ダウンロード",
       "install": "再起動して更新",
       "confirmTitle": "再起動して更新しますか？",
-      "confirmBody": "会話と下書きを保存してPleiadを再起動します。実行中の作業や承認待ちがある場合は、更新せずにお知らせします。",
+      "confirmBody": "会話と下書きを保存してPleiadを再起動します。",
       "confirmInstall": "保存して再起動",
       "later": "あとで",
       "autoCheck": "更新を自動で確認する",
@@ -1028,7 +1028,6 @@
     "sys": {
       "agentChanged": "エージェントを {{agent}} に変更しました。次の送信から会話を引き継ぎます。",
       "taskResumed": "Pleiad タスクの結果を受け取って再開しました",
-      "aborted": "中断した",
       "failed": "失敗: {{error}}",
       "unknownReason": "理由不明",
       "contextRefreshed": "指示・Skills が変わったので読み込み直しました",
@@ -1710,7 +1709,19 @@
     "updated": "Pleiad {{version}} に更新しました",
     "promptReady": "Pleiad {{target}} の更新準備ができました",
     "promptAvailable": "Pleiad {{target}} を利用できます",
-    "notesFailed": "リリースノートを読み込めませんでした。"
+    "notesFailed": "リリースノートを読み込めませんでした。",
+    "workTitle": "実行中の作業",
+    "workRunning": "実行中 · {{agent}}",
+    "workRunningOnly": "実行中",
+    "workWaiting": "承認待ち",
+    "workMore_other": "ほか {{count}} 件",
+    "workAfter": "中断した会話は再起動後に {{mark}} で残り、「再開」で続きから進められます。承認待ちは却下扱いになります。",
+    "interruptInstall": "中断して更新",
+    "interrupting": "作業を中断しています… {{done}} / {{total}}",
+    "interruptTimeout": "30 秒待っても止まらない作業がありました。更新は準備済みのまま残ります。",
+    "promptRunning_other": "実行中 {{count}} 件",
+    "promptWaiting_other": "承認待ち {{count}} 件",
+    "promptJoin": "・"
   },
   "outbox": {
     "status": {
@@ -1991,5 +2002,33 @@
       "saveFailed": "保存できませんでした: {{error}}",
       "loadFailed": "読み込めませんでした: {{error}}"
     }
+  },
+  "interrupt": {
+    "label": {
+      "user": "中断",
+      "update": "更新のため中断",
+      "quit": "終了のため中断",
+      "restart": "再起動で中断",
+      "hostAway": "接続が切れて中断"
+    },
+    "line": {
+      "user": "中断しました",
+      "update": "Pleiad の更新のため中断しました",
+      "quit": "Pleiad の終了のため中断しました",
+      "restart": "Pleiad が再起動したため中断しました",
+      "hostAway": "接続が切れたため中断しました"
+    },
+    "resume": "再開",
+    "resumeOutbox_other": "保留中の {{count}} 件を送って再開",
+    "resumeNote": "送ると、この指示で続けます",
+    "resumeNoteHeld_other": "送ると、保留中の {{count}} 件の後にこの指示で続けます",
+    "placeholder": "指示を変えて続ける…",
+    "resumeFailed": "再開できませんでした: {{error}}",
+    "groupMark": "中の会話が中断",
+    "strip_other": "更新で中断した会話が {{count}} 件あります",
+    "resumeAll": "まとめて再開",
+    "stripClose": "閉じる",
+    "resumeAllFailed_other": "{{count}} 件を再開できませんでした: {{error}}",
+    "markName": "注意の三角"
   }
 }

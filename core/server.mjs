@@ -61,6 +61,8 @@ const usageStore = createUsageStore(store.dataDir);
 await ensureDataSchema(store.dataDir);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
+// このサーバーが起動した時刻。ready で配る。画面は、これより前の更新による中断だけを「更新の後」とみなす（web/interrupt.mjs の updateInterrupted）
+const SERVER_STARTED_AT = Date.now();
 const WEB = path.join(HERE, "..", "web");
 // 画面の言語（設定値と解決後）。起動時と設定を変えたときに決め直す。ready と prefs イベントで配る（docs/design.md「多言語対応」）
 let locale = localeInfo(await store.getPrefs());
@@ -573,6 +575,19 @@ server.on("upgrade", (req, socket, head) => {
 
 const toMs = (v) => (Number.isFinite(v) ? v : (v ? Date.parse(v) || null : null));
 
+// ---- 中断と再開（docs/design.md「中断と再開」・ADR 0027） ----------------------------
+// 中断の理由。user = 中断ボタン、update = 更新のため、quit = 終了のため、hostAway = ホスト不在の猶予切れ、
+// restart = Pleiad が落ちた・強制終了で終わりが記録されていないターン（起動時に store.recoverInterruptedTurns が付ける）
+const INTERRUPT_REASONS = new Set(["user", "update", "quit", "hostAway", "restart"]);
+// abort で画面・デスクトップが渡せる理由。ほかの値（不正・省略）は user として扱う
+const ABORT_REASONS = new Set(["user", "update", "quit"]);
+const abortReason = (value) => (ABORT_REASONS.has(value) ? value : "user");
+/** 保存された中断の印を、画面へ渡す形 { at, reason } に揃える。形が崩れていれば null */
+function interruptedOf(value) {
+  if (!value || typeof value !== "object" || !Number.isFinite(value.at)) return null;
+  return { at: value.at, reason: INTERRUPT_REASONS.has(value.reason) ? value.reason : "user" };
+}
+
 /**
  * エージェントのネイティブな行（無ければ null）と sidecar の行を、一覧の 1 行に合わせる。
  *
@@ -591,6 +606,8 @@ function sessionRow(b, s, extra = {}) {
     status: (b.capabilities?.tag && s ? s.tag : extra.status ?? s?.tag) ?? null,
     statusChangedAt: extra.statusChangedAt ?? null,
     completedAt: extra.completedAt ?? null,
+    // 中断したまま次のターンが始まっていない印 { at, reason }。無ければ null（docs/design.md「中断と再開」）
+    interrupted: interruptedOf(extra.interrupted),
     // 確認済みの完了時刻。ホストに 1 つで、どの端末から見ても同じ（store.markRead・docs/design.md「完了・未確認」）
     readAt: Number.isFinite(extra.readAt) ? extra.readAt : null,
     parent: extra.parent ?? s?.parent ?? null,
@@ -867,7 +884,8 @@ function giveUp() {
   // エージェントへの理由は承認ごとに会話の言語で（askPermission が messageKey を訳す）。ログは日本語のまま
   for (const [, w] of [...runtime.waiting]) w.settle({ allow: false, messageKey: 'hostAway', messageParams: { seconds } });
   // 承認を返せないまま走らせ続けない。黙って deny し続けるより、止めて気づかせる。
-  for (const t of [...runtime.turns.values()]) t.ac.abort();
+  // 中断の理由は hostAway（会話に中断として残り、戻った人が「再開」で続けられる）
+  for (const t of [...runtime.turns.values()]) { t.abortReason ??= "hostAway"; t.ac.abort(); }
   void agentTasks?.cancelOwner().catch(() => {});
   console.log(`  host が ${seconds} 秒戻らなかったので中断した`);
 }
@@ -1046,6 +1064,8 @@ function makeEmit(turn) {
     if (event?.type === "turnResult") {
       if (turn.stream.initialMessageId) event = { ...event, messageId: turn.stream.initialMessageId };
       turn.outcome = event.outcome;
+      // 中断で終わったら理由を添える（画面は会話の末尾の「中断しました」の文言を理由で選ぶ）
+      if (event.outcome === "aborted") event = { ...event, reason: turn.abortReason ?? "user" };
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）
       if (event.outcome === "error") turn.errorShown = true;
       const execution = taskExecutions.get(turn.info.sessionId);
@@ -1074,8 +1094,10 @@ function makeEmit(turn) {
       // backend を書いておかないと、次に開いたときに誰に聞けばよいか分からない。
       const { sessionId, mode, model, cwd, status, attachments } = turn.info;
       turn.setup = Promise.all([
+        // turnStartedAt: 走っている印。終わり（endTurn）で片付ける。起動時に残っていれば落ちたターン（store.recoverInterruptedTurns）
         store.setMeta(sessionId, {
           backend: turn.backend.id, cwd, createdAt: turn.info.startedAt, lastModified: Date.now(),
+          turnStartedAt: turn.startedAtMs, interrupted: null,
         }),
         store.setMode(sessionId, mode),
           store.setModel(sessionId, model ?? ""),
@@ -1431,6 +1453,11 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
   });
 };
 
+// 送信待ちの一覧が変わるたびに呼ぶもの（sessionId -> Set<fn(messages)>）。再開の受け付けを、送った項目が出ていくまで保つのに使う
+const outboxWatchers = new Map();
+// 会話の中断で取り消す委譲タスクの子の会話 -> 中断の理由。子のターンを実際に止める所（agentTasks の execute の stopChild）が
+// 読んで付ける。止まらなかった子には付けない（abortSessions が取り消しの後に片付ける）
+const taskStopReasons = new Map();
 const outbox = createMessageQueue({
   store,
   active: id => {
@@ -1446,7 +1473,10 @@ const outbox = createMessageQueue({
       steer: steer ? item => steer(item) : null };
   },
   start: runTurn,
-  changed: (sessionId, messages) => emitGlobal({ type: 'outbox', sessionId, messages }),
+  changed: (sessionId, messages) => {
+    emitGlobal({ type: 'outbox', sessionId, messages });
+    for (const watch of [...(outboxWatchers.get(sessionId) ?? [])]) watch(messages);
+  },
   delivered: async (sessionId, item, { turn }) => {
     // 受理と「エージェントに渡った」は別。後から合図を出せるバックエンド（steerConfirms）の分だけ
     // pending を立て、画面は渡るまで待っていることを出す。出せないバックエンドは今までどおり即時扱い
@@ -1459,6 +1489,11 @@ const outbox = createMessageQueue({
   },
 });
 await outbox.recover();
+// 前の起動で走っていたのに終わりが記録されていないターン（落ちた・強制終了）を、会話の中断（reason: restart）として残す
+{
+  const recovered = await store.recoverInterruptedTurns(Date.now()).catch(err => { console.error("  中断の記録に失敗:", String(err?.message ?? err)); return []; });
+  if (recovered.length) console.log(`  前の起動で終わらなかったターン ${recovered.length} 件を中断として残した`);
+}
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
   changed: () => { broadcastRunning(); },
@@ -1522,7 +1557,12 @@ agentTasks = await createAgentTasks({
     const execution = { outcome: null, error: null };
     taskExecutions.set(task.sessionId, execution);
     const stopChild = () => {
-      runtime.turns.get(task.sessionId)?.ac.abort();
+      const child = runtime.turns.get(task.sessionId);
+      // 依頼元の会話を止めた理由（abortSessions が置く）。この取り消しが実際に止めるターンにだけ付ける
+      const why = taskStopReasons.get(task.sessionId);
+      taskStopReasons.delete(task.sessionId);
+      if (child && why) child.abortReason ??= why;
+      child?.ac.abort();
       getBackend(task.backend)?.stopSession?.(task.sessionId);
     };
     signal.addEventListener('abort', stopChild, { once: true });
@@ -1701,6 +1741,9 @@ async function runTurnInternal(args, onStarted, hooks) {
       },
       key: sessionId ?? `new:${crypto.randomUUID()}`,
       ac: new AbortController(),
+      // 中断の理由（abortSessions / giveUp が止める前に付ける。無いまま中断で終わったら user）
+      abortReason: null,
+      startedAtMs: Date.now(),
       backend,
       agentLocale,
       control: { handle: null, onReady: () => outbox.kick(sessionId).catch(() => {}) },
@@ -1759,6 +1802,10 @@ async function runTurnInternal(args, onStarted, hooks) {
     try {
       await onStarted();
       didStart = true;
+      // 次のターンが始まったので中断の印を消し、走っている印を付ける（新しい会話は id が決まったとき。makeEmit の session）
+      if (sessionId) await store.setMeta(sessionId, { turnStartedAt: turn.startedAtMs, interrupted: null }).catch(err => {
+        console.error("  ターンの開始の記録に失敗:", String(err?.message ?? err));
+      });
       if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true });
       broadcastRunning();
       syncRunningPoll();
@@ -1862,18 +1909,26 @@ async function runTurnInternal(args, onStarted, hooks) {
 async function endTurn(turn, emit, { record = true } = {}) {
   const requeued = turn.outcome === "requeue";
   const completedAt = requeued ? null : Date.now();
+  // 中断で終わった（バックエンドが aborted を返した。止めた後に失敗として終わったものも含む）なら、会話に中断として残す。
+  // 時刻は completedAt と同じ値にする（確認済みの印 readAt は completedAt で丸めるので、ずらすと未読から戻れない）
+  const stopped = !requeued && (turn.outcome === "aborted" || (turn.ac.signal.aborted && turn.outcome !== "ok"));
+  const interrupted = stopped ? { at: completedAt, reason: turn.abortReason ?? "user" } : null;
   if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id })
     .catch(() => { console.error('  使用量を記録できませんでした'); });
   if (turn.info.sessionId) {
     await turn.setup?.catch(() => {});
-    if (!requeued) await store.setMeta(turn.info.sessionId, { completedAt }).catch(err => {
+    // 走っている印（turnStartedAt）はどの終わり方でも片付ける。requeue は何も届いていないので完了も中断も書かない
+    // 始まらなかったターン（record が false）は前の中断の印を消さない（開始で消していないので）
+    const patch = requeued ? { turnStartedAt: null }
+      : { completedAt, turnStartedAt: null, ...(record || stopped ? { interrupted } : {}) };
+    await store.setMeta(turn.info.sessionId, patch).catch(err => {
       console.error("  完了の記録に失敗:", String(err?.message ?? err));
     });
   }
   // 委譲された子の会話（delegation）の完了は、画面が通知しない。結果は依頼元の会話へ届く
   const delegated = turn.info.sessionId ? Boolean((await store.get(turn.info.sessionId).catch(() => null))?.delegation) : false;
   // Retain turnEnd in snapshots already being read, then release the turn.
-  emit({ type: "turnEnd", completedAt, outcome: turn.outcome, ...(requeued ? { requeued: true } : {}), ...(delegated ? { delegated: true } : {}) });
+  emit({ type: "turnEnd", completedAt, outcome: turn.outcome, interrupted, ...(requeued ? { requeued: true } : {}), ...(delegated ? { delegated: true } : {}) });
   runtime.turns.delete(turn.key);
   notifyFree(turn.key);
   syncRunningPoll();
@@ -1972,6 +2027,138 @@ function emitOutsideTurn(sessionId, event) {
   emitGlobal({ ...event, sessionId });
 }
 
+// Pleiad タスクがまだ終わっていない（取り消せば子のターンが止まる）状態。agentTasks.list は承認待ちを waiting と見せる
+const LIVE_TASK = new Set(['queued', 'running', 'cancelling', 'waiting']);
+/**
+ * 会話を止めると取り消しで止まる、委譲の子孫の会話（孫以下も）。agentTasks.cancelOwner と同じく終わったタスクの先も辿るが、
+ * 返すのはタスクがまだ終わっていない子だけ（終わったタスクの子の会話を人が直接動かしているターンは止まらない）
+ */
+function stoppedDescendants(sessionId) {
+  const out = new Set(), seen = new Set([sessionId]);
+  const queue = [sessionId];
+  for (let i = 0; i < queue.length && seen.size < 1000; i++) {
+    for (const r of agentTasks.list(queue[i])) {
+      if (!r.sessionId || seen.has(r.sessionId)) continue;
+      seen.add(r.sessionId);
+      if (LIVE_TASK.has(r.status)) out.add(r.sessionId);
+      queue.push(r.sessionId);
+    }
+  }
+  return out;
+}
+
+/**
+ * 会話を止める（WS の abort と、デスクトップの「中断して終了」）。sessionId を省略したら全部。
+ * 止めたターンは会話に中断（interrupted { at, reason }）として残る（endTurn）。
+ * 委譲の子の会話も独立した会話なので、同じ理由で中断として残り、個別に再開できる。委譲タスクそのものは取り消す。
+ */
+async function abortSessions({ sessionId = null, reason } = {}) {
+  const why = abortReason(reason);
+  const paused = sessionId ? [sessionId] : [...runtime.turns.keys()];
+  // 実際の中断を**最初に同期的に**行う。以前は Pleiad タスクの停止と送信待ちの保留（どちらもディスクへの
+  // 書き込み）を待ってから中断していたので、タスクを多く作った会話ほど止まるのが遅れ、その間は途中送信も
+  // 通ってしまっていた（steer は turn.ac.signal.aborted で断る）
+  const targets = sessionId
+    ? [runtime.turns.get(sessionId)].filter(Boolean)
+    : [...runtime.turns.values()];
+  // 1 つの会話を止めると、その会話の委譲タスク（終わっていないもの）も取り消しで止まる。子のターンにも同じ理由を付けるが、
+  // 付けるのは取り消しが実際にそのターンを止めるとき（stopChild）。先に止め始めていた（理由が付いている）ターンは最初の理由のまま
+  const children = sessionId ? [...stoppedDescendants(sessionId)] : [];
+  for (const id of children) if (!taskStopReasons.has(id)) taskStopReasons.set(id, why);
+  for (const t of targets) {
+    t.abortReason ??= why;
+    t.ac.abort();
+    settleAll('aborted', t.info.sessionId);
+    // 受け付けたことをすぐ画面に出す。バックエンドが止まり終えるまで（Claude は CLI の終了まで）
+    // turnResult / turnEnd は来ないので、それまでの間「中断している」を出す
+    if (!t.info.stopping) {
+      t.info.stopping = true;
+      makeEmit(t)({ type: 'activity', state: 'stopping' });
+    }
+  }
+  if (targets.length) broadcastRunning();
+  try {
+    await agentTasks.cancelOwner(sessionId || undefined);
+  } finally {
+    // 取り消しで止まった子は stopChild が読み終えている。残りは止まらなかった子（付けない）
+    for (const id of children) if (taskStopReasons.get(id) === why) taskStopReasons.delete(id);
+  }
+  const ownTask = sessionId ? agentTasks.list().find(r => r.sessionId === sessionId) : null;
+  if (ownTask) await agentTasks.cancel(ownTask.taskId);
+  for (const id of paused) await outbox.pause(id);
+  return { aborted: targets.length, reason: why };
+}
+
+/** 送信待ちの ids がどれも queued / sending でなくなるまで待つ（始まった・失敗した・取り消した）。ms で諦める */
+function outboxSettled(sessionId, ids, ms = 120000) {
+  const wanted = new Set(ids);
+  return new Promise(resolve => {
+    let set = outboxWatchers.get(sessionId);
+    if (!set) outboxWatchers.set(sessionId, set = new Set());
+    const done = () => {
+      clearTimeout(timer);
+      set.delete(check);
+      if (!set.size && outboxWatchers.get(sessionId) === set) outboxWatchers.delete(sessionId);
+      resolve();
+    };
+    const check = messages => {
+      if (!messages.some(m => wanted.has(m.id) && (m.status === 'queued' || m.status === 'sending'))) done();
+    };
+    const timer = setTimeout(done, ms);
+    timer.unref?.();
+    set.add(check);
+    outbox.list(sessionId).then(check, done);
+  });
+}
+
+// 再開を受け付けている最中の会話（二度押し・別の端末からの再開で二重に送らない）。
+// 送った項目が送信待ち・送信中を出る（ターンが始まる・失敗する）まで保つ。始まれば sessionBusy が引き継ぐ
+const resuming = new Set();
+const resumeRunning = () => Object.assign(new Error(t('resume.running')), { code: 'SESSION_RUNNING' });
+/**
+ * 中断した会話を続ける。人が「再開」を押したときだけ呼ばれる（勝手には再開しない）。
+ * 保留（paused）の未送信があれば、それを並びのまま送り直す（1 件ずつの「再送する」と同じ経路。「続けて」は送らない）。
+ * 先頭が送れなかった（failed。エージェントに渡っていない）ものなら、それも一緒に送り直す。
+ * 先頭が結果不明（unknown）なら断る（届いているかもしれないので、人が一覧で再送か取り消しを選ぶ）。
+ * 保留の後ろで止まっていた送信待ち（中断中に送った指示）は、保留を戻せば続いて送られる。
+ * 送り直すものが無ければ理由ごとの文を、普通の送信（sendMessage と同じ送信待ち）で送る。文は会話の言語で、見える発言になる。
+ * 実行中（準備中・切り替え・分岐を含む。先頭が送信待ち・送信中も）の会話と、中断していない会話は断る
+ */
+async function resumeSession(sessionId) {
+  if (!sessionId || typeof sessionId !== 'string' || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
+  if (resuming.has(sessionId) || sessionBusy(sessionId)) throw resumeRunning();
+  resuming.add(sessionId);
+  let sent = null;
+  try {
+    const items = await outbox.list(sessionId);
+    // 一覧は送信待ちの処理（kick）の後ろに並ぶので、読み終えた時点でもう始まっているかもしれない。読んだ後に確かめ直す
+    if (sessionBusy(sessionId)) throw resumeRunning();
+    const entry = await store.get(sessionId);
+    const interrupted = interruptedOf(entry.interrupted);
+    if (!interrupted) throw Object.assign(new Error(t('resume.notInterrupted')), { code: 'NOT_INTERRUPTED' });
+    const open = items.filter(m => !['sent', 'cancelled'].includes(m.status));
+    // 送信中、または先頭が送信待ち（すぐ送られる）なら、もう続きを送っている（再開の二度押し・別の端末から）。
+    // 中断の後に送った（受け付けた）ものが既に渡っていても同じ（ターンの開始で中断の印が消えるまでの間）
+    if (open.some(m => m.status === 'sending') || open[0]?.status === 'queued'
+      || items.some(m => m.status === 'sent' && Date.parse(m.at) > interrupted.at)) throw resumeRunning();
+    if (open.some(m => m.status === 'unknown')) throw Object.assign(new Error(t('resume.outboxUnknown')), { code: 'OUTBOX_UNKNOWN' });
+    const released = await outbox.retryPaused(sessionId, { failed: true });
+    if (released.length) {
+      sent = released;
+      return { sent: 'outbox', count: released.length };
+    }
+    const lng = agentLocaleOf(entry.agentLocale) ?? currentLocale();
+    // i18n-dynamic: resume.prompt.
+    const prompt = t(`resume.prompt.${interrupted.reason}`, { lng });
+    const item = await outbox.accept(sessionId, crypto.randomUUID(), { prompt });
+    sent = [item.id];
+    return { sent: 'text', count: 1 };
+  } finally {
+    if (sent) outboxSettled(sessionId, sent).finally(() => resuming.delete(sessionId));
+    else resuming.delete(sessionId);
+  }
+}
+
 wss.on("connection", (ws, req) => {
   // OS の操作（revealPath / openPath）を許すのは、サーバーのある PC の画面からの接続だけ（core/os-open.mjs）
   const local = isLocalRequest(req);
@@ -1988,6 +2175,7 @@ wss.on("connection", (ws, req) => {
     version: APP_VERSION,
     homeDir: os.homedir(),
     resumedTurn: resumed,
+    startedAt: SERVER_STARTED_AT,
     // 画面の言語。setting は設定値（auto|ja|en）、lang は実際に使う言語（ja|en）
     locale,
   }));
@@ -2348,6 +2536,10 @@ wss.on("connection", (ws, req) => {
           if (typeof messageId !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(messageId)) throw new Error(t('send.messageIdRequired'));
           if (typeof prompt !== 'string' || !prompt.trim()) throw new Error(t('send.messageRequired'));
           if (attachments !== undefined && !Array.isArray(attachments)) throw new Error(t('send.invalidAttachments'));
+          // 中断した会話に新しい指示を送ったら、中断で保留になった未送信を先に並びのまま送り直す（再開と同じ）。
+          // 戻さないと新しい指示は保留の後ろで順番を待ち続ける。画面は「保留中の N 件の後にこの指示で続けます」と出している
+          if (!sessionBusy(sessionId) && interruptedOf((await store.get(sessionId)).interrupted)
+            && (await outbox.list(sessionId)).some(m => m.status === 'paused')) await outbox.retryPaused(sessionId);
           return reply(true, await outbox.accept(sessionId, messageId, {
             prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}),
           }));
@@ -2361,32 +2553,14 @@ wss.on("connection", (ws, req) => {
           return reply(true, await outbox.list(msg.args?.sessionId));
 
         case "abort": {
-          // どのセッションを止めるか。省略されたら全部止める
-          const { sessionId } = msg.args ?? {};
-          const paused = sessionId ? [sessionId] : [...runtime.turns.keys()];
-          // 実際の中断を**最初に同期的に**行う。以前は Pleiad タスクの停止と送信待ちの保留（どちらもディスクへの
-          // 書き込み）を待ってから中断していたので、タスクを多く作った会話ほど止まるのが遅れ、その間は途中送信も
-          // 通ってしまっていた（steer は turn.ac.signal.aborted で断る）
-          const targets = sessionId
-            ? [runtime.turns.get(sessionId)].filter(Boolean)
-            : [...runtime.turns.values()];
-          for (const t of targets) {
-            t.ac.abort();
-            settleAll('aborted', t.info.sessionId);
-            // 受け付けたことをすぐ画面に出す。バックエンドが止まり終えるまで（Claude は CLI の終了まで）
-            // turnResult / turnEnd は来ないので、それまでの間「中断している」を出す
-            if (!t.info.stopping) {
-              t.info.stopping = true;
-              makeEmit(t)({ type: 'activity', state: 'stopping' });
-            }
-          }
-          if (targets.length) broadcastRunning();
-          await agentTasks.cancelOwner(sessionId);
-          const ownTask = agentTasks.list().find(r => r.sessionId === sessionId);
-          if (ownTask) await agentTasks.cancel(ownTask.taskId);
-          for (const id of paused) await outbox.pause(id);
-          return reply(true, { aborted: targets.length });
+          // { sessionId?, reason? }。sessionId を省略したら全部止める。reason は user|update|quit（ほかは user）
+          const { sessionId, reason } = msg.args ?? {};
+          return reply(true, await abortSessions({ sessionId, reason }));
         }
+
+        // 中断した会話を続ける（docs/design.md「中断と再開」）。{ sessionId } -> { sent: "outbox"|"text", count }
+        case "resume":
+          return reply(true, await resumeSession(msg.args?.sessionId));
 
         case 'agentTasks': return reply(true, agentTasks.list(msg.args?.sessionId));
         case 'cancelAgentTask': {
@@ -2475,6 +2649,8 @@ wss.on("connection", (ws, req) => {
             const retired = backend?.retired ? { retired: backend.retired } : {};
             // A later completion cannot be acknowledged by an older history snapshot.
             const completedAt = (await store.get(sessionId)).completedAt ?? null;
+            // 中断の印（一覧の行と同じ形）。会話の末尾の「中断しました」を保存された状態から描くため
+            const interrupted = runtime.turns.has(sessionId) ? null : interruptedOf((await store.get(sessionId)).interrupted);
             const data = await history.loadTranscript(sessionId, backend);
             // 系譜の照合（web/branches.mjs）は uuid・役割・本文・ツール名しか見ない。
             // ツール結果や提示まで載せると、家族を開くたびに数十MBが流れて画面が止まる
@@ -2483,7 +2659,7 @@ wss.on("connection", (ws, req) => {
               ...(m.toolCalls ? { toolCalls: m.toolCalls.map(call => ({ name: call.name })) } : {}),
             })) });
             const draft = (await store.get(sessionId)).draft ?? null;
-            if (!msg.args?.live) return reply(true, { ...data, completedAt, draft, ...retired });
+            if (!msg.args?.live) return reply(true, { ...data, completedAt, interrupted, draft, ...retired });
             // 承認は一度きりの配信で、streamEvents にも載らない（web/session-stream.mjs）。
             // 開き直しのたびに保留中のものを返さないと、承認が起きた後にその会話を開いても
             // カードが出ず、一覧だけが「承認待ち」のまま止まる。
@@ -2500,12 +2676,12 @@ wss.on("connection", (ws, req) => {
               // Use a fixed pre-turn history, never an independently sampled partial
               // transcript: it may overlap the events or lag behind them.
               return reply(true, {
-                messages: [...live.messages, ...(user ? [user] : [])], presents: live.presents, completedAt, draft,
+                messages: [...live.messages, ...(user ? [user] : [])], presents: live.presents, completedAt, interrupted: null, draft,
                 stream: { events: live.events }, streamCursor: streamSequence, permissions,
                 initialMessageId: live.initialMessageId,
               });
             }
-            return reply(true, { ...data, completedAt, draft, streamCursor: streamSequence, permissions, ...retired });
+            return reply(true, { ...data, completedAt, interrupted, draft, streamCursor: streamSequence, permissions, ...retired });
           } finally { liveReads.delete(read); }
         }
 
@@ -3109,6 +3285,12 @@ process.parentPort?.on("message", async ({ data }) => {
   }
   if (data?.type === 'update-unlock') updateGate.release();
   if (data?.type === "running") process.parentPort.postMessage({ type: "running", work: await runningWork() });
+  // デスクトップの「中断して終了」（desktop/main.cjs の closeSafely）。全部を reason 付きで止める。
+  // main は running の count が 0 になるのを待ってから終了する
+  if (data?.type === 'abort') {
+    const result = await abortSessions({ reason: data.reason }).catch(err => ({ error: String(err?.message ?? err) }));
+    process.parentPort.postMessage({ type: 'abort', id: data.id, ...result });
+  }
   if (data?.type === "shutdown" && runtime.turns.size === 0 && !agentTasks.busy) process.exit(0);
 });
 

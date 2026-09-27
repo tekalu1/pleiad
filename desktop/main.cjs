@@ -26,7 +26,7 @@ if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 
 // ローカルの窓の本体フレームで、ローカルのサーバーの画面からの IPC だけを通す（リモートの窓・同梱の窓は別の口）
 function trusted(event) { trust.check(event, ['local']); }
-function workerRequest(type) {
+function workerRequest(type, extra = {}) {
   return new Promise((resolve, reject) => {
     const id = ++requestId;
     const done = message => {
@@ -34,8 +34,36 @@ function workerRequest(type) {
       clearTimeout(timer); worker.off('message', done); resolve(message);
     };
     const timer = setTimeout(() => { worker.off('message', done); reject(new Error(t('errors.runningCheckFailed'))); }, 10000);
-    worker.on('message', done); worker.postMessage({ type, id });
+    worker.on('message', done); worker.postMessage({ ...extra, type, id });
   });
+}
+
+/** 実行中の作業（core/server.mjs の runningWork）。10 秒で答えが無ければ失敗 */
+function runningWork() {
+  return new Promise((resolve, reject) => {
+    const onMessage = message => { if (message.type === 'running') { clearTimeout(timer); worker.off('message', onMessage); resolve(message.work); } };
+    const timer = setTimeout(() => { worker.off('message', onMessage); reject(new Error(t('quit.checkFailed'))); }, 10_000);
+    worker.on('message', onMessage); worker.postMessage({ type: 'running' });
+  });
+}
+
+// 「中断して終了」で作業が止まり終えるのを待つ上限（画面の「中断して更新」と同じ 30 秒。docs/desktop-releases.md）
+const ABORT_WAIT_MS = 30_000;
+/**
+ * 全部の作業を reason 付きで中断し、実行中の数が 0 になるまで待つ。止まった会話は中断として残り、次の起動で「再開」できる。
+ * 待つ間に始まったターン（別の端末からの送信・委譲の完了の届け・送信待ち）も止めるため、残っている間は見るたびに
+ * 中断を送り直す（止め始めたものには何もしない。理由も最初のまま）。上限までに止まらなければ、残っている数を理由にして失敗する（終了しない）
+ */
+async function abortAll(reason) {
+  const until = Date.now() + ABORT_WAIT_MS;
+  for (;;) {
+    const result = await workerRequest('abort', { reason });
+    if (result.error) throw new Error(result.error);
+    const work = await runningWork();
+    if (work.count === 0) return;
+    if (Date.now() >= until) throw new Error(t('quit.abortTimeout', { count: work.count, seconds: ABORT_WAIT_MS / 1000 }));
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
 }
 
 async function installUpdate() {
@@ -188,14 +216,13 @@ async function closeSafely() {
   if (closing) return;
   closing = true;
   try {
-    const work = await new Promise((resolve, reject) => {
-      const onMessage = message => { if (message.type === 'running') { clearTimeout(timer); worker.off('message', onMessage); resolve(message.work); } };
-      const timer = setTimeout(() => { worker.off('message', onMessage); reject(new Error(t('quit.checkFailed'))); }, 10_000);
-      worker.on('message', onMessage); worker.postMessage({ type: 'running' });
-    });
+    const work = await runningWork();
     if (work.count > 0) {
-      await dialog.showMessageBox(window, { type: 'info', title: t('quit.busyTitle'), message: t('quit.busyMessage'), buttons: [t('quit.backToWork')] });
-      return;
+      // 「作業に戻る」か「中断して終了」（reason: quit。中断した会話は次の起動で残り、「再開」で続けられる。ADR 0027）
+      const { response } = await dialog.showMessageBox(window, { type: 'info', title: t('quit.busyTitle'), message: t('quit.busyMessage'),
+        buttons: [t('quit.backToWork'), t('quit.abortAndQuit')], defaultId: 0, cancelId: 0, noLink: true });
+      if (response !== 1) return;
+      await abortAll('quit');
     }
     quitting = true; worker.postMessage({ type: 'shutdown' }); app.quit();
   } catch (e) { await dialog.showMessageBox(window, { message: e.message, buttons: [t('common.back')] }); }

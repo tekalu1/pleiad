@@ -91,6 +91,18 @@
     "visualizationSaveFailed": "Could not save the visualization: {{error}}",
     "contextSaveFailed": "Could not save the context usage record."
   },
+  "resume": {
+    "running": "This conversation is running. Resume it after it finishes.",
+    "notInterrupted": "This conversation was not stopped.",
+    "outboxUnknown": "Can't resume: a message couldn't be confirmed as sent. Check the conversation, then resend or cancel that message in the unsent list.",
+    "prompt": {
+      "user": "Please continue.",
+      "update": "Stopped for a Pleiad update. Check the result of any operation that was in progress, then continue.",
+      "quit": "Stopped because Pleiad was quit. Check the result of any operation that was in progress, then continue.",
+      "restart": "Stopped because Pleiad restarted. Check the result of any operation that was in progress, then continue.",
+      "hostAway": "Stopped because the connection was lost. Check the result of any operation that was in progress, then continue."
+    }
+  },
   "scan": {
     "busy": "A scan is already running."
   },

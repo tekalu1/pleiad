@@ -78,6 +78,8 @@ export default async function (t) {
     completionNotifications: { requestPermission: noop }, slashSkills: { close: noop }, uiLang: 'ja', attachmentLine: (l, p) => p,
     receipts: new Map(), saveReceipts: noop, messageRow: () => true, ensureMessageRow: noop, markDelivery: noop,
     createComposerWait,
+    // 中断と再開（web/interrupt.mjs・client.mjs の syncResume / paintInterruptLine）。ここでは中断していない会話だけ
+    syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
   });
   vm.runInContext(code, context);
   context.composerWait = createComposerWait({ box: $('cbox'), prompt: $('prompt'), send: $('send'), note: $('composerNote'),

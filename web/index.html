@@ -77,9 +77,17 @@
     <div class="update-notice" id="updateNotice" hidden><span id="updateNoticeText"></span><button type="button" class="btn" id="viewUpdateNotes" data-i18n="app.update.viewNotes"></button><button type="button" class="btn" id="dismissUpdateNotice" data-i18n="app.update.dismiss"></button></div>
     <div class="update-notice" id="updatePrompt" hidden>
       <span id="updatePromptText" role="status" aria-live="polite"></span>
+      <!-- 実行中の作業があれば「実行中 N 件・承認待ち M 件」（web/updates.mjs。更新すると中断される） -->
+      <span class="sub" id="updatePromptWork" hidden></span>
       <progress id="updatePromptProgress" max="100" hidden data-i18n-aria-label="app.update.progress"></progress>
       <button type="button" class="btn" id="viewAvailableUpdate" data-i18n="app.update.view"></button>
       <button type="button" class="btn" id="deferUpdate" data-i18n="app.update.later"></button>
+    </div>
+    <!-- 更新で中断した会話が残っている間の一行（docs/design-system.md「中断と再開」）。× は閉じたときの最大の中断時刻を覚える -->
+    <div class="side-undo resume-strip" id="resumeStrip" role="status" hidden>
+      <span class="side-undo-text" id="resumeStripText"></span>
+      <button type="button" class="btn" id="resumeAll" data-i18n="interrupt.resumeAll"></button>
+      <button type="button" class="btn btn-icon side-undo-close" id="closeResumeStrip" data-i18n-title="interrupt.stripClose" data-i18n-aria-label="interrupt.stripClose"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <!-- 直前の操作を取り消す一行（グループの出入り・状態の移動）。操作したときだけ出る -->
     <div class="side-undo" id="sideUndo" role="status" hidden></div>
@@ -168,9 +176,13 @@
           <button type="button" class="chip mode" id="modeChip" aria-controls="modePop"></button>
           <!-- 中断。狭い幅（480px 以下）では四角のアイコンだけにする -->
           <button type="button" class="btn btn-quiet abort" id="abort" hidden data-i18n-title="chat.composer.abort" data-i18n-aria-label="chat.composer.abort"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg><span data-i18n="chat.composer.abort"></span></button>
+          <!-- 再開。中断状態・走っていない・欄が空のときだけ、中断と同じ位置に（web/interrupt.mjs）。保留があれば「保留中の N 件を送って再開」 -->
+          <button type="button" class="btn btn-quiet resume" id="resume" hidden data-i18n-title="interrupt.resume" data-i18n-aria-label="interrupt.resume"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7z"/></svg><span id="resumeLabel" data-i18n="interrupt.resume"></span></button>
           <button type="submit" class="btn btn-primary send" id="send" data-i18n-title="chat.composer.sendTitle" data-i18n-aria-label="chat.composer.sendTitle"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg></button>
         </div>
       </div>
+      <!-- 中断中に字を書いたときだけ見える一行。書いていない間も高さは取っておく（.quiet） -->
+      <div class="resume-note quiet" id="resumeNote" hidden data-i18n="interrupt.resumeNote"></div>
       <div class="pop cpop" id="cwdPop" role="dialog" data-i18n-aria-label="chat.composer.cwd" hidden></div>
       <div class="pop cpop" id="modelPop" role="dialog" data-i18n-aria-label="chat.composer.model" hidden></div>
       <div class="pop cpop" id="modePop" role="dialog" data-i18n-aria-label="chat.composer.mode" hidden></div>
@@ -211,8 +223,13 @@
           <div id="updateConfirm" hidden aria-labelledby="updateConfirmTitle">
             <h3 id="updateConfirmTitle" tabindex="-1" data-i18n="settings.updates.confirmTitle"></h3>
             <p data-i18n="settings.updates.confirmBody"></p>
-            <button type="button" class="btn btn-primary" id="confirmInstallUpdate" data-i18n="settings.updates.confirmInstall"></button>
-            <button type="button" class="btn" id="cancelInstallUpdate" data-i18n="settings.updates.later"></button>
+            <!-- 止まる作業（web/updates.mjs）。実行中でも断らず、並べて「中断して更新」を選ばせる（ADR 0027） -->
+            <div class="update-work" id="updateWork" hidden><h4 data-i18n="updates.workTitle"></h4><div id="updateWorkList"></div></div>
+            <p class="update-work-after" id="updateWorkAfter" hidden></p>
+            <div class="update-acts">
+              <button type="button" class="btn" id="cancelInstallUpdate" data-i18n="settings.updates.later"></button>
+              <button type="button" class="btn btn-primary" id="confirmInstallUpdate" data-i18n="settings.updates.confirmInstall"></button>
+            </div>
           </div>
           <p id="updateError" role="alert"></p>
           <div id="updatePreferences" hidden>
