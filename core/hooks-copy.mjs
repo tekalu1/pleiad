@@ -25,7 +25,7 @@ export function copyEvent(from, to, event) {
 }
 
 /** 入出力のアダプターを挟むか。Antigravity との間はいつも。Claude Code → Codex は PreToolUse だけ（ask を Codex が扱えないため） */
-export const needsAdapter = (from, to, event) => from === 'antigravity' || to === 'antigravity' || (from === 'claude' && to === 'codex' && event === 'PreToolUse');
+export const needsAdapter = (from, to, event) => from === 'antigravity' || to === 'antigravity' || (from !== to && event === 'PreToolUse');
 
 // ツール名の対応。1 行が 1 つの意味。exact は名前と入力の意味が一致するもの（シェル）。ほかは近い意味なので警告を付ける。
 // input: 入力（tool_input / toolCall.args）の形をアダプターで直せるか（Codex の apply_patch はパッチの本文なので Antigravity の引数と相互に直せない）
@@ -132,8 +132,7 @@ export function convertHook(source, to, { platform = process.platform, matcher: 
   // コマンドが元のエージェントの環境変数を使う。写す先では設定されない（アダプターも Claude Code の CLAUDE_PROJECT_DIR しか用意しない）
   if (/CLAUDE_PLUGIN_(ROOT|DATA)|\bPLUGIN_(ROOT|DATA)\b|CLAUDE_ENV_FILE/.test(command)) block('pluginEnv');
   else if (/CLAUDE_PROJECT_DIR/.test(command) && from === 'claude' && !adapter) block('claudeEnv');
-  // アダプターは元のコマンドを OS の既定のシェル（Windows は cmd.exe）で動かす。$VAR・~・単引用符は解釈が違う
-  if (adapter && platform === 'win32' && /[$~`']/.test(command)) warnings.push({ code: 'shellSyntax' });
+  // Windows の元エージェントのシェルが未確認の組み合わせは、呼び出し側で写せない扱いにする。
   if (!adapter && from !== 'antigravity' && platform === 'win32' && /[$~]/.test(command)) warnings.push({ code: 'shellSyntaxDirect' });
 
   // matcher
@@ -154,7 +153,11 @@ export function convertHook(source, to, { platform = process.platform, matcher: 
   if (Object.hasOwn(h, 'timeout') && explicit === null) warnings.push({ code: 'timeoutOdd', params: { value: JSON.stringify(h.timeout) } });
   const effective = explicit ?? srcDefault;
   let timeout, innerTimeout = null;
-  if (adapter) { innerTimeout = effective; timeout = Math.min(86400, effective + ADAPTER_MARGIN); }
+  if (adapter) {
+    innerTimeout = Math.min(effective, 86400 - ADAPTER_MARGIN);
+    timeout = innerTimeout + ADAPTER_MARGIN;
+    if (innerTimeout !== effective) warnings.push({ code: 'timeoutCapped' });
+  }
   else timeout = explicit ?? (event && defaultTimeout(to, event) !== srcDefault ? srcDefault : undefined);
   if (event && to === 'codex' && event === 'SessionEnd' && effective > 3) warnings.push({ code: 'codexSessionEnd' });
 
@@ -199,10 +202,10 @@ const b64 = s => Buffer.from(String(s), 'utf8').toString('base64url');
  * 写した先の設定に書くコマンド。アダプターのパスはスラッシュ区切り（Antigravity は引用符付きのバックスラッシュのパスを解決できない）。
  * 元のコマンドは base64url で 1 つの引数にする（どのシェルでも引用符を気にせず渡せ、写した定義の中に収まるので Codex の信頼の hash にも入る）
  */
+export const safeAdapterPath = p => /^[A-Za-z0-9_ ./:+@~,-]+$/.test(String(p).replace(/\\/g, '/'));
 export function adapterCommand({ adapterPath, from, to, event, innerTimeout, command, node = 'node' }) {
   const p = String(adapterPath).replace(/\\/g, '/');
-  const q = /\s/.test(p) ? `"${p}"` : p;
-  return `${node} ${q} ${from} ${to} ${event} ${innerTimeout} ${b64(command)}`;
+  return `${node === 'node' ? node : `"${String(node).replace(/\\/g, '/')}"`} "${p}" ${from} ${to} ${event} ${innerTimeout} ${b64(command)}`;
 }
 const ADAPTER_RE = /(?:^|[\s"'/\\])hook-adapter-[0-9a-f]{8,}\.mjs["']?\s+(claude|codex|antigravity)\s+(claude|codex|antigravity)\s+([A-Za-z]+)\s+(\d+)\s+([A-Za-z0-9_-]+)\s*$/;
 /** アダプター越しのコマンドを読む（一覧・詳細で元のコマンドを見せる）。違えば null */

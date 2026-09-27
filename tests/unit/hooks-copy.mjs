@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { copyEvent, mapMatcher, convertHook, adapterCommand, parseAdapterCommand, suggestName, scriptPaths } from '../../core/hooks-copy.mjs';
+import { copyEvent, mapMatcher, convertHook, adapterCommand, parseAdapterCommand, safeAdapterPath, suggestName, scriptPaths } from '../../core/hooks-copy.mjs';
 import { toSourceInput, readResult, toTargetOutput, adapt, argsFromAgy, argsToAgy } from '../../core/hook-adapter.mjs';
 import { createHooksConfig } from '../../core/hooks-config.mjs';
 export const name = 'hooks-copy';
@@ -63,7 +63,7 @@ export default async function(t) {
   t.ok('timeout を書いていなければ元の既定（Claude 600 秒）を保つ', conv({}, 'antigravity').innerTimeout === 600
     && convertHook({ agent: 'antigravity', event: 'Stop', handler: { command: 'x' } }, 'claude', { platform: 'linux' }).innerTimeout === 30);
   const direct = convertHook({ agent: 'codex', event: 'PreToolUse', matcher: 'Bash', handler: { type: 'command', command: 'python g.py', statusMessage: 'checking' } }, 'claude', { platform: 'linux' });
-  t.ok('Codex → Claude はアダプターを挟まず、statusMessage も写す', !direct.adapter && direct.command === 'python g.py' && direct.statusMessage === 'checking' && direct.timeout === undefined);
+  t.ok('Codex → Claude の PreToolUse もアダプターを挟み、statusMessage を保つ', direct.adapter && direct.command === 'python g.py' && direct.statusMessage === 'checking' && direct.innerTimeout === 600);
   t.ok('Claude → Codex は PreToolUse だけアダプター（ask を止める）', conv({}, 'codex').adapter && conv({}, 'codex').warnings.some(w => w.code === 'askToDeny')
     && !convertHook({ agent: 'claude', event: 'Stop', handler: { type: 'command', command: 'x' } }, 'codex').adapter);
   t.ok('command 以外の型は写せない', conv({ type: 'http', url: 'https://x' }, 'codex').reasons.some(r => r.code === 'type'));
@@ -75,7 +75,8 @@ export default async function(t) {
   t.ok('statusMessage は Antigravity では落とす（警告）', conv({ statusMessage: 's' }, 'antigravity').warnings.some(w => w.code === 'dropKey') && conv({ statusMessage: 's' }, 'antigravity').statusMessage === undefined);
   t.ok('CLAUDE_PROJECT_DIR を使うコマンドはアダプター無しでは写せない', convertHook({ agent: 'claude', event: 'Stop', handler: { type: 'command', command: '"$CLAUDE_PROJECT_DIR"/x.sh' } }, 'codex').reasons.some(r => r.code === 'claudeEnv'));
   t.ok('プラグインの環境変数を使うコマンドは写せない', conv({ command: '${CLAUDE_PLUGIN_ROOT}/x' }, 'antigravity').reasons.some(r => r.code === 'pluginEnv'));
-  t.ok('Windows では $・~ を使うコマンドにシェルの違いを警告', convertHook({ agent: 'claude', event: 'PreToolUse', matcher: 'Bash', handler: { type: 'command', command: 'node ~/x.mjs' } }, 'antigravity', { platform: 'win32' }).warnings.some(w => w.code === 'shellSyntax'));
+  t.ok('Windows の Claude のコマンドは元と同じシェルで動かす', !convertHook({ agent: 'claude', event: 'PreToolUse', matcher: 'Bash', handler: { type: 'command', command: 'node ~/x.mjs' } }, 'antigravity', { platform: 'win32' }).warnings.some(w => w.code === 'shellSyntax'));
+  t.ok('アダプターのパスはシェルの特殊文字を拒む', safeAdapterPath('C:/plain/with space/x.mjs') && !safeAdapterPath('C:/R&D/x.mjs') && !safeAdapterPath("C:/O'Brien/x.mjs"));
   const rev = convertHook({ agent: 'claude', event: 'PreToolUse', matcher: 'Bash|Notebook.*', handler: { type: 'command', command: 'x' } }, 'antigravity', { platform: 'linux' });
   const chosen = convertHook({ agent: 'claude', event: 'PreToolUse', matcher: 'Bash|Notebook.*', handler: { type: 'command', command: 'x' } }, 'antigravity', { platform: 'linux', matcher: 'run_command' });
   t.ok('確認が必要な matcher は、写す先の matcher を入れると写せる', rev.status === 'review' && chosen.status === 'ready' && chosen.matcher === 'run_command' && chosen.matcherStatus === 'chosen');
@@ -151,7 +152,7 @@ export default async function(t) {
   const adapterFile = fileURLToPath(new URL('../../core/hook-adapter.mjs', import.meta.url));
   const script = async (name, body) => { const p = path.join(tmp, name); await fs.writeFile(p, body); return p.replace(/\\/g, '/'); };
   const runAdapter = (args, stdin) => new Promise(resolve => {
-    const p = spawn(process.execPath, [adapterFile, ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const p = spawn(process.execPath, [adapterFile, ...args], { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, TMP: tmp, TEMP: tmp, TMPDIR: tmp } });
     let o = '', e = '';
     p.stdout.on('data', b => { o += b; }); p.stderr.on('data', b => { e += b; });
     p.on('close', code => resolve({ code, stdout: o, stderr: e }));
@@ -179,14 +180,36 @@ process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'PreToolU
     t.ok('実行: エージェントの入力が JSON でなければ deny', JSON.parse(r5.stdout).decision === 'deny');
     const r6 = await runAdapter(['claude', 'nobody', 'PreToolUse', '10', 'x'], agyIn);
     t.ok('実行: 引数が壊れていても JSON を返す（exit 0）', r6.code === 0 && JSON.parse(r6.stdout) !== null);
+    const tampered = path.join(tmp, 'hook-adapter-000000000000.mjs');
+    await fs.copyFile(adapterFile, tampered);
+    const hashFailure = await adapt({ argv: ['claude', 'codex', 'PreToolUse', '10', b64('echo hi')], stdin: JSON.stringify(CODEX_PRE), selfPath: tampered });
+    t.ok('アダプターの中身の hash がファイル名と違えば deny', JSON.parse(hashFailure.stdout).hookSpecificOutput.permissionDecision === 'deny');
     const agyScript = await script('agy.mjs', `let r='';for await (const c of process.stdin) r+=c;const i=JSON.parse(r);
 process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{decision:'deny',reason:'no hi'}:{decision:'allow'}));`);
     await fs.mkdir(path.join(tmp, '.agents'), { recursive: true });
+    if (process.platform === 'win32') {
+      const shellProbe = await script('shell-probe.mjs', 'process.stderr.write(JSON.stringify(process.argv.slice(2)));');
+      const codexShell = await runAdapter(['codex', 'claude', 'PreToolUse', '10', b64(`node ${shellProbe} $PWD`)], JSON.stringify({ ...CODEX_PRE, cwd: tmp }));
+      const agyShell = await runAdapter(['antigravity', 'claude', 'PreToolUse', '10', b64(`node ${shellProbe} %CD%`)], JSON.stringify({ ...CLAUDE_PRE, cwd: tmp }));
+      t.ok('Windows の元コマンドは Codex で PowerShell、agy で cmd の変数が展開される',
+        JSON.parse(codexShell.stderr)[0].toLowerCase() === tmp.toLowerCase()
+        && JSON.parse(agyShell.stderr)[0].toLowerCase() === path.join(tmp, '.agents').toLowerCase());
+    }
     const r7 = await runAdapter(['antigravity', 'claude', 'PreToolUse', '10', b64(`node ${agyScript}`)], JSON.stringify({ ...CLAUDE_PRE, cwd: tmp }));
     t.ok('実行: Claude から呼ばれ、agy の形で渡し、deny を Claude の形で返す', JSON.parse(r7.stdout).hookSpecificOutput?.permissionDecision === 'deny', r7.stdout);
     const stopper = await script('stop.mjs', 'process.stdout.write(JSON.stringify({decision:"continue",reason:"not yet"}));');
     const r8 = await runAdapter(['antigravity', 'codex', 'Stop', '10', b64(`node ${stopper}`)], JSON.stringify({ session_id: 's', cwd: tmp, hook_event_name: 'Stop', stop_hook_active: false }));
     t.ok('実行: agy の Stop continue → Codex の decision: block', JSON.parse(r8.stdout).decision === 'block' && JSON.parse(r8.stdout).reason === 'not yet');
+    const repeats = [];
+    for (let n = 0; n < 5; n++) repeats.push(await runAdapter(['antigravity', 'codex', 'Stop', '10', b64(`node ${stopper}`)], JSON.stringify({ session_id: 's', cwd: tmp, hook_event_name: 'Stop', stop_hook_active: true })));
+    t.ok('Stop の連続した続けは 5 回で止まる', repeats.slice(0, 4).every(r => JSON.parse(r.stdout).decision === 'block') && JSON.stringify(JSON.parse(repeats[4].stdout)) === '{}');
+    const nums = [];
+    for (let n = 0; n < 3; n++) await adapt({ argv: ['antigravity', 'claude', 'Stop', '10', b64('echo stop-count')], stdin: JSON.stringify({ session_id: 'numbered', cwd: tmp }),
+      stateDir: tmp, run: async (_, options) => { nums.push(options.input.executionNum); return { code: 0, stdout: '{"decision":"continue"}' }; } });
+    t.ok('agy に渡す executionNum は会話ごとの連続回数', JSON.stringify(nums) === '[0,1,2]');
+    t.ok('コマンドが見つからない終了と出力超過は PreToolUse で deny', out('claude', 'codex', 'PreToolUse', { code: 127 }).hookSpecificOutput.permissionDecision === 'deny'
+      && out('claude', 'codex', 'PreToolUse', { code: 1, stderr: '認識されていません' }).hookSpecificOutput.permissionDecision === 'deny'
+      && out('claude', 'codex', 'PreToolUse', { overflow: true }).hookSpecificOutput.permissionDecision === 'deny');
     const skip = await runAdapter(['claude', 'antigravity', 'PostToolUse', '10', b64(`node ${slow}`)], JSON.stringify({ ...AGY_PRE, error: 'exit status 1' }));
     t.ok('実行: Claude の PostToolUse は失敗したツールでは元のコマンドを動かさない', skip.stdout === '{}');
 
@@ -202,7 +225,7 @@ process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{d
     await write(path.join(home, '.codex', 'config.toml'), codexToml);
     await write(path.join(home, '.gemini', 'config', 'hooks.json'), { keep: { Stop: [{ command: 'node s.mjs' }] }, 'claude-guard': { enabled: false, Stop: [{ command: 'x' }] } });
     let nodeFound = 'C:/node/node.exe';
-    const svc = createHooksConfig({ home, codexHome: path.join(home, '.codex'), claudeHome: path.join(home, '.claude'), geminiHome: path.join(home, '.gemini'), findNode: async () => nodeFound });
+    const svc = createHooksConfig({ home, codexHome: path.join(home, '.codex'), claudeHome: path.join(home, '.claude'), geminiHome: path.join(home, '.gemini'), findNode: async () => nodeFound, platform: 'linux' });
     const scan = await svc.scan({ scopes: ['user'] });
     const pre = scan.entries.find(e => e.agent === 'claude' && e.event === 'PreToolUse');
     const rev = scan.files.find(f => f.path === pre.path).revision;
@@ -226,7 +249,7 @@ process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{d
     t.ok('Codex: 既存の TOML の本文とコメントを残して末尾に足す', toml.startsWith(codexToml) && /\[\[hooks\.PreToolUse\]\]\nmatcher = "Bash"/.test(toml), toml);
     const agy = JSON.parse(await fs.readFile(path.join(home, '.gemini', 'config', 'hooks.json'), 'utf8'));
     const h = agy.guard2?.PreToolUse?.[0];
-    t.ok('agy: 名前 → PreToolUse → matcher run_command → アダプター越しのコマンド・timeout 15', h?.matcher === 'run_command' && /hook-adapter-[0-9a-f]{12}\.mjs claude antigravity PreToolUse 10 /.test(h.hooks[0].command)
+    t.ok('agy: 名前 → PreToolUse → matcher run_command → アダプター越しのコマンド・timeout 15', h?.matcher === 'run_command' && /hook-adapter-[0-9a-f]{12}\.mjs" claude antigravity PreToolUse 10 /.test(h.hooks[0].command)
       && h.hooks[0].timeout === 15 && !h.hooks[0].command.includes('\\'), JSON.stringify(agy));
     t.ok('agy: 他の名前（enabled: false を含む）はそのまま', agy.keep?.Stop?.[0]?.command === 'node s.mjs' && agy['claude-guard']?.enabled === false);
     t.ok('写したコマンドから元のコマンドを読める（秘密も含めて元のまま）', parseAdapterCommand(h.hooks[0].command)?.command.includes('SECRET-TOKEN-1'));
@@ -301,6 +324,15 @@ process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{d
     const miss = await svc.copy({ source: { agent: 'codex', scope: 'project', base: repo, file: path.join(repo, '.codex', 'hooks.json'), loc: { event: 'PreToolUse', group: 0, handler: 0 } },
       targets: [{ agent: 'claude', scope: 'project', base: repo }], dryRun: true });
     t.ok('指すスクリプトが無ければ警告（写しても動かない）', miss.results[0].status === 'ready' && miss.results[0].warnings.some(w => w.code === 'scriptMissing'), JSON.stringify(miss.results[0].warnings));
+    t.ok('Claude のプロジェクトには移動しても動く変数のパスを書く', miss.results[0].written.includes('"$CLAUDE_PROJECT_DIR/.claude/pleiad-hooks/'));
+    const win = createHooksConfig({ home, codexHome: path.join(home, '.codex'), claudeHome: path.join(home, '.claude'), geminiHome: path.join(home, '.gemini'),
+      findNode: async () => 'C:/node/node.exe', platform: 'win32' });
+    const wa = await win.copy({ source, targets: [{ agent: 'antigravity', scope: 'user', name: 'win-quoted' }], dryRun: true });
+    t.ok('Windows の agy へは引用付きパスを解決できないので写さない', wa.results[0].reasons.some(r => r.code === 'agyQuotedPath'));
+    await write(path.join(repo, '.claude', 'settings.json'), { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo hi' }] }] } });
+    const wc = await win.copy({ source: { agent: 'claude', scope: 'project', base: repo, file: path.join(repo, '.claude', 'settings.json'), loc: { event: 'PreToolUse', group: 0, handler: 0 } },
+      targets: [{ agent: 'codex', scope: 'project', base: repo }], dryRun: true });
+    t.ok('Codex のプロジェクトへはアダプターの基準フォルダーが不明で写さない', wc.results[0].reasons.some(r => r.code === 'adapterProjectCodex'));
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }

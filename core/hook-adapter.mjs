@@ -15,6 +15,8 @@
 //   after a tool (PostToolUse)  -> nothing
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,6 +24,8 @@ export const AGENTS = ['claude', 'codex', 'antigravity'];
 export const EVENTS = ['PreToolUse', 'PostToolUse', 'Stop', 'SessionStart', 'SessionEnd', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop',
   'PermissionRequest', 'PreCompact', 'PostCompact'];
 const OUTPUT_LIMIT = 1024 * 1024;
+const STOP_LIMIT = 5;
+const STOP_TTL = 24 * 60 * 60 * 1000;
 
 // Tool names: Claude Code / Codex -> Antigravity, and back. Names not listed stay as they are
 const TO_AGY = { Bash: 'run_command', Write: 'write_to_file', Edit: 'replace_file_content', Read: 'view_file', Grep: 'grep_search', Glob: 'find_by_name',
@@ -121,7 +125,8 @@ const firstLine = s => str(s).trim().split(/\r?\n/)[0]?.slice(0, 500) ?? '';
  */
 export function readResult({ from, event, result }) {
   const { code = 0, stdout = '', stderr = '', timedOut = false, startError = null } = result ?? {};
-  if (timedOut || startError) return { failed: true, why: timedOut ? 'timeout' : 'start', reason: timedOut ? 'Hook timed out' : `Hook could not start: ${startError}` };
+  if (timedOut || startError || result?.overflow) return { failed: true, why: timedOut ? 'timeout' : result?.overflow ? 'output' : 'start',
+    reason: timedOut ? 'Hook timed out' : result?.overflow ? 'Hook output exceeded 1 MiB' : `Hook could not start: ${startError}` };
   if (from === 'antigravity') {
     // Antigravity needs JSON on stdout and stops the tool on a non-zero exit or bad JSON (observed 2026-09-27)
     const out = code === 0 ? parse(stdout.trim() || '{}') : null;
@@ -138,7 +143,11 @@ export function readResult({ from, event, result }) {
   // Claude Code / Codex: exit 2 blocks (before a tool) or continues (at stop), with stderr as the reason. Other non-zero exits are
   // non-blocking errors in both agents, so the command's decision is "no opinion"
   if (code === 2) return event === 'Stop' ? { stop: 'continue', reason: firstLine(stderr) } : { gate: 'deny', reason: firstLine(stderr) || 'Blocked by hook' };
-  if (code !== 0) return event === 'Stop' ? { stop: 'stop' } : { gate: 'pass' };
+  if (code !== 0) {
+    if (event === 'PreToolUse' && ([126, 127, 9009].includes(code) || /(?:認識されていません|not recognized as an internal or external command|command not found|permission denied)/i.test(stderr)))
+      return { failed: true, why: 'start', reason: firstLine(stderr) || `Hook exited with ${code}` };
+    return event === 'Stop' ? { stop: 'stop' } : { gate: 'pass' };
+  }
   // exit 0: JSON is read; plain text is not a decision (both agents accept plain output)
   const out = parse(stdout.trim()) ?? {};
   const hso = record(out.hookSpecificOutput) ? out.hookSpecificOutput : {};
@@ -195,7 +204,7 @@ export function toTargetOutput({ from, to, event, decision }) {
     if (Object.keys(hso).length) base.hookSpecificOutput = hso; else delete base.hookSpecificOutput;
     return base;
   }
-  // to Claude Code (from Antigravity)
+  // to Claude Code
   if (d.gate === 'deny') return denyFor('claude', d.reason || 'Denied by hook');
   if (d.gate === 'ask' || d.gate === 'forceAsk') return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', ...(d.reason ? { permissionDecisionReason: d.reason } : {}) } };
   // Antigravity's allow does not grant permissions (observed). Pass, so Claude Code's own permission check still applies
@@ -206,23 +215,64 @@ export function toTargetOutput({ from, to, event, decision }) {
 export function runCommand(command, { input, cwd, env, timeoutMs }) {
   return new Promise(resolve => {
     let child;
-    try { child = spawn(command, { cwd, env: { ...process.env, ...env }, shell: true, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }); }
+    const bash = process.env.CLAUDE_CODE_GIT_BASH_PATH || ['C:/Program Files/Git/bin/bash.exe', 'C:/Program Files/Git/usr/bin/bash.exe'].find(fs.existsSync);
+    const systemRoot = process.env.SystemRoot || 'C:/Windows';
+    const shell = process.platform === 'win32' ? env?.__pleiadFrom === 'claude' ? bash
+      : env?.__pleiadFrom === 'codex' ? path.join(systemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe')
+        : process.env.ComSpec || path.join(systemRoot, 'System32/cmd.exe') : true;
+    if (!shell) { resolve({ startError: 'Git Bash was not found' }); return; }
+    const childEnv = { ...process.env, ...env };
+    delete childEnv.__pleiadFrom;
+    try { child = spawn(command, { cwd, env: childEnv, shell, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }); }
     catch (e) { resolve({ startError: String(e?.message ?? e) }); return; }
-    let stdout = '', stderr = '', done = false, timedOut = false;
+    let stdout = '', stderr = '', done = false, timedOut = false, overflow = false;
     const finish = r => { if (done) return; done = true; clearTimeout(timer); resolve(r); };
+    const kill = () => {
+      if (process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
+      else if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
+      child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      if (process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
-      else child.kill('SIGKILL');
+      kill();
       finish({ timedOut: true, stdout, stderr });
     }, timeoutMs);
-    child.stdout.on('data', b => { if (stdout.length < OUTPUT_LIMIT) stdout += b; });
-    child.stderr.on('data', b => { if (stderr.length < OUTPUT_LIMIT) stderr += b; });
+    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+    const append = (which, chunk) => {
+      if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) + Buffer.byteLength(chunk) > OUTPUT_LIMIT) {
+        overflow = true; kill(); finish({ overflow: true, stdout, stderr }); return;
+      }
+      if (which === 'stdout') stdout += chunk; else stderr += chunk;
+    };
+    child.stdout.on('data', b => append('stdout', b));
+    child.stderr.on('data', b => append('stderr', b));
     child.on('error', e => finish({ startError: String(e?.message ?? e), stdout, stderr }));
-    child.on('close', code => { if (!timedOut) finish({ code: code ?? 1, stdout, stderr }); });
+    child.on('close', code => { if (!timedOut) finish({ code: code ?? 1, stdout, stderr, overflow }); });
     child.stdin.on('error', () => {});
     child.stdin.end(JSON.stringify(input));
   });
+}
+
+const sha = text => crypto.createHash('sha256').update(text).digest('hex');
+function stopState(session, command, stateDir = os.tmpdir()) {
+  if (!session) return null;
+  const file = path.join(stateDir, `pleiad-hook-stop-${sha(`${session}\0${command}`).slice(0, 24)}.json`);
+  try {
+    const stat = fs.statSync(file);
+    if (Date.now() - stat.mtimeMs > STOP_TTL) return { file, count: 0 };
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return { file, count: Number.isInteger(data.count) && data.count >= 0 ? Math.min(data.count, STOP_LIMIT) : 0 };
+  } catch { return { file, count: 0 }; }
+}
+function saveStop(state, count) {
+  if (!state) return false;
+  try { fs.writeFileSync(state.file, JSON.stringify({ count }), { mode: 0o600 }); return true; } catch { return false; }
+}
+function validSelf(file) {
+  const name = path.basename(file);
+  if (name === 'hook-adapter.mjs') return true; // The repository source has no hash in its name.
+  const match = /^hook-adapter-([0-9a-f]{12})\.mjs$/.exec(name);
+  return Boolean(match) && sha(fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n')).startsWith(match[1]);
 }
 
 export function decodeCommand(text) {
@@ -230,20 +280,32 @@ export function decodeCommand(text) {
 }
 
 /** One run: stdin JSON in, JSON out. Returns { stdout, stderr, code } */
-export async function adapt({ argv, stdin, run = runCommand, processCwd = process.cwd() }) {
+export async function adapt({ argv, stdin, run = runCommand, processCwd = process.cwd(), stateDir = os.tmpdir(), selfPath = fileURLToPath(import.meta.url) }) {
   const [from, to, event, timeoutText, encoded] = argv;
   const timeout = Number(timeoutText);
   // A broken call (hand-edited settings) fails the safe way for the runner
   const broken = why => ({ stdout: JSON.stringify(toTargetOutput({ from: from ?? 'claude', to: AGENTS.includes(to) ? to : 'claude', event, decision: { failed: true, why: 'start', reason: why } })), stderr: `pleiad hook adapter: ${why}\n`, code: 0 });
   if (!AGENTS.includes(from) || !AGENTS.includes(to) || from === to || !EVENTS.includes(event)) return broken('bad arguments');
   const command = decodeCommand(encoded);
-  if (!command.trim() || !Number.isInteger(timeout) || timeout < 1) return broken('bad arguments');
+  if (!command.trim() || !Number.isInteger(timeout) || timeout < 1 || timeout > 86400) return broken('bad arguments');
+  try { if (!validSelf(selfPath)) return broken('adapter content hash mismatch'); }
+  catch { return broken('adapter content could not be checked'); }
   const input = parse(String(stdin ?? '').trim());
   if (!input) return broken('the agent did not send JSON');
   const src = toSourceInput({ from, to, event, input, processCwd });
+  const session = str(input.session_id) || str(input.conversationId);
+  const state = event === 'Stop' ? stopState(session, command, stateDir) : null;
+  if (event === 'Stop' && !state) return broken('Stop session id is missing');
+  if (event === 'Stop' && from === 'antigravity') src.input.executionNum = Math.max(src.input.executionNum ?? 0, state.count);
+  if (event === 'Stop' && from !== 'antigravity' && state.count > 0) src.input.stop_hook_active = true;
   if (src.skip) return { stdout: JSON.stringify(toTargetOutput({ from, to, event, decision: { gate: 'pass', stop: 'stop' } })), stderr: '', code: 0 };
-  const result = await run(command, { input: src.input, cwd: src.cwd, env: src.env, timeoutMs: timeout * 1000 });
+  const result = await run(command, { input: src.input, cwd: src.cwd, env: { ...src.env, __pleiadFrom: from }, timeoutMs: timeout * 1000 });
   const decision = readResult({ from, event, result });
+  if (event === 'Stop') {
+    if (decision.stop === 'continue' && !decision.failed) {
+      if (state.count >= STOP_LIMIT || !saveStop(state, state.count + 1)) decision.stop = 'stop';
+    } else saveStop(state, 0);
+  }
   return { stdout: JSON.stringify(toTargetOutput({ from, to, event, decision })), stderr: str(result.stderr), code: 0 };
 }
 
@@ -252,8 +314,7 @@ async function main() {
   for await (const chunk of process.stdin) stdin += chunk;
   const out = await adapt({ argv: process.argv.slice(2), stdin });
   if (out.stderr) process.stderr.write(out.stderr);
-  process.stdout.write(out.stdout);
-  process.exitCode = out.code;
+  process.stdout.write(out.stdout, () => process.exit(out.code));
 }
 
 // Run only when started as a script (tests import the functions). Compare real paths, ignoring case on Windows

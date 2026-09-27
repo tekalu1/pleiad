@@ -22,7 +22,7 @@ import { FRONTMATTER } from './context-scan.mjs';
 import { redactSecrets } from './redact.mjs';
 import { renameRetry } from './atomic-file.mjs';
 import { t } from './i18n.mjs';
-import { convertHook, adapterCommand, parseAdapterCommand, suggestName, scriptPaths } from './hooks-copy.mjs';
+import { convertHook, adapterCommand, parseAdapterCommand, safeAdapterPath, suggestName, scriptPaths } from './hooks-copy.mjs';
 
 export const HOOK_AGENTS = ['claude', 'codex', 'antigravity'];
 // 各エージェントの公式のイベント（2026-09-27 時点。temporary/reports/hooks-agent-specs.md）
@@ -262,7 +262,7 @@ export function findNodeOnPath() {
 /** 写す先に書き出すアダプター（core/hook-adapter.mjs をそのまま）。名前に中身の hash を入れ、版が変わっても前の写しを壊さない */
 let adapterCache = null;
 async function adapterSource() {
-  adapterCache ??= fs.readFile(new URL('./hook-adapter.mjs', import.meta.url), 'utf8').then(text => ({ text, name: `hook-adapter-${digest(text).slice(0, 12)}.mjs` }));
+  adapterCache ??= fs.readFile(new URL('./hook-adapter.mjs', import.meta.url), 'utf8').then(text => ({ text, name: `hook-adapter-${digest(text.replace(/\r\n/g, '\n')).slice(0, 12)}.mjs` }));
   return adapterCache;
 }
 
@@ -373,6 +373,7 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
   async function resolveBase(scope, base) {
     if (scope === 'user') return null;
     if (!['project', 'local'].includes(scope)) throw new Error(t('hooks.write.target'));
+    if (typeof base !== 'string' || !path.isAbsolute(base)) throw new Error(t('hooks.write.target'));
     return scanDirectory(base);
   }
   /** 書き先のファイル。file を指せば、その agent・scope・base の置き場所のどれかに限る（任意のパスには書かない） */
@@ -615,7 +616,7 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
     try { await fs.writeFile(file, text, { encoding: 'utf8', flag: 'wx' }); }
     catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      if (await fs.readFile(file, 'utf8') !== text) throw new Error(t('hooks.copy.adapterConflict'));
+      if ((await fs.readFile(file, 'utf8')).replace(/\r\n/g, '\n') !== text.replace(/\r\n/g, '\n')) throw new Error(t('hooks.copy.adapterConflict'));
     }
   }
   /** 1 つのファイルの、あるイベントの handler のコマンド（agy は全部の名前から） */
@@ -646,15 +647,32 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       const adapterPath = path.join(path.dirname(file.path), 'pleiad-hooks', adapterFile.name);
       const current = await readAdapter(adapterPath, file.base);
       out.adapter = { path: adapterPath, exists: Boolean(current.exists) };
-      if (current.error || (current.exists && current.text !== adapterFile.text)) reasons.push({ code: 'adapterConflict', params: { path: adapterPath }, blocks: true });
+      if (!safeAdapterPath(adapterPath) || (to === 'antigravity' && /\s/.test(adapterPath))) reasons.push({ code: 'adapterPath', blocks: true });
+      if (platform === 'win32' && to === 'antigravity') reasons.push({ code: 'agyQuotedPath', blocks: true });
+      if (scope !== 'user' && to === 'codex') reasons.push({ code: 'adapterProjectCodex', blocks: true });
+      if (platform === 'win32') {
+        const shell = src.agent === 'claude' ? process.env.CLAUDE_CODE_GIT_BASH_PATH ? [process.env.CLAUDE_CODE_GIT_BASH_PATH]
+          : ['C:/Program Files/Git/bin/bash.exe', 'C:/Program Files/Git/usr/bin/bash.exe']
+          : src.agent === 'codex' ? [path.join(process.env.SystemRoot || 'C:/Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe')]
+            : [process.env.ComSpec || path.join(process.env.SystemRoot || 'C:/Windows', 'System32/cmd.exe')];
+        if (!await Promise.any(shell.filter(Boolean).map(s => fs.stat(s).then(st => st.isFile() ? s : Promise.reject()))).catch(() => null))
+          reasons.push({ code: 'sourceShell', blocks: true });
+      }
+      if (current.error || (current.exists && current.text.replace(/\r\n/g, '\n') !== adapterFile.text.replace(/\r\n/g, '\n'))) reasons.push({ code: 'adapterConflict', params: { path: adapterPath }, blocks: true });
       const node = await findNode();
       out.node = node;
       if (!node) reasons.push({ code: 'noNode', blocks: true });
-      command = adapterCommand({ adapterPath, from: src.agent, to, event: conv.event, innerTimeout: conv.innerTimeout, command: conv.command });
+      if (scope === 'user' && node && (!path.isAbsolute(node) || !safeAdapterPath(node) || (to === 'antigravity' && /\s/.test(node)))) reasons.push({ code: 'adapterPath', blocks: true });
+      const commandPath = scope === 'user' ? adapterPath : to === 'antigravity' ? `pleiad-hooks/${adapterFile.name}`
+        : `$CLAUDE_PROJECT_DIR/.claude/pleiad-hooks/${adapterFile.name}`;
+      command = adapterCommand({ adapterPath: commandPath, from: src.agent, to, event: conv.event, innerTimeout: conv.innerTimeout,
+        command: conv.command, node: scope === 'user' && node ? node : 'node' });
     }
     // 同じイベントに同じコマンドが既にあれば写さない（前に写したもの。Codex・agy は同じ定義を重ねると 2 回走る）
     const existing = await load(file, file.base);
-    if (!existing.error && existing.map && commandsOf(to, existing.map, conv.event).includes(command)) reasons.push({ code: 'duplicate', params: { path: file.path }, blocks: true });
+    if (!existing.error && existing.map && commandsOf(to, existing.map, conv.event).some(previous => previous === command ||
+      (parseAdapterCommand(previous)?.from === src.agent && parseAdapterCommand(previous)?.event === conv.event &&
+        parseAdapterCommand(previous)?.command === conv.command))) reasons.push({ code: 'duplicate', params: { path: file.path }, blocks: true });
     // スクリプト本体は写さない。指す先が無い・相対パスで基準の場所が変わるときは知らせる（同じ場所なら写した先でも同じファイルを指す）
     const sameBase = src.scope === 'user' || (scope !== 'user' && file.base && src.base && path.resolve(file.base) === path.resolve(src.base));
     for (const s of scriptPaths(conv.command)) {
