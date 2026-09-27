@@ -45,7 +45,8 @@ View は DOM より上に描かれるので、メニュー・ダイアログ・�
 
 - `browserPanelAvailable()`: 使える画面か。
 - `openInBrowserPanel(url, { newTab })`: 右パネルをブラウザーにして開く。url はアドレス欄と同じ規則で直し、開けなければ何もせず false。url を省くと空の新しいタブ。
-- 会話のリンク・プレビューのリンク・「ブラウザーで開く」をここへ流す配線は、リンクの開き先を 1 つに集める関数（`web/link-open.mjs`）と合わせて足す（未配線）。Ctrl/⌘+クリックと中クリックは既定のブラウザー（ADR 0041）。
+- 会話の外部リンクとプレビュー（可視化・HTML ファイル）の中のリンクは、`web/link-open.mjs` の `openExternalLink` に集まり、開き先が内蔵ブラウザーなら新しいタブで開く。Ctrl/⌘+クリックと中クリック（`auxclick`）は既定のブラウザー（ADR 0041）。既定のブラウザーへは殻の `openExternal`（http/https、userinfo 無し）で渡すので、本体の窓の `setWindowOpenHandler` が通さない http の localhost も開ける。使えない画面（ブラウザーで開いた Pleiad・リモートの窓）は今どおり新しいタブ。
+- 「ブラウザーで開く」（HTML ファイル・可視化の写し）はまだ既定のブラウザー（未配線）。
 
 ## main の口
 

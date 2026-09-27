@@ -3,6 +3,7 @@ import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
 import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
+import { configureLinkOpen } from './link-open.mjs';
 import { download, notify } from './file-actions.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
@@ -3680,6 +3681,8 @@ const filePreview = setupFilePreview({
 });
 // 設定 › ブラウザー（リンクの開き先）。内蔵ブラウザーが使える画面だけ脇に項目を出す
 const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs });
+// 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
+configureLinkOpen({ getPrefs: () => state.prefs });
 
 /**
  * ホストのファイルをパスのまま添付に積む（送らない。ファイルプレビューの「会話で使う」とホストのファイルの面）。
