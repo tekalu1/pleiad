@@ -1,6 +1,6 @@
 import { createCompactionScheduler, idleCompactionGuards } from '../../core/compaction-scheduler.mjs';
 import { normalizeCompactionSettings } from '../../core/compaction-settings.mjs';
-import { normalizeSdkMessage, claudeCompactionsFromHistory } from '../../core/backends/claude-normalize.mjs';
+import { normalizeSdkMessage, createClaudeCompactDiagnostic, claudeCompactionsFromHistory } from '../../core/backends/claude-normalize.mjs';
 import { codexContextWindow, codexCompactionEvent } from '../../core/backends/codex.mjs';
 import { mergeCompactionHistory } from '../../core/compaction-history.mjs';
 import fs from 'node:fs';
@@ -16,6 +16,18 @@ export default async function (t) {
   const failed = normalizeSdkMessage({ type: 'system', subtype: 'status', status: null,
     compact_result: 'failed', compact_error: 'network' });
   t.ok('Claude の失敗理由を正規化する', failed.some(x => x.type === 'compaction' && x.phase === 'failed' && x.reason === 'network'));
+  const unavailable = { type: 'system', subtype: 'local_command_output', content: "/compact isn't available in this environment." };
+  const diagnostic = createClaudeCompactDiagnostic();
+  diagnostic.observe(unavailable);
+  diagnostic.observe({ type: 'result', subtype: 'success' });
+  t.ok('圧縮が CLI の local_command 出力だけで終わればその文を失敗理由にする',
+    diagnostic.reason() === unavailable.content);
+  diagnostic.observe({ type: 'system', subtype: 'compact_boundary' });
+  t.ok('境界が届いた圧縮は CLI 出力を失敗理由にしない', diagnostic.reason() === '');
+  const answered = createClaudeCompactDiagnostic();
+  answered.observe(unavailable);
+  answered.observe({ type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } });
+  t.ok('Claude の応答があれば local_command 出力だけの失敗とは扱わない', answered.reason() === '');
   const nativeClaude = claudeCompactionsFromHistory([{ type: 'system', uuid: 'b1', timestamp: '2026-09-27T00:00:00Z',
     message: { subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: 182000, post_tokens: 21000 } } }]);
   t.ok('Claude のネイティブ履歴から境界を復元する', nativeClaude[0]?.nativeId === 'b1'
@@ -38,8 +50,8 @@ export default async function (t) {
     mergeCompactionHistory(native, [{ id: 'failed', phase: 'failed', at: 100_500 }]).length === 2);
 
   const defaults = normalizeCompactionSettings();
-  t.ok('既定は Claude のみ 50 分、最小 40k', defaults.enabled && defaults.minTokens === 40000
-    && defaults.claude.enabled && defaults.claude.delayMinutes === 50 && !defaults.codex.enabled);
+  t.ok('既定は Claude のみ 50 分（Codex は切り・25 分）、最小 40k', defaults.enabled && defaults.minTokens === 40000
+    && defaults.claude.enabled && defaults.claude.delayMinutes === 50 && !defaults.codex.enabled && defaults.codex.delayMinutes === 25);
   t.ok('設定の入切・待ち時間を保持する', normalizeCompactionSettings({ codex: { enabled: true, delayMinutes: 12 } }).codex.delayMinutes === 12);
   t.ok('不正な設定を拒否する', (() => { try { normalizeCompactionSettings({ minTokens: -1 }); return false; } catch { return true; } })());
 

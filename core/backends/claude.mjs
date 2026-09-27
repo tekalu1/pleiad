@@ -18,7 +18,7 @@ import { readClaudeAccountsUsage } from './claude-usage.mjs';
 import { claudeEnv, redactToken } from '../claude-accounts.mjs';
 import { claudeCompatEnv, writeClaudeFlagSettings, redactSecret } from '../compat-endpoints.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
-import { claudeContextOptions, unexpectedNativeMcp } from './context-options.mjs';
+import { claudeContextOptions, claudeQueryExtraArgs, unexpectedNativeMcp } from './context-options.mjs';
 import { undelivered } from './undelivered.mjs';
 import { z } from "zod";
 import fs from "node:fs/promises";
@@ -28,7 +28,7 @@ import os from "node:os";
 import * as store from "../store.mjs";
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { buildClaudeModels, FALLBACK_MODELS } from "./claude-models.mjs";
-import { normalizeSdkMessage, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, stopHookFollowUps, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript } from "./claude-normalize.mjs";
+import { normalizeSdkMessage, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, stopHookFollowUps, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript } from "./claude-normalize.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
 
 const NL = String.fromCharCode(10);
@@ -552,7 +552,7 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, contextRuntime, agentRuntime, oauthToken, endpoint = null, locale }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, contextRuntime, agentRuntime, oauthToken, endpoint = null, locale, compact }) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, locale };
     let releaseContext;
@@ -602,7 +602,8 @@ export const backend = {
     // 互換の接続先（core/compat-endpoints.mjs）。env を組み替え（親の ANTHROPIC_* と OAuth トークンを外して接続先の値を入れる）、
     // 同じ値をフラグ設定のファイルにも書く（ユーザーの settings.json の env が options.env に勝つため。オブジェクトで渡すと argv にキーが載る）。
     // Pleiad の担当の設定（claudeContextOptions の settings）も同じファイルに入れる
-    const contextOptions = claudeContextOptions(contextRuntime);
+    const contextOptions = claudeContextOptions(contextRuntime, { compact: Boolean(compact) });
+    const compactDiagnostic = compact ? createClaudeCompactDiagnostic() : null;
     const flag = endpoint ? await writeClaudeFlagSettings(store.dataDir, endpoint, contextOptions.settings) : null;
     const hide = text => redactSecret(redactToken(text, oauthToken), endpoint?.key);
     // query の組み立てで例外になっても、鍵を含むフラグ設定のファイルを残さない（ターンの終わりの finally まで届かないため）
@@ -625,12 +626,12 @@ export const backend = {
         // 既定ではストリームに合図が無く、途中送信が会話に入ったことを外から確かめられない。
         // 返ってくるのは最初のプロンプトと自分が push した分だけで、CLI 内部の通知は replay されない
         // （実測 2026-09、CLI 2.1.273）。content が文字列の user から normalize は何も作らないので表示は変わらない
-        extraArgs: { 'replay-user-messages': null },
         mcpServers: plyServers,
         // ~/.claude と .claude を読ませる。R1（skill / command / hooks / memory）はここで効く。
         settingSources: ["user", "project", "local"],
         skills: "all",
         ...contextOptions,
+        extraArgs: claudeQueryExtraArgs(contextOptions),
         ...(flag ? { settings: flag.file } : {}),
         ...((visualizeInstructions || contextRuntime?.prompt || agentRuntime?.instructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, agentRuntime?.instructions].filter(Boolean).join('\n\n') } } : {}),
         // adaptive = モデルが必要な分だけ考える。
@@ -848,6 +849,7 @@ export const backend = {
       }
       openSteer();
       for await (const message of q) {
+        compactDiagnostic?.observe(message);
         const model = message.type === "system" && message.subtype === "init" && message.model
           ? String(message.model) : null;
 
@@ -915,7 +917,8 @@ export const backend = {
       if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
     }
 
-    return { sessionId: ctx.sessionId };
+    const compactionFailureReason = compactDiagnostic?.reason();
+    return { sessionId: ctx.sessionId, ...(compactionFailureReason ? { compactionFailureReason } : {}) };
   },
 
   /**

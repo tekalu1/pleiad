@@ -1989,6 +1989,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       if (hooks.signal?.aborted) throw new Error(t('turn.aborted'));
       const runArgs = {
         prompt,
+        ...(hooks.compact ? { compact: hooks.compact } : {}),
         sessionId,
         cwd,
         mode: permissionMode,
@@ -2023,7 +2024,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         ? await backend.compact({ ...runArgs, trigger: hooks.compact })
         : await backend.runTurn(runArgs);
       if (hooks.compact && !turn.compaction?.phase?.match(/^complete$/)) {
-        emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact, reason: t('compaction.noCompletion') });
+        emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
+          reason: result?.compactionFailureReason || turn.compaction?.reason || t('compaction.noCompletion') });
       }
       if (hooks.compact && turn.outcome == null) emit({ type: 'turnResult', outcome: 'ok' });
       // 相手が別のターンを走らせていて、何も届かなかった。
