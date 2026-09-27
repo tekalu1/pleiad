@@ -70,7 +70,7 @@ export function filterSkills(skills, q) {
  * @param {() => string} [o.cwd] 今の作業ディレクトリ
  * @param {() => number} [o.now] 取得した時刻の測り方（テストのためだけに差し替えられる）
  */
-export function setupSlashSkills({ input, list, hint, load, cwd = () => "", now = () => Date.now() }) {
+export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canCompact = () => true, now = () => Date.now() }) {
   // 同じ作業ディレクトリなら使い回す。ただし古くなったら取り直す（編集中に足したスキルを拾う）
   const FRESH_MS = 60_000;
   let skills = [], skillsKey = null, skillsAt = 0, loadingKey = null;
@@ -97,21 +97,28 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", now 
 
   const paint = (q) => {
     list.replaceChildren();
-    const head = el("li", "head");
-    head.append(el("span", null, t("chat.composer.skills")), el("span", "n", String(items.length)));
+    // スキルの組の見出しは件数付き（コマンドの組ができる前と同じ形）
+    const skillHead = () => {
+      const h = el("li", "head");
+      h.append(el("span", null, t("chat.composer.skills")), el("span", "n", String(items.filter(item => !item.command).length)));
+      return h;
+    };
+    const head = items.some(item => item.command) ? el("li", "head", t("compaction.commandGroup")) : skillHead();
     list.append(head);
     if (!items.length) list.append(el("li", "none", t("composer.skills.none")));
     for (const extra of list.children) if (!extra.classList.contains("it") && extra !== head) extra.setAttribute("role", "presentation");
     items.forEach((s, i) => {
+      if (!s.command && i > 0 && items[i - 1]?.command) list.append(skillHead());
       const li = el("li", "it" + (i === active ? " on" : ""));
       li.id = `slash-option-${i}`;
       li.setAttribute("role", "option");
       li.setAttribute("aria-selected", String(i === active));
+      if (s.command && !canCompact()) li.setAttribute('aria-disabled', 'true');
       const name = el("span", "name");
       name.append(el("span", null, "/"), ...parts(s.name, q));
       if (s.hint) name.append(el("span", "args", s.hint));
       li.append(name, el("span", "from", s.from ?? ""));
-      li.append(el("span", "desc", s.description ?? ""));
+      li.append(el("span", "desc", s.command && !canCompact() ? t('compaction.antigravityManaged') : s.description ?? ""));
       // click だと blur が先に走る。mousedown で取る（combo と同じ）
       li.onmousedown = (e) => { e.preventDefault(); commit(i); };
       list.append(li);
@@ -119,11 +126,11 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", now 
     list.hidden = false;
     input.removeAttribute("aria-activedescendant");
     if (items.length) input.setAttribute("aria-activedescendant", `slash-option-${active}`);
-    list.children[active + 1]?.scrollIntoView?.({ block: "nearest" });
+    list.querySelector(`#slash-option-${active}`)?.scrollIntoView?.({ block: "nearest" });
   };
 
   const render = (q) => {
-    items = filterSkills(skills, q);
+    items = filterSkills([{ name: 'compact', command: true, from: '', description: t('compaction.compact') }, ...skills], q);
     if (active >= items.length) active = 0;
     paint(q);
   };
@@ -164,8 +171,9 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", now 
     const s = items[i];
     const at = token();
     if (!s || !at) return close();
+    if (s.command && !canCompact()) return close();
     const suffix = input.value.slice(at.end);
-    const insertion = `/${s.name}` + (/^\s/.test(suffix) ? "" : " ");
+    const insertion = `/${s.name}` + (s.command || /^\s/.test(suffix) ? "" : " ");
     input.value = input.value.slice(0, at.start) + insertion + suffix;
     const caret = at.start + insertion.length + (/^\s/.test(suffix) ? 1 : 0);
     chosen = { value: input.value };

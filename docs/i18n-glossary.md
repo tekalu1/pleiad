@@ -42,7 +42,10 @@
 | 接続先 / 互換の接続先 / 公式 | endpoint / compatible endpoint / Official |
 | 接続先を管理… | Manage endpoints… |
 | 使用量 | usage |
-| コンテキスト | context |
+| プラグイン（指示・Skills・MCP の入口） | Plugins |
+| 文脈（会話の LLM 窓の占有） | Context |
+| コンテキスト長（モデルの窓の上限） | Context length |
+| 圧縮 / 自動圧縮 | compaction / auto compaction |
 | スキル | skills |
 | 外観 / 配色 / 言語 | Appearance / Theme / Language |
 | アプリ情報・更新 | About & updates |
@@ -95,6 +98,7 @@
 | 探索（コンテキスト） | scan / search |
 | 送信待ち | waiting to be sent |
 | 作業が完了しました（通知） | Work finished |
+| 返事を待っています（通知） | Waiting for your reply |
 | 鍵束（OS） | keyring |
 | 変更の理由（保存される） | reason |
 | グループごと移動 | Moved with its group |

@@ -176,11 +176,13 @@ Pleiad タスクには件数・深さの上限を置かない。同時に活動�
 
 Pleiad は結果を保存し、親が空いたときに専用の完了通知で次のターンを開始する。
 子がさらに Pleiad の子を作った場合は、その結果通知と子の回答が終わるまで待ち、最終回答を依頼元へ返す。
+OS の完了通知は依頼元の会話に出す。依頼元のターン後も子が動いている間は保留し、結果の配送で始まったターンが終わるか、キャンセルなどで結果が届かないまま作業がなくなった時点で 1 回出す。子の承認・質問が人間の返事待ちになったときは、その子の会話名で OS 通知を出す。
 親の人間からの送信待ちを優先する。通知は画面で「Pleiad タスクの結果を受け取って再開しました」と表示し、人間の発言と区別する。
 通知の文は依頼元の会話の言語（`[Pleiad タスク完了通知 / <taskId>]` / `[Pleiad task completion notice / <taskId>]`。docs/design.md「多言語対応」）。人間の発言との区別は文言ではなく、送った本文のハッシュ（セッションの記録の `taskNotices`）で行う。子の会話は親の会話の言語を継ぎ、ply_agents の instructions・ツールの説明・エラーも会話の言語で返す。
 バックエンドのネイティブ履歴には、この通知が入力メッセージとして残る。
 
 親が走っている・裏の作業が残っている・送信待ちがあるときは通知を送らない。
+裏の作業に数えるのは終わりを待つものだけ（画面の衛星と同じ基準。`core/server.mjs` の `awaitedBackground`）。Codex のバックグラウンド端末（`kind: terminal`。dev サーバーなど）は数えない。以前は端末のある親には通知が届かなかった（2026-09-27）。
 送信が `requeue`（未受領）で返った場合だけ再送し、受領が不明な失敗は自動再送しない。
 
 通知の状態は `none` → `pending`（届ける結果がある）→ `delivering`（送っている）→ `sent` / `unknown`（受領が不明）。止めたタスクは `suppressed`。
@@ -189,8 +191,37 @@ Pleiad は結果を保存し、親が空いたときに専用の完了通知で�
 `deliver` が `requeue` を返したら（受け取る直前に親が動き出した）、メモリだけ `pending` に戻し、ファイルは `delivering` のまま書かない。
 次に送るとき、ファイルがすでに `delivering` なら書き直さない。以前は親が忙しい間、500ms ごとにファイル全体を 2 回ずつ書き直していた（2026-09-27）。
 
+子の返答の後も終わらず Pleiad が止めた裏の作業があれば（下の「子に残った裏の作業」）、同じ場所に 1 段落足す（`agent:delegation.noticeStoppedBackground`。件数、待った分数、先頭 3 件の見出し）。
+
 子で実行前に拒否されたコマンドがあれば、通知の本文の最後（「元の依頼に必要な作業を続けてください。」の前）に 1 段落足す（`agent:delegation.noticeRejections`）。
 件数と、先頭 3 件の `command`（伏せて切ったもの）と `reason` だけを並べ、全件は `ply_task_status` の `rejections` で読むよう案内する。拒否が無ければ何も足さない。
+
+## 子の結果
+
+結果にするのは、子の会話のこの回（最後の user の発言より後）の assistant の返答のうち、最後のもの（`core/agent-tasks.mjs` の `finalReply`）。
+ただし、バックエンドが `stopHookFollowUp` の印を付けた返答は飛ばす。飛ばすと何も残らないときは、今までどおり最後の返答。
+
+印は、Stop フックに止められて（exit 2・`decision: block`）main が続けた分のうち、**中身の仕事をしていない**ものに付く。何を続きとみなし、何を中身の仕事とするかは文面ではなくバックエンドが決める（docs/multi-backend.md §2.3 の `NormalizedMessage`）。
+
+- **Claude**（`claude-normalize.mjs` の `stopHookFollowUps`）: transcript の `stop_hook_summary` の行で `hookErrors` があり `preventedContinuation` でないものを「止めた」とし、その後の assistant 行を続きとする。続きは次の人の発言・途中送信・裏の作業の完了通知で切れる。続きで呼んだツールが全部「調べるだけ」（ToolSearch・Skill・Read・Grep・Glob・LS・TodoWrite・WebSearch・WebFetch・MCP のリソースの読み出し・`ply_context` の load_skill / instructions_for_path など）なら、続きの返答に印を付ける。Edit・Write・Bash・PowerShell・ほかの MCP・サブエージェントを 1 回でも呼んだ続きは中身の仕事として扱い、印を付けない（Bash は読むだけのこともあるが、変えたかを見分けられないので仕事をした側に倒す。倒れた先は今までどおりの「最後の返答」）。
+- **Codex・Antigravity**: 印を付けない。結果は最後の返答。
+
+理由: 2026-09-27、Claude の子が報告を書いた後に、ナレッジの棚卸しを促す Stop フックで ToolSearch と load_skill を呼んで「ナレッジ化対象なし」と書いて終わり、その一言が依頼元への結果になって報告が届かなかった。フックの出力は isMeta の user として transcript にだけ残り、会話の記録からは続きだと分からない。本文で見分けると、フックの文面や子の言い回しが変わるたびに外れる。続きで直して報告し直した（フックが不備を指摘する型）なら、そちらが本当の結果なので選ぶ。
+子の会話そのもの（画面）には続きの返答も残る。
+
+## 子に残った裏の作業
+
+子の結果は、子のターンが終わり、子が待つ裏の作業と子が作った Pleiad タスクが片付いてから確定する（`execute`）。
+裏の作業が終わらないと結果が出ず、タスクは `running` のまま残って依頼元へ通知が届かない。2026-09-27 に、Claude の子が報告を書き終えた後も、120 秒で終わらず CLI が裏へ回したコマンド（完了の通知が来ないまま生きていた）のせいで、そうなった。
+
+- **Claude**: main が返答を終えても、裏のタスク（コマンドを含む）が生きている間はターンを保持する（docs/multi-backend.md §2.2 の `phase: waiting`）。委譲の子では、`phase: waiting` が `AGENT_HOST_DELEGATION_BACKGROUND_WAIT_MS`（既定 10 分。Claude Code の print モードが裏の作業を待つ上限の既定と同じ）続いたら、サブエージェント以外の裏の作業を止める（作業ダイアログの停止ボタンと同じ `stopBackground` → `Query.stopTask`）。CLI は止めたことの完了通知で main を再開させ、ターンが終わる。時間は main が止まるたびに数え直す（正当に待っているテストの実行などを先回りして止めない）。サブエージェントは自分で終わるので止めない。人が見ている会話（委譲の子でない会話）では止めない。
+- 止めた後に main が足した一言だけが結果にならないよう、止める前の最後の返答を結果の先頭に残す（`報告
+
+止めた後の一言`）。止めたものはタスクの `stoppedBackground`（`[{ kind, label }]`。見出しは拒否と同じく秘密を伏せて 300 字で切る）に残し、完了通知にも書く。その回で止めたものが無ければ消す。
+- **Codex**: バックグラウンド端末はターンの外に残り、終わっても main は再開しない（§2.7）。待っても結果は変わらないので、子の結果も依頼元への通知も端末を待たない。端末は止めずに残す（子の会話の「バックグラウンド N」から止められる）。以前は端末が残った子は `running` のままだった。
+- **Antigravity**: ターンの中にもターンの外にも裏の作業を持たないので、この形は起きない。
+
+この修正より前に `running` のまま残った記録は、子の会話の作業ダイアログで残っている裏のコマンドを止めれば、その場で完了して通知が届く。Pleiad を再起動すると、今までどおり `interrupted` になる（再起動をまたいで子の結果を確かめ直す仕組みは入れていない）。
 
 ## 実行前に拒否されたコマンド
 
@@ -225,7 +256,7 @@ Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の�
 
 ## 保存・画面・再起動
 
-`AGENT_HOST_DATA/agent-tasks.json` にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）、実行前に拒否されたコマンド（`rejections`。伏せて切ったもの）を保存する。
+`AGENT_HOST_DATA/agent-tasks.json` にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）、実行前に拒否されたコマンド（`rejections`。伏せて切ったもの）、子の返答の後に Pleiad が止めた裏の作業（`stoppedBackground`）を保存する。
 会話メタデータの `delegation` に親とタスク ID を、`routing` にどう選ばれたかを記録する。会話の分岐を表す `parent` とは別にする。
 入力欄の上の「バックグラウンド N」（全件終了後は「バックグラウンド · 完了 M」。design-system.md「バックグラウンド」）で子の会話を読む・停止する・承認に答える。「会話として開く」で子の会話そのものへ移り、子からはヘッダーの「依頼元の会話」で戻れる。完了後も札と、依頼元の会話の `ply_delegate` のカードの「開く」から確認できる。
 
@@ -255,6 +286,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 `npm test` でタスクの管理と SDK MCP クライアント接続、fake を使ったサーバー全体の委譲・継続・停止と、承認の中継・`waiting` を検証する。
 保存障害は `tests/unit/agent-tasks-storage.mjs`（rename に EPERM を差し込む。回復・閉じない・障害中の読み取りと断り・requeue を書かない・再起動後の送り直し）。
 実行前の拒否は `tests/unit/codex-rejections.mjs`（rollout の解析・読む範囲・伏せ方）と `tests/unit/server-codex-rejections.mjs`（身代わりの Codex が rollout に拒否を書き、会話・`ply_task_status`・完了通知・`ply_task_send` の次の回まで）。
+子に残った裏の作業と子の結果は `tests/unit/server-delegation-background.mjs`（fake の台本 `bg-shell` / `bg` / `term` / `hook-follow` で、終わらないコマンドを上限まで待って止める・結果に止める前の報告を残す・サブエージェントは止めない・端末は子でも親でも待たない・Stop フックの続きの一言を結果にしない）と `tests/unit/delegation-result.mjs`（2026-09-27 の transcript と同じ行の形で、続きの印・中身の仕事をした続き・区切り・結果の選び方）と `tests/unit/claude-turn-end.mjs`（SDK の身代わりで、Stop フックの続きではターンが終わり、裏へ回ったまま終わらないコマンドがあると終わらず、`stopTask` で終わる）。
 振り分けは `tests/unit/delegation-routing.mjs`（規則・段・使用量・アカウント。判定器は偽の fetch）と `tests/unit/server-delegation-routing.mjs`（偽の Jev と偽の agy でサーバー全体。別の候補でやり直す・承認モードの確かめ・動いている元のタスク・完了通知の一行も）、画面の文と並びは `tests/unit/delegation-routing-view.mjs`。テストのサーバーは使用量を定期的に取らず（`AGENT_HOST_ROUTING_USAGE=off`）、判定器の送り先を手元に向ける（`AGENT_HOST_OPENROUTER_API` / `AGENT_HOST_CEREBRAS_API`。本物へは送らない）。
 `npm run test:e2e -- agent-delegation` は実サービスを呼び、Claude → Codex、Codex → Claude と結果通知による再開を確認する。
 単独確認には `E2E_DELEGATION_PARENT=codex` などを使える。

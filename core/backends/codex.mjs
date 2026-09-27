@@ -927,6 +927,23 @@ async function reconcileAll() {
 
 // ---------------------------------------------------------------- backend
 
+export function codexContextWindow(tokenUsage) {
+  const usedTokens = tokenUsage?.last?.totalTokens;
+  const windowTokens = tokenUsage?.modelContextWindow;
+  return Number.isFinite(usedTokens) && Number.isFinite(windowTokens) && windowTokens > 0
+    ? { type: 'contextWindow', usedTokens, windowTokens } : null;
+}
+
+export function codexCompactionEvent(method, params) {
+  if (method === 'thread/compacted' ||
+      (method === 'item/completed' && params?.item?.type === 'contextCompaction'))
+    return { type: 'compaction', phase: 'complete', trigger: 'auto', nativeId: params?.item?.id ?? null,
+      turnId: params?.turnId ?? null };
+  if (method === 'item/started' && params?.item?.type === 'contextCompaction')
+    return { type: 'compaction', phase: 'start', trigger: 'auto', turnId: params?.turnId ?? null };
+  return null;
+}
+
 export const backend = {
   async usage() { return codexQuota(await rpc.request('account/rateLimits/read', {}, 15_000)); },
   id: "codex",
@@ -934,6 +951,7 @@ export const backend = {
   get description() { return t("codex.description"); },
 
   capabilities: {
+    compact: true,
     title: true,        // thread/name/set。公式クライアントとタイトルを共有できる
     tag: false,         // 状態タグは持てない -> sidecar が正本
     fork: true,
@@ -950,6 +968,35 @@ export const backend = {
 
   toolHints: TOOL_HINTS,
   subagentTools: SUBAGENT_ITEMS,
+
+  async compact({ sessionId, emit }) {
+    if (!validId(sessionId)) throw new Error(t('codex.errors.noThreadId', { method: 'thread/compact/start' }));
+    await nativeRpc.request('thread/resume', { threadId: sessionId });
+    let off, timer;
+    const completed = new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('Compaction timed out')), 300_000);
+      timer.unref?.();
+      off = nativeRpc.onNotify((method, params) => {
+        if (params?.threadId !== sessionId) return;
+        if (method === 'thread/tokenUsage/updated') {
+          const window = codexContextWindow(params.tokenUsage);
+          if (window) emit(window);
+          return;
+        }
+        const event = codexCompactionEvent(method, params);
+        if (event?.phase !== 'complete') return;
+        clearTimeout(timer);
+        emit({ ...event, trigger: 'manual' });
+        resolve();
+      });
+    });
+    completed.catch(() => {});
+    try {
+      emit({ type: 'compaction', phase: 'start', trigger: 'manual' });
+      await nativeRpc.request('thread/compact/start', { threadId: sessionId });
+      await completed;
+    } finally { clearTimeout(timer); off?.(); }
+  },
 
   // ---- サブエージェント（第 1 引数はネイティブの threadId。conversations.mjs が翻訳済み）--------
 
@@ -1154,7 +1201,10 @@ export const backend = {
       switch (method) {
         case 'thread/tokenUsage/updated':
           if (!turnId || (params.turnId && params.turnId !== turnId)) return;
+          if (codexContextWindow(params.tokenUsage)) emit(codexContextWindow(params.tokenUsage));
           return emit({ type: 'usage', ...meter(params.tokenUsage) });
+        case 'thread/compacted':
+          return emit(codexCompactionEvent(method, params));
         case "turn/started":
           turnId ??= params?.turn?.id ?? null;
           return;
@@ -1171,6 +1221,7 @@ export const backend = {
         case "item/started": {
           const item = params?.item;
           if (!item?.id) return;
+          if (item.type === 'contextCompaction') emit(codexCompactionEvent(method, params));
           items.set(item.id, item);
           noteDelivered(item);
           if (!TOOL_ITEMS.has(item.type)) return;
@@ -1188,6 +1239,7 @@ export const backend = {
         case "item/completed": {
           const item = params?.item;
           if (!item?.id) return;
+          if (item.type === 'contextCompaction') emit(codexCompactionEvent(method, params));
           const started = items.has(item.id);
           // 終わったターンのアイテムが遅れて届くことがある（バックグラウンド端末。turnId は昔のまま）。
           // このターンのカードにはしない。結果は見張り（codex-background.mjs）が会話へ出す
@@ -1524,6 +1576,14 @@ export const backend = {
     const res = await rpc.request("thread/read", { threadId: sessionId, includeTurns: true });
     if (!res?.thread) throw new Error(t("codex.errors.historyUnreadable"));
     return threadToMessages(res?.thread, options);
+  },
+
+  async getCompactions(sessionId) {
+    const res = await nativeRpc.request('thread/read', { threadId: sessionId, includeTurns: true }, 30_000);
+    return (res?.thread?.turns ?? []).flatMap(turn => (turn.items ?? [])
+      .filter(item => item.type === 'contextCompaction')
+      .map(item => ({ id: `native:${item.id}`, nativeId: item.id, turnId: turn.id ?? null, phase: 'complete', trigger: 'auto',
+        at: Number(turn.completedAt ?? turn.startedAt ?? res.thread.updatedAt) * 1000 })));
   },
 
   async setTitle(sessionId, title) {

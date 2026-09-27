@@ -39,10 +39,11 @@
       "agents": "エージェント設定",
       "usage": "使用量",
       "appearance": "外観",
-      "context": "コンテキスト",
+      "context": "プラグイン",
       "remote": "リモート",
       "about": "アプリ情報・更新",
-      "delegation": "委譲"
+      "delegation": "委譲",
+      "autoCompaction": "自動圧縮"
     },
     "usage": {
       "description": "サブスクの枠はアカウント全体の値です。使用率・残量・リセット日時を表示します。",
@@ -189,7 +190,7 @@
     "connectingMcp": "外部 MCP に接続中 {{current}}/{{total}}",
     "thinking": "考えている",
     "writing": "書いている",
-    "compacting": "文脈を圧縮している",
+    "compacting": "会話を圧縮しています…",
     "waiting": "あなたの応答を待っている",
     "running": "動いている",
     "stopping": "中断している",
@@ -533,7 +534,7 @@
       "added": "Pleiad の指示 {{n}}",
       "join": "・"
     },
-    "title": "この会話のコンテキスト",
+    "title": "この会話のプラグイン",
     "subtitle": {
       "startedAt": "{{time}} に開始 · 設定の変更は次のターンから反映",
       "started": "設定の変更は次のターンから反映",
@@ -545,7 +546,7 @@
     "notStarted": "この会話はまだ始まっていません。最初の送信で、何を渡したかをここに記録します。",
     "guarded": {
       "title": "この会話では Pleiad がそろえる設定を使っていません",
-      "reason": "{{backend}} は Pleiad がそろえるコンテキストを受け取れないため、エージェント自身の読み込みに任せました"
+      "reason": "{{backend}} は Pleiad がそろえるプラグインを受け取れないため、エージェント自身の読み込みに任せました"
     },
     "failed": {
       "title": "読み込みか実行が途中で失敗しました",
@@ -553,7 +554,7 @@
     },
     "foot": {
       "lead": "すべての場所の設定は ",
-      "link": "コンテキストの設定を開く →"
+      "link": "プラグインの設定を開く →"
     },
     "instruction": {
       "native": "{{agent}} が自分の決まりで読みます（Pleiad からは中身が見えません）",
@@ -750,7 +751,7 @@
       "nothing": "足した場所 · 見つかったものはありません"
     },
     "scanFailed": "探せませんでした：{{error}}",
-    "loadFailed": "コンテキストの設定を読めませんでした：{{error}}",
+    "loadFailed": "プラグインの設定を読めませんでした：{{error}}",
     "tier": {
       "user": "ユーザー",
       "place": "作業場所",
@@ -972,7 +973,7 @@
       "resumeCwd": "再開時に変更",
       "cwdFrom": "{{from}} から",
       "contextReloaded": "指示・Skills を読み込み直した",
-      "contextSettingsApplied": "コンテキストの設定の変更を反映した",
+      "contextSettingsApplied": "プラグインの設定の変更を反映した",
       "contextChanged": "{{names}}",
       "contextChangedMore_other": "{{names}} ほか {{count}} 件",
       "inheritedStatus": "新しいセッションに引き継いだ",
@@ -1038,7 +1039,7 @@
       "failed": "失敗: {{error}}",
       "unknownReason": "理由不明",
       "contextRefreshed": "指示・Skills が変わったので読み込み直しました",
-      "contextSettingsApplied": "コンテキストの設定の変更を、このターンから反映しました",
+      "contextSettingsApplied": "プラグインの設定の変更を、このターンから反映しました",
       "contextRefreshedNames": "指示・Skills が変わったので読み込み直しました（{{names}}）",
       "contextRefreshedNamesMore_other": "指示・Skills が変わったので読み込み直しました（{{names}} ほか {{count}} 件）",
       "modeSaveFailed": "承認モードを保存できませんでした: {{error}}",
@@ -1206,13 +1207,13 @@
     "titleLabel": "タイトル",
     "titleWand": "AI にタイトルを考えてもらう",
     "context": {
-      "entryTitle": "この会話が読み込むコンテキスト",
-      "label": "コンテキスト",
+      "entryTitle": "この会話が読み込むプラグイン",
+      "label": "プラグイン",
       "changed": "変更あり",
-      "title": "この会話のコンテキスト",
-      "titleWith": "この会話のコンテキスト：{{summary}}",
+      "title": "この会話のプラグイン",
+      "titleWith": "この会話のプラグイン：{{summary}}",
       "changedSuffix": "· 変更あり",
-      "open": "この会話のコンテキストを開く：{{summary}}"
+      "open": "この会話のプラグインを開く：{{summary}}"
     },
     "menu": {
       "iconFailed": "アイコンの変更に失敗: {{error}}",
@@ -1810,6 +1811,7 @@
   },
   "notify": {
     "completed": "作業が完了しました",
+    "waitingReply": "返事を待っています",
     "untitled": "Pleiad の会話"
   },
   "remote": {
@@ -2126,5 +2128,47 @@
     "stripClose": "閉じる",
     "resumeAllFailed_other": "{{count}} 件を再開できませんでした: {{error}}",
     "markName": "注意の三角"
+  },
+  "compaction": {
+    "context": "文脈",
+    "meter": "{{rate}}% · {{used}} / {{window}}",
+    "running": "会話を圧縮しています…",
+    "failed": "会話を圧縮できませんでした",
+    "scheduled": "◷ {{time}} に自動で圧縮します",
+    "cancel": "キャンセル",
+    "retry": "再試行",
+    "compact": "会話を圧縮",
+    "compactNow": "圧縮する",
+    "meterMenu": "文脈の操作",
+    "settings": "圧縮設定",
+    "done": "会話を圧縮しました",
+    "doneAuto": "自動で圧縮しました",
+    "tokenChange": "· {{before}} → {{after}} トークン",
+    "showSummary": "要約を表示",
+    "commandGroup": "Pleiad のコマンド",
+    "disableConversation": "この会話では自動圧縮しない",
+    "antigravityManaged": "Antigravity が必要に応じて自動で圧縮します",
+    "antigravityAutoManaged": "Antigravity が自動で管理",
+    "claudeEnabled": "Claude Code の自動圧縮",
+    "codexEnabled": "Codex の自動圧縮",
+    "ruleExcludedTitle": "対象外",
+    "ruleExcluded": "委譲の子の会話、実行中、承認待ち、失敗・中断したターン",
+    "ruleSkipTitle": "見送り",
+    "ruleSkip": "予定から 8 分を超えたら実行せず、予告を消します",
+    "ruleOnceTitle": "回数",
+    "ruleOnce": "正常に終わった利用者のターンごとに 1 回。次の送信、手動圧縮、未送信会話の削除、バックエンド切替、対象外への設定変更、キャンセルで予約を取り消します",
+    "settingFailed": "自動圧縮の設定を保存できませんでした: {{error}}",
+    "otherConversationFailed": "「{{title}}」の圧縮操作を完了できませんでした: {{error}}",
+    "sidebarDone": "圧縮済み",
+    "autoEnabled": "放置した会話を自動で圧縮する",
+    "minSize": "対象にする最小サイズ",
+    "kTokens": "k トークン",
+    "agent": "エージェント",
+    "enabled": "入 / 切",
+    "delay": "待ち時間",
+    "claudeDelay": "Claude Code の待ち時間",
+    "codexDelay": "Codex の待ち時間",
+    "minutes": "分",
+    "saveFailed": "自動圧縮の設定を保存できませんでした：{{error}}"
   }
 }

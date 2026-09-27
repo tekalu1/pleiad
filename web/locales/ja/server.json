@@ -89,7 +89,7 @@
     "reservedInvalid": "予約した設定は使用できません。選び直してください",
     "aborted": "中断しました",
     "visualizationSaveFailed": "可視化を保存できませんでした: {{error}}",
-    "contextSaveFailed": "コンテキストの利用記録を保存できませんでした"
+    "contextSaveFailed": "プラグインの利用記録を保存できませんでした"
   },
   "resume": {
     "running": "この会話は実行中です。終わってから再開してください",
@@ -238,7 +238,7 @@
   },
   "mcp": {
     "oauth": {
-      "loginRequired": "ログインが必要です。設定 › コンテキストの外部 MCP から「ログイン」してください",
+      "loginRequired": "ログインが必要です。設定 › プラグインの外部 MCP から「ログイン」してください",
       "registrationMissing": "registration_client_uri / registration_access_token がありません",
       "labelRegistration": "登録管理の URL",
       "labelAuthorization": "認可エンドポイント",
@@ -565,7 +565,7 @@
       "cannotRead": "Antigravity の使用枠を取得できません",
       "needsUpdate": "使用枠の表示には Antigravity CLI 1.1.11 以降が必要です。端末で agy update を実行してください。"
     },
-    "contextRefusal": "Antigravity に Pleiad のコンテキストを渡すと、ワークスペースの指示（AGENTS.md・GEMINI.md）を agy が読み込まなくなります。指示の担当がエージェントのままなので、この会話ではエージェント自身の読み込みに任せました。Skills や外部 MCP を Pleiad に任せるには、指示の担当も Pleiad にしてください"
+    "contextRefusal": "Antigravity に Pleiad のプラグインを渡すと、ワークスペースの指示（AGENTS.md・GEMINI.md）を agy が読み込まなくなります。指示の担当がエージェントのままなので、この会話ではエージェント自身の読み込みに任せました。Skills や外部 MCP を Pleiad に任せるには、指示の担当も Pleiad にしてください"
   },
   "context": {
     "removedHere": "この会話では外しました",
@@ -608,29 +608,29 @@
       "dirRequired": "ディレクトリを指定してください",
       "scanInvalid": "スキャン設定の形式が不正です",
       "unknownKind": "種類が不正です",
-      "kindInvalid": "コンテキストの設定の形式が不正です",
+      "kindInvalid": "プラグインの設定の形式が不正です",
       "disabledMcpOnly": "名前で外す設定は外部 MCP だけです",
       "rootsInvalid": "追加で探すフォルダーの形式が不正です",
       "defaultPlace": "既定",
-      "migrateDiffers": "コンテキストの設定を新しい形式へ移せませんでした（{{place}} で結果が変わるため）。元の設定は変更していません",
-      "migrateUnverified": "コンテキストの設定の移行を確かめられませんでした。元の設定は変更していません",
-      "unreadable": "コンテキストの設定を読み込めません。context-scans.json を確認してください",
+      "migrateDiffers": "プラグインの設定を新しい形式へ移せませんでした（{{place}} で結果が変わるため）。元の設定は変更していません",
+      "migrateUnverified": "プラグインの設定の移行を確かめられませんでした。元の設定は変更していません",
+      "unreadable": "プラグインの設定を読み込めません。context-scans.json を確認してください",
       "nothingToChange": "変更する項目を指定してください"
     },
     "session": {
       "sessionRequired": "会話を指定してください",
-      "noRecord": "この会話にはコンテキストの記録がありません",
+      "noRecord": "この会話にはプラグインの記録がありません",
       "notManaged": "この会話では Pleiad が指示・Skills をそろえていません",
       "busy": "返答中は読み込み直せません。返答が終わってから押してください",
       "invalidMcpName": "MCP の名前が不正です",
       "reconnectNext": "次の返答からつなぎます"
     },
     "runtime": {
-      "refused": "{{backend}} は Pleiad が担当するコンテキスト（指示・Skills・外部 MCP）を受け取れないため、この会話ではエージェント自身の読み込みに任せました",
+      "refused": "{{backend}} は Pleiad が担当するプラグイン（指示・Skills・外部 MCP）を受け取れないため、この会話ではエージェント自身の読み込みに任せました",
       "choicePrefer": "同じ名前の定義が複数あり、{{source}} の設定の方を使いました（設定で選んだもの）",
       "choiceFirst": "同じ名前の定義が複数あり、{{source}} の設定の方を使いました（選んでいないので先に見つかった方）",
       "otherSource": "別",
-      "unresolved": "コンテキストを完全に解決できません。探索結果を確認してください：{{detail}}",
+      "unresolved": "プラグインを完全に解決できません。探索結果を確認してください：{{detail}}",
       "scanLimit": "探索上限",
       "duplicateName": "同名の {{kind}}「{{name}}」があります。探索設定の除外パスで使用する定義を1つに絞ってください",
       "skillUnsupported": "固有の実行設定：{{keys}}",
@@ -646,12 +646,12 @@
       "plyUnavailable": "Pleiad の MCP 登録を読み込めません",
       "oauthUnavailable": "OAuth を扱えない起動です",
       "configUnreadable": "接続設定を読み込めません",
-      "unsupportedHint": "{{message}}。認証の設定が要る MCP は、設定 › コンテキストの外部 MCP で「Pleiad に取り込む」と Pleiad 側で認証できます",
-      "authRequiredPly": "MCP が認証を求めています。設定 › コンテキストの外部 MCP で認証の方式と値を確かめてください",
-      "authRequiredNative": "MCP が認証を求めています。設定 › コンテキストの外部 MCP で「Pleiad に取り込む」とログインできます。または外部 MCP をエージェントに任せてください",
+      "unsupportedHint": "{{message}}。認証の設定が要る MCP は、設定 › プラグインの外部 MCP で「Pleiad に取り込む」と Pleiad 側で認証できます",
+      "authRequiredPly": "MCP が認証を求めています。設定 › プラグインの外部 MCP で認証の方式と値を確かめてください",
+      "authRequiredNative": "MCP が認証を求めています。設定 › プラグインの外部 MCP で「Pleiad に取り込む」とログインできます。または外部 MCP をエージェントに任せてください",
       "tooManyTools": "ツールが多すぎます（{{max}} 件まで）",
       "connectFailed": "MCP に接続できません。接続先・認証・起動コマンドを確認してください",
-      "invalidToken": "コンテキストのトークンが不正です",
+      "invalidToken": "プラグインのトークンが不正です",
       "tooManyServers": "MCP は1セッション32件までです。探索対象を絞ってください",
       "aborted": "中断しました",
       "toolTotalExceeded": "ツールの合計が上限（{{max}} 件）を超えるため外しました"
@@ -702,7 +702,7 @@
       "settingsObject": "設定はオブジェクトで指定してください",
       "metadataUrl": "clientMetadataUrl は URL で指定してください",
       "metadataUrlScheme": "clientMetadataUrl は、パスを持つ https の URL で指定してください（例: https://example.com/ply/oauth-client.json）",
-      "pendingValues": "未入力の値があります（{{keys}}）。設定 › コンテキストの外部 MCP で登録を編集して入力してください",
+      "pendingValues": "未入力の値があります（{{keys}}）。設定 › プラグインの外部 MCP で登録を編集して入力してください",
       "bearerMissing": "bearer トークンが保存されていません。MCP の登録を編集して入力してください"
     }
   },
@@ -929,5 +929,10 @@
     "notFound": "その指示はありません",
     "builtinDelete": "既定の指示は削除できません。スイッチで切ってください",
     "tooMany": "指示は {{count}} 件までです"
+  },
+  "compaction": {
+    "unsupported": "このエージェントでは手動で圧縮できません",
+    "invalidSetting": "自動圧縮の設定が不正です",
+    "noCompletion": "圧縮の完了を確認できませんでした"
   }
 }

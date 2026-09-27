@@ -41,7 +41,9 @@
     "noticeMore": "\n続きは ply_task_status の offset: {{offset}} で取得できます。",
     "noticeRetry": "利用者が {{of}} を別の委譲先でやり直したタスク\n",
     "noticeRejections": "実行前に拒否されたコマンド（Codex 自身の安全判定など）: {{count}} 件\n{{items}}\n全件は ply_task_status の rejections で読めます。",
-    "noticeRejection": "- {{command}}（{{reason}}）"
+    "noticeRejection": "- {{command}}（{{reason}}）",
+    "noticeStoppedBackground": "子の返答の後も {{minutes}} 分以上終わらなかった裏の作業を、Pleiad が止めました: {{count}} 件\n{{items}}\n続きが要るなら、子の会話で結果を確かめてから ply_task_send で指示してください。",
+    "noticeStoppedItem": "- {{label}}"
   },
   "tasks": {
     "textLength": "{{name}} は1〜{{max}}文字で指定してください",

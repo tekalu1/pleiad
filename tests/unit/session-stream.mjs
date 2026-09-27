@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createSessionLoads } from "../../web/session-stream.mjs";
 import { createCompletionNotifications } from '../../web/notifications.mjs';
+import { mergeCompactionHistory } from '../../core/compaction-history.mjs';
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
 
@@ -29,6 +30,7 @@ export default async function (t) {
     // ヘッダーの使用量のチップ（web/header-usage.mjs）。ターンの終わりで取り直す。このテストの対象外
     headerUsage: { turnEnded: noop },
     filePreview: { sessionChanged: noop },
+    paintContextStrip: noop, paintCompactions: noop,
     // 狭い画面の引き出し（client.mjs の setDrawer）。会話を開くと閉じる。このテストの対象外
     setDrawer: noop,
     // 入力欄の待ち（web/composer-wait.mjs）。tests/unit/composer-wait.mjs が見る。このテストの対象外
@@ -77,6 +79,8 @@ export default async function (t) {
   const next = vm.runInContext("select('target')", context);
   deliver({ type: "text.end", sessionId: "target", streamSeq: 6 });
   deliver({ type: "turnEnd", sessionId: "target", streamSeq: 7, outcome: 'ok', completedAt: 100 });
+  t.ok('turnEnd 自体は OS 通知を出さない', notices.length === 0);
+  deliver({ type: 'completionReady', sessionId: 'target', completedAt: 100 });
   t.ok("読込中の終了による同期は復元まで待つ", syncs === 0);
   releaseHistory({ messages: [], presents: [], stream: { events: [event("全文", 5)] }, streamCursor: 5 });
   await next;
@@ -119,7 +123,8 @@ export default async function (t) {
   const turns = new Map([["target", turn]]);
   const serverContext = vm.createContext({
     msg: { args: { sessionId: "target", live: true } }, runtime: { turns, waiting: new Map() }, liveReads,
-    resolveBackendForSession: async () => ({}), store: { get: async () => ({}) },
+    resolveBackendForSession: async () => ({}), store: { get: async () => ({}) }, compactionScheduler: { get: () => null },
+    mergeCompactionHistory,
     history: { loadTranscript: () => new Promise(r => { resolveTranscript = r; }) },
     reply: (ok, data) => data, streamSequence: 3,
   });

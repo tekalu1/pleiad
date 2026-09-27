@@ -92,7 +92,7 @@ export const COMMANDS = new Set([
   "onboardingSeen",
   "completeSetup",
   "runTurn",
-  "sendMessage", "messageAction", "listMessages",
+  "sendMessage", "messageAction", "listMessages", "compactConversation", "cancelCompaction", "setAutoCompaction", "setConversationAutoCompaction",
   "switchBackend",   // idle conversation -> a new native execution segment
   "abort",           // { sessionId?, reason?: user|update|quit } -> { aborted, reason }。sessionId 省略は全部。reason 省略・不正は user。止めた会話は interrupted { at, reason } で残る
   "resume",          // { sessionId } -> { sent: "outbox"|"text", count }。中断した会話を続ける（保留・送れなかった未送信を送り直す。無ければ理由ごとの文を送る）。実行中（SESSION_RUNNING）・中断していない（NOT_INTERRUPTED）・結果不明の未送信がある（OUTBOX_UNKNOWN）会話は断る
@@ -171,6 +171,7 @@ export const EVENTS = new Set([
   "tool.start",      // { id, name, input }
   "tool.result",     // { id, text, isError, truncated }
   "activity",        // { state: thinking|writing|compacting|waiting|running|idle, label? }
+  "compaction", "contextWindow", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",
   "turnResult",      // { outcome: ok|error|aborted, turns?, costUsd?, error?, reason? }。reason は aborted のときの中断の理由（user|update|quit|hostAway）
 
   // ---- セッションとメタ情報

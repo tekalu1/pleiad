@@ -90,6 +90,8 @@ export default async function (t) {
       sessionEvents.length === 1 && sessionEvents[0].first === true && Boolean(sessionEvents[0].sessionId),
       JSON.stringify(sessionEvents));
     t.ok("本文が text.delta で流れる", textOf(first) === "了解: こんにちは", JSON.stringify(textOf(first)));
+    t.ok('tokenUsage の last と modelContextWindow が文脈量になる', first.events.some(e => e.type === 'contextWindow'
+      && e.usedTokens === 15 && e.windowTokens === 200000));
     t.ok("思考が thinking.start / delta に写る",
       first.events.some((e) => e.type === "thinking.start")
         && first.events.some((e) => e.type === "thinking.delta" && e.text === "考えている"));
@@ -254,6 +256,14 @@ export default async function (t) {
         && String(e.url).startsWith("https://") && e.backend === "codex"),
       JSON.stringify(c.since(at).filter((e) => e.type === "auth")));
     t.ok("login/completed を待ってから応答が返る", logged.loggedIn === true, JSON.stringify(logged));
+    const compactFrom = c.mark();
+    await c.cmd('compactConversation', { sessionId: sid });
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === sid, { from: compactFrom, ms: 30_000 });
+    const compactEvents = c.since(compactFrom);
+    t.ok('thread/compact/start の完了と縮小した文脈量が届く', compactEvents.some(e => e.type === 'compaction' && e.phase === 'complete' && e.trigger === 'manual')
+      && compactEvents.some(e => e.type === 'contextWindow' && e.usedTokens === 21000 && e.windowTokens === 200000));
+    t.ok('Codex の圧縮 item を開き直しても区切りが一つ残る',
+      (await c.cmd('loadSession', { sessionId: sid })).compactions?.filter(e => e.phase === 'complete').length === 1);
   } finally {
     c.close();
     await server.stop();

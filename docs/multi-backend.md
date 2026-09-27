@@ -16,7 +16,7 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 |---|---|---|---|---|
 | Codex | `codex app-server` | CLI 0.156.1 | なし | rollout の `session_meta.cli_version`、`response_item` の `turn_id` とツール出力。拒否の読み取り（[ADR 0035](adr/0035-read-codex-rollout-for-rejections.md)） |
 | Claude Code | Agent SDK の `query()` と利用者の `claude` CLI | SDK 0.3.258、CLI 2.1.282 | なし | `projects/*.jsonl` の attachment、`subagents/*.jsonl` の親子鎖、`*.meta.json` の `toolUseId` |
-| Antigravity | `agy --print= --input-format stream-json --output-format stream-json` | CLI 1.2.8（実機の動作記録）、1.2.11（この PC の版表示） | 1.1.11（古い版では `/usage` がモデルへの依頼になる） | ファイルなし。stream-json のイベント形 |
+| Antigravity | `agy --print= --input-format stream-json --output-format stream-json` | CLI 1.2.8（実機の動作記録）、1.2.12（この PC の版表示） | 1.1.11（古い版では `/usage` がモデルへの依頼になる） | ファイルなし。stream-json のイベント形 |
 
 非公開形式の不一致は `AGENT_HOST_DATA/backend-shape-errors.log` に、バックエンド・種類・検知した版・検証した版・時刻だけを記録する。同じ組合せはログに残る間は一度だけ記録する。Claude の transcript は行の `version`、Codex の rollout は先頭の `session_meta.cli_version` を使う。Antigravity の stream-json には版がないため `unknown` と記録する。
 
@@ -106,7 +106,8 @@ web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧�
   kill する**（`tasks/<id>.output` に `[killed]` だけが残り、「完了の通知が来たら報告します」が果たされない）。
   いまは `canCloseInput` が shell も待つので入力は開いたまま、完了通知で main が再開して報告できる。
   タスクには `waitable: true` を付けて出す。終わらないコマンド（`npm run dev`）の逃げ道はタイムアウトではなく
-  作業ダイアログの**停止ボタン**（`stopBackground` → SDK の `Query.stopTask`）
+  作業ダイアログの**停止ボタン**（`stopBackground` → SDK の `Query.stopTask`）。例外は委譲の子で、人が見ていないので、
+  `phase: waiting` が上限（既定 10 分）続いたら server がサブエージェント以外を同じ口で止める（agent-delegation.md「子に残った裏の作業」）
 - 見出し（`behindOfTasks` の `label`）は、全部 `agent` なら「サブエージェントを待っている」、
   全部 `shell` なら「バックグラウンドのコマンドを待っている」、混在なら「裏の作業を待っている」
 
@@ -280,6 +281,10 @@ pending・running・paused→running）。前面で待った子で task 系の�
 
 `NormalizedMessage` は `history.mjs` が既に返している
 `{ role, text, uuid, at, thinking?, toolCalls?: [{ id, name, input, result }] }`。
+assistant の発言に `stopHookFollowUp: true` を付けてよい（2026-09-27）。Stop フックに止められて main が続けた分のうち、中身の仕事をしていない発言の印で、
+委譲の結果を選ぶときに飛ばす（agent-delegation.md「子の結果」）。何を続きとみなし、何を中身の仕事とするかはバックエンドが決める。
+今は Claude だけが付ける（`claude-normalize.mjs` の `stopHookFollowUps`。getSessionMessages に出ない `stop_hook_summary` の行を transcript から読む）。
+付けないバックエンドでは、結果は今までどおり最後の返答になる。
 
 ### 2.4 sidecar の拡張
 
@@ -461,6 +466,7 @@ SDK の `perTaskStopAffordance` は**宣言しない**。宣言すると中断�
 **会話単位の background**（`setBackground`）:
 - server は `runtime.background` に会話ごとに持ち、`running.background` に載せる。変わったらすぐ `running` を配る。これがある間は 4 秒の定期便も回る
 - `count` には入れない。デスクトップは `count > 0` の間は終了させない。ターンの外の作業（dev サーバの端末など）に終了を塞がせない
+- 委譲の子の結果と、依頼元への完了通知は、終わりを待つもの（`behindOfTasks` と同じ基準。server の `awaitedBackground`）だけを待つ。端末は待たない（agent-delegation.md「子に残った裏の作業」）
 - web: ターンが走っていない会話でも、待てるもの（§2.2 の `behindOfTasks`）が 1 本以上あれば衛星（一覧の行・畳んだ見出し・稼働表示）。
   ターンが走っていればターン行が優先（弧、または Claude の `waiting` なら衛星）。中断は出さない。
   Codex の端末は `kind: "terminal"` で待てるものに数えないので、端末だけなら衛星は出ない（会話末尾の「バックグラウンド N」から開く）
@@ -694,3 +700,13 @@ Codexの `set_status / set_title / fork` は未接続なので、
 - 「接続が来ても古い接続を閉じない」
 - md レンダリング・CSP・提示の永続化
 - `tests/unit/stream-routing.mjs` などの「規則の写経」は、写経元を動かしたら同時に直す
+
+## 圧縮と文脈の量（2026-09-27）
+
+| バックエンド | 圧縮の検出・手動実行 | 文脈の量 | 要約 |
+|---|---|---|---|
+| Claude Code | SDK の `status.compacting`・`compact_result`・`compact_boundary`、PreCompact / PostCompact。手動は `/compact` | `getContextUsage()` の `total_tokens` / `raw_max_tokens` | PostCompact |
+| Codex | app-server 0.156.1 の `contextCompaction` item と `thread/compacted`、手動は `thread/compact/start` | `thread/tokenUsage/updated` の `last.totalTokens` / `modelContextWindow` | 現在の item 形からは取得できない |
+| Antigravity | `checkpoint` の意味は未確認。圧縮と判別できないため正規化しない。手動操作は提供しない | 取得しない | 取得しない |
+
+core は圧縮の開始・完了・失敗を `compaction`、文脈量を `contextWindow` として送る。既存の `contextUsage` はプラグインの読み込み記録なので保持する。Claude の `compact_boundary` と Codex の `contextCompaction` item をネイティブ履歴から優先して読み、sidecar の `compactions` から要約・trigger・失敗理由を補う。ID のない記録も同じターン、または近い時刻で照合して重複を除く。ネイティブ境界が無い分は sidecar から区切りを戻し、ネイティブ履歴の発言と一緒に描く。自動圧縮の予約は送信受理・手動圧縮・未送信会話の削除・バックエンド切替・対象外への設定変更・キャンセルで取り消す。画面の会話切替では残し、Pleiad の再起動で消える（[ADR 0039](adr/0039-conversation-compaction.md)）。

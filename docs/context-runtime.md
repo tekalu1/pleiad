@@ -1,6 +1,6 @@
 # 共通コンテキストの実行
 
-2026-09-12。設定 › コンテキストで、指示・Skills・外部 MCP ごとに「エージェントに任せる」か「Pleiad がそろえる」を選ぶ。既定はエージェント任せ。2026-09-20 から設定は種類ごとに「すべての場所（既定）」と場所ごとの上書きで持つ（`docs/context-management.md`「保存と継承（形式 2）」）。外部 MCP については Pleiad 自身の登録（`<data>/mcp-servers.json`）も持つ。エージェント側の設定ファイルは書き換えない。
+2026-09-12。設定 › プラグインで、指示・Skills・外部 MCP ごとに「エージェントに任せる」か「Pleiad がそろえる」を選ぶ。既定はエージェント任せ。2026-09-20 から設定は種類ごとに「すべての場所（既定）」と場所ごとの上書きで持つ（`docs/context-management.md`「保存と継承（形式 2）」）。外部 MCP については Pleiad 自身の登録（`<data>/mcp-servers.json`）も持つ。エージェント側の設定ファイルは書き換えない。
 
 ## セッションと適用範囲
 
@@ -56,7 +56,7 @@ console.log(await pinChanges(all['<sessionId>'].contextSession, {}));
 
 Skills は名前・説明・ID・元のディレクトリのみを一覧として渡す。`load_skill` は選択済み ID のファイルを必要時に読み、**そのときの本文**を返して記録の行のハッシュを渡した内容へ直す（開始時と違っても止めない。固定しているのはカタログだけなので、本文の編集はそのまま次の読み込みに効く）。スクリプト・参照は元のディレクトリを基準にし、コピーは作らない。ツール権限は緩和しない。`disable-model-invocation` はユーザーの依頼に `$名前` があるターンだけ公開。`context: fork` などネイティブ固有の実行設定は適用したことにせず、未対応として記録し公開しない。
 
-`instructions_for_path` と `load_skill` は、同じ会話で渡し済みの本文を繰り返さない。渡した本文のハッシュを行の id ごとに `contextSession.delivered`（`{ backend, entries }`）へ残してターンをまたいで持ち越し、同じ本文なら `Already provided in this conversation: <パス> (scope: …). Not repeated. …` の一行だけを返す（記録の行は `loaded` のまま、`calls` に頼まれた回数）。ファイルが変わっていれば本文を「変わった」の一言付きで渡し直し、`full: true` なら必ず本文を返す。控えを捨てる（次は本文を渡し直す）のは、文脈の圧縮（Claude の `activity: compacting`）、履歴を引き継ぎの文で渡し直すターン（バックエンドの切り替え・ホスト側で写した分岐の最初のターン。`pendingHandoff`）、「新しい内容で会話を続ける」、編集して再送信（`fork` の `beforeMessageId`）。Codex・antigravity の圧縮は Pleiad から見えないので、エージェントが `full: true` で取り直す。**控えは指示欄のプロンプト（`contextTools` の `prompt`）に一切影響させない**。ファイルが同じならプロンプトはターンをまたいで同じバイト列のままにし、prompt caching を外さない（変わるのは末尾に積まれるツールの返りだけ）。
+`instructions_for_path` と `load_skill` は、同じ会話で渡し済みの本文を繰り返さない。渡した本文のハッシュを行の id ごとに `contextSession.delivered`（`{ backend, entries }`）へ残してターンをまたいで持ち越し、同じ本文なら `Already provided in this conversation: <パス> (scope: …). Not repeated. …` の一行だけを返す（記録の行は `loaded` のまま、`calls` に頼まれた回数）。ファイルが変わっていれば本文を「変わった」の一言付きで渡し直し、`full: true` なら必ず本文を返す。控えを捨てる（次は本文を渡し直す）のは、圧縮の**完了**（Claude の `compact_boundary` / `compact_result`、Codex の `contextCompaction` / `thread/compacted`。開始と失敗では消さない）、履歴を引き継ぎの文で渡し直すターン（バックエンドの切り替え・ホスト側で写した分岐の最初のターン。`pendingHandoff`）、「新しい内容で会話を続ける」、編集して再送信（`fork` の `beforeMessageId`）。Antigravity の圧縮はまだ検出できないので、エージェントが `full: true` で取り直す。**控えは指示欄のプロンプト（`contextTools` の `prompt`）に一切影響させない**。ファイルが同じならプロンプトはターンをまたいで同じバイト列のままにし、prompt caching を外さない（変わるのは末尾に積まれるツールの返りだけ）。
 
 ## Pleiad の指示
 
@@ -66,7 +66,7 @@ Skills は名前・説明・ID・元のディレクトリのみを一覧とし�
 - **入れる文**: 項目ごとに見出し「<名前>（Pleiad が追加した指示）:」（`agent:guide.heading`）と本文。並びの順に空行でつなぐ。
 - **経路**: `ply_agents` の instructions の後ろに足し、同じ指示欄で渡す（Claude は `systemPrompt.append`、Codex は `developerInstructions`）。橋（`ply_agents`）は会話ごとに使い回すので、足すのはターンごと（`core/server.mjs` の `runTurn`）。MCP の initialize の instructions とツールの説明には入れない。
 - **入れる条件**（`turnInstructions`。入れないときは理由を記録する）: スイッチが入っている（`off`）、入れる会話が合う（依頼元 = 会話の記録に `delegation` が無い、委譲された会話 = ある。`target`）、エージェントが選ばれている（fake などそれ以外はどれにも当たる。`agent`）、`route` は委譲先の自動選択が有効（`routingOff`）、`delegate` と `route` は読み取り・計画モードの依頼元には入れない（`ply_delegate` を受け付けないため。`readOnly`。委譲された子には読み取りのモードでも `child` を入れる）。
-- **保存**: `prefs.json` の `plyInstructions`（`{ items: [{ id, on, name?, body?, target?, agents? }] }`。並びが入る順。既定の項目は編集したときだけ `name` などを持つ）。すべての場所に共通（場所ごとには持たない）。`plyInstructions` / `setPlyInstructions`（`action`: `save` / `toggle` / `delete` / `reset` / `order`）で読み書きし、画面は設定 › コンテキストの「指示」のカード。**前の版の `addedContext`**（`{ delegation: false }` で委譲の指示を切っていた）は、`plyInstructions` が無い間は委譲の既定の 2 項目（`delegate`・`child`）を切った状態として読み、初めて保存したときに消す（`codexPolicy` は前の版に無かったので入れたまま）。保存済みの並びに無い既定の項目は、既定の位置に足して読む。
+- **保存**: `prefs.json` の `plyInstructions`（`{ items: [{ id, on, name?, body?, target?, agents? }] }`。並びが入る順。既定の項目は編集したときだけ `name` などを持つ）。すべての場所に共通（場所ごとには持たない）。`plyInstructions` / `setPlyInstructions`（`action`: `save` / `toggle` / `delete` / `reset` / `order`）で読み書きし、画面は設定 › プラグインの「指示」のカード。**前の版の `addedContext`**（`{ delegation: false }` で委譲の指示を切っていた）は、`plyInstructions` が無い間は委譲の既定の 2 項目（`delegate`・`child`）を切った状態として読み、初めて保存したときに消す（`codexPolicy` は前の版に無かったので入れたまま）。保存済みの並びに無い既定の項目は、既定の位置に足して読む。
 - **トークン数**: 画面に出す数は `web/token-estimate.mjs` の見積もり（英数字・記号は 4 文字で 1、それ以外は 1 文字で 1。見出しを含む）。サーバーと画面で同じ数になる。
 - **効く時期**: 次のターンから、始まっている会話にも。Codex のロード済みのスレッドは `thread/resume` で指示欄が変わらないので、前に渡した指示と違えば `thread/unsubscribe` してから読み直す（接続先を変えたときと同じ。指示だけの違いで外せなかったときは止めずに前の指示で続ける）。
 - **記録**: ターンごとに `contextSession.added`（`[{ id, name, target, inserted: true, text } | { id, name, target, inserted: false, reason }]`）に残し、`sessionContext` の `added` で返す。会話の右パネルの「Pleiad の指示」と頭の札「Pleiad の指示 n」はこれだけから作る（前の版の記録 `{ id: 'delegation', variant, text }` も読む）。「新しい内容で会話を続ける」は `added` をそのまま残す。
@@ -97,7 +97,7 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 
 ## 利用記録と検証
 
-`sessionContext {sessionId}` と会話の右パネル「この会話のコンテキスト」（会話の頭の札・タイトル行の入口から開く）で、指示の供給元、Skills の案内／使ったもの、MCP の接続成否・ツール数・呼び出し回数、要ログイン・失敗の理由、除外理由を確認できる。記録は「モデルが理解した」という推定ではなく、Pleiad が渡した／接続した事実。ネイティブ担当の内部一覧を共通記録に含めたとは扱わない。エージェント任せの MCP は、そのエージェントの設定に登録されているもの（`agentMcp`）を読み取りのみで並べ、接続の成否は Pleiad から見えないと書く。antigravity で Pleiad 担当を扱わなかった会話は、記録の `guardedBackend` と `reason` を出す。
+`sessionContext {sessionId}` と会話の右パネル「この会話のプラグイン」（会話の頭の札・タイトル行の入口から開く）で、指示の供給元、Skills の案内／使ったもの、MCP の接続成否・ツール数・呼び出し回数、要ログイン・失敗の理由、除外理由を確認できる。記録は「モデルが理解した」という推定ではなく、Pleiad が渡した／接続した事実。ネイティブ担当の内部一覧を共通記録に含めたとは扱わない。エージェント任せの MCP は、そのエージェントの設定に登録されているもの（`agentMcp`）を読み取りのみで並べ、接続の成否は Pleiad から見えないと書く。antigravity で Pleiad 担当を扱わなかった会話は、記録の `guardedBackend` と `reason` を出す。
 
 右パネルは種類ごとの行を出どころで分ける: 記録の行の `root`（足した場所で見つかった）→「追加した場所」、`scope: 'user'` →「ユーザー」、それ以外 →「この場所と親フォルダー」（記録の行は `scope` と `root` を持つ。前の版の記録は `origins[0].scope` で分ける）。一番上の作業場所の面は `contextSettings { cwd }` の今の場所から「全体の設定どおり／<親> の設定どおり／このフォルダーだけの設定 · n 項目」を出す。「この場所だけ変える」を押すと、その場所の設定で探し直した結果（`scanContext { cwd }`）に担当の 2 択と行のスイッチを付け、変えたものをその場所の上書き（`setContextSettings { place: cwd, kind, value }`。指示・Skills は見つかった範囲の `excludePaths`、MCP は `disabled`）として保存する。「全体の設定に戻す」はその場所の上書きを消す（`{ place: cwd, remove: true }`）。効くのは次のターンから。
 戻りは `{ report, owners, pinned, changed, startedAt, refreshedAt, removedMcp, added }`（`added` は上の「Pleiad の指示」）。`report` が記録（外部 MCP の行には Pleiad の登録の認証方式 `auth` も付く）、`owners` はその会話が始まった時点の担当、`pinned` は固定の有無。`changed` は固定された会話でだけ行う今のファイルとの突き合わせで、`{ differs, paths, files }`（`differs` が正否、`paths` は変わったと分かったファイルの手掛かり、`files` は `{ path, name, kind, before, after, modifiedAt }`。会話中に `instructions_for_path` で読み足した子階層の指示が混じることがある）。ネイティブ担当の会話では探索を走らせず `null` を返す（`docs/design-system.md` §9）。

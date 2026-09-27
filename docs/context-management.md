@@ -93,7 +93,7 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
 
 ## 外部 MCP の画面（2026-09-20）
 
-設定 › コンテキストの「外部 MCP」カードに集約した（旧「MCP 管理」の JSON 直書き画面は廃止）。
+設定 › プラグインの「外部 MCP」カードに集約した（旧「MCP 管理」の JSON 直書き画面は廃止）。
 - **エージェントに任せる**: `agentMcp` で各エージェントの登録を 2 列で見比べる。片方にしか無いものに「Claude だけ」。Pleiad は読むだけで変えない。
 - **Pleiad がそろえる**: ユーザーの段に、どの場所でもつなぐもの（Pleiad の登録と、ユーザーの範囲のエージェントの登録）を名前ごとに 1 行。作業場所の `.mcp.json` などは場所ごとなので、会話の右パネルで見る。手元で動かす／URL の区別、どの設定由来か（Pleiad に登録・Claude だけに登録・両方に登録）、ログインの状態と「ログイン」、同じ名前で中身の違う定義があれば「どちらの定義を使いますか」（`prefer`）、スイッチ（オフ = `disabled`）。行を押すと中身: Pleiad の登録は編集・名前を変える・ログイン／ログアウト・接続を確認・削除、エージェントの登録は伏せ字の定義と「Pleiad に取り込む」（`importPlyMcp`。トークンは引き継がない）。読み込む設定ファイルは段の探す形式（ユーザーは Claude の設定・Codex の設定、作業場所は `.mcp.json`・`.codex/config.toml`）。「ログインの詳細設定」（Client ID Metadata Document の URL。既定は空）は折りたたみの奥。暗号化されない起動では平文で保存することを注記する。
 - **名前を変えたとき**（`renamePlyMcp`）: 既定と各場所の設定で名前で指したものも追随させる（`contextSettings.renameMcp`）。`disabled` は新しい名前も外す（古い名前は残す。同じ名前のエージェント側の登録は前と同じく外れたまま）。`prefer` は Pleiad の登録を選んでいたものだけ新しい名前へ移す。戻り値の `settingsUpdated` は書き換えた箇所の数。始まっている会話も次のターンから今の設定（`plan.mcp`）に従う。「この会話では外す」（`removedMcp`）は会話の方針なので名前のまま変えない。
@@ -116,7 +116,7 @@ JSON は他のキーを保持して整形保存。通常の TOML テーブルで
 
 登録の保存だけでは接続しない。Pleiad 管理の場合は、次の実行時に登録を解決して接続する。
 
-`core/context-settings.mjs` が設定の保存・継承・移行、`core/context-scan.mjs` が探索、`core/mcp-config.mjs` がエージェント側の登録の読み書き、`core/context-session.mjs` が会話ごとの操作。UI は `web/context.mjs`（設定 › コンテキスト）、`web/mcp-config.mjs`（外部 MCP のカードとシート）、`web/session-context.mjs`（会話の右パネル）。実行時は `core/context-runtime.mjs` と `core/context-bridge.mjs` を介して各バックエンドに供給し、会話に利用記録を保存する。TOML / YAML は `smol-toml` / `yaml` で解析し、設定を正規表現だけで読まない。
+`core/context-settings.mjs` が設定の保存・継承・移行、`core/context-scan.mjs` が探索、`core/mcp-config.mjs` がエージェント側の登録の読み書き、`core/context-session.mjs` が会話ごとの操作。UI は `web/context.mjs`（設定 › プラグイン）、`web/mcp-config.mjs`（外部 MCP のカードとシート）、`web/session-context.mjs`（会話の右パネル）。実行時は `core/context-runtime.mjs` と `core/context-bridge.mjs` を介して各バックエンドに供給し、会話に利用記録を保存する。TOML / YAML は `smol-toml` / `yaml` で解析し、設定を正規表現だけで読まない。
 
 ## 検証
 

@@ -205,6 +205,7 @@ async function runTurn(t, turnId, text) {
     tokenUsage: {
       last: { cachedInputTokens: 0, inputTokens: 10, outputTokens: 5, reasoningOutputTokens: 2, totalTokens: 15 },
       total: { cachedInputTokens: 0, inputTokens: 10, outputTokens: 5, reasoningOutputTokens: 2, totalTokens: 15 },
+      modelContextWindow: 200000,
     },
   });
 
@@ -496,6 +497,23 @@ async function handle(method, params) {
         modelProvider: t.provider?.id ?? "openai",
         sandbox: { type: "workspaceWrite" },
       };
+    }
+
+    case "thread/compact/start": {
+      const t = threads.get(params?.threadId);
+      if (!t) throw new Error(`Unknown threadId: ${params?.threadId}`);
+      const item = { id: `compact_${++seq}`, type: "contextCompaction" };
+      const turnId = `compact_turn_${seq}`;
+      record({ method, threadId: t.id });
+      notify("item/started", { threadId: t.id, turnId, startedAtMs: Date.now(), item });
+      await wait(50);
+      notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item });
+      notify("thread/compacted", { threadId: t.id, turnId });
+      notify("thread/tokenUsage/updated", { threadId: t.id, turnId,
+        tokenUsage: { last: { cachedInputTokens: 0, inputTokens: 18000, outputTokens: 3000,
+          reasoningOutputTokens: 0, totalTokens: 21000 }, modelContextWindow: 200000 } });
+      t.turns.push({ id: turnId, status: "completed", startedAt: secs(), completedAt: secs(), items: [item] });
+      return {};
     }
 
     case "turn/start": {

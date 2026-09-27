@@ -46,6 +46,9 @@ export default async function(t) {
     const first = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:CHILD_RESULT', title: '  子の  短い\n名前  ' }) });
     const sid = first.sessionId;
     let rows = await awaitTasks(rows => rows.length === 1 && rows[0].notification === 'sent');
+    await c.waitFor(e => e.type === 'completionReady' && e.sessionId === sid, { ms: 10000 });
+    t.ok('子の結果を受け取った依頼元の完了を一度だけ知らせる',
+      c.events.filter(e => e.type === 'completionReady' && e.sessionId === sid).length === 1);
     const child = rows[0];
     t.ok('MCP 委譲で別の子会話を開始する', child.sessionId !== sid && child.parentSessionId === sid && child.result === 'CHILD_RESULT');
     const sessions = await c.cmd('listSessions');
@@ -70,11 +73,17 @@ export default async function(t) {
     t.ok('孫の結果を受け取った子の最終回答を親へ返す', Boolean(grandchild) && nestedResult.includes(grandchild.taskId) && nestedResult.includes('DEEP_RESULT') && grandchild.notification === 'sent', nestedResult.slice(0, 200));
     const other = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_task_status', { taskId: child.taskId }) });
     t.ok('別会話の taskId を MCP から操作できない', other.events.some(e => e.type === 'tool.result' && e.isError));
+    const slowMark = c.mark();
     await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'slow' }) });
     rows = await awaitTasks(rows => rows.some(r => r.task === 'slow' && r.status === 'running'));
     const slow = rows.find(r => r.task === 'slow');
+    t.ok('子がまだ動いている間に依頼元の完了を通知しない',
+      !c.since(slowMark).some(e => e.type === 'completionReady' && e.sessionId === sid));
     await c.cmd('cancelAgentTask', { taskId: slow.taskId });
     await awaitTasks(rows => rows.find(r => r.taskId === slow.taskId)?.status === 'cancelled');
+    await c.waitFor(e => e.type === 'completionReady' && e.sessionId === sid, { from: slowMark, ms: 10000 });
+    t.ok('子のキャンセルで結果が届かなくても依頼元に一度だけ知らせる',
+      c.since(slowMark).filter(e => e.type === 'completionReady' && e.sessionId === sid).length === 1);
     t.ok('UI の停止コマンドが子の実行を止める', !(await c.cmd('running')).turns.some(r => r.sessionId === slow.sessionId));
     for (let i = 0; i < 100; i++) { if (!(await c.cmd('running')).turns.some(t => t.sessionId === sid)) break; await sleep(50); }
     t.ok('親の強さに収まる委譲では聞かない', escalations.length === 0, `${escalations.length} 件聞かれた`);
@@ -113,6 +122,8 @@ export default async function(t) {
     const asker = rows.find(r => r.parentSessionId === top);
     const relayed = await awaitPerms(p => [top, asker.sessionId].every(id => p.some(x => x.sessionId === id)));
     t.ok('子の承認を依頼元の会話にも出す', relayed, [...held.values()].map(ev => ev.sessionId).join(' / '));
+    t.ok('子の返事待ちだけを初回通知し、中継カードは通知しない',
+      cardOf(asker.sessionId)?.notifyReply === true && !cardOf(top)?.notifyReply);
     t.ok('中継したカードには「常に許可」を出さない', cardOf(top)?.canAlways === false && cardOf(asker.sessionId)?.canAlways === true);
     t.ok('中継したカードにどの会話の承認かを出す', String(cardOf(top)?.title ?? '').includes('ask-slow'), cardOf(top)?.title ?? '');
     t.ok('承認待ちの子は依頼元に waiting として見える', (await callTool(top, 'ply_task_status', { taskId: asker.taskId })).status === 'waiting');

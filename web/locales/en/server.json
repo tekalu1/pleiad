@@ -240,7 +240,7 @@
   },
   "mcp": {
     "oauth": {
-      "loginRequired": "Sign-in required. Sign in from Settings › Context › External MCP.",
+      "loginRequired": "Sign-in required. Sign in from Settings › Plugins › External MCP.",
       "registrationMissing": "registration_client_uri / registration_access_token is missing.",
       "labelRegistration": "Registration management URL",
       "labelAuthorization": "Authorization endpoint",
@@ -610,13 +610,13 @@
       "dirRequired": "Specify a directory.",
       "scanInvalid": "The scan settings are malformed.",
       "unknownKind": "Invalid kind.",
-      "kindInvalid": "The context settings are malformed.",
+      "kindInvalid": "The plugin settings are malformed.",
       "disabledMcpOnly": "Removing by name is only available for external MCP servers.",
       "rootsInvalid": "The additional search folders are malformed.",
       "defaultPlace": "Default",
-      "migrateDiffers": "Could not migrate the context settings to the new format (the result would change for {{place}}). The original settings were not changed.",
-      "migrateUnverified": "Could not verify the context settings migration. The original settings were not changed.",
-      "unreadable": "Cannot read the context settings. Check context-scans.json.",
+      "migrateDiffers": "Could not migrate the plugin settings to the new format (the result would change for {{place}}). The original settings were not changed.",
+      "migrateUnverified": "Could not verify the plugin settings migration. The original settings were not changed.",
+      "unreadable": "Cannot read the plugin settings. Check context-scans.json.",
       "nothingToChange": "Specify what to change."
     },
     "session": {
@@ -648,9 +648,9 @@
       "plyUnavailable": "Cannot read Pleiad's MCP registry.",
       "oauthUnavailable": "OAuth is not available in this launch.",
       "configUnreadable": "Cannot read the connection settings.",
-      "unsupportedHint": "{{message}}. For MCP servers that need authentication settings, use \"Import into Pleiad\" under Settings › Context › External MCP to authenticate in Pleiad.",
-      "authRequiredPly": "The MCP server requires authentication. Check the authentication method and values under Settings › Context › External MCP.",
-      "authRequiredNative": "The MCP server requires authentication. Use \"Import into Pleiad\" under Settings › Context › External MCP to sign in, or leave external MCP to the agent.",
+      "unsupportedHint": "{{message}}. For MCP servers that need authentication settings, use \"Import into Pleiad\" under Settings › Plugins › External MCP to authenticate in Pleiad.",
+      "authRequiredPly": "The MCP server requires authentication. Check the authentication method and values under Settings › Plugins › External MCP.",
+      "authRequiredNative": "The MCP server requires authentication. Use \"Import into Pleiad\" under Settings › Plugins › External MCP to sign in, or leave external MCP to the agent.",
       "tooManyTools": "Too many tools (up to {{max}}).",
       "connectFailed": "Cannot connect to the MCP server. Check the endpoint, authentication, and launch command.",
       "invalidToken": "Invalid context token.",
@@ -704,7 +704,7 @@
       "settingsObject": "Settings must be an object.",
       "metadataUrl": "clientMetadataUrl must be a URL.",
       "metadataUrlScheme": "clientMetadataUrl must be an https URL with a path (for example, https://example.com/ply/oauth-client.json).",
-      "pendingValues": "Some values are missing ({{keys}}). Edit the entry under Settings › Context › External MCP and enter them.",
+      "pendingValues": "Some values are missing ({{keys}}). Edit the entry under Settings › Plugins › External MCP and enter them.",
       "bearerMissing": "No bearer token is saved. Edit the MCP entry and enter it."
     }
   },
@@ -931,5 +931,10 @@
     "notFound": "That instruction does not exist.",
     "builtinDelete": "Default instructions can't be deleted. Turn them off with the switch.",
     "tooMany": "You can have up to {{count}} instructions."
+  },
+  "compaction": {
+    "unsupported": "Manual compaction is unavailable for this agent",
+    "invalidSetting": "Invalid auto compaction settings",
+    "noCompletion": "Could not confirm compaction completion"
   }
 }
