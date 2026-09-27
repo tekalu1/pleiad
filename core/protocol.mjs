@@ -127,8 +127,8 @@ export const COMMANDS = new Set([
   "hostCapabilities", // {} -> { osActions, hostName }。この接続がサーバーのある PC の画面からか（OS の操作を出してよいか・添付の出どころを選ばせるか）
   "resolvePath",      // { path, sessionId?, at?, base?, lenient? } -> { path（実体）, cwd, kind: file|directory }。lenient は読まずに在り処と cwd だけ（無くてもよい）
   "revealPath",       // { path, sessionId?, at?, base? } -> { path }。エクスプローラーでファイルを選んだ状態で開く（フォルダーはその中）。遠隔の接続は断る
-  "openPath",         // 同上。HTML だけ、既定のブラウザーで開く。遠隔の接続は断る
-  "openVisualization", // { sessionId, id? | at? } -> { path }。会話に保存された可視化の写しを既定のブラウザーで開く（窓を開けない殻の代わり）。遠隔の接続は断る
+  "openPath",         // 同上。HTML だけ。returnPath:true なら検査済みの実体パスを返し、OS では開かない。遠隔の接続は断る
+  "openVisualization", // { sessionId, id? | at?, returnPath? } -> { path }。写しを書き、returnPath:true なら開かずに返す。遠隔の接続は断る
   "backends",        // 使えるバックエンドの一覧（capabilities / toolHints 付き）
   "authStatus",      // { backend } -> { supported, loggedIn?, account?, detail? }
   "authLogin",       // { backend }。URL は auth イベントで出る
