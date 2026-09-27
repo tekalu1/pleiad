@@ -1478,7 +1478,7 @@
     },
     "actionsFor": "{{name}} の操作",
     "currentActions": "このファイルの操作",
-    "browserTitle": "この PC の既定のブラウザーで開きます",
+    "browserTitle": "ブラウザーで開きます",
     "revealTitle": "この PC のエクスプローラーで、ファイルを選んだ状態で開きます",
     "copiedPath": "パスをコピーしました",
     "copiedRelative": "相対パスをコピーしました",

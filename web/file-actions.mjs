@@ -6,6 +6,23 @@
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 
+/** サーバーが許可範囲を検査して返した実体パスを file: URL にする。 */
+export function fileUrl(path) {
+  const normalized = String(path).replaceAll('\\', '/').replaceAll('%', '%25');
+  const url = new URL('file:///');
+  url.pathname = /^[a-z]:\//i.test(normalized) ? `/${normalized}` : normalized;
+  return url.href;
+}
+
+/** HTML または可視化の写しを、設定に応じたブラウザーで開く。 */
+export async function openHostFile(command, args, { cmd, inApp = false, openInPanel } = {}) {
+  if (inApp) {
+    const result = await cmd(command, { ...args, returnPath: true });
+    if (openInPanel?.(fileUrl(result.path), { newTab: true })) return result;
+  }
+  return cmd(command, args);
+}
+
 const isHtml = path => /\.html?$/i.test(String(path ?? ''));
 
 /**

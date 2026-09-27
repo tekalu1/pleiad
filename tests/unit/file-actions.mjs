@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 import WebSocket from 'ws';
 import { looksLikePath, findWindowsPaths, fileReference } from '../../web/file-reference.mjs';
 import { renderMarkdown, renderToolCall, renderPresent, applyToolResult } from '../../web/render.mjs';
-import { fileMenuItems, relativeTo, samePath } from '../../web/file-actions.mjs';
+import { fileMenuItems, relativeTo, samePath, fileUrl, openHostFile } from '../../web/file-actions.mjs';
 import { launchPlan, launch, isLocalRequest, createRateLimit, bridgeError } from '../../core/os-open.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open as openWs } from '../lib/ws-client.mjs';
@@ -96,6 +96,25 @@ export default async function (t) {
   assert(samePath('D:\\A\\b.md', 'd:/a/b.md') && !samePath('/a/B.md', '/a/b.md'));
   t.ok('メニュー: 遠隔では OS の操作を出さない・HTML だけブラウザー・フォルダーは「開く」で保存なし・表示中は右パネルを出さない', true);
 
+  const sent = [], tabs = [];
+  const openCmd = async (command, args) => { sent.push([command, args]); return { path:'D:\\work\\a #?.html' }; };
+  const openTab = (url, options) => { tabs.push([url, options]); return true; };
+  assert.equal(fileUrl('D:\\work\\a #?.html'), 'file:///D:/work/a%20%23%3F.html');
+  assert.equal(fileUrl('D:\\work\\100%.html'), 'file:///D:/work/100%25.html');
+  await openHostFile('openPath', { path:'page.html' }, { cmd:openCmd, inApp:true, openInPanel:openTab });
+  assert.deepEqual(sent, [['openPath', { path:'page.html', returnPath:true }]]);
+  assert.deepEqual(tabs, [['file:///D:/work/a%20%23%3F.html', { newTab:true }]]);
+  sent.length = 0;
+  await openHostFile('openVisualization', { sessionId:'s', id:'v' }, { cmd:openCmd, inApp:true, openInPanel:openTab });
+  assert.deepEqual(sent, [['openVisualization', { sessionId:'s', id:'v', returnPath:true }]]);
+  sent.length = 0;
+  await openHostFile('openPath', { path:'page.html' }, { cmd:openCmd });
+  assert.deepEqual(sent, [['openPath', { path:'page.html' }]], '既定のブラウザーは従来の経路');
+  sent.length = 0;
+  await openHostFile('openPath', { path:'page.html' }, { cmd:openCmd, inApp:true, openInPanel:() => false });
+  assert.deepEqual(sent, [['openPath', { path:'page.html', returnPath:true }], ['openPath', { path:'page.html' }]], '内蔵ブラウザーを開けなければ既定へ');
+  t.ok('設定に応じた開き先と、検査済みパスの file: URL・新しいタブを使う', true);
+
   // ---- 起動の組み立て（起動はしない）
   const env = { SystemRoot: 'C:\\Windows' };
   const reveal = launchPlan('reveal', 'C:/a b/c&d%PATH%^.png', { platform: 'win32', env });
@@ -155,7 +174,10 @@ export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-file-actions-'));
   const work = path.join(scratch, 'work'), outside = path.join(scratch, 'outside'), data = path.join(scratch, 'data');
   await Promise.all([work, outside, data, path.join(work, 'sub')].map(p => fs.mkdir(p, { recursive: true })));
-  await fs.writeFile(path.join(work, 'page.html'), '<h1>x</h1>');
+  await fs.writeFile(path.join(work, 'page.html'), '<link rel="stylesheet" href="style.css"><img src="proof.svg"><script src="script.js"></script>');
+  await fs.writeFile(path.join(work, 'style.css'), 'body { color: red; }');
+  await fs.writeFile(path.join(work, 'script.js'), 'window.proof = true;');
+  await fs.writeFile(path.join(work, 'proof.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
   await fs.writeFile(path.join(work, 'run.bat'), 'echo x');
   await fs.writeFile(path.join(outside, 'secret.html'), 'secret');
   await fs.symlink(outside, path.join(work, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
@@ -169,14 +191,23 @@ export default async function (t) {
     assert.equal((await client.cmd('revealPath', { path: path.join(work, 'page.html') })).path, await real(path.join(work, 'page.html')));
     assert.equal((await client.cmd('revealPath', { path: 'sub', sessionId: 'fixture' })).path, await real(path.join(work, 'sub')));
     assert.equal((await client.cmd('openPath', { path: 'page.html:3', sessionId: 'fixture' })).path, await real(path.join(work, 'page.html')));
+    assert.equal((await client.cmd('openPath', { path:'./page.html', sessionId:'fixture', returnPath:true })).path, await real(path.join(work, 'page.html')));
+    const htmlUrl = fileUrl((await client.cmd('openPath', { path:'page.html', sessionId:'fixture', returnPath:true })).path);
+    assert((await fs.readFile(new URL(htmlUrl), 'utf8')).includes('style.css'));
+    assert((await fs.readFile(new URL('./style.css', htmlUrl), 'utf8')).includes('color: red'));
+    assert((await fs.readFile(new URL('./script.js', htmlUrl), 'utf8')).includes('window.proof'));
+    assert((await fs.readFile(new URL('./proof.svg', htmlUrl), 'utf8')).includes('<svg'));
+    t.ok('検査済み HTML の file: URL から相対 CSS・JS・画像を同じフォルダーで解決する', true);
     const resolved = await client.cmd('resolvePath', { path: './page.html', sessionId: 'fixture' });
     assert.deepEqual(resolved, { path: await real(path.join(work, 'page.html')), cwd: work, kind: 'file' });
     t.ok('範囲の中は実体を解決したパスで通す（相対は会話の作業ディレクトリ、フォルダーも可）', true);
 
     await assert.rejects(client.cmd('revealPath', { path: path.join(outside, 'secret.html') }), /作業場所の外/);
     await assert.rejects(client.cmd('openPath', { path: path.join(work, 'escape', 'secret.html') }), /作業場所の外/);
+    await assert.rejects(client.cmd('openPath', { path: path.join(work, 'escape', 'secret.html'), returnPath:true }), /作業場所の外/);
     await assert.rejects(client.cmd('resolvePath', { path: path.join(work, 'escape', 'secret.html') }), /作業場所の外/);
     await assert.rejects(client.cmd('openPath', { path: path.join(work, 'run.bat') }), /HTML だけ/);
+    await assert.rejects(client.cmd('openPath', { path: path.join(work, 'run.bat'), returnPath:true }), /HTML だけ/);
     await assert.rejects(client.cmd('openPath', { path: path.join(work, 'sub') }), /HTML だけ/);
     await assert.rejects(client.cmd('revealPath', { path: '\\\\host\\share\\a.html' }), /読み取れません/);
     await assert.rejects(client.cmd('revealPath', { path: path.join(work, 'missing.html') }), /見つかりません/);
@@ -191,14 +222,14 @@ export default async function (t) {
     const refused = await ask('revealPath', { path: path.join(work, 'page.html') });
     assert(!refused.ok && /サーバーのある PC/.test(refused.error), JSON.stringify(refused));
     assert.equal((await ask('openPath', { path: path.join(work, 'page.html') })).ok, false);
+    assert.equal((await ask('openPath', { path: path.join(work, 'page.html'), returnPath:true })).ok, false);
     assert.equal((await ask('resolvePath', { path: path.join(work, 'page.html') })).ok, true);
     t.ok('遠隔（ループバック以外・中継経由）からの OS の操作はサーバーが断る。パスの解決はできる', true);
 
-    // 連打: 10 秒に 5 回まで（ここまでに 3 回通っている）
+    // 連打: 10 秒に 5 回まで（ここまでに 5 回通っている）
     const results = [];
     for (let i = 0; i < 4; i++) results.push(await client.cmd('revealPath', { path: path.join(work, 'page.html') }).then(() => 'ok', e => e.message));
-    assert.deepEqual(results.slice(0, 2), ['ok', 'ok']);
-    assert(/続けて開きすぎ/.test(results[2]), results.join(' / '));
+    assert(/続けて開きすぎ/.test(results[0]), results.join(' / '));
     t.ok('短い時間に何度も開かせない', true, results.at(-1));
   } finally {
     client?.close?.(); remote?.close();
