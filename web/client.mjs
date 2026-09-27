@@ -177,7 +177,131 @@ const state = {
   auth: new Map(),         // backendId -> authStatus の戻り（{ supported, loggedIn, account?, detail?, pending? }）
   authUrl: new Map(),      // backendId -> { url, message } ログインの途中で出た URL
   busy: false,             // 枝の動きの最中。重ねて動かさない
+  compactions: [],
+  contextWindow: null,
+  compactionAt: null,
+  compactionPhase: null,
 };
+
+const compactNumber = n => `${Math.round(n / 1000)}k`;
+const compactTime = at => new Date(at).toLocaleTimeString(uiLang, { hour: '2-digit', minute: '2-digit' });
+function canCompactHere() { return Boolean(state.current && capsOf(activeBackendId()).compact && !retiredHere()); }
+function closeMeterPop(focus = false) {
+  $('contextMeterPop').hidden = true;
+  $('contextMeter').setAttribute('aria-expanded', 'false');
+  if (focus) $('contextMeter').focus();
+}
+function paintContextStrip() {
+  const usage = state.contextWindow;
+  const show = state.current && activeBackendId() !== 'antigravity' && (usage || state.compactionAt || state.compactionPhase);
+  $('contextStrip').hidden = !show;
+  if (!show) { closeMeterPop(); return; }
+  $('contextMeter').hidden = !usage;
+  if (usage) {
+    const rate = Math.round(100 * usage.usedTokens / usage.windowTokens);
+    $('contextMeter').replaceChildren(document.createTextNode(t('compaction.context')),
+      (() => { const bar = el('span', 'context-meter-bar'); const fill = el('span'); fill.style.width = `${Math.min(100, Math.max(0, rate))}%`; bar.append(fill); return bar; })(),
+      document.createTextNode(t('compaction.meter', { rate, used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) })));
+  }
+  const status = $('contextStripStatus'); status.replaceChildren();
+  const action = (label, run) => { const button = el('button', null, label); button.type = 'button'; button.onclick = run; status.append(button); };
+  if (state.compactionPhase?.phase === 'start') status.append(t('compaction.running'));
+  else if (state.compactionPhase?.phase === 'failed') {
+    status.append(t('compaction.failed'));
+    if (canCompactHere()) action(t('compaction.retry'), () => requestCompaction());
+    if (state.compactionPhase.reason) status.append(el('small', null, state.compactionPhase.reason));
+  } else if (state.compactionAt) {
+    status.append(t('compaction.scheduled', { time: compactTime(state.compactionAt) }));
+    action(t('compaction.cancel'), () => cmd('cancelCompaction', { sessionId: state.current }).catch(showCompactionError));
+  }
+}
+function showCompactionError(error) { state.compactionPhase = { phase: 'failed', reason: String(error?.message ?? error) }; paintContextStrip(); }
+async function showRowCompactionError(session, error, setting = false) {
+  // i18n-dynamic: compaction.settingFailed
+  // i18n-dynamic: compaction.otherConversationFailed
+  if (state.current !== session.id) {
+    try { await select(session.id); } catch { /* Keep the error visible even if this conversation cannot be opened. */ }
+  }
+  if (state.current === session.id) {
+    if (setting) sys(tHtml('compaction.settingFailed', { error: String(error?.message ?? error) }));
+    else showCompactionError(error);
+  } else {
+    sys(tHtml('compaction.otherConversationFailed', { title: sessionLabel(session.id), error: String(error?.message ?? error) }));
+  }
+}
+function requestCompaction() {
+  if (!canCompactHere()) return;
+  closeMeterPop();
+  cmd('compactConversation', { sessionId: state.current }).catch(showCompactionError);
+}
+function compactionBoundary(entry) {
+  const m = el('div', 'm compaction-boundary');
+  const line = el('div', 'boundary-line');
+  // i18n-dynamic: compaction.done compaction.doneAuto
+  line.append(el('strong', null, t(entry.phase === 'failed' ? "compaction.failed" : entry.trigger === 'manual' ? "compaction.done" : "compaction.doneAuto")));
+  if (entry.phase === 'complete' && Number.isFinite(entry.beforeTokens) && Number.isFinite(entry.afterTokens))
+    line.append(el('span', 'boundary-tokens', t('compaction.tokenChange', { before: compactNumber(entry.beforeTokens), after: compactNumber(entry.afterTokens) })));
+  if (entry.phase === 'failed' && canCompactHere()) {
+    const retry = el('button', null, t('compaction.retry')); retry.type = 'button'; retry.onclick = requestCompaction; line.append(retry);
+  }
+  m.append(line);
+  if (entry.phase === 'failed' && entry.reason) m.append(el('small', null, entry.reason));
+  if (entry.phase === 'complete' && entry.summary) {
+    const details = el('details'); details.append(el('summary', null, t('compaction.showSummary')), el('div', 'summary-body', entry.summary)); m.append(details);
+  }
+  return m;
+}
+function paintCompactions() {
+  for (const old of thread.querySelectorAll('.mw[data-compaction-id]')) old.remove();
+  for (const entry of state.compactions) {
+    if (!['complete', 'failed'].includes(entry.phase)) continue;
+    const row = append(compactionBoundary(entry), `compaction:${entry.id}`);
+    row.classList.add('compaction-boundary'); row.dataset.compactionId = entry.id;
+    const after = [...thread.querySelectorAll('.mw:not([data-compaction-id])')]
+      .find(message => {
+        const at = message.querySelector('.m[data-at]')?.dataset.at;
+        return at && Date.parse(at) > entry.at;
+      });
+    after?.before(row);
+  }
+}
+function acceptCompaction(event) {
+  if (event.phase === 'start') state.compactionPhase = event;
+  else if (event.phase === 'complete' || event.phase === 'failed') {
+    state.compactionPhase = event.phase === 'failed' ? event : null;
+    const index = state.compactions.findIndex(item => item.id === event.id);
+    if (index >= 0) state.compactions[index] = event; else state.compactions.push(event);
+    paintCompactions();
+  }
+  paintContextStrip();
+}
+function paintAutoCompactionSettings() {
+  const settings = state.prefs.autoCompaction ?? { enabled: true, minTokens: 40_000,
+    claude: { enabled: true, delayMinutes: 50 }, codex: { enabled: false, delayMinutes: 50 } };
+  $('autoCompactionEnabled').checked = settings.enabled;
+  $('autoCompactionMin').value = String(settings.minTokens / 1000);
+  for (const id of ['claude', 'codex']) {
+    const name = id[0].toUpperCase() + id.slice(1);
+    $(`autoCompaction${name}`).checked = settings[id].enabled;
+    $(`autoCompaction${name}Delay`).value = String(settings[id].delayMinutes);
+  }
+  for (const input of $('autoCompactionPanel').querySelectorAll('input:not(#autoCompactionEnabled)')) input.disabled = !settings.enabled;
+}
+async function saveAutoCompactionSettings() {
+  const settings = { enabled: $('autoCompactionEnabled').checked,
+    minTokens: Number($('autoCompactionMin').value) * 1000,
+    claude: { enabled: $('autoCompactionClaude').checked, delayMinutes: Number($('autoCompactionClaudeDelay').value) },
+    codex: { enabled: $('autoCompactionCodex').checked, delayMinutes: Number($('autoCompactionCodexDelay').value) } };
+  try {
+    const saved = await cmd('setAutoCompaction', { settings });
+    state.prefs.autoCompaction = saved;
+    $('autoCompactionError').textContent = '';
+    paintAutoCompactionSettings();
+  } catch (error) {
+    $('autoCompactionError').textContent = t('compaction.saveFailed', { error: error.message });
+    paintAutoCompactionSettings();
+  }
+}
 
 // ---------------------------------------------------------------- 表示の下請け
 
@@ -1142,7 +1266,24 @@ function onEvent(ev, replay = false) {
   // （覚えずに捨てると、一覧は「承認待ち」なのにカードがどこにも出ない）
   if (ev.type === "permission" && ev.id) state.pendingPerms.set(ev.id, ev);
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); return; }
+  if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
+  if (ev.type === 'compactionSchedule') {
+    const row = state.sessions.find(s => s.id === ev.sessionId);
+    if (row) row.compactionAt = ev.at;
+    if (ev.sessionId === state.current) { state.compactionAt = ev.at; paintContextStrip(); }
+    renderSessions(); return;
+  }
+  if (ev.type === 'conversationAutoCompaction') {
+    const row = state.sessions.find(s => s.id === ev.sessionId);
+    if (row) row.autoCompactionOff = ev.off;
+    return;
+  }
+  if (ev.type === 'compaction' && ev.sessionId) {
+    const row = state.sessions.find(s => s.id === ev.sessionId);
+    if (row && ev.phase === 'complete' && ev.trigger !== 'manual') row.compacted = true;
+    renderSessions();
+  }
   // 別の窓・別の端末（この窓も含む）で完了を確認した。一覧の青い丸だけが変わる
   if (ev.type === "read") { if (readCompletions.apply(ev.reads)) renderSessions(); return; }
   // Pleiad に登録した外部 MCP のログインの進み具合。会話には出さず、設定 › コンテキストと会話の右パネル（web/context.mjs・web/session-context.mjs）へ渡す
@@ -1165,6 +1306,8 @@ function onEvent(ev, replay = false) {
     return;
   }
   switch (ev.type) {
+    case 'contextWindow': state.contextWindow = ev; paintContextStrip(); return;
+    case 'compaction': acceptCompaction(ev); return;
     case 'userMessage': {
       if (replay && ev.messageId === state.initialMessageId) {
         const row = ensureMessageRow(ev.messageId, ev.text, ev.at);
@@ -1181,6 +1324,10 @@ function onEvent(ev, replay = false) {
       row.dataset.messageStarted = '1';
       row.querySelector('.m.user .body').innerHTML = plainTextHtml(ev.text);
       if (ev.at) { row.querySelector('.m').dataset.at = ev.at; row.querySelector('.who .when').textContent = hhmm(ev.at); }
+      for (const boundary of thread.querySelectorAll('.mw[data-compaction-id]')) {
+        const entry = state.compactions.find(item => item.id === boundary.dataset.compactionId);
+        if (entry && ev.at && entry.at < Date.parse(ev.at)) row.before(boundary);
+      }
       // pending = 受理はしたが、まだエージェントに渡っていない（userMessage.delivered を待つ）。
       // 配達の合図が先に来ていた分（速いバックエンド）はここで消化する
       const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);
@@ -1289,6 +1436,7 @@ function onEvent(ev, replay = false) {
       sys(html.t('chat.sys.taskResumed'));
       return;
     case "turnResult": {
+      if (ev.compact) return;
       if (ev.outcome === "ok") return;             // 終わったことは稼働表示が消えれば分かる
       closeTurnEl();
       // 中断の一行は保存された状態と同じ形で描く（paintInterruptLine が二重に出さない）
@@ -2052,6 +2200,7 @@ const slashSkills = setupSlashSkills({
   list: $("skillList"),
   hint: $("slashHint"),
   cwd: () => state.cwd.trim() || state.draft.cwd || "",
+  canCompact: () => canCompactHere(),
   load: (cwd) => cmd("slashSkills", { cwd: cwd || undefined }),
 });
 
@@ -4056,6 +4205,12 @@ function rowMenu(s, x, y, lead = []) {
         cmd("setTitle", { sessionId: s.id, title: v, reasonKey: "menu" })
           .catch((e) => sys(html.t("session.titleFailed", { error: e.message }))) } },
     ] },
+    { label: t('compaction.compact'), disabled: !capsOf(s.backend).compact,
+      hint: !capsOf(s.backend).compact ? t('compaction.antigravityManaged') : '',
+      onClick: () => cmd('compactConversation', { sessionId: s.id }).catch(error => showRowCompactionError(s, error)) },
+    ...(s.backend === 'antigravity' ? [] : [{ label: t('compaction.disableConversation'), checked: Boolean(s.autoCompactionOff),
+      onClick: () => cmd('setConversationAutoCompaction', { sessionId: s.id, off: !s.autoCompactionOff })
+        .then(({ off }) => { s.autoCompactionOff = off; renderSessions(); }).catch(error => showRowCompactionError(s, error, true)) }]),
     { label: t("session.menu.changeStatus"), hint: s.status ?? t("session.status.none"), sub: () => [
       { input: { placeholder: t("session.menu.newStatus"), onCommit: (v) => setStatusOf(s.id, v) } },
       ...known.map((k) => ({ label: k, checked: k === s.status, onClick: () => setStatusOf(s.id, k) })),
@@ -4395,6 +4550,7 @@ async function runRefresh() {
   readCompletions.fromSessions(sessions);
   state.statuses = applyPendingStatuses(statuses);
   state.prefs = prefs ?? {};
+  paintAutoCompactionSettings();
   await loadBackends();
   await syncTopbar();
   cmd("running").then(applyRunning).catch(() => {});
@@ -4567,6 +4723,8 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     if (!fresh && composerWait.queued) composerWait.cancel();
     if (!fresh) saveDraft().catch(() => {});
     state.current = id;
+    state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
+    paintContextStrip();
     try { localStorage.setItem("agent-host-current", id); } catch {}
     syncWorkEntry();
     state.loadingSession = id;
@@ -4658,6 +4816,11 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   state.awaitingSession = false;
   state.submitting = false;
   state.messages = data?.messages ?? [];
+  state.contextWindow = data?.contextWindow ?? null;
+  state.compactionAt = data?.compactionAt ?? null;
+  state.compactionPhase = null;
+  state.compactions = data?.compactions ?? [];
+  paintContextStrip();
   restorePastSubagents(id);
   state.initialMessageId = data?.initialMessageId;
   state.presents = data?.presents ?? [];
@@ -4704,6 +4867,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   if (!keepComposer) loadDraft();
   closeTurnEl();
   const added = paintHistory(keepUpTo ?? 0);
+  paintCompactions();
   if (state.initialMessageId) {
     const lastUser = [...thread.querySelectorAll('.mw:has(.m.user)')].at(-1);
     if (lastUser) lastUser.dataset.messageId = state.initialMessageId;
@@ -4975,6 +5139,16 @@ async function submit() {
     const text = $('prompt').value;
     const attachments = state.attached.map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
     if (!text.trim() && !attachments.length) return;
+    if (text.trim() === '/compact' && !attachments.length) {
+      if (canCompactHere()) {
+        await cmd('compactConversation', { sessionId });
+        await clearSentDraft(sessionId, text, attachments);
+      } else sys(t('compaction.antigravityManaged'));
+      return;
+    }
+    const row = state.sessions.find(s => s.id === sessionId);
+    if (row) { row.compacted = false; row.compactionAt = null; renderSessions(); }
+    state.compactionAt = null; paintContextStrip();
     // 添付の印はエージェントが読むので会話の言語で（まだ決まっていない会話は、サーバーが決めるのと同じ画面の言語）
     const agentLang = state.sessions.find(s => s.id === sessionId)?.agentLocale ?? uiLang;
     const full = [text.trim(), attachments.map(a => attachmentLine(agentLang, a.path)).join(NL)].filter(Boolean).join(NL + NL);
@@ -5116,6 +5290,31 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   openSettings: () => openContextPage(), labelOf,
   isRunning: () => Boolean(state.current && state.runningIds.has(state.current)) });
 $('contextEntry').onclick = () => sessionContext.toggle($('contextEntry'));
+function openAutoCompactionSettings() { closeMeterPop(); onboarding.open('autoCompaction'); }
+$('contextMeter').onclick = () => {
+  const pop = $('contextMeterPop');
+  if (!pop.hidden) return closeMeterPop(true);
+  pop.hidden = false;
+  $('contextMeter').setAttribute('aria-expanded', 'true');
+  $('meterCompact').disabled = !canCompactHere() || state.compactionPhase?.phase === 'start';
+  pop.querySelector('button:not(:disabled)')?.focus();
+};
+$('meterCompact').onclick = requestCompaction;
+$('meterSettings').onclick = openAutoCompactionSettings;
+document.addEventListener('pointerdown', event => { if (!$('contextMeterPop').hidden && !event.target.closest('.context-meter-wrap')) closeMeterPop(); });
+document.addEventListener('focusin', event => { if (!$('contextMeterPop').hidden && !event.target.closest('.context-meter-wrap')) closeMeterPop(); });
+document.addEventListener('keydown', event => {
+  if ($('contextMeterPop').hidden) return;
+  if (event.key === 'Escape') { event.preventDefault(); closeMeterPop(true); }
+  else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+    const items = [...$('contextMeterPop').querySelectorAll('button:not(:disabled)')];
+    const index = items.indexOf(document.activeElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+      : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    event.preventDefault(); items[next]?.focus();
+  }
+});
+for (const input of $('autoCompactionPanel').querySelectorAll('input')) input.addEventListener('change', saveAutoCompactionSettings);
 // 止めるのは今見ているセッションだけ。他のセッションは走らせたままにする
 $("abort").onclick = () => {
   const sessionId = state.current;

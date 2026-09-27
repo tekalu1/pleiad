@@ -100,8 +100,21 @@ export function normalizeSdkMessage(m) {
 
   // ---- CLI が出す権威ある稼働状態。推測より、こちらを優先する
   if (m.type === "system" && m.subtype === "status") {
-    if (m.status === "compacting") out.push({ type: "activity", state: "compacting" });
+    if (m.status === "compacting") {
+      out.push({ type: "activity", state: "compacting" });
+      out.push({ type: "compaction", phase: "start", trigger: "auto" });
+    }
+    if (m.compact_result === "failed") out.push({ type: "compaction", phase: "failed", trigger: "auto", reason: String(m.compact_error ?? "") });
+    if (m.compact_result === "success") out.push({ type: "compaction", phase: "complete", trigger: "auto" });
     else if (m.status === "requesting") out.push({ type: "activity", state: "thinking" });
+    return out;
+  }
+
+  if (m.type === "system" && m.subtype === "compact_boundary") {
+    const meta = m.compact_metadata ?? {};
+    out.push({ type: "compaction", phase: "complete", trigger: meta.trigger === "manual" ? "manual" : "auto",
+      nativeId: m.uuid ?? null, beforeTokens: Number.isFinite(meta.pre_tokens) ? meta.pre_tokens : null,
+      afterTokens: Number.isFinite(meta.post_tokens) ? meta.post_tokens : null });
     return out;
   }
 
@@ -130,6 +143,21 @@ export function normalizeSdkMessage(m) {
   }
 
   return out;
+}
+
+/** getSessionMessages({ includeSystemMessages: true }) の境界を表示用に読む。 */
+export function claudeCompactionsFromHistory(rows) {
+  return rows.flatMap(row => {
+    const body = row?.message && typeof row.message === 'object' ? row.message : {};
+    const source = body.subtype === 'compact_boundary' ? body : row;
+    if (row?.type !== 'system' || source?.subtype !== 'compact_boundary' || !row.uuid) return [];
+    const meta = source.compact_metadata ?? {};
+    return [{ id: `native:${row.uuid}`, nativeId: row.uuid, phase: 'complete',
+      trigger: meta.trigger === 'manual' ? 'manual' : 'auto',
+      at: Date.parse(row.timestamp ?? body.timestamp ?? '') || Date.now(),
+      ...(Number.isFinite(meta.pre_tokens) ? { beforeTokens: meta.pre_tokens } : {}),
+      ...(Number.isFinite(meta.post_tokens) ? { afterTokens: meta.post_tokens } : {}) }];
+  });
 }
 
 // ------------------------------------------------------------------ 履歴

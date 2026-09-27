@@ -656,6 +656,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (pendingRow?.visible) meta.append(pendingLabel(pendingRow.text));
     else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
     else meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
+    if (s.compactionAt) meta.append(el('span', 'row-compaction', `◷ ${new Date(s.compactionAt).toLocaleTimeString(document.documentElement.lang, { hour: '2-digit', minute: '2-digit' })}`));
+    else if (s.compacted) meta.append(el('span', 'row-compaction', t('compaction.sidebarDone')));
     if (last.backendLabels && s.backend) meta.append(backendLogo(s.backend, last.backendLabels[s.backend] ?? s.backend));
     const cwd = el("span", "row-cwd", shortDir(s.cwd));
     if (s.cwd) cwd.title = s.cwd;

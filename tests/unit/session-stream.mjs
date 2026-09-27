@@ -29,6 +29,7 @@ export default async function (t) {
     // ヘッダーの使用量のチップ（web/header-usage.mjs）。ターンの終わりで取り直す。このテストの対象外
     headerUsage: { turnEnded: noop },
     filePreview: { sessionChanged: noop },
+    paintContextStrip: noop, paintCompactions: noop,
     // 狭い画面の引き出し（client.mjs の setDrawer）。会話を開くと閉じる。このテストの対象外
     setDrawer: noop,
     // 入力欄の待ち（web/composer-wait.mjs）。tests/unit/composer-wait.mjs が見る。このテストの対象外
@@ -119,7 +120,7 @@ export default async function (t) {
   const turns = new Map([["target", turn]]);
   const serverContext = vm.createContext({
     msg: { args: { sessionId: "target", live: true } }, runtime: { turns, waiting: new Map() }, liveReads,
-    resolveBackendForSession: async () => ({}), store: { get: async () => ({}) },
+    resolveBackendForSession: async () => ({}), store: { get: async () => ({}) }, compactionScheduler: { get: () => null },
     history: { loadTranscript: () => new Promise(r => { resolveTranscript = r; }) },
     reply: (ok, data) => data, streamSequence: 3,
   });

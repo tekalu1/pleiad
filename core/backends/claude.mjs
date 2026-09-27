@@ -28,7 +28,7 @@ import os from "node:os";
 import * as store from "../store.mjs";
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { buildClaudeModels, FALLBACK_MODELS } from "./claude-models.mjs";
-import { normalizeSdkMessage, transcriptToMessages, mergeQueuedCommands, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript } from "./claude-normalize.mjs";
+import { normalizeSdkMessage, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript } from "./claude-normalize.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog } from "./claude-background.mjs";
 
 const NL = String.fromCharCode(10);
@@ -507,6 +507,7 @@ export const backend = {
   get description() { return t("claude.description"); },
 
   capabilities: {
+    compact: true,
     title: true,       // renameSession / customTitle。公式 CLI・VS Code と共有される
     tag: true,         // tagSession / tag。同上
     fork: true,
@@ -640,6 +641,16 @@ export const backend = {
         ...(model || endpoint?.roles?.main ? { model: model || endpoint.roles.main } : {}),
         ...(effort && (!endpoint || endpoint.options?.sendThinking) ? { effort } : {}),
         includePartialMessages: true,
+        hooks: {
+          PreCompact: [{ hooks: [async input => {
+            emit({ type: 'compaction', phase: 'start', trigger: input.trigger === 'manual' ? 'manual' : 'auto' });
+            return {};
+          }] }],
+          PostCompact: [{ hooks: [async input => {
+            if (input.compact_summary) emit({ type: 'compaction', phase: 'summary', trigger: input.trigger === 'manual' ? 'manual' : 'auto', summary: input.compact_summary });
+            return {};
+          }] }],
+        },
         canUseTool: makeCanUseTool(ctx, askPermission),
       },
     }); } catch (e) { await flag?.dispose(); throw undelivered(e); }
@@ -864,6 +875,11 @@ export const backend = {
           if (ev.type === "turnResult" && ev.outcome === "ok") { heldResult = ev; continue; }
           emit(ev);
         }
+        if (message.type === 'result' || message.subtype === 'compact_boundary') {
+          const usage = typeof q.getContextUsage === 'function' ? await q.getContextUsage().catch(() => null) : null;
+          if (Number.isFinite(usage?.totalTokens) && Number.isFinite(usage?.rawMaxTokens))
+            emit({ type: 'contextWindow', usedTokens: usage.totalTokens, windowTokens: usage.rawMaxTokens });
+        }
         // 裏の作業と main の状態（background / phase）。変わったときだけ出る
         for (const ev of tracker.observe(message)) emit(ev);
         settleInput();
@@ -942,6 +958,11 @@ export const backend = {
     // 走っているターンに折り込まれた途中送信は getSessionMessages に出ない。transcript から拾って戻す
     const rows = await readQueuedCommandRows(sessionId);
     return transcriptToMessages(mergeQueuedCommands(entries, rows), options);
+  },
+
+  async getCompactions(sessionId) {
+    const rows = await getSessionMessages(sessionId, { includeSystemMessages: true }).catch(() => []);
+    return claudeCompactionsFromHistory(rows);
   },
 
   setTitle: (sessionId, title) => renameSession(sessionId, title),

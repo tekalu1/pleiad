@@ -1,7 +1,7 @@
 import { isComposingKey } from './keyboard.mjs';
 import { t } from './i18n.mjs';
 
-const pages = [['setup', 'setupTab', 'setupPanel'], ['usage', 'usageTab', 'usagePanel'], ['delegation', 'delegationTab', 'delegationPanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['context', 'openContext', 'contextPanel'], ['remote', 'remoteTab', 'remotePanel'], ['updates', 'updatesTab', 'updatesPanel']];
+const pages = [['setup', 'setupTab', 'setupPanel'], ['usage', 'usageTab', 'usagePanel'], ['delegation', 'delegationTab', 'delegationPanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['context', 'openContext', 'contextPanel'], ['autoCompaction', 'autoCompactionTab', 'autoCompactionPanel'], ['remote', 'remoteTab', 'remotePanel'], ['updates', 'updatesTab', 'updatesPanel']];
 
 // A failed status check is not evidence that the account is unconfigured.
 export function shouldShowOnboarding(status, auth) {
@@ -174,6 +174,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
   $('closeOnboarding').onclick = () => welcome.close();
   $('setupTab').onclick = () => page();
   $('appearanceTab').onclick = () => page('appearance');
+  $('autoCompactionTab').onclick = () => page('autoCompaction');
   $('backToChat').onclick = () => close();
   // Esc でも会話へ戻る。重なった dialog と、combo・メニューが既に受け取った Esc は横取りしない
   document.addEventListener('keydown', event => {

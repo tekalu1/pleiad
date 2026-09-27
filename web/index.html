@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="/updates.css">
 <link rel="stylesheet" href="/usage.css">
 <link rel="stylesheet" href="/file-preview.css">
+<link rel="stylesheet" href="/compaction.css">
 <!-- i18next はビルドしないので、裸の名前をサーバーの配信口へ向ける（core/server.mjs の /vendor/i18next.mjs）。モジュールより前に置く -->
 <script type="importmap">{ "imports": { "i18next": "/vendor/i18next.mjs" } }</script>
 <!-- 最初の描画より前に、配色・言語・窓の枠（デスクトップ版だけ）・脇の開閉を決める。client.mjs を待つと一瞬ずれて見える。
@@ -70,6 +71,7 @@
       <button type="button" id="delegationTab" aria-controls="delegationPanel" data-i18n="settings.nav.delegation"></button>
       <button type="button" id="appearanceTab" aria-controls="appearancePanel" data-i18n="settings.nav.appearance"></button>
       <button type="button" id="openContext" aria-controls="contextPanel" data-i18n="settings.nav.context"></button>
+      <button type="button" id="autoCompactionTab" aria-controls="autoCompactionPanel" data-i18n="settings.nav.autoCompaction"></button>
       <button type="button" id="remoteTab" aria-controls="remotePanel" data-i18n="settings.nav.remote"></button>
       <button type="button" id="updatesTab" aria-controls="updatesPanel" data-i18n="settings.nav.about"></button>
     </nav>
@@ -141,7 +143,7 @@
         <span class="title-field" id="titleField"><input id="titleEdit" data-i18n-placeholder="session.untitled" data-i18n-aria-label="session.titleLabel" autocomplete="off" disabled></span>
       </div>
       <button type="button" class="btn btn-icon" id="titleWand" data-i18n-title="session.titleWand" disabled><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></button>
-      <!-- 会話の右パネル「この会話のコンテキスト」の入口（web/session-context.mjs）。件数と「変更あり」は client.mjs が入れる -->
+      <!-- 会話の右パネル「この会話のプラグイン」の入口（web/session-context.mjs）。件数と「変更あり」は client.mjs が入れる -->
       <button type="button" class="btn ctxlink" id="contextEntry" data-i18n-title="session.context.entryTitle" hidden><svg class="i" viewBox="0 0 24 24"><path d="M4 4h9l5 5v11H4z"/><path d="M13 4v5h5"/></svg><span data-i18n="session.context.label"></span><span class="n mono" id="contextEntryCount" hidden></span><span class="chg" id="contextEntryChanged" hidden data-i18n="session.context.changed"></span></button>
       <!-- 委譲された子の会話でだけ出す、依頼元の会話へ戻る口（子の会話は脇の一覧に出ない）。サブエージェント・タスク・裏のコマンドの一覧は会話末尾の「バックグラウンド N」 -->
       <button type="button" class="btn" id="parentChatEntry" hidden data-i18n="dialog.tasks.parent"></button>
@@ -157,6 +159,14 @@
 
     <div class="work-entry" id="workEntry" hidden><button type="button" class="btn work" id="workEntryButton" aria-controls="workDialog"></button></div>
     <form class="composer" id="composer">
+      <div class="context-strip" id="contextStrip" hidden>
+        <div class="context-meter-wrap"><button type="button" class="context-meter" id="contextMeter" aria-haspopup="menu" aria-expanded="false" aria-controls="contextMeterPop"></button>
+          <div class="pop menu context-meter-pop" id="contextMeterPop" role="menu" hidden>
+            <button type="button" role="menuitem" id="meterCompact" data-i18n="compaction.compact"></button>
+            <button type="button" role="menuitem" id="meterSettings" data-i18n="compaction.settings"></button>
+          </div></div>
+        <div class="context-strip-status" id="contextStripStatus" role="status"></div>
+      </div>
       <div id="outbox" class="outbox" aria-live="polite" hidden></div>
       <div class="next-settings" id="nextSettings" role="status" hidden><div><b data-i18n="chat.next.title"></b><div id="nextSettingsText"></div><details class="next-handoff" id="nextHandoff" hidden></details></div><button type="button" class="btn" id="cancelSettings" data-i18n="chat.next.cancel"></button></div>
       <div class="settings-error" id="settingsError" role="alert"></div>
@@ -267,6 +277,17 @@
           <p class="locale-now" id="localeNow" role="status" aria-live="polite"></p>
         </section>
         <section id="contextPanel" data-i18n-aria-label="settings.nav.context" hidden></section>
+        <section id="autoCompactionPanel" data-i18n-aria-label="settings.nav.autoCompaction" hidden>
+          <div class="auto-compaction-settings">
+            <label class="setting-line"><span data-i18n="compaction.autoEnabled"></span><input type="checkbox" id="autoCompactionEnabled"></label>
+            <label class="setting-line"><span data-i18n="compaction.minSize"></span><span><input type="number" id="autoCompactionMin" min="1" max="10000"> <span data-i18n="compaction.kTokens"></span></span></label>
+            <div class="auto-compaction-head"><span data-i18n="compaction.agent"></span><span data-i18n="compaction.enabled"></span><span data-i18n="compaction.delay"></span></div>
+            <label class="auto-compaction-row"><span>Claude Code</span><input type="checkbox" id="autoCompactionClaude"><span><input type="number" id="autoCompactionClaudeDelay" min="1" max="10080" data-i18n-aria-label="compaction.claudeDelay"> <span data-i18n="compaction.minutes"></span></span></label>
+            <label class="auto-compaction-row"><span>Codex</span><input type="checkbox" id="autoCompactionCodex"><span><input type="number" id="autoCompactionCodexDelay" min="1" max="10080" data-i18n-aria-label="compaction.codexDelay"> <span data-i18n="compaction.minutes"></span></span></label>
+            <div class="auto-compaction-managed" data-i18n="compaction.antigravityAutoManaged"></div>
+            <p id="autoCompactionError" role="status"></p>
+          </div>
+        </section>
         <!-- 中身は web/remote.mjs が作る -->
         <section id="remotePanel" data-i18n-aria-label="settings.nav.remote" hidden></section>
       </div>

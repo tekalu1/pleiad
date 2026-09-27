@@ -98,11 +98,14 @@ export default async function (t) {
       q.push(replay(q.frames[2].uuid, "Msg A"));
       await until(() => delivered(events).length >= 2);
       t.ok("最初のプロンプトの replay では何も出さない", JSON.stringify(delivered(events)) === '["m-a","m-a2"]', JSON.stringify(delivered(events)));
+      q.getContextUsage = async () => ({ totalTokens: 124000, rawMaxTokens: 200000 });
       q.push(result());
       q.end();
       await done;
       t.ok("普通に終われば ok の turnResult を 1 回だけ出す",
         events.filter((e) => e.type === "turnResult").map((e) => e.outcome).join() === "ok");
+      t.ok("SDK の getContextUsage を文脈量として流す", events.some(e => e.type === 'contextWindow'
+        && e.usedTokens === 124000 && e.windowTokens === 200000));
     } finally { restore(); }
   }
 
