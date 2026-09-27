@@ -148,6 +148,8 @@ GitHub Release の prerelease 属性とアプリの先行版設定で選別し�
 
 ## リリース手順
 
+リリースごとに [外部エージェントの版の表](multi-backend.md#外部エージェントの版) を見直し、検証した版と非公開形式の依存を更新する。
+
 ### 自己署名の先行版（現在の運用）
 
 `Evaluation release` は GitHub-hosted `windows-latest` で動く。このPCの常駐プロセス、ログイン状態、self-hosted runnerには依存しない。

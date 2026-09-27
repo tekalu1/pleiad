@@ -29,6 +29,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import * as store from '../store.mjs';
+import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 
 /**
  * 本文の無い SUCCESS を確定するまでに、打ち切りの印（stderr）を待つ時間。
@@ -242,6 +244,7 @@ export const backend = {
         addDirs: cwd ? [cwd] : [],
         ...(agent ? { addDirs: [...(cwd ? [cwd] : []), agent.home], agent: AGENT_NAME, env: agent.env, onGone: agent.cleanup } : {}),
       });
+      session.onShapeMismatch = () => { void recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'antigravity', kind: 'stream-json-shape', detectedVersion: null }); };
       session.contextKey = contextKey;
       session.contextShape = contextShape;
     }
