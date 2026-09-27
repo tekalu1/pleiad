@@ -510,7 +510,9 @@
       "appServerDied": "codex app-server exited: {{why}}",
       "timeout": "codex {{method}} did not respond within {{ms}} ms.",
       "notConnected": "Not connected to codex app-server.",
-      "noHandler": "Nothing is listening for {{method}}."
+      "noHandler": "Nothing is listening for {{method}}.",
+      "hooksList": "Could not get Codex's hook list (hooks/list), so the message was not sent (the hooks to turn off could not be decided)",
+      "hooksUnsubscribeFailed": "Could not switch how hooks are passed (codex could not unload the conversation: {{reason}}). Continuing would run hooks twice or not at all, so the message was not sent. Stop any terminal running in the background, then send again"
     },
     "auth": {
       "notLoggedIn": "Not signed in to codex.",
@@ -969,5 +971,23 @@
       "notReady": "This copy is not ready yet. Check the reasons on the review screen",
       "adapterConflict": "An adapter file with the same name but different content already exists, so it was not overwritten"
     }
+  },
+  "plyHooks": {
+    "invalid": "The hook registration is not in a valid form",
+    "name": "Enter a name of 1–80 characters",
+    "agent": "Choose which agent the command is written for",
+    "event": "That event does not exist for the chosen agent",
+    "matcher": "The matcher must be a string of up to 500 characters",
+    "command": "Enter the command on one line (up to 4000 characters)",
+    "timeout": "Timeout must be a whole number of seconds from 1 to 86400",
+    "targets": "Choose at least one agent to pass it to",
+    "owner": "The hooks owner setting is not valid",
+    "unreadable": "Cannot read Pleiad's hook registrations (hooks.json). The file was left unchanged",
+    "notFound": "That registration was not found (it may have been removed in another window)",
+    "tooMany": "You can register up to 200 hooks"
+  },
+  "hooksUnify": {
+    "prepareFailed": "Could not prepare the hooks managed by Pleiad, so the message was not sent (to avoid running the agent's own hooks twice): {{error}}",
+    "importFailed": "Some definitions cannot be imported (the file changed, or the form cannot be imported). Open the review again"
   }
 }

@@ -91,15 +91,30 @@ export function agentDefinition({ owners, prompt, cwd, home, locale, execPath = 
  * 会話用のエージェントを Pleiad の置き場（<data>/antigravity/context/<pid>-<乱数>/）に書く。
  * `--add-dir <home> --agent ply-context` で agy に見せ、env を agy の環境変数に足す。agy が終わったら cleanup で消す
  */
-export async function prepareAgent({ owners, prompt, cwd, url, authorization, locale }) {
+export async function prepareAgent({ owners, prompt, cwd, url, authorization, locale, context = true, hooks = null }) {
   const home = path.join(root(), `${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
-  const file = path.join(home, '.agents', 'agents', AGENT_NAME, 'agent.md');
-  await fs.promises.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-  await fs.promises.writeFile(file, agentDefinition({ owners, prompt, cwd, home, locale }), { encoding: 'utf8', mode: 0o600 });
+  await fs.promises.mkdir(path.join(home, '.agents'), { recursive: true, mode: 0o700 });
+  if (context) {
+    const file = path.join(home, '.agents', 'agents', AGENT_NAME, 'agent.md');
+    await fs.promises.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    await fs.promises.writeFile(file, agentDefinition({ owners, prompt, cwd, home, locale }), { encoding: 'utf8', mode: 0o600 });
+  }
+  // Hooks を Pleiad がそろえる会話（ADR 0048）: 置き場の .agents/hooks.json に登録（pleiad-<id>、アダプター越し）と、ネイティブの名前ごとの
+  // { enabled: false } を書く。agy は --add-dir の .agents/hooks.json も読み、同じ名前の enabled:false はスコープをまたいで止める（実機で確認。2026-09-28）。
+  // アダプターは置き場の .agents/pleiad-hooks/ に置き、発火の記録（runs.jsonl）もそこに書かせる
+  let runs = null;
+  if (hooks) {
+    const dir = path.join(home, '.agents', 'pleiad-hooks');
+    await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+    await fs.promises.writeFile(path.join(dir, hooks.adapter.name), hooks.adapter.text, { encoding: 'utf8', mode: 0o600 });
+    await fs.promises.writeFile(path.join(home, '.agents', 'hooks.json'), `${JSON.stringify(hooks.file, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    runs = path.join(dir, 'runs.jsonl');
+  }
   return {
     home,
+    runs,
     // PLY_CONTEXT_LOCALE は中継が agy へ返すエラーの言語（会話の言語。core/agy-context-relay.mjs）
-    env: { PLY_CONTEXT_URL: url, PLY_CONTEXT_AUTHORIZATION: authorization, ...(locale ? { PLY_CONTEXT_LOCALE: locale } : {}) },
+    env: context ? { PLY_CONTEXT_URL: url, PLY_CONTEXT_AUTHORIZATION: authorization, ...(locale ? { PLY_CONTEXT_LOCALE: locale } : {}) } : {},
     cleanup: () => fs.rmSync(home, { recursive: true, force: true, maxRetries: 3 }),
   };
 }

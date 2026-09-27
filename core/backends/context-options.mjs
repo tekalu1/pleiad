@@ -6,11 +6,20 @@ import { t } from '../i18n.mjs';
 // 読んだかどうかは最初のプロンプトを処理するまで memoryFiles に出ないので、claude.mjs の起動時の確認では見逃す
 export const CLAUDE_MD_EXCLUDES = ['**/CLAUDE.md', '**/CLAUDE.local.md', '**/AGENTS.md', '**/.claude/rules/**'];
 
-export function claudeContextOptions(context, { compact = false } = {}) {
-  if (!context) return {};
+/**
+ * Pleiad の担当の分の query() のオプション。hooks: Hooks を Pleiad がそろえる会話（ADR 0048）なら、フラグ設定に disableAllHooks を入れて
+ * ユーザー・プロジェクト・ローカル・プラグインの hooks を止める（管理者の hooks は止まらない）。登録はコールバックで渡す（claude.mjs）
+ */
+export function claudeContextOptions(context, { compact = false, hooks = false } = {}) {
+  const settings = {
+    ...(context?.owners.instruction === 'ply' ? { claudeMdExcludes: CLAUDE_MD_EXCLUDES, autoMemoryEnabled: false } : {}),
+    ...(hooks ? { disableAllHooks: true } : {}),
+  };
+  const withSettings = Object.keys(settings).length ? { settings } : {};
+  if (!context) return withSettings;
   const { owners } = context;
   return {
-    ...(owners.instruction === 'ply' ? { settings: { claudeMdExcludes: CLAUDE_MD_EXCLUDES, autoMemoryEnabled: false } } : {}),
+    ...withSettings,
     ...(owners.skill === 'ply' ? { skills: [], ...(!compact ? { extraArgs: { 'disable-slash-commands': null } } : {}), disallowedTools: ['Skill'] } : {}),
     ...(owners.mcp === 'ply' ? { strictMcpConfig: true } : {}),
     ...(context.prompt ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: context.prompt } } : {}),

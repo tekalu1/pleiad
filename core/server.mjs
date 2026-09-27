@@ -49,7 +49,10 @@ import { redactForPeer } from './redact.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
-import { createHooksConfig, HOOK_AGENTS, applyCodexHooks, trimHookRuns } from './hooks-config.mjs';
+import { createHooksConfig, HOOK_AGENTS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
+import { createPlyHooks } from './ply-hooks.mjs';
+import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
+import { deliverable } from './hooks-plan.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
 import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
@@ -218,7 +221,23 @@ const contextSession = createContextSession({ store, snapshots: CONTEXT_SNAPSHOT
 const mcpConfig = createMcpConfig();
 // Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。読むのと、利用者が明示した編集だけ
 const hooksConfig = createHooksConfig();
+// Pleiad 自身の Hooks の登録と、Hooks の担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0048）
+const plyHooks = createPlyHooks(store.dataDir);
+const HOOK_LEAKS_MAX = 20;
 /**
+ * 切り替えの確認の材料。cwd があればその場所（ユーザーと Git のルートから cwd まで）、無ければユーザーの範囲だけ。
+ * Codex の行には hooks/list のプラグイン・管理者の定義を重ねる（止めない出どころとして並べる）
+ */
+async function hooksUnifyPreview({ cwd = null, direction = 'ply' } = {}) {
+  const dir = cwd ? await scanDirectory(cwd) : null;
+  const report = await hooksConfig.scan({ cwd: dir, scopes: dir ? ['user', 'directory'] : ['user'] });
+  await withCodexTrust(report, dir ?? os.homedir(), { trust: true });
+  const raws = await hooksConfig.raw({ cwd: dir, ids: report.entries.map(e => e.id) });
+  const view = await plyHooks.view(dir);
+  const owner = dir ? view.place?.value : view.defaults.value;
+  const all = await plyHooks.read();
+  return { ...unifyPreview({ report, raws, hooks: all.hooks, owner, direction }), cwd: dir, owner, scope: dir ? 'place' : 'user' };
+}/**
  * Codex の hooks の信頼状態を app-server の hooks/list で重ねる（Codex の会話と同じ接続を使う）。
  * Codex の行も Codex のファイルも無ければ呼ばない。trust が偽なら呼ばずに「確かめています」の印（trustPending）だけ付けて返す
  * （一覧を先に返し、画面が trust: true でもう一度頼む。app-server の起動を一覧の表示で待たせない）。
@@ -1171,9 +1190,15 @@ function makeEmit(turn) {
     // hooks の発火（Claude の hook_started / hook_response）。画面へは流さず、ターンに集めて終わりに会話へ残す（右パネルの「発火の記録」）
     if (event?.type === 'hookRun') {
       turn.hookRuns ??= [];
-      const { phase, hookId, name, event: hookEvent, outcome, exitCode } = event;
+      const { phase, hookId, name, event: hookEvent, outcome, exitCode, pleiad, id, source, ms } = event;
+      // Hooks を Pleiad がそろえる会話で、止めたはずのネイティブの定義が走った（Claude の hook_started は設定ファイル・プラグインの hooks の分だけ届く。
+      // Codex は source が user・project）。止められなかったことを会話の記録に残す（推定で止まったことにしない）
+      const hooksRecord = turn.contextRecord?.hooks;
+      const leak = hooksRecord?.owner === 'ply' && !pleiad && (event.leak === true || turn.backend.id === 'claude');
+      if (leak && phase === 'started' && hooksRecord.leaks.length < HOOK_LEAKS_MAX) hooksRecord.leaks.push({ name, event: hookEvent, ...(source ? { source } : {}), at: new Date().toISOString() });
       // 多いときは新しいほうを残す（ターンの最後の Stop などが記録から落ちないように）
-      turn.hookRuns.push({ phase, hookId, name, event: hookEvent, ...(outcome ? { outcome } : {}), ...(Number.isInteger(exitCode) ? { exitCode } : {}), at: Date.now() });
+      turn.hookRuns.push({ phase, hookId, name, event: hookEvent, ...(outcome ? { outcome } : {}), ...(Number.isInteger(exitCode) ? { exitCode } : {}),
+        ...(pleiad ? { pleiad: true, ...(id ? { id } : {}) } : {}), ...(source ? { source } : {}), ...(leak ? { leak: true } : {}), ...(Number.isInteger(ms) ? { ms } : {}), at: Date.now() });
       trimHookRuns(turn.hookRuns);
       return;
     }
@@ -1869,6 +1894,12 @@ async function runTurnInternal(args, onStarted, hooks) {
       child: Boolean(sessionId && (await store.get(sessionId)).delegation), supported: Boolean(backend.capabilities?.plyAgents),
       canDelegate: canDelegate(backend.modes()[permissionMode]), agent: INSTRUCTION_AGENTS.includes(backend.id) ? backend.id : null });
     if (added) contextRecord.added = added;
+    // Hooks の担当が Pleiad の場所（ADR 0048）。このエージェントへ渡す登録・止めるネイティブ・渡せないものを組み立て、会話の記録に残す。
+    // 組み立てられなければ送らない（ネイティブと登録が二重に動くか、どちらも動かないため）
+    let hooksTurn = null;
+    try { hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath } }); }
+    catch (e) { throw new Error(t('hooksUnify.prepareFailed', { error: String(e?.message ?? e) })); }
+    if (hooksTurn) contextRecord.hooks = hooksTurn.record;
     if (appliedSettings) {
       await store.recordChange(sessionId, { by: 'ply', field: 'context', from: previousContext.pin ?? null, to: contextRecord.pin,
         ...savedReason('contextSettingsApplied'), backend });
@@ -2006,6 +2037,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         locale: agentLocale,
         visualizeInstructions: visualizeInstructions(agentLocale),
         contextRuntime: runtimeContext,
+        // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
+        ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
         // 橋は会話ごとに使い回すので、Pleiad の指示はターンごとにここで足す（設定の変更が始まっている会話にも次のターンから効く）
         agentRuntime: (runtime => ({ ...runtime, instructions: withAdded(runtime.instructions, contextRecord.added) }))(agentConnection(turn)),
         // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
@@ -2604,15 +2637,55 @@ wss.on("connection", (ws, req) => {
         case 'copyHooks':
           return reply(true, await hooksConfig.copy(msg.args ?? {}));
         case 'sessionHooks': {
-          // 会話の右パネル: その会話の場所で見つかった定義（読み込まれたかは分からない）と、受け取った発火の記録
+          // 会話の右パネル: その会話の場所で見つかった定義（読み込まれたかは分からない）と、受け取った発火の記録。
+          // Hooks を Pleiad がそろえた会話は、そのターンの記録（渡した登録・止めたネイティブ・渡せなかったもの・漏れ）も返す（unify）
           const id = msg.args?.sessionId ?? null;
           const agent = HOOK_AGENTS.includes(msg.args?.backend) ? msg.args.backend : null;
           const cwd = msg.args?.cwd ? await scanDirectory(msg.args.cwd).catch(() => null) : null;
           const report = agent && cwd ? await hooksConfig.scan({ cwd, agents: [agent] }) : null;
           if (report && agent === 'codex') await withCodexTrust(report, cwd, { trust: msg.args?.trust === true });
-          const saved = id ? (await store.get(id)).hookRuns ?? [] : [];
-          const live = id ? runtime.turns.get(id)?.hookRuns ?? [] : [];
-          return reply(true, { agent, cwd, report, observable: agent === 'claude', runs: trimHookRuns([...saved, ...live]) });
+          const saved = id ? await store.get(id).catch(() => ({})) : {};
+          const live = id ? runtime.turns.get(id) : null;
+          const unify = live?.contextRecord?.hooks ?? saved.contextSession?.hooks ?? null;
+          const owner = cwd ? (await plyHooks.resolve(cwd).catch(() => null))?.owner ?? 'native' : 'native';
+          // 発火を受け取れる接続: Claude（通知・コールバック）、Codex（hook/started・hook/completed）、Antigravity は Pleiad が渡した分だけ（アダプターの記録）
+          const observable = agent === 'claude' || agent === 'codex' ? 'all' : agent === 'antigravity' && unify?.owner === 'ply' ? 'pleiad' : null;
+          return reply(true, { agent, cwd, report, observable: Boolean(observable), observed: observable, owner, unify, runs: trimHookRuns([...(saved.hookRuns ?? []), ...(live?.hookRuns ?? [])]) });
+        }
+        // ---- Pleiad の Hooks の登録と担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0048）。エージェントの設定ファイルは書かない
+        case 'plyHooks':
+          return reply(true, await plyHooks.view(msg.args?.cwd ?? null));
+        case 'readPlyHook':
+          return reply(true, await plyHooks.readHook(msg.args?.id));
+        case 'savePlyHook':
+          return reply(true, await plyHooks.save(msg.args?.value ?? {}, { cwd: msg.args?.cwd ?? null }));
+        case 'removePlyHook':
+          return reply(true, await plyHooks.remove(msg.args?.id, { cwd: msg.args?.cwd ?? null }));
+        case 'togglePlyHook':
+          return reply(true, await plyHooks.toggle(msg.args?.id, msg.args?.enabled !== false, { cwd: msg.args?.cwd ?? null }));
+        case 'plyHookPreview': {
+          // 追加・編集のシートの確認: エージェントごとの渡し方（イベント・matcher・アダプター・渡せない理由）。保存はしない
+          const value = msg.args?.value ?? {};
+          const hook = { ...value, targets: Array.isArray(value.targets) ? value.targets : [], matcher: value.matcher ?? '' };
+          return reply(true, { targets: Object.fromEntries(HOOK_AGENTS.map(a => { const d = hook.targets.includes(a) ? deliverable(hook, a) : null;
+            return [a, d ? { status: d.status, reasons: d.reasons, warnings: d.warnings ?? [], event: d.event, matcher: d.matcher, adapter: d.adapter } : null]; })) });
+        }
+        case 'hooksUnifyPreview':
+          return reply(true, await hooksUnifyPreview({ cwd: msg.args?.cwd ?? null, direction: msg.args?.direction === 'native' ? 'native' : 'ply' }));
+        case 'setHooksOwner': {
+          // 担当と取り込みを 1 回で保存する。取り込む定義はサーバーがファイルから読み直す（画面から来たコマンドは使わない）
+          const place = msg.args?.place ?? null;
+          const ids = Array.isArray(msg.args?.imports) ? msg.args.imports.filter(x => typeof x === 'string').slice(0, 100) : [];
+          const dir = place ? await scanDirectory(place) : null;
+          const raws = ids.length ? await hooksConfig.raw({ cwd: dir, ids }) : [];
+          const add = [];
+          for (const id of ids) {
+            const raw = raws.find(r => r.row.id === id);
+            const c = raw ? importCandidate(raw) : null;
+            if (!c?.importable) throw new Error(t('hooksUnify.importFailed'));
+            add.push(c.value);
+          }
+          return reply(true, await plyHooks.setOwner({ place, value: msg.args?.value ?? null, add, cwd: msg.args?.cwd ?? place }));
         }
         case 'scanContext': {
           // One scan at a time per connection; no changes to running turns.

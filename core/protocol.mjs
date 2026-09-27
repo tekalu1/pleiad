@@ -94,7 +94,16 @@ export const COMMANDS = new Set([
   'hookTargets',  // { scope, base?, agents? } -> { <agent>: { path, format } | { error } } 追加の書き先
   'saveHooks',    // { items: [{ op: add|edit|delete|enable, agent, scope, base?, file?, revision?, loc?, event, matcher, name?, command, timeout, async, enabled? }], dryRun?, allowReformat? } -> { results: [{ ok, path, before, after, reformatsFile, error? }] }
   'copyHooks',    // { source: { agent, scope, base?, file, loc, revision? }, targets: [{ agent, scope, base?, name?, matcher?, revision? }], dryRun?, allowReformat? } -> { source, results: [{ agent, status: ready|review|blocked, reasons, warnings, event, matcher, name?, path, adapter?, before, after, revision, ok, written?, error? }] }。元の定義はファイルから読み直す
-  'sessionHooks', // { sessionId, cwd, backend, trust? } -> { agent, cwd, report, observable, runs: [{ phase, hookId, name, event, outcome?, exitCode?, at }] }
+  'sessionHooks', // { sessionId, cwd, backend, trust? } -> { agent, cwd, report, observable, observed: all|pleiad|null, owner, unify（Pleiad がそろえた会話の記録）, runs: [{ phase, hookId, name, event, outcome?, exitCode?, pleiad?, id?, source?, leak?, ms?, at }] }
+  // Pleiad の Hooks の登録と担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0048）。エージェントの設定ファイルは書かない
+  'plyHooks',          // { cwd? } -> { defaults: { value: { owner, disabled } }, place: { value, override, from } | null, hooks: [登録（コマンドは伏せ字）], revision }
+  'readPlyHook',       // { id } -> 登録 1 件（元のコマンド）。編集のシートを開くときだけ
+  'savePlyHook',       // { value: { id?, name, agent, event, matcher, command, timeout?, async?, targets, matchers?, enabled }, cwd? } -> plyHooks と同じ形と id
+  'removePlyHook',     // { id, cwd? } -> plyHooks と同じ形
+  'togglePlyHook',     // { id, enabled, cwd? } -> plyHooks と同じ形
+  'plyHookPreview',    // { value } -> { targets: { <agent>: { status: ok|blocked, reasons, warnings, event, matcher, adapter } | null } }。保存しない
+  'hooksUnifyPreview', // { cwd?, direction: ply|native } -> { stops（止まる／再開する。importable・reasons）, keeps（動き続ける）, registry（登録ごとのエージェント別の渡し方）, owner, scope }
+  'setHooksOwner',     // { place: null|path, value: { owner, disabled } | null, imports?: [行の id] } -> plyHooks と同じ形と added。取り込む定義はファイルから読み直す
   "onboardingStatus",
   "onboardingSeen",
   "completeSetup",

@@ -18,6 +18,10 @@ import { rpc } from "./codex-rpc.mjs";
 import { rpc as nativeRpc } from './codex-rpc.mjs';
 import { createTerminalTracker } from "./codex-background.mjs";
 import { codexContextRpc } from './context-options.mjs';
+import { CodexRpc } from './codex-rpc.mjs';
+import { codexHooksState } from '../hooks-plan.mjs';
+import { maskText } from '../hooks-config.mjs';
+import crypto from 'node:crypto';
 import { undelivered } from './undelivered.mjs';
 import { codexCompatThread, redactSecret } from '../compat-endpoints.mjs';
 import { MAX_RESULT_CHARS } from "./shared.mjs";
@@ -514,7 +518,56 @@ const loadedProvider = new Map();
 // 同じく、ロード済みのスレッドに渡した developerInstructions。Pleiad の指示（core/ply-instructions.mjs）は
 // 設定・承認モードでターンごとに変わるので、前と違えば接続先と同じく外してから読み直す（始まっている会話にも次のターンから効かせる）
 const loadedInstructions = new Map();
-nativeRpc.onDown(() => { loadedProvider.clear(); loadedInstructions.clear(); });
+// 同じく、ロード済みのスレッドに渡した hooks の config の指紋（'' は渡していない）。Hooks を Pleiad がそろえる会話（ADR 0048）は
+// thread の config で hooks と hooks.state を渡すが、ロード済みのスレッドへの resume は config を無視する（実機で確認。2026-09-28）。
+// 指紋が変わったら外してから読み直し、外せなければターンを始めない（二重実行か未実行になるため）
+const loadedHooks = new Map();
+nativeRpc.onDown(() => { loadedProvider.clear(); loadedInstructions.clear(); loadedHooks.clear(); });
+
+// Pleiad の登録を信頼済みとして渡す hash（hooks.state の trusted_hash）。同じ表を起動の -c で渡した app-server の hooks/list の
+// currentHash（source: sessionFlags）から取る（LLM は呼ばない）。表が同じなら同じ hash なので、表ごとに覚える
+const probeCache = new Map();
+async function probeHookHashes(table, cwd) {
+  const key = JSON.stringify(table);
+  if (probeCache.has(key)) return probeCache.get(key);
+  const probe = new CodexRpc({ hooks: table });
+  try {
+    const data = (await probe.request('hooks/list', { cwds: [cwd] }, 30_000))?.data ?? [];
+    if (probeCache.size > 50) probeCache.clear();
+    probeCache.set(key, data);
+    return data;
+  } finally { probe.stop(); }
+}
+/**
+ * Hooks を Pleiad がそろえるターンの config の hooks。ターンごとに hooks/list（その会話の app-server・その cwd）を取り直し、
+ * ユーザー・プロジェクトの定義の key を enabled:false にする。自分の定義には trusted_hash を付ける（ADR 0048。Pleiad の画面で確かめた登録だけ）
+ */
+export async function codexHooksConfig(runtime, rpc, cwd, { probe = probeHookHashes } = {}) {
+  const list = (await rpc.request('hooks/list', { cwds: [cwd] }, 15_000))?.data;
+  if (!Array.isArray(list)) throw new Error(t('codex.errors.hooksList'));
+  const probed = Object.keys(runtime.table).length ? await probe(runtime.table, cwd).catch(() => []) : [];
+  const { state, stopped, kept, untrusted } = codexHooksState({ table: runtime.table, probe: probed, list });
+  const row = h => ({ key: h.key, source: h.source, event: h.eventName ? h.eventName[0].toUpperCase() + h.eventName.slice(1) : null, path: h.sourcePath ?? '',
+    command: h.command ? maskText(h.command) : '', matcher: typeof h.matcher === 'string' ? h.matcher : null, ...(h.pluginId ? { plugin: h.pluginId } : {}) });
+  Object.assign(runtime.record, { stopped: stopped.map(row), kept: kept.map(row), ...(untrusted ? { untrusted } : {}) });
+  const config = { ...runtime.table, ...(Object.keys(state).length ? { state } : {}) };
+  return { config, key: crypto.createHash('sha256').update(JSON.stringify(config)).digest('hex') };
+}
+const HOOK_OUTCOME = { completed: 'success', failed: 'error', blocked: 'blocked', stopped: 'cancelled' };
+/** Codex の hook/started・hook/completed を Pleiad の hookRun にする。出力（entries の本文）は秘密を含みうるので持ち出さない */
+export function codexHookRun(method, params, hooksRuntime = null) {
+  const run = params?.run ?? {};
+  const event = typeof run.eventName === 'string' && run.eventName ? run.eventName[0].toUpperCase() + run.eventName.slice(1) : '';
+  const source = typeof run.source === 'string' ? run.source : 'unknown';
+  const pleiad = source === 'sessionFlags';
+  // Pleiad が渡した定義のうち、同じイベントが 1 件だけならその登録の名前で出す（通知には定義の位置が無い）
+  const mine = pleiad ? (hooksRuntime?.supplied ?? []).filter(s => s.d.event === event) : [];
+  const one = mine.length === 1 ? mine[0].hook : null;
+  return { type: 'hookRun', phase: method === 'hook/started' ? 'started' : 'response', hookId: String(run.id ?? ''), name: one?.name ?? event, event, source,
+    ...(pleiad ? { pleiad: true, ...(one ? { id: one.id } : {}) } : {}),
+    ...(hooksRuntime && ['user', 'project'].includes(source) ? { leak: true } : {}),
+    ...(method === 'hook/completed' ? { outcome: HOOK_OUTCOME[run.status] ?? 'error', ...(Number.isInteger(run.durationMs) ? { ms: run.durationMs } : {}) } : {}) };
+}
 /** 公式の provider の id（config.toml の model_provider、無ければ openai）。互換から公式へ戻すときに明示する */
 async function defaultProvider(rpc, cwd) {
   const { config } = await rpc.request('config/read', { cwd, includeLayers: false }).catch(() => ({}));
@@ -1140,8 +1193,16 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, contextRuntime, agentRuntime, endpoint = null }) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, contextRuntime, agentRuntime, hooksRuntime = null, endpoint = null }) {
     const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
+    // Hooks を Pleiad がそろえる会話。止める key はこのターンの直前に作り直す（起動の後に足された定義も、次のターンからは止まる）。
+    // 作れなければターンを始めない（ネイティブと Pleiad の登録が二重に動くか、どちらも動かないため）
+    let hooks = null;
+    if (hooksRuntime) {
+      try { hooks = await codexHooksConfig(hooksRuntime, rpc, cwd); }
+      catch (e) { if (rpc !== nativeRpc) rpc.stop(); throw undelivered(e); }
+    }
+    const hooksKey = hooks?.key ?? '';
     // 互換の接続先（core/compat-endpoints.mjs）。スレッドごとに modelProvider と model_providers.<id> を渡す（app-server は共有のまま）。
     // 鍵は experimental_bearer_token / http_headers で JSON-RPC に載る（argv・環境に出ない）。エラー文からは伏せる
     const compat = endpoint ? codexCompatThread(endpoint) : null;
@@ -1210,6 +1271,11 @@ export const backend = {
           return emit({ type: 'usage', ...meter(params.tokenUsage) });
         case 'thread/compacted':
           return emit(codexCompactionEvent(method, params));
+        // hooks の発火（会話の右パネルの「発火の記録」）。Pleiad が渡した定義は source: sessionFlags。
+        // Hooks を Pleiad がそろえる会話で、止めたはずのユーザー・プロジェクトの定義が走ったら漏れとして記録する
+        case 'hook/started':
+        case 'hook/completed':
+          return emit(codexHookRun(method, params, hooksRuntime));
         case "turn/started":
           turnId ??= params?.turn?.id ?? null;
           return;
@@ -1391,6 +1457,7 @@ export const backend = {
             // The context bridge applies the selected mode to external tool calls.
             ...(contextRuntime ? { 'mcp_servers.ply_context': { url: contextRuntime.url, http_headers: contextRuntime.headers, enabled: true, required: true, default_tools_approval_mode: 'approve', startup_timeout_sec: 20 } } : {}),
           ...(compat ? compat.config : {}),
+          ...(hooks ? { hooks: hooks.config } : {}),
         },
         ...(compat ? { modelProvider: compat.modelProvider } : {}),
         ...((visualizeInstructions || contextRuntime?.prompt || agentRuntime?.instructions) ? { developerInstructions: [contextRuntime?.prompt, visualizeInstructions, agentRuntime?.instructions].filter(Boolean).join('\n\n') } : {}),
@@ -1406,7 +1473,8 @@ export const backend = {
         // 外さずに resume すると前の接続先のまま走る（スパイクで確認）
         const known = rpc === nativeRpc ? loadedProvider.get(threadId) : undefined;
         const instructionsChanged = rpc === nativeRpc && loadedInstructions.has(threadId) && loadedInstructions.get(threadId) !== (common.developerInstructions ?? '');
-        if (known !== undefined && (known !== providerKey || instructionsChanged)) {
+        const hooksChanged = rpc === nativeRpc && known !== undefined && (loadedHooks.get(threadId) ?? '') !== hooksKey;
+        if (known !== undefined && (known !== providerKey || instructionsChanged || hooksChanged)) {
           const out = await rpc.request('thread/unsubscribe', { threadId }).catch(e => ({ error: e }));
           const unloaded = !out?.error && ['unsubscribed', 'notLoaded', 'notSubscribed'].includes(out?.status);
           // 接続先が変わったのに外せなかったら、この後の resume は接続先の変更を黙って無視する。前の接続先へ送らないよう、ここで止める。
@@ -1414,7 +1482,11 @@ export const backend = {
           if (!unloaded && known !== providerKey) {
             throw new Error(t("codex.errors.unsubscribeFailed", { reason: out?.error?.message ?? out?.status ?? t("codex.errors.noResponse") }));
           }
-          if (unloaded) { loadedProvider.delete(threadId); loadedInstructions.delete(threadId); }
+          // hooks の渡し方が変わったのに外せなかったら、この後の resume は hooks の config を黙って無視する。ターンを始めない
+          if (!unloaded && hooksChanged) {
+            throw new Error(t("codex.errors.hooksUnsubscribeFailed", { reason: out?.error?.message ?? out?.status ?? t("codex.errors.noResponse") }));
+          }
+          if (unloaded) { loadedProvider.delete(threadId); loadedInstructions.delete(threadId); loadedHooks.delete(threadId); }
         }
         // 互換から公式へ戻すときは公式の provider を明示する（スレッドに記録された互換の provider を使わせない）
         const back = !compat && known !== undefined && known !== 'default' ? { modelProvider: await defaultProvider(rpc, cwd) } : {};
@@ -1428,14 +1500,14 @@ export const backend = {
         }
         effectiveSandbox = resumed?.sandbox;
         if (!ephemeral) rolloutPath = rolloutPathOf(resumed);
-        if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, common.developerInstructions ?? ''); }
+        if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, common.developerInstructions ?? ''); loadedHooks.set(threadId, hooksKey); }
       } else {
         const started = await rpc.request("thread/start", { ...common, ...(ephemeral ? { ephemeral: true } : {}) });
         effectiveSandbox = started?.sandbox;
         if (!ephemeral) rolloutPath = rolloutPathOf(started);
         threadId = started?.thread?.id ?? null;
         if (!threadId) throw new Error(t("codex.errors.noThreadId", { method: "thread/start" }));
-        if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, common.developerInstructions ?? ''); }
+        if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, common.developerInstructions ?? ''); loadedHooks.set(threadId, hooksKey); }
         // 受け皿を取り下げる前に attach する。逆にすると、預かっていた自分の通知が捨てられる
         detach = rpc.adopt(threadId, handlers);
         // **これを出さないと web が id を受け取れない**（P1 §5.1）。turn/start より前に出す。

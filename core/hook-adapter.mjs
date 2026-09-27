@@ -8,6 +8,13 @@
 // The script rewrites the input into the <from> shape, runs the original command with the <from> agent's working folder,
 // then rewrites the command's result into what <to> understands. It only uses Node's own modules, so it runs without Pleiad.
 //
+// Pleiad also runs hooks it registers itself through this script (ADR 0048, "Pleiad manages hooks"):
+//   - <from> may equal <to>. The command then gets the runner's input unchanged, in the runner's own working folder
+//     (Antigravity: <workspace>/.agents, not Pleiad's temporary folder), and its result goes back unchanged. The one change:
+//     an Antigravity PreToolUse that says nothing (exit 0 with no decision) becomes "allow", because Antigravity would deny it.
+//   - An optional 6th argument (the registration id) records each run as a JSON line in runs.jsonl next to this file,
+//     so Pleiad can show which of its hooks ran (Antigravity reports no hook runs itself).
+//
 // When the two agents do not mean the same thing, it never swaps in a different meaning. It takes the safe side instead:
 //   before a tool (PreToolUse)  -> deny   (ask that the runner cannot ask, updatedInput that agy cannot apply, timeout, start failure,
 //                                          and anything agy itself treats as a failure)
@@ -279,26 +286,74 @@ export function decodeCommand(text) {
   return Buffer.from(String(text ?? ''), 'base64url').toString('utf8');
 }
 
+/**
+ * The same agent on both sides (Pleiad's own registrations, ADR 0048): the command gets the input unchanged in the runner's working folder,
+ * and its output and exit code go back unchanged. Antigravity: a PreToolUse with no decision becomes allow (Antigravity denies on "{}").
+ */
+export function sameAgentRun({ to, event, input, processCwd = process.cwd(), exists = fs.existsSync }) {
+  if (to === 'antigravity') {
+    const workspace = str(input.workspacePaths?.[0]) || (path.basename(processCwd) === '.agents' ? path.dirname(processCwd) : processCwd);
+    const agents = path.join(workspace, '.agents');
+    return { cwd: exists(agents) ? agents : workspace, env: { ANTIGRAVITY_CONVERSATION_ID: str(input.conversationId) } };
+  }
+  const cwd = str(input.cwd) || processCwd;
+  return { cwd, env: to === 'claude' && !process.env.CLAUDE_PROJECT_DIR ? { CLAUDE_PROJECT_DIR: cwd } : {} };
+}
+export function sameAgentOutput({ to, event, result }) {
+  const { code = 0, stdout = '', stderr = '', timedOut = false, startError = null, overflow = false } = result ?? {};
+  if (timedOut || startError || overflow) {
+    const why = timedOut ? 'Hook timed out' : overflow ? 'Hook output exceeded 1 MiB' : `Hook could not start: ${startError}`;
+    // Antigravity stops the tool on a failed hook; the others treat it as a non-blocking error. Keep each agent's own rule
+    return { stdout: '', stderr: `${why}\n`, code: 1 };
+  }
+  if (to === 'antigravity' && event === 'PreToolUse' && code === 0) {
+    const out = parse(String(stdout).trim() || '{}');
+    if (out && !str(out.decision)) return { stdout: JSON.stringify({ ...out, decision: 'allow' }), stderr: str(stderr), code: 0 };
+  }
+  return { stdout: str(stdout), stderr: str(stderr), code: Number.isInteger(code) ? code : 1 };
+}
+
+const RECORD_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** One line per run in runs.jsonl next to this file. Never the command's input or output (they can hold secrets) */
+function recordRun(selfPath, line) {
+  try { fs.appendFileSync(path.join(path.dirname(selfPath), 'runs.jsonl'), `${JSON.stringify(line)}\n`, { mode: 0o600 }); } catch {}
+}
+
 /** One run: stdin JSON in, JSON out. Returns { stdout, stderr, code } */
 export async function adapt({ argv, stdin, run = runCommand, processCwd = process.cwd(), stateDir = os.tmpdir(), selfPath = fileURLToPath(import.meta.url) }) {
-  const [from, to, event, timeoutText, encoded] = argv;
+  const [from, to, event, timeoutText, encoded, recordId] = argv;
+  const record = RECORD_ID.test(recordId ?? '') ? recordId : null;
+  const runId = record ? crypto.randomUUID() : null;
+  const at = Date.now();
+  if (record) recordRun(selfPath, { phase: 'started', runId, id: record, event, at });
+  const out = await adaptOnce({ from, to, event, timeoutText, encoded, stdin, run, processCwd, stateDir, selfPath });
+  if (record) recordRun(selfPath, { phase: 'response', runId, id: record, event, at: Date.now(), ms: Date.now() - at, ...(out.outcome ?? {}) });
+  return { stdout: out.stdout, stderr: out.stderr, code: out.code };
+}
+async function adaptOnce({ from, to, event, timeoutText, encoded, stdin, run, processCwd, stateDir, selfPath }) {
   const timeout = Number(timeoutText);
   // A broken call (hand-edited settings) fails the safe way for the runner
-  const broken = why => ({ stdout: JSON.stringify(toTargetOutput({ from: from ?? 'claude', to: AGENTS.includes(to) ? to : 'claude', event, decision: { failed: true, why: 'start', reason: why } })), stderr: `pleiad hook adapter: ${why}\n`, code: 0 });
-  if (!AGENTS.includes(from) || !AGENTS.includes(to) || from === to || !EVENTS.includes(event)) return broken('bad arguments');
+  const broken = why => ({ stdout: JSON.stringify(toTargetOutput({ from: from ?? 'claude', to: AGENTS.includes(to) ? to : 'claude', event, decision: { failed: true, why: 'start', reason: why } })), stderr: `pleiad hook adapter: ${why}\n`, code: 0, outcome: { outcome: 'error' } });
+  if (!AGENTS.includes(from) || !AGENTS.includes(to) || !EVENTS.includes(event)) return broken('bad arguments');
   const command = decodeCommand(encoded);
   if (!command.trim() || !Number.isInteger(timeout) || timeout < 1 || timeout > 86400) return broken('bad arguments');
   try { if (!validSelf(selfPath)) return broken('adapter content hash mismatch'); }
   catch { return broken('adapter content could not be checked'); }
   const input = parse(String(stdin ?? '').trim());
   if (!input) return broken('the agent did not send JSON');
+  if (from === to) {
+    const where = sameAgentRun({ to, event, input, processCwd });
+    const result = await run(command, { input, cwd: where.cwd, env: { ...where.env, __pleiadFrom: from }, timeoutMs: timeout * 1000 });
+    const out = sameAgentOutput({ to, event, result });
+    return { ...out, outcome: { outcome: result.timedOut ? 'cancelled' : out.code === 0 ? 'success' : 'error', exitCode: result.code ?? null } };
+  }
   const src = toSourceInput({ from, to, event, input, processCwd });
   const session = str(input.session_id) || str(input.conversationId);
   const state = event === 'Stop' ? stopState(session, command, stateDir) : null;
   if (event === 'Stop' && !state) return broken('Stop session id is missing');
   if (event === 'Stop' && from === 'antigravity') src.input.executionNum = Math.max(src.input.executionNum ?? 0, state.count);
   if (event === 'Stop' && from !== 'antigravity' && state.count > 0) src.input.stop_hook_active = true;
-  if (src.skip) return { stdout: JSON.stringify(toTargetOutput({ from, to, event, decision: { gate: 'pass', stop: 'stop' } })), stderr: '', code: 0 };
+  if (src.skip) return { stdout: JSON.stringify(toTargetOutput({ from, to, event, decision: { gate: 'pass', stop: 'stop' } })), stderr: '', code: 0, outcome: { outcome: 'success', skipped: true } };
   const result = await run(command, { input: src.input, cwd: src.cwd, env: { ...src.env, __pleiadFrom: from }, timeoutMs: timeout * 1000 });
   const decision = readResult({ from, event, result });
   if (event === 'Stop') {
@@ -306,7 +361,8 @@ export async function adapt({ argv, stdin, run = runCommand, processCwd = proces
       if (state.count >= STOP_LIMIT || !saveStop(state, state.count + 1)) decision.stop = 'stop';
     } else saveStop(state, 0);
   }
-  return { stdout: JSON.stringify(toTargetOutput({ from, to, event, decision })), stderr: str(result.stderr), code: 0 };
+  return { stdout: JSON.stringify(toTargetOutput({ from, to, event, decision })), stderr: str(result.stderr), code: 0,
+    outcome: { outcome: result.timedOut ? 'cancelled' : decision.failed ? 'error' : 'success', exitCode: result.code ?? null } };
 }
 
 async function main() {
