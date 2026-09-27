@@ -13,4 +13,7 @@
     <string name="remote_token_required">A token is required (open this from the app)</string>
     <string name="remote_lost">Lost the connection to the host</string>
     <string name="host_open_failed">Couldn\'t open this host. Go back and try again.</string>
+    <!-- Links in the host window (same text as timeline.link.hostOnly in web/locales/en/ui.json) -->
+    <string name="link_host_only">localhost links open only on the host\'s PC.</string>
+    <string name="sheet_close">Close</string>
 </resources>

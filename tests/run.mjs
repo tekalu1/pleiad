@@ -23,6 +23,8 @@ const cases = [
   await import('./unit/file-actions.mjs'),
   // 右パネルの枠（web/side-panel.mjs）: モードごとの部品・渡さない部品は隠す・可視化の ⋯
   await import('./unit/side-panel.mjs'),
+  // 内蔵ブラウザー: 右パネルの表・アドレス欄・リンクの開き先・使える画面・main のタブと位置（偽の electron）
+  await import('./unit/inapp-browser.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
   // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）
@@ -212,6 +214,8 @@ const cases = [
   await import("./unit/remote-upload.mjs"),
   // モバイルの殻（mobile/）の取り決め: plyRemote の形・平文はループバックだけ・依存の版の固定・殻の辞書
   await import("./unit/mobile-shell.mjs"),
+  // リモートでリンクを押したときの行き先（localhost の知らせ・写しはアプリの中・Web は端末のブラウザー）
+  await import("./unit/remote-links.mjs"),
 ];
 
 const selected = pick(cases, process.argv.slice(2));

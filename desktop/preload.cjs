@@ -18,4 +18,16 @@ contextBridge.exposeInMainWorld('plyDesktop', {
     ipcRenderer.on('ply:update-state', handler);
     return () => ipcRenderer.removeListener('ply:update-state', handler);
   },
+  // 内蔵ブラウザー（desktop/browser-panel.cjs、web/browser-panel.mjs）。この窓（ローカル）にだけ出す。
+  // command は open・newTab・select・close・back・forward・reload・stop・devtools・external・detach・clearSiteData・freeze・unfreeze・context・state
+  browser: {
+    command: (action, args) => ipcRenderer.invoke('ply:browser', action, args),
+    // 右パネルの本文の枠（CSS の px。窓の左上から）と、見せるかどうか
+    layout: message => ipcRenderer.send('ply:browser-layout', message),
+    onState: listener => {
+      const handler = (_event, state) => listener(state);
+      ipcRenderer.on('ply:browser-state', handler);
+      return () => ipcRenderer.removeListener('ply:browser-state', handler);
+    },
+  },
 });

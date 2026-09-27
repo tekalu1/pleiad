@@ -3390,6 +3390,11 @@ wss.on("connection", (ws, req) => {
             if (!LOCALE_SETTINGS.includes(value)) return reply(false, t("errors.unknownLocale", { value }));
             return reply(true, await savePref(key, value));
           }
+          // リンクの開き先（inapp: 内蔵ブラウザー / external: 既定のブラウザー）。内蔵ブラウザーはデスクトップ版のホストの画面だけ（docs/inapp-browser.md）
+          if (key === "linkOpen") {
+            if (value !== "inapp" && value !== "external") return reply(false, t('settings.unknownPrefValue', { key, value: String(value) }));
+            return reply(true, await savePref(key, value));
+          }
           if (backendId && !getBackend(backendId)) return reply(false, t('agents.unknown'));
           if (key !== "mode" && key !== "model") return reply(false, t('settings.unknownPref', { key }));
           // 語彙はエージェントごとに違う。どれか1つでも知っていれば通す

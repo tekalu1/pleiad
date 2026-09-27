@@ -79,6 +79,31 @@ function hostRow(rec, { windowOpen = false } = {}) {
     lastConnectedAt: rec.lastConnectedAt ?? null, pairedAt: rec.pairedAt ?? null, windowOpen };
 }
 
+const SNAPSHOT_PATH = '/visualization-snapshot';
+const LOOPBACK_V4 = /^127(?:\.\d{1,3}){3}$/;
+
+/** localhost・ループバック。WHATWG の URL が正規化した hostname（IPv6 は [] 付き）を受ける */
+function isLoopbackHost(hostname) {
+  const h = String(hostname ?? '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  return h === 'localhost' || h.endsWith('.localhost') || LOOPBACK_V4.test(h) || h === '0.0.0.0'
+    || h === '::1' || h === '::' || h.startsWith('::ffff:127.') || h.startsWith('::ffff:7f');
+}
+
+/**
+ * リモートの窓で押したリンクの行き先（docs/remote.md §8.5。Android の LinkPolicy、web/host-only-links.mjs と同じ規則）。
+ *   'snapshot'  この窓のプロキシの /visualization-snapshot。プロキシの Cookie はこの窓の保存領域にしか無いので、アプリの中の窓で開く
+ *   'external'  Web のページ。この PC の既定のブラウザー
+ *   'host-only' localhost。ホストの PC を指すが、ここで開くとこの PC を指してしまう（画面が知らせる）
+ *   'blocked'   それ以外（ほかのスキーム・URL の中の資格情報・プロキシのほかのページ）
+ */
+function linkTarget(url, origin) {
+  let u;
+  try { u = new URL(url); } catch { return 'blocked'; }
+  if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.username || u.password) return 'blocked';
+  if (u.origin === origin) return u.pathname === SNAPSHOT_PATH ? 'snapshot' : 'blocked';
+  return isLoopbackHost(u.hostname) ? 'host-only' : 'external';
+}
+
 /** 起動の引数に「ほかのホストにつなぐ窓を開く」（Windows のジャンプリスト）があるか */
 const wantsHostsWindow = argv => Array.isArray(argv) && argv.includes(HOSTS_ARG);
 
@@ -116,11 +141,13 @@ function drawOverlayBitmap(size = 32) {
 
 /**
  * deps: Electron の部品（app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage）と、
- *   trust（desktop/window-trust.cjs）、icon（窓のアイコン）、external（https を既定のブラウザーで開く）
+ *   trust（desktop/window-trust.cjs）、icon（窓のアイコン）、external（https を既定のブラウザーで開く）、
+ *   shell（省けば electron の shell。リモートの窓のリンクを http も含めて既定のブラウザーで開く）
  */
 function createRemoteWindows(deps) {
   const { app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust, icon, external } = deps;
   const platform = deps.platform ?? process.platform;
+  const shell = () => deps.shell ?? require('electron').shell;
   const windows = new Map();       // hostId -> { win, name, origin, notify, state }
   const opening = new Map();       // hostId -> Promise（2 度押しで 2 枚開かない）
   const connectedAt = new Map();   // hostId -> 最後につながった時刻（ms）
@@ -200,9 +227,10 @@ function createRemoteWindows(deps) {
     const origin = `http://127.0.0.1:${proxy.port}`;
     const ses = session.fromPartition(partitionFor(hostId));
     // 権限は断るのが基本。コピーのボタン（clipboard-sanitized-write）だけ、このホストの画面の本体に通す（main.cjs と同じ）
-    ses.setPermissionRequestHandler((_contents, permission, callback, details) => {
+    // 写しの窓（openSnapshot）は同じ保存領域・同じ URL のオリジンなので、窓そのものでも確かめる
+    ses.setPermissionRequestHandler((contents, permission, callback, details) => {
       let own = false;
-      try { own = details.isMainFrame && originOf(details.requestingUrl) === windows.get(hostId)?.origin; } catch {}
+      try { own = details.isMainFrame && contents === windows.get(hostId)?.win.webContents && originOf(details.requestingUrl) === windows.get(hostId)?.origin; } catch {}
       callback(permission === 'clipboard-sanitized-write' && own);
     });
     const win = new BrowserWindow({
@@ -216,15 +244,26 @@ function createRemoteWindows(deps) {
     });
     win.removeMenu();
     trust.register(win, { kind: 'remote', origin, hostId });
-    const entry = { win, name, origin, state: proxy.status?.state,
+    const entry = { win, name, origin, state: proxy.status?.state, snapshots: new Set(),
       notify: createDesktopNotifications({ Notification, getWindow: () => win, icon }) };
     windows.set(hostId, entry);
     // 画面の <title> ではなく、どのホストかが分かる名前を OS に出す（§7.2 の 3）
     win.on('page-title-updated', event => event.preventDefault());
-    win.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
-    win.webContents.on('will-navigate', (event, url) => { if (originOf(url) !== entry.origin) { event.preventDefault(); external(url); } });
+    // 新しい窓は開かせず、行き先で振り分ける（linkTarget）。localhost は画面が知らせる（web/host-only-links.mjs）
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      const kind = linkTarget(url, entry.origin);
+      if (kind === 'snapshot') openSnapshot(entry, ses, url);
+      else if (kind === 'external') openOutside(url);
+      return { action: 'deny' };
+    });
+    win.webContents.on('will-navigate', (event, url) => {
+      if (originOf(url) === entry.origin) return;
+      event.preventDefault();
+      if (linkTarget(url, entry.origin) === 'external') openOutside(url);
+    });
     win.once('ready-to-show', () => { setOverlay(win); win.show(); });
     win.on('closed', () => {
+      for (const s of entry.snapshots) if (!s.isDestroyed()) s.close();
       windows.delete(hostId);
       d.close(hostId).catch(() => {});   // 手元のプロキシを閉じるだけ。ホストの作業は止めない
       pushHosts();
@@ -232,6 +271,31 @@ function createRemoteWindows(deps) {
     pushHosts();
     try { await win.loadURL(proxy.url); } catch { /* 読み込みの失敗（中断など）でも窓は出す。案内はプロキシが返す */ }
     if (!win.isDestroyed()) { setOverlay(win); focus(win); }
+  }
+
+  /** リモートの窓のリンクを、この PC の既定のブラウザーで（http も。linkTarget が 'external' と決めたものだけ来る） */
+  function openOutside(url) {
+    try { shell().openExternal(new URL(url).href).catch(() => {}); } catch {}
+  }
+
+  /**
+   * 可視化の写し（「ブラウザーで開く」）を、リモートの窓と同じ保存領域の窓で開く。既定のブラウザーにはプロキシの Cookie が無く 401 になる。
+   * preload は入れない（plyRemote もブリッジも無い）。写しはホストが sandbox の CSP で返すので、不透明なオリジンで動く（docs/visualize.md）。
+   * 中のリンクは写しの窓では開かず、行き先で振り分ける
+   */
+  function openSnapshot(entry, ses, url) {
+    const child = new BrowserWindow({
+      width: 1000, height: 760, minWidth: 320, minHeight: 240, icon, autoHideMenuBar: true,
+      backgroundColor: nativeTheme.shouldUseDarkColors ? '#1b1c23' : '#ffffff',
+      webPreferences: { session: ses, contextIsolation: true, nodeIntegration: false, sandbox: true },
+    });
+    child.removeMenu();
+    entry.snapshots.add(child);
+    child.on('closed', () => entry.snapshots.delete(child));
+    const route = to => { if (linkTarget(to, entry.origin) === 'external') openOutside(to); };
+    child.webContents.setWindowOpenHandler(({ url: to }) => { route(to); return { action: 'deny' }; });
+    child.webContents.on('will-navigate', (event, to) => { event.preventDefault(); route(to); });
+    child.loadURL(url).catch(() => {});
   }
 
   function openHostsWindow() {
@@ -360,5 +424,5 @@ function createRemoteWindows(deps) {
 
 module.exports = {
   createRemoteWindows, partitionFor, displayName, relayLabel, formatCode, validTitleBarColors, encodeRemoteArg, decodeRemoteArg,
-  publicStatus, hostRow, wantsHostsWindow, drawOverlayBitmap, REMOTE_BAR, HOSTS_ARG,
+  publicStatus, hostRow, wantsHostsWindow, drawOverlayBitmap, linkTarget, isLoopbackHost, REMOTE_BAR, HOSTS_ARG,
 };

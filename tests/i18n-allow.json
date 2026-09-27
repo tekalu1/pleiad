@@ -4,6 +4,7 @@
     "server:codex.subagent.collab",
     "ui:hooks.row.matcher",
     "ui:hooks.scope.skill",
+    "ui:browser.menu.devtools",
     "ui:routing.fallback.http",
     "ui:routing.judge.cerebras",
     "ui:routing.judge.jev",

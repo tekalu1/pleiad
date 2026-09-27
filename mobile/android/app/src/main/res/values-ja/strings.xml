@@ -9,4 +9,7 @@
     <string name="remote_token_required">トークンが要る（アプリから開いてください）</string>
     <string name="remote_lost">ホストとの接続が切れました</string>
     <string name="host_open_failed">このホストを開けませんでした。戻ってもう一度試してください。</string>
+    <!-- ホストの窓のリンク（web/locales/ja/ui.json の timeline.link.hostOnly と同じ文言） -->
+    <string name="link_host_only">localhost のリンクはホストの PC でだけ開けます。</string>
+    <string name="sheet_close">閉じる</string>
 </resources>

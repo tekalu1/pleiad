@@ -115,7 +115,8 @@
     "accountNotRegistered": "選択したアカウントは登録されていません",
     "unknownPref": "知らない設定: {{key}}",
     "unknownMode": "知らない承認モード: {{value}}",
-    "unknownModel": "知らないモデル: {{value}}"
+    "unknownModel": "知らないモデル: {{value}}",
+    "unknownPrefValue": "知らない設定の値: {{key}} = {{value}}"
   },
   "send": {
     "messageIdRequired": "送信IDが必要です",
