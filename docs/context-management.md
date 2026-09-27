@@ -120,7 +120,7 @@ JSON は他のキーを保持して整形保存。通常の TOML テーブルで
 
 ## Hooks（2026-09-27）
 
-設定 › コンテキストの「Hooks」カードと会話の右パネルの Hooks の面（[ADR 0041](adr/0041-hooks-management.md)、画面は design-system.md「Hooks」）。第 1 段は見える化とネイティブ編集で、担当は「エージェントに任せる」に固定（「Pleiad がそろえる」は選べない）。探索と書き込みは `core/hooks-config.mjs`。hooks は `context-scans.json` の `kinds` に入れていない（保存する担当・除外が無いため。形式の移行は担当を保存する段で決める）。
+設定 › コンテキストの「Hooks」カードと会話の右パネルの Hooks の面（[ADR 0045](adr/0045-hooks-management.md)、画面は design-system.md「Hooks」）。第 1 段は見える化とネイティブ編集で、担当は「エージェントに任せる」に固定（「Pleiad がそろえる」は選べない）。探索と書き込みは `core/hooks-config.mjs`。hooks は `context-scans.json` の `kinds` に入れていない（保存する担当・除外が無いため。形式の移行は担当を保存する段で決める）。
 
 **探す場所**（ユーザーは home、作業場所は Git のルートから cwd までの各フォルダー）:
 

@@ -1,4 +1,4 @@
-// Hooks の探索と、各エージェントの元の設定ファイルへの書き込み（docs/context-management.md「Hooks」、ADR 0041）。
+// Hooks の探索と、各エージェントの元の設定ファイルへの書き込み（docs/context-management.md「Hooks」、ADR 0045）。
 // hooks を実行するのは各エージェント。Pleiad は定義を読み、利用者が明示した編集だけを元のファイルへ書く。
 // 抑止のために元のファイルを書き換えない。コマンドは実行しない。
 //

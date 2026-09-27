@@ -143,7 +143,7 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
     catch (e) { status.textContent = t('context.saveFailed', { error: e.message }); }
   }
   const plyInstructions = createPlyInstructions({ cmd, work, saved: () => saved(), openDelegation, opened });
-  // 4 つ目の種類。担当・探索の設定（context-scans.json）には入れず、各エージェントの元の設定を読む（ADR 0041）
+  // 4 つ目の種類。担当・探索の設定（context-scans.json）には入れず、各エージェントの元の設定を読む（ADR 0045）
   const hooks = createHooksCard({ cmd, work, saved: () => saved(t('hooks.saved')), opened });
   toast.before(hooks.root);
 

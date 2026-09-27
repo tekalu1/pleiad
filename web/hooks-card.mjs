@@ -1,5 +1,5 @@
 // ==================== Hooks のカード（設定 › コンテキスト）と、追加・編集のシート ====================
-// docs/design-system.md「コンテキスト」の「Hooks」、ADR 0041。
+// docs/design-system.md「コンテキスト」の「Hooks」、ADR 0045。
 // 実行するのは各エージェント。Pleiad は元の設定ファイル（core/hooks-config.mjs）を読み、利用者が明示した編集だけを書く。
 //   担当の 2 択は「設定を誰が用意するか」。今は「エージェントに任せる」だけで、「Pleiad がそろえる」は選べない（理由を出す）
 //   ユーザーの段: 見つかった定義を イベント順（既定）／エージェント別 3 列 で並べる。行を押すと定義・出どころ・状態（②）
@@ -169,7 +169,7 @@ export function createHooksCard({ cmd, work, saved, opened }) {
       const b = button('', 'cx-opt');
       b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(id === 'native')); b.dataset.owner = id;
       b.append(el('b', null, title), el('span', null, desc));
-      // 第 1 段では選べない（ADR 0041）。押せない理由は下の文で示す
+      // 第 1 段では選べない（ADR 0045）。押せない理由は下の文で示す
       if (id === 'ply') { b.disabled = true; b.setAttribute('aria-describedby', 'hkOwnerNote'); }
       box.append(b);
     }

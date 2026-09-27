@@ -9,7 +9,7 @@
 //   - エージェント任せの MCP は、そのエージェントの設定に登録されているものを読み取りのみで並べる（agentMcp）
 //   - antigravity で Pleiad 担当を扱わなかった会話は、その理由
 //   - Pleiad の指示（core/ply-instructions.mjs。担当によらない）: 項目ごとに入れたか・入れなかった理由と、渡した文
-//   - Hooks（ADR 0041）: この場所で見つかった定義は「登録あり · 読み込み未確認」まで（有効・実行済みにしない）。
+//   - Hooks（ADR 0045）: この場所で見つかった定義は「登録あり · 読み込み未確認」まで（有効・実行済みにしない）。
 //     発火の記録は受け取った事実だけ（Claude の hook_started / hook_response）。受け取れない接続は「観測できません」
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
