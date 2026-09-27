@@ -6,7 +6,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { browserEnvironment, parentPortBrowser, browserInstruction } from '../../core/agent-browser.mjs';
-import { CodexRpc } from '../../core/backends/codex-rpc.mjs';
+import { rpc as nativeRpc } from '../../core/backends/codex-rpc.mjs';
+import { backend as codex } from '../../core/backends/codex.mjs';
 import { AgySession } from '../../core/backends/antigravity-cli.mjs';
 import { backend as claude, setClaudeSdkForTest } from '../../core/backends/claude.mjs';
 
@@ -92,12 +93,18 @@ export default async function (t) {
   } finally { ws?.terminate(); relay.close(); }
 
   const port = new EventEmitter();
-  port.postMessage = request => queueMicrotask(() => port.emit('message', { data: { type: request.type, id: request.id, ok: true, url: 'ws://127.0.0.1:1234/devtools/browser/key' } }));
+  let endpointUrl = 'ws://127.0.0.1:1234/devtools/browser/key';
+  port.postMessage = request => queueMicrotask(() => port.emit('message', { data: { type: request.type, id: request.id, ok: true, url: endpointUrl } }));
+  const bridge = parentPortBrowser(port);
   const dir = await mkdtemp(path.join(os.tmpdir(), 'pleiad-browser-test-'));
   try {
-    const env = await browserEnvironment({ bridge: parentPortBrowser(port), dataDir: dir, sessionId: 'conversation-1' });
+    const env = await browserEnvironment({ bridge, dataDir: dir, sessionId: 'conversation-1' });
     const config = JSON.parse(await readFile(env.AGENT_BROWSER_CONFIG, 'utf8'));
     t.ok('会話別の設定ファイルと環境変数', env.AGENT_BROWSER_SESSION === 'conversation-1' && Object.keys(config).join() === 'cdp' && config.cdp.includes('/key'));
+    bridge.rebind('conversation-1', 'native-thread-1');
+    endpointUrl = 'ws://127.0.0.1:1234/devtools/browser/new-key';
+    const rebound = await browserEnvironment({ bridge, dataDir: dir, sessionId: 'native-thread-1' });
+    t.ok('新規スレッドの ID 確定後も設定パスを保ち、鍵を更新する', rebound.AGENT_BROWSER_CONFIG === env.AGENT_BROWSER_CONFIG && rebound.AGENT_BROWSER_SESSION === env.AGENT_BROWSER_SESSION && JSON.parse(await readFile(env.AGENT_BROWSER_CONFIG, 'utf8')).cdp === endpointUrl);
     t.ok('デスクトップ以外では渡さない', await browserEnvironment({ bridge: null, dataDir: dir, sessionId: 'one' }) === null);
     t.ok('指示は中継があるターンだけ', browserInstruction(env, 'ja', (_locale, key) => key) === 'browser.instructions' && browserInstruction(null, 'ja', () => 'wrong') === null);
   } finally { await rm(dir, { recursive: true, force: true }); }
@@ -105,14 +112,40 @@ export default async function (t) {
   const fake = path.resolve('tests/lib/fake-browser-env.mjs');
   const scratch = await mkdtemp(path.join(os.tmpdir(), 'pleiad-browser-env-'));
   const codexBin = process.env.AGENT_HOST_CODEX_BIN, agyBin = process.env.AGENT_HOST_AGY_BIN;
+  const fakeBrowserEnvFile = process.env.FAKE_BROWSER_ENV_FILE;
   try {
     const env = { AGENT_BROWSER_CONFIG: path.join(scratch, 'agent-browser.json'), AGENT_BROWSER_SESSION: 'env-session' };
     process.env.AGENT_HOST_CODEX_BIN = `"${process.execPath}" "${fake}"`;
-    const codexFile = path.join(scratch, 'codex.json');
-    const rpc = new CodexRpc({}, { ...env, FAKE_BROWSER_ENV_FILE: codexFile });
-    await rpc.start(); rpc.stop();
-    const codexSeen = JSON.parse(await readFile(codexFile, 'utf8'));
-    t.ok('Codex app-server のシェルに会話の環境変数が届く', codexSeen.config === env.AGENT_BROWSER_CONFIG && codexSeen.session === env.AGENT_BROWSER_SESSION);
+    process.env.FAKE_BROWSER_ENV_FILE = path.join(scratch, 'unexpected-codex.json');
+    const originalRpc = { request: nativeRpc.request, attach: nativeRpc.attach, claimOrphan: nativeRpc.claimOrphan, stop: nativeRpc.stop };
+    const requests = [];
+    let handlers, stopped = 0, turnSerial = 0;
+    nativeRpc.claimOrphan = h => { handlers = h; return () => {}; };
+    nativeRpc.attach = (_id, h) => { handlers = h; return () => {}; };
+    nativeRpc.stop = () => { stopped++; };
+    nativeRpc.request = async (method, params) => {
+      if (method === 'config/read') return { config: { model_reasoning_effort: 'medium' } };
+      if (method === 'model/list') return { data: [] };
+      if (method === 'thread/start' || method === 'thread/resume') {
+        requests.push({ method, params });
+        return { thread: { id: 'browser-thread' }, sandbox: { type: 'workspaceWrite', writableRoots: [scratch], networkAccess: false } };
+      }
+      if (method === 'turn/start') {
+        const id = `turn-${++turnSerial}`;
+        const current = handlers;
+        queueMicrotask(() => current.onNotification('turn/completed', { turn: { id, status: 'completed' } }));
+        return { turn: { id } };
+      }
+      throw new Error(`unexpected Codex RPC: ${method}`);
+    };
+    try {
+      const args = { prompt: 'browser', cwd: scratch, mode: 'ask', emit() {}, browserEnv: env, browserInstructions: 'browser guidance' };
+      const first = await codex.runTurn({ ...args, sessionId: null });
+      await codex.runTurn({ ...args, sessionId: first.sessionId });
+      const expected = { AGENT_BROWSER_CONFIG: env.AGENT_BROWSER_CONFIG, AGENT_BROWSER_SESSION: env.AGENT_BROWSER_SESSION };
+      t.ok('Codex の thread/start と thread/resume に会話別 shell_environment_policy.set を渡す', requests.map(r => r.method).join() === 'thread/start,thread/resume' && requests.every(r => JSON.stringify(r.params.config['shell_environment_policy.set']) === JSON.stringify(expected)));
+      t.ok('通常の Codex は共有 app-server を使いターン後も止めない', stopped === 0 && !(await readFile(process.env.FAKE_BROWSER_ENV_FILE).then(() => true, () => false)));
+    } finally { Object.assign(nativeRpc, originalRpc); }
 
     process.env.AGENT_HOST_AGY_BIN = `"${process.execPath}" "${fake}"`;
     const agyFile = path.join(scratch, 'agy.json');
@@ -135,6 +168,7 @@ export default async function (t) {
   } finally {
     if (codexBin === undefined) delete process.env.AGENT_HOST_CODEX_BIN; else process.env.AGENT_HOST_CODEX_BIN = codexBin;
     if (agyBin === undefined) delete process.env.AGENT_HOST_AGY_BIN; else process.env.AGENT_HOST_AGY_BIN = agyBin;
+    if (fakeBrowserEnvFile === undefined) delete process.env.FAKE_BROWSER_ENV_FILE; else process.env.FAKE_BROWSER_ENV_FILE = fakeBrowserEnvFile;
     await rm(scratch, { recursive: true, force: true });
   }
 }

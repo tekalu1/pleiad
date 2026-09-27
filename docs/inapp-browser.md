@@ -6,11 +6,11 @@
 
 デスクトップ版では、会話ごとに鍵付きの loopback WebSocket CDP 中継を開く（[ADR 0043](adr/0043-agent-browser-via-per-session-cdp-relay.md)）。中継は `webContents.debugger` を使い、その会話の内蔵ブラウザーのタブだけを `Target` として返す。Pleiad 本体の画面や別会話のタブは返さない。タブが無ければ最初の接続先を準備するときに空のタブを作る。`Target.createTarget` はその会話の新しいタブを作り、`Browser.close` などブラウザー全体に効くコマンドは拒否する。Electron の `--remote-debugging-port` は開かない。
 
-utilityProcess のサーバーは parentPort でメインプロセスに接続先を頼む。`<data>/agent-browser/<会話 ID の SHA-256>/agent-browser.json` に `cdp` URL を書き、エージェントの起動環境へ `AGENT_BROWSER_CONFIG` と `AGENT_BROWSER_SESSION` を渡す。デスクトップ版でない `npm start` には渡さない。Claude は SDK の会話別 env、Codex は会話別 app-server、Antigravity は会話別プロセスの env に入れる。接続方法は会話のエージェント向け指示にも入る。`agent-browser` は同梱した OS のネイティブ本体を PATH から呼ぶ。
+utilityProcess のサーバーは parentPort でメインプロセスに接続先を頼む。`<data>/agent-browser/<会話の初期 ID の SHA-256>/agent-browser.json` に `cdp` URL を書き、エージェントのシェルへ `AGENT_BROWSER_CONFIG` と `AGENT_BROWSER_SESSION` を渡す。デスクトップ版でない `npm start` には渡さない。Claude は SDK の会話別 env、Codex は共有 app-server の `thread/start`・`thread/resume` に渡す会話別の `shell_environment_policy.set`、Antigravity は会話別プロセスの env を使う。接続方法は会話のエージェント向け指示にも入る。`agent-browser` は同梱した OS のネイティブ本体を PATH から呼ぶ。
 
 中継を使うと右パネルを開き、操作中のタブに印を付け、道具の列の下に「<エージェント名> が操作中」と「止める」「引き継ぐ」を数秒表示する。「止める」は接続を切り、次の人の送信まで再接続を拒否する。「引き継ぐ」は接続を切って表示を消し、再接続は許す。会話のツール履歴はシェル実行として残る。
 
-同じ `persist:pleiad-browser` のタブは会話が違っても Cookie を共有する。中継は主フレームのページと通常のタブ操作を対象とし、OOPIF・service worker・DevTools の同時接続などを CDP の完全なブラウザーとしては公開しない。Codex の会話別 app-server はターンの終わりに終了するため、その app-server 内で始めたバックグラウンド端末は継続しない。
+同じ `persist:pleiad-browser` のタブは会話が違っても Cookie を共有する。中継は主フレームのページと通常のタブ操作を対象とし、OOPIF・service worker・DevTools の同時接続などを CDP の完全なブラウザーとしては公開しない。Codex の読み込み済みスレッドは `thread/resume` の新しい config を無視する場合がある。新規会話のネイティブ ID が決まった後も、最初に渡した設定ファイルと `AGENT_BROWSER_SESSION` を保ち、接続鍵の変更は同じファイルを書き換えて届ける。
 
 ## 使える場所
 

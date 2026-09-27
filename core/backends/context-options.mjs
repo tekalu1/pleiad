@@ -30,7 +30,7 @@ export function unexpectedNativeMcp(status, passed) {
   const own = new Set(['ply', ...passed]);
   return (status ?? []).map(s => s.name).filter(name => !own.has(name));
 }
-export async function codexContextRpc(context, cwd, nativeRpc, env = null) {
+export async function codexContextRpc(context, cwd, nativeRpc) {
   const config = {};
   if (context.owners.instruction === 'ply') config.project_doc_max_bytes = 0;
   if (context.owners.skill === 'ply') {
@@ -47,5 +47,5 @@ export async function codexContextRpc(context, cwd, nativeRpc, env = null) {
     config.mcp_servers = Object.fromEntries(Object.keys(result.config.mcp_servers ?? {}).map(name => [name, { command: process.execPath, enabled: false, required: false }]));
     config['features.plugins'] = false;
   }
-  return new CodexRpc(config, env);
+  return new CodexRpc(config);
 }
