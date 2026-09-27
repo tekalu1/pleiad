@@ -69,18 +69,16 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
    | ux_new / visual | tv | tv | tv |
 
    段の候補（既定、左から）: t1 = antigravity `gemini-3.8-flash-high` → claude `haiku`。t2 = antigravity `gemini-3.8-flash-high` → codex `gpt-6-luna` → antigravity `claude-opus-4-6-thinking` → claude `sonnet`。t3 = codex `gpt-6-sol` → claude `sonnet`。t4 = claude `opus` → claude `fable`。tv = codex `gpt-6-astra`。
-5. **候補を左から試す。** 飛ばす理由（`skipped[].reason`）:
-   - `unavailable`: バックエンドが有効でない・CLI が入っていない（Claude の登録アカウントはトークンが無い）。中身は `skipped[].detail`（`disabled`・`not_installed`・`no_token`。使用量をまだ一度も取っていないときは付けない）で、画面は「使えない（未インストール）」と添える。
-   - 使える候補が無いときの `ply_delegate` のエラー文（エージェント向け、会話の言語）は、種類・難しさの値と、候補ごとに言語によらない行（`- backend:model (段): 理由 (中身) 枠 使用率% pace ペース`）を持つ。画面の委譲カードはこの行を読んで理由ごとにまとめる（design-system.md「委譲カード」）。
-   - `model_unknown`: 今のモデル一覧に無い（黙って既定に落とさず次の候補へ）。
-   - `usage_unknown`: 使用量の取得に失敗・取得中・枠が 1 つも無い・使用率が不明な枠がある。`usage_stale`: 取得から 15 分を超えた。
-   - `quota_high`: 効く枠のどれかが避ける線（80%）以上。
+5. **候補を 3 組に分ける。** Claude はアカウントごとに判定する（[ADR 0040](adr/0040-delegation-routing-headroom.md)）。
+   - **使えない（外す）:** `unavailable`（バックエンドが有効でない・CLI が無い・Claude の登録アカウントにトークンが無い）、`model_unknown`（今のモデル一覧に無い）、委譲先でのモデル再確認による `rejected`、効く枠の今の使用率が 100% 以上の `quota_full`。`unavailable` の中身は `skipped[].detail`（`disabled`・`not_installed`・`no_token`。使用量をまだ一度も取っていないときは付けない）で、画面は「使えない（未インストール）」と添える。
+   - **余裕が少ない（後回し）:** `usage_unknown`（取得失敗・取得中・枠なし・不明な枠あり）、`usage_stale`（取得から 15 分超）、`quota_high`（効く 5 時間以外の枠のどれかが後回しの線、既定 80%、以上）、`pace_high`、`pace_unknown`。`avoidPercent` は候補を除く線ではなく後回しにする線。5 時間の枠（`minutes === 300`）は 100% 以上のときだけ使えないと判定し、100% 未満なら後回しの判定には使わない。5 時間の使用率が不明でも、それだけでは `usage_unknown` にしない。
+   - **余裕あり:** 上記のどれにも当たらない候補。
    - `pace_high`: 週次の枠のペース（使用率 ÷ 経過率）が 1.2 を超える。経過率はリセット時刻と期間から出し、20% 未満は見ない。
    - `pace_unknown`: 経過率が出せない週次の枠で、使用率が 20% × 1.2 = 24% を超える（24% 以下なら、経過率がいくつでもペースで落ちないので通す）。
    - リセット時刻を過ぎた枠は、使い直しが始まっているので使用率 0 とみなす。
    - 候補に効く枠: claude は 5 時間・週次と、そのモデルの系統の週次（`seven_day_opus` など。`seven_day_oauth_apps` も念のため全モデルに効かせる）。codex は主の枠と、名前がそのモデルに当たる追加の枠。antigravity はモデル名の語をいちばん多く含むグループ（`gemini-*` → Gemini のグループ、`claude-*` / `gpt-*` → Claude and GPT のグループ）。グループが見つからなければ `usage_unknown`。
-6. **Claude のアカウント。** アカウントを登録していれば、どれか 1 つが使えれば候補は使える。複数使えるなら週次のペースが最も低いもの、同じなら 5 時間の使用率が低いもの。使用量の一覧では「ログイン中のアカウント」と、同じ人の登録アカウントが同じ値で並ぶことがあるので、**組織（`.claude.json` の `oauthAccount.organizationUuid`）とメールアドレスの両方が分かって一致するものだけ**を同じアカウントとして 1 つにまとめる。残すのは使える方（片方だけ使用量の取得に失敗していることがある）で、両方使えるか両方だめならログイン中の方（登録アカウントの手がかりは、使用量の認可をした設定フォルダの `.claude.json`）。どちらかが分からなければまとめない（同じ人が 2 つの候補として並ぶだけで、どちらを選んでも同じ枠を使う）。
-7. **全部飛んだら** 1 つ上の段へ（t1 → t2 → t3 → t4）。t4 と tv が全部だめならエラー（種類・難しさと、飛ばした候補と理由の一覧つき。エージェントは `backend` を書いて固定で頼み直すか、ユーザーに聞く）。
+6. **Claude のアカウント。** 余裕ありのアカウントがあれば 5 時間以外の効く枠の最大使用率が低い順、同じなら週次のペースが低い順、最後の同点決めだけ 5 時間の使用率が低い順。無ければ余裕が少ないアカウントを次の苦しさの順で選ぶ。同じ人の重複は、**組織（`.claude.json` の `oauthAccount.organizationUuid`）とメールアドレスの両方が分かって一致するものだけ**まとめる。残す順は余裕あり → 余裕が少ない → 使えない、同じ組なら苦しくない方、なお同じならログイン中の方。どちらかが分からなければまとめない。重複をまとめた後の各認証を、カード・設定・再試行・エラーでは別々の行にする。選ばれなかった余裕ありの認証には `lower_priority` を付ける。
+7. **段を選ぶ。** 基準の段から上へ、各段の候補を左から見て余裕ありを先に選ぶ。無ければ基準の段から上へ 1 段ずつ余裕が少ない候補を選ぶ。同じ段では使用量が分かるもの（`usage_unknown` / `usage_stale` 以外）→ 5 時間以外の効く枠の最大使用率が低い順 → 週次のペースが低い順 → 5 時間の使用率が低い順 → 段の候補の順。基準から上がすべて使えないときは 1 段ずつ下り、各段で余裕あり、次に余裕が少ない候補を選ぶ。tv は tv だけを見る。見たすべての段で全候補が使えないときだけエラー。エラー文は後回しの線と Claude のアカウントごとの理由を含む。行は言語によらない `- backend:model [認証の表示名] (段): 理由 (中身) 枠 使用率% pace ペース` の形（Claude 以外と認証情報の無い Claude は角括弧なし）にし、画面はこの行を読む。
 8. 選んだ backend / model / account で子の会話を作る（`prepare`）。**自動で選んだ子は親の会話の接続先を継がず公式で走る**（候補を公式の使用枠で選んでいるため）。Claude を選んだときは選んだアカウント（`''` はログイン中）。選んだ候補のモデルは、委譲先の作業場所（`cwd`）で一覧にあるかを確かめ直し、無ければ `model_unknown` として次の候補から選び直す。それでも子の会話を作る時点で使えなければ、既定に落とさずエラー。
 
 **使用量の取り置き。** 振り分けのたびに使用量を取りに行って待たない。サーバーは待ち受けを始めてから、既存の使用量の取得（`providerQuota`。設定の「使用量」・`ply_usage` と同じ 1 分のキャッシュを通す）を 5 分ごとと委譲の直後に呼び直し、振り分けはその値を同期的に読む。起動直後でまだ一度も取れていないときだけ、判定と同じ 3 秒まで待つ。候補のモデルが一覧に無いバックエンド（agy はログインの確認でモデル一覧を覚える）は、30 分に 1 回までログインの確認で一覧を引き直す。振り分けが無効なら取らない。
@@ -92,10 +90,11 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
   "judge": "jev" | "cerebras" | "none" | null,          // 答えを使った判定器。固定なら null
   "signals": { "diagnose": false, … } | null, "probabilities": { "diagnose": 0.12, … } | null,  // 確率は Jev のとき
   "difficulty": "low" | "mid" | "high" | null, "baseTier": "t2", "tier": "t3",   // baseTier は表の段、tier は選んだ候補の段（自動のときだけ）
-  "target": { "backend": "codex", "model": "gpt-6-sol", "account": null },       // account は Claude のときだけ（'' = ログイン中）
+  "target": { "backend": "claude", "model": "opus", "account": "oz", "accountLabel": "OZ" }, // accountLabel は伏せた表示名。account の '' はログイン中
   "targetWindows": [{ "label": "…", "minutes": 10080, "usedPercent": 11 }],      // 選んだ候補に効いた枠の、選んだ時点の使用率（委譲カードの内訳）
-  "skipped": [{ "candidate": "antigravity:gemini-3.8-flash-high", "tier": "t2", "reason": "quota_high",
-                "window": { "label": "…", "minutes": 300, "usedPercent": 85 }, "accounts": [ … ] }],
+  "selectedWithLowHeadroom": { "reason": "quota_high", "window": { "label": "週次", "minutes": 10080, "usedPercent": 83 }, "avoidPercent": 70 }, // 余裕が少ない候補を選んだときだけ
+  "skipped": [{ "candidate": "claude:opus", "tier": "t4", "account": "", "accountLabel": "ログイン中", "reason": "quota_high",
+                "window": { "label": "週次", "minutes": 10080, "usedPercent": 85 }, "windows": [ … ] }], // Claude は認証ごとに 1 行
   "usageAt": "2026-09-26T03:00:00.000Z",   // 選んだ候補の使用量の取得時刻（選べなければ見た中で最も古いもの）。skipped[] にも各自の checkedAt
   "fallback": null,                        // 判定器を使えなかった理由（no_key など）
   "escalated": true,                       // 「Jev が迷ったら Cerebras」で聞き直したときだけ
@@ -106,10 +105,10 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 固定（`mode: "pinned"`）の `target` は実際に使う値（モデルが既定に戻った、継いだアカウント）で書く。
 後で規則を見直すため、失敗はタスクの `status`（`failed`）と `routing` で数えられる。人が別の候補でやり直したことは、やり直したタスクの `routing.retry`（`of` が元のタスク、`from` が元の委譲先）で数え、元のタスクの `routing` と `of` で結び付ける。集計の画面はまだ無い。
 
-**別の候補でやり直す**（委譲カードの操作。画面は design-system.md「委譲カード」、WebSocket の `retryAgentTask { taskId, candidate, stop?, approved? }`。`core/server.mjs` の `retryAgentTask`）:
-- 自動で選んだ委譲のカードからだけ出す。候補は設定 › 委譲と同じ一覧（`delegationRouting` の `candidates`）のうち、今使えるもの（使用量の取り置きで確かめる）で、元の委譲先は除く。サーバーでも同じ確かめをし、使えない・元と同じ・形が不正なら断る
+**別の候補でやり直す**（委譲カードの操作。画面は design-system.md「委譲カード」、WebSocket の `retryAgentTask { taskId, candidate, account?, stop?, approved? }`。`core/server.mjs` の `retryAgentTask`）:
+- 自動で選んだ委譲のカードからだけ出す。候補は設定 › 委譲と同じ一覧（`delegationRouting` の `candidates`）のうち、余裕あり・余裕が少ないもの（使用量の取り置きで確かめる）。Claude は使える認証ごとに並べ、`account` に認証の id（ログイン中は `''`）を渡す。元の委譲先と同じ backend・model・account の組だけ除く。サーバーでも認証を含めて確かめ、使えない・元と同じ・形が不正なら断る
 - 同じ依頼（`task` と `context`）で**新しいタスク**を作る。元のタスクは書き換えない。タスクは最初の `context` を持つ（`agent-tasks.json` の `context`。一覧・`ply_task_status` には載せない）。`context` を持つ前に作ったタスクは `task` だけを渡す
-- 依頼元は元のタスクと同じ会話（`parentSessionId`）。依頼元のターンの外で作る（`prepare` は `routing.mode: manual` のときだけ依頼元のターンを求めない）。作業場所は元のタスクの `cwd`。自動のときと同じく接続先は継がず公式で走り、Claude なら使用量で選んだアカウント
+- 依頼元は元のタスクと同じ会話（`parentSessionId`）。依頼元のターンの外で作る（`prepare` は `routing.mode: manual` のときだけ依頼元のターンを求めない）。作業場所は元のタスクの `cwd`。自動のときと同じく接続先は継がず公式で走り、Claude なら明示して選んだ認証
 - 子の承認モードは `ply_delegate` と同じく依頼元の会話の強さまで（`resolveDelegatedMode`）。それを超えるなら作らずに `{ confirm: { agent, mode } }` を返し、画面が 1 行で示して `approved: true` で頼み直す。依頼元の会話が読み取り・計画モードなら断る
 - 元のタスクが動いている（`queued` / `running` / `cancelling`）ときは `stop`（真偽）が要る。画面で「止めて◯◯でやり直す」「止めずにやり直す」を選ばせる。`stop: true` なら元のタスクを止めてから作る（止めたタスクの完了通知は出さない）
 - やり直したタスクの完了通知は依頼元のエージェントに届く。依頼元が作ったタスクではないので、通知の 2 行目に「利用者が <元の taskId> を別の委譲先でやり直したタスク」を添える（`agent:delegation.noticeRetry`）。依頼元は `ply_task_*` で同じように読める

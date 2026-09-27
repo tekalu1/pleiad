@@ -152,7 +152,7 @@
     "kindRequired": "Give kind as one of the following.\n{{kinds}}",
     "backendRequired": "Automatic delegation routing is turned off. Give backend (claude, codex, antigravity).",
     "pinOnly": "model and effort can be used only with backend. Omit model and effort to let Pleiad choose.",
-    "exhausted": "No delegation target is usable (kind {{kind}}, difficulty {{difficulty}}). Skipped candidates:\n{{skipped}}\nRetry with an explicit backend, or ask the user.",
+    "exhausted": "No delegation target is usable (kind {{kind}}, difficulty {{difficulty}}, deferral threshold {{avoidPercent}}%). Candidate and account reasons:\n{{skipped}}\nRetry with an explicit backend, or ask the user.",
     "modelUnavailable": "The model {{model}} ({{backend}}) chosen by routing is not available. Retry with an explicit backend."
   },
   "guide": {

@@ -10,7 +10,7 @@ import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
 import { createAgentTasks, finalReply } from './agent-tasks.mjs';
 import { createCompletionNotices, hasPendingChild } from './completion-notices.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
-import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate } from './delegation-routing.mjs';
+import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode } from './modes.mjs';
@@ -337,8 +337,8 @@ async function routeDelegation(args, lng, cwd) {
   }
   if (!ok) {
     // 候補の行は言語によらない形（画面の委譲カードがこの行を読んで理由ごとにまとめる。web/delegation-routing-view.mjs の parseRoutingFailure）
-    const skipped = routing.skipped.map(s => `- ${s.candidate} (${s.tier}): ${s.reason}${s.detail ? ` (${s.detail})` : ''}${s.window?.usedPercent != null ? ` ${s.window.label ?? ''} ${s.window.usedPercent}%` : ''}${s.window?.pace != null ? ` pace ${s.window.pace}` : ''}`).join('\n');
-    throw new Error(agentT(lng, 'routing.exhausted', { kind: args.kind, difficulty: routing.difficulty, skipped }));
+    const skipped = formatSkippedCandidates(routing.skipped);
+    throw new Error(agentT(lng, 'routing.exhausted', { kind: args.kind, difficulty: routing.difficulty, avoidPercent: settings.avoidPercent, skipped }));
   }
   const { backend, model, account } = routing.target;
   return { ...args, backend, model, account: account ?? '', routing };
@@ -365,14 +365,16 @@ const routingSettingsError = e => e instanceof RoutingSettingsError ? new Error(
  * - 元のタスクが動いていれば、止めるかどうか（stop）を画面で確かめてから来る。stop が無ければ断る
  * - 子の承認モードは ply_delegate と同じく依頼元の会話の強さまで。それを超えるなら { confirm } を返し、approved で来たら作る
  */
-async function retryAgentTask({ taskId, candidate, stop, approved } = {}) {
+async function retryAgentTask({ taskId, candidate, account, stop, approved } = {}) {
   const original = agentTasks.get(taskId);
   if (!original) throw new Error(t('delegation.taskNotFound'));
   const parsed = parseCandidate(candidate);
   if (!parsed) throw new Error(t('routing.retry.badCandidate'));
   const from = original.routing?.target ?? { backend: original.backend, model: original.model, account: null };
-  if (parsed.backend === from.backend && parsed.model === from.model) throw new Error(t('routing.retry.same'));
-  const check = checkCandidate(candidate, { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now() });
+  const candidateCheck = checkCandidate(candidate, { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now() });
+  const check = selectRetryAccount(candidateCheck, parsed.backend, account);
+  if (parsed.backend === from.backend && parsed.model === from.model && (check.account ?? null) === (from.account ?? null))
+    throw new Error(t('routing.retry.same'));
   const child = getBackend(parsed.backend);
   if (!check.ok || !child) throw new Error(t('routing.retry.unusable', { candidate, reason: check.ok ? 'unavailable' : check.reason }));
   const owner = original.parentSessionId;

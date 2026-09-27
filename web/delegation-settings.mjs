@@ -331,21 +331,31 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   function candidateUsage(candidate) {
     const st = stateOf(candidate);
     const { backend } = splitCandidate(candidate);
+    const join = t('routing.line.join');
+    if (st?.accounts?.length) return { st, lines: st.accounts.map(a => {
+      const name = a.label || (a.account === '' ? t('routing.detail.loginAccount') : a.account);
+      const state = a.usable ? a.deferred ? t('routing.settings.lowHeadroom', { reason: skipText(a.reason) }) : '' : skipText(a.reason, a.detail);
+      return { text: [name, state, usageSummary({ windows: a.windows })].filter(Boolean).join(join), strong: a.reason === 'model_unknown' };
+    }) };
     const sub = [labelOf(backend)];
-    if (st?.usable) { const u = usageSummary(st); if (u) sub.push(u); }
+    if (st?.usable) {
+      if (st.deferred) sub.push(t('routing.settings.lowHeadroom', { reason: skipText(st.reason) }));
+      const u = usageSummary(st); if (u) sub.push(u);
+    }
     else if (st) sub.push(skipText(st.reason, st.detail));
-    return { st, text: (st?.reason === 'model_unknown' ? '⚠ ' : '') + sub.join(t('routing.line.join')) };
+    return { st, lines: [{ text: (st?.reason === 'model_unknown' ? '⚠ ' : '') + sub.join(join), strong: st?.reason === 'model_unknown' }] };
   }
+  const usageLines = lines => lines.map(line => el('small', line.strong ? 'rt-strong' : null, line.text));
   function paintUsage() {
     paintEffective();
     const at = data.candidates.map(c => c.checkedAt).filter(Boolean).sort()[0];
     const stamp = advancedBody.querySelector('.rt-usage-at')?.querySelector('small');
     if (stamp) stamp.textContent = at ? t('routing.settings.usageAt', { time: fmt.time(at, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }) : t('routing.settings.usageNever');
     for (const row of advancedBody.querySelectorAll('.rt-cand-row')) {
-      const { st, text } = candidateUsage(row.dataset.candidate);
+      const { st, lines } = candidateUsage(row.dataset.candidate);
       row.classList.toggle('off', Boolean(st && !st.usable));
-      const small = row.querySelector('.rt-cand-info')?.querySelector('small');
-      if (small) { small.textContent = text; small.classList.toggle('rt-strong', st?.reason === 'model_unknown'); }
+      const info = row.querySelector('.rt-cand-info');
+      if (info) { for (const small of info.querySelectorAll('small')) small.remove(); info.append(...usageLines(lines)); }
     }
   }
   function tierBlock(tier) {
@@ -364,8 +374,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       title.append(el('span', 'rt-n', `${i + 1}.`), logo(backend), el('span', null, name));
       title.title = candidate;
       const usage = candidateUsage(candidate);
-      const small = el('small', st?.reason === 'model_unknown' ? 'rt-strong' : null, usage.text);
-      info.append(title, small);
+      info.append(title, ...usageLines(usage.lines));
       const actions = el('div', 'rt-cand-actions');
       const move = (to, label, d) => {
         const b = button('', () => { const next = [...list]; [next[i], next[to]] = [next[to], next[i]]; saveNested('tiers', { ...data.settings.tiers, [tier]: next }); }, 'btn btn-icon rt-move');

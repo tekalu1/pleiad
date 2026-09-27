@@ -169,7 +169,8 @@ export default async function (t) {
     state = await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['claude:haiku'], t2: ['claude:sonnet'], t3: ['codex:gpt-6-sol'], t4: ['claude:opus'] } } });
     t.ok('設定は prefs に重ねて保存し、既定で補う', state.settings.tiers.t1.join() === 'claude:haiku' && state.settings.tiers.tv.join() === 'codex:gpt-6-astra' && state.settings.avoidPercent === 80);
     const none = await call(sid, { kind: 'trivial', task: 'agy-none' });
-    t.ok('全部の候補がだめならエラー（飛ばした候補と理由つき）', none.isError && none.text.includes('claude:haiku (t1): unavailable') && none.text.includes('claude:opus (t4): unavailable') && none.text.includes('backend'), none.text);
+    t.ok('全部の候補がだめならエラー（線と飛ばした候補の理由つき）', none.isError && none.text.includes('線 80%')
+      && none.text.includes('claude:haiku (t1): unavailable') && none.text.includes('claude:opus (t4): unavailable') && none.text.includes('backend'), none.text);
     state = await c.cmd('setDelegationRouting', { settings: { tiers: null, enabled: false } });
     t.ok('null の項目は既定に戻す', state.settings.tiers.t1.join() === 'antigravity:gemini-3.8-flash-high,claude:haiku' && state.settings.enabled === false);
     const off = await call(sid, { kind: 'trivial', task: 'agy-off' });
