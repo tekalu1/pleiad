@@ -1393,6 +1393,12 @@
       "groupEnded": "終わった",
       "showMore": "さらに {{count}} 件を表示",
       "delegated": "· 委譲 {{count}}",
+      "instructionsWaiting": "追加指示 {{count}} 件待機中",
+      "instructionState": {
+        "queued": "待機中",
+        "sending": "送信中",
+        "dropped": "未配送で終了"
+      },
       "yesterday": "昨日",
       "showFull": "全文を表示",
       "collapse": "たたむ",

@@ -48,6 +48,27 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   const logFile = path.join(dataDir, 'agent-tasks-errors.log');
   let records = {};
   try { records = JSON.parse(await io.readFile(file, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  // Older files kept only prompt strings in queue. Preserve their order and make
+  // pending follow-ups visible without replaying the initial delegation request.
+  for (const r of Object.values(records)) {
+    r.instructions ??= [];
+    const initial = !r.revision && !r.result && r.status === 'queued' && r.createdAt === r.updatedAt;
+    r.queue = (r.queue ?? []).map((entry, index) => {
+      if (typeof entry !== 'string' || (initial && index === 0)) return entry;
+      const instruction = { id: crypto.randomUUID(), text: entry, at: r.updatedAt ?? r.createdAt ?? Date.now(), state: 'queued' };
+      r.instructions.push(instruction);
+      return { instructionId: instruction.id };
+    });
+  }
+  const setInstruction = (r, id, state) => {
+    if (!id) return;
+    const instruction = r.instructions?.find(x => x.id === id);
+    if (instruction && instruction.state !== state) { instruction.state = state; r.instructionRevision = (r.instructionRevision ?? 0) + 1; }
+  };
+  const dropInstructions = r => {
+    for (const instruction of r.instructions ?? []) if (instruction.state === 'queued') setInstruction(r, instruction.id, 'dropped');
+    r.queue = [];
+  };
   let writes = Promise.resolve(), closed = false, mutating = false, probing = false;
   // fault: 保存障害（最後の失敗の errno・操作・タスク ID・時刻）。dirty: メモリにだけある記録が残っている
   let fault = null, dirty = false;
@@ -93,7 +114,11 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // 再起動: 実行中だったものは再実行しない。まだ親に渡っていない pending はそのまま送り直す。
   // 渡ったか分からない delivering だけを unknown にする（二重に届けない）
   for (const r of Object.values(records)) {
-    if (ACTIVE.has(r.status)) { r.status = 'interrupted'; r.error = t('tasks.interruptedByRestart'); r.queue = []; }
+    if (ACTIVE.has(r.status)) {
+      r.status = 'interrupted'; r.error = t('tasks.interruptedByRestart');
+      for (const instruction of r.instructions ?? []) if (instruction.state === 'sending') setInstruction(r, instruction.id, 'delivered');
+      dropInstructions(r);
+    }
     if (r.notification === 'delivering') r.notification = 'unknown';
   }
   await serial(() => persist('restore'));
@@ -104,8 +129,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   };
   // context は「別の候補でやり直す」で同じ依頼を渡し直すために持つだけ（長いので一覧・状態には載せない）
   const view = (r, offset = 0) => {
-    const { result = '', queue, context, rejections = [], ...rest } = r;
-    return { ...rest, rejections, pendingMessages: queue.length, result: result.slice(offset, offset + 16000), resultOffset: offset,
+    const { result = '', queue, context, instructions, rejections = [], ...rest } = r;
+    return { ...rest, rejections, pendingMessages: instructions.filter(x => x.state === 'queued').length, result: result.slice(offset, offset + 16000), resultOffset: offset,
       resultLength: result.length, nextOffset: offset + 16000 < result.length ? offset + 16000 : null };
   };
   // 依頼元のエージェントへ返す形。人間の承認待ちは「いま待っているか」から導く見せかけの状態で、
@@ -135,19 +160,28 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   }
   async function run(r, controller) {
     // stalled: 実行の開始を保存できなかった。子は動かしていないので queued のまま、次のタイマーでやり直す
-    let stalled = false;
+    let stalled = false, activeInstructionId;
     try {
       while (!controller.signal.aborted) {
-        let prompt;
-        try { await commit(r.taskId, row => { prompt = row.queue.shift(); row.status = 'running'; }, 'run.start'); }
+        let prompt, instructionId;
+        try { await commit(r.taskId, row => {
+          const entry = row.queue.shift();
+          instructionId = entry?.instructionId;
+          prompt = instructionId ? row.instructions.find(x => x.id === instructionId)?.text : entry;
+          setInstruction(row, instructionId, 'sending');
+          row.status = 'running';
+        }, 'run.start'); }
         catch { stalled = true; break; }
+        activeInstructionId = instructionId;
         const result = await execute(structuredClone(r), prompt, controller.signal);
         if (result?.requeue) {
-          await record(r.taskId, row => { row.queue.unshift(prompt); row.status = 'queued'; }, 'run.requeue');
+          await record(r.taskId, row => { row.queue.unshift(instructionId ? { instructionId } : prompt); setInstruction(row, instructionId, 'queued'); row.status = 'queued'; }, 'run.requeue');
+          activeInstructionId = undefined;
           return;
         }
         await record(r.taskId, row => {
           row.result = String(result?.text ?? ''); row.error = result?.error ?? null;
+          setInstruction(row, instructionId, 'delivered');
           // 実行前に拒否されたコマンド。前の完了通知の後に走った回の分を足していく（通知の前に続けて走った回の分も落とさない）
           const got = Array.isArray(result?.rejections) ? result.rejections : [];
           if (got.length) {
@@ -159,14 +193,15 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           const stopped = Array.isArray(result?.stoppedBackground) ? result.stoppedBackground.slice(0, MAX_REJECTIONS) : [];
           if (stopped.length) row.stoppedBackground = stopped; else delete row.stoppedBackground;
           row.status = controller.signal.aborted ? 'cancelled' : result?.outcome === 'ok' ? (row.queue.length ? 'queued' : 'completed') : 'failed';
-          if (['failed', 'cancelled'].includes(row.status)) row.queue = [];
+          if (['failed', 'cancelled'].includes(row.status)) dropInstructions(row);
         }, 'run.result');
+        activeInstructionId = undefined;
         if (r.status !== 'queued') break;
       }
     } catch (e) {
-      await record(r.taskId, row => { row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); row.queue = []; }, 'run.error');
+      await record(r.taskId, row => { row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); setInstruction(row, activeInstructionId, 'dropped'); dropInstructions(row); }, 'run.error');
     } finally {
-      if (r.status === 'cancelling' || controller.signal.aborted) await record(r.taskId, row => { row.status = 'cancelled'; row.queue = []; }, 'run.cancelled');
+      if (r.status === 'cancelling' || controller.signal.aborted) await record(r.taskId, row => { row.status = 'cancelled'; dropInstructions(row); }, 'run.cancelled');
       live.delete(r.taskId);
       if (!stalled || controller.signal.aborted) {
         if (r.queue.length && !controller.signal.aborted) await record(r.taskId, row => { row.status = 'queued'; row.notification = 'none'; }, 'run.queued');
@@ -231,6 +266,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     get busy() { return live.size > 0 || notices.size > 0 || Object.values(records).some(r => ACTIVE.has(r.status) || r.notification === 'pending'); },
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
     get(taskId) { return records[taskId] ? view(records[taskId]) : null; },
+    instructions(taskId) { const r = records[taskId]; return r ? { taskId, revision: r.instructionRevision ?? 0, instructions: structuredClone(r.instructions) } : null; },
     /** 最初の依頼（task と context）。やり直しで同じ依頼を渡す。context を持つ前に作ったタスクは task だけ */
     request(taskId) { const r = records[taskId]; return r ? { task: r.task, title: r.title ?? null, context: r.context ?? null } : null; },
     // locale は呼び出した会話（owner）の言語。子の会話も同じ言語を継ぐので、子への依頼文もこれで作る
@@ -253,7 +289,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           if (signal?.aborted) throw new Error(agentT(locale, 'tasks.aborted'));
           const row = { ...prepared, taskId, parentSessionId: owner, manager: 'ply', depth, task: args.task, title: args.title, ...(args.context !== undefined ? { context: args.context } : {}),
             createdAt: Date.now(), updatedAt: Date.now(), status: 'queued', notification: 'none',
-            result: '', error: null, queue: [args.context ? agentT(locale, 'tasks.withContext', { task: args.task, context: args.context }) : args.task] };
+            result: '', error: null, instructions: [], instructionRevision: 0,
+            queue: [args.context ? agentT(locale, 'tasks.withContext', { task: args.task, context: args.context }) : args.task] };
           records[taskId] = row;
           try { await write(); } catch (e) { failed(e, 'delegate', taskId); throw refused(locale); }
           touched(); return view(row);
@@ -291,7 +328,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           row.revision = (row.revision ?? 0) + 1;
           // 前の回の拒否を依頼元へ渡し終えていれば、この指示で走る回の分で置き換える。まだ渡していなければ（走っている・通知の前）足していく
           if (NOTICED.has(row.notification)) { delete row.rejections; delete row.rejectionsDropped; }
-          row.queue.push(args.message); row.notification = 'none'; row.error = null;
+          const instruction = { id: crypto.randomUUID(), text: args.message, at: Date.now(), state: 'queued' };
+          row.instructions.push(instruction); row.instructionRevision = (row.instructionRevision ?? 0) + 1;
+          row.queue.push({ instructionId: instruction.id }); row.notification = 'none'; row.error = null;
           if (!live.has(row.taskId) || !ACTIVE.has(row.status)) row.status = 'queued';
         }, 'send', locale);
         kick(); return view(r);
@@ -306,7 +345,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       // Stop descendant Pleiad tasks too; engine-native children follow their engine's cancellation.
       for (const child of Object.values(records).filter(c => c.parentSessionId === r.sessionId)) await this.cancel(child.taskId);
       // 止めることは保存できなくても止める（record。ファイルは後で追いつく）
-      await record(taskId, row => { row.revision = (row.revision ?? 0) + 1; row.queue = []; row.notification = 'suppressed'; if (ACTIVE.has(row.status)) row.status = live.has(taskId) ? 'cancelling' : 'cancelled'; }, 'cancel');
+      await record(taskId, row => { row.revision = (row.revision ?? 0) + 1; dropInstructions(row); row.notification = 'suppressed'; if (ACTIVE.has(row.status)) row.status = live.has(taskId) ? 'cancelling' : 'cancelled'; }, 'cancel');
       live.get(taskId)?.abort();
     },
     // 承認待ちの増減で ply_task_wait を起こす。保存する状態は変わらないので write() は通らない
@@ -330,7 +369,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       // cancel と同じく、保存できなくても止める
       await serial(async () => {
         for (const r of change) {
-          r.revision = (r.revision ?? 0) + 1; r.queue = []; r.notification = 'suppressed';
+          r.revision = (r.revision ?? 0) + 1; dropInstructions(r); r.notification = 'suppressed';
           if (ACTIVE.has(r.status)) r.status = live.has(r.taskId) ? 'cancelling' : 'cancelled';
           r.updatedAt = Date.now();
         }
