@@ -694,3 +694,13 @@ Codexの `set_status / set_title / fork` は未接続なので、
 - 「接続が来ても古い接続を閉じない」
 - md レンダリング・CSP・提示の永続化
 - `tests/unit/stream-routing.mjs` などの「規則の写経」は、写経元を動かしたら同時に直す
+
+## 圧縮と文脈の量（2026-09-27）
+
+| バックエンド | 圧縮の検出・手動実行 | 文脈の量 | 要約 |
+|---|---|---|---|
+| Claude Code | SDK の `status.compacting`・`compact_result`・`compact_boundary`、PreCompact / PostCompact。手動は `/compact` | `getContextUsage()` の `total_tokens` / `raw_max_tokens` | PostCompact |
+| Codex | app-server 0.156.1 の `contextCompaction` item と `thread/compacted`、手動は `thread/compact/start` | `thread/tokenUsage/updated` の `last.totalTokens` / `modelContextWindow` | 現在の item 形からは取得できない |
+| Antigravity | `checkpoint` の意味は未確認。圧縮と判別できないため正規化しない。手動操作は提供しない | 取得しない | 取得しない |
+
+core は圧縮の開始・完了・失敗を `compaction`、文脈量を `contextWindow` として送る。既存の `contextUsage` はプラグインの読み込み記録なので保持する。Claude の `compact_boundary` と Codex の `contextCompaction` item をネイティブ履歴から優先して読み、sidecar の `compactions` から要約・trigger・失敗理由を補う。ネイティブ境界が無い分は sidecar から区切りを戻し、ネイティブ履歴の発言と一緒に描く。Pleiad の再起動で自動圧縮の予約は消える（[ADR 0039](adr/0039-conversation-compaction.md)）。
