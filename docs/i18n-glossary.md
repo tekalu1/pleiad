@@ -178,6 +178,10 @@
 | 登録あり · 個別停止なし | Registered · No per-hook off switch |
 | 信頼状態は取得できません | Trust status unavailable |
 | 発火の記録 | Hook runs |
+| 他のエージェントへ写す / 写す | Copy to another agent / Copy |
+| 入出力のアダプター | input/output adapter |
+| 写せます / 確認が必要 / 写せません | Ready to copy / Needs review / Can't copy |
+| 未審査 · /hooks で信頼するまで実行されません | Not reviewed · Does not run until trusted in /hooks |
 | 観測できません | Not observable |
 | 書き込む内容を確認 | Review changes |
 

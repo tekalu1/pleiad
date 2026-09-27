@@ -120,7 +120,7 @@ JSON は他のキーを保持して整形保存。通常の TOML テーブルで
 
 ## Hooks（2026-09-27）
 
-設定 › コンテキストの「Hooks」カードと会話の右パネルの Hooks の面（[ADR 0045](adr/0045-hooks-management.md)、画面は design-system.md「Hooks」）。第 1 段は見える化とネイティブ編集で、担当は「エージェントに任せる」に固定（「Pleiad がそろえる」は選べない）。探索と書き込みは `core/hooks-config.mjs`。hooks は `context-scans.json` の `kinds` に入れていない（保存する担当・除外が無いため。形式の移行は担当を保存する段で決める）。
+設定 › コンテキストの「Hooks」カードと会話の右パネルの Hooks の面（[ADR 0045](adr/0045-hooks-management.md)、画面は design-system.md「Hooks」）。第 1 段は見える化とネイティブ編集、第 2 段は他のエージェントへ写す（下の節）で、担当は「エージェントに任せる」に固定（「Pleiad がそろえる」は選べない）。探索と書き込みは `core/hooks-config.mjs`。hooks は `context-scans.json` の `kinds` に入れていない（保存する担当・除外が無いため。形式の移行は担当を保存する段で決める）。
 
 **探す場所**（ユーザーは home、作業場所は Git のルートから cwd までの各フォルダー）:
 
@@ -141,6 +141,15 @@ Claude の Skill の frontmatter の `hooks`（ユーザーの `skills/*/SKILL.m
 **書き込み**（`saveHooks`）: `op` は `add`・`edit`・`delete`・`enable`（agy の名前単位）。command 型だけを追加・編集・削除でき、http・prompt・agent・mcp_tool の定義と知らないキーはそのまま残す（編集は `command`・`timeout`・`async` だけを差し替える）。イベントがそのエージェントに無ければ断る。agy には `async` を書かない。書き先はエージェント・スコープ・場所から決まるファイルだけ（任意のパスへは書かない）。追加の書き先は、Codex は既存の定義が `config.toml` にあればそこ（`hooks.json` を足して二重に登録しない）、agy のユーザーは CLI の `settings.json` に `hooks` があればそこ、ほかは `hooks.json`。`dryRun: true` は書かずに、書き先・形式（`toml`／`json`）・**実際に書く本文の前後**（伏せ字済み。`before`／`after`）・書き直しの要否（`reformatsFile` と理由 `reason: comments|jsonValues|rewrite`、消えるコメントの行数 `lostComments`）・伏せた部分だけが変わるか（`hiddenChange`）を返し、画面はこれを行の差分として見せてから書く。伏せ字は前後の本文に同じように通す（`maskFileText`: env・headers などの表とインラインの表の値、秘密らしい名前のキーの文字列の値、形で分かる秘密）ので、変わらない行は同じになる。agy の改名は名前の `enabled` を引き継ぎ、移し先の名前が別の `enabled` を持っていれば断る。予約の名前（`__proto__`・`constructor`・`prototype`）は名前・イベントのどちらにも使わない。matcher を変えた handler が他と group を共有していれば、取り出して新しい group に入れる。空になった group・イベント・名前は消す。
 
 保存は `core/mcp-config.mjs` と同じ: 直列化、読んだ本文の SHA-256 revision を保存直前にもう一度照合、一時ファイルから rename、既存ファイルのアクセスモードとリンクの実体を保つ、構文の壊れたファイルは上書きしない、上限 1 MiB。改行コード（CRLF／LF）・BOM・JSON の字下げ（幅・タブ）は読んだ本文に合わせる。JSON は他のキーを残して整形保存し、読み直して値が変わるところ（有効桁を超える整数・重複したキー。`jsonLossy`）があれば書き直しの許可を求める。TOML（`renderToml`）は、追加なら既存の表に触らず末尾に `[[hooks.<イベント>]]` の 1 ブロックだけを足す。編集・削除（と、足すだけでは合わないとき）は hooks の表（`[hooks…]`・`[[hooks.…]]`。見出しから次の見出しの手前まで、ただし末尾のコメント行と空行は次の表の側に残す）を抜き、最初の hooks の表の位置に書き直す。抜く範囲にコメント（行末のものを含む）があれば、消える行数を出して画面で許可を取る。どちらも読み直した結果が期待どおりのときだけ使い、インライン・ドットの定義で合わなければ、ファイル全体の書き直し（コメントが消える）を画面で明示的に許可させる。プロジェクト・プロジェクトローカルのスコープでは、置き場所（`.claude`・`.codex`・`.agents` やファイル）の実体が作業場所の外にあれば（リンク）、読まず書かない（一覧では読めないファイルとして出す）。ユーザーのスコープのリンク（dotfiles の管理）は確かめない。複数の書き先は 1 件ずつ書き、失敗した先だけ理由を返す（書けた先は戻さない）。編集のシートを開くときだけ、`readHook` がその handler の `command`・`timeout`・`async` とキーの名前を返す（env・headers などの値は返さない）。元の `timeout` がシートの欄で扱えない値（文字列・小数）なら、欄を空のまま保存すれば元の値を残す（`keepTimeout`）。
+
+### 他のエージェントへ写す（第 2 段）
+
+1 つの command 型の定義を、ほかのエージェントの設定ファイルへ写す（[ADR 0047](adr/0047-hooks-copy-adapter.md)）。`copyHooks { source: { agent, scope, base?, file, loc, revision? }, targets: [{ agent, scope, base?, name?, matcher?, revision? }], dryRun?, allowReformat? }`。元の定義はサーバーがファイルから読み直す（画面から来たコマンドは使わない）。写す先ごとに `{ status: ready|review|blocked, reasons, warnings, event, matcher, matcherStatus, name?, adapter?: { path, exists }, timeout, innerTimeout, path, format, before, after, revision }` を返し、`dryRun` なら書かない。書くのは、確認画面で見た revision と今の revision が同じで `ready` の先だけ。管理者・プラグイン・Skill・command 以外・写した定義（アダプター越し）からは写さない。
+
+- **変換**（`core/hooks-copy.mjs`、純粋な関数）: イベントは同じ名前だけ（Claude Code ↔ Codex は共通のイベントすべて、agy とは PreToolUse・PostToolUse・Stop）。matcher はツール名の対応表（`Bash` ↔ `Bash` ↔ `run_command` だけが一致、`Edit`／`Write` ↔ `apply_patch` ↔ `replace_file_content`・`write_to_file` などは警告付き、`apply_patch` と agy のファイル操作の間は写せない）。正規表現・知らない名前・一部だけ無いものは `review`（写す先の `matcher` を入れると写せる）。実行の条件を変えるキー・知らないキー・group のほかのキー・agy への `async`・プラグインの環境変数は `blocked`。timeout は元のエージェントで効いていた秒数を保つ。
+- **アダプター**（`core/hook-adapter.mjs`）: agy との間と Claude Code → Codex の PreToolUse に挟む。写した先の設定ファイルの隣 `pleiad-hooks/hook-adapter-<中身の hash 12 桁>.mjs` に同じ中身を書き出し（既に同じ名前で別の中身なら写さない）、コマンドは `node <アダプター（スラッシュ区切り）> <元> <先> <イベント> <元の timeout> <元のコマンドの base64url>`、外側の timeout は元の秒数 + 5。stdin を元の形に直し、元のエージェントの作業フォルダー（agy は `.agents`）と環境変数（`CLAUDE_PROJECT_DIR`・`ANTIGRAVITY_CONVERSATION_ID`）で元のコマンドを動かし、答えを写した先の形に直していつも exit 0 で返す。意味が合わない答え・失敗は安全な側（PreToolUse は deny、Stop は止まらせる、PostToolUse は何もしない）。対応表は ADR 0047。`node` が見つからなければ写せない。
+- **確かめること**: 同じイベントに同じコマンドが既にあれば写さない（`duplicate`）。agy の名前は既定でスクリプト名から（`claude-<名前>`）作り、ユーザー・作業場所に同じ名前があれば `review`（別の名前を入れる）。コマンドが指すスクリプトが無ければ `scriptMissing`、相対パスで基準の場所が変わるなら `scriptRelative` の警告。
+- **伏せ字**: アダプターのコマンドの base64url の引数も、元のコマンドに伏せる値があれば引数ごと伏せる（`maskText`）。一覧の行は写した定義に `adapter: { from, event, timeout, command（元のコマンド、伏せ字） }` を付け、行の要約も元のコマンドにする。
 
 ## 検証
 
