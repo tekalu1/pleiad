@@ -936,5 +936,31 @@
     "unsupported": "Manual compaction is unavailable for this agent",
     "invalidSetting": "Invalid auto compaction settings",
     "noCompletion": "Could not confirm compaction completion"
+  },
+  "hooks": {
+    "file": {
+      "unreadable": "Can't read this file.",
+      "link": "The link target is missing.",
+      "syntax": "The file has a syntax error and can't be read.",
+      "format": "The hooks in this file have an unexpected shape.",
+      "partial": "Skipped definitions with an unexpected shape."
+    },
+    "write": {
+      "target": "Can't decide where to write. Check the agent, scope, and location.",
+      "command": "Enter a command of up to 4000 characters.",
+      "timeout": "Timeout must be a whole number of seconds from 1 to 86400.",
+      "asyncAgy": "Antigravity doesn't accept async.",
+      "matcher": "Matcher must be a string of up to 500 characters.",
+      "notFound": "The definition wasn't found. Reload the list.",
+      "name": "Use up to 64 letters, digits, or . _ : - for the name.",
+      "format": "The hooks in the target file have an unexpected shape, so nothing was written.",
+      "operation": "The change is invalid.",
+      "changed": "The file changed after it was loaded. Reload the list.",
+      "changedReload": "The file changed while saving. Reload and save again.",
+      "readOnly": "This definition can't be edited from Pleiad.",
+      "event": "This agent doesn't support the selected event.",
+      "tooLarge": "The settings file would be too large.",
+      "reformat": "Only the hooks part of this file can't be rewritten. Confirm rewriting the whole file."
+    }
   }
 }

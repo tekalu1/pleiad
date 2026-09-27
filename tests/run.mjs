@@ -72,6 +72,9 @@ const cases = [
   await import('./unit/visualize.mjs'),
   await import('./unit/server-visualize.mjs'),
   await import('./unit/mcp-config.mjs'),
+  // Hooks: 3 エージェントの元の設定の探索（壊れたファイル・伏せ字）と書き込み（JSON / TOML・競合・enabled・部分成功）
+  await import('./unit/hooks-config.mjs'),
+  await import('./unit/server-hooks.mjs'),
   await import('./unit/context-scan.mjs'),
   // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）
   await import('./unit/context-settings.mjs'),

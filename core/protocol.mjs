@@ -88,6 +88,12 @@ export const COMMANDS = new Set([
   'setPlyMcpSettings', // { clientMetadataUrl: https URL | null } -> 設定。Client ID Metadata Document の URL（既定は無し）
   'setContextSettings', // { place: null|path, kind, value|null } / { place, kind?, roots|null } / { place, add|remove } -> 即時保存し contextSettings と同じ形を返す
   'scanContext', // { cwd, place?: 'default', scope?: 'user' } -> bounded inventory (entries, the home / Git roots and the MCP config file bodies); never launches tools or changes agents
+  // Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。コマンドは実行しない。一覧の値は伏せ字
+  'scanHooks',    // { cwd?, scope?: 'user' } -> { files: [{ agent, scope, path, status: missing|none|ok|error, count, revision, error? }], entries: [行], events, order }
+  'readHook',     // { agent, scope, base?, file, loc: { event, group, handler, name? } } -> 編集のシートを開くときだけ、その handler の元の値
+  'hookTargets',  // { scope, base?, agents? } -> { <agent>: { path, format } | { error } } 追加の書き先
+  'saveHooks',    // { items: [{ op: add|edit|delete|enable, agent, scope, base?, file?, revision?, loc?, event, matcher, name?, command, timeout, async, enabled? }], dryRun?, allowReformat? } -> { results: [{ ok, path, before, after, reformatsFile, error? }] }
+  'sessionHooks', // { sessionId, cwd, backend } -> { agent, cwd, report, observable, runs: [{ phase, hookId, name, event, outcome?, exitCode?, at }] }
   "onboardingStatus",
   "onboardingSeen",
   "completeSetup",

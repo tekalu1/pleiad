@@ -333,6 +333,16 @@ export const backend = {
         emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
         out.text = 'compacted';
         await say(emit, out.text, out.uuid);
+      } else if (text === 'hookruns') {
+        // Claude の hooks の発火の通知（hook_started / hook_response を正規化した hookRun）の台本。完了・失敗・開始だけの 3 通り
+        emit({ type: 'hookRun', phase: 'started', hookId: 'h1', name: 'PreToolUse:Bash', event: 'PreToolUse' });
+        await wait(20);
+        emit({ type: 'hookRun', phase: 'response', hookId: 'h1', name: 'PreToolUse:Bash', event: 'PreToolUse', outcome: 'success', exitCode: 0 });
+        emit({ type: 'hookRun', phase: 'started', hookId: 'h2', name: 'PostToolUse:Bash', event: 'PostToolUse' });
+        emit({ type: 'hookRun', phase: 'response', hookId: 'h2', name: 'PostToolUse:Bash', event: 'PostToolUse', outcome: 'error', exitCode: 1 });
+        emit({ type: 'hookRun', phase: 'started', hookId: 'h3', name: 'Stop', event: 'Stop' });
+        out.text = 'hooks';
+        await say(emit, out.text, out.uuid);
       } else if (text === 'compact-fail') {
         emit({ type: 'compaction', phase: 'start', trigger: 'auto' });
         await wait(350);
