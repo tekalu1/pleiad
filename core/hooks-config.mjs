@@ -229,6 +229,22 @@ async function insideBase(file, base) {
   }
 }
 
+// Compare the location of the file, without following a link on the file itself.
+// Windows can return a long path for base even when a scan reported an 8.3 path.
+async function fileLocationKey(file) {
+  let dir = path.dirname(file), tail = path.basename(file);
+  for (;;) {
+    try { return pathKey(path.join(await fs.realpath(dir), tail)); }
+    catch (e) {
+      if (!['ENOENT', 'ENOTDIR'].includes(e.code)) return pathKey(file);
+      const parent = path.dirname(dir);
+      if (parent === dir) return pathKey(file);
+      tail = path.join(path.basename(dir), tail);
+      dir = parent;
+    }
+  }
+}
+
 export function createHooksConfig({ home = os.homedir(), codexHome = process.env.CODEX_HOME || path.join(home, '.codex'),
   claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), geminiHome = path.join(home, '.gemini') } = {}) {
   const places = { home, codexHome, claudeHome, geminiHome };
@@ -350,7 +366,9 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       return { ...f, base: dir };
     };
     if (file) {
-      const hit = list.find(f => pathKey(f.path) === pathKey(file));
+      const key = await fileLocationKey(file);
+      let hit = null;
+      for (const f of list) if (await fileLocationKey(f.path) === key) { hit = f; break; }
       if (!hit) throw new Error(t('hooks.write.target'));
       return chosen(hit);
     }

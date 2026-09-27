@@ -13,6 +13,7 @@ export const name = 'server-hooks';
 export const title = 'Hooks の API: 探索・書き込み・会話の場所の定義と発火の記録';
 
 export default async function (t) {
+  const tempRoot = await fs.realpath(os.tmpdir());
   const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-server-hooks-')));
   const home = path.join(tmp, 'home'), cwd = path.join(tmp, 'repo');
   const write = async (p, v) => { await fs.mkdir(path.dirname(p), { recursive: true }); await fs.writeFile(p, typeof v === 'string' ? v : JSON.stringify(v)); };
@@ -63,7 +64,7 @@ export default async function (t) {
     t.ok('Codex のプラグインの hooks も読み取りのみの行で出す（秘密は伏せる）', trusted.report.entries.some(e => e.scope === 'plugin' && e.readOnly) && !JSON.stringify(trusted).includes('SECRET-PLUGIN'));
   } finally {
     client?.close(); await host?.stop();
-    if (!containsPath(os.tmpdir(), tmp) || !path.basename(tmp).startsWith('ply-server-hooks-')) throw new Error('unexpected test path');
+    if (!containsPath(tempRoot, tmp) || !path.basename(tmp).startsWith('ply-server-hooks-')) throw new Error('unexpected test path');
     await fs.rm(tmp, { recursive: true, force: true });
   }
 }
