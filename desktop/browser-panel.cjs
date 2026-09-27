@@ -223,6 +223,14 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
         await shell.openExternal(url).catch(() => {});
         return { ok: true };
       }
+      // 会話・プレビューのリンクを既定のブラウザーへ（web/link-open.mjs）。本体の窓の setWindowOpenHandler は https しか通さないので、http の localhost もここで渡す
+      case 'openExternal': {
+        const url = externalUrl(args.url);
+        if (!url) return { ok: false };
+        log('external', url);
+        await shell.openExternal(url).catch(() => {});
+        return { ok: true };
+      }
       case 'detach': return { ok: detach(tab?.id) };
       case 'clearSiteData': return { ok: await clearSiteData(tab) };
       // 重なりの間は、今の見た目を画像にして画面へ返し、View を外す。画面は画像を同じ位置に置く

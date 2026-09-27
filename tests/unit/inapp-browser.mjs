@@ -332,6 +332,9 @@ export default async function (t) {
   // 既定のブラウザー・DevTools・データを消す
   await call('external');
   assert.deepEqual(fe.log.external, ['https://example.org/']);
+  await call('openExternal', { url: 'http://localhost:5173/' });
+  assert.deepEqual(fe.log.external.at(-1), 'http://localhost:5173/', 'リンクの既定のブラウザーは http の localhost も渡す');
+  assert.deepEqual(await call('openExternal', { url: 'file:///C:/a.html' }), { ok: false });
   await call('devtools');
   assert.deepEqual(fe.log.devtools.at(-1), ['https://example.org/', { mode: 'detach' }]);
   await call('clearSiteData');
