@@ -10,6 +10,7 @@
 // 書き込みは core/mcp-config.mjs に倣う: 読んだ本文の SHA-256（revision）で競合を見つける、JSON は他のキーを残す、
 // TOML は hooks の表だけを置き換えて本文とコメントを残す（置き換えで意味が変わるなら書き直しの許可を求める）、一時ファイルから rename。
 import fs from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -21,6 +22,7 @@ import { FRONTMATTER } from './context-scan.mjs';
 import { redactSecrets } from './redact.mjs';
 import { renameRetry } from './atomic-file.mjs';
 import { t } from './i18n.mjs';
+import { convertHook, adapterCommand, parseAdapterCommand, suggestName } from './hooks-copy.mjs';
 
 export const HOOK_AGENTS = ['claude', 'codex', 'antigravity'];
 // 各エージェントの公式のイベント（2026-09-27 時点。temporary/reports/hooks-agent-specs.md）
@@ -171,6 +173,11 @@ function withHooks(kind, config, map) {
   return next;
 }
 
+/** 他のエージェントから写した定義（アダプター越し）なら、元のエージェント・イベント・元のコマンド（伏せ字）。一覧と詳細で元のコマンドを見せる */
+function adapterOf(h) {
+  const via = typeof h?.command === 'string' ? parseAdapterCommand(h.command) : null;
+  return via ? { adapter: { from: via.from, event: via.event, timeout: via.timeout, command: maskText(via.command) } } : {};
+}
 /** 1 つの handler の要約（行に出す分）。値は伏せてから切る */
 function summary(h) {
   const text = maskText(commandOf(h));
@@ -189,7 +196,7 @@ function rowsOf(agent, map, base) {
     rows.push({ ...base, event, group, handler, type, command: summary(h),
       timeout: Number.isFinite(h.timeout) ? h.timeout : null, async: h.async === true,
       editable: !base.readOnly && type === 'command' && typeof h.command === 'string',
-      definition: maskDefinition(h), unknownKeys: Object.keys(h).filter(k => !['type', 'command', 'timeout', 'async'].includes(k)), ...extra });
+      definition: maskDefinition(h), unknownKeys: Object.keys(h).filter(k => !['type', 'command', 'timeout', 'async'].includes(k)), ...adapterOf(h), ...extra });
   };
   const groups = (event, list, extra = {}) => {
     // イベントでないキー（説明など）は行にしない。イベントなのに並びでないものは壊れた定義として知らせる
@@ -229,8 +236,29 @@ async function insideBase(file, base) {
   }
 }
 
+/** PATH の node（写した hook のアダプターを動かす）。見つからなければ null。結果は 30 秒覚える */
+let nodeCache = null;
+export function findNodeOnPath() {
+  if (nodeCache && Date.now() - nodeCache.at < 30_000) return nodeCache.value;
+  const value = new Promise(resolve => {
+    execFile(process.platform === 'win32' ? 'where' : 'which', ['node'], { timeout: 5_000, windowsHide: true }, (error, stdout) => {
+      const first = String(stdout ?? '').split(/\r?\n/).map(s => s.trim()).find(Boolean);
+      resolve(error || !first ? null : first);
+    });
+  });
+  nodeCache = { at: Date.now(), value };
+  return value;
+}
+/** 写す先に書き出すアダプター（core/hook-adapter.mjs をそのまま）。名前に中身の hash を入れ、版が変わっても前の写しを壊さない */
+let adapterCache = null;
+async function adapterSource() {
+  adapterCache ??= fs.readFile(new URL('./hook-adapter.mjs', import.meta.url), 'utf8').then(text => ({ text, name: `hook-adapter-${digest(text).slice(0, 12)}.mjs` }));
+  return adapterCache;
+}
+
 export function createHooksConfig({ home = os.homedir(), codexHome = process.env.CODEX_HOME || path.join(home, '.codex'),
-  claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), geminiHome = path.join(home, '.gemini') } = {}) {
+  claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), geminiHome = path.join(home, '.gemini'),
+  findNode = findNodeOnPath, platform = process.platform } = {}) {
   const places = { home, codexHome, claudeHome, geminiHome };
   let writes = Promise.resolve();
 
@@ -448,7 +476,7 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
    * 1 件の変更を組み立てる（書かない）。op: add / edit / delete / enable。
    * 返すのは書き込む本文と、書く前の確認に使う前後の本文（伏せ字）
    */
-  async function plan(item) {
+  async function plan(item, { handler: given = null } = {}) {
     const op = item?.op;
     if (!['add', 'edit', 'delete', 'enable'].includes(op)) throw new Error(t('hooks.write.operation'));
     const loc = record(item.loc) ? item.loc : {};
@@ -475,7 +503,8 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       if (!supportsEvent(agent, event)) throw new Error(t('hooks.write.event'));
       const matcher = cleanMatcher(item.matcher);
       const name = agent === 'antigravity' ? item.name : undefined;
-      if (op === 'add') added = insert(agent, map, { name, event, matcher }, cleanHandler(item, agent));
+      // given: 写すとき（copy）にサーバーが組み立てた handler。画面から来た値は cleanHandler を通す
+      if (op === 'add') added = insert(agent, map, { name, event, matcher }, given ?? cleanHandler(item, agent));
       else {
         const found = locate(agent, map, loc);
         if (handlerType(found.handler) !== 'command' || typeof found.handler.command !== 'string') throw new Error(t('hooks.write.readOnly'));
@@ -549,6 +578,119 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       await renameRetry(tmp, p.data.real);
     } finally { await fs.rm(tmp, { force: true }); }
   }
+  // ---------------------------------------------------------------- 他のエージェントへ写す（ADR 0046）
+  /** Antigravity の名前（ユーザーの 2 つのファイルと、作業場所の .agents/hooks.json）。同じ名前はスコープをまたいで止まり、両方有効なら両方走る */
+  async function agyNames(base) {
+    const out = new Map();
+    const files = [...hookFiles(places, 'antigravity', 'user', null).map(f => [f, null]), ...(base ? hookFiles(places, 'antigravity', 'project', base).map(f => [f, base]) : [])];
+    for (const [f, b] of files) {
+      const data = await load(f, b);
+      if (data.error || !data.map) continue;
+      for (const n of Object.keys(data.map)) if (!out.has(n)) out.set(n, f.path);
+    }
+    return out;
+  }
+  async function readAdapter(file, base) {
+    if (base && !await insideBase(file, base)) return { error: true };
+    try {
+      const stat = await fs.lstat(file);
+      if (!stat.isFile() || stat.size > LIMIT) return { error: true };
+      return { exists: true, text: await fs.readFile(file, 'utf8') };
+    } catch (e) { return ['ENOENT', 'ENOTDIR'].includes(e.code) ? { exists: false } : { error: true }; }
+  }
+  /** アダプターを書き出す。既にあれば中身が同じときだけそのまま使う（別の内容なら上書きしない） */
+  async function writeAdapter(file, text, base) {
+    if (base && !await insideBase(file, base)) throw new Error(t('hooks.file.outside'));
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    try { await fs.writeFile(file, text, { encoding: 'utf8', flag: 'wx' }); }
+    catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      if (await fs.readFile(file, 'utf8') !== text) throw new Error(t('hooks.copy.adapterConflict'));
+    }
+  }
+  /** 1 つの写し先。dryRun なら書かずに、変換の結果・書き先・前後の本文を返す */
+  async function copyOne(src, want, adapterFile, { dryRun, allowReformat }) {
+    const to = want?.agent;
+    if (!HOOK_AGENTS.includes(to)) throw new Error(t('hooks.write.target'));
+    const scope = want.scope === 'local' && to !== 'claude' ? 'project' : want.scope;
+    const conv = convertHook(src, to, { platform, matcher: typeof want.matcher === 'string' ? want.matcher : undefined });
+    const reasons = [...conv.reasons], warnings = [...conv.warnings];
+    const out = { agent: to, scope, event: conv.event, matcher: conv.matcher, matcherStatus: conv.matcherStatus, adapter: null, name: null,
+      timeout: conv.timeout ?? null, innerTimeout: conv.innerTimeout, command: maskText(conv.command) };
+    const status = () => (reasons.some(r => r.blocks) ? 'blocked' : reasons.some(r => r.review) ? 'review' : 'ready');
+    const finish = extra => ({ ...out, status: status(), reasons, warnings, ...extra });
+    if (status() === 'blocked') return finish({ ok: false });
+    const file = await target({ agent: to, scope, base: want.base });
+    Object.assign(out, { path: file.path, format: file.format });
+    let command = conv.command;
+    if (conv.adapter) {
+      // 写した先の設定ファイルの隣（<設定のフォルダー>/pleiad-hooks/）。Pleiad の置き場所・起動状態に頼らずに動く
+      const adapterPath = path.join(path.dirname(file.path), 'pleiad-hooks', adapterFile.name);
+      const current = await readAdapter(adapterPath, file.base);
+      out.adapter = { path: adapterPath, exists: Boolean(current.exists) };
+      if (current.error || (current.exists && current.text !== adapterFile.text)) reasons.push({ code: 'adapterConflict', params: { path: adapterPath }, blocks: true });
+      const node = await findNode();
+      out.node = node;
+      if (!node) reasons.push({ code: 'noNode', blocks: true });
+      command = adapterCommand({ adapterPath, from: src.agent, to, event: conv.event, innerTimeout: conv.innerTimeout, command: conv.command });
+    }
+    let name;
+    if (to === 'antigravity') {
+      name = typeof want.name === 'string' && want.name.trim() ? want.name.trim() : suggestName(src);
+      out.name = name;
+      warnings.push({ code: 'agyNameScope' });
+      if (!validName(name)) reasons.push({ code: 'nameInvalid', params: { name }, review: 'name' });
+      else {
+        const taken = (await agyNames(file.base)).get(name);
+        if (taken) reasons.push({ code: 'nameTaken', params: { name, path: taken }, review: 'name' });
+      }
+    }
+    if (status() === 'blocked' || (name !== undefined && !validName(name))) return finish({ ok: false });
+    const handler = { type: 'command', command, ...(conv.timeout !== undefined ? { timeout: conv.timeout } : {}), ...(conv.async ? { async: true } : {}),
+      ...(conv.statusMessage !== undefined ? { statusMessage: conv.statusMessage } : {}) };
+    const item = { op: 'add', agent: to, scope, base: file.base ?? undefined, file: file.path, name, event: conv.event, matcher: conv.matcher ?? '', revision: want.revision };
+    const p = await plan(item, { handler });
+    Object.assign(out, { before: p.before, after: p.after, reformatsFile: p.reformatsFile, reason: p.reason, lostComments: p.lostComments,
+      hiddenChange: p.hiddenChange, revision: p.data.revision, written: maskText(command) });
+    if (dryRun) return finish({ ok: true });
+    if (status() !== 'ready') throw new Error(t('hooks.copy.notReady'));
+    if (want.revision === undefined) throw new Error(t('hooks.write.changed'));
+    if (p.reformatsFile && !allowReformat) throw new Error(t('hooks.write.reformat'));
+    if (out.adapter && !out.adapter.exists) await writeAdapter(out.adapter.path, adapterFile.text, file.base);
+    await commit(p, item);
+    return finish({ ok: true, written: true, revision: digest(p.text) });
+  }
+  /**
+   * 1 つの定義を他のエージェントへ写す。source: { agent, scope, base?, file, loc, revision? }、targets: [{ agent, scope, base?, name?, matcher?, revision? }]。
+   * 元の定義はファイルから読み直す（画面から来たコマンドは使わない）。dryRun なら書かない。
+   * 書くときは写す先ごとに、確認画面で見た revision と今の revision が同じで、写せる（ready）ものだけを書く。書けた先は戻さない
+   */
+  function copy({ source, targets, dryRun = false, allowReformat = false } = {}) {
+    if (!record(source) || !Array.isArray(targets) || !targets.length || targets.length > 6) return Promise.reject(new Error(t('hooks.write.operation')));
+    const loc = record(source.loc) ? source.loc : {};
+    if ([loc.name, loc.event].some(k => typeof k === 'string' && RESERVED.has(k))) return Promise.reject(new Error(t('hooks.write.notFound')));
+    const run = writes.catch(() => {}).then(async () => {
+      const f = await target({ agent: source.agent, scope: source.scope, base: source.base, file: source.file ?? '\0' });
+      const data = await load(f, f.base);
+      if (data.error) throw new Error(data.error);
+      if (source.revision !== undefined && source.revision !== data.revision) throw new Error(t('hooks.write.changed'));
+      const found = locate(source.agent, data.map, loc);
+      const groupKeys = found.group ? Object.keys(found.group).filter(k => !['matcher', 'hooks'].includes(k)) : [];
+      const src = { agent: source.agent, event: loc.event, matcher: found.group?.matcher ?? null, handler: found.handler, groupKeys, name: loc.name ?? null };
+      const adapterFile = await adapterSource();
+      const results = [];
+      for (const want of targets) {
+        try { results.push(await copyOne(src, want, adapterFile, { dryRun, allowReformat })); }
+        catch (e) { results.push({ agent: want?.agent, status: 'blocked', ok: false, error: e.message, reasons: [], warnings: [] }); }
+      }
+      const via = typeof found.handler.command === 'string' ? parseAdapterCommand(found.handler.command) : null;
+      return { dryRun, source: { agent: source.agent, event: loc.event, matcher: src.matcher, revision: data.revision, path: f.path,
+        command: maskText(via?.command ?? found.handler.command ?? ''), timeout: found.handler.timeout ?? null }, results };
+    });
+    writes = run;
+    return run;
+  }
+
   /**
    * 編集のシートを開くときだけ、指した handler の command・timeout・async とキーの名前を返す。
    * env・headers などほかの値は返さない（保存は元のファイルの handler を土台にするので要らない）
@@ -567,7 +709,7 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       editable: handlerType(h) === 'command' && typeof h.command === 'string',
       ...(agent === 'antigravity' ? { enabled: data.map[where.name]?.enabled !== false } : {}) };
   }
-  return { scan, save, read, targets, places };
+  return { scan, save, read, targets, copy, places };
 }
 
 // 1 つの会話に残す hooks の発火の記録の上限（core/server.mjs）

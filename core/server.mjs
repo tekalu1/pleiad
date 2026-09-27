@@ -2599,6 +2599,8 @@ wss.on("connection", (ws, req) => {
           return reply(true, await hooksConfig.targets(msg.args ?? {}));
         case 'saveHooks':
           return reply(true, await hooksConfig.save(msg.args ?? {}));
+        case 'copyHooks':
+          return reply(true, await hooksConfig.copy(msg.args ?? {}));
         case 'sessionHooks': {
           // 会話の右パネル: その会話の場所で見つかった定義（読み込まれたかは分からない）と、受け取った発火の記録
           const id = msg.args?.sessionId ?? null;

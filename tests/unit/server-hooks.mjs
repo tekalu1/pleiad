@@ -35,6 +35,17 @@ export default async function (t) {
     const codex = JSON.parse(await fs.readFile(path.join(home, '.codex', 'hooks.json'), 'utf8'));
     t.ok('書き込むと Codex の hooks.json（hooks の下にイベント）になる', codex.hooks.SessionStart[0].matcher === 'startup' && codex.hooks.SessionStart[0].hooks[0].command === 'echo hi');
 
+    // ---- 他のエージェントへ写す（元の定義はサーバーがファイルから読み直す）
+    const stop = user.entries[0];
+    const source = { agent: 'claude', scope: 'user', file: stop.path, loc: { event: 'Stop', group: stop.group, handler: stop.handler } };
+    const copyDry = await client.cmd('copyHooks', { source, targets: [{ agent: 'codex', scope: 'user' }], dryRun: true });
+    t.ok('copyHooks の dryRun: 写せる・書き先・伏せ字の本文', copyDry.results[0].status === 'ready' && copyDry.results[0].path === path.join(home, '.codex', 'hooks.json')
+      && copyDry.results[0].after.includes('notify') && !JSON.stringify(copyDry).includes('SECRET-VALUE'), JSON.stringify(copyDry.results[0].reasons));
+    await client.cmd('copyHooks', { source, targets: [{ agent: 'codex', scope: 'user', revision: copyDry.results[0].revision }] });
+    const copied = JSON.parse(await fs.readFile(path.join(home, '.codex', 'hooks.json'), 'utf8'));
+    t.ok('copyHooks: Codex の Stop に元のコマンドがそのまま入る（Claude → Codex の Stop はアダプター無し）', copied.hooks.Stop?.[0]?.hooks?.[0]?.command === 'notify --token SECRET-VALUE'
+      && copied.hooks.SessionStart[0].hooks[0].command === 'echo hi');
+
     // ---- 会話の右パネル
     const session = await client.cmd('newSession', { cwd, backend: 'fake' });
     const turn = await client.runTurn({ ...session, prompt: 'hookruns' }, { ms: 60_000 });

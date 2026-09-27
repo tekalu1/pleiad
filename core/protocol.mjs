@@ -93,6 +93,7 @@ export const COMMANDS = new Set([
   'readHook',     // { agent, scope, base?, file, loc: { event, group, handler, name? } } -> 編集のシートを開くときだけ、その handler の command・timeout・async とキーの名前
   'hookTargets',  // { scope, base?, agents? } -> { <agent>: { path, format } | { error } } 追加の書き先
   'saveHooks',    // { items: [{ op: add|edit|delete|enable, agent, scope, base?, file?, revision?, loc?, event, matcher, name?, command, timeout, async, enabled? }], dryRun?, allowReformat? } -> { results: [{ ok, path, before, after, reformatsFile, error? }] }
+  'copyHooks',    // { source: { agent, scope, base?, file, loc, revision? }, targets: [{ agent, scope, base?, name?, matcher?, revision? }], dryRun?, allowReformat? } -> { source, results: [{ agent, status: ready|review|blocked, reasons, warnings, event, matcher, name?, path, adapter?, before, after, revision, ok, written?, error? }] }。元の定義はファイルから読み直す
   'sessionHooks', // { sessionId, cwd, backend, trust? } -> { agent, cwd, report, observable, runs: [{ phase, hookId, name, event, outcome?, exitCode?, at }] }
   "onboardingStatus",
   "onboardingSeen",
