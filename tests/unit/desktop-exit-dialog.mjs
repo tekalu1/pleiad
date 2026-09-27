@@ -72,6 +72,8 @@ async function start({ ready = true } = {}) {
     './window-trust.cjs': { createWindowTrust: () => ({ register: () => {} }) },
     './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, handleArgv: () => false }) },
     './browser-panel.cjs': { createBrowserPanel: () => ({ attach: () => {} }) },
+    './agent-browser-bridge.cjs': { attachAgentBrowserBridge: () => ({ close: () => {} }) },
+    './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
     'electron-updater': { autoUpdater: {} },
   };
