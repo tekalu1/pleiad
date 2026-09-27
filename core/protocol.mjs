@@ -28,7 +28,7 @@ export const ERROR = "error";
 export const COMMAND = "command";
 
 export const COMMANDS = new Set([
-  'agentTasks', 'cancelAgentTask',
+  'agentTasks', 'agentTaskInstructions', 'cancelAgentTask',
   'retryAgentTask',             // { taskId, candidate: 'backend:model', account?, stop?, approved? } -> { task } | { confirm: { agent, mode } }。Claude の account は選んだ認証（'' はログイン中）。委譲カードの「別の候補でやり直す」
   // 委譲先の自動振り分け（core/delegation-routing.mjs。docs/agent-delegation.md「委譲先の自動振り分け」）。判定器のキーは返さない（hasKey だけ）
   'delegationRouting',          // { refresh? } -> { settings, defaults, kinds, judges, tiers, signals, keys: { openrouter|cerebras: { hasKey } }, storage, warnings, candidates }

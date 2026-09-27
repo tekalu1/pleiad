@@ -2902,6 +2902,11 @@ wss.on("connection", (ws, req) => {
           return reply(true, await resumeSession(msg.args?.sessionId));
 
         case 'agentTasks': return reply(true, agentTasks.list(msg.args?.sessionId));
+        case 'agentTaskInstructions': {
+          const result = agentTasks.instructions(msg.args?.taskId);
+          if (!result) throw new Error(t('delegation.taskNotFound'));
+          return reply(true, result);
+        }
         case 'cancelAgentTask': {
           const task = agentTasks.get(msg.args?.taskId);
           if (!task) throw new Error(t('delegation.taskNotFound'));
