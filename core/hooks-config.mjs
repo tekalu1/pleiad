@@ -237,6 +237,9 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
         }
       }
     }
+    // agy の enabled: false は、ユーザーと作業場所にある同じ名前の定義をまとめて止める（実機で確認。2026-09-27）
+    const offNames = new Set(entries.filter(e => e.agent === 'antigravity' && e.enabled === false).map(e => e.name));
+    for (const e of entries) if (e.agent === 'antigravity' && e.enabled && offNames.has(e.name)) e.stoppedBySameName = true;
     for (const e of entries) e.id = digest([e.agent, pathKey(e.path), e.name ?? '', e.event, e.group, e.handler].join('\0')).slice(0, 24);
     return { cwd, root, home, scopes, files, entries, diagnostics, events: HOOK_EVENTS, order: HOOK_ORDER };
   }
@@ -443,6 +446,39 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       ...(agent === 'antigravity' ? { enabled: data.map[loc.name]?.enabled !== false } : {}) };
   }
   return { scan, save, read, targets, places };
+}
+
+const CODEX_READ_ONLY = { plugin: 'plugin', system: 'managed', mdm: 'managed', cloudRequirements: 'managed', cloudManagedConfig: 'managed',
+  legacyManagedConfigFile: 'managed', legacyManagedConfigMdm: 'managed', sessionFlags: 'managed' };
+/**
+ * Codex の hooks/list（app-server）の結果を探索の行に重ねる。key は `<sourcePath>:<event の snake_case>:<group>:<handler>`。
+ * 行には trust: { status, enabled, hash } を付ける。取れなかったとき（data が null）は trust: null と trustError。
+ * ユーザー・プロジェクト以外（プラグイン・管理）の hooks は読み取りのみの行として足す
+ */
+export function applyCodexHooks(report, data, error = null) {
+  const codexRows = report.entries.filter(e => e.agent === 'codex');
+  if (!Array.isArray(data)) { for (const e of codexRows) { e.trust = null; e.trustError = error ?? true; } return report; }
+  const camel = s => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+  const seen = new Set();
+  for (const entry of data) for (const h of entry?.hooks ?? []) {
+    if (!h?.key || seen.has(h.key)) continue;
+    seen.add(h.key);
+    const m = /:([a-z_]+):(\d+):(\d+)$/.exec(h.key);
+    const event = h.eventName ? h.eventName[0].toUpperCase() + h.eventName.slice(1) : m ? camel(m[1]).replace(/^./, c => c.toUpperCase()) : null;
+    const trust = { status: typeof h.trustStatus === 'string' ? h.trustStatus : null, enabled: h.enabled !== false, hash: h.currentHash ?? null };
+    const row = m && codexRows.find(e => pathKey(e.path) === pathKey(h.sourcePath ?? '') && e.event === event && e.group === Number(m[2]) && e.handler === Number(m[3]));
+    if (row) { row.trust = trust; continue; }
+    const scope = CODEX_READ_ONLY[h.source] ?? (h.isManaged ? 'managed' : null);
+    if (!scope || !event) continue;
+    const definition = maskDefinition({ type: h.handlerType ?? 'command', ...(h.command ? { command: h.command } : {}), ...(h.server ? { server: h.server, tool: h.tool } : {}),
+      ...(h.timeoutSec ? { timeout: h.timeoutSec } : {}), ...(h.async ? { async: true } : {}) });
+    report.entries.push({ id: digest(['codex', h.key].join('\0')).slice(0, 24), agent: 'codex', scope, base: null, path: h.sourcePath ?? '', format: null, kind: 'codex-list',
+      readOnly: true, stop: 'codex', event, group: m ? Number(m[2]) : 0, handler: m ? Number(m[3]) : 0, type: h.handlerType === 'mcpTool' ? 'mcp_tool' : h.handlerType ?? 'command',
+      command: h.command ? maskText(h.command) : '', matcher: typeof h.matcher === 'string' ? h.matcher : null, timeout: h.timeoutSec ?? null, async: h.async === true,
+      editable: false, definition, unknownKeys: [], trust, ...(h.pluginId ? { plugin: h.pluginId } : {}) });
+  }
+  for (const e of codexRows) if (!('trust' in e)) e.trust = null;
+  return report;
 }
 
 /**

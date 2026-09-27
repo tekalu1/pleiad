@@ -7,6 +7,7 @@ import path from 'node:path';
 import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { containsPath } from '../../core/context-settings.mjs';
+import { ROOT } from '../lib/server.mjs';
 
 export const name = 'server-hooks';
 export const title = 'Hooks の API: 探索・書き込み・会話の場所の定義と発火の記録';
@@ -45,6 +46,19 @@ export default async function (t) {
     t.ok('Claude の会話: ユーザーと作業場所の定義、発火は観測できる', claude.observable && claude.report.entries.some(e => e.scope === 'project' && e.event === 'PostToolUse') && claude.report.entries.some(e => e.scope === 'user'));
     const codexSide = await client.cmd('sessionHooks', { sessionId: session.sessionId, cwd, backend: 'codex' });
     t.ok('Codex の会話は観測できない（定義だけ）', codexSide.observable === false && codexSide.report.entries.every(e => e.agent === 'codex'));
+    t.ok('Codex を使わない構成では信頼状態は「取得できません」', codexSide.report.entries.every(e => e.trust === null));
+    client.close(); await host.stop(); client = null; host = null;
+
+    // ---- Codex の app-server（身代わり）の hooks/list から信頼状態を取る
+    await write(path.join(cwd, '.codex', 'hooks.json'), { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo guard' }] }] } });
+    host = await startServer({ dataDir: path.join(tmp, 'data2'), timeoutMs: 30_000, env: { AGENT_HOST_BACKENDS: 'codex', USERPROFILE: home, HOME: home,
+      CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests', 'lib', 'fake-codex.mjs')}"`,
+      FAKE_CODEX_HOOK_TRUST: 'untrusted', FAKE_CODEX_PLUGIN_HOOK: '1' } });
+    client = await open(host);
+    const trusted = await client.cmd('sessionHooks', { cwd, backend: 'codex' });
+    const project = trusted.report.entries.find(e => e.scope === 'project' && e.event === 'PreToolUse');
+    t.ok('Codex の会話: hooks/list の trustStatus を行に付ける', project?.trust?.status === 'untrusted' && project.trust.enabled === true, JSON.stringify(project?.trust));
+    t.ok('Codex のプラグインの hooks も読み取りのみの行で出す（秘密は伏せる）', trusted.report.entries.some(e => e.scope === 'plugin' && e.readOnly) && !JSON.stringify(trusted).includes('SECRET-PLUGIN'));
   } finally {
     client?.close(); await host?.stop();
     if (!containsPath(os.tmpdir(), tmp) || !path.basename(tmp).startsWith('ply-server-hooks-')) throw new Error('unexpected test path');

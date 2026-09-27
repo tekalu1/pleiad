@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { parse } from 'smol-toml';
-import { createHooksConfig, renderToml } from '../../core/hooks-config.mjs';
+import { createHooksConfig, renderToml, applyCodexHooks } from '../../core/hooks-config.mjs';
 import { containsPath } from '../../core/context-settings.mjs';
 export const name = 'hooks-config';
 export const title = 'Hooks の探索（3 エージェント × スコープ・壊れたファイル・伏せ字）と元ファイルへの書き込み（JSON / TOML・競合・enabled）';
@@ -53,6 +53,28 @@ export default async function(t) {
     const again = await svc.scan({ cwd, scopes: ['user'] });
     t.ok('ファイルはあるが hooks が無ければ none', again.files.find(f => f.path === none.home).status === 'none');
     t.ok('scopes: [user] は作業場所を探さない', again.entries.every(e => e.scope === 'user' || (e.scope === 'skill' && e.skillScope === 'user')));
+
+    // ---- agy の enabled: false は同じ名前の定義をスコープをまたいで止める
+    await write(path.join(cwd, '.agents', 'hooks.json'), { audit: { PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command: 'node w.cjs' }] }] } });
+    const same = (await svc.scan({ cwd })).entries.find(e => e.agent === 'antigravity' && e.scope === 'project');
+    t.ok('ユーザー側の enabled: false は作業場所の同じ名前の定義も止めると示す', same?.enabled === true && same.stoppedBySameName === true);
+    await fs.rm(path.join(cwd, '.agents'), { recursive: true });
+
+    // ---- Codex の hooks/list（信頼状態）を行に重ねる
+    const codexUser = all.entries.find(e => e.agent === 'codex' && e.scope === 'user');
+    const codexProject = all.entries.find(e => e.agent === 'codex' && e.scope === 'project');
+    const listed = [{ cwd, hooks: [
+      { key: `${codexUser.path}:pre_tool_use:0:0`, eventName: 'preToolUse', sourcePath: codexUser.path, source: 'user', enabled: true, trustStatus: 'trusted', currentHash: 'sha256:aa' },
+      { key: `${codexProject.path}:stop:0:0`, eventName: 'stop', sourcePath: codexProject.path, source: 'project', enabled: false, trustStatus: 'modified', currentHash: 'sha256:bb' },
+      { key: 'P:/plug/hooks.json:session_start:0:0', eventName: 'sessionStart', sourcePath: 'P:/plug/hooks.json', source: 'plugin', pluginId: 'plug', handlerType: 'command', command: 'run --token SECRET-PLUG', enabled: true, trustStatus: 'trusted' },
+    ], errors: [], warnings: [] }];
+    const merged = applyCodexHooks(structuredClone(all), listed);
+    const mu = merged.entries.find(e => e.id === codexUser.id), mp = merged.entries.find(e => e.id === codexProject.id);
+    t.ok('hooks/list の trustStatus・enabled・hash を key（パス・イベント・番号）で行に付ける', mu.trust?.status === 'trusted' && mu.trust.hash === 'sha256:aa' && mp.trust?.status === 'modified' && mp.trust.enabled === false);
+    const plug = merged.entries.find(e => e.agent === 'codex' && e.scope === 'plugin');
+    t.ok('プラグインの hooks は読み取りのみの行として足し、コマンドは伏せる', plug?.readOnly && !plug.editable && plug.event === 'SessionStart' && !JSON.stringify(plug).includes('SECRET-PLUG'));
+    const failed = applyCodexHooks(structuredClone(all), null, 'timeout');
+    t.ok('取れないときは trust: null（取得できません）', failed.entries.filter(e => e.agent === 'codex').every(e => e.trust === null));
 
     // ---- 書き込み: Claude（JSON。他のキーを残す）
     const claudeFile = path.join(home, '.claude', 'settings.json');

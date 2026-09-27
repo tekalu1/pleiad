@@ -49,7 +49,7 @@ import { redactForPeer } from './redact.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
-import { createHooksConfig, HOOK_AGENTS } from './hooks-config.mjs';
+import { createHooksConfig, HOOK_AGENTS, applyCodexHooks } from './hooks-config.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
 import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
@@ -220,6 +220,19 @@ const mcpConfig = createMcpConfig();
 const hooksConfig = createHooksConfig();
 // 1 つの会話に残す hooks の発火の記録の上限（古いものから捨てる）
 const HOOK_RUNS_MAX = 60;
+/**
+ * Codex の hooks の信頼状態を app-server の hooks/list で重ねる（Codex の会話と同じ接続を使う）。
+ * Codex を使わない構成・取れないときは「取得できません」（trust: null）のまま。一覧を待たせすぎないよう 8 秒で諦める
+ */
+async function withCodexTrust(report, cwd) {
+  if (!report.entries.some(e => e.agent === 'codex') && !report.files.some(f => f.agent === 'codex')) return report;
+  const codex = getBackend('codex');
+  if (!codex?.hooksList) return applyCodexHooks(report, null, 'unavailable');
+  try {
+    const data = await Promise.race([codex.hooksList([cwd]), new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 8_000).unref?.())]);
+    return applyCodexHooks(report, data);
+  } catch (e) { return applyCodexHooks(report, null, String(e?.message ?? e).slice(0, 200)); }
+}
 let agentTasks;
 const agentConnections = new Map();
 const taskExecutions = new Map();
@@ -2570,7 +2583,8 @@ wss.on("connection", (ws, req) => {
         // ---- Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。コマンドは実行しない
         case 'scanHooks': {
           const cwd = msg.args?.cwd ? await scanDirectory(msg.args.cwd) : null;
-          return reply(true, await hooksConfig.scan({ cwd, scopes: cwd && msg.args?.scope !== 'user' ? ['user', 'directory'] : ['user'] }));
+          const report = await hooksConfig.scan({ cwd, scopes: cwd && msg.args?.scope !== 'user' ? ['user', 'directory'] : ['user'] });
+          return reply(true, await withCodexTrust(report, cwd ?? os.homedir()));
         }
         case 'readHook':
           return reply(true, await hooksConfig.read(msg.args ?? {}));
@@ -2584,6 +2598,7 @@ wss.on("connection", (ws, req) => {
           const agent = HOOK_AGENTS.includes(msg.args?.backend) ? msg.args.backend : null;
           const cwd = msg.args?.cwd ? await scanDirectory(msg.args.cwd).catch(() => null) : null;
           const report = agent && cwd ? await hooksConfig.scan({ cwd, agents: [agent] }) : null;
+          if (report && agent === 'codex') await withCodexTrust(report, cwd);
           const saved = id ? (await store.get(id)).hookRuns ?? [] : [];
           const live = id ? runtime.turns.get(id)?.hookRuns ?? [] : [];
           return reply(true, { agent, cwd, report, observable: agent === 'claude', runs: [...saved, ...live].slice(-HOOK_RUNS_MAX) });
