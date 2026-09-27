@@ -29,7 +29,8 @@ export default async function(t) {
 
   // HTML のプレビューは可視化と同じ隔離でスクリプトを動かす
   assert.equal(PREVIEW_CSP,VISUALIZE_CSP);
-  for (const rule of ["default-src 'none'","script-src 'unsafe-inline' https://cdnjs.cloudflare.com","connect-src 'none'","frame-src 'none'","object-src 'none'","base-uri 'none'","form-action 'none'"]) assert(PREVIEW_CSP.includes(rule),rule);
+  for (const rule of ["default-src 'none'","script-src 'unsafe-inline' https:","style-src 'unsafe-inline' https:","img-src https: data: blob:","font-src https: data: blob:","connect-src https:","frame-src https:","media-src https: data: blob:","worker-src https: blob:","object-src 'none'","base-uri 'none'","form-action 'none'"]) assert(PREVIEW_CSP.includes(rule),rule);
+  assert(!PREVIEW_CSP.includes('http:') && !PREVIEW_CSP.includes('allow-same-origin'));
   const wrapped=previewDocument('<meta http-equiv="Content-Security-Policy" content="script-src *"><script>run()</script>');
   assert(wrapped.indexOf(`content="${PREVIEW_CSP}"`)>0 && wrapped.indexOf(`content="${PREVIEW_CSP}"`)<wrapped.indexOf('<script>run()'));
   const frame=previewFrame(wrapped,'page.html');
@@ -60,6 +61,41 @@ export default async function(t) {
   assert(result.document.indexOf('Content-Security-Policy')<result.document.indexOf('<body>'));
   assert(result.note.includes('スクリプト') && !result.note.includes('実行しません'));
   t.ok('HTMLはスクリプト付きで隔離枠に出す。CSPが先頭、ローカルのスクリプトは埋め込み、読めないものは省いて注記',true);
+
+  // The HTML scrubber must retain HTTPS resources and links without fetching them.
+  const elements = [
+    ['link',{rel:'stylesheet',href:'https://example.com/a.css'}],
+    ['style',{},'@import "https://example.com/b.css"; .x{background:url(https://example.com/c.png)}'],
+    ['img',{src:'https://example.com/d.png'}],
+    ['a',{href:'https://example.com/page',target:'_blank'},'site'],
+    ['a',{href:'#part'},'section'],
+    ['a',{href:'javascript:alert(1)'},'bad'],
+    ['video',{src:'https://example.com/movie.mp4'}],
+    ['iframe',{src:'https://example.com/frame'}],
+  ].map(([tag,attrs,body])=>{
+    const n=create(tag); for(const [key,value] of Object.entries(attrs)) n.setAttribute(key,value);
+    if(body)n.textContent=body;
+    Object.defineProperty(n,'localName',{value:tag});
+    Object.defineProperty(n,'attributes',{get(){return Object.entries(this.attrs).map(([name,value])=>({name,value}));}});
+    if(tag==='link')n.rel=attrs.rel;
+    return n;
+  });
+  const sample=create('div'); sample.append(...elements);
+  sample.querySelectorAll=selector=>{
+    if(selector==='iframe,frame,object,embed,base,meta[http-equiv],form')return sample.children.filter(n=>n.localName==='iframe');
+    if(selector==='script')return [];
+    if(selector==='link'||selector==='style')return sample.children.filter(n=>n.localName===selector);
+    if(selector==='*')return [...sample.children];
+    return [];
+  };
+  document.createElement=tag=>tag==='template'?{set innerHTML(_value){},get innerHTML(){return sample.children.map(n=>n.outerHTML).join('');},content:sample}:create(tag);
+  const resources=[]; let external;
+  try { external=await htmlDocument('',async raw=>{resources.push(raw);throw new Error('unexpected asset');}); }
+  finally { document.createElement=create; }
+  assert.deepEqual(resources,[]);
+  for(const expected of ['href="https://example.com/a.css"','@import','https://example.com/b.css','url(https://example.com/c.png)','src="https://example.com/d.png"','href="https://example.com/page"','href="#part"','src="https://example.com/movie.mp4"']) assert(external.document.includes(expected),expected);
+  assert(!external.document.includes('javascript:') && !external.document.includes('<iframe'));
+  t.ok('HTML の HTTPS 資源とリンクを残し、危険なリンクと入れ子の枠は除く',true);
 
   const scratch=await fs.mkdtemp(path.join(os.tmpdir(),'ply-preview-'));
   const one=path.join(scratch,'one'),two=path.join(scratch,'two'),data=path.join(scratch,'data');

@@ -1,6 +1,9 @@
 import { isComposingKey } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
+import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
+import { setupBrowserSettings } from './browser-settings.mjs';
+import { configureLinkOpen } from './link-open.mjs';
 import { download, notify } from './file-actions.mjs';
 import { watchHostOnlyLinks } from './host-only-links.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
@@ -53,6 +56,7 @@ import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, 
 import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { renderOutbox } from './outbox.mjs';
+import { visibleTaskInstructions } from './task-instructions.mjs';
 import { createComposerWait } from './composer-wait.mjs';
 import { createConnectionStatus } from './connection-status.mjs';
 import { attentionCounts, paintOpenSidebar } from './open-sidebar-mark.mjs';
@@ -1274,7 +1278,7 @@ function onEvent(ev, replay = false) {
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
   if (ev.type === 'compactionSchedule') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
@@ -2616,6 +2620,7 @@ function backgroundItems() {
       model: task.model || null, effort: task.effort || null, status: TASK_MARK[task.status] ?? null,
       taskStatus: waiting ? 'waiting' : task.status, live, waiting, startedAt: task.createdAt ?? null, endedAt: live ? null : task.updatedAt ?? null,
       childId: task.sessionId, taskId: task.taskId, error: task.error, notification: task.notification, routing: task.routing ?? null,
+      pendingMessages: task.pendingMessages ?? 0, instructionRevision: task.instructionRevision ?? 0,
     });
   }
   for (const { task, entry } of backgroundHere()) items.push({
@@ -2744,6 +2749,7 @@ function listRow(item) {
     if (model) meta.append(el('span', 'bg-model', model));
     const status = statusText(item);
     if (status) meta.append(el('span', item.waiting ? 'bg-waiting' : null, status));
+    if (item.source === 'task' && item.pendingMessages > 0) meta.append(el('span', null, t('dialog.work.instructionsWaiting', { count: item.pendingMessages })));
     if (item.childCount) meta.append(el('span', null, t('dialog.work.delegated', { count: item.childCount })));
   } else {
     meta.append(el('span', null, item.kindLabel));
@@ -2791,7 +2797,9 @@ function renderBackground() {
   // 同じ項目。見出し（状態・経過時間）だけ更新し、動いている子は続きを読み直す
   bg.view.item = item;
   paintDetailHead(item);
-  if (item?.live || bg.view.wasLive) refreshDetail();
+  const changed = item?.source === 'task' && bg.view.instructionRevision !== item.instructionRevision;
+  const becameIdle = bg.view.wasLive && !item?.live;
+  if (item?.live || becameIdle || changed) refreshDetail({ force: changed || becameIdle });
 }
 
 function selectBackground(key) {
@@ -2893,10 +2901,11 @@ function openDetail(item) {
 /** 読み直しの間隔。走っている子は running の配信（4 秒ごと）に合わせて読み直す */
 const DETAIL_MIN_MS = 2500;
 
-async function refreshDetail({ first = false } = {}) {
+async function refreshDetail({ first = false, force = false } = {}) {
   const view = bg.view;
-  if (!view || view.busy || !$('workDialog').open) return;
-  if (!first && Date.now() - view.at < DETAIL_MIN_MS) return;
+  if (!view || !$('workDialog').open) return;
+  if (view.busy) { if (force) view.pendingRefresh = true; return; }
+  if (!first && !force && Date.now() - view.at < DETAIL_MIN_MS) return;
   view.busy = true;
   view.at = Date.now();
   const body = $('workBody');
@@ -2910,10 +2919,17 @@ async function refreshDetail({ first = false } = {}) {
       body.replaceChildren(content);
     }
     view.wasLive = view.item.live;
+    view.instructionRevision = view.item.instructionRevision;
     if (stick) body.scrollTop = body.scrollHeight;
   } catch (e) {
     if (bg.view === view) body.replaceChildren(el('div', 'work-head', t('dialog.work.readFailed', { error: e.message })));
-  } finally { view.busy = false; }
+  } finally {
+    view.busy = false;
+    if (view.pendingRefresh && bg.view === view) {
+      view.pendingRefresh = false;
+      queueMicrotask(() => refreshDetail({ force: true }));
+    }
+  }
 }
 
 /** ネイティブのサブエージェントの会話。依頼文は記録に入らないエージェントがあるので、親の委譲ツールの入力から補う */
@@ -2940,9 +2956,12 @@ function requestOf(toolId) {
 
 /** Pleiad タスクの子の会話。普通の会話なので、会話を開くときと同じ読み込みの結果を描く */
 async function taskThread(item) {
-  const data = await cmd('loadSession', { sessionId: item.childId });
+  const [data, instructionData] = await Promise.all([
+    cmd('loadSession', { sessionId: item.childId }), cmd('agentTaskInstructions', { taskId: item.taskId }),
+  ]);
   $('workBody').dataset.sessionId = item.childId;
-  const th = readonlyThread(data.messages ?? [], { presents: data.presents ?? [], backend: item.backend, live: item.live, item });
+  const th = readonlyThread(data.messages ?? [], { presents: data.presents ?? [], backend: item.backend, prompt: item.request, live: item.live, item,
+    instructions: visibleTaskInstructions(instructionData.instructions ?? [], data.messages ?? []) });
   // 子が承認を待っていれば、ここで答えられる（子の会話へ移らなくてよい）。同じ承認は依頼元の会話にも中継されている
   for (const ev of [...(data.permissions ?? []), ...state.pendingPerms.values()]) {
     if (ev.sessionId !== item.childId || th.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"]`)) continue;
@@ -2958,7 +2977,7 @@ async function taskThread(item) {
  * 読むだけの筋。メインパネルの paintHistory と同じ部品（wrap・userMsg・aiMsg・考えた内容・ツールカード・画像）で、描く先だけを変える。
  * 分岐・編集・再送は出さない（この会話の発言ではない）。走っている子は末尾に稼働表示（弧と経過時間）を置く
  */
-function readonlyThread(messages, { presents = [], backend, prompt = null, live = false, item } = {}) {
+function readonlyThread(messages, { presents = [], backend, prompt = null, live = false, item, instructions = [] } = {}) {
   const th = el('div', 'thread bg-thread');
   const spine = svgEl('svg', { class: 'spine', 'aria-hidden': 'true' });
   spine.append(svgEl('line', { x1: 20, y1: 0, x2: 20, y2: '100%' }));
@@ -2985,8 +3004,25 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
     }
     return m;
   };
+  // i18n-dynamic: dialog.work.instructionState.
+  let instructionsPlaced = false;
+  const putInstructions = () => {
+    if (instructionsPlaced) return;
+    instructionsPlaced = true;
+    if (!instructions.length) return;
+    const list = el('div', 'outbox');
+    for (const instruction of instructions) {
+      const row = el('div', 'outbox-message');
+      row.dataset.instructionId = instruction.id;
+      row.append(el('div', 'outbox-text', instruction.text));
+      const label = t(`dialog.work.instructionState.${instruction.state}`);
+      row.append(el('div', 'outbox-status', `${fmt.dateTime(instruction.at)} · ${label}`));
+      list.append(row);
+    }
+    put(list, 'instructions');
+  };
   let prevRole = null;
-  if (prompt && messages[0]?.role !== 'user') { put(requestNode(prompt, messages[0]?.at), 'request'); prevRole = 'user'; }
+  if (prompt && messages[0]?.role !== 'user') { put(requestNode(prompt, messages[0]?.at), 'request'); putInstructions(); prevRole = 'user'; }
   const refs = presents.map(p => p.reference);
   for (const it of buildItems(messages, presents)) {
     if (it.kind === 'present') { put(renderPresent(savedEvent(it.p)), `p:${it.pi}`); continue; }
@@ -3009,7 +3045,9 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
     }
     prevRole = m.role;
     put(node, `m:${it.mi}`);
+    if (it.mi === 0 && m.role === 'user') putInstructions();
   }
+  if (!instructionsPlaced) putInstructions();
   if (live) {
     const act = el('div', 'm activity');
     act.append(el('span', 'txt', item?.waiting ? t('activity.waitingApproval') : t('activity.running')));
@@ -3627,7 +3665,12 @@ function loadDraft() {
 $("draftSaved").onclick = () => saveDraft().catch(() => {});
 // 狭い幅の「再試行」。押すと一行は「保存中…」で消えるので、フォーカスは入力欄へ（失敗すれば一行が出直す）
 $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() => {}); };
+// 内蔵ブラウザー（web/browser-panel.mjs）。デスクトップ版のホストの画面だけ。右パネルの 1 つのモードになる
+const browserPanel = browserPanelAvailable()
+  ? createBrowserPanel({ showMenu: (x, y, items, title) => showMenu(x, y, items, title), getSessionId: () => state.current ?? null })
+  : null;
 const filePreview = setupFilePreview({
+  browser: browserPanel,
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   getContext: anchor => ({ sessionId:anchor?.closest('#workBody')?.dataset.sessionId || state.current, at:anchor?.closest('.m')?.dataset.at }),
   onLayout: () => requestAnimationFrame(relayoutBranches),
@@ -3637,6 +3680,10 @@ const filePreview = setupFilePreview({
   osActions: () => state.osActions === true,
   useFile: file => { if (attachHostFiles([file])) $('prompt').focus(); },
 });
+// 設定 › ブラウザー（リンクの開き先）。内蔵ブラウザーが使える画面だけ脇に項目を出す
+const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs });
+// 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
+configureLinkOpen({ getPrefs: () => state.prefs });
 
 /**
  * ホストのファイルをパスのまま添付に積む（送らない。ファイルプレビューの「会話で使う」とホストのファイルの面）。
@@ -4559,6 +4606,7 @@ async function runRefresh() {
   state.statuses = applyPendingStatuses(statuses);
   state.prefs = prefs ?? {};
   paintAutoCompactionSettings();
+  browserSettings.paint();
   await loadBackends();
   await syncTopbar();
   cmd("running").then(applyRunning).catch(() => {});

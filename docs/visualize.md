@@ -34,13 +34,13 @@ Codex の専用形式も同じ経路で受け取る。
 - **「ブラウザーで開く」は写しを新しいタブで開く**（元のファイルではない。元は後から書き換わっていることがある）。Blob の URL は Pleiad と同じオリジンで動き、中のスクリプトが保存領域やトークンに届くので使わない。サーバーの `GET /visualization-snapshot?sessionId=…&id=…`（`id` の無い以前の記録は `at=…`）が、会話の記録（`presents`）から写しを引き、表示と同じ包みで返す。応答ヘッダーは `Content-Security-Policy: sandbox allow-scripts; <枠と同じ CSP>; frame-ancestors 'none'`（`allow-same-origin` は付けない。不透明なオリジンで動く）、`cache-control: private, no-store`、`nosniff`、`referrer-policy: no-referrer`。認証は他の画面と同じトークン（Cookie）で、HTML を画面から受け取らないのでリモートの接続口（GET だけを通す）からも開ける。記録に無い・エラーのカードは 404、指定が無ければ 400。新しい可視化の記録は `id` を持つ（`core/history.mjs`）。
 - ポップアップとして止められないよう、押した瞬間に空の窓を開け、`opener` を切ってから行き先を入れる。窓を開けない殻（デスクトップ版は `setWindowOpenHandler` で断る）は、サーバーのある PC の画面なら `openVisualization` コマンドで写しをデータ置き場の `visualization-snapshots/` に書き、既定のブラウザーで開く（ファイルは文書の meta の CSP だけを持つ。1 日より古い写しは書くたびに消す）。どちらもできなければ、開けなかったことを短い知らせで示す。
 - リモートの窓・モバイル版（`plyRemote` のある殻）は、写しの URL を `window.open(url, '_blank', 'noopener')` で直接渡し、殻がアプリの中で開く（デスクトップ版はリモートの窓と同じ保存領域の別の窓、Android はホストの窓の上のシート）。端末のブラウザーには端末内プロキシの Cookie が無く 401 になるため。URL に鍵を載せる案を採らなかった理由と規則は docs/remote.md §8.5。LAN のブラウザーで開いた画面は、ほかのブラウザーと同じく新しいタブ（Cookie があるので開ける）
-- 高さの通知だけを iframe から受け取り、送信元の WindowProxy を確認して120〜900pxに制限する。パネルの可視化は面の高さに合わせるため、この通知を使わない。親へのコマンド実行 API は公開しない。
+- iframe から高さと外部リンクの通知を受け取り、どちらも送信元の WindowProxy を確認する。高さは120〜900pxに制限し、パネルの可視化では使わない。リンクは http/https だけを、設定の開き先（内蔵ブラウザー / 既定のブラウザー。[inapp-browser.md](inapp-browser.md)）で開く。Ctrl/⌘+クリックと中クリックは既定のブラウザー。親への任意のコマンド実行 API は公開しない。
 
 ## 実行範囲
 
-新しい `kind: visualization` は `sandbox="allow-scripts"` の iframe で動く。`allow-same-origin`、ポップアップ、親画面の遷移、フォーム送信は許可しない。親の DOM・Cookie・ストレージにはアクセスできない。CSP はモデルの HTML より前に挿入し、fetch/XHR/WebSocket、子フレーム、object、base の指定を禁止する。
+新しい `kind: visualization` は `sandbox="allow-scripts"` の iframe で動く。`allow-same-origin`、直接のポップアップ、親画面の遷移、フォーム送信は許可しない。親の DOM・Cookie・ストレージにはアクセスできない。CSP はモデルの HTML より前に挿入する。画像・スクリプト・スタイル・フォント・fetch/XHR・子フレーム・メディア・worker は HTTPS から読み込める。従来の data/blob の許可も残す。object、base、フォーム送信は止め、HTTP の資源は許可しない（[ADR 0042](adr/0042-preview-loads-external-by-default.md)）。
 
-スクリプト・CSS・フォントは HTTPS の cdnjs.cloudflare.com、esm.sh、cdn.jsdelivr.net、unpkg.com、fonts.googleapis.com、fonts.gstatic.com、fonts.bunny.net から読み込める。画像は data/blob URI。CDN への静的リソース取得は通信を伴う。モデルの指示にもネットワーク書き込みやページ遷移を行わないよう記載する。
+枠の中の http/https リンクは、クリックを親へ通知して開く。同じページ内の `#…` は枠内で移動する。`window.open(url)` も http/https なら同じ入口へ渡す。枠の外へ直接遷移させず、親が送り元と URL を確認する。通信は表示内のコードが行えるため、可視化の作者には読み込み先と送信先を明示するよう共通スキルで案内する。
 
 ライト/ダークの基礎スタイルと可視化用 CSS 変数を提供する。JavaScript、SVG、canvas、ローカルの入力操作に対応する。Codex の `window.openai`、注釈、`Tweak` の専用 UI は提供しない。対応していない機能を使うコードは共通スキルで避ける。
 

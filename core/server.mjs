@@ -2849,6 +2849,11 @@ wss.on("connection", (ws, req) => {
           return reply(true, await resumeSession(msg.args?.sessionId));
 
         case 'agentTasks': return reply(true, agentTasks.list(msg.args?.sessionId));
+        case 'agentTaskInstructions': {
+          const result = agentTasks.instructions(msg.args?.taskId);
+          if (!result) throw new Error(t('delegation.taskNotFound'));
+          return reply(true, result);
+        }
         case 'cancelAgentTask': {
           const task = agentTasks.get(msg.args?.taskId);
           if (!task) throw new Error(t('delegation.taskNotFound'));
@@ -3323,6 +3328,11 @@ wss.on("connection", (ws, req) => {
           // 画面の言語。auto は OS に合わせる
           if (key === "locale") {
             if (!LOCALE_SETTINGS.includes(value)) return reply(false, t("errors.unknownLocale", { value }));
+            return reply(true, await savePref(key, value));
+          }
+          // リンクの開き先（inapp: 内蔵ブラウザー / external: 既定のブラウザー）。内蔵ブラウザーはデスクトップ版のホストの画面だけ（docs/inapp-browser.md）
+          if (key === "linkOpen") {
+            if (value !== "inapp" && value !== "external") return reply(false, t('settings.unknownPrefValue', { key, value: String(value) }));
             return reply(true, await savePref(key, value));
           }
           if (backendId && !getBackend(backendId)) return reply(false, t('agents.unknown'));

@@ -18,15 +18,19 @@ const cases = [
   await import('./unit/compaction.mjs'),
   await import('./unit/server-compaction.mjs'),
   await import('./unit/file-preview.mjs'),
+  await import('./unit/preview-links.mjs'),
   // パスの自動リンク・画像の所在・ファイルの操作メニュー・OS で開く口（OS の窓は開かない）
   await import('./unit/file-actions.mjs'),
   // 右パネルの枠（web/side-panel.mjs）: モードごとの部品・渡さない部品は隠す・可視化の ⋯
   await import('./unit/side-panel.mjs'),
+  // 内蔵ブラウザー: 右パネルの表・アドレス欄・リンクの開き先・使える画面・main のタブと位置（偽の electron）
+  await import('./unit/inapp-browser.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
   // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）
   await import('./unit/agent-tasks-storage.mjs'),
   await import('./unit/background-model.mjs'),
+  await import('./unit/task-instructions.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
   // 委譲の子に裏の作業が残るとき: 終わらないコマンドは上限まで待って止める・サブエージェントは止めない・端末は待たない（子にも親にも）
   await import('./unit/server-delegation-background.mjs'),

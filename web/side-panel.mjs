@@ -1,4 +1,4 @@
-// 右パネルの枠（docs/design-system.md「右パネルの枠」）。ファイル・可視化・会話のコンテキストが同じ 1 つの枠を使う。
+// 右パネルの枠（docs/design-system.md「右パネルの枠」）。ファイル・可視化・会話のコンテキスト・内蔵ブラウザーが同じ 1 つの枠を使う。
 // どのモードで何を出すかは、ここの *Slots だけが決める。枠（applySlots）は渡された部品だけを並べ、
 // **渡されなかった部品は必ず隠す**。モードごとに出したり消したりを書き足すと、前のモードの部品が残る
 // （可視化にエクスプローラーの枠が残った不具合。docs/design-system.md「右パネル」）。
@@ -44,6 +44,25 @@ export function visualizationSlots({ origin = null, html = '', canBrowse = true,
   };
 }
 
+/**
+ * 内蔵ブラウザー（docs/inapp-browser.md、ADR 0041）。見出しの下にタブの列、道具の列は戻る・進む・再読み込み・アドレス欄・
+ * 既定のブラウザーで開く（常に）・⋯。種類の印・切り替え・ツリー・下の行は出さない。部品は web/browser-panel.mjs が作る
+ */
+export function browserSlots() {
+  return {
+    mode: 'browser',
+    label: t('browser.panel'),
+    kind: '',
+    head: ['wide', 'close'],
+    tabs: true,
+    views: false,
+    toolbar: ['back', 'forward', 'reloadPage', 'address', 'openExternal', 'browserMore'],
+    aside: false,
+    note: '',
+    footer: null,
+  };
+}
+
 /** ファイル以外の中身（この会話のコンテキスト）。見出しと本文と閉じるだけ */
 export function customSlots({ label = '' } = {}) {
   return { mode: 'custom', label, kind: '', head: ['close'], views: false, toolbar: [], aside: false, footer: null };
@@ -79,6 +98,8 @@ export function applySlots(parts, config) {
   parts.kind.textContent = config.kind ?? '';
   parts.kind.hidden = !config.kind;
   parts.actions.replaceChildren(...pick(config.head));
+  // タブの列（内蔵ブラウザーだけ）
+  if (parts.tabs) parts.tabs.hidden = !config.tabs;
   parts.switcher.hidden = !config.views;
   parts.tools.replaceChildren(...pick(config.toolbar));
   parts.toolbar.hidden = !config.views && !config.toolbar?.length;

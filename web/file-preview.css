@@ -113,3 +113,53 @@ body.file-preview-wide .file-preview-resize{display:none}
   .file-preview-head{padding:16px 0 12px}
   .file-preview-foot{padding:10px 0 max(10px,env(safe-area-inset-bottom))}
 }
+
+/* ---- 内蔵ブラウザー（docs/inapp-browser.md、docs/design-system.md「内蔵ブラウザー」）。
+   ページはデスクトップ版の main が本文の枠（.browser-viewport）の位置に重ねるネイティブの View。ここは枠の部品だけ */
+.file-preview[data-mode=browser] .file-preview-path:empty{display:none}
+.file-preview[data-mode=browser] .file-preview-head{padding-bottom:8px}
+.browser-tabs{display:flex;align-items:center;gap:2px;padding:0 0 8px;min-width:0}
+.browser-tab-list{display:flex;gap:2px;min-width:0;overflow-x:auto;scrollbar-width:none}
+.browser-tab{display:flex;align-items:center;flex:0 1 180px;min-width:72px;max-width:180px;height:28px;border-radius:var(--r-m);color:var(--ink-weak);
+  transition:background-color var(--dur-fast) var(--ease-out)}
+.browser-tab:hover{background:var(--surface-hover)}
+.browser-tab.on{background:var(--surface-paper);color:var(--ink)}
+.browser-tab-pick{display:flex;align-items:center;gap:6px;flex:1;min-width:0;height:100%;padding:0 4px 0 10px;background:transparent;color:inherit;
+  border-radius:var(--r-m);font-size:var(--fs-xs);cursor:pointer;text-align:left}
+.browser-tab-pick:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
+.browser-tab-mark{display:grid;place-items:center;width:14px;height:14px;flex:none}
+.browser-tab-mark svg{width:14px;height:14px}
+.browser-tab-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.browser-tabs .btn-icon{width:24px;height:24px;padding:0;flex:none}
+.browser-tabs .btn-icon svg{width:14px;height:14px}
+.browser-tab-close{opacity:0;margin-right:2px}
+.browser-tab.on .browser-tab-close,.browser-tab:hover .browser-tab-close,.browser-tab-close:focus-visible{opacity:1}
+@media (hover:none){.browser-tab-close{opacity:1}}
+.file-preview[data-mode=browser] .file-preview-toolbar{flex-wrap:nowrap;gap:2px;padding-bottom:10px}
+.file-preview[data-mode=browser] .file-preview-toolbar .btn-icon{width:30px;height:30px;padding:0;flex:none}
+.browser-address{position:relative;display:flex;align-items:center;gap:6px;flex:1;min-width:0;height:32px;margin:0 4px;padding:0 12px;
+  background:var(--surface-paper);border-radius:var(--r-pill);color:var(--ink-weak)}
+.browser-address:focus-within{outline:2px solid var(--line-blue);outline-offset:-1px;color:var(--ink)}
+.browser-address-mark{display:grid;place-items:center;width:14px;height:14px;flex:none}
+.browser-address-mark svg{width:14px;height:14px}
+.browser-address[data-kind=local] .browser-address-mark{color:var(--ink-blue)}
+.browser-address input{flex:1;min-width:0;height:100%;padding:0;border:0;background:transparent;color:var(--ink);font:var(--fs-s)/1.6 var(--font-mono);outline:0}
+/* 触れていない間は入力欄の文字を透かし、ホスト名を強くした同じ文字を重ねる */
+.browser-address:not(.editing):has(.browser-address-text:not(:empty)) input{color:transparent}
+.browser-address-text{position:absolute;left:32px;right:12px;top:50%;transform:translateY(-50%);pointer-events:none;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;font:var(--fs-s)/1.6 var(--font-mono);color:var(--ink)}
+.browser-address.editing .browser-address-text{visibility:hidden}
+.browser-address-text .weak{color:var(--ink-weak)}
+.browser-address-text b{font-weight:600}
+.file-preview[data-mode=browser] .file-preview-body-layout{padding-bottom:16px}
+.file-preview[data-mode=browser] .file-preview-content{overflow:hidden}
+.browser-viewport{position:absolute;inset:0}
+/* 重なりの間だけ、main が写したページの画像を同じ位置に置く（View は外れている） */
+.browser-still{position:absolute;inset:0;width:100%;height:100%;display:block}
+.browser-empty{padding:48px 28px;text-align:center;overflow-wrap:anywhere}
+.browser-empty h3{margin:0 0 12px;font-size:var(--fs-l)}
+.browser-empty p{margin:0;color:var(--ink-weak);line-height:1.8}
+/* 設定 › ブラウザー */
+.browser-setting{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;max-width:560px;margin:8px 0}
+.browser-link-open{min-width:260px}
+.browser-setting-note{color:var(--ink-weak);font-size:var(--fs-s)}

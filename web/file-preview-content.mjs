@@ -1,12 +1,13 @@
 import { renderMarkdown } from './render.mjs';
 import { fileReference } from './file-reference.mjs';
 import { VISUALIZE_CSP, isolateFrame } from './visualize-frame.mjs';
+import { LINK_BRIDGE } from './visualize-document.mjs';
 import { t } from './i18n.mjs';
 
 /** 読み込めなかった画像の代わりの文字（alt）。「名前（表示できません）」 */
 const unavailableAlt = alt => t('filePreview.unavailableAlt', { alt });
 
-// Same policy as visualizations: inline scripts and the CDN allowlist only, no network access.
+// HTML file previews and visualizations share the same sandbox policy.
 export const PREVIEW_CSP = VISUALIZE_CSP;
 
 /** CSV/TSV with escaped quotes, delimiters and newlines inside quoted cells. */
@@ -31,7 +32,7 @@ export function parseTable(text, delimiter = ',', maxRows = 501, maxColumns = 10
 const dataUrl = file => `data:${file.mime};base64,${file.data}`;
 
 /** Local `<script src>` becomes inline text (the file is read through the same
- * budget as other assets). Remote sources stay; the CSP allows only the CDN list.
+ * budget as other assets). HTTPS sources stay under the shared CSP.
  */
 export async function inlineScripts(root, asset, omitted) {
   for (const script of root.querySelectorAll('script')) {
@@ -49,7 +50,7 @@ export async function inlineScripts(root, asset, omitted) {
 
 /** Policy goes before ALL file content, even documents with their own head. */
 export function previewDocument(body) {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${PREVIEW_CSP}"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:16px;font:15px/1.7 system-ui,sans-serif;overflow-wrap:anywhere}img,svg{max-width:100%;height:auto}</style></head><body>${body}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${PREVIEW_CSP}"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:16px;font:15px/1.7 system-ui,sans-serif;overflow-wrap:anywhere}img,svg{max-width:100%;height:auto}</style>${LINK_BRIDGE}</head><body>${body}</body></html>`;
 }
 
 /** Scripts run in an opaque origin (never allow-same-origin): the app carries authenticated cookies. */
@@ -79,11 +80,15 @@ export async function htmlDocument(text, loadAsset) {
   }
   await inlineScripts(fragment, asset, omitted);
   async function cssText(css, base) {
-    // Imports, remote fonts and remote URLs do not make network requests.
-    if (/@import\b/i.test(css)) { omitted.add(t('filePreview.omitted.extraStyle')); css = css.replace(/@import\s+(?:url\([^)]*\)|"[^"]*"|'[^']*')[^;]*;?/gi, ''); }
+    // Keep HTTPS imports; local imports still have no inline resolver.
+    css = css.replace(/@import\s+(?:url\(\s*(['"]?)(.*?)\1\s*\)|"([^"]*)"|'([^']*)')[^;]*;?/gi, (rule, _quote, url, double, single) => {
+      if (/^https:\/\//i.test(url || double || single || '')) return rule;
+      omitted.add(t('filePreview.omitted.extraStyle'));
+      return '';
+    });
     const refs = [...css.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi)];
     for (const ref of refs) {
-      if (/^data:image\//i.test(ref[2]) || /^#/.test(ref[2])) continue;
+      if (/^(https:\/\/|data:|blob:|#)/i.test(ref[2])) continue;
       let replacement = 'none';
       try {
         const file = await loadAsset(ref[2], base);
@@ -96,6 +101,7 @@ export async function htmlDocument(text, loadAsset) {
   }
   for (const link of fragment.querySelectorAll('link')) {
     if (link.rel.toLowerCase() === 'stylesheet') {
+      if (/^https:\/\//i.test(link.getAttribute('href') || '')) continue;
       try {
         const file = await asset(link.getAttribute('href'));
         if (file.kind !== 'text' || file.size > 512 * 1024) throw new Error('stylesheet');
@@ -107,14 +113,17 @@ export async function htmlDocument(text, loadAsset) {
   for (const element of fragment.querySelectorAll('*')) {
     for (const attribute of [...element.attributes]) {
       const name = attribute.name.toLowerCase();
-      if (['srcdoc','srcset','ping','autofocus','formaction','action','target','download'].includes(name)) element.removeAttribute(attribute.name);
+      if (['srcdoc','srcset','ping','autofocus','formaction','action','download'].includes(name) || (name === 'target' && !['a','area'].includes(element.localName))) element.removeAttribute(attribute.name);
     }
     if (element.hasAttribute('style')) element.setAttribute('style', await cssText(element.getAttribute('style')));
-    // Local document links are available in source mode. Prevent frame navigation.
-    if (element.localName === 'a' || element.localName === 'area') { element.removeAttribute('href'); element.removeAttribute('xlink:href'); }
+    // The frame bridge opens absolute Web links; local files remain in source mode.
+    if (element.localName === 'a' || element.localName === 'area') {
+      if (!/^(https?:\/\/|#)/i.test(element.getAttribute('href') || '')) element.removeAttribute('href');
+      element.removeAttribute('xlink:href');
+    }
     if (element.localName === 'img') {
       const raw = element.getAttribute('src') ?? '';
-      if (/^data:image\//i.test(raw)) continue;
+      if (/^(https:\/\/|data:image\/|blob:)/i.test(raw)) continue;
       element.removeAttribute('src');
       try {
         const file = await asset(raw);
@@ -123,7 +132,7 @@ export async function htmlDocument(text, loadAsset) {
       } catch { omitted.add(t('filePreview.omitted.image')); element.setAttribute('alt', unavailableAlt(element.getAttribute('alt') || raw || t('filePreview.imageAlt'))); }
     }
     if (['video','audio','source','track','image','use'].includes(element.localName)) {
-      for (const name of ['src','href','xlink:href','poster']) if (element.hasAttribute(name) && !element.getAttribute(name).startsWith('#')) { element.removeAttribute(name); omitted.add(t('filePreview.omitted.media')); }
+      for (const name of ['src','href','xlink:href','poster']) if (element.hasAttribute(name) && !/^(https:\/\/|data:|blob:|#)/i.test(element.getAttribute(name))) { element.removeAttribute(name); omitted.add(t('filePreview.omitted.media')); }
     }
   }
   return {

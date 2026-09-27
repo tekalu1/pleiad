@@ -43,7 +43,8 @@
       "remote": "Remote",
       "about": "About & updates",
       "delegation": "Delegation",
-      "autoCompaction": "Auto compaction"
+      "autoCompaction": "Auto compaction",
+      "browser": "Browser"
     },
     "usage": {
       "description": "Subscription limits apply to the whole account. Shows usage, remaining amount, and reset time.",
@@ -174,6 +175,16 @@
         "sleepAlways": "Prevent while remote access is on",
         "sleepOff": "Do not prevent"
       }
+    },
+    "browser": {
+      "description": "Choose where links in conversations and previews open.",
+      "linkOpen": {
+        "title": "Open links in",
+        "inapp": "Built-in browser",
+        "external": "Default browser",
+        "note": "The built-in browser opens beside the conversation, and sign-ins stay in this app. Its storage is separate from Pleiad itself."
+      },
+      "saveFailed": "Couldn't save: {{error}}"
     }
   },
   "time": {
@@ -1434,6 +1445,12 @@
       "groupEnded": "Finished",
       "showMore": "Show {{count}} more",
       "delegated": "· {{count}} delegated",
+      "instructionsWaiting": "{{count}} follow-up instructions waiting",
+      "instructionState": {
+        "queued": "Waiting",
+        "sending": "Sending",
+        "dropped": "Ended without delivery"
+      },
       "yesterday": "Yesterday",
       "showFull": "Show full request",
       "collapse": "Collapse",
@@ -2247,5 +2264,40 @@
     "codexDelay": "Codex delay",
     "minutes": "min",
     "saveFailed": "Could not save auto compaction settings: {{error}}"
+  },
+  "browser": {
+    "panel": "Browser",
+    "tabs": "Browser tabs",
+    "newTab": "New tab",
+    "untitled": "New tab",
+    "closeTab": "Close tab: {{title}}",
+    "back": "Back",
+    "forward": "Forward",
+    "reload": "Reload",
+    "stop": "Stop loading",
+    "loading": "Loading",
+    "address": "Address",
+    "addressPlaceholder": "Enter a URL",
+    "openExternal": "Open in default browser",
+    "actions": "Browser actions",
+    "menu": {
+      "devtools": "DevTools",
+      "detach": "Move to new window",
+      "clearSiteData": "Clear data for this site"
+    },
+    "kind": {
+      "secure": "Secure connection (https)",
+      "local": "This PC (localhost)",
+      "insecure": "Not encrypted",
+      "file": "File on this PC"
+    },
+    "empty": {
+      "title": "Enter a URL to open",
+      "hint": "URLs on this PC such as localhost:5173 open with http. Others open with https."
+    },
+    "invalid": "Can't open this URL. Enter an http or https URL, or something like localhost:5173.",
+    "externalUnavailable": "This page can't be opened in the default browser.",
+    "siteDataCleared": "Cleared data for this site.",
+    "failed": "The browser action failed."
   }
 }
