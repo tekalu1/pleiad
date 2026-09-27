@@ -173,6 +173,13 @@
 | 別の候補でやり直す | Retry with another candidate |
 | 後回しにする使用率（5時間以外） / 週次のペース | Defer at usage (except 5h) / Weekly pace |
 | 余裕が少ない | Low headroom |
+| Hooks / Hook を追加 | Hooks / Add hook（固有名として訳さない） |
+| 登録あり · 読み込み未確認 | Registered · Load not confirmed |
+| 登録あり · 個別停止なし | Registered · No per-hook off switch |
+| 信頼状態は取得できません | Trust status unavailable |
+| 発火の記録 | Hook runs |
+| 観測できません | Not observable |
+| 書き込む内容を確認 | Review changes |
 
 ## 揺れ（未統一）
 - 使用枠: `usage`（辞書での使用が多数派。例 server:antigravity.usage.badResponse・shared・none・timeout・tooLarge・cannotRead・needsUpdate） / `usage limits`（例 server:antigravity.usage.unsupported、server:usage.codexUnavailable、server:usage.claudeUnavailable）。本表には多い方の `usage` を採ったが、辞書は直していないので `usage limits` の箇所も残っている

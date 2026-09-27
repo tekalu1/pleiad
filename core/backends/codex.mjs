@@ -946,6 +946,11 @@ export function codexCompactionEvent(method, params) {
 
 export const backend = {
   async usage() { return codexQuota(await rpc.request('account/rateLimits/read', {}, 15_000)); },
+  /**
+   * Codex が今読む hooks と、その信頼状態（trustStatus: trusted / untrusted / modified / managed）と hash（hooks/list）。
+   * 読むだけ。信頼・停止の RPC は無い（docs/context-management.md「Hooks」）
+   */
+  async hooksList(cwds) { return (await rpc.request('hooks/list', { cwds }, 15_000))?.data ?? []; },
   id: "codex",
   label: "OpenAI Codex",
   get description() { return t("codex.description"); },

@@ -9,6 +9,8 @@
 //   - エージェント任せの MCP は、そのエージェントの設定に登録されているものを読み取りのみで並べる（agentMcp）
 //   - antigravity で Pleiad 担当を扱わなかった会話は、その理由
 //   - Pleiad の指示（core/ply-instructions.mjs。担当によらない）: 項目ごとに入れたか・入れなかった理由と、渡した文
+//   - Hooks（ADR 0045）: この場所で見つかった定義は「登録あり · 読み込み未確認」まで（有効・実行済みにしない）。
+//     発火の記録は受け取った事実だけ（Claude の hook_started / hook_response）。受け取れない接続は「観測できません」
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { runMark } from './arc.mjs';
@@ -16,6 +18,7 @@ import { renderMarkdown } from './render.mjs';
 import { estimateTokens } from './token-estimate.mjs';
 import { toggleExclude } from './context.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
+import { openHookSheet, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
 
 const KEY = 'session-context';
 const KINDS = ['instruction', 'skill', 'mcp'];
@@ -30,6 +33,7 @@ const OWNER = {
   ply: [t('context.owner.ply'), { instruction: t('context.instruction.ply'), skill: t('context.skill.ply'), mcp: t('context.mcp.ply') }],
 };
 const SKILLS_SHOWN = 6;
+const HOOKS_SHOWN = 4;   // 右パネルに並べるユーザーの Hooks（残りは畳む）
 
 // 「9/23 09:05」か「09:05」
 function stamp(at, withDay = true) {
@@ -150,6 +154,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   let place = { cwd: null, view: null, loading: false }, edit = false, editScan = null, editBusy = false, toastTimer = null, toastOn = false;
   // この場所の外部 MCP を「Pleiad がそろえる」へ切り替える前の確認を開いているか（ADR 0031）
   let unifying = false;
+  // Hooks（sessionHooks の戻り）。会話・場所・実行中かが変わったら取り直す
+  let hooks = { key: null, data: null };
 
   const title = t('sessionContext.title');
   function subtitle(data) {
@@ -190,7 +196,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     else {
       box.append(instructions(data));
       if (data.added?.length) box.append(addedBox(data));
-      box.append(skills(data), mcp(data));
+      box.append(skills(data), mcp(data), ...hookBoxes(data));
     }
     const foot = el('p', 'scx-foot');
     foot.append(t('sessionContext.foot.lead'), button(t('sessionContext.foot.link'), 'cx-link', () => openSettings()));
@@ -528,6 +534,109 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const rowOf = x => { const r = el('div', 'scx-item'); const body = el('div', 't'); body.append(el('div', null, x.name), el('div', 'p', x.disabled ? t('sessionContext.nativeMcp.disabled', { path: shortPath(x.path) }) : shortPath(x.path))); r.append(el('span', 'cx-dot off'), body); return r; };
     list.slice(0, 5).forEach(x => k.append(rowOf(x)));
     if (list.length > 5) k.append(fold(t('sessionContext.more', { count: list.length - 5 }), list.slice(5).map(rowOf)));
+  }
+
+  // ---------------------------------------------------------------- Hooks（エージェントの設定で見つかった定義と、受け取った発火の記録）
+  // 取り直すのは会話・場所・エージェントが変わったとき。Claude の会話は、ターンが終わったときも取り直す（発火の記録がターンの終わりに残る）。
+  // Codex の信頼状態はターンでは変わらないので、ターンの開始・終わりでは hooks/list を呼ばない
+  function loadHooks(data, force = false) {
+    const s = session(), cwd = cwdOf(data), running = isRunning();
+    const key = [s?.id, cwd, s?.backend, data.report?.at ?? ''].join('|');
+    const turnEnded = s?.backend === 'claude' && hooks.running && !running;
+    hooks.running = running;
+    if (!force && !turnEnded && hooks.key === key) return;
+    const keep = hooks.key?.split('|')[0] === s?.id ? hooks.data : null;
+    hooks = { key, data: keep, running };
+    const args = { sessionId: s?.id, cwd, backend: s?.backend };
+    cmd('sessionHooks', args)
+      .then(r => {
+        if (hooks.key !== key) return;
+        hooks.data = r; refresh();
+        // Codex の信頼状態は一覧を出した後に重ねる（app-server の起動を待たせない）
+        if (r?.report?.trustPending) cmd('sessionHooks', { ...args, trust: true }).then(t2 => { if (hooks.key === key) { hooks.data = t2; refresh(); } }).catch(() => {});
+      })
+      .catch(e => { if (hooks.key === key) { hooks.data = { failed: e.message }; refresh(); } });
+  }
+  function hookBoxes(data) {
+    loadHooks(data);
+    const h = hooks.data;
+    const k = kindBox('Hooks', t('sessionContext.native'), false);
+    if (!h) { k.append(el('p', 'cx-sub', t('sessionContext.hooks.reading'))); return [k]; }
+    if (h.failed) { k.append(el('p', 'cx-sub', t('sessionContext.hooks.failed', { error: h.failed }))); return [k]; }
+    if (!h.agent || !h.report) { k.append(el('p', 'cx-sub', t('sessionContext.hooks.unknownAgent', { agent: backendLabel() }))); return [k]; }
+    k.append(el('p', 'cx-sub', h.observable ? t('sessionContext.hooks.lead') : t('sessionContext.hooks.leadUnobserved')));
+    const ctx = { cmd, scan: h.report, short: shortPath, onSaved: async () => { showToast(); loadHooks(info() ?? data, true); } };
+    for (const f of h.report.files.filter(f => f.status === 'error')) k.append(el('p', 'cx-strong', t('sessionContext.hooks.fileError', { path: shortPath(f.path), error: f.error ?? '' })));
+    const entries = h.report.entries.slice().sort((a, b) => order(h.report, a.event) - order(h.report, b.event));
+    // 出どころの区切りは他の種類と同じ（ユーザー／この場所と親フォルダー）。Skill の hooks は Skill の置き場で分ける
+    const mine = e => ['user', 'plugin', 'managed'].includes(e.scope) || e.skillScope === 'user' ? 'user' : 'directory';
+    // ユーザーの定義は設定の画面で見る・直すもの。ここでは数件だけ並べて残りは畳み、パスと編集は作業場所の定義にだけ付ける
+    const makeRow = ({ hook: e }) => {
+      const bits = [e.event, e.matcher !== null && e.matcher !== undefined ? e.matcher || '*' : null,
+        e.agent === 'codex' ? codexState(e) : null, e.agent === 'antigravity' && !e.enabled ? t('hooks.state.agyOff') : null,
+        e.stoppedBySameName ? t('hooks.state.agySame') : null, ['plugin', 'managed'].includes(e.scope) ? scopeLabel(e) : null,
+        e.scope === 'skill' ? t('sessionContext.hooks.skill', { name: e.skill ?? '' }) : null, t('sessionContext.hooks.registered')].filter(Boolean);
+      const row = el('div', 'scx-item');
+      const dot = el('span', 'cx-dot off'); dot.setAttribute('aria-hidden', 'true');
+      const body = el('div', 't');
+      body.append(el('div', 'nm', rowName(e)), el('div', 'p', bits.join(' · ')));
+      if (mine(e) !== 'user') body.append(el('div', 'p cx-mono', shortPath(e.path)));
+      if (e.editable && mine(e) !== 'user') {
+        const acts = el('div', 'acts');
+        const edit = button(t('hooks.edit'), 'btn', () => openHookSheet(ctx, { entry: e }));
+        edit.setAttribute('aria-label', t('sessionContext.hooks.editAria', { name: rowName(e) }));
+        acts.append(edit);
+        body.append(acts);
+      }
+      row.append(dot, body);
+      return row;
+    };
+    const rows = entries.map(e => ({ root: null, scope: mine(e), hook: e }));
+    const users = rows.filter(r => r.scope === 'user'), places = rows.filter(r => r.scope !== 'user');
+    grouped(k, users.slice(0, HOOKS_SHOWN), makeRow);
+    if (users.length > HOOKS_SHOWN) k.append(fold(t('sessionContext.more', { count: users.length - HOOKS_SHOWN }), users.slice(HOOKS_SHOWN).map(makeRow)));
+    grouped(k, places, makeRow);
+    if (!entries.length) k.append(el('p', 'cx-sub', t('sessionContext.hooks.none', { agent: agentLabel(h.agent) })));
+    const add = el('p', 'cx-sub');
+    add.append(button(t('sessionContext.hooks.add'), 'cx-link', () => openHookSheet(ctx, { agents: [h.agent], scope: 'project', base: h.cwd })));
+    k.append(add);
+    return [k, hookRuns(h)];
+  }
+  /** 発火の記録。開始と応答を hook_id で組にする。応答が無いものは「開始を受信 · 完了は未確認」のまま（推定で完了にしない） */
+  function hookRuns(h) {
+    const k = kindBox(t('sessionContext.hooks.runsTitle'), h.observable ? t('sessionContext.hooks.runsWho') : t('sessionContext.hooks.unobservable'), false);
+    if (!h.observable) { k.append(el('p', 'cx-sub', t('sessionContext.hooks.unobservedNote', { agent: agentLabel(h.agent) }))); return k; }
+    const runs = [], byId = new Map();
+    for (const r of h.runs ?? []) {
+      const known = r.hookId && byId.get(r.hookId);
+      if (r.phase === 'response' && known && !known.response) { known.response = r; continue; }
+      const run = r.phase === 'started' ? { started: r } : { response: r };
+      runs.push(run);
+      if (r.hookId) byId.set(r.hookId, run);
+    }
+    if (!runs.length) { k.append(el('p', 'cx-sub', t('sessionContext.hooks.noRuns'))); return k; }
+    // 通知の名前は「イベント:matcher」。同じイベント・matcher の定義が 1 つだけなら、その定義の名前で出す。結べなければイベントだけ
+    const defs = (h.report?.entries ?? []).filter(e => e.agent === 'claude');
+    const titleOf = r => {
+      const at = String(r.name ?? '').indexOf(':'), matcher = at < 0 ? null : r.name.slice(at + 1);
+      const hits = defs.filter(e => e.event === r.event && (matcher === null ? !e.matcher || e.matcher === '*' : e.matcher === matcher));
+      return hits.length === 1 ? rowName(hits[0]) : eventLabel(r.event);
+    };
+    const make = run => {
+      const r = run.response ?? run.started, done = run.response;
+      const mark = !done ? '○' : done.outcome === 'success' ? '✓' : done.outcome === 'cancelled' ? '–' : '×';
+      const what = !done ? t('sessionContext.hooks.startedOnly') : done.outcome === 'success' ? t('sessionContext.hooks.done')
+        : done.outcome === 'cancelled' ? t('sessionContext.hooks.cancelled') : t('sessionContext.hooks.failedRun');
+      const bits = [stamp(run.started?.at ?? r.at, false), r.event, what];
+      if (Number.isInteger(done?.exitCode)) bits.push(t('sessionContext.hooks.exit', { code: done.exitCode }));
+      if (done && run.started) bits.push(t('sessionContext.hooks.ms', { ms: Math.max(0, done.at - run.started.at) }));
+      return item(mark, titleOf(r), bits.filter(Boolean).join(' · '), { on: done?.outcome === 'success' }).row;
+    };
+    const recent = runs.slice(-8);
+    for (const run of recent) k.append(make(run));
+    if (runs.length > recent.length) k.append(fold(t('sessionContext.more', { count: runs.length - recent.length }), runs.slice(0, -8).map(make)));
+    k.append(el('p', 'cx-sub', t('sessionContext.hooks.runsNote')));
+    return k;
   }
 
   function changedNotice(data) {

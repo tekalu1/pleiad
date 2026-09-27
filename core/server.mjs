@@ -38,7 +38,7 @@ import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, withAdded } from './ply-instructions.mjs';
-import { DEFAULT_OWNERS, pathKey } from './context-settings.mjs';
+import { DEFAULT_OWNERS, pathKey, scanDirectory } from './context-settings.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createContextSession } from './context-session.mjs';
 import { createSecretStore, defaultCipher } from './secret-store.mjs';
@@ -49,6 +49,7 @@ import { redactForPeer } from './redact.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
+import { createHooksConfig, HOOK_AGENTS, applyCodexHooks, trimHookRuns } from './hooks-config.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
 import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
@@ -215,6 +216,28 @@ const CONTEXT_SNAPSHOTS = path.join(store.dataDir, 'context-snapshots');
 const contextSession = createContextSession({ store, snapshots: CONTEXT_SNAPSHOTS, plyServers: () => plyMcp.scanInput(),
   liveRecord: id => runtime.turns.get(id)?.contextRecord ?? null, isRunning: id => runtime.turns.has(id) });
 const mcpConfig = createMcpConfig();
+// Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。読むのと、利用者が明示した編集だけ
+const hooksConfig = createHooksConfig();
+/**
+ * Codex の hooks の信頼状態を app-server の hooks/list で重ねる（Codex の会話と同じ接続を使う）。
+ * Codex の行も Codex のファイルも無ければ呼ばない。trust が偽なら呼ばずに「確かめています」の印（trustPending）だけ付けて返す
+ * （一覧を先に返し、画面が trust: true でもう一度頼む。app-server の起動を一覧の表示で待たせない）。
+ * Codex を使わない構成・取れないときは「取得できません」（trust: null）。8 秒で諦める
+ */
+async function withCodexTrust(report, cwd, { trust = true } = {}) {
+  if (!report.entries.some(e => e.agent === 'codex') && !report.files.some(f => f.agent === 'codex' && f.exists)) return report;
+  if (!trust) {
+    report.trustPending = true;
+    for (const e of report.entries) if (e.agent === 'codex') e.trustPending = true;
+    return report;
+  }
+  const codex = getBackend('codex');
+  if (!codex?.hooksList) return applyCodexHooks(report, null, 'unavailable');
+  try {
+    const data = await Promise.race([codex.hooksList([cwd]), new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 8_000).unref?.())]);
+    return applyCodexHooks(report, data);
+  } catch (e) { return applyCodexHooks(report, null, String(e?.message ?? e).slice(0, 200)); }
+}
 let agentTasks;
 const agentConnections = new Map();
 const taskExecutions = new Map();
@@ -1145,6 +1168,15 @@ function makeEmit(turn) {
         }).catch(err => console.error('  圧縮の記録に失敗:', String(err?.message ?? err)));
       }
     }
+    // hooks の発火（Claude の hook_started / hook_response）。画面へは流さず、ターンに集めて終わりに会話へ残す（右パネルの「発火の記録」）
+    if (event?.type === 'hookRun') {
+      turn.hookRuns ??= [];
+      const { phase, hookId, name, event: hookEvent, outcome, exitCode } = event;
+      // 多いときは新しいほうを残す（ターンの最後の Stop などが記録から落ちないように）
+      turn.hookRuns.push({ phase, hookId, name, event: hookEvent, ...(outcome ? { outcome } : {}), ...(Number.isInteger(exitCode) ? { exitCode } : {}), at: Date.now() });
+      trimHookRuns(turn.hookRuns);
+      return;
+    }
     // 受理済みの途中送信が読まれずに捨てられた（userMessage.dropped）。送信待ちへ戻す
     if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId) {
       outbox.returned(turn.info.sessionId, event.messageId).catch(() => {});
@@ -2060,6 +2092,11 @@ async function endTurn(turn, emit, { record = true } = {}) {
     await turn.setup?.catch(() => {});
     await turn.compactionWrite;
     if (turn.contextWindow) await store.setSessionData(turn.info.sessionId, 'contextWindow', turn.contextWindow).catch(() => {});
+    if (turn.hookRuns?.length) {
+      const previous = (await store.get(turn.info.sessionId).catch(() => ({}))).hookRuns ?? [];
+      await store.setSessionData(turn.info.sessionId, 'hookRuns', trimHookRuns([...previous, ...turn.hookRuns])).catch(() => {});
+      turn.hookRuns = [];
+    }
     // 走っている印（turnStartedAt）はどの終わり方でも片付ける。requeue は何も届いていないので完了も中断も書かない
     // 始まらなかったターン（record が false）は前の中断の印を消さない（開始で消していないので）
     const patch = requeued ? { turnStartedAt: null }
@@ -2550,6 +2587,29 @@ wss.on("connection", (ws, req) => {
           return reply(true, await contextSession.agentMcp((await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd));
         case 'setContextSettings':
           return reply(true, await contextSettings.set(msg.args ?? {}));
+        // ---- Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。コマンドは実行しない
+        case 'scanHooks': {
+          const cwd = msg.args?.cwd ? await scanDirectory(msg.args.cwd) : null;
+          const report = await hooksConfig.scan({ cwd, scopes: cwd && msg.args?.scope !== 'user' ? ['user', 'directory'] : ['user'] });
+          return reply(true, await withCodexTrust(report, cwd ?? os.homedir(), { trust: msg.args?.trust === true }));
+        }
+        case 'readHook':
+          return reply(true, await hooksConfig.read(msg.args ?? {}));
+        case 'hookTargets':
+          return reply(true, await hooksConfig.targets(msg.args ?? {}));
+        case 'saveHooks':
+          return reply(true, await hooksConfig.save(msg.args ?? {}));
+        case 'sessionHooks': {
+          // 会話の右パネル: その会話の場所で見つかった定義（読み込まれたかは分からない）と、受け取った発火の記録
+          const id = msg.args?.sessionId ?? null;
+          const agent = HOOK_AGENTS.includes(msg.args?.backend) ? msg.args.backend : null;
+          const cwd = msg.args?.cwd ? await scanDirectory(msg.args.cwd).catch(() => null) : null;
+          const report = agent && cwd ? await hooksConfig.scan({ cwd, agents: [agent] }) : null;
+          if (report && agent === 'codex') await withCodexTrust(report, cwd, { trust: msg.args?.trust === true });
+          const saved = id ? (await store.get(id)).hookRuns ?? [] : [];
+          const live = id ? runtime.turns.get(id)?.hookRuns ?? [] : [];
+          return reply(true, { agent, cwd, report, observable: agent === 'claude', runs: trimHookRuns([...saved, ...live]) });
+        }
         case 'scanContext': {
           // One scan at a time per connection; no changes to running turns.
           // place: 'default' なら場所ごとの上書きを使わず既定だけで探す（設定の「すべての場所」）

@@ -95,6 +95,12 @@ Claude は設定ソースと権限を保持し、Pleiad 管理時は初期化結
 
 Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad の置き場の `.agents/agents/ply-context/agent.md`、`--add-dir <置き場> --agent ply-context`）で Pleiad のコンテキストを受け取る（`core/backends/antigravity-context.mjs`）。本文に指示と Skills の一覧、`mcpServers` に ply_context への stdio 中継（`core/agy-context-relay.mjs`）を書き、Skills・MCP がエージェント担当なら `inheritCustomizations` / `inheritMcp` で agy 自身の読み込みを残す。カスタムエージェントはワークスペースの AGENTS.md・GEMINI.md を読まないため、**指示も Pleiad 担当のときだけ**受け取る。指示がエージェント担当のまま Skills か MCP だけを Pleiad にした組み合わせは、その会話をエージェント任せにして理由を記録に残す（`guardedBackend` / `reason`。設定画面の Skills・MCP のカードと会話の右パネルにも出る）。
 
+## Hooks
+
+hooks は Pleiad から渡さない（担当は「エージェントに任せる」だけ。[ADR 0045](adr/0045-hooks-management.md)）。各エージェントが自分の設定の hooks を実行する。Claude の会話は `query()` に `includeHookEvents: true` を渡し、hooks の開始（`hook_started`）と応答（`hook_response`）を受け取る。`claude-normalize.mjs` がこれを `hookRun`（`{ phase: started|response, hookId, name, event, outcome?: success|error|cancelled, exitCode? }`）にする。出力（stdout・stderr・output）は秘密を含みうるので持ち出さない。通知は設定ファイルの hooks の分だけ届き、Pleiad 自身が `query()` に渡す SDK のコールバック（PreCompact / PostCompact）の分は届かない（実機で確認、2026-09-27。設定とコールバックが同じイベントで走っても通知は 1 組）。server は `hookRun` を画面の流れへは出さず、ターンに集めて終わりに会話の `hookRuns` へ足す（最新 60 件。ターンの中でも古いほうから、開始と応答の組ごとに捨てる。`trimHookRuns`）。
+
+`sessionHooks { sessionId, cwd, backend }` は会話の右パネル用に、その会話のエージェントで cwd に見つかる定義（`scanHooks` と同じ行）と `hookRuns`（走っているターンの分を含む）を返す。`observable` は発火の通知を受け取れる接続か（今は Claude だけ）。定義は「登録あり · 読み込み未確認」までで、読み込まれた・実行されたとは扱わない。発火の記録は開始と応答を `hookId` で組にし、応答が無いものを完了と推定しない。通知には設定ファイルのパスも command も無い。`hook_name` は「イベント:matcher」（例 `PreToolUse:Bash`）なので、その会話の場所で同じイベント・matcher の Claude の定義が 1 つだけのときその定義の名前で出し、結べなければイベントだけを出す。Codex と Antigravity は通知を受け取れないので「観測できません」とし、0 件・未実行とは書かない。
+
 ## 利用記録と検証
 
 `sessionContext {sessionId}` と会話の右パネル「この会話のプラグイン」（会話の頭の札・タイトル行の入口から開く）で、指示の供給元、Skills の案内／使ったもの、MCP の接続成否・ツール数・呼び出し回数、要ログイン・失敗の理由、除外理由を確認できる。記録は「モデルが理解した」という推定ではなく、Pleiad が渡した／接続した事実。ネイティブ担当の内部一覧を共通記録に含めたとは扱わない。エージェント任せの MCP は、そのエージェントの設定に登録されているもの（`agentMcp`）を読み取りのみで並べ、接続の成否は Pleiad から見えないと書く。antigravity で Pleiad 担当を扱わなかった会話は、記録の `guardedBackend` と `reason` を出す。

@@ -118,6 +118,17 @@ export function normalizeSdkMessage(m) {
     return out;
   }
 
+  // ---- hooks の発火（includeHookEvents）。出力（stdout / stderr / output）は秘密を含みうるので持ち出さない。
+  // 識別は hook_id と、CLI が付ける名前（「PreToolUse:Bash」= イベントと matcher）・イベントだけ（docs/context-runtime.md「Hooks」）。
+  // 通知は設定ファイルの hooks の分だけ届き、Pleiad 自身の SDK のコールバック（PreCompact / PostCompact）は届かない（実機で確認。2026-09-27）
+  if (m.type === "system" && (m.subtype === "hook_started" || m.subtype === "hook_response")) {
+    out.push({ type: "hookRun", phase: m.subtype === "hook_started" ? "started" : "response", hookId: String(m.hook_id ?? ""),
+      name: String(m.hook_name ?? ""), event: String(m.hook_event ?? ""),
+      ...(m.subtype === "hook_response" ? { outcome: ["success", "error", "cancelled"].includes(m.outcome) ? m.outcome : "error",
+        ...(Number.isInteger(m.exit_code) ? { exitCode: m.exit_code } : {}) } : {}) });
+    return out;
+  }
+
   if (m.type === "system" && m.subtype === "session_state_changed") {
     if (m.state === "requires_action") out.push({ type: "activity", state: "waiting" });
     else if (m.state === "running") out.push({ type: "activity", state: "running" });

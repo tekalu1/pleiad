@@ -118,6 +118,30 @@ JSON は他のキーを保持して整形保存。通常の TOML テーブルで
 
 `core/context-settings.mjs` が設定の保存・継承・移行、`core/context-scan.mjs` が探索、`core/mcp-config.mjs` がエージェント側の登録の読み書き、`core/context-session.mjs` が会話ごとの操作。UI は `web/context.mjs`（設定 › プラグイン）、`web/mcp-config.mjs`（外部 MCP のカードとシート）、`web/session-context.mjs`（会話の右パネル）。実行時は `core/context-runtime.mjs` と `core/context-bridge.mjs` を介して各バックエンドに供給し、会話に利用記録を保存する。TOML / YAML は `smol-toml` / `yaml` で解析し、設定を正規表現だけで読まない。
 
+## Hooks（2026-09-27）
+
+設定 › コンテキストの「Hooks」カードと会話の右パネルの Hooks の面（[ADR 0045](adr/0045-hooks-management.md)、画面は design-system.md「Hooks」）。第 1 段は見える化とネイティブ編集で、担当は「エージェントに任せる」に固定（「Pleiad がそろえる」は選べない）。探索と書き込みは `core/hooks-config.mjs`。hooks は `context-scans.json` の `kinds` に入れていない（保存する担当・除外が無いため。形式の移行は担当を保存する段で決める）。
+
+**探す場所**（ユーザーは home、作業場所は Git のルートから cwd までの各フォルダー）:
+
+| エージェント | ユーザー | 作業場所 | 形 |
+|---|---|---|---|
+| Claude Code | `CLAUDE_CONFIG_DIR`（既定 `~/.claude`）の `settings.json` | `.claude/settings.json`（プロジェクト）・`.claude/settings.local.json`（プロジェクトローカル） | `hooks` → イベント → matcher group → handler |
+| Codex | `CODEX_HOME`（既定 `~/.codex`）の `hooks.json` と `config.toml` の `[hooks]` | `.codex/hooks.json`・`.codex/config.toml` | 同上（TOML は `[[hooks.<イベント>]]`） |
+| Antigravity | `~/.gemini/config/hooks.json`（最上位が名前）・`~/.gemini/antigravity-cli/settings.json` の `hooks` | `.agents/hooks.json` | 名前 → イベント → ツールのイベントは matcher group、それ以外は handler を直接。名前に `enabled` |
+
+Claude の Skill の frontmatter の `hooks`（ユーザーの `skills/*/SKILL.md` と作業場所の `.claude/skills/*/SKILL.md`）は読み取りのみの行にする。Claude と agy の管理者の設定・プラグインの `hooks.json` はまだ読まない。
+
+**Codex の信頼状態**: Codex は定義の hash ごとに信頼を審査し、信頼されていない定義を実行しない（`codex exec` では確認も出ずに飛ばす。実機で確認、2026-09-27）。`scanHooks`・`sessionHooks` は、まず信頼状態なしで一覧を返し（Codex の行には `trustPending`、画面は「信頼状態を確かめています…」）、画面が `trust: true` でもう一度頼んだときに、Codex の会話と同じ app-server（`core/backends/codex-rpc.mjs` の共有の接続。`initialize` は `experimentalApi: true`）に `hooks/list { cwds }` を送り、返った各 hook の `trustStatus`（`trusted`・`untrusted`・`modified`・`managed`）・`enabled`・`currentHash` を、`key`（`<sourcePath>:<イベントの snake_case>:<group>:<handler>`）で行に `trust` として付ける（`applyCodexHooks`）。ユーザー・プロジェクト以外（プラグイン・管理者）の hooks は `hooks/list` の定義から読み取りのみの行を足す。Codex の行も Codex の設定ファイルも無ければ `hooks/list` を呼ばない（app-server を起こさない）。Codex を使わない構成・8 秒で返らない・失敗したときは `trust: null`（「信頼状態を取得できません」）。個別の停止・信頼の RPC は無い（`hooks/list` だけ）ので、Pleiad は信頼を代行せず、停止のスイッチも出さない。
+
+**agy の enabled は名前単位でスコープをまたぐ**: ユーザーと作業場所に同じ名前の定義があるとき、有効なものは両方走り、どちらか一方の `enabled: false` で両方止まる（実機で確認）。探索は、止めている同じ名前の定義がある行に `stoppedBySameName` を付ける。agy は引用符付きのバックスラッシュのパスを解決できない（スラッシュ形式なら動く）ので、シートは agy に書くコマンドにバックスラッシュがあれば知らせ、スラッシュに直せる。
+
+**行**（`scanHooks` の `entries`）: `{ id, agent, scope: user|project|local|skill|plugin|managed, base, path, format, event, matcher, name?（agy）, enabled?（agy）, stoppedBySameName?（agy）, trust?（Codex）, group, handler, type, command（伏せ字の要約）, timeout, async, editable, readOnly, definition（伏せ字の handler 全体）, unknownKeys }`。`group` / `handler` は元の並びの番号で、編集の指し先になる（agy の非ツールのイベントは `group: -1`）。ファイルごとの状態は `files`（`missing` = 無い、`none` = あるが登録 0 件、`ok`、`error` = 壊れている・形が違う。`partial` は一部の定義を飛ばした）で、登録 0 件と読み取り失敗を分ける。一覧の値は伏せる: `env`・`headers` の値、URL のクエリ・資格情報、トークンらしい形（`core/redact.mjs`）、`--token 値` のような引数。伏せるのは表示だけで、元のファイルの値は変えない。
+
+**書き込み**（`saveHooks`）: `op` は `add`・`edit`・`delete`・`enable`（agy の名前単位）。command 型だけを追加・編集・削除でき、http・prompt・agent・mcp_tool の定義と知らないキーはそのまま残す（編集は `command`・`timeout`・`async` だけを差し替える）。イベントがそのエージェントに無ければ断る。agy には `async` を書かない。書き先はエージェント・スコープ・場所から決まるファイルだけ（任意のパスへは書かない）。追加の書き先は、Codex は既存の定義が `config.toml` にあればそこ（`hooks.json` を足して二重に登録しない）、agy のユーザーは CLI の `settings.json` に `hooks` があればそこ、ほかは `hooks.json`。`dryRun: true` は書かずに、書き先・形式（`toml`／`json`）・**実際に書く本文の前後**（伏せ字済み。`before`／`after`）・書き直しの要否（`reformatsFile` と理由 `reason: comments|jsonValues|rewrite`、消えるコメントの行数 `lostComments`）・伏せた部分だけが変わるか（`hiddenChange`）を返し、画面はこれを行の差分として見せてから書く。伏せ字は前後の本文に同じように通す（`maskFileText`: env・headers などの表とインラインの表の値、秘密らしい名前のキーの文字列の値、形で分かる秘密）ので、変わらない行は同じになる。agy の改名は名前の `enabled` を引き継ぎ、移し先の名前が別の `enabled` を持っていれば断る。予約の名前（`__proto__`・`constructor`・`prototype`）は名前・イベントのどちらにも使わない。matcher を変えた handler が他と group を共有していれば、取り出して新しい group に入れる。空になった group・イベント・名前は消す。
+
+保存は `core/mcp-config.mjs` と同じ: 直列化、読んだ本文の SHA-256 revision を保存直前にもう一度照合、一時ファイルから rename、既存ファイルのアクセスモードとリンクの実体を保つ、構文の壊れたファイルは上書きしない、上限 1 MiB。改行コード（CRLF／LF）・BOM・JSON の字下げ（幅・タブ）は読んだ本文に合わせる。JSON は他のキーを残して整形保存し、読み直して値が変わるところ（有効桁を超える整数・重複したキー。`jsonLossy`）があれば書き直しの許可を求める。TOML（`renderToml`）は、追加なら既存の表に触らず末尾に `[[hooks.<イベント>]]` の 1 ブロックだけを足す。編集・削除（と、足すだけでは合わないとき）は hooks の表（`[hooks…]`・`[[hooks.…]]`。見出しから次の見出しの手前まで、ただし末尾のコメント行と空行は次の表の側に残す）を抜き、最初の hooks の表の位置に書き直す。抜く範囲にコメント（行末のものを含む）があれば、消える行数を出して画面で許可を取る。どちらも読み直した結果が期待どおりのときだけ使い、インライン・ドットの定義で合わなければ、ファイル全体の書き直し（コメントが消える）を画面で明示的に許可させる。プロジェクト・プロジェクトローカルのスコープでは、置き場所（`.claude`・`.codex`・`.agents` やファイル）の実体が作業場所の外にあれば（リンク）、読まず書かない（一覧では読めないファイルとして出す）。ユーザーのスコープのリンク（dotfiles の管理）は確かめない。複数の書き先は 1 件ずつ書き、失敗した先だけ理由を返す（書けた先は戻さない）。編集のシートを開くときだけ、`readHook` がその handler の `command`・`timeout`・`async` とキーの名前を返す（env・headers などの値は返さない）。元の `timeout` がシートの欄で扱えない値（文字列・小数）なら、欄を空のまま保存すれば元の値を残す（`keepTimeout`）。
+
 ## 検証
 
 `npm test` に探索・参照循環・リンク・競合・秘密値非公開・保存継承・同時保存・再起動復元・通常ターン非干渉のテストを追加。ブラウザーで両スコープの未保存変更の保持、保存・スキャン、390px 幅、明暗表示、コンソールエラー無しを確認した。

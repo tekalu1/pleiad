@@ -52,6 +52,8 @@ export default async function (t) {
     paintHistory: () => [], placeJunctions: () => [], isRunningHere: () => false, behindHere: () => null, backgroundCounts: () => ({ live: 0, ended: 0 }),
     relayoutBranches: noop, branchIsFresh: () => false, setUuid: noop,
     paintContextLine: noop, paintContextEntry: noop, refreshContextEntry: async () => null, isManagedContext: () => false,
+    // 会話の右パネル（ターンの終わりに開いていれば描き直す）。このテストの対象外
+    sessionContext: { isOpen: () => false, refresh: noop },
     syncHistory: () => { syncs++; }, refresh: async () => {},
     cmd: () => new Promise(r => { releaseHistory = r; }),
     // 文言（web/i18n.mjs の t と client.mjs の html.t・ACTIVITY_LABEL）。このテストは文言を見ない

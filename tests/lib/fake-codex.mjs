@@ -623,6 +623,23 @@ async function handle(method, params) {
     }
 
     case "config/read": return { config: { model: "fake-model-1", model_reasoning_effort: "medium" } };
+    // hooks/list: 各 cwd の .codex/hooks.json を本物と同じ形（key = <sourcePath>:<snake_case>:<group>:<handler>）で返す。
+    // 信頼状態は FAKE_CODEX_HOOK_TRUST（既定 untrusted）。FAKE_CODEX_PLUGIN_HOOK=1 ならプラグインの定義も 1 件足す
+    case "hooks/list": {
+      const snake = s => s.replace(/[A-Z]/g, (c, i) => (i ? '_' : '') + c.toLowerCase());
+      return { data: (params?.cwds ?? []).map(cwd => {
+        const file = path.join(cwd, '.codex', 'hooks.json');
+        let map = {};
+        try { map = JSON.parse(fs.readFileSync(file, 'utf8')).hooks ?? {}; } catch {}
+        const hooks = Object.entries(map).flatMap(([event, groups]) => groups.flatMap((g, gi) => g.hooks.map((h, hi) => ({
+          key: `${file}:${snake(event)}:${gi}:${hi}`, eventName: event[0].toLowerCase() + event.slice(1), handlerType: 'command', command: h.command,
+          matcher: g.matcher ?? null, sourcePath: file, source: 'project', enabled: true, isManaged: false,
+          currentHash: 'sha256:fake', trustStatus: process.env.FAKE_CODEX_HOOK_TRUST || 'untrusted' }))));
+        if (process.env.FAKE_CODEX_PLUGIN_HOOK === '1') hooks.push({ key: 'C:/plugins/x/hooks/hooks.json:stop:0:0', eventName: 'stop', handlerType: 'command',
+          command: 'node plugin-stop.js --token SECRET-PLUGIN', sourcePath: 'C:/plugins/x/hooks/hooks.json', source: 'plugin', pluginId: 'x', enabled: true, isManaged: false, trustStatus: 'trusted' });
+        return { cwd, hooks, errors: [], warnings: [] };
+      }) };
+    }
     // 2 ページに分けて返す（本物も `nextCursor` で続きを渡す）。タイトル生成の Luna は 2 ページ目にだけ居る
     case "model/list": {
       const efforts = ["low", "medium", "high"].map(reasoningEffort => ({ reasoningEffort }));

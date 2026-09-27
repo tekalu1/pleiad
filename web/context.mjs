@@ -13,6 +13,7 @@ import { renderMarkdown } from './render.mjs';
 import { copyIcon } from './icons.mjs';
 import { createMcpSection, unifyConfirm, toggleMcp } from './mcp-config.mjs';
 import { createPlyInstructions } from './ply-instructions-card.mjs';
+import { createHooksCard } from './hooks-card.mjs';
 import { t } from './i18n.mjs';
 
 const KINDS = ['instruction', 'skill', 'mcp'];
@@ -130,8 +131,9 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
   };
   const info = () => view.defaults;
 
-  function saved() {
+  function saved(text = t('context.saved')) {
     status.textContent = '';
+    toast.textContent = text;
     toast.classList.add('on');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toast.classList.remove('on'), 1800);
@@ -140,7 +142,10 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
     try { await fn(); }
     catch (e) { status.textContent = t('context.saveFailed', { error: e.message }); }
   }
-  const plyInstructions = createPlyInstructions({ cmd, work, saved, openDelegation, opened });
+  const plyInstructions = createPlyInstructions({ cmd, work, saved: () => saved(), openDelegation, opened });
+  // 4 つ目の種類。担当・探索の設定（context-scans.json）には入れず、各エージェントの元の設定を読む（ADR 0045）
+  const hooks = createHooksCard({ cmd, work, saved: () => saved(t('hooks.saved')), opened });
+  toast.before(hooks.root);
 
   // ---------------------------------------------------------------- 保存（その場で。全体の設定）
   async function saveKind(kind, mutate, { rescan = true } = {}) {
@@ -446,7 +451,7 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
     }
     scan = null; adding = null; unifying = false; opened.clear(); expanded.clear();
     renderAll();
-    await Promise.all([plyInstructions.load(), loadScan()]);
+    await Promise.all([plyInstructions.load(), loadScan(), hooks.load()]);
   }
   // ログインが済んだら一覧の状態を取り直す（web/client.mjs が mcpAuth を ply:mcp-auth として渡す）
   window.addEventListener('ply:mcp-auth', e => {
