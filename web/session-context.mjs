@@ -18,7 +18,7 @@ import { renderMarkdown } from './render.mjs';
 import { estimateTokens } from './token-estimate.mjs';
 import { toggleExclude } from './context.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
-import { openHookSheet, agentLabel, rowName, eventLabel, order } from './hooks-card.mjs';
+import { openHookSheet, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
 
 const KEY = 'session-context';
 const KINDS = ['instruction', 'skill', 'mcp'];
@@ -559,11 +559,12 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     for (const f of h.report.files.filter(f => f.status === 'error')) k.append(el('p', 'cx-strong', t('sessionContext.hooks.fileError', { path: shortPath(f.path), error: f.error ?? '' })));
     const entries = h.report.entries.slice().sort((a, b) => order(h.report, a.event) - order(h.report, b.event));
     // 出どころの区切りは他の種類と同じ（ユーザー／この場所と親フォルダー）。Skill の hooks は Skill の置き場で分ける
-    const mine = e => e.scope === 'user' || e.skillScope === 'user' ? 'user' : 'directory';
+    const mine = e => ['user', 'plugin', 'managed'].includes(e.scope) || e.skillScope === 'user' ? 'user' : 'directory';
     // ユーザーの定義は設定の画面で見る・直すもの。ここでは数件だけ並べて残りは畳み、パスと編集は作業場所の定義にだけ付ける
     const makeRow = ({ hook: e }) => {
       const bits = [e.event, e.matcher !== null && e.matcher !== undefined ? e.matcher || '*' : null,
-        e.agent === 'codex' ? t('sessionContext.hooks.codexTrust') : null, e.agent === 'antigravity' && !e.enabled ? t('hooks.state.agyOff') : null,
+        e.agent === 'codex' ? codexState(e) : null, e.agent === 'antigravity' && !e.enabled ? t('hooks.state.agyOff') : null,
+        e.stoppedBySameName ? t('hooks.state.agySame') : null, ['plugin', 'managed'].includes(e.scope) ? scopeLabel(e) : null,
         e.scope === 'skill' ? t('sessionContext.hooks.skill', { name: e.skill ?? '' }) : null, t('sessionContext.hooks.registered')].filter(Boolean);
       const row = el('div', 'scx-item');
       const dot = el('span', 'cx-dot off'); dot.setAttribute('aria-hidden', 'true');
@@ -604,6 +605,13 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       if (r.hookId) byId.set(r.hookId, run);
     }
     if (!runs.length) { k.append(el('p', 'cx-sub', t('sessionContext.hooks.noRuns'))); return k; }
+    // 通知の名前は「イベント:matcher」。同じイベント・matcher の定義が 1 つだけなら、その定義の名前で出す。結べなければイベントだけ
+    const defs = (h.report?.entries ?? []).filter(e => e.agent === 'claude');
+    const titleOf = r => {
+      const at = String(r.name ?? '').indexOf(':'), matcher = at < 0 ? null : r.name.slice(at + 1);
+      const hits = defs.filter(e => e.event === r.event && (matcher === null ? !e.matcher || e.matcher === '*' : e.matcher === matcher));
+      return hits.length === 1 ? rowName(hits[0]) : eventLabel(r.event);
+    };
     const make = run => {
       const r = run.response ?? run.started, done = run.response;
       const mark = !done ? '○' : done.outcome === 'success' ? '✓' : done.outcome === 'cancelled' ? '–' : '×';
@@ -612,7 +620,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       const bits = [stamp(run.started?.at ?? r.at, false), r.event, what];
       if (Number.isInteger(done?.exitCode)) bits.push(t('sessionContext.hooks.exit', { code: done.exitCode }));
       if (done && run.started) bits.push(t('sessionContext.hooks.ms', { ms: Math.max(0, done.at - run.started.at) }));
-      return item(mark, r.name || eventLabel(r.event), bits.filter(Boolean).join(' · '), { on: done?.outcome === 'success' }).row;
+      return item(mark, titleOf(r), bits.filter(Boolean).join(' · '), { on: done?.outcome === 'success' }).row;
     };
     const recent = runs.slice(-8);
     for (const run of recent) k.append(make(run));

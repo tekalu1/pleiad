@@ -717,7 +717,6 @@
       "lead": "Definitions found in the settings. Whether they loaded isn't confirmed. Runs are shown separately below.",
       "leadUnobserved": "Definitions found in the settings. Whether they loaded isn't confirmed.",
       "fileError": "Can't read {{path}} · {{error}}",
-      "codexTrust": "Trust status unavailable",
       "skill": "Only after skill {{name}} is invoked",
       "registered": "Registered · Load not confirmed",
       "editAria": "Edit {{name}}",
@@ -734,7 +733,7 @@
       "cancelled": "Cancelled",
       "exit": "exit code {{code}}",
       "ms": "{{ms}} ms",
-      "runsNote": "Only notifications received are listed. No record doesn't prove a hook didn't run. Compaction events aren't recorded because they can't be told apart from Pleiad's own handling."
+      "runsNote": "Only notifications received are listed (output isn't saved). No record doesn't prove a hook didn't run."
     }
   },
   "context": {
@@ -2314,22 +2313,25 @@
       "user": "User",
       "project": "Project",
       "local": "Project local",
-      "skill": "Skill {{name}}"
+      "skill": "Skill {{name}}",
+      "plugin": "Plugin",
+      "managed": "Managed"
     },
     "state": {
       "claude": "Registered · No per-hook off switch",
       "codex": "Trust status unavailable",
       "agyOn": "Set to enabled",
       "agyOff": "Set to disabled",
-      "readOnly": "Read only"
+      "readOnly": "Read only",
+      "agySame": "Turned off by a definition with the same name"
     },
     "row": {
       "matcher": "matcher: {{matcher}}",
-      "agySwitch": "Enable all events of {{name}}"
+      "agySwitch": "Enable {{name}} (all definitions with this name)"
     },
     "fact": {
       "unit": "Unit",
-      "unitAgy": "Name {{name}} · All its events turn off together",
+      "unitAgy": "Name {{name}} · Definitions with this name turn off together across user and workspace",
       "unitGroup": "Event → matcher group → handler",
       "event": "Event",
       "none": "Not set",
@@ -2340,14 +2342,17 @@
     },
     "peek": {
       "claude": "Claude Code has no setting to turn off a single hook while keeping its definition. To stop it, delete the definition.",
-      "codex": "Codex reviews each definition and won't run it until it's trusted. Pleiad can't read the trust status. Review, trust, and turn off individual hooks with /hooks in Codex.",
+      "codex": "Couldn't get the trust status from Codex. Codex doesn't run untrusted definitions. Review, trust, and turn off individual hooks with /hooks in Codex.",
       "agyToggle": "Enable {{name}}",
-      "agy": "Saves enabled to the original file. It also applies to Antigravity started outside Pleiad. When it's reloaded hasn't been confirmed.",
+      "agy": "Saves enabled to the original file. enabled applies per name: turning off a definition in user or workspace settings turns off both. It also applies to Antigravity started outside Pleiad.",
       "skill": "Applies only after the skill is invoked. Not edited from here.",
       "readOnly": "This definition isn't changed from here.",
       "notCommand": "Types other than command are read only in this version. Saving keeps them.",
       "unknownKeys": "Other keys ({{keys}}) are kept when you edit.",
-      "definition": "Original definition · Values that look secret are hidden"
+      "definition": "Original definition · Values that look secret are hidden",
+      "codexUntrusted": "Won't run until trusted. codex exec skips it without asking. Review and trust it with /hooks in Codex. Individual hooks are also turned off there.",
+      "codexTrusted": "Trusted for its current content (hash). Editing changes the hash, and it won't run until reviewed again in /hooks. Turn off individual hooks with /hooks.",
+      "codexOff": "Turned off with /hooks in Codex. Turn it back on there."
     },
     "sheet": {
       "editTitle": "Edit hook",
@@ -2382,7 +2387,9 @@
       "projectScope": "Applies to conversations in this project, including ones started outside Pleiad.",
       "foot": "Managed, plugin, and skill definitions aren't edited here. Codex still needs its own trust review.",
       "keepKeys": "Other keys ({{keys}}) are kept.",
-      "review": "Review changes"
+      "review": "Review changes",
+      "slashAgy": "Antigravity can't resolve quoted backslash paths. Write paths with forward slashes (C:/…).",
+      "slashFix": "Use forward slashes"
     },
     "error": {
       "agents": "Select at least one agent.",
@@ -2396,7 +2403,7 @@
       "deleteLead": "The following definition will be removed from the settings file",
       "outside": "Writing to user settings makes this command run automatically in conversations started outside Pleiad too.",
       "cannot": "Can't write: {{error}}",
-      "codexTrust": "After saving, it won't run until you review and trust it with /hooks in Codex.",
+      "codexTrust": "After saving, it won't run until you review and trust it with /hooks in Codex (codex exec skips it without asking).",
       "reformat": "Only the hooks part can't be replaced, so the whole file will be rewritten (comments and order change)",
       "ack": "I've checked the command and which conversations it runs in",
       "ackDelete": "I've checked the definition to delete",
@@ -2444,6 +2451,13 @@
       "PostModelSwitch": "After model switch",
       "Elicitation": "Elicitation",
       "ElicitationResult": "Elicitation result"
+    },
+    "trust": {
+      "trusted": "Trusted",
+      "untrusted": "Not reviewed · Won't run until trusted",
+      "modified": "Changed · Won't run until reviewed again",
+      "managed": "Managed",
+      "off": "Turned off in Codex /hooks"
     }
   }
 }

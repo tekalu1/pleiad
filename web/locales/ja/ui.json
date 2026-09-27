@@ -690,7 +690,6 @@
       "lead": "設定で見つかった定義です。読み込まれたかは確かめていません。実行は下の発火の記録で分けて示します。",
       "leadUnobserved": "設定で見つかった定義です。読み込まれたかは確かめていません。",
       "fileError": "{{path}} を読めません · {{error}}",
-      "codexTrust": "信頼状態は取得できません",
       "skill": "Skill {{name}} の呼び出し後だけ",
       "registered": "登録あり · 読み込み未確認",
       "editAria": "{{name}} を編集",
@@ -707,7 +706,7 @@
       "cancelled": "取り消し",
       "exit": "終了コード {{code}}",
       "ms": "{{ms}} ms",
-      "runsNote": "記録は受け取った通知だけです。記録がないことは、実行されなかった証明ではありません。圧縮前後のイベントは Pleiad 自身の処理と区別できないため記録しません。"
+      "runsNote": "記録は受け取った通知だけです（出力は保存しません）。記録がないことは、実行されなかった証明ではありません。"
     }
   },
   "context": {
@@ -2238,22 +2237,25 @@
       "user": "ユーザー",
       "project": "プロジェクト",
       "local": "プロジェクトローカル",
-      "skill": "Skill {{name}}"
+      "skill": "Skill {{name}}",
+      "plugin": "プラグイン",
+      "managed": "管理者"
     },
     "state": {
       "claude": "登録あり · 個別停止なし",
-      "codex": "信頼状態は取得できません",
+      "codex": "信頼状態を取得できません",
       "agyOn": "有効にする設定",
       "agyOff": "無効にする設定",
-      "readOnly": "読み取りのみ"
+      "readOnly": "読み取りのみ",
+      "agySame": "同じ名前の定義が止めています"
     },
     "row": {
       "matcher": "matcher: {{matcher}}",
-      "agySwitch": "{{name}} の全イベントを有効にする"
+      "agySwitch": "{{name}} を有効にする（同じ名前の定義すべて）"
     },
     "fact": {
       "unit": "定義の単位",
-      "unitAgy": "名前 {{name}} · 同じ名前のイベントをまとめて止める",
+      "unitAgy": "名前 {{name}} · 同じ名前の定義はユーザーと作業場所をまたいでまとめて止まる",
       "unitGroup": "イベント → matcher group → handler",
       "event": "イベント",
       "none": "指定なし",
@@ -2264,14 +2266,17 @@
     },
     "peek": {
       "claude": "Claude Code には、定義を残したまま 1 件だけ止める設定がありません。止めるときは定義を削除します。",
-      "codex": "Codex は定義ごとに信頼を審査し、信頼されるまで実行しません。Pleiad からは信頼状態を取得できません。内容の確認・信頼・個別の停止は Codex の /hooks で行います。",
+      "codex": "Codex から信頼状態を取得できませんでした。Codex は信頼されていない定義を実行しません。内容の確認・信頼・個別の停止は Codex の /hooks で行います。",
       "agyToggle": "{{name}} を有効にする",
-      "agy": "enabled を元のファイルへ保存します。Pleiad 以外から起動する Antigravity にも効きます。読み込まれる時点は確認していません。",
+      "agy": "enabled を元のファイルへ保存します。enabled は名前単位で、ユーザーと作業場所にある同じ名前の定義は、どちらかを止めると両方止まります。Pleiad 以外から起動する Antigravity にも効きます。",
       "skill": "Skill を呼び出した後だけ効く定義です。この画面からは編集しません。",
       "readOnly": "この定義はここから書き換えません。",
       "notCommand": "command 以外の型は、今の版では読むだけです。保存しても消しません。",
       "unknownKeys": "ほかのキー（{{keys}}）は編集しても残ります。",
-      "definition": "元の定義 · 秘密らしい値は伏せています"
+      "definition": "元の定義 · 秘密らしい値は伏せています",
+      "codexUntrusted": "信頼されるまで実行されません。codex exec では確認も出ずに飛ばされます。Codex の /hooks で内容を確かめて信頼してください。個別の停止も /hooks で行います。",
+      "codexTrusted": "今の内容（hash）に対して信頼済みです。編集すると hash が変わり、/hooks で審査し直すまで実行されません。個別の停止は /hooks で行います。",
+      "codexOff": "Codex の /hooks で止めています。再開も /hooks で行います。"
     },
     "sheet": {
       "editTitle": "Hook を編集",
@@ -2306,7 +2311,9 @@
       "projectScope": "指定したプロジェクトの会話に効く設定です。Pleiad 以外から起動する会話にも効きます。",
       "foot": "管理者・プラグイン・Skill の定義はここから編集しません。Codex の信頼の審査は別に必要です。",
       "keepKeys": "ほかのキー（{{keys}}）は残します。",
-      "review": "書き込む内容を確認"
+      "review": "書き込む内容を確認",
+      "slashAgy": "Antigravity は引用符付きのバックスラッシュのパスを解決できません。パスはスラッシュ（C:/…）で書いてください。",
+      "slashFix": "スラッシュに直す"
     },
     "error": {
       "agents": "対象エージェントを選んでください。",
@@ -2320,7 +2327,7 @@
       "deleteLead": "次の定義を設定ファイルから削除します",
       "outside": "ユーザーの設定に書くと、Pleiad 以外から起動する会話でもこのコマンドが自動で実行されます。",
       "cannot": "書き込めません: {{error}}",
-      "codexTrust": "保存後、Codex の /hooks で審査して信頼するまで実行されません。",
+      "codexTrust": "保存後、Codex の /hooks で審査して信頼するまで実行されません（codex exec では確認も出ずに飛ばされます）。",
       "reformat": "hooks の部分だけを置き換えられないため、ファイル全体を書き直します（コメントと並びが変わります）",
       "ack": "コマンドの内容と、実行される会話の範囲を確認しました",
       "ackDelete": "削除する定義を確認しました",
@@ -2368,6 +2375,13 @@
       "PostModelSwitch": "モデルの切り替え後",
       "Elicitation": "入力の要求",
       "ElicitationResult": "入力の要求の結果"
+    },
+    "trust": {
+      "trusted": "信頼済み",
+      "untrusted": "未審査 · 信頼するまで実行されません",
+      "modified": "変更あり · 審査し直すまで実行されません",
+      "managed": "管理者の定義",
+      "off": "Codex の /hooks で停止中"
     }
   }
 }

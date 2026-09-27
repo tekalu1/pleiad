@@ -119,10 +119,9 @@ export function normalizeSdkMessage(m) {
   }
 
   // ---- hooks の発火（includeHookEvents）。出力（stdout / stderr / output）は秘密を含みうるので持ち出さない。
-  // 識別は hook_id と、CLI が付ける名前・イベントだけ。どの定義かは結び付けない（docs/context-runtime.md「Hooks」）
-  // PreCompact / PostCompact には Pleiad 自身も SDK のコールバックを登録している（claude.mjs）。利用者の定義の発火と区別できないので記録しない
+  // 識別は hook_id と、CLI が付ける名前（「PreToolUse:Bash」= イベントと matcher）・イベントだけ（docs/context-runtime.md「Hooks」）。
+  // 通知は設定ファイルの hooks の分だけ届き、Pleiad 自身の SDK のコールバック（PreCompact / PostCompact）は届かない（実機で確認。2026-09-27）
   if (m.type === "system" && (m.subtype === "hook_started" || m.subtype === "hook_response")) {
-    if (m.hook_event === "PreCompact" || m.hook_event === "PostCompact") return out;
     out.push({ type: "hookRun", phase: m.subtype === "hook_started" ? "started" : "response", hookId: String(m.hook_id ?? ""),
       name: String(m.hook_name ?? ""), event: String(m.hook_event ?? ""),
       ...(m.subtype === "hook_response" ? { outcome: ["success", "error", "cancelled"].includes(m.outcome) ? m.outcome : "error",

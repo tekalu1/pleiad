@@ -305,6 +305,9 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 .hk-maprow{display:grid;grid-template-columns:110px minmax(0,1fr);align-items:center;gap:8px;color:var(--ink);font-size:var(--fs-s)}
 .hk-map .hk-input{background:var(--surface-paper)}
 .hk-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.hk-slash{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
+.hk-slash[hidden]{display:none}
+.hk-slash .btn{padding:3px 10px;font-size:var(--fs-s)}
 .hk-where{display:flex;flex-direction:column;gap:4px;background:var(--surface-1)}
 .hk-where b{color:var(--ink)}
 .hk-where p{margin:0}

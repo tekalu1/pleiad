@@ -31,11 +31,22 @@ export const scopeLabel = e => e.scope === 'skill' ? t('hooks.scope.skill', { na
 export const rowName = e => e.name ?? (e.command || e.definition?.url || e.definition?.server || e.type);
 /** 行の状態（右端の弱い字）。有効・実行済みとは言わない */
 export function stateText(e) {
+  if (e.agent === 'codex' && ('trust' in e)) return codexState(e);
   if (e.readOnly) return t('hooks.state.readOnly');
   if (e.agent === 'claude') return t('hooks.state.claude');
   if (e.agent === 'codex') return t('hooks.state.codex');
+  if (e.stoppedBySameName) return t('hooks.state.agySame');
   return e.enabled ? t('hooks.state.agyOn') : t('hooks.state.agyOff');
 }
+// i18n-dynamic: hooks.trust.
+/** Codex の信頼状態（hooks/list の trustStatus・enabled）。取れなかったときだけ「取得できません」 */
+export function codexState(e) {
+  if (!e.trust?.status) return t('hooks.state.codex');
+  if (!e.trust.enabled) return t('hooks.trust.off');
+  const key = `hooks.trust.${e.trust.status}`, s = t(key);
+  return s === key ? e.trust.status : s;
+}
+const codexRuns = e => ['trusted', 'managed'].includes(e.trust?.status) && e.trust.enabled;
 export function metaText(e) {
   const bits = [scopeLabel(e)];
   if (e.matcher !== null && e.matcher !== undefined) bits.push(t('hooks.row.matcher', { matcher: e.matcher || '*' }));
@@ -84,11 +95,13 @@ export function peekHook(e, { short = p => p, onEdit = null, onDelete = null, on
   put('timeout', e.timeout ? t('hooks.fact.seconds', { n: e.timeout }) : t('hooks.fact.default'));
   put('async', e.agent === 'antigravity' ? t('hooks.fact.asyncAgy') : String(e.async));
   put(t('hooks.fact.state'), stateText(e));
+  if (e.trust?.hash) put('hash', e.trust.hash.replace(/^(sha256:.{12}).*$/, '$1…'));
   box.append(facts);
   // 止める操作の説明（エージェントごと）
   if (e.readOnly) box.append(el('p', 'msg', e.scope === 'skill' ? t('hooks.peek.skill') : t('hooks.peek.readOnly')));
   else if (e.agent === 'claude') box.append(el('p', 'msg', t('hooks.peek.claude')));
-  else if (e.agent === 'codex') box.append(el('p', 'msg', t('hooks.peek.codex')));
+  else if (e.agent === 'codex') box.append(el('p', 'msg', !e.trust?.status ? t('hooks.peek.codex') : !e.trust.enabled ? t('hooks.peek.codexOff')
+    : codexRuns(e) ? t('hooks.peek.codexTrusted') : t('hooks.peek.codexUntrusted')));
   else {
     // スイッチは行の右端（設定のカード）。渡されたときだけ詳細にも置く
     if (onToggle) {
@@ -338,7 +351,13 @@ export async function openHookSheet(ctx, opts = {}) {
   // コマンド
   const cmdField = el('label', 'mcp-field');
   const command = el('input'); command.className = 'hk-input mono'; command.value = editing ? original.handler.command ?? '' : ''; command.placeholder = 'node ~/hooks/audit.cjs'; command.autocomplete = 'off'; command.spellcheck = false;
-  cmdField.append(t('hooks.sheet.command'), command, el('p', 'mcp-note', t('hooks.sheet.commandNote')));
+  // Antigravity は引用符付きのバックスラッシュのパスを解決できない（実機で確認。2026-09-27）。スラッシュ形式に直せるようにする
+  const slashNote = el('div', 'hk-slash');
+  const slashFix = button(t('hooks.sheet.slashFix'), 'btn', () => { command.value = command.value.replace(/\\/g, '/'); paintSlash(); command.focus(); });
+  slashNote.append(el('p', 'mcp-note cx-strong', t('hooks.sheet.slashAgy')), slashFix);
+  const paintSlash = () => { slashNote.hidden = !(state.agents.includes('antigravity') && command.value.includes('\\')); };
+  command.oninput = paintSlash;
+  cmdField.append(t('hooks.sheet.command'), command, slashNote, el('p', 'mcp-note', t('hooks.sheet.commandNote')));
   // timeout / async
   const pair = el('div', 'hk-pair');
   const timeoutField = el('label', 'mcp-field');
@@ -400,6 +419,7 @@ export async function openHookSheet(ctx, opts = {}) {
     if (hasAgy) asyncSelect.value = 'false';
     asyncNote.textContent = hasAgy ? t('hooks.sheet.asyncAgy') : '';
     asyncNote.hidden = !hasAgy;
+    paintSlash();
     const localOption = scopeSelect.querySelector('[value=local]');
     localOption.disabled = !(agents.length === 1 && agents[0] === 'claude');
     if (localOption.disabled && state.scope === 'local' && !editing) { state.scope = 'user'; scopeSelect.value = 'user'; }
