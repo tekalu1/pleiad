@@ -234,6 +234,7 @@ export const backend = {
   // hostTools だけ false なのは、AI 側から present / set_status を呼ぶ口が無い
   // バックエンド（codex）と同じ形を、テストでも踏むため。
   capabilities: {
+    compact: true,
     title: true,
     tag: true,
     fork: true,
@@ -254,6 +255,16 @@ export const backend = {
 
   modes: () => MODES,
   models: async () => MODELS,
+
+  async compact({ sessionId, emit }) {
+    const s = ensure(sessionId);
+    emit({ type: 'compaction', phase: 'start', trigger: 'manual' });
+    await wait(350);
+    s.contextTokens = 21_000;
+    emit({ type: 'compaction', phase: 'complete', trigger: 'manual', beforeTokens: 124_000,
+      afterTokens: 21_000, summary: '会話一覧に検索を追加しました。次は狭い画面で結果を確認します。' });
+    emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
+  },
 
   async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, oauthToken, hostSessionId }) {
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
@@ -312,9 +323,21 @@ export const backend = {
         // 実際に渡った ply_agents の instructions（Pleiad が入れた指示を含む）をそのまま返す。親と子で中身が違うことを確かめる台本
         out.text = agentRuntime?.instructions ?? '(none)';
         await say(emit, out.text, out.uuid);
-      } else if (text === 'compact') {
+      } else if (text === 'compact' || text === '/compact') {
         emit({ type: 'activity', state: 'compacting' });
+        emit({ type: 'compaction', phase: 'start', trigger: 'auto' });
+        await wait(350);
+        s.contextTokens = 21_000;
+        emit({ type: 'compaction', phase: 'complete', trigger: 'auto', beforeTokens: 182_000,
+          afterTokens: 21_000, summary: '会話一覧に検索を追加しました。次は狭い画面で結果を確認します。' });
+        emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
         out.text = 'compacted';
+        await say(emit, out.text, out.uuid);
+      } else if (text === 'compact-fail') {
+        emit({ type: 'compaction', phase: 'start', trigger: 'auto' });
+        await wait(350);
+        emit({ type: 'compaction', phase: 'failed', trigger: 'auto', reason: '接続が切れました' });
+        out.text = 'failed';
         await say(emit, out.text, out.uuid);
       } else if (text.startsWith("tool")) {
         const callId = crypto.randomUUID();
@@ -412,6 +435,7 @@ export const backend = {
     }
 
     if (out.text || out.toolCalls) push(s, out);
+    emit({ type: 'contextWindow', usedTokens: s.contextTokens ?? 124_000, windowTokens: 200_000 });
     emit({ type: "turnResult", outcome: "ok", turns: 1, costUsd: 0 });
     return { sessionId: id };
   },

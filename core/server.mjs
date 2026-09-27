@@ -30,6 +30,9 @@ import * as P from "./protocol.mjs";
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
+import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
+import { normalizeCompactionSettings } from './compaction-settings.mjs';
+import { mergeCompactionHistory } from './compaction-history.mjs';
 import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
@@ -68,6 +71,16 @@ const WEB = path.join(HERE, "..", "web");
 // 画面の言語（設定値と解決後）。起動時と設定を変えたときに決め直す。ready と prefs イベントで配る（docs/design.md「多言語対応」）
 let locale = localeInfo(await store.getPrefs());
 setLocale(locale.lang);
+let compactionSettings;
+try {
+  compactionSettings = normalizeCompactionSettings((await store.getPrefs()).autoCompaction ?? {});
+} catch (err) {
+  console.error('  自動圧縮の保存済み設定が不正です。既定値に戻します:', String(err?.message ?? err));
+  compactionSettings = normalizeCompactionSettings();
+  await store.setPref('autoCompaction', compactionSettings).catch(saveError => {
+    console.error('  自動圧縮の既定値を保存できませんでした:', String(saveError?.message ?? saveError));
+  });
+}
 
 import { installation, cliCommand } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
@@ -641,6 +654,10 @@ function sessionRow(b, s, extra = {}) {
     status: (b.capabilities?.tag && s ? s.tag : extra.status ?? s?.tag) ?? null,
     statusChangedAt: extra.statusChangedAt ?? null,
     completedAt: extra.completedAt ?? null,
+    contextWindow: extra.contextWindow ?? null,
+    compactionAt: compactionScheduler.get(s?.sessionId ?? extra.id),
+    compacted: Boolean(extra.compacted),
+    autoCompactionOff: Boolean(extra.autoCompactionOff),
     // 中断したまま次のターンが始まっていない印 { at, reason }。無ければ null（docs/design.md「中断と再開」）
     interrupted: interruptedOf(extra.interrupted),
     // 確認済みの完了時刻。ホストに 1 つで、どの端末から見ても同じ（store.markRead・docs/design.md「完了・未確認」）
@@ -929,6 +946,7 @@ function giveUp() {
 const LIST_NEUTRAL_EVENTS = new Set([
   "text.delta", "text.end", "thinking.start", "thinking.delta", "tool.start", "tool.result", "activity",
   "userMessage.delivered", "running", "permission", "outbox", "mcpAuth", "claudeLogin",
+  "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",
 ]);
 
 // 接続ごとに、いま開いている会話（loadSession の watch）。宣言した接続には、流れの出来事（streamEvents）を
@@ -1086,17 +1104,45 @@ function clientReason(args) {
 function makeEmit(turn) {
   const emit = (event, { recorded = false } = {}) => {
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
-    // 文脈の圧縮（Claude の activity compacting）。控えを捨て、
-    // 次に頼まれたら instructions_for_path / load_skill が本文を渡し直す（要約に置き換わると手元から消えるため）
-    if (event?.type === 'activity' && event.state === 'compacting') {
-      const kept = turn.contextRecord?.delivered?.entries;
-      if (kept) for (const key of Object.keys(kept)) delete kept[key];
+    if (event?.type === 'contextWindow' && Number.isFinite(event.usedTokens) && Number.isFinite(event.windowTokens)) {
+      turn.contextWindow = { usedTokens: event.usedTokens, windowTokens: event.windowTokens };
+    }
+    if (event?.type === 'compaction') {
+      const phase = event.phase;
+      const current = turn.compaction;
+      const wasComplete = current?.phase === 'complete';
+      if (phase === 'start' && current?.phase === 'start') return;
+      if (phase === 'summary' && !current) return;
+      const entry = phase === 'start' || !current
+        ? { id: crypto.randomUUID(), at: Date.now(), trigger: turn.compactTrigger ?? event.trigger ?? 'auto' }
+        : current;
+      if (phase !== 'summary') entry.phase = phase;
+      if (phase === 'complete' && !wasComplete) {
+        const kept = turn.contextRecord?.delivered?.entries;
+        if (kept) for (const key of Object.keys(kept)) delete kept[key];
+      }
+      for (const key of ['nativeId', 'turnId', 'beforeTokens', 'afterTokens', 'summary', 'reason'])
+        if (event[key] !== undefined && event[key] !== null) entry[key] = event[key];
+      turn.compaction = entry;
+      event = { type: 'compaction', ...entry };
+      if (phase !== 'start' && turn.info.sessionId) {
+        const sessionId = turn.info.sessionId;
+        turn.compactionWrite = turn.compactionWrite.then(async () => {
+          const previous = (await store.get(sessionId)).compactions ?? [];
+          const index = previous.findIndex(x => x.id === entry.id);
+          const next = [...previous];
+          if (index >= 0) next[index] = { ...entry }; else next.push({ ...entry });
+          await store.setSessionData(sessionId, 'compactions', next);
+          if (entry.phase === 'complete' && entry.trigger !== 'manual') await store.setSessionData(sessionId, 'compacted', true);
+        }).catch(err => console.error('  圧縮の記録に失敗:', String(err?.message ?? err)));
+      }
     }
     // 受理済みの途中送信が読まれずに捨てられた（userMessage.dropped）。送信待ちへ戻す
     if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId) {
       outbox.returned(turn.info.sessionId, event.messageId).catch(() => {});
     }
     if (event?.type === "turnResult") {
+      if (turn.compactTrigger) event = { ...event, compact: true };
       if (turn.stream.initialMessageId) event = { ...event, messageId: turn.stream.initialMessageId };
       turn.outcome = event.outcome;
       // 中断で終わったら理由を添える（画面は会話の末尾の「中断しました」の文言を理由で選ぶ）
@@ -1123,6 +1169,7 @@ function makeEmit(turn) {
     // （差し替えると sidecar に "null" キーの行が生える）。
     if (event?.type === "session" && event.sessionId && !turn.info.sessionId) {
       turn.info.sessionId = event.sessionId;
+      turn.compactionRevision = compactionScheduler.revision(event.sessionId);
       for (const read of liveReads) if (read.sessionId === event.sessionId) read.turn = turn;
       runtime.turns.delete(turn.key);
       const connection = agentConnections.get(turn.key);
@@ -1664,10 +1711,13 @@ const ANSWER_EVENTS = new Set(['text.delta', 'text.end', 'thinking.delta', 'tool
 
 async function runTurnInternal(args, onStarted, hooks) {
   const { prompt, sessionId = null } = args ?? {};
+  if (hooks.canStart && !hooks.canStart()) return 'cancelled';
   if ((hooks.internal || hooks.signal) && (sessionBusy(sessionId))) return 'requeue';
   if (switching.has(sessionId) || forking.has(sessionId)) throw new Error(t('agents.switching'));
   // 同じセッションの二重実行は防ぐ。別のセッションなら並行して回してよい
   if (sessionId && runtime.turns.has(sessionId)) throw new Error(t('session.running'));
+  if (sessionId && hooks.compact !== 'idle') compactionScheduler.cancel(sessionId);
+  const compactionRevision = sessionId ? compactionScheduler.revision(sessionId) : null;
   if (sessionId) switching.add(sessionId);
   try {
 
@@ -1709,6 +1759,7 @@ async function runTurnInternal(args, onStarted, hooks) {
     const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd, endpointId);
     const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
     if (sessionId) {
+      if (!hooks.compact) await store.setSessionData(sessionId, 'compacted', false);
       await store.setModel(sessionId, model);
       await store.setSessionData(sessionId, "effort", effort);
       if (reserved?.account !== undefined) await store.setSessionData(sessionId, 'claudeAccount', reserved.account);
@@ -1783,7 +1834,7 @@ async function runTurnInternal(args, onStarted, hooks) {
     const turn = {
       stream: {
         ...structuredClone(baseline),
-        user: hooks.internal ? null : { role: "user", text: String(prompt ?? ""), at: new Date().toISOString(), backend: backend.id },
+        user: hooks.internal || hooks.compact ? null : { role: "user", text: String(prompt ?? ""), at: new Date().toISOString(), backend: backend.id },
         initialMessageId: args.messageId ?? null,
         events: [],
       },
@@ -1796,6 +1847,12 @@ async function runTurnInternal(args, onStarted, hooks) {
       agentLocale,
       control: { handle: null, onReady: () => outbox.kick(sessionId).catch(() => {}) },
       outcome: null,
+      compactTrigger: hooks.compact ?? null,
+      compactionRevision,
+      userInitiated: !hooks.internal && !hooks.compact,
+      compaction: null,
+      compactionWrite: Promise.resolve(),
+      contextWindow: null,
       contextRecord,
       taskHints: new Map(),
       pastSubagents,
@@ -1878,8 +1935,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       // 再開なら id が分かっているので先に載せる。新規は session イベントで id が決まった瞬間に（makeEmit）
       if (sessionId && attachments.length) await presentAttachments(sessionId, attachments, emit);
       if (hooks.signal?.aborted) throw new Error(t('turn.aborted'));
-      backendInvoked = true;
-      const result = await backend.runTurn({
+      const runArgs = {
         prompt,
         sessionId,
         cwd,
@@ -1903,7 +1959,21 @@ async function runTurnInternal(args, onStarted, hooks) {
         ...(account ? { oauthToken: account.token } : {}),
         // 互換の接続先（キーを含む。backend の中でだけ使い、ログ・イベントには出さない。core/compat-endpoints.mjs）
         ...(endpoint ? { endpoint } : {}),
-      });
+      };
+      // Preparation can await context and settings. A send or cancellation may have invalidated
+      // an idle reservation since the first check; do not invoke the backend in that case.
+      if (hooks.canInvoke && !hooks.canInvoke()) {
+        turn.outcome = 'requeue';
+        return 'requeue';
+      }
+      backendInvoked = true;
+      const result = hooks.compact && backend.compact
+        ? await backend.compact({ ...runArgs, trigger: hooks.compact })
+        : await backend.runTurn(runArgs);
+      if (hooks.compact && !turn.compaction?.phase?.match(/^complete$/)) {
+        emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact, reason: t('compaction.noCompletion') });
+      }
+      if (hooks.compact && turn.outcome == null) emit({ type: 'turnResult', outcome: 'ok' });
       // 相手が別のターンを走らせていて、何も届かなかった。
       // 完了ではない。送信待ちへ戻し（message-queue）、そのターンが終わってから送り直す
       if (result?.requeue) turn.outcome = "requeue";
@@ -1926,6 +1996,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         await store.setMeta(turn.info.sessionId, { lastModified: Date.now() }).catch(() => {});
       }
     } catch (err) {
+      if (hooks.compact && turn.compaction?.phase !== 'complete') emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
+        reason: String(err?.message ?? err) });
       if (resolvedContext) { contextRecord.report.status = 'failed'; await saveContext().catch(() => {}); }
       if (!turn.errorShown) emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
       // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
@@ -1965,6 +2037,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
     .catch(() => { console.error('  使用量を記録できませんでした'); });
   if (turn.info.sessionId) {
     await turn.setup?.catch(() => {});
+    await turn.compactionWrite;
+    if (turn.contextWindow) await store.setSessionData(turn.info.sessionId, 'contextWindow', turn.contextWindow).catch(() => {});
     // 走っている印（turnStartedAt）はどの終わり方でも片付ける。requeue は何も届いていないので完了も中断も書かない
     // 始まらなかったターン（record が false）は前の中断の印を消さない（開始で消していないので）
     const patch = requeued ? { turnStartedAt: null }
@@ -1983,6 +2057,21 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 片付けるのはこのセッションの承認待ちだけ。他のターンの分は残す
   settleAll('turnEnded', turn.info.sessionId);
   broadcastRunning();
+  if (record && turn.outcome === 'ok' && turn.userInitiated && !turn.compaction
+      && !delegated && turn.info.sessionId) {
+    const id = turn.info.sessionId;
+    const meta = await store.get(id);
+    const queued = await outbox.list(id);
+    const row = compactionSettings[turn.backend.id === 'fake' ? 'claude' : turn.backend.id];
+    const usage = turn.contextWindow ?? meta.contextWindow;
+    if (compactionScheduler.revision(id) === turn.compactionRevision && !runtime.turns.has(id)
+        && !queued.some(m => !['sent', 'cancelled'].includes(m.status))
+        && compactionSettings.enabled && row?.enabled && turn.backend.capabilities?.compact
+        && usage?.usedTokens >= compactionSettings.minTokens && !meta.autoCompactionOff
+        && ![...runtime.waiting.values()].some(w => w.payload.sessionId === id))
+      compactionScheduler.schedule(id, turn.backend.id, row.delayMinutes * 60_000,
+        turn.compactionRevision, usage.usedTokens);
+  }
 }
 
 /** 送信待ちが残っている会話を全部 kick する。ターンが終わるたびに呼ぶ。 */
@@ -1997,6 +2086,49 @@ async function kickQueued() {
 
 // 同じ会話のターン（準備中を含む）が終わるのを待つ
 const sessionBusy = (id) => runtime.turns.has(id) || switching.has(id) || forking.has(id);
+const compactionScheduler = createCompactionScheduler({
+  changed: (sessionId, at) => emitGlobal({ type: 'compactionSchedule', sessionId, at }),
+  canRun: async (id, expectedBackend) => {
+    const [meta, backend, queued] = await Promise.all([store.get(id), resolveBackendForSession(id), outbox.list(id)]);
+    const row = compactionSettings[backend?.id === 'fake' ? 'claude' : backend?.id];
+    return backend?.id === expectedBackend && !sessionBusy(id) && !meta.autoCompactionOff && !meta.delegation
+      && !queued.some(m => !['sent', 'cancelled'].includes(m.status))
+      && compactionSettings.enabled && row?.enabled && backend?.capabilities?.compact
+      && meta.contextWindow?.usedTokens >= compactionSettings.minTokens
+      && ![...runtime.waiting.values()].some(w => w.payload.sessionId === id);
+  },
+  compact: async (id, _sessionId, current) => {
+    if (current()) await runTurn({ sessionId: id, prompt: '/compact' }, () => {},
+      { compact: 'idle', ...idleCompactionGuards(current, () => sessionBusy(id)) });
+  },
+});
+const queuedCompactions = new Set();
+async function compactionStartFailed(sessionId, trigger, err) {
+  const entry = { id: crypto.randomUUID(), at: Date.now(), trigger, phase: 'failed', reason: String(err?.message ?? err) };
+  try {
+    const previous = (await store.get(sessionId)).compactions ?? [];
+    await store.setSessionData(sessionId, 'compactions', [...previous, entry]);
+  } catch (saveError) { console.error('  圧縮失敗の記録に失敗:', String(saveError?.message ?? saveError)); }
+  emitGlobal({ type: 'compaction', sessionId, ...entry });
+}
+async function compactConversation(sessionId, trigger = 'manual') {
+  const backend = await resolveBackendForSession(sessionId);
+  if (!backend?.capabilities?.compact) throw new Error(t('compaction.unsupported'));
+  if (sessionBusy(sessionId)) {
+    if (queuedCompactions.has(sessionId)) return 'queued';
+    queuedCompactions.add(sessionId);
+    void (async () => {
+      try {
+        while (sessionBusy(sessionId)) await waitFree(sessionId, 30_000);
+        if (queuedCompactions.has(sessionId)) await runTurn({ sessionId, prompt: '/compact' }, () => {}, { compact: trigger });
+      } catch (err) {
+        await compactionStartFailed(sessionId, trigger, err);
+      } finally { queuedCompactions.delete(sessionId); }
+    })();
+    return 'queued';
+  }
+  return runTurn({ sessionId, prompt: '/compact' }, () => {}, { compact: trigger });
+}
 const freeWaiters = new Map();   // sessionId -> Set<() => void>
 function notifyFree(id) {
   for (const done of [...(freeWaiters.get(id) ?? [])]) done();
@@ -2600,6 +2732,8 @@ wss.on("connection", (ws, req) => {
           switching.add(sessionId);
           try {
             if (!(await store.get(sessionId)).unsent) throw new Error(t('session.onlyUnsentDeletable'));
+            compactionScheduler.cancel(sessionId);
+            queuedCompactions.delete(sessionId);
             await deleteUnsentConversation(sessionId);
             await store.removeSession(sessionId);
             releaseAgentConnection(sessionId);
@@ -2612,6 +2746,7 @@ wss.on("connection", (ws, req) => {
           const { sessionId, backend: targetId } = msg.args ?? {};
           if (!sessionId) return reply(false, t('session.required'));
           if (runtime.turns.has(sessionId) || switching.has(sessionId) || forking.has(sessionId)) return reply(false, t('session.finishBeforeSwitch'));
+          compactionScheduler.cancel(sessionId);
           switching.add(sessionId);
           try {
             const source = refuseRetired(await resolveBackendForSession(sessionId));
@@ -2635,6 +2770,7 @@ wss.on("connection", (ws, req) => {
           if (typeof messageId !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(messageId)) throw new Error(t('send.messageIdRequired'));
           if (typeof prompt !== 'string' || !prompt.trim()) throw new Error(t('send.messageRequired'));
           if (attachments !== undefined && !Array.isArray(attachments)) throw new Error(t('send.invalidAttachments'));
+          compactionScheduler.cancel(sessionId);
           // 中断した会話に新しい指示を送ったら、中断で保留になった未送信を先に並びのまま送り直す（再開と同じ）。
           // 戻さないと新しい指示は保留の後ろで順番を待ち続ける。画面は「保留中の N 件の後にこの指示で続けます」と出している
           if (!sessionBusy(sessionId) && interruptedOf((await store.get(sessionId)).interrupted)
@@ -2642,6 +2778,33 @@ wss.on("connection", (ws, req) => {
           return reply(true, await outbox.accept(sessionId, messageId, {
             prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}),
           }));
+        }
+        case 'compactConversation': {
+          const sessionId = msg.args?.sessionId;
+          compactionScheduler.cancel(sessionId);
+          const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
+          if (!backend) throw new Error(t('session.notFound'));
+          if (!backend.capabilities?.compact) throw new Error(t('compaction.unsupported'));
+          const queued = sessionBusy(sessionId);
+          void compactConversation(sessionId).catch(err => compactionStartFailed(sessionId, 'manual', err));
+          return reply(true, { status: queued ? 'queued' : 'started' });
+        }
+        case 'cancelCompaction': {
+          const sessionId = msg.args?.sessionId;
+          compactionScheduler.cancel(sessionId);
+          queuedCompactions.delete(sessionId);
+          return reply(true, { cancelled: true });
+        }
+        case 'setConversationAutoCompaction': {
+          const sessionId = msg.args?.sessionId;
+          const off = msg.args?.off;
+          if (typeof off !== 'boolean') throw new Error(t('compaction.invalidSetting'));
+          if (!sessionId) throw new Error(t('session.notFound'));
+          if (off) compactionScheduler.cancel(sessionId);
+          if (!(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
+          await store.setSessionData(sessionId, 'autoCompactionOff', off);
+          emitGlobal({ type: 'conversationAutoCompaction', sessionId, off });
+          return reply(true, { off });
         }
         case 'messageAction': {
           const { sessionId, messageId, action } = msg.args ?? {};
@@ -2758,7 +2921,8 @@ wss.on("connection", (ws, req) => {
             const backend = await resolveBackendForSession(sessionId);
             const retired = backend?.retired ? { retired: backend.retired } : {};
             // A later completion cannot be acknowledged by an older history snapshot.
-            const completedAt = (await store.get(sessionId)).completedAt ?? null;
+            const sidecar = await store.get(sessionId);
+            const completedAt = sidecar.completedAt ?? null;
             // 中断の印（一覧の行と同じ形）。会話の末尾の「中断しました」を保存された状態から描くため
             const interrupted = runtime.turns.has(sessionId) ? null : interruptedOf((await store.get(sessionId)).interrupted);
             const data = await history.loadTranscript(sessionId, backend);
@@ -2769,7 +2933,12 @@ wss.on("connection", (ws, req) => {
               ...(m.toolCalls ? { toolCalls: m.toolCalls.map(call => ({ name: call.name })) } : {}),
             })) });
             const draft = (await store.get(sessionId)).draft ?? null;
-            if (!msg.args?.live) return reply(true, { ...data, completedAt, interrupted, draft, ...retired });
+            const nativeCompactions = backend.getCompactions ? await backend.getCompactions(sessionId).catch(() => []) : [];
+            const savedCompactions = sidecar.compactions ?? [];
+            const compactions = mergeCompactionHistory(nativeCompactions, savedCompactions);
+            const compactionData = { compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
+              compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
+            if (!msg.args?.live) return reply(true, { ...data, completedAt, interrupted, draft, ...compactionData, ...retired });
             // 承認は一度きりの配信で、streamEvents にも載らない（web/session-stream.mjs）。
             // 開き直しのたびに保留中のものを返さないと、承認が起きた後にその会話を開いても
             // カードが出ず、一覧だけが「承認待ち」のまま止まる。
@@ -2786,12 +2955,12 @@ wss.on("connection", (ws, req) => {
               // Use a fixed pre-turn history, never an independently sampled partial
               // transcript: it may overlap the events or lag behind them.
               return reply(true, {
-                messages: [...live.messages, ...(user ? [user] : [])], presents: live.presents, completedAt, interrupted: null, draft,
+                messages: [...live.messages, ...(user ? [user] : [])], presents: live.presents, completedAt, interrupted: null, draft, ...compactionData,
                 stream: { events: live.events }, streamCursor: streamSequence, permissions,
                 initialMessageId: live.initialMessageId,
               });
             }
-            return reply(true, { ...data, completedAt, interrupted, draft, streamCursor: streamSequence, permissions, ...retired });
+            return reply(true, { ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired });
           } finally { liveReads.delete(read); }
         }
 
@@ -2978,7 +3147,30 @@ wss.on("connection", (ws, req) => {
           // 既定のエージェントが無くなっていたら（対応を終えた・無効にした）載せない。web は有効なものへ落とす
           const prefs = await store.getPrefs();
           if (prefs.backend && !getBackend(prefs.backend)) delete prefs.backend;
+          prefs.autoCompaction = compactionSettings;
           return reply(true, prefs);
+        }
+        case 'setAutoCompaction': {
+          const settings = normalizeCompactionSettings(msg.args?.settings);
+          const previousSettings = compactionSettings;
+          // A reservation already firing may be preparing its backend. Settings take effect before
+          // the disk write, and ineligible in-flight reservations are invalidated before invocation.
+          compactionScheduler.cancelFiring(entry => {
+            const row = settings[entry.backendId === 'fake' ? 'claude' : entry.backendId];
+            return !settings.enabled || !row?.enabled || entry.usedTokens < settings.minTokens;
+          });
+          compactionSettings = settings;
+          try { await store.setPref('autoCompaction', settings); }
+          catch (err) { compactionSettings = previousSettings; throw err; }
+          for (const entry of compactionScheduler.entries()) {
+            const backend = await resolveBackendForSession(entry.sessionId);
+            const row = settings[backend?.id === 'fake' ? 'claude' : backend?.id];
+            if (!settings.enabled || !row?.enabled
+                || (await store.get(entry.sessionId)).contextWindow?.usedTokens < settings.minTokens)
+              compactionScheduler.cancel(entry.sessionId);
+          }
+          emitGlobal({ type: 'autoCompactionSettings', sessionId: null, settings });
+          return reply(true, settings);
         }
 
         /**

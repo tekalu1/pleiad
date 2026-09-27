@@ -104,6 +104,9 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .pop .li .lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pop .li .hint{color:var(--ink-weak);margin-left:auto;font-size:var(--fs-xs);font-family:var(--font-mono);flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pop .li .more{color:var(--ink-weak);font-size:10px;flex:none}
+/* 項目の下の補足（押せない理由など）。字の位置は項目名に揃え（✓ の幅 9px + 間 8px）、弱い小さな本文の字で全文を折り返す */
+.pop .li.has-note{flex-wrap:wrap;row-gap:1px}
+.pop .li .note{flex-basis:100%;margin-left:17px;font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5;white-space:normal;overflow-wrap:anywhere}
 .pop .sep{height:6px}
 .pop input.field{width:100%;background:var(--surface-1);border-radius:var(--r-pill);padding:5px 10px;margin:2px 0 4px}
 .pop input.field:focus{outline:none;background:var(--surface-2)}
@@ -179,6 +182,10 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 #skillList .args{margin-left:8px;font-family:var(--font-mono);font-size:var(--fs-xs);font-weight:400;color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis}
 #skillList .from{font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
 #skillList .desc{grid-column:1/-1;font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 今は使えない候補（Antigravity の会話の /compact）。名前を弱い字にし、説明の欄に理由を全文で出す */
+#skillList li.it[aria-disabled=true]{cursor:default}
+#skillList li.it[aria-disabled=true] .name{color:var(--ink-weak)}
+#skillList li.it[aria-disabled=true] .desc{white-space:normal}
 #skillList .none{padding:6px 10px;font-size:var(--fs-xs);color:var(--ink-weak);cursor:default}
 /* 選んだ直後だけ、引数の書き方を入力欄の足元に薄く。打ち始めると消える */
 .slash-hint{font-size:var(--fs-xs);color:var(--ink-weak);padding:4px 16px 0;min-height:22px;font-family:var(--font-mono)}

@@ -39,10 +39,11 @@
       "agents": "Agents",
       "usage": "Usage",
       "appearance": "Appearance",
-      "context": "Context",
+      "context": "Plugins",
       "remote": "Remote",
       "about": "About & updates",
-      "delegation": "Delegation"
+      "delegation": "Delegation",
+      "autoCompaction": "Auto compaction"
     },
     "usage": {
       "description": "Subscription limits apply to the whole account. Shows usage, remaining amount, and reset time.",
@@ -194,7 +195,7 @@
     "connectingMcp": "Connecting to external MCP {{current}}/{{total}}",
     "thinking": "Thinking",
     "writing": "Writing",
-    "compacting": "Compacting context",
+    "compacting": "Compacting conversation…",
     "waiting": "Waiting for your reply",
     "running": "Running",
     "stopping": "Stopping",
@@ -547,7 +548,7 @@
       "added": "Pleiad's instructions {{n}}",
       "join": ", "
     },
-    "title": "Context for this conversation",
+    "title": "Plugins for this conversation",
     "subtitle": {
       "startedAt": "Started {{time}} · settings changes apply from the next turn",
       "started": "Settings changes apply from the next turn",
@@ -560,7 +561,7 @@
     "notStarted": "This conversation hasn't started yet. What Pleiad provides is recorded here on the first send.",
     "guarded": {
       "title": "This conversation doesn't use the settings Pleiad provides",
-      "reason": "{{backend}} can't receive the context Pleiad provides, so loading was left to the agent itself."
+      "reason": "{{backend}} can't receive the plugins Pleiad provides, so loading was left to the agent itself."
     },
     "failed": {
       "title": "Loading or running failed partway",
@@ -568,7 +569,7 @@
     },
     "foot": {
       "lead": "Settings for all locations: ",
-      "link": "Open context settings →"
+      "link": "Open plugin settings →"
     },
     "instruction": {
       "native": "{{agent}} reads them by its own rules (Pleiad can't see the contents).",
@@ -777,7 +778,7 @@
       "nothing": "Added location · nothing found"
     },
     "scanFailed": "Couldn't search: {{error}}",
-    "loadFailed": "Couldn't load the context settings: {{error}}",
+    "loadFailed": "Couldn't load the plugin settings: {{error}}",
     "tier": {
       "user": "User",
       "place": "Working directory",
@@ -1002,7 +1003,7 @@
       "resumeCwd": "Changed on resume",
       "cwdFrom": "from {{from}}",
       "contextReloaded": "Reloaded instructions and Skills",
-      "contextSettingsApplied": "Applied context settings changes",
+      "contextSettingsApplied": "Applied plugin settings changes",
       "contextChanged": "{{names}}",
       "contextChangedMore_one": "{{names}} and {{count}} more",
       "contextChangedMore_other": "{{names}} and {{count}} more",
@@ -1070,7 +1071,7 @@
       "failed": "Failed: {{error}}",
       "unknownReason": "unknown reason",
       "contextRefreshed": "Instructions or Skills changed, so they were reloaded",
-      "contextSettingsApplied": "Context settings changes apply from this turn",
+      "contextSettingsApplied": "Plugin settings changes apply from this turn",
       "contextRefreshedNames": "Instructions or Skills changed, so they were reloaded ({{names}})",
       "contextRefreshedNamesMore_one": "Instructions or Skills changed, so they were reloaded ({{names}} and {{count}} more)",
       "contextRefreshedNamesMore_other": "Instructions or Skills changed, so they were reloaded ({{names}} and {{count}} more)",
@@ -1241,13 +1242,13 @@
     "titleLabel": "Title",
     "titleWand": "Ask the AI for a title",
     "context": {
-      "entryTitle": "Context this conversation loads",
-      "label": "Context",
+      "entryTitle": "Plugins this conversation loads",
+      "label": "Plugins",
       "changed": "Changed",
-      "title": "Context for this conversation",
-      "titleWith": "Context for this conversation: {{summary}}",
+      "title": "Plugins for this conversation",
+      "titleWith": "Plugins for this conversation: {{summary}}",
       "changedSuffix": "· Changed",
-      "open": "Open context for this conversation: {{summary}}"
+      "open": "Open plugins for this conversation: {{summary}}"
     },
     "menu": {
       "iconFailed": "Couldn't change the icon: {{error}}",
@@ -2194,5 +2195,47 @@
     "resumeAllFailed_one": "Couldn't resume {{count}} conversation: {{error}}",
     "resumeAllFailed_other": "Couldn't resume {{count}} conversations: {{error}}",
     "markName": "warning triangle"
+  },
+  "compaction": {
+    "context": "Context",
+    "meter": "{{rate}}% · {{used}} / {{window}}",
+    "running": "Compacting conversation…",
+    "failed": "Could not compact conversation",
+    "scheduled": "◷ Auto compaction at {{time}}",
+    "cancel": "Cancel",
+    "retry": "Retry",
+    "compact": "Compact conversation",
+    "compactNow": "Compact now",
+    "meterMenu": "Context window actions",
+    "settings": "Compaction settings",
+    "done": "Conversation compacted",
+    "doneAuto": "Compacted automatically",
+    "tokenChange": "· {{before}} → {{after}} tokens",
+    "showSummary": "Show summary",
+    "commandGroup": "Pleiad commands",
+    "disableConversation": "Do not auto compact this conversation",
+    "antigravityManaged": "Antigravity compacts automatically when needed",
+    "antigravityAutoManaged": "Managed automatically by Antigravity",
+    "claudeEnabled": "Claude Code auto compaction",
+    "codexEnabled": "Codex auto compaction",
+    "ruleExcludedTitle": "Excluded",
+    "ruleExcluded": "Delegated child conversations, active turns, pending approval, and failed or interrupted turns",
+    "ruleSkipTitle": "Skipped",
+    "ruleSkip": "If more than 8 minutes late, the reservation is dropped without compacting",
+    "ruleOnceTitle": "Frequency",
+    "ruleOnce": "Once after each successful user turn. The next message, manual compaction, deleting an unsent conversation, changing its backend, making it ineligible in settings, or Cancel clears the reservation",
+    "settingFailed": "Could not save auto compaction settings: {{error}}",
+    "otherConversationFailed": "Could not complete compaction for “{{title}}”: {{error}}",
+    "sidebarDone": "Compacted",
+    "autoEnabled": "Automatically compact idle conversations",
+    "minSize": "Minimum size",
+    "kTokens": "k tokens",
+    "agent": "Agent",
+    "enabled": "On / Off",
+    "delay": "Delay",
+    "claudeDelay": "Claude Code delay",
+    "codexDelay": "Codex delay",
+    "minutes": "min",
+    "saveFailed": "Could not save auto compaction settings: {{error}}"
   }
 }
