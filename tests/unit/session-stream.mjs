@@ -54,6 +54,8 @@ export default async function (t) {
     cmd: () => new Promise(r => { releaseHistory = r; }),
     // 文言（web/i18n.mjs の t と client.mjs の html.t・ACTIVITY_LABEL）。このテストは文言を見ない
     t: key => key, html: { t: key => key }, ACTIVITY_LABEL: {},
+    // 中断と再開（client.mjs の syncResume / paintInterruptLine、web/interrupt.mjs）。このテストの対象外
+    syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
   });
   vm.runInContext(functions, context);
   const event = (text, streamSeq) => ({ type: "text.delta", sessionId: "target", text, streamSeq });

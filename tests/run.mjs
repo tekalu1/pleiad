@@ -99,6 +99,8 @@ const cases = [
   // 入力欄と上端の見直し: 字の欄の上限・チップの字・添付の出どころ・パンくず・規則
   await import("./unit/composer-layout.mjs"),
   await import("./unit/unread.mjs"),
+  // 中断と再開の画面（web/interrupt.mjs）: 三角の未読・理由の文言・再開ボタン・更新で止めた会話・更新の確認の作業一覧と進み
+  await import("./unit/web-interrupt.mjs"),
   // 確認済み（既読）の置き場と、2 本の接続で共有されること（fake バックエンド）
   await import("./unit/read-store.mjs"),
   await import("./unit/server-read.mjs"),
@@ -147,6 +149,8 @@ const cases = [
   await import("./unit/server-fake.mjs"),
   // 中断の順序（実際の中断が先、Pleiad タスクの後始末は後）と「中断している」の知らせ。fake バックエンドだけ
   await import("./unit/server-abort.mjs"),
+  // 中断を会話の状態として残す・再開（保留の送り直しか理由の文）・委譲の子の中断・再起動で落ちたターン
+  await import("./unit/server-interrupt-resume.mjs"),
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
   await import('./unit/claude-accounts.mjs'),
   await import('./unit/server-claude-accounts.mjs'),
