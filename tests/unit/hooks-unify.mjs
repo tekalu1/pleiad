@@ -185,6 +185,8 @@ export default async function (t) {
     t.ok('確認: 実行の条件（if）を持つ定義は取り込めない（理由付き）', cond && !cond.importable && cond.reasons.includes('controlKeys'));
     const candidate = importCandidate(raws.find(r => r.row.scope === 'plugin'));
     t.ok('取り込み: プラグインの置き場所の変数は実際のパスに置き換える', candidate.importable && candidate.value.command === `node ${pluginRoot.replace(/\\/g, '/')}/fmt.mjs` && candidate.value.importedFrom.plugin === 'p1@m');
+    const ssRow = importCandidate({ row: { agent: 'claude', scope: 'user', event: 'SessionStart', path: '/x/settings.json' }, handler: { type: 'command', command: 'node ctx.mjs' }, matcher: '' });
+    t.ok('取り込み: Claude の SessionStart はコールバックで渡せないので取り込めない', !ssRow.importable && ssRow.reasons.includes('claudeCallback'));
     const again = unifyPreview({ report, raws, hooks: [{ ...candidate.value, id: 'h-00000000000e', importedFrom: candidate.value.importedFrom }] });
     t.ok('取り込み済みの定義はもう一度取り込まない', again.stops.find(s => s.scope === 'plugin').reasons.includes('already'));
     t.ok('確認: Pleiad の登録ごとの、エージェントごとの渡し方', unifyPreview({ report, raws, hooks: [hook] }).registry[0].targets.antigravity.adapter === true);
