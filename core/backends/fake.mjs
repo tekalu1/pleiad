@@ -17,12 +17,19 @@
 //   "whoami"       … 渡されたアカウントのトークン（oauthToken）の指紋を本文にする。無ければ account:none
 //   "context:<json>" … ply_context（contextRuntime）のツールを { name, arguments } で 1 回呼び、返りを本文にする
 //   "compact"      … 文脈の圧縮（Claude の activity compacting と同じ形）を流す
+//   "bg-shell <本文>" … 本文で返答した後、終わらない裏のコマンド（Claude の local_bash）を抱えて phase: waiting で待つ。
+//                    stopBackground で止めると main が再開して一言返し、ターンが終わる
+//   "term <本文>"  … 本文で返答して終わり、ターンの外に端末（Codex の unified_exec と同じ kind: terminal）を残す
 //   それ以外        … prompt をそのまま echo
 import crypto from "node:crypto";
 import { undelivered } from "./undelivered.mjs";
 
 const sessions = new Map();   // sessionId -> { sessionId, title, cwd, createdAt, lastModified, tag, messages, subagents }
 const auth = { loggedIn: false, account: null };
+// 台本 "bg-shell" の止め口（Pleiad の会話 id -> taskId -> 止める関数）と、台本 "term" が残した端末（会話 id -> 端末の一覧）
+const shells = new Map();
+const terminals = new Map();
+let host = null;   // attachHost で受け取る server の口（ターンの外の background）
 
 const now = () => Date.now();
 const iso = () => new Date().toISOString();
@@ -182,6 +189,40 @@ async function background(text, { s, out, emit, signal, control }) {
   return false;
 }
 
+/**
+ * 台本 "bg-shell <本文>"。Claude で、裏へ回ったコマンドが終わらないまま main が返答を終えた形
+ * （local_bash の完了通知が来ないので、入力を閉じられずターンが続く）。本文で返答し、phase: waiting で待つ。
+ * stopBackground（Query.stopTask に当たる）で止めると、完了通知で main が再開して一言返し、ターンが終わる。
+ * 中断されたら true。
+ */
+async function hangingShell(text, { s, out, emit, signal, keys }) {
+  const task = { id: `fake-shell-${crypto.randomUUID().slice(0, 8)}`, kind: "shell", label: "cat >> /dev/null", waitable: true };
+  let stopped = false, wake = null;
+  const poke = () => { const w = wake; wake = null; w?.(); };
+  const stop = () => { stopped = true; poke(); };
+  for (const key of keys) { if (!shells.has(key)) shells.set(key, new Map()); shells.get(key).set(task.id, stop); }
+  signal?.signal?.addEventListener?.("abort", poke, { once: true });
+  try {
+    emit({ type: "background", tasks: [task] });
+    const report = { uuid: crypto.randomUUID(), role: "assistant", text: text.replace(/^bg-shell\s*/, "") || "終わった" };
+    await say(emit, report.text, report.uuid);
+    push(s, report);
+    emit({ type: "phase", state: "waiting" });
+    while (!stopped && !signal?.signal?.aborted) await new Promise((resolve) => { wake = resolve; });
+    if (signal?.signal?.aborted) { emit({ type: "turnResult", outcome: "aborted" }); return true; }
+    emit({ type: "background", tasks: [] });
+    emit({ type: "phase", state: "active" });
+    const resumed = { uuid: crypto.randomUUID(), role: "assistant", text: "裏のコマンドが止められた" };
+    await say(emit, resumed.text, resumed.uuid);
+    push(s, resumed);
+  } finally {
+    for (const key of keys) { shells.get(key)?.delete(task.id); if (!shells.get(key)?.size) shells.delete(key); }
+  }
+  out.text = "";
+  out.toolCalls = null;
+  return false;
+}
+
 export const backend = {
   id: "fake",
   label: "Fake (test)",
@@ -212,7 +253,7 @@ export const backend = {
   modes: () => MODES,
   models: async () => MODELS,
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, oauthToken }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, oauthToken, hostSessionId }) {
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
     if (String(prompt ?? "").trim().startsWith("undelivered")) {
       const error = "fake: failed before the prompt was delivered";
@@ -333,6 +374,16 @@ export const backend = {
         await say(emit, out.text, out.uuid);
       } else if (/^bg(\s|$)/.test(text)) {
         if (await background(text, { s, out, emit, signal, control })) return { sessionId: id };
+      } else if (/^bg-shell(\s|$)/.test(text)) {
+        if (await hangingShell(text, { s, out, emit, signal, keys: [...new Set([hostSessionId, id].filter(Boolean))] })) return { sessionId: id };
+      } else if (/^term(\s|$)/.test(text)) {
+        out.text = text.replace(/^term\s*/, "") || "端末を残した";
+        await say(emit, out.text, out.uuid);
+        // Codex と同じく、端末はターンが終わっても残る。server へはターンの外の background で渡す
+        const key = hostSessionId ?? id;
+        const list = [...(terminals.get(key) ?? []), { id: `fake-term-${crypto.randomUUID().slice(0, 8)}`, kind: "terminal", label: "npm run dev" }];
+        terminals.set(key, list);
+        host?.background(key, list);
       } else {
         out.text = text.startsWith("echo:") ? text.slice(5).trim() : text;
         await say(emit, out.text, out.uuid);
@@ -347,6 +398,22 @@ export const backend = {
     if (out.text || out.toolCalls) push(s, out);
     emit({ type: "turnResult", outcome: "ok", turns: 1, costUsd: 0 });
     return { sessionId: id };
+  },
+
+  attachHost(h) { host = h; },
+
+  // 台本 "bg-shell" の裏のコマンドと、台本 "term" の端末だけを止められる。ほかは止められない（サブエージェントなど）
+  async stopBackground(sessionId, taskId) {
+    const stop = shells.get(sessionId)?.get(taskId);
+    if (stop) { stop(); return { stopped: true }; }
+    const list = terminals.get(sessionId) ?? [];
+    if (list.some((x) => x.id === taskId)) {
+      const rest = list.filter((x) => x.id !== taskId);
+      if (rest.length) terminals.set(sessionId, rest); else terminals.delete(sessionId);
+      host?.background(sessionId, rest);
+      return { stopped: true };
+    }
+    throw new Error("fake: このタスクは止められません");
   },
 
   async setModelLive(handle, model) {

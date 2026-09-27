@@ -29,14 +29,15 @@ import * as store from "../store.mjs";
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { buildClaudeModels, FALLBACK_MODELS } from "./claude-models.mjs";
 import { normalizeSdkMessage, transcriptToMessages, mergeQueuedCommands, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript } from "./claude-normalize.mjs";
-import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog } from "./claude-background.mjs";
+import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
 
 const NL = String.fromCharCode(10);
 
 // runTurn が使う SDK の入口と中断の待ち時間。テスト（tests/unit/claude-steer-stop.mjs）だけが差し替える。
 // 中断は CLI に interrupt を頼み、stopAckMs のうちに受領（interrupt の応答か result）が無ければ
-// 入力を閉じて SDK の abort に落とす。受領の後も stopExitMs のうちに終わらなければ同じく落とす
-const sdk = { query, executable: claudeExecutable, stopAckMs: 2500, stopExitMs: 3000 };
+// 入力を閉じて SDK の abort に落とす。受領の後も stopExitMs のうちに終わらなければ同じく落とす。
+// resumeGraceMs は裏の作業を見たターンで入力を閉じる前に置く猶予（claude-background.mjs の RESUME_GRACE_MS）
+const sdk = { query, executable: claudeExecutable, stopAckMs: 2500, stopExitMs: 3000, resumeGraceMs: RESUME_GRACE_MS };
 export function setClaudeSdkForTest(over = {}) {
   const prev = { ...sdk };
   Object.assign(sdk, over);
@@ -578,6 +579,7 @@ export const backend = {
     const closer = createInputCloser({
       tracker,
       inflight: () => hostCalls.inflight,
+      graceMs: sdk.resumeGraceMs,
       close: () => { hostCalls.markClosed(); input.close(); },
     });
     hostCalls.watch(() => closer.settle());   // 最後の応答が終わった時点でも閉じてよいか見直す

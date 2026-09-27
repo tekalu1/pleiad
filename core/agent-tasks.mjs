@@ -142,6 +142,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
             row.rejections = all.slice(0, MAX_REJECTIONS);
             if (all.length > MAX_REJECTIONS) row.rejectionsDropped = (row.rejectionsDropped ?? 0) + all.length - MAX_REJECTIONS;
           }
+          // 子が返答を終えた後も終わらず、Pleiad が止めた裏の作業（この回の分。docs/agent-delegation.md「子に残った裏の作業」）
+          const stopped = Array.isArray(result?.stoppedBackground) ? result.stoppedBackground.slice(0, MAX_REJECTIONS) : [];
+          if (stopped.length) row.stoppedBackground = stopped; else delete row.stoppedBackground;
           row.status = controller.signal.aborted ? 'cancelled' : result?.outcome === 'ok' ? (row.queue.length ? 'queued' : 'completed') : 'failed';
           if (['failed', 'cancelled'].includes(row.status)) row.queue = [];
         }, 'run.result');
