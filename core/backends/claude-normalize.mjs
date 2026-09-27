@@ -217,7 +217,7 @@ function extract(entry, fullResults = false) {
  * @param includeNested サブエージェント側のメッセージ（parent_tool_use_id 付き）も含めるか。
  *        本流の会話では落とすが、サブエージェントの会話を読むときはそれしか無い。
  */
-export function transcriptToMessages(entries, { includeNested = false, fullResults = false } = {}) {
+export function transcriptToMessages(entries, { includeNested = false, fullResults = false, followUps = null } = {}) {
   const messages = [];
   // tool_use_id -> toolCall。結果は後続の user エントリに来るので、後から書き戻す
   const calls = new Map();
@@ -257,10 +257,80 @@ export function transcriptToMessages(entries, { includeNested = false, fullResul
     if (got.thinking) msg.thinking = got.thinking;
     if (got.tools) msg.tools = got.tools;
     if (got.toolCalls) msg.toolCalls = got.toolCalls;
+    // Stop フックに止められて書いた、中身の仕事をしていない続き（stopHookFollowUps）。委譲の結果はこれを飛ばす
+    if (role === "assistant" && followUps?.has(entry.uuid)) msg.stopHookFollowUp = true;
     messages.push(msg);
   }
 
   return messages;
+}
+
+// Stop フックの続きで使っても「中身の仕事をした」とみなさないツール（調べる・読む・Skill を読み込む・予定を書くだけ）。
+// これ以外（Edit / Write / Bash / PowerShell / MCP の書き込み / サブエージェントなど）を 1 回でも呼んだ続きは中身のある仕事として扱う。
+// Bash は読むだけのこともあるが、変更したかを見分けられないので、仕事をした側に倒す（結果が今までどおり最後の返答になる）
+const LOOKUP_TOOLS = new Set([
+  "ToolSearch", "Skill", "Read", "Grep", "Glob", "LS", "TodoWrite", "WebSearch", "WebFetch",
+  "ListMcpResourcesTool", "ReadMcpResourceTool",
+  "mcp__ply_context__load_skill", "mcp__ply_context__instructions_for_path", "mcp__ply_context__mcp_resources", "mcp__ply_context__mcp_prompts",
+]);
+
+/**
+ * Stop フックに止められて（exit 2・decision: block）main が続けた分のうち、中身の仕事をしていない assistant 行の uuid。
+ *
+ * Stop フックが止めると、CLI は同じターンの中で main を続けさせる。transcript には
+ * `{ type: "system", subtype: "stop_hook_summary", hookErrors: [フックの出力…], preventedContinuation: false }` と
+ * フックの出力を運ぶ isMeta の user（"Stop hook feedback: …"）が残り、その後に続きの assistant 行が並ぶ。
+ * どちらも getSessionMessages には出ない（system は中身が落ち、isMeta は返らない。2026-09-27 実測、SDK 0.3.258 / CLI 2.1.282）ので、
+ * transcript の本文から拾う。区切りは文面ではなく、この行の形（subtype と hookErrors）で見る。
+ *
+ * 続きは、次の人の発言・途中送信（queued_command）・裏の作業の完了通知（task-notification）の行までとする。
+ * その続きで呼んだツールが全部 LOOKUP_TOOLS なら、続きの assistant 行を全部返す（委譲の結果に使わない）。
+ * 2026-09-27、委譲の子が報告を書いた後に、ナレッジの棚卸しを促す Stop フックで ToolSearch と load_skill を呼び
+ * 「ナレッジ化対象なし」と書いて終わり、その一言が依頼元への結果になった（docs/agent-delegation.md「子の結果」）。
+ *
+ * 大きい transcript を毎回全部 parse しないよう、止めた stop_hook_summary が最初に出る行から後だけを読む。
+ */
+export function stopHookFollowUps(text) {
+  const out = new Set();
+  if (typeof text !== "string") return out;
+  const first = text.indexOf('"hookErrors":["');
+  if (first < 0) return out;
+  const segments = [];
+  let segment = null;
+  for (const line of text.slice(text.lastIndexOf("\n", first) + 1).split("\n")) {
+    if (!line.trim()) continue;
+    let row;
+    try { row = JSON.parse(line); } catch { continue; }
+    if (!row || typeof row !== "object" || row.isSidechain) continue;
+    if (row.type === "system" && row.subtype === "stop_hook_summary") {
+      if (Array.isArray(row.hookErrors) && row.hookErrors.length && row.preventedContinuation !== true) {
+        segment = { uuids: [], tools: [] };
+        segments.push(segment);
+      }
+      continue;
+    }
+    if (row.type === "attachment") {
+      if (row.attachment?.type === "queued_command") segment = null;
+      continue;
+    }
+    if (row.type === "user") {
+      if (row.isMeta) continue;
+      const content = row.message?.content;
+      const onlyResults = Array.isArray(content) && content.length > 0 && content.every((b) => b?.type === "tool_result");
+      if (!onlyResults) segment = null;
+      continue;
+    }
+    if (row.type === "assistant" && segment && row.uuid) {
+      segment.uuids.push(row.uuid);
+      for (const b of Array.isArray(row.message?.content) ? row.message.content : []) {
+        if (b?.type === "tool_use" && b.name) segment.tools.push(String(b.name));
+      }
+    }
+  }
+  for (const s of segments) {
+    if (s.tools.every((name) => LOOKUP_TOOLS.has(name))) for (const uuid of s.uuids) out.add(uuid);
+  }
+  return out;
 }
 
 /**
