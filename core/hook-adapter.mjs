@@ -2,7 +2,7 @@
 // Pleiad hook adapter. Pleiad copies this file unchanged next to a copied hook's settings file
 // (<settings folder>/pleiad-hooks/hook-adapter-<hash>.mjs). Do not edit a written copy: the hooks that point at it expect this content.
 //
-// A hook copied to another agent runs through this script (docs/context-management.md "Hooks", ADR 0046):
+// A hook copied to another agent runs through this script (docs/context-management.md "Hooks", ADR 0047):
 //   node hook-adapter-<hash>.mjs <from> <to> <event> <timeoutSec> <command as base64url>
 // <to> is the agent that runs the hook now and writes its JSON on stdin. <from> is the agent the command was written for.
 // The script rewrites the input into the <from> shape, runs the original command with the <from> agent's working folder,

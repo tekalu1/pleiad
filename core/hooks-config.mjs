@@ -22,7 +22,7 @@ import { FRONTMATTER } from './context-scan.mjs';
 import { redactSecrets } from './redact.mjs';
 import { renameRetry } from './atomic-file.mjs';
 import { t } from './i18n.mjs';
-import { convertHook, adapterCommand, parseAdapterCommand, suggestName } from './hooks-copy.mjs';
+import { convertHook, adapterCommand, parseAdapterCommand, suggestName, scriptPaths } from './hooks-copy.mjs';
 
 export const HOOK_AGENTS = ['claude', 'codex', 'antigravity'];
 // 各エージェントの公式のイベント（2026-09-27 時点。temporary/reports/hooks-agent-specs.md）
@@ -62,8 +62,16 @@ const FLAG_ALONE = new RegExp(`^${FLAG_NAME}$`, 'i');
 const SECRET_NAME = /(token|secret|password|passwd|api[_-]?key|authorization|cookie)/i;
 // 値を丸ごと伏せる表（env・headers。Codex の MCP の http_headers なども）
 const SECRET_TABLES = new Set(['env', 'headers', 'http_headers', 'env_http_headers']);
+const maskPlain = s => redactSecrets(String(s)).replace(FLAG_VALUE, `$1${MASK}`);
+// 写した定義（アダプター越し）のコマンドは、元のコマンドを base64url の引数で持つ（core/hooks-copy.mjs の adapterCommand）。
+// そのままでは伏せ字をすり抜けるので、元のコマンドに伏せる値があれば引数ごと伏せる（JSON の \" の後ろも拾う）
+const ADAPTER_ARG = /(hook-adapter-[0-9a-f]{8,}\.mjs(?:\\?["'])?\s+(?:claude|codex|antigravity)\s+(?:claude|codex|antigravity)\s+[A-Za-z]+\s+\d+\s+)([A-Za-z0-9_-]{4,})/g;
+const maskAdapterArg = s => s.replace(ADAPTER_ARG, (all, head, b64) => {
+  const inner = Buffer.from(b64, 'base64url').toString('utf8');
+  return maskPlain(inner) === inner ? all : `${head}${MASK}`;
+});
 /** 文字列 1 つの伏せ字。形で分かる秘密だけ（伏せ漏れはありうる） */
-export const maskText = s => redactSecrets(String(s)).replace(FLAG_VALUE, `$1${MASK}`);
+export const maskText = s => maskAdapterArg(maskPlain(s));
 /** 画面に出す形。env・headers の値、秘密らしい名前のキーの値、args の秘密のフラグの次の要素を伏せ、文字列は形で伏せる。元の値は変えない */
 export function maskDefinition(value) {
   if (Array.isArray(value)) return value.map((v, i) => typeof v === 'string' && typeof value[i - 1] === 'string' && FLAG_ALONE.test(value[i - 1]) ? MASK : maskDefinition(v));
@@ -180,7 +188,9 @@ function adapterOf(h) {
 }
 /** 1 つの handler の要約（行に出す分）。値は伏せてから切る */
 function summary(h) {
-  const text = maskText(commandOf(h));
+  // 写した定義（アダプター越し）は元のコマンドを見せる（どこから写したかは adapter で行に付ける）
+  const via = typeof h?.command === 'string' ? parseAdapterCommand(h.command) : null;
+  const text = maskText(via ? via.command : commandOf(h));
   return text.length > 160 ? `${text.slice(0, 160)}…` : text;
 }
 
@@ -578,7 +588,7 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       await renameRetry(tmp, p.data.real);
     } finally { await fs.rm(tmp, { force: true }); }
   }
-  // ---------------------------------------------------------------- 他のエージェントへ写す（ADR 0046）
+  // ---------------------------------------------------------------- 他のエージェントへ写す（ADR 0047）
   /** Antigravity の名前（ユーザーの 2 つのファイルと、作業場所の .agents/hooks.json）。同じ名前はスコープをまたいで止まり、両方有効なら両方走る */
   async function agyNames(base) {
     const out = new Map();
@@ -608,6 +618,14 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       if (await fs.readFile(file, 'utf8') !== text) throw new Error(t('hooks.copy.adapterConflict'));
     }
   }
+  /** 1 つのファイルの、あるイベントの handler のコマンド（agy は全部の名前から） */
+  function commandsOf(agent, map, event) {
+    const out = [];
+    const walk = v => { if (Array.isArray(v)) v.forEach(walk); else if (record(v)) { if (typeof v.command === 'string') out.push(v.command); if (Array.isArray(v.hooks)) walk(v.hooks); } };
+    if (agent === 'antigravity') for (const def of Object.values(map)) { if (record(def)) walk(def[event]); }
+    else walk(map[event]);
+    return out;
+  }
   /** 1 つの写し先。dryRun なら書かずに、変換の結果・書き先・前後の本文を返す */
   async function copyOne(src, want, adapterFile, { dryRun, allowReformat }) {
     const to = want?.agent;
@@ -633,6 +651,16 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       out.node = node;
       if (!node) reasons.push({ code: 'noNode', blocks: true });
       command = adapterCommand({ adapterPath, from: src.agent, to, event: conv.event, innerTimeout: conv.innerTimeout, command: conv.command });
+    }
+    // 同じイベントに同じコマンドが既にあれば写さない（前に写したもの。Codex・agy は同じ定義を重ねると 2 回走る）
+    const existing = await load(file, file.base);
+    if (!existing.error && existing.map && commandsOf(to, existing.map, conv.event).includes(command)) reasons.push({ code: 'duplicate', params: { path: file.path }, blocks: true });
+    // スクリプト本体は写さない。指す先が無い・相対パスで基準の場所が変わるときは知らせる（同じ場所なら写した先でも同じファイルを指す）
+    const sameBase = src.scope === 'user' || (scope !== 'user' && file.base && src.base && path.resolve(file.base) === path.resolve(src.base));
+    for (const s of scriptPaths(conv.command)) {
+      if (s.relative) { if (!sameBase) warnings.push({ code: 'scriptRelative', params: { path: maskText(s.path) } }); continue; }
+      const abs = /^~[\\/]/.test(s.path) ? path.join(home, s.path.slice(2)) : s.path;
+      if (!await fs.stat(abs).then(st => st.isFile(), () => false)) warnings.push({ code: 'scriptMissing', params: { path: maskText(s.path) } });
     }
     let name;
     if (to === 'antigravity') {
@@ -676,7 +704,7 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       if (source.revision !== undefined && source.revision !== data.revision) throw new Error(t('hooks.write.changed'));
       const found = locate(source.agent, data.map, loc);
       const groupKeys = found.group ? Object.keys(found.group).filter(k => !['matcher', 'hooks'].includes(k)) : [];
-      const src = { agent: source.agent, event: loc.event, matcher: found.group?.matcher ?? null, handler: found.handler, groupKeys, name: loc.name ?? null };
+      const src = { agent: source.agent, scope: source.scope, base: f.base ?? null, event: loc.event, matcher: found.group?.matcher ?? null, handler: found.handler, groupKeys, name: loc.name ?? null };
       const adapterFile = await adapterSource();
       const results = [];
       for (const want of targets) {

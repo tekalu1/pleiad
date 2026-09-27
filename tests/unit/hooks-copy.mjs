@@ -1,4 +1,4 @@
-// Hooks を他のエージェントへ写す（ADR 0046）。LLM もエージェントも呼ばない。
+// Hooks を他のエージェントへ写す（ADR 0047）。LLM もエージェントも呼ばない。
 //   - 変換: イベントの対応（代わりのイベントに読み替えない）・matcher のツール名・写せない handler
 //   - アダプター: 各方向の stdin の実例 → 元の形、元の出力 → 写した先の形、exit code、壊れた出力・timeout を安全側へ（実際に node で動かす）
 //   - 保存: 写し先のファイルに正しい形で書き、他のキーを壊さない。アダプターの書き出し・名前の衝突・node が無いとき
@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { copyEvent, mapMatcher, convertHook, adapterCommand, parseAdapterCommand, suggestName } from '../../core/hooks-copy.mjs';
+import { copyEvent, mapMatcher, convertHook, adapterCommand, parseAdapterCommand, suggestName, scriptPaths } from '../../core/hooks-copy.mjs';
 import { toSourceInput, readResult, toTargetOutput, adapt, argsFromAgy, argsToAgy } from '../../core/hook-adapter.mjs';
 import { createHooksConfig } from '../../core/hooks-config.mjs';
 export const name = 'hooks-copy';
@@ -83,6 +83,9 @@ export default async function(t) {
   t.ok('アダプターのコマンドはスラッシュ区切り・空白は引用符、元のコマンドは 1 つの引数', cmd.startsWith('node "C:/Users/a b/.claude/pleiad-hooks/hook-adapter-0123456789ab.mjs" antigravity claude PreToolUse 30 ') && !cmd.includes('\\'));
   t.ok('アダプターのコマンドから元のコマンドを読める', parseAdapterCommand(cmd)?.command === 'node "D:/x y/a.mjs" --v \'q\'' && parseAdapterCommand('node x.mjs') === null);
   t.ok('写した定義をもう一度写すことはしない', convertHook({ agent: 'antigravity', event: 'PreToolUse', matcher: 'run_command', handler: { command: cmd } }, 'codex').reasons.some(r => r.code === 'alreadyCopy'));
+  t.ok('スクリプトらしいパスを拾う（相対・~・引用符付き。URL・変数は拾わない）', JSON.stringify(scriptPaths('node "D:/a b/x.mjs" --v && python scripts/y.py ~/z.sh https://e.com/a.js $HOME/q.sh'))
+    === JSON.stringify([{ path: 'D:/a b/x.mjs', relative: false }, { path: 'scripts/y.py', relative: true }, { path: '~/z.sh', relative: false }]));
+  t.ok('Claude ↔ Codex の PostToolUse は block の意味の違いを警告', convertHook({ agent: 'claude', event: 'PostToolUse', matcher: 'Bash', handler: { type: 'command', command: 'x' } }, 'codex').warnings.some(w => w.code === 'postBlock'));
   t.ok('Antigravity の名前の候補はスクリプト名から', suggestName({ agent: 'claude', event: 'Stop', handler: { command: 'node D:/hooks/audit-shell.cjs --x' } }) === 'claude-audit-shell');
 
   // ---------------------------------------------------------------- アダプター: 入力
@@ -209,6 +212,9 @@ process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{d
     t.ok('dryRun: 書かずに前後の本文（伏せ字）と書き先を返す', dc.ok && dc.path.endsWith('config.toml') && dc.format === 'toml' && dc.after.includes('[[hooks.PreToolUse]]')
       && !JSON.stringify(dry).includes('SECRET-TOKEN-1') && !(await fs.stat(path.join(home, '.codex', 'pleiad-hooks')).catch(() => null)));
     t.ok('dryRun: 元のコマンドも伏せ字', dry.source.command.includes('••••') && !dry.source.command.includes('SECRET'));
+    // アダプター越しのコマンドは元のコマンドを base64url で持つ。秘密を含むなら、その引数も伏せる（デコードして漏れない）
+    const leaked = s => [...String(s).matchAll(/[A-Za-z0-9_-]{16,}/g)].some(m => Buffer.from(m[0], 'base64url').toString('utf8').includes('SECRET-TOKEN-1'));
+    t.ok('dryRun: 差分・書くコマンドの base64 の中の秘密も伏せる', !leaked(JSON.stringify(dry)) && /PreToolUse 10 ••••/.test(dc.after), dc.after);
     t.ok('agy の名前が既にあれば「確認が必要」（同じ名前には写さない）', da.status === 'review' && da.reasons.some(r => r.code === 'nameTaken' && r.params.name === 'claude-guard'), JSON.stringify(da.reasons));
     const da2 = (await svc.copy({ source, targets: [{ agent: 'antigravity', scope: 'user', name: 'guard2' }], dryRun: true })).results[0];
     t.ok('別の名前なら写せる', da2.status === 'ready', JSON.stringify(da2.reasons));
@@ -234,10 +240,15 @@ process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{d
     const rescan = await svc.scan({ scopes: ['user'] });
     const copied = rescan.entries.find(e => e.agent === 'antigravity' && e.name === 'guard2');
     t.ok('一覧は写した定義に元のエージェントと元のコマンド（伏せ字）を付ける', copied?.adapter?.from === 'claude' && copied.adapter.command.includes('••••') && !copied.adapter.command.includes('SECRET'));
+    t.ok('一覧の写した定義: 行は元のコマンド（伏せ字）、定義の base64 の中の秘密も出さない', !leaked(JSON.stringify(rescan)) && /guard\.mjs --token ••••/.test(copied.command)
+      && /PreToolUse 10 ••••/.test(copied.definition.command), JSON.stringify({ c: copied.command, d: copied.definition }));
 
     // 既にあるアダプターは中身が同じなら使い回す。違えば上書きしない
     const again = await svc.copy({ source: { ...source, revision: undefined }, targets: [{ agent: 'antigravity', scope: 'user', name: 'guard3' }], dryRun: true });
-    t.ok('同じ中身のアダプターは使い回す', again.results[0].adapter.exists === true && again.results[0].status === 'ready');
+    t.ok('同じ中身のアダプターは使い回す', again.results[0].adapter.exists === true && !again.results[0].reasons.some(r => r.code === 'adapterConflict'));
+    t.ok('同じコマンドが写す先の同じイベントに既にあれば写さない（agy は別の名前でも 2 回走る）', again.results[0].status === 'blocked' && again.results[0].reasons.some(r => r.code === 'duplicate'));
+    const againCodex = await svc.copy({ source: { ...source, revision: undefined }, targets: [{ agent: 'codex', scope: 'user' }], dryRun: true });
+    t.ok('Codex へもう一度写すのも重ねない', againCodex.results[0].reasons.some(r => r.code === 'duplicate'));
     await fs.writeFile(path.join(home, '.gemini', 'config', 'pleiad-hooks', adapters[0]), '// changed');
     const conflict = await svc.copy({ source, targets: [{ agent: 'antigravity', scope: 'user', name: 'guard3' }], dryRun: true });
     t.ok('別の内容のアダプターがあれば写せない', conflict.results[0].status === 'blocked' && conflict.results[0].reasons.some(r => r.code === 'adapterConflict'));
@@ -279,6 +290,17 @@ process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{d
     const clash2 = await svc.copy({ source: { agent: 'claude', scope: 'user', file: pre.path, loc: { event: 'PreToolUse', group: pre.group, handler: pre.handler } },
       targets: [{ agent: 'antigravity', scope: 'project', base: repo, name: 'guard2' }], dryRun: true });
     t.ok('作業場所へ写すときは、ユーザーの同じ名前とも衝突を示す', clash2.results[0].reasons.some(r => r.code === 'nameTaken'));
+
+    // スクリプト本体は写さないので、指す先を確かめる
+    t.ok('同じ作業場所へ写すなら相対パスは警告しない', !pr.warnings.some(w => w.code === 'scriptRelative'));
+    const toUser = await svc.copy({ source: { agent: 'claude', scope: 'project', base: repo, file: path.join(repo, '.claude', 'settings.json'), loc: { event: 'Stop', group: 0, handler: 0 } },
+      targets: [{ agent: 'codex', scope: 'user' }], dryRun: true });
+    t.ok('作業場所の相対パスをユーザーへ写すと、基準の場所が変わることを警告', toUser.results[0].warnings.some(w => w.code === 'scriptRelative' && w.params.path === 'stop.mjs'), JSON.stringify(toUser.results[0].warnings));
+    const missing = `${tmp.replace(/\\/g, '/')}/no-such-hook.mjs`;
+    await write(path.join(repo, '.codex', 'hooks.json'), { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: `node ${missing}` }] }] } });
+    const miss = await svc.copy({ source: { agent: 'codex', scope: 'project', base: repo, file: path.join(repo, '.codex', 'hooks.json'), loc: { event: 'PreToolUse', group: 0, handler: 0 } },
+      targets: [{ agent: 'claude', scope: 'project', base: repo }], dryRun: true });
+    t.ok('指すスクリプトが無ければ警告（写しても動かない）', miss.results[0].status === 'ready' && miss.results[0].warnings.some(w => w.code === 'scriptMissing'), JSON.stringify(miss.results[0].warnings));
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }

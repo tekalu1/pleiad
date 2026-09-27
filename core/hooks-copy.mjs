@@ -1,4 +1,4 @@
-// Hooks を他のエージェントへ写すときの変換（docs/context-management.md「Hooks」の「他のエージェントへ写す」、ADR 0046）。
+// Hooks を他のエージェントへ写すときの変換（docs/context-management.md「Hooks」の「他のエージェントへ写す」、ADR 0047）。
 // 純粋な関数だけを置く（ファイルは読まない）。書き込みは core/hooks-config.mjs の copy。
 //   イベント: Claude Code ↔ Codex は共通のイベントすべて、Antigravity とは PreToolUse・PostToolUse・Stop だけ。
 //            対応が無いイベントは写さない（SessionStart を PreInvocation に読み替えるような代わりのイベントは使わない）
@@ -185,7 +185,7 @@ function meaningWarnings(from, to, event, adapter) {
   if (event === 'PostToolUse') {
     if (to === 'antigravity') { w('postToAgy'); if (from === 'claude') w('postSkipFailure'); }
     if (from === 'antigravity') w('postFromAgy');
-    if ((from === 'claude' && to === 'codex') || (from === 'codex' && to === 'claude')) w('postFailureCodex');
+    if ((from === 'claude' && to === 'codex') || (from === 'codex' && to === 'claude')) { w('postFailureCodex'); w('postBlock'); }
   }
   if (event === 'Stop' && (from === 'antigravity' || to === 'antigravity')) { w('stopMeaning'); w('stopInput'); }
   if (event === 'PermissionRequest') w('permissionRequest');
@@ -212,6 +212,20 @@ export function parseAdapterCommand(command) {
   const text = Buffer.from(m[5], 'base64url').toString('utf8');
   if (!text.trim()) return null;
   return { from: m[1], to: m[2], event: m[3], timeout: Number(m[4]), command: text };
+}
+
+/**
+ * コマンドが指すスクリプトらしいパス（拡張子で見分ける）。スクリプト本体は写さないので、写す前に有無を確かめる材料にする。
+ * 返す: [{ path, relative }]。~ は展開しない（呼ぶ側）。URL・環境変数を含むものは確かめられないので返さない
+ */
+export function scriptPaths(command) {
+  const out = [];
+  for (const raw of String(command ?? '').match(/"[^"]*"|'[^']*'|\S+/g) ?? []) {
+    const s = raw.replace(/^["']|["']$/g, '');
+    if (!/\.(m?[jt]s|cjs|py|sh|ps1|rb|pl|bat|cmd)$/i.test(s) || /^[a-z][a-z0-9+.-]*:\/\//i.test(s) || /[$%]/.test(s)) continue;
+    out.push({ path: s, relative: !/^(~[\\/]|[\\/]|[A-Za-z]:[\\/])/.test(s) });
+  }
+  return out;
 }
 
 /** Antigravity の名前の候補（元のコマンドのスクリプト名から）。validName に合う形 */
