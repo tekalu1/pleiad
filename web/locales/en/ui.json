@@ -2395,7 +2395,9 @@
       "keepKeys": "Other keys ({{keys}}) are kept.",
       "review": "Review changes",
       "slashAgy": "Antigravity can't resolve quoted backslash paths. Write paths with forward slashes (C:/…).",
-      "slashFix": "Use forward slashes"
+      "slashFix": "Use forward slashes",
+      "timeoutKept": "The original timeout ({{value}}) can't be shown in this field. Leave it empty to keep the original value.",
+      "timeoutKeepHint": "Keep original"
     },
     "error": {
       "agents": "Select at least one agent.",
@@ -2410,7 +2412,7 @@
       "outside": "Writing to user settings makes this command run automatically in conversations started outside Pleiad too.",
       "cannot": "Can't write: {{error}}",
       "codexTrust": "After saving, it won't run until you review and trust it with /hooks in Codex (codex exec skips it without asking).",
-      "reformat": "Only the hooks part can't be replaced, so the whole file will be rewritten (comments and order change)",
+      "reformat": "Only the hooks part can't be replaced, so the whole file will be rewritten ({{n}} comment lines are removed and order changes)",
       "ack": "I've checked the command and which conversations it runs in",
       "ackDelete": "I've checked the definition to delete",
       "write": "Write {{n}}",
@@ -2418,7 +2420,10 @@
       "back": "Back",
       "written": "Written",
       "failed": "Couldn't write: {{error}}",
-      "partial": "Wrote {{ok}}, couldn't write {{failed}}. The written ones stay as they are."
+      "partial": "Wrote {{ok}}, couldn't write {{failed}}. The written ones stay as they are.",
+      "lostComments": "Rewriting the hooks tables removes {{n}} comment lines inside them. OK to rewrite",
+      "jsonValues": "Rewriting this file changes some values (long numbers or duplicate keys). OK to rewrite",
+      "hiddenChange": "Hidden (secret-looking) values also change."
     },
     "event": {
       "SessionStart": "Session start",
@@ -2463,7 +2468,8 @@
       "untrusted": "Not reviewed · Won't run until trusted",
       "modified": "Changed · Won't run until reviewed again",
       "managed": "Managed",
-      "off": "Turned off in Codex /hooks"
+      "off": "Turned off in Codex /hooks",
+      "checking": "Checking trust status…"
     }
   }
 }

@@ -308,6 +308,8 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 .hk-slash{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
 .hk-slash[hidden]{display:none}
 .hk-slash .btn{padding:3px 10px;font-size:var(--fs-s)}
+.hk-label{display:flex;flex-direction:column;gap:5px;min-width:0}
+.hk-lang{align-self:flex-start;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak)}
 .hk-where{display:flex;flex-direction:column;gap:4px;background:var(--surface-1)}
 .hk-where b{color:var(--ink)}
 .hk-where p{margin:0}

@@ -537,14 +537,24 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   }
 
   // ---------------------------------------------------------------- Hooks（エージェントの設定で見つかった定義と、受け取った発火の記録）
+  // 取り直すのは会話・場所・エージェントが変わったとき。Claude の会話は、ターンが終わったときも取り直す（発火の記録がターンの終わりに残る）。
+  // Codex の信頼状態はターンでは変わらないので、ターンの開始・終わりでは hooks/list を呼ばない
   function loadHooks(data, force = false) {
-    const s = session(), cwd = cwdOf(data);
-    const key = [s?.id, cwd, s?.backend, isRunning(), data.report?.at ?? ''].join('|');
-    if (!force && hooks.key === key) return;
+    const s = session(), cwd = cwdOf(data), running = isRunning();
+    const key = [s?.id, cwd, s?.backend, data.report?.at ?? ''].join('|');
+    const turnEnded = s?.backend === 'claude' && hooks.running && !running;
+    hooks.running = running;
+    if (!force && !turnEnded && hooks.key === key) return;
     const keep = hooks.key?.split('|')[0] === s?.id ? hooks.data : null;
-    hooks = { key, data: keep };
-    cmd('sessionHooks', { sessionId: s?.id, cwd, backend: s?.backend })
-      .then(r => { if (hooks.key === key) { hooks.data = r; refresh(); } })
+    hooks = { key, data: keep, running };
+    const args = { sessionId: s?.id, cwd, backend: s?.backend };
+    cmd('sessionHooks', args)
+      .then(r => {
+        if (hooks.key !== key) return;
+        hooks.data = r; refresh();
+        // Codex の信頼状態は一覧を出した後に重ねる（app-server の起動を待たせない）
+        if (r?.report?.trustPending) cmd('sessionHooks', { ...args, trust: true }).then(t2 => { if (hooks.key === key) { hooks.data = t2; refresh(); } }).catch(() => {});
+      })
       .catch(e => { if (hooks.key === key) { hooks.data = { failed: e.message }; refresh(); } });
   }
   function hookBoxes(data) {

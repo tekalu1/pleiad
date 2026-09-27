@@ -31,7 +31,7 @@ export const scopeLabel = e => e.scope === 'skill' ? t('hooks.scope.skill', { na
 export const rowName = e => e.name ?? (e.command || e.definition?.url || e.definition?.server || e.type);
 /** 行の状態（右端の弱い字）。有効・実行済みとは言わない */
 export function stateText(e) {
-  if (e.agent === 'codex' && ('trust' in e)) return codexState(e);
+  if (e.agent === 'codex' && (('trust' in e) || e.trustPending)) return codexState(e);
   if (e.readOnly) return t('hooks.state.readOnly');
   if (e.agent === 'claude') return t('hooks.state.claude');
   if (e.agent === 'codex') return t('hooks.state.codex');
@@ -41,6 +41,7 @@ export function stateText(e) {
 // i18n-dynamic: hooks.trust.
 /** Codex の信頼状態（hooks/list の trustStatus・enabled）。取れなかったときだけ「取得できません」 */
 export function codexState(e) {
+  if (e.trustPending && !('trust' in e)) return t('hooks.trust.checking');
   if (!e.trust?.status) return t('hooks.state.codex');
   if (!e.trust.enabled) return t('hooks.trust.off');
   const key = `hooks.trust.${e.trust.status}`, s = t(key);
@@ -144,11 +145,19 @@ export function createHooksCard({ cmd, work, saved, opened }) {
   let scan = null, loading = false, layout = 'events', expanded = false, home = '';
   const short = p => (home && String(p).toLowerCase().replace(/\\/g, '/').startsWith(home.toLowerCase().replace(/\\/g, '/')) ? `~${String(p).slice(home.length)}` : String(p ?? ''));
 
+  let ticket = 0;
+  /** 一覧を先に出し、Codex の信頼状態（hooks/list。app-server の起動を待つことがある）は後から重ねる */
   async function load() {
+    const mine = ++ticket;
     loading = true; render();
-    try { scan = await cmd('scanHooks', { scope: 'user' }); home = scan.home ?? ''; }
-    catch (e) { scan = { entries: [], files: [], failed: e.message }; }
-    finally { loading = false; }
+    try { const first = await cmd('scanHooks', { scope: 'user' }); if (mine !== ticket) return; scan = first; home = scan.home ?? ''; }
+    catch (e) { if (mine !== ticket) return; scan = { entries: [], files: [], failed: e.message }; }
+    finally { if (mine === ticket) loading = false; }
+    render();
+    if (!scan.trustPending) return;
+    const withTrust = await cmd('scanHooks', { scope: 'user', trust: true }).catch(() => null);
+    if (mine !== ticket || !withTrust) return;
+    scan = withTrust;
     render();
   }
   const reload = () => load();
@@ -302,7 +311,11 @@ export async function openHookSheet(ctx, opts = {}) {
   let original = null;
   if (editing) {
     try { original = await ctx.cmd('readHook', { agent: entry.agent, scope: entry.scope, base: entry.base, file: entry.path, loc: { event: entry.event, group: entry.group, handler: entry.handler, name: entry.name } }); }
-    catch (e) { form.append(el('p', 'mcp-error', e.message), button(t('mcp.cancel'), 'btn', () => dialog.close())); dialog.showModal(); return; }
+    catch (e) {
+      dialog.setAttribute('aria-label', opts.remove ? t('hooks.sheet.deleteTitle') : t('hooks.sheet.editTitle'));
+      const failed = el('p', 'mcp-error', e.message); failed.setAttribute('role', 'alert');
+      form.append(failed, button(t('mcp.cancel'), 'btn', () => dialog.close())); dialog.showModal(); return;
+    }
   }
   const heading = el('h3', null, opts.remove ? t('hooks.sheet.deleteTitle') : editing ? t('hooks.sheet.editTitle') : t('hooks.add'));
   heading.tabIndex = -1;
@@ -319,9 +332,15 @@ export async function openHookSheet(ctx, opts = {}) {
   };
   const lead = el('p', 'mcp-note', editing ? t('hooks.sheet.editLead') : t('hooks.sheet.addLead'));
   // 名前（Antigravity の定義のキー。ほかのエージェントには書かない）
-  const nameField = el('label', 'mcp-field');
+  // 欄の見出しと入力は <label>、補足の文はその外（label の中身は文の要素に限るので p を入れない）
+  const field = (text, control, ...notes) => {
+    const box = el('div', 'mcp-field'), label = el('label', 'hk-label');
+    label.append(text, control);
+    box.append(label, ...notes);
+    return box;
+  };
   const name = el('input'); name.className = 'hk-input'; name.value = editing ? entry.name ?? '' : ''; name.placeholder = 'audit'; name.autocomplete = 'off'; name.spellcheck = false;
-  nameField.append(t('hooks.sheet.name'), name, el('p', 'mcp-note', t('hooks.sheet.nameNote')));
+  const nameField = field(t('hooks.sheet.name'), name, el('p', 'mcp-note', t('hooks.sheet.nameNote')));
   // 対象エージェント（複数選択）
   const agentField = el('fieldset', 'mcp-field hk-fieldset');
   agentField.append(el('legend', null, t('hooks.sheet.agents')));
@@ -336,61 +355,60 @@ export async function openHookSheet(ctx, opts = {}) {
   });
   agentField.append(checks);
   // イベント
-  const eventField = el('label', 'mcp-field');
   const eventSelect = el('select'); eventSelect.className = 'hk-input';
   for (const ev of events) { const o = el('option', null, `${ev} — ${eventLabel(ev)}`); o.value = ev; eventSelect.append(o); }
   eventSelect.value = state.event;
   eventSelect.onchange = () => { state.event = eventSelect.value; paint(); };
   const support = el('p', 'mcp-note hk-support');
-  eventField.append(t('hooks.sheet.event'), eventSelect, support);
+  const eventField = field(t('hooks.sheet.event'), eventSelect, support);
   // matcher（エージェントごと）
   const matcherField = el('div', 'mcp-field');
   const matcherBox = el('div', 'hk-map');
   const matcherNote = el('p', 'mcp-note');
   matcherField.append(t('hooks.sheet.matcher'), matcherBox, matcherNote);
   // コマンド
-  const cmdField = el('label', 'mcp-field');
-  const command = el('input'); command.className = 'hk-input mono'; command.value = editing ? original.handler.command ?? '' : ''; command.placeholder = 'node ~/hooks/audit.cjs'; command.autocomplete = 'off'; command.spellcheck = false;
+  const command = el('input'); command.className = 'hk-input mono'; command.value = editing ? original.command ?? '' : ''; command.placeholder = 'node ~/hooks/audit.cjs'; command.autocomplete = 'off'; command.spellcheck = false;
   // Antigravity は引用符付きのバックスラッシュのパスを解決できない（実機で確認。2026-09-27）。スラッシュ形式に直せるようにする
   const slashNote = el('div', 'hk-slash');
   const slashFix = button(t('hooks.sheet.slashFix'), 'btn', () => { command.value = command.value.replace(/\\/g, '/'); paintSlash(); command.focus(); });
   slashNote.append(el('p', 'mcp-note cx-strong', t('hooks.sheet.slashAgy')), slashFix);
   const paintSlash = () => { slashNote.hidden = !(state.agents.includes('antigravity') && command.value.includes('\\')); };
   command.oninput = paintSlash;
-  cmdField.append(t('hooks.sheet.command'), command, slashNote, el('p', 'mcp-note', t('hooks.sheet.commandNote')));
-  // timeout / async
+  const cmdField = field(t('hooks.sheet.command'), command, slashNote, el('p', 'mcp-note', t('hooks.sheet.commandNote')));
+  // timeout / async。元の timeout が欄で扱えない値（文字列・小数・範囲外）なら欄は空にし、空のまま保存すれば元の値を残す
   const pair = el('div', 'hk-pair');
-  const timeoutField = el('label', 'mcp-field');
-  const timeout = el('input'); timeout.className = 'hk-input'; timeout.type = 'number'; timeout.min = '1'; timeout.step = '1'; timeout.value = editing && Number.isFinite(original.handler.timeout) ? String(original.handler.timeout) : '';
-  timeout.placeholder = t('hooks.sheet.timeoutDefault');
-  timeoutField.append(t('hooks.sheet.timeout'), timeout);
-  const asyncField = el('label', 'mcp-field');
+  const validTimeout = v => Number.isInteger(v) && v >= 1 && v <= 86400;
+  const oddTimeout = editing && original.timeout !== null && original.timeout !== undefined && !validTimeout(original.timeout);
+  const timeout = el('input'); timeout.className = 'hk-input'; timeout.type = 'number'; timeout.min = '1'; timeout.step = '1'; timeout.value = editing && validTimeout(original.timeout) ? String(original.timeout) : '';
+  timeout.placeholder = oddTimeout ? t('hooks.sheet.timeoutKeepHint') : t('hooks.sheet.timeoutDefault');
+  const timeoutField = field(t('hooks.sheet.timeout'), timeout);
   const asyncSelect = el('select'); asyncSelect.className = 'hk-input';
   for (const [v, text] of [['false', t('hooks.sheet.sync')], ['true', t('hooks.sheet.async')]]) { const o = el('option', null, text); o.value = v; asyncSelect.append(o); }
-  asyncSelect.value = editing && original.handler.async === true ? 'true' : 'false';
-  asyncField.append('async', asyncSelect);
+  asyncSelect.value = editing && original.async === true ? 'true' : 'false';
+  const asyncField = field('async', asyncSelect);
   pair.append(timeoutField, asyncField);
+  const timeoutNote = el('p', 'mcp-note', oddTimeout ? t('hooks.sheet.timeoutKept', { value: JSON.stringify(original.timeout) }) : '');
+  timeoutNote.hidden = !oddTimeout;
   const asyncNote = el('p', 'mcp-note');
   // 書き先
-  const scopeField = el('label', 'mcp-field');
   const scopeSelect = el('select'); scopeSelect.className = 'hk-input';
   for (const [v, text] of [['user', t('hooks.scope.user')], ['project', t('hooks.scope.project')], ['local', t('hooks.sheet.localOnly')]]) { const o = el('option', null, text); o.value = v; scopeSelect.append(o); }
   scopeSelect.value = state.scope; scopeSelect.disabled = editing;
   scopeSelect.onchange = () => { state.scope = scopeSelect.value; paint(); paintTargets(); };
-  scopeField.append(t('hooks.sheet.scope'), scopeSelect);
-  const baseField = el('label', 'mcp-field');
+  const scopeField = field(t('hooks.sheet.scope'), scopeSelect);
   const base = el('input'); base.className = 'hk-input mono'; base.value = state.base; base.placeholder = t('context.folderPath'); base.disabled = editing; base.autocomplete = 'off'; base.spellcheck = false;
   base.onchange = () => { state.base = base.value.trim(); paintTargets(); };
-  baseField.append(t('hooks.sheet.base'), base);
+  const baseField = field(t('hooks.sheet.base'), base);
   const where = el('div', 'cx-note hk-where');
   const foot = el('p', 'mcp-note', t('hooks.sheet.foot'));
-  if (editing && original.handler && Object.keys(original.handler).some(k => !['type', 'command', 'timeout', 'async'].includes(k)))
-    foot.textContent = `${t('hooks.sheet.keepKeys', { keys: Object.keys(original.handler).filter(k => !['type', 'command', 'timeout', 'async'].includes(k)).join(', ') })} ${foot.textContent}`;
+  const otherKeys = editing ? (original.keys ?? []).filter(k => !['type', 'command', 'timeout', 'async'].includes(k)) : [];
+  if (otherKeys.length) foot.textContent = `${t('hooks.sheet.keepKeys', { keys: otherKeys.join(', ') })} ${foot.textContent}`;
   const error = el('p', 'mcp-error'); error.setAttribute('role', 'alert');
   const acts = el('div', 'mcp-acts');
   const go = button(t('hooks.sheet.review'), 'btn btn-primary'); go.type = 'submit';
   acts.append(button(t('mcp.cancel'), 'btn', () => dialog.close()), go);
-  form.append(heading, lead, agentField, nameField, eventField, matcherField, cmdField, pair, asyncNote, scopeField, baseField, where, foot, error, acts);
+  const sheetParts = [heading, lead, agentField, nameField, eventField, matcherField, cmdField, pair, timeoutNote, asyncNote, scopeField, baseField, where, foot, error, acts];
+  form.append(...sheetParts);
 
   let targets = {};
   function paint() {
@@ -445,7 +463,8 @@ export async function openHookSheet(ctx, opts = {}) {
     catch (e) { if (ticket === targetTicket) targets = Object.fromEntries(HOOK_AGENTS.map(([id]) => [id, { error: e.message }])); }
     if (ticket === targetTicket) paintWhere();
   }
-  form.onsubmit = async ev => {
+  // 確認の段は送信を止める。「戻る」でシートへ戻したら、この処理を付け直す
+  const submit = async ev => {
     ev.preventDefault();
     error.textContent = '';
     const agents = state.agents;
@@ -456,7 +475,8 @@ export async function openHookSheet(ctx, opts = {}) {
     if (!command.value.trim()) return fail(t('hooks.error.command'));
     if (agents.includes('antigravity') && !name.value.trim()) return fail(t('hooks.error.name'));
     if (state.scope !== 'user' && !state.base) return fail(t('hooks.sheet.baseNeeded'));
-    const common = { event: state.event, command: command.value.trim(), timeout: timeout.value.trim() ? Number(timeout.value) : null, async: asyncSelect.value === 'true' };
+    const common = { event: state.event, command: command.value.trim(), timeout: timeout.value.trim() ? Number(timeout.value) : null, async: asyncSelect.value === 'true',
+      ...(oddTimeout && !timeout.value.trim() ? { keepTimeout: true } : {}) };
     const matcherOf = a => matcherBox.querySelector(`input[data-agent="${a}"]`)?.value.trim() ?? '';
     const items = editing
       ? [{ op: 'edit', agent: entry.agent, scope: entry.scope, base: entry.base, file: entry.path, revision: original.revision,
@@ -464,8 +484,9 @@ export async function openHookSheet(ctx, opts = {}) {
         matcher: matcherOf(entry.agent), ...common }]
       : agents.map(a => ({ op: 'add', agent: a, scope: state.scope, base: state.base || undefined, name: a === 'antigravity' ? name.value.trim() : undefined,
         matcher: matcherOf(a), ...common, async: a === 'antigravity' ? false : common.async }));
-    confirmStep(items, { back: () => { form.replaceChildren(heading, lead, agentField, nameField, eventField, matcherField, cmdField, pair, asyncNote, scopeField, baseField, where, foot, error, acts); heading.focus(); } });
+    confirmStep(items, { back: () => { form.replaceChildren(...sheetParts); form.onsubmit = submit; heading.focus(); } });
   };
+  form.onsubmit = submit;
 
   /** 書く前の確認。dryRun で書き先ごとの前後を取り、確かめてから書く。部分成功は行ごとに結果を出す */
   async function confirmStep(items, { back }) {
@@ -488,12 +509,16 @@ export async function openHookSheet(ctx, opts = {}) {
       h.append(el('b', null, agentLabel(items[i].agent)), el('span', 'cx-path', r.path ? ctx.short(r.path) : ''));
       card.append(h);
       if (!r.ok) { card.append(el('p', 'cx-strong', t('hooks.confirm.cannot', { error: r.error }))); return { card, ok: false }; }
-      card.append(diffView(lineDiff(JSON.stringify(r.before, null, 2), JSON.stringify(r.after, null, 2))));
+      // 実際に書く本文（伏せ字済み）の行の差分。形式（TOML / JSON）の札を付ける
+      card.append(el('span', 'hk-lang', String(r.format ?? '').toUpperCase()), diffView(lineDiff(r.before ?? '', r.after ?? '')));
+      if (r.hiddenChange) card.append(el('p', 'mcp-note cx-strong', t('hooks.confirm.hiddenChange')));
       if (items[i].agent === 'codex' && items[i].op !== 'delete') card.append(el('p', 'mcp-note', t('hooks.confirm.codexTrust')));
       let allow = null;
       if (r.reformatsFile) {
         const l = el('label', 'hk-check'); allow = el('input'); allow.type = 'checkbox';
-        l.append(allow, document.createTextNode(t('hooks.confirm.reformat')));
+        const why = r.reason === 'comments' ? t('hooks.confirm.lostComments', { n: r.lostComments })
+          : r.reason === 'jsonValues' ? t('hooks.confirm.jsonValues') : t('hooks.confirm.reformat', { n: r.lostComments ?? 0 });
+        l.append(allow, document.createTextNode(why));
         card.append(l);
       }
       box.append(card);
