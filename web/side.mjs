@@ -64,6 +64,13 @@ function unreadMark() {
   return mark;
 }
 
+/** 保存待ちの語（移動中・削除中・作成中）。回る弧は「動いている会話」の印なので置かず、語の上を光が通る（design-system.md §4.6） */
+function pendingLabel(text) {
+  const label = el("span", "pending-label");
+  label.append(el("span", "pending-glint", text));
+  return label;
+}
+
 // 絵文字の一覧（1363 件）は重いので、起動後の空き時間に先読みし、押した瞬間は面と弧を先に出す
 let emojiMod = null;
 const loadEmoji = () => (emojiMod ??= import("./emoji.mjs"));
@@ -240,7 +247,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const pendingStatus = last.pendingStatuses.get(st);
       if (pendingStatus) {
         head.classList.add('pending-status');
-        if (pendingStatus.visible) { const label = el('span', 'pending-label'); label.append(runMark(pendingStatus.text), pendingStatus.text); head.append(label); }
+        if (pendingStatus.visible) head.append(pendingLabel(pendingStatus.text));
       }
       // 畳んだ中に走っているものがあれば見出しに弧。走っていないときは印そのものを置かない（置くと回り続ける）
       // 動いているものが 1 つでもあれば弧、裏を待っているだけなら衛星（docs/design-system.md §6）
@@ -623,7 +630,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (last.runningIds.has(s.id) || behind) meta.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
     else if (last.unreadIds.has(s.id)) meta.append(unreadMark());
     if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", t("sidebar.waiting")));
-    if (pendingRow?.visible) { const label = el('span', 'pending-label'); label.append(runMark(pendingRow.text), pendingRow.text); meta.append(label); }
+    if (pendingRow?.visible) meta.append(pendingLabel(pendingRow.text));
     else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
     else meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
     if (last.backendLabels && s.backend) meta.append(backendLogo(s.backend, last.backendLabels[s.backend] ?? s.backend));
