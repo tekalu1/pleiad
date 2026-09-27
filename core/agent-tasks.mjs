@@ -20,6 +20,19 @@ const text = (locale, value, name, max = 60000) => {
   return value;
 };
 
+/**
+ * 子の会話の記録（getMessages）から、委譲の結果にする返答を選ぶ（docs/agent-delegation.md「子の結果」）。
+ * この回（最後の user の発言より後）の assistant の本文のうち、最後のもの。ただし、バックエンドが
+ * stopHookFollowUp を付けた発言（Stop フックに止められて書いた、中身の仕事をしていない続き。Claude の
+ * claude-normalize.mjs の stopHookFollowUps）は飛ばす。飛ばすと何も残らないときは、今までどおり最後の本文
+ */
+export function finalReply(messages) {
+  const list = Array.isArray(messages) ? messages : [];
+  const reply = (m) => m?.role === 'assistant' && typeof m.text === 'string' && m.text;
+  const run = list.slice(list.findLastIndex((m) => m?.role === 'user') + 1);
+  return (run.findLast((m) => reply(m) && !m.stopHookFollowUp) ?? list.findLast(reply))?.text ?? '';
+}
+
 // Pleiad owns these tasks, independently of each engine's native subagent registry.
 // Writes are serialized; only the scheduler starts work. No blind replay after a crash.
 // 保存の失敗（docs/agent-delegation.md「保存・画面・再起動」）:

@@ -28,7 +28,7 @@ import os from "node:os";
 import * as store from "../store.mjs";
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { buildClaudeModels, FALLBACK_MODELS } from "./claude-models.mjs";
-import { normalizeSdkMessage, transcriptToMessages, mergeQueuedCommands, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript } from "./claude-normalize.mjs";
+import { normalizeSdkMessage, transcriptToMessages, mergeQueuedCommands, stopHookFollowUps, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript } from "./claude-normalize.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
 
 const NL = String.fromCharCode(10);
@@ -396,7 +396,7 @@ const subagentReads = new Map();   // "sessionId/agentId:limit" -> { stamp, entr
 /**
  * サブエージェントの transcript を自分で読む。SDK の getSubagentMessages は最後の 1 件しか返さない
  * （claude-normalize.mjs の subagentEntries）。見つからなければ null（呼び出し側が SDK へ落とす）。
- * 置き場は readQueuedCommandRows と同じく、組み立てずに projects の下を探す。
+ * 置き場は readTranscriptExtras と同じく、組み立てずに projects の下を探す。
  */
 function transcriptVersion(text) {
   for (const line of String(text).split('\n').slice(0, 20)) {
@@ -447,17 +447,19 @@ async function readSubagentEntries(sessionId, agentId, { limit = 0 } = {}) {
 }
 
 /**
- * transcript（`<CLAUDE_CONFIG_DIR ?? ~/.claude>/projects/<何か>/<sessionId>.jsonl`）から
- * attachment 行だけを拾う。途中送信は queued_command の attachment として残り、
- * SDK の getSessionMessages はそれを返さない（claude-normalize.mjs の mergeQueuedCommands）。
+ * transcript（`<CLAUDE_CONFIG_DIR ?? ~/.claude>/projects/<何か>/<sessionId>.jsonl`）から、
+ * SDK の getSessionMessages が返さないものを拾う。
+ * - rows: attachment 行。途中送信は queued_command の attachment として残る（claude-normalize.mjs の mergeQueuedCommands）
+ * - followUps: Stop フックに止められて書いた、中身の仕事をしていない続きの assistant 行の uuid（claude-normalize.mjs の stopHookFollowUps）
  *
  * - 置き場のディレクトリ名は cwd から作られるが、**組み立てない**（再開で cwd が変わると外れる）。
  *   projects の下を順に見て、その id の .jsonl があるところを使う。
  * - 折り込みが 1 件も無いセッションでは何も parse しない（文字列を 1 回走査するだけ）。
  * - 読めなければ空。履歴は素の getSessionMessages のまま出す（今までどおりの見た目に落ちる）。
  */
-async function readQueuedCommandRows(sessionId) {
-  if (!sessionId) return [];
+async function readTranscriptExtras(sessionId) {
+  const none = { rows: [], followUps: new Set() };
+  if (!sessionId) return none;
   try {
     const projects = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects");
     let text = null;
@@ -469,7 +471,9 @@ async function readQueuedCommandRows(sessionId) {
       }
       if (text !== null) break;
     }
-    if (!text || !text.split('\n').some(line => line.includes('"attachment"') && line.includes('queued_command'))) return [];
+    if (!text) return none;
+    const followUps = stopHookFollowUps(text);
+    if (!text.split('\n').some(line => line.includes('"attachment"') && line.includes('queued_command'))) return { rows: [], followUps };
     const version = transcriptVersion(text);
     const rows = [];
     // 親子の鎖を遡るのに要るのは attachment 行だけ（間に挟まるのは CLI が足す attachment）。
@@ -482,9 +486,9 @@ async function readQueuedCommandRows(sessionId) {
       } catch { /* 壊れた行は飛ばす */ }
     }
     if (invalidQueuedCommandTranscript(text)) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'transcript-shape', detectedVersion: version });
-    return rows;
+    return { rows, followUps };
   } catch {
-    return [];
+    return none;
   }
 }
 
@@ -941,9 +945,9 @@ export const backend = {
 
   async getMessages(sessionId, options) {
     const entries = await getSessionMessages(sessionId).catch(() => []);
-    // 走っているターンに折り込まれた途中送信は getSessionMessages に出ない。transcript から拾って戻す
-    const rows = await readQueuedCommandRows(sessionId);
-    return transcriptToMessages(mergeQueuedCommands(entries, rows), options);
+    // 走っているターンに折り込まれた途中送信と、Stop フックの続きの印は getSessionMessages に出ない。transcript から拾う
+    const { rows, followUps } = await readTranscriptExtras(sessionId);
+    return transcriptToMessages(mergeQueuedCommands(entries, rows), { ...options, followUps });
   },
 
   setTitle: (sessionId, title) => renameSession(sessionId, title),

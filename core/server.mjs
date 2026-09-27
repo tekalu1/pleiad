@@ -7,7 +7,7 @@ import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
 // server は「どのエージェントに聞くか」を決めて、正規化イベントを web へ配るだけ。
 // 承認の保留・猶予・中断（設計メモ §8.5）だけはここに残す。エージェントに散らすと
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
-import { createAgentTasks } from './agent-tasks.mjs';
+import { createAgentTasks, finalReply } from './agent-tasks.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
 import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
@@ -2027,11 +2027,10 @@ function awaitedBackground(sessionId) {
   return (runtime.background.get(sessionId)?.tasks ?? []).some((x) => x.waitable === true || (x.kind !== "shell" && x.kind !== "terminal"));
 }
 
-/** 会話の最後の assistant の本文（委譲の結果に使う）。無ければ空文字 */
+/** 委譲の結果にする子の返答（agent-tasks.mjs の finalReply。Stop フックの続きの一言は飛ばす）。無ければ空文字 */
 async function lastReply(sessionId) {
   const backend = await resolveBackendForSession(sessionId);
-  const messages = await backend.getMessages(sessionId, { fullResults: true });
-  return messages.findLast((m) => m.role === "assistant" && m.text)?.text ?? "";
+  return finalReply(await backend.getMessages(sessionId, { fullResults: true }));
 }
 
 /**

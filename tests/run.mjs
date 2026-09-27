@@ -28,6 +28,8 @@ const cases = [
   await import('./unit/server-agent-tasks.mjs'),
   // 委譲の子に裏の作業が残るとき: 終わらないコマンドは上限まで待って止める・サブエージェントは止めない・端末は待たない（子にも親にも）
   await import('./unit/server-delegation-background.mjs'),
+  // 委譲の結果に選ぶ返答: Stop フックの続き（調べものだけ）は飛ばす・中身の仕事をした続きは選ぶ（Claude の transcript の印）
+  await import('./unit/delegation-result.mjs'),
   // 委譲先の自動振り分け: 規則・段・使用量で飛ばす・Claude のアカウント・判定器（偽の fetch）・使用量の取り置き
   await import('./unit/delegation-routing.mjs'),
   // 同じくサーバー全体: kind の検査・自動で選んで子を作る・記録・設定とキーの口（偽の判定器と偽の agy）

@@ -20,6 +20,8 @@
 //   "bg-shell <本文>" … 本文で返答した後、終わらない裏のコマンド（Claude の local_bash）を抱えて phase: waiting で待つ。
 //                    stopBackground で止めると main が再開して一言返し、ターンが終わる
 //   "term <本文>"  … 本文で返答して終わり、ターンの外に端末（Codex の unified_exec と同じ kind: terminal）を残す
+//   "hook-follow <本文>" … 本文で返答した後、Stop フックに止められて続けた形（ToolSearch と load_skill を呼んで「ナレッジ化対象なし」）。
+//                    続きの発言には Claude の履歴と同じ stopHookFollowUp を付ける
 //   それ以外        … prompt をそのまま echo
 import crypto from "node:crypto";
 import { undelivered } from "./undelivered.mjs";
@@ -376,6 +378,20 @@ export const backend = {
         if (await background(text, { s, out, emit, signal, control })) return { sessionId: id };
       } else if (/^bg-shell(\s|$)/.test(text)) {
         if (await hangingShell(text, { s, out, emit, signal, keys: [...new Set([hostSessionId, id].filter(Boolean))] })) return { sessionId: id };
+      } else if (/^hook-follow(\s|$)/.test(text)) {
+        const report = { uuid: crypto.randomUUID(), role: "assistant", text: text.replace(/^hook-follow\s*/, "") || "報告" };
+        await say(emit, report.text, report.uuid);
+        push(s, report);
+        // Stop フックの続き。調べものだけをして一言書く（claude-normalize.mjs の stopHookFollowUps が印を付ける形）
+        const calls = ["ToolSearch", "mcp__ply_context__load_skill"].map((name) => ({ id: crypto.randomUUID(), name, input: {}, result: { text: "ok", isError: false, truncated: false } }));
+        for (const call of calls) {
+          emit({ type: "tool.start", id: call.id, name: call.name, input: call.input });
+          emit({ type: "tool.result", id: call.id, text: "ok", isError: false, truncated: false });
+        }
+        push(s, { role: "assistant", text: "", tools: calls.map((c) => c.name), toolCalls: calls, stopHookFollowUp: true });
+        const follow = { uuid: crypto.randomUUID(), role: "assistant", text: "ナレッジ化対象なし", stopHookFollowUp: true };
+        await say(emit, follow.text, follow.uuid);
+        push(s, follow);
       } else if (/^term(\s|$)/.test(text)) {
         out.text = text.replace(/^term\s*/, "") || "端末を残した";
         await say(emit, out.text, out.uuid);

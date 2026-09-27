@@ -4,6 +4,7 @@
 //     2026-09-27 に、Claude の子が報告を書き終えた後も running のまま残り、依頼元に通知が届かなかった（docs/agent-delegation.md「子に残った裏の作業」）
 //   - "bg": 裏のサブエージェント。自分で終わるので止めない
 //   - "term": Codex のバックグラウンド端末（ターンの外に残る。終わっても main は再開しない）。子にも親にも残る形
+//   - "hook-follow": 報告の後に Stop フックが続けさせ、調べものだけして一言書いた形。結果と通知は報告（docs/agent-delegation.md「子の結果」）
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,7 +12,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 
 export const name = 'server-delegation-background';
-export const title = '委譲の子に裏の作業が残っても完了し、依頼元へ通知が届く（終わらないコマンド・サブエージェント・端末）';
+export const title = '委譲の子の終わり方: 裏の作業が残っても完了して通知が届く（コマンド・サブエージェント・端末）・Stop フックの続きの一言を結果にしない';
 
 const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 const WAIT_MS = 1500;
@@ -92,6 +93,17 @@ export default async function (t) {
       const sent = await until(async () => { const r = await taskOf(second.taskId); return r?.notification === 'sent' ? r : null; }, 15000);
       t.ok('親に端末が残っていても完了通知が届く', sent?.status === 'completed' && (await notices(parent)).some((m) => m.text.includes(second.taskId)),
         JSON.stringify({ status: sent?.status, notification: sent?.notification }));
+    }
+
+    // ---- 4. 報告の後に Stop フックが続けさせた一言は結果にしない
+    {
+      const { parent, task } = await delegate('hook-follow 子の報告: デザインを直した');
+      const done = await until(async () => { const r = await taskOf(task.taskId); return r?.notification === 'sent' ? r : null; }, 15000);
+      t.ok('結果は報告（Stop フックの続きの「ナレッジ化対象なし」ではない）', done?.status === 'completed' && done.result === '子の報告: デザインを直した', JSON.stringify({ status: done?.status, result: done?.result }));
+      const child = await c.cmd('loadSession', { sessionId: task.sessionId });
+      t.ok('子の会話には続きの一言も残る（印付き）', child.messages.at(-1)?.text === 'ナレッジ化対象なし' && child.messages.at(-1)?.stopHookFollowUp === true);
+      const text = (await notices(parent))[0]?.text ?? '';
+      t.ok('完了通知の結果も報告', text.includes('子の報告: デザインを直した') && !text.includes('ナレッジ化対象なし'), text.slice(0, 300));
     }
   } finally {
     c.close();
