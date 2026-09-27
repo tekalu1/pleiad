@@ -28,6 +28,16 @@ export function diffFromDefaults(value, defaults) {
   return same(value, defaults) ? null : value;
 }
 
+function applyPatch(settings, patch, defaults) {
+  const next = structuredClone(settings);
+  for (const [key, value] of Object.entries(patch)) {
+    next[key] = value === null ? structuredClone(defaults[key])
+      : value && typeof value === 'object' && !Array.isArray(value)
+        ? { ...next[key], ...structuredClone(value) } : value;
+  }
+  return next;
+}
+
 function button(text, onclick, className = 'btn') {
   const b = el('button', className, text);
   b.type = 'button';
@@ -47,8 +57,10 @@ function button(text, onclick, className = 'btn') {
 export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, modelsOf, modelName }) {
   const $ = id => document.getElementById(id);
   const root = $('delegationPanel');
-  let data = null, busy = false, message = '', editingKey = '', confirmingKey = '', confirmingReset = false, refreshing = false;
-  // 判定器の面で押した部品（`${kind}:${judge}` か 'escalate'）。保存中は押せないので、保存が終わって描き直したときにフォーカスを戻す
+  let data = null, committed = null, message = '', editingKey = '', confirmingKey = '', confirmingReset = false, refreshing = false;
+  const pending = [];
+  let saving = false, refreshSerial = 0;
+  // 判定器の面で押した部品（`${kind}:${judge}` か 'escalate'）。描き直したときにフォーカスを戻す
   let judgeFocus = '';
   const names = { backend: id => labelOf(id), model: (backend, model) => modelName(backend, model) || model };
 
@@ -78,19 +90,40 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   root.append(head, stateLine, effective, judges, keys, advanced, reset);
 
   async function refresh(args = {}) {
-    try { data = await cmd('delegationRouting', args); message = ''; }
+    const serial = ++refreshSerial;
+    try {
+      const latest = await cmd('delegationRouting', args);
+      if (serial !== refreshSerial) return;
+      committed = latest;
+      data = { ...latest, settings: pending.reduce((s, patch) => applyPatch(s, patch, latest.defaults), latest.settings) };
+      message = '';
+    }
     catch (e) { message = t('routing.settings.loadFailed', { error: e.message }); }
     // 候補の名前は語彙から。まだ読んでいないエージェントの分を読んでから描く
     await Promise.all([...new Set((data?.candidates ?? []).map(c => c.backend).filter(Boolean))].map(b => modelsOf(b).catch(() => null)));
     paint();
   }
   async function save(patch) {
-    if (busy || !data) return;
-    busy = true; message = '';
+    if (!data) return;
+    pending.push(patch);
+    data = { ...data, settings: applyPatch(data.settings, patch, data.defaults) };
+    message = '';
     paint();
-    try { data = await cmd('setDelegationRouting', { settings: patch }); }
-    catch (e) { message = t('routing.settings.saveFailed', { error: e.message }); }
-    finally { busy = false; paint(); }
+    if (saving) return;
+    saving = true;
+    while (pending.length) {
+      const next = pending[0];
+      try {
+        committed = await cmd('setDelegationRouting', { settings: next });
+        message = '';
+      } catch (e) {
+        message = t('routing.settings.saveFailed', { error: e.message });
+      }
+      pending.shift();
+      data = { ...committed, settings: pending.reduce((s, item) => applyPatch(s, item, committed.defaults), committed.settings) };
+      paint();
+    }
+    saving = false;
   }
   /** 入れ子の設定（judgeByKind・tiers・table）を変えたとき。既定と同じ項目は送らず、全部既定なら null で既定に戻す */
   const saveNested = (key, value) => save({ [key]: diffFromDefaults(value, data.defaults[key]) });
@@ -99,7 +132,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   function paint() {
     const s = data?.settings;
     sw.setAttribute('aria-checked', String(Boolean(s?.enabled)));
-    sw.disabled = busy || !s;
+    sw.disabled = !s;
     stateLine.textContent = message;
     stateLine.hidden = !message;
     paintEffective();
@@ -136,7 +169,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
         }, '');
         b.classList.toggle('on', s.judgeByKind[kind] === judge);
         b.setAttribute('aria-pressed', String(s.judgeByKind[kind] === judge));
-        b.disabled = busy;
+        b.disabled = false;
         b.dataset.focusKey = key;
         controls.set(key, b);
         seg.append(b);
@@ -149,17 +182,15 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     const box = el('input');
     box.type = 'checkbox';
     box.checked = s.escalateToCerebras;
-    box.disabled = busy;
+    box.disabled = false;
     box.onchange = () => { judgeFocus = 'escalate'; save({ escalateToCerebras: box.checked }); };
     box.dataset.focusKey = 'escalate';
     controls.set('escalate', box);
     check.append(box, el('span', null, t('routing.settings.escalate')));
     out.push(check);
     judges.replaceChildren(...out);
-    // 保存中は押せない（disabled にはフォーカスが乗らない）ので、押せるようになった次の描き直しまで持ち越す
-    const target = controls.get(focusKey);
-    if (target?.disabled) judgeFocus = focusKey;
-    else { judgeFocus = ''; target?.focus(); }
+    judgeFocus = '';
+    controls.get(focusKey)?.focus();
   }
   // i18n-dynamic: routing.settings.service.
 
@@ -254,10 +285,14 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     return form;
   }
   async function keyCommand(command, args) {
-    busy = true; message = '';
-    try { data = await cmd(command, args); editingKey = ''; confirmingKey = ''; }
+    message = '';
+    try {
+      committed = await cmd(command, args);
+      data = { ...committed, settings: pending.reduce((s, patch) => applyPatch(s, patch, committed.defaults), committed.settings) };
+      editingKey = ''; confirmingKey = '';
+    }
     catch (e) { message = t('routing.settings.saveFailed', { error: e.message }); }
-    finally { busy = false; paint(); }
+    finally { paint(); }
   }
 
   // ---- 詳しい設定
@@ -293,6 +328,26 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     advancedBody.replaceChildren(...out);
   }
   function stateOf(candidate) { return data.candidates.find(c => c.candidate === candidate) ?? null; }
+  function candidateUsage(candidate) {
+    const st = stateOf(candidate);
+    const { backend } = splitCandidate(candidate);
+    const sub = [labelOf(backend)];
+    if (st?.usable) { const u = usageSummary(st); if (u) sub.push(u); }
+    else if (st) sub.push(skipText(st.reason, st.detail));
+    return { st, text: (st?.reason === 'model_unknown' ? '⚠ ' : '') + sub.join(t('routing.line.join')) };
+  }
+  function paintUsage() {
+    paintEffective();
+    const at = data.candidates.map(c => c.checkedAt).filter(Boolean).sort()[0];
+    const stamp = advancedBody.querySelector('.rt-usage-at')?.querySelector('small');
+    if (stamp) stamp.textContent = at ? t('routing.settings.usageAt', { time: fmt.time(at, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }) : t('routing.settings.usageNever');
+    for (const row of advancedBody.querySelectorAll('.rt-cand-row')) {
+      const { st, text } = candidateUsage(row.dataset.candidate);
+      row.classList.toggle('off', Boolean(st && !st.usable));
+      const small = row.querySelector('.rt-cand-info')?.querySelector('small');
+      if (small) { small.textContent = text; small.classList.toggle('rt-strong', st?.reason === 'model_unknown'); }
+    }
+  }
   function tierBlock(tier) {
     const list = data.settings.tiers[tier] ?? [];
     const block = el('div', 'rt-tier');
@@ -303,28 +358,27 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       const st = stateOf(candidate);
       const name = names.model(backend, model);
       const row = el('li', 'rt-cand-row' + (st && !st.usable ? ' off' : ''));
+      row.dataset.candidate = candidate;
       const info = el('div', 'rt-cand-info');
       const title = el('span', 'rt-cand-name');
       title.append(el('span', 'rt-n', `${i + 1}.`), logo(backend), el('span', null, name));
       title.title = candidate;
-      const sub = [labelOf(backend)];
-      if (st?.usable) { const u = usageSummary(st); if (u) sub.push(u); }
-      else if (st) sub.push(skipText(st.reason, st.detail));
-      const small = el('small', st && ['model_unknown'].includes(st.reason) ? 'rt-strong' : null, (st?.reason === 'model_unknown' ? '⚠ ' : '') + sub.join(t('routing.line.join')));
+      const usage = candidateUsage(candidate);
+      const small = el('small', st?.reason === 'model_unknown' ? 'rt-strong' : null, usage.text);
       info.append(title, small);
       const actions = el('div', 'rt-cand-actions');
       const move = (to, label, d) => {
         const b = button('', () => { const next = [...list]; [next[i], next[to]] = [next[to], next[i]]; saveNested('tiers', { ...data.settings.tiers, [tier]: next }); }, 'btn btn-icon rt-move');
         b.setAttribute('aria-label', label); b.title = label;
         b.innerHTML = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
-        b.disabled = busy || to < 0 || to >= list.length;
+        b.disabled = to < 0 || to >= list.length;
         return b;
       };
       const remove = button('', () => saveNested('tiers', { ...data.settings.tiers, [tier]: list.filter(c => c !== candidate) }), 'btn btn-icon rt-move');
       remove.setAttribute('aria-label', t('routing.settings.candidateRemove', { name }));
       remove.title = remove.getAttribute('aria-label');
       remove.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
-      remove.disabled = busy;
+      remove.disabled = false;
       actions.append(move(i - 1, t('routing.settings.candidateUp', { name }), 'M6 15l6-6 6 6'),
         move(i + 1, t('routing.settings.candidateDown', { name }), 'M6 9l6 6 6-6'), remove);
       row.append(info, actions);
@@ -333,7 +387,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     if (!list.length) block.append(el('p', 'mp-note', t('routing.settings.empty')));
     else block.append(rows);
     const add = button(t('routing.settings.addCandidate'), e => addMenu(tier, e.currentTarget), 'btn rt-add');
-    add.disabled = busy;
+    add.disabled = false;
     block.append(add);
     return block;
   }
@@ -376,7 +430,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
           `${kindText(kind)} · ${difficultyText(d)}`);
         }, 'btn rt-cell');
         b.setAttribute('aria-label', t('routing.settings.tableCell', { kind: kindText(kind), difficulty: difficultyText(d), tier: tierText(tier) }));
-        b.disabled = busy;
+        b.disabled = false;
         td.append(b);
         tr.append(td);
       });
@@ -391,7 +445,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     const input = el('input');
     input.type = 'number'; input.min = String(min); input.max = String(max); input.step = String(step);
     input.value = String(data.settings[key]);
-    input.disabled = busy;
+    input.disabled = false;
     const commit = () => {
       const v = Number(input.value);
       if (!Number.isFinite(v) || v === data.settings[key]) { input.value = String(data.settings[key]); return; }
@@ -420,7 +474,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       out.push(ask);
     } else {
       const b = button(t('routing.settings.reset'), () => { confirmingReset = true; paintReset(); });
-      b.disabled = busy || same(data.settings, data.defaults);
+      b.disabled = same(data.settings, data.defaults);
       out.push(b);
     }
     reset.replaceChildren(...out);
@@ -430,7 +484,18 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   paint();
   return {
     refresh,
-    /** delegationRoutingChanged。開いているときだけ取り直す（使用量の取り直しは 5 分ごとに来る） */
-    event() { if (!root.hidden) refresh(); },
+    /** 使用量だけの通知では、開いたメニューと入力欄を作り直さない。種類のない旧サーバーの通知は全体を取り直す */
+    async event(ev) {
+      if (root.hidden) return;
+      if (ev?.change !== 'usage') return refresh();
+      const serial = ++refreshSerial;
+      try {
+        const latest = await cmd('delegationRouting');
+        if (serial !== refreshSerial || !data) return;
+        data.candidates = latest.candidates;
+        data.warnings = latest.warnings;
+        paintUsage();
+      } catch (e) { message = t('routing.settings.loadFailed', { error: e.message }); stateLine.textContent = message; stateLine.hidden = false; }
+    },
   };
 }

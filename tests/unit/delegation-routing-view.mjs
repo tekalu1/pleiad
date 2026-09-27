@@ -163,15 +163,17 @@ async function effectiveLines(t) {
 /** 設定 › 委譲の判定器の面。押したボタンにフォーカスが残っていても、選び直しが画面に出てフォーカスが戻る */
 async function judgePanel(t) {
   const judgeDefaults = { implement: 'jev', review: 'jev' };
-  const defaults = { enabled: true, judgeByKind: judgeDefaults, escalateToCerebras: false, tiers: { t1: [] }, table: { implement: ['t1', 't1', 't1'], review: ['t1', 't1', 't1'] },
+  const defaults = { enabled: true, judgeByKind: judgeDefaults, escalateToCerebras: false, tiers: { t1: ['claude:haiku'] }, table: { implement: ['t1', 't1', 't1'], review: ['t1', 't1', 't1'] },
     avoidPercent: 80, paceLimit: 1.5, staleMinutes: 10 };
   let settings = structuredClone(defaults);
-  const state = () => structuredClone({ settings, defaults, kinds: ['implement', 'review'], judges: ['jev', 'cerebras', 'none'], tiers: ['t1'], candidates: [],
+  let candidates = [{ candidate: 'claude:haiku', backend: 'claude', usable: true, checkedAt: '2026-09-27T00:00:00Z', windows: [] }];
+  const state = () => structuredClone({ settings, defaults, kinds: ['implement', 'review'], judges: ['jev', 'cerebras', 'none'], tiers: ['t1'], candidates,
     keys: { openrouter: { hasKey: true }, cerebras: { hasKey: true } }, storage: { encrypted: true } });
-  let release = null;
+  const releases = [], sent = [];
   const cmd = async (name, args) => {
     if (name === 'setDelegationRouting') {
-      await new Promise(r => { release = r; });
+      sent.push(args.settings);
+      await new Promise((resolve, reject) => { releases.push({ resolve, reject }); });
       const { judgeByKind, ...rest } = args.settings;
       if (judgeByKind !== undefined) settings.judgeByKind = { ...judgeDefaults, ...(judgeByKind ?? {}) };
       Object.assign(settings, rest);
@@ -198,24 +200,39 @@ async function judgePanel(t) {
     const cerebras = control('implement:cerebras');
     document.activeElement = cerebras;
     cerebras.onclick();
-    t.ok('保存中は判定器のボタンを押せない', control('implement:cerebras').disabled === true && control('review:none').disabled === true);
-    release(); await tick();
+    t.ok('押した瞬間に選択が変わり、ほかの判定器も押せる', control('implement:cerebras').classList.contains('on') && !control('review:none').disabled);
+    control('review:none').onclick();
+    t.ok('保存中の次の変更もすぐ表示し、送信は最初の保存を待つ', control('review:none').classList.contains('on') && sent.length === 1);
+    releases.shift().resolve(); await tick();
+    t.ok('2 件目は 1 件目の完了後に送る', sent.length === 2 && sent[1].judgeByKind.review === 'none');
+    releases.shift().resolve(); await tick();
     const after = control('implement:cerebras');
     t.ok('押した判定器に選択が移る', after.classList.contains('on') && after.getAttribute('aria-pressed') === 'true'
-      && !control('implement:jev').classList.contains('on') && settings.judgeByKind.implement === 'cerebras');
-    t.ok('描き直した後も押したボタンにフォーカスが残る', document.activeElement === after);
+      && !control('implement:jev').classList.contains('on') && settings.judgeByKind.implement === 'cerebras' && settings.judgeByKind.review === 'none');
 
     // 別の画面から変わった（delegationRoutingChanged）ときも、フォーカスが面の中にあっても描き直す
-    settings.judgeByKind.review = 'none';
+    settings.judgeByKind.review = 'jev';
     await ui.refresh();
-    t.ok('フォーカスが面の中にあっても、届いた設定を描き直す', control('review:none').classList.contains('on') && document.activeElement === control('implement:cerebras'));
+    t.ok('フォーカスが面の中にあっても、届いた設定を描き直す', control('review:jev').classList.contains('on'));
 
     const box = control('escalate');
     document.activeElement = box;
     box.checked = true;
     box.onchange();
-    release(); await tick();
+    releases.shift().resolve(); await tick();
     t.ok('聞き直しのチェックも保存して描き直し、フォーカスを戻す', control('escalate').checked === true && settings.escalateToCerebras === true && document.activeElement === control('escalate'));
+    control('review:none').onclick();
+    t.ok('失敗する保存も先に画面へ反映する', control('review:none').classList.contains('on'));
+    releases.shift().reject(new Error('denied')); await tick();
+    t.ok('保存に失敗した値だけを巻き戻し、理由を 1 行に出す', control('review:jev').classList.contains('on') && root.querySelector('.rm-state').textContent.includes('denied'));
+
+    const row = root.querySelector('.rt-cand-row');
+    const input = root.querySelector('.rt-number').querySelector('input');
+    input.value = '73'; document.activeElement = input;
+    candidates = [{ ...candidates[0], usable: false, reason: 'quota_high' }];
+    await ui.event({ type: 'delegationRoutingChanged', change: 'usage' });
+    t.ok('使用量だけの知らせで候補の行・入力とフォーカスを保ち、使えるかどうかだけを変える',
+      root.querySelector('.rt-cand-row') === row && row.classList.contains('off') && input.value === '73' && document.activeElement === input);
   } finally {
     document.getElementById = saved.getElementById;
     document.activeElement = saved.activeElement;
