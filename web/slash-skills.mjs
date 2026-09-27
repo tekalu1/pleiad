@@ -97,13 +97,18 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canC
 
   const paint = (q) => {
     list.replaceChildren();
-    // i18n-dynamic: compaction.commandGroup
-    const head = el("li", "head", t(items.some(item => item.command) ? "compaction.commandGroup" : "chat.composer.skills"));
+    // スキルの組の見出しは件数付き（コマンドの組ができる前と同じ形）
+    const skillHead = () => {
+      const h = el("li", "head");
+      h.append(el("span", null, t("chat.composer.skills")), el("span", "n", String(items.filter(item => !item.command).length)));
+      return h;
+    };
+    const head = items.some(item => item.command) ? el("li", "head", t("compaction.commandGroup")) : skillHead();
     list.append(head);
     if (!items.length) list.append(el("li", "none", t("composer.skills.none")));
     for (const extra of list.children) if (!extra.classList.contains("it") && extra !== head) extra.setAttribute("role", "presentation");
     items.forEach((s, i) => {
-      if (!s.command && (i === 0 || items[i - 1]?.command)) list.append(el('li', 'head', t('chat.composer.skills')));
+      if (!s.command && i > 0 && items[i - 1]?.command) list.append(skillHead());
       const li = el("li", "it" + (i === active ? " on" : ""));
       li.id = `slash-option-${i}`;
       li.setAttribute("role", "option");

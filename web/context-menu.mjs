@@ -61,13 +61,15 @@ export function createContextMenu() {
         input.onkeydown = e => { if (isComposingKey(e)) return; if (e.key === 'Enter') { e.preventDefault(); const v = input.value.trim(); if (v) { close(true); item.input.onCommit(v); } } };
         panel.append(input); continue;
       }
-      const row = el('button', 'li' + (item.checked ? ' on' : '') + (item.hintWrap ? ' hint-wrap' : ''));
+      const row = el('button', 'li' + (item.checked ? ' on' : '') + (item.note ? ' has-note' : ''));
       row.type = 'button'; row.setAttribute('role', 'menuitem');
       // 今は押せない項目（タイトル行の「…」のタイトルを生成: 生成中・未送信など）
       if (item.disabled) { row.disabled = true; row.setAttribute('aria-disabled', 'true'); }
       row.append(el('span', 'lbl', item.label));
       if (item.pending) { const label = el('span', 'hint pending-label'); label.append(runMark(t('pending.loading')), t('pending.loading')); row.append(label); }
       else if (item.hint) row.append(el('span', 'hint', item.hint));
+      // 項目の下の補足（押せない理由など）。右の値（.hint）とは別に、弱い小さな本文の字で全文を折り返す
+      if (item.note) row.append(el('span', 'note', item.note));
       if (item.sub) {
         row.append(el('span', 'more', '▸'));
         row.setAttribute('aria-haspopup', 'menu'); row.setAttribute('aria-expanded', 'false');

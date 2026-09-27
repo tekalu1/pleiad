@@ -199,7 +199,8 @@ function paintContextStrip() {
   $('contextMeter').hidden = !usage;
   if (usage) {
     const rate = Math.round(100 * usage.usedTokens / usage.windowTokens);
-    const caret = el('span', 'context-meter-caret', '⌄'); caret.setAttribute('aria-hidden', 'true');
+    // 入力欄のチップと同じ ▾（composer-controls.mjs の CARET。12px の線画）
+    const caret = svgEl('svg', { class: 'i caret', viewBox: '0 0 24 24', 'aria-hidden': 'true' }); caret.append(svgEl('path', { d: 'M7 10l5 5 5-5' }));
     $('contextMeter').replaceChildren(document.createTextNode(t('compaction.context')),
       (() => { const bar = el('span', 'context-meter-bar'); const fill = el('span'); fill.style.width = `${Math.min(100, Math.max(0, rate))}%`; bar.append(fill); return bar; })(),
       document.createTextNode(t('compaction.meter', { rate, used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) })), caret);
@@ -286,7 +287,6 @@ function paintAutoCompactionSettings() {
     $(`autoCompaction${name}`).setAttribute('aria-checked', String(settings[id].enabled));
     $(`autoCompaction${name}Delay`).value = String(settings[id].delayMinutes);
   }
-  for (const control of $('autoCompactionPanel').querySelectorAll('input, .auto-compaction-agents .cx-sw')) control.disabled = !settings.enabled;
 }
 async function saveAutoCompactionSettings() {
   const settings = { enabled: $('autoCompactionEnabled').getAttribute('aria-checked') === 'true',
@@ -4207,8 +4207,7 @@ function rowMenu(s, x, y, lead = []) {
           .catch((e) => sys(html.t("session.titleFailed", { error: e.message }))) } },
     ] },
     { label: t('compaction.compact'), disabled: !capsOf(s.backend).compact,
-      hint: !capsOf(s.backend).compact ? t('compaction.antigravityManaged') : '',
-      hintWrap: !capsOf(s.backend).compact,
+      note: !capsOf(s.backend).compact ? t('compaction.antigravityManaged') : '',
       onClick: () => cmd('compactConversation', { sessionId: s.id }).catch(error => showRowCompactionError(s, error)) },
     ...(s.backend === 'antigravity' ? [] : [{ label: t('compaction.disableConversation'), checked: Boolean(s.autoCompactionOff),
       onClick: () => cmd('setConversationAutoCompaction', { sessionId: s.id, off: !s.autoCompactionOff })
