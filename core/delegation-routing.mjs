@@ -186,19 +186,20 @@ export function windowsFor(backend, model, windows = []) {
 
 /**
  * 枠の集まりで使えるか。{ ok, reason?, window? }。
- *   どれかの枠が 100% 以上 → quota_full（使えない）。後回しの線以上 → quota_high
+ *   どれかの枠が 100% 以上 → quota_full（使えない）。5 時間以外が後回しの線以上 → quota_high
  *   週次の枠のペースが上限を超える（経過率 20% 未満は見ない）→ pace_high
  *   経過率が出せない週次の枠は、使用率が 20% × 上限以下ならペースで後回しにならず、超えれば pace_unknown
- *   使用率が分からない枠がある・枠が 1 つも無い → usage_unknown
+ *   5 時間以外の使用率が分からない・枠が 1 つも無い → usage_unknown
  */
 export function judgeWindows(windows, { now, avoidPercent, paceLimit }) {
   if (!windows.length) return { ok: false, reason: 'usage_unknown' };
   const rows = windows.map(w => ({ w, used: usedNow(w, now) }));
   const full = rows.filter(r => r.used >= 100).sort((a, b) => b.used - a.used)[0];
   if (full) return { ok: false, reason: 'quota_full', window: brief(full.w, full.used) };
-  const unknown = rows.find(r => r.used == null);
+  const priorityRows = rows.filter(r => r.w.minutes !== 300);
+  const unknown = priorityRows.find(r => r.used == null);
   if (unknown) return { ok: false, reason: 'usage_unknown', window: brief(unknown.w, null) };
-  const high = rows.filter(r => r.used >= avoidPercent).sort((a, b) => b.used - a.used)[0];
+  const high = priorityRows.filter(r => r.used >= avoidPercent).sort((a, b) => b.used - a.used)[0];
   if (high) return { ok: false, reason: 'quota_high', window: brief(high.w, high.used) };
   for (const { w, used } of rows) {
     if (w.minutes !== WEEK_MINUTES) continue;
@@ -230,11 +231,12 @@ function fiveHour(windows, now) {
 const SOFT_REASONS = new Set(['quota_high', 'pace_high', 'pace_unknown', 'usage_unknown', 'usage_stale']);
 const selectable = verdict => SOFT_REASONS.has(verdict.reason)
   ? { ...verdict, ok: true, deferred: true } : verdict;
-const maxUsage = (windows, now) => Math.max(...(windows ?? []).map(w => usedNow(w, now)).filter(v => v != null), 0);
+const maxUsage = (windows, now) => Math.max(...(windows ?? []).filter(w => w.minutes !== 300).map(w => usedNow(w, now)).filter(v => v != null), 0);
 const pressure = (a, b, now) =>
   Number(['usage_unknown', 'usage_stale'].includes(a.reason)) - Number(['usage_unknown', 'usage_stale'].includes(b.reason))
   || (a.maxUsed ?? maxUsage(a.windows, now)) - (b.maxUsed ?? maxUsage(b.windows, now))
-  || (a.weeklyRate ?? weeklyPace(a.windows ?? [], now)) - (b.weeklyRate ?? weeklyPace(b.windows ?? [], now));
+  || (a.weeklyRate ?? weeklyPace(a.windows ?? [], now)) - (b.weeklyRate ?? weeklyPace(b.windows ?? [], now))
+  || fiveHour(a.windows ?? [], now) - fiveHour(b.windows ?? [], now);
 
 /**
  * Claude のアカウントの重複を落とす。今の使用量では「ログイン中のアカウント」と、登録したアカウントのうち同じ人のものが
@@ -274,8 +276,12 @@ export function checkCandidate(candidate, { usage, settings, now }) {
       return { account: a.account, label: a.label ?? null, identity: a.identity, windows,
         ...selectable(verdict.reason === 'quota_full' ? verdict : staleReason ? { ok: false, reason: staleReason } : verdict) };
     });
-    let results = dedupeAccounts(assessed, r => r.ok && !r.deferred);
-    if (!results.some(r => r.ok && !r.deferred)) results = dedupeAccounts(assessed, r => r.ok);
+    const ranked = [...assessed].sort((a, b) =>
+      Number(!a.ok || a.deferred) - Number(!b.ok || b.deferred)
+      || Number(!a.ok) - Number(!b.ok)
+      || pressure(a, b, now));
+    let results = dedupeAccounts(ranked, r => r.ok && !r.deferred);
+    if (!results.some(r => r.ok && !r.deferred)) results = dedupeAccounts(ranked, r => r.ok);
     const usable = results.filter(r => r.ok && !r.deferred);
     const deferred = results.filter(r => r.deferred);
     if (!usable.length) {
@@ -292,7 +298,7 @@ export function checkCandidate(candidate, { usage, settings, now }) {
       return { ok: false, reason: first?.reason ?? 'usage_unknown', ...(first?.reason === 'unavailable' ? { detail: 'no_token' } : {}), ...(first?.window ? { window: first.window } : {}), checkedAt,
         accounts: results.map(({ account, label, reason, window }) => ({ account, label, reason, ...(window ? { window } : {}) })) };
     }
-    usable.sort((a, b) => weeklyPace(a.windows, now) - weeklyPace(b.windows, now) || fiveHour(a.windows, now) - fiveHour(b.windows, now));
+    usable.sort((a, b) => pressure(a, b, now));
     return { ok: true, account: usable[0].account, checkedAt, windows: usable[0].windows.map(w => brief(w, usedNow(w, now))) };
   }
   const windows = windowsFor(parsed.backend, parsed.model, entry.windows);

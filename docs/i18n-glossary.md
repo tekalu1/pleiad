@@ -167,7 +167,7 @@
 | 手がかり（難しさの） | signal |
 | 飛ばした（候補） | skipped |
 | 別の候補でやり直す | Retry with another candidate |
-| 後回しにする使用率 / 週次のペース | Defer at usage / Weekly pace |
+| 後回しにする使用率（5時間以外） / 週次のペース | Defer at usage (except 5h) / Weekly pace |
 | 余裕が少ない | Low headroom |
 
 ## 揺れ（未統一）

@@ -2086,7 +2086,7 @@
       "tableCell": "{{kind}}・{{difficulty}}: {{tier}}",
       "policyTitle": "使用量の方針",
       "lowHeadroom": "余裕が少ない（{{reason}}）",
-      "avoid": "後回しにする使用率",
+      "avoid": "後回しにする使用率（5時間以外）",
       "avoidUnit": "% 以上",
       "pace": "週次のペース",
       "paceUnit": "倍を超えたら後回し",

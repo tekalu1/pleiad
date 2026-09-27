@@ -2158,7 +2158,7 @@
       "tableCell": "{{kind}} · {{difficulty}}: {{tier}}",
       "policyTitle": "Usage policy",
       "lowHeadroom": "Low headroom ({{reason}})",
-      "avoid": "Defer at usage",
+      "avoid": "Defer at usage (except 5h)",
       "avoidUnit": "% or more",
       "pace": "Weekly pace",
       "paceUnit": "× or faster defers",

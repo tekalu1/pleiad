@@ -1,6 +1,6 @@
 // 委譲カードの振り分けの理由と設定 › 委譲の組み立て（web/delegation-routing-view.mjs・web/delegation-settings.mjs）。DOM の大半は触らず、文と並びだけ見る
 import assert from 'node:assert/strict';
-import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackText, retryCandidates, retryPanel, usageSummary, isAutoRouting, fallbackName, routingDetail, pinnedDetail,
+import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackText, retryCandidates, retryPanel, usageRows, usageSummary, isAutoRouting, fallbackName, routingDetail, pinnedDetail,
   skipText, parseRoutingFailure, groupSkipped, groupText, routingFailureParts } from '../../web/delegation-routing-view.mjs';
 import { diffFromDefaults, setupDelegationSettings } from '../../web/delegation-settings.mjs';
 import { el } from '../../web/dom.mjs';
@@ -56,6 +56,8 @@ export default async function (t) {
   assert.deepEqual(retryCandidates(cands, routing).map(c => c.candidate), ['claude:sonnet', 'claude:opus', 'codex:gpt-6-astra', 'antigravity:gemini-3.8-flash-high'],
     '使えるものだけ・元の委譲先を除く・元の段から上、次に下');
   assert.equal(usageSummary(cands[3]), '週次 12%', 'Claude は使うアカウントの枠。率の分からない枠は出さない');
+  const bars = usageRows([{ label: '5時間', minutes: 300, usedPercent: 87 }, { label: '週次', minutes: 10080, usedPercent: 83 }], { avoidPercent: 70 });
+  assert.equal(bars.querySelectorAll('.usage-bar').filter(bar => bar.classList.contains('hi')).length, 1, '5 時間は線を超えても強調せず、週次は強調する');
   const retry = retryPanel({ candidates: retryCandidates(cands, routing), running: false, names, run: async () => ({}), close() {} });
   assert.ok(retry.textContent.includes('余裕が少ない（使用量が多い）'), '後回しの候補も選択肢に理由を添える');
   t.ok('やり直しの候補は、今使えるものを元の段から上へ、次に下の段の順', true);

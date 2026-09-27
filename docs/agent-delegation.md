@@ -69,16 +69,16 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
    | ux_new / visual | tv | tv | tv |
 
    段の候補（既定、左から）: t1 = antigravity `gemini-3.8-flash-high` → claude `haiku`。t2 = antigravity `gemini-3.8-flash-high` → codex `gpt-6-luna` → antigravity `claude-opus-4-6-thinking` → claude `sonnet`。t3 = codex `gpt-6-sol` → claude `sonnet`。t4 = claude `opus` → claude `fable`。tv = codex `gpt-6-astra`。
-5. **候補を 3 組に分ける。** Claude はアカウントごとに判定する（[ADR 0039](adr/0039-routing-soft-quota.md)）。
+5. **候補を 3 組に分ける。** Claude はアカウントごとに判定する（[ADR 0040](adr/0040-five-hour-quota-priority.md)）。
    - **使えない（外す）:** `unavailable`（バックエンドが有効でない・CLI が無い・Claude の登録アカウントにトークンが無い）、`model_unknown`（今のモデル一覧に無い）、委譲先でのモデル再確認による `rejected`、効く枠の今の使用率が 100% 以上の `quota_full`。`unavailable` の中身は `skipped[].detail`（`disabled`・`not_installed`・`no_token`。使用量をまだ一度も取っていないときは付けない）で、画面は「使えない（未インストール）」と添える。
-   - **余裕が少ない（後回し）:** `usage_unknown`（取得失敗・取得中・枠なし・不明な枠あり）、`usage_stale`（取得から 15 分超）、`quota_high`（効く枠のどれかが後回しの線、既定 80%、以上）、`pace_high`、`pace_unknown`。`avoidPercent` は候補を除く線ではなく後回しにする線。
+   - **余裕が少ない（後回し）:** `usage_unknown`（取得失敗・取得中・枠なし・不明な枠あり）、`usage_stale`（取得から 15 分超）、`quota_high`（効く 5 時間以外の枠のどれかが後回しの線、既定 80%、以上）、`pace_high`、`pace_unknown`。`avoidPercent` は候補を除く線ではなく後回しにする線。5 時間の枠（`minutes === 300`）は 100% 以上のときだけ使えないと判定し、100% 未満なら後回しの判定には使わない。5 時間の使用率が不明でも、それだけでは `usage_unknown` にしない。
    - **余裕あり:** 上記のどれにも当たらない候補。
    - `pace_high`: 週次の枠のペース（使用率 ÷ 経過率）が 1.2 を超える。経過率はリセット時刻と期間から出し、20% 未満は見ない。
    - `pace_unknown`: 経過率が出せない週次の枠で、使用率が 20% × 1.2 = 24% を超える（24% 以下なら、経過率がいくつでもペースで落ちないので通す）。
    - リセット時刻を過ぎた枠は、使い直しが始まっているので使用率 0 とみなす。
    - 候補に効く枠: claude は 5 時間・週次と、そのモデルの系統の週次（`seven_day_opus` など。`seven_day_oauth_apps` も念のため全モデルに効かせる）。codex は主の枠と、名前がそのモデルに当たる追加の枠。antigravity はモデル名の語をいちばん多く含むグループ（`gemini-*` → Gemini のグループ、`claude-*` / `gpt-*` → Claude and GPT のグループ）。グループが見つからなければ `usage_unknown`。
-6. **Claude のアカウント。** 余裕ありのアカウントがあれば週次のペースが低い順、同じなら 5 時間の使用率が低い順。無ければ余裕が少ないアカウントを次の苦しさの順で選ぶ。同じ人の重複は、**組織（`.claude.json` の `oauthAccount.organizationUuid`）とメールアドレスの両方が分かって一致するものだけ**まとめる。残す順は余裕あり → 余裕が少ない → 使えない、同じ組ならログイン中の方。どちらかが分からなければまとめない。
-7. **段を選ぶ。** 基準の段から上へ、各段の候補を左から見て余裕ありを先に選ぶ。無ければ基準の段から上へ 1 段ずつ余裕が少ない候補を選ぶ。同じ段では使用量が分かるもの（`usage_unknown` / `usage_stale` 以外）→ 効く枠の最大使用率が低い順 → 週次のペースが低い順 → 段の候補の順。基準から上がすべて使えないときは 1 段ずつ下り、各段で余裕あり、次に余裕が少ない候補を選ぶ。tv は tv だけを見る。見たすべての段で全候補が使えないときだけエラー。エラー文は後回しの線と Claude のアカウントごとの理由を含み、候補の行は言語によらない `- backend:model (段): 理由 (中身) 枠 使用率% pace ペース` の形にする。画面はこの行を読む。
+6. **Claude のアカウント。** 余裕ありのアカウントがあれば 5 時間以外の効く枠の最大使用率が低い順、同じなら週次のペースが低い順、最後の同点決めだけ 5 時間の使用率が低い順。無ければ余裕が少ないアカウントを次の苦しさの順で選ぶ。同じ人の重複は、**組織（`.claude.json` の `oauthAccount.organizationUuid`）とメールアドレスの両方が分かって一致するものだけ**まとめる。残す順は余裕あり → 余裕が少ない → 使えない、同じ組なら苦しくない方、なお同じならログイン中の方。どちらかが分からなければまとめない。
+7. **段を選ぶ。** 基準の段から上へ、各段の候補を左から見て余裕ありを先に選ぶ。無ければ基準の段から上へ 1 段ずつ余裕が少ない候補を選ぶ。同じ段では使用量が分かるもの（`usage_unknown` / `usage_stale` 以外）→ 5 時間以外の効く枠の最大使用率が低い順 → 週次のペースが低い順 → 5 時間の使用率が低い順 → 段の候補の順。基準から上がすべて使えないときは 1 段ずつ下り、各段で余裕あり、次に余裕が少ない候補を選ぶ。tv は tv だけを見る。見たすべての段で全候補が使えないときだけエラー。エラー文は後回しの線と Claude のアカウントごとの理由を含み、候補の行は言語によらない `- backend:model (段): 理由 (中身) 枠 使用率% pace ペース` の形にする。画面はこの行を読む。
 8. 選んだ backend / model / account で子の会話を作る（`prepare`）。**自動で選んだ子は親の会話の接続先を継がず公式で走る**（候補を公式の使用枠で選んでいるため）。Claude を選んだときは選んだアカウント（`''` はログイン中）。選んだ候補のモデルは、委譲先の作業場所（`cwd`）で一覧にあるかを確かめ直し、無ければ `model_unknown` として次の候補から選び直す。それでも子の会話を作る時点で使えなければ、既定に落とさずエラー。
 
 **使用量の取り置き。** 振り分けのたびに使用量を取りに行って待たない。サーバーは待ち受けを始めてから、既存の使用量の取得（`providerQuota`。設定の「使用量」・`ply_usage` と同じ 1 分のキャッシュを通す）を 5 分ごとと委譲の直後に呼び直し、振り分けはその値を同期的に読む。起動直後でまだ一度も取れていないときだけ、判定と同じ 3 秒まで待つ。候補のモデルが一覧に無いバックエンド（agy はログインの確認でモデル一覧を覚える）は、30 分に 1 回までログインの確認で一覧を引き直す。振り分けが無効なら取らない。
@@ -94,7 +94,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
   "targetWindows": [{ "label": "…", "minutes": 10080, "usedPercent": 11 }],      // 選んだ候補に効いた枠の、選んだ時点の使用率（委譲カードの内訳）
   "selectedWithLowHeadroom": { "reason": "quota_high", "window": { "label": "週次", "minutes": 10080, "usedPercent": 83 }, "avoidPercent": 70 }, // 余裕が少ない候補を選んだときだけ
   "skipped": [{ "candidate": "antigravity:gemini-3.8-flash-high", "tier": "t2", "reason": "quota_high",
-                "window": { "label": "…", "minutes": 300, "usedPercent": 85 }, "accounts": [ … ] }],
+                "window": { "label": "週次", "minutes": 10080, "usedPercent": 85 }, "accounts": [ … ] }],
   "usageAt": "2026-09-26T03:00:00.000Z",   // 選んだ候補の使用量の取得時刻（選べなければ見た中で最も古いもの）。skipped[] にも各自の checkedAt
   "fallback": null,                        // 判定器を使えなかった理由（no_key など）
   "escalated": true,                       // 「Jev が迷ったら Cerebras」で聞き直したときだけ
