@@ -515,11 +515,17 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
    * 見えている写しを新しいタブで開く。Blob の URL は Pleiad と同じオリジンで動く（中のスクリプトが保存領域に届く）ので使わず、
    * サーバーが記録から sandbox 付きで返す /visualization-snapshot を開く。ポップアップとして止められないよう、
    * 押した瞬間に空の窓を開け、opener を切ってから行き先を入れる。窓を開けない殻（デスクトップ版）は、
-   * サーバーのある PC の既定のブラウザーへ渡す（openVisualization）
+   * サーバーのある PC の既定のブラウザーへ渡す（openVisualization）。
+   * リモートの窓（plyRemote のある殻）は、行き先を見て殻がアプリの中の窓・シートで開く（docs/remote.md §8.5）。
+   * 空の窓では行き先が分からないので URL を直接渡す。殻は窓を返さない（opener を持たせない）ので null でも知らせない
    */
   function openSnapshot(v) {
     const query = snapshotQuery(v);
     if (!query) return;
+    if (window.plyRemote) {
+      window.open(new URL(`/visualization-snapshot?${query}`, window.location.href).href, '_blank', 'noopener');
+      return;
+    }
     const tab = window.open('', '_blank');
     if (!tab) {
       if (cmd && osActions()) return cmd('openVisualization', Object.fromEntries(query)).catch(failed);

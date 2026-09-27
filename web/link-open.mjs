@@ -46,6 +46,8 @@ export function handlePreviewLinkMessage(event) {
 if (typeof window !== 'undefined' && window.addEventListener) {
   window.addEventListener('message', handlePreviewLinkMessage);
   const conversationLink = event => {
+    // Already handled (e.g. web/host-only-links.mjs stops localhost links on remote screens)
+    if (event.defaultPrevented) return null;
     const link = event.target.closest?.('a.md-link[target="_blank"]');
     if (!link || !document.querySelector('#log')?.contains(link)) return null;
     return /^https?:\/\//i.test(link.getAttribute('href') || '') ? link : null;

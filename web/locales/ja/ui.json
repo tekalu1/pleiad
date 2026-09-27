@@ -1469,7 +1469,8 @@
       "selected": "コードを選択しました。Ctrl+C / ⌘C でコピー"
     },
     "link": {
-      "blocked": "安全でないリンクのため無効化"
+      "blocked": "安全でないリンクのため無効化",
+      "hostOnly": "localhost のリンクはホストの PC でだけ開けます。"
     },
     "present": {
       "height": {
