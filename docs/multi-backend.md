@@ -281,6 +281,10 @@ pending・running・paused→running）。前面で待った子で task 系の�
 
 `NormalizedMessage` は `history.mjs` が既に返している
 `{ role, text, uuid, at, thinking?, toolCalls?: [{ id, name, input, result }] }`。
+assistant の発言に `stopHookFollowUp: true` を付けてよい（2026-09-27）。Stop フックに止められて main が続けた分のうち、中身の仕事をしていない発言の印で、
+委譲の結果を選ぶときに飛ばす（agent-delegation.md「子の結果」）。何を続きとみなし、何を中身の仕事とするかはバックエンドが決める。
+今は Claude だけが付ける（`claude-normalize.mjs` の `stopHookFollowUps`。getSessionMessages に出ない `stop_hook_summary` の行を transcript から読む）。
+付けないバックエンドでは、結果は今までどおり最後の返答になる。
 
 ### 2.4 sidecar の拡張
 

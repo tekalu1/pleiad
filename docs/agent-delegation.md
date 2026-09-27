@@ -196,6 +196,19 @@ Pleiad は結果を保存し、親が空いたときに専用の完了通知で�
 子で実行前に拒否されたコマンドがあれば、通知の本文の最後（「元の依頼に必要な作業を続けてください。」の前）に 1 段落足す（`agent:delegation.noticeRejections`）。
 件数と、先頭 3 件の `command`（伏せて切ったもの）と `reason` だけを並べ、全件は `ply_task_status` の `rejections` で読むよう案内する。拒否が無ければ何も足さない。
 
+## 子の結果
+
+結果にするのは、子の会話のこの回（最後の user の発言より後）の assistant の返答のうち、最後のもの（`core/agent-tasks.mjs` の `finalReply`）。
+ただし、バックエンドが `stopHookFollowUp` の印を付けた返答は飛ばす。飛ばすと何も残らないときは、今までどおり最後の返答。
+
+印は、Stop フックに止められて（exit 2・`decision: block`）main が続けた分のうち、**中身の仕事をしていない**ものに付く。何を続きとみなし、何を中身の仕事とするかは文面ではなくバックエンドが決める（docs/multi-backend.md §2.3 の `NormalizedMessage`）。
+
+- **Claude**（`claude-normalize.mjs` の `stopHookFollowUps`）: transcript の `stop_hook_summary` の行で `hookErrors` があり `preventedContinuation` でないものを「止めた」とし、その後の assistant 行を続きとする。続きは次の人の発言・途中送信・裏の作業の完了通知で切れる。続きで呼んだツールが全部「調べるだけ」（ToolSearch・Skill・Read・Grep・Glob・LS・TodoWrite・WebSearch・WebFetch・MCP のリソースの読み出し・`ply_context` の load_skill / instructions_for_path など）なら、続きの返答に印を付ける。Edit・Write・Bash・PowerShell・ほかの MCP・サブエージェントを 1 回でも呼んだ続きは中身の仕事として扱い、印を付けない（Bash は読むだけのこともあるが、変えたかを見分けられないので仕事をした側に倒す。倒れた先は今までどおりの「最後の返答」）。
+- **Codex・Antigravity**: 印を付けない。結果は最後の返答。
+
+理由: 2026-09-27、Claude の子が報告を書いた後に、ナレッジの棚卸しを促す Stop フックで ToolSearch と load_skill を呼んで「ナレッジ化対象なし」と書いて終わり、その一言が依頼元への結果になって報告が届かなかった。フックの出力は isMeta の user として transcript にだけ残り、会話の記録からは続きだと分からない。本文で見分けると、フックの文面や子の言い回しが変わるたびに外れる。続きで直して報告し直した（フックが不備を指摘する型）なら、そちらが本当の結果なので選ぶ。
+子の会話そのもの（画面）には続きの返答も残る。
+
 ## 子に残った裏の作業
 
 子の結果は、子のターンが終わり、子が待つ裏の作業と子が作った Pleiad タスクが片付いてから確定する（`execute`）。
@@ -273,7 +286,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 `npm test` でタスクの管理と SDK MCP クライアント接続、fake を使ったサーバー全体の委譲・継続・停止と、承認の中継・`waiting` を検証する。
 保存障害は `tests/unit/agent-tasks-storage.mjs`（rename に EPERM を差し込む。回復・閉じない・障害中の読み取りと断り・requeue を書かない・再起動後の送り直し）。
 実行前の拒否は `tests/unit/codex-rejections.mjs`（rollout の解析・読む範囲・伏せ方）と `tests/unit/server-codex-rejections.mjs`（身代わりの Codex が rollout に拒否を書き、会話・`ply_task_status`・完了通知・`ply_task_send` の次の回まで）。
-子に残った裏の作業は `tests/unit/server-delegation-background.mjs`（fake の台本 `bg-shell` / `bg` / `term` で、終わらないコマンドを上限まで待って止める・結果に止める前の報告を残す・サブエージェントは止めない・端末は子でも親でも待たない）と `tests/unit/claude-turn-end.mjs`（SDK の身代わりで、Stop フックの続きではターンが終わり、裏へ回ったまま終わらないコマンドがあると終わらず、`stopTask` で終わる）。
+子に残った裏の作業と子の結果は `tests/unit/server-delegation-background.mjs`（fake の台本 `bg-shell` / `bg` / `term` / `hook-follow` で、終わらないコマンドを上限まで待って止める・結果に止める前の報告を残す・サブエージェントは止めない・端末は子でも親でも待たない・Stop フックの続きの一言を結果にしない）と `tests/unit/delegation-result.mjs`（2026-09-27 の transcript と同じ行の形で、続きの印・中身の仕事をした続き・区切り・結果の選び方）と `tests/unit/claude-turn-end.mjs`（SDK の身代わりで、Stop フックの続きではターンが終わり、裏へ回ったまま終わらないコマンドがあると終わらず、`stopTask` で終わる）。
 振り分けは `tests/unit/delegation-routing.mjs`（規則・段・使用量・アカウント。判定器は偽の fetch）と `tests/unit/server-delegation-routing.mjs`（偽の Jev と偽の agy でサーバー全体。別の候補でやり直す・承認モードの確かめ・動いている元のタスク・完了通知の一行も）、画面の文と並びは `tests/unit/delegation-routing-view.mjs`。テストのサーバーは使用量を定期的に取らず（`AGENT_HOST_ROUTING_USAGE=off`）、判定器の送り先を手元に向ける（`AGENT_HOST_OPENROUTER_API` / `AGENT_HOST_CEREBRAS_API`。本物へは送らない）。
 `npm run test:e2e -- agent-delegation` は実サービスを呼び、Claude → Codex、Codex → Claude と結果通知による再開を確認する。
 単独確認には `E2E_DELEGATION_PARENT=codex` などを使える。
