@@ -69,7 +69,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
    | ux_new / visual | tv | tv | tv |
 
    段の候補（既定、左から）: t1 = antigravity `gemini-3.8-flash-high` → claude `haiku`。t2 = antigravity `gemini-3.8-flash-high` → codex `gpt-6-luna` → antigravity `claude-opus-4-6-thinking` → claude `sonnet`。t3 = codex `gpt-6-sol` → claude `sonnet`。t4 = claude `opus` → claude `fable`。tv = codex `gpt-6-astra`。
-5. **候補を 3 組に分ける。** Claude はアカウントごとに判定する（[ADR 0041](adr/0041-account-level-delegation.md)）。
+5. **候補を 3 組に分ける。** Claude はアカウントごとに判定する（[ADR 0040](adr/0040-delegation-routing-headroom.md)）。
    - **使えない（外す）:** `unavailable`（バックエンドが有効でない・CLI が無い・Claude の登録アカウントにトークンが無い）、`model_unknown`（今のモデル一覧に無い）、委譲先でのモデル再確認による `rejected`、効く枠の今の使用率が 100% 以上の `quota_full`。`unavailable` の中身は `skipped[].detail`（`disabled`・`not_installed`・`no_token`。使用量をまだ一度も取っていないときは付けない）で、画面は「使えない（未インストール）」と添える。
    - **余裕が少ない（後回し）:** `usage_unknown`（取得失敗・取得中・枠なし・不明な枠あり）、`usage_stale`（取得から 15 分超）、`quota_high`（効く 5 時間以外の枠のどれかが後回しの線、既定 80%、以上）、`pace_high`、`pace_unknown`。`avoidPercent` は候補を除く線ではなく後回しにする線。5 時間の枠（`minutes === 300`）は 100% 以上のときだけ使えないと判定し、100% 未満なら後回しの判定には使わない。5 時間の使用率が不明でも、それだけでは `usage_unknown` にしない。
    - **余裕あり:** 上記のどれにも当たらない候補。
