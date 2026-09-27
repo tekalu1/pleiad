@@ -2,6 +2,7 @@
 // allow-same-origin: the surrounding app carries authenticated cookies.
 import { t } from './i18n.mjs';
 import { visualizationDocument } from './visualize-document.mjs';
+import './link-open.mjs';
 export { VISUALIZE_CSP, visualizationDocument } from './visualize-document.mjs';
 
 if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('message', event => {
@@ -52,7 +53,7 @@ export function visualizationFileName({ path, title }) {
  * 配色は焼き込まず、開いた環境のライト／ダークに従う。
  */
 export function visualizationBlobUrl(content) {
-  return URL.createObjectURL(new Blob([visualizationDocument(content)], { type: 'text/html;charset=utf-8' }));
+  return URL.createObjectURL(new Blob([visualizationDocument(content, { resize: false })], { type: 'text/html;charset=utf-8' }));
 }
 
 /** 会話にはいくつも並ぶので、URL は押したときだけ作って手放す */

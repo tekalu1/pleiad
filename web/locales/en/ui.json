@@ -1445,6 +1445,12 @@
       "groupEnded": "Finished",
       "showMore": "Show {{count}} more",
       "delegated": "· {{count}} delegated",
+      "instructionsWaiting": "{{count}} follow-up instructions waiting",
+      "instructionState": {
+        "queued": "Waiting",
+        "sending": "Sending",
+        "dropped": "Ended without delivery"
+      },
       "yesterday": "Yesterday",
       "showFull": "Show full request",
       "collapse": "Collapse",
