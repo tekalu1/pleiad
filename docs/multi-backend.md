@@ -60,7 +60,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `tool.start` | `{ id, name, input }` | `assistant` の `tool_use` |
 | `tool.result` | `{ id, text, isError, truncated, rejection? }` `rejection` は実行前に拒否されたコマンドの構造（Codex だけ。§2.5「Codex の実行前の拒否」）。server が委譲の結果に集める | `user` の `tool_result` |
 | `activity` | `{ state: "thinking"\|"writing"\|"compacting"\|"waiting"\|"running"\|"idle", label? }` | `system/status`, `session_state_changed` |
-| `turnResult` | `{ outcome: "ok"\|"error"\|"aborted", turns?, costUsd?, error? }` | `result` |
+| `turnResult` | `{ outcome: "ok"\|"error"\|"aborted", turns?, costUsd?, error? }`（aborted には server が中断の理由 `reason` を足す。バックエンドは出さない） | `result` |
 | `permission` | `{ id, kind: "tool"\|"question", toolName, input, title?, canAlways, questions? }` | 既存 + AskUserQuestion の特別扱い |
 | `auth` | `{ backend, phase: "url"\|"done"\|"error", url?, message? }` | 新規（ログイン誘導） |
 | `session` | `{ sessionId, first?, model? }` | 既存 + モデル通知 |
@@ -106,7 +106,9 @@ web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧�
 `startedAt` / `endedAt` は ISO 文字列か `null`。終わった子もターンが終わるまでは一覧に残る（履歴化はしていない）。
 `count` のサブエージェント分は **`status` が `"running"` か `null` の行だけ**を数える。終わった子を数えると更新のゲート
 （web の `count > 0`）が閉じたままになる。`null` を数えるのは、状態を出さないバックエンドでゲートを緩めないため。
-`turnEnd` は `{ completedAt, requeued? }`。`requeued: true` は完了ではない（§2.7 の requeue。`completedAt` は `null`）。
+`turnEnd` は `{ completedAt, outcome, interrupted, requeued?, delegated? }`。`requeued: true` は完了ではない（§2.7 の requeue。`completedAt` は `null`）。
+`interrupted` は中断で終わったターンなら `{ at, reason }`（`at` は `completedAt` と同じ）、それ以外は `null`（design.md「中断と再開」）。
+`running` の `count` が 0 になるのを、更新とデスクトップの終了の「中断して…」が待つ（ADR 0036）。
 
 Claude の判定は `core/backends/claude-background.mjs`（SDK 非依存、`tests/unit/claude-background.mjs`）。
 実測（`output/bg-tasks/claude-report.md` §3、2026-09、SDK 0.3.258 / Claude Code 2.1.268）に沿う:

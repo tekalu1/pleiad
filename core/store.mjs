@@ -16,6 +16,9 @@
 //   readAt          … 確認済みの完了時刻（completedAt のうち人が見たもの）。ホストに 1 つで、どの端末・窓から見ても同じ
 //                     （markRead。大きい方だけを採り、completedAt を超えない。docs/design.md「完了・未確認」）
 //   routing         … 委譲の子の会話が、どう選ばれたか（ply_delegate の返り値の routing と同じ形。core/delegation-routing.mjs）
+//   interrupted     … 中断したまま次のターンが始まっていない印 { at, reason }（reason: user|update|quit|hostAway|restart）。
+//                     ターンが中断で終わったら書き、次のターンの開始で null にする（core/server.mjs。docs/design.md「中断と再開」）
+//   turnStartedAt   … 走っているターンの開始時刻。終わりで片付ける。起動時に残っていれば、落ちて終わりが記録されなかったターン（restart）
 //   agentLocale     … 会話の言語（ja|en）。エージェントに渡す文（指示・ツールの説明・通知）の言語。会話を始めたときに
 //                     画面の言語で決め、以後は変えない（core/server.mjs。docs/design.md「多言語対応」）
 import fs from "node:fs/promises";
@@ -30,7 +33,7 @@ const STATUSES = path.join(DIR, "statuses.json");
 
 // sidecar が持つメタ情報のうち、外から丸ごと上書きしてよいもの。
 // history / parent / mode / model は専用の口があるので、ここには入れない。
-const META_KEYS = new Set(["backend", "title", "status", "cwd", "createdAt", "lastModified", "completedAt", "unsent"]);
+const META_KEYS = new Set(["backend", "title", "status", "cwd", "createdAt", "lastModified", "completedAt", "unsent", "interrupted", "turnStartedAt"]);
 
 /**
  * JSON ファイル 1 つ。読みは一度きりでキャッシュ、書きは一時ファイルへ書いてから置き換える
@@ -383,6 +386,33 @@ export async function markRead(reads) {
       }
     }
     return [...changed];
+  });
+}
+
+/**
+ * 起動時に 1 回。turnStartedAt が完了（completedAt）より新しい会話は、走っている間に Pleiad が落ちた・強制終了された
+ * （終わりが記録されなかった）ので、中断（reason: restart）にする。completedAt も同じ時刻にする: 終わったターンとして数え、
+ * 確認済みの印（readAt。markRead は completedAt で丸める）が中断の時刻まで届くようにするため。
+ * turnStartedAt は片付ける。変えた会話の id を返す
+ */
+export async function recoverInterruptedTurns(at = Date.now()) {
+  return exclusive(async () => {
+    const all = await load();
+    const changed = [];
+    let touched = false;
+    for (const [id, entry] of Object.entries(all)) {
+      if (!entry || entry.turnStartedAt == null) continue;
+      const started = entry.turnStartedAt;
+      if (Number.isFinite(started) && started > (Number.isFinite(entry.completedAt) ? entry.completedAt : 0)) {
+        entry.interrupted = { at, reason: "restart" };
+        entry.completedAt = at;
+        changed.push(id);
+      }
+      entry.turnStartedAt = null;
+      touched = true;
+    }
+    if (touched) await flush();
+    return changed;
   });
 }
 
