@@ -7,6 +7,7 @@ import { containsPath } from '../../core/context-settings.mjs';
 export const name = 'hooks-config';
 export const title = 'Hooks の探索（3 エージェント × スコープ・壊れたファイル・伏せ字）と元ファイルへの書き込み（JSON / TOML・競合・enabled）';
 export default async function(t) {
+  const tempRoot = await fs.realpath(os.tmpdir());
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-hooks-config-'));
   const home = path.join(tmp, 'home'), repo = path.join(tmp, 'repo'), cwd = path.join(repo, 'pkg');
   const write = async (file, text) => { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, typeof text === 'string' ? text : JSON.stringify(text, null, 2)); };
@@ -203,7 +204,7 @@ export default async function(t) {
     const linkedAdd = await svc.save({ items: [{ op: 'add', agent: 'claude', scope: 'project', base: linked, event: 'Stop', command: 'echo x' }] });
     const linkedScan = await svc.scan({ cwd: linked, agents: ['claude'] });
     t.ok('リンクの先が作業場所の外なら書かない・一覧はエラーにする', !linkedAdd.results[0].ok && await fs.readFile(path.join(outsideDir, 'settings.json'), 'utf8') === '{"victim":true}'
-      && linkedScan.files.find(f => f.scope === 'project')?.status === 'error');
+      && linkedScan.files.find(f => f.path === path.join(linked, '.claude', 'settings.json'))?.status === 'error');
     await fs.rm(path.join(linked, '.claude'));
 
     // ---- agy の改名で enabled を引き継ぐ。移し先の enabled が違えば断る
@@ -229,6 +230,22 @@ export default async function(t) {
     const oddJson = await readJson(oddFile);
     t.ok('keepTimeout なら扱えない timeout も元の値のまま残す', oddJson.hooks.Stop[0].hooks[0].timeout === '30' && oddJson.hooks.Stop[0].hooks[0].command === 'echo odd2' && oddJson.hooks.Stop[0].hooks[0].env.API_KEY === 'SECRET-READ');
 
+    // An existing config can be scanned through an alias while base is resolved before editing.
+    const realRepo = path.join(tmp, 'alias-real'), aliasRepo = path.join(tmp, 'alias-link');
+    await write(path.join(realRepo, '.claude', 'settings.json'), { hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo old' }] }] } });
+    await fs.mkdir(path.join(realRepo, '.git'));
+    await fs.symlink(realRepo, aliasRepo, process.platform === 'win32' ? 'junction' : 'dir');
+    try {
+      const aliasFile = path.join(aliasRepo, '.claude', 'settings.json');
+      const scanned = await svc.scan({ cwd: aliasRepo, scopes: ['directory'], agents: ['claude'] });
+      const found = scanned.entries.find(e => e.path === aliasFile && e.event === 'Stop');
+      const openedAlias = await svc.read({ agent: 'claude', scope: 'project', base: aliasRepo, file: aliasFile, loc: { event: 'Stop', group: 0, handler: 0 } });
+      const savedAlias = await svc.save({ items: [{ op: 'edit', agent: 'claude', scope: 'project', base: aliasRepo, file: aliasFile,
+        revision: openedAlias.revision, loc: { event: 'Stop', group: 0, handler: 0 }, event: 'Stop', command: 'echo new' }] });
+      t.ok('別名のパスで見つけた hook を開いて編集できる', found && openedAlias.command === 'echo old' && savedAlias.results[0].ok
+        && (await readJson(path.join(realRepo, '.claude', 'settings.json'))).hooks.Stop[0].hooks[0].command === 'echo new');
+    } finally { await fs.rm(aliasRepo); }
+
     // ---- 伏せ字: args の秘密のフラグの次・秘密らしい名前のキー（入れ子も）
     const masked = JSON.stringify(maskDefinition({ args: ['--token', 'SECRETARG', '-v'], extra: { apiKey: 'SECRETNESTED', deep: { password: 'hunter2' } } }));
     t.ok('args の --token の次の要素と、秘密らしい名前のキーの値を伏せる', !/SECRETARG|SECRETNESTED|hunter2/.test(masked) && masked.includes('-v'));
@@ -239,7 +256,7 @@ export default async function(t) {
     trimHookRuns(runs);
     t.ok('発火の記録は上限まで古いほうから組ごとに捨てる', runs.length === 60 && runs[0].hookId === 'h10' && runs[0].phase === 'started' && runs.at(-1).hookId === 'h39');
   } finally {
-    if (!containsPath(os.tmpdir(), tmp) || !path.basename(tmp).startsWith('ply-hooks-config-')) throw new Error('unexpected test path');
+    if (!containsPath(tempRoot, await fs.realpath(tmp)) || !path.basename(tmp).startsWith('ply-hooks-config-')) throw new Error('unexpected test path');
     await fs.rm(tmp, { recursive: true });
   }
 }
