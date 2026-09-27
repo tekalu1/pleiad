@@ -18,7 +18,7 @@ import { renderMarkdown } from './render.mjs';
 import { estimateTokens } from './token-estimate.mjs';
 import { toggleExclude } from './context.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
-import { openHookSheet, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
+import { openHookSheet, openCopySheet, copyBlocked, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
 
 const KEY = 'session-context';
 const KINDS = ['instruction', 'skill', 'mcp'];
@@ -586,6 +586,12 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         const edit = button(t('hooks.edit'), 'btn', () => openHookSheet(ctx, { entry: e }));
         edit.setAttribute('aria-label', t('sessionContext.hooks.editAria', { name: rowName(e) }));
         acts.append(edit);
+        // 他のエージェントへ写す（作業場所の定義は右パネルにしか並ばない）。写した定義（アダプター越し）からは写さない
+        if (!copyBlocked(e)) {
+          const copy = button(t('hooks.copy.open'), 'btn', () => openCopySheet(ctx, e));
+          copy.setAttribute('aria-label', t('sessionContext.hooks.copyAria', { name: rowName(e) }));
+          acts.append(copy);
+        }
         body.append(acts);
       }
       row.append(dot, body);

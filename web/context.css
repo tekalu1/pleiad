@@ -322,7 +322,26 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 .hk-target{display:flex;flex-direction:column;gap:6px;padding:10px 12px;background:var(--surface-1);border-radius:var(--r-m)}
 .hk-target p{margin:0}
 .hk-target .scx-lines{background:var(--surface-paper)}
+.hk-target .row-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;min-width:0}
+.hk-target .row-line .cx-path{overflow-wrap:anywhere}
 .hk-confirm>.hk-check{align-self:flex-start;border-radius:var(--r-m)}
+/* 他のエージェントへ写す前の確認（写す先ごとの面） */
+.hk-src{gap:6px;background:var(--surface-1)}
+.hk-src .cx-mono{overflow-wrap:anywhere}
+.hk-copyrows{display:flex;flex-direction:column;gap:10px}
+.hk-copyhead{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;min-width:0}
+.hk-copyhead>b{flex:1 1 auto;min-width:0;color:var(--ink)}
+.hk-copyhead .hk-state{margin-left:auto}
+.hk-copyrow .fm{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;padding:8px 12px;background:var(--surface-paper);border-radius:var(--r-s);font-size:var(--fs-s)}
+.hk-copyrow .fm .k{color:var(--ink-weak)}
+.hk-copyrow .fm .v{overflow-wrap:anywhere;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink)}
+.hk-reasons,.hk-warns ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px;font-size:var(--fs-s);line-height:1.6}
+.hk-warns{display:flex;flex-direction:column;gap:4px;padding:8px 12px;background:var(--surface-paper);border-radius:var(--r-s);color:var(--ink-weak)}
+.hk-warns b{font-size:var(--fs-s);color:var(--ink)}
+.hk-redo{display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px 8px}
+.hk-redo .hk-label{flex:1 1 180px;font-size:var(--fs-s)}
+.hk-redo .hk-input{background:var(--surface-paper)}
+.hk-copywhere{overflow-wrap:anywhere}
 
 /* ---- 狭い画面。2 列を縦に積む ---- */
 @media (max-width:760px){
