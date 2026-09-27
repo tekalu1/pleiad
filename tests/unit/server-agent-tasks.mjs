@@ -64,6 +64,9 @@ export default async function(t) {
     t.ok('追加指示が同じ子に届く', rows[0].sessionId === child.sessionId);
     const history = await c.cmd('loadSession', { sessionId: child.sessionId });
     t.ok('子会話に両方の依頼と結果が残る', history.messages.filter(m => m.role === 'user').length === 2);
+    const delivered = await c.cmd('agentTaskInstructions', { taskId: child.taskId });
+    t.ok('詳細取得は選んだタスクの指示と配送状態だけを返す', delivered.instructions.length === 1
+      && delivered.instructions[0].text === 'echo:FOLLOW_UP' && delivered.instructions[0].state === 'delivered');
     const nestedPrompt = prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:DEEP_RESULT' });
     await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: nestedPrompt }) });
     rows = await awaitTasks(rows => rows.some(r => r.task === nestedPrompt && r.notification === 'sent'));

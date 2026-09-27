@@ -24,9 +24,10 @@ export default async function(t) {
       calls.push([r.taskId, prompt]);
       if (prompt === 'retry' && retry) { retry = false; return { requeue: true }; }
       if (prompt === 'hold') await new Promise(resolve => { release = resolve; signal.addEventListener('abort', resolve, { once: true }); });
+      if (prompt === 'hold-fail') await new Promise(resolve => { release = resolve; signal.addEventListener('abort', resolve, { once: true }); });
       if (prompt === 'gate') await Promise.race([gated, new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }))]);
       if (prompt === 'error') throw new Error('fixture failure');
-      return { outcome: signal.aborted ? 'aborted' : 'ok', text: prompt === 'large' ? 'x'.repeat(40000) : prompt };
+      return { outcome: signal.aborted ? 'aborted' : prompt === 'hold-fail' ? 'error' : 'ok', text: prompt === 'large' ? 'x'.repeat(40000) : prompt };
     },
     deliver: async r => { if (notifyBlocked) return 'requeue'; notifications.push([r.taskId, r.result]); return 'ok'; },
   };
@@ -56,10 +57,16 @@ export default async function(t) {
     const denied = await manager.call('stranger', 'ply_task_status', { taskId: job.taskId }).catch(e => e.message);
     t.ok('別の親からタスクにアクセスできない', typeof denied === 'string');
     await manager.call('parent', 'ply_task_send', { taskId: job.taskId, message: 'second' });
-    t.ok('実行中の追加指示は順番を待つ', calls.length === 1);
+    await manager.call('parent', 'ply_task_send', { taskId: job.taskId, message: 'second' });
+    const pending = manager.instructions(job.taskId).instructions;
+    t.ok('実行中に積んだ同文の指示が別 ID で待機中として見える', calls.length === 1 && pending.length === 2
+      && pending[0].id !== pending[1].id && pending.every(x => x.text === 'second' && x.state === 'queued')
+      && manager.get(job.taskId).pendingMessages === 2);
     release();
     await until(() => manager.get(job.taskId).status === 'completed');
-    t.ok('同じ子の会話で追加指示を実行する', calls.length === 2 && manager.get(job.taskId).result === 'second');
+    t.ok('同じ子の会話で追加指示を FIFO 配送し、配送済みを待機表示から外す', calls.length === 3
+      && calls.slice(1).every(x => x[1] === 'second') && manager.get(job.taskId).result === 'second'
+      && manager.instructions(job.taskId).instructions.every(x => x.state === 'delivered') && manager.get(job.taskId).pendingMessages === 0);
     notifyBlocked = false;
     await until(() => manager.get(job.taskId).notification === 'sent');
     await sleep(550);
@@ -74,9 +81,20 @@ export default async function(t) {
     release = null;
     const slow = await manager.call('parent', 'ply_delegate', { backend: 'claude', task: 'hold' });
     await until(() => release);
+    await manager.call('parent', 'ply_task_send', { taskId: slow.taskId, message: 'stop pending' });
     await manager.call('parent', 'ply_task_cancel', { taskId: slow.taskId });
     await until(() => manager.get(slow.taskId).status === 'cancelled');
     t.ok('停止を実行に伝播する', manager.get(slow.taskId).notification === 'suppressed');
+    t.ok('停止後も未配送の本文を残す', manager.instructions(slow.taskId).instructions[0]?.state === 'dropped'
+      && manager.instructions(slow.taskId).instructions[0]?.text === 'stop pending');
+    release = null;
+    const failing = await manager.call('parent', 'ply_delegate', { backend: 'codex', task: 'hold-fail' });
+    await until(() => release);
+    await manager.call('parent', 'ply_task_send', { taskId: failing.taskId, message: 'failure pending' });
+    release();
+    await until(() => manager.get(failing.taskId).status === 'failed');
+    t.ok('失敗時も後続の指示を未配送で残す', manager.instructions(failing.taskId).instructions[0]?.state === 'dropped'
+      && manager.instructions(failing.taskId).instructions[0]?.text === 'failure pending');
     const failed = await manager.call('parent', 'ply_delegate', { backend: 'codex', task: 'error' });
     await until(() => manager.get(failed.taskId).status === 'failed');
     t.ok('実行失敗を成功として扱わない', manager.get(failed.taskId).error === 'fixture failure');
@@ -84,10 +102,13 @@ export default async function(t) {
     await sleep(100);
     const raw = JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'));
     raw[slow.taskId].status = 'running'; raw[slow.taskId].notification = 'delivering';
+    raw[slow.taskId].queue = ['legacy pending']; delete raw[slow.taskId].instructions;
     await fs.writeFile(path.join(dir, 'agent-tasks.json'), JSON.stringify(raw));
     const before = calls.length;
     manager = await createAgentTasks(options);
     t.ok('再起動で実行を再送せず中断・配送不明にする', manager.get(slow.taskId).status === 'interrupted' && manager.get(slow.taskId).notification === 'unknown' && calls.length === before);
+    t.ok('旧形式の queue を読み、再起動で未配送として残す', manager.instructions(slow.taskId).instructions[0]?.text === 'legacy pending'
+      && manager.instructions(slow.taskId).instructions[0]?.state === 'dropped');
     renameBroken = true;
     const count = manager.list().length;
     const rejected = await manager.call('parent', 'ply_delegate', { backend: 'codex', task: 'must not run' }).then(() => false, () => true);

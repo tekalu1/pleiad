@@ -27,6 +27,7 @@ const cases = [
   // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）
   await import('./unit/agent-tasks-storage.mjs'),
   await import('./unit/background-model.mjs'),
+  await import('./unit/task-instructions.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
   // 委譲の子に裏の作業が残るとき: 終わらないコマンドは上限まで待って止める・サブエージェントは止めない・端末は待たない（子にも親にも）
   await import('./unit/server-delegation-background.mjs'),
