@@ -30,8 +30,9 @@ import * as P from "./protocol.mjs";
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
-import { createCompactionScheduler } from './compaction-scheduler.mjs';
+import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings } from './compaction-settings.mjs';
+import { mergeCompactionHistory } from './compaction-history.mjs';
 import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
@@ -70,7 +71,16 @@ const WEB = path.join(HERE, "..", "web");
 // 画面の言語（設定値と解決後）。起動時と設定を変えたときに決め直す。ready と prefs イベントで配る（docs/design.md「多言語対応」）
 let locale = localeInfo(await store.getPrefs());
 setLocale(locale.lang);
-let compactionSettings = normalizeCompactionSettings((await store.getPrefs()).autoCompaction ?? {});
+let compactionSettings;
+try {
+  compactionSettings = normalizeCompactionSettings((await store.getPrefs()).autoCompaction ?? {});
+} catch (err) {
+  console.error('  自動圧縮の保存済み設定が不正です。既定値に戻します:', String(err?.message ?? err));
+  compactionSettings = normalizeCompactionSettings();
+  await store.setPref('autoCompaction', compactionSettings).catch(saveError => {
+    console.error('  自動圧縮の既定値を保存できませんでした:', String(saveError?.message ?? saveError));
+  });
+}
 
 import { installation, cliCommand } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
@@ -1100,7 +1110,7 @@ function makeEmit(turn) {
         const kept = turn.contextRecord?.delivered?.entries;
         if (kept) for (const key of Object.keys(kept)) delete kept[key];
       }
-      for (const key of ['nativeId', 'beforeTokens', 'afterTokens', 'summary', 'reason'])
+      for (const key of ['nativeId', 'turnId', 'beforeTokens', 'afterTokens', 'summary', 'reason'])
         if (event[key] !== undefined && event[key] !== null) entry[key] = event[key];
       turn.compaction = entry;
       event = { type: 'compaction', ...entry };
@@ -1147,6 +1157,7 @@ function makeEmit(turn) {
     // （差し替えると sidecar に "null" キーの行が生える）。
     if (event?.type === "session" && event.sessionId && !turn.info.sessionId) {
       turn.info.sessionId = event.sessionId;
+      turn.compactionRevision = compactionScheduler.revision(event.sessionId);
       for (const read of liveReads) if (read.sessionId === event.sessionId) read.turn = turn;
       runtime.turns.delete(turn.key);
       const connection = agentConnections.get(turn.key);
@@ -1685,11 +1696,13 @@ const ANSWER_EVENTS = new Set(['text.delta', 'text.end', 'thinking.delta', 'tool
 
 async function runTurnInternal(args, onStarted, hooks) {
   const { prompt, sessionId = null } = args ?? {};
+  if (hooks.canStart && !hooks.canStart()) return 'cancelled';
   if ((hooks.internal || hooks.signal) && (sessionBusy(sessionId))) return 'requeue';
   if (switching.has(sessionId) || forking.has(sessionId)) throw new Error(t('agents.switching'));
   // 同じセッションの二重実行は防ぐ。別のセッションなら並行して回してよい
   if (sessionId && runtime.turns.has(sessionId)) throw new Error(t('session.running'));
-  if (sessionId) compactionScheduler.cancel(sessionId);
+  if (sessionId && hooks.compact !== 'idle') compactionScheduler.cancel(sessionId);
+  const compactionRevision = sessionId ? compactionScheduler.revision(sessionId) : null;
   if (sessionId) switching.add(sessionId);
   try {
 
@@ -1820,6 +1833,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       control: { handle: null, onReady: () => outbox.kick(sessionId).catch(() => {}) },
       outcome: null,
       compactTrigger: hooks.compact ?? null,
+      compactionRevision,
       userInitiated: !hooks.internal && !hooks.compact,
       compaction: null,
       compactionWrite: Promise.resolve(),
@@ -1906,7 +1920,6 @@ async function runTurnInternal(args, onStarted, hooks) {
       // 再開なら id が分かっているので先に載せる。新規は session イベントで id が決まった瞬間に（makeEmit）
       if (sessionId && attachments.length) await presentAttachments(sessionId, attachments, emit);
       if (hooks.signal?.aborted) throw new Error(t('turn.aborted'));
-      backendInvoked = true;
       const runArgs = {
         prompt,
         sessionId,
@@ -1932,6 +1945,13 @@ async function runTurnInternal(args, onStarted, hooks) {
         // 互換の接続先（キーを含む。backend の中でだけ使い、ログ・イベントには出さない。core/compat-endpoints.mjs）
         ...(endpoint ? { endpoint } : {}),
       };
+      // Preparation can await context and settings. A send or cancellation may have invalidated
+      // an idle reservation since the first check; do not invoke the backend in that case.
+      if (hooks.canInvoke && !hooks.canInvoke()) {
+        turn.outcome = 'requeue';
+        return 'requeue';
+      }
+      backendInvoked = true;
       const result = hooks.compact && backend.compact
         ? await backend.compact({ ...runArgs, trigger: hooks.compact })
         : await backend.runTurn(runArgs);
@@ -2025,12 +2045,17 @@ async function endTurn(turn, emit, { record = true } = {}) {
   if (record && turn.outcome === 'ok' && turn.userInitiated && !turn.compaction
       && !delegated && turn.info.sessionId) {
     const id = turn.info.sessionId;
+    const meta = await store.get(id);
+    const queued = await outbox.list(id);
     const row = compactionSettings[turn.backend.id === 'fake' ? 'claude' : turn.backend.id];
-    const usage = turn.contextWindow ?? (await store.get(id)).contextWindow;
-    if (compactionSettings.enabled && row?.enabled && turn.backend.capabilities?.compact
-        && usage?.usedTokens >= compactionSettings.minTokens && !(await store.get(id)).autoCompactionOff
+    const usage = turn.contextWindow ?? meta.contextWindow;
+    if (compactionScheduler.revision(id) === turn.compactionRevision && !runtime.turns.has(id)
+        && !queued.some(m => !['sent', 'cancelled'].includes(m.status))
+        && compactionSettings.enabled && row?.enabled && turn.backend.capabilities?.compact
+        && usage?.usedTokens >= compactionSettings.minTokens && !meta.autoCompactionOff
         && ![...runtime.waiting.values()].some(w => w.payload.sessionId === id))
-      compactionScheduler.schedule(id, turn.backend.id, row.delayMinutes * 60_000);
+      compactionScheduler.schedule(id, turn.backend.id, row.delayMinutes * 60_000,
+        turn.compactionRevision, usage.usedTokens);
   }
 }
 
@@ -2049,15 +2074,18 @@ const sessionBusy = (id) => runtime.turns.has(id) || switching.has(id) || forkin
 const compactionScheduler = createCompactionScheduler({
   changed: (sessionId, at) => emitGlobal({ type: 'compactionSchedule', sessionId, at }),
   canRun: async (id, expectedBackend) => {
-    const meta = await store.get(id);
-    const backend = await resolveBackendForSession(id);
+    const [meta, backend, queued] = await Promise.all([store.get(id), resolveBackendForSession(id), outbox.list(id)]);
     const row = compactionSettings[backend?.id === 'fake' ? 'claude' : backend?.id];
     return backend?.id === expectedBackend && !sessionBusy(id) && !meta.autoCompactionOff && !meta.delegation
+      && !queued.some(m => !['sent', 'cancelled'].includes(m.status))
       && compactionSettings.enabled && row?.enabled && backend?.capabilities?.compact
       && meta.contextWindow?.usedTokens >= compactionSettings.minTokens
       && ![...runtime.waiting.values()].some(w => w.payload.sessionId === id);
   },
-  compact: async id => { await runTurn({ sessionId: id, prompt: '/compact' }, () => {}, { compact: 'idle' }); },
+  compact: async (id, _sessionId, current) => {
+    if (current()) await runTurn({ sessionId: id, prompt: '/compact' }, () => {},
+      { compact: 'idle', ...idleCompactionGuards(current, () => sessionBusy(id)) });
+  },
 });
 const queuedCompactions = new Set();
 async function compactionStartFailed(sessionId, trigger, err) {
@@ -2071,7 +2099,6 @@ async function compactionStartFailed(sessionId, trigger, err) {
 async function compactConversation(sessionId, trigger = 'manual') {
   const backend = await resolveBackendForSession(sessionId);
   if (!backend?.capabilities?.compact) throw new Error(t('compaction.unsupported'));
-  compactionScheduler.cancel(sessionId);
   if (sessionBusy(sessionId)) {
     if (queuedCompactions.has(sessionId)) return 'queued';
     queuedCompactions.add(sessionId);
@@ -2688,6 +2715,7 @@ wss.on("connection", (ws, req) => {
         }
         case 'compactConversation': {
           const sessionId = msg.args?.sessionId;
+          compactionScheduler.cancel(sessionId);
           const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
           if (!backend) throw new Error(t('session.notFound'));
           if (!backend.capabilities?.compact) throw new Error(t('compaction.unsupported'));
@@ -2703,11 +2731,12 @@ wss.on("connection", (ws, req) => {
         }
         case 'setConversationAutoCompaction': {
           const sessionId = msg.args?.sessionId;
-          if (!sessionId || !(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
           const off = msg.args?.off;
           if (typeof off !== 'boolean') throw new Error(t('compaction.invalidSetting'));
-          await store.setSessionData(sessionId, 'autoCompactionOff', off);
+          if (!sessionId) throw new Error(t('session.notFound'));
           if (off) compactionScheduler.cancel(sessionId);
+          if (!(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
+          await store.setSessionData(sessionId, 'autoCompactionOff', off);
           emitGlobal({ type: 'conversationAutoCompaction', sessionId, off });
           return reply(true, { off });
         }
@@ -2840,11 +2869,7 @@ wss.on("connection", (ws, req) => {
             const draft = (await store.get(sessionId)).draft ?? null;
             const nativeCompactions = backend.getCompactions ? await backend.getCompactions(sessionId).catch(() => []) : [];
             const savedCompactions = sidecar.compactions ?? [];
-            const nativeIds = new Set(nativeCompactions.map(entry => entry.nativeId));
-            const compactions = [
-              ...nativeCompactions.map(native => ({ ...native, ...savedCompactions.find(entry => entry.nativeId === native.nativeId) })),
-              ...savedCompactions.filter(entry => !entry.nativeId || !nativeIds.has(entry.nativeId)),
-            ].sort((a, b) => a.at - b.at);
+            const compactions = mergeCompactionHistory(nativeCompactions, savedCompactions);
             const compactionData = { compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
             if (!msg.args?.live) return reply(true, { ...data, completedAt, interrupted, draft, ...compactionData, ...retired });
@@ -3056,13 +3081,21 @@ wss.on("connection", (ws, req) => {
           // 既定のエージェントが無くなっていたら（対応を終えた・無効にした）載せない。web は有効なものへ落とす
           const prefs = await store.getPrefs();
           if (prefs.backend && !getBackend(prefs.backend)) delete prefs.backend;
-          prefs.autoCompaction = normalizeCompactionSettings(prefs.autoCompaction ?? {});
+          prefs.autoCompaction = compactionSettings;
           return reply(true, prefs);
         }
         case 'setAutoCompaction': {
           const settings = normalizeCompactionSettings(msg.args?.settings);
-          await store.setPref('autoCompaction', settings);
+          const previousSettings = compactionSettings;
+          // A reservation already firing may be preparing its backend. Settings take effect before
+          // the disk write, and ineligible in-flight reservations are invalidated before invocation.
+          compactionScheduler.cancelFiring(entry => {
+            const row = settings[entry.backendId === 'fake' ? 'claude' : entry.backendId];
+            return !settings.enabled || !row?.enabled || entry.usedTokens < settings.minTokens;
+          });
           compactionSettings = settings;
+          try { await store.setPref('autoCompaction', settings); }
+          catch (err) { compactionSettings = previousSettings; throw err; }
           for (const entry of compactionScheduler.entries()) {
             const backend = await resolveBackendForSession(entry.sessionId);
             const row = settings[backend?.id === 'fake' ? 'claude' : backend?.id];

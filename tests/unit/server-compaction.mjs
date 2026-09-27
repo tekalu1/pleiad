@@ -56,4 +56,27 @@ export default async function (t) {
     await server.stop();
     await fs.rm(scratch, { recursive: true, force: true });
   }
+
+  const invalidScratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-compact-invalid-'));
+  const invalidData = path.join(invalidScratch, 'data');
+  await fs.mkdir(invalidData);
+  await fs.writeFile(path.join(invalidData, 'prefs.json'), JSON.stringify({ autoCompaction: { minTokens: '40000' } }));
+  let recoveredServer, recoveredClient;
+  try {
+    recoveredServer = await startServer({ dataDir: invalidData, env: { AGENT_HOST_BACKENDS: 'fake' }, timeoutMs: 30_000 });
+    recoveredClient = await open({ port: recoveredServer.port, token: recoveredServer.token });
+    const prefs = await recoveredClient.cmd('prefs');
+    t.ok('不正な保存済み設定でも起動し既定値を返す', prefs.autoCompaction.minTokens === 40_000
+      && prefs.autoCompaction.claude.enabled && recoveredServer.tail(200).includes('自動圧縮の保存済み設定が不正'));
+    const onDisk = JSON.parse(await fs.readFile(path.join(invalidData, 'prefs.json'), 'utf8'));
+    t.ok('不正な保存値を既定値へ修復する', onDisk.autoCompaction.minTokens === 40_000);
+    let rejected = false;
+    try { await recoveredClient.cmd('setAutoCompaction', { settings: { minTokens: '40000' } }); }
+    catch { rejected = true; }
+    t.ok('保存時の不正値は引き続き拒否する', rejected);
+  } finally {
+    recoveredClient?.close();
+    await recoveredServer?.stop();
+    await fs.rm(invalidScratch, { recursive: true, force: true });
+  }
 }

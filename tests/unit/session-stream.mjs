@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createSessionLoads } from "../../web/session-stream.mjs";
 import { createCompletionNotifications } from '../../web/notifications.mjs';
+import { mergeCompactionHistory } from '../../core/compaction-history.mjs';
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
 
@@ -121,6 +122,7 @@ export default async function (t) {
   const serverContext = vm.createContext({
     msg: { args: { sessionId: "target", live: true } }, runtime: { turns, waiting: new Map() }, liveReads,
     resolveBackendForSession: async () => ({}), store: { get: async () => ({}) }, compactionScheduler: { get: () => null },
+    mergeCompactionHistory,
     history: { loadTranscript: () => new Promise(r => { resolveTranscript = r; }) },
     reply: (ok, data) => data, streamSequence: 3,
   });

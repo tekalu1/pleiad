@@ -937,9 +937,10 @@ export function codexContextWindow(tokenUsage) {
 export function codexCompactionEvent(method, params) {
   if (method === 'thread/compacted' ||
       (method === 'item/completed' && params?.item?.type === 'contextCompaction'))
-    return { type: 'compaction', phase: 'complete', trigger: 'auto', nativeId: params?.item?.id ?? null };
+    return { type: 'compaction', phase: 'complete', trigger: 'auto', nativeId: params?.item?.id ?? null,
+      turnId: params?.turnId ?? null };
   if (method === 'item/started' && params?.item?.type === 'contextCompaction')
-    return { type: 'compaction', phase: 'start', trigger: 'auto' };
+    return { type: 'compaction', phase: 'start', trigger: 'auto', turnId: params?.turnId ?? null };
   return null;
 }
 
@@ -1581,7 +1582,7 @@ export const backend = {
     const res = await nativeRpc.request('thread/read', { threadId: sessionId, includeTurns: true }, 30_000);
     return (res?.thread?.turns ?? []).flatMap(turn => (turn.items ?? [])
       .filter(item => item.type === 'contextCompaction')
-      .map(item => ({ id: `native:${item.id}`, nativeId: item.id, phase: 'complete', trigger: 'auto',
+      .map(item => ({ id: `native:${item.id}`, nativeId: item.id, turnId: turn.id ?? null, phase: 'complete', trigger: 'auto',
         at: Number(turn.completedAt ?? turn.startedAt ?? res.thread.updatedAt) * 1000 })));
   },
 
