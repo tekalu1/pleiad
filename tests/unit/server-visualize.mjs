@@ -58,7 +58,12 @@ export default async function(t) {
     assert(opened.path.startsWith(path.join(scratch,'data')), '写しはデータ置き場に書く');
     const written = await fs.readFile(opened.path, 'utf8');
     assert(written.includes('first') && written.includes('Content-Security-Policy'));
+    const inApp = await c.cmd('openVisualization', { sessionId:id, id:saved.presents[0].id, returnPath:true });
+    assert.equal(inApp.path, opened.path, '内蔵ブラウザー向けにもデータ置き場の写しのパスを返す');
+    const inAppWritten = await fs.readFile(inApp.path, 'utf8');
+    assert(inAppWritten.includes('Content-Security-Policy') && inAppWritten.includes("default-src 'none'"), 'file: の写しにも meta CSP を付ける');
     await assert.rejects(c.cmd('openVisualization', { sessionId:id, id:'missing' }));
+    await assert.rejects(c.cmd('openVisualization', { sessionId:id, id:'missing', returnPath:true }));
     // 元のファイルが消えていても、在り処と作業ディレクトリは分かる（見出しの下の相対パス）
     const where = await c.cmd('resolvePath', { path:file, sessionId:id, lenient:true });
     assert.equal(path.resolve(where.path), path.resolve(file)); assert.equal(path.resolve(where.cwd), path.resolve(scratch));
