@@ -72,6 +72,8 @@
       <button type="button" id="appearanceTab" aria-controls="appearancePanel" data-i18n="settings.nav.appearance"></button>
       <button type="button" id="openContext" aria-controls="contextPanel" data-i18n="settings.nav.context"></button>
       <button type="button" id="autoCompactionTab" aria-controls="autoCompactionPanel" data-i18n="settings.nav.autoCompaction"></button>
+      <!-- 内蔵ブラウザー。デスクトップ版のホストの画面だけ出す（web/browser-settings.mjs） -->
+      <button type="button" id="browserTab" aria-controls="browserPanel" data-i18n="settings.nav.browser" hidden></button>
       <button type="button" id="remoteTab" aria-controls="remotePanel" data-i18n="settings.nav.remote"></button>
       <button type="button" id="updatesTab" aria-controls="updatesPanel" data-i18n="settings.nav.about"></button>
     </nav>
@@ -298,6 +300,8 @@
             <p class="rm-state rm-strong" id="autoCompactionError" role="status"></p>
           </div>
         </section>
+        <!-- 中身は web/browser-settings.mjs が作る -->
+        <section id="browserPanel" data-i18n-aria-label="settings.nav.browser" hidden></section>
         <!-- 中身は web/remote.mjs が作る -->
         <section id="remotePanel" data-i18n-aria-label="settings.nav.remote" hidden></section>
       </div>

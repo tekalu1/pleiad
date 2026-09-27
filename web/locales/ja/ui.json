@@ -43,7 +43,8 @@
       "remote": "リモート",
       "about": "アプリ情報・更新",
       "delegation": "委譲",
-      "autoCompaction": "自動圧縮"
+      "autoCompaction": "自動圧縮",
+      "browser": "ブラウザー"
     },
     "usage": {
       "description": "サブスクの枠はアカウント全体の値です。使用率・残量・リセット日時を表示します。",
@@ -173,6 +174,16 @@
         "sleepAlways": "リモートが有効な間は防ぐ",
         "sleepOff": "防がない"
       }
+    },
+    "browser": {
+      "description": "会話やプレビューのリンクを開く場所を選びます。",
+      "linkOpen": {
+        "title": "リンクの開き先",
+        "inapp": "内蔵ブラウザー",
+        "external": "既定のブラウザー",
+        "note": "内蔵ブラウザーは会話の右に開き、ログインはこのアプリの中に残ります。Pleiad 本体の保存領域とは分けています。"
+      },
+      "saveFailed": "保存できませんでした: {{error}}"
     }
   },
   "time": {
@@ -2176,5 +2187,40 @@
     "codexDelay": "Codex の待ち時間",
     "minutes": "分",
     "saveFailed": "自動圧縮の設定を保存できませんでした：{{error}}"
+  },
+  "browser": {
+    "panel": "ブラウザー",
+    "tabs": "ブラウザーのタブ",
+    "newTab": "新しいタブ",
+    "untitled": "新しいタブ",
+    "closeTab": "タブを閉じる: {{title}}",
+    "back": "戻る",
+    "forward": "進む",
+    "reload": "再読み込み",
+    "stop": "読み込みを止める",
+    "loading": "読み込み中",
+    "address": "アドレス",
+    "addressPlaceholder": "URL を入力",
+    "openExternal": "既定のブラウザーで開く",
+    "actions": "ブラウザーの操作",
+    "menu": {
+      "devtools": "DevTools",
+      "detach": "別の窓に出す",
+      "clearSiteData": "このサイトのデータを消す"
+    },
+    "kind": {
+      "secure": "安全な接続（https）",
+      "local": "この PC（localhost）",
+      "insecure": "暗号化されていない接続",
+      "file": "PC のファイル"
+    },
+    "empty": {
+      "title": "URL を入力して開きます",
+      "hint": "localhost:5173 のようにこの PC の URL は http で、それ以外は https で開きます。"
+    },
+    "invalid": "開けない URL です。http・https の URL か、localhost:5173 のように入力してください。",
+    "externalUnavailable": "このページは既定のブラウザーで開けません。",
+    "siteDataCleared": "このサイトのデータを消しました。",
+    "failed": "ブラウザーの操作に失敗しました。"
   }
 }

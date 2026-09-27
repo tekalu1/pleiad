@@ -115,7 +115,8 @@
     "accountNotRegistered": "The selected account is not registered.",
     "unknownPref": "Unknown setting: {{key}}",
     "unknownMode": "Unknown approval mode: {{value}}",
-    "unknownModel": "Unknown model: {{value}}"
+    "unknownModel": "Unknown model: {{value}}",
+    "unknownPrefValue": "Unknown value for {{key}}: {{value}}"
   },
   "send": {
     "messageIdRequired": "A message ID is required.",
