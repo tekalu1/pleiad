@@ -3,7 +3,7 @@
 import { KINDS, SIGNALS, DEFAULTS, normalizeSettings, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, selectRetryAccount, dedupeAccounts,
   route, pinnedRouting, manualRouting, candidateStates, settingsWarnings, parseCandidate, elapsedPercent, formatSkippedCandidates } from '../../core/delegation-routing.mjs';
 import { askJev, askCerebras, judgeDifficulty, normalizeKey, TASK_LIMIT, JEV_MODEL, CEREBRAS_MODEL } from '../../core/delegation-judges.mjs';
-import { createUsageMonitor } from '../../core/delegation-usage.mjs';
+import { createUsageMonitor, REFRESH_MS, STALE_MS } from '../../core/delegation-usage.mjs';
 import { claudeQuota, codexQuota } from '../../core/usage.mjs';
 import { antigravityQuota } from '../../core/backends/antigravity-usage.mjs';
 
@@ -61,13 +61,14 @@ const cerebrasAnswer = signals => ({ choices: [{ message: { content: JSON.string
 export default async function (t) {
   // ---- 設定
   t.ok('未設定なら既定値（既定で有効、ux_* と visual は判定しない）', settings.enabled === true && settings.judgeByKind.ux_new === 'none' && settings.judgeByKind.review === 'jev'
-    && JSON.stringify(settings.tiers) === JSON.stringify(DEFAULTS.tiers) && settings.avoidPercent === 80 && settings.paceLimit === 1.2 && settings.staleMinutes === 15);
+    && JSON.stringify(settings.tiers) === JSON.stringify(DEFAULTS.tiers) && settings.avoidPercent === 80 && settings.paceLimit === 1.2 && !Object.hasOwn(settings, 'staleMinutes'));
   const partial = normalizeSettings({ judgeByKind: { design: 'cerebras' }, tiers: { t4: ['claude:fable'] }, avoidPercent: 70 });
   t.ok('一部だけの設定は既定で補う', partial.judgeByKind.design === 'cerebras' && partial.judgeByKind.review === 'jev' && partial.tiers.t4.join() === 'claude:fable' && partial.tiers.t1.length === 2 && partial.avoidPercent === 70);
   const rejects = [{ nope: 1 }, { enabled: 'yes' }, { avoidPercent: 0 }, { paceLimit: 'x' }, { judgeByKind: { design: 'gpt' } }, { judgeByKind: { cooking: 'jev' } },
     { tiers: { t9: [] } }, { tiers: { t1: ['no-colon'] } }, { tiers: { t1: ['claude:haiku', 'claude:haiku'] } }, { table: { design: ['t1', 't2'] } }, { table: { design: ['t1', 't2', 't7'] } }];
   t.ok('画面からの保存（strict）は不正な値を断る', rejects.every(raw => { try { normalizeSettings(raw, { strict: true }); return false; } catch (e) { return e instanceof RoutingSettingsError && typeof e.code === 'string'; } }));
   t.ok('読むとき（strict でない）は不正な項目だけ既定に戻す', normalizeSettings({ avoidPercent: 500, paceLimit: 2 }).avoidPercent === 80 && normalizeSettings({ avoidPercent: 500, paceLimit: 2 }).paceLimit === 2);
+  t.ok('保存済みの prefs に古い staleMinutes が残っていても、読むときはエラーにせず読み捨てる', !Object.hasOwn(normalizeSettings({ staleMinutes: 30 }), 'staleMinutes'));
   t.ok('候補の id は backend:model（model の中の : はそのまま）', parseCandidate('codex:gpt-6-sol').model === 'gpt-6-sol' && parseCandidate('x:a:b').model === 'a:b' && !parseCandidate('claude') && !parseCandidate(':m') && !parseCandidate('claude: x'));
 
   // ---- 難しさの規則（v3・規則 A）
@@ -123,11 +124,11 @@ export default async function (t) {
   const s3m = routeAt('mechanical', 'mid', S3);
   t.ok('記録: 種類・難しさ・段・判定器・取得時刻', s3m.routing.mode === 'auto' && s3m.routing.kind === 'mechanical' && s3m.routing.difficulty === 'mid' && s3m.routing.tier === 't2'
     && s3m.routing.baseTier === 't2' && s3m.routing.judge === 'jev' && s3m.routing.usageAt === new Date(NOW - 60_000).toISOString() && s3m.routing.fallback === null);
-  const stale = { ...S1, antigravity: { ...S1.antigravity, checkedAt: NOW - 16 * 60_000 } };
+  const stale = { ...S1, antigravity: { ...S1.antigravity, checkedAt: NOW - STALE_MS - 60_000 } };
   const st = routeAt('trivial', 'low', stale);
-  t.ok('取得から 15 分を超えた使用量は usage_stale で飛ばし、次の候補（Haiku）へ', target(st) === 'claude:haiku@acct-oz' && st.routing.skipped[0].reason === 'usage_stale');
+  t.ok('取得間隔の 3 倍（STALE_MS）を超えた使用量は usage_stale で飛ばし、次の候補（Haiku）へ', target(st) === 'claude:haiku@acct-oz' && st.routing.skipped[0].reason === 'usage_stale');
   t.ok('usageAt は選んだ候補の取得時刻（飛ばした古い候補の時刻ではない）。飛ばした候補には各自の取得時刻', st.routing.usageAt === new Date(NOW - 60_000).toISOString()
-    && st.routing.skipped[0].checkedAt === new Date(NOW - 16 * 60_000).toISOString());
+    && st.routing.skipped[0].checkedAt === new Date(NOW - STALE_MS - 60_000).toISOString());
   const again = route({ kind: 'trivial', judged: { judge: 'jev', signals: zero }, settings, usage: S1, now: NOW, rejected: { 'antigravity:gemini-3.8-flash-high': 'model_unknown' } });
   t.ok('選んだ後の確かめで落ちた候補（rejected）は理由を付けて飛ばし、次の候補へ', target(again) === 'claude:haiku@acct-oz' && again.routing.skipped[0].reason === 'model_unknown');
   const rejectedClaude = route({ kind: 'design', judged: { judge: 'jev', signals: byDifficulty.high }, settings, usage: S1, now: NOW,
@@ -332,5 +333,39 @@ export default async function (t) {
   t.ok('CLI が入っていないバックエンドは使えない（使用量も取らない）', snap.codex.available === false && reads === 2);
   t.ok('同じ人のアカウントは振り分けのときに 1 つにまとまる', checkCandidate('claude:opus', { usage: snap, settings, now: NOW }).accounts.length === 2
     && dedupeAccounts(snap.claude.accounts).map(a => a.account).join() === ',acct-2');
+
+  // ---- 使用量の取り置き: 古ければ判定と並行して取り直す（ensureFresh）。
+  // 待ちの上限は unref のタイマーなので、遅らせる側は必ず実タイマー（setTimeout）にする。
+  // 手動で解決する Promise だけを止めると、イベントループを保つものが無くなり上限のタイマーごと発火せずに固まる
+  t.ok('古さの閾値は取得間隔の 3 倍', STALE_MS === REFRESH_MS * 3);
+  let efReads = 0, efDelayMs = 0;
+  const efBackend = { id: 'codex', usage: true };
+  const efMonitor = createUsageMonitor({
+    backends: () => [efBackend], installed: () => true,
+    read: async () => { efReads++; if (efDelayMs) await new Promise(r => setTimeout(r, efDelayMs)); return { windows: [], checkedAt: Date.now() }; },
+    candidates: () => ['codex:gpt-6-sol'], modelKnown: async () => true,
+  });
+  await efMonitor.ensureFresh(1000);
+  t.ok('一度も取れていなければ取り直して待つ', efReads === 1 && Object.keys(efMonitor.snapshot()).length === 1);
+  await efMonitor.ensureFresh(1000);
+  t.ok('新しい値が揃っていれば取り直さずすぐ戻る', efReads === 1);
+  efMonitor.snapshot().codex.checkedAt = Date.now() - STALE_MS - 1000;
+  await efMonitor.ensureFresh(1000);
+  t.ok('STALE_MS（取得間隔の 3 倍）を超えて古ければ取り直して待つ', efReads === 2);
+  efMonitor.snapshot().codex.checkedAt = Date.now() - STALE_MS - 1000;
+  efDelayMs = 100;
+  const p1 = efMonitor.ensureFresh(1000);
+  await new Promise(r => setTimeout(r, 10));
+  const p2 = efMonitor.ensureFresh(1000);
+  await Promise.all([p1, p2]);
+  t.ok('取得中に呼ばれたら相乗りし、2 重に取り直さない', efReads === 3);
+  efMonitor.snapshot().codex.checkedAt = Date.now() - STALE_MS - 1000;
+  efDelayMs = 200;
+  const start = Date.now();
+  await efMonitor.ensureFresh(30);
+  t.ok('取り直しが終わらなくても最長 ms で戻る（取り直しは裏で続く）', efReads === 4 && Date.now() - start < 150);
+  await new Promise(r => setTimeout(r, 250));
+  efDelayMs = 0;
+
   t.ok('9 種類の kind', KINDS.length === 9);
 }

@@ -162,7 +162,7 @@ function failure(t, names) {
 /** 設定 › 委譲のスイッチの直下: 効いていない理由だけを出す（平常時・オフのときは何も出さない） */
 async function effectiveLines(t) {
   const defaults = { enabled: true, judgeByKind: { implement: 'jev' }, escalateToCerebras: false, tiers: { t1: ['codex:gpt-6-sol'] }, table: { implement: ['t1', 't1', 't1'] },
-    avoidPercent: 80, paceLimit: 1.5, staleMinutes: 10 };
+    avoidPercent: 80, paceLimit: 1.5 };
   let settings = structuredClone(defaults), hasKey = false, usable = false;
   const state = () => structuredClone({ settings, defaults, kinds: ['implement'], judges: ['jev', 'cerebras', 'none'], tiers: ['t1'],
     candidates: [{ candidate: 'codex:gpt-6-sol', backend: 'codex', model: 'gpt-6-sol', tiers: ['t1'], usable, reason: usable ? null : 'unavailable', detail: 'disabled', windows: [] }],
@@ -196,7 +196,7 @@ async function effectiveLines(t) {
 async function judgePanel(t) {
   const judgeDefaults = { implement: 'jev', review: 'jev' };
   const defaults = { enabled: true, judgeByKind: judgeDefaults, escalateToCerebras: false, tiers: { t1: ['claude:haiku'] }, table: { implement: ['t1', 't1', 't1'], review: ['t1', 't1', 't1'] },
-    avoidPercent: 80, paceLimit: 1.5, staleMinutes: 10 };
+    avoidPercent: 80, paceLimit: 1.5 };
   let settings = structuredClone(defaults);
   let candidates = [{ candidate: 'claude:haiku', backend: 'claude', usable: true, checkedAt: '2026-09-27T00:00:00Z', windows: [] }];
   const state = () => structuredClone({ settings, defaults, kinds: ['implement', 'review'], judges: ['jev', 'cerebras', 'none'], tiers: ['t1'], candidates,

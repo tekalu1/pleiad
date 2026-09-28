@@ -2249,8 +2249,6 @@
       "avoidUnit": "% or more",
       "pace": "Weekly pace",
       "paceUnit": "× or faster defers",
-      "stale": "Treat as out of date",
-      "staleUnit": "minutes old",
       "reset": "Reset to default",
       "resetConfirm": "Reset the delegation settings to default? Keys are kept.",
       "saveFailed": "Couldn't save: {{error}}",
