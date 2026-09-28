@@ -11,7 +11,7 @@ import { migrateClaudeUsage } from './usage-migrations.mjs';
 import { createAgentTasks, finalReply } from './agent-tasks.mjs';
 import { createCompletionNotices, hasPendingChild } from './completion-notices.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
-import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
+import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode } from './modes.mjs';
@@ -3121,6 +3121,7 @@ wss.on("connection", (ws, req) => {
           if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error(t('routing.settings.notObject', { key: 'settings' }));
           const raw = { ...((await store.getPrefs()).delegationRouting ?? {}) };
           for (const [key, value] of Object.entries(patch)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
+          for (const key of RETIRED_KEYS) delete raw[key];
           let settings;
           try { settings = normalizeSettings(raw, { strict: true }); } catch (e) { throw routingSettingsError(e); }
           const previous = routingSettingsCache;
