@@ -21,6 +21,8 @@ export default async function (t) {
     const from = c.mark();
     const result = await c.cmd('compactConversation', { sessionId: id });
     const completed = await c.waitFor(e => e.type === 'compaction' && e.sessionId === id && e.phase === 'complete', { from, ms: 20_000 });
+    // 完了はターンの途中で出る。後始末（保存）が終わって turnEnd が出るまで会話は準備中の印が付いたままで、次の runTurn は断られる
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === id, { from, ms: 20_000 });
     t.ok('手動コマンドは要約と前後量を持つ完了を返す', result.status === 'started'
       && completed.trigger === 'manual' && completed.beforeTokens === 164000 && completed.afterTokens === 21000
       && Boolean(completed.summary));
