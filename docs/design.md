@@ -447,7 +447,7 @@ Pleiadでターンが終了すると（成功・失敗・中断を含む）、�
 
 ### 2026-09-11: 未送信セッションと次ターン設定
 
-新規セッションは `newSession` でホストIDを発行し、`conversations.json` の空レコードとsidecarを保存してから応答する。初回のネイティブ実行IDは実行区間として紐づけ、UIのIDを変えない。タイトル・状態は送信前から変更できる。下書きは `saveDraft`、次ターンのエージェント・モデル・作業ディレクトリ予約は `setTurnSettings` で保存する。未指定の設定は既存の予約を保持し、`cancel` は全予約を取り消す。作業場所は保存時に絶対パスへ解決し、保存時と実行直前に存在を検証する。予約は実行中のハンドルを変更せず、次の `runTurn` の準備で検証・適用する。予約した作業場所は送信側の古い `cwd` より優先する。API互換のため既存の `setModel` / `switchBackend` は残すが、UIの変更は予約経路に統一する。
+新規セッションは `newSession` でホストIDを発行し、`conversations.json` の空レコードとsidecarを保存してから応答する。初回のネイティブ実行IDは実行区間として紐づけ、UIのIDを変えない。タイトル・状態は送信前から変更できる。下書きは `saveDraft`（作るときに文を入れておくなら `newSession` の `draft`）、次ターンのエージェント・モデル・作業ディレクトリ予約は `setTurnSettings` で保存する。未指定の設定は既存の予約を保持し、`cancel` は全予約を取り消す。作業場所は保存時に絶対パスへ解決し、保存時と実行直前に存在を検証する。予約は実行中のハンドルを変更せず、次の `runTurn` の準備で検証・適用する。予約した作業場所は送信側の古い `cwd` より優先する。API互換のため既存の `setModel` / `switchBackend` は残すが、UIの変更は予約経路に統一する。
 
 入力の保存に失敗した場合は入力を保持して案内する。未送信セッションの削除は明示操作のみ。任意位置の分岐拡張は別issue #3。
 
@@ -470,7 +470,9 @@ Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作�
 
 ## 指示の量（2026-09-28）
 
-コンテキストの見直しの第 1 段として、毎ターン最初に読み込まれる指示の量を会話の右パネルに出す（[ADR 0056](adr/0056-context-review.md)）。数える場所: ファイルの行は探索（`core/context-scan.mjs` の `tokens`）、Pleiad が足す分はターンを組み立てる `runTurn`（実際に渡した文を `core/instruction-amount.mjs` で数え、会話の記録 `contextSession.plyParts` に残す）、エージェント任せの指示はパネルを開いたときの `nativeInstructions`（そのエージェントの規則で探す。「推定」）。合計・目安との比べは画面（`web/instruction-amount.mjs`）。目安は `prefs.json` の `instructionBudget`（既定 5,000）。詳しくは docs/context-runtime.md「指示の量」。
+コンテキストの見直しの第 1 段として、毎ターン最初に読み込まれる指示の量を会話の右パネルに出す（[ADR 0056](adr/0056-context-review.md)）。数える場所: ファイルの行は探索（`core/context-scan.mjs` の `tokens`）、Pleiad が足す分はターンを組み立てる `runTurn`（実際に渡した文を `core/instruction-amount.mjs` で数え、会話の記録 `contextSession.plyParts` に残す）、エージェント任せの指示はパネルを開いたときの `nativeInstructions`（そのエージェントの規則で探す。「推定」）。合計・目安との比べは画面（`web/instruction-amount.mjs`）。目安は `prefs.json` の `instructionBudget`（既定 5,000）。
+第 2 段として、同じ面に「気になる所」を出す: 違うファイルのほぼ同じ段落（文字の 5-gram の Jaccard 係数が 0.5 以上）と、この場所の指示に書かれたもう無い相対パスだけ。どちらも文の意味を読まない判定で、パネルを開いたときにサーバーが計算し（`contextFindings`、`core/context-findings.mjs`）、保存しない。
+第 3 段として、同じ面の「見直しを頼む」で、同じ作業場所に未送信の新しい会話を作り、入力欄に依頼文の下書き（画面の言語。対象・量と目安・見つかった所・4 段の順の見直し方・変える前に差分を見せて確認を取ること。ファイルの本文は入れない）を入れて開く。送らない。会話は `newSession` の `sourceSessionId`（設定の引き継ぎ）と `draft`（作るのと同時に下書きとして保存）で作る。詳しくは docs/context-runtime.md「指示の量」「気になる所」「見直しを頼む」。
 
 ## 会話の圧縮（2026-09-27）
 

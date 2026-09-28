@@ -74,7 +74,8 @@ export default async function (t) {
     const parsed = parsePairingPayload(offer.payload);
     t.ok('QR の中身は hostId・公開鍵・中継・ホスト名と合う', parsed.hostId === st.hostId && parsed.hostName === 'desk-test' && parsed.relayUrl === `http://127.0.0.1:${relayPort}`);
     const expiresIn = Date.parse(offer.expiresAt) - Date.now();
-    t.ok('ペアリングは 5 分で失効する', expiresIn > 280_000 && expiresIn <= 300_000, String(expiresIn));
+    // 失効の時刻はサーバーのプロセスが付けるので、こちらの時計との数ミリ秒の揺れは許す（300001 で落ちたことがある）
+    t.ok('ペアリングは 5 分で失効する', expiresIn > 280_000 && expiresIn <= 300_000 + 50, String(expiresIn));
     const offered = await cmd('remoteStatus');
     t.ok('状態には期限だけが出て、秘密は出ない', Boolean(offered.pairing.offer?.expiresAt) && !JSON.stringify(offered).includes(offer.payload.split('&s=')[1]?.split('&')[0]));
 

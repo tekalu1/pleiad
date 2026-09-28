@@ -74,6 +74,7 @@ export const COMMANDS = new Set([
   'setSessionMcp',  // { sessionId, name, removed } -> この会話だけ外部 MCP を外す（ply_context に出さない）/ 戻す。次のターンから効く
   'agentMcp',       // { cwd } -> { agents: { claude|codex: [{ name, transport, endpoint, command, path, scope, disabled }] } } 各エージェントの登録（読むだけ）
   'nativeInstructions', // { cwd, backend } -> { cwd, agent, entries: [{ id, name, path, scope, tokens }] | null } エージェント任せの指示を、そのエージェントの規則で探した量（読むだけ。ADR 0056）
+  'contextFindings', // { sessionId, cwd, backend } -> { duplicates: [{ score, sides: [{ path, scope, root, line, segments: [{ text, common }] }] }], missing: [{ path, scope, line, target, from }], more: { duplicates, missing } } | null 指示の量の面の気になる所（重複・無いパス。読むだけ・保存しない。ADR 0056）
   'listMcpConfig', // { cwd, format, scope } -> native path, revision and names (no secrets)
   'readMcpServer', // { cwd, format, scope, name } -> explicitly opened server definition
   'saveMcpServer', // { cwd, format, scope, name, value, revision, mode } -> native registration
@@ -123,7 +124,7 @@ export const COMMANDS = new Set([
   "listSessions",
   "loadSession",     // 履歴（本文 + present）を読み直す。outline: true は系譜の照合用に骨だけ返す。watch: true はこの接続が開いた会話として登録する（下の watchSession）
   "watchSession",    // { sessionId } 開いている会話を登録し直す。登録した接続には、流れの出来事をその会話の分だけ送る（turnEnd は全部。ADR 0024）
-  "newSession",      // 空のセッションを開始する（最初の runTurn まで id は無い）
+  "newSession",      // 空のセッションを開始する（最初の runTurn まで id は無い）。draft を渡すと入力欄の下書きとして保存する（送らない。「見直しを頼む」）
   "saveDraft",
   "deleteUnsentSession",
   "setTurnSettings", // durable agent/model/cwd/account choice, applied at the next runTurn（account: '' = ログイン中の Claude アカウント）

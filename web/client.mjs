@@ -2757,6 +2757,31 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
   return creatingSession;
 }
 
+/**
+ * 「見直しを頼む」（ADR 0056「③ 見直しを頼む」。右パネルの指示の量の面）。同じ作業場所に未送信の新しい会話を作り、
+ * 入力欄に依頼文の下書きを入れて開く。送らない。設定（エージェント・モデルなど）は今の会話から新しい会話を作るときと同じ引き継ぎ
+ * （newSession の sourceSessionId）。下書きはサーバーが作るのと同時に保存する（開き直しても残る）。作っている間の二度目は同じ約束を返す
+ */
+let reviewDrafting = null;
+function draftReview({ cwd, text }) {
+  if (reviewDrafting) return reviewDrafting;
+  const source = state.current;
+  reviewDrafting = (async () => {
+    try {
+      await saveDraft().catch(() => {});
+      await settingsWrite.catch(() => {});
+      await modeWrite;
+      const { sessionId } = await cmd("newSession", { sourceSessionId: source, cwd: cwd || state.cwd || state.homeDir || "", draft: text });
+      await refresh().catch(() => {});
+      await select(sessionId);
+      // 依頼文は頭から読むので、欄の先頭を見せる（末尾に置くと下書きの終わりだけが見える）
+      if (state.current === sessionId) { const p = $('prompt'); p.focus({ preventScroll: true }); p.setSelectionRange(0, 0); p.scrollTop = 0; }
+      return sessionId;
+    } finally { reviewDrafting = null; }
+  })();
+  return reviewDrafting;
+}
+
 function branchIsFresh(id) {
   const r = branches.family?.rows.get(id);
   return Boolean(r) && r.messages.length === r.k + 1;
@@ -5659,7 +5684,7 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   info: () => (state.contextInfoId === state.current ? state.contextInfo : null),
   refreshInfo: (force) => refreshContextEntry({ force }),
   openSettings: () => openContextPage(), labelOf,
-  isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs) });
+  isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs), askReview: draftReview });
 $('contextEntry').onclick = () => sessionContext.toggle($('contextEntry'));
 function openAutoCompactionSettings() { closeMeterPop(); onboarding.open('autoCompaction'); }
 $('contextMeter').onclick = () => {
