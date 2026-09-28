@@ -157,9 +157,16 @@ function createBrowserScreencast(panel, { post = () => {}, agentControl = () => 
     const update = () => pushState(sessionId);
     const events = ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated'];
     for (const name of events) c.on(name, update);
+    // 別の文書へ移ると（描く側が替わると）画面の送信が止まることがある。移るたびにかけ直す
+    const restart = () => {
+      if (sessions.get(sessionId) !== entry || c.isDestroyed()) return;
+      c.debugger.sendCommand('Page.stopScreencast').catch(() => {}).then(() => begin(entry)).catch(() => {});
+    };
+    c.on('did-navigate', restart);
     entry.cleanup.push(() => {
       c.debugger.off('message', onMessage); c.debugger.off('detach', onDetach);
       for (const name of events) c.off(name, update);
+      c.off('did-navigate', restart);
       if (!c.isDestroyed()) c.setBackgroundThrottling?.(true);
       if (!c.isDestroyed() && c.debugger.isAttached()) {
         c.debugger.sendCommand('Page.stopScreencast').catch(() => {});

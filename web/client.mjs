@@ -7,7 +7,7 @@ import { configurePreviewConfirmation, refreshPreviewConfirmation } from './prev
 import { configureLinkOpen } from './link-open.mjs';
 import { download, notify } from './file-actions.mjs';
 import { watchHostOnlyLinks } from './host-only-links.mjs';
-import { linkChoices, showLinkSheet } from './link-sheet.mjs';
+import { linkChoices, showLinkSheet, hideLinkSheet, linkSheetOpen } from './link-sheet.mjs';
 import { createRemoteBrowser } from './remote-browser.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
@@ -5577,6 +5577,9 @@ function backToHosts() {
 function watchShellBack() {
   const escape = target => target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
   addEventListener("plyremote:back", (e) => {
+    // リンクの開き先のシートと PC のブラウザーの画面（web/link-sheet.mjs・web/remote-browser.mjs）
+    if (linkSheetOpen()) { e.preventDefault(); hideLinkSheet(); return; }
+    if (remoteBrowser.isOpen) { e.preventDefault(); remoteBrowser.close(); return; }
     const dialog = [...document.querySelectorAll("dialog[open]")].at(-1);
     if (dialog) {
       e.preventDefault();

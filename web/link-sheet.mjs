@@ -85,3 +85,4 @@ export function showLinkSheet(options) {
   sheet.show(options);
 }
 export function hideLinkSheet() { sheet?.hide(); }
+export function linkSheetOpen() { return !!sheet && !sheet.wrap.hidden; }

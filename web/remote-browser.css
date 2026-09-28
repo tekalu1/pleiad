@@ -10,7 +10,7 @@
 .link-sheet-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .link-sheet-head h3{margin:0;font-size:15px}
 .link-sheet-url{font-size:12px;color:var(--ink-weak);overflow-wrap:anywhere;margin:4px 0 16px}
-.link-sheet-note{margin:0 0 4px}
+.link-sheet-note{margin:0 0 4px;font-size:13px;color:var(--ink-weak)}
 .link-sheet-note[hidden]{display:none}
 .link-sheet-dest{display:flex;align-items:center;width:100%;gap:12px;padding:14px 16px;border-radius:14px;background:var(--surface-1);margin-top:8px;
   font-size:14px;text-align:left;white-space:normal;color:var(--ink)}
@@ -46,8 +46,9 @@ body.rb-open{overflow:hidden}
 .rb-tools{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 12px;font-size:12px}
 .rb-tool-row{display:flex;gap:4px}
 .rb-tool{font-size:12px;padding:0 10px;min-height:32px}
-.rb-status{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rb-text-hint{padding:0 12px 4px}
+.rb-status{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink-weak)}
+.rb-address-text .weak{color:var(--ink-weak)}
+.rb-text-hint{padding:0 12px 4px;font-size:12px;color:var(--ink-weak)}
 .rb-text-hint[hidden]{display:none}
 .rb-text{display:flex;gap:8px;padding:8px 12px;background:var(--surface-1)}
 .rb-text[hidden]{display:none}

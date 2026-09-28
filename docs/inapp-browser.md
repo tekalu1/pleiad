@@ -20,7 +20,22 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 
 ## 使える場所
 
-デスクトップ版のホストの画面（ローカルの窓）だけ。ブラウザーで開いた Pleiad・リモートの窓・スマホには内蔵ブラウザーのモードを出さない。設定 › ブラウザーはすべての画面に出す。画面は `window.plyDesktop.browser` の有無と `window.plyRemote` が無いことで判断する（`web/browser-panel.mjs` の `browserPanelAvailable`）。リモートの窓の preload（`desktop/remote-preload.cjs`）には口を出さず、main も `ply:browser` を受ける前にローカルの窓の本体フレームかを確かめる（`desktop/window-trust.cjs`）。
+デスクトップ版のホストの画面（ローカルの窓）だけ。ブラウザーで開いた Pleiad・リモートの窓・スマホには内蔵ブラウザーのモードを出さない（ホストの内蔵ブラウザーを画面の転送で見ることはできる。下の「リモートから見る」）。設定 › ブラウザーはすべての画面に出す。画面は `window.plyDesktop.browser` の有無と `window.plyRemote` が無いことで判断する（`web/browser-panel.mjs` の `browserPanelAvailable`）。リモートの窓の preload（`desktop/remote-preload.cjs`）には口を出さず、main も `ply:browser` を受ける前にローカルの窓の本体フレームかを確かめる（`desktop/window-trust.cjs`）。
+
+## リモートから見る
+
+ホストの画面ではない端末（リモートの窓・モバイル版・LAN のブラウザー）から、ホストの内蔵ブラウザーを見て操作する（ADR 0041 の最後の項、形は docs/design-system.md「リンクの開き先のシート・PC のブラウザーを見る画面」）。ホストがデスクトップ版のときだけ。`npm start` のホストには内蔵ブラウザーが無いので出さない（`hostCapabilities` の `pcBrowser` が false）。
+
+- リンクの開き先: 会話の外部リンク・プレビューの中のリンク・可視化の「ブラウザーで開く」を押すと、下からのシートで「この端末で開く / PC のブラウザーで見る」を選ぶ（`web/link-sheet.mjs` の `linkChoices`）。localhost・ループバックの URL は「PC のブラウザーで見る」だけ（端末で開くと端末自身を指す）。「この端末で開く」は今までの行き先（docs/remote.md §8.5）。可視化の写しは両方を出し、PC で見るときはサーバーが写しを書き出して `file:` で開く（端末から `file:` の URL は受けない）。ホストの画面ではシートを出さない。
+- PC のブラウザーで見る: 全面の表示（`web/remote-browser.mjs`）。その会話の内蔵ブラウザーのタブで見る。URL があれば新しいタブで開き、無ければエージェントが操作中のタブか、その会話の最初のタブ（無ければ空のタブを作る）。
+- 画面の転送（`desktop/browser-screencast.cjs`）: タブの `webContents.debugger` で `Page.startScreencast`（JPEG）を回す。debugger はエージェントの CDP 中継と共有し、中継はエージェント自身が始めていない画面のフレームを流さない。見ている間はビューポートを端末の表示の大きさにし（`Emulation.setDeviceMetricsOverride`、倍率は画質「自動」で 2 まで・「低」で 1）、`setBackgroundThrottling(false)` で覆われた窓・最小化した窓でも描かせる。タブが窓に載っていないと描かれないので、パネルに出ていないタブは窓の外に 1px で載せる（`panel.pin`）。窓が隠れている（常駐で閉じた）ときは、見られている間だけ最小化で出し、終われば隠し直す。止めるとビューポートと描き方を戻す。別の文書へ移るたびに送信をかけ直す（描く側が替わると止まることがある）。
+- 送る頻度（`core/browser-screencast.mjs`）: Chromium は変化があったときだけフレームを出し、ack を返すまで次を出さない。worker は、見ている端末がみな描き終えた（`browserScreencastAck`。返事が無ければ 3 秒）うえで、前のフレームから最短の間隔（自動 200ms・低 500ms）が過ぎたら ack を返す。回線の遅い端末では自然に頻度が下がる。フレームは WS の `{ kind: "screencast" }` で見ている接続にだけ送る。新しいポートは開けず、リモートは中継の既存の WS 経路を通る。
+- 入力: タップはマウスの移動・押す・離す、ドラッグとホイールは `mouseWheel`、文字は `Input.insertText`、キーは Enter・Backspace・Tab・Escape・Delete・矢印だけ（`Input.dispatchKeyEvent`）。座標は端末がフレームの `metadata`（`deviceWidth` / `deviceHeight`）と画像の表示の大きさから CSS px に変換する（`toPageCoords`）。ほかに戻る・進む・再読み込み・止める・URL を開く（http・https だけ）。入力と移動は人の操作としてエージェントの操作を解除する（「サイトの利用の確認」）。
+- エージェントとの関係: エージェントが中継で操作中（`panel.agentFor`）は、端末では見るだけで、入力と移動は断る（`agent-active`）。端末の「引き継ぐ」でエージェントの接続を切ってから操作できる。「止める」は次の人の送信まで再接続を断る（どちらも「エージェントの操作」と同じ意味）。
+- 止める: 端末が閉じる・接続が切れる・見る端末がいなくなると止める。タブが閉じる・DevTools で debugger が外れると端末へ終わりを知らせる。
+- 口: WS の `browserScreencast`・`browserScreencastStop`・`browserScreencastAck`・`browserScreencastInput`・`browserScreencastNav`・`browserScreencastAgent`（`core/protocol.mjs`）。リモートの接続（ADR 0010 の `isLocalRequest` が false）からだけ受け、ホストの画面からは `remote-only` で断る。入力・移動・エージェントの操作は、その会話を見ている接続からだけ。worker と main の間は parentPort（`desktop/browser-screencast-bridge.cjs`）。
+- 帯域の実測（2026-09-28、390×712 の表示、毎 50ms 数字が変わるページ）: 自動は 1 枚 約 9 KB（780×1424）、約 4 fps、約 290 kbit/s。低は 1 枚 約 3.5 KB（390×712）、約 1.8 fps、約 50 kbit/s。変化の無い間は 0 枚。WS では base64 と JSON で約 1.35 倍になる。
+- 画面に映る秘密（ログイン中のページなど）も中継を通る。中身は中継で E2E（docs/remote.md §9）だが、ペアリングした端末はホストのブラウザーのログインをそのまま使える。
 
 ## 仕組み
 
@@ -95,3 +110,5 @@ ON のとき、エージェントが別の origin へ移る前に中継の `Page
 ## 検証
 
 `tests/unit/inapp-browser.mjs`（右パネルの表・アドレス欄・リンクの開き先・使える画面・preload・偽の electron での main のタブと位置）と `tests/unit/server-ux.mjs`（`linkOpen` の保存）。実機は fake バックエンドのデスクトップ版を別のデータ置き場と userData で起動し、http://example.com と手元の localhost のページで、タブ・戻る/進む・新しい窓・DevTools・既定のブラウザーで開く（呼ばれたことだけを記録）・メニューとの重なり・幅の変更・全面表示・別の窓を確かめた（2026-09-27）。`file:` の HTML（相対の CSS 付き）では、既定のブラウザーで開くが押せて実体のパスで `shell.openPath` が呼ばれること（呼ばれたことだけを記録）、ページのリンクで別の `file:` へ移った後と `.png` では押せないことを確かめた（2026-09-28）。
+
+リモートから見るは `tests/unit/remote-browser-view.mjs`（間引き・止める条件・ローカルの接続と見ていない接続とエージェント操作中の断り・入力の変換・座標の変換・シートの出し分け）。実機は fake バックエンドのデスクトップ版を一時のデータ置き場と userData で起動し、`X-Forwarded-For` を足すプロキシ越しに携帯の大きさの Chromium で開いて、シートの出し分け・画面が届く・タップでボタンが押せる・文字と Enter・戻る・ドラッグでスクロール・アドレス欄・画質の切り替え・閉じると止まる・ローカルの接続からは断ることを確かめた（2026-09-28）。
