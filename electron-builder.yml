@@ -2,6 +2,7 @@ appId: jp.ply.desktop
 productName: Pleiad
 artifactName: Pleiad-${version}-${os}-${arch}.${ext}
 asar: false
+afterPack: ./scripts/pack-agent-browser.cjs
 # node-pty は N-API の prebuild（win32 / darwin の x64・arm64）をそのまま Electron で読む。
 # 既定の npmRebuild はソースからビルドし直して build/Release に置き（prebuild より先に読まれる）、
 # x64 の runner で arm64 をクロスビルドすることになるので止める。ほかの本番依存に再ビルドの要る native モジュールは無い
@@ -14,6 +15,7 @@ files:
   - web/**
   - skills/visualize/**
   - package.json
+  - "!node_modules/agent-browser/bin/**"
   # node-pty のソース・デバッグ情報・使わない ConPTY の DLL は入れない
   - "!node_modules/node-pty/{src,deps,scripts,third_party,typings}/**"
   - "!node_modules/node-pty/**/*.pdb"

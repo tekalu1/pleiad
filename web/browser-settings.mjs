@@ -4,6 +4,7 @@
 import { t } from './i18n.mjs';
 import { el } from './dom.mjs';
 import { LINK_OPEN_VALUES, linkOpenPref } from './browser-address.mjs';
+const AGENT_BROWSER_VERSION = '0.38.1';
 
 export function setupBrowserSettings({ available, cmd, getPrefs }) {
   const $ = id => document.getElementById(id);
@@ -26,7 +27,9 @@ export function setupBrowserSettings({ available, cmd, getPrefs }) {
   seg.append(...buttons);
   row.append(label, seg);
   const error = el('p', 'browser-setting-error'); error.setAttribute('role', 'status');
-  root.replaceChildren(el('p', null, t('settings.browser.description')), row, el('p', 'browser-setting-note', t('settings.browser.linkOpen.note')), error);
+  const agentSection = el('div', 'browser-agent-setting');
+  agentSection.append(el('strong', null, t('settings.browser.agentOperation.title')), el('p', null, t('settings.browser.agentOperation.bundled', { version: AGENT_BROWSER_VERSION })));
+  root.replaceChildren(el('p', null, t('settings.browser.description')), row, el('p', 'browser-setting-note', t('settings.browser.linkOpen.note')), agentSection, error);
   function paint() {
     const value = linkOpenPref(getPrefs());
     for (const b of buttons) { b.classList.toggle('on', b.dataset.linkOpen === value); b.setAttribute('aria-pressed', String(b.dataset.linkOpen === value)); }

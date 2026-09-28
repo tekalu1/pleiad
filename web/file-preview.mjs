@@ -140,7 +140,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
       reveal, save, visualSave, use, ...(browser?.buttons ?? {}) } };
   const handle = el('div', 'file-preview-resize'); handle.tabIndex = 0; handle.setAttribute('role', 'separator');
   handle.setAttribute('aria-label', t('filePreview.width')); handle.setAttribute('aria-orientation', 'vertical'); handle.setAttribute('aria-valuemin', '30'); handle.setAttribute('aria-valuemax', '65');
-  panel.append(handle, head, ...(browser ? [browser.tabsRow] : []), toolbar, location, note, bodyLayout, footer); document.body.append(panel);
+  panel.append(handle, head, ...(browser ? [browser.tabsRow] : []), toolbar, ...(browser ? [browser.agentRow] : []), location, note, bodyLayout, footer); document.body.append(panel);
   const main = document.querySelector('body > main'), sidebar = document.getElementById('sidebar');
   const mobile = matchMedia('(max-width:760px)');
   // 幅の割合の分母は、脇を除いた窓の幅。1150px 以下では脇が畳まれ、閉じた脇（web/client.mjs）も列を取らない
@@ -395,7 +395,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   /** 内蔵ブラウザーから別の中身へ移る・閉じる。ページ（ネイティブの View）を隠す。タブは main に残る */
   function leaveBrowser() {
     if (!browsing) return;
-    browsing = false; browser.hide();
+    browsing = false; browser.hide(); browser.agentRow.hidden = true;
     content.tabIndex = 0;
   }
   /**

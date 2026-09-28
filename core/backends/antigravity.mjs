@@ -232,7 +232,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, hooksRuntime = null }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, hooksRuntime = null }) {
     const m = MODES[modeFor(mode)];
 
     // **控えはターンの終わりに書くが、送信の時刻はここで取る。**
@@ -259,16 +259,21 @@ export const backend = {
     // Pleiad のコンテキストは起動時にしか渡せない（エージェント定義と env）。起動時と違う渡し方になるなら起こし直す。
     // 担当や渡すツール（shape）が変わったときも同じ（コンテキストの設定の変更を次のターンから効かせる。会話は --conversation で続く）
     const contextKey = contextRuntime?.headers?.Authorization ?? null, contextShape = contextRuntime?.shape ?? null;
-    // Hooks を Pleiad がそろえる会話（ADR 0049）も、置き場の .agents/hooks.json は起動時にしか読まれない。登録・止める名前が変われば起こし直す
+    // 内蔵ブラウザーの接続（browserEnv）と、Hooks を Pleiad がそろえる会話（ADR 0049）の置き場の .agents/hooks.json も起動時にしか渡せない。
+    // ブラウザーの設定・登録・止める名前が変われば起こし直す
     const hooksShape = hooksRuntime?.shape ?? null;
-    if (session && ((session.contextKey ?? null) !== contextKey || (session.contextShape ?? null) !== contextShape || (session.hooksShape ?? null) !== hooksShape)) { session.kill(); release(conversationId, session); session = null; }
+    if (session && ((session.contextKey ?? null) !== contextKey || (session.contextShape ?? null) !== contextShape
+      || (session.browserConfig ?? null) !== (browserEnv?.AGENT_BROWSER_CONFIG ?? null) || (session.hooksShape ?? null) !== hooksShape)) { session.kill(); release(conversationId, session); session = null; }
 
     const fresh = !session;
     if (fresh) {
       // 会話ごとのエージェント定義（Pleiad の置き場）と、中継に渡す接続先・トークン（env）
-      // Hooks だけを Pleiad がそろえるときは、カスタムエージェントを使わず置き場（--add-dir）だけを作る（既定のエージェントのまま。inheritCustomizations に頼らない）
-      const agent = contextRuntime || hooksRuntime ? await prepareAgent({ owners: contextRuntime?.owners, prompt: contextRuntime?.prompt, cwd, url: contextRuntime?.url,
-        authorization: contextKey, locale: contextRuntime?.locale, context: Boolean(contextRuntime), hooks: hooksRuntime }) : null;
+      // カスタムエージェントを使うのは、Pleiad のコンテキストかブラウザーの指示を渡すときだけ。
+      // Hooks だけを Pleiad がそろえるときは、置き場（--add-dir）だけを作る（既定のエージェントのまま。inheritCustomizations に頼らない）
+      const useAgent = Boolean(contextRuntime || browserInstructions);
+      const agent = useAgent || hooksRuntime ? await prepareAgent({ owners: contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' },
+        prompt: [contextRuntime?.prompt, browserInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale,
+        context: useAgent, hooks: hooksRuntime }) : null;
       session = new AgySession({
         cwd,
         conversationId,
@@ -278,13 +283,15 @@ export const backend = {
         skipPermissions: Boolean(m.skip),
         // agy のヘッドレスは cwd だけではワークスペースを設定しないため、--add-dir で渡す
         addDirs: cwd ? [cwd] : [],
-        ...(agent ? { addDirs: [...(cwd ? [cwd] : []), agent.home], ...(contextRuntime ? { agent: AGENT_NAME, env: agent.env } : {}), onGone: agent.cleanup } : {}),
+        ...(agent ? { addDirs: [...(cwd ? [cwd] : []), agent.home], ...(useAgent ? { agent: AGENT_NAME } : {}), env: { ...agent.env, ...browserEnv }, onGone: agent.cleanup }
+          : browserEnv ? { env: browserEnv } : {}),
       });
       session.hooksShape = hooksShape;
       session.hookRuns = agent?.runs ? { file: agent.runs, offset: 0 } : null;
       session.onShapeMismatch = () => { void recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'antigravity', kind: 'stream-json-shape', detectedVersion: null }); };
       session.contextKey = contextKey;
       session.contextShape = contextShape;
+      session.browserConfig = browserEnv?.AGENT_BROWSER_CONFIG ?? null;
     }
 
     const handle = (ev) => {

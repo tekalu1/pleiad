@@ -553,7 +553,7 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, contextRuntime, agentRuntime, hooksRuntime = null, oauthToken, endpoint = null, locale, compact }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, oauthToken, endpoint = null, locale, compact }) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, locale };
     let releaseContext;
@@ -617,8 +617,8 @@ export const backend = {
         // env は置き換え（足し算ではない）なので process.env を必ず広げる。
         // 待ちの上限は 0 = 無し。入力を開けている限り CLI は上限を見ないが、閉じた後の保険として外す。
         // 会話で選んだアカウントのトークンは、この会話の env にだけ入れる（process.env は触らない。core/claude-accounts.mjs）
-        env: endpoint ? claudeCompatEnv(process.env, endpoint, { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" })
-          : claudeEnv(process.env, { token: oauthToken, extra: { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" } }),
+        env: { ...(endpoint ? claudeCompatEnv(process.env, endpoint, { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" })
+          : claudeEnv(process.env, { token: oauthToken, extra: { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" } })), ...browserEnv },
         // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークン・接続先のキーが紛れても伏せる
         stderr: createStderrLog({ secrets: [oauthToken, endpoint?.key].filter(Boolean) }),
         resume: sessionId ?? undefined,
@@ -635,7 +635,7 @@ export const backend = {
         ...contextOptions,
         extraArgs: claudeQueryExtraArgs(contextOptions),
         ...(flag ? { settings: flag.file } : {}),
-        ...((visualizeInstructions || contextRuntime?.prompt || agentRuntime?.instructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, agentRuntime?.instructions].filter(Boolean).join('\n\n') } } : {}),
+        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions].filter(Boolean).join('\n\n') } } : {}),
         // adaptive = モデルが必要な分だけ考える。
         // 注意: このモデルの thinking ブロックは署名だけで平文が入らない（2026-08 時点、
         // display の有無を問わず `thinking` は空文字）。したがって思考の中身は表示できない。

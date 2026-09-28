@@ -1231,7 +1231,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, contextRuntime, agentRuntime, hooksRuntime = null, endpoint = null }) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, endpoint = null }) {
     const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
     // Hooks を Pleiad がそろえる会話。止める key はこのターンの直前に作り直す（起動の後に足された定義も、次のターンからは止まる）。
     // 作れなければターンを始めない（ネイティブと Pleiad の登録が二重に動くか、どちらも動かないため）
@@ -1495,10 +1495,14 @@ export const backend = {
             // The context bridge applies the selected mode to external tool calls.
             ...(contextRuntime ? { 'mcp_servers.ply_context': { url: contextRuntime.url, http_headers: contextRuntime.headers, enabled: true, required: true, default_tools_approval_mode: 'approve', startup_timeout_sec: 20 } } : {}),
           ...(compat ? compat.config : {}),
+          ...(browserEnv ? { 'shell_environment_policy.set': {
+            AGENT_BROWSER_CONFIG: browserEnv.AGENT_BROWSER_CONFIG,
+            AGENT_BROWSER_SESSION: browserEnv.AGENT_BROWSER_SESSION,
+          } } : {}),
           ...(hooks ? { hooks: hooks.config } : {}),
         },
         ...(compat ? { modelProvider: compat.modelProvider } : {}),
-        ...((visualizeInstructions || contextRuntime?.prompt || agentRuntime?.instructions) ? { developerInstructions: [contextRuntime?.prompt, visualizeInstructions, agentRuntime?.instructions].filter(Boolean).join('\n\n') } : {}),
+        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions) ? { developerInstructions: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions].filter(Boolean).join('\n\n') } : {}),
         approvalPolicy: m.approvalPolicy,
         sandbox: m.sandbox,
         ...(model ? { model } : {}),
@@ -1641,7 +1645,7 @@ export const backend = {
       if (!contextRuntime && !ephemeral) endTurn(threadId);
       if (ephemeral && threadId) await rpc.request("thread/unsubscribe", { threadId }).catch(() => {});
       if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
-      if (contextRuntime) rpc.stop();
+      if (rpc !== nativeRpc) rpc.stop();
     }
 
     return { sessionId: threadId };

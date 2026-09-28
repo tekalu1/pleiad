@@ -3,7 +3,7 @@
 //   - タブごとに WebContentsView を 1 つ。窓に載せるのは今のタブだけで、ほかのタブは外したまま裏で動き続ける
 //   - 置く場所は画面が決める（右パネルの本文の枠の位置と大きさを ply:browser-layout で送ってくる）。
 //     ネイティブの View は DOM より上に描かれるので、メニューなどが重なる間は画面が freeze を頼み、写した画像と差し替えて View を外す
-//   - タブは開いた会話（sessionId）を覚える。次の段階でエージェントの操作（CDP の中継）を会話ごとのタブへつなぐための表（ADR 0043）
+//   - タブは開いた会話（sessionId）を覚える。CDP 中継は会話ごとのタブへつなぐ（ADR 0043）
 // 画面との口は ipcMain の ply:browser（invoke）・ply:browser-layout（send）と、画面への ply:browser-state。
 // 送り元はローカルの窓の本体フレームだけ（trust.check(event, ['local'])）。リモートの窓の preload には口を出さない。
 const path = require('node:path');
@@ -54,7 +54,7 @@ function uniquePath(dir, name, exists = fs.existsSync) {
  *   window: 本体の BrowserWindow。WebContentsView・BrowserWindow・session・shell・ipcMain・app は electron のもの（テストでは偽物）
  *   trust: desktop/window-trust.cjs。icon: 別の窓のアイコン
  */
-function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon, log = () => {} }) {
+function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon, log = () => {}, agentControl = () => {} }) {
   const tabs = new Map();          // id -> { id, view, sessionId, detached }
   let order = [];                  // タブの並び（id）
   let current = null;              // 今のタブの id
@@ -62,6 +62,8 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   let visible = false, frozen = false, rect = null, radius = 0;
   let context = { sessionId: null };   // 画面で今開いている会話
   let nextId = 1;
+  const tabListeners = new Set();
+  const agents = new Map();
   const ses = session.fromPartition(PARTITION);
   setupSession(ses);
 
@@ -91,7 +93,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     };
   }
   function snapshot() {
-    return { tabs: order.map(id => info(tabs.get(id))), current };
+    return { tabs: order.map(id => info(tabs.get(id))), current, agent: agents.get(context.sessionId) ?? null };
   }
   let pushTimer = null;
   function push() {
@@ -105,8 +107,9 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
 
   /** 今のタブの View を窓に載せる・外す。見せるのは、画面が表示中と言い、枠があり、凍らせていない間だけ */
   function place() {
+    if (window.isDestroyed() || window.webContents.isDestroyed?.()) return;
     const tab = currentTab();
-    const want = visible && !frozen && rect && tab && !tab.blank ? tab.view : null;
+    const want = visible && !frozen && rect && tab && !tab.blank && !tab.view.webContents.isDestroyed() ? tab.view : null;
     if (attached && attached !== want) {
       try { window.contentView.removeChildView(attached); } catch {}
       attached = null;
@@ -139,6 +142,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     if (select) current = tab.id;
     if (url) load(tab, url);
     place(); push();
+    for (const listener of tabListeners) listener('created', tab);
     return tab;
   }
   function load(tab, url) {
@@ -157,6 +161,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     if (current === id) current = order[Math.min(index, order.length - 1)] ?? null;
     try { if (!tab.detached && !tab.view.webContents.isDestroyed()) tab.view.webContents.close(); } catch {}
     place(); push();
+    for (const listener of tabListeners) listener('destroyed', tab);
   }
 
   /** そのタブを独立した窓へ移す。パネルの一覧からは外れる（窓を閉じるとページも閉じる） */
@@ -200,6 +205,8 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     const tab = args.id ? tabOf(args.id) : currentTab();
     switch (action) {
       case 'state': return snapshot();
+      case 'agentStop': agentControl('stop', context.sessionId); return snapshot();
+      case 'agentTakeOver': agentControl('takeOver', context.sessionId); return snapshot();
       case 'context': context = { sessionId: typeof args.sessionId === 'string' ? args.sessionId : null }; return snapshot();
       case 'open': {
         const url = openable(args.url);
@@ -271,9 +278,15 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
 
   return {
     attach, command, layout, snapshot,
-    // ---- 次の段階（エージェントの操作の中継）の足場。会話ごとのタブと、その webContents（debugger で CDP をつなぐ）
+    // ---- エージェントの操作の中継へ渡す、会話ごとのタブと webContents
     tabsFor: sessionId => order.map(id => tabs.get(id)).filter(tab => tab.sessionId === sessionId).map(tab => ({ id: tab.id, webContents: tab.view.webContents })),
     contentsOf: id => tabs.get(id)?.view.webContents ?? null,
+    createFor: (sessionId, url = '') => { const tab = createTab({ sessionId, url: url || 'about:blank', select: true }); return { id: tab.id, webContents: tab.view.webContents }; },
+    selectFor: id => { if (tabs.has(id)) { current = id; place(); push(); } },
+    closeFor: id => removeTab(id),
+    rebindSession: (from, to) => { for (const tab of tabs.values()) if (tab.sessionId === from) tab.sessionId = to; if (agents.has(from)) { const active = agents.get(from); agents.delete(from); agents.set(to, { ...active, sessionId: to }); } push(); },
+    onTabsChanged: listener => { tabListeners.add(listener); return () => tabListeners.delete(listener); },
+    setAgent: (sessionId, tabId) => { if (tabId) agents.set(sessionId, { sessionId, tabId }); else agents.delete(sessionId); if (tabId && context.sessionId === sessionId) { current = tabId; place(); } push(); },
     session: ses,
   };
 }

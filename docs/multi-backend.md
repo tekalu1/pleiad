@@ -8,15 +8,18 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 2026-09 に **Antigravity CLI**（`agy`）を足した（§2.8）。
 同時期に入れた Gemini CLI（ACP）は、個人向けログインの終了により廃止した。
 
-## 外部エージェントの版
+## 外部エージェントと操作ツールの版
 
 利用者が CLI を管理する。下表は確認した範囲であり、上限は設けない（[ADR 0037](adr/0037-manage-external-agent-versions.md)）。
+
+内蔵ブラウザー操作用の agent-browser は **0.38.1** を同梱する。エージェントの CLI と異なり、Pleiad がこの版を固定して配る（[ADR 0043](adr/0043-agent-browser-via-per-session-cdp-relay.md)）。
 
 | バックエンド | つなぎ方 | 検証した版 | 最低の版 | 頼っている非公開のもの |
 |---|---|---|---|---|
 | Codex | `codex app-server` | CLI 0.156.1 | なし | rollout の `session_meta.cli_version`、`response_item` の `turn_id` とツール出力。拒否の読み取り（[ADR 0035](adr/0035-read-codex-rollout-for-rejections.md)） |
 | Claude Code | Agent SDK の `query()` と利用者の `claude` CLI | SDK 0.3.258、CLI 2.1.282 | なし | `projects/*.jsonl` の attachment、`subagents/*.jsonl` の親子鎖、`*.meta.json` の `toolUseId` |
 | Antigravity | `agy --print= --input-format stream-json --output-format stream-json` | CLI 1.2.8（実機の動作記録）、1.2.12（この PC の版表示） | 1.1.11（古い版では `/usage` がモデルへの依頼になる） | ファイルなし。stream-json のイベント形 |
+| 内蔵ブラウザー操作 | `agent-browser` と会話別 CDP 中継 | 0.38.1（同梱） | 同梱版を使用 | なし |
 
 非公開形式の不一致は `AGENT_HOST_DATA/backend-shape-errors.log` に、バックエンド・種類・検知した版・検証した版・時刻だけを記録する。同じ組合せはログに残る間は一度だけ記録する。Claude の transcript は行の `version`、Codex の rollout は先頭の `session_meta.cli_version` を使う。Antigravity の stream-json には版がないため `unknown` と記録する。
 
