@@ -5,7 +5,7 @@ description: Pleiad の会話の中に、操作できる図・グラフ・UI の
 
 # Pleiad での可視化
 
-Pleiad は、すべてのエージェントで Visualize の参照形式に対応している。会話の中に表示を出すには、今の作業ディレクトリの下に UTF-8 の HTML の断片を書き（例 `output/visualizations/comparison.html`）、その後に単独の行として `visualize{"path":"<absolute-path>/comparison.html","title":"Comparison"}` を出力する。ユーザーが表示用に既存の HTML ファイルを渡したときは、作り直さずにそのファイルを直接参照する。
+Pleiad は、すべてのエージェントで Visualize の参照形式に対応している。会話の中に表示を出すには、ホストの任意の場所に UTF-8 の HTML の断片を書き（例 `output/visualizations/comparison.html`）、その後に絶対パスを使った単独の行として `visualize{"path":"<absolute-path>/comparison.html","title":"Comparison"}` を出力する。UNC・デバイスパスと Pleiad のデータ置き場（既定 `~/.agent-host`、`AGENT_HOST_DATA` で変更可能）は利用できない。データ置き場のうち添付の `uploads` だけは利用できる。リンクやジャンクション経由でも同じ制限がかかる（[ADR 0050](../../docs/adr/0050-local-file-access.md)）。ユーザーが表示用に既存の HTML ファイルを渡したときは、作り直さずにそのファイルを直接参照する。
 
 Codex のネイティブの形式 `visualize{"path":"<absolute-path>/comparison.html","title":"Comparison"}` も同じ意味になる。Claude のとき、または経路が特殊な Unicode の印を落とすときは、ASCII の形式を使う。どちらの形式も、まったく同じ描画と保存を使う。
 

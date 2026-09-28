@@ -5,7 +5,7 @@ description: Create interactive diagrams, charts and UI previews inside a Pleiad
 
 # Visualize in Pleiad
 
-Pleiad supports the Visualize reference format for all its agents. For an inline visual, write a UTF-8 HTML fragment under the current working directory (for example `output/visualizations/comparison.html`), then output a standalone line: `visualize{"path":"<absolute-path>/comparison.html","title":"Comparison"}`. When the user supplies an existing HTML file for display, reference that file directly without recreating it.
+Pleiad supports the Visualize reference format for all its agents. For an inline visual, write a UTF-8 HTML fragment anywhere on the host (for example `output/visualizations/comparison.html`), then output a standalone line with its absolute path: `visualize{"path":"<absolute-path>/comparison.html","title":"Comparison"}`. UNC and device paths are not allowed. Pleiad's data directory (by default `~/.agent-host`, configurable with `AGENT_HOST_DATA`) is also blocked except for attachments in `uploads`, including through symbolic links and junctions. See [ADR 0050](../../docs/adr/0050-local-file-access.md). When the user supplies an existing HTML file for display, reference that file directly without recreating it.
 
 The Codex native form `visualize{"path":"<absolute-path>/comparison.html","title":"Comparison"}` is equivalent. Prefer the ASCII form with Claude or when the transport drops special Unicode markers. Both forms use exactly the same renderer and storage.
 

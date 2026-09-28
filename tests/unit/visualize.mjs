@@ -11,8 +11,10 @@ export const title = '参照形式・許可パス・スナップショット・�
 export default async function(t) {
   const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-visual-')));
   const file = path.join(dir, 'chart.html');
+  const access = { dataDir: path.join(dir, 'data'), uploadDir: path.join(dir, 'data', 'uploads') };
   const ref = `${S}${JSON.stringify({ path: file, title: '比較', mode: 'wide' })}${E}`;
   try {
+    await fs.mkdir(access.uploadDir, { recursive: true });
     await fs.writeFile(file, '<button onclick="this.textContent=2">1</button>');
     assert.equal(visualizeReferences(ref).length, 1);
     assert.equal(visualizeReferences('visualize'+JSON.stringify({path:file}))[0].value.path, file);
@@ -24,22 +26,27 @@ export default async function(t) {
     assert(renderAssistantMarkdown(ref, []).includes('visualize'));
     assert(renderMarkdown(ref).includes('visualize'));
     t.ok('コード例・人間の本文は保持し、実際の参照だけ消費', true);
-    const saved = [], collector = createVisualizationCollector({ roots: [dir], publish: p => saved.push(p) });
+    const saved = [], collector = createVisualizationCollector({ access, publish: p => saved.push(p) });
     for (const text of ref.match(/[\s\S]{1,3}/g)) collector.accept({ type: 'text.delta', text });
     collector.accept({ type: 'text.end' }); await collector.close(); await collector.close();
     await fs.writeFile(file, 'changed');
     assert.equal(saved.length, 1); assert(saved[0].content.includes('<button'));
     assert.equal(saved[0].mode, 'wide');
     t.ok('分割された参照を1回だけ取り込み、元ファイルの変更から独立', true);
-    const outside = { value: { path: path.join(dir, '../secret.html') } };
-    await assert.rejects(prepareVisualization(outside, [dir]));
-    await assert.rejects(prepareVisualization({ value: { path: 'relative.html' } }, [dir]));
+    const protectedFile = path.join(access.dataDir, 'secret.html');
+    const upload = path.join(access.uploadDir, 'chart.html');
+    await fs.writeFile(protectedFile, 'secret');
+    await fs.writeFile(upload, '<p>attachment</p>');
+    await assert.rejects(prepareVisualization({ value: { path: protectedFile } }, access), { code: 'protected-data' });
+    assert.equal((await prepareVisualization({ value: { path: upload } }, access)).content, '<p>attachment</p>');
+    await assert.rejects(prepareVisualization({ value: { path: 'relative.html' } }, access));
+    await assert.rejects(prepareVisualization({ value: { path: path.join(dir, 'chart.txt') } }, access), /HTML/);
     await fs.writeFile(file, 'x'.repeat(MAX_VISUALIZE_BYTES + 1));
-    await assert.rejects(prepareVisualization({ value: { path: file } }, [dir]));
-    const bad = createVisualizationCollector({ roots: [dir], publish: p => saved.push(p) });
+    await assert.rejects(prepareVisualization({ value: { path: file } }, access));
+    const bad = createVisualizationCollector({ access, publish: p => saved.push(p) });
     bad.accept({ type: 'text.delta', text: `${S}{"path":true}${E}` }); await bad.close();
     assert(saved.at(-1).error);
-    t.ok('不正参照・作業場外・相対パス・サイズ超過を拒否し、エラーを可視化', true);
+    t.ok('データ置き場・非 HTML・不正参照・相対パス・サイズ超過を拒否し、添付は取り込む', true);
     const old = renderPresent({ kind: 'html', content: '<script>bad()</script>' });
     const visual = renderPresent(saved[0]);
     assert.equal(old.querySelector('iframe').getAttribute('sandbox'), '');
