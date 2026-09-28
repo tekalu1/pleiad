@@ -2549,7 +2549,9 @@
         "claudeSessionStart": "Claude Code の SessionStart はコールバックで渡せません（呼ばれないため）。登録していても渡しません。",
         "claudeManaged": "Claude Code の管理者の設定の hooks は止まりません。",
         "codexPlugins": "Codex のプラグイン・管理者の hooks と、Antigravity のプラグインの hooks は止めません。",
-        "afterStart": "会話が始まった後に足したネイティブの hooks は止まりません（Codex は次のターンから止まります。Antigravity は会話を起こし直すまで止まらず、走ったかも分かりません）。"
+        "afterStart": "会話が始まった後に足したネイティブの hooks は止まりません（Codex は次のターンから止まります。Antigravity は会話を起こし直すまで止まらず、走ったかも分かりません）。",
+        "agySkills": "Antigravity は、Skills も Pleiad がそろえる場所では会話を始めません（カスタムエージェントが hooks も止めるため）。",
+        "agyNames": "Antigravity は名前で止めます。同じ名前のプラグインの定義があれば、それも止まるおそれがあります（未確認）。"
       },
       "ack": "止まる定義と、Pleiad が渡すコマンドを確認しました",
       "ackReturn": "再開する定義を確認しました",
@@ -2578,7 +2580,8 @@
         "commandShape": "1 行のコマンドでない定義は取り込めません",
         "unreadable": "元のファイルを読み直せません",
         "already": "取り込み済み",
-        "claudeCallback": "取り込んでも Claude Code へはコールバックで渡せません"
+        "claudeCallback": "取り込んでも Claude Code へはコールバックで渡せません",
+        "alreadyOff": "取り込み済み（オフ・この場所では渡さない）"
       },
       "pluginName": "プラグイン {{name}}",
       "skillUnverified": "止まる見込み（未確認）",
@@ -2641,9 +2644,37 @@
         "leakRun": "止めたはずの定義",
         "foot": "止めたのは Pleiad から起動したこの会話だけです。元のファイルは変えていません。",
         "viaAdapter": "アダプター越し",
-        "blocked": "完了 · ツールを止めた"
+        "blocked": "完了 · ツールを止めた",
+        "unknownNative": "出どころを確かめられないネイティブの hooks の発火が {{n}} 件ありました（管理者の hooks など。止めた定義とは結べません）: {{names}}",
+        "unknownNativeRun": "出どころ未確認のネイティブ"
       },
-      "placeSwitchAria": "この場所で {{name}} を渡す"
+      "placeSwitchAria": "この場所で {{name}} を渡す",
+      "resetLead": "この場所の上書きを外し、上のフォルダーか全体の設定に戻します。元のファイルは変更しません。",
+      "agySkillsConflict": "この場所では Skills も Pleiad がそろえています。Antigravity の会話は始まりません（Skills のためのカスタムエージェントが Pleiad の hooks まで止めるため）。",
+      "agyIncomplete": "Antigravity の hooks の定義を読めないファイルがあるので、そろえた Antigravity の会話は始まりません。",
+      "filePartial": "{{agent}} の設定の一部を読めません（{{path}}）。",
+      "importOffSwitch": "{{name}} をオフで Pleiad に取り込む",
+      "importOff": "オフで取り込む",
+      "inactive": "元の設定で動いていないもの",
+      "inactiveNote": "元の設定で止めている・Codex で未審査の定義です。そろえても止めても変わりません。取り込むと、オフの登録になります（オンにするまで渡しません）。",
+      "inactiveReturnNote": "元の設定で止めている・Codex で未審査の定義です。戻しても動きません。",
+      "matcherOverrides": "渡す先ごとの matcher",
+      "matcherAuto": "自動（対応表で直す）",
+      "matcherOverridesNote": "空なら、コマンドの形のエージェントの matcher をツール名の対応表で直して渡します。",
+      "unreadable": "Pleiad の Hooks の登録（hooks.json）を読めません。Hooks を Pleiad がそろえた（か分からない）場所の Claude Code・Codex・Antigravity の会話は、直すまで始まりません。",
+      "problems": "hooks.json に壊れた部分が {{n}} 件あります",
+      "problem": {
+        "hook": "読めない登録（{{name}}）",
+        "duplicate": "同じ id の登録（{{name}}）",
+        "tooMany": "上限を超えた登録（{{name}}）",
+        "defaults": "全体の担当",
+        "places": "場所ごとの担当の並び",
+        "place": "場所の担当（{{place}}）"
+      },
+      "brokenEffect": "直すまで、担当が Pleiad の場所・担当が読めない場所のそろえた会話は始まらず、ここからの保存もしません。",
+      "repair": "壊れた部分を外して保存し直す",
+      "repairConfirm": "元のファイルは hooks.broken-<時刻>.json に退避します。読めなかった登録は無くなり、担当を読めなかった場所はエージェント任せになります（ネイティブの hooks が再開します）。",
+      "repairGo": "外して保存し直す"
     }
   },
   "browser": {

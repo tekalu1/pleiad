@@ -50,12 +50,35 @@ function nativeLine(r) {
   return bits.join(' · ');
 }
 
+// ---------------------------------------------------------------- 画面の小さな決まり（テストで確かめる）
+/** 登録のシートの matcher の上書き: 保存済みの値から始め、渡さない先・コマンドの形と同じエージェントの分だけ外す */
+export const initialOverrides = hook => ({ ...(hook?.matchers ?? {}) });
+export const sheetMatchers = ({ overrides, agent, targets }) =>
+  Object.fromEntries(Object.entries(overrides).filter(([a, v]) => v && a !== agent && targets.includes(a)));
+/**
+ * 右パネルの「Hooks を全体の設定に戻す」: 上書きを外したときの担当（view.place.inherited、無ければ既定）が今と違えば確認を通す。
+ * 戻り: { confirm: 'ply' | 'native' }（切り替えと同じ確認）| { direct: true }（担当は変わらない）
+ */
+export function resetPlan(view) {
+  const now = view?.place?.value?.owner ?? view?.defaults?.value?.owner ?? 'native';
+  const up = (view?.place?.inherited?.value ?? view?.defaults?.value)?.owner ?? 'native';
+  return up !== now ? { confirm: up } : { direct: true };
+}
+/** 取り込む行を足し引きしたら、確認のチェックを戻す（確認した対象と違うものを保存しない） */
+export function pickChange(state, row) {
+  const picked = new Map(state.picked);
+  if (picked.has(row.id)) picked.delete(row.id); else picked.set(row.id, row.digest);
+  return { picked, ack: false };
+}
+
 // ---------------------------------------------------------------- 切り替えの確認
 /**
  * direction: 'ply'（そろえる）| 'native'（エージェントに任せるへ戻す）。cwd があればその場所の上書きとして保存する（右パネルの「この場所だけ変える」）。
- * onDone(view) は保存した後の担当と登録の形、onCancel は何も保存しない
+ * reset: 場所の上書きを外して上の設定に戻す（担当が変わるときも、この確認を通す。保存は value: null）。
+ * onDone(view) は保存した後の担当と登録の形、onCancel は何も保存しない。
+ * 保存には確認票（プレビューの revision と、取り込む行の digest）を付け、確認の後に登録・担当・元の定義が変わっていれば保存されない
  */
-export function unifyConfirmPanel({ cmd, cwd = null, direction, short = p => p, onDone, onCancel }) {
+export function unifyConfirmPanel({ cmd, cwd = null, direction, reset = false, short = p => p, onDone, onCancel }) {
   const box = el('div', 'cx-confirm hk-unify');
   box.setAttribute('role', 'group');
   const q = el('p', 'q', direction === 'ply' ? t('hooks.unify.question') : t('hooks.unify.returnQuestion'));
@@ -64,26 +87,32 @@ export function unifyConfirmPanel({ cmd, cwd = null, direction, short = p => p, 
   const loading = el('p', 'cx-sub');
   loading.append(runMark(t('hooks.unify.loading')), ` ${t('hooks.unify.loading')}`);
   box.append(q, loading);
-  const picked = new Set();
+  const picked = new Map();   // 行の id -> digest（確認票）
+  const switches = [];
   let data = null, busy = false;
   const status = el('p', 'mcp-error'); status.setAttribute('role', 'alert');
   const ackLabel = el('label', 'hk-check'), ack = el('input'); ack.type = 'checkbox';
   ackLabel.append(ack, document.createTextNode(direction === 'ply' ? t('hooks.unify.ack') : t('hooks.unify.ackReturn')));
   const ok = button('', 'btn btn-primary');
+  const cancel = button(t('mcp.cancel'), 'btn', () => onCancel());
   const paintOk = () => {
     ok.textContent = direction === 'ply' ? (picked.size ? t('hooks.unify.confirmImport', { n: picked.size }) : t('hooks.unify.confirm')) : t('hooks.unify.confirmReturn');
     ok.disabled = busy || !data || !ack.checked;
+    // 保存の間は対象と取り消しを変えられない（見えている取り込み対象と送った対象を食い違わせない）
+    cancel.disabled = busy; ack.disabled = busy;
+    for (const s of switches) s.disabled = busy;
   };
   ack.onchange = paintOk;
   ok.onclick = async () => {
     busy = true; paintOk(); status.textContent = '';
     try {
-      const view = await cmd('setHooksOwner', { place: cwd, cwd, value: { owner: direction, disabled: data.owner?.disabled ?? [] }, imports: direction === 'ply' ? [...picked] : [] });
+      const view = await cmd('setHooksOwner', { place: cwd, cwd, value: reset ? null : { owner: direction, disabled: data.owner?.disabled ?? [] },
+        revision: data.revision, imports: direction === 'ply' ? [...picked].map(([id, digest]) => ({ id, digest })) : [] });
       onDone(view);
     } catch (e) { busy = false; status.textContent = e.message; paintOk(); }
   };
   const acts = el('div', 'acts');
-  acts.append(button(t('mcp.cancel'), 'btn', () => onCancel()), ok);
+  acts.append(cancel, ok);
   paintOk();
 
   const section = (title, count, open = true) => {
@@ -96,38 +125,55 @@ export function unifyConfirmPanel({ cmd, cwd = null, direction, short = p => p, 
     data = r;
     loading.remove();
     const warn = el('p', 'cx-strong hk-warn', direction === 'ply' ? t('hooks.unify.warn') : t('hooks.unify.returnWarn'));
-    const lead = el('p', 'cx-sub', direction === 'ply' ? (cwd ? t('hooks.unify.leadPlace') : t('hooks.unify.leadUser')) : t('hooks.unify.returnLead'));
-    box.insertBefore(warn, null); box.append(lead);
-    for (const f of r.files ?? []) box.append(el('p', 'cx-note', t('hooks.unify.fileError', { agent: agentLabel(f.agent), path: short(f.path), error: f.error ?? '' })));
-    // 止まる（戻すときは再開する）ネイティブの hooks
-    const stops = section(direction === 'ply' ? t('hooks.unify.stops') : t('hooks.unify.resumes'), r.stops.length);
-    const list = el('div', 'cx-list');
-    for (const s of r.stops) {
+    const lead = el('p', 'cx-sub', reset ? t('hooks.unify.resetLead') : direction === 'ply' ? (cwd ? t('hooks.unify.leadPlace') : t('hooks.unify.leadUser')) : t('hooks.unify.returnLead'));
+    box.append(warn, lead);
+    // この組み合わせ・この状態では、そろえた会話を始めない（その理由を先に出す）
+    if (direction === 'ply' && r.agySkillsConflict) box.append(el('p', 'cx-strong hk-warn', t('hooks.unify.agySkillsConflict')));
+    if (direction === 'ply' && r.incomplete?.includes('antigravity')) box.append(el('p', 'cx-strong hk-warn', t('hooks.unify.agyIncomplete')));
+    for (const f of r.files ?? []) box.append(el('p', 'cx-note', t(f.partial ? 'hooks.unify.filePartial' : 'hooks.unify.fileError', { agent: agentLabel(f.agent), path: short(f.path), error: f.error ?? '' })));
+    // i18n-dynamic: hooks.unify.import
+    // i18n-dynamic: hooks.unify.file
+    /** 取り込みのスイッチ。変えたら確認のチェックを戻す（確認した対象と違うものを保存しない） */
+    const importSwitch = (s, label) => {
+      const toggle = sw(false, t(label, { name: rowTitle(s) }), () => {
+        const next = pickChange({ picked, ack: ack.checked }, s);
+        picked.clear(); for (const [k, v] of next.picked) picked.set(k, v);
+        toggle.setAttribute('aria-checked', String(picked.has(s.id)));
+        ack.checked = next.ack;
+        paintOk(); paintRegistry();
+      });
+      switches.push(toggle);
+      const wrap = el('span', 'hk-import');
+      wrap.append(el('span', 'hk-state', label === 'hooks.unify.importOffSwitch' ? t('hooks.unify.importOff') : t('hooks.unify.import')), toggle);
+      return wrap;
+    };
+    const rowOf = (s, { inactive = false } = {}) => {
       const row = el('div', 'cx-row hk-unify-row');
       const body = el('span', 't');
       body.append(el('span', 'nm hk-cmd', rowTitle(s)), el('span', 'p', nativeLine(s)));
       if (s.name && s.command) body.append(el('span', 'p hk-cmd', s.command));
       if (s.unverified) body.append(el('span', 'p', t('hooks.unify.skillUnverified')));
+      if (inactive) body.append(el('span', 'p', inactiveText(s)));
       row.append(body);
-      if (direction === 'ply') {
-        if (s.importable) {
-          const label = t('hooks.unify.importSwitch', { name: rowTitle(s) });
-          const toggle = sw(false, label, () => {
-            if (picked.has(s.id)) picked.delete(s.id); else picked.add(s.id);
-            toggle.setAttribute('aria-checked', String(picked.has(s.id)));
-            paintOk(); paintRegistry();
-          });
-          const wrap = el('span', 'hk-import');
-          wrap.append(el('span', 'hk-state', t('hooks.unify.import')), toggle);
-          row.append(wrap);
-        } else row.append(el('span', 'hk-state', s.reasons.map(importWhy).join(' ')));
-      }
-      list.append(row);
-    }
+      if (direction === 'ply') row.append(s.importable ? importSwitch(s, inactive ? 'hooks.unify.importOffSwitch' : 'hooks.unify.importSwitch') : el('span', 'hk-state', s.reasons.map(importWhy).join(' ')));
+      return row;
+    };
+    // 止まる（戻すときは再開する）ネイティブの hooks
+    const stops = section(direction === 'ply' ? t('hooks.unify.stops') : t('hooks.unify.resumes'), r.stops.length);
+    const list = el('div', 'cx-list');
+    for (const s of r.stops) list.append(rowOf(s));
     if (!r.stops.length) list.append(el('p', 'cx-empty', direction === 'ply' ? t('hooks.unify.noStops') : t('hooks.unify.noResumes')));
     stops.append(list);
     if (direction === 'ply') stops.append(el('p', 'cx-sub', t('hooks.unify.importNote')));
     box.append(stops);
+    // 元の設定で動いていないもの（止めても戻しても変わらない。取り込むならオフで）
+    if (r.inactive?.length) {
+      const sec = section(t('hooks.unify.inactive'), r.inactive.length, direction === 'ply');
+      const il = el('div', 'cx-list');
+      for (const s of r.inactive) il.append(rowOf(s, { inactive: true }));
+      sec.append(il, el('p', 'cx-sub', direction === 'ply' ? t('hooks.unify.inactiveNote') : t('hooks.unify.inactiveReturnNote')));
+      box.append(sec);
+    }
     // 動き続けるもの（止め方の無い出どころ）
     if (r.keeps.length) {
       const keeps = section(t('hooks.unify.keeps'), r.keeps.length, false);
@@ -143,8 +189,9 @@ export function unifyConfirmPanel({ cmd, cwd = null, direction, short = p => p, 
     box.append(reg);
     function paintRegistry() {
       regList.replaceChildren();
+      const chosen = [...r.stops, ...(r.inactive ?? [])].filter(s => picked.has(s.id));
       const rows = [...r.registry.filter(h => h.enabled && !h.disabledHere).map(h => ({ ...h, imported: false })),
-        ...(direction === 'ply' ? r.stops.filter(s => picked.has(s.id)).map(s => ({ name: rowTitle(s), agent: s.agent, event: s.event, matcher: s.matcher, command: s.command, imported: true,
+        ...(direction === 'ply' ? chosen.filter(s => !s.wasOff).map(s => ({ name: rowTitle(s), agent: s.agent, event: s.event, matcher: s.matcher, command: s.command, imported: true,
           targets: Object.fromEntries(HOOK_AGENTS.map(([a]) => [a, a === s.agent ? { status: s.agent === 'claude' && ['SessionStart', 'Setup'].includes(s.event) ? 'blocked' : 'ok',
             reasons: s.agent === 'claude' && ['SessionStart', 'Setup'].includes(s.event) ? [{ code: 'claudeCallback', params: { event: s.event } }] : [], adapter: a === 'antigravity' } : null])) })) : [])];
       for (const h of rows) {
@@ -163,14 +210,56 @@ export function unifyConfirmPanel({ cmd, cwd = null, direction, short = p => p, 
     paintRegistry();
     // エージェントごとに渡せないもの・止められないもの（報告の制約）
     // i18n-dynamic: hooks.unify.limit.
-    const limits = section(t('hooks.unify.limits'), 4, direction === 'ply');
+    const keys = ['claudeSessionStart', 'claudeManaged', 'codexPlugins', 'afterStart', 'agySkills', 'agyNames'];
+    const limits = section(t('hooks.unify.limits'), keys.length, direction === 'ply');
     const ul = el('ul', 'hk-reasons');
-    for (const k of ['claudeSessionStart', 'claudeManaged', 'codexPlugins', 'afterStart']) ul.append(el('li', null, t(`hooks.unify.limit.${k}`)));
+    for (const k of keys) ul.append(el('li', null, t(`hooks.unify.limit.${k}`)));
     limits.append(ul);
     if (direction === 'ply') box.append(limits);
     box.append(ackLabel, status, acts);
     paintOk();
   }).catch(e => { loading.replaceChildren(el('span', 'mcp-error', t('hooks.unify.previewFailed', { error: e.message }))); box.append(acts); });
+  return box;
+}
+/** 元の設定で動いていない理由（agy の enabled:false・同じ名前で停止、Codex の /hooks で停止・未審査・変更あり） */
+function inactiveText(s) {
+  if (s.agent === 'antigravity') return s.stoppedBySameName ? t('hooks.state.agySame') : t('hooks.state.agyOff');
+  if (s.trust && s.trust.enabled === false) return t('hooks.trust.off');
+  // i18n-dynamic: hooks.trust.
+  return s.trust?.status ? t(`hooks.trust.${s.trust.status}`) : '';
+}
+
+// ---------------------------------------------------------------- hooks.json が壊れているとき
+/**
+ * 壊れた部分（読めない登録・担当・重複）や、ファイルが丸ごと読めないことを知らせ、直す操作を出す（ADR 0049）。
+ * 壊れている間、担当が Pleiad の（または担当が分からない）場所のそろえた会話は始まらず、上書き保存もしない。
+ * 「壊れた部分を外して保存し直す」は元のファイルを退避し、読めた部分だけで書き直す（担当を読めなかった場所はエージェント任せになる）
+ */
+export function brokenNotice(view, { cmd, onRepaired }) {
+  if (!view?.unreadable && !view?.problems?.length) return null;
+  const box = el('div', 'scx-notice hk-broken');
+  box.setAttribute('role', 'status');
+  box.append(el('p', 'cx-strong', view.unreadable ? t('hooks.unify.unreadable') : t('hooks.unify.problems', { n: view.problems.length })));
+  // i18n-dynamic: hooks.unify.problem.
+  if (!view.unreadable) {
+    const ul = el('ul', 'hk-reasons');
+    for (const p of view.problems.slice(0, 6)) ul.append(el('li', null, t(`hooks.unify.problem.${p.kind}`, { name: p.name ?? p.id ?? `#${(p.index ?? 0) + 1}`, place: p.place ?? '' })));
+    box.append(ul);
+  }
+  box.append(el('p', 'cx-sub', t('hooks.unify.brokenEffect')));
+  const acts = el('div', 'acts');
+  const fix = button(t('hooks.unify.repair'), 'btn', () => {
+    const ask = el('div', 'acts hk-ask');
+    const go = button(t('hooks.unify.repairGo'), 'btn btn-primary', async () => {
+      go.disabled = true;
+      try { onRepaired(await cmd('repairPlyHooks', {})); } catch (e) { go.disabled = false; ask.append(el('p', 'mcp-error', e.message)); }
+    });
+    ask.append(el('span', 'cx-sub', t('hooks.unify.repairConfirm')), button(t('mcp.cancel'), 'btn', () => ask.replaceWith(acts)), go);
+    acts.replaceWith(ask);
+    go.focus();
+  });
+  acts.append(fix);
+  box.append(acts);
   return box;
 }
 
@@ -299,19 +388,40 @@ export async function openPlyHookSheet({ cmd, hook = null, onSaved }) {
   const chips = el('div', 'cx-chips');
   const boxes = HOOK_AGENTS.map(([id, label]) => { const l = el('label', 'hk-check'), c = el('input'); c.type = 'checkbox'; c.value = id; c.checked = (full?.targets ?? [agent.value]).includes(id); l.append(c, document.createTextNode(label)); chips.append(l); return c; });
   targets.append(chips, el('p', 'mcp-note', t('hooks.unify.targetsNote')));
-  const overrides = {};
+  // 渡す先ごとの matcher の上書き（自動で訳せないときに入れたもの）。編集では保存済みの値から始め、見せて変え・消せるようにする
+  const overrides = initialOverrides(full);
+  const overrideBox = el('div', 'mcp-field hk-overrides');
+  const paintOverrides = () => {
+    overrideBox.replaceChildren();
+    const others = boxes.filter(b => b.checked && b.value !== agent.value).map(b => b.value);
+    if (!others.length) { overrideBox.hidden = true; return; }
+    overrideBox.hidden = false;
+    overrideBox.append(el('span', 'hk-label', t('hooks.unify.matcherOverrides')));
+    for (const a of others) {
+      const i = input(overrides[a] ?? '', t('hooks.unify.matcherAuto'), true);
+      i.setAttribute('aria-label', t('hooks.copy.matcher', { agent: agentLabel(a) }));
+      i.oninput = () => { overrides[a] = i.value.trim(); };
+      const line = el('label', 'hk-maprow');
+      line.append(el('span', null, agentLabel(a)), i);
+      overrideBox.append(line);
+    }
+    overrideBox.append(el('p', 'mcp-note', t('hooks.unify.matcherOverridesNote')));
+  };
+  for (const b of boxes) b.addEventListener('change', paintOverrides);
+  paintOverrides();
   const error = el('p', 'mcp-error'); error.setAttribute('role', 'alert');
   const acts = el('div', 'mcp-acts');
   const go = button(t('hooks.unify.sheetReview'), 'btn btn-primary'); go.type = 'submit';
   acts.append(button(t('mcp.cancel'), 'btn', () => dialog.close()), go);
-  agent.onchange = () => paintEvents();
+  agent.onchange = () => { paintEvents(); paintOverrides(); };
   const parts = [heading, el('p', 'mcp-note', t('hooks.unify.sheetLead')), field(t('hooks.sheet.name'), name), field(t('hooks.unify.formLabel'), agent, el('p', 'mcp-note', t('hooks.unify.formNote'))),
     field(t('hooks.sheet.event'), event), field('matcher', matcher, el('p', 'mcp-note', t('hooks.unify.matcherNote'))), field(t('hooks.sheet.command'), command, el('p', 'mcp-note', t('hooks.sheet.commandNote'))),
-    field(t('hooks.sheet.timeout'), timeout), field('async', asyncSelect), targets, error, acts];
+    field(t('hooks.sheet.timeout'), timeout), field('async', asyncSelect), targets, overrideBox, error, acts];
   form.append(...parts);
   const value = () => ({ ...(hook ? { id: hook.id } : {}), name: name.value.trim(), agent: agent.value, event: event.value, matcher: matcher.value.trim(), command: command.value.trim(),
     timeout: timeout.value.trim() ? Number(timeout.value) : null, async: asyncSelect.value === 'true', targets: boxes.filter(b => b.checked).map(b => b.value),
-    matchers: Object.fromEntries(Object.entries(overrides).filter(([a, v]) => v && a !== agent.value)), enabled: hook ? hook.enabled : true });
+    // 渡さない先・コマンドの形と同じエージェントの上書きだけを外す（元の agent や targets を変えたときに要らなくなったもの）
+    matchers: sheetMatchers({ overrides, agent: agent.value, targets: boxes.filter(b => b.checked).map(b => b.value) }), enabled: hook ? hook.enabled : true });
   form.onsubmit = async ev => {
     ev.preventDefault();
     error.textContent = '';
@@ -340,7 +450,7 @@ export async function openPlyHookSheet({ cmd, hook = null, onSaved }) {
       if (d.status === 'ok' && d.matcher !== undefined && d.matcher !== null && TOOL_EVENTS.has(d.event)) card.append(el('p', 'cx-sub', t('hooks.row.matcher', { matcher: d.matcher || '*' })));
       if (d.reasons?.some(x => /^matcher/.test(x.code) || x.code === 'partialTools')) {
         const i = input(overrides[a] ?? '', a === 'antigravity' ? 'run_command' : 'Bash', true);
-        const again = button(t('hooks.copy.recheck'), 'btn', () => { overrides[a] = i.value.trim(); review(value()); });
+        const again = button(t('hooks.copy.recheck'), 'btn', () => { overrides[a] = i.value.trim(); paintOverrides(); review(value()); });
         const line = el('div', 'hk-redo'); const l = el('label', 'hk-label'); l.append(t('hooks.copy.matcher', { agent: label }), i); line.append(l, again);
         card.append(line);
       }
@@ -383,6 +493,8 @@ export function unifySessionBox(unify, { kindBox, short = p => p }) {
     k.append(n);
   }
   if (unify.untrusted) k.append(el('p', 'cx-strong', t('hooks.unify.session.untrusted', { n: unify.untrusted })));
+  // Claude の通知は出どころを持たない。止めた定義と結べないネイティブの発火（管理者の hooks など）は漏れと言わずに分ける
+  if (unify.unknownNative?.length) k.append(el('p', 'cx-sub', t('hooks.unify.session.unknownNative', { n: unify.unknownNative.length, names: unify.unknownNative.map(l => `${l.event} · ${l.name}`).join(' / ') })));
   const group = (title, rows, make, empty) => {
     k.append(el('p', 'scx-grp', t('hooks.unify.section', { title, n: rows.length })));
     if (!rows.length) { k.append(el('p', 'cx-sub', empty)); return; }

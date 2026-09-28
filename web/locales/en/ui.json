@@ -2625,7 +2625,9 @@
         "claudeSessionStart": "Claude Code's SessionStart cannot be passed as a callback (it is never called). It is not passed even if registered.",
         "claudeManaged": "Hooks in Claude Code's managed settings do not stop.",
         "codexPlugins": "Codex plugin and managed hooks and Antigravity plugin hooks are not stopped.",
-        "afterStart": "Agent hooks added after a conversation starts are not stopped (Codex stops them from the next turn; Antigravity does not until the conversation restarts, and whether they ran cannot be observed)."
+        "afterStart": "Agent hooks added after a conversation starts are not stopped (Codex stops them from the next turn; Antigravity does not until the conversation restarts, and whether they ran cannot be observed).",
+        "agySkills": "Antigravity conversations do not start where Skills are also managed by Pleiad (the custom agent also turns off hooks).",
+        "agyNames": "Antigravity hooks are turned off by name. A plugin definition with the same name may be turned off too (not confirmed)."
       },
       "ack": "I have reviewed the definitions that stop and the commands Pleiad passes",
       "ackReturn": "I have reviewed the definitions that run again",
@@ -2654,7 +2656,8 @@
         "commandShape": "Only one-line commands can be imported",
         "unreadable": "The original file cannot be read again",
         "already": "Already imported",
-        "claudeCallback": "Even if imported, it cannot be passed to Claude Code as a callback"
+        "claudeCallback": "Even if imported, it cannot be passed to Claude Code as a callback",
+        "alreadyOff": "Already imported (off or not passed here)"
       },
       "pluginName": "Plugin {{name}}",
       "skillUnverified": "Expected to stop (not confirmed)",
@@ -2717,9 +2720,37 @@
         "leakRun": "should have been off",
         "foot": "Turned off only in this conversation started from Pleiad. The original files are unchanged.",
         "viaAdapter": "through the adapter",
-        "blocked": "Done · blocked the tool"
+        "blocked": "Done · blocked the tool",
+        "unknownNative": "{{n}} agent hook runs came from an unconfirmed source (such as managed hooks; they cannot be matched to a turned-off definition): {{names}}",
+        "unknownNativeRun": "agent hook, source unconfirmed"
       },
-      "placeSwitchAria": "Pass {{name}} in this location"
+      "placeSwitchAria": "Pass {{name}} in this location",
+      "resetLead": "Removes this location's override and returns to the parent folder's or the global setting. The original files are not changed.",
+      "agySkillsConflict": "Skills are also managed by Pleiad here. Antigravity conversations will not start (the custom agent for Skills also turns off Pleiad's hooks).",
+      "agyIncomplete": "Some Antigravity hook definitions cannot be read, so Antigravity conversations managed by Pleiad will not start.",
+      "filePartial": "Part of the {{agent}} settings cannot be read ({{path}}).",
+      "importOffSwitch": "Import {{name}} into Pleiad, turned off",
+      "importOff": "Import turned off",
+      "inactive": "Not running in the agent's settings",
+      "inactiveNote": "These are turned off in the agent's settings or not reviewed in Codex. Switching does not change them. If imported, the registration is off (not passed until you turn it on).",
+      "inactiveReturnNote": "These are turned off in the agent's settings or not reviewed in Codex. They do not run after returning either.",
+      "matcherOverrides": "Matcher per agent",
+      "matcherAuto": "Automatic (tool name table)",
+      "matcherOverridesNote": "When empty, the matcher of the command's agent is converted with the tool name table.",
+      "unreadable": "Pleiad's hook registrations (hooks.json) cannot be read. Claude Code, Codex and Antigravity conversations in locations managed by Pleiad (or where the owner is unknown) will not start until it is fixed.",
+      "problems": "hooks.json has {{n}} broken parts",
+      "problem": {
+        "hook": "An unreadable registration ({{name}})",
+        "duplicate": "A registration with a duplicate id ({{name}})",
+        "tooMany": "A registration over the limit ({{name}})",
+        "defaults": "The global owner",
+        "places": "The list of location owners",
+        "place": "A location owner ({{place}})"
+      },
+      "brokenEffect": "Until it is fixed, conversations managed by Pleiad (or where the owner cannot be read) do not start, and nothing is saved from here.",
+      "repair": "Remove the broken parts and save again",
+      "repairConfirm": "The original file is moved to hooks.broken-<time>.json. Unreadable registrations are dropped, and locations whose owner could not be read go back to Leave to the agent (the agent's hooks run again).",
+      "repairGo": "Remove and save again"
     }
   },
   "browser": {

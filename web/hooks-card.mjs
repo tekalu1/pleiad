@@ -13,7 +13,7 @@ import { runMark } from './arc.mjs';
 import { codeBlock } from './render.mjs';
 import { copyIcon } from './icons.mjs';
 import { lineDiff } from './session-context.mjs';
-import { unifyConfirmPanel, plyRegistryTier } from './hooks-unify-ui.mjs';
+import { unifyConfirmPanel, plyRegistryTier, brokenNotice } from './hooks-unify-ui.mjs';
 
 export const HOOK_AGENTS = [['claude', 'Claude Code'], ['codex', 'Codex'], ['antigravity', 'Antigravity']];
 export const agentLabel = id => HOOK_AGENTS.find(([k]) => k === id)?.[1] ?? id;
@@ -203,7 +203,8 @@ export function createHooksCard({ cmd, work, saved, opened }) {
       // 確認の面を開いている間も、選んでいるのは今の担当（決めるまで切り替えない。ADR 0031）
       b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(id === owner())); b.dataset.owner = id;
       b.append(el('b', null, title), el('span', null, desc));
-      b.disabled = !ply;
+      // 読めない・壊れた hooks.json のあいだは担当を変えない（直す操作を先に出す）
+      b.disabled = !ply || ply.unreadable || Boolean(ply.problems?.length);
       b.onclick = () => {
         if (id === owner()) { if (confirm) { confirm = null; render(); } return; }
         confirm = id; render();
@@ -286,6 +287,8 @@ export function createHooksCard({ cmd, work, saved, opened }) {
     if (loading && scan) { const label = el('span', 'pending-label'); label.append(runMark(t('pending.searching')), t('pending.searching')); head.append(label); }
     root.append(head, seg());
     root.append(el('p', 'cx-sub', t('hooks.runBy')));
+    const broken = brokenNotice(ply, { cmd, onRepaired: view => { ply = view; saved(); render(); } });
+    if (broken) root.append(broken);
     if (confirm) root.append(unifyConfirmPanel({ cmd, direction: confirm, short,
       onDone: view => { ply = view; confirm = null; saved(); render(); root.querySelector(`[data-owner="${owner()}"]`)?.focus(); },
       onCancel: () => { confirm = null; render(); root.querySelector(`[data-owner="${owner()}"]`)?.focus(); } }));

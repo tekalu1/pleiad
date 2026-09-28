@@ -19,7 +19,7 @@ import { estimateTokens } from './token-estimate.mjs';
 import { toggleExclude } from './context.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
 import { openHookSheet, openCopySheet, copyBlocked, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
-import { unifySessionBox, unifyConfirmPanel } from './hooks-unify-ui.mjs';
+import { unifySessionBox, unifyConfirmPanel, resetPlan } from './hooks-unify-ui.mjs';
 
 const KEY = 'session-context';
 const KINDS = ['instruction', 'skill', 'mcp'];
@@ -652,7 +652,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       const what = !done ? t('sessionContext.hooks.startedOnly') : done.outcome === 'success' ? t('sessionContext.hooks.done')
         : done.outcome === 'blocked' ? t('hooks.unify.session.blocked')
         : done.outcome === 'cancelled' ? t('sessionContext.hooks.cancelled') : t('sessionContext.hooks.failedRun');
-      const bits = [stamp(run.started?.at ?? r.at, false), r.event, what, r.leak ? t('hooks.unify.session.leakRun') : null,
+      const bits = [stamp(run.started?.at ?? r.at, false), r.event, what, r.leak ? t('hooks.unify.session.leakRun') : null, r.unknownNative ? t('hooks.unify.session.unknownNativeRun') : null,
         !r.pleiad && r.source && r.source !== 'unknown' ? t(`hooks.scope.${r.source === 'user' || r.source === 'project' || r.source === 'plugin' ? r.source : 'managed'}`) : null];
       if (Number.isInteger(done?.exitCode)) bits.push(t('sessionContext.hooks.exit', { code: done.exitCode }));
       if (done && run.started) bits.push(t('sessionContext.hooks.ms', { ms: Number.isInteger(done.ms) ? done.ms : Math.max(0, done.at - run.started.at) }));
@@ -671,24 +671,30 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const value = view?.place?.value ?? view?.defaults?.value;
     const ply = value?.owner === 'ply';
     const k = kindBox('Hooks', ply ? t('sessionContext.place.plyWho') : t('sessionContext.native'), ply);
+    if (view?.unreadable) { k.append(el('p', 'cx-strong', t('hooks.unify.unreadable'))); return k; }
     if (!value) { k.append(el('p', 'cx-sub', t('sessionContext.place.loading'))); return k; }
     const seg = el('div', 'cx-seg'); seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', t('sessionContext.place.ownerAria', { kind: 'Hooks' }));
     for (const id of ['native', 'ply']) {
       const b = button('', 'cx-opt');
       b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(value.owner === id)); b.dataset.owner = `hooks:${id}`;
       b.append(el('b', null, OWNER[id][0]), el('span', null, t(id === 'ply' ? 'hooks.owner.ply' : 'hooks.owner.agent')));
-      b.onclick = () => { hooksConfirm = value.owner === id ? null : id; refresh(); focusIn(hooksConfirm ? '.hk-unify' : `[data-owner="hooks:${id}"]`); };
+      b.onclick = () => { hooksConfirm = value.owner === id ? null : { direction: id, reset: false }; refresh(); focusIn(hooksConfirm ? '.hk-unify' : `[data-owner="hooks:${id}"]`); };
       seg.append(b);
     }
     k.append(seg);
     const saved = v => { hooksPlace.view = v; hooksConfirm = null; showToast(); loadHooks(info(), true); refresh(); };
     if (hooksConfirm) {
-      k.append(unifyConfirmPanel({ cmd, cwd: place.cwd, direction: hooksConfirm, short: shortPath, onDone: saved,
+      k.append(unifyConfirmPanel({ cmd, cwd: place.cwd, direction: hooksConfirm.direction, reset: hooksConfirm.reset, short: shortPath, onDone: saved,
         onCancel: () => { hooksConfirm = null; refresh(); focusIn(`[data-owner="hooks:${value.owner}"]`); } }));
       return k;
     }
     if (view.place?.override) {
-      const reset = button(t('hooks.unify.placeReset'), 'btn', () => placeWork(async () => saved(await cmd('setHooksOwner', { place: place.cwd, cwd: place.cwd, value: null }))));
+      // 上の設定に戻すと担当が変わるなら、切り替えと同じ確認を通す（止めていたネイティブが再開する・動いていたものが止まるため）
+      const reset = button(t('hooks.unify.placeReset'), 'btn', () => {
+        const plan = resetPlan(view);
+        if (plan.confirm) { hooksConfirm = { direction: plan.confirm, reset: true }; refresh(); focusIn('.hk-unify'); return; }
+        placeWork(async () => saved(await cmd('setHooksOwner', { place: place.cwd, cwd: place.cwd, value: null, revision: view.revision })));
+      });
       k.append(reset);
     }
     if (!ply) { k.append(el('p', 'cx-sub', t('sessionContext.place.nativeNote', { agent: backendLabel() }))); return k; }
@@ -699,7 +705,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     for (const h of hooksList) {
       const on = !off.has(h.id);
       const row = switchRow({ id: h.id, name: h.name, path: '' }, on, [h.event, h.targets.map(agentLabel).join(', '), on ? '' : t('hooks.unify.offHere')].filter(Boolean).join(' · '), true,
-        () => placeWork(async () => saved(await cmd('setHooksOwner', { place: place.cwd, cwd: place.cwd, value: { owner: 'ply', disabled: on ? [...off, h.id] : [...off].filter(x => x !== h.id) } }))));
+        () => placeWork(async () => saved(await cmd('setHooksOwner', { place: place.cwd, cwd: place.cwd, revision: view.revision,
+          value: { owner: 'ply', disabled: on ? [...off, h.id] : [...off].filter(x => x !== h.id) } }))));
       row.querySelector('.cx-sw')?.setAttribute('aria-label', t('hooks.unify.placeSwitchAria', { name: h.name }));
       k.append(row);
     }
