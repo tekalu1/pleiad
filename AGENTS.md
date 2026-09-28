@@ -24,6 +24,7 @@
 - サーバー越しのテストで fake-codex のターンを走らせるときは `open({ ...host, autoAllow: true })` でつなぐ。fake-codex の既定の台本はコマンドの承認を求めるので、無いと `runTurn` が承認待ちで止まる（`open(host, { autoAllow: true })` のように第 2 引数で渡しても効かない）。
 - `setTimeout(ms).unref?.()` を `Promise.race` に使う「最長 ms だけ待つ」処理（`core/delegation-usage.mjs` の `ensureFresh` など）を単体テストで確かめるとき、待たせる側（遅い処理）を手動で解決する Promise（`new Promise(r => { resolve = r })`）だけにすると、イベントループを保つものが無くなり、unref のタイマーごと発火せずに固まる（2026-09-28、`tests/unit/delegation-routing.mjs`）。待たせる側は必ず実タイマー（`setTimeout(fn, ms)`。unref しない）にする。
 - `npm run test:e2e` は実際の LLM を呼び出すため、実サービスとの接続確認が必要な変更で実行する。
+- 本物の Codex の app-server の JSON-RPC（通知の順・item の中身）を見るときは、stdio を 1 行ずつファイルに書きながら本物の `codex.exe` へ中継する node スクリプトを `AGENT_HOST_CODEX_BIN='node "<スクリプト>"'` に渡し、別ポート・別のデータ置き場でサーバーを立てる。理由: Pleiad の出来事からは turn/started や item の形が見えず、fake-codex は本物の形を仮に出しているだけ。2026-09-28 は、`thread/shellCommand` の直後の `turn/start` が同じターンに入って返答が消えることを、これで突き止めた（`temporary/scripts/shell-real/codex-tap.mjs`）。記録には会話の本文が載るので、測り終えたら消す。
 - 現在は独立したビルドコマンドはない。文書のみの変更では、内容と `git diff --check` の確認を行えばよい。
 - UI の変更では必要に応じてブラウザーで表示・操作を確認する。ブラウザー自動化は、まずシェルで `playwright-cli` と `agent-browser` の利用可否を調べ、前者があれば優先し、なければ後者を使う。ユーザーによるツール・ブラウザー指定があればそれに従う。
   - `playwright-cli` は `file:` を開けない（"Access to file: protocol is blocked"）。`temporary/mockups/` のモックを見るときは `python -m http.server 8799` をそのディレクトリで起動して `goto http://127.0.0.1:8799/<name>.html` で開く。`eval` は式の文字列ではなく `"() => { … }"` の関数を渡す（式だと `UtilityScript` のエラーで落ちる）。確認したら `playwright-cli close` とサーバー停止まで行う。
