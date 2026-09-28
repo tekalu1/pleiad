@@ -22,7 +22,6 @@
 - コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。
 - WebSocket のコマンドを足すときは、`core/server.mjs` の `case` に加えて `core/protocol.mjs` の `COMMANDS` にも登録する。登録が無いとサーバーはエラーも返さず黙って捨て、テストの `cmd` は応答待ちのまま止まる（2026-09-28）。
 - `core/server.mjs` の `case "loadSession"` の本文は、`tests/unit/session-stream.mjs` が文字列で切り出して vm の中で走らせる。そこで新しい関数を呼ぶなら、テストの `vm.createContext({ … })` にも渡す。渡さないと `ReferenceError: <名前> is not defined` で落ちる（2026-09-28、`attachCompactSummaries`）。`web/client.mjs` の `saveDraft`・`loadDraft`・`submit` なども `tests/unit/composer-new-session.mjs` が同じように vm で走らせるので、そこから新しいモジュールの定数を引くなら身代わりを足す（2026-09-28、`shellComposer`）。
-- fake-codex は `skills/list` を知らない。Skills を「Pleiad がそろえる」にした場所で Codex の会話を走らせると、ターンが「fake-codex は skills/list を知らない」で落ちる。fake-codex で Codex の会話を見るなら、その場所の Skills をエージェント任せにする（2026-09-28）。
 - サーバー越しのテストで fake-codex のターンを走らせるときは `open({ ...host, autoAllow: true })` でつなぐ。fake-codex の既定の台本はコマンドの承認を求めるので、無いと `runTurn` が承認待ちで止まる（`open(host, { autoAllow: true })` のように第 2 引数で渡しても効かない）。
 - `setTimeout(ms).unref?.()` を `Promise.race` に使う「最長 ms だけ待つ」処理（`core/delegation-usage.mjs` の `ensureFresh` など）を単体テストで確かめるとき、待たせる側（遅い処理）を手動で解決する Promise（`new Promise(r => { resolve = r })`）だけにすると、イベントループを保つものが無くなり、unref のタイマーごと発火せずに固まる（2026-09-28、`tests/unit/delegation-routing.mjs`）。待たせる側は必ず実タイマー（`setTimeout(fn, ms)`。unref しない）にする。
 - `npm run test:e2e` は実際の LLM を呼び出すため、実サービスとの接続確認が必要な変更で実行する。
