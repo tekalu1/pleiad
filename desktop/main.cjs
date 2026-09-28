@@ -16,9 +16,12 @@ const { createRemoteWindows } = require('./remote-windows.cjs');
 // 内蔵ブラウザー（右パネルに重ねる WebContentsView。docs/inapp-browser.md、ADR 0041）。ローカルの窓にだけ置く
 const { createBrowserPanel } = require('./browser-panel.cjs');
 const { attachAgentBrowserBridge } = require('./agent-browser-bridge.cjs');
+// リモートの端末から内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートから見る」）
+const { attachBrowserScreencastBridge } = require('./browser-screencast-bridge.cjs');
 const { prepareAgentBrowserBin } = require('./agent-browser-bin.cjs');
 let browserPanel;
 let agentBrowserBridge;
+let browserScreencastBridge;
 const trust = createWindowTrust();
 let remoteWindows;
 let worker, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
@@ -183,6 +186,15 @@ async function boot() {
   browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png'), agentControl: (action, id) => agentBrowserBridge?.[action]?.(id) });
   browserPanel.attach();
   agentBrowserBridge = attachAgentBrowserBridge(worker, browserPanel);
+  browserScreencastBridge = attachBrowserScreencastBridge(worker, browserPanel, {
+    agentControl: (action, id) => agentBrowserBridge?.[action]?.(id),
+    // 隠れた窓（常駐で閉じた）ではページが描かれない。見られている間だけ最小化で出し、終われば隠し直す
+    keepVisible: () => {
+      if (!window || window.isDestroyed() || window.isVisible()) return () => {};
+      window.showInactive(); window.minimize();
+      return () => { if (!quitting && window && !window.isDestroyed() && window.isMinimized()) window.hide(); };
+    },
+  });
   window.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
   window.webContents.on('will-navigate', (event, url) => {
     if (new URL(url).origin !== origin) { event.preventDefault(); external(url); }
@@ -271,7 +283,7 @@ ipcMain.on('ply:title-bar', (event, colors) => {
 });
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('will-quit', () => agentBrowserBridge?.close());
+  app.on('will-quit', () => { browserScreencastBridge?.close(); agentBrowserBridge?.close(); });
   app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { exitInProgress = true; if (!quitting && window) { event.preventDefault(); void closeSafely(); } });
   app.on('will-quit', () => { exitInProgress = true; });

@@ -1006,5 +1006,17 @@
     "agyNameCollision": "An Antigravity hook has the same name as a Pleiad registration ({{name}}), so it cannot be turned off. Rename it",
     "importChanged": "A definition to import changed after the review. Open the review again",
     "reviewRequired": "Change the hooks owner from the review"
+  },
+  "remoteBrowser": {
+    "remote-only": "Use the in-app browser in the right panel on this PC.",
+    "unavailable": "This PC can't use the in-app browser (desktop app only).",
+    "invalid-session": "Open a conversation first.",
+    "not-found": "Couldn't find the saved visualization.",
+    "invalid-url": "Can't open this URL.",
+    "not-watching": "You aren't viewing the PC browser. Open it again.",
+    "agent-active": "An agent is using the browser. Tap Take over first.",
+    "invalid-input": "Can't send this input.",
+    "failed": "The PC browser action failed.",
+    "unknown": "Unknown action."
   }
 }

@@ -36,7 +36,7 @@ const iconButton = (icon, label, action, className = 'btn btn-icon') => {
  * osActions() はサーバーのある PC の画面から見ているか（OS の操作を出してよいか。判定はサーバー）
  * browser は内蔵ブラウザーの部品（web/browser-panel.mjs の createBrowserPanel）。デスクトップ版のホストの画面だけで渡る
  */
-export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd, osActions = () => false, getPrefs = () => ({}), browser = null }) {
+export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd, osActions = () => false, getPrefs = () => ({}), browser = null, chooseSnapshot = () => false }) {
   const panel = el('aside', 'file-preview'); panel.id = 'filePreview'; panel.hidden = true;
   panel.setAttribute('aria-label', t('filePreview.panel')); panel.tabIndex = -1;
   const head = el('header', 'file-preview-head'), title = el('div', 'file-preview-title');
@@ -595,11 +595,13 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
    * 押した瞬間に空の窓を開け、opener を切ってから行き先を入れる。窓を開けない殻（デスクトップ版）は、
    * サーバーのある PC の既定のブラウザーへ渡す（openVisualization）。
    * リモートの窓（plyRemote のある殻）は、行き先を見て殻がアプリの中の窓・シートで開く（docs/remote.md §8.5）。
-   * 空の窓では行き先が分からないので URL を直接渡す。殻は窓を返さない（opener を持たせない）ので null でも知らせない
+   * 空の窓では行き先が分からないので URL を直接渡す。殻は窓を返さない（opener を持たせない）ので null でも知らせない。
+   * ホストの画面ではない端末でホストに内蔵ブラウザーがあれば、先に「この端末で開く / PC のブラウザーで見る」を選ぶ（chooseSnapshot）
    */
-  function openSnapshot(v) {
+  function openSnapshot(v, direct = false) {
     const query = snapshotQuery(v);
     if (!query) return;
+    if (!direct && chooseSnapshot(Object.fromEntries(query), () => openSnapshot(v, true))) return;
     if (useInAppBrowser()) {
       return openHostFile('openVisualization', Object.fromEntries(query), {
         cmd, inApp:true, openInPanel:openInBrowserPanel,

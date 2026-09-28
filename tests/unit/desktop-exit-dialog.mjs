@@ -73,6 +73,7 @@ async function start({ ready = true } = {}) {
     './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, handleArgv: () => false }) },
     './browser-panel.cjs': { createBrowserPanel: () => ({ attach: () => {} }) },
     './agent-browser-bridge.cjs': { attachAgentBrowserBridge: () => ({ close: () => {} }) },
+    './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: () => ({ close: () => {} }) },
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
     'electron-updater': { autoUpdater: {} },
