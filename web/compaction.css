@@ -23,7 +23,8 @@
 .compaction-boundary summary::before { content:"▸"; display:inline-block; width:1em; transition:transform var(--dur-fast) var(--ease-out); }
 .compaction-boundary details[open] > summary::before { transform:rotate(90deg); }
 /* 要約の本文は見出しの行と同じ大きさ（--fs-s）。見出しより大きくしない */
-.compaction-boundary .summary-body { white-space:pre-wrap; overflow-wrap:anywhere; font-size:var(--fs-s); line-height:1.7; background:var(--surface-2); border-radius:var(--r-s); padding:8px 12px; margin-top:4px; }
+/* 要約は 1 万字前後になる。区切りの中でスクロールする（高さの上限） */
+.compaction-boundary .summary-body { white-space:pre-wrap; overflow-wrap:anywhere; font-size:var(--fs-s); line-height:1.7; background:var(--surface-2); border-radius:var(--r-s); padding:8px 12px; margin-top:4px; max-height:260px; overflow:auto; }
 .auto-compaction-settings { width:100%; }
 .auto-compaction-settings > .rm-switch { min-height:34px; }
 .auto-compaction-minimum { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }

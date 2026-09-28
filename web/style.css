@@ -566,6 +566,29 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 一行の中から画面を開く（コンテキストの記録の「中身を見る」）。押すのはボタン、見た目はリンク */
 .m.sys .lnk{padding:0;font-size:var(--fs-xs);color:var(--ink-blue);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
 .m.sys .lnk:hover{background:transparent;color:var(--ink-blue);text-decoration-color:var(--line-blue)}
+/* 開ける出来事の一行（別のセッションからのメッセージ・Pleiad の完了通知。web/system-messages.mjs の sysFold）。
+   開閉は会話の中の折りたたみ（tools.css の .tc-fold）と同じ ▸ の回転。既定は閉じた状態 */
+.m.sys .sys-fold>summary{list-style:none;cursor:pointer;user-select:none;display:flex;align-items:baseline;gap:6px}
+.m.sys .sys-fold>summary::-webkit-details-marker{display:none}
+.m.sys .sys-fold>summary::before{content:"▸";display:inline-block;width:1em;flex:none;transition:transform var(--dur-fast) var(--ease-out)}
+.m.sys .sys-fold[open]>summary::before{transform:rotate(90deg)}
+.m.sys .sys-fold>summary:hover{color:var(--ink)}
+.m.sys .sys-fold>summary .t{font-family:var(--font-mono);margin-left:auto}
+.m.sys .sys-body{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-s);line-height:1.7;color:var(--ink);background:var(--surface-2);
+  border-radius:var(--r-s);padding:8px 12px;margin:4px 0 4px 1em;max-width:680px;max-height:340px;overflow:auto}
+/* スラッシュコマンド・! モードの 1 行（web/system-messages.mjs の commandParts）。発言者は「あなた」、吹き出しは付けない。
+   字はツールの行と同じ等幅・本文色。ラベルは「コマンド」「シェル」（エージェントのツールの「実行」と見分ける） */
+.m.user.cmd .cmdline{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;min-width:0;padding:2px 0}
+.m.user.cmd .cmdline .tc-label{color:var(--ink-weak)}
+.m.user.cmd .cmd-text{flex:1 1 12em;min-width:0;color:var(--ink);font-family:var(--font-mono);font-size:var(--fs-s);white-space:pre-wrap;overflow-wrap:anywhere}
+.m.user.cmd .cmd-res{flex:none;margin-left:auto;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
+.m.user.cmd .who .handed{letter-spacing:0}
+.m.user.cmd .cmd-fold>summary{opacity:.8}
+.m.user.cmd .cmd-fold>summary .first{font-family:var(--font-mono);display:inline-block;max-width:calc(100% - 7em);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+.m.user.cmd .cmd-out{margin:0;padding:8px 12px;background:var(--surface-2);border-radius:var(--r-m);font:var(--fs-s)/1.6 var(--font-mono);color:var(--ink);
+  white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow:auto;max-width:680px}
+/* ! の出力は罫線の表が多く横に長い。折り返すと表が崩れるので、面の中で横にスクロールする */
+.m.user.cmd .cmd-out.wide{white-space:pre;overflow-wrap:normal}
 /* 新しいセッション・新しい枝の頭に出る一行 */
 
 /* ---- md（web/render.mjs の出力）。見出し・表・コード・引用に枠は無い ---- */

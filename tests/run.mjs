@@ -149,6 +149,8 @@ const cases = [
   await import("./unit/ask-answers.mjs"),
   await import("./unit/title-clean.mjs"),
   await import("./unit/claude-normalize.mjs"),
+  // 履歴のシステム側のメッセージ: 形（transcript の印）と文面での見分け・区切りへの要約・中断・teammate・文脈のタグ・保存分（ADR 0052）
+  await import("./unit/system-messages.mjs"),
   await import("./unit/claude-background.mjs"),
   // Claude の途中送信の渡った合図（uuid・まとめ取り出し・次の内部ターン）と中断の interrupt。SDK の query を身代わりにする
   await import("./unit/claude-steer-stop.mjs"),
