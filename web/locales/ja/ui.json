@@ -184,7 +184,26 @@
         "note": "内蔵ブラウザーは会話の右に開き、ログインはこのアプリの中に残ります。Pleiad 本体の保存領域とは分けています。"
       },
       "saveFailed": "保存できませんでした: {{error}}",
-      "agentOperation": { "title": "エージェントの操作", "bundled": "agent-browser {{version}} · 同梱" }
+      "agentOperation": { "title": "エージェントの操作", "bundled": "agent-browser {{version}} · 同梱" },
+      "confirm": {
+        "title": "確認",
+        "external": "外部の読み込みの前に確認",
+        "agent": "エージェントがサイトを使う前に確認",
+        "sites": "許可したサイト",
+        "stopped": "止めた出どころ",
+        "externalList": "外部の読み込み",
+        "agentList": "エージェントの利用",
+        "permit": "許可",
+        "always": "常に",
+        "ask": "毎回聞く",
+        "remove": "消す",
+        "load": "読み込む",
+        "settings": "設定",
+        "blocked_other": "外部の読み込みを {{count}} 件止めています",
+        "once": "一度だけ",
+        "alwaysSite": "このサイトは常に",
+        "deny": "断る"
+      }
     }
   },
   "time": {

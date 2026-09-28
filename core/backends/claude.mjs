@@ -29,6 +29,7 @@ import os from "node:os";
 import * as store from "../store.mjs";
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { buildClaudeModels, FALLBACK_MODELS } from "./claude-models.mjs";
+import { ZERO_COST, readCostState, decideCostBase } from "./claude-cost-state.mjs";
 import { normalizeSdkMessage, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, stopHookFollowUps, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript } from "./claude-normalize.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
 
@@ -493,6 +494,31 @@ async function readTranscriptExtras(sessionId) {
   }
 }
 
+/**
+ * ターン開始時点の使用量の累計（transcript の最後の cost-state）。result の累計から引いてターンの分にする（claude-cost-state.mjs）。
+ * 新しい会話は 0。置き場は readTranscriptExtras と同じく projects の下を順に探す。
+ * null は「分からない」（見つからない・読めない・形が違う）で、そのターンの記録は数値を null にする（数えすぎを防ぐ）
+ */
+async function readCostBase(sessionId) {
+  if (!sessionId) return ZERO_COST;
+  if (!SAFE_ID.test(String(sessionId))) return null;
+  let read = null;
+  try {
+    const projects = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects");
+    for (const dir of await fs.readdir(projects)) {
+      try { read = await readCostState(path.join(projects, dir, `${sessionId}.jsonl`)); break; }
+      catch (error) { if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') throw error; }
+    }
+  } catch {
+    await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'transcript-unreadable', detectedVersion: null });
+    return null;
+  }
+  if (!read) return null;
+  const { cost, mismatch } = decideCostBase(read);
+  if (mismatch) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: mismatch, detectedVersion: read.version });
+  return cost;
+}
+
 // 走っているターンの query。停止ボタン（stopBackground -> Query.stopTask）はターンの外から来るので、
 // 会話 id から引けるようにしておく。ターンが終わったら必ず外す（finally）。
 // SDK の options には `perTaskStopAffordance` があるが**宣言しない**。宣言すると中断（interrupt）が
@@ -608,6 +634,8 @@ export const backend = {
     const compactDiagnostic = compact ? createClaudeCompactDiagnostic() : null;
     const flag = endpoint ? await writeClaudeFlagSettings(store.dataDir, endpoint, contextOptions.settings) : null;
     const hide = text => redactSecret(redactToken(text, oauthToken), endpoint?.key);
+    // resume する前に読む（CLI はこの値を読み戻し、result はそこからの累計になる）。1 つの query の result は全部これから引く
+    const costBase = await readCostBase(sessionId);
     // query の組み立てで例外になっても、鍵を含むフラグ設定のファイルを残さない（ターンの終わりの finally まで届かないため）
     let q;
     try { q = sdk.query({
@@ -879,10 +907,10 @@ export const backend = {
         // 中断を頼んだ後の result は、interrupt が効いた合図（応答より先に来ることがある）
         if (stop && message.type === "result") stopAcked();
 
-        for (const ev of normalizeSdkMessage(message)) {
+        for (const ev of normalizeSdkMessage(message, { costBase })) {
           // result は 1 回の query で何度も出る（裏の subagent が終わるたびに main が再開する・途中送信に答える）。
           // turnResult は「このターンが終わった」の合図で、server はそれを見て途中送信を止める。
-          // 成功の分は最後の 1 つだけを query の終わりに出す。使用量（usage）は累計なのでその都度出してよい。
+          // 成功の分は最後の 1 つだけを query の終わりに出す。使用量（usage）は開始時点からの累計なので、その都度出してよい（server は上書きする）。
           // 中断を頼んだ後の result（打ち切られた内部ターン）は出さない。結果は最後に aborted で出す
           if (ev.type === "turnResult" && stop) continue;
           if (ev.type === "turnResult" && ev.outcome === "ok") { heldResult = ev; continue; }

@@ -48,7 +48,9 @@
     "delegateEscalation": "この委譲は {{agent}} を「{{mode}}（{{modeId}}）」で動かします",
     "childConversation": "委譲した子の会話",
     "relayTitle": "委譲先「{{child}}」",
-    "relayTitleWith": "委譲先「{{child}}」 / {{title}}"
+    "relayTitleWith": "委譲先「{{child}}」 / {{title}}",
+    "browserSite": "{{agent}} が {{site}} を使おうとしています",
+    "browserAccount": "（ログイン済み: {{account}}）"
   },
   "quota": {
     "unsupported": "このエージェントは使用枠の取得に対応していません。",
@@ -749,7 +751,9 @@
     "claudeUnavailable": "使用枠を取得できません。API 接続・権限不足・未対応の CLI では表示されません。",
     "authChanged": "認証状態が変わりました。更新してください。",
     "fetchFailed": "取得に失敗しました。ログイン状態を確認し、しばらくして更新してください。",
-    "recordInvalid": "使用量記録の形式が不正です"
+    "recordInvalid": "使用量記録の形式が不正です",
+    "migrated": "Claude の使用量の記録を、会話の累計からターンの分へ直しました（直した {{fixed}} 件・結び付かない {{unlinked}} 件・候補が複数 {{ambiguous}} 件。元の値は usage.v1-backup.json）",
+    "migrateFailed": "Claude の使用量の記録を直せませんでした。記録は元のままです:"
   },
   "conversations": {
     "deleteSent": "送信済みのセッションは削除できません",

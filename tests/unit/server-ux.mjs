@@ -99,6 +99,15 @@ export default async function(t) {
     const linkBack = await c.cmd('setPref', { key: 'linkOpen', value: 'inapp' });
     t.ok('linkOpen pref saves inapp/external and rejects other values',
       linkPrefs.linkOpen === 'external' && linkBack.linkOpen === 'inapp' && /linkOpen/.test(String(badLink?.message)));
+    const initialBrowserPrefs = await c.cmd('prefs');
+    t.ok('browser confirmation is OFF until explicitly set', !initialBrowserPrefs.confirmExternalLoads && !initialBrowserPrefs.confirmAgentSites);
+    const externalSites = [{ origin: 'https://assets.example', mode: 'always' }, { origin: 'https://ask.example', mode: 'ask' }];
+    const agentSites = [{ origin: 'http://localhost:5173', agent: 'codex', mode: 'always' }];
+    for (const [key, value] of Object.entries({ confirmExternalLoads: true, confirmAgentSites: true, externalSitePermissions: externalSites, agentSitePermissions: agentSites })) await c.cmd('setPref', { key, value });
+    const badBrowserPref = await c.cmd('setPref', { key: 'externalSitePermissions', value: [{ origin: 'https://bad.example/; *', mode: 'always' }] }).then(() => false, () => true);
+    c.close(); await server.stop(); server = await startServer(config); c = await open({ port: server.port, token: server.token, autoAllow: true });
+    const browserPrefs = await c.cmd('prefs');
+    t.ok('browser confirmation and both permission lists survive server restart; malformed origin rejected', badBrowserPref && browserPrefs.confirmExternalLoads && browserPrefs.confirmAgentSites && JSON.stringify(browserPrefs.externalSitePermissions) === JSON.stringify(externalSites) && JSON.stringify(browserPrefs.agentSitePermissions) === JSON.stringify(agentSites));
     const inherited = await c.cmd('newSession', { sourceSessionId: dirId, cwd: ROOT });
     const inheritedRow = await row(inherited.sessionId);
     t.ok('new session uses source settings over global preferences', inheritedRow.backend === 'fake' && inheritedRow.model === '' && inheritedRow.mode === 'auto');

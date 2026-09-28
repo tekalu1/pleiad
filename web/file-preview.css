@@ -185,6 +185,23 @@ body.file-preview-wide .file-preview-resize{display:none}
 .browser-setting{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;max-width:560px;margin:8px 0}
 .browser-link-open{min-width:260px}
 .browser-setting-note{color:var(--ink-weak);font-size:var(--fs-s)}
+.browser-confirm-settings{max-width:680px;margin-top:24px}
+.browser-confirm-settings h3{font-size:var(--fs);margin:24px 0 12px}
+.browser-confirm-settings h4{font-size:var(--fs-s);color:var(--ink-weak);font-weight:400;margin:18px 0 8px}
+.browser-confirm-settings .browser-setting{max-width:none;padding:10px 0}
+.browser-confirm-settings input[role=switch]{appearance:none;width:36px;height:22px;border:0;border-radius:999px;background:var(--surface-3);position:relative;cursor:pointer;flex:none}
+.browser-confirm-settings input[role=switch]:before{content:'';position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:var(--surface-paper);transition:transform .12s}
+.browser-confirm-settings input[role=switch]:checked{background:var(--fill-primary);color:var(--on-fill)}
+.browser-confirm-settings input[role=switch]:checked:before{transform:translateX(14px)}
+.browser-confirm-settings input[role=switch]:focus-visible{outline:2px solid var(--line-blue);outline-offset:3px}
+.browser-site-name{flex:1;min-width:140px;overflow-wrap:anywhere}
+.preview-blocked{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;color:var(--ink-weak);font-size:var(--fs-s);flex:none}
+.preview-blocked span{flex:1;min-width:160px}
+.preview-blocked button{border:0;background:none;color:var(--ink-blue);font:inherit;cursor:pointer;padding:4px}
+.browser-site-approval .card-head .desc{white-space:normal;overflow-wrap:anywhere}
+.browser-site-approval .card-actions .res:empty{display:none}
+.file-preview-content:has(>.preview-blocked){display:flex;flex-direction:column}
+.file-preview-content:has(>.preview-blocked)>iframe{flex:1;min-height:0;height:0}
 .browser-agent-row{display:flex;align-items:center;gap:8px;padding:5px 10px;color:var(--ink-weak);font-size:var(--fs-s)}
 .browser-agent-row[hidden]{display:none}
 .browser-agent-status{display:flex;align-items:center;gap:7px;flex:1;min-width:0;color:var(--ink)}

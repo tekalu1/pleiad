@@ -221,7 +221,7 @@ export default async function (t) {
   document.getElementById = id => settingNodes[id] ?? null;
   try {
     const hidden = setupBrowserSettings({ available: false, cmd: async () => {}, getPrefs: () => ({}) });
-    assert.equal(settingNodes.browserTab.hidden, true); assert.equal(settingNodes.browserPanel.children.length, 0); hidden.paint();
+    assert.equal(settingNodes.browserTab.hidden, false); assert.equal(settingNodes.browserPanel.querySelectorAll('input').length, 1); hidden.paint();
     let prefs = {}; const sent = [];
     const settings = setupBrowserSettings({ available: true, cmd: async (c, a) => { sent.push([c, a]); }, getPrefs: () => prefs });
     assert.equal(settingNodes.browserTab.hidden, false);
@@ -233,7 +233,7 @@ export default async function (t) {
     prefs = { linkOpen: 'external' }; settings.paint();
     assert.equal(external.getAttribute('aria-pressed'), 'true');
   } finally { document.getElementById = savedGet; }
-  t.ok('使える画面: ブラウザーで開いた Pleiad とリモートの窓では使えず、設定の項目も出さない', true);
+  t.ok('ブラウザーで開いた画面にも外部読み込みの設定を出す', true);
 
   // ---- 画面の部品（偽のブリッジ）
   await withWindow({ plyDesktop: { browser: null } }, async () => {
