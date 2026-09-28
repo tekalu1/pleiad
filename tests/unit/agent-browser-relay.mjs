@@ -40,6 +40,15 @@ function fakePanel() {
   }
   return { createFor, tabsFor: sessionId => tabs.filter(x => x.sessionId === sessionId), selectFor() {}, closeFor(id) { const index = tabs.findIndex(x => x.id === id); if (index < 0) return; const [tab] = tabs.splice(index, 1); for (const listener of listeners) listener('destroyed', tab); }, rebindSession(from, to) { for (const tab of tabs) if (tab.sessionId === from) tab.sessionId = to; }, onTabsChanged(listener) { listeners.add(listener); return () => listeners.delete(listener); } };
 }
+/** 知らせは WebSocket を通って届くので、1 回の setTimeout では足りないことがある。届くまで上限付きで待つ */
+async function until(check, ms = 2000) {
+  const end = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > end) return false;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  return true;
+}
 function open(url) { return new Promise((resolve, reject) => { const ws = new WebSocket(url); ws.once('open', () => resolve(ws)); ws.once('error', reject); }); }
 function ask(ws, method, params = {}, sessionId) {
   const id = Math.floor(Math.random() * 1e9);
@@ -72,11 +81,9 @@ export default async function (t) {
     ws.on('message', raw => { const msg = JSON.parse(raw.toString()); if (msg.method) events.push(msg); });
     await ask(ws, 'Target.setDiscoverTargets', { discover: true });
     const uiTab = panel.createFor('one');
-    await new Promise(resolve => setTimeout(resolve, 0));
-    t.ok('画面で追加したタブを発見する', events.some(event => event.method === 'Target.targetCreated' && event.params.targetInfo.targetId === 'frame-' + uiTab.id));
+    t.ok('画面で追加したタブを発見する', await until(() => events.some(event => event.method === 'Target.targetCreated' && event.params.targetInfo.targetId === 'frame-' + uiTab.id)));
     panel.closeFor(uiTab.id);
-    await new Promise(resolve => setTimeout(resolve, 0));
-    t.ok('画面で閉じたタブを通知する', events.some(event => event.method === 'Target.targetDestroyed' && event.params.targetId === 'frame-' + uiTab.id));
+    t.ok('画面で閉じたタブを通知する', await until(() => events.some(event => event.method === 'Target.targetDestroyed' && event.params.targetId === 'frame-' + uiTab.id)));
     panel.closeFor('t1');
     t.ok('閉じたタブへのページコマンドを断る', !!(await ask(ws, 'Page.navigate', { url: 'http://localhost/closed' }, sid)).error);
     relay.disconnect('one', true);

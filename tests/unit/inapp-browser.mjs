@@ -419,7 +419,8 @@ export default async function (t) {
     s = await run('open', { url: `${fileUrl(html)}#top` });
     assert.equal(now$(s).external, true, '画面が開いた file: の HTML は押せる');
     assert.deepEqual(await run('external'), { ok: true });
-    assert.deepEqual(fx.log.opened, [fs.realpathSync(html)], '実体を解決したパスを openPath に渡す');
+    // 製品は fs.promises.realpath（OS の解決。8.3 の短い名前も長い名前に戻す）なので、期待値も .native で作る
+    assert.deepEqual(fx.log.opened, [fs.realpathSync.native(html)], '実体を解決したパスを openPath に渡す');
     assert.deepEqual(fx.log.external, [], 'file: は URL として openExternal に渡さない');
     contents.url = fileUrl(other);   // ページの中で別の file: へ移った
     s = await run('state');
