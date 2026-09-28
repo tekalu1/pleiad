@@ -484,13 +484,13 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 
 ### 8.5 リンク
 
-リモートの窓・モバイル版・LAN のブラウザー（ホストの PC の画面ではないところ）で、会話のリンクや可視化の「ブラウザーで開く」を押したときの行き先（2026-09-27、issue #33 の段階 0）。規則は 3 か所が同じ表で持つ: 画面の `web/host-only-links.mjs`、デスクトップ版の `desktop/remote-windows.cjs` の `linkTarget`、Android の `LinkPolicy`（`mobile/android/remote-core`）。
+リモートの窓・モバイル版・LAN のブラウザー（ホストの PC の画面ではないところ）で、会話のリンクや可視化の「ブラウザーで開く」を押したときの行き先（2026-09-27、issue #33 の段階 0）。ホストがデスクトップ版なら、先に下からのシートで「この端末で開く / PC のブラウザーで見る」を選ぶ（2026-09-28、段階 4。docs/inapp-browser.md「リモートから見る」）。下の表は「この端末で開く」を選んだとき、またはホストに内蔵ブラウザーが無いとき（`npm start`）の行き先。規則は 3 か所が同じ表で持つ: 画面の `web/host-only-links.mjs`、デスクトップ版の `desktop/remote-windows.cjs` の `linkTarget`、Android の `LinkPolicy`（`mobile/android/remote-core`）。
 
 | 行き先 | 例 | 開く場所 |
 |---|---|---|
 | Web のページ（http・https） | 会話の外部リンク、認可のページ | 端末の既定のブラウザー。デスクトップ版はその PC、Android は `Intent.ACTION_VIEW`、LAN のブラウザーは新しいタブ。URL に資格情報（`user:pass@`）があるものと、ほかのスキームは開かない |
 | 可視化の写し（`/visualization-snapshot`） | 右パネルの可視化の「ブラウザーで開く」 | アプリの中。デスクトップ版はリモートの窓と同じ保存領域の別の窓（preload なし）、Android はホストの窓の上のシート（題と「閉じる」。戻るでも閉じる）。LAN のブラウザーは新しいタブ |
-| localhost・ループバック（`localhost`・`*.localhost`・`127.0.0.0/8`・`0.0.0.0`・`[::1]`） | エージェントが立てた開発サーバー | 開かない。「localhost のリンクはホストの PC でだけ開けます。」と知らせる（端末で開くと端末自身を指す）。ホストの PC の画面（`osActions`）では普通に開く |
+| localhost・ループバック（`localhost`・`*.localhost`・`127.0.0.0/8`・`0.0.0.0`・`[::1]`） | エージェントが立てた開発サーバー | 端末では開かない（端末で開くと端末自身を指す）。ホストがデスクトップ版ならシートは「PC のブラウザーで見る」だけ、そうでなければ「localhost のリンクはホストの PC でだけ開けます。」と知らせる。ホストの PC の画面（`osActions`）では普通に開く |
 
 - **写しを端末のブラウザーへ渡さない。** 写しは端末内プロキシ（`127.0.0.1:<p>`）を通って届き、プロキシはトークンの Cookie（`HttpOnly`・`SameSite=Strict`）で守る。Cookie はアプリの保存領域にしか無いので、端末のブラウザーでは 401 になる。URL に鍵を載せる案（短い寿命・1 回限り・その写しだけに効く）は採らない: プロキシが 2 つ（Node と Kotlin）あり両方に鍵の発行と検証が要る、鍵がブラウザーの履歴に残る、アプリを離れるとプロキシが止まって開けない。アプリの中で開けば、認証は今の Cookie のままで、写しの応答（`sandbox allow-scripts` の CSP で不透明なオリジン。docs/visualize.md）も変わらない
 - 画面は `plyRemote` があれば、写しの URL を `window.open(url, '_blank', 'noopener')` で直接渡す（空の窓では殻が行き先を知れない）。殻は窓を返さないので、null でも「開けなかった」とは出さない
@@ -498,7 +498,7 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 - **Android**: `setSupportMultipleWindows(true)` で新しい窓（`target=_blank`・`window.open`）を `onCreateWindow` で受ける。押したとき（`isUserGesture`）だけ。受けた窓は素の WebView（`plyRemote`・ダウンロード・さらに窓を開く口を入れない。スクリプトは写しのために動かす）で、最初の遷移で振り分け、写しでなければ捨てる（10 秒どこへも行かない窓も捨てる）。WebView は新しい窓の最初の遷移で `shouldOverrideUrlLoading` を呼ばないことがあるので、`onPageStarted` でも振り分ける。本体の画面から出る遷移も同じ規則。殻の知らせは Toast（文言は画面の辞書と同じ `link_host_only`）
 - **デスクトップ版のリモートの窓**: `setWindowOpenHandler` は窓を開かせず（`deny`）、行き先で振り分ける。Web は http も https も既定のブラウザー（ローカルの窓の `external` は https だけ）。写しの窓の中の遷移と新しい窓も同じ規則で外へ出し、写しの窓自体は移らない。クリップボードの許可はリモートの窓そのものだけ（写しの窓も同じオリジンの URL を持つので、窓でも確かめる）。リモートの窓を閉じると写しの窓も閉じる
 - 写しの中の `target=_blank` は写しの sandbox（`allow-popups` なし）が止める。`target` の無いリンクは上の規則で端末のブラウザーへ
-- ホストの PC のブラウザーで見る（画面の転送）はまだ無い（ADR 0041）。HTML ファイルの「ブラウザーで開く」（ホストの OS で開く）はリモートでは出さない（§7.3）
+- ホストの PC のブラウザーで見る（画面の転送）は docs/inapp-browser.md「リモートから見る」。フレームと入力は中継の既存の WS 経路（`{ kind: "screencast" }` と `browserScreencast*` のコマンド）を通り、新しいポートは開けない。殻の変更は無い（戻るボタンは `plyremote:back` でシートと画面を閉じる）。HTML ファイルの「ブラウザーで開く」（ホストの OS で開く）はリモートでは出さない（§7.3）
 - 確かめ方（2026-09-27）: Android はエミュレーター（API 33）で `mobile/scripts/fake-host.mjs` と `adb reverse` の中継につなぎ、WebView の DevTools の口（`webview_devtools_remote_<pid>`）から押した。デスクトップ版は Electron の中で `createRemoteWindows` を偽のホストにつないで押した。LAN のブラウザーは、エミュレーターの Chrome から `X-Forwarded-For` を足すプロキシ経由で開いた。単体の試験は `tests/unit/remote-links.mjs` と `LinkPolicyTest`
 
 ## 9. 安全についての考え

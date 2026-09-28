@@ -1004,5 +1004,17 @@
     "agyNameCollision": "Antigravity の hooks に、Pleiad の登録と同じ名前（{{name}}）の定義があるので止められません。名前を変えてください",
     "importChanged": "確認した後に、取り込む定義の中身が変わりました。確認の面を開き直してください",
     "reviewRequired": "Hooks の担当は確認の面から変えてください"
+  },
+  "remoteBrowser": {
+    "remote-only": "PC の内蔵ブラウザーは、この PC の画面の右パネルで開いてください。",
+    "unavailable": "この PC では内蔵ブラウザーを使えません（デスクトップ版だけ）。",
+    "invalid-session": "会話を開いてから使ってください。",
+    "not-found": "可視化の写しが見つかりません。",
+    "invalid-url": "開けない URL です。",
+    "not-watching": "PC のブラウザーを見ていません。開き直してください。",
+    "agent-active": "エージェントが操作中です。「引き継ぐ」を押してから操作してください。",
+    "invalid-input": "送れない入力です。",
+    "failed": "PC のブラウザーの操作に失敗しました。",
+    "unknown": "知らない操作です。"
   }
 }
