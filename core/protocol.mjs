@@ -115,6 +115,7 @@ export const COMMANDS = new Set([
   // 入力欄の `!`（シェルの行。core/shell-runs.mjs、ADR 0054）。送信待ちにも送り直しの控えにも積まない。同じ runId は 2 度走らせない
   'runShell',   // { sessionId, runId, command, cwd? } -> { runId, duplicate? }。走り出したら返す。進み具合は shell.start / shell.output / shell.done、渡したら shell.handed
   'stopShell',  // { runId } -> { stopped }
+  'skipShell',  // { sessionId, runId, skip } -> { runId, skip }。次の発言で渡すか（'host' の会話だけ。ADR 0055）。全部の接続へ shell.skip。渡しかけ・渡した後は断る
   "switchBackend",   // idle conversation -> a new native execution segment
   "abort",           // { sessionId?, reason?: user|update|quit } -> { aborted, reason }。sessionId 省略は全部。reason 省略・不正は user。止めた会話は interrupted { at, reason } で残る
   "resume",          // { sessionId } -> { sent: "outbox"|"text", count }。中断した会話を続ける（保留・送れなかった未送信を送り直す。無ければ理由ごとの文を送る）。実行中（SESSION_RUNNING）・中断していない（NOT_INTERRUPTED）・結果不明の未送信がある（OUTBOX_UNKNOWN）会話は断る

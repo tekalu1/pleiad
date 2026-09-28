@@ -667,9 +667,14 @@ function commandMsg(m) {
   node.dataset.role = 'user';
   if (m.at) node.dataset.at = m.at;
   const who = whoLine(t('chat.message.you'), m.at);
-  // 入力欄の `!`（ADR 0054）: 渡す前は「次の発言で {agent} に渡す」、渡した後は「{agent} に渡した」
+  // 入力欄の `!`（ADR 0054）: 渡す前は「次の発言で {agent} に渡す」、渡した後は「{agent} に渡した」。
+  // ホストで走らせる会話は、渡す前なら行ごとに「渡さない」を選べる。渡さなかった行は「{agent} に渡していない」で残る（ADR 0055）
   const agent = labelOf(m.backend ?? activeBackendId()) || 'AI';
-  if (m.kind === 'shell') who.firstChild.append(' · ', el('span', 'handed', m.pending ? t('chat.shell.pending', { agent }) : t('chat.system.handedTo', { agent })));
+  if (m.kind === 'shell') {
+    const label = m.kept ? t('chat.shell.kept', { agent }) : m.pending ? (m.skip ? t('chat.shell.skipped', { agent }) : t('chat.shell.pending', { agent })) : t('chat.system.handedTo', { agent });
+    who.firstChild.append(' · ', el('span', 'handed', label));
+    if (m.pending && m.runId && capsOf(m.backend ?? activeBackendId()).shell === 'host') who.firstChild.append(shellSkipButton(m));
+  }
   const parts = commandParts(m, { onStop: m.runId ? () => cmd('stopShell', { runId: m.runId }).catch(() => {}) : null });
   // 0 以外の終了コードが分かるときだけ、行の面を一段上げる（ツールの失敗と同じ語彙。design-system「システム側のメッセージ」）
   if (shellFailed(m)) { const box = el('div', 'cmd-box'); box.append(...parts); node.append(who, box); }
@@ -709,6 +714,25 @@ function copyShellToComposer(command) {
 const shellRows = new Map();   // runId -> { m, node }
 const shellPaints = new Map(); // runId -> requestAnimationFrame の番号（出力が速いときは 1 フレームにまとめて描き直す）
 let shellTicker = null;
+
+/** 見出しの横の「渡さない」／「渡す」（ADR 0055）。全部の接続へ流れる shell.skip で描き直す */
+function shellSkipButton(m) {
+  const b = el('button', 'who-act', m.skip ? t('chat.shell.unskip') : t('chat.shell.skip'));
+  b.type = 'button';
+  b.onclick = async () => {
+    const sessionId = state.current;
+    b.disabled = true;
+    try {
+      const r = await cmd('skipShell', { sessionId, runId: m.runId, skip: !m.skip });
+      if (sessionId === state.current) { m.skip = r.skip; repaintShellRow(m.runId); }
+      $('settingsError').textContent = '';
+    } catch (e) {
+      b.disabled = false;
+      $('settingsError').textContent = t('chat.shell.skipFailed', { error: e.message });
+    }
+  };
+  return b;
+}
 
 /** 走っている行の経過を 1 秒ごとに書き換える。走っている行が無くなったら止める */
 function syncShellTicker() {
@@ -765,6 +789,16 @@ function onShellEvent(ev) {
       const entry = shellRows.get(runId);
       if (entry) { entry.m.pending = false; repaintShellRow(runId); }
     }
+    // 渡さなかった行（ADR 0055）
+    for (const runId of ev.keptIds ?? []) {
+      const entry = shellRows.get(runId);
+      if (entry) { Object.assign(entry.m, { pending: false, skip: false, kept: true }); repaintShellRow(runId); }
+    }
+    return;
+  }
+  if (ev.type === 'shell.skip') {
+    const entry = shellRows.get(ev.runId);
+    if (entry && entry.m.pending) { entry.m.skip = Boolean(ev.skip); repaintShellRow(ev.runId); }
     return;
   }
   const entry = shellRows.get(ev.runId);

@@ -314,9 +314,10 @@ Claude の `getCompactions` は、区切りを transcript の `system:compact_bo
 
 入力欄の `!` で人が走らせるコマンド（[ADR 0054](adr/0054-shell-from-composer.md)、形は design-system.md「入力欄のシェルの形」）。承認モードは掛けず、送信待ち（outbox）にも送り直しの控え（receipts）にも積まない。管理は `core/shell-runs.mjs`。
 
-- 口: コマンド `runShell { sessionId, runId, command, cwd? }` → `{ runId, duplicate? }`（走り出したら返す。同じ `runId` は 2 度走らせない。`cwd` はまだ送っていない会話だけ使い、送信済みなら会話の作業ディレクトリ）、`stopShell { runId }` → `{ stopped }`
-- 出来事（全部の接続へ。一覧は変わらない）: `shell.start { runId, command, cwd, at, backend, mode }`・`shell.output { runId, stream: 'stdout'|'stderr', text }`・`shell.done { runId, exitCode, durationMs, truncated, timedOut, stopped, timeoutMs?, error?, stdout? }`（`stdout` はエージェントが走らせた分の出力全体）・`shell.handed { runIds }`（次の発言がエージェントに渡った）
-- `loadSession` は発言の末尾に、まだ渡していない行（`pending: true`）と走っている行（`running: true`）を `{ role:'user', kind:'shell', command, stdout, stderr, exitCode, runId }` で足す。履歴の `!` の行には、Pleiad が走らせたときの終了コードを付ける
+- 口: コマンド `runShell { sessionId, runId, command, cwd? }` → `{ runId, duplicate? }`（走り出したら返す。同じ `runId` は 2 度走らせない。`cwd` はまだ送っていない会話だけ使い、送信済みなら会話の作業ディレクトリ）、`stopShell { runId }` → `{ stopped }`、`skipShell { sessionId, runId, skip }` → `{ runId, skip }`（行ごとの「渡さない」。`'host'` の会話だけ。[ADR 0055](adr/0055-shell-skip-handoff.md)）
+- 出来事（全部の接続へ。一覧は変わらない）: `shell.start { runId, command, cwd, at, backend, mode }`・`shell.output { runId, stream: 'stdout'|'stderr', text }`・`shell.done { runId, exitCode, durationMs, truncated, timedOut, stopped, timeoutMs?, error?, stdout? }`（`stdout` はエージェントが走らせた分の出力全体）・`shell.skip { runId, skip }`（「渡さない」を切り替えた）・`shell.handed { runIds, keptIds? }`（次の発言がエージェントに渡った。`keptIds` は渡さなかった行）
+- `loadSession` は発言の末尾に、まだ渡していない行（`pending: true`。「渡さない」なら `skip: true`）と走っている行（`running: true`）を `{ role:'user', kind:'shell', command, stdout, stderr, exitCode, runId }` で足す。渡さなかった行（`kept: true`）は、走らせた時刻より後の最初の人の発言の前に差す（後に無ければ末尾）。履歴の `!` の行には、Pleiad が走らせたときの終了コードを付ける
+- **渡さない**（`'host'` の会話だけ）: 走っている間は走っている分の印、終わった後は `shellPending` の行の `skip: true`。次の人の発言のターンでは `shellAppends` から外し、渡った合図で `shellPending` から sessions.json の `shellKept` へ移す（会話ごとに新しい 20 件まで、出力は stdout・stderr それぞれ先頭 32KB まで。越えたら `truncated`）。エージェントを切り替えて `shellPending` を捨てるときも、「渡さない」の行は `shellKept` へ移す。渡しかけている間（ターンの始めに `shellAppends` を決めてから渡った合図まで）と渡した後の切り替えは断る（`SHELL_HANDING`・`SHELL_HANDED`）。`'native'`（Codex）は結果がエージェントの会話に入っていて外せないので断る（`SHELL_UNAVAILABLE`）
 - バックエンドの宣言は `capabilities.shell`:
 
 | | 走らせる所 | 渡し方 | 履歴 |
@@ -325,7 +326,7 @@ Claude の `getCompactions` は、区切りを transcript の `system:compact_bo
 | `'native'`（Codex） | `backend.shell({ sessionId, command, cwd, timeoutMs, signal, onOutput })`。app-server の `thread/shellCommand { threadId, command, timeoutMs }`（応答は `{}`、サンドボックスの外）。スレッドが読み込まれていなければ `thread/resume` し、終わったら `thread/unsubscribe`。Codex は 1 回ごとに turn/started・completed で包み、Windows では PowerShell で走らせる。止めるのは item の turnId への `turn/interrupt`（item は `exitCode: -1`・`"command aborted by user"` で閉じるので、終了コードにせず `stopped` にする）。**ターンの間は走らせない**: Codex は `!` のターンの間に来た `turn/start` の発言を同じターンに入れ、モデルを呼ばずに閉じる（2026-09-28 に本物で確認）。そのため、ターン（始める準備の間も）が走っていれば `runShell` を断り（`SHELL_BUSY`）、`!` が走っていれば次のターンは終わるまで待ってから始める（`shellRuns.settled`） | Codex の会話に残るので何もしない。次の人の発言のターンが渡ったら `shell.handed` だけ出す | `source: userShell` の `commandExecution` を `kind: 'shell'`（`stdout` は `aggregatedOutput`、`stderr` は null、`exitCode`）にし、エージェントのツールのカードにしない（ターンの通知でも拾わない）。`command` はシェルに包んで POSIX 式にクォートした形（`"…\powershell.exe" -Command '…'`）なので、人が打った形に戻す。最後の人の発言より後の行は `pending` |
 | 無し（Antigravity） | 使えない（`runShell` は断る） | — | — |
 
-- 完了通知で再開するターン・圧縮のターン・走っているターンへの途中送信では渡さない。エージェントを切り替えたら（予約した設定の適用も）走っている分を止め、替えた先も `'host'` なら `shellPending` を次のターンで渡し、そうでなければ捨てる（`shellRuns.switched`）。予約で替わる先が `'host'` どうしでなければ `runShell` は断る。未送信の会話の削除・サーバーの終わりでも止める
+- 完了通知で再開するターン・圧縮のターン・走っているターンへの途中送信では渡さない。エージェントを切り替えたら（予約した設定の適用も）走っている分を止め、替えた先も `'host'` なら `shellPending` を次のターンで渡し、そうでなければ捨てる（「渡さない」の行は `shellKept` に残す。`shellRuns.switched`）。予約で替わる先が `'host'` どうしでなければ `runShell` は断る。未送信の会話の削除・サーバーの終わりでも止める
 
 ### 2.4 sidecar の拡張
 

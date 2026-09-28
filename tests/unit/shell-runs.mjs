@@ -147,6 +147,75 @@ export default async function (t) {
     t.ok('Codex: 止めた分は「止めました」（終了コード・定型の文を出さない）', messages[3].stopped === true && messages[3].exitCode === null && messages[3].stdout === null, JSON.stringify(messages[3]));
   }
 
+  // ---- 行ごとの「渡さない」（ADR 0055）: 走っている間・終わった後に切り替える・渡す行から外す・渡さないまま残す
+  {
+    const store = fakeStore();
+    const events = [];
+    const runs = createShellRuns({ store, emit: (e) => events.push(e) });
+    const cwd = process.cwd();
+    await runs.start({ sessionId: 'k1', runId: 'run-skip-01', command: 'echo held; sleep 1', cwd, backend: HOST });
+    await until(() => events.some(e => e.type === 'shell.output' && e.runId === 'run-skip-01'));
+    const r1 = await runs.setSkip({ sessionId: 'k1', runId: 'run-skip-01', skip: true, backend: HOST });
+    t.ok('走っている間に「渡さない」にできる', r1.skip === true && events.some(e => e.type === 'shell.skip' && e.runId === 'run-skip-01' && e.skip === true && e.sessionId === 'k1'));
+    t.ok('走っている行の開き直しにも「渡さない」が出る', runs.rows('k1', store.data.k1).find(r => r.runId === 'run-skip-01')?.skip === true);
+    await until(() => store.data.k1?.shellPending?.length === 1);
+    t.ok('走っている間に選んだ「渡さない」が、終わった結果に残る', store.data.k1.shellPending[0].skip === true);
+    await runs.setSkip({ sessionId: 'k1', runId: 'run-skip-01', skip: false, backend: HOST });
+    t.ok('終わった後に「渡す」へ戻せる', !store.data.k1.shellPending[0].skip && events.filter(e => e.type === 'shell.skip').at(-1).skip === false);
+    await runs.setSkip({ sessionId: 'k1', runId: 'run-skip-01', skip: true, backend: HOST });
+    t.ok('渡す前なら何度でも切り替えられる', store.data.k1.shellPending[0].skip === true && runs.rows('k1', store.data.k1)[0].skip === true);
+
+    await runs.start({ sessionId: 'k1', runId: 'run-give-01', command: 'echo given', cwd, backend: HOST });
+    await until(() => store.data.k1?.shellPending?.length === 2);
+    const handoff = await runs.appendsFor('k1');
+    t.ok('「渡さない」の行は次のターンで渡す行から外れる', handoff.ids.join() === 'run-give-01' && handoff.skipped.join() === 'run-skip-01'
+      && handoff.lines.length === 2 && !handoff.lines.some(l => l.includes('held')), JSON.stringify(handoff));
+    const handing = await runs.setSkip({ sessionId: 'k1', runId: 'run-skip-01', skip: false, backend: HOST }).then(() => null, e => e.code);
+    t.ok('渡しかけている間は切り替えない', handing === 'SHELL_HANDING');
+    runs.release('k1', handoff);
+    await runs.setSkip({ sessionId: 'k1', runId: 'run-skip-01', skip: true, backend: HOST });
+    t.ok('渡らずに終わったら、また切り替えられる', store.data.k1.shellPending.find(e => e.runId === 'run-skip-01').skip === true);
+
+    const again = await runs.appendsFor('k1');
+    await runs.delivered('k1', again.ids, again.skipped);
+    const handed = events.filter(e => e.type === 'shell.handed').at(-1);
+    t.ok('次の発言が渡ったら、渡した行と渡さなかった行を分けて知らせる', handed.runIds.join() === 'run-give-01' && handed.keptIds.join() === 'run-skip-01', JSON.stringify(handed));
+    t.ok('渡さなかった行は未送の追記から外し、残す行（shellKept）へ移す', !store.data.k1.shellPending.length
+      && store.data.k1.shellKept.length === 1 && store.data.k1.shellKept[0].runId === 'run-skip-01' && !('skip' in store.data.k1.shellKept[0]) && store.data.k1.shellKept[0].stdout.includes('held'));
+    t.ok('渡さなかった行の終了コードは shellExits に控えない（記録に無いので照らす先が無い）', Object.keys(store.data.k1.shellExits ?? {}).length === 1);
+    const late = await runs.setSkip({ sessionId: 'k1', runId: 'run-skip-01', skip: false, backend: HOST }).then(() => null, e => e.code);
+    t.ok('渡した後（渡さないで送った後）は切り替えない', late === 'SHELL_HANDED');
+
+    // 開き直し: 走らせた時刻の後の最初の人の発言の前に差す
+    const at = Date.parse(store.data.k1.shellKept[0].at);
+    const iso = (ms) => new Date(ms).toISOString();
+    const history = [{ role: 'user', text: 'before', at: iso(at - 5000) }, { role: 'assistant', text: 'a', at: iso(at - 4000) },
+      { role: 'user', kind: 'shell', command: 'echo given', at: iso(at + 1000) }, { role: 'user', text: 'after', at: iso(at + 2000) }, { role: 'assistant', text: 'b', at: iso(at + 3000) }];
+    const placed = runs.placeKept(history, store.data.k1);
+    const idx = placed.findIndex(m => m.kept);
+    t.ok('開き直すと、渡さなかった行を次の人の発言の前に「渡していない」で出す', placed.length === 6 && idx === 3 && placed[4].text === 'after'
+      && placed[idx].kind === 'shell' && placed[idx].command === 'echo held; sleep 1' && placed[idx].pending === undefined && placed[idx].runId === 'run-skip-01', JSON.stringify(placed.map(m => [m.text, m.kept])));
+    t.ok('後に人の発言が無ければ末尾に出す', runs.placeKept(history.slice(0, 2), store.data.k1).at(-1)?.kept === true);
+
+    // 上限: 残す行は 20 まで・出力は 32KB まで
+    const many = Array.from({ length: 25 }, (_, i) => ({ runId: `run-many-${String(i).padStart(2, '0')}`, command: `c${i}`, at: iso(at + i), backend: 'claude',
+      stdout: i === 24 ? 'x'.repeat(40 * 1024) : 'o', stderr: '', exitCode: 0, skip: true }));
+    store.data.k2 = { shellPending: many };
+    const h2 = await runs.appendsFor('k2');
+    await runs.delivered('k2', h2.ids, h2.skipped);
+    t.ok('渡さなかった行は会話ごとに 20 まで残す（古いものから捨てる）', store.data.k2.shellKept.length === 20 && store.data.k2.shellKept[0].runId === 'run-many-05');
+    t.ok('渡さなかった行の出力は 32KB まで残し、省いた印を付ける', store.data.k2.shellKept.at(-1).stdout.length === 32 * 1024 && store.data.k2.shellKept.at(-1).truncated === true);
+
+    // 切り替えで渡せなくなったとき: 渡さない行は残し、それ以外は捨てる
+    store.data.k3 = { shellPending: [{ ...many[0], runId: 'run-k3-skip-1' }, { ...many[1], runId: 'run-k3-give-1', skip: undefined }] };
+    await runs.switched('k3', HOST, { id: 'codex', capabilities: { shell: 'native' } });
+    t.ok('渡す口の違うエージェントに替えても、渡さない行は残す', !store.data.k3.shellPending.length && store.data.k3.shellKept.map(e => e.runId).join() === 'run-k3-skip-1');
+
+    const native = { id: 'codex', capabilities: { shell: 'native' } };
+    const refused = await runs.setSkip({ sessionId: 'k1', runId: 'run-skip-01', skip: true, backend: native }).then(() => null, e => e.code);
+    t.ok('エージェントが走らせる会話（Codex）では断る', refused === 'SHELL_UNAVAILABLE');
+  }
+
   // ---- Claude に渡す形: shouldQuery: false の 2 行を、プロンプトの前に
   {
     const frames = [];
@@ -173,6 +242,22 @@ export default async function (t) {
         && frames[0].shouldQuery === false && frames[0].message.content === '<bash-input>git log -1</bash-input>'
         && frames[1].shouldQuery === false && frames[1].message.content === '<bash-stdout>abc</bash-stdout><bash-stderr></bash-stderr>'
         && frames[2].message.content === 'next' && frames[2].shouldQuery === undefined, JSON.stringify(frames.map(f => [f.message?.content, f.shouldQuery])));
+
+      // 「渡さない」の行（ADR 0055）は Claude に渡らない
+      const store = fakeStore();
+      store.data.c1 = { shellPending: [
+        { runId: 'run-claude-skip', command: 'cat secret.txt', stdout: 'SECRET', stderr: '', exitCode: 0, at: new Date().toISOString(), backend: 'claude', skip: true },
+        { runId: 'run-claude-give', command: 'git status', stdout: 'clean', stderr: '', exitCode: 0, at: new Date().toISOString(), backend: 'claude' },
+      ] };
+      const runs = createShellRuns({ store, emit: () => {} });
+      const handoff = await runs.appendsFor('c1');
+      frames.length = 0;
+      await claude.runTurn({ prompt: 'next', sessionId: null, cwd: process.cwd(), mode: 'default', emit: () => {}, askPermission: async () => ({ allow: true }),
+        signal: new AbortController(), control: {}, hostSessionId: 'host-shell-skip', shellAppends: handoff.lines }).catch(() => {});
+      await until(() => frames.length >= 3, 3000);
+      const sent = frames.map(f => String(f.message?.content ?? ''));
+      t.ok('Claude: 「渡さない」の行は渡さず、ほかの行と発言だけを渡す', frames.length === 3 && sent[0] === '<bash-input>git status</bash-input>'
+        && sent[2] === 'next' && !sent.some(text => text.includes('secret') || text.includes('SECRET')), JSON.stringify(sent));
     } finally { restore(); }
   }
 }

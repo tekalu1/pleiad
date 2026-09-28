@@ -91,7 +91,10 @@
     "unavailable": "Shell commands can't run in this conversation",
     "notStarted": "Send the first message before running shell commands",
     "busy": "Wait for the reply to finish before running shell commands",
-    "noCwd": "The working directory wasn't found, so the command can't run"
+    "noCwd": "The working directory wasn't found, so the command can't run",
+    "skipUnavailable": "Shell results can't be held back in this conversation",
+    "handing": "This result is being sent with your message, so it can't be changed now",
+    "alreadyHanded": "This result was already sent, so it can't be changed"
   },
   "turn": {
     "reservedInvalid": "The scheduled settings can no longer be used. Choose again.",

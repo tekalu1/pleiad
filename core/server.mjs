@@ -1030,7 +1030,7 @@ const LIST_NEUTRAL_EVENTS = new Set([
   "userMessage.delivered", "running", "permission", "outbox", "mcpAuth", "claudeLogin",
   "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
-  "shell.start", "shell.output", "shell.done", "shell.handed",
+  "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
 ]);
 
 // 接続ごとに、いま開いている会話（loadSession の watch）。宣言した接続には、流れの出来事（streamEvents）を
@@ -2068,14 +2068,15 @@ async function runTurnInternal(args, onStarted, hooks) {
     let didStart = false, backendInvoked = false, runtimeContext;
     let initialDelivered = false;
     // 入力欄の `!` の結果（ADR 0054）。人の発言のターンでだけ、発言と一緒に渡す（完了通知で再開するターン・圧縮では渡さない）。
-    // 'host' の会話は未送の追記を shouldQuery: false の行で先に渡す。'native'（Codex）はエージェントの会話に既に入っている
+    // 'host' の会話は未送の追記を shouldQuery: false の行で先に渡す。'native'（Codex）はエージェントの会話に既に入っている。
+    // 「渡さない」の行は渡さず、渡った後に会話に残す行へ移す（ADR 0055）
     const shellHandoff = sessionId && !hooks.internal && !hooks.compact && shellMode(backend)
-      ? (shellMode(backend) === 'host' ? await shellRuns.appendsFor(sessionId) : { ids: [], lines: [] }) : null;
+      ? (shellMode(backend) === 'host' ? await shellRuns.appendsFor(sessionId) : { ids: [], skipped: [], lines: [] }) : null;
     let shellHanded = false;
     const onPromptDelivered = () => {
       if (shellHandoff && !shellHanded) {
         shellHanded = true;
-        shellRuns.delivered(sessionId, shellHandoff.ids).catch(e => console.error('  shell: 渡した記録に失敗:', String(e?.message ?? e)));
+        shellRuns.delivered(sessionId, shellHandoff.ids, shellHandoff.skipped).catch(e => console.error('  shell: 渡した記録に失敗:', String(e?.message ?? e)));
       }
       if (initialDelivered || !args.messageId) return;
       initialDelivered = true;
@@ -2208,6 +2209,8 @@ async function runTurnInternal(args, onStarted, hooks) {
       }
       if (!didStart) throw err;
     } finally {
+      // 渡らずに終わった `!` の行は、また「渡さない」を切り替えられる
+      if (shellHandoff && !shellHanded) shellRuns.release(sessionId, shellHandoff);
       if (didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
       await turn.visualizations.close().catch(err => emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) }));
       await Promise.allSettled([runtimeContext?.close()]);
@@ -3099,6 +3102,20 @@ wss.on("connection", (ws, req) => {
         }
         case 'stopShell':
           return reply(true, { stopped: shellRuns.stop(msg.args?.runId) });
+        // 行ごとの「渡さない」（ADR 0055）。ホストで走らせる会話だけ。Codex は結果がエージェントの会話に入っていて外せない
+        case 'skipShell': {
+          const { sessionId, runId, skip } = msg.args ?? {};
+          const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
+          if (!backend) throw new Error(t('session.notFound'));
+          try {
+            return reply(true, await shellRuns.setSkip({ sessionId, runId, skip: Boolean(skip), backend }));
+          } catch (e) {
+            if (e?.code === 'SHELL_UNAVAILABLE') throw Object.assign(new Error(t('shell.skipUnavailable')), { code: e.code });
+            if (e?.code === 'SHELL_HANDING') throw Object.assign(new Error(t('shell.handing')), { code: e.code });
+            if (e?.code === 'SHELL_HANDED') throw Object.assign(new Error(t('shell.alreadyHanded')), { code: e.code });
+            throw e;
+          }
+        }
         case 'compactConversation': {
           const sessionId = msg.args?.sessionId;
           compactionScheduler.cancel(sessionId);
@@ -3252,8 +3269,10 @@ wss.on("connection", (ws, req) => {
             // 中断の印（一覧の行と同じ形）。会話の末尾の「中断しました」を保存された状態から描くため
             const interrupted = runtime.turns.has(sessionId) ? null : interruptedOf((await store.get(sessionId)).interrupted);
             const { compactSummaries, ...data } = await history.loadTranscript(sessionId, backend);
-            // 入力欄の `!`: Pleiad が走らせた分の終了コードを付け、まだ渡していない分・走っている分を末尾に足す（ADR 0054）
-            data.messages = [...shellRuns.decorate(data.messages, sidecar, backend), ...(msg.args?.outline ? [] : shellRuns.rows(sessionId, sidecar))];
+            // 入力欄の `!`: Pleiad が走らせた分の終了コードを付け、まだ渡していない分・走っている分を末尾に足す（ADR 0054）。
+            // 渡さなかった分は、次の人の発言の前に差す（ADR 0055）
+            data.messages = msg.args?.outline ? shellRuns.decorate(data.messages, sidecar, backend)
+              : [...shellRuns.placeKept(shellRuns.decorate(data.messages, sidecar, backend), sidecar), ...shellRuns.rows(sessionId, sidecar)];
             // 系譜の照合（web/branches.mjs）は uuid・役割・本文・ツール名しか見ない。
             // ツール結果や提示まで載せると、家族を開くたびに数十MBが流れて画面が止まる
             if (msg.args?.outline) return reply(true, { messages: data.messages.map(m => ({
@@ -3284,7 +3303,7 @@ wss.on("connection", (ws, req) => {
               // Use a fixed pre-turn history, never an independently sampled partial
               // transcript: it may overlap the events or lag behind them.
               return reply(true, {
-                messages: [...live.messages, ...(user ? [user] : []), ...shellRuns.rows(sessionId, sidecar)], presents: live.presents, completedAt, interrupted: null, draft, ...compactionData,
+                messages: [...shellRuns.placeKept([...live.messages, ...(user ? [user] : [])], sidecar), ...shellRuns.rows(sessionId, sidecar)], presents: live.presents, completedAt, interrupted: null, draft, ...compactionData,
                 stream: { events: live.events }, streamCursor: streamSequence, permissions,
                 initialMessageId: live.initialMessageId,
               });
