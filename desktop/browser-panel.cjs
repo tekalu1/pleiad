@@ -96,7 +96,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   const agents = new Map();
   let navigation = null;
   const openFileAllowed = createRateLimit({ now });
-  const ses =session.fromPartition(PARTITION);
+  const ses = session.fromPartition(PARTITION);
   setupSession(ses);
 
   function setupSession(s) {
