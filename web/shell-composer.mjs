@@ -31,6 +31,8 @@ export function createShellComposer({ box, prompt, head, send, t, availability, 
 
   function paintHead() {
     head.replaceChildren();
+    // 光らせた印は残さない（隠した頭の行をまた出したときに、もう一度光ってしまう）
+    head.classList.remove('flash');
     head.classList.toggle('unavail', mode === 'blocked');
     if (!mode) { head.hidden = true; return; }
     head.hidden = false;
@@ -155,6 +157,7 @@ export function createShellComposer({ box, prompt, head, send, t, availability, 
     head.classList.remove('flash');
     void head.offsetWidth;
     head.classList.add('flash');
+    head.addEventListener('animationend', () => head.classList.remove('flash'), { once: true });
   }
 
   return {

@@ -136,7 +136,17 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     if (handed.length) emit({ type: 'shell.handed', sessionId, runIds: handed });
   }
 
-  /** 会話の切り替え（バックエンドを替えた）で、渡せなくなった未送の追記を捨てる */
+  /**
+   * 会話のエージェントを替えた（切り替え・予約した設定の適用）。走っている分は止める。
+   * 渡していない追記は、替えた先もホストで走らせる形なら次のターンで渡し、そうでなければ捨てる（渡す口が無い）
+   */
+  async function switched(sessionId, from, to) {
+    stopSession(sessionId);
+    nativeDone.delete(sessionId);
+    if (!(shellMode(from) === 'host' && shellMode(to) === 'host')) await discard(sessionId);
+  }
+
+  /** 渡せなくなった未送の追記を捨てる */
   async function discard(sessionId) {
     nativeDone.delete(sessionId);
     await serial(sessionId, () => store.setSessionData(sessionId, 'shellPending', []));
@@ -177,5 +187,5 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     return out;
   }
 
-  return { start, stop, stopSession, stopAll, appendsFor, delivered, discard, rows, decorate, running: () => runs.size };
+  return { start, stop, stopSession, stopAll, appendsFor, delivered, switched, discard, rows, decorate, running: () => runs.size };
 }

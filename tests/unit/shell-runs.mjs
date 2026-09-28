@@ -82,8 +82,11 @@ export default async function (t) {
     await runs.start({ sessionId: 's3', runId: 'run-all-1', command: 'sleep 20', cwd: process.cwd(), backend: HOST });
     t.ok('会話の分を全部止める（切り替え・削除）', runs.stopSession('s3') === 1);
     await until(() => events.some(e => e.type === 'shell.done' && e.runId === 'run-all-1'));
-    await runs.discard('s3');
-    t.ok('渡せなくなった未送の追記は捨てる', (store.data.s3?.shellPending ?? []).length === 0);
+    await until(() => store.data.s3?.shellPending?.length === 1);
+    await runs.switched('s3', HOST, { id: 'fake', capabilities: { shell: 'host' } });
+    t.ok('ホストで走らせるエージェントどうしの切り替えでは、未送の追記を次のターンで渡す', store.data.s3.shellPending.length === 1);
+    await runs.switched('s3', HOST, { id: 'codex', capabilities: { shell: 'native' } });
+    t.ok('渡す口の違うエージェントに替えたら、未送の追記は捨てる', (store.data.s3?.shellPending ?? []).length === 0);
   }
 
   // ---- 使えない会話・エージェントが走らせる会話

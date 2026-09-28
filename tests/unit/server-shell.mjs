@@ -52,6 +52,9 @@ export default async function (t) {
     t.ok('渡した後の履歴は kind: shell の 1 行（渡した・終了コードつき）で、人の発言より前', rows.length === 1 && !rows[0].pending && rows[0].exitCode === 2
       && rows[0].command === 'echo from-shell; exit 2' && loaded.messages.indexOf(rows[0]) < userIdx, JSON.stringify(loaded.messages.map(m => [m.role, m.kind, m.text])));
 
+    const titled = (await c.cmd('listSessions')).find(s => s.id === sessionId);
+    t.ok('会話の題は `!` の行ではなく最初の人の発言から取る', titled?.title === 'echo:見た？', titled?.title);
+
     // 止める
     const stopFrom = c.mark();
     await c.cmd('runShell', { sessionId, runId: 'shell-stop-0001', command: 'echo go; sleep 30', cwd: ROOT });

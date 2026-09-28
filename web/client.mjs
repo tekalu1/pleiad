@@ -763,11 +763,13 @@ function onShellEvent(ev) {
 
 /** 空の欄の先頭で `!` を打ったときに、いまの会話で走らせられるか */
 function shellAvailability() {
-  const backend = activeBackendId();
-  const caps = capsOf(backend);
-  if (!caps.shell) return { ok: false, text: t('chat.shell.unavailable', { agent: labelOf(backend) || 'AI' }) };
-  // Codex はスレッドができてから（最初の発言の後）
   const row = state.sessions.find(s => s.id === state.current);
+  // 次の送信でエージェントが替わる予約があれば、渡す先（替えた先）で決める。ホストで走らせる形どうしでなければ渡せない
+  const current = activeBackendId();
+  const backend = row?.nextSettings?.backend ?? current;
+  const caps = capsOf(backend);
+  if (!caps.shell || (backend !== current && !(caps.shell === 'host' && capsOf(current).shell === 'host'))) return { ok: false, text: t('chat.shell.unavailable', { agent: labelOf(backend) || 'AI' }) };
+  // Codex はスレッドができてから（最初の発言の後）
   if (caps.shell === 'native' && (!row || row.unsent || state.current === freshSessionId)) return { ok: false, text: t('chat.shell.notStarted') };
   return { ok: true };
 }
@@ -1582,7 +1584,7 @@ function onEvent(ev, replay = false) {
       renderAuth();
       break;
     case "nextSettings":
-      return refresh();
+      return refresh().then(() => shellComposer.sync());
     case "backend":
       if (ev.applied) return refresh().then(() => shellComposer.sync());
       sys(html.t("chat.sys.agentChanged", { agent: labelOf(ev.backend) }));
@@ -4652,7 +4654,8 @@ function paintContextLine() {
   thread.querySelector('.mw[data-key="context"]')?.remove();
   const report = state.contextInfo?.report;
   if (!report) return;
-  const anchor = thread.querySelector('.mw:has(.m[data-role="user"])');
+  // 最初の人の発言の下（コマンド・`!` の行（.cmd）ではなく）
+  const anchor = thread.querySelector('.mw:has(.m[data-role="user"]:not(.cmd))');
   if (!anchor) return;
   const m = el("button", "ctx-chip");
   m.type = 'button';

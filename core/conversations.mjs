@@ -426,7 +426,10 @@ export function wrapBackend(native) {
           const info = await native.getSession(r.nativeId).catch(() => null);
           const meta = await store.get(id);
           if ((!meta.title || meta.title === "新しいセッション") && !meta.history?.some(h => h.field === "title")) { // i18n-ignore: 過去の記録の既定タイトルとの照合
-            const title = info?.title?.trim() || messages.find(m => m.role === "user" && m.text)?.text?.trim().slice(0, 80);
+            // 入力欄の `!` の結果は発言の前に渡る（ADR 0054）。その行（<bash-input>・CLI が題に使う `! コマンド`）は題にせず、最初の人の発言を使う
+            const nativeTitle = info?.title?.trim();
+            const title = (nativeTitle && !/^(<[a-z-]+>|! )/.test(nativeTitle) ? nativeTitle : '')
+              || classifySystemMessages(messages).find(m => m.role === "user" && !m.kind && m.text)?.text?.trim().slice(0, 80);
             if (title) await store.setMeta(id, { title });
           }
         }

@@ -1897,7 +1897,10 @@ async function runTurnInternal(args, onStarted, hooks) {
       const target = getBackend(reserved.backend);
       if (!target || !await validModel(target, reserved.model, cwd, endpointId) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error(t('turn.reservedInvalid'));
       await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo);
-      if (target.id !== backend.id) await switchBackend(sessionId, backend, target);
+      if (target.id !== backend.id) {
+        await switchBackend(sessionId, backend, target);
+        await shellRuns.switched(sessionId, backend, target);
+      }
       backend = target;
     }
     // Reject before marking the conversation sent or consuming its pending handoff.
@@ -3033,7 +3036,7 @@ wss.on("connection", (ws, req) => {
             if (!source || !target) throw new Error(t('agents.notFound'));
             await switchBackend(sessionId, source, target);
             // 入力欄の `!`: 走っている分は止め、渡していない分は捨てる（前のエージェントの形でしか渡せない。ADR 0054）
-            if (source.id !== target.id) { shellRuns.stopSession(sessionId); await shellRuns.discard(sessionId); }
+            if (source.id !== target.id) await shellRuns.switched(sessionId, source, target);
             // 接続先はエージェントごとの形式なので、エージェントが変わったら変えた先の既定（「既定にする」を押したもの。無ければ公式）に置き直す
             if (source.id !== target.id) await store.setSessionData(sessionId, 'compatEndpoint', endpointCapable(target) ? await compatEndpoints.defaultFor(target.id) : '');
             await savePref("backend", target.id);
@@ -3067,6 +3070,9 @@ wss.on("connection", (ws, req) => {
           if (!backend) throw new Error(t('session.notFound'));
           if (!shellMode(backend)) throw Object.assign(new Error(t('shell.unavailable')), { code: 'SHELL_UNAVAILABLE' });
           const sidecar = await store.get(sessionId);
+          // 次の送信でエージェントが替わる予約がある。渡す先がホストで走らせる形でなければ走らせない（渡せないまま残るため）
+          const reservedId = sidecar.nextSettings?.backend;
+          if (reservedId && reservedId !== backend.id && !(shellMode(backend) === 'host' && shellMode(getBackend(reservedId)) === 'host')) throw Object.assign(new Error(t('shell.unavailable')), { code: 'SHELL_UNAVAILABLE' });
           // Codex はスレッドができてから（最初の発言の後）
           if (shellMode(backend) === 'native' && !(await backend.shellReady?.(sessionId) ?? true)) throw Object.assign(new Error(t('shell.notStarted')), { code: 'SHELL_NOT_STARTED' });
           // 送信済みの会話は会話の作業ディレクトリ。まだ送っていない会話は入力欄で選んでいる場所
