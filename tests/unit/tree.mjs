@@ -1,6 +1,6 @@
 // web/tree.mjs の単体テスト。ブラウザは要らない（tests/lib/dom-stub.mjs の最小 DOM で回す）。
-// 見るのは: 開閉・選択・絞り込み・キーボード・遅延読み込みと「さらに表示」・差し替えで開閉を保つ。見た目は tests/unit/design-lint.mjs の担当。
-import { createTree } from '../../web/tree.mjs';
+// 見るのは: 開閉・選択・絞り込み・キーボード・遅延読み込みと「さらに表示」・差し替えで開閉を保つ・横の位置合わせ（scrollX）。見た目は tests/unit/design-lint.mjs の担当。
+import { createTree, scrollLeftFor } from '../../web/tree.mjs';
 
 export const name = 'tree';
 export const title = 'ツリー部品の開閉・選択・絞り込み・キーボード';
@@ -145,4 +145,61 @@ export default async function (t) {
   t.ok('すべて折りたたむと根の直下だけ残る', lnames() === 'R,lazy,empty' && lazy.state().join() === 'R', lnames());
   t.ok('reveal で祖先を開き直せる', lazy.reveal('L1') && lnames() === 'R,lazy,l1,empty', lnames());
   lazy.scrollToRow('L1');   // 最小 DOM は大きさを持たない。呼んでも落ちないことだけ
+
+  // ---- 横の位置合わせ（純粋な関数）: 座標は中身の左端から。欄 200、⋯ の分 30 ----
+  const x = (o) => scrollLeftFor({ width: 200, reserve: 30, ...o });
+  t.ok('名前が欄に収まれば 0 に戻す', x({ scroll: 120, start: 20, end: 150 }) === 0);
+  t.ok('収まっていて頭も見えていれば動かさない', x({ scroll: 10, start: 20, end: 150 }) === 10);
+  t.ok('force なら見えていても 0 に合わせ直す', x({ scroll: 10, start: 20, end: 150, force: true }) === 0);
+  t.ok('収まらなければ名前の終わり＋⋯が見える最小の量', x({ scroll: 0, start: 160, end: 300 }) === 130);
+  t.ok('名前の終わりと頭が見えていれば動かさない', x({ scroll: 150, start: 160, end: 300 }) === 150);
+  t.ok('force なら見えていても最小の量へ合わせ直す', x({ scroll: 150, start: 160, end: 300, force: true }) === 130);
+  t.ok('右へ行き過ぎていれば最小の量へ戻す', x({ scroll: 400, start: 160, end: 300 }) === 130);
+  t.ok('頭と終わりが同時に見えなければ名前の終わりを優先', x({ scroll: 0, start: 160, end: 500 }) === 330);
+  t.ok('その位置のままなら動かさない', x({ scroll: 330, start: 160, end: 500 }) === 330);
+
+  // ---- 横の位置合わせ（部品）: 行の部品の位置を深さから作る最小の幾何で回す ----
+  const hroot = document.createElement('div');
+  Object.assign(hroot, { clientWidth: 200, clientLeft: 0, scrollLeft: 0, scrollTop: 0 });
+  hroot.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 280, right: 200, bottom: 280 });
+  const depth = { H: 0, S: 1, D: 9 };
+  const rectAt = (left, width, row) => () => {
+    const i = hroot.querySelectorAll('.tree-row').indexOf(row);
+    return { left: left - hroot.scrollLeft, right: left + width - hroot.scrollLeft, width, top: i * 28 - hroot.scrollTop, bottom: i * 28 + 28 - hroot.scrollTop, height: 28 };
+  };
+  const htree = createTree(hroot, {
+    scrollX: true,
+    nodes: [{ id: 'H', name: 'root', open: true, children: [{ id: 'S', name: 'short' }, { id: 'D', name: 'deep-long-name' }] }],
+    render(n, row) {
+      const left = 24 + depth[n.id] * 16;
+      const ic = document.createElement('span'); ic.className = 'ic'; ic.getBoundingClientRect = rectAt(left, 16, row);
+      const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = n.name; nm.getBoundingClientRect = rectAt(left + 21, n.name.length * 20, row);
+      const more = document.createElement('button'); more.className = 'tree-more'; more.getBoundingClientRect = rectAt(0, 22, row);
+      row.append(ic, nm, more);
+      row.getBoundingClientRect = rectAt(0, 600, row);
+      row.scrollIntoView = () => { hroot.scrollLeft = 100; };   // ブラウザーの scrollIntoView は横にも動かす
+    },
+  });
+  htree.select('D', false, { scroll: false });
+  htree.scrollToRow('D');
+  // 深い行: 頭 168、名前の終わり 168+21+280=469、⋯ 22（行の間隔・余白は getComputedStyle が無いので 0）
+  t.ok('scrollX: 深い行を送ると名前の終わり＋⋯が見える最小の量へ', hroot.scrollLeft === 469 + 22 - 200, String(hroot.scrollLeft));
+  htree.scrollToRow('S');
+  t.ok('scrollX: 浅い行へ移ると 0 に戻る', hroot.scrollLeft === 0, String(hroot.scrollLeft));
+  hroot.scrollLeft = 5;
+  htree.scrollToRow('S');
+  t.ok('scrollX: 見えていれば動かさない', hroot.scrollLeft === 5, String(hroot.scrollLeft));
+  htree.scrollToRow('S', { force: true });
+  t.ok('scrollX: force なら合わせ直す', hroot.scrollLeft === 0, String(hroot.scrollLeft));
+  htree.select('S', false);
+  const hkey = (k) => hroot.dispatchEvent({ type: 'keydown', key: k, preventDefault() {} });
+  hkey('ArrowDown');
+  t.ok('scrollX: キーボードで選んだ行も名前が見える位置へ（scrollIntoView の横の送りは打ち消す）', htree.selected().id === 'D' && hroot.scrollLeft === 291, String(hroot.scrollLeft));
+  hkey('ArrowUp');
+  t.ok('scrollX: キーボードで浅い行へ戻ると 0', htree.selected().id === 'S' && hroot.scrollLeft === 0, String(hroot.scrollLeft));
+  htree.collapseAll();
+  t.ok('scrollX: すべて折りたたむと左端へ戻す', hroot.scrollLeft === 0, String(hroot.scrollLeft));
+  tree.select('c');
+  tree.collapseAll();
+  t.ok('scrollX の無い使い手は横に触らない', root.scrollLeft === undefined);
 }
