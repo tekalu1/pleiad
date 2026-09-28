@@ -721,7 +721,7 @@ AI が `set_status` で状態を変えたときは、その会話 1 本だけが
 | `paired-token` | `--x-bg` と `--x-fg`/`-text`/`-color`/`-ink`/`-line`、または `--x-bg` と有彩色の `--x` | 既定 |
 | `one-sided-line` | `border-top/right/bottom/left(-width/-style/-color)` の単独指定、`inset` の影で片側に置いた線。角丸と `transparent` は拾わない | 既定 |
 | `unknown-token` | 色プロパティの `var(--x)` が未定義 | 既定 |
-| `border-use` | 見える枠線（`border*`、`0`/`none`/`transparent` 以外）。要る箇所は同じ行に `/* allow-border: 理由 */` | strict |
+| `border-use` | 見える枠線（`border*`、`0`/`none`/`transparent` 以外）。要る箇所は同じ行に `/* allow-border: 理由 */`。角丸の個別指定（`border-top-left-radius` など）も枠線として落ちるので、片側だけ丸めるときは `border-radius` の 4 値の短縮形で書く（2026-09-28） | strict |
 | `family` | `background` は `--surface-*`/`--fill-*` のみ、`color` は `--ink-*`/`--on-fill` のみ、線と影は `--line-*`/`--surface-*`/`--shadow`、`text-decoration` は `--line-*`/`--ink-*`、SVG の `fill`/`stroke` は `--line-*`/`--ink-*`/`--fill-*`/`--surface-*`/`currentColor` | strict |
 | `fill-without-on-fill` | `background:var(--fill-*)` の規則に `color:var(--on-fill)` が無い | strict |
 | `token-outside-root` | テーマの 3 スコープ以外に色リテラルを持つトークン定義 | strict |
