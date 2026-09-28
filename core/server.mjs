@@ -397,8 +397,8 @@ async function routeDelegation(args, lng, cwd) {
   if (typeof args.task !== 'string' || !args.task.trim() || args.task.length > 60000) throw new Error(agentT(lng, 'tasks.textLength', { name: 'task', max: 60000 }));
   const [judged] = await Promise.all([
     judgeDifficulty({ kind: args.kind, task: args.task, judge: settings.judgeByKind[args.kind], escalate: settings.escalateToCerebras, keyOf: routingKey }),
-    // 起動直後でまだ一度も使用量を取れていなければ、判定と同じだけ待つ
-    routingUsage.warmUp(JUDGE_TIMEOUT_MS),
+    // 起動直後でまだ一度も取れていない、または古ければ取り直し、判定と同じだけ待つ
+    routingUsage.ensureFresh(JUDGE_TIMEOUT_MS),
   ]);
   // 選んだ候補のモデルを委譲先の場所で確かめ直す。取り置きの後に一覧から消えていたら、既定に落とさず次の候補へ
   const rejected = {};

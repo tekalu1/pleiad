@@ -2181,8 +2181,6 @@
       "avoidUnit": "% 以上",
       "pace": "週次のペース",
       "paceUnit": "倍を超えたら後回し",
-      "stale": "古いとみなす",
-      "staleUnit": "分を超えたら",
       "reset": "既定に戻す",
       "resetConfirm": "委譲の設定を既定に戻しますか。キーは残ります。",
       "saveFailed": "保存できませんでした: {{error}}",

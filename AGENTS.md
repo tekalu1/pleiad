@@ -22,6 +22,7 @@
 - WebSocket のコマンドを足すときは、`core/server.mjs` の `case` に加えて `core/protocol.mjs` の `COMMANDS` にも登録する。登録が無いとサーバーはエラーも返さず黙って捨て、テストの `cmd` は応答待ちのまま止まる（2026-09-28）。
 - `core/server.mjs` の `case "loadSession"` の本文は、`tests/unit/session-stream.mjs` が文字列で切り出して vm の中で走らせる。そこで新しい関数を呼ぶなら、テストの `vm.createContext({ … })` にも渡す。渡さないと `ReferenceError: <名前> is not defined` で落ちる（2026-09-28、`attachCompactSummaries`）。
 - サーバー越しのテストで fake-codex のターンを走らせるときは `open({ ...host, autoAllow: true })` でつなぐ。fake-codex の既定の台本はコマンドの承認を求めるので、無いと `runTurn` が承認待ちで止まる（`open(host, { autoAllow: true })` のように第 2 引数で渡しても効かない）。
+- `setTimeout(ms).unref?.()` を `Promise.race` に使う「最長 ms だけ待つ」処理（`core/delegation-usage.mjs` の `ensureFresh` など）を単体テストで確かめるとき、待たせる側（遅い処理）を手動で解決する Promise（`new Promise(r => { resolve = r })`）だけにすると、イベントループを保つものが無くなり、unref のタイマーごと発火せずに固まる（2026-09-28、`tests/unit/delegation-routing.mjs`）。待たせる側は必ず実タイマー（`setTimeout(fn, ms)`。unref しない）にする。
 - `npm run test:e2e` は実際の LLM を呼び出すため、実サービスとの接続確認が必要な変更で実行する。
 - 現在は独立したビルドコマンドはない。文書のみの変更では、内容と `git diff --check` の確認を行えばよい。
 - UI の変更では必要に応じてブラウザーで表示・操作を確認する。ブラウザー自動化は、まずシェルで `playwright-cli` と `agent-browser` の利用可否を調べ、前者があれば優先し、なければ後者を使う。ユーザーによるツール・ブラウザー指定があればそれに従う。
