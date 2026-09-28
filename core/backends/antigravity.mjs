@@ -232,7 +232,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, hooksRuntime = null }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, addedInstructions, hooksRuntime = null }) {
     const m = MODES[modeFor(mode)];
 
     // **控えはターンの終わりに書くが、送信の時刻はここで取る。**
@@ -268,11 +268,11 @@ export const backend = {
     const fresh = !session;
     if (fresh) {
       // 会話ごとのエージェント定義（Pleiad の置き場）と、中継に渡す接続先・トークン（env）
-      // カスタムエージェントを使うのは、Pleiad のコンテキストかブラウザーの指示を渡すときだけ。
+      // カスタムエージェントを使うのは、Pleiad のコンテキスト・ブラウザーの指示・委譲の子への指示を渡すときだけ。
       // Hooks だけを Pleiad がそろえるときは、置き場（--add-dir）だけを作る（既定のエージェントのまま。inheritCustomizations に頼らない）
-      const useAgent = Boolean(contextRuntime || browserInstructions);
+      const useAgent = Boolean(contextRuntime || browserInstructions || addedInstructions);
       const agent = useAgent || hooksRuntime ? await prepareAgent({ owners: contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' },
-        prompt: [contextRuntime?.prompt, browserInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale,
+        prompt: [contextRuntime?.prompt, browserInstructions, addedInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale,
         context: useAgent, hooks: hooksRuntime }) : null;
       session = new AgySession({
         cwd,

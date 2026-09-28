@@ -185,7 +185,7 @@ export const EVENTS = new Set([
   "text.end",        // { uuid? } 本文の追記が終わった。uuid は確定した発言の id（分岐の起点に使う）
   "thinking.start",  // 考え始めた
   "thinking.delta",  // { text?, estimatedTokens? }
-  "tool.start",      // { id, name, input }
+  "tool.start",      // { id, name, input, turnId?, startedAt?, processId? }
   "tool.result",     // { id, text, isError, truncated }
   "activity",        // { state: thinking|writing|compacting|waiting|running|idle, label? }
   "compaction", "contextWindow", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",

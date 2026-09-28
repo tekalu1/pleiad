@@ -31,7 +31,7 @@ const MAX_ITEMS = 50, MAX_BODY = 32 * 1024, MAX_NAME = 80;
 const builtinName = (locale, id) => agentT(locale, `guide.names.${id}`);
 function builtinBody(locale, id) {
   if (id === 'delegate') return [`- ${agentT(locale, 'guide.delegate')}`, `- ${agentT(locale, 'guide.main')}`].join('\n');
-  if (id === 'child') return agentT(locale, 'guide.child');
+  if (id === 'child') return [agentT(locale, 'guide.child'), agentT(locale, 'guide.commandLifetime')].join('\n');
   if (id === 'codexPolicy') return agentT(locale, 'guide.codexPolicy');
   return `- ${agentT(locale, 'guide.route')}`;
 }
@@ -86,7 +86,7 @@ export function resolvePlyInstructions(list, locale) {
 export const itemText = (locale, item) => `${agentT(locale, 'guide.heading', { name: item.name })}\n${item.body}`;
 
 /**
- * このターンに入れる Pleiad の指示。ply_agents を持たないバックエンド（antigravity）では null（記録もしない）。
+ * このターンに入れる Pleiad の指示。ply_agents を持たない子にはコマンドの実行指示だけを入れる。
  * 項目ごとに { id, name, target, inserted, text? , reason? }。入れない理由:
  *   off（スイッチで切った）/ target（入れる会話が違う）/ agent（このエージェントは選んでいない）/
  *   readOnly（読み取り・計画モードの依頼元。ply_delegate を受け付けないので委譲の項目は入れない）/ routingOff（委譲先の自動選択が無効）
@@ -94,7 +94,8 @@ export const itemText = (locale, item) => `${agentT(locale, 'guide.heading', { n
  * agent は backend の種類（claude / codex）。それ以外（fake など）はどのエージェントの項目も入れる
  */
 export function turnInstructions({ list, locale, child, routing, supported, canDelegate, agent = null }) {
-  if (!supported) return null;
+  if (!supported) return child ? [{ id: 'childCommand', name: builtinName(locale, 'child'), target: 'child', inserted: true,
+    text: agentT(locale, 'guide.commandLifetime') }] : null;
   return resolvePlyInstructions(list, locale).map(item => {
     const base = { id: item.id, name: item.name, target: item.target };
     const skip = reason => ({ ...base, inserted: false, reason });

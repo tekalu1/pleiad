@@ -72,7 +72,7 @@ export default async function (t) {
       AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests', 'lib', 'fake-agy.mjs')}"`,
       FAKE_AGY_AGENT_FILE: agentFile, FAKE_AGY_ARGS_FILE: argsFile, FAKE_AGY_PID_FILE: pidFile,
     } });
-    client = await open(host);
+    client = await open({ ...host, autoAllow: true });
     await client.cmd('savePlyMcp', { name: 'fixture', mode: 'add', value: { transport: 'stdio', command: process.execPath, args: [script], env: { MARK: 'ply', API_KEY: 'AGY_ENV_SECRET' } } });
     // 担当はすべて Pleiad（この場所の上書き）。探すのは Claude 形式、MCP は home 側も（Pleiad の登録を含む）
     for (const kind of ['instruction', 'skill', 'mcp']) await client.cmd('setContextSettings', { cwd, place: cwd, kind,
@@ -111,13 +111,25 @@ export default async function (t) {
     const outside = await fetch(agent.url, { method: 'POST', headers: { authorization: agent.authorization, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) });
     t.ok('ターンの外ではそのトークンでも ply_context に入れない', outside.status === 401);
 
+    t.ok('通常の agy 会話には子のコマンド実行指示を入れない', !body.includes('Start-Process -Wait'));
+    const delegated = await client.runTurn({ backend: 'fake', cwd,
+      prompt: 'ply:' + JSON.stringify({ name: 'ply_delegate', arguments: { kind: 'mechanical', backend: 'antigravity', task: 'agent-body' } }) }, { ms: 30000 });
+    const task = JSON.parse(delegated.events.find(e => e.type === 'tool.result' && e.text.includes('"taskId"')).text);
+    let child;
+    for (let i = 0; i < 600; i++) {
+      child = (await client.cmd('agentTasks')).find(x => x.taskId === task.taskId);
+      if (child?.status === 'completed') break;
+      await new Promise(r => setTimeout(r, 50));
+    }
+    t.ok('agy の委譲された子には時間上限・PID管理・無期限待機禁止が実際に届く', child?.status === 'completed' && child.result.includes('Start-Process -Wait') && child.result.includes('PID'));
+
     // ---- 前の起動が残した置き場は、次の起動で消す（強制終了では agy の終了を待てないため）
     client.close(); client = null;
     await host.stop(); host = null;
     const stale = path.join(dataDir, 'antigravity', 'context', '999999-deadbeef0000');
     await fs.mkdir(path.join(stale, '.agents'), { recursive: true });
     host = await startServer({ dataDir, timeoutMs: 30_000, env: { AGENT_HOST_BACKENDS: 'fake,antigravity', AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests', 'lib', 'fake-agy.mjs')}"` } });
-    client = await open(host);
+    client = await open({ ...host, autoAllow: true });
     const left = await fs.readdir(path.join(dataDir, 'antigravity', 'context')).catch(() => []);
     t.ok('持ち主の居ない置き場は次の起動で消える', !left.includes('999999-deadbeef0000') && !left.includes(path.basename(home)), JSON.stringify(left));
   } finally {

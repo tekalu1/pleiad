@@ -20,6 +20,13 @@ export function resultText(c) {
   return "";
 }
 
+// A Bash result can acknowledge launch while the process is still alive.
+function backgroundCommandResult(result, content) {
+  const id = result?.backgroundTaskId
+    ?? resultText(content).match(/(?:Command|Task) running in background with ID:\s*([\w-]+)/i)?.[1];
+  return id ? { commandBackground: true, nativeTaskId: String(id) } : {};
+}
+
 /** A headless slash command can finish without a compaction boundary or assistant reply. */
 export function createClaudeCompactDiagnostic() {
   let output = '', boundary = false, answer = false;
@@ -55,6 +62,15 @@ export function normalizeSdkMessage(m) {
   // カードが main の会話に積まれ、履歴（transcriptToMessages は落とす）を読み直すと消える。
   // 子の中身は「サブエージェント N」の画面（listSubagents / getSubagentMessages）で見る
   if ((m.type === "assistant" || m.type === "user" || m.type === "stream_event") && m.parent_tool_use_id) return out;
+
+  if (m.type === 'tool_progress') return [{ type: 'task.activity' },
+    { type: 'task.command', id: m.tool_use_id, nativeTaskId: m.task_id }];
+  if (m.type === 'system' && ['task_started', 'task_updated', 'task_notification'].includes(m.subtype)) {
+    const p = m.patch ?? m;
+    return [{ type: 'task.command', id: m.tool_use_id, nativeTaskId: m.task_id,
+      state: m.subtype === 'task_notification' ? m.status
+        : ['completed', 'failed', 'stopped', 'killed'].includes(p.status) ? p.status : p.is_backgrounded ? 'background' : p.status }];
+  }
 
   // ---- 部分メッセージ（includePartialMessages: true でだけ来る）
   if (m.type === "stream_event") {
@@ -109,6 +125,7 @@ export function normalizeSdkMessage(m) {
         text: resultText(b.content),
         isError: Boolean(b.is_error),
         truncated: false,
+        ...backgroundCommandResult(m.tool_use_result, b.content),
       });
     }
     return out;

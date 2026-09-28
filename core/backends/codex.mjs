@@ -16,6 +16,7 @@ import os from "node:os";
 import { codexQuota, createCodexMeter } from '../usage.mjs';
 import { rpc } from "./codex-rpc.mjs";
 import { rpc as nativeRpc } from './codex-rpc.mjs';
+import { commandActivity } from "./codex-background.mjs";
 import { createTerminalTracker } from "./codex-background.mjs";
 import { codexContextRpc } from './context-options.mjs';
 import { CodexRpc } from './codex-rpc.mjs';
@@ -890,19 +891,21 @@ const noSuchMethod = (err) =>
   err?.code === -32601 || (err?.code === -32600 && /unknown variant/i.test(String(err?.message ?? "")));
 
 const report = (w) => {
+  for (const x of w.tracker.list()) host?.event?.(w.sessionId, { type: "task.command", id: x.id, state: "background" });
   host?.background?.(w.sessionId, w.tracker.list());
   syncReconcile();
 };
 
 /** 裏で終わった端末の結果を、終わったターンのツールカードへ差し込む。 */
 const reportFinished = (w, item) =>
-  host?.event?.(w.sessionId, { type: "tool.result", id: item.id, ...toolResult(item) });
+  host?.event?.(w.sessionId, { type: "tool.result", id: item.id, commandCompleted: true, ...toolResult(item) });
 
 function onWatchedNotification(method, params) {
   const threadId = params?.threadId;
   const w = threadId ? trackers.get(threadId) : null;
   if (!w) return;
   const { changed, finished } = w.tracker.observe(method, params);
+  for (const event of commandActivity(method, params)) host?.event?.(w.sessionId, event);
   if (finished) reportFinished(w, finished);
   if (changed) report(w);
 }
@@ -996,7 +999,9 @@ async function reconcileAll() {
       continue;
     }
     if (entries === null) continue;   // 読み切れなかった。消さずに見送る
+    const before = w.tracker.list();
     const { changed, understood } = w.tracker.reconcile(entries);
+    if (understood) for (const x of before) if (!w.tracker.has(x.id)) host?.event?.(w.sessionId, { type: "task.command", id: x.id, state: "completed" });
     if (!understood) {
       // 応答はあるが、端末を見分ける id を拾えなかった。実機の要素の形が分かったら reconcile を直す
       if (!warnedShape) {
@@ -1169,7 +1174,10 @@ export const backend = {
     nativeRpc.onNotify(onWatchedNotification);
     // app-server が落ちた・入れ替わった。走っていた端末は道連れなので、数えたままにしない
     nativeRpc.onDown(() => {
-      for (const [, w] of [...trackers]) if (w.tracker.clear()) host?.background?.(w.sessionId, []);
+      for (const [, w] of [...trackers]) {
+        for (const id of w.tracker.commandIds()) host?.event?.(w.sessionId, { type: "task.command", id, state: "unknown" });
+        if (w.tracker.clear()) host?.background?.(w.sessionId, []);
+      }
       trackers.clear();
       syncReconcile();
     });
@@ -1302,6 +1310,7 @@ export const backend = {
     const observe = rpc === nativeRpc ? () => {} : observeSubagents;
     const onNotification = (method, params) => {
       observe(method, params);
+      for (const event of commandActivity(method, params)) emit(event);
       switch (method) {
         case 'thread/tokenUsage/updated':
           if (!turnId || (params.turnId && params.turnId !== turnId)) return;
@@ -1335,7 +1344,8 @@ export const backend = {
           noteDelivered(item);
           if (!TOOL_ITEMS.has(item.type)) return;
           emit({ type: "activity", state: "running", label: t("activity.tool", { label: TOOL_HINTS[item.type]?.label ?? item.type }) });
-          return emit({ type: "tool.start", id: item.id, name: item.type, input: toolInput(item) });
+          return emit({ type: "tool.start", id: item.id, name: item.type, input: toolInput(item),
+            turnId: params.turnId, startedAt: params.startedAtMs, processId: item.processId });
         }
 
         // 差分が後から確定することがある。承認カードに載せるので覚え直す
@@ -1358,9 +1368,10 @@ export const backend = {
           noteDelivered(item);
           if (item.type === "reasoning" && thinkingOpen) thinkingOpen = false;
           if (!TOOL_ITEMS.has(item.type)) return;
-          if (!started) emit({ type: "tool.start", id: item.id, name: item.type, input: toolInput(item) });
+          if (!started) emit({ type: "tool.start", id: item.id, name: item.type, input: toolInput(item),
+            turnId: params.turnId, startedAt: params.startedAtMs, processId: item.processId });
           const r = toolResult(item);
-          return emit({ type: "tool.result", id: item.id, ...r });
+          return emit({ type: "tool.result", id: item.id, commandCompleted: item.type === "commandExecution", ...r });
         }
 
         case "turn/completed": {

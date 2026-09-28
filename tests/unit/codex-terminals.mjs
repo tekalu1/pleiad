@@ -103,6 +103,7 @@ export default async function (t) {
     await push(
       turnStarted(first.turnId),
       itemStarted(first.turnId, terminal("call_dev", "npm run dev")),
+      { method: "item/commandExecution/outputDelta", params: { threadId: THREAD, turnId: first.turnId, itemId: "call_dev", delta: "output" } },
       // 同じターンの中で終わる普通のコマンド。裏には残らない
       itemStarted(first.turnId, plain("call_ls", "ls")),
       itemCompleted(first.turnId, plain("call_ls", "ls", { status: "completed", exitCode: 0, aggregatedOutput: "core web" })),
@@ -110,6 +111,8 @@ export default async function (t) {
       turnCompleted(first.turnId),
     );
     await first.run;
+    t.ok("出力差分は画面用本文を増やさず活動を出す", events.some(e => e.type === "task.activity") && !events.some(e => e.type === "text.delta" && e.text === "output"));
+    t.ok("実際の開始情報を正規化して渡す", events.some(e => e.type === "tool.start" && e.id === "call_dev" && Number.isFinite(e.startedAt) && e.turnId === first.turnId));
 
     t.ok("ターンは普通に ok で終わる（端末の終了を待たない）",
       events.some((e) => e.type === "turnResult" && e.outcome === "ok"));
@@ -127,7 +130,7 @@ export default async function (t) {
     await push({ method: 'item/commandExecution/outputDelta', params: {
       threadId: THREAD, turnId: first.turnId, itemId: 'call_dev', delta: 'Listening on 5191\n',
     } });
-    t.ok('ターン終了後も端末の出力を詳細で読める', backend.getBackgroundTask(THREAD, 'call_dev')?.output === 'Listening on 5191\n');
+    t.ok('ターン終了後も端末の出力を詳細で読める', backend.getBackgroundTask(THREAD, 'call_dev')?.output === 'outputListening on 5191\n');
     t.ok('別の会話から端末の出力を取得できない', backend.getBackgroundTask('other-session', 'call_dev') === null);
     t.ok('閲覧では終了要求を送らない', (await state()).terminated.length === 0);
 
@@ -158,8 +161,8 @@ export default async function (t) {
     t.ok("古いターンのアイテムが、いま走っているターンのカードとして生えない",
       !second.some((e) => e.type === "tool.start" && e.id === "call_old"),
       JSON.stringify(second.filter((e) => e.type === "tool.start").map((e) => e.id)));
-    t.ok("数えていない端末の完了では、ターンの外へも何も出さない",
-      !outside.some(([, e]) => e.id === "call_old"), JSON.stringify(outside.map(([, e]) => e.id)));
+    t.ok("数えていない端末の完了では、画面用の結果を出さない",
+      !outside.some(([, e]) => e.type === "tool.result" && e.id === "call_old"), JSON.stringify(outside.map(([, e]) => e.id)));
 
     // ---- thread/backgroundTerminals/list との照合（取りこぼした終了を引く）
     //
