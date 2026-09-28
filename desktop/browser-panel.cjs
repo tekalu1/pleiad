@@ -127,7 +127,9 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     // 通常の新しいタブ（target=_blank）は内蔵ブラウザーの新しいタブにする（opener なし）
     c.setWindowOpenHandler(({ url: next, disposition, features }) => {
       const target = openable(next);
-      if (target && navigable(target)) {
+      // ログインのポップアップは空の窓（about:blank）を先に開けてから行き先を入れることがあるので、それも窓で開く
+      const blankPopup = disposition === 'new-window' && (!next || next === 'about:blank');
+      if (blankPopup || (target && navigable(target))) {
         if (disposition === 'new-window') {
           const parsedFeatures = (features || '').split(',').reduce((acc, f) => {
             const [k, v] = f.split('=');

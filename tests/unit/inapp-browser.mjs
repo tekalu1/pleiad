@@ -321,9 +321,13 @@ export default async function (t) {
   // ポップアップ（disposition: 'new-window'）は action: 'allow' になり別の窓で開く
   const popupResult = firstContents.openHandler({ url: 'https://example.org/popup', disposition: 'new-window', features: 'width=400,height=300' });
   assert.equal(popupResult.action, 'allow');
-  assert.deepEqual(popupResult.overrideBrowserWindowOptions.webPreferences, { session: panel.session, contextIsolation: true, sandbox: true, nodeIntegration: false, preload: '' });
+  assert.deepEqual(popupResult.overrideBrowserWindowOptions.webPreferences, { session: panel.session, contextIsolation: true, sandbox: true, nodeIntegration: false }, 'ポップアップに本体の preload を付けない');
   assert.equal(popupResult.overrideBrowserWindowOptions.width, 400);
   assert.equal(popupResult.overrideBrowserWindowOptions.height, 300);
+  // ログインのポップアップは空の窓を先に開けてから行き先を入れることがある
+  assert.equal(firstContents.openHandler({ url: 'about:blank', disposition: 'new-window', features: 'width=400,height=300' }).action, 'allow', '空のポップアップも窓で開く');
+  assert.equal(firstContents.openHandler({ url: '', disposition: 'new-window', features: '' }).action, 'allow');
+  assert.equal(firstContents.openHandler({ url: 'file:///C:/a.html', disposition: 'new-window', features: '' }).action, 'deny', 'file: のポップアップは開かない');
   let prevented = false;
   const popupWin = { webContents: { on: (n, f) => { if (n === 'will-navigate') f({ preventDefault: () => { prevented = true; } }, 'file:///C:/a'); }, setWindowOpenHandler: () => {} }, setMenuBarVisibility: () => {} };
   firstContents.emit('did-create-window', popupWin, { url: 'https://example.org/popup' });
