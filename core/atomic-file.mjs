@@ -20,11 +20,11 @@ export async function renameRetry(from, to, { io = fs, delays = RENAME_DELAYS } 
   }
 }
 
-/** 一意な一時ファイルに書いてから置き換える。失敗しても一時ファイルは残さない */
-export async function writeAtomic(file, data, { io = fs, delays = RENAME_DELAYS } = {}) {
+/** 一意な一時ファイルに書いてから置き換える。失敗しても一時ファイルは残さない。mode は一時ファイルを作るときの権限（置き換えた後もそのまま） */
+export async function writeAtomic(file, data, { io = fs, delays = RENAME_DELAYS, mode = undefined } = {}) {
   const tmp = `${file}.${crypto.randomUUID()}.tmp`;
   try {
-    await io.writeFile(tmp, data, { encoding: 'utf8', flag: 'wx' });
+    await io.writeFile(tmp, data, { encoding: 'utf8', flag: 'wx', ...(mode !== undefined ? { mode } : {}) });
     await renameRetry(tmp, file, { io, delays });
   } finally { await io.rm(tmp, { force: true }).catch(() => {}); }
 }

@@ -154,6 +154,7 @@ const activityItem = (id, kind, child, agentPath) =>
 // 承認を拒否されたら status: "declined" のまま完了させる（本物と同じ形）。
 async function runTurn(t, turnId, text) {
   notify("turn/started", { threadId: t.id, turn: { id: turnId, items: [], status: "inProgress" } });
+  emitHookRuns(t, turnId);
 
   // 思考（要約）。thinking.start / thinking.delta に写るはず
   notify("item/reasoning/summaryTextDelta", {
@@ -432,6 +433,54 @@ function seedSubagents(cwd) {
 
 // ---- ディスパッチ -----------------------------------------------------------
 
+// ---- hooks（Hooks を Pleiad がそろえる会話。ADR 0049）
+// 起動の -c hooks=<表>（本物では source: sessionFlags・sourcePath "<session-flags>/config.toml"）。プローブが hash を取るのに使う
+import { parse as tomlParse } from "smol-toml";
+import crypto from "node:crypto";
+const LAUNCH_HOOKS = (() => {
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length - 1; i++) if (argv[i] === '-c' && argv[i + 1].startsWith('hooks=')) {
+    try { return tomlParse(`hooks = ${argv[i + 1].slice(6)}`).hooks; } catch { return null; }
+  }
+  return null;
+})();
+const snake = s => s.replace(/[A-Z]/g, (c, i) => (i ? '_' : '') + c.toLowerCase());
+const FLAGS_PATH = process.platform === 'win32' ? 'C:\\<session-flags>\\config.toml' : '/<session-flags>/config.toml';
+// 定義の hash（本物の計算は分からないので、同じ定義なら同じ値になる形だけ真似る）
+const hookHash = (event, g, h) => `sha256:${crypto.createHash('sha256').update(JSON.stringify([event, g.matcher ?? null, h])).digest('hex')}`;
+function rowsOf(map, file, source, trust) {
+  return Object.entries(map ?? {}).filter(([k, v]) => k !== 'state' && Array.isArray(v)).flatMap(([event, groups]) => groups.flatMap((g, gi) => (g.hooks ?? []).map((h, hi) => ({
+    key: `${file}:${snake(event)}:${gi}:${hi}`, eventName: event[0].toLowerCase() + event.slice(1), handlerType: 'command', command: h.command,
+    matcher: g.matcher ?? null, sourcePath: file, source, enabled: true, isManaged: false, currentHash: hookHash(event, g, h), trustStatus: trust }))));
+}
+/** ユーザー（CODEX_HOME/hooks.json）とプロジェクト（<cwd>/.codex/hooks.json）の定義。信頼状態は FAKE_CODEX_HOOK_TRUST（既定 untrusted） */
+function nativeHooks(cwd) {
+  const read = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')).hooks ?? {}; } catch { return {}; } };
+  const trust = process.env.FAKE_CODEX_HOOK_TRUST || 'untrusted';
+  const user = process.env.CODEX_HOME ? path.join(process.env.CODEX_HOME, 'hooks.json') : null;
+  const project = cwd ? path.join(cwd, '.codex', 'hooks.json') : null;
+  return [...(user ? rowsOf(read(user), user, 'user', trust) : []), ...(project ? rowsOf(read(project), project, 'project', trust) : []),
+    ...(LAUNCH_HOOKS ? rowsOf(LAUNCH_HOOKS, FLAGS_PATH, 'sessionFlags', 'untrusted') : [])];
+}
+/**
+ * ターンの始めに、走るはずの hooks の hook/started・hook/completed を出す（コマンドは動かさない）。
+ * ネイティブ: 信頼済み（FAKE_CODEX_HOOK_TRUST=trusted）で state の enabled:false でないもの。
+ * thread の config の hooks: state の trusted_hash が定義の hash と同じもの（source: sessionFlags）
+ */
+function emitHookRuns(t, turnId) {
+  const state = t.hooksConfig?.state ?? {};
+  const native = nativeHooks(t.cwd).filter(h => h.source !== 'sessionFlags');
+  const mine = t.hooksConfig ? rowsOf(t.hooksConfig, FLAGS_PATH, 'sessionFlags', 'untrusted') : [];
+  const runs = [...native.filter(h => h.trustStatus === 'trusted' && state[h.key]?.enabled !== false),
+    ...mine.filter(h => state[h.key]?.trusted_hash === h.currentHash && state[h.key]?.enabled !== false)];
+  for (const h of runs) {
+    const run = { id: `hr_${++seq}`, eventName: h.eventName, source: h.source, sourcePath: h.sourcePath, handlerType: 'command', executionMode: 'sync', scope: 'turn',
+      displayOrder: 0, entries: [], startedAt: Date.now() };
+    notify('hook/started', { threadId: t.id, turnId, run: { ...run, status: 'running' } });
+    notify('hook/completed', { threadId: t.id, turnId, run: { ...run, status: 'completed', durationMs: 5, completedAt: Date.now() } });
+  }
+}
+
 // 接続先（modelProvider）の扱いを本物に寄せる（スパイク 2026-09-23）: ロード済みのスレッドへの thread/resume は
 // modelProvider・config を無視し、thread/unsubscribe の後の resume なら新しい接続先が効く。
 // FAKE_CODEX_LOG があれば、そのファイルへ 1 行 JSON で記録する（テストが「どの接続先・鍵・モデルでターンが走ったか」を見る）
@@ -441,6 +490,8 @@ const record = (entry) => { if (LOG) fs.appendFileSync(LOG, JSON.stringify(entry
 function applyProvider(t, params) {
   if (t.loaded) return;
   t.loaded = true;
+  // hooks の config（Hooks を Pleiad がそろえる会話）も読み込んだときのものだけが効く（ロード済みの resume では変わらない）
+  t.hooksConfig = params?.config?.hooks ?? null;
   const id = params?.modelProvider ?? "openai";
   const def = params?.config?.[`model_providers.${id}`] ?? null;
   t.provider = { id, baseUrl: def?.base_url ?? null, bearer: def?.experimental_bearer_token ?? null, headers: def?.http_headers ?? null,
@@ -486,7 +537,7 @@ async function handle(method, params) {
       if (!t) throw new Error(`知らない threadId: ${params?.threadId}`);
       if (params?.model) t.model = params.model;
       applyProvider(t, params);
-      record({ method, threadId: t.id, modelProvider: params?.modelProvider ?? null, model: params?.model ?? null });
+      record({ method, threadId: t.id, modelProvider: params?.modelProvider ?? null, model: params?.model ?? null, hooks: Boolean(params?.config?.hooks) });
       return {
         thread: wire(t, false),
         approvalPolicy: params?.approvalPolicy ?? "untrusted",
@@ -522,7 +573,7 @@ async function handle(method, params) {
       if (params?.cwd) t.cwd = params.cwd;
       const turnId = `tn_${++seq}`;
       const text = (params?.input ?? []).filter((i) => i?.type === "text").map((i) => i.text).join("");
-      record({ method, threadId: t.id, provider: t.provider ?? null, model: t.model ?? null, effort: params?.effort ?? null, ephemeral: Boolean(t.ephemeral), developerInstructions: t.developerInstructions ?? null });
+      record({ method, threadId: t.id, provider: t.provider ?? null, model: t.model ?? null, effort: params?.effort ?? null, ephemeral: Boolean(t.ephemeral), developerInstructions: t.developerInstructions ?? null, hooks: t.hooksConfig ?? null });
       if (t.ephemeral && process.env.FAKE_CODEX_CHECK_TITLE === "1") {
         if (t.model !== "gpt-5.6-luna" || params?.effort !== "low") {
           throw new Error("Title generation must use Luna with low effort");
@@ -567,6 +618,7 @@ async function handle(method, params) {
       return {};
     }
 
+    case "fake/hooks": return { launch: LAUNCH_HOOKS };
     case "thread/unsubscribe": {
       const gone = threads.get(params?.threadId);
       // FAKE_CODEX_CONTROL のファイルに sticky があれば、外したと答えてもロードしたまま（接続先の変更を無視する本物の場面の再現）。
@@ -626,15 +678,8 @@ async function handle(method, params) {
     // hooks/list: 各 cwd の .codex/hooks.json を本物と同じ形（key = <sourcePath>:<snake_case>:<group>:<handler>）で返す。
     // 信頼状態は FAKE_CODEX_HOOK_TRUST（既定 untrusted）。FAKE_CODEX_PLUGIN_HOOK=1 ならプラグインの定義も 1 件足す
     case "hooks/list": {
-      const snake = s => s.replace(/[A-Z]/g, (c, i) => (i ? '_' : '') + c.toLowerCase());
       return { data: (params?.cwds ?? []).map(cwd => {
-        const file = path.join(cwd, '.codex', 'hooks.json');
-        let map = {};
-        try { map = JSON.parse(fs.readFileSync(file, 'utf8')).hooks ?? {}; } catch {}
-        const hooks = Object.entries(map).flatMap(([event, groups]) => groups.flatMap((g, gi) => g.hooks.map((h, hi) => ({
-          key: `${file}:${snake(event)}:${gi}:${hi}`, eventName: event[0].toLowerCase() + event.slice(1), handlerType: 'command', command: h.command,
-          matcher: g.matcher ?? null, sourcePath: file, source: 'project', enabled: true, isManaged: false,
-          currentHash: 'sha256:fake', trustStatus: process.env.FAKE_CODEX_HOOK_TRUST || 'untrusted' }))));
+        const hooks = nativeHooks(cwd);
         if (process.env.FAKE_CODEX_PLUGIN_HOOK === '1') hooks.push({ key: 'C:/plugins/x/hooks/hooks.json:stop:0:0', eventName: 'stop', handlerType: 'command',
           command: 'node plugin-stop.js --token SECRET-PLUGIN', sourcePath: 'C:/plugins/x/hooks/hooks.json', source: 'plugin', pluginId: 'x', enabled: true, isManaged: false, trustStatus: 'trusted' });
         return { cwd, hooks, errors: [], warnings: [] };

@@ -59,7 +59,7 @@ export default async function (t) {
     const pending = await client.cmd('sessionHooks', { sessionId: session.sessionId, cwd, backend: 'codex' });
     t.ok('一覧は先に返し、Codex の信頼状態は「確かめています」の印だけ付ける', pending.report.trustPending === true && pending.report.entries.every(e => e.trustPending && !('trust' in e)));
     const codexSide = await client.cmd('sessionHooks', { sessionId: session.sessionId, cwd, backend: 'codex', trust: true });
-    t.ok('Codex の会話は観測できない（定義だけ）', codexSide.observable === false && codexSide.report.entries.every(e => e.agent === 'codex'));
+    t.ok('Codex の会話は発火を観測できる（hook/started・hook/completed）', codexSide.observable === true && codexSide.report.entries.every(e => e.agent === 'codex'));
     t.ok('Codex を使わない構成では信頼状態は「取得できません」', codexSide.report.entries.every(e => e.trust === null));
     client.close(); await host.stop(); client = null; host = null;
 

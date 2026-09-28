@@ -31,6 +31,7 @@ import os from "node:os";
 import path from "node:path";
 import * as store from '../store.mjs';
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
+import { readAgyRuns, rotateAgyRuns } from '../hooks-unify.mjs';
 
 /**
  * 本文の無い SUCCESS を確定するまでに、打ち切りの印（stderr）を待つ時間。
@@ -105,6 +106,37 @@ const reaped = pids.reap().catch(() => []);
 sweep();
 
 /** 会話から手を引く。生かしている印（live / pid の控え）を揃って落とす。 */
+/**
+ * Pleiad が渡した hooks の発火（アダプターが置き場の runs.jsonl に書いたもの）を記録にする。agy は hooks の実行を stream に出さないため。
+ * ネイティブの定義の発火は分からない（止めたはずの定義が走ったかは観測できない）
+ */
+async function reportHookRuns(session, hooksRuntime, emit) {
+  const at = session?.hookRuns;
+  if (!at) return;
+  // 入れ替えた古いファイルの続き（入れ替えの間に書かれた行）を先に読む。新しい行が無くなったら捨てる
+  const runs = [];
+  if (at.old) {
+    const r = await readAgyRuns(at.old.file, at.old.offset);
+    runs.push(...r.runs);
+    if (r.offset === at.old.offset && !r.more) { await fs.promises.rm(at.old.file, { force: true }).catch(() => {}); at.old = null; }
+    else at.old.offset = r.offset;
+  }
+  // 上限ずつ、最後の改行まで読む（書きかけの行は次のターンに回す）
+  for (let i = 0; i < 16; i++) {
+    const r = await readAgyRuns(at.file, at.offset);
+    runs.push(...r.runs);
+    at.offset = r.offset;
+    if (!r.more) break;
+  }
+  // 長く続く会話でファイルが育たないように、読み終えた分が大きくなったら入れ替える
+  const rotated = !at.old && await rotateAgyRuns(at.file, at.offset);
+  if (rotated) { at.old = { file: rotated.old, offset: rotated.oldOffset }; at.offset = 0; }
+  const names = new Map((hooksRuntime?.supplied ?? []).map(s => [s.hook.id, s.hook.name]));
+  for (const r of runs) emit({ type: 'hookRun', phase: r.phase === 'started' ? 'started' : 'response', hookId: r.runId, name: names.get(r.id) ?? r.id, event: String(r.event ?? ''),
+    pleiad: true, id: r.id, ...(r.phase === 'response' ? { outcome: ['success', 'error', 'cancelled'].includes(r.outcome) ? r.outcome : 'error',
+      ...(Number.isInteger(r.exitCode) ? { exitCode: r.exitCode } : {}), ...(Number.isInteger(r.ms) ? { ms: r.ms } : {}) } : {}) });
+}
+
 function release(conversationId, session) {
   if (conversationId && live.get(conversationId) === session) live.delete(conversationId);
   if (session?.pid) pids.forget(session.pid);
@@ -200,7 +232,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, addedInstructions }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, addedInstructions, hooksRuntime = null }) {
     const m = MODES[modeFor(mode)];
 
     // **控えはターンの終わりに書くが、送信の時刻はここで取る。**
@@ -227,12 +259,21 @@ export const backend = {
     // Pleiad のコンテキストは起動時にしか渡せない（エージェント定義と env）。起動時と違う渡し方になるなら起こし直す。
     // 担当や渡すツール（shape）が変わったときも同じ（コンテキストの設定の変更を次のターンから効かせる。会話は --conversation で続く）
     const contextKey = contextRuntime?.headers?.Authorization ?? null, contextShape = contextRuntime?.shape ?? null;
-    if (session && ((session.contextKey ?? null) !== contextKey || (session.contextShape ?? null) !== contextShape || (session.browserConfig ?? null) !== (browserEnv?.AGENT_BROWSER_CONFIG ?? null))) { session.kill(); release(conversationId, session); session = null; }
+    // 内蔵ブラウザーの接続（browserEnv）と、Hooks を Pleiad がそろえる会話（ADR 0049）の置き場の .agents/hooks.json も起動時にしか渡せない。
+    // ブラウザーの設定・登録・止める名前が変われば起こし直す
+    const hooksShape = hooksRuntime?.shape ?? null;
+    if (session && ((session.contextKey ?? null) !== contextKey || (session.contextShape ?? null) !== contextShape
+      || (session.browserConfig ?? null) !== (browserEnv?.AGENT_BROWSER_CONFIG ?? null) || (session.hooksShape ?? null) !== hooksShape)) { session.kill(); release(conversationId, session); session = null; }
 
     const fresh = !session;
     if (fresh) {
       // 会話ごとのエージェント定義（Pleiad の置き場）と、中継に渡す接続先・トークン（env）
-      const agent = contextRuntime || browserInstructions || addedInstructions ? await prepareAgent({ owners: contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' }, prompt: [contextRuntime?.prompt, browserInstructions, addedInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale }) : null;
+      // カスタムエージェントを使うのは、Pleiad のコンテキスト・ブラウザーの指示・委譲の子への指示を渡すときだけ。
+      // Hooks だけを Pleiad がそろえるときは、置き場（--add-dir）だけを作る（既定のエージェントのまま。inheritCustomizations に頼らない）
+      const useAgent = Boolean(contextRuntime || browserInstructions || addedInstructions);
+      const agent = useAgent || hooksRuntime ? await prepareAgent({ owners: contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' },
+        prompt: [contextRuntime?.prompt, browserInstructions, addedInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale,
+        context: useAgent, hooks: hooksRuntime }) : null;
       session = new AgySession({
         cwd,
         conversationId,
@@ -242,8 +283,11 @@ export const backend = {
         skipPermissions: Boolean(m.skip),
         // agy のヘッドレスは cwd だけではワークスペースを設定しないため、--add-dir で渡す
         addDirs: cwd ? [cwd] : [],
-        ...(agent ? { addDirs: [...(cwd ? [cwd] : []), agent.home], agent: AGENT_NAME, env: { ...agent.env, ...browserEnv }, onGone: agent.cleanup } : browserEnv ? { env: browserEnv } : {}),
+        ...(agent ? { addDirs: [...(cwd ? [cwd] : []), agent.home], ...(useAgent ? { agent: AGENT_NAME } : {}), env: { ...agent.env, ...browserEnv }, onGone: agent.cleanup }
+          : browserEnv ? { env: browserEnv } : {}),
       });
+      session.hooksShape = hooksShape;
+      session.hookRuns = agent?.runs ? { file: agent.runs, offset: 0 } : null;
       session.onShapeMismatch = () => { void recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'antigravity', kind: 'stream-json-shape', detectedVersion: null }); };
       session.contextKey = contextKey;
       session.contextShape = contextShape;
@@ -407,6 +451,7 @@ export const backend = {
       emit({ type: "activity", state: "thinking" });
       session.prompt(prompt);
       await finished;
+      await reportHookRuns(session, hooksRuntime, emit);
 
       if (signal?.signal?.aborted) {
         emit({ type: "turnResult", outcome: "aborted" });

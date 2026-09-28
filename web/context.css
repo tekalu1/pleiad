@@ -359,3 +359,22 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
   .hk-pair,.hk-maprow{grid-template-columns:minmax(0,1fr)}
   .hk-maprow{gap:2px}
 }
+/* Pleiad がそろえる（ADR 0049）: 切り替えの確認・登録の一覧・右パネル */
+.hk-unify .hk-warn{margin:0}
+.hk-unify>.cx-sub,.hk-unify>.cx-note{margin:0}
+.hk-unify-sec>summary{color:var(--ink);font-weight:600}
+.hk-unify-sec .cx-list{margin-top:6px}
+.hk-unify-row{flex-wrap:wrap}
+.hk-unify-row .t{flex:1 1 220px;min-width:0}
+.hk-unify-row>.hk-state{max-width:100%;text-align:right}
+.hk-import{display:inline-flex;align-items:center;gap:8px;margin-left:auto}
+.hk-unify-reg{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.hk-unify-reg .fm,.hk-how{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;font-size:var(--fs-s)}
+.hk-unify-reg .fm{padding:8px 12px;background:var(--surface-paper);border-radius:var(--r-s)}
+.hk-unify-reg .fm .k,.hk-how .k{color:var(--ink-weak)}
+.hk-unify-reg .fm .v,.hk-how .v{overflow-wrap:anywhere;color:var(--ink)}
+.hk-unify-reg .hk-cmd{font-size:var(--fs-xs)}
+.hk-stopped>summary{color:var(--ink)}
+.hk-stopped .cx-list{margin-top:6px}
+.hk-ask{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.hk-ask .cx-sub{flex:1 1 180px}

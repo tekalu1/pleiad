@@ -19,6 +19,7 @@ import { claudeEnv, redactToken } from '../claude-accounts.mjs';
 import { claudeCompatEnv, writeClaudeFlagSettings, redactSecret } from '../compat-endpoints.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
 import { claudeContextOptions, claudeQueryExtraArgs, unexpectedNativeMcp } from './context-options.mjs';
+import { claudeHookCallbacks, mergeCallbacks } from '../hooks-unify.mjs';
 import { undelivered } from './undelivered.mjs';
 import { z } from "zod";
 import fs from "node:fs/promises";
@@ -552,7 +553,7 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, oauthToken, endpoint = null, locale, compact }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, oauthToken, endpoint = null, locale, compact }) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, locale };
     let releaseContext;
@@ -602,7 +603,8 @@ export const backend = {
     // 互換の接続先（core/compat-endpoints.mjs）。env を組み替え（親の ANTHROPIC_* と OAuth トークンを外して接続先の値を入れる）、
     // 同じ値をフラグ設定のファイルにも書く（ユーザーの settings.json の env が options.env に勝つため。オブジェクトで渡すと argv にキーが載る）。
     // Pleiad の担当の設定（claudeContextOptions の settings）も同じファイルに入れる
-    const contextOptions = claudeContextOptions(contextRuntime, { compact: Boolean(compact) });
+    // Hooks を Pleiad がそろえる会話（hooksRuntime。ADR 0049）は、ネイティブの hooks をフラグ設定の disableAllHooks で止め、登録をコールバックで渡す
+    const contextOptions = claudeContextOptions(contextRuntime, { compact: Boolean(compact), hooks: Boolean(hooksRuntime) });
     const compactDiagnostic = compact ? createClaudeCompactDiagnostic() : null;
     const flag = endpoint ? await writeClaudeFlagSettings(store.dataDir, endpoint, contextOptions.settings) : null;
     const hide = text => redactSecret(redactToken(text, oauthToken), endpoint?.key);
@@ -650,7 +652,7 @@ export const backend = {
         includePartialMessages: true,
         // hooks の発火（hook_started / hook_response）を受け取る。会話の右パネルの「発火の記録」に使う（claude-normalize.mjs）
         includeHookEvents: true,
-        hooks: {
+        hooks: mergeCallbacks({
           PreCompact: [{ hooks: [async input => {
             emit({ type: 'compaction', phase: 'start', trigger: input.trigger === 'manual' ? 'manual' : 'auto' });
             return {};
@@ -659,7 +661,8 @@ export const backend = {
             if (input.compact_summary) emit({ type: 'compaction', phase: 'summary', trigger: input.trigger === 'manual' ? 'manual' : 'auto', summary: input.compact_summary });
             return {};
           }] }],
-        },
+        // Pleiad の Hooks の登録。コールバックは Pleiad の中で走るので、発火の記録は自分で出す（hook_started は届かない）
+        }, claudeHookCallbacks(hooksRuntime, { onRun: run => emit({ type: 'hookRun', ...run }) })),
         canUseTool: makeCanUseTool(ctx, askPermission),
       },
     }); } catch (e) { await flag?.dispose(); throw undelivered(e); }

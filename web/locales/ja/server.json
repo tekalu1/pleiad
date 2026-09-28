@@ -508,7 +508,10 @@
       "appServerDied": "codex app-server が落ちた: {{why}}",
       "timeout": "codex {{method}} が {{ms}}ms で応答しなかった",
       "notConnected": "codex app-server につながっていない",
-      "noHandler": "{{method}} を受け取る相手が居ない"
+      "noHandler": "{{method}} を受け取る相手が居ない",
+      "hooksList": "Codex の hooks の一覧（hooks/list）がそろわなかったので、送信を止めました（止める hooks を決められないため）: {{detail}}",
+      "hooksUnsubscribeFailed": "Hooks の渡し方を切り替えられませんでした（codex が会話を外せませんでした: {{reason}}）。そのまま続けると hooks が二重に動くか動かないので、送信を止めました。裏で動いている端末があれば止めてから、もう一度送ってください",
+      "hooksTrust": "Pleiad の hooks を Codex に信頼済みとして渡すための hash を取れなかったので、送信を止めました（そのまま進むとガードが動かず、ネイティブの hooks だけが止まるため）: {{detail}}"
     },
     "auth": {
       "notLoggedIn": "codex にログインしていない",
@@ -967,5 +970,32 @@
       "notReady": "この写し先は、まだ写せる状態ではありません。確認画面で理由を確かめてください",
       "adapterConflict": "同じ名前のアダプターのファイルが別の内容で既にあるため、上書きしません"
     }
+  },
+  "plyHooks": {
+    "invalid": "Hook の登録の形が正しくありません",
+    "name": "名前を 1〜80 文字で入れてください",
+    "agent": "コマンドの形（どのエージェント向けに書いたか）を選んでください",
+    "event": "選んだエージェントの形に無いイベントです",
+    "matcher": "matcher は 500 文字までの文字列にしてください",
+    "command": "コマンドを 1 行で入れてください（4000 文字まで）",
+    "timeout": "timeout は 1〜86400 の整数（秒）にしてください",
+    "targets": "渡すエージェントを 1 つ以上選んでください",
+    "owner": "Hooks の担当の値が正しくありません",
+    "unreadable": "Pleiad の Hooks の登録（hooks.json）を読めません。ファイルはそのまま残しています",
+    "notFound": "その登録は見つかりません（別の画面で消された可能性があります）",
+    "tooMany": "登録できる Hook は 200 件までです",
+    "brokenSave": "hooks.json に壊れた部分があるので保存しません（壊れた部分を消さないため）。設定 › コンテキストの Hooks の「壊れた部分を外して保存し直す」で直してください",
+    "ownerUnknown": "この場所の Hooks の担当を hooks.json から読めないので、送信を止めました（止めるはずの hooks が動くおそれがあるため）。設定 › コンテキストの Hooks で直してください",
+    "brokenEntries": "Hooks を Pleiad がそろえる場所ですが、hooks.json に読めない登録があるので送信を止めました（Pleiad のガードが抜けるおそれがあるため）。設定 › コンテキストの Hooks で直してください",
+    "changedSinceReview": "確認した後に Hooks の登録か担当が変わりました。確認の面を開き直してください"
+  },
+  "hooksUnify": {
+    "prepareFailed": "Pleiad がそろえる Hooks を準備できなかったので、送信を止めました（ネイティブの hooks と二重に動くのを防ぐため）: {{error}}",
+    "importFailed": "取り込めない定義があります（ファイルが変わったか、取り込めない形です）。確認の画面を開き直してください",
+    "agySkillsConflict": "Antigravity では、Skills も Pleiad がそろえる場所で Hooks を Pleiad がそろえられません（Skills のためのカスタムエージェントが Pleiad の hooks まで止めるため）。どちらかをエージェント任せにしてください",
+    "agyStopListIncomplete": "Antigravity の hooks の定義を読めないので、止める一覧を作れません（{{path}} · {{error}}）。このままではネイティブの hooks が動くので送信を止めました",
+    "agyNameCollision": "Antigravity の hooks に、Pleiad の登録と同じ名前（{{name}}）の定義があるので止められません。名前を変えてください",
+    "importChanged": "確認した後に、取り込む定義の中身が変わりました。確認の面を開き直してください",
+    "reviewRequired": "Hooks の担当は確認の面から変えてください"
   }
 }
