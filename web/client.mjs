@@ -60,6 +60,7 @@ import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, 
   resumeNoteText, resumeVisible, updateInterrupted } from './interrupt.mjs';
 import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
+import { budgetOf } from './instruction-amount.mjs';
 import { renderOutbox } from './outbox.mjs';
 import { visibleTaskInstructions } from './task-instructions.mjs';
 import { createComposerWait } from './composer-wait.mjs';
@@ -1542,7 +1543,7 @@ function onEvent(ev, replay = false) {
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); refreshPreviewConfirmation(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
   if (ev.type === 'compactionSchedule') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
@@ -1826,7 +1827,8 @@ function onEvent(ev, replay = false) {
       // 開始時刻・外した MCP などは sessionContext の戻りにしか無いので、同じ会話なら前の値を引き継ぐ
       const id = state.current ?? state.contextInfoId;
       const prev = state.contextInfoId === id ? state.contextInfo : null;
-      state.contextInfo = { ...prev, report: ev.report, owners: ev.report?.owners, pinned: isManagedContext(ev.report), changed: { differs: false, paths: [], files: [] } };
+      state.contextInfo = { ...prev, report: ev.report, owners: ev.report?.owners, pinned: isManagedContext(ev.report), changed: { differs: false, paths: [], files: [] },
+        plyParts: ev.plyParts ?? prev?.plyParts ?? null };
       state.contextInfoId = id;
       paintContextEntry();
       paintContextLine();
@@ -5649,7 +5651,7 @@ $("prompt").onkeydown = (e) => {
 // 設定 › コンテキストは全体の設定だけ（フォルダーごとは会話の右パネルの「この場所だけ変える」）。
 // 最近の会話の場所は「探す場所を足す」の候補、「設定 › 委譲で変える →」は委譲のページへ
 const context = setupContext({ button: $('openContext'), cmd,
-  show: () => onboarding.page('context'), recentPlaces: cwdOptions, backends: () => state.backends,
+  show: () => onboarding.page('context'), recentPlaces: cwdOptions, backends: () => state.backends, getPrefs: () => state.prefs,
   openDelegation: () => { $('delegationTab').click(); $('delegationTab').focus(); } });
 // 会話の右パネル「この会話のコンテキスト」。札とタイトル行の入口から開く
 const sessionContext = setupSessionContext({ cmd, preview: filePreview,
@@ -5657,7 +5659,7 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   info: () => (state.contextInfoId === state.current ? state.contextInfo : null),
   refreshInfo: (force) => refreshContextEntry({ force }),
   openSettings: () => openContextPage(), labelOf,
-  isRunning: () => Boolean(state.current && state.runningIds.has(state.current)) });
+  isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs) });
 $('contextEntry').onclick = () => sessionContext.toggle($('contextEntry'));
 function openAutoCompactionSettings() { closeMeterPop(); onboarding.open('autoCompaction'); }
 $('contextMeter').onclick = () => {

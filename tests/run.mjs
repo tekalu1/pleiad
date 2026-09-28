@@ -103,6 +103,8 @@ const cases = [
   await import('./unit/context-roots.mjs'),
   await import('./unit/server-context.mjs'),
   await import('./unit/context-ui.mjs'),
+  // 指示の量（ADR 0056）: 自分で書いた分と Pleiad が足した分・目安・エージェント任せの見積もり
+  await import('./unit/instruction-amount.mjs'),
   await import('./unit/slash-skills.mjs'),
   await import('./unit/notifications.mjs'),
   await import("./unit/onboarding.mjs"),

@@ -666,6 +666,33 @@
         "routingOff": "委譲の自動選択がオフなので入れていない"
       }
     },
+    "amount": {
+      "title": "指示の量",
+      "about": "約 {{n}}",
+      "estimated": "推定",
+      "estimatedNote": "Pleiad が同じ規則で探した結果",
+      "reading": "{{agent}} が読む指示を探しています…",
+      "unknown": "{{agent}} が自分で読む指示は数えていません（読み方を Pleiad が知らないため）",
+      "own": "自分で書いた 約 {{n}}",
+      "budget": "目安 {{n}}",
+      "ply": "Pleiad が足す分",
+      "plyAria": "Pleiad が足す分の内訳",
+      "plyNote": "Pleiad が会話に入れる文",
+      "plyPending": "次の送信から数えます",
+      "part": {
+        "visualize": "Visualize の説明",
+        "skills": "Skills の一覧",
+        "agents": "委譲ツールの説明",
+        "added": "Pleiad の指示",
+        "guide": "コンテキストの案内",
+        "browser": "ブラウザーの説明"
+      },
+      "over": "自分で書いた指示が目安の {{ratio}} 倍",
+      "overDetail": " · 約 {{own}} / {{budget}}",
+      "aria": "合計 約 {{total}} トークン。ユーザー 約 {{user}}、この場所と親フォルダー 約 {{dir}}、Pleiad が足す分 約 {{ply}}。自分で書いた指示 約 {{own}}、目安 {{budget}}",
+      "nativeFound_other": "Pleiad が同じ規則で探したもの {{count}} 件",
+      "nativeNone": "{{agent}} が読む指示ファイルは見つかりませんでした"
+    },
     "changed": {
       "title_other": "開始後に {{count}} 件変わりました",
       "removed": "{{name}} が消えました",
@@ -802,6 +829,12 @@
       "conditional": "{{paths}} のときだけ",
       "offerAria": "{{name}} を案内する",
       "provideAria": "{{name}} を渡す"
+    },
+    "budget": {
+      "label": "自分で書いた指示の目安",
+      "unit": "トークン",
+      "note": "ユーザーとこの場所の指示の合計がこれを超えると、会話の右パネルで知らせます（会話は止めません）",
+      "invalid": "{{min}}〜{{max}} の整数で入れてください"
     },
     "showAll": "すべて見る（{{n}} 件）",
     "antigravityNote": "antigravity の会話では、指示ファイルも「Pleiad がそろえる」にしたときだけ、ここを Pleiad がそろえます。今は指示ファイルがエージェント任せなので、antigravity ではこの種類もエージェント任せになります（Pleiad から渡すと、agy がワークスペースの AGENTS.md・GEMINI.md を読まなくなるため）",

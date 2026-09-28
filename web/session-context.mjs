@@ -1,6 +1,8 @@
 // ==================== 会話の右パネル「この会話のコンテキスト」（docs/design-system.md「コンテキスト」） ====================
 // 会話の頭の札（指示 2 · Skills 14 · MCP … · Pleiad の指示 3）を押すと、ファイルプレビューと同じ右パネルに開く（web/file-preview.mjs の openPanel）。
 // 一番上は作業場所の面: 「<場所> · 全体の設定どおり／<親の場所> の設定どおり／このフォルダーだけの設定 · n 項目」と「この場所だけ変える」。
+// そのすぐ下が指示の量の面（ADR 0056）: 毎ターン最初に読み込まれる指示の合計と、ユーザー／この場所と親フォルダー／Pleiad が足す分の積み上げ、
+//   自分で書いた分にだけ引く目安の線。エージェント任せの指示は、そのエージェントの規則で Pleiad が探した結果を数えて「推定」と添える
 //   変えている間（edit）は、この場所の設定（places。core/context-settings.mjs）で探した結果を並べ、担当と行のスイッチでこのフォルダーだけ変える
 //   （「全体の設定に戻す」「終わる」）。保存は次のターンから効く。
 // ふだんは sessionContext の記録（core/server.mjs）から作る。種類ごとに、渡したものを出どころ（ユーザー／この場所と親フォルダー／追加した場所）で分ける。
@@ -16,6 +18,7 @@ import { t, fmt } from './i18n.mjs';
 import { runMark } from './arc.mjs';
 import { renderMarkdown } from './render.mjs';
 import { estimateTokens } from './token-estimate.mjs';
+import { DEFAULT_BUDGET, instructionAmount } from './instruction-amount.mjs';
 import { toggleExclude } from './context.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
 import { openHookSheet, openCopySheet, copyBlocked, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
@@ -144,9 +147,12 @@ export function placeStatus(here) {
 
 // i18n-dynamic: sessionContext.group.
 // i18n-dynamic: sessionContext.added.reason.
-export function setupSessionContext({ cmd, preview, session, info, refreshInfo, openSettings, labelOf, isRunning = () => false }) {
+// i18n-dynamic: sessionContext.amount.part.
+export function setupSessionContext({ cmd, preview, session, info, refreshInfo, openSettings, labelOf, isRunning = () => false, budget = () => DEFAULT_BUDGET }) {
   const logins = new Map();     // MCP 名 -> ログインの進み具合（ブラウザで続けてください… / ログインしました）
   const agentCache = new Map(); // cwd -> agentMcp の結果
+  const nativeCache = new Map(); // cwd|エージェント -> nativeInstructions の結果（null は読んでいる途中）。パネルを開くたびに読み直す
+  let plyOpen = false;          // 指示の量の面の「Pleiad が足す分」を開いているか
   let diff = null, diffOpen = false, busy = false, notice = '';
   let refreshLoadingVisible = false;
   const removedPending = new Map();
@@ -184,6 +190,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const report = data.report;
     loadPlace(cwdOf(data));
     box.append(placeFace(data));
+    if (!edit) box.append(amountFace(data));
     if (data.changed?.differs && !edit) box.append(changedNotice(data));
     if (report.guardedBackend) {
       const n = el('div', 'scx-notice');
@@ -215,7 +222,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     k.append(head);
     return k;
   }
-  function item(mark, name, sub, { on = false } = {}) {
+  function item(mark, name, sub, { on = false, tokens = null } = {}) {
     const row = el('div', 'scx-item');
     const m = el('span', 'mark' + (on ? ' on' : ''), mark);
     m.setAttribute('aria-hidden', 'true');
@@ -223,8 +230,11 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     body.append(el('div', 'nm', name));
     if (sub) body.append(el('div', 'p', sub));
     row.append(m, body);
+    // 指示の行の右端の量（ADR 0056）
+    if (Number.isFinite(tokens)) row.append(el('span', 'scx-tok', about(tokens)));
     return { row, body };
   }
+  const about = n => t('sessionContext.amount.about', { n: fmt.number(n) });
   /** 行を出どころ（ユーザー／この場所と親フォルダー／追加した場所）で分けて並べる */
   function grouped(k, rows, make) {
     for (const g of GROUPS) {
@@ -233,6 +243,109 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       k.append(el('p', 'scx-grp', t(`sessionContext.group.${g}`)));
       for (const e of list) k.append(make(e));
     }
+  }
+
+  // ---------------------------------------------------------------- 指示の量の面（ADR 0056「① 量を見せる」）
+  // 数えるのは毎ターン最初に読み込まれる指示だけ（条件付きの rules・Skills の本文・MCP のツール定義・履歴は数えない）。
+  // 自分で書いた分は、Pleiad が渡した会話では記録の行（tokens）、エージェント任せの会話では nativeInstructions の見積もり。
+  // Pleiad が足す分は、直前のターンで実際に渡した文（plyParts。core/instruction-amount.mjs）。この面はファイルを変えない
+  /** エージェント任せの指示を、そのエージェントの規則で探した結果。まだ無ければ読み始めて null（読んでいる途中） */
+  function nativeFound(data) {
+    const where = cwdOf(data), agent = session()?.backend ?? '';
+    const key = `${where}|${agent}`;
+    if (!nativeCache.has(key)) {
+      nativeCache.set(key, null);
+      cmd('nativeInstructions', { cwd: where, backend: agent })
+        .then(r => { nativeCache.set(key, r ?? { entries: null }); refresh(); })
+        .catch(() => { nativeCache.set(key, { entries: null }); refresh(); });
+    }
+    return nativeCache.get(key);
+  }
+  function amountFace(data) {
+    const managedHere = managed(data, 'instruction');
+    const native = managedHere ? null : nativeFound(data);
+    const reading = !managedHere && native === null;
+    const unknown = !managedHere && !reading && !native.entries;
+    const estimated = !managedHere && !unknown;
+    const rows = managedHere ? data.report.entries.filter(e => e.kind === 'instruction' && e.status === 'supplied') : native?.entries ?? [];
+    const parts = data.plyParts ?? null;
+    const a = instructionAmount({ rows, parts: parts ?? [], budget: budget() });
+    const n = v => fmt.number(v);
+    const k = el('section', 'scx-kind scx-amount');
+    const h = el('h4', null, t('sessionContext.amount.title'));
+    h.id = 'scxAmountTitle';
+    k.setAttribute('aria-labelledby', h.id);
+    const head = el('div', 'cx-khead');
+    head.append(h);
+    if (estimated) { const est = el('span', 'scx-est', t('sessionContext.amount.estimated')); est.title = t('sessionContext.amount.estimatedNote'); head.append(est); }
+    head.append(el('span', 'scx-total', about(a.total)));
+    k.append(head);
+    if (reading) k.append(el('p', 'cx-sub', t('sessionContext.amount.reading', { agent: backendLabel() })));
+    else if (unknown) k.append(el('p', 'cx-sub', t('sessionContext.amount.unknown', { agent: backendLabel() })));
+    else if (estimated) k.append(el('p', 'cx-sub', native.entries.length ? t('sessionContext.amount.estimatedNote') : t('sessionContext.amount.nativeNone', { agent: backendLabel() })));
+
+    // 積み上げの棒。全長は合計か目安の大きい方。目安の線は自分で書いた分にだけ当てる（左端から測る）
+    const pct = v => `${(a.scale ? v / a.scale * 100 : 0).toFixed(2)}%`;
+    const meter = el('div', 'scx-meter');
+    meter.setAttribute('role', 'img');
+    meter.setAttribute('aria-label', t('sessionContext.amount.aria', { total: n(a.total), user: n(a.user), dir: n(a.dir), ply: n(a.ply), own: n(a.own), budget: n(a.budget) }));
+    if (a.own) {
+      const own = el('div', 'scx-own');
+      own.style.width = `calc(${pct(a.own)} - 1px)`;
+      own.append(el('span', null, t('sessionContext.amount.own', { n: n(a.own) })));
+      meter.append(own);
+    }
+    const bar = el('div', 'scx-bar');
+    for (const [side, v] of [['user', a.user], ['dir', a.dir], ['ply', a.ply]]) {
+      if (!v) continue;
+      const seg = el('span', `scx-seg sw-${side}`);
+      seg.style.flexBasis = pct(v);
+      bar.append(seg);
+    }
+    const at = a.scale ? a.budget / a.scale * 100 : 100;
+    const limit = el('span', 'scx-limit' + (at > 80 ? ' end' : ''));
+    limit.style.left = `${at.toFixed(2)}%`;
+    limit.append(el('b', null, t('sessionContext.amount.budget', { n: n(a.budget) })));
+    bar.append(limit);
+    meter.append(bar);
+    k.append(meter);
+
+    // 凡例。色だけに頼らず、印と数字を並べる。Pleiad が足す分は開くと内訳（見せるだけ）
+    const legend = el('ul', 'scx-legend');
+    const li = (tag, side, label, value) => {
+      const row = el(tag, 'scx-li');
+      const sw = el('span', `sw sw-${side}`); sw.setAttribute('aria-hidden', 'true');
+      row.append(sw, el('span', 'n', label), el('span', 'v', value));
+      return row;
+    };
+    const ownValue = v => reading || unknown ? '—' : about(v);
+    for (const [side, v] of [['user', a.user], ['dir', a.dir]]) { const r = el('li'); r.append(li('span', side, t(`sessionContext.group.${side}`), ownValue(v))); legend.append(r); }
+    const plyRow = el('li');
+    if (!parts) plyRow.append(li('span', 'ply', t('sessionContext.amount.ply'), t('sessionContext.amount.plyPending')));
+    else {
+      const d = el('details', 'scx-ply');
+      d.open = plyOpen;
+      d.addEventListener('toggle', () => { plyOpen = d.open; });
+      const list = el('ul', 'scx-plylist');
+      list.setAttribute('aria-label', t('sessionContext.amount.plyAria'));
+      for (const p of parts) { const r = el('li'); r.append(el('span', null, t(`sessionContext.amount.part.${p.id}`)), el('span', null, about(p.tokens))); list.append(r); }
+      list.append(el('li', 'cx-sub', t('sessionContext.amount.plyNote')));
+      d.append(li('summary', 'ply', t('sessionContext.amount.ply'), about(a.ply)), list);
+      plyRow.append(d);
+    }
+    legend.append(plyRow);
+    k.append(legend);
+
+    // 目安を超えた。何倍かを 1 行で知らせるだけで、会話は止めない
+    if (a.ratio) {
+      const over = el('p', 'scx-over');
+      const g = el('span', 'g', '▲'); g.setAttribute('aria-hidden', 'true');
+      const text = el('span', null, t('sessionContext.amount.over', { ratio: fmt.number(a.ratio, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }));
+      text.append(el('span', 'w', t('sessionContext.amount.overDetail', { own: n(a.own), budget: n(a.budget) })));
+      over.append(g, text);
+      k.append(over);
+    }
+    return k;
   }
 
   // ---------------------------------------------------------------- 作業場所の面
@@ -409,8 +522,18 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const rows = data.report.entries.filter(e => e.kind === 'instruction');
     const given = rows.filter(e => e.status === 'supplied' || e.status === 'loaded');
     const k = kindBox(WORD.instruction, ply ? t('sessionContext.instruction.who', { count: given.length }) : t('sessionContext.native'), ply);
-    if (!ply) { k.append(el('p', 'cx-sub', t('sessionContext.instruction.native', { agent: backendLabel() }))); return k; }
-    grouped(k, given, e => item('✓', e.name, e.status === 'loaded' ? t('sessionContext.instruction.loaded', { path: shortPath(dir(e.path)) }) : shortPath(dir(e.path)), { on: true }).row);
+    if (!ply) {
+      k.append(el('p', 'cx-sub', t('sessionContext.instruction.native', { agent: backendLabel() })));
+      // Pleiad が同じ規則で探したもの（指示の量の「推定」の中身）。畳んで出す
+      const found = nativeFound(data)?.entries;
+      if (found?.length) {
+        const list = el('div');
+        grouped(list, found, e => item('·', e.name, shortPath(dir(e.path)), { tokens: e.tokens }).row);
+        k.append(fold(t('sessionContext.amount.nativeFound', { count: found.length }), [...list.childNodes]));
+      }
+      return k;
+    }
+    grouped(k, given, e => item('✓', e.name, e.status === 'loaded' ? t('sessionContext.instruction.loaded', { path: shortPath(dir(e.path)) }) : shortPath(dir(e.path)), { on: true, tokens: e.tokens }).row);
     if (!given.length) k.append(el('p', 'cx-sub', t('sessionContext.instruction.none')));
     const left = rows.filter(e => !['supplied', 'loaded'].includes(e.status));
     if (left.length) k.append(fold(t('sessionContext.instruction.notGiven', { count: left.length }), left.map(e => item('–', e.name, `${shortPath(dir(e.path))} · ${reasonOf(e)}`).row)));
@@ -813,8 +936,9 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   function open(element) {
     chip = element ?? chip;
     const data = info() ?? {};
-    // 開くたびに作業場所の設定を読み直す（設定の画面や別の窓で変わっていることがある）
+    // 開くたびに作業場所の設定を読み直す（設定の画面や別の窓で変わっていることがある）。エージェント任せの指示の見積もりも同じ
     place = { cwd: null, view: null, loading: false };
+    nativeCache.clear();
     preview.openPanel({ key: KEY, title, subtitle: data.report ? subtitle(data) : '', body: render(), label: title, element: chip,
       onClose: () => { chip?.setAttribute('aria-expanded', 'false'); edit = false; editScan = null; unifying = false; } });
   }
@@ -824,6 +948,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   }
   /** 記録が変わったとき（ターンの開始・読み込み直し・外す）。開いていれば描き直す */
   function refresh() {
+    // 閉じているときは描かない（描くと作業場所の設定やエージェント任せの指示の見積もりを読みに行く）
+    if (!preview.panelOpen(KEY)) return;
     const data = info() ?? {};
     preview.updatePanel(KEY, { subtitle: data.report ? subtitle(data) : '', body: render() });
   }
