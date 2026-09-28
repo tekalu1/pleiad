@@ -122,6 +122,47 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     if (attached !== want) { window.contentView.addChildView(want); attached = want; }
   }
 
+  function setupPopupWindow(c, sessionId, agentFromTab) {
+    // 新しい窓のうち、ポップアップ（disposition: 'new-window'）は opener を保って別の窓で開く
+    // 通常の新しいタブ（target=_blank）は内蔵ブラウザーの新しいタブにする（opener なし）
+    c.setWindowOpenHandler(({ url: next, disposition, features }) => {
+      const target = openable(next);
+      if (target && navigable(target)) {
+        if (disposition === 'new-window') {
+          const parsedFeatures = (features || '').split(',').reduce((acc, f) => {
+            const [k, v] = f.split('=');
+            if (k) acc[k.trim()] = v ? v.trim() : true;
+            return acc;
+          }, {});
+          const width = parseInt(parsedFeatures.width) || 500;
+          const height = parseInt(parsedFeatures.height) || 700;
+          return {
+            action: 'allow',
+            overrideBrowserWindowOptions: {
+              parent: window,
+              width,
+              height,
+              webPreferences: { session: ses, contextIsolation: true, sandbox: true, nodeIntegration: false }
+            }
+          };
+        }
+        const open = () => createTab({ url: target, sessionId, select: disposition !== 'background-tab', agentFrom: agentFromTab });
+        if (!navigation?.popup(agentFromTab, target, open)) open();
+      }
+      return { action: 'deny' };
+    });
+    c.on('did-create-window', (popupWin, details) => {
+      popupWin.setMenuBarVisibility?.(false);
+      const popupTab = { id: `popup-${nextId++}`, sessionId, webContents: popupWin.webContents };
+      navigation?.watch(popupTab);
+      if (agentFromTab) navigation?.inherit(agentFromTab, popupTab, details.url);
+      setupPopupWindow(popupWin.webContents, sessionId, popupTab);
+      const guard = (event, nextUrl) => { if (!navigable(nextUrl)) event.preventDefault(); };
+      popupWin.webContents.on('will-navigate', guard);
+      popupWin.webContents.on('will-redirect', guard);
+    });
+  }
+
   function createTab({ url = '', sessionId = context.sessionId, select = true, agentFrom = null } = {}) {
     const view = new WebContentsView({ webPreferences: { session: ses, contextIsolation: true, sandbox: true, nodeIntegration: false } });
     view.setBackgroundColor?.('#ffffff');
@@ -131,15 +172,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     const navigationTab = { id: tab.id, sessionId: tab.sessionId, webContents: c };
     navigation?.watch(navigationTab);
     if (agentFrom) navigation?.inherit(agentFrom, navigationTab, url);
-    // 新しい窓（target=_blank・window.open）は新しいタブにする。開いた元の関係（opener）は保たない
-    c.setWindowOpenHandler(({ url: next, disposition }) => {
-      const target = openable(next);
-      if (target && navigable(target)) {
-        const open = () => createTab({ url: target, sessionId: tab.sessionId, select: disposition !== 'background-tab', agentFrom: navigationTab });
-        if (!navigation?.popup(navigationTab, target, open)) open();
-      }
-      return { action: 'deny' };
-    });
+    setupPopupWindow(c, tab.sessionId, navigationTab);
     // ページから file: や独自のスキームへは移らない
     const guard = (event, next) => { if (!navigable(next) && !(tab.allowFile && next.startsWith('file:'))) event.preventDefault(); };
     c.on('will-navigate', guard);

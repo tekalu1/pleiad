@@ -318,8 +318,16 @@ export default async function (t) {
   assert.equal(state.tabs.length, 2); assert.equal(state.tabs[1].url, 'https://example.org/'); assert.equal(state.current, state.tabs[1].id);
   assert.equal(state.tabs[1].sessionId, 'sess-a', '開いた元のタブの会話を引き継ぐ');
   assert.equal(fe.log.removed.at(-1), fe.log.added[0], '見えるのは今のタブだけ');
-  // ページから file: や独自のスキームへは移らない
+  // ポップアップ（disposition: 'new-window'）は action: 'allow' になり別の窓で開く
+  const popupResult = firstContents.openHandler({ url: 'https://example.org/popup', disposition: 'new-window', features: 'width=400,height=300' });
+  assert.equal(popupResult.action, 'allow');
+  assert.deepEqual(popupResult.overrideBrowserWindowOptions.webPreferences, { session: panel.session, contextIsolation: true, sandbox: true, nodeIntegration: false, preload: '' });
+  assert.equal(popupResult.overrideBrowserWindowOptions.width, 400);
+  assert.equal(popupResult.overrideBrowserWindowOptions.height, 300);
   let prevented = false;
+  const popupWin = { webContents: { on: (n, f) => { if (n === 'will-navigate') f({ preventDefault: () => { prevented = true; } }, 'file:///C:/a'); }, setWindowOpenHandler: () => {} }, setMenuBarVisibility: () => {} };
+  firstContents.emit('did-create-window', popupWin, { url: 'https://example.org/popup' });
+  // ページから file: や独自のスキームへは移らない
   firstContents.emit('will-navigate', { preventDefault: () => { prevented = true; } }, 'file:///C:/Windows/win.ini');
   assert.equal(prevented, true);
   // 重なりの間は写しを返して外す
