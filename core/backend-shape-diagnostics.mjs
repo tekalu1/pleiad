@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const MAX_BYTES = 64 * 1024;
-const VERIFIED = Object.freeze({ codex: '0.156.1', claude: '2.1.282', antigravity: '1.2.8' });
+const VERIFIED = Object.freeze({ codex: '0.156.1', claude: '2.1.282', antigravity: '1.2.12' });
 const KINDS = Object.freeze({
   codex: new Set(['rollout-unreadable', 'rollout-session-meta', 'rollout-turn-id']),
   claude: new Set(['transcript-shape', 'transcript-unreadable', 'subagent-shape', 'subagent-unreadable', 'subagent-meta']),
