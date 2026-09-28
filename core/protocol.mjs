@@ -103,7 +103,8 @@ export const COMMANDS = new Set([
   'togglePlyHook',     // { id, enabled, cwd? } -> plyHooks と同じ形
   'plyHookPreview',    // { value } -> { targets: { <agent>: { status: ok|blocked, reasons, warnings, event, matcher, adapter } | null } }。保存しない
   'hooksUnifyPreview', // { cwd?, direction: ply|native } -> { stops（止まる／再開する。importable・reasons）, keeps（動き続ける）, registry（登録ごとのエージェント別の渡し方）, owner, scope }
-  'setHooksOwner',     // { place: null|path, value: { owner, disabled } | null, imports?: [行の id] } -> plyHooks と同じ形と added。取り込む定義はファイルから読み直す
+  'setHooksOwner',     // { place: null|path, value: { owner, disabled } | null, revision（確認票）, imports?: [{ id, digest }] } -> plyHooks と同じ形と added。取り込む定義はファイルから読み直し、digest と照合する
+  'repairPlyHooks',    // { cwd? } -> plyHooks と同じ形。壊れた hooks.json を退避し、読めた部分だけで書き直す
   "onboardingStatus",
   "onboardingSeen",
   "completeSetup",

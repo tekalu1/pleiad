@@ -218,9 +218,10 @@ export function toTargetOutput({ from, to, event, decision }) {
   return {};
 }
 
-/** Runs the original command in a shell. Kills it (and its children) after timeoutMs */
-export function runCommand(command, { input, cwd, env, timeoutMs }) {
+/** Runs the original command in a shell. Kills it (and its children) after timeoutMs, or when signal aborts (then { aborted: true }) */
+export function runCommand(command, { input, cwd, env, timeoutMs, signal }) {
   return new Promise(resolve => {
+    if (signal?.aborted) { resolve({ aborted: true }); return; }
     let child;
     const bash = process.env.CLAUDE_CODE_GIT_BASH_PATH || ['C:/Program Files/Git/bin/bash.exe', 'C:/Program Files/Git/usr/bin/bash.exe'].find(fs.existsSync);
     const systemRoot = process.env.SystemRoot || 'C:/Windows';
@@ -233,7 +234,8 @@ export function runCommand(command, { input, cwd, env, timeoutMs }) {
     try { child = spawn(command, { cwd, env: childEnv, shell, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }); }
     catch (e) { resolve({ startError: String(e?.message ?? e) }); return; }
     let stdout = '', stderr = '', done = false, timedOut = false, overflow = false;
-    const finish = r => { if (done) return; done = true; clearTimeout(timer); resolve(r); };
+    const onAbort = () => { kill(); finish({ aborted: true, stdout, stderr }); };
+    const finish = r => { if (done) return; done = true; clearTimeout(timer); signal?.removeEventListener?.('abort', onAbort); resolve(r); };
     const kill = () => {
       if (process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
       else if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
@@ -244,6 +246,7 @@ export function runCommand(command, { input, cwd, env, timeoutMs }) {
       kill();
       finish({ timedOut: true, stdout, stderr });
     }, timeoutMs);
+    signal?.addEventListener?.('abort', onAbort, { once: true });
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     const append = (which, chunk) => {
       if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) + Buffer.byteLength(chunk) > OUTPUT_LIMIT) {
@@ -314,19 +317,25 @@ export function sameAgentOutput({ to, event, result }) {
 }
 
 const RECORD_ID = /^[A-Za-z0-9_-]{1,64}$/;
-/** One line per run in runs.jsonl next to this file. Never the command's input or output (they can hold secrets) */
+const RECORD_LIMIT = 8 * 1024 * 1024;
+/**
+ * One line per run in runs.jsonl next to this file. Never the command's input or output (they can hold secrets).
+ * Pleiad reads and rotates the file; if it has grown past RECORD_LIMIT anyway (Pleiad not reading), stop recording rather than fill the disk
+ */
 function recordRun(selfPath, line) {
-  try { fs.appendFileSync(path.join(path.dirname(selfPath), 'runs.jsonl'), `${JSON.stringify(line)}\n`, { mode: 0o600 }); } catch {}
+  const file = path.join(path.dirname(selfPath), 'runs.jsonl');
+  try { if (fs.statSync(file).size > RECORD_LIMIT) return; } catch {}
+  try { fs.appendFileSync(file, `${JSON.stringify(line)}\n`, { mode: 0o600 }); } catch {}
 }
 
 /** One run: stdin JSON in, JSON out. Returns { stdout, stderr, code } */
-export async function adapt({ argv, stdin, run = runCommand, processCwd = process.cwd(), stateDir = os.tmpdir(), selfPath = fileURLToPath(import.meta.url) }) {
+export async function adapt({ argv, stdin, run = runCommand, processCwd = process.cwd(), stateDir = os.tmpdir(), selfPath = fileURLToPath(import.meta.url), signal }) {
   const [from, to, event, timeoutText, encoded, recordId] = argv;
   const record = RECORD_ID.test(recordId ?? '') ? recordId : null;
   const runId = record ? crypto.randomUUID() : null;
   const at = Date.now();
   if (record) recordRun(selfPath, { phase: 'started', runId, id: record, event, at });
-  const out = await adaptOnce({ from, to, event, timeoutText, encoded, stdin, run, processCwd, stateDir, selfPath });
+  const out = await adaptOnce({ from, to, event, timeoutText, encoded, stdin, run: (cmd, opts) => run(cmd, { ...opts, signal }), processCwd, stateDir, selfPath });
   if (record) recordRun(selfPath, { phase: 'response', runId, id: record, event, at: Date.now(), ms: Date.now() - at, ...(out.outcome ?? {}) });
   return { stdout: out.stdout, stderr: out.stderr, code: out.code };
 }

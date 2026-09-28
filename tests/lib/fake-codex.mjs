@@ -537,7 +537,7 @@ async function handle(method, params) {
       if (!t) throw new Error(`知らない threadId: ${params?.threadId}`);
       if (params?.model) t.model = params.model;
       applyProvider(t, params);
-      record({ method, threadId: t.id, modelProvider: params?.modelProvider ?? null, model: params?.model ?? null });
+      record({ method, threadId: t.id, modelProvider: params?.modelProvider ?? null, model: params?.model ?? null, hooks: Boolean(params?.config?.hooks) });
       return {
         thread: wire(t, false),
         approvalPolicy: params?.approvalPolicy ?? "untrusted",

@@ -45,11 +45,14 @@ export default async function (t) {
 
     // 登録（Claude の形の PreToolUse を Codex へ。アダプター越し）＋ ネイティブの 1 件を取り込んで、この場所の担当を Pleiad に
     await client.cmd('savePlyHook', { value: { name: 'claude-guard', agent: 'claude', event: 'PreToolUse', matcher: 'Bash', command: 'node guard.mjs', targets: ['codex', 'antigravity'] } });
-    const saved = await client.cmd('setHooksOwner', { place: cwd, value: { owner: 'ply', disabled: [] }, imports: [guard.id] });
+    const stale = await client.cmd('setHooksOwner', { place: cwd, value: { owner: 'ply', disabled: [] }, revision: preview.revision, imports: [{ id: guard.id, digest: guard.digest }] }).then(() => null, e => e);
+    t.ok('確認の後に登録が変わっていれば保存しない（確認票の revision）', stale && /開き直して/.test(stale.message), stale?.message);
+    const fresh = await client.cmd('hooksUnifyPreview', { cwd, direction: 'ply' });
+    const saved = await client.cmd('setHooksOwner', { place: cwd, value: { owner: 'ply', disabled: [] }, revision: fresh.revision, imports: [{ id: guard.id, digest: guard.digest }] });
     t.ok('担当と取り込みを 1 回で保存（取り込んだ定義は元のファイルから読み直す）', saved.place.value.owner === 'ply' && saved.place.override && saved.hooks.some(h => h.importedFrom?.scope === 'project' && h.agent === 'codex'));
     t.ok('エージェントの設定ファイルは書き換えない', (await fs.readFile(path.join(cwd, '.codex', 'hooks.json'), 'utf8')).includes('project-guard')
       && !(await fs.readFile(path.join(cwd, '.codex', 'hooks.json'), 'utf8')).includes('claude-guard'));
-    const forged = await client.cmd('setHooksOwner', { place: cwd, value: { owner: 'ply' }, imports: ['not-a-row'] }).then(() => null, e => e);
+    const forged = await client.cmd('setHooksOwner', { place: cwd, value: { owner: 'ply' }, revision: saved.revision, imports: [{ id: 'not-a-row', digest: 'x' }] }).then(() => null, e => e);
     t.ok('見つからない行は取り込まない（画面から来た定義は使わない）', forged && /取り込めない/.test(forged.message));
 
     const s = await client.cmd('newSession', { cwd, backend: 'codex' });
@@ -69,7 +72,7 @@ export default async function (t) {
     // 同じスレッドで担当を戻す: ロード済みのスレッドを外して読み直し、ネイティブが戻る
     const back = await client.cmd('hooksUnifyPreview', { cwd, direction: 'native' });
     t.ok('戻すときの確認: 再開するネイティブの定義を並べる', back.direction === 'native' && back.stops.some(x => x.scope === 'project'));
-    await client.cmd('setHooksOwner', { place: cwd, value: null });
+    await client.cmd('setHooksOwner', { place: cwd, value: null, revision: back.revision });
     const again = await client.runTurn({ sessionId: sid, prompt: 'hello', mode: 'full' }, { ms: 60_000 });
     const lines = await logLines(log);
     const last = lines.filter(l => l.method === 'turn/start').at(-1);
@@ -92,7 +95,7 @@ export default async function (t) {
     const nativeTurn = await client.runTurn({ ...a0, prompt: 'agy-hooks' }, { ms: 60_000 });
     t.ok('agy・エージェント任せ: ユーザーと作業場所の定義が走る', /user_probe:allow/.test(textOf(nativeTurn)) && /ws_probe:allow/.test(textOf(nativeTurn)), textOf(nativeTurn));
     const reg = await client.cmd('savePlyHook', { value: { name: 'agy-deny', agent: 'antigravity', event: 'PreToolUse', matcher: 'run_command', command: `node ${deny}`, targets: ['antigravity'] } });
-    await client.cmd('setHooksOwner', { place: null, value: { owner: 'ply', disabled: [] } });
+    await client.cmd('setHooksOwner', { place: null, value: { owner: 'ply', disabled: [] }, revision: (await client.cmd('plyHooks', {})).revision });
     const a1 = await client.cmd('newSession', { cwd, backend: 'antigravity' });
     const plyTurn = await client.runTurn({ ...a1, prompt: 'agy-hooks' }, { ms: 60_000 });
     const text = textOf(plyTurn);

@@ -31,7 +31,7 @@ import os from "node:os";
 import path from "node:path";
 import * as store from '../store.mjs';
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
-import { readAgyRuns } from '../hooks-unify.mjs';
+import { readAgyRuns, rotateAgyRuns } from '../hooks-unify.mjs';
 
 /**
  * 本文の無い SUCCESS を確定するまでに、打ち切りの印（stderr）を待つ時間。
@@ -113,8 +113,24 @@ sweep();
 async function reportHookRuns(session, hooksRuntime, emit) {
   const at = session?.hookRuns;
   if (!at) return;
-  const { runs, offset } = await readAgyRuns(at.file, at.offset);
-  at.offset = offset;
+  // 入れ替えた古いファイルの続き（入れ替えの間に書かれた行）を先に読む。新しい行が無くなったら捨てる
+  const runs = [];
+  if (at.old) {
+    const r = await readAgyRuns(at.old.file, at.old.offset);
+    runs.push(...r.runs);
+    if (r.offset === at.old.offset && !r.more) { await fs.promises.rm(at.old.file, { force: true }).catch(() => {}); at.old = null; }
+    else at.old.offset = r.offset;
+  }
+  // 上限ずつ、最後の改行まで読む（書きかけの行は次のターンに回す）
+  for (let i = 0; i < 16; i++) {
+    const r = await readAgyRuns(at.file, at.offset);
+    runs.push(...r.runs);
+    at.offset = r.offset;
+    if (!r.more) break;
+  }
+  // 長く続く会話でファイルが育たないように、読み終えた分が大きくなったら入れ替える
+  const rotated = !at.old && await rotateAgyRuns(at.file, at.offset);
+  if (rotated) { at.old = { file: rotated.old, offset: rotated.oldOffset }; at.offset = 0; }
   const names = new Map((hooksRuntime?.supplied ?? []).map(s => [s.hook.id, s.hook.name]));
   for (const r of runs) emit({ type: 'hookRun', phase: r.phase === 'started' ? 'started' : 'response', hookId: r.runId, name: names.get(r.id) ?? r.id, event: String(r.event ?? ''),
     pleiad: true, id: r.id, ...(r.phase === 'response' ? { outcome: ['success', 'error', 'cancelled'].includes(r.outcome) ? r.outcome : 'error',

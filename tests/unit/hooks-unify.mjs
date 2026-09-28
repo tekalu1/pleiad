@@ -64,9 +64,8 @@ export default async function (t) {
     await fs.writeFile(path.join(tmp, 'broken.json'), '{');
     const broken = createPlyHooks(tmp);
     await fs.rename(path.join(tmp, 'broken.json'), broken.file);
-    let unreadable = null;
-    try { await broken.view(); } catch (e) { unreadable = e; }
-    t.ok('壊れたファイルは読めないとして止まり、ファイルは変えない', unreadable && (await fs.readFile(broken.file, 'utf8')) === '{');
+    const unreadable = await broken.view();
+    t.ok('壊れたファイルは読めないと知らせ（画面が直す操作を出す）、ファイルは変えない', unreadable.unreadable === true && (await fs.readFile(broken.file, 'utf8')) === '{');
     await fs.rm(broken.file);
 
     // ---------------------------------------------------------------- 組み立て（純粋）

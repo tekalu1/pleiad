@@ -19,7 +19,7 @@ import { rpc as nativeRpc } from './codex-rpc.mjs';
 import { createTerminalTracker } from "./codex-background.mjs";
 import { codexContextRpc } from './context-options.mjs';
 import { CodexRpc } from './codex-rpc.mjs';
-import { codexHooksState } from '../hooks-plan.mjs';
+import { codexHooksState, codexListProblem } from '../hooks-plan.mjs';
 import { maskText } from '../hooks-config.mjs';
 import crypto from 'node:crypto';
 import { undelivered } from './undelivered.mjs';
@@ -524,19 +524,46 @@ const loadedInstructions = new Map();
 const loadedHooks = new Map();
 nativeRpc.onDown(() => { loadedProvider.clear(); loadedInstructions.clear(); loadedHooks.clear(); });
 
+/**
+ * スレッドを hooks の config（指紋 hooksKey。'' は渡さない）で読み直せるように外す。共有の app-server だけ（専用の app-server は毎回新しい）。
+ * 追跡している（loadedHooks にある）スレッドは指紋が違うときだけ外す。追跡していないスレッドは、圧縮・分岐など別の経路で
+ * どの config でロードされたか分からないので、hooks を渡すなら必ず外す（ロードされていなければ notLoaded で通る）。
+ * 外せなければ投げる（resume が config を黙って無視し、二重実行か未実行になるため）。外したかを返す
+ */
+async function unloadForHooks(rpc, threadId, hooksKey) {
+  if (rpc !== nativeRpc || !threadId) return false;
+  const needs = loadedHooks.has(threadId) ? loadedHooks.get(threadId) !== hooksKey : hooksKey !== '';
+  if (!needs) return false;
+  const out = await rpc.request('thread/unsubscribe', { threadId }).catch(e => ({ error: e }));
+  if (out?.error || !['unsubscribed', 'notLoaded', 'notSubscribed'].includes(out?.status)) {
+    throw new Error(t('codex.errors.hooksUnsubscribeFailed', { reason: out?.error?.message ?? out?.status ?? t('codex.errors.noResponse') }));
+  }
+  loadedProvider.delete(threadId); loadedInstructions.delete(threadId); loadedHooks.delete(threadId);
+  return true;
+}
+
 // Pleiad の登録を信頼済みとして渡す hash（hooks.state の trusted_hash）。同じ表を起動の -c で渡した app-server の hooks/list の
-// currentHash（source: sessionFlags）から取る（LLM は呼ばない）。表が同じなら同じ hash なので、表ごとに覚える
+// currentHash（source: sessionFlags）から取る（LLM は呼ばない）。表が同じなら同じ hash なので、表ごとに覚える（新しく使った 50 表まで）。
+// 同じ表を同時に頼まれたら 1 本のプローブを分け合い、失敗は 30 秒のあいだ覚えて app-server を起こし直さない
 const probeCache = new Map();
-async function probeHookHashes(table, cwd) {
+const PROBE_KEEP = 50, PROBE_FAIL_MS = 30_000;
+export function probeHookHashes(table, cwd, { spawn = config => new CodexRpc(config), now = Date.now } = {}) {
   const key = JSON.stringify(table);
-  if (probeCache.has(key)) return probeCache.get(key);
-  const probe = new CodexRpc({ hooks: table });
-  try {
-    const data = (await probe.request('hooks/list', { cwds: [cwd] }, 30_000))?.data ?? [];
-    if (probeCache.size > 50) probeCache.clear();
-    probeCache.set(key, data);
-    return data;
-  } finally { probe.stop(); }
+  const hit = probeCache.get(key);
+  if (hit && !(hit.failedAt && now() - hit.failedAt > PROBE_FAIL_MS)) {
+    probeCache.delete(key); probeCache.set(key, hit);   // 新しく使った順に並べ直す
+    return hit.promise;
+  }
+  const entry = { failedAt: null, promise: null };
+  entry.promise = (async () => {
+    const probe = spawn({ hooks: table });
+    try { return (await probe.request('hooks/list', { cwds: [cwd] }, 30_000))?.data ?? []; }
+    finally { probe.stop(); }
+  })();
+  entry.promise.catch(() => { entry.failedAt = now(); });
+  probeCache.delete(key); probeCache.set(key, entry);
+  while (probeCache.size > PROBE_KEEP) probeCache.delete(probeCache.keys().next().value);
+  return entry.promise;
 }
 /**
  * Hooks を Pleiad がそろえるターンの config の hooks。ターンごとに hooks/list（その会話の app-server・その cwd）を取り直し、
@@ -544,9 +571,13 @@ async function probeHookHashes(table, cwd) {
  */
 export async function codexHooksConfig(runtime, rpc, cwd, { probe = probeHookHashes } = {}) {
   const list = (await rpc.request('hooks/list', { cwds: [cwd] }, 15_000))?.data;
-  if (!Array.isArray(list)) throw new Error(t('codex.errors.hooksList'));
-  const probed = Object.keys(runtime.table).length ? await probe(runtime.table, cwd).catch(() => []) : [];
+  // 一覧が欠けている・形が違う・cwd ごとの errors があるときは、止める key が全部そろっていない。0 件として続けない（ネイティブが漏れて動く）
+  const problem = codexListProblem(list, cwd);
+  if (problem) throw new Error(t('codex.errors.hooksList', { detail: problem }));
+  // 渡す登録すべての trusted_hash が取れなければ始めない。hash の無い登録を Codex は動かさず、ネイティブだけを止めることになる
+  const probed = Object.keys(runtime.table).length ? await probe(runtime.table, cwd).catch(e => { throw new Error(t('codex.errors.hooksTrust', { detail: String(e?.message ?? e).slice(0, 200) })); }) : [];
   const { state, stopped, kept, untrusted } = codexHooksState({ table: runtime.table, probe: probed, list });
+  if (untrusted) throw new Error(t('codex.errors.hooksTrust', { detail: `${untrusted}` }));
   const row = h => ({ key: h.key, source: h.source, event: h.eventName ? h.eventName[0].toUpperCase() + h.eventName.slice(1) : null, path: h.sourcePath ?? '',
     command: h.command ? maskText(h.command) : '', matcher: typeof h.matcher === 'string' ? h.matcher : null, ...(h.pluginId ? { plugin: h.pluginId } : {}) });
   Object.assign(runtime.record, { stopped: stopped.map(row), kept: kept.map(row), ...(untrusted ? { untrusted } : {}) });
@@ -1027,9 +1058,15 @@ export const backend = {
   toolHints: TOOL_HINTS,
   subagentTools: SUBAGENT_ITEMS,
 
-  async compact({ sessionId, emit }) {
+  async compact({ sessionId, emit, cwd, hooksRuntime = null }) {
     if (!validId(sessionId)) throw new Error(t('codex.errors.noThreadId', { method: 'thread/compact/start' }));
-    await nativeRpc.request('thread/resume', { threadId: sessionId });
+    // 圧縮でも PreCompact / PostCompact の hooks が動く。通常のターンと同じく、Hooks を Pleiad がそろえる会話は登録と止める key を渡し、
+    // 違う config でロードされている（か分からない）スレッドは外してから読み直す（ADR 0049）
+    const hooks = hooksRuntime ? await codexHooksConfig(hooksRuntime, nativeRpc, cwd) : null;
+    const hooksKey = hooks?.key ?? '';
+    await unloadForHooks(nativeRpc, sessionId, hooksKey);
+    await nativeRpc.request('thread/resume', { threadId: sessionId, ...(hooks ? { config: { hooks: hooks.config } } : {}) });
+    loadedHooks.set(sessionId, hooksKey);
     let off, timer;
     const completed = new Promise((resolve, reject) => {
       timer = setTimeout(() => reject(new Error('Compaction timed out')), 300_000);
@@ -1041,6 +1078,7 @@ export const backend = {
           if (window) emit(window);
           return;
         }
+        if (method === 'hook/started' || method === 'hook/completed') { emit(codexHookRun(method, params, hooksRuntime)); return; }
         const event = codexCompactionEvent(method, params);
         if (event?.phase !== 'complete') return;
         clearTimeout(timer);
@@ -1473,13 +1511,14 @@ export const backend = {
         // 外さずに resume すると前の接続先のまま走る（スパイクで確認）
         const known = rpc === nativeRpc ? loadedProvider.get(threadId) : undefined;
         const instructionsChanged = rpc === nativeRpc && loadedInstructions.has(threadId) && loadedInstructions.get(threadId) !== (common.developerInstructions ?? '');
-        const hooksChanged = rpc === nativeRpc && known !== undefined && (loadedHooks.get(threadId) ?? '') !== hooksKey;
-        if (known !== undefined && (known !== providerKey || instructionsChanged || hooksChanged)) {
+        // hooks は追跡していないロード済みのスレッド（圧縮・分岐でロードされたもの）も外す（unloadForHooks と同じ判断）
+        const hooksChanged = rpc === nativeRpc && (loadedHooks.has(threadId) ? loadedHooks.get(threadId) !== hooksKey : hooksKey !== '');
+        if ((known !== undefined && (known !== providerKey || instructionsChanged)) || hooksChanged) {
           const out = await rpc.request('thread/unsubscribe', { threadId }).catch(e => ({ error: e }));
           const unloaded = !out?.error && ['unsubscribed', 'notLoaded', 'notSubscribed'].includes(out?.status);
           // 接続先が変わったのに外せなかったら、この後の resume は接続先の変更を黙って無視する。前の接続先へ送らないよう、ここで止める。
           // 指示だけが変わったときは止めない（前の指示のまま続け、次のターンでもう一度外す）
-          if (!unloaded && known !== providerKey) {
+          if (!unloaded && known !== undefined && known !== providerKey) {
             throw new Error(t("codex.errors.unsubscribeFailed", { reason: out?.error?.message ?? out?.status ?? t("codex.errors.noResponse") }));
           }
           // hooks の渡し方が変わったのに外せなかったら、この後の resume は hooks の config を黙って無視する。ターンを始めない

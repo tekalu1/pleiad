@@ -52,7 +52,7 @@ import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
 import { createPlyHooks } from './ply-hooks.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
-import { deliverable } from './hooks-plan.mjs';
+import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
 import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
@@ -230,13 +230,27 @@ const HOOK_LEAKS_MAX = 20;
  */
 async function hooksUnifyPreview({ cwd = null, direction = 'ply' } = {}) {
   const dir = cwd ? await scanDirectory(cwd) : null;
-  const report = await hooksConfig.scan({ cwd: dir, scopes: dir ? ['user', 'directory'] : ['user'] });
-  await withCodexTrust(report, dir ?? os.homedir(), { trust: true });
-  const raws = await hooksConfig.raw({ cwd: dir, ids: report.entries.map(e => e.id) });
+  const { report, raws } = await nativeRaws(dir);
+  const all = await plyHooks.read();
   const view = await plyHooks.view(dir);
   const owner = dir ? view.place?.value : view.defaults.value;
-  const all = await plyHooks.read();
-  return { ...unifyPreview({ report, raws, hooks: all.hooks, owner, direction }), cwd: dir, owner, scope: dir ? 'place' : 'user' };
+  // agy はコンテキストの Skills も Pleiad 担当だと、カスタムエージェントが hooks まで止める（ADR 0049）。その場所ではそろえた agy の会話を始めない
+  const context = await contextSettings.get(dir ?? os.homedir(), dir ? {} : { level: 'default' }).catch(() => null);
+  return { ...unifyPreview({ report, raws, hooks: all.hooks, owner, direction }), cwd: dir, owner, scope: dir ? 'place' : 'user',
+    // 確認票: 登録と担当の版。保存（setHooksOwner）の直前に照合する
+    revision: view.revision, agySkillsConflict: context?.owners?.skill === 'ply' };
+}
+/**
+ * 取り込みの材料。見つかった行（Codex の信頼状態を重ねたもの）と、その元の定義（伏せ字でない）。
+ * 元の設定で動いていないか（Codex の信頼状態・agy の enabled）は行の側にあるので、元の定義の行へ写す
+ */
+async function nativeRaws(dir, ids = null) {
+  const report = await hooksConfig.scan({ cwd: dir, scopes: dir ? ['user', 'directory'] : ['user'] });
+  await withCodexTrust(report, dir ?? os.homedir(), { trust: true });
+  const raws = await hooksConfig.raw({ cwd: dir, ids: ids ?? report.entries.map(e => e.id) });
+  const byId = new Map(report.entries.map(e => [e.id, e]));
+  for (const r of raws) { const e = byId.get(r.row.id); if (e?.trust) r.row = { ...r.row, trust: e.trust }; }
+  return { report, raws };
 }/**
  * Codex の hooks の信頼状態を app-server の hooks/list で重ねる（Codex の会話と同じ接続を使う）。
  * Codex の行も Codex のファイルも無ければ呼ばない。trust が偽なら呼ばずに「確かめています」の印（trustPending）だけ付けて返す
@@ -1197,11 +1211,15 @@ function makeEmit(turn) {
       // Hooks を Pleiad がそろえる会話で、止めたはずのネイティブの定義が走った（Claude の hook_started は設定ファイル・プラグインの hooks の分だけ届く。
       // Codex は source が user・project）。止められなかったことを会話の記録に残す（推定で止まったことにしない）
       const hooksRecord = turn.contextRecord?.hooks;
-      const leak = hooksRecord?.owner === 'ply' && !pleiad && (event.leak === true || turn.backend.id === 'claude');
+      // Claude の通知には出どころが無い（hook_name は「イベント:matcher」）。止めたはずの定義と同じイベント・matcher のものだけ漏れとし、
+      // ほかは出どころの分からないネイティブの発火（管理者の hooks は止めない契約なので、それを漏れと言わない）
+      const { leak, unknownNative } = classifyNativeRun({ record: hooksRecord, backend: turn.backend.id, pleiad, name, event: hookEvent, leak: event.leak });
       if (leak && phase === 'started' && hooksRecord.leaks.length < HOOK_LEAKS_MAX) hooksRecord.leaks.push({ name, event: hookEvent, ...(source ? { source } : {}), at: new Date().toISOString() });
+      if (unknownNative && phase === 'started' && (hooksRecord.unknownNative ??= []).length < HOOK_LEAKS_MAX) hooksRecord.unknownNative.push({ name, event: hookEvent, at: new Date().toISOString() });
       // 多いときは新しいほうを残す（ターンの最後の Stop などが記録から落ちないように）
       turn.hookRuns.push({ phase, hookId, name, event: hookEvent, ...(outcome ? { outcome } : {}), ...(Number.isInteger(exitCode) ? { exitCode } : {}),
-        ...(pleiad ? { pleiad: true, ...(id ? { id } : {}) } : {}), ...(source ? { source } : {}), ...(leak ? { leak: true } : {}), ...(Number.isInteger(ms) ? { ms } : {}), at: Date.now() });
+        ...(pleiad ? { pleiad: true, ...(id ? { id } : {}) } : {}), ...(source ? { source } : {}), ...(leak ? { leak: true } : {}), ...(unknownNative ? { unknownNative: true } : {}),
+        ...(Number.isInteger(ms) ? { ms } : {}), at: Date.now() });
       trimHookRuns(turn.hookRuns);
       return;
     }
@@ -1907,7 +1925,8 @@ async function runTurnInternal(args, onStarted, hooks) {
     // Hooks の担当が Pleiad の場所（ADR 0049）。このエージェントへ渡す登録・止めるネイティブ・渡せないものを組み立て、会話の記録に残す。
     // 組み立てられなければ送らない（ネイティブと登録が二重に動くか、どちらも動かないため）
     let hooksTurn = null;
-    try { hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath } }); }
+    try { hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
+      context: { owners: policy.owners, delivered: plyContext } } }); }
     catch (e) { throw new Error(t('hooksUnify.prepareFailed', { error: String(e?.message ?? e) })); }
     if (hooksTurn) contextRecord.hooks = hooksTurn.record;
     if (appliedSettings) {
@@ -2685,18 +2704,27 @@ wss.on("connection", (ws, req) => {
           return reply(true, await hooksUnifyPreview({ cwd: msg.args?.cwd ?? null, direction: msg.args?.direction === 'native' ? 'native' : 'ply' }));
         case 'setHooksOwner': {
           // 担当と取り込みを 1 回で保存する。取り込む定義はサーバーがファイルから読み直す（画面から来たコマンドは使わない）
+          // 確認票: 確認の面で見た版（revision）と、取り込む行ごとの元の定義の hash（digest）。どちらかが変わっていれば保存しない（確認し直す）
           const place = msg.args?.place ?? null;
-          const ids = Array.isArray(msg.args?.imports) ? msg.args.imports.filter(x => typeof x === 'string').slice(0, 100) : [];
+          if (typeof msg.args?.revision !== 'string') throw new Error(t('hooksUnify.reviewRequired'));
+          const wanted = Array.isArray(msg.args?.imports) ? msg.args.imports : [];
+          if (wanted.length > 100 || wanted.some(x => typeof x?.id !== 'string' || typeof x?.digest !== 'string')) throw new Error(t('hooksUnify.importFailed'));
+          const imports = [...new Map(wanted.map(x => [x.id, x])).values()];
           const dir = place ? await scanDirectory(place) : null;
-          const raws = ids.length ? await hooksConfig.raw({ cwd: dir, ids }) : [];
+          const { raws } = imports.length ? await nativeRaws(dir, imports.map(x => x.id)) : { raws: [] };
           const add = [];
-          for (const id of ids) {
-            const raw = raws.find(r => r.row.id === id);
+          for (const want of imports) {
+            const raw = raws.find(r => r.row.id === want.id);
             const c = raw ? importCandidate(raw) : null;
             if (!c?.importable) throw new Error(t('hooksUnify.importFailed'));
+            if (c.digest !== want.digest) throw new Error(t('hooksUnify.importChanged'));
             add.push(c.value);
           }
-          return reply(true, await plyHooks.setOwner({ place, value: msg.args?.value ?? null, add, cwd: msg.args?.cwd ?? place }));
+          return reply(true, await plyHooks.setOwner({ place, value: msg.args?.value ?? null, add, cwd: msg.args?.cwd ?? place, expect: msg.args.revision }));
+        }
+        case 'repairPlyHooks': {
+          // 壊れた hooks.json を退避して、読めた部分だけで書き直す（画面で影響を知らせてから押させる）
+          return reply(true, await plyHooks.repair({ cwd: msg.args?.cwd ?? null }));
         }
         case 'scanContext': {
           // One scan at a time per connection; no changes to running turns.

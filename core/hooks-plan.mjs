@@ -111,16 +111,40 @@ export function codexHooksState({ table, probe = [], list = [] }) {
  * nativeNames はユーザー・作業場所の定義の名前（止める）。プラグインの名前は入れない
  */
 export function agyHooksFile({ supplied, nativeNames = [], adapterName }) {
-  const out = {};
+  // 名前はエージェントの設定ファイルから来る外の値。`__proto__` なども普通の名前として出すため、Map で組んで Object.fromEntries で
+  // own property にする（普通の {} への代入だと `__proto__` は prototype の設定になり、JSON に出ず止まらない）
+  const out = new Map();
   const rel = `pleiad-hooks/${adapterName}`;
+  const natives = new Set(nativeNames);
   for (const s of supplied) {
-    const handler = { type: 'command', command: suppliedCommand(s, 'antigravity', { adapterPath: rel, unquoted: true, recordId: true }), timeout: s.d.timeout };
     const name = `${AGY_NAME_PREFIX}${s.hook.id}`;
-    const spec = out[name] ??= {};
-    spec[s.d.event] = AGY_TOOL_EVENTS.has(s.d.event) ? [{ matcher: s.d.matcher || '*', hooks: [handler] }] : [handler];
+    // 同じ名前のネイティブがあると、止める行と Pleiad の登録が同じ名前になり、どちらかしか書けない。止められないので断る
+    if (natives.has(name)) throw Object.assign(new Error(`agy hook name collides with a Pleiad registration: ${name}`), { code: 'AGY_NAME_COLLISION', name });
+    const handler = { type: 'command', command: suppliedCommand(s, 'antigravity', { adapterPath: rel, unquoted: true, recordId: true }), timeout: s.d.timeout };
+    const spec = out.get(name) ?? new Map();
+    spec.set(s.d.event, AGY_TOOL_EVENTS.has(s.d.event) ? [{ matcher: s.d.matcher || '*', hooks: [handler] }] : [handler]);
+    out.set(name, spec);
   }
-  for (const n of nativeNames) if (!Object.hasOwn(out, n)) out[n] = { enabled: false };
-  return out;
+  for (const n of natives) out.set(n, new Map([['enabled', false]]));
+  return Object.fromEntries([...out].map(([k, v]) => [k, Object.fromEntries(v)]));
+}
+
+/**
+ * Codex の hooks/list の返りが、止める key を決めるのに足りるか。足りなければ理由（短い英語）、足りれば null。
+ * 並びでない・cwd の分が無い・hooks が並びでない・cwd ごとの errors がある（一部の設定を読めていない）ときは足りない
+ */
+export function codexListProblem(list, cwd) {
+  if (!Array.isArray(list)) return 'not a list';
+  const norm = p => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const mine = list.filter(d => d && (list.length === 1 || norm(d.cwd) === norm(cwd)));
+  if (!mine.length) return 'no entry for the working directory';
+  for (const d of mine) {
+    if (!Array.isArray(d.hooks)) return 'hooks is not a list';
+    if (d.errors !== undefined && !Array.isArray(d.errors)) return 'errors is not a list';
+    if (d.errors?.length) return `errors: ${String(d.errors[0]?.message ?? d.errors[0]).slice(0, 120)}`;
+    if (d.hooks.some(h => !h || typeof h.key !== 'string' || typeof h.source !== 'string')) return 'a hook without key or source';
+  }
+  return null;
 }
 
 /** 一覧・記録に残す形（登録の要約。コマンドは呼ぶ側で伏せる） */
@@ -149,11 +173,29 @@ export function claudeIdentityOutput(event, result) {
   return {};
 }
 
-/** 担当の切り替えで止まる・動き続けるネイティブの行の区分（ADR 0049）。止め方の無い出どころは「動き続ける」 */
+/**
+ * 担当の切り替えで止まる・動き続けるネイティブの行の区分（ADR 0049）。止め方の無い出どころは「動き続ける」（kept）。
+ * 元の設定で動いていないもの（agy の enabled:false・同じ名前で止まっている、Codex の /hooks で止めた・未審査・変更あり）は inactive
+ * （止めても再開しても変わらない。取り込むならオフで）
+ */
 export function nativeFate(row) {
+  if (row.agent === 'antigravity' && ['user', 'project'].includes(row.scope) && (row.enabled === false || row.stoppedBySameName)) return 'inactive';
+  if (row.agent === 'codex' && ['user', 'project'].includes(row.scope) && row.trust && (row.trust.enabled === false || ['untrusted', 'modified'].includes(row.trust.status))) return 'inactive';
   if (row.agent === 'claude') return row.scope === 'managed' ? 'kept' : 'stopped';
   if (row.agent === 'codex') return ['user', 'project'].includes(row.scope) ? 'stopped' : 'kept';
   if (row.agent === 'antigravity') return ['user', 'project'].includes(row.scope) ? 'stopped' : 'kept';
   return 'kept';
+}
+/**
+ * そろえた会話で届いたネイティブの発火を分ける（会話の記録の leaks / unknownNative）。
+ * Codex は通知の source で分かる（user・project なら漏れ。hookRun の leak）。Claude の通知には出どころが無い（hook_name は「イベント:matcher」）ので、
+ * 止めたはずの定義（record.stopped）と同じイベント・matcher のものだけを漏れとし、ほかは出どころ未確認（管理者の hooks は止めない契約なので、漏れと言わない）
+ */
+export function classifyNativeRun({ record, backend, pleiad = false, name = '', event = '', leak = false }) {
+  if (record?.owner !== 'ply' || pleiad) return { leak: false, unknownNative: false };
+  if (backend !== 'claude') return { leak: leak === true, unknownNative: false };
+  const at = String(name).indexOf(':'), matcher = at < 0 ? null : String(name).slice(at + 1);
+  const hit = (record.stopped ?? []).some(r => r.event === event && (matcher === null ? !r.matcher || r.matcher === '*' : r.matcher === matcher));
+  return { leak: hit, unknownNative: !hit };
 }
 export { HOOK_AGENTS };
