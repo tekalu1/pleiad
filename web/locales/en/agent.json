@@ -44,6 +44,8 @@
     "noticeMore": "\nRead the rest with ply_task_status and offset: {{offset}}.",
     "noticeRetry": "The user retried {{of}} with another delegate.\n",
     "noticeRejections": "Commands rejected before running (for example by Codex's own safety check): {{count}}\n{{items}}\nRead them all in rejections from ply_task_status.",
+    "noticeStoppedBackground": "Pleiad stopped background tasks that were still running {{minutes}} or more minutes after the child finished its reply: {{count}}\n{{items}}\nIf the work needs to continue, check the child conversation and send instructions with ply_task_send.",
+    "noticeStoppedItem": "- {{label}}",
     "noticeRejection": "- {{command}} ({{reason}})"
   },
   "tasks": {

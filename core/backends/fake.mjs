@@ -195,9 +195,11 @@ async function background(text, { s, out, emit, signal, control }) {
  * 台本 "bg-shell <本文>"。Claude で、裏へ回ったコマンドが終わらないまま main が返答を終えた形
  * （local_bash の完了通知が来ないので、入力を閉じられずターンが続く）。本文で返答し、phase: waiting で待つ。
  * stopBackground（Query.stopTask に当たる）で止めると、完了通知で main が再開して一言返し、ターンが終わる。
+ * "active-shell" は報告せず、main が結果を待っている形（phase: active）。
  * 中断されたら true。
  */
 async function hangingShell(text, { s, out, emit, signal, keys }) {
+  const reported = !text.startsWith("active-shell");
   const task = { id: `fake-shell-${crypto.randomUUID().slice(0, 8)}`, kind: "shell", label: "cat >> /dev/null", waitable: true };
   let stopped = false, wake = null;
   const poke = () => { const w = wake; wake = null; w?.(); };
@@ -208,10 +210,12 @@ async function hangingShell(text, { s, out, emit, signal, keys }) {
     emit({ type: "tool.start", id: task.id, name: "Bash", input: { command: task.label, run_in_background: true } });
     emit({ type: "tool.result", id: task.id, text: "launched", commandBackground: true, nativeTaskId: task.id });
     emit({ type: "background", tasks: [task] });
-    const report = { uuid: crypto.randomUUID(), role: "assistant", text: text.replace(/^bg-shell\s*/, "") || "終わった" };
-    await say(emit, report.text, report.uuid);
-    push(s, report);
-    emit({ type: "phase", state: "waiting" });
+    if (reported) {
+      const report = { uuid: crypto.randomUUID(), role: "assistant", text: text.replace(/^bg-shell\s*/, "") || "終わった" };
+      await say(emit, report.text, report.uuid);
+      push(s, report);
+      emit({ type: "phase", state: "waiting" });
+    } else emit({ type: "phase", state: "active" });
     while (!stopped && !signal?.signal?.aborted) await new Promise((resolve) => { wake = resolve; });
     if (signal?.signal?.aborted) { emit({ type: "turnResult", outcome: "aborted" }); return true; }
     emit({ type: "background", tasks: [] });
@@ -412,7 +416,7 @@ export const backend = {
         await say(emit, out.text, out.uuid);
       } else if (/^bg(\s|$)/.test(text)) {
         if (await background(text, { s, out, emit, signal, control })) return { sessionId: id };
-      } else if (/^bg-shell(\s|$)/.test(text)) {
+      } else if (/^(?:bg-shell|active-shell)(\s|$)/.test(text)) {
         if (await hangingShell(text, { s, out, emit, signal, keys: [...new Set([hostSessionId, id].filter(Boolean))] })) return { sessionId: id };
       } else if (/^hook-follow(\s|$)/.test(text)) {
         const report = { uuid: crypto.randomUUID(), role: "assistant", text: text.replace(/^hook-follow\s*/, "") || "報告" };

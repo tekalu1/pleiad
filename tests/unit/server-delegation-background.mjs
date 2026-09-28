@@ -1,7 +1,8 @@
-// 委譲の子に長いコマンドが残るとき、停止せず親に知らせ、明示的な取り消しで止められること。
+// 返答前のコマンドは知らせるだけ。報告後の裏の作業は待機上限で片付け、完了通知を届ける。
 // fake バックエンドでサーバー全体を通す（LLM は呼ばない）。
 //   - "bg-shell": Claude で、裏へ回ったコマンドが終わらず main だけが止まった形（phase: waiting のままターンが続く）。
 //     2026-09-27 に、Claude の子が報告を書き終えた後も running のまま残り、依頼元に通知が届かなかった（docs/agent-delegation.md「子に残った裏の作業」）
+//   - "active-shell": main が返答前で、コマンドの結果を待っている形。上限を過ぎても自動停止しない
 //   - "bg": 裏のサブエージェント。自分で終わるので止めない
 //   - "term": Codex のバックグラウンド端末（ターンの外に残る。終わっても main は再開しない）。子にも親にも残る形
 //   - "hook-follow": 報告の後に Stop フックが続けさせ、調べものだけして一言書いた形。結果と通知は報告（docs/agent-delegation.md「子の結果」）
@@ -12,7 +13,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 
 export const name = 'server-delegation-background';
-export const title = '委譲の子の終わり方: 裏のコマンドは自動停止せず端末は完了を妨げない（コマンド・サブエージェント・端末）・Stop フックの続きの一言を結果にしない';
+export const title = '委譲の子の終わり方: 報告後は裏のコマンドを片付け、返答前は通知だけ（コマンド・サブエージェント・端末）・Stop フックの続きの一言を結果にしない';
 
 const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 const WAIT_MS = 1500;
@@ -48,17 +49,45 @@ export default async function (t) {
     {
       const { parent, task, from } = await delegate('bg-shell 子の報告: 作業を終えた');
       await c.waitFor((e) => e.type === 'phase' && e.sessionId === task.sessionId && e.state === 'waiting', { from, ms: 20000 });
+      const early = await taskOf(task.taskId);
+      t.ok('報告直後は裏のコマンドと台帳を残して待つ', early.status === 'running' && early.activeCommands.length === 1);
+      const done = await until(async () => { const r = await taskOf(task.taskId); return r?.notification === 'sent' ? r : null; });
+      t.ok('報告後の待機上限で片付け、子をcompletedにする', done?.status === 'completed');
+      t.ok('停止前の報告と再開後の一言を結果に残す', done?.result.includes('子の報告: 作業を終えた') && done.result.includes('裏のコマンドが止められた'));
+      t.ok('止めた作業を記録し、コマンド台帳を閉じる', done?.stoppedBackground?.[0]?.label === 'cat >> /dev/null' && done.activeCommands.length === 0);
+      const received = (await notices(parent)).filter(m => m.text.includes('Pleiad タスク完了通知'));
+      t.ok('完了通知は一度だけで、止めた作業と報告を載せる', received.length === 1 && received[0].text.includes('cat >> /dev/null')
+        && received[0].text.includes('止めました') && received[0].text.includes('子の報告: 作業を終えた'));
+      await until(async () => !(await c.cmd('running')).turns?.some(r => r.sessionId === parent));
+      await callTool(parent, 'ply_task_send', { taskId: task.taskId, message: 'echo:FOLLOWUP_DONE' });
+      const next = await until(async () => { const r = await taskOf(task.taskId); return r?.notification === 'sent' && r.result === 'FOLLOWUP_DONE' ? r : null; });
+      t.ok('次の回で止めた作業がなければ前回の停止記録を消す', next && !next.stoppedBackground);
+    }
+
+    // main がまだコマンドの結果を待っている子。backgroundでも報告前なら片付けない。
+    {
+      const { parent, task, from } = await delegate('active-shell');
+      await c.waitFor(e => e.type === 'phase' && e.sessionId === task.sessionId && e.state === 'active', { from, ms: 20000 });
       await sleep(WAIT_MS + 500);
       const running = await taskOf(task.taskId);
-      t.ok('旧タイムアウトを過ぎてもコマンドも子も自動停止しない', running?.status === 'running'
-        && (await phaseOf(task.sessionId)) === 'waiting' && !running.stoppedBackground);
-      const delivered = await until(async () => (await notices(parent)).find(m => m.text.includes('Pleiad コマンド長時間通知')));
-      t.ok('完了通知の代わりにコマンド固有の通知を届ける', delivered?.text.includes('cat >> /dev/null') && delivered.text.includes('ply_task_status')
-        && !(await notices(parent)).some(m => m.text.includes('Pleiad タスク完了通知')));
+      t.ok('返答前のコマンドは片付けの上限を過ぎても止めない', running?.status === 'running' && running.activeCommands.length === 1
+        && !running.stoppedBackground && (await phaseOf(task.sessionId)) === 'active');
+      const notice = await until(async () => (await notices(parent)).find(m => m.text.includes('Pleiad コマンド長時間通知')));
+      t.ok('返答前にはコマンドの時間通知だけが届く', notice?.text.includes('cat >> /dev/null') && !(await notices(parent)).some(m => m.text.includes('Pleiad タスク完了通知')));
       await until(async () => !(await c.cmd('running')).turns?.some(r => r.sessionId === parent));
       await callTool(parent, 'ply_task_cancel', { taskId: task.taskId });
-      t.ok('親が明示的に取り消せる', await until(async () => (await taskOf(task.taskId))?.status === 'cancelled'));
+      t.ok('返答前のコマンドは親が明示的に取り消せる', await until(async () => (await taskOf(task.taskId))?.status === 'cancelled'));
+    }
 
+    // 通常の会話では、報告後のwaitingにも片付けの時計を設けない。
+    {
+      const from = c.mark();
+      await c.cmd('runTurn', { backend: 'fake', cwd: ROOT, prompt: 'bg-shell 通常の会話の報告' });
+      const ev = await c.waitFor(e => e.type === 'phase' && e.state === 'waiting', { from, ms: 10000 });
+      await sleep(WAIT_MS + 500);
+      t.ok('ユーザーの会話は報告後も自動停止しない', (await phaseOf(ev.sessionId)) === 'waiting');
+      await c.cmd('abort', { sessionId: ev.sessionId });
+      await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === ev.sessionId, { from, ms: 10000 });
     }
 
     // ---- 2. 裏のサブエージェントは止めない（自分で終わる）
