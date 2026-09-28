@@ -72,6 +72,16 @@ Skills は名前・説明・ID・元のディレクトリのみを一覧とし�
 - **記録**: ターンごとに `contextSession.added`（`[{ id, name, target, inserted: true, text } | { id, name, target, inserted: false, reason }]`）に残し、`sessionContext` の `added` で返す。会話の右パネルの「Pleiad の指示」と頭の札「Pleiad の指示 n」はこれだけから作る（前の版の記録 `{ id: 'delegation', variant, text }` も読む）。「新しい内容で会話を続ける」は `added` をそのまま残す。
 - 中身が変わらなければ指示欄は同じバイト列のまま（prompt caching を外さない）。
 
+## 指示の量（[ADR 0056](adr/0056-context-review.md)）
+
+会話の右パネルの「指示の量」の面（docs/design-system.md「コンテキスト」）に出す数。毎ターン最初に読み込まれる指示だけを数え、条件付きの rules・Skills の本文・MCP のツール定義・auto-memory・会話の履歴は数えない。数え方はどこでも `web/token-estimate.mjs` の `estimateTokens`（実際のトークナイザーは使わない）。ファイルは書き換えない。
+
+- **ファイルの行の量**: 探索（`core/context-scan.mjs`）が指示の行ごとに `tokens` を付ける。数えるのは渡す本文（`instructionBody`。`@参照` の行と rules の frontmatter を除く。参照先は別の行で数える）。設定の行・右パネルの行の「約 N」と、下の合計は同じ数になる。
+- **Pleiad がそろえる会話**: 自分で書いた分は、記録の行（`contextSession.report.entries`）のうち `supplied` の `tokens` を、出どころ（`scope`: ユーザー／作業場所。足した場所は足した段の側）で分けて足す。途中で読み込んだ子孫の指示（`loaded`）は数えない。
+- **エージェント任せの会話**: Pleiad は本文を渡していないので、パネルが `nativeInstructions`（`{ cwd, backend }`）を呼び、そのエージェントが読む規則（Claude は `claude`、Codex は `codex` の探す形式。探索の設定の除外・足した場所には従わない）で探した `candidate` の行を数える。画面は「推定」と添える。規則を知らないエージェント（antigravity・fake）は `entries: null` で、数えない。結果はパネルを開くたびに取り直す。
+- **Pleiad が足す分**（`contextSession.plyParts`、`[{ id, tokens }]`）: `runTurn` が、そのターンで渡す文が出そろったところ（`runArgs` を組み立てた後）で `core/instruction-amount.mjs` の `plyParts` で数え、変わったときだけ記録し直す（それまでは前のターンの値を引き継ぐ）。内訳は `visualize`（Visualize の説明）・`skills`（ply_context の Skills の一覧）・`agents`（ply_agents の instructions）・`added`（Pleiad の指示）・`guide`（ply_context のうち指示本文以外: ファイルを包む文・子孫の指示と paths 付き rules の案内。`contextTools` の `sections`）・`browser`（ブラウザーの説明）。実際に渡したものだけを載せる: `capabilities.plyAgents` を持たないバックエンド（antigravity）には Visualize と ply_agents の説明を数えず、内蔵ブラウザーの無い会話にはブラウザーの説明を数えない。`sessionContext` の `plyParts` と、ターンの `contextUsage` イベントの `plyParts` で画面に届く。
+- **目安**: 自分で書いた分（ユーザー＋この場所）にだけ当てる。既定 5,000、`prefs.json` の `instructionBudget`（`setPref`。100〜1,000,000 の整数、`null` で既定）。超えたら何倍かを 1 行で知らせるだけで、会話は止めない。
+
 ## MCP
 
 公式 TypeScript SDK のクライアントで stdio / Streamable HTTP / SSE に接続する。Claude・Codex の既存登録を読み、command / args / cwd / env、URL / headers、Codex の環境変数ヘッダー・bearer token 環境変数をメモリ内で解決する。環境変数参照は `${VAR}` / `${VAR:-fallback}` / `${env:VAR}` に対応。Codex の enabled_tools / disabled_tools を反映する。不明な設定を黙って落とさずエラーにする。

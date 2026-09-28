@@ -5,14 +5,17 @@
 // - diff:    開始時の内容（スナップショット）と今の内容
 // - setMcp:  「この会話では外す」。方針（policy.removedMcp）に残し、次のターンから接続しない
 // - agentMcp: エージェント任せの MCP。各エージェントの設定に登録されているもの（読むだけ。接続はしない）
+// - nativeInstructions: エージェント任せの指示。そのエージェントが読む規則で探し、量を見積もる（読むだけ）
 import fs from 'node:fs/promises';
 import { scanContext } from './context-scan.mjs';
-import { KINDS } from './context-settings.mjs';
+import { KINDS, pathKey } from './context-settings.mjs';
 import { pinChanges, readSnapshot, resolveRuntime } from './context-runtime.mjs';
 import { t } from './i18n.mjs';
 
 const MAX_TEXT = 256 * 1024;
 const NAME = /^[a-zA-Z0-9_.-]{1,128}$/;
+/** エージェント任せのとき、そのエージェントが読む指示の探す形式（core/context-scan.mjs の sources） */
+const NATIVE_SOURCE = { claude: 'claude', codex: 'codex' };
 
 export function createContextSession({ store, snapshots, plyServers = async () => null, liveRecord = () => null, isRunning = () => false, scanOptions = {} }) {
   async function saved(sessionId) {
@@ -98,5 +101,29 @@ export function createContextSession({ store, snapshots, plyServers = async () =
     return { cwd: scan.cwd, agents, diagnostics: scan.diagnostics };
   }
 
-  return { refresh, diff, setMcp, agentMcp };
+  /**
+   * エージェント任せの指示の見積もり（右パネルの「指示の量」の「推定」。ADR 0056）。Pleiad は中身を渡していないので、
+   * そのエージェントが読む規則（Claude は CLAUDE.md・rules、Codex は AGENTS.md）で探した結果を数える。
+   * 探索の設定（探す形式・除外・足した場所）には従わない。paths 付きの rules（開始時には読まれない）と、override に隠れたものは数えない。
+   * 規則を知らないエージェント（antigravity など）は entries: null
+   */
+  async function nativeInstructions(cwd, agent) {
+    const source = NATIVE_SOURCE[agent];
+    if (!source) return { cwd, agent, entries: null };
+    const scope = { sources: [source], excludePaths: [] };
+    const kinds = Object.fromEntries(KINDS.map(k => [k, k === 'instruction' ? scope : null]));
+    const scan = await scanContext({ cwd, plan: { user: { roots: [], kinds }, directory: { roots: [], kinds }, mcp: { disabled: [], prefer: {} } } }, scanOptions);
+    const seen = new Set(), entries = [];
+    for (const e of scan.entries) {
+      if (e.kind !== 'instruction' || e.status !== 'candidate' || typeof e.content !== 'string') continue;
+      // 作業場所が home だと、同じファイルがユーザーと作業場所の両方で見つかる（core/context-runtime.mjs の resolveRuntime と同じまとめ方）
+      const key = `${pathKey(e.realPath ?? e.path)}:${e.appliesTo ?? ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      entries.push({ id: e.id, name: e.name, path: e.path, scope: e.scope, tokens: e.tokens });
+    }
+    return { cwd: scan.cwd, agent, entries };
+  }
+
+  return { refresh, diff, setMcp, agentMcp, nativeInstructions };
 }

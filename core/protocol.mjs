@@ -65,7 +65,7 @@ export const COMMANDS = new Set([
   'setRemoteResident',     // { keepRunning?, sleep?: 'working'|'always'|'off' } -> RemoteStatus。常駐の設定（§6.3。RemoteStatus.resident に { available, keepRunning, sleep }）
   'contextSettings', // { cwd? } -> { defaults, places: [{ id, path, kinds: { <kind>: { value, override, from } }, roots, overrides, current }] } 種類ごとの設定と継承（core/context-settings.mjs）
   'slashSkills',     // { cwd } -> 入力欄「/」の候補。コンテキスト画面と同じ探索結果からのスキル一覧（説明文付き）
-  'sessionContext', // { sessionId } -> { report, owners, pinned, changed, startedAt, refreshedAt, removedMcp, added } この会話が読み込んだ記録。固定された会話では今のファイルと突き合わせる。added は Pleiad が入れた指示（直前のターン）
+  'sessionContext', // { sessionId } -> { report, owners, pinned, changed, startedAt, refreshedAt, removedMcp, added, plyParts } この会話が読み込んだ記録。固定された会話では今のファイルと突き合わせる。added は Pleiad が入れた指示、plyParts は Pleiad が足した文の量 [{ id, tokens }]（どちらも直前のターン。ADR 0056）
   // Pleiad の指示（core/ply-instructions.mjs）。担当によらず ply_agents を持つ会話へ毎ターン入る。すべての場所に共通
   'plyInstructions',    // {} -> { items: [{ id, tag: 'default'|'linked'|null, modified, name, body, target, agents, on, tokens }], total, routing }（文は画面の言語）
   'setPlyInstructions', // { action: 'save'|'toggle'|'delete'|'reset'|'order', … } -> 同上。prefs.json の plyInstructions に保存。始まっている会話にも次のターンから効く
@@ -73,6 +73,7 @@ export const COMMANDS = new Set([
   'contextDiff',    // { sessionId } -> { files: [{ path, name, kind, modifiedAt, before, after, beforeMissing, removed }] } 開始時と今の中身
   'setSessionMcp',  // { sessionId, name, removed } -> この会話だけ外部 MCP を外す（ply_context に出さない）/ 戻す。次のターンから効く
   'agentMcp',       // { cwd } -> { agents: { claude|codex: [{ name, transport, endpoint, command, path, scope, disabled }] } } 各エージェントの登録（読むだけ）
+  'nativeInstructions', // { cwd, backend } -> { cwd, agent, entries: [{ id, name, path, scope, tokens }] | null } エージェント任せの指示を、そのエージェントの規則で探した量（読むだけ。ADR 0056）
   'listMcpConfig', // { cwd, format, scope } -> native path, revision and names (no secrets)
   'readMcpServer', // { cwd, format, scope, name } -> explicitly opened server definition
   'saveMcpServer', // { cwd, format, scope, name, value, revision, mode } -> native registration

@@ -49,8 +49,8 @@ const ALLOW = {
 const ONE_SIDED = /^border-(top|right|bottom|left|inline-start|inline-end|block-start|block-end|inline|block)(-(width|style|color))?$/;
 /* 枠線そのもの（--strict: border-use）。区切りは余白・面の階調・配置で作るのが原則。
    どうしても要る箇所は、その宣言と同じ行に `allow-border:` と理由をコメントで書く。
-   outline はフォーカスの輪なので枠線に数えない。 */
-const BORDER_PROP = /^border(-(width|style|color|top|right|bottom|left|inline|block)(-\w+)*)?$/;
+   outline はフォーカスの輪なので枠線に数えない。角丸（border-*-radius）も線ではないので数えない。 */
+const BORDER_PROP = /^border(?!.*-radius$)(-(width|style|color|top|right|bottom|left|inline|block)(-\w+)*)?$/;
 const ALLOW_BORDER_MARK = /allow-border\s*:/;
 /* トークンを定義してよいスコープ（--strict）。ここ以外に色リテラルを置くとテーマが片肺になる。 */
 const THEME_SCOPES = [':root', ':root:not([data-theme="light"])', ':root[data-theme="dark"]'];
@@ -503,7 +503,7 @@ export function selftest(log = console.log) {
       [{ name: 'e.css', text: ':root{--line:#c9cee0}\n.a{border-left:2px solid var(--line);border-top-left-radius:8px}\n.b{box-shadow:inset 3px 0 0 var(--line)}\n.c{box-shadow:0 8px 24px var(--line)}' }], {},
       V => V.filter(v => v.rule === 'one-sided-line').length === 2],
     ['枠線は --strict で落ち、allow-border の行は通る',
-      [{ name: 'f.css', text: ':root{--line:#c9cee0}\n.a{border:1px solid var(--line)}\n.b{border:1px solid var(--line)} /* allow-border: 提示 HTML が溶けないため */\n.c{border:0}' }], { strict: true },
+      [{ name: 'f.css', text: ':root{--line:#c9cee0}\n.a{border:1px solid var(--line)}\n.b{border:1px solid var(--line)} /* allow-border: 提示 HTML が溶けないため */\n.c{border:0;border-top-left-radius:8px;border-end-start-radius:4px}' }], { strict: true },
       V => V.filter(v => v.rule === 'border-use').length === 1 && V.find(v => v.rule === 'border-use').line === 2],
     ['html の <style> と style 属性の直書きの色が、その行番号で落ちる',
       [{ name: 'g.html', text: '<html>\n<style>\n.a{color:#9c3312}\n</style>\n<div style="background:#fbe3da;width:10px">x</div>\n</html>' }], {},

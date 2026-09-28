@@ -130,7 +130,8 @@ export function createContextBridge({ plyMcp, oauth } = {}) {
       // shape: 担当と渡すツールの名前。会話のあいだプロセスを生かすバックエンド（antigravity）は、これが変わったら起こし直す
       // （設定の変更で担当や外部 MCP が変わっても、起動時に受け取ったツール一覧のままになるため）
       const shape = hash([runtime.owners, binding.tools.map(tool => tool.name)]);
-      return { owners: runtime.owners, prompt: helpers.prompt, locale: runtime.locale, url: `${origin}${CONTEXT_MCP_PATH}`, headers: { Authorization: `Bearer ${token}` }, shape, close };
+      // sections: prompt の内訳（Pleiad が足した文の量を数える。core/instruction-amount.mjs）
+      return { owners: runtime.owners, prompt: helpers.prompt, sections: helpers.sections, locale: runtime.locale, url: `${origin}${CONTEXT_MCP_PATH}`, headers: { Authorization: `Bearer ${token}` }, shape, close };
     } catch (e) { await close(); throw e; }
   }
   async function metadata(b, kind, params = {}) {
