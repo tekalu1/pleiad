@@ -168,6 +168,11 @@ export const COMMANDS = new Set([
   "setStatusIcon",   // { status, icon }。空なら「なし」（既定）に戻す
   "createStatus",    // { status }。空のグループを作る（statuses.json にある限り存在する）
   "lineage",         // { sessionId } -> 同じ根を持つセッション群（分岐の筋を描く材料）
+  // リモートの画面から PC の内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートでの表示」）。リモートの接続からだけ使える
+  'browserScreencast',       // { sessionId, url?, width?, quality? } -> { tabId }。始める。タブが無ければ作る
+  'browserScreencastStop',   // { sessionId } -> {}。止める
+  'browserScreencastInput',  // { sessionId, input: { type, ... } } -> {}。入力を送る。エージェント操作中は断る
+  'browserScreencastNav',    // { sessionId, action: back|forward|reload|navigate, url? } -> {}。移動
 ]);
 
 // event.type の一覧（server -> client の EVENT ペイロード）。

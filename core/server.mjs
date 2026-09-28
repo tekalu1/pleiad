@@ -58,6 +58,7 @@ import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
 import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
 import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
+import { parentPortScreencast, nullScreencast } from './browser-screencast.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff, conversation } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
@@ -72,6 +73,16 @@ await ensureDataSchema(store.dataDir);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
 const agentBrowser = parentPortBrowser(process.parentPort);
+const screencast = process.parentPort ? parentPortScreencast(process.parentPort) : nullScreencast();
+const screencastWatchers = new Map(); // sessionId -> Set<ws>
+screencast.onFrame((sessionId, frame) => {
+  const watchers = screencastWatchers.get(sessionId);
+  if (!watchers?.size) return;
+  const msg = JSON.stringify({ kind: 'screencastFrame', sessionId, frame });
+  for (const w of watchers) {
+    if (w.readyState === 1) w.send(msg);
+  }
+});
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
 delete process.env.AGENT_BROWSER_CONFIG;
 delete process.env.AGENT_BROWSER_SESSION;
@@ -2574,7 +2585,17 @@ wss.on("connection", (ws, req) => {
     // 画面の言語。setting は設定値（auto|ja|en）、lang は実際に使う言語（ja|en）
     locale,
   }));
-  ws.on("close", () => detach(ws));
+  ws.on("close", () => {
+    detach(ws);
+    // Clean up any screencast watchers when a WS disconnects
+    for (const [sid, watchers] of screencastWatchers) {
+      watchers.delete(ws);
+      if (!watchers.size) {
+        screencastWatchers.delete(sid);
+        screencast.stop(sid).catch(() => {});
+      }
+    }
+  });
 
   ws.on("message", async (raw) => {
     let msg;
@@ -3278,6 +3299,55 @@ wss.on("connection", (ws, req) => {
         // 作業ディレクトリを選ぶ簡易ブラウザー（ブラウザー版の入力欄）。フォルダーの名前だけを返す
         case "listDirs":
           return reply(true, await listDirs(msg.args?.path, { files: msg.args?.files === true }));
+
+        case 'browserScreencast': {
+          if (local) return reply(false, 'remote-only');
+          if (!screencast.available) return reply(false, 'not-available');
+          const sid = msg.args?.sessionId;
+          if (!sid) return reply(false, 'session required');
+          try {
+            const result = await screencast.start(sid, {
+              url: msg.args.url,
+              width: msg.args.width,
+              quality: msg.args.quality
+            });
+            // Register this WS connection as watching this screencast
+            if (!screencastWatchers.has(sid)) screencastWatchers.set(sid, new Set());
+            screencastWatchers.get(sid).add(ws);
+            return reply(true, result);
+          } catch (e) { return reply(false, e.message); }
+        }
+        case 'browserScreencastStop': {
+          const sid = msg.args?.sessionId;
+          if (sid) {
+            screencastWatchers.get(sid)?.delete(ws);
+            if (!screencastWatchers.get(sid)?.size) {
+              screencastWatchers.delete(sid);
+              await screencast.stop(sid).catch(() => {});
+            }
+          }
+          return reply(true, {});
+        }
+        case 'browserScreencastInput': {
+          if (local) return reply(false, 'remote-only');
+          const sid = msg.args?.sessionId;
+          if (!sid) return reply(false, 'session required');
+          // Check if agent is operating on this session's browser
+          // (agent state is tracked by the browser panel)
+          try {
+            await screencast.input(sid, msg.args.input);
+            return reply(true, {});
+          } catch (e) { return reply(false, e.message); }
+        }
+        case 'browserScreencastNav': {
+          if (local) return reply(false, 'remote-only');
+          const sid = msg.args?.sessionId;
+          if (!sid) return reply(false, 'session required');
+          try {
+            await screencast.navigate(sid, msg.args.action, { url: msg.args.url });
+            return reply(true, {});
+          } catch (e) { return reply(false, e.message); }
+        }
 
         // ファイルの操作（web/file-actions.mjs）。範囲は /file-preview と同じで、実体を解決した後のパスで確かめる。
         // ホストで開く・検査済みのパスを画面へ返す操作は遠隔から断る。開けるのは HTML だけ

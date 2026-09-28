@@ -1538,7 +1538,13 @@
     },
     "link": {
       "blocked": "Disabled because the link is unsafe",
-      "hostOnly": "localhost links open only on the host's PC."
+      "hostOnly": "This URL opens only on the host PC.",
+      "openSheet": "Open link",
+      "openOnDevice": "Open on this device",
+      "openOnDeviceSub": "This device's browser",
+      "openOnPc": "View on PC's browser",
+      "openOnPcSub": "{{host}}",
+      "pcOnly": "This URL opens only on the host PC."
     },
     "present": {
       "height": {
@@ -2788,6 +2794,21 @@
     "invalid": "Can't open this URL. Enter an http or https URL, or something like localhost:5173.",
     "externalUnavailable": "This page can't be opened in the default browser.",
     "siteDataCleared": "Cleared data for this site.",
-    "failed": "The browser action failed."
+    "failed": "The browser action failed.",
+    "remote": {
+      "title": "PC Browser",
+      "connected": "Connected",
+      "connecting": "Connecting…",
+      "disconnected": "Disconnected",
+      "fps": "{{fps}} fps",
+      "quality": "Quality: {{level}}",
+      "qualityAuto": "Auto",
+      "qualityLow": "Low",
+      "textInput": "Text input",
+      "textPlaceholder": "Type text for the PC",
+      "textSend": "Send",
+      "takeOverFirst": "Take over first to type",
+      "unavailable": "PC browser unavailable"
+    }
   }
 }
