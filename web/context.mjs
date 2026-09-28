@@ -14,7 +14,8 @@ import { copyIcon } from './icons.mjs';
 import { createMcpSection, unifyConfirm, toggleMcp } from './mcp-config.mjs';
 import { createPlyInstructions } from './ply-instructions-card.mjs';
 import { createHooksCard } from './hooks-card.mjs';
-import { t } from './i18n.mjs';
+import { t, fmt } from './i18n.mjs';
+import { DEFAULT_BUDGET, MIN_BUDGET, MAX_BUDGET, budgetOf } from './instruction-amount.mjs';
 
 const KINDS = ['instruction', 'skill', 'mcp'];
 const TEXT = {
@@ -104,7 +105,7 @@ export function peekDocument(entry, { short = p => p } = {}) {
   return box;
 }
 
-export function setupContext({ button: openButton, cmd, show, recentPlaces = () => [], backends = () => [], openDelegation = null }) {
+export function setupContext({ button: openButton, cmd, show, recentPlaces = () => [], backends = () => [], openDelegation = null, getPrefs = () => ({}) }) {
   const panel = document.getElementById('contextPanel');
   panel.classList.add('context');
   panel.replaceChildren();
@@ -233,11 +234,13 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
       body.append(el('span', 'p', [short(where), entry.root ? t('context.roots.extra') : '', note].filter(Boolean).join(' · ')));
       open.append(body);
       open.onclick = () => { if (opened.has(entry.id)) opened.delete(entry.id); else opened.add(entry.id); renderCard(kind); };
+      // 指示の行の右端の量（渡す本文の見積もり。core/context-scan.mjs の tokens。ADR 0056）
+      const tokens = kind === 'instruction' && Number.isFinite(entry.tokens) ? el('span', 'cx-tok', t('sessionContext.amount.about', { n: fmt.number(entry.tokens) })) : null;
       const sw = button('', 'cx-sw');
       sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(!off));
       sw.setAttribute('aria-label', kind === 'skill' ? t('context.row.offerAria', { name: entry.name }) : t('context.row.provideAria', { name: entry.name }));
       sw.onclick = () => { sw.setAttribute('aria-checked', String(off)); work(() => saveKind(kind, v => toggleExclude(v, entry, off))); };
-      row.append(open, sw);
+      row.append(open, ...(tokens ? [tokens] : []), sw);
       list.append(row);
       if (opened.has(entry.id)) {
         const peek = peekDocument(entry, { short });
@@ -319,6 +322,33 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
     return box;
   }
 
+  /**
+   * 自分で書いた指示の目安（ADR 0056）。担当によらず、会話の右パネルの「指示の量」が自分で書いた分（ユーザー＋この場所）にだけ当てる。
+   * prefs.json の instructionBudget に保存し、既定と同じ値なら消す（既定が変わったときに追う）
+   */
+  function budgetRow() {
+    const row = el('div', 'cx-budget');
+    const label = el('label', 'n', t('context.budget.label'));
+    const input = el('input');
+    input.type = 'number'; input.min = String(MIN_BUDGET); input.max = String(MAX_BUDGET); input.step = '100';
+    input.id = label.htmlFor = 'cxInstructionBudget';
+    input.value = String(budgetOf(getPrefs()));
+    const box = el('span', 'rt-number-row');
+    box.append(input, el('span', 'rt-unit', t('context.budget.unit')));
+    const error = el('p', 'cx-sub err'); error.setAttribute('role', 'alert');
+    input.onchange = () => {
+      const value = Number(input.value);
+      if (!Number.isInteger(value) || value < MIN_BUDGET || value > MAX_BUDGET) {
+        error.textContent = t('context.budget.invalid', { min: fmt.number(MIN_BUDGET), max: fmt.number(MAX_BUDGET) });
+        return;
+      }
+      error.textContent = '';
+      work(async () => { await cmd('setPref', { key: 'instructionBudget', value: value === DEFAULT_BUDGET ? null : value }); saved(); });
+    };
+    row.append(label, box, el('p', 'cx-sub', t('context.budget.note')), error);
+    return row;
+  }
+
   // ---------------------------------------------------------------- 段（ユーザー／作業場所）
   function tierHead(name, sub) {
     const h = el('div', 'cx-tierh');
@@ -373,7 +403,7 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
       host = el('div', 'cx-block');
       const sec = el('div', 'cx-sec');
       sec.append(el('span', 'n', t('context.instruction.fileTitle')));
-      host.append(sec);
+      host.append(sec, budgetRow());
       card.append(host);
     }
     host.append(seg(kind, value.owner));

@@ -254,6 +254,59 @@
 /* 出どころの区切り（ユーザー／この場所と親フォルダー／追加した場所）。弱い小さな字。線は引かない */
 .scx-grp{margin:6px 0 0;font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em;font-weight:600}
 .scx-kind>.cx-khead+.scx-grp,.scx-kind>.cx-seg+.scx-grp{margin-top:2px}
+/* 指示の行の右端の量（右パネル・設定。ADR 0056） */
+.scx-tok{flex:none;margin-left:8px;font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.6;white-space:nowrap;font-variant-numeric:tabular-nums}
+.cx-row .cx-tok{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap;font-variant-numeric:tabular-nums}
+/* 指示の量の面（右パネル。ADR 0056）: 合計 → 積み上げの棒（ユーザー／この場所と親フォルダー／Pleiad が足す分）→ 凡例 → 目安を超えた知らせ */
+.scx-amount{gap:8px}
+.scx-amount .cx-khead{align-items:center}
+.scx-est{padding:0 8px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-weak);font-size:var(--fs-xs);line-height:1.7;cursor:help}
+.scx-total{margin-left:auto;font-size:var(--fs);font-weight:600;font-variant-numeric:tabular-nums}
+.scx-amount>.cx-sub{margin:-4px 0 0;font-size:var(--fs-xs)}
+.scx-meter{position:relative;padding-top:28px;margin-bottom:18px}
+/* 自分で書いた分の括り（棒の上）。目安の線がこの分にだけ効くことを図で示す */
+.scx-own{position:absolute;left:0;top:0;height:26px;min-width:12px;font-size:var(--fs-xs);color:var(--ink);white-space:nowrap}
+.scx-own span{display:block;line-height:1.4}
+.scx-own::after{content:"";position:absolute;left:0;right:0;bottom:2px;height:5px;color:var(--ink-weak);
+  background:linear-gradient(currentColor,currentColor) top/100% 1.5px no-repeat,linear-gradient(currentColor,currentColor) left/1.5px 100% no-repeat,linear-gradient(currentColor,currentColor) right/1.5px 100% no-repeat}
+.scx-bar{position:relative;display:flex;gap:2px;height:14px;border-radius:var(--r-pill);background:var(--surface-2)}
+.scx-seg{flex:0 1 0;min-width:3px;height:100%;border-radius:3px}
+.scx-seg:first-child{border-radius:var(--r-pill) 3px 3px var(--r-pill)}
+.scx-seg:nth-last-child(2){border-radius:3px var(--r-pill) var(--r-pill) 3px}
+.scx-seg:first-child:nth-last-child(2){border-radius:var(--r-pill)}
+/* 色分け: ユーザーは濃い青、この場所は淡い青、Pleiad が足す分は灰の斜線（自分のものではない）。凡例に同じ印と数字を置き、色だけに頼らない */
+.sw-user{background:var(--fill-primary);color:var(--on-fill)}
+.sw-dir{background:var(--fill-primary);color:var(--on-fill);opacity:.42}
+.sw-ply{background:repeating-linear-gradient(135deg,var(--surface-thumb-hover) 0 2px,var(--surface-3) 2px 5px)}
+/* 目安の線。棒の左端から測る */
+.scx-limit{position:absolute;top:-4px;bottom:-4px;width:2px;margin-left:-1px;border-radius:1px;color:var(--ink-strong);background:currentColor}
+.scx-limit b{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:2px;font-size:var(--fs-xs);font-weight:600;white-space:nowrap}
+.scx-limit.end b{left:auto;right:0;transform:none}
+.scx-legend{display:flex;flex-direction:column;gap:2px;margin:0;padding:0;list-style:none}
+.scx-li{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-s)}
+.scx-li .sw{flex:none;width:10px;height:10px;border-radius:3px}
+.scx-li .n{flex:1;min-width:0;overflow-wrap:anywhere}
+.scx-li .v{flex:none;color:var(--ink-weak);font-variant-numeric:tabular-nums}
+details.scx-ply>summary{list-style:none;cursor:pointer;border-radius:var(--r-s)}
+details.scx-ply>summary::-webkit-details-marker{display:none}
+details.scx-ply>summary .n::after{content:"  ＋";color:var(--ink-weak)}
+details.scx-ply[open]>summary .n::after{content:"  －"}
+details.scx-ply>summary:hover .n{color:var(--ink-blue)}
+.scx-plylist{display:flex;flex-direction:column;gap:1px;margin:4px 0 4px 18px;padding:8px 10px;list-style:none;background:var(--surface-1);border-radius:var(--r-s);font-size:var(--fs-xs);color:var(--ink-weak)}
+.scx-plylist li{display:flex;justify-content:space-between;gap:10px}
+.scx-plylist li span:first-child{color:var(--ink)}
+.scx-plylist li span:last-child{font-variant-numeric:tabular-nums}
+.scx-plylist .cx-sub{margin-top:4px;font-size:var(--fs-xs)}
+.scx-over{display:flex;gap:6px;align-items:baseline;margin:0;font-size:var(--fs-s);color:var(--ink-strong);font-weight:600}
+.scx-over .g{flex:none}
+.scx-over .w{font-weight:400;color:var(--ink-weak)}
+/* 設定の「指示」: 自分で書いた指示の目安 */
+.cx-budget{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.cx-budget .n{font-size:var(--fs-s);color:var(--ink)}
+.cx-budget input[type=number]{width:110px;flex:none;min-width:0;padding:6px 12px;background:var(--surface-paper);border-radius:var(--r-pill);color:var(--ink);font-variant-numeric:tabular-nums}
+.cx-budget>.cx-sub{flex:1 1 100%;margin:0}
+.cx-budget>.err{color:var(--ink-strong)}
+.cx-budget>.err:empty{display:none}
 /* 作業場所の面（この場所だけ変える） */
 .scx-place{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 14px;background:var(--surface-paper);border-radius:var(--r-m)}
 .scx-place .t{flex:1 1 180px;min-width:0}

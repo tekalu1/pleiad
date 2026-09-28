@@ -468,6 +468,10 @@ Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作�
 ネイティブの `spawn_agent` / `agent_job` と名前・ID・完了通知の管理元を分ける。詳細は [agent-delegation.md](agent-delegation.md)。
 親は仕事の種類（`kind`）を必ず申告し、`backend` を省けば Pleiad が難しさの判定器（既定は OpenRouter の Jev）と使用量から委譲先を選んで理由（`routing`）を残す（[ADR 0022](adr/0022-delegation-routing.md)）。
 
+## 指示の量（2026-09-28）
+
+コンテキストの見直しの第 1 段として、毎ターン最初に読み込まれる指示の量を会話の右パネルに出す（[ADR 0056](adr/0056-context-review.md)）。数える場所: ファイルの行は探索（`core/context-scan.mjs` の `tokens`）、Pleiad が足す分はターンを組み立てる `runTurn`（実際に渡した文を `core/instruction-amount.mjs` で数え、会話の記録 `contextSession.plyParts` に残す）、エージェント任せの指示はパネルを開いたときの `nativeInstructions`（そのエージェントの規則で探す。「推定」）。合計・目安との比べは画面（`web/instruction-amount.mjs`）。目安は `prefs.json` の `instructionBudget`（既定 5,000）。詳しくは docs/context-runtime.md「指示の量」。
+
 ## 会話の圧縮（2026-09-27）
 
 利用者向けには指示・Skills・MCP の入口を「プラグイン」、LLM の窓の占有を「文脈」、会話を縮める操作を「圧縮」と呼ぶ。モデルの「コンテキスト長」は維持する。圧縮のイベントは core が正規化し、結果を sidecar に残して開き直した会話にも区切りを表示する（[ADR 0039](adr/0039-conversation-compaction.md)）。自動圧縮は正常終了した利用者ターンから会話ごとに一回だけ予約する。既定は全体オン、最小 150k トークン（[ADR 0051](adr/0051-auto-compaction-min-150k.md)）、Claude オン・50 分、Codex オフ・有効化時 25 分（[ADR 0046](adr/0046-codex-auto-compaction-25-minutes.md)）。Antigravity は自身の管理に任せる。次の送信・手動圧縮・未送信会話の削除・バックエンド切替・対象外への設定変更・キャンセルで予約を取り消し、画面の会話切替では残す。予約は再起動で消える。

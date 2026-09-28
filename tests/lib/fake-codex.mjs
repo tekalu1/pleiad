@@ -710,6 +710,8 @@ async function handle(method, params) {
     }
 
     case "config/read": return { config: { model: "fake-model-1", model_reasoning_effort: "medium" } };
+    // skills/list: 本物と同じ形（cwd ごとの skills）。fake-codex は自分の Skills を持たないので空で返す
+    case "skills/list": return { data: (params?.cwds ?? []).map(cwd => ({ cwd, skills: [], errors: [] })) };
     // hooks/list: 各 cwd の .codex/hooks.json を本物と同じ形（key = <sourcePath>:<snake_case>:<group>:<handler>）で返す。
     // 信頼状態は FAKE_CODEX_HOOK_TRUST（既定 untrusted）。FAKE_CODEX_PLUGIN_HOOK=1 ならプラグインの定義も 1 件足す
     case "hooks/list": {

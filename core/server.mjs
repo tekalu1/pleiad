@@ -58,6 +58,8 @@ import { createRemoteHost } from './remote/connector.mjs';
 import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
 import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
+import { plyParts } from './instruction-amount.mjs';
+import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
 import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
@@ -1976,7 +1978,9 @@ async function runTurnInternal(args, onStarted, hooks) {
     // エージェント任せにしたターンでも固定（pin）は捨てない。Pleiad 担当を受け取れるエージェントへ戻したときに突き合わせる
     const contextRecord = { policy: refreshedContext || appliedSettings ? { ...policy, refreshedAt: new Date().toISOString() } : policy,
       pin: resolvedContext?.pin ?? (plyContext ? null : previousContext?.pin ?? null), report: resolvedContext?.report ?? nativeContextReport(policy, cwd, backend),
-      delivered: { backend: backend.id, entries: delivered } };
+      delivered: { backend: backend.id, entries: delivered },
+      // Pleiad が足した文の量（ADR 0056）。渡す文が出そろった所（下の runArgs の後）で数え直す。それまでは前のターンの値を見せる
+      ...(previousContext?.plyParts ? { plyParts: previousContext.plyParts } : {}) };
     // Pleiad の指示（core/ply-instructions.mjs）。担当によらず、ターンごとに今の設定・モード・子かどうか・エージェントで決める。
     // 渡すのは ply_agents の instructions の後ろ（下の agentRuntime）。項目ごとに入れたか（入れなかった理由）を会話の記録に残し、右パネルに出す
     const added = turnInstructions({ list: plyInstructionsCache, locale: agentLocale, routing: routingSettingsCache.enabled,
@@ -2085,7 +2089,7 @@ async function runTurnInternal(args, onStarted, hooks) {
     const saveContext = async () => {
       await turn.setup;
       if (turn.info.sessionId) await store.setSessionData(turn.info.sessionId, 'contextSession', contextRecord);
-      emit({ type: 'contextUsage', report: structuredClone(contextRecord.report) });
+      emit({ type: 'contextUsage', report: structuredClone(contextRecord.report), plyParts: contextRecord.plyParts ?? null });
     };
     try {
       await onStarted();
@@ -2161,6 +2165,10 @@ async function runTurnInternal(args, onStarted, hooks) {
         // i18n-dynamic: agent:browser.instructions
         runArgs.browserInstructions = browserInstruction(runArgs.browserEnv, agentLocale, agentT);
       }
+      // Pleiad が足した文の量（右パネルの「指示の量」。ADR 0056）。このターンで渡す文が出そろったここで数え、変わったときだけ記録し直す
+      const parts = plyParts({ plyAgents: Boolean(backend.capabilities?.plyAgents), context: runtimeContext?.sections ?? null,
+        visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentConnection(turn).instructions, added: contextRecord.added });
+      if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await saveContext(); }
       // Preparation can await context and settings. A send or cancellation may have invalidated
       // an idle reservation since the first check; do not invoke the backend in that case.
       if (hooks.canInvoke && !hooks.canInvoke()) {
@@ -2727,7 +2735,8 @@ wss.on("connection", (ws, req) => {
             finally { ws.contextScanning = false; }
           }
           return reply(true, { report: saved.report, owners: saved.policy?.owners ?? saved.report.owners, pinned: Boolean(saved.pin), changed,
-            startedAt: saved.policy?.at ?? null, refreshedAt: saved.policy?.refreshedAt ?? null, removedMcp: saved.policy?.removedMcp ?? [], added: saved.added ?? [] });
+            startedAt: saved.policy?.at ?? null, refreshedAt: saved.policy?.refreshedAt ?? null, removedMcp: saved.policy?.removedMcp ?? [], added: saved.added ?? [],
+            plyParts: saved.plyParts ?? null });
         }
         case 'plyInstructions':
           return reply(true, plyInstructionsState());
@@ -2749,6 +2758,8 @@ wss.on("connection", (ws, req) => {
           return reply(true, { ok: true });
         case 'agentMcp':
           return reply(true, await contextSession.agentMcp((await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd));
+        case 'nativeInstructions':
+          return reply(true, await contextSession.nativeInstructions((await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd, msg.args?.backend));
         case 'setContextSettings':
           return reply(true, await contextSettings.set(msg.args ?? {}));
         // ---- Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。コマンドは実行しない
@@ -3677,6 +3688,11 @@ wss.on("connection", (ws, req) => {
           // リンクの開き先（inapp: 内蔵ブラウザー / external: 既定のブラウザー）。内蔵ブラウザーはデスクトップ版のホストの画面だけ（docs/inapp-browser.md）
           if (key === "linkOpen") {
             if (value !== "inapp" && value !== "external") return reply(false, t('settings.unknownPrefValue', { key, value: String(value) }));
+            return reply(true, await savePref(key, value));
+          }
+          // 自分で書いた指示の目安（トークン。右パネルの「指示の量」。ADR 0056）。null で既定（web/instruction-amount.mjs の DEFAULT_BUDGET）に戻す
+          if (key === "instructionBudget") {
+            if (value !== null && !(Number.isInteger(value) && value >= MIN_BUDGET && value <= MAX_BUDGET)) return reply(false, t('settings.unknownPrefValue', { key, value: String(value) }));
             return reply(true, await savePref(key, value));
           }
           if (backendId && !getBackend(backendId)) return reply(false, t('agents.unknown'));

@@ -691,6 +691,34 @@
         "routingOff": "Not added: automatic delegation routing is off"
       }
     },
+    "amount": {
+      "title": "Instruction size",
+      "about": "~{{n}}",
+      "estimated": "Estimate",
+      "estimatedNote": "What Pleiad found using the same rules",
+      "reading": "Looking for the instructions {{agent}} reads…",
+      "unknown": "Instructions that {{agent}} reads on its own are not counted (Pleiad does not know how it reads them)",
+      "own": "Written by you ~{{n}}",
+      "budget": "Budget {{n}}",
+      "ply": "Added by Pleiad",
+      "plyAria": "Breakdown of what Pleiad adds",
+      "plyNote": "Text Pleiad adds to the conversation",
+      "plyPending": "Counted from the next send",
+      "part": {
+        "visualize": "Visualize guide",
+        "skills": "Skills list",
+        "agents": "Delegation tool guide",
+        "added": "Pleiad instructions",
+        "guide": "Context guide",
+        "browser": "Browser guide"
+      },
+      "over": "Your instructions are {{ratio}}× the budget",
+      "overDetail": " · ~{{own}} / {{budget}}",
+      "aria": "Total ~{{total}} tokens. User ~{{user}}, this location and its parent folders ~{{dir}}, added by Pleiad ~{{ply}}. Written by you ~{{own}}, budget {{budget}}",
+      "nativeFound_one": "{{count}} file Pleiad found using the same rules",
+      "nativeFound_other": "{{count}} files Pleiad found using the same rules",
+      "nativeNone": "No instruction files that {{agent}} reads were found"
+    },
     "changed": {
       "title_one": "{{count}} file changed since the start",
       "title_other": "{{count}} files changed since the start",
@@ -830,6 +858,12 @@
       "conditional": "Only for {{paths}}",
       "offerAria": "Offer {{name}}",
       "provideAria": "Provide {{name}}"
+    },
+    "budget": {
+      "label": "Budget for your instructions",
+      "unit": "tokens",
+      "note": "When your user and location instructions together exceed this, the conversation's side panel says so (the conversation is not stopped)",
+      "invalid": "Enter a whole number from {{min}} to {{max}}"
     },
     "showAll": "Show all ({{n}})",
     "antigravityNote": "In antigravity conversations, Pleiad manages this only when instruction files are also set to “Managed by Pleiad”. Instruction files are currently left to the agent, so in antigravity this kind is also left to the agent (if Pleiad provided it, agy would stop reading AGENTS.md and GEMINI.md in the workspace).",

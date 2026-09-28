@@ -8,6 +8,7 @@ import { parse as toml, stringify as tomlText } from 'smol-toml';
 import { parse as yaml } from 'yaml';
 import { KINDS, SOURCES, containsPath, globRegExp, pathKey, scanPlan } from './context-settings.mjs';
 import { t } from './i18n.mjs';
+import { estimateTokens } from '../web/token-estimate.mjs';
 
 const digest = s => crypto.createHash('sha256').update(s).digest('hex');
 const record = v => v && typeof v === 'object' && !Array.isArray(v);
@@ -18,6 +19,8 @@ const SECRET_KEYS = new Set(['env', 'headers']), MASK = '••••';
 const URL_KEYS = new Set(['url', 'baseUrl']);
 // 先頭の YAML frontmatter（Skill・Claude の rules）。中身が空の `---\n---` も frontmatter とみなす
 export const FRONTMATTER = /^---\r?\n(?:([^]*?)\r?\n)?---(?:\r?\n|$)/;
+/** 渡す指示の本文。@参照の行（参照先は探索で別の行になっている）と、rules の frontmatter（paths は範囲として別に示す）を除く */
+export const instructionBody = item => (item.rule ? item.content.replace(FRONTMATTER, '') : item.content).split(/\r?\n/).filter(l => !/^\s*@(?:"[^"]+"|\S+)\s*$/.test(l)).join('\n');
 /** rules の `paths`。配列か文字列（`,` 区切り。`{a,b}` の中の `,` では切らない）。解釈できなければ null */
 function globList(value) {
   const items = typeof value === 'string' ? value.split(/,(?![^{]*\})/) : Array.isArray(value) && value.every(v => typeof v === 'string') ? value : null;
@@ -125,7 +128,9 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     if (!data || !data.text.trim()) return;
     const key = pathKey(data.real);
     if (stack.has(key)) { issue(file, t('context.scan.circularReference')); return; }
-    const item = add(data, file, ctx, { kind: 'instruction', name: path.basename(file), status, bytes: data.bytes, hash: digest(data.text), content: data.text, references: [], ...more });
+    // tokens: 渡す本文の量の見積もり（設定と右パネルの行の「約 N」、右パネルの「指示の量」。ADR 0056）
+    const item = add(data, file, ctx, { kind: 'instruction', name: path.basename(file), status, bytes: data.bytes, hash: digest(data.text), content: data.text,
+      tokens: estimateTokens(instructionBody({ ...more, content: data.text })), references: [], ...more });
     if (item.status === 'excluded' || item.status === 'shadowed') return;
     // Only standalone @path imports; ambiguous inline imports are reported, not guessed.
     if (ctx.source !== 'claude') return;

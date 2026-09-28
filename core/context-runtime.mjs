@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { FRONTMATTER, scanContext } from './context-scan.mjs';
+import { instructionBody, scanContext } from './context-scan.mjs';
 import { DEFAULT_OWNERS, KINDS, containsPath, legacyPlan, matchesGlobs, normalizePlan, pathKey } from './context-settings.mjs';
 import { t, agentT } from './i18n.mjs';
 
@@ -148,8 +148,6 @@ export async function resolveRuntime(policy, options = {}) {
   if (scan.limited || scan.diagnostics.length) throw new Error(t('context.runtime.unresolved', { detail: scan.diagnostics[0]?.message ?? t('context.runtime.scanLimit') }));
   const report = { version: 1, cwd: policy.cwd, owners, at: new Date().toISOString(), entries: [], native: kinds.length < 3, status: 'resolved' };
   const instructions = [], conditional = [], skills = [], servers = [], seen = new Set(), names = new Map();
-  // 渡す本文。@参照の行（参照先は探索で別の行になっている）と、rules の frontmatter（paths は範囲として別に示す）を除く
-  const body = item => (item.rule ? item.content.replace(FRONTMATTER, '') : item.content).split(/\r?\n/).filter(l => !/^\s*@(?:"[^"]+"|\S+)\s*$/.test(l)).join('\n');
   for (const item of scan.entries) {
     // scope と root は会話の右パネルが出どころ（ユーザー／この場所と親フォルダー／追加した場所）で分けるのに使う
     const row = { id: item.id, kind: item.kind, name: item.name, path: item.path, scope: item.scope, appliesTo: item.appliesTo, status: item.status, hash: item.hash, origins: item.origins,
@@ -160,7 +158,7 @@ export async function resolveRuntime(policy, options = {}) {
     if (item.status === 'conditional') {
       const key = `rule:${pathKey(item.realPath)}:${item.pathsBase ?? ''}`;
       if (seen.has(key)) row.status = 'duplicate';
-      else { seen.add(key); conditional.push({ ...item, content: body(item) }); }
+      else { seen.add(key); conditional.push({ ...item, content: instructionBody(item) }); }
       continue;
     }
     if (item.status !== 'candidate') continue;
@@ -173,7 +171,9 @@ export async function resolveRuntime(policy, options = {}) {
     if (item.kind === 'instruction') {
       row.status = 'supplied';
       // Imports are already resolved, scoped and deduplicated by the scanner.
-      instructions.push({ ...item, content: body(item) });
+      // 渡した本文の量（右パネルの行の「約 N」と「指示の量」。ADR 0056。数えるのは探索: core/context-scan.mjs）
+      row.tokens = item.tokens;
+      instructions.push({ ...item, content: instructionBody(item) });
     } else {
       const nameKey = `${item.kind}:${item.name}`;
       if (names.has(nameKey)) throw new Error(t('context.runtime.duplicateName', { kind: item.kind === 'mcp' ? 'MCP' : 'Skill', name: item.name }));
@@ -224,16 +224,19 @@ export function contextTools(runtime, userPrompt = '') {
   const catalog = active.map(s => agentT(locale, 'context.prompt.skillLine', { name: s.name, description: s.description, id: s.id, dir: path.dirname(s.realPath) })).join('\n');
   // paths 付きの rules は本文を渡さず、どのファイルで読み足すべきかだけを示す
   const scoped = (runtime.conditional ?? []).map(i => agentT(locale, 'context.prompt.scopedLine', { paths: i.paths.join(', '), base: i.pathsBase ?? runtime.policy.cwd }));
-  const prompt = [runtime.prompt,
-    runtime.owners.instruction === 'ply' ? agentT(locale, 'context.prompt.descendants') : '',
-    runtime.owners.instruction === 'ply' && scoped.length ? agentT(locale, 'context.prompt.scopedRules', { rules: [...new Set(scoped)].join('\n') }) : '',
-    runtime.owners.skill === 'ply' ? agentT(locale, 'context.prompt.skills', { catalog: catalog || agentT(locale, 'context.prompt.none') }) : '',
-  ].filter(Boolean).join('\n\n');
+  const descendants = runtime.owners.instruction === 'ply' ? agentT(locale, 'context.prompt.descendants') : '';
+  const rules = runtime.owners.instruction === 'ply' && scoped.length ? agentT(locale, 'context.prompt.scopedRules', { rules: [...new Set(scoped)].join('\n') }) : '';
+  const skillList = runtime.owners.skill === 'ply' ? agentT(locale, 'context.prompt.skills', { catalog: catalog || agentT(locale, 'context.prompt.none') }) : '';
+  const prompt = [runtime.prompt, descendants, rules, skillList].filter(Boolean).join('\n\n');
+  // 量を数えるための内訳（右パネルの「指示の量」。ADR 0056）。指示ファイルの本文は記録の行（tokens）で数えるので、
+  // ここはファイルを包む文（「〈パス〉の指示（適用範囲: …）:」）と案内、Skills の一覧だけ
+  const wrappers = (runtime.instructions ?? []).map(i => agentT(locale, 'context.instructionsFrom', { path: i.path, scope: i.appliesTo ?? agentT(locale, 'context.allDirectories'), content: '' }));
+  const sections = { guide: [...wrappers, descendants, rules].filter(Boolean).join('\n\n'), skills: skillList };
   // 渡し済みの控え。prompt を組み立てた後に触る（プロンプトには影響させない）
   const delivered = runtime.delivered ??= {};
   /** 記録の行を「読み込み済み」にし、頼まれた回数を数える（短い一行で返した分も含む） */
   const mark = id => { const row = runtime.report.entries.find(e => e.id === id); if (row) { row.status = 'loaded'; row.calls = (row.calls ?? 0) + 1; } return row; };
-  return { tools, prompt, async call(name, args) {
+  return { tools, prompt, sections, async call(name, args) {
     const full = args?.full === true;
     if (name === 'load_skill') {
       const item = active.find(s => s.id === args?.id);
