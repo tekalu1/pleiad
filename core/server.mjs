@@ -614,7 +614,7 @@ const server = http.createServer(async (req, res) => {
             at:url.searchParams.get('at'), base:url.searchParams.get('base') }, sessions, roots);
           // list=1 はプレビューの横のツリーの 1 フォルダー（開いたとき・「さらに表示」。web/file-preview.mjs）
           const preview = url.searchParams.get('list') === '1'
-            ? await listTreeFolder(resolved.path, roots, { access: fileAccess, offset:Number(url.searchParams.get('offset')) || 0 })
+            ? await listTreeFolder(resolved.path, { access: fileAccess, offset:Number(url.searchParams.get('offset')) || 0 })
             : await readPreview(resolved.path, roots, { access: fileAccess, resource:url.searchParams.get('resource') === '1' });
           res.writeHead(200, { 'content-type':'application/json; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' });
           return res.end(JSON.stringify({ ...preview, line:resolved.line, cwd:resolved.cwd }));

@@ -88,16 +88,18 @@ export default async function (t) {
     t.ok('ほかの除外名は出さないまま', !find(inTemp.tree, path.join(ws, 'node_modules')));
 
     // ---- 遅延読み込み・続き・範囲 ----
-    const lazy = await listTreeFolder(path.join(ws, 'a'), [ws], { access });
+    const lazy = await listTreeFolder(path.join(ws, 'a'), { access });
     t.ok('フォルダーを 1 つ読む', lazy.children.map(n => n.name).join() === 'b' && lazy.children[0].lazy === true && lazy.more === 0);
-    const page2 = await listTreeFolder(path.join(ws, 'big'), [ws], { access, offset: TREE_PAGE });
-    const page3 = await listTreeFolder(path.join(ws, 'big'), [ws], { access, offset: TREE_PAGE * 2 });
+    const page2 = await listTreeFolder(path.join(ws, 'big'), { access, offset: TREE_PAGE });
+    const page3 = await listTreeFolder(path.join(ws, 'big'), { access, offset: TREE_PAGE * 2 });
     t.ok('offset から続きを読む', page2.children[0].name === 'f200.txt' && page2.next === TREE_PAGE * 2 && page2.more === 450 - TREE_PAGE * 2);
     t.ok('最後のページは続きが無い', page3.children.length === 50 && page3.more === 0 && page3.next === null);
-    await assert.rejects(listTreeFolder(path.join(scratch, 'outside'), [ws], { access }), { code: 'outside-tree' });
-    await assert.rejects(listTreeFolder(path.join(ws, 'private'), [ws], { access }), { code: 'protected-data' });
-    await assert.rejects(listTreeFolder(path.join(ws, 'top.md'), [ws], { access }), { code: 'not-directory' });
-    t.ok('roots の外・データ置き場・ファイルは読めない', true);
+    // roots の外のファイルを開くとツリーの根はそのフォルダーになる。フォルダーのプレビューと同じく、外も読める
+    const outsideListed = await listTreeFolder(path.join(scratch, 'outside'), { access });
+    t.ok('作業場所の外のフォルダーも読める（プレビューと同じ範囲）', Array.isArray(outsideListed.children));
+    await assert.rejects(listTreeFolder(path.join(ws, 'private'), { access }), { code: 'protected-data' });
+    await assert.rejects(listTreeFolder(path.join(ws, 'top.md'), { access }), { code: 'not-directory' });
+    t.ok('データ置き場・ファイルは読めない', true);
 
     // ---- サーバーの口（/file-preview?list=1） ----
     await fs.writeFile(path.join(data, 'sessions.json'), JSON.stringify({ fixture: { cwd: ws, backend: 'fake' } }));
@@ -111,11 +113,10 @@ export default async function (t) {
       const more = await (await fetch(url(path.join(ws, 'big'), { offset: String(TREE_PAGE) }), auth)).json();
       assert.equal(more.children[0].name, 'f200.txt');
       const outside = await fetch(url(path.join(scratch, 'outside')), auth);
-      assert.equal(outside.status, 400);
-      assert.equal((await outside.json()).error.code, 'outside-tree');
+      assert.equal(outside.status, 200);
       const preview = await (await fetch(url(path.join(deepDir, 'deep.md'), { list: '0' }), auth)).json();
       assert(find(preview.tree, path.join(deepDir, 'deep.md')));
-      t.ok('サーバーの口: 認証が要る・1 フォルダーと続きを返す・作業場所の外は 400', true);
+      t.ok('サーバーの口: 認証が要る・1 フォルダーと続きを返す・作業場所の外も読める', true);
     } finally { await server.stop(); }
   } finally {
     await fs.rm(scratch, { recursive: true, force: true });

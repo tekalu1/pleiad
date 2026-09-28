@@ -730,7 +730,6 @@
     "accessDenied": "Cannot read this file. Check the permissions on the host.",
     "readFailed": "Could not load the file. Reload to try again.",
     "notDirectory": "Choose a folder.",
-    "outsideTree": "This folder is outside the working directory, so it cannot be loaded into the tree.",
     "visualize": {
       "htmlRequired": "Specify an HTML file for the visualization.",
       "notUtf8": "Cannot read the visualization as UTF-8 HTML.",

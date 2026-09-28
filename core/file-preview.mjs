@@ -158,20 +158,13 @@ async function buildTree(rootPath, target, access) {
 }
 
 /**
- * ツリーの 1 フォルダーの続き（開いたとき・「さらに表示」）。読める範囲は /file-preview と同じ（inspectFile）で、
- * さらに会話の作業場所などの roots の中に限る（ツリーは roots の中だけを見せる）
+ * ツリーの 1 フォルダーの続き（開いたとき・「さらに表示」）。読める範囲は /file-preview でフォルダーを開くのと同じ
+ * （inspectFile）。roots の外のファイルを開くとツリーの根はそのフォルダーになるので、roots では絞らない
  */
-export async function listTreeFolder(requested, roots, { access, offset = 0 } = {}) {
-  const { file, stat } = await inspectFile(requested, access);
+export async function listTreeFolder(requested, { access, offset = 0 } = {}) {
+  const { stat } = await inspectFile(requested, access);
   if (!stat.isDirectory()) throw new PreviewError('not-directory', t('filePreview.notDirectory'));
   const dir = path.resolve(requested);
-  const resolvedRoots = await Promise.all(roots.filter(Boolean).map(async root => {
-    try { return (await inspectFile(root, access)).file; } catch { return null; }
-  }));
-  // ツリーの id は実体を解決する前のパス。リンクをたどった先が roots の外でも、置き場が roots の中なら読める
-  if (!resolvedRoots.some(root => root && (containsPath(root, file) || containsPath(root, dir)))) {
-    throw new PreviewError('outside-tree', t('filePreview.outsideTree'));
-  }
   const start = Number.isInteger(offset) && offset > 0 ? offset : 0;
   return { path: dir, ...await listEntries(dir, access, { offset: start }) };
 }
