@@ -56,7 +56,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     const work = mode === 'host'
       ? runHost({ command, cwd, timeoutMs, signal: run.ac.signal, onOutput })
       : backend.shell({ sessionId, command, cwd, timeoutMs, signal: run.ac.signal, onOutput });
-    void Promise.resolve(work).then(result => finish(run, result), error => finish(run, { error: String(error?.message ?? error), exitCode: null }));
+    run.done = Promise.resolve(work).then(result => finish(run, result), error => finish(run, { error: String(error?.message ?? error), exitCode: null }));
     return { runId };
   }
 
@@ -101,6 +101,19 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
   /** 全部止める（サーバーの終わり） */
   function stopAll() {
     for (const run of runs.values()) run.ac.abort();
+  }
+  /** この会話で走っている分 */
+  const runningIn = (sessionId) => [...runs.values()].some(r => r.sessionId === sessionId);
+  /**
+   * この会話で走っている分が全部終わるまで待つ。'native'（Codex）の会話で次のターンを始める前に使う。
+   * Codex は `!` のターンの間に来た turn/start の発言を同じターンに入れ、モデルを呼ばずに閉じる（codex-cli 0.156.1 で確認）
+   */
+  async function settled(sessionId, signal = null) {
+    while (!signal?.aborted) {
+      const pending = [...runs.values()].filter(r => r.sessionId === sessionId).map(r => r.done);
+      if (!pending.length) return;
+      await Promise.race([Promise.allSettled(pending), new Promise(resolve => signal?.addEventListener?.('abort', resolve, { once: true }))]);
+    }
   }
 
   /**
@@ -187,5 +200,5 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     return out;
   }
 
-  return { start, stop, stopSession, stopAll, appendsFor, delivered, switched, discard, rows, decorate, running: () => runs.size };
+  return { start, stop, stopSession, stopAll, runningIn, settled, appendsFor, delivered, switched, discard, rows, decorate, running: () => runs.size };
 }

@@ -88,6 +88,46 @@ export default async function (t) {
     t.ok('Codex: 次の発言が渡ったら「渡した」を出す', c.since(nextFrom).some(e => e.type === 'shell.handed' && e.runIds.includes('shell-codex-0001')));
     loaded = await c.cmd('loadSession', { sessionId: threadId });
     t.ok('Codex: 次の発言の後は渡した行になる', loaded.messages.find(m => m.kind === 'shell')?.pending !== true);
+
+    // Codex を止める: turn/interrupt。本物は exitCode -1・"command aborted by user" で閉じる。「止めました」にする
+    const slowFrom = c.mark();
+    await c.cmd('runShell', { sessionId: threadId, runId: 'shell-codex-0002', command: 'slow one', cwd: ROOT });
+    await c.waitFor(e => e.type === 'shell.output' && e.runId === 'shell-codex-0002', { from: slowFrom, ms: 20_000 });
+    await c.cmd('stopShell', { runId: 'shell-codex-0002' });
+    const slowDone = await c.waitFor(e => e.type === 'shell.done' && e.runId === 'shell-codex-0002', { from: slowFrom, ms: 20_000 });
+    t.ok('Codex: 止めたら stopped で終わる（exit -1 にしない・定型の文を出力にしない）', slowDone.stopped === true && slowDone.exitCode === null && !slowDone.stdout?.includes('aborted'), JSON.stringify(slowDone));
+    loaded = await c.cmd('loadSession', { sessionId: threadId });
+    const slowRow = loaded.messages.find(m => m.kind === 'shell' && m.command === 'slow one');
+    t.ok('Codex: 開き直しても止めた行（包んだ command は人が打った形に戻す）', slowRow?.stopped === true && slowRow.exitCode === null, JSON.stringify(loaded.messages.filter(m => m.kind === 'shell')));
+
+    // Codex は `!` のターンの間に来た turn/start の発言を同じターンに入れ、返答しないまま閉じる（本物で確認）。順番を守る
+    const methods = async () => (await fs.readFile(log, 'utf8')).trim().split('\n').map(l => JSON.parse(l)).filter(l => l.threadId === threadId).map(l => l.method);
+    const waitFrom = c.mark();
+    await c.cmd('runShell', { sessionId: threadId, runId: 'shell-codex-0003', command: 'slow three', cwd: ROOT });
+    await c.waitFor(e => e.type === 'shell.output' && e.runId === 'shell-codex-0003', { from: waitFrom, ms: 20_000 });
+    const before = (await methods()).length;
+    await c.cmd('sendMessage', { sessionId: threadId, messageId: 'shell-codex-wait-0001', prompt: 'after shell' });
+    await c.waitFor(e => e.type === 'running' && e.turns?.some(x => x.sessionId === threadId), { from: waitFrom, ms: 20_000 });
+    await new Promise(r => setTimeout(r, 500));
+    t.ok('Codex: `!` が走っている間は、次のターン（turn/start）を始めない', !(await methods()).slice(before).includes('turn/start'), JSON.stringify((await methods()).slice(before)));
+    const busy = await c.cmd('runShell', { sessionId: threadId, runId: 'shell-codex-0004', command: 'echo no', cwd: ROOT }).then(() => null, e => e.message);
+    t.ok('Codex: ターンの間（始める前の待ちも）の `!` は断る', /応答が終わってから/.test(busy ?? ''), busy);
+    await c.cmd('stopShell', { runId: 'shell-codex-0003' });
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === threadId, { from: waitFrom, ms: 20_000 });
+    const after = c.since(waitFrom);
+    t.ok('Codex: `!` が終わってから始め、その `!` を「渡した」にする', after.some(e => e.type === 'text.delta') && after.some(e => e.type === 'shell.handed' && e.runIds.includes('shell-codex-0003'))
+      && after.findIndex(e => e.type === 'shell.done' && e.runId === 'shell-codex-0003') < after.findIndex(e => e.type === 'text.delta'), JSON.stringify(after.map(e => e.type)));
+
+    // item が閉じてからターンが閉じるまでの間に turn/start を送らない（スレッドを読み込んだまま＝外し直しの間が無い場面）
+    const lagFrom = c.mark();
+    await c.cmd('runShell', { sessionId: threadId, runId: 'shell-codex-0005', command: 'lag slow', cwd: ROOT });
+    await c.waitFor(e => e.type === 'shell.output' && e.runId === 'shell-codex-0005', { from: lagFrom, ms: 20_000 });
+    await c.cmd('sendMessage', { sessionId: threadId, messageId: 'shell-codex-wait-0002', prompt: 'after lag' });
+    await c.waitFor(e => e.type === 'running' && e.turns?.some(x => x.sessionId === threadId), { from: lagFrom, ms: 20_000 });
+    await c.cmd('stopShell', { runId: 'shell-codex-0005' });
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === threadId, { from: lagFrom, ms: 20_000 });
+    const starts = (await fs.readFile(log, 'utf8')).trim().split('\n').map(l => JSON.parse(l)).filter(l => l.method === 'turn/start' && l.threadId === threadId);
+    t.ok('Codex: `!` のターンが閉じてから turn/start を送る（発言が `!` のターンに入らない）', starts.length > 0 && !starts.some(l => l.folded), JSON.stringify(starts.map(l => l.folded ?? false)));
   } finally {
     c.close();
     await server.stop();

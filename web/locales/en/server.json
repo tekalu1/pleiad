@@ -90,6 +90,7 @@
   "shell": {
     "unavailable": "Shell commands can't run in this conversation",
     "notStarted": "Send the first message before running shell commands",
+    "busy": "Wait for the reply to finish before running shell commands",
     "noCwd": "The working directory wasn't found, so the command can't run"
   },
   "turn": {

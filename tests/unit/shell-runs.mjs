@@ -56,6 +56,9 @@ export default async function (t) {
     const history = classifySystemMessages(lines.map(text => ({ role: 'user', text })));
     const decorated = runs.decorate(history, store.data.s1, HOST);
     t.ok('履歴の `!` の行に、控えた終了コードを付ける', decorated.length === 1 && decorated[0].kind === 'shell' && decorated[0].exitCode === 3, JSON.stringify(decorated));
+    // 本物の Claude の transcript は、shouldQuery: false の行を `\n` でつないだ 1 行（2026-09-28 に確認）
+    const joined = runs.decorate(classifySystemMessages([{ role: 'user', text: lines.join('\n'), uuid: 'u1' }]), store.data.s1, HOST);
+    t.ok('つながった 1 行で残っても、終了コードを付ける', joined.length === 1 && joined[0].exitCode === 3 && joined[0].stdout.includes('hi'), JSON.stringify(joined));
     t.ok('鍵は履歴の読み方と揃う（改行・末尾の空白）', shellKey({ command: 'a', stdout: 'x\r\n', stderr: '' }) === shellKey({ command: 'a', stdout: 'x', stderr: null }));
   }
 
@@ -126,6 +129,22 @@ export default async function (t) {
     const shell = messages.find(m => m.kind === 'shell');
     t.ok('Codex の userShell は kind: shell（終了コードつき）', shell?.role === 'user' && shell.command === 'git status' && shell.exitCode === 128 && shell.stdout === 'fatal: not a repo' && shell.stderr === null, JSON.stringify(shell));
     t.ok('エージェントの commandExecution はツールのまま', messages.some(m => m.role === 'assistant' && m.toolCalls?.some(c => c.id === 'c2')) && messages.filter(m => m.kind === 'shell').length === 1);
+  }
+  // 本物の Codex（codex-cli 0.156.1、2026-09-28 に確認）: command はシェルに包んだ形。止めた分は exitCode -1 と定型の文
+  {
+    const ps = '"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe" -Command';
+    const item = (id, command, extra) => ({ type: 'commandExecution', id, command, cwd: '/w', source: 'userShell', status: 'completed', exitCode: 0, aggregatedOutput: 'x', ...extra });
+    const messages = threadToMessages({ turns: [{ id: 'tn1', startedAt: 1, items: [
+      item('c1', `${ps} 'echo hello-codex'`),
+      item('c2', `${ps} "echo \\"it's ok\\" 'a\\"b' "'$HOME'`),
+      item('c3', "/bin/bash -lc 'git log --oneline | head -3'"),
+      item('c4', `${ps} 'sleep 30'`, { status: 'failed', exitCode: -1, aggregatedOutput: 'command aborted by user' }),
+      item('c5', 'something odd', { commandActions: [{ type: 'unknown', command: 'odd' }] }),
+    ] }] }).filter(m => m.kind === 'shell');
+    t.ok('Codex: 包んだ command を人が打った形に戻す', messages[0].command === 'echo hello-codex' && messages[0].text === '! echo hello-codex'
+      && messages[1].command === `echo "it's ok" 'a"b' $HOME` && messages[2].command === 'git log --oneline | head -3', JSON.stringify(messages.map(m => m.command)));
+    t.ok('Codex: 戻せない形は commandActions が 1 つならその command', messages[4].command === 'odd');
+    t.ok('Codex: 止めた分は「止めました」（終了コード・定型の文を出さない）', messages[3].stopped === true && messages[3].exitCode === null && messages[3].stdout === null, JSON.stringify(messages[3]));
   }
 
   // ---- Claude に渡す形: shouldQuery: false の 2 行を、プロンプトの前に

@@ -22,8 +22,8 @@ Claude Code・Codex の CLI には、入力欄の先頭で `!` を打つとシ�
 - **送り直さない**: シェルのコマンドは送信待ちにも送り直しの控えにも積まない。サーバーは同じ `runId` を 2 度走らせない。つながっていなければ ▶ は押せない。つながりしだい自動で走らせることはしない。
 - **エージェントは返答しない**: 結果は会話にすぐ行として積み（走っている間は「実行中 · 経過」「止める」、出力は流しながら）、エージェントには**次の人の発言と一緒に**渡す。見出しは渡す前が「あなた · 次の発言で {agent} に渡す」、渡した後が「{agent} に渡した」。完了通知で再開するターン・圧縮では渡さない。走っているターンへの途中送信でも渡さない（次のターンの始めに渡す）。
 - **バックエンドごと**（`capabilities.shell`）:
-  - Claude（`'host'`）: Pleiad がホストのシェル（Windows は Git Bash、無ければ PowerShell。ほかは `$SHELL`）で走らせ、結果を会話の「未送の追記」（sessions.json の `shellPending`）に貯める。次のターンの始めに、CLI の `!` と同じ `<bash-input>…</bash-input>` と `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>` の 2 行を `shouldQuery: false` の user 行として、発言の前に渡す。記録の形が CLI と同じなので、履歴は ADR 0053 の見分けがそのまま `kind: 'shell'` にする。終了コードは記録に入らないので、渡したときに sessions.json の `shellExits`（出力の鍵 → 終了コード）に控え、開き直した履歴に付ける。
-  - Codex（`'native'`）: `thread/shellCommand` で app-server に走らせる（`timeoutMs` は 10 分）。記録は Codex の会話に残る。`source: userShell` の item はエージェントのツールのカードにせず、履歴でも `kind: 'shell'`（終了コードつき）にする。スレッドができる前（最初の発言の前）は走らせられない。
+  - Claude（`'host'`）: Pleiad がホストのシェル（Windows は Git Bash、無ければ PowerShell。ほかは `$SHELL`）で走らせ、結果を会話の「未送の追記」（sessions.json の `shellPending`）に貯める。次のターンの始めに、CLI の `!` と同じ `<bash-input>…</bash-input>` と `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>` の 2 行を `shouldQuery: false` の user 行として、発言の前に渡す。SDK はこれらを `\n` でつないだ 1 つの user 行として transcript に残す（CLI は 2 行。本物で確認）。タグは CLI と同じなので、ADR 0053 の見分けを広げ、つないだ行も入力と出力の組ごとに `kind: 'shell'` にする。終了コードは記録に入らないので、渡したときに sessions.json の `shellExits`（出力の鍵 → 終了コード）に控え、開き直した履歴に付ける。
+  - Codex（`'native'`）: `thread/shellCommand` で app-server に走らせる（`timeoutMs` は 10 分）。記録は Codex の会話に残る。`source: userShell` の item はエージェントのツールのカードにせず、履歴でも `kind: 'shell'`（終了コードつき）にする。スレッドができる前（最初の発言の前）は走らせられない。**ターンの間は走らせない**: Codex は `!` の間に始めたターンの発言を `!` と同じターンに入れ、返答しないまま閉じる（本物で確認）。ターンが走っていれば `!` は断り（「応答が終わってからシェルを実行できます」）、`!` が走っていれば次のターンはその終わりを待つ。
   - Antigravity と、シェルを持たないバックエンド: 使えない。`!` を打つと欄に `!` を残したまま「この会話ではシェルを実行できません」を出して送信を止める（黙って文として送らない）。「文として送る」は使える。
   - fake: Claude と同じくホストで走らせる（テストと画面の確認のため）。
 - **後始末**: 止める（「止める」）・エージェントの切り替え（予約した設定の適用も）・未送信の会話の削除・サーバーの終わりで、走っている子のプロセスを木ごと止める。エージェントを切り替えたら、渡していない追記は、替えた先もホストで走らせる形なら次のターンで渡し、そうでなければ捨てる。次の送信でエージェントが替わる予約がある会話では、渡す先で使えるかを決める。
@@ -41,4 +41,4 @@ Claude Code・Codex の CLI には、入力欄の先頭で `!` を打つとシ�
 - WebSocket のコマンドに `runShell { sessionId, runId, command, cwd? }`・`stopShell { runId }`、出来事に `shell.start`・`shell.output`・`shell.done`・`shell.handed` が加わる（全部の接続へ流す）。`loadSession` の発言の末尾に、まだ渡していない行と走っている行が `kind: 'shell'` で入る。
 - `AgentBackend` に `capabilities.shell`（`'host'` | `'native'`）と、`'native'` の `shell({ sessionId, command, cwd, timeoutMs, signal, onOutput })` が加わる。`runTurn` は `shellAppends`（渡す行の本文）を受け取る。
 - 出力（秘密を含みうる）は、次の発言でエージェント（＝LLM の提供元）に渡り、transcript にも残る。CLI の `!` と同じ性質なので、画面には書かず docs に書く。
-- 未確認: Claude の `shouldQuery: false` の行が transcript で CLI と同じ別々の user 行として残るか（SDK の説明は「bare user entries」）。Codex の `thread/shellCommand` を止める口（`turn/interrupt` で止まるか）と、ターンが走っている間に打ったときの動き。
+- 本物で確認した（2026-09-28。SDK 0.3.258・Claude Code 2.1.283、codex-cli 0.156.1）: Claude の `shouldQuery: false` の行は、発言とは別の 1 つの user 行（積んだ分を `\n` でつないだもの）として残り、返答は起きない。Codex の `thread/shellCommand` は turn/started・completed で包まれ、`turn/interrupt` で止まり、返答のターンは起きない。

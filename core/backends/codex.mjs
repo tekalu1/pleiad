@@ -96,6 +96,47 @@ const isUserShell = (item) => item?.type === "commandExecution" && item.source =
 const userShellItems = new Set();
 /** `!` の出力を履歴の形に（改行を揃え、末尾の空白を落とす。Claude の `!` の行と同じ扱い。core/system-messages.mjs） */
 const shellText = (s) => String(s ?? "").replace(/\r\n/g, "\n").replace(/\s+$/, "");
+/** 止めた `!`（turn/interrupt）。Codex は status: failed・exitCode -1・"command aborted by user" で閉じる（codex-cli 0.156.1 で確認） */
+const userShellAborted = (item) => item?.exitCode === -1 && item.status !== "completed" && /^command aborted by user\s*$/.test(String(item.aggregatedOutput ?? ""));
+
+/**
+ * userShell の item の command は、Codex がシェルに包んで POSIX 式にクォートしてつないだ形
+ * （Windows は `"C:\\…\\powershell.exe" -Command 'echo hi'`。codex-cli 0.156.1 で確認）。人が打った形に戻す。
+ * 戻せなければ、commandActions が 1 つならその command、それも無ければそのまま
+ */
+export function userShellCommand(item) {
+  const raw = String(item?.command ?? "");
+  const m = /^("[^"]*"|\S+)(?:\s+-(?:NoProfile|NoLogo))*\s+(?:-Command|-lc|-c)\s+(\S[\s\S]*)$/.exec(raw);
+  const shell = m && /(?:^|[\\/])(?:bash|sh|zsh|powershell|pwsh)(?:\.exe)?$/i.test(m[1].replace(/^"|"$/g, ""));
+  const inner = shell ? unquoteWord(m[2]) : null;
+  if (inner != null) return inner;
+  const actions = Array.isArray(item?.commandActions) ? item.commandActions : [];
+  return actions.length === 1 && typeof actions[0]?.command === "string" ? actions[0].command : raw;
+}
+
+/** POSIX 式にクォートした 1 語（'…'・"…"（\ のエスケープ）・\x のつなぎ）を戻す。1 語でなければ null */
+function unquoteWord(s) {
+  let out = "";
+  for (let i = 0; i < s.length;) {
+    const c = s[i];
+    if (c === "'") {
+      const j = s.indexOf("'", i + 1);
+      if (j < 0) return null;
+      out += s.slice(i + 1, j); i = j + 1;
+    } else if (c === '"') {
+      let j = i + 1;
+      for (; j < s.length && s[j] !== '"'; j++) {
+        if (s[j] === "\\" && j + 1 < s.length && '"\\$`'.includes(s[j + 1])) j++;
+        out += s[j];
+      }
+      if (j >= s.length) return null;
+      i = j + 1;
+    } else if (c === "\\" && i + 1 < s.length) { out += s[i + 1]; i += 2; }
+    else if (/\s/.test(c)) return null;
+    else { out += c; i++; }
+  }
+  return out;
+}
 
 /**
  * model/list の結果 `{ list, at }`。毎回 codex を叩かない（UI は表示のたびに引く）。
@@ -815,10 +856,12 @@ export function threadToMessages(thread, { fullResults = false } = {}) {
       // 入力欄の `!`（Codex の TUI・Desktop の `!` も同じ）。エージェントのツールではなく、人が走らせた行（ADR 0054）
       if (isUserShell(item)) {
         flushTools();
-        const command = String(item.command ?? "");
+        const command = userShellCommand(item);
+        const aborted = userShellAborted(item);
         messages.push({ role: "user", kind: "shell", text: `! ${command}`, command,
-          stdout: item.aggregatedOutput ? shellText(item.aggregatedOutput) || null : null, stderr: null,
-          exitCode: Number.isInteger(item.exitCode) ? item.exitCode : null, uuid: item.id, at, ...(item.status === "inProgress" ? { running: true } : {}) });
+          stdout: item.aggregatedOutput && !aborted ? shellText(item.aggregatedOutput) || null : null, stderr: null,
+          exitCode: Number.isInteger(item.exitCode) && !aborted ? item.exitCode : null, uuid: item.id, at,
+          ...(aborted ? { stopped: true } : {}), ...(item.status === "inProgress" ? { running: true } : {}) });
         continue;
       }
 
@@ -1701,7 +1744,7 @@ export const backend = {
   async shell({ sessionId: threadId, command, timeoutMs, signal, onOutput = () => {} }) {
     if (!validId(threadId)) throw new Error(t("codex.errors.shellNotStarted"));
     const loadedHere = !loadedProvider.has(threadId) && !nativeRpc.threads.has(threadId);
-    let itemId = null, turnId = null, output = "", stopped = false, settle;
+    let itemId = null, turnId = null, finished = null, output = "", stopped = false, settle;
     const done = new Promise((resolve) => { settle = resolve; });
     const off = nativeRpc.onNotify((method, params) => {
       if (params?.threadId !== threadId) return;
@@ -1713,8 +1756,13 @@ export const backend = {
         const delta = String(params.delta ?? "");
         output += delta;
         onOutput("stdout", delta);
-      } else if (method === "item/completed" && isUserShell(item) && (!itemId || item.id === itemId)) settle({ item });
-      else if (method === "turn/completed" && turnId && params?.turn?.id === turnId) setTimeout(() => settle({}), 500);
+      } else if (method === "item/completed" && isUserShell(item) && (!itemId || item.id === itemId)) {
+        // 包んだターンが閉じてから終える。閉じる前に次の turn/start が来ると、Codex はその発言を `!` のターンに入れて返答しない
+        finished = item;
+        if (!turnId) settle({ item }); else setTimeout(() => settle({ item }), 2000).unref?.();
+      } else if (method === "turn/completed" && turnId && params?.turn?.id === turnId) {
+        if (finished) settle({ item: finished }); else setTimeout(() => settle({}), 500);
+      }
     });
     const stop = () => {
       stopped = true;
@@ -1729,10 +1777,12 @@ export const backend = {
       if (loadedHere) await nativeRpc.request("thread/resume", { threadId });
       await nativeRpc.request("thread/shellCommand", { threadId, command, timeoutMs });
       const { item, timedOut } = await done;
-      const text = item?.aggregatedOutput != null ? String(item.aggregatedOutput) : output;
-      return { exitCode: Number.isInteger(item?.exitCode) ? item.exitCode : null, output: text,
-        durationMs: Number.isFinite(item?.durationMs) ? item.durationMs : Date.now() - started,
-        stopped: stopped && !Number.isInteger(item?.exitCode), timedOut: Boolean(timedOut) };
+      // 止めた分は exitCode -1 と "command aborted by user" で閉じる。終了コードにせず「止めました」とそれまでの出力にする
+      const aborted = userShellAborted(item) || (stopped && item?.exitCode === -1);
+      const text = item?.aggregatedOutput != null && !aborted ? String(item.aggregatedOutput) : output;
+      return { exitCode: Number.isInteger(item?.exitCode) && !aborted ? item.exitCode : null, output: text,
+        durationMs: Number.isFinite(item?.durationMs) && !aborted ? item.durationMs : Date.now() - started,
+        stopped: aborted || (stopped && !Number.isInteger(item?.exitCode)), timedOut: Boolean(timedOut) };
     } finally {
       clearTimeout(guard);
       off();

@@ -2113,6 +2113,11 @@ async function runTurnInternal(args, onStarted, hooks) {
       // 再開なら id が分かっているので先に載せる。新規は session イベントで id が決まった瞬間に（makeEmit）
       if (sessionId && attachments.length) await presentAttachments(sessionId, attachments, emit);
       if (hooks.signal?.aborted) throw new Error(t('turn.aborted'));
+      // Codex は走っている `!` のターンに発言を入れ、返答しないまま閉じる。終わるまで待ってから始める（ADR 0054）
+      if (sessionId && shellMode(backend) === 'native' && shellRuns.runningIn(sessionId)) {
+        await shellRuns.settled(sessionId, turn.ac.signal);
+        if (turn.ac.signal.aborted) throw new Error(t('turn.aborted'));
+      }
       const runArgs = {
         prompt,
         ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
@@ -3075,6 +3080,8 @@ wss.on("connection", (ws, req) => {
           if (reservedId && reservedId !== backend.id && !(shellMode(backend) === 'host' && shellMode(getBackend(reservedId)) === 'host')) throw Object.assign(new Error(t('shell.unavailable')), { code: 'SHELL_UNAVAILABLE' });
           // Codex はスレッドができてから（最初の発言の後）
           if (shellMode(backend) === 'native' && !(await backend.shellReady?.(sessionId) ?? true)) throw Object.assign(new Error(t('shell.notStarted')), { code: 'SHELL_NOT_STARTED' });
+          // Codex はターンの間（始める準備の間も）に走らせない。`!` がそのターンに入り、発言にモデルが返答しないまま閉じる（codex-cli 0.156.1 で確認）
+          if (shellMode(backend) === 'native' && sessionBusy(sessionId)) throw Object.assign(new Error(t('shell.busy')), { code: 'SHELL_BUSY' });
           // 送信済みの会話は会話の作業ディレクトリ。まだ送っていない会話は入力欄で選んでいる場所
           const cwd = !sidecar.unsent && sidecar.cwd ? sidecar.cwd : typeof msg.args?.cwd === 'string' && msg.args.cwd.trim() ? msg.args.cwd.trim() : sidecar.cwd;
           if (!cwd || !(await fs.stat(cwd).then(st => st.isDirectory(), () => false))) throw Object.assign(new Error(t('shell.noCwd')), { code: 'SHELL_NO_CWD' });

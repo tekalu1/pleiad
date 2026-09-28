@@ -576,7 +576,8 @@ async function handle(method, params) {
       if (params?.cwd) t.cwd = params.cwd;
       const turnId = `tn_${++seq}`;
       const text = (params?.input ?? []).filter((i) => i?.type === "text").map((i) => i.text).join("");
-      record({ method, threadId: t.id, provider: t.provider ?? null, model: t.model ?? null, effort: params?.effort ?? null, ephemeral: Boolean(t.ephemeral), developerInstructions: t.developerInstructions ?? null, hooks: t.hooksConfig ?? null });
+      // folded: `!` のターンが閉じる前に来た。本物はこの発言を `!` のターンに入れ、返答しないまま閉じる（codex-cli 0.156.1）
+      record({ method, threadId: t.id, provider: t.provider ?? null, model: t.model ?? null, effort: params?.effort ?? null, ephemeral: Boolean(t.ephemeral), developerInstructions: t.developerInstructions ?? null, hooks: t.hooksConfig ?? null, ...(t.shellTurn ? { folded: true } : {}) });
       if (t.ephemeral && process.env.FAKE_CODEX_CHECK_TITLE === "1") {
         if (t.model !== "gpt-5.6-luna" || params?.effort !== "low") {
           throw new Error("Title generation must use Luna with low effort");
@@ -624,16 +625,24 @@ async function handle(method, params) {
       if (typeof params?.command !== "string") throw new RpcError("command is required", -32602);
       record({ method, threadId: t.id, command: params.command, timeoutMs: params.timeoutMs ?? null });
       const turnId = `sh_${++seq}`;
-      const item = { id: `ush_${++seq}`, type: "commandExecution", command: params.command, cwd: t.cwd, source: "userShell", status: "inProgress", commandActions: [] };
+      // 本物（codex-cli 0.156.1）はシェルに包んで POSIX 式にクォートした形を command に入れる
+      const wrapped = `/bin/bash -lc '${params.command.replace(/'/g, "'\\''")}'`;
+      const item = { id: `ush_${++seq}`, type: "commandExecution", command: wrapped, cwd: t.cwd, source: "userShell", status: "inProgress", commandActions: [] };
       setTimeout(async () => {
         notify("turn/started", { threadId: t.id, turn: { id: turnId, status: "inProgress", items: [] } });
+        t.shellTurn = turnId;
         notify("item/started", { threadId: t.id, turnId, startedAtMs: Date.now(), item });
         notify("item/commandExecution/outputDelta", { threadId: t.id, turnId, itemId: item.id, delta: "fake out\n" });
         let interrupted = false;
         if (params.command.includes("slow")) await new Promise((resolve) => slowTurns.set(turnId, { threadId: t.id, resolve: () => { interrupted = true; resolve(); } }));
-        const done = { ...item, status: interrupted ? "failed" : "completed", exitCode: interrupted ? null : params.command.includes("fail") ? 1 : 0, aggregatedOutput: "fake out\n", durationMs: 3 };
+        // 止めた分は本物と同じく exitCode -1・定型の文で閉じる
+        const done = { ...item, status: interrupted || params.command.includes("fail") ? "failed" : "completed", exitCode: interrupted ? -1 : params.command.includes("fail") ? 1 : 0,
+          aggregatedOutput: interrupted ? "command aborted by user" : "fake out\n", durationMs: interrupted ? 0 : 3 };
         t.turns.push({ id: turnId, status: "completed", startedAt: secs(), completedAt: secs(), items: [done] });
         notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item: done });
+        // lag: 本物と同じく、item が閉じてから少し遅れてターンが閉じる
+        if (params.command.includes("lag")) await new Promise((resolve) => setTimeout(resolve, 300));
+        t.shellTurn = null;
         notify("turn/completed", { threadId: t.id, turn: { id: turnId, status: interrupted ? "interrupted" : "completed", items: [] } });
       }, 10);
       return {};
