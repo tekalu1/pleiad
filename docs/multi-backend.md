@@ -325,7 +325,7 @@ Claude の `getCompactions` は、区切りを transcript の `system:compact_bo
 | `'native'`（Codex） | `backend.shell({ sessionId, command, cwd, timeoutMs, signal, onOutput })`。app-server の `thread/shellCommand { threadId, command, timeoutMs }`（応答は `{}`、サンドボックスの外）。スレッドが読み込まれていなければ `thread/resume` し、終わったら `thread/unsubscribe`。止めるのは item の turnId への `turn/interrupt` | Codex の会話に残るので何もしない。次の人の発言のターンが渡ったら `shell.handed` だけ出す | `source: userShell` の `commandExecution` を `kind: 'shell'`（`stdout` は `aggregatedOutput`、`stderr` は null、`exitCode`）にし、エージェントのツールのカードにしない（ターンの通知でも拾わない）。最後の人の発言より後の行は `pending` |
 | 無し（Antigravity） | 使えない（`runShell` は断る） | — | — |
 
-- 完了通知で再開するターン・圧縮のターン・走っているターンへの途中送信では渡さない。エージェントを切り替えたら、走っている分を止めて `shellPending` を捨てる。未送信の会話の削除・サーバーの終わりでも止める
+- 完了通知で再開するターン・圧縮のターン・走っているターンへの途中送信では渡さない。エージェントを切り替えたら（予約した設定の適用も）走っている分を止め、替えた先も `'host'` なら `shellPending` を次のターンで渡し、そうでなければ捨てる（`shellRuns.switched`）。予約で替わる先が `'host'` どうしでなければ `runShell` は断る。未送信の会話の削除・サーバーの終わりでも止める
 
 ### 2.4 sidecar の拡張
 
