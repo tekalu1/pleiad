@@ -74,6 +74,7 @@ export const COMMANDS = new Set([
   'setSessionMcp',  // { sessionId, name, removed } -> この会話だけ外部 MCP を外す（ply_context に出さない）/ 戻す。次のターンから効く
   'agentMcp',       // { cwd } -> { agents: { claude|codex: [{ name, transport, endpoint, command, path, scope, disabled }] } } 各エージェントの登録（読むだけ）
   'nativeInstructions', // { cwd, backend } -> { cwd, agent, entries: [{ id, name, path, scope, tokens }] | null } エージェント任せの指示を、そのエージェントの規則で探した量（読むだけ。ADR 0056）
+  'contextFindings', // { sessionId, cwd, backend } -> { duplicates: [{ score, sides: [{ path, scope, root, line, segments: [{ text, common }] }] }], missing: [{ path, scope, line, target, from }], more: { duplicates, missing } } | null 指示の量の面の気になる所（重複・無いパス。読むだけ・保存しない。ADR 0056）
   'listMcpConfig', // { cwd, format, scope } -> native path, revision and names (no secrets)
   'readMcpServer', // { cwd, format, scope, name } -> explicitly opened server definition
   'saveMcpServer', // { cwd, format, scope, name, value, revision, mode } -> native registration

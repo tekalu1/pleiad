@@ -6,10 +6,12 @@
 // - setMcp:  「この会話では外す」。方針（policy.removedMcp）に残し、次のターンから接続しない
 // - agentMcp: エージェント任せの MCP。各エージェントの設定に登録されているもの（読むだけ。接続はしない）
 // - nativeInstructions: エージェント任せの指示。そのエージェントが読む規則で探し、量を見積もる（読むだけ）
+// - findings: 指示の量の面の「気になる所」（重複・無いパス。core/context-findings.mjs。読むだけ）
 import fs from 'node:fs/promises';
 import { scanContext } from './context-scan.mjs';
 import { KINDS, pathKey } from './context-settings.mjs';
 import { pinChanges, readSnapshot, resolveRuntime } from './context-runtime.mjs';
+import { contextFindings } from './context-findings.mjs';
 import { t } from './i18n.mjs';
 
 const MAX_TEXT = 256 * 1024;
@@ -108,6 +110,11 @@ export function createContextSession({ store, snapshots, plyServers = async () =
    * 規則を知らないエージェント（antigravity など）は entries: null
    */
   async function nativeInstructions(cwd, agent) {
+    const found = await nativeScan(cwd, agent);
+    return { ...found, entries: found.entries?.map(({ content, realPath, ...e }) => e) ?? null };
+  }
+  /** nativeInstructions の探索。行に本文（content）と実体のパスを残す（気になる所が使う） */
+  async function nativeScan(cwd, agent) {
     const source = NATIVE_SOURCE[agent];
     if (!source) return { cwd, agent, entries: null };
     const scope = { sources: [source], excludePaths: [] };
@@ -120,10 +127,25 @@ export function createContextSession({ store, snapshots, plyServers = async () =
       const key = `${pathKey(e.realPath ?? e.path)}:${e.appliesTo ?? ''}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      entries.push({ id: e.id, name: e.name, path: e.path, scope: e.scope, tokens: e.tokens });
+      entries.push({ id: e.id, name: e.name, path: e.path, scope: e.scope, tokens: e.tokens, content: e.content, realPath: e.realPath });
     }
     return { cwd: scan.cwd, agent, entries };
   }
 
-  return { refresh, diff, setMcp, agentMcp, nativeInstructions };
+  /**
+   * 指示の量の面の「気になる所」（ADR 0056「② 気になる所を知らせる」）。数えている指示ファイルと同じものを対象にする:
+   * Pleiad がそろえる会話は記録の行のうち渡したもの（supplied。今のファイルを読む）、エージェント任せの会話は nativeInstructions と同じ探索。
+   * 規則を知らないエージェントは null。保存しない
+   */
+  async function findings(sessionId, cwd, agent) {
+    const record = await saved(sessionId);
+    const report = record.report;
+    const managed = report.status !== 'native' && (record.policy?.owners ?? report.owners ?? {}).instruction === 'ply';
+    const where = managed ? report.cwd ?? cwd : cwd;
+    const rows = managed ? report.entries.filter(e => e.kind === 'instruction' && e.status === 'supplied') : (await nativeScan(where, agent)).entries;
+    if (!rows) return null;
+    return contextFindings(rows, { cwd: where });
+  }
+
+  return { refresh, diff, setMcp, agentMcp, nativeInstructions, findings };
 }

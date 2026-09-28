@@ -693,6 +693,18 @@
       "nativeFound_other": "Pleiad が同じ規則で探したもの {{count}} 件",
       "nativeNone": "{{agent}} が読む指示ファイルは見つかりませんでした"
     },
+    "findings": {
+      "title": "気になる所",
+      "duplicate": "重複",
+      "duplicateNote": "ほぼ同じ段落",
+      "missing": "無いパス",
+      "missingRepo": "リポジトリにありません",
+      "missingFolder": "このフォルダーにありません",
+      "open": "開く",
+      "openAria": "{{name}} の {{line}} 行目を開く",
+      "more_other": "ほか {{count}} 件",
+      "scope": { "user": "ユーザー", "dir": "この場所", "extra": "追加した場所" }
+    },
     "changed": {
       "title_other": "開始後に {{count}} 件変わりました",
       "removed": "{{name}} が消えました",

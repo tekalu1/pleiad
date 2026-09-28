@@ -105,6 +105,8 @@ const cases = [
   await import('./unit/context-ui.mjs'),
   // 指示の量（ADR 0056）: 自分で書いた分と Pleiad が足した分・目安・エージェント任せの見積もり
   await import('./unit/instruction-amount.mjs'),
+  // 気になる所: 違うファイルのほぼ同じ段落・もう無いパス（言語に依存しない判定）・サーバー越しの対象
+  await import('./unit/context-findings.mjs'),
   await import('./unit/slash-skills.mjs'),
   await import('./unit/notifications.mjs'),
   await import("./unit/onboarding.mjs"),

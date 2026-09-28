@@ -470,7 +470,8 @@ Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作�
 
 ## 指示の量（2026-09-28）
 
-コンテキストの見直しの第 1 段として、毎ターン最初に読み込まれる指示の量を会話の右パネルに出す（[ADR 0056](adr/0056-context-review.md)）。数える場所: ファイルの行は探索（`core/context-scan.mjs` の `tokens`）、Pleiad が足す分はターンを組み立てる `runTurn`（実際に渡した文を `core/instruction-amount.mjs` で数え、会話の記録 `contextSession.plyParts` に残す）、エージェント任せの指示はパネルを開いたときの `nativeInstructions`（そのエージェントの規則で探す。「推定」）。合計・目安との比べは画面（`web/instruction-amount.mjs`）。目安は `prefs.json` の `instructionBudget`（既定 5,000）。詳しくは docs/context-runtime.md「指示の量」。
+コンテキストの見直しの第 1 段として、毎ターン最初に読み込まれる指示の量を会話の右パネルに出す（[ADR 0056](adr/0056-context-review.md)）。数える場所: ファイルの行は探索（`core/context-scan.mjs` の `tokens`）、Pleiad が足す分はターンを組み立てる `runTurn`（実際に渡した文を `core/instruction-amount.mjs` で数え、会話の記録 `contextSession.plyParts` に残す）、エージェント任せの指示はパネルを開いたときの `nativeInstructions`（そのエージェントの規則で探す。「推定」）。合計・目安との比べは画面（`web/instruction-amount.mjs`）。目安は `prefs.json` の `instructionBudget`（既定 5,000）。
+第 2 段として、同じ面に「気になる所」を出す: 違うファイルのほぼ同じ段落（文字の 5-gram の Jaccard 係数が 0.5 以上）と、この場所の指示に書かれたもう無い相対パスだけ。どちらも文の意味を読まない判定で、パネルを開いたときにサーバーが計算し（`contextFindings`、`core/context-findings.mjs`）、保存しない。詳しくは docs/context-runtime.md「指示の量」「気になる所」。
 
 ## 会話の圧縮（2026-09-27）
 

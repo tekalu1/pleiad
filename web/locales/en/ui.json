@@ -719,6 +719,19 @@
       "nativeFound_other": "{{count}} files Pleiad found using the same rules",
       "nativeNone": "No instruction files that {{agent}} reads were found"
     },
+    "findings": {
+      "title": "Worth a look",
+      "duplicate": "Duplicate",
+      "duplicateNote": "Nearly the same paragraph",
+      "missing": "Missing path",
+      "missingRepo": "Not in the repository",
+      "missingFolder": "Not in this folder",
+      "open": "Open",
+      "openAria": "Open line {{line}} of {{name}}",
+      "more_one": "{{count}} more",
+      "more_other": "{{count}} more",
+      "scope": { "user": "User", "dir": "This location", "extra": "Added location" }
+    },
     "changed": {
       "title_one": "{{count}} file changed since the start",
       "title_other": "{{count}} files changed since the start",

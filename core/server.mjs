@@ -2760,6 +2760,8 @@ wss.on("connection", (ws, req) => {
           return reply(true, await contextSession.agentMcp((await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd));
         case 'nativeInstructions':
           return reply(true, await contextSession.nativeInstructions((await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd, msg.args?.backend));
+        case 'contextFindings':
+          return reply(true, await contextSession.findings(msg.args?.sessionId, (await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd, msg.args?.backend));
         case 'setContextSettings':
           return reply(true, await contextSettings.set(msg.args ?? {}));
         // ---- Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。コマンドは実行しない

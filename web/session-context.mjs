@@ -2,7 +2,8 @@
 // 会話の頭の札（指示 2 · Skills 14 · MCP … · Pleiad の指示 3）を押すと、ファイルプレビューと同じ右パネルに開く（web/file-preview.mjs の openPanel）。
 // 一番上は作業場所の面: 「<場所> · 全体の設定どおり／<親の場所> の設定どおり／このフォルダーだけの設定 · n 項目」と「この場所だけ変える」。
 // そのすぐ下が指示の量の面（ADR 0056）: 毎ターン最初に読み込まれる指示の合計と、ユーザー／この場所と親フォルダー／Pleiad が足す分の積み上げ、
-//   自分で書いた分にだけ引く目安の線。エージェント任せの指示は、そのエージェントの規則で Pleiad が探した結果を数えて「推定」と添える
+//   自分で書いた分にだけ引く目安の線。エージェント任せの指示は、そのエージェントの規則で Pleiad が探した結果を数えて「推定」と添える。
+//   同じ面の中に「気になる所」（違うファイルのほぼ同じ段落と、もう無いパス。contextFindings）を件数付きで畳む（0 件なら出さない）
 //   変えている間（edit）は、この場所の設定（places。core/context-settings.mjs）で探した結果を並べ、担当と行のスイッチでこのフォルダーだけ変える
 //   （「全体の設定に戻す」「終わる」）。保存は次のターンから効く。
 // ふだんは sessionContext の記録（core/server.mjs）から作る。種類ごとに、渡したものを出どころ（ユーザー／この場所と親フォルダー／追加した場所）で分ける。
@@ -148,11 +149,14 @@ export function placeStatus(here) {
 // i18n-dynamic: sessionContext.group.
 // i18n-dynamic: sessionContext.added.reason.
 // i18n-dynamic: sessionContext.amount.part.
+// i18n-dynamic: sessionContext.findings.scope.
 export function setupSessionContext({ cmd, preview, session, info, refreshInfo, openSettings, labelOf, isRunning = () => false, budget = () => DEFAULT_BUDGET }) {
   const logins = new Map();     // MCP 名 -> ログインの進み具合（ブラウザで続けてください… / ログインしました）
   const agentCache = new Map(); // cwd -> agentMcp の結果
   const nativeCache = new Map(); // cwd|エージェント -> nativeInstructions の結果（null は読んでいる途中）。パネルを開くたびに読み直す
   let plyOpen = false;          // 指示の量の面の「Pleiad が足す分」を開いているか
+  const findingsCache = new Map(); // 会話|場所|エージェント -> contextFindings の結果（null は計算の途中）。パネルを開くたびに計算し直す
+  let issuesOpen = true;        // 「気になる所」を開いているか（最初は開く）
   let diff = null, diffOpen = false, busy = false, notice = '';
   let refreshLoadingVisible = false;
   const removedPending = new Map();
@@ -345,7 +349,78 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       over.append(g, text);
       k.append(over);
     }
+    if (!reading && !unknown) {
+      const issues = issuesFace(findingsOf(data));
+      if (issues) k.append(issues);
+    }
     return k;
+  }
+
+  // ---------------------------------------------------------------- 気になる所（ADR 0056「② 気になる所を知らせる」）
+  // 数えている指示ファイルのうち、違うファイルのほぼ同じ段落（重複）と、この場所の指示に書かれたもう無いパスだけ。
+  // 文の意味は読まない（core/context-findings.mjs）。パネルを開いたときにサーバーが計算し、保存しない
+  function findingsOf(data) {
+    const id = session()?.id ?? '', where = cwdOf(data), agent = session()?.backend ?? '';
+    const key = `${id}|${where}|${agent}`;
+    const none = { duplicates: [], missing: [], more: {} };
+    if (!findingsCache.has(key)) {
+      findingsCache.set(key, null);
+      cmd('contextFindings', { sessionId: id, cwd: where, backend: agent })
+        .then(r => { findingsCache.set(key, r ?? none); refresh(); })
+        .catch(() => { findingsCache.set(key, none); refresh(); });
+    }
+    return findingsCache.get(key);
+  }
+  const findingCount = f => (f ? f.duplicates.length + f.missing.length + (f.more?.duplicates ?? 0) + (f.more?.missing ?? 0) : 0);
+  /** 件数付きで開閉する区画。重複は 2 か所を上下に並べて共通の部分を太字に、無いパスはどのファイルのどのパスか。各側に「開く」（その行へ） */
+  function issuesFace(found) {
+    const count = findingCount(found);
+    if (!count) return null;
+    const d = el('details', 'scx-issues');
+    d.open = issuesOpen;
+    d.addEventListener('toggle', () => { issuesOpen = d.open; });
+    const summary = el('summary', null, t('sessionContext.findings.title'));
+    summary.append(el('span', 'scx-n', fmt.number(count)));
+    d.append(summary);
+    const where = side => {
+      const row = el('div', 'scx-where');
+      const scope = side.root ? 'extra' : side.scope === 'user' ? 'user' : 'dir';
+      const go = button(t('sessionContext.findings.open'), 'btn', () => preview.open({ path: side.path, line: side.line ?? null }, go));
+      go.setAttribute('aria-label', t('sessionContext.findings.openAria', { name: base(side.path), line: side.line }));
+      const p = el('span', 'cx-path', shortPath(side.path));
+      p.title = side.path;
+      row.append(el('span', 'sc', t(`sessionContext.findings.scope.${scope}`)), p, go);
+      return row;
+    };
+    const head = (label, rest) => {
+      const h = el('p', 'scx-ih');
+      h.append(el('span', 'scx-ik', label), rest);
+      return h;
+    };
+    for (const item of found.duplicates) {
+      const box = el('div', 'scx-issue');
+      box.append(head(t('sessionContext.findings.duplicate'), el('span', null, t('sessionContext.findings.duplicateNote'))));
+      item.sides.forEach((side, i) => {
+        if (i) { const vs = el('span', 'scx-vs', '＝'); vs.setAttribute('aria-hidden', 'true'); box.append(vs); }
+        const quote = el('p', 'scx-quote');
+        for (const seg of side.segments) quote.append(seg.common ? el('b', null, seg.text) : document.createTextNode(seg.text));
+        const s = el('div', 'scx-side');
+        s.append(where(side), quote);
+        box.append(s);
+      });
+      d.append(box);
+    }
+    for (const item of found.missing) {
+      const box = el('div', 'scx-issue');
+      box.append(head(t('sessionContext.findings.missing'), el('code', null, item.target)));
+      const s = el('div', 'scx-side');
+      s.append(where(item), el('p', 'scx-quote', item.from === 'folder' ? t('sessionContext.findings.missingFolder') : t('sessionContext.findings.missingRepo')));
+      box.append(s);
+      d.append(box);
+    }
+    const more = (found.more?.duplicates ?? 0) + (found.more?.missing ?? 0);
+    if (more) d.append(el('p', 'cx-sub scx-more', t('sessionContext.findings.more', { count: more })));
+    return d;
   }
 
   // ---------------------------------------------------------------- 作業場所の面
@@ -939,6 +1014,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     // 開くたびに作業場所の設定を読み直す（設定の画面や別の窓で変わっていることがある）。エージェント任せの指示の見積もりも同じ
     place = { cwd: null, view: null, loading: false };
     nativeCache.clear();
+    findingsCache.clear();
     preview.openPanel({ key: KEY, title, subtitle: data.report ? subtitle(data) : '', body: render(), label: title, element: chip,
       onClose: () => { chip?.setAttribute('aria-expanded', 'false'); edit = false; editScan = null; unifying = false; } });
   }
