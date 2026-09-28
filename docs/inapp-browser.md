@@ -10,9 +10,9 @@ utilityProcess のサーバーは parentPort でメインプロセスに接続�
 
 中継を使うと右パネルを開き、操作中のタブに印を付け、道具の列の下に「<エージェント名> が操作中」と「止める」「引き継ぐ」を数秒表示する。「止める」は接続を切り、次の人の送信まで再接続を拒否する。「引き継ぐ」は接続を切って表示を消し、再接続は許す。会話のツール履歴はシェル実行として残る。
 
-デーモンの管理ファイルは設定ファイルの隣の `sock/` に作り、`AGENT_BROWSER_SOCKET_DIR` で全バックエンドへ渡す。既定の `~/.agent-browser` は Codex の `workspace-write` では書けないため、会話ごとに置き場を分ける。Codex の `thread/start`・`thread/resume` の config には `sandbox_workspace_write.writable_roots` を追加し、`turn/start` の `sandboxPolicy.writableRoots` にも反映する。既存の追加ルートは保ち、Pleiad のデータ置き場全体や CDP 接続設定のフォルダーには書き込みを許可しない。読み取り専用モードでは追加せず、ファイルへの書き込みが必要なブラウザー操作はできない旨をエージェントへ指示する。
+デーモンの管理ファイルは Windows では OS の一時領域の `ply-ab-<ハッシュ>/`、Unix では `/tmp/ply-ab-<uid>/<ハッシュ>/` に作り、`AGENT_BROWSER_SOCKET_DIR` で全バックエンドへ渡す。既定の `~/.agent-browser` は Codex の `workspace-write` では書けないため、既定で書ける一時領域を使う。Codex の thread config と turn の sandboxPolicy にブラウザー用の書き込みルートは追加しない。読み取り専用モードでは、ファイルへの書き込みが必要なブラウザー操作はできない旨をエージェントへ指示する。利用者が `exclude_tmpdir_env_var`（Windows の TEMP/TMP を含む）や `exclude_slash_tmp`（Unix）で一時領域を除外した場合、その制限は変更しないため操作できない場合がある。
 
-`AGENT_BROWSER_SESSION` は設定フォルダーの絶対パスをハッシュ化した短い名前で、会話とデータ置き場を区別し、ネイティブ ID の確定後も変えない。Unix のソケットパスが 104 バイト以上になる場合は `/tmp/ply-ab-<uid>/<ハッシュ>/` を使う。Windows の agent-browser 0.38.1 は loopback TCP を使い、PID・ポート等のファイルを `sock/` に置く。継承した `AGENT_BROWSER_NAMESPACE` は空にして、指定した置き場が変わらないようにする。
+`AGENT_BROWSER_SESSION` と一時領域のハッシュは設定フォルダーの絶対パスから作り、会話とデータ置き場を区別し、ネイティブ ID の確定後も変えない。Unix では長い TMPDIR による 104 バイトのソケットパス制限を避けるため、常に短い `/tmp` を使う。Windows の agent-browser 0.38.1 は loopback TCP を使い、PID・ポート等のファイルを一時領域に置く。継承した `AGENT_BROWSER_NAMESPACE` は空にして、指定した置き場が変わらないようにする。
 
 agent-browser 0.38.1 の state ルートには専用の変更変数がない。`AGENT_BROWSER_STATE` は読み込む state ファイルの指定であり、保存先の指定ではない。この CDP 接続では自動 state 保存を設定せず、Cookie 等は Electron の保存領域を使う。Claude・Antigravity にも同じ env を渡す。Claude の Bash sandbox を利用者が有効にしている場合、書き込み先と loopback 接続の許可はその sandbox の設定にも必要で、Pleiad は設定を自動で緩めない。
 

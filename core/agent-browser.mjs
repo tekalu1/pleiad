@@ -3,12 +3,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 
-export function browserSocketDirectory(dir, session, platform = process.platform) {
-  const socketDir = path.join(dir, 'sock');
-  // agent-browser allows at most 103 bytes for a Unix socket path, plus NUL.
-  if (platform === 'win32' || Buffer.byteLength(path.join(socketDir, `${session}.sock`)) < 104) return socketDir;
-  // macOS TMPDIR can itself exceed the socket limit. /tmp is short on Unix.
+export function browserSocketDirectory(dir, platform = process.platform) {
   const hash = crypto.createHash('sha256').update(path.resolve(dir)).digest('hex').slice(0, 24);
+  // Use workspace-write's default temporary roots without adding sandbox grants.
+  if (platform === 'win32') return path.join(os.tmpdir(), `ply-ab-${hash}`);
+  // macOS TMPDIR can exceed agent-browser's 103-byte Unix socket path limit.
   return path.join('/tmp', `ply-ab-${os.userInfo().uid}`, hash);
 }
 
@@ -48,7 +47,7 @@ export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = 
   const configSessionId = bridge.configSessionId?.(sessionId) ?? sessionId;
   const dir = path.join(dataDir, 'agent-browser', crypto.createHash('sha256').update(configSessionId).digest('hex'));
   const session = `ply-${crypto.createHash('sha256').update(path.resolve(dir)).digest('hex').slice(0, 24)}`;
-  const socketDir = browserSocketDirectory(dir, session);
+  const socketDir = browserSocketDirectory(dir);
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
   await fs.mkdir(socketDir, { recursive: true, mode: 0o700 });
   const file = path.join(dir, 'agent-browser.json');

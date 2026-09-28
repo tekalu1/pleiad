@@ -109,9 +109,10 @@ export default async function (t) {
     socketDirs.add(other.AGENT_BROWSER_SOCKET_DIR);
     t.ok('会話ごとにデーモンと置き場を分ける', other.AGENT_BROWSER_SOCKET_DIR !== env.AGENT_BROWSER_SOCKET_DIR && other.AGENT_BROWSER_SESSION !== env.AGENT_BROWSER_SESSION);
     const longDir = path.join(dir, '長'.repeat(100));
-    const shortSocket = browserSocketDirectory(longDir, env.AGENT_BROWSER_SESSION, 'darwin');
+    const shortSocket = browserSocketDirectory(longDir, 'darwin');
     t.ok('Unix の長い UTF-8 パスは短い置き場へ切り替える', Buffer.byteLength(path.join(shortSocket, `${env.AGENT_BROWSER_SESSION}.sock`)) < 104 && shortSocket !== path.join(longDir, 'sock'));
-    t.ok('Windows は管理ファイルを設定の隣に置く', browserSocketDirectory(dir, env.AGENT_BROWSER_SESSION, 'win32') === path.join(dir, 'sock'));
+    t.ok('Windows は既定の一時領域に短い会話別の置き場を作る', path.dirname(browserSocketDirectory(dir, 'win32')) === os.tmpdir() && /^ply-ab-[a-f0-9]{24}$/.test(path.basename(browserSocketDirectory(dir, 'win32'))));
+    t.ok('Unix は短い設定パスでも既定で書ける /tmp を使う', browserSocketDirectory('/short', 'linux').startsWith(path.join('/tmp', 'ply-ab-')));
     bridge.rebind('conversation-1', 'native-thread-1');
     endpointUrl = 'ws://127.0.0.1:1234/devtools/browser/new-key';
     const rebound = await browserEnvironment({ bridge, dataDir: dir, sessionId: 'native-thread-1' });
@@ -163,17 +164,17 @@ export default async function (t) {
       await codex.runTurn({ ...args, sessionId: first.sessionId });
       const expected = env;
       t.ok('Codex の thread/start と thread/resume に会話別 shell_environment_policy.set を渡す', requests.map(r => r.method).join() === 'thread/start,thread/resume' && requests.every(r => JSON.stringify(r.params.config['shell_environment_policy.set']) === JSON.stringify(expected)));
-      t.ok('thread config は既存の writable_roots を残してソケットだけを追加する', requests.every(r => JSON.stringify(r.params.config['sandbox_workspace_write.writable_roots']) === JSON.stringify([scratch, env.AGENT_BROWSER_SOCKET_DIR])));
-      t.ok('ロード済みスレッドが追加ルートを返さなくてもターンで許可する', turns.every(r => JSON.stringify(r.sandboxPolicy.writableRoots) === JSON.stringify([scratch, env.AGENT_BROWSER_SOCKET_DIR])));
+      t.ok('thread config にブラウザー用の writable_roots を追加しない', requests.every(r => !('sandbox_workspace_write.writable_roots' in r.params.config)));
+      t.ok('ターンも既存の sandboxPolicy を保ちソケットのルートを追加しない', turns.every(r => r.sandboxPolicy === returnedSandbox && JSON.stringify(r.sandboxPolicy.writableRoots) === JSON.stringify([scratch])));
       await codex.runTurn({ ...args, mode: 'readonly', sessionId: first.sessionId });
       t.ok('読み取り専用ではルートを追加せず操作不可の指示に替える', !('sandbox_workspace_write.writable_roots' in requests.at(-1).params.config) && turns.at(-1).sandboxPolicy.type === 'readOnly' && !turns.at(-1).sandboxPolicy.writableRoots && requests.at(-1).params.developerInstructions.includes('Do not operate the built-in browser'));
       await codex.runTurn({ ...args, mode: 'full', sessionId: first.sessionId });
-      t.ok('通常モードへ戻すとソケットの書き込みを許可する', turns.at(-1).sandboxPolicy.type === 'workspaceWrite' && turns.at(-1).sandboxPolicy.writableRoots.includes(env.AGENT_BROWSER_SOCKET_DIR));
+      t.ok('通常モードへ戻しても追加ルートを増やさない', turns.at(-1).sandboxPolicy.type === 'workspaceWrite' && !turns.at(-1).sandboxPolicy.writableRoots.includes(env.AGENT_BROWSER_SOCKET_DIR));
       await codex.runTurn({ ...args, mode: 'yolo', sessionId: first.sessionId });
       t.ok('YOLO に workspace の追加ルートを持ち込まない', !('sandbox_workspace_write.writable_roots' in requests.at(-1).params.config) && turns.at(-1).sandboxPolicy.type === 'dangerFullAccess');
       returnedSandbox = { type: 'dangerFullAccess' };
       await codex.runTurn({ ...args, mode: 'full', sessionId: first.sessionId });
-      t.ok('YOLO から戻るターンも利用者の追加ルートを維持する', turns.at(-1).sandboxPolicy.type === 'workspaceWrite' && JSON.stringify(turns.at(-1).sandboxPolicy.writableRoots) === JSON.stringify([scratch, env.AGENT_BROWSER_SOCKET_DIR]));
+      t.ok('YOLO から戻るターンもブラウザー用の追加ルートを作らない', turns.at(-1).sandboxPolicy.type === 'workspaceWrite' && !turns.at(-1).sandboxPolicy.writableRoots);
       t.ok('通常の Codex は共有 app-server を使いターン後も止めない', stopped === 0 && !(await readFile(process.env.FAKE_BROWSER_ENV_FILE).then(() => true, () => false)));
     } finally { Object.assign(nativeRpc, originalRpc); }
 

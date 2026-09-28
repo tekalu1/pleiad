@@ -53,17 +53,13 @@ const vocab = ({ label, short, note, scope, autonomy, enforced }) => ({ label, .
 
 // thread/resume が以前の設定を返しても、選んだアクセス範囲を turn/start に適用する。
 // 同じ種類なら設定済みの追加ルートなどを保持し、YOLO から戻る場合は制限を復元する。
-function sandboxForTurn(mode, current, browserWritableRoots) {
+function sandboxForTurn(mode, current) {
   const type = {
     "workspace-write": "workspaceWrite",
     "read-only": "readOnly",
     "danger-full-access": "dangerFullAccess",
   }[mode.sandbox];
   if (type === "dangerFullAccess") return { type };
-  if (type === 'workspaceWrite' && browserWritableRoots) {
-    const policy = current?.type === type ? current : { type, networkAccess: false };
-    return { ...policy, writableRoots: [...new Set([...(policy.writableRoots ?? []), ...browserWritableRoots])] };
-  }
   if (current?.type === type) return current;
   return { type, networkAccess: false };
 }
@@ -1504,11 +1500,6 @@ export const backend = {
       if (browserEnv && m.sandbox === 'read-only') {
         browserInstructions = agentT(locale, 'browser.readonlyInstructions');
       }
-      let browserWritableRoots;
-      if (m.sandbox === 'workspace-write' && browserEnv?.AGENT_BROWSER_SOCKET_DIR) {
-        const { config } = await rpc.request('config/read', { cwd, includeLayers: false });
-        browserWritableRoots = [...new Set([...(config?.sandbox_workspace_write?.writable_roots ?? []), browserEnv.AGENT_BROWSER_SOCKET_DIR])];
-      }
       const common = {
         cwd,
         config: {
@@ -1524,9 +1515,6 @@ export const backend = {
             AGENT_BROWSER_SOCKET_DIR: browserEnv.AGENT_BROWSER_SOCKET_DIR,
             AGENT_BROWSER_NAMESPACE: browserEnv.AGENT_BROWSER_NAMESPACE,
           } } : {}),
-          ...(browserWritableRoots ? {
-            'sandbox_workspace_write.writable_roots': browserWritableRoots,
-          } : {}),
           ...(hooks ? { hooks: hooks.config } : {}),
         },
         ...(compat ? { modelProvider: compat.modelProvider } : {}),
@@ -1625,7 +1613,7 @@ export const backend = {
         // ロード済み thread の resume だけに設定更新を任せない。
         // 毎ターン指定し、auto/full への変更も ask への復帰も確実に適用する。
         approvalPolicy: m.approvalPolicy,
-        sandboxPolicy: sandboxForTurn(m, effectiveSandbox, browserWritableRoots),
+        sandboxPolicy: sandboxForTurn(m, effectiveSandbox),
         ...(effectiveEffort ? { effort: effectiveEffort } : {}),
         input: [{ type: "text", text: String(prompt ?? "") }],
       });
