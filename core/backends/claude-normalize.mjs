@@ -11,6 +11,7 @@
 // 正規化イベントの一覧は docs/multi-backend.md §2.2。
 import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { t } from "../i18n.mjs";
+import { ZERO_COST, resultCost, usageTotals, claudeUsageDelta } from "./claude-cost-state.mjs";
 
 /** tool_result の content は string か [{type:"text"}] で来る。文字列に均す */
 export function resultText(c) {
@@ -53,7 +54,11 @@ export function createClaudeCompactDiagnostic() {
  * 保存の時点で切るが、ライブは v1 が生の SDK メッセージを素通ししていたので、
  * 同じ見た目を保つためにそのまま流す。
  */
-export function normalizeSdkMessage(m) {
+/**
+ * costBase はターン開始時点の累計（transcript の最後の cost-state。claude-cost-state.mjs）。
+ * result の累計からこれを引いて、そのターンの分を usage にする。null は「開始時点が分からない」で、数値を null にする
+ */
+export function normalizeSdkMessage(m, { costBase = ZERO_COST } = {}) {
   const out = [];
   if (!m || typeof m !== "object") return out;
 
@@ -169,19 +174,19 @@ export function normalizeSdkMessage(m) {
   }
 
   if (m.type === "result") {
-    const models = Object.values(m.modelUsage ?? {});
-    if (models.length) {
-      const sum = key => models.reduce((n, u) => n + (Number.isFinite(u[key]) ? u[key] : 0), 0);
-      out.push({ type: 'usage', inputTokens: sum('inputTokens') + sum('cacheReadInputTokens') + sum('cacheCreationInputTokens'),
-        outputTokens: sum('outputTokens'), cachedTokens: sum('cacheReadInputTokens'),
-        costUsd: Number.isFinite(m.total_cost_usd) ? m.total_cost_usd : null });
-    } else if (Number.isFinite(m.total_cost_usd)) out.push({ type: 'usage', costUsd: m.total_cost_usd });
+    // total_cost_usd / modelUsage は会話の累計（CLI が resume で cost-state を読み戻す）。開始時点を引いてターンの分にする。
+    // 後から直せるように、会話のネイティブ id と開始・終了の累計も付ける（core/usage.mjs が記録に残す）
+    const end = resultCost(m);
+    const delta = end ? claudeUsageDelta(end, costBase) : null;
+    if (end) out.push({ type: 'usage', ...delta,
+      ...(typeof m.session_id === 'string' && m.session_id ? { nativeSessionId: m.session_id } : {}),
+      cumulativeStart: costBase ? usageTotals(costBase) : null, cumulativeEnd: usageTotals(end) });
     const ok = m.subtype === "success";
     out.push({
       type: "turnResult",
       outcome: ok ? "ok" : "error",
       turns: m.num_turns ?? null,
-      costUsd: typeof m.total_cost_usd === "number" ? m.total_cost_usd : null,
+      costUsd: delta?.costUsd ?? null,
       ...(ok ? {} : { error: String(m.subtype ?? "error") }),
     });
   }
