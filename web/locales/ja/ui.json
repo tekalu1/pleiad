@@ -693,6 +693,29 @@
       "nativeFound_other": "Pleiad が同じ規則で探したもの {{count}} 件",
       "nativeNone": "{{agent}} が読む指示ファイルは見つかりませんでした"
     },
+    "review": {
+      "ask": "見直しを頼む",
+      "note": "新しい会話に下書き · 送信はしない",
+      "failed": "見直しの会話を作れませんでした: {{error}}",
+      "draft": {
+        "lead": "指示ファイルを見直してください。",
+        "files": "対象",
+        "file": "- {{path}}（約 {{n}} トークン）",
+        "amount": "量: 自分で書いた分 約 {{own}} / 目安 {{budget}}",
+        "amountOver": "量: 自分で書いた分 約 {{own}} / 目安 {{budget}}（{{ratio}} 倍）",
+        "found": "見つかった所",
+        "duplicate": "- 重複: {{a}} の {{lineA}} 行目と {{b}} の {{lineB}} 行目がほぼ同じ段落",
+        "missing": "- 無いパス: {{file}} の {{line}} 行目の {{target}}",
+        "more_other": "- ほか {{count}} 件",
+        "how": "見直し方",
+        "howLead": "注意書きを 1 つずつ、次の順で分類し、消す・移す・まとめる案を出してください。",
+        "step1": "1. ツールを直せば消せるか",
+        "step2": "2. ガードや環境で塞げるか",
+        "step3": "3. 使った瞬間に案内できるか",
+        "step4": "4. 文書に残す知識か",
+        "confirm": "ファイルを変える前に差分を見せて、確認を取ってください。"
+      }
+    },
     "findings": {
       "title": "気になる所",
       "duplicate": "重複",

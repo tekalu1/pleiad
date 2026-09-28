@@ -3341,6 +3341,9 @@ wss.on("connection", (ws, req) => {
           const mode = msg.args?.mode ?? (inherit ? source.nextSettings?.mode ?? (backend.id === sourceBackend.id ? source.mode : undefined) : undefined);
           const cwd = typeof msg.args?.cwd === "string" && msg.args.cwd.trim() ? msg.args.cwd.trim() : os.homedir();
           const status = typeof msg.args?.status === "string" ? msg.args.status.trim() || null : null;
+          // draft: 入力欄に入れておく文（「見直しを頼む」。ADR 0056）。作るのと同時に下書きとして保存し、送らない
+          const draft = msg.args?.draft;
+          if (draft !== undefined && (typeof draft !== "string" || draft.length > 2_000_000)) throw new Error(t('session.draftTooLarge'));
           const now = Date.now();
           // 既定のタイトルは保存しない（空）。画面が今の言語で既定名を出す（web/style.css の .row-t:empty など）。過去の記録には「新しいセッション」が残っている
           const info = { title: "", cwd, tag: status, createdAt: now, lastModified: now };
@@ -3369,6 +3372,7 @@ wss.on("connection", (ws, req) => {
             // 引き継ぎ元が無ければ前回選んだアカウント（削除済みなら、ログイン中のアカウントのまま）
             const account = source ? source.nextSettings?.account ?? source.claudeAccount ?? '' : (await store.getPrefs()).claudeAccount ?? '';
             if (account && await claudeAccounts.has(account)) await store.setSessionData(sessionId, 'claudeAccount', account);
+            if (draft) await store.setSessionData(sessionId, "draft", { text: draft, attached: [] });
           } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
           emitGlobal({ type: "sessionsChanged", sessionId: null });
           return reply(true, { sessionId });

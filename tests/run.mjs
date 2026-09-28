@@ -107,6 +107,8 @@ const cases = [
   await import('./unit/instruction-amount.mjs'),
   // 気になる所: 違うファイルのほぼ同じ段落・もう無いパス（言語に依存しない判定）・サーバー越しの対象
   await import('./unit/context-findings.mjs'),
+  // 見直しを頼む: 依頼文の下書き・下書き入りの未送信の新しい会話（送らない）
+  await import('./unit/context-review.mjs'),
   await import('./unit/slash-skills.mjs'),
   await import('./unit/notifications.mjs'),
   await import("./unit/onboarding.mjs"),

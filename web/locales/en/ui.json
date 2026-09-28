@@ -719,6 +719,30 @@
       "nativeFound_other": "{{count}} files Pleiad found using the same rules",
       "nativeNone": "No instruction files that {{agent}} reads were found"
     },
+    "review": {
+      "ask": "Ask for a review",
+      "note": "Drafts a new conversation · does not send",
+      "failed": "Could not create the review conversation: {{error}}",
+      "draft": {
+        "lead": "Please review my instruction files.",
+        "files": "Files",
+        "file": "- {{path}} (~{{n}} tokens)",
+        "amount": "Size: written by me ~{{own}} / budget {{budget}}",
+        "amountOver": "Size: written by me ~{{own}} / budget {{budget}} ({{ratio}}×)",
+        "found": "Found",
+        "duplicate": "- Duplicate: line {{lineA}} of {{a}} and line {{lineB}} of {{b}} are nearly the same paragraph",
+        "missing": "- Missing path: {{target}} on line {{line}} of {{file}}",
+        "more_one": "- {{count}} more",
+        "more_other": "- {{count}} more",
+        "how": "How to review",
+        "howLead": "Go through the notes one at a time, classify each in this order, and propose what to delete, move, or merge.",
+        "step1": "1. Could fixing the tool make it unnecessary?",
+        "step2": "2. Could a guard or the environment block it?",
+        "step3": "3. Could it be shown at the moment it is needed?",
+        "step4": "4. Is it knowledge that belongs in the docs?",
+        "confirm": "Show me the diff and get my confirmation before changing any file."
+      }
+    },
     "findings": {
       "title": "Worth a look",
       "duplicate": "Duplicate",
