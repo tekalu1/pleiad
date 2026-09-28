@@ -34,7 +34,7 @@ import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings } from './compaction-settings.mjs';
-import { mergeCompactionHistory } from './compaction-history.mjs';
+import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
 import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
@@ -72,7 +72,7 @@ const updateGate = createUpdateGate();
 const quotaCache = createQuotaCache();
 const usageStore = createUsageStore(store.dataDir);
 await ensureDataSchema(store.dataDir);
-// Claude の記録に入っていた会話の累計を、ターンの分へ一度だけ直す（core/usage-migrations.mjs、ADR 0052）。
+// Claude の記録に入っていた会話の累計を、ターンの分へ一度だけ直す（core/usage-migrations.mjs、ADR 0053）。
 // transcript を読むので起動は待たせない。記録の書き込みとは usageStore の中で直列になる
 migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects') })
   .then(result => { if (result) console.log(`  ${t('usage.migrated', result)}`); })
@@ -2078,7 +2078,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         const hashes = (await store.get(sessionId)).taskNotices ?? [];
         const digest = crypto.createHash('sha256').update(prompt).digest('hex');
         await store.setSessionData(sessionId, 'taskNotices', [...new Set([...hashes, digest])]);
-        emit({ type: 'taskNotice' });
+        // 本文も載せる。画面の「タスクの結果で再開」の 1 行を開くと読める（ADR 0053）
+        emit({ type: 'taskNotice', text: String(prompt ?? '') });
       }
       await saveContext();
       // agy のように会話のあいだ 1 本のプロセスを生かすバックエンドには、会話ごとの同じトークンで開く（起動時にしか渡せない）
@@ -3191,7 +3192,7 @@ wss.on("connection", (ws, req) => {
             const completedAt = sidecar.completedAt ?? null;
             // 中断の印（一覧の行と同じ形）。会話の末尾の「中断しました」を保存された状態から描くため
             const interrupted = runtime.turns.has(sessionId) ? null : interruptedOf((await store.get(sessionId)).interrupted);
-            const data = await history.loadTranscript(sessionId, backend);
+            const { compactSummaries, ...data } = await history.loadTranscript(sessionId, backend);
             // 系譜の照合（web/branches.mjs）は uuid・役割・本文・ツール名しか見ない。
             // ツール結果や提示まで載せると、家族を開くたびに数十MBが流れて画面が止まる
             if (msg.args?.outline) return reply(true, { messages: data.messages.map(m => ({
@@ -3201,7 +3202,8 @@ wss.on("connection", (ws, req) => {
             const draft = (await store.get(sessionId)).draft ?? null;
             const nativeCompactions = backend.getCompactions ? await backend.getCompactions(sessionId).catch(() => []) : [];
             const savedCompactions = sidecar.compactions ?? [];
-            const compactions = mergeCompactionHistory(nativeCompactions, savedCompactions);
+            // 圧縮の要約は発言として出さず、区切りの「要約を表示」に入れる（ADR 0053）
+            const compactions = attachCompactSummaries(compactSummaries, mergeCompactionHistory(nativeCompactions, savedCompactions));
             const compactionData = { compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
             if (!msg.args?.live) return reply(true, { ...data, completedAt, interrupted, draft, ...compactionData, ...retired });

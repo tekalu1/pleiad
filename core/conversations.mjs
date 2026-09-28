@@ -8,6 +8,7 @@ import { readPresents } from "./history.mjs";
 import { buildItems } from "../web/timeline.mjs";
 import { t, agentT } from "./i18n.mjs";
 import { writeAtomic } from "./atomic-file.mjs";
+import { classifySystemMessages } from "./system-messages.mjs";
 
 const file = path.join(store.dataDir, "conversations.json");
 const convDir = path.join(store.dataDir, "conversations");
@@ -238,7 +239,9 @@ export function wrapBackend(native) {
         mergeMessages(r, recent, native.id);
       }
     }
-    const messages = structuredClone(r.messages);
+    // 保存分には、見分けを足す前に保存したシステム側の行（圧縮の要約・コマンドの行・中断など）が生のまま残っている。
+    // 読むたびに文面で見分ける（core/system-messages.mjs。kind の付いた発言は触らない）
+    const messages = classifySystemMessages(structuredClone(r.messages));
     if (!options?.fullResults) for (const m of messages) for (const call of m.toolCalls ?? []) {
       if (call.result?.text?.length > MAX_RESULT_CHARS) {
         call.result.text = call.result.text.slice(0, MAX_RESULT_CHARS) + t("conversations.truncated");

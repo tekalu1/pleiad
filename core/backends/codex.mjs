@@ -29,6 +29,7 @@ import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { readTurnRejections, rolloutPathOf, rolloutSize } from "./codex-rejections.mjs";
 import * as store from '../store.mjs';
 import { t, agentT } from "../i18n.mjs";
+import { stripInjectedContext } from "../system-messages.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -776,9 +777,10 @@ export function threadToMessages(thread, { fullResults = false } = {}) {
     for (const item of unique.values()) {
       if (item?.type === "userMessage") {
         flushTools();
-        const text = (item.content ?? [])
+        // Codex Desktop が人の本文の先頭に付ける画面の状態（<in-app-browser-context>）は外す（ADR 0053）
+        const text = stripInjectedContext((item.content ?? [])
           .filter((c) => c?.type === "text" && typeof c.text === "string")
-          .map((c) => c.text).join("");
+          .map((c) => c.text).join(""));
         const attachments = (item.content ?? []).filter(c => c?.type !== "text");
         if (text.trim() || attachments.length) messages.push({ role: "user", text, uuid: item.id, at,
           ...(attachments.length ? { attachments: structuredClone(attachments) } : {}) });

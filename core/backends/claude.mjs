@@ -30,7 +30,8 @@ import * as store from "../store.mjs";
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { buildClaudeModels, FALLBACK_MODELS } from "./claude-models.mjs";
 import { ZERO_COST, readCostState, decideCostBase } from "./claude-cost-state.mjs";
-import { normalizeSdkMessage, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, stopHookFollowUps, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript } from "./claude-normalize.mjs";
+import { normalizeSdkMessage, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, stopHookFollowUps, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript, transcriptSystemMarks } from "./claude-normalize.mjs";
+import { classifySystemMessages } from "../system-messages.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
 
 const NL = String.fromCharCode(10);
@@ -453,29 +454,37 @@ async function readSubagentEntries(sessionId, agentId, { limit = 0 } = {}) {
  * SDK の getSessionMessages が返さないものを拾う。
  * - rows: attachment 行。途中送信は queued_command の attachment として残る（claude-normalize.mjs の mergeQueuedCommands）
  * - followUps: Stop フックに止められて書いた、中身の仕事をしていない続きの assistant 行の uuid（claude-normalize.mjs の stopHookFollowUps）
+ * - marks: 圧縮の要約・コマンドの出力の行の印（claude-normalize.mjs の transcriptSystemMarks）。読めなければ null（文面で見分ける）
  *
  * - 置き場のディレクトリ名は cwd から作られるが、**組み立てない**（再開で cwd が変わると外れる）。
  *   projects の下を順に見て、その id の .jsonl があるところを使う。
  * - 折り込みが 1 件も無いセッションでは何も parse しない（文字列を 1 回走査するだけ）。
  * - 読めなければ空。履歴は素の getSessionMessages のまま出す（今までどおりの見た目に落ちる）。
  */
-async function readTranscriptExtras(sessionId) {
-  const none = { rows: [], followUps: new Set() };
-  if (!sessionId) return none;
+/** transcript の本文。置き場は readTranscriptExtras の説明のとおり。無ければ・読めなければ null */
+async function readTranscriptText(sessionId) {
+  if (!sessionId) return null;
   try {
     const projects = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects");
-    let text = null;
     for (const dir of await fs.readdir(projects)) {
-      try { text = await fs.readFile(path.join(projects, dir, `${sessionId}.jsonl`), "utf8"); }
+      try { return await fs.readFile(path.join(projects, dir, `${sessionId}.jsonl`), "utf8"); }
       catch (error) {
         if (error?.code !== 'ENOENT') await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'transcript-unreadable', detectedVersion: null });
-        text = null;
       }
-      if (text !== null) break;
     }
+  } catch { /* projects が無い */ }
+  return null;
+}
+
+async function readTranscriptExtras(sessionId) {
+  const none = { rows: [], followUps: new Set(), marks: null };
+  if (!sessionId) return none;
+  try {
+    const text = await readTranscriptText(sessionId);
     if (!text) return none;
     const followUps = stopHookFollowUps(text);
-    if (!text.split('\n').some(line => line.includes('"attachment"') && line.includes('queued_command'))) return { rows: [], followUps };
+    const marks = transcriptSystemMarks(text);
+    if (!text.split('\n').some(line => line.includes('"attachment"') && line.includes('queued_command'))) return { rows: [], followUps, marks };
     const version = transcriptVersion(text);
     const rows = [];
     // 親子の鎖を遡るのに要るのは attachment 行だけ（間に挟まるのは CLI が足す attachment）。
@@ -488,7 +497,7 @@ async function readTranscriptExtras(sessionId) {
       } catch { /* 壊れた行は飛ばす */ }
     }
     if (invalidQueuedCommandTranscript(text)) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'transcript-shape', detectedVersion: version });
-    return { rows, followUps };
+    return { rows, followUps, marks };
   } catch {
     return none;
   }
@@ -998,11 +1007,16 @@ export const backend = {
   async getMessages(sessionId, options) {
     const entries = await getSessionMessages(sessionId).catch(() => []);
     // 走っているターンに折り込まれた途中送信と、Stop フックの続きの印は getSessionMessages に出ない。transcript から拾う
-    const { rows, followUps } = await readTranscriptExtras(sessionId);
-    return transcriptToMessages(mergeQueuedCommands(entries, rows), { ...options, followUps });
+    // 圧縮の要約・コマンドの行・中断などのシステム側の行は、transcript の印（無ければ文面）で見分けて置き換える（core/system-messages.mjs）
+    const { rows, followUps, marks } = await readTranscriptExtras(sessionId);
+    return classifySystemMessages(transcriptToMessages(mergeQueuedCommands(entries, rows), { ...options, followUps }), marks);
   },
 
+  // 区切りは transcript の compact_boundary の行から読む（getSessionMessages の system 行は message: null で中身が無い。SDK 0.3.258）。
+  // transcript を読めないときだけ SDK の行から読む
   async getCompactions(sessionId) {
+    const text = await readTranscriptText(sessionId);
+    if (text) return transcriptSystemMarks(text).compactions;
     const rows = await getSessionMessages(sessionId, { includeSystemMessages: true }).catch(() => []);
     return claudeCompactionsFromHistory(rows);
   },
@@ -1048,6 +1062,8 @@ export const backend = {
         prompt: agentT(locale, 'title.claude') + NL + NL + transcript,
         options: {
           pathToClaudeCodeExecutable: claudeExecutable(), model: "haiku", settingSources: [], allowedTools: [], permissionMode: "default",
+          // 1 回きりの問い合わせ。会話として残すと「次は作業ログの冒頭です…」で始まる会話が Claude の一覧に出る
+          persistSession: false,
           // その会話で選んだアカウントで回す。選んでいなければ env を渡さない（今までどおり SDK が process.env を使う）。
           // 互換の接続先の会話は、その接続先の Haiku 相当のモデル（"haiku" が ANTHROPIC_DEFAULT_HAIKU_MODEL に置き換わる）。
           // settingSources が空なのでユーザーの settings.json は読まれず、env だけで足りる

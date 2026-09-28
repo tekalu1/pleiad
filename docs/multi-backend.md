@@ -186,7 +186,7 @@ main の開始は 2 回目以降の `system/init` とトップレベルの `mess
   途中送信）は `userMessage.dropped` にする。プロセスツリーごとの強制終了はしない（pid は `spawnClaudeCodeProcess` で自前に起動したときしか取れない）
 - `result` は 1 回の query で何度も出る。`total_cost_usd` と `modelUsage` は累計で単調に増える（上書きで二重計上にならない）。
   CLI 2.1.280 以降は resume で transcript の最後の `cost-state` を読み戻すので、累計は query ではなく会話の始まりから数える。
-  そのため query を作る前に最後の `cost-state` を開始時点として読み、`usage` はそこからの差分にする（`claude-cost-state.mjs`、[ADR 0052](adr/0052-claude-usage-delta.md)）
+  そのため query を作る前に最後の `cost-state` を開始時点として読み、`usage` はそこからの差分にする（`claude-cost-state.mjs`、[ADR 0053](adr/0052-claude-usage-delta.md)）
   turnResult は「ターンが終わった」の合図なので、Claude は成功の turnResult を query の終わりに 1 回だけ出す
   （途中で出すと server がターンを終わりかけと見なし、途中送信を止める）
 - 裏の subagent の完了通知は、main を再開させるための user メッセージ（`<task-notification>…`、`origin.kind: task-notification`）として
@@ -292,6 +292,23 @@ assistant の発言に `stopHookFollowUp: true` を付けてよい（2026-09-27�
 委譲の結果を選ぶときに飛ばす（agent-delegation.md「子の結果」）。何を続きとみなし、何を中身の仕事とするかはバックエンドが決める。
 今は Claude だけが付ける（`claude-normalize.mjs` の `stopHookFollowUps`。getSessionMessages に出ない `stop_hook_summary` の行を transcript から読む）。
 付けないバックエンドでは、結果は今までどおり最後の返答になる。
+
+人が書いていないのに user の行として残るもの（システム側のメッセージ）は、`kind` を付けた形に置き換えるか落とす（2026-09-28、[ADR 0053](adr/0053-system-messages-display.md)）。
+置き換えるのは `core/system-messages.mjs` の `classifySystemMessages`（SDK を import しない純粋な関数。`kind` の付いた発言は触らないので、何度かけてもよい）:
+
+| kind | 形 | 元の行 |
+|---|---|---|
+| `command` | `{ role:'user', text, command, output }` | スラッシュコマンドの行（`<command-name>`）と、続く出力（`<local-command-stdout>`／`-stderr`） |
+| `shell` | `{ role:'user', text, command, stdout, stderr }` | `!` モードの入力（`<bash-input>`）と出力（`<bash-stdout>`／`<bash-stderr>`）。終了コードは無い |
+| `compactSummary` | `{ role:'system', text:'', summary, boundary }` | 圧縮の要約。`history.mjs` が発言から外して `compactSummaries` で返し、server が区切りに入れる（`compaction-history.mjs` の `attachCompactSummaries`） |
+| `interrupt` | `{ role:'system', text:'' }` | 中断（`[Request interrupted by user]`・`… for tool use]`） |
+| `teammate` | `{ role:'system', text:'', from, body }` | agent teams の teammate の知らせ。待機（`idle_notification`）だけのものは落とす |
+
+コマンド・シェルの出力は入力の行へまとめ、`uuid` は出力の行のもの（分岐点）にする。Pleiad の `/compact` の行とその出力・裏の作業の完了通知・文脈だけの発言は落とし、発言の先頭の文脈（`<ide_opened_file>`・`<in-app-browser-context>`）は外す。
+見分けは行の形を優先する。Claude は transcript の本文から印（`claude-normalize.mjs` の `transcriptSystemMarks`: 要約の uuid と区切りの uuid、コマンド・シェルの行の子の出力の uuid）を拾って渡す。getSessionMessages は `isCompactSummary`・`parentUuid` を落とすため。
+印が無いとき（transcript を読めない・切り替え済みの会話の保存分。`conversations.mjs` が読むたびにかける）は文面（行の先頭のタグ・固定の中断の文字列・要約の定型の書き出し）で見分ける。Codex は `<in-app-browser-context>` を外すだけ。
+
+Claude の `getCompactions` は、区切りを transcript の `system:compact_boundary` の行（`compactMetadata` の trigger・preTokens・postTokens）から読む。SDK 0.3.258 の `getSessionMessages({ includeSystemMessages: true })` は system 行を `message: null` で返すため。transcript を読めないときだけ SDK の行から読む。
 
 ### 2.4 sidecar の拡張
 

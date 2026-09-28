@@ -209,6 +209,77 @@ export function claudeCompactionsFromHistory(rows) {
   });
 }
 
+/**
+ * transcript の本文から、getSessionMessages が落とす印を拾う（core/system-messages.mjs の classifySystemMessages に渡す）。
+ * - compactions: 圧縮の区切り（`system:compact_boundary` の行）。uuid・trigger・前後のトークン数と、要約の本文
+ * - summaries: 圧縮の要約の行（`isCompactSummary: true`）の uuid -> 区切りの uuid。要約の親は区切りか、
+ *   `attachment`（日付など）を挟んだ区切り
+ * - outputs: コマンド・`!` モードの出力の行の uuid -> 親（コマンド・シェルの行）の uuid
+ *
+ * SDK 0.3.258 の `getSessionMessages({ includeSystemMessages: true })` は system 行を `message: null` で返し、
+ * subtype も compact_metadata も落とすので、区切りはここから読む（claudeCompactionsFromHistory は読めないときの控え）。
+ * 本文やツール結果の大きい行は、印になる文字列を含むときだけ parse する。
+ */
+export function transcriptSystemMarks(text) {
+  const summaries = new Map();
+  const outputs = new Map();
+  const compactions = [];
+  if (typeof text !== "string") return { summaries, outputs, compactions };
+  const needs = ['"compact_boundary"', '"isCompactSummary":true', "<local-command-std", "<bash-std"];
+  if (!needs.some((s) => text.includes(s))) return { summaries, outputs, compactions };
+  const parentOf = new Map();
+  const boundaries = new Map();
+  const heads = new Set();
+  const summaryRows = [];
+  const outputRows = [];
+  const userText = (row) => {
+    const c = row.message?.content;
+    if (typeof c === "string") return c;
+    return Array.isArray(c) ? c.filter((b) => b?.type === "text").map((b) => b.text ?? "").join("") : "";
+  };
+  for (const line of text.split("\n")) {
+    const boundary = line.includes('"compact_boundary"');
+    const summary = line.includes('"isCompactSummary":true');
+    const mark = line.includes("<command-name>") || line.includes("<command-message>") || line.includes("<bash-input>")
+      || line.includes("<local-command-std") || line.includes("<bash-std");
+    const attachment = line.includes('"type":"attachment"');
+    if (!boundary && !summary && !mark && !attachment) continue;
+    let row;
+    try { row = JSON.parse(line); } catch { continue; }
+    if (!row || typeof row !== "object" || typeof row.uuid !== "string" || row.isSidechain) continue;
+    parentOf.set(row.uuid, row.parentUuid ?? null);
+    if (row.type === "system" && row.subtype === "compact_boundary") { boundaries.set(row.uuid, row); continue; }
+    if (row.type !== "user" || row.isMeta) continue;
+    if (row.isCompactSummary === true) { summaryRows.push(row); continue; }
+    const body = userText(row).trimStart();
+    if (body.startsWith("<command-name>") || body.startsWith("<command-message>") || body.startsWith("<bash-input>")) heads.add(row.uuid);
+    else if (body.startsWith("<local-command-std") || body.startsWith("<bash-std")) outputRows.push(row);
+  }
+  for (const row of outputRows) if (heads.has(row.parentUuid)) outputs.set(row.uuid, row.parentUuid);
+  const summaryOf = new Map();
+  for (const row of summaryRows) {
+    // 親を 3 歩まで遡って区切りを探す（間に attachment:date などが挟まる。2026-09-28 実測）
+    let cursor = row.parentUuid ?? null;
+    for (let hops = 0; cursor && !boundaries.has(cursor) && hops < 3; hops++) cursor = parentOf.get(cursor) ?? null;
+    const boundaryId = cursor && boundaries.has(cursor) ? cursor : null;
+    summaries.set(row.uuid, boundaryId);
+    if (boundaryId && !summaryOf.has(boundaryId)) summaryOf.set(boundaryId, userText(row).trim());
+  }
+  for (const [uuid, row] of boundaries) {
+    const meta = row.compactMetadata ?? row.compact_metadata ?? {};
+    const before = meta.preTokens ?? meta.pre_tokens;
+    const after = meta.postTokens ?? meta.post_tokens;
+    compactions.push({ id: `native:${uuid}`, nativeId: uuid, phase: "complete",
+      trigger: meta.trigger === "manual" ? "manual" : "auto",
+      at: Date.parse(row.timestamp ?? "") || 0,
+      ...(Number.isFinite(before) ? { beforeTokens: before } : {}),
+      ...(Number.isFinite(after) ? { afterTokens: after } : {}),
+      ...(summaryOf.has(uuid) ? { summary: summaryOf.get(uuid) } : {}) });
+  }
+  compactions.sort((a, b) => a.at - b.at);
+  return { summaries, outputs, compactions };
+}
+
 // ------------------------------------------------------------------ 履歴
 
 /**
@@ -242,6 +313,9 @@ function extract(entry, fullResults = false) {
     let text = "";
     const results = [];
     for (const block of content) {
+      // VS Code が人の発言に足す文脈（開いているファイル・選択）。人の本文とは別の text ブロックで入るので、ブロックごと外す。
+      // 行は origin: human なので行では分けられない（ADR 0053）
+      if (block?.type === "text" && typeof block.text === "string" && /^\s*<ide_(opened_file|selection)>/.test(block.text)) continue;
       if (block?.type === "text" && typeof block.text === "string") text += block.text;
       else if (block?.type === "tool_result" && block.tool_use_id) {
         const raw = resultText(block.content);

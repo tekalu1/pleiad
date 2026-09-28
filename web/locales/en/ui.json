@@ -1129,6 +1129,19 @@
       "sent": "Sent to the AI",
       "notYet": "Not yet passed to the agent"
     },
+    "system": {
+      "command": "Command",
+      "shell": "Shell",
+      "output": "Output",
+      "outputLines_one": "Output · {{count}} line",
+      "outputLines_other": "Output · {{count}} lines",
+      "errorOutput": "Error output",
+      "noOutput": "No output",
+      "handedTo": "sent to {{agent}}",
+      "copyToComposer": "Copy to composer",
+      "teammate": "Message from another session",
+      "teammateFrom": "Message from another session ({{from}})"
+    },
     "sys": {
       "agentChanged": "Changed the agent to {{agent}}. It takes over the conversation from your next message.",
       "taskResumed": "Received the Pleiad task result and resumed",

@@ -1096,6 +1096,18 @@
       "sent": "AIへ送信済み",
       "notYet": "まだエージェントに渡っていない"
     },
+    "system": {
+      "command": "コマンド",
+      "shell": "シェル",
+      "output": "出力",
+      "outputLines_other": "出力 · {{count}} 行",
+      "errorOutput": "エラー出力",
+      "noOutput": "出力なし",
+      "handedTo": "{{agent}} に渡した",
+      "copyToComposer": "入力欄に写す",
+      "teammate": "別のセッションからのメッセージ",
+      "teammateFrom": "別のセッションからのメッセージ（{{from}}）"
+    },
     "sys": {
       "agentChanged": "エージェントを {{agent}} に変更しました。次の送信から会話を引き継ぎます。",
       "taskResumed": "Pleiad タスクの結果を受け取って再開しました",
