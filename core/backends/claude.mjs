@@ -23,6 +23,7 @@ import { claudeHookCallbacks, mergeCallbacks } from '../hooks-unify.mjs';
 import { undelivered } from './undelivered.mjs';
 import { z } from "zod";
 import fs from "node:fs/promises";
+import { statSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
@@ -40,11 +41,13 @@ const NL = String.fromCharCode(10);
 // 中断は CLI に interrupt を頼み、stopAckMs のうちに受領（interrupt の応答か result）が無ければ
 // 入力を閉じて SDK の abort に落とす。受領の後も stopExitMs のうちに終わらなければ同じく落とす。
 // resumeGraceMs は裏の作業を見たターンで入力を閉じる前に置く猶予（claude-background.mjs の RESUME_GRACE_MS）
-const sdk = { query, executable: claudeExecutable, stopAckMs: 2500, stopExitMs: 3000, resumeGraceMs: RESUME_GRACE_MS };
+// probe / cliSigThrottleMs はモデル一覧の引き直し（下の CATALOG_TTL のあたり）だけがテストで差し替える
+const sdk = { query, executable: claudeExecutable, probe: null, cliSigThrottleMs: 5_000, stopAckMs: 2500, stopExitMs: 3000, resumeGraceMs: RESUME_GRACE_MS };
 export function setClaudeSdkForTest(over = {}) {
   const prev = { ...sdk };
   Object.assign(sdk, over);
-  return () => Object.assign(sdk, prev);
+  resetCliSignatureCache();
+  return () => { Object.assign(sdk, prev); resetCliSignatureCache(); };
 }
 
 // Pleiadが提供するツール。名前はMCPサーバー名 host / ply から決まる。
@@ -107,9 +110,28 @@ const MODELS = FALLBACK_MODELS;
 const CATALOG_TTL = 30 * 60_000, CATALOG_RETRY = 60_000, CATALOG_WAIT = 8_000;
 const PROVIDER_ENV = ["ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
   "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_GATEWAY"];
-// 引く条件（作業場所・段に効く設定）ごとに 1 件。{ value, at, failed, probe }
+// 引く条件（作業場所・段に効く設定）ごとに 1 件。{ value, at, failed, probe, cliSig }
 const catalogs = new Map();
-let anyCatalog = null;   // どれか 1 件でも取れたか（validModel が保存済みの id を通すかどうか）
+let anyCatalog = null, anyCatalogSig = null;   // どれか 1 件でも取れたか（validModel が保存済みの id を通すかどうか）
+
+// CLI の実体（パス・更新時刻・サイズ）の目印。claude update でモデルが増えても（2026-09-29、
+// 2.1.284 で Sonnet 5.5）CATALOG_TTL の 30 分は古い一覧のままだったので、版が変わったら TTL 内でも引き直す。
+// claudeExecutable() はプロセスを起こさず PATH を辿るだけだが、呼ばれる頻度（models() は request のたびに来る）
+// に合わせて数秒だけ間引く。stat に失敗したら（未導入など）null を返し、今までどおり目印無しで動く
+let cliSigAt = 0, cliSigValue = null;
+function cliSignature() {
+  const now = Date.now();
+  if (now - cliSigAt < sdk.cliSigThrottleMs) return cliSigValue;
+  cliSigAt = now;
+  try {
+    const exe = sdk.executable();
+    const stat = statSync(exe);
+    cliSigValue = `${exe}|${stat.mtimeMs}|${stat.size}`;
+  } catch { cliSigValue = null; }
+  return cliSigValue;
+}
+function resetCliSignatureCache() { cliSigAt = 0; cliSigValue = null; }
+
 async function probeCatalog(cwd, withSettings) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 30_000);
@@ -140,22 +162,32 @@ async function probeCatalog(cwd, withSettings) {
     ac.abort();
   }
 }
+sdk.probe ??= probeCatalog;
+
+/** anyCatalog を、今の CLI の目印と食い違わない間だけ返す。食い違ったら（版が変わった）忘れる */
+function freshAnyCatalog(cliSig) {
+  if (anyCatalog && cliSig && anyCatalogSig && cliSig !== anyCatalogSig) { anyCatalog = null; anyCatalogSig = null; }
+  return anyCatalog;
+}
 function loadCatalog(cwd, pref) {
   // 別の接続先のときは設定を読まないので、作業場所で結果は変わらない
   const key = pref.custom ? "custom" : `${cwd || ""}|${pref.sig}`, now = Date.now();
+  const cliSig = cliSignature();
   let e = catalogs.get(key);
-  if (e?.value && now - e.at < CATALOG_TTL) return Promise.resolve(e.value);
-  if (e && !e.value && now - e.failed < CATALOG_RETRY) return Promise.resolve(null);
   if (!e) {
     if (catalogs.size >= 32) catalogs.delete(catalogs.keys().next().value);
-    e = { value: null, at: 0, failed: 0, probe: null }; catalogs.set(key, e);
+    e = { value: null, at: 0, failed: 0, probe: null, cliSig: null }; catalogs.set(key, e);
   }
-  e.probe ??= probeCatalog(cwd, !pref.custom)
-    .then((c) => { e.value = anyCatalog = c; e.at = Date.now(); return c; })
-    .catch((err) => { e.failed = Date.now(); console.error("  Claude のモデル一覧を取れなかった:", String(err?.message ?? err)); return e.value; })
+  // CLI の版が変わっていたら（claude update）、30 分の TTL 内・失敗の再試行待ちの中でも忘れて引き直す
+  if (e.cliSig && cliSig && e.cliSig !== cliSig) { e.value = null; e.at = 0; e.failed = 0; }
+  if (e.value && now - e.at < CATALOG_TTL) return Promise.resolve(e.value);
+  if (!e.value && now - e.failed < CATALOG_RETRY) return Promise.resolve(null);
+  e.probe ??= sdk.probe(cwd, !pref.custom)
+    .then((c) => { e.value = c; e.cliSig = cliSig; anyCatalog = c; anyCatalogSig = cliSig; e.at = Date.now(); return c; })
+    .catch((err) => { e.failed = Date.now(); e.cliSig = cliSig; console.error("  Claude のモデル一覧を取れなかった:", String(err?.message ?? err)); return e.value; })
     .finally(() => { e.probe = null; });
   // 初めの 1 回だけ待つ。長く掛かる（未ログイン・未導入）ときは、別の条件で取れた一覧か固定の一覧で先に答える
-  const stand = () => e.value ?? (anyCatalog && { ...anyCatalog, applied: false });
+  const stand = () => e.value ?? (freshAnyCatalog(cliSig) && { ...anyCatalog, applied: false });
   return Promise.race([e.probe.then((v) => v ?? stand()), new Promise((resolve) => setTimeout(() => resolve(stand()), CATALOG_WAIT).unref?.())]);
 }
 // 利用者の設定のモデルとエフォート。env が settings.json より強い（CLI と同じ順）。作業場所ごとに違いうるので cwd で引く。
@@ -581,7 +613,7 @@ export const backend = {
   async validModel(model, cwd) {
     if (typeof model !== "string" || model.length > 200 || /[\r\n\x00]/.test(model)) return false;
     if (!model) return true;
-    return Object.hasOwn(await claudeModels(cwd), model) || (!anyCatalog && /^[\w.\-\[\]]+$/.test(model));
+    return Object.hasOwn(await claudeModels(cwd), model) || (!freshAnyCatalog(cliSignature()) && /^[\w.\-\[\]]+$/.test(model));
   },
 
   // ---- 実行 ---------------------------------------------------------------
