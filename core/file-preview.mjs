@@ -82,69 +82,98 @@ export async function readBounded(file, maxBytes) {
 }
 
 const IGNORED_NAMES = new Set(['.git', 'node_modules', 'temporary', '.turbo', '.next', '.cache', 'dist', 'build']);
+/** ツリーの 1 フォルダーに一度に出す件数。続きは「さらに N 件を表示」で読む */
+export const TREE_PAGE = 200;
 
-async function buildTree(rootPath, access, maxDepth = 4, maxEntries = 1000) {
-  let count = 0;
+const sameName = (a, b) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+const byKindAndName = (a, b) => {
+  const aDir = a.isDirectory(), bDir = b.isDirectory();
+  if (aDir !== bDir) return aDir ? -1 : 1;
+  return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+};
 
-  async function walk(dir, depth) {
-    if (depth > maxDepth || count >= maxEntries) return [];
-    let entries;
-    try {
-      await inspectFile(dir, access);
-      entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
-      return [];
-    }
+/** ツリーの 1 行。フォルダーは中身を読まずに lazy で返す（開いたときに読む。空の [] とは別） */
+async function treeEntry(dir, name, access) {
+  const id = path.join(dir, name);
+  let stat;
+  try { ({ stat } = await inspectFile(id, access)); } catch { return null; }
+  if (stat.isDirectory()) return { id, name, kind: 'directory', lazy: true };
+  if (stat.isFile()) return { id, name, kind: 'file' };
+  return null;
+}
 
-    entries.sort((a, b) => {
-      const aDir = a.isDirectory();
-      const bDir = b.isDirectory();
-      if (aDir !== bDir) return aDir ? -1 : 1;
-      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-    });
-
-    const children = [];
-    for (const entry of entries) {
-      if (count >= maxEntries) break;
-      if (IGNORED_NAMES.has(entry.name)) continue;
-
-      const fullPath = path.join(dir, entry.name);
-      let stat;
-      try { ({ stat } = await inspectFile(fullPath, access)); } catch { continue; }
-      const isDir = stat.isDirectory(), isFil = stat.isFile();
-
-      if (!isDir && !isFil) continue;
-      count++;
-
-      const node = {
-        id: fullPath,
-        name: entry.name,
-        kind: isDir ? 'directory' : 'file',
-      };
-
-      if (isDir) {
-        if (depth < maxDepth) {
-          node.children = await walk(fullPath, depth + 1);
-        } else {
-          node.children = [];
-        }
-      }
-
-      children.push(node);
-    }
-    return children;
+/**
+ * フォルダーの中身を 1 ページ（offset から TREE_PAGE 件）。除外名は出さない。
+ * pin は開いたファイルへの経路の次の段の名前。除外名でも出し、ページの外なら末尾に足す（pinned）。
+ * more は続きの件数（足した pin は数えない）、next は続きを読むときの offset
+ */
+async function listEntries(dir, access, { offset = 0, pin = null } = {}) {
+  await inspectFile(dir, access);
+  const entries = (await fs.readdir(dir, { withFileTypes: true }))
+    .filter(entry => !IGNORED_NAMES.has(entry.name) || (pin && sameName(entry.name, pin)))
+    .sort(byKindAndName);
+  const end = offset + TREE_PAGE;
+  const children = (await Promise.all(entries.slice(offset, end).map(entry => treeEntry(dir, entry.name, access)))).filter(Boolean);
+  let more = Math.max(0, entries.length - end);
+  const at = pin ? entries.findIndex(entry => sameName(entry.name, pin)) : -1;
+  if (at >= end) {
+    const node = await treeEntry(dir, entries[at].name, access);
+    if (node) { node.pinned = true; children.push(node); more--; }
   }
+  return { children, more, next: entries.length > end ? end : null };
+}
 
-  const rootChildren = await walk(rootPath, 1);
-  return [
-    {
-      id: rootPath,
-      name: path.basename(rootPath) || rootPath,
-      kind: 'directory',
-      open: true,
-      children: rootChildren,
+/**
+ * プレビューの横のツリー。根から開いたもの（target）の親までの各段は中身を必ず返し、ほかのフォルダーは lazy のまま。
+ * 深さの上限は無い（件数は段数 × TREE_PAGE で収まる）。除外名のフォルダーに入ったら、そこから先は経路だけを返し、
+ * そのフォルダーに pathOnly を付ける（docs/design-system.md「右パネル」のツリー）
+ */
+async function buildTree(rootPath, target, access) {
+  const root = { id: rootPath, name: path.basename(rootPath) || rootPath, kind: 'directory', open: true };
+  const rel = path.relative(rootPath, target);
+  const steps = rel && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel) ? rel.split(path.sep) : [];
+  let node = root, pathOnly = false;
+  for (let i = 0; ; i++) {
+    const pin = steps[i] ?? null;
+    let listing;
+    try {
+      if (pathOnly) {
+        await inspectFile(node.id, access);
+        const only = await treeEntry(node.id, pin, access);
+        listing = { children: only ? [only] : [], more: 0, next: null };
+      } else listing = await listEntries(node.id, access, { pin });
+    } catch {
+      if (node === root) root.children = [];   // 根が読めない。ほかの段は lazy のまま残し、開いたときに失敗を示す
+      break;
     }
-  ];
+    delete node.lazy;
+    Object.assign(node, listing);
+    if (!pin || i === steps.length - 1) break;   // pin が開いたもの自身。フォルダーでも中身は開いたときに読む
+    const next = listing.children.find(child => sameName(child.name, pin));
+    if (!next || next.kind !== 'directory') break;
+    if (!pathOnly && IGNORED_NAMES.has(next.name)) { next.pathOnly = true; pathOnly = true; }
+    node = next;
+  }
+  return [root];
+}
+
+/**
+ * ツリーの 1 フォルダーの続き（開いたとき・「さらに表示」）。読める範囲は /file-preview と同じ（inspectFile）で、
+ * さらに会話の作業場所などの roots の中に限る（ツリーは roots の中だけを見せる）
+ */
+export async function listTreeFolder(requested, roots, { access, offset = 0 } = {}) {
+  const { file, stat } = await inspectFile(requested, access);
+  if (!stat.isDirectory()) throw new PreviewError('not-directory', t('filePreview.notDirectory'));
+  const dir = path.resolve(requested);
+  const resolvedRoots = await Promise.all(roots.filter(Boolean).map(async root => {
+    try { return (await inspectFile(root, access)).file; } catch { return null; }
+  }));
+  // ツリーの id は実体を解決する前のパス。リンクをたどった先が roots の外でも、置き場が roots の中なら読める
+  if (!resolvedRoots.some(root => root && (containsPath(root, file) || containsPath(root, dir)))) {
+    throw new PreviewError('outside-tree', t('filePreview.outsideTree'));
+  }
+  const start = Number.isInteger(offset) && offset > 0 ? offset : 0;
+  return { path: dir, ...await listEntries(dir, access, { offset: start }) };
 }
 
 export async function readPreview(requested, roots, { access, resource = false } = {}) {
@@ -159,7 +188,7 @@ export async function readPreview(requested, roots, { access, resource = false }
     return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
   });
   const treeRoot = matchingRoots.sort((a, b) => b.length - a.length)[0] || (stat.isDirectory() ? file : path.dirname(file));
-  const tree = resource ? [] : await buildTree(treeRoot, access);
+  const tree = resource ? [] : await buildTree(treeRoot, file, access);
 
   if (stat.isDirectory()) {
     const entries = await fs.readdir(file, { withFileTypes: true }).catch(() => []);

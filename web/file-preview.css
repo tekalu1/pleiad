@@ -30,6 +30,13 @@ body.file-preview-open{grid-template-columns:var(--side-col) minmax(360px,1fr) v
 .file-preview-tree-pane.collapsed{display:none}
 .file-preview-tree-header{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 6px;font-size:var(--fs-xs);font-weight:600;color:var(--ink-weak);letter-spacing:.04em}
 .file-preview-tree{flex:1;min-height:0;overflow:auto;scrollbar-width:thin}
+/* 見出しの道具（開いているファイルを表示・すべて折りたたむ）。見出しの字と同じ弱い色、24px のアイコン */
+.file-preview-tree-tools{display:flex;gap:2px;margin:-4px -6px -4px 0}
+.file-preview-tree-tools .btn-icon{width:24px;height:24px;letter-spacing:0;color:var(--ink-weak)}
+.file-preview-tree-tools .btn-icon svg.i{width:14px;height:14px}
+/* 除外名のフォルダーを経路だけ出す: 名前を弱い字、横に「経路のみ」。新しい色は使わない */
+.file-preview-tree .tree-row.path-only .nm{color:var(--ink-weak)}
+.file-preview-tree .tree-row .tag{margin-left:2px;flex:none;font-size:var(--fs-xs);color:var(--ink-weak)}
 .file-preview-content{min-height:0;flex:1;overflow:auto;overscroll-behavior:contain;position:relative;background:var(--surface-paper);border-radius:var(--r-m)}
 .directory-view{padding:28px 32px;max-width:900px;margin:0 auto}
 .dir-head{margin-bottom:20px}
