@@ -268,7 +268,7 @@ export const backend = {
     emit({ type: 'compaction', phase: 'start', trigger: 'manual' });
     await wait(350);
     s.contextTokens = 21_000;
-    emit({ type: 'compaction', phase: 'complete', trigger: 'manual', beforeTokens: 124_000,
+    emit({ type: 'compaction', phase: 'complete', trigger: 'manual', beforeTokens: 164_000,
       afterTokens: 21_000, summary: '会話一覧に検索を追加しました。次は狭い画面で結果を確認します。' });
     emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
   },
@@ -453,7 +453,7 @@ export const backend = {
     }
 
     if (out.text || out.toolCalls) push(s, out);
-    emit({ type: 'contextWindow', usedTokens: s.contextTokens ?? 124_000, windowTokens: 200_000 });
+    emit({ type: 'contextWindow', usedTokens: s.contextTokens ?? 164_000, windowTokens: 200_000 });
     emit({ type: "turnResult", outcome: "ok", turns: 1, costUsd: 0 });
     return { sessionId: id };
   },
