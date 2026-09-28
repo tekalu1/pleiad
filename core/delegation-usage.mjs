@@ -10,6 +10,8 @@
 import { maskEmail } from './usage.mjs';
 
 export const REFRESH_MS = 5 * 60_000;
+/** これを超えて古い値は usage_stale（core/delegation-routing.mjs の checkCandidate）。取得間隔の 3 倍 */
+export const STALE_MS = REFRESH_MS * 3;
 
 /**
  * backends()   … 有効なバックエンド（listBackends）
@@ -74,10 +76,16 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
     },
     /** 今の値（同期）。取得中は前回の値 */
     snapshot() { return state; },
-    /** まだ一度も取れていないバックエンドがあり、取得中なら、最長 ms だけ待つ（起動直後の委譲のため） */
-    async warmUp(ms) {
-      if (!running || Object.keys(state).length) return;
-      await Promise.race([running.catch(() => {}), new Promise(r => setTimeout(r, ms).unref?.())]);
+    /**
+     * まだ一度も取れていない、または有効なバックエンドのどれかの値が STALE_MS を超えて古ければ取り直し
+     * （すでに取得中ならそれに相乗り）、最長 ms だけ待つ。それ以外（新しい値が揃っている）はすぐ戻る
+     */
+    async ensureFresh(ms) {
+      const isStale = () => !Object.keys(state).length
+        || backends().some(b => { const e = state[b.id]; return e?.available && (e.checkedAt == null || Date.now() - e.checkedAt > STALE_MS); });
+      if (!running && !isStale()) return;
+      const wait = running ?? monitor.refresh();
+      await Promise.race([wait.catch(() => {}), new Promise(r => setTimeout(r, ms).unref?.())]);
     },
     start() {
       if (timer) return;

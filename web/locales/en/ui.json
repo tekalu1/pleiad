@@ -2269,8 +2269,6 @@
       "avoidUnit": "% or more",
       "pace": "Weekly pace",
       "paceUnit": "× or faster defers",
-      "stale": "Treat as out of date",
-      "staleUnit": "minutes old",
       "reset": "Reset to default",
       "resetConfirm": "Reset the delegation settings to default? Keys are kept.",
       "saveFailed": "Couldn't save: {{error}}",
@@ -2846,6 +2844,7 @@
     },
     "invalid": "Can't open this URL. Enter an http or https URL, or something like localhost:5173.",
     "externalUnavailable": "This page can't be opened in the default browser.",
+    "externalTooMany": "Too many open requests in a row. Wait a moment and try again.",
     "siteDataCleared": "Cleared data for this site.",
     "failed": "The browser action failed."
   }

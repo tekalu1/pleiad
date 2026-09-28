@@ -322,8 +322,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     out.push(el('h3', 'rt-sub-title', t('routing.settings.policyTitle')));
     const policy = el('div', 'rt-policy');
     policy.append(numberField('avoidPercent', t('routing.settings.avoid'), t('routing.settings.avoidUnit'), { min: 1, max: 100, step: 1 }),
-      numberField('paceLimit', t('routing.settings.pace'), t('routing.settings.paceUnit'), { min: 0.1, max: 10, step: 0.1 }),
-      numberField('staleMinutes', t('routing.settings.stale'), t('routing.settings.staleUnit'), { min: 1, max: 1440, step: 1 }));
+      numberField('paceLimit', t('routing.settings.pace'), t('routing.settings.paceUnit'), { min: 0.1, max: 10, step: 0.1 }));
     out.push(policy);
     advancedBody.replaceChildren(...out);
   }

@@ -448,6 +448,23 @@ for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) {
   log.addEventListener(type, () => { lastHistoryInput = performance.now(); }, { passive: true });
 }
 
+/**
+ * 実寸を確定するときの基準の発言。#log の上端より少し下に下端がある最初の行を選ぶ。
+ * 点で当てると、列（.thread の max-width）より #log が広い窓で列の外に落ちるので、行の並びから探す。
+ * 行は上から順に並んでいるので二分探索にし、レイアウトを読むのは log2(件数) 回で済ませる
+ */
+function historyAnchor() {
+  const box = log.getBoundingClientRect();
+  const line = box.top + Math.min(80, box.height / 3);
+  const rows = thread.querySelectorAll(':scope > .mw');
+  let lo = 0, hi = rows.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (rows[mid].getBoundingClientRect().bottom > line) hi = mid; else lo = mid + 1;
+  }
+  return rows[lo] ?? null;
+}
+
 function prepareHistoryHeights() {
   const version = ++heightPreparationVersion;
   if (heightPreparationTimer !== null) clearTimeout(heightPreparationTimer);
@@ -461,8 +478,10 @@ function prepareHistoryHeights() {
       heightPreparationTimer = setTimeout(next, 350 - quietFor);
       return;
     }
-    const box = log.getBoundingClientRect();
-    const anchor = document.elementFromPoint(box.left + box.width / 2, box.top + Math.min(80, box.height / 3))?.closest('.mw');
+    // 末尾にいたら確定の後も末尾に合わせる（scrollToEnd の見張りは途中で打ち切るので、それに頼らない）。
+    // 読み返しているなら、見えている発言の位置を保つ
+    const pinEnd = atBottom();
+    const anchor = pinEnd ? null : historyAnchor();
     const anchorTop = anchor?.getBoundingClientRect().top;
     let last = null;
     for (let n = 0; n < 16 && index < rows.length; n++) {
@@ -473,7 +492,8 @@ function prepareHistoryHeights() {
     }
     if (last) {
       void last.offsetHeight;
-      if (anchor?.isConnected) log.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+      if (pinEnd) log.scrollTop = log.scrollHeight;
+      else if (anchor?.isConnected) log.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
     }
     if (index < rows.length) heightPreparationTimer = setTimeout(next, 0);
   };

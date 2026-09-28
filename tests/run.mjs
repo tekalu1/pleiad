@@ -145,6 +145,8 @@ const cases = [
   await import("./unit/stream-routing.mjs"),
   await import("./unit/stream-prefix.mjs"),
   await import("./unit/session-stream.mjs"),
+  // 長い履歴の実寸を確定するときのスクロール: 末尾にいれば末尾に、読み返し中なら位置を保つ（列より広い窓でも）
+  await import("./unit/history-heights.mjs"),
   await import("./unit/work-attribution.mjs"),
   await import('./unit/work-status.mjs'),
   await import('./unit/background-labels.mjs'),

@@ -8,19 +8,49 @@
 // 送り元はローカルの窓の本体フレームだけ（trust.check(event, ['local'])）。リモートの窓の preload には口を出さない。
 const path = require('node:path');
 const fs = require('node:fs');
+const { fileURLToPath } = require('node:url');
+const { checkRequest } = require('./file-bridge.cjs');
 
 const PARTITION = 'persist:pleiad-browser';
 // 開いてよい URL。画面の入力は web/browser-address.mjs が http(s) に直してから送る。file: は画面が明示したときだけ（HTML のファイル）
 const OPENABLE = new Set(['http:', 'https:', 'file:']);
 // ページの中から移ってよい先（と about:blank）。file: へはページからは移らせない（Chromium も http(s) からは止める）
 const NAVIGABLE = new Set(['http:', 'https:']);
-// 既定のブラウザーへ渡すのは http(s) だけ（userinfo の無いもの）
+// URL のまま既定のブラウザーへ渡すのは http(s) だけ（userinfo の無いもの）
 function externalUrl(url) {
   try {
     const u = new URL(url);
     if ((u.protocol === 'https:' || u.protocol === 'http:') && !u.username && !u.password) return u.href;
   } catch {}
   return null;
+}
+// file: の HTML も既定のブラウザーで開ける。ただし画面が明示して開いたファイル（tab.requested）そのものだけで、
+// ページの中で移った先の file: は断る。拡張子は URL の段階と、実体を解決した後（file-bridge の checkRequest）の両方で確かめる
+const OPENABLE_FILE = /\.html?$/i;
+function filePath(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'file:' && !u.host ? fileURLToPath(u) : null;   // file://server/share（UNC）は断る
+  } catch { return null; }
+}
+const samePath = (a, b) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+/** そのタブの今の URL が、画面が明示して開いた file: の HTML ならそのパス。それ以外は null */
+function externalFile(url, tab) {
+  if (!tab?.allowFile) return null;
+  const file = filePath(url), requested = filePath(tab.requested);
+  if (!file || !requested || !OPENABLE_FILE.test(file) || !samePath(path.resolve(file), path.resolve(requested))) return null;
+  return file;
+}
+/** 短い時間に何度も開かせない。core/os-open.mjs の createRateLimit と同じで、サーバーの openPath と同じ 5 回 / 10 秒 */
+function createRateLimit({ limit = 5, windowMs = 10_000, now = () => Date.now() } = {}) {
+  const times = [];
+  return () => {
+    const t = now();
+    while (times.length && t - times[0] > windowMs) times.shift();
+    if (times.length >= limit) return false;
+    times.push(t);
+    return true;
+  };
 }
 function openable(url) {
   try { const u = new URL(url); return OPENABLE.has(u.protocol) && !u.username && !u.password ? u.href : null; } catch { return null; }
@@ -54,7 +84,7 @@ function uniquePath(dir, name, exists = fs.existsSync) {
  *   window: 本体の BrowserWindow。WebContentsView・BrowserWindow・session・shell・ipcMain・app は electron のもの（テストでは偽物）
  *   trust: desktop/window-trust.cjs。icon: 別の窓のアイコン
  */
-function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon, log = () => {}, agentControl = () => {} }) {
+function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon, log = () => {}, agentControl = () => {}, now }) {
   const tabs = new Map();          // id -> { id, view, sessionId, detached }
   let order = [];                  // タブの並び（id）
   let current = null;              // 今のタブの id
@@ -65,6 +95,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   const tabListeners = new Set();
   const agents = new Map();
   let navigation = null;
+  const openFileAllowed = createRateLimit({ now });
   const ses = session.fromPartition(PARTITION);
   setupSession(ses);
 
@@ -91,6 +122,8 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       id: tab.id, sessionId: tab.sessionId, url,
       title: c.isDestroyed() ? '' : c.getTitle(), loading: !c.isDestroyed() && c.isLoading(),
       canGoBack: !c.isDestroyed() && c.navigationHistory.canGoBack(), canGoForward: !c.isDestroyed() && c.navigationHistory.canGoForward(),
+      // 「既定のブラウザーで開く」を押せるか（http・https と、画面が明示して開いた file: の HTML）
+      external: !!(externalUrl(url) || externalFile(url, tab)),
     };
   }
   function snapshot() {
@@ -267,7 +300,10 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       case 'stop': tab?.view.webContents.stop(); return snapshot();
       case 'devtools': if (tab && !tab.blank) tab.view.webContents.openDevTools({ mode: 'detach' }); return snapshot();
       case 'external': {
-        const url = externalUrl(tab?.view.webContents.getURL());
+        const loaded = tab?.view.webContents.getURL();
+        const file = externalFile(loaded, tab);
+        if (file) return openFile(file);
+        const url = externalUrl(loaded);
         if (!url) return { ok: false };
         log('external', url);
         await shell.openExternal(url).catch(() => {});
@@ -297,6 +333,19 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       case 'unfreeze': frozen = false; place(); return { ok: true };
       default: throw new Error(`unknown browser action: ${action}`);
     }
+  }
+
+  /** 画面が開いた file: の HTML を既定のブラウザーで。実体を解決して HTML のファイルと確かめてから shell.openPath（シェルを通さない） */
+  async function openFile(file) {
+    let real;
+    try {
+      real = await fs.promises.realpath(file);
+      checkRequest({ action: 'open', path: real });
+    } catch { return { ok: false }; }
+    if (!openFileAllowed()) return { ok: false, reason: 'too-many' };
+    log('external', real);
+    const error = await shell.openPath(real).catch(e => String(e?.message ?? e));
+    return error ? { ok: false } : { ok: true };
   }
 
   function layout(message) {
@@ -335,4 +384,4 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   };
 }
 
-module.exports = { createBrowserPanel, PARTITION, openable, navigable, externalUrl, cleanRect, plainUserAgent, uniquePath };
+module.exports = { createBrowserPanel, PARTITION, openable, navigable, externalUrl, externalFile, cleanRect, plainUserAgent, uniquePath };

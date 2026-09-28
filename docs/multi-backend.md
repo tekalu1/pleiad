@@ -17,7 +17,7 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 | バックエンド | つなぎ方 | 検証した版 | 最低の版 | 頼っている非公開のもの |
 |---|---|---|---|---|
 | Codex | `codex app-server` | CLI 0.156.1 | なし | rollout の `session_meta.cli_version`、`response_item` の `turn_id` とツール出力。拒否の読み取り（[ADR 0035](adr/0035-read-codex-rollout-for-rejections.md)） |
-| Claude Code | Agent SDK の `query()` と利用者の `claude` CLI | SDK 0.3.258、CLI 2.1.282 | なし | `projects/*.jsonl` の attachment と `cost-state`（使用量の累計）、`subagents/*.jsonl` の親子鎖、`*.meta.json` の `toolUseId` |
+| Claude Code | Agent SDK の `query()` と利用者の `claude` CLI | SDK 0.3.258、CLI 2.1.283 | なし | `projects/*.jsonl` の attachment と `cost-state`（使用量の累計）、`subagents/*.jsonl` の親子鎖、`*.meta.json` の `toolUseId`、`system:compact_boundary` の `compactMetadata`・`isCompactSummary`・`parentUuid`、コマンド・`!` の行のタグと中断の文字列（[ADR 0053](adr/0053-system-messages-display.md)） |
 | Antigravity | `agy --print= --input-format stream-json --output-format stream-json` | CLI 1.2.12（Hooks の実機検証。[ADR 0049](adr/0049-hooks-pleiad-managed.md)） | 1.1.11（古い版では `/usage` がモデルへの依頼になる） | ファイルなし。stream-json のイベント形 |
 | 内蔵ブラウザー操作 | `agent-browser` と会話別 CDP 中継 | 0.38.1（同梱） | 同梱版を使用 | なし |
 
@@ -186,7 +186,7 @@ main の開始は 2 回目以降の `system/init` とトップレベルの `mess
   途中送信）は `userMessage.dropped` にする。プロセスツリーごとの強制終了はしない（pid は `spawnClaudeCodeProcess` で自前に起動したときしか取れない）
 - `result` は 1 回の query で何度も出る。`total_cost_usd` と `modelUsage` は累計で単調に増える（上書きで二重計上にならない）。
   CLI 2.1.280 以降は resume で transcript の最後の `cost-state` を読み戻すので、累計は query ではなく会話の始まりから数える。
-  そのため query を作る前に最後の `cost-state` を開始時点として読み、`usage` はそこからの差分にする（`claude-cost-state.mjs`、[ADR 0053](adr/0052-claude-usage-delta.md)）
+  そのため query を作る前に最後の `cost-state` を開始時点として読み、`usage` はそこからの差分にする（`claude-cost-state.mjs`、[ADR 0052](adr/0052-claude-usage-delta.md)）
   turnResult は「ターンが終わった」の合図なので、Claude は成功の turnResult を query の終わりに 1 回だけ出す
   （途中で出すと server がターンを終わりかけと見なし、途中送信を止める）
 - 裏の subagent の完了通知は、main を再開させるための user メッセージ（`<task-notification>…`、`origin.kind: task-notification`）として

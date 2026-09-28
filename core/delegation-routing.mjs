@@ -1,12 +1,14 @@
 // 委譲先の自動振り分け（docs/agent-delegation.md「委譲先の自動振り分け」。決定は docs/adr/0022-delegation-routing.md）。
 //
 // ここはプロセスも HTTP も起こさない純粋な関数だけを置く。難しさの判定器（HTTP）は core/delegation-judges.mjs、
-// 使用量の取り置き（定期的な取得）は core/delegation-usage.mjs。
+// 使用量の取り置き（定期的な取得）は core/delegation-usage.mjs。「古い」の閾値（STALE_MS）はそちらの定数を使う。
 //
 //   種類（kind）   … 親のエージェントが ply_delegate で申告する
 //   難しさ          … 判定器の 6 つの手がかり（SIGNALS）から規則（difficultyOf）で数える
 //   段（tier）      … 種類 × 難しさの表（table）
 //   委譲先          … 段の候補を左から、使用量の枠で飛ばしながら選ぶ（route）。無ければ 1 つ上の段へ
+
+import { STALE_MS } from './delegation-usage.mjs';
 
 export const KINDS = Object.freeze(['trivial', 'mechanical', 'investigate', 'implement', 'review', 'design', 'ux_change', 'ux_new', 'visual']);
 export const DIFFICULTIES = Object.freeze(['low', 'mid', 'high']);
@@ -36,7 +38,6 @@ export const DEFAULTS = Object.freeze({
   escalateToCerebras: false,
   avoidPercent: 80,
   paceLimit: 1.2,
-  staleMinutes: 15,
   tiers: Object.freeze({
     t1: Object.freeze(['antigravity:gemini-3.8-flash-high', 'claude:haiku']),
     t2: Object.freeze(['antigravity:gemini-3.8-flash-high', 'codex:gpt-6-luna', 'antigravity:claude-opus-4-6-thinking', 'claude:sonnet']),
@@ -76,7 +77,7 @@ export function normalizeSettings(raw, { strict = false } = {}) {
   const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const fail = (code, detail) => { if (strict) throw new RoutingSettingsError(code, detail); };
   const out = { enabled: DEFAULTS.enabled, judgeByKind: { ...DEFAULTS.judgeByKind }, escalateToCerebras: DEFAULTS.escalateToCerebras,
-    avoidPercent: DEFAULTS.avoidPercent, paceLimit: DEFAULTS.paceLimit, staleMinutes: DEFAULTS.staleMinutes,
+    avoidPercent: DEFAULTS.avoidPercent, paceLimit: DEFAULTS.paceLimit,
     tiers: Object.fromEntries(Object.entries(DEFAULTS.tiers).map(([k, v]) => [k, [...v]])),
     table: Object.fromEntries(Object.entries(DEFAULTS.table).map(([k, v]) => [k, [...v]])) };
   for (const key of Object.keys(src)) if (!Object.hasOwn(out, key)) fail('unknownKey', { key });
@@ -84,7 +85,7 @@ export function normalizeSettings(raw, { strict = false } = {}) {
     if (src[key] === undefined) continue;
     if (typeof src[key] === 'boolean') out[key] = src[key]; else fail('notBoolean', { key });
   }
-  const numbers = { avoidPercent: [1, 100], paceLimit: [0.1, 10], staleMinutes: [1, 1440] };
+  const numbers = { avoidPercent: [1, 100], paceLimit: [0.1, 10] };
   for (const [key, [min, max]] of Object.entries(numbers)) {
     if (src[key] === undefined) continue;
     const v = src[key];
@@ -268,7 +269,7 @@ export function checkCandidate(candidate, { usage, settings, now }) {
     ...(parsed.backend === 'claude' && Array.isArray(entry.accounts) ? { accounts: dedupeAccounts(entry.accounts).map(a => ({
       account: a.account, label: a.label ?? null, ok: false, reason: 'model_unknown', windows: [] })) } : {}) };
   const checkedAt = entry.checkedAt ?? null;
-  const staleReason = checkedAt == null ? 'usage_unknown' : now - checkedAt > settings.staleMinutes * 60_000 ? 'usage_stale' : null;
+  const staleReason = checkedAt == null ? 'usage_unknown' : now - checkedAt > STALE_MS ? 'usage_stale' : null;
   const policy = { now, avoidPercent: settings.avoidPercent, paceLimit: settings.paceLimit };
   if (parsed.backend === 'claude' && Array.isArray(entry.accounts)) {
     const assessed = entry.accounts.map(a => {

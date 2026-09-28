@@ -2195,8 +2195,6 @@
       "avoidUnit": "% 以上",
       "pace": "週次のペース",
       "paceUnit": "倍を超えたら後回し",
-      "stale": "古いとみなす",
-      "staleUnit": "分を超えたら",
       "reset": "既定に戻す",
       "resetConfirm": "委譲の設定を既定に戻しますか。キーは残ります。",
       "saveFailed": "保存できませんでした: {{error}}",
@@ -2768,6 +2766,7 @@
     },
     "invalid": "開けない URL です。http・https の URL か、localhost:5173 のように入力してください。",
     "externalUnavailable": "このページは既定のブラウザーで開けません。",
+    "externalTooMany": "続けて開きすぎています。少し待ってからもう一度押してください。",
     "siteDataCleared": "このサイトのデータを消しました。",
     "failed": "ブラウザーの操作に失敗しました。"
   }

@@ -22,6 +22,7 @@
 - WebSocket のコマンドを足すときは、`core/server.mjs` の `case` に加えて `core/protocol.mjs` の `COMMANDS` にも登録する。登録が無いとサーバーはエラーも返さず黙って捨て、テストの `cmd` は応答待ちのまま止まる（2026-09-28）。
 - `core/server.mjs` の `case "loadSession"` の本文は、`tests/unit/session-stream.mjs` が文字列で切り出して vm の中で走らせる。そこで新しい関数を呼ぶなら、テストの `vm.createContext({ … })` にも渡す。渡さないと `ReferenceError: <名前> is not defined` で落ちる（2026-09-28、`attachCompactSummaries`）。`web/client.mjs` の `saveDraft`・`loadDraft`・`submit` なども `tests/unit/composer-new-session.mjs` が同じように vm で走らせるので、そこから新しいモジュールの定数を引くなら身代わりを足す（2026-09-28、`shellComposer`）。
 - サーバー越しのテストで fake-codex のターンを走らせるときは `open({ ...host, autoAllow: true })` でつなぐ。fake-codex の既定の台本はコマンドの承認を求めるので、無いと `runTurn` が承認待ちで止まる（`open(host, { autoAllow: true })` のように第 2 引数で渡しても効かない）。
+- `setTimeout(ms).unref?.()` を `Promise.race` に使う「最長 ms だけ待つ」処理（`core/delegation-usage.mjs` の `ensureFresh` など）を単体テストで確かめるとき、待たせる側（遅い処理）を手動で解決する Promise（`new Promise(r => { resolve = r })`）だけにすると、イベントループを保つものが無くなり、unref のタイマーごと発火せずに固まる（2026-09-28、`tests/unit/delegation-routing.mjs`）。待たせる側は必ず実タイマー（`setTimeout(fn, ms)`。unref しない）にする。
 - `npm run test:e2e` は実際の LLM を呼び出すため、実サービスとの接続確認が必要な変更で実行する。
 - 現在は独立したビルドコマンドはない。文書のみの変更では、内容と `git diff --check` の確認を行えばよい。
 - UI の変更では必要に応じてブラウザーで表示・操作を確認する。ブラウザー自動化は、まずシェルで `playwright-cli` と `agent-browser` の利用可否を調べ、前者があれば優先し、なければ後者を使う。ユーザーによるツール・ブラウザー指定があればそれに従う。
@@ -41,6 +42,7 @@
   - fake の応答は即座に返り、処理中の表示が一瞬で消える。見るときはページ上で `WebSocket.prototype.send` を包み、対象コマンド（例: `suggestTitle`）の送信を数秒遅らせる。
   - 画面の重さ（会話を開く時間など）を実データで測るときは、`~/.agent-host` を `temporary/` の下へ写す。写しから `remote/` と `agent-tasks.json` を消し、`AGENT_HOST_DATA=<写し> AGENT_HOST_PORT=7499 node core/server.mjs` で立てる。理由: 写しに残ったホストの鍵で中継へつなぎ、本物のホストの接続とぶつかるおそれがある（未確認。消してから測った）。委譲の続きも走らせないため。写しには秘密の写しも入るので、測り終えたら消す。時間は Playwright の CDP で測る。`Emulation.setCPUThrottlingRate`（4 倍でスマホの目安）をかけ、`Profiler.start` / `stop` で取ったサンプルを関数ごとに self・inclusive で集計すると、原因の関数まで出る。2026-09-26 はこれで、描画のたびに `layoutBranchSpine` が強制レイアウトを起こしているのを突き止めた。スクリプトは `temporary/scripts/session-open-*.mjs`。
     - スクロールの重さは、開いて落ち着かせた長い会話の `#log` へ 900px のホイールを 40ms 間隔で送り、CDP の `Performance.getMetrics` の `LayoutCount`・`LayoutDuration` とフレーム間隔の p95 で比べる（`temporary/scripts/scroll-jank-measure.mjs`）。開く時間を縮める変更はスクロールを重くすることがあるので、両方を測る。2026-09-27 は、開く時間のために入れた `content-visibility:auto` の仮の高さ（160px）と実寸の差で、スクロール中にレイアウトが繰り返されていた。
+    - 会話の位置の測定は、狭い窓（1280 幅など）に加えて `#log` が約 1,736px を超える広い窓（2560 幅）でも行う。会話の列は `max-width:860px` で左に寄るので、`#log` の中央の点で当てる処理は広い窓でだけ列の外に落ちる。2026-09-28 は、これで広い窓の利用者だけが、長い会話を開くと末尾から上へずれていた（1280 幅では再現しなかった）。
   - 動いている Pleiad の `~/.agent-host` のファイルを、PowerShell の `Get-Content` で開かない。Node の `fs.readFileSync` で読むか、写してから読む。理由: `Get-Content` が開いている間は Pleiad の保存（一時ファイルからの rename）が EPERM で失敗する。2026-09-27 には、調査中の子が `agent-tasks.json` を読んだのをきっかけに、委譲の管理が閉じて全部の会話で委譲が止まった。Node は削除を共有する形で開くので、保存とぶつからない。
 - コミット前に差分を確認し、対象ファイルを明示してステージする。検証が失敗した場合は原因を調べ、未解決のまま完了扱いにしない。
 
