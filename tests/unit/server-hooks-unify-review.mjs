@@ -45,7 +45,10 @@ export default async function (t) {
     const p2 = await client.cmd('hooksUnifyPreview', { cwd, direction: 'ply' });
     await client.cmd('setHooksOwner', { place: cwd, value: { owner: 'ply', disabled: [] }, revision: p2.revision });
     const before = (await logLines(log)).length;
+    const compactFrom = client.mark();
     await client.cmd('compactConversation', { sessionId: sid });
+    // 圧縮のターンが終わる（turnEnd）まで会話は準備中の印が付いたままで、次の runTurn は断られる
+    await client.waitFor(e => e.type === 'turnEnd' && e.sessionId === sid, { from: compactFrom, ms: 30_000 });
     for (let i = 0; i < 50 && !(await logLines(log)).slice(before).some(l => l.method === 'thread/compact/start'); i++) await new Promise(r => setTimeout(r, 100));
     const compactLog = (await logLines(log)).slice(before);
     const unsubAt = compactLog.findIndex(l => l.method === 'thread/unsubscribe' && l.threadId === sid);
