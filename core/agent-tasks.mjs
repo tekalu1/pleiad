@@ -171,7 +171,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   }
   async function run(r, controller) {
     // stalled: 実行の開始を保存できなかった。子は動かしていないので queued のまま、次のタイマーでやり直す
-    let stalled = false, activeInstructionId;
+    let stalled = false, requeued = false, activeInstructionId;
     try {
       while (!controller.signal.aborted) {
         let prompt, instructionId;
@@ -187,7 +187,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         const result = await execute(structuredClone(r), prompt, controller.signal);
         if (result?.requeue) {
           await record(r.taskId, row => { row.queue.unshift(instructionId ? { instructionId } : prompt); setInstruction(row, instructionId, 'queued'); row.status = 'queued'; }, 'run.requeue');
-          activeInstructionId = undefined;
+          activeInstructionId = undefined; requeued = true;
           return;
         }
         await record(r.taskId, row => {
@@ -212,13 +212,15 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     } catch (e) {
       await record(r.taskId, row => { row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); setInstruction(row, activeInstructionId, 'dropped'); dropInstructions(row); }, 'run.error');
     } finally {
-      if (r.status === 'cancelling' || controller.signal.aborted) await record(r.taskId, row => { row.status = 'cancelled'; dropInstructions(row); }, 'run.cancelled');
+      // 止まった後（run.result / run.error で cancelled）に ply_task_send で積まれた指示は、止めた回の分ではない。
+      // cancelled に戻して捨てず、下の kick で次の実行にする（docs/agent-delegation.md「ツール」の ply_task_send）
+      if (r.status === 'cancelling' || controller.signal.aborted) await record(r.taskId, row => { if (!requeued && row.status === 'queued' && row.queue.length) return; row.status = 'cancelled'; dropInstructions(row); }, 'run.cancelled');
       live.delete(r.taskId);
       if (!stalled || controller.signal.aborted) {
         if (r.queue.length && !controller.signal.aborted) await record(r.taskId, row => { row.status = 'queued'; row.notification = 'none'; }, 'run.queued');
         else if (!ACTIVE.has(r.status)) await record(r.taskId, row => { row.notification = row.status === 'cancelled' ? 'suppressed' : 'pending'; }, 'run.notice');
-        // Busy sessions retry on the timer, never in a recursive write loop.
-        if (r.status !== 'queued') kick();
+        // Busy sessions retry on the timer, never in a recursive write loop. 止めた後に積まれた指示はすぐ走らせる
+        if (r.status !== 'queued' || controller.signal.aborted) kick();
       }
     }
   }
