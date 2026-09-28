@@ -12,7 +12,8 @@ import { estimateTokens } from '../web/token-estimate.mjs';
 
 const digest = s => crypto.createHash('sha256').update(s).digest('hex');
 const record = v => v && typeof v === 'object' && !Array.isArray(v);
-const MAX_FILE = 256 * 1024, MAX_TOTAL = 4 * 1024 * 1024, MAX_ENTRIES = 1000;
+// 読む量の上限（気になる所の計算も同じ上限で読む: core/context-findings.mjs）
+export const MAX_FILE = 256 * 1024, MAX_TOTAL = 4 * 1024 * 1024, MAX_ENTRIES = 1000;
 // 値を伏せるキー。キー名は残す（何が要るかは見えたほうがよい）
 const SECRET_KEYS = new Set(['env', 'headers']), MASK = '••••';
 // クエリ文字列に鍵を置く登録（?key=… / ?token=…）があるので、? 以降は伏せる。接続先そのものは残す

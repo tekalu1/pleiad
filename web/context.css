@@ -300,6 +300,30 @@ details.scx-ply>summary:hover .n{color:var(--ink-blue)}
 .scx-over{display:flex;gap:6px;align-items:baseline;margin:0;font-size:var(--fs-s);color:var(--ink-strong);font-weight:600}
 .scx-over .g{flex:none}
 .scx-over .w{font-weight:400;color:var(--ink-weak)}
+/* 見直しを頼む（ADR 0056「③ 見直しを頼む」）: 目安を超えたか気になる所があれば主要操作、どちらも無ければ控えめ */
+.scx-acts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.scx-acts .cx-sub{font-size:var(--fs-xs)}
+/* 気になる所（ADR 0056「② 気になる所を知らせる」）: 件数付きの開閉。重複は 2 か所を上下に並べ、共通の部分を太字に */
+.scx-issues{padding:8px 10px;border-radius:var(--r-m);background:var(--surface-1)}
+.scx-issues>summary{display:flex;align-items:center;gap:6px;list-style:none;cursor:pointer;font-size:var(--fs-s);font-weight:600;color:var(--ink)}
+.scx-issues>summary::-webkit-details-marker{display:none}
+.scx-issues>summary::before{content:"＋";font-weight:400;color:var(--ink-weak)}
+.scx-issues[open]>summary::before{content:"－"}
+.scx-issues>summary:hover{color:var(--ink-blue)}
+.scx-n{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:var(--r-pill);background:var(--surface-3);font-size:var(--fs-xs);font-variant-numeric:tabular-nums}
+.scx-issue{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.scx-ih{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;margin:0;font-size:var(--fs-s);min-width:0}
+.scx-ih code{overflow-wrap:anywhere}
+.scx-ik{flex:none;font-size:var(--fs-xs);font-weight:600;color:var(--ink-weak);letter-spacing:.04em}
+.scx-side{display:flex;flex-direction:column;gap:4px;min-width:0;padding:8px 10px;border-radius:var(--r-s);background:var(--surface-paper)}
+.scx-where{display:flex;flex-wrap:wrap;align-items:center;gap:0 6px;min-width:0;font-size:var(--fs-xs);color:var(--ink-weak)}
+.scx-where .sc{flex:none;font-weight:600}
+.scx-where .cx-path{order:3;flex:1 1 100%;white-space:normal;overflow-wrap:anywhere;color:var(--ink)}
+.scx-where .btn{order:2;flex:none;margin-left:auto;padding:1px 10px;font-size:var(--fs-xs);color:var(--ink-blue)}
+.scx-quote{margin:0;font-size:var(--fs-xs);line-height:1.7;color:var(--ink-weak);overflow-wrap:anywhere}
+.scx-quote b{font-weight:600;color:var(--ink)}
+.scx-vs{align-self:center;font-size:var(--fs-xs);line-height:1;color:var(--ink-weak)}
+.scx-more{margin:8px 0 0;font-size:var(--fs-xs)}
 /* 設定の「指示」: 自分で書いた指示の目安 */
 .cx-budget{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
 .cx-budget .n{font-size:var(--fs-s);color:var(--ink)}
