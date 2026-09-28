@@ -69,11 +69,15 @@ export default async function(t) {
     t.ok("画像にも認証が必要", (await fetch(url(local))).status === 401);
     const image=await fetch(url(local),auth);
     t.ok("実ファイルをPNGとして返す", image.status===200 && image.headers.get("content-type")==="image/png" && Buffer.from(await image.arrayBuffer()).equals(Buffer.from(png,"base64")));
-    t.ok("ワークスペース外を拒否", (await fetch(url(path.join(scratch,"secret.txt")),auth)).status===404);
-    t.ok("親ディレクトリへの脱出を拒否", (await fetch(url(path.join(workspace,"../secret.txt")),auth)).status===404);
+    t.ok("作業場所外を読める", (await fetch(url(path.join(scratch,"secret.txt")),auth)).status===200);
+    t.ok("親ディレクトリも読める", (await fetch(url(path.join(workspace,"../secret.txt")),auth)).status===200);
     const html=await fetch(url(path.join(workspace,"unsafe.html")),auth);
     t.ok("HTMLは実行せず添付として返す", html.headers.get("content-type")==="application/octet-stream" && html.headers.get("content-disposition").startsWith("attachment"));
     await fs.symlink(scratch,path.join(workspace,"escape"),process.platform==="win32"?"junction":"dir");
-    t.ok("シンボリックリンクでの脱出も拒否",(await fetch(url(path.join(workspace,"escape/secret.txt")),auth)).status===404);
+    t.ok("作業場所外へのリンクも読める",(await fetch(url(path.join(workspace,"escape/secret.txt")),auth)).status===200);
+    t.ok("データ置き場の秘密はリンク経由も拒否",(await fetch(url(path.join(workspace,"escape/data/sessions.json")),auth)).status===404);
+    const upload=path.join(data,'uploads','logo.png');
+    await fs.mkdir(path.dirname(upload),{recursive:true}); await fs.copyFile(local,upload);
+    t.ok("添付は画像として読める",(await fetch(url(upload),auth)).headers.get('content-type')==='image/png');
   } finally {await server.stop(); await fs.rm(scratch,{recursive:true,force:true});}
 }

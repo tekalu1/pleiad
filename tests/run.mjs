@@ -18,6 +18,7 @@ const cases = [
   await import('./unit/compaction.mjs'),
   await import('./unit/server-compaction.mjs'),
   await import('./unit/file-preview.mjs'),
+  await import('./unit/file-access.mjs'),
   await import('./unit/preview-links.mjs'),
   // パスの自動リンク・画像の所在・ファイルの操作メニュー・OS で開く口（OS の窓は開かない）
   await import('./unit/file-actions.mjs'),

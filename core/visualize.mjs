@@ -14,11 +14,11 @@ const SKILLS = { en: await readSkill('SKILL.md'), ja: await readSkill('SKILL.ja.
 export const visualizeInstructions = locale => SKILLS[locale] ?? SKILLS.en;
 export const MAX_VISUALIZE_BYTES = 1024 * 1024;
 
-export async function prepareVisualization(ref, roots) {
+export async function prepareVisualization(ref, access) {
   if (ref.error) throw new Error(ref.error);
   const { path: file, title, mode } = ref.value;
   if (!['.html', '.htm'].includes(path.extname(file).toLowerCase())) throw new Error(t('filePreview.visualize.htmlRequired'));
-  const { body } = await readLocalFile(file, roots, { maxBytes: MAX_VISUALIZE_BYTES });
+  const { body } = await readLocalFile(file, access, { maxBytes: MAX_VISUALIZE_BYTES });
   let content;
   try { content = new TextDecoder('utf-8', { fatal: true }).decode(body); }
   catch { throw new Error(t('filePreview.visualize.notUtf8')); }
@@ -27,7 +27,7 @@ export async function prepareVisualization(ref, roots) {
 
 // Serialize snapshots in response order, and drain before turnEnd. A missing or
 // rejected file gets a durable error card, rather than a disappearing reference.
-export function createVisualizationCollector({ roots, publish }) {
+export function createVisualizationCollector({ access, publish }) {
   let text = '', chain = Promise.resolve(), count = 0;
   function end() {
     const refs = visualizeReferences(text); text = '';
@@ -38,7 +38,7 @@ export function createVisualizationCollector({ roots, publish }) {
         let payload;
         try {
           if (overLimit) throw new Error(t('filePreview.visualize.tooMany', { max: 32 }));
-          payload = await prepareVisualization(ref, roots);
+          payload = await prepareVisualization(ref, access);
         }
         catch (e) { payload = { kind: 'visualization', caption: ref.value?.title ?? t('filePreview.visualize.caption'), error: String(e.message) }; }
         await publish({ ...payload, reference: ref.raw });

@@ -180,7 +180,9 @@ export default async function (t) {
   await fs.writeFile(path.join(work, 'proof.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
   await fs.writeFile(path.join(work, 'run.bat'), 'echo x');
   await fs.writeFile(path.join(outside, 'secret.html'), 'secret');
+  await fs.writeFile(path.join(data, 'secret.html'), 'private');
   await fs.symlink(outside, path.join(work, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+  await fs.symlink(data, path.join(work, 'private'), process.platform === 'win32' ? 'junction' : 'dir');
   await fs.writeFile(path.join(data, 'sessions.json'), JSON.stringify({ fixture: { cwd: work, backend: 'fake' } }));
   const server = await startServer({ dataDir: data, env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_OS_OPEN: 'dry' } });
   let client, remote;
@@ -188,10 +190,10 @@ export default async function (t) {
     client = await openWs({ port: server.port, token: server.token });
     const real = p => fs.realpath(p);
     assert.deepEqual(await client.cmd('hostCapabilities'), { osActions: true, hostName: os.hostname() });
-    assert.equal((await client.cmd('revealPath', { path: path.join(work, 'page.html') })).path, await real(path.join(work, 'page.html')));
+    assert.equal((await client.cmd('revealPath', { path: path.join(outside, 'secret.html') })).path, await real(path.join(outside, 'secret.html')));
     assert.equal((await client.cmd('revealPath', { path: 'sub', sessionId: 'fixture' })).path, await real(path.join(work, 'sub')));
-    assert.equal((await client.cmd('openPath', { path: 'page.html:3', sessionId: 'fixture' })).path, await real(path.join(work, 'page.html')));
-    assert.equal((await client.cmd('openPath', { path:'./page.html', sessionId:'fixture', returnPath:true })).path, await real(path.join(work, 'page.html')));
+    assert.equal((await client.cmd('openPath', { path: 'escape/secret.html:3', sessionId: 'fixture' })).path, await real(path.join(outside, 'secret.html')));
+    assert.equal((await client.cmd('openPath', { path:'./escape/secret.html', sessionId:'fixture', returnPath:true })).path, await real(path.join(outside, 'secret.html')));
     const htmlUrl = fileUrl((await client.cmd('openPath', { path:'page.html', sessionId:'fixture', returnPath:true })).path);
     assert((await fs.readFile(new URL(htmlUrl), 'utf8')).includes('style.css'));
     assert((await fs.readFile(new URL('./style.css', htmlUrl), 'utf8')).includes('color: red'));
@@ -200,18 +202,19 @@ export default async function (t) {
     t.ok('検査済み HTML の file: URL から相対 CSS・JS・画像を同じフォルダーで解決する', true);
     const resolved = await client.cmd('resolvePath', { path: './page.html', sessionId: 'fixture' });
     assert.deepEqual(resolved, { path: await real(path.join(work, 'page.html')), cwd: work, kind: 'file' });
-    t.ok('範囲の中は実体を解決したパスで通す（相対は会話の作業ディレクトリ、フォルダーも可）', true);
+    assert.equal((await client.cmd('resolvePath', { path: path.join(work, 'escape', 'secret.html') })).path, await real(path.join(outside, 'secret.html')));
+    t.ok('作業場所外も実体を解決して通す（相対は会話の作業ディレクトリ、フォルダーも可）', true);
 
-    await assert.rejects(client.cmd('revealPath', { path: path.join(outside, 'secret.html') }), /作業場所の外/);
-    await assert.rejects(client.cmd('openPath', { path: path.join(work, 'escape', 'secret.html') }), /作業場所の外/);
-    await assert.rejects(client.cmd('openPath', { path: path.join(work, 'escape', 'secret.html'), returnPath:true }), /作業場所の外/);
-    await assert.rejects(client.cmd('resolvePath', { path: path.join(work, 'escape', 'secret.html') }), /作業場所の外/);
+    await assert.rejects(client.cmd('revealPath', { path: path.join(data, 'secret.html') }), /データ置き場/);
+    await assert.rejects(client.cmd('openPath', { path: path.join(work, 'private', 'secret.html') }), /データ置き場/);
+    await assert.rejects(client.cmd('openPath', { path: path.join(work, 'private', 'secret.html'), returnPath:true }), /データ置き場/);
+    await assert.rejects(client.cmd('resolvePath', { path: path.join(work, 'private', 'secret.html') }), /データ置き場/);
     await assert.rejects(client.cmd('openPath', { path: path.join(work, 'run.bat') }), /HTML だけ/);
     await assert.rejects(client.cmd('openPath', { path: path.join(work, 'run.bat'), returnPath:true }), /HTML だけ/);
     await assert.rejects(client.cmd('openPath', { path: path.join(work, 'sub') }), /HTML だけ/);
-    await assert.rejects(client.cmd('revealPath', { path: '\\\\host\\share\\a.html' }), /読み取れません/);
+    await assert.rejects(client.cmd('revealPath', { path: '\\\\host\\share\\a.html' }), /UNC/);
     await assert.rejects(client.cmd('revealPath', { path: path.join(work, 'missing.html') }), /見つかりません/);
-    t.ok('範囲の外・シンボリックリンクでの脱出・HTML 以外の「開く」・UNC・無いファイルを断る', true);
+    t.ok('データ置き場はリンク経由も拒否。HTML 以外の「開く」・UNC・無いファイルも断る', true);
 
     // 中継を通った接続（遠隔）は断る。画面に出さないだけでなく、サーバーが断る
     remote = new WebSocket(`ws://127.0.0.1:${server.port}/ws?token=${server.token}`, { headers: { 'x-forwarded-for': '203.0.113.9' } });
