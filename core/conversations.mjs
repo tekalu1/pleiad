@@ -250,6 +250,18 @@ export function wrapBackend(native) {
     }
     return messages;
   };
+  // 入力欄の `!` をエージェントが走らせるバックエンド（Codex）。会話の id をネイティブの id に訳す。
+  // ネイティブの会話がまだ無い（最初の発言の前・切り替えた直後）ときは走らせられない（shellReady が false）
+  if (native.shell) {
+    wrapped.shellReady = async id => { const r = await conversation(id); return r ? r.backend === native.id && Boolean(r.nativeId) : true; };
+    wrapped.shell = async args => {
+      const r = args.sessionId && await conversation(args.sessionId);
+      if (!r) return native.shell(args);
+      if (r.backend !== native.id) throw new Error(t('conversations.backendMismatch'));
+      if (!r.nativeId) throw new Error(t('shell.notStarted'));
+      return native.shell({ ...args, sessionId: r.nativeId });
+    };
+  }
   if (native.getCompactions) wrapped.getCompactions = async id => {
     const r = await conversation(id);
     if (!r) return native.getCompactions(id);
@@ -414,7 +426,10 @@ export function wrapBackend(native) {
           const info = await native.getSession(r.nativeId).catch(() => null);
           const meta = await store.get(id);
           if ((!meta.title || meta.title === "新しいセッション") && !meta.history?.some(h => h.field === "title")) { // i18n-ignore: 過去の記録の既定タイトルとの照合
-            const title = info?.title?.trim() || messages.find(m => m.role === "user" && m.text)?.text?.trim().slice(0, 80);
+            // 入力欄の `!` の結果は発言の前に渡る（ADR 0054）。その行（<bash-input>・CLI が題に使う `! コマンド`）は題にせず、最初の人の発言を使う
+            const nativeTitle = info?.title?.trim();
+            const title = (nativeTitle && !/^(<[a-z-]+>|! )/.test(nativeTitle) ? nativeTitle : '')
+              || classifySystemMessages(messages).find(m => m.role === "user" && !m.kind && m.text)?.text?.trim().slice(0, 80);
             if (title) await store.setMeta(id, { title });
           }
         }

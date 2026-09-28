@@ -90,6 +90,53 @@ const SUBAGENT_ITEMS = ["subAgentActivity", "collabAgentToolCall"];
 // tool.start / tool.result に落とすアイテム。これ以外（agentMessage / reasoning / plan …）は
 // 本文や思考として別に扱う。知らない type は黙って落とす（増えても壊れない）。
 const TOOL_ITEMS = new Set(Object.keys(TOOL_HINTS));
+/** 入力欄の `!` で人が走らせたコマンド（thread/shellCommand。Codex の TUI・Desktop の `!` も同じ source） */
+const isUserShell = (item) => item?.type === "commandExecution" && item.source === "userShell";
+/** 走っている `!` の item id（出力の差分は item を運ばないので、id で見分ける） */
+const userShellItems = new Set();
+/** `!` の出力を履歴の形に（改行を揃え、末尾の空白を落とす。Claude の `!` の行と同じ扱い。core/system-messages.mjs） */
+const shellText = (s) => String(s ?? "").replace(/\r\n/g, "\n").replace(/\s+$/, "");
+/** 止めた `!`（turn/interrupt）。Codex は status: failed・exitCode -1・"command aborted by user" で閉じる（codex-cli 0.156.1 で確認） */
+const userShellAborted = (item) => item?.exitCode === -1 && item.status !== "completed" && /^command aborted by user\s*$/.test(String(item.aggregatedOutput ?? ""));
+
+/**
+ * userShell の item の command は、Codex がシェルに包んで POSIX 式にクォートしてつないだ形
+ * （Windows は `"C:\\…\\powershell.exe" -Command 'echo hi'`。codex-cli 0.156.1 で確認）。人が打った形に戻す。
+ * 戻せなければ、commandActions が 1 つならその command、それも無ければそのまま
+ */
+export function userShellCommand(item) {
+  const raw = String(item?.command ?? "");
+  const m = /^("[^"]*"|\S+)(?:\s+-(?:NoProfile|NoLogo))*\s+(?:-Command|-lc|-c)\s+(\S[\s\S]*)$/.exec(raw);
+  const shell = m && /(?:^|[\\/])(?:bash|sh|zsh|powershell|pwsh)(?:\.exe)?$/i.test(m[1].replace(/^"|"$/g, ""));
+  const inner = shell ? unquoteWord(m[2]) : null;
+  if (inner != null) return inner;
+  const actions = Array.isArray(item?.commandActions) ? item.commandActions : [];
+  return actions.length === 1 && typeof actions[0]?.command === "string" ? actions[0].command : raw;
+}
+
+/** POSIX 式にクォートした 1 語（'…'・"…"（\ のエスケープ）・\x のつなぎ）を戻す。1 語でなければ null */
+function unquoteWord(s) {
+  let out = "";
+  for (let i = 0; i < s.length;) {
+    const c = s[i];
+    if (c === "'") {
+      const j = s.indexOf("'", i + 1);
+      if (j < 0) return null;
+      out += s.slice(i + 1, j); i = j + 1;
+    } else if (c === '"') {
+      let j = i + 1;
+      for (; j < s.length && s[j] !== '"'; j++) {
+        if (s[j] === "\\" && j + 1 < s.length && '"\\$`'.includes(s[j + 1])) j++;
+        out += s[j];
+      }
+      if (j >= s.length) return null;
+      i = j + 1;
+    } else if (c === "\\" && i + 1 < s.length) { out += s[i + 1]; i += 2; }
+    else if (/\s/.test(c)) return null;
+    else { out += c; i++; }
+  }
+  return out;
+}
 
 /**
  * model/list の結果 `{ list, at }`。毎回 codex を叩かない（UI は表示のたびに引く）。
@@ -806,6 +853,18 @@ export function threadToMessages(thread, { fullResults = false } = {}) {
         continue;
       }
 
+      // 入力欄の `!`（Codex の TUI・Desktop の `!` も同じ）。エージェントのツールではなく、人が走らせた行（ADR 0054）
+      if (isUserShell(item)) {
+        flushTools();
+        const command = userShellCommand(item);
+        const aborted = userShellAborted(item);
+        messages.push({ role: "user", kind: "shell", text: `! ${command}`, command,
+          stdout: item.aggregatedOutput && !aborted ? shellText(item.aggregatedOutput) || null : null, stderr: null,
+          exitCode: Number.isInteger(item.exitCode) && !aborted ? item.exitCode : null, uuid: item.id, at,
+          ...(aborted ? { stopped: true } : {}), ...(item.status === "inProgress" ? { running: true } : {}) });
+        continue;
+      }
+
       if (TOOL_ITEMS.has(item?.type)) {
         const r = toolResult(item);
         toolCalls.push({
@@ -1060,6 +1119,8 @@ export const backend = {
     login: true,
     // 互換の接続先（OpenAI Responses 互換）を会話ごとに選べる（core/compat-endpoints.mjs）
     compatEndpoints: true,
+    // 入力欄の `!`: app-server の thread/shellCommand で走らせる（下の shell。ADR 0054）
+    shell: 'native',
   },
 
   toolHints: TOOL_HINTS,
@@ -1312,6 +1373,7 @@ export const backend = {
     const observe = rpc === nativeRpc ? () => {} : observeSubagents;
     const onNotification = (method, params) => {
       observe(method, params);
+      if (isUserShell(params?.item) || (method === 'item/commandExecution/outputDelta' && userShellItems.has(params?.itemId))) return;
       for (const event of commandActivity(method, params)) emit(event);
       switch (method) {
         case 'thread/tokenUsage/updated':
@@ -1341,6 +1403,8 @@ export const backend = {
         case "item/started": {
           const item = params?.item;
           if (!item?.id) return;
+          // 入力欄の `!` の結果はエージェントのツールではない。backend.shell が拾って shell.* で出す
+          if (isUserShell(item)) return;
           if (item.type === 'contextCompaction') emit(codexCompactionEvent(method, params));
           items.set(item.id, item);
           noteDelivered(item);
@@ -1360,6 +1424,7 @@ export const backend = {
         case "item/completed": {
           const item = params?.item;
           if (!item?.id) return;
+          if (isUserShell(item)) return;
           if (item.type === 'contextCompaction') emit(codexCompactionEvent(method, params));
           const started = items.has(item.id);
           // 終わったターンのアイテムが遅れて届くことがある（バックグラウンド端末。turnId は昔のまま）。
@@ -1667,6 +1732,64 @@ export const backend = {
     }
 
     return { sessionId: threadId };
+  },
+
+  /**
+   * 入力欄の `!`（ADR 0054）。app-server の thread/shellCommand { threadId, command, timeoutMs }（応答は {}。
+   * codex-cli 0.156.1 の generate-json-schema で確認。サンドボックスの外・全権限で走る）。
+   * 結果は commandExecution（source: userShell）の item/started → item/commandExecution/outputDelta → item/completed で流れる。
+   * スレッドがこの app-server に読み込まれていなければ読み込み、終わったら外す（次のターンが自分の設定で読み込めるように）。
+   * 止めるのは turn/interrupt（item の turnId）。止まった合図が 5 秒来なければ待つのをやめる
+   */
+  async shell({ sessionId: threadId, command, timeoutMs, signal, onOutput = () => {} }) {
+    if (!validId(threadId)) throw new Error(t("codex.errors.shellNotStarted"));
+    const loadedHere = !loadedProvider.has(threadId) && !nativeRpc.threads.has(threadId);
+    let itemId = null, turnId = null, finished = null, output = "", stopped = false, settle;
+    const done = new Promise((resolve) => { settle = resolve; });
+    const off = nativeRpc.onNotify((method, params) => {
+      if (params?.threadId !== threadId) return;
+      const item = params?.item;
+      if (method === "item/started" && isUserShell(item) && !itemId) {
+        itemId = item.id; turnId = params.turnId ?? null; userShellItems.add(itemId);
+        if (signal?.aborted) stop();
+      } else if (method === "item/commandExecution/outputDelta" && itemId && params.itemId === itemId) {
+        const delta = String(params.delta ?? "");
+        output += delta;
+        onOutput("stdout", delta);
+      } else if (method === "item/completed" && isUserShell(item) && (!itemId || item.id === itemId)) {
+        // 包んだターンが閉じてから終える。閉じる前に次の turn/start が来ると、Codex はその発言を `!` のターンに入れて返答しない
+        finished = item;
+        if (!turnId) settle({ item }); else setTimeout(() => settle({ item }), 2000).unref?.();
+      } else if (method === "turn/completed" && turnId && params?.turn?.id === turnId) {
+        if (finished) settle({ item: finished }); else setTimeout(() => settle({}), 500);
+      }
+    });
+    const stop = () => {
+      stopped = true;
+      if (turnId) nativeRpc.request("turn/interrupt", { threadId, turnId }).catch(() => {});
+      setTimeout(() => settle({}), 5000).unref?.();
+    };
+    signal?.addEventListener?.("abort", stop, { once: true });
+    // 上限は codex にも渡す。合図が来ないときの保険に、少し長く待ってからやめる
+    const guard = setTimeout(() => settle({ timedOut: true }), timeoutMs + 30_000);
+    const started = Date.now();
+    try {
+      if (loadedHere) await nativeRpc.request("thread/resume", { threadId });
+      await nativeRpc.request("thread/shellCommand", { threadId, command, timeoutMs });
+      const { item, timedOut } = await done;
+      // 止めた分は exitCode -1 と "command aborted by user" で閉じる。終了コードにせず「止めました」とそれまでの出力にする
+      const aborted = userShellAborted(item) || (stopped && item?.exitCode === -1);
+      const text = item?.aggregatedOutput != null && !aborted ? String(item.aggregatedOutput) : output;
+      return { exitCode: Number.isInteger(item?.exitCode) && !aborted ? item.exitCode : null, output: text,
+        durationMs: Number.isFinite(item?.durationMs) && !aborted ? item.durationMs : Date.now() - started,
+        stopped: aborted || (stopped && !Number.isInteger(item?.exitCode)), timedOut: Boolean(timedOut) };
+    } finally {
+      clearTimeout(guard);
+      off();
+      if (itemId) userShellItems.delete(itemId);
+      signal?.removeEventListener?.("abort", stop);
+      if (loadedHere && !nativeRpc.threads.has(threadId)) await nativeRpc.request("thread/unsubscribe", { threadId }).catch(() => {});
+    }
   },
 
   // locale は会話の言語。タイトルもその言語で作らせる

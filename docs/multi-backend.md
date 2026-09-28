@@ -310,6 +310,23 @@ assistant の発言に `stopHookFollowUp: true` を付けてよい（2026-09-27�
 
 Claude の `getCompactions` は、区切りを transcript の `system:compact_boundary` の行（`compactMetadata` の trigger・preTokens・postTokens）から読む。SDK 0.3.258 の `getSessionMessages({ includeSystemMessages: true })` は system 行を `message: null` で返すため。transcript を読めないときだけ SDK の行から読む。
 
+#### シェルの行（入力欄の `!`、2026-09-28）
+
+入力欄の `!` で人が走らせるコマンド（[ADR 0054](adr/0054-shell-from-composer.md)、形は design-system.md「入力欄のシェルの形」）。承認モードは掛けず、送信待ち（outbox）にも送り直しの控え（receipts）にも積まない。管理は `core/shell-runs.mjs`。
+
+- 口: コマンド `runShell { sessionId, runId, command, cwd? }` → `{ runId, duplicate? }`（走り出したら返す。同じ `runId` は 2 度走らせない。`cwd` はまだ送っていない会話だけ使い、送信済みなら会話の作業ディレクトリ）、`stopShell { runId }` → `{ stopped }`
+- 出来事（全部の接続へ。一覧は変わらない）: `shell.start { runId, command, cwd, at, backend, mode }`・`shell.output { runId, stream: 'stdout'|'stderr', text }`・`shell.done { runId, exitCode, durationMs, truncated, timedOut, stopped, timeoutMs?, error?, stdout? }`（`stdout` はエージェントが走らせた分の出力全体）・`shell.handed { runIds }`（次の発言がエージェントに渡った）
+- `loadSession` は発言の末尾に、まだ渡していない行（`pending: true`）と走っている行（`running: true`）を `{ role:'user', kind:'shell', command, stdout, stderr, exitCode, runId }` で足す。履歴の `!` の行には、Pleiad が走らせたときの終了コードを付ける
+- バックエンドの宣言は `capabilities.shell`:
+
+| | 走らせる所 | 渡し方 | 履歴 |
+|---|---|---|---|
+| `'host'`（Claude・fake） | Pleiad がホストのシェル（`core/host-shell.mjs`。`AGENT_HOST_SHELL`、無ければ Windows は Git Bash → PowerShell、ほかは `$SHELL` → `/bin/sh`）。標準入力は閉じ、上限 10 分（`AGENT_HOST_SHELL_TIMEOUT_MS`）で木ごと止める。出力は stdout・stderr それぞれ 256KB まで | 結果を sessions.json の `shellPending` に貯め、次の人の発言のターンで `runTurn` の `shellAppends` に CLI の `!` と同じ 2 行（`<bash-input>`・`<bash-stdout>…<bash-stderr>`）を渡す。Claude は `shouldQuery: false` の user 行としてプロンプトの前に流す（返答を起こさずに transcript へ積み、プロンプトと合わせて渡る）。渡った合図（`onPromptDelivered`）で `shellPending` から外し、終了コードを `shellExits`（出力の鍵 → 終了コード、200 件まで）に控える | SDK は積んだ行を `\n` でつないだ 1 つの user 行として transcript に残す（CLI の `!` は 2 行。2026-09-28 に本物で確認）。`core/system-messages.mjs` がどちらも入力と出力の組ごとに `kind: 'shell'` の行にし（つないだ行の分岐点の uuid は最後の組だけ）、`shellExits` で終了コードを付ける |
+| `'native'`（Codex） | `backend.shell({ sessionId, command, cwd, timeoutMs, signal, onOutput })`。app-server の `thread/shellCommand { threadId, command, timeoutMs }`（応答は `{}`、サンドボックスの外）。スレッドが読み込まれていなければ `thread/resume` し、終わったら `thread/unsubscribe`。Codex は 1 回ごとに turn/started・completed で包み、Windows では PowerShell で走らせる。止めるのは item の turnId への `turn/interrupt`（item は `exitCode: -1`・`"command aborted by user"` で閉じるので、終了コードにせず `stopped` にする）。**ターンの間は走らせない**: Codex は `!` のターンの間に来た `turn/start` の発言を同じターンに入れ、モデルを呼ばずに閉じる（2026-09-28 に本物で確認）。そのため、ターン（始める準備の間も）が走っていれば `runShell` を断り（`SHELL_BUSY`）、`!` が走っていれば次のターンは終わるまで待ってから始める（`shellRuns.settled`） | Codex の会話に残るので何もしない。次の人の発言のターンが渡ったら `shell.handed` だけ出す | `source: userShell` の `commandExecution` を `kind: 'shell'`（`stdout` は `aggregatedOutput`、`stderr` は null、`exitCode`）にし、エージェントのツールのカードにしない（ターンの通知でも拾わない）。`command` はシェルに包んで POSIX 式にクォートした形（`"…\powershell.exe" -Command '…'`）なので、人が打った形に戻す。最後の人の発言より後の行は `pending` |
+| 無し（Antigravity） | 使えない（`runShell` は断る） | — | — |
+
+- 完了通知で再開するターン・圧縮のターン・走っているターンへの途中送信では渡さない。エージェントを切り替えたら（予約した設定の適用も）走っている分を止め、替えた先も `'host'` なら `shellPending` を次のターンで渡し、そうでなければ捨てる（`shellRuns.switched`）。予約で替わる先が `'host'` どうしでなければ `runShell` は断る。未送信の会話の削除・サーバーの終わりでも止める
+
 ### 2.4 sidecar の拡張
 
 `~/.agent-host/sessions.json` の Entry に足す: `backend`, `title`, `status`, `cwd`, `createdAt`, `lastModified`。

@@ -51,7 +51,8 @@ import { el, svgEl, icon, relTime, randomId } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
 import { savedEvent, savedTitle } from "./saved-text.mjs";
 import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE } from "./timeline.mjs";
-import { commandParts, sysFold, teammateNode } from "./system-messages.mjs";
+import { commandParts, sysFold, teammateNode, shellFailed, elapsedText as shellElapsed } from "./system-messages.mjs";
+import { createShellComposer } from "./shell-composer.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
 import { createReadCompletions } from "./unread.mjs";
@@ -662,17 +663,23 @@ function systemHistoryNode(m) {
  * 操作は「ここから分岐」だけ。`!` は「入力欄に写す」（走らせない）も。編集して再送信・再送信は付けない
  */
 function commandMsg(m) {
-  const node = el('div', 'm user cmd');
+  const node = el('div', 'm user cmd' + (shellFailed(m) ? ' failed' : ''));
   node.dataset.role = 'user';
   if (m.at) node.dataset.at = m.at;
   const who = whoLine(t('chat.message.you'), m.at);
-  if (m.kind === 'shell') who.firstChild.append(' · ', el('span', 'handed', t('chat.system.handedTo', { agent: labelOf(m.backend ?? activeBackendId()) || 'AI' })));
-  node.append(who, ...commandParts(m));
+  // 入力欄の `!`（ADR 0054）: 渡す前は「次の発言で {agent} に渡す」、渡した後は「{agent} に渡した」
+  const agent = labelOf(m.backend ?? activeBackendId()) || 'AI';
+  if (m.kind === 'shell') who.firstChild.append(' · ', el('span', 'handed', m.pending ? t('chat.shell.pending', { agent }) : t('chat.system.handedTo', { agent })));
+  const parts = commandParts(m, { onStop: m.runId ? () => cmd('stopShell', { runId: m.runId }).catch(() => {}) : null });
+  // 0 以外の終了コードが分かるときだけ、行の面を一段上げる（ツールの失敗と同じ語彙。design-system「システム側のメッセージ」）
+  if (shellFailed(m)) { const box = el('div', 'cmd-box'); box.append(...parts); node.append(who, box); }
+  else node.append(who, ...parts);
+  if (m.runId) { node.dataset.runId = m.runId; shellRows.set(m.runId, { m, node }); if (m.running) syncShellTicker(); }
   const actions = el('div', 'message-actions');
-  if (m.kind === 'shell' && m.command) {
+  if (m.kind === 'shell' && m.command && !m.running) {
     const copy = el('button', 'btn copybtn', t('chat.system.copyToComposer'));
     copy.type = 'button';
-    copy.onclick = () => copyToComposer(`! ${m.command}`);
+    copy.onclick = () => copyShellToComposer(m.command);
     actions.append(copy);
   }
   if (m.uuid) node.dataset.uuid = m.uuid;
@@ -684,6 +691,134 @@ function commandMsg(m) {
   }
   if (actions.childElementCount) node.append(actions);
   return node;
+}
+
+/**
+ * `!` の行の「入力欄に写す」（走らせない）。空の欄で走らせられる会話なら、シェルの形でコマンドを入れる（web/shell-composer.mjs）。
+ * 書きかけがある・使えない会話では、`! コマンド` の文として後ろに足す
+ */
+function copyShellToComposer(command) {
+  if (!shellComposer.copy(command)) return copyToComposer(`! ${command}`);
+  const prompt = $('prompt');
+  prompt.dispatchEvent(new Event('input', { bubbles: true }));
+  prompt.focus();
+}
+
+// ---------------------------------------------------------------- 入力欄の `!`（シェルの行。ADR 0054）
+// 走らせた行は会話にすぐ積み、出力を流しながら出す。行は runId で引く（履歴の行も commandMsg が登録する）
+const shellRows = new Map();   // runId -> { m, node }
+const shellPaints = new Map(); // runId -> requestAnimationFrame の番号（出力が速いときは 1 フレームにまとめて描き直す）
+let shellTicker = null;
+
+/** 走っている行の経過を 1 秒ごとに書き換える。走っている行が無くなったら止める */
+function syncShellTicker() {
+  const running = () => [...shellRows.values()].filter(e => e.m.running && e.node.isConnected);
+  if (shellTicker || !running().length) return;
+  shellTicker = setInterval(() => {
+    const live = running();
+    if (!live.length) { clearInterval(shellTicker); shellTicker = null; return; }
+    for (const { m, node } of live) {
+      const span = node.querySelector('.cmd-res.running .elapsed');
+      if (span) span.textContent = t("chat.shell.running", { elapsed: shellElapsed(Date.now() - Date.parse(m.at ?? 0)) });
+    }
+  }, 1000);
+}
+
+/** 行を描き直す。開閉と、出力の末尾に付いていたかは引き継ぐ */
+function repaintShellRow(runId) {
+  const entry = shellRows.get(runId);
+  if (!entry?.node.isConnected) return;
+  const open = {}, stuck = {};
+  for (const d of entry.node.querySelectorAll('details[data-stream]')) {
+    open[d.dataset.stream] = d.open;
+    const pre = d.querySelector('pre');
+    stuck[d.dataset.stream] = !pre || pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
+  }
+  entry.m.openStreams = open;
+  const stick = atBottom();
+  const old = entry.node;
+  const fresh = commandMsg(entry.m);
+  old.replaceWith(fresh);
+  for (const d of fresh.querySelectorAll('details[data-stream]')) {
+    const pre = d.querySelector('pre');
+    if (pre && stuck[d.dataset.stream] !== false) pre.scrollTop = pre.scrollHeight;
+  }
+  if (stick) log.scrollTop = log.scrollHeight;
+}
+function scheduleShellRow(runId) {
+  if (shellPaints.has(runId)) return;
+  shellPaints.set(runId, requestAnimationFrame(() => { shellPaints.delete(runId); repaintShellRow(runId); }));
+}
+
+/** shell.* の出来事（core/shell-runs.mjs）。開いている会話の分だけ描く */
+function onShellEvent(ev) {
+  if (ev.sessionId !== state.current) return;
+  if (ev.type === 'shell.start') {
+    if (shellRows.get(ev.runId)?.node.isConnected) return;
+    const m = { role: 'user', kind: 'shell', text: `! ${ev.command}`, command: ev.command, stdout: '', stderr: '', at: ev.at, backend: ev.backend,
+      runId: ev.runId, pending: true, running: true, live: true };
+    append(commandMsg(m), `shell:${ev.runId}`);
+    return;
+  }
+  if (ev.type === 'shell.handed') {
+    for (const runId of ev.runIds ?? []) {
+      const entry = shellRows.get(runId);
+      if (entry) { entry.m.pending = false; repaintShellRow(runId); }
+    }
+    return;
+  }
+  const entry = shellRows.get(ev.runId);
+  if (!entry) return;
+  const m = entry.m;
+  if (ev.type === 'shell.output') {
+    m[ev.stream] = (m[ev.stream] || '') + ev.text;
+    return scheduleShellRow(ev.runId);
+  }
+  if (ev.type === 'shell.done') {
+    Object.assign(m, { running: false, exitCode: ev.exitCode ?? null, stopped: ev.stopped, timedOut: ev.timedOut, truncated: ev.truncated,
+      error: ev.error ?? null, ...(ev.timeoutMs ? { timeoutMs: ev.timeoutMs } : {}), ...(typeof ev.stdout === 'string' ? { stdout: ev.stdout } : {}) });
+    cancelAnimationFrame(shellPaints.get(ev.runId));
+    shellPaints.delete(ev.runId);
+    repaintShellRow(ev.runId);
+  }
+}
+
+/** 空の欄の先頭で `!` を打ったときに、いまの会話で走らせられるか */
+function shellAvailability() {
+  const row = state.sessions.find(s => s.id === state.current);
+  // 次の送信でエージェントが替わる予約があれば、渡す先（替えた先）で決める。ホストで走らせる形どうしでなければ渡せない
+  const current = activeBackendId();
+  const backend = row?.nextSettings?.backend ?? current;
+  const caps = capsOf(backend);
+  if (!caps.shell || (backend !== current && !(caps.shell === 'host' && capsOf(current).shell === 'host'))) return { ok: false, text: t('chat.shell.unavailable', { agent: labelOf(backend) || 'AI' }) };
+  // Codex はスレッドができてから（最初の発言の後）
+  if (caps.shell === 'native' && (!row || row.unsent || state.current === freshSessionId)) return { ok: false, text: t('chat.shell.notStarted') };
+  return { ok: true };
+}
+
+/** シェルの形の欄で Ctrl+Enter / ▶。欄はすぐ空に戻し、行は shell.start で会話に積む。送信待ちにも送り直しの控えにも積まない */
+async function runShellFromComposer() {
+  if (connStatus.blocksSend() || retiredHere()) return;
+  const command = $('prompt').value;
+  if (!command.trim()) return;
+  if (!state.current || state.current === freshSessionId) {
+    const created = await (creatingSession ?? startNew());
+    if (!created || state.current !== created || state.current === freshSessionId) return;
+  }
+  const sessionId = state.current;
+  const runId = randomId();
+  $('prompt').value = '';
+  shellComposer.exit();
+  fitPrompt();
+  saveDraft().catch(() => {});
+  try {
+    await cmd('runShell', { sessionId, runId, command, cwd: state.cwd.trim() || undefined });
+    $('settingsError').textContent = '';
+  } catch (e) {
+    // 走らなかった。書いたコマンドを欄に戻す（送り直しはしない。もう一度押すかは人が決める）
+    if (state.current === sessionId && !$('prompt').value) { shellComposer.enter(); $('prompt').value = command; fitPrompt(); }
+    $('settingsError').textContent = t('chat.shell.runFailed', { error: e.message });
+  }
 }
 
 /** 入力欄に字を入れる（送らない）。書きかけがあれば改行して後ろに足す */
@@ -1335,6 +1470,7 @@ function syncOutboxRows(messages) {
 }
 
 function onEvent(ev, replay = false) {
+  if (ev.type?.startsWith('shell.')) return onShellEvent(ev);
   if (ev.type === 'completionReady') {
     completionNotifications.completed(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
     return;
@@ -1470,11 +1606,11 @@ function onEvent(ev, replay = false) {
       renderAuth();
       break;
     case "nextSettings":
-      return refresh();
+      return refresh().then(() => shellComposer.sync());
     case "backend":
-      if (ev.applied) return refresh();
+      if (ev.applied) return refresh().then(() => shellComposer.sync());
       sys(html.t("chat.sys.agentChanged", { agent: labelOf(ev.backend) }));
-      return refresh();
+      return refresh().then(() => shellComposer.sync());
     case "text.delta":
       return appendText(String(ev.text ?? ""));
 
@@ -2312,6 +2448,7 @@ const slashSkills = setupSlashSkills({
   cwd: () => state.cwd.trim() || state.draft.cwd || "",
   canCompact: () => canCompactHere(),
   load: (cwd) => cmd("slashSkills", { cwd: cwd || undefined }),
+  off: () => shellComposer.active,
 });
 
 // ---------------------------------------------------------------- セッション一覧（web/side.mjs）
@@ -3712,7 +3849,8 @@ function saveDraft() {
   const id = draftKey();
   // 開いている途中の欄は前の下書きの写しなので保存しない。作ったばかりの会話（freshSessionId）は欄が正本なので保存する
   if (id && state.loadingSession === id && id !== freshSessionId) return Promise.resolve();
-  const value = { text: $("prompt").value, attached: state.attached.slice(), dirty: true };
+  // シェルの形の欄は `!` を頭に戻して残す（復元ではシェルの形に入らない。web/shell-composer.mjs）
+  const value = { text: shellComposer.draftText(), attached: state.attached.slice(), dirty: true };
   return persistDraft(id, value);
 }
 function persistDraft(id, value) {
@@ -3757,6 +3895,7 @@ function setDraftNote(text, st) {
 }
 function loadDraft() {
   const d = state.drafts.get(draftKey());
+  shellComposer.reset();
   $("prompt").value = typeof d?.text === "string" ? d.text : "";
   fitPrompt();
   state.attached = Array.isArray(d?.attached) ? d.attached.slice() : [];
@@ -4549,7 +4688,8 @@ function paintContextLine() {
   thread.querySelector('.mw[data-key="context"]')?.remove();
   const report = state.contextInfo?.report;
   if (!report) return;
-  const anchor = thread.querySelector('.mw:has(.m[data-role="user"])');
+  // 最初の人の発言の下（コマンド・`!` の行（.cmd）ではなく）
+  const anchor = thread.querySelector('.mw:has(.m[data-role="user"]:not(.cmd))');
   if (!anchor) return;
   const m = el("button", "ctx-chip");
   m.type = 'button';
@@ -5049,7 +5189,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   const added = paintHistory(keepUpTo ?? 0);
   paintCompactions();
   if (state.initialMessageId) {
-    const lastUser = [...thread.querySelectorAll('.mw:has(.m.user)')].at(-1);
+    const lastUser = [...thread.querySelectorAll('.mw:has(.m.user:not(.cmd))')].at(-1);
     if (lastUser) lastUser.dataset.messageId = state.initialMessageId;
   }
   syncOutboxRows(outboxes.get(id) ?? []);
@@ -5286,6 +5426,9 @@ async function clearSentDraft(id, text, attachments) {
   await persistDraft(id, { text: '', attached: [], dirty: true });
 }
 async function submit() {
+  // 入力欄の `!`: シェルの形なら走らせる。使えない会話の `!` は送らずに理由の一行を光らせる（文として送るのは「文として送る」だけ）
+  if (shellComposer.active) return runShellFromComposer();
+  if (shellComposer.blocked) return shellComposer.flash();
   if ($('prompt').value.trim() || state.attached.length) completionNotifications.requestPermission();
   // 設定を保存できず止めている間は送らない。理由の一行へフォーカスを移す（web/composer-wait.mjs の hold）
   if (composerWait.held) { composerWait.point(); return; }
@@ -5453,9 +5596,18 @@ function connect() {
 
 // ---------------------------------------------------------------- 操作
 
+const shellComposer = createShellComposer({ box: $('cbox'), prompt: $('prompt'), head: $('shellHead'), send: $('send'), t,
+  availability: shellAvailability,
+  where: () => ({ cwd: state.cwd.trim() || state.sessions.find(s => s.id === state.current)?.cwd || '', host: remoteInfo(window.plyRemote)?.host ?? '' }),
+  touch: () => matchMedia('(pointer:coarse)').matches,
+  onAsText: () => submit(),
+  onChange: () => { fitPrompt(); controls.fit(); } });
+$('prompt').addEventListener('beforeinput', e => shellComposer.beforeinput(e));
+$('prompt').addEventListener('input', () => shellComposer.input());
 $("composer").onsubmit = (e) => { e.preventDefault(); submit(); };
 $("prompt").onkeydown = (e) => {
   if (isComposingKey(e)) return;
+  if (shellComposer.keydown(e)) return;
   // 入力欄の「/」の候補が開いている間は候補の操作を先に取る（Ctrl+Enter は送信のまま）
   if (slashSkills.keydown(e)) return;
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); }

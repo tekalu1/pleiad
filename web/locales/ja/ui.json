@@ -1108,6 +1108,26 @@
       "teammate": "別のセッションからのメッセージ",
       "teammateFrom": "別のセッションからのメッセージ（{{from}}）"
     },
+    "shell": {
+      "label": "シェル",
+      "placeholder": "実行するコマンド（Ctrl+Enter）",
+      "placeholderTouch": "実行するコマンド",
+      "run": "実行",
+      "asText": "文として送る",
+      "asTextTitle": "! で始まる文としてエージェントに送る",
+      "unavailable": "{{agent}} の会話ではシェルを実行できません",
+      "notStarted": "最初の発言を送ってからシェルを実行できます",
+      "pending": "次の発言で {{agent}} に渡す",
+      "running": "実行中 · {{elapsed}}",
+      "stop": "止める",
+      "stopped": "止めました",
+      "timedOut": "{{minutes}} 分で止めました",
+      "failed": "✕ 失敗 · exit {{code}}",
+      "exit": "exit {{code}}",
+      "truncated": "出力が長いので途中から省きました",
+      "runFailed": "実行できませんでした: {{error}}",
+      "where": "{{cwd}} で実行"
+    },
     "sys": {
       "agentChanged": "エージェントを {{agent}} に変更しました。次の送信から会話を引き継ぎます。",
       "taskResumed": "Pleiad タスクの結果を受け取って再開しました",
