@@ -23,6 +23,8 @@ export const READY = "ready";   // { protocolVersion, version, homeDir, resumedT
 export const EVENT = "event";
 export const RESPONSE = "response";
 export const ERROR = "error";
+// PC の内蔵ブラウザーの画面（browserScreencast で見ている接続だけへ）。{ type: frame|state|ended, sessionId, seq?, data?（JPEG の base64）, metadata?, state?, reason? }
+export const SCREENCAST = "screencast";
 
 // client -> server
 export const COMMAND = "command";
@@ -168,11 +170,13 @@ export const COMMANDS = new Set([
   "setStatusIcon",   // { status, icon }。空なら「なし」（既定）に戻す
   "createStatus",    // { status }。空のグループを作る（statuses.json にある限り存在する）
   "lineage",         // { sessionId } -> 同じ根を持つセッション群（分岐の筋を描く材料）
-  // リモートの画面から PC の内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートでの表示」）。リモートの接続からだけ使える
-  'browserScreencast',       // { sessionId, url?, width?, quality? } -> { tabId }。始める。タブが無ければ作る
-  'browserScreencastStop',   // { sessionId } -> {}。止める
-  'browserScreencastInput',  // { sessionId, input: { type, ... } } -> {}。入力を送る。エージェント操作中は断る
-  'browserScreencastNav',    // { sessionId, action: back|forward|reload|navigate, url? } -> {}。移動
+  // リモートの画面から PC の内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートから見る」）。リモートの接続からだけ使える（core/browser-screencast.mjs）
+  'browserScreencast',       // { sessionId, url? | visualization?: { id?, at? }, width, height, scale, quality: auto|low } -> { tabId, state }。見始める（url があれば新しいタブ）
+  'browserScreencastStop',   // { sessionId } -> {}。見るのをやめる（見る端末がいなくなれば止める）
+  'browserScreencastAck',    // { sessionId, seq } -> {}。そのフレームを描き終えた（次のフレームを許す）
+  'browserScreencastInput',  // { sessionId, input: { type: tap|scroll|text|key, x?, y?, dx?, dy?, text?, key? } } -> {}。エージェントが操作中は断る（code: agent-active）
+  'browserScreencastNav',    // { sessionId, action: back|forward|reload|stop|open, url? } -> {}
+  'browserScreencastAgent',  // { sessionId, action: stop|takeOver } -> {}。エージェントの接続を止める・引き継ぐ
 ]);
 
 // event.type の一覧（server -> client の EVENT ペイロード）。

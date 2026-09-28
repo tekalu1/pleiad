@@ -235,6 +235,8 @@ const cases = [
   await import("./unit/mobile-shell.mjs"),
   // リモートでリンクを押したときの行き先（localhost の知らせ・写しはアプリの中・Web は端末のブラウザー）
   await import("./unit/remote-links.mjs"),
+  // リモートから PC の内蔵ブラウザーを見る: フレームの間引き・止める条件・ローカルとエージェント操作中の断り・入力の変換・シートの出し分け
+  await import("./unit/remote-browser-view.mjs"),
 ];
 
 const selected = pick(cases, process.argv.slice(2));

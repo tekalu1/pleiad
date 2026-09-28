@@ -64,6 +64,9 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   let nextId = 1;
   const tabListeners = new Set();
   const agents = new Map();
+  const agentListeners = new Set();
+  // リモートの端末が見ているタブ（desktop/browser-screencast.cjs）。窓に載っていないと描かれないので、窓の外に 1px で載せておく
+  const pinned = new Set(), parked = new Set();
   let navigation = null;
   const ses = session.fromPartition(PARTITION);
   setupSession(ses);
@@ -109,6 +112,25 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   /** 今のタブの View を窓に載せる・外す。見せるのは、画面が表示中と言い、枠があり、凍らせていない間だけ */
   function place() {
     if (window.isDestroyed() || window.webContents.isDestroyed?.()) return;
+    placeCurrent();
+    park();
+  }
+  function park() {
+    const keep = new Set();
+    for (const id of pinned) {
+      const tab = tabs.get(id);
+      if (!tab || tab.view === attached || tab.view.webContents.isDestroyed()) continue;
+      keep.add(tab.view);
+      tab.view.setBounds({ x: -4000, y: 0, width: 1, height: 1 });
+      if (!parked.has(tab.view)) { try { window.contentView.addChildView(tab.view); parked.add(tab.view); } catch {} }
+    }
+    for (const view of [...parked]) {
+      if (keep.has(view)) continue;
+      parked.delete(view);
+      if (view !== attached) { try { window.contentView.removeChildView(view); } catch {} }
+    }
+  }
+  function placeCurrent() {
     const tab = currentTab();
     const want = visible && !frozen && rect && tab && !tab.blank && !tab.view.webContents.isDestroyed() ? tab.view : null;
     if (attached && attached !== want) {
@@ -197,6 +219,8 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     const tab = tabs.get(id);
     if (!tab) return;
     if (attached === tab.view) { try { window.contentView.removeChildView(tab.view); } catch {} attached = null; }
+    if (parked.delete(tab.view)) { try { window.contentView.removeChildView(tab.view); } catch {} }
+    pinned.delete(id);
     tabs.delete(id);
     const index = order.indexOf(id);
     order = order.filter(x => x !== id);
@@ -330,7 +354,18 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     closeFor: id => removeTab(id),
     rebindSession: (from, to) => { for (const tab of tabs.values()) if (tab.sessionId === from) tab.sessionId = to; if (agents.has(from)) { const active = agents.get(from); agents.delete(from); agents.set(to, { ...active, sessionId: to }); } push(); },
     onTabsChanged: listener => { tabListeners.add(listener); return () => tabListeners.delete(listener); },
-    setAgent: (sessionId, tabId) => { if (tabId) agents.set(sessionId, { sessionId, tabId }); else agents.delete(sessionId); if (tabId && context.sessionId === sessionId) { current = tabId; place(); } push(); },
+    setAgent: (sessionId, tabId) => {
+      const before = agents.get(sessionId)?.tabId ?? null;
+      if (tabId) agents.set(sessionId, { sessionId, tabId }); else agents.delete(sessionId);
+      if (tabId && context.sessionId === sessionId) { current = tabId; place(); }
+      push();
+      if (before !== (tabId ?? null)) for (const listener of agentListeners) listener(sessionId);
+    },
+    // ---- リモートの端末から見る（desktop/browser-screencast.cjs）
+    agentFor: sessionId => agents.get(sessionId) ?? null,
+    onAgentChanged: listener => { agentListeners.add(listener); return () => agentListeners.delete(listener); },
+    pin: (id, on) => { if (on && tabs.has(id)) pinned.add(id); else pinned.delete(id); place(); },
+    human: id => navigation?.human({ id }, true),
     session: ses,
   };
 }

@@ -1,0 +1,54 @@
+/* ホストの画面ではない端末で、ホストの内蔵ブラウザーを見る（docs/design-system.md「リンクの開き先のシート」「PC のブラウザーを見る画面」） */
+
+/* ---- リンクの開き先のシート（web/link-sheet.mjs） */
+.link-sheet-wrap{position:fixed;inset:0;z-index:58}
+.link-sheet-wrap[hidden]{display:none}
+.link-sheet-veil{position:absolute;inset:0;background:var(--surface-veil)}
+.link-sheet{position:absolute;left:0;right:0;bottom:0;max-width:560px;margin:0 auto;background:var(--surface-paper);border-radius:20px 20px 0 0;
+  padding:10px 16px calc(24px + env(safe-area-inset-bottom));box-shadow:var(--shadow)}
+.link-sheet-handle{width:36px;height:4px;border-radius:2px;background:var(--line-strong);margin:0 auto 10px}
+.link-sheet-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.link-sheet-head h3{margin:0;font-size:15px}
+.link-sheet-url{font-size:12px;color:var(--ink-weak);overflow-wrap:anywhere;margin:4px 0 16px}
+.link-sheet-note{margin:0 0 4px}
+.link-sheet-note[hidden]{display:none}
+.link-sheet-dest{display:flex;align-items:center;width:100%;gap:12px;padding:14px 16px;border-radius:14px;background:var(--surface-1);margin-top:8px;
+  font-size:14px;text-align:left;white-space:normal;color:var(--ink)}
+.link-sheet-dest[hidden]{display:none}
+.link-sheet-dest:hover{background:var(--surface-hover)}
+.link-sheet-dest .i{width:20px;height:20px;flex:none}
+.link-sheet-dest small{display:block;font-size:12px;color:var(--ink-weak);margin-top:2px}
+.link-sheet-dest .grow{flex:1}
+
+/* ---- PC のブラウザーを見る画面（web/remote-browser.mjs）。全面に重ねる */
+.rb{position:fixed;inset:0;z-index:55;display:flex;flex-direction:column;background:var(--surface-paper);
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.rb[hidden]{display:none}
+body.rb-open{overflow:hidden}
+.rb-head{display:flex;align-items:center;gap:8px;padding:8px 12px 4px}
+.rb-titles{flex:1;min-width:0;line-height:1.3}
+.rb-titles strong{display:block;font-size:15px}
+.rb-host{font-size:11px;color:var(--ink-weak)}
+.rb-bar{display:flex;align-items:center;gap:4px;padding:4px 8px}
+.rb-address,.rb-address-input{flex:1;min-width:0;height:36px;border-radius:var(--r-pill);background:var(--surface-1);padding:0 12px;font-size:13px}
+.rb-address{display:flex;align-items:center;gap:6px;color:var(--ink);text-align:left}
+.rb-address[hidden],.rb-address-input[hidden]{display:none}
+.rb-address-mark{display:grid;place-items:center;flex:none;color:var(--ink-weak)}
+.rb-address-mark svg{width:14px;height:14px}
+.rb-address-text{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.rb-address-input{border:0;color:var(--ink);font-size:16px;outline:2px solid var(--line-blue);outline-offset:-1px}
+.rb-agent{display:flex;align-items:center;gap:8px;padding:4px 12px 8px;font-size:13px}
+.rb-agent[hidden]{display:none}
+.rb-agent-text{flex:1;display:flex;align-items:center;gap:6px;min-width:0}
+.rb-agent[data-done] .btn{display:none}
+.rb-screen{position:relative;flex:1;min-height:0;background:var(--surface-1);touch-action:none;overflow:hidden;user-select:none;-webkit-user-select:none}
+.rb-frame{display:block;width:100%;height:100%;object-fit:contain;pointer-events:none}
+.rb-tools{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 12px;font-size:12px}
+.rb-tool-row{display:flex;gap:4px}
+.rb-tool{font-size:12px;padding:0 10px;min-height:32px}
+.rb-status{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rb-text-hint{padding:0 12px 4px}
+.rb-text-hint[hidden]{display:none}
+.rb-text{display:flex;gap:8px;padding:8px 12px;background:var(--surface-1)}
+.rb-text[hidden]{display:none}
+.rb-text input{flex:1;min-width:0;background:var(--surface-paper);padding:10px 14px;border-radius:var(--r-pill);font-size:16px;border:0;color:var(--ink)}

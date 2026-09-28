@@ -1,109 +1,87 @@
-// リンクの開き先の選択シート（docs/inapp-browser.md「リモートでの表示」、モック E）。
-// リモートの画面でリンクを押したとき、「この端末で開く / PC のブラウザーで見る」を選ぶ下からのシート。
-// localhost と PC のファイルは「PC のブラウザーで見る」だけ。ホストの画面（デスクトップのローカルの窓）では出さない。
+// リンクの開き先のシート（docs/inapp-browser.md「リモートから見る」、docs/design-system.md「リンクの開き先のシート」）。
+// ホストの画面ではない端末（リモートの窓・モバイル版・LAN のブラウザー）で、会話のリンク・プレビューのリンク・可視化の
+// 「ブラウザーで開く」を押したとき、下からのシートで「この端末で開く / PC のブラウザーで見る」を選ぶ。
+//   - localhost と PC のファイル（可視化の写し）は「PC のブラウザーで見る」だけ（端末で開くと端末自身を指す）
+//   - ホストに内蔵ブラウザーが無い（デスクトップ版でない npm start）ならシートを出さない（今までどおり端末で開くか、知らせる）
+//   - ホストの画面（state.osActions）ではシートを出さない
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { isHostOnlyUrl } from './host-only-links.mjs';
 
 const svg = d => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 const ICON_PHONE = svg('<path d="M7 2h10v20H7Z"/><path d="M11 18h2"/>');
-const ICON_SCREEN = svg('<path d="M3 4h18v13H3Z"/><path d="M8 21h8m-4-4v4"/>');
+const ICON_SCREEN = svg('<path d="M3 4h18v12H3z"/><path d="M8 20h8M12 16v4"/>');
 const ICON_CLOSE = svg('<path d="m6 6 12 12M18 6 6 18"/>');
 const ICON_CHEVRON = svg('<path d="m9 5 7 7-7 7"/>');
 
 /**
- * リンクの開き先のシートを作る。
- * @param {object} options
- *   hostName: ホストの名前（例: desktop-home）
- *   screencastAvailable: PC の内蔵ブラウザーが使えるか（デスクトップ版であるか）
- *   onDevice: (url) => void — この端末で開く
- *   onPc: (url) => void — PC のブラウザーで見る
- * @returns {{ show(url, pageOrigin), hide(), element }}
+ * 出す選択肢。null ならシートを出さない（呼び出し側が今までどおりに扱う）。
+ * kind: 'url'（http・https のリンク）・'snapshot'（可視化の写し。端末でも開ける）・'file'（PC のファイル。端末では開けない）
  */
-export function createLinkSheet({ hostName = '', screencastAvailable = false, onDevice, onPc } = {}) {
+export function linkChoices({ url, kind = 'url', pageOrigin, hostScreen = false, pcBrowser = false }) {
+  if (hostScreen || !pcBrowser) return null;
+  const pcOnly = kind === 'file' || (kind === 'url' && isHostOnlyUrl(url, pageOrigin));
+  return { device: !pcOnly, pc: true, pcOnly };
+}
+
+let sheet = null;
+function build() {
+  const wrap = el('div', 'link-sheet-wrap'); wrap.hidden = true;
   const veil = el('div', 'link-sheet-veil');
-  const sheet = el('section', 'link-sheet');
-  sheet.setAttribute('role', 'dialog');
-  sheet.setAttribute('aria-label', t('timeline.link.openSheet'));
-
-  const handle = el('div', 'link-sheet-handle');
-  const header = el('div', 'link-sheet-header');
-  const title = el('h3', null, t('timeline.link.openSheet'));
-  const closeBtn = el('button', 'btn btn-icon');
-  closeBtn.type = 'button';
-  closeBtn.innerHTML = ICON_CLOSE;
-  closeBtn.title = t('pending.cancel');
-  closeBtn.setAttribute('aria-label', t('pending.cancel'));
-  header.append(title, closeBtn);
-
-  const urlLine = el('div', 'link-sheet-url');
-  const note = el('p', 'link-sheet-note weak small');
-
-  const deviceBtn = el('button', 'link-sheet-dest');
-  deviceBtn.type = 'button';
-  deviceBtn.innerHTML = `${ICON_PHONE}<span>${t('timeline.link.openOnDevice')}<small>${t('timeline.link.openOnDeviceSub')}</small></span>`;
-
-  const pcBtn = el('button', 'link-sheet-dest');
-  pcBtn.type = 'button';
-  pcBtn.innerHTML = `${ICON_SCREEN}<span>${t('timeline.link.openOnPc')}<small>${t('timeline.link.openOnPcSub', { host: hostName || 'PC' })}</small></span><span class="grow"></span>${ICON_CHEVRON}`;
-
-  sheet.append(handle, header, urlLine, note, deviceBtn, pcBtn);
-
-  const wrapper = el('div', 'link-sheet-wrap');
-  wrapper.hidden = true;
-  wrapper.append(veil, sheet);
-
-  let currentUrl = '';
-
-  function show(url, pageOrigin) {
-    currentUrl = url;
-    urlLine.textContent = url;
-    const hostOnly = isHostOnlyUrl(url, pageOrigin);
-
-    // localhost / PC のファイルでは「この端末で開く」を出さない
-    deviceBtn.hidden = hostOnly;
-    note.textContent = hostOnly ? t('timeline.link.pcOnly') : '';
-    note.hidden = !hostOnly;
-
-    // PC のブラウザーが使えないなら選択肢を出さない
-    pcBtn.hidden = !screencastAvailable;
-
-    wrapper.hidden = false;
-    // Focus trap
-    requestAnimationFrame(() => {
-      if (!hostOnly && !deviceBtn.hidden) deviceBtn.focus();
-      else if (!pcBtn.hidden) pcBtn.focus();
-      else closeBtn.focus();
-    });
-  }
-
-  function hide() {
-    wrapper.hidden = true;
-    currentUrl = '';
-  }
-
-  closeBtn.onclick = hide;
-  veil.onclick = hide;
-  deviceBtn.onclick = () => {
-    hide();
-    onDevice?.(currentUrl);
+  const box = el('section', 'link-sheet');
+  box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true');
+  const title = el('h3', null, t('timeline.link.openSheet')); title.id = 'linkSheetTitle';
+  box.setAttribute('aria-labelledby', title.id);
+  const close = el('button', 'btn btn-icon'); close.type = 'button';
+  close.innerHTML = ICON_CLOSE; close.title = t('timeline.link.close'); close.setAttribute('aria-label', close.title);
+  const head = el('div', 'link-sheet-head'); head.append(title, close);
+  const url = el('div', 'link-sheet-url mono');
+  const note = el('p', 'link-sheet-note small weak', t('timeline.link.pcOnly'));
+  const destination = (icon, label, sub, chevron) => {
+    const b = el('button', 'link-sheet-dest'); b.type = 'button';
+    const text = el('span', 'link-sheet-dest-text', label);
+    const small = el('small', null, sub); text.append(small);
+    b.innerHTML = icon; b.append(text);
+    if (chevron) { b.append(el('span', 'grow')); b.insertAdjacentHTML('beforeend', ICON_CHEVRON); }
+    return { b, small };
   };
-  pcBtn.onclick = () => {
-    hide();
-    onPc?.(currentUrl);
+  const device = destination(ICON_PHONE, t('timeline.link.openOnDevice'), t('timeline.link.openOnDeviceSub'));
+  const pc = destination(ICON_SCREEN, t('timeline.link.openOnPc'), '', true);
+  pc.small.classList.add('mono');
+  box.append(el('div', 'link-sheet-handle'), head, url, note, device.b, pc.b);
+  wrap.append(veil, box);
+  document.body.append(wrap);
+  let current = null, returnFocus = null;
+  const hide = () => {
+    if (wrap.hidden) return;
+    wrap.hidden = true; current = null;
+    returnFocus?.focus?.({ preventScroll: true }); returnFocus = null;
   };
-
-  // Escape で閉じる
-  wrapper.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { event.stopPropagation(); hide(); }
-  });
-
+  const pick = which => { const action = current?.[which]; hide(); action?.(); };
+  close.onclick = hide; veil.onclick = hide;
+  device.b.onclick = () => pick('onDevice');
+  pc.b.onclick = () => pick('onPc');
+  wrap.addEventListener('keydown', event => { if (event.key === 'Escape') { event.stopPropagation(); hide(); } });
   return {
-    show,
+    wrap,
+    show({ label, choices, hostName, onDevice, onPc }) {
+      current = { onDevice, onPc };
+      returnFocus = document.activeElement;
+      url.textContent = label;
+      device.b.hidden = !choices.device;
+      note.hidden = !choices.pcOnly;
+      pc.small.textContent = hostName || '';
+      pc.small.hidden = !hostName;
+      wrap.hidden = false;
+      (choices.device ? device.b : pc.b).focus({ preventScroll: true });
+    },
     hide,
-    get visible() { return !wrapper.hidden; },
-    setHostName(name) { hostName = name; pcBtn.querySelector('small').textContent = t('timeline.link.openOnPcSub', { host: name || 'PC' }); },
-    setScreencastAvailable(v) { screencastAvailable = v; },
-    element: wrapper,
   };
 }
+
+/** シートを出す。choices は linkChoices の戻り値 */
+export function showLinkSheet(options) {
+  sheet ??= build();
+  sheet.show(options);
+}
+export function hideLinkSheet() { sheet?.hide(); }

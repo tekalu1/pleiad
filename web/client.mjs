@@ -7,6 +7,8 @@ import { configurePreviewConfirmation, refreshPreviewConfirmation } from './prev
 import { configureLinkOpen } from './link-open.mjs';
 import { download, notify } from './file-actions.mjs';
 import { watchHostOnlyLinks } from './host-only-links.mjs';
+import { linkChoices, showLinkSheet } from './link-sheet.mjs';
+import { createRemoteBrowser } from './remote-browser.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 setupCodeCopy();
@@ -3750,8 +3752,20 @@ $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() 
 const browserPanel = browserPanelAvailable()
   ? createBrowserPanel({ showMenu: (x, y, items, title) => showMenu(x, y, items, title), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()) })
   : null;
+// ホストの画面ではない端末から、ホストの内蔵ブラウザーを見る（web/remote-browser.mjs）。リンクを押したら開き先を選ぶ（web/link-sheet.mjs）
+const remoteBrowser = createRemoteBrowser({ cmd: (command, args) => cmd(command, args), getSessionId: () => state.current ?? null,
+  getAgentName: () => labelOf(activeBackendId()), getHostName: () => state.hostCaps?.hostName ?? '' });
+/** シートを出したら true。ホストの画面・内蔵ブラウザーの無いホストでは出さない（呼び出し側が今までどおりに開く） */
+function chooseRemote({ url = '', kind = 'url', label = url, openHere = () => {}, target = { url } }) {
+  const choices = linkChoices({ url, kind, pageOrigin: location.origin, hostScreen: state.osActions === true, pcBrowser: state.hostCaps?.pcBrowser === true });
+  if (!choices) return false;
+  showLinkSheet({ label, choices, hostName: state.hostCaps?.hostName ?? '', onDevice: openHere, onPc: () => remoteBrowser.open(target) });
+  return true;
+}
 const filePreview = setupFilePreview({
   browser: browserPanel,
+  chooseSnapshot: (query, openHere) => chooseRemote({ kind: 'snapshot', label: t('filePreview.visual.title'), openHere,
+    target: { visualization: { sessionId: query.sessionId, id: query.id, at: query.at } } }),
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   getContext: anchor => ({ sessionId:anchor?.closest('#workBody')?.dataset.sessionId || state.current, at:anchor?.closest('.m')?.dataset.at }),
   onLayout: () => requestAnimationFrame(relayoutBranches),
@@ -3765,7 +3779,7 @@ const filePreview = setupFilePreview({
 // External resource confirmation is available on every screen.
 const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf });
 // 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
-configureLinkOpen({ getPrefs: () => state.prefs });
+configureLinkOpen({ getPrefs: () => state.prefs, chooseRemote: (url, openHere) => chooseRemote({ url, openHere }) });
 configurePreviewConfirmation({ getPrefs: () => state.prefs, openSettings: () => {
   onboarding.open('browser');
   const heading = $('browserAllowedSites'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' });
@@ -5375,6 +5389,7 @@ function connect() {
         filePreview.osChanged();
         syncAttachButton();
         renderAttached();
+        remoteBrowser.reconnected();
       }).catch(() => {});
       // 開く前から承認待ちがあれば、ここでダイアログに出す
       remoteSettings.refresh();
@@ -5393,6 +5408,8 @@ function connect() {
 
     // 保存される文言（変更の理由・添付の見出し）を今の言語に（web/saved-text.mjs）
     if (m.kind === "event") return onEvent(savedEvent(m.event));
+    // PC の内蔵ブラウザーの画面（見ている接続にだけ届く）
+    if (m.kind === "screencast") return remoteBrowser.onMessage(m);
 
     if (m.kind === "response") {
       const p = pending.get(m.id);
@@ -5649,7 +5666,7 @@ watchTitleBar();
 watchShellTheme();
 watchShellBack();
 // localhost のリンクは、サーバーのある PC の画面でなければ開かずに知らせる（docs/remote.md §8.5）
-watchHostOnlyLinks({ onHostScreen: () => state.osActions === true, notify });
+watchHostOnlyLinks({ onHostScreen: () => state.osActions === true, notify, choose: url => chooseRemote({ url }) });
 wireDropZone();
 fitPrompt();
 // 初めて接続して会話を開く（または新しい会話を始める）までは書けない。書いても開いた会話の下書きで上書きされる

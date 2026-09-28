@@ -1,294 +1,225 @@
-// A browser-only CDP screencast endpoint for one Pleiad conversation.
-// This module manages CDP Page.startScreencast on WebContentsView's webContents.debugger for remote viewing of the PC's built-in browser.
+// リモートの画面から PC の内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートから見る」、ADR 0041）。
+// 会話の内蔵ブラウザーのタブに webContents.debugger で Page.startScreencast を回し、フレームを worker へ渡す。
+// debugger はエージェントの CDP 中継（desktop/browser-relay.cjs）と同じものを共有する（どちらも付いていれば付け直さない）。
+//   - フレームは変化があったときだけ Chromium が出す。次のフレームは ack の後なので、間引きは ack を遅らせて行う（worker が決める）
+//   - 見ている間はビューポートを端末の表示の大きさにする（Emulation.setDeviceMetricsOverride）。端末で読める幅になり、
+//     タブが窓に載っていない・窓が最小化されていても描かれる（窓に載せる必要はある。panel.pin が窓の外に 1px で載せる）
+//   - 入力は Input.dispatch*。エージェントが操作中は断る（端末の「引き継ぐ」で接続を切ってから）
+const { navigable } = require('./browser-panel.cjs');
 
-/**
- * @param {object} panel - The browser panel instance (from browser-panel.cjs)
- * @returns {object} screencast API
- */
-function createBrowserScreencast(panel) {
-  // Track active screencasts per session (conversation)
-  // Each session can have at most one active screencast
-  // セッションごとのアクティブなスクリーンキャストを追跡する
-  const sessions = new Map(); // sessionId -> { tabId, listeners: Set<ws>, ackPending, stopped, width, quality, frameCount, totalBytes, lastFrameAt }
+const KEYS = {
+  Enter: { code: 'Enter', keyCode: 13, text: '\r' },
+  Backspace: { code: 'Backspace', keyCode: 8 },
+  Tab: { code: 'Tab', keyCode: 9 },
+  Escape: { code: 'Escape', keyCode: 27 },
+  Delete: { code: 'Delete', keyCode: 46 },
+  ArrowLeft: { code: 'ArrowLeft', keyCode: 37 },
+  ArrowUp: { code: 'ArrowUp', keyCode: 38 },
+  ArrowRight: { code: 'ArrowRight', keyCode: 39 },
+  ArrowDown: { code: 'ArrowDown', keyCode: 40 },
+};
+const clamp = (value, min, max, fallback) => Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 
-  /**
-   * Start screencast for a conversation's browser tab.
-   * If no tab exists, creates one via panel.createFor.
-   * Uses CDP Page.startScreencast on webContents.debugger.
-   * @param {string} sessionId - Conversation session ID
-   * @param {object} options - { url?, width?, quality? }
-   * @returns {{ tabId: string }}
-   */
-  async function start(sessionId, { url, width = 800, quality = 40 } = {}) {
-    // Get or create a tab for this session
-    let tabs = panel.tabsFor(sessionId);
-    if (!tabs.length) {
-      panel.createFor(sessionId, url || 'about:blank');
-      tabs = panel.tabsFor(sessionId);
-    }
-    const tab = tabs[0];
-    const c = tab.webContents;
-    if (c.isDestroyed()) throw new Error('tab destroyed');
-    
-    // Attach debugger if not already
-    if (!c.debugger.isAttached()) c.debugger.attach('1.3');
-    
-    // If url provided, navigate
-    if (url && url !== 'about:blank') {
-      if (!safeUrl(url)) throw new Error('invalid url');
-      await c.debugger.sendCommand('Page.navigate', { url });
-    }
-    
-    // Stop any existing screencast for this session
-    const existing = sessions.get(sessionId);
-    if (existing && existing.tabId !== tab.id) {
-      await stop(sessionId);
-    }
-    
-    let entry = sessions.get(sessionId);
-    if (!entry) {
-      entry = { 
-        tabId: tab.id, 
-        listeners: new Set(), 
-        ackPending: false, 
-        stopped: false, 
-        width, 
-        quality, 
-        frameCount: 0, 
-        totalBytes: 0, 
-        lastFrameAt: 0 
-      };
-      sessions.set(sessionId, entry);
-      
-      // Listen for screencast frames
-      const onMessage = (_event, method, params) => {
-        if (method !== 'Page.screencastFrame') return;
-        entry.frameCount++;
-        const frameBytes = params.data ? Math.ceil(params.data.length * 3 / 4) : 0;
-        entry.totalBytes += frameBytes;
-        entry.lastFrameAt = Date.now();
-        entry.ackPending = true;
-        
-        // Send frame to all listeners
-        const frame = {
-          data: params.data, // base64 JPEG
-          metadata: params.metadata,
-          sessionId: params.sessionId
-        };
-        for (const send of entry.listeners) {
-          try { send(frame); } catch {}
-        }
-      };
-      entry.debuggerListener = onMessage;
-      c.debugger.on('message', onMessage);
-    }
-    entry.width = width;
-    entry.quality = quality;
-    
-    // Start CDP screencast
-    await c.debugger.sendCommand('Page.startScreencast', {
-      format: 'jpeg',
-      quality: Math.max(10, Math.min(80, quality)),
-      maxWidth: Math.max(320, Math.min(1280, width)),
-      maxHeight: Math.round(Math.max(320, Math.min(1280, width)) * 16 / 9),
-      everyNthFrame: 1
-    });
-    
-    return { tabId: tab.id };
-  }
-
-  /**
-   * Acknowledge a received frame (required by CDP to get the next one).
-   */
-  function ack(sessionId, frameSessionId) {
-    const entry = sessions.get(sessionId);
-    if (!entry || !entry.ackPending) return;
-    entry.ackPending = false;
-    const tabs = panel.tabsFor(sessionId);
-    const tab = tabs.find(t => t.id === entry.tabId);
-    if (!tab || tab.webContents.isDestroyed()) return;
-    try {
-      tab.webContents.debugger.sendCommand('Page.screencastFrameAck', { sessionId: frameSessionId }).catch(() => {});
-    } catch {}
-  }
-
-  /**
-   * Add a listener (WebSocket send function) that receives frames.
-   * Returns a cleanup function.
-   */
-  function addListener(sessionId, send) {
-    const entry = sessions.get(sessionId);
-    if (!entry) return () => {};
-    entry.listeners.add(send);
-    return () => {
-      entry.listeners.delete(send);
-      // If no more listeners, stop screencast
-      if (entry.listeners.size === 0) {
-        stop(sessionId).catch(() => {});
-      }
-    };
-  }
-
-  /**
-   * Stop screencast for a session.
-   */
-  async function stop(sessionId) {
-    const entry = sessions.get(sessionId);
-    if (!entry) return;
-    sessions.delete(sessionId);
-    entry.stopped = true;
-    const tabs = panel.tabsFor(sessionId);
-    const tab = tabs.find(t => t.id === entry.tabId);
-    if (tab && !tab.webContents.isDestroyed()) {
-      tab.webContents.debugger.off('message', entry.debuggerListener);
-      try { await tab.webContents.debugger.sendCommand('Page.stopScreencast'); } catch {}
-    }
-    for (const send of entry.listeners) {
-      try { send(null); } catch {} // null signals stop
-    }
-    entry.listeners.clear();
-  }
-
-  /**
-   * Dispatch input event to the browser tab.
-   * @param {string} sessionId
-   * @param {object} input - { type: 'mouse'|'scroll'|'key'|'text', ... }
-   */
-  async function dispatchInput(sessionId, input) {
-    const entry = sessions.get(sessionId);
-    if (!entry) throw new Error('no screencast');
-    const tabs = panel.tabsFor(sessionId);
-    const tab = tabs.find(t => t.id === entry.tabId);
-    if (!tab || tab.webContents.isDestroyed()) throw new Error('tab destroyed');
-    const dbg = tab.webContents.debugger;
-    if (!dbg.isAttached()) throw new Error('debugger detached');
-
-    switch (input.type) {
-      case 'mouse': {
-        // Convert coordinates from remote screen to actual page coordinates
-        // Remote sends coords relative to the screencast image dimensions
-        // Note: screencast metadata includes deviceWidth/deviceHeight that the client uses to scale
-        const x = input.x;
-        const y = input.y;
-        await dbg.sendCommand('Input.dispatchMouseEvent', {
-          type: input.action, // mousePressed, mouseReleased, mouseMoved
-          x, y,
-          button: input.button || 'left',
-          clickCount: input.clickCount || 1
-        });
-        break;
-      }
-      case 'scroll': {
-        await dbg.sendCommand('Input.dispatchMouseEvent', {
-          type: 'mouseWheel',
-          x: input.x || 0,
-          y: input.y || 0,
-          deltaX: input.deltaX || 0,
-          deltaY: input.deltaY || 0
-        });
-        break;
-      }
-      case 'key': {
-        // Only allow a small set of keys for safety
-        const ALLOWED_KEYS = [
-          'Enter', 'Escape', 'Tab', 'Backspace', 'Delete',
-          'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-          'Home', 'End', 'PageUp', 'PageDown'
-        ];
-        if (!ALLOWED_KEYS.includes(input.key)) break;
-        await dbg.sendCommand('Input.dispatchKeyEvent', {
-          type: 'keyDown', key: input.key,
-          code: input.code || input.key,
-          windowsVirtualKeyCode: input.keyCode || 0
-        });
-        await dbg.sendCommand('Input.dispatchKeyEvent', {
-          type: 'keyUp', key: input.key,
-          code: input.code || input.key,
-          windowsVirtualKeyCode: input.keyCode || 0
-        });
-        break;
-      }
-      case 'text': {
-        if (typeof input.text === 'string' && input.text.length > 0 && input.text.length <= 1000) {
-          await dbg.sendCommand('Input.insertText', { text: input.text });
-        }
-        break;
-      }
-    }
-  }
-
-  /**
-   * Navigate the tab.
-   * @param {string} sessionId
-   * @param {'back'|'forward'|'reload'|'navigate'} action
-   * @param {object} args - { url? }
-   */
-  async function navigate(sessionId, action, args = {}) {
-    const entry = sessions.get(sessionId);
-    if (!entry) throw new Error('no screencast');
-    const tabs = panel.tabsFor(sessionId);
-    const tab = tabs.find(t => t.id === entry.tabId);
-    if (!tab || tab.webContents.isDestroyed()) throw new Error('tab destroyed');
-    const c = tab.webContents;
-    switch (action) {
-      case 'back':
-        if (c.navigationHistory.canGoBack()) c.navigationHistory.goBack();
-        break;
-      case 'forward':
-        if (c.navigationHistory.canGoForward()) c.navigationHistory.goForward();
-        break;
-      case 'reload':
-        c.reload();
-        break;
-      case 'navigate': {
-        if (!args.url) throw new Error('url required');
-        if (!safeUrl(args.url)) throw new Error('invalid url');
-        const href = args.url === 'about:blank' ? args.url : new URL(args.url).href;
-        c.loadURL(href).catch(() => {});
-        break;
-      }
-    }
-  }
-
-  /**
-   * Get current tab info for the session's screencast.
-   */
-  function info(sessionId) {
-    const entry = sessions.get(sessionId);
-    if (!entry) return null;
-    const tabs = panel.tabsFor(sessionId);
-    const tab = tabs.find(t => t.id === entry.tabId);
-    if (!tab || tab.webContents.isDestroyed()) return null;
-    const c = tab.webContents;
-    return {
-      url: c.getURL() || '',
-      title: c.getTitle() || '',
-      canGoBack: c.navigationHistory.canGoBack(),
-      canGoForward: c.navigationHistory.canGoForward(),
-      loading: c.isLoading()
-    };
-  }
-
-  /**
-   * Get bandwidth stats.
-   */
-  function stats(sessionId) {
-    const entry = sessions.get(sessionId);
-    if (!entry) return null;
-    return {
-      frameCount: entry.frameCount,
-      totalBytes: entry.totalBytes,
-      avgFrameBytes: entry.frameCount > 0 ? Math.round(entry.totalBytes / entry.frameCount) : 0
-    };
-  }
-
-  function close() {
-    for (const sessionId of sessions.keys()) stop(sessionId).catch(() => {});
-  }
-
-  return { start, stop, ack, addListener, dispatchInput, navigate, info, stats, close };
+/** 端末の表示の大きさと画質を、送ってよい範囲に丸める */
+function screencastSettings({ width, height, scale, quality } = {}) {
+  const w = Math.round(clamp(width, 240, 1600, 390));
+  const h = Math.round(clamp(height, 240, 2400, 700));
+  const s = clamp(scale, 1, 2, 1);
+  return { width: w, height: h, scale: s, quality: Math.round(clamp(quality, 20, 80, 50)), maxWidth: Math.round(w * s), maxHeight: Math.round(h * s) };
 }
 
-function safeUrl(value) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password || url.href === 'about:blank'; } catch { return false; } }
+/** 端末からの入力を CDP のコマンドの列にする。座標はページの CSS px（端末が表示の倍率から変換済み）。知らない入力は空 */
+function inputCommands(input, { width = 1600, height = 2400 } = {}) {
+  if (!input || typeof input !== 'object') return [];
+  const x = clamp(input.x, 0, width, 0), y = clamp(input.y, 0, height, 0);
+  switch (input.type) {
+    case 'tap': return [
+      ['Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 }],
+      ['Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 }],
+      ['Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 }],
+    ];
+    case 'scroll': {
+      const deltaX = clamp(input.dx, -4000, 4000, 0), deltaY = clamp(input.dy, -4000, 4000, 0);
+      if (!deltaX && !deltaY) return [];
+      return [['Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX, deltaY }]];
+    }
+    case 'text': {
+      if (typeof input.text !== 'string' || !input.text || input.text.length > 2000) return [];
+      return [['Input.insertText', { text: input.text }]];
+    }
+    case 'key': {
+      const key = KEYS[input.key];
+      if (!key) return [];
+      const base = { key: input.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode };
+      return [
+        ['Input.dispatchKeyEvent', { type: key.text ? 'keyDown' : 'rawKeyDown', ...base, ...(key.text ? { text: key.text, unmodifiedText: key.text } : {}) }],
+        ['Input.dispatchKeyEvent', { type: 'keyUp', ...base }],
+      ];
+    }
+    default: return [];
+  }
+}
 
-module.exports = { createBrowserScreencast };
+/**
+ * @param panel desktop/browser-panel.cjs の戻り値（tabsFor・createFor・contentsOf・agentFor・pin・human・onTabsChanged・onAgentChanged）
+ * @param post  worker へ送る（{ type: 'browser-screencast-frame' | 'browser-screencast-state' | 'browser-screencast-ended', sessionId, ... }）
+ * @param agentControl エージェントの接続を止める・引き継ぐ（desktop/agent-browser-bridge.cjs の stop / takeOver）
+ */
+function createBrowserScreencast(panel, { post = () => {}, agentControl = () => {} } = {}) {
+  const sessions = new Map();   // sessionId -> { tabId, contents, settings, cleanup[] }
+
+  function state(sessionId) {
+    const entry = sessions.get(sessionId);
+    const c = entry?.contents;
+    if (!c || c.isDestroyed()) return null;
+    const url = c.getURL();
+    return {
+      // PC のファイル（可視化の写し）の在り処は端末へ出さない
+      tabId: entry.tabId, url: url === 'about:blank' ? '' : /^file:/i.test(url) ? 'file:///' : url, title: c.getTitle(), loading: c.isLoading(),
+      canGoBack: c.navigationHistory.canGoBack(), canGoForward: c.navigationHistory.canGoForward(),
+      agent: !!panel.agentFor(sessionId),
+    };
+  }
+  let stateTimer = new Map();
+  function pushState(sessionId) {
+    // 読み込みの途中は細かく届くので、まとめて送る
+    if (stateTimer.has(sessionId)) return;
+    stateTimer.set(sessionId, setTimeout(() => {
+      stateTimer.delete(sessionId);
+      const value = state(sessionId);
+      if (value) post({ type: 'browser-screencast-state', sessionId, state: value });
+    }, 50));
+  }
+
+  function pickTab(sessionId, url) {
+    if (url) return panel.createFor(sessionId, url);
+    const tabs = panel.tabsFor(sessionId);
+    const agentTab = panel.agentFor(sessionId)?.tabId;
+    return tabs.find(tab => tab.id === agentTab) ?? tabs[0] ?? panel.createFor(sessionId, 'about:blank');
+  }
+
+  async function begin(entry) {
+    const { contents: c, settings } = entry;
+    // 窓がほかの窓に覆われている・最小化されている間も描かせる（既定では隠れたページとして描かれない）
+    c.setBackgroundThrottling?.(false);
+    if (!c.debugger.isAttached()) c.debugger.attach('1.3');
+    await c.debugger.sendCommand('Emulation.setDeviceMetricsOverride', { width: settings.width, height: settings.height, deviceScaleFactor: settings.scale, mobile: false });
+    await c.debugger.sendCommand('Page.startScreencast', { format: 'jpeg', quality: settings.quality, maxWidth: settings.maxWidth, maxHeight: settings.maxHeight, everyNthFrame: 1 });
+  }
+
+  function release(sessionId) {
+    const entry = sessions.get(sessionId);
+    if (!entry) return null;
+    sessions.delete(sessionId);
+    clearTimeout(stateTimer.get(sessionId)); stateTimer.delete(sessionId);
+    for (const off of entry.cleanup) { try { off(); } catch {} }
+    panel.pin(entry.tabId, false);
+    return entry;
+  }
+  function end(sessionId, reason) {
+    if (!release(sessionId)) return;
+    post({ type: 'browser-screencast-ended', sessionId, reason });
+  }
+
+  async function start(sessionId, { url, fileUrl, ...options } = {}) {
+    if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('invalid session');
+    const target = fileUrl && /^file:/i.test(fileUrl) ? fileUrl : url;
+    if (url && !fileUrl && (!navigable(url) || url === 'about:blank')) throw new Error('invalid-url');
+    const settings = screencastSettings(options);
+    const existing = sessions.get(sessionId);
+    // 開く URL が無く、同じ会話を見ているなら、同じタブのまま大きさと画質だけを変える
+    if (existing && !target) {
+      existing.settings = settings;
+      await existing.contents.debugger.sendCommand('Page.stopScreencast').catch(() => {});
+      await begin(existing);
+      pushState(sessionId);
+      return { tabId: existing.tabId, state: state(sessionId) };
+    }
+    if (existing) await stop(sessionId);
+    const tab = pickTab(sessionId, target);
+    const c = tab.webContents;
+    if (!c || c.isDestroyed()) throw new Error('tab destroyed');
+    const entry = { tabId: tab.id, contents: c, settings, cleanup: [] };
+    sessions.set(sessionId, entry);
+    panel.pin(tab.id, true);
+    const onMessage = (_event, method, params, childSession) => {
+      if (method !== 'Page.screencastFrame' || childSession || sessions.get(sessionId) !== entry) return;
+      const m = params.metadata ?? {};
+      post({ type: 'browser-screencast-frame', sessionId, frame: {
+        id: params.sessionId, data: params.data,
+        metadata: { deviceWidth: m.deviceWidth, deviceHeight: m.deviceHeight, pageScaleFactor: m.pageScaleFactor, offsetTop: m.offsetTop, scrollOffsetX: m.scrollOffsetX, scrollOffsetY: m.scrollOffsetY },
+      } });
+    };
+    // DevTools を開くと debugger が外れる。そこで終わりにする
+    const onDetach = () => end(sessionId, 'detached');
+    c.debugger.on('message', onMessage);
+    c.debugger.on('detach', onDetach);
+    const update = () => pushState(sessionId);
+    const events = ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated'];
+    for (const name of events) c.on(name, update);
+    entry.cleanup.push(() => {
+      c.debugger.off('message', onMessage); c.debugger.off('detach', onDetach);
+      for (const name of events) c.off(name, update);
+      if (!c.isDestroyed()) c.setBackgroundThrottling?.(true);
+      if (!c.isDestroyed() && c.debugger.isAttached()) {
+        c.debugger.sendCommand('Page.stopScreencast').catch(() => {});
+        c.debugger.sendCommand('Emulation.clearDeviceMetricsOverride').catch(() => {});
+      }
+    });
+    entry.cleanup.push(panel.onTabsChanged((change, changed) => { if (change === 'destroyed' && changed.id === tab.id) end(sessionId, 'closed'); }));
+    entry.cleanup.push(panel.onAgentChanged(changedSession => { if (changedSession === sessionId) update(); }));
+    try { await begin(entry); }
+    catch (error) { release(sessionId); throw error; }
+    return { tabId: tab.id, state: state(sessionId) };
+  }
+
+  async function stop(sessionId) { release(sessionId); }
+
+  function ack(sessionId, frameId) {
+    const c = sessions.get(sessionId)?.contents;
+    if (!c || c.isDestroyed() || !Number.isInteger(frameId)) return;
+    c.debugger.sendCommand('Page.screencastFrameAck', { sessionId: frameId }).catch(() => {});
+  }
+
+  async function input(sessionId, value) {
+    const entry = sessions.get(sessionId);
+    if (!entry || entry.contents.isDestroyed()) throw new Error('not-watching');
+    if (panel.agentFor(sessionId)) throw new Error('agent-active');
+    const commands = inputCommands(value, entry.settings);
+    if (!commands.length) throw new Error('invalid-input');
+    // 人がページへ入力したらエージェントの操作を解除する（docs/inapp-browser.md「サイトの利用の確認」）
+    panel.human(entry.tabId);
+    for (const [method, params] of commands) await entry.contents.debugger.sendCommand(method, params);
+  }
+
+  async function navigate(sessionId, action, url) {
+    const entry = sessions.get(sessionId);
+    const c = entry?.contents;
+    if (!c || c.isDestroyed()) throw new Error('not-watching');
+    if (panel.agentFor(sessionId)) throw new Error('agent-active');
+    panel.human(entry.tabId);
+    switch (action) {
+      case 'back': if (c.navigationHistory.canGoBack()) c.navigationHistory.goBack(); break;
+      case 'forward': if (c.navigationHistory.canGoForward()) c.navigationHistory.goForward(); break;
+      case 'reload': c.reload(); break;
+      case 'stop': c.stop(); break;
+      case 'open':
+        if (typeof url !== 'string' || !navigable(url) || url === 'about:blank') throw new Error('invalid-url');
+        c.loadURL(new URL(url).href).catch(() => {});   // 失敗は Chromium のエラーページが出る
+        break;
+      default: throw new Error('unknown action');
+    }
+  }
+
+  function agent(sessionId, action) {
+    if (action !== 'stop' && action !== 'takeOver') throw new Error('unknown action');
+    agentControl(action, sessionId);
+    pushState(sessionId);
+  }
+
+  function close() { for (const id of [...sessions.keys()]) release(id); }
+
+  return { start, stop, ack, input, navigate, agent, state, close, watching: () => [...sessions.keys()] };
+}
+
+module.exports = { createBrowserScreencast, inputCommands, screencastSettings, KEYS };

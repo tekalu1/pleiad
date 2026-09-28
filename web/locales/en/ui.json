@@ -1577,13 +1577,13 @@
     },
     "link": {
       "blocked": "Disabled because the link is unsafe",
-      "hostOnly": "This URL opens only on the host PC.",
-      "openSheet": "Open link",
+      "hostOnly": "localhost links open only on the host's PC.",
+      "openSheet": "Open link in",
       "openOnDevice": "Open on this device",
       "openOnDeviceSub": "This device's browser",
-      "openOnPc": "View on PC's browser",
-      "openOnPcSub": "{{host}}",
-      "pcOnly": "This URL opens only on the host PC."
+      "openOnPc": "View in the PC's browser",
+      "pcOnly": "This URL opens only on the host PC.",
+      "close": "Close"
     },
     "present": {
       "height": {
@@ -2832,22 +2832,29 @@
     },
     "invalid": "Can't open this URL. Enter an http or https URL, or something like localhost:5173.",
     "externalUnavailable": "This page can't be opened in the default browser.",
+    "externalTooMany": "Too many open requests in a row. Wait a moment and try again.",
     "siteDataCleared": "Cleared data for this site.",
     "failed": "The browser action failed.",
     "remote": {
-      "title": "PC Browser",
-      "connected": "Connected",
+      "title": "PC browser",
+      "backToChat": "Back to conversation",
+      "screen": "Browser screen sent from the PC",
+      "address": "PC browser address",
+      "editAddress": "Enter address",
+      "connectedFps": "Connected · {{fps}} fps",
       "connecting": "Connecting…",
-      "disconnected": "Disconnected",
-      "fps": "{{fps}} fps",
+      "ended": "The PC browser tab was closed",
       "quality": "Quality: {{level}}",
       "qualityAuto": "Auto",
       "qualityLow": "Low",
-      "textInput": "Text input",
-      "textPlaceholder": "Type text for the PC",
+      "textInput": "Type text",
+      "textLabel": "Text to type into the PC page",
+      "textPlaceholder": "Text for the PC",
       "textSend": "Send",
-      "takeOverFirst": "Take over first to type",
-      "unavailable": "PC browser unavailable"
+      "takeOverFirst": "Take over to type",
+      "youOperate": "You're in control",
+      "stopped": "Stopped the agent",
+      "failed": "Couldn't open the PC browser."
     }
   }
 }

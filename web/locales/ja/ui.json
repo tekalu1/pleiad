@@ -1534,13 +1534,13 @@
     },
     "link": {
       "blocked": "安全でないリンクのため無効化",
-      "hostOnly": "この URL は PC からだけ開けます。",
+      "hostOnly": "localhost のリンクはホストの PC でだけ開けます。",
       "openSheet": "リンクの開き先",
       "openOnDevice": "この端末で開く",
       "openOnDeviceSub": "この端末のブラウザー",
       "openOnPc": "PC のブラウザーで見る",
-      "openOnPcSub": "{{host}}",
-      "pcOnly": "この URL は PC からだけ開けます。"
+      "pcOnly": "この URL は PC からだけ開けます。",
+      "close": "閉じる"
     },
     "present": {
       "height": {
@@ -2754,22 +2754,29 @@
     },
     "invalid": "開けない URL です。http・https の URL か、localhost:5173 のように入力してください。",
     "externalUnavailable": "このページは既定のブラウザーで開けません。",
+    "externalTooMany": "続けて開きすぎています。少し待ってからもう一度押してください。",
     "siteDataCleared": "このサイトのデータを消しました。",
     "failed": "ブラウザーの操作に失敗しました。",
     "remote": {
       "title": "PC のブラウザー",
-      "connected": "接続中",
+      "backToChat": "会話へ",
+      "screen": "PC から送られたブラウザーの画面",
+      "address": "PC のブラウザーのアドレス",
+      "editAddress": "アドレスを入力",
+      "connectedFps": "接続中 · {{fps}} fps",
       "connecting": "接続しています…",
-      "disconnected": "切断しました",
-      "fps": "{{fps}} fps",
+      "ended": "PC のブラウザーのタブが閉じました",
       "quality": "画質: {{level}}",
       "qualityAuto": "自動",
       "qualityLow": "低",
       "textInput": "文字入力",
+      "textLabel": "PC のページへ入力する文字",
       "textPlaceholder": "PC に入力する文字",
       "textSend": "入力",
       "takeOverFirst": "引き継いでから入力できます",
-      "unavailable": "PC のブラウザーは使えません"
+      "youOperate": "あなたが操作中",
+      "stopped": "操作を止めました",
+      "failed": "PC のブラウザーを開けませんでした。"
     }
   }
 }

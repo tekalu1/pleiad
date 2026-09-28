@@ -18,15 +18,16 @@ export function isHostOnlyUrl(href, pageOrigin) {
 
 /**
  * 画面の中のリンクの押下を見張る（取り込みの段階で、ほかの処理より先に）。
- * onHostScreen() が true（サーバーのある PC の画面）なら何もしない。iframe の中のリンクはここに来ない
+ * onHostScreen() が true（サーバーのある PC の画面）なら何もしない。iframe の中のリンクはここに来ない。
+ * choose(href) が true を返したら（「PC のブラウザーで見る」のシートを出した。web/link-sheet.mjs）知らせは出さない
  */
-export function watchHostOnlyLinks({ onHostScreen, notify, root = document, origin = () => location.origin }) {
+export function watchHostOnlyLinks({ onHostScreen, notify, choose = () => false, root = document, origin = () => location.origin }) {
   const handler = event => {
     if (event.defaultPrevented || (event.type === 'auxclick' && event.button !== 1) || onHostScreen()) return;
     const a = event.target?.closest?.('a[href]');
     if (!a || !isHostOnlyUrl(a.getAttribute('href'), origin())) return;
     event.preventDefault();
-    notify(t('timeline.link.hostOnly'));
+    if (!choose(new URL(a.getAttribute('href'), origin()).href)) notify(t('timeline.link.hostOnly'));
   };
   root.addEventListener('click', handler, true);
   root.addEventListener('auxclick', handler, true);
