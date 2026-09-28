@@ -17,7 +17,9 @@ export default async function(t) {
   const calls = [], notifications = [];
   let notifyBlocked = true, retry = true, gated, renameBroken = false;
   // 保存の失敗は rename に差し込む（一時ファイルの名前は毎回変わるので、置き場に物を置いては塞げない）
-  const io = { ...fs, rename: async (from, to) => { if (renameBroken) throw Object.assign(new Error('injected'), { code: 'ENOSPC', syscall: 'rename' }); return fs.rename(from, to); } };
+  // renameHold: 条件が真の間の保存を、開くまで止める（止めた後の後片付けの間に指示を割り込ませる）
+  let renameHold = null;
+  const io = { ...fs, rename: async (from, to) => { if (renameHold?.when()) await renameHold.opened; if (renameBroken) throw Object.assign(new Error('injected'), { code: 'ENOSPC', syscall: 'rename' }); return fs.rename(from, to); } };
   const options = { dataDir: dir, io, log: () => {}, prepare: async (_owner, a) => ({ sessionId: `child-${++seq}`, backend: a.backend }),
     rollback: async () => { rolledBack++; },
     execute: async (r, prompt, signal) => {
@@ -91,6 +93,24 @@ export default async function(t) {
     await until(() => manager.get(slow.taskId).status === 'completed');
     t.ok('停止で未配送になった指示を、後の配送後も残す', manager.instructions(slow.taskId).instructions.map(x => x.state).join() === 'dropped,delivered'
       && calls.some(([taskId, prompt]) => taskId === slow.taskId && prompt === 'after stop'));
+    // 止まった（cancelled）直後、後片付けの保存が終わる前に送った指示も、捨てずに走らせる。
+    // 止めた回の結果の保存を止めておき、その間に送る（CI の遅い保存で落ちた並び。後片付けの run.cancelled より送信が先に入る）
+    release = null;
+    const racing = await manager.call('parent', 'ply_delegate', { backend: 'claude', task: 'hold' });
+    await until(() => release);
+    let open;
+    renameHold = { when: () => manager.get(racing.taskId).status === 'cancelled', opened: new Promise(r => { open = r; }) };
+    await manager.call('parent', 'ply_task_cancel', { taskId: racing.taskId });
+    await until(() => manager.get(racing.taskId).status === 'cancelled');
+    const sending = manager.call('parent', 'ply_task_send', { taskId: racing.taskId, message: 'right after stop' });
+    await sleep(50);
+    renameHold = null; open();
+    await sending;
+    const ranAfterStop = await until(() => manager.get(racing.taskId).status === 'completed').then(() => true, () => false);
+    t.ok('止まった直後（後片付けの保存の前）に送った指示も捨てずに走らせて完了する', ranAfterStop
+      && calls.some(([taskId, prompt]) => taskId === racing.taskId && prompt === 'right after stop')
+      && manager.instructions(racing.taskId).instructions.map(x => `${x.text}:${x.state}`).join() === 'right after stop:delivered',
+      JSON.stringify({ status: manager.get(racing.taskId).status, instructions: manager.instructions(racing.taskId).instructions.map(x => `${x.text}:${x.state}`) }));
     release = null;
     const stoppedSending = await manager.call('parent', 'ply_delegate', { backend: 'claude', task: 'hold' });
     await until(() => release);

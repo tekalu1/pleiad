@@ -12,7 +12,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 | `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort` | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ |
 | `ply_task_status` | `taskId`, 任意の `offset` | 状態と結果。結果は16,000文字ずつ返し、`nextOffset` で続きへ進む。子で実行前に拒否されたコマンドは `rejections`（下の「実行前に拒否されたコマンド」） |
 | `ply_task_wait` | `taskId`, 任意の `seconds`（1〜30、既定30） | 上限まで待つ。承認待ちになったらすぐ戻る。未完了なら現在の状態を返す |
-| `ply_task_send` | `taskId`, `message` | 同じ子会話に追加指示。実行中なら順番に待ち、完了後なら再開する |
+| `ply_task_send` | `taskId`, `message` | 同じ子会話に追加指示。実行中なら順番に待ち、完了後・停止後なら再開する（止まった直後に送った指示も捨てずに走らせる）。止めている途中（`cancelling`）は断る |
 | `ply_task_cancel` | `taskId` | タスクと、その配下の Pleiad タスクを停止する |
 | `ply_task_list` | なし | 呼び出し元が作成した Pleiad タスクだけを列挙する。結果の本文は載せず、拒否は件数（`rejectionCount`）だけ |
 | `ply_usage` | 任意の `backend` | 各バックエンドの使用枠（枠ごとの `usedPercent`・`resetsAt`、`plan`、`checkedAt`、`message`）。省略時は使用枠を読めるバックエンドすべて |

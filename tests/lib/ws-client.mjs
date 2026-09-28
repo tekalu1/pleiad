@@ -89,29 +89,42 @@ export async function open({ port, token, host = "127.0.0.1", onEvent, autoAllow
     /**
      * 1ターン走らせて終わるまで待ち、そのターンのあいだに起きたことをまとめて返す。
      * runTurn の応答と turnEnd の両方を見る。断られたときに turnEnd を待ち続けないため。
+     * 待つのはこの回の会話の turnEnd だけ。裏で別の会話のターン（委譲の完了通知など）が走っても、その終わりで返らない。
+     * 新しい会話は、呼んだ時点までに見ていない ID の session をこの回の会話とする。
+     * id が決まる前に終わったターンの turnEnd は sessionId が null なので、そのときは null の turnEnd で返る。
      */
     async runTurn(args, { ms = 300000 } = {}) {
       const from = events.length;
+      const known = new Set(events.map((e) => e.sessionId).filter(Boolean));
+      let own = args?.sessionId ?? null;
+      const mine = (e) => {
+        if (!own && e.type === "session" && e.sessionId && !known.has(e.sessionId)) own = e.sessionId;
+        return e.type === "turnEnd" && (e.sessionId ?? null) === own;
+      };
       const started = cmd("runTurn", args);
-      const ended = api.waitFor((e) => e.type === "turnEnd", { ms, from });
+      const ended = api.waitFor(mine, { ms, from });
       await Promise.race([ended, started.then(() => ended)]);
-      return api.turnResult(from);
+      return api.turnResult(from, { sessionId: own });
     },
 
-    /** 目印から後のイベントを、よく見る形に畳んで返す。 */
-    turnResult(from) {
+    /**
+     * 目印から後のイベントを、よく見る形に畳んで返す。
+     * sessionId を渡すと、会話の ID・モデル・結果はその会話のものを選ぶ（events・tools・permissions は目印から後の全部）。
+     */
+    turnResult(from, { sessionId } = {}) {
       const slice = events.slice(from);
+      const scoped = sessionId === undefined ? slice : slice.filter((e) => e.sessionId === sessionId);
       // プロトコル v2 では生の SDK メッセージは来ない。正規化された tool.start を数える
       const tools = slice.filter((e) => e.type === "tool.start").map((e) => e.name);
       return {
         events: slice,
         tools,
-        sessionId: slice.find((e) => e.type === "session")?.sessionId ?? null,
+        sessionId: sessionId !== undefined ? sessionId : slice.find((e) => e.type === "session")?.sessionId ?? null,
         permissions: slice.filter((e) => e.type === "permission"),
         // 実際に解決されたモデル。session イベントに乗ってくる（乗せられるバックエンドだけ）。
         // id が決まるのとモデルが分かるのは別のタイミングなので、model を持つ方を探す
-        initModel: slice.find((e) => e.type === "session" && e.model)?.model ?? null,
-        outcome: slice.find((e) => e.type === "turnResult")?.outcome ?? null,
+        initModel: scoped.find((e) => e.type === "session" && e.model)?.model ?? null,
+        outcome: scoped.find((e) => e.type === "turnResult")?.outcome ?? null,
       };
     },
 

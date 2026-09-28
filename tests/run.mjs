@@ -195,6 +195,8 @@ const cases = [
   await import("./unit/server-fake.mjs"),
   // 中断の順序（実際の中断が先、Pleiad タスクの後始末は後）と「中断している」の知らせ。fake バックエンドだけ
   await import("./unit/server-abort.mjs"),
+  // テストの補助 runTurn（tests/lib/ws-client.mjs）が、裏で別の会話のターンが終わっても自分の会話の終わりまで待つ。fake バックエンドだけ
+  await import("./unit/ws-client-run-turn.mjs"),
   // 中断を会話の状態として残す・再開（保留の送り直しか理由の文）・委譲の子の中断・再起動で落ちたターン
   await import("./unit/server-interrupt-resume.mjs"),
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
