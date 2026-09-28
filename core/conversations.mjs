@@ -202,6 +202,13 @@ export async function switchBackend(id, source, target) {
   await store.setMode(id, Object.keys(target.modes())[0] ?? "default");
 }
 
+function hostEvent(event, id, nativeId) {
+  return { ...event,
+    ...(event.sessionId === undefined || event.sessionId === nativeId ? { sessionId: id } : {}),
+    ...(event.type === 'session' ? { first: false } : {}),
+  };
+}
+
 export function wrapBackend(native) {
   const wrapped = { ...native, capabilities: { ...native.capabilities, fork: true, forkMessage: true } };
   wrapped.getPresents = async id => [
@@ -239,6 +246,23 @@ export function wrapBackend(native) {
       }
     }
     return messages;
+  };
+  if (native.getCompactions) wrapped.getCompactions = async id => {
+    const r = await conversation(id);
+    if (!r) return native.getCompactions(id);
+    if (r.backend !== native.id) throw new Error(t('conversations.backendMismatch'));
+    return r.nativeId ? native.getCompactions(r.nativeId) : [];
+  };
+  if (native.compact) wrapped.compact = async args => {
+    const id = args.sessionId;
+    const r = id && await conversation(id);
+    if (!r) return native.compact(args);
+    if (r.backend !== native.id) throw new Error(t('conversations.backendMismatch'));
+    if (!r.nativeId) throw new Error(t('compaction.notStarted'));
+    return native.compact({ ...args, sessionId: r.nativeId, hostSessionId: id, hostBackend: wrapped,
+      askPermission: req => args.askPermission({ ...req, sessionId: id }),
+      emit: event => args.emit(hostEvent(event, id, r.nativeId)),
+    });
   };
   for (const [method, field] of [["setTitle", "title"], ["setTag", "status"]]) {
     if (native[method]) wrapped[method] = async (id, value) => {
@@ -372,7 +396,7 @@ export function wrapBackend(native) {
             checkpoint = save();
             checkpoint.catch(() => {});
           }
-          args.emit({ ...ev, ...(ev.sessionId === undefined || ev.sessionId === r.nativeId ? { sessionId: id } : {}), ...(ev.type === "session" ? { first: false } : {}) });
+          args.emit(hostEvent(ev, id, r.nativeId));
         },
       });
     } finally {

@@ -936,6 +936,7 @@
     "tooMany": "指示は {{count}} 件までです"
   },
   "compaction": {
+    "notStarted": "送信した後に圧縮できます",
     "unsupported": "このエージェントでは手動で圧縮できません",
     "invalidSetting": "自動圧縮の設定が不正です",
     "noCompletion": "圧縮の完了を確認できませんでした"

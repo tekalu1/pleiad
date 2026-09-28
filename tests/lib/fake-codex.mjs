@@ -204,7 +204,8 @@ async function runTurn(t, turnId, text) {
   notify("thread/tokenUsage/updated", {
     threadId: t.id, turnId,
     tokenUsage: {
-      last: { cachedInputTokens: 0, inputTokens: 10, outputTokens: 5, reasoningOutputTokens: 2, totalTokens: 15 },
+      last: { cachedInputTokens: 0, inputTokens: text === 'large-context' ? 49995 : 10, outputTokens: 5,
+        reasoningOutputTokens: 2, totalTokens: text === 'large-context' ? 50000 : 15 },
       total: { cachedInputTokens: 0, inputTokens: 10, outputTokens: 5, reasoningOutputTokens: 2, totalTokens: 15 },
       modelContextWindow: 200000,
     },
@@ -223,6 +224,8 @@ async function runTurn(t, turnId, text) {
       { id: "it_r1", type: "reasoning", summary: ["考えている"], content: [] },
       done,
       { id: "it_m1", type: "agentMessage", text: body },
+      // A boundary created outside Pleiad has no notification or sidecar entry.
+      ...(text === 'compact-history' ? [{ id: `history_${turnId}`, type: 'contextCompaction' }] : []),
     ],
   });
   t.updatedAt = secs();

@@ -10,6 +10,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from 'node:url';
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
 
@@ -21,10 +22,17 @@ const textOf = (turn) => turn.events.filter((e) => e.type === "text.delta").map(
 export default async function (t) {
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "agent-host-codex-")));
   const fake = path.join(ROOT, "tests", "lib", "fake-codex.mjs");
+  const clock = path.join(scratch, 'clock');
+  const home = path.join(scratch, 'home');
+  await fs.mkdir(home);
+  await fs.writeFile(clock, String(Date.now()));
 
   const server = await startServer({
     env: {
       AGENT_HOST_BACKENDS: "codex",
+      HOME: home, USERPROFILE: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
+      TEST_COMPACTION_CLOCK: clock,
+      NODE_OPTIONS: `--loader="${pathToFileURL(path.join(ROOT, 'tests/lib/compaction-clock-loader.mjs')).href}"`,
       FAKE_CODEX_CHECK_TITLE: "1",
       // 空白を含むパスでも壊れないよう、クォート付きで渡す（codex-rpc の parseCommand が外す）
       AGENT_HOST_CODEX_BIN: `node "${fake}"`,
@@ -264,6 +272,41 @@ export default async function (t) {
       && compactEvents.some(e => e.type === 'contextWindow' && e.usedTokens === 21000 && e.windowTokens === 200000));
     t.ok('Codex の圧縮 item を開き直しても区切りが一つ残る',
       (await c.cmd('loadSession', { sessionId: sid })).compactions?.filter(e => e.phase === 'complete').length === 1);
+
+    await c.cmd('setAutoCompaction', { settings: { enabled: true, minTokens: 40000, codex: { enabled: true, delayMinutes: 25 } } });
+    const { sessionId: hostId } = await c.cmd('newSession', { backend: 'codex', cwd: scratch, mode: 'ask' });
+    const emptyFrom = c.mark();
+    await c.cmd('compactConversation', { sessionId: hostId });
+    await c.waitFor(e => e.type === 'compaction' && e.phase === 'failed' && e.sessionId === hostId, { from: emptyFrom, ms: 5000 });
+    t.ok('未送信の圧縮は送信後に使えると説明し、予約しない', c.since(emptyFrom).some(e => e.type === 'compaction'
+      && e.phase === 'failed' && e.reason === '送信した後に圧縮できます')
+      && !c.since(emptyFrom).some(e => e.type === 'compactionSchedule' && e.at));
+    t.ok('開始できない圧縮で未送信の会話を送信済みにしない',
+      (await c.cmd('listSessions')).find(row => row.id === hostId)?.unsent === true);
+    const firstHost = await c.runTurn({ sessionId: hostId, prompt: 'compact-history', cwd: scratch }, { ms: 20000 });
+    t.ok('ホスト ID の最初のターンが成功する', firstHost.outcome === 'ok');
+    const beforeHost = await c.cmd('loadSession', { sessionId: hostId });
+    t.ok('通知や sidecar の成功記録がなくても native の圧縮境界を開ける',
+      !firstHost.events.some(e => e.type === 'compaction')
+      && beforeHost.compactions.some(e => e.phase === 'complete' && e.nativeId?.startsWith('history_')));
+    const hostFrom = c.mark();
+    await c.cmd('compactConversation', { sessionId: hostId });
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === hostId, { from: hostFrom, ms: 5000 });
+    t.ok('ホスト ID の手動圧縮が完了する', c.since(hostFrom).some(e => e.type === 'compaction'
+      && e.sessionId === hostId && e.phase === 'complete' && e.trigger === 'manual'));
+    const reopened = await c.cmd('loadSession', { sessionId: hostId });
+    t.ok('圧縮後も発言を保持し、native と sidecar の境界は重複しない',
+      JSON.stringify(reopened.messages) === JSON.stringify(beforeHost.messages)
+      && reopened.compactions.filter(e => e.phase === 'complete').length === 2);
+    const idleFrom = c.mark();
+    const nextHost = await c.runTurn({ sessionId: hostId, prompt: 'large-context', cwd: scratch }, { ms: 20000 });
+    t.ok('圧縮後に同じ会話で次のターンを実行できる', nextHost.outcome === 'ok');
+    const scheduled = await c.waitFor(e => e.type === 'compactionSchedule' && e.sessionId === hostId && e.at, { from: idleFrom, ms: 5000 });
+    const fireFrom = c.mark();
+    await fs.writeFile(clock, String(scheduled.at));
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === hostId, { from: fireFrom, ms: 5000 });
+    t.ok('注入した時計で放置後の圧縮が idle として完了する', c.since(idleFrom).some(e => e.type === 'compaction'
+      && e.sessionId === hostId && e.phase === 'complete' && e.trigger === 'idle'));
   } finally {
     c.close();
     await server.stop();
