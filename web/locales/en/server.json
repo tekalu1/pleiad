@@ -938,6 +938,7 @@
     "tooMany": "You can have up to {{count}} instructions."
   },
   "compaction": {
+    "notStarted": "Send a message before compacting this conversation.",
     "unsupported": "Manual compaction is unavailable for this agent",
     "invalidSetting": "Invalid auto compaction settings",
     "noCompletion": "Could not confirm compaction completion"

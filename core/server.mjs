@@ -59,7 +59,7 @@ import { createFolderUploads } from './folder-uploads.mjs';
 import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
 import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
-import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff } from "./conversations.mjs";
+import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff, conversation } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
 import {
   getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession,
@@ -1858,6 +1858,11 @@ async function runTurnInternal(args, onStarted, hooks) {
       await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo);
       if (target.id !== backend.id) await switchBackend(sessionId, backend, target);
       backend = target;
+    }
+    // Reject before marking the conversation sent or consuming its pending handoff.
+    if (hooks.compact && backend.compact) {
+      const record = await conversation(sessionId);
+      if (record && !record.nativeId) throw new Error(t('compaction.notStarted'));
     }
     // 再開のセッションの作業ディレクトリを人が変えた。status / title と同じく履歴に残し、一覧と会話に知らせる。
     // エージェントが新しい cwd でセッションを見つけられるかはエージェント次第（claude は init の id で確かめる）
