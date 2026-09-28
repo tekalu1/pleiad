@@ -48,7 +48,9 @@
     "delegateEscalation": "この委譲は {{agent}} を「{{mode}}（{{modeId}}）」で動かします",
     "childConversation": "委譲した子の会話",
     "relayTitle": "委譲先「{{child}}」",
-    "relayTitleWith": "委譲先「{{child}}」 / {{title}}"
+    "relayTitleWith": "委譲先「{{child}}」 / {{title}}",
+    "browserSite": "{{agent}} が {{site}} を使おうとしています",
+    "browserAccount": "（ログイン済み: {{account}}）"
   },
   "quota": {
     "unsupported": "このエージェントは使用枠の取得に対応していません。",

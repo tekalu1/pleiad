@@ -3,6 +3,7 @@
 import { t } from './i18n.mjs';
 import { visualizationDocument } from './visualize-document.mjs';
 import './link-open.mjs';
+import { confirmedPreview, currentPreviewPolicy } from './preview-confirm.mjs';
 export { VISUALIZE_CSP, visualizationDocument } from './visualize-document.mjs';
 
 if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('message', event => {
@@ -31,7 +32,7 @@ export function visualizationFrame(content, title, { fill = false } = {}) {
   frame.className = fill ? 'visualize-frame visualize-fill' : 'visualize-frame';
   isolateFrame(frame);
   frame.title = title || t('timeline.present.kind.visualization');
-  frame.srcdoc = visualizationDocument(content, { theme: document.documentElement?.dataset?.theme });
+  confirmedPreview(frame, policy => visualizationDocument(content, { theme: document.documentElement?.dataset?.theme, policy }));
   return frame;
 }
 
@@ -53,7 +54,7 @@ export function visualizationFileName({ path, title }) {
  * 配色は焼き込まず、開いた環境のライト／ダークに従う。
  */
 export function visualizationBlobUrl(content) {
-  return URL.createObjectURL(new Blob([visualizationDocument(content, { resize: false })], { type: 'text/html;charset=utf-8' }));
+  return URL.createObjectURL(new Blob([visualizationDocument(content, { resize: false, policy: currentPreviewPolicy() })], { type: 'text/html;charset=utf-8' }));
 }
 
 /** 会話にはいくつも並ぶので、URL は押したときだけ作って手放す */

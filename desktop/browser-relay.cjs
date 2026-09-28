@@ -6,7 +6,7 @@ const { WebSocketServer } = require('ws');
 const DENIED = new Set(['Browser.close', 'Target.createBrowserContext', 'Target.disposeBrowserContext', 'Target.setRemoteLocations']);
 const random = () => crypto.randomBytes(24).toString('hex');
 
-function createBrowserRelay(panel, { onActivity = () => {}, WebSocketServerImpl = WebSocketServer } = {}) {
+function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocketServerImpl = WebSocketServer } = {}) {
   const entries = new Map();
   const byKey = new Map();
   const wss = new WebSocketServerImpl({ noServer: true });
@@ -100,7 +100,8 @@ function createBrowserRelay(panel, { onActivity = () => {}, WebSocketServerImpl 
           else {
             if (method.startsWith('Target.') || method.startsWith('Browser.')) throw new Error('browser command denied');
             if (method === 'Page.navigate' && !safeUrl(params.url)) throw new Error('navigation denied');
-            result = await record.tab.webContents.debugger.sendCommand(method, params);
+            const sendCommand = () => record.tab.webContents.debugger.sendCommand(method, params);
+            result = navigation ? await navigation.run({ ...record.tab, sessionId: entry.id }, method, params, sendCommand) : await sendCommand();
           }
           onActivity(entry.id, record.tab.id);
         } else {
@@ -128,7 +129,15 @@ function createBrowserRelay(panel, { onActivity = () => {}, WebSocketServerImpl 
             case 'Target.attachToTarget': result = { sessionId: await attach(find()) }; break;
             case 'Target.createTarget': {
               if (!safeUrl(params.url || 'about:blank')) throw new Error('navigation denied');
-              const tab = panel.createFor(entry.id, params.url === 'about:blank' ? '' : params.url);
+              const tab = panel.createFor(entry.id);
+              try {
+                if (params.url && params.url !== 'about:blank') {
+                  await target(tab);
+                  const sendCommand = () => tab.webContents.debugger.sendCommand('Page.navigate', { url: params.url });
+                  if (navigation) await navigation.run({ ...tab, sessionId: entry.id }, 'Page.navigate', { url: params.url }, sendCommand);
+                  else await sendCommand();
+                }
+              } catch (error) { panel.closeFor(tab.id); throw error; }
               const row = await target(tab);
               result = { targetId: row.id };
               onActivity(entry.id, tab.id);
@@ -160,6 +169,7 @@ function createBrowserRelay(panel, { onActivity = () => {}, WebSocketServerImpl 
     const entry = entries.get(sessionId);
     if (!entry) return;
     entry.stopped = stop;
+    navigation?.cancel(sessionId);
     for (const ws of entry.sockets) ws.close(1000, 'disconnected');
     onActivity(sessionId, null);
   }
@@ -175,6 +185,7 @@ function createBrowserRelay(panel, { onActivity = () => {}, WebSocketServerImpl 
     const entry = entries.get(from);
     if (!entry || entries.has(to)) return;
     entries.delete(from); entry.id = to; entries.set(to, entry);
+    navigation?.rebind(from, to);
     panel.rebindSession(from, to);
   }
   function close() { for (const id of entries.keys()) disconnect(id, true); wss.close(); server.close(); }

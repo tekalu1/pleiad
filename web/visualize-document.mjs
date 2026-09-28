@@ -2,7 +2,9 @@
 // DOM も i18n も使わない（サーバーの core/server.mjs からも読む）。
 // Interactive documents always have an opaque sandbox origin. Never add
 // allow-same-origin: the surrounding app carries authenticated cookies.
-export const VISUALIZE_CSP = "default-src 'none'; script-src 'unsafe-inline' https:; style-src 'unsafe-inline' https:; img-src https: data: blob:; font-src https: data: blob:; connect-src https:; frame-src https:; media-src https: data: blob:; worker-src https: blob:; object-src 'none'; base-uri 'none'; form-action 'none'";
+import { previewCsp } from './browser-confirm-policy.mjs';
+export const VISUALIZE_CSP = previewCsp();
+export const VIOLATION_BRIDGE = `<script>document.addEventListener('securitypolicyviolation',event=>{if(event.disposition==='enforce'&&/^https:\\/\\//i.test(event.blockedURI))parent.postMessage({type:'ply-preview-blocked',url:event.blockedURI},'*')})</script>`;
 // 下の BASE の ::-webkit-scrollbar 以降: スクロールバーは本体（style.css）と同じ。溝と端の矢印は出さず、丸いつまみだけ。
 // 色は tokens.css の --surface-thumb / --surface-thumb-hover。Chromium は scrollbar-color があると ::-webkit-scrollbar を無視するので、
 // 標準の指定は持たないブラウザーにだけ当てる（iframe の中身に日本語のコメントを持ち込まないため、ここに書く）
@@ -19,10 +21,10 @@ export const LINK_BRIDGE = `<script>(()=>{const send=(url,newWindow,external)=>{
 // for its height, so it gets no reporting script at all.
 // title: the tab's name when opened on its own. Escaped; it comes from the model.
 const escapeText = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
-export function visualizationDocument(content, { theme = '', resize = true, title = '' } = {}) {
+export function visualizationDocument(content, { theme = '', resize = true, title = '', policy = {} } = {}) {
   const scheme = ['light', 'dark'].includes(theme) ? `:root{color-scheme:${theme}}` : '';
   // Place policy before ALL model content, even full documents with an existing
   // head, scripts or meta refresh. Nothing from the model enters the parent DOM.
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${VISUALIZE_CSP}"><meta name="viewport" content="width=device-width,initial-scale=1">${title ? `<title>${escapeText(title)}</title>` : ''}<style>${BASE}${scheme}</style>${resize ? LINK_BRIDGE : ''}</head><body>${String(content)}${resize ? RESIZE : ''}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${previewCsp(policy)}">${resize ? VIOLATION_BRIDGE : ''}<meta name="viewport" content="width=device-width,initial-scale=1">${title ? `<title>${escapeText(title)}</title>` : ''}<style>${BASE}${scheme}</style>${resize ? LINK_BRIDGE : ''}</head><body>${String(content)}${resize ? RESIZE : ''}</body></html>`;
 }
 
