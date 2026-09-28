@@ -50,7 +50,7 @@ export default async function (t) {
     mergeCompactionHistory(native, [{ id: 'failed', phase: 'failed', at: 100_500 }]).length === 2);
 
   const defaults = normalizeCompactionSettings();
-  t.ok('既定は Claude のみ 50 分（Codex は切り・25 分）、最小 40k', defaults.enabled && defaults.minTokens === 40000
+  t.ok('既定は Claude のみ 50 分（Codex は切り・25 分）、最小 150k', defaults.enabled && defaults.minTokens === 150000
     && defaults.claude.enabled && defaults.claude.delayMinutes === 50 && !defaults.codex.enabled && defaults.codex.delayMinutes === 25);
   t.ok('設定の入切・待ち時間を保持する', normalizeCompactionSettings({ codex: { enabled: true, delayMinutes: 12 } }).codex.delayMinutes === 12);
   t.ok('不正な設定を拒否する', (() => { try { normalizeCompactionSettings({ minTokens: -1 }); return false; } catch { return true; } })());

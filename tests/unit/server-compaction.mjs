@@ -16,13 +16,13 @@ export default async function (t) {
     const initial = await c.runTurn({ prompt: 'echo:first', sessionId: null, cwd: ROOT, backend: 'fake', mode: 'default' }, { ms: 20_000 });
     const id = initial.sessionId;
     await c.waitFor(e => e.type === 'compactionSchedule' && e.sessionId === id && e.at > Date.now(), { ms: 2000 }).catch(() => {});
-    t.ok('通常ターンで文脈量と自動圧縮の予定が届く', c.events.some(e => e.type === 'contextWindow' && e.sessionId === id && e.usedTokens === 124000)
+    t.ok('通常ターンで文脈量と自動圧縮の予定が届く', c.events.some(e => e.type === 'contextWindow' && e.sessionId === id && e.usedTokens === 164000)
       && c.events.some(e => e.type === 'compactionSchedule' && e.sessionId === id && e.at > Date.now()));
     const from = c.mark();
     const result = await c.cmd('compactConversation', { sessionId: id });
     const completed = await c.waitFor(e => e.type === 'compaction' && e.sessionId === id && e.phase === 'complete', { from, ms: 20_000 });
     t.ok('手動コマンドは要約と前後量を持つ完了を返す', result.status === 'started'
-      && completed.trigger === 'manual' && completed.beforeTokens === 124000 && completed.afterTokens === 21000
+      && completed.trigger === 'manual' && completed.beforeTokens === 164000 && completed.afterTokens === 21000
       && Boolean(completed.summary));
     const opened = await c.cmd('loadSession', { sessionId: id });
     t.ok('開き直した履歴に区切りと文脈量が残る', opened.compactions?.some(x => x.phase === 'complete' && x.summary)
@@ -66,10 +66,10 @@ export default async function (t) {
     recoveredServer = await startServer({ dataDir: invalidData, env: { AGENT_HOST_BACKENDS: 'fake' }, timeoutMs: 30_000 });
     recoveredClient = await open({ port: recoveredServer.port, token: recoveredServer.token });
     const prefs = await recoveredClient.cmd('prefs');
-    t.ok('不正な保存済み設定でも起動し既定値を返す', prefs.autoCompaction.minTokens === 40_000
+    t.ok('不正な保存済み設定でも起動し既定値を返す', prefs.autoCompaction.minTokens === 150_000
       && prefs.autoCompaction.claude.enabled && recoveredServer.tail(200).includes('自動圧縮の保存済み設定が不正'));
     const onDisk = JSON.parse(await fs.readFile(path.join(invalidData, 'prefs.json'), 'utf8'));
-    t.ok('不正な保存値を既定値へ修復する', onDisk.autoCompaction.minTokens === 40_000);
+    t.ok('不正な保存値を既定値へ修復する', onDisk.autoCompaction.minTokens === 150_000);
     let rejected = false;
     try { await recoveredClient.cmd('setAutoCompaction', { settings: { minTokens: '40000' } }); }
     catch { rejected = true; }

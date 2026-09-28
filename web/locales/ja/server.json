@@ -48,7 +48,9 @@
     "delegateEscalation": "この委譲は {{agent}} を「{{mode}}（{{modeId}}）」で動かします",
     "childConversation": "委譲した子の会話",
     "relayTitle": "委譲先「{{child}}」",
-    "relayTitleWith": "委譲先「{{child}}」 / {{title}}"
+    "relayTitleWith": "委譲先「{{child}}」 / {{title}}",
+    "browserSite": "{{agent}} が {{site}} を使おうとしています",
+    "browserAccount": "（ログイン済み: {{account}}）"
   },
   "quota": {
     "unsupported": "このエージェントは使用枠の取得に対応していません。",
@@ -727,6 +729,7 @@
     "notFound": "ファイルが見つかりません。移動または削除された可能性があります。",
     "accessDenied": "このファイルを読み取れません。ホストのアクセス権を確認してください。",
     "readFailed": "ファイルを読み込めませんでした。再読み込みしてください。",
+    "notDirectory": "フォルダーを選んでください。",
     "visualize": {
       "htmlRequired": "可視化には HTML ファイルを指定してください",
       "notUtf8": "可視化を UTF-8 の HTML として読めません",

@@ -13,6 +13,7 @@ import { backend as claude, setClaudeSdkForTest } from '../../core/backends/clau
 
 const require = createRequire(import.meta.url);
 const { createBrowserRelay } = require('../../desktop/browser-relay.cjs');
+const { createBrowserNavigation } = require('../../desktop/browser-navigation.cjs');
 export const name = 'agent-browser-relay';
 export const title = '会話別 CDP 中継・鍵・停止・環境変数';
 
@@ -91,6 +92,31 @@ export default async function (t) {
     const bad = url.replace(/.$/, url.endsWith('0') ? '1' : '0');
     t.ok('違う鍵を拒否', await open(bad).then(() => false, () => true));
   } finally { ws?.terminate(); relay.close(); }
+
+  const confirmPanel = fakePanel();
+  let approve, requested = 0;
+  const navigation = createBrowserNavigation({ enabled: () => true, authorize: () => { requested++; return new Promise(resolve => { approve = resolve; }); } });
+  const confirmRelay = createBrowserRelay(confirmPanel, { navigation });
+  let confirmWs;
+  try {
+    confirmWs = await open(await confirmRelay.endpoint('confirm'));
+    const sid = (await ask(confirmWs, 'Target.attachToTarget', { targetId: 'frame-t1' })).result.sessionId;
+    const navigate = url => ask(confirmWs, 'Page.navigate', { url }, sid);
+    const allowed = navigate('https://allow.example/');
+    while (!approve) await new Promise(resolve => setTimeout(resolve, 5));
+    t.ok('CDP navigate has not reached debugger while approval is pending', confirmPanel.tabsFor('confirm')[0].webContents.getURL() === 'about:blank');
+    approve({ allow: true }); await allowed;
+    t.ok('approved CDP navigation proceeds', confirmPanel.tabsFor('confirm')[0].webContents.getURL() === 'https://allow.example/');
+    approve = null; const denied = navigate('https://deny.example/');
+    while (!approve) await new Promise(resolve => setTimeout(resolve, 5));
+    approve({ allow: false });
+    t.ok('denied CDP navigation replies with a protocol error and leaves the page intact', !!(await denied).error && confirmPanel.tabsFor('confirm')[0].webContents.getURL() === 'https://allow.example/');
+    await navigate('https://allow.example/next');
+    t.ok('same-origin CDP navigation does not ask again', requested === 2);
+    approve = null; const creating = ask(confirmWs, 'Target.createTarget', { url: 'https://new.example/' });
+    while (!approve) await new Promise(resolve => setTimeout(resolve, 5));
+    approve({ allow: false }); t.ok('new targets also wait for site approval and denied tabs are removed', !!(await creating).error && confirmPanel.tabsFor('confirm').length === 1);
+  } finally { confirmWs?.terminate(); confirmRelay.close(); }
 
   const port = new EventEmitter();
   let endpointUrl = 'ws://127.0.0.1:1234/devtools/browser/key';

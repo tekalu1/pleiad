@@ -48,7 +48,9 @@
     "delegateEscalation": "This delegation runs {{agent}} in \"{{mode}}\" ({{modeId}}).",
     "childConversation": "Delegated conversation",
     "relayTitle": "Delegated task \"{{child}}\"",
-    "relayTitleWith": "Delegated task \"{{child}}\" / {{title}}"
+    "relayTitleWith": "Delegated task \"{{child}}\" / {{title}}",
+    "browserSite": "{{agent}} wants to use {{site}}",
+    "browserAccount": " (signed in as {{account}})"
   },
   "quota": {
     "unsupported": "This agent cannot report its usage limits.",
@@ -729,6 +731,7 @@
     "notFound": "File not found. It may have been moved or deleted.",
     "accessDenied": "Cannot read this file. Check the permissions on the host.",
     "readFailed": "Could not load the file. Reload to try again.",
+    "notDirectory": "Choose a folder.",
     "visualize": {
       "htmlRequired": "Specify an HTML file for the visualization.",
       "notUtf8": "Cannot read the visualization as UTF-8 HTML.",

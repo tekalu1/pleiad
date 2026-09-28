@@ -18,6 +18,8 @@ const cases = [
   await import('./unit/compaction.mjs'),
   await import('./unit/server-compaction.mjs'),
   await import('./unit/file-preview.mjs'),
+  // プレビューの横のツリー: 経路の段は必ず返す・遅延読み込み・件数の枠と枠の外の経路・除外名は経路だけ・roots の外は読めない
+  await import('./unit/file-preview-tree.mjs'),
   await import('./unit/file-access.mjs'),
   await import('./unit/preview-links.mjs'),
   // パスの自動リンク・画像の所在・ファイルの操作メニュー・OS で開く口（OS の窓は開かない）
@@ -27,6 +29,7 @@ const cases = [
   // 内蔵ブラウザー: 右パネルの表・アドレス欄・リンクの開き先・使える画面・main のタブと位置（偽の electron）
   await import('./unit/inapp-browser.mjs'),
   await import('./unit/agent-browser-relay.mjs'),
+  await import('./unit/browser-confirm.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
   await import('./unit/agent-tasks-silence.mjs'),

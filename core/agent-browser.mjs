@@ -16,8 +16,20 @@ export function parentPortBrowser(port, { timeoutMs = 10_000 } = {}) {
   const pending = new Map();
   const configIds = new Map();
   let next = 0;
+  let authorize = async () => ({ allow: false });
+  let confirmationEnabled = false;
+  const approvals = new Map();
   port.on('message', event => {
     const message = event?.data ?? event;
+    if (message?.type === 'agent-browser-prefs-request') { port.postMessage({ type: 'agent-browser-prefs', enabled: confirmationEnabled }); return; }
+    if (message?.type === 'agent-browser-authorize-cancel') { approvals.get(message.id)?.abort(); return; }
+    if (message?.type === 'agent-browser-authorize') {
+      const controller = new AbortController(); approvals.set(message.id, controller);
+      Promise.resolve().then(() => authorize(message, controller.signal)).then(answer => {
+        port.postMessage({ type: 'agent-browser-authorize', id: message.id, ...answer });
+      }, () => port.postMessage({ type: 'agent-browser-authorize', id: message.id, allow: false })).finally(() => approvals.delete(message.id));
+      return;
+    }
     if (message?.type !== 'agent-browser-endpoint') return;
     const item = pending.get(message.id);
     if (!item) return;
@@ -26,6 +38,9 @@ export function parentPortBrowser(port, { timeoutMs = 10_000 } = {}) {
     else item.reject(new Error(message.error || 'browser unavailable'));
   });
   return {
+    configureAuthorization(handler) { authorize = handler; },
+    endTurn(sessionId) { port.postMessage({ type: 'agent-browser-turn-ended', sessionId }); },
+    prefs(prefs) { confirmationEnabled = prefs.confirmAgentSites === true; port.postMessage({ type: 'agent-browser-prefs', enabled: confirmationEnabled }); },
     endpoint(sessionId, { unlock = false } = {}) { return new Promise((resolve, reject) => {
       const id = `ab${++next}`;
       const timer = setTimeout(() => { pending.delete(id); reject(new Error('browser relay timeout')); }, timeoutMs);
