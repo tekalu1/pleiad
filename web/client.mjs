@@ -3,6 +3,7 @@ import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
 import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
+import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
 import { configureLinkOpen } from './link-open.mjs';
 import { download, notify } from './file-actions.mjs';
 import { watchHostOnlyLinks } from './host-only-links.mjs';
@@ -843,7 +844,8 @@ function permissionCard(ev, into = null) {
   m.append(card);
   const head = el("div", "card-head");
   head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.approval.headingMark")));
-  head.append(el("span", "tool", ev.toolName ?? ""));
+  if (ev.browserSite) card.classList.add('browser-site-approval');
+  if (!ev.browserSite) head.append(el("span", "tool", ev.toolName ?? ""));
   head.append(el("span", "desc", ev.title ?? ""));
   card.append(head);
 
@@ -853,20 +855,20 @@ function permissionCard(ev, into = null) {
   const pre = el("pre");
   pre.append(el("code", null, short));
   code.append(pre);
-  card.append(code);
+  if (!ev.browserSite) card.append(code);
 
-  // 「常に許可」は候補を出せるエージェントでだけ。候補はこちらで組み立てない
-  const canAlways = ev.canAlways && capsOf(activeBackendId()).alwaysAllow !== false;
+  // Browser grants are owned by Pleiad, independent of backend tool permissions.
+  const canAlways = ev.canAlways && (ev.browserSite || capsOf(activeBackendId()).alwaysAllow !== false);
   const actions = el("div", "card-actions");
-  actions.append(el("span", "res", t("chat.approval.blocking")));
-  const always = el("button", "btn", t("chat.approval.always"));
+  actions.append(el("span", "res", ev.browserSite ? '' : t("chat.approval.blocking")));
+  const always = el("button", "btn", ev.browserSite ? t('settings.browser.confirm.alwaysSite') : t("chat.approval.always"));
   always.type = "button";
-  const deny = el("button", "btn btn-quiet", t("chat.approval.deny"));
+  const deny = el("button", "btn btn-quiet", ev.browserSite ? t('settings.browser.confirm.deny') : t("chat.approval.deny"));
   deny.type = "button";
-  const allow = el("button", "btn btn-primary", t("chat.approval.allow"));
+  const allow = el("button", "btn btn-primary", ev.browserSite ? t('settings.browser.confirm.once') : t("chat.approval.allow"));
   allow.type = "button";
-  if (canAlways) actions.append(always);
-  actions.append(deny, allow);
+  if (ev.browserSite) { actions.append(allow); if (canAlways) actions.append(always); actions.append(deny); }
+  else { if (canAlways) actions.append(always); actions.append(deny, allow); }
   card.append(actions);
 
   // 押したらサーバーが受け取るまで「◯◯を送っています…」（ボタンは止め、カードは待っている形のまま）。
@@ -903,7 +905,7 @@ function permissionCard(ev, into = null) {
     head.append(el("span", "res", `${ok ? (forever ? t("chat.approval.allowedAlways") : t("chat.approval.allowed")) : t("chat.approval.denied")} · ${hhmm(new Date())}`));
     actions.remove();
     // 決着後は一行に畳み、押せば承認したときの入力をその場で開ける（何を許可・拒否したかを後からたどれる）
-    foldSettledCard(card, head, code, approvalTarget(ev.input));
+    if (!ev.browserSite) foldSettledCard(card, head, code, approvalTarget(ev.input));
     if (isRunningHere()) activity.show(ok ? t("activity.runningTool", { tool: ev.toolName }) : t("activity.continuing"));
     state.pendingPerms.delete(ev.id);
   };
@@ -1278,7 +1280,7 @@ function onEvent(ev, replay = false) {
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); refreshPreviewConfirmation(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
   if (ev.type === 'compactionSchedule') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
@@ -3683,10 +3685,14 @@ const filePreview = setupFilePreview({
   getPrefs: () => state.prefs,
   useFile: file => { if (attachHostFiles([file])) $('prompt').focus(); },
 });
-// 設定 › ブラウザー（リンクの開き先）。内蔵ブラウザーが使える画面だけ脇に項目を出す
-const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs });
+// External resource confirmation is available on every screen.
+const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf });
 // 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
 configureLinkOpen({ getPrefs: () => state.prefs });
+configurePreviewConfirmation({ getPrefs: () => state.prefs, openSettings: () => {
+  onboarding.open('browser');
+  const heading = $('browserAllowedSites'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' });
+} });
 
 /**
  * ホストのファイルをパスのまま添付に積む（送らない。ファイルプレビューの「会話で使う」とホストのファイルの面）。
@@ -4610,6 +4616,7 @@ async function runRefresh() {
   state.prefs = prefs ?? {};
   paintAutoCompactionSettings();
   browserSettings.paint();
+  refreshPreviewConfirmation();
   await loadBackends();
   await syncTopbar();
   cmd("running").then(applyRunning).catch(() => {});

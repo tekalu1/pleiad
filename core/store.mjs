@@ -103,6 +103,15 @@ export async function setPref(key, value, backendId) {
   });
 }
 
+export async function rememberBrowserSite(site) {
+  return exclusive(async () => {
+    const all = await prefs.read();
+    all.agentSitePermissions = [...(all.agentSitePermissions ?? []).filter(row => row.agent !== site.agent || row.origin !== site.origin), site];
+    await prefs.write();
+    return { ...all };
+  });
+}
+
 // ---- 状態グループ（statuses.json） ------------------------------------------
 // 状態は SDK の tag（自由文字列）で、事前定義もアイコンも SDK には無い。
 // ここには { [status]: { icon?, createdAt? } } を持つ。使われた状態はここに無くても存在する（§6）が、

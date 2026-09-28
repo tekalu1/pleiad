@@ -1,7 +1,9 @@
 import { renderMarkdown } from './render.mjs';
 import { fileReference } from './file-reference.mjs';
 import { VISUALIZE_CSP, isolateFrame } from './visualize-frame.mjs';
-import { LINK_BRIDGE } from './visualize-document.mjs';
+import { LINK_BRIDGE, VIOLATION_BRIDGE } from './visualize-document.mjs';
+import { previewCsp } from './browser-confirm-policy.mjs';
+import { confirmedPreview } from './preview-confirm.mjs';
 import { t } from './i18n.mjs';
 
 /** 読み込めなかった画像の代わりの文字（alt）。「名前（表示できません）」 */
@@ -49,14 +51,15 @@ export async function inlineScripts(root, asset, omitted) {
 }
 
 /** Policy goes before ALL file content, even documents with their own head. */
-export function previewDocument(body) {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${PREVIEW_CSP}"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:16px;font:15px/1.7 system-ui,sans-serif;overflow-wrap:anywhere}img,svg{max-width:100%;height:auto}</style>${LINK_BRIDGE}</head><body>${body}</body></html>`;
+export function previewDocument(body, policy = {}) {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${previewCsp(policy)}">${VIOLATION_BRIDGE}<meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:16px;font:15px/1.7 system-ui,sans-serif;overflow-wrap:anywhere}img,svg{max-width:100%;height:auto}</style>${LINK_BRIDGE}</head><body>${body}</body></html>`;
 }
 
 /** Scripts run in an opaque origin (never allow-same-origin): the app carries authenticated cookies. */
 export function previewFrame(documentText, title) {
   const frame = isolateFrame(document.createElement('iframe'));
-  frame.className = 'file-preview-frame'; frame.title = title; frame.srcdoc = documentText;
+  frame.className = 'file-preview-frame'; frame.title = title;
+  confirmedPreview(frame, policy => documentText.replace(/(<meta http-equiv="Content-Security-Policy" content=")[^"]*/, (_match, prefix) => prefix + previewCsp(policy)));
   return frame;
 }
 
