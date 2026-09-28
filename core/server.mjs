@@ -1173,9 +1173,9 @@ function clientReason(args) {
  */
 function makeEmit(turn) {
   const emit = (event, { recorded = false } = {}) => {
-    if (event?.type) agentTasks?.activity(turn.info.sessionId);
-    // Antigravity can report a step without a normalized conversation event.
-    if (event?.type === 'task.activity') return;
+    if (event?.type) agentTasks?.observe(turn.info.sessionId, event);
+    // Internal activity and command observations do not add conversation UI events.
+    if (event?.type === 'task.activity' || event?.type === 'task.command') return;
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
     if (event?.type === 'contextWindow' && Number.isFinite(event.usedTokens) && Number.isFinite(event.windowTokens)) {
       turn.contextWindow = { usedTokens: event.usedTokens, windowTokens: event.windowTokens };
@@ -1748,7 +1748,6 @@ agentTasks = await createAgentTasks({
   execute: async (task, prompt, signal) => {
     if (signal.aborted) return { outcome: 'aborted' };
     if (sessionBusy(task.sessionId)) return { requeue: true };
-    // stopped / reply / timer: 子に残った裏の作業を止めたもの・止める前の返答・待つ上限のタイマー（watchChildBackground）
     const execution = { outcome: null, error: null, rejections: [], stopped: [], reply: null, timer: null };
     taskExecutions.set(task.sessionId, execution);
     const stopChild = () => {
@@ -1791,6 +1790,20 @@ agentTasks = await createAgentTasks({
     const retry = task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '';
     const prompt = agentT(lng, 'delegation.notice', { taskId: task.taskId, backend: task.backend, status: task.status, task: task.task,
       result: task.result.slice(0, 16000), more, error: task.error ?? '', retry, rejections: rejectionNotice(lng, task.rejections) + stoppedBackgroundNotice(lng, task.stoppedBackground) });
+    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
+  },
+  cancelBackground: async task => {
+    for (const command of task.activeCommands) {
+      const found = findBackgroundTask(task.sessionId, command.nativeTaskId ?? command.toolCallId);
+      if (found) await found.backend.stopBackground(task.sessionId, found.task.id);
+    }
+  },
+  deliverCommand: async (task, command) => {
+    const owner = task.parentSessionId;
+    if (await noticeBlocked(owner)) return 'requeue';
+    const lng = await ensureAgentLocale(owner);
+    const prompt = agentT(lng, 'delegation.commandNotice', { taskId: task.taskId, noticeId: command.noticeId,
+      title: task.title, command: redactForPeer(command.command, 200), minutes: command.elapsedMinutes });
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
   deliverSilence: async (task, minutes) => {
@@ -2079,6 +2092,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         visualizeInstructions: visualizeInstructions(agentLocale),
         browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
         browserInstructions: null,
+        addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
         contextRuntime: runtimeContext,
         // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
         ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
@@ -2332,8 +2346,12 @@ async function stopChildBackground(turn, execution) {
   // 止めると main が再開して一言足すことがある。止める前の返答（報告）を控えておく
   execution.reply ??= await lastReply(sessionId).catch(() => null);
   for (const x of targets) {
+    if (runtime.turns.get(sessionId) !== turn || taskExecutions.get(sessionId) !== execution || turn.info.phase !== "waiting") return;
+    if (!turn.info.background?.some(task => task.id === x.id)) continue;
     try {
-      await turn.backend.stopBackground(sessionId, x.id);
+      const result = await turn.backend.stopBackground(sessionId, x.id);
+      if (result?.stopped === false) continue;
+      agentTasks?.observe(sessionId, { type: 'task.command', id: x.id, nativeTaskId: x.id, state: 'stopped' });
       execution.stopped.push(x);
       // i18n-ignore: サーバーのログ
       console.error(`  [delegation] 子 ${sessionId} の裏の作業（${x.kind}）を ${Math.round(DELEGATION_BACKGROUND_WAIT_MS / 1000)} 秒待って止めた`);
@@ -2391,15 +2409,16 @@ function findBackgroundTask(sessionId, taskId) {
 
 /**
  * ターンの外で起きた、会話に属する正規化イベント（docs/multi-backend.md §2.7）。
- * 今の用途は 1 つだけ: Codex のバックグラウンド端末が、ターンが終わったずっと後に終わったとき、
+ * Codex の端末の稼働・終了を委譲の台帳に伝える。端末がターンの後に終わったときは、
  * 走ったままに見えているツールカードへ結果を差し込む。
  * ターンを作らないので `running` にも使用量にも出ない。何でも流せる口にはしない
  * （本文や turnResult をターンの外から出すと、web の吹き出し・稼働表示の前提が崩れる）。
  */
-const OUTSIDE_TURN_EVENTS = new Set(["tool.result"]);
+const OUTSIDE_TURN_EVENTS = new Set(["tool.result", "task.command", "task.activity"]);
 function emitOutsideTurn(sessionId, event) {
   if (!sessionId || !OUTSIDE_TURN_EVENTS.has(event?.type)) return;
-  agentTasks?.activity(sessionId);
+  agentTasks?.observe(sessionId, event);
+  if (event.type.startsWith("task.")) return;
   emitGlobal({ ...event, sessionId });
 }
 

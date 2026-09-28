@@ -195,9 +195,11 @@ async function background(text, { s, out, emit, signal, control }) {
  * 台本 "bg-shell <本文>"。Claude で、裏へ回ったコマンドが終わらないまま main が返答を終えた形
  * （local_bash の完了通知が来ないので、入力を閉じられずターンが続く）。本文で返答し、phase: waiting で待つ。
  * stopBackground（Query.stopTask に当たる）で止めると、完了通知で main が再開して一言返し、ターンが終わる。
+ * "active-shell" は報告せず、main が結果を待っている形（phase: active）。
  * 中断されたら true。
  */
 async function hangingShell(text, { s, out, emit, signal, keys }) {
+  const reported = !text.startsWith("active-shell");
   const task = { id: `fake-shell-${crypto.randomUUID().slice(0, 8)}`, kind: "shell", label: "cat >> /dev/null", waitable: true };
   let stopped = false, wake = null;
   const poke = () => { const w = wake; wake = null; w?.(); };
@@ -205,11 +207,15 @@ async function hangingShell(text, { s, out, emit, signal, keys }) {
   for (const key of keys) { if (!shells.has(key)) shells.set(key, new Map()); shells.get(key).set(task.id, stop); }
   signal?.signal?.addEventListener?.("abort", poke, { once: true });
   try {
+    emit({ type: "tool.start", id: task.id, name: "Bash", input: { command: task.label, run_in_background: true } });
+    emit({ type: "tool.result", id: task.id, text: "launched", commandBackground: true, nativeTaskId: task.id });
     emit({ type: "background", tasks: [task] });
-    const report = { uuid: crypto.randomUUID(), role: "assistant", text: text.replace(/^bg-shell\s*/, "") || "終わった" };
-    await say(emit, report.text, report.uuid);
-    push(s, report);
-    emit({ type: "phase", state: "waiting" });
+    if (reported) {
+      const report = { uuid: crypto.randomUUID(), role: "assistant", text: text.replace(/^bg-shell\s*/, "") || "終わった" };
+      await say(emit, report.text, report.uuid);
+      push(s, report);
+      emit({ type: "phase", state: "waiting" });
+    } else emit({ type: "phase", state: "active" });
     while (!stopped && !signal?.signal?.aborted) await new Promise((resolve) => { wake = resolve; });
     if (signal?.signal?.aborted) { emit({ type: "turnResult", outcome: "aborted" }); return true; }
     emit({ type: "background", tasks: [] });
@@ -218,6 +224,7 @@ async function hangingShell(text, { s, out, emit, signal, keys }) {
     await say(emit, resumed.text, resumed.uuid);
     push(s, resumed);
   } finally {
+    emit({ type: "task.command", id: task.id, state: "stopped" });
     for (const key of keys) { shells.get(key)?.delete(task.id); if (!shells.get(key)?.size) shells.delete(key); }
   }
   out.text = "";
@@ -409,7 +416,7 @@ export const backend = {
         await say(emit, out.text, out.uuid);
       } else if (/^bg(\s|$)/.test(text)) {
         if (await background(text, { s, out, emit, signal, control })) return { sessionId: id };
-      } else if (/^bg-shell(\s|$)/.test(text)) {
+      } else if (/^(?:bg-shell|active-shell)(\s|$)/.test(text)) {
         if (await hangingShell(text, { s, out, emit, signal, keys: [...new Set([hostSessionId, id].filter(Boolean))] })) return { sessionId: id };
       } else if (/^hook-follow(\s|$)/.test(text)) {
         const report = { uuid: crypto.randomUUID(), role: "assistant", text: text.replace(/^hook-follow\s*/, "") || "報告" };
@@ -431,6 +438,7 @@ export const backend = {
         // Codex と同じく、端末はターンが終わっても残る。server へはターンの外の background で渡す
         const key = hostSessionId ?? id;
         const list = [...(terminals.get(key) ?? []), { id: `fake-term-${crypto.randomUUID().slice(0, 8)}`, kind: "terminal", label: "npm run dev" }];
+        emit({ type: "tool.start", id: list.at(-1).id, name: "commandExecution", input: { command: list.at(-1).label, cwd }, startedAt: Date.now() });
         terminals.set(key, list);
         host?.background(key, list);
       } else {
@@ -460,6 +468,7 @@ export const backend = {
     if (list.some((x) => x.id === taskId)) {
       const rest = list.filter((x) => x.id !== taskId);
       if (rest.length) terminals.set(sessionId, rest); else terminals.delete(sessionId);
+      host?.event?.(sessionId, { type: "task.command", id: taskId, state: "stopped" });
       host?.background(sessionId, rest);
       return { stopped: true };
     }
