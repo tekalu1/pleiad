@@ -250,6 +250,18 @@ export function wrapBackend(native) {
     }
     return messages;
   };
+  // 入力欄の `!` をエージェントが走らせるバックエンド（Codex）。会話の id をネイティブの id に訳す。
+  // ネイティブの会話がまだ無い（最初の発言の前・切り替えた直後）ときは走らせられない（shellReady が false）
+  if (native.shell) {
+    wrapped.shellReady = async id => { const r = await conversation(id); return r ? r.backend === native.id && Boolean(r.nativeId) : true; };
+    wrapped.shell = async args => {
+      const r = args.sessionId && await conversation(args.sessionId);
+      if (!r) return native.shell(args);
+      if (r.backend !== native.id) throw new Error(t('conversations.backendMismatch'));
+      if (!r.nativeId) throw new Error(t('shell.notStarted'));
+      return native.shell({ ...args, sessionId: r.nativeId });
+    };
+  }
   if (native.getCompactions) wrapped.getCompactions = async id => {
     const r = await conversation(id);
     if (!r) return native.getCompactions(id);

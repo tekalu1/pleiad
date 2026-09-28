@@ -564,6 +564,8 @@ export const backend = {
     claudeAccounts: true,
     // 互換の接続先（Anthropic 互換）を会話ごとに選べる。server は endpoint を渡す（core/compat-endpoints.mjs）
     compatEndpoints: true,
+    // 入力欄の `!`: Pleiad がホストで走らせ、結果を次のターンの始めに shouldQuery: false の行で渡す（runTurn の shellAppends。ADR 0054）
+    shell: 'host',
   },
 
   // 親側の Task の説明を拾ってサブエージェントの見出しにする（server.mjs）。
@@ -588,7 +590,7 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, oauthToken, endpoint = null, locale, compact }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [] }) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, locale };
     let releaseContext;
@@ -609,6 +611,9 @@ export const backend = {
       if (input.closed || signal?.signal?.aborted) return;       // 走り出す前に中断された
       promptSent = true;
       onPromptDelivered?.();
+      // 入力欄の `!` の結果（CLI の `!` と同じ <bash-input> / <bash-stdout><bash-stderr> の 2 行）。
+      // shouldQuery: false は返答を起こさずに transcript へ積み、次に query する user 行（このプロンプト）と合わせて渡す（sdk.d.ts の SDKUserMessage）
+      for (const text of shellAppends) yield { ...userMessage(text), shouldQuery: false };
       yield userMessage(prompt);
       yield* input;
     }

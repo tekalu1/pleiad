@@ -70,7 +70,7 @@ export function filterSkills(skills, q) {
  * @param {() => string} [o.cwd] 今の作業ディレクトリ
  * @param {() => number} [o.now] 取得した時刻の測り方（テストのためだけに差し替えられる）
  */
-export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canCompact = () => true, now = () => Date.now() }) {
+export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canCompact = () => true, now = () => Date.now(), off = () => false }) {
   // 同じ作業ディレクトリなら使い回す。ただし古くなったら取り直す（編集中に足したスキルを拾う）
   const FRESH_MS = 60_000;
   let skills = [], skillsKey = null, skillsAt = 0, loadingKey = null;
@@ -186,7 +186,8 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canC
 
   /** 入力が変わったら候補の出し入れと、選んだ直後の引数ヒントの後始末 */
   const sync = () => {
-    const q = query();
+    // 入力欄がシェルの形の間は出さない（web/shell-composer.mjs。`/` はパスの一部）
+    const q = off() ? null : query();
     if (q === null) return close();
     const key = cwdKey();
     if (skillsKey !== key || now() - skillsAt >= FRESH_MS) return ensure(key);

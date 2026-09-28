@@ -255,6 +255,8 @@ export const backend = {
     login: true,
     // Claude と同じく会話ごとのアカウントを受け取れることにする（server の配線と画面をテストで通すため）
     claudeAccounts: true,
+    // 入力欄の `!` は Claude と同じく Pleiad がホストで走らせる。渡した行は発言として履歴に残す（Claude の transcript と同じ形）
+    shell: 'host',
   },
 
   subagentTools: ["Agent"],
@@ -273,7 +275,7 @@ export const backend = {
     emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
   },
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, oauthToken, hostSessionId }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, oauthToken, hostSessionId, shellAppends = [] }) {
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
     if (String(prompt ?? "").trim().startsWith("undelivered")) {
       const error = "fake: failed before the prompt was delivered";
@@ -291,6 +293,8 @@ export const backend = {
     const handle = { sessionId: id, mode, model };
     if (control) control.handle = handle;
 
+    // 入力欄の `!` の結果（Claude の shouldQuery: false の行と同じく、返答を起こさずに履歴へ積む）
+    for (const text of shellAppends) push(s, { role: "user", text });
     push(s, { role: "user", text: String(prompt ?? "") });
     // silent: は渡った合図を出さないバックエンド（antigravity）の代わり。server は返答の中身で渡ったとみなす
     if (!String(prompt ?? "").trim().startsWith("silent:")) onPromptDelivered?.();

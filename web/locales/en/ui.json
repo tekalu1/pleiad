@@ -1142,6 +1142,26 @@
       "teammate": "Message from another session",
       "teammateFrom": "Message from another session ({{from}})"
     },
+    "shell": {
+      "label": "Shell",
+      "placeholder": "Command to run (Ctrl+Enter)",
+      "placeholderTouch": "Command to run",
+      "run": "Run",
+      "asText": "Send as text",
+      "asTextTitle": "Send to the agent as text starting with !",
+      "unavailable": "Shell commands can't run in {{agent}} conversations",
+      "notStarted": "Send the first message before running shell commands",
+      "pending": "goes to {{agent}} with your next message",
+      "running": "Running · {{elapsed}}",
+      "stop": "Stop",
+      "stopped": "Stopped",
+      "timedOut": "Stopped after {{minutes}} min",
+      "failed": "✕ Failed · exit {{code}}",
+      "exit": "exit {{code}}",
+      "truncated": "Output was too long; the rest was left out",
+      "runFailed": "Couldn't run: {{error}}",
+      "where": "Runs in {{cwd}}"
+    },
     "sys": {
       "agentChanged": "Changed the agent to {{agent}}. It takes over the conversation from your next message.",
       "taskResumed": "Received the Pleiad task result and resumed",

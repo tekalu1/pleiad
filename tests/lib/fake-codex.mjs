@@ -615,6 +615,29 @@ async function handle(method, params) {
       }, 20);
       return { turnId: params.expectedTurnId };
     }
+    // 入力欄の `!`（codex-cli 0.156.1 の ThreadShellCommandParams: { threadId, command, timeoutMs }、応答は {}）。
+    // 結果は source: userShell の commandExecution として、応答の後に通知で流す。本物がターンで包むかは未確認なので、turn/started・completed も出す。
+    // "slow" を含むコマンドは turn/interrupt まで終わらない。"fail" を含むと exit 1
+    case "thread/shellCommand": {
+      const t = threads.get(params?.threadId);
+      if (!t) throw new Error(`知らない threadId: ${params?.threadId}`);
+      if (typeof params?.command !== "string") throw new RpcError("command is required", -32602);
+      record({ method, threadId: t.id, command: params.command, timeoutMs: params.timeoutMs ?? null });
+      const turnId = `sh_${++seq}`;
+      const item = { id: `ush_${++seq}`, type: "commandExecution", command: params.command, cwd: t.cwd, source: "userShell", status: "inProgress", commandActions: [] };
+      setTimeout(async () => {
+        notify("turn/started", { threadId: t.id, turn: { id: turnId, status: "inProgress", items: [] } });
+        notify("item/started", { threadId: t.id, turnId, startedAtMs: Date.now(), item });
+        notify("item/commandExecution/outputDelta", { threadId: t.id, turnId, itemId: item.id, delta: "fake out\n" });
+        let interrupted = false;
+        if (params.command.includes("slow")) await new Promise((resolve) => slowTurns.set(turnId, { threadId: t.id, resolve: () => { interrupted = true; resolve(); } }));
+        const done = { ...item, status: interrupted ? "failed" : "completed", exitCode: interrupted ? null : params.command.includes("fail") ? 1 : 0, aggregatedOutput: "fake out\n", durationMs: 3 };
+        t.turns.push({ id: turnId, status: "completed", startedAt: secs(), completedAt: secs(), items: [done] });
+        notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item: done });
+        notify("turn/completed", { threadId: t.id, turn: { id: turnId, status: interrupted ? "interrupted" : "completed", items: [] } });
+      }, 10);
+      return {};
+    }
     case "turn/interrupt": {
       const slow = slowTurns.get(params?.turnId);
       if (slow) { slowTurns.delete(params.turnId); slow.resolve(); }

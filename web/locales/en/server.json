@@ -87,6 +87,11 @@
     "preparingFork": "The conversation is being prepared. Try branching again.",
     "cannotFork": "This agent cannot branch."
   },
+  "shell": {
+    "unavailable": "Shell commands can't run in this conversation",
+    "notStarted": "Send the first message before running shell commands",
+    "noCwd": "The working directory wasn't found, so the command can't run"
+  },
   "turn": {
     "reservedInvalid": "The scheduled settings can no longer be used. Choose again.",
     "aborted": "Stopped.",
@@ -515,7 +520,8 @@
       "noHandler": "Nothing is listening for {{method}}.",
       "hooksList": "Codex's hook list (hooks/list) was incomplete, so the message was not sent (the hooks to turn off could not be decided): {{detail}}",
       "hooksUnsubscribeFailed": "Could not switch how hooks are passed (codex could not unload the conversation: {{reason}}). Continuing would run hooks twice or not at all, so the message was not sent. Stop any terminal running in the background, then send again",
-      "hooksTrust": "Could not get the hashes to pass Pleiad's hooks to Codex as trusted, so the message was not sent (otherwise the guards would not run and only the agent's hooks would be off): {{detail}}"
+      "hooksTrust": "Could not get the hashes to pass Pleiad's hooks to Codex as trusted, so the message was not sent (otherwise the guards would not run and only the agent's hooks would be off): {{detail}}",
+      "shellNotStarted": "Send the first message before running shell commands"
     },
     "auth": {
       "notLoggedIn": "Not signed in to codex.",

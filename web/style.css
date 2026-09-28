@@ -589,6 +589,17 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
   white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow:auto;max-width:680px}
 /* ! の出力は罫線の表が多く横に長い。折り返すと表が崩れるので、面の中で横にスクロールする */
 .m.user.cmd .cmd-out.wide{white-space:pre;overflow-wrap:normal}
+/* 入力欄の `!` の行（ADR 0054）。右端は結果（exit 0・止めました）、走っている間は弧と経過と「止める」 */
+.m.user.cmd .cmd-res{display:inline-flex;align-items:center;gap:6px}
+.m.user.cmd .cmd-res .stop{color:var(--ink-blue);font-family:var(--font);font-size:var(--fs-xs);padding:0 4px}
+.m.user.cmd svg.arc{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;animation:cmd-spin 1s linear infinite}
+@keyframes cmd-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.m.user.cmd svg.arc{animation:none}}
+/* 失敗（終了コードが 0 以外と分かるときだけ）。色は付けず、ツールの失敗と同じく面を一段上げて太字と ✕（tools.css の .tc-error） */
+.m.user.cmd.failed .cmd-box{background:var(--surface-1);border-radius:var(--r-s);padding:6px 10px;margin-left:-10px;max-width:700px}
+.m.user.cmd.failed .cmd-res{color:var(--ink-strong);font-weight:700}
+.m.user.cmd .cmd-note{font-size:var(--fs-xs);color:var(--ink-weak);padding:2px 0}
+.m.user.cmd .cmd-note.strong{color:var(--ink-strong)}
 /* 新しいセッション・新しい枝の頭に出る一行 */
 
 /* ---- md（web/render.mjs の出力）。見出し・表・コード・引用に枠は無い ---- */
@@ -833,6 +844,23 @@ button.att-name:hover{text-decoration:underline}
 @media (prefers-reduced-motion:reduce){.composer-note.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
 /* 送らせない間の送信。塗りをやめ、押せない見た目（disabled にはしない。押すと理由の一行へ） */
 .send.blocked,.send.blocked:hover{background:var(--surface-3);color:var(--ink-weak);cursor:not-allowed}
+/* 入力欄のシェルの形（web/shell-composer.mjs、ADR 0054）。箱の中の頭の行・等幅の欄・▶ 実行。面も色も足さない */
+.shell-head{display:flex;align-items:center;gap:6px;padding:8px 12px 0;font-size:var(--fs-xs);color:var(--ink-weak);min-width:0;line-height:1.5}
+.shell-head[hidden]{display:none}
+.shell-head svg.i{width:14px;height:14px}
+.shell-head .where{font-family:var(--font-mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.shell-head .where .host{color:var(--ink-blue)}
+.shell-head .as-text{margin-left:auto;flex:none;color:var(--ink-blue);font-size:var(--fs-xs);padding:0 6px}
+.shell-head.unavail{color:var(--ink-strong)}
+.shell-head.unavail .msg{min-width:0;overflow-wrap:anywhere}
+.shell-head.flash{border-radius:var(--r-s);animation:note-flash 1.2s var(--ease-out)}
+@media (prefers-reduced-motion:reduce){.shell-head.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
+.cbox.shell #prompt{font-family:var(--font-mono);font-size:13px}
+.send svg.i-run{display:none;fill:currentColor;stroke:none}
+.cbox.shell .send svg.i-send{display:none}
+.cbox.shell .send svg.i-run{display:inline-block}
+/* 使えない会話の `!`。送信は押せない見た目（disabled にはしない。押すと理由の一行を光らせる） */
+.send.shell-blocked,.send.shell-blocked:hover{background:var(--surface-3);color:var(--ink-weak);cursor:not-allowed}
 /* 欄の上の接続の一行（web/connection-status.mjs）。切れた（自動で戻る）は本文の字と弧で、脇が見えていないときだけ
    （700px 以下の引き出し・広い画面で閉じたとき）。トークンが古い（操作が要る）は .next-settings と同じ面に強い字の見出しと次の一手で、脇の幅によらず出す */
 .conn-note{display:flex;align-items:center;gap:6px;font-size:var(--fs-s);color:var(--ink);padding:0 6px 6px;min-height:22px}

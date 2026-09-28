@@ -183,6 +183,8 @@
       <div class="cbox" id="cbox">
         <!-- 送る前の添付。会話にはまだ出ない（送信で present として載る） -->
         <div class="attached" id="attached"></div>
+        <!-- 入力欄の `!`（web/shell-composer.mjs）。シェルの形の間だけ、欄の上に「シェル · 作業ディレクトリ · 文として送る」。使えない会話では理由の一行 -->
+        <div class="shell-head" id="shellHead" hidden></div>
         <textarea id="prompt" data-i18n-placeholder="chat.composer.placeholder" rows="1" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="skillList"></textarea>
         <!-- 書けない待ち（会話を開いている・初めて接続するまで）。150ms を越えたら字の欄の上に重ねる（web/composer-wait.mjs） -->
         <div class="composer-busy" id="composerBusy" hidden><span class="composer-busy-text" id="composerBusyText"></span></div>
@@ -209,7 +211,7 @@
           <button type="button" class="btn btn-quiet abort" id="abort" hidden data-i18n-title="chat.composer.abort" data-i18n-aria-label="chat.composer.abort"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg><span data-i18n="chat.composer.abort"></span></button>
           <!-- 再開。中断状態・走っていない・欄が空のときだけ、中断と同じ位置に（web/interrupt.mjs）。保留があれば「保留中の N 件を送って再開」 -->
           <button type="button" class="btn btn-quiet resume" id="resume" hidden data-i18n-title="interrupt.resume" data-i18n-aria-label="interrupt.resume"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7z"/></svg><span id="resumeLabel" data-i18n="interrupt.resume"></span></button>
-          <button type="submit" class="btn btn-primary send" id="send" data-i18n-title="chat.composer.sendTitle" data-i18n-aria-label="chat.composer.sendTitle"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg></button>
+          <button type="submit" class="btn btn-primary send" id="send" data-i18n-title="chat.composer.sendTitle" data-i18n-aria-label="chat.composer.sendTitle"><svg class="i i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg><svg class="i i-run" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7z"/></svg></button>
         </div>
       </div>
       <!-- 中断中に字を書いたときだけ見える一行。書いていない間も高さは取っておく（.quiet） -->

@@ -102,6 +102,7 @@ try {
 
 import { installation, cliCommand } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
+import { createShellRuns, shellMode } from './shell-runs.mjs';
 
 const PORT = Number(process.env.AGENT_HOST_PORT ?? 7420);
 const HOST = process.env.AGENT_HOST_BIND ?? "127.0.0.1";
@@ -1023,6 +1024,8 @@ const LIST_NEUTRAL_EVENTS = new Set([
   "text.delta", "text.end", "thinking.start", "thinking.delta", "tool.start", "tool.result", "activity",
   "userMessage.delivered", "running", "permission", "outbox", "mcpAuth", "claudeLogin",
   "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",
+  // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
+  "shell.start", "shell.output", "shell.done", "shell.handed",
 ]);
 
 // 接続ごとに、いま開いている会話（loadSession の watch）。宣言した接続には、流れの出来事（streamEvents）を
@@ -1049,6 +1052,9 @@ function sendTo(frame) {
   }
   return sent;
 }
+// 入力欄の `!`（シェルの行。ADR 0054）。走っている子のプロセスはサーバーの終わりに止める
+const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event) });
+process.on('exit', () => shellRuns.stopAll());
 const completionNotices = createCompletionNotices({
   // 裏の作業は委譲の完了と同じく awaitedBackground で見る。開きっぱなしの端末（開発サーバーなど）で通知が出なくならないように
   busy: sessionId => sessionBusy(sessionId) || awaitedBackground(sessionId) || hasPendingChild(agentTasks?.list(sessionId) ?? []),
@@ -2053,7 +2059,16 @@ async function runTurnInternal(args, onStarted, hooks) {
 
     let didStart = false, backendInvoked = false, runtimeContext;
     let initialDelivered = false;
+    // 入力欄の `!` の結果（ADR 0054）。人の発言のターンでだけ、発言と一緒に渡す（完了通知で再開するターン・圧縮では渡さない）。
+    // 'host' の会話は未送の追記を shouldQuery: false の行で先に渡す。'native'（Codex）はエージェントの会話に既に入っている
+    const shellHandoff = sessionId && !hooks.internal && !hooks.compact && shellMode(backend)
+      ? (shellMode(backend) === 'host' ? await shellRuns.appendsFor(sessionId) : { ids: [], lines: [] }) : null;
+    let shellHanded = false;
     const onPromptDelivered = () => {
+      if (shellHandoff && !shellHanded) {
+        shellHanded = true;
+        shellRuns.delivered(sessionId, shellHandoff.ids).catch(e => console.error('  shell: 渡した記録に失敗:', String(e?.message ?? e)));
+      }
       if (initialDelivered || !args.messageId) return;
       initialDelivered = true;
       emit({ type: 'userMessage.delivered', messageId: args.messageId });
@@ -2097,6 +2112,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       if (hooks.signal?.aborted) throw new Error(t('turn.aborted'));
       const runArgs = {
         prompt,
+        ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
         ...(hooks.compact ? { compact: hooks.compact } : {}),
         sessionId,
         cwd,
@@ -2996,6 +3012,7 @@ wss.on("connection", (ws, req) => {
             if (!(await store.get(sessionId)).unsent) throw new Error(t('session.onlyUnsentDeletable'));
             compactionScheduler.cancel(sessionId);
             queuedCompactions.delete(sessionId);
+            shellRuns.stopSession(sessionId);
             await deleteUnsentConversation(sessionId);
             await store.removeSession(sessionId);
             releaseAgentConnection(sessionId);
@@ -3015,6 +3032,8 @@ wss.on("connection", (ws, req) => {
             const target = getBackend(targetId);
             if (!source || !target) throw new Error(t('agents.notFound'));
             await switchBackend(sessionId, source, target);
+            // 入力欄の `!`: 走っている分は止め、渡していない分は捨てる（前のエージェントの形でしか渡せない。ADR 0054）
+            if (source.id !== target.id) { shellRuns.stopSession(sessionId); await shellRuns.discard(sessionId); }
             // 接続先はエージェントごとの形式なので、エージェントが変わったら変えた先の既定（「既定にする」を押したもの。無ければ公式）に置き直す
             if (source.id !== target.id) await store.setSessionData(sessionId, 'compatEndpoint', endpointCapable(target) ? await compatEndpoints.defaultFor(target.id) : '');
             await savePref("backend", target.id);
@@ -3041,6 +3060,22 @@ wss.on("connection", (ws, req) => {
             prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}),
           }));
         }
+        // 入力欄の `!`（シェルの行。ADR 0054）。人の操作なので承認モードは掛けない。送信待ちにも送り直しの控えにも積まない
+        case 'runShell': {
+          const { sessionId, runId, command } = msg.args ?? {};
+          const backend = sessionId ? refuseRetired(await resolveBackendForSession(sessionId)) : null;
+          if (!backend) throw new Error(t('session.notFound'));
+          if (!shellMode(backend)) throw Object.assign(new Error(t('shell.unavailable')), { code: 'SHELL_UNAVAILABLE' });
+          const sidecar = await store.get(sessionId);
+          // Codex はスレッドができてから（最初の発言の後）
+          if (shellMode(backend) === 'native' && !(await backend.shellReady?.(sessionId) ?? true)) throw Object.assign(new Error(t('shell.notStarted')), { code: 'SHELL_NOT_STARTED' });
+          // 送信済みの会話は会話の作業ディレクトリ。まだ送っていない会話は入力欄で選んでいる場所
+          const cwd = !sidecar.unsent && sidecar.cwd ? sidecar.cwd : typeof msg.args?.cwd === 'string' && msg.args.cwd.trim() ? msg.args.cwd.trim() : sidecar.cwd;
+          if (!cwd || !(await fs.stat(cwd).then(st => st.isDirectory(), () => false))) throw Object.assign(new Error(t('shell.noCwd')), { code: 'SHELL_NO_CWD' });
+          return reply(true, await shellRuns.start({ sessionId, runId, command, cwd, backend }));
+        }
+        case 'stopShell':
+          return reply(true, { stopped: shellRuns.stop(msg.args?.runId) });
         case 'compactConversation': {
           const sessionId = msg.args?.sessionId;
           compactionScheduler.cancel(sessionId);
@@ -3193,6 +3228,8 @@ wss.on("connection", (ws, req) => {
             // 中断の印（一覧の行と同じ形）。会話の末尾の「中断しました」を保存された状態から描くため
             const interrupted = runtime.turns.has(sessionId) ? null : interruptedOf((await store.get(sessionId)).interrupted);
             const { compactSummaries, ...data } = await history.loadTranscript(sessionId, backend);
+            // 入力欄の `!`: Pleiad が走らせた分の終了コードを付け、まだ渡していない分・走っている分を末尾に足す（ADR 0054）
+            data.messages = [...shellRuns.decorate(data.messages, sidecar, backend), ...(msg.args?.outline ? [] : shellRuns.rows(sessionId, sidecar))];
             // 系譜の照合（web/branches.mjs）は uuid・役割・本文・ツール名しか見ない。
             // ツール結果や提示まで載せると、家族を開くたびに数十MBが流れて画面が止まる
             if (msg.args?.outline) return reply(true, { messages: data.messages.map(m => ({
@@ -3223,7 +3260,7 @@ wss.on("connection", (ws, req) => {
               // Use a fixed pre-turn history, never an independently sampled partial
               // transcript: it may overlap the events or lag behind them.
               return reply(true, {
-                messages: [...live.messages, ...(user ? [user] : [])], presents: live.presents, completedAt, interrupted: null, draft, ...compactionData,
+                messages: [...live.messages, ...(user ? [user] : []), ...shellRuns.rows(sessionId, sidecar)], presents: live.presents, completedAt, interrupted: null, draft, ...compactionData,
                 stream: { events: live.events }, streamCursor: streamSequence, permissions,
                 initialMessageId: live.initialMessageId,
               });

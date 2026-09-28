@@ -90,6 +90,12 @@ const SUBAGENT_ITEMS = ["subAgentActivity", "collabAgentToolCall"];
 // tool.start / tool.result に落とすアイテム。これ以外（agentMessage / reasoning / plan …）は
 // 本文や思考として別に扱う。知らない type は黙って落とす（増えても壊れない）。
 const TOOL_ITEMS = new Set(Object.keys(TOOL_HINTS));
+/** 入力欄の `!` で人が走らせたコマンド（thread/shellCommand。Codex の TUI・Desktop の `!` も同じ source） */
+const isUserShell = (item) => item?.type === "commandExecution" && item.source === "userShell";
+/** 走っている `!` の item id（出力の差分は item を運ばないので、id で見分ける） */
+const userShellItems = new Set();
+/** `!` の出力を履歴の形に（改行を揃え、末尾の空白を落とす。Claude の `!` の行と同じ扱い。core/system-messages.mjs） */
+const shellText = (s) => String(s ?? "").replace(/\r\n/g, "\n").replace(/\s+$/, "");
 
 /**
  * model/list の結果 `{ list, at }`。毎回 codex を叩かない（UI は表示のたびに引く）。
@@ -806,6 +812,16 @@ export function threadToMessages(thread, { fullResults = false } = {}) {
         continue;
       }
 
+      // 入力欄の `!`（Codex の TUI・Desktop の `!` も同じ）。エージェントのツールではなく、人が走らせた行（ADR 0054）
+      if (isUserShell(item)) {
+        flushTools();
+        const command = String(item.command ?? "");
+        messages.push({ role: "user", kind: "shell", text: `! ${command}`, command,
+          stdout: item.aggregatedOutput ? shellText(item.aggregatedOutput) || null : null, stderr: null,
+          exitCode: Number.isInteger(item.exitCode) ? item.exitCode : null, uuid: item.id, at, ...(item.status === "inProgress" ? { running: true } : {}) });
+        continue;
+      }
+
       if (TOOL_ITEMS.has(item?.type)) {
         const r = toolResult(item);
         toolCalls.push({
@@ -1060,6 +1076,8 @@ export const backend = {
     login: true,
     // 互換の接続先（OpenAI Responses 互換）を会話ごとに選べる（core/compat-endpoints.mjs）
     compatEndpoints: true,
+    // 入力欄の `!`: app-server の thread/shellCommand で走らせる（下の shell。ADR 0054）
+    shell: 'native',
   },
 
   toolHints: TOOL_HINTS,
@@ -1312,6 +1330,7 @@ export const backend = {
     const observe = rpc === nativeRpc ? () => {} : observeSubagents;
     const onNotification = (method, params) => {
       observe(method, params);
+      if (isUserShell(params?.item) || (method === 'item/commandExecution/outputDelta' && userShellItems.has(params?.itemId))) return;
       for (const event of commandActivity(method, params)) emit(event);
       switch (method) {
         case 'thread/tokenUsage/updated':
@@ -1341,6 +1360,8 @@ export const backend = {
         case "item/started": {
           const item = params?.item;
           if (!item?.id) return;
+          // 入力欄の `!` の結果はエージェントのツールではない。backend.shell が拾って shell.* で出す
+          if (isUserShell(item)) return;
           if (item.type === 'contextCompaction') emit(codexCompactionEvent(method, params));
           items.set(item.id, item);
           noteDelivered(item);
@@ -1360,6 +1381,7 @@ export const backend = {
         case "item/completed": {
           const item = params?.item;
           if (!item?.id) return;
+          if (isUserShell(item)) return;
           if (item.type === 'contextCompaction') emit(codexCompactionEvent(method, params));
           const started = items.has(item.id);
           // 終わったターンのアイテムが遅れて届くことがある（バックグラウンド端末。turnId は昔のまま）。
@@ -1667,6 +1689,57 @@ export const backend = {
     }
 
     return { sessionId: threadId };
+  },
+
+  /**
+   * 入力欄の `!`（ADR 0054）。app-server の thread/shellCommand { threadId, command, timeoutMs }（応答は {}。
+   * codex-cli 0.156.1 の generate-json-schema で確認。サンドボックスの外・全権限で走る）。
+   * 結果は commandExecution（source: userShell）の item/started → item/commandExecution/outputDelta → item/completed で流れる。
+   * スレッドがこの app-server に読み込まれていなければ読み込み、終わったら外す（次のターンが自分の設定で読み込めるように）。
+   * 止めるのは turn/interrupt（item の turnId）。止まった合図が 5 秒来なければ待つのをやめる
+   */
+  async shell({ sessionId: threadId, command, timeoutMs, signal, onOutput = () => {} }) {
+    if (!validId(threadId)) throw new Error(t("codex.errors.shellNotStarted"));
+    const loadedHere = !loadedProvider.has(threadId) && !nativeRpc.threads.has(threadId);
+    let itemId = null, turnId = null, output = "", stopped = false, settle;
+    const done = new Promise((resolve) => { settle = resolve; });
+    const off = nativeRpc.onNotify((method, params) => {
+      if (params?.threadId !== threadId) return;
+      const item = params?.item;
+      if (method === "item/started" && isUserShell(item) && !itemId) {
+        itemId = item.id; turnId = params.turnId ?? null; userShellItems.add(itemId);
+        if (signal?.aborted) stop();
+      } else if (method === "item/commandExecution/outputDelta" && itemId && params.itemId === itemId) {
+        const delta = String(params.delta ?? "");
+        output += delta;
+        onOutput("stdout", delta);
+      } else if (method === "item/completed" && isUserShell(item) && (!itemId || item.id === itemId)) settle({ item });
+      else if (method === "turn/completed" && turnId && params?.turn?.id === turnId) setTimeout(() => settle({}), 500);
+    });
+    const stop = () => {
+      stopped = true;
+      if (turnId) nativeRpc.request("turn/interrupt", { threadId, turnId }).catch(() => {});
+      setTimeout(() => settle({}), 5000).unref?.();
+    };
+    signal?.addEventListener?.("abort", stop, { once: true });
+    // 上限は codex にも渡す。合図が来ないときの保険に、少し長く待ってからやめる
+    const guard = setTimeout(() => settle({ timedOut: true }), timeoutMs + 30_000);
+    const started = Date.now();
+    try {
+      if (loadedHere) await nativeRpc.request("thread/resume", { threadId });
+      await nativeRpc.request("thread/shellCommand", { threadId, command, timeoutMs });
+      const { item, timedOut } = await done;
+      const text = item?.aggregatedOutput != null ? String(item.aggregatedOutput) : output;
+      return { exitCode: Number.isInteger(item?.exitCode) ? item.exitCode : null, output: text,
+        durationMs: Number.isFinite(item?.durationMs) ? item.durationMs : Date.now() - started,
+        stopped: stopped && !Number.isInteger(item?.exitCode), timedOut: Boolean(timedOut) };
+    } finally {
+      clearTimeout(guard);
+      off();
+      if (itemId) userShellItems.delete(itemId);
+      signal?.removeEventListener?.("abort", stop);
+      if (loadedHere && !nativeRpc.threads.has(threadId)) await nativeRpc.request("thread/unsubscribe", { threadId }).catch(() => {});
+    }
   },
 
   // locale は会話の言語。タイトルもその言語で作らせる

@@ -87,6 +87,11 @@
     "preparingFork": "会話の準備中です。分岐を再試行してください",
     "cannotFork": "このエージェントは分岐できない"
   },
+  "shell": {
+    "unavailable": "この会話ではシェルを実行できません",
+    "notStarted": "最初の発言を送ってからシェルを実行できます",
+    "noCwd": "作業ディレクトリが見つからないので実行できません"
+  },
   "turn": {
     "reservedInvalid": "予約した設定は使用できません。選び直してください",
     "aborted": "中断しました",
@@ -513,7 +518,8 @@
       "noHandler": "{{method}} を受け取る相手が居ない",
       "hooksList": "Codex の hooks の一覧（hooks/list）がそろわなかったので、送信を止めました（止める hooks を決められないため）: {{detail}}",
       "hooksUnsubscribeFailed": "Hooks の渡し方を切り替えられませんでした（codex が会話を外せませんでした: {{reason}}）。そのまま続けると hooks が二重に動くか動かないので、送信を止めました。裏で動いている端末があれば止めてから、もう一度送ってください",
-      "hooksTrust": "Pleiad の hooks を Codex に信頼済みとして渡すための hash を取れなかったので、送信を止めました（そのまま進むとガードが動かず、ネイティブの hooks だけが止まるため）: {{detail}}"
+      "hooksTrust": "Pleiad の hooks を Codex に信頼済みとして渡すための hash を取れなかったので、送信を止めました（そのまま進むとガードが動かず、ネイティブの hooks だけが止まるため）: {{detail}}",
+      "shellNotStarted": "最初の発言を送ってからシェルを実行できます"
     },
     "auth": {
       "notLoggedIn": "codex にログインしていない",

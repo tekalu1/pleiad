@@ -153,6 +153,12 @@ const cases = [
   await import("./unit/claude-normalize.mjs"),
   // 履歴のシステム側のメッセージ: 形（transcript の印）と文面での見分け・区切りへの要約・中断・teammate・文脈のタグ・保存分（ADR 0053）
   await import("./unit/system-messages.mjs"),
+  // 入力欄の `!`（ADR 0054）: ホストで走らせる・止める・上限・同じ runId・Claude に渡す形・Codex の userShell の履歴
+  await import("./unit/shell-runs.mjs"),
+  // 同じく入力欄の形: `!` を打つ・貼り付けでは入らない・Backspace で戻る・使えない会話・文として送る・入力欄に写す
+  await import("./unit/shell-composer.mjs"),
+  // 同じくサーバー越し（fake）: 走らせる・送信待ちに入らない・次の発言で渡す・開き直した履歴・使えない会話・Codex の thread/shellCommand
+  await import("./unit/server-shell.mjs"),
   await import("./unit/claude-background.mjs"),
   // Claude の途中送信の渡った合図（uuid・まとめ取り出し・次の内部ターン）と中断の interrupt。SDK の query を身代わりにする
   await import("./unit/claude-steer-stop.mjs"),
