@@ -69,6 +69,9 @@ export class RoutingSettingsError extends Error {
   constructor(code, detail = {}) { super(code); this.code = code; this.detail = detail; }
 }
 
+/** 設定から外した項目。前の版で保存した prefs に残っていても、保存（strict）で断らずに読み捨てる */
+export const RETIRED_KEYS = Object.freeze(['staleMinutes']);
+
 /**
  * prefs.json の delegationRouting を、既定値で補った完全な形にする。
  * strict なら不正な値を RoutingSettingsError で断る（画面からの保存）。そうでなければ不正な項目だけ既定に戻す（読むとき）
@@ -80,7 +83,7 @@ export function normalizeSettings(raw, { strict = false } = {}) {
     avoidPercent: DEFAULTS.avoidPercent, paceLimit: DEFAULTS.paceLimit,
     tiers: Object.fromEntries(Object.entries(DEFAULTS.tiers).map(([k, v]) => [k, [...v]])),
     table: Object.fromEntries(Object.entries(DEFAULTS.table).map(([k, v]) => [k, [...v]])) };
-  for (const key of Object.keys(src)) if (!Object.hasOwn(out, key)) fail('unknownKey', { key });
+  for (const key of Object.keys(src)) if (!Object.hasOwn(out, key) && !RETIRED_KEYS.includes(key)) fail('unknownKey', { key });
   for (const key of ['enabled', 'escalateToCerebras']) {
     if (src[key] === undefined) continue;
     if (typeof src[key] === 'boolean') out[key] = src[key]; else fail('notBoolean', { key });
