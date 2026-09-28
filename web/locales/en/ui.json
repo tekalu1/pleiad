@@ -2824,6 +2824,7 @@
     },
     "invalid": "Can't open this URL. Enter an http or https URL, or something like localhost:5173.",
     "externalUnavailable": "This page can't be opened in the default browser.",
+    "externalTooMany": "Too many open requests in a row. Wait a moment and try again.",
     "siteDataCleared": "Cleared data for this site.",
     "failed": "The browser action failed."
   }

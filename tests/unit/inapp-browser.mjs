@@ -5,11 +5,12 @@
 //   - preload: ローカルの窓にだけ browser の口を出す
 //   - main（desktop/browser-panel.cjs）を偽の electron で: タブ・位置・重なりの freeze・権限・新しい窓・既定のブラウザー・送り元の確認
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { N } from '../lib/dom-stub.mjs';
 import { applySlots, fileSlots, visualizationSlots, customSlots, browserSlots } from '../../web/side-panel.mjs';
 import { normalizeAddress, addressParts, tabLabel, isLocalHost, linkOpenPref, linkOpenTarget } from '../../web/browser-address.mjs';
@@ -81,7 +82,7 @@ function fakeBridge() {
 
 // ---- 偽の electron（desktop/browser-panel.cjs 用）
 function fakeElectron() {
-  const log = { external: [], added: [], removed: [], windows: [], devtools: [] };
+  const log = { external: [], opened: [], openError: '', added: [], removed: [], windows: [], devtools: [] };
   const handlers = { handle: {}, on: {} };
   let permissionRequest, permissionCheck;
   const session = {
@@ -124,7 +125,7 @@ function fakeElectron() {
     removeMenu() {} getContentSize() { return [900, 700]; } on(name, fn) { this.events[name] = fn; } isDestroyed() { return false; } setTitle(text) { this.title = text; }
   }
   const ipcMain = { handle: (ch, fn) => { handlers.handle[ch] = fn; }, on: (ch, fn) => { handlers.on[ch] = fn; } };
-  const shell = { openExternal: async url => { log.external.push(url); } };
+  const shell = { openExternal: async url => { log.external.push(url); }, openPath: async file => { log.opened.push(file); return log.openError; } };
   const app = { userAgentFallback: 'Mozilla/5.0 Chrome/140.0 Electron/44.3.0 agent-host/0.1.0-beta.49 Safari/537.36', getPath: () => 'C:/Users/x/Downloads' };
   const trust = { check: (event, kinds) => { if (event?.kind !== 'local' || !kinds.includes('local')) throw new Error('Invalid sender'); } };
   return { log, handlers, deps: { window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: 'icon.png' },
@@ -253,12 +254,23 @@ export default async function (t) {
     const visible = bridge.layouts.at(-1);
     assert.deepEqual(visible, { visible: true, rect: { x: 700, y: 120, width: 480, height: 700 }, radius: 12 });
     assert.equal(openInBrowserPanel('not a url'), false, '開けない URL は何もしない');
-    bridge.push({ tabs: [{ id: 't1', url: 'http://localhost:5173/', title: 'Workspace', loading: false, canGoBack: true, canGoForward: false }], current: 't1' });
+    bridge.push({ tabs: [{ id: 't1', url: 'http://localhost:5173/', title: 'Workspace', loading: false, canGoBack: true, canGoForward: false, external: true }], current: 't1' });
     assert.equal(panel.buttons.back.disabled, false); assert.equal(panel.buttons.forward.disabled, true);
     assert.equal(panel.buttons.openExternal.disabled, false);
     assert.equal(panel.buttons.address.dataset.kind, 'local');
     assert.equal(panel.tabsRow.querySelectorAll('.browser-tab').length, 1);
     assert(panel.tabsRow.shown.includes('Workspace'));
+    // 既定のブラウザーで開くを押せるかは main の external に従う（file: の HTML は画面が明示して開いたものだけ true になる）
+    const tabWith = (url, external) => bridge.push({ tabs: [{ id: 't1', url, title: '', loading: false, canGoBack: false, canGoForward: false, external }], current: 't1' });
+    tabWith('file:///D:/dev/demo/index.html', true);
+    assert.equal(panel.buttons.openExternal.disabled, false, '画面が開いた file: の HTML は押せる');
+    tabWith('file:///D:/dev/demo/other.html', false);
+    assert.equal(panel.buttons.openExternal.disabled, true, 'ページの中で移った file: は押せない');
+    tabWith('https://example.com/', undefined);
+    assert.equal(panel.buttons.openExternal.disabled, true, 'main が押せると言わなければ押せない');
+    tabWith('', false);
+    assert.equal(panel.buttons.openExternal.disabled, true, '空のタブは押せない');
+    tabWith('http://localhost:5173/', true);
     panel.hide();
     assert.deepEqual(bridge.layouts.at(-1), { visible: false, rect: null }, '隠すと View を外す');
     // 最後のタブを閉じたらパネルを閉じる
@@ -382,6 +394,64 @@ export default async function (t) {
   fe.handlers.main(null, 'http://127.0.0.1/', false, true);
   assert.equal(fe.log.removed.at(-1), attachedNow);
   t.ok('main: 分けた保存領域・権限は断る・送り元の確認・位置と倍率・今のタブだけ載せる・新しい窓はタブ・file: へ移らない・freeze・既定のブラウザー・会話ごとのタブ・別の窓', true);
+
+  // ---- main: 画面が開いた file: の HTML を既定のブラウザーで（shell.openPath）
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-inapp-external-'));
+  try {
+    const html = path.join(dir, 'page.html'), other = path.join(dir, 'other.htm'), png = path.join(dir, 'a.png'), missing = path.join(dir, 'gone.html');
+    for (const file of [html, other, png]) fs.writeFileSync(file, '<p>x</p>');
+    const fileUrl = file => pathToFileURL(file).href;
+    let clock = 0;
+    const fx = fakeElectron();
+    const filePanel = bp.createBrowserPanel({ ...fx.deps, now: () => clock });
+    filePanel.attach();
+    const run = (action, args) => fx.handlers.handle['ply:browser'](local$, action, args);
+    const now$ = s => s.tabs.find(tab => tab.id === s.current);
+    let s = await run('open', { url: 'https://example.com/' });
+    assert.equal(now$(s).external, true, 'https は押せる');
+    const contents = filePanel.contentsOf(s.current);
+    s = await run('open', { url: 'http://localhost:5173/' });
+    assert.equal(now$(s).external, true, 'http は押せる');
+    contents.url = fileUrl(html);   // http(s) のタブがページの中で file: へ移った（allowFile なし）
+    s = await run('state');
+    assert.equal(now$(s).external, false, '画面が file: を開いていないタブの file: は押せない');
+    assert.deepEqual(await run('external'), { ok: false });
+    s = await run('open', { url: `${fileUrl(html)}#top` });
+    assert.equal(now$(s).external, true, '画面が開いた file: の HTML は押せる');
+    assert.deepEqual(await run('external'), { ok: true });
+    assert.deepEqual(fx.log.opened, [fs.realpathSync(html)], '実体を解決したパスを openPath に渡す');
+    assert.deepEqual(fx.log.external, [], 'file: は URL として openExternal に渡さない');
+    contents.url = fileUrl(other);   // ページの中で別の file: へ移った
+    s = await run('state');
+    assert.equal(now$(s).external, false, 'ページの中で移った先の file: は押せない');
+    assert.deepEqual(await run('external'), { ok: false });
+    s = await run('open', { url: fileUrl(png) });
+    assert.equal(now$(s).external, false, 'file: の HTML 以外は押せない');
+    assert.deepEqual(await run('external'), { ok: false });
+    s = await run('open', { url: fileUrl(missing) });
+    assert.deepEqual(await run('external'), { ok: false }, '無いファイルは断る');
+    s = await run('newTab');
+    assert.equal(now$(s).external, false, '空のタブは押せない');
+    const blank = filePanel.createFor('sess-x');
+    s = await run('select', { id: blank.id });
+    assert.equal(now$(s).url, 'about:blank'); assert.equal(now$(s).external, false, 'about:blank は押せない');
+    assert.deepEqual(await run('external'), { ok: false });
+    assert.equal(fx.log.opened.length, 1);
+    // openPath の失敗と連打（サーバーの openPath と同じ 5 回 / 10 秒）
+    s = await run('open', { url: fileUrl(html) });
+    fx.log.openError = 'No application is associated';
+    assert.deepEqual(await run('external'), { ok: false }, 'openPath の失敗は断ったと返す');
+    fx.log.openError = '';
+    for (let i = 0; i < 3; i++) assert.deepEqual(await run('external'), { ok: true });
+    assert.deepEqual(await run('external'), { ok: false, reason: 'too-many' }, '10 秒に 6 回目は断る');
+    assert.equal(fx.log.opened.length, 5);
+    clock += 10_001;
+    assert.deepEqual(await run('external'), { ok: true }, '時間が経てばまた開ける');
+    assert.equal(bp.externalFile(fileUrl(html), { allowFile: true, requested: fileUrl(html) }), html);
+    assert.equal(bp.externalFile('file://server/share/a.html', { allowFile: true, requested: 'file://server/share/a.html' }), null, 'UNC は断る');
+    assert.equal(bp.externalFile(fileUrl(html), { allowFile: false, requested: fileUrl(html) }), null);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  t.ok('main: 既定のブラウザーで開くは http・https と、画面が開いた file: の HTML だけ（実体を解決して openPath・連打の制限）。ページで移った file:・HTML 以外・about:blank は断る', true);
 
   // ---- 補助
   assert.equal(bp.openable('https://a.example/'), 'https://a.example/'); assert.equal(bp.openable('chrome://gpu'), null);
