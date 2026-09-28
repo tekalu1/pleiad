@@ -20,7 +20,7 @@
 - 画面・エラー・エージェント向けの文言は辞書（`web/locales/<言語>/<名前空間>.json`）に置き、`t()` で引く（`docs/design.md`「多言語対応」、訳語は `docs/i18n-glossary.md` に従う）。直書きの日本語は `npm test` の lint-i18n が落とす。基準（`tests/i18n-baseline.json`）の更新は減らすときだけ（`node tests/lint-i18n.mjs --update-baseline`）。
 - コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。
 - WebSocket のコマンドを足すときは、`core/server.mjs` の `case` に加えて `core/protocol.mjs` の `COMMANDS` にも登録する。登録が無いとサーバーはエラーも返さず黙って捨て、テストの `cmd` は応答待ちのまま止まる（2026-09-28）。
-- `core/server.mjs` の `case "loadSession"` の本文は、`tests/unit/session-stream.mjs` が文字列で切り出して vm の中で走らせる。そこで新しい関数を呼ぶなら、テストの `vm.createContext({ … })` にも渡す。渡さないと `ReferenceError: <名前> is not defined` で落ちる（2026-09-28、`attachCompactSummaries`）。
+- `core/server.mjs` の `case "loadSession"` の本文は、`tests/unit/session-stream.mjs` が文字列で切り出して vm の中で走らせる。そこで新しい関数を呼ぶなら、テストの `vm.createContext({ … })` にも渡す。渡さないと `ReferenceError: <名前> is not defined` で落ちる（2026-09-28、`attachCompactSummaries`）。`web/client.mjs` の `saveDraft`・`loadDraft`・`submit` なども `tests/unit/composer-new-session.mjs` が同じように vm で走らせるので、そこから新しいモジュールの定数を引くなら身代わりを足す（2026-09-28、`shellComposer`）。
 - サーバー越しのテストで fake-codex のターンを走らせるときは `open({ ...host, autoAllow: true })` でつなぐ。fake-codex の既定の台本はコマンドの承認を求めるので、無いと `runTurn` が承認待ちで止まる（`open(host, { autoAllow: true })` のように第 2 引数で渡しても効かない）。
 - `npm run test:e2e` は実際の LLM を呼び出すため、実サービスとの接続確認が必要な変更で実行する。
 - 現在は独立したビルドコマンドはない。文書のみの変更では、内容と `git diff --check` の確認を行えばよい。
