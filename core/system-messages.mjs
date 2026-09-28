@@ -157,10 +157,26 @@ export function classifySystemMessages(messages, marks = null) {
       continue;
     }
     if (startsWithAny(text, SHELL_INPUT_TAGS)) {
-      const command = (tagBody(text, "bash-input") ?? "").trim();
-      const message = { ...m, kind: "shell", text: `! ${command}`, command, stdout: null, stderr: null };
-      out.push(message);
-      owner = { kind: "shell", raw: m.uuid, message };
+      // CLI の `!` は入力と出力が別々の行。Claude の SDK は、次の発言の前に積んだ shouldQuery: false の行（Pleiad の `!`）を
+      // `\n` でつないで 1 行に残す（入力と出力の組が並ぶ）。組ごとに 1 行にする。uuid は最後の組だけに付ける
+      // （前の組で分岐すると後の組まで入るため）
+      const segments = [];
+      const seg = /<bash-input>([\s\S]*?)<\/bash-input>\s*(?:<bash-stdout>[\s\S]*?<\/bash-stdout>)?\s*(?:<bash-stderr>[\s\S]*?<\/bash-stderr>)?\s*/y;
+      seg.lastIndex = text.length - head(text).length;
+      for (let hit; seg.lastIndex < text.length && (hit = seg.exec(text));) segments.push(hit);
+      if (!segments.length) segments.push([text, tagBody(text, "bash-input") ?? ""]);
+      let message = null;
+      segments.forEach((hit, i) => {
+        const command = plain(hit[1]).trim();
+        const output = hit[0].includes("<bash-stdout>") || hit[0].includes("<bash-stderr>");
+        const last = i === segments.length - 1;
+        const { uuid: _uuid, ...rest } = m;
+        message = { ...(last ? m : rest), kind: "shell", text: `! ${command}`, command, ...(output ? shellOutput(hit[0]) : { stdout: null, stderr: null }) };
+        out.push(message);
+      });
+      // 出力を持たない入力の行（CLI の形）だけが、続く出力の行を受け取る
+      const tail = segments[segments.length - 1][0];
+      owner = tail.includes("<bash-stdout>") || tail.includes("<bash-stderr>") ? null : { kind: "shell", raw: m.uuid, message };
       continue;
     }
     if (INTERRUPTS.has(text.trim())) {

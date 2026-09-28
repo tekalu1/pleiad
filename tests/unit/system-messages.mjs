@@ -74,6 +74,21 @@ export default async function (t) {
       out[0].stdout === "On branch main\nYour branch is up to date." && out[0].stderr === null && out[1].stdout === null && out[1].stderr === "Switched to branch 'feature/x'");
     t.ok("両方空なら両方 null", out[2].stdout === null && out[2].stderr === null && !("exitCode" in out[2]));
   }
+  // ---- Pleiad の `!`: Claude の SDK が shouldQuery: false の行を `\n` でつないで 1 行に残した形（本物で確認 2026-09-28）
+  {
+    const out = classifySystemMessages([
+      u("j1", "<bash-input>ls no-such-dir</bash-input>\n<bash-stdout></bash-stdout><bash-stderr>ls: cannot access 'no-such-dir'\n</bash-stderr>\n<bash-input>echo second-run</bash-input>\n<bash-stdout>second-run\n</bash-stdout><bash-stderr></bash-stderr>"),
+      u("h", "直前の 2 つは？"),
+      u("j2", "<bash-input>echo one</bash-input>\n<bash-stdout>one\n</bash-stdout><bash-stderr></bash-stderr>"),
+      u("r9", "<bash-stdout>stray</bash-stdout><bash-stderr></bash-stderr>"),
+    ]);
+    t.ok("つながった行は、入力と出力の組ごとに kind: shell の行になる",
+      out.length === 5 && out[0].kind === "shell" && out[0].command === "ls no-such-dir" && out[0].stdout === null && out[0].stderr === "ls: cannot access 'no-such-dir'"
+      && out[1].kind === "shell" && out[1].command === "echo second-run" && out[1].stdout === "second-run" && out[1].stderr === null, JSON.stringify(out));
+    t.ok("uuid（分岐点）は最後の組だけが持つ", !("uuid" in out[0]) && out[1].uuid === "j1");
+    t.ok("人の発言は混ざらない", !out[2].kind && out[2].text === "直前の 2 つは？");
+    t.ok("出力を持った行の後の出力の行は、その行にまとめない", out[3].stdout === "one" && out[3].uuid === "j2" && out[4].kind === "shell" && out[4].command === "" && out[4].stdout === "stray");
+  }
   // ---- 中断
   {
     const out = classifySystemMessages([u("h", "テストを全部流して"), a("a", "実行します。"), u("x1", "[Request interrupted by user]"), u("x2", "[Request interrupted by user for tool use]")]);
