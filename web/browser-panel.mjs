@@ -90,7 +90,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   // 触れていない間は、スキームと残りを弱く・ホスト名を強くした文字を入力欄に重ねて見せる
   const shownText = el('span', 'browser-address-text'); shownText.setAttribute('aria-hidden', 'true');
   address.append(mark, input, shownText);
-  const openExternal = button(ICON.external, t('browser.openExternal'), () => run('external').then(r => { if (r && r.ok === false) notify(t('browser.externalUnavailable')); }).catch(failed));
+  const openExternal = button(ICON.external, t('browser.openExternal'), () => run('external').then(r => { if (r && r.ok === false) notify(r.reason === 'too-many' ? t('browser.externalTooMany') : t('browser.externalUnavailable')); }).catch(failed));
   const more = button(moreIcon, t('browser.actions'), () => {
     const r = more.getBoundingClientRect(), tab = current();
     showMenu?.(r.left, r.bottom + 4, [
@@ -180,7 +180,8 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
     const loading = !!tab?.loading;
     reload.innerHTML = loading ? ICON.stop : ICON.reload;
     reload.title = loading ? t('browser.stop') : t('browser.reload'); reload.setAttribute('aria-label', reload.title);
-    openExternal.disabled = !/^https?:/.test(tab?.url ?? '');
+    // 押せるかは main が決める（http・https と、画面が明示して開いた file: の HTML。desktop/browser-panel.cjs）
+    openExternal.disabled = !tab?.external;
     empty.hidden = !!tab?.url;
     paintTabs(); paintAddress();
     // 最後のタブを閉じたらパネルごと閉じる
