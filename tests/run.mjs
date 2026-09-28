@@ -172,6 +172,8 @@ const cases = [
   await import("./unit/claude-steer-stop.mjs"),
   // Claude のターンの終わり: Stop フックの続き・裏へ回ったまま終わらないコマンド（stopTask で終わる）
   await import("./unit/claude-turn-end.mjs"),
+  // Claude のモデル一覧: CLI の実体（版）が変わったら 30 分の TTL の中でも引き直す
+  await import("./unit/claude-catalog-cli-version.mjs"),
   await import("./unit/codex-background.mjs"),
   await import("./unit/codex-terminals.mjs"),
   await import("./unit/event-session-id.mjs"),
