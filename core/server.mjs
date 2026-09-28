@@ -11,7 +11,7 @@ import { migrateClaudeUsage } from './usage-migrations.mjs';
 import { createAgentTasks, finalReply } from './agent-tasks.mjs';
 import { createCompletionNotices, hasPendingChild } from './completion-notices.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
-import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
+import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode } from './modes.mjs';
@@ -26,7 +26,7 @@ import os from "node:os";
 import { readLocalFile } from "./local-files.mjs";
 import { isLocalRequest, defaultOpener, createRateLimit, OPENABLE } from './os-open.mjs';
 import { readPreview, listTreeFolder, resolveReference, cwdAt, inspectFile, previewFailure } from './file-preview.mjs';
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
 import * as store from "./store.mjs";
@@ -59,6 +59,7 @@ import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
 import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
 import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
+import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { validBrowserPref } from '../web/browser-confirm-policy.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
@@ -80,6 +81,10 @@ migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_C
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
 const agentBrowser = parentPortBrowser(process.parentPort);
+// リモートの端末から PC の内蔵ブラウザーを見る（core/browser-screencast.mjs）。デスクトップ版だけ
+const screencastBridge = parentPortScreencast(process.parentPort);
+const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencastBridge }) : null;
+const screencastClients = new WeakMap();   // ws -> hub に渡す端末
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
 delete process.env.AGENT_BROWSER_CONFIG;
 delete process.env.AGENT_BROWSER_SESSION;
@@ -2622,7 +2627,12 @@ wss.on("connection", (ws, req) => {
     // 画面の言語。setting は設定値（auto|ja|en）、lang は実際に使う言語（ja|en）
     locale,
   }));
-  ws.on("close", () => detach(ws));
+  ws.on("close", () => {
+    detach(ws);
+    // 見ていた PC のブラウザーは、見る端末がいなくなれば止める
+    const viewer = screencastClients.get(ws);
+    if (viewer) screencastHub?.forget(viewer);
+  });
 
   ws.on("message", async (raw) => {
     let msg;
@@ -3159,6 +3169,7 @@ wss.on("connection", (ws, req) => {
           if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error(t('routing.settings.notObject', { key: 'settings' }));
           const raw = { ...((await store.getPrefs()).delegationRouting ?? {}) };
           for (const [key, value] of Object.entries(patch)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
+          for (const key of RETIRED_KEYS) delete raw[key];
           let settings;
           try { settings = normalizeSettings(raw, { strict: true }); } catch (e) { throw routingSettingsError(e); }
           const previous = routingSettingsCache;
@@ -3354,11 +3365,28 @@ wss.on("connection", (ws, req) => {
         case "listDirs":
           return reply(true, await listDirs(msg.args?.path, { files: msg.args?.files === true }));
 
+        // リモートの端末から PC の内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートから見る」）
+        case 'browserScreencast': case 'browserScreencastStop': case 'browserScreencastAck':
+        case 'browserScreencastInput': case 'browserScreencastNav': case 'browserScreencastAgent': {
+          if (!screencastClients.has(ws)) screencastClients.set(ws, { send: message => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message)); } });
+          const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {}, local, hub: screencastHub, bridge: screencastBridge,
+            client: screencastClients.get(ws),
+            snapshotFile: async ({ sessionId, id, at }) => {
+              const record = await history.findVisualization(sessionId, await resolveBackendForSession(sessionId).catch(() => null), { id, at });
+              if (!record) return null;
+              const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'), { prefs: await store.getPrefs() });
+              return pathToFileURL(file).href;
+            } });
+          // i18n-dynamic: server:remoteBrowser.
+          return answer.ok ? reply(true, answer.result) : reply(false, t(`remoteBrowser.${answer.code}`), answer.code);
+        }
+
         // ファイルの操作（web/file-actions.mjs）。範囲は /file-preview と同じで、実体を解決した後のパスで確かめる。
         // ホストで開く・検査済みのパスを画面へ返す操作は遠隔から断る。開けるのは HTML だけ
         case "hostCapabilities":
           // hostName は添付の「ホストから <ホスト名>」の見出し（リモートの印の無いブラウザーで使う）
-          return reply(true, { osActions: local, hostName: os.hostname() });
+          // pcBrowser: この接続から PC の内蔵ブラウザーを見られるか（デスクトップ版で、リモートの接続のとき）
+          return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready });
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));

@@ -47,9 +47,15 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
       if (existing) return existing[0];
       const sid = random();
       const c = row.tab.webContents;
-      const listener = (_event, method, params, innerSession) => send({ method, params, sessionId: innerSession || sid });
+      // debugger はリモートの端末の画面（desktop/browser-screencast.cjs）と共有する。そちらのフレームはエージェントへ流さない
+      const record = { tab: row.tab, targetId: row.id, listener: null, screencast: false };
+      const listener = (_event, method, params, innerSession) => {
+        if (method === 'Page.screencastFrame' && !innerSession && !record.screencast) return;
+        send({ method, params, sessionId: innerSession || sid });
+      };
+      record.listener = listener;
       c.debugger.on('message', listener);
-      attached.set(sid, { tab: row.tab, targetId: row.id, listener });
+      attached.set(sid, record);
       if (announce) send({ method: 'Target.attachedToTarget', params: { sessionId: sid, targetInfo: publicInfo(row), waitingForDebugger: false } });
       return sid;
     }
@@ -100,6 +106,7 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
           else {
             if (method.startsWith('Target.') || method.startsWith('Browser.')) throw new Error('browser command denied');
             if (method === 'Page.navigate' && !safeUrl(params.url)) throw new Error('navigation denied');
+            if (method === 'Page.startScreencast') record.screencast = true;
             const sendCommand = () => record.tab.webContents.debugger.sendCommand(method, params);
             result = navigation ? await navigation.run({ ...record.tab, sessionId: entry.id }, method, params, sendCommand) : await sendCommand();
           }

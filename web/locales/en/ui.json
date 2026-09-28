@@ -1597,7 +1597,13 @@
     },
     "link": {
       "blocked": "Disabled because the link is unsafe",
-      "hostOnly": "localhost links open only on the host's PC."
+      "hostOnly": "localhost links open only on the host's PC.",
+      "openSheet": "Open link in",
+      "openOnDevice": "Open on this device",
+      "openOnDeviceSub": "This device's browser",
+      "openOnPc": "View in the PC's browser",
+      "pcOnly": "This URL opens only on the host PC.",
+      "close": "Close"
     },
     "present": {
       "height": {
@@ -2846,6 +2852,27 @@
     "externalUnavailable": "This page can't be opened in the default browser.",
     "externalTooMany": "Too many open requests in a row. Wait a moment and try again.",
     "siteDataCleared": "Cleared data for this site.",
-    "failed": "The browser action failed."
+    "failed": "The browser action failed.",
+    "remote": {
+      "title": "PC browser",
+      "backToChat": "Back to conversation",
+      "screen": "Browser screen sent from the PC",
+      "address": "PC browser address",
+      "editAddress": "Enter address",
+      "connectedFps": "Connected · {{fps}} fps",
+      "connecting": "Connecting…",
+      "ended": "The PC browser tab was closed",
+      "quality": "Quality: {{level}}",
+      "qualityAuto": "Auto",
+      "qualityLow": "Low",
+      "textInput": "Type text",
+      "textLabel": "Text to type into the PC page",
+      "textPlaceholder": "Text for the PC",
+      "textSend": "Send",
+      "takeOverFirst": "Take over to type",
+      "youOperate": "You're in control",
+      "stopped": "Stopped the agent",
+      "failed": "Couldn't open the PC browser."
+    }
   }
 }

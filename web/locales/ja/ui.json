@@ -1554,7 +1554,13 @@
     },
     "link": {
       "blocked": "安全でないリンクのため無効化",
-      "hostOnly": "localhost のリンクはホストの PC でだけ開けます。"
+      "hostOnly": "localhost のリンクはホストの PC でだけ開けます。",
+      "openSheet": "リンクの開き先",
+      "openOnDevice": "この端末で開く",
+      "openOnDeviceSub": "この端末のブラウザー",
+      "openOnPc": "PC のブラウザーで見る",
+      "pcOnly": "この URL は PC からだけ開けます。",
+      "close": "閉じる"
     },
     "present": {
       "height": {
@@ -2768,6 +2774,27 @@
     "externalUnavailable": "このページは既定のブラウザーで開けません。",
     "externalTooMany": "続けて開きすぎています。少し待ってからもう一度押してください。",
     "siteDataCleared": "このサイトのデータを消しました。",
-    "failed": "ブラウザーの操作に失敗しました。"
+    "failed": "ブラウザーの操作に失敗しました。",
+    "remote": {
+      "title": "PC のブラウザー",
+      "backToChat": "会話へ",
+      "screen": "PC から送られたブラウザーの画面",
+      "address": "PC のブラウザーのアドレス",
+      "editAddress": "アドレスを入力",
+      "connectedFps": "接続中 · {{fps}} fps",
+      "connecting": "接続しています…",
+      "ended": "PC のブラウザーのタブが閉じました",
+      "quality": "画質: {{level}}",
+      "qualityAuto": "自動",
+      "qualityLow": "低",
+      "textInput": "文字入力",
+      "textLabel": "PC のページへ入力する文字",
+      "textPlaceholder": "PC に入力する文字",
+      "textSend": "入力",
+      "takeOverFirst": "引き継いでから入力できます",
+      "youOperate": "あなたが操作中",
+      "stopped": "操作を止めました",
+      "failed": "PC のブラウザーを開けませんでした。"
+    }
   }
 }

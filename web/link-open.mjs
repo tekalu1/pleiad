@@ -6,15 +6,22 @@ import { browserPanelAvailable, openInBrowserPanel } from './browser-panel.mjs';
 import { linkOpenTarget } from './browser-address.mjs';
 
 let getPrefs = () => ({});
-/** client.mjs passes the current prefs (linkOpen) */
-export function configureLinkOpen({ getPrefs: read } = {}) {
+let chooseRemote = () => false;
+/**
+ * client.mjs passes the current prefs (linkOpen) and, for screens other than the host's, the chooser that shows
+ * "open on this device / view in the PC's browser" (web/link-sheet.mjs). It returns true when it took the link.
+ */
+export function configureLinkOpen({ getPrefs: read, chooseRemote: choose } = {}) {
   if (typeof read === 'function') getPrefs = read;
+  if (typeof choose === 'function') chooseRemote = choose;
 }
 
-export function openExternalLink(url, { newWindow = true, external = false } = {}) {
+export function openExternalLink(url, { newWindow = true, external = false, direct = false } = {}) {
   let parsed;
   try { parsed = new URL(url); } catch { return false; }
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return false;
+  // direct: the chooser already picked this device
+  if (!direct && chooseRemote(parsed.href, () => openExternalLink(parsed.href, { newWindow, external, direct: true }))) return true;
   const available = browserPanelAvailable();
   if (!external && linkOpenTarget({ available, prefs: getPrefs() }) === 'inapp' &&
       openInBrowserPanel(parsed.href, { newTab: true })) return true;

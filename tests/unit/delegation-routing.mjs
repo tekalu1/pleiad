@@ -69,6 +69,7 @@ export default async function (t) {
   t.ok('画面からの保存（strict）は不正な値を断る', rejects.every(raw => { try { normalizeSettings(raw, { strict: true }); return false; } catch (e) { return e instanceof RoutingSettingsError && typeof e.code === 'string'; } }));
   t.ok('読むとき（strict でない）は不正な項目だけ既定に戻す', normalizeSettings({ avoidPercent: 500, paceLimit: 2 }).avoidPercent === 80 && normalizeSettings({ avoidPercent: 500, paceLimit: 2 }).paceLimit === 2);
   t.ok('保存済みの prefs に古い staleMinutes が残っていても、読むときはエラーにせず読み捨てる', !Object.hasOwn(normalizeSettings({ staleMinutes: 30 }), 'staleMinutes'));
+  t.ok('外した項目（staleMinutes）が prefs に残っていても、画面からの保存（strict）は断らない', !Object.hasOwn(normalizeSettings({ staleMinutes: 30, avoidPercent: 70 }, { strict: true }), 'staleMinutes'));
   t.ok('候補の id は backend:model（model の中の : はそのまま）', parseCandidate('codex:gpt-6-sol').model === 'gpt-6-sol' && parseCandidate('x:a:b').model === 'a:b' && !parseCandidate('claude') && !parseCandidate(':m') && !parseCandidate('claude: x'));
 
   // ---- 難しさの規則（v3・規則 A）
