@@ -56,8 +56,10 @@ export async function loadTranscript(sessionId, backend) {
   ]);
 
   const notices = new Set((await store.get(sessionId)).taskNotices ?? []);
-  for (const m of messages) if (m.role === 'user' && notices.has(crypto.createHash('sha256').update(m.text ?? '').digest('hex'))) m.internalTaskNotice = true;
-  return { messages, presents };
+  for (const m of messages) if (m.role === 'user' && !m.kind && notices.has(crypto.createHash('sha256').update(m.text ?? '').digest('hex'))) m.internalTaskNotice = true;
+  // 圧縮の要約は発言ではなく区切りの中身。分けて返し、server が区切りに入れる（core/compaction-history.mjs の attachCompactSummaries）
+  const compactSummaries = messages.filter(m => m?.kind === 'compactSummary');
+  return { messages: compactSummaries.length ? messages.filter(m => m?.kind !== 'compactSummary') : messages, presents, compactSummaries };
 }
 
 // ------------------------------------------------------------------ present

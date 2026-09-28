@@ -4,6 +4,8 @@ import readline from 'node:readline';
 fs.writeFileSync(process.env.FAKE_BROWSER_ENV_FILE, JSON.stringify({
   config: process.env.AGENT_BROWSER_CONFIG,
   session: process.env.AGENT_BROWSER_SESSION,
+  socketDir: process.env.AGENT_BROWSER_SOCKET_DIR,
+  namespace: process.env.AGENT_BROWSER_NAMESPACE,
   path: process.env.PATH,
 }));
 if (process.argv.includes('app-server')) {

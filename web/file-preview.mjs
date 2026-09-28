@@ -4,7 +4,7 @@ import { isComposingKey } from './keyboard.mjs';
 import { fileReference, fileDownloadUrl } from './file-reference.mjs';
 import { htmlDocument, markdownContent, parseTable, previewFrame } from './file-preview-content.mjs';
 import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs';
-import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fileIcon, moreIcon } from './icons.mjs';
+import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fileIcon, moreIcon, locateIcon, collapseAllIcon } from './icons.mjs';
 import { fileMenuItems, visualizationMenuItems, copyPathText, relativeTo, samePath, notify, download, openHostFile } from './file-actions.mjs';
 import { browserPanelAvailable, openInBrowserPanel } from './browser-panel.mjs';
 import { linkOpenTarget } from './browser-address.mjs';
@@ -20,6 +20,8 @@ function formatSize(bytes) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+/** ツリーの 1 フォルダーに一度に出す件数（core/file-preview.mjs の TREE_PAGE と同じ）。「さらに N 件」の N の上限 */
+const TREE_PAGE = 200;
 const button = (label, action, className = 'btn') => { const b = el('button', className, label); b.type = 'button'; b.onclick = action; return b; };
 /** 枠の操作はアイコンにして、名前は title と aria-label に持たせる */
 const setIcon = (b, icon, label) => { b.innerHTML = icon; b.title = label; b.setAttribute('aria-label', label); };
@@ -50,7 +52,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   const setTreeOpen = (on) => {
     treePane.classList.toggle('collapsed', !on);
     treeToggle.setAttribute('aria-expanded', String(on));
-    if (on && file?.path && tree.reveal(file.path)) tree.select(file.path, false);
+    if (on) revealCurrent();
   };
   const treeToggle = iconButton(folderIcon, t('filePreview.tree'), () => setTreeOpen(treePane.classList.contains('collapsed')));
   treeToggle.setAttribute('aria-expanded', 'false');
@@ -89,7 +91,11 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   const bodyLayout = el('div', 'file-preview-body-layout');
   const treePane = el('div', 'file-preview-tree-pane collapsed');
   const treeHeader = el('div', 'file-preview-tree-header');
-  treeHeader.append(el('span', null, t('filePreview.explorer')));
+  // 見出しの道具: 祖先を開き直して今のファイルを選び直す・根の直下だけ残して畳む（docs/design-system.md「右パネル」）
+  const treeTools = el('div', 'file-preview-tree-tools');
+  treeTools.append(iconButton(locateIcon, t('filePreview.treeLocate'), () => revealCurrent({ force:true })),
+    iconButton(collapseAllIcon, t('filePreview.treeCollapseAll'), () => tree.collapseAll()));
+  treeHeader.append(el('span', null, t('filePreview.explorer')), treeTools);
   const treeRoot = el('div', 'tree file-preview-tree');
   treePane.append(treeHeader, treeRoot);
   const content = el('div', 'file-preview-content'); content.setAttribute('aria-label', t('filePreview.contents')); content.tabIndex = 0;
@@ -100,19 +106,84 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
       const ic = el('span', 'ic');
       ic.innerHTML = node.kind === 'directory' ? folderIcon : fileIcon;
       const nm = el('span', 'nm', node.name);
+      // 名前は省略せず横にスクロールする（scrollX）。どこの行かは title の作業ディレクトリからのパスでも分かる
+      // （分からなければツリーの根から。外ならフルパス）
+      row.title = relativeTo(node.id, file?.cwd) ?? relativeTo(node.id, file?.tree?.[0]?.id) ?? node.id;
       // ⋯ は触れた・選んだ行に出る。フォーカスはツリー 1 つのまま（tabindex -1）。支援技術には出さない
       // （行の名前に混ざる）。キーボードは Shift+F10・ContextMenu キーで同じメニュー
       const dots = el('button', 'btn btn-icon tree-more'); dots.type = 'button'; dots.tabIndex = -1;
       setIcon(dots, moreIcon, t('files.actionsFor', { name: node.name })); dots.setAttribute('aria-hidden', 'true');
       dots.onclick = e => { e.stopPropagation(); const r = dots.getBoundingClientRect(); treeMenu(node, r.left, r.bottom + 4); };
       dots.ondblclick = e => e.stopPropagation();
-      row.append(ic, nm, dots);
+      row.append(ic, nm);
+      // 除外名のフォルダー（temporary など）の中を開いたときだけ出る。兄弟は出さず、経路だけ
+      if (node.pathOnly) {
+        row.classList.add('path-only');
+        const tag = el('span', 'tag', t('filePreview.treePathOnly')); tag.title = t('filePreview.treePathOnlyTitle');
+        row.append(tag);
+      }
+      row.append(dots);
     },
     onSelect(node) {
       open({ path: node.id });
     },
     onContext(node, x, y) { treeMenu(node, x, y); },
+    onLoad: node => listFolder(node),
+    onMore: node => moreOf(node),
+    failed: t('filePreview.treeLoadFailed'),
+    moreLabel: node => t('filePreview.treeShowMore', { count: Math.min(node.more, TREE_PAGE) }),
+    scrollX: true,
   });
+  /**
+   * 今のファイルまで祖先を開いて選び、上下に余白を残して見える位置へ送る。横は名前の終わりが見える位置へ。ツリーに無ければ選択を外す。
+   * force（見出しのボタン）は余白の内にあっても上の余白の位置へ送り、横も合わせ直す
+   */
+  function revealCurrent({ force = false } = {}) {
+    const found = file?.path ? tree.reveal(file.path) : null;
+    tree.select(found, false, { scroll:false });
+    if (found) tree.scrollToRow(found, { force });
+  }
+  /** ツリーの 1 フォルダーを読む（開いたとき・続き）。読める範囲はプレビューと同じ口（/file-preview の list=1）が決める */
+  async function listFolder(node, offset = 0) {
+    const params = new URLSearchParams({ path:node.id, list:'1', ...(offset ? { offset:String(offset) } : {}), ...(context.sessionId ? { sessionId:context.sessionId } : {}) });
+    const response = await fetch(`/file-preview?${params}`, { credentials:'same-origin' });
+    if (response.status === 401) throw new Error(t('filePreview.error.auth'));
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error?.message || t('filePreview.treeLoadFailed'));
+    return { children:data.children ?? [], more:data.more ?? 0, next:data.next ?? null };
+  }
+  /**
+   * 「さらに表示」。枠の外から足していた行（pinned: 開いたファイルへの経路）は、続きの中に来たら並びの位置へ移す。
+   * その行は開いた中身を持っているので、同じ id の新しい行ではなく元の行を使う
+   */
+  async function moreOf(node) {
+    const page = await listFolder(node, node.next);
+    const pins = new Map(node.children.filter(child => child.pinned).map(child => [child.id, child]));
+    const kept = node.children.filter(child => !child.pinned), seen = new Set(kept.map(child => child.id));
+    const added = page.children.filter(child => !seen.has(child.id)).map(child => {
+      const pin = pins.get(child.id);
+      if (!pin) return child;
+      pins.delete(child.id); delete pin.pinned;
+      return pin;
+    });
+    return { children:[...kept, ...added, ...pins.values()], more:Math.max(0, page.more - pins.size), next:page.next };
+  }
+  /**
+   * 新しいツリーに、同じ会話で前に読んだフォルダーの中身を引き継ぐ（サーバーは経路の段しか読まないため）。
+   * 経路だけのフォルダー（pathOnly）は、別の場所のファイルへ移ったら消す
+   */
+  function keepLoaded(nodes) {
+    const withoutPathOnly = list => list.filter(child => !child.pathOnly).map(child => {
+      if (Array.isArray(child.children)) child.children = withoutPathOnly(child.children);
+      return child;
+    });
+    for (const n of nodes) {
+      const old = tree.node(n.id);
+      if (n.lazy && old && !old.lazy && Array.isArray(old.children) && !old.pathOnly) {
+        Object.assign(n, { children:withoutPathOnly(old.children), more:old.more, next:old.next, lazy:false });
+      } else if (Array.isArray(n.children)) keepLoaded(n.children);
+    }
+  }
   function treeMenu(node, x, y) {
     menu(x, y, { path:node.id, kind:node.kind === 'directory' ? 'directory' : 'file', cwd:file?.cwd, current:samePath(node.id, file?.path) });
   }
@@ -146,6 +217,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   // 幅の割合の分母は、脇を除いた窓の幅。1150px 以下では脇が畳まれ、閉じた脇（web/client.mjs）も列を取らない
   const besideSidebar = () => innerWidth - (innerWidth > 1150 && !document.documentElement.classList.contains('side-closed') ? sidebar.offsetWidth : 0);
   let opener, context = {}, reference, file, visual, source = false, abort, generation = 0, paintId = 0, percentage = 48;
+  let treeKey = null;   // 今のツリーの会話と根。変わったら前に読んだフォルダーの中身を引き継がない
   let custom = null;   // ファイル以外の中身（この会話のコンテキストなど）を出しているときの { key, label }
   let browsing = false;   // 内蔵ブラウザーを出しているか
   let pdfTask, pdfDoc, pdfPage = 1, pdfZoom = 1, imageZoom = 1, renderTask;
@@ -220,14 +292,18 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
           : t('filePreview.status.fileTitle', { date: fmt.dateTime(data.modifiedAt) }) });
       source = !!reference.line && typeof data.text === 'string';
       if (data.tree) {
+        // 開閉（tree の opened）は差し替えても保つ。読んだ中身は同じ会話・同じ根の間だけ引き継ぐ
+        const key = `${context.sessionId ?? ''}\n${data.tree[0]?.id ?? ''}`;
+        if (key === treeKey) keepLoaded(data.tree);
+        treeKey = key;
         tree.setNodes(data.tree);
-        tree.reveal(data.path);
-        tree.select(data.path, false);
+        revealCurrent();
       }
       await paint();
     } catch (error) {
       if (current !== generation || error.name === 'AbortError' || panel.hidden) return;
       if (error.path) fullPath.value = error.path;
+      tree.select(null, false);   // 開けなかったファイルの代わりに前のファイルが選ばれたまま残らない
       show({ status:t('filePreview.status.failed') }); stateMessage(t('filePreview.error.open'), error.message);
     }
   }

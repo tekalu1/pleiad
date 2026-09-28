@@ -1,6 +1,6 @@
 export const DEFAULT_COMPACTION_SETTINGS = Object.freeze({
   enabled: true,
-  minTokens: 40_000,
+  minTokens: 150_000,
   claude: { enabled: true, delayMinutes: 50 },
   codex: { enabled: false, delayMinutes: 25 },
 });

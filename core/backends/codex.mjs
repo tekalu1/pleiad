@@ -29,6 +29,7 @@ import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { readTurnRejections, rolloutPathOf, rolloutSize } from "./codex-rejections.mjs";
 import * as store from '../store.mjs';
 import { t, agentT } from "../i18n.mjs";
+import { stripInjectedContext } from "../system-messages.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -776,9 +777,10 @@ export function threadToMessages(thread, { fullResults = false } = {}) {
     for (const item of unique.values()) {
       if (item?.type === "userMessage") {
         flushTools();
-        const text = (item.content ?? [])
+        // Codex Desktop が人の本文の先頭に付ける画面の状態（<in-app-browser-context>）は外す（ADR 0053）
+        const text = stripInjectedContext((item.content ?? [])
           .filter((c) => c?.type === "text" && typeof c.text === "string")
-          .map((c) => c.text).join("");
+          .map((c) => c.text).join(""));
         const attachments = (item.content ?? []).filter(c => c?.type !== "text");
         if (text.trim() || attachments.length) messages.push({ role: "user", text, uuid: item.id, at,
           ...(attachments.length ? { attachments: structuredClone(attachments) } : {}) });
@@ -1239,7 +1241,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, endpoint = null }) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, endpoint = null, locale }) {
     const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
     // Hooks を Pleiad がそろえる会話。止める key はこのターンの直前に作り直す（起動の後に足された定義も、次のターンからは止まる）。
     // 作れなければターンを始めない（ネイティブと Pleiad の登録が二重に動くか、どちらも動かないため）
@@ -1497,6 +1499,9 @@ export const backend = {
     let promptSent = false;
 
     try {
+      if (browserEnv && m.sandbox === 'read-only') {
+        browserInstructions = agentT(locale, 'browser.readonlyInstructions');
+      }
       const common = {
         cwd,
         config: {
@@ -1509,6 +1514,8 @@ export const backend = {
           ...(browserEnv ? { 'shell_environment_policy.set': {
             AGENT_BROWSER_CONFIG: browserEnv.AGENT_BROWSER_CONFIG,
             AGENT_BROWSER_SESSION: browserEnv.AGENT_BROWSER_SESSION,
+            AGENT_BROWSER_SOCKET_DIR: browserEnv.AGENT_BROWSER_SOCKET_DIR,
+            AGENT_BROWSER_NAMESPACE: browserEnv.AGENT_BROWSER_NAMESPACE,
           } } : {}),
           ...(hooks ? { hooks: hooks.config } : {}),
         },

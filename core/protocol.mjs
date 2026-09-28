@@ -179,7 +179,7 @@ export const COMMANDS = new Set([
 // 全イベントに sessionId が付く（emitGlobal が補う）。
 export const EVENTS = new Set([
   'taskNotice',
-  'usage', // cumulative per-execution token/cost measurements; unknown fields omitted
+  'usage', // { inputTokens?, outputTokens?, cachedTokens?, costUsd? } このターンの分（ターンの中では増えていき、最後の値が記録になる）。Claude は nativeSessionId と開始・終了時点の会話の累計 cumulativeStart / cumulativeEnd も付ける。分からない値は null か省略
   "outbox", "userMessage",
   // { messageId } 途中送信がエージェントに渡った（会話に入った）。渡るまでの表示を消す合図
   "userMessage.delivered",
@@ -194,7 +194,7 @@ export const EVENTS = new Set([
   "tool.result",     // { id, text, isError, truncated }
   "activity",        // { state: thinking|writing|compacting|waiting|running|idle, label? }
   "compaction", "contextWindow", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",
-  "turnResult",      // { outcome: ok|error|aborted, turns?, costUsd?, error?, reason? }。reason は aborted のときの中断の理由（user|update|quit|hostAway）
+  "turnResult",      // { outcome: ok|error|aborted, turns?, costUsd?, error?, reason? }。costUsd はこのターンの推計費用（Claude はターン開始時の累計からの差分）。reason は aborted のときの中断の理由（user|update|quit|hostAway）
 
   // ---- セッションとメタ情報
   "session",      // sessionId が確定した { sessionId, model? }（model は実際に解決されたもの）

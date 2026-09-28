@@ -221,7 +221,7 @@ export default async function (t) {
   document.getElementById = id => settingNodes[id] ?? null;
   try {
     const hidden = setupBrowserSettings({ available: false, cmd: async () => {}, getPrefs: () => ({}) });
-    assert.equal(settingNodes.browserTab.hidden, true); assert.equal(settingNodes.browserPanel.children.length, 0); hidden.paint();
+    assert.equal(settingNodes.browserTab.hidden, false); assert.equal(settingNodes.browserPanel.querySelectorAll('input').length, 1); hidden.paint();
     let prefs = {}; const sent = [];
     const settings = setupBrowserSettings({ available: true, cmd: async (c, a) => { sent.push([c, a]); }, getPrefs: () => prefs });
     assert.equal(settingNodes.browserTab.hidden, false);
@@ -233,7 +233,7 @@ export default async function (t) {
     prefs = { linkOpen: 'external' }; settings.paint();
     assert.equal(external.getAttribute('aria-pressed'), 'true');
   } finally { document.getElementById = savedGet; }
-  t.ok('使える画面: ブラウザーで開いた Pleiad とリモートの窓では使えず、設定の項目も出さない', true);
+  t.ok('ブラウザーで開いた画面にも外部読み込みの設定を出す', true);
 
   // ---- 画面の部品（偽のブリッジ）
   await withWindow({ plyDesktop: { browser: null } }, async () => {
@@ -318,8 +318,20 @@ export default async function (t) {
   assert.equal(state.tabs.length, 2); assert.equal(state.tabs[1].url, 'https://example.org/'); assert.equal(state.current, state.tabs[1].id);
   assert.equal(state.tabs[1].sessionId, 'sess-a', '開いた元のタブの会話を引き継ぐ');
   assert.equal(fe.log.removed.at(-1), fe.log.added[0], '見えるのは今のタブだけ');
-  // ページから file: や独自のスキームへは移らない
+  // ポップアップ（disposition: 'new-window'）は action: 'allow' になり別の窓で開く
+  const popupResult = firstContents.openHandler({ url: 'https://example.org/popup', disposition: 'new-window', features: 'width=400,height=300' });
+  assert.equal(popupResult.action, 'allow');
+  assert.deepEqual(popupResult.overrideBrowserWindowOptions.webPreferences, { session: panel.session, contextIsolation: true, sandbox: true, nodeIntegration: false }, 'ポップアップに本体の preload を付けない');
+  assert.equal(popupResult.overrideBrowserWindowOptions.width, 400);
+  assert.equal(popupResult.overrideBrowserWindowOptions.height, 300);
+  // ログインのポップアップは空の窓を先に開けてから行き先を入れることがある
+  assert.equal(firstContents.openHandler({ url: 'about:blank', disposition: 'new-window', features: 'width=400,height=300' }).action, 'allow', '空のポップアップも窓で開く');
+  assert.equal(firstContents.openHandler({ url: '', disposition: 'new-window', features: '' }).action, 'allow');
+  assert.equal(firstContents.openHandler({ url: 'file:///C:/a.html', disposition: 'new-window', features: '' }).action, 'deny', 'file: のポップアップは開かない');
   let prevented = false;
+  const popupWin = { webContents: { on: (n, f) => { if (n === 'will-navigate') f({ preventDefault: () => { prevented = true; } }, 'file:///C:/a'); }, setWindowOpenHandler: () => {} }, setMenuBarVisibility: () => {} };
+  firstContents.emit('did-create-window', popupWin, { url: 'https://example.org/popup' });
+  // ページから file: や独自のスキームへは移らない
   firstContents.emit('will-navigate', { preventDefault: () => { prevented = true; } }, 'file:///C:/Windows/win.ini');
   assert.equal(prevented, true);
   // 重なりの間は写しを返して外す

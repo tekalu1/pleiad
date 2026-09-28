@@ -3,6 +3,7 @@ import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
 import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
+import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
 import { configureLinkOpen } from './link-open.mjs';
 import { download, notify } from './file-actions.mjs';
 import { watchHostOnlyLinks } from './host-only-links.mjs';
@@ -48,6 +49,7 @@ import { el, svgEl, icon, relTime, randomId } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
 import { savedEvent, savedTitle } from "./saved-text.mjs";
 import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE } from "./timeline.mjs";
+import { commandParts, sysFold, teammateNode } from "./system-messages.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
 import { createReadCompletions } from "./unread.mjs";
@@ -270,6 +272,11 @@ function paintCompactions() {
         return at && Date.parse(at) > entry.at;
       });
     after?.before(row);
+    // 区切りの後ろの AI の発言は、前の発言の続き（見出しを省いた形）にしない。要約の行が間に無くなったので（ADR 0053）
+    if (after?.classList.contains('cont')) {
+      after.classList.replace('cont', 'node');
+      after.querySelector(':scope .m.ai.cont')?.classList.remove('cont');
+    }
   }
 }
 function acceptCompaction(event) {
@@ -283,7 +290,7 @@ function acceptCompaction(event) {
   paintContextStrip();
 }
 function paintAutoCompactionSettings() {
-  const settings = state.prefs.autoCompaction ?? { enabled: true, minTokens: 40_000,
+  const settings = state.prefs.autoCompaction ?? { enabled: true, minTokens: 150_000,
     claude: { enabled: true, delayMinutes: 50 }, codex: { enabled: false, delayMinutes: 25 } };
   $('autoCompactionEnabled').setAttribute('aria-checked', String(settings.enabled));
   $('autoCompactionMin').value = String(settings.minTokens / 1000);
@@ -614,6 +621,70 @@ function userMsg(text, { uuid, at } = {}) {
   return m;
 }
 
+/**
+ * 履歴のシステム側のメッセージ（サーバーが kind を付けた発言。core/system-messages.mjs、ADR 0053）の行。
+ * 落とすものは null、システム側のものでなければ undefined（呼び出し側が普通の発言として描く）
+ */
+function systemHistoryNode(m) {
+  if (m.kind === 'compactSummary') return null;   // 区切りの「要約を表示」に入っている（サーバーが外す。念のため）
+  if (m.kind === 'interrupt') return interruptHistoryLine(m);
+  if (m.kind === 'teammate') return teammateNode(m, hhmm(m.at));
+  if (m.kind === 'command' || m.kind === 'shell') return commandMsg(m);
+  // Pleiad の完了通知。「タスクの結果で再開」の 1 行を開くと、エージェントに渡した本文が読める
+  if (m.internalTaskNotice) return m.text ? sysFold(t('chat.sys.taskResumed'), m.text) : el('div', 'm sys', t('chat.sys.taskResumed'));
+  return undefined;
+}
+
+/**
+ * スラッシュコマンド・`!` モードの 1 行。発言者は「あなた」、吹き出しは付けない（web/system-messages.mjs）。
+ * 操作は「ここから分岐」だけ。`!` は「入力欄に写す」（走らせない）も。編集して再送信・再送信は付けない
+ */
+function commandMsg(m) {
+  const node = el('div', 'm user cmd');
+  node.dataset.role = 'user';
+  if (m.at) node.dataset.at = m.at;
+  const who = whoLine(t('chat.message.you'), m.at);
+  if (m.kind === 'shell') who.firstChild.append(' · ', el('span', 'handed', t('chat.system.handedTo', { agent: labelOf(m.backend ?? activeBackendId()) || 'AI' })));
+  node.append(who, ...commandParts(m));
+  const actions = el('div', 'message-actions');
+  if (m.kind === 'shell' && m.command) {
+    const copy = el('button', 'btn copybtn', t('chat.system.copyToComposer'));
+    copy.type = 'button';
+    copy.onclick = () => copyToComposer(`! ${m.command}`);
+    actions.append(copy);
+  }
+  if (m.uuid) node.dataset.uuid = m.uuid;
+  if (m.uuid && capsOf(activeBackendId()).fork !== false) {
+    const fork = el('button', 'btn forkbtn', t('chat.message.fork'));
+    fork.type = 'button';
+    fork.onclick = () => forkFrom(node);
+    actions.append(fork);
+  }
+  if (actions.childElementCount) node.append(actions);
+  return node;
+}
+
+/** 入力欄に字を入れる（送らない）。書きかけがあれば改行して後ろに足す */
+function copyToComposer(text) {
+  const prompt = $('prompt');
+  prompt.value = prompt.value && !prompt.value.endsWith('\n') ? `${prompt.value}\n${text}` : prompt.value + text;
+  prompt.dispatchEvent(new Event('input', { bubbles: true }));
+  prompt.focus();
+}
+
+/**
+ * 履歴に残った中断（CLI の `[Request interrupted by user]`）。吹き出しにせず、保存された中断と同じ 1 行にする。
+ * 末尾の中断は paintInterruptLine が同じ行を保存された理由・時刻で描き直すので、二重にならない
+ */
+function interruptHistoryLine(m) {
+  const line = el('div', 'm sys interrupted');
+  line.dataset.interrupted = 'user';
+  line.append(stopMark(), el('span', null, interruptLineText({ reason: 'user' })));
+  const at = hhmm(m.at);
+  if (at) line.append(el('span', null, '·'), el('span', 't', at));
+  return line;
+}
+
 function aiMsg({ uuid, at, cont, backend } = {}) {
   const m = el("div", "m ai" + (cont ? " cont" : ""));
   m.dataset.role = "assistant";
@@ -843,7 +914,8 @@ function permissionCard(ev, into = null) {
   m.append(card);
   const head = el("div", "card-head");
   head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.approval.headingMark")));
-  head.append(el("span", "tool", ev.toolName ?? ""));
+  if (ev.browserSite) card.classList.add('browser-site-approval');
+  if (!ev.browserSite) head.append(el("span", "tool", ev.toolName ?? ""));
   head.append(el("span", "desc", ev.title ?? ""));
   card.append(head);
 
@@ -853,20 +925,20 @@ function permissionCard(ev, into = null) {
   const pre = el("pre");
   pre.append(el("code", null, short));
   code.append(pre);
-  card.append(code);
+  if (!ev.browserSite) card.append(code);
 
-  // 「常に許可」は候補を出せるエージェントでだけ。候補はこちらで組み立てない
-  const canAlways = ev.canAlways && capsOf(activeBackendId()).alwaysAllow !== false;
+  // Browser grants are owned by Pleiad, independent of backend tool permissions.
+  const canAlways = ev.canAlways && (ev.browserSite || capsOf(activeBackendId()).alwaysAllow !== false);
   const actions = el("div", "card-actions");
-  actions.append(el("span", "res", t("chat.approval.blocking")));
-  const always = el("button", "btn", t("chat.approval.always"));
+  actions.append(el("span", "res", ev.browserSite ? '' : t("chat.approval.blocking")));
+  const always = el("button", "btn", ev.browserSite ? t('settings.browser.confirm.alwaysSite') : t("chat.approval.always"));
   always.type = "button";
-  const deny = el("button", "btn btn-quiet", t("chat.approval.deny"));
+  const deny = el("button", "btn btn-quiet", ev.browserSite ? t('settings.browser.confirm.deny') : t("chat.approval.deny"));
   deny.type = "button";
-  const allow = el("button", "btn btn-primary", t("chat.approval.allow"));
+  const allow = el("button", "btn btn-primary", ev.browserSite ? t('settings.browser.confirm.once') : t("chat.approval.allow"));
   allow.type = "button";
-  if (canAlways) actions.append(always);
-  actions.append(deny, allow);
+  if (ev.browserSite) { actions.append(allow); if (canAlways) actions.append(always); actions.append(deny); }
+  else { if (canAlways) actions.append(always); actions.append(deny, allow); }
   card.append(actions);
 
   // 押したらサーバーが受け取るまで「◯◯を送っています…」（ボタンは止め、カードは待っている形のまま）。
@@ -903,7 +975,7 @@ function permissionCard(ev, into = null) {
     head.append(el("span", "res", `${ok ? (forever ? t("chat.approval.allowedAlways") : t("chat.approval.allowed")) : t("chat.approval.denied")} · ${hhmm(new Date())}`));
     actions.remove();
     // 決着後は一行に畳み、押せば承認したときの入力をその場で開ける（何を許可・拒否したかを後からたどれる）
-    foldSettledCard(card, head, code, approvalTarget(ev.input));
+    if (!ev.browserSite) foldSettledCard(card, head, code, approvalTarget(ev.input));
     if (isRunningHere()) activity.show(ok ? t("activity.runningTool", { tool: ev.toolName }) : t("activity.continuing"));
     state.pendingPerms.delete(ev.id);
   };
@@ -1278,7 +1350,7 @@ function onEvent(ev, replay = false) {
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); refreshPreviewConfirmation(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
   if (ev.type === 'compactionSchedule') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
@@ -1445,7 +1517,9 @@ function onEvent(ev, replay = false) {
 
     case 'taskNotice':
       closeTurnEl();
-      sys(html.t('chat.sys.taskResumed'));
+      // 本文があれば開ける 1 行（既定は閉じた状態。履歴の systemHistoryNode と同じ形）
+      if (ev.text) append(sysFold(t('chat.sys.taskResumed'), ev.text));
+      else sys(html.t('chat.sys.taskResumed'));
       return;
     case "turnResult": {
       if (ev.compact) return;
@@ -3029,7 +3103,12 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   for (const it of buildItems(messages, presents)) {
     if (it.kind === 'present') { put(renderPresent(savedEvent(it.p)), `p:${it.pi}`); continue; }
     const m = it.m;
-    if (m.internalTaskNotice) { put(el('div', 'm sys', t('chat.sys.taskResumed')), `m:${it.mi}`); prevRole = null; continue; }
+    const system = systemHistoryNode(m);
+    if (system !== undefined) {
+      if (system) put(readOnly(system), `m:${it.mi}`);
+      prevRole = system?.classList.contains('user') ? 'user' : null;
+      continue;
+    }
     let node;
     if (m.role === 'user') node = it.mi === 0 ? requestNode(m.text, m.at) : readOnly(userMsg(m.text, { at: m.at }));
     else {
@@ -3683,10 +3762,14 @@ const filePreview = setupFilePreview({
   getPrefs: () => state.prefs,
   useFile: file => { if (attachHostFiles([file])) $('prompt').focus(); },
 });
-// 設定 › ブラウザー（リンクの開き先）。内蔵ブラウザーが使える画面だけ脇に項目を出す
-const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs });
+// External resource confirmation is available on every screen.
+const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf });
 // 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
 configureLinkOpen({ getPrefs: () => state.prefs });
+configurePreviewConfirmation({ getPrefs: () => state.prefs, openSettings: () => {
+  onboarding.open('browser');
+  const heading = $('browserAllowedSites'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' });
+} });
 
 /**
  * ホストのファイルをパスのまま添付に積む（送らない。ファイルプレビューの「会話で使う」とホストのファイルの面）。
@@ -4610,6 +4693,7 @@ async function runRefresh() {
   state.prefs = prefs ?? {};
   paintAutoCompactionSettings();
   browserSettings.paint();
+  refreshPreviewConfirmation();
   await loadBackends();
   await syncTopbar();
   cmd("running").then(applyRunning).catch(() => {});
@@ -4687,9 +4771,12 @@ function paintHistoryRows(fromMi) {
     }
     if (it.mi < fromMi) continue;
     const m = it.m;
-    if (m.internalTaskNotice) {
-      added.push(append(el('div', 'm sys', t('chat.sys.taskResumed')), `m:${it.mi}`));
-      prevRole = null;
+    const system = systemHistoryNode(m);
+    if (system !== undefined) {
+      // 続けて残った中断（ツールの中断と、その直後の中断）は 1 行にする
+      const repeated = system?.matches('.m.sys.interrupted') && added.at(-1)?.querySelector(':scope .m.sys.interrupted');
+      if (system && !repeated) added.push(append(system, `m:${it.mi}`));
+      prevRole = system?.classList.contains('user') ? 'user' : null;
       continue;
     }
     let node;

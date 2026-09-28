@@ -18,6 +18,8 @@ const cases = [
   await import('./unit/compaction.mjs'),
   await import('./unit/server-compaction.mjs'),
   await import('./unit/file-preview.mjs'),
+  // プレビューの横のツリー: 経路の段は必ず返す・遅延読み込み・件数の枠と枠の外の経路・除外名は経路だけ・roots の外は読めない
+  await import('./unit/file-preview-tree.mjs'),
   await import('./unit/file-access.mjs'),
   await import('./unit/preview-links.mjs'),
   // パスの自動リンク・画像の所在・ファイルの操作メニュー・OS で開く口（OS の窓は開かない）
@@ -27,6 +29,7 @@ const cases = [
   // 内蔵ブラウザー: 右パネルの表・アドレス欄・リンクの開き先・使える画面・main のタブと位置（偽の electron）
   await import('./unit/inapp-browser.mjs'),
   await import('./unit/agent-browser-relay.mjs'),
+  await import('./unit/browser-confirm.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
   await import('./unit/agent-tasks-silence.mjs'),
@@ -50,6 +53,8 @@ const cases = [
   // Pleiad の指示: 担当によらず届く・依頼元と子で違う・足した指示・既定の編集・前の版のスイッチ・Codex のロード済みスレッド
   await import('./unit/server-added-context.mjs'),
   await import('./unit/usage.mjs'),
+  // Claude の使用量: 開始時点の累計（cost-state）からの差分・resume 前の読み取り・既存の記録の移行（写し・冪等）
+  await import('./unit/claude-usage-delta.mjs'),
   await import('./unit/antigravity-usage.mjs'),
   // 会話のヘッダーの使用量のチップ（web/header-usage.mjs）: 枠の選び方・アカウント・上限・グループのまとめ
   await import('./unit/header-usage.mjs'),
@@ -146,6 +151,8 @@ const cases = [
   await import("./unit/ask-answers.mjs"),
   await import("./unit/title-clean.mjs"),
   await import("./unit/claude-normalize.mjs"),
+  // 履歴のシステム側のメッセージ: 形（transcript の印）と文面での見分け・区切りへの要約・中断・teammate・文脈のタグ・保存分（ADR 0053）
+  await import("./unit/system-messages.mjs"),
   await import("./unit/claude-background.mjs"),
   // Claude の途中送信の渡った合図（uuid・まとめ取り出し・次の内部ターン）と中断の interrupt。SDK の query を身代わりにする
   await import("./unit/claude-steer-stop.mjs"),

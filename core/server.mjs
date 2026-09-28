@@ -1,6 +1,7 @@
 import { effortOptions, validateEffort } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
 import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
+import { migrateClaudeUsage } from './usage-migrations.mjs';
 // HTTP（web/ の配信）+ WebSocket（/ws）。token gate は constant-time 比較、既定は localhost bind。
 //
 // ここは**エージェント非依存**。エージェントの実行もセッション管理も core/backends/<id>.mjs が持ち、
@@ -24,7 +25,7 @@ import path from "node:path";
 import os from "node:os";
 import { readLocalFile } from "./local-files.mjs";
 import { isLocalRequest, defaultOpener, createRateLimit, OPENABLE } from './os-open.mjs';
-import { readPreview, resolveReference, cwdAt, inspectFile, previewFailure } from './file-preview.mjs';
+import { readPreview, listTreeFolder, resolveReference, cwdAt, inspectFile, previewFailure } from './file-preview.mjs';
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
@@ -33,7 +34,7 @@ import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings } from './compaction-settings.mjs';
-import { mergeCompactionHistory } from './compaction-history.mjs';
+import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
 import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
@@ -59,6 +60,8 @@ import { createFolderUploads } from './folder-uploads.mjs';
 import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
 import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
 import { parentPortScreencast, nullScreencast } from './browser-screencast.mjs';
+import { createBrowserSiteApprovals } from './browser-confirm.mjs';
+import { validBrowserPref } from '../web/browser-confirm-policy.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff, conversation } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
@@ -70,6 +73,11 @@ const updateGate = createUpdateGate();
 const quotaCache = createQuotaCache();
 const usageStore = createUsageStore(store.dataDir);
 await ensureDataSchema(store.dataDir);
+// Claude の記録に入っていた会話の累計を、ターンの分へ一度だけ直す（core/usage-migrations.mjs、ADR 0053）。
+// transcript を読むので起動は待たせない。記録の書き込みとは usageStore の中で直列になる
+migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects') })
+  .then(result => { if (result) console.log(`  ${t('usage.migrated', result)}`); })
+  .catch(err => console.error(`  ${t('usage.migrateFailed')}`, String(err?.message ?? err)));
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
 const agentBrowser = parentPortBrowser(process.parentPort);
@@ -623,7 +631,10 @@ const server = http.createServer(async (req, res) => {
         try {
           resolved = await resolveSessionFile({ path:url.searchParams.get('path'), sessionId:url.searchParams.get('sessionId'),
             at:url.searchParams.get('at'), base:url.searchParams.get('base') }, sessions, roots);
-          const preview = await readPreview(resolved.path, roots, { access: fileAccess, resource:url.searchParams.get('resource') === '1' });
+          // list=1 はプレビューの横のツリーの 1 フォルダー（開いたとき・「さらに表示」。web/file-preview.mjs）
+          const preview = url.searchParams.get('list') === '1'
+            ? await listTreeFolder(resolved.path, { access: fileAccess, offset:Number(url.searchParams.get('offset')) || 0 })
+            : await readPreview(resolved.path, roots, { access: fileAccess, resource:url.searchParams.get('resource') === '1' });
           res.writeHead(200, { 'content-type':'application/json; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' });
           return res.end(JSON.stringify({ ...preview, line:resolved.line, cwd:resolved.cwd }));
         } catch (error) {
@@ -647,7 +658,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(sessionId && (id || at) ? 404 : 400, { 'content-type':'text/plain; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' });
         return res.end(t('filePreview.visualize.snapshotNotFound'));
       }
-      const { headers, body } = snapshotResponse(record);
+      const { headers, body } = snapshotResponse(record, await store.getPrefs());
       res.writeHead(200, headers);
       return res.end(req.method === 'HEAD' ? undefined : body);
     }
@@ -1589,7 +1600,7 @@ async function delegationAncestors(sessionId) {
  * 人間は最上位の会話に居るので、1段だけ上げても誰も見ない場所に出るだけになる。
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
-const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale }) => {
+const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite }) => {
   const ancestors = sessionId ? await delegationAncestors(sessionId) : [];
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
@@ -1611,6 +1622,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       title,
       conversationTitle,
       canAlways: Boolean(canAlways),
+      ...(browserSite ? { browserSite } : {}),
       ...(questions ? { questions } : {}),
     };
     // 祖先ごとに別の id の複製を作り、どれも同じ settle を指す。
@@ -1618,10 +1630,9 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     const cards = [{ id: crypto.randomUUID(), payload, relay: false }, ...ancestors.map((ancestor) => ({
       id: crypto.randomUUID(),
       relay: true,
-      // 中継したカードに「常に許可」は出さない。「常に許可」は子の会話で今後も通す約束で、
-      // 依頼元の画面からは子が今後何をするのか見えないまま恒久的な許可を与えることになる。
-      // 子の会話を開けば従来どおり押せる。
-      payload: { ...payload, sessionId: ancestor, canAlways: false, title: title ? t('permission.relayTitleWith', { child: childTitle, title }) : t('permission.relayTitle', { child: childTitle }) },
+      // Tool-wide grants stay in the child. Browser grants show the specific agent
+      // and origin, so the same three site choices are available to ancestors.
+      payload: { ...payload, sessionId: ancestor, canAlways: !!browserSite, title: title ? t('permission.relayTitleWith', { child: childTitle, title }) : t('permission.relayTitle', { child: childTitle }) },
     }))];
     const onAbort = () => settle({ allow: false, messageKey: 'aborted' });
     const settle = (answer) => {
@@ -1655,6 +1666,17 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     permissionsChanged();
   });
 };
+
+agentBrowser?.configureAuthorization(createBrowserSiteApprovals({
+  getPrefs: store.getPrefs,
+  getAgent: async id => {
+    const turn = runtime.turns.get(id) ?? [...runtime.turns.values()].find(turn => turn.browserRelayId === id);
+    return turn ? { id: turn.backend.id, label: turn.backend.label, sessionId: turn.info.sessionId || turn.key, signal: turn.ac.signal, locale: turn.agentLocale } : null;
+  },
+  askPermission, translate: t,
+  remember: async site => { const prefs = await store.rememberBrowserSite(site); emitGlobal({ type: 'prefs', sessionId: null, prefs, locale }); },
+}));
+agentBrowser?.prefs(await store.getPrefs());
 
 // 送信待ちの一覧が変わるたびに呼ぶもの（sessionId -> Set<fn(messages)>）。再開の受け付けを、送った項目が出ていくまで保つのに使う
 const outboxWatchers = new Map();
@@ -2067,7 +2089,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         const hashes = (await store.get(sessionId)).taskNotices ?? [];
         const digest = crypto.createHash('sha256').update(prompt).digest('hex');
         await store.setSessionData(sessionId, 'taskNotices', [...new Set([...hashes, digest])]);
-        emit({ type: 'taskNotice' });
+        // 本文も載せる。画面の「タスクの結果で再開」の 1 行を開くと読める（ADR 0053）
+        emit({ type: 'taskNotice', text: String(prompt ?? '') });
       }
       await saveContext();
       // agy のように会話のあいだ 1 本のプロセスを生かすバックエンドには、会話ごとの同じトークンで開く（起動時にしか渡せない）
@@ -2218,6 +2241,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // Retain turnEnd in snapshots already being read, then release the turn.
   emit({ type: "turnEnd", completedAt, outcome: turn.outcome, interrupted, ...(requeued ? { requeued: true } : {}), ...(delegated ? { delegated: true } : {}) });
   runtime.turns.delete(turn.key);
+  agentBrowser?.endTurn(turn.info.sessionId || turn.key);
   notifyFree(turn.key);
   syncRunningPoll();
   // 片付けるのはこのセッションの承認待ちだけ。他のターンの分は残す
@@ -3189,7 +3213,7 @@ wss.on("connection", (ws, req) => {
             const completedAt = sidecar.completedAt ?? null;
             // 中断の印（一覧の行と同じ形）。会話の末尾の「中断しました」を保存された状態から描くため
             const interrupted = runtime.turns.has(sessionId) ? null : interruptedOf((await store.get(sessionId)).interrupted);
-            const data = await history.loadTranscript(sessionId, backend);
+            const { compactSummaries, ...data } = await history.loadTranscript(sessionId, backend);
             // 系譜の照合（web/branches.mjs）は uuid・役割・本文・ツール名しか見ない。
             // ツール結果や提示まで載せると、家族を開くたびに数十MBが流れて画面が止まる
             if (msg.args?.outline) return reply(true, { messages: data.messages.map(m => ({
@@ -3199,7 +3223,8 @@ wss.on("connection", (ws, req) => {
             const draft = (await store.get(sessionId)).draft ?? null;
             const nativeCompactions = backend.getCompactions ? await backend.getCompactions(sessionId).catch(() => []) : [];
             const savedCompactions = sidecar.compactions ?? [];
-            const compactions = mergeCompactionHistory(nativeCompactions, savedCompactions);
+            // 圧縮の要約は発言として出さず、区切りの「要約を表示」に入れる（ADR 0053）
+            const compactions = attachCompactSummaries(compactSummaries, mergeCompactionHistory(nativeCompactions, savedCompactions));
             const compactionData = { compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
             if (!msg.args?.live) return reply(true, { ...data, completedAt, interrupted, draft, ...compactionData, ...retired });
@@ -3388,7 +3413,7 @@ wss.on("connection", (ws, req) => {
             const record = await history.findVisualization(args.sessionId, await resolveBackendForSession(args.sessionId).catch(() => null), { id: args.id, at: args.at });
             if (!record) return reply(false, t('filePreview.visualize.snapshotNotFound'));
             if (!osActionAllowed()) return reply(false, t('files.tooMany'));
-            const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'));
+            const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'), { prefs: await store.getPrefs() });
             if (args.returnPath !== true) await openOnHost('open', file, { directory: false });
             return reply(true, { path: file });
           } catch (error) {
@@ -3607,6 +3632,12 @@ wss.on("connection", (ws, req) => {
         // セッションを選んでいなくても既定は変えられる
         case "setPref": {
           const { key, value, backend: backendId } = msg.args ?? {};
+          if (['confirmExternalLoads', 'confirmAgentSites', 'externalSitePermissions', 'agentSitePermissions'].includes(key)) {
+            if (!validBrowserPref(key, value)) return reply(false, t('settings.unknownPrefValue', { key, value: String(value) }));
+            const prefs = await savePref(key, value);
+            agentBrowser?.prefs(prefs);
+            return reply(true, prefs);
+          }
           if (key === "backend") {
             if (!getBackend(value)) return reply(false, t('agents.unknown'));
             return reply(true, await savePref(key, value));

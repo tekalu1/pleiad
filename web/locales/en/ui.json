@@ -185,7 +185,27 @@
         "note": "The built-in browser opens beside the conversation, and sign-ins stay in this app. Its storage is separate from Pleiad itself."
       },
       "saveFailed": "Couldn't save: {{error}}",
-      "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" }
+      "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" },
+      "confirm": {
+        "title": "Confirmation",
+        "external": "Ask before loading external resources",
+        "agent": "Ask before an agent uses a site",
+        "sites": "Allowed sites",
+        "stopped": "Blocked origins",
+        "externalList": "External resources",
+        "agentList": "Agent access",
+        "permit": "Allow",
+        "always": "Always",
+        "ask": "Ask each time",
+        "remove": "Remove",
+        "load": "Load",
+        "settings": "Settings",
+        "blocked_one": "Blocked {{count}} external resource",
+        "blocked_other": "Blocked {{count}} external resources",
+        "once": "Just once",
+        "alwaysSite": "Always for this site",
+        "deny": "Deny"
+      }
     }
   },
   "time": {
@@ -458,6 +478,12 @@
     "fullPath": "Full file path",
     "copyPath": "Copy path",
     "explorer": "Explorer",
+    "treeLocate": "Show open file",
+    "treeCollapseAll": "Collapse all",
+    "treeShowMore": "Show {{count}} more",
+    "treeLoadFailed": "Couldn't load",
+    "treePathOnly": "Path only",
+    "treePathOnlyTitle": "This folder is excluded. Only the path to the open file is shown",
     "contents": "File contents",
     "save": "Save",
     "saveFile": "Save the current file",
@@ -1102,6 +1128,19 @@
       "late": "Too late for this task. The AI will answer next.",
       "sent": "Sent to the AI",
       "notYet": "Not yet passed to the agent"
+    },
+    "system": {
+      "command": "Command",
+      "shell": "Shell",
+      "output": "Output",
+      "outputLines_one": "Output · {{count}} line",
+      "outputLines_other": "Output · {{count}} lines",
+      "errorOutput": "Error output",
+      "noOutput": "No output",
+      "handedTo": "sent to {{agent}}",
+      "copyToComposer": "Copy to composer",
+      "teammate": "Message from another session",
+      "teammateFrom": "Message from another session ({{from}})"
     },
     "sys": {
       "agentChanged": "Changed the agent to {{agent}}. It takes over the conversation from your next message.",

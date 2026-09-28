@@ -154,6 +154,7 @@ export default async function(t) {
 
   // ---------------------------------------------------------------- アダプター: 実際に node で動かす（元のコマンドは node のスクリプト）
   const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-hooks-copy-')));
+  const originalGitBashPath = process.env.CLAUDE_CODE_GIT_BASH_PATH;
   const adapterFile = fileURLToPath(new URL('../../core/hook-adapter.mjs', import.meta.url));
   const script = async (name, body) => { const p = path.join(tmp, name); await fs.writeFile(p, body); return p.replace(/\\/g, '/'); };
   const runAdapter = (args, stdin) => new Promise(resolve => {
@@ -229,16 +230,21 @@ process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{d
     const codexToml = '# mine\nmodel = "gpt"\n\n[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = "command"\ncommand = "echo s" # keep\n\n[projects."x"]\ntrust_level = "trusted"\n';
     await write(path.join(home, '.codex', 'config.toml'), codexToml);
     await write(path.join(home, '.gemini', 'config', 'hooks.json'), { keep: { Stop: [{ command: 'node s.mjs' }] }, 'claude-guard': { enabled: false, Stop: [{ command: 'x' }] } });
-    let nodeFound = 'C:/node/node.exe';
+    let nodeFound = process.execPath;
     const svc = createHooksConfig({ home, codexHome: path.join(home, '.codex'), claudeHome: path.join(home, '.claude'), geminiHome: path.join(home, '.gemini'), findNode: async () => nodeFound, platform: 'linux' });
     const scan = await svc.scan({ scopes: ['user'] });
     const pre = scan.entries.find(e => e.agent === 'claude' && e.event === 'PreToolUse');
     const rev = scan.files.find(f => f.path === pre.path).revision;
     const source = { agent: 'claude', scope: 'user', file: pre.path, loc: { event: 'PreToolUse', group: pre.group, handler: pre.handler }, revision: rev };
+    nodeFound = 'node';
+    const relativeNode = (await svc.copy({ source, targets: [{ agent: 'codex', scope: 'user' }], dryRun: true })).results[0];
+    t.ok('Codex のユーザー設定へ写す Node は絶対パスが必要', !relativeNode.ok && relativeNode.status === 'blocked'
+      && relativeNode.reasons.some(r => r.code === 'adapterPath'), JSON.stringify(relativeNode.reasons));
+    nodeFound = process.execPath;
     const dry = await svc.copy({ source, targets: [{ agent: 'codex', scope: 'user' }, { agent: 'antigravity', scope: 'user' }], dryRun: true });
     const [dc, da] = dry.results;
     t.ok('dryRun: 書かずに前後の本文（伏せ字）と書き先を返す', dc.ok && dc.path.endsWith('config.toml') && dc.format === 'toml' && dc.after.includes('[[hooks.PreToolUse]]')
-      && !JSON.stringify(dry).includes('SECRET-TOKEN-1') && !(await fs.stat(path.join(home, '.codex', 'pleiad-hooks')).catch(() => null)));
+      && !JSON.stringify(dry).includes('SECRET-TOKEN-1') && !(await fs.stat(path.join(home, '.codex', 'pleiad-hooks')).catch(() => null)), JSON.stringify(dc.reasons));
     t.ok('dryRun: 元のコマンドも伏せ字', dry.source.command.includes('••••') && !dry.source.command.includes('SECRET'));
     // アダプター越しのコマンドは元のコマンドを base64url で持つ。秘密を含むなら、その引数も伏せる（デコードして漏れない）
     const leaked = s => [...String(s).matchAll(/[A-Za-z0-9_-]{16,}/g)].some(m => Buffer.from(m[0], 'base64url').toString('utf8').includes('SECRET-TOKEN-1'));
@@ -249,7 +255,7 @@ process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{d
     const bad = await svc.copy({ source, targets: [{ agent: 'antigravity', scope: 'user', name: 'claude-guard', revision: da.revision }] });
     t.ok('確認が必要なまま書こうとしても書かない', !bad.results[0].ok && !(await fs.readFile(path.join(home, '.gemini', 'config', 'hooks.json'), 'utf8')).includes('run_command'));
     const done = await svc.copy({ source, targets: [{ agent: 'codex', scope: 'user', revision: dc.revision }, { agent: 'antigravity', scope: 'user', name: 'guard2', revision: da2.revision }] });
-    t.ok('書き込み: 2 つの写し先に書けた', done.results.every(r => r.ok && r.written), JSON.stringify(done.results.map(r => r.error)));
+    t.ok('書き込み: 2 つの写し先に書けた', done.results.every(r => r.ok && r.written), JSON.stringify(done.results.map(({ agent, status, reasons, error }) => ({ agent, status, reasons, error }))));
     const toml = await fs.readFile(path.join(home, '.codex', 'config.toml'), 'utf8');
     t.ok('Codex: 既存の TOML の本文とコメントを残して末尾に足す', toml.startsWith(codexToml) && /\[\[hooks\.PreToolUse\]\]\nmatcher = "Bash"/.test(toml), toml);
     const agy = JSON.parse(await fs.readFile(path.join(home, '.gemini', 'config', 'hooks.json'), 'utf8'));
@@ -330,8 +336,15 @@ process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{d
       targets: [{ agent: 'claude', scope: 'project', base: repo }], dryRun: true });
     t.ok('指すスクリプトが無ければ警告（写しても動かない）', miss.results[0].status === 'ready' && miss.results[0].warnings.some(w => w.code === 'scriptMissing'), JSON.stringify(miss.results[0].warnings));
     t.ok('Claude のプロジェクトには移動しても動く変数のパスを書く', miss.results[0].written.includes('"$CLAUDE_PROJECT_DIR/.claude/pleiad-hooks/'));
+    // These copy previews only check that the source shell exists; they never execute it.
+    const gitBashPath = path.join(tmp, 'git-bash.exe');
+    process.env.CLAUDE_CODE_GIT_BASH_PATH = gitBashPath;
     const win = createHooksConfig({ home, codexHome: path.join(home, '.codex'), claudeHome: path.join(home, '.claude'), geminiHome: path.join(tmp, 'win-home', '.gemini'),
       findNode: async () => 'C:/Program Files/nodejs/node.exe', platform: 'win32' });
+    const noShell = (await win.copy({ source, targets: [{ agent: 'antigravity', scope: 'user', name: 'win-unquoted' }], dryRun: true })).results[0];
+    t.ok('Windows の元のシェルが無ければ写さない', !noShell.ok && noShell.status === 'blocked'
+      && noShell.reasons.some(r => r.code === 'sourceShell'), JSON.stringify(noShell.reasons));
+    await fs.writeFile(gitBashPath, '');
     const wa = await win.copy({ source, targets: [{ agent: 'antigravity', scope: 'user', name: 'win-unquoted' }], dryRun: true });
     t.ok('Windows の agy ユーザーへは空白の無い絶対パスと PATH の node で写せる', wa.results[0].status === 'ready'
       && /^node [^"\s]+\/pleiad-hooks\/hook-adapter-[0-9a-f]{12}\.mjs claude antigravity /.test(wa.results[0].written),
@@ -349,6 +362,8 @@ process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{d
       targets: [{ agent: 'codex', scope: 'project', base: repo }], dryRun: true });
     t.ok('Codex のプロジェクトへはアダプターの基準フォルダーが不明で写さない', wc.results[0].reasons.some(r => r.code === 'adapterProjectCodex'));
   } finally {
+    if (originalGitBashPath === undefined) delete process.env.CLAUDE_CODE_GIT_BASH_PATH;
+    else process.env.CLAUDE_CODE_GIT_BASH_PATH = originalGitBashPath;
     await fs.rm(tmp, { recursive: true, force: true });
   }
 }

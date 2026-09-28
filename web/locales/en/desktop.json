@@ -109,5 +109,8 @@
         "fullAccess": "An added device can do everything the host's user can. If you lose it, revoke it from the host's device list."
       }
     }
+  },
+  "browser": {
+    "navigationDenied": "Navigation to this site was not allowed."
   }
 }

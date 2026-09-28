@@ -64,6 +64,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   let nextId = 1;
   const tabListeners = new Set();
   const agents = new Map();
+  let navigation = null;
   const ses = session.fromPartition(PARTITION);
   setupSession(ses);
 
@@ -121,18 +122,59 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     if (attached !== want) { window.contentView.addChildView(want); attached = want; }
   }
 
-  function createTab({ url = '', sessionId = context.sessionId, select = true } = {}) {
+  function setupPopupWindow(c, sessionId, agentFromTab) {
+    // 新しい窓のうち、ポップアップ（disposition: 'new-window'）は opener を保って別の窓で開く
+    // 通常の新しいタブ（target=_blank）は内蔵ブラウザーの新しいタブにする（opener なし）
+    c.setWindowOpenHandler(({ url: next, disposition, features }) => {
+      const target = openable(next);
+      // ログインのポップアップは空の窓（about:blank）を先に開けてから行き先を入れることがあるので、それも窓で開く
+      const blankPopup = disposition === 'new-window' && (!next || next === 'about:blank');
+      if (blankPopup || (target && navigable(target))) {
+        if (disposition === 'new-window') {
+          const parsedFeatures = (features || '').split(',').reduce((acc, f) => {
+            const [k, v] = f.split('=');
+            if (k) acc[k.trim()] = v ? v.trim() : true;
+            return acc;
+          }, {});
+          const width = parseInt(parsedFeatures.width) || 500;
+          const height = parseInt(parsedFeatures.height) || 700;
+          return {
+            action: 'allow',
+            overrideBrowserWindowOptions: {
+              parent: window,
+              width,
+              height,
+              webPreferences: { session: ses, contextIsolation: true, sandbox: true, nodeIntegration: false }
+            }
+          };
+        }
+        const open = () => createTab({ url: target, sessionId, select: disposition !== 'background-tab', agentFrom: agentFromTab });
+        if (!navigation?.popup(agentFromTab, target, open)) open();
+      }
+      return { action: 'deny' };
+    });
+    c.on('did-create-window', (popupWin, details) => {
+      popupWin.setMenuBarVisibility?.(false);
+      const popupTab = { id: `popup-${nextId++}`, sessionId, webContents: popupWin.webContents };
+      navigation?.watch(popupTab);
+      if (agentFromTab) navigation?.inherit(agentFromTab, popupTab, details.url);
+      setupPopupWindow(popupWin.webContents, sessionId, popupTab);
+      const guard = (event, nextUrl) => { if (!navigable(nextUrl)) event.preventDefault(); };
+      popupWin.webContents.on('will-navigate', guard);
+      popupWin.webContents.on('will-redirect', guard);
+    });
+  }
+
+  function createTab({ url = '', sessionId = context.sessionId, select = true, agentFrom = null } = {}) {
     const view = new WebContentsView({ webPreferences: { session: ses, contextIsolation: true, sandbox: true, nodeIntegration: false } });
     view.setBackgroundColor?.('#ffffff');
     const tab = { id: `t${nextId++}`, view, sessionId: sessionId ?? null, blank: !url };
     tabs.set(tab.id, tab); order.push(tab.id);
     const c = view.webContents;
-    // 新しい窓（target=_blank・window.open）は新しいタブにする。開いた元の関係（opener）は保たない
-    c.setWindowOpenHandler(({ url: next, disposition }) => {
-      const target = openable(next);
-      if (target && navigable(target)) createTab({ url: target, sessionId: tab.sessionId, select: disposition !== 'background-tab' });
-      return { action: 'deny' };
-    });
+    const navigationTab = { id: tab.id, sessionId: tab.sessionId, webContents: c };
+    navigation?.watch(navigationTab);
+    if (agentFrom) navigation?.inherit(agentFrom, navigationTab, url);
+    setupPopupWindow(c, tab.sessionId, navigationTab);
     // ページから file: や独自のスキームへは移らない
     const guard = (event, next) => { if (!navigable(next) && !(tab.allowFile && next.startsWith('file:'))) event.preventDefault(); };
     c.on('will-navigate', guard);
@@ -209,6 +251,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       case 'agentTakeOver': agentControl('takeOver', context.sessionId); return snapshot();
       case 'context': context = { sessionId: typeof args.sessionId === 'string' ? args.sessionId : null }; return snapshot();
       case 'open': {
+        if (tab) navigation?.human({ id: tab.id }, true);
         const url = openable(args.url);
         if (!url) throw new Error('invalid-url');
         if (!tab || args.newTab) createTab({ url });
@@ -218,9 +261,9 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       case 'newTab': createTab({}); return snapshot();
       case 'select': if (tab) { current = tab.id; place(); push(); } return snapshot();
       case 'close': if (tab) removeTab(tab.id); return snapshot();
-      case 'back': if (tab?.view.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack(); return snapshot();
-      case 'forward': if (tab?.view.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward(); return snapshot();
-      case 'reload': tab?.view.webContents.reload(); return snapshot();
+      case 'back': if (tab) navigation?.human({ id: tab.id }, true); if (tab?.view.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack(); return snapshot();
+      case 'forward': if (tab) navigation?.human({ id: tab.id }, true); if (tab?.view.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward(); return snapshot();
+      case 'reload': if (tab) navigation?.human({ id: tab.id }, true); tab?.view.webContents.reload(); return snapshot();
       case 'stop': tab?.view.webContents.stop(); return snapshot();
       case 'devtools': if (tab && !tab.blank) tab.view.webContents.openDevTools({ mode: 'detach' }); return snapshot();
       case 'external': {
@@ -278,6 +321,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
 
   return {
     attach, command, layout, snapshot,
+    setNavigationGuard: guard => { navigation = guard; for (const tab of tabs.values()) guard.watch({ id: tab.id, sessionId: tab.sessionId, webContents: tab.view.webContents }); },
     // ---- エージェントの操作の中継へ渡す、会話ごとのタブと webContents
     tabsFor: sessionId => order.map(id => tabs.get(id)).filter(tab => tab.sessionId === sessionId).map(tab => ({ id: tab.id, webContents: tab.view.webContents })),
     contentsOf: id => tabs.get(id)?.view.webContents ?? null,
