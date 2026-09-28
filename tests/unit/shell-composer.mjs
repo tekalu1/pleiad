@@ -111,6 +111,7 @@ export default function (t) {
   t.ok('beforeinput で `!` を見る（貼り付け・復元は insertText ではない）', client.includes("addEventListener('beforeinput', e => shellComposer.beforeinput(e))"));
   const server = read('core/server.mjs');
   const protocol = read('core/protocol.mjs');
-  t.ok('runShell / stopShell はサーバーの case とプロトコルの COMMANDS の両方にある',
-    server.includes("case 'runShell':") && server.includes("case 'stopShell':") && protocol.includes("'runShell',") && protocol.includes("'stopShell',"));
+  t.ok('runShell / stopShell / skipShell はサーバーの case とプロトコルの COMMANDS の両方にある',
+    server.includes("case 'runShell':") && server.includes("case 'stopShell':") && protocol.includes("'runShell',") && protocol.includes("'stopShell',")
+    && server.includes("case 'skipShell':") && protocol.includes("'skipShell',"));
 }

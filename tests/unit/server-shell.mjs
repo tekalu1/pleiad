@@ -55,6 +55,45 @@ export default async function (t) {
     const titled = (await c.cmd('listSessions')).find(s => s.id === sessionId);
     t.ok('会話の題は `!` の行ではなく最初の人の発言から取る', titled?.title === 'echo:見た？', titled?.title);
 
+    // ---- 行ごとの「渡さない」（ADR 0055）。ほかの接続（別の端末の画面）にも同じ状態を流す
+    const other = await open({ ...server, autoAllow: true });
+    try {
+      const skipFrom = c.mark(), otherFrom = other.mark();
+      await c.cmd('runShell', { sessionId, runId: 'shell-skip-0001', command: 'echo held-back; sleep 1', cwd: ROOT });
+      await c.waitFor(e => e.type === 'shell.output' && e.runId === 'shell-skip-0001', { from: skipFrom, ms: 20_000 });
+      const r1 = await c.cmd('skipShell', { sessionId, runId: 'shell-skip-0001', skip: true });
+      t.ok('skipShell: 走っている間に「渡さない」にできる', r1.skip === true);
+      const seen = await other.waitFor(e => e.type === 'shell.skip' && e.runId === 'shell-skip-0001', { from: otherFrom, ms: 10_000 });
+      t.ok('shell.skip はほかの接続にも届く', seen.skip === true && seen.sessionId === sessionId);
+      loaded = await c.cmd('loadSession', { sessionId });
+      t.ok('走っている行の開き直しにも「渡さない」が出る', loaded.messages.find(m => m.runId === 'shell-skip-0001')?.skip === true);
+      await c.waitFor(e => e.type === 'shell.done' && e.runId === 'shell-skip-0001', { from: skipFrom, ms: 20_000 });
+      await c.cmd('skipShell', { sessionId, runId: 'shell-skip-0001', skip: false });
+      loaded = await c.cmd('loadSession', { sessionId });
+      t.ok('終わった後に「渡す」へ戻せる', loaded.messages.find(m => m.runId === 'shell-skip-0001')?.skip === undefined);
+      await c.cmd('skipShell', { sessionId, runId: 'shell-skip-0001', skip: true });
+      loaded = await c.cmd('loadSession', { sessionId });
+      t.ok('終わった後にもう一度「渡さない」にできる', loaded.messages.find(m => m.runId === 'shell-skip-0001')?.skip === true && other.since(otherFrom).filter(e => e.type === 'shell.skip').length === 3);
+
+      await c.cmd('runShell', { sessionId, runId: 'shell-give-0001', command: 'echo handed-over', cwd: ROOT });
+      await c.waitFor(e => e.type === 'shell.done' && e.runId === 'shell-give-0001', { from: skipFrom, ms: 20_000 });
+      const sendFrom = c.mark();
+      await c.cmd('sendMessage', { sessionId, messageId: 'shell-skip-next-0001', prompt: 'echo:次' });
+      await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === sessionId, { from: sendFrom, ms: 20_000 });
+      const skipHanded = other.since(otherFrom).find(e => e.type === 'shell.handed' && e.keptIds);
+      t.ok('次の発言の後、渡した行と渡さなかった行をほかの接続にも知らせる', skipHanded?.runIds?.join() === 'shell-give-0001' && skipHanded.keptIds.join() === 'shell-skip-0001', JSON.stringify(skipHanded));
+      loaded = await c.cmd('loadSession', { sessionId });
+      const texts = loaded.messages.map(m => [m.role, m.kind ?? '', m.text, m.kept ?? false]);
+      const kept = loaded.messages.find(m => m.kept);
+      const next = loaded.messages.findIndex(m => m.role === 'user' && !m.kind && m.text === 'echo:次');
+      t.ok('渡さなかった行はエージェントに渡らない（記録に入らない）', !loaded.messages.some(m => !m.kept && String(m.text ?? '').includes('held-back'))
+        && loaded.messages.some(m => m.kind === 'shell' && !m.kept && m.command === 'echo handed-over'), JSON.stringify(texts));
+      t.ok('開き直すと、渡さなかった行が次の人の発言の前に「渡していない」で残る', kept?.runId === 'shell-skip-0001' && kept.pending === undefined && kept.stdout.includes('held-back')
+        && loaded.messages.indexOf(kept) < next, JSON.stringify(texts));
+      const late = await c.cmd('skipShell', { sessionId, runId: 'shell-skip-0001', skip: false }).then(() => null, e => e.message);
+      t.ok('渡さないで送った後は切り替えない', /もう渡した/.test(late ?? ''), late);
+    } finally { other.close(); }
+
     // 止める
     const stopFrom = c.mark();
     await c.cmd('runShell', { sessionId, runId: 'shell-stop-0001', command: 'echo go; sleep 30', cwd: ROOT });
@@ -83,6 +122,8 @@ export default async function (t) {
     loaded = await c.cmd('loadSession', { sessionId: threadId });
     const codexRow = loaded.messages.find(m => m.kind === 'shell');
     t.ok('Codex: 履歴の userShell は kind: shell（終了コードつき・まだ渡していない）', codexRow?.exitCode === 1 && codexRow.pending === true && codexRow.command === 'git fail', JSON.stringify(loaded.messages));
+    const codexSkip = await c.cmd('skipShell', { sessionId: threadId, runId: 'shell-codex-0001', skip: true }).then(() => null, e => e.message);
+    t.ok('Codex: 「渡さない」は断る（結果が Codex の会話に入っていて外せない）', /渡さないようにできません/.test(codexSkip ?? ''), codexSkip);
     const nextFrom = c.mark();
     await c.runTurn({ sessionId: threadId, prompt: 'next' });
     t.ok('Codex: 次の発言が渡ったら「渡した」を出す', c.since(nextFrom).some(e => e.type === 'shell.handed' && e.runIds.includes('shell-codex-0001')));

@@ -128,7 +128,7 @@ export default async function (t) {
     resolveBackendForSession: async () => ({}), store: { get: async () => ({}) }, compactionScheduler: { get: () => null },
     mergeCompactionHistory, attachCompactSummaries,
     // 入力欄の `!`（core/shell-runs.mjs）。このテストの対象外
-    shellRuns: { decorate: m => m, rows: () => [] },
+    shellRuns: { decorate: m => m, rows: () => [], placeKept: m => m },
     history: { loadTranscript: () => new Promise(r => { resolveTranscript = r; }) },
     reply: (ok, data) => data, streamSequence: 3,
   });
