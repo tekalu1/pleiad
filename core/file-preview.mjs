@@ -21,26 +21,49 @@ export function cwdAt(meta, at) {
 }
 
 export function resolveReference(raw, cwd) {
+  rejectNetworkPath(typeof raw === 'string' ? raw.trim() : raw);
   const ref = fileReference(raw);
   if (!ref) throw new PreviewError('invalid-path', t('filePreview.invalidPath'));
   if (process.platform !== 'win32' && /^[a-z]:[\\/]/i.test(ref.path)) throw new PreviewError('different-host', t('filePreview.otherOs'));
   if (process.platform === 'win32' && /^\//.test(ref.path)) throw new PreviewError('different-host', t('filePreview.noDrive'));
   if (!path.isAbsolute(ref.path) && (!cwd || !path.isAbsolute(cwd))) throw new PreviewError('cwd-unknown', t('filePreview.relativeUnknownCwd'));
+  if (!path.isAbsolute(ref.path)) rejectNetworkPath(cwd);
   return { path: path.resolve(cwd || '.', ref.path), line: ref.line };
 }
 
-export async function inspectFile(requested, roots) {
-  if (typeof requested !== 'string' || !path.isAbsolute(requested) || /^[\\/]{2}/.test(requested)) throw new PreviewError('invalid-path', t('filePreview.invalidPath'));
+function rejectNetworkPath(file) {
+  if (typeof file === 'string' && /^[\\/]{2}/.test(file)) throw new PreviewError('network-path', t('filePreview.networkPath'));
+}
+
+function containsPath(root, file) {
+  if (process.platform === 'win32') { root = root.toLowerCase(); file = file.toLowerCase(); }
+  const rel = path.relative(root, file);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+export async function inspectFile(requested, { dataDir, uploadDir }) {
+  // Check before realpath: even resolving a UNC path can send SMB credentials.
+  rejectNetworkPath(requested);
+  if (typeof requested !== 'string' || !path.isAbsolute(requested)) throw new PreviewError('invalid-path', t('filePreview.invalidPath'));
   const file = await fs.realpath(requested);
-  const resolvedRoots = await Promise.all(roots.filter(Boolean).map(r => fs.realpath(r).catch(() => null)));
-  if (!resolvedRoots.some(root => {
-    if (!root) return false;
-    const rel = path.relative(root, file);
-    return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
-  })) throw new PreviewError('outside-workspace', t('filePreview.outsideWorkspace'));
+  rejectNetworkPath(file);
+  rejectNetworkPath(dataDir);
+  const protectedDir = await fs.realpath(dataDir);
+  rejectNetworkPath(protectedDir);
+  if (containsPath(protectedDir, file)) {
+    rejectNetworkPath(uploadDir);
+    const uploads = uploadDir ? await fs.realpath(uploadDir).catch(error => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }) : null;
+    rejectNetworkPath(uploads);
+    if (!uploads || containsPath(uploads, protectedDir) || !containsPath(uploads, file)) {
+      throw new PreviewError('protected-data', t('filePreview.protectedData'));
+    }
+  }
   const stat = await fs.stat(file);
   if (!stat.isFile() && !stat.isDirectory()) throw new PreviewError('not-file', t('filePreview.notFile'));
-  return { file, stat, resolvedRoots };
+  return { file, stat };
 }
 
 export async function readBounded(file, maxBytes) {
@@ -60,13 +83,14 @@ export async function readBounded(file, maxBytes) {
 
 const IGNORED_NAMES = new Set(['.git', 'node_modules', 'temporary', '.turbo', '.next', '.cache', 'dist', 'build']);
 
-async function buildTree(rootPath, maxDepth = 4, maxEntries = 1000) {
+async function buildTree(rootPath, access, maxDepth = 4, maxEntries = 1000) {
   let count = 0;
 
   async function walk(dir, depth) {
     if (depth > maxDepth || count >= maxEntries) return [];
     let entries;
     try {
+      await inspectFile(dir, access);
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {
       return [];
@@ -85,18 +109,9 @@ async function buildTree(rootPath, maxDepth = 4, maxEntries = 1000) {
       if (IGNORED_NAMES.has(entry.name)) continue;
 
       const fullPath = path.join(dir, entry.name);
-      let isDir = entry.isDirectory();
-      let isFil = entry.isFile();
-
-      if (entry.isSymbolicLink()) {
-        try {
-          const s = await fs.stat(fullPath);
-          isDir = s.isDirectory();
-          isFil = s.isFile();
-        } catch {
-          continue;
-        }
-      }
+      let stat;
+      try { ({ stat } = await inspectFile(fullPath, access)); } catch { continue; }
+      const isDir = stat.isDirectory(), isFil = stat.isFile();
 
       if (!isDir && !isFil) continue;
       count++;
@@ -132,15 +147,19 @@ async function buildTree(rootPath, maxDepth = 4, maxEntries = 1000) {
   ];
 }
 
-export async function readPreview(requested, roots, { resource = false } = {}) {
-  const { file, stat, resolvedRoots } = await inspectFile(requested, roots);
+export async function readPreview(requested, roots, { access, resource = false } = {}) {
+  const { file, stat } = await inspectFile(requested, access);
+  // Roots select the tree shown beside the preview; they never grant access.
+  const resolvedRoots = resource ? [] : await Promise.all(roots.filter(Boolean).map(async root => {
+    try { return (await inspectFile(root, access)).file; } catch { return null; }
+  }));
   const matchingRoots = (resolvedRoots || []).filter(root => {
     if (!root) return false;
     const rel = path.relative(root, file);
     return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
   });
   const treeRoot = matchingRoots.sort((a, b) => b.length - a.length)[0] || (stat.isDirectory() ? file : path.dirname(file));
-  const tree = resource ? [] : await buildTree(treeRoot);
+  const tree = resource ? [] : await buildTree(treeRoot, access);
 
   if (stat.isDirectory()) {
     const entries = await fs.readdir(file, { withFileTypes: true }).catch(() => []);
@@ -151,10 +170,10 @@ export async function readPreview(requested, roots, { resource = false } = {}) {
       let isFil = entry.isFile();
       let entryStat = null;
       try {
-        entryStat = await fs.stat(entryPath);
+        ({ stat: entryStat } = await inspectFile(entryPath, access));
         isDir = entryStat.isDirectory();
         isFil = entryStat.isFile();
-      } catch {}
+      } catch { continue; }
       if (!isDir && !isFil) continue;
       items.push({
         name: entry.name,

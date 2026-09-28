@@ -4,9 +4,9 @@ import { inspectFile, readBounded } from './file-preview.mjs';
 const IMAGE_TYPES = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
   ".gif": "image/gif", ".webp": "image/webp", ".avif": "image/avif", ".ico": "image/x-icon" };
 
-/** Only authenticated requests reach here. Resolve symlinks before checking roots. */
-export async function readLocalFile(requested, roots, { maxBytes = 32 * 1024 * 1024, download = false } = {}) {
-  const { file, stat } = await inspectFile(requested, roots);
+/** Only authenticated requests reach here. Apply the host's file access policy. */
+export async function readLocalFile(requested, access, { maxBytes = 32 * 1024 * 1024, download = false } = {}) {
+  const { file, stat } = await inspectFile(requested, access);
   if (!stat.isFile() || stat.size > maxBytes) throw new Error("unsupported file");
   const mime = IMAGE_TYPES[path.extname(file).toLowerCase()];
   const body = await readBounded(file, maxBytes);

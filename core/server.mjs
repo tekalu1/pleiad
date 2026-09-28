@@ -106,6 +106,7 @@ const settingsWrites = new Map();
 const COOKIE_NAME = "agent_host_token";
 // 人間が渡したファイルの置き場。作業ディレクトリを汚さないよう外に出す
 const UPLOAD_DIR = path.join(store.dataDir, "uploads");
+const fileAccess = { dataDir: store.dataDir, uploadDir: UPLOAD_DIR };
 // 1 件の添付の上限（2026-09-23 に 8MB から上げた）。中身は断片（512 KiB の base64）で送る（attachStart / attachChunk / attachFinish）。
 // 1 通の WS で丸ごと送ると 100MB は約 133MB の 1 通になり、ws の既定の maxPayload（100 MiB）・リモートの 64 MiB の上限を超え、
 // 端末内プロキシ・中継・このサーバーのどこでも丸ごと抱えることになるため
@@ -547,7 +548,7 @@ function tokenFromCookie(header) {
 }
 
 /**
- * 会話のファイルを読める範囲（/local-file・/file-preview・ファイルの操作で共通）。
+ * プレビューのツリー表示の基準。読み取りの許可には使わない（ADR 0050）。
  * 作業ディレクトリ・添付の置き場・Codex の生成画像・全会話の cwd とその変更履歴
  */
 function fileRoots(sessions) {
@@ -571,7 +572,7 @@ async function resolveSessionFile({ path: requested, sessionId, at, base }, sess
   // Only relative references need a historical cwd. An explicit path
   // stays useful even when a native transcript has no timestamps.
   if (base != null) {
-    const baseFile = await inspectFile(base, roots);
+    const baseFile = await inspectFile(base, fileAccess);
     cwd = path.dirname(baseFile.file);
   } else if (!/^(?:[a-z]:[\\/]|\/|file:)/i.test(requested ?? '')) cwd = cwdAt({ ...meta, cwd:currentCwd }, at);
   return { ...resolveReference(requested, cwd), cwd };
@@ -611,7 +612,7 @@ const server = http.createServer(async (req, res) => {
         try {
           resolved = await resolveSessionFile({ path:url.searchParams.get('path'), sessionId:url.searchParams.get('sessionId'),
             at:url.searchParams.get('at'), base:url.searchParams.get('base') }, sessions, roots);
-          const preview = await readPreview(resolved.path, roots, { resource:url.searchParams.get('resource') === '1' });
+          const preview = await readPreview(resolved.path, roots, { access: fileAccess, resource:url.searchParams.get('resource') === '1' });
           res.writeHead(200, { 'content-type':'application/json; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' });
           return res.end(JSON.stringify({ ...preview, line:resolved.line, cwd:resolved.cwd }));
         } catch (error) {
@@ -620,7 +621,7 @@ const server = http.createServer(async (req, res) => {
           return res.end(JSON.stringify({ error:failure, path:resolved?.path ?? url.searchParams.get('path') }));
         }
       }
-      const { body, headers } = await readLocalFile(url.searchParams.get("path"), roots, { download:url.searchParams.get('download') === '1' });
+      const { body, headers } = await readLocalFile(url.searchParams.get("path"), fileAccess, { download:url.searchParams.get('download') === '1' });
       res.writeHead(200, headers);
       return res.end(body);
     }
@@ -2000,7 +2001,7 @@ async function runTurnInternal(args, onStarted, hooks) {
     for (const read of liveReads) if (read.sessionId === sessionId) read.turn = turn;
     const emit = makeEmit(turn);
     turn.visualizations = createVisualizationCollector({
-      roots: [cwd],
+      access: fileAccess,
       publish: async payload => {
         await turn.setup;
         const id = turn.info.sessionId;
@@ -3267,9 +3268,9 @@ wss.on("connection", (ws, req) => {
             const roots = fileRoots(sessions);
             const args = msg.args ?? {};
             const resolved = await resolveSessionFile({ path: args.path, sessionId: args.sessionId, at: args.at, base: args.base }, sessions, roots);
-            // lenient: 在り処だけを知りたい（可視化の元のパス。元のファイルは消えていることがある）。読まないので範囲も問わない
+            // lenient: 在り処だけを知りたい（可視化の元のパス。元のファイルは消えていることがある）。ファイルには触れない
             if (!hostAction && args.lenient === true) return reply(true, { path: resolved.path, cwd: resolved.cwd ?? null });
-            const { file, stat } = await inspectFile(resolved.path, roots);
+            const { file, stat } = await inspectFile(resolved.path, fileAccess);
             const directory = stat.isDirectory();
             if (!hostAction) return reply(true, { path: file, cwd: resolved.cwd ?? null, kind: directory ? 'directory' : 'file' });
             if (msg.command === 'openPath' && (directory || !OPENABLE.test(file))) return reply(false, t('files.htmlOnly'));

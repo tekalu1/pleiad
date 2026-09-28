@@ -135,11 +135,21 @@ export default async function(t) {
     assert(Array.isArray(directory.items));
     assert(directory.items.some(it=>it.name==='日本語 file.md'&&it.kind==='file'));
     assert(Array.isArray(directory.tree));
-    const outsideDir=await (await fetch(url(scratch),auth)).json(); assert.equal(outsideDir.error.code,'outside-workspace');
-    const outside=await (await fetch(url(path.join(scratch,'secret.txt')),auth)).json(); assert.equal(outside.error.code,'outside-workspace');
+    const outsideDir=await (await fetch(url(scratch),auth)).json(); assert.equal(outsideDir.kind,'directory');
+    assert(!outsideDir.items.some(item => item.name === 'data'));
+    assert(!JSON.stringify(outsideDir.tree).includes('sessions.json'));
+    const outside=await (await fetch(url(path.join(scratch,'secret.txt')),auth)).json(); assert.equal(outside.text,'private');
     await fs.symlink(scratch,path.join(one,'escape'),process.platform==='win32'?'junction':'dir');
-    const symlink=await (await fetch(url(path.join(one,'escape/secret.txt')),auth)).json(); assert.equal(symlink.error.code,'outside-workspace');
-    t.ok('種類・空ファイル・大きいファイル・フォルダープレビュー・欠損を区別し、作業場所外とsymlink脱出を拒否',true);
+    const symlink=await (await fetch(url(path.join(one,'escape/secret.txt')),auth)).json(); assert.equal(symlink.text,'private');
+    const based=await (await fetch(url('secret.txt',{base:path.join(scratch,'secret.txt')}),auth)).json(); assert.equal(based.text,'private');
+    for (const target of [data, path.join(data,'sessions.json'), path.join(one,'escape/data/sessions.json')]) {
+      const denied=await (await fetch(url(target),auth)).json(); assert.equal(denied.error.code,'protected-data');
+    }
+    const deniedBase=await (await fetch(url('secret.txt',{base:path.join(data,'sessions.json')}),auth)).json(); assert.equal(deniedBase.error.code,'protected-data');
+    const upload=path.join(data,'uploads','attachment.txt');
+    await fs.mkdir(path.dirname(upload),{recursive:true}); await fs.writeFile(upload,'attachment');
+    const attachment=await (await fetch(url(upload),auth)).json(); assert.equal(attachment.text,'attachment');
+    t.ok('種類・上限・欠損と相対解決を維持し、作業場所外は許可、データ置き場はリンク経由も拒否、添付は許可',true);
     const download=await fetch(`${origin}/local-file?${new URLSearchParams({path:path.join(one,'unsafe.html'),download:'1'})}`,auth);
     assert(download.headers.get('content-disposition').startsWith('attachment')); assert.equal(download.headers.get('content-type'),'application/octet-stream');
     assert.equal((await fetch(`${origin}/vendor/pdfjs/build/pdf.mjs`)).status,401);
