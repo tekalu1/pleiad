@@ -1,6 +1,16 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
+
+export function browserSocketDirectory(dir, session, platform = process.platform) {
+  const socketDir = path.join(dir, 'sock');
+  // agent-browser allows at most 103 bytes for a Unix socket path, plus NUL.
+  if (platform === 'win32' || Buffer.byteLength(path.join(socketDir, `${session}.sock`)) < 104) return socketDir;
+  // macOS TMPDIR can itself exceed the socket limit. /tmp is short on Unix.
+  const hash = crypto.createHash('sha256').update(path.resolve(dir)).digest('hex').slice(0, 24);
+  return path.join('/tmp', `ply-ab-${os.userInfo().uid}`, hash);
+}
 
 export function parentPortBrowser(port, { timeoutMs = 10_000 } = {}) {
   if (!port) return null;
@@ -37,10 +47,13 @@ export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = 
   // Keep the shell config path and agent-browser namespace stable after a new thread gets its native ID.
   const configSessionId = bridge.configSessionId?.(sessionId) ?? sessionId;
   const dir = path.join(dataDir, 'agent-browser', crypto.createHash('sha256').update(configSessionId).digest('hex'));
+  const session = `ply-${crypto.createHash('sha256').update(path.resolve(dir)).digest('hex').slice(0, 24)}`;
+  const socketDir = browserSocketDirectory(dir, session);
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.mkdir(socketDir, { recursive: true, mode: 0o700 });
   const file = path.join(dir, 'agent-browser.json');
   await fs.writeFile(file, JSON.stringify({ cdp: url }), { mode: 0o600 });
-  return { AGENT_BROWSER_CONFIG: file, AGENT_BROWSER_SESSION: configSessionId };
+  return { AGENT_BROWSER_CONFIG: file, AGENT_BROWSER_SESSION: session, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_NAMESPACE: '' };
 }
 
 export function browserInstruction(env, locale, translate) {

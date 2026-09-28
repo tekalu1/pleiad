@@ -53,13 +53,17 @@ const vocab = ({ label, short, note, scope, autonomy, enforced }) => ({ label, .
 
 // thread/resume が以前の設定を返しても、選んだアクセス範囲を turn/start に適用する。
 // 同じ種類なら設定済みの追加ルートなどを保持し、YOLO から戻る場合は制限を復元する。
-function sandboxForTurn(mode, current) {
+function sandboxForTurn(mode, current, browserWritableRoots) {
   const type = {
     "workspace-write": "workspaceWrite",
     "read-only": "readOnly",
     "danger-full-access": "dangerFullAccess",
   }[mode.sandbox];
   if (type === "dangerFullAccess") return { type };
+  if (type === 'workspaceWrite' && browserWritableRoots) {
+    const policy = current?.type === type ? current : { type, networkAccess: false };
+    return { ...policy, writableRoots: [...new Set([...(policy.writableRoots ?? []), ...browserWritableRoots])] };
+  }
   if (current?.type === type) return current;
   return { type, networkAccess: false };
 }
@@ -1239,7 +1243,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, endpoint = null }) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, endpoint = null, locale }) {
     const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
     // Hooks を Pleiad がそろえる会話。止める key はこのターンの直前に作り直す（起動の後に足された定義も、次のターンからは止まる）。
     // 作れなければターンを始めない（ネイティブと Pleiad の登録が二重に動くか、どちらも動かないため）
@@ -1497,6 +1501,14 @@ export const backend = {
     let promptSent = false;
 
     try {
+      if (browserEnv && m.sandbox === 'read-only') {
+        browserInstructions = agentT(locale, 'browser.readonlyInstructions');
+      }
+      let browserWritableRoots;
+      if (m.sandbox === 'workspace-write' && browserEnv?.AGENT_BROWSER_SOCKET_DIR) {
+        const { config } = await rpc.request('config/read', { cwd, includeLayers: false });
+        browserWritableRoots = [...new Set([...(config?.sandbox_workspace_write?.writable_roots ?? []), browserEnv.AGENT_BROWSER_SOCKET_DIR])];
+      }
       const common = {
         cwd,
         config: {
@@ -1509,7 +1521,12 @@ export const backend = {
           ...(browserEnv ? { 'shell_environment_policy.set': {
             AGENT_BROWSER_CONFIG: browserEnv.AGENT_BROWSER_CONFIG,
             AGENT_BROWSER_SESSION: browserEnv.AGENT_BROWSER_SESSION,
+            AGENT_BROWSER_SOCKET_DIR: browserEnv.AGENT_BROWSER_SOCKET_DIR,
+            AGENT_BROWSER_NAMESPACE: browserEnv.AGENT_BROWSER_NAMESPACE,
           } } : {}),
+          ...(browserWritableRoots ? {
+            'sandbox_workspace_write.writable_roots': browserWritableRoots,
+          } : {}),
           ...(hooks ? { hooks: hooks.config } : {}),
         },
         ...(compat ? { modelProvider: compat.modelProvider } : {}),
@@ -1608,7 +1625,7 @@ export const backend = {
         // ロード済み thread の resume だけに設定更新を任せない。
         // 毎ターン指定し、auto/full への変更も ask への復帰も確実に適用する。
         approvalPolicy: m.approvalPolicy,
-        sandboxPolicy: sandboxForTurn(m, effectiveSandbox),
+        sandboxPolicy: sandboxForTurn(m, effectiveSandbox, browserWritableRoots),
         ...(effectiveEffort ? { effort: effectiveEffort } : {}),
         input: [{ type: "text", text: String(prompt ?? "") }],
       });
