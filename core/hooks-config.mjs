@@ -194,6 +194,9 @@ function summary(h) {
   return text.length > 160 ? `${text.slice(0, 160)}…` : text;
 }
 
+// 行 → 元の定義（伏せ字でない handler と group の matcher）。画面へ返す行には載せない
+const RAW = new WeakMap();
+
 /**
  * hooks の置き場 1 つを行に直す。group / handler は元の並びの番号（編集の指し先）。
  * agy の非ツールのイベントは handler を直接並べるので group は -1、handler がその番号
@@ -203,10 +206,13 @@ function rowsOf(agent, map, base) {
   const handlerRow = (event, group, handler, h, extra) => {
     if (!record(h)) { problems.push('handler'); return; }
     const type = handlerType(h);
-    rows.push({ ...base, event, group, handler, type, command: summary(h),
+    const row = { ...base, event, group, handler, type, command: summary(h),
       timeout: Number.isFinite(h.timeout) ? h.timeout : null, async: h.async === true,
       editable: !base.readOnly && type === 'command' && typeof h.command === 'string',
-      definition: maskDefinition(h), unknownKeys: Object.keys(h).filter(k => !['type', 'command', 'timeout', 'async'].includes(k)), ...adapterOf(h), ...extra });
+      definition: maskDefinition(h), unknownKeys: Object.keys(h).filter(k => !['type', 'command', 'timeout', 'async'].includes(k)), ...adapterOf(h), ...extra };
+    rows.push(row);
+    // 元の定義（伏せ字でない）。画面へは送らない。「Pleiad に取り込む」でサーバーが読み直すときだけ使う（raw）
+    RAW.set(row, { handler: h, matcher: typeof extra?.matcher === 'string' ? extra.matcher : null, groupKeys: extra?.groupKeys ?? [] });
   };
   const groups = (event, list, extra = {}) => {
     // イベントでないキー（説明など）は行にしない。イベントなのに並びでないものは壊れた定義として知らせる
@@ -378,11 +384,69 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
         }
       }
     }
+    // Claude のプラグインの hooks（有効にしたプラグインの hooks/hooks.json と plugin.json の hooks）。読むだけ。
+    // 「Pleiad がそろえる」ではフラグ設定の disableAllHooks で一緒に止まるので、切り替えの確認に並べる（ADR 0049）
+    if (agents.includes('claude') && scopes.includes('user')) entries.push(...await claudePluginRows(ancestors, diagnostics));
     // agy の enabled: false は、ユーザーと作業場所にある同じ名前の定義をまとめて止める（実機で確認。2026-09-27）
     const offNames = new Set(entries.filter(e => e.agent === 'antigravity' && e.enabled === false).map(e => e.name));
     for (const e of entries) if (e.agent === 'antigravity' && e.enabled && offNames.has(e.name)) e.stoppedBySameName = true;
     for (const e of entries) e.id = digest([e.agent, pathKey(e.path), e.name ?? '', e.event, e.group, e.handler].join('\0')).slice(0, 24);
     return { cwd, root, home, scopes, files, entries, diagnostics, events: HOOK_EVENTS, order: HOOK_ORDER };
+  }
+
+  /** JSON のファイルを読む（無い・壊れている・大きすぎるなら null） */
+  async function readJson(file) {
+    try {
+      const stat = await fs.stat(file);
+      if (!stat.isFile() || stat.size > LIMIT) return null;
+      return JSON.parse((await fs.readFile(file, 'utf8')).replace(/^﻿/, ''));
+    } catch { return null; }
+  }
+  /**
+   * 有効にした Claude のプラグインの hooks の行。installed_plugins.json（形式 2）の置き場所と、設定の enabledPlugins（ユーザー → プロジェクト →
+   * プロジェクトローカルの順で後が勝つ）で決める。プロジェクトに入れたプラグインは、その場所（とその下）の会話だけ
+   */
+  async function claudePluginRows(ancestors, diagnostics) {
+    const installed = await readJson(path.join(claudeHome, 'plugins', 'installed_plugins.json'));
+    if (!record(installed?.plugins)) return [];
+    const enabled = {};
+    const settingsFiles = [path.join(claudeHome, 'settings.json'), ...ancestors.flatMap(b => [path.join(b, '.claude', 'settings.json'), path.join(b, '.claude', 'settings.local.json')])];
+    for (const f of settingsFiles) { const v = await readJson(f); if (record(v?.enabledPlugins)) Object.assign(enabled, v.enabledPlugins); }
+    const keys = new Set(ancestors.map(pathKey));
+    const out = [];
+    for (const [id, installs] of Object.entries(installed.plugins)) {
+      if (enabled[id] !== true || !Array.isArray(installs)) continue;
+      const hit = installs.find(i => record(i) && typeof i.installPath === 'string' && (i.scope === 'user' || (typeof i.projectPath === 'string' && keys.has(pathKey(i.projectPath)))));
+      if (!hit) continue;
+      const root = hit.installPath;
+      const files = [path.join(root, 'hooks', 'hooks.json')];
+      const manifest = await readJson(path.join(root, '.claude-plugin', 'plugin.json'));
+      const inline = record(manifest?.hooks) ? manifest.hooks : null;
+      for (const p of [manifest?.hooks].flat()) if (typeof p === 'string') files.push(path.resolve(root, p));
+      const seen = new Set();
+      const add = (map, file) => {
+        const { rows, problems } = rowsOf('claude', map, { agent: 'claude', scope: 'plugin', plugin: id, pluginRoot: root, base: null, path: file, format: 'json', kind: 'claude-plugin', readOnly: true, stop: 'none' });
+        if (problems.length) diagnostics.push({ path: file, message: t('hooks.file.partial') });
+        out.push(...rows);
+      };
+      for (const file of files) {
+        if (seen.has(pathKey(file))) continue;
+        seen.add(pathKey(file));
+        const v = await readJson(file);
+        if (record(v?.hooks)) add(v.hooks, file);
+      }
+      if (inline) add(record(inline.hooks) ? inline.hooks : inline, path.join(root, '.claude-plugin', 'plugin.json'));
+    }
+    return out;
+  }
+  /**
+   * 見つかった行の元の定義（伏せ字でない）。「Pleiad に取り込む」でだけ使う（画面から来たコマンドは使わない）。
+   * ids の行を今のファイルから読み直し、{ row, handler, matcher, groupKeys } を返す（無くなった行は入れない）
+   */
+  async function raw({ cwd = null, ids = [], agents = HOOK_AGENTS } = {}) {
+    const report = await scan({ cwd, scopes: cwd ? ['user', 'directory'] : ['user'], agents });
+    const want = new Set(ids);
+    return report.entries.filter(e => want.has(e.id) && RAW.has(e)).map(e => ({ row: e, ...structuredClone(RAW.get(e)) }));
   }
 
   // ---------------------------------------------------------------- 書き込み
@@ -775,7 +839,7 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       editable: handlerType(h) === 'command' && typeof h.command === 'string',
       ...(agent === 'antigravity' ? { enabled: data.map[where.name]?.enabled !== false } : {}) };
   }
-  return { scan, save, read, targets, copy, places };
+  return { scan, save, read, targets, copy, raw, places };
 }
 
 // 1 つの会話に残す hooks の発火の記録の上限（core/server.mjs）

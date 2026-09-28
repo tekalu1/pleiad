@@ -510,7 +510,10 @@
       "appServerDied": "codex app-server exited: {{why}}",
       "timeout": "codex {{method}} did not respond within {{ms}} ms.",
       "notConnected": "Not connected to codex app-server.",
-      "noHandler": "Nothing is listening for {{method}}."
+      "noHandler": "Nothing is listening for {{method}}.",
+      "hooksList": "Codex's hook list (hooks/list) was incomplete, so the message was not sent (the hooks to turn off could not be decided): {{detail}}",
+      "hooksUnsubscribeFailed": "Could not switch how hooks are passed (codex could not unload the conversation: {{reason}}). Continuing would run hooks twice or not at all, so the message was not sent. Stop any terminal running in the background, then send again",
+      "hooksTrust": "Could not get the hashes to pass Pleiad's hooks to Codex as trusted, so the message was not sent (otherwise the guards would not run and only the agent's hooks would be off): {{detail}}"
     },
     "auth": {
       "notLoggedIn": "Not signed in to codex.",
@@ -969,5 +972,32 @@
       "notReady": "This copy is not ready yet. Check the reasons on the review screen",
       "adapterConflict": "An adapter file with the same name but different content already exists, so it was not overwritten"
     }
+  },
+  "plyHooks": {
+    "invalid": "The hook registration is not in a valid form",
+    "name": "Enter a name of 1–80 characters",
+    "agent": "Choose which agent the command is written for",
+    "event": "That event does not exist for the chosen agent",
+    "matcher": "The matcher must be a string of up to 500 characters",
+    "command": "Enter the command on one line (up to 4000 characters)",
+    "timeout": "Timeout must be a whole number of seconds from 1 to 86400",
+    "targets": "Choose at least one agent to pass it to",
+    "owner": "The hooks owner setting is not valid",
+    "unreadable": "Cannot read Pleiad's hook registrations (hooks.json). The file was left unchanged",
+    "notFound": "That registration was not found (it may have been removed in another window)",
+    "tooMany": "You can register up to 200 hooks",
+    "brokenSave": "hooks.json has broken parts, so it was not saved (to avoid deleting them). Fix it with \"Remove the broken parts and save again\" in Settings › Context › Hooks",
+    "ownerUnknown": "The hooks owner for this location cannot be read from hooks.json, so the message was not sent (hooks that should be off might run). Fix it in Settings › Context › Hooks",
+    "brokenEntries": "Hooks are managed by Pleiad here, but hooks.json has registrations that cannot be read, so the message was not sent (a Pleiad guard might be missing). Fix it in Settings › Context › Hooks",
+    "changedSinceReview": "The hook registrations or owner changed after the review. Open the review again"
+  },
+  "hooksUnify": {
+    "prepareFailed": "Could not prepare the hooks managed by Pleiad, so the message was not sent (to avoid running the agent's own hooks twice): {{error}}",
+    "importFailed": "Some definitions cannot be imported (the file changed, or the form cannot be imported). Open the review again",
+    "agySkillsConflict": "In Antigravity, hooks cannot be managed by Pleiad where Skills are also managed by Pleiad (the custom agent for Skills also turns off Pleiad's hooks). Leave one of them to the agent",
+    "agyStopListIncomplete": "Antigravity's hook definitions cannot be read, so the list of hooks to turn off cannot be made ({{path}} · {{error}}). The agent's own hooks would run, so the message was not sent",
+    "agyNameCollision": "An Antigravity hook has the same name as a Pleiad registration ({{name}}), so it cannot be turned off. Rename it",
+    "importChanged": "A definition to import changed after the review. Open the review again",
+    "reviewRequired": "Change the hooks owner from the review"
   }
 }

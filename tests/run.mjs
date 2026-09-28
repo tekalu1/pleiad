@@ -83,6 +83,12 @@ const cases = [
   await import('./unit/hooks-config.mjs'),
   await import('./unit/hooks-copy.mjs'),
   await import('./unit/server-hooks.mjs'),
+  // Hooks を Pleiad がそろえる: 正本と担当の保存・渡し方の組み立て・コールバックとアダプター・切り替えの確認
+  await import('./unit/hooks-unify.mjs'),
+  await import('./unit/server-hooks-unify.mjs'),
+  // 同じくレビューの指摘ごと（漏れ・ガードの消失・確認の迂回）
+  await import('./unit/hooks-unify-review.mjs'),
+  await import('./unit/server-hooks-unify-review.mjs'),
   await import('./unit/context-scan.mjs'),
   // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）
   await import('./unit/context-settings.mjs'),

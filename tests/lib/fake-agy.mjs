@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 
 const NL = String.fromCharCode(10);
 
@@ -200,9 +201,39 @@ async function startMcp() {
 }
 process.on("exit", () => { for (const s of mcpServers ?? []) { try { s.child.kill(); } catch {} } });
 
+/**
+ * hooks の確認用（agy-hooks）: run_command の前の PreToolUse を本物（agy 1.2.12）の読み方で動かし、走った名前と答えを返す。
+ * 読むのはユーザー（HOME の .gemini/config/hooks.json）・作業場所（cwd）と --add-dir の .agents/hooks.json。
+ * どこかで { enabled: false } の名前はスコープをまたいで止まる。hook は <その場所>/.agents で動く（実機で確認。2026-09-27・28）
+ */
+function agyHooksScript() {
+  const files = [path.join(process.env.HOME || process.env.USERPROFILE || '', '.gemini', 'config', 'hooks.json'),
+    ...[process.cwd(), ...addDirs].map((d) => path.join(d, '.agents', 'hooks.json'))];
+  const defs = [];
+  for (const file of files) {
+    let map = {};
+    try { map = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { continue; }
+    for (const [name, spec] of Object.entries(map)) defs.push({ name, spec, dir: path.dirname(file) });
+  }
+  const off = new Set(defs.filter((d) => d.spec?.enabled === false).map((d) => d.name));
+  const ran = [];
+  for (const d of defs) {
+    if (off.has(d.name)) continue;
+    for (const g of d.spec?.PreToolUse ?? []) for (const h of g.hooks ?? []) {
+      const input = JSON.stringify({ conversationId, workspacePaths: [process.cwd().replace(/\\/g, '/')], stepIdx: 1, toolCall: { name: 'run_command', args: { CommandLine: 'echo hi' } } });
+      const r = spawnSync(h.command, { cwd: d.dir, shell: true, input, encoding: 'utf8', timeout: 20_000 });
+      let decision = 'deny';
+      try { decision = JSON.parse(r.stdout || '{}').decision ?? 'deny'; } catch {}
+      ran.push(`${d.name}:${r.status === 0 ? decision : 'deny'}`);
+    }
+  }
+  return `hooks:${ran.join(',') || 'none'}`;
+}
+
 /** カスタムエージェントの確認用の台本。返事の本文を返す。該当しなければ null */
 async function agentScript(text) {
   if (text === "agent-body") return customAgent?.body ?? "(no agent)";
+  if (text === "agy-hooks") return agyHooksScript();
   if (!/^mcp-(tools|call:)/.test(text)) return null;
   const servers = await startMcp();
   if (text === "mcp-tools") return JSON.stringify(servers.flatMap((s) => s.tools.map((t) => ({ server: s.name, name: t.name, description: t.description ?? "" }))));

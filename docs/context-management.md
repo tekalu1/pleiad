@@ -120,7 +120,7 @@ JSON は他のキーを保持して整形保存。通常の TOML テーブルで
 
 ## Hooks（2026-09-27）
 
-設定 › コンテキストの「Hooks」カードと会話の右パネルの Hooks の面（[ADR 0045](adr/0045-hooks-management.md)、画面は design-system.md「Hooks」）。第 1 段は見える化とネイティブ編集、第 2 段は他のエージェントへ写す（下の節）で、担当は「エージェントに任せる」に固定（「Pleiad がそろえる」は選べない）。探索と書き込みは `core/hooks-config.mjs`。hooks は `context-scans.json` の `kinds` に入れていない（保存する担当・除外が無いため。形式の移行は担当を保存する段で決める）。
+設定 › コンテキストの「Hooks」カードと会話の右パネルの Hooks の面（[ADR 0045](adr/0045-hooks-management.md)、画面は design-system.md「Hooks」）。第 1 段は見える化とネイティブ編集、第 2 段は他のエージェントへ写す、第 3 段は Pleiad がそろえる（下の節）。探索と書き込みは `core/hooks-config.mjs`。hooks の担当と Pleiad の登録は `context-scans.json` ではなく `<data>/hooks.json` に持つ（下の「Pleiad がそろえる」。[ADR 0049](adr/0049-hooks-pleiad-managed.md)）。
 
 **探す場所**（ユーザーは home、作業場所は Git のルートから cwd までの各フォルダー）:
 
@@ -130,7 +130,7 @@ JSON は他のキーを保持して整形保存。通常の TOML テーブルで
 | Codex | `CODEX_HOME`（既定 `~/.codex`）の `hooks.json` と `config.toml` の `[hooks]` | `.codex/hooks.json`・`.codex/config.toml` | 同上（TOML は `[[hooks.<イベント>]]`） |
 | Antigravity | `~/.gemini/config/hooks.json`（最上位が名前）・`~/.gemini/antigravity-cli/settings.json` の `hooks` | `.agents/hooks.json` | 名前 → イベント → ツールのイベントは matcher group、それ以外は handler を直接。名前に `enabled` |
 
-Claude の Skill の frontmatter の `hooks`（ユーザーの `skills/*/SKILL.md` と作業場所の `.claude/skills/*/SKILL.md`）は読み取りのみの行にする。Claude と agy の管理者の設定・プラグインの `hooks.json` はまだ読まない。
+Claude の Skill の frontmatter の `hooks`（ユーザーの `skills/*/SKILL.md` と作業場所の `.claude/skills/*/SKILL.md`）は読み取りのみの行にする。Claude のプラグインの hooks は、`<CLAUDE_CONFIG_DIR>/plugins/installed_plugins.json`（形式 2）の置き場所のうち、設定の `enabledPlugins`（ユーザー → プロジェクト → プロジェクトローカルの順で後が勝つ）で `true` のものの `hooks/hooks.json` と `.claude-plugin/plugin.json` の `hooks`（パスかインライン）を、読み取りのみの行（`scope: plugin`、`plugin`・`pluginRoot`）にする。プロジェクトに入れたプラグインは、その場所の会話だけ。Claude と agy の管理者の設定、agy のプラグインの hooks はまだ読まない。
 
 **Codex の信頼状態**: Codex は定義の hash ごとに信頼を審査し、信頼されていない定義を実行しない（`codex exec` では確認も出ずに飛ばす。実機で確認、2026-09-27）。`scanHooks`・`sessionHooks` は、まず信頼状態なしで一覧を返し（Codex の行には `trustPending`、画面は「信頼状態を確かめています…」）、画面が `trust: true` でもう一度頼んだときに、Codex の会話と同じ app-server（`core/backends/codex-rpc.mjs` の共有の接続。`initialize` は `experimentalApi: true`）に `hooks/list { cwds }` を送り、返った各 hook の `trustStatus`（`trusted`・`untrusted`・`modified`・`managed`）・`enabled`・`currentHash` を、`key`（`<sourcePath>:<イベントの snake_case>:<group>:<handler>`）で行に `trust` として付ける（`applyCodexHooks`）。ユーザー・プロジェクト以外（プラグイン・管理者）の hooks は `hooks/list` の定義から読み取りのみの行を足す。Codex の行も Codex の設定ファイルも無ければ `hooks/list` を呼ばない（app-server を起こさない）。Codex を使わない構成・8 秒で返らない・失敗したときは `trust: null`（「信頼状態を取得できません」）。個別の停止・信頼の RPC は無い（`hooks/list` だけ）ので、Pleiad は信頼を代行せず、停止のスイッチも出さない。
 
@@ -141,6 +141,28 @@ Claude の Skill の frontmatter の `hooks`（ユーザーの `skills/*/SKILL.m
 **書き込み**（`saveHooks`）: `op` は `add`・`edit`・`delete`・`enable`（agy の名前単位）。command 型だけを追加・編集・削除でき、http・prompt・agent・mcp_tool の定義と知らないキーはそのまま残す（編集は `command`・`timeout`・`async` だけを差し替える）。イベントがそのエージェントに無ければ断る。agy には `async` を書かない。書き先はエージェント・スコープ・場所から決まるファイルだけ（任意のパスへは書かない）。追加の書き先は、Codex は既存の定義が `config.toml` にあればそこ（`hooks.json` を足して二重に登録しない）、agy のユーザーは CLI の `settings.json` に `hooks` があればそこ、ほかは `hooks.json`。`dryRun: true` は書かずに、書き先・形式（`toml`／`json`）・**実際に書く本文の前後**（伏せ字済み。`before`／`after`）・書き直しの要否（`reformatsFile` と理由 `reason: comments|jsonValues|rewrite`、消えるコメントの行数 `lostComments`）・伏せた部分だけが変わるか（`hiddenChange`）を返し、画面はこれを行の差分として見せてから書く。伏せ字は前後の本文に同じように通す（`maskFileText`: env・headers などの表とインラインの表の値、秘密らしい名前のキーの文字列の値、形で分かる秘密）ので、変わらない行は同じになる。agy の改名は名前の `enabled` を引き継ぎ、移し先の名前が別の `enabled` を持っていれば断る。予約の名前（`__proto__`・`constructor`・`prototype`）は名前・イベントのどちらにも使わない。matcher を変えた handler が他と group を共有していれば、取り出して新しい group に入れる。空になった group・イベント・名前は消す。
 
 保存は `core/mcp-config.mjs` と同じ: 直列化、読んだ本文の SHA-256 revision を保存直前にもう一度照合、一時ファイルから rename、既存ファイルのアクセスモードとリンクの実体を保つ、構文の壊れたファイルは上書きしない、上限 1 MiB。改行コード（CRLF／LF）・BOM・JSON の字下げ（幅・タブ）は読んだ本文に合わせる。JSON は他のキーを残して整形保存し、読み直して値が変わるところ（有効桁を超える整数・重複したキー。`jsonLossy`）があれば書き直しの許可を求める。TOML（`renderToml`）は、追加なら既存の表に触らず末尾に `[[hooks.<イベント>]]` の 1 ブロックだけを足す。編集・削除（と、足すだけでは合わないとき）は hooks の表（`[hooks…]`・`[[hooks.…]]`。見出しから次の見出しの手前まで、ただし末尾のコメント行と空行は次の表の側に残す）を抜き、最初の hooks の表の位置に書き直す。抜く範囲にコメント（行末のものを含む）があれば、消える行数を出して画面で許可を取る。どちらも読み直した結果が期待どおりのときだけ使い、インライン・ドットの定義で合わなければ、ファイル全体の書き直し（コメントが消える）を画面で明示的に許可させる。プロジェクト・プロジェクトローカルのスコープでは、置き場所（`.claude`・`.codex`・`.agents` やファイル）の実体が作業場所の外にあれば（リンク）、読まず書かない（一覧では読めないファイルとして出す）。ユーザーのスコープのリンク（dotfiles の管理）は確かめない。複数の書き先は 1 件ずつ書き、失敗した先だけ理由を返す（書けた先は戻さない）。編集のシートを開くときだけ、`readHook` がその handler の `command`・`timeout`・`async` とキーの名前を返す（env・headers などの値は返さない）。元の `timeout` がシートの欄で扱えない値（文字列・小数）なら、欄を空のまま保存すれば元の値を残す（`keepTimeout`）。
+
+### Pleiad がそろえる（第 3 段、2026-09-28）
+
+担当を「Pleiad がそろえる」にした場所では、Pleiad から起動する Claude Code・Codex・Antigravity の会話で、各エージェント自身の設定の hooks（ネイティブ）を止め、Pleiad の登録だけを渡す（[ADR 0049](adr/0049-hooks-pleiad-managed.md)。渡し方は [共通コンテキストの実行](context-runtime.md)「Hooks」）。エージェントの設定ファイルは書き換えず、Pleiad 以外から起動する会話は今までどおり。
+
+- **保存**（`core/ply-hooks.mjs`）: `<data>/hooks.json`（形式 1、0600）。`context-scans.json`（形式 3）には入れない（前の版がそのファイルごと読めなくなるのを避ける。前の版は `hooks.json` を無視し、hooks はエージェント任せに戻る）。
+  ```jsonc
+  { "version": 1,
+    "hooks": [ { "id": "h-<12 桁>", "name": "…", "agent": "claude|codex|antigravity",   // コマンドが読み書きする JSON の形
+                 "event": "PreToolUse", "matcher": "Bash", "command": "…", "timeout"?: 秒, "async"?: true,
+                 "targets": ["claude", "codex"],                 // 渡すエージェント
+                 "matchers"?: { "codex": "…" },                   // 自動で訳せない先の matcher
+                 "enabled": true, "importedFrom"?: { "agent", "scope", "path", "event", "plugin"? }, "createdAt", "updatedAt" } ],
+    "defaults": { "owner": "native|ply", "disabled": [] },         // 担当と、渡さない登録の id
+    "places": { "<pathKey>": { "path": "…", "owner": "…", "disabled": [] } } }   // 場所ごとの上書き（一番近いものが勝つ）
+  ```
+  受け継ぐ値と同じ場所の上書きは持たない。登録を消すと `disabled` からも外す。一時ファイルを作るときから 0600。
+  **厳密に読む**（`parseConfig`）: 検査に通らない登録・重複した id・上限（200 件）超え・壊れた既定や場所の担当は、黙って落とさずに `problems` として返す（読めた部分は使える）。`problems` がある間は上書き保存しない（`plyHooks.brokenSave`）。ファイルが丸ごと読めなければ画面の形は `{ unreadable: true }`。直すのは `repairPlyHooks`（元のファイルを `hooks.broken-<時刻>.json` に退避し、読めた部分だけで書き直す。担当を読めなかった場所・既定はエージェント任せになる）。
+  **ターンの前の担当**（`resolveForTurn`）: 既定か効くはずの場所の担当が壊れていれば担当は分からない（`plyHooks.ownerUnknown`。ターンを始めない）。担当が Pleiad なのに登録に壊れた部分があれば始めない（`plyHooks.brokenEntries`）。担当が確かにエージェント任せなら、登録が壊れていても始める。ファイルが丸ごと読めなくなったら、このプロセスで最後に読めた内容でエージェント任せだった場所だけ続ける（`stale`）。
+- **API**: `plyHooks { cwd? }`（担当と登録。コマンドは伏せ字）、`readPlyHook { id }`（編集のシートだけ元のコマンド）、`savePlyHook { value }`、`removePlyHook { id }`、`togglePlyHook { id, enabled }`、`plyHookPreview { value }`（エージェントごとの渡し方。保存しない）、`hooksUnifyPreview { cwd?, direction: ply|native }`、`setHooksOwner { place, value, revision, imports?: [{ id, digest }] }`、`repairPlyHooks {}`。`plyHooks` の場所の形には、上書きを外したときの担当（`inherited`）と、担当が確かに決まるか（`certain`）、壊れた部分（`problems`）を載せる。
+- **切り替えの確認**（`hooksUnifyPreview`。ADR 0031 に倣う。戻す向きでも出す）: 設定の画面はユーザーの範囲、右パネルの「この場所だけ変える」はその場所（ユーザーと Git のルートから cwd まで）を探し、Codex は `hooks/list` のプラグイン・管理者の定義を重ねる。行を `stops`（止まる。戻すときは再開する）・`inactive`（元の設定で動いていない: agy の `enabled: false`・同じ名前で止まっている、Codex の `/hooks` で止めた・未審査・変更あり。止めても戻しても変わらない）・`keeps`（止め方の無い出どころ: Codex・agy のプラグイン、管理者）に分け、`stops`・`inactive` には取り込めるか（`importable` と理由）と確認票の `digest`（元の定義の hash）を付ける。Claude はプラグインと Skill の hooks も `stops`（Skill は止まる見込み・未確認）。`registry` は登録ごとの、エージェントごとの渡し方（`deliverable`）。ほかに確認票の `revision`（登録と担当の版）、止める一覧を作れないエージェント（`incomplete`。agy のファイルを読めないとき）、その場所で Skills も Pleiad 担当か（`agySkillsConflict`。そろえた agy の会話は始まらない）。
+- **取り込み**（`setHooksOwner` の `imports`）: 画面が送るのは行の id と確認票の digest だけで、サーバーが元のファイルを読み直して登録にし、digest が同じときだけ保存する（違えば `hooksUnify.importChanged`。確認し直す）。`revision` が今の版と違っても保存しない（`plyHooks.changedSinceReview`）。取り込めないもの: command 以外、実行の条件や知らないキー（`if`・`once` など）、matcher group のほかのキー、Skill、管理者・Codex の `hooks/list` だけの行、プラグインのデータの置き場（`CLAUDE_PLUGIN_DATA`）を使うもの、複数行のコマンド、Claude の SessionStart（コールバックで渡せない）。取り込み済みかは同じ出どころ・同じ定義（`importedFrom.digest`）で決め、取り込み済みの登録がオフ・この場所で外しているなら `alreadyOff`。重ねて送った・再送した取り込みは 1 件にする。元の設定で動いていない定義はオフの登録にする。プラグインの `${CLAUDE_PLUGIN_ROOT}` は実際のパスに置き換える。取り込んだ登録は元のエージェントだけに渡す（`targets` は元のエージェント）。担当と取り込みは 1 回の書き込みで、取り込みに失敗したら担当も変えない。
 
 ### 他のエージェントへ写す（第 2 段）
 

@@ -184,6 +184,13 @@
 | 未審査 · /hooks で信頼するまで実行されません | Not reviewed · Does not run until trusted in /hooks |
 | 観測できません | Not observable |
 | 書き込む内容を確認 | Review changes |
+| Pleiad に取り込む（ネイティブの hooks を Pleiad の登録へ） | Import into Pleiad |
+| ネイティブの hooks（各エージェントの設定の hooks） | agent hooks / the agent's own hooks |
+| 止まる / 再開する / 止めずに動き続ける（そろえる確認） | stop / run again / keep running |
+| コマンドの形（どのエージェント向けに書いたか） | command format |
+| 渡す / 渡せない（登録をエージェントへ） | pass / cannot pass |
+| 一時の置き場（agy の --add-dir） | temporary folder |
+| 止めたはずの定義（漏れ） | should have been off |
 
 ## 揺れ（未統一）
 - 使用枠: `usage`（辞書での使用が多数派。例 server:antigravity.usage.badResponse・shared・none・timeout・tooLarge・cannotRead・needsUpdate） / `usage limits`（例 server:antigravity.usage.unsupported、server:usage.codexUnavailable、server:usage.claudeUnavailable）。本表には多い方の `usage` を採ったが、辞書は直していないので `usage limits` の箇所も残っている
