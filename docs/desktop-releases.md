@@ -9,6 +9,7 @@ Pleiad の画面・サーバー・Electron を一つの `package.json.version` �
 `releases/<version>.json` がリリースノートの正本。バージョン・公開日・見出し・利用者への影響を記載する。
 `npm run release:prepare` はアプリ内の `web/release-info.json` と公開用 `temporary/release-notes.md` を生成する。
 package.json と package-lock.json の番号を揃え、原稿と生成済み JSON をコミットする。
+番号は package.json の 1 か所と package-lock.json の 2 か所（先頭と `packages[""]`）。`release:prepare` は番号を上げて原稿を置いた後に走らせる（合う原稿が無いと止まる）。`npm test` も `web/release-info.json` を作り直すので、番号と原稿が食い違ったままでは落ちる。タグの前に `node scripts/release-info.mjs --require-new-notes` を通す（CI も前の版と同じ原稿なら止める）。
 公開前に原稿の日付と検証結果を確定する。コミットの羅列はリリースノートの本文にしない。
 リリースノートは利用者が使える機能・操作の変更に絞り、リポジトリ移行などの運用経緯は載せない。
 
