@@ -12,5 +12,8 @@ export const expandIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"
 export const collapseIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10h-6V4M4 14h6v6M14 10l6-6M10 14l-6 6"/></svg>';
 export const folderIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 export const fileIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h10l6 6v10H4z"/><path d="M14 4v6h6"/></svg>';
+// プレビューのツリーの見出し: 開いているファイルを表示（照準）・すべて折りたたむ（上下から閉じる）
+export const locateIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.6"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/></svg>';
+export const collapseAllIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l5 5 5-5M7 20l5-5 5 5"/></svg>';
 // ファイルの操作メニュー（⋯）。点は太めの線で打つ
 export const moreIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="2.6"/></svg>';

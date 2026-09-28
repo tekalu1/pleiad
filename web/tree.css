@@ -26,3 +26,8 @@
 .tree-row .tree-more svg.i{width:14px;height:14px}
 .tree-row:hover .tree-more,.tree-row.sel .tree-more,.tree-row .tree-more[aria-expanded=true]{visibility:visible}
 @media(hover:none){.tree-row .tree-more{visibility:visible}}
+/* 部品が足す行（読み込み中・読めなかった）: 葉と同じ字下げ、弱い字、触れても面を変えない */
+.tree-row.tree-note{color:var(--ink-weak);cursor:default}
+.tree-row.tree-note:hover{background:none}
+/* 「さらに N 件を表示」: 押せる行なのでリンクの字 */
+.tree-row.tree-action{color:var(--ink-blue);cursor:pointer}
