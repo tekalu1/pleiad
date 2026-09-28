@@ -106,7 +106,8 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
       const ic = el('span', 'ic');
       ic.innerHTML = node.kind === 'directory' ? folderIcon : fileIcon;
       const nm = el('span', 'nm', node.name);
-      // 深い行は名前が切れるので、行の title に作業ディレクトリからのパス（分からなければツリーの根から。外ならフルパス）
+      // 名前は省略せず横にスクロールする（scrollX）。どこの行かは title の作業ディレクトリからのパスでも分かる
+      // （分からなければツリーの根から。外ならフルパス）
       row.title = relativeTo(node.id, file?.cwd) ?? relativeTo(node.id, file?.tree?.[0]?.id) ?? node.id;
       // ⋯ は触れた・選んだ行に出る。フォーカスはツリー 1 つのまま（tabindex -1）。支援技術には出さない
       // （行の名前に混ざる）。キーボードは Shift+F10・ContextMenu キーで同じメニュー
@@ -131,10 +132,11 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     onMore: node => moreOf(node),
     failed: t('filePreview.treeLoadFailed'),
     moreLabel: node => t('filePreview.treeShowMore', { count: Math.min(node.more, TREE_PAGE) }),
+    scrollX: true,
   });
   /**
-   * 今のファイルまで祖先を開いて選び、上下に余白を残して見える位置へ送る。ツリーに無ければ選択を外す。
-   * force（見出しのボタン）は余白の内にあっても上の余白の位置へ送る
+   * 今のファイルまで祖先を開いて選び、上下に余白を残して見える位置へ送る。横は名前の終わりが見える位置へ。ツリーに無ければ選択を外す。
+   * force（見出しのボタン）は余白の内にあっても上の余白の位置へ送り、横も合わせ直す
    */
   function revealCurrent({ force = false } = {}) {
     const found = file?.path ? tree.reveal(file.path) : null;

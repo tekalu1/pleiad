@@ -15,6 +15,18 @@ import { t } from "./i18n.mjs";
 
 let seq = 0;
 
+/**
+ * 横に送る量（scrollLeft）を決める純粋な関数。座標はすべてツリーの中身の左端から。
+ * start は行の頭（アイコン）の左、end は名前の右、reserve は名前の右に空けたい幅（右端に留まる ⋯ の分）、width は欄の見える幅。
+ * 名前が欄に収まるなら 0。収まらなければ名前の終わりが見える最小の量（頭も見えるならそのまま、見えなくても名前の終わりを優先）。
+ * すでに名前の終わりと頭が見えていれば今の scroll のまま。force なら見えていても合わせ直す
+ */
+export function scrollLeftFor({ scroll = 0, width, start, end, reserve = 0, force = false }) {
+  const need = Math.ceil(end + reserve - width);      // 名前の終わりが見える最小の量
+  if (!force && scroll >= Math.max(0, need) && scroll <= Math.max(start, need, 0)) return scroll;
+  return Math.max(0, need);
+}
+
 /** 10px の chevron。閉じているとき右向き、開くと 90° 回る（回転は CSS） */
 function chevron() {
   const svg = svgEl("svg", { viewBox: "0 0 10 10", "aria-hidden": "true" });
@@ -31,12 +43,14 @@ function chevron() {
  *          render?:(node:any, row:HTMLElement)=>void, onSelect?:(node:any)=>void, onOpen?:(node:any, open:boolean)=>void,
  *          onContext?:(node:any, x:number, y:number, row:HTMLElement)=>void,
  *          onLoad?:(node:any)=>Promise<any>, onMore?:(node:any)=>Promise<any>,
- *          loading?:string, failed?:string, moreLabel?:(node:any)=>string}} opts
+ *          loading?:string, failed?:string, moreLabel?:(node:any)=>string, scrollX?:boolean}} opts
  *   onContext は行のメニュー。右クリック・ContextMenu キー・Shift+F10 で呼ぶ（行は選ぶが onSelect は呼ばない）
  *   failed は読めなかった行の文言（無ければ投げられたエラーの文）。moreLabel は「さらに表示」の行の文言
+ *   scrollX は名前を省略せず横にスクロールする使い手（呼び出し側の CSS で行を伸ばす）。選んだ・送った行の名前が見える
+ *   よう横位置も合わせ（scrollLeftFor）、すべて畳むと左端へ戻す。無ければ横には触らない
  */
 export function createTree(root, { nodes = [], open = [], empty = t("common.noMatch"), render, onSelect, onOpen, onContext,
-  onLoad, onMore, loading = t("pending.loading"), failed = "", moreLabel = (n) => String(n.more) } = {}) {
+  onLoad, onMore, loading = t("pending.loading"), failed = "", moreLabel = (n) => String(n.more), scrollX = false } = {}) {
   const prefix = `tree${++seq}`;
   const opened = new Set(open);                       // 開いている節の id。呼び出し側が state() で持ち出せる。setNodes でも消さない
   const parents = new Map(), rows = new Map(), byId = new Map();
@@ -199,7 +213,11 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
     }
     const row = n ? rows.get(n) : null;
     root.setAttribute("aria-activedescendant", row?.id ?? "");
-    if (scroll) row?.scrollIntoView({ block: "nearest" });
+    if (scroll && row) {
+      const left = root.scrollLeft;
+      row.scrollIntoView({ block: "nearest" });
+      if (scrollX) alignX(row, left);                  // scrollIntoView の横の送り（行の幅いっぱい）は使わない
+    }
     if (notify && n && !n.action) onSelect?.(n);
     return n;
   }
@@ -217,8 +235,31 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
     if (!box.height) return;                            // 畳まれていて見えない。開いたときに呼び直す
     const margin = Math.min((r.height || 28) * margins, box.height / 3);
     const top = r.top - box.top, bottom = box.bottom - r.bottom;
-    if (!force && top >= margin && bottom >= margin) return;
-    root.scrollTop += top - margin;
+    if (force || top < margin || bottom < margin) root.scrollTop += top - margin;
+    if (scrollX) alignX(row, root.scrollLeft, force);
+  }
+
+  /**
+   * scrollX の使い手で、行の名前が見える横位置へ送る（scrollLeftFor）。left は合わせる前の scrollLeft（動かさないときはここへ戻す）。
+   * 頭は chevron の次（アイコンか名前）、終わりは ⋯ の前の最後の部品（名前・「経路のみ」の札）。
+   * ⋯ は右端に留まるので、その幅と行の右の余白を名前の右に空ける
+   */
+  function alignX(row, left, force = false) {
+    const box = root.getBoundingClientRect?.();
+    if (!box?.width || !root.clientWidth) return;
+    const parts = [...row.children].filter((c) => !c.classList.contains("chev") && !c.classList.contains("tree-more"));
+    if (!parts.length) return;
+    const more = row.querySelector(".tree-more");
+    const style = globalThis.getComputedStyle?.(row), rootStyle = globalThis.getComputedStyle?.(root);
+    // ⋯ は欄の余白の内側に留まる（sticky）ので、欄の右の余白も足す
+    const gap = parseFloat(style?.columnGap) || 0, pad = (parseFloat(style?.paddingRight) || 0) + (parseFloat(rootStyle?.paddingRight) || 0);
+    const origin = box.left + (root.clientLeft || 0) - (root.scrollLeft || 0);   // 中身の左端（今の位置で測る。scrollIntoView が動かしていても）
+    const x = (c, side) => c.getBoundingClientRect()[side] - origin;
+    root.scrollLeft = scrollLeftFor({
+      scroll: left, width: root.clientWidth, force,
+      start: x(parts[0], "left"), end: x(parts[parts.length - 1], "right"),
+      reserve: pad + (more ? gap + more.getBoundingClientRect().width : 0),
+    });
   }
 
   /** すべて畳む。一番上の節（根）だけ開いたまま残し、根の直下が並ぶ */
@@ -226,6 +267,7 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
     opened.clear();
     for (const n of list) if (branch(n)) opened.add(n.id);
     redraw();
+    if (scrollX) root.scrollLeft = 0;
   }
 
   /** その行が見えるところまで祖先を開く。選択はしない */

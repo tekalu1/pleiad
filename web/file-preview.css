@@ -37,6 +37,21 @@ body.file-preview-open{grid-template-columns:var(--side-col) minmax(360px,1fr) v
 /* 除外名のフォルダーを経路だけ出す: 名前を弱い字、横に「経路のみ」。新しい色は使わない */
 .file-preview-tree .tree-row.path-only .nm{color:var(--ink-weak)}
 .file-preview-tree .tree-row .tag{margin-left:2px;flex:none;font-size:var(--fs-xs);color:var(--ink-weak)}
+/* 名前は省略せず、中身が欄より広ければ横にスクロールする（位置合わせは web/tree.mjs の scrollX）。
+   一番外の ul を一番長い行の幅にし、行は ul いっぱいに伸ばして選択・ホバーの面の右端をそろえる。
+   ⋯ は見えている範囲の右端に留め、下の名前が透けないよう行の面の色で塗る（左へぼかす）。
+   ⋯ の右（行の右の余白）も同じ色の帯で覆う。帯は行の高さで右の角を行と同じに丸め、行が欄に収まるときは行の端と重なる。
+   欄の右の余白は 0（余白に名前が覗かないように） */
+.file-preview-tree{padding-right:0}
+.file-preview-tree>ul{width:max-content;min-width:100%}
+.file-preview-tree .tree-row .nm{flex:none;overflow:visible;text-overflow:clip}
+.file-preview-tree .tree-row{--surface-tree-row:var(--surface-1)}
+.file-preview-tree .tree-row:hover{--surface-tree-row:var(--surface-2)}
+.file-preview-tree .tree-row.sel{--surface-tree-row:var(--surface-paper)}
+.file-preview-tree .tree-row .tree-more{position:sticky;right:8px;background:var(--surface-tree-row);box-shadow:-6px 0 4px -3px var(--surface-tree-row)}
+.file-preview-tree .tree-row .tree-more:hover{background:var(--surface-2)}
+.file-preview-tree .tree-row .tree-more::after{content:'';position:absolute;left:calc(100% - 1px);top:-3px;bottom:-3px;width:9px;
+  background:var(--surface-tree-row);border-radius:0 var(--r-s) var(--r-s) 0;pointer-events:none}
 .file-preview-content{min-height:0;flex:1;overflow:auto;overscroll-behavior:contain;position:relative;background:var(--surface-paper);border-radius:var(--r-m)}
 .directory-view{padding:28px 32px;max-width:900px;margin:0 auto}
 .dir-head{margin-bottom:20px}
