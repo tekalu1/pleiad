@@ -5,7 +5,8 @@ const MAX_BYTES = 64 * 1024;
 const VERIFIED = Object.freeze({ codex: '0.156.1', claude: '2.1.282', antigravity: '1.2.12' });
 const KINDS = Object.freeze({
   codex: new Set(['rollout-unreadable', 'rollout-session-meta', 'rollout-turn-id']),
-  claude: new Set(['transcript-shape', 'transcript-unreadable', 'subagent-shape', 'subagent-unreadable', 'subagent-meta']),
+  // cost-state-*: 使用量の開始時点（transcript の cost-state。core/backends/claude-cost-state.mjs）が読めない
+  claude: new Set(['transcript-shape', 'transcript-unreadable', 'subagent-shape', 'subagent-unreadable', 'subagent-meta', 'cost-state-shape', 'cost-state-missing']),
   antigravity: new Set(['stream-json-shape']),
 });
 const queues = new Map();

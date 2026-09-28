@@ -3,6 +3,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { t, agentT } from './i18n.mjs';
+import { CLAUDE_COST_DELTA } from './usage-migrations.mjs';
 
 export const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 // Thread totals include previous turns; last describes the latest model request.
@@ -121,6 +122,23 @@ export async function agentUsage({ backend, list, get, read, locale }) {
   return { backends };
 }
 
+const USAGE_KEYS = ['inputTokens', 'outputTokens', 'cachedTokens', 'costUsd'];
+const totals = value => value && typeof value === 'object' ? Object.fromEntries(USAGE_KEYS.map(key => [key, number(value[key])])) : null;
+/**
+ * 記録の 1 行。4 つの数値はそのターンの分。Claude は後から直せるように、会話のネイティブ id と
+ * そのときの累計（開始時点・終了時点。core/backends/claude-cost-state.mjs）も残す
+ */
+export function usageRecord(record, at) {
+  const safe = { id: record.id, backend: record.backend, at, ...Object.fromEntries(USAGE_KEYS.map(key => [key, number(record[key])])) };
+  if (typeof record.nativeSessionId === 'string' && /^[\w-]{1,200}$/.test(record.nativeSessionId)) safe.nativeSessionId = record.nativeSessionId;
+  if ('cumulativeStart' in record || 'cumulativeEnd' in record) {
+    safe.cumulativeStart = totals(record.cumulativeStart); safe.cumulativeEnd = totals(record.cumulativeEnd);
+  }
+  return safe;
+}
+// 済んだ移行の名前（core/usage-migrations.mjs）。新しく作る記録は直す必要が無いので、最初から済みにする
+export const USAGE_MIGRATIONS = Object.freeze([CLAUDE_COST_DELTA]);
+
 export function createUsageStore(dir, { now = Date.now } = {}) {
   const file = path.join(dir, 'usage.json');
   let writes = Promise.resolve();
@@ -129,21 +147,35 @@ export function createUsageStore(dir, { now = Date.now } = {}) {
       const data = JSON.parse(await fs.readFile(file, 'utf8'));
       if (data.version !== 1 || !Array.isArray(data.records)) throw new Error(t('usage.recordInvalid'));
       return data;
-    } catch (e) { if (e.code === 'ENOENT') return { version: 1, since: now(), records: [] }; throw e; }
+    } catch (e) { if (e.code === 'ENOENT') return { version: 1, since: now(), migrations: [...USAGE_MIGRATIONS], records: [] }; throw e; }
   }
+  async function write(data) {
+    await fs.mkdir(dir, { recursive: true });
+    const tmp = file + '.tmp';
+    await fs.writeFile(tmp, JSON.stringify(data), { mode: 0o600 }); await fs.rename(tmp, file);
+  }
+  // 書き込みは直列にする（記録と移行が同じ usage.json を読み書きする）
+  const serial = fn => { const task = writes.catch(() => {}).then(fn); writes = task; return task; };
   return {
+    file,
     record(record) {
-      const task = writes.catch(() => {}).then(async () => {
+      return serial(async () => {
         const data = await read();
-        const safe = { id: record.id, backend: record.backend, at: now(),
-          inputTokens: number(record.inputTokens), outputTokens: number(record.outputTokens),
-          cachedTokens: number(record.cachedTokens), costUsd: number(record.costUsd) };
+        const safe = usageRecord(record, now());
         if (!data.records.some(r => r.id === safe.id)) data.records.push(safe);
-        await fs.mkdir(dir, { recursive: true });
-        const tmp = file + '.tmp';
-        await fs.writeFile(tmp, JSON.stringify(data), { mode: 0o600 }); await fs.rename(tmp, file);
+        await write(data);
       });
-      writes = task; return task;
+    },
+    /** 移行（core/usage-migrations.mjs）。fn が新しい中身を返したときだけ書く。ファイルが無ければ何もしない */
+    update(fn) {
+      return serial(async () => {
+        let data;
+        try { data = JSON.parse(await fs.readFile(file, 'utf8')); } catch (e) { if (e.code === 'ENOENT') return null; throw e; }
+        if (data.version !== 1 || !Array.isArray(data.records)) throw new Error(t('usage.recordInvalid'));
+        const next = await fn(data);
+        if (next?.data) await write(next.data);
+        return next?.result ?? null;
+      });
     },
     async summary(backend) {
       await writes;

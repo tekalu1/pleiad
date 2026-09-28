@@ -10,6 +10,12 @@ utilityProcess のサーバーは parentPort でメインプロセスに接続�
 
 中継を使うと右パネルを開き、操作中のタブに印を付け、道具の列の下に「<エージェント名> が操作中」と「止める」「引き継ぐ」を数秒表示する。「止める」は接続を切り、次の人の送信まで再接続を拒否する。「引き継ぐ」は接続を切って表示を消し、再接続は許す。会話のツール履歴はシェル実行として残る。
 
+デーモンの管理ファイルは Windows では OS の一時領域の `ply-ab-<ハッシュ>/`、Unix では `/tmp/ply-ab-<uid>/<ハッシュ>/` に作り、`AGENT_BROWSER_SOCKET_DIR` で全バックエンドへ渡す。既定の `~/.agent-browser` は Codex の `workspace-write` では書けないため、既定で書ける一時領域を使う。Codex の thread config と turn の sandboxPolicy にブラウザー用の書き込みルートは追加しない。読み取り専用モードでは、ファイルへの書き込みが必要なブラウザー操作はできない旨をエージェントへ指示する。利用者が `exclude_tmpdir_env_var`（Windows の TEMP/TMP を含む）や `exclude_slash_tmp`（Unix）で一時領域を除外した場合、その制限は変更しないため操作できない場合がある。
+
+`AGENT_BROWSER_SESSION` と一時領域のハッシュは設定フォルダーの絶対パスから作り、会話とデータ置き場を区別し、ネイティブ ID の確定後も変えない。Unix では長い TMPDIR による 104 バイトのソケットパス制限を避けるため、常に短い `/tmp` を使う。Windows の agent-browser 0.38.1 は loopback TCP を使い、PID・ポート等のファイルを一時領域に置く。継承した `AGENT_BROWSER_NAMESPACE` は空にして、指定した置き場が変わらないようにする。
+
+agent-browser 0.38.1 の state ルートには専用の変更変数がない。`AGENT_BROWSER_STATE` は読み込む state ファイルの指定であり、保存先の指定ではない。この CDP 接続では自動 state 保存を設定せず、Cookie 等は Electron の保存領域を使う。Claude・Antigravity にも同じ env を渡す。Claude の Bash sandbox を利用者が有効にしている場合、書き込み先と loopback 接続の許可はその sandbox の設定にも必要で、Pleiad は設定を自動で緩めない。
+
 同じ `persist:pleiad-browser` のタブは会話が違っても Cookie を共有する。中継は主フレームのページと通常のタブ操作を対象とし、OOPIF・service worker・DevTools の同時接続などを CDP の完全なブラウザーとしては公開しない。Codex の読み込み済みスレッドは `thread/resume` の新しい config を無視する場合がある。新規会話のネイティブ ID が決まった後も、最初に渡した設定ファイルと `AGENT_BROWSER_SESSION` を保ち、接続鍵の変更は同じファイルを書き換えて届ける。
 
 ## 使える場所
@@ -23,7 +29,7 @@ utilityProcess のサーバーは parentPort でメインプロセスに接続�
 - タブごとに View を 1 つ持ち、窓に載せるのは今のタブだけ。ほかのタブは外したまま動き続ける。空のタブ（新しいタブ）は View を載せず、画面が「URL を入力して開きます」を出す。
 - 保存領域は `persist:pleiad-browser`。Pleiad 本体（既定の session）とリモートの窓（`persist:remote-<id>`）から分けるので、ページのスクリプトや Cookie は Pleiad の認証に届かない。一度ログインすれば次回も残る。
 - `webPreferences` は `contextIsolation`・`sandbox`・`nodeIntegration: false`、preload なし。権限の要求（カメラ・マイク・位置・通知など）は確認を出さずに断る。UA から `Electron/…` と Pleiad の印を外す（ログインを断るサイトがあるため）。
-- `target="_blank"`・`window.open` は新しいタブで開く（opener の関係は保たない）。ページから `file:` や独自のスキームへは移らない。開けるのは http・https と、画面が明示した `file:`。
+- `target="_blank"` など通常の新しい窓の要求は新しいタブで開く（opener の関係は保たない、ADR 0041 の通り）。ただし、`window.open` でポップアップ（`features` 付き）として要求された窓は、ログイン等の連携（opener・`window.close()` 等）に要るため、例外として別の小さな窓で開く。どちらもページから `file:` や独自のスキームへは移らない。開けるのは http・https と、画面が明示した `file:`。
 - ダウンロードは確かめずに OS の既定のダウンロードの場所へ保存する（同じ名前があれば「名前 (2)」）。
 - 閉じる（×・Esc）とパネルを隠すだけで、タブは main に残る。もう一度開くと同じタブが出る。最後のタブを閉じるとパネルも閉じる。会話を切り替えてもブラウザーのパネルは開いたまま。
 

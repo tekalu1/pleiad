@@ -1,5 +1,5 @@
 // 履歴のシステム側のメッセージの見分けと置き換え（core/system-messages.mjs・claude-normalize.mjs の transcriptSystemMarks・
-// compaction-history.mjs の attachCompactSummaries・web/system-messages.mjs）。ADR 0052。
+// compaction-history.mjs の attachCompactSummaries・web/system-messages.mjs）。ADR 0053。
 // 材料は temporary/reports/system-messages-as-user.md の伏せ字の例から作った。実データは入れていない。
 import { classifySystemMessages, stripInjectedContext, parseTeammate } from "../../core/system-messages.mjs";
 import { transcriptSystemMarks, transcriptToMessages } from "../../core/backends/claude-normalize.mjs";

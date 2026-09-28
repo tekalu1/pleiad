@@ -1,6 +1,7 @@
 import { effortOptions, validateEffort } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
 import { createQuotaCache, createUsageStore, agentUsage } from './usage.mjs';
+import { migrateClaudeUsage } from './usage-migrations.mjs';
 // HTTP（web/ の配信）+ WebSocket（/ws）。token gate は constant-time 比較、既定は localhost bind。
 //
 // ここは**エージェント非依存**。エージェントの実行もセッション管理も core/backends/<id>.mjs が持ち、
@@ -71,6 +72,11 @@ const updateGate = createUpdateGate();
 const quotaCache = createQuotaCache();
 const usageStore = createUsageStore(store.dataDir);
 await ensureDataSchema(store.dataDir);
+// Claude の記録に入っていた会話の累計を、ターンの分へ一度だけ直す（core/usage-migrations.mjs、ADR 0053）。
+// transcript を読むので起動は待たせない。記録の書き込みとは usageStore の中で直列になる
+migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects') })
+  .then(result => { if (result) console.log(`  ${t('usage.migrated', result)}`); })
+  .catch(err => console.error(`  ${t('usage.migrateFailed')}`, String(err?.message ?? err)));
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
 const agentBrowser = parentPortBrowser(process.parentPort);
@@ -2072,7 +2078,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         const hashes = (await store.get(sessionId)).taskNotices ?? [];
         const digest = crypto.createHash('sha256').update(prompt).digest('hex');
         await store.setSessionData(sessionId, 'taskNotices', [...new Set([...hashes, digest])]);
-        // 本文も載せる。画面の「タスクの結果で再開」の 1 行を開くと読める（ADR 0052）
+        // 本文も載せる。画面の「タスクの結果で再開」の 1 行を開くと読める（ADR 0053）
         emit({ type: 'taskNotice', text: String(prompt ?? '') });
       }
       await saveContext();
@@ -3196,7 +3202,7 @@ wss.on("connection", (ws, req) => {
             const draft = (await store.get(sessionId)).draft ?? null;
             const nativeCompactions = backend.getCompactions ? await backend.getCompactions(sessionId).catch(() => []) : [];
             const savedCompactions = sidecar.compactions ?? [];
-            // 圧縮の要約は発言として出さず、区切りの「要約を表示」に入れる（ADR 0052）
+            // 圧縮の要約は発言として出さず、区切りの「要約を表示」に入れる（ADR 0053）
             const compactions = attachCompactSummaries(compactSummaries, mergeCompactionHistory(nativeCompactions, savedCompactions));
             const compactionData = { compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };

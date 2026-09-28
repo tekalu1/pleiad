@@ -1,4 +1,4 @@
-// 履歴に残ったシステム側のメッセージの見せ方（docs/design-system.md「システム側のメッセージ」、ADR 0052）。
+// 履歴に残ったシステム側のメッセージの見せ方（docs/design-system.md「システム側のメッセージ」、ADR 0053）。
 // 見分けはサーバー（core/system-messages.mjs）が済ませ、発言に kind を付けて渡す。ここは kind ごとの中身の DOM だけを作る。
 // 発言者の見出し・筋の節・操作（分岐・入力欄に写す）は client.mjs が付ける。
 import { el } from "./dom.mjs";

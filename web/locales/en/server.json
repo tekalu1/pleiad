@@ -753,7 +753,9 @@
     "claudeUnavailable": "Cannot get usage limits. They are not shown for API connections, insufficient permissions, or unsupported CLIs.",
     "authChanged": "Sign-in status changed. Refresh to update.",
     "fetchFailed": "Could not get usage. Check that you are signed in and refresh after a while.",
-    "recordInvalid": "The usage record is malformed."
+    "recordInvalid": "The usage record is malformed.",
+    "migrated": "Corrected Claude usage records from conversation totals to per-turn values ({{fixed}} corrected, {{unlinked}} unmatched, {{ambiguous}} with multiple candidates; original values are in usage.v1-backup.json).",
+    "migrateFailed": "Could not correct Claude usage records. The records are unchanged:"
   },
   "conversations": {
     "deleteSent": "Sessions that have been sent cannot be deleted.",

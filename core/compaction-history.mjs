@@ -27,7 +27,7 @@ export function mergeCompactionHistory(nativeEntries = [], savedEntries = []) {
 }
 
 /**
- * 圧縮の要約の発言（core/system-messages.mjs の kind: 'compactSummary'）を区切りに入れる（ADR 0052）。
+ * 圧縮の要約の発言（core/system-messages.mjs の kind: 'compactSummary'）を区切りに入れる（ADR 0053）。
  * 区切りの uuid が分かれば（transcript の印）それに、分からなければ区切りの直後（前後 2 分）の要約とみなす。
  * 合う区切りが無い（CLI の自動圧縮を保存分で読んだなど）ときは、要約から自動の区切りを作る。
  * 区切りが既に要約を持っていれば（Pleiad の PostCompact で受け取った分）、そちらを残す。

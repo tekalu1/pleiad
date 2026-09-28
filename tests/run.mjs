@@ -53,6 +53,8 @@ const cases = [
   // Pleiad の指示: 担当によらず届く・依頼元と子で違う・足した指示・既定の編集・前の版のスイッチ・Codex のロード済みスレッド
   await import('./unit/server-added-context.mjs'),
   await import('./unit/usage.mjs'),
+  // Claude の使用量: 開始時点の累計（cost-state）からの差分・resume 前の読み取り・既存の記録の移行（写し・冪等）
+  await import('./unit/claude-usage-delta.mjs'),
   await import('./unit/antigravity-usage.mjs'),
   // 会話のヘッダーの使用量のチップ（web/header-usage.mjs）: 枠の選び方・アカウント・上限・グループのまとめ
   await import('./unit/header-usage.mjs'),
@@ -149,7 +151,7 @@ const cases = [
   await import("./unit/ask-answers.mjs"),
   await import("./unit/title-clean.mjs"),
   await import("./unit/claude-normalize.mjs"),
-  // 履歴のシステム側のメッセージ: 形（transcript の印）と文面での見分け・区切りへの要約・中断・teammate・文脈のタグ・保存分（ADR 0052）
+  // 履歴のシステム側のメッセージ: 形（transcript の印）と文面での見分け・区切りへの要約・中断・teammate・文脈のタグ・保存分（ADR 0053）
   await import("./unit/system-messages.mjs"),
   await import("./unit/claude-background.mjs"),
   // Claude の途中送信の渡った合図（uuid・まとめ取り出し・次の内部ターン）と中断の interrupt。SDK の query を身代わりにする

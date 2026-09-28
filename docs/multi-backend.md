@@ -17,7 +17,7 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 | バックエンド | つなぎ方 | 検証した版 | 最低の版 | 頼っている非公開のもの |
 |---|---|---|---|---|
 | Codex | `codex app-server` | CLI 0.156.1 | なし | rollout の `session_meta.cli_version`、`response_item` の `turn_id` とツール出力。拒否の読み取り（[ADR 0035](adr/0035-read-codex-rollout-for-rejections.md)） |
-| Claude Code | Agent SDK の `query()` と利用者の `claude` CLI | SDK 0.3.258、CLI 2.1.282 | なし | `projects/*.jsonl` の attachment、`subagents/*.jsonl` の親子鎖、`*.meta.json` の `toolUseId` |
+| Claude Code | Agent SDK の `query()` と利用者の `claude` CLI | SDK 0.3.258、CLI 2.1.282 | なし | `projects/*.jsonl` の attachment と `cost-state`（使用量の累計）、`subagents/*.jsonl` の親子鎖、`*.meta.json` の `toolUseId` |
 | Antigravity | `agy --print= --input-format stream-json --output-format stream-json` | CLI 1.2.12（Hooks の実機検証。[ADR 0049](adr/0049-hooks-pleiad-managed.md)） | 1.1.11（古い版では `/usage` がモデルへの依頼になる） | ファイルなし。stream-json のイベント形 |
 | 内蔵ブラウザー操作 | `agent-browser` と会話別 CDP 中継 | 0.38.1（同梱） | 同梱版を使用 | なし |
 
@@ -75,7 +75,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `tool.start` | `{ id, name, input }` | `assistant` の `tool_use` |
 | `tool.result` | `{ id, text, isError, truncated, rejection? }` `rejection` は実行前に拒否されたコマンドの構造（Codex だけ。§2.5「Codex の実行前の拒否」）。server が委譲の結果に集める | `user` の `tool_result` |
 | `activity` | `{ state: "thinking"\|"writing"\|"compacting"\|"waiting"\|"running"\|"idle", label? }` | `system/status`, `session_state_changed` |
-| `turnResult` | `{ outcome: "ok"\|"error"\|"aborted", turns?, costUsd?, error? }`（aborted には server が中断の理由 `reason` を足す。バックエンドは出さない） | `result` |
+| `turnResult` | `{ outcome: "ok"\|"error"\|"aborted", turns?, costUsd?, error? }`（costUsd はこのターンの分。aborted には server が中断の理由 `reason` を足す。バックエンドは出さない） | `result` |
 | `permission` | `{ id, kind: "tool"\|"question", toolName, input, title?, canAlways, questions? }` | 既存 + AskUserQuestion の特別扱い |
 | `auth` | `{ backend, phase: "url"\|"done"\|"error", url?, message? }` | 新規（ログイン誘導） |
 | `session` | `{ sessionId, first?, model? }` | 既存 + モデル通知 |
@@ -184,7 +184,9 @@ main の開始は 2 回目以降の `system/init` とトップレベルの `mess
   interrupt を書けない）。interrupt の応答か `result` が 2.5 秒のうちに来なければ、入力を閉じて SDK の abort に落とす。受領の後は入力を閉じ、
   3 秒のうちに終わらなければ同じく落とす。結果はどちらでも `turnResult aborted`。応答の `cancelled` にある `uuid`（折り込まれる前に取り消された
   途中送信）は `userMessage.dropped` にする。プロセスツリーごとの強制終了はしない（pid は `spawnClaudeCodeProcess` で自前に起動したときしか取れない）
-- `result` は 1 回の query で何度も出る。`total_cost_usd` と `modelUsage` は query 全体の累計で単調に増える（上書きで二重計上にならない）。
+- `result` は 1 回の query で何度も出る。`total_cost_usd` と `modelUsage` は累計で単調に増える（上書きで二重計上にならない）。
+  CLI 2.1.280 以降は resume で transcript の最後の `cost-state` を読み戻すので、累計は query ではなく会話の始まりから数える。
+  そのため query を作る前に最後の `cost-state` を開始時点として読み、`usage` はそこからの差分にする（`claude-cost-state.mjs`、[ADR 0053](adr/0052-claude-usage-delta.md)）
   turnResult は「ターンが終わった」の合図なので、Claude は成功の turnResult を query の終わりに 1 回だけ出す
   （途中で出すと server がターンを終わりかけと見なし、途中送信を止める）
 - 裏の subagent の完了通知は、main を再開させるための user メッセージ（`<task-notification>…`、`origin.kind: task-notification`）として
@@ -291,7 +293,7 @@ assistant の発言に `stopHookFollowUp: true` を付けてよい（2026-09-27�
 今は Claude だけが付ける（`claude-normalize.mjs` の `stopHookFollowUps`。getSessionMessages に出ない `stop_hook_summary` の行を transcript から読む）。
 付けないバックエンドでは、結果は今までどおり最後の返答になる。
 
-人が書いていないのに user の行として残るもの（システム側のメッセージ）は、`kind` を付けた形に置き換えるか落とす（2026-09-28、[ADR 0052](adr/0052-system-messages-display.md)）。
+人が書いていないのに user の行として残るもの（システム側のメッセージ）は、`kind` を付けた形に置き換えるか落とす（2026-09-28、[ADR 0053](adr/0053-system-messages-display.md)）。
 置き換えるのは `core/system-messages.mjs` の `classifySystemMessages`（SDK を import しない純粋な関数。`kind` の付いた発言は触らないので、何度かけてもよい）:
 
 | kind | 形 | 元の行 |

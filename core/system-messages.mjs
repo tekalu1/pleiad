@@ -1,5 +1,5 @@
 // 人が書いていないのに user の行として履歴に残る「システム側のメッセージ」の見分けと、表示用の形
-// （ADR 0052、docs/design-system.md「システム側のメッセージ」、docs/multi-backend.md「NormalizedMessage」）。
+// （ADR 0053、docs/design-system.md「システム側のメッセージ」、docs/multi-backend.md「NormalizedMessage」）。
 //
 // 見分けは行の形・フィールドを優先する。Claude は transcript から拾った印（claude-normalize.mjs の
 // transcriptSystemMarks: 要約の uuid・コマンドの行の子の出力の uuid）を marks で渡す。

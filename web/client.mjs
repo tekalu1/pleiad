@@ -272,7 +272,7 @@ function paintCompactions() {
         return at && Date.parse(at) > entry.at;
       });
     after?.before(row);
-    // 区切りの後ろの AI の発言は、前の発言の続き（見出しを省いた形）にしない。要約の行が間に無くなったので（ADR 0052）
+    // 区切りの後ろの AI の発言は、前の発言の続き（見出しを省いた形）にしない。要約の行が間に無くなったので（ADR 0053）
     if (after?.classList.contains('cont')) {
       after.classList.replace('cont', 'node');
       after.querySelector(':scope .m.ai.cont')?.classList.remove('cont');
@@ -622,7 +622,7 @@ function userMsg(text, { uuid, at } = {}) {
 }
 
 /**
- * 履歴のシステム側のメッセージ（サーバーが kind を付けた発言。core/system-messages.mjs、ADR 0052）の行。
+ * 履歴のシステム側のメッセージ（サーバーが kind を付けた発言。core/system-messages.mjs、ADR 0053）の行。
  * 落とすものは null、システム側のものでなければ undefined（呼び出し側が普通の発言として描く）
  */
 function systemHistoryNode(m) {
