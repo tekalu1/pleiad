@@ -25,6 +25,10 @@
 | 委譲 / 委譲先 | delegate / delegated task |
 | Pleiad タスク | Pleiad task |
 | 承認 | approval |
+| 確認（ブラウザーの設定） | Confirmation |
+| 外部の読み込み / 許可したサイト / 止めた出どころ | External resources / Allowed sites / Blocked origins |
+| 一度だけ / このサイトは常に / 断る | Just once / Always for this site / Deny |
+| 常に / 毎回聞く | Always / Ask each time |
 | 承認モード | approval mode |
 | 許可 / 今回だけ許可 / あとで | Allow / Allow once / Later |
 | 都度確認 | Ask each time |

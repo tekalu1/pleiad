@@ -185,7 +185,27 @@
         "note": "The built-in browser opens beside the conversation, and sign-ins stay in this app. Its storage is separate from Pleiad itself."
       },
       "saveFailed": "Couldn't save: {{error}}",
-      "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" }
+      "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" },
+      "confirm": {
+        "title": "Confirmation",
+        "external": "Ask before loading external resources",
+        "agent": "Ask before an agent uses a site",
+        "sites": "Allowed sites",
+        "stopped": "Blocked origins",
+        "externalList": "External resources",
+        "agentList": "Agent access",
+        "permit": "Allow",
+        "always": "Always",
+        "ask": "Ask each time",
+        "remove": "Remove",
+        "load": "Load",
+        "settings": "Settings",
+        "blocked_one": "Blocked {{count}} external resource",
+        "blocked_other": "Blocked {{count}} external resources",
+        "once": "Just once",
+        "alwaysSite": "Always for this site",
+        "deny": "Deny"
+      }
     }
   },
   "time": {

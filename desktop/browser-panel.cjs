@@ -64,6 +64,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   let nextId = 1;
   const tabListeners = new Set();
   const agents = new Map();
+  let navigation = null;
   const ses = session.fromPartition(PARTITION);
   setupSession(ses);
 
@@ -121,16 +122,22 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     if (attached !== want) { window.contentView.addChildView(want); attached = want; }
   }
 
-  function createTab({ url = '', sessionId = context.sessionId, select = true } = {}) {
+  function createTab({ url = '', sessionId = context.sessionId, select = true, agentFrom = null } = {}) {
     const view = new WebContentsView({ webPreferences: { session: ses, contextIsolation: true, sandbox: true, nodeIntegration: false } });
     view.setBackgroundColor?.('#ffffff');
     const tab = { id: `t${nextId++}`, view, sessionId: sessionId ?? null, blank: !url };
     tabs.set(tab.id, tab); order.push(tab.id);
     const c = view.webContents;
+    const navigationTab = { id: tab.id, sessionId: tab.sessionId, webContents: c };
+    navigation?.watch(navigationTab);
+    if (agentFrom) navigation?.inherit(agentFrom, navigationTab, url);
     // 新しい窓（target=_blank・window.open）は新しいタブにする。開いた元の関係（opener）は保たない
     c.setWindowOpenHandler(({ url: next, disposition }) => {
       const target = openable(next);
-      if (target && navigable(target)) createTab({ url: target, sessionId: tab.sessionId, select: disposition !== 'background-tab' });
+      if (target && navigable(target)) {
+        const open = () => createTab({ url: target, sessionId: tab.sessionId, select: disposition !== 'background-tab', agentFrom: navigationTab });
+        if (!navigation?.popup(navigationTab, target, open)) open();
+      }
       return { action: 'deny' };
     });
     // ページから file: や独自のスキームへは移らない
@@ -209,6 +216,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       case 'agentTakeOver': agentControl('takeOver', context.sessionId); return snapshot();
       case 'context': context = { sessionId: typeof args.sessionId === 'string' ? args.sessionId : null }; return snapshot();
       case 'open': {
+        if (tab) navigation?.human({ id: tab.id }, true);
         const url = openable(args.url);
         if (!url) throw new Error('invalid-url');
         if (!tab || args.newTab) createTab({ url });
@@ -218,9 +226,9 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       case 'newTab': createTab({}); return snapshot();
       case 'select': if (tab) { current = tab.id; place(); push(); } return snapshot();
       case 'close': if (tab) removeTab(tab.id); return snapshot();
-      case 'back': if (tab?.view.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack(); return snapshot();
-      case 'forward': if (tab?.view.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward(); return snapshot();
-      case 'reload': tab?.view.webContents.reload(); return snapshot();
+      case 'back': if (tab) navigation?.human({ id: tab.id }, true); if (tab?.view.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack(); return snapshot();
+      case 'forward': if (tab) navigation?.human({ id: tab.id }, true); if (tab?.view.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward(); return snapshot();
+      case 'reload': if (tab) navigation?.human({ id: tab.id }, true); tab?.view.webContents.reload(); return snapshot();
       case 'stop': tab?.view.webContents.stop(); return snapshot();
       case 'devtools': if (tab && !tab.blank) tab.view.webContents.openDevTools({ mode: 'detach' }); return snapshot();
       case 'external': {
@@ -278,6 +286,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
 
   return {
     attach, command, layout, snapshot,
+    setNavigationGuard: guard => { navigation = guard; for (const tab of tabs.values()) guard.watch({ id: tab.id, sessionId: tab.sessionId, webContents: tab.view.webContents }); },
     // ---- エージェントの操作の中継へ渡す、会話ごとのタブと webContents
     tabsFor: sessionId => order.map(id => tabs.get(id)).filter(tab => tab.sessionId === sessionId).map(tab => ({ id: tab.id, webContents: tab.view.webContents })),
     contentsOf: id => tabs.get(id)?.view.webContents ?? null,

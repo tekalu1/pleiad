@@ -48,7 +48,9 @@
     "delegateEscalation": "This delegation runs {{agent}} in \"{{mode}}\" ({{modeId}}).",
     "childConversation": "Delegated conversation",
     "relayTitle": "Delegated task \"{{child}}\"",
-    "relayTitleWith": "Delegated task \"{{child}}\" / {{title}}"
+    "relayTitleWith": "Delegated task \"{{child}}\" / {{title}}",
+    "browserSite": "{{agent}} wants to use {{site}}",
+    "browserAccount": " (signed in as {{account}})"
   },
   "quota": {
     "unsupported": "This agent cannot report its usage limits.",

@@ -58,6 +58,8 @@ import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
 import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
 import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
+import { createBrowserSiteApprovals } from './browser-confirm.mjs';
+import { validBrowserPref } from '../web/browser-confirm-policy.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff, conversation } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
@@ -636,7 +638,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(sessionId && (id || at) ? 404 : 400, { 'content-type':'text/plain; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' });
         return res.end(t('filePreview.visualize.snapshotNotFound'));
       }
-      const { headers, body } = snapshotResponse(record);
+      const { headers, body } = snapshotResponse(record, await store.getPrefs());
       res.writeHead(200, headers);
       return res.end(req.method === 'HEAD' ? undefined : body);
     }
@@ -1578,7 +1580,7 @@ async function delegationAncestors(sessionId) {
  * 人間は最上位の会話に居るので、1段だけ上げても誰も見ない場所に出るだけになる。
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
-const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale }) => {
+const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite }) => {
   const ancestors = sessionId ? await delegationAncestors(sessionId) : [];
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
@@ -1600,6 +1602,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       title,
       conversationTitle,
       canAlways: Boolean(canAlways),
+      ...(browserSite ? { browserSite } : {}),
       ...(questions ? { questions } : {}),
     };
     // 祖先ごとに別の id の複製を作り、どれも同じ settle を指す。
@@ -1607,10 +1610,9 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     const cards = [{ id: crypto.randomUUID(), payload, relay: false }, ...ancestors.map((ancestor) => ({
       id: crypto.randomUUID(),
       relay: true,
-      // 中継したカードに「常に許可」は出さない。「常に許可」は子の会話で今後も通す約束で、
-      // 依頼元の画面からは子が今後何をするのか見えないまま恒久的な許可を与えることになる。
-      // 子の会話を開けば従来どおり押せる。
-      payload: { ...payload, sessionId: ancestor, canAlways: false, title: title ? t('permission.relayTitleWith', { child: childTitle, title }) : t('permission.relayTitle', { child: childTitle }) },
+      // Tool-wide grants stay in the child. Browser grants show the specific agent
+      // and origin, so the same three site choices are available to ancestors.
+      payload: { ...payload, sessionId: ancestor, canAlways: !!browserSite, title: title ? t('permission.relayTitleWith', { child: childTitle, title }) : t('permission.relayTitle', { child: childTitle }) },
     }))];
     const onAbort = () => settle({ allow: false, messageKey: 'aborted' });
     const settle = (answer) => {
@@ -1644,6 +1646,17 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     permissionsChanged();
   });
 };
+
+agentBrowser?.configureAuthorization(createBrowserSiteApprovals({
+  getPrefs: store.getPrefs,
+  getAgent: async id => {
+    const turn = runtime.turns.get(id) ?? [...runtime.turns.values()].find(turn => turn.browserRelayId === id);
+    return turn ? { id: turn.backend.id, label: turn.backend.label, sessionId: turn.info.sessionId || turn.key, signal: turn.ac.signal, locale: turn.agentLocale } : null;
+  },
+  askPermission, translate: t,
+  remember: async site => { const prefs = await store.rememberBrowserSite(site); emitGlobal({ type: 'prefs', sessionId: null, prefs, locale }); },
+}));
+agentBrowser?.prefs(await store.getPrefs());
 
 // 送信待ちの一覧が変わるたびに呼ぶもの（sessionId -> Set<fn(messages)>）。再開の受け付けを、送った項目が出ていくまで保つのに使う
 const outboxWatchers = new Map();
@@ -2207,6 +2220,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // Retain turnEnd in snapshots already being read, then release the turn.
   emit({ type: "turnEnd", completedAt, outcome: turn.outcome, interrupted, ...(requeued ? { requeued: true } : {}), ...(delegated ? { delegated: true } : {}) });
   runtime.turns.delete(turn.key);
+  agentBrowser?.endTurn(turn.info.sessionId || turn.key);
   notifyFree(turn.key);
   syncRunningPoll();
   // 片付けるのはこのセッションの承認待ちだけ。他のターンの分は残す
@@ -3318,7 +3332,7 @@ wss.on("connection", (ws, req) => {
             const record = await history.findVisualization(args.sessionId, await resolveBackendForSession(args.sessionId).catch(() => null), { id: args.id, at: args.at });
             if (!record) return reply(false, t('filePreview.visualize.snapshotNotFound'));
             if (!osActionAllowed()) return reply(false, t('files.tooMany'));
-            const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'));
+            const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'), { prefs: await store.getPrefs() });
             if (args.returnPath !== true) await openOnHost('open', file, { directory: false });
             return reply(true, { path: file });
           } catch (error) {
@@ -3537,6 +3551,12 @@ wss.on("connection", (ws, req) => {
         // セッションを選んでいなくても既定は変えられる
         case "setPref": {
           const { key, value, backend: backendId } = msg.args ?? {};
+          if (['confirmExternalLoads', 'confirmAgentSites', 'externalSitePermissions', 'agentSitePermissions'].includes(key)) {
+            if (!validBrowserPref(key, value)) return reply(false, t('settings.unknownPrefValue', { key, value: String(value) }));
+            const prefs = await savePref(key, value);
+            agentBrowser?.prefs(prefs);
+            return reply(true, prefs);
+          }
           if (key === "backend") {
             if (!getBackend(value)) return reply(false, t('agents.unknown'));
             return reply(true, await savePref(key, value));
