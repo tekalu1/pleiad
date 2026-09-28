@@ -29,12 +29,13 @@ const cases = [
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
   await import('./unit/agent-tasks-silence.mjs'),
+  await import('./unit/task-command-notice.mjs'),
   // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）
   await import('./unit/agent-tasks-storage.mjs'),
   await import('./unit/background-model.mjs'),
   await import('./unit/task-instructions.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
-  // 委譲の子に裏の作業が残るとき: 終わらないコマンドは上限まで待って止める・サブエージェントは止めない・端末は待たない（子にも親にも）
+  // 委譲の子に裏の作業が残るとき: 終わらないコマンドも自動停止しない・サブエージェントは止めない・端末は待たない（子にも親にも）
   await import('./unit/server-delegation-background.mjs'),
   // 委譲の結果に選ぶ返答: Stop フックの続き（調べものだけ）は飛ばす・中身の仕事をした続きは選ぶ（Claude の transcript の印）
   await import('./unit/delegation-result.mjs'),

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { t, agentT } from './i18n.mjs';
+import { observeCommand, pauseCommands, commandElapsed, commandView } from './task-commands.mjs';
 import { taskTitle } from './task-title.mjs';
 import { writeAtomic, RENAME_DELAYS } from './atomic-file.mjs';
 
@@ -42,10 +43,13 @@ export function finalReply(messages) {
 // - 障害の間は、スケジューラーは間隔を空けて保存をやり直すだけにする。list / status はメモリの状態を障害中の印付きで返す。
 // ready は「親が完了通知を受け取れるか」。受け取れない間は delivering にせず、ファイルも書かない。
 // io・log・renameDelays・retryMax はテストで失敗を差し込み、記録を読み、待ちを縮めるためのもの
-export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', ready = async () => true, changed = () => {}, waiting = () => false,
-  now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 15),
+export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', deliverCommand = async () => 'ok', cancelBackground = async () => {}, ready = async () => true, changed = () => {}, waiting = () => false,
+  now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
+  commandMinutes = Number(process.env.AGENT_HOST_TASK_COMMAND_MINUTES ?? 5),
   io = fs, log = line => console.error(line), renameDelays = RENAME_DELAYS, retryMax = RETRY_MAX }) {
   const silenceMs = Number.isFinite(silenceMinutes) && silenceMinutes > 0 ? silenceMinutes * 60000 : 0;
+  const commandMs = Number.isFinite(commandMinutes) && commandMinutes > 0 ? commandMinutes * 60000 : 0;
+  const commandNotices = new Set();
   const file = path.join(dataDir, 'agent-tasks.json');
   const logFile = path.join(dataDir, 'agent-tasks-errors.log');
   let records = {};
@@ -122,6 +126,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       for (const instruction of r.instructions ?? []) if (instruction.state === 'sending') setInstruction(r, instruction.id, 'delivered');
       dropInstructions(r);
     }
+    for (const c of r.activeCommands ?? []) { c.state = 'unknown'; c.pausedAt = null; }
     if (r.notification === 'delivering') r.notification = 'unknown';
   }
   await serial(() => persist('restore'));
@@ -132,8 +137,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   };
   // context は「別の候補でやり直す」で同じ依頼を渡し直すために持つだけ（長いので一覧・状態には載せない）
   const view = (r, offset = 0) => {
-    const { result = '', queue, context, instructions, rejections = [], silenceNotifiedAt, ...rest } = r;
-    return { ...rest, silenceMinutes: r.status === 'running' && !waiting(r.sessionId) && r.lastActivityAt != null
+    const { result = '', queue, context, instructions, rejections = [], silenceNotifiedAt, activeCommands = [], ...rest } = r;
+    pauseCommands(r, now(), waiting(r.sessionId));
+    return { ...rest, activeCommands: activeCommands.map(c => commandView(c, now())), silenceMinutes: r.status === 'running' && !waiting(r.sessionId) && r.lastActivityAt != null
       ? Math.max(0, Math.floor((now() - r.lastActivityAt) / 60000)) : null,
       rejections, pendingMessages: instructions.filter(x => x.state === 'queued').length, result: result.slice(offset, offset + 16000), resultOffset: offset,
       resultLength: result.length, nextOffset: offset + 16000 < result.length ? offset + 16000 : null };
@@ -194,9 +200,6 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
             row.rejections = all.slice(0, MAX_REJECTIONS);
             if (all.length > MAX_REJECTIONS) row.rejectionsDropped = (row.rejectionsDropped ?? 0) + all.length - MAX_REJECTIONS;
           }
-          // 子が返答を終えた後も終わらず、Pleiad が止めた裏の作業（この回の分。docs/agent-delegation.md「子に残った裏の作業」）
-          const stopped = Array.isArray(result?.stoppedBackground) ? result.stoppedBackground.slice(0, MAX_REJECTIONS) : [];
-          if (stopped.length) row.stoppedBackground = stopped; else delete row.stoppedBackground;
           row.status = controller.signal.aborted ? 'cancelled' : result?.outcome === 'ok' ? (row.queue.length ? 'queued' : 'completed') : 'failed';
           if (['failed', 'cancelled'].includes(row.status)) dropInstructions(row);
         }, 'run.result');
@@ -259,6 +262,36 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (outcome === 'requeue' && r.lastActivityAt === activityAt) await record(r.taskId, row => { row.silenceNotifiedAt = null; }, 'silence.requeue');
     } finally { silenceNotices.delete(r.taskId); }
   }
+  async function notifyCommand(r, command) {
+    const id = command.noticeId;
+    commandNotices.add(id);
+    const current = () => r.activeCommands?.find(c => c.noticeId === id);
+    const eligible = () => {
+      const c = current();
+      return c && c.state !== 'unknown' && !waiting(r.sessionId) && commandElapsed(c, now()) >= commandMs;
+    };
+    try {
+      if (!(await ready(structuredClone(r)).catch(() => false)) || !eligible() || current().notified) return;
+      const marked = await serial(async () => {
+        if (!eligible() || current().notified) return false;
+        current().notified = true;
+        try { await write(); return true; }
+        catch (e) {
+          if (current()) current().notified = false;
+          failed(e, 'command.notice', r.taskId);
+          return false;
+        }
+      });
+      if (!marked) return;
+      if (!eligible()) {
+        if (current()) await record(r.taskId, () => { if (current()) current().notified = false; }, 'command.defer');
+        return;
+      }
+      const c = current();
+      const outcome = await deliverCommand(structuredClone(r), { ...commandView(c, now()), noticeId: id }).catch(() => 'error');
+      if (outcome === 'requeue' && current()) await record(r.taskId, () => { if (current()) current().notified = false; }, 'command.requeue');
+    } finally { commandNotices.delete(id); }
+  }
   // 保存障害の間は、間隔を空けて保存だけをやり直す（1 回に 1 秒ほど待つ保存を、500ms ごとに仕事の数だけ重ねない）。
   // 書けたら障害を解き、次のタイマーから実行の開始と通知を再開する
   function probe() {
@@ -271,6 +304,13 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     if (closed || mutating) return;
     if (fault) { probe(); return; }
     for (const r of Object.values(records)) {
+      pauseCommands(r, now(), waiting(r.sessionId));
+      for (const c of r.activeCommands ?? []) {
+        if (commandMs && c.state !== 'unknown' && !waiting(r.sessionId) && !c.notified
+          && commandElapsed(c, now()) >= commandMs && !commandNotices.has(c.noticeId)) {
+          void notifyCommand(r, c).catch(e => report({ event: 'unexpected', operation: 'command', taskId: r.taskId, code: e?.code ?? null }));
+        }
+      }
       if (r.status === 'running') {
         const isWaiting = waiting(r.sessionId);
         if (isWaiting) {
@@ -294,9 +334,20 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   }
   const timer = setInterval(kick, 500); timer.unref();
   return {
-    get busy() { return live.size > 0 || notices.size > 0 || silenceNotices.size > 0 || Object.values(records).some(r => ACTIVE.has(r.status) || r.notification === 'pending'); },
+    get busy() { return live.size > 0 || notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || Object.values(records).some(r => ACTIVE.has(r.status) || r.notification === 'pending'); },
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
     get(taskId) { return records[taskId] ? view(records[taskId]) : null; },
+    observe(sessionId, event) {
+      const r = bySession.get(sessionId);
+      if (!r || !event?.type) return;
+      this.activity(sessionId);
+      if (!['tool.start', 'tool.result', 'task.command'].includes(event.type)) return;
+      const before = JSON.stringify(r.activeCommands ?? []);
+      observeCommand(r, event, now(), waiting(sessionId));
+      if (before !== JSON.stringify(r.activeCommands)) void serial(async () => {
+        await persist('command.observe', r.taskId);
+      });
+    },
     activity(sessionId) {
       const r = bySession.get(sessionId);
       if (r?.status === 'running') { r.lastActivityAt = now(); r.silenceNotifiedAt = null; }
@@ -383,9 +434,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       // 止めることは保存できなくても止める（record。ファイルは後で追いつく）
       await record(taskId, row => { row.revision = (row.revision ?? 0) + 1; dropInstructions(row); row.notification = 'suppressed'; if (ACTIVE.has(row.status)) row.status = live.has(taskId) ? 'cancelling' : 'cancelled'; }, 'cancel');
       live.get(taskId)?.abort();
+      if (!live.has(taskId) && r.activeCommands?.length) await cancelBackground(view(r));
     },
     // 承認待ちの増減で ply_task_wait を起こす。保存する状態は変わらないので write() は通らない
-    wake() { for (const fn of [...listeners]) fn(); },
+    wake() { for (const r of Object.values(records)) pauseCommands(r, now(), waiting(r.sessionId)); for (const fn of [...listeners]) fn(); },
     // 会話を止めたときに、その会話が作ったタスク（と子孫）をまとめて止める。cancel と同じ書き換えを、
     // 書き換えて何かが変わるものにだけ行い、保存は 1 回にする。以前は終わったタスクまで 1 件ずつ保存していて
     // （1 会話で数十件になる）、会話の停止を遅らせていた。止め終わって通知も抑えたもの（cancel を呼んでも

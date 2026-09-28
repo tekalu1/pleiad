@@ -126,6 +126,7 @@ export function createTerminalTracker() {
   return {
     observe,
     list,
+    commandIds() { return [...new Set([...live.keys(), ...bg.keys()])]; },
     detail(id) {
       const item = bg.get(id);
       return item ? {
@@ -186,4 +187,13 @@ export function createTerminalTracker() {
      */
     processIdOf(id) { return bg.get(id)?.processId ?? null; },
   };
+}
+
+/** Internal observations also reach the host after the originating turn has ended. */
+export function commandActivity(method, params) {
+  if (method === 'item/commandExecution/outputDelta') return [{ type: 'task.activity' }];
+  if (method === 'item/commandExecution/terminalInteraction') return [{ type: 'task.command', id: params.itemId, processId: params.processId }];
+  if (method === 'item/completed' && params.item?.type === 'commandExecution')
+    return [{ type: 'task.command', id: params.item.id, state: 'completed' }];
+  return [];
 }

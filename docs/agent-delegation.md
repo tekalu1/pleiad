@@ -22,7 +22,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 ローカルの使用実績（トークン数・参考費用）は返さない。Claude でアカウントを登録していれば `accounts` にアカウントごとの枠を並べ、表示名にメールアドレスが含まれる場合はローカル部を1文字残して伏せる。アカウント ID・資格情報は返さない。
 不明な `backend` はエラー。1つのバックエンドの取得失敗はそのバックエンドの `message` に入れ、他は返す。
 
-**委譲の指示**: 委譲の使い方は、利用者の指示ファイルではなく Pleiad の指示の既定の項目として Pleiad が入れる（[ADR 0023](adr/0023-pleiad-added-delegation-instructions.md) を [ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md) で置き換え）。`ply_agents` の instructions の後ろに毎ターン足す。依頼元の会話には「委譲の進め方」（委譲を基本にする・この会話でやること。編集できる）と「委譲の振り分けの使い方」（`kind` を付けて `backend` を書かない。委譲と連動で編集できず、振り分けが無効なら入れない）、委譲された子の会話には「委譲した会話では任せない」（さらに委譲しない。編集できる）、Codex の子にだけ「Codex の実行前の拒否」（承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。編集・切り替えできる）。項目・スイッチ・記録は context-runtime.md「Pleiad の指示」。
+**委譲の指示**: 委譲の使い方は、利用者の指示ファイルではなく Pleiad の指示の既定の項目として Pleiad が入れる（[ADR 0023](adr/0023-pleiad-added-delegation-instructions.md) を [ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md) で置き換え）。`ply_agents` の instructions の後ろに毎ターン足す。依頼元の会話には「委譲の進め方」（委譲を基本にする・この会話でやること。編集できる）と「委譲の振り分けの使い方」（`kind` を付けて `backend` を書かない。委譲と連動で編集できず、振り分けが無効なら入れない）、委譲された子の会話には「委譲した会話では任せない」（さらに委譲しない・コマンドには時間上限を付ける・常駐するサーバーやアプリはバックグラウンドで起動して PID を控え、自分で止める・`Start-Process -Wait` のような無期限待機をしない。編集できる）、Codex の子にだけ「Codex の実行前の拒否」（承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。編集・切り替えできる）。項目・スイッチ・記録は context-runtime.md「Pleiad の指示」。Antigravity の子にも、コマンドの時間上限と PID の管理の指示をカスタムエージェントの本文に足す。親とユーザーの会話には足さない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。編集済みの子向け指示は上書きせず、既定に戻すと新しい文面になる。
 
 タスク ID は `ply-task-<UUID>`。Claude / Codex のネイティブサブエージェントとは別に管理する。
 `ply_agents` は専用の接続で注入するため、外部 MCP 中継のハッシュ化されたツール名にならない。
@@ -172,10 +172,22 @@ Pleiad タスクには件数・深さの上限を置かない。同時に活動�
 `waiting` は「いま承認を待っているか」から導く見せかけの状態で、保存する状態（`queued` / `running` …）は変えない。
 `ACTIVE` の集合と、再起動時に実行中を `interrupted` にする扱いを壊さないため。
 
-## 無音の通知
+## 無音と長いコマンドの通知
 
-実行中の子の最後の動き（バックエンドのイベント、ツールの開始・結果、本文差分、承認待ちの開始・再開）を `lastActivityAt` に持つ。Antigravity は履歴に残さない `step_update` も数える。`ply_task_status` / `ply_task_list` はこの時刻と `silenceMinutes`（実行中の無音分数。承認待ちは `null`）を返す。
-既定で 15 分、子から動きが無ければ、親が受け取れるときに専用の無音通知で親のターンを 1 回始める。`AGENT_HOST_TASK_SILENCE_MINUTES` で分数を変えられ、`0` で無効。子は止めない。同じ無音期間には重ねて通知せず、動きが戻った後に再び無音になれば知らせ直す。人間の承認待ちは数えず、再開時から数え直す。親が忙しい間は通知を保留し、送ったか不明な失敗では自動再送しない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。
+実行中の子の最後の動き（バックエンドのイベント、ツールの開始・結果、本文差分、承認待ちの開始・再開）を `lastActivityAt` に持つ。Antigravity は履歴に残さない `step_update`、Claude は SDK の `tool_progress`、Codex は `item/commandExecution/outputDelta` も数える。これらの活動だけで画面の表示を増やさない。`ply_task_status` / `ply_task_list` はこの時刻と `silenceMinutes`（実行中の無音分数。承認待ちは `null`）を返す。
+既定で 5 分、子から動きが無ければ、親が受け取れるときに専用の無音通知で親のターンを 1 回始める。`AGENT_HOST_TASK_SILENCE_MINUTES` で分数を変えられ、`0` で無効。子は止めない。同じ無音期間には重ねて通知せず、動きが戻った後に再び無音になれば知らせ直す。人間の承認待ちは数えず、再開時から数え直す。親が忙しい間は通知を保留し、送ったか不明な失敗では自動再送しない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。
+
+コマンドの時間は無音とは別に数える。`AGENT_HOST_TASK_COMMAND_MINUTES`（既定 5 分、`0` で無効）に達すると、そのコマンドについて一度だけ親へ通知する。コマンド出力・思考・別のツールの活動では時計を延ばさず、人間の承認待ちだけを差し引く。親が忙しい間は保留し、未受領（`requeue`）だけ再送する。受領が不明な失敗は再送しない。通知はコマンド固有の ID を持ち、無音通知や完了通知とは区別する。
+
+`ply_task_status` / `ply_task_list` の `activeCommands` は、コマンドごとに `toolCallId`、`command`、`cwd`、`observedAt`、`startedAt`、`startKnown`、`elapsedMinutes`、`state`、分かれば `turnId`・`nativeTaskId`・`processId` を返す。本文と cwd は既存の秘密値の伏せ方を使い、本文は台帳で 2000 字、通知で 200 字に切る。既知の形式以外の秘密は伏せきれない。開始時刻がないものは最初の観測から数え、開始を推定して埋めない。`processId` はバックエンドの識別子であり OS の PID とは限らない。`stopSupported` はこの台帳が個別停止を提供するかを表し、現在は false。
+
+| バックエンド | 開始 | 完了 |
+|---|---|---|
+| Antigravity | `run_command` の ACTIVE を正規化した `tool.start` | 同じ ID の DONE を正規化した `tool.result` |
+| Claude | Bash / PowerShell の `tool_use` を正規化した `tool.start` | 前景の `tool_result`、または task ID を結んだ `task_notification` / 終了状態の `task_updated` |
+| Codex | `commandExecution` の `item/started` を正規化した `tool.start`（`startedAtMs` があれば保持） | 同じ item の `item/completed`。元のターンの終了後も受け取る |
+
+Claude の background 起動結果（`backgroundTaskId` または起動を示す本文）は完了ではない。`task_started` / `task_updated` で background に移ったものも、実際の終了まで残す。Codex の端末は子タスクが `completed` になっても通知対象で、終了を確認するまで台帳に残る。台帳の通知は子を再実行しない。サーバー再起動後は保存済みコマンドの生存を確認できないため `state: unknown`・経過 `null` とし、再通知や自動停止はしない。
 
 ## 完了通知
 
@@ -196,8 +208,6 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 `deliver` が `requeue` を返したら（受け取る直前に親が動き出した）、メモリだけ `pending` に戻し、ファイルは `delivering` のまま書かない。
 次に送るとき、ファイルがすでに `delivering` なら書き直さない。以前は親が忙しい間、500ms ごとにファイル全体を 2 回ずつ書き直していた（2026-09-27）。
 
-子の返答の後も終わらず Pleiad が止めた裏の作業があれば（下の「子に残った裏の作業」）、同じ場所に 1 段落足す（`agent:delegation.noticeStoppedBackground`。件数、待った分数、先頭 3 件の見出し）。
-
 子で実行前に拒否されたコマンドがあれば、通知の本文の最後（「元の依頼に必要な作業を続けてください。」の前）に 1 段落足す（`agent:delegation.noticeRejections`）。
 件数と、先頭 3 件の `command`（伏せて切ったもの）と `reason` だけを並べ、全件は `ply_task_status` の `rejections` で読むよう案内する。拒否が無ければ何も足さない。
 
@@ -216,17 +226,13 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 
 ## 子に残った裏の作業
 
-子の結果は、子のターンが終わり、子が待つ裏の作業と子が作った Pleiad タスクが片付いてから確定する（`execute`）。
-裏の作業が終わらないと結果が出ず、タスクは `running` のまま残って依頼元へ通知が届かない。2026-09-27 に、Claude の子が報告を書き終えた後も、120 秒で終わらず CLI が裏へ回したコマンド（完了の通知が来ないまま生きていた）のせいで、そうなった。
+子の結果は、子のターンが終わり、子が待つ裏の作業と子が作った Pleiad タスクが片付いてから確定する（`execute`）。Pleiad は時間を理由にコマンドを自動停止しない。委譲の子・ユーザーの会話とも同じ（[ADR 0048](adr/0048-delegation-silence-notice.md)）。
 
-- **Claude**: main が返答を終えても、裏のタスク（コマンドを含む）が生きている間はターンを保持する（docs/multi-backend.md §2.2 の `phase: waiting`）。委譲の子では、`phase: waiting` が `AGENT_HOST_DELEGATION_BACKGROUND_WAIT_MS`（既定 10 分。Claude Code の print モードが裏の作業を待つ上限の既定と同じ）続いたら、サブエージェント以外の裏の作業を止める（作業ダイアログの停止ボタンと同じ `stopBackground` → `Query.stopTask`）。CLI は止めたことの完了通知で main を再開させ、ターンが終わる。時間は main が止まるたびに数え直す（正当に待っているテストの実行などを先回りして止めない）。サブエージェントは自分で終わるので止めない。人が見ている会話（委譲の子でない会話）では止めない。
-- 止めた後に main が足した一言だけが結果にならないよう、止める前の最後の返答を結果の先頭に残す（`報告
+- **Claude**: main が返答を終えても、裏のタスクが生きている間はターンを保持する（`phase: waiting`）。長いコマンドまたは無音の通知を受けた親が、状態の確認・子への追加指示・取り消しを判断する。作業ダイアログから個別に止めることもできる。
+- **Codex**: 端末はターンの外に残り、終わっても main は再開しない。子の結果と完了通知は端末を待たず、コマンドの監視は続ける。子の完了後も `ply_task_cancel` で、台帳とバックグラウンド一覧の ID が一致する端末を明示的に止められる。
+- **Antigravity**: バックグラウンド移行の情報がなくても、`run_command` の ACTIVE から DONE まで監視する。
 
-止めた後の一言`）。止めたものはタスクの `stoppedBackground`（`[{ kind, label }]`。見出しは拒否と同じく秘密を伏せて 300 字で切る）に残し、完了通知にも書く。その回で止めたものが無ければ消す。
-- **Codex**: バックグラウンド端末はターンの外に残り、終わっても main は再開しない（§2.7）。待っても結果は変わらないので、子の結果も依頼元への通知も端末を待たない。端末は止めずに残す（子の会話の「バックグラウンド N」から止められる）。以前は端末が残った子は `running` のままだった。
-- **Antigravity**: ターンの中にもターンの外にも裏の作業を持たないので、この形は起きない。
-
-この修正より前に `running` のまま残った記録は、子の会話の作業ダイアログで残っている裏のコマンドを止めれば、その場で完了して通知が届く。Pleiad を再起動すると、今までどおり `interrupted` になる（再起動をまたいで子の結果を確かめ直す仕組みは入れていない）。
+旧 `AGENT_HOST_DELEGATION_BACKGROUND_WAIT_MS` による自動停止は廃止した。再起動時、実行中だった子タスクは従来どおり `interrupted` にし、再実行しない。
 
 ## 実行前に拒否されたコマンド
 
@@ -261,7 +267,7 @@ Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の�
 
 ## 保存・画面・再起動
 
-`AGENT_HOST_DATA/agent-tasks.json` にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）、実行前に拒否されたコマンド（`rejections`。伏せて切ったもの）、子の返答の後に Pleiad が止めた裏の作業（`stoppedBackground`）を保存する。
+`AGENT_HOST_DATA/agent-tasks.json` にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）、実行前に拒否されたコマンド（`rejections`。伏せて切ったもの）、実行中コマンド（`activeCommands`）と通知済みの印を保存する。
 追加指示は各タスクの `instructions: [{ id, text, at, state }]` に受け付け順で保存する（[ADR 0044](adr/0044-task-instruction-delivery.md)）。`queue` は初回依頼の本文または `{ instructionId }` の FIFO。旧ファイルの文字列 `queue` は読み込み時に追加指示へ移し、初回依頼は区別する。`state` は `queued` → `sending` → `delivered`、受領前の再投入なら `queued`。失敗・停止・再起動で待機中だったものは `dropped` として残す。子のターンに渡した `sending` は、中断や再起動でも `delivered` とし、実行の例外では渡る前に失敗したものとして `dropped` にする。件数上限は設けない。
 `ply_task_status` / `ply_task_list` は本文を含めず `pendingMessages` を保つ。4 秒ごとの `running` も待機件数と `instructionRevision` だけを含む。画面が選んだタスクの詳細を開くと `agentTaskInstructions` でそのタスクの本文を読み、初回の「依頼」の下に待機・送信中・未配送を示す。配送済みは子の通常の user 発言として履歴から描く。同じ本文を複数回送れるので、指示 ID・状態・配送順を使い、本文の一致では重複を判定しない。現状「会話として開く」の通常画面には待機中の指示を表示しない。
 会話メタデータの `delegation` に親とタスク ID を、`routing` にどう選ばれたかを記録する。会話の分岐を表す `parent` とは別にする。

@@ -9,6 +9,7 @@ const URL_RX = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"<>`]+/gi;
 
 // 既知のトークンの形。前の部分（種類が分かる接頭辞）は残し、値だけを伏せる
 const TOKEN_RULES = [
+  [/((?:--[\w-]*(?:token|password|secret|api-key)|(?:[\w]+_)*(?:TOKEN|PASSWORD|SECRET|API_KEY))\s*(?:[=:]\s*|\s+))(?:"[^"]*"|'[^']*'|[^\s;&|]+)/gi, (_, head) => `${head}${MASK}`],
   // Authorization ヘッダーの値（Bearer / Basic）。伏せすぎ（Basic の後の普通の語）は害が無いので許す
   [/\b(Bearer|Basic)(\s+)[A-Za-z0-9._~+/=-]{6,}/gi, (_, kind, sp) => `${kind}${sp}${MASK}`],
   // OpenAI・Anthropic などの sk-…（sk-proj-…・sk-ant-… を含む）

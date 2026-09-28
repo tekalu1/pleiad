@@ -205,6 +205,8 @@ async function hangingShell(text, { s, out, emit, signal, keys }) {
   for (const key of keys) { if (!shells.has(key)) shells.set(key, new Map()); shells.get(key).set(task.id, stop); }
   signal?.signal?.addEventListener?.("abort", poke, { once: true });
   try {
+    emit({ type: "tool.start", id: task.id, name: "Bash", input: { command: task.label, run_in_background: true } });
+    emit({ type: "tool.result", id: task.id, text: "launched", commandBackground: true, nativeTaskId: task.id });
     emit({ type: "background", tasks: [task] });
     const report = { uuid: crypto.randomUUID(), role: "assistant", text: text.replace(/^bg-shell\s*/, "") || "終わった" };
     await say(emit, report.text, report.uuid);
@@ -218,6 +220,7 @@ async function hangingShell(text, { s, out, emit, signal, keys }) {
     await say(emit, resumed.text, resumed.uuid);
     push(s, resumed);
   } finally {
+    emit({ type: "task.command", id: task.id, state: "stopped" });
     for (const key of keys) { shells.get(key)?.delete(task.id); if (!shells.get(key)?.size) shells.delete(key); }
   }
   out.text = "";
@@ -431,6 +434,7 @@ export const backend = {
         // Codex と同じく、端末はターンが終わっても残る。server へはターンの外の background で渡す
         const key = hostSessionId ?? id;
         const list = [...(terminals.get(key) ?? []), { id: `fake-term-${crypto.randomUUID().slice(0, 8)}`, kind: "terminal", label: "npm run dev" }];
+        emit({ type: "tool.start", id: list.at(-1).id, name: "commandExecution", input: { command: list.at(-1).label, cwd }, startedAt: Date.now() });
         terminals.set(key, list);
         host?.background(key, list);
       } else {
@@ -460,6 +464,7 @@ export const backend = {
     if (list.some((x) => x.id === taskId)) {
       const rest = list.filter((x) => x.id !== taskId);
       if (rest.length) terminals.set(sessionId, rest); else terminals.delete(sessionId);
+      host?.event?.(sessionId, { type: "task.command", id: taskId, state: "stopped" });
       host?.background(sessionId, rest);
       return { stopped: true };
     }

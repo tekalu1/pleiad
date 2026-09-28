@@ -263,17 +263,6 @@ function rejectionNotice(lng, list) {
     command: r.command ?? r.raw ?? '', reason: r.reason ?? r.kind ?? '' })).join('\n');
   return agentT(lng, 'delegation.noticeRejections', { count: list.length, items }) + '\n';
 }
-// 委譲の子で main が返答を終え、裏の作業だけを待っている（phase: waiting）ときに待つ上限（docs/agent-delegation.md「子に残った裏の作業」）。
-// 過ぎたらサブエージェント以外（終わらないことがあるコマンドなど）を止める。止めると完了通知で main が再開し、ターンが終わる。
-// 既定は Claude Code の print モードが裏の作業を待つ上限（CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS の既定 600 秒）と同じ。テストは縮める
-const DELEGATION_BACKGROUND_WAIT_MS = Number(process.env.AGENT_HOST_DELEGATION_BACKGROUND_WAIT_MS) > 0 ? Number(process.env.AGENT_HOST_DELEGATION_BACKGROUND_WAIT_MS) : 600_000;
-// 止めた裏の作業を依頼元へ返す形。見出しはコマンドのことがあるので、拒否と同じく秘密を伏せて切る
-const peerBackground = x => ({ kind: pick(x.kind, 20) ?? 'other', label: redactForPeer(String(x.label ?? ''), REJECTION_TEXT_MAX) ?? '' });
-function stoppedBackgroundNotice(lng, list) {
-  if (!Array.isArray(list) || !list.length) return '';
-  const items = list.slice(0, NOTICE_REJECTIONS).map(x => agentT(lng, 'delegation.noticeStoppedItem', { label: x.label || x.kind })).join('\n');
-  return agentT(lng, 'delegation.noticeStoppedBackground', { count: list.length, minutes: Math.max(1, Math.round(DELEGATION_BACKGROUND_WAIT_MS / 60000)), items }) + '\n';
-}
 // エラー・結果の文はツールの結果としてエージェントが読むので、会話の言語で引く（agent 名前空間。橋は会話ごとに開き、locale はその会話の言語）
 const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale } = {}) => {
   const turn = runtime.turns.get(owner);
@@ -1139,9 +1128,9 @@ function clientReason(args) {
  */
 function makeEmit(turn) {
   const emit = (event, { recorded = false } = {}) => {
-    if (event?.type) agentTasks?.activity(turn.info.sessionId);
-    // Antigravity can report a step without a normalized conversation event.
-    if (event?.type === 'task.activity') return;
+    if (event?.type) agentTasks?.observe(turn.info.sessionId, event);
+    // Internal activity and command observations do not add conversation UI events.
+    if (event?.type === 'task.activity' || event?.type === 'task.command') return;
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
     if (event?.type === 'contextWindow' && Number.isFinite(event.usedTokens) && Number.isFinite(event.windowTokens)) {
       turn.contextWindow = { usedTokens: event.usedTokens, windowTokens: event.windowTokens };
@@ -1209,7 +1198,6 @@ function makeEmit(turn) {
     if (event?.type === "phase" || event?.type === "background") {
       if (event.type === "phase") turn.info.phase = event.state === "waiting" ? "waiting" : "active";
       else turn.info.background = Array.isArray(event.tasks) ? event.tasks : [];
-      if (event.type === "phase") watchChildBackground(turn);
       broadcastRunning();
     }
     // 新規セッションは走り出してから id が決まる。仮キーを本物へ差し替える。
@@ -1704,8 +1692,7 @@ agentTasks = await createAgentTasks({
   execute: async (task, prompt, signal) => {
     if (signal.aborted) return { outcome: 'aborted' };
     if (sessionBusy(task.sessionId)) return { requeue: true };
-    // stopped / reply / timer: 子に残った裏の作業を止めたもの・止める前の返答・待つ上限のタイマー（watchChildBackground）
-    const execution = { outcome: null, error: null, rejections: [], stopped: [], reply: null, timer: null };
+    const execution = { outcome: null, error: null, rejections: [] };
     taskExecutions.set(task.sessionId, execution);
     const stopChild = () => {
       const child = runtime.turns.get(task.sessionId);
@@ -1725,15 +1712,12 @@ agentTasks = await createAgentTasks({
       const childrenBusy = () => agentTasks.list(task.sessionId).some(r => ['queued', 'running', 'cancelling'].includes(r.status) || ['pending', 'delivering'].includes(r.notification));
       // ターンの外に残る端末（Codex）は待たない。終わっても main は再開せず、結果は変わらない（awaitedBackground）
       while (!signal.aborted && (sessionBusy(task.sessionId) || awaitedBackground(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
-      const last = await lastReply(task.sessionId);
-      // 裏の作業を止める前の返答（報告）を残す。止めた後に main が再開して足した一言だけが結果にならないように
-      const text = execution.reply && execution.reply !== last ? [execution.reply, last].filter(Boolean).join('\n\n') : last;
+      const text = await lastReply(task.sessionId);
       // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
       const rejections = execution.rejections.map(peerRejection);
-      const stoppedBackground = execution.stopped.map(peerBackground);
-      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown'), rejections, stoppedBackground };
-      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: execution.error, rejections, stoppedBackground };
-    } finally { signal.removeEventListener('abort', stopChild); clearTimeout(execution.timer); taskExecutions.delete(task.sessionId); }
+      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown'), rejections };
+      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: execution.error, rejections };
+    } finally { signal.removeEventListener('abort', stopChild); taskExecutions.delete(task.sessionId); }
   },
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
   ready: async task => !(await noticeBlocked(task.parentSessionId)),
@@ -1746,7 +1730,21 @@ agentTasks = await createAgentTasks({
     // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
     const retry = task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '';
     const prompt = agentT(lng, 'delegation.notice', { taskId: task.taskId, backend: task.backend, status: task.status, task: task.task,
-      result: task.result.slice(0, 16000), more, error: task.error ?? '', retry, rejections: rejectionNotice(lng, task.rejections) + stoppedBackgroundNotice(lng, task.stoppedBackground) });
+      result: task.result.slice(0, 16000), more, error: task.error ?? '', retry, rejections: rejectionNotice(lng, task.rejections) });
+    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
+  },
+  cancelBackground: async task => {
+    for (const command of task.activeCommands) {
+      const found = findBackgroundTask(task.sessionId, command.nativeTaskId ?? command.toolCallId);
+      if (found) await found.backend.stopBackground(task.sessionId, found.task.id);
+    }
+  },
+  deliverCommand: async (task, command) => {
+    const owner = task.parentSessionId;
+    if (await noticeBlocked(owner)) return 'requeue';
+    const lng = await ensureAgentLocale(owner);
+    const prompt = agentT(lng, 'delegation.commandNotice', { taskId: task.taskId, noticeId: command.noticeId,
+      title: task.title, command: redactForPeer(command.command, 200), minutes: command.elapsedMinutes });
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
   deliverSilence: async (task, minutes) => {
@@ -2023,6 +2021,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         visualizeInstructions: visualizeInstructions(agentLocale),
         browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
         browserInstructions: null,
+        addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
         contextRuntime: runtimeContext,
         // 橋は会話ごとに使い回すので、Pleiad の指示はターンごとにここで足す（設定の変更が始まっている会話にも次のターンから効く）
         agentRuntime: (runtime => ({ ...runtime, instructions: withAdded(runtime.instructions, contextRecord.added) }))(agentConnection(turn)),
@@ -2251,42 +2250,6 @@ async function lastReply(sessionId) {
 }
 
 /**
- * 委譲の子のターンで、main が返答を終えて裏の作業だけを待つ（phase: waiting）時間を測る。
- * DELEGATION_BACKGROUND_WAIT_MS を過ぎたら、サブエージェント以外の裏の作業を止める（作業ダイアログの停止ボタンと同じ stopBackground）。
- * Claude はそれまでターンを保持するので、裏へ回ったまま終わらないコマンドが 1 本あると、子の報告が済んでいてもタスクが running のまま残り、
- * 依頼元へ完了通知が届かなかった（2026-09-27。docs/agent-delegation.md「子に残った裏の作業」）。人が見ている会話では止めない（委譲の子だけ）
- */
-function watchChildBackground(turn) {
-  const execution = taskExecutions.get(turn.info.sessionId);
-  if (!execution) return;
-  if (turn.info.phase !== "waiting") { clearTimeout(execution.timer); execution.timer = null; return; }
-  if (execution.timer) return;
-  execution.timer = setTimeout(() => { execution.timer = null; void stopChildBackground(turn, execution); }, DELEGATION_BACKGROUND_WAIT_MS);
-  execution.timer.unref?.();
-}
-
-async function stopChildBackground(turn, execution) {
-  const sessionId = turn.info.sessionId;
-  if (runtime.turns.get(sessionId) !== turn || taskExecutions.get(sessionId) !== execution || turn.info.phase !== "waiting") return;
-  // サブエージェントは自分で終わるので止めない（止めると仕事を失う）
-  const targets = (turn.info.background ?? []).filter((x) => x.kind !== "agent");
-  if (!targets.length || typeof turn.backend.stopBackground !== "function") return;
-  // 止めると main が再開して一言足すことがある。止める前の返答（報告）を控えておく
-  execution.reply ??= await lastReply(sessionId).catch(() => null);
-  for (const x of targets) {
-    try {
-      await turn.backend.stopBackground(sessionId, x.id);
-      execution.stopped.push(x);
-      // i18n-ignore: サーバーのログ
-      console.error(`  [delegation] 子 ${sessionId} の裏の作業（${x.kind}）を ${Math.round(DELEGATION_BACKGROUND_WAIT_MS / 1000)} 秒待って止めた`);
-    } catch (err) {
-      // i18n-ignore: サーバーのログ
-      console.error(`  [delegation] 子 ${sessionId} の裏の作業（${x.kind}）を止められなかった: ${String(err?.message ?? err).slice(0, 200)}`);
-    }
-  }
-}
-
-/**
  * 会話に紐づく、ターンの外で裏に残っている作業。バックエンドが全量で渡し、空で消える。
  * running の background に載り、web は一覧の行と稼働表示を衛星にする（design-system.md §6.1）。
  */
@@ -2333,15 +2296,16 @@ function findBackgroundTask(sessionId, taskId) {
 
 /**
  * ターンの外で起きた、会話に属する正規化イベント（docs/multi-backend.md §2.7）。
- * 今の用途は 1 つだけ: Codex のバックグラウンド端末が、ターンが終わったずっと後に終わったとき、
+ * Codex の端末の稼働・終了を委譲の台帳に伝える。端末がターンの後に終わったときは、
  * 走ったままに見えているツールカードへ結果を差し込む。
  * ターンを作らないので `running` にも使用量にも出ない。何でも流せる口にはしない
  * （本文や turnResult をターンの外から出すと、web の吹き出し・稼働表示の前提が崩れる）。
  */
-const OUTSIDE_TURN_EVENTS = new Set(["tool.result"]);
+const OUTSIDE_TURN_EVENTS = new Set(["tool.result", "task.command", "task.activity"]);
 function emitOutsideTurn(sessionId, event) {
   if (!sessionId || !OUTSIDE_TURN_EVENTS.has(event?.type)) return;
-  agentTasks?.activity(sessionId);
+  agentTasks?.observe(sessionId, event);
+  if (event.type.startsWith("task.")) return;
   emitGlobal({ ...event, sessionId });
 }
 
