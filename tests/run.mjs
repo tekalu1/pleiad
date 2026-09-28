@@ -18,6 +18,8 @@ const cases = [
   await import('./unit/compaction.mjs'),
   await import('./unit/server-compaction.mjs'),
   await import('./unit/file-preview.mjs'),
+  // プレビューの横のツリー: 経路の段は必ず返す・遅延読み込み・件数の枠と枠の外の経路・除外名は経路だけ・roots の外は読めない
+  await import('./unit/file-preview-tree.mjs'),
   await import('./unit/file-access.mjs'),
   await import('./unit/preview-links.mjs'),
   // パスの自動リンク・画像の所在・ファイルの操作メニュー・OS で開く口（OS の窓は開かない）
