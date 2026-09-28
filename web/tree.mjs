@@ -2,7 +2,10 @@
 // データ → DOM・開閉・選択・キーボード・絞り込みだけを持つ汎用の部品。行の意味は知らない。
 // 行の中身（アイコン・右端の一語・件数）は render(node, row) で呼び出し側が描く。
 //
-//   node: { id, name, children?, open?, data }。children が無ければ葉。data は部品が触らない
+//   node: { id, name, children?, open?, lazy?, more?, data }。children が無ければ葉。data は部品が触らない
+//   lazy: true は「まだ読んでいないフォルダー」（空の [] とは別）。開くと onLoad(node) で読み、その間は「読み込み中…」の行、
+//   失敗すると失敗の行を出す。more（数）があれば子の後ろに「さらに表示」の行を出し、押すと onMore(node) で続きを読む。
+//   onLoad・onMore は { children, more?, ... } を返し、部品はそれを node に書き込む（children は全体を差し替える）
 //   DOM:  <div role=tree tabindex=0><ul><li role=none><div role=treeitem aria-level aria-expanded aria-selected>
 //
 // フォーカスは tree 1 つだけ（roving tabindex は持たない）。行が何百あっても tab 1 回で抜けられる。
@@ -26,13 +29,18 @@ function chevron() {
  * @param {HTMLElement} root 置き場所。role と tabindex はここで付ける
  * @param {{nodes?:Array, open?:string[], empty?:string,
  *          render?:(node:any, row:HTMLElement)=>void, onSelect?:(node:any)=>void, onOpen?:(node:any, open:boolean)=>void,
- *          onContext?:(node:any, x:number, y:number, row:HTMLElement)=>void}} opts
+ *          onContext?:(node:any, x:number, y:number, row:HTMLElement)=>void,
+ *          onLoad?:(node:any)=>Promise<any>, onMore?:(node:any)=>Promise<any>,
+ *          loading?:string, failed?:string, moreLabel?:(node:any)=>string}} opts
  *   onContext は行のメニュー。右クリック・ContextMenu キー・Shift+F10 で呼ぶ（行は選ぶが onSelect は呼ばない）
+ *   failed は読めなかった行の文言（無ければ投げられたエラーの文）。moreLabel は「さらに表示」の行の文言
  */
-export function createTree(root, { nodes = [], open = [], empty = t("common.noMatch"), render, onSelect, onOpen, onContext } = {}) {
+export function createTree(root, { nodes = [], open = [], empty = t("common.noMatch"), render, onSelect, onOpen, onContext,
+  onLoad, onMore, loading = t("pending.loading"), failed = "", moreLabel = (n) => String(n.more) } = {}) {
   const prefix = `tree${++seq}`;
-  const opened = new Set(open);                       // 開いている節の id。呼び出し側が state() で持ち出せる
+  const opened = new Set(open);                       // 開いている節の id。呼び出し側が state() で持ち出せる。setNodes でも消さない
   const parents = new Map(), rows = new Map(), byId = new Map();
+  const pending = new Set(), failures = new Map();    // 読んでいる最中・読めなかった節の id（中身の読み込みと「さらに表示」）
   let list = [], filter = null, selected = null, typed = "", typedAt = 0, counter = 0;
 
   root.setAttribute("role", "tree");
@@ -46,15 +54,59 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
       if (n.children?.length) index(n.children, n);
     }
   }
+  /** 開ける節か。まだ読んでいない（lazy）フォルダーも含む */
+  const branch = (n) => Boolean(n.lazy || n.children?.length);
   // 絞り込み中は祖先を全部開く。元の開閉は opened に残したままにして、解除で戻す
-  const expanded = (n) => Boolean(n.children?.length) && (filter ? true : opened.has(n.id));
+  const expanded = (n) => branch(n) && (filter ? true : opened.has(n.id));
 
   function toggle(n) {
-    if (!n.children?.length) return;
+    if (!branch(n)) return;
     const next = !opened.has(n.id);
     if (next) opened.add(n.id); else opened.delete(n.id);
+    if (next) failures.delete(n.id);                  // 閉じて開き直すと、読めなかった節をもう一度読む
     redraw();
     onOpen?.(n, next);
+  }
+
+  /**
+   * 中身（lazy の節）か続き（more）を読む。読んでいる間に setNodes で差し替わったら、同じ id の今の節がまだ読んでいない
+   * ときだけそこへ書き込む（中身を持った節を、前の節から読んだ結果で上書きしない）
+   */
+  async function fetchInto(n, loader) {
+    if (!loader || pending.has(n.id)) return;
+    pending.add(n.id);
+    failures.delete(n.id);
+    redraw();
+    try {
+      const result = await loader(n);
+      const live = byId.get(n.id) ?? n;
+      if (live !== n && !live.lazy) return;
+      Object.assign(live, result ?? {}, { lazy: false });
+      live.children ??= [];
+      index(live.children, live);
+    } catch (error) {
+      failures.set(n.id, error?.message || failed);
+    } finally {
+      pending.delete(n.id);
+      redraw();
+    }
+  }
+  const load = (n) => fetchInto(n, onLoad);
+  const loadMore = (n) => fetchInto(n, onMore);
+
+  /** 部品が足す行（読み込み中・失敗）。選べず、キーボードでも止まらない */
+  function note(text, level, className) {
+    const li = el("li");
+    li.setAttribute("role", "none");
+    const row = el("div", `tree-row tree-note ${className}`);
+    row.setAttribute("role", "treeitem");
+    row.setAttribute("aria-level", String(level));
+    row.setAttribute("aria-disabled", "true");
+    const chev = chevron();
+    chev.classList.add("none");
+    row.append(chev, el("span", "nm", text));
+    li.append(row);
+    return li;
   }
 
   function build(items, level) {
@@ -69,11 +121,11 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
       row.setAttribute("role", "treeitem");
       row.setAttribute("aria-level", String(level));
       row.setAttribute("aria-selected", String(n === selected));
-      if (n.children?.length) row.setAttribute("aria-expanded", String(expanded(n)));
+      if (branch(n)) row.setAttribute("aria-expanded", String(expanded(n)));
       if (n === selected) row.classList.add("sel");
       if (filter?.hit.has(n)) row.classList.add("hit");
       const chev = chevron();
-      if (!n.children?.length) chev.classList.add("none");   // 葉でも場所は空けて字下げを揃える
+      if (!branch(n)) chev.classList.add("none");   // 葉でも場所は空けて字下げを揃える
       chev.onclick = (e) => { e.stopPropagation(); toggle(n); };
       row.append(chev);
       if (render) render(n, row); else row.append(el("span", "nm", n.name));
@@ -86,7 +138,41 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
       };
       li.append(row);
       rows.set(n, row);
-      if (n.children?.length && expanded(n)) li.append(build(n.children, level + 1));
+      if (expanded(n)) li.append(inner(n, level + 1));
+      ul.append(li);
+    }
+    return ul;
+  }
+
+  /** 開いた節の中身。まだ読んでいなければ読み始め、読み込み中・失敗・「さらに表示」の行を足す */
+  function inner(n, level) {
+    if (n.lazy && !pending.has(n.id) && !failures.has(n.id)) queueMicrotask(() => load(n));
+    const ul = build(n.lazy ? [] : n.children ?? [], level);
+    if (filter) return ul;
+    if (pending.has(n.id)) ul.append(note(loading, level, "tree-pending"));
+    else if (failures.has(n.id)) {
+      const reason = failures.get(n.id);
+      const li = note(failed || reason, level, "tree-failed");
+      if (reason && reason !== failed) li.firstChild.title = reason;
+      ul.append(li);
+    }
+    if (!n.lazy && n.more > 0 && !pending.has(n.id)) {
+      // 「さらに表示」はキーボードでも辿れる行。選んでも onSelect は呼ばず、押す・Enter で続きを読む
+      const action = { id: `${n.id}\0more`, name: moreLabel(n), action: () => loadMore(n) };
+      const li = el("li");
+      li.setAttribute("role", "none");
+      const row = el("div", "tree-row tree-action");
+      row.id = `${prefix}-${counter++}`;
+      row.setAttribute("role", "treeitem");
+      row.setAttribute("aria-level", String(level));
+      row.setAttribute("aria-selected", "false");
+      const chev = chevron();
+      chev.classList.add("none");
+      row.append(chev, el("span", "nm", action.name));
+      row.onclick = () => action.action();
+      li.append(row);
+      rows.set(action, row);
+      parents.set(action, n);
       ul.append(li);
     }
     return ul;
@@ -100,19 +186,46 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
     root.setAttribute("aria-activedescendant", rows.get(selected)?.id ?? "");
   }
 
-  function select(target, notify = true) {
-    const n = typeof target === "string" ? byId.get(target) : target;
-    if (!n) return null;
+  /**
+   * 行を選ぶ。見つからない id・null は選択を外す（前の行が選ばれたまま残らない）。
+   * scroll: false なら送らない（呼び出し側が scrollToRow で余白を取って送るとき）
+   */
+  function select(target, notify = true, { scroll = true } = {}) {
+    const n = (typeof target === "string" ? byId.get(target) : target) ?? null;
     selected = n;
     for (const [node, row] of rows) {
       row.classList.toggle("sel", node === n);
       row.setAttribute("aria-selected", String(node === n));
     }
-    const row = rows.get(n);
+    const row = n ? rows.get(n) : null;
     root.setAttribute("aria-activedescendant", row?.id ?? "");
-    row?.scrollIntoView({ block: "nearest" });
-    if (notify) onSelect?.(n);
+    if (scroll) row?.scrollIntoView({ block: "nearest" });
+    if (notify && n && !n.action) onSelect?.(n);
     return n;
+  }
+
+  /**
+   * その行をツリーの中で縦に送る。上下に 3 行分（欄の 1/3 まで）の余白を残し、すでに余白の内にあれば動かさない。
+   * 外にあれば上の余白の位置へ送る。force なら余白の内でも上の余白の位置へ送る（利用者が頼んだとき）。
+   * ツリーの外（ページ）はスクロールしない
+   */
+  function scrollToRow(target, { margins = 3, force = false } = {}) {
+    const n = typeof target === "string" ? byId.get(target) : target;
+    const row = n ? rows.get(n) : null;
+    if (!row?.getBoundingClientRect || !root.getBoundingClientRect) return;
+    const box = root.getBoundingClientRect(), r = row.getBoundingClientRect();
+    if (!box.height) return;                            // 畳まれていて見えない。開いたときに呼び直す
+    const margin = Math.min((r.height || 28) * margins, box.height / 3);
+    const top = r.top - box.top, bottom = box.bottom - r.bottom;
+    if (!force && top >= margin && bottom >= margin) return;
+    root.scrollTop += top - margin;
+  }
+
+  /** すべて畳む。一番上の節（根）だけ開いたまま残し、根の直下が並ぶ */
+  function collapseAll() {
+    opened.clear();
+    for (const n of list) if (branch(n)) opened.add(n.id);
+    redraw();
   }
 
   /** その行が見えるところまで祖先を開く。選択はしない */
@@ -167,17 +280,18 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
     else if (key === "End") select(order[order.length - 1]);
     else if (key === "ArrowRight") {
       if (!selected) select(order[0]);
-      else if (!selected.children?.length) return;
+      else if (!branch(selected)) return;
       else if (!expanded(selected)) toggle(selected);
-      else select(selected.children.find((c) => rows.has(c)) ?? selected);
+      else select(selected.children?.find((c) => rows.has(c)) ?? selected);
     } else if (key === "ArrowLeft") {
       if (!selected) return;
-      else if (selected.children?.length && expanded(selected)) toggle(selected);
+      else if (branch(selected) && expanded(selected)) toggle(selected);
       else if (parents.get(selected)) select(parents.get(selected));
       else return;
     } else if (key === "Enter") {
       if (!selected) return;
-      onSelect?.(selected);                            // 同じ行をもう一度送る（プレビューを戻す）
+      if (selected.action) selected.action();          // 「さらに表示」の行
+      else onSelect?.(selected);                       // 同じ行をもう一度送る（プレビューを戻す）
     } else if (key.length === 1 && /\S/.test(key)) {
       // 打った文字で始まる次の行へ。続けて打つと語で絞る
       const now = Date.now();
@@ -203,7 +317,7 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
 
   setNodes(nodes);
   return {
-    select, reveal, redraw, setNodes,
+    select, reveal, redraw, setNodes, scrollToRow, collapseAll,
     filter: applyFilter,
     node: (id) => byId.get(id) ?? null,
     selected: () => selected,

@@ -24,7 +24,7 @@ import path from "node:path";
 import os from "node:os";
 import { readLocalFile } from "./local-files.mjs";
 import { isLocalRequest, defaultOpener, createRateLimit, OPENABLE } from './os-open.mjs';
-import { readPreview, resolveReference, cwdAt, inspectFile, previewFailure } from './file-preview.mjs';
+import { readPreview, listTreeFolder, resolveReference, cwdAt, inspectFile, previewFailure } from './file-preview.mjs';
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
@@ -612,7 +612,10 @@ const server = http.createServer(async (req, res) => {
         try {
           resolved = await resolveSessionFile({ path:url.searchParams.get('path'), sessionId:url.searchParams.get('sessionId'),
             at:url.searchParams.get('at'), base:url.searchParams.get('base') }, sessions, roots);
-          const preview = await readPreview(resolved.path, roots, { access: fileAccess, resource:url.searchParams.get('resource') === '1' });
+          // list=1 はプレビューの横のツリーの 1 フォルダー（開いたとき・「さらに表示」。web/file-preview.mjs）
+          const preview = url.searchParams.get('list') === '1'
+            ? await listTreeFolder(resolved.path, { access: fileAccess, offset:Number(url.searchParams.get('offset')) || 0 })
+            : await readPreview(resolved.path, roots, { access: fileAccess, resource:url.searchParams.get('resource') === '1' });
           res.writeHead(200, { 'content-type':'application/json; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' });
           return res.end(JSON.stringify({ ...preview, line:resolved.line, cwd:resolved.cwd }));
         } catch (error) {
