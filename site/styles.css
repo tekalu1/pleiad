@@ -117,6 +117,7 @@ h1 {
 @keyframes fade { from { opacity: 0; transform: translateY(12px); } }
 .nw { display: inline-block; }
 .lede { font-feature-settings: normal; margin-top: 28px; font-size: clamp(16px, 1.4vw, 19px); color: var(--weak); }
+.lede img { display: inline-block; width: 1em; height: 1em; margin-right: .3em; vertical-align: -.14em; }
 .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
 .meta { margin-top: 20px; font-size: 12.5px; line-height: 1.6; color: var(--weak); }
 
@@ -128,6 +129,7 @@ h2 {
   color: var(--ink-strong);
 }
 .f-sub { margin-top: 20px; font-size: 16px; color: var(--weak); }
+.f-note { margin-top: 8px; font-size: 13px; color: var(--weak); }
 
 [data-reveal] { opacity: 0; transform: translateY(24px); transition: opacity .9s var(--ease), transform .9s var(--ease); }
 [data-reveal].in { opacity: 1; transform: none; }
