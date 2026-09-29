@@ -38,7 +38,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
   // 会話は伏せずにページで覆う（style.css「設定の画面」）ので、キーボードと読み上げが覆った会話へ届かないよう inert にする
   // main の直下だけを見る（文書全体を探すと長い会話ではそれだけで重い）。要素は作り直さないので一度拾えば足りる
   let coveredNodes;
-  const covered = () => coveredNodes ??= [...(document.querySelector('body > main')?.children ?? [])].filter(n => n.matches('.top, #log, .composer'));
+  const covered = () => coveredNodes ??= [...(document.querySelector('body > main')?.children ?? [])].filter(n => n.matches('.top, #logFrame, .composer'));
   function open(active = 'setup') {
     if (welcome.open) return;
     page(active);

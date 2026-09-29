@@ -76,6 +76,8 @@ export default async function (t) {
     ACTIVITY_LABEL: {}, attachMenu: null, setDraftNote: noop,
     isWaitingHere: () => false, stoppingHere: () => false, controls: { fit: noop }, retiredHere: () => null, submittingMessages: new Set(),
     connStatus: { blocksSend: () => false },
+    // 会話の移動（web/conversation-nav-view.mjs）。最新へのボタンの弧を合わせる呼び出しだけ受ける
+    nav: { syncRunning: noop, reset: noop }, navSession: null,
     // 入力欄の `!`（web/shell-composer.mjs）。tests/unit/shell-composer.mjs が見る。このテストでは使わない（ふつうの欄のまま）
     shellComposer: { active: false, blocked: false, draftText: () => prompt.value, reset: noop },
     completionNotifications: { requestPermission: noop }, slashSkills: { close: noop }, uiLang: 'ja', attachmentLine: (l, p) => p,

@@ -2951,5 +2951,25 @@
       "stopped": "Stopped the agent",
       "failed": "Couldn't open the PC browser."
     }
+  },
+  "nav": {
+    "token": {
+      "code": "‹code›",
+      "attachment": "Attachment"
+    },
+    "log": {
+      "label": "Conversation"
+    },
+    "sticky": {
+      "title": "{{text}} (press to go to the start of the question)",
+      "openToc": "Open contents"
+    },
+    "latest": {
+      "label": "Jump to latest (End)",
+      "running": "Reply in progress",
+      "new_one": "{{count}} new reply",
+      "new_other": "{{count}} new replies",
+      "withNote": "Jump to latest · {{note}}"
+    }
   }
 }

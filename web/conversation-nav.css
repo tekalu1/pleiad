@@ -1,0 +1,42 @@
+/* 会話の移動（docs/design-system.md「会話の移動」、ADR 0059）。
+   A 残る問い・C 最新へ（web/conversation-nav-view.mjs）。B 地図・D 目次は後の段で足す。
+   浮く面（最新へ・地図の浮く面）は、ライトでは --surface-paper。ダークでは地（--surface-paper）と同じ面が沈むので、一段明るい --surface-1 にする */
+
+/* 会話（#log）を包む相対位置の入れ物。残る問い・最新へ・地図は #log の外に重ねて、スクロールで動かない */
+.log-frame{flex:1;min-height:0;position:relative;display:flex;flex-direction:column;
+  --surface-float:var(--surface-paper);--surface-float-hover:var(--surface-1)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .log-frame{--surface-float:var(--surface-1);--surface-float-hover:var(--surface-3)}}
+:root[data-theme="dark"] .log-frame{--surface-float:var(--surface-1);--surface-float-hover:var(--surface-3)}
+.log-frame > #log:focus-visible{outline:2px solid var(--line-blue);outline-offset:-3px}
+
+/* ---- A 問いが上に残る。影は付けず、会話の白から透明へのグラデーションでつなぐ。
+   左は発言の吹き出しの左端（#log の左の余白 8px + 溝 72px）にそろえ、幅は会話の列（860px − 溝 72px）まで。文字は押せる領域だけ ---- */
+.nav-sticky{position:absolute;z-index:4;left:0;right:10px;top:0;height:58px;padding:6px 18px 14px 80px;
+  background:linear-gradient(to bottom,var(--surface-paper) 76%,transparent);pointer-events:none}
+.nav-sticky-button{display:block;max-width:min(100%,788px);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-size:var(--fs-s);line-height:1.6;padding:8px 0;background:transparent;color:var(--ink-weak);cursor:pointer;pointer-events:auto;
+  transition:color var(--dur-fast) var(--ease-out)}
+.nav-sticky-button:hover{color:var(--ink)}
+.nav-sticky-time{font-family:var(--font-mono);font-size:var(--fs-xs)}
+.nav-token{color:var(--ink-weak)}
+
+/* ---- C 最新へ。直径 34px の丸。会話の右下（地図の左、入力欄の上） ---- */
+.nav-latest{position:absolute;z-index:7;right:44px;bottom:14px;height:34px;width:34px;padding:0;display:flex;align-items:center;justify-content:center;gap:6px;
+  background:var(--surface-float);color:var(--ink);box-shadow:0 8px 28px var(--shadow);border-radius:var(--r-pill);cursor:pointer;
+  transition:background var(--dur-fast) var(--ease-out),width var(--dur) var(--ease-out);animation:nav-rise var(--dur) var(--ease-out)}
+.nav-latest:hover{background:var(--surface-float-hover)}
+.nav-latest .nav-arrow{width:17px;height:17px;flex:none}
+/* 走っている間は pill に伸びて、矢印の左に §6 の弧 */
+.nav-latest.running{width:56px}
+.nav-latest .run{flex:none}
+/* 読んでいる間に返答が届いた印。脇の一覧の「完了・未確認」と同じ青い丸。紙の色で 2px の切り欠き */
+.nav-unread{position:absolute;top:0;right:0;width:9px;height:9px;border-radius:50%;color:var(--ink-unread);background:currentColor;box-shadow:0 0 0 2px var(--surface-float)}
+@keyframes nav-rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* ---- 狭い画面。地図は出さない。最新へは入力欄の右上。タップ領域は 44px ---- */
+@media (max-width:700px){
+  .nav-sticky{right:0;height:62px;padding-left:74px}
+  .nav-sticky-button{min-height:44px;padding-top:4px}
+  .nav-latest{right:16px;bottom:12px}
+  .nav-latest::after{content:"";position:absolute;inset:-5px;border-radius:var(--r-pill)}
+}

@@ -67,6 +67,7 @@ import { streamMessages } from './stream-messages.mjs';
 import { createComposerWait } from './composer-wait.mjs';
 import { createConnectionStatus } from './connection-status.mjs';
 import { attentionCounts, paintOpenSidebar } from './open-sidebar-mark.mjs';
+import { createConversationNav } from './conversation-nav-view.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
 const submittingMessages = new Set();
@@ -376,6 +377,11 @@ function scrollToEnd() {
   };
   requestAnimationFrame(tick);
 }
+
+// 会話の移動（残る問い・最新へ。docs/design-system.md「会話の移動」）。末尾へ送るのは上の scrollToEnd（実寸の確定を待つ）
+let navSession = null;   // 最新へのボタンの新着を数えている会話。替わったら数え直す（paintSession）
+const navNarrow = matchMedia("(max-width:700px)");
+const nav = createConversationNav({ frame: $("logFrame"), log, thread, scrollToEnd, isRunning: () => isRunningHere(), narrow: navNarrow });
 
 /** 筋の末尾に置く。稼働表示（走っている間だけある）は常に一番下に残す */
 function place(w) {
@@ -1853,6 +1859,8 @@ function onEvent(ev, replay = false) {
       return;
 
     case "turnEnd":
+      // 読み返している間に返答が終わったら、最新へのボタンに新着の印（リプレイと、ほかの会話・送信待ちへ戻っただけの分は数えない）
+      if (!replay && !ev.requeued && (!ev.sessionId || ev.sessionId === state.current)) nav.replyArrived();
       closeTurnEl();
       // 渡った合図が来ないままターンが終わった分。Codex などは次のターンとして答える。
       // Claude は区切りで取り出された分にも同じターンの中で答え、渡った合図も出す（取りこぼしても、
@@ -5238,6 +5246,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   syncRunState();
   syncTopbar();
 
+  if (navSession !== id) { navSession = id; nav.reset(); }
   const scrollAt = log.scrollTop;
   // 読み直しは、末尾を見ていたなら末尾へ、読み返していたならその位置のまま描き替える
   const atEnd = log.scrollHeight - log.clientHeight - log.scrollTop < 40;
@@ -5478,6 +5487,7 @@ function stoppingHere() {
 /** 実行状態から見た目を合わせる。走っている本数ではなく「この画面が走っているか」で決める。 */
 function syncRunState() {
   const here = isRunningHere();
+  nav.syncRunning();
   // エージェント・作業ディレクトリは実行中も次のターンの分を予約できる（チップは無効にしない）
   // 作ったばかりの会話（freshSessionId）を開いている間は押せる（送信を予約する。submit）
   $("send").disabled = submittingMessages.has(state.current)

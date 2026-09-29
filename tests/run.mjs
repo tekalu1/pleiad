@@ -160,6 +160,8 @@ const cases = [
   await import("./unit/session-stream.mjs"),
   // 長い履歴の実寸を確定するときのスクロール: 末尾にいれば末尾に、読み返し中なら位置を保つ（列より広い窓でも）
   await import("./unit/history-heights.mjs"),
+  // 会話の移動（web/conversation-nav.mjs）: 発言の抜粋（畳み・コード・添付）と件数の札
+  await import("./unit/conversation-nav.mjs"),
   await import("./unit/work-attribution.mjs"),
   await import('./unit/work-status.mjs'),
   await import('./unit/background-labels.mjs'),

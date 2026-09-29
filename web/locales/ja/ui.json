@@ -2870,5 +2870,24 @@
       "stopped": "操作を止めました",
       "failed": "PC のブラウザーを開けませんでした。"
     }
+  },
+  "nav": {
+    "token": {
+      "code": "‹コード›",
+      "attachment": "添付"
+    },
+    "log": {
+      "label": "会話の本文"
+    },
+    "sticky": {
+      "title": "{{text}}（押すと問いの先頭へ）",
+      "openToc": "目次を開く"
+    },
+    "latest": {
+      "label": "最新へ（End）",
+      "running": "返答を書いている",
+      "new_other": "新しい返答 {{count}} 件",
+      "withNote": "最新へ · {{note}}"
+    }
   }
 }
