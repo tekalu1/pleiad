@@ -294,6 +294,9 @@ export function initSky({ canvas, labelsEl, labels, avoid }) {
     camera.updateProjectionMatrix();
     uniforms.uPR.value = renderer.getPixelRatio();
     lineMats.forEach((m) => m.resolution.set(W * renderer.getPixelRatio(), H * renderer.getPixelRatio()));
+    // 広い画面では線も太らせる（1440px を基準に最大 1.4 倍）
+    const lw = THREE.MathUtils.clamp(W / 1440, 1, 1.4);
+    baseMat.linewidth = 1.6 * lw; trunkMat.linewidth = 1.6 * lw; curMat.linewidth = 3 * lw;
     const halfH = Math.tan(THREE.MathUtils.degToRad(15)) * CAM_Z;
     const halfW = halfH * camera.aspect;
     const wide = camera.aspect > 1.15;
@@ -359,6 +362,13 @@ export function initSky({ canvas, labelsEl, labels, avoid }) {
 
     // ラベル
     root.updateMatrixWorld();
+    // 枝の上の点を画面へ写す。ラベルの字に枝が刺さる置き方を避けるため
+    const pts = [];
+    branches.forEach((b) => b.pts.forEach((q, i) => {
+      v.copy(q).applyMatrix4(tree.matrixWorld).project(camera);
+      pts.push({ b, i, x: (v.x * 0.5 + 0.5) * W, y: (-v.y * 0.5 + 0.5) * H });
+    }));
+    const crossed = (l, x0, y, w) => pts.some((q) => !(q.b === l.b && q.i >= l.b.pts.length - 3) && q.x > x0 - 6 && q.x < x0 + w + 6 && Math.abs(q.y - y) < 14);
     labeled.forEach((it) => {
       const { el, l } = it;
       v.copy(l.pos).applyMatrix4(tree.matrixWorld);
@@ -367,13 +377,17 @@ export function initSky({ canvas, labelsEl, labels, avoid }) {
       const x = (v.x * 0.5 + 0.5) * W;
       const y = (-v.y * 0.5 + 0.5) * H;
       const w = el.offsetWidth || 180;
-      const flip = x + 24 + w > W - 16;
+      // 右に置けなければ左。どちらも枝が刺さるなら、今回は出さない
+      const right = x + 24 + w <= W - 16 && !crossed(l, x + 24, y, w);
+      const left = x - w - 24 >= 8 && !crossed(l, x - w - 24, y, w);
+      const flip = !right && left;
       it.x = Math.max(-8, flip ? x - w - 48 : x);
       it.y = y;
+      const blocked = !right && !left;
       const fog = THREE.MathUtils.smoothstep(-depth, 15.5, 21);
       const a = avoidRect;
       const hit = a && it.x + 24 < a.r + 12 && it.x + 24 + w > a.l && y > a.t - 16 && y < a.b + 16;
-      it.ok = !hit && fog < 0.6 && x > 0 && x < W && y > 60 && y < H - 20;
+      it.ok = !hit && !blocked && fog < 0.6 && x > 0 && x < W && y > 60 && y < H - 20;
       it.fog = fog;
     });
     if (time > grown) {
