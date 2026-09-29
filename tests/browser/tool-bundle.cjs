@@ -65,5 +65,29 @@ async page => {
   if ((await page.locator('.bundle .rhead').getAttribute('aria-expanded')) !== 'true') throw Error('aria-expanded');
   await page.locator('.bundle .rhead').click();
   await page.waitForFunction(() => document.querySelectorAll('.bundle .hi:not(.hid)').length === 0);
-  return { passed: true, checks: ['live shape', 'approval in bundle', 'closed heading', 'keyboard', 'toggle all'] };
+  // Claude は本文の無い（ツールだけの）発言ごとに text.end を出す。それでも 1 つの発言・1 つのまとまりのまま（履歴の合成と同じ）
+  await page.locator('#newSession').click();
+  const gaps = { steps: [
+    { newMessage: true }, { tool: 'Read', input: { file_path: 'D:/x/a.mjs' }, result: '1	a', ms: 500 },
+    { newMessage: true }, { tool: 'Grep', input: { pattern: 'foo' }, result: 'No matches found', ms: 500 },
+    { newMessage: true }, { tool: 'Read', input: { file_path: 'D:/x/b.mjs' }, result: '1	b', ms: 500 },
+    { newMessage: true }, { tool: 'Grep', input: { pattern: 'bar' }, result: 'No matches found', ms: 2500 },
+    { text: 'まとめです' },
+  ] };
+  await page.locator('#prompt').fill('steps:' + JSON.stringify(gaps));
+  await page.locator('#prompt').press('Control+Enter');
+  await page.waitForFunction(() => document.querySelector('.bundle')?.dataset.n === '4');
+  const split = await page.evaluate(() => ({ ai: document.querySelectorAll('#thread .m.ai').length, bundles: document.querySelectorAll('.bundle').length,
+    loose: document.querySelectorAll('#thread .m.ai > .tc').length, ghost: document.querySelectorAll('.bundle .hi.ghost').length }));
+  if (split.ai !== 1 || split.bundles !== 1 || split.loose !== 0 || split.ghost !== 1) throw Error('bundle split by text.end: ' + JSON.stringify(split));
+  await page.locator('.m.ai .body').filter({ hasText: 'まとめです' }).waitFor();
+  await page.waitForFunction(() => !document.querySelector('.bundle .latest .tc'));
+  // 開き直しても同じ形（履歴の合成）
+  await page.reload();
+  const later2 = page.getByRole('button', { name: 'あとで', exact: true });
+  if (await later2.isVisible()) await later2.click();
+  await page.locator('.bundle .rhead').waitFor();
+  const reopened = await page.evaluate(() => ({ bundles: document.querySelectorAll('.bundle').length, n: document.querySelector('.bundle')?.dataset.n }));
+  if (reopened.bundles !== 1 || reopened.n !== '4') throw Error('reopened shape: ' + JSON.stringify(reopened));
+  return { passed: true, checks: ['live shape', 'approval in bundle', 'closed heading', 'keyboard', 'toggle all', 'text.end gaps', 'reopened'] };
 }

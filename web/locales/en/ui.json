@@ -1751,6 +1751,8 @@
       "todoDone": "{{done}}/{{total}} done",
       "todoItems": "Items ({{n}})",
       "forkHere": "Carry this conversation over up to here",
+      "moreFiles_one": "+{{n}} more file",
+      "moreFiles_other": "+{{n}} more files",
       "input": "Input"
     },
     "result": {

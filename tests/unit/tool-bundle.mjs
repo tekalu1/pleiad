@@ -4,7 +4,7 @@
 //
 // DOM シムは tests/run.mjs が入口で入れている。
 import { bundleStats, splitToolCalls, clock } from "../../web/tool-bundle.mjs";
-import { renderToolCall, applyToolResult, toolChange, exitCodeOf, failureLine, isDelegateToolName } from "../../web/render.mjs";
+import { renderToolCall, applyToolResult, applyToolHints, toolChange, exitCodeOf, failureLine, isDelegateToolName } from "../../web/render.mjs";
 import { parseTaskNotice } from "../../web/task-notice.mjs";
 
 export const name = "tool-bundle";
@@ -53,6 +53,35 @@ export default async function (t) {
     t.ok("編集の量は変わった行だけ（−1 +2）", edit?.del === 1 && edit?.add === 2, JSON.stringify(edit));
     t.ok("書き込みは全部が追加", toolChange("Write", { file_path: "b.mjs", content: "a\nb\nc" })?.add === 3);
     t.ok("読むツールは変更ではない", toolChange("Read", { file_path: "a.mjs" }) === null && toolChange("Bash", { command: "ls" }) === null);
+  }
+
+  // ---- Codex・agy の変更（バックエンドが申告した shape で決める）
+  {
+    applyToolHints({ fileChange: { label: "編集", shape: "edit" }, write_file: { label: "書く", shape: "write" }, edit_file: { label: "編集", shape: "edit" }, commandExecution: { label: "実行", shape: "shell" } });
+    const codex = toolChange("fileChange", { files: ["D:/x/a.mjs", "D:/x/b.mjs"] });
+    t.ok("Codex の fileChange: パスの一覧からファイル数だけ数える（量は 0）", codex?.paths?.length === 2 && codex.add === 0 && codex.del === 0, JSON.stringify(codex));
+    const st = bundleStats([item("編集", { change: codex }), item("編集", { change: { path: "D:/x/a.mjs", add: 3, del: 1 } })]);
+    t.ok("同じファイルは量を足して 1 つ、別のファイルは別に数える", st.files.length === 2 && st.files.find((f) => f.name === "a.mjs").add === 3, JSON.stringify(st.files));
+    const agyWrite = toolChange("write_file", { TargetFile: "D:/x/n.mjs", CodeContent: "a\nb\nc" });
+    t.ok("agy の write_file: 書いた行数", agyWrite?.path === "D:/x/n.mjs" && agyWrite.add === 3, JSON.stringify(agyWrite));
+    const agyEdit = toolChange("edit_file", { TargetFile: "D:/x/n.mjs", TargetContent: "a\nb", ReplacementContent: "a\nc\nd" });
+    t.ok("agy の edit_file: 変わった行", agyEdit?.del === 1 && agyEdit.add === 2, JSON.stringify(agyEdit));
+    t.ok("shell 形のツールは変更ではない", toolChange("commandExecution", { command: "ls" }) === null);
+    const card = renderToolCall("fileChange", { files: ["D:/x/a.mjs", "D:/x/b.mjs"] });
+    applyToolResult(card, { text: "ok", isError: false });
+    t.ok("Codex の fileChange: 主役は最初のファイル、右端は量が分からないので「編集した」", text(card.querySelector(".tc-main")).includes("a.mjs") && text(card.querySelector(".tc-res")) === "編集した", text(card.querySelector(".tc-res")));
+  }
+
+  // ---- 押さずに決着した承認: 結果が届いたら承認カードを外して行を戻す
+  {
+    const row = renderToolCall("Write", { file_path: "D:/x/a.mjs", content: "a" });
+    const shell = row.querySelector(".tc-details");
+    shell.hidden = true;
+    row.classList.add("tc-waiting");
+    const box = document.createElement("div"); box.className = "tc-appr";
+    row.append(box);
+    applyToolResult(row, { text: "ok", isError: false });
+    t.ok("結果が届いたら承認カードは外れ、行が戻る", row.querySelector(".tc-appr") === null && shell.hidden === false && !row.classList.contains("tc-waiting") && row.classList.contains("tc-done"));
   }
 
   // ---- 1 行と結果

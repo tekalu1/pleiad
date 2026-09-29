@@ -33,10 +33,13 @@ export function bundleStats(items) {
   const files = new Map();
   for (const it of items) {
     if (!it.change || it.running || it.err) continue;
-    const key = it.change.path;
-    const f = files.get(key) ?? { path: key, name: String(key).replace(/\\/g, "/").split("/").pop(), add: 0, del: 0 };
-    f.add += it.change.add; f.del += it.change.del;
-    files.set(key, f);
+    // Codex の fileChange は変更したパスの一覧（paths）だけを持つ。量は最初のパスにだけ載せる
+    const paths = it.change.paths?.length ? it.change.paths : [it.change.path];
+    paths.forEach((key, i) => {
+      const f = files.get(key) ?? { path: key, name: String(key).replace(/\\/g, "/").split("/").pop(), add: 0, del: 0 };
+      if (i === 0) { f.add += it.change.add; f.del += it.change.del; }
+      files.set(key, f);
+    });
   }
   return { count: items.length, mix, errors: items.filter((it) => it.err && !it.running).length, files: [...files.values()] };
 }
@@ -101,8 +104,8 @@ const secs = (ms) => `${Math.max(0, Math.floor(ms / 1000))}s`;
 function tickAll() {
   const now = Date.now();
   for (const n of ticking) {
-    if (!n.isConnected) { ticking.delete(n); continue; }
-    if (n.paint) n.paint(now);
+    if (!n.isConnected || !n.paint) { ticking.delete(n); continue; }   // 切り離された・結果が届いて印を外した要素は刻まない
+    n.paint(now);
   }
   if (!ticking.size) { clearInterval(timer); timer = 0; }
 }
@@ -211,7 +214,8 @@ export class Bundle {
 
     this.head.onclick = () => this.toggleAll();
     this.el.addEventListener("keydown", (e) => {
-      if (e.target.closest?.(".tc-details-body") || e.altKey || e.ctrlKey || e.metaKey) return;
+      // ↑↓・Esc で遡るのは、見出しか薄い行にフォーカスがあるときだけ（承認のボタンや開いた行の中では、会話のスクロールを奪わない）
+      if (!e.target.closest?.(".rhead, .hi.ghost") || e.target.closest?.(".tc-details-body") || e.altKey || e.ctrlKey || e.metaKey) return;
       if (e.key === "ArrowUp") { e.preventDefault(); this.step(1); }
       else if (e.key === "ArrowDown") { e.preventDefault(); this.step(-1); }
       else if (e.key === "Escape" && (this.expanded || this.k > 0)) { e.preventDefault(); this.collapse(); }
@@ -219,7 +223,7 @@ export class Bundle {
     // 薄い行を押す: 行を開くのではなく遡る
     this.hist.addEventListener("click", (e) => {
       const g = e.target.closest?.(".hi.ghost");
-      if (!g) return;
+      if (!g || e.target.closest?.("button, a")) return;
       e.preventDefault(); e.stopPropagation(); this.step(3);
     }, true);
     this.hist.addEventListener("keydown", (e) => {
@@ -341,7 +345,8 @@ export class Bundle {
     const inner = this.inner, n = inner.length;
     inner.forEach((card, i) => {
       const fromEnd = n - 1 - i;
-      const shown = this.expanded || fromEnd < this.k;
+      // 承認を待っている行は、まとまりの操作（閉じる・新しいツール）で薄い行や隠れた行に落とさない
+      const shown = this.expanded || fromEnd < this.k || card.classList.contains("tc-waiting");
       const ghost = !shown && this.live && !!this.cur && fromEnd === this.k;
       const w = card.hiWrap;
       if (!w) return;
@@ -353,6 +358,9 @@ export class Bundle {
       w.classList.toggle("hid", now === "hid");
       w.classList.toggle("ghost", now === "ghost");
       if (now === "hid") w.setAttribute("inert", ""); else w.removeAttribute("inert");
+      // 薄い行は「押すと遡る」1 つの部品。中のリンクや開閉に Tab で入れない
+      const inner = w.firstChild;
+      if (inner) { if (now === "ghost") inner.setAttribute("inert", ""); else inner.removeAttribute("inert"); }
       if (now === "ghost") {
         w.tabIndex = 0;
         const it = itemOf(card);

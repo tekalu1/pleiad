@@ -185,6 +185,8 @@ const state = {
   presents: [],
   turnEl: null,        // 追記中の AI の発言（.m.ai）
   bundle: null,        // 走っているツールのまとまり（本文・委譲・ターンの終わりで閉じる。web/tool-bundle.mjs）
+  pendingUuid: null,   // 見せるものが無いまま確定した発言（thinking だけ）の id。次に発言の入れ物を作るときに使う
+  endedWithText: false, // 直前に確定した発言（text.end）が本文を持っていたか。本文の無いツールだけの発言が続くときは、発言もまとまりも閉じない
   turnClosed: false,   // text.end が来た。続くツール呼び出しは同じ発言に入り、次の本文は新しい発言になる
   streamEl: null,      // 追記中の本文
   thinkEl: null,       // 追記中の thinking 要素（平文が来たときだけ作る）
@@ -944,7 +946,8 @@ const lastIsAi = () => thread.querySelector(".mw:last-of-type .m")?.classList.co
  */
 function ensureTurnEl() {
   if (state.turnEl) return state.turnEl;
-  const m = aiMsg({ at: new Date().toISOString(), cont: lastIsAi() });
+  const m = aiMsg({ at: new Date().toISOString(), cont: lastIsAi(), uuid: state.pendingUuid });
+  state.pendingUuid = null;
   append(m, `live:${++liveSeq}`);
   state.turnEl = m;
   return m;
@@ -959,8 +962,14 @@ function openTurnEl() {
 
 /** 走っているまとまりを閉じて見出し 1 行にする（本文が来た・委譲が始まった・ターンが終わった） */
 function closeBundle() {
-  state.bundle?.close();
+  const b = state.bundle;
   state.bundle = null;
+  if (!b) return;
+  b.close();
+  // 走っている行を抱えたまま閉じた（本文・割り込みが先に来た）。その行は閉じた見出しの中に隠れるので、稼働表示で待っていることを残す
+  if (b.cards.some((c) => c.classList.contains("tc-running"))) {
+    queueMicrotask(() => { if (isRunningHere() && !state.bundle) activity.show(activity.text || ACTIVITY_LABEL.running); });
+  }
 }
 
 /** 今のまとまり。無ければ今の発言の末尾に作る */
@@ -976,12 +985,37 @@ function liveBundle() {
 /** まとまりの外に置くツール（委譲・サブエージェント）。子は親のターンの後も動くので、閉じても見える */
 const isBoundaryTool = (name) => isDelegateTool(name) || SUBAGENT_TOOLS.has(name);
 
+/** 会話の下端に付いていく（行が伸びて高さが変わる間も、読んでいた下端に居続ける） */
+function followBottom(ms = 320) {
+  const end = performance.now() + ms;
+  const tick = () => { log.scrollTop = log.scrollHeight; if (performance.now() < end) requestAnimationFrame(tick); };
+  tick();
+}
+
 function closeTurnEl() {
   closeThink();
   closeBundle();
   state.streamEl = null;
   state.turnEl = null;
   state.turnClosed = false;
+  state.endedWithText = false;
+  state.pendingUuid = null;
+}
+
+/**
+ * ターンが終わった。結果を持たないまま残った行（中断・エラーで tool.result が来なかった）から、走っている印と承認カードを外す。
+ * 弧と経過が回り続けたり、閉じた見出しの中で押せない承認が残ったりしないように
+ */
+function settleStrays() {
+  for (const row of thread.querySelectorAll(".tc.tc-running, .tc.tc-waiting")) {
+    row.classList.remove("tc-running", "tc-waiting");
+    const res = row.querySelector(".tc-res");
+    if (res) { res.paint = null; res.replaceChildren(); }
+    row.querySelector(".tc-appr")?.remove();
+    const shell = row.querySelector(".tc-details");
+    if (shell) shell.hidden = false;
+    bundleOf(row)?.paint();
+  }
 }
 
 // ---------------------------------------------------------------- 質問カード
@@ -1203,6 +1237,9 @@ function rowApprovalCard(ev, row) {
     if (box.dataset.sending) return;
     box.dataset.sending = "1";
     box.classList.add("sending");
+    // 拒否の印は送る前に付ける（確認より先に結果が届いても、失敗と数えない）。送れなかったら外す
+    const change = row.toolChange;
+    if (!ok) { row.dataset.denied = "1"; row.toolChange = null; }
     for (const b of buttons) b.disabled = true;
     res.className = "res";
     res.removeAttribute("role");
@@ -1214,6 +1251,7 @@ function rowApprovalCard(ev, row) {
       clearTimeout(arc);
       delete box.dataset.sending;
       box.classList.remove("sending");
+      if (!ok) { delete row.dataset.denied; row.toolChange = change; }
       for (const b of buttons) b.disabled = false;
       res.className = "res fail";
       res.setAttribute("role", "alert");
@@ -1230,12 +1268,10 @@ function rowApprovalCard(ev, row) {
       line.querySelector(".tc-note")?.remove();
       if (ok) line.querySelector(".tc-res").before(said);
       fadeIn(details);
-      if (ok) markRunning(row);
-      else {
-        row.dataset.denied = "1";
-        row.toolChange = null;
-        line.querySelector(".tc-res").textContent = t("chat.approval.denied");
-      }
+      // 結果が確認より先に届いていたら（tc-done / tc-error）、終わった行に弧を付けない
+      const finished = row.classList.contains("tc-done") || row.classList.contains("tc-error");
+      if (ok) { if (!finished) markRunning(row); }
+      else if (!finished) line.querySelector(".tc-res").textContent = t("chat.approval.denied");
     });
     bundleOf(row)?.paint();
     state.pendingPerms.delete(ev.id);
@@ -1392,6 +1428,7 @@ const activity = {
   text: "",
   behind: null,      // behindOf() の結果。裏を待っている間だけ
   idleTimer: null,   // ツールが終わってから稼働表示を戻すまでの短い待ち（afterTool）
+  suspended: false,  // ツールの行が今の状態を語っている間。汎用の activity 事象（passive）は出さない
   shape: "",         // 今の印（run / sat:N / none）。変わったときだけ差し替える
   /** ターンは終わり、待てない裏の作業（端末・裏のコマンド）だけが残っている。印も経過時間も出さない（§6.1） */
   idleOnly() {
@@ -1421,8 +1458,9 @@ const activity = {
   suspend() {
     clearTimeout(this.idleTimer);
     this.idleTimer = null;
+    this.suspended = true;
     if (!this.t0) this.t0 = Date.now();
-    if (behindHere()) return this.show(this.text || ACTIVITY_LABEL.running);
+    if (behindHere()) return this.show(this.text || ACTIVITY_LABEL.running, { keepSuspended: true });
     clearTimeout(this.markTimer);
     this.markTimer = null;
     this.behind = null;
@@ -1436,12 +1474,17 @@ const activity = {
     clearTimeout(this.idleTimer);
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
-      if (isRunningHere() && !document.querySelector(".tc-running, .tc-waiting")) this.show(ACTIVITY_LABEL.running);
+      // 走っている・承認を待っている行が今のまとまりに無いときだけ（前のターンの残骸や他の会話の行は見ない）
+      const busy = (state.bundle?.cards ?? []).some((c) => c.classList.contains("tc-running") || c.classList.contains("tc-waiting"));
+      if (isRunningHere() && !busy) this.show(ACTIVITY_LABEL.running);
     }, 600);
   },
-  show(text, { delayMark = false } = {}) {
+  show(text, { delayMark = false, passive = false, keepSuspended = false } = {}) {
+    // 汎用の事象（動いている・待っている）は、ツールの行が語っている間は出さない
+    if (passive && this.suspended && !behindHere()) return;
     clearTimeout(this.idleTimer);
     this.idleTimer = null;
+    if (!keepSuspended) this.suspended = false;
     // 中断を頼んだ後は、止まり終えるまで何が流れてきても「中断している」のまま出す
     if (stoppingHere()) text = ACTIVITY_LABEL.stopping;
     this.text = text;
@@ -1493,6 +1536,7 @@ const activity = {
     clearInterval(this.timer);
     clearTimeout(this.idleTimer);
     this.idleTimer = null;
+    this.suspended = false;
     clearTimeout(this.markTimer);
     this.timer = null;
     this.markTimer = null;
@@ -1843,9 +1887,17 @@ function onEvent(ev, replay = false) {
     case "text.end": {
       // 確定した発言。id が分かったので「ここから分岐」が押せるようになる。
       // 続くツール呼び出しは同じ発言に入る（履歴の 1 メッセージ = 本文 + ツール呼び出し）。
-      // 既に閉じた発言に続けて来たなら（本文の無いツールだけの発言）、新しい発言を作る
+      // 本文の無い発言（ツールだけ）が、本文の無い発言に続くときは、発言もまとまりも閉じない。
+      // 履歴は「本文も thinking も無く連続するツール呼び出し」を 1 つの発言に合成する（claude-normalize の transcriptToMessages）ので、ライブも同じにする。
+      // Claude は本文の無い発言ごとに text.end を出す
+      const bodyless = !state.streamEl && !state.thinkEl;
+      if (bodyless && state.turnClosed && !state.endedWithText) return;
+      // 見せるものが無い発言（thinking が署名だけ）のために、空の発言の入れ物は作らない。id は次の入れ物に持たせる
+      if (bodyless && !state.turnEl) { state.pendingUuid = ev.uuid ?? null; state.turnClosed = true; state.endedWithText = false; return; }
+      // 本文のある発言に続けて来たなら（本文の無いツールだけの発言）、新しい発言を作る
       const m = openTurnEl();
       if (ev.uuid) setUuid(m, ev.uuid);
+      state.endedWithText = !bodyless;
       closeThink();
       state.streamEl = null;
       state.turnClosed = true;
@@ -1877,11 +1929,16 @@ function onEvent(ev, replay = false) {
       const stick = atBottom();
       const card = renderToolCall(ev.name, ev.input, { id: ev.id });
       linkDelegateCard(card, ev.input);
-      if (isBoundaryTool(ev.name)) { closeBundle(); ensureTurnEl().append(card); }
+      const boundary = isBoundaryTool(ev.name);
+      if (boundary) { closeBundle(); ensureTurnEl().append(card); }
       else { markRunning(card); liveBundle().add(card); }
-      if (stick) log.scrollTop = log.scrollHeight;
+      // 2 件目で見出しが現れ、行が伸びる間も、読んでいた下端に付いていく
+      if (stick) followBottom();
       if (ev.id) state.toolCards.set(ev.id, card);
-      activity.suspend();   // 走っているツールは最新の行（弧と経過）が語る。末尾の稼働表示は重ねない
+      // 走っているツールは最新の行（弧と経過）が語る。末尾の稼働表示は重ねない。
+      // 委譲・サブエージェントの行には弧が無い（状態は 4 秒ごとの更新で追いつく）ので、それまでは従来の稼働表示を残す
+      if (boundary) activity.show(t("activity.runningTool", { tool: ev.name }));
+      else activity.suspend();
       return card;
     }
 
@@ -1894,12 +1951,13 @@ function onEvent(ev, replay = false) {
     }
 
     case "activity":
-      if (ev.state === "idle") { closeBundle(); return activity.hide(); }
+      if (ev.state === "idle") { settleStrays(); closeBundle(); return activity.hide(); }
       // 別のタブで押した中断・開き直した会話でも、止まり終えるまで中断ボタンを押せなくする
       if (ev.state === "stopping" && ev.sessionId && isRunningHere()) { state.stopping.add(ev.sessionId); syncRunState(); }
+      // running / waiting は「動いている」「待っている」だけを言う汎用の事象。ツールの行が語っている間（suspend 中）は出さない
       return activity.show(ev.label || (ev.state === 'preparing'
         ? ev.current && ev.total ? t('activity.connectingMcp', { current: ev.current, total: ev.total }) : t('activity.preparing')
-        : ACTIVITY_LABEL[ev.state] || ACTIVITY_LABEL.running), { delayMark: ev.state === 'preparing' });
+        : ACTIVITY_LABEL[ev.state] || ACTIVITY_LABEL.running), { delayMark: ev.state === 'preparing', passive: ev.state === 'running' || ev.state === 'waiting' });
 
     case 'taskNotice':
       closeTurnEl();
@@ -1916,6 +1974,7 @@ function onEvent(ev, replay = false) {
     }
     case "turnResult": {
       if (ev.compact) return;
+      settleStrays();
       closeBundle();                                // ターンが終わったら、最新の行を残さず見出しだけにする
       if (ev.outcome === "ok") return;             // 終わったことは稼働表示が消えれば分かる
       closeTurnEl();

@@ -754,27 +754,30 @@ function diffFold(oldS, newS) {
 /** 編集・書き込みが変えた量。まとまりの見出しの「N ファイルを変更」と、行の右端の「−2 +3」に使う。変えないツールは null */
 export function toolChange(name, input) {
   const inp = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const raw = String(name ?? "");
+  // 何のツールか。名前（Claude）に加えて、バックエンドが申告した shape（applyToolHints。Codex の fileChange・agy の write_file / edit_file）でも決める
+  const draw = TOOL_DRAW[raw];
+  const kind = raw === "MultiEdit" || draw === drawMultiEdit ? "multi"
+    : raw === "Write" || draw === drawWrite ? "write"
+    : raw === "Edit" || raw === "NotebookEdit" || draw === drawEdit ? "edit" : null;
+  if (!kind) return null;
   const path = FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v);
-  if (!path) return null;
-  switch (String(name ?? "")) {
-    case "Write": {
-      const n = lineCount(inp.content);
-      return { path, del: 0, add: n };
-    }
-    case "Edit": case "NotebookEdit": {
-      const { del, add } = diffLines(inp.old_string, inp.new_string);
-      return { path, del: del.length, add: add.length };
-    }
-    case "MultiEdit": {
-      let del = 0, add = 0;
-      for (const e of Array.isArray(inp.edits) ? inp.edits : []) {
-        const d = diffLines(e?.old_string, e?.new_string);
-        del += d.del.length; add += d.add.length;
-      }
-      return { path, del, add };
-    }
-    default: return null;
+  if (!path) {
+    // Codex の fileChange は変更したパスの一覧だけを持つ（量は分からないので 0。数えるのはファイルの数だけ）
+    const paths = Array.isArray(inp.files) ? inp.files.filter((p) => typeof p === "string" && p) : [];
+    return paths.length ? { path: paths[0], paths, del: 0, add: 0 } : null;
   }
+  if (kind === "write") return { path, del: 0, add: lineCount(inp.content ?? inp.CodeContent) };
+  if (kind === "edit") {
+    const { del, add } = diffLines(inp.old_string ?? inp.TargetContent, inp.new_string ?? inp.ReplacementContent);
+    return { path, del: del.length, add: add.length };
+  }
+  let del = 0, add = 0;
+  for (const e of Array.isArray(inp.edits) ? inp.edits : []) {
+    const d = diffLines(e?.old_string, e?.new_string);
+    del += d.del.length; add += d.add.length;
+  }
+  return { path, del, add };
 }
 
 // ------------------------------------------------------------ ツール別の描画
@@ -830,6 +833,8 @@ function drawWrite(card, head, inp) {
 
 function drawEdit(card, head, inp) {
   head.append(pathSpan(inp.file_path));
+  // Codex の fileChange: 変更したファイルが複数あれば、最初の 1 つに「ほか n ファイル」を添える
+  if (Array.isArray(inp.files) && inp.files.length > 1) head.append(noteSpan(t("timeline.tool.moreFiles", { count: inp.files.length - 1, n: fmtN(inp.files.length - 1) })));
   const a = String(inp.old_string ?? "");
   const b = String(inp.new_string ?? "");
   if (inp.replace_all) head.append(noteSpan(t("timeline.tool.replaceAll")));
@@ -1061,7 +1066,8 @@ export function renderToolCall(name, input, opts) {
   const draw = TOOL_DRAW[raw] ?? (raw.startsWith("mcp__") ? drawMcp : drawUnknown);
   let drawInp = inp;
   if (FILE_DRAWS.has(draw) && !inp.file_path) {
-    const target = FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v);
+    const target = FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v)
+      ?? (Array.isArray(inp.files) ? inp.files.find((p) => typeof p === "string" && p) : null);
     if (target) drawInp = { ...inp, file_path: target };
   }
   draw(body, line, drawInp, raw);
@@ -1105,12 +1111,15 @@ function summarizeResult(tool, body, n, change) {
   const found = /^Found (\d+) /.exec(out);
   if (found) return t("timeline.result.count", { count: Number(found[1]), n: fmtN(found[1]) });
 
+  // 編集の量。バックエンドが申告した shape で編集と決まったツール（Codex の fileChange・agy の edit_file）も同じ。量が分からなければ「編集した」
+  if (change && tool !== "Write") return change.add || change.del ? `${change.del ? `−${fmtN(change.del)} ` : ""}+${fmtN(change.add)}` : t("timeline.result.edited");
+
   switch (tool) {
     case "Glob": return t("timeline.result.count", { count: n, n: fmtN(n) });
     case "Write":
-      return change ? t("timeline.result.lines", { count: change.add, n: fmtN(change.add) }) : t("timeline.result.saved");
+      return change?.add ? t("timeline.result.lines", { count: change.add, n: fmtN(change.add) }) : t("timeline.result.saved");
     case "Edit": case "MultiEdit": case "NotebookEdit":
-      return change ? `${change.del ? `−${fmtN(change.del)} ` : ""}+${fmtN(change.add)}` : t("timeline.result.edited");
+      return t("timeline.result.edited");
     case "TodoWrite": return t("timeline.result.updated");
     default:
       // このアプリのツールは「〜した」という短い返事を返すので、それをそのまま見せる
@@ -1187,6 +1196,13 @@ export function applyToolResult(node, result) {
 
   // 呼び直されても二重に付かないよう、前回の結果を落としてから積む
   for (const old of [...node.querySelectorAll(".tc-out, .tc-preview, .tc-res-view, .tc-errline")]) old.remove();
+  // 結果が届いたなら承認は決着している（別の端末で押した・自動で通った・中断）。行を置き換えていた承認カードは外して行を戻す
+  const pending = node.querySelector(".tc-appr");
+  if (pending) {
+    pending.remove();
+    const shell = node.querySelector(".tc-details");
+    if (shell) shell.hidden = false;
+  }
   node.classList.remove("tc-error", "tc-done", "tc-running", "tc-waiting");
   const resEl = node.querySelector(".tc-res");
   if (resEl) { resEl.textContent = ""; resEl.className = "tc-res"; resEl.paint = null; delete resEl.dataset.sig; }

@@ -1699,6 +1699,7 @@
       "todoDone": "{{done}}/{{total}} 完了",
       "todoItems": "項目（{{n}}）",
       "forkHere": "この会話をここまで引き継ぐ",
+      "moreFiles_other": "ほか {{n}} ファイル",
       "input": "入力"
     },
     "result": {

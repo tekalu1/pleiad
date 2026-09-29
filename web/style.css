@@ -548,6 +548,8 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .message-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:var(--sp-1);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
 .message-actions .btn{font-size:var(--fs-xs);padding:3px 10px}
 .m.ai > .message-actions{position:absolute;right:48px;top:-1px}
+/* 見出しの行が無い続きの発言がツールの行から始まるとき、操作は右端の結果・「開く」と重ならないよう左へ寄せる */
+@media (min-width:561px){.m.ai.cont > .message-actions:has(+ :is(.tc,.bundle)){right:190px;top:3px}}
 .m:hover > .message-actions,.message-actions:focus-within{opacity:1}
 .m.editing > .message-actions{visibility:hidden}
 .message-editor{max-width:680px;background:var(--surface-2);border-radius:var(--r-l);padding:var(--sp-3) var(--sp-4)}

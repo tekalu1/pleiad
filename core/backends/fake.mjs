@@ -23,7 +23,7 @@
 //   "hook-follow <本文>" … 本文で返答した後、Stop フックに止められて続けた形（ToolSearch と load_skill を呼んで「ナレッジ化対象なし」）。
 //                    続きの発言には Claude の履歴と同じ stopHookFollowUp を付ける
 //   "steps:<json>" または "steps:@<json ファイルの絶対パス>" … ツールと本文を台本どおりに並べる。{"steps":[{"tool":"Grep","input":{…},"result":"…","error":false,"ms":600,"ask":false},{"text":"…"}]}
-//                    ms は結果を返すまでの時間、ask はツールを始めたあと承認（kind:"tool"）を待つ、text は本文を書く（前のツールは同じ発言に入る）
+//                    ms は結果を返すまでの時間、ask はツールを始めたあと承認（kind:"tool"）を待つ、text は本文を書く（前のツールは同じ発言に入る）、newMessage は発言の切れ目（text.end）だけを出す
 //   それ以外        … prompt をそのまま echo
 import crypto from "node:crypto";
 import { undelivered } from "./undelivered.mjs";
@@ -373,6 +373,11 @@ export const backend = {
         let calls = [];
         for (const step of script.steps ?? []) {
           if (signal?.signal?.aborted) break;
+          if (step.newMessage) {
+            // Claude は本文の無い（ツールだけの）発言ごとに text.end を出す。履歴は連続するツールだけの発言を 1 つに合成するので、calls は続ける
+            emit({ type: "text.end", uuid: crypto.randomUUID() });
+            continue;
+          }
           if (step.text != null) {
             const uuid = crypto.randomUUID();
             await say(emit, step.text, uuid);
