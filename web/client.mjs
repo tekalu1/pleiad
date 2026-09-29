@@ -1604,10 +1604,8 @@ function onEvent(ev, replay = false) {
       row.dataset.messageStarted = '1';
       row.querySelector('.m.user .body').innerHTML = plainTextHtml(ev.text);
       if (ev.at) { row.querySelector('.m').dataset.at = ev.at; row.querySelector('.who .when').textContent = hhmm(ev.at); }
-      for (const boundary of thread.querySelectorAll('.mw[data-compaction-id]')) {
-        const entry = state.compactions.find(item => item.id === boundary.dataset.compactionId);
-        if (entry && ev.at && entry.at < Date.parse(ev.at)) row.before(boundary);
-      }
+      // 放置中の圧縮で末尾に付いた区切りは、この発言の前へ置き直す。すでに正しい位置にある古い区切りは動かさない（at で並べ直す）
+      paintCompactions();
       // pending = 受理はしたが、まだエージェントに渡っていない（userMessage.delivered を待つ）。
       // 配達の合図が先に来ていた分（速いバックエンド）はここで消化する
       const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);
