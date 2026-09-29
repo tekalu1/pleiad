@@ -3059,11 +3059,11 @@
     },
     "rail": {
       "label": "Conversation map",
+      "now": "Now",
       "kind": {
         "pending": "Waiting for approval",
         "compact": "Compaction",
-        "branch": "Branch",
-        "visual": "Visualization"
+        "branch": "Branch"
       }
     },
     "toc": {

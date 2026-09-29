@@ -2963,11 +2963,11 @@
     },
     "rail": {
       "label": "会話の地図",
+      "now": "今",
       "kind": {
         "pending": "承認待ち",
         "compact": "圧縮の境目",
-        "branch": "分岐",
-        "visual": "可視化"
+        "branch": "分岐"
       }
     },
     "toc": {
