@@ -13,7 +13,7 @@ export const title = "途中で開いたセッションを履歴と受信イベ�
 
 export default async function (t) {
   const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
-  const functions = ["onEvent", "isMine", "appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl", "clearThread", "paintSession", "select", "loadAndPaint"].map(name => {
+  const functions = ["onEvent", "isMine", "appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl", "resetLiveTurn", "clearThread", "paintSession", "select", "loadAndPaint"].map(name => {
     let start = source.indexOf(`function ${name}(`);
     if (source.slice(start - 6, start) === "async ") start -= 6;
     return source.slice(start, source.indexOf("\n}", start) + 2);

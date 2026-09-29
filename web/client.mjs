@@ -47,6 +47,7 @@ import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
+import { retainPlan } from "./history-sync.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
 import { el, svgEl, icon, relTime, randomId } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
@@ -516,19 +517,79 @@ function prepareHistoryHeights() {
   });
 }
 
-function clearThread() {
-  heightPreparationVersion++;
-  if (heightPreparationTimer !== null) clearTimeout(heightPreparationTimer);
-  heightPreparationTimer = null;
+/** 走っているターンの描きかけ（稼働表示・本文・思考・発言の入れ物）を捨てる。走っている分は履歴の再生で描き直す */
+function resetLiveTurn() {
   activity.hide();
   cancelStream();
-  thread.replaceChildren(spine());
-  thread.classList.remove("branched");
   state.streamEl = null;
   state.thinkEl = null;
   state.turnEl = null;
   state.turnClosed = false;
+}
+
+function clearThread() {
+  heightPreparationVersion++;
+  if (heightPreparationTimer !== null) clearTimeout(heightPreparationTimer);
+  heightPreparationTimer = null;
+  resetLiveTurn();
+  thread.replaceChildren(spine());
+  thread.classList.remove("branched");
   state.toolCards.clear();
+}
+
+/** 行の中の発言の役割（続きの見出しを省くかの判定に使う）。履歴の行は AI なら .m.ai、人なら .m.user */
+function rowRole(row) {
+  const m = row.querySelector(".m");
+  return m?.classList.contains("ai") ? "assistant" : m?.classList.contains("user") ? "user" : null;
+}
+
+/**
+ * 静かな読み直し（つなぎ直したとき）で、履歴から描いた行を plan.keepItems 項目まで残し、その後ろを外す（web/history-sync.mjs の retainPlan）。
+ * 残す境目は、残す項目のうち一番後ろの「履歴から描いた行」（data-h）。ライブで描いて履歴の添字を付けただけの行は、
+ * 1 行が複数の発言にまたがることがあるので境目にしない（その分は履歴から描き直す）。
+ * 境目より前でも、圧縮の区切りと分岐点の行は描き直すので外す。境目が無ければ null（呼び出し側が全部描き直す）。
+ * 戻り値は { row: 境目の行, from: 描き直す最初の項目の添字, prevRole: その直前の発言の役割 }
+ */
+function retainThread({ keepItems, items }) {
+  const rows = new Map();
+  for (const row of thread.children) if (row.dataset.h && row.dataset.key) rows.set(row.dataset.key, row);
+  const keyOf = it => it.kind === "present" ? `p:${it.pi}` : `m:${it.mi}`;
+  let boundary = null, from = 0;
+  for (let i = keepItems - 1; i >= 0 && !boundary; i--) {
+    boundary = rows.get(keyOf(items[i])) ?? null;
+    from = i + 1;
+  }
+  if (!boundary) return null;
+  let prevRole = null;
+  for (let i = from - 1; i >= 0 && prevRole === null; i--) {
+    const row = items[i].kind === "msg" ? rows.get(keyOf(items[i])) : null;
+    if (row) prevRole = rowRole(row);
+  }
+  resetLiveTurn();
+  let after = false;
+  for (const row of [...thread.children]) {
+    if (row.classList.contains("spine")) continue;
+    if (after || row.classList.contains("branch-row") || row.dataset.compactionId !== undefined) row.remove();
+    if (row === boundary) after = true;
+  }
+  for (const [id, card] of state.toolCards) if (!card.isConnected) state.toolCards.delete(id);
+  return { row: boundary, from, prevRole };
+}
+
+/**
+ * 読み返している位置を、画面の基準の行（historyAnchor）で覚える。返す関数は、描き替えた後に同じ行が同じ高さに来るよう #log を動かす。
+ * 基準の行が外れていたら同じ添字の行、それも無ければ元の scrollTop
+ */
+function holdReading() {
+  const anchor = historyAnchor();
+  const top = anchor?.getBoundingClientRect().top;
+  const key = anchor?.dataset.key;
+  const scrollAt = log.scrollTop;
+  return () => {
+    const row = anchor?.isConnected ? anchor : key ? [...thread.children].find(x => x.dataset.key === key) : null;
+    if (row) log.scrollTop += row.getBoundingClientRect().top - top;
+    else log.scrollTop = scrollAt;
+  };
 }
 
 function spine() {
@@ -5033,31 +5094,40 @@ function paintBranchNames() {
   placeJunctions();
 }
 
-/** 履歴を描く。from 以降の添字（messages の mi）だけ。返すのは足した要素 */
-function paintHistory(fromMi = 0) {
+/**
+ * 履歴を描く。from 以降の添字（messages の mi）だけ。返すのは足した要素。
+ * retained を渡すと（静かな読み直し。retainThread の戻り値）、描き並べる項目の retained.from 番目からだけ描く
+ */
+function paintHistory(fromMi = 0, retained = null) {
   paintingHistory = true;
-  try { return paintHistoryRows(fromMi); }
+  try { return paintHistoryRows(fromMi, retained); }
   finally { paintingHistory = false; relayoutBranches(); }
 }
 
-function paintHistoryRows(fromMi) {
+function paintHistoryRows(fromMi, retained = null) {
   const items = buildItems(state.messages, state.presents);
   const refs = state.presents.map(p => p.reference);
   const added = [];
-  let prevRole = fromMi > 0 ? state.messages[fromMi - 1]?.role : null;
-  const startAt = fromMi > 0 ? new Date(state.messages[fromMi - 1]?.at ?? 0) : null;
-  for (const it of items) {
+  let prevRole = retained ? retained.prevRole : fromMi > 0 ? state.messages[fromMi - 1]?.role : null;
+  const startAt = !retained && fromMi > 0 ? new Date(state.messages[fromMi - 1]?.at ?? 0) : null;
+  for (const [index, it] of items.entries()) {
+    if (retained && index < retained.from) continue;
     if (it.kind === "present") {
       if (it.anchorMi >= 0 && it.anchorMi < fromMi) continue;
       if (it.anchorMi < 0 && startAt && new Date(it.p.at ?? 0) < startAt) continue;
       const wrapper = append(renderPresent(savedEvent(it.p)), `p:${it.pi}`);
+      wrapper.dataset.h = "1";
       if (it.p.by === "human") wrapper.dataset.humanAttachment = "true";
       added.push(wrapper);
       continue;
     }
     if (it.mi < fromMi) continue;
-    const { node, role } = historyRow(it.m, { cont: prevRole === "assistant", refs, prev: added.at(-1) });
-    if (node) added.push(append(node, `m:${it.mi}`));
+    const { node, role } = historyRow(it.m, { cont: prevRole === "assistant", refs, prev: added.at(-1) ?? retained?.row });
+    if (node) {
+      const row = append(node, `m:${it.mi}`);
+      row.dataset.h = "1";
+      added.push(row);
+    }
     prevRole = role;
   }
   return added;
@@ -5227,7 +5297,12 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh }) {
   }
   try {
     if (state.displayLoad !== load || keepUpTo === undefined && state.current !== id) return;
-    await paintSession(id, data, { keepUpTo, load, quiet, fresh });
+    // 静かな読み直しは、今の画面と同じ先頭の行を残して、変わった所から後ろだけ描く
+    const plan = quiet && keepUpTo === undefined
+      ? retainPlan({ messages: state.messages, presents: state.presents, compactions: state.compactions },
+        { messages: data?.messages, presents: data?.presents, compactions: data?.compactions })
+      : null;
+    await paintSession(id, data, { keepUpTo, load, quiet, fresh, plan });
   } catch (e) {
     // 描く途中（枝の読み込みなど）で落ちても、欄を待ちのまま残さない
     if (state.current === id && state.loadingSession === id && keepUpTo === undefined && !quiet) {
@@ -5243,7 +5318,7 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh }) {
  * 続きだけ描く。タイトル・一覧の選択・入力欄もここで一緒に切り替わる（= 描画の最終コマと同じタイミング）。
  * transition は選択前のノード座標。本文の高さを畳まず、ノードを横移動する。
  */
-async function paintSession(id, data, { keepUpTo, transition, loaded = false, load, quiet = false, fresh = false } = {}) {
+async function paintSession(id, data, { keepUpTo, transition, loaded = false, load, quiet = false, fresh = false, plan = null } = {}) {
   filePreview.sessionChanged(id);
   const snapshots = branchSnapshots();
   if (keepUpTo !== undefined) saveDraft().catch(() => {});
@@ -5291,7 +5366,9 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   const scrollAt = log.scrollTop;
   // 読み直しは、末尾を見ていたなら末尾へ、読み返していたならその位置のまま描き替える
   const atEnd = log.scrollHeight - log.clientHeight - log.scrollTop < 40;
-  if (keepUpTo === undefined) clearThread();
+  const restoreReading = plan && !atEnd ? holdReading() : null;
+  const retained = plan ? retainThread(plan) : null;
+  if (keepUpTo === undefined) { if (!retained) clearThread(); }
   else {
     const last = keepUpTo > 0 ? branchAnchor(keepUpTo - 1) : null;
     let after = !last;
@@ -5302,7 +5379,8 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
     }
   }
   // Shared DOM survives a fork switch, but its UUID must belong to the selected session.
-  for (const w of thread.querySelectorAll('.mw[data-key^="m:"]')) {
+  // 静かな読み直しで残した行は同じ会話の同じ発言なので、uuid は変わらない
+  if (!retained) for (const w of thread.querySelectorAll('.mw[data-key^="m:"]')) {
     const message = state.messages[Number(w.dataset.key.slice(2))];
     const m = w.querySelector('.m[data-role]');
     if (m && message) {
@@ -5314,7 +5392,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   }
   if (!keepComposer) loadDraft();
   closeTurnEl();
-  const added = paintHistory(keepUpTo ?? 0);
+  const added = paintHistory(keepUpTo ?? 0, retained);
   paintCompactions();
   if (state.initialMessageId) {
     const lastUser = [...thread.querySelectorAll('.mw:has(.m.user:not(.cmd))')].at(-1);
@@ -5350,7 +5428,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   const retired = data?.retired ?? null;
   if (retired) { sys(escText(retired)); $("prompt").disabled = true; $("prompt").placeholder = retired; }
   syncResume();
-  if (keepUpTo === undefined && (!quiet || atEnd)) scrollToEnd(); else log.scrollTop = scrollAt;
+  if (keepUpTo === undefined && (!quiet || atEnd)) scrollToEnd(); else if (restoreReading) restoreReading(); else log.scrollTop = scrollAt;
   prepareHistoryHeights();
   if (family) family.then(() => {
     if (state.current !== id || load && state.displayLoad !== load) return;
