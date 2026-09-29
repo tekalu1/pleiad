@@ -22,6 +22,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { writeAtomic } from './atomic-file.mjs';
 import os from "node:os";
 import { readLocalFile } from "./local-files.mjs";
 import { isLocalRequest, defaultOpener, createRateLimit, OPENABLE } from './os-open.mjs';
@@ -2517,7 +2518,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
   broadcastRunning();
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
   if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt);
-  if (record && turn.outcome === 'ok' && turn.userInitiated && !turn.compaction
+  // 利用者の送信でも、委譲の完了通知などで始まったターンでも予約する（ADR 0068）。圧縮のターンの後は予約し直さない
+  if (record && turn.outcome === 'ok' && !turn.compactTrigger && !turn.compaction
       && !delegated && turn.info.sessionId) {
     const id = turn.info.sessionId;
     const meta = await store.get(id);
@@ -2546,8 +2548,44 @@ async function kickQueued() {
 
 // 同じ会話のターン（準備中を含む）が終わるのを待つ
 const sessionBusy = (id) => runtime.turns.has(id) || switching.has(id) || forking.has(id);
+const COMPACTION_SCHEDULE_FILE = path.join(store.dataDir, 'compaction-schedule.json');
+// 見えている予約をファイルに写す。同じティック内の連続変更は 1 回にまとめ、書き込みは順に行う（ADR 0069）
+let compactionSaveTimer = null;
+let compactionSaveChain = Promise.resolve();
+function saveCompactionSchedule() {
+  if (compactionSaveTimer) return;
+  compactionSaveTimer = setTimeout(() => {
+    compactionSaveTimer = null;
+    compactionSaveChain = compactionSaveChain.then(async () => {
+      const entries = {};
+      for (const { sessionId, at, backendId, usedTokens } of compactionScheduler.entries())
+        entries[sessionId] = { at, backend: backendId, usedTokens };
+      await writeAtomic(COMPACTION_SCHEDULE_FILE, JSON.stringify({ version: 1, entries }, null, 2));
+    }).catch(err => console.error('  自動圧縮の予約を保存できませんでした:', String(err?.message ?? err)));
+  }, 0);
+}
+async function readCompactionSchedule() {
+  try {
+    const saved = JSON.parse(await fs.readFile(COMPACTION_SCHEDULE_FILE, 'utf8'));
+    return saved?.version === 1 && saved.entries && typeof saved.entries === 'object' ? Object.entries(saved.entries) : [];
+  } catch { return []; }
+}
+// 前の起動で置いた予約を戻す。猶予（8 分）を過ぎたもの、会話が無いもの、バックエンドが変わったものは捨てる。
+// 発火時の canRun は今までどおり全条件を確かめる
+async function restoreCompactionSchedule() {
+  const revived = [];
+  for (const [id, saved] of await readCompactionSchedule()) {
+    if (!Number.isFinite(saved?.at) || typeof saved.backend !== 'string' || !(compactionScheduler.now() <= saved.at + compactionScheduler.graceMs)) continue;
+    const backend = await resolveBackendForSession(id).catch(() => null);
+    if (backend?.id === saved.backend) revived.push([id, saved]);
+  }
+  for (const [id, saved] of revived)
+    compactionScheduler.schedule(id, saved.backend, Math.max(0, saved.at - compactionScheduler.now()),
+      undefined, Number.isFinite(saved.usedTokens) ? saved.usedTokens : null);
+  saveCompactionSchedule();
+}
 const compactionScheduler = createCompactionScheduler({
-  changed: (sessionId, at) => emitGlobal({ type: 'compactionSchedule', sessionId, at }),
+  changed: (sessionId, at) => { emitGlobal({ type: 'compactionSchedule', sessionId, at }); saveCompactionSchedule(); },
   canRun: async (id, expectedBackend) => {
     const [meta, backend, queued] = await Promise.all([store.get(id), resolveBackendForSession(id), outbox.list(id)]);
     const row = compactionSettings[backend?.id === 'fake' ? 'claude' : backend?.id];
@@ -4308,4 +4346,6 @@ server.once("error", (err) => {
   server.removeListener("listening", announce);
   server.listen(0, HOST, announce);
 });
+// 設定とバックエンドが揃った後に、前の起動の放置圧縮の予約を戻す
+await restoreCompactionSchedule().catch(err => console.error('  自動圧縮の予約を戻せませんでした:', String(err?.message ?? err)));
 server.listen(PORT, HOST, announce);
