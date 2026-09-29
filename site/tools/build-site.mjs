@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // 公開先の URL（canonical・hreflang・og:url・og:image の元）。末尾は /
-export const SITE_URL = "https://tekalu1.github.io/pleiad/";
+export const SITE_URL = "https://pleiad.dev/";
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LANGS = {
@@ -16,7 +16,7 @@ const LANGS = {
   en: { dir: "en/", locale: "en_US", ogImage: "assets/og-en.png" },
 };
 // 出力先へ写さないもの（生成の材料）
-const SKIP = new Set(["tools", "locales", "README.md", "index.html"]);
+const SKIP = new Set(["tools", "locales", "README.md", "index.html", "wrangler.jsonc"]);
 const LOGOS = {
   claude: '<img src="assets/claude.svg" alt="" width="16" height="16">',
   openai: '<img src="assets/openai.svg" alt="" width="16" height="16">',
@@ -105,10 +105,20 @@ function headTags(lang) {
   ].join("\n");
 }
 
+// 言語の切り替え: 地球のアイコンと今の言語の名前。開くと各言語をその言語の名前で並べる
 function langSwitch(lang) {
-  return lang === "ja"
-    ? '<a class="nav-lang" href="en/" hreflang="en" lang="en">EN</a>'
-    : '<a class="nav-lang" href="../" hreflang="ja" lang="ja">日本語</a>';
+  const ja = lang === "ja";
+  const item = (code, href, name) =>
+    `<a href="${href}" hreflang="${code}" lang="${code}"${code === lang ? ' aria-current="page"' : ""}>${name}</a>`;
+  return [
+    '<details class="lang">',
+    `  <summary class="lang-btn" aria-label="${ja ? "言語" : "Language"}"><svg aria-hidden="true"><use href="#i-globe"/></svg><span class="lang-cur">${ja ? "日本語" : "English"}</span><svg class="lang-chev" aria-hidden="true"><use href="#i-chev"/></svg></summary>`,
+    '  <div class="lang-menu">',
+    `    ${item("ja", ja ? "./" : "../", "日本語")}`,
+    `    ${item("en", ja ? "en/" : "./", "English")}`,
+    "  </div>",
+    "</details>",
+  ].join("\n");
 }
 
 export function renderPage(source, lang, dict) {

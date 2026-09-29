@@ -66,6 +66,17 @@ function trackArcs(root = document) {
   else if (!arcLoop) arcLoop = requestAnimationFrame(drawArcs);
 }
 
+// 言語の切り替え: 外を押すか Esc で閉じる
+const langMenu = $('.lang');
+if (langMenu) {
+  document.addEventListener('click', (e) => { if (langMenu.open && !langMenu.contains(e.target)) langMenu.open = false; });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !langMenu.open) return;
+    langMenu.open = false;
+    $('summary', langMenu).focus();
+  });
+}
+
 // ナビ: 面はヒーローを過ぎたら
 const nav = $('.nav');
 // ダウンロードの大きなボタン（ヒーローと終わり）が見えている間は、ナビに同じボタンを重ねない

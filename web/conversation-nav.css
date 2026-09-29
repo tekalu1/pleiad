@@ -1,4 +1,4 @@
-/* 会話の移動（docs/design-system.md「会話の移動」、ADR 0059）。
+/* 会話の移動（docs/design-system.md「会話の移動」、ADR 0063）。
    A 残る問い・C 最新へ（web/conversation-nav-view.mjs）。B 地図・D 目次は後の段で足す。
    浮く面（最新へ・地図の浮く面）は、ライトでは --surface-paper。ダークでは地（--surface-paper）と同じ面が沈むので、一段明るい --surface-1 にする */
 

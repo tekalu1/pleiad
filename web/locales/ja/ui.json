@@ -181,7 +181,8 @@
         "title": "リンクの開き先",
         "inapp": "内蔵ブラウザー",
         "external": "既定のブラウザー",
-        "note": "内蔵ブラウザーは会話の右に開き、ログインはこのアプリの中に残ります。Pleiad 本体の保存領域とは分けています。"
+        "note": "内蔵ブラウザーは会話の右に開き、ログインはこのアプリの中に残ります。Pleiad 本体の保存領域とは分けています。",
+        "shortcuts": "{{key}}+クリックと中クリックは、いつも既定のブラウザーで開きます。右クリックでどちらでも選べます。"
       },
       "saveFailed": "保存できませんでした: {{error}}",
       "agentOperation": { "title": "エージェントの操作", "bundled": "agent-browser {{version}} · 同梱" },
@@ -1204,6 +1205,8 @@
     "sys": {
       "agentChanged": "エージェントを {{agent}} に変更しました。次の送信から会話を引き継ぎます。",
       "taskResumed": "Pleiad タスクの結果を受け取って再開しました",
+      "taskResult": "委譲の結果",
+      "taskFull": "エージェントに渡した全文",
       "interruptionNote": "中断で止めたものをエージェントに伝えました",
       "failed": "失敗: {{error}}",
       "unknownReason": "理由不明",
@@ -1242,7 +1245,46 @@
       "editCancel": "取り消し",
       "sendAsBranchTitle": "分岐して送信 (Ctrl+Enter)",
       "sendAsBranch": "分岐して送信",
+      "showMore": "続きを表示",
+      "showLess": "折りたたむ",
+      "showSource": "エージェントに渡した原文を見る",
+      "hideSource": "原文を閉じる",
       "you": "あなた"
+    },
+    "attachList": {
+      "count_other": "添付 {{count}} 件",
+      "open": "開く",
+      "copyPath": "パスをコピー",
+      "close": "閉じる",
+      "sent": "送信済み",
+      "byPath": "パスで渡す",
+      "jump": "文中の位置へ移動",
+      "insert": "カーソルの位置に入れる",
+      "section": {
+        "inline": "文中の添付",
+        "tail": "文末に付く"
+      },
+      "origin": {
+        "host": "ホスト",
+        "device": "この端末"
+      }
+    },
+    "composerAtt": {
+      "retry": "再試行",
+      "cancelled": "やめました",
+      "failed": "送れませんでした: {{error}}",
+      "entrySending_other": "{{count}} 件送信中",
+      "entryFailed_other": "{{count}} 件失敗",
+      "blockSending": "添付を送っている間は送れません",
+      "blockFailed": "送れなかった添付があります。再試行するか外してください"
+    },
+    "composerFormat": {
+      "label": "書式",
+      "strong": "太字",
+      "em": "斜体",
+      "code": "コード",
+      "link": "リンク",
+      "url": "リンクの URL"
     },
     "next": {
       "title": "次のターンから適用",
@@ -1285,6 +1327,7 @@
       "firstMessage": "{{name}} の最初の発言を書く",
       "placeholder": "Ctrl+Enter で送信",
       "placeholderTouch": "メッセージを書く",
+      "editorLabel": "メッセージ",
       "queued": "会話ができしだい送ります",
       "queuedCancel": "取り消す",
       "historyLoading": "履歴を読み込み中…",
@@ -1354,8 +1397,6 @@
       "sendingTitle": "{{name}}（{{size}}）をホストへ送っています",
       "cancelSending": "送るのをやめる",
       "largeImage": "{{name}}（{{size}}）を添付しました。エージェントは画像をパスから読みます。5MB を超える画像は、エージェントによっては画像として読めないことがあります。そのときは小さくしてから添付してください。",
-      "removeNamed": "外す: {{name}}",
-      "removeNamedIn": "外す: {{name}}（{{folder}}）",
       "deviceFolder": "この端末",
       "already": "このファイルはすでに添付されています"
     },
@@ -1634,6 +1675,14 @@
       "openOnDeviceSub": "この端末のブラウザー",
       "openOnPc": "PC のブラウザーで見る",
       "pcOnly": "この URL は PC からだけ開けます。",
+      "openInApp": "内蔵ブラウザーで開く",
+      "chooseDest": "開き先を選ぶ",
+      "copy": "リンクをコピー",
+      "copied": "リンクをコピーしました",
+      "copyFailed": "コピーできませんでした",
+      "clickHint": "クリック",
+      "ctrlClickHint": "{{key}}+クリック",
+      "ctrlHint": "· {{key}} で既定",
       "close": "閉じる"
     },
     "present": {
@@ -1678,9 +1727,6 @@
       "lineRange": "{{from}}–{{to}} 行",
       "firstLines_other": "先頭 {{n}} 行",
       "fromLine": "{{n}} 行目から",
-      "lines_other": "{{n}} 行",
-      "writeContent": "書き込む内容",
-      "editLines": "{{from}} 行 → {{to}} 行",
       "replaceAll": "全置換",
       "edits_other": "{{n}} 箇所",
       "grepMode": {
@@ -1700,6 +1746,7 @@
       "todoDone": "{{done}}/{{total}} 完了",
       "todoItems": "項目（{{n}}）",
       "forkHere": "この会話をここまで引き継ぐ",
+      "moreFiles_other": "ほか {{n}} ファイル",
       "input": "入力"
     },
     "result": {
@@ -1713,7 +1760,32 @@
       "failed": "✕ 失敗",
       "output": "出力",
       "outputPartial": "出力（途中まで）",
-      "generatedImage": "生成画像"
+      "generatedImage": "生成画像",
+      "failedExit": "✕ 失敗 · exit {{code}}",
+      "tail_other": "出力 · 末尾 {{n}} 行",
+      "showAll_other": "全 {{n}} 行を表示"
+    },
+    "bundle": {
+      "count_other": "{{n}} 件",
+      "changed_other": "{{n}} ファイルを変更",
+      "changedShort_other": "変更 {{n}}",
+      "failed_other": "✕ {{n}}",
+      "label_other": "ツール {{n}} 件（{{mix}}）",
+      "labelChanged_other": "・{{n}} ファイルを変更",
+      "labelFailed_other": "・失敗 {{n}}",
+      "labelOpen": "。押すと開く",
+      "labelClose": "。押すと閉じる",
+      "ghost": "1 つ前: {{verb}} {{target}}（押すと遡る）",
+      "running": "実行中"
+    },
+    "delegate": {
+      "running": "実行中 · {{dur}}",
+      "done": "完了 · {{dur}}",
+      "failed": "失敗 · {{dur}}",
+      "stopped": "中断 · {{dur}}",
+      "waiting": "承認待ち",
+      "secs_other": "{{n}} 秒",
+      "mins_other": "{{n}} 分"
     },
     "branch": {
       "pick": "この先の会話を選択",

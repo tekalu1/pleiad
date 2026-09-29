@@ -1,0 +1,10 @@
+// Cloudflare Workers の静的アセットとして _site を配る（site/README.md「公開」）。
+// パスはこのファイルからの相対。name は Cloudflare のプロジェクト名と同じにする。
+{
+  "name": "pleiad",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "../_site",
+    "html_handling": "auto-trailing-slash"
+  }
+}

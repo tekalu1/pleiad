@@ -9,7 +9,7 @@ import { t } from "./i18n.mjs";
 // 確定は Enter / Tab / クリック。`/名前 ` まで入り、続けて引数を打てる。
 // Ctrl+Enter は候補が開いていても送信のまま（keydown が false を返す）。
 //
-// 入力欄は textarea（役割は textbox）なので aria-expanded を持てない（textarea には combobox の役割も付けられない）。
+// 入力欄は編集欄（役割は textbox。web/md-editor.mjs）なので aria-expanded を持てない（combobox の役割も付けない）。
 // 開いているかは候補の一覧（listbox）が出ているかで伝え、欄には aria-controls・aria-haspopup・今指している候補（aria-activedescendant）だけを置く。
 
 /** 入力欄の値から打ち込まれた名前を取り出す。候補を出す条件を満たさなければ null */
@@ -63,7 +63,7 @@ export function filterSkills(skills, q) {
 
 /**
  * @param {object} o
- * @param {HTMLTextAreaElement} o.input 入力欄
+ * @param {HTMLElement} o.input 入力欄（textarea と同じ窓口を持つ編集欄。value・selectionStart / End・setRangeText）
  * @param {HTMLElement} o.list 候補の ul（.clist）
  * @param {HTMLElement} [o.hint] 引数の書き方を出す場所
  * @param {(cwd:string) => Promise<Array<object>>} o.load 候補を取りに行く（cwd は今の作業ディレクトリ）
@@ -174,7 +174,9 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canC
     if (s.command && !canCompact()) return close();
     const suffix = input.value.slice(at.end);
     const insertion = `/${s.name}` + (s.command || /^\s/.test(suffix) ? "" : " ");
-    input.value = input.value.slice(0, at.start) + insertion + suffix;
+    // 編集欄（web/md-editor.mjs）では、行の書式を壊さないよう token の範囲だけを置き換える
+    if (typeof input.setRangeText === "function") input.setRangeText(insertion, at.start, at.end, "end");
+    else input.value = input.value.slice(0, at.start) + insertion + suffix;
     const caret = at.start + insertion.length + (/^\s/.test(suffix) ? 1 : 0);
     chosen = { value: input.value };
     if (hint) hint.textContent = s.hint ? t("composer.skills.args", { hint: s.hint }) : "";

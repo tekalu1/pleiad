@@ -1,4 +1,4 @@
-// 会話の移動（docs/design-system.md「会話の移動」、ADR 0059）の、DOM を使わない部品。
+// 会話の移動（docs/design-system.md「会話の移動」、ADR 0063）の、DOM を使わない部品。
 // 発言の抜粋（上に残る問い・地図の浮く面・目次の行）、件数の札、目次の並び・絞り込み、検索の一致の数え方。
 // 画面の部品は web/conversation-nav-view.mjs（残る問い・最新へ・地図）と web/conversation-toc.mjs（目次と検索）。
 import { t } from './i18n.mjs';

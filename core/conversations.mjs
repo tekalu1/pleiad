@@ -9,6 +9,7 @@ import { buildItems } from "../web/timeline.mjs";
 import { t, agentT } from "./i18n.mjs";
 import { writeAtomic } from "./atomic-file.mjs";
 import { classifySystemMessages } from "./system-messages.mjs";
+import { promptTitle } from "./prompt-title.mjs";
 
 const file = path.join(store.dataDir, "conversations.json");
 const convDir = path.join(store.dataDir, "conversations");
@@ -429,7 +430,7 @@ export function wrapBackend(native) {
             // 入力欄の `!` の結果は発言の前に渡る（ADR 0054）。その行（<bash-input>・CLI が題に使う `! コマンド`）は題にせず、最初の人の発言を使う
             const nativeTitle = info?.title?.trim();
             const title = (nativeTitle && !/^(<[a-z-]+>|! )/.test(nativeTitle) ? nativeTitle : '')
-              || classifySystemMessages(messages).find(m => m.role === "user" && !m.kind && m.text)?.text?.trim().slice(0, 80);
+              || promptTitle(classifySystemMessages(messages).find(m => m.role === "user" && !m.kind && m.text)?.text);
             if (title) await store.setMeta(id, { title });
           }
         }

@@ -22,6 +22,8 @@ const cases = [
   await import('./unit/file-preview-tree.mjs'),
   await import('./unit/file-access.mjs'),
   await import('./unit/preview-links.mjs'),
+  // 文中の URL のリンク: 範囲の判定（ASCII の字まで）・リンクにする場所としない場所・行き先の一行と右クリックのメニューの項目
+  await import('./unit/url-links.mjs'),
   // パスの自動リンク・画像の所在・ファイルの操作メニュー・OS で開く口（OS の窓は開かない）
   await import('./unit/file-actions.mjs'),
   // 右パネルの枠（web/side-panel.mjs）: モードごとの部品・渡さない部品は隠す・可視化の ⋯
@@ -130,12 +132,19 @@ const cases = [
   await import("./unit/connection-status.mjs"),
   // 新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る（client.mjs を vm で流す）
   await import("./unit/composer-new-session.mjs"),
+  // 圧縮の区切りは発言を送っても動かない・放置中の圧縮の区切りは次の発言の前に置く（client.mjs の userMessage・paintCompactions）
+  await import("./unit/compaction-boundary-position.mjs"),
   await import("./unit/server-groups.mjs"),
   await import("./unit/audit-self.mjs"),
   await import("./unit/markdown-xss.mjs"),
   await import("./unit/tools-render.mjs"),
+  await import("./unit/tool-bundle.mjs"),
   await import("./unit/timeline-images.mjs"),
   await import("./unit/attachment-order.mjs"),
+  // 自分の発言: 添付の印を本文の位置に置く（コードブロック内・一致しないパスは残す・古い形式は末尾）・畳み込み・別カードを二重に出さない
+  await import("./unit/user-message.mjs"),
+  await import("./unit/md-doc.mjs"),
+  await import("./unit/prompt-title.mjs"),
   // 添付の件数に上限が無い（下書き・送信）。出どころの印。1 件 8MB の上限は残る
   await import("./unit/attach-no-limit.mjs"),
   // 添付を断片で送る（1 件 100MB まで）: 境目・抜け・やめる・切れても続きから・大きな画像は会話にパスだけ
@@ -162,6 +171,15 @@ const cases = [
   await import("./unit/history-heights.mjs"),
   // 会話の移動（web/conversation-nav.mjs）: 発言の抜粋（畳み・コード・添付）と件数の札
   await import("./unit/conversation-nav.mjs"),
+  // 履歴を描く間、1 行ごとに筋を探し回らない（稼働表示の行は activity.el。issue #37）
+  await import("./unit/place-scan.mjs"),
+  // つなぎ直したときの静かな読み直しは、同じ発言の行を残して変わった所から後ろだけ描く（読み返している位置も保つ。issue #37）
+  await import("./unit/history-retain.mjs"),
+  // loadSession の差分（ADR 0062）: 合うときだけ続きを返す・つないだ結果は全量と同じ・合わなければ全量・画面の頼み方
+  await import("./unit/history-sync.mjs"),
+  await import("./unit/server-history-diff.mjs"),
+  // 返答の本文は 1 コマに 1 回だけ描く・流れの終わりでは描き切る・会話を切り替えたら別の会話へ描かない
+  await import("./unit/stream-frames.mjs"),
   await import("./unit/work-attribution.mjs"),
   await import('./unit/work-status.mjs'),
   await import('./unit/background-labels.mjs'),

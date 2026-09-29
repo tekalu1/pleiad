@@ -8,7 +8,7 @@ node site/tools/build-site.mjs                 # _site/ に組む（--out <dir> 
 python -m http.server 8799 --directory _site   # http://127.0.0.1:8799/ と /en/
 ```
 
-`site/` を直接配ると日本語だけが見える（言語の切り替えと英語は生成物にだけある）。公開は `.github/workflows/pages.yml` が check → build → `_site` の順で行う。
+`site/` を直接配ると日本語だけが見える（言語の切り替えと英語は生成物にだけある）。公開は Cloudflare Workers の静的アセット（https://pleiad.dev/）。main への push で、Cloudflare がリポジトリの根でビルドコマンド `node site/tools/check-i18n.mjs && node site/tools/build-site.mjs` を走らせ（検査が落ちたら公開しない）、デプロイコマンド `npx wrangler deploy --config site/wrangler.jsonc` で `_site` を配る。
 
 - `index.html`・`styles.css`・`main.js`: ページと、スクロールで場面を切り替えるアプリ画面の再現。
 - 訳す要素には `data-i18n="キー"`（中身を置き換える。`<br>` や `<span class="nw">` を含めてよい）か、`data-i18n-attr="属性:キー;属性:キー"` を付け、英語を `locales/en.json` に書く。値の `{claude}` `{openai}` `{antigravity}` は各ロゴの `<img>` になる。

@@ -64,6 +64,13 @@ export class N {
   replaceChildren(...n) { this._text = null; this._html = null; this.children = []; this.append(...n); }
   prepend(...n) { for (const c of n.reverse()) { c.parent = this; this.children.unshift(c); } }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); }
+  before(...n) {
+    const p = this.parent;
+    if (!p) return;
+    const i = p.children.indexOf(this);
+    for (const c of n) c.parent = p;
+    p.children.splice(i, 0, ...n);
+  }
   contains(n) { for (let x = n; x; x = x.parent) if (x === this) return true; return false; }
   get firstChild() { return this.children[0]; }
   get lastChild() { return this.children[this.children.length - 1]; }

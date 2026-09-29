@@ -3,6 +3,7 @@
 import { t } from './i18n.mjs';
 import { el } from './dom.mjs';
 import { LINK_OPEN_VALUES, linkOpenPref } from './browser-address.mjs';
+import { modifierKey } from './link-open.mjs';
 import { blockedPreviewOrigins, onBlockedPreviewOrigins } from './preview-confirm.mjs';
 const AGENT_BROWSER_VERSION = '0.38.1';
 
@@ -28,8 +29,12 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   const error = el('p', 'browser-setting-error'); error.setAttribute('role', 'status');
   const agentSection = el('div', 'browser-agent-setting');
   agentSection.append(el('strong', null, t('settings.browser.agentOperation.title')), el('p', null, t('settings.browser.agentOperation.bundled', { version: AGENT_BROWSER_VERSION })));
-  root.replaceChildren(...(available ? [el('p', null, t('settings.browser.description'))] : []), row, el('p', 'browser-setting-note', t('settings.browser.linkOpen.note')), error);
-  if (!available) { row.remove(); agentSection.remove(); root.querySelector('.browser-setting-note')?.remove(); }
+  // 近道の説明。修飾キーの名前は <kbd> にする（辞書の {{key}} の所に入れる）
+  const shortcuts = el('p', 'browser-setting-note');
+  const [before, after = ''] = t('settings.browser.linkOpen.shortcuts', { key: '\u0000' }).split('\u0000');
+  shortcuts.append(...[before && el('span', null, before), el('kbd', null, modifierKey()), after && el('span', null, after)].filter(Boolean));
+  root.replaceChildren(...(available ? [el('p', null, t('settings.browser.description'))] : []), row, el('p', 'browser-setting-note', t('settings.browser.linkOpen.note')), shortcuts, error);
+  if (!available) { row.remove(); agentSection.remove(); root.querySelectorAll('.browser-setting-note').forEach(n => n.remove()); }
   const confirmation = el('section', 'browser-confirm-settings');
   error.remove(); root.append(confirmation); if (available) root.append(agentSection); root.append(error);
   async function save(key, value) {

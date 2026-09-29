@@ -1,13 +1,14 @@
 import { withoutVisualizeReferences } from './visualize-reference.mjs';
 import { fileReference, looksLikePath, findWindowsPaths, baseName, dirName, WINDOWS_PATH_SOURCE } from './file-reference.mjs';
 import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs';
+import { URL_SOURCE, bareUrl, wholeUrl } from './url-detect.mjs';
 // md 描画と present カードの描画。外部ライブラリを足さない方針なので自前で持つ（設計メモ §11）。
 //
 // 大前提: 入力（モデル出力・ユーザー入力・読み込んだファイル）は一切信用しない。
 // テキストは必ず esc() を通してから組み立てる。生の入力が HTML として通る経路を作らない。
 // 「エスケープしてから正規表現で置換する」方式は取らない（実体参照が壊れる／取りこぼす）。
 // 構造をパースし、葉のテキストを出力する瞬間にだけエスケープする。
-import { el } from "./dom.mjs";
+import { el, chevron } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { copyIcon, downloadIcon, sidePanelIcon, moreIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
@@ -65,7 +66,7 @@ function safeImg(u) {
  * present の画像用。safeImg に加えて、同一オリジンの http(s) を許す。
  * core が token 付き HTTP で配信する経路（設計メモ §7）を塞がないため。外部ホストは通さない。
  */
-function presentImg(u) {
+export function presentImg(u) {
   const ok = safeImg(u);
   if (ok !== null) return ok;
   const raw = String(u ?? "").trim();
@@ -173,6 +174,7 @@ const INLINE_SRC =
   "|(?<img>!)?\\[(?<label>(?:\\\\.|[^\\]\\\\\\n]){0,500})\\]" +
   "\\((?:<(?<angleHref>[^<>\\n]{1,2000})>|(?<href>(?:\\\\.|[^()\\s\\\\]){0,2000}))(?:\\s+\"(?<title>[^\"\\n]{0,200})\")?\\)" +
   "|<(?<auto>https?:\\/\\/[^\\s<>\"]{1,2000})>" +
+  `|(?<url>${URL_SOURCE})` +
   `|(?<win>${WINDOWS_PATH_SOURCE})` +
   "|(?<st>\\*\\*|__)(?<stb>[\\s\\S]{1,1000}?)\\k<st>" +
   "|(?<em>[*_])(?<emb>[^\\s*_][\\s\\S]{0,1000}?)\\k<em>" +
@@ -185,6 +187,14 @@ const INLINE_SRC =
 function fileAnchor(ref, inner, extra = "") {
   const href = safeUrl(ref.path) ?? "";
   return `<a class="md-link file-link${extra}" href="${esc(href)}" data-file-path="${esc(ref.path)}"${ref.line ? ` data-file-line="${ref.line}"` : ""}>${inner}</a>`;
+}
+
+/**
+ * 文中の URL のリンク。押すと設定「リンクの開き先」に従う（web/link-open.mjs）。u は bareUrl / wholeUrl が通したもの、
+ * inner はエスケープ済みの HTML。字が URL そのものなので、名前で偽る余地は無い
+ */
+function urlAnchor(u, inner, extra = "") {
+  return `<a class="md-link${extra}" href="${esc(u)}" target="_blank" rel="noopener noreferrer nofollow">${inner}</a>`;
 }
 
 /** 画像の下に添える所在の一行: ファイル名（右パネルで開く）・フォルダー（全体は title）・⋯（操作） */
@@ -215,13 +225,23 @@ function inline(src, depth = 0, noLink = false) {
     } else if (g.code !== undefined) {
       // 前後に空白が1つずつ付いていたら剥がす（CommonMark 準拠）
       const c = /^ .* $/s.test(g.code) ? g.code.slice(1, -1) : g.code;
-      // 中身全体が 1 つのパスならファイルリンク（`web/render.mjs`・`D:\a b\c.md:42`）
-      const ref = noLink ? null : looksLikePath(c);
-      out.push(ref ? fileAnchor(ref, `<code>${esc(c)}</code>`, " code-link") : `<code>${esc(c)}</code>`);
+      // 中身全体が 1 つのパスならファイルリンク（`web/render.mjs`・`D:\a b\c.md:42`）、1 つの URL なら URL のリンク
+      const u = noLink ? null : wholeUrl(c);
+      const ref = noLink || u ? null : looksLikePath(c);
+      out.push(u ? urlAnchor(u, `<code>${esc(c)}</code>`, " code-link")
+        : ref ? fileAnchor(ref, `<code>${esc(c)}</code>`, " code-link") : `<code>${esc(c)}</code>`);
     } else if (g.label !== undefined) {
       out.push(link(g.img === "!", g.label, g.angleHref ?? g.href, g.title, depth, noLink));
     } else if (g.auto !== undefined) {
       out.push(link(false, g.auto, g.auto, undefined, depth, noLink));
+    } else if (g.url !== undefined) {
+      // 地の文の URL。範囲は ASCII の字まで（web/url-detect.mjs）。末尾の句読点は外して、続きから読み直す
+      const u = noLink ? null : bareUrl(g.url);
+      if (!u) handled = false;
+      else {
+        out.push(urlAnchor(u, esc(u)));
+        re.lastIndex = m.index + u.length;
+      }
     } else if (g.win !== undefined) {
       // 地の文の Windows の絶対パス（docs/design-system.md「ファイルの操作」）。末尾の句読点は外して、続きから読み直す
       const found = noLink ? null : findWindowsPaths(g.win)[0];
@@ -258,22 +278,37 @@ function inline(src, depth = 0, noLink = false) {
 /**
  * 自分の発言の本文（平文）を HTML にする。Markdown としては解釈せず、字は書いたとおりに残す（改行は CSS の pre-wrap）。
  * パスだけは AI の本文と同じ厳しい判定でファイルリンクにする: 地の文の Windows の絶対パスと、` で囲んだ中身全体が 1 つのパス
- * （` は書いたまま残し、中身だけをリンクにする）。docs/design-system.md「ファイルの操作」。返すのはエスケープ済みの HTML
+ * （` は書いたまま残し、中身だけをリンクにする）。docs/design-system.md「ファイルの操作」。
+ * URL も同じ判定でリンクにする（地の文の裸の URL と、` で囲んだ中身全体が 1 つの URL。docs/design-system.md「文中の URL」）。
+ * paths:false は URL だけをリンクにする（完了通知・委譲の依頼。パスは字のまま）。返すのはエスケープ済みの HTML
  */
-export function plainTextHtml(src) {
+export function plainTextHtml(src, { paths = true } = {}) {
   const s = String(src ?? "");
   if (s.length > 100_000) return esc(s);
-  const re = new RegExp(`(?<ticks>\`+)(?<code>[^\\n]{1,1024}?)\\k<ticks>(?!\`)|(?<win>${WINDOWS_PATH_SOURCE})`, "g");
+  const re = new RegExp((paths ? `(?<ticks>\`+)(?<code>[^\\n]{1,1024}?)\\k<ticks>(?!\`)|(?<win>${WINDOWS_PATH_SOURCE})|` : "") + `(?<url>${URL_SOURCE})`, "g");
   const out = [];
   let last = 0, m;
   while ((m = re.exec(s))) {
     const g = m.groups;
     if (g.code !== undefined) {
       const c = /^ .* $/s.test(g.code) ? g.code.slice(1, -1) : g.code;
-      const ref = looksLikePath(c);
-      if (!ref) continue;   // パスでない ` はそのまま（続きから読む）
-      out.push(esc(s.slice(last, m.index)), esc(g.ticks), fileAnchor(ref, esc(g.code)), esc(g.ticks));
+      const u = wholeUrl(c);
+      const ref = u ? null : looksLikePath(c);
+      if (!u && !ref) continue;   // パスでも URL でもない ` はそのまま（続きから読む）
+      if (u) {
+        const pad = c !== g.code ? " " : "";   // 前後に 1 つずつ付いていた空白は、リンクの外に残す
+        out.push(esc(s.slice(last, m.index)), esc(g.ticks), pad, urlAnchor(u, esc(c)), pad, esc(g.ticks));
+      } else {
+        out.push(esc(s.slice(last, m.index)), esc(g.ticks), fileAnchor(ref, esc(g.code)), esc(g.ticks));
+      }
       last = re.lastIndex;
+      continue;
+    }
+    if (g.url !== undefined) {
+      const u = bareUrl(g.url);
+      if (!u) { re.lastIndex = m.index + 1; continue; }
+      out.push(esc(s.slice(last, m.index)), urlAnchor(u, esc(u)));
+      last = re.lastIndex = m.index + u.length;
       continue;
     }
     const found = findWindowsPaths(g.win)[0];
@@ -340,10 +375,36 @@ function cells(line) {
   return s.split(/(?<!\\)\|/).map((c) => c.trim());
 }
 
-function parseBlocks(lines, depth = 0) {
+/**
+ * 見た目の行数の見積もり。吹き出しの 1 行に入る字数（全角 1 字を 2、半角を 1 と数えて 88 桁）で折り返したものとして数える。
+ * 空行は数えない（自分の発言を約 8 行で畳む目安。実測はしない）
+ */
+export function visualLines(text) {
+  let n = 0;
+  for (const line of String(text ?? "").split("\n")) {
+    if (!line.trim()) continue;
+    let width = 0;
+    for (const ch of line) width += ch.charCodeAt(0) > 0xff ? 2 : 1;
+    n += Math.max(1, Math.ceil(width / 88));
+  }
+  return n;
+}
+
+/**
+ * ブロックに分ける。meta を渡すと、out の各要素に対応する { lines }（元の行の見た目の行数。visualLines）を積む
+ * （自分の発言の畳み込みが行数を見積もる。renderMarkdownBlocks）
+ */
+function parseBlocks(lines, depth = 0, meta = null) {
   const out = [];
-  let i = 0;
+  let i = 0, from = 0, seen = 0;
+  const note = () => {
+    if (!meta || out.length <= seen) return;
+    meta.push({ lines: visualLines(lines.slice(from, i).join("\n")) });
+    seen = out.length;
+  };
   while (i < lines.length) {
+    note();
+    from = i;
     const line = lines[i];
     if (!line.trim()) { i++; continue; }
 
@@ -420,7 +481,8 @@ function parseBlocks(lines, depth = 0) {
     while (i < lines.length && lines[i].trim() && !startsBlock(lines, i)) { buf.push(lines[i]); i++; }
     out.push(`<p>${inline(buf.join("\n").replace(/[ \t]+$/gm, ""))}</p>`);
   }
-  return out.join("");
+  note();
+  return meta ? out : out.join("");
 }
 
 /** 収集済みのリスト行から <ul>/<ol> を組む。ネストは2段まで */
@@ -467,6 +529,35 @@ export function renderMarkdown(src) {
   const s = String(src ?? "").replace(/\r\n?/g, "\n").replace(/\u0000/g, "");
   if (!s.trim()) return "";
   return parseBlocks(s.split("\n"));
+}
+
+/**
+ * renderMarkdown と同じ描画を、一番外のブロックごとに分けて返す（自分の発言。段落の境目で畳むため）。
+ * @returns {{html: string, lines: number}[]} lines は見た目の行数の見積もり（visualLines）
+ */
+export function renderMarkdownBlocks(src) {
+  const s = String(src ?? "").replace(/\r\n?/g, "\n").replace(/\u0000/g, "");
+  if (!s.trim()) return [];
+  const meta = [];
+  const blocks = parseBlocks(s.split("\n"), 0, meta);
+  return blocks.map((html, n) => ({ html, lines: meta[n]?.lines ?? 1 }));
+}
+
+/** 行ごとに、コードフェンスの中（開き・閉じの行も含む）か。renderMarkdown がコードとして読む範囲と同じ */
+export function codeFenceMask(lines) {
+  const mask = [];
+  let close = null;
+  for (const line of lines) {
+    if (close) {
+      mask.push(true);
+      if (close.test(line)) close = null;
+      continue;
+    }
+    const f = RE_FENCE.exec(line);
+    mask.push(Boolean(f));
+    if (f) close = new RegExp(`^[ ]{0,3}${f[2][0] === "`" ? "`" : "~"}{${f[2].length},}[ \\t]*$`);
+  }
+  return mask;
 }
 
 // ------------------------------------------------------------------- present
@@ -683,6 +774,26 @@ function fold(summary, open) {
   return d;
 }
 
+/** 開いた中身の 1 節。見出しの字と、こちらで組み立てた（エスケープ済みの）html */
+function section(label, htmlOrNode) {
+  const box = el("div", "tc-sec");
+  box.append(el("div", "tc-section-label", label));
+  if (typeof htmlOrNode === "string") { const b = el("div", "tc-sec-body"); b.innerHTML = htmlOrNode; box.append(b); }
+  else box.append(htmlOrNode);
+  return box;
+}
+
+/** 入力を「キー 値」の格子で見せる。スカラーはそのまま、入れ子は 1 行の JSON に。空なら null */
+function kvGrid(inp) {
+  const entries = Object.entries(inp ?? {}).filter(([, v]) => v != null);
+  if (!entries.length) return null;
+  const grid = el("div", "tc-kv");
+  for (const [k, v] of entries.slice(0, 20)) {
+    grid.append(el("span", "k", clip(k, 40)), el("span", "v", clip(typeof v === "object" ? JSON.stringify(v) : String(v), 300)));
+  }
+  return grid;
+}
+
 /** 折りたたみ + コードブロック。codeBlock がエスケープするので innerHTML でよい */
 function foldCode(summary, body, lang, open) {
   const d = fold(summary, open);
@@ -706,10 +817,9 @@ function diffLines(oldS, newS) {
   return { del: a.slice(pre, a.length - post), add: b.slice(pre, b.length - post) };
 }
 
-/** 記号の列（+ / −）と面の階調だけで見せる。色は付けない（docs/design-system.md §2.2） */
-function diffFold(oldS, newS) {
+/** 記号の列（+ / −）と面の階調だけで見せる差分の枠。色は付けない（docs/design-system.md §2.2） */
+function diffBox(oldS, newS) {
   const { del, add } = diffLines(oldS, newS);
-  const d = fold(t("timeline.tool.diff", { del: fmtN(del.length), add: fmtN(add.length) }));
   const box = el("div", "tc-diff");
   const put = (arr, cls, mark) => {
     for (const line of arr.slice(0, DIFF_MAX)) {
@@ -721,8 +831,44 @@ function diffFold(oldS, newS) {
   };
   put(del, "tc-del", "−");
   put(add, "tc-add", "+");
+  return { box, del: del.length, add: add.length };
+}
+
+/** 差分の折りたたみ（MultiEdit の 1 箇所ごと） */
+function diffFold(oldS, newS) {
+  const { box, del, add } = diffBox(oldS, newS);
+  const d = fold(t("timeline.tool.diff", { del: fmtN(del), add: fmtN(add) }));
   d.lastChild.append(box);
   return d;
+}
+
+/** 編集・書き込みが変えた量。まとまりの見出しの「N ファイルを変更」と、行の右端の「−2 +3」に使う。変えないツールは null */
+export function toolChange(name, input) {
+  const inp = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const raw = String(name ?? "");
+  // 何のツールか。名前（Claude）に加えて、バックエンドが申告した shape（applyToolHints。Codex の fileChange・agy の write_file / edit_file）でも決める
+  const draw = TOOL_DRAW[raw];
+  const kind = raw === "MultiEdit" || draw === drawMultiEdit ? "multi"
+    : raw === "Write" || draw === drawWrite ? "write"
+    : raw === "Edit" || raw === "NotebookEdit" || draw === drawEdit ? "edit" : null;
+  if (!kind) return null;
+  const path = FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v);
+  if (!path) {
+    // Codex の fileChange は変更したパスの一覧だけを持つ（量は分からないので 0。数えるのはファイルの数だけ）
+    const paths = Array.isArray(inp.files) ? inp.files.filter((p) => typeof p === "string" && p) : [];
+    return paths.length ? { path: paths[0], paths, del: 0, add: 0 } : null;
+  }
+  if (kind === "write") return { path, del: 0, add: lineCount(inp.content ?? inp.CodeContent) };
+  if (kind === "edit") {
+    const { del, add } = diffLines(inp.old_string ?? inp.TargetContent, inp.new_string ?? inp.ReplacementContent);
+    return { path, del: del.length, add: add.length };
+  }
+  let del = 0, add = 0;
+  for (const e of Array.isArray(inp.edits) ? inp.edits : []) {
+    const d = diffLines(e?.old_string, e?.new_string);
+    del += d.del.length; add += d.add.length;
+  }
+  return { path, del, add };
 }
 
 // ------------------------------------------------------------ ツール別の描画
@@ -755,7 +901,7 @@ function drawShell(card, head, inp, name) {
   if (inp.description) notes.push(String(inp.description));
   if (notes.length) head.append(noteSpan(notes.join(" · ")));
 
-  if (folded) card.append(foldCode(t("timeline.tool.fullCommand", { count: lineCount(cmd), n: fmtN(lineCount(cmd)) }), cmd, "bash"));
+  if (folded) card.append(section(t("timeline.tool.fullCommand", { count: lineCount(cmd), n: fmtN(lineCount(cmd)) }), codeBlock(clip(cmd, 8000), "bash")));
 }
 
 function drawRead(card, head, inp) {
@@ -773,18 +919,17 @@ function drawRead(card, head, inp) {
 function drawWrite(card, head, inp) {
   head.append(pathSpan(inp.file_path));
   const body = String(inp.content ?? "");
-  head.append(noteSpan(t("timeline.tool.lines", { count: lineCount(body), n: fmtN(lineCount(body)) })));
-  if (body) card.append(foldCode(t("timeline.tool.writeContent"), body, langFromPath(inp.file_path)));
+  if (body) card.append(diffBox("", body).box);
 }
 
 function drawEdit(card, head, inp) {
   head.append(pathSpan(inp.file_path));
+  // Codex の fileChange: 変更したファイルが複数あれば、最初の 1 つに「ほか n ファイル」を添える
+  if (Array.isArray(inp.files) && inp.files.length > 1) head.append(noteSpan(t("timeline.tool.moreFiles", { count: inp.files.length - 1, n: fmtN(inp.files.length - 1) })));
   const a = String(inp.old_string ?? "");
   const b = String(inp.new_string ?? "");
-  const bits = [t("timeline.tool.editLines", { from: fmtN(lineCount(a)), to: fmtN(lineCount(b)) })];
-  if (inp.replace_all) bits.push(t("timeline.tool.replaceAll"));
-  head.append(noteSpan(bits.join(" · ")));
-  if (a || b) card.append(diffFold(a, b));
+  if (inp.replace_all) head.append(noteSpan(t("timeline.tool.replaceAll")));
+  if (a || b) card.append(diffBox(a, b).box);
 }
 
 function drawMultiEdit(card, head, inp) {
@@ -832,14 +977,15 @@ function drawTask(card, head, inp) {
 }
 
 function drawWebFetch(card, head, inp) {
-  const raw = String(inp.url ?? "");
+  const raw = String(inp.url ?? inp.Url ?? "");
   // safeUrl は相対パスも通すが、リンクにしてよいのは絶対 http(s) だけにする。
   // 壊れた URL を host 自身への相対リンクにしても意味が無く、押せることが誤解を生む
   const u = /^https?:\/\//i.test(raw.trim()) ? safeUrl(raw) : null;
   if (u === null) {
-    head.append(codeSpan(clip(raw, 160), "tc-main"));
+    if (raw.trim()) head.append(codeSpan(clip(raw, 160), "tc-main"));
   } else {
-    const a = el("a", "tc-main tc-link", clip(raw, 160));
+    // md-link: 会話の文中の URL と同じく、押すと設定「リンクの開き先」に従う（web/link-open.mjs）
+    const a = el("a", "md-link tc-main tc-link", clip(raw, 160));
     a.setAttribute("href", u); // 絶対 http(s) かつ safeUrl を通ったものだけ
     a.setAttribute("target", "_blank");
     a.setAttribute("rel", "noopener noreferrer nofollow");
@@ -912,13 +1058,16 @@ function drawMcp(card, head, inp, name) {
   head.append(textMain(parts.slice(2).join("__") || name));
   const s = summarizeInput(inp);
   if (s) head.append(noteSpan(s));
-  if (Object.keys(inp).length) card.append(foldCode(t("timeline.tool.input"), toJson(inp), "json"));
+  // ply_delegate の中身は client.mjs が依頼と内訳で描く（キーと値の格子にしない）
+  const grid = isDelegateToolName(name) ? null : kvGrid(inp);
+  if (grid) card.append(grid);
 }
 
 function drawUnknown(card, head, inp) {
   const s = summarizeInput(inp);
   if (s) head.append(textMain(s));
-  if (Object.keys(inp).length) card.append(foldCode(t("timeline.tool.input"), toJson(inp), "json"));
+  const grid = kvGrid(inp);
+  if (grid) card.append(grid);
 }
 
 // 動詞で揃える。並んだときに「何をしたか」が縦に読める
@@ -970,8 +1119,12 @@ export function applyToolHints(hints) {
   }
 }
 
+/** 委譲のツール（Task / Agent / ply_delegate）。右端の状態は client.mjs が子の状態で描くので、結果の要約は出さない */
+export const isDelegateToolName = (name) => /^(Task|Agent)$/.test(String(name ?? "")) || /(^|[_./])ply_delegate$/.test(String(name ?? ""));
+
 /**
- * ツール呼び出しを折りたたみ、開くと入力と出力を読めるようにする。
+ * ツール呼び出しを 1 行にし、開くとツールごとの中身（差分・出力の末尾・ファイル一覧・キーと値）を読めるようにする。
+ * 1 行は「動詞・主役・補足・右端に結果・開閉の印」。生の入力・出力は奥の「入力・出力（JSON）」の折りたたみに残す。
  * @param {string} name ツール名（モデル由来。信用しない）
  * @param {object} input ツール入力（同上）
  * @param {{id?:string, open?:boolean, compact?:boolean}} [opts]
@@ -995,15 +1148,36 @@ export function renderToolCall(name, input, opts) {
   const body = el("div", "tc-details-body");
   details.append(head, body);
   card.append(details);
-  head.append(el("span", "tc-label", TOOL_LABEL[raw] ?? (raw.startsWith("mcp__") ? "MCP" : clip(raw, 24))));
-  // 読む・書く・編集の対象は、動詞の横にファイルリンクで添える（押すと右パネル、右クリックで操作。docs/design-system.md「ファイルの操作」）
-  const target = FILE_DRAWS.has(TOOL_DRAW[raw]) ? FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v) : null;
-  if (target) head.append(pathSpan(target));
+  // 1 行目は tc-line に積む（失敗の要点・委譲の行き先は、その下の行として head に足す）
+  const line = el("span", "tc-line");
+  head.append(line);
+  line.append(el("span", "tc-label", TOOL_LABEL[raw] ?? (raw.startsWith("mcp__") ? "MCP" : clip(raw, 24))));
 
-  body.append(el("div", "tc-section-label", t("timeline.tool.input")));
+  // 描き分け。対象がファイルのツールは、バックエンドごとに違うパスのキーを file_path に揃えて渡す
+  // （押すと右パネル、右クリックで操作。docs/design-system.md「ファイルの操作」）
+  const draw = TOOL_DRAW[raw] ?? (raw.startsWith("mcp__") ? drawMcp : drawUnknown);
+  let drawInp = inp;
+  if (FILE_DRAWS.has(draw) && !inp.file_path) {
+    const target = FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v)
+      ?? (Array.isArray(inp.files) ? inp.files.find((p) => typeof p === "string" && p) : null);
+    if (target) drawInp = { ...inp, file_path: target };
+  }
+  draw(body, line, drawInp, raw);
+  card.toolChange = toolChange(raw, drawInp);
+
+  // 右端: 結果（走っている間は弧と経過秒。web/tool-bundle.mjs）。続けて開閉の印
+  line.append(el("span", "tc-res"));
+  line.append(chevron());
+
+  const json = el("details", "tc-fold tc-json");
+  json.append(el("summary", null, t("routing.detail.json")));
+  const jsonBody = el("div", "tc-json-body");
+  jsonBody.append(el("div", "tc-section-label", t("timeline.tool.input")));
   const inputBody = el("div", "tc-input");
   inputBody.innerHTML = codeBlock(JSON.stringify(inp, null, 2), "json");
-  body.append(inputBody);
+  jsonBody.append(inputBody);
+  json.append(jsonBody);
+  body.append(json);
   return card;
 }
 
@@ -1021,18 +1195,23 @@ function resultText(r) {
   return "";
 }
 
-/** 結果の要約。全文は出さない。行数・件数・成否だけ分かればよい */
-function summarizeResult(tool, body, n) {
+/** 結果の要約（右端）。全文は出さない。行数・件数・変えた量だけ分かればよい */
+function summarizeResult(tool, body, n, change) {
   const out = body.trim();
-  if (!out) return t("timeline.result.empty");
+  if (!out && !change) return t("timeline.result.empty");
   if (/^No (matches|files) found/i.test(out)) return t("timeline.result.count", { count: 0, n: fmtN(0) });
   const found = /^Found (\d+) /.exec(out);
   if (found) return t("timeline.result.count", { count: Number(found[1]), n: fmtN(found[1]) });
 
+  // 編集の量。バックエンドが申告した shape で編集と決まったツール（Codex の fileChange・agy の edit_file）も同じ。量が分からなければ「編集した」
+  if (change && tool !== "Write") return change.add || change.del ? `${change.del ? `−${fmtN(change.del)} ` : ""}+${fmtN(change.add)}` : t("timeline.result.edited");
+
   switch (tool) {
     case "Glob": return t("timeline.result.count", { count: n, n: fmtN(n) });
-    case "Write": return t("timeline.result.saved");
-    case "Edit": case "MultiEdit": case "NotebookEdit": return t("timeline.result.edited");
+    case "Write":
+      return change?.add ? t("timeline.result.lines", { count: change.add, n: fmtN(change.add) }) : t("timeline.result.saved");
+    case "Edit": case "MultiEdit": case "NotebookEdit":
+      return t("timeline.result.edited");
     case "TodoWrite": return t("timeline.result.updated");
     default:
       // このアプリのツールは「〜した」という短い返事を返すので、それをそのまま見せる
@@ -1041,9 +1220,65 @@ function summarizeResult(tool, body, n) {
   }
 }
 
+/** 終了コード。出力の中の「Exit code 1」「exit status 2」「exited with code 3」の最後のもの。分からなければ null */
+export function exitCodeOf(body) {
+  let code = null;
+  for (const m of String(body ?? "").matchAll(/\bexit(?:ed)?(?: with)?(?: status| code)?[:\s]+(\d{1,3})\b/gi)) code = Number(m[1]);
+  return code;
+}
+
+/** 失敗の要点の 1 行。出力の中の Error: などの行、無ければ最後の空でない行 */
+export function failureLine(body) {
+  const lines = String(body ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return "";
+  const hit = lines.find((l) => /^(?:[\w.]*Error\b|error\b|fatal\b|FAIL\b|Traceback|panic\b|npm ERR!)/.test(l));
+  return clip(hit ?? lines.at(-1), 200);
+}
+
+const TAIL_LINES = 6;   // 実行の出力を開いたときに出す末尾の行数
+
+/** 実行の出力: 末尾 N 行と「全 N 行を表示」 */
+function outputTail(text) {
+  const lines = text.replace(/\n$/, "").split("\n");
+  const box = el("div", "tc-res-view tc-tail");
+  const tail = lines.length > TAIL_LINES;
+  const label = el("div", "tc-section-label", tail ? t("timeline.result.tail", { count: TAIL_LINES, n: fmtN(TAIL_LINES) }) : t("timeline.result.output"));
+  const code = el("div", "tc-output");
+  const shown = tail ? lines.slice(-TAIL_LINES) : lines;
+  while (shown.length > 1 && !shown[0].trim()) shown.shift();   // 末尾で切った先頭が空行なら落とす
+  code.innerHTML = codeBlock(shown.join("\n"), "");
+  if (tail) {
+    const more = el("button", "btn tc-more", t("timeline.result.showAll", { count: lines.length, n: fmtN(lines.length) }));
+    more.type = "button";
+    more.onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      code.innerHTML = codeBlock(clip(lines.join("\n"), 20000), "");
+      label.firstChild.textContent = t("timeline.result.output");
+      more.remove();
+    };
+    label.append(more);
+  }
+  box.append(label, code);
+  return box;
+}
+
+/** 検索・探すの結果: 全部がファイルのパスなら、ファイルリンクの一覧。そうでなければ null */
+function fileList(text) {
+  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l && !/^(Found \d+|No (matches|files) found|\(?[Tt]runcated)/.test(l));
+  if (!lines.length || lines.some((l) => !looksLikePath(l))) return null;
+  const list = el("ul", "tc-res-view tc-files");
+  for (const l of lines.slice(0, 40)) {
+    const li = el("li");
+    li.append(pathSpan(l, 4));
+    list.append(li);
+  }
+  if (lines.length > 40) list.append(el("li", "tc-diff-more", t("timeline.tool.diffMore", { count: lines.length - 40, n: fmtN(lines.length - 40) })));
+  return list;
+}
+
 /**
  * renderToolCall が作った要素に結果を反映する。**全文は出さない。**
- * 長い出力は折りたたみに入れ、失敗は目立たせる。
+ * 右端に要約、失敗は太字の「✕ 失敗 · exit 1」と要点の 1 行。開いた中はツールごとの見せ方で、生の出力は「入力・出力（JSON）」の奥。
  * @param {HTMLElement} node renderToolCall の戻り
  * @param {{text?:string, isError?:boolean, truncated?:boolean}|string|null} result
  * @returns {HTMLElement} node
@@ -1052,31 +1287,61 @@ export function applyToolResult(node, result) {
   if (!node || typeof node.querySelector !== "function") return node;
 
   // 呼び直されても二重に付かないよう、前回の結果を落としてから積む
-  for (const old of [...node.querySelectorAll(".tc-res, .tc-out, .tc-preview")]) old.remove();
-  node.classList.remove("tc-error", "tc-done");
+  for (const old of [...node.querySelectorAll(".tc-out, .tc-preview, .tc-res-view, .tc-errline")]) old.remove();
+  // 結果が届いたなら承認は決着している（別の端末で押した・自動で通った・中断）。行を置き換えていた承認カードは外して行を戻す
+  const pending = node.querySelector(".tc-appr");
+  if (pending) {
+    pending.remove();
+    const shell = node.querySelector(".tc-details");
+    if (shell) shell.hidden = false;
+  }
+  node.classList.remove("tc-error", "tc-done", "tc-running", "tc-waiting");
+  const resEl = node.querySelector(".tc-res");
+  if (resEl) { resEl.textContent = ""; resEl.className = "tc-res"; resEl.paint = null; delete resEl.dataset.sig; }
   if (result == null) return node;
 
   const head = node.querySelector(".tc-head") ?? node;
+  const tool = node.dataset?.tool ?? "";
   const body = resultText(result);
-  const isError = Boolean(result?.isError ?? result?.is_error);
+  // 人が承認を拒否したツールは失敗ではない（✕ にせず、見出しの「✕ n」にも数えない。web/client.mjs の rowApprovalCard が印を付ける）
+  const denied = node.dataset?.denied === "1";
+  const isError = Boolean(result?.isError ?? result?.is_error) && !denied;
   const cut = Boolean(result?.truncated);
+  const delegate = isDelegateToolName(tool);
+  const draw = TOOL_DRAW[tool];
 
   node.classList.add(isError ? "tc-error" : "tc-done");
-  const badge = el("span", isError ? "tc-res tc-res-err" : "tc-res");
-  // 失敗は記号と太字で。色は付けない（差し色は「あなたを待っている」だけ）
-  badge.textContent = isError
-    ? t("timeline.result.failed")
-    : "";
-  if (isError) head.append(badge);
+  if (resEl) {
+    if (isError) {
+      // 失敗は記号と太字で。色は付けない（差し色は「あなたを待っている」だけ）
+      const code = exitCodeOf(body);
+      resEl.className = "tc-res tc-res-err";
+      resEl.textContent = code != null && code !== 0 ? t("timeline.result.failedExit", { code }) : t("timeline.result.failed");
+      const why = failureLine(body);
+      if (why && !delegate) { const line = el("span", "tc-errline", why); line.title = why; head.append(line); }
+    } else if (denied) {
+      resEl.textContent = t("chat.approval.denied");
+    } else if (!delegate) {
+      resEl.textContent = summarizeResult(tool, body, lineCount(body), node.toolChange);
+    }
+  }
 
-  // 短い出力も詳細内に残す。画像だけは折りたたみの外に置く。
+  // 開いた中。出力の見せ方はツール別（実行 = 末尾、検索・探す = ファイル一覧）。生の出力は JSON の折りたたみへ
+  const detailsBody = node.querySelector(".tc-details-body");
+  const jsonFold = node.querySelector(".tc-json");
+  const view = !body ? null : draw === drawShell ? outputTail(body) : (draw === drawGlob || draw === drawGrep) ? fileList(body) : null;
+  if (view && detailsBody) { if (jsonFold) jsonFold.before(view); else detailsBody.append(view); }
+
   const output = el("div", "tc-out");
   output.append(el("div", "tc-section-label", (cut ? t("timeline.result.outputPartial") : t("timeline.result.output"))));
   const code = el("div", "tc-output");
   code.innerHTML = codeBlock(body || t("timeline.result.empty"), "");
   output.append(code);
-  // 委譲のカードは入力・出力を「入力・出力（JSON）」の折りたたみに入れている（client.mjs の foldDelegateJson）
-  (node.querySelector(".tc-json-body") ?? node.querySelector(".tc-details-body") ?? node).append(output);
+  // 委譲・処理済みの見せ方があるツールは、生の出力を「入力・出力（JSON）」の折りたたみの奥へ。それ以外は開いた中にそのまま
+  const raw = node.querySelector(".tc-json-body");
+  if (raw && (delegate || view)) raw.append(output);
+  else if (jsonFold) jsonFold.before(output);
+  else (detailsBody ?? node).append(output);
   for (const img of result?.images ?? []) {
     const src = presentImg(img.url ?? img.dataUri ?? "");
     if (!src) continue;

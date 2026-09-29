@@ -1,4 +1,4 @@
-// 目次と会話の中の検索（docs/design-system.md「会話の移動」D、ADR 0059）。
+// 目次と会話の中の検索（docs/design-system.md「会話の移動」D、ADR 0063）。
 // 広い画面では右パネル（web/file-preview.mjs の openPanel。ファイルプレビューと同じ枠）、狭い画面（700px 以下）では下からのシート。
 // 中身は同じ部品: 検索欄（pill）・対象の区分（発言 / ＋返答 / ＋ツール）・並び順・一覧。
 //
