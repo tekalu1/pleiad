@@ -59,6 +59,7 @@
     "offsetInvalid": "offset must be an integer of 0 or more.",
     "secondsInvalid": "seconds must be from 1 to 30.",
     "stopping": "The task is stopping. Wait a moment.",
+    "steerUnknown": "It is unknown whether the follow-up reached the child's running turn. It may have arrived, so do not resend it; check ply_task_status and the child's result.",
     "unknownTool": "Unknown Pleiad task tool.",
     "storageFailed": "Could not save the delegation record, so this was not accepted ({{code}}). Wait a moment and try again. Running child tasks have not stopped.",
     "storageFault": "The delegation record cannot be saved ({{code}}, since {{since}}). The state shown here may not be saved yet, and child tasks may still be running."

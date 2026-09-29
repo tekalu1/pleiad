@@ -41,9 +41,13 @@ const cases = [
   await import('./unit/agent-tasks-storage.mjs'),
   // 完了通知: 受け取り済み（read）は送らない・同じ親の分は 1 つにまとめる・走っているターンへ渡す（steerable）と送り直し・途中送信の条件
   await import('./unit/agent-tasks-notice.mjs'),
+  // 追加指示（ply_task_send）を走っている子のターンへ途中送信で渡す: 受理・合図・捨てられた・合図なし・順序・止めた後（ADR 0065）
+  await import('./unit/agent-tasks-steer.mjs'),
   // 中断で委譲タスクを止める: 届いていない結果を捨てずに返す・取り消したものを返す・cancel は終わったタスクの通知を止めない・再起動で止まったもの
   await import('./unit/agent-tasks-interrupt.mjs'),
   await import('./unit/server-delegation-notice.mjs'),
+  // 追加指示を走っている子のターンへ途中送信で渡す（fake の bg 台本。合図あり・なし、受理されない、結果不明、捨てられた、合図なし）
+  await import('./unit/server-delegation-steer.mjs'),
   await import('./unit/background-model.mjs'),
   await import('./unit/task-instructions.mjs'),
   // 作業の詳細: 走っている子の出来事（loadSession の live）を仮の発言に畳む・詳細とメインパネルが発言の描き方を共有する

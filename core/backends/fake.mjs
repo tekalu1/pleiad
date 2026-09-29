@@ -127,9 +127,11 @@ async function background(text, { s, out, emit, signal, control }) {
     if (STEER_CONFIRM_MS) control.steerConfirms = true;
     control.steer = async (item) => {
       if (done || signal?.signal?.aborted) return false;
-      // テスト用: 完了通知（core/server.mjs の steerNotice。id が task-notice-）の本文に DECLINE_STEER があれば受理しない
-      // （Claude が入力を閉じた終わり際のように、受理できずに空いてからの新しいターンへ回る形）
-      if (String(item?.id ?? "").startsWith("task-notice-") && String(item?.args?.prompt ?? "").includes("DECLINE_STEER")) return false;
+      // テスト用: 完了通知（core/server.mjs の steerNotice。id が task-notice-）と追加指示（steerInstruction。id が task-send-）の
+      // 本文に DECLINE_STEER があれば受理しない（Claude が入力を閉じた終わり際のように、受理できずに空いてからの新しいターンへ回る形）。
+      // THROW_STEER なら例外（結果不明）
+      if (/^task-(notice|send)-/.test(String(item?.id ?? "")) && String(item?.args?.prompt ?? "").includes("DECLINE_STEER")) return false;
+      if (String(item?.id ?? "").startsWith("task-send-") && String(item?.args?.prompt ?? "").includes("THROW_STEER")) throw new Error("steer failed");
       inbox.push({ id: item?.id ?? null, text: String(item?.args?.prompt ?? "") });
       poke();
       return true;
@@ -161,6 +163,9 @@ async function background(text, { s, out, emit, signal, control }) {
         if (STEER_CONFIRM_MS) {
           await Promise.race([wait(STEER_CONFIRM_MS), aborted]);
           if (signal?.signal?.aborted) continue;
+          // テスト用: 本文の DROP_STEER は読まれずに捨てられた合図（userMessage.dropped）、SILENT_STEER は合図を出さず読みもしない
+          if (said.includes("DROP_STEER")) { emit({ type: "userMessage.dropped", messageId: steeredId }); continue; }
+          if (said.includes("SILENT_STEER")) continue;
           emit({ type: "userMessage.delivered", messageId: steeredId });
         }
         push(s, { role: "user", text: said });
