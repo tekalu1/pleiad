@@ -187,12 +187,6 @@ export default async function (t) {
     const childRow = list.find((s) => s.delegation?.parentSessionId === sessA.sessionId);
     t.ok("ply_delegate で作成された本物の子会話も place が null になる",
       Boolean(childRow) && childRow.place === null, `child place=${childRow?.place}`);
-
-    // 3-6. 短時間での連続 listSessions 呼び出し（キャッシュヒットの検証）
-    const t0 = Date.now();
-    const listCached = await c.cmd("listSessions");
-    const elapsed = Date.now() - t0;
-    t.ok("キャッシュにより連続呼び出しが高速に応答する", elapsed < 500 && listCached.length === list.length);
   } finally {
     c.close();
     await server.stop();

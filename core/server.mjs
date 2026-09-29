@@ -780,7 +780,9 @@ function sessionRow(b, s, extra = {}) {
 /**
  * 最近の場所のフォルダー実在確認。
  * G:\ などの仮想ドライブ・ネットワーク共有で stat がハングしても一覧の応答を止めないよう、
- * 最長 PLACE_CHECK_TIMEOUT_MS で打ち切り、結果を PLACE_CHECK_TTL_MS だけ保持する。
+ * 最長 PLACE_CHECK_TIMEOUT_MS で打ち切る（その回は「無い」扱い）。stat の結果は届いた時点で
+ * PLACE_CHECK_TTL_MS だけ覚える（打ち切った回の「無い」は覚えない。遅いドライブが次の一覧で戻るように）。
+ * 同じ場所の stat は 1 本にまとめる。
  */
 const PLACE_CHECK_TTL_MS = 30_000;
 const PLACE_CHECK_TIMEOUT_MS = 1_000;
@@ -792,30 +794,18 @@ async function isExistingDirectory(dirPath) {
   const hit = placeCheckCache.get(dirPath);
   if (hit && Date.now() - hit.at < PLACE_CHECK_TTL_MS) return hit.isDir;
 
-  if (placeCheckInflight.has(dirPath)) return placeCheckInflight.get(dirPath);
-
-  const checkPromise = (async () => {
-    let timer;
-    try {
-      const statPromise = fs.stat(dirPath).then(st => st.isDirectory(), () => false);
-      const timeoutPromise = new Promise(resolve => {
-        timer = setTimeout(() => resolve(false), PLACE_CHECK_TIMEOUT_MS);
-        timer.unref?.();
-      });
-      const isDir = await Promise.race([statPromise, timeoutPromise]);
-      return Boolean(isDir);
-    } catch {
-      return false;
-    } finally {
-      clearTimeout(timer);
+  let stat = placeCheckInflight.get(dirPath);
+  if (!stat) {
+    stat = fs.stat(dirPath).then(st => st.isDirectory(), () => false).then((isDir) => {
+      placeCheckCache.set(dirPath, { at: Date.now(), isDir });
       placeCheckInflight.delete(dirPath);
-    }
-  })();
-
-  placeCheckInflight.set(dirPath, checkPromise);
-  const isDir = await checkPromise;
-  placeCheckCache.set(dirPath, { at: Date.now(), isDir });
-  return isDir;
+      return isDir;
+    });
+    placeCheckInflight.set(dirPath, stat);
+  }
+  let timer;
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(false), PLACE_CHECK_TIMEOUT_MS); timer.unref?.(); });
+  try { return await Promise.race([stat, timeout]); } finally { clearTimeout(timer); }
 }
 
 /**
