@@ -86,20 +86,22 @@ const lines = $$('.leave-line', prologue);
 const cam = $('.stage-cam');
 const app = $('.app');
 const steps = $$('.step');
-const APP_W = 1080, APP_H = 680, MAIN_X = 268;
-// 照らす場所。寄るときはここを収める。x は揃える面の左端、top は見出しの帯から見せる
-const FOCUS = {
+const APP_H = 680, MAIN_X = 268;
+const APP_W = { wide: 1080, narrow: 688 };
+// 各場面の枠。辺は面の境目（x）か要素のすき間（y）にだけ置き、切れる辺はぼかす。
+// top: 上端をそこに揃える / bottomOf: その要素の下に揃える / bottomAbove: その要素の上に揃える（その要素は入れない）
+const SHOTS = {
   wide: [
-    { sel: ['.msg.is-ai[data-zone="see"]', '.msg.is-user'], x: MAIN_X },
-    { sel: ['.side-head', '.rows:last-of-type'], x: 0, top: true },
-    { sel: ['.fork', '.is-late .bubble'], x: MAIN_X },
-    { sel: ['.handoff', '.is-late2', '.composer'], x: MAIN_X },
+    { full: true },
+    { x0: 0, x1: 560, top: 0, bottomOf: '.rows:last-of-type' },
+    { x0: MAIN_X, bottomAbove: '.composer' },
+    { x0: MAIN_X, bottom: true },
   ],
   narrow: [
-    { sel: ['.viz'], x: MAIN_X },
-    { sel: ['.side-head', '.rows'], x: 0 },
-    { sel: ['.fk-a-node', '.fk-b-node', '.is-late .bubble'], x: MAIN_X },
-    { sel: ['.handoff span', '.is-late2 .spk img', '.chip-agent'], x: MAIN_X },
+    { x0: MAIN_X, bottomOf: '.msg.is-ai[data-zone="see"]' },
+    { x0: 0, x1: MAIN_X, top: 0, bottomOf: '.rows' },
+    { x0: MAIN_X, bottomAbove: '.composer' },
+    { x0: MAIN_X, bottom: true },
   ],
 };
 
@@ -162,7 +164,7 @@ function applyState(n, done) {
   app.classList.toggle('has-hand', handed);
   app.classList.remove('is-picking', 'is-moving');
   setRows(n === 1 && done);
-  const toB = n === 2 && done;
+  const toB = n > 2 || (n === 2 && done);
   setBranch(toB);
   late.textContent = LATE[toB ? 1 : 0];
   late.style.opacity = 1;
@@ -173,48 +175,43 @@ function applyState(n, done) {
 let step = -1, gen = 0;
 const stepDone = [false, false, false, false];
 
-// 寄る先は、各場面の動き終えた形で測っておく（動いている途中で測らない）
-let focusCache = null;
+// 枠の基準にする要素（脇の行・最初の返答・入力欄）は場面の動きで位置が変わらないので、その場で測る
+let mode = 'wide';
 function measure() {
-  const narrow = cam.clientWidth < 700;
-  app.classList.toggle('is-narrow', narrow);
-  app.classList.add('is-measuring');
-  const saved = app.style.transform;
-  app.style.transform = 'none';
-  focusCache = FOCUS[narrow ? 'narrow' : 'wide'].map((f, n) => {
-    applyState(n, true);
-    const a = app.getBoundingClientRect();
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    f.sel.forEach((sel) => {
-      const r = $(sel, app).getBoundingClientRect();
-      x0 = Math.min(x0, r.left - a.left); y0 = Math.min(y0, r.top - a.top);
-      x1 = Math.max(x1, r.right - a.left); y1 = Math.max(y1, r.bottom - a.top);
-    });
-    const pad = 24;
-    x0 = Math.min(x0, f.x);
-    y0 = f.top ? 0 : y0 - pad;
-    return { x: x0, y: y0, w: x1 + pad - x0, h: y1 + pad - y0, snap: f.x };
-  });
-  const cur = Math.max(step, 0);
-  applyState(cur, stepDone[cur]);
-  app.style.transform = saved;
-  void app.offsetWidth;
-  app.classList.remove('is-measuring');
+  mode = cam.clientWidth < 700 ? 'narrow' : 'wide';
+  app.classList.toggle('is-narrow', mode === 'narrow');
+}
+function shotFor(n) {
+  const f = SHOTS[mode][n];
+  if (f.full) return f;
+  const a = app.getBoundingClientRect();
+  const k = a.width / APP_W[mode];
+  const box = (sel) => { const r = $(sel, app).getBoundingClientRect(); return { top: (r.top - a.top) / k, bottom: (r.bottom - a.top) / k }; };
+  const y1 = f.bottomOf ? box(f.bottomOf).bottom + 20 : f.bottomAbove ? box(f.bottomAbove).top - 4 : APP_H;
+  return { x0: f.x0, x1: f.x1 ?? APP_W[mode], top: f.top, y1 };
 }
 function placeCamera() {
   const cw = cam.clientWidth, ch = cam.clientHeight;
-  if (!cw || !focusCache) return;
-  const base = Math.min(cw / APP_W, ch / APP_H);
-  const narrow = cw < 700;
-  const f = focusCache[Math.max(step, 0)];
-  // 広い画面: 会話の面を枠いっぱいに（脇を半端に切らない）。脇の場面は全体
-  const s = narrow ? clamp(Math.min(cw / f.w, ch / f.h), base, 1) : f.snap === MAIN_X ? cw / (APP_W - MAIN_X) : base;
-  const tx = APP_W * s <= cw ? (cw - APP_W * s) / 2 : clamp(-f.x * s, cw - APP_W * s, 0);
-  let ty = APP_H * s <= ch ? (ch - APP_H * s) / 2 : clamp(ch / 2 - (f.y + f.h / 2) * s, ch - APP_H * s, 0);
-  // 見出しの帯（52px）を途中で切らない。全部見せるか、全部外す
-  const band = 52 * s;
-  if (!narrow && ty < 0 && ty > -band) ty = f.y + f.h <= ch / s ? 0 : -band;
+  if (!cw) return;
+  const W = APP_W[mode];
+  const f = shotFor(Math.max(step, 0));
+  let s, tx, ty;
+  if (f.full) {
+    s = Math.min(cw / W, ch / APP_H);
+    tx = (cw - W * s) / 2;
+    ty = (ch - APP_H * s) / 2;
+  } else {
+    s = cw / (f.x1 - f.x0);
+    if (f.top != null) s = Math.min(s, ch / (f.y1 - f.top));
+    tx = -f.x0 * s;
+    ty = f.top != null ? -f.top * s : clamp(ch - f.y1 * s, ch - APP_H * s, 0);
+  }
   app.style.transform = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${s.toFixed(4)})`;
+  // 切れた辺だけぼかす。脇で切れる下端は脇の色で
+  cam.classList.toggle('cut-top', ty < -0.5);
+  cam.classList.toggle('cut-right', tx + W * s > cw + 0.5);
+  cam.classList.toggle('cut-bottom', ty + APP_H * s > ch + 0.5);
+  cam.classList.toggle('cut-side', !f.full && f.x1 <= MAIN_X);
 }
 
 // 場面の動き。1 度やったら、戻って来ても動き終えた形で見せる
@@ -270,9 +267,12 @@ function onScreen() {
   const p = y / P;
   lines.forEach((el, i) => el.style.setProperty('--t', clamp((p - 0.04 - i * 0.14) / 0.1).toFixed(3)));
   screen.classList.toggle('is-said', p > 0.5);
-  prologue.style.setProperty('--out', clamp((p - 0.8) / 0.14).toFixed(3));
-  screen.classList.toggle('in', p > 0.9);
-  if (p > 0.9) app.classList.add('is-drawn');
+  // 前置きが消えきってから舞台が入る。どちらもスクロール量で動かし、重ならない
+  prologue.style.setProperty('--out', clamp((p - 0.74) / 0.1).toFixed(3));
+  const come = clamp((p - 0.86) / 0.1);
+  screen.style.setProperty('--in', come.toFixed(3));
+  screen.classList.toggle('in', come > 0.6);
+  if (come > 0.9) app.classList.add('is-drawn');
   const n = clamp(Math.floor((y - P) / S), 0, 3);
   if (n === step) return;
   step = n;
@@ -283,6 +283,8 @@ function onScreen() {
 
 measure();
 new ResizeObserver(() => { measure(); placeCamera(); }).observe(cam);
+// 書体が入ると高さが変わるので測り直す
+document.fonts.ready.then(() => { measure(); placeCamera(); });
 
 // スクロールは 1 フレームに 1 回だけ読む
 let ticking = false;
@@ -313,7 +315,7 @@ const approve = () => {
   phone.classList.add('is-approved');
   $('.ph-q span', phone).textContent = '許可した';
 };
-if (reduce) approve();
+if (reduce) { approve(); phone.classList.add('is-next'); }
 else {
   new IntersectionObserver(async ([e], obs) => {
     if (!e.isIntersecting) return;
@@ -323,5 +325,11 @@ else {
     await wait(180);
     phone.classList.remove('is-press');
     approve();
+    await wait(2600);
+    phone.classList.add('is-next');
+    // 会話と同じく、新しいカードが見えるところまで流す
+    const scr = $('.ph-screen', phone), th = $('.ph-thread', phone), nx = $('.ph-next', phone);
+    const over = nx.getBoundingClientRect().bottom - scr.getBoundingClientRect().bottom + 20;
+    if (over > 0) th.style.transform = `translateY(${-over}px)`;
   }, { threshold: 0.5 }).observe(phone);
 }

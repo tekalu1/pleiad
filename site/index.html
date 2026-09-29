@@ -70,8 +70,8 @@
     <svg class="brand-word" aria-hidden="true"><use href="#i-word"/></svg>
   </a>
   <nav class="nav-links">
-    <a class="nav-gh" href="https://github.com/tekalu1/pleiad" aria-label="GitHub"><svg aria-hidden="true"><use href="#i-gh"/></svg></a>
     <a class="btn btn-s nav-dl" href="https://github.com/tekalu1/pleiad/releases">ダウンロード</a>
+    <a class="nav-gh" href="https://github.com/tekalu1/pleiad" aria-label="GitHub"><svg aria-hidden="true"><use href="#i-gh"/></svg></a>
   </nav>
 </header>
 
@@ -87,7 +87,7 @@
         <a class="btn" href="https://github.com/tekalu1/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg>Windows 版をダウンロード</a>
         <a class="btn btn-ghost" href="https://github.com/tekalu1/pleiad"><svg aria-hidden="true"><use href="#i-gh"/></svg>GitHub</a>
       </div>
-      <p class="meta">Beta · Windows 10 / 11 · Apache-2.0</p>
+      <p class="meta">Beta · Windows 10 / 11</p>
     </div>
   </section>
 
@@ -101,6 +101,7 @@
     </div>
     <div class="stage" aria-hidden="true">
       <div class="stage-cam">
+        <i class="cam-fade"></i>
         <div class="app" data-step="0">
 
           <aside class="side">
@@ -167,7 +168,7 @@
                 <div class="handoff is-late2"><img src="assets/claude.svg" alt=""><svg><use href="#i-arrow"/></svg><img src="assets/openai.svg" alt=""><span>Codex に切り替え</span></div>
                 <div class="msg is-ai is-late2 is-running">
                   <p class="spk"><img src="assets/openai.svg" alt="">Codex<time>12:55</time></p>
-                  <p class="think"><svg class="arc" viewBox="0 0 14 14"><path/></svg>内訳を集計している<time>0:12</time></p>
+                  <p class="think"><svg class="arc" viewBox="0 0 14 14"><path/></svg>前年比を足している<time>0:12</time></p>
                 </div>
               </div>
             </div>
@@ -227,7 +228,7 @@
       </div>
       <div class="tile-visual">
       <div class="v-deleg" aria-hidden="true">
-        <p class="dg-head"><b>委譲</b><span class="dg-auto">自動</span><img src="assets/openai.svg" alt=""><span class="dg-why">実装 · 難しさ 中 → Codex<span> · Claude は週次 83% で飛ばした</span></span></p>
+        <p class="dg-head"><b>委譲</b><span class="dg-auto">自動</span><img src="assets/openai.svg" alt=""><span class="dg-why">実装 · 難しさ 中 → Codex</span></p>
         <ol class="dg-cands">
           <li class="c-skip"><em>1</em><img src="assets/claude.svg" alt=""><span class="c-name">Claude Code</span><span class="c-st">飛ばした · 使用量が多い</span><span class="c-use"><span>週次</span><span class="c-bar"><i style="--v:.83"></i></span><span class="c-pct">83%</span></span></li>
           <li class="c-pick"><em>2</em><img src="assets/openai.svg" alt=""><span class="c-name">Codex</span><span class="c-st">✓ 使った</span><span class="c-use"><span>週次</span><span class="c-bar"><i style="--v:.22"></i></span><span class="c-pct">22%</span></span></li>
@@ -256,6 +257,11 @@
               <div class="ph-btns"><span class="ph-yes">許可</span><span class="ph-no">拒否</span></div>
             </div>
             <p class="ph-run"><svg class="arc" viewBox="0 0 14 14"><path/></svg>実行している</p>
+            <div class="ph-card ph-next">
+              <p class="ph-q"><i class="dia"></i><span>承認を待っている</span></p>
+              <code>git push origin release</code>
+              <div class="ph-btns"><span class="ph-yes">許可</span><span class="ph-no">拒否</span></div>
+            </div>
           </div>
         </div>
       </div>
