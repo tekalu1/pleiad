@@ -25,6 +25,8 @@ export default async function (t) {
   // ---- メニューの並びと文言
   t.ok("自分の発言: コピー・ここから分岐 / 編集して再送信・再送信・原文",
     keys(messageMenuPlan({ kind: "user", source: true })) === "copy,fork,sep,edit,resend,source");
+  t.ok("保存前の自分の発言: 編集・再送信は出さない",
+    keys(messageMenuPlan({ kind: "user", source: true, editable: false })) === "copy,fork,sep,source");
   t.ok("エージェントの返答: 返答をコピー・ここから分岐だけ", keys(messageMenuPlan({ kind: "ai" })) === "copy,fork"
     && messageMenuPlan({ kind: "ai" })[0].label === "返答をコピー");
   t.ok("続きの発言を右クリックしたときの分岐は「この発言から分岐」", messageMenuPlan({ kind: "ai", part: true }).find((p) => p.key === "fork").label === "この発言から分岐"

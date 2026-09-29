@@ -94,13 +94,14 @@ export async function copyToClipboard(text, button = null) {
  * touch: 時刻の行を先頭に置く（ホバーが無く、時刻を出す手段が押すことしか無いので）
  * @returns {{ key: string, label: string, sep?: boolean }[]}
  */
-export function messageMenuPlan({ kind = 'user', part = false, canFork = true, shell = false, source = false } = {}) {
+export function messageMenuPlan({ kind = 'user', part = false, canFork = true, shell = false, source = false, editable = true } = {}) {
   const items = [{ key: 'copy', label: kind === 'ai' ? t('chat.message.copyReply') : t('chat.message.copy') }];
   if (shell) items.push({ key: 'toComposer', label: t('chat.system.copyToComposer') });
   if (canFork) items.push({ key: 'fork', label: part ? t('chat.message.forkPart') : t('chat.message.fork') });
   if (kind === 'user') {
-    items.push({ key: 'sep', sep: true }, { key: 'edit', label: t('chat.message.editResend') }, { key: 'resend', label: t('chat.message.resend') });
-    if (source) items.push({ key: 'source', label: t('chat.message.showSource') });
+    // 編集・再送信は、保存済み（uuid が分かっている）の発言だけ
+    if (editable) items.push({ key: 'sep', sep: true }, { key: 'edit', label: t('chat.message.editResend') }, { key: 'resend', label: t('chat.message.resend') });
+    if (source) items.push(...(editable ? [] : [{ key: 'sep', sep: true }]), { key: 'source', label: t('chat.message.showSource') });
   }
   return items;
 }

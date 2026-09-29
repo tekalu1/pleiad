@@ -700,7 +700,7 @@ function openMessageMenu({ m, part = false }, at = {}) {
   const target = kind === 'ai' && !part ? forkAtReplyEnd(m) : (m.dataset.uuid ? m : null);
   const canFork = Boolean(target) && capsOf(activeBackendId()).fork !== false;
   const command = kind === 'cmd' ? m.shellCommand?.() : null;
-  const plan = messageMenuPlan({ kind, part, canFork, shell: Boolean(command), source: kind === 'user' });
+  const plan = messageMenuPlan({ kind, part, canFork, shell: Boolean(command), source: kind === 'user', editable: Boolean(m.dataset.uuid) });
   const busy = state.busy;
   const run = {
     copy: () => copyToClipboard(messageCopyText(m), owner.querySelector(':scope > .who .who-copy')),
@@ -3802,7 +3802,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   th.append(spine);
   const put = (node, key) => { const w = wrap(node, key); th.append(w); return w; };
   const parentMsg = (text, at, word) => {
-    const m = userMsg(text, { at });
+    const m = stripActions(userMsg(text, { at }));
     m.querySelector('.who > span').textContent = word;
     return m;
   };
