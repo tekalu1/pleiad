@@ -49,7 +49,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            mobile/package-lock.json
+      # InteropTest（remote-core）は mobile/scripts/fake-host.mjs で本物の relay と core のサーバーを起こすので、
+      # ルートの依存も要る。Electron の本体は使わないので落とさない。
+      - name: Install root dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm ci
       - name: Install and sync
         working-directory: mobile
         run: |
