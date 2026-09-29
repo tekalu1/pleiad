@@ -2290,8 +2290,8 @@ $("cancelSettings").onclick = () => reserveSettings({ cancel: true });
 function cwdOptions() {
   const seen = new Map();
   for (const s of state.sessions) {
-    if (!s.cwd) continue;
-    if (!seen.has(s.cwd) || (s.lastModified ?? 0) > seen.get(s.cwd)) seen.set(s.cwd, s.lastModified ?? 0);
+    if (!s.place) continue;
+    if (!seen.has(s.place) || (s.lastModified ?? 0) > seen.get(s.place)) seen.set(s.place, s.lastModified ?? 0);
   }
   return [...seen].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([d, t]) => ({ value: d, hint: relTime(t), time: t }));
 }

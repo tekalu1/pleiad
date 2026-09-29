@@ -10,6 +10,34 @@
 - 例: `git worktree add -b fix/<作業名> <worktreeの絶対パス> main`
 - 既存の未コミット変更、未追跡ファイル、他の作業用ブランチ・worktree は保持する。無断で stash、破棄、上書きしない。
 
+## 構成と環境変数
+
+```
+core/     Node の HTTP + WebSocket サーバー。バックエンドに依存しない
+  backends/  エージェント 1 種類 = 1 ファイル（claude・codex・antigravity と、テスト用の fake）
+web/      画面。素の ESM でビルドは無い。サーバーがリクエストごとにディスクから読む
+desktop/  Electron の main / preload と自動更新
+mobile/   モバイル版（Capacitor）
+relay/    リモート接続の中継サーバー（docs/remote.md）
+tests/    run.mjs（npm test）と e2e.mjs（npm run test:e2e）
+scripts/  リリースと署名
+docs/     設計（design.md）・見た目（design-system.md）・ADR（adr/）
+```
+
+core が web へ流すのは正規化イベントだけで、バックエンドごとのプロトコルは漏らさない（`docs/multi-backend.md` §2.2）。
+
+| 環境変数 | 意味 |
+|---|---|
+| `AGENT_HOST_TOKEN` | 固定のトークン（既定は起動ごとにランダム） |
+| `AGENT_HOST_PORT` | 既定 7420。予約済み・使用中なら空きポートへ移る |
+| `AGENT_HOST_BIND` | 既定 `127.0.0.1` |
+| `AGENT_HOST_DATA` | データ置き場（既定 `~/.agent-host`） |
+| `AGENT_HOST_BACKENDS` | 使うバックエンド（カンマ区切り。既定 `claude,codex,antigravity`） |
+| `AGENT_HOST_CODEX_BIN` | codex の実行ファイル（既定 `codex`） |
+| `AGENT_HOST_AGY_BIN` | Antigravity CLI の実行ファイル（既定 `agy`） |
+
+デスクトップ版は `npm run desktop`、インストーラーの生成は `npm run desktop:dist`（対象 OS で実行）。リリースの運用は `docs/desktop-releases.md`。
+
 ## 実装と検証
 
 - 作業用 worktree 内で実装・検証・コミットを行い、依頼に必要な変更だけを含める。
