@@ -383,9 +383,12 @@ function scrollToEnd() {
   requestAnimationFrame(tick);
 }
 
-/** 筋の末尾に置く。稼働表示（走っている間だけある）は常に一番下に残す */
+/**
+ * 筋の末尾に置く。稼働表示（走っている間だけある）は常に一番下に残す。
+ * 稼働表示の行は activity.el が持っている。1 行ごとに筋の子孫を探すと、履歴を描く間が件数の 2 乗になる
+ */
 function place(w) {
-  const act = thread.querySelector(".mw.activity");
+  const act = activity.el?.isConnected ? activity.el.closest(".mw") : null;
   if (act && !w.classList.contains("activity")) act.before(w);
   else thread.append(w);
 }
