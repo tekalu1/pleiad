@@ -125,6 +125,11 @@ export function markWaiting(card) {
   res.replaceChildren();
 }
 
+/** 入れ替わりで出てくる側の不透明度 0 → 1（240ms）。動きを減らす設定では何もしない */
+export function fadeIn(node) {
+  animate(node, [{ opacity: 0 }, { opacity: 1 }], { duration: DUR });
+}
+
 /**
  * 行 ⇄ 承認カードの入れ替え。host（.in）の高さを、入れ替える前の高さから後の高さへ 240ms で動かす。
  * 位置は最新の行を基準に保つので、上の本文は動かない。動きを減らす設定では動かさずに入れ替える

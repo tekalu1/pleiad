@@ -26,7 +26,7 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
 import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, plainTextHtml, toolDoing } from "./render.mjs";
-import { Bundle, bundleOf, markRunning, markWaiting, splitToolCalls, swapHeight } from "./tool-bundle.mjs";
+import { Bundle, bundleOf, fadeIn, markRunning, markWaiting, splitToolCalls, swapHeight } from "./tool-bundle.mjs";
 import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
 import { setupComposerControls, resolvedModel, folderBrowser } from "./composer-controls.mjs";
@@ -1230,6 +1230,7 @@ function rowApprovalCard(ev, row) {
       const said = el("span", "tc-note", ok ? (forever ? t("chat.approval.allowedAlways") : t("chat.approval.allowed")) : "");
       line.querySelector(".tc-note")?.remove();
       if (ok) line.querySelector(".tc-res").before(said);
+      fadeIn(details);
       if (ok) markRunning(row);
       else {
         row.dataset.denied = "1";
@@ -1247,6 +1248,7 @@ function rowApprovalCard(ev, row) {
 
   markWaiting(row);
   swapHeight(host, () => { details.hidden = true; row.append(box); });
+  fadeIn(box);
   bundleOf(row)?.reveal(row);
   return box;
 }

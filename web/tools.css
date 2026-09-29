@@ -11,6 +11,9 @@
 .tc.tc-compact{font-size:var(--fs-xs)}
 .tc-details-body{padding:4px 0 8px var(--tc-indent);min-width:0}
 .tc-details-body .code-block>pre{max-height:240px;overflow:auto}
+/* コピーの操作は枠の右上に重ねる（言語札の無い出力の上に空の行を作らない） */
+.tc .code-block .code-actions{position:absolute;top:4px;right:6px;padding:0;z-index:1}
+.tc .code-block>pre{padding:8px 52px 8px 12px}
 .tc-section-label{margin:4px 0 3px;font-size:var(--fs-xs);color:var(--ink-weak);display:flex;gap:8px;align-items:baseline}
 .tc-section-label .btn{font-size:var(--fs-xs);padding:0 6px;color:var(--ink-blue)}
 .tc-preview{margin:12px 0;max-width:100%}

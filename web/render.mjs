@@ -1152,7 +1152,9 @@ function outputTail(text) {
   const tail = lines.length > TAIL_LINES;
   const label = el("div", "tc-section-label", tail ? t("timeline.result.tail", { count: TAIL_LINES, n: fmtN(TAIL_LINES) }) : t("timeline.result.output"));
   const code = el("div", "tc-output");
-  code.innerHTML = codeBlock(tail ? lines.slice(-TAIL_LINES).join("\n") : lines.join("\n"), "");
+  const shown = tail ? lines.slice(-TAIL_LINES) : lines;
+  while (shown.length > 1 && !shown[0].trim()) shown.shift();   // 末尾で切った先頭が空行なら落とす
+  code.innerHTML = codeBlock(shown.join("\n"), "");
   if (tail) {
     const more = el("button", "btn tc-more", t("timeline.result.showAll", { count: lines.length, n: fmtN(lines.length) }));
     more.type = "button";
