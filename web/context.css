@@ -211,14 +211,6 @@
 .mcp-acts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}
 
 /* ==================== ① 会話の右パネル「この会話のコンテキスト」 ==================== */
-/* 会話の頭に付く札。押すと右パネルが開く */
-.ctx-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 12px;border-radius:var(--r-pill);background:var(--surface-1);
-  color:var(--ink-weak);font-size:var(--fs-s);white-space:normal;text-align:left}
-.ctx-chip:hover,.ctx-chip[aria-expanded=true]{background:var(--surface-2);color:var(--ink)}
-.ctx-chip svg{flex:none;width:14px;height:14px}
-.ctx-chip .chg{color:var(--ink-strong);font-weight:600}
-.mw[data-key=context] .mw-body{padding-bottom:10px}
-
 /* パネルの中身は紙の面をやめ、種類ごとの白い面を脇の地に並べる */
 .file-preview.custom .file-preview-content{background:transparent;border-radius:0}
 .scx{display:flex;flex-direction:column;gap:10px;padding:0 0 16px;font-size:var(--fs-s);color:var(--ink)}

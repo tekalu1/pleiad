@@ -1,9 +1,9 @@
-// ツール呼び出しの「まとまり」（docs/design-system.md §4.5「ツール呼び出し」、ADR 0061）。
+// ツール呼び出しの「まとまり」（docs/design-system.md §4.5「ツール呼び出し」、ADR 0061・0067）。
 //
-// 本文（と委譲）で区切られたツールの連続を 1 つのまとまりにする。閉じると見出し 1 行（件数・動詞の内訳・変更したファイル数・失敗の数・経過）。
+// 本文（と委譲）で区切られたツールの連続を 1 つのまとまりにする。閉じると見出し 1 行（「≡ ツール実行 N」。右端は失敗のときの「✕ 失敗 N」と、走っている間の経過だけ）。
 // 走っている間は「見出し + 1 つ前（薄い行）+ 最新の行」の 3 行で、新しいツールが始まるたびに入れ替わる。
 // 薄い行を押す・↑ で 1 件ずつ、最新を下端に固定したまま上へ伸びて遡れる。見出しを押すと全部を開く ⇄ 閉じる。
-// 失敗・変更したファイル・承認待ちは、まとまりの中に入れる（見出しの数字と補足で分かる）。委譲だけは呼び出し側がまとまりの外に置く。
+// 失敗・変更したファイル・承認待ちは、まとまりの中に入れる（失敗は見出しの右端の「✕ 失敗 N」で分かる）。委譲だけは呼び出し側がまとまりの外に置く。
 // 動きは §8 の値（240ms・120ms）。prefers-reduced-motion では動かさない。
 import { el, svgEl, chevron } from "./dom.mjs";
 import { t } from "./i18n.mjs";
@@ -190,23 +190,21 @@ export class Bundle {
     this.live = live;
     this.cur = null;         // 最新の行（live のとき）
     this.t0 = Date.now();
-    this.elapsed = null;
 
-    this.el = el("div", "bundle");
+    this.el = el("div", live ? "bundle live" : "bundle");
     this.el.bundle = this;
     this.head = el("button", "rhead");
     this.head.type = "button";
     this.head.setAttribute("aria-expanded", "false");
+    // 「≡ ツール実行 12」。数は見出しの語の後ろに弱い字で置くだけ（丸いバッジにしない）。畳んでいる間は .verb 全体を沈める（tools.css）
     this.nEl = el("span", "n");
     const verb = el("span", "verb");
-    verb.append(stackIcon(), this.nEl);
-    this.mixEl = el("span", "mix");
-    this.noteEl = el("span", "note");
+    verb.append(stackIcon(), el("span", "mix", t("timeline.bundle.title")), this.nEl);
     this.xmEl = el("span", "xm");
     this.elEl = el("span", "el");
     const res = el("span", "res");
     res.append(this.xmEl, this.elEl);
-    this.head.append(verb, this.mixEl, this.noteEl, res, chevron());
+    this.head.append(verb, res, chevron());
     this.hist = el("div", "hist");
     this.hist.setAttribute("role", "list");
     this.latest = el("div", "latest");
@@ -283,8 +281,8 @@ export class Bundle {
   close() {
     if (!this.live) return;
     this.live = false;
+    this.el.classList.remove("live");
     ticking.delete(this.head);
-    this.elapsed = (Date.now() - this.t0) / 1000;
     const card = this.cur;
     this.cur = null;
     // 1 件だけなら見出しは要らない。行のまま置く
@@ -371,31 +369,21 @@ export class Bundle {
     this.paint(countAnimation);
   }
 
-  /** 見出し。件数・内訳・変更したファイル数・失敗の数・経過。結果が届いたら呼び直す */
+  /** 見出し。「ツール実行 N」・失敗の数（右端）・走っている間の経過。結果が届いたら呼び直す */
   paint(countAnimation = false) {
     const st = bundleStats(this.items);
     this.el.dataset.n = String(st.count);   // 1 件の間は見出しを出さない（tools.css）
-    const nText = t("timeline.bundle.count", { count: st.count, n: st.count });
+    const nText = st.count > 99 ? "99+" : String(st.count);
     if (this.nEl.textContent !== nText) {
       this.nEl.textContent = nText;
       if (countAnimation) animate(this.nEl, [{ opacity: 0, transform: "translateY(-40%)" }, { opacity: 1, transform: "none" }], { duration: FAST });
     }
-    const mix = st.mix.map(([v, c]) => `${v} ${c}`).join(" · ");
-    this.mixEl.textContent = mix;
-    const files = st.files.length;
-    // 狭い幅では短い形（.ns。tools.css）
-    const long = el("span", "nl", t("timeline.bundle.changed", { count: files, n: files }));
-    const short = el("span", "ns", t("timeline.bundle.changedShort", { count: files, n: files }));
-    if (files) this.noteEl.replaceChildren(long, short); else this.noteEl.replaceChildren();
-    if (files) this.noteEl.title = st.files.map((f) => `${f.name} ${f.del ? `−${f.del} ` : ""}+${f.add}`).join("\n");
-    else this.noteEl.removeAttribute("title");
+    this.nEl.title = t("timeline.bundle.count", { count: st.count, n: st.count });   // 100 以上の「99+」の実数
     this.xmEl.textContent = st.errors ? t("timeline.bundle.failed", { count: st.errors, n: st.errors }) : "";
-    if (this.live) this.elEl.textContent = clock((Date.now() - this.t0) / 1000);
-    else this.elEl.textContent = this.elapsed != null ? clock(this.elapsed) : "";
+    this.elEl.textContent = this.live ? clock((Date.now() - this.t0) / 1000) : "";   // 終わったまとまりに経過は出さない
     const open = this.head.getAttribute("aria-expanded") === "true";
     this.head.setAttribute("aria-label",
-      t("timeline.bundle.label", { count: st.count, n: st.count, mix })
-      + (files ? t("timeline.bundle.labelChanged", { count: files, n: files }) : "")
+      t("timeline.bundle.label", { count: st.count, n: st.count })
       + (st.errors ? t("timeline.bundle.labelFailed", { count: st.errors, n: st.errors }) : "")
       + (open ? t("timeline.bundle.labelClose") : t("timeline.bundle.labelOpen")));
   }

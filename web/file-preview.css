@@ -103,7 +103,10 @@ body.file-preview-open{grid-template-columns:var(--side-col) minmax(360px,1fr) v
 .file-preview-resize:focus-visible{outline:none}
 .file-preview-resize:focus-visible::before{outline:2px solid var(--line-blue);outline-offset:1px}
 .file-link{overflow-wrap:anywhere}
-.file-link::before{content:'▧';display:inline-block;margin-right:4px;text-decoration:none}
+/* ファイルの印。字の飾り（▧）ではなく SVG のアイコン（どの書体にも無く、Meiryo に落ちていた）。色は文字に従う */
+.file-link::before{content:"";display:inline-block;width:12px;height:12px;margin-right:4px;vertical-align:-1px;text-decoration:none;background:currentColor;
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 1.5h4l2 2v7H3z'/%3E%3Cpath d='M7 1.5v2h2'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 1.5h4l2 2v7H3z'/%3E%3Cpath d='M7 1.5v2h2'/%3E%3C/svg%3E") center/contain no-repeat}
 .file-link[aria-current=true]::after{content:var(--i18n-showing,"");display:inline-block;margin-left:4px;text-decoration:none;font-size:var(--fs-xs)}
 body.file-preview-wide{grid-template-columns:var(--side-col) minmax(0,1fr)}
 body.file-preview-wide > main{display:none}

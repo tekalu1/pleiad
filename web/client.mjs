@@ -14,6 +14,7 @@ import { linkChoices, showLinkSheet, hideLinkSheet, linkSheetOpen } from './link
 import { createRemoteBrowser } from './remote-browser.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
+import { setupMessagePeek } from './message-peek.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
 import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
@@ -119,6 +120,7 @@ const token = new URL(location.href).searchParams.get("token") ?? "";
 const $ = (id) => document.getElementById(id);
 const log = $("log");
 const thread = $("thread");
+setupMessagePeek(thread);   // タッチ: 発言を押すと時刻を 4 秒出す
 // 静的な HTML の文言（data-i18n*）を今の言語で埋める。以降の処理が書き換える文言より先に済ませる
 applyDom(document);
 // 「サイドバーを開く」の名前は件数を入れて書く（web/open-sidebar-mark.mjs）ので、HTML の data-i18n には置かない。一覧が届くまでは件数なし
@@ -703,8 +705,18 @@ function setUuid(m, uuid) {
   }
 }
 
-function whoLine(who, at) {
+/**
+ * 発言者の行。「[ロゴ] 名前 …… 時刻」。ロゴ（エージェントの発言だけ。「あなた」には付けない）は名前の左に置き、読み上げには出さない。
+ * 時刻は触れている・焦点がある間だけ見える（style.css。場所は取ったまま）。右端には操作の列（24px）を空けてある
+ */
+function whoLine(who, at, { backend } = {}) {
   const w = el("div", "who");
+  if (backend) {
+    const logo = backendLogo(backend, who);
+    logo.removeAttribute("title");
+    logo.setAttribute("aria-hidden", "true");
+    w.append(logo);
+  }
   w.append(el("span", null, who), el("span", "when", hhmm(at)));
   return w;
 }
@@ -760,7 +772,7 @@ function taskNoticeNode(text, at = '') {
   const backend = task?.backend || notice.backend;
   const failed = notice.status === 'failed';
   const mark = stillMark(notice.status === 'completed' ? 'done' : failed ? 'fail' : 'stop', TASK_STATUS[notice.status] ?? notice.status);
-  const m = el('div', 'm sys task-notice');
+  const m = el('div', 'm sys task-notice' + (failed ? ' failed' : ''));
   const d = el('details', 'sys-fold');
   const s = el('summary');
   const who = el('span', 'tn-who');
@@ -1022,7 +1034,8 @@ function aiMsg({ uuid, at, cont, backend } = {}) {
   const m = el("div", "m ai" + (cont ? " cont" : ""));
   m.dataset.role = "assistant";
   if (at) m.dataset.at = at;
-  m.append(whoLine(labelOf(backend ?? activeBackendId()) || "AI", at));
+  const be = backend ?? activeBackendId();
+  m.append(whoLine(labelOf(be) || "AI", at, { backend: be }));
   forkButton(m);
   setUuid(m, uuid);
   return m;
@@ -1973,7 +1986,6 @@ function onEvent(ev, replay = false) {
       if (ev.pending && ev.messageId && !confirmed) markDelivery(row, ev.initial ? 'sending' : 'pending');
       else markDelivery(row, 'sent');
       syncOutboxRows(outboxes.get(state.current) ?? []);
-      paintContextLine();      // 最初の発言が出てから置く（記録は発言より先に届く）
       return;
     }
     case 'userMessage.delivered': {
@@ -2210,7 +2222,6 @@ function onEvent(ev, replay = false) {
       if (state.contextInfo && state.contextInfoId === ev.sessionId) {
         state.contextInfo = { ...state.contextInfo, changed: { differs: false, paths: [], files: [] } };
         paintContextEntry();
-        paintContextLine();
         sessionContext.refresh();
       }
       return;
@@ -2225,7 +2236,6 @@ function onEvent(ev, replay = false) {
         plyParts: ev.plyParts ?? prev?.plyParts ?? null };
       state.contextInfoId = id;
       paintContextEntry();
-      paintContextLine();
       sessionContext.refresh();
       return;
     }
@@ -4079,6 +4089,11 @@ function paintDelegateStates() {
     if (res.dataset.sig === sig) continue;
     res.dataset.sig = sig;
     res.classList.toggle('tc-res-wait', Boolean(next?.waiting));
+    // 走っている・承認待ち・失敗のカードは沈めない（web/tools.css）
+    if (next?.waiting) card.dataset.dstate = 'waiting';
+    else if (item?.live) card.dataset.dstate = 'running';
+    else if (item?.status === 'failed') card.dataset.dstate = 'failed';
+    else delete card.dataset.dstate;
     if (!next) { res.replaceChildren(); continue; }
     res.replaceChildren(...(next.mark ? [next.mark] : []), el('span', null, next.text));
   }
@@ -5346,29 +5361,6 @@ function paintContextEntry() {
   paintContextEntryButton($('contextEntry'), { visible: !!state.current, report: state.contextInfo?.report,
     summary: chipText(state.contextInfo), changed: !!state.contextInfo?.changed?.differs });
 }
-const CHIP_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg>';
-/** 会話の頭に付く札（指示 2 · Skills 14 · MCP …）。最初の発言の下。押すと右パネルが開く */
-function paintContextLine() {
-  thread.querySelector('.mw[data-key="context"]')?.remove();
-  const report = state.contextInfo?.report;
-  if (!report) return;
-  // 最初の人の発言の下（コマンド・`!` の行（.cmd）ではなく）
-  const anchor = thread.querySelector('.mw:has(.m[data-role="user"]:not(.cmd))');
-  if (!anchor) return;
-  const m = el("button", "ctx-chip");
-  m.type = 'button';
-  m.innerHTML = CHIP_ICON;
-  m.append(el('span', null, chipText(state.contextInfo)));
-  if (state.contextInfo?.changed?.differs) m.append(el('span', 'chg', t('session.context.changedSuffix')));
-  m.setAttribute('aria-label', t('session.context.open', { summary: chipText(state.contextInfo) }));
-  m.setAttribute('aria-expanded', String(sessionContext.isOpen()));
-  m.onclick = () => sessionContext.toggle(m);
-  // 分岐点の行は同じ発言の後ろに入る。その後ろに置いて順番を保つ
-  let after = anchor;
-  while (after.nextElementSibling?.classList.contains('branch-row')) after = after.nextElementSibling;
-  after.after(wrap(m, 'context'));
-  relayoutBranches();
-}
 /** 今のセッションの読み込み記録を取り直す。固定された会話ではサーバが今のファイルと突き合わせる */
 async function refreshContextEntry({ force = false } = {}) {
   const id = state.current;
@@ -5382,7 +5374,6 @@ async function refreshContextEntry({ force = false } = {}) {
     state.contextInfoId = id;
   } else return state.contextInfo;
   paintContextEntry();
-  paintContextLine();
   sessionContext.refresh();
   return state.contextInfo;
 }
@@ -5659,7 +5650,7 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
   if (m.role === "user") node = user ? user(m) : userMsg(m.text, { uuid: readonly ? undefined : m.uuid, at: m.at, presents, markdown: !readonly });
   else {
     node = aiMsg({ uuid: readonly ? undefined : m.uuid, at: m.at, backend: m.backend ?? backend, cont });
-    if (readonly && m.model) node.querySelector('.who > span').textContent = modelDisplayName(state.vocab.get(backend)?.models ?? {}, m.model);
+    if (readonly && m.model) node.querySelector('.who > span:not(.row-be)').textContent = modelDisplayName(state.vocab.get(backend)?.models ?? {}, m.model);
     if (m.thinking) node.append(thinkFromText(m.thinking));
     const cards = (m.toolCalls ?? []).map((c) => {
       const card = renderToolCall(c.name, c.input, { id: c.id });
@@ -5959,7 +5950,6 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
     for (const node of added) node.animate([{ opacity: .15 }, { opacity: 1 }], { duration: motionDuration(420), easing: EASING });
   }
   // この会話が読み込んだ記録。取り直しは待たない（固定された会話では今のファイルとの突き合わせが入る）
-  paintContextLine();
   refreshContextEntry({ force: true }).catch(() => {});
   thread.classList.toggle("branched", branches.has(id));   // 枝があるとき、筋は「今いる枝」として青く太い
   if (isRunningHere()) activity.show(activity.text || ACTIVITY_LABEL.running);   // 走っている会話を開いたら末尾に弧

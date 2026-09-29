@@ -148,6 +148,8 @@ const cases = [
   await import("./unit/attachment-order.mjs"),
   // 自分の発言: 添付の印を本文の位置に置く（コードブロック内・一致しないパスは残す・古い形式は末尾）・畳み込み・別カードを二重に出さない
   await import("./unit/user-message.mjs"),
+  // ホバーの無い端末で発言を押すと時刻を 4 秒出す（リンク・ボタン・コード・字の選択の上では出さない）
+  await import("./unit/message-peek.mjs"),
   await import("./unit/md-doc.mjs"),
   await import("./unit/prompt-title.mjs"),
   // 添付の件数に上限が無い（下書き・送信）。出どころの印。1 件 8MB の上限は残る

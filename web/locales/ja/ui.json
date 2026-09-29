@@ -1253,6 +1253,7 @@
     },
     "attachList": {
       "count_other": "添付 {{count}} 件",
+      "openList_other": "添付 {{count}} 件の一覧を開く",
       "open": "開く",
       "copyPath": "パスをコピー",
       "close": "閉じる",
@@ -1421,9 +1422,7 @@
       "label": "プラグイン",
       "changed": "変更あり",
       "title": "この会話のプラグイン",
-      "titleWith": "この会話のプラグイン：{{summary}}",
-      "changedSuffix": "· 変更あり",
-      "open": "この会話のプラグインを開く：{{summary}}"
+      "titleWith": "この会話のプラグイン：{{summary}}"
     },
     "menu": {
       "iconFailed": "アイコンの変更に失敗: {{error}}",
@@ -1766,12 +1765,10 @@
       "showAll_other": "全 {{n}} 行を表示"
     },
     "bundle": {
+      "title": "ツール実行",
       "count_other": "{{n}} 件",
-      "changed_other": "{{n}} ファイルを変更",
-      "changedShort_other": "変更 {{n}}",
-      "failed_other": "✕ {{n}}",
-      "label_other": "ツール {{n}} 件（{{mix}}）",
-      "labelChanged_other": "・{{n}} ファイルを変更",
+      "failed_other": "✕ 失敗 {{n}}",
+      "label_other": "ツール実行 {{n}} 件",
       "labelFailed_other": "・失敗 {{n}}",
       "labelOpen": "。押すと開く",
       "labelClose": "。押すと閉じる",

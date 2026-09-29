@@ -92,8 +92,9 @@ export default async function (t) {
   t.ok("添付が無い発言には下の行を出さない", userTools({ raw: "x", presents: [] }) === null);
   const rawText = "x\n[添付] C:\\up\\a.png";
   const tools = userTools({ raw: rawText, presents: [a, b] });
-  t.ok("添付 N 件の入口と原文の入口（原文は送った本文そのまま・初めは閉じている）",
-    tools.row.querySelectorAll(".msg-tool").length === 2 && tools.row.shown.includes("添付 2 件") && tools.source.hidden === true && tools.source.textContent === rawText);
+  t.ok("添付の入口（字は件数だけ。名前と title は「添付 2 件の一覧を開く」）と原文の入口（原文は送った本文そのまま・初めは閉じている）",
+    tools.row.querySelectorAll(".msg-tool").length === 2 && !tools.row.shown.includes("添付") && tools.row.querySelector(".msg-tool-n")?.textContent === "2"
+    && tools.row.querySelector(".msg-tool-atts")?.attrs.title === "添付 2 件の一覧を開く" && tools.source.hidden === true && tools.source.textContent === rawText);
 
   // ---- 発言に結び付いた present を別カードとして二重に出さない
   const messages = [

@@ -1292,6 +1292,8 @@
     "attachList": {
       "count_one": "{{count}} attachment",
       "count_other": "{{count}} attachments",
+      "openList_one": "Open the list of {{count}} attachment",
+      "openList_other": "Open the list of {{count}} attachments",
       "open": "Open",
       "copyPath": "Copy path",
       "close": "Close",
@@ -1464,9 +1466,7 @@
       "label": "Plugins",
       "changed": "Changed",
       "title": "Plugins for this conversation",
-      "titleWith": "Plugins for this conversation: {{summary}}",
-      "changedSuffix": "· Changed",
-      "open": "Open plugins for this conversation: {{summary}}"
+      "titleWith": "Plugins for this conversation: {{summary}}"
     },
     "menu": {
       "iconFailed": "Couldn't change the icon: {{error}}",
@@ -1826,18 +1826,13 @@
       "showAll_other": "Show all {{n}} lines"
     },
     "bundle": {
+      "title": "Tool calls",
       "count_one": "{{n}} call",
       "count_other": "{{n}} calls",
-      "changed_one": "{{n}} file changed",
-      "changed_other": "{{n}} files changed",
-      "changedShort_one": "{{n}} changed",
-      "changedShort_other": "{{n}} changed",
-      "failed_one": "✕ {{n}}",
-      "failed_other": "✕ {{n}}",
-      "label_one": "{{n}} tool call ({{mix}})",
-      "label_other": "{{n}} tool calls ({{mix}})",
-      "labelChanged_one": ", {{n}} file changed",
-      "labelChanged_other": ", {{n}} files changed",
+      "failed_one": "✕ Failed {{n}}",
+      "failed_other": "✕ Failed {{n}}",
+      "label_one": "Tool calls, {{n}} call",
+      "label_other": "Tool calls, {{n}} calls",
       "labelFailed_one": ", {{n}} failed",
       "labelFailed_other": ", {{n}} failed",
       "labelOpen": ". Press to open",

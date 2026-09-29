@@ -175,12 +175,17 @@ export function userTools({ raw, presents = [], openItem, copyPath }) {
   const button = el('button', 'msg-tool msg-tool-atts');
   button.type = 'button';
   button.setAttribute('aria-haspopup', 'dialog');
+  // 「📎 6 ▾」。字は「添付」を外して件数だけ。名前と title は「添付 6 件の一覧を開く」
+  const label = t('chat.attachList.openList', { count: presents.length, n: presents.length });
+  button.setAttribute('aria-label', label);
+  button.title = label;
   button.append(
     icon('M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2'),
-    el('span', null, t('chat.attachList.count', { count: presents.length })),
+    el('span', 'msg-tool-n', String(presents.length)),
     el('span', 'msg-tool-caret', '▾'),
   );
   button.lastChild.setAttribute('aria-hidden', 'true');
+  button.children[1].setAttribute('aria-hidden', 'true');
   button.onclick = () => openAttachmentList({
     anchor: button, title: t('chat.attachList.count', { count: presents.length }),
     items: presents.map(attachmentListItem),

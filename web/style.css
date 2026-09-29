@@ -522,16 +522,18 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 #log{flex:1;min-height:0;overflow-y:auto;padding:14px 22px 24px 8px}
 #log.branch-transition{overflow-anchor:none}
 .thread{position:relative;max-width:860px;min-width:0}
-.spine{position:absolute;left:0;top:0;width:72px;height:100%;overflow:visible;pointer-events:none}
+.spine{position:absolute;left:0;top:0;width:var(--gut,72px);height:100%;overflow:visible;pointer-events:none}
 .spine path{fill:none;stroke:var(--line);stroke-width:var(--hair);transition:stroke var(--dur) var(--ease-out),stroke-width var(--dur) var(--ease-out)}
 /* 現在の会話軸。分岐グループ内の曲線は branch-view.mjs が描く。 */
 .thread.branched .spine path{stroke:var(--line-blue);stroke-width:2}
 /* 発言の入れ物。左 72px の溝に筋の節、右に中身。枝の最小化・最大化はこの高さと位置を動かす。
    高さを畳むために中身は overflow:hidden を持つ。節は溝の側にあるので切られない */
-.mw{display:grid;grid-template-columns:72px minmax(0,1fr);grid-template-rows:1fr;opacity:1;transform:none;min-width:0;
+.mw{display:grid;grid-template-columns:var(--gut,72px) minmax(0,1fr);grid-template-rows:1fr;opacity:1;transform:none;min-width:0;
   transition:grid-template-rows var(--dur-slow) var(--ease-organic),opacity var(--dur-slow) var(--ease-organic),transform var(--dur-slow) var(--ease-organic)}
 /* 初期表示では画面外の発言を省き、client.mjs が末尾から小分けに実寸を確定する。 */
 #thread > .mw:not(.activity):not(.height-ready){content-visibility:auto;contain-intrinsic-size:auto 160px}
+/* 700px 以下は溝を 40px に（本文の幅を取り戻す）。筋は x=20 のまま、分岐の曲線（web/branch-view.mjs）は溝の外の自分の行に描くので崩れない */
+@media (max-width:700px){:is(.thread,.bg-thread){--gut:40px}}
 .mw-gutter,.mw-body{min-height:0;overflow:hidden;min-width:0}
 .mw-gutter{position:relative}
 .mw-body{transition:transform var(--dur-fast) var(--ease-out)}
@@ -543,8 +545,13 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
    詰めるのは入れ物の側（.mw.cont）。中身（.m）を負の margin で上げると .mw-body の overflow:hidden に頭が切られる */
 .mw.cont{margin-top:-10px}
 .m.cont .who{display:none}
-.who{font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em;margin-bottom:3px;display:flex;align-items:center;gap:8px}
-.who .when{font-family:var(--font-mono);margin-left:auto}
+.who{font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:0;margin-bottom:3px;display:flex;align-items:center;gap:10px;min-height:18px}
+/* 右端は「値の列」（時刻）と、その右の幅 24px の「操作の列」の 2 列（ツールの行・まとまりの見出しの ⌄ と同じ列）。値と操作の間は 10px。
+   操作の列にはこの後 ⋯ が入る。時刻は触れている・焦点がある間（タッチは発言を押した 4 秒）だけ見える。場所は取ったままなので並びは動かない */
+.who::after{content:"";flex:none;width:24px}
+.who .row-be{margin-right:-4px}
+.who .when{margin-left:auto;opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
+.m:is(:hover,:focus-within,.peek)>.who .when{opacity:1}
 .m.user .body{display:inline-block;max-width:680px;background:var(--surface-2);border-radius:var(--r-l);padding:9px 16px;white-space:pre-wrap;overflow-wrap:anywhere}
 /* ---- 自分の発言の Markdown と添付（web/user-message.mjs、docs/design-system.md「自分の発言」、ADR 0059）。
    本文は AI の本文と同じ md の見た目。添付は本文の印の位置に縮小（画像）か札（ファイル）で出る ---- */
@@ -605,9 +612,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 }
 .message-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:var(--sp-1);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
 .message-actions .btn{font-size:var(--fs-xs);padding:3px 10px}
-.m.ai > .message-actions{position:absolute;right:48px;top:-1px}
+.m.ai > .message-actions{position:absolute;right:82px;top:-1px}
 /* 見出しの行が無い続きの発言がツールの行から始まるとき、操作は右端の結果・「開く」と重ならないよう左へ寄せる */
-@media (min-width:561px){.m.ai.cont > .message-actions:has(+ :is(.tc,.bundle)){right:190px;top:3px}}
+@media (min-width:561px){.m.ai.cont > .message-actions:has(+ :is(.tc,.bundle)){right:198px;top:3px}}
 .m:hover > .message-actions,.message-actions:focus-within{opacity:1}
 .m.editing > .message-actions{visibility:hidden}
 .message-editor{max-width:680px;background:var(--surface-2);border-radius:var(--r-l);padding:var(--sp-3) var(--sp-4)}
@@ -622,7 +629,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 「■ 中断しました · 14:32」。保存された中断から描く一行（client.mjs の paintInterruptLine） */
 .m.sys.interrupted{display:flex;align-items:center;gap:6px}
 .m.sys .stop-mark{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linejoin:round}
-.m.sys.interrupted .t{font-family:var(--font-mono)}
 /* 一行の中から画面を開く（コンテキストの記録の「中身を見る」）。押すのはボタン、見た目はリンク */
 .m.sys .lnk{padding:0;font-size:var(--fs-xs);color:var(--ink-blue);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
 .m.sys .lnk:hover{background:transparent;color:var(--ink-blue);text-decoration-color:var(--line-blue)}
@@ -633,7 +639,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.sys .sys-fold>summary::before{content:"▸";display:inline-block;width:1em;flex:none;transition:transform var(--dur-fast) var(--ease-out)}
 .m.sys .sys-fold[open]>summary::before{transform:rotate(90deg)}
 .m.sys .sys-fold>summary:hover{color:var(--ink)}
-.m.sys .sys-fold>summary .t{font-family:var(--font-mono);margin-left:auto}
+.m.sys .sys-fold>summary .t{margin-left:auto}
 .m.sys .sys-body{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-s);line-height:1.7;color:var(--ink);background:var(--surface-2);
   border-radius:var(--r-s);padding:8px 12px;margin:4px 0 4px 1em;max-width:680px;max-height:340px;overflow:auto}
 /* スラッシュコマンド・! モードの 1 行（web/system-messages.mjs の commandParts）。発言者は「あなた」、吹き出しは付けない。
@@ -641,7 +647,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.user.cmd .cmdline{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;min-width:0;padding:2px 0}
 .m.user.cmd .cmdline .tc-label{color:var(--ink-weak)}
 .m.user.cmd .cmd-text{flex:1 1 12em;min-width:0;color:var(--ink);font-family:var(--font-mono);font-size:var(--fs-s);white-space:pre-wrap;overflow-wrap:anywhere}
-.m.user.cmd .cmd-res{flex:none;margin-left:auto;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
+.m.user.cmd .cmd-res{flex:none;margin-left:auto;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
 .m.user.cmd .who .handed{letter-spacing:0}
 /* 渡す前の `!` の行の「渡さない」／「渡す」（ADR 0055）。見出しの字に並ぶ小さな字のボタン */
 .m.user.cmd .who .who-act{color:var(--ink-blue);padding:0 4px;font-size:var(--fs-xs);letter-spacing:0;border:0;background:transparent;cursor:pointer;font-family:inherit}
@@ -725,9 +731,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .table-wrap tbody tr:nth-child(even) td{background:var(--surface-2)}
 .code-block{position:relative;margin:0 0 .9em;border-radius:var(--r-m);background:var(--surface-2);overflow:hidden;min-width:0;max-width:100%}
 .code-block pre{margin:0;padding:12px 52px 12px 16px;overflow-x:auto}
+/* 言語札とコピーはコードの右上に重ねる（上に 1 行空けない。ツールの中のコードと同じ） */
 .code-block pre code{white-space:pre;display:block;font-size:var(--fs-s)}
-.code-actions{display:flex;justify-content:flex-end;align-items:center;gap:var(--sp-1);padding:var(--sp-1) var(--sp-2) 0}
-.code-lang{font-family:var(--font-mono);font-size:var(--fs-xs);letter-spacing:.08em;color:var(--ink-weak);pointer-events:none}
+.code-actions{position:absolute;top:var(--sp-1);right:6px;z-index:1;display:flex;justify-content:flex-end;align-items:center;gap:var(--sp-1);padding:0}
+.code-lang{font-size:var(--fs-xs);letter-spacing:.06em;color:var(--ink-weak);background:var(--surface-2);border-radius:var(--r-s);padding:0 var(--sp-1);pointer-events:none}
 .code-copy{padding:var(--sp-1);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
 .code-block:hover .code-copy,.code-block:focus-within .code-copy{opacity:1}
 @media (hover:none){.code-copy{opacity:1}}
@@ -783,7 +790,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .mw.activity{min-height:40px}
 .m.activity{display:flex;align-items:center;gap:10px;padding:4px 0;margin-bottom:8px;font-size:var(--fs-s);color:var(--ink-weak);min-width:0}
 .m.activity .txt{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.m.activity .el{margin-left:auto;font-family:var(--font-mono);flex:none;font-size:var(--fs-xs)}
+.m.activity .el{margin-left:auto;flex:none;font-size:var(--fs-xs)}
 .m.activity .btn{font-size:var(--fs-xs);padding:2px 10px}
 
 /* ---- 承認カード・質問カード。会話の流れの中に出る（design.md §8.5）。モーダルは使わない ---- */
