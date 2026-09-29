@@ -20,7 +20,7 @@ export default async function (t) {
     const state = { streamEl: null, turnEl: null, turnClosed: closed };
     const context = vm.createContext({
       state, el, renderAssistantMarkdown,
-      closeThink() {}, activity: { show() {} }, atBottom: () => false,
+      closeBundle() {}, closeThink() {}, activity: { show() {} }, atBottom: () => false,
       ACTIVITY_LABEL: {},   // 稼働表示の文言（client.mjs）。このテストは見ない
       ensureTurnEl: () => ({ append: node => bodies.push(node) }),
     });

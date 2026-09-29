@@ -22,7 +22,7 @@ export default async function(t) {
   applyToolHints(backend.toolHints);
   const card = renderToolCall("commandExecution", {command:"echo private-command"});
   applyToolResult(card, {text:"short output"});
-  t.ok("閉じた見出しは実行だけ", card.querySelector("summary").textContent === "実行" && card.querySelector("details").getAttribute("open") === undefined);
+  t.ok("閉じた見出しは動詞から始まり、中身は開くまで閉じている", card.querySelector(".tc-label").textContent === "実行" && card.querySelector("details").getAttribute("open") === undefined);
   t.ok("短い入力・出力も折りたたみの中に保存", card.querySelector("details").outerHTML.includes("private-command") && card.querySelector("details").outerHTML.includes("short output"));
   const item = {type:"imageGeneration", id:"image-1",status:"completed",revisedPrompt:"organic",result:png};
   const messages = threadToMessages({turns:[{id:"t", items:[item,item,{type:"agentMessage",id:"a",text:"done"}]}]});

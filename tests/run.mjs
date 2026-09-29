@@ -134,6 +134,7 @@ const cases = [
   await import("./unit/audit-self.mjs"),
   await import("./unit/markdown-xss.mjs"),
   await import("./unit/tools-render.mjs"),
+  await import("./unit/tool-bundle.mjs"),
   await import("./unit/timeline-images.mjs"),
   await import("./unit/attachment-order.mjs"),
   // 添付の件数に上限が無い（下書き・送信）。出どころの印。1 件 8MB の上限は残る

@@ -41,7 +41,7 @@ export default async function (t) {
     // 承認カードはこのテストの対象外（tests/unit/server-fake.mjs の reopenCase が見ている）
     paintPendingPerms: noop,
     readCompletions: { mark: noop }, renderSessions: noop, acknowledgeDisplayed: noop, el: () => ({ dataset: {} }), renderMarkdown: x => x, renderAssistantMarkdown: x => x,
-    closeThink: noop, activity: { show: noop, hide: noop }, atBottom: () => false,
+    closeBundle: noop, closeThink: noop, activity: { show: noop, hide: noop }, atBottom: () => false,
     ensureTurnEl: () => ({ append: x => bodies.push(x) }),
     thread: { replaceChildren: () => { bodies = []; }, classList: { toggle: noop, remove: noop }, querySelectorAll: () => [] },
     spine: noop, branchSnapshots: () => [], localStorage: { setItem: noop },

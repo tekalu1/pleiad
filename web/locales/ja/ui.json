@@ -227,6 +227,16 @@
     "stopping": "中断している",
     "continuing": "続きを待っている",
     "runningTool": "{{tool}} を実行中",
+    "doing": {
+      "run": "実行中",
+      "read": "読んでいる",
+      "write": "書いている",
+      "edit": "編集している",
+      "find": "探している",
+      "grep": "検索している",
+      "fetch": "取得している",
+      "webSearch": "web を検索している"
+    },
     "waitingAnswer": "あなたの回答を待っている",
     "waitingApproval": "承認を待っている",
     "behindCount_other": "裏で {{count}} 本が動いている",
@@ -1204,6 +1214,8 @@
     "sys": {
       "agentChanged": "エージェントを {{agent}} に変更しました。次の送信から会話を引き継ぎます。",
       "taskResumed": "Pleiad タスクの結果を受け取って再開しました",
+      "taskResult": "委譲の結果",
+      "taskFull": "エージェントに渡した全文",
       "interruptionNote": "中断で止めたものをエージェントに伝えました",
       "failed": "失敗: {{error}}",
       "unknownReason": "理由不明",
@@ -1678,9 +1690,6 @@
       "lineRange": "{{from}}–{{to}} 行",
       "firstLines_other": "先頭 {{n}} 行",
       "fromLine": "{{n}} 行目から",
-      "lines_other": "{{n}} 行",
-      "writeContent": "書き込む内容",
-      "editLines": "{{from}} 行 → {{to}} 行",
       "replaceAll": "全置換",
       "edits_other": "{{n}} 箇所",
       "grepMode": {
@@ -1713,7 +1722,32 @@
       "failed": "✕ 失敗",
       "output": "出力",
       "outputPartial": "出力（途中まで）",
-      "generatedImage": "生成画像"
+      "generatedImage": "生成画像",
+      "failedExit": "✕ 失敗 · exit {{code}}",
+      "tail_other": "出力 · 末尾 {{n}} 行",
+      "showAll_other": "全 {{n}} 行を表示"
+    },
+    "bundle": {
+      "count_other": "{{n}} 件",
+      "changed_other": "{{n}} ファイルを変更",
+      "changedShort_other": "変更 {{n}}",
+      "failed_other": "✕ {{n}}",
+      "label_other": "ツール {{n}} 件（{{mix}}）",
+      "labelChanged_other": "・{{n}} ファイルを変更",
+      "labelFailed_other": "・失敗 {{n}}",
+      "labelOpen": "。押すと開く",
+      "labelClose": "。押すと閉じる",
+      "ghost": "1 つ前: {{verb}} {{target}}（押すと遡る）",
+      "running": "実行中"
+    },
+    "delegate": {
+      "running": "実行中 · {{dur}}",
+      "done": "完了 · {{dur}}",
+      "failed": "失敗 · {{dur}}",
+      "stopped": "中断 · {{dur}}",
+      "waiting": "承認待ち",
+      "secs_other": "{{n}} 秒",
+      "mins_other": "{{n}} 分"
     },
     "branch": {
       "pick": "この先の会話を選択",

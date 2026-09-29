@@ -7,7 +7,7 @@ import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs
 // テキストは必ず esc() を通してから組み立てる。生の入力が HTML として通る経路を作らない。
 // 「エスケープしてから正規表現で置換する」方式は取らない（実体参照が壊れる／取りこぼす）。
 // 構造をパースし、葉のテキストを出力する瞬間にだけエスケープする。
-import { el } from "./dom.mjs";
+import { el, chevron } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { copyIcon, downloadIcon, sidePanelIcon, moreIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
@@ -683,6 +683,26 @@ function fold(summary, open) {
   return d;
 }
 
+/** 開いた中身の 1 節。見出しの字と、こちらで組み立てた（エスケープ済みの）html */
+function section(label, htmlOrNode) {
+  const box = el("div", "tc-sec");
+  box.append(el("div", "tc-section-label", label));
+  if (typeof htmlOrNode === "string") { const b = el("div", "tc-sec-body"); b.innerHTML = htmlOrNode; box.append(b); }
+  else box.append(htmlOrNode);
+  return box;
+}
+
+/** 入力を「キー 値」の格子で見せる。スカラーはそのまま、入れ子は 1 行の JSON に。空なら null */
+function kvGrid(inp) {
+  const entries = Object.entries(inp ?? {}).filter(([, v]) => v != null);
+  if (!entries.length) return null;
+  const grid = el("div", "tc-kv");
+  for (const [k, v] of entries.slice(0, 20)) {
+    grid.append(el("span", "k", clip(k, 40)), el("span", "v", clip(typeof v === "object" ? JSON.stringify(v) : String(v), 300)));
+  }
+  return grid;
+}
+
 /** 折りたたみ + コードブロック。codeBlock がエスケープするので innerHTML でよい */
 function foldCode(summary, body, lang, open) {
   const d = fold(summary, open);
@@ -706,10 +726,9 @@ function diffLines(oldS, newS) {
   return { del: a.slice(pre, a.length - post), add: b.slice(pre, b.length - post) };
 }
 
-/** 記号の列（+ / −）と面の階調だけで見せる。色は付けない（docs/design-system.md §2.2） */
-function diffFold(oldS, newS) {
+/** 記号の列（+ / −）と面の階調だけで見せる差分の枠。色は付けない（docs/design-system.md §2.2） */
+function diffBox(oldS, newS) {
   const { del, add } = diffLines(oldS, newS);
-  const d = fold(t("timeline.tool.diff", { del: fmtN(del.length), add: fmtN(add.length) }));
   const box = el("div", "tc-diff");
   const put = (arr, cls, mark) => {
     for (const line of arr.slice(0, DIFF_MAX)) {
@@ -721,8 +740,41 @@ function diffFold(oldS, newS) {
   };
   put(del, "tc-del", "−");
   put(add, "tc-add", "+");
+  return { box, del: del.length, add: add.length };
+}
+
+/** 差分の折りたたみ（MultiEdit の 1 箇所ごと） */
+function diffFold(oldS, newS) {
+  const { box, del, add } = diffBox(oldS, newS);
+  const d = fold(t("timeline.tool.diff", { del: fmtN(del), add: fmtN(add) }));
   d.lastChild.append(box);
   return d;
+}
+
+/** 編集・書き込みが変えた量。まとまりの見出しの「N ファイルを変更」と、行の右端の「−2 +3」に使う。変えないツールは null */
+export function toolChange(name, input) {
+  const inp = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const path = FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v);
+  if (!path) return null;
+  switch (String(name ?? "")) {
+    case "Write": {
+      const n = lineCount(inp.content);
+      return { path, del: 0, add: n };
+    }
+    case "Edit": case "NotebookEdit": {
+      const { del, add } = diffLines(inp.old_string, inp.new_string);
+      return { path, del: del.length, add: add.length };
+    }
+    case "MultiEdit": {
+      let del = 0, add = 0;
+      for (const e of Array.isArray(inp.edits) ? inp.edits : []) {
+        const d = diffLines(e?.old_string, e?.new_string);
+        del += d.del.length; add += d.add.length;
+      }
+      return { path, del, add };
+    }
+    default: return null;
+  }
 }
 
 // ------------------------------------------------------------ ツール別の描画
@@ -755,7 +807,7 @@ function drawShell(card, head, inp, name) {
   if (inp.description) notes.push(String(inp.description));
   if (notes.length) head.append(noteSpan(notes.join(" · ")));
 
-  if (folded) card.append(foldCode(t("timeline.tool.fullCommand", { count: lineCount(cmd), n: fmtN(lineCount(cmd)) }), cmd, "bash"));
+  if (folded) card.append(section(t("timeline.tool.fullCommand", { count: lineCount(cmd), n: fmtN(lineCount(cmd)) }), codeBlock(clip(cmd, 8000), "bash")));
 }
 
 function drawRead(card, head, inp) {
@@ -773,18 +825,15 @@ function drawRead(card, head, inp) {
 function drawWrite(card, head, inp) {
   head.append(pathSpan(inp.file_path));
   const body = String(inp.content ?? "");
-  head.append(noteSpan(t("timeline.tool.lines", { count: lineCount(body), n: fmtN(lineCount(body)) })));
-  if (body) card.append(foldCode(t("timeline.tool.writeContent"), body, langFromPath(inp.file_path)));
+  if (body) card.append(diffBox("", body).box);
 }
 
 function drawEdit(card, head, inp) {
   head.append(pathSpan(inp.file_path));
   const a = String(inp.old_string ?? "");
   const b = String(inp.new_string ?? "");
-  const bits = [t("timeline.tool.editLines", { from: fmtN(lineCount(a)), to: fmtN(lineCount(b)) })];
-  if (inp.replace_all) bits.push(t("timeline.tool.replaceAll"));
-  head.append(noteSpan(bits.join(" · ")));
-  if (a || b) card.append(diffFold(a, b));
+  if (inp.replace_all) head.append(noteSpan(t("timeline.tool.replaceAll")));
+  if (a || b) card.append(diffBox(a, b).box);
 }
 
 function drawMultiEdit(card, head, inp) {
@@ -912,13 +961,16 @@ function drawMcp(card, head, inp, name) {
   head.append(textMain(parts.slice(2).join("__") || name));
   const s = summarizeInput(inp);
   if (s) head.append(noteSpan(s));
-  if (Object.keys(inp).length) card.append(foldCode(t("timeline.tool.input"), toJson(inp), "json"));
+  // ply_delegate の中身は client.mjs が依頼と内訳で描く（キーと値の格子にしない）
+  const grid = isDelegateToolName(name) ? null : kvGrid(inp);
+  if (grid) card.append(grid);
 }
 
 function drawUnknown(card, head, inp) {
   const s = summarizeInput(inp);
   if (s) head.append(textMain(s));
-  if (Object.keys(inp).length) card.append(foldCode(t("timeline.tool.input"), toJson(inp), "json"));
+  const grid = kvGrid(inp);
+  if (grid) card.append(grid);
 }
 
 // 動詞で揃える。並んだときに「何をしたか」が縦に読める
@@ -933,6 +985,15 @@ const TOOL_LABEL = {
   mcp__host__set_status: t("timeline.tool.label.status"),
   mcp__host__set_title: t("timeline.tool.label.title"), mcp__host__fork: t("timeline.tool.label.fork"),
 };
+
+// 稼働表示の「実行中 · npm test」の動詞（活動の字。一覧の動詞 TOOL_LABEL とは別に「〜している」の形を持つ）
+// i18n-dynamic: activity.doing.
+const TOOL_DOING = {
+  Bash: "run", PowerShell: "run", Read: "read", Write: "write", Edit: "edit", MultiEdit: "edit", NotebookEdit: "edit",
+  Glob: "find", Grep: "grep", WebFetch: "fetch", WebSearch: "webSearch",
+};
+/** ツール名 -> 「実行中」「読んでいる」など。知らないツールは null */
+export const toolDoing = (name) => (TOOL_DOING[name] ? t(`activity.doing.${TOOL_DOING[name]}`) : null);
 
 const TOOL_DRAW = {
   Bash: drawShell, PowerShell: drawShell,
@@ -970,8 +1031,12 @@ export function applyToolHints(hints) {
   }
 }
 
+/** 委譲のツール（Task / Agent / ply_delegate）。右端の状態は client.mjs が子の状態で描くので、結果の要約は出さない */
+export const isDelegateToolName = (name) => /^(Task|Agent)$/.test(String(name ?? "")) || /(^|[_./])ply_delegate$/.test(String(name ?? ""));
+
 /**
- * ツール呼び出しを折りたたみ、開くと入力と出力を読めるようにする。
+ * ツール呼び出しを 1 行にし、開くとツールごとの中身（差分・出力の末尾・ファイル一覧・キーと値）を読めるようにする。
+ * 1 行は「動詞・主役・補足・右端に結果・開閉の印」。生の入力・出力は奥の「入力・出力（JSON）」の折りたたみに残す。
  * @param {string} name ツール名（モデル由来。信用しない）
  * @param {object} input ツール入力（同上）
  * @param {{id?:string, open?:boolean, compact?:boolean}} [opts]
@@ -995,15 +1060,35 @@ export function renderToolCall(name, input, opts) {
   const body = el("div", "tc-details-body");
   details.append(head, body);
   card.append(details);
-  head.append(el("span", "tc-label", TOOL_LABEL[raw] ?? (raw.startsWith("mcp__") ? "MCP" : clip(raw, 24))));
-  // 読む・書く・編集の対象は、動詞の横にファイルリンクで添える（押すと右パネル、右クリックで操作。docs/design-system.md「ファイルの操作」）
-  const target = FILE_DRAWS.has(TOOL_DRAW[raw]) ? FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v) : null;
-  if (target) head.append(pathSpan(target));
+  // 1 行目は tc-line に積む（失敗の要点・委譲の行き先は、その下の行として head に足す）
+  const line = el("span", "tc-line");
+  head.append(line);
+  line.append(el("span", "tc-label", TOOL_LABEL[raw] ?? (raw.startsWith("mcp__") ? "MCP" : clip(raw, 24))));
 
-  body.append(el("div", "tc-section-label", t("timeline.tool.input")));
+  // 描き分け。対象がファイルのツールは、バックエンドごとに違うパスのキーを file_path に揃えて渡す
+  // （押すと右パネル、右クリックで操作。docs/design-system.md「ファイルの操作」）
+  const draw = TOOL_DRAW[raw] ?? (raw.startsWith("mcp__") ? drawMcp : drawUnknown);
+  let drawInp = inp;
+  if (FILE_DRAWS.has(draw) && !inp.file_path) {
+    const target = FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v);
+    if (target) drawInp = { ...inp, file_path: target };
+  }
+  draw(body, line, drawInp, raw);
+  card.toolChange = toolChange(raw, drawInp);
+
+  // 右端: 結果（走っている間は弧と経過秒。web/tool-bundle.mjs）。続けて開閉の印
+  line.append(el("span", "tc-res"));
+  line.append(chevron());
+
+  const json = el("details", "tc-fold tc-json");
+  json.append(el("summary", null, t("routing.detail.json")));
+  const jsonBody = el("div", "tc-json-body");
+  jsonBody.append(el("div", "tc-section-label", t("timeline.tool.input")));
   const inputBody = el("div", "tc-input");
   inputBody.innerHTML = codeBlock(JSON.stringify(inp, null, 2), "json");
-  body.append(inputBody);
+  jsonBody.append(inputBody);
+  json.append(jsonBody);
+  body.append(json);
   return card;
 }
 
@@ -1021,18 +1106,20 @@ function resultText(r) {
   return "";
 }
 
-/** 結果の要約。全文は出さない。行数・件数・成否だけ分かればよい */
-function summarizeResult(tool, body, n) {
+/** 結果の要約（右端）。全文は出さない。行数・件数・変えた量だけ分かればよい */
+function summarizeResult(tool, body, n, change) {
   const out = body.trim();
-  if (!out) return t("timeline.result.empty");
+  if (!out && !change) return t("timeline.result.empty");
   if (/^No (matches|files) found/i.test(out)) return t("timeline.result.count", { count: 0, n: fmtN(0) });
   const found = /^Found (\d+) /.exec(out);
   if (found) return t("timeline.result.count", { count: Number(found[1]), n: fmtN(found[1]) });
 
   switch (tool) {
     case "Glob": return t("timeline.result.count", { count: n, n: fmtN(n) });
-    case "Write": return t("timeline.result.saved");
-    case "Edit": case "MultiEdit": case "NotebookEdit": return t("timeline.result.edited");
+    case "Write":
+      return change ? t("timeline.result.lines", { count: change.add, n: fmtN(change.add) }) : t("timeline.result.saved");
+    case "Edit": case "MultiEdit": case "NotebookEdit":
+      return change ? `${change.del ? `−${fmtN(change.del)} ` : ""}+${fmtN(change.add)}` : t("timeline.result.edited");
     case "TodoWrite": return t("timeline.result.updated");
     default:
       // このアプリのツールは「〜した」という短い返事を返すので、それをそのまま見せる
@@ -1041,9 +1128,63 @@ function summarizeResult(tool, body, n) {
   }
 }
 
+/** 終了コード。出力の中の「Exit code 1」「exit status 2」「exited with code 3」の最後のもの。分からなければ null */
+export function exitCodeOf(body) {
+  let code = null;
+  for (const m of String(body ?? "").matchAll(/\bexit(?:ed)?(?: with)?(?: status| code)?[:\s]+(\d{1,3})\b/gi)) code = Number(m[1]);
+  return code;
+}
+
+/** 失敗の要点の 1 行。出力の中の Error: などの行、無ければ最後の空でない行 */
+export function failureLine(body) {
+  const lines = String(body ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return "";
+  const hit = lines.find((l) => /^(?:[\w.]*Error\b|error\b|fatal\b|FAIL\b|Traceback|panic\b|npm ERR!)/.test(l));
+  return clip(hit ?? lines.at(-1), 200);
+}
+
+const TAIL_LINES = 6;   // 実行の出力を開いたときに出す末尾の行数
+
+/** 実行の出力: 末尾 N 行と「全 N 行を表示」 */
+function outputTail(text) {
+  const lines = text.replace(/\n$/, "").split("\n");
+  const box = el("div", "tc-res-view tc-tail");
+  const tail = lines.length > TAIL_LINES;
+  const label = el("div", "tc-section-label", tail ? t("timeline.result.tail", { count: TAIL_LINES, n: fmtN(TAIL_LINES) }) : t("timeline.result.output"));
+  const code = el("div", "tc-output");
+  code.innerHTML = codeBlock(tail ? lines.slice(-TAIL_LINES).join("\n") : lines.join("\n"), "");
+  if (tail) {
+    const more = el("button", "btn tc-more", t("timeline.result.showAll", { count: lines.length, n: fmtN(lines.length) }));
+    more.type = "button";
+    more.onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      code.innerHTML = codeBlock(clip(lines.join("\n"), 20000), "");
+      label.firstChild.textContent = t("timeline.result.output");
+      more.remove();
+    };
+    label.append(more);
+  }
+  box.append(label, code);
+  return box;
+}
+
+/** 検索・探すの結果: 全部がファイルのパスなら、ファイルリンクの一覧。そうでなければ null */
+function fileList(text) {
+  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l && !/^(Found \d+|No (matches|files) found|\(?[Tt]runcated)/.test(l));
+  if (!lines.length || lines.some((l) => !looksLikePath(l))) return null;
+  const list = el("ul", "tc-res-view tc-files");
+  for (const l of lines.slice(0, 40)) {
+    const li = el("li");
+    li.append(pathSpan(l, 4));
+    list.append(li);
+  }
+  if (lines.length > 40) list.append(el("li", "tc-diff-more", t("timeline.tool.diffMore", { count: lines.length - 40, n: fmtN(lines.length - 40) })));
+  return list;
+}
+
 /**
  * renderToolCall が作った要素に結果を反映する。**全文は出さない。**
- * 長い出力は折りたたみに入れ、失敗は目立たせる。
+ * 右端に要約、失敗は太字の「✕ 失敗 · exit 1」と要点の 1 行。開いた中はツールごとの見せ方で、生の出力は「入力・出力（JSON）」の奥。
  * @param {HTMLElement} node renderToolCall の戻り
  * @param {{text?:string, isError?:boolean, truncated?:boolean}|string|null} result
  * @returns {HTMLElement} node
@@ -1052,31 +1193,54 @@ export function applyToolResult(node, result) {
   if (!node || typeof node.querySelector !== "function") return node;
 
   // 呼び直されても二重に付かないよう、前回の結果を落としてから積む
-  for (const old of [...node.querySelectorAll(".tc-res, .tc-out, .tc-preview")]) old.remove();
-  node.classList.remove("tc-error", "tc-done");
+  for (const old of [...node.querySelectorAll(".tc-out, .tc-preview, .tc-res-view, .tc-errline")]) old.remove();
+  node.classList.remove("tc-error", "tc-done", "tc-running", "tc-waiting");
+  const resEl = node.querySelector(".tc-res");
+  if (resEl) { resEl.textContent = ""; resEl.className = "tc-res"; resEl.paint = null; delete resEl.dataset.sig; }
   if (result == null) return node;
 
   const head = node.querySelector(".tc-head") ?? node;
+  const tool = node.dataset?.tool ?? "";
   const body = resultText(result);
-  const isError = Boolean(result?.isError ?? result?.is_error);
+  // 人が承認を拒否したツールは失敗ではない（✕ にせず、見出しの「✕ n」にも数えない。web/client.mjs の rowApprovalCard が印を付ける）
+  const denied = node.dataset?.denied === "1";
+  const isError = Boolean(result?.isError ?? result?.is_error) && !denied;
   const cut = Boolean(result?.truncated);
+  const delegate = isDelegateToolName(tool);
+  const draw = TOOL_DRAW[tool];
 
   node.classList.add(isError ? "tc-error" : "tc-done");
-  const badge = el("span", isError ? "tc-res tc-res-err" : "tc-res");
-  // 失敗は記号と太字で。色は付けない（差し色は「あなたを待っている」だけ）
-  badge.textContent = isError
-    ? t("timeline.result.failed")
-    : "";
-  if (isError) head.append(badge);
+  if (resEl) {
+    if (isError) {
+      // 失敗は記号と太字で。色は付けない（差し色は「あなたを待っている」だけ）
+      const code = exitCodeOf(body);
+      resEl.className = "tc-res tc-res-err";
+      resEl.textContent = code != null && code !== 0 ? t("timeline.result.failedExit", { code }) : t("timeline.result.failed");
+      const why = failureLine(body);
+      if (why && !delegate) { const line = el("span", "tc-errline", why); line.title = why; head.append(line); }
+    } else if (denied) {
+      resEl.textContent = t("chat.approval.denied");
+    } else if (!delegate) {
+      resEl.textContent = summarizeResult(tool, body, lineCount(body), node.toolChange);
+    }
+  }
 
-  // 短い出力も詳細内に残す。画像だけは折りたたみの外に置く。
+  // 開いた中。出力の見せ方はツール別（実行 = 末尾、検索・探す = ファイル一覧）。生の出力は JSON の折りたたみへ
+  const detailsBody = node.querySelector(".tc-details-body");
+  const jsonFold = node.querySelector(".tc-json");
+  const view = !body ? null : draw === drawShell ? outputTail(body) : (draw === drawGlob || draw === drawGrep) ? fileList(body) : null;
+  if (view && detailsBody) { if (jsonFold) jsonFold.before(view); else detailsBody.append(view); }
+
   const output = el("div", "tc-out");
   output.append(el("div", "tc-section-label", (cut ? t("timeline.result.outputPartial") : t("timeline.result.output"))));
   const code = el("div", "tc-output");
   code.innerHTML = codeBlock(body || t("timeline.result.empty"), "");
   output.append(code);
-  // 委譲のカードは入力・出力を「入力・出力（JSON）」の折りたたみに入れている（client.mjs の foldDelegateJson）
-  (node.querySelector(".tc-json-body") ?? node.querySelector(".tc-details-body") ?? node).append(output);
+  // 委譲・処理済みの見せ方があるツールは、生の出力を「入力・出力（JSON）」の折りたたみの奥へ。それ以外は開いた中にそのまま
+  const raw = node.querySelector(".tc-json-body");
+  if (raw && (delegate || view)) raw.append(output);
+  else if (jsonFold) jsonFold.before(output);
+  else (detailsBody ?? node).append(output);
   for (const img of result?.images ?? []) {
     const src = presentImg(img.url ?? img.dataUri ?? "");
     if (!src) continue;
