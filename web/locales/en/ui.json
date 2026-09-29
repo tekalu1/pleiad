@@ -2174,7 +2174,7 @@
       "design": "Design",
       "ux_change": "UX change",
       "ux_new": "New UX",
-      "visual": "Visual"
+      "visual": "Creative (3D, vectorizing, etc.)"
     },
     "difficulty": {
       "low": "Low",
@@ -2186,14 +2186,14 @@
       "t2": "Tier 2",
       "t3": "Tier 3",
       "t4": "Tier 4",
-      "tv": "Images & new UX"
+      "tv": "Creative"
     },
     "tierShort": {
       "t1": "1",
       "t2": "2",
       "t3": "3",
       "t4": "4",
-      "tv": "Visual"
+      "tv": "Creative"
     },
     "judge": {
       "jev": "Jev",

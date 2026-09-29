@@ -118,8 +118,11 @@ export default async function (t) {
   t.ok('S2: 5 時間 96% でも週次に余裕のある OZ を選ぶ', target(s2) === 'claude:opus@acct-oz'
     && !s2.routing.selectedWithLowHeadroom, JSON.stringify(s2.routing));
   t.ok('S3: investigate・中 → Codex が週次 92% なので Sonnet（oz）', target(routeAt('investigate', 'mid', S3)) === 'claude:sonnet@acct-oz');
-  t.ok('S3: ux_new は tv だけを見て、線を超えていても選ぶ', target(routeAt('ux_new', 'mid', S3)) === 'codex:gpt-6-astra'
-    && routeAt('ux_new', 'mid', S3).routing.selectedWithLowHeadroom.reason === 'quota_high');
+  t.ok('S3: visual は tv だけを見て、線を超えていても選ぶ', target(routeAt('visual', 'mid', S3)) === 'codex:gpt-6-astra'
+    && routeAt('visual', 'mid', S3).routing.selectedWithLowHeadroom.reason === 'quota_high');
+  const newUx = routeAt('ux_new', 'mid', S1);
+  t.ok('ux_new は既定で t4（Opus が先頭）へ行き、tv には行かない', DEFAULTS.table.ux_new.join() === 't4,t4,t4' && newUx.routing.tier === 't4'
+    && target(newUx).startsWith('claude:opus') && DEFAULTS.table.visual.join() === 'tv,tv,tv', JSON.stringify(newUx.routing));
   t.ok('S4: investigate・中 → Codex gpt-6-sol', target(routeAt('investigate', 'mid', S4)) === 'codex:gpt-6-sol');
   t.ok('S4: design・高 → 週次の使用率が低い oz', target(routeAt('design', 'high', S4)) === 'claude:opus@acct-oz');
   const s3m = routeAt('mechanical', 'mid', S3);
