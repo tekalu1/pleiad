@@ -47,7 +47,7 @@ import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
-import { retainPlan } from "./history-sync.mjs";
+import { retainPlan, syncRequest, joinReply } from "./history-sync.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
 import { el, svgEl, icon, relTime, randomId } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
@@ -5223,6 +5223,22 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
 }
 
 /**
+ * loadSession。prev（今持っている { messages, presents }）を渡すと、その先頭の続きだけを頼む（web/history-sync.mjs、ADR 0059）。
+ * 差分が返れば先頭につないで全量の形にし、全量が返った（古いサーバー・先頭が合わない）ときはそのまま、
+ * 差分の印と件数が食い違うときは全量を取り直す。どの場合も、呼び出し側が受け取る形は同じ
+ */
+async function loadHistory(args, prev = null) {
+  const request = prev ? syncRequest(prev.messages, prev.presents) : null;
+  const data = await cmd("loadSession", request ? { ...args, ...request } : args);
+  if (!request) return data;
+  const joined = joinReply(prev, data, request);
+  if (joined === null) return data;
+  if (joined === false) return cmd("loadSession", args);
+  const { from, total, presentFrom, presentTotal, ...rest } = data;
+  return { ...rest, ...joined };
+}
+
+/**
  * セッションを開く。keepUpTo を渡すと、その添字より前の発言は画面に残したまま続きだけ描く
  * （枝の切り替え。共通部分は動かさない）。
  * reload は同じ会話の読み直し（つなぎ直したとき）。今の表示・入力欄・引き出しはそのままにして裏で読み、
@@ -5281,7 +5297,8 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh }) {
   }, 150) : null;
   let data;
   try {
-    data = await cmd("loadSession", { sessionId: id, live: true, watch: true });
+    // 静かな読み直し（つなぎ直したとき）は、今持っている履歴の続きだけを頼む
+    data = await loadHistory({ sessionId: id, live: true, watch: true }, quiet && state.messages.length ? { messages: state.messages, presents: state.presents } : null);
   } catch (e) {
     clearTimeout(historyTimer);
     sessionLoads.cancel(load);
@@ -5453,7 +5470,7 @@ async function syncHistory() {
   const id = state.current;
   if (!id) return;
   const before = state.messages.length;
-  const data = await cmd("loadSession", { sessionId: id }).catch(() => null);
+  const data = await loadHistory({ sessionId: id }, { messages: state.messages, presents: state.presents }).catch(() => null);
   if (!data || state.current !== id) return;
   if (state.busy) { pendingHistorySync = true; return; }
   state.messages = data.messages ?? [];

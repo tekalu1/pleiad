@@ -65,6 +65,7 @@ import { parentPortScreencast, createScreencastHub, screencastCommand } from './
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { validBrowserPref } from '../web/browser-confirm-policy.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
+import { serveFrom } from "../web/history-sync.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff, conversation } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
 import {
@@ -3483,7 +3484,8 @@ wss.on("connection", (ws, req) => {
             const compactions = attachCompactSummaries(compactSummaries, mergeCompactionHistory(nativeCompactions, savedCompactions));
             const compactionData = { compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
-            if (!msg.args?.live) return reply(true, { ...data, completedAt, interrupted, draft, ...compactionData, ...retired });
+            // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0059）。合わなければ全量
+            if (!msg.args?.live) return reply(true, serveFrom({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args));
             // 承認は一度きりの配信で、streamEvents にも載らない（web/session-stream.mjs）。
             // 開き直しのたびに保留中のものを返さないと、承認が起きた後にその会話を開いても
             // カードが出ず、一覧だけが「承認待ち」のまま止まる。
@@ -3499,13 +3501,13 @@ wss.on("connection", (ws, req) => {
                 : null;
               // Use a fixed pre-turn history, never an independently sampled partial
               // transcript: it may overlap the events or lag behind them.
-              return reply(true, {
+              return reply(true, serveFrom({
                 messages: [...shellRuns.placeKept([...live.messages, ...(user ? [user] : [])], sidecar), ...shellRuns.rows(sessionId, sidecar)], presents: live.presents, completedAt, interrupted: null, draft, ...compactionData,
                 stream: { events: live.events }, streamCursor: streamSequence, permissions,
                 initialMessageId: live.initialMessageId,
-              });
+              }, msg.args));
             }
-            return reply(true, { ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired });
+            return reply(true, serveFrom({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args));
           } finally { liveReads.delete(read); }
         }
 

@@ -5,6 +5,7 @@ import path from "node:path";
 import { createSessionLoads } from "../../web/session-stream.mjs";
 import { createCompletionNotifications } from '../../web/notifications.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from '../../core/compaction-history.mjs';
+import { serveFrom, syncRequest, joinReply, retainPlan } from '../../web/history-sync.mjs';
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
 
@@ -13,7 +14,7 @@ export const title = "途中で開いたセッションを履歴と受信イベ�
 
 export default async function (t) {
   const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
-  const functions = ["onEvent", "isMine", "appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl", "resetLiveTurn", "clearThread", "paintSession", "select", "loadAndPaint"].map(name => {
+  const functions = ["onEvent", "isMine", "appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl", "resetLiveTurn", "clearThread", "paintSession", "select", "loadHistory", "loadAndPaint"].map(name => {
     let start = source.indexOf(`function ${name}(`);
     if (source.slice(start - 6, start) === "async ") start -= 6;
     return source.slice(start, source.indexOf("\n}", start) + 2);
@@ -28,7 +29,7 @@ export default async function (t) {
     // 本文の描き直しは 1 コマに 1 回（client.mjs の flushStream）。このテストは本文の raw だけを見る
     requestAnimationFrame: () => 1, cancelAnimationFrame: noop, streamFrame: 0, streamTarget: null, stoppingHere: () => false,
     setTimeout: () => 1, clearTimeout: noop, heightPreparationVersion: 0, heightPreparationTimer: null, prepareHistoryHeights: noop,
-    completionNotifications,
+    completionNotifications, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop,
     // ヘッダーの使用量のチップ（web/header-usage.mjs）。ターンの終わりで取り直す。このテストの対象外
     headerUsage: { turnEnded: noop },
     filePreview: { sessionChanged: noop },
@@ -128,7 +129,7 @@ export default async function (t) {
   const serverContext = vm.createContext({
     msg: { args: { sessionId: "target", live: true } }, runtime: { turns, waiting: new Map() }, liveReads,
     resolveBackendForSession: async () => ({}), store: { get: async () => ({}) }, compactionScheduler: { get: () => null },
-    mergeCompactionHistory, attachCompactSummaries,
+    mergeCompactionHistory, attachCompactSummaries, serveFrom,
     // 入力欄の `!`（core/shell-runs.mjs）。このテストの対象外
     shellRuns: { decorate: m => m, rows: () => [], placeKept: m => m },
     history: { loadTranscript: () => new Promise(r => { resolveTranscript = r; }) },

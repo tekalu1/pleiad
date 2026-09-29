@@ -202,6 +202,7 @@ web の `isMine` は新規セッションの id を `first` の付いた session
 
 v3 で `statusIcon { status, icon }`（状態グループのアイコン。sidecar `statuses.json`）、`lineage`、`setStatusIcon`、runTurn の `status`、`text.end` の `uuid` を足した。`PROTOCOL_VERSION` は **3**。
 その後、番号を据え置いたまま `loadSession` の `watch` と `watchSession` を足した。宣言した接続には、流れの出来事を開いている会話の分だけ送る（[ADR 0024](adr/0024-watch-open-session-stream.md)）。
+さらに `loadSession` に `from`・`check`・`presentFrom`・`presentCheck` を足した。持っている履歴の先頭が合うときだけ続きを返し、合わなければ全量（[ADR 0059](adr/0059-incremental-session-load.md)）。
 
 **`permission.kind === "question"` の `questions` の形**（web の questionCard が読む形。Claude の AskUserQuestion 入力をそのまま正規形にする）:
 

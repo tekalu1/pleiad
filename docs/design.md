@@ -129,6 +129,14 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 - 更新の後の一行（「更新で中断した会話が N 件あります」）: `ready` の `startedAt`（サーバーの起動時刻）より前の `update` の中断だけを数える（更新で Pleiad が再起動したときだけ。失敗・30 秒で止まらなかったときは出さない）。その画面で更新を進めている間も出さない。
 - デスクトップ: 更新は画面が `abort { reason: "update" }` で止め、`running` の数が 0 になるのを待ってから今の手順へ進む（サーバーの更新ロックは安全網として残す）。終了は main が worker に `{ type: "abort", reason: "quit" }` を送り、同じく待つ（`docs/desktop-releases.md`）。待つ間に始まったターン（別の端末からの送信・委譲の完了の届け・送信待ち）も止めるため、どちらも数が 0 になるまで見るたびに `abort` を送り直す（何度送っても同じ）。
 
+## 会話の読み直し（2026-09-29）
+
+ターンが終わったとき（`syncHistory`）と、つなぎ直したときの静かな読み直し（`select(..., { reload: true })`）は、持っている履歴の続きだけを読み、変わった所から後ろだけ描く（[ADR 0059](adr/0059-incremental-session-load.md)。issue #37）。
+
+- **通信**: `loadSession` に `from`（持っている発言の数から末尾の 2 件を引いた位置）・`check`（その先頭の署名の並びの値）・`presentFrom`（持っている提示の数）・`presentCheck` を付けると、サーバーは先頭が合うときだけ `messages` を `from` 以降・`presents` を `presentFrom` 以降に切り、`from`・`total`・`presentFrom`・`presentTotal` を足して返す。合わなければ（途中の発言や提示が書き換わった・履歴が短くなった・頼みが壊れている）全量で、`from` の印は無い。画面は印と件数が合うときだけ先頭につなぎ、合わなければ全量を取り直す。会話を開くとき・枝の切り替え・`outline` は全量。署名と切り出しとつなぎは `web/history-sync.mjs`（`messageSig`・`presentSig`・`syncRequest`・`serveFrom`・`joinReply`）。
+- **描画**: 静かな読み直しは `clearThread` せず、今の画面と読み直した履歴を、描く行の並び（`buildItems`）で先頭から比べる（`retainPlan`）。ツールの結果・本文・uuid・圧縮の区切り・提示（`visualize` の印と添付の結び付き）のどれが変わっても「違う」になり、最初に違う項目から後ろだけ描き直す。残すのは履歴から描いた行（`data-h`）で、ライブで描いた行・稼働表示・圧縮の区切り・分岐点の行は外して描き直す（`retainThread`）。先頭が違えば今までどおり全部描き直す。
+- **位置**: 末尾を見ていたなら末尾へ。読み返していたなら、基準の行（`historyAnchor`）が同じ高さに来るよう戻す（`holdReading`）。
+
 ## デスクトップの更新（2026-09-12）
 
 Pleiad の画面・サーバー・デスクトップを一つのバージョンとして配布する。

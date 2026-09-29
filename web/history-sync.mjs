@@ -1,5 +1,6 @@
-// 履歴を全部読み直さずに済ませるための、比べる側の道具（issue #37 段階 2）。
+// 履歴を全部読み直さずに済ませるための道具（issue #37 段階 2。ADR 0059）。
 //   - retainPlan: 静かな読み直しで、画面に残す行と描き直す行の境目（画面の DOM は client.mjs が触る）
+//   - syncRequest / serveFrom / joinReply: loadSession を「今持っている先頭の続きだけ」にする（画面が頼み、サーバーが切り、画面がつなぐ）
 // 中身の同じ発言を見分けるのは、発言全体の署名（messageSig）。uuid・本文だけでなく、後から付いたツールの結果・
 // 圧縮の印など、行の見た目に効く値が変わっても「違う」になる（web/branches.mjs の commonPrefix は本文とツール名しか見ない）。
 import { buildItems } from "./timeline.mjs";
@@ -84,4 +85,57 @@ export function retainPlan(old, next) {
     keepItems = Math.min(keepItems, first < 0 ? items.length : first);
   }
   return keepItems > 0 ? { keepItems, items } : null;
+}
+
+// ---------------------------------------------------------------- loadSession の差分
+
+/**
+ * 差分の頼みで、画面が持っている発言の末尾のうち取り直す件数。末尾の発言は後から中身が変わることがある（結果の付き足し）。
+ * 提示は取り直さない（1 件が 1MB を超えることがある）。中身が変わる（添付の結び付き）と署名が合わず、全量に戻る
+ */
+export const TAIL = 2;
+
+/** 先頭 n 件の署名の並びを 1 つにまとめた値 */
+function digestOf(list, n, sigOf) {
+  let text = "";
+  for (let i = 0; i < n; i++) text += `${sigOf(list[i])},`;
+  return hash53(text);
+}
+
+/**
+ * 画面が持っている履歴（messages・presents）の続きだけを頼む引数。先頭が変わっていないかを、サーバーが同じ計算で確かめられるよう、
+ * 先頭（発言は末尾の TAIL 件を除く。提示は全部）の署名の並びの値（check・presentCheck）を付ける。頼めるほど持っていなければ null（全量）
+ */
+export function syncRequest(messages, presents) {
+  const from = Math.max(0, messages.length - TAIL), presentFrom = presents.length;
+  if (!from && !presentFrom) return null;
+  return { from, check: digestOf(messages, from, messageSig), presentFrom, presentCheck: digestOf(presents, presentFrom, presentSig) };
+}
+
+/**
+ * サーバー側。loadSession の応答（messages・presents を持つ）を、頼みの先頭が今の履歴と同じなら続きだけに切る。
+ * 合わない（途中の発言が書き換わった・圧縮・Codex の書き換え・枝が変わった・件数が足りない）・頼みが無い・壊れているときは、そのまま全量を返す。
+ * 差分のときは from・total（発言）と presentFrom・presentTotal（提示）を足す。画面はこの印があるときだけ差分として扱う
+ */
+export function serveFrom(body, args) {
+  const from = args?.from, presentFrom = args?.presentFrom;
+  if (!Number.isInteger(from) || !Number.isInteger(presentFrom) || from < 0 || presentFrom < 0) return body;
+  const messages = body.messages ?? [], presents = body.presents ?? [];
+  if (from > messages.length || presentFrom > presents.length) return body;
+  if (digestOf(messages, from, messageSig) !== args.check || digestOf(presents, presentFrom, presentSig) !== args.presentCheck) return body;
+  return { ...body, messages: messages.slice(from), presents: presents.slice(presentFrom), from, total: messages.length, presentFrom, presentTotal: presents.length };
+}
+
+/**
+ * 画面側。差分の応答を、持っていた履歴（prev）の先頭につないで全量にする。
+ * 差分の印が無ければ（全量。古いサーバー・合わなかったとき）null、印はあるが頼んだ位置・件数と食い違うときは false（全量を取り直す）。
+ * 先頭の要素は prev のものをそのまま使うので、続きの行だけが新しい
+ */
+export function joinReply(prev, data, request) {
+  if (!Number.isInteger(data?.from)) return null;
+  const messages = data.messages ?? [], presents = data.presents ?? [];
+  if (data.from !== request.from || data.presentFrom !== request.presentFrom
+    || data.total !== data.from + messages.length || data.presentTotal !== data.presentFrom + presents.length
+    || data.from > prev.messages.length || data.presentFrom > prev.presents.length) return false;
+  return { messages: [...prev.messages.slice(0, data.from), ...messages], presents: [...prev.presents.slice(0, data.presentFrom), ...presents] };
 }

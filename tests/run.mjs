@@ -168,6 +168,9 @@ const cases = [
   await import("./unit/place-scan.mjs"),
   // つなぎ直したときの静かな読み直しは、同じ発言の行を残して変わった所から後ろだけ描く（読み返している位置も保つ。issue #37）
   await import("./unit/history-retain.mjs"),
+  // loadSession の差分（ADR 0059）: 合うときだけ続きを返す・つないだ結果は全量と同じ・合わなければ全量・画面の頼み方
+  await import("./unit/history-sync.mjs"),
+  await import("./unit/server-history-diff.mjs"),
   // 返答の本文は 1 コマに 1 回だけ描く・流れの終わりでは描き切る・会話を切り替えたら別の会話へ描かない
   await import("./unit/stream-frames.mjs"),
   await import("./unit/work-attribution.mjs"),
