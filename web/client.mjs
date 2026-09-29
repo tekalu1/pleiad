@@ -6438,7 +6438,8 @@ document.addEventListener('keydown', event => {
   if (event.defaultPrevented || isComposingKey(event) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'f' || (mac ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey)) return;
   if (document.body.classList.contains('settings') || document.querySelector('dialog[open]') || !state.current) return;
   const field = event.target;
-  if (field.matches?.('input,textarea,[contenteditable="true"]') && field.id !== 'prompt' && !field.closest?.('.toc')) return;
+  // 入力欄（#prompt。Markdown の編集欄は contenteditable。web/md-editor.mjs）と目次の検索欄では奪う。ほかの入力要素の中では奪わない
+  if ((field.matches?.('input,textarea') || field.isContentEditable) && !field.closest?.('#prompt, .toc')) return;
   event.preventDefault();
   toc.focusSearch();
 });

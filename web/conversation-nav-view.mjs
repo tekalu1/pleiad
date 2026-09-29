@@ -76,7 +76,9 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     const users = [...thread.querySelectorAll(TURN_USER)];
     // 発言の並びが同じなら、同じ配列を保つ（地図の点を作り直さない）
     if (users.length === turns.length && users.every((user, i) => user === turns[i].user)) return;
-    turns = users.map((user) => ({ user, row: user.closest('.mw'), top: 0, ub: -1 }));
+    // 静かな読み直し（web/history-sync.mjs）は、変わった所から後ろの行だけを描き直す。残った行の発言は同じ要素なので、測った値を引き継ぐ
+    const before = new Map(turns.map((turn) => [turn.user, turn]));
+    turns = users.map((user) => { const kept = before.get(user); return kept?.row === user.closest('.mw') ? kept : { user, row: user.closest('.mw'), top: 0, ub: -1 }; });
     measured = false;
   };
   /** 全発言の位置を 1 度に測る。読みだけ。fresh は「地図が点を置き直す」合図（次の update で 1 度だけ渡す） */
@@ -89,9 +91,13 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     fresh = true;
   };
   const fullText = (turn) => {
+    // 発言の原文は .body の dataset.raw（web/client.mjs の userRaw。本文は Markdown で描くので、字だけでは印の行・コードの囲みが分からない）。
+    // 添付が後から結び付いて描き直されることがあるので、原文が変わっていたら作り直す
+    const body = turn.user.querySelector(':scope > .body');
+    const raw = body?.dataset.raw ?? body?.textContent ?? '';
     let text = texts.get(turn.user);
-    if (text === undefined) {
-      text = { pieces: userPieces(turn.user.querySelector(':scope > .body')?.textContent ?? ''), at: turn.user.querySelector(':scope > .who .when')?.textContent ?? '' };
+    if (text === undefined || text.raw !== raw) {
+      text = { raw, pieces: userPieces(raw), at: turn.user.querySelector(':scope > .who .when')?.textContent ?? '' };
       text.plain = piecesText(text.pieces);
       texts.set(turn.user, text);
     }
@@ -187,7 +193,7 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   function scrollToRow(row, gap = 12) {
     settle?.abort();
     const run = settle = new AbortController();
-    const want = () => row.getBoundingClientRect().top - log.getBoundingClientRect().top + log.scrollTop - gap;
+    const want = () => !row.isConnected ? log.scrollTop : row.getBoundingClientRect().top - log.getBoundingClientRect().top + log.scrollTop - gap;
     log.scrollTop = want();
     for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) log.addEventListener(type, () => run.abort(), { signal: run.signal, passive: true });
     let frames = 0, calm = 0;

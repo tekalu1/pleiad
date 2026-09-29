@@ -10,6 +10,9 @@
 .log-frame > #log{height:100%}   /* 入れ物は block（flex にすると、長い会話を開く時間が伸びた）。#log の flex:1 は効かないので高さで満たす */
 .log-frame > #log:focus-visible{outline:2px solid var(--line-blue);outline-offset:-3px}
 
+/* 重ねる部品は layout 包含にする。中身が変わる（残る問いの文・最新への印）たびに、包んでいる会話の再レイアウトが走らないように（長い会話のスクロールで測った） */
+.nav-sticky,.nav-latest,.nav-rail{contain:layout style}
+
 /* ---- A 問いが上に残る。影は付けず、会話の白から透明へのグラデーションでつなぐ。
    左は発言の吹き出しの左端（#log の左の余白 8px + 溝 72px）にそろえ、幅は会話の列（860px − 溝 72px）まで。文字は押せる領域だけ ---- */
 .nav-sticky{position:absolute;z-index:4;left:0;right:10px;top:0;height:58px;padding:6px 18px 14px 80px;

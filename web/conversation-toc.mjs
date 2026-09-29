@@ -9,7 +9,8 @@ import { el, svgEl } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { closeIcon } from './icons.mjs';
 import { turnKinds } from './conversation-rail.mjs';
-import { SCOPES, inScope, matchRanges, countMatches, scopeTallies, assignHits, entryOfHit, listRows, excerptAround, toolTarget, userPieces, piecesText, appendPieces, badge } from './conversation-nav.mjs';
+import { bundleOf } from './tool-bundle.mjs';
+import { SCOPES, inScope, matchRanges, countMatches, scopeTallies, assignHits, entryOfHit, listRows, excerptAround, toolTarget, appendPieces, badge } from './conversation-nav.mjs';
 
 const KEY = 'conversation-toc';
 /** 右パネルの幅（px）。モックの 340px */
@@ -36,7 +37,7 @@ function svg(name) {
 
 const collapse = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
 /** 検索・抜粋に使わない文字（コピーのボタンなど） */
-const usable = (node) => !node.parentElement?.closest('button,.code-copy');
+const usable = (node) => !node.parentElement?.closest('button,summary,.code-copy');
 
 /**
  * @param {{ thread:HTMLElement, log:HTMLElement, nav:object, preview:object, narrow:MediaQueryList, button:HTMLElement }} o
@@ -118,7 +119,7 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
     for (const child of thread.children) {
       if (turnOf.has(child)) {
         turn = turnOf.get(child);
-        out.push({ id: out.length, kind: 'user', turn, row: child, el: turns[turn].user, at: nav.turnInfo(turns[turn]).at, pending: kinds[turn] === 'pending', hits: 0, hitStart: -1, marks: [] });
+        out.push({ id: out.length, kind: 'user', turn, row: child, el: turns[turn].user, turnObj: turns[turn], at: nav.turnInfo(turns[turn]).at, pending: kinds[turn] === 'pending', hits: 0, hitStart: -1, marks: [] });
         continue;
       }
       const ai = child.querySelector?.(':scope > .mw-body > .m.ai');
@@ -128,8 +129,10 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
         if (node.matches('.body')) {
           if (!answer) { answer = { id: out.length, kind: 'answer', turn, row: child, el: ai, bodies: [], at: at(ai), hits: 0, hitStart: -1, marks: [] }; out.push(answer); }
           answer.bodies.push(node);
-        } else if (node.matches('.tc')) {
-          out.push({ id: out.length, kind: 'tool', turn, row: child, el: node, at: at(ai), hits: 0, hitStart: -1, marks: [] });
+        } else if (node.matches('.tc') || node.matches('.bundle')) {
+          // ツールのまとまり（web/tool-bundle.mjs、ADR 0061）の中の行も、1 件ずつ項目にする
+          const cards = node.matches('.tc') ? [node] : [...node.querySelectorAll('.tc')].filter((c) => !c.parentElement.closest('.tc'));
+          for (const card of cards) out.push({ id: out.length, kind: 'tool', turn, row: child, el: card, at: at(ai), hits: 0, hitStart: -1, marks: [] });
         }
       }
     }
@@ -253,10 +256,19 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
     const mark = entry.marks[hitIndex - entry.hitStart];
     for (const m of entry.marks) m.classList.toggle('active', m === mark);
     paintCount();
-    if (scroll) {
-      for (let node = (mark ?? entry.el).closest?.('details'); node; node = node.parentElement?.closest('details')) node.open = true;
-      nav.scrollToRow(mark ?? entry.row, 90);
-    }
+    if (scroll) sendTo(mark ?? entry.row, mark ?? entry.el, 90);
+  }
+  /**
+   * 畳まれたところ（<details>・閉じたツールのまとまり。ADR 0061）を開いて見せる。まとまりは開く動き（240ms）があるので、終わってから送る
+   * （動いている間に送ると、行の高さが伸びる前の位置へ着いてしまう）
+   */
+  function sendTo(target, inside, gap) {
+    let animated = false;
+    const card = inside.closest?.('.tc');
+    const bundle = card && bundleOf(card);
+    if (bundle && !bundle.expanded && card !== bundle.cur) { bundle.reveal(card); animated = true; }
+    for (let node = inside.closest?.('details'); node; node = node.parentElement?.closest('details')) node.open = true;
+    if (animated) setTimeout(() => nav.scrollToRow(target, gap), 320); else nav.scrollToRow(target, gap);
   }
 
   // ---- 一覧
@@ -274,7 +286,7 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
     }
     if (entry.pending) body.append(el('span', 'toc-pending', '◆'), ' ');
     if (searching) { appendWindow(body, entryText(entry), entry.kind === 'user' ? 14 : 8); return body; }
-    if (entry.kind === 'user') appendPieces(body, userPieces(entry.el.querySelector(':scope > .body')?.textContent ?? ''));
+    if (entry.kind === 'user') appendPieces(body, nav.turnInfo(entry.turnObj).pieces);
     else body.append(entryText(entry).slice(0, 200));
     return body;
   }
@@ -285,7 +297,7 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
   }
   /** 行の title（全文）。発言は抜粋の規則で畳んだ全文、返答は先頭 600 字、ツールは行の文字 */
   function fullLabel(entry, excerpt) {
-    if (entry.kind === 'user') return piecesText(userPieces(entry.el.querySelector(':scope > .body')?.textContent ?? ''));
+    if (entry.kind === 'user') return nav.turnInfo(entry.turnObj).plain;
     return entry.kind === 'answer' ? entryText(entry).slice(0, 600) : collapse(excerpt.textContent);
   }
 
@@ -321,7 +333,7 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
     if (query && entry.hitStart >= 0) return selectHit(entry.hitStart);
     if (entry.kind === 'user') return nav.goTo(entry.turn);
     if (entry.kind === 'tool') { const d = entry.el.querySelector('details'); if (d) d.open = true; }
-    nav.scrollToRow(entry.kind === 'tool' ? entry.el : entry.row, 12);
+    sendTo(entry.kind === 'tool' ? entry.el : entry.row, entry.el, 12);
   }
 
   // ---- 開閉
