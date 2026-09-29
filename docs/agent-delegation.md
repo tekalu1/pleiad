@@ -12,7 +12,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 | `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort` | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ |
 | `ply_task_status` | `taskId`, 任意の `offset` | 状態と結果。結果は16,000文字ずつ返し、`nextOffset` で続きへ進む。子で実行前に拒否されたコマンドは `rejections`（下の「実行前に拒否されたコマンド」） |
 | `ply_task_wait` | `taskId`, 任意の `seconds`（1〜30、既定30） | 上限まで待つ。承認待ちになったらすぐ戻る。未完了なら現在の状態を返す |
-| `ply_task_send` | `taskId`, `message` | 同じ子会話に追加指示。実行中なら順番に待ち、完了後・停止後なら再開する（止まった直後に送った指示も捨てずに走らせる）。止めている途中（`cancelling`）は断る |
+| `ply_task_send` | `taskId`, `message` | 同じ子会話に追加指示。子のターンが走っていて途中送信を受けられるなら、今のターンへ途中送信（`control.steer`）で渡す（下の「追加指示の配送」）。渡せなければ順番に待ち、次のターンで送る。完了後・停止後なら再開する（止まった直後に送った指示も捨てずに走らせる）。止めている途中（`cancelling`）は断る |
 | `ply_task_cancel` | `taskId` | タスクと、その配下の Pleiad タスクを停止する |
 | `ply_task_list` | なし | 呼び出し元が作成した Pleiad タスクだけを列挙する。結果の本文は載せず、拒否は件数（`rejectionCount`）だけ |
 | `ply_usage` | 任意の `backend` | 各バックエンドの使用枠（枠ごとの `usedPercent`・`resetsAt`、`plan`、`checkedAt`、`message`）。省略時は使用枠を読めるバックエンドすべて |
@@ -210,7 +210,7 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 ### 受け取り済みの通知は送らない
 
 依頼元が `ply_task_status` / `ply_task_wait` で終了状態（`completed` / `failed`）と結果を受け取ったら、通知を `read` にして送らない。結果が長く `nextOffset` が残っていても、受け取った時点で配達済み。
-`ply_task_list` は結果を返さないので対象にしない。実行中の `status` も対象にしない。終わった直後で通知がまだ始まっていない（`none`）ときに受け取っても `read` にし、直後の `run.notice` が `pending` に戻さない。`delivering` 以降（送っている最中・送り終えた・不明・止めた）は変えない。`ply_task_send` は `none` に戻し、次に走る回の結果は通知する。依頼元が `ply_task_wait` でそのタスクを待っている間は、終わっても通知を送らない（結果は待ちの戻り値で渡る。走っているターンへ同じ結果を重ねないため）。
+`ply_task_list` は結果を返さないので対象にしない。実行中の `status` も対象にしない。終わった直後で通知がまだ始まっていない（`none`）ときに受け取っても `read` にし、直後の `run.notice` が `pending` に戻さない。`delivering` 以降（送っている最中・送り終えた・不明・止めた）は変えない。`ply_task_send` は `none` に戻し、次に走る回の結果は通知する（走っている回に途中送信で渡した指示は、その回の結果が新しい指示も反映するので、通知はその回の完了で 1 回）。依頼元が `ply_task_wait` でそのタスクを待っている間は、終わっても通知を送らない（結果は待ちの戻り値で渡る。走っているターンへ同じ結果を重ねないため）。
 
 ### 状態と待つ条件
 
@@ -238,6 +238,29 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 
 子で実行前に拒否されたコマンドがあれば、通知の本文の最後（「元の依頼に必要な作業を続けてください。」の前）に 1 段落足す（`agent:delegation.noticeRejections`）。
 件数と、先頭 3 件の `command`（伏せて切ったもの）と `reason` だけを並べ、全件は `ply_task_status` の `rejections` で読むよう案内する。拒否が無ければ何も足さない。
+
+## 追加指示の配送
+
+決定は [ADR 0065](adr/0065-steer-task-instructions.md)（[ADR 0044](adr/0044-task-instruction-delivery.md) の配送の規則を、走っている子のターンにも広げる）。
+
+`ply_task_send` は指示を `queued` で受け付けた（保存できなければ断る）後、次の条件がそろえば待たずに**子の走っているターンへ途中送信**する。
+
+- タスクが `running` で、子が委譲の実行中のターンとして走っている。
+- 子が `control.steer` を持ち、`canSteerNotice`（`core/completion-notices.mjs`）を満たす。圧縮のターン・中断や終了に向かっているターン・途中送信を持たないバックエンド（Antigravity）・次ターンの設定の予約・子の会話に人の送信待ちがあるときは渡さない。
+- 後ろに待機の指示が無い（順序を守る）。前の途中送信が「渡った」合図を待っている間の次の指示も待機する（渡らなかった前の指示が次のターンで後ろに回ることを避ける）。
+
+渡す道は完了通知の `steerNotice` と同じ形（`core/server.mjs` の `steerInstruction`）。outbox は通さず、item id `task-send-<指示 ID>` で `control.steer` を呼ぶ。子の会話には通常の user 発言（`userMessage`）として出し、履歴にはバックエンドの記録が入る。
+
+| `steer` の返り | 指示の状態 | 意味 |
+|---|---|---|
+| true、合図の無いバックエンド | `delivered` | 受理した時点で渡ったものとして扱う。新しいターンは走らない |
+| true、`steerConfirms`（Claude・Codex） | `sending` | 受理しただけ。`userMessage` は `pending: true`。`userMessage.delivered` で `delivered` |
+| false | `queued` | 受理されない。待機のまま次のターンで送る |
+| throw | `dropped` | 結果不明。自動で送り直さない（届いているかもしれない）。`ply_task_send` の返り値に `warning`（`agent:tasks.steerUnknown`。送り直さず `ply_task_status` と子の結果で確かめる）を添える |
+
+`sending`（合図待ち）の指示は、`userMessage.dropped` が来たか、合図が来ないまま子のターンが終わったら（`endTurn` が結果の確定より先に片付ける）`queued` に戻し、次のターンで送る。指示の ID で照合するので、渡った後に遅れて来た捨てられた合図では戻さず、二重に送らない。人の発言と違い親からの指示なので、送り直してよい。戻した後に子の回が失敗・停止で終わったときは、待機の指示と同じく `dropped` になる。止めたタスク（`cancelled`）へ戻すときも生き返らせず `dropped`。
+
+走っている回に途中送信で渡した指示は、その回の結果が新しい指示への返答も含む（結果にするのは回の最後の返答。「子の結果」）。ターンが終わってから待機を新しいターンで送る道は今までどおりで、その回の結果が指示の結果になる。再起動では、合図待ちだった `sending` は渡ったものとして `delivered` に残し（子は `interrupted`）、走らせ直さない。
 
 ## 子の結果
 
@@ -297,8 +320,8 @@ Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の�
 ## 保存・画面・再起動
 
 `AGENT_HOST_DATA/agent-tasks.json` にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）、実行前に拒否されたコマンド（`rejections`。伏せて切ったもの）、実行中コマンド（`activeCommands`）と通知済みの印、子の報告後に Pleiad が止めた裏の作業（`stoppedBackground`）を保存する。
-追加指示は各タスクの `instructions: [{ id, text, at, state }]` に受け付け順で保存する（[ADR 0044](adr/0044-task-instruction-delivery.md)）。`queue` は初回依頼の本文または `{ instructionId }` の FIFO。旧ファイルの文字列 `queue` は読み込み時に追加指示へ移し、初回依頼は区別する。`state` は `queued` → `sending` → `delivered`、受領前の再投入なら `queued`。失敗・停止・再起動で待機中だったものは `dropped` として残す。子のターンに渡した `sending` は、中断や再起動でも `delivered` とし、実行の例外では渡る前に失敗したものとして `dropped` にする。件数上限は設けない。
-`ply_task_status` / `ply_task_list` は本文を含めず `pendingMessages` を保つ。4 秒ごとの `running` も待機件数と `instructionRevision` だけを含む。画面が選んだタスクの詳細を開くと `agentTaskInstructions` でそのタスクの本文を読み、初回の「依頼」の下に待機・送信中・未配送を示す。配送済みは子の通常の user 発言として履歴から描く。同じ本文を複数回送れるので、指示 ID・状態・配送順を使い、本文の一致では重複を判定しない。現状「会話として開く」の通常画面には待機中の指示を表示しない。
+追加指示は各タスクの `instructions: [{ id, text, at, state }]` に受け付け順で保存する（[ADR 0044](adr/0044-task-instruction-delivery.md)）。`queue` は初回依頼の本文または `{ instructionId }` の FIFO。旧ファイルの文字列 `queue` は読み込み時に追加指示へ移し、初回依頼は区別する。`state` は `queued` → `sending` → `delivered`、受領前の再投入なら `queued`。途中送信で渡した指示は受け付け直後に `queue` から外して `sending` にし、渡れば `delivered`、渡らなければ `queued`（`queue` の先頭）へ戻る（「追加指示の配送」）。失敗・停止・再起動で待機中だったものは `dropped` として残す。子のターンに渡した `sending` は、中断や再起動でも `delivered` とし、実行の例外では渡る前に失敗したものとして `dropped` にする。件数上限は設けない。
+`ply_task_status` / `ply_task_list` は本文を含めず `pendingMessages` を保つ。4 秒ごとの `running` も待機件数と `instructionRevision` だけを含む。画面が選んだタスクの詳細を開くと `agentTaskInstructions` でそのタスクの本文を読み、初回の「依頼」の下に待機・送信中・未配送を示す（途中送信の合図待ちは送信中。渡れば子の履歴の user 発言に代わる）。配送済みは子の通常の user 発言として履歴から描く。同じ本文を複数回送れるので、指示 ID・状態・配送順を使い、本文の一致では重複を判定しない。現状「会話として開く」の通常画面には待機中の指示を表示しない。
 会話メタデータの `delegation` に親とタスク ID を、`routing` にどう選ばれたかを記録する。会話の分岐を表す `parent` とは別にする。
 入力欄の上の「バックグラウンド N」（全件終了後は「バックグラウンド · 完了 M」。design-system.md「バックグラウンド」）で子の会話を読む・停止する・承認に答える。「会話として開く」で子の会話そのものへ移り、子からはヘッダーの「依頼元の会話」で戻れる。完了後も札と、依頼元の会話の `ply_delegate` のカードの「開く」から確認できる。
 
@@ -327,6 +350,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 
 `npm test` でタスクの管理と SDK MCP クライアント接続、fake を使ったサーバー全体の委譲・継続・停止と、承認の中継・`waiting` を検証する。
 完了通知は `tests/unit/agent-tasks-notice.mjs`（受け取り済み `read` は送らない・`ply_task_wait` の間は途中送信しない・同じ親の分を 1 回の配送にまとめる・`steerable` の途中送信で `sent`・受理されない/不明/捨てられた場合の状態・`canSteerNotice` の条件）と `tests/unit/server-delegation-notice.mjs`（fake の `bg` 台本で、依頼元のターンの中へ届く・人間の発言にしない・`ply_task_wait` の後は届かない・途中送信を止めている間に溜まった 2 件が 1 通・`steerConfirms` の合図と受理されない場合）。
+追加指示の途中送信は `tests/unit/agent-tasks-steer.mjs`（受理・合図待ち・合図が先に来る・捨てられた・合図なしでターンが終わった・受理されない・結果不明・渡せない・順序・合図待ちの間の次の指示・止めた後・再起動。管理側だけを身代わりで）と `tests/unit/server-delegation-steer.mjs`（fake の `bg` 台本で、同じターンに入り新しいターンを走らせない・`DECLINE_STEER`/`THROW_STEER`/次ターンの設定の予約で待機か未配送・`steerConfirms` の送信中と `DROP_STEER`/`SILENT_STEER` が次のターンで 1 回だけ）。
 保存障害は `tests/unit/agent-tasks-storage.mjs`（rename に EPERM を差し込む。回復・閉じない・障害中の読み取りと断り・requeue を書かない・再起動後の送り直し）。
 実行前の拒否は `tests/unit/codex-rejections.mjs`（rollout の解析・読む範囲・伏せ方）と `tests/unit/server-codex-rejections.mjs`（身代わりの Codex が rollout に拒否を書き、会話・`ply_task_status`・完了通知・`ply_task_send` の次の回まで）。
 子に残った裏の作業と子の結果は `tests/unit/server-delegation-background.mjs`（fake の台本 `bg-shell` / `active-shell` / `bg` / `term` / `hook-follow` で、報告後のコマンドを上限まで待って止める・台帳を閉じて完了通知に載せる・結果に止める前の報告を残す・返答前とユーザーの会話では止めない・サブエージェントは止めない・端末は子でも親でも待たない・Stop フックの続きの一言を結果にしない）と `tests/unit/delegation-result.mjs`（2026-09-27 の transcript と同じ行の形で、続きの印・中身の仕事をした続き・区切り・結果の選び方）と `tests/unit/claude-turn-end.mjs`（SDK の身代わりで、Stop フックの続きではターンが終わり、裏へ回ったまま終わらないコマンドがあると終わらず、`stopTask` で終わる）。

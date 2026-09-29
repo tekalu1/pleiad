@@ -48,7 +48,10 @@ export function finalReply(messages) {
 // io・log・renameDelays・retryMax はテストで失敗を差し込み、記録を読み、待ちを縮めるためのもの
 // ready は「親が新しいターンで完了通知を受け取れるか」、steerable は「走っている親のターンへ今すぐ渡せるか」（ADR 0057）。
 // deliver は同じ親へ届ける完了通知（1 件以上）をまとめて受け取る。無音・コマンドの通知は ready だけで決める
-export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', deliverCommand = async () => 'ok', cancelBackground = async () => {}, ready = async () => true, steerable = async () => false, changed = () => {}, waiting = () => false,
+// childSteerable は「走っている子のターンへ追加指示を今すぐ渡せるか」、steer(task, { id, text }) はその途中送信。
+// 'delivered'（受理。合図の無いバックエンドは渡ったものとして扱う）/ 'pending'（受理。渡った合図を steered() で待つ）/
+// 'requeue'（受理されない。待機のまま次のターンで）/ 'error'（結果不明。送り直さない）を返す（ADR 0065）
+export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', deliverCommand = async () => 'ok', cancelBackground = async () => {}, ready = async () => true, steerable = async () => false, childSteerable = async () => false, steer = async () => 'requeue', changed = () => {}, waiting = () => false,
   now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
   commandMinutes = Number(process.env.AGENT_HOST_TASK_COMMAND_MINUTES ?? 5),
   io = fs, log = line => console.error(line), renameDelays = RENAME_DELAYS, retryMax = RETRY_MAX }) {
@@ -88,6 +91,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   let persisted = new Map(Object.values(records).map(r => [r.taskId, r.notification]));
   // noticeOwners: 完了通知を送っている最中の親（同じ親への配送は 1 つずつ。次に溜まった分は次の kick でまとめて送る）
   // waited: 依頼元が ply_task_wait で待っているタスク（taskId → 待ちの数）。待ちの間は完了通知を送らない（ADR 0057）
+  // steers: 走っている子のターンへ途中送信で渡している追加指示（taskId → 指示 ID の集合）。メモリだけ（再起動では sending が delivered に戻る）
+  const steers = new Map();
   const live = new Map(), notices = new Set(), noticeOwners = new Set(), waited = new Map(), silenceNotices = new Set(), silenceWaiting = new Map(), listeners = new Set();
   const serial = fn => {
     const next = writes.then(async () => { mutating = true; try { return await fn(); } finally { mutating = false; } });
@@ -185,6 +190,55 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   async function markRead(r) {
     if (!readable(r)) return;
     await record(r.taskId, row => { if (readable(row)) row.notification = 'read'; }, 'notify.read');
+  }
+  // 途中送信の指示を待機へ戻す（受理されない・捨てられた・合図が来ないままターンが終わった）。
+  // 次のターンで 1 回だけ送る。ID で claim を持っているものだけ戻すので、合図が先に来て配送済みにしたものは戻さない
+  function unclaim(taskId, instructionId) {
+    return serial(async () => {
+      const row = records[taskId];
+      if (!row || !steers.get(taskId)?.delete(instructionId)) return;
+      if (!steers.get(taskId).size) steers.delete(taskId);
+      if (['cancelled', 'interrupted'].includes(row.status)) setInstruction(row, instructionId, 'dropped');   // 止めたタスクを指示で生き返らせない
+      else {
+        row.queue.unshift({ instructionId }); setInstruction(row, instructionId, 'queued');
+        // 走っていた回がもう終わっていたら、待機の指示のために再開する（send と同じ）
+        if (!ACTIVE.has(row.status)) { row.status = 'queued'; row.notification = 'none'; }
+      }
+      row.updatedAt = Date.now();
+      await persist('send.steer.requeue', taskId); touched();
+    });
+  }
+  // 途中送信の指示を配送済み（か、渡らなかったもの dropped）にして片付ける
+  function resolveClaim(taskId, instructionId, state) {
+    return serial(async () => {
+      const row = records[taskId];
+      if (!row || !steers.get(taskId)?.delete(instructionId)) return;
+      if (!steers.get(taskId).size) steers.delete(taskId);
+      setInstruction(row, instructionId, state); row.updatedAt = Date.now();
+      await persist('send.steer.done', taskId); touched();
+    });
+  }
+  // ply_task_send で積んだ指示を、走っている子のターンへ途中送信で渡してみる。渡せなければ何も変えない（待機のまま）。
+  // 渡すのは、後ろに待機の指示が無く（順序を守る）、前の途中送信が決着している（二重にしない）ときだけ
+  async function steerInstruction(r, instructionId) {
+    if (r.status !== 'running' || !live.has(r.taskId) || steers.get(r.taskId)?.size || r.queue.length !== 1) return;
+    if (!(await childSteerable(structuredClone(r)).catch(() => false))) return;
+    const claimed = await serial(async () => {
+      const row = records[r.taskId];
+      if (!row || row.status !== 'running' || !live.has(row.taskId) || steers.get(row.taskId)?.size
+        || row.queue.length !== 1 || row.queue[0]?.instructionId !== instructionId) return false;
+      row.queue.shift(); setInstruction(row, instructionId, 'sending'); row.updatedAt = Date.now();
+      steers.set(row.taskId, new Set([instructionId]));
+      await persist('send.steer', row.taskId); touched();
+      return true;
+    });
+    if (!claimed) return;
+    const text = r.instructions.find(x => x.id === instructionId)?.text ?? '';
+    const outcome = await steer(structuredClone(r), { id: instructionId, text }).catch(() => 'error');
+    if (outcome === 'delivered') await resolveClaim(r.taskId, instructionId, 'delivered');
+    else if (outcome === 'error') await resolveClaim(r.taskId, instructionId, 'dropped');
+    else if (outcome !== 'pending') await unclaim(r.taskId, instructionId);
+    return outcome;
   }
   async function run(r, controller) {
     // stalled: 実行の開始を保存できなかった。子は動かしていないので queued のまま、次のタイマーでやり直す
@@ -411,6 +465,20 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       });
       kick();
     },
+    /**
+     * 途中送信で渡した追加指示への「渡った」合図（'delivered'）か、読まれずに捨てられた合図（'dropped'）。
+     * 捨てられたら待機へ戻し、次のターンで送る（親からの指示なので送り直してよい。合図の ID で照合するので二重にならない）
+     */
+    async steered(taskId, instructionId, event) {
+      if (event === 'delivered') await resolveClaim(taskId, instructionId, 'delivered');
+      else await unclaim(taskId, instructionId);
+    },
+    /** 子のターンが終わった。渡った合図が来ないままの途中送信は読まれたか分からない（読まれていれば合図が先に来ている）ので待機へ戻し、次のターンで送る */
+    async settleSteers(sessionId) {
+      const r = bySession.get(sessionId);
+      if (!r) return;
+      for (const instructionId of [...(steers.get(r.taskId) ?? [])]) await unclaim(r.taskId, instructionId);
+    },
     instructions(taskId) { const r = records[taskId]; return r ? { taskId, revision: r.instructionRevision ?? 0, instructions: structuredClone(r.instructions) } : null; },
     /** 最初の依頼（task と context）。やり直しで同じ依頼を渡す。context を持つ前に作ったタスクは task だけ */
     request(taskId) { const r = records[taskId]; return r ? { task: r.task, title: r.title ?? null, context: r.context ?? null } : null; },
@@ -478,17 +546,23 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (name === 'ply_task_send') {
         text(locale, args.message, 'message');
         // 追加の指示も新しい仕事なので、保存できなければ受けない（commit が理由付きで断る）
+        let instructionId;
         await commit(r.taskId, row => {
           if (row.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
           row.revision = (row.revision ?? 0) + 1;
           // 前の回の拒否を依頼元へ渡し終えていれば、この指示で走る回の分で置き換える。まだ渡していなければ（走っている・通知の前）足していく
           if (NOTICED.has(row.notification)) { delete row.rejections; delete row.rejectionsDropped; }
           const instruction = { id: crypto.randomUUID(), text: args.message, at: Date.now(), state: 'queued' };
+          instructionId = instruction.id;
           row.instructions.push(instruction); row.instructionRevision = (row.instructionRevision ?? 0) + 1;
           row.queue.push({ instructionId: instruction.id }); row.notification = 'none'; row.error = null;
           if (!live.has(row.taskId) || !ACTIVE.has(row.status)) row.status = 'queued';
         }, 'send', locale);
-        kick(); return view(r);
+        // 子のターンが走っていて途中送信を受けられるなら、待たずに今のターンへ渡す（ADR 0065）
+        const steered = await steerInstruction(r, instructionId).catch(e => { report({ event: 'unexpected', operation: 'steer', taskId: r.taskId, code: e?.code ?? null }); });
+        kick();
+        // 渡ったか分からない指示は送り直さない。依頼元のエージェントには、確かめるよう一言添える
+        return steered === 'error' ? { ...view(r), warning: agentT(locale, 'tasks.steerUnknown') } : view(r);
       }
       if (name === 'ply_task_cancel') {
         // 終わったタスクの結果はこの戻り値で渡る。同じ結果の完了通知を後から送らない

@@ -1316,6 +1316,12 @@ function makeEmit(turn) {
       else agentTasks?.renotify(notice.items).catch(() => {});
       return;
     }
+    // 子のターンへ途中送信で渡した追加指示（ply_task_send。liveInstructions）の合図。指示の状態を決めてから、画面にも流す
+    if ((event?.type === "userMessage.delivered" || event?.type === "userMessage.dropped") && liveInstructions.has(event.messageId)) {
+      const sent = liveInstructions.get(event.messageId);
+      liveInstructions.delete(event.messageId);
+      agentTasks?.steered(sent.taskId, sent.instructionId, event.type === "userMessage.delivered" ? "delivered" : "dropped").catch(() => {});
+    }
     // 受理済みの途中送信が読まれずに捨てられた（userMessage.dropped）。送信待ちへ戻す
     if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId) {
       outbox.returned(turn.info.sessionId, event.messageId).catch(() => {});
@@ -1771,6 +1777,10 @@ const taskStopReasons = new Map();
 // 通知の item id -> { owner, prompt, items: [{ taskId, revision }] }。渡れば画面へ通知の一行を出し、
 // 読まれないままターンが死んだら（userMessage.dropped・ターンの終わり）空いたときの経路で送り直す（ADR 0057）
 const liveNotices = new Map();
+// 走っている子のターンへ途中送信（control.steer）で渡した追加指示（ply_task_send）のうち、「渡った」合図（steerConfirms）を待っているもの。
+// 指示の item id（task-send-<指示 ID>） -> { sessionId: 子の会話, taskId, instructionId }。合図で指示の状態を決め、
+// 合図が来ないままターンが終わったら待機へ戻して次のターンで送る（ADR 0065）
+const liveInstructions = new Map();
 const outbox = createMessageQueue({
   store,
   active: id => {
@@ -1867,6 +1877,38 @@ async function steerNotice(turn, owner, prompt, tasks) {
   if (!confirms) emitGlobal({ type: 'taskNotice', sessionId: owner, text: prompt });
   return 'ok';
 }
+
+/**
+ * 追加指示（ply_task_send）を今すぐ渡せる、子の走っているターン（無ければ null）。委譲の子として実行中のターンだけを対象にし、
+ * 渡してよい条件は完了通知と同じ（canSteerNotice。子の会話に人の送信待ちがあれば渡さない）
+ */
+async function childTarget(sessionId) {
+  const turn = taskExecutions.has(sessionId) ? runtime.turns.get(sessionId) : null;
+  if (!turn) return null;
+  const unsent = (await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status));
+  return canSteerNotice(turn, { unsent, nextSettings: (await store.get(sessionId)).nextSettings }) ? turn : null;
+}
+
+/**
+ * 追加指示を、走っている子のターンへ途中送信（control.steer）で渡す。人間の発言ではないので outbox は通さず、
+ * 子の会話には通常の user 発言として出す（履歴にはバックエンドの記録が入る）。
+ * 'delivered'=受理（合図の無いバックエンドは渡ったものとして扱う）/ 'pending'=受理して「渡った」合図を待つ（liveInstructions）/
+ * 'requeue'=受理できない → 待機のまま次のターンで / 'error'=結果不明 → 自動で送り直さない
+ */
+async function steerInstruction(task, instruction) {
+  const turn = await childTarget(task.sessionId);
+  if (!turn) return 'requeue';
+  const item = { id: `task-send-${instruction.id}`, args: { prompt: instruction.text } };
+  const confirms = Boolean(turn.control.steerConfirms);
+  // 合図は受理の応答より先に来ることがある。先に登録しておく
+  if (confirms) liveInstructions.set(item.id, { sessionId: task.sessionId, taskId: task.taskId, instructionId: instruction.id });
+  let accepted;
+  try { accepted = await turn.control.steer?.(item); }
+  catch { liveInstructions.delete(item.id); return 'error'; }
+  if (!accepted) { liveInstructions.delete(item.id); return 'requeue'; }
+  emitGlobal({ type: 'userMessage', sessionId: task.sessionId, messageId: item.id, text: instruction.text, at: Date.now(), ...(confirms ? { pending: true } : {}) });
+  return confirms ? 'pending' : 'delivered';
+}
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
   changed: () => { broadcastRunning(); completionNotices.changed(); },
@@ -1961,6 +2003,9 @@ agentTasks = await createAgentTasks({
   ready: async task => !(await noticeBlocked(task.parentSessionId)),
   // 走っている依頼元のターンへ、今すぐ途中送信で渡せるか（無音・コマンドの通知は使わない。ADR 0057）
   steerable: async task => Boolean(await noticeTarget(task.parentSessionId)),
+  // 走っている子のターンへ、追加指示を今すぐ途中送信で渡せるか（ADR 0065）
+  childSteerable: async task => Boolean(await childTarget(task.sessionId)),
+  steer: steerInstruction,
   // 同じ依頼元への完了通知をまとめて 1 つ届ける。走っているターンへ渡せれば途中送信で（noticeTarget）、
   // 渡せなければ（requeue）空いてから新しいターンで
   deliver: async tasks => {
@@ -2443,6 +2488,17 @@ async function endTurn(turn, emit, { record = true } = {}) {
     if (notice.owner !== turn.info.sessionId) continue;
     liveNotices.delete(id);
     agentTasks?.renotify(notice.items).catch(() => {});
+  }
+  // 子のターンに渡した追加指示のうち、渡った合図が来ないまま終わったものは読まれたか分からない（読まれていれば合図が先に来ている）。
+  // 待機へ戻して次のターンで送る。子の結果を確定する execute がこの後に返るので、結果の記録より先に戻る。
+  // 画面には、渡っていない発言を下げる
+  if (turn.info.sessionId) {
+    for (const [id, sent] of [...liveInstructions]) {
+      if (sent.sessionId !== turn.info.sessionId) continue;
+      liveInstructions.delete(id);
+      emitGlobal({ type: 'userMessage.dropped', sessionId: sent.sessionId, messageId: id });
+    }
+    await agentTasks?.settleSteers(turn.info.sessionId).catch(() => {});
   }
   agentBrowser?.endTurn(turn.info.sessionId || turn.key);
   notifyFree(turn.key);
