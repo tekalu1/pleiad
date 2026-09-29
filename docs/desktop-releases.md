@@ -1,5 +1,7 @@
 # デスクトップのバージョンと更新
 
+Android 版の配布（`main` への push で署名済み APK を別のリリースとして出す）は [android-releases.md](android-releases.md)。
+
 ## バージョンと原稿
 
 Pleiad の画面・サーバー・Electron を一つの `package.json.version` で管理する。Windows/macOS も同じ番号。

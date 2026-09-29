@@ -53,7 +53,7 @@
 | 端末の資格情報・ペアリング・端末内プロキシ | `core/remote/device.mjs`（置き場・ペアリング・ホストごとのプロキシの管理）、`core/remote/device-link.mjs`（中継への線・張り直し・状態）、`core/remote/device-proxy.mjs`（127.0.0.1 の HTTP と /ws）。デスクトップの main から `import()`、試験からも使う | Node |
 | リモートの窓・ほかのホストにつなぐ窓 | `desktop/remote-windows.cjs`（窓・IPC・印。main プロセス）、`desktop/remote-preload.cjs`（リモートの窓の preload）、`desktop/remote-hosts.html`・`remote-hosts-view.cjs`・`remote-hosts-preload.cjs`（同梱の窓）、`desktop/window-trust.cjs`（窓ごとのオリジンの表）、`desktop/i18n.cjs`（本体の文言）。画面の印は `web/remote-badge.mjs` | Node |
 | 手元のフォルダーを送る（§8.1） | `core/folder-uploads.mjs`（`upload*` コマンドの中身・置き場・パスの検査）、`web/folder-upload.mjs`（送る流れとドロップの問い）、`web/attach-menu.mjs`（添付のボタンのメニュー） | Node / JS |
-| モバイルの殻 | `mobile/`（Capacitor 8。独立した `package.json`）。Android: `mobile/android/remote-core/`（端末側の Kotlin 移植。純粋な JVM で Gradle の試験）、`mobile/android/app/`（殻・ホストの窓・Keystore）、`mobile/www/`（同梱のホスト一覧）、`mobile/scripts/fake-host.mjs`（試験用の中継 + fake のホスト）。iOS は未着手 | Kotlin / JS（iOS は Swift） |
+| モバイルの殻 | `mobile/`（Capacitor 8。独立した `package.json`）。Android: `mobile/android/remote-core/`（端末側の Kotlin 移植。純粋な JVM で Gradle の試験）、`mobile/android/app/`（殻・ホストの窓・Keystore）、`mobile/www/`（同梱のホスト一覧）、`mobile/scripts/fake-host.mjs`（試験用の中継 + fake のホスト）。iOS は未着手。Android の配布は [android-releases.md](android-releases.md) | Kotlin / JS（iOS は Swift） |
 | 試験ベクトル | `tests/remote/vectors.json`（Noise の公式ベクトル + フレームの例。3 実装が同じものを読む） | — |
 
 ## 3. 暗号とペアリング
