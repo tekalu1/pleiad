@@ -217,6 +217,8 @@ const cases = [
   await import("./unit/server-retired.mjs"),
   await import("./unit/server-fork.mjs"),
   await import("./unit/server-ux.mjs"),
+  // 最近の場所の候補: Pleiadで使った実在フォルダーのみ・委譲やネイティブ一覧や消えた場所を除外
+  await import("./unit/cwd-recent-places.mjs"),
   await import("./unit/conversations.mjs"),
   await import("./unit/conversations-storage.mjs"),
   // codex バックエンド。app-server の身代わり（tests/lib/fake-codex.mjs）と話すだけで、
