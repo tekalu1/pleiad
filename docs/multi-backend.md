@@ -240,6 +240,8 @@ export const backend = {
   runTurn({ prompt, sessionId, cwd, mode, model, emit, askPermission, signal, control })
     : Promise<{ sessionId }>,   // 新規なら確定した id を返す。途中で `session` イベントも出す
                                 // 新規に最初から付ける状態（web の runTurn args.status）は server が session イベントで書く。バックエンドは知らない
+                                // notes?: string[] … 中断の後に Pleiad が添える文（design.md「中断と再開」）。発言の本文は変えず、前に置く:
+                                //   Claude は同じ user メッセージの別の text ブロック、Codex は turn/start の別の入力、agy は本文の前につなぐ
   abort?(handle),                // signal で足りるなら省略
   setModelLive?(handle, model): Promise<boolean>,
   setModeLive?(handle, mode): Promise<boolean>,
@@ -303,6 +305,7 @@ assistant の発言に `stopHookFollowUp: true` を付けてよい（2026-09-27�
 | `compactSummary` | `{ role:'system', text:'', summary, boundary }` | 圧縮の要約。`history.mjs` が発言から外して `compactSummaries` で返し、server が区切りに入れる（`compaction-history.mjs` の `attachCompactSummaries`） |
 | `interrupt` | `{ role:'system', text:'' }` | 中断（`[Request interrupted by user]`・`… for tool use]`） |
 | `teammate` | `{ role:'system', text:'', from, body }` | agent teams の teammate の知らせ。待機（`idle_notification`）だけのものは落とす |
+| `interruptionNote` | `{ role:'system', text:'', body }` | 中断で止めたものを Pleiad が伝えた文（行の先頭の `<pleiad-interruption>…</pleiad-interruption>`）。続く人の発言は別の行に分ける（分岐点の uuid は発言に残す）。どのバックエンドの行も `history.mjs` の `loadTranscript` で分ける（`splitInterruptionNotes`） |
 
 コマンド・シェルの出力は入力の行へまとめ、`uuid` は出力の行のもの（分岐点）にする。Pleiad の `/compact` の行とその出力・裏の作業の完了通知・文脈だけの発言は落とし、発言の先頭の文脈（`<ide_opened_file>`・`<in-app-browser-context>`）は外す。
 見分けは行の形を優先する。Claude は transcript の本文から印（`claude-normalize.mjs` の `transcriptSystemMarks`: 要約の uuid と区切りの uuid、コマンド・シェルの行の子の出力の uuid）を拾って渡す。getSessionMessages は `isCompactSummary`・`parentUuid` を落とすため。

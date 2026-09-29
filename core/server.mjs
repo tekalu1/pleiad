@@ -110,6 +110,8 @@ try {
 import { installation, cliCommand } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
 import { createShellRuns, shellMode } from './shell-runs.mjs';
+import { taskStop, backgroundStop, approvalStop, interruptionNote } from './interrupt-stops.mjs';
+import { splitInterruptionNotes } from './system-messages.mjs';
 
 const PORT = Number(process.env.AGENT_HOST_PORT ?? 7420);
 const HOST = process.env.AGENT_HOST_BIND ?? "127.0.0.1";
@@ -1066,12 +1068,14 @@ function giveUp() {
   runtime.awaySince = 0;
   clearTimeout(runtime.graceTimer);
   runtime.graceTimer = null;
+  // 承認待ちを却下する前に、止めるターンが抱えているもの（承認待ち・裏の作業）を控える（中断で終わったら会話の「止めたもの」に残す）
+  for (const t of runtime.turns.values()) t.stops ??= captureStops(t);
   // エージェントへの理由は承認ごとに会話の言語で（askPermission が messageKey を訳す）。ログは日本語のまま
   for (const [, w] of [...runtime.waiting]) w.settle({ allow: false, messageKey: 'hostAway', messageParams: { seconds } });
   // 承認を返せないまま走らせ続けない。黙って deny し続けるより、止めて気づかせる。
   // 中断の理由は hostAway（会話に中断として残り、戻った人が「再開」で続けられる）
   for (const t of [...runtime.turns.values()]) { t.abortReason ??= "hostAway"; t.ac.abort(); }
-  void agentTasks?.cancelOwner().catch(() => {});
+  void agentTasks?.cancelOwner().then(list => recordTaskStops(list, 'hostAway')).catch(() => {});
   console.log(`  host が ${seconds} 秒戻らなかったので中断した`);
 }
 
@@ -1968,6 +1972,9 @@ agentTasks = await createAgentTasks({
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
 });
+// 前の起動で走っていて、再起動で止まった委譲タスクを、依頼元の会話の「止めたもの」に残す（次のターンで伝える）。
+// 裏の作業と承認待ちは保存していないので分からない（docs/design.md「中断と再開」）
+await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
 
 // ターンの外で起きたことをバックエンドから受け取る口（docs/multi-backend.md §2.7）。
 // codex（バックグラウンド端末）が使う
@@ -2171,6 +2178,9 @@ async function runTurnInternal(args, onStarted, hooks) {
         background: [],
       },
     };
+    // 止めた瞬間に、このターンが抱えていたもの（裏の作業・承認待ち）を控える。中断で終わったら会話の「止めたもの」に残す（endTurn）。
+    // 承認待ちの却下（settleAll）より先に走るよう、ほかの abort の受け手より前に付ける
+    turn.ac.signal.addEventListener('abort', () => { turn.stops ??= captureStops(turn); }, { once: true });
     if (hooks.signal?.aborted) turn.ac.abort();
     const abortFromTask = () => turn.ac.abort();
     hooks.signal?.addEventListener('abort', abortFromTask, { once: true });
@@ -2190,6 +2200,8 @@ async function runTurnInternal(args, onStarted, hooks) {
 
     let didStart = false, backendInvoked = false, runtimeContext;
     let initialDelivered = false;
+    // 中断で止めたもの（stops）を伝える文。このターンの発言の前に 1 回だけ添え、渡ったら会話から消す（docs/design.md「中断と再開」）
+    let interruption = null, interruptionTaken = false;
     // 入力欄の `!` の結果（ADR 0054）。人の発言のターンでだけ、発言と一緒に渡す（完了通知で再開するターン・圧縮では渡さない）。
     // 'host' の会話は未送の追記を shouldQuery: false の行で先に渡す。'native'（Codex）はエージェントの会話に既に入っている。
     // 「渡さない」の行は渡さず、渡った後に会話に残す行へ移す（ADR 0055）
@@ -2197,6 +2209,10 @@ async function runTurnInternal(args, onStarted, hooks) {
       ? (shellMode(backend) === 'host' ? await shellRuns.appendsFor(sessionId) : { ids: [], skipped: [], lines: [] }) : null;
     let shellHanded = false;
     const onPromptDelivered = () => {
+      if (interruption && !interruptionTaken) {
+        interruptionTaken = true;
+        store.takeStops(sessionId, interruption.keys, { dropped: interruption.dropped }).catch(e => console.error('  中断で止めたものを伝えた記録に失敗:', String(e?.message ?? e)));
+      }
       if (shellHandoff && !shellHanded) {
         shellHanded = true;
         shellRuns.delivered(sessionId, shellHandoff.ids, shellHandoff.skipped).catch(e => console.error('  shell: 渡した記録に失敗:', String(e?.message ?? e)));
@@ -2217,7 +2233,15 @@ async function runTurnInternal(args, onStarted, hooks) {
       if (sessionId) await store.setMeta(sessionId, { turnStartedAt: turn.startedAtMs, interrupted: null }).catch(err => {
         console.error("  ターンの開始の記録に失敗:", String(err?.message ?? err));
       });
+      // 中断で止めたものがあれば、エージェントの言語で文にして発言の前に添える（圧縮のターンでは添えない）。
+      // 画面には、何を伝えたかを開ける 1 行で出す（履歴は system-messages.mjs の splitInterruptionNotes が同じ行にする）。
+      // 発言の吹き出しの後に送り、画面は messageId の吹き出しの前へ置く（履歴と同じ並び）
+      if (sessionId && !hooks.compact) {
+        const stops = (await store.get(sessionId).catch(() => null))?.stops;
+        interruption = interruptionNote(agentLocale, stops, stops?.reason);
+      }
       if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true });
+      if (interruption) emit({ type: 'interruptionNote', text: interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
       broadcastRunning();
       syncRunningPoll();
       if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'preparing' });
@@ -2248,6 +2272,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       const runArgs = {
         prompt,
         ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
+        ...(interruption ? { notes: [interruption.text] } : {}),
         ...(hooks.compact ? { compact: hooks.compact } : {}),
         sessionId,
         cwd,
@@ -2311,7 +2336,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         await turn.setup;
         if (attachments.length || turn.steeredAttachments?.length) {
           await Promise.all(turn.presentWrites);
-          const messages = await backend.getMessages(turn.info.sessionId);
+          // 中断の後に添えた文は発言から切り分けてから照らす（history.loadTranscript と同じ）
+          const messages = splitInterruptionNotes(await backend.getMessages(turn.info.sessionId));
           let cursor = baseline.messages.length;
           for (const attachment of [{ key: turn.presentKey, prompt }, ...(turn.steeredAttachments ?? [])]) {
             const index = messages.findIndex((m, i) => i >= cursor && m.role === 'user' && m.text === attachment.prompt);
@@ -2380,6 +2406,10 @@ async function endTurn(turn, emit, { record = true } = {}) {
       : { completedAt, turnStartedAt: null, ...(record || stopped ? { interrupted } : {}) };
     await store.setMeta(turn.info.sessionId, patch).catch(err => {
       console.error("  完了の記録に失敗:", String(err?.message ?? err));
+    });
+    // 中断で終わったターンが抱えていた裏の作業・承認待ちを、会話の「止めたもの」に残す（次のターンで伝える）
+    if (stopped && turn.stops) await store.addStops(turn.info.sessionId, { ...turn.stops, reason: interrupted.reason }).catch(err => {
+      console.error("  中断で止めたものの記録に失敗:", String(err?.message ?? err));
     });
   }
   // 委譲された子の会話（delegation）の完了は、画面が通知しない。結果は依頼元の会話へ届く
@@ -2630,6 +2660,33 @@ function stoppedDescendants(sessionId) {
 }
 
 /**
+ * 止めた瞬間にターンが抱えていたもの（stops の background / approvals）。
+ * 裏の作業は Claude の run_in_background の Bash・サブエージェント（turn.info.background。CLI の終了で止まる）。
+ * Codex の端末はターンの外（runtime.background）にあり、中断では止まらないので数えない。
+ * 承認待ちはこの会話のもの（中継の複製は、元の会話の分として数える）
+ */
+function captureStops(turn) {
+  const id = turn.info.sessionId;
+  return {
+    background: (turn.info.background ?? []).map(backgroundStop),
+    approvals: id ? [...runtime.waiting].filter(([, w]) => !w.relay && w.payload.sessionId === id).map(([key, w]) => approvalStop(key, w.payload)) : [],
+  };
+}
+
+/** 取り消した委譲タスク（agentTasks.cancelOwner / cancel / restored の項目）を、依頼元の会話ごとに「止めたもの」へ足す */
+async function recordTaskStops(list, reason, { restart = false } = {}) {
+  const owners = new Map();
+  for (const x of list ?? []) {
+    if (!x?.parentSessionId) continue;
+    if (!owners.has(x.parentSessionId)) owners.set(x.parentSessionId, []);
+    owners.get(x.parentSessionId).push(taskStop(x, { restart }));
+  }
+  for (const [owner, tasks] of owners) await store.addStops(owner, { tasks, reason }).catch(err => {
+    console.error("  中断で止めたものの記録に失敗:", String(err?.message ?? err));
+  });
+}
+
+/**
  * 会話を止める（WS の abort と、デスクトップの「中断して終了」）。sessionId を省略したら全部。
  * 止めたターンは会話に中断（interrupted { at, reason }）として残る（endTurn）。
  * 委譲の子の会話も独立した会話なので、同じ理由で中断として残り、個別に再開できる。委譲タスクそのものは取り消す。
@@ -2659,14 +2716,18 @@ async function abortSessions({ sessionId = null, reason } = {}) {
     }
   }
   if (targets.length) broadcastRunning();
+  let cancelled = [];
   try {
-    await agentTasks.cancelOwner(sessionId || undefined);
+    cancelled = await agentTasks.cancelOwner(sessionId || undefined);
   } finally {
     // 取り消しで止まった子は stopChild が読み終えている。残りは止まらなかった子（付けない）
     for (const id of children) if (taskStopReasons.get(id) === why) taskStopReasons.delete(id);
   }
   const ownTask = sessionId ? agentTasks.list().find(r => r.sessionId === sessionId) : null;
-  if (ownTask) await agentTasks.cancel(ownTask.taskId);
+  // 子の会話を直接止めたときは、その委譲タスクも取り消す（終わっていれば止めるものは無く、届いていない結果は依頼元へ届く）
+  const own = ownTask ? await agentTasks.cancel(ownTask.taskId) : null;
+  // 取り消した委譲タスクと、終わっていたのに完了通知が届いていなかったタスクを、依頼元の会話ごとに残す（次のターンで伝える）
+  await recordTaskStops([...cancelled, ...(own ? [own] : [])], why);
   for (const id of paused) await outbox.pause(id);
   return { aborted: targets.length, reason: why };
 }

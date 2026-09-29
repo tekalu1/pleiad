@@ -127,8 +127,11 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     code: fault.code, since: fault.since, failures: fault.failures } } : {};
   // 再起動: 実行中だったものは再実行しない。まだ親に渡っていない pending はそのまま送り直す。
   // 渡ったか分からない delivering だけを unknown にする（二重に届けない）
+  // restored: 再起動で止まった（interrupted にした）タスク。server が依頼元の会話の「止めたもの」に残す（docs/design.md「中断と再開」）
+  const restored = [];
   for (const r of Object.values(records)) {
     if (ACTIVE.has(r.status)) {
+      restored.push({ taskId: r.taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: r.status });
       r.status = 'interrupted'; r.error = t('tasks.interruptedByRestart');
       for (const instruction of r.instructions ?? []) if (instruction.state === 'sending') setInstruction(r, instruction.id, 'delivered');
       dropInstructions(r);
@@ -488,25 +491,36 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         kick(); return view(r);
       }
       if (name === 'ply_task_cancel') {
-        await this.cancel(r.taskId); return view(r);
+        // 終わったタスクの結果はこの戻り値で渡る。同じ結果の完了通知を後から送らない
+        await this.cancel(r.taskId); const out = view(r); await markRead(r); return out;
       }
       throw new Error(agentT(locale, 'tasks.unknownTool'));
     },
-    async cancel(taskId) {
-      const r = records[taskId]; if (!r) return;
+    // 取り消したとき止まったもの（走っていた・待っていた）なら、止めた時点の状態を返す（無ければ null）。
+    // 終わったタスク（止めるものが無い）の届いていない完了通知は止めない。以前は止めていて、依頼元に結果が届かなかった。
+    // 子孫（descendant）は依頼元（このタスクの子の会話）ごと止まるので、今どおり通知も止める
+    async cancel(taskId, { descendant = false } = {}) {
+      const r = records[taskId]; if (!r) return null;
       // Stop descendant Pleiad tasks too; engine-native children follow their engine's cancellation.
-      for (const child of Object.values(records).filter(c => c.parentSessionId === r.sessionId)) await this.cancel(child.taskId);
+      for (const child of Object.values(records).filter(c => c.parentSessionId === r.sessionId)) await this.cancel(child.taskId, { descendant: true });
+      const was = r.status, stopping = ACTIVE.has(r.status) || live.has(taskId) || r.queue.length > 0;
+      if (!descendant && !stopping && readable(r)) return null;
       // 止めることは保存できなくても止める（record。ファイルは後で追いつく）
       await record(taskId, row => { row.revision = (row.revision ?? 0) + 1; dropInstructions(row); row.notification = 'suppressed'; if (ACTIVE.has(row.status)) row.status = live.has(taskId) ? 'cancelling' : 'cancelled'; }, 'cancel');
       live.get(taskId)?.abort();
       if (!live.has(taskId) && r.activeCommands?.length) await cancelBackground(view(r));
+      return stopping && was !== 'cancelling' ? { taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: was } : null;
     },
     // 承認待ちの増減で ply_task_wait を起こす。保存する状態は変わらないので write() は通らない
     wake() { for (const r of Object.values(records)) pauseCommands(r, now(), waiting(r.sessionId)); for (const fn of [...listeners]) fn(); },
     // 会話を止めたときに、その会話が作ったタスク（と子孫）をまとめて止める。cancel と同じ書き換えを、
     // 書き換えて何かが変わるものにだけ行い、保存は 1 回にする。以前は終わったタスクまで 1 件ずつ保存していて
     // （1 会話で数十件になる）、会話の停止を遅らせていた。止め終わって通知も抑えたもの（cancel を呼んでも
-    // revision と updatedAt しか変わらない）は飛ばす。子孫は親を飛ばしても辿る
+    // revision と updatedAt しか変わらない）は飛ばす。子孫は親を飛ばしても辿る。
+    // 中断した会話を勝手に再開しないので、終わっていて完了通知が届いていない（none / pending）タスクの通知も止める。
+    // その結果は捨てずに返す（unread: true。ply_task_status で読める）。走っていた・待っていたタスクは止めた時点の状態で返す。
+    // 返すのは [{ taskId, parentSessionId, title, status, unread }]。server が依頼元の会話ごとに「止めたもの」に残し、
+    // 次のターンでエージェントへ伝える（docs/design.md「中断と再開」）
     async cancelOwner(owner) {
       const targets = [], seen = new Set();
       const visit = r => {
@@ -518,10 +532,13 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       for (const r of Object.values(records).filter(r => !owner || r.parentSessionId === owner)) visit(r);
       const settled = r => !ACTIVE.has(r.status) && !r.queue.length && r.notification === 'suppressed' && !live.has(r.taskId);
       const change = targets.filter(r => !settled(r));
-      if (!change.length) return;
+      if (!change.length) return [];
+      const stopped = [];
       // cancel と同じく、保存できなくても止める
       await serial(async () => {
         for (const r of change) {
+          const running = (ACTIVE.has(r.status) || live.has(r.taskId) || r.queue.length > 0) && r.status !== 'cancelling';
+          if (running || readable(r)) stopped.push({ taskId: r.taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: r.status, unread: !running });
           r.revision = (r.revision ?? 0) + 1; dropInstructions(r); r.notification = 'suppressed';
           if (ACTIVE.has(r.status)) r.status = live.has(r.taskId) ? 'cancelling' : 'cancelled';
           r.updatedAt = Date.now();
@@ -530,7 +547,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         touched();
       });
       for (const r of change) live.get(r.taskId)?.abort();
+      return stopped;
     },
+    /** 再起動で止まった（interrupted にした）タスク。[{ taskId, parentSessionId, title, status }]（status は止まる前の状態） */
+    get restored() { return structuredClone(restored); },
     /** 保存障害（無ければ null）。errno・操作・タスク ID・時刻だけ */
     get fault() { return fault && { code: fault.code, syscall: fault.syscall, operation: fault.operation, taskId: fault.taskId, since: fault.since, at: fault.at, failures: fault.failures }; },
     // 正常終了。保存障害では閉じない

@@ -1302,7 +1302,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, endpoint = null, locale }) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, endpoint = null, locale, notes = [] }) {
     const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
     // Hooks を Pleiad がそろえる会話。止める key はこのターンの直前に作り直す（起動の後に足された定義も、次のターンからは止まる）。
     // 作れなければターンを始めない（ネイティブと Pleiad の登録が二重に動くか、どちらも動かないため）
@@ -1682,7 +1682,8 @@ export const backend = {
         approvalPolicy: m.approvalPolicy,
         sandboxPolicy: sandboxForTurn(m, effectiveSandbox),
         ...(effectiveEffort ? { effort: effectiveEffort } : {}),
-        input: [{ type: "text", text: String(prompt ?? "") }],
+        // 中断の後に Pleiad が添える文（core/interrupt-stops.mjs）は、人の発言とは別の入力にして前に置く（本文は書き換えない）
+        input: [...notes, String(prompt ?? "")].map(text => ({ type: "text", text })),
       });
       turnId ??= res?.turn?.id ?? null;
       onPromptDelivered?.();

@@ -1241,6 +1241,7 @@
     "sys": {
       "agentChanged": "Changed the agent to {{agent}}. It takes over the conversation from your next message.",
       "taskResumed": "Received the Pleiad task result and resumed",
+      "interruptionNote": "Told the agent what the interruption stopped",
       "failed": "Failed: {{error}}",
       "unknownReason": "unknown reason",
       "contextRefreshed": "Instructions or Skills changed, so they were reloaded",
