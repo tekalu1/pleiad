@@ -87,7 +87,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // ファイルに書けた通知の状態（taskId → notification）。ファイルがすでに delivering なら送る前に書き直さない
   let persisted = new Map(Object.values(records).map(r => [r.taskId, r.notification]));
   // noticeOwners: 完了通知を送っている最中の親（同じ親への配送は 1 つずつ。次に溜まった分は次の kick でまとめて送る）
-  const live = new Map(), notices = new Set(), noticeOwners = new Set(), silenceNotices = new Set(), silenceWaiting = new Map(), listeners = new Set();
+  // waited: 依頼元が ply_task_wait で待っているタスク（taskId → 待ちの数）。待ちの間は完了通知を送らない（ADR 0057）
+  const live = new Map(), notices = new Set(), noticeOwners = new Set(), waited = new Map(), silenceNotices = new Set(), silenceWaiting = new Map(), listeners = new Set();
   const serial = fn => {
     const next = writes.then(async () => { mutating = true; try { return await fn(); } finally { mutating = false; } });
     writes = next.catch(() => {});
@@ -243,7 +244,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // 同じ親への通知は 1 回の保存にまとめる。まだ pending のものだけ返す（依頼元が受け取り済みの read は外れる）
   async function begin(rows) {
     return serial(async () => {
-      const list = rows.filter(r => r.notification === 'pending' && !ACTIVE.has(r.status));
+      const list = rows.filter(r => r.notification === 'pending' && !waited.has(r.taskId) && !ACTIVE.has(r.status));
       if (!list.length) return [];
       const before = list.map(r => r.updatedAt);
       for (const r of list) r.notification = 'delivering';
@@ -360,7 +361,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         const ac = new AbortController(); live.set(r.taskId, ac);
         void run(r, ac).catch(e => { live.delete(r.taskId); report({ event: 'unexpected', operation: 'run', taskId: r.taskId, code: e?.code ?? null }); });
       }
-      if (r.notification === 'pending' && !notices.has(r.taskId) && !ACTIVE.has(r.status)) {
+      if (r.notification === 'pending' && !notices.has(r.taskId) && !waited.has(r.taskId) && !ACTIVE.has(r.status)) {
         if (!groups.has(r.parentSessionId)) groups.set(r.parentSessionId, []);
         groups.get(r.parentSessionId).push(r);
       }
@@ -455,15 +456,21 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) throw new Error(agentT(locale, 'tasks.secondsInvalid'));
         // 人間の承認待ちになったら待たずに戻る。待つ相手が人間に変わったことを依頼元へ早く伝える
         const pending = () => ACTIVE.has(r.status) && !waiting(r.sessionId);
-        if (pending()) await new Promise(resolve => {
-          const done = () => { clearTimeout(timeout); listeners.delete(check); signal?.removeEventListener('abort', done); resolve(); };
-          const check = () => { if (!pending()) done(); };
-          const timeout = setTimeout(done, seconds * 1000); listeners.add(check); signal?.addEventListener('abort', done, { once: true });
-          if (signal?.aborted) done();
-        });
-        const out = { ...shown(r), ...storage(locale) };
-        await markRead(r);
-        return out;
+        // 待っている間に終わったら、結果はこの戻り値で渡す。同じ結果の完了通知を走っているターンへ重ねないよう、待ちの間は通知を控える
+        waited.set(r.taskId, (waited.get(r.taskId) ?? 0) + 1);
+        try {
+          if (pending()) await new Promise(resolve => {
+            const done = () => { clearTimeout(timeout); listeners.delete(check); signal?.removeEventListener('abort', done); resolve(); };
+            const check = () => { if (!pending()) done(); };
+            const timeout = setTimeout(done, seconds * 1000); listeners.add(check); signal?.addEventListener('abort', done, { once: true });
+            if (signal?.aborted) done();
+          });
+          const out = { ...shown(r), ...storage(locale) };
+          await markRead(r);
+          return out;
+        } finally {
+          if (waited.get(r.taskId) > 1) waited.set(r.taskId, waited.get(r.taskId) - 1); else waited.delete(r.taskId);
+        }
       }
       if (name === 'ply_task_send') {
         text(locale, args.message, 'message');

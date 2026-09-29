@@ -127,6 +127,13 @@ export default async function(t) {
       // 受け取り済み（read）や別の回のものは戻さない
       await manager.renotify([{ taskId: d.taskId, revision: revision + 1 }, { taskId: 'missing', revision: 0 }]);
       t.ok('回が違う・無いタスクは戻さない', manager.get(d.taskId).notification === 'sent');
+
+      // 依頼元が ply_task_wait で待っている間に終わった: 結果は待ちの戻り値で渡すので、走っているターンへ通知を重ねない
+      parentReady = false; canSteer = true; delivered.length = 0;
+      const w = await delegate('p4', 'slow-waited');
+      const got = await manager.call('p4', 'ply_task_wait', { taskId: w.taskId, seconds: 5 });
+      await sleep(1200);
+      t.ok('待ちで受け取った結果は途中送信でも届けない', got.status === 'completed' && delivered.length === 0 && manager.get(w.taskId).notification === 'read', JSON.stringify(delivered));
     }
 
     // ---- 途中送信の条件（canSteerNotice）: 人間の送信待ちが先・予約された次ターンの設定・圧縮・中断・途中送信の無いバックエンド

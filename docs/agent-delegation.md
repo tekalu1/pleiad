@@ -210,7 +210,7 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 ### 受け取り済みの通知は送らない
 
 依頼元が `ply_task_status` / `ply_task_wait` で終了状態（`completed` / `failed`）と結果を受け取ったら、通知を `read` にして送らない。結果が長く `nextOffset` が残っていても、受け取った時点で配達済み。
-`ply_task_list` は結果を返さないので対象にしない。実行中の `status` も対象にしない。終わった直後で通知がまだ始まっていない（`none`）ときに受け取っても `read` にし、直後の `run.notice` が `pending` に戻さない。`delivering` 以降（送っている最中・送り終えた・不明・止めた）は変えない。`ply_task_send` は `none` に戻し、次に走る回の結果は通知する。
+`ply_task_list` は結果を返さないので対象にしない。実行中の `status` も対象にしない。終わった直後で通知がまだ始まっていない（`none`）ときに受け取っても `read` にし、直後の `run.notice` が `pending` に戻さない。`delivering` 以降（送っている最中・送り終えた・不明・止めた）は変えない。`ply_task_send` は `none` に戻し、次に走る回の結果は通知する。依頼元が `ply_task_wait` でそのタスクを待っている間は、終わっても通知を送らない（結果は待ちの戻り値で渡る。走っているターンへ同じ結果を重ねないため）。
 
 ### 状態と待つ条件
 
@@ -326,7 +326,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 ## 検証
 
 `npm test` でタスクの管理と SDK MCP クライアント接続、fake を使ったサーバー全体の委譲・継続・停止と、承認の中継・`waiting` を検証する。
-完了通知は `tests/unit/agent-tasks-notice.mjs`（受け取り済み `read` は送らない・同じ親の分を 1 回の配送にまとめる・`steerable` の途中送信で `sent`・受理されない/不明/捨てられた場合の状態・`canSteerNotice` の条件）と `tests/unit/server-delegation-notice.mjs`（fake の `bg` 台本で、依頼元のターンの中へ届く・人間の発言にしない・`ply_task_wait` の後は届かない・途中送信を止めている間に溜まった 2 件が 1 通・`steerConfirms` の合図と受理されない場合）。
+完了通知は `tests/unit/agent-tasks-notice.mjs`（受け取り済み `read` は送らない・`ply_task_wait` の間は途中送信しない・同じ親の分を 1 回の配送にまとめる・`steerable` の途中送信で `sent`・受理されない/不明/捨てられた場合の状態・`canSteerNotice` の条件）と `tests/unit/server-delegation-notice.mjs`（fake の `bg` 台本で、依頼元のターンの中へ届く・人間の発言にしない・`ply_task_wait` の後は届かない・途中送信を止めている間に溜まった 2 件が 1 通・`steerConfirms` の合図と受理されない場合）。
 保存障害は `tests/unit/agent-tasks-storage.mjs`（rename に EPERM を差し込む。回復・閉じない・障害中の読み取りと断り・requeue を書かない・再起動後の送り直し）。
 実行前の拒否は `tests/unit/codex-rejections.mjs`（rollout の解析・読む範囲・伏せ方）と `tests/unit/server-codex-rejections.mjs`（身代わりの Codex が rollout に拒否を書き、会話・`ply_task_status`・完了通知・`ply_task_send` の次の回まで）。
 子に残った裏の作業と子の結果は `tests/unit/server-delegation-background.mjs`（fake の台本 `bg-shell` / `active-shell` / `bg` / `term` / `hook-follow` で、報告後のコマンドを上限まで待って止める・台帳を閉じて完了通知に載せる・結果に止める前の報告を残す・返答前とユーザーの会話では止めない・サブエージェントは止めない・端末は子でも親でも待たない・Stop フックの続きの一言を結果にしない）と `tests/unit/delegation-result.mjs`（2026-09-27 の transcript と同じ行の形で、続きの印・中身の仕事をした続き・区切り・結果の選び方）と `tests/unit/claude-turn-end.mjs`（SDK の身代わりで、Stop フックの続きではターンが終わり、裏へ回ったまま終わらないコマンドがあると終わらず、`stopTask` で終わる）。
