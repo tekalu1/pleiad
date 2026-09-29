@@ -5,6 +5,7 @@ import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
 import { configureLinkOpen } from './link-open.mjs';
+import { setupLinkMenu } from './link-menu.mjs';
 import { download, notify } from './file-actions.mjs';
 import { watchHostOnlyLinks } from './host-only-links.mjs';
 import { linkChoices, showLinkSheet, hideLinkSheet, linkSheetOpen } from './link-sheet.mjs';
@@ -3503,7 +3504,8 @@ function delegateRequest(card) {
   const task = cardJson(card, '.tc-input')?.task;
   if (typeof task !== 'string' || !task.trim()) return null;
   const box = el('div', 'rt-request');
-  const text = el('div', 'rt-request-text', task.trim());
+  const text = el('div', 'rt-request-text');
+  text.innerHTML = plainTextHtml(task.trim(), { paths: false });   // 字は書いたとおり。URL だけリンクにする
   box.append(el('div', 'rt-request-label', t('dialog.work.request')), text);
   const toggle = el('button', 'bg-request-toggle', t('dialog.work.showFull'));
   toggle.type = 'button'; toggle.hidden = true;
@@ -3999,6 +4001,10 @@ const filePreview = setupFilePreview({
 const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf });
 // 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
 configureLinkOpen({ getPrefs: () => state.prefs, chooseRemote: (url, openHere) => chooseRemote({ url, openHere }) });
+// 文中の URL・名前付きのリンクの、行き先の一行と右クリックのメニュー（web/link-menu.mjs）
+setupLinkMenu({ showMenu: (x, y, items, title) => showMenu(x, y, items, title), getPrefs: () => state.prefs,
+  screen: () => ({ hostScreen: state.osActions === true, pcBrowser: state.hostCaps?.pcBrowser === true }),
+  openOnPc: url => remoteBrowser.open({ url }) });
 configurePreviewConfirmation({ getPrefs: () => state.prefs, openSettings: () => {
   onboarding.open('browser');
   const heading = $('browserAllowedSites'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' });
