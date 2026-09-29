@@ -33,7 +33,7 @@ export default async function (t) {
       relayoutBranches: () => { c.layouts++; },
       renderAssistantMarkdown: raw => { c.conversions++; return `<p>${raw}</p>`; },
       ACTIVITY_LABEL: { writing: "writing", stopping: "stopping" }, stoppingHere: () => false,
-      closeThink: noop,
+      closeThink: noop, closeBundle: noop,
       el: () => ({ dataset: {}, isConnected: true, innerHTML: "" }),
       openTurnEl: () => (state.turnEl ??= { append: noop }),
       heightPreparationVersion: 0, heightPreparationTimer: null,

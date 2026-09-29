@@ -20,6 +20,13 @@ export function svgEl(tag, attrs = {}) {
   return n;
 }
 
+/** ツールの行・まとまりの見出し・完了通知の右端の開閉の印（›。開くと 90° 回る。見え方は web/tools.css の .tc-chev） */
+export function chevron() {
+  const svg = svgEl("svg", { class: "tc-chev", viewBox: "0 0 12 12", "aria-hidden": "true" });
+  svg.append(svgEl("path", { d: "M4 2.5 7.5 6 4 9.5" }));
+  return svg;
+}
+
 /** 16px の線画アイコン（svg.i）。d は 24×24 の path */
 export function icon(d) {
   const svg = svgEl("svg", { class: "i", viewBox: "0 0 24 24" });

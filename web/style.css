@@ -605,6 +605,8 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .message-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:var(--sp-1);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
 .message-actions .btn{font-size:var(--fs-xs);padding:3px 10px}
 .m.ai > .message-actions{position:absolute;right:48px;top:-1px}
+/* 見出しの行が無い続きの発言がツールの行から始まるとき、操作は右端の結果・「開く」と重ならないよう左へ寄せる */
+@media (min-width:561px){.m.ai.cont > .message-actions:has(+ :is(.tc,.bundle)){right:190px;top:3px}}
 .m:hover > .message-actions,.message-actions:focus-within{opacity:1}
 .m.editing > .message-actions{visibility:hidden}
 .message-editor{max-width:680px;background:var(--surface-2);border-radius:var(--r-l);padding:var(--sp-3) var(--sp-4)}
@@ -1268,7 +1270,7 @@ main.dropping #log{background:var(--surface-1)}
    1 行の理由は見出しの残りの幅に入れ、入らなければ … で切る（全文は title と開いた内訳に） */
 .tc-auto,.bg-auto{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
 .bg-row-meta>.bg-auto{flex:none;overflow:visible}
-.tc-route{flex:1 1 12em;min-width:0;display:flex;align-items:center;gap:5px;color:var(--ink);font-size:var(--fs-s)}
+.tc-route{min-width:0;display:flex;align-items:center;gap:6px;color:var(--ink-weak);font-size:var(--fs-xs);padding-left:var(--tc-indent)}
 .tc-route-text{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* 開いた委譲カードの先頭の「依頼」（4 行で切る。バックグラウンドの詳細と同じ）と、奥に畳んだ入力・出力の JSON */
 .rt-request{margin:4px 0 10px;font-size:var(--fs-s);color:var(--ink)}
@@ -1327,7 +1329,6 @@ main.dropping #log{background:var(--surface-1)}
 .tc-cands .rs{margin-left:auto;color:var(--ink-weak)}
 /* 狭い画面: 理由の行は見出しの下の 1 行に回す。内訳は 2 列、使用量は枠の名前を上の行に */
 @media (max-width:520px){
-  .tc-route{order:3;flex-basis:100%;padding-left:1em}
   .rt-facts{grid-template-columns:repeat(2,minmax(0,1fr))}
   .rt-usage.usage-rows{grid-template-columns:minmax(0,1fr) auto}
   .rt-usage.usage-rows .wl{grid-column:1/-1;max-width:none}

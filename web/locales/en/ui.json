@@ -1242,6 +1242,8 @@
     "sys": {
       "agentChanged": "Changed the agent to {{agent}}. It takes over the conversation from your next message.",
       "taskResumed": "Received the Pleiad task result and resumed",
+      "taskResult": "Delegation result",
+      "taskFull": "Full text given to the agent",
       "interruptionNote": "Told the agent what the interruption stopped",
       "failed": "Failed: {{error}}",
       "unknownReason": "unknown reason",
@@ -1777,10 +1779,6 @@
       "firstLines_one": "First {{n}} line",
       "firstLines_other": "First {{n}} lines",
       "fromLine": "From line {{n}}",
-      "lines_one": "{{n}} line",
-      "lines_other": "{{n}} lines",
-      "writeContent": "Content to write",
-      "editLines": "{{from}} → {{to}} lines",
       "replaceAll": "Replace all",
       "edits_one": "{{n}} edit",
       "edits_other": "{{n}} edits",
@@ -1803,6 +1801,8 @@
       "todoDone": "{{done}}/{{total}} done",
       "todoItems": "Items ({{n}})",
       "forkHere": "Carry this conversation over up to here",
+      "moreFiles_one": "+{{n}} more file",
+      "moreFiles_other": "+{{n}} more files",
       "input": "Input"
     },
     "result": {
@@ -1818,7 +1818,43 @@
       "failed": "✕ Failed",
       "output": "Output",
       "outputPartial": "Output (partial)",
-      "generatedImage": "Generated image"
+      "generatedImage": "Generated image",
+      "failedExit": "✕ Failed · exit {{code}}",
+      "tail_one": "Output · last {{n}} line",
+      "tail_other": "Output · last {{n}} lines",
+      "showAll_one": "Show all {{n}} line",
+      "showAll_other": "Show all {{n}} lines"
+    },
+    "bundle": {
+      "count_one": "{{n}} call",
+      "count_other": "{{n}} calls",
+      "changed_one": "{{n}} file changed",
+      "changed_other": "{{n}} files changed",
+      "changedShort_one": "{{n}} changed",
+      "changedShort_other": "{{n}} changed",
+      "failed_one": "✕ {{n}}",
+      "failed_other": "✕ {{n}}",
+      "label_one": "{{n}} tool call ({{mix}})",
+      "label_other": "{{n}} tool calls ({{mix}})",
+      "labelChanged_one": ", {{n}} file changed",
+      "labelChanged_other": ", {{n}} files changed",
+      "labelFailed_one": ", {{n}} failed",
+      "labelFailed_other": ", {{n}} failed",
+      "labelOpen": ". Press to open",
+      "labelClose": ". Press to close",
+      "ghost": "Previous: {{verb}} {{target}} (press to go back)",
+      "running": "Running"
+    },
+    "delegate": {
+      "running": "Running · {{dur}}",
+      "done": "Done · {{dur}}",
+      "failed": "Failed · {{dur}}",
+      "stopped": "Stopped · {{dur}}",
+      "waiting": "Waiting for approval",
+      "secs_one": "{{n}} sec",
+      "secs_other": "{{n}} sec",
+      "mins_one": "{{n}} min",
+      "mins_other": "{{n}} min"
     },
     "branch": {
       "pick": "Choose the conversation to continue",

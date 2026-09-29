@@ -138,6 +138,7 @@ const cases = [
   await import("./unit/audit-self.mjs"),
   await import("./unit/markdown-xss.mjs"),
   await import("./unit/tools-render.mjs"),
+  await import("./unit/tool-bundle.mjs"),
   await import("./unit/timeline-images.mjs"),
   await import("./unit/attachment-order.mjs"),
   // 自分の発言: 添付の印を本文の位置に置く（コードブロック内・一致しないパスは残す・古い形式は末尾）・畳み込み・別カードを二重に出さない
