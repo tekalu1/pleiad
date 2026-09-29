@@ -608,7 +608,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 新しいセッション・新しい枝の頭に出る一行 */
 
 /* ---- md（web/render.mjs の出力）。見出し・表・コード・引用に枠は無い ---- */
-.body{min-width:0;max-width:100%}
+.body{min-width:0;max-width:100%;overflow-wrap:break-word}
 .body>:first-child{margin-top:0}.body>:last-child{margin-bottom:0}
 .body p{margin:0 0 .8em}
 .body :is(h1,h2,h3,h4,h5,h6){margin:1.3em 0 .5em;line-height:1.35;font-weight:600}
@@ -626,6 +626,20 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .body :not(pre)>code{background:var(--surface-2);border-radius:var(--r-s);padding:.05em .4em;color:var(--ink)}
 .body :is(strong,b){color:var(--ink-strong);font-weight:650}
 .body del{color:var(--ink-weak)}
+/* 文中のリンク（裸の URL も名前付きのリンクも）は、どこででも折り返せる。字は省かない（選んで写すときに書いたとおりが要る）。
+   docs/design-system.md「文中の URL」 */
+.md-link{overflow-wrap:anywhere}
+/* 行き先の一行（web/link-menu.mjs）: 会話の左下、入力欄の上。ホバー・キーボードのフォーカスで薄く上がる。タッチ（ホバーが無い）では出さない */
+.url-status{position:absolute;left:12px;bottom:10px;z-index:3;display:flex;align-items:center;gap:6px;max-width:calc(100% - 24px);
+  background:var(--surface-paper);border-radius:var(--r-pill);box-shadow:0 4px 18px var(--shadow);padding:3px 12px 3px 9px;
+  font-size:var(--fs-xs);color:var(--ink);opacity:0;transform:translateY(4px);pointer-events:none;
+  transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out)}
+.url-status.on{opacity:1;transform:none}
+.url-status svg.i{width:13px;height:13px;flex:none;color:var(--ink-weak)}
+.url-status .dest,.url-status .k{flex:none;white-space:nowrap}
+.url-status .k{color:var(--ink-weak)}
+.url-status .u{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);color:var(--ink-weak)}
+@media (hover:none){.url-status{display:none}}
 /* 許可していないスキームのリンク。押せない字として残す */
 .md-link-blocked{color:var(--ink-weak);text-decoration:line-through dotted;cursor:help}
 .md-img{display:block;max-width:100%;border-radius:var(--r-s);margin:.4em 0}
@@ -640,7 +654,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .file-more svg.i{width:15px;height:15px}
 /* インラインコードのパスもファイルリンク。下線はリンクと同じ */
 .code-link{text-decoration:underline;text-decoration-color:var(--line-strong)}
-.code-link code{color:var(--ink-blue)}
+.code-link code,.body .code-link>code{color:var(--ink-blue)}   /* .body :not(pre)>code（本文色）より強くする */
 /* 短い知らせ（コピーした・開けなかった）。数秒で消える */
 .file-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;max-width:min(92vw,520px);padding:8px 16px;
   background:var(--surface-paper);color:var(--ink);border-radius:var(--r-pill);box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-s);

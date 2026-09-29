@@ -13,7 +13,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { createRemoteDevice } from '../../core/remote/device.mjs';
 import { classifyClose } from '../../core/remote/device-link.mjs';
-import { STREAM_WINDOW } from '../../core/remote/channel.mjs';
+import { STREAM_WINDOW, CHANNEL_WINDOW } from '../../core/remote/channel.mjs';
 
 export const name = 'remote-device';
 export const title = 'リモートの端末側: ペアリング・端末内プロキシ（認証・HTTP・/ws・背圧）・取り消し・中継の張り直し';
@@ -222,6 +222,21 @@ export default async function (t) {
     });
     t.ok('2 MB の応答が、読み手が遅くても欠けずに届く', slow.status === 200 && slow.body.equals(worker), `${slow.status} ${slow.body.length}/${worker.length}`);
     t.ok('読み手が止まっている間、プロキシが抱える量はストリームの窓（256 KiB）以内', heldMax <= STREAM_WINDOW, String(heldMax));
+
+    // ---- 窓の返却（画面側の書き込みが詰まったまま END が届いても、チャネルの窓は返る。end() の後は drain が来ない）
+    // 読み手を止めたまま応答を最後まで受け取らせ、あとから読ませる。1 回の読み込みで窓が漏れると、2 回でほぼ尽きる（issue #37）
+    for (let i = 0; i < 2; i++) {
+      const stalled = await request(port, '/vendor/pdfjs/build/pdf.worker.mjs', {
+        headers: { cookie }, timeoutMs: 30_000,
+        onResponse: res => { res.pause(); setTimeout(() => res.resume(), 700); },
+      });
+      t.ok(`読み手が止まったままの応答（${i + 1} 回目）も欠けずに届く`, stalled.status === 200 && stalled.body.equals(worker), `${stalled.status} ${stalled.body.length}/${worker.length}`);
+    }
+    const channel = proxy.link.channel;
+    const settled = () => channel.recvWindow === CHANNEL_WINDOW && channel.streams.size === 0;
+    for (let i = 0; i < 100 && !settled(); i++) await sleep(50);
+    t.ok('書き込みが詰まった応答を 2 回取った後、端末側チャネルの受け窓が元（CHANNEL_WINDOW）に戻る',
+      channel.recvWindow === CHANNEL_WINDOW && channel.streams.size === 0, `受け窓 ${channel.recvWindow} / ${CHANNEL_WINDOW}、ストリーム ${channel.streams.size} 本`);
 
     // ---- /ws
     const w = await openWs(`ws://127.0.0.1:${port}/ws?token=${proxy.token}`);

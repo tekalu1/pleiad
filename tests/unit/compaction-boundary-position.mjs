@@ -88,6 +88,7 @@ export default async function (t) {
     state, thread, el, userMsg, t: k => k, noop, log: { scrollTop: 0, scrollHeight: 0, clientHeight: 0 },
     atBottom: () => false, relayoutBranches: noop, canCompactHere: () => false, compactNumber: String, paintContextStrip: noop,
     paintingHistory: false, liveSeq: 0,
+    activity: { el: null },   // 稼働表示の行（place が使う）。このテストは稼働表示を出さない
     messageRow: (id) => thread.querySelectorAll('.mw').find(w => w.dataset.messageId === id) ?? null,
     closeTurnEl: noop, plainTextHtml: x => x, hhmm: x => x, markDelivery: noop, syncOutboxRows: noop, outboxes: new Map(),
     paintContextLine: noop, deliveredEarly: new Set(), document: { createTextNode: x => x },

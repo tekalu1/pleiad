@@ -43,7 +43,7 @@
 .tc-main{flex:0 1 auto;min-width:0;max-width:100%;color:var(--ink);font-family:var(--font-mono);font-size:var(--fs-s);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tc-main.tc-text{font-family:inherit}
-.tc-main.tc-link{white-space:nowrap;text-overflow:ellipsis}
+.tc-main.tc-link{color:var(--ink-blue);white-space:nowrap;text-overflow:ellipsis}   /* 取得の URL。押すと設定の開き先 */
 /* 読む・書く・編集の対象はファイルリンク（押すと右パネル、右クリックで操作）。色はリンクに戻す */
 .tc-main.tc-file{color:var(--ink-blue);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
 

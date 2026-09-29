@@ -5,6 +5,7 @@ import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
 import { configureLinkOpen } from './link-open.mjs';
+import { setupLinkMenu } from './link-menu.mjs';
 import { download, notify } from './file-actions.mjs';
 import { watchHostOnlyLinks } from './host-only-links.mjs';
 import { linkChoices, showLinkSheet, hideLinkSheet, linkSheetOpen } from './link-sheet.mjs';
@@ -388,9 +389,12 @@ function scrollToEnd() {
   requestAnimationFrame(tick);
 }
 
-/** 筋の末尾に置く。稼働表示（走っている間だけある）は常に一番下に残す */
+/**
+ * 筋の末尾に置く。稼働表示（走っている間だけある）は常に一番下に残す。
+ * 稼働表示の行は activity.el が持っている。1 行ごとに筋の子孫を探すと、履歴を描く間が件数の 2 乗になる
+ */
 function place(w) {
-  const act = thread.querySelector(".mw.activity");
+  const act = activity.el?.isConnected ? activity.el.closest(".mw") : null;
   if (act && !w.classList.contains("activity")) act.before(w);
   else thread.append(w);
 }
@@ -522,6 +526,7 @@ function clearThread() {
   if (heightPreparationTimer !== null) clearTimeout(heightPreparationTimer);
   heightPreparationTimer = null;
   activity.hide();
+  cancelStream();
   thread.replaceChildren(spine());
   thread.classList.remove("branched");
   state.streamEl = null;
@@ -685,9 +690,11 @@ function taskNoticeNode(text, at = '') {
     s.append(open);
   }
   s.append(chevron());
-  const body = el('div', 'sys-body', notice.result || text);
+  // 字は書いたとおり。URL だけリンクにする（sysFold と同じ。パスは字のまま）
+  const linked = (source) => { const box = el('div', 'sys-body'); box.innerHTML = plainTextHtml(source, { paths: false }); return box; };
+  const body = linked(notice.result || text);
   const full = el('details', 'tc-fold tc-json');
-  full.append(el('summary', null, t('chat.sys.taskFull')), el('div', 'sys-body', text));
+  full.append(el('summary', null, t('chat.sys.taskFull')), linked(text));
   d.append(s, body, full);
   m.append(d);
   return m;
@@ -995,7 +1002,7 @@ function followBottom(ms = 320) {
 function closeTurnEl() {
   closeThink();
   closeBundle();
-  state.streamEl = null;
+  endStream();
   state.turnEl = null;
   state.turnClosed = false;
   state.endedWithText = false;
@@ -1588,10 +1595,44 @@ function thinkFromText(text) {
 // ---------------------------------------------------------------- ターンの流れ
 // core が正規化して送ってくる（プロトコル v3）。エージェントごとの差は core で吸収済み。
 
+// 本文の描き直しは 1 コマに 1 回。デルタは文字を貯めるだけにする（正本は本文の要素の dataset.raw）。
+// デルタごとに返答の全体を Markdown から作り直し、会話全体のレイアウトを強制すると、スマホの CPU では
+// デルタの間隔に追いつかず、数秒〜十数秒コマが出なかった（issue #37）。
+// 流れが終わる所（text.end・ツール・thinking・発言を閉じる・中断・会話の切り替え）では、貯めた分を同期で描き切る（endStream・closeTurnEl）。
+let streamFrame = 0, streamTarget = null;
+
+/** 貯めた分を今描く。末尾を見ていたときだけ末尾へ追う（読み返している人を引き戻さない） */
+function flushStream() {
+  if (streamFrame) cancelAnimationFrame(streamFrame);
+  streamFrame = 0;
+  const target = streamTarget;
+  streamTarget = null;
+  if (!target) return;
+  const stick = target.isConnected && atBottom();
+  target.innerHTML = renderAssistantMarkdown(target.dataset.raw);
+  if (!target.isConnected) return;
+  relayoutBranches();
+  if (stick) log.scrollTop = log.scrollHeight;
+}
+
+/** 筋ごと捨てるとき（会話の切り替え）。貯めた分は捨てる本文の要素の中にあり、別の会話には描かない */
+function cancelStream() {
+  if (streamFrame) cancelAnimationFrame(streamFrame);
+  streamFrame = 0;
+  streamTarget = null;
+}
+
+/** 追記中の本文を終える。貯めた分を描き切ってから、次の本文・ツール・発言に移る */
+function endStream() {
+  flushStream();
+  state.streamEl = null;
+}
+
 function appendText(text) {
   closeThink();
-  activity.show(ACTIVITY_LABEL.writing);
-  const stick = atBottom();
+  // 稼働表示は文言が変わったときだけ更新する（show は行の置き直し・筋の貼り直し・作業の入口の更新まで行う）
+  const label = stoppingHere() ? ACTIVITY_LABEL.stopping : ACTIVITY_LABEL.writing;
+  if (!activity.el?.isConnected || activity.text !== label) activity.show(ACTIVITY_LABEL.writing);
   if (!state.streamEl) {
     // 閉じた発言の後は streamEl がリセットされるため、本文を作る前に開く。
     const turn = openTurnEl();
@@ -1601,8 +1642,8 @@ function appendText(text) {
     turn.append(state.streamEl);
   }
   state.streamEl.dataset.raw += text;
-  state.streamEl.innerHTML = renderAssistantMarkdown(state.streamEl.dataset.raw);
-  if (stick) log.scrollTop = log.scrollHeight;
+  streamTarget = state.streamEl;
+  streamFrame ||= requestAnimationFrame(flushStream);
 }
 
 const ACTIVITY_LABEL = {
@@ -1899,13 +1940,13 @@ function onEvent(ev, replay = false) {
       if (ev.uuid) setUuid(m, ev.uuid);
       state.endedWithText = !bodyless;
       closeThink();
-      state.streamEl = null;
+      endStream();
       state.turnClosed = true;
       return;
     }
 
     case "thinking.start":
-      state.streamEl = null;
+      endStream();
       state.thinkTokens = 0;
       activity.show(ACTIVITY_LABEL.thinking);
       return;
@@ -1925,7 +1966,7 @@ function onEvent(ev, replay = false) {
 
     case "tool.start": {
       if (ev.id && state.toolCards.has(ev.id)) return state.toolCards.get(ev.id);
-      state.streamEl = null;
+      endStream();
       const stick = atBottom();
       const card = renderToolCall(ev.name, ev.input, { id: ev.id });
       linkDelegateCard(card, ev.input);
@@ -3769,7 +3810,8 @@ function delegateRequest(card) {
   const task = cardJson(card, '.tc-input')?.task;
   if (typeof task !== 'string' || !task.trim()) return null;
   const box = el('div', 'rt-request');
-  const text = el('div', 'rt-request-text', task.trim());
+  const text = el('div', 'rt-request-text');
+  text.innerHTML = plainTextHtml(task.trim(), { paths: false });   // 字は書いたとおり。URL だけリンクにする
   box.append(el('div', 'rt-request-label', t('dialog.work.request')), text);
   const toggle = el('button', 'bg-request-toggle', t('dialog.work.showFull'));
   toggle.type = 'button'; toggle.hidden = true;
@@ -4302,6 +4344,10 @@ const filePreview = setupFilePreview({
 const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf });
 // 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
 configureLinkOpen({ getPrefs: () => state.prefs, chooseRemote: (url, openHere) => chooseRemote({ url, openHere }) });
+// 文中の URL・名前付きのリンクの、行き先の一行と右クリックのメニュー（web/link-menu.mjs）
+setupLinkMenu({ showMenu: (x, y, items, title) => showMenu(x, y, items, title), getPrefs: () => state.prefs,
+  screen: () => ({ hostScreen: state.osActions === true, pcBrowser: state.hostCaps?.pcBrowser === true }),
+  openOnPc: url => remoteBrowser.open({ url }) });
 configurePreviewConfirmation({ getPrefs: () => state.prefs, openSettings: () => {
   onboarding.open('browser');
   const heading = $('browserAllowedSites'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' });

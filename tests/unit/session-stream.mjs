@@ -13,7 +13,7 @@ export const title = "途中で開いたセッションを履歴と受信イベ�
 
 export default async function (t) {
   const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
-  const functions = ["onEvent", "isMine", "appendText", "openTurnEl", "closeTurnEl", "clearThread", "paintSession", "select", "loadAndPaint"].map(name => {
+  const functions = ["onEvent", "isMine", "appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl", "clearThread", "paintSession", "select", "loadAndPaint"].map(name => {
     let start = source.indexOf(`function ${name}(`);
     if (source.slice(start - 6, start) === "async ") start -= 6;
     return source.slice(start, source.indexOf("\n}", start) + 2);
@@ -25,6 +25,8 @@ export default async function (t) {
   const state = { current: "other", sessions: [], drafts: new Map(), toolCards: new Map(), runningIds: new Set(["target"]), stopping: new Set(), pendingPerms: new Map() };
   const loads = createSessionLoads();
   const context = vm.createContext({
+    // 本文の描き直しは 1 コマに 1 回（client.mjs の flushStream）。このテストは本文の raw だけを見る
+    requestAnimationFrame: () => 1, cancelAnimationFrame: noop, streamFrame: 0, streamTarget: null, stoppingHere: () => false,
     setTimeout: () => 1, clearTimeout: noop, heightPreparationVersion: 0, heightPreparationTimer: null, prepareHistoryHeights: noop,
     completionNotifications,
     // ヘッダーの使用量のチップ（web/header-usage.mjs）。ターンの終わりで取り直す。このテストの対象外
