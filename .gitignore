@@ -19,6 +19,9 @@ Thumbs.db
 
 dist-desktop/
 
+# site/ から組んだ配信物（node site/tools/build-site.mjs）
+_site/
+
 # 作業の出力とブラウザー自動化のログ（使い捨て）
 output/
 .playwright-cli/
