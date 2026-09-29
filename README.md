@@ -14,7 +14,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dark.png">
-  <img src="docs/images/screenshot-light.png" alt="Pleiad showing a conversation list and an open conversation">
+  <img src="docs/images/screenshot-light.png" alt="Pleiad with conversations from Claude, Codex, and Antigravity grouped by status, and a chart an agent rendered in the conversation">
 </picture>
 
 Pleiad is a desktop app for working with several coding agents side by side.
