@@ -622,7 +622,7 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [] }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [], notes = [] }) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, locale };
     let releaseContext;
@@ -646,7 +646,12 @@ export const backend = {
       // 入力欄の `!` の結果（CLI の `!` と同じ <bash-input> / <bash-stdout><bash-stderr> の 2 行）。
       // shouldQuery: false は返答を起こさずに transcript へ積み、次に query する user 行（このプロンプト）と合わせて渡す（sdk.d.ts の SDKUserMessage）
       for (const text of shellAppends) yield { ...userMessage(text), shouldQuery: false };
-      yield userMessage(prompt);
+      // 中断の後に Pleiad が添える文（core/interrupt-stops.mjs）。人の発言とは別の text ブロックにし、本文は書き換えない
+      if (notes.length) {
+        const message = userMessage(prompt);
+        message.message.content = [...notes, String(prompt ?? '')].map(text => ({ type: 'text', text }));
+        yield message;
+      } else yield userMessage(prompt);
       yield* input;
     }
     // host ツールの結果も承認の返事も、この入力（CLI の stdin）を通って CLI へ戻る。

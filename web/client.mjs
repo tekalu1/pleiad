@@ -654,6 +654,8 @@ function systemHistoryNode(m) {
   if (m.kind === 'interrupt') return interruptHistoryLine(m);
   if (m.kind === 'teammate') return teammateNode(m, hhmm(m.at));
   if (m.kind === 'command' || m.kind === 'shell') return commandMsg(m);
+  // 中断で止めたものを Pleiad がエージェントへ伝えた文。開くと中身が読める
+  if (m.kind === 'interruptionNote') return sysFold(t('chat.sys.interruptionNote'), m.body ?? '');
   // Pleiad の完了通知。「タスクの結果で再開」の 1 行を開くと、エージェントに渡した本文が読める
   if (m.internalTaskNotice) return m.text ? sysFold(t('chat.sys.taskResumed'), m.text) : el('div', 'm sys', t('chat.sys.taskResumed'));
   return undefined;
@@ -1714,6 +1716,14 @@ function onEvent(ev, replay = false) {
       if (ev.text) append(sysFold(t('chat.sys.taskResumed'), ev.text));
       else sys(html.t('chat.sys.taskResumed'));
       return;
+    case 'interruptionNote': {
+      // 中断で止めたものをエージェントへ伝えた。開くと伝えた中身が読める（履歴の systemHistoryNode と同じ形）。
+      // 添えた発言の吹き出しの前に置く（履歴と同じ並び）
+      const node = append(sysFold(t('chat.sys.interruptionNote'), ev.text ?? ''));
+      const row = ev.messageId ? messageRow(ev.messageId) : null;
+      if (row && row !== node) row.before(node);
+      return;
+    }
     case "turnResult": {
       if (ev.compact) return;
       if (ev.outcome === "ok") return;             // 終わったことは稼働表示が消えれば分かる

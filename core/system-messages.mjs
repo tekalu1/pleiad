@@ -13,6 +13,34 @@ const INTERRUPTS = new Set(["[Request interrupted by user]", "[Request interrupt
 // 文面: agent teams の teammate からの知らせの書き出し
 const TEAMMATE_PREFIX = "Another Claude session sent a message:";
 
+// Pleiad が中断の後の最初の発言の前に添える「止めたもの」の文の印（core/interrupt-stops.mjs。docs/design.md「中断と再開」）。
+// 発言と同じ user の行に入る（Claude は別の text ブロック、Codex は別の入力、agy は本文の前）ので、履歴で切り分ける
+export const INTERRUPTION_TAG = "pleiad-interruption";
+const INTERRUPTION = new RegExp(`^\\s*<${INTERRUPTION_TAG}>\\s*([\\s\\S]*?)\\s*</${INTERRUPTION_TAG}>\\s*`);
+
+/** 行の先頭の「止めたもの」の文を `{ body, rest }` にする（body は印の中、rest は続く人の発言）。無ければ null */
+export function splitInterruptionNote(text) {
+  const m = INTERRUPTION.exec(String(text ?? ""));
+  return m ? { body: m[1], rest: String(text).slice(m[0].length) } : null;
+}
+
+/**
+ * user の行の先頭にある「止めたもの」の文を、システム側の 1 行（kind: interruptionNote）と続く発言に分ける。
+ * 発言の uuid（分岐点）は続く発言に残す。続きが空なら文の行に付ける。何度かけても同じ
+ */
+export function splitInterruptionNotes(messages) {
+  const out = [];
+  for (const m of Array.isArray(messages) ? messages : []) {
+    const note = m?.role === "user" && !m.kind && typeof m.text === "string" ? splitInterruptionNote(m.text) : null;
+    if (!note) { out.push(m); continue; }
+    const rest = (note.rest.trim() || m.attachments?.length) ? { ...m, text: note.rest } : null;
+    out.push({ role: "system", kind: "interruptionNote", text: "", body: note.body, at: m.at ?? null,
+      ...(rest ? {} : { uuid: m.uuid }), ...(m.backend ? { backend: m.backend } : {}) });
+    if (rest) out.push(rest);
+  }
+  return out;
+}
+
 const head = (text) => String(text ?? "").trimStart();
 const startsWithAny = (text, tags) => { const s = head(text); return tags.some((tag) => s.startsWith(tag)); };
 // ANSI の色の指定（/model の出力などに入る）は画面では字化けになるので外す
@@ -96,6 +124,7 @@ export function parseTeammate(text) {
  * - `{ role:'system', kind:'compactSummary', text:'', summary, boundary }` … 圧縮の要約（区切りに入れる。core/compaction-history.mjs）
  * - `{ role:'system', kind:'interrupt', text:'' }` … 中断
  * - `{ role:'system', kind:'teammate', text:'', from, body }` … agent teams の teammate の知らせ
+ * - `{ role:'system', kind:'interruptionNote', text:'', body }` … 中断で止めたものを Pleiad が伝えた文（splitInterruptionNotes）
  * 落とすもの: Pleiad の `/compact` の行とその出力、待機だけの teammate の知らせ、裏の作業の完了通知、文脈だけの発言。
  * コマンド・シェルの出力は入力の行へまとめ、uuid は出力の行のものにする（分岐点。SDK は追記した行より前で分岐できない）。
  *
@@ -110,7 +139,7 @@ export function classifySystemMessages(messages, marks = null) {
   const out = [];
   // 直前のコマンド・シェルの行。続く出力の行を受け取る。raw は元の行の uuid（印の親と照らす）
   let owner = null;
-  for (const m of Array.isArray(messages) ? messages : []) {
+  for (const m of splitInterruptionNotes(messages)) {
     if (!m || m.role !== "user" || m.kind || m.internalTaskNotice || typeof m.text !== "string") {
       out.push(m); owner = null; continue;
     }

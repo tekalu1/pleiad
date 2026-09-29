@@ -12,6 +12,7 @@ import path from "node:path";
 import crypto from 'node:crypto';
 import * as store from "./store.mjs";
 import { writeAtomic } from "./atomic-file.mjs";
+import { splitInterruptionNotes } from "./system-messages.mjs";
 
 const PRESENT_DIR = path.join(store.dataDir, "presents");
 
@@ -50,10 +51,12 @@ function presentFile(sessionId) {
 export async function loadTranscript(sessionId, backend) {
   if (!sessionId) return { messages: [], presents: [] };
 
-  const [messages, presents] = await Promise.all([
+  const [raw, presents] = await Promise.all([
     backend?.getMessages ? backend.getMessages(sessionId) : Promise.resolve([]),
     backend?.getPresents ? backend.getPresents(sessionId) : readPresents(sessionId),
   ]);
+  // 中断の後に添えた「止めたもの」の文は、人の発言から切り分ける（どのバックエンドの行も通る。完了通知の見分けより先に）
+  const messages = splitInterruptionNotes(raw);
 
   const notices = new Set((await store.get(sessionId)).taskNotices ?? []);
   for (const m of messages) if (m.role === 'user' && !m.kind && notices.has(crypto.createHash('sha256').update(m.text ?? '').digest('hex'))) m.internalTaskNotice = true;
