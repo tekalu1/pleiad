@@ -817,7 +817,11 @@ export function createMarkdownEditor(root, o) {
     /** 平文の形が変わった（シェルの形に入った・出た）。書式は読み直さず、次の入力から効く */
     modeChanged() { hideBar(); syncEmpty(); },
     /** 添付の印の言語が変わった・添付の情報が変わった。札を描き直す */
-    refresh() { paint(getState().blocks, { force: true }); },
+    refresh() {
+      const s = getState();
+      paint(s.blocks, { force: true });
+      if (hasFocus()) setDomSel(s.sel); else lastSel = s.sel;
+    },
   };
   root.editor = editor;
 

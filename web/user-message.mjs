@@ -159,7 +159,8 @@ export function attachmentListItem(p, index) {
   const bytes = p.dataUri ? Math.floor((String(p.dataUri).length - String(p.dataUri).indexOf(',') - 1) * 3 / 4) : null;
   return {
     id: String(index), kind: src ? 'image' : 'file', name: attachmentName(p), path: String(p.path ?? ''),
-    thumb: src, size: Number.isFinite(p.size) ? p.size : bytes && bytes > 0 ? bytes : null, origin: p.origin ?? null, status: t('chat.attachList.sent'),
+    thumb: src, size: Number.isFinite(p.size) ? p.size : bytes && bytes > 0 ? bytes : null, origin: p.origin ?? null,
+    status: p.origin === 'host' ? t('chat.attachList.byPath') : t('chat.attachList.sent'),
   };
 }
 

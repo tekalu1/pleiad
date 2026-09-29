@@ -15,7 +15,7 @@ const shape = segments => segments.map(s => (s.type === "text" ? `T(${s.text.rep
 export default async function (t) {
   // ---- 一覧の面の行: 出どころ・大きさは core が載せた present から出す（画像の dataUri からの見積もりより先）
   const host = attachmentListItem({ ...file("D:\\work\\確認項目.md"), origin: "host", size: 4096 }, 0);
-  t.ok("present の origin・size を一覧の行に出す", host.origin === "host" && host.size === 4096, JSON.stringify(host));
+  t.ok("present の origin・size を一覧の行に出す（ホストのファイルはパスで渡した印）", host.origin === "host" && host.size === 4096 && host.status === "パスで渡す", JSON.stringify(host));
   t.ok("size が無い present は、画像なら dataUri から見積もり、ファイルなら出さない", attachmentListItem(image("C:\\up\\a.png"), 0).size > 0 && attachmentListItem(file("C:\\up\\c.md"), 0).size === null);
 
   // ---- 印の置き換え: 位置・一致しないパス・コードブロック内

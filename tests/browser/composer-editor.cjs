@@ -79,6 +79,8 @@ async page => {
   check('範囲選択で書式バー', await page.evaluate(() => { const b = document.querySelector('.md-bar'); return Boolean(b && !b.hidden); }), true);
   await page.click('.md-bar-b');
   check('書式バーの太字', await val(), '**12345**');
+  await K.press('End'); await page.waitForTimeout(150);
+  check('選択を外すと書式バーは消える', await page.evaluate(() => document.querySelector('.md-bar').hidden), true);
 
   // ---------------------------------------------------------------- 2. 文中の添付
   await clean();
@@ -86,6 +88,14 @@ async page => {
   await pasteImage('pasted.png');
   await page.waitForFunction(() => document.querySelectorAll('#prompt .md-att[data-state=ok]').length === 1, null, { timeout: 10000 });
   check('貼り付けた画像はキャレットの位置に入る', [await kinds(), marks(await val()), await strip()], ['p,att,p', 'x|A|y', '添付 1 件▾']);
+  // 空の行に入れると、続きはその添付の次の行に書ける（キャレットが先頭へ飛ばない）
+  await K.press('Control+End'); await K.press('Enter');
+  await pasteImage('second.png');
+  await page.waitForFunction(() => document.querySelectorAll('#prompt .md-att[data-state=ok]').length === 2, null, { timeout: 10000 });
+  await K.type('z');
+  check('空の行への添付のあと、続きは添付の次に書ける', marks(await val()), 'x|A|y|A|z');
+  await K.press('Control+z'); await K.press('Control+z'); await K.press('Control+z');
+  check('元に戻すで 2 枚目の添付も外れる', [marks(await val()), await strip()], ['x|A|y', '添付 1 件▾']);
   await K.press('ArrowDown'); await K.press('Home'); await K.press('Backspace');
   check('直後の Backspace 1 回で外れる', [await kinds(), await val(), await strip()], ['p,p', 'x\ny', '']);
   await K.press('Control+z');
@@ -108,6 +118,29 @@ async page => {
   const msg = await page.evaluate(() => { const m = [...document.querySelectorAll('#log .m.user')].at(-1); return { raw: m.querySelector('.body').dataset.raw, imgs: m.querySelectorAll('.msg-att-img').length, cards: document.querySelectorAll('#log .present').length }; });
   check('送信: 印は 1 回・位置のまま・別カードは出ない', [msg.raw.split('\n').filter(l => l.startsWith('[添付]')).length, marks(msg.raw).replace(/^# Title\|/, ''), msg.imgs, msg.cards], [1, 'x|A|y', 1, 0]);
   check('送信: 欄は空', [await val(), await strip()], ['', '']);
+
+  // 旧形式の下書きと同じ状態（添付の実体があり、本文には印が無い）は「文末に付く」。位置に入れて送ると、文中の印は位置のまま・文末に付く分だけ末尾
+  await clean();
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(['a'], 'a.txt', { type: 'text/plain' })); dt.items.add(new File(['b'], 'b.txt', { type: 'text/plain' }));
+    document.querySelector('main').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  });
+  await page.waitForFunction(() => document.querySelectorAll('#prompt .md-att[data-state=ok]').length === 2, null, { timeout: 15000 });
+  await page.evaluate(() => { const p = document.querySelector('#prompt'); p.value = '古い下書き\n続き'; p.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.click('.att-entry'); await page.waitForSelector('dialog.att-list[open]');
+  check('印の無い添付は「文末に付く」', await page.evaluate(() => ({ sections: [...document.querySelectorAll('dialog.att-list .att-list-caption')].map(c => c.textContent), actions: [...document.querySelectorAll('dialog.att-list .att-list-action')].map(b => b.textContent).slice(0, 2) })), { sections: ['文末に付く'], actions: ['カーソルの位置に入れる', '外す'] });
+  await K.press('Escape');
+  await page.evaluate(() => document.querySelector('#prompt').focus()); await K.press('Control+Home'); await K.press('End');
+  await page.click('.att-entry'); await page.waitForSelector('dialog.att-list[open]');
+  await page.evaluate(() => [...document.querySelectorAll('dialog.att-list .att-list-row')].find(r => r.textContent.includes('a.txt')).querySelector('.att-list-action').click());
+  await page.waitForTimeout(300);
+  check('カーソルの位置に入れる', marks(await val()), '古い下書き|A|続き');
+  await page.evaluate(() => document.querySelector('#prompt').focus());
+  await K.press('Control+Enter');
+  await page.waitForFunction(() => [...document.querySelectorAll('#log .m.user .body')].some(b => b.dataset.raw?.includes('古い下書き')), null, { timeout: 10000 });
+  const raw = await page.evaluate(() => [...document.querySelectorAll('#log .m.user .body')].find(b => b.dataset.raw?.includes('古い下書き')).dataset.raw);
+  check('送信: 文中の印は位置のまま・文末に付く分は末尾に 1 つ', raw.split('\n').map(l => l.startsWith('[添付]') ? l.replace(/^.*Z_/, '[添付] ') : l), ['古い下書き', '[添付] a.txt', '続き', '', '[添付] b.txt']);
 
   // ---------------------------------------------------------------- 3. 送っている途中・失敗
   await clean();

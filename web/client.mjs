@@ -4196,7 +4196,8 @@ function renderAttached() {
   attachEntry.state.textContent = failed ? ` · ${t("chat.composerAtt.entryFailed", { count: failed })}` : sending ? ` · ${t("chat.composerAtt.entrySending", { count: sending })}` : "";
   attachEntry.b.dataset.state = failed ? "failed" : sending ? "sending" : "";
   // 同じ名前の添付が増えた・減った: 札に添える見分けのフォルダーが変わるので札を描き直す
-  const hints = JSON.stringify(attachFolderHints(state.attached, { deviceLabel: t("chat.attach.deviceFolder") }));
+  const hints = attachFolderHints(state.attached, { deviceLabel: t("chat.attach.deviceFolder") })
+    .map((h, i) => (h ? `${attachedKey(state.attached[i].path)}=${h}` : "")).filter(Boolean).join("|");
   if (hints !== attachHintSig) { attachHintSig = hints; composerEditor.refresh(); }
   if (!total) attachList?.close();
   else attachList?.update(attachListRows());
