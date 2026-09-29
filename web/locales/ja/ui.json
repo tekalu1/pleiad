@@ -1100,6 +1100,29 @@
       "spread": "ほかのエージェントにも広がります"
     }
   },
+  "changeLog": {
+    "menu": "変更の記録",
+    "title": "変更の記録",
+    "close": "閉じる",
+    "empty": "記録された変更はありません",
+    "failed": "変更の記録を読めませんでした: {{error}}",
+    "none": "なし",
+    "aiMark": "AI",
+    "aiTitle": "AI が変更",
+    "aiTitleReason": "AI が変更: {{reason}}",
+    "field": {
+      "status": "状態",
+      "title": "タイトル",
+      "cwd": "作業ディレクトリ",
+      "mode": "承認モード",
+      "model": "モデル"
+    },
+    "by": {
+      "human": "あなた",
+      "ai": "AI",
+      "ply": "Pleiad"
+    }
+  },
   "saved": {
     "reason": {
       "resumeCwd": "再開時に変更",
@@ -1203,33 +1226,14 @@
       "where": "{{cwd}} で実行"
     },
     "sys": {
-      "agentChanged": "エージェントを {{agent}} に変更しました。次の送信から会話を引き継ぎます。",
       "taskResumed": "Pleiad タスクの結果を受け取って再開しました",
-      "taskResult": "委譲の結果",
+      "taskResultState": "委譲の結果（{{state}}）",
       "taskFull": "エージェントに渡した全文",
       "interruptionNote": "中断で止めたものをエージェントに伝えました",
-      "failed": "失敗: {{error}}",
+      "failed": "{{head}} {{error}}",
       "unknownReason": "理由不明",
-      "contextRefreshed": "指示・Skills が変わったので読み込み直しました",
-      "contextSettingsApplied": "プラグインの設定の変更を、このターンから反映しました",
-      "contextRefreshedNames": "指示・Skills が変わったので読み込み直しました（{{names}}）",
-      "contextRefreshedNamesMore_other": "指示・Skills が変わったので読み込み直しました（{{names}} ほか {{count}} 件）",
       "modeSaveFailed": "承認モードを保存できませんでした: {{error}}",
       "historyFailed": "履歴を読めなかった: {{error}}"
-    },
-    "change": {
-      "status": "状態 → {{value}}（{{by}}）",
-      "statusReason": "状態 → {{value}}（{{by}}：{{reason}}）",
-      "title": "タイトル → {{value}}（{{by}}）",
-      "titleReason": "タイトル → {{value}}（{{by}}：{{reason}}）",
-      "cwd": "作業ディレクトリ → {{value}}（{{by}}）",
-      "cwdReason": "作業ディレクトリ → {{value}}（{{by}}：{{reason}}）",
-      "mode": "承認モード → {{value}}（{{by}}）",
-      "modeNext": "承認モード → {{value}}（{{by}}・次のターンから）",
-      "model": "モデル → {{value}}（{{by}}）",
-      "modelNext": "モデル → {{value}}（{{by}}・次のターンから）",
-      "forkAi": "分岐した（ai）",
-      "forkAiReason": "分岐した（ai：{{reason}}）"
     },
     "model": {
       "default": "既定",
@@ -1612,11 +1616,9 @@
       "showMore": "さらに {{count}} 件を表示",
       "delegated": "· 委譲 {{count}}",
       "instructionsWaiting": "追加指示 {{count}} 件待機中",
-      "instructionState": {
-        "queued": "待機中",
-        "sending": "送信中",
-        "dropped": "未配送で終了"
-      },
+      "instruction": "追加の指示",
+      "instructionQueued": "待機中 · 今の作業が終わると届く",
+      "instructionDropped": "✕ 届かずに終わった",
       "yesterday": "昨日",
       "showFull": "全文を表示",
       "collapse": "たたむ",
@@ -1785,13 +1787,8 @@
       "running": "実行中"
     },
     "delegate": {
-      "running": "実行中 · {{dur}}",
-      "done": "完了 · {{dur}}",
-      "failed": "失敗 · {{dur}}",
-      "stopped": "中断 · {{dur}}",
-      "waiting": "承認待ち",
-      "secs_other": "{{n}} 秒",
-      "mins_other": "{{n}} 分"
+      "openChild": "子の会話を開く",
+      "label": "委譲: {{title}}（{{agent}} · {{state}}）。押すと開く"
     },
     "branch": {
       "pick": "この先の会話を選択",
@@ -2161,7 +2158,6 @@
       "attachNote": "添付は 1 ファイル 100MB まで。フォルダーの中身をまとめて添付するのではなく、ファイルごとに添付します。"
     },
     "busy": "ほかのフォルダーを送っている途中です。",
-    "sentNotice": "フォルダーをホストの {{dest}} に送りました。",
     "dropFailed": "フォルダーを読めませんでした（{{error}}）"
   },
   "routing": {

@@ -1134,6 +1134,29 @@
       "spread": "Will also be available to other agents"
     }
   },
+  "changeLog": {
+    "menu": "Change history",
+    "title": "Change history",
+    "close": "Close",
+    "empty": "No changes recorded",
+    "failed": "Couldn't load the change history: {{error}}",
+    "none": "none",
+    "aiMark": "AI",
+    "aiTitle": "Changed by AI",
+    "aiTitleReason": "Changed by AI: {{reason}}",
+    "field": {
+      "status": "Status",
+      "title": "Title",
+      "cwd": "Working directory",
+      "mode": "Approval mode",
+      "model": "Model"
+    },
+    "by": {
+      "human": "You",
+      "ai": "AI",
+      "ply": "Pleiad"
+    }
+  },
   "saved": {
     "reason": {
       "resumeCwd": "Changed on resume",
@@ -1240,34 +1263,14 @@
       "where": "Runs in {{cwd}}"
     },
     "sys": {
-      "agentChanged": "Changed the agent to {{agent}}. It takes over the conversation from your next message.",
       "taskResumed": "Received the Pleiad task result and resumed",
-      "taskResult": "Delegation result",
+      "taskResultState": "Delegation result ({{state}})",
       "taskFull": "Full text given to the agent",
       "interruptionNote": "Told the agent what the interruption stopped",
-      "failed": "Failed: {{error}}",
+      "failed": "{{head}} {{error}}",
       "unknownReason": "unknown reason",
-      "contextRefreshed": "Instructions or Skills changed, so they were reloaded",
-      "contextSettingsApplied": "Plugin settings changes apply from this turn",
-      "contextRefreshedNames": "Instructions or Skills changed, so they were reloaded ({{names}})",
-      "contextRefreshedNamesMore_one": "Instructions or Skills changed, so they were reloaded ({{names}} and {{count}} more)",
-      "contextRefreshedNamesMore_other": "Instructions or Skills changed, so they were reloaded ({{names}} and {{count}} more)",
       "modeSaveFailed": "Couldn't save the approval mode: {{error}}",
       "historyFailed": "Couldn't load the history: {{error}}"
-    },
-    "change": {
-      "status": "Status → {{value}} ({{by}})",
-      "statusReason": "Status → {{value}} ({{by}}: {{reason}})",
-      "title": "Title → {{value}} ({{by}})",
-      "titleReason": "Title → {{value}} ({{by}}: {{reason}})",
-      "cwd": "Working directory → {{value}} ({{by}})",
-      "cwdReason": "Working directory → {{value}} ({{by}}: {{reason}})",
-      "mode": "Approval mode → {{value}} ({{by}})",
-      "modeNext": "Approval mode → {{value}} ({{by}}, from the next turn)",
-      "model": "Model → {{value}} ({{by}})",
-      "modelNext": "Model → {{value}} ({{by}}, from the next turn)",
-      "forkAi": "Branched (ai)",
-      "forkAiReason": "Branched (ai: {{reason}})"
     },
     "model": {
       "default": "Default",
@@ -1662,11 +1665,9 @@
       "showMore": "Show {{count}} more",
       "delegated": "· {{count}} delegated",
       "instructionsWaiting": "{{count}} follow-up instructions waiting",
-      "instructionState": {
-        "queued": "Waiting",
-        "sending": "Sending",
-        "dropped": "Ended without delivery"
-      },
+      "instruction": "Follow-up instruction",
+      "instructionQueued": "Waiting · delivered when the current work ends",
+      "instructionDropped": "✕ Ended without being delivered",
       "yesterday": "Yesterday",
       "showFull": "Show full request",
       "collapse": "Collapse",
@@ -1850,15 +1851,8 @@
       "running": "Running"
     },
     "delegate": {
-      "running": "Running · {{dur}}",
-      "done": "Done · {{dur}}",
-      "failed": "Failed · {{dur}}",
-      "stopped": "Stopped · {{dur}}",
-      "waiting": "Waiting for approval",
-      "secs_one": "{{n}} sec",
-      "secs_other": "{{n}} sec",
-      "mins_one": "{{n}} min",
-      "mins_other": "{{n}} min"
+      "openChild": "Open the child conversation",
+      "label": "Delegation: {{title}} ({{agent}} · {{state}}). Press to open"
     },
     "branch": {
       "pick": "Choose the conversation to continue",
@@ -2249,7 +2243,6 @@
       "attachNote": "Attachments are up to 100 MB per file. Each file is attached separately; the folder isn't attached as a whole."
     },
     "busy": "Another folder is being sent.",
-    "sentNotice": "Sent the folder to {{dest}} on the host.",
     "dropFailed": "Couldn't read the folder ({{error}})"
   },
   "routing": {

@@ -50,6 +50,9 @@ const cases = [
   await import('./unit/server-delegation-steer.mjs'),
   await import('./unit/background-model.mjs'),
   await import('./unit/task-instructions.mjs'),
+  // 委譲した子の詳細: ツールだけの発言を本文が来るまで 1 つにまとめる・変更の記録の行（新しい順・項目・誰がの訳）
+  await import('./unit/tool-turns.mjs'),
+  await import('./unit/change-log.mjs'),
   // 作業の詳細: 走っている子の出来事（loadSession の live）を仮の発言に畳む・詳細とメインパネルが発言の描き方を共有する
   await import('./unit/stream-messages.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
@@ -255,6 +258,8 @@ const cases = [
   await import("./unit/server-retired.mjs"),
   await import("./unit/server-fork.mjs"),
   await import("./unit/server-ux.mjs"),
+  // 変更の記録: sessionChanges の返す形と、statusByAi（AI が状態を変えたときだけ印。人が変えたら null）
+  await import("./unit/server-session-changes.mjs"),
   // 最近の場所の候補: Pleiadで使った実在フォルダーのみ・委譲やネイティブ一覧や消えた場所を除外
   await import("./unit/cwd-recent-places.mjs"),
   await import("./unit/conversations.mjs"),
