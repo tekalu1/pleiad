@@ -297,10 +297,13 @@ export function initSky({ canvas, labelsEl, labels, avoid }) {
     const halfH = Math.tan(THREE.MathUtils.degToRad(15)) * CAM_Z;
     const halfW = halfH * camera.aspect;
     const wide = camera.aspect > 1.15;
-    const target = wide ? Math.min(halfH * 1.02, halfW * 0.56) : Math.min(halfW * 0.78, halfH * 0.3);
+    const target = wide ? Math.min(halfH * 1.02, halfW * 0.56 * Math.min(1, 1440 / W)) : Math.min(halfW * 0.78, halfH * 0.3);
     fitScale = target / radius;
     root.scale.setScalar(fitScale);
-    root.position.set(wide ? halfW * 0.22 : 0, wide ? 0 : halfH * 0.44, 0);
+    // 横は本文の枠（最大 1440px）の右寄りに置く
+    const box = Math.min(W, 1440);
+    const cx = (W - box) / 2 + box * 0.66;
+    root.position.set(wide ? ((cx / W) * 2 - 1) * halfW : 0, wide ? 0 : halfH * 0.44, 0);
     avoidRect = avoid ? avoid.getBoundingClientRect() : null;
     const cr = canvas.getBoundingClientRect();
     if (avoidRect) avoidRect = { l: avoidRect.left - cr.left, t: avoidRect.top - cr.top, r: avoidRect.right - cr.left, b: avoidRect.bottom - cr.top };

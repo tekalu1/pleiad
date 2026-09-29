@@ -1,3 +1,8 @@
+/* 使う字だけに削った書体。文言を変えたら site/tools/subset-fonts.py で作り直す（OFL は assets/fonts/） */
+@font-face { font-family: "Noto Sans JP"; src: url("assets/fonts/noto-sans-jp.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Geist"; src: url("assets/fonts/geist.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Geist Mono"; src: url("assets/fonts/geist-mono.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+
 :root {
   --bg: #f5f6fa;
   --paper: #ffffff;
@@ -147,7 +152,7 @@ h2 {
 .screen { position: relative; z-index: 2; height: calc(100svh + 4 * 80svh); margin-top: -30svh; }
 .screen-view {
   position: sticky; top: 0; height: 100svh;
-  display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); align-items: center;
+  display: grid; grid-template-columns: minmax(260px, 380px) minmax(0, 1fr); align-items: center;
   column-gap: clamp(32px, 4vw, 72px);
   padding: 80px var(--gutter) 32px;
 }
@@ -167,7 +172,7 @@ h2 {
   transition: opacity .28s var(--ease), transform .5s var(--ease);
 }
 .screen.in .step.is-on { opacity: 1; transform: none; transition-delay: .14s; }
-.step h2 { font-size: clamp(30px, 2.9vw, 44px); }
+.step h2 { font-size: clamp(28px, 2.7vw, 40px); }
 .agents-row { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 22px; font-size: 15px; font-weight: 500; }
 .agents-row li { display: flex; align-items: center; gap: 8px; }
 .agents-row img { width: 18px; height: 18px; }
