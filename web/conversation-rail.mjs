@@ -60,7 +60,7 @@ export function createConversationRail({ frame, log, thread, nav, narrow }) {
   /** @type {HTMLButtonElement[]} */
   let dots = [];
   let kinds = [], shown = false, height = 0, active = -1, dragging = false, dragFrom = 0, dragTurn = -1;
-  let lastKinds = 0, builtFor = null, timer = 0, tops = [], hovered = -1;
+  let builtFor = null, timer = 0, tops = [], hovered = -1;
 
   const label = (turn, i) => {
     const info = nav.turnInfo(turn), kind = kinds[i];
@@ -139,6 +139,15 @@ export function createConversationRail({ frame, log, thread, nav, narrow }) {
     showTip(i);
   }
 
+  function flush() {
+    timer = 0;
+    if (!shown) return;
+    const turns = nav.turns();
+    if (builtFor !== turns) return;
+    paintKinds(turns);
+    place(turns);
+  }
+
   function showTip(i) {
     if (dragging) return;
     const turn = nav.turns()[i];
@@ -160,12 +169,12 @@ export function createConversationRail({ frame, log, thread, nav, narrow }) {
     if (!want) return;
     const turns = nav.turns();
     height = Math.max(0, log.clientHeight - PAD_TOP - PAD_BOTTOM);
-    if (builtFor !== turns) { builtFor = turns; build(turns); tops = []; kinds = []; lastKinds = 0; remeasured = true; }
+    if (builtFor !== turns) { builtFor = turns; build(turns); tops = []; kinds = []; remeasured = true; }
+    // 点の位置・区別する形は、測り直しが落ち着いてから（300ms）まとめて書く。最初の 1 回だけは待たずに置く。
+    // 実寸の確定が続く間は測り直しが続くので、そのたびに点を置き直すと、点の数だけ再計算が走ってスクロールが重くなる
     if (remeasured) {
-      const now = performance.now();
-      if (now - lastKinds > 250) { lastKinds = now; paintKinds(turns); }
-      else if (!timer) timer = setTimeout(() => { timer = 0; lastKinds = 0; nav.invalidate(); }, 260);   // 間引いた分は少し後にもう 1 度
-      place(turns);
+      clearTimeout(timer);
+      if (!tops.length) flush(); else timer = setTimeout(flush, 300);
     }
     // 位置は transform（再レイアウトを起こさない）。高さはスクロールでは変わらないので、測り直したときだけ書く
     const total = log.scrollHeight;

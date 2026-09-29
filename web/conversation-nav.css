@@ -3,10 +3,11 @@
    浮く面（最新へ・地図の浮く面）は、ライトでは --surface-paper。ダークでは地（--surface-paper）と同じ面が沈むので、一段明るい --surface-1 にする */
 
 /* 会話（#log）を包む相対位置の入れ物。残る問い・最新へ・地図は #log の外に重ねて、スクロールで動かない */
-.log-frame{flex:1;min-height:0;position:relative;display:flex;flex-direction:column;
+.log-frame{flex:1;min-height:0;position:relative;
   --surface-float:var(--surface-paper);--surface-float-hover:var(--surface-1)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .log-frame{--surface-float:var(--surface-1);--surface-float-hover:var(--surface-3)}}
 :root[data-theme="dark"] .log-frame{--surface-float:var(--surface-1);--surface-float-hover:var(--surface-3)}
+.log-frame > #log{height:100%}   /* 入れ物は block（flex にすると、長い会話を開く時間が伸びた）。#log の flex:1 は効かないので高さで満たす */
 .log-frame > #log:focus-visible{outline:2px solid var(--line-blue);outline-offset:-3px}
 
 /* ---- A 問いが上に残る。影は付けず、会話の白から透明へのグラデーションでつなぐ。
