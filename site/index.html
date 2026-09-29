@@ -3,19 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pleiad — 全ての作業を、一か所で。</title>
-<meta name="description" content="Claude Code・Codex・Antigravity を、ひとつの画面でどこからでも。">
-<link rel="canonical" href="https://tekalu1.github.io/pleiad/">
+<title data-i18n="meta.title">Pleiad — 全ての作業を、一か所で。</title>
+<meta name="description" content="Claude Code・Codex・Antigravity を、ひとつの画面でどこからでも。" data-i18n-attr="content:meta.description">
+<!-- i18n:head -->
 <meta name="theme-color" content="#f5f6fa">
-<meta property="og:title" content="Pleiad — 全ての作業を、一か所で。">
-<meta property="og:description" content="Claude Code・Codex・Antigravity を、ひとつの画面でどこからでも。">
-<meta property="og:url" content="https://tekalu1.github.io/pleiad/">
+<meta property="og:title" content="Pleiad — 全ての作業を、一か所で。" data-i18n-attr="content:meta.title">
+<meta property="og:description" content="Claude Code・Codex・Antigravity を、ひとつの画面でどこからでも。" data-i18n-attr="content:meta.description">
 <meta property="og:type" content="website">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-<link rel="preload" href="assets/fonts/noto-sans-jp.woff2" as="font" type="font/woff2" crossorigin>
+<link data-only="ja" rel="preload" href="assets/fonts/noto-sans-jp.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="assets/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
-<meta property="og:image" content="https://tekalu1.github.io/pleiad/assets/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <script type="importmap">
 { "imports": {
@@ -72,7 +70,8 @@
     <svg class="brand-word" aria-hidden="true"><use href="#i-word"/></svg>
   </a>
   <nav class="nav-links">
-    <a class="btn btn-s nav-dl" href="https://github.com/tekalu1/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg>ダウンロード</a>
+    <a class="btn btn-s nav-dl" href="https://github.com/tekalu1/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="nav.download">ダウンロード</span></a>
+    <!-- i18n:lang-switch -->
     <a class="nav-gh" href="https://github.com/tekalu1/pleiad" aria-label="GitHub"><svg aria-hidden="true"><use href="#i-gh"/></svg></a>
   </nav>
 </header>
@@ -83,23 +82,23 @@
     <canvas class="sky" aria-hidden="true"></canvas>
     <div class="sky-labels" aria-hidden="true"></div>
     <div class="hero-copy">
-      <h1><span class="ln"><span>全ての作業を、</span></span><span class="ln"><span>一か所で。</span></span></h1>
-      <p class="lede"><span class="nw"><img src="assets/claude.svg" alt="" width="16" height="16">Claude Code・</span><span class="nw"><img src="assets/openai.svg" alt="" width="16" height="16">Codex・</span><span class="nw"><img src="assets/antigravity.svg" alt="" width="16" height="16">Antigravity を、</span><span class="nw">ひとつの画面で</span><span class="nw">どこからでも。</span></p>
+      <h1><span class="ln"><span data-i18n="hero.h1a">全ての作業を、</span></span><span class="ln"><span data-i18n="hero.h1b">一か所で。</span></span></h1>
+      <p class="lede" data-i18n="hero.lede"><span class="nw"><img src="assets/claude.svg" alt="" width="16" height="16">Claude Code・</span><span class="nw"><img src="assets/openai.svg" alt="" width="16" height="16">Codex・</span><span class="nw"><img src="assets/antigravity.svg" alt="" width="16" height="16">Antigravity を、</span><span class="nw">ひとつの画面で</span><span class="nw">どこからでも。</span></p>
       <div class="cta">
-        <a class="btn" href="https://github.com/tekalu1/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg>Windows 版をダウンロード</a>
-        <a class="btn btn-ghost" href="https://github.com/tekalu1/pleiad#開発の始め方"><svg aria-hidden="true"><use href="#i-gh"/></svg>macOS・Linux はソースから</a>
+        <a class="btn" href="https://github.com/tekalu1/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="cta.download">Windows 版をダウンロード</span></a>
+        <a class="btn btn-ghost" href="https://github.com/tekalu1/pleiad#開発の始め方" data-i18n-attr="href:cta.sourceHref"><svg aria-hidden="true"><use href="#i-gh"/></svg><span data-i18n="cta.source">macOS・Linux はソースから</span></a>
       </div>
-      <p class="meta">Beta · Windows 10 / 11</p>
+      <p class="meta" data-i18n="hero.meta">Beta · Windows 10 / 11</p>
     </div>
   </section>
 
-  <section class="screen" aria-label="ひとつの画面で">
+  <section class="screen" aria-label="ひとつの画面で" data-i18n-attr="aria-label:screen.aria">
    <div class="screen-view">
     <div class="prologue">
-      <p class="leave-line" data-i="0"><span class="nw">エージェントごとに、</span><span class="nw">ターミナルを開く。</span></p>
-      <p class="leave-line" data-i="1"><span class="nw">できたグラフは、</span><span class="nw">ブラウザーで開き直す。</span></p>
-      <p class="leave-line" data-i="2"><span class="nw">どれが承認を待っているか、</span><span class="nw">ひとつずつ覗く。</span></p>
-      <p class="leave-end">もう、<span class="nw">行き来しない。</span></p>
+      <p class="leave-line" data-i="0" data-i18n="leave.0"><span class="nw">エージェントごとに、</span><span class="nw">ターミナルを開く。</span></p>
+      <p class="leave-line" data-i="1" data-i18n="leave.1"><span class="nw">できたグラフは、</span><span class="nw">ブラウザーで開き直す。</span></p>
+      <p class="leave-line" data-i="2" data-i18n="leave.2"><span class="nw">どれが承認を待っているか、</span><span class="nw">ひとつずつ覗く。</span></p>
+      <p class="leave-end" data-i18n="leave.end">もう、<span class="nw">行き来しない。</span></p>
     </div>
     <div class="stage" aria-hidden="true">
       <div class="stage-cam">
@@ -112,80 +111,80 @@
               <svg class="side-word"><use href="#i-word"/></svg>
               <span class="side-ic"><svg><use href="#i-plus"/></svg></span>
             </div>
-            <div class="side-search"><svg><use href="#i-search"/></svg>検索</div>
+            <div class="side-search"><svg><use href="#i-search"/></svg><span data-i18n="app.search">検索</span></div>
 
-            <p class="grp"><span class="grp-ic">◐</span>進行中</p>
+            <p class="grp"><span class="grp-ic">◐</span><span data-i18n="app.grp.run">進行中</span></p>
             <ul class="rows">
-              <li class="row" data-s="run" data-row="login"><img src="assets/claude.svg" alt=""><b><span>ログインの不具合を直す</span></b><i class="mk"></i><small>12分前</small><small class="cwd">web</small></li>
-              <li class="row is-sel" data-s="run" data-row="sales"><img src="assets/claude.svg" alt=""><b><span>売上レポートを作る</span></b><i class="mk"></i><small>たった今</small><small class="cwd">sales</small></li>
-              <li class="row" data-s="wait" data-row="db"><img src="assets/openai.svg" alt=""><b><span>DB の移行手順</span></b><i class="mk"></i><small>21分前</small><small class="cwd">api</small></li>
+              <li class="row" data-s="run" data-row="login"><img src="assets/claude.svg" alt=""><b><span data-i18n="row.login">ログインの不具合を直す</span></b><i class="mk"></i><small data-i18n="row.login.age">12分前</small><small class="cwd">web</small></li>
+              <li class="row is-sel" data-s="run" data-row="sales"><img src="assets/claude.svg" alt=""><b><span data-i18n="row.sales">売上レポートを作る</span></b><i class="mk"></i><small data-i18n="row.sales.age">たった今</small><small class="cwd">sales</small></li>
+              <li class="row" data-s="wait" data-row="db"><img src="assets/openai.svg" alt=""><b><span data-i18n="row.db">DB の移行手順</span></b><i class="mk"></i><small data-i18n="row.db.age">21分前</small><small class="cwd">api</small></li>
             </ul>
-            <p class="grp"><span class="grp-ic">◇</span>レビュー待ち</p>
+            <p class="grp"><span class="grp-ic">◇</span><span data-i18n="app.grp.review">レビュー待ち</span></p>
             <ul class="rows">
-              <li class="row" data-s="done" data-row="readme"><img src="assets/antigravity.svg" alt=""><b><span>README の英訳</span></b><i class="mk"></i><small>2時間前</small><small class="cwd">docs</small></li>
-              <li class="row" data-s="idle" data-row="e2e"><img src="assets/openai.svg" alt=""><b><span>E2E を安定させる</span></b><i class="mk"></i><small>昨日</small><small class="cwd">web</small></li>
+              <li class="row" data-s="done" data-row="readme"><img src="assets/antigravity.svg" alt=""><b><span data-i18n="row.readme">README の英訳</span></b><i class="mk"></i><small data-i18n="row.readme.age">2時間前</small><small class="cwd">docs</small></li>
+              <li class="row" data-s="idle" data-row="e2e"><img src="assets/openai.svg" alt=""><b><span data-i18n="row.e2e">E2E を安定させる</span></b><i class="mk"></i><small data-i18n="row.e2e.age">昨日</small><small class="cwd">web</small></li>
             </ul>
-            <p class="grp"><span class="grp-ic">○</span>保留</p>
+            <p class="grp"><span class="grp-ic">○</span><span data-i18n="app.grp.hold">保留</span></p>
             <ul class="rows">
-              <li class="row" data-s="stale" data-row="pay"><img src="assets/claude.svg" alt=""><b><span>決済 API の比較</span></b><i class="mk"><span>9日</span></i><small>9日前</small><small class="cwd">api</small></li>
+              <li class="row" data-s="stale" data-row="pay"><img src="assets/claude.svg" alt=""><b><span data-i18n="row.pay">決済 API の比較</span></b><i class="mk"><span data-i18n="row.pay.mark">9日</span></i><small data-i18n="row.pay.age">9日前</small><small class="cwd">api</small></li>
             </ul>
           </aside>
 
           <div class="main">
             <header class="main-head">
-              <b>売上レポートを作る</b>
-              <span class="usage"><i><em style="width:38%"></em></i>5時間 38%</span>
+              <b data-i18n="row.sales">売上レポートを作る</b>
+              <span class="usage"><i><em style="width:38%"></em></i><span data-i18n="app.usage">5時間 38%</span></span>
               <span class="more">···</span>
             </header>
 
             <div class="log">
               <div class="log-inner">
-                <div class="msg is-user"><p class="spk">あなた<time>12:48</time></p><p class="bubble">4月からの売上を集計して</p></div>
-                <div class="msg is-ai"><p class="spk"><img src="assets/claude.svg" alt="">Claude<time>12:49</time></p><p>月ごとの合計を sales.csv にまとめました。</p></div>
-                <div class="handoff is-hand"><img src="assets/claude.svg" alt=""><svg><use href="#i-arrow"/></svg><img src="assets/openai.svg" alt=""><span>Codex に切り替え</span></div>
-                <div class="msg is-user is-ask"><p class="spk">あなた<time>12:51</time></p><p class="bubble">推移をグラフにして</p></div>
+                <div class="msg is-user"><p class="spk"><span data-i18n="app.you">あなた</span><time>12:48</time></p><p class="bubble" data-i18n="msg.ask1">4月からの売上を集計して</p></div>
+                <div class="msg is-ai"><p class="spk"><img src="assets/claude.svg" alt="">Claude<time>12:49</time></p><p data-i18n="msg.reply1">月ごとの合計を sales.csv にまとめました。</p></div>
+                <div class="handoff is-hand"><img src="assets/claude.svg" alt=""><svg><use href="#i-arrow"/></svg><img src="assets/openai.svg" alt=""><span data-i18n="msg.handoff">Codex に切り替え</span></div>
+                <div class="msg is-user is-ask"><p class="spk"><span data-i18n="app.you">あなた</span><time>12:51</time></p><p class="bubble" data-i18n="msg.ask2">推移をグラフにして</p></div>
                 <div class="msg is-ai is-reply" data-zone="see">
                   <p class="spk"><img src="assets/openai.svg" alt="">Codex<time>12:52</time></p>
-                  <p class="think see-run"><svg class="arc" viewBox="0 0 14 14"><path/></svg>グラフを描いている<time>0:08</time></p>
+                  <p class="think see-run"><svg class="arc" viewBox="0 0 14 14"><path/></svg><span data-i18n="msg.drawing">グラフを描いている</span><time>0:08</time></p>
                   <div class="see-body">
-                  <p>4月から9月の推移です。9月は前月比 +12% でした。</p>
+                  <p data-i18n="msg.reply2">4月から9月の推移です。9月は前月比 +12% でした。</p>
                   <figure class="viz">
-                    <div class="viz-head"><span>月次売上</span><b>1,284<small>万円</small></b></div>
+                    <div class="viz-head"><span data-i18n="viz.title">月次売上</span><b data-i18n="viz.value">1,284<small>万円</small></b></div>
                     <svg class="viz-chart" viewBox="0 0 480 130" preserveAspectRatio="none">
                       <defs><linearGradient id="vg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#5665cd" stop-opacity=".16"/><stop offset="1" stop-color="#5665cd" stop-opacity="0"/></linearGradient></defs>
                       <path class="viz-area" d="M0 104 C40 98 60 92 96 88 S160 96 192 78 S250 46 288 52 S350 34 384 26 S450 14 480 10 V130 H0Z" fill="url(#vg)"/>
                       <path class="viz-line" pathLength="1" d="M0 104 C40 98 60 92 96 88 S160 96 192 78 S250 46 288 52 S350 34 384 26 S450 14 480 10"/>
                       <circle class="viz-dot" cx="480" cy="10" r="4"/>
                     </svg>
-                    <div class="viz-x"><span>4月</span><span>5月</span><span>6月</span><span>7月</span><span>8月</span><span>9月</span></div>
+                    <div class="viz-x" data-i18n="viz.x"><span>4月</span><span>5月</span><span>6月</span><span>7月</span><span>8月</span><span>9月</span></div>
                   </figure>
                   </div>
                 </div>
 
                 <div class="fork" data-zone="branch" hidden>
                   <template>
-                    <b data-k="action">⑂ ここから分岐</b>
-                    <b data-k="source">売上レポートを作る</b><b data-k="sourceNote">3 件の続き</b>
-                    <b data-k="fork">表にする</b><b data-k="forkNote">0 件の続き</b>
-                    <b data-k="current">現在の会話</b>
+                    <b data-k="action" data-i18n="fork.action">⑂ ここから分岐</b>
+                    <b data-k="source" data-i18n="row.sales">売上レポートを作る</b><b data-k="sourceNote" data-i18n="fork.sourceNote">3 件の続き</b>
+                    <b data-k="fork" data-i18n="fork.fork">表にする</b><b data-k="forkNote" data-i18n="fork.forkNote">0 件の続き</b>
+                    <b data-k="current" data-i18n="fork.current">現在の会話</b>
                   </template>
                 </div>
 
-                <div class="msg is-user is-late"><p class="spk">あなた<time>12:54</time></p><p class="bubble">9月の内訳も出して</p></div>
+                <div class="msg is-user is-late"><p class="spk"><span data-i18n="app.you">あなた</span><time>12:54</time></p><p class="bubble" data-i18n="msg.late">9月の内訳も出して</p></div>
                 <div class="msg is-ai is-late2 is-running">
                   <p class="spk"><img src="assets/openai.svg" alt="">Codex<time>12:55</time></p>
-                  <p class="think"><svg class="arc" viewBox="0 0 14 14"><path/></svg>前年比を足している<time>0:12</time></p>
+                  <p class="think"><svg class="arc" viewBox="0 0 14 14"><path/></svg><span data-i18n="msg.adding">前年比を足している</span><time>0:12</time></p>
                 </div>
               </div>
             </div>
 
             <div class="composer" data-zone="agents">
-              <p class="cm-text">Ctrl+Enter で送信</p>
+              <p class="cm-text" data-i18n="app.placeholder">Ctrl+Enter で送信</p>
               <div class="cm-row">
                 <span class="chip chip-ic"><svg><use href="#i-clip"/></svg></span>
                 <span class="chip"><svg><use href="#i-folder"/></svg>sales<svg class="chev"><use href="#i-chev"/></svg></span>
                 <span class="chip chip-agent"><img class="ag-logo" src="assets/claude.svg" alt=""><span class="ag-name">Claude Code</span><svg class="chev"><use href="#i-chev"/></svg></span>
-                <span class="chip"><svg><use href="#i-shield"/></svg>都度確認<svg class="chev"><use href="#i-chev"/></svg></span>
+                <span class="chip"><svg><use href="#i-shield"/></svg><span data-i18n="app.mode">都度確認</span><svg class="chev"><use href="#i-chev"/></svg></span>
                 <span class="send"><svg><use href="#i-send"/></svg></span>
               </div>
             </div>
@@ -197,29 +196,29 @@
 
     <div class="steps">
       <article class="step" data-step="0">
-        <p class="f-kicker">選ばない</p>
-        <h2>乗り換えても、<br>会話は続く。</h2>
+        <p class="f-kicker" data-i18n="s0.kicker">選ばない</p>
+        <h2 data-i18n="s0.h2">乗り換えても、<br>会話は続く。</h2>
         <ul class="agents-row">
           <li><img src="assets/claude.svg" alt="" width="18" height="18">Claude Code</li>
           <li><img src="assets/openai.svg" alt="" width="18" height="18">Codex</li>
           <li><img src="assets/antigravity.svg" alt="" width="18" height="18">Antigravity</li>
         </ul>
-        <p class="f-sub f-compat">OpenRouter・LiteLLM・Ollama <span class="nw">にもつなげる。</span></p>
+        <p class="f-sub f-compat" data-i18n="s0.sub">OpenRouter・LiteLLM・Ollama <span class="nw">にもつなげる。</span></p>
       </article>
       <article class="step" data-step="1">
-        <p class="f-kicker">見る</p>
-        <h2>成果物は、<br>会話の中に。</h2>
-        <p class="f-sub"><span class="nw">HTML・画像・ファイルを、</span><span class="nw">その場で。</span><br><span class="nw">あなたの認知負荷を</span><span class="nw">下げます。</span></p>
+        <p class="f-kicker" data-i18n="s1.kicker">見る</p>
+        <h2 data-i18n="s1.h2">成果物は、<br>会話の中に。</h2>
+        <p class="f-sub" data-i18n="s1.sub"><span class="nw">HTML・画像・ファイルを、</span><span class="nw">その場で。</span><br><span class="nw">あなたの認知負荷を</span><span class="nw">下げます。</span></p>
       </article>
       <article class="step" data-step="2">
-        <p class="f-kicker">思い出す</p>
-        <h2>待っている会話が、<br>すぐわかる。</h2>
-        <p class="f-sub"><span class="nw">カンバンのように、</span><span class="nw">会話に自由な状態を</span><span class="nw">持たせられます。</span></p>
+        <p class="f-kicker" data-i18n="s2.kicker">思い出す</p>
+        <h2 data-i18n="s2.h2">待っている会話が、<br>すぐわかる。</h2>
+        <p class="f-sub" data-i18n="s2.sub"><span class="nw">カンバンのように、</span><span class="nw">会話に自由な状態を</span><span class="nw">持たせられます。</span></p>
       </article>
       <article class="step" data-step="3">
-        <p class="f-kicker">気楽に分岐</p>
-        <h2>分岐しても、<br>迷わない。</h2>
-        <p class="f-sub">どの枝からでも、続けられる。</p>
+        <p class="f-kicker" data-i18n="s3.kicker">気楽に分岐</p>
+        <h2 data-i18n="s3.h2">分岐しても、<br>迷わない。</h2>
+        <p class="f-sub" data-i18n="s3.sub">どの枝からでも、続けられる。</p>
       </article>
     </div>
    </div>
@@ -228,17 +227,17 @@
   <section class="pair">
     <article class="tile" id="delegate">
       <div class="tile-copy">
-        <p class="f-kicker">任せる</p>
-        <h2>サブエージェントの<br>モデルは自動で選びます</h2>
-        <p class="f-sub">種類・難しさ・使用量から。<span class="nw">Jev を使い判断します。</span></p>
+        <p class="f-kicker" data-i18n="delegate.kicker">任せる</p>
+        <h2 data-i18n="delegate.h2">サブエージェントの<br>モデルは自動で選びます</h2>
+        <p class="f-sub" data-i18n="delegate.sub">種類・難しさ・使用量から。<span class="nw">Jev を使い判断します。</span></p>
       </div>
       <div class="tile-visual">
       <div class="v-deleg" aria-hidden="true">
-        <p class="dg-head"><b>委譲</b><span class="dg-auto">自動</span><img src="assets/openai.svg" alt=""><span class="dg-why">実装 · 難しさ 中 → Codex</span></p>
+        <p class="dg-head"><b data-i18n="dg.title">委譲</b><span class="dg-auto" data-i18n="dg.auto">自動</span><img src="assets/openai.svg" alt=""><span class="dg-why" data-i18n="dg.why">実装 · 難しさ 中 → Codex</span></p>
         <ol class="dg-cands">
-          <li class="c-skip"><em>1</em><img src="assets/claude.svg" alt=""><span class="c-name">Claude Code</span><span class="c-st">飛ばした · 使用量が多い</span><span class="c-use"><span>週次</span><span class="c-bar"><i style="--v:.83"></i></span><span class="c-pct">83%</span></span></li>
-          <li class="c-pick"><em>2</em><img src="assets/openai.svg" alt=""><span class="c-name">Codex</span><span class="c-st">✓ 使った</span><span class="c-use"><span>週次</span><span class="c-bar"><i style="--v:.22"></i></span><span class="c-pct">22%</span></span></li>
-          <li class="c-next"><em>3</em><img src="assets/antigravity.svg" alt=""><span class="c-name">Antigravity</span><span class="c-st"></span><span class="c-use"><span>週次</span><span class="c-bar"><i style="--v:.10"></i></span><span class="c-pct">10%</span></span></li>
+          <li class="c-skip"><em>1</em><img src="assets/claude.svg" alt=""><span class="c-name">Claude Code</span><span class="c-st" data-i18n="dg.skipped">飛ばした · 使用量が多い</span><span class="c-use"><span data-i18n="dg.weekly">週次</span><span class="c-bar"><i style="--v:.83"></i></span><span class="c-pct">83%</span></span></li>
+          <li class="c-pick"><em>2</em><img src="assets/openai.svg" alt=""><span class="c-name">Codex</span><span class="c-st" data-i18n="dg.used">✓ 使った</span><span class="c-use"><span data-i18n="dg.weekly">週次</span><span class="c-bar"><i style="--v:.22"></i></span><span class="c-pct">22%</span></span></li>
+          <li class="c-next"><em>3</em><img src="assets/antigravity.svg" alt=""><span class="c-name">Antigravity</span><span class="c-st"></span><span class="c-use"><span data-i18n="dg.weekly">週次</span><span class="c-bar"><i style="--v:.10"></i></span><span class="c-pct">10%</span></span></li>
         </ol>
       </div>
       </div>
@@ -246,28 +245,28 @@
 
     <article class="tile" id="remote">
       <div class="tile-copy">
-        <p class="f-kicker">外から</p>
-        <h2>家の PC を、<br>ポケットから。</h2>
-        <p class="f-sub">どこからでも作業を継続できます</p>
-        <p class="f-note">※ 中継サーバーの用意が必要です</p>
+        <p class="f-kicker" data-i18n="remote.kicker">外から</p>
+        <h2 data-i18n="remote.h2">家の PC を、<br>ポケットから。</h2>
+        <p class="f-sub" data-i18n="remote.sub">どこからでも作業を継続できます</p>
+        <p class="f-note" data-i18n="remote.note">※ 中継サーバーの用意が必要です</p>
       </div>
       <div class="tile-visual">
       <div class="phone" aria-hidden="true">
         <div class="ph-screen">
-          <p class="ph-top"><b>DB の移行手順</b><span>自宅の PC</span></p>
+          <p class="ph-top"><b data-i18n="row.db">DB の移行手順</b><span data-i18n="ph.host">自宅の PC</span></p>
           <div class="ph-thread">
-            <p class="ph-user">本番の前に、差分を確かめて</p>
-            <p class="ph-msg">移行の前に、確認を流します。</p>
+            <p class="ph-user" data-i18n="ph.user">本番の前に、差分を確かめて</p>
+            <p class="ph-msg" data-i18n="ph.msg">移行の前に、確認を流します。</p>
             <div class="ph-card">
-              <p class="ph-q"><i class="dia"></i><span>承認を待っている</span></p>
+              <p class="ph-q"><i class="dia"></i><span data-i18n="ph.wait">承認を待っている</span></p>
               <code>npm run migrate:check</code>
-              <div class="ph-btns"><span class="ph-yes">許可</span><span class="ph-no">拒否</span></div>
+              <div class="ph-btns"><span class="ph-yes" data-i18n="ph.allow">許可</span><span class="ph-no" data-i18n="ph.deny">拒否</span></div>
             </div>
-            <p class="ph-run"><svg class="arc" viewBox="0 0 14 14"><path/></svg>実行している</p>
+            <p class="ph-run"><svg class="arc" viewBox="0 0 14 14"><path/></svg><span data-i18n="ph.running">実行している</span></p>
             <div class="ph-card ph-next">
-              <p class="ph-q"><i class="dia"></i><span>承認を待っている</span></p>
+              <p class="ph-q"><i class="dia"></i><span data-i18n="ph.wait">承認を待っている</span></p>
               <code>git push origin release</code>
-              <div class="ph-btns"><span class="ph-yes">許可</span><span class="ph-no">拒否</span></div>
+              <div class="ph-btns"><span class="ph-yes" data-i18n="ph.allow">許可</span><span class="ph-no" data-i18n="ph.deny">拒否</span></div>
             </div>
           </div>
         </div>
@@ -278,12 +277,12 @@
 
   <section class="end">
     <svg class="end-mark" aria-hidden="true"><use href="#i-mark"/></svg>
-    <h2><span class="nw">全ての作業を、</span><span class="nw">一か所で。</span></h2>
+    <h2 data-i18n="end.h2"><span class="nw">全ての作業を、</span><span class="nw">一か所で。</span></h2>
     <div class="cta">
-      <a class="btn" href="https://github.com/tekalu1/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg>Windows 版をダウンロード</a>
-      <a class="btn btn-ghost" href="https://github.com/tekalu1/pleiad#開発の始め方"><svg aria-hidden="true"><use href="#i-gh"/></svg>macOS・Linux はソースから</a>
+      <a class="btn" href="https://github.com/tekalu1/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="cta.download">Windows 版をダウンロード</span></a>
+      <a class="btn btn-ghost" href="https://github.com/tekalu1/pleiad#開発の始め方" data-i18n-attr="href:cta.sourceHref"><svg aria-hidden="true"><use href="#i-gh"/></svg><span data-i18n="cta.source">macOS・Linux はソースから</span></a>
     </div>
-    <p class="meta">各エージェントの CLI とログインが必要です。</p>
+    <p class="meta" data-i18n="end.meta">各エージェントの CLI とログインが必要です。</p>
   </section>
 
 </main>
@@ -294,6 +293,16 @@
   <a href="https://github.com/tekalu1/pleiad">GitHub</a>
 </footer>
 
+<script type="application/json" id="strings" data-i18n-json="strings">
+{
+  "status.wait": "承認待ち",
+  "status.run": "実行中",
+  "status.done": "完了",
+  "mark.stale": "◌ 9日",
+  "late.fork": "列に前年比を足して",
+  "phone.approved": "許可した"
+}
+</script>
 <script type="module" src="main.js"></script>
 </body>
 </html>

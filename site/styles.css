@@ -60,6 +60,8 @@ h1, h2, .leave-sticky p, .f-sub, .lede { word-break: auto-phrase; }
 .brand-mark { width: 26px; height: 26px; }
 .brand-word { width: 62px; height: 19px; }
 .nav-links { display: flex; align-items: center; gap: 8px; }
+.nav-lang { display: grid; place-items: center; height: 40px; padding: 0 10px; border-radius: 999px; font-size: 13px; font-weight: 500; letter-spacing: .04em; color: var(--weak); transition: background .2s, color .2s; }
+.nav-lang:hover { background: var(--s1); color: var(--ink); }
 .nav-gh { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 999px; color: var(--ink); transition: background .2s; }
 .nav-gh:hover { background: var(--s1); }
 .nav-gh svg { width: 20px; height: 20px; }
@@ -464,6 +466,20 @@ h2 {
 
 .foot { display: flex; justify-content: center; gap: 24px; padding: 32px var(--pad) 48px; font-size: 13px; color: var(--weak); }
 .foot a:hover { color: var(--ink); }
+
+/* 英語。字が長い分だけ組みを調える（日本語の組みは変えない） */
+html:lang(en) .step h2 { font-size: clamp(26px, 2.3vw, 38px); }
+/* 承認待ちの印は長いので、題を狭めずに 2 行目（アプリの脇と同じく meta の側）へ回す */
+html:lang(en) .row:has(.wait) b { grid-column: 2 / 4; }
+html:lang(en) .row:has(.wait) .mk { grid-column: 2; grid-row: 2; }
+html:lang(en) .row:has(.wait) small:not(.cwd) { display: none; }
+/* 分岐の札は並びの間隔（最大 92px）に収まらないので、折り返す */
+html:lang(en) .fork :is(.branch-name, .branch-note) { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  /* 「実装 · 難しさ 中 → Codex」の行き先が省かれないよう、狭い画面では折り返す */
+  html:lang(en) .dg-head { align-items: flex-start; }
+  html:lang(en) .dg-why { white-space: normal; }
+}
 
 @media (min-width: 1800px) {
   :root { --max: 1760px; }
