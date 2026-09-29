@@ -46,7 +46,7 @@ export default async function(t) {
       const { c, awaitTask, child, send, stateOf, turnEnds, events, userTexts } = await boot({});
 
       // 走っている子へ渡す: 同じターンに入り、その場で配送済み。新しいターンは走らない
-      const a = await child('bg 1 4');
+      const a = await child('bg 1 8');
       const markA = c.mark();
       await send(a.parent, a.task, 'echo:STEER_A');
       t.ok('走っている子には途中送信で渡り、その場で配送済みになる', await stateOf(a.task) === 'echo:STEER_A:delivered');
@@ -62,7 +62,7 @@ export default async function(t) {
       t.ok('完了通知は 1 回', (await c.cmd('agentTasks')).find(r => r.taskId === a.task.taskId).notification === 'sent');
 
       // 受理されない（DECLINE_STEER）: 待機のまま、次のターンで 1 回
-      const b = await child('bg 1 3');
+      const b = await child('bg 1 8');
       const markB = c.mark();
       const outB = JSON.parse((await send(b.parent, b.task, 'echo:LATER DECLINE_STEER').then(r => r.events.find(e => e.type === 'tool.result'))).text);
       t.ok('受理されなければ待機（queued）で、依頼元には待機件数が見える', await stateOf(b.task) === 'echo:LATER DECLINE_STEER:queued' && outB.pendingMessages === 1);
@@ -71,7 +71,7 @@ export default async function(t) {
         && (await userTexts(b.task)).filter(x => x.includes('LATER')).length === 1, doneB.status);
 
       // 結果不明（THROW_STEER）: 送り直さない（未配送で残す）
-      const cth = await child('bg 1 3');
+      const cth = await child('bg 1 8');
       const outTh = JSON.parse((await send(cth.parent, cth.task, 'echo:THROWN THROW_STEER').then(r => r.events.find(e => e.type === 'tool.result'))).text);
       t.ok('結果不明は未配送（dropped）で残し、待機にしない。依頼元には確かめるよう一言添える', await stateOf(cth.task) === 'echo:THROWN THROW_STEER:dropped'
         && outTh.pendingMessages === 0 && typeof outTh.warning === 'string');
@@ -80,7 +80,7 @@ export default async function(t) {
       t.ok('自動で送り直さない', turnEnds(cth.task, cth.mark).length === 1 && !(await userTexts(cth.task)).some(x => x.includes('THROWN')));
 
       // 次ターンの設定が予約されている子は、途中送信を断る（完了通知と同じ）
-      const d = await child('bg 1 3');
+      const d = await child('bg 1 8');
       await c.cmd('setTurnSettings', { sessionId: d.task.sessionId, backend: 'fake', model: 'fast' });
       await send(d.parent, d.task, 'echo:NEXT');
       t.ok('次ターンの設定が予約されていれば待機する', await stateOf(d.task) === 'echo:NEXT:queued', await stateOf(d.task));
@@ -120,7 +120,7 @@ export default async function(t) {
         && (await userTexts(e2.task)).filter(x => x.includes('DROPPED')).length === 1);
 
       // 合図が来ないままターンが終わった: 待機へ戻り、次のターンで 1 回だけ。画面の発言は下げる
-      const e3 = await child('bg 1 3');
+      const e3 = await child('bg 1 8');
       const mark3 = c.mark();
       await send(e3.parent, e3.task, 'echo:SILENT SILENT_STEER');
       t.ok('合図が来るまでは送信中', await stateOf(e3.task) === 'echo:SILENT SILENT_STEER:sending');
