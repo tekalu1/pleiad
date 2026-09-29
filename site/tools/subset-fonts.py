@@ -1,12 +1,13 @@
 """サイトで使う字だけに削った woff2 を assets/fonts/ に作る。
 
-文言（index.html・main.js・hero.js）を変えたら流し直す。
+文言（index.html・main.js・hero.js・locales/en.json）を変えたら流し直す。
 元の書体は google/fonts から temporary/fonts/ に落とす（コミットしない）。
 要るもの: python の fontTools と brotli（pip install fonttools brotli）。
 
     python site/tools/subset-fonts.py
 """
 import html
+import json
 import pathlib
 import re
 import subprocess
@@ -41,6 +42,11 @@ def used_text():
             t = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", t, flags=re.S)
             t = html.unescape(re.sub(r"<[^>]+>", " ", t))
         text += t
+    # 英語の辞書（値は HTML の断片。日本語の書体には記号の字だけが要る）
+    en = json.loads((SITE / "locales" / "en.json").read_text(encoding="utf-8"))
+    for value in en.values():
+        for v in (value.values() if isinstance(value, dict) else [value]):
+            text += html.unescape(re.sub(r"<[^>]+>", " ", v))
     ascii_ = "".join(chr(c) for c in range(0x20, 0x7F))
     extra = "、。・「」（）→✓…◆◇◐○◌·—–％：＋"
     return "".join(sorted(set(text + ascii_ + extra) - set("\n\r\t")))
