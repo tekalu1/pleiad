@@ -12,12 +12,14 @@ async (page) => {
   await page.locator('#cwdPop .cpath').press('Enter');
   await page.locator('#prompt').fill('echo:Shared context');
   await page.locator('#send').click();
-  await page.locator('.mw[data-key="m:1"] .forkbtn').waitFor({state:'attached'});
+  await page.locator('.mw[data-key="m:1"] .m[data-uuid]').waitFor({state:'attached'});
   await page.waitForFunction(() => !document.querySelector('#send').disabled);
   check(await page.locator('.spine path').count() > 0, 'initial live turn has an edge without reload');
   for (let i = 0; i < 3; i++) {
+    // 分岐は返答の ⋯ のメニュー（その返答の終わりから）
     await page.locator('.mw[data-key="m:1"] .m').hover();
-    await page.locator('.mw[data-key="m:1"] .forkbtn').click();
+    await page.locator('.mw[data-key="m:1"] .who-more').click();
+    await page.getByRole('menuitem', { name: 'ここから分岐', exact: true }).click();
     await page.waitForFunction(() => !!document.querySelector('.branch-row[data-phase="growing"]'));
     await page.waitForFunction(n => document.querySelectorAll('.branch-tip').length === n && !document.querySelector('.branch-tip:disabled'), i+2);
     const ys=await page.locator('.branch-ring').evaluateAll(es=>es.map(e=>e.getBoundingClientRect().y));

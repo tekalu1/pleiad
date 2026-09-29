@@ -24,7 +24,7 @@
   font-size:var(--fs-s);line-height:1.6;padding:8px 0;background:transparent;color:var(--ink-weak);cursor:pointer;pointer-events:auto;
   transition:color var(--dur-fast) var(--ease-out)}
 .nav-sticky-button:hover{color:var(--ink)}
-.nav-sticky-time{font-family:var(--font-mono);font-size:var(--fs-xs)}
+.nav-sticky-time{font-size:var(--fs-xs)}
 .nav-token{color:var(--ink-weak)}
 
 /* ---- C 最新へ。直径 34px の丸。会話の右下（地図の左、入力欄の上） ---- */
@@ -91,7 +91,7 @@
 
 /* ---- 狭い画面。地図は出さない。最新へは入力欄の右上。タップ領域は 44px ---- */
 @media (max-width:700px){
-  .nav-sticky{right:0;height:62px;padding-left:74px}
+  .nav-sticky{right:0;height:62px;padding-left:42px}   /* 吹き出しの左端（#log の左 8px + 溝 40px）の 6px 左（従来と同じずれ） */
   .nav-sticky-button{min-height:44px;padding-top:4px}
   .nav-rail{display:none}
   .nav-latest{right:16px;bottom:12px}

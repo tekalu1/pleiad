@@ -725,6 +725,13 @@ function interruptedOf(value) {
   return { at: value.at, reason: INTERRUPT_REASONS.has(value.reason) ? value.reason : "user" };
 }
 
+/** 状態を最後に変えたのが AI なら { reason, reasonKey?, reasonParams? }、そうでなければ null */
+function statusChangedByAi(history) {
+  const row = [...(history ?? [])].reverse().find(h => h?.field === "status");
+  if (row?.by !== "ai") return null;
+  return { reason: row.reason ?? null, ...(row.reasonKey ? { reasonKey: row.reasonKey, ...(row.reasonParams ? { reasonParams: row.reasonParams } : {}) } : {}) };
+}
+
 /**
  * エージェントのネイティブな行（無ければ null）と sidecar の行を、一覧の 1 行に合わせる。
  *
@@ -742,6 +749,8 @@ function sessionRow(b, s, extra = {}) {
     // 事前定義なし。使われた時点で存在する
     status: (b.capabilities?.tag && s ? s.tag : extra.status ?? s?.tag) ?? null,
     statusChangedAt: extra.statusChangedAt ?? null,
+    // 状態を最後に変えたのが AI のときだけ、その理由（画面が小さな「AI」の印を出す）。人が変えていれば null
+    statusByAi: statusChangedByAi(extra.history),
     completedAt: extra.completedAt ?? null,
     contextWindow: extra.contextWindow ?? null,
     compactionAt: compactionScheduler.get(s?.sessionId ?? extra.id),
@@ -4215,6 +4224,15 @@ wss.on("connection", (ws, req) => {
           const byId = new Map(rows.map((r) => [r.id, r]));
           const { rootId, ids } = familyOf(rows, sessionId);
           return reply(true, { rootId, sessions: ids.map((id) => byId.get(id) ?? { id, parent: null }) });
+        }
+
+        // 会話の変更の記録（時刻・誰が・前 → 後・理由）。脇の会話の行の「変更の記録」が読む
+        case "sessionChanges": {
+          const { sessionId } = msg.args ?? {};
+          if (!sessionId) return reply(false, t('session.required'));
+          const entry = await store.get(sessionId);
+          return reply(true, { changes: (entry.history ?? []).map(({ at, by, field, from, to, reason, reasonKey, reasonParams }) =>
+            ({ at, by, field, from: from ?? null, to: to ?? null, reason: reason ?? null, ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}) })) });
         }
 
         case "setTitle": {

@@ -118,6 +118,10 @@
 | 書式（B・I・コード・リンク。範囲を選んだときの面） | Formatting (Bold / Italic / Code / Link) |
 | エージェントに渡した原文（発言の本文そのまま） | what was sent to the agent |
 | 続きを表示 / 折りたたむ（長い発言） | Show more / Show less |
+| コピー / 返答をコピー（発言の操作） | Copy / Copy reply |
+| ここから分岐 / この発言から分岐（発言のメニュー） | Branch from here / Branch from this message |
+| この発言の操作（⋯ の名前） | Message actions |
+| 画像を読み込んでいます / 読み込めませんでした / もう一度（送った直後の画像） | Loading image / Couldn't load the image / Try again |
 | 根（グループの根の会話） | root |
 | 常に許可 / 拒否 | Always allow / Deny |
 | 配色の 自動 / 明 / 暗 | Auto / Light / Dark |

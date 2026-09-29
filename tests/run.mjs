@@ -50,6 +50,9 @@ const cases = [
   await import('./unit/server-delegation-steer.mjs'),
   await import('./unit/background-model.mjs'),
   await import('./unit/task-instructions.mjs'),
+  // 委譲した子の詳細: ツールだけの発言を本文が来るまで 1 つにまとめる・変更の記録の行（新しい順・項目・誰がの訳）
+  await import('./unit/tool-turns.mjs'),
+  await import('./unit/change-log.mjs'),
   // 作業の詳細: 走っている子の出来事（loadSession の live）を仮の発言に畳む・詳細とメインパネルが発言の描き方を共有する
   await import('./unit/stream-messages.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
@@ -148,6 +151,10 @@ const cases = [
   await import("./unit/attachment-order.mjs"),
   // 自分の発言: 添付の印を本文の位置に置く（コードブロック内・一致しないパスは残す・古い形式は末尾）・畳み込み・別カードを二重に出さない
   await import("./unit/user-message.mjs"),
+  // ホバーの無い端末で発言を押すと時刻を 4 秒出す（リンク・ボタン・コード・字の選択の上では出さない）
+  await import("./unit/message-peek.mjs"),
+  // 発言のメニュー（⋯・右クリック・キーボード）・長い発言の畳みを開く・送った直後の画像の枠（ADR 0067）
+  await import("./unit/message-actions.mjs"),
   await import("./unit/md-doc.mjs"),
   await import("./unit/prompt-title.mjs"),
   // 添付の件数に上限が無い（下書き・送信）。出どころの印。1 件 8MB の上限は残る
@@ -251,6 +258,8 @@ const cases = [
   await import("./unit/server-retired.mjs"),
   await import("./unit/server-fork.mjs"),
   await import("./unit/server-ux.mjs"),
+  // 変更の記録: sessionChanges の返す形と、statusByAi（AI が状態を変えたときだけ印。人が変えたら null）
+  await import("./unit/server-session-changes.mjs"),
   // 最近の場所の候補: Pleiadで使った実在フォルダーのみ・委譲やネイティブ一覧や消えた場所を除外
   await import("./unit/cwd-recent-places.mjs"),
   await import("./unit/conversations.mjs"),

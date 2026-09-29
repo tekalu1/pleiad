@@ -173,6 +173,7 @@ export const COMMANDS = new Set([
   "uploadFinish",    // { uploadId } -> { dest, files, bytes }。送り先へ移し、途中の置き場を消す
   "uploadCancel",    // { uploadId } -> { cancelled }
   "suggestTitle",    // AI にタイトルを考えてもらう
+  "sessionChanges",  // { sessionId } -> { changes: [{ at, by, field, from, to, reason, reasonKey?, reasonParams? }] }。会話の変更の記録（sessions.json の history。古い順）
   "setStatusIcon",   // { status, icon }。空なら「なし」（既定）に戻す
   "createStatus",    // { status }。空のグループを作る（statuses.json にある限り存在する）
   "lineage",         // { sessionId } -> 同じ根を持つセッション群（分岐の筋を描く材料）

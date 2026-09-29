@@ -1,6 +1,6 @@
 // playwright-cli run-code --filename=tests/browser/tool-bundle.cjs
 // fake バックエンドの `steps:` 台本（core/backends/fake.mjs）で、ツールのまとまり（web/tool-bundle.mjs）を実ブラウザーで確かめる:
-// 入れ替わり（薄い行・件数）・遡り（↑↓・Esc）・閉じた見出し（✕ n・n ファイルを変更）・承認待ちがまとまりの最新の行の場所に出て、決着したら行に戻る。
+// 入れ替わり（薄い行・件数）・遡り（↑↓・Esc）・閉じた見出し（「ツール実行 N」・✕ 失敗 N）・承認待ちがまとまりの最新の行の場所に出て、決着したら行に戻る。
 // 認証済みで、案内を閉じた fake の会話（新しいセッション）から始める。
 async page => {
   const later = page.getByRole('button', { name: 'あとで', exact: true });
@@ -41,13 +41,14 @@ async page => {
   const note = await page.locator('.bundle .latest .tc-note, .bundle .hi .tc-note').filter({ hasText: '許可した' }).count();
   if (!note) throw Error('allowed note missing');
 
-  // ターンが終わったら見出しだけ。失敗は見出しの太字の「✕ 1」、変更は補足
+  // ターンが終わったら見出しだけ。「ツール実行 N」と、失敗は右端の太字の「✕ 失敗 1」（内訳・変更数・経過は出さない）
   await page.waitForFunction(() => !document.querySelector('.bundle .latest .tc') && document.querySelector('.bundle .rhead .xm')?.textContent.includes('1'));
   const closed = await page.evaluate(() => {
     const b = document.querySelector('.bundle');
-    return { note: b.querySelector('.rhead .nl')?.textContent, xm: b.querySelector('.rhead .xm')?.textContent, shown: b.querySelectorAll('.hi:not(.hid)').length, label: b.querySelector('.rhead').getAttribute('aria-label'), n: b.dataset.n };
+    const h = b.querySelector('.rhead');
+    return { head: h.querySelector('.verb').textContent, extra: h.querySelectorAll('.note, .nl, .ns').length, el: h.querySelector('.el').textContent, xm: h.querySelector('.xm')?.textContent, shown: b.querySelectorAll('.hi:not(.hid)').length, label: h.getAttribute('aria-label'), n: b.dataset.n };
   });
-  if (closed.n !== '4' || closed.shown !== 0 || !closed.note?.includes('1') || closed.xm !== '✕ 1') throw Error('closed shape: ' + JSON.stringify(closed));
+  if (closed.n !== '4' || closed.shown !== 0 || closed.head !== 'ツール実行4' || closed.extra || closed.el || closed.xm !== '✕ 失敗 1' || !closed.label.startsWith('ツール実行 4 件・失敗 1')) throw Error('closed shape: ' + JSON.stringify(closed));
 
   // 遡る: ↑ で 1 件ずつ、Esc で閉じる（見出しにフォーカス）
   await page.locator('.bundle .rhead').focus();

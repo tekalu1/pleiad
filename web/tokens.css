@@ -75,8 +75,11 @@
   --r-s:8px;--r-m:14px;--r-l:20px;--r-pill:999px;
 
   /* -- 文字 -- */
-  --font:system-ui,"Yu Gothic UI","Segoe UI",sans-serif;
-  --font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace;
+  /* 欧文の書体 → 日本語の書体の順。欧文は Segoe UI（Windows）・San Francisco（macOS）、日本語は Yu Gothic UI・Hiragino Sans。
+     system-ui を先頭にすると日本語の Windows では欧文まで Yu Gothic UI で描かれ、バックスラッシュが「¥」の字形になる */
+  --font:"Segoe UI",-apple-system,BlinkMacSystemFont,"Yu Gothic UI","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  /* 等幅はコードそのものだけ。後ろに日本語の書体を足し、日本語が MS Gothic に落ちないようにする */
+  --font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,"Yu Gothic UI","Hiragino Sans","Noto Sans JP",monospace;
   --fs-xs:11px;--fs-s:12px;--fs:14px;--fs-l:15px;--fs-xl:18px;
   --lh:1.6;
 

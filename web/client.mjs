@@ -14,6 +14,9 @@ import { linkChoices, showLinkSheet, hideLinkSheet, linkSheetOpen } from './link
 import { createRemoteBrowser } from './remote-browser.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
+import { setupMessagePeek } from './message-peek.mjs';
+import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog } from './message-actions.mjs';
+import { mountFold } from './fold.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
 import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
@@ -72,6 +75,8 @@ import { setupSessionContext, chipText } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
 import { renderOutbox } from './outbox.mjs';
 import { visibleTaskInstructions } from './task-instructions.mjs';
+import { openChangeLog } from './change-log.mjs';
+import { mergeToolTurns } from './tool-turns.mjs';
 import { streamMessages } from './stream-messages.mjs';
 import { createComposerWait } from './composer-wait.mjs';
 import { createConnectionStatus } from './connection-status.mjs';
@@ -119,6 +124,7 @@ const token = new URL(location.href).searchParams.get("token") ?? "";
 const $ = (id) => document.getElementById(id);
 const log = $("log");
 const thread = $("thread");
+setupMessagePeek(thread);   // タッチ: 発言を押すと時刻を 4 秒出す
 // 静的な HTML の文言（data-i18n*）を今の言語で埋める。以降の処理が書き換える文言より先に済ませる
 applyDom(document);
 // 「サイドバーを開く」の名前は件数を入れて書く（web/open-sidebar-mark.mjs）ので、HTML の data-i18n には置かない。一覧が届くまでは件数なし
@@ -453,6 +459,15 @@ function sys(html) {
 }
 
 /**
+ * 操作の失敗・知らせは会話の流れに入れない（ADR 0067）。会話の中の出来事の行（sys）は、その会話のターンの失敗・履歴を読めない・
+ * 圧縮と接続の問題のように、会話そのものの出来事だけにする。
+ * 脇の行・メニューからの操作は脇の帯（side.showUndo。失敗は再試行の無い形）へ、入力欄・メッセージ・タイトルからの操作は入力欄の上のエラー行（#settingsError）へ、
+ * ログインは設定の面（#setupError）へ出す
+ */
+const sideNote = (text, { failed = true } = {}) => side.showUndo(text, null, { retry: failed });
+const composerError = (text) => { $("settingsError").textContent = text; };
+
+/**
  * 訳文を sys() に渡す HTML にする。訳文も差し込みの値もエスケープし、bold に挙げた差し込みだけ <b> で包む。
  * 訳文と HTML を混ぜないため、差し込みは印に置き換えて訳してから、エスケープした値に戻す
  */
@@ -468,15 +483,6 @@ function tHtml(key, params = {}, bold = []) {
 }
 /** sys(html.t('キー', 差し込み, 太字にする差し込み))。.t の形にしておくと tests/lint-i18n.mjs がキーを拾う */
 const html = { t: tHtml };
-
-/**
- * 会話の設定が変わった一行（状態・タイトル・承認モード・モデル・作業ディレクトリ）。
- * 値だけ太字。誰が（by）と理由（reason。保存済みのデータ）は届いたまま出す
- */
-function changeLine(what, value, ev, { reason, next } = {}) {
-  // i18n-dynamic: chat.change.
-  sys(html.t(`chat.change.${what}${reason ? "Reason" : next ? "Next" : ""}`, { value, by: ev.by, reason }, ["value"]));
-}
 
 /** markedHead() に渡す訳文の差し込み。{{mark}} の位置を示す */
 const MARK = "\u{E000}";
@@ -602,47 +608,135 @@ function spine() {
 
 // ---------------------------------------------------------------- 発言
 
-/** 「⑂ ここから分岐」。発言の uuid が分かってから見える */
-function forkButton(m) {
-  const actions = el('div', 'message-actions');
-  actions.hidden = true;
-  const b = el("button", "btn forkbtn", t("chat.message.fork"));
-  b.type = "button";
-  b.onclick = () => forkFrom(m);
-  actions.append(b);
-  if (m.dataset.role === 'user') {
-    for (const [label, className, edit] of [[t('chat.message.editResend'), 'editbtn', true], [t('chat.message.resend'), 'resendbtn', false]]) {
-      const action = el('button', `btn ${className}`, label);
-      action.type = 'button';
-      action.onclick = async () => {
-        if (state.busy || m.querySelector('.message-editor')) return;
-        const source = state.current;
-        action.disabled = true;
-        try {
-          const data = await cmd('loadSession', { sessionId: source });
-          if (state.current !== source || !m.isConnected || state.busy) return;
-          const index = data.messages.findIndex(row => row.uuid === m.dataset.uuid);
-          if (index < 0) throw new Error(t('chat.message.notSaved'));
-          const attached = data.presents.filter(p => attachmentMessageIndex(data.messages, p) === index)
-            // 名前は captionParams.name（新しい記録）。無い過去の記録は保存された見出し「添付: 名前」から取る
-            .map(p => ({ path: p.path, name: p.captionParams?.name || p.caption?.replace(/^添付:\s*/, '') || p.path.split(/[\\/]/).at(-1),
-              mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri,
-              // 出どころと大きさも引き継ぐ（入力欄の一覧が出す）
-              ...(p.origin === 'host' || p.origin === 'device' ? { from: p.origin } : {}), ...(Number.isFinite(p.size) ? { size: p.size } : {}) }));
-          // 印（[添付] / [Attachment]）は本文の位置のまま編集欄へ戻す。文中の位置を保つ（編集で印を消した添付は送らない。keptAttachments）
-          const draft = { text: data.messages[index].text ?? '', attached, index };
-          if (edit) editMessage(m, draft);
-          else await forkFrom(m, { draft });
-        } catch (e) { sys(html.t('chat.message.resendPrepareFailed', { error: e.message })); }
-        finally { action.disabled = false; }
-      };
-      actions.append(action);
-    }
-  }
-  m.append(actions);
-  return b;
+// 発言の操作（10）。発言者の行のコピーと ⋯、⋯ と右クリック（タッチは長押し）が開く同じメニュー、キーボード（Shift+F10・メニューキー）。
+// コピーは自分の発言なら原文、エージェントの返答なら次の自分の発言までの本文の Markdown（ツールは含めない）。
+// 「ここから分岐」は、返答では ⋯ からその返答の終わりから、続きの発言を右クリックしたときはその発言から。
+
+/** 発言者の行の操作を付ける（コピー・⋯）。ボタンは whoLine が置いてある。読むだけの筋（委譲の詳細）では stripActions で外す */
+function wireActions(m) {
+  const who = m.querySelector(':scope > .who');
+  const copy = who?.querySelector('.who-copy'), more = who?.querySelector('.who-more');
+  if (copy) copy.onclick = (e) => { e.stopPropagation(); copyToClipboard(messageCopyText(m), copy); };
+  if (more) more.onclick = (e) => { e.stopPropagation(); openMessageMenu({ m, part: false }, { via: more }); };
 }
 
+/** 読むだけの筋（委譲の詳細）の発言から、操作を外す */
+function stripActions(m) {
+  const who = m.querySelector(':scope > .who');
+  who?.querySelectorAll('.who-btn').forEach(b => b.remove());
+  who?.classList.remove('acts');
+  return m;
+}
+
+/** 返答の頭（見出しの行のある発言）。続きの発言から前へ辿る */
+function replyHead(m) {
+  if (!m.classList.contains('cont')) return m;
+  for (let w = m.closest('.mw')?.previousElementSibling; w; w = w.previousElementSibling) {
+    const x = w.querySelector?.(':scope .m.ai');
+    if (x && !x.classList.contains('cont')) return x;
+    if (w.querySelector?.(':scope .m.user:not(.cmd)')) break;
+  }
+  return m;
+}
+
+/** 返答（頭から、次の自分の発言・次の返答の前まで）の発言 */
+function replyMessages(head) {
+  const out = [head];
+  for (let w = head.closest('.mw')?.nextElementSibling; w; w = w.nextElementSibling) {
+    const x = w.querySelector?.(':scope .m[data-role]');
+    if (!x) continue;
+    if (x.dataset.role === 'user' && !x.classList.contains('cmd')) break;
+    if (x.classList.contains('ai')) { if (!x.classList.contains('cont')) break; out.push(x); }
+  }
+  return out;
+}
+
+/** コピーする字。自分の発言は原文、返答は本文の Markdown をつなげたもの（ツール・考え中は含めない） */
+function messageCopyText(m) {
+  if (m.dataset.role === 'user') return m.classList.contains('cmd') ? (m.commandText?.() ?? '') : userRaw(m);
+  return replyMessages(replyHead(m))
+    .flatMap(x => [...x.querySelectorAll(':scope > .body')].map(b => b.dataset.raw ?? b.textContent ?? ''))
+    .filter(Boolean).join('\n\n');
+}
+
+/** ⋯ から返答の終わりへ分岐するときの発言。uuid のある最後の発言（走っている最中の末尾は uuid がまだ無い） */
+function forkAtReplyEnd(head) {
+  return replyMessages(head).reverse().find(x => x.dataset.uuid) ?? null;
+}
+
+async function resendFrom(m, edit) {
+  if (state.busy || m.querySelector('.message-editor') || m.dataset.resending) return;
+  const source = state.current;
+  m.dataset.resending = '1';
+  try {
+    const data = await cmd('loadSession', { sessionId: source });
+    if (state.current !== source || !m.isConnected || state.busy) return;
+    const index = data.messages.findIndex(row => row.uuid === m.dataset.uuid);
+    if (index < 0) throw new Error(t('chat.message.notSaved'));
+    const attached = data.presents.filter(p => attachmentMessageIndex(data.messages, p) === index)
+      // 名前は captionParams.name（新しい記録）。無い過去の記録は保存された見出し「添付: 名前」から取る
+      .map(p => ({ path: p.path, name: p.captionParams?.name || p.caption?.replace(/^添付:\s*/, '') || p.path.split(/[\\/]/).at(-1),
+        mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri,
+        // 出どころと大きさも引き継ぐ（入力欄の一覧が出す）
+        ...(p.origin === 'host' || p.origin === 'device' ? { from: p.origin } : {}), ...(Number.isFinite(p.size) ? { size: p.size } : {}) }));
+    // 印（[添付] / [Attachment]）は本文の位置のまま編集欄へ戻す。文中の位置を保つ（編集で印を消した添付は送らない。keptAttachments）
+    const draft = { text: data.messages[index].text ?? '', attached, index };
+    if (edit) editMessage(m, draft);
+    else await forkFrom(m, { draft });
+  } catch (e) { composerError(t('chat.message.resendPrepareFailed', { error: e.message })); }
+  finally { delete m.dataset.resending; }
+}
+
+/**
+ * 発言のメニューを開く。hit.m は触れた発言、hit.part は続きの発言（見出しの行が無い）を右クリックしたとき。
+ * at: { via } ⋯ のボタンの下に右を揃えて出す / { x, y } 押した位置 / { key: true } キーボード（⋯ の下）
+ */
+function openMessageMenu({ m, part = false }, at = {}) {
+  const head = replyHead(m);
+  const owner = part ? head : m;
+  const more = (part ? head : m).querySelector(':scope > .who .who-more');
+  const user = m.dataset.role === 'user';
+  const kind = user ? (m.classList.contains('cmd') ? 'cmd' : 'user') : 'ai';
+  const target = kind === 'ai' && !part ? forkAtReplyEnd(m) : (m.dataset.uuid ? m : null);
+  const canFork = Boolean(target) && capsOf(activeBackendId()).fork !== false;
+  const command = kind === 'cmd' ? m.shellCommand?.() : null;
+  const plan = messageMenuPlan({ kind, part, canFork, shell: Boolean(command), source: kind === 'user', editable: Boolean(m.dataset.uuid) });
+  const busy = state.busy;
+  const run = {
+    copy: () => copyToClipboard(messageCopyText(m), owner.querySelector(':scope > .who .who-copy')),
+    toComposer: () => copyShellToComposer(command),
+    fork: () => forkFrom(target, { pending: more }),
+    edit: () => resendFrom(m, true),
+    resend: () => resendFrom(m, false),
+    source: () => openSourceDialog({ text: userRaw(m), at: m.querySelector(':scope > .who .when')?.textContent ?? '', opener: more }),
+  };
+  const items = plan.map(p => (p.sep ? { sep: true } : { label: p.label, disabled: busy && ['fork', 'edit', 'resend'].includes(p.key), onClick: run[p.key] }));
+  // ホバーが無い端末は、時刻を出す手段が押すことしか無いので、メニューの先頭に置く
+  const when = m.querySelector(':scope > .who .when')?.textContent ?? '';
+  const title = hoverless() && when
+    ? (user ? t('chat.message.sentAt', { time: when }) : `${when} · ${m.querySelector(':scope > .who > span:not(.row-be):not(.when)')?.textContent ?? ''}`)
+    : undefined;
+  let x = at.x, y = at.y, alignRight = false;
+  if (at.via || at.key || (!x && !y)) {
+    const r = (more ?? m).getBoundingClientRect();
+    x = more ? r.right : r.left + 8; y = r.bottom + 4; alignRight = Boolean(more);
+  }
+  owner.classList.add('menu-open');
+  more?.setAttribute('aria-expanded', 'true');
+  showMenu(x, y, items, title, { alignRight, onClose: () => {
+    owner.classList.remove('menu-open');
+    more?.setAttribute('aria-expanded', 'false');
+  } });
+}
+
+setupMessageMenu(thread, {
+  resolve: (target) => {
+    const m = target.closest('.m[data-role]');
+    if (!m || m.classList.contains('editing')) return null;
+    return { m, part: m.classList.contains('ai') && m.classList.contains('cont') };
+  },
+  open: (hit, at) => openMessageMenu(hit, at),
+});
 /** 編集で本文から消した印の添付は、再送しない（元の本文に印があって、編集後に無くなったものだけを外す） */
 function keptAttachments(attached, before, after) {
   const marks = (text) => new Set(String(text ?? '').split(/\r?\n/).map(line => ATTACHMENT_LINE.exec(line.trim())?.[1]).filter(Boolean).map(normalizeAttachmentPath));
@@ -667,7 +761,7 @@ function editMessage(m, draft) {
   const close = () => {
     if (state.busy) return;
     editor.remove(); body.hidden = false; m.classList.remove('editing');
-    m.querySelector('.editbtn')?.focus(); relayoutBranches();
+    m.querySelector(':scope > .who .who-more')?.focus(); relayoutBranches();
   };
   cancel.onclick = close;
   const update = () => {
@@ -696,16 +790,28 @@ function editMessage(m, draft) {
 
 function setUuid(m, uuid) {
   if (!uuid) return;
-  m.dataset.uuid = uuid;
-  if (capsOf(activeBackendId()).fork !== false) {
-    const b = m.querySelector(":scope > .message-actions");
-    if (b) b.hidden = false;
-  }
+  m.dataset.uuid = uuid;   // ⋯ のメニューの「ここから分岐」は、uuid が分かった発言だけに出る（openMessageMenu）
 }
 
-function whoLine(who, at) {
+/**
+ * 発言者の行。「[ロゴ] 名前 …… 時刻」。ロゴ（エージェントの発言だけ。「あなた」には付けない）は名前の左に置き、読み上げには出さない。
+ * 時刻は触れている・焦点がある間だけ見える（style.css。場所は取ったままなので並びは動かない）。右端の操作の列（24px）は ⋯、
+ * 時刻の左にコピー（actions: false は操作を持たない行。wireActions が押したときの動きを付ける）
+ */
+function whoLine(who, at, { backend, actions = true } = {}) {
   const w = el("div", "who");
-  w.append(el("span", null, who), el("span", "when", hhmm(at)));
+  if (backend) {
+    const logo = backendLogo(backend, who);
+    logo.removeAttribute("title");
+    logo.setAttribute("aria-hidden", "true");
+    w.append(logo);
+  }
+  w.append(el("span", null, who));
+  if (actions) {
+    const { copy, more } = actionButtons();
+    w.classList.add("acts");
+    w.append(copy, el("span", "when", hhmm(at)), more);
+  } else w.append(el("span", "when", hhmm(at)));
   return w;
 }
 
@@ -720,7 +826,7 @@ function userMsg(text, { uuid, at, presents = [], markdown = true } = {}) {
   m.append(whoLine(t("chat.message.you"), at));
   const body = el("div", "body");
   m.append(body);
-  forkButton(m);
+  wireActions(m);
   paintUser(m, text, presents, { markdown });
   setUuid(m, uuid);
   return m;
@@ -734,22 +840,38 @@ function paintUser(m, text, presents = [], { markdown = m.querySelector(":scope 
   const body = m.querySelector(":scope > .body");
   m.attached = presents;
   paintUserBody(body, text, presents, { markdown });
+  if (markdown) paintUserTools(m);
+  else m.querySelector(":scope > .msg-tools")?.remove();
+}
+
+/** 発言の下の「📎 N ▾」。結び付いた添付（m.attached）から作り直す（本文は触らない） */
+function paintUserTools(m) {
   m.querySelector(":scope > .msg-tools")?.remove();
-  m.querySelector(":scope > .msg-source")?.remove();
-  if (!markdown) return;
-  const tools = userTools({ raw: text, presents,
+  const tools = userTools({ presents: m.attached ?? [],
     openItem: (item, present) => {
       const src = present && attachmentImageSrc(present);
       if (src) openLightbox(src, item.name, item.path);
       else if (item.path) filePreview.open({ path: item.path, line: null }, null);
     },
     copyPath: (path) => copyPathText(path) });
-  if (tools) body.after(tools.row, tools.source);
+  if (tools) m.querySelector(":scope > .body")?.after(tools);
 }
 
 /**
- * Pleiad の完了通知の 1 行。✓/✕・「委譲の結果」・依頼の題・委譲先・届いた時刻・「開く」。開くと結果の本文だけで、
- * エージェントに渡した全文は奥の折りたたみ。読めない形（まとめ通知・古い形）や本文が無いときは、従来の「再開しました」の 1 行
+ * 送った直後の吹き出しに渡す仮の添付（入力欄の添付から。web/attachment-frame.mjs）。パスの字を出さず、画像は枠から始める。
+ * 後から同じパスの present が届いたら、描き直さずに中身だけ差し替える（present のハンドラ）
+ */
+const provisionalPresent = (a) => ({ by: 'human', provisional: true, kind: a.kind === 'image' ? 'image' : 'file', path: a.path,
+  captionParams: { name: a.name }, mime: a.mime ?? '',
+  ...(a.from === 'host' || a.from === 'device' ? { origin: a.from } : {}), ...(Number.isFinite(a.size) ? { size: a.size } : {}),
+  ...(a.width > 0 && a.height > 0 ? { width: a.width, height: a.height } : {}) });
+/** 送ってから吹き出しができるまでの仮の添付（messageId で引く。行を作るときに 1 度だけ使う） */
+const provisionalByMessage = new Map();
+
+/**
+ * Pleiad の完了通知の 1 行。「✓（失敗は ✕）・委譲先のロゴ・依頼の題 …… 届いた時刻」の並びで、字は出さない（委譲のカードと同じ並び。ADR 0067）。
+ * 「委譲の結果（完了）」は読み上げ名と title、委譲先の名前はロゴの title が持つ。時刻は触れたときだけ。子の会話へは矢印のアイコン。
+ * 開くと結果の本文だけで、エージェントに渡した全文は奥の折りたたみ。読めない形（まとめ通知・古い形）や本文が無いときは、従来の「再開しました」の 1 行
  */
 function taskNoticeNode(text, at = '') {
   const notice = parseTaskNotice(text);
@@ -759,21 +881,21 @@ function taskNoticeNode(text, at = '') {
   const title = task ? backgroundTitle(task) : [...first].slice(0, 40).join('');
   const backend = task?.backend || notice.backend;
   const failed = notice.status === 'failed';
-  const mark = stillMark(notice.status === 'completed' ? 'done' : failed ? 'fail' : 'stop', TASK_STATUS[notice.status] ?? notice.status);
-  const m = el('div', 'm sys task-notice');
+  const resultName = t('chat.sys.taskResultState', { state: TASK_STATUS[notice.status] ?? notice.status });
+  const mark = stillMark(notice.status === 'completed' ? 'done' : failed ? 'fail' : 'stop', resultName);
+  const m = el('div', 'm sys task-notice' + (failed ? ' failed' : ''));
   const d = el('details', 'sys-fold');
   const s = el('summary');
-  const who = el('span', 'tn-who');
-  if (backend) who.append(routingLogo(backend), el('span', 'tn-name', labelOf(backend)));
-  if (at) who.append(el('span', 't', at));
-  s.append(mark, el('span', 'tn-verb', t('chat.sys.taskResult')), el('span', 'tn-title', title), who);
-  if (task) {
-    const open = el('button', 'btn tc-open', t('dialog.work.open'));
-    open.type = 'button';
-    open.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openWork(`t:${task.taskId}`); };
-    s.append(open);
-  }
-  s.append(chevron());
+  s.setAttribute('aria-label', `${resultName}: ${title}`);
+  const verb = el('span', 'tn-verb');
+  verb.append(mark);
+  const res = el('span', 'tn-res');
+  res.append(el('span', 'tc-go-slot'));   // 行の外に重ねた矢印（.tc-go）の場所
+  if (at) res.append(el('span', 't', at));
+  const logo = backend ? routingLogo(backend) : null;
+  logo?.setAttribute('aria-hidden', 'true');
+  s.append(verb, ...(logo ? [logo] : []), el('span', 'tn-title', title), res, chevron());
+  watchValueWidth(res);
   // 字は書いたとおり。URL だけリンクにする（sysFold と同じ。パスは字のまま）
   const linked = (source) => { const box = el('div', 'sys-body'); box.innerHTML = plainTextHtml(source, { paths: false }); return box; };
   const body = linked(notice.result || text);
@@ -781,6 +903,7 @@ function taskNoticeNode(text, at = '') {
   full.append(el('summary', null, t('chat.sys.taskFull')), linked(text));
   d.append(s, body, full);
   m.append(d);
+  if (task) m.append(goButton(t('timeline.delegate.openChild'), () => openWork(`t:${task.taskId}`)));
   return m;
 }
 
@@ -817,26 +940,16 @@ function commandMsg(m) {
     who.firstChild.append(' · ', el('span', 'handed', label));
     if (m.pending && m.runId && capsOf(m.backend ?? activeBackendId()).shell === 'host') who.firstChild.append(shellSkipButton(m));
   }
+  // 操作は ⋯ のメニュー（コピー・`!` は「入力欄に写す」・ここから分岐）。走らせ直した行の内容は、その時点の行から読む
+  node.commandText = () => (m.runId ? shellRows.get(m.runId)?.m : null)?.command ?? m.command ?? '';
+  node.shellCommand = () => { const x = (m.runId ? shellRows.get(m.runId)?.m : null) ?? m; return x.kind === 'shell' && x.command && !x.running ? x.command : null; };
   const parts = commandParts(m, { onStop: m.runId ? () => cmd('stopShell', { runId: m.runId }).catch(() => {}) : null });
   // 0 以外の終了コードが分かるときだけ、行の面を一段上げる（ツールの失敗と同じ語彙。design-system「システム側のメッセージ」）
   if (shellFailed(m)) { const box = el('div', 'cmd-box'); box.append(...parts); node.append(who, box); }
   else node.append(who, ...parts);
   if (m.runId) { node.dataset.runId = m.runId; shellRows.set(m.runId, { m, node }); if (m.running) syncShellTicker(); }
-  const actions = el('div', 'message-actions');
-  if (m.kind === 'shell' && m.command && !m.running) {
-    const copy = el('button', 'btn copybtn', t('chat.system.copyToComposer'));
-    copy.type = 'button';
-    copy.onclick = () => copyShellToComposer(m.command);
-    actions.append(copy);
-  }
+  wireActions(node);
   if (m.uuid) node.dataset.uuid = m.uuid;
-  if (m.uuid && capsOf(activeBackendId()).fork !== false) {
-    const fork = el('button', 'btn forkbtn', t('chat.message.fork'));
-    fork.type = 'button';
-    fork.onclick = () => forkFrom(node);
-    actions.append(fork);
-  }
-  if (actions.childElementCount) node.append(actions);
   return node;
 }
 
@@ -1022,8 +1135,9 @@ function aiMsg({ uuid, at, cont, backend } = {}) {
   const m = el("div", "m ai" + (cont ? " cont" : ""));
   m.dataset.role = "assistant";
   if (at) m.dataset.at = at;
-  m.append(whoLine(labelOf(backend ?? activeBackendId()) || "AI", at));
-  forkButton(m);
+  const be = backend ?? activeBackendId();
+  m.append(whoLine(labelOf(be) || "AI", at, { backend: be }));
+  wireActions(m);
   setUuid(m, uuid);
   return m;
 }
@@ -1810,7 +1924,9 @@ function markDelivery(row, kind) {
 function ensureMessageRow(messageId, text, at) {
   let row = messageRow(messageId);
   if (!row) {
-    row = append(userMsg(text, { at }), `live:${++liveSeq}`);
+    const presents = provisionalByMessage.get(messageId) ?? [];
+    provisionalByMessage.delete(messageId);
+    row = append(userMsg(text, { at, presents }), `live:${++liveSeq}`);
     row.dataset.messageId = messageId;
   }
   if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
@@ -1960,7 +2076,8 @@ function onEvent(ev, replay = false) {
       if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
       row.dataset.messageStarted = '1';
       const userRow = row.querySelector('.m.user');
-      if (userRow?.querySelector(':scope > .body')) paintUser(userRow, ev.text, userRow.attached ?? []);
+      // 本文が同じなら描き直さない（送った直後の画像の枠を、読み込みの途中でやり直さない）
+      if (userRow?.querySelector(':scope > .body') && userRaw(userRow) !== String(ev.text ?? '')) paintUser(userRow, ev.text, userRow.attached ?? []);
       if (ev.at) { row.querySelector('.m').dataset.at = ev.at; row.querySelector('.who .when').textContent = hhmm(ev.at); }
       // 放置中の圧縮で末尾に付いた区切りは、この発言の前へ置き直す（at で並べ直す）。
       // 区切りがすべてこの発言より前にあるときは作り直さない。古い区切りを最新の発言の前へ動かしていた不具合の再発を防ぐ
@@ -1973,7 +2090,6 @@ function onEvent(ev, replay = false) {
       if (ev.pending && ev.messageId && !confirmed) markDelivery(row, ev.initial ? 'sending' : 'pending');
       else markDelivery(row, 'sent');
       syncOutboxRows(outboxes.get(state.current) ?? []);
-      paintContextLine();      // 最初の発言が出てから置く（記録は発言より先に届く）
       return;
     }
     case 'userMessage.delivered': {
@@ -2003,9 +2119,8 @@ function onEvent(ev, replay = false) {
       break;
     case "nextSettings":
       return refresh().then(() => shellComposer.sync());
+    // エージェントの変更は会話に行を出さない（入力欄の「次のターンから」の行と引き継ぎの案内が持つ。ADR 0067）
     case "backend":
-      if (ev.applied) return refresh().then(() => shellComposer.sync());
-      sys(html.t("chat.sys.agentChanged", { agent: labelOf(ev.backend) }));
       return refresh().then(() => shellComposer.sync());
     case "text.delta":
       return appendText(String(ev.text ?? ""));
@@ -2107,7 +2222,9 @@ function onEvent(ev, replay = false) {
       // 中断の一行は保存された状態と同じ形で描く（paintInterruptLine が二重に出さない）
       if (ev.outcome === "aborted") paintInterruptLine({ at: ev.at ?? Date.now(), reason: ev.reason });
       else {
-        const node = sys(html.t("chat.sys.failed", { error: ev.error ?? t("chat.sys.unknownReason") }));
+        // ターンの失敗は会話の出来事として残す。「✕ 失敗」は強い字（ツールの失敗と同じ語）
+        const node = sys(html.t("chat.sys.failed", { head: t("timeline.result.failed"), error: ev.error ?? t("chat.sys.unknownReason") }, ["head"]));
+        node.classList.add("turn-failed");
         if (ev.sessionId) turnErrorRows.set(ev.sessionId, { messageId: ev.messageId, node });
         const failed = outboxes.get(ev.sessionId)?.find(m => m.status === 'failed' && m.id === ev.messageId);
         if (failed) syncOutboxRows(outboxes.get(ev.sessionId));
@@ -2126,7 +2243,13 @@ function onEvent(ev, replay = false) {
         const owner = index >= 0 && rows[index].querySelector(':scope > .body')?.classList.contains('md-user') ? rows[index] : null;
         if (owner) {
           const same = (a, b) => normalizeAttachmentPath(a) === normalizeAttachmentPath(b);
-          if (!(owner.attached ?? []).some(p => same(p.path, ev.path))) paintUser(owner, userRaw(owner), [...(owner.attached ?? []), ev]);
+          const known = (owner.attached ?? []).findIndex(p => same(p.path, ev.path));
+          if (known < 0) paintUser(owner, userRaw(owner), [...(owner.attached ?? []), ev]);
+          else if (owner.attached[known].provisional) {
+            // 送った直後に仮の添付で描いてある。描き直さず（画像を読み直さない）、持っている情報だけを本物に替える
+            owner.attached[known] = ev;
+            paintUserTools(owner);
+          }
           relayoutBranches();
           return owner.closest('.mw');
         }
@@ -2154,8 +2277,9 @@ function onEvent(ev, replay = false) {
       }
       return;
 
+    // 設定の変化（状態・タイトル・承認モード・モデル・作業ディレクトリ・AI の分岐・指示の読み直し）は会話に行を出さない。
+    // 結果は別の場所（脇の行・見出し・入力欄のチップと「次のターンから」・分岐の節）に出ている。誰がいつ変えたかは脇の行の「変更の記録」（ADR 0067）
     case "status":
-      if (ev.sessionId) changeLine("status", ev.status || t("session.status.none"), ev, { reason: ev.reason });
       return refresh();
 
     case 'statusProgress': {
@@ -2178,39 +2302,24 @@ function onEvent(ev, replay = false) {
       return refresh();
 
     case "title":
-      changeLine("title", ev.title, ev, { reason: ev.reason });
       return refresh().then(paintBranchNames);
 
     case "fork":
-      if (ev.by === "ai") sys(ev.reason ? html.t("chat.change.forkAiReason", { reason: ev.reason }) : html.t("chat.change.forkAi"));
       // 今の会話の家族が増えたなら系譜を読み直し、分岐点の印を置き直す
       return refresh().then(() => reloadBranches(ev));
 
     case "mode":
-      changeLine("mode", state.modes[ev.mode]?.label ?? ev.mode, ev, { next: !ev.live });
-      return refresh();
-
     case "model":
-      changeLine("model", ev.model ? state.models[ev.model]?.label ?? (state.endpoint ? compatModelText(ev.model) : ev.model) : state.models[""]?.resolvesTo ? t("chat.model.defaultResolved", { model: resolvedModel(state.models, "").label }) : t("chat.model.default"), ev, { next: !ev.live });
-      return refresh();
-
     case "cwd":
-      changeLine("cwd", ev.cwd, ev, { reason: ev.reason });
       return refresh();
 
     // 開始時と指示・Skills が変わっていた、またはコンテキストの設定が変わったので、送信時に自動で読み込み直した（core/server.mjs の runTurn）
     case 'contextRefreshed': {
-      const names = (ev.names ?? []).join(t("app.listSeparator"));
-      const rest = ev.count - (ev.names ?? []).length;
-      if (ev.settings) sys(html.t("chat.sys.contextSettingsApplied"));
-      else if (!names) sys(html.t("chat.sys.contextRefreshed"));
-      else if (rest > 0) sys(html.t("chat.sys.contextRefreshedNamesMore", { names, count: rest }));
-      else sys(html.t("chat.sys.contextRefreshedNames", { names }));
+      // 会話には行を出さない（タイトル行のプラグインの「変更あり」の点が消える。ADR 0067）。
       // 新しい記録はこの直後の contextUsage で届く。ここでは「変更あり」の印だけ先に消す
       if (state.contextInfo && state.contextInfoId === ev.sessionId) {
         state.contextInfo = { ...state.contextInfo, changed: { differs: false, paths: [], files: [] } };
         paintContextEntry();
-        paintContextLine();
         sessionContext.refresh();
       }
       return;
@@ -2225,7 +2334,6 @@ function onEvent(ev, replay = false) {
         plyParts: ev.plyParts ?? prev?.plyParts ?? null };
       state.contextInfoId = id;
       paintContextEntry();
-      paintContextLine();
       sessionContext.refresh();
       return;
     }
@@ -2514,7 +2622,7 @@ function authUrlBox(id) {
       try {
         await cmd("authSubmit", { backend: b.id, input: v });
       } catch (err) {
-        sys(html.t("settings.agents.loginFailed", { agent: b.label, error: err.message }));
+        $("setupError").textContent = t("settings.agents.loginFailed", { agent: b.label, error: err.message });
         send.disabled = false;
       }
     };
@@ -2534,7 +2642,7 @@ function authLogin(b) {
   onboarding.paint();
   let failure;
   cmd("authLogin", { backend: b.id })
-    .catch((e) => { failure = e; sys(html.t("settings.agents.loginFailed", { agent: b.label, error: e.message })); })
+    .catch((e) => { failure = e; })
     .finally(async () => {
       state.authUrl.delete(b.id);
       forgetVocab(b.id);
@@ -2547,7 +2655,7 @@ async function authLogout(b) {
   try {
     await cmd("authLogout", { backend: b.id });
   } catch (e) {
-    sys(html.t("settings.agents.logoutFailed", { agent: b.label, error: e.message }));
+    $("setupError").textContent = t("settings.agents.logoutFailed", { agent: b.label, error: e.message });
   }
   forgetVocab(b.id);
   await refreshAuth().catch(() => {});
@@ -2571,7 +2679,7 @@ function onAuthEvent(ev) {
     return append(row);
   }
   state.authUrl.delete(ev.backend);
-  if (ev.phase === "error") sys(html.t("settings.agents.loginFailed", { agent: name, error: ev.message ?? "" }));
+  if (ev.phase === "error") $("setupError").textContent = t("settings.agents.loginFailed", { agent: name, error: ev.message ?? "" });
   else sys(html.t("settings.agents.loginMessage", { agent: name, message: ev.message ?? t("settings.agents.loginDone") }));
   refreshAuth().catch(() => {});
 }
@@ -2799,10 +2907,7 @@ const folderUpload = canSendFolders() ? createFolderUpload({
   connected: () => ws?.readyState === WebSocket.OPEN,
   session: () => state.current ?? null,
   onDone: async (dest, sessionId, { makeCwd = true } = {}) => {
-    if (!makeCwd) {
-      sys(html.t("upload.sentNotice", { dest }, ["dest"]));
-      return "other";
-    }
+    if (!makeCwd) return "other";   // 送り先は送る面の「applied.other」が知らせる
     if (sessionId === (state.current ?? null)) {
       const unsent = !sessionId || state.sessions.find((s) => s.id === sessionId)?.unsent;
       applyCwd(dest);
@@ -2864,7 +2969,7 @@ const controls = setupComposerControls({
       modeWrite = modeWrite.catch(() => {}).then(() => sessionId
         ? cmd("setMode", { sessionId, mode: v, reasonKey: "manual" })
         : cmd("setPref", { key: "mode", value: v, backend }));
-      modeWrite.catch(e => sys(html.t("chat.sys.modeSaveFailed", { error: e.message })));
+      modeWrite.catch(e => composerError(t("chat.sys.modeSaveFailed", { error: e.message })));
     },
     // モデルの面を開いた。候補を裏で取り直し、変わっていたら描き直す
     openModel: () => revalidateVocab(state.shownBackend ?? activeBackendId()),
@@ -2899,7 +3004,7 @@ const side = createSide({
     setStatusOf(id, status);
   },
   onSetIcon: (status, icon) => cmd("setStatusIcon", { status, icon })
-    .catch((e) => sys(html.t("session.menu.iconFailed", { error: e.message }))),
+    .catch((e) => sideNote(t("session.menu.iconFailed", { error: e.message }))),
   onContext: (s, x, y) => rowMenu(s, x, y),
   onGroupContext: (st, x, y) => groupMenu(st, x, y),
   onFamilyContext: (root, members, x, y) => familyMenu(root, members, x, y),
@@ -3381,15 +3486,25 @@ function modelText(item) {
   return name && item.effort ? `${name} · ${item.effort}` : name;
 }
 
-/** 状態の一語。承認待ちは差し色（あなたを待っている、§1） */
+/**
+ * 状態の字。弧・印で足りる状態（実行中・待機中・完了・停止）は字にしない（読み上げ名・title は印が持つ）。
+ * 字を残すのは、人を待っている「承認待ち」（差し色）と「✕ 失敗」だけ（ADR 0067）
+ */
 function statusText(item) {
   if (item.group === 'command') return item.kindLabel;
-  if (item.source === 'task') return TASK_STATUS[item.taskStatus] ?? item.taskStatus ?? '';
-  return item.status ? t(`dialog.work.state.${item.status}`) : '';
+  if (item.waiting) return TASK_STATUS.waiting;
+  const failed = item.source === 'task' ? item.taskStatus === 'failed' : item.status === 'failed';
+  return failed ? t('timeline.result.failed') : '';
 }
-// i18n-dynamic: dialog.work.state.
 
-/** 経過時間（等幅）。走っている間は今まで、終わったら終わった時刻まで */
+/** 経過の形は 1 つ。`m:ss`、1 時間を越えたら `h:mm:ss`（会話の中のカード・一覧・詳細で同じ） */
+function clockText(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+    : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** 経過時間。走っている間は今まで（m:ss）、終わったら終わった時刻（今日は HH:MM） */
 function elapsedText(item) {
   if (!item.live) {
     const end = timeOf(item.endedAt);
@@ -3401,20 +3516,17 @@ function elapsedText(item) {
     return `${date.getMonth() + 1}/${date.getDate()}`;
   }
   const start = timeOf(item.startedAt);
-  if (!start) return '';
-  const s = Math.max(0, Math.round(((item.live ? Date.now() : timeOf(item.endedAt) || Date.now()) - start) / 1000));
-  return s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
-    : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  return start ? clockText(Date.now() - start) : '';
 }
 
+/** 行・詳細の頭の状態の印。字は出さないので、名前（読み上げ・title）は印が持つ。Pleiad タスクはタスクの状態の語（待機中・承認待ち…） */
 function markOf(item) {
-  if (item.waiting) {
-    const m = stateMark('running');
-    m?.classList.add('waiting');
-    if (m) m.setAttribute('aria-label', TASK_STATUS.waiting);
-    return m;
-  }
-  return stateMark(item.status);
+  const mark = item.waiting ? stateMark('running') : stateMark(item.status);
+  if (!mark) return mark;
+  if (item.waiting) mark.classList.add('waiting');
+  const name = item.waiting ? TASK_STATUS.waiting : item.source === 'task' ? TASK_STATUS[item.taskStatus] : '';
+  if (name) { mark.setAttribute('aria-label', name); mark.title = name; }
+  return mark;
 }
 
 function listRow(item) {
@@ -3427,17 +3539,15 @@ function listRow(item) {
   row.dataset.key = item.key;
   if (item.key === bg.selected) row.setAttribute('aria-current', 'true');
   row.append(markOf(item) ?? el('span', 'bg-nomark'));
-  row.append(el('span', `bg-row-title${item.group === 'command' ? ' mono' : ''}`, item.title));
-  row.append(el('span', 'bg-row-time mono', elapsedText(item)));
+  // 1 行目は「状態の印・ロゴ・題 …… 経過」（カード・完了通知と同じ並び。ADR 0067）。ロゴは題の前
+  const title = el('span', `bg-row-title${item.group === 'command' ? ' mono' : ''}`);
+  if (item.group === 'agent') title.append(backendLogo(item.backend, labelOf(item.backend)));
+  title.append(el('span', 'bg-row-name', item.title));
+  row.append(title);
+  row.append(el('span', 'bg-row-time', elapsedText(item)));
   const meta = el('span', 'bg-row-meta');
   if (item.group === 'agent') {
-    // 委譲先を自動で選んだタスクは、モデル名の前に「自動」（docs/design-system.md「バックグラウンド」）
-    if (isAutoRouting(item.routing)) {
-      const auto = el('span', 'bg-auto', t('routing.auto'));
-      auto.title = t('routing.autoTitle');
-      meta.append(auto);
-    }
-    meta.append(backendLogo(item.backend, labelOf(item.backend)));
+    // 2 行目はモデル名だけ。委譲先を自動で選んだかは詳細の「委譲先」に書く
     const model = modelText(item);
     if (model) meta.append(el('span', 'bg-model', model));
     const status = statusText(item);
@@ -3547,13 +3657,17 @@ function paintDetailHead(item) {
   const status = statusText(item);
   if (status) meta.append(el('span', item.waiting ? 'bg-waiting' : null, status));
   const elapsed = elapsedText(item);
-  if (elapsed) meta.append(el('span', 'mono', elapsed));
+  if (elapsed) meta.append(el('span', 'bg-elapsed', elapsed));
   title.append(h, meta);
   head.append(back, title);
   const actions = el('div', 'bg-dt-actions');
   if (item.source === 'task') {
-    const open = el('button', 'btn', t('dialog.work.openChat'));
+    // 子の会話へ移るのは矢印のアイコン（名前は title・読み上げ）。「停止」は結果が重いので字のまま
+    const open = el('button', 'btn btn-icon bg-open');
     open.type = 'button';
+    open.title = t('dialog.work.openChat');
+    open.setAttribute('aria-label', t('dialog.work.openChat'));
+    open.append(icon(GO_PATH));
     open.onclick = () => { $('workDialog').close(); select(item.childId); };
     actions.append(open);
     if (['queued', 'running'].includes(item.taskStatus) || item.waiting) {
@@ -3675,75 +3789,72 @@ async function taskThread(item) {
 
 /**
  * 読むだけの筋。メインパネルの paintHistory と同じ部品（wrap・userMsg・aiMsg・考えた内容・ツールカード・画像）で、描く先だけを変える。
- * 分岐・編集・再送は出さない（この会話の発言ではない）。走っている子は末尾に稼働表示（弧と経過時間）を置く
+ * 分岐・編集・再送は出さない（この会話の発言ではない）。走っている子は末尾に稼働表示（弧だけ）を置く。
+ * 依頼元（親）は「あなた」と同じ扱いで、最初の「依頼」も追加の指示も自分の発言と同じ部品（Markdown・吹き出し・畳み方・時刻）で描き、
+ * 発言者の語だけ「依頼」「追加の指示」にする。まだ子に渡っていない追加の指示は、差し込み待ち（sending）ならメインパネルの作業中の送信と同じ状態の行、
+ * 待機（queued。途中送信できない子）なら末尾に時計の印、届かず終わったもの（dropped）は弱い字（ADR 0067。docs/design-system.md「バックグラウンド」）
  */
 function readonlyThread(messages, { presents = [], backend, prompt = null, live = false, item, instructions = [], sessionId = null } = {}) {
+  messages = mergeToolTurns(messages);
   const th = el('div', 'thread bg-thread');
   const spine = svgEl('svg', { class: 'spine', 'aria-hidden': 'true' });
   spine.append(svgEl('line', { x1: 20, y1: 0, x2: 20, y2: '100%' }));
   th.append(spine);
   const put = (node, key) => { const w = wrap(node, key); th.append(w); return w; };
-  const readOnly = (m) => { m.querySelector(':scope > .message-actions')?.remove(); return m; };
-  const requestNode = (text, at) => {
-    const m = readOnly(userMsg(text, { at, markdown: false }));
-    m.querySelector('.who > span').textContent = t('dialog.work.request');
-    const bubble = m.querySelector('.body');
-    if (bubble) {
-      bubble.classList.add('bg-request');
-      const text = el('span', 'bg-request-text');
-      text.append(...bubble.childNodes);
-      bubble.append(text);
-      const toggle = el('button', 'bg-request-toggle', t('dialog.work.showFull'));
-      toggle.type = 'button'; toggle.hidden = true;
-      toggle.onclick = () => {
-        const expanded = bubble.classList.toggle('expanded');
-        toggle.textContent = expanded ? t('dialog.work.collapse') : t('dialog.work.showFull');
-      };
-      bubble.after(toggle);
-      requestAnimationFrame(() => { toggle.hidden = text.scrollHeight <= text.clientHeight + 1; });
-    }
+  const parentMsg = (text, at, word) => {
+    const m = stripActions(userMsg(text, { at }));
+    m.querySelector('.who > span').textContent = word;
     return m;
   };
-  // i18n-dynamic: dialog.work.instructionState.
-  let instructionsPlaced = false;
-  const putInstructions = () => {
-    if (instructionsPlaced) return;
-    instructionsPlaced = true;
-    if (!instructions.length) return;
-    const list = el('div', 'outbox');
-    for (const instruction of instructions) {
-      const row = el('div', 'outbox-message');
-      row.dataset.instructionId = instruction.id;
-      row.append(el('div', 'outbox-text', instruction.text));
-      const label = t(`dialog.work.instructionState.${instruction.state}`);
-      row.append(el('div', 'outbox-status', `${fmt.dateTime(instruction.at)} · ${label}`));
-      list.append(row);
+  const requestNode = (text, at) => parentMsg(text, at, t('dialog.work.request'));
+  const followUp = (text, at) => parentMsg(text, at, t('dialog.work.instruction'));
+  const pendingNode = (instruction) => {
+    const m = followUp(instruction.text, instruction.at);
+    m.dataset.instructionId = instruction.id;
+    if (instruction.state === 'sending') {
+      const status = el('div', 'outbox-status outbox-status-mark');
+      status.append(runMark(t('chat.delivery.notYet')), t('chat.delivery.pending'));
+      m.append(status);
+    } else if (instruction.state === 'dropped') {
+      m.append(el('div', 'outbox-status', t('dialog.work.instructionDropped')));
+    } else {
+      // 待機中。字の代わりに、発言者の行の静止した時計の印（title・読み上げ名）
+      m.classList.add('queued');
+      const clock = el('span', 'who-queued');
+      clock.setAttribute('role', 'img');
+      clock.title = t('dialog.work.instructionQueued');
+      clock.setAttribute('aria-label', t('dialog.work.instructionQueued'));
+      clock.append(clockIcon());
+      m.querySelector('.who > span').after(clock);
     }
-    put(list, 'instructions');
+    const w = wrap(m, `instruction:${instruction.id}`);
+    if (instruction.state !== 'sending') w.classList.remove('node');
+    return w;
   };
-  let prevRole = null, last = null;
-  if (prompt && messages[0]?.role !== 'user') { last = put(requestNode(prompt, messages[0]?.at), 'request'); putInstructions(); prevRole = 'user'; }
+  let last = null, prevRole = null;
+  if (prompt && messages[0]?.role !== 'user') { last = put(requestNode(prompt, messages[0]?.at), 'request'); prevRole = 'user'; }
   const refs = presents.map(p => p.reference);
-  const request = (m) => requestNode(m.text, m.at);
   for (const it of buildItems(messages, presents)) {
     if (it.kind === 'present') { last = put(renderPresent(savedEvent(it.p)), `p:${it.pi}`); continue; }
-    const { node, role, system } = historyRow(it.m, { cont: prevRole === 'assistant', refs, prev: last, readonly: true, backend,
-      sessionId, user: it.mi === 0 ? request : null });
+    const { node, role } = historyRow(it.m, { cont: prevRole === 'assistant', refs, prev: last, readonly: true, backend, sessionId,
+      user: (m) => (it.mi === 0 ? requestNode : followUp)(m.text, m.at) });
     prevRole = role;
     if (node) last = put(node, `m:${it.mi}`);
-    if (it.mi === 0 && it.m.role === 'user' && !system) putInstructions();
   }
-  if (!instructionsPlaced) putInstructions();
+  // 途中送信で差し込み中の指示は、稼働表示の前（メインパネルの作業中の送信と同じ位置）。待機と届かなかったものは末尾
+  for (const instruction of instructions.filter(x => x.state === 'sending')) th.append(pendingNode(instruction));
   if (live) {
     const act = el('div', 'm activity');
-    act.append(el('span', 'txt', item?.waiting ? t('activity.waitingApproval') : t('activity.running')));
-    const elapsed = elapsedText(item ?? {});
-    if (elapsed) act.append(el('span', 'el', elapsed));
+    if (item?.waiting) act.append(el('span', 'txt', t('activity.waitingApproval')));
     const w = put(act, 'activity');
     const tip = el('span', 'activity-tip');
-    tip.append(runMark(t('activity.turnRunning')));
+    const mark = runMark(t('activity.turnRunning'));
+    mark.setAttribute('role', 'img');
+    mark.setAttribute('aria-label', t('activity.turnRunning'));
+    tip.append(mark);
     w.querySelector('.mw-gutter').append(tip);
   }
+  for (const instruction of instructions.filter(x => x.state !== 'sending')) th.append(pendingNode(instruction));
   if (th.childElementCount === 1) th.append(el('div', 'work-head', t('dialog.work.noMessages')));
   return th;
 }
@@ -3818,8 +3929,38 @@ async function stopBackground(button, sessionId, task) {
 const SUBAGENT_TOOLS = new Set(['Task', 'Agent', 'collabAgentToolCall', 'subAgentActivity']);
 const isDelegateTool = (name) => /(^|[_./])ply_delegate$/.test(String(name ?? ''));
 
+const GO_PATH = 'M9 5h10v10M19 5L6 18';
+function clockIcon() {
+  const svg = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+  svg.append(svgEl('circle', { cx: 12, cy: 12, r: 8 }), svgEl('path', { d: 'M12 8v4.5l3 2' }));
+  return svg;
+}
+
 /**
- * 委譲のカードに「開く」を足す。押すとバックグラウンドのダイアログでその子を選んだ状態になる。
+ * 子の会話へ移る矢印のボタン。押せる要素を入れ子にしないため、開閉の行（summary）の中には置かず、行の外に重ねる。
+ * 位置は「値の列」のすぐ左。値の列の幅は watchValueWidth が --res-w に入れる（web/tools.css）
+ */
+function goButton(label, onclick) {
+  const b = el('button', 'btn btn-icon tc-go');
+  b.type = 'button';
+  b.title = label;
+  b.setAttribute('aria-label', label);
+  b.append(icon(GO_PATH));
+  b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); onclick(b); };
+  return b;
+}
+const valueWidths = typeof ResizeObserver === 'function' ? new ResizeObserver((entries) => {
+  for (const { target } of entries) {
+    const host = target.closest('.tc, .task-notice');
+    if (!host?.isConnected) { valueWidths.unobserve(target); continue; }
+    host.style.setProperty('--res-w', `${target.getBoundingClientRect().width}px`);
+  }
+}) : null;
+/** 行の右端の値の列（.tc-res / .tn-res）の幅を、重ねた矢印の位置のために宿主へ伝える */
+const watchValueWidth = (res) => valueWidths?.observe(res);
+
+/**
+ * 委譲のカードに、子の会話へ移る矢印を足す。押すとバックグラウンドのダイアログでその子を選んだ状態になる。
  * Pleiad タスクは結果（taskId）が届いてから押せるようにする。メインの会話のカードだけに付ける
  */
 function linkDelegateCard(card, input = null, result = null) {
@@ -3829,7 +3970,7 @@ function linkDelegateCard(card, input = null, result = null) {
   if (said && card) card.dataset.bgTitle = String(said).slice(0, 120);
   // ply_delegate の見出しの主役は依頼の題（無ければ依頼の 1 行目）。バックグラウンドの一覧と同じ語
   if (name && isDelegateTool(name) && input) retitleDelegate(card, input.title || said);
-  if (!name || card.querySelector(':scope .tc-open')) return;
+  if (!name || card.querySelector(':scope > .tc-go')) return;
   if (isDelegateTool(name)) {
     const id = /ply-task-[0-9a-f-]{36}/.exec(card.querySelector('.tc-output, .tc-result, .tc-details-body')?.textContent ?? '')?.[0];
     if (!id) { decorateFailedDelegate(card, result); return; }
@@ -3838,11 +3979,10 @@ function linkDelegateCard(card, input = null, result = null) {
     const routing = delegateResult(result)?.routing;
     if (routing) cardRouting.set(card, routing);
   } else if (!SUBAGENT_TOOLS.has(name) || !card.dataset.id || capsOf(activeBackendId()).subagents === false) return;
-  const open = el('button', 'btn tc-open', t('dialog.work.open'));
-  open.type = 'button';
-  open.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openFromCard(card, open); };
-  const chev = card.querySelector('.tc-line > .tc-chev');
-  if (chev) chev.before(open); else card.querySelector('.tc-line')?.append(open);
+  card.classList.add('tc-delegate');
+  card.append(goButton(t('timeline.delegate.openChild'), (b) => openFromCard(card, b)));
+  const res = card.querySelector('.tc-res');
+  if (res) watchValueWidth(res);
   if (card.dataset.taskId) decorateDelegateCard(card);
 }
 
@@ -3861,8 +4001,8 @@ function retitleDelegate(card, title) {
 }
 
 // ---- 委譲カードの振り分けの理由（docs/design-system.md「委譲カード」）
-// 見出しを「委譲」にし、委譲先のロゴと 1 行（「種類 → 委譲先」）を足す。開くと「依頼」と内訳（web/delegation-routing-view.mjs）、
-// 入力・出力の JSON は折りたたみの奥。自動で選んだときだけ「自動」の印・判定・候補・やり直し（固定の委譲には持ち込まない）
+// 閉じたカードは 1 行（「委譲・ロゴ・題 …… 状態の印・経過」）。ロゴは委譲先。開くと「依頼」「委譲先」（自動・種類・難しさ → 行き先、飛ばした候補）と
+// 内訳（web/delegation-routing-view.mjs）、入力・出力の JSON は折りたたみの奥。自動で選んだときだけ「自動」の印・判定・候補・やり直し（固定の委譲には持ち込まない）
 
 /** カード -> 結果から読んだ routing（タスクの一覧から外れていても出せるように） */
 const cardRouting = new WeakMap();
@@ -3901,7 +4041,8 @@ function delegateDetail(card, routing) {
     ? routingDetail(routing, { names: routingNames, logo: routingLogo, onRetry: (root, button) => toggleRetry(card, root, button) })
     : pinnedDetail(routing, pinnedFacts(card, routing));
 }
-/** 開いた内訳の先頭の「依頼」。4 行で切り、はみ出すときだけ「全文を表示」（バックグラウンドの詳細と同じ） */
+const foldLabels = () => ({ open: t('dialog.work.showFull'), close: t('dialog.work.collapse') });
+/** 開いた内訳の先頭の「依頼」。4 行で畳み、はみ出すときだけシェブロン（自分の長い発言・バックグラウンドの詳細と同じ部品。web/fold.mjs） */
 function delegateRequest(card) {
   const task = cardJson(card, '.tc-input')?.task;
   if (typeof task !== 'string' || !task.trim()) return null;
@@ -3909,18 +4050,8 @@ function delegateRequest(card) {
   const text = el('div', 'rt-request-text');
   text.innerHTML = plainTextHtml(task.trim(), { paths: false });   // 字は書いたとおり。URL だけリンクにする
   box.append(el('div', 'rt-request-label', t('dialog.work.request')), text);
-  const toggle = el('button', 'bg-request-toggle', t('dialog.work.showFull'));
-  toggle.type = 'button'; toggle.hidden = true;
-  toggle.onclick = (e) => {
-    e.preventDefault();
-    const expanded = box.classList.toggle('expanded');
-    toggle.textContent = expanded ? t('dialog.work.collapse') : t('dialog.work.showFull');
-  };
-  box.append(toggle);
-  // 閉じたカードでは高さを測れないので、開いたときに測る
-  const measure = () => { if (!box.classList.contains('expanded')) toggle.hidden = text.scrollHeight <= text.clientHeight + 1; };
-  card.querySelector('.tc-details')?.addEventListener('toggle', measure);
-  requestAnimationFrame(measure);
+  // 閉じたカードでは高さが取れないので、開いて見えるようになってから測る（mountFold の measure）
+  mountFold(box, text, { measure: true, labels: foldLabels() });
   return box;
 }
 /** 入力・出力の JSON は「入力・出力（JSON）」の折りたたみの奥へ（消さずに残す）。結果の読み直しもこの中に入る（render.mjs の applyToolResult） */
@@ -3946,20 +4077,25 @@ function decorateDelegateCard(card) {
   const head = card.querySelector('.tc-head');
   const label = head.querySelector('.tc-label');
   label.textContent = t('timeline.tool.label.delegate');
-  // 2 行目: 「自動」の印・委譲先のロゴ・理由の 1 行。名前は 1 行の字にあるので読み上げには出さない
-  const line = el('span', 'tc-route');
+  // ロゴは題の前（カード・バックグラウンドの一覧の行・完了通知でそろえる）。名前は title と、行の読み上げ名（paintDelegateStates）が持つ
+  const logo = routingLogo(routing.target.backend);
+  logo.setAttribute('aria-hidden', 'true');
+  label.after(logo);
+  // 委譲先の行（自動の印・種類・難しさ → 行き先・飛ばした候補）は開いた中へ
+  const route = el('span', 'rt-route');
   if (auto) {
     const mark = el('span', 'tc-auto', t('routing.auto'));
     mark.title = t('routing.autoTitle');
-    line.append(mark);
+    route.append(mark);
   }
-  const logo = routingLogo(routing.target.backend);
-  logo.setAttribute('aria-hidden', 'true');
-  line.append(logo, el('span', 'tc-route-text'));
-  head.append(line);
+  const routeLogo = routingLogo(routing.target.backend);
+  routeLogo.setAttribute('aria-hidden', 'true');
+  route.append(routeLogo, el('span', 'rt-route-text'));
+  const where = el('div', 'rt-where');
+  where.append(el('div', 'rt-request-label', t('routing.detail.target')), route);
   foldDelegateJson(card);
   const request = delegateRequest(card);
-  card.querySelector('.tc-details-body')?.prepend(...(request ? [request] : []), delegateDetail(card, routing));
+  card.querySelector('.tc-details-body')?.prepend(...(request ? [request] : []), where, delegateDetail(card, routing));
   paintRouteLine(card, routing);
   paintRetried(card);
 }
@@ -4006,7 +4142,7 @@ function decorateFailedDelegate(card, result) {
   }).catch(() => {});
 }
 function paintRouteLine(card, routing) {
-  const line = card.querySelector('.tc-route');
+  const line = card.querySelector('.rt-route');
   if (!line) return;
   line.lastChild.textContent = routingLine(routing, routingNames);
   line.title = line.lastChild.textContent;
@@ -4047,27 +4183,31 @@ function paintDelegateCards() {
   paintDelegateStates();
 }
 
-// i18n-dynamic: timeline.delegate.
-/** 「3 分」「40 秒」。所要時間の短い言い方 */
-function spanText(ms) {
-  const s = Math.max(0, Math.round(ms / 1000));
-  return s < 60 ? t('timeline.delegate.secs', { count: s, n: s }) : t('timeline.delegate.mins', { count: Math.floor(s / 60), n: Math.floor(s / 60) });
+/**
+ * 委譲カードの右端（値の列）。動いている間は弧と経過（m:ss）、承認待ちは差し色の字だけ、失敗は「✕ 失敗」、
+ * 終わったものは静止した印（✓・横線）。終わった時刻は触れたときだけ。弧・印で足りる状態の字は出さない（ADR 0067）。
+ * 印の名前は読み上げ・title が持つ
+ */
+function delegateStateOf(item) {
+  if (item.waiting) return { key: 'waiting', text: TASK_STATUS.waiting };
+  if (item.live) return { key: 'running', mark: markOf(item), start: timeOf(item.startedAt) };
+  const when = elapsedText(item);
+  if (item.status === 'completed') return { key: 'done', mark: markOf(item), when };
+  if (item.status === 'failed') return { key: 'failed', mark: null, text: t('timeline.result.failed'), when };
+  return item.status ? { key: 'stopped', mark: markOf(item), when } : null;
 }
 
-/** 委譲カードの右端: 子が動いている間は弧と「実行中 · 4 分」、終わったら静止した印と「完了 · 11 分」。承認待ちは差し色 */
-function delegateStateOf(item) {
-  const start = timeOf(item.startedAt);
-  const dur = start ? spanText((item.live ? Date.now() : timeOf(item.endedAt) || Date.now()) - start) : '';
-  const withDur = (key) => t(`timeline.delegate.${key}`, { dur }).replace(/ · $/, '');
-  if (item.waiting) return { mark: stateMark('running'), text: t('timeline.delegate.waiting'), waiting: true };
-  if (item.live) return { mark: stateMark('running'), text: withDur('running') };
-  if (item.status === 'completed') return { mark: stateMark('completed'), text: withDur('done') };
-  if (item.status === 'failed') return { mark: stateMark('failed'), text: withDur('failed') };
-  return item.status ? { mark: stateMark('stopped'), text: withDur('stopped') } : null;
+/** 走っているカードの経過を 1 秒ごとに書き換える。走っているカードが無くなったら止める */
+let delegateTicker = 0;
+function tickDelegateElapsed() {
+  const spans = thread.querySelectorAll('.tc-el[data-start]');
+  if (!spans.length) { clearInterval(delegateTicker); delegateTicker = 0; return; }
+  const now = Date.now();
+  for (const span of spans) span.textContent = clockText(now - Number(span.dataset.start));
 }
 
 function paintDelegateStates() {
-  const cards = [...thread.querySelectorAll('.tc[data-tool]')].filter(c => c.querySelector(':scope .tc-open'));
+  const cards = [...thread.querySelectorAll('.tc[data-tool]')].filter(c => c.querySelector(':scope > .tc-go'));
   if (!cards.length) return;
   const items = backgroundItems().filter(i => i.group === 'agent');
   for (const card of cards) {
@@ -4075,13 +4215,32 @@ function paintDelegateStates() {
     if (!res || card.classList.contains('tc-error')) continue;
     const item = card.dataset.taskId ? items.find(i => i.taskId === card.dataset.taskId) : items.find(i => i.origin && i.origin === card.dataset.id);
     const next = item ? delegateStateOf(item) : null;
-    const sig = next ? `${next.text}|${next.mark?.getAttribute('aria-label') ?? ''}` : '';
+    // 走っている間の経過は署名に入れない（秒ごとの書き換えは tickDelegateElapsed）
+    const sig = next ? `${next.key}|${next.when ?? ''}|${next.mark?.getAttribute('aria-label') ?? ''}` : '';
+    // 読み上げ名は、題・委譲先・状態。押すと開く（summary は開閉の状態を持つ）
+    const head = card.querySelector('.tc-head');
+    const stateName = next ? (next.key === 'waiting' ? TASK_STATUS.waiting : next.mark?.getAttribute('aria-label') ?? next.text ?? '') : '';
+    const agent = item ? [labelOf(item.backend), modelText(item)].filter(Boolean).join(' ') : '';
+    head.setAttribute('aria-label', t('timeline.delegate.label', { title: card.querySelector('.tc-main')?.textContent ?? '', agent, state: stateName }));
     if (res.dataset.sig === sig) continue;
     res.dataset.sig = sig;
-    res.classList.toggle('tc-res-wait', Boolean(next?.waiting));
-    if (!next) { res.replaceChildren(); continue; }
-    res.replaceChildren(...(next.mark ? [next.mark] : []), el('span', null, next.text));
+    res.classList.toggle('tc-res-wait', next?.key === 'waiting');
+    // 走っている・承認待ち・失敗のカードは沈めない（web/tools.css）
+    if (next?.key === 'waiting') card.dataset.dstate = 'waiting';
+    else if (item?.live) card.dataset.dstate = 'running';
+    else if (item?.status === 'failed') card.dataset.dstate = 'failed';
+    else delete card.dataset.dstate;
+    // 先頭の空きは、行の外に重ねた矢印（.tc-go）の場所
+    const parts = [el('span', 'tc-go-slot')];
+    if (next) {
+      if (next.mark) parts.push(next.mark);
+      if (next.key === 'running' && next.start) { const span = el('span', 'tc-el', clockText(Date.now() - next.start)); span.dataset.start = String(next.start); parts.push(span); }
+      else if (next.text) parts.push(el('span', next.key === 'failed' ? 'tc-res-err' : null, next.text));
+      if (next.when) parts.push(el('span', 'tc-when', next.when));
+    }
+    res.replaceChildren(...parts);
   }
+  if (!delegateTicker && thread.querySelector('.tc-el[data-start]')) delegateTicker = setInterval(tickDelegateElapsed, 1000);
 }
 /** 「別の候補でやり直す」の面を開閉する。候補は設定 › 委譲と同じ一覧から、今使えるものだけ */
 async function toggleRetry(card, root, button) {
@@ -4107,8 +4266,19 @@ async function toggleRetry(card, root, button) {
     root.querySelector('.rt-actions').after(panel);
     button.setAttribute('aria-expanded', 'true');
     panel.querySelector('input:checked, button')?.focus();
-  } catch (e) { sys(html.t('routing.retry.failed', { error: e.message })); }
+  } catch (e) { retryNote(root, t('routing.retry.failed', { error: e.message })); }
   finally { button.disabled = false; }
+}
+
+/** 「別の候補でやり直す」の候補を読めなかったとき。内訳の中の一行（会話の流れには入れない） */
+function retryNote(root, text) {
+  root.querySelector('.rt-retry-fail')?.remove();
+  root.append(el('p', 'rt-retry-note rt-retry-fail', text));
+}
+/** 子の会話を開けなかったとき。カードのすぐ下の一行（会話の流れには入れない） */
+function cardNote(card, text) {
+  card.querySelector(':scope > .tc-go-note')?.remove();
+  card.append(el('p', 'tc-endpoint-note tc-go-note', text));
 }
 
 async function openFromCard(card, button) {
@@ -4127,7 +4297,7 @@ async function openFromCard(card, button) {
       status: status ?? (card.classList.contains('tc-fail') ? 'failed' : 'completed'), live: status === 'running', extra: true,
       startedAt: startedAt ?? null, endedAt: endedAt ?? null, origin: toolId, parentId: sessionId, agentId });
     openWork(key);
-  } catch (e) { sys(html.t('dialog.work.openFailed', { error: e.message })); }
+  } catch (e) { cardNote(card, t('dialog.work.openFailed', { error: e.message })); }
   finally { button.disabled = false; }
 }
 
@@ -4726,7 +4896,8 @@ async function thumbnailOf(file) {
     const c = document.createElement("canvas");
     c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
     c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-    return c.toDataURL("image/jpeg", 0.85);
+    // 縦横は、送った直後の吹き出しの枠の大きさに使う（web/attachment-frame.mjs）
+    return { dataUri: c.toDataURL("image/jpeg", 0.85), width: bmp.width, height: bmp.height };
   } finally { bmp.close?.(); }
 }
 /** 添付の置き場の画像を大きく見る URL（/local-file。認証はクッキー）。パスが無ければ縮小の data URI */
@@ -4770,7 +4941,7 @@ async function attachFiles(files, { at = takeAttachAt() } = {}) {
   const queue = [];
   for (const file of files) {
     if (file.size > ATTACH_MAX_BYTES) {
-      sys(html.t("chat.attach.tooLarge", { name: file.name, limit: formatBytes(ATTACH_MAX_BYTES) }));
+      composerError(t("chat.attach.tooLarge", { name: file.name, limit: formatBytes(ATTACH_MAX_BYTES) }));
       continue;
     }
     const u = { id: randomId(), file, name: file.name, size: file.size, sent: 0, sessionId, cancelled: false, failed: null, placed: false };
@@ -4797,7 +4968,8 @@ async function runUpload(u) {
       isImage ? thumbnailOf(file).catch(() => null) : null,
     ]);
     if (!r || u.cancelled) { u.cancelled = true; renderAttached(); return; }   // やめた（札は外れている）
-    const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: "device", size: file.size, ...(thumb ? { dataUri: thumb } : {}) };
+    const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: "device", size: file.size,
+      ...(thumb ? { dataUri: thumb.dataUri, width: thumb.width, height: thumb.height } : {}) };
     // 持ち主は届いた時点で読む（新しい会話を作っている間に始めたものは、できた会話の id に付け替わっている: adoptUploads）
     const owner = u.sessionId;
     if (state.current === owner) {
@@ -4816,12 +4988,12 @@ async function runUpload(u) {
       renderAttached();
     }
     // エージェントは画像をパスから自分の道具で読む。大きな画像は画像として読めないことがある（Claude の API は 1 枚 5MB まで）
-    if (isImage && file.size > IMAGE_READ_HINT_BYTES) sys(html.t("chat.attach.largeImage", { name: file.name, size: formatBytes(file.size) }));
+    if (isImage && file.size > IMAGE_READ_HINT_BYTES) composerError(t("chat.attach.largeImage", { name: file.name, size: formatBytes(file.size) }));
   } catch (e) {
     u.failed = e?.message ?? String(e);
-    // 札が字の欄にあれば札に理由・再試行・外すを出す。札の無い（平文の間など）失敗は今までどおり一行で
+    // 札が字の欄にあれば札に理由・再試行・外すを出す。札の無い（平文の間など）失敗は入力欄の上の一行で
     if (u.placed && composerEditor.hasAttachment(`i:${u.id}`)) composerEditor.updatePending(u.id);
-    else { uploads.delete(u.id); sys(html.t("chat.attach.failed", { name: file.name, error: u.failed })); }
+    else { uploads.delete(u.id); composerError(t("chat.attach.failed", { name: file.name, error: u.failed })); }
     renderAttached();
   }
 }
@@ -4916,12 +5088,12 @@ async function dropFolder(entries) {
   const dir = entries.find((x) => x.isDirectory);
   let picked;
   try { picked = await entriesFromDirectory(dir); }
-  catch (e) { sys(html.t("upload.dropFailed", { error: e?.message ?? String(e) })); return; }
+  catch (e) { composerError(t("upload.dropFailed", { error: e?.message ?? String(e) })); return; }
   const excludes = folderUpload.state.excludes;
   const sum = summarize(picked.entries, excludes);
   const choice = await askDroppedFolder({ name: picked.name, files: sum.files, bytes: sum.bytes, excludes });
   if (choice === "send") {
-    if (folderUpload.busy) { sys(html.t("upload.busy")); attachMenu?.openUpload(); return; }
+    if (folderUpload.busy) { composerError(t("upload.busy")); attachMenu?.openUpload(); return; }
     folderUpload.choose(picked, { makeCwd: true });
     attachMenu?.openUpload();
   } else if (choice === "attach") {
@@ -4935,20 +5107,20 @@ async function dropFolder(entries) {
 
 const contextMenu = createContextMenu();
 const closeMenu = () => contextMenu.close();
-function showMenu(x, y, items, title) { side.closePops(); return contextMenu.open(x, y, items, title); }
+function showMenu(x, y, items, title, opts) { side.closePops(); return contextMenu.open(x, y, items, title, opts); }
 
-/** クリップボードへ写し、結果を一行出す。done / failed は出す文（sys に渡す HTML） */
+/** クリップボードへ写し、結果を脇の帯に出す（脇の行のメニューの操作）。done / failed は出す文 */
 const copy = (text, done, failed) => {
   navigator.clipboard?.writeText(String(text ?? ""))
-    .then(() => sys(done))
-    .catch(() => sys(failed));
+    .then(() => sideNote(done, { failed: false }))
+    .catch(() => sideNote(failed));
 };
 
 function setStatusOf(sessionId, status) {
   const s = state.sessions.find((x) => x.id === sessionId);
   if (s) return changeStatus(s, status);
   cmd("setStatus", { sessionId, status, reasonKey: "menu" })
-    .catch((e) => sys(html.t("session.statusFailed", { error: e.message })));
+    .catch((e) => sideNote(t("session.statusFailed", { error: e.message })));
 }
 
 // ---------------------------------------------------------------- グループ（fork のまとまり、§4.1）
@@ -5198,7 +5370,7 @@ function rowMenu(s, x, y, lead = []) {
     { label: t("session.menu.rename"), sub: () => [
       { input: { placeholder: t("session.menu.newTitle"), value: s.title === "(no title)" ? "" : s.title, onCommit: (v) =>
         cmd("setTitle", { sessionId: s.id, title: v, reasonKey: "menu" })
-          .catch((e) => sys(html.t("session.titleFailed", { error: e.message }))) } },
+          .catch((e) => sideNote(t("session.titleFailed", { error: e.message }))) } },
     ] },
     { label: t('compaction.compact'), disabled: !capsOf(s.backend).compact,
       note: !capsOf(s.backend).compact ? t('compaction.antigravityManaged') : '',
@@ -5212,6 +5384,8 @@ function rowMenu(s, x, y, lead = []) {
       { sep: true },
       { label: t("session.menu.clearStatus"), onClick: () => setStatusOf(s.id, "") },
     ] },
+    // 会話の設定を誰がいつ変えたか（AI が変えた状態・タイトルもここで辿れる。会話の中には行を出さない。ADR 0067）
+    { label: t("changeLog.menu"), onClick: () => showChangeLog(s) },
     ...(capsOf(s.backend).fork === false ? [] : [{ label: t("session.menu.forkTail"), onClick: () => forkTail(s.id) }]),
     ...groupItems(s),
     { sep: true },
@@ -5221,7 +5395,7 @@ function rowMenu(s, x, y, lead = []) {
         onClick: () => (s.nextSettings?.backend && s.nextSettings.backend !== s.backend
           ? cmd("setTurnSettings", { sessionId: s.id, backend: s.nextSettings.backend, mode: id, rememberMode: true })
           : cmd("setMode", { sessionId: s.id, mode: id, reasonKey: "menu" }))
-          .then(refresh).catch((e) => sys(html.t("session.menu.modeFailed", { error: e.message }))),
+          .then(refresh).catch((e) => sideNote(t("session.menu.modeFailed", { error: e.message }))),
       })) },
     // 名前は版付き（入力欄のチップと同じ）。「既定に従う」には実際に当たるモデルを添える。隠した別名は選んでいるときだけ。
     // 段違いを系統にまとめた一覧（antigravity）は系統ごとに 1 行（composer-labels.mjs の modelRowIds）
@@ -5230,7 +5404,7 @@ function rowMenu(s, x, y, lead = []) {
         label: id === "" && m.resolvesTo ? `${m.label}（${vocab?.models[m.resolvesTo]?.label ?? m.resolvesTo}）` : m.label,
         hint: m.note, checked: id === (s.nextSettings?.model ?? s.model ?? ""),
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, backend: s.nextSettings?.backend ?? s.backend, model: id, rememberModel: true })
-          .then(refresh).catch((e) => sys(html.t("session.menu.modelFailed", { error: e.message }))),
+          .then(refresh).catch((e) => sideNote(t("session.menu.modelFailed", { error: e.message }))),
       })) },
     ...(endpoints ?? (capsOf(s.nextSettings?.backend ?? s.backend).compatEndpoints ? [{ label: t('session.menu.endpoint'), pending: waitingVisible, sub: () => [] }] : [])),
     ...(accounts ?? (capsOf(s.nextSettings?.backend ?? s.backend).claudeAccounts ? [{ label: t('session.menu.account'), pending: waitingVisible, sub: () => [] }] : [])),
@@ -5240,10 +5414,10 @@ function rowMenu(s, x, y, lead = []) {
         label: effort === "" && m.resolvesTo ? `${m.label}（${m.resolvesTo}）` : m.label,
         hint: m.note, checked: effort === (s.nextSettings?.effort ?? s.effort ?? ""),
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, effort, rememberEffort: true })
-          .then(refresh).catch(e => sys(html.t("session.menu.effortFailed", { error: e.message }))),
+          .then(refresh).catch(e => sideNote(t("session.menu.effortFailed", { error: e.message }))),
       })) },
-    { label: t("session.menu.copyCwd"), hint: s.cwd ?? "", onClick: () => copy(s.cwd, html.t("session.menu.cwdCopied"), html.t("session.menu.cwdCopyFailed")) },
-    { label: t("session.menu.copyId"), onClick: () => copy(s.id, html.t("session.menu.idCopied"), html.t("session.menu.idCopyFailed")) },
+    { label: t("session.menu.copyCwd"), hint: s.cwd ?? "", onClick: () => copy(s.cwd, t("session.menu.cwdCopied"), t("session.menu.cwdCopyFailed")) },
+    { label: t("session.menu.copyId"), onClick: () => copy(s.id, t("session.menu.idCopied"), t("session.menu.idCopyFailed")) },
     ...(s.unsent ? [{ label: t("session.menu.deleteUnsent"), sub: () => [
       { label: t("session.menu.deleteWithDraft"), onClick: () => deleteUnsentRow(s) },
     ] }] : []),
@@ -5262,12 +5436,20 @@ function rowMenu(s, x, y, lead = []) {
   rowAccountItems(s).then(value => { accounts = value; repaint(); });
 }
 
+/** 脇の会話の行の「変更の記録」。sessions.json の history を、時刻・誰が・前 → 後・理由で並べる面を開く */
+async function showChangeLog(s) {
+  try {
+    const { changes } = await cmd("sessionChanges", { sessionId: s.id });
+    openChangeLog({ title: rowLabel(s), changes, anchor: document.querySelector(`[data-session="${CSS.escape(s.id)}"]`) });
+  } catch (e) { sideNote(t("changeLog.failed", { error: e.message })); }
+}
+
 /** 「新しいグループを作る…」。その場に名前の欄が出て、Enter で作る。空のままでも一覧に残る（statuses.json） */
 function newGroupItem() {
   return { label: t("session.menu.newStatusEllipsis"), sub: () => [
     { input: { placeholder: t("session.menu.statusName"), onCommit: (v) =>
       cmd("createStatus", { status: v }).then(refresh)
-        .catch((e) => sys(html.t("session.menu.createStatusFailed", { error: e.message }))) } },
+        .catch((e) => sideNote(t("session.menu.createStatusFailed", { error: e.message }))) } },
   ] };
 }
 
@@ -5346,29 +5528,6 @@ function paintContextEntry() {
   paintContextEntryButton($('contextEntry'), { visible: !!state.current, report: state.contextInfo?.report,
     summary: chipText(state.contextInfo), changed: !!state.contextInfo?.changed?.differs });
 }
-const CHIP_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg>';
-/** 会話の頭に付く札（指示 2 · Skills 14 · MCP …）。最初の発言の下。押すと右パネルが開く */
-function paintContextLine() {
-  thread.querySelector('.mw[data-key="context"]')?.remove();
-  const report = state.contextInfo?.report;
-  if (!report) return;
-  // 最初の人の発言の下（コマンド・`!` の行（.cmd）ではなく）
-  const anchor = thread.querySelector('.mw:has(.m[data-role="user"]:not(.cmd))');
-  if (!anchor) return;
-  const m = el("button", "ctx-chip");
-  m.type = 'button';
-  m.innerHTML = CHIP_ICON;
-  m.append(el('span', null, chipText(state.contextInfo)));
-  if (state.contextInfo?.changed?.differs) m.append(el('span', 'chg', t('session.context.changedSuffix')));
-  m.setAttribute('aria-label', t('session.context.open', { summary: chipText(state.contextInfo) }));
-  m.setAttribute('aria-expanded', String(sessionContext.isOpen()));
-  m.onclick = () => sessionContext.toggle(m);
-  // 分岐点の行は同じ発言の後ろに入る。その後ろに置いて順番を保つ
-  let after = anchor;
-  while (after.nextElementSibling?.classList.contains('branch-row')) after = after.nextElementSibling;
-  after.after(wrap(m, 'context'));
-  relayoutBranches();
-}
 /** 今のセッションの読み込み記録を取り直す。固定された会話ではサーバが今のファイルと突き合わせる */
 async function refreshContextEntry({ force = false } = {}) {
   const id = state.current;
@@ -5382,7 +5541,6 @@ async function refreshContextEntry({ force = false } = {}) {
     state.contextInfoId = id;
   } else return state.contextInfo;
   paintContextEntry();
-  paintContextLine();
   sessionContext.refresh();
   return state.contextInfo;
 }
@@ -5400,7 +5558,7 @@ async function rowAccountItems(s) {
   return [{ label: t("session.menu.account"), hint: accountLabel(value), sub: () => choices.map((c) => ({
     label: c.label, hint: c.note, checked: c.value === value,
     onClick: () => cmd("setTurnSettings", { sessionId: s.id, account: c.value })
-      .then(refresh).catch((e) => sys(html.t("session.menu.accountFailed", { error: e.message }))),
+      .then(refresh).catch((e) => sideNote(t("session.menu.accountFailed", { error: e.message }))),
   })) }];
 }
 
@@ -5432,7 +5590,7 @@ async function rowEndpointItems(s) {
   return [{ label: t("session.menu.endpoint"), hint: endpointLabel(value), sub: () => choices.map((c) => ({
     label: c.label, hint: c.note, checked: c.value === value,
     onClick: () => cmd("setTurnSettings", { sessionId: s.id, endpoint: c.value })
-      .then(refresh).catch((e) => sys(html.t("session.menu.endpointFailed", { error: e.message }))),
+      .then(refresh).catch((e) => sideNote(t("session.menu.endpointFailed", { error: e.message }))),
   })) }];
 }
 
@@ -5640,7 +5798,7 @@ function paintHistoryRows(fromMi, retained = null) {
  * 履歴の発言 1 件の行。メインパネル（paintHistoryRows）と読むだけの筋（作業の詳細、readonlyThread）で共通。
  * node が null なら描かない。role は次の発言の cont（AI が続けて話したか）を決める。system はシステム側の行（systemHistoryNode）だったか。
  * prev は直前に置いた行。続けて残った中断（ツールの中断と、その直後の中断）は 1 行にする。
- * readonly は読むだけの筋: 操作（message-actions）を外し、発言者をモデル名で出し（どのモデルが答えたかを見分けるため。
+ * readonly は読むだけの筋: 操作（コピー・⋯）を外し、発言者をモデル名で出し（どのモデルが答えたかを見分けるため。
  * 分からなければエージェント名のまま）、ツールカードを state.toolCards に登録せず、委譲のカードに「開く」を付けない
  * （openFromCard はメインパネルの会話を親として子を探すので、別の会話の筋では違う子を開く）。
  * backend は発言に backend が無いときの発言者。sessionId は Web 検索の失敗に接続先の一文を足すときに引く会話。
@@ -5652,14 +5810,14 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
     const repeated = system?.matches('.m.sys.interrupted') && prev?.querySelector(':scope .m.sys.interrupted');
     const role = system?.classList.contains('user') ? 'user' : null;
     if (!system || repeated) return { node: null, role, system: true };
-    if (readonly) system.querySelector(':scope > .message-actions')?.remove();
+    if (readonly) stripActions(system);
     return { node: system, role, system: true };
   }
   let node;
   if (m.role === "user") node = user ? user(m) : userMsg(m.text, { uuid: readonly ? undefined : m.uuid, at: m.at, presents, markdown: !readonly });
   else {
     node = aiMsg({ uuid: readonly ? undefined : m.uuid, at: m.at, backend: m.backend ?? backend, cont });
-    if (readonly && m.model) node.querySelector('.who > span').textContent = modelDisplayName(state.vocab.get(backend)?.models ?? {}, m.model);
+    if (readonly && m.model) node.querySelector('.who > span:not(.row-be)').textContent = modelDisplayName(state.vocab.get(backend)?.models ?? {}, m.model);
     if (m.thinking) node.append(thinkFromText(m.thinking));
     const cards = (m.toolCalls ?? []).map((c) => {
       const card = renderToolCall(c.name, c.input, { id: c.id });
@@ -5670,9 +5828,9 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
     });
     if (!m.toolCalls) for (const name of m.tools ?? []) cards.push(renderToolCall(name, null));
     node.append(...toolNodes(cards));
-    if (m.text) { const b = el("div", "body"); b.innerHTML = renderAssistantMarkdown(m.text, refs); node.append(b); }
+    if (m.text) { const b = el("div", "body"); b.dataset.raw = m.text; b.innerHTML = renderAssistantMarkdown(m.text, refs); node.append(b); }
   }
-  if (readonly) node.querySelector(':scope > .message-actions')?.remove();
+  if (readonly) stripActions(node);
   return { node, role: m.role };
 }
 
@@ -5927,8 +6085,6 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
     const m = w.querySelector('.m[data-role]');
     if (m && message) {
       delete m.dataset.uuid;
-      const button = m.querySelector('.message-actions');
-      if (button) button.hidden = true;
       setUuid(m, message.uuid);
     }
   }
@@ -5959,7 +6115,6 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
     for (const node of added) node.animate([{ opacity: .15 }, { opacity: 1 }], { duration: motionDuration(420), easing: EASING });
   }
   // この会話が読み込んだ記録。取り直しは待たない（固定された会話では今のファイルとの突き合わせが入る）
-  paintContextLine();
   refreshContextEntry({ force: true }).catch(() => {});
   thread.classList.toggle("branched", branches.has(id));   // 枝があるとき、筋は「今いる枝」として青く太い
   if (isRunningHere()) activity.show(activity.text || ACTIVITY_LABEL.running);   // 走っている会話を開いたら末尾に弧
@@ -6034,18 +6189,20 @@ function forkPending(button) {
   if (!button) return () => {};
   const old = [...button.childNodes].map(node => node.cloneNode(true));
   button.disabled = true;
-  const timer = setTimeout(() => button.replaceChildren(runMark(t('pending.creatingBranch')), t('pending.creatingBranch')), 150);
+  // 発言の ⋯ は絵だけのボタンなので、弧だけを出す（名前は今のまま）。ほかは弧と字
+  const icon = button.classList.contains('who-btn');
+  const timer = setTimeout(() => button.replaceChildren(...(icon ? [runMark(t('pending.creatingBranch'))] : [runMark(t('pending.creatingBranch')), t('pending.creatingBranch')])), 150);
   return () => { clearTimeout(timer); if (button.isConnected) button.replaceChildren(...old); button.disabled = false; };
 }
 
 /** Create the actual child first, then grow its edge, reveal its node, and promote it. */
-async function forkFrom(m, { draft } = {}) {
+async function forkFrom(m, { draft, pending } = {}) {
   const uuid = m.dataset.uuid, mw = m.closest('.mw');
   if (!uuid || !state.current || state.busy) return;
   const key = mw?.dataset.key ?? '';
   const mi = draft ? draft.index - 1 : key.startsWith('m:') ? Number(key.slice(2)) : state.messages.findIndex(x => x.uuid === uuid);
   const source = state.current;
-  const clearPending = forkPending(m.querySelector('.forkbtn'));
+  const clearPending = forkPending(pending ?? m.querySelector(':scope > .who .who-more'));
   let sendTo;
   state.busy = true;
   log.classList.add('branch-transition');
@@ -6066,7 +6223,7 @@ async function forkFrom(m, { draft } = {}) {
     $('prompt').focus({ preventScroll: true });
   } catch (e) {
     placeJunctions();
-    sys(html.t("chat.fork.failed", { error: e.message }));
+    composerError(t("chat.fork.failed", { error: e.message }));
   } finally { clearPending(); await finishBranchChange(); }
   if (sendTo && state.current === sendTo) await submit();
 }
@@ -6091,7 +6248,7 @@ async function forkTail(id) {
     const row = placeJunctions().at(-1);
     if (row) await row.grow(r.sessionId);
     await changeBranch(r.sessionId, row);
-  } catch (e) { sys(html.t("chat.fork.failed", { error: e.message })); }
+  } catch (e) { composerError(t("chat.fork.failed", { error: e.message })); }
   finally { await finishBranchChange(); }
   } finally { clearPending(); }
 }
@@ -6128,7 +6285,7 @@ async function switchTo(id, row) {
   state.busy = true; row?.lock();
   log.classList.add('branch-transition');
   try { await changeBranch(id, row); }
-  catch (e) { row?.unlock(); sys(html.t("chat.fork.switchFailed", { error: e.message })); }
+  catch (e) { row?.unlock(); composerError(t("chat.fork.switchFailed", { error: e.message })); }
   finally { await finishBranchChange(); }
 }
 
@@ -6220,7 +6377,8 @@ async function submit() {
     // 候補が開いたまま blur した場合の後片付けが先に走ると、送信の入力が書き換わる
     slashSkills.close();
     const text = $('prompt').value;
-    const attachments = orderedAttachments().map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
+    const ordered = orderedAttachments();
+    const attachments = ordered.map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
     if (!text.trim() && !attachments.length) return;
     if (text.trim() === '/compact' && !attachments.length) {
       if (canCompactHere()) {
@@ -6252,6 +6410,8 @@ async function submit() {
     }
     const request = previous && previous.prompt === full ? previous : { ...args, messageId: randomId() };
     receipts.set(sessionId, request); saveReceipts();
+    // 吹き出しは、受理の応答が先でも userMessage が先でも、この仮の添付で描く
+    if (ordered.length && !messageRow(request.messageId)) provisionalByMessage.set(request.messageId, ordered.map(provisionalPresent));
     await cmd('sendMessage', request);
     if (state.current === sessionId && !messageRow(request.messageId)) {
       markDelivery(ensureMessageRow(request.messageId, full, new Date().toISOString()), 'sending');
@@ -6464,7 +6624,7 @@ async function commitTitle() {
   if (!state.current || !v || v === s?.title || v === titleSent) return;
   titleSent = v;
   await cmd("setTitle", { sessionId: state.current, title: v, reasonKey: "manual" })
-    .catch((e) => sys(html.t("session.titleFailed", { error: e.message })));
+    .catch((e) => composerError(t("session.titleFailed", { error: e.message })));
 }
 $("titleEdit").onchange = commitTitle;
 $("titleEdit").onblur = commitTitle;
@@ -6534,7 +6694,7 @@ $("titleWand").onclick = async () => {
   try {
     result = await cmd("suggestTitle", { sessionId: id });
   } catch (e) {
-    sys(html.t("session.titleSuggestFailed", { error: e.message }));
+    composerError(t("session.titleSuggestFailed", { error: e.message }));
   } finally {
     titleGenerating.delete(id);
     syncTitleControls();

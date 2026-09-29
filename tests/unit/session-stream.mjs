@@ -56,7 +56,7 @@ export default async function (t) {
     loadDraft: noop, saveDraft: async () => {}, settingsFailure: null, syncSettingsHold: noop, sys: noop,
     paintHistory: () => [], placeJunctions: () => [], isRunningHere: () => false, behindHere: () => null, backgroundCounts: () => ({ live: 0, ended: 0 }),
     relayoutBranches: noop, branchIsFresh: () => false, setUuid: noop,
-    paintContextLine: noop, paintContextEntry: noop, refreshContextEntry: async () => null, isManagedContext: () => false,
+    paintContextEntry: noop, refreshContextEntry: async () => null, isManagedContext: () => false,
     // 会話の右パネル（ターンの終わりに開いていれば描き直す）。このテストの対象外
     sessionContext: { isOpen: () => false, refresh: noop },
     syncHistory: () => { syncs++; }, refresh: async () => {},

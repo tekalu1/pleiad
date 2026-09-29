@@ -24,6 +24,7 @@ import { el, icon, moreButton, relTime, svgEl } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { familiesOf } from "./family.mjs";
 import { warnMark, interruptLabel, showsReasonInMeta } from "./interrupt.mjs";
+import { aiMarkTitle } from "./change-log.mjs";
 
 const backendLogos = {
   codex: "./brand/openai.svg",
@@ -672,6 +673,12 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (pendingRow?.visible) meta.append(pendingLabel(pendingRow.text));
     else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
     else meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
+    // 状態を最後に変えたのが AI のときだけ小さな「AI」の印（理由は title。誰がいつ変えたかは行のメニューの「変更の記録」）
+    if (s.status && s.statusByAi) {
+      const ai = el("span", "row-ai", t("changeLog.aiMark"));
+      ai.title = aiMarkTitle(s.statusByAi);
+      meta.append(ai);
+    }
     if (last.backendLabels && s.backend) meta.append(backendLogo(s.backend, last.backendLabels[s.backend] ?? s.backend));
     const cwd = el("span", "row-cwd", shortDir(s.cwd));
     if (s.cwd) cwd.title = s.cwd;

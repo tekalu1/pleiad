@@ -1134,6 +1134,29 @@
       "spread": "Will also be available to other agents"
     }
   },
+  "changeLog": {
+    "menu": "Change history",
+    "title": "Change history",
+    "close": "Close",
+    "empty": "No changes recorded",
+    "failed": "Couldn't load the change history: {{error}}",
+    "none": "none",
+    "aiMark": "AI",
+    "aiTitle": "Changed by AI",
+    "aiTitleReason": "Changed by AI: {{reason}}",
+    "field": {
+      "status": "Status",
+      "title": "Title",
+      "cwd": "Working directory",
+      "mode": "Approval mode",
+      "model": "Model"
+    },
+    "by": {
+      "human": "You",
+      "ai": "AI",
+      "ply": "Pleiad"
+    }
+  },
   "saved": {
     "reason": {
       "resumeCwd": "Changed on resume",
@@ -1240,41 +1263,28 @@
       "where": "Runs in {{cwd}}"
     },
     "sys": {
-      "agentChanged": "Changed the agent to {{agent}}. It takes over the conversation from your next message.",
       "taskResumed": "Received the Pleiad task result and resumed",
-      "taskResult": "Delegation result",
+      "taskResultState": "Delegation result ({{state}})",
       "taskFull": "Full text given to the agent",
       "interruptionNote": "Told the agent what the interruption stopped",
-      "failed": "Failed: {{error}}",
+      "failed": "{{head}} {{error}}",
       "unknownReason": "unknown reason",
-      "contextRefreshed": "Instructions or Skills changed, so they were reloaded",
-      "contextSettingsApplied": "Plugin settings changes apply from this turn",
-      "contextRefreshedNames": "Instructions or Skills changed, so they were reloaded ({{names}})",
-      "contextRefreshedNamesMore_one": "Instructions or Skills changed, so they were reloaded ({{names}} and {{count}} more)",
-      "contextRefreshedNamesMore_other": "Instructions or Skills changed, so they were reloaded ({{names}} and {{count}} more)",
       "modeSaveFailed": "Couldn't save the approval mode: {{error}}",
       "historyFailed": "Couldn't load the history: {{error}}"
-    },
-    "change": {
-      "status": "Status → {{value}} ({{by}})",
-      "statusReason": "Status → {{value}} ({{by}}: {{reason}})",
-      "title": "Title → {{value}} ({{by}})",
-      "titleReason": "Title → {{value}} ({{by}}: {{reason}})",
-      "cwd": "Working directory → {{value}} ({{by}})",
-      "cwdReason": "Working directory → {{value}} ({{by}}: {{reason}})",
-      "mode": "Approval mode → {{value}} ({{by}})",
-      "modeNext": "Approval mode → {{value}} ({{by}}, from the next turn)",
-      "model": "Model → {{value}} ({{by}})",
-      "modelNext": "Model → {{value}} ({{by}}, from the next turn)",
-      "forkAi": "Branched (ai)",
-      "forkAiReason": "Branched (ai: {{reason}})"
     },
     "model": {
       "default": "Default",
       "defaultResolved": "Default ({{model}})"
     },
     "message": {
-      "fork": "⑂ Branch from here",
+      "fork": "Branch from here",
+      "forkPart": "Branch from this message",
+      "copy": "Copy",
+      "copyReply": "Copy reply",
+      "copied": "Copied",
+      "more": "Message actions",
+      "sentAt": "Sent at {{time}}",
+      "sourceTitle": "What was sent to the agent",
       "editResend": "Edit and resend",
       "resend": "Resend",
       "notSaved": "This message hasn't been saved yet. Wait a moment and try again.",
@@ -1286,12 +1296,13 @@
       "showMore": "Show more",
       "showLess": "Show less",
       "showSource": "View what was sent to the agent",
-      "hideSource": "Hide source",
       "you": "You"
     },
     "attachList": {
       "count_one": "{{count}} attachment",
       "count_other": "{{count}} attachments",
+      "openList_one": "Open the list of {{count}} attachment",
+      "openList_other": "Open the list of {{count}} attachments",
       "open": "Open",
       "copyPath": "Copy path",
       "close": "Close",
@@ -1409,6 +1420,9 @@
       "enlarge": "{{name}} (click to enlarge)",
       "remove": "Remove",
       "readFailed": "Couldn't read the file",
+      "imageLoading": "Loading image: {{name}}",
+      "imageFailed": "Couldn't load the image",
+      "imageRetry": "Try again",
       "tooLarge": "{{name}} is too large (max {{limit}})",
       "failed": "Couldn't attach {{name}}: {{error}}",
       "fromHost": "Host file {{path}} (passed by path, not uploaded)",
@@ -1464,9 +1478,7 @@
       "label": "Plugins",
       "changed": "Changed",
       "title": "Plugins for this conversation",
-      "titleWith": "Plugins for this conversation: {{summary}}",
-      "changedSuffix": "· Changed",
-      "open": "Open plugins for this conversation: {{summary}}"
+      "titleWith": "Plugins for this conversation: {{summary}}"
     },
     "menu": {
       "iconFailed": "Couldn't change the icon: {{error}}",
@@ -1653,11 +1665,9 @@
       "showMore": "Show {{count}} more",
       "delegated": "· {{count}} delegated",
       "instructionsWaiting": "{{count}} follow-up instructions waiting",
-      "instructionState": {
-        "queued": "Waiting",
-        "sending": "Sending",
-        "dropped": "Ended without delivery"
-      },
+      "instruction": "Follow-up instruction",
+      "instructionQueued": "Waiting · delivered when the current work ends",
+      "instructionDropped": "✕ Ended without being delivered",
       "yesterday": "Yesterday",
       "showFull": "Show full request",
       "collapse": "Collapse",
@@ -1826,18 +1836,13 @@
       "showAll_other": "Show all {{n}} lines"
     },
     "bundle": {
+      "title": "Tool calls",
       "count_one": "{{n}} call",
       "count_other": "{{n}} calls",
-      "changed_one": "{{n}} file changed",
-      "changed_other": "{{n}} files changed",
-      "changedShort_one": "{{n}} changed",
-      "changedShort_other": "{{n}} changed",
-      "failed_one": "✕ {{n}}",
-      "failed_other": "✕ {{n}}",
-      "label_one": "{{n}} tool call ({{mix}})",
-      "label_other": "{{n}} tool calls ({{mix}})",
-      "labelChanged_one": ", {{n}} file changed",
-      "labelChanged_other": ", {{n}} files changed",
+      "failed_one": "✕ Failed {{n}}",
+      "failed_other": "✕ Failed {{n}}",
+      "label_one": "Tool calls, {{n}} call",
+      "label_other": "Tool calls, {{n}} calls",
       "labelFailed_one": ", {{n}} failed",
       "labelFailed_other": ", {{n}} failed",
       "labelOpen": ". Press to open",
@@ -1846,15 +1851,8 @@
       "running": "Running"
     },
     "delegate": {
-      "running": "Running · {{dur}}",
-      "done": "Done · {{dur}}",
-      "failed": "Failed · {{dur}}",
-      "stopped": "Stopped · {{dur}}",
-      "waiting": "Waiting for approval",
-      "secs_one": "{{n}} sec",
-      "secs_other": "{{n}} sec",
-      "mins_one": "{{n}} min",
-      "mins_other": "{{n}} min"
+      "openChild": "Open the child conversation",
+      "label": "Delegation: {{title}} ({{agent}} · {{state}}). Press to open"
     },
     "branch": {
       "pick": "Choose the conversation to continue",
@@ -2245,7 +2243,6 @@
       "attachNote": "Attachments are up to 100 MB per file. Each file is attached separately; the folder isn't attached as a whole."
     },
     "busy": "Another folder is being sent.",
-    "sentNotice": "Sent the folder to {{dest}} on the host.",
     "dropFailed": "Couldn't read the folder ({{error}})"
   },
   "routing": {

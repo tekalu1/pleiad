@@ -10,6 +10,7 @@ import { t } from './i18n.mjs';
 import { closeIcon } from './icons.mjs';
 import { turnKinds } from './conversation-rail.mjs';
 import { bundleOf } from './tool-bundle.mjs';
+import { revealFold } from './fold.mjs';
 import { SCOPES, inScope, matchRanges, countMatches, scopeTallies, assignHits, entryOfHit, listRows, excerptAround, toolTarget, appendPieces, badge } from './conversation-nav.mjs';
 
 const KEY = 'conversation-toc';
@@ -259,7 +260,7 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
     if (scroll) sendTo(mark ?? entry.row, mark ?? entry.el, 90);
   }
   /**
-   * 畳まれたところ（<details>・閉じたツールのまとまり。ADR 0061）を開いて見せる。まとまりは開く動き（240ms）があるので、終わってから送る
+   * 畳まれたところ（<details>・閉じたツールのまとまり・長い発言の畳み。ADR 0061）を開いて見せる。まとまりは開く動き（240ms）があるので、終わってから送る
    * （動いている間に送ると、行の高さが伸びる前の位置へ着いてしまう）
    */
   function sendTo(target, inside, gap) {
@@ -268,6 +269,7 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
     const bundle = card && bundleOf(card);
     if (bundle && !bundle.expanded && card !== bundle.cur) { bundle.reveal(card); animated = true; }
     for (let node = inside.closest?.('details'); node; node = node.parentElement?.closest('details')) node.open = true;
+    revealFold(inside);   // 長い発言の畳まれた部分（動かさずに開く。web/fold.mjs）
     if (animated) setTimeout(() => nav.scrollToRow(target, gap), 320); else nav.scrollToRow(target, gap);
   }
 

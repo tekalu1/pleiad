@@ -82,6 +82,7 @@ export default async function (t) {
     compactionScheduler: { get: () => null },
     interruptedOf: () => null,
     agentLocaleOf: () => null,
+    statusChangedByAi: () => null,
     toMs: (v) => (typeof v === "number" ? v : null),
   });
   vm.runInContext(rowCode, rowCtx);
