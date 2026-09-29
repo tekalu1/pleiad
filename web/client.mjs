@@ -63,6 +63,7 @@ import { setupSessionContext, chipText } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
 import { renderOutbox } from './outbox.mjs';
 import { visibleTaskInstructions } from './task-instructions.mjs';
+import { streamMessages } from './stream-messages.mjs';
 import { createComposerWait } from './composer-wait.mjs';
 import { createConnectionStatus } from './connection-status.mjs';
 import { attentionCounts, paintOpenSidebar } from './open-sidebar-mark.mjs';
@@ -3237,7 +3238,7 @@ async function subagentThread(item) {
   // モデルは記録から分かることがある（一覧の配信より先に読めたとき）
   const model = (data.messages ?? []).findLast(m => m.model)?.model;
   if (model && !item.model) { item.model = model; paintDetailHead(item); }
-  return readonlyThread(data.messages ?? [], { backend: item.backend, prompt, live: item.live, item });
+  return readonlyThread(data.messages ?? [], { backend: item.backend, prompt, live: item.live, item, sessionId: item.parentId });
 }
 
 /** 親の会話のツール呼び出し（id）の入力にある依頼文 */
@@ -3250,14 +3251,21 @@ function requestOf(toolId) {
   return null;
 }
 
-/** Pleiad タスクの子の会話。普通の会話なので、会話を開くときと同じ読み込みの結果を描く */
+/**
+ * Pleiad タスクの子の会話。普通の会話なので、会話を開くときと同じ読み込み（live）の結果を描く。
+ * 走っている間はターン前の履歴と、ここまでの出来事（stream.events）が返る。出来事は仮の発言に畳んで後ろに足す
+ * （web/stream-messages.mjs。Antigravity はターンが終わるまで履歴に何も書かない）。
+ * watch は付けない（付けると、この接続がメインパネルで見ている会話が子へ書き換わる）
+ */
 async function taskThread(item) {
   const [data, instructionData] = await Promise.all([
-    cmd('loadSession', { sessionId: item.childId }), cmd('agentTaskInstructions', { taskId: item.taskId }),
+    cmd('loadSession', { sessionId: item.childId, live: true }), cmd('agentTaskInstructions', { taskId: item.taskId }),
   ]);
   $('workBody').dataset.sessionId = item.childId;
-  const th = readonlyThread(data.messages ?? [], { presents: data.presents ?? [], backend: item.backend, prompt: item.request, live: item.live, item,
-    instructions: visibleTaskInstructions(instructionData.instructions ?? [], data.messages ?? []) });
+  const live = streamMessages(data.stream?.events, { backend: item.backend, model: item.model, initialMessageId: data.initialMessageId });
+  const messages = [...(data.messages ?? []), ...live.messages];
+  const th = readonlyThread(messages, { presents: [...(data.presents ?? []), ...live.presents], backend: item.backend, prompt: item.request, live: item.live, item,
+    sessionId: item.childId, instructions: visibleTaskInstructions(instructionData.instructions ?? [], messages) });
   // 子が承認を待っていれば、ここで答えられる（子の会話へ移らなくてよい）。同じ承認は依頼元の会話にも中継されている
   for (const ev of [...(data.permissions ?? []), ...state.pendingPerms.values()]) {
     if (ev.sessionId !== item.childId || th.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"]`)) continue;
@@ -3273,7 +3281,7 @@ async function taskThread(item) {
  * 読むだけの筋。メインパネルの paintHistory と同じ部品（wrap・userMsg・aiMsg・考えた内容・ツールカード・画像）で、描く先だけを変える。
  * 分岐・編集・再送は出さない（この会話の発言ではない）。走っている子は末尾に稼働表示（弧と経過時間）を置く
  */
-function readonlyThread(messages, { presents = [], backend, prompt = null, live = false, item, instructions = [] } = {}) {
+function readonlyThread(messages, { presents = [], backend, prompt = null, live = false, item, instructions = [], sessionId = null } = {}) {
   const th = el('div', 'thread bg-thread');
   const spine = svgEl('svg', { class: 'spine', 'aria-hidden': 'true' });
   spine.append(svgEl('line', { x1: 20, y1: 0, x2: 20, y2: '100%' }));
@@ -3317,36 +3325,17 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
     }
     put(list, 'instructions');
   };
-  let prevRole = null;
-  if (prompt && messages[0]?.role !== 'user') { put(requestNode(prompt, messages[0]?.at), 'request'); putInstructions(); prevRole = 'user'; }
+  let prevRole = null, last = null;
+  if (prompt && messages[0]?.role !== 'user') { last = put(requestNode(prompt, messages[0]?.at), 'request'); putInstructions(); prevRole = 'user'; }
   const refs = presents.map(p => p.reference);
+  const request = (m) => requestNode(m.text, m.at);
   for (const it of buildItems(messages, presents)) {
-    if (it.kind === 'present') { put(renderPresent(savedEvent(it.p)), `p:${it.pi}`); continue; }
-    const m = it.m;
-    const system = systemHistoryNode(m);
-    if (system !== undefined) {
-      if (system) put(readOnly(system), `m:${it.mi}`);
-      prevRole = system?.classList.contains('user') ? 'user' : null;
-      continue;
-    }
-    let node;
-    if (m.role === 'user') node = it.mi === 0 ? requestNode(m.text, m.at) : readOnly(userMsg(m.text, { at: m.at }));
-    else {
-      node = readOnly(aiMsg({ at: m.at, backend: m.backend ?? backend, cont: prevRole === 'assistant' }));
-      // 発言者はモデル名で出す（どのモデルが答えたかを見分けるため）。分からなければエージェント名のまま
-      if (m.model) node.querySelector('.who > span').textContent = modelDisplayName(state.vocab.get(backend)?.models ?? {}, m.model);
-      if (m.thinking) node.append(thinkFromText(m.thinking));
-      for (const c of m.toolCalls ?? []) {
-        const card = renderToolCall(c.name, c.input, { id: c.id });
-        if (c.result) applyToolResult(card, c.result);
-        node.append(card);
-      }
-      if (!m.toolCalls) for (const name of m.tools ?? []) node.append(renderToolCall(name, null));
-      if (m.text) { const b = el('div', 'body'); b.innerHTML = renderAssistantMarkdown(m.text, refs); node.append(b); }
-    }
-    prevRole = m.role;
-    put(node, `m:${it.mi}`);
-    if (it.mi === 0 && m.role === 'user') putInstructions();
+    if (it.kind === 'present') { last = put(renderPresent(savedEvent(it.p)), `p:${it.pi}`); continue; }
+    const { node, role, system } = historyRow(it.m, { cont: prevRole === 'assistant', refs, prev: last, readonly: true, backend,
+      sessionId, user: it.mi === 0 ? request : null });
+    prevRole = role;
+    if (node) last = put(node, `m:${it.mi}`);
+    if (it.mi === 0 && it.m.role === 'user' && !system) putInstructions();
   }
   if (!instructionsPlaced) putInstructions();
   if (live) {
@@ -4803,11 +4792,12 @@ async function rowAccountItems(s) {
 
 /**
  * 互換の接続先の会話で Web 検索が失敗したら、そのカードに理由を一文足す（画面 4）。
- * エージェントの失敗文だけでは接続先が原因だと分からないため。公式の会話では何もしない
+ * エージェントの失敗文だけでは接続先が原因だと分からないため。公式の会話では何もしない。
+ * sessionId はカードのある会話（作業の詳細では子の会話。既定はメインパネルの会話）
  */
-function noteEndpointFailure(card, result) {
+function noteEndpointFailure(card, result, sessionId = state.current) {
   if (!card || !(result?.isError ?? result?.is_error) || !/^(WebSearch|webSearch|web_search)$/.test(card.dataset?.tool ?? "")) return;
-  const s = state.sessions.find((x) => x.id === state.current);
+  const s = state.sessions.find((x) => x.id === sessionId);
   const e = s?.compatEndpoint ? compatEndpoints.get(s.compatEndpoint) : null;
   if (!e || card.querySelector(".tc-note")) return;
   const note = el("p", "tc-note", t("chat.endpoint.noWebSearch", { name: e.name }));
@@ -4992,6 +4982,7 @@ function paintHistory(fromMi = 0) {
 
 function paintHistoryRows(fromMi) {
   const items = buildItems(state.messages, state.presents);
+  const refs = state.presents.map(p => p.reference);
   const added = [];
   let prevRole = fromMi > 0 ? state.messages[fromMi - 1]?.role : null;
   const startAt = fromMi > 0 ? new Date(state.messages[fromMi - 1]?.at ?? 0) : null;
@@ -5005,34 +4996,50 @@ function paintHistoryRows(fromMi) {
       continue;
     }
     if (it.mi < fromMi) continue;
-    const m = it.m;
-    const system = systemHistoryNode(m);
-    if (system !== undefined) {
-      // 続けて残った中断（ツールの中断と、その直後の中断）は 1 行にする
-      const repeated = system?.matches('.m.sys.interrupted') && added.at(-1)?.querySelector(':scope .m.sys.interrupted');
-      if (system && !repeated) added.push(append(system, `m:${it.mi}`));
-      prevRole = system?.classList.contains('user') ? 'user' : null;
-      continue;
-    }
-    let node;
-    if (m.role === "user") node = userMsg(m.text, { uuid: m.uuid, at: m.at });
-    else {
-      node = aiMsg({ uuid: m.uuid, at: m.at, backend: m.backend, cont: prevRole === "assistant" });
-      if (m.thinking) node.append(thinkFromText(m.thinking));
-      for (const c of m.toolCalls ?? []) {
-        const card = renderToolCall(c.name, c.input, { id: c.id });
-        if (c.result) { applyToolResult(card, c.result); noteEndpointFailure(card, c.result); }
-        linkDelegateCard(card, c.input, c.result);
-        node.append(card);
-        if (c.id) state.toolCards.set(c.id, card);
-      }
-      if (!m.toolCalls) for (const t of m.tools ?? []) node.append(renderToolCall(t, null));
-      if (m.text) { const b = el("div", "body"); b.innerHTML = renderAssistantMarkdown(m.text, state.presents.map(p => p.reference)); node.append(b); }
-    }
-    prevRole = m.role;
-    added.push(append(node, `m:${it.mi}`));
+    const { node, role } = historyRow(it.m, { cont: prevRole === "assistant", refs, prev: added.at(-1) });
+    if (node) added.push(append(node, `m:${it.mi}`));
+    prevRole = role;
   }
   return added;
+}
+
+/**
+ * 履歴の発言 1 件の行。メインパネル（paintHistoryRows）と読むだけの筋（作業の詳細、readonlyThread）で共通。
+ * node が null なら描かない。role は次の発言の cont（AI が続けて話したか）を決める。system はシステム側の行（systemHistoryNode）だったか。
+ * prev は直前に置いた行。続けて残った中断（ツールの中断と、その直後の中断）は 1 行にする。
+ * readonly は読むだけの筋: 操作（message-actions）を外し、発言者をモデル名で出し（どのモデルが答えたかを見分けるため。
+ * 分からなければエージェント名のまま）、ツールカードを state.toolCards に登録せず、委譲のカードに「開く」を付けない
+ * （openFromCard はメインパネルの会話を親として子を探すので、別の会話の筋では違う子を開く）。
+ * backend は発言に backend が無いときの発言者。sessionId は Web 検索の失敗に接続先の一文を足すときに引く会話。
+ * user を渡すと人の発言をそれで描く（詳細の最初の発言の「依頼」）
+ */
+function historyRow(m, { cont = false, refs = [], prev = null, readonly = false, backend, sessionId = state.current, user = null } = {}) {
+  const system = systemHistoryNode(m);
+  if (system !== undefined) {
+    const repeated = system?.matches('.m.sys.interrupted') && prev?.querySelector(':scope .m.sys.interrupted');
+    const role = system?.classList.contains('user') ? 'user' : null;
+    if (!system || repeated) return { node: null, role, system: true };
+    if (readonly) system.querySelector(':scope > .message-actions')?.remove();
+    return { node: system, role, system: true };
+  }
+  let node;
+  if (m.role === "user") node = user ? user(m) : userMsg(m.text, { uuid: readonly ? undefined : m.uuid, at: m.at });
+  else {
+    node = aiMsg({ uuid: readonly ? undefined : m.uuid, at: m.at, backend: m.backend ?? backend, cont });
+    if (readonly && m.model) node.querySelector('.who > span').textContent = modelDisplayName(state.vocab.get(backend)?.models ?? {}, m.model);
+    if (m.thinking) node.append(thinkFromText(m.thinking));
+    for (const c of m.toolCalls ?? []) {
+      const card = renderToolCall(c.name, c.input, { id: c.id });
+      if (c.result) { applyToolResult(card, c.result); noteEndpointFailure(card, c.result, sessionId); }
+      if (!readonly) linkDelegateCard(card, c.input, c.result);
+      node.append(card);
+      if (c.id && !readonly) state.toolCards.set(c.id, card);
+    }
+    if (!m.toolCalls) for (const t of m.tools ?? []) node.append(renderToolCall(t, null));
+    if (m.text) { const b = el("div", "body"); b.innerHTML = renderAssistantMarkdown(m.text, refs); node.append(b); }
+  }
+  if (readonly) node.querySelector(':scope > .message-actions')?.remove();
+  return { node, role: m.role };
 }
 
 /** A live assistant row can represent several persisted tool/thinking entries. */
