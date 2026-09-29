@@ -1,0 +1,134 @@
+/* 会話の移動（docs/design-system.md「会話の移動」、ADR 0063）。
+   A 残る問い・C 最新へ（web/conversation-nav-view.mjs）。B 地図・D 目次は後の段で足す。
+   浮く面（最新へ・地図の浮く面）は、ライトでは --surface-paper。ダークでは地（--surface-paper）と同じ面が沈むので、一段明るい --surface-1 にする */
+
+/* 会話（#log）を包む相対位置の入れ物。残る問い・最新へ・地図は #log の外に重ねて、スクロールで動かない */
+.log-frame{flex:1;min-height:0;position:relative;
+  --surface-float:var(--surface-paper);--surface-float-hover:var(--surface-1)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .log-frame{--surface-float:var(--surface-1);--surface-float-hover:var(--surface-3)}}
+:root[data-theme="dark"] .log-frame{--surface-float:var(--surface-1);--surface-float-hover:var(--surface-3)}
+.log-frame > #log{height:100%}   /* 入れ物は block（flex にすると、長い会話を開く時間が伸びた）。#log の flex:1 は効かないので高さで満たす */
+.log-frame > #log:focus-visible{outline:2px solid var(--line-blue);outline-offset:-3px}
+
+/* 重ねる部品は layout 包含にする。中身が変わる（残る問いの文・最新への印）たびに、包んでいる会話の再レイアウトが走らないように（長い会話のスクロールで測った） */
+.nav-sticky,.nav-latest,.nav-rail{contain:layout style}
+
+/* 会話の末尾の目印（web/conversation-nav-view.mjs）。「最新へ」を出すかを、スクロール量を読まずに決める */
+.nav-end{height:1px;pointer-events:none}
+
+/* ---- A 問いが上に残る。影は付けず、会話の白から透明へのグラデーションでつなぐ。
+   左は発言の吹き出しの左端（#log の左の余白 8px + 溝 72px）にそろえ、幅は会話の列（860px − 溝 72px）まで。文字は押せる領域だけ ---- */
+.nav-sticky{position:absolute;z-index:4;left:0;right:10px;top:0;height:58px;padding:6px 18px 14px 80px;
+  background:linear-gradient(to bottom,var(--surface-paper) 76%,transparent);pointer-events:none}
+.nav-sticky-button{display:block;max-width:min(100%,788px);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-size:var(--fs-s);line-height:1.6;padding:8px 0;background:transparent;color:var(--ink-weak);cursor:pointer;pointer-events:auto;
+  transition:color var(--dur-fast) var(--ease-out)}
+.nav-sticky-button:hover{color:var(--ink)}
+.nav-sticky-time{font-family:var(--font-mono);font-size:var(--fs-xs)}
+.nav-token{color:var(--ink-weak)}
+
+/* ---- C 最新へ。直径 34px の丸。会話の右下（地図の左、入力欄の上） ---- */
+.nav-latest{position:absolute;z-index:7;right:44px;bottom:14px;height:34px;width:34px;padding:0;display:flex;align-items:center;justify-content:center;gap:6px;
+  background:var(--surface-float);color:var(--ink);box-shadow:0 8px 28px var(--shadow);border-radius:var(--r-pill);cursor:pointer;
+  transition:background var(--dur-fast) var(--ease-out),width var(--dur) var(--ease-out);animation:nav-rise var(--dur) var(--ease-out)}
+.nav-latest:hover{background:var(--surface-float-hover)}
+.nav-latest .nav-arrow{width:17px;height:17px;flex:none}
+/* 走っている間は pill に伸びて、矢印の左に §6 の弧 */
+.nav-latest.running{width:56px}
+.nav-latest .run{flex:none}
+/* 読んでいる間に返答が届いた印。脇の一覧の「完了・未確認」と同じ青い丸。紙の色で 2px の切り欠き */
+.nav-unread{position:absolute;top:0;right:0;width:9px;height:9px;border-radius:50%;color:var(--ink-unread);background:currentColor;box-shadow:0 0 0 2px var(--surface-float)}
+@keyframes nav-rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* ---- B 会話の地図。#log の右端の細いレール。普段 14px（操作領域 22px）、触れると 28px に 120ms で広がる。
+   出ている間は #log の細いスクロールバーのつまみを透明にする（幅は残す。消すと本文の幅が変わり、レールの出入りが振動する） ---- */
+.log-frame.has-rail > #log::-webkit-scrollbar-thumb{background:transparent}
+@supports not selector(::-webkit-scrollbar){.log-frame.has-rail > #log{scrollbar-color:transparent transparent}}
+.nav-rail{position:absolute;right:5px;top:14px;bottom:16px;width:22px;z-index:6;touch-action:none}
+.nav-rail-surface{position:absolute;top:0;bottom:0;right:3px;width:14px;border-radius:var(--r-pill);background:var(--surface-1);transition:width var(--dur-fast) var(--ease-out)}
+.nav-rail:hover .nav-rail-surface,.nav-rail:focus-within .nav-rail-surface,.nav-rail.dragging .nav-rail-surface{width:28px}
+.nav-rail-range{position:absolute;top:0;right:0;width:20px;will-change:transform;min-height:12px;border-radius:var(--r-pill);background:var(--surface-3);pointer-events:none}
+.nav-dot{position:absolute;top:0;right:0;width:22px;height:15px;padding:0;display:grid;place-items:center;
+  background:transparent;color:var(--ink-weak);font-size:var(--fs-s);line-height:1;border-radius:var(--r-pill);cursor:pointer}
+.nav-dot-normal{width:5px;height:5px;background:currentColor;border-radius:50%}
+.nav-dot.pending{color:var(--ink-mark)}
+.nav-dot.hot,.nav-dot:focus-visible{background:var(--surface-sel)}
+.nav-dot[aria-current=true]:not(.pending){color:var(--ink)}
+/* 浮く面: 時刻と発言の中身だけ。幅 320px・最大 3 行 */
+.nav-tip{position:absolute;right:36px;z-index:10;width:320px;max-width:calc(100vw - 100px);border-radius:var(--r-m);background:var(--surface-float);
+  box-shadow:0 8px 28px var(--shadow);padding:10px 14px 12px;pointer-events:none;font-size:var(--fs);line-height:1.55}
+.nav-tip-time{display:block;font:var(--fs-xs)/1.6 var(--font-mono);color:var(--ink-weak);margin-bottom:2px}
+.nav-tip-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden;overflow-wrap:anywhere}
+
+/* ---- 狭い画面。地図は出さない。最新へは入力欄の右上。タップ領域は 44px ---- */
+@media (max-width:700px){
+  .nav-sticky{right:0;height:62px;padding-left:74px}
+  .nav-sticky-button{min-height:44px;padding-top:4px}
+  .nav-rail{display:none}
+  .nav-latest{right:16px;bottom:12px}
+  .nav-latest::after{content:"";position:absolute;inset:-5px;border-radius:var(--r-pill)}
+}
+
+/* ---- D 目次と会話内検索。右パネル（ファイルプレビューと同じ枠。幅 340px）と、狭い画面の下からのシートで同じ部品。
+   パネルの地は --surface-0（context.css の .file-preview.custom が中身の紙を透明にする）。検索欄と選んだ行は --surface-paper ---- */
+.file-preview[data-panel="conversation-toc"] .file-preview-content{overflow:hidden;display:flex;flex-direction:column}
+.toc{display:flex;flex-direction:column;flex:1;min-height:0;padding:3px 3px 0;   /* 検索欄のフォーカスの輪（外側 3px）が、中身の overflow で切れない余白 */
+  --surface-seg-track:var(--surface-1);--surface-seg-on:var(--surface-paper);--surface-badge-on:var(--surface-3)}
+/* ダークでは、選んだ区分（--surface-paper）が地（--surface-1）より暗く沈んで見えるので、溝を一段沈め（--surface-2）、選んだ区分を持ち上げる（--surface-3）。札は選んだ区分の上で --surface-2 に替える */
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .toc{--surface-seg-track:var(--surface-2);--surface-seg-on:var(--surface-3);--surface-badge-on:var(--surface-2)}}
+:root[data-theme="dark"] .toc{--surface-seg-track:var(--surface-2);--surface-seg-on:var(--surface-3);--surface-badge-on:var(--surface-2)}
+.toc-searchbox{position:relative}
+.toc-combo{display:flex;align-items:center;gap:2px;min-height:42px;padding:0 5px 0 12px;background:var(--surface-paper);border-radius:var(--r-pill)}
+.toc-combo:has(input:focus-visible){outline:2px solid var(--line-blue);outline-offset:1px}
+.toc-combo input:focus-visible{outline:none}
+.toc-combo > svg{width:16px;height:16px;flex:none;color:var(--ink-weak)}
+.toc-query{flex:1;width:100%;min-width:0;padding:10px 6px;background:transparent;font-size:13px}
+.toc-count{font:var(--fs-xs)/1 var(--font-mono);color:var(--ink-weak);white-space:nowrap;padding:0 4px}
+.toc-nb{width:28px;height:28px;padding:0;display:grid;place-items:center;flex:none;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer}
+.toc-nb:hover:not(:disabled){background:var(--surface-2)}
+.toc-nb:disabled{opacity:.45;cursor:default}
+.toc-nb svg{width:16px;height:16px}
+.toc-scope-row{display:flex;align-items:center;gap:6px;margin:12px 0 10px}
+.toc-seg{display:flex;flex:1;min-width:0;gap:2px;padding:3px;background:var(--surface-seg-track);border-radius:var(--r-pill)}
+.toc-scope{flex:auto;display:flex;align-items:center;justify-content:center;gap:5px;padding:5px 8px;font-size:var(--fs-s);color:var(--ink-weak);white-space:nowrap;
+  background:transparent;border-radius:var(--r-pill);cursor:pointer;transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.toc-scope:hover{background:var(--surface-2)}
+.toc-scope[aria-checked=true]{background:var(--surface-seg-on);color:var(--ink);font-weight:600}
+/* 件数の札: --surface-3・11px 等幅・最小幅 18px の pill。99 を超えたら 99+（全数は title） */
+.toc-badge{display:inline-block;min-width:18px;height:18px;padding:0 5px;border-radius:var(--r-pill);background:var(--surface-3);color:var(--ink);font:400 var(--fs-xs)/18px var(--font-mono);text-align:center}
+.toc-scope[aria-checked=true] .toc-badge{background:var(--surface-badge-on)}
+.toc-sort{width:36px;height:36px;padding:0;display:grid;place-items:center;flex:none;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer}
+.toc-sort:hover{background:var(--surface-2)}
+.toc-sort[aria-pressed=true]{color:var(--ink-blue)}
+.toc-sort svg{width:18px;height:18px}
+.toc-list{overflow:auto;flex:1;min-height:0;overscroll-behavior:contain}
+.toc-row{display:block;width:100%;text-align:left;padding:9px 12px;margin-bottom:2px;border-radius:var(--r-m);background:transparent;cursor:pointer}
+.toc-row:hover{background:var(--surface-hover)}
+.toc-row[aria-current=true]{background:var(--surface-paper)}
+.toc-excerpt{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+.toc-row small{display:block;margin-top:3px;font:var(--fs-xs)/1.5 var(--font-mono);color:var(--ink-weak)}
+.toc-row.k-answer,.toc-row.k-tool{padding-left:28px}
+.toc-row.k-answer .toc-excerpt{color:var(--ink-weak)}
+.toc-row.k-tool .toc-excerpt{font:var(--fs-s)/1.6 var(--font-mono);color:var(--ink-weak)}
+.toc-verb{font-family:var(--font);margin-right:2px}
+.toc-pending{color:var(--ink-mark)}
+.toc-empty{padding:30px 12px;margin:0;color:var(--ink-weak);font-size:13px}
+/* 一致: 下線と太字（色の面は使わない）。いま指している一致は太い濃い下線。UA の <mark> の黄色は消す */
+.searchhit,mark.searchhit{background:transparent;color:inherit;font-weight:700;text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:3px}
+mark.searchhit.active{text-decoration-color:var(--ink-strong);text-decoration-thickness:3px}
+
+/* ---- 狭い画面のシート。下から 86%。背景は幕で沈め、操作を受けない（main を inert にする） ---- */
+.toc-sheet-wrap{position:fixed;inset:0;z-index:40}
+.toc-veil{position:absolute;inset:0;background:var(--surface-veil)}
+.toc-sheet{position:absolute;left:0;right:0;bottom:0;height:86%;display:flex;flex-direction:column;padding:8px 16px calc(12px + env(safe-area-inset-bottom,0px));
+  background:var(--surface-0);color:var(--ink);border-radius:var(--r-l) var(--r-l) 0 0;box-shadow:0 8px 28px var(--shadow);animation:nav-sheet var(--dur) var(--ease-out)}
+.toc-grip{align-self:center;width:36px;height:4px;margin:0 0 6px;background:var(--surface-3);border-radius:var(--r-pill)}
+.toc-sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.toc-sheet-close{width:44px;height:44px;padding:0;display:grid;place-items:center;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer}
+.toc-sheet-close:hover{background:var(--surface-2)}
+.toc-sheet .toc-row{min-height:56px}
+.toc-sheet .toc-combo{min-height:48px}
+.toc-sheet .toc-nb{width:40px;height:40px}
+.toc-sheet .toc-scope{min-height:38px}
+.toc-sheet .toc-sort{width:44px;height:44px}
+@keyframes nav-sheet{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}

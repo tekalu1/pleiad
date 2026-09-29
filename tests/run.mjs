@@ -169,6 +169,8 @@ const cases = [
   await import("./unit/session-stream.mjs"),
   // 長い履歴の実寸の確定: 見えている所の近くだけ（数は会話の長さによらない・issue #37）。確定してもスクロールの位置は動かない（末尾なら末尾に、読み返し中ならその位置に。列より広い窓でも）
   await import("./unit/history-heights.mjs"),
+  // 会話の移動（web/conversation-nav.mjs）: 発言の抜粋（畳み・コード・添付）と件数の札
+  await import("./unit/conversation-nav.mjs"),
   // 履歴を描く間、1 行ごとに筋を探し回らない（稼働表示の行は activity.el。issue #37）
   await import("./unit/place-scan.mjs"),
   // つなぎ直したときの静かな読み直しは、同じ発言の行を残して変わった所から後ろだけ描く（読み返している位置も保つ。issue #37）

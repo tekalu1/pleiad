@@ -3037,5 +3037,63 @@
       "stopped": "Stopped the agent",
       "failed": "Couldn't open the PC browser."
     }
+  },
+  "nav": {
+    "token": {
+      "code": "‹code›",
+      "attachment": "Attachment"
+    },
+    "log": {
+      "label": "Conversation"
+    },
+    "sticky": {
+      "title": "{{text}} (press to go to the start of the question)",
+      "openToc": "Open contents"
+    },
+    "latest": {
+      "label": "Jump to latest (End)",
+      "running": "Reply in progress",
+      "new_one": "{{count}} new reply",
+      "new_other": "{{count}} new replies",
+      "withNote": "Jump to latest · {{note}}"
+    },
+    "rail": {
+      "label": "Conversation map",
+      "kind": {
+        "pending": "Waiting for approval",
+        "compact": "Compaction",
+        "branch": "Branch",
+        "visual": "Visualization"
+      }
+    },
+    "toc": {
+      "title": "Contents",
+      "entry": "Contents and search in this conversation (Ctrl+F)",
+      "close": "Close (Esc)",
+      "search": "Search this conversation",
+      "prevHit": "Previous match (Shift+Enter)",
+      "nextHit": "Next match (Enter)",
+      "clear": "Clear search",
+      "count": "{{index}} / {{total}}",
+      "none": "0 matches",
+      "scopeLabel": "Search in",
+      "scope": {
+        "user": "Yours",
+        "answer": "+ Replies",
+        "tool": "+ Tools"
+      },
+      "scopeFull": {
+        "user": "Your messages",
+        "answer": "Your messages and replies",
+        "tool": "Your messages, replies and tool output"
+      },
+      "scopeItems": "{{scope}} · {{count}} items",
+      "scopeMatches": "{{scope}} · {{count}} matches",
+      "sortLabel": "Newest first",
+      "sortOldest": "Oldest first (press for newest first)",
+      "sortNewest": "Newest first (press for oldest first)",
+      "noMatch": "No matches",
+      "noItems": "No messages in this conversation yet"
+    }
   }
 }

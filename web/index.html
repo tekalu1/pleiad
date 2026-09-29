@@ -17,6 +17,7 @@
 <link rel="stylesheet" href="/usage.css">
 <link rel="stylesheet" href="/file-preview.css">
 <link rel="stylesheet" href="/compaction.css">
+<link rel="stylesheet" href="/conversation-nav.css">
 <link rel="stylesheet" href="/remote-browser.css">
 <!-- i18next はビルドしないので、裸の名前をサーバーの配信口へ向ける（core/server.mjs の /vendor/i18next.mjs）。モジュールより前に置く -->
 <script type="importmap">{ "imports": { "i18next": "/vendor/i18next.mjs" } }</script>
@@ -147,6 +148,8 @@
       </div>
       <button type="button" class="btn btn-icon" id="titleWand" data-i18n-title="session.titleWand" disabled><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></button>
       <!-- 会話の右パネル「この会話のプラグイン」の入口（web/session-context.mjs）。件数と「変更あり」は client.mjs が入れる -->
+      <!-- 目次と会話内検索（web/conversation-toc.mjs）。発言がある会話でだけ出す。開くと右パネル（狭い画面は下からのシート） -->
+      <button type="button" class="btn btn-icon" id="tocEntry" hidden aria-controls="filePreview" aria-expanded="false" aria-keyshortcuts="Control+F" data-i18n-title="nav.toc.entry" data-i18n-aria-label="nav.toc.entry"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1"/></svg></button>
       <button type="button" class="btn ctxlink" id="contextEntry" data-i18n-title="session.context.entryTitle" hidden><svg class="i" viewBox="0 0 24 24"><path d="M4 4h9l5 5v11H4z"/><path d="M13 4v5h5"/></svg><span data-i18n="session.context.label"></span><span class="n mono" id="contextEntryCount" hidden></span><span class="chg" id="contextEntryChanged" hidden data-i18n="session.context.changed"></span></button>
       <!-- 委譲された子の会話でだけ出す、依頼元の会話へ戻る口（子の会話は脇の一覧に出ない）。サブエージェント・タスク・裏のコマンドの一覧は会話末尾の「バックグラウンド N」 -->
       <button type="button" class="btn" id="parentChatEntry" hidden data-i18n="dialog.tasks.parent"></button>
@@ -158,7 +161,8 @@
       <button type="button" class="btn btn-icon more-btn" id="sessionMore" hidden aria-haspopup="menu" data-i18n-title="session.more" data-i18n-aria-label="session.more"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></button>
     </header>
     <!-- 稼働表示（考えている・経過時間）は会話の筋の末尾の節として client.mjs が描く。固定の帯は置かない -->
-    <div id="log"><div class="thread" id="thread"></div></div>
+    <!-- 会話を包む入れ物。残る問い・最新へ・地図（web/conversation-nav-view.mjs）を #log の外に重ねる -->
+    <div class="log-frame" id="logFrame"><div id="log"><div class="thread" id="thread"></div></div></div>
 
     <div class="work-entry" id="workEntry" hidden><button type="button" class="btn work" id="workEntryButton" aria-controls="workDialog"></button></div>
     <form class="composer" id="composer">

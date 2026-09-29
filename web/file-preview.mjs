@@ -229,7 +229,9 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     setIcon(wide, expanded ? collapseIcon : expandIcon, expanded ? t('filePreview.besideChat') : t('filePreview.expand'));
     setIcon(closeButton, mobile.matches ? backIcon : closeIcon, mobile.matches ? t('filePreview.backToChat') : t('filePreview.closePreview'));
     const available = besideSidebar();
-    const pixels = Math.min(available - 360, Math.max(300, available * percentage / 100));
+    // 幅を決めた自前の中身（目次と検索。web/conversation-toc.mjs）は、その幅に固定して境界のつまみを出さない
+    const pixels = custom?.width ? Math.min(available - 360, custom.width) : Math.min(available - 360, Math.max(300, available * percentage / 100));
+    handle.hidden = Boolean(custom?.width);
     document.body.style.setProperty('--file-preview-width', `${Math.max(300, pixels)}px`);
     handle.setAttribute('aria-valuenow', String(Math.round(percentage)));
     if (browsing) browser.sync();
@@ -498,13 +500,13 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
    * ファイル以外の中身を同じパネルに出す（会話の右パネル「この会話のコンテキスト」）。
    * 幅・Esc・狭い画面の全面表示はファイルと共有する。出す部品は customSlots（見出しと本文と閉じるだけ）
    */
-  function openPanel({ key, title, subtitle = '', body, label, element, onClose }) {
+  function openPanel({ key, title, subtitle = '', body, label, element, onClose, width = 0 }) {
     const previous = custom;
     abort?.abort(); generation++; paintId++; disposePdf();
     if (previous && previous.key !== key) { leaveCustom(); previous.onClose?.(); }
     leaveBrowser();
     opener = element ?? null; file = null; reference = null; visual = null;
-    custom = { key, label, onClose, opener: element ?? null };
+    custom = { key, label, onClose, opener: element ?? null, width };
     context = getContext(element);
     panel.hidden = false; panel.dataset.panel = key; document.body.classList.add('file-preview-open');
     document.body.classList.remove('file-preview-wide');

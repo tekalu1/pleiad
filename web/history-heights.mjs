@@ -35,8 +35,12 @@ export function createHeightSettler({
   idle = idleWhenFree(),
   tailScreens = TAIL_SCREENS, tailMaxRows = TAIL_MAX_ROWS, batch = BATCH, idleBatch = IDLE_BATCH,
   urgentReach = URGENT_REACH, nearReach = NEAR_REACH, farReach = FAR_REACH,
+  onBusy = null,
 }) {
   let version = 0, active = false, frameQueued = false, idleQueued = false;
+  // 確定の作業が待っているか（onBusy に知らせる。会話の移動の部品が、確定が続く間の同期を間引くのに使う。web/conversation-nav-view.mjs）
+  let busy = false;
+  const refreshBusy = () => { const now = active && (frameQueued || idleQueued); if (now !== busy) { busy = now; onBusy?.(now); } };
   // scrollTop は画面の 1px に丸められる。補正のたびに丸めた分（端数）が積もって位置がずれないよう、丸めきれなかった分は次の補正に足す
   let carry = 0;
 
@@ -129,28 +133,33 @@ export function createHeightSettler({
     }
     if (unsettledWithin(nearReach).length) scheduleFrame();
     scheduleIdle();
+    refreshBusy();
   }
 
   function scheduleFrame() {
     if (!active || frameQueued) return;
     frameQueued = true;
+    refreshBusy();
     const at = version;
-    raf(() => { if (at === version) frameWork(); else frameQueued = false; });
+    raf(() => { if (at === version) frameWork(); else { frameQueued = false; refreshBusy(); } });
   }
 
   /** 手が空いたとき: 少し遠くの行を近い順に idleBatch 行ずつ確定する。近くの行が残っている間は待つ */
   function scheduleIdle() {
     if (!active || idleQueued) return;
     idleQueued = true;
+    refreshBusy();
     const at = version;
     idle(() => {
       idleQueued = false;
       if (at !== version) return;
       if (frameQueued) { scheduleIdle(); return; }
       const far = unsettledWithin(farReach);
-      if (!far.length) return;
-      settle(far.slice(0, idleBatch));
-      if (far.length > idleBatch) scheduleIdle();
+      if (far.length) {
+        settle(far.slice(0, idleBatch));
+        if (far.length > idleBatch) scheduleIdle();
+      }
+      refreshBusy();
     });
   }
 
@@ -176,6 +185,7 @@ export function createHeightSettler({
     version++;
     active = false;
     frameQueued = idleQueued = false;
+    refreshBusy();
   }
 }
 
