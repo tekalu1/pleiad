@@ -5,7 +5,8 @@
   </picture>
 </p>
 
-<p align="center">One workspace for Claude Code, Codex, and Antigravity.</p>
+<p align="center">One workspace for Claude Code, Codex, and Antigravity.<br>
+  <a href="https://pleiad.dev">pleiad.dev</a></p>
 
 <p align="center">
   <a href="https://github.com/tekalu1/pleiad/releases"><img src="https://img.shields.io/github/v/release/tekalu1/pleiad?include_prereleases" alt="Release"></a>
