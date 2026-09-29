@@ -109,6 +109,9 @@
 | 端末 | terminal |
 | 裏の作業 / 裏で動いている | background task / running in the background |
 | 下書き | draft |
+| 添付 N 件（発言の下・一覧の面） | N attachments |
+| エージェントに渡した原文（発言の本文そのまま） | what was sent to the agent |
+| 続きを表示 / 折りたたむ（長い発言） | Show more / Show less |
 | 根（グループの根の会話） | root |
 | 常に許可 / 拒否 | Always allow / Deny |
 | 配色の 自動 / 明 / 暗 | Auto / Light / Dark |
