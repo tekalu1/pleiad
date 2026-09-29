@@ -57,9 +57,15 @@ function trackArcs(root = document) {
   else if (!arcLoop) arcLoop = requestAnimationFrame(drawArcs);
 }
 
-// ナビ: 面はヒーローを過ぎたら、ダウンロードはヒーローのボタンが見えなくなったら
+// ナビ: 面はヒーローを過ぎたら
 const nav = $('.nav');
-new IntersectionObserver(([e]) => nav.classList.toggle('show-dl', !e.isIntersecting)).observe($('.hero .cta'));
+// ダウンロードの大きなボタン（ヒーローと終わり）が見えている間は、ナビに同じボタンを重ねない
+const ctaSeen = new Map();
+const ctaIo = new IntersectionObserver((entries) => {
+  entries.forEach((e) => ctaSeen.set(e.target, e.isIntersecting));
+  nav.classList.toggle('show-dl', ![...ctaSeen.values()].some(Boolean));
+});
+$$('.hero .cta, .end .cta').forEach((el) => ctaIo.observe(el));
 
 // 出現
 $$('.tile-copy, .v-deleg, .phone, .end > *').forEach((el) => el.setAttribute('data-reveal', ''));

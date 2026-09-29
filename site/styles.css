@@ -440,7 +440,6 @@ h2 {
   #delegate { padding-bottom: 22px; }
   .tile-visual { padding-top: 36px; }
   .dg-why span { display: none; }
-  .ph-done code { display: none; }
   .cta { flex-direction: column; align-items: stretch; width: 100%; max-width: 320px; }
   .hero-copy .cta { max-width: 300px; }
   #remote .tile-visual { display: block; }
