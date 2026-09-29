@@ -138,8 +138,13 @@ const cases = [
   await import("./unit/audit-self.mjs"),
   await import("./unit/markdown-xss.mjs"),
   await import("./unit/tools-render.mjs"),
+  await import("./unit/tool-bundle.mjs"),
   await import("./unit/timeline-images.mjs"),
   await import("./unit/attachment-order.mjs"),
+  // 自分の発言: 添付の印を本文の位置に置く（コードブロック内・一致しないパスは残す・古い形式は末尾）・畳み込み・別カードを二重に出さない
+  await import("./unit/user-message.mjs"),
+  await import("./unit/md-doc.mjs"),
+  await import("./unit/prompt-title.mjs"),
   // 添付の件数に上限が無い（下書き・送信）。出どころの印。1 件 8MB の上限は残る
   await import("./unit/attach-no-limit.mjs"),
   // 添付を断片で送る（1 件 100MB まで）: 境目・抜け・やめる・切れても続きから・大きな画像は会話にパスだけ
@@ -168,7 +173,7 @@ const cases = [
   await import("./unit/place-scan.mjs"),
   // つなぎ直したときの静かな読み直しは、同じ発言の行を残して変わった所から後ろだけ描く（読み返している位置も保つ。issue #37）
   await import("./unit/history-retain.mjs"),
-  // loadSession の差分（ADR 0059）: 合うときだけ続きを返す・つないだ結果は全量と同じ・合わなければ全量・画面の頼み方
+  // loadSession の差分（ADR 0062）: 合うときだけ続きを返す・つないだ結果は全量と同じ・合わなければ全量・画面の頼み方
   await import("./unit/history-sync.mjs"),
   await import("./unit/server-history-diff.mjs"),
   // 返答の本文は 1 コマに 1 回だけ描く・流れの終わりでは描き切る・会話を切り替えたら別の会話へ描かない

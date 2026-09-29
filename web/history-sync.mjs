@@ -1,9 +1,9 @@
-// 履歴を全部読み直さずに済ませるための道具（issue #37 段階 2。ADR 0059）。
+// 履歴を全部読み直さずに済ませるための道具（issue #37 段階 2。ADR 0062）。
 //   - retainPlan: 静かな読み直しで、画面に残す行と描き直す行の境目（画面の DOM は client.mjs が触る）
 //   - syncRequest / serveFrom / joinReply: loadSession を「今持っている先頭の続きだけ」にする（画面が頼み、サーバーが切り、画面がつなぐ）
 // 中身の同じ発言を見分けるのは、発言全体の署名（messageSig）。uuid・本文だけでなく、後から付いたツールの結果・
 // 圧縮の印など、行の見た目に効く値が変わっても「違う」になる（web/branches.mjs の commonPrefix は本文とツール名しか見ない）。
-import { buildItems } from "./timeline.mjs";
+import { buildItems, inlineAttachments } from "./timeline.mjs";
 import { visualizeReferences } from "./visualize-reference.mjs";
 
 /** 文字列の 53 ビットの署名（cyrb53）。暗号用ではなく、同じ中身かを見分けるだけ */
@@ -49,10 +49,12 @@ const sameMessage = (a, b) => a === b || messageSig(a) === messageSig(b);
 const samePresent = (a, b) => a === b || presentSig(a) === presentSig(b);
 
 /** 描く行の並び（buildItems）の 2 つの項目が、同じ行になるか */
-function sameItem(a, b, refsChanged) {
+function sameItem(a, b, refsChanged, attachmentsChanged) {
   if (a.kind !== b.kind) return false;
   if (a.kind === "present") return a.pi === b.pi && a.anchorMi === b.anchorMi && samePresent(a.p, b.p);
   if (a.mi !== b.mi || !sameMessage(a.m, b.m)) return false;
+  // 発言の本文に取り込んで描く添付（human の提示）が変わった（結び付いた・外れた）
+  if (attachmentsChanged(b.mi)) return false;
   // 提示の印（visualize{…}）は、対応する提示が保存されているかで描き方が変わる
   return !(b.m.role === "assistant" && refsChanged(b.m.text));
 }
@@ -73,8 +75,11 @@ export function retainPlan(old, next) {
   const newRefs = new Set((next.presents ?? []).map(p => p?.reference).filter(Boolean));
   const refsChanged = (text) => typeof text === "string" && text.includes("visualize")
     && visualizeReferences(text).some(ref => oldRefs.has(ref.raw) !== newRefs.has(ref.raw));
+  const oldAttached = inlineAttachments(oldItems), newAttached = inlineAttachments(items);
+  const attachedSig = (list) => (list ?? []).map(presentSig).join(",");
+  const attachmentsChanged = (mi) => attachedSig(oldAttached.get(mi)) !== attachedSig(newAttached.get(mi));
   let keepItems = 0;
-  while (keepItems < oldItems.length && keepItems < items.length && sameItem(oldItems[keepItems], items[keepItems], refsChanged)) keepItems++;
+  while (keepItems < oldItems.length && keepItems < items.length && sameItem(oldItems[keepItems], items[keepItems], refsChanged, attachmentsChanged)) keepItems++;
 
   const before = compactionOf(old.compactions), after = compactionOf(next.compactions);
   const changed = [...new Set([...before.keys(), ...after.keys()])].filter(id => before.get(id) !== after.get(id));

@@ -6,7 +6,8 @@ import { setupBrowserSettings } from './browser-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
 import { configureLinkOpen } from './link-open.mjs';
 import { setupLinkMenu } from './link-menu.mjs';
-import { download, notify } from './file-actions.mjs';
+import { download, notify, copyPathText } from './file-actions.mjs';
+import { paintUserBody, userTools, attachmentImageSrc } from './user-message.mjs';
 import { watchHostOnlyLinks } from './host-only-links.mjs';
 import { linkChoices, showLinkSheet, hideLinkSheet, linkSheetOpen } from './link-sheet.mjs';
 import { createRemoteBrowser } from './remote-browser.mjs';
@@ -27,16 +28,19 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
 import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, plainTextHtml } from "./render.mjs";
+import { Bundle, bundleOf, fadeIn, markRunning, markWaiting, splitToolCalls, swapHeight } from "./tool-bundle.mjs";
 import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
 import { setupComposerControls, resolvedModel, folderBrowser } from "./composer-controls.mjs";
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { setupAttachMenu } from "./attach-menu.mjs";
-import { promptMaxHeight, attachSources, attachOrigin, attachFolderHints } from "./composer-layout.mjs";
+import { promptMaxHeight, attachSources, attachFolderHints } from "./composer-layout.mjs";
 import { sendAttachment, ATTACH_MAX_BYTES } from "./attach-upload.mjs";
 import { formatBytes } from "./folder-upload.mjs";
 import { modelRowIds, modelDisplayName } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
+import { createMarkdownEditor } from "./md-editor.mjs";
+import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
@@ -49,11 +53,12 @@ import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { retainPlan, syncRequest, joinReply } from "./history-sync.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
-import { el, svgEl, icon, relTime, randomId } from "./dom.mjs";
+import { el, svgEl, icon, relTime, randomId, chevron } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
 import { savedEvent, savedTitle } from "./saved-text.mjs";
-import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE } from "./timeline.mjs";
+import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE, normalizeAttachmentPath, inlineAttachments, showsAsCard } from "./timeline.mjs";
 import { commandParts, sysFold, teammateNode, shellFailed, elapsedText as shellElapsed } from "./system-messages.mjs";
+import { parseTaskNotice } from "./task-notice.mjs";
 import { createShellComposer } from "./shell-composer.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
@@ -117,6 +122,22 @@ paintOpenSidebar($("openSidebar"), {}, t);
 for (const [name, text] of [["untitled", t("session.untitled")], ["default", t("chat.model.default")], ["showing", ` ${t("app.previewShowing")}`]]) {
   document.documentElement.style.setProperty(`--i18n-${name}`, JSON.stringify(text));
 }
+
+// 入力欄（web/md-editor.mjs、ADR 0060）。Markdown をその場で整える編集欄。textarea と同じ窓口（value・selectionStart・placeholder…）を持つので、
+// 以降のコードは今までどおり $("prompt").value などで触る。添付は字の間の 1 行の印（[添付] パス）が原子になり、実体の情報は state.attached、
+// 送っている途中のものは uploads（仮の ID）が持つ。シェルの形の間は整形も文中の添付もしない（composerPlain）
+let composerPlain = false, composerShellMode = null;
+const uploads = new Map();
+const composerEditor = createMarkdownEditor($("prompt"), {
+  resolve: (path) => attachedInfo(path),
+  pending: (pid) => pendingUpload(pid),
+  locale: () => composerAgentLang(),
+  isPlain: () => composerPlain,
+  onAtoms: (change) => onComposerAtoms(change),
+  onZoom: (info) => openLightbox(attachedImageSrc(info), info.name, info.path),
+  onOpenFile: (info, anchor) => filePreview.open({ path: info.path, line: null }, anchor),
+  onAtomAction: (act, key) => onComposerAtomAction(act, key),
+});
 
 // 入力欄の待ち（web/composer-wait.mjs）。書けない待ちは disabled ではなく readonly + aria-busy。
 // 初めて接続して会話を開くまでは「接続しています…」（その間に書いた字は、開いた会話の下書きで上書きされるため）
@@ -184,6 +205,9 @@ const state = {
   contextInfoId: null, // 上の記録がどのセッションのものか
   presents: [],
   turnEl: null,        // 追記中の AI の発言（.m.ai）
+  bundle: null,        // 走っているツールのまとまり（本文・委譲・ターンの終わりで閉じる。web/tool-bundle.mjs）
+  pendingUuid: null,   // 見せるものが無いまま確定した発言（thinking だけ）の id。次に発言の入れ物を作るときに使う
+  endedWithText: false, // 直前に確定した発言（text.end）が本文を持っていたか。本文の無いツールだけの発言が続くときは、発言もまとまりも閉じない
   turnClosed: false,   // text.end が来た。続くツール呼び出しは同じ発言に入り、次の本文は新しい発言になる
   streamEl: null,      // 追記中の本文
   thinkEl: null,       // 追記中の thinking 要素（平文が来たときだけ作る）
@@ -524,6 +548,7 @@ function resetLiveTurn() {
   state.streamEl = null;
   state.thinkEl = null;
   state.turnEl = null;
+  state.bundle = null;
   state.turnClosed = false;
 }
 
@@ -548,7 +573,7 @@ function rowRole(row) {
  * 残す境目は、残す項目のうち一番後ろの「履歴から描いた行」（data-h）。ライブで描いて履歴の添字を付けただけの行は、
  * 1 行が複数の発言にまたがることがあるので境目にしない（その分は履歴から描き直す）。
  * 境目より前でも、圧縮の区切りと分岐点の行は描き直すので外す。境目が無ければ null（呼び出し側が全部描き直す）。
- * 戻り値は { row: 境目の行, from: 描き直す最初の項目の添字, prevRole: その直前の発言の役割 }
+ * 戻り値は { row: 境目の行, from: 描き直す最初の項目の添字, prevRole: その直前の発言の役割, rows: 履歴から描いた行（キー → 行） }
  */
 function retainThread({ keepItems, items }) {
   const rows = new Map();
@@ -573,7 +598,7 @@ function retainThread({ keepItems, items }) {
     if (row === boundary) after = true;
   }
   for (const [id, card] of state.toolCards) if (!card.isConnected) state.toolCards.delete(id);
-  return { row: boundary, from, prevRole };
+  return { row: boundary, from, prevRole, rows };
 }
 
 /**
@@ -625,14 +650,11 @@ function forkButton(m) {
           const attached = data.presents.filter(p => attachmentMessageIndex(data.messages, p) === index)
             // 名前は captionParams.name（新しい記録）。無い過去の記録は保存された見出し「添付: 名前」から取る
             .map(p => ({ path: p.path, name: p.captionParams?.name || p.caption?.replace(/^添付:\s*/, '') || p.path.split(/[\\/]/).at(-1),
-              mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri }));
-          // 自動で付いた添付行（[添付] / [Attachment]）だけを除く。本文に書かれた説明は残す。
-          const paths = new Set(attached.map(p => p.path.replace(/\\/g, '/').toLowerCase()));
-          const text = (data.messages[index].text ?? '').split(/\r?\n/).filter(line => {
-            const match = ATTACHMENT_LINE.exec(line.trim());
-            return !match || !paths.has(match[1].replace(/\\/g, '/').toLowerCase());
-          }).join('\n').trimEnd();
-          const draft = { text, attached, index };
+              mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri,
+              // 出どころと大きさも引き継ぐ（入力欄の一覧が出す）
+              ...(p.origin === 'host' || p.origin === 'device' ? { from: p.origin } : {}), ...(Number.isFinite(p.size) ? { size: p.size } : {}) }));
+          // 印（[添付] / [Attachment]）は本文の位置のまま編集欄へ戻す。文中の位置を保つ（編集で印を消した添付は送らない。keptAttachments）
+          const draft = { text: data.messages[index].text ?? '', attached, index };
           if (edit) editMessage(m, draft);
           else await forkFrom(m, { draft });
         } catch (e) { sys(html.t('chat.message.resendPrepareFailed', { error: e.message })); }
@@ -643,6 +665,13 @@ function forkButton(m) {
   }
   m.append(actions);
   return b;
+}
+
+/** 編集で本文から消した印の添付は、再送しない（元の本文に印があって、編集後に無くなったものだけを外す） */
+function keptAttachments(attached, before, after) {
+  const marks = (text) => new Set(String(text ?? '').split(/\r?\n/).map(line => ATTACHMENT_LINE.exec(line.trim())?.[1]).filter(Boolean).map(normalizeAttachmentPath));
+  const had = marks(before), has = marks(after);
+  return attached.filter(a => { const k = normalizeAttachmentPath(a.path); return !had.has(k) || has.has(k); });
 }
 
 function editMessage(m, draft) {
@@ -674,7 +703,7 @@ function editMessage(m, draft) {
   send.onclick = async () => {
     if (send.disabled || state.busy) return;
     send.disabled = cancel.disabled = input.disabled = true;
-    try { await forkFrom(m, { draft: { ...draft, text: input.value } }); }
+    try { await forkFrom(m, { draft: { ...draft, text: input.value, attached: keptAttachments(draft.attached, draft.text, input.value) } }); }
     finally { cancel.disabled = input.disabled = false; update(); }
   };
   input.onkeydown = event => {
@@ -704,17 +733,78 @@ function whoLine(who, at) {
   return w;
 }
 
-function userMsg(text, { uuid, at } = {}) {
+/**
+ * 自分の発言。本文は Markdown で描き、この発言に結び付いた添付（presents。human の present）は本文の印の位置に置く
+ * （web/user-message.mjs、ADR 0059）。markdown: false は今までの平文（委譲の子の会話を読む面）
+ */
+function userMsg(text, { uuid, at, presents = [], markdown = true } = {}) {
   const m = el("div", "m user");
   m.dataset.role = "user";
   if (at) m.dataset.at = at;
   m.append(whoLine(t("chat.message.you"), at));
-  // 字は書いたとおり。パスだけ AI の本文と同じ判定でファイルリンクにする（render.mjs の plainTextHtml）
   const body = el("div", "body");
-  body.innerHTML = plainTextHtml(text);
   m.append(body);
   forkButton(m);
+  paintUser(m, text, presents, { markdown });
   setUuid(m, uuid);
+  return m;
+}
+
+/** 発言の原文。描画は原文から作り直せるよう、吹き出しが持つ（履歴との突き合わせ・添付の突き合わせもこれを読む） */
+const userRaw = (m) => m.querySelector(":scope > .body")?.dataset.raw ?? m.querySelector(":scope > .body")?.textContent ?? "";
+
+/** 発言の本文と、その下の行（添付 N 件・原文）を描く。m.attached は結び付いた添付 */
+function paintUser(m, text, presents = [], { markdown = m.querySelector(":scope > .body")?.classList.contains("md-user") ?? true } = {}) {
+  const body = m.querySelector(":scope > .body");
+  m.attached = presents;
+  paintUserBody(body, text, presents, { markdown });
+  m.querySelector(":scope > .msg-tools")?.remove();
+  m.querySelector(":scope > .msg-source")?.remove();
+  if (!markdown) return;
+  const tools = userTools({ raw: text, presents,
+    openItem: (item, present) => {
+      const src = present && attachmentImageSrc(present);
+      if (src) openLightbox(src, item.name, item.path);
+      else if (item.path) filePreview.open({ path: item.path, line: null }, null);
+    },
+    copyPath: (path) => copyPathText(path) });
+  if (tools) body.after(tools.row, tools.source);
+}
+
+/**
+ * Pleiad の完了通知の 1 行。✓/✕・「委譲の結果」・依頼の題・委譲先・届いた時刻・「開く」。開くと結果の本文だけで、
+ * エージェントに渡した全文は奥の折りたたみ。読めない形（まとめ通知・古い形）や本文が無いときは、従来の「再開しました」の 1 行
+ */
+function taskNoticeNode(text, at = '') {
+  const notice = parseTaskNotice(text);
+  if (!notice) return text ? sysFold(t('chat.sys.taskResumed'), text, at) : el('div', 'm sys', t('chat.sys.taskResumed'));
+  const task = (state.work.tasks ?? []).find(x => x.taskId === notice.taskId);
+  const first = notice.task.split(/\r?\n/).find(Boolean) ?? '';
+  const title = task ? backgroundTitle(task) : [...first].slice(0, 40).join('');
+  const backend = task?.backend || notice.backend;
+  const failed = notice.status === 'failed';
+  const mark = stillMark(notice.status === 'completed' ? 'done' : failed ? 'fail' : 'stop', TASK_STATUS[notice.status] ?? notice.status);
+  const m = el('div', 'm sys task-notice');
+  const d = el('details', 'sys-fold');
+  const s = el('summary');
+  const who = el('span', 'tn-who');
+  if (backend) who.append(routingLogo(backend), el('span', 'tn-name', labelOf(backend)));
+  if (at) who.append(el('span', 't', at));
+  s.append(mark, el('span', 'tn-verb', t('chat.sys.taskResult')), el('span', 'tn-title', title), who);
+  if (task) {
+    const open = el('button', 'btn tc-open', t('dialog.work.open'));
+    open.type = 'button';
+    open.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openWork(`t:${task.taskId}`); };
+    s.append(open);
+  }
+  s.append(chevron());
+  // 字は書いたとおり。URL だけリンクにする（sysFold と同じ。パスは字のまま）
+  const linked = (source) => { const box = el('div', 'sys-body'); box.innerHTML = plainTextHtml(source, { paths: false }); return box; };
+  const body = linked(notice.result || text);
+  const full = el('details', 'tc-fold tc-json');
+  full.append(el('summary', null, t('chat.sys.taskFull')), linked(text));
+  d.append(s, body, full);
+  m.append(d);
   return m;
 }
 
@@ -730,7 +820,7 @@ function systemHistoryNode(m) {
   // 中断で止めたものを Pleiad がエージェントへ伝えた文。開くと中身が読める
   if (m.kind === 'interruptionNote') return sysFold(t('chat.sys.interruptionNote'), m.body ?? '');
   // Pleiad の完了通知。「タスクの結果で再開」の 1 行を開くと、エージェントに渡した本文が読める
-  if (m.internalTaskNotice) return m.text ? sysFold(t('chat.sys.taskResumed'), m.text) : el('div', 'm sys', t('chat.sys.taskResumed'));
+  if (m.internalTaskNotice) return taskNoticeNode(m.text, hhmm(m.at));
   return undefined;
 }
 
@@ -934,7 +1024,7 @@ async function runShellFromComposer() {
 /** 入力欄に字を入れる（送らない）。書きかけがあれば改行して後ろに足す */
 function copyToComposer(text) {
   const prompt = $('prompt');
-  prompt.value = prompt.value && !prompt.value.endsWith('\n') ? `${prompt.value}\n${text}` : prompt.value + text;
+  composerEditor.append(prompt.value && !prompt.value.endsWith('\n') ? `\n${text}` : text);
   prompt.dispatchEvent(new Event('input', { bubbles: true }));
   prompt.focus();
 }
@@ -971,7 +1061,8 @@ const lastIsAi = () => thread.querySelector(".mw:last-of-type .m")?.classList.co
  */
 function ensureTurnEl() {
   if (state.turnEl) return state.turnEl;
-  const m = aiMsg({ at: new Date().toISOString(), cont: lastIsAi() });
+  const m = aiMsg({ at: new Date().toISOString(), cont: lastIsAi(), uuid: state.pendingUuid });
+  state.pendingUuid = null;
   append(m, `live:${++liveSeq}`);
   state.turnEl = m;
   return m;
@@ -984,11 +1075,62 @@ function openTurnEl() {
   return ensureTurnEl();
 }
 
+/** 走っているまとまりを閉じて見出し 1 行にする（本文が来た・委譲が始まった・ターンが終わった） */
+function closeBundle() {
+  const b = state.bundle;
+  state.bundle = null;
+  if (!b) return;
+  b.close();
+  // 走っている行を抱えたまま閉じた（本文・割り込みが先に来た）。その行は閉じた見出しの中に隠れるので、稼働表示で待っていることを残す
+  if (b.cards.some((c) => c.classList.contains("tc-running"))) {
+    queueMicrotask(() => { if (isRunningHere() && !state.bundle) activity.show(activity.text || ACTIVITY_LABEL.running); });
+  }
+}
+
+/** 今のまとまり。無ければ今の発言の末尾に作る */
+function liveBundle() {
+  const turn = ensureTurnEl();
+  if (state.bundle && state.bundle.el.parentNode === turn) return state.bundle;
+  closeBundle();
+  state.bundle = new Bundle({ live: true });
+  turn.append(state.bundle.el);
+  return state.bundle;
+}
+
+/** まとまりの外に置くツール（委譲・サブエージェント）。子は親のターンの後も動くので、閉じても見える */
+const isBoundaryTool = (name) => isDelegateTool(name) || SUBAGENT_TOOLS.has(name);
+
+/** 会話の下端に付いていく（行が伸びて高さが変わる間も、読んでいた下端に居続ける） */
+function followBottom(ms = 320) {
+  const end = performance.now() + ms;
+  const tick = () => { log.scrollTop = log.scrollHeight; if (performance.now() < end) requestAnimationFrame(tick); };
+  tick();
+}
+
 function closeTurnEl() {
   closeThink();
+  closeBundle();
   endStream();
   state.turnEl = null;
   state.turnClosed = false;
+  state.endedWithText = false;
+  state.pendingUuid = null;
+}
+
+/**
+ * ターンが終わった。結果を持たないまま残った行（中断・エラーで tool.result が来なかった）から、走っている印と承認カードを外す。
+ * 弧と経過が回り続けたり、閉じた見出しの中で押せない承認が残ったりしないように
+ */
+function settleStrays() {
+  for (const row of thread.querySelectorAll(".tc.tc-running, .tc.tc-waiting")) {
+    row.classList.remove("tc-running", "tc-waiting");
+    const res = row.querySelector(".tc-res");
+    if (res) { res.paint = null; res.replaceChildren(); }
+    row.querySelector(".tc-appr")?.remove();
+    const shell = row.querySelector(".tc-details");
+    if (shell) shell.hidden = false;
+    bundleOf(row)?.paint();
+  }
 }
 
 // ---------------------------------------------------------------- 質問カード
@@ -1175,7 +1317,94 @@ function foldSettledCard(card, head, code, target) {
   head.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
 }
 
+/**
+ * ツールの承認を、走っているまとまりの最新の行の場所に出す（許可・拒否をその場で押せる）。決着したらカードが縮んで普通の行に戻り、
+ * まとまりに残る（外に ◇ の 1 行を残さない）。行は「動詞・主役・補足」の並びのまま、押したら 3 つのボタンを止めて受け取りを待つ
+ */
+function rowApprovalCard(ev, row) {
+  const details = row.querySelector(".tc-details");
+  const line = row.querySelector(".tc-line");
+  const host = row.closest(".in") ?? row;
+  const box = el("div", "tc-appr");
+  box.setAttribute("role", "group");
+  box.dataset.permId = ev.id;
+  const ln = el("div", "ln");
+  for (const n of line.querySelectorAll(".tc-label, .tc-server, .tc-main, .tc-note")) ln.append(n.cloneNode(true));
+  // 書き込みは行数を補足に（行の右端の結果は、書き終えてから出る）
+  const change = row.toolChange;
+  if (change && !change.del && change.add && !ln.querySelector(".tc-note")) ln.append(el("span", "tc-note", t("timeline.result.lines", { count: change.add, n: change.add })));
+  box.append(el("div", "h", t("chat.approval.headingMark")), ln);
+  box.setAttribute("aria-label", `${t("chat.approval.headingMark")}: ${line.querySelector(".tc-label")?.textContent ?? ""} ${line.querySelector(".tc-main")?.textContent ?? ""}`.trim());
+
+  const canAlways = ev.canAlways && capsOf(activeBackendId()).alwaysAllow !== false;
+  const acts = el("div", "acts");
+  const res = el("span", "res");
+  const always = el("button", "btn", t("chat.approval.always"));
+  const deny = el("button", "btn btn-quiet", t("chat.approval.deny"));
+  const allow = el("button", "btn btn-primary", t("chat.approval.allow"));
+  for (const b of [always, deny, allow]) b.type = "button";
+  acts.append(res, ...(canAlways ? [always] : []), deny, allow);
+  box.append(acts);
+  const buttons = [always, deny, allow];
+  const verb = (ok, forever) => (ok ? (forever ? t("chat.approval.always") : t("chat.approval.allow")) : t("chat.approval.deny"));
+
+  const settle = async (ok, forever = false) => {
+    if (box.dataset.sending) return;
+    box.dataset.sending = "1";
+    box.classList.add("sending");
+    // 拒否の印は送る前に付ける（確認より先に結果が届いても、失敗と数えない）。送れなかったら外す
+    const change = row.toolChange;
+    if (!ok) { row.dataset.denied = "1"; row.toolChange = null; }
+    for (const b of buttons) b.disabled = true;
+    res.className = "res";
+    res.removeAttribute("role");
+    res.replaceChildren(el("span", null, t("chat.approval.sending", { action: verb(ok, forever) })));
+    const arc = setTimeout(() => res.prepend(runMark()), 150);
+    try {
+      await cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, ...(ok ? {} : { messageKey: "userDenied" }) });
+    } catch (e) {
+      clearTimeout(arc);
+      delete box.dataset.sending;
+      box.classList.remove("sending");
+      if (!ok) { delete row.dataset.denied; row.toolChange = change; }
+      for (const b of buttons) b.disabled = false;
+      res.className = "res fail";
+      res.setAttribute("role", "alert");
+      res.replaceChildren(`✕ ${t("chat.approval.sendFailedInline", { action: verb(ok, forever), error: e.message })}`);
+      return;
+    }
+    clearTimeout(arc);
+    // カードを行に戻す。補足は「許可した」「常に許可した」、拒否は右端に弱い字で「拒否した」（失敗ではない。変更にも数えない）
+    swapHeight(host, () => {
+      box.remove();
+      details.hidden = false;
+      row.classList.remove("tc-waiting");
+      const said = el("span", "tc-note", ok ? (forever ? t("chat.approval.allowedAlways") : t("chat.approval.allowed")) : "");
+      line.querySelector(".tc-note")?.remove();
+      if (ok) line.querySelector(".tc-res").before(said);
+      fadeIn(details);
+      // 結果が確認より先に届いていたら（tc-done / tc-error）、終わった行に弧を付けない
+      const finished = row.classList.contains("tc-done") || row.classList.contains("tc-error");
+      if (ok) { if (!finished) markRunning(row); }
+      else if (!finished) line.querySelector(".tc-res").textContent = t("chat.approval.denied");
+    });
+    bundleOf(row)?.paint();
+    state.pendingPerms.delete(ev.id);
+    if (isRunningHere()) { if (ok) activity.suspend(); else activity.show(t("activity.continuing")); }
+  };
+  allow.onclick = () => settle(true);
+  deny.onclick = () => settle(false);
+  always.onclick = () => settle(true, true);
+
+  markWaiting(row);
+  swapHeight(host, () => { details.hidden = true; row.append(box); });
+  fadeIn(box);
+  bundleOf(row)?.reveal(row);
+  return box;
+}
+
 function permissionCard(ev, into = null) {
+  if (into?.matches?.(".tc")) return rowApprovalCard(ev, into);
   const m = el("div", "m card");
   const card = el("div", "card");
   m.append(card);
@@ -1258,7 +1487,13 @@ function permissionCard(ev, into = null) {
  * 同じ承認を二度描かない（枝の切り替えでは筋の前半が残るため）。
  */
 function renderPermission(ev) {
-  if (thread.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"]`)) return;
+  if (thread.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"], [data-perm-id="${CSS.escape(ev.id)}"]`)) return;
+  // ツールの承認で、そのツールの行が走っているまとまりの中にあるなら、まとまりを閉じずにその行の中に出す
+  const row = ev.kind !== "question" && !ev.browserSite && ev.toolUseID ? state.toolCards.get(ev.toolUseID) : null;
+  if (row?.isConnected && bundleOf(row)?.live) {
+    activity.suspend();   // 承認カードが「承認を待っている」を語る
+    return permissionCard(ev, row);
+  }
   closeTurnEl();
   // 質問は承認ではない。専用のカードで選択肢を出す
   if (ev.kind === "question") {
@@ -1307,6 +1542,8 @@ const activity = {
   el: null,          // .m.activity
   text: "",
   behind: null,      // behindOf() の結果。裏を待っている間だけ
+  idleTimer: null,   // ツールが終わってから稼働表示を戻すまでの短い待ち（afterTool）
+  suspended: false,  // ツールの行が今の状態を語っている間。汎用の activity 事象（passive）は出さない
   shape: "",         // 今の印（run / sat:N / none）。変わったときだけ差し替える
   /** ターンは終わり、待てない裏の作業（端末・裏のコマンド）だけが残っている。印も経過時間も出さない（§6.1） */
   idleOnly() {
@@ -1328,7 +1565,41 @@ const activity = {
   remark() {
     this.el?.closest(".mw")?.querySelector(".activity-tip")?.replaceChildren(this.mark());
   },
-  show(text, { delayMark = false } = {}) {
+  /**
+   * ツールの行（走っている最新の行・承認カード）が今の状態を語っているときは、末尾の稼働表示を出さない（同じ内容を 2 か所に書かない）。
+   * 経過は覚えておく（次に出すときも続きから数える）。裏の衛星だけは残す: 衛星の置き場はここしか無いので、
+   * ツールの文言は重ねずに衛星の行にする
+   */
+  suspend() {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+    this.suspended = true;
+    if (!this.t0) this.t0 = Date.now();
+    if (behindHere()) return this.show(this.text || ACTIVITY_LABEL.running, { keepSuspended: true });
+    clearTimeout(this.markTimer);
+    this.markTimer = null;
+    this.behind = null;
+    this.shape = "";
+    this.el?.closest(".mw")?.remove();
+    this.el = null;
+    relayoutBranches();
+  },
+  /** ツールの結果が届いた。すぐ次のツールが始まらず、走っている行も無いなら、行に出ていない待ちとして稼働表示を戻す */
+  afterTool() {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      // 走っている・承認を待っている行が今のまとまりに無いときだけ（前のターンの残骸や他の会話の行は見ない）
+      const busy = (state.bundle?.cards ?? []).some((c) => c.classList.contains("tc-running") || c.classList.contains("tc-waiting"));
+      if (isRunningHere() && !busy) this.show(ACTIVITY_LABEL.running);
+    }, 600);
+  },
+  show(text, { delayMark = false, passive = false, keepSuspended = false } = {}) {
+    // 汎用の事象（動いている・待っている）は、ツールの行が語っている間は出さない
+    if (passive && this.suspended && !behindHere()) return;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+    if (!keepSuspended) this.suspended = false;
     // 中断を頼んだ後は、止まり終えるまで何が流れてきても「中断している」のまま出す
     if (stoppingHere()) text = ACTIVITY_LABEL.stopping;
     this.text = text;
@@ -1378,6 +1649,9 @@ const activity = {
   },
   hide() {
     clearInterval(this.timer);
+    clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+    this.suspended = false;
     clearTimeout(this.markTimer);
     this.timer = null;
     this.markTimer = null;
@@ -1470,6 +1744,7 @@ function appendText(text) {
   if (!state.streamEl) {
     // 閉じた発言の後は streamEl がリセットされるため、本文を作る前に開く。
     const turn = openTurnEl();
+    closeBundle();
     state.streamEl = el("div", "body");
     state.streamEl.dataset.raw = "";
     turn.append(state.streamEl);
@@ -1708,7 +1983,8 @@ function onEvent(ev, replay = false) {
         : append(userMsg(ev.text, { at: ev.at }), `live:${++liveSeq}`);
       if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
       row.dataset.messageStarted = '1';
-      row.querySelector('.m.user .body').innerHTML = plainTextHtml(ev.text);
+      const userRow = row.querySelector('.m.user');
+      if (userRow?.querySelector(':scope > .body')) paintUser(userRow, ev.text, userRow.attached ?? []);
       if (ev.at) { row.querySelector('.m').dataset.at = ev.at; row.querySelector('.who .when').textContent = hhmm(ev.at); }
       // 放置中の圧縮で末尾に付いた区切りは、この発言の前へ置き直す（at で並べ直す）。
       // 区切りがすべてこの発言より前にあるときは作り直さない。古い区切りを最新の発言の前へ動かしていた不具合の再発を防ぐ
@@ -1761,9 +2037,17 @@ function onEvent(ev, replay = false) {
     case "text.end": {
       // 確定した発言。id が分かったので「ここから分岐」が押せるようになる。
       // 続くツール呼び出しは同じ発言に入る（履歴の 1 メッセージ = 本文 + ツール呼び出し）。
-      // 既に閉じた発言に続けて来たなら（本文の無いツールだけの発言）、新しい発言を作る
+      // 本文の無い発言（ツールだけ）が、本文の無い発言に続くときは、発言もまとまりも閉じない。
+      // 履歴は「本文も thinking も無く連続するツール呼び出し」を 1 つの発言に合成する（claude-normalize の transcriptToMessages）ので、ライブも同じにする。
+      // Claude は本文の無い発言ごとに text.end を出す
+      const bodyless = !state.streamEl && !state.thinkEl;
+      if (bodyless && state.turnClosed && !state.endedWithText) return;
+      // 見せるものが無い発言（thinking が署名だけ）のために、空の発言の入れ物は作らない。id は次の入れ物に持たせる
+      if (bodyless && !state.turnEl) { state.pendingUuid = ev.uuid ?? null; state.turnClosed = true; state.endedWithText = false; return; }
+      // 本文のある発言に続けて来たなら（本文の無いツールだけの発言）、新しい発言を作る
       const m = openTurnEl();
       if (ev.uuid) setUuid(m, ev.uuid);
+      state.endedWithText = !bodyless;
       closeThink();
       endStream();
       state.turnClosed = true;
@@ -1795,33 +2079,40 @@ function onEvent(ev, replay = false) {
       const stick = atBottom();
       const card = renderToolCall(ev.name, ev.input, { id: ev.id });
       linkDelegateCard(card, ev.input);
-      ensureTurnEl().append(card);
-      if (stick) log.scrollTop = log.scrollHeight;
+      const boundary = isBoundaryTool(ev.name);
+      if (boundary) { closeBundle(); ensureTurnEl().append(card); }
+      else { markRunning(card); liveBundle().add(card); }
+      // 2 件目で見出しが現れ、行が伸びる間も、読んでいた下端に付いていく
+      if (stick) followBottom();
       if (ev.id) state.toolCards.set(ev.id, card);
-      activity.show(t("activity.runningTool", { tool: ev.name }));
+      // 走っているツールは最新の行（弧と経過）が語る。末尾の稼働表示は重ねない。
+      // 委譲・サブエージェントの行には弧が無い（状態は 4 秒ごとの更新で追いつく）ので、それまでは従来の稼働表示を残す
+      if (boundary) activity.show(t("activity.runningTool", { tool: ev.name }));
+      else activity.suspend();
       return card;
     }
 
     // ツールの戻り。対応するカードに結果を差し込む（別の吹き出しにはしない）
     case "tool.result": {
       const card = state.toolCards.get(ev.id);
-      if (card) { applyToolResult(card, ev); noteEndpointFailure(card, ev); linkDelegateCard(card, null, ev); }
+      if (card) { applyToolResult(card, ev); noteEndpointFailure(card, ev); linkDelegateCard(card, null, ev); bundleOf(card)?.paint(); }
+      activity.afterTool();
       return;
     }
 
     case "activity":
-      if (ev.state === "idle") return activity.hide();
+      if (ev.state === "idle") { settleStrays(); closeBundle(); return activity.hide(); }
       // 別のタブで押した中断・開き直した会話でも、止まり終えるまで中断ボタンを押せなくする
       if (ev.state === "stopping" && ev.sessionId && isRunningHere()) { state.stopping.add(ev.sessionId); syncRunState(); }
+      // running / waiting は「動いている」「待っている」だけを言う汎用の事象。ツールの行が語っている間（suspend 中）は出さない
       return activity.show(ev.label || (ev.state === 'preparing'
         ? ev.current && ev.total ? t('activity.connectingMcp', { current: ev.current, total: ev.total }) : t('activity.preparing')
-        : ACTIVITY_LABEL[ev.state] || ACTIVITY_LABEL.running), { delayMark: ev.state === 'preparing' });
+        : ACTIVITY_LABEL[ev.state] || ACTIVITY_LABEL.running), { delayMark: ev.state === 'preparing', passive: ev.state === 'running' || ev.state === 'waiting' });
 
     case 'taskNotice':
       closeTurnEl();
       // 本文があれば開ける 1 行（既定は閉じた状態。履歴の systemHistoryNode と同じ形）
-      if (ev.text) append(sysFold(t('chat.sys.taskResumed'), ev.text));
-      else sys(html.t('chat.sys.taskResumed'));
+      append(taskNoticeNode(ev.text, hhmm(ev.at ?? new Date())));
       return;
     case 'interruptionNote': {
       // 中断で止めたものをエージェントへ伝えた。開くと伝えた中身が読める（履歴の systemHistoryNode と同じ形）。
@@ -1833,6 +2124,8 @@ function onEvent(ev, replay = false) {
     }
     case "turnResult": {
       if (ev.compact) return;
+      settleStrays();
+      closeBundle();                                // ターンが終わったら、最新の行を残さず見出しだけにする
       if (ev.outcome === "ok") return;             // 終わったことは稼働表示が消えれば分かる
       closeTurnEl();
       // 中断の一行は保存された状態と同じ形で描く（paintInterruptLine が二重に出さない）
@@ -1852,7 +2145,15 @@ function onEvent(ev, replay = false) {
     case "present": {
       if (ev.by === "human") {
         const rows = [...thread.querySelectorAll('.m[data-role="user"]')];
-        const index = attachmentMessageIndex(rows.map(row => ({role:"user", at:row.dataset.at, text:row.querySelector('.body')?.textContent})), ev);
+        const index = attachmentMessageIndex(rows.map(row => ({role:"user", at:row.dataset.at, text:userRaw(row)})), ev);
+        // 結び付いた発言が Markdown で描かれているなら、添付は本文の位置に取り込む（別のカードは出さない）
+        const owner = index >= 0 && rows[index].querySelector(':scope > .body')?.classList.contains('md-user') ? rows[index] : null;
+        if (owner) {
+          const same = (a, b) => normalizeAttachmentPath(a) === normalizeAttachmentPath(b);
+          if (!(owner.attached ?? []).some(p => same(p.path, ev.path))) paintUser(owner, userRaw(owner), [...(owner.attached ?? []), ev]);
+          relayoutBranches();
+          return owner.closest('.mw');
+        }
         const wrapper = append(renderPresent(ev), `live:${++liveSeq}`);
         wrapper.dataset.humanAttachment = "true";
         if (index >= 0) {
@@ -2601,7 +2902,7 @@ const slashSkills = setupSlashSkills({
   cwd: () => state.cwd.trim() || state.draft.cwd || "",
   canCompact: () => canCompactHere(),
   load: (cwd) => cmd("slashSkills", { cwd: cwd || undefined }),
-  off: () => shellComposer.active,
+  off: () => shellComposer.active || composerEditor.inCode(),
 });
 
 // ---------------------------------------------------------------- セッション一覧（web/side.mjs）
@@ -2702,7 +3003,7 @@ function syncResume() {
   const interrupted = isInterrupted(s) && !retiredHere() && state.current !== freshSessionId;
   const running = isRunningHere() || submittingMessages.has(state.current);
   const text = $('prompt').value;
-  const attached = state.attached.length > 0;
+  const attached = state.attached.length > 0 || uploadsHere().length > 0;   // 送っている途中の添付も「書いてある」に数える
   const show = resumeVisible({ interrupted, running, waiting: isWaitingHere(), text, attached });
   const button = $('resume');
   const paused = interrupted ? pausedCount(outboxes.get(state.current)) : 0;
@@ -2862,6 +3163,7 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
         if (blank.text || blank.attached?.length) persistDraft(result.sessionId, { ...blank, dirty: true }).catch(() => {});
         dropBlankDraft();
       }
+      adoptUploads(result.sessionId);   // 作っている間に始めた添付（会話を開けなかった・別の会話へ移った場合も、できた会話のもの）
       return result.sessionId;
     } catch (e) {
       if (pendingNewSession) pendingRows.delete(pendingNewSession.id);
@@ -3405,7 +3707,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   const put = (node, key) => { const w = wrap(node, key); th.append(w); return w; };
   const readOnly = (m) => { m.querySelector(':scope > .message-actions')?.remove(); return m; };
   const requestNode = (text, at) => {
-    const m = readOnly(userMsg(text, { at }));
+    const m = readOnly(userMsg(text, { at, markdown: false }));
     m.querySelector('.who > span').textContent = t('dialog.work.request');
     const bubble = m.querySelector('.body');
     if (bubble) {
@@ -3547,6 +3849,8 @@ function linkDelegateCard(card, input = null, result = null) {
   // 一覧の見出しに使う依頼の一行（結果が後から届くカードは、始まったときに覚えた分を使う）
   const said = input?.description || input?.task || (typeof input?.prompt === 'string' ? input.prompt.split(/\r?\n/).find(Boolean) : '');
   if (said && card) card.dataset.bgTitle = String(said).slice(0, 120);
+  // ply_delegate の見出しの主役は依頼の題（無ければ依頼の 1 行目）。バックグラウンドの一覧と同じ語
+  if (name && isDelegateTool(name) && input) retitleDelegate(card, input.title || said);
   if (!name || card.querySelector(':scope .tc-open')) return;
   if (isDelegateTool(name)) {
     const id = /ply-task-[0-9a-f-]{36}/.exec(card.querySelector('.tc-output, .tc-result, .tc-details-body')?.textContent ?? '')?.[0];
@@ -3559,8 +3863,23 @@ function linkDelegateCard(card, input = null, result = null) {
   const open = el('button', 'btn tc-open', t('dialog.work.open'));
   open.type = 'button';
   open.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openFromCard(card, open); };
-  card.querySelector('.tc-head')?.append(open);
+  const chev = card.querySelector('.tc-line > .tc-chev');
+  if (chev) chev.before(open); else card.querySelector('.tc-line')?.append(open);
   if (card.dataset.taskId) decorateDelegateCard(card);
+}
+
+/** ply_delegate の 1 行目: サーバー名とツール名・入力の要約を、依頼の題に替える */
+function retitleDelegate(card, title) {
+  const head = card.querySelector('.tc-head');
+  const main = head?.querySelector('.tc-main');
+  const text = String(title ?? '').trim();
+  if (!main || !text || card.dataset.retitled) return;
+  head.querySelector('.tc-server')?.remove();
+  head.querySelector('.tc-note')?.remove();
+  main.className = 'tc-main tc-text';
+  main.textContent = text;
+  main.title = text;
+  card.dataset.retitled = '1';
 }
 
 // ---- 委譲カードの振り分けの理由（docs/design-system.md「委譲カード」）
@@ -3649,18 +3968,17 @@ function decorateDelegateCard(card) {
   const head = card.querySelector('.tc-head');
   const label = head.querySelector('.tc-label');
   label.textContent = t('timeline.tool.label.delegate');
+  // 2 行目: 「自動」の印・委譲先のロゴ・理由の 1 行。名前は 1 行の字にあるので読み上げには出さない
+  const line = el('span', 'tc-route');
   if (auto) {
     const mark = el('span', 'tc-auto', t('routing.auto'));
     mark.title = t('routing.autoTitle');
-    label.after(mark);
+    line.append(mark);
   }
-  // 1 行の頭に委譲先のロゴ。名前は 1 行の字にあるので読み上げには出さない
   const logo = routingLogo(routing.target.backend);
   logo.setAttribute('aria-hidden', 'true');
-  const line = el('span', 'tc-route');
   line.append(logo, el('span', 'tc-route-text'));
-  const openButton = head.querySelector('.tc-open');
-  if (openButton) openButton.before(line); else head.append(line);
+  head.append(line);
   foldDelegateJson(card);
   const request = delegateRequest(card);
   card.querySelector('.tc-details-body')?.prepend(...(request ? [request] : []), delegateDetail(card, routing));
@@ -3683,11 +4001,11 @@ function decorateFailedDelegate(card, result) {
   label.textContent = t('timeline.tool.label.delegate');
   const auto = el('span', 'tc-auto', t('routing.auto'));
   auto.title = t('routing.autoTitle');
-  label.after(auto);
-  const line = el('span', 'tc-route', t('routing.line.head', { kind: kindText(failure.kind), difficulty: difficultyText(failure.difficulty), target: t('routing.failure.none') }));
-  line.title = line.textContent;
-  const badge = head.querySelector('.tc-res');
-  if (badge) badge.before(line); else head.append(line);
+  const line = el('span', 'tc-route');
+  const text = el('span', 'tc-route-text', t('routing.line.head', { kind: kindText(failure.kind), difficulty: difficultyText(failure.difficulty), target: t('routing.failure.none') }));
+  line.title = text.textContent;
+  line.append(auto, text);
+  head.append(line);
   // 入力と返り値（エージェント向けのエラー文）は、成功・固定のカードと同じ「入力・出力（JSON）」の折りたたみの奥へ
   foldDelegateJson(card);
   const open = (reason) => {
@@ -3747,6 +4065,44 @@ function paintDelegateCards() {
   for (const card of thread.querySelectorAll('.tc[data-task-id]')) {
     if (card.dataset.routed) paintRetried(card);
     else decorateDelegateCard(card);
+  }
+  paintDelegateStates();
+}
+
+// i18n-dynamic: timeline.delegate.
+/** 「3 分」「40 秒」。所要時間の短い言い方 */
+function spanText(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? t('timeline.delegate.secs', { count: s, n: s }) : t('timeline.delegate.mins', { count: Math.floor(s / 60), n: Math.floor(s / 60) });
+}
+
+/** 委譲カードの右端: 子が動いている間は弧と「実行中 · 4 分」、終わったら静止した印と「完了 · 11 分」。承認待ちは差し色 */
+function delegateStateOf(item) {
+  const start = timeOf(item.startedAt);
+  const dur = start ? spanText((item.live ? Date.now() : timeOf(item.endedAt) || Date.now()) - start) : '';
+  const withDur = (key) => t(`timeline.delegate.${key}`, { dur }).replace(/ · $/, '');
+  if (item.waiting) return { mark: stateMark('running'), text: t('timeline.delegate.waiting'), waiting: true };
+  if (item.live) return { mark: stateMark('running'), text: withDur('running') };
+  if (item.status === 'completed') return { mark: stateMark('completed'), text: withDur('done') };
+  if (item.status === 'failed') return { mark: stateMark('failed'), text: withDur('failed') };
+  return item.status ? { mark: stateMark('stopped'), text: withDur('stopped') } : null;
+}
+
+function paintDelegateStates() {
+  const cards = [...thread.querySelectorAll('.tc[data-tool]')].filter(c => c.querySelector(':scope .tc-open'));
+  if (!cards.length) return;
+  const items = backgroundItems().filter(i => i.group === 'agent');
+  for (const card of cards) {
+    const res = card.querySelector('.tc-res');
+    if (!res || card.classList.contains('tc-error')) continue;
+    const item = card.dataset.taskId ? items.find(i => i.taskId === card.dataset.taskId) : items.find(i => i.origin && i.origin === card.dataset.id);
+    const next = item ? delegateStateOf(item) : null;
+    const sig = next ? `${next.text}|${next.mark?.getAttribute('aria-label') ?? ''}` : '';
+    if (res.dataset.sig === sig) continue;
+    res.dataset.sig = sig;
+    res.classList.toggle('tc-res-wait', Boolean(next?.waiting));
+    if (!next) { res.replaceChildren(); continue; }
+    res.replaceChildren(...(next.mark ? [next.mark] : []), el('span', null, next.text));
   }
 }
 /** 「別の候補でやり直す」の面を開閉する。候補は設定 › 委譲と同じ一覧から、今使えるものだけ */
@@ -4012,12 +4368,27 @@ const draftKey = () => state.current ?? "";
 const DRAFT_STORE = "agent-host-drafts-v1";
 try { state.drafts = new Map(JSON.parse(localStorage.getItem(DRAFT_STORE) ?? "[]")); } catch { /* server copy remains available */ }
 const draftWrites = new Map();
+// 打鍵ごとの保存は間引く（長い下書きを毎打鍵ぶん localStorage とサーバーへ書かない）。静かな間の最初の打鍵はすぐ保存し、
+// 続く打鍵は DRAFT_THROTTLE_MS ごとに 1 回（最後の打鍵の分は必ず保存する）。会話の切り替え・送信・ページを離れる・欄を離れるときは直ちに保存する
+const DRAFT_THROTTLE_MS = 400;
+let draftTimer = null, draftSavedAt = 0;
+function saveDraftSoon() {
+  const wait = draftSavedAt + DRAFT_THROTTLE_MS - Date.now();
+  if (wait <= 0) saveDraft().catch(() => {});
+  else if (draftTimer === null) draftTimer = setTimeout(() => saveDraft().catch(() => {}), wait);
+}
+/** 間引いて待っている保存があれば、いま保存する */
+function flushDraft() { if (draftTimer !== null) saveDraft().catch(() => {}); }
 function saveDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = null;
+  draftSavedAt = Date.now();
   const id = draftKey();
   // 開いている途中の欄は前の下書きの写しなので保存しない。作ったばかりの会話（freshSessionId）は欄が正本なので保存する
   if (id && state.loadingSession === id && id !== freshSessionId) return Promise.resolve();
   // シェルの形の欄は `!` を頭に戻して残す（復元ではシェルの形に入らない。web/shell-composer.mjs）
-  const value = { text: shellComposer.draftText(), attached: state.attached.slice(), dirty: true };
+  // text は文中の添付の印（[添付] パス）を含む Markdown（位置が残る）。version: 2 より前の下書きは印が無く、添付は「文末に付く」になる
+  const value = { text: shellComposer.draftText(), attached: state.attached.slice(), version: 2, dirty: true };
   return persistDraft(id, value);
 }
 function persistDraft(id, value) {
@@ -4063,9 +4434,11 @@ function setDraftNote(text, st) {
 function loadDraft() {
   const d = state.drafts.get(draftKey());
   shellComposer.reset();
+  // 添付の実体を先に置く（本文の印は、ここにあるものだけが札になる。無い印・古い下書きの添付は「文末に付く」）
+  state.attached = Array.isArray(d?.attached) ? d.attached.slice() : [];
+  for (const [id, u] of uploads) if (u.cancelled || u.failed) uploads.delete(id);
   $("prompt").value = typeof d?.text === "string" ? d.text : "";
   fitPrompt();
-  state.attached = Array.isArray(d?.attached) ? d.attached.slice() : [];
   renderAttached();
   // ホストのファイルの面で選んでいたもの・開いていた場所は会話ごと（次は新しい会話の作業ディレクトリから）
   attachMenu?.reset();
@@ -4117,110 +4490,235 @@ configurePreviewConfirmation({ getPrefs: () => state.prefs, openSettings: () => 
 
 /**
  * ホストのファイルをパスのまま添付に積む（送らない。ファイルプレビューの「会話で使う」とホストのファイルの面）。
- * 件数の上限は無い。同じパスは 1 つだけ。積めたら true
+ * 字の欄の、クリップを開く前の位置（無ければ今のキャレット）に札を置く。件数の上限は無い。同じパスは 1 つだけ。積めたら true
  */
-function attachHostFiles(files) {
+function attachHostFiles(files, { at = takeAttachAt() } = {}) {
   if ($('prompt').disabled || !composerWait.accepts()) return false;
   let added = 0, already = 0;
   for (const file of files) {
     if (!file?.path) continue;
-    // 同じパスは札を増やさず、画面下の短い知らせで伝える
-    if (state.attached.some(a => a.path === file.path)) { already++; continue; }
-    state.attached.push({ path: file.path, name: file.name, kind: 'file', mime: file.mime ?? '', from: 'host' });
+    const existing = attachedByPath(file.path);
+    // 同じパスは札を増やさず、画面下の短い知らせで伝える。文中に置いていない添付（文末に付く）は、ここで位置に置く
+    if (existing && composerEditor.hasAttachment(attachedKey(file.path))) { already++; continue; }
+    if (!existing) state.attached.push({ path: file.path, name: file.name, kind: 'file', mime: file.mime ?? '', from: 'host', ...(Number.isFinite(file.size) ? { size: file.size } : {}) });
+    composerEditor.insertAttachment({ path: file.path }, { at });
+    at = null;
     added++;
   }
   if (added) { renderAttached(); saveDraft().catch(() => {}); }
   if (already && !added) notify(t("chat.attach.already"));
   return true;
 }
-$("prompt").addEventListener("input", () => saveDraft().catch(() => {}));
+$("prompt").addEventListener("input", saveDraftSoon);
+$("prompt").addEventListener("blur", flushDraft);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushDraft(); });
 addEventListener("pagehide", () => saveDraft().catch(() => {}));
 
 // ---------------------------------------------------------------- 添付
 // present の逆方向。AI が人間に見せるのと同じ流れに、人間からも置けるようにする（設計メモ §7）。
-// 送るまでは入力欄の中（サムネイル）。会話に載るのは送信のとき（runTurn の attachments → present）。
+// 添付は字の欄の、置いた位置の 1 行の印（[添付] パス）として持つ（web/md-editor.mjs、ADR 0060）。state.attached が添付の実体
+// （パス・名前・出どころ）、文中の位置は本文が持つ。文中に無い添付（古い下書き・平文の間に足したもの）は「文末に付く」で、
+// 送るときに末尾へ印を足す。会話に載るのは送信のとき（runTurn の attachments → present）。
 
-// 出どころのアイコン（⇄ ホスト / 端末）。出どころを選べる接続でだけ札に付ける（composer-layout.mjs の attachOrigin）
-const ORIGIN_ICON = { host: "M4 8h13l-3-3M20 16H7l3 3", device: "M9.5 3h5A2.5 2.5 0 0 1 17 5.5v13a2.5 2.5 0 0 1-2.5 2.5h-5A2.5 2.5 0 0 1 7 18.5v-13A2.5 2.5 0 0 1 9.5 3zM11 18h2" };
 /** 添付で出どころを選ばせるか（null ならクリップはすぐファイルを選ぶ）。composer-layout.mjs の attachSources */
 const currentAttachSources = () => attachSources({ remote: window.plyRemote, osActions: state.hostCaps?.osActions });
 
-function renderAttached() {
-  const box = $("attached");
-  const sources = currentAttachSources();
-  // 同じ名前の札にだけ、見分けの付くフォルダーを添える（composer-layout.mjs の attachFolderHints）
-  const folders = attachFolderHints(state.attached, { deviceLabel: t("chat.attach.deviceFolder") });
-  box.replaceChildren(...state.attached.map((a, i) => {
-    const item = el("span", "att" + (a.dataUri ? " att-img" : ""));
-    const origin = attachOrigin(a, sources);
-    if (origin) {
-      const mark = el("span", "att-from");
-      mark.append(icon(ORIGIN_ICON[origin]));
-      mark.firstChild.setAttribute("aria-hidden", "true");
-      item.append(mark);
-      item.title = origin === "host" ? t("chat.attach.fromHost", { path: a.path }) : t("chat.attach.fromDevice", { name: a.name });
-    } else if (a.path) item.title = a.path;
-    if (a.dataUri) {
-      const b = el("button", "att-thumb");
-      b.type = "button";
-      b.title = t("chat.attach.enlarge", { name: a.name });
-      const img = el("img");
-      img.src = a.dataUri;
-      img.alt = a.name;
-      b.append(img);
-      b.onclick = () => openLightbox(attachedImageSrc(a), a.name, a.path);
-      item.append(b);
-    } else if (a.path) {
-      // 名前を押すと右パネルで中身を開く（会話のファイルリンクと同じ）
-      const open = el("button", "att-name", a.name);
-      open.type = "button";
-      open.onclick = () => filePreview.open({ path: a.path, line: null }, item);
-      item.append(open);
+const attachedKey = (path) => `p:${normalizeAttachmentPath(path)}`;
+function attachedByPath(path) {
+  const key = attachedKey(path);
+  return state.attached.find(a => attachedKey(a.path) === key) ?? null;
+}
+/** 字の欄の札に出す添付の情報（同じ名前の札には見分けのフォルダー hint を添える） */
+function attachedInfo(path) {
+  const a = attachedByPath(path);
+  if (!a) return null;
+  return { ...a, hint: attachFolderHints(state.attached, { deviceLabel: t("chat.attach.deviceFolder") })[state.attached.indexOf(a)] || "" };
+}
+/** 添付の印の言語（会話の言語。まだ決まっていない会話は画面の言語） */
+const composerAgentLang = () => state.sessions.find(s => s.id === state.current)?.agentLocale ?? uiLang;
+
+/** 送っている途中の添付（仮の ID）の見え方。札が進み具合（%）と失敗の理由を出す */
+function pendingUpload(pid) {
+  const u = uploads.get(pid);
+  if (!u) return null;
+  const failed = u.failed || u.cancelled;
+  return { name: u.name, size: u.size, state: failed ? 'failed' : 'sending', percent: u.size ? Math.floor((u.sent / u.size) * 100) : 0,
+    error: u.failed ?? (u.cancelled ? t('chat.composerAtt.cancelled') : '') };
+}
+/**
+ * この会話の、まだ届いていない添付（送信中・失敗）。札を外した（やめた）ものは数えない。
+ * 新しい会話を作っている間（state.current が null）に始めたものは sessionId が null で、会話ができたら adoptUploads がその id へ付け替える
+ */
+function uploadsHere() {
+  return [...uploads.values()].filter(u => u.sessionId === (state.current ?? null)
+    && (!u.cancelled || composerEditor.hasAttachment(`i:${u.id}`)));
+}
+/**
+ * 新しい会話の欄（sessionId が null）で始めた添付の持ち主を、できた会話 id にする。会話を開く（select の fresh）のと同時に呼ぶので、
+ * 作成中から作成後へ変わる間も「送っている途中の添付がある」判定（uploadsHere・uploadBlockReason）が途切れない
+ */
+function adoptUploads(id) {
+  for (const u of uploads.values()) if (u.sessionId === null) u.sessionId = id;
+}
+/** 送れない理由（送信中・失敗の添付があるとき）。無ければ null */
+function uploadBlockReason() {
+  const here = uploadsHere();
+  if (here.some(u => u.failed || u.cancelled)) return t('chat.composerAtt.blockFailed');
+  return here.length ? t('chat.composerAtt.blockSending') : null;
+}
+/** 添付を字の欄の位置の順に並べる。文中に無いものは後ろ（文末に付く） */
+function orderedAttachments() {
+  const order = [...composerEditor.attachmentKeys()];
+  const rank = (a) => { const i = order.indexOf(attachedKey(a.path)); return i < 0 ? order.length : i; };
+  return state.attached.map((a, i) => ({ a, i })).sort((x, y) => rank(x.a) - rank(y.a) || x.i - y.i).map(x => x.a);
+}
+const removedAttached = new Map();   // 元に戻すで札が戻ったとき、添付の実体も戻す
+/** 利用者の操作（Backspace・切り取り・元に戻す・やり直し・一覧の「外す」）で字の欄の添付が出入りした */
+function onComposerAtoms({ added, removed }) {
+  for (const key of removed) {
+    if (key.startsWith('p:')) {
+      const i = state.attached.findIndex(a => attachedKey(a.path) === key);
+      if (i >= 0) removedAttached.set(key, state.attached.splice(i, 1)[0]);
     } else {
-      item.append(el("span", "att-name", a.name));
+      const u = uploads.get(key.slice(2));
+      if (u && !u.failed) u.cancelled = true;
     }
-    if (folders[i]) item.append(el("span", "att-dir", folders[i]));
-    const x = el("button", "x", "×");
-    x.type = "button";
-    x.title = t("chat.attach.remove");
-    x.setAttribute("aria-label", folders[i] ? t("chat.attach.removeNamedIn", { name: a.name, folder: folders[i] }) : t("chat.attach.removeNamed", { name: a.name }));
-    x.onclick = () => { state.attached.splice(i, 1); renderAttached(); saveDraft().catch(() => {}); };
-    item.append(x);
-    return item;
-  }), ...attachUploads.filter(u => u.sessionId === (state.current ?? null)).map(uploadChip));
+  }
+  for (const key of added) {
+    if (key.startsWith('p:')) {
+      const a = removedAttached.get(key);
+      if (a && !attachedByPath(a.path)) { state.attached.push(a); removedAttached.delete(key); }
+    }
+  }
+  renderAttached();
+}
+function onComposerAtomAction(act, key) {
+  if (act === 'retry') { const u = uploads.get(key.slice(2)); if (u) runUpload(u); return; }
+  removeComposerAttachment(key);
+}
+/** 添付を外す（札があれば札ごと。文末に付くものは実体だけ）。送っている途中ならやめる */
+function removeComposerAttachment(key) {
+  if (composerEditor.removeAttachment(key)) return;
+  if (key.startsWith('p:')) {
+    const i = state.attached.findIndex(a => attachedKey(a.path) === key);
+    if (i >= 0) state.attached.splice(i, 1);
+  } else {
+    const u = uploads.get(key.slice(2));
+    if (u) { u.cancelled = true; if (u.failed) uploads.delete(u.id); }
+  }
+  renderAttached();
+  saveDraft().catch(() => {});
 }
 
-// ---- 送っている途中の添付（attach-upload.mjs）。札に進み具合（%）を出し、× でやめる。終わったら普通の札になる
-const attachUploads = [];
-function uploadChip(u) {
-  const item = el("span", "att att-sending");
-  item.title = t("chat.attach.sendingTitle", { name: u.name, size: formatBytes(u.size) });
-  if (currentAttachSources()) {
-    const mark = el("span", "att-from");
-    mark.append(icon(ORIGIN_ICON.device));
-    mark.firstChild.setAttribute("aria-hidden", "true");
-    item.append(mark);
+// 添付の入口「添付 N 件 ▾」（字の欄の上の 1 行。0 件なら出さない）。状態（送信中・失敗）は同じ行に
+const PAPERCLIP = 'M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2';
+let attachEntry = null, attachList = null, attachHintSig = "";
+function renderAttached() {
+  const strip = $("attached");
+  const here = uploadsHere();
+  const failed = here.filter(u => u.failed || u.cancelled).length, sending = here.length - failed;
+  const total = state.attached.length + here.length;
+  strip.hidden = total === 0;
+  if (!attachEntry) {
+    const b = el("button", "att-entry");
+    b.type = "button";
+    b.setAttribute("aria-haspopup", "dialog");
+    b.setAttribute("aria-expanded", "false");
+    const count = el("span", "att-count"), state_ = el("span", "att-state");
+    state_.setAttribute("role", "status");
+    const caret = el("span", null, "▾");
+    caret.setAttribute("aria-hidden", "true");
+    b.append(icon(PAPERCLIP), count, caret, state_);
+    b.onclick = openAttachList;
+    attachEntry = { b, count, state: state_ };
+    strip.append(b);
   }
-  const pct = u.size ? Math.floor((u.sent / u.size) * 100) : 0;
-  const bar = el("span", "att-bar");
-  bar.style.setProperty("--p", `${pct}%`);
-  const label = el("span", "att-pct", t("chat.attach.sending", { percent: pct }));
-  label.setAttribute("role", "status");
-  item.append(el("span", "att-name", u.name), label, bar);
-  const x = el("button", "x", "×");
-  x.type = "button";
-  x.title = t("chat.attach.cancelSending");
-  x.setAttribute("aria-label", t("chat.attach.cancelSending"));
-  x.onclick = () => { u.cancelled = true; x.disabled = true; };
-  item.append(x);
-  u.chip = { label, bar };
-  return item;
+  attachEntry.count.textContent = t("chat.attachList.count", { count: total });
+  attachEntry.state.textContent = failed ? ` · ${t("chat.composerAtt.entryFailed", { count: failed })}` : sending ? ` · ${t("chat.composerAtt.entrySending", { count: sending })}` : "";
+  attachEntry.b.dataset.state = failed ? "failed" : sending ? "sending" : "";
+  // 同じ名前の添付が増えた・減った: 札に添える見分けのフォルダーが変わるので札を描き直す
+  const hints = attachFolderHints(state.attached, { deviceLabel: t("chat.attach.deviceFolder") })
+    .map((h, i) => (h ? `${attachedKey(state.attached[i].path)}=${h}` : "")).filter(Boolean).join("|");
+  if (hints !== attachHintSig) { attachHintSig = hints; composerEditor.refresh(); }
+  if (!total) attachList?.close();
+  else attachList?.update(attachListRows(), t("chat.attachList.count", { count: total }));   // 見出しの件数も合わせる
+  syncRunState();
 }
+
+/** 一覧の面の行: 文中の添付（位置の順）→ 文末に付く。送っている途中は進み具合を出す */
+function attachListRows() {
+  const inDoc = composerEditor.attachmentKeys();
+  const inline = t("chat.attachList.section.inline"), tail = t("chat.attachList.section.tail");
+  const hints = attachFolderHints(state.attached, { deviceLabel: t("chat.attach.deviceFolder") });
+  const attached = (a, section) => ({
+    id: attachedKey(a.path), kind: a.kind === "image" ? "image" : "file", name: a.name, path: a.path || "", hint: hints[state.attached.indexOf(a)] || null,
+    thumb: a.kind === "image" ? attachedImageSrc(a) : null, origin: a.from === "host" || a.from === "device" ? a.from : null,
+    size: Number.isFinite(a.size) ? a.size : null, status: a.from === "host" ? t("chat.attachList.byPath") : t("chat.attachList.sent"), section });
+  const upload = (u, section) => {
+    const p = pendingUpload(u.id);
+    return { id: `i:${u.id}`, kind: "file", name: u.name, path: "", origin: "device", size: u.size, section,
+      status: p.state === "failed" ? p.error : t("chat.composerAtt.entrySending", { count: 1 }), progress: p.state === "sending" ? p.percent : null };
+  };
+  const rows = [];
+  for (const key of inDoc) {
+    const a = key.startsWith("p:") ? state.attached.find(x => attachedKey(x.path) === key) : null;
+    const u = key.startsWith("i:") ? uploads.get(key.slice(2)) : null;
+    if (a) rows.push(attached(a, inline)); else if (u) rows.push(upload(u, inline));
+  }
+  for (const a of state.attached) if (!inDoc.has(attachedKey(a.path))) rows.push(attached(a, tail));
+  for (const u of uploadsHere()) if (!inDoc.has(`i:${u.id}`)) rows.push(upload(u, tail));
+  return rows;
+}
+function openAttachList() {
+  const at = composerEditor.rememberCaret();
+  const b = attachEntry.b;
+  b.setAttribute("aria-expanded", "true");
+  attachList = openAttachmentList({
+    anchor: b, title: t("chat.attachList.count", { count: state.attached.length + uploadsHere().length }), items: attachListRows(),
+    // 全部外して入口ごと隠れたときは、フォーカスが <body> に落ちないよう入力欄へ
+    onClose: () => { attachList = null; b.setAttribute("aria-expanded", "false"); if (!document.activeElement || document.activeElement === document.body) $("prompt").focus?.({ preventScroll: true }); },
+    actions: (item) => {
+      const key = item.id;
+      if (key.startsWith("i:")) {
+        const p = pendingUpload(key.slice(2));
+        return p?.state === "sending"
+          ? [{ label: t("chat.attach.cancelSending"), run: () => removeComposerAttachment(key), keepOpen: true }]
+          : [{ label: t("chat.composerAtt.retry"), run: () => onComposerAtomAction("retry", key), keepOpen: true },
+             { label: t("chat.attach.remove"), run: () => removeComposerAttachment(key), keepOpen: true }];
+      }
+      const placed = composerEditor.hasAttachment(key);
+      return [
+        placed ? { label: t("chat.attachList.jump"), run: () => composerEditor.reveal(key) }
+          : { label: t("chat.attachList.insert"), run: () => { const a = state.attached.find(x => attachedKey(x.path) === key); if (a) { composerEditor.insertAttachment({ path: a.path }, { at }); renderAttached(); saveDraft().catch(() => {}); composerEditor.reveal(key); } } },
+        { label: t("chat.attach.remove"), run: () => removeComposerAttachment(key), keepOpen: true },
+      ];
+    },
+  });
+}
+function flashAttachEntry() {
+  const b = attachEntry?.b;
+  if (!b) return;
+  b.classList.remove("flash");
+  void b.offsetWidth;
+  b.classList.add("flash");
+  b.addEventListener("animationend", () => b.classList.remove("flash"), { once: true });
+}
+
+// クリップを押した時点の字の欄の位置。メニューやファイルの選択の間にフォーカスが移っても、そこへ置く（2 分で忘れる）
+let attachAtMemo = null;
+const rememberAttachAt = () => { attachAtMemo = { at: composerEditor.rememberCaret(), time: Date.now() }; };
+function takeAttachAt() {
+  const memo = attachAtMemo;
+  attachAtMemo = null;
+  return memo && Date.now() - memo.time < 120_000 ? memo.at : null;
+}
+
+// ---- 送っている途中の添付（attach-upload.mjs）。字の欄の札に進み具合（%）を出し、中止・再試行・外すを置く。終わったら普通の札になる
 function paintUpload(u) {
-  if (!u.chip?.label.isConnected) return renderAttached();
+  composerEditor.updatePending(u.id);
   const pct = u.size ? Math.floor((u.sent / u.size) * 100) : 0;
-  u.chip.label.textContent = t("chat.attach.sending", { percent: pct });
-  u.chip.bar.style.setProperty("--p", `${pct}%`);
+  const row = attachList?.dialog.querySelector(`.att-list-row[data-id="${CSS.escape(`i:${u.id}`)}"] .att-list-bar`);
+  if (row) { row.style.setProperty("--p", `${pct}%`); row.setAttribute("aria-valuenow", String(pct)); }
 }
 
 // 切れている間に待っている断片の送り手。ready で起こす（attach-upload.mjs の online）
@@ -4277,62 +4775,84 @@ function openLightbox(src, caption, path, origin) {
 
 /**
  * この端末のファイルを添付として送る（ドロップ・貼り付け・クリップの「ファイル…」）。1 件 100MB まで・件数の上限は無い。
- * 中身は断片で送る（web/attach-upload.mjs）。送っている間は札に進み具合を出し、終わったら普通の札にする
+ * 字の欄の、カーソル（ドロップは落とした位置、クリップは開く前の位置）に、仮の札を先に置く。中身は断片で送り（web/attach-upload.mjs）、
+ * 札が進み具合（%）を出す。終わったらその札がパスを持つ普通の札になる
  */
-async function attachFiles(files) {
+async function attachFiles(files, { at = takeAttachAt() } = {}) {
   // 書けない待ち（会話を開いている・送信を予約した）の間に積むと、開いた会話の下書きで消されるか予約した送信に紛れる
   if (!composerWait.accepts()) return;
-  const sessionId = state.current;
+  const sessionId = state.current ?? null;
+  const queue = [];
   for (const file of files) {
     if (file.size > ATTACH_MAX_BYTES) {
       sys(html.t("chat.attach.tooLarge", { name: file.name, limit: formatBytes(ATTACH_MAX_BYTES) }));
       continue;
     }
-    const u = { name: file.name, size: file.size, sent: 0, sessionId: sessionId ?? null, cancelled: false, chip: null };
-    attachUploads.push(u);
-    renderAttached();
-    try {
-      const isImage = /^image\//.test(file.type);
-      const [r, thumb] = await Promise.all([
-        sendAttachment({ cmd, file, sessionId, cancelled: () => u.cancelled, online: whenOnline,
-          onProgress: (sent) => { u.sent = sent; paintUpload(u); } }),
-        isImage ? thumbnailOf(file).catch(() => null) : null,
-      ]);
-      if (!r) continue;   // やめた
-      const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: "device", ...(thumb ? { dataUri: thumb } : {}) };
-      if (state.current === sessionId) { state.attached.push(item); saveDraft().catch(() => {}); }
-      else {
-        const draft = state.drafts.get(sessionId) ?? { text: "", attached: [] };
-        draft.attached.push(item); state.drafts.set(sessionId, draft);
-        try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch {}
-        await cmd("saveDraft", { sessionId, ...draft });
-      }
-      // エージェントは画像をパスから自分の道具で読む。大きな画像は画像として読めないことがある（Claude の API は 1 枚 5MB まで）
-      if (isImage && file.size > IMAGE_READ_HINT_BYTES) sys(html.t("chat.attach.largeImage", { name: file.name, size: formatBytes(file.size) }));
-    } catch (e) {
-      sys(html.t("chat.attach.failed", { name: file.name, error: e.message }));
-    } finally {
-      attachUploads.splice(attachUploads.indexOf(u), 1);
+    const u = { id: randomId(), file, name: file.name, size: file.size, sent: 0, sessionId, cancelled: false, failed: null, placed: false };
+    uploads.set(u.id, u);
+    u.placed = composerEditor.insertAttachment({ pid: u.id }, { at }) === "inserted";
+    at = null;
+    queue.push(u);
+  }
+  renderAttached();
+  for (const u of queue) await runUpload(u);
+}
+
+/** 1 件を送る（最初と「再試行」）。仮の札を、届いたパスを持つ札に替える */
+async function runUpload(u) {
+  u.failed = null; u.cancelled = false; u.sent = 0;
+  composerEditor.updatePending(u.id);
+  renderAttached();
+  const { file } = u;
+  try {
+    const isImage = /^image\//.test(file.type);
+    const [r, thumb] = await Promise.all([
+      sendAttachment({ cmd, file, sessionId: u.sessionId, cancelled: () => u.cancelled, online: whenOnline,
+        onProgress: (sent) => { u.sent = sent; paintUpload(u); } }),
+      isImage ? thumbnailOf(file).catch(() => null) : null,
+    ]);
+    if (!r || u.cancelled) { u.cancelled = true; renderAttached(); return; }   // やめた（札は外れている）
+    const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: "device", size: file.size, ...(thumb ? { dataUri: thumb } : {}) };
+    // 持ち主は届いた時点で読む（新しい会話を作っている間に始めたものは、できた会話の id に付け替わっている: adoptUploads）
+    const owner = u.sessionId;
+    if (state.current === owner) {
+      uploads.delete(u.id);
+      state.attached.push(item);
+      composerEditor.resolvePending(u.id, r.path);
+      renderAttached();
+      saveDraft().catch(() => {});
+    } else {
+      // 送っている間に別の会話へ移った。その会話の下書きに積む（位置は持たない: 文末に付く）。"" は持ち主の会話が無い欄の下書き。
+      // 保存できたら札を消す（できなければ下の catch が本当の理由つきの失敗にする）
+      const key = owner ?? "";
+      const draft = state.drafts.get(key) ?? { text: "", attached: [] };
+      await persistDraft(key, { ...draft, attached: [...(draft.attached ?? []), item], version: 2, dirty: true });
+      uploads.delete(u.id);
       renderAttached();
     }
+    // エージェントは画像をパスから自分の道具で読む。大きな画像は画像として読めないことがある（Claude の API は 1 枚 5MB まで）
+    if (isImage && file.size > IMAGE_READ_HINT_BYTES) sys(html.t("chat.attach.largeImage", { name: file.name, size: formatBytes(file.size) }));
+  } catch (e) {
+    u.failed = e?.message ?? String(e);
+    // 札が字の欄にあれば札に理由・再試行・外すを出す。札の無い（平文の間など）失敗は今までどおり一行で
+    if (u.placed && composerEditor.hasAttachment(`i:${u.id}`)) composerEditor.updatePending(u.id);
+    else { uploads.delete(u.id); sys(html.t("chat.attach.failed", { name: file.name, error: u.failed })); }
+    renderAttached();
   }
 }
 // これより大きな画像は、エージェントが画像として読めないことがある（Claude の API の画像の上限は 1 枚 5MB）
 const IMAGE_READ_HINT_BYTES = 5 * 1024 * 1024;
 
 /**
- * 入力欄の高さを中身に合わせる。1 行から始め、上限はマウス 10 行・タッチ 6 行（promptMaxLines）。その先は中でスクロール。
- * 画面が低いとき（キーボードが出ている）は画面の 40% でも止める
+ * 入力欄の高さの上限を決める。1 行から始めて中身に合わせて伸び（CSS）、上限はマウス 10 行・タッチ 6 行（promptMaxLines）。
+ * その先は欄の中でスクロールする（送信の行は常に見える）。画面が低いとき（キーボードが出ている）は画面の 40% でも止める
  */
 function fitPrompt() {
-  const ta = $("prompt");
-  ta.style.height = "auto";
-  const css = getComputedStyle(ta);
+  const ed = $("prompt");
+  const css = getComputedStyle(ed);
   const line = parseFloat(css.lineHeight) || 22;
   const pad = (parseFloat(css.paddingTop) || 0) + (parseFloat(css.paddingBottom) || 0);
-  const max = promptMaxHeight({ line, pad, touch: matchMedia("(pointer:coarse)").matches, viewport: innerHeight });
-  ta.style.height = `${Math.min(ta.scrollHeight, max)}px`;
-  ta.style.overflowY = ta.scrollHeight > max ? "auto" : "hidden";
+  ed.style.maxHeight = `${promptMaxHeight({ line, pad, touch: matchMedia("(pointer:coarse)").matches, viewport: innerHeight })}px`;
 }
 
 function wireDropZone() {
@@ -4344,12 +4864,16 @@ function wireDropZone() {
     startDir: () => state.cwd.trim(),
     attachHost: (files) => { if (attachHostFiles(files)) $("prompt").focus(); },
   });
+  // クリップを押す前の字の欄の位置を覚える（メニューやファイルの選択でフォーカスが移っても、そこへ札を置く）
+  $("attach").addEventListener("pointerdown", rememberAttachAt, true);
+  $("attach").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") rememberAttachAt(); }, true);
   $("attach").addEventListener("click", () => { if (!currentAttachSources()) $("fileIn").click(); });
   syncAttachButton();
   $("fileIn").onchange = () => { attachFiles([...$("fileIn").files]); $("fileIn").value = ""; };
   // 会話に載った画像も同じライトボックスで大きく見る
   const zoomImage = (e) => {
-    const img = e.target.closest(".present-body > img, .tc-preview > img, .md-img");
+    const zoom = e.target.closest(".msg-att-zoom");
+    const img = zoom ? zoom.querySelector("img") : e.target.closest(".present-body > img, .tc-preview > img, .md-img");
     if (img) openLightbox(img.src, img.alt, img.dataset.filePath, img);
   };
   log.addEventListener("click", zoomImage);
@@ -4390,7 +4914,8 @@ function wireDropZone() {
       const entries = [...e.dataTransfer.items].map((i) => (i.kind === "file" ? i.webkitGetAsEntry?.() : null)).filter(Boolean);
       if (entries.some((x) => x.isDirectory)) { dropFolder(entries); return; }
     }
-    attachFiles([...e.dataTransfer.files]);
+    // 字の欄の上に落としたら、その位置へ。それ以外はキャレットの位置
+    attachFiles([...e.dataTransfer.files], { at: composerEditor.posFromPoint(e.clientX, e.clientY) });
   });
   // 貼り付けでも渡せるようにする。スクショを撮ってそのまま貼る動線が一番短い
   $("prompt").addEventListener("paste", (e) => {
@@ -4920,8 +5445,8 @@ function noteEndpointFailure(card, result, sessionId = state.current) {
   if (!card || !(result?.isError ?? result?.is_error) || !/^(WebSearch|webSearch|web_search)$/.test(card.dataset?.tool ?? "")) return;
   const s = state.sessions.find((x) => x.id === sessionId);
   const e = s?.compatEndpoint ? compatEndpoints.get(s.compatEndpoint) : null;
-  if (!e || card.querySelector(".tc-note")) return;
-  const note = el("p", "tc-note", t("chat.endpoint.noWebSearch", { name: e.name }));
+  if (!e || card.querySelector(".tc-endpoint-note")) return;
+  const note = el("p", "tc-endpoint-note", t("chat.endpoint.noWebSearch", { name: e.name }));
   const more = el("button", "clink", t("chat.endpoint.details")); more.type = "button";
   more.onclick = () => compatEndpoints.open(e.agent);
   note.append(" ", more);
@@ -5101,7 +5626,7 @@ function paintBranchNames() {
 function paintHistory(fromMi = 0, retained = null) {
   paintingHistory = true;
   try { return paintHistoryRows(fromMi, retained); }
-  finally { paintingHistory = false; relayoutBranches(); }
+  finally { paintingHistory = false; relayoutBranches(); paintDelegateStates(); }
 }
 
 function paintHistoryRows(fromMi, retained = null) {
@@ -5110,10 +5635,18 @@ function paintHistoryRows(fromMi, retained = null) {
   const added = [];
   let prevRole = retained ? retained.prevRole : fromMi > 0 ? state.messages[fromMi - 1]?.role : null;
   const startAt = !retained && fromMi > 0 ? new Date(state.messages[fromMi - 1]?.at ?? 0) : null;
+  // 発言に結び付いた human の present は、発言の本文の位置に取り込む（別のカードは出さない）。発言が描かれた添字だけ取り込み済みにする
+  const attachedTo = inlineAttachments(items);
+  const inlined = new Set();
   for (const [index, it] of items.entries()) {
-    if (retained && index < retained.from) continue;
+    if (retained && index < retained.from) {
+      // 残した行のうち、本文に添付を取り込んで描いた発言は取り込み済みにする（後ろの添付の行を二重にしない）
+      if (it.kind === "msg" && it.m.role === "user" && retained.rows.get(`m:${it.mi}`)?.querySelector(".m.user:not(.cmd)")) inlined.add(it.mi);
+      continue;
+    }
     if (it.kind === "present") {
       if (it.anchorMi >= 0 && it.anchorMi < fromMi) continue;
+      if (!showsAsCard(it, inlined)) continue;
       if (it.anchorMi < 0 && startAt && new Date(it.p.at ?? 0) < startAt) continue;
       const wrapper = append(renderPresent(savedEvent(it.p)), `p:${it.pi}`);
       wrapper.dataset.h = "1";
@@ -5122,7 +5655,9 @@ function paintHistoryRows(fromMi, retained = null) {
       continue;
     }
     if (it.mi < fromMi) continue;
-    const { node, role } = historyRow(it.m, { cont: prevRole === "assistant", refs, prev: added.at(-1) ?? retained?.row });
+    const { node, role } = historyRow(it.m, { cont: prevRole === "assistant", refs, prev: added.at(-1) ?? retained?.row,
+      presents: (attachedTo.get(it.mi) ?? []).map(savedEvent) });
+    if (it.m.role === "user" && node?.matches('.m.user:not(.cmd)')) inlined.add(it.mi);
     if (node) {
       const row = append(node, `m:${it.mi}`);
       row.dataset.h = "1";
@@ -5143,7 +5678,7 @@ function paintHistoryRows(fromMi, retained = null) {
  * backend は発言に backend が無いときの発言者。sessionId は Web 検索の失敗に接続先の一文を足すときに引く会話。
  * user を渡すと人の発言をそれで描く（詳細の最初の発言の「依頼」）
  */
-function historyRow(m, { cont = false, refs = [], prev = null, readonly = false, backend, sessionId = state.current, user = null } = {}) {
+function historyRow(m, { cont = false, refs = [], prev = null, readonly = false, backend, sessionId = state.current, user = null, presents = [] } = {}) {
   const system = systemHistoryNode(m);
   if (system !== undefined) {
     const repeated = system?.matches('.m.sys.interrupted') && prev?.querySelector(':scope .m.sys.interrupted');
@@ -5153,23 +5688,40 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
     return { node: system, role, system: true };
   }
   let node;
-  if (m.role === "user") node = user ? user(m) : userMsg(m.text, { uuid: readonly ? undefined : m.uuid, at: m.at });
+  if (m.role === "user") node = user ? user(m) : userMsg(m.text, { uuid: readonly ? undefined : m.uuid, at: m.at, presents, markdown: !readonly });
   else {
     node = aiMsg({ uuid: readonly ? undefined : m.uuid, at: m.at, backend: m.backend ?? backend, cont });
     if (readonly && m.model) node.querySelector('.who > span').textContent = modelDisplayName(state.vocab.get(backend)?.models ?? {}, m.model);
     if (m.thinking) node.append(thinkFromText(m.thinking));
-    for (const c of m.toolCalls ?? []) {
+    const cards = (m.toolCalls ?? []).map((c) => {
       const card = renderToolCall(c.name, c.input, { id: c.id });
       if (c.result) { applyToolResult(card, c.result); noteEndpointFailure(card, c.result, sessionId); }
       if (!readonly) linkDelegateCard(card, c.input, c.result);
-      node.append(card);
       if (c.id && !readonly) state.toolCards.set(c.id, card);
-    }
-    if (!m.toolCalls) for (const t of m.tools ?? []) node.append(renderToolCall(t, null));
+      return card;
+    });
+    if (!m.toolCalls) for (const name of m.tools ?? []) cards.push(renderToolCall(name, null));
+    node.append(...toolNodes(cards));
     if (m.text) { const b = el("div", "body"); b.innerHTML = renderAssistantMarkdown(m.text, refs); node.append(b); }
   }
   if (readonly) node.querySelector(':scope > .message-actions')?.remove();
   return { node, role: m.role };
+}
+
+/**
+ * 履歴の 1 つの発言のツールの行を、まとまり（閉じた見出し）と委譲に分けて並べる。委譲はまとまりの外に 1 件ずつ出し、そこでまとまりが切れる。
+ * 1 件だけのまとまりは見出しを付けず、行のまま置く
+ */
+function toolNodes(cards) {
+  const out = [];
+  for (const seg of splitToolCalls(cards, (card) => isBoundaryTool(card.dataset.tool))) {
+    if (seg.type === "delegate") { out.push(seg.call); continue; }
+    if (seg.calls.length === 1) { out.push(seg.calls[0]); continue; }
+    const bundle = new Bundle();
+    bundle.addAll(seg.calls);
+    out.push(bundle.el);
+  }
+  return out;
 }
 
 /** A live assistant row can represent several persisted tool/thinking entries. */
@@ -5223,7 +5775,7 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
 }
 
 /**
- * loadSession。prev（今持っている { messages, presents }）を渡すと、その先頭の続きだけを頼む（web/history-sync.mjs、ADR 0059）。
+ * loadSession。prev（今持っている { messages, presents }）を渡すと、その先頭の続きだけを頼む（web/history-sync.mjs、ADR 0062）。
  * 差分が返れば先頭につないで全量の形にし、全量が返った（古いサーバー・先頭が合わない）ときはそのまま、
  * 差分の印と件数が食い違うときは全量を取り直す。どの場合も、呼び出し側が受け取る形は同じ
  */
@@ -5256,7 +5808,11 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     // 作っている間の送信の予約は、別の会話へ移ったら取り消す（字は "" の下書きに残り、作った会話へ移る。startNew）
     if (!fresh && composerWait.queued) composerWait.cancel();
     if (!fresh) saveDraft().catch(() => {});
+    // 新しい会話の欄で始めた添付: できた会話へ付け替える。作っていないのに別の会話へ移るなら、その欄の持ち物として "" に切り離す
+    // （後で作る別の会話に紛れ込まない。届いたら "" の下書きに積む）
+    if (state.current === null && !fresh && !creatingSession) for (const u of uploads.values()) if (u.sessionId === null) u.sessionId = "";
     state.current = id;
+    if (fresh) adoptUploads(id);
     state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
     paintContextStrip();
     try { localStorage.setItem("agent-host-current", id); } catch {}
@@ -5530,7 +6086,7 @@ async function forkFrom(m, { draft } = {}) {
     const boundary = draft ? { beforeMessageId: uuid } : { upToMessageId: uuid };
     const result = await cmd('fork', { sessionId: source, ...boundary });
     if (!result?.sessionId) throw new Error(t('chat.fork.noId'));
-    if (draft) await persistDraft(result.sessionId, { text: draft.text, attached: draft.attached, dirty: true });
+    if (draft) await persistDraft(result.sessionId, { text: draft.text, attached: draft.attached, version: 2, dirty: true });
     await refresh();
     await branches.load(source, state.messages);
     const groups = placeJunctions();
@@ -5627,7 +6183,11 @@ function syncRunState() {
   // 作ったばかりの会話（freshSessionId）を開いている間は押せる（送信を予約する。submit）
   $("send").disabled = submittingMessages.has(state.current)
     || state.loadingSession === state.current && Boolean(state.current) && state.current !== freshSessionId
-    || composerWait.blocksSend() || Boolean(retiredHere()) || connStatus.blocksSend();
+    || composerWait.blocksSend() || Boolean(retiredHere()) || connStatus.blocksSend() || Boolean(composerShellMode ? null : uploadBlockReason());
+  // 送れない理由（送信中・失敗の添付）は送信ボタンの title に出す
+  const sendBtn = $("send"), upReason = composerShellMode ? null : uploadBlockReason();
+  if (upReason) { if (sendBtn.dataset.upBlock === undefined) sendBtn.dataset.upBlock = sendBtn.getAttribute("title") ?? ""; sendBtn.setAttribute("title", upReason); }
+  else if (sendBtn.dataset.upBlock !== undefined) { sendBtn.setAttribute("title", sendBtn.dataset.upBlock); delete sendBtn.dataset.upBlock; }
   $("abort").hidden = !(here || isWaitingHere());
   // 受け付けた中断は取り消せない。止まり終えるまで押せないようにする（稼働表示は「中断している」）
   $("abort").disabled = here && stoppingHere();
@@ -5644,7 +6204,8 @@ function syncRunState() {
 
 async function clearSentDraft(id, text, attachments) {
   const draft = state.current === id ? { text: $('prompt').value, attached: state.attached } : state.drafts.get(id);
-  if (draft?.text !== text || JSON.stringify((draft.attached ?? []).map(a => a.path)) !== JSON.stringify(attachments.map(a => a.path))) return;
+  const paths = (list) => JSON.stringify(list.map(a => a.path).sort());
+  if (draft?.text !== text || paths(draft.attached ?? []) !== paths(attachments)) return;
   if (state.current === id) { $('prompt').value = ''; state.attached = []; renderAttached(); $('slashHint').textContent = ''; slashSkills.close(); fitPrompt(); }
   await persistDraft(id, { text: '', attached: [], dirty: true });
 }
@@ -5655,6 +6216,9 @@ async function submit() {
   if ($('prompt').value.trim() || state.attached.length) completionNotifications.requestPermission();
   // 設定を保存できず止めている間は送らない。理由の一行へフォーカスを移す（web/composer-wait.mjs の hold）
   if (composerWait.held) { composerWait.point(); return; }
+  // 送っている途中・失敗の添付があるうちは送らない（欠けた添付を前提にエージェントが作業を始めないように）。札が理由と外す・再試行を持つ
+  const upBlock = uploadBlockReason();
+  if (upBlock) { notify(upBlock); flashAttachEntry(); return; }
   if (!state.current || state.current === freshSessionId) {
     // 新しい会話を作っている間の送信は予約する（docs/design-system.md「入力欄の待ち」）。欄は readonly にして字を保ち、
     // 150ms を越えたら送信ボタンに弧、欄の上に「会話ができしだい送ります · 取り消す」。できしだい下の続きで送る
@@ -5670,6 +6234,9 @@ async function submit() {
     finally { if (queuedSend === ticket) { queuedSend = null; composerWait.unqueue(); } }
     // 取り消した・作れなかった（脇の帯に理由とやり直し）・その間に別の会話へ移ったなら送らない。字は欄に残っている
     if (ticket.cancelled || !created || state.current !== created || state.current === freshSessionId) return;
+    // 待っている間に添付を始めたもの（会話ができたら持ち主がその会話になる）も、届くまで送らない
+    const stillBlocked = uploadBlockReason();
+    if (stillBlocked) { notify(stillBlocked); flashAttachEntry(); return; }
   }
   const sessionId = state.current;
   if (submittingMessages.has(sessionId) || state.busy || state.loadingSession || composerWait.blocksSend() || retiredHere()) return;
@@ -5683,7 +6250,7 @@ async function submit() {
     // 候補が開いたまま blur した場合の後片付けが先に走ると、送信の入力が書き換わる
     slashSkills.close();
     const text = $('prompt').value;
-    const attachments = state.attached.map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
+    const attachments = orderedAttachments().map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
     if (!text.trim() && !attachments.length) return;
     if (text.trim() === '/compact' && !attachments.length) {
       if (canCompactHere()) {
@@ -5697,7 +6264,10 @@ async function submit() {
     state.compactionAt = null; paintContextStrip();
     // 添付の印はエージェントが読むので会話の言語で（まだ決まっていない会話は、サーバーが決めるのと同じ画面の言語）
     const agentLang = state.sessions.find(s => s.id === sessionId)?.agentLocale ?? uiLang;
-    const full = [text.trim(), attachments.map(a => attachmentLine(agentLang, a.path)).join(NL)].filter(Boolean).join(NL + NL);
+    // 本文は文中の印（[添付] パス）ごとそのまま送る。文中に無い添付（文末に付く）だけ、今までどおり末尾に印を足す
+    const inDoc = composerEditor.attachmentKeys();
+    const tail = attachments.filter(a => !inDoc.has(attachedKey(a.path)));
+    const full = [text.trim(), tail.map(a => attachmentLine(agentLang, a.path)).join(NL)].filter(Boolean).join(NL + NL);
     const args = { sessionId, prompt: full, cwd: state.cwd.trim() || undefined, mode: state.mode,
       ...(attachments.length ? { attachments } : {}) };
     const previous = receipts.get(sessionId);
@@ -5824,7 +6394,7 @@ const shellComposer = createShellComposer({ box: $('cbox'), prompt: $('prompt'),
   where: () => ({ cwd: state.cwd.trim() || state.sessions.find(s => s.id === state.current)?.cwd || '', host: remoteInfo(window.plyRemote)?.host ?? '' }),
   touch: () => matchMedia('(pointer:coarse)').matches,
   onAsText: () => submit(),
-  onChange: () => { fitPrompt(); controls.fit(); } });
+  onChange: () => { composerPlain = shellComposer.active; composerShellMode = shellComposer.mode; composerEditor.modeChanged(); fitPrompt(); controls.fit(); syncRunState(); } });
 $('prompt').addEventListener('beforeinput', e => shellComposer.beforeinput(e));
 $('prompt').addEventListener('input', () => shellComposer.input());
 $("composer").onsubmit = (e) => { e.preventDefault(); submit(); };

@@ -20,7 +20,7 @@ export default async function (t) {
     const state = { streamEl: null, turnEl: null, turnClosed: closed };
     const context = vm.createContext({
       state, el, renderAssistantMarkdown,
-      closeThink() {}, activity: { show() {} }, atBottom: () => false,
+      closeBundle() {}, closeThink() {}, activity: { show() {} }, atBottom: () => false,
       ACTIVITY_LABEL: {},   // 稼働表示の文言（client.mjs）。このテストは見ない
       stoppingHere: () => false,
       // 本文の描き直しは 1 コマに 1 回（client.mjs の flushStream）。コマは待たず、下で同期に描かせる

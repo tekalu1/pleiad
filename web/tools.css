@@ -1,71 +1,108 @@
-/* ==================== ツール呼び出しの表示（web/render.mjs の renderToolCall） ====================
-   会話の主役は本文なので、ここは一段沈める。動詞のラベル + 等幅の本文色 + 補足 + 右端に結果。
+/* ==================== ツール呼び出しの表示（web/render.mjs の renderToolCall、web/tool-bundle.mjs のまとまり） ====================
+   会話の主役は本文なので、ここは一段沈める。1 行は「動詞・主役・補足・右端に結果・開閉の印」。
    失敗は本文を読み飛ばしていても気づける必要があるので、行の面を一段持ち上げ、太字と記号で出す。
    色は付けない（差し色は「あなたを待っている」だけ）。枠線・片側の線も無い。
+   docs/design-system.md §4.5「ツール呼び出し」・§8（動き）・§2.3（触れたときだけ現れるもの）
 
    横に長い中身（コマンド・パス・パターン）は必ずこの枠の内側で止める。
    body に横スクロールを出さないため、入れ子のどこかで min-width:0 が切れないようにする。 */
 
-.tc{font-size:var(--fs-s);color:var(--ink-weak);padding:2px 10px;margin:0 0 4px;border-radius:var(--r-s);max-width:100%;min-width:0}
+.tc{--tc-indent:calc(3.4 * var(--fs-xs) + 10px);font-size:var(--fs-s);color:var(--ink-weak);padding:0;margin:0 0 2px;border-radius:var(--r-s);max-width:100%;min-width:0}
 .tc.tc-compact{font-size:var(--fs-xs)}
-.tc-details>summary{display:flex;align-items:center}
-.tc-details-body{padding:6px 0;min-width:0}
-.tc-details-body .code-block>pre{max-height:340px;overflow:auto}
-.tc-section-label{margin:6px 0;color:var(--ink-weak)}
+.tc-details-body{padding:4px 0 8px var(--tc-indent);min-width:0}
+.tc-details-body .code-block>pre{max-height:240px;overflow:auto}
+/* コピーの操作は枠の右上に重ねる（言語札の無い出力の上に空の行を作らない） */
+.tc .code-block .code-actions{position:absolute;top:4px;right:6px;padding:0;z-index:1}
+.tc .code-block>pre{padding:8px 52px 8px 12px}
+.tc-section-label{margin:4px 0 3px;font-size:var(--fs-xs);color:var(--ink-weak);display:flex;gap:8px;align-items:baseline}
+.tc-section-label .btn{font-size:var(--fs-xs);padding:0 6px;color:var(--ink-blue)}
 .tc-preview{margin:12px 0;max-width:100%}
 .tc-preview>img{display:block;max-width:100%;max-height:520px;object-fit:contain;border-radius:var(--r-s);cursor:zoom-in}
 
-/* 1行目。折り返してよいが、各要素は自分の中で横スクロールを閉じる */
-.tc-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;min-width:0}
+/* ---- 1 行。押せる範囲は行全体で、触れたときの面（--surface-hover）で伝える。枠線は無い ---- */
+.tc-details>.tc-head{display:block;min-width:0;padding:2px 8px;margin:0 -8px;border-radius:var(--r-s);
+  list-style:none;cursor:pointer;user-select:none;color:var(--ink-weak);font-size:var(--fs-s);
+  transition:background-color var(--dur-fast) var(--ease-out)}
+.tc-line{display:flex;align-items:baseline;gap:10px;min-width:0;min-height:20px}
+.tc-details>.tc-head::-webkit-details-marker{display:none}
+.tc-details>.tc-head::before{content:none}
+.tc-details>.tc-head:hover{background:var(--surface-hover);color:var(--ink-weak)}
+.tc-details>.tc-head:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px;background:var(--surface-hover)}
 
-/* ツールの種類。動詞で揃えているので、縦に並ぶと「何をしたか」が読める */
-.tc-label{font-family:var(--font-mono);font-size:var(--fs-xs);letter-spacing:.04em;flex:none;min-width:3.6em;
-  white-space:nowrap;max-width:14em;overflow:hidden;text-overflow:ellipsis}
+/* 動詞。UI の字・弱い色。並ぶと「何をしたか」が縦に読める */
+.tc-head .tc-label{flex:none;min-width:3.4em;font-size:var(--fs-xs);white-space:nowrap;max-width:14em;overflow:hidden;text-overflow:ellipsis}
+/* `!` の行（style.css の .cmdline）と、開いた中の見出しは従来の等幅のまま */
+.cmdline .tc-label{font-family:var(--font-mono);letter-spacing:.04em;flex:none;min-width:3.6em;white-space:nowrap}
 
 /* mcp のサーバ名。ツール名と混ざらないよう弱く */
 .tc-server{flex:none;font-size:var(--fs-xs);white-space:nowrap}
 
 .tc-code{font-size:var(--fs-s)}
 
-/* 主役。何をしたかが分かる一番大事な部分なので、ここだけ本文色にする */
-.tc-main{flex:1 1 auto;min-width:0;max-width:100%;color:var(--ink);font-family:var(--font-mono);font-size:var(--fs-s);
-  white-space:pre;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain}
-.tc-main.tc-text{font-family:inherit;white-space:normal;overflow:hidden;
-  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}
+/* 主役。何をしたかが分かる一番大事な部分なので、ここだけ本文色にする。1 行に収め、はみ出しは … （全文は title） */
+.tc-main{flex:0 1 auto;min-width:0;max-width:100%;color:var(--ink);font-family:var(--font-mono);font-size:var(--fs-s);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-main.tc-text{font-family:inherit}
 .tc-main.tc-link{color:var(--ink-blue);white-space:nowrap;text-overflow:ellipsis}   /* 取得の URL。押すと設定の開き先 */
 /* 読む・書く・編集の対象はファイルリンク（押すと右パネル、右クリックで操作）。色はリンクに戻す */
-.tc-main.tc-file{color:var(--ink-blue);flex:0 1 auto}
-/* 主役の中の横スクロールバーは細く。太いと行が膨らんで一覧性が落ちる */
-.tc-main::-webkit-scrollbar{height:6px}
-.tc-main::-webkit-scrollbar-thumb{border:0}   /* 共通のつまみ（style.css）は縁を 2px 取る。6px の溝ではつまみを溝いっぱいにする */
+.tc-main.tc-file{color:var(--ink-blue);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
 
-/* 補足（行範囲・オプション・description）。溢れたら折り返さず切る */
-.tc-note{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%}
+/* 補足（行範囲・オプション・description）。幅が足りないと主役より先に縮み、消える */
+.tc-note{flex:0 100 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%;font-size:var(--fs-xs)}
 
-/* 結果。右端に弱く。成功は主張しない */
-.tc-res{flex:none;margin-left:auto;font-family:var(--font-mono);font-size:var(--fs-xs);white-space:nowrap}
-/* 失敗。面を一段持ち上げ、太字と記号で */
-.tc.tc-error{background:var(--surface-1);padding:6px 10px}
-.tc-res-err{color:var(--ink-strong);font-weight:700;white-space:normal;max-width:60%;overflow:hidden;text-overflow:ellipsis}
+/* 右端の結果。成功は主張しない。走っている間は弧と経過秒 */
+.tc-res{flex:none;margin-left:auto;font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:var(--fs-xs);white-space:nowrap;
+  display:inline-flex;align-items:center;gap:6px;align-self:center}
+.tc-res:empty{display:none}
+.tc-res .run{width:14px;height:14px}
 
-/* ---- 折りたたみ（コマンド全体・書き込む内容・渡した指示・出力） ---- */
+/* 開閉の印（右端）。触れたとき・キーボードで選んだとき・開いているときだけ見える。場所は常に取ってあるので字はずれない */
+.tc-chev{flex:none;align-self:center;width:12px;height:12px;margin:0 2px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;
+  opacity:0;color:var(--ink-weak);transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur) var(--ease-out)}
+.tc-head:hover .tc-chev,.tc-head:focus-visible .tc-chev,.tc-details[open]>.tc-head .tc-chev{opacity:1}
+.tc-details[open]>.tc-head .tc-chev{transform:rotate(90deg)}
+/* タッチには触れる前の状態が無いので、薄く常に出す */
+@media (hover:none){.tc-chev{opacity:.55}.tc-details>.tc-head:hover{background:transparent}}
 
+/* 失敗。面を一段持ち上げ、太字の ✕ と要点の 1 行を出す。色は付けない */
+.tc.tc-error>.tc-details>.tc-head{background:var(--surface-1)}
+.tc-res-err{color:var(--ink-strong);font-weight:700}
+.tc-errline{display:block;min-width:0;padding:0 0 2px var(--tc-indent);font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc.tc-error>.tc-details>.tc-details-body{background:var(--surface-1);margin:0 -8px;padding-left:calc(var(--tc-indent) + 8px);padding-right:8px;border-radius:0 0 var(--r-s) var(--r-s)}
+
+/* ---- 開いた中身 ---- */
+
+.tc-sec-body .code-block{margin:0 0 6px}
+.tc-tail .tc-output,.tc-out .tc-output{margin:0}
 .tc-fold{margin-top:3px;min-width:0;max-width:100%}
-.tc-fold>summary{list-style:none;cursor:pointer;color:var(--ink-weak);font-size:var(--fs-xs);padding:1px 0;user-select:none}
+.tc-fold>summary:not(.tc-head){list-style:none;cursor:pointer;color:var(--ink-weak);font-size:var(--fs-xs);padding:1px 0;user-select:none}
 .tc-fold>summary::-webkit-details-marker{display:none}
-.tc-fold>summary::before{content:"▸";display:inline-block;width:1em;transition:transform var(--dur-fast) var(--ease-out)}
-.tc-fold[open]>summary::before{transform:rotate(90deg)}
-.tc-fold>summary:hover{color:var(--ink)}
+.tc-fold>summary:not(.tc-head)::before{content:"▸";display:inline-block;width:1em;transition:transform var(--dur-fast) var(--ease-out)}
+.tc-fold[open]>summary:not(.tc-head)::before{transform:rotate(90deg)}
+.tc-fold>summary:not(.tc-head):hover{color:var(--ink)}
 .tc-fold-body{margin:4px 0 6px;min-width:0;max-width:100%}
 .tc-fold-body .code-block{margin:0}
-.tc-fold-body .code-block>pre{padding:8px 12px;max-height:340px;overflow:auto}
-/* 出力は「読みたければ開く」もの。閉じているあいだは存在を主張させない */
+.tc-fold-body .code-block>pre{padding:8px 12px;max-height:240px;overflow:auto}
+.tc-json{margin-top:6px}
+.tc-json-body{margin:4px 0 0}
+.tc-json-body .code-block{margin:0}
+.tc-json-body .code-block>pre{padding:8px 12px;max-height:240px;overflow:auto}
 .tc-out>summary{opacity:.8}
-.tc.tc-error>.tc-out>summary{color:var(--ink);opacity:1}
 
-/* ---- 簡易 diff（Edit / MultiEdit）。記号の列と面の階調だけ ---- */
+/* 検索・探すの結果 */
+.tc-files{list-style:none;margin:0 0 6px;padding:0;font:var(--fs-s)/1.7 var(--font-mono);min-width:0}
+.tc-files li{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-files .tc-main{display:inline}
 
-.tc-diff{border-radius:var(--r-m);background:var(--surface-2);padding:6px 0;margin:0;overflow:auto;max-height:340px;
+/* 入力の「キー 値」の格子 */
+.tc-kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 12px;font-size:var(--fs-s);margin:0 0 6px}
+.tc-kv .k{color:var(--ink-weak)}
+.tc-kv .v{font-family:var(--font-mono);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---- 簡易 diff（Edit / MultiEdit / Write）。記号の列と面の階調だけ ---- */
+
+.tc-diff{border-radius:var(--r-m);background:var(--surface-2);padding:6px 0;margin:0 0 6px;overflow:auto;max-height:340px;
   font-family:var(--font-mono);font-size:var(--fs-s);line-height:1.6}
 .tc-diff>div{padding:0 12px 0 8px;white-space:pre;display:flex;gap:8px;min-width:min-content}
 .tc-diff .g{width:1em;text-align:center;flex:none;color:var(--ink-weak)}
@@ -85,4 +122,114 @@
 
 /* .tc-done は見た目を変えない。結果が返ったことを client.mjs 側が見分けるための印。 */
 /* 互換の接続先で使えない機能が失敗したときに Pleiad が足す一文（web/client.mjs の noteEndpointFailure） */
-.tc-note{margin:4px 0 0;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
+.tc-endpoint-note{margin:4px 0 0;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
+
+/* ==================== まとまり（web/tool-bundle.mjs） ====================
+   見出し 1 行（件数・内訳・変更したファイル数・失敗の数・経過）＋ 中の行（.hist）＋ 最新の行（.latest）。
+   中の行は grid-template-rows の 0fr ⇄ 1fr で高さを動かす（240ms・--ease-out）。閉じた行は inert。
+   面を敷くのはまとまり全体（.bundle）。見出しは自分の面を持たない（範囲は .bundle が示す）。 */
+
+/* まとまりは左右に 8px はみ出した 1 枚の面。触れていない間は透明 */
+.bundle{margin:0 -8px 4px;padding:2px 8px;min-width:0;border-radius:var(--r-m);transition:background-color var(--dur-fast) var(--ease-out)}
+.rhead{display:flex;align-items:baseline;gap:10px;width:100%;margin:0;padding:2px 0;min-height:24px;border:0;background:transparent;border-radius:0;
+  cursor:pointer;text-align:left;font:inherit;font-size:var(--fs-s);color:var(--ink-weak);-webkit-tap-highlight-color:transparent}
+.rhead:hover{background:transparent}
+.rhead:focus-visible{outline:none}
+/* 見出しに触れた（マウス）・キーボードで選んだ・押している間（タッチ）は、開閉で出入りする範囲全体に面を敷く。枠線は無い */
+@media (hover:hover){
+  .bundle:has(>.rhead:hover){background:var(--surface-hover)}
+  .bundle:has(>.rhead:hover) :is(.tc-error>.tc-details>.tc-head,.tc-error>.tc-details>.tc-details-body,.tc-appr){background:var(--surface-2)}
+}
+.bundle:has(>.rhead:focus-visible),.bundle:has(>.rhead:active){background:var(--surface-hover)}
+.bundle:has(>.rhead:focus-visible) :is(.tc-error>.tc-details>.tc-head,.tc-error>.tc-details>.tc-details-body,.tc-appr),
+.bundle:has(>.rhead:active) :is(.tc-error>.tc-details>.tc-head,.tc-error>.tc-details>.tc-details-body,.tc-appr){background:var(--surface-2)}
+.bundle:has(>.rhead:focus-visible){outline:2px solid var(--line-blue);outline-offset:1px}
+.rhead .verb{display:inline-flex;align-items:center;gap:4px;flex:none;min-width:3.4em;font-size:var(--fs-xs)}
+.rhead .stk{width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;align-self:center}
+.rhead .n{display:inline-block;font-variant-numeric:tabular-nums;white-space:nowrap}
+.rhead .mix{flex:0 1 auto;min-width:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 見出しの補足は切らずに残し、内訳（.mix）の方を省略する。狭い幅は短い形 */
+.rhead .note{flex:none;white-space:nowrap;font-size:var(--fs-xs)}
+.rhead .note:empty{display:none}
+.rhead .ns{display:none}
+.rhead .res{flex:none;margin-left:auto;display:inline-flex;align-items:baseline;gap:8px;align-self:center;font-family:var(--font-mono);font-size:var(--fs-xs);font-variant-numeric:tabular-nums}
+.rhead .xm{color:var(--ink-strong);font-weight:700}
+.rhead .tc-chev{transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur) var(--ease-out)}
+.rhead:hover .tc-chev,.rhead:focus-visible .tc-chev,.rhead[aria-expanded="true"] .tc-chev{opacity:1}
+.rhead[aria-expanded="true"] .tc-chev{transform:rotate(90deg)}
+/* 1 件の間は見出しを出さない（行そのものが見出し）。2 件目が始まったところで現れる */
+.bundle[data-n="1"]>.rhead{display:none}
+.hist,.latest{min-width:0}
+.hi{display:grid;grid-template-rows:1fr;opacity:1;transition:grid-template-rows var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out)}
+.hi>.in{min-height:0;overflow:hidden;margin:0 -8px;padding:0 8px}
+.hi.hid{grid-template-rows:0fr;opacity:0}
+/* 積み重ねの手がかり: 最新のすぐ上に 1 つ前の行が薄く、上へ消えていく形で見えている。押す・↑ で遡る。
+   マスクは行（.tc-head）に掛け、触れたときの面は欠けさせない */
+.hi.ghost{opacity:.42;cursor:pointer}
+.hi.ghost .tc-head{pointer-events:none;-webkit-mask-image:linear-gradient(to bottom,transparent 0,black 75%);mask-image:linear-gradient(to bottom,transparent 0,black 75%)}
+.hi.ghost>.in{border-radius:var(--r-s);transition:background-color var(--dur-fast) var(--ease-out)}
+/* 薄い行に触れたとき（1 件遡る）は、その行だけに面を敷いて濃くする。まとまり全体の面とは大きさで見分ける */
+@media (hover:hover){
+  .hi.ghost:hover{opacity:1}
+  .hi.ghost:hover>.in{background:var(--surface-hover)}
+  .hi.ghost:hover .tc-head{opacity:.75}
+}
+.hi.ghost:focus-visible,.hi.ghost:active{opacity:1;outline:none}
+.hi.ghost:focus-visible>.in,.hi.ghost:active>.in{background:var(--surface-hover)}
+.hi.ghost:focus-visible .tc-head,.hi.ghost:active .tc-head{opacity:.75}
+.hi.ghost:focus-visible>.in{outline:2px solid var(--line-blue);outline-offset:-2px}
+/* まとまりの中の行は余白を持たない（間隔は行の高さ 24px が作る） */
+.hi .tc{margin:0}
+
+/* 狭い幅: 行の補足が先に消え、見出しの補足は「変更 2」に */
+@media (max-width:560px){
+  .tc-note{display:none}
+  .rhead .nl{display:none}
+  .rhead .ns{display:inline}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .hi,.hi.ghost,.tc-chev,.bundle,.hi.ghost>.in{transition:none}
+}
+
+/* ---- 承認待ち: まとまりの最新の行の場所が承認カードになる（許可・拒否をその場で押せる）。差し色（--ink-mark）はここだけ。
+   決着したらカードが縮んで普通の行に戻り、まとまりに残る（外に ◇ の 1 行を残さない） ---- */
+.tc-appr{background:var(--surface-1);border-radius:var(--r-m);margin:2px 0 4px;padding:8px 12px 10px;font-size:var(--fs-s);min-width:0}
+.tc-appr .h{color:var(--ink-mark);font-weight:600}
+.tc-appr .ln{display:flex;align-items:baseline;gap:10px;min-width:0;margin-top:2px}
+.tc-appr .ln .tc-label{flex:none;min-width:3.4em;font-size:var(--fs-xs);color:var(--ink-weak)}
+.tc-appr .ln .tc-main{min-width:0}
+.tc-appr .ln .tc-note{flex:none;max-width:none}
+.tc-appr .acts{display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap;padding-left:calc(3.4 * var(--fs-xs) + 10px)}
+.tc-appr .acts .res{margin-right:auto;font-size:var(--fs-xs);color:var(--ink-weak);display:inline-flex;align-items:center;gap:6px}
+.tc-appr .acts .res:empty{display:none}
+.tc-appr .acts .res.fail{color:var(--ink-strong);font-weight:600}
+.tc-appr.sending .acts .btn{pointer-events:none;opacity:.55}
+.tc-wait{color:var(--ink-mark)}
+.tc-approval-note{margin:2px 0 4px;font-size:var(--fs-xs);color:var(--ink-weak)}
+@media (max-width:560px){.tc-appr .acts{padding-left:0}}
+
+/* ---- 委譲カード（まとまりの外）。1 行目に依頼の題と子の状態、2 行目に行き先と理由 ---- */
+.tc-details>.tc-head .tc-open{flex:none}
+.tc-res:not(:empty)+.tc-open{margin-left:0}
+.tc-res-wait{color:var(--ink-mark)}
+.tc-res .state-mark,.tc-res .run{align-self:center}
+
+/* ---- 委譲の完了通知（システム側の行。web/client.mjs の taskNoticeNode） ---- */
+.m.sys.task-notice{margin:2px 0}
+.m.sys.task-notice .sys-fold>summary{display:flex;align-items:baseline;gap:10px;min-height:24px;padding:2px 8px;margin:0 -8px;border-radius:var(--r-s);font-size:var(--fs-s);
+  transition:background-color var(--dur-fast) var(--ease-out)}
+.m.sys.task-notice .sys-fold>summary::before{content:none}
+.m.sys.task-notice .sys-fold>summary:hover{background:var(--surface-hover)}
+.m.sys.task-notice .sys-fold>summary:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.m.sys.task-notice .state-mark{align-self:center}
+.tn-verb{flex:none;min-width:0;font-size:var(--fs-xs)}
+.tn-title{flex:0 1 auto;min-width:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tn-who{flex:none;margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs)}
+.tn-who .logo,.tn-who svg{width:12px;height:12px}
+.tn-who .t{font-family:var(--font-mono);margin-left:0}
+.m.sys.task-notice .sys-fold[open]>summary .tc-chev,.m.sys.task-notice .sys-fold>summary:hover .tc-chev,.m.sys.task-notice .sys-fold>summary:focus-visible .tc-chev{opacity:1}
+.m.sys.task-notice .sys-fold[open]>summary .tc-chev{transform:rotate(90deg)}
+.m.sys.task-notice .sys-body{margin-left:0}
+.m.sys.task-notice .tc-json{margin-top:6px}
+@media (max-width:560px){.tn-name,.tn-who .t{display:none}}

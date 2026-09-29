@@ -7,7 +7,7 @@
 import fs from "node:fs/promises";
 import vm from "node:vm";
 import { N } from "../lib/dom-stub.mjs";
-import { buildItems } from "../../web/timeline.mjs";
+import { buildItems, inlineAttachments, showsAsCard } from "../../web/timeline.mjs";
 import { retainPlan } from "../../web/history-sync.mjs";
 import { commonPrefix } from "../../web/branches.mjs";
 
@@ -110,20 +110,23 @@ export default async function (t) {
   const functions = ["wrap", "place", "append", "resetLiveTurn", "rowRole", "retainThread", "paintHistory", "paintHistoryRows"].map(cut).join("\n");
   const el = (tag, cls, text) => { const n = new Node(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   // 履歴の 1 行。本物の historyRow（web/client.mjs）は発言 1 件から行を作る。ここでは中身が決まる作りものにして、行の並びと続きの見出しだけを見る
-  const historyRow = (m, { cont }) => {
+  // 人の発言には、結び付いた添付（presents）を本文の位置に取り込み、AI の発言はツールをまとまり（.bundle）にして持つ（main の historyRow と同じ形）
+  const historyRow = (m, { cont, presents = [] }) => {
     const node = el("div", `m ${m.role === "user" ? "user" : "ai"}${cont ? " cont" : ""}`);
     node.dataset.role = m.role;
-    node.textContent = `${m.uuid}|${m.text}|${JSON.stringify(m.toolCalls?.[0]?.result ?? null)}`;
+    node.append(el("div", "body", `${m.uuid}|${m.text}|${JSON.stringify(m.toolCalls?.[0]?.result ?? null)}`));
+    if (m.toolCalls?.length) { const bundle = el("div", "bundle"); bundle.bundle = { of: m.uuid }; node.append(bundle); }
+    if (m.role === "user" && presents.length) node.append(el("div", "attached", presents.map(p => p.path).join(",")));
     return { node, role: m.role };
   };
   const build = () => {
     const thread = el("div", "thread");
     thread.append(el("svg", "spine"));
-    const state = { messages: [], presents: [], busy: true, toolCards: new Map(), streamEl: "s", thinkEl: "t", turnEl: "u", turnClosed: true };
+    const state = { messages: [], presents: [], busy: true, toolCards: new Map(), streamEl: "s", thinkEl: "t", turnEl: "u", turnClosed: true, bundle: { live: true } };
     let cancelled = 0, hidden = 0;
     const activity = { el: null, hide: () => { hidden++; activity.el?.closest?.(".mw")?.remove(); activity.el = null; } };
     const context = vm.createContext({
-      thread, state, activity, el, buildItems, historyRow, log: { scrollTop: 0 }, atBottom: () => false, relayoutBranches() {},
+      thread, state, activity, el, buildItems, inlineAttachments, showsAsCard, historyRow, log: { scrollTop: 0 }, atBottom: () => false, relayoutBranches() {}, paintDelegateStates() {},
       renderPresent: p => el("div", "m card", `提示 ${p.id ?? p.path}`), savedEvent: p => p,
       cancelStream: () => { cancelled++; },
     });
@@ -232,6 +235,66 @@ export default async function (t) {
   s.reload(conversation(30), [present, { ...present, id: "v2", at: at(50), reference: "visualize{\"path\":\"/tmp/b.html\"}" }]);
   t.ok("提示が増えても、描いた行は同じ要素のまま、提示の行だけが足される",
     withCard.every((r, i) => s.rows()[i] === r) && s.rows().length === withCard.length + 1 && s.rows().at(-1).dataset.key === "p:1", keys(s.rows()).slice(-20));
+
+  // ---------------------------------------------------------------- ツールのまとまり・取り込んだ添付（main の web/tool-bundle.mjs・inlineAttachments）
+  // 履歴の行は発言 1 件につき 1 行で、ツールのまとまり（.bundle）はその行の中にある。残した行のまとまりは同じ要素のまま
+  s = build(); s.paint(conversation(30));
+  const bundlesBefore = s.rows().map(r => r.querySelector(".bundle")).filter(Boolean);
+  s.reload(conversation(34));
+  const bundlesAfter = s.thread.querySelectorAll(".bundle");
+  t.ok("残した行の中のツールのまとまりは、同じ要素のまま残る（増えた分だけ足される）",
+    bundlesBefore.length === 15 && bundlesBefore.every(b => bundlesAfter.includes(b)) && bundlesAfter.length === 17, `${bundlesBefore.length} → ${bundlesAfter.length}`);
+  // 走っているまとまり（state.bundle）を持つライブの行は、外して履歴から描き直す
+  s = build(); s.paint(conversation(30));
+  const liveTurn = liveRow("live:1"); const liveBundle = el("div", "bundle"); liveTurn.append(liveBundle);
+  liveTurn.parent = s.thread; s.thread.children.push(liveTurn);
+  s.reload(conversation(30));
+  t.ok("ライブのまとまりを持つ行は外れ、走っているまとまり（state.bundle）の参照も捨てる", !s.thread.children.includes(liveTurn) && s.state.bundle === null && s.rows().length === 30);
+
+  // 発言に結び付いた人の添付は、発言の本文の位置に取り込み、後ろに別の行を出さない。取り込みの有無が変わったら、その発言から描き直す
+  const attach = (extra = {}) => ({ by: "human", kind: "image", path: "/tmp/a.png", at: at(4), ...extra });
+  const paintedRows = (messages, presents) => { const f = build(); f.paint(messages, presents); return f; };
+  const same2 = (a, b) => rowsHtml(a.rows()) === rowsHtml(b.rows());
+  {
+    const bound = [attach({ messageId: "u4" })];
+    s = paintedRows(conversation(30), bound);
+    t.ok("（前提）結び付いた添付は発言の行に取り込まれ、別の行は出ない", s.rows()[4].outerHTML.includes("/tmp/a.png") && !s.rows().some(r => r.dataset.key === "p:0") && s.rows().length === 30);
+    const before = s.rows();
+    const nothing2 = s.reload(conversation(30), bound);
+    t.ok("添付が変わらなければ、全部残る（取り込んだ発言の行も同じ要素）", nothing2.added.length === 0 && before.every((r, i) => s.rows()[i] === r));
+    const grown2 = s.reload(conversation(34), bound);
+    t.ok("増えたときも、取り込んだ添付を二重の行にしない（発言の行 34 だけ）", s.rows().length === 34 && !s.rows().some(r => r.dataset.key === "p:0") && before.every((r, i) => s.rows()[i] === r) && grown2.added.length === 4);
+    t.ok("その結果は全量で描いた結果と同じ", same2(s, paintedRows(conversation(34), bound)));
+
+    // 添付が発言に結ばれた（それまでは別のカード）→ 発言の行に取り込まれ、カードが消える
+    s = paintedRows(conversation(30), [attach()]);
+    t.ok("（前提）結び付いていない添付は別のカードの行", s.rows().some(r => r.dataset.key === "p:0"));
+    const early = s.rows();
+    s.reload(conversation(30), bound);
+    t.ok("添付が発言に結ばれたら、その発言から描き直し、カードの行は消える（前の行は同じ要素）",
+      !s.rows().some(r => r.dataset.key === "p:0") && s.rows()[4].outerHTML.includes("/tmp/a.png") && early.slice(0, 4).every((r, i) => s.rows()[i] === r));
+    t.ok("その結果は全量で描いた結果と同じ", same2(s, paintedRows(conversation(30), bound)));
+
+    // 逆: 結び付きが外れた
+    s = paintedRows(conversation(30), bound);
+    s.reload(conversation(30), [attach()]);
+    t.ok("結び付きが外れたら、発言の行から添付が消え、カードの行が出る", !s.rows()[4].outerHTML.includes("/tmp/a.png") && s.rows().some(r => r.dataset.key === "p:0") && same2(s, paintedRows(conversation(30), [attach()])));
+
+    // 古い発言に後から添付が結ばれた（提示が増えた）
+    s = paintedRows(conversation(30), []);
+    const old = s.rows();
+    s.reload(conversation(30), bound);
+    t.ok("残した古い発言に添付が後から結ばれたら、その発言を描き直して取り込む（カードにしない）",
+      s.rows()[4].outerHTML.includes("/tmp/a.png") && !s.rows().some(r => r.dataset.key === "p:0") && old.slice(0, 4).every((r, i) => s.rows()[i] === r) && same2(s, paintedRows(conversation(30), bound)));
+
+    // 描き直しの始まりが、取り込み済みの添付の項目に当たっても、その添付を別の行にしない
+    s = paintedRows(conversation(30), bound);
+    const items = buildItems(conversation(30), bound);
+    const at4 = items.findIndex(it => it.kind === "msg" && it.mi === 4);
+    const retained = s.context.retainThread({ keepItems: at4 + 1, items });
+    s.context.paintHistory(0, retained);
+    t.ok("描き直しが取り込み済みの添付の項目から始まっても、別の行を出さない", retained.from === at4 + 1 && !s.rows().some(r => r.dataset.key === "p:0") && same2(s, paintedRows(conversation(30), bound)));
+  }
 
   // ---------------------------------------------------------------- 読み返している位置（holdReading）
   // 行の高さと #log のスクロールだけを持つ画面（tests/unit/history-heights.mjs と同じ作り）

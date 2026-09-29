@@ -1242,6 +1242,8 @@
     "sys": {
       "agentChanged": "Changed the agent to {{agent}}. It takes over the conversation from your next message.",
       "taskResumed": "Received the Pleiad task result and resumed",
+      "taskResult": "Delegation result",
+      "taskFull": "Full text given to the agent",
       "interruptionNote": "Told the agent what the interruption stopped",
       "failed": "Failed: {{error}}",
       "unknownReason": "unknown reason",
@@ -1281,7 +1283,49 @@
       "editCancel": "Cancel",
       "sendAsBranchTitle": "Send as branch (Ctrl+Enter)",
       "sendAsBranch": "Send as branch",
+      "showMore": "Show more",
+      "showLess": "Show less",
+      "showSource": "View what was sent to the agent",
+      "hideSource": "Hide source",
       "you": "You"
+    },
+    "attachList": {
+      "count_one": "{{count}} attachment",
+      "count_other": "{{count}} attachments",
+      "open": "Open",
+      "copyPath": "Copy path",
+      "close": "Close",
+      "sent": "Sent",
+      "byPath": "Passed by path",
+      "jump": "Go to its place in the text",
+      "insert": "Insert at the cursor",
+      "section": {
+        "inline": "In the text",
+        "tail": "Added at the end"
+      },
+      "origin": {
+        "host": "Host",
+        "device": "This device"
+      }
+    },
+    "composerAtt": {
+      "retry": "Retry",
+      "cancelled": "Stopped",
+      "failed": "Couldn't send: {{error}}",
+      "entrySending_one": "{{count}} sending",
+      "entrySending_other": "{{count}} sending",
+      "entryFailed_one": "{{count}} failed",
+      "entryFailed_other": "{{count}} failed",
+      "blockSending": "Can't send while attachments are still uploading",
+      "blockFailed": "Some attachments couldn't be sent. Retry or remove them."
+    },
+    "composerFormat": {
+      "label": "Formatting",
+      "strong": "Bold",
+      "em": "Italic",
+      "code": "Code",
+      "link": "Link",
+      "url": "Link URL"
     },
     "next": {
       "title": "Applies from the next turn",
@@ -1324,6 +1368,7 @@
       "firstMessage": "Write the first message for {{name}}",
       "placeholder": "Ctrl+Enter to send",
       "placeholderTouch": "Write a message",
+      "editorLabel": "Message",
       "queued": "Will send once the conversation is ready",
       "queuedCancel": "Cancel",
       "historyLoading": "Loading history…",
@@ -1395,8 +1440,6 @@
       "sendingTitle": "Sending {{name}} ({{size}}) to the host",
       "cancelSending": "Stop sending",
       "largeImage": "Attached {{name}} ({{size}}). Agents read images from the path. Some agents can't read images over 5 MB as images; if that happens, shrink the image and attach it again.",
-      "removeNamed": "Remove {{name}}",
-      "removeNamedIn": "Remove {{name}} ({{folder}})",
       "deviceFolder": "this device",
       "already": "This file is already attached"
     },
@@ -1736,10 +1779,6 @@
       "firstLines_one": "First {{n}} line",
       "firstLines_other": "First {{n}} lines",
       "fromLine": "From line {{n}}",
-      "lines_one": "{{n}} line",
-      "lines_other": "{{n}} lines",
-      "writeContent": "Content to write",
-      "editLines": "{{from}} → {{to}} lines",
       "replaceAll": "Replace all",
       "edits_one": "{{n}} edit",
       "edits_other": "{{n}} edits",
@@ -1762,6 +1801,8 @@
       "todoDone": "{{done}}/{{total}} done",
       "todoItems": "Items ({{n}})",
       "forkHere": "Carry this conversation over up to here",
+      "moreFiles_one": "+{{n}} more file",
+      "moreFiles_other": "+{{n}} more files",
       "input": "Input"
     },
     "result": {
@@ -1777,7 +1818,43 @@
       "failed": "✕ Failed",
       "output": "Output",
       "outputPartial": "Output (partial)",
-      "generatedImage": "Generated image"
+      "generatedImage": "Generated image",
+      "failedExit": "✕ Failed · exit {{code}}",
+      "tail_one": "Output · last {{n}} line",
+      "tail_other": "Output · last {{n}} lines",
+      "showAll_one": "Show all {{n}} line",
+      "showAll_other": "Show all {{n}} lines"
+    },
+    "bundle": {
+      "count_one": "{{n}} call",
+      "count_other": "{{n}} calls",
+      "changed_one": "{{n}} file changed",
+      "changed_other": "{{n}} files changed",
+      "changedShort_one": "{{n}} changed",
+      "changedShort_other": "{{n}} changed",
+      "failed_one": "✕ {{n}}",
+      "failed_other": "✕ {{n}}",
+      "label_one": "{{n}} tool call ({{mix}})",
+      "label_other": "{{n}} tool calls ({{mix}})",
+      "labelChanged_one": ", {{n}} file changed",
+      "labelChanged_other": ", {{n}} files changed",
+      "labelFailed_one": ", {{n}} failed",
+      "labelFailed_other": ", {{n}} failed",
+      "labelOpen": ". Press to open",
+      "labelClose": ". Press to close",
+      "ghost": "Previous: {{verb}} {{target}} (press to go back)",
+      "running": "Running"
+    },
+    "delegate": {
+      "running": "Running · {{dur}}",
+      "done": "Done · {{dur}}",
+      "failed": "Failed · {{dur}}",
+      "stopped": "Stopped · {{dur}}",
+      "waiting": "Waiting for approval",
+      "secs_one": "{{n}} sec",
+      "secs_other": "{{n}} sec",
+      "mins_one": "{{n}} min",
+      "mins_other": "{{n}} min"
     },
     "branch": {
       "pick": "Choose the conversation to continue",

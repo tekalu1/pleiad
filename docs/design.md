@@ -21,7 +21,7 @@
 - 橋・MCP の言語: ply_agents は会話ごとに開く（トークンが会話に束縛される）ので、開くときに会話の言語を渡し、instructions・ツールの一覧・エラーをその言語で返す。ply_context も会話（ターン）ごとの束縛で、`resolveRuntime(policy, { locale })` が言語を runtime に持つ。agy の中継（別プロセス）には `PLY_CONTEXT_LOCALE` で渡す。Claude の host MCP はターンごとに作るので `runTurn({ locale })` の言語。プロセスに 1 つの共有の MCP で会話を持たないものは無い。
 - Visualize の案内は 1 つの文書として長く、表示の約束（参照の形式・特殊な印）を保つ必要があるので、辞書ではなく Skill の形のファイルで持つ: en は `skills/visualize/SKILL.md`、ja は `skills/visualize/SKILL.ja.md`（core/visualize.mjs の `visualizeInstructions(locale)`）。
 - 承認の拒否の理由: 画面は文ではなく印を送る（`resolvePermission { messageKey: 'userDenied' }`）。サーバーの中断・猶予切れ・ターンの終わりの理由も `messageKey` で settle し、`askPermission` が承認を求めた会話の言語で訳す。文（`message`）で来たものはそのまま渡す（古い画面との互換）。
-- 添付の印: 画面が送信の本文に `[添付] <パス>`（ja）/ `[Attachment] <パス>`（en）を付ける（会話の言語。まだ決まっていない会話は画面の言語）。読み戻し（送信済みの発言と添付の突き合わせ・再送の下書き）はどちらの印も受ける（web/timeline.mjs の `ATTACHMENT_LINE`）。機械が読み戻す印なので辞書ではなくそこで固定する。
+- 添付の印: 画面が送信の本文に `[添付] <パス>`（ja）/ `[Attachment] <パス>`（en）の行を置く（会話の言語。まだ決まっていない会話は画面の言語）。入力欄で文中に置いた添付はその位置の行、文中に置いていない添付（文末に付く）は末尾に足す（[ADR 0060](adr/0060-markdown-composer-inline-attachments.md)）。読み戻し（送信済みの発言と添付の突き合わせ・再送の下書き）はどちらの印も受ける（web/timeline.mjs の `ATTACHMENT_LINE`）。機械が読み戻す印なので辞書ではなくそこで固定する。
 - **内部の目印は言語に依存させない。** 委譲完了通知を人間の発言と見分けるのは文言ではなく、送った本文のハッシュ（セッションの記録の `taskNotices`。core/history.mjs が `internalTaskNotice` を付ける）。テストも文言ではなく taskId で見分ける。承認の理由は `messageKey`、添付の印は両方の言語を受ける正規表現。
 
 **言語の解決。** `prefs.json` の `locale`（`"auto" | "ja" | "en"`、既定 auto = OS に合わせる）。`setPref { key: "locale" }` で変える。実際に使う言語は、`AGENT_HOST_LOCALE`（テスト・手動での強制。設定より優先）→ `locale`（auto 以外）→ `AGENT_HOST_SYSTEM_LOCALE`（デスクトップ版の main が `app.getPreferredSystemLanguages()[0]`、無ければ `app.getLocale()` を utilityProcess に渡す）→ Node の `Intl.DateTimeFormat().resolvedOptions().locale` → en、の最初に決まったもの。先頭の言語サブタグで ja / en に丸め、ja 以外は英語。設定値と解決後は `ready` と `prefs` イベントに `locale: { setting, lang }` で載る。画面はサーバーの解決を正本にし、最初の描画のために `localStorage['agent-host-lang']` へ写す（`web/index.html` のインライン script が `<html lang>` を先に決める。写しが無ければ日本語）。届いた言語が今の画面と違えば写しを直して読み直す（途中で文言を差し替える経路は持たない）。テストは `AGENT_HOST_LOCALE=ja` で日本語に固定する（tests/run.mjs・tests/e2e.mjs・tests/lib/server.mjs）。
@@ -131,10 +131,10 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 
 ## 会話の読み直し（2026-09-29）
 
-ターンが終わったとき（`syncHistory`）と、つなぎ直したときの静かな読み直し（`select(..., { reload: true })`）は、持っている履歴の続きだけを読み、変わった所から後ろだけ描く（[ADR 0059](adr/0059-incremental-session-load.md)。issue #37）。
+ターンが終わったとき（`syncHistory`）と、つなぎ直したときの静かな読み直し（`select(..., { reload: true })`）は、持っている履歴の続きだけを読み、変わった所から後ろだけ描く（[ADR 0062](adr/0062-incremental-session-load.md)。issue #37）。
 
 - **通信**: `loadSession` に `from`（持っている発言の数から末尾の 2 件を引いた位置）・`check`（その先頭の署名の並びの値）・`presentFrom`（持っている提示の数）・`presentCheck` を付けると、サーバーは先頭が合うときだけ `messages` を `from` 以降・`presents` を `presentFrom` 以降に切り、`from`・`total`・`presentFrom`・`presentTotal` を足して返す。合わなければ（途中の発言や提示が書き換わった・履歴が短くなった・頼みが壊れている）全量で、`from` の印は無い。画面は印と件数が合うときだけ先頭につなぎ、合わなければ全量を取り直す。会話を開くとき・枝の切り替え・`outline` は全量。署名と切り出しとつなぎは `web/history-sync.mjs`（`messageSig`・`presentSig`・`syncRequest`・`serveFrom`・`joinReply`）。
-- **描画**: 静かな読み直しは `clearThread` せず、今の画面と読み直した履歴を、描く行の並び（`buildItems`）で先頭から比べる（`retainPlan`）。ツールの結果・本文・uuid・圧縮の区切り・提示（`visualize` の印と添付の結び付き）のどれが変わっても「違う」になり、最初に違う項目から後ろだけ描き直す。残すのは履歴から描いた行（`data-h`）で、ライブで描いた行・稼働表示・圧縮の区切り・分岐点の行は外して描き直す（`retainThread`）。先頭が違えば今までどおり全部描き直す。
+- **描画**: 静かな読み直しは `clearThread` せず、今の画面と読み直した履歴を、描く行の並び（`buildItems`）で先頭から比べる（`retainPlan`）。ツールの結果・本文・uuid・圧縮の区切り・提示（`visualize` の印と添付の結び付き）のどれが変わっても「違う」になり、最初に違う項目から後ろだけ描き直す。発言に取り込んで描く人の添付（`inlineAttachments`）が変わった（結び付いた・外れた）発言も「違う」とし、残した行の分の取り込み済みも数え直す。ツールのまとまり（`Bundle`）は発言の行の中にあるので、行ごと残る。残すのは履歴から描いた行（`data-h`）で、ライブで描いた行・稼働表示・圧縮の区切り・分岐点の行は外して描き直す（`retainThread`）。先頭が違えば今までどおり全部描き直す。
 - **位置**: 末尾を見ていたなら末尾へ。読み返していたなら、基準の行（`historyAnchor`）が同じ高さに来るよう戻す（`holdReading`）。
 
 ## デスクトップの更新（2026-09-12）

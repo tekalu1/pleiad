@@ -1,4 +1,4 @@
-// loadSession の差分（web/history-sync.mjs・ADR 0059）: 画面が頼み、サーバーが切り、画面がつなぐ。
+// loadSession の差分（web/history-sync.mjs・ADR 0062）: 画面が頼み、サーバーが切り、画面がつなぐ。
 //   - 差分でつないだ結果は、全量と同じ。合わない・古い相手・壊れた頼みは全量に戻る
 //   - 画面の syncHistory（ターンの終わり）と静かな読み直しが、持っている履歴の続きだけを頼む
 // サーバーを起動して量を測る確認は tests/unit/server-history-diff.mjs
