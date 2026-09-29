@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // 公開先の URL（canonical・hreflang・og:url・og:image の元）。末尾は /
-export const SITE_URL = "https://tekalu1.github.io/pleiad/";
+export const SITE_URL = "https://pleiad.dev/";
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LANGS = {
