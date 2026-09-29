@@ -232,7 +232,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, addedInstructions, hooksRuntime = null }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, addedInstructions, hooksRuntime = null, notes = [] }) {
     const m = MODES[modeFor(mode)];
 
     // **控えはターンの終わりに書くが、送信の時刻はここで取る。**
@@ -241,6 +241,8 @@ export const backend = {
     // その並びは分岐の切り口にそのまま効く（core/conversations.mjs の buildItems）ので、
     // ユーザー発言で切った枝に、まだ走っていないはずの成果物が入り込む。
     const sentAt = Date.now();
+    // 中断の後に Pleiad が添える文（core/interrupt-stops.mjs）。agy は 1 行 1 ターンで入力を分けられないので、本文の前に置く
+    const sent = [...notes, String(prompt ?? "")].join("");
 
     let conversationId = sessionId ?? null;
     let sawText = false;
@@ -449,7 +451,7 @@ export const backend = {
       if (control) control.handle = { get conversationId() { return conversationId; } };
       control?.onReady?.();
       emit({ type: "activity", state: "thinking" });
-      session.prompt(prompt);
+      session.prompt(sent);
       await finished;
       await reportHookRuns(session, hooksRuntime, emit);
 
@@ -465,7 +467,7 @@ export const backend = {
       await transcript.appendMessages(conversationId, {
         cwd,
         messages: [
-          { role: "user", text: String(prompt ?? ""), uuid: `${conversationId}:u${sentAt}`, at: new Date(sentAt).toISOString() },
+          { role: "user", text: sent, uuid: `${conversationId}:u${sentAt}`, at: new Date(sentAt).toISOString() },
           ...(text || toolCalls.length ? [{
             role: "assistant", text, uuid: `${conversationId}:a${doneAt}`, at: new Date(doneAt).toISOString(),
             ...(toolCalls.length ? { tools: toolCalls.map((c) => c.name), toolCalls } : {}),

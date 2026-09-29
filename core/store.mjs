@@ -18,6 +18,10 @@
 //   routing         … 委譲の子の会話が、どう選ばれたか（ply_delegate の返り値の routing と同じ形。core/delegation-routing.mjs）
 //   interrupted     … 中断したまま次のターンが始まっていない印 { at, reason }（reason: user|update|quit|hostAway|restart）。
 //                     ターンが中断で終わったら書き、次のターンの開始で null にする（core/server.mjs。docs/design.md「中断と再開」）
+//   stops           … 中断（と再起動）で Pleiad が止めたもののうち、まだエージェントに伝えていないもの
+//                     { tasks: [{ key, taskId, title, status, unread, restart? }], background: [{ key, id, kind, label }],
+//                       approvals: [{ key, tool, target }], dropped, reason }。次のターンで 1 回だけ伝え、渡った分を消す（addStops / takeStops。
+//                     docs/design.md「中断と再開」）
 //   turnStartedAt   … 走っているターンの開始時刻。終わりで片付ける。起動時に残っていれば、落ちて終わりが記録されなかったターン（restart）
 //   agentLocale     … 会話の言語（ja|en）。エージェントに渡す文（指示・ツールの説明・通知）の言語。会話を始めたときに
 //                     画面の言語で決め、以後は変えない（core/server.mjs。docs/design.md「多言語対応」）
@@ -422,6 +426,64 @@ export async function recoverInterruptedTurns(at = Date.now()) {
     }
     if (touched) await flush();
     return changed;
+  });
+}
+
+// 「止めたもの」の種類ごとの上限。超えた分は数だけ残す（dropped）
+const STOPS_MAX = 30;
+const STOP_LISTS = ["tasks", "background", "approvals"];
+
+/**
+ * 中断で止めたもの（stops）を会話に足す。同じ key のものは新しい方で置き換える（同じタスクを 2 度止めても 1 件）。
+ * patch: { tasks?, background?, approvals? }（それぞれ key を持つ項目の配列）。会話の行が無ければ書かない
+ */
+export async function addStops(sessionId, patch) {
+  if (!sessionId || !patch) return null;
+  return exclusive(async () => {
+    const all = await load();
+    const entry = all[sessionId];
+    if (!entry) return null;
+    const next = structuredClone(entry.stops ?? {});
+    let touched = false;
+    for (const name of STOP_LISTS) {
+      const items = Array.isArray(patch[name]) ? patch[name].filter(x => x?.key) : [];
+      if (!items.length) continue;
+      const list = (next[name] ?? []).filter(x => !items.some(y => y.key === x.key));
+      list.push(...structuredClone(items));
+      if (list.length > STOPS_MAX) next.dropped = (next.dropped ?? 0) + list.length - STOPS_MAX;
+      next[name] = list.slice(-STOPS_MAX);
+      touched = true;
+    }
+    if (!touched) return entry.stops ?? null;
+    // 理由は最後に止めたときのもの（伝える文の見出しに使う）
+    if (patch.reason) next.reason = patch.reason;
+    entry.stops = next;
+    await flush();
+    return structuredClone(next);
+  });
+}
+
+/**
+ * エージェントに伝えた分（keys）を stops から消す。伝えている間に足された分は残る。空になれば null。
+ * dropped（上限で落とした数）も伝えた（dropped: true）なら消す
+ */
+export async function takeStops(sessionId, keys, { dropped = false } = {}) {
+  if (!sessionId) return null;
+  const done = new Set(keys ?? []);
+  return exclusive(async () => {
+    const all = await load();
+    const entry = all[sessionId];
+    if (!entry?.stops) return null;
+    const next = {};
+    for (const name of STOP_LISTS) {
+      const list = (entry.stops[name] ?? []).filter(x => !done.has(x.key));
+      if (list.length) next[name] = list;
+    }
+    if (!dropped && entry.stops.dropped) next.dropped = entry.stops.dropped;
+    if (Object.keys(next).length && entry.stops.reason) next.reason = entry.stops.reason;
+    entry.stops = Object.keys(next).length ? next : null;
+    await flush();
+    return entry.stops;
   });
 }
 
