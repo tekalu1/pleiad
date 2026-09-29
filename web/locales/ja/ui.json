@@ -227,16 +227,6 @@
     "stopping": "中断している",
     "continuing": "続きを待っている",
     "runningTool": "{{tool}} を実行中",
-    "doing": {
-      "run": "実行中",
-      "read": "読んでいる",
-      "write": "書いている",
-      "edit": "編集している",
-      "find": "探している",
-      "grep": "検索している",
-      "fetch": "取得している",
-      "webSearch": "web を検索している"
-    },
     "waitingAnswer": "あなたの回答を待っている",
     "waitingApproval": "承認を待っている",
     "behindCount_other": "裏で {{count}} 本が動いている",

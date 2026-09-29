@@ -25,7 +25,7 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
-import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, plainTextHtml, toolDoing } from "./render.mjs";
+import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, plainTextHtml } from "./render.mjs";
 import { Bundle, bundleOf, fadeIn, markRunning, markWaiting, splitToolCalls, swapHeight } from "./tool-bundle.mjs";
 import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
@@ -970,13 +970,6 @@ function liveBundle() {
 /** まとまりの外に置くツール（委譲・サブエージェント）。子は親のターンの後も動くので、閉じても見える */
 const isBoundaryTool = (name) => isDelegateTool(name) || SUBAGENT_TOOLS.has(name);
 
-/** 稼働表示の文: 「実行中 · npm test」（動詞と対象）。動詞を知らないツールは名前のまま */
-function toolActivity(card, name) {
-  const doing = toolDoing(name);
-  const target = card?.querySelector?.(".tc-main")?.textContent ?? "";
-  return doing ? (target ? `${doing} · ${target.slice(0, 80)}` : doing) : t("activity.runningTool", { tool: name });
-}
-
 function closeTurnEl() {
   closeThink();
   closeBundle();
@@ -1240,7 +1233,7 @@ function rowApprovalCard(ev, row) {
     });
     bundleOf(row)?.paint();
     state.pendingPerms.delete(ev.id);
-    if (isRunningHere()) activity.show(ok ? toolActivity(row, ev.toolName) : t("activity.continuing"));
+    if (isRunningHere()) { if (ok) activity.suspend(); else activity.show(t("activity.continuing")); }
   };
   allow.onclick = () => settle(true);
   deny.onclick = () => settle(false);
@@ -1341,7 +1334,7 @@ function renderPermission(ev) {
   // ツールの承認で、そのツールの行が走っているまとまりの中にあるなら、まとまりを閉じずにその行の中に出す
   const row = ev.kind !== "question" && !ev.browserSite && ev.toolUseID ? state.toolCards.get(ev.toolUseID) : null;
   if (row?.isConnected && bundleOf(row)?.live) {
-    activity.show(t("activity.waitingApproval"));
+    activity.suspend();   // 承認カードが「承認を待っている」を語る
     return permissionCard(ev, row);
   }
   closeTurnEl();
@@ -1392,6 +1385,7 @@ const activity = {
   el: null,          // .m.activity
   text: "",
   behind: null,      // behindOf() の結果。裏を待っている間だけ
+  idleTimer: null,   // ツールが終わってから稼働表示を戻すまでの短い待ち（afterTool）
   shape: "",         // 今の印（run / sat:N / none）。変わったときだけ差し替える
   /** ターンは終わり、待てない裏の作業（端末・裏のコマンド）だけが残っている。印も経過時間も出さない（§6.1） */
   idleOnly() {
@@ -1413,7 +1407,35 @@ const activity = {
   remark() {
     this.el?.closest(".mw")?.querySelector(".activity-tip")?.replaceChildren(this.mark());
   },
+  /**
+   * ツールの行（走っている最新の行・承認カード）が今の状態を語っているときは、末尾の稼働表示を出さない（同じ内容を 2 か所に書かない）。
+   * 経過は覚えておく（次に出すときも続きから数える）。裏の衛星だけは残す: 衛星の置き場はここしか無いので、
+   * ツールの文言は重ねずに衛星の行にする
+   */
+  suspend() {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+    if (!this.t0) this.t0 = Date.now();
+    if (behindHere()) return this.show(this.text || ACTIVITY_LABEL.running);
+    clearTimeout(this.markTimer);
+    this.markTimer = null;
+    this.behind = null;
+    this.shape = "";
+    this.el?.closest(".mw")?.remove();
+    this.el = null;
+    relayoutBranches();
+  },
+  /** ツールの結果が届いた。すぐ次のツールが始まらず、走っている行も無いなら、行に出ていない待ちとして稼働表示を戻す */
+  afterTool() {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      if (isRunningHere() && !document.querySelector(".tc-running, .tc-waiting")) this.show(ACTIVITY_LABEL.running);
+    }, 600);
+  },
   show(text, { delayMark = false } = {}) {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = null;
     // 中断を頼んだ後は、止まり終えるまで何が流れてきても「中断している」のまま出す
     if (stoppingHere()) text = ACTIVITY_LABEL.stopping;
     this.text = text;
@@ -1463,6 +1485,8 @@ const activity = {
   },
   hide() {
     clearInterval(this.timer);
+    clearTimeout(this.idleTimer);
+    this.idleTimer = null;
     clearTimeout(this.markTimer);
     this.timer = null;
     this.markTimer = null;
@@ -1851,7 +1875,7 @@ function onEvent(ev, replay = false) {
       else { markRunning(card); liveBundle().add(card); }
       if (stick) log.scrollTop = log.scrollHeight;
       if (ev.id) state.toolCards.set(ev.id, card);
-      activity.show(toolActivity(card, ev.name));
+      activity.suspend();   // 走っているツールは最新の行（弧と経過）が語る。末尾の稼働表示は重ねない
       return card;
     }
 
@@ -1859,6 +1883,7 @@ function onEvent(ev, replay = false) {
     case "tool.result": {
       const card = state.toolCards.get(ev.id);
       if (card) { applyToolResult(card, ev); noteEndpointFailure(card, ev); linkDelegateCard(card, null, ev); bundleOf(card)?.paint(); }
+      activity.afterTool();
       return;
     }
 

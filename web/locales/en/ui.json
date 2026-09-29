@@ -233,16 +233,6 @@
     "stopping": "Stopping",
     "continuing": "Waiting to continue",
     "runningTool": "Running {{tool}}",
-    "doing": {
-      "run": "Running",
-      "read": "Reading",
-      "write": "Writing",
-      "edit": "Editing",
-      "find": "Searching files",
-      "grep": "Searching",
-      "fetch": "Fetching",
-      "webSearch": "Searching the web"
-    },
     "waitingAnswer": "Waiting for your answer",
     "waitingApproval": "Waiting for approval",
     "behindCount_one": "{{count}} task running in the background",

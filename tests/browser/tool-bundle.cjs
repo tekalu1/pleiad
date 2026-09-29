@@ -27,12 +27,15 @@ async page => {
       inertHidden: [...b.querySelectorAll('.hi.hid')].every(h => h.hasAttribute('inert')), head: b.querySelector('.rhead').textContent };
   });
   if (live.ghost !== 1 || live.latest !== 1 || !live.inertHidden || !live.head.includes('3')) throw Error('live shape: ' + JSON.stringify(live));
+  // 走っているツールは最新の行が語る。末尾の稼働表示は重ねない
+  if (await page.locator('.m.activity').count()) throw Error('activity line shown while a tool row is running');
 
   // 承認待ち: まとまりの最新の行の場所に承認カード（まとまりは閉じない）
   await page.locator('.bundle .latest .tc-appr').waitFor();
   const waiting = await page.evaluate(() => ({ closed: !document.querySelector('.bundle .latest'), outside: !!document.querySelector('.mw.card'),
     row: document.querySelector('.bundle .latest .tc')?.classList.contains('tc-waiting') }));
   if (waiting.closed || waiting.outside || !waiting.row) throw Error('approval placement: ' + JSON.stringify(waiting));
+  if (await page.locator('.m.activity').count()) throw Error('activity line shown while waiting for approval');
   await page.locator('.tc-appr .btn-primary').click();
   await page.locator('.tc-appr').waitFor({ state: 'detached' });
   const note = await page.locator('.bundle .latest .tc-note, .bundle .hi .tc-note').filter({ hasText: '許可した' }).count();

@@ -986,15 +986,6 @@ const TOOL_LABEL = {
   mcp__host__set_title: t("timeline.tool.label.title"), mcp__host__fork: t("timeline.tool.label.fork"),
 };
 
-// 稼働表示の「実行中 · npm test」の動詞（活動の字。一覧の動詞 TOOL_LABEL とは別に「〜している」の形を持つ）
-// i18n-dynamic: activity.doing.
-const TOOL_DOING = {
-  Bash: "run", PowerShell: "run", Read: "read", Write: "write", Edit: "edit", MultiEdit: "edit", NotebookEdit: "edit",
-  Glob: "find", Grep: "grep", WebFetch: "fetch", WebSearch: "webSearch",
-};
-/** ツール名 -> 「実行中」「読んでいる」など。知らないツールは null */
-export const toolDoing = (name) => (TOOL_DOING[name] ? t(`activity.doing.${TOOL_DOING[name]}`) : null);
-
 const TOOL_DRAW = {
   Bash: drawShell, PowerShell: drawShell,
   Read: drawRead, Write: drawWrite, Edit: drawEdit,
