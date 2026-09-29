@@ -84,6 +84,15 @@ export default async function (t) {
       first.events.some((e) => e.type === "text.end" && typeof e.uuid === "string" && e.uuid),
       "走っている最中の発言から分岐する起点");
 
+    // ---- 最初の発言が Markdown（見出し・強調・添付の印）でも、題は記号・印・改行の無い一行になる
+    const titledId = (await c.cmd("newSession", { backend: "fake", cwd: ROOT })).sessionId;
+    await c.runTurn(
+      { prompt: "# 検索結果の余白\n**この画面**の行を直す\n[添付] C:\\up\\shot.png", sessionId: titledId, cwd: ROOT, mode: "default" },
+      { ms: 20_000 },
+    );
+    const titledRow = (await c.cmd("listSessions")).find((s) => s.id === titledId);
+    t.ok("一覧の題は最初の発言から作る（# ・** ・添付の印・改行を含めない）", titledRow?.title === "検索結果の余白 この画面の行を直す", JSON.stringify(titledRow?.title));
+
     // ---- 一覧と履歴
     const list = await c.cmd("listSessions");
     const row = list.find((s) => s.id === sid);
@@ -122,9 +131,55 @@ export default async function (t) {
       && String(pres?.dataUri ?? "").startsWith("data:image/png;base64,"), JSON.stringify(pres && { kind: pres.kind, by: pres.by }));
     t.ok("present は履歴に残る",
       (await c.cmd("loadSession", { sessionId: sid })).presents.some((p) => p.path === up.path));
+    t.ok("端末から送った添付の present は出どころ device と大きさを持つ", pres?.origin === "device" && pres?.size === 8, JSON.stringify({ origin: pres?.origin, size: pres?.size }));
+    // ホストのファイルをパスのまま渡した添付（ADR 0060）: 読み取りの検査は /local-file と同じ。中身は載せず、パス・出どころ・大きさだけ
+    const hostFile = path.join(ROOT, "package.json");
     const m1 = c.mark();
-    await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: "C:/Windows/win.ini", name: "win.ini", mime: "text/plain" }] }, { ms: 20_000 });
-    t.ok("置き場の外のパスは載せない", !c.since(m1).some((e) => e.type === "present"));
+    const hosted = await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: hostFile, name: "package.json", mime: "" }] }, { ms: 20_000 });
+    const hp = hosted.events.find((e) => e.type === "present");
+    t.ok("ホストのファイルは中身を載せず、パス・出どころ host・大きさだけの present になる",
+      hp?.by === "human" && hp?.kind === "file" && hp?.path === hostFile && hp?.origin === "host" && hp?.size > 0 && hp?.truncated === true
+        && hp?.content === undefined && hp?.dataUri === undefined, JSON.stringify(hp));
+    t.ok("ホストのファイルの present は履歴に出どころと大きさを残す",
+      (await c.cmd("loadSession", { sessionId: sid })).presents.some((p) => p.path === hostFile && p.origin === "host" && p.size > 0));
+    const m2 = c.mark();
+    await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: path.join(ROOT, "no-such-file.zzz"), name: "x", mime: "" }, { path: "\\\\server\\share\\x.txt", name: "x", mime: "" }] }, { ms: 20_000 });
+    t.ok("無いファイル・UNC パスは載せない", !c.since(m2).some((e) => e.type === "present") && !c.since(m1).some((e) => e.type === "present" && e.path !== hostFile));
+
+    // present の path は、渡された文字列のまま（.. を含んでいても解決しない。本文の印と突き合わせるため）。検査だけが解決した後のパスで行う
+    const dotted = ROOT + path.sep + "core" + path.sep + ".." + path.sep + "package.json";
+    const m6 = c.mark();
+    const viaDots = await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: dotted, name: "package.json", mime: "" }] }, { ms: 20_000 });
+    t.ok("ホストのファイルの present の path は渡された文字列のまま（.. を解決しない）", viaDots.events.find((e) => e.type === "present")?.path === dotted, JSON.stringify(viaDots.events.find((e) => e.type === "present")?.path));
+    if (process.platform === "win32") {
+      const lowered = up.path[0].toLowerCase() + up.path.slice(1), uppered = up.path[0].toUpperCase() + up.path.slice(1);
+      const cased = lowered === up.path ? uppered : lowered;
+      const viaCase = await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: cased, name: "shot.png", mime: "image/png" }] }, { ms: 20_000 });
+      const pc = viaCase.events.find((e) => e.type === "present");
+      t.ok("Windows はドライブの大小が違っても置き場の中（端末から送ったもの）として扱う", pc?.origin === "device" && String(pc?.dataUri ?? "").startsWith("data:image/png"), JSON.stringify({ origin: pc?.origin, path: pc?.path }));
+    } else t.ok("置き場のパスの大小を区別しない判定は Windows だけ（skip）", true);
+    // データ置き場の中（uploads の外。sessions.json など）と、置き場へのジャンクション・シンボリックリンクは、載せない（ADR 0050。/local-file と同じ検査）
+    const dataDir = path.join(scratch, "data");
+    const dataFile = path.join(dataDir, "sessions.json");
+    const m3 = c.mark();
+    await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: dataFile, name: "sessions.json", mime: "" }] }, { ms: 20_000 });
+    t.ok("データ置き場の中（uploads の外）のファイルは載せない", !c.since(m3).some((e) => e.type === "present"));
+    const linkDir = path.join(scratch, "link-to-data");
+    const linked = await fs.symlink(dataDir, linkDir, "junction").then(() => true, (e) => e.message);
+    if (linked !== true) t.ok("置き場へのジャンクションを作れない環境では確かめられない（skip）: " + linked, true);
+    else {
+      const m4 = c.mark();
+      await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: path.join(linkDir, "sessions.json"), name: "sessions.json", mime: "" }] }, { ms: 20_000 });
+      t.ok("データ置き場へのジャンクション・リンク越しのパスも載せない", !c.since(m4).some((e) => e.type === "present"));
+    }
+    const fileLink = path.join(scratch, "link-to-sessions.json");
+    const fileLinked = await fs.symlink(dataFile, fileLink, "file").then(() => true, (e) => e.code ?? e.message);
+    if (fileLinked !== true) t.ok("ファイルのシンボリックリンクを作れない環境では確かめられない（skip）: " + fileLinked, true);
+    else {
+      const m5 = c.mark();
+      await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: fileLink, name: "sessions.json", mime: "" }] }, { ms: 20_000 });
+      t.ok("データ置き場のファイルへのシンボリックリンクも載せない", !c.since(m5).some((e) => e.type === "present"));
+    }
 
     // ---- 承認（保留せず往復する）
     const from = asked.length;

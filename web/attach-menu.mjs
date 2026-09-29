@@ -210,7 +210,7 @@ export function setupAttachMenu({ button, sources, upload = null, pickFiles, rec
     go.dataset.key = 'hostAttach';
     go.disabled = !count;
     go.onclick = () => {
-      const files = [...host.selected.values()].map((f) => ({ path: f.path, name: f.name }));
+      const files = [...host.selected.values()].map((f) => ({ path: f.path, name: f.name, size: f.size }));
       if (!files.length) return;
       host.selected.clear();
       self.hide(false);
@@ -244,7 +244,7 @@ export function setupAttachMenu({ button, sources, upload = null, pickFiles, rec
       ck.setAttribute('aria-hidden', 'true');
       b.append(ck, el('span', 'hf-name', f.name), el('span', 'hf-meta', `${formatBytes(f.size)} · ${relTime(f.mtime)}`));
       b.onclick = () => {
-        if (host.selected.has(full)) host.selected.delete(full); else host.selected.set(full, { path: full, name: f.name });
+        if (host.selected.has(full)) host.selected.delete(full); else host.selected.set(full, { path: full, name: f.name, size: f.size });
         const now = host.selected.has(full);
         b.classList.toggle('sel', now);
         b.setAttribute('aria-selected', String(now));

@@ -19,6 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { t } from "../i18n.mjs";
+import { promptTitle } from "../prompt-title.mjs";
 
 /** 控えの置き場。**agy がらみの控えはすべてここに揃える**（pid の控えも: antigravity-pids.mjs）。 */
 export function dir() {
@@ -169,7 +170,7 @@ export function toRow(record) {
   return {
     sessionId: record.conversationId,
     // agy にタイトルの口は無い。最初の発言を見出しに使う（sidecar が正本）
-    title: firstUserText(record.messages).slice(0, 80) || null,
+    title: promptTitle(firstUserText(record.messages)) || null,
     cwd: record.cwd ?? null,
     createdAt: record.createdAt ?? null,
     lastModified: toMs(record.lastModified ?? record.createdAt),

@@ -108,6 +108,9 @@ export async function recordPresent(sessionId, payload) {
     ...(payload.kind === 'visualization' ? { id: crypto.randomUUID(), mode: payload.mode, error: payload.error, reference: payload.reference } : {}),
     // 誰が置いたか。人間の添付と AI の提示は同じ流れに並ぶので、履歴でも区別できるようにする
     by: payload.by === "human" ? "human" : "ai",
+    // 人間の添付の出どころ（host: ホストのファイルをパスで渡した / device: この端末から送った）と大きさ。一覧の面が出す（web/attachment-list.mjs）
+    ...(payload.origin === "host" || payload.origin === "device" ? { origin: payload.origin } : {}),
+    ...(Number.isFinite(payload.size) && payload.size >= 0 ? { size: payload.size } : {}),
     ...(payload.turnKey ? { turnKey: payload.turnKey } : {}),
   };
 

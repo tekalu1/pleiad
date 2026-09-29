@@ -112,6 +112,7 @@ import { createClaudeLogin } from './claude-login.mjs';
 import { createShellRuns, shellMode } from './shell-runs.mjs';
 import { taskStop, backgroundStop, approvalStop, interruptionNote } from './interrupt-stops.mjs';
 import { splitInterruptionNotes } from './system-messages.mjs';
+import { textForTitleModel } from './prompt-title.mjs';
 
 const PORT = Number(process.env.AGENT_HOST_PORT ?? 7420);
 const HOST = process.env.AGENT_HOST_BIND ?? "127.0.0.1";
@@ -1412,15 +1413,32 @@ function makeEmit(turn) {
 }
 
 /**
- * 送信と一緒に渡された添付（attachFile が置いたもの）を会話に載せる。
+ * 送信と一緒に渡された添付を会話に載せる。
  * 人間の添付も AI の提示と同じ present で並ぶ（設計メモ §7）。記録は emit（makeEmit）が present を見て行う。
- * 置き場（uploads/）の外のパスは載せない。クライアントの言うことを鵜呑みにしてファイルを読まないため
+ * - 置き場（uploads/）のファイル（attachFile が置いた、この端末から送ったもの）: 中身も載せる。origin は device
+ * - それ以外（ホストのファイルをパスのまま渡したもの。origin は host）: 読み取りの検査は /local-file と同じ（ADR 0050。UNC・データ置き場は
+ *   拒否）。クライアントの言うことを鵜呑みにしてファイルを読まないため、中身は載せず、パス・出どころ・大きさだけを載せる。
+ *   送信後の発言が、本文の印（[添付] パス）の位置にそのパスを札として出せる。エージェントは自分の道具でパスから読む
  */
 async function presentAttachments(sessionId, attachments, emit) {
   for (const a of attachments) {
-    const file = path.resolve(String(a?.path ?? ""));
-    if (!file.startsWith(UPLOAD_DIR + path.sep)) continue;
+    const given = String(a?.path ?? "");
+    const file = path.resolve(given);
     const mime = String(a.mime ?? "");
+    // Windows はドライブ・フォルダーの大小を区別しない（区別すると、置き場の中のファイルがホストのファイルの枝に入る）
+    const inUploads = process.platform === "win32" ? file.toLowerCase().startsWith((UPLOAD_DIR + path.sep).toLowerCase()) : file.startsWith(UPLOAD_DIR + path.sep);
+    if (!inUploads) {
+      let stat;
+      try { ({ stat } = await inspectFile(file, fileAccess)); } catch { continue; }
+      if (!stat.isFile()) continue;
+      const name = path.basename(file);
+      const isImage = IMAGE_MIME.test(mime) || /\.(?:png|jpe?g|gif|webp|avif)$/i.test(name);
+      // path は本文の印と突き合わせる（web/timeline.mjs）ので、クライアントが渡した文字列のまま（絶対パスに直さない・実パスに直さない）。
+      // 読めるかの検査（inspectFile）だけが、解決した後のパスで行う
+      emit({ type: "present", sessionId, kind: isImage ? "image" : "file", caption: t('ui:saved.caption.attachment', { name, lng: 'ja' }), captionKey: 'attachment',
+        captionParams: { name }, path: given, by: "human", origin: "host", size: stat.size, truncated: true });
+      continue;
+    }
     const isImage = IMAGE_MIME.test(mime);
     // 丸ごと読むのは会話に画像として載せる大きさまで。文字のファイルは先頭だけ読む（添付は 1 件 100MB まである）
     let size, buf;
@@ -1438,6 +1456,8 @@ async function presentAttachments(sessionId, attachments, emit) {
       captionParams: { name },
       path: file,
       by: "human",
+      origin: "device",
+      size,
       ...(isImage ? (buf ? { dataUri: `data:${mime};base64,${buf.toString("base64")}` } : { truncated: true })
         : { content: buf.toString("utf8").slice(0, PRESENT_TEXT_CHARS) }),
     });
@@ -3207,14 +3227,17 @@ wss.on("connection", (ws, req) => {
         }
 
         case "saveDraft": {
-          const { sessionId, text = "", attached = [] } = msg.args ?? {};
+          const { sessionId, text = "", attached = [], version } = msg.args ?? {};
           if (!sessionId || !(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
           if (typeof text !== "string" || text.length > 2_000_000 || !Array.isArray(attached)) throw new Error(t('session.draftTooLarge'));
           // 件数の上限は無い（添付の上限は 1 件 100MB だけ。docs/design-system.md「入力欄」）。from は札の出どころの印（ホスト / この端末）
           const files = attached.map(a => ({ name: String(a.name ?? ""), path: String(a.path ?? ""), kind: String(a.kind ?? "file"), mime: String(a.mime ?? ""),
-            ...(a?.from === "host" || a?.from === "device" ? { from: a.from } : {}) }));
+            ...(a?.from === "host" || a?.from === "device" ? { from: a.from } : {}),
+            // size: 一覧の面に出す大きさ（分かるときだけ）
+            ...(Number.isFinite(a?.size) && a.size >= 0 ? { size: a.size } : {}) }));
           if (files.some(a => a.path.length > 8192 || a.name.length > 4096)) throw new Error(t('session.attachmentInfoTooLarge'));
-          await store.setSessionData(sessionId, "draft", { text, attached: files });
+          // version: 2 = text が文中の添付の印（[添付] パス）を含む Markdown（位置が残る。ADR 0060）。無い下書きは印が無く、添付は文末に付く
+          await store.setSessionData(sessionId, "draft", { text, attached: files, ...(Number.isInteger(version) ? { version } : {}) });
           if ((await store.get(sessionId)).unsent && typeof msg.args?.cwd === "string") {
             await store.setMeta(sessionId, { cwd: msg.args.cwd });
           }
@@ -3758,7 +3781,7 @@ wss.on("connection", (ws, req) => {
           const gist = messages
             .filter((m) => m.text)
             .slice(0, 6)
-            .map((m) => m.role === "user" ? agentT(lng, 'title.request', { text: m.text.slice(0, 600) }) : agentT(lng, 'title.response', { text: m.text.slice(0, 600) }))
+            .map((m) => m.role === "user" ? agentT(lng, 'title.request', { text: textForTitleModel(m.text).slice(0, 600) }) : agentT(lng, 'title.response', { text: m.text.slice(0, 600) }))
             .join(NL + NL);
           if (!gist) return reply(false, t('title.noContent'));
 

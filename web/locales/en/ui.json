@@ -1283,7 +1283,49 @@
       "editCancel": "Cancel",
       "sendAsBranchTitle": "Send as branch (Ctrl+Enter)",
       "sendAsBranch": "Send as branch",
+      "showMore": "Show more",
+      "showLess": "Show less",
+      "showSource": "View what was sent to the agent",
+      "hideSource": "Hide source",
       "you": "You"
+    },
+    "attachList": {
+      "count_one": "{{count}} attachment",
+      "count_other": "{{count}} attachments",
+      "open": "Open",
+      "copyPath": "Copy path",
+      "close": "Close",
+      "sent": "Sent",
+      "byPath": "Passed by path",
+      "jump": "Go to its place in the text",
+      "insert": "Insert at the cursor",
+      "section": {
+        "inline": "In the text",
+        "tail": "Added at the end"
+      },
+      "origin": {
+        "host": "Host",
+        "device": "This device"
+      }
+    },
+    "composerAtt": {
+      "retry": "Retry",
+      "cancelled": "Stopped",
+      "failed": "Couldn't send: {{error}}",
+      "entrySending_one": "{{count}} sending",
+      "entrySending_other": "{{count}} sending",
+      "entryFailed_one": "{{count}} failed",
+      "entryFailed_other": "{{count}} failed",
+      "blockSending": "Can't send while attachments are still uploading",
+      "blockFailed": "Some attachments couldn't be sent. Retry or remove them."
+    },
+    "composerFormat": {
+      "label": "Formatting",
+      "strong": "Bold",
+      "em": "Italic",
+      "code": "Code",
+      "link": "Link",
+      "url": "Link URL"
     },
     "next": {
       "title": "Applies from the next turn",
@@ -1326,6 +1368,7 @@
       "firstMessage": "Write the first message for {{name}}",
       "placeholder": "Ctrl+Enter to send",
       "placeholderTouch": "Write a message",
+      "editorLabel": "Message",
       "queued": "Will send once the conversation is ready",
       "queuedCancel": "Cancel",
       "historyLoading": "Loading history…",
@@ -1397,8 +1440,6 @@
       "sendingTitle": "Sending {{name}} ({{size}}) to the host",
       "cancelSending": "Stop sending",
       "largeImage": "Attached {{name}} ({{size}}). Agents read images from the path. Some agents can't read images over 5 MB as images; if that happens, shrink the image and attach it again.",
-      "removeNamed": "Remove {{name}}",
-      "removeNamedIn": "Remove {{name}} ({{folder}})",
       "deviceFolder": "this device",
       "already": "This file is already attached"
     },

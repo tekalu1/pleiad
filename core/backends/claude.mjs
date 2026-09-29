@@ -33,6 +33,7 @@ import { buildClaudeModels, FALLBACK_MODELS } from "./claude-models.mjs";
 import { ZERO_COST, readCostState, decideCostBase } from "./claude-cost-state.mjs";
 import { normalizeSdkMessage, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, stopHookFollowUps, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript, transcriptSystemMarks } from "./claude-normalize.mjs";
 import { classifySystemMessages } from "../system-messages.mjs";
+import { promptTitle } from "../prompt-title.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
 
 const NL = String.fromCharCode(10);
@@ -416,7 +417,8 @@ function toRow(s) {
     sessionId: s.sessionId,
     // 3段のフォールバックは Claude Code の概念（自動生成 summary / 最初のプロンプト）。
     // 見つからなければ null を返し、sidecar の title に譲る。
-    title: s.customTitle ?? s.summary ?? s.firstPrompt ?? null,
+    // customTitle は人が付けた題なのでそのまま。summary・firstPrompt は最初の発言の本文そのものであることがあるので、題の形にする（core/prompt-title.mjs）
+    title: s.customTitle ?? (promptTitle(s.summary ?? s.firstPrompt) || null),
     cwd: s.cwd ?? null,
     createdAt: s.createdAt ?? null,
     lastModified: s.lastModified ?? null,

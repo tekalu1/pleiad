@@ -109,6 +109,15 @@
 | 端末 | terminal |
 | 裏の作業 / 裏で動いている | background task / running in the background |
 | 下書き | draft |
+| 添付 N 件（発言の下・一覧の面） | N attachments |
+| 文中の添付 / 文末に付く（一覧の区分） | In the text / Added at the end |
+| 文中の位置へ移動 / カーソルの位置に入れる（一覧の操作） | Go to its place in the text / Insert at the cursor |
+| パスで渡す（ホストのファイル） | Passed by path |
+| 送るのをやめる / 再試行（送っている途中・失敗の添付） | Stop sending / Retry |
+| N 件送信中 / N 件失敗（添付の入口） | N sending / N failed |
+| 書式（B・I・コード・リンク。範囲を選んだときの面） | Formatting (Bold / Italic / Code / Link) |
+| エージェントに渡した原文（発言の本文そのまま） | what was sent to the agent |
+| 続きを表示 / 折りたたむ（長い発言） | Show more / Show less |
 | 根（グループの根の会話） | root |
 | 常に許可 / 拒否 | Always allow / Deny |
 | 配色の 自動 / 明 / 暗 | Auto / Light / Dark |
