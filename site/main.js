@@ -1,3 +1,5 @@
+import { mountBranch } from './branch.js';
+
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -133,16 +135,11 @@ function setRows(after) {
   Object.entries(want).forEach(([k, s]) => setRow(k, s));
 }
 
-// 分岐: x=20 にいるのが今の会話
-const nodeA = $('.fk-a-node'), nodeB = $('.fk-b-node');
+// 分岐（branch.js）。BRANCH_STEP は分岐の場面の番号。分かれ目の後の発言は、元の会話と作った枝で替わる
+const BRANCH_STEP = 2;
 const late = $('.is-late .bubble');
 const LATE = ['9月の内訳も出して', '列に前年比を足して'];
-function setBranch(toB) {
-  nodeA.classList.toggle('is-cur', !toB);
-  nodeA.classList.toggle('is-right', toB);
-  nodeB.classList.toggle('is-cur', toB);
-  nodeB.classList.toggle('is-right', !toB);
-}
+const branch = mountBranch($('.fork'), { swap: (toFork) => { late.textContent = LATE[toFork ? 1 : 0]; } });
 
 // 入力欄のエージェント
 const agentChip = $('.chip-agent');
@@ -160,14 +157,11 @@ async function setAgent(name, animate) {
 function applyState(n, done) {
   const handed = n === 3 && done;
   app.dataset.step = n;
-  app.classList.toggle('has-fork', n >= 2);
+  app.classList.toggle('has-fork', n >= BRANCH_STEP);
   app.classList.toggle('has-hand', handed);
-  app.classList.remove('is-picking', 'is-moving');
+  app.classList.remove('is-picking');
   setRows(n === 1 && done);
-  const toB = n > 2 || (n === 2 && done);
-  setBranch(toB);
-  late.textContent = LATE[toB ? 1 : 0];
-  late.style.opacity = 1;
+  branch.show(n > BRANCH_STEP || (n === BRANCH_STEP && done));
   setAgent(handed ? 'codex' : 'claude', false);
   trackArcs(app);
 }
@@ -228,19 +222,7 @@ async function playStep(n) {
       await wait(1200);
     }
   }
-  if (n === 2) {
-    await wait(1500);
-    if (!alive()) return;
-    app.classList.add('is-moving');
-    late.style.opacity = 0;
-    await wait(130);
-    setBranch(true);
-    await wait(560);
-    late.textContent = LATE[1];
-    late.style.opacity = 1;
-    app.classList.remove('is-moving');
-    if (!alive()) return;
-  }
+  if (n === BRANCH_STEP && !(await branch.play(alive))) return;
   if (n === 3) {
     await wait(600);
     if (!alive()) return;
