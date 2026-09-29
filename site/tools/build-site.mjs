@@ -16,7 +16,7 @@ const LANGS = {
   en: { dir: "en/", locale: "en_US", ogImage: "assets/og-en.png" },
 };
 // 出力先へ写さないもの（生成の材料）
-const SKIP = new Set(["tools", "locales", "README.md", "index.html"]);
+const SKIP = new Set(["tools", "locales", "README.md", "index.html", "wrangler.jsonc"]);
 const LOGOS = {
   claude: '<img src="assets/claude.svg" alt="" width="16" height="16">',
   openai: '<img src="assets/openai.svg" alt="" width="16" height="16">',
