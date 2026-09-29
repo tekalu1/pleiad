@@ -61,18 +61,6 @@ function trackArcs(root = document) {
 const nav = $('.nav');
 new IntersectionObserver(([e]) => nav.classList.toggle('show-dl', !e.isIntersecting)).observe($('.hero .cta'));
 
-// 離れる理由: 読み進めた分だけ濃くなる
-const leave = $('.leave');
-const leaveView = $('.leave-sticky');
-const lines = $$('.leave-line', leave);
-function onLeave() {
-  const r = leave.getBoundingClientRect();
-  const p = -r.top / (r.height - innerHeight);
-  lines.forEach((el, i) => el.style.setProperty('--t', clamp((p - 0.02 - i * 0.16) / 0.1).toFixed(3)));
-  leave.classList.toggle('is-done', p > 0.56);
-  leaveView.style.setProperty('--out', clamp((p - 0.78) / 0.14).toFixed(3));
-}
-
 // 出現
 $$('.tile-copy, .v-deleg, .phone, .end > *').forEach((el) => el.setAttribute('data-reveal', ''));
 const io = new IntersectionObserver((entries) => {
@@ -87,63 +75,29 @@ $$('[data-reveal]').forEach((el) => io.observe(el));
 
 // ひとつの画面 --------------------------------------------------------------
 const screen = $('.screen');
+const prologue = $('.prologue');
+const lines = $$('.leave-line', prologue);
 const cam = $('.stage-cam');
 const app = $('.app');
 const steps = $$('.step');
 const APP_W = 1080, APP_H = 680, MAIN_X = 268;
-// 照らす場所。寄るときはここを収める（左端は面の端に揃える）
+// 照らす場所。寄るときはここを収める。x は揃える面の左端、top は見出しの帯から見せる
 const FOCUS = {
   wide: [
-    { sel: ['.msg.is-ai[data-zone="see"]'], x: MAIN_X },
-    { sel: ['.side-head', '.rows:last-of-type'], x: 0 },
-    { sel: ['.fork-svg', '.fk-b-node', '.is-late .bubble'], x: MAIN_X },
+    { sel: ['.msg.is-ai[data-zone="see"]', '.msg.is-user'], x: MAIN_X },
+    { sel: ['.side-head', '.rows:last-of-type'], x: 0, top: true },
+    { sel: ['.fork', '.is-late .bubble'], x: MAIN_X },
     { sel: ['.handoff', '.is-late2', '.composer'], x: MAIN_X },
   ],
   narrow: [
-    { sel: ['.viz'], x: null },
-    { sel: ['.side-head', '.rows:last-of-type'], x: 0 },
-    { sel: ['.fork-svg', '.fk-b-node', '.is-late .bubble'], x: MAIN_X },
+    { sel: ['.viz'], x: MAIN_X },
+    { sel: ['.side-head', '.rows'], x: 0 },
+    { sel: ['.fk-a-node', '.fk-b-node', '.is-late .bubble'], x: MAIN_X },
     { sel: ['.handoff span', '.is-late2 .spk img', '.chip-agent'], x: MAIN_X },
   ],
 };
-let step = -1;
 
-new IntersectionObserver(([e]) => { if (e.isIntersecting) screen.classList.add('in'); }, { rootMargin: '0px 0px -10% 0px' }).observe(screen);
-
-function focusRect(f) {
-  const a = app.getBoundingClientRect();
-  const k = a.width / APP_W;
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  f.sel.forEach((sel) => {
-    const r = $(sel, app).getBoundingClientRect();
-    if (!r.height) return;
-    x0 = Math.min(x0, (r.left - a.left) / k); y0 = Math.min(y0, (r.top - a.top) / k);
-    x1 = Math.max(x1, (r.right - a.left) / k); y1 = Math.max(y1, (r.bottom - a.top) / k);
-  });
-  const pad = 24;
-  x0 = f.x == null ? x0 - pad : Math.min(x0, f.x);
-  return { x: x0, y: y0 - pad, w: x1 + pad - x0, h: y1 - y0 + pad * 2 };
-}
-function placeCamera() {
-  const cw = cam.clientWidth, ch = cam.clientHeight;
-  if (!cw) return;
-  const base = Math.min(cw / APP_W, ch / APP_H);
-  const narrow = cw < 700;
-  const f = focusRect(FOCUS[narrow ? 'narrow' : 'wide'][Math.max(step, 0)]);
-  const s = clamp(Math.min(cw / f.w, ch / f.h), base, narrow ? 1 : base * 1.45);
-  const fit = (size, view, lo, hi) => {
-    if (size * s <= view) return (view - size * s) / 2;
-    const center = view / 2 - ((lo + hi) / 2) * s;
-    return clamp(center, view - size * s, 0);
-  };
-  // 横は面の左端に揃える。縦は照らす場所の中央
-  const tx = APP_W * s <= cw ? (cw - APP_W * s) / 2 : clamp(-f.x * s, cw - APP_W * s, 0);
-  const ty = fit(APP_H, ch, f.y, f.y + f.h);
-  app.style.transform = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${s.toFixed(4)})`;
-}
-new ResizeObserver(placeCamera).observe(cam);
-
-// 脇の一覧の印
+const rows = Object.fromEntries($$('.row').map((r) => [r.dataset.row, r]));
 const MARK = {
   run: () => '<svg class="arc" viewBox="0 0 14 14"><path/></svg>',
   wait: () => '<i class="dia"></i><span class="wait">承認待ち</span>',
@@ -151,12 +105,10 @@ const MARK = {
   stale: () => '<span class="stale">◌ 9日</span>',
   idle: () => '',
 };
-const rows = Object.fromEntries($$('.row').map((r) => [r.dataset.row, r]));
 function setRow(key, s, flash) {
   const row = rows[key];
-  if (row.dataset.s === s && row.dataset.drawn) return;
+  if (row.dataset.s === s) return;
   row.dataset.s = s;
-  row.dataset.drawn = 1;
   const mk = $('.mk', row);
   mk.innerHTML = MARK[s]();
   trackArcs(mk);
@@ -165,21 +117,24 @@ function setRow(key, s, flash) {
     setTimeout(() => row.classList.remove('is-flash'), 900);
   }
 }
-const INITIAL = { login: 'run', sales: 'run', db: 'wait', readme: 'done', e2e: 'idle', pay: 'stale' };
-const resetRows = () => Object.entries(INITIAL).forEach(([k, s]) => setRow(k, s));
-resetRows();
-trackArcs(app);
+const ROWS_START = { login: 'run', sales: 'run', db: 'wait', readme: 'done', e2e: 'idle', pay: 'stale' };
+const ROWS_SCRIPT = [['db', 'run'], ['sales', 'done'], ['login', 'wait']];
+function setRows(after) {
+  const want = { ...ROWS_START };
+  if (after) ROWS_SCRIPT.forEach(([k, s]) => (want[k] = s));
+  Object.entries(want).forEach(([k, s]) => setRow(k, s));
+}
 
 // 分岐: x=20 にいるのが今の会話
 const nodeA = $('.fk-a-node'), nodeB = $('.fk-b-node');
+const late = $('.is-late .bubble');
+const LATE = ['9月の内訳も出して', '列に前年比を足して'];
 function setBranch(toB) {
   nodeA.classList.toggle('is-cur', !toB);
   nodeA.classList.toggle('is-right', toB);
   nodeB.classList.toggle('is-cur', toB);
   nodeB.classList.toggle('is-right', !toB);
 }
-const late = $('.is-late .bubble');
-const LATE = ['9月の内訳も出して', '列に前年比を足して'];
 
 // 入力欄のエージェント
 const agentChip = $('.chip-agent');
@@ -193,47 +148,97 @@ async function setAgent(name, animate) {
   agentChip.classList.remove('is-swap');
 }
 
-// 場面ごとの動き。1 回やって、最後の形で止まる
-let gen = 0;
+// n 番目の場面の、動く前（done=false）か動き終えた（done=true）形
+function applyState(n, done) {
+  const handed = n === 3 && done;
+  app.dataset.step = n;
+  app.classList.toggle('has-fork', n >= 2);
+  app.classList.toggle('has-hand', handed);
+  app.classList.remove('is-picking', 'is-moving');
+  setRows(n === 1 && done);
+  const toB = n === 2 && done;
+  setBranch(toB);
+  late.textContent = LATE[toB ? 1 : 0];
+  late.style.opacity = 1;
+  setAgent(handed ? 'codex' : 'claude', false);
+  trackArcs(app);
+}
+
+let step = -1, gen = 0;
+const stepDone = [false, false, false, false];
+
+// 寄る先は、各場面の動き終えた形で測っておく（動いている途中で測らない）
+let focusCache = null;
+function measure() {
+  const narrow = cam.clientWidth < 700;
+  app.classList.toggle('is-narrow', narrow);
+  app.classList.add('is-measuring');
+  const saved = app.style.transform;
+  app.style.transform = 'none';
+  focusCache = FOCUS[narrow ? 'narrow' : 'wide'].map((f, n) => {
+    applyState(n, true);
+    const a = app.getBoundingClientRect();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    f.sel.forEach((sel) => {
+      const r = $(sel, app).getBoundingClientRect();
+      x0 = Math.min(x0, r.left - a.left); y0 = Math.min(y0, r.top - a.top);
+      x1 = Math.max(x1, r.right - a.left); y1 = Math.max(y1, r.bottom - a.top);
+    });
+    const pad = 24;
+    x0 = Math.min(x0, f.x);
+    y0 = f.top ? 0 : y0 - pad;
+    return { x: x0, y: y0, w: x1 + pad - x0, h: y1 + pad - y0, snap: f.x };
+  });
+  const cur = Math.max(step, 0);
+  applyState(cur, stepDone[cur]);
+  app.style.transform = saved;
+  void app.offsetWidth;
+  app.classList.remove('is-measuring');
+}
+function placeCamera() {
+  const cw = cam.clientWidth, ch = cam.clientHeight;
+  if (!cw || !focusCache) return;
+  const base = Math.min(cw / APP_W, ch / APP_H);
+  const narrow = cw < 700;
+  const f = focusCache[Math.max(step, 0)];
+  // 広い画面: 会話の面を枠いっぱいに（脇を半端に切らない）。脇の場面は全体
+  const s = narrow ? clamp(Math.min(cw / f.w, ch / f.h), base, 1) : f.snap === MAIN_X ? cw / (APP_W - MAIN_X) : base;
+  const tx = APP_W * s <= cw ? (cw - APP_W * s) / 2 : clamp(-f.x * s, cw - APP_W * s, 0);
+  let ty = APP_H * s <= ch ? (ch - APP_H * s) / 2 : clamp(ch / 2 - (f.y + f.h / 2) * s, ch - APP_H * s, 0);
+  // 見出しの帯（52px）を途中で切らない。全部見せるか、全部外す
+  const band = 52 * s;
+  if (!narrow && ty < 0 && ty > -band) ty = f.y + f.h <= ch / s ? 0 : -band;
+  app.style.transform = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${s.toFixed(4)})`;
+}
+
+// 場面の動き。1 度やったら、戻って来ても動き終えた形で見せる
 async function playStep(n) {
   const g = ++gen;
   const alive = () => g === gen;
-  app.classList.add('is-drawn');
-  app.classList.toggle('has-fork', n >= 2);
-  app.classList.toggle('has-hand', n >= 3);
-  app.classList.remove('is-picking', 'is-moving');
-  setBranch(false);
-  late.textContent = LATE[0];
-  late.style.opacity = 1;
-  setAgent(n >= 3 ? 'codex' : 'claude', false);
-  if (n !== 1) resetRows();
-  if (reduce) return;
-
+  if (reduce || stepDone[n]) { stepDone[n] = true; applyState(n, true); return; }
+  applyState(n, false);
   if (n === 1) {
-    const script = [['db', 'run'], ['readme', 'idle'], ['login', 'wait']];
-    await wait(800);
-    for (const [k, s] of script) {
+    await wait(700);
+    for (const [k, s] of ROWS_SCRIPT) {
       if (!alive()) return;
       setRow(k, s, true);
-      await wait(1300);
+      await wait(1200);
     }
   }
   if (n === 2) {
-    await wait(1700);
+    await wait(1500);
     if (!alive()) return;
     app.classList.add('is-moving');
     late.style.opacity = 0;
     await wait(130);
     setBranch(true);
     await wait(560);
-    if (!alive()) return;
     late.textContent = LATE[1];
     late.style.opacity = 1;
     app.classList.remove('is-moving');
+    if (!alive()) return;
   }
   if (n === 3) {
-    setAgent('claude', false);
-    app.classList.remove('has-hand');
     await wait(600);
     if (!alive()) return;
     app.classList.add('is-picking');
@@ -245,21 +250,33 @@ async function playStep(n) {
     app.classList.add('has-hand');
     trackArcs(app);
   }
+  if (alive()) stepDone[n] = true;
 }
 
 function onScreen() {
   const r = screen.getBoundingClientRect();
-  const q = -r.top / (r.height - innerHeight);
-  const n = clamp(Math.floor(q * 4), 0, 3);
+  const vh = innerHeight;
+  const narrow = innerWidth <= 960;
+  const P = vh * (narrow ? 1.3 : 1.5);
+  const S = vh * (narrow ? 0.7 : 0.8);
+  const y = -r.top;
+  // 前置き: 読み進めた分だけ濃くなり、言い切ったら舞台に替わる
+  const p = y / P;
+  lines.forEach((el, i) => el.style.setProperty('--t', clamp((p - 0.04 - i * 0.14) / 0.1).toFixed(3)));
+  screen.classList.toggle('is-said', p > 0.5);
+  prologue.style.setProperty('--out', clamp((p - 0.8) / 0.14).toFixed(3));
+  screen.classList.toggle('in', p > 0.9);
+  if (p > 0.9) app.classList.add('is-drawn');
+  const n = clamp(Math.floor((y - P) / S), 0, 3);
   if (n === step) return;
   step = n;
   steps.forEach((el, i) => el.classList.toggle('is-on', i === step));
-  app.dataset.step = step;
   playStep(step);
   placeCamera();
-  clearTimeout(onScreen.t);
-  onScreen.t = setTimeout(placeCamera, 900);
 }
+
+measure();
+new ResizeObserver(() => { measure(); placeCamera(); }).observe(cam);
 
 // スクロールは 1 フレームに 1 回だけ読む
 let ticking = false;
@@ -269,7 +286,6 @@ function onScroll() {
   requestAnimationFrame(() => {
     ticking = false;
     nav.classList.toggle('is-scrolled', scrollY > 24);
-    onLeave();
     onScreen();
   });
 }
@@ -284,18 +300,22 @@ deleg.addEventListener('enter', async () => {
   deleg.classList.add('is-decided');
 });
 
-// 外から: 見えたら一度だけ許可する
+// 外から: 見えたらしばらく待って、一度だけ許可する
 const phone = $('.phone');
 trackArcs(phone);
-if (reduce) phone.classList.add('is-approved');
+const approve = () => {
+  phone.classList.add('is-approved');
+  $('.ph-q span', phone).textContent = '許可した';
+};
+if (reduce) approve();
 else {
   new IntersectionObserver(async ([e], obs) => {
     if (!e.isIntersecting) return;
     obs.disconnect();
-    await wait(2200);
+    await wait(3200);
     phone.classList.add('is-press');
     await wait(180);
     phone.classList.remove('is-press');
-    phone.classList.add('is-approved');
+    approve();
   }, { threshold: 0.5 }).observe(phone);
 }
