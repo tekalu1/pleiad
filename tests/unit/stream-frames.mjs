@@ -10,7 +10,7 @@ export const title = "text.delta は 1 コマに 1 回だけ描く。流れの�
 
 export default async function (t) {
   const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
-  const functions = ["appendText", "flushStream", "cancelStream", "endStream", "closeTurnEl", "clearThread"].map(name => {
+  const functions = ["appendText", "flushStream", "cancelStream", "endStream", "closeTurnEl", "resetLiveTurn", "clearThread"].map(name => {
     const start = source.indexOf(`function ${name}(`);
     return start < 0 ? "" : source.slice(start, source.indexOf("\n}", start) + 2);
   });

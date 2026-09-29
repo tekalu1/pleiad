@@ -10,11 +10,12 @@ import vm from 'node:vm';
 import { N } from '../lib/dom-stub.mjs';
 import { createSessionLoads } from '../../web/session-stream.mjs';
 import { createComposerWait } from '../../web/composer-wait.mjs';
+import { syncRequest, joinReply, retainPlan } from '../../web/history-sync.mjs';
 
 export const name = 'composer-new-session';
 export const title = '新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る';
 
-const FUNCTIONS = ['startNew', 'select', 'loadAndPaint', 'paintSession', 'saveDraft', 'persistDraft', 'dropBlankDraft', 'loadDraft',
+const FUNCTIONS = ['startNew', 'select', 'loadHistory', 'loadAndPaint', 'paintSession', 'saveDraft', 'persistDraft', 'dropBlankDraft', 'loadDraft',
   'syncRunState', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'runUpload', 'saveDraftSoon', 'flushDraft'];
 
 export default async function (t) {
@@ -61,7 +62,7 @@ export default async function (t) {
     pendingPerms: new Map(), cwd: '', homeDir: 'C:/home', backendId: 'fake', prefs: {}, draft: {}, mode: 'default', runningIds: new Set(), stopping: new Set() };
   const storage = new Map();
   const context = vm.createContext({
-    state, $, cmd, refresh, t: k => k, html: { t: k => k }, sys: noop, escText: x => x, NL: '\n',
+    state, $, cmd, refresh, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop, t: k => k, html: { t: k => k }, sys: noop, escText: x => x, NL: '\n',
     creatingSession: null, pendingNewSession: null, freshSessionId: null, draftTimer: null, draftSavedAt: 0, DRAFT_THROTTLE_MS: 400, queuedSend: null, settingsFailure: null, syncSettingsHold: noop,
     settingsWrite: Promise.resolve(), modeWrite: Promise.resolve(),
     DRAFT_STORE: 'drafts', draftWrites: new Map(), draftKey: () => state.current ?? '',
