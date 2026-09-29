@@ -234,6 +234,8 @@ const cases = [
   // antigravity バックエンド。agy の身代わり（tests/lib/fake-agy.mjs）と話すだけで、
   // 本物の agy も Google のログインも要らない
   await import("./unit/server-antigravity.mjs"),
+  // 控えはターンの途中から書く: 途中の書き込み・失敗／中断で残る・uuid が変わらない・forget した控えを作り直さない・書き込みは 1 本ずつ
+  await import("./unit/antigravity-partial-transcript.mjs"),
   // Pleiad の MCP 登録と認証の API、1 件つながらなくても会話が進むこと、antigravity では Pleiad 担当を開かないこと
   await import("./unit/server-mcp-auth.mjs"),
   await import("./unit/server-agy-context.mjs"),

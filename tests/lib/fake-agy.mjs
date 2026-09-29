@@ -267,6 +267,31 @@ async function runTurn(text) {
     });
   }
 
+  // ターンの途中の控えを測る台本（partial / partial-fail / partial-exit / partial-ok）。本文とツールを 1 つずつ出した後、
+  // partial は result を出さない（中断を待つ）。ほかは FAKE_AGY_PARTIAL_HOLD_MS だけ待ってから、
+  // -fail は ERROR、-exit はプロセスごと落ち、-ok は本文を足して SUCCESS で終わる
+  const partial = /^partial(?:-(fail|exit|ok))?/.exec(text);
+  if (partial) {
+    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "途中まで" });
+    const toolStep = ++stepIndex;
+    const tool = { name: "run_command", parameters: { CommandLine: "echo partial" } };
+    step({ step_index: toolStep, state: "ACTIVE", step_type: "tool", tool_name: "run_command", tool_info: tool });
+    step({ step_index: toolStep, state: "DONE", step_type: "tool", tool_name: "run_command", tool_info: { ...tool, output: "partial-out" } });
+    if (!partial[1]) return;
+    await new Promise((r) => setTimeout(r, Number(process.env.FAKE_AGY_PARTIAL_HOLD_MS ?? 400)));
+    if (partial[1] === "exit") process.exit(3);
+    const ok = partial[1] === "ok";
+    if (ok) step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "。続き" });
+    return send({
+      event: "result",
+      result: {
+        conversation_id: conversationId, status: ok ? "SUCCESS" : "ERROR", response: ok ? "途中まで。続き" : "",
+        ...(ok ? {} : { error: "agy が途中で失敗した" }), duration_seconds: 0.4, num_turns: 1,
+        usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 },
+      },
+    });
+  }
+
   // 中断を測るための、終わらないターン
   if (text.startsWith("slow")) {
     step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "待つ" });

@@ -41,6 +41,9 @@ import { readAgyRuns, rotateAgyRuns } from '../hooks-unify.mjs';
 const EMPTY_SUCCESS_GRACE_MS = Number(process.env.AGENT_HOST_AGY_EMPTY_SUCCESS_MS ?? 500);
 const LATE = Symbol("late");
 
+/** ターンの途中で本文を控えに書き足す間隔。ツールの完了はすぐ書く */
+const TEXT_SAVE_MS = Number(process.env.AGENT_HOST_AGY_SAVE_MS ?? 2_000);
+
 /**
  * 承認モード。**`yolo` の 1 つだけ**にしてある。
  *
@@ -235,14 +238,17 @@ export const backend = {
   async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, addedInstructions, hooksRuntime = null }) {
     const m = MODES[modeFor(mode)];
 
-    // **控えはターンの終わりに書くが、送信の時刻はここで取る。**
-    // 終わりの時刻で打つと、長いターンでは送信が数分ずれて見えるうえ、
+    // **控えはターンの途中から書き足すが、ユーザー発言の時刻は送信の時刻で打つ。**
+    // AI の発言は書くたびにその時刻、終わりで完了の時刻に打ち直す。
+    // ユーザー発言まで後の時刻で打つと、長いターンでは送信が数分ずれて見えるうえ、
     // ターンの途中で出た提示（visualization は生成時刻を持つ）がユーザー発言より前に並ぶ。
     // その並びは分岐の切り口にそのまま効く（core/conversations.mjs の buildItems）ので、
     // ユーザー発言で切った枝に、まだ走っていないはずの成果物が入り込む。
     const sentAt = Date.now();
 
     let conversationId = sessionId ?? null;
+    // 再開した会話の途中の書き込みでは控えを作らない（--conversation が撥ねられて forget した控えを作り直さない）
+    const resumed = Boolean(sessionId);
     let sawText = false;
     let text = "";                 // 控えに残す本文
     const toolCalls = [];          // 控えに残すツール呼び出し
@@ -252,6 +258,47 @@ export const backend = {
     const started = new Map();     // tool.start を出した step -> { name, input }
     let closed = false;            // このターンを畳み終えた（settle 済み）
     const finished = new Promise((resolve) => { settle = () => { closed = true; resolve(); }; });
+
+    // ---- 控え。**ターンの途中から書き足す**（agy に履歴の取り出し口が無い。antigravity-store.mjs 冒頭）
+    // ユーザー発言は id が分かって本文を渡したら、AI の発言はツールの完了ごと・本文は間を空けて、同じ uuid で差し替える。
+    // 失敗・中断・打ち切りでも、終わりにそこまでの分を書く。書き込みは 1 本ずつ（控えの read-modify-write を重ねない）
+    let delivered = false;         // プロンプトを渡した（渡せなかったターンは控えに残さない）
+    let writes = Promise.resolve();
+    let queued = false;            // 積んだまま、まだ始まっていない書き込みがある（次のを積まない。始まるときに最新を読む）
+    let final = null;              // 終わりに書く分（畳んだ後に遅れて届いた出来事を混ぜない）
+    let textTimer = null;
+    const snapshot = (at) => [
+      { role: "user", text: String(prompt ?? ""), uuid: `${conversationId}:u${sentAt}`, at: new Date(sentAt).toISOString() },
+      // uuid はターンの間変えない（送信の時刻から作る）。変えると控えにも写しの会話（core/conversations.mjs の mergeMessages）にも二重に並ぶ
+      ...(text || toolCalls.length ? [{
+        role: "assistant", text, uuid: `${conversationId}:a${sentAt}`, at: new Date(at).toISOString(),
+        ...(toolCalls.length ? { tools: toolCalls.map((c) => c.name), toolCalls: [...toolCalls] } : {}),
+      }] : []),
+    ];
+    const save = ({ last = false } = {}) => {
+      // 畳んだ後は終わりの分（seal）だけを書く。遅れて届いた出来事で書き直さない
+      if (!delivered || !conversationId || queued || (final && !last)) return writes;
+      queued = true;
+      writes = writes.then(() => {
+        queued = false;
+        const messages = final?.messages ?? snapshot(Date.now());
+        return transcript.appendMessages(conversationId, { cwd, messages, create: final?.create ?? !resumed });
+      }).catch((err) => console.error("  agy の控えを書けなかった:", String(err?.message ?? err)));
+      return writes;
+    };
+    // 本文のデルタは細かいので、間を空けてまとめて書く
+    const saveSoon = () => {
+      if (textTimer || final) return;
+      textTimer = setTimeout(() => { textTimer = null; if (!final) save(); }, TEXT_SAVE_MS);
+      textTimer.unref?.();
+    };
+    /** ターンの終わりの分を書く。成功なら完了の時刻で、控えが無ければ作る（今までどおり） */
+    const seal = ({ ok }) => {
+      clearTimeout(textTimer);
+      if (final || !delivered) return writes;
+      final = { messages: snapshot(Date.now()), create: ok || !resumed };
+      return save({ last: true });
+    };
 
     // 生きているプロセスを使い回す。落ちていれば立て直す（会話は --conversation で拾える）
     let session = conversationId ? live.get(conversationId) : null;
@@ -312,6 +359,8 @@ export const backend = {
               ...(ev.init?.model ? { model: ev.init.model } : {}),
             });
           }
+          // 新しい会話は id がここで分かる。ユーザー発言を控えに書く
+          save();
           return;
         }
 
@@ -322,6 +371,7 @@ export const backend = {
             if (!delta) return;
             if (!sawText) { sawText = true; emit({ type: "activity", state: "writing" }); }
             text += delta;
+            saveSoon();
             return emit({ type: "text.delta", text: String(delta) });
           }
           if (s.step_type === "tool") {
@@ -348,6 +398,7 @@ export const backend = {
             const r = cut(typeof output === "string" ? output : JSON.stringify(output ?? ""));
             emit({ type: "tool.result", id, ...r, isError: false });
             toolCalls.push({ id, name, input, result: { ...r, isError: false } });
+            save();
             return;
           }
           // user_input / checkpoint。会話には出さない
@@ -450,30 +501,27 @@ export const backend = {
       control?.onReady?.();
       emit({ type: "activity", state: "thinking" });
       session.prompt(prompt);
+      // 渡せた。再開した会話は id が分かっているので、ユーザー発言をここで書く（新しい会話は init で）
+      delivered = true;
+      save();
       await finished;
       await reportHookRuns(session, hooksRuntime, emit);
 
-      if (signal?.signal?.aborted) {
+      // 終わりの分を書く（時刻は発言ごとに変える: ユーザーは送信時、AI は完了時。提示はこの間に入る）。
+      // 失敗・中断・打ち切りでも、そこまでのツールと本文を残す（中断の印は sidecar の interrupted が持つ）
+      const aborted = Boolean(signal?.signal?.aborted);
+      await seal({ ok: !aborted && !failed });
+
+      if (aborted) {
         emit({ type: "turnResult", outcome: "aborted" });
         return { sessionId: conversationId };
       }
       if (failed) throw failed;
-
-      // **控えは Pleiad が書く。**agy に履歴の取り出し口が無い（antigravity-store.mjs 冒頭）
-      // 時刻は発言ごとに変える: ユーザーは送信時、AI は完了時。提示はこの間に入る
-      const doneAt = Date.now();
-      await transcript.appendMessages(conversationId, {
-        cwd,
-        messages: [
-          { role: "user", text: String(prompt ?? ""), uuid: `${conversationId}:u${sentAt}`, at: new Date(sentAt).toISOString() },
-          ...(text || toolCalls.length ? [{
-            role: "assistant", text, uuid: `${conversationId}:a${doneAt}`, at: new Date(doneAt).toISOString(),
-            ...(toolCalls.length ? { tools: toolCalls.map((c) => c.name), toolCalls } : {}),
-          }] : []),
-        ],
-      }).catch((err) => console.error("  agy の控えを書けなかった:", String(err?.message ?? err)));
     } finally {
       clearTimeout(timer);
+      // 途中で投げた（seal まで来なかった）ときも、そこまでの分を書いてから返す。
+      // 積んだ書き込みを待つ（server はターンの後に控えを読む。次のターンの書き込みとも重ねない）
+      await seal({ ok: false });
       if (control) { control.handle = null; control.steer = null; }
     }
 

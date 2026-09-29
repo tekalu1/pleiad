@@ -9,6 +9,7 @@
 //
 // gemini では本体が書いた記録を**読んだ**（gemini-sessions.mjs）。
 // agy では読めるものが無いので、**ターンの最中に見た正規化メッセージをそのまま控える**。
+// ターンの終わりを待たず、途中から書き足す（runTurn。失敗・中断・打ち切りのターンも残す）。
 // 置き場は Pleiad の sidecar と同じ `AGENT_HOST_DATA`（既定 `~/.agent-host`）。
 //
 // 控えなので、`agy` 側で消えた会話が残ることはありうる。`--conversation <id>` が
@@ -60,26 +61,51 @@ async function write(record) {
 }
 
 /**
- * 1 ターンぶんの発言を控えに足す。
+ * 会話ごとの書き込みの列。**控えの read-modify-write を重ねない。**
+ * runTurn はターンの途中から何度も書く（ツールの完了・本文の区切り・終わり）。重なると後から読んだ側が
+ * 先の書き込みを消し、同じ一時ファイルの名前もぶつかる。forget も同じ列に並べ、書きかけが消した控えを作り直さないようにする
+ */
+const queues = new Map();   // conversationId -> 最後に積んだ処理の Promise
+
+function serial(conversationId, job) {
+  const key = String(conversationId);
+  const run = (queues.get(key) ?? Promise.resolve()).then(job);
+  const tail = run.catch(() => {});
+  queues.set(key, tail);
+  tail.then(() => { if (queues.get(key) === tail) queues.delete(key); });
+  return run;
+}
+
+/** forget した会話（この起動の間）。agy 側に無い会話なので、後から届いた書き込みで作り直さない */
+const forgotten = new Set();
+
+/**
+ * 発言を控えに足す。runTurn はターンの途中から同じ uuid の発言を何度も書き直す。
  *
  * `messages` は正規化済みの NormalizedMessage（history.mjs と同じ形）。
- * 同じ uuid が既にあれば差し替える（ターンの途中でやり直しても二重にならない）。
+ * 同じ uuid が既にあれば差し替える（ターンの途中の書き直しでも二重にならない）。
+ * `create: false` なら、控えが無いときに作らない（再開した会話の途中の書き込み。forget した控えを作り直さない）。
  */
-export async function appendMessages(conversationId, { cwd, messages }) {
-  if (!conversationId || !messages?.length) return;
-  const now = new Date().toISOString();
-  const record = (await read(conversationId)) ?? {
-    conversationId, cwd: cwd ?? null, createdAt: now, lastModified: now, messages: [],
-  };
-  if (cwd) record.cwd = cwd;
-  record.lastModified = now;
+export function appendMessages(conversationId, { cwd, messages, create = true }) {
+  if (!conversationId || !messages?.length) return Promise.resolve();
+  return serial(conversationId, async () => {
+    if (forgotten.has(String(conversationId))) return;
+    const now = new Date().toISOString();
+    const existing = await read(conversationId);
+    if (!existing && !create) return;
+    const record = existing ?? {
+      conversationId, cwd: cwd ?? null, createdAt: now, lastModified: now, messages: [],
+    };
+    if (cwd) record.cwd = cwd;
+    record.lastModified = now;
 
-  for (const message of messages) {
-    const at = message.uuid ? record.messages.findIndex((m) => m.uuid === message.uuid) : -1;
-    if (at >= 0) record.messages[at] = message;
-    else record.messages.push(message);
-  }
-  await write(record);
+    for (const message of messages) {
+      const at = message.uuid ? record.messages.findIndex((m) => m.uuid === message.uuid) : -1;
+      if (at >= 0) record.messages[at] = message;
+      else record.messages.push(message);
+    }
+    await write(record);
+  });
 }
 
 /** 1 本ぶんの控え。無ければ null。 */
@@ -128,7 +154,8 @@ export async function listRecords({ limit = 100 } = {}) {
 /** 控えを捨てる（`agy` 側にもう無い会話）。 */
 export async function forget(conversationId) {
   if (!conversationId) return;
-  await fs.rm(fileFor(conversationId), { force: true }).catch(() => {});
+  forgotten.add(String(conversationId));
+  await serial(conversationId, () => fs.rm(fileFor(conversationId), { force: true })).catch(() => {});
 }
 
 const toMs = (v) => {
