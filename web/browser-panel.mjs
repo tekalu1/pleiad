@@ -56,9 +56,10 @@ const button = (icon, label, action, className = 'btn btn-icon') => {
 /**
  * 部品を作る。bridge は window.plyDesktop.browser。showMenu は右クリックメニュー（web/client.mjs）。
  * getSessionId は今開いている会話（タブがどの会話から開かれたかを main が覚える）。
- * openPanel は右パネルをブラウザーのモードにする関数（web/file-preview.mjs が後から入れる）。onEmpty は最後のタブを閉じたとき
+ * openPanel は右パネルをブラウザーのモードにする関数（web/file-preview.mjs が後から入れる）。onEmpty は最後のタブを閉じたとき。
+ * onChange は main から状態（タブ・エージェントの操作）が届いて描き直した後（頭の行のボタンの操作中の印。web/header-entries.mjs）
  */
-export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMenu, getSessionId = () => null, getAgentName = () => 'Agent' } = {}) {
+export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMenu, getSessionId = () => null, getAgentName = () => 'Agent', onChange = () => {} } = {}) {
   let state = { tabs: [], current: null, agent: null };
   let shown = false, covered = false, freezing = null, editing = false;
   let hooks = { openPanel: () => {}, onEmpty: () => {} };
@@ -186,6 +187,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
     paintTabs(); paintAddress();
     // 最後のタブを閉じたらパネルごと閉じる
     if (before.tabs.length && !state.tabs.length && shown) hooks.onEmpty();
+    onChange(state);
   }
 
   // ---- 位置の報告と重なり

@@ -34,9 +34,10 @@ const iconButton = (icon, label, action, className = 'btn btn-icon') => {
 /**
  * showMenu は web/client.mjs の右クリックメニュー（1 つを共有する）。cmd はサーバーへのコマンド。
  * osActions() はサーバーのある PC の画面から見ているか（OS の操作を出してよいか。判定はサーバー）
- * browser は内蔵ブラウザーの部品（web/browser-panel.mjs の createBrowserPanel）。デスクトップ版のホストの画面だけで渡る
+ * browser は内蔵ブラウザーの部品（web/browser-panel.mjs の createBrowserPanel）。デスクトップ版のホストの画面だけで渡る。
+ * onBrowsing はパネルが内蔵ブラウザーになった・ブラウザーでなくなったとき（頭の行のボタンの押されている状態。web/header-entries.mjs）
  */
-export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd, osActions = () => false, getPrefs = () => ({}), browser = null, chooseSnapshot = () => false }) {
+export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd, osActions = () => false, getPrefs = () => ({}), browser = null, chooseSnapshot = () => false, onBrowsing = () => {} }) {
   const panel = el('aside', 'file-preview'); panel.id = 'filePreview'; panel.hidden = true;
   panel.setAttribute('aria-label', t('filePreview.panel')); panel.tabIndex = -1;
   const head = el('header', 'file-preview-head'), title = el('div', 'file-preview-title');
@@ -475,18 +476,20 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     if (!browsing) return;
     browsing = false; browser.hide(); browser.agentRow.hidden = true;
     content.tabIndex = 0;
+    onBrowsing(false);
   }
   /**
-   * 右パネルを内蔵ブラウザーにする（web/browser-panel.mjs の openInBrowserPanel から）。
-   * 幅・広げる・Esc・狭い画面の全面表示はファイルと共有する。出す部品は browserSlots
+   * 右パネルを内蔵ブラウザーにする（web/browser-panel.mjs の openInBrowserPanel と、頭の行のボタン）。
+   * 幅・広げる・Esc・狭い画面の全面表示はファイルと共有する。出す部品は browserSlots。
+   * element は閉じたときにフォーカスを戻す先（頭の行のボタン）。省くと今フォーカスのあるもの
    */
-  function openBrowser() {
+  function openBrowser(element) {
     if (!browser) return;
-    if (browsing && !panel.hidden) { browser.show(); return; }
+    if (browsing && !panel.hidden) { if (element) opener = element; browser.show(); return; }
     abort?.abort(); generation++; paintId++; disposePdf();
     const previous = custom; leaveCustom(); previous?.onClose?.();
     const active = document.activeElement;
-    opener = active && active !== document.body && !panel.contains(active) ? active : opener;
+    opener = element ?? (active && active !== document.body && !panel.contains(active) ? active : opener);
     file = null; reference = null; visual = null; browsing = true;
     context = getContext();
     panel.hidden = false; document.body.classList.add('file-preview-open');
@@ -495,6 +498,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     show({ title:t('browser.panel'), subtitle:'', note:'', status:'', body:browser.body });
     clearCurrent();
     layout(); browser.show();
+    onBrowsing(true);
   }
   /**
    * ファイル以外の中身を同じパネルに出す（会話の右パネル「この会話のコンテキスト」）。
@@ -773,7 +777,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   handle.onkeydown = event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); percentage = Math.max(30,Math.min(65,percentage + (event.key === 'ArrowLeft' ? 2 : -2))); layout(); } };
   addEventListener('resize', layout);
   new MutationObserver(() => { if (!panel.hidden && document.body.classList.contains('settings')) close(false); }).observe(document.body,{attributes:true,attributeFilter:['class']});
-  browser?.connect({ openPanel: openBrowser, onEmpty: () => { if (browsing && !panel.hidden) close(); } });
+  browser?.connect({ openPanel: () => openBrowser(), onEmpty: () => { if (browsing && !panel.hidden) close(); } });
   return { close, layout, openPanel, updatePanel, panelOpen: key => !panel.hidden && custom?.key === key,
     /** 右パネルでファイルを開く（拡大表示の「右パネルで開く」） */
     open: (ref, element) => open(ref, element),
@@ -781,8 +785,10 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     menu, reveal: (target) => osAction('revealPath', target),
     /** 見ている場所（OS の操作の可否）が分かった・変わった */
     osChanged: () => { if (!panel.hidden) show(); },
-    /** 内蔵ブラウザーのモードにする（web/browser-panel.mjs が呼ぶ） */
+    /** 内蔵ブラウザーのモードにする（web/browser-panel.mjs と頭の行のボタンが呼ぶ） */
     openBrowser,
+    /** 右パネルが内蔵ブラウザーを出しているか */
+    browserOpen: () => browsing && !panel.hidden,
     // 内蔵ブラウザーは会話を移っても開いたまま（タブは会話をまたいで残る）。これから開くタブの会話だけ知らせる
     sessionChanged(id) {
       if (browsing && !panel.hidden) { context = { ...context, sessionId:id }; browser.sessionChanged(id); return; }

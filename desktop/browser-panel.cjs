@@ -70,6 +70,15 @@ function cleanRect(rect) {
 function plainUserAgent(ua) {
   return String(ua ?? '').replace(/\s(?:Electron|agent-host|Pleiad|Ply)\/\S+/g, '');
 }
+/**
+ * 右パネルのブラウザーを開閉する近道（Ctrl+Shift+B、macOS は ⌘⇧B。画面の側は web/header-entries.mjs）か。
+ * input は before-input-event のもの。押したときだけ（離したときはページへ渡す）。IME の変換中は奪わない
+ */
+function isPanelShortcut(input, platform = process.platform) {
+  if (!input || input.type !== 'keyDown' || input.isComposing || input.alt || !input.shift) return false;
+  if (platform === 'darwin' ? !input.meta || input.control : !input.control || input.meta) return false;
+  return String(input.key ?? '').toLowerCase() === 'b';
+}
 /** 既定のダウンロードの置き場で、同じ名前があれば「名前 (2).拡張子」 */
 function uniquePath(dir, name, exists = fs.existsSync) {
   const safe = path.basename(String(name || 'download')).replace(/[\u0000-\u001f<>:"/\\|?*]/g, '_') || 'download';
@@ -235,6 +244,15 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     c.on('will-navigate', guard);
     c.on('will-redirect', guard);
     for (const name of ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated', 'did-fail-load']) c.on(name, push);
+    // ページにフォーカスがあるときの開閉の近道。この近道だけページへ渡さず、本体の画面へ知らせる（フォーカスも本体へ戻す）。
+    // 別の窓に出したタブでは拾わない
+    c.on('before-input-event', (event, input) => {
+      if (tab.detached || !isPanelShortcut(input)) return;
+      event.preventDefault();
+      if (input.isAutoRepeat || window.isDestroyed()) return;
+      window.webContents.focus?.();
+      window.webContents.send('ply:browser-shortcut');
+    });
     c.on('destroyed', () => { if (tabs.has(tab.id)) removeTab(tab.id); });
     if (select) current = tab.id;
     if (url) load(tab, url);
@@ -419,4 +437,4 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   };
 }
 
-module.exports = { createBrowserPanel, PARTITION, openable, navigable, externalUrl, externalFile, cleanRect, plainUserAgent, uniquePath };
+module.exports = { createBrowserPanel, PARTITION, openable, navigable, externalUrl, externalFile, cleanRect, plainUserAgent, uniquePath, isPanelShortcut };

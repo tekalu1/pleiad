@@ -2,6 +2,7 @@ import { isComposingKey } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
 import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
+import { isManagedContext, paintContextEntry as paintContextEntryButton, setupBrowserEntry } from './header-entries.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
 import { configureLinkOpen } from './link-open.mjs';
@@ -4425,8 +4426,10 @@ $("draftSaved").onclick = () => saveDraft().catch(() => {});
 // 狭い幅の「再試行」。押すと一行は「保存中…」で消えるので、フォーカスは入力欄へ（失敗すれば一行が出直す）
 $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() => {}); };
 // 内蔵ブラウザー（web/browser-panel.mjs）。デスクトップ版のホストの画面だけ。右パネルの 1 つのモードになる
+let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry）。状態の知らせが先に届いても落ちないよう先に宣言する
 const browserPanel = browserPanelAvailable()
-  ? createBrowserPanel({ showMenu: (x, y, items, title) => showMenu(x, y, items, title), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()) })
+  ? createBrowserPanel({ showMenu: (x, y, items, title) => showMenu(x, y, items, title), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
+    onChange: () => browserEntry?.paint() })
   : null;
 // ホストの画面ではない端末から、ホストの内蔵ブラウザーを見る（web/remote-browser.mjs）。リンクを押したら開き先を選ぶ（web/link-sheet.mjs）
 const remoteBrowser = createRemoteBrowser({ cmd: (command, args) => cmd(command, args), getSessionId: () => state.current ?? null,
@@ -4451,7 +4454,12 @@ const filePreview = setupFilePreview({
   osActions: () => state.osActions === true,
   getPrefs: () => state.prefs,
   useFile: file => { if (attachHostFiles([file])) $('prompt').focus(); },
+  onBrowsing: () => browserEntry?.paint(),
 });
+// 頭の行の内蔵ブラウザーのボタンと近道（web/header-entries.mjs）。使えない画面では出さない
+browserEntry = setupBrowserEntry({ button: $('browserEntry'), browser: browserPanel, preview: filePreview, bridge: window.plyDesktop?.browser,
+  getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
+  blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
 // External resource confirmation is available on every screen.
 const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf });
 // 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
@@ -5328,14 +5336,6 @@ function groupMenu(st, x, y) {
 // タイトル行の入口と、共通読み込みの会話に残る一行（docs/design-system.md §9）。
 // 出所はどちらも sessionContext の記録で、ターンの開始に届く contextUsage で更新する。
 
-const CTX_KINDS = ['instruction', 'skill', 'mcp'];
-// 実際に渡ったものだけ数える。除外・重複・未対応・接続できなかった MCP は数に入れない
-const CTX_LOADED = { instruction: ['supplied', 'loaded'], skill: ['available', 'manual-only', 'loaded'], mcp: ['pending', 'connected'] };
-// Pleiad が担当する種類だけ数える（エージェント任せの種類は Pleiad が中身を把握していない）
-const contextTotal = (report) => CTX_KINDS.filter((kind) => report?.owners?.[kind] === 'ply')
-  .reduce((sum, kind) => sum + (report.entries ?? []).filter((e) => e.kind === kind && CTX_LOADED[kind].includes(e.status)).length, 0);
-// エージェント任せの会話（と、Pleiad 担当を受け取れなかった antigravity の会話）
-const isManagedContext = (report) => Boolean(report) && report.status !== 'native';
 /** 設定のコンテキストのページ（全体の設定）を開く */
 function openContextPage() {
   onboarding.open('context');
@@ -5343,17 +5343,8 @@ function openContextPage() {
 }
 /** タイトル行の右の入口。押すと右パネル「この会話のコンテキスト」を開閉する。セッションを選んでいないときは出さない */
 function paintContextEntry() {
-  const button = $('contextEntry'), report = state.contextInfo?.report;
-  button.hidden = !state.current;
-  if (button.hidden) return;
-  const managed = isManagedContext(report);
-  button.classList.toggle('ply', managed);
-  button.title = report ? t('session.context.titleWith', { summary: chipText(state.contextInfo) }) : t('session.context.title');
-  $('contextEntryCount').hidden = !managed;
-  $('contextEntryCount').textContent = managed ? String(contextTotal(report)) : '';
-  $('contextEntryChanged').hidden = !state.contextInfo?.changed?.differs;
-  // 700px 以下では字を畳んでアイコンと数字だけになるので、読み上げの名前は字で持つ
-  button.setAttribute('aria-label', [t('session.context.label'), managed ? String(contextTotal(report)) : '', state.contextInfo?.changed?.differs ? t('session.context.changed') : ''].filter(Boolean).join(' '));
+  paintContextEntryButton($('contextEntry'), { visible: !!state.current, report: state.contextInfo?.report,
+    summary: chipText(state.contextInfo), changed: !!state.contextInfo?.changed?.differs });
 }
 const CHIP_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg>';
 /** 会話の頭に付く札（指示 2 · Skills 14 · MCP …）。最初の発言の下。押すと右パネルが開く */
