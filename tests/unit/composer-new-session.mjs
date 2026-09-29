@@ -15,7 +15,7 @@ export const name = 'composer-new-session';
 export const title = '新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る';
 
 const FUNCTIONS = ['startNew', 'select', 'loadAndPaint', 'paintSession', 'saveDraft', 'persistDraft', 'dropBlankDraft', 'loadDraft',
-  'syncRunState', 'submit', 'clearSentDraft'];
+  'syncRunState', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'runUpload'];
 
 export default async function (t) {
   const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
@@ -38,8 +38,10 @@ export default async function (t) {
   // 偽の cmd。newSession・loadSession は手で返す。saveDraft・sendMessage は記録してすぐ返す
   const calls = [];
   const waiting = [];
+  let failSave = null;   // saveDraft をこのメッセージで失敗させる
   const cmd = (command, args = {}) => {
     calls.push({ command, args });
+    if (command === 'saveDraft' && failSave) return Promise.reject(new Error(failSave));
     if (command === 'newSession' || command === 'loadSession') return new Promise((res, rej) => waiting.push({ command, args, res, rej }));
     return Promise.resolve(command === 'listMessages' ? [] : {});
   };
@@ -54,6 +56,7 @@ export default async function (t) {
   let releaseRefresh = null;
   const refresh = () => new Promise(r => { releaseRefresh = r; });
 
+  const uploading = [];
   const state = { current: 'old', busy: false, loadingSession: null, drafts: new Map(), attached: [], sessions: [], messages: [], presents: [],
     pendingPerms: new Map(), cwd: '', homeDir: 'C:/home', backendId: 'fake', prefs: {}, draft: {}, mode: 'default', runningIds: new Set(), stopping: new Set() };
   const storage = new Map();
@@ -84,6 +87,9 @@ export default async function (t) {
     uploadBlockReason: () => null, orderedAttachments: () => state.attached.slice(), attachedKey: p => `p:${p}`, notify: noop, flashAttachEntry: noop,
     receipts: new Map(), saveReceipts: noop, messageRow: () => true, ensureMessageRow: noop, markDelivery: noop,
     createComposerWait,
+    // 添付を送る（runUpload）。sendAttachment は手で終わらせる
+    sendAttachment: (o) => new Promise((res, rej) => uploading.push({ o, res, rej })), thumbnailOf: async () => null, whenOnline: async () => {},
+    ATTACH_MAX_BYTES: 1e9, IMAGE_READ_HINT_BYTES: 1e9, formatBytes: String, paintUpload: noop, takeAttachAt: () => null,
     // 中断と再開（web/interrupt.mjs・client.mjs の syncResume / paintInterruptLine）。ここでは中断していない会話だけ
     syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
   });
@@ -166,6 +172,55 @@ export default async function (t) {
   await reply('loadSession', { messages: [], presents: [], draft: { text: '既存の下書き', attached: [] } });
   for (let k = 0; k < 5; k++) await new Promise(setImmediate);
   t.ok('読めたら書けて送れる。失敗の前に書いた字は残る', !prompt.readOnly && $('send').disabled === false && $('composerNote').hidden && prompt.value === '既存の下書き!', prompt.value);
+
+  // ---------------------------------------------------------------- 新しい会話を作っている間に始めた添付（会話ができても消えず、送信を止め、できた会話の本文の位置に入る）
+  const resolved = [], pendingTouched = [], notices = [];
+  let inserted = 0;
+  context.composerEditor = { attachmentKeys: () => new Set(), hasAttachment: () => true, insertAttachment: () => { inserted++; return 'inserted'; },
+    updatePending: (pid) => pendingTouched.push(pid), resolvePending: (pid, path) => resolved.push({ pid, path }) };
+  context.sys = (text) => notices.push(text);
+  context.notify = noop;
+  state.attached = [];
+  prompt.value = '';
+  const makingUp = run('startNew()');
+  t.ok('作り始めた（state.current は null）', state.current === null);
+  const attaching = context.attachFiles([{ name: 'a.png', size: 10, type: 'image/png' }]);
+  t.ok('作っている間に始めた添付は、この欄の送信中として数える', context.uploadsHere().length === 1 && inserted === 1);
+  await reply('newSession', { sessionId: 'up1' });
+  releaseRefresh(); releaseRefresh = null;
+  for (let k = 0; k < 5; k++) await new Promise(setImmediate);
+  const upload = [...context.uploads.values()][0];
+  t.ok('会話ができたら持ち主がその会話になり、送っている途中の判定が途切れない', state.current === 'up1' && upload.sessionId === 'up1' && context.uploadsHere().length === 1 && Boolean(context.uploadBlockReason()));
+  run('syncRunState()');
+  t.ok('会話ができた後も送信ボタンは押せない', $('send').disabled === true);
+  await reply('loadSession', { messages: [], presents: [], draft: { text: '', attached: [] } });
+  await makingUp;
+  const beforeUp = calls.filter(c => c.command === 'sendMessage').length;
+  prompt.value = '添付を待つ字';
+  await run('submit()');
+  t.ok('届くまで送らない', calls.filter(c => c.command === 'sendMessage').length === beforeUp);
+  await new Promise(setImmediate);
+  uploading[0].res({ path: 'C:\\up\\up1.png', kind: 'image' });
+  await attaching;
+  t.ok('届いたら、できた会話の添付になり、札は同じ位置でパスを持つ札に替わる',
+    state.attached.length === 1 && state.attached[0].path === 'C:\\up\\up1.png' && resolved.length === 1 && resolved[0].pid === upload.id && resolved[0].path === 'C:\\up\\up1.png' && context.uploads.size === 0);
+  t.ok('できた会話の下書きに、本文の位置を保った添付として保存される', (() => { const d = calls.filter(c => c.command === 'saveDraft' && c.args.sessionId === 'up1').at(-1)?.args; return d?.attached?.length === 1 && d.text === '添付を待つ字'; })());
+  run('syncRunState()');
+  t.ok('届けば送信ボタンは押せる', $('send').disabled === false);
+
+  // 送っている間に別の会話へ移った: その会話の下書きに積む。保存できなければ札は消さず、本当の理由を出す
+  state.attached = []; state.current = 'up1'; resolved.length = 0; pendingTouched.length = 0; notices.length = 0; uploading.length = 0;
+  const attaching2 = context.attachFiles([{ name: 'b.md', size: 5, type: 'text/markdown' }]);
+  const upload2 = [...context.uploads.values()][0];
+  state.current = 'elsewhere';
+  failSave = 'disk full';
+  await new Promise(setImmediate);
+  uploading[0].res({ path: 'C:\\up\\b.md', kind: 'file' });
+  await attaching2;
+  t.ok('保存できなかったら札を消さず、失敗の理由は「disk full」', context.uploads.has(upload2.id) && upload2.failed === 'disk full' && pendingTouched.includes(upload2.id), String(upload2.failed));
+  failSave = null;
+  context.uploads.clear();
+  state.current = 'existing';
 
   // ---------------------------------------------------------------- 文中の添付（ADR 0060）: 本文の印はそのまま送り、文中に無い添付だけ末尾に足す
   const A = 'C:\\up\\a.png', B = 'C:\\up\\b.md';

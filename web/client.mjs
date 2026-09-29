@@ -2810,6 +2810,7 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
         if (blank.text || blank.attached?.length) persistDraft(result.sessionId, { ...blank, dirty: true }).catch(() => {});
         dropBlankDraft();
       }
+      adoptUploads(result.sessionId);   // 作っている間に始めた添付（会話を開けなかった・別の会話へ移った場合も、できた会話のもの）
       return result.sessionId;
     } catch (e) {
       if (pendingNewSession) pendingRows.delete(pendingNewSession.id);
@@ -4116,9 +4117,21 @@ function pendingUpload(pid) {
   return { name: u.name, size: u.size, state: failed ? 'failed' : 'sending', percent: u.size ? Math.floor((u.sent / u.size) * 100) : 0,
     error: u.failed ?? (u.cancelled ? t('chat.composerAtt.cancelled') : '') };
 }
-/** この会話の、まだ届いていない添付（送信中・失敗）。札を外した（やめた）ものは数えない */
-const uploadsHere = () => [...uploads.values()].filter(u => u.sessionId === (state.current ?? null)
-  && (!u.cancelled || composerEditor.hasAttachment(`i:${u.id}`)));
+/**
+ * この会話の、まだ届いていない添付（送信中・失敗）。札を外した（やめた）ものは数えない。
+ * 新しい会話を作っている間（state.current が null）に始めたものは sessionId が null で、会話ができたら adoptUploads がその id へ付け替える
+ */
+function uploadsHere() {
+  return [...uploads.values()].filter(u => u.sessionId === (state.current ?? null)
+    && (!u.cancelled || composerEditor.hasAttachment(`i:${u.id}`)));
+}
+/**
+ * 新しい会話の欄（sessionId が null）で始めた添付の持ち主を、できた会話 id にする。会話を開く（select の fresh）のと同時に呼ぶので、
+ * 作成中から作成後へ変わる間も「送っている途中の添付がある」判定（uploadsHere・uploadBlockReason）が途切れない
+ */
+function adoptUploads(id) {
+  for (const u of uploads.values()) if (u.sessionId === null) u.sessionId = id;
+}
 /** 送れない理由（送信中・失敗の添付があるとき）。無ければ null */
 function uploadBlockReason() {
   const here = uploadsHere();
@@ -4361,28 +4374,31 @@ async function runUpload(u) {
   u.failed = null; u.cancelled = false; u.sent = 0;
   composerEditor.updatePending(u.id);
   renderAttached();
-  const { file, sessionId } = u;
+  const { file } = u;
   try {
     const isImage = /^image\//.test(file.type);
     const [r, thumb] = await Promise.all([
-      sendAttachment({ cmd, file, sessionId, cancelled: () => u.cancelled, online: whenOnline,
+      sendAttachment({ cmd, file, sessionId: u.sessionId, cancelled: () => u.cancelled, online: whenOnline,
         onProgress: (sent) => { u.sent = sent; paintUpload(u); } }),
       isImage ? thumbnailOf(file).catch(() => null) : null,
     ]);
     if (!r || u.cancelled) { u.cancelled = true; renderAttached(); return; }   // やめた（札は外れている）
     const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: "device", size: file.size, ...(thumb ? { dataUri: thumb } : {}) };
-    uploads.delete(u.id);
-    if (state.current === sessionId) {
+    // 持ち主は届いた時点で読む（新しい会話を作っている間に始めたものは、できた会話の id に付け替わっている: adoptUploads）
+    const owner = u.sessionId;
+    if (state.current === owner) {
+      uploads.delete(u.id);
       state.attached.push(item);
       composerEditor.resolvePending(u.id, r.path);
       renderAttached();
       saveDraft().catch(() => {});
     } else {
-      // 送っている間に別の会話へ移った。その会話の下書きに積む（位置は持たない: 文末に付く）
-      const draft = state.drafts.get(sessionId) ?? { text: "", attached: [] };
-      draft.attached.push(item); state.drafts.set(sessionId, draft);
-      try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch {}
-      await cmd("saveDraft", { sessionId, ...draft });
+      // 送っている間に別の会話へ移った。その会話の下書きに積む（位置は持たない: 文末に付く）。"" は持ち主の会話が無い欄の下書き。
+      // 保存できたら札を消す（できなければ下の catch が本当の理由つきの失敗にする）
+      const key = owner ?? "";
+      const draft = state.drafts.get(key) ?? { text: "", attached: [] };
+      await persistDraft(key, { ...draft, attached: [...(draft.attached ?? []), item], version: 2, dirty: true });
+      uploads.delete(u.id);
       renderAttached();
     }
     // エージェントは画像をパスから自分の道具で読む。大きな画像は画像として読めないことがある（Claude の API は 1 枚 5MB まで）
@@ -5317,7 +5333,11 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     // 作っている間の送信の予約は、別の会話へ移ったら取り消す（字は "" の下書きに残り、作った会話へ移る。startNew）
     if (!fresh && composerWait.queued) composerWait.cancel();
     if (!fresh) saveDraft().catch(() => {});
+    // 新しい会話の欄で始めた添付: できた会話へ付け替える。作っていないのに別の会話へ移るなら、その欄の持ち物として "" に切り離す
+    // （後で作る別の会話に紛れ込まない。届いたら "" の下書きに積む）
+    if (state.current === null && !fresh && !creatingSession) for (const u of uploads.values()) if (u.sessionId === null) u.sessionId = "";
     state.current = id;
+    if (fresh) adoptUploads(id);
     state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
     paintContextStrip();
     try { localStorage.setItem("agent-host-current", id); } catch {}
@@ -5730,6 +5750,9 @@ async function submit() {
     finally { if (queuedSend === ticket) { queuedSend = null; composerWait.unqueue(); } }
     // 取り消した・作れなかった（脇の帯に理由とやり直し）・その間に別の会話へ移ったなら送らない。字は欄に残っている
     if (ticket.cancelled || !created || state.current !== created || state.current === freshSessionId) return;
+    // 待っている間に添付を始めたもの（会話ができたら持ち主がその会話になる）も、届くまで送らない
+    const stillBlocked = uploadBlockReason();
+    if (stillBlocked) { notify(stillBlocked); flashAttachEntry(); return; }
   }
   const sessionId = state.current;
   if (submittingMessages.has(sessionId) || state.busy || state.loadingSession || composerWait.blocksSend() || retiredHere()) return;
