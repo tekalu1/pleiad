@@ -154,8 +154,16 @@ h2 {
   opacity: 0; transform: translateY(.4em);
   transition: opacity .7s var(--ease), transform .7s var(--ease);
 }
-.screen.is-said .leave-line { color: var(--weak); }
-.screen.is-said .leave-end { opacity: 1; transform: none; }
+.screen.is-said .leave-line { color: var(--faint); transition-delay: calc(var(--d0, 0) * 1s); }
+.screen.is-said .leave-end { opacity: 1; transform: none; transition-delay: 1.15s; }
+/* 言い切ったら、行き来していた場面を 1 行ずつ消す（--d は main.js が句ごとに置く） */
+.leave-line .nw { position: relative; }
+.leave-line .nw::after {
+  content: ""; position: absolute; left: -.04em; right: -.04em; top: 50%; height: .07em; border-radius: .035em;
+  background: var(--indigo); transform: scaleX(0); transform-origin: left center;
+  transition: transform .34s var(--ease) calc(var(--d, 0) * 1s);
+}
+.screen.is-said .leave-line .nw::after { transform: none; }
 .stage { position: relative; z-index: 1; grid-column: 2; grid-row: 1; display: flex; align-items: center; min-width: 0; height: 100%; }
 .stage-cam {
   position: relative; width: 100%; aspect-ratio: 1080 / 680; max-height: 100%;
