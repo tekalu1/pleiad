@@ -235,7 +235,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, addedInstructions, hooksRuntime = null }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, addedInstructions, hooksRuntime = null, notes = [] }) {
     const m = MODES[modeFor(mode)];
 
     // **控えはターンの途中から書き足すが、ユーザー発言の時刻は送信の時刻で打つ。**
@@ -245,6 +245,8 @@ export const backend = {
     // その並びは分岐の切り口にそのまま効く（core/conversations.mjs の buildItems）ので、
     // ユーザー発言で切った枝に、まだ走っていないはずの成果物が入り込む。
     const sentAt = Date.now();
+    // 中断の後に Pleiad が添える文（core/interrupt-stops.mjs）。agy は 1 行 1 ターンで入力を分けられないので、本文の前に置く
+    const sent = [...notes, String(prompt ?? "")].join("");
 
     let conversationId = sessionId ?? null;
     // 再開した会話の途中の書き込みでは控えを作らない（--conversation が撥ねられて forget した控えを作り直さない）
@@ -268,7 +270,7 @@ export const backend = {
     let final = null;              // 終わりに書く分（畳んだ後に遅れて届いた出来事を混ぜない）
     let textTimer = null;
     const snapshot = (at) => [
-      { role: "user", text: String(prompt ?? ""), uuid: `${conversationId}:u${sentAt}`, at: new Date(sentAt).toISOString() },
+      { role: "user", text: sent, uuid: `${conversationId}:u${sentAt}`, at: new Date(sentAt).toISOString() },
       // uuid はターンの間変えない（送信の時刻から作る）。変えると控えにも写しの会話（core/conversations.mjs の mergeMessages）にも二重に並ぶ
       ...(text || toolCalls.length ? [{
         role: "assistant", text, uuid: `${conversationId}:a${sentAt}`, at: new Date(at).toISOString(),
@@ -500,7 +502,7 @@ export const backend = {
       if (control) control.handle = { get conversationId() { return conversationId; } };
       control?.onReady?.();
       emit({ type: "activity", state: "thinking" });
-      session.prompt(prompt);
+      session.prompt(sent);
       // 渡せた。再開した会話は id が分かっているので、ユーザー発言をここで書く（新しい会話は init で）
       delivered = true;
       save();

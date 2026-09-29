@@ -278,7 +278,7 @@ export const backend = {
     emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
   },
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, oauthToken, hostSessionId, shellAppends = [] }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, oauthToken, hostSessionId, shellAppends = [], notes = [] }) {
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
     if (String(prompt ?? "").trim().startsWith("undelivered")) {
       const error = "fake: failed before the prompt was delivered";
@@ -298,7 +298,8 @@ export const backend = {
 
     // 入力欄の `!` の結果（Claude の shouldQuery: false の行と同じく、返答を起こさずに履歴へ積む）
     for (const text of shellAppends) push(s, { role: "user", text });
-    push(s, { role: "user", text: String(prompt ?? "") });
+    // 中断の後に Pleiad が添える文は、Claude の別の text ブロックをつないだ履歴と同じく、発言の前に置く
+    push(s, { role: "user", text: [...notes, String(prompt ?? "")].join("") });
     // silent: は渡った合図を出さないバックエンド（antigravity）の代わり。server は返答の中身で渡ったとみなす
     if (!String(prompt ?? "").trim().startsWith("silent:")) onPromptDelivered?.();
     emit({ type: "activity", state: "thinking" });

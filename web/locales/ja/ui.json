@@ -1204,6 +1204,7 @@
     "sys": {
       "agentChanged": "エージェントを {{agent}} に変更しました。次の送信から会話を引き継ぎます。",
       "taskResumed": "Pleiad タスクの結果を受け取って再開しました",
+      "interruptionNote": "中断で止めたものをエージェントに伝えました",
       "failed": "失敗: {{error}}",
       "unknownReason": "理由不明",
       "contextRefreshed": "指示・Skills が変わったので読み込み直しました",

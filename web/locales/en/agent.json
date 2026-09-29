@@ -160,6 +160,34 @@
     "exhausted": "No delegation target is usable (kind {{kind}}, difficulty {{difficulty}}, deferral threshold {{avoidPercent}}%). Candidate and account reasons:\n{{skipped}}\nRetry with an explicit backend, or ask the user.",
     "modelUnavailable": "The model {{model}} ({{backend}}) chosen by routing is not available. Retry with an explicit backend."
   },
+  "stops": {
+    "heading": "[Pleiad interruption record]\nWhen the previous turn stopped ({{reason}}), Pleiad stopped the following. This is a notice from Pleiad, not a message from the user.",
+    "reason": {
+      "user": "the user stopped it",
+      "update": "stopped to update Pleiad",
+      "quit": "stopped to quit Pleiad",
+      "hostAway": "the user's screen stayed away until the grace period ran out",
+      "restart": "Pleiad crashed or was force-quit",
+      "unknown": "reason unknown"
+    },
+    "cancelled": "Delegated tasks that were cancelled (Pleiad will not resume them, and no completion notice will arrive):\n{{items}}",
+    "unread": "Delegated tasks that had finished but were stopped before their completion notice reached you (read the results with ply_task_status):\n{{items}}",
+    "restarted": "Delegated tasks stopped by the Pleiad restart (not resumed; check how far they got with ply_task_status):\n{{items}}",
+    "taskItem": "- {{taskId}} \"{{title}}\" (state when stopped: {{status}})",
+    "unreadItem": "- {{taskId}} \"{{title}}\" ({{status}})",
+    "background": "Background work that stopped (no longer running; no results will arrive):\n{{items}}",
+    "backgroundItem": "- {{id}} ({{kind}}): {{label}}",
+    "kind": {
+      "shell": "command",
+      "agent": "subagent",
+      "terminal": "terminal",
+      "other": "work"
+    },
+    "approvals": "Pending approvals that were treated as denied (not run):\n{{items}}",
+    "approvalItem": "- {{tool}}: {{target}}",
+    "dropped": "{{count}} more were left out.",
+    "footer": "Do not simply redo what was stopped. Check the current state (files, command output, ply_task_status) first, then decide whether to delegate again or rerun commands."
+  },
   "guide": {
     "heading": "{{name}} (instructions added by Pleiad):",
     "names": {

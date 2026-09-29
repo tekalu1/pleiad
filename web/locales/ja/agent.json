@@ -160,6 +160,34 @@
     "exhausted": "使える委譲先がありません（種類 {{kind}}、難しさ {{difficulty}}、後回しの線 {{avoidPercent}}%）。候補とアカウントごとの理由:\n{{skipped}}\nbackend を指定して固定で頼み直すか、ユーザーに確認してください。",
     "modelUnavailable": "振り分けで選んだモデル {{model}}（{{backend}}）を使えません。backend を指定して頼み直してください。"
   },
+  "stops": {
+    "heading": "[Pleiad 中断の記録]\n前のターンが止まったとき（{{reason}}）、Pleiad は次のものを止めました。これは利用者の発言ではなく、Pleiad からのお知らせです。",
+    "reason": {
+      "user": "利用者が中断した",
+      "update": "Pleiad を更新するために中断した",
+      "quit": "Pleiad を終了するために中断した",
+      "hostAway": "利用者の画面が離れたまま時間切れになった",
+      "restart": "Pleiad が落ちた、または強制終了された",
+      "unknown": "理由は不明"
+    },
+    "cancelled": "取り消した委譲タスク（Pleiad からは再開しません。完了通知も届きません）:\n{{items}}",
+    "unread": "終わっていたが、完了通知を渡す前に止めた委譲タスク（結果は ply_task_status で読めます）:\n{{items}}",
+    "restarted": "Pleiad の再起動で止まった委譲タスク（再開しません。止まるまでの様子は ply_task_status で確かめられます）:\n{{items}}",
+    "taskItem": "- {{taskId}}「{{title}}」（止めた時点: {{status}}）",
+    "unreadItem": "- {{taskId}}「{{title}}」（{{status}}）",
+    "background": "止まったバックグラウンドの作業（もう動いていません。結果も届きません）:\n{{items}}",
+    "backgroundItem": "- {{id}}（{{kind}}）: {{label}}",
+    "kind": {
+      "shell": "コマンド",
+      "agent": "サブエージェント",
+      "terminal": "端末",
+      "other": "作業"
+    },
+    "approvals": "却下扱いにした承認待ち（実行されていません）:\n{{items}}",
+    "approvalItem": "- {{tool}}: {{target}}",
+    "dropped": "ほかに {{count}} 件ありますが、省きました。",
+    "footer": "止めたものを、そのままやり直さないでください。ファイル・コマンドの出力・ply_task_status で今の状態を確かめてから、委譲し直すか、コマンドを走らせ直すかを決めてください。"
+  },
   "guide": {
     "heading": "{{name}}（Pleiad が追加した指示）:",
     "names": {
