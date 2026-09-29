@@ -28,7 +28,7 @@ export default async function (t) {
   const context = vm.createContext({
     // 本文の描き直しは 1 コマに 1 回（client.mjs の flushStream）。このテストは本文の raw だけを見る
     requestAnimationFrame: () => 1, cancelAnimationFrame: noop, streamFrame: 0, streamTarget: null, stoppingHere: () => false,
-    setTimeout: () => 1, clearTimeout: noop, heightPreparationVersion: 0, heightPreparationTimer: null, prepareHistoryHeights: noop,
+    setTimeout: () => 1, clearTimeout: noop, heightSettler: null, prepareHistoryHeights: noop,
     completionNotifications, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop,
     // ヘッダーの使用量のチップ（web/header-usage.mjs）。ターンの終わりで取り直す。このテストの対象外
     headerUsage: { turnEnded: noop },

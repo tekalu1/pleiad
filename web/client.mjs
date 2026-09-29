@@ -52,6 +52,7 @@ import { createSide, backendLogo } from "./side.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { retainPlan, syncRequest, joinReply } from "./history-sync.mjs";
+import { createHeightSettler } from "./history-heights.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
 import { el, svgEl, icon, relTime, randomId, chevron } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
@@ -491,20 +492,14 @@ function markedHead(text, mark) {
   ];
 }
 
-let heightPreparationVersion = 0, heightPreparationTimer = null, lastHistoryInput = -Infinity;
-for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) {
-  log.addEventListener(type, () => { lastHistoryInput = performance.now(); }, { passive: true });
-}
-
 /**
- * 実寸を確定するときの基準の発言。#log の上端より少し下に下端がある最初の行を選ぶ。
+ * 見ている位置の基準の発言（実寸の確定・再接続の読み直しで位置を保つのに使う）。#log の上端より少し下に下端がある最初の行を選ぶ。
  * 点で当てると、列（.thread の max-width）より #log が広い窓で列の外に落ちるので、行の並びから探す。
- * 行は上から順に並んでいるので二分探索にし、レイアウトを読むのは log2(件数) 回で済ませる
+ * 行は上から順に並んでいるので二分探索にし、レイアウトを読むのは log2(件数) 回で済ませる。rows は上から並んだ全部の発言の行（省くと今の #thread から集める）
  */
-function historyAnchor() {
+function historyAnchor(rows = thread.querySelectorAll(':scope > .mw')) {
   const box = log.getBoundingClientRect();
   const line = box.top + Math.min(80, box.height / 3);
-  const rows = thread.querySelectorAll(':scope > .mw');
   let lo = 0, hi = rows.length;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
@@ -513,41 +508,14 @@ function historyAnchor() {
   return rows[lo] ?? null;
 }
 
+/**
+ * 履歴の発言の実寸を、見えている所の近くだけ確定する（web/history-heights.mjs）。
+ * 開いた直後は末尾の近く、その後は見えている所に近づいた行から。遠くの行は仮の高さのまま
+ */
+let heightSettler = null;
 function prepareHistoryHeights() {
-  const version = ++heightPreparationVersion;
-  if (heightPreparationTimer !== null) clearTimeout(heightPreparationTimer);
-  const rows = [...thread.querySelectorAll(':scope > .mw:not(.activity):not(.height-ready)')].reverse();
-  let index = 0;
-  const next = () => {
-    heightPreparationTimer = null;
-    if (version !== heightPreparationVersion) return;
-    const quietFor = performance.now() - lastHistoryInput;
-    if (quietFor < 350) {
-      heightPreparationTimer = setTimeout(next, 350 - quietFor);
-      return;
-    }
-    // 末尾にいたら確定の後も末尾に合わせる（scrollToEnd の見張りは途中で打ち切るので、それに頼らない）。
-    // 読み返しているなら、見えている発言の位置を保つ
-    const pinEnd = atBottom();
-    const anchor = pinEnd ? null : historyAnchor();
-    const anchorTop = anchor?.getBoundingClientRect().top;
-    let last = null;
-    for (let n = 0; n < 16 && index < rows.length; n++) {
-      const row = rows[index++];
-      if (!row.isConnected) continue;
-      row.classList.add('height-ready');
-      last = row;
-    }
-    if (last) {
-      void last.offsetHeight;
-      if (pinEnd) log.scrollTop = log.scrollHeight;
-      else if (anchor?.isConnected) log.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
-    }
-    if (index < rows.length) heightPreparationTimer = setTimeout(next, 0);
-  };
-  if (rows.length) requestAnimationFrame(() => {
-    if (version === heightPreparationVersion) heightPreparationTimer = setTimeout(next, 0);
-  });
+  heightSettler ??= createHeightSettler({ log, thread, atBottom, anchorRow: historyAnchor });
+  heightSettler.prepare();
 }
 
 /** 走っているターンの描きかけ（稼働表示・本文・思考・発言の入れ物）を捨てる。走っている分は履歴の再生で描き直す */
@@ -562,9 +530,7 @@ function resetLiveTurn() {
 }
 
 function clearThread() {
-  heightPreparationVersion++;
-  if (heightPreparationTimer !== null) clearTimeout(heightPreparationTimer);
-  heightPreparationTimer = null;
+  heightSettler?.cancel();
   resetLiveTurn();
   thread.replaceChildren(spine());
   thread.classList.remove("branched");
