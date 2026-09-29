@@ -2,6 +2,9 @@
   "about": "tests/lint-i18n.mjs の許可リスト。sameAsJa: ja と同じ値のままでよいキー（固有名など）を「名前空間:キー」で書く",
   "sameAsJa": [
     "server:codex.subagent.collab",
+    "ui:changeLog.aiMark",
+    "ui:changeLog.by.ai",
+    "ui:changeLog.by.ply",
     "ui:chat.shell.exit",
     "ui:hooks.row.matcher",
     "ui:hooks.scope.skill",

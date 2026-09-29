@@ -277,6 +277,8 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .fam-rows{display:flex;flex-direction:column;gap:2px;padding:0 4px 4px 16px}
 .row-meta{display:flex;align-items:center;gap:6px;margin-top:2px;font-size:var(--fs-xs);color:var(--ink-weak);min-width:0}
 .row-when{font-family:var(--font-mono);flex:none}
+/* 状態を最後に変えたのが AI のときだけ付く小さな印（理由は title）。誰がいつ変えたかは行のメニューの「変更の記録」 */
+.row-ai{flex:none;padding:0 5px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-weak);font-size:10px;line-height:15px;font-weight:600;letter-spacing:0}
 .pending-row .row-t,.pending-row .row-cwd{color:var(--ink-weak)}
 .pending-delete{opacity:.55}
 .pending-status>:not(.pending-label){opacity:.55}
@@ -610,6 +612,33 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
   .att-list{left:0!important;right:0;top:auto!important;bottom:0;width:100%;max-width:none;max-height:85dvh;border-radius:var(--r-l) var(--r-l) 0 0}
   .att-list-handle{display:block;width:32px;height:4px;margin:0 auto 14px;background:var(--surface-3);border-radius:var(--r-pill)}
 }
+/* 変更の記録の面（web/change-log.mjs）。作りは添付の一覧と同じ（白い面・角丸・影・背後は覆い）。700px 以下は下からのシート */
+.cl-dialog{position:fixed;margin:auto;padding:0;border:0;background:var(--surface-paper);color:var(--ink);border-radius:var(--r-m);
+  width:min(560px,calc(100vw - 24px));max-height:min(70vh,640px);overflow:auto;box-shadow:0 8px 32px var(--shadow)}
+.cl-dialog::backdrop{background:var(--surface-veil)}
+.cl-in{padding:16px}
+.cl-handle{display:none}
+.cl-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.cl-titles{min-width:0}
+.cl-head h3{margin:0;font-size:var(--fs-l);font-weight:600}
+.cl-sub{display:block;margin-top:2px;font-size:var(--fs-xs);color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cl-close{font-size:var(--fs-s);padding:3px 10px;flex:none}
+.cl-empty{margin:16px 0 4px;font-size:var(--fs-s);color:var(--ink-weak)}
+.cl-row{padding:10px 0;min-width:0}
+.cl-row+.cl-row{margin-top:2px}
+.cl-line{display:flex;align-items:baseline;gap:10px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.cl-when{font-variant-numeric:tabular-nums}
+.cl-field{font-size:var(--fs-s);font-weight:600;color:var(--ink)}
+.cl-by{margin-left:auto}
+.cl-row.ai .cl-by{color:var(--ink);font-weight:600}
+.cl-change{display:flex;align-items:baseline;gap:8px;margin-top:3px;font-size:var(--fs-s);min-width:0;overflow-wrap:anywhere}
+.cl-from{color:var(--ink-weak)}
+.cl-arrow{color:var(--ink-weak);flex:none}
+.cl-reason{margin-top:2px;font-size:var(--fs-xs);color:var(--ink-weak)}
+@media (max-width:700px){
+  .cl-dialog{left:0;right:0;top:auto;bottom:0;width:100%;max-width:none;max-height:85dvh;border-radius:var(--r-l) var(--r-l) 0 0}
+  .cl-handle{display:block;width:32px;height:4px;margin:0 auto 14px;background:var(--surface-3);border-radius:var(--r-pill)}
+}
 .message-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:var(--sp-1);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
 .message-actions .btn{font-size:var(--fs-xs);padding:3px 10px}
 .m.ai > .message-actions{position:absolute;right:82px;top:-1px}
@@ -625,6 +654,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 出来事の一行（送信の失敗・状態やタイトルの変更）。筋の節は持たない */
 .m.sys{margin-bottom:8px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .m.sys b{color:var(--ink);font-weight:500}
+.m.sys.turn-failed b{color:var(--ink-strong);font-weight:700}
 .m.sys code{font-size:var(--fs-xs)}
 /* 「■ 中断しました · 14:32」。保存された中断から描く一行（client.mjs の paintInterruptLine） */
 .m.sys.interrupted{display:flex;align-items:center;gap:6px}
@@ -1241,7 +1271,8 @@ main.dropping #log{background:var(--surface-1)}
 .bg-row:hover{background:var(--surface-1)}
 .bg-row[aria-current="true"]{background:var(--surface-paper)}
 .bg-nomark{width:14px;height:14px}
-.bg-row-title{font-size:var(--fs-s);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bg-row-title{font-size:var(--fs-s);min-width:0;display:flex;align-items:center;gap:6px}
+.bg-row-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bg-row-time{font-size:var(--fs-xs);color:var(--ink-weak)}
 .bg-row-meta{grid-column:2/4;display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--ink-weak);min-width:0;overflow:hidden;white-space:nowrap}
 .bg-row-meta>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
@@ -1258,12 +1289,12 @@ main.dropping #log{background:var(--surface-1)}
 .bg-dt{flex:1;min-width:0}
 .bg-dt-title{margin:0;font-size:var(--fs-m);font-weight:600;display:flex;align-items:center;gap:8px;min-width:0}
 .bg-dt-title>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* 切るのは吹き出しの中の字の包み。吹き出しそのものを切ると、overflow が padding の内側までしか切らず 5 行目が下の余白にのぞく */
-.bg-request:not(.expanded)>.bg-request-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
 .bg-request-toggle{display:block;border:0;background:none;color:var(--ink-blue);font:inherit;font-size:var(--fs-xs);padding:3px 0;cursor:pointer}
 .bg-request-toggle[hidden]{display:none}
 .bg-dt-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:var(--fs-xs);color:var(--ink-weak);margin-top:3px}
 .bg-dt-actions{display:flex;align-items:center;gap:6px;flex:none}
+.bg-open{color:var(--ink-weak)}
+.bg-open:hover{color:var(--ink)}
 #workBody{flex:1;min-height:0;overflow-y:auto;padding:4px 18px 18px 8px;display:flex;flex-direction:column;gap:8px}
 #workBody>*{flex:0 0 auto}
 #workBody>.work-head,#workBody>pre,#workBody>.work-location{margin-left:14px}
@@ -1272,14 +1303,16 @@ main.dropping #log{background:var(--surface-1)}
 .bg-thread .spine line{stroke:var(--line);stroke-width:var(--hair)}
 /* ターンが終わり、待てない裏の作業だけが残った末尾の行は印を置かない（§6.1） */
 .activity-tip:has(.activity-none){display:none}
-/* 会話の中の委譲のカードから、その子をバックグラウンドのダイアログで開く */
-.tc-open{margin-left:auto;font-size:var(--fs-xs);padding:0 8px;color:var(--ink-blue)}
 /* 委譲先を自動で選んだカード（docs/design-system.md「委譲カード」）。「自動」は「既定」の札と同じ弱い字。
    1 行の理由は見出しの残りの幅に入れ、入らなければ … で切る（全文は title と開いた内訳に） */
-.tc-auto,.bg-auto{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
-.bg-row-meta>.bg-auto{flex:none;overflow:visible}
-.tc-route{min-width:0;display:flex;align-items:center;gap:6px;color:var(--ink-weak);font-size:var(--fs-xs);padding-left:var(--tc-indent)}
-.tc-route-text{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-auto{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
+/* 使える委譲先が無かったカードだけ、見出しの下の 2 行目に行き先の行を出す（承認済み 2026-09-27）。成功のカードは開いた中の「委譲先」 */
+.tc-route,.rt-route{min-width:0;display:flex;align-items:center;gap:6px;color:var(--ink-weak);font-size:var(--fs-xs)}
+.tc-route{padding-left:var(--tc-indent)}
+.tc-route-text,.rt-route-text{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-where{margin:0 0 10px;font-size:var(--fs-s)}
+.rt-where .rt-route{color:var(--ink);font-size:var(--fs-s);margin-top:1px}
+.rt-where .rt-route-text{white-space:normal;overflow-wrap:anywhere}
 /* 開いた委譲カードの先頭の「依頼」（4 行で切る。バックグラウンドの詳細と同じ）と、奥に畳んだ入力・出力の JSON */
 .rt-request{margin:4px 0 10px;font-size:var(--fs-s);color:var(--ink)}
 .rt-request-label{font-size:var(--fs-xs);color:var(--ink-weak)}
@@ -1435,6 +1468,10 @@ main.dropping #log{background:var(--surface-1)}
 .outbox-status-failed { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .outbox-status-failed b { color: var(--ink-strong); }
 .outbox-status-failed button { font-size: 12px; padding: 1px 10px; }
+/* 委譲した子の詳細: 途中送信できずに待機している追加の指示（ADR 0067）。一段明るい面・節なしで末尾に置き、「待機中」の字の代わりに発言者の行に時計の印を出す */
+.m.user.queued>.body { background: var(--surface-1); }
+.who-queued { display: inline-grid; place-items: center; color: var(--ink-weak); margin-left: -4px; }
+.who-queued svg.i { width: 12px; height: 12px; }
 
 /* ==================== 狭い画面・タッチ（docs/remote.md §8.4） ====================
    plyRemote の有無ではなく、画面の幅（700px 以下）と入力の種類（hover:none / pointer:coarse）で効かせる。ブラウザー版の狭い窓にも効く。
