@@ -182,7 +182,8 @@
         "title": "Open links in",
         "inapp": "Built-in browser",
         "external": "Default browser",
-        "note": "The built-in browser opens beside the conversation, and sign-ins stay in this app. Its storage is separate from Pleiad itself."
+        "note": "The built-in browser opens beside the conversation, and sign-ins stay in this app. Its storage is separate from Pleiad itself.",
+        "shortcuts": "{{key}}+click and middle click always open in the default browser. Right-click to choose either."
       },
       "saveFailed": "Couldn't save: {{error}}",
       "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" },
@@ -1721,6 +1722,14 @@
       "openOnDeviceSub": "This device's browser",
       "openOnPc": "View in the PC's browser",
       "pcOnly": "This URL opens only on the host PC.",
+      "openInApp": "Open in built-in browser",
+      "chooseDest": "Choose where to open",
+      "copy": "Copy link",
+      "copied": "Link copied",
+      "copyFailed": "Couldn't copy the link",
+      "clickHint": "Click",
+      "ctrlClickHint": "{{key}}+click",
+      "ctrlHint": "· {{key}} for default",
       "close": "Close"
     },
     "present": {

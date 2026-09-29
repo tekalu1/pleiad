@@ -5,6 +5,7 @@ import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
 import { configureLinkOpen } from './link-open.mjs';
+import { setupLinkMenu } from './link-menu.mjs';
 import { download, notify, copyPathText } from './file-actions.mjs';
 import { paintUserBody, userTools, attachmentImageSrc } from './user-message.mjs';
 import { watchHostOnlyLinks } from './host-only-links.mjs';
@@ -26,7 +27,7 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
-import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints } from "./render.mjs";
+import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, plainTextHtml } from "./render.mjs";
 import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
 import { setupComposerControls, resolvedModel, folderBrowser } from "./composer-controls.mjs";
@@ -285,11 +286,17 @@ function compactionBoundary(entry) {
   return m;
 }
 function paintCompactions() {
-  for (const old of thread.querySelectorAll('.mw[data-compaction-id]')) old.remove();
+  // 作り直しても、開いていた「要約を表示」は開いたままにする
+  const open = new Set();
+  for (const old of thread.querySelectorAll('.mw[data-compaction-id]')) {
+    if (old.querySelector('details')?.open) open.add(old.dataset.compactionId);
+    old.remove();
+  }
   for (const entry of state.compactions) {
     if (!['complete', 'failed'].includes(entry.phase)) continue;
     const row = append(compactionBoundary(entry), `compaction:${entry.id}`);
     row.classList.add('compaction-boundary'); row.dataset.compactionId = entry.id;
+    if (open.has(entry.id)) { const details = row.querySelector('details'); if (details) details.open = true; }
     const after = [...thread.querySelectorAll('.mw:not([data-compaction-id])')]
       .find(message => {
         const at = message.querySelector('.m[data-at]')?.dataset.at;
@@ -396,9 +403,12 @@ function scrollToEnd() {
   requestAnimationFrame(tick);
 }
 
-/** 筋の末尾に置く。稼働表示（走っている間だけある）は常に一番下に残す */
+/**
+ * 筋の末尾に置く。稼働表示（走っている間だけある）は常に一番下に残す。
+ * 稼働表示の行は activity.el が持っている。1 行ごとに筋の子孫を探すと、履歴を描く間が件数の 2 乗になる
+ */
 function place(w) {
-  const act = thread.querySelector(".mw.activity");
+  const act = activity.el?.isConnected ? activity.el.closest(".mw") : null;
   if (act && !w.classList.contains("activity")) act.before(w);
   else thread.append(w);
 }
@@ -530,6 +540,7 @@ function clearThread() {
   if (heightPreparationTimer !== null) clearTimeout(heightPreparationTimer);
   heightPreparationTimer = null;
   activity.hide();
+  cancelStream();
   thread.replaceChildren(spine());
   thread.classList.remove("branched");
   state.streamEl = null;
@@ -961,7 +972,7 @@ function openTurnEl() {
 
 function closeTurnEl() {
   closeThink();
-  state.streamEl = null;
+  endStream();
   state.turnEl = null;
   state.turnClosed = false;
 }
@@ -1404,10 +1415,44 @@ function thinkFromText(text) {
 // ---------------------------------------------------------------- ターンの流れ
 // core が正規化して送ってくる（プロトコル v3）。エージェントごとの差は core で吸収済み。
 
+// 本文の描き直しは 1 コマに 1 回。デルタは文字を貯めるだけにする（正本は本文の要素の dataset.raw）。
+// デルタごとに返答の全体を Markdown から作り直し、会話全体のレイアウトを強制すると、スマホの CPU では
+// デルタの間隔に追いつかず、数秒〜十数秒コマが出なかった（issue #37）。
+// 流れが終わる所（text.end・ツール・thinking・発言を閉じる・中断・会話の切り替え）では、貯めた分を同期で描き切る（endStream・closeTurnEl）。
+let streamFrame = 0, streamTarget = null;
+
+/** 貯めた分を今描く。末尾を見ていたときだけ末尾へ追う（読み返している人を引き戻さない） */
+function flushStream() {
+  if (streamFrame) cancelAnimationFrame(streamFrame);
+  streamFrame = 0;
+  const target = streamTarget;
+  streamTarget = null;
+  if (!target) return;
+  const stick = target.isConnected && atBottom();
+  target.innerHTML = renderAssistantMarkdown(target.dataset.raw);
+  if (!target.isConnected) return;
+  relayoutBranches();
+  if (stick) log.scrollTop = log.scrollHeight;
+}
+
+/** 筋ごと捨てるとき（会話の切り替え）。貯めた分は捨てる本文の要素の中にあり、別の会話には描かない */
+function cancelStream() {
+  if (streamFrame) cancelAnimationFrame(streamFrame);
+  streamFrame = 0;
+  streamTarget = null;
+}
+
+/** 追記中の本文を終える。貯めた分を描き切ってから、次の本文・ツール・発言に移る */
+function endStream() {
+  flushStream();
+  state.streamEl = null;
+}
+
 function appendText(text) {
   closeThink();
-  activity.show(ACTIVITY_LABEL.writing);
-  const stick = atBottom();
+  // 稼働表示は文言が変わったときだけ更新する（show は行の置き直し・筋の貼り直し・作業の入口の更新まで行う）
+  const label = stoppingHere() ? ACTIVITY_LABEL.stopping : ACTIVITY_LABEL.writing;
+  if (!activity.el?.isConnected || activity.text !== label) activity.show(ACTIVITY_LABEL.writing);
   if (!state.streamEl) {
     // 閉じた発言の後は streamEl がリセットされるため、本文を作る前に開く。
     const turn = openTurnEl();
@@ -1416,8 +1461,8 @@ function appendText(text) {
     turn.append(state.streamEl);
   }
   state.streamEl.dataset.raw += text;
-  state.streamEl.innerHTML = renderAssistantMarkdown(state.streamEl.dataset.raw);
-  if (stick) log.scrollTop = log.scrollHeight;
+  streamTarget = state.streamEl;
+  streamFrame ||= requestAnimationFrame(flushStream);
 }
 
 const ACTIVITY_LABEL = {
@@ -1652,10 +1697,10 @@ function onEvent(ev, replay = false) {
       const userRow = row.querySelector('.m.user');
       if (userRow?.querySelector(':scope > .body')) paintUser(userRow, ev.text, userRow.attached ?? []);
       if (ev.at) { row.querySelector('.m').dataset.at = ev.at; row.querySelector('.who .when').textContent = hhmm(ev.at); }
-      for (const boundary of thread.querySelectorAll('.mw[data-compaction-id]')) {
-        const entry = state.compactions.find(item => item.id === boundary.dataset.compactionId);
-        if (entry && ev.at && entry.at < Date.parse(ev.at)) row.before(boundary);
-      }
+      // 放置中の圧縮で末尾に付いた区切りは、この発言の前へ置き直す（at で並べ直す）。
+      // 区切りがすべてこの発言より前にあるときは作り直さない。古い区切りを最新の発言の前へ動かしていた不具合の再発を防ぐ
+      const rows = [...thread.children];
+      if ([...thread.querySelectorAll('.mw[data-compaction-id]')].some(boundary => rows.indexOf(boundary) > rows.indexOf(row))) paintCompactions();
       // pending = 受理はしたが、まだエージェントに渡っていない（userMessage.delivered を待つ）。
       // 配達の合図が先に来ていた分（速いバックエンド）はここで消化する
       const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);
@@ -1707,13 +1752,13 @@ function onEvent(ev, replay = false) {
       const m = openTurnEl();
       if (ev.uuid) setUuid(m, ev.uuid);
       closeThink();
-      state.streamEl = null;
+      endStream();
       state.turnClosed = true;
       return;
     }
 
     case "thinking.start":
-      state.streamEl = null;
+      endStream();
       state.thinkTokens = 0;
       activity.show(ACTIVITY_LABEL.thinking);
       return;
@@ -1733,7 +1778,7 @@ function onEvent(ev, replay = false) {
 
     case "tool.start": {
       if (ev.id && state.toolCards.has(ev.id)) return state.toolCards.get(ev.id);
-      state.streamEl = null;
+      endStream();
       const stick = atBottom();
       const card = renderToolCall(ev.name, ev.input, { id: ev.id });
       linkDelegateCard(card, ev.input);
@@ -3560,7 +3605,8 @@ function delegateRequest(card) {
   const task = cardJson(card, '.tc-input')?.task;
   if (typeof task !== 'string' || !task.trim()) return null;
   const box = el('div', 'rt-request');
-  const text = el('div', 'rt-request-text', task.trim());
+  const text = el('div', 'rt-request-text');
+  text.innerHTML = plainTextHtml(task.trim(), { paths: false });   // 字は書いたとおり。URL だけリンクにする
   box.append(el('div', 'rt-request-label', t('dialog.work.request')), text);
   const toggle = el('button', 'bg-request-toggle', t('dialog.work.showFull'));
   toggle.type = 'button'; toggle.hidden = true;
@@ -4073,6 +4119,10 @@ const filePreview = setupFilePreview({
 const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf });
 // 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
 configureLinkOpen({ getPrefs: () => state.prefs, chooseRemote: (url, openHere) => chooseRemote({ url, openHere }) });
+// 文中の URL・名前付きのリンクの、行き先の一行と右クリックのメニュー（web/link-menu.mjs）
+setupLinkMenu({ showMenu: (x, y, items, title) => showMenu(x, y, items, title), getPrefs: () => state.prefs,
+  screen: () => ({ hostScreen: state.osActions === true, pcBrowser: state.hostCaps?.pcBrowser === true }),
+  openOnPc: url => remoteBrowser.open({ url }) });
 configurePreviewConfirmation({ getPrefs: () => state.prefs, openSettings: () => {
   onboarding.open('browser');
   const heading = $('browserAllowedSites'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' });

@@ -181,7 +181,8 @@
         "title": "リンクの開き先",
         "inapp": "内蔵ブラウザー",
         "external": "既定のブラウザー",
-        "note": "内蔵ブラウザーは会話の右に開き、ログインはこのアプリの中に残ります。Pleiad 本体の保存領域とは分けています。"
+        "note": "内蔵ブラウザーは会話の右に開き、ログインはこのアプリの中に残ります。Pleiad 本体の保存領域とは分けています。",
+        "shortcuts": "{{key}}+クリックと中クリックは、いつも既定のブラウザーで開きます。右クリックでどちらでも選べます。"
       },
       "saveFailed": "保存できませんでした: {{error}}",
       "agentOperation": { "title": "エージェントの操作", "bundled": "agent-browser {{version}} · 同梱" },
@@ -1672,6 +1673,14 @@
       "openOnDeviceSub": "この端末のブラウザー",
       "openOnPc": "PC のブラウザーで見る",
       "pcOnly": "この URL は PC からだけ開けます。",
+      "openInApp": "内蔵ブラウザーで開く",
+      "chooseDest": "開き先を選ぶ",
+      "copy": "リンクをコピー",
+      "copied": "リンクをコピーしました",
+      "copyFailed": "コピーできませんでした",
+      "clickHint": "クリック",
+      "ctrlClickHint": "{{key}}+クリック",
+      "ctrlHint": "· {{key}} で既定",
       "close": "閉じる"
     },
     "present": {

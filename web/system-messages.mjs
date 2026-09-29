@@ -3,6 +3,7 @@
 // 発言者の見出し・筋の節・操作（分岐・入力欄に写す）は client.mjs が付ける。
 import { el, svgEl } from "./dom.mjs";
 import { t } from "./i18n.mjs";
+import { plainTextHtml } from "./render.mjs";
 
 // 流れている出力の末尾の改行は行に数えない
 const lineCount = (s) => String(s ?? "").replace(/\n$/, "").split("\n").length;
@@ -101,7 +102,10 @@ export function sysFold(label, body, at = "") {
   const s = el("summary");
   s.append(el("span", null, label));
   if (at) s.append(el("span", "t", at));
-  d.append(s, el("div", "sys-body", body));
+  // 字は書いたとおり。URL だけリンクにする（パスは字のまま）
+  const text = el("div", "sys-body");
+  text.innerHTML = plainTextHtml(body, { paths: false });
+  d.append(s, text);
   m.append(d);
   return m;
 }

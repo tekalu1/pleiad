@@ -22,6 +22,8 @@ const cases = [
   await import('./unit/file-preview-tree.mjs'),
   await import('./unit/file-access.mjs'),
   await import('./unit/preview-links.mjs'),
+  // 文中の URL のリンク: 範囲の判定（ASCII の字まで）・リンクにする場所としない場所・行き先の一行と右クリックのメニューの項目
+  await import('./unit/url-links.mjs'),
   // パスの自動リンク・画像の所在・ファイルの操作メニュー・OS で開く口（OS の窓は開かない）
   await import('./unit/file-actions.mjs'),
   // 右パネルの枠（web/side-panel.mjs）: モードごとの部品・渡さない部品は隠す・可視化の ⋯
@@ -130,6 +132,8 @@ const cases = [
   await import("./unit/connection-status.mjs"),
   // 新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る（client.mjs を vm で流す）
   await import("./unit/composer-new-session.mjs"),
+  // 圧縮の区切りは発言を送っても動かない・放置中の圧縮の区切りは次の発言の前に置く（client.mjs の userMessage・paintCompactions）
+  await import("./unit/compaction-boundary-position.mjs"),
   await import("./unit/server-groups.mjs"),
   await import("./unit/audit-self.mjs"),
   await import("./unit/markdown-xss.mjs"),
@@ -164,6 +168,10 @@ const cases = [
   await import("./unit/session-stream.mjs"),
   // 長い履歴の実寸を確定するときのスクロール: 末尾にいれば末尾に、読み返し中なら位置を保つ（列より広い窓でも）
   await import("./unit/history-heights.mjs"),
+  // 履歴を描く間、1 行ごとに筋を探し回らない（稼働表示の行は activity.el。issue #37）
+  await import("./unit/place-scan.mjs"),
+  // 返答の本文は 1 コマに 1 回だけ描く・流れの終わりでは描き切る・会話を切り替えたら別の会話へ描かない
+  await import("./unit/stream-frames.mjs"),
   await import("./unit/work-attribution.mjs"),
   await import('./unit/work-status.mjs'),
   await import('./unit/background-labels.mjs'),

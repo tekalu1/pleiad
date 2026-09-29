@@ -1,6 +1,7 @@
 import { withoutVisualizeReferences } from './visualize-reference.mjs';
 import { fileReference, looksLikePath, findWindowsPaths, baseName, dirName, WINDOWS_PATH_SOURCE } from './file-reference.mjs';
 import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs';
+import { URL_SOURCE, bareUrl, wholeUrl } from './url-detect.mjs';
 // md 描画と present カードの描画。外部ライブラリを足さない方針なので自前で持つ（設計メモ §11）。
 //
 // 大前提: 入力（モデル出力・ユーザー入力・読み込んだファイル）は一切信用しない。
@@ -173,6 +174,7 @@ const INLINE_SRC =
   "|(?<img>!)?\\[(?<label>(?:\\\\.|[^\\]\\\\\\n]){0,500})\\]" +
   "\\((?:<(?<angleHref>[^<>\\n]{1,2000})>|(?<href>(?:\\\\.|[^()\\s\\\\]){0,2000}))(?:\\s+\"(?<title>[^\"\\n]{0,200})\")?\\)" +
   "|<(?<auto>https?:\\/\\/[^\\s<>\"]{1,2000})>" +
+  `|(?<url>${URL_SOURCE})` +
   `|(?<win>${WINDOWS_PATH_SOURCE})` +
   "|(?<st>\\*\\*|__)(?<stb>[\\s\\S]{1,1000}?)\\k<st>" +
   "|(?<em>[*_])(?<emb>[^\\s*_][\\s\\S]{0,1000}?)\\k<em>" +
@@ -185,6 +187,14 @@ const INLINE_SRC =
 function fileAnchor(ref, inner, extra = "") {
   const href = safeUrl(ref.path) ?? "";
   return `<a class="md-link file-link${extra}" href="${esc(href)}" data-file-path="${esc(ref.path)}"${ref.line ? ` data-file-line="${ref.line}"` : ""}>${inner}</a>`;
+}
+
+/**
+ * 文中の URL のリンク。押すと設定「リンクの開き先」に従う（web/link-open.mjs）。u は bareUrl / wholeUrl が通したもの、
+ * inner はエスケープ済みの HTML。字が URL そのものなので、名前で偽る余地は無い
+ */
+function urlAnchor(u, inner, extra = "") {
+  return `<a class="md-link${extra}" href="${esc(u)}" target="_blank" rel="noopener noreferrer nofollow">${inner}</a>`;
 }
 
 /** 画像の下に添える所在の一行: ファイル名（右パネルで開く）・フォルダー（全体は title）・⋯（操作） */
@@ -215,13 +225,23 @@ function inline(src, depth = 0, noLink = false) {
     } else if (g.code !== undefined) {
       // 前後に空白が1つずつ付いていたら剥がす（CommonMark 準拠）
       const c = /^ .* $/s.test(g.code) ? g.code.slice(1, -1) : g.code;
-      // 中身全体が 1 つのパスならファイルリンク（`web/render.mjs`・`D:\a b\c.md:42`）
-      const ref = noLink ? null : looksLikePath(c);
-      out.push(ref ? fileAnchor(ref, `<code>${esc(c)}</code>`, " code-link") : `<code>${esc(c)}</code>`);
+      // 中身全体が 1 つのパスならファイルリンク（`web/render.mjs`・`D:\a b\c.md:42`）、1 つの URL なら URL のリンク
+      const u = noLink ? null : wholeUrl(c);
+      const ref = noLink || u ? null : looksLikePath(c);
+      out.push(u ? urlAnchor(u, `<code>${esc(c)}</code>`, " code-link")
+        : ref ? fileAnchor(ref, `<code>${esc(c)}</code>`, " code-link") : `<code>${esc(c)}</code>`);
     } else if (g.label !== undefined) {
       out.push(link(g.img === "!", g.label, g.angleHref ?? g.href, g.title, depth, noLink));
     } else if (g.auto !== undefined) {
       out.push(link(false, g.auto, g.auto, undefined, depth, noLink));
+    } else if (g.url !== undefined) {
+      // 地の文の URL。範囲は ASCII の字まで（web/url-detect.mjs）。末尾の句読点は外して、続きから読み直す
+      const u = noLink ? null : bareUrl(g.url);
+      if (!u) handled = false;
+      else {
+        out.push(urlAnchor(u, esc(u)));
+        re.lastIndex = m.index + u.length;
+      }
     } else if (g.win !== undefined) {
       // 地の文の Windows の絶対パス（docs/design-system.md「ファイルの操作」）。末尾の句読点は外して、続きから読み直す
       const found = noLink ? null : findWindowsPaths(g.win)[0];
@@ -258,22 +278,37 @@ function inline(src, depth = 0, noLink = false) {
 /**
  * 自分の発言の本文（平文）を HTML にする。Markdown としては解釈せず、字は書いたとおりに残す（改行は CSS の pre-wrap）。
  * パスだけは AI の本文と同じ厳しい判定でファイルリンクにする: 地の文の Windows の絶対パスと、` で囲んだ中身全体が 1 つのパス
- * （` は書いたまま残し、中身だけをリンクにする）。docs/design-system.md「ファイルの操作」。返すのはエスケープ済みの HTML
+ * （` は書いたまま残し、中身だけをリンクにする）。docs/design-system.md「ファイルの操作」。
+ * URL も同じ判定でリンクにする（地の文の裸の URL と、` で囲んだ中身全体が 1 つの URL。docs/design-system.md「文中の URL」）。
+ * paths:false は URL だけをリンクにする（完了通知・委譲の依頼。パスは字のまま）。返すのはエスケープ済みの HTML
  */
-export function plainTextHtml(src) {
+export function plainTextHtml(src, { paths = true } = {}) {
   const s = String(src ?? "");
   if (s.length > 100_000) return esc(s);
-  const re = new RegExp(`(?<ticks>\`+)(?<code>[^\\n]{1,1024}?)\\k<ticks>(?!\`)|(?<win>${WINDOWS_PATH_SOURCE})`, "g");
+  const re = new RegExp((paths ? `(?<ticks>\`+)(?<code>[^\\n]{1,1024}?)\\k<ticks>(?!\`)|(?<win>${WINDOWS_PATH_SOURCE})|` : "") + `(?<url>${URL_SOURCE})`, "g");
   const out = [];
   let last = 0, m;
   while ((m = re.exec(s))) {
     const g = m.groups;
     if (g.code !== undefined) {
       const c = /^ .* $/s.test(g.code) ? g.code.slice(1, -1) : g.code;
-      const ref = looksLikePath(c);
-      if (!ref) continue;   // パスでない ` はそのまま（続きから読む）
-      out.push(esc(s.slice(last, m.index)), esc(g.ticks), fileAnchor(ref, esc(g.code)), esc(g.ticks));
+      const u = wholeUrl(c);
+      const ref = u ? null : looksLikePath(c);
+      if (!u && !ref) continue;   // パスでも URL でもない ` はそのまま（続きから読む）
+      if (u) {
+        const pad = c !== g.code ? " " : "";   // 前後に 1 つずつ付いていた空白は、リンクの外に残す
+        out.push(esc(s.slice(last, m.index)), esc(g.ticks), pad, urlAnchor(u, esc(c)), pad, esc(g.ticks));
+      } else {
+        out.push(esc(s.slice(last, m.index)), esc(g.ticks), fileAnchor(ref, esc(g.code)), esc(g.ticks));
+      }
       last = re.lastIndex;
+      continue;
+    }
+    if (g.url !== undefined) {
+      const u = bareUrl(g.url);
+      if (!u) { re.lastIndex = m.index + 1; continue; }
+      out.push(esc(s.slice(last, m.index)), urlAnchor(u, esc(u)));
+      last = re.lastIndex = m.index + u.length;
       continue;
     }
     const found = findWindowsPaths(g.win)[0];
@@ -888,14 +923,15 @@ function drawTask(card, head, inp) {
 }
 
 function drawWebFetch(card, head, inp) {
-  const raw = String(inp.url ?? "");
+  const raw = String(inp.url ?? inp.Url ?? "");
   // safeUrl は相対パスも通すが、リンクにしてよいのは絶対 http(s) だけにする。
   // 壊れた URL を host 自身への相対リンクにしても意味が無く、押せることが誤解を生む
   const u = /^https?:\/\//i.test(raw.trim()) ? safeUrl(raw) : null;
   if (u === null) {
-    head.append(codeSpan(clip(raw, 160), "tc-main"));
+    if (raw.trim()) head.append(codeSpan(clip(raw, 160), "tc-main"));
   } else {
-    const a = el("a", "tc-main tc-link", clip(raw, 160));
+    // md-link: 会話の文中の URL と同じく、押すと設定「リンクの開き先」に従う（web/link-open.mjs）
+    const a = el("a", "md-link tc-main tc-link", clip(raw, 160));
     a.setAttribute("href", u); // 絶対 http(s) かつ safeUrl を通ったものだけ
     a.setAttribute("target", "_blank");
     a.setAttribute("rel", "noopener noreferrer nofollow");
@@ -1055,6 +1091,8 @@ export function renderToolCall(name, input, opts) {
   // 読む・書く・編集の対象は、動詞の横にファイルリンクで添える（押すと右パネル、右クリックで操作。docs/design-system.md「ファイルの操作」）
   const target = FILE_DRAWS.has(TOOL_DRAW[raw]) ? FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v) : null;
   if (target) head.append(pathSpan(target));
+  // 取得は URL を見出しに出す（押すと設定の開き先）。ほかのツールの見出しは動詞だけ
+  if (TOOL_DRAW[raw] === drawWebFetch) drawWebFetch(card, head, inp);
 
   body.append(el("div", "tc-section-label", t("timeline.tool.input")));
   const inputBody = el("div", "tc-input");

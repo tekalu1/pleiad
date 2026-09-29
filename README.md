@@ -1,8 +1,12 @@
 <p align="center">
-  <img src="assets/branding/harmonic/harmonic-lockup.svg" alt="Pleiad" width="280">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/branding/pleiad-lockup-dark.svg">
+    <img src="assets/branding/pleiad-lockup.svg" alt="Pleiad" width="240">
+  </picture>
 </p>
 
-<p align="center">One workspace for Claude Code, Codex, and Antigravity.</p>
+<p align="center">One workspace for Claude Code, Codex, and Antigravity.<br>
+  <a href="https://pleiad.dev">pleiad.dev</a></p>
 
 <p align="center">
   <a href="https://github.com/tekalu1/pleiad/releases"><img src="https://img.shields.io/github/v/release/tekalu1/pleiad?include_prereleases" alt="Release"></a>
@@ -11,7 +15,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dark.png">
-  <img src="docs/images/screenshot-light.png" alt="Pleiad showing a conversation list and an open conversation">
+  <img src="docs/images/screenshot-light.png" alt="Pleiad with conversations from Claude, Codex, and Antigravity grouped by status, and a chart an agent rendered in the conversation">
 </picture>
 
 Pleiad is a desktop app for working with several coding agents side by side.

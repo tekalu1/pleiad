@@ -60,6 +60,24 @@ h1, h2, .leave-sticky p, .f-sub, .lede { word-break: auto-phrase; }
 .brand-mark { width: 26px; height: 26px; }
 .brand-word { width: 62px; height: 19px; }
 .nav-links { display: flex; align-items: center; gap: 8px; }
+/* 言語の切り替え（build-site.mjs が差し込む） */
+.lang { position: relative; }
+.lang-btn { list-style: none; display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 10px 0 11px; border-radius: 999px; font-size: 13px; font-weight: 500; color: var(--weak); cursor: pointer; user-select: none; transition: background .2s, color .2s; }
+.lang-btn::-webkit-details-marker { display: none; }
+.lang-btn:hover, .lang[open] .lang-btn { background: var(--s1); color: var(--ink); }
+.lang-btn svg { width: 17px; height: 17px; flex: none; }
+.lang-btn .lang-chev { width: 12px; height: 12px; transition: transform .2s var(--ease); }
+.lang[open] .lang-chev { transform: rotate(180deg); }
+.lang-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 10;
+  display: grid; gap: 2px; min-width: 156px; padding: 6px; border-radius: 16px;
+  background: #fff; box-shadow: 0 12px 32px rgba(28, 34, 71, .12), 0 2px 6px rgba(28, 34, 71, .06);
+  animation: fade .18s var(--ease) both;
+}
+.lang-menu a { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 38px; padding: 0 12px; border-radius: 10px; font-size: 14px; color: var(--ink); }
+.lang-menu a:hover, .lang-menu a:focus-visible { background: var(--s1); }
+.lang-menu a[aria-current]::after { content: ""; width: 5px; height: 9px; margin: -3px 3px 0 0; border: solid var(--indigo); border-width: 0 1.8px 1.8px 0; transform: rotate(45deg); }
+@media (max-width: 560px) { .lang-cur { display: none; } .lang-btn { padding: 0 9px; } }
 .nav-gh { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 999px; color: var(--ink); transition: background .2s; }
 .nav-gh:hover { background: var(--s1); }
 .nav-gh svg { width: 20px; height: 20px; }
@@ -117,6 +135,7 @@ h1 {
 @keyframes fade { from { opacity: 0; transform: translateY(12px); } }
 .nw { display: inline-block; }
 .lede { font-feature-settings: normal; margin-top: 28px; font-size: clamp(16px, 1.4vw, 19px); color: var(--weak); }
+.lede img { display: inline-block; width: 1em; height: 1em; margin-right: .3em; vertical-align: -.14em; }
 .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
 .meta { margin-top: 20px; font-size: 12.5px; line-height: 1.6; color: var(--weak); }
 
@@ -128,6 +147,7 @@ h2 {
   color: var(--ink-strong);
 }
 .f-sub { margin-top: 20px; font-size: 16px; color: var(--weak); }
+.f-note { margin-top: 8px; font-size: 13px; color: var(--weak); }
 
 [data-reveal] { opacity: 0; transform: translateY(24px); transition: opacity .9s var(--ease), transform .9s var(--ease); }
 [data-reveal].in { opacity: 1; transform: none; }
@@ -148,14 +168,17 @@ h2 {
   opacity: calc(1 - var(--out, 0)); transform: translateY(calc(var(--out, 0) * -40px));
   pointer-events: none;
 }
-.leave-line { color: color-mix(in oklab, var(--ink) calc(var(--t, 0) * 100%), var(--faint)); transition: color .5s var(--ease); }
+/* 前置きはスクロール量で進む。--t 読んだ分 / --s 句の取り消し線 / --x 行を消し終えた分 / --e 結びの一文（main.js） */
+.leave-line { color: color-mix(in oklab, var(--faint) calc(var(--x, 0) * 100%), color-mix(in oklab, var(--ink) calc(var(--t, 0) * 100%), var(--faint))); }
 .leave-end {
   margin-top: .6em; color: var(--indigo); font-weight: 700;
-  opacity: 0; transform: translateY(.4em);
-  transition: opacity .7s var(--ease), transform .7s var(--ease);
+  opacity: var(--e, 0); transform: translateY(calc((1 - var(--e, 0)) * .4em));
 }
-.screen.is-said .leave-line { color: var(--weak); }
-.screen.is-said .leave-end { opacity: 1; transform: none; }
+.leave-line .nw { position: relative; }
+.leave-line .nw::after {
+  content: ""; position: absolute; left: -.04em; right: -.04em; top: 50%; height: .07em; border-radius: .035em;
+  background: var(--indigo); transform: scaleX(var(--s, 0)); transform-origin: left center;
+}
 .stage { position: relative; z-index: 1; grid-column: 2; grid-row: 1; display: flex; align-items: center; min-width: 0; height: 100%; }
 .stage-cam {
   position: relative; width: 100%; aspect-ratio: 1080 / 680; max-height: 100%;
@@ -459,6 +482,20 @@ h2 {
 
 .foot { display: flex; justify-content: center; gap: 24px; padding: 32px var(--pad) 48px; font-size: 13px; color: var(--weak); }
 .foot a:hover { color: var(--ink); }
+
+/* 英語。字が長い分だけ組みを調える（日本語の組みは変えない） */
+html:lang(en) .step h2 { font-size: clamp(26px, 2.3vw, 38px); }
+/* 承認待ちの印は長いので、題を狭めずに 2 行目（アプリの脇と同じく meta の側）へ回す */
+html:lang(en) .row:has(.wait) b { grid-column: 2 / 4; }
+html:lang(en) .row:has(.wait) .mk { grid-column: 2; grid-row: 2; }
+html:lang(en) .row:has(.wait) small:not(.cwd) { display: none; }
+/* 分岐の札は並びの間隔（最大 92px）に収まらないので、折り返す */
+html:lang(en) .fork :is(.branch-name, .branch-note) { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  /* 「実装 · 難しさ 中 → Codex」の行き先が省かれないよう、狭い画面では折り返す */
+  html:lang(en) .dg-head { align-items: flex-start; }
+  html:lang(en) .dg-why { white-space: normal; }
+}
 
 @media (min-width: 1800px) {
   :root { --max: 1760px; }

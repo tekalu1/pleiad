@@ -5,6 +5,13 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+// 文言は index.html の <script id="strings">（言語ごとに build-site.mjs が差し替える）
+const T = JSON.parse(document.getElementById('strings').textContent);
+// 画像はこのファイルからの相対で引く（英語のページは /en/ にあり、文書からの相対では届かない）
+const asset = (name) => new URL(`assets/${name}`, import.meta.url).href;
+
+// 星図のラベルの題は、脇の会話の行と同じ
+const rowTitle = (key) => $(`.row[data-row="${key}"] b`).textContent;
 
 // ヒーローの星図。WebGL が無ければ焼いた一枚
 (async () => {
@@ -13,7 +20,7 @@ const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
     const img = new Image();
     img.className = 'sky-still';
     img.alt = '';
-    img.src = 'assets/sky.webp';
+    img.src = asset('sky.webp');
     canvas.replaceWith(img);
     return;
   }
@@ -24,10 +31,10 @@ const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
       labelsEl: $('.sky-labels'),
       avoid: $('.hero-copy'),
       labels: [
-        { title: 'DB の移行手順', status: '承認待ち', logo: 'assets/openai.svg', kind: 'wait' },
-        { title: 'ログインの不具合を直す', status: '実行中', logo: 'assets/claude.svg', kind: 'run' },
-        { title: 'README の英訳', status: '完了', logo: 'assets/antigravity.svg', kind: 'done' },
-        { title: 'E2E を安定させる', status: '実行中', logo: 'assets/openai.svg', kind: 'run' },
+        { title: rowTitle('db'), status: T['status.wait'], logo: asset('openai.svg'), kind: 'wait' },
+        { title: rowTitle('login'), status: T['status.run'], logo: asset('claude.svg'), kind: 'run' },
+        { title: rowTitle('readme'), status: T['status.done'], logo: asset('antigravity.svg'), kind: 'done' },
+        { title: rowTitle('e2e'), status: T['status.run'], logo: asset('openai.svg'), kind: 'run' },
       ],
     });
   } catch (e) {
@@ -59,6 +66,17 @@ function trackArcs(root = document) {
   else if (!arcLoop) arcLoop = requestAnimationFrame(drawArcs);
 }
 
+// 言語の切り替え: 外を押すか Esc で閉じる
+const langMenu = $('.lang');
+if (langMenu) {
+  document.addEventListener('click', (e) => { if (langMenu.open && !langMenu.contains(e.target)) langMenu.open = false; });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !langMenu.open) return;
+    langMenu.open = false;
+    $('summary', langMenu).focus();
+  });
+}
+
 // ナビ: 面はヒーローを過ぎたら
 const nav = $('.nav');
 // ダウンロードの大きなボタン（ヒーローと終わり）が見えている間は、ナビに同じボタンを重ねない
@@ -85,6 +103,8 @@ $$('[data-reveal]').forEach((el) => io.observe(el));
 const screen = $('.screen');
 const prologue = $('.prologue');
 const lines = $$('.leave-line', prologue);
+// 取り消し線は行の順に、句ごとに続けて引く
+const chunks = lines.map((el) => $$('.nw', el));
 const cam = $('.stage-cam');
 const app = $('.app');
 const steps = $$('.step');
@@ -112,9 +132,9 @@ const SHOTS = {
 const rows = Object.fromEntries($$('.row').map((r) => [r.dataset.row, r]));
 const MARK = {
   run: () => '<svg class="arc" viewBox="0 0 14 14"><path/></svg>',
-  wait: () => '<i class="dia"></i><span class="wait">承認待ち</span>',
+  wait: () => `<i class="dia"></i><span class="wait">${T['status.wait']}</span>`,
   done: () => '<i class="dot"></i>',
-  stale: () => '<span class="stale">◌ 9日</span>',
+  stale: () => `<span class="stale">${T['mark.stale']}</span>`,
   idle: () => '',
 };
 function setRow(key, s, flash) {
@@ -139,12 +159,12 @@ function setRows(after) {
 
 // 分岐（branch.js）。分かれ目の後の発言は、元の会話と作った枝で替わる
 const late = $('.is-late .bubble');
-const LATE = ['9月の内訳も出して', '列に前年比を足して'];
+const LATE = [late.textContent, T['late.fork']];
 const branch = mountBranch($('.fork'), { swap: (toFork) => { late.textContent = LATE[toFork ? 1 : 0]; } });
 
 // 入力欄のエージェント
 const agentChip = $('.chip-agent');
-const AGENTS = { claude: ['assets/claude.svg', 'Claude Code'], codex: ['assets/openai.svg', 'Codex'] };
+const AGENTS = { claude: [asset('claude.svg'), 'Claude Code'], codex: [asset('openai.svg'), 'Codex'] };
 const salesLogo = $('img', rows.sales);
 async function setAgent(name, animate) {
   if (agentChip.dataset.agent === name) return;
@@ -272,11 +292,18 @@ function onScreen() {
   const y = -r.top;
   // 前置き: 読み進めた分だけ濃くなり、言い切ったら舞台に替わる
   const p = y / P;
-  lines.forEach((el, i) => el.style.setProperty('--t', clamp((p - 0.04 - i * 0.14) / 0.1).toFixed(3)));
-  screen.classList.toggle('is-said', p > 0.5);
+  // 読み終えたら、行の順に句ごとに線を引いて消し、結びの一文を出す
+  let j = 0;
+  lines.forEach((el, i) => {
+    el.style.setProperty('--t', clamp((p - 0.04 - i * 0.14) / 0.1).toFixed(3));
+    let s = 0;
+    chunks[i].forEach((c) => { s = clamp((p - 0.44 - j++ * 0.022) / 0.03); c.style.setProperty('--s', s.toFixed(3)); });
+    el.style.setProperty('--x', s.toFixed(3));
+  });
+  prologue.style.setProperty('--e', clamp((p - 0.57) / 0.05).toFixed(3));
   // 前置きが消えきってから舞台が入る。どちらもスクロール量で動かし、重ならない
-  prologue.style.setProperty('--out', clamp((p - 0.74) / 0.1).toFixed(3));
-  const come = clamp((p - 0.86) / 0.1);
+  prologue.style.setProperty('--out', clamp((p - 0.8) / 0.08).toFixed(3));
+  const come = clamp((p - 0.9) / 0.08);
   screen.style.setProperty('--in', come.toFixed(3));
   screen.classList.toggle('in', come > 0.6);
   const n = clamp(Math.floor((y - P) / S), 0, 3);
@@ -319,7 +346,7 @@ const phone = $('.phone');
 trackArcs(phone);
 const approve = () => {
   phone.classList.add('is-approved');
-  $('.ph-q span', phone).textContent = '許可した';
+  $('.ph-q span', phone).textContent = T['phone.approved'];
 };
 if (reduce) { approve(); phone.classList.add('is-next'); }
 else {
