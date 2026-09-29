@@ -1,4 +1,4 @@
-// 自分の発言の描画（web/user-message.mjs、ADR 0058）: 印の置き換え・末尾の古い形式・畳み込み・二重に出さない
+// 自分の発言の描画（web/user-message.mjs、ADR 0059）: 印の置き換え・末尾の古い形式・畳み込み・二重に出さない
 import { placeAttachments, bodyUnits, foldIndex, userBodyHtml, attachmentName, userTools } from "../../web/user-message.mjs";
 import { buildItems, inlineAttachments, showsAsCard } from "../../web/timeline.mjs";
 import { audit } from "../lib/audit.mjs";

@@ -634,7 +634,7 @@ function whoLine(who, at) {
 
 /**
  * 自分の発言。本文は Markdown で描き、この発言に結び付いた添付（presents。human の present）は本文の印の位置に置く
- * （web/user-message.mjs、ADR 0058）。markdown: false は今までの平文（委譲の子の会話を読む面）
+ * （web/user-message.mjs、ADR 0059）。markdown: false は今までの平文（委譲の子の会話を読む面）
  */
 function userMsg(text, { uuid, at, presents = [], markdown = true } = {}) {
   const m = el("div", "m user");

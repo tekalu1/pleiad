@@ -545,7 +545,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .who{font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em;margin-bottom:3px;display:flex;align-items:center;gap:8px}
 .who .when{font-family:var(--font-mono);margin-left:auto}
 .m.user .body{display:inline-block;max-width:680px;background:var(--surface-2);border-radius:var(--r-l);padding:9px 16px;white-space:pre-wrap;overflow-wrap:anywhere}
-/* ---- 自分の発言の Markdown と添付（web/user-message.mjs、docs/design-system.md「自分の発言」、ADR 0058）。
+/* ---- 自分の発言の Markdown と添付（web/user-message.mjs、docs/design-system.md「自分の発言」、ADR 0059）。
    本文は AI の本文と同じ md の見た目。添付は本文の印の位置に縮小（画像）か札（ファイル）で出る ---- */
 /* 狭い画面で、折り返さないコード・表の幅に吹き出しが引きずられて画面の外へ出ないよう、幅は入れ物で止める（中身は横にスクロール） */
 .m.user .body.md-user{white-space:normal;max-width:min(680px,100%)}

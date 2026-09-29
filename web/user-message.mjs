@@ -1,4 +1,4 @@
-// 自分の発言の描画（docs/design-system.md「自分の発言」、ADR 0058）。
+// 自分の発言の描画（docs/design-system.md「自分の発言」、ADR 0059）。
 //
 // 本文は Markdown（web/render.mjs の renderMarkdown と同じ描画）。本文の中の `[添付] パス` の行のうち、この発言に結び付いた
 // human の present（web/timeline.mjs の attachmentMessageIndex / buildItems）とパスが一致するものだけを、その位置で添付の表示

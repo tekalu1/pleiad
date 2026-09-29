@@ -1,4 +1,4 @@
-// 添付の一覧の面（docs/design-system.md「添付の一覧」、ADR 0058）。
+// 添付の一覧の面（docs/design-system.md「添付の一覧」、ADR 0059）。
 // デスクトップは動線（呼び出したボタン）の近くに浮く面、700px 以下は下からのシート。native の <dialog>（showModal）なので、
 // Tab は面の中に留まり、Esc で閉じ、閉じたら呼び出したボタンへフォーカスを戻す。
 //
