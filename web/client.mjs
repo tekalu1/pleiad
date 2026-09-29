@@ -266,11 +266,17 @@ function compactionBoundary(entry) {
   return m;
 }
 function paintCompactions() {
-  for (const old of thread.querySelectorAll('.mw[data-compaction-id]')) old.remove();
+  // 作り直しても、開いていた「要約を表示」は開いたままにする
+  const open = new Set();
+  for (const old of thread.querySelectorAll('.mw[data-compaction-id]')) {
+    if (old.querySelector('details')?.open) open.add(old.dataset.compactionId);
+    old.remove();
+  }
   for (const entry of state.compactions) {
     if (!['complete', 'failed'].includes(entry.phase)) continue;
     const row = append(compactionBoundary(entry), `compaction:${entry.id}`);
     row.classList.add('compaction-boundary'); row.dataset.compactionId = entry.id;
+    if (open.has(entry.id)) { const details = row.querySelector('details'); if (details) details.open = true; }
     const after = [...thread.querySelectorAll('.mw:not([data-compaction-id])')]
       .find(message => {
         const at = message.querySelector('.m[data-at]')?.dataset.at;
@@ -1604,8 +1610,10 @@ function onEvent(ev, replay = false) {
       row.dataset.messageStarted = '1';
       row.querySelector('.m.user .body').innerHTML = plainTextHtml(ev.text);
       if (ev.at) { row.querySelector('.m').dataset.at = ev.at; row.querySelector('.who .when').textContent = hhmm(ev.at); }
-      // 放置中の圧縮で末尾に付いた区切りは、この発言の前へ置き直す。すでに正しい位置にある古い区切りは動かさない（at で並べ直す）
-      paintCompactions();
+      // 放置中の圧縮で末尾に付いた区切りは、この発言の前へ置き直す（at で並べ直す）。
+      // 区切りがすべてこの発言より前にあるときは作り直さない。古い区切りを最新の発言の前へ動かしていた不具合の再発を防ぐ
+      const rows = [...thread.children];
+      if ([...thread.querySelectorAll('.mw[data-compaction-id]')].some(boundary => rows.indexOf(boundary) > rows.indexOf(row))) paintCompactions();
       // pending = 受理はしたが、まだエージェントに渡っていない（userMessage.delivered を待つ）。
       // 配達の合図が先に来ていた分（速いバックエンド）はここで消化する
       const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);

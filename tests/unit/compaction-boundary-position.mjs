@@ -9,7 +9,7 @@ import { N } from '../lib/dom-stub.mjs';
 export const name = 'compaction-boundary-position';
 export const title = '圧縮の区切りは発言を送っても動かない・放置中の圧縮の区切りは次の発言の前に置く';
 
-// dom-stub の N は before() と複合セレクターを持たないので、このテストに要る分だけ足す
+// dom-stub の N は before() と複合セレクターと open の読み取りを持たないので、このテストに要る分だけ足す
 class Node extends N {
   constructor(tag) {
     super(tag);
@@ -21,6 +21,9 @@ class Node extends N {
     n.parent = this.parent;
     this.parent.children.splice(this.parent.children.indexOf(this), 0, n);
   }
+  // dom-stub の open は書くだけで読めない。要約の開閉を確かめるので読めるようにする
+  get open() { return 'open' in this.attrs; }
+  set open(v) { if (v) this.attrs.open = ''; else delete this.attrs.open; }
   matches(sel) { return compound(this, sel.trim()); }
   querySelectorAll(sel) {
     const parts = sel.replace(/^:scope\s+/, '').trim().split(/\s+/);
@@ -137,4 +140,20 @@ export default async function (t) {
   t.ok('複数の区切りも、それぞれ at で決まる位置に留まる（後ろの区切りは送った発言の前）', order() === 'U1 A2 [圧縮] U10 [圧縮] U20', order());
   send('m2', 'at が無い', undefined);
   t.ok('at の無い発言を送っても区切りは動かない', order().startsWith('U1 A2 [圧縮] U10 [圧縮] U20'), order());
+
+  // ---------------------------------------------------------------- 送信待ちの行の後ろに付いた区切り・開いていた「要約を表示」
+  reset();
+  history('u1', '最初', at(1)); reply(at(2));
+  vm.runInContext('ensureMessageRow', context)('m1', '送信待ち', undefined);   // 圧縮より先に出ていた送信待ちの行（まだ at が無い）
+  context.ev = { ...compaction('c1', 30), summary: '要約' };
+  vm.runInContext('acceptCompaction(ev)', context);
+  t.ok('（前提）送信待ちの行の後ろに区切りが付く', order() === 'U1 A2 ? [圧縮]', order());
+  const boundaryNode = () => thread.children.find(w => w.dataset.compactionId);
+  boundaryNode().querySelector('details').open = true;
+  send('m1', '送信待ち', at(40));
+  t.ok('送信待ちだった発言が届くと、区切りはその発言の前へ移る', order() === 'U1 A2 [圧縮] U40', order());
+  t.ok('置き直しても、開いていた要約は開いたまま', boundaryNode().querySelector('details').open === true);
+  const placed = boundaryNode();
+  send('m2', '2 通目', at(41));
+  t.ok('区切りがすべて送った発言より前なら、区切りを作り直さない', boundaryNode() === placed && placed.querySelector('details').open === true);
 }
