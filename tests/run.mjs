@@ -167,7 +167,7 @@ const cases = [
   await import("./unit/stream-routing.mjs"),
   await import("./unit/stream-prefix.mjs"),
   await import("./unit/session-stream.mjs"),
-  // 長い履歴の実寸を確定するときのスクロール: 末尾にいれば末尾に、読み返し中なら位置を保つ（列より広い窓でも）
+  // 長い履歴の実寸の確定: 見えている所の近くだけ（数は会話の長さによらない・issue #37）。確定してもスクロールの位置は動かない（末尾なら末尾に、読み返し中ならその位置に。列より広い窓でも）
   await import("./unit/history-heights.mjs"),
   // 履歴を描く間、1 行ごとに筋を探し回らない（稼働表示の行は activity.el。issue #37）
   await import("./unit/place-scan.mjs"),

@@ -36,7 +36,7 @@ export default async function (t) {
       closeThink: noop, closeBundle: noop,
       el: () => ({ dataset: {}, isConnected: true, innerHTML: "" }),
       openTurnEl: () => (state.turnEl ??= { append: noop }),
-      heightPreparationVersion: 0, heightPreparationTimer: null,
+      heightSettler: null,
       thread: { replaceChildren: noop, classList: { remove: noop } },
       spine: noop,
     });
