@@ -1,10 +1,10 @@
 // 会話の移動（web/conversation-nav.mjs）: 発言の抜粋（畳み方・コード・添付）と件数の札。
 import assert from 'node:assert/strict';
-import { userPieces, piecesText, summaryOf, badge } from '../../web/conversation-nav.mjs';
+import { userPieces, piecesText, summaryOf, badge, matchRanges, countMatches, scopeTallies, assignHits, entryOfHit, listRows, excerptAround, toolTarget, inScope } from '../../web/conversation-nav.mjs';
 import { turnKinds } from '../../web/conversation-rail.mjs';
 
 export const name = 'conversation-nav';
-export const title = '会話の移動: 発言の抜粋（改行と空白の畳み・‹コード›・添付の行）・件数の札・地図の点の種類';
+export const title = '会話の移動: 発言の抜粋（改行と空白の畳み・‹コード›・添付の行）・件数の札・地図の点の種類・検索の一致の数え方と並び';
 
 export default async function (t) {
   // ---- 抜粋: 改行と連続する空白は 1 つの空白にする
@@ -75,4 +75,62 @@ export default async function (t) {
   assert.deepEqual(turnKinds(thread, turns), turns.map(() => ''), '何も無ければ空');
   t.ok('地図の点の種類: 直前の発言のターンに数え、優先は 承認待ち > 圧縮 > 分岐 > 可視化', true);
 
+  // ---- 検索: 一致の数え方（重ならない・大文字小文字を区別しない）
+  assert.deepEqual(matchRanges('aaaa', 'aa'), [{ start: 0, end: 2 }, { start: 2, end: 4 }], '重ならない');
+  assert.equal(countMatches('Ok ok OK', 'ok'), 3, '大文字小文字を区別しない');
+  assert.equal(countMatches('認証と認証', '認証'), 2);
+  assert.equal(countMatches('abc', ''), 0, '空の検索語は一致なし');
+  assert.equal(countMatches('', 'a'), 0);
+  assert.deepEqual(matchRanges('İİ', 'i̇'), [], '小文字で長さが変わる文字は、大文字小文字を区別して探す（位置がずれない）');
+  t.ok('一致は重ならず、大文字小文字を区別しない。空の検索語は 0 件', true);
+
+  // ---- 検索: 段（発言 ⊂ ＋返答 ⊂ ＋ツール）と札の件数
+  assert.ok(inScope('user', 'user') && !inScope('user', 'answer') && inScope('answer', 'user') && !inScope('answer', 'tool') && inScope('tool', 'tool'));
+  const entries = [
+    { kind: 'user', hits: 1 }, { kind: 'answer', hits: 2 }, { kind: 'tool', hits: 0 },
+    { kind: 'user', hits: 0 }, { kind: 'tool', hits: 5 }, { kind: 'answer', hits: 1 },
+  ];
+  assert.deepEqual(scopeTallies(entries, false), { user: 2, answer: 4, tool: 6 }, '空欄は項目数（次の段は前の段を含む）');
+  assert.deepEqual(scopeTallies(entries, true), { user: 1, answer: 4, tool: 9 }, '検索中は一致数');
+  assert.equal(badge(scopeTallies(entries, true).tool), '9');
+  t.ok('札の件数: 空欄は項目数・検索中は一致数、次の段は前の段を含む', true);
+
+  // ---- 検索: 通し番号は対象の段の中だけで、文書の順
+  assert.equal(assignHits(entries, 'user'), 1);
+  assert.deepEqual(entries.map((e) => e.hitStart), [0, -1, -1, -1, -1, -1]);
+  assert.equal(assignHits(entries, 'answer'), 4);
+  assert.deepEqual(entries.map((e) => e.hitStart), [0, 1, -1, -1, -1, 3]);
+  assert.equal(assignHits(entries, 'tool'), 9);
+  assert.deepEqual(entries.map((e) => e.hitStart), [0, 1, -1, -1, 3, 8]);
+  assert.equal(entryOfHit(entries, 0), entries[0]);
+  assert.equal(entryOfHit(entries, 2), entries[1], '項目の 2 つ目の一致');
+  assert.equal(entryOfHit(entries, 3), entries[4]);
+  assert.equal(entryOfHit(entries, 7), entries[4]);
+  assert.equal(entryOfHit(entries, 8), entries[5]);
+  assert.equal(entryOfHit(entries, 9), null, '範囲外');
+  t.ok('一致の通し番号は対象の段の中で文書の順に振り、番号から項目を引ける', true);
+
+  // ---- 目次の並び: 段で絞り、検索中は一致のある項目だけ。新しい順は並びだけ逆（元の配列は変えない）
+  const all = [{ kind: 'user', hits: 0, id: 'a' }, { kind: 'answer', hits: 0, id: 'b' }, { kind: 'tool', hits: 0, id: 'c' }, { kind: 'user', hits: 0, id: 'd' }];
+  const ids = (rows) => rows.map((r) => r.id).join('');
+  assert.equal(ids(listRows(all, { scope: 'user', searching: false, newestFirst: false })), 'ad');
+  assert.equal(ids(listRows(all, { scope: 'tool', searching: false, newestFirst: false })), 'abcd');
+  assert.equal(ids(listRows(all, { scope: 'tool', searching: false, newestFirst: true })), 'dcba');
+  assert.equal(ids(all), 'abcd', '元の配列は変えない');
+  all[1].hits = 2; all[3].hits = 1;
+  assert.equal(ids(listRows(all, { scope: 'answer', searching: true, newestFirst: false })), 'bd', '検索中は一致のある項目だけ');
+  assert.equal(ids(listRows(all, { scope: 'user', searching: true, newestFirst: true })), 'd');
+  t.ok('目次の並び: 段で絞る・検索中は一致のある項目だけ・新しい順は並びだけ逆', true);
+
+  // ---- 抜粋（一致のまわり）とツールの対象
+  assert.deepEqual(excerptAround('前置きの説明が長くて 認証のエラーを直して', '認証', { before: 4, after: 3 }), { cut: true, head: '長くて ', hit: '認証', tail: 'のエラ' });
+  assert.equal(excerptAround('認証から始まる', '認証').cut, false, '先頭なら手前を切らない');
+  assert.equal(excerptAround('a\n\n  b  ok', 'ok').head.includes('  '), false, '空白は畳んでから探す');
+  assert.equal(excerptAround('なし', 'ok'), null);
+  assert.equal(toolTarget('{"command":"node --test tests/a.mjs","description":"x"}'), 'node --test tests/a.mjs');
+  assert.equal(toolTarget('{"file_path":"web/a.mjs"}'), 'web/a.mjs');
+  assert.equal(toolTarget('{"n":1,"label":"  ほげ  "}'), 'ほげ', '最初に見つかった文字列');
+  assert.equal(toolTarget('not json'), '');
+  assert.equal(toolTarget('{}'), '');
+  t.ok('抜粋は一致の手前から。ツールの対象は command・path などの最初のもの', true);
 }

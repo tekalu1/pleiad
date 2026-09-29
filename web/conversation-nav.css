@@ -61,3 +61,67 @@
   .nav-latest{right:16px;bottom:12px}
   .nav-latest::after{content:"";position:absolute;inset:-5px;border-radius:var(--r-pill)}
 }
+
+/* ---- D 目次と会話内検索。右パネル（ファイルプレビューと同じ枠。幅 340px）と、狭い画面の下からのシートで同じ部品。
+   パネルの地は --surface-0（context.css の .file-preview.custom が中身の紙を透明にする）。検索欄と選んだ行は --surface-paper ---- */
+.file-preview[data-panel="conversation-toc"] .file-preview-content{overflow:hidden;display:flex;flex-direction:column}
+.toc{display:flex;flex-direction:column;flex:1;min-height:0;padding:3px 3px 0;   /* 検索欄のフォーカスの輪（外側 3px）が、中身の overflow で切れない余白 */
+  --surface-seg-track:var(--surface-1);--surface-seg-on:var(--surface-paper);--surface-badge-on:var(--surface-3)}
+/* ダークでは、選んだ区分（--surface-paper）が地（--surface-1）より暗く沈んで見えるので、溝を一段沈め（--surface-2）、選んだ区分を持ち上げる（--surface-3）。札は選んだ区分の上で --surface-2 に替える */
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .toc{--surface-seg-track:var(--surface-2);--surface-seg-on:var(--surface-3);--surface-badge-on:var(--surface-2)}}
+:root[data-theme="dark"] .toc{--surface-seg-track:var(--surface-2);--surface-seg-on:var(--surface-3);--surface-badge-on:var(--surface-2)}
+.toc-searchbox{position:relative}
+.toc-combo{display:flex;align-items:center;gap:2px;min-height:42px;padding:0 5px 0 12px;background:var(--surface-paper);border-radius:var(--r-pill)}
+.toc-combo:has(input:focus-visible){outline:2px solid var(--line-blue);outline-offset:1px}
+.toc-combo input:focus-visible{outline:none}
+.toc-combo > svg{width:16px;height:16px;flex:none;color:var(--ink-weak)}
+.toc-query{flex:1;width:100%;min-width:0;padding:10px 6px;background:transparent;font-size:13px}
+.toc-count{font:var(--fs-xs)/1 var(--font-mono);color:var(--ink-weak);white-space:nowrap;padding:0 4px}
+.toc-nb{width:28px;height:28px;padding:0;display:grid;place-items:center;flex:none;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer}
+.toc-nb:hover:not(:disabled){background:var(--surface-2)}
+.toc-nb:disabled{opacity:.45;cursor:default}
+.toc-nb svg{width:16px;height:16px}
+.toc-scope-row{display:flex;align-items:center;gap:6px;margin:12px 0 10px}
+.toc-seg{display:flex;flex:1;min-width:0;gap:2px;padding:3px;background:var(--surface-seg-track);border-radius:var(--r-pill)}
+.toc-scope{flex:auto;display:flex;align-items:center;justify-content:center;gap:5px;padding:5px 8px;font-size:var(--fs-s);color:var(--ink-weak);white-space:nowrap;
+  background:transparent;border-radius:var(--r-pill);cursor:pointer;transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.toc-scope:hover{background:var(--surface-2)}
+.toc-scope[aria-checked=true]{background:var(--surface-seg-on);color:var(--ink);font-weight:600}
+/* 件数の札: --surface-3・11px 等幅・最小幅 18px の pill。99 を超えたら 99+（全数は title） */
+.toc-badge{display:inline-block;min-width:18px;height:18px;padding:0 5px;border-radius:var(--r-pill);background:var(--surface-3);color:var(--ink);font:400 var(--fs-xs)/18px var(--font-mono);text-align:center}
+.toc-scope[aria-checked=true] .toc-badge{background:var(--surface-badge-on)}
+.toc-sort{width:36px;height:36px;padding:0;display:grid;place-items:center;flex:none;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer}
+.toc-sort:hover{background:var(--surface-2)}
+.toc-sort[aria-pressed=true]{color:var(--ink-blue)}
+.toc-sort svg{width:18px;height:18px}
+.toc-list{overflow:auto;flex:1;min-height:0;overscroll-behavior:contain}
+.toc-row{display:block;width:100%;text-align:left;padding:9px 12px;margin-bottom:2px;border-radius:var(--r-m);background:transparent;cursor:pointer}
+.toc-row:hover{background:var(--surface-hover)}
+.toc-row[aria-current=true]{background:var(--surface-paper)}
+.toc-excerpt{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+.toc-row small{display:block;margin-top:3px;font:var(--fs-xs)/1.5 var(--font-mono);color:var(--ink-weak)}
+.toc-row.k-answer,.toc-row.k-tool{padding-left:28px}
+.toc-row.k-answer .toc-excerpt{color:var(--ink-weak)}
+.toc-row.k-tool .toc-excerpt{font:var(--fs-s)/1.6 var(--font-mono);color:var(--ink-weak)}
+.toc-verb{font-family:var(--font);margin-right:2px}
+.toc-pending{color:var(--ink-mark)}
+.toc-empty{padding:30px 12px;margin:0;color:var(--ink-weak);font-size:13px}
+/* 一致: 下線と太字（色の面は使わない）。いま指している一致は太い濃い下線。UA の <mark> の黄色は消す */
+.searchhit,mark.searchhit{background:transparent;color:inherit;font-weight:700;text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:3px}
+mark.searchhit.active{text-decoration-color:var(--ink-strong);text-decoration-thickness:3px}
+
+/* ---- 狭い画面のシート。下から 86%。背景は幕で沈め、操作を受けない（main を inert にする） ---- */
+.toc-sheet-wrap{position:fixed;inset:0;z-index:40}
+.toc-veil{position:absolute;inset:0;background:var(--surface-veil)}
+.toc-sheet{position:absolute;left:0;right:0;bottom:0;height:86%;display:flex;flex-direction:column;padding:8px 16px calc(12px + env(safe-area-inset-bottom,0px));
+  background:var(--surface-0);color:var(--ink);border-radius:var(--r-l) var(--r-l) 0 0;box-shadow:0 8px 28px var(--shadow);animation:nav-sheet var(--dur) var(--ease-out)}
+.toc-grip{align-self:center;width:36px;height:4px;margin:0 0 6px;background:var(--surface-3);border-radius:var(--r-pill)}
+.toc-sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.toc-sheet-close{width:44px;height:44px;padding:0;display:grid;place-items:center;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer}
+.toc-sheet-close:hover{background:var(--surface-2)}
+.toc-sheet .toc-row{min-height:56px}
+.toc-sheet .toc-combo{min-height:48px}
+.toc-sheet .toc-nb{width:40px;height:40px}
+.toc-sheet .toc-scope{min-height:38px}
+.toc-sheet .toc-sort{width:44px;height:44px}
+@keyframes nav-sheet{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}

@@ -69,6 +69,7 @@ import { createConnectionStatus } from './connection-status.mjs';
 import { attentionCounts, paintOpenSidebar } from './open-sidebar-mark.mjs';
 import { createConversationNav } from './conversation-nav-view.mjs';
 import { createConversationRail } from './conversation-rail.mjs';
+import { createConversationToc } from './conversation-toc.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
 const submittingMessages = new Set();
@@ -382,7 +383,7 @@ function scrollToEnd() {
 // 会話の移動（残る問い・最新へ。docs/design-system.md「会話の移動」）。末尾へ送るのは上の scrollToEnd（実寸の確定を待つ）
 let navSession = null;   // 最新へのボタンの新着を数えている会話。替わったら数え直す（paintSession）
 const navNarrow = matchMedia("(max-width:700px)");
-const nav = createConversationNav({ frame: $("logFrame"), log, thread, scrollToEnd, isRunning: () => isRunningHere(), narrow: navNarrow });
+const nav = createConversationNav({ frame: $("logFrame"), log, thread, scrollToEnd, isRunning: () => isRunningHere(), narrow: navNarrow, openToc: () => toc.open() });
 createConversationRail({ frame: $("logFrame"), log, thread, nav, narrow: navNarrow });
 
 /** 筋の末尾に置く。稼働表示（走っている間だけある）は常に一番下に残す */
@@ -1862,7 +1863,7 @@ function onEvent(ev, replay = false) {
 
     case "turnEnd":
       // 読み返している間に返答が終わったら、最新へのボタンに新着の印（リプレイと、ほかの会話・送信待ちへ戻っただけの分は数えない）
-      if (!replay && !ev.requeued && (!ev.sessionId || ev.sessionId === state.current)) nav.replyArrived();
+      if (!replay && !ev.requeued && (!ev.sessionId || ev.sessionId === state.current)) { nav.replyArrived(); toc.refresh(); }
       closeTurnEl();
       // 渡った合図が来ないままターンが終わった分。Codex などは次のターンとして答える。
       // Claude は区切りで取り出された分にも同じターンの中で答え、渡った合図も出す（取りこぼしても、
@@ -5248,7 +5249,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   syncRunState();
   syncTopbar();
 
-  if (navSession !== id) { navSession = id; nav.reset(); }
+  if (navSession !== id) { navSession = id; nav.reset(); toc.reset(); }
   const scrollAt = log.scrollTop;
   // 読み直しは、末尾を見ていたなら末尾へ、読み返していたならその位置のまま描き替える
   const atEnd = log.scrollHeight - log.clientHeight - log.scrollTop < 40;
@@ -5715,6 +5716,17 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   openSettings: () => openContextPage(), labelOf,
   isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs), askReview: draftReview });
 $('contextEntry').onclick = () => sessionContext.toggle($('contextEntry'));
+// 会話の目次と検索（右パネル。狭い画面は下からのシート）。会話の画面にいるときの Ctrl+F（macOS は ⌘F）でも開く
+const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry') });
+document.addEventListener('keydown', event => {
+  const mac = /Mac/.test(navigator.platform);
+  if (event.defaultPrevented || isComposingKey(event) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'f' || (mac ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey)) return;
+  if (document.body.classList.contains('settings') || document.querySelector('dialog[open]') || !state.current) return;
+  const field = event.target;
+  if (field.matches?.('input,textarea,[contenteditable="true"]') && field.id !== 'prompt' && !field.closest?.('.toc')) return;
+  event.preventDefault();
+  toc.focusSearch();
+});
 function openAutoCompactionSettings() { closeMeterPop(); onboarding.open('autoCompaction'); }
 $('contextMeter').onclick = () => {
   const pop = $('contextMeterPop');
