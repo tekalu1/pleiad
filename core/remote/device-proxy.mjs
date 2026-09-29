@@ -206,9 +206,17 @@ export class DeviceProxy extends EventEmitter {
       const status = Number.isInteger(head?.status) && head.status >= 100 && head.status <= 599 ? head.status : 502;
       try { res.writeHead(status, out); } catch { res.writeHead(status, queryOk ? { 'set-cookie': out['set-cookie'] } : {}); }
     });
+    // 書き込みが詰まった分の窓（release）は drain で返す。ただし end() の後は drain が来ないので、
+    // 詰まったまま END が届いたり窓が閉じたりしたときは finish・close で返す（返さないとチャネルの窓が尽きる）。
+    // release は 1 回しか効かない（channel.mjs の _releaser）が、ここでも 1 度取り出したら空にする
+    const waiting = [];
+    const returnWindow = () => { for (const release of waiting.splice(0)) release(); };
+    res.on('drain', returnWindow);
+    res.on('finish', returnWindow);
+    res.on('close', returnWindow);
     stream.on('data', (chunk, release) => {
       if (res.destroyed) return release();
-      if (res.write(chunk)) release(); else res.once('drain', release);
+      if (res.write(chunk)) release(); else waiting.push(release);
     });
     stream.on('end', () => { finished = true; res.end(); });
     stream.on('reset', code => {
