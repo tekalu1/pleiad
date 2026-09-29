@@ -770,9 +770,52 @@ function sessionRow(b, s, extra = {}) {
     // 人が host で作業ディレクトリを変えたなら sidecar が正本（ネイティブは古い cwd を返しうる）。
     // 変えていなければネイティブ優先（公式 CLI で移した分も拾える）
     cwd: ((extra.history ?? []).some((h) => h?.field === "cwd") ? extra.cwd ?? s?.cwd : s?.cwd ?? extra.cwd) ?? null,
+    // 最近の場所の候補（ユーザーが Pleiad で使った場所。委譲の子会話やネイティブのみの会話は除外）
+    place: (extra.delegation || typeof extra.cwd !== 'string' || !extra.cwd.trim()) ? null : extra.cwd.trim(),
     lastModified: toMs(s?.lastModified) ?? toMs(extra.lastModified),
     createdAt: s?.createdAt ?? extra.createdAt ?? null,
   };
+}
+
+/**
+ * 最近の場所のフォルダー実在確認。
+ * G:\ などの仮想ドライブ・ネットワーク共有で stat がハングしても一覧の応答を止めないよう、
+ * 最長 PLACE_CHECK_TIMEOUT_MS で打ち切り、結果を PLACE_CHECK_TTL_MS だけ保持する。
+ */
+const PLACE_CHECK_TTL_MS = 30_000;
+const PLACE_CHECK_TIMEOUT_MS = 1_000;
+const placeCheckCache = new Map();    // path -> { at: number, isDir: boolean }
+const placeCheckInflight = new Map(); // path -> Promise<boolean>
+
+async function isExistingDirectory(dirPath) {
+  if (typeof dirPath !== 'string' || !dirPath.trim()) return false;
+  const hit = placeCheckCache.get(dirPath);
+  if (hit && Date.now() - hit.at < PLACE_CHECK_TTL_MS) return hit.isDir;
+
+  if (placeCheckInflight.has(dirPath)) return placeCheckInflight.get(dirPath);
+
+  const checkPromise = (async () => {
+    let timer;
+    try {
+      const statPromise = fs.stat(dirPath).then(st => st.isDirectory(), () => false);
+      const timeoutPromise = new Promise(resolve => {
+        timer = setTimeout(() => resolve(false), PLACE_CHECK_TIMEOUT_MS);
+        timer.unref?.();
+      });
+      const isDir = await Promise.race([statPromise, timeoutPromise]);
+      return Boolean(isDir);
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+      placeCheckInflight.delete(dirPath);
+    }
+  })();
+
+  placeCheckInflight.set(dirPath, checkPromise);
+  const isDir = await checkPromise;
+  placeCheckCache.set(dirPath, { at: Date.now(), isDir });
+  return isDir;
 }
 
 /**
@@ -821,6 +864,22 @@ async function sessionList({ limit = 100 } = {}) {
     if (!b) continue;
     const managed = b.retired ? await b.getSession(id).catch(() => null) : null;
     rows.set(id, sessionRow(b, managed, { ...extra, id }));
+  }
+
+  const places = new Set();
+  for (const row of rows.values()) {
+    if (row.place) places.add(row.place);
+  }
+  if (places.size > 0) {
+    const verified = new Map();
+    await Promise.all([...places].map(async (p) => {
+      verified.set(p, await isExistingDirectory(p).catch(() => false));
+    }));
+    for (const row of rows.values()) {
+      if (row.place && !verified.get(row.place)) {
+        row.place = null;
+      }
+    }
   }
 
   for (const row of rows.values()) if (row.cwd) workspaceRoots.add(row.cwd);
