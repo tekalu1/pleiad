@@ -1,6 +1,18 @@
 apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
+// Pleiad: the release build's version comes from CI (-PplyVersionCode / -PplyVersionName, docs/android-releases.md)
+def plyVersionCode = (project.findProperty('plyVersionCode') ?: '1') as int
+def plyVersionName = project.findProperty('plyVersionName') ?: '0.1.0'
+
+// Pleiad: release signing comes from the environment; without PLY_ANDROID_KEYSTORE the release build stays unsigned
+def plyKeystore = System.getenv('PLY_ANDROID_KEYSTORE')
+if (plyKeystore) {
+    ['PLY_ANDROID_KEYSTORE_PASSWORD', 'PLY_ANDROID_KEY_ALIAS', 'PLY_ANDROID_KEY_PASSWORD'].each {
+        if (!System.getenv(it)) throw new GradleException("PLY_ANDROID_KEYSTORE is set but ${it} is empty")
+    }
+}
+
 android {
     namespace = "com.procway.pleiad"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -8,8 +20,8 @@ android {
         applicationId "com.procway.pleiad"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "0.1.0"
+        versionCode plyVersionCode
+        versionName plyVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -20,8 +32,20 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    signingConfigs {
+        if (plyKeystore) {
+            release {
+                storeFile file(plyKeystore)
+                storeType 'PKCS12'
+                storePassword System.getenv('PLY_ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('PLY_ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('PLY_ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
     buildTypes {
         release {
+            if (plyKeystore) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
