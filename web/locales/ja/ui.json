@@ -2888,6 +2888,9 @@
   "browser": {
     "agent": { "working": "エージェントが操作中", "status": "{{name}} が操作中", "stop": "止める", "takeOver": "引き継ぐ" },
     "panel": "ブラウザー",
+    "entry": "内蔵ブラウザー（{{keys}}）",
+    "entryLabel": "内蔵ブラウザー",
+    "entryWorking": "内蔵ブラウザー · {{name}} が操作中",
     "tabs": "ブラウザーのタブ",
     "newTab": "新しいタブ",
     "untitled": "新しいタブ",

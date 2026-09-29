@@ -86,7 +86,8 @@ export default async function (t) {
       && /\$\("draftFailRetry"\)\.onclick = \(\) => \{ \$\("prompt"\)\.focus\(\); saveDraft\(\)/.test(clientSrc));
   const locales = ['ja', 'en'].map((l) => JSON.parse(fs.readFileSync(new URL(`../../web/locales/${l}/ui.json`, import.meta.url), 'utf8')).chat.draft);
   t.ok('文言（下書きを保存できなかった一行・再試行）は ja・en の辞書にある', locales.every((d) => d.saveFailedNote && d.retry));
-  t.ok('700px 以下は ✦ を隠し、コンテキストをアイコン + 数字に', /#titleWand\{display:none\}/.test(css) && /\.ctxlink > span:not\(\.n,\.chg\)\{display:none\}/.test(css));
+  t.ok('700px 以下は ✦ を隠し、プラグインは広い画面と同じアイコンのまま（字・件数の畳みは無い）', /#titleWand\{display:none\}/.test(css) && !/\.ctxlink/.test(css)
+    && /id="contextEntry"[^>]*class|class="btn btn-icon" id="contextEntry"/.test(html));
   t.ok('モバイル版の殻の 700px 以下はタイトルの下の添え字（帯は 701px 以上だけ）', /@media \(max-width:700px\)\{[^@]*:root\.remote-mobile \.host-sub\{display:inline-flex\}/s.test(css)
     && /@media \(min-width:701px\)\{[^@]*:root\.remote-mobile \.host-bar\{display:flex/s.test(css));
   t.ok('リモートの帯を塗らない（--fill-primary を帯・殻の帯に使わない）', !/:root\.remote \.titlebar\{[^}]*fill-primary/.test(css) && !/\.host-bar\{[^}]*fill-primary/.test(css)

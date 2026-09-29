@@ -54,6 +54,8 @@ View は DOM より上に描かれるので、メニュー・ダイアログ・�
 
 ## 画面
 
+入口は会話の頭の行の地球のボタン（`#browserEntry`、`web/header-entries.mjs`。見た目は [design-system](design-system.md)「会話の頭の行のアイコン」）と、近道 Ctrl+Shift+B（macOS は ⌘⇧B）。どちらも右パネルのブラウザーを開閉する。開くときは前のタブをそのまま出し（読み直さない）、タブが無ければ空の新しいタブを作ってアドレス欄にフォーカスを置く。閉じるとフォーカスはボタンへ戻る。近道は IME の変換中・ダイアログ・設定の画面では効かない。ページにフォーカスがあるときは main がタブの webContents の `before-input-event` でこの近道だけを拾って `preventDefault` し（離したとき・押しっぱなしの繰り返し・ほかのキーはページへ渡す。別の窓に出したタブでは拾わない）、本体の画面へフォーカスを戻して `ply:browser-shortcut` で知らせる。ボタンはブラウザーを表示中は `aria-pressed`、エージェントがこの会話のタブを操作している間は走っている弧を付ける。
+
 右パネルの 1 つのモード（`web/side-panel.mjs` の `browserSlots`）。見出し「ブラウザー」、頭の行は広げる・閉じる。見出しの下にタブの列（小さく、×・新しいタブ）。道具の列は戻る・進む・再読み込み（読み込み中は止める）・アドレス欄・既定のブラウザーで開く（常に）・⋯（DevTools・別の窓に出す・このサイトのデータを消す）。種類の印・切り替え・ツリー・下の行は出さない。形は docs/design-system.md「内蔵ブラウザー」。
 
 アドレス欄（`web/browser-address.mjs`）:
@@ -102,6 +104,7 @@ ON のとき、エージェントが別の origin へ移る前に中継の `Page
 - `command(action, args)` → `ply:browser`（invoke）。`open`・`newTab`・`select`・`close`・`back`・`forward`・`reload`・`stop`・`devtools`・`external`・`detach`・`clearSiteData`・`freeze`・`unfreeze`・`context`・`state`・`agentStop`・`agentTakeOver`。
 - `layout({ visible, rect, radius })` → `ply:browser-layout`。
 - `onState(listener)` ← `ply:browser-state`（タブの一覧・今のタブ・URL・題・読み込み中・戻れるか/進めるか・操作中のエージェント）。
+- `onShortcut(listener)` ← `ply:browser-shortcut`（ページにフォーカスがあるときに押された開閉の近道）。
 
 ### 会話とタブ
 

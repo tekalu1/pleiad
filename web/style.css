@@ -492,13 +492,14 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .top input::placeholder{color:var(--ink-weak);font-weight:400}
 .top input:disabled{background:transparent}
 .title-field{flex:1;min-width:0;display:flex;position:relative}
-/* タイトル行の右。この会話が読み込むコンテキストへの入口（docs/design-system.md §9）。
-   弱い色で、触れると本文色。共通読み込み（Pleiad が担当）の会話だけ青のまま */
-.ctxlink{flex:none;padding:4px 12px;font-size:var(--fs-s)}
-.ctxlink svg{width:14px;height:14px}
-.ctxlink .n{font-size:var(--fs-s)}
-.ctxlink .chg{color:var(--ink-strong)}
-.ctxlink.ply,.ctxlink.ply:hover{color:var(--ink-blue)}
+/* タイトル行の右の、右パネルを開くアイコンボタン（目次・プラグイン・内蔵ブラウザー。docs/design-system.md「会話の頭の行のアイコン」）。
+   プラグインの「変更あり」は右上の強い字の点（紙の色の 2px の切り欠き）。件数は字にせず名前にだけ入れる。
+   内蔵ブラウザーの操作中は右上の走っている弧（§6。14px の紙の色の丸の中に半径 4.4・線 1.5） */
+#contextEntry,#browserEntry{position:relative}
+.entry-dot{position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;color:var(--ink-strong);background:currentColor;box-shadow:0 0 0 2px var(--surface-paper);pointer-events:none}
+.entry-run.run{position:absolute;top:-2px;right:-3px;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);color:var(--ink);pointer-events:none}
+.entry-run.run svg{width:12.32px;height:12.32px;stroke-width:1.7}
+.btn:hover > .entry-dot{box-shadow:0 0 0 2px var(--surface-2)}
 /* AI がタイトルを考えている間。欄の文字を隠し、文字の代わりに丸い棒を置いて光を左から右へ通す。
    棒は 15px の太字 1 行に合わせた高さ 10px、長さはタイトルの半分ほど。欄は disabled で書き込めない */
 .title-field.generating input,.title-field.generating input::placeholder{color:transparent}
@@ -1481,12 +1482,15 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   /* タイトル行と入力欄の行: 見た目は 36px のまま、押せる範囲を上下に 4px ずつ広げて 44px にする。
      左右は隣と重ならない範囲（隙間の半分）まで。タイトル行は隙間を 8px にして 44×44（::after は設定の更新の点が使う） */
   .top{gap:8px}
-  .top > .btn-icon,.top > .ctxlink,.crow > .btn-icon,.crow > .chip,.crow > .abort,.crow > .send{position:relative}
-  .top > .btn-icon::before,.top > .ctxlink::before{content:"";position:absolute;inset:-4px}
+  .top > .btn-icon,.crow > .btn-icon,.crow > .chip,.crow > .abort,.crow > .send{position:relative}
+  .top > .btn-icon::before{content:"";position:absolute;inset:-4px}
   .crow > .btn-icon::before,.crow > .chip::before,.crow > .abort::before,.crow > .send::before{content:"";position:absolute;inset:-4px -1px}
   .send{width:36px;height:36px}
   .side-mark[data-kind=unread]{top:5px;right:4px}
   .side-mark[data-kind=wait]{top:1px;right:-3px}
+  /* 36px のボタンでは、変更ありの点・操作中の弧をアイコンの右上に寄せたまま置く */
+  .entry-dot{top:7px;right:7px}
+  .entry-run.run{top:1px;right:0}
 }
 
 /* ---- 狭い画面（700px 以下）: 脇を引き出しに ---- */
@@ -1569,14 +1573,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   :root.remote-mobile .file-preview{top:var(--top-inset)}
   :root.remote-mobile dialog:modal{max-height:calc(100dvh - var(--top-inset) - 16px)}
 }
-/* ---- 700px 以下のタイトル行: ✦（タイトルを生成）は「…」の中へ、コンテキストは文書のアイコンと等幅の数字に畳む（札の色地は作らない） ---- */
+/* ---- 700px 以下のタイトル行: ✦（タイトルを生成）は「…」の中へ。目次・プラグイン・内蔵ブラウザーのアイコンは「…」へ逃がさない ---- */
 @media (max-width:700px){
   #titleWand{display:none}
-  .ctxlink{padding:0 8px 0 6px;min-height:36px;gap:3px}
-  .ctxlink svg{width:16px;height:16px}
-  .ctxlink > span:not(.n,.chg){display:none}
-  .ctxlink .n{font-family:var(--font-mono)}
-  /* 「変更あり」は強い字の点だけ残す（読み上げは字のまま） */
-  .ctxlink .chg{font-size:0}
-  .ctxlink .chg::before{content:"•";font-size:var(--fs)}
 }
