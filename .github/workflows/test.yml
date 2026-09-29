@@ -5,7 +5,9 @@ name: test
 on:
   push:
     branches: [main]
+    paths-ignore: ['site/**']
   pull_request:
+    paths-ignore: ['site/**']
   workflow_dispatch:
   # 押すたびには回さない検査（下の safe-storage-macos）を、週に一度だけ拾う
   schedule:
