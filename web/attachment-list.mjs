@@ -28,7 +28,7 @@ let open = null;
  *   progress  0〜100 | null（送信中の進み具合。あれば細い棒を出す）
  *   section   区分の見出し（前の行と違うときだけ行の上に出す）| null
  * actions(item) は [{ label, run(item), keepOpen? }]。押すと面を閉じてから run する（keepOpen は閉じない）。
- * @returns {{ close(): void, update(items: object[]): void, dialog: HTMLDialogElement }}
+ * @returns {{ close(): void, update(items: object[], title?: string): void, dialog: HTMLDialogElement }}
  */
 export function openAttachmentList({ anchor = null, title, items = [], actions = () => [], onClose = null }) {
   open?.close();
@@ -80,7 +80,8 @@ export function openAttachmentList({ anchor = null, title, items = [], actions =
   open = { dialog, close };
   return {
     dialog, close,
-    update(next) {
+    update(next, nextTitle = null) {
+      if (nextTitle) heading.textContent = nextTitle;
       // 行を作り直すので、フォーカスのあった行・ボタンの位置を覚え、作り直した後の同じ位置（無ければ前の行）へ戻す
       // （「外す」を押した後にフォーカスが <body> へ落ちない）
       const at = dialog.contains(document.activeElement) ? focusPath(body, document.activeElement) : null;

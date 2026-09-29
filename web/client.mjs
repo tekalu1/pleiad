@@ -4231,7 +4231,7 @@ function renderAttached() {
     .map((h, i) => (h ? `${attachedKey(state.attached[i].path)}=${h}` : "")).filter(Boolean).join("|");
   if (hints !== attachHintSig) { attachHintSig = hints; composerEditor.refresh(); }
   if (!total) attachList?.close();
-  else attachList?.update(attachListRows());
+  else attachList?.update(attachListRows(), t("chat.attachList.count", { count: total }));   // 見出しの件数も合わせる
   syncRunState();
 }
 

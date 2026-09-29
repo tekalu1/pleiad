@@ -294,8 +294,8 @@ async page => {
   await K.press('Enter'); await page.waitForTimeout(150);
   check('一覧の「外す」の後も、フォーカスは面の中の同じ位置のボタン', await page.evaluate(() => {
     const a = document.activeElement;
-    return { inDialog: Boolean(a.closest('dialog.att-list')), label: a.textContent, rows: document.querySelectorAll('dialog.att-list .att-list-row').length };
-  }), { inDialog: true, label: '外す', rows: 1 });
+    return { inDialog: Boolean(a.closest('dialog.att-list')), label: a.textContent, rows: document.querySelectorAll('dialog.att-list .att-list-row').length, heading: document.querySelector('dialog.att-list h3').textContent };
+  }), { inDialog: true, label: '外す', rows: 1, heading: '添付 1 件' });
   await K.press('Enter'); await page.waitForTimeout(250);
   check('全部外して面が閉じたら、フォーカスは入力欄へ', await page.evaluate(() => ({ id: document.activeElement.id, open: document.querySelectorAll('dialog.att-list[open]').length })), { id: 'prompt', open: 0 });
   await reset();
