@@ -1243,7 +1243,46 @@
       "editCancel": "取り消し",
       "sendAsBranchTitle": "分岐して送信 (Ctrl+Enter)",
       "sendAsBranch": "分岐して送信",
+      "showMore": "続きを表示",
+      "showLess": "折りたたむ",
+      "showSource": "エージェントに渡した原文を見る",
+      "hideSource": "原文を閉じる",
       "you": "あなた"
+    },
+    "attachList": {
+      "count_other": "添付 {{count}} 件",
+      "open": "開く",
+      "copyPath": "パスをコピー",
+      "close": "閉じる",
+      "sent": "送信済み",
+      "byPath": "パスで渡す",
+      "jump": "文中の位置へ移動",
+      "insert": "カーソルの位置に入れる",
+      "section": {
+        "inline": "文中の添付",
+        "tail": "文末に付く"
+      },
+      "origin": {
+        "host": "ホスト",
+        "device": "この端末"
+      }
+    },
+    "composerAtt": {
+      "retry": "再試行",
+      "cancelled": "やめました",
+      "failed": "送れませんでした: {{error}}",
+      "entrySending_other": "{{count}} 件送信中",
+      "entryFailed_other": "{{count}} 件失敗",
+      "blockSending": "添付を送っている間は送れません",
+      "blockFailed": "送れなかった添付があります。再試行するか外してください"
+    },
+    "composerFormat": {
+      "label": "書式",
+      "strong": "太字",
+      "em": "斜体",
+      "code": "コード",
+      "link": "リンク",
+      "url": "リンクの URL"
     },
     "next": {
       "title": "次のターンから適用",
@@ -1286,6 +1325,7 @@
       "firstMessage": "{{name}} の最初の発言を書く",
       "placeholder": "Ctrl+Enter で送信",
       "placeholderTouch": "メッセージを書く",
+      "editorLabel": "メッセージ",
       "queued": "会話ができしだい送ります",
       "queuedCancel": "取り消す",
       "historyLoading": "履歴を読み込み中…",
@@ -1355,8 +1395,6 @@
       "sendingTitle": "{{name}}（{{size}}）をホストへ送っています",
       "cancelSending": "送るのをやめる",
       "largeImage": "{{name}}（{{size}}）を添付しました。エージェントは画像をパスから読みます。5MB を超える画像は、エージェントによっては画像として読めないことがあります。そのときは小さくしてから添付してください。",
-      "removeNamed": "外す: {{name}}",
-      "removeNamedIn": "外す: {{name}}（{{folder}}）",
       "deviceFolder": "この端末",
       "already": "このファイルはすでに添付されています"
     },

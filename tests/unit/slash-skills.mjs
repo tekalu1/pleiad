@@ -189,4 +189,18 @@ export default async function (t) {
   await m4.settle();
   t.ok("取れなかったことを出して、閉じない", m4.list.querySelector(".none").textContent === "スキル一覧を取得できませんでした"
     && m4.slash.isOpen() === true);
+
+  // ---- 編集欄（web/md-editor.mjs）: setRangeText を持つ欄では、行全体を書き換えずに token の範囲だけを置き換える
+  const m5 = mount();
+  const ranges = [];
+  m5.input.setRangeText = (text, start, end, mode) => {
+    ranges.push([text, start, end, mode]);
+    m5.input.value = m5.input.value.slice(0, start) + text + m5.input.value.slice(end);
+  };
+  m5.type("先に **太字** を書いて /vi");
+  await m5.settle();
+  m5.key("Enter");
+  t.ok("token の範囲だけを置き換える（setRangeText）・欄の値の全体は書き換えない",
+    ranges.length === 1 && ranges[0][0] === "/visualize " && ranges[0][1] === 15 && ranges[0][2] === 18 && ranges[0][3] === "end" && m5.input.value === "先に **太字** を書いて /visualize ",
+    JSON.stringify(ranges));
 }

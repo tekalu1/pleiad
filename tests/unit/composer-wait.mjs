@@ -141,7 +141,7 @@ export default function (t) {
   const html = read('web/index.html');
   t.ok('index.html に欄の上の一行と欄の中の待機表示', /id="composerNote"[^>]*role="status"/.test(html) && /id="composerBusy"/.test(html) && /id="composerBusyText"/.test(html));
   const css = read('web/style.css');
-  t.ok('style.css: 待ちは 150ms 後の data-wait で字を隠し、流れる棒は reduced-motion で止める', /\.cbox\[data-wait\] textarea/.test(css) && /\.composer-busy-bar\{animation:none\}/.test(css));
+  t.ok('style.css: 待ちは 150ms 後の data-wait で字を隠し、流れる棒は reduced-motion で止める', /\.cbox\[data-wait\] #prompt/.test(css) && /\.composer-busy-bar\{animation:none\}/.test(css));
   const keys = ['queued', 'queuedCancel', 'historyLoading', 'connecting', 'historyNotLoaded', 'historyRetry'];
   const missing = ['ja', 'en'].flatMap(lang => { const c = JSON.parse(read(`web/locales/${lang}/ui.json`)).chat.composer; return keys.filter(k => !c[k]).map(k => `${lang}:${k}`); });
   t.ok('文言は ja・en の辞書にある', missing.length === 0, missing.join(' '));

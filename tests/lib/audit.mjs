@@ -11,6 +11,8 @@ const ALLOWED_TAGS = new Set([
   "p", "h1", "h2", "h3", "h4", "ul", "ol", "li", "code", "pre", "div", "span",
   "table", "thead", "tbody", "tr", "th", "td", "blockquote", "hr", "a",
   "strong", "em", "br", "del", "details", "summary", "button", "svg", "path",
+  // 自分の発言の添付（web/user-message.mjs）。img の src は下で検査する
+  "figure", "figcaption", "img",
 ]);
 const SAFE_HREF = /^(https?:\/\/|\/|#|\.{0,2}\/|[^:\s]*$)/i;
 const ATTR = /([a-zA-Z_:][\w:.\-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;

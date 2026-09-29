@@ -13,6 +13,8 @@ const normalize = value => {
 export const ATTACHMENT_MARKS = { ja: '[添付]', en: '[Attachment]' }; // i18n-ignore: エージェントに渡す添付の印（会話の言語で選ぶ。読み戻しの正規表現と対）
 export const attachmentLine = (locale, path) => `${ATTACHMENT_MARKS[locale] ?? ATTACHMENT_MARKS.ja} ${path}`;
 export const ATTACHMENT_LINE = /^\[(?:添付|Attachment)\]\s+(.+)$/;
+/** 添付のパスを突き合わせる形にする（区切りと Windows のドライブの大小を吸収） */
+export const normalizeAttachmentPath = normalize;
 
 /** Match the attachment marker, not incidental mentions of a filename. */
 export function attachmentMessageIndex(messages, present) {
@@ -64,3 +66,22 @@ export function buildItems(messages, presents) {
     .flatMap(item => item.kind === "msg" ? [item, ...(attached.get(item.mi) ?? [])] : [item])
     .concat(untimed);
 }
+
+/**
+ * 発言に結び付いた human の present（発言の添字 → present の並び）。画面はこれを発言の本文の位置に取り込む（web/user-message.mjs）。
+ * items は buildItems の結果
+ */
+export function inlineAttachments(items) {
+  const byMessage = new Map();
+  for (const it of items) {
+    if (it.kind !== "present" || it.p.by !== "human" || it.anchorMi < 0) continue;
+    byMessage.set(it.anchorMi, [...(byMessage.get(it.anchorMi) ?? []), it.p]);
+  }
+  return byMessage;
+}
+
+/**
+ * present の item を、発言の後ろの別カードとして出すか。取り込み済みの発言（inlined = 本文に取り込んで描いた発言の添字）に
+ * 結び付いた human の present は出さない（二重にしない）。結び付かなかった human の present・AI の present・可視化は出す
+ */
+export const showsAsCard = (item, inlined) => !(item.p.by === "human" && item.anchorMi >= 0 && inlined.has(item.anchorMi));

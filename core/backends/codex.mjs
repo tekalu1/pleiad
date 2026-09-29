@@ -19,6 +19,7 @@ import { rpc as nativeRpc } from './codex-rpc.mjs';
 import { commandActivity } from "./codex-background.mjs";
 import { createTerminalTracker } from "./codex-background.mjs";
 import { codexContextRpc } from './context-options.mjs';
+import { promptTitle } from '../prompt-title.mjs';
 import { CodexRpc } from './codex-rpc.mjs';
 import { codexHooksState, codexListProblem } from '../hooks-plan.mjs';
 import { maskText } from '../hooks-config.mjs';
@@ -890,7 +891,7 @@ function toRow(t) {
   return {
     sessionId: t.id,
     // name が正本（thread/name/set で公式クライアントと共有される）。無ければ preview を出す
-    title: t.name || (t.preview ? String(t.preview).slice(0, 80) : null) || null,
+    title: t.name || (t.preview ? promptTitle(t.preview) : null) || null,
     cwd: t.cwd ?? null,
     createdAt: toIso(t.createdAt),
     lastModified: toMs(t.updatedAt),
