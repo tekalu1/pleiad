@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/branding/harmonic/harmonic-lockup.svg" alt="Pleiad" width="280">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/branding/pleiad-lockup-dark.svg">
+    <img src="assets/branding/pleiad-lockup.svg" alt="Pleiad" width="240">
+  </picture>
 </p>
 
 <p align="center">One workspace for Claude Code, Codex, and Antigravity.</p>
