@@ -8,9 +8,9 @@ const C = {
   bg: new THREE.Color('#f5f6fa'),
   ink: new THREE.Color('#1c2247'),
   node: new THREE.Color('#6d76a3'),
-  line: new THREE.Color('#b4bcdf'),
+  line: new THREE.Color('#9aa3d4'),
   current: new THREE.Color('#5665cd'),
-  run: new THREE.Color('#3a499e'),
+  run: new THREE.Color('#1c2247'),
   done: new THREE.Color('#5665cd'),
   wait: new THREE.Color('#aa2678'),
   dust: new THREE.Color('#c3c9e2'),
@@ -90,7 +90,7 @@ const vert = /* glsl */ `
 `;
 
 const frag = /* glsl */ `
-  uniform float uTime;
+  uniform float uTime, uHead, uTail;
   uniform vec3 uBg;
   varying vec3 vColor;
   varying float vKind, vAlpha, vFog, vAge;
@@ -108,15 +108,17 @@ const frag = /* glsl */ `
     } else if (vKind < 2.5) {
       a = disc(r, 0.5, aa);
     } else if (vKind < 3.5) {
-      float ang = atan(p.y, p.x);
-      float head = mod(uTime * 3.2, 6.2831853);
-      float d = mod(head - ang + 6.2831853, 6.2831853);
-      float arc = smoothstep(0.0, 0.25, d) * (1.0 - smoothstep(2.4, 3.2, d));
-      a = max(disc(r, 0.26, aa), ring(r, 0.72, 0.1, aa) * arc);
+      // アプリの走っている印と同じ弧（台は置かない）
+      float ang = atan(-p.y, p.x);
+      float len = uHead - uTail;
+      float d = mod(ang - uTail, 6.2831853);
+      float arc = smoothstep(-0.12, 0.05, d) * (1.0 - smoothstep(len - 0.05, len + 0.12, d));
+      a = ring(r, 0.6, 0.14, aa) * arc;
     } else if (vKind < 4.5) {
-      float ph = fract(uTime * 0.55);
-      float pulse = ring(r, mix(0.34, 0.96, ph), 0.08, aa) * (1.0 - ph) * 0.9;
-      a = max(disc(r, 0.3, aa), pulse);
+      // 承認待ち: ◆
+      float dm = abs(p.x) + abs(p.y);
+      float daa = fwidth(dm) * 0.75;
+      a = 1.0 - smoothstep(0.62 - daa, 0.62 + daa, dm);
     } else {
       a = disc(r, 0.5, aa) * (1.0 - smoothstep(0.0, 0.4, vAge));
     }
@@ -126,7 +128,10 @@ const frag = /* glsl */ `
   }
 `;
 
-export function initSky({ canvas, labelsEl, labels }) {
+// docs/design-system.md §6 の弧。先端も尾も戻らない
+const theta = (t) => Math.PI * (t - (0.6 * 2.4 / (2 * Math.PI)) * Math.cos((2 * Math.PI * t) / 2.4) - (0.3 * 1.7 / (2 * Math.PI)) * Math.cos((2 * Math.PI * t) / 1.7 + 1.1));
+
+export function initSky({ canvas, labelsEl, labels, avoid }) {
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const seed = Number(new URLSearchParams(location.search).get('seed')) || 5;
   const rand = rng(seed);
@@ -157,8 +162,12 @@ export function initSky({ canvas, labelsEl, labels }) {
   // 葉（枝の終わり）に状態を振る
   const leaves = branches.map((b) => ({ b, pos: b.pts[b.pts.length - 1], t: b.t0 + b.steps * STEP_T }));
   const order = leaves.slice().sort((x, y) => y.pos.z - x.pos.z);
-  const want = ['run', 'wait', 'run', 'done', 'run', 'done'];
-  order.forEach((l, i) => (l.kind = want[i] || (i % 3 === 0 ? 'done' : 'msg')));
+  const want = ['run', 'run', 'done', 'run', 'done'];
+  // 承認待ちは、最初の向きで右側（見出しと重ならない側）の葉
+  const sx = (l) => (l.pos.x - center.x) * Math.cos(-0.5) + (l.pos.z - center.z) * Math.sin(-0.5);
+  const waitLeaf = leaves.slice().sort((x, y) => sx(y) - sx(x))[1];
+  waitLeaf.kind = 'wait';
+  order.filter((l) => l !== waitLeaf).forEach((l, i) => (l.kind = want[i] || (i % 3 === 0 ? 'done' : 'msg')));
 
   // 今いる枝: 実行中のうち手前の葉までの経路
   const currentLeaf = order.find((l) => l.kind === 'run');
@@ -179,9 +188,9 @@ export function initSky({ canvas, labelsEl, labels }) {
     lineMats.push(m);
     return m;
   };
-  const baseMat = mkMat(C.line, 1.4, 1);
-  const trunkMat = mkMat(C.node, 1.4, 0.9);
-  const curMat = mkMat(C.current, 2.6, 1);
+  const baseMat = mkMat(C.line, 1.6, 1);
+  const trunkMat = mkMat(C.node, 1.6, 0.9);
+  const curMat = mkMat(C.current, 3, 1);
 
   const lines = [];
   const addLine = (pts, t0, mat, order) => {
@@ -209,13 +218,13 @@ export function initSky({ canvas, labelsEl, labels }) {
   branches.forEach((b) => {
     for (let i = 2; i < b.pts.length - 1; i += 2) {
       if (b.forks.includes(i)) continue;
-      push(b.pts[i], KIND.msg, 5.5, C.node, b.t0 + i * STEP_T);
+      push(b.pts[i], KIND.msg, 6.5, C.node, b.t0 + i * STEP_T);
     }
     b.forks.forEach((i) => push(b.pts[i], KIND.fork, 10, C.ink, b.t0 + i * STEP_T));
   });
   const leafSpec = {
     run: [KIND.run, 30, C.run],
-    wait: [KIND.wait, 40, C.wait],
+    wait: [KIND.wait, 21, C.wait],
     done: [KIND.done, 12, C.done],
     msg: [KIND.msg, 7, C.node],
   };
@@ -223,6 +232,8 @@ export function initSky({ canvas, labelsEl, labels }) {
     const [k, s, c] = leafSpec[l.kind];
     push(l.pos, k, s, c, l.t);
   });
+  // 最初の発言
+  push(branches[0].pts[0], KIND.done, 20, C.ink, 0.2);
 
   // 伸びている先端の光
   const tipIndex = pos.length / 3;
@@ -244,6 +255,8 @@ export function initSky({ canvas, labelsEl, labels }) {
     uFogNear: { value: 13 },
     uFogFar: { value: 23 },
     uBg: { value: C.bg },
+    uHead: { value: 0 },
+    uTail: { value: 0 },
   };
   const pmat = new THREE.ShaderMaterial({ vertexShader: vert, fragmentShader: frag, uniforms, transparent: true, depthWrite: false });
   const points = new THREE.Points(geo, pmat);
@@ -251,27 +264,31 @@ export function initSky({ canvas, labelsEl, labels }) {
   points.frustumCulled = false;
   tree.add(points);
 
-  // ラベル: 葉に会話のタイトル
+  // ラベル: 葉に会話のタイトル。一度に 1 つずつ
   const labeled = [];
-  const pickOrder = ['run', 'wait', 'done', 'run'];
   const used = new Set();
-  labels.forEach((spec, i) => {
-    const l = order.find((x) => x.kind === pickOrder[i] && !used.has(x));
+  labels.forEach((spec) => {
+    const l = order.find((x) => x.kind === spec.kind && !used.has(x));
     if (!l) return;
     used.add(l);
     const el = document.createElement('div');
     el.className = `sky-label is-${l.kind}`;
     el.innerHTML = `<img src="${spec.logo}" alt="" width="14" height="14"><span class="t">${spec.title}</span><span class="s">${spec.status}</span>`;
     labelsEl.appendChild(el);
-    labeled.push({ el, l });
+    labeled.push({ el, l, o: 0, x: 0, y: 0, ok: true });
   });
+  const grown = Math.max(...leaves.map((l) => l.t)) + 0.3;
+  const HOLD = 3.6;
+  let active = 0, since = grown;
 
   // 大きさと配置
-  let W = 1, H = 1, fitScale = 1;
+  let W = 1, H = 1, fitScale = 1, avoidRect = null;
   const resize = () => {
     const r = canvas.getBoundingClientRect();
     W = r.width; H = r.height;
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    let pr = Math.min(devicePixelRatio, 2);
+    if (W * H * pr * pr > 4.2e6) pr = Math.max(1, Math.sqrt(4.2e6 / (W * H)));
+    renderer.setPixelRatio(pr);
     renderer.setSize(W, H, false);
     camera.aspect = W / H;
     camera.updateProjectionMatrix();
@@ -280,10 +297,13 @@ export function initSky({ canvas, labelsEl, labels }) {
     const halfH = Math.tan(THREE.MathUtils.degToRad(15)) * CAM_Z;
     const halfW = halfH * camera.aspect;
     const wide = camera.aspect > 1.15;
-    const target = wide ? Math.min(halfH * 0.95, halfW * 0.44) : Math.min(halfW * 0.9, halfH * 0.5);
+    const target = wide ? Math.min(halfH * 1.02, halfW * 0.56) : Math.min(halfW * 0.78, halfH * 0.3);
     fitScale = target / radius;
     root.scale.setScalar(fitScale);
-    root.position.set(wide ? halfW * 0.34 : 0, wide ? -halfH * 0.02 : halfH * 0.3, 0);
+    root.position.set(wide ? halfW * 0.22 : 0, wide ? 0 : halfH * 0.44, 0);
+    avoidRect = avoid ? avoid.getBoundingClientRect() : null;
+    const cr = canvas.getBoundingClientRect();
+    if (avoidRect) avoidRect = { l: avoidRect.left - cr.left, t: avoidRect.top - cr.top, r: avoidRect.right - cr.left, b: avoidRect.bottom - cr.top };
   };
   resize();
   new ResizeObserver(resize).observe(canvas);
@@ -308,6 +328,9 @@ export function initSky({ canvas, labelsEl, labels }) {
     const dt = Math.min(clock.getDelta(), 0.05);
     if (!reduce) time += dt;
     uniforms.uTime.value = time;
+    const head = theta(time);
+    uniforms.uHead.value = head % (Math.PI * 2);
+    uniforms.uTail.value = uniforms.uHead.value - (head - Math.min(theta(time - 0.65), head - 0.42));
 
     // 枝を伸ばす
     lines.forEach((ln, i) => {
@@ -333,19 +356,38 @@ export function initSky({ canvas, labelsEl, labels }) {
 
     // ラベル
     root.updateMatrixWorld();
-    labeled.forEach(({ el, l }) => {
+    labeled.forEach((it) => {
+      const { el, l } = it;
       v.copy(l.pos).applyMatrix4(tree.matrixWorld);
       const depth = v.clone().applyMatrix4(camera.matrixWorldInverse).z;
       v.project(camera);
       const x = (v.x * 0.5 + 0.5) * W;
       const y = (-v.y * 0.5 + 0.5) * H;
-      const appear = THREE.MathUtils.clamp((time - l.t - 0.4) / 0.6, 0, 1);
-      const fog = THREE.MathUtils.smoothstep(-depth, 15.5, 21);
-      el.style.opacity = (appear * (1 - fog)).toFixed(3);
       const w = el.offsetWidth || 180;
-      const flip = x + 22 + w > W - 16;
-      el.classList.toggle('is-flip', flip);
-      el.style.transform = `translate3d(${(flip ? x - w - 44 : x).toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
+      const flip = x + 24 + w > W - 16;
+      it.x = Math.max(-8, flip ? x - w - 48 : x);
+      it.y = y;
+      const fog = THREE.MathUtils.smoothstep(-depth, 15.5, 21);
+      const a = avoidRect;
+      const hit = a && it.x + 24 < a.r + 12 && it.x + 24 + w > a.l && y > a.t - 16 && y < a.b + 16;
+      it.ok = !hit && fog < 0.6 && x > 0 && x < W && y > 60 && y < H - 20;
+      it.fog = fog;
+    });
+    if (time > grown) {
+      const cur = labeled[active];
+      if ((!reduce && time - since > HOLD) || !cur.ok) {
+        for (let k = 1; k <= labeled.length; k++) {
+          const n = (active + k) % labeled.length;
+          if (labeled[n].ok) { active = n; break; }
+        }
+        since = time;
+      }
+    }
+    labeled.forEach((it, i) => {
+      const on = time > grown && i === active && it.ok;
+      it.o += ((on ? 1 - it.fog : 0) - it.o) * (reduce ? 1 : 0.08);
+      it.el.style.opacity = it.o.toFixed(3);
+      it.el.style.transform = `translate3d(${it.x.toFixed(1)}px, ${it.y.toFixed(1)}px, 0)`;
     });
   }
 
