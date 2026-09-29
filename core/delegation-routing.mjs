@@ -13,7 +13,7 @@ import { STALE_MS } from './delegation-usage.mjs';
 export const KINDS = Object.freeze(['trivial', 'mechanical', 'investigate', 'implement', 'review', 'design', 'ux_change', 'ux_new', 'visual']);
 export const DIFFICULTIES = Object.freeze(['low', 'mid', 'high']);
 export const TIERS = Object.freeze(['t1', 't2', 't3', 't4', 'tv']);
-/** 上がっていく段の順。tv（画像・新規 UX）はこの列に入らず、上がらない */
+/** 上がっていく段の順。tv（クリエイティブ）はこの列に入らず、上がらない */
 const LADDER = ['t1', 't2', 't3', 't4'];
 export const JUDGES = Object.freeze(['jev', 'cerebras', 'none']);
 
@@ -49,7 +49,7 @@ export const DEFAULTS = Object.freeze({
     trivial: Object.freeze(['t1', 't1', 't2']), mechanical: Object.freeze(['t1', 't2', 't3']),
     investigate: Object.freeze(['t2', 't3', 't4']), implement: Object.freeze(['t2', 't3', 't4']), review: Object.freeze(['t2', 't3', 't4']),
     design: Object.freeze(['t3', 't4', 't4']), ux_change: Object.freeze(['t4', 't4', 't4']),
-    ux_new: Object.freeze(['tv', 'tv', 'tv']), visual: Object.freeze(['tv', 'tv', 'tv']),
+    ux_new: Object.freeze(['t4', 't4', 't4']), visual: Object.freeze(['tv', 'tv', 'tv']),
   }),
 });
 /** 週次の枠のペース（使用率 ÷ 経過率）を見始める経過率（%） */

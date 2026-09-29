@@ -43,7 +43,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 | `design` | 成果物が推奨・計画・選んだやり方（作業の大半が事実集めでも） |
 | `ux_change` | 既存の画面の見た目や流れを変え、形を子が決める。複雑ではないもの |
 | `ux_new` | 新しい画面や製品の UX、または複雑な UX の作り直し |
-| `visual` | 画像・ロゴ・図 |
+| `visual` | 3D モデリング、生成画像のベクター化、イラスト・ロゴなど、見た目の出来栄えが成果を決める高度なクリエイティブ作業（図・グラフ・画面のモックは含めない。形が決まっていれば `implement`、形を子が決めるなら `ux_change` / `ux_new`） |
 
 `kind` が無い・不正なら、9 種類の一覧（定義つき）を付けたエラーを返す。`backend` を書いたときも `kind` は記録する。
 振り分けが無効な設定で `backend` が無ければ、`backend` を求めるエラー。`backend` 無しで `model` / `effort` を書いたらエラー（黙って捨てない）。
@@ -65,10 +65,10 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
    | mechanical | t1 | t2 | t3 |
    | investigate / implement / review | t2 | t3 | t4 |
    | design | t3 | t4 | t4 |
-   | ux_change | t4 | t4 | t4 |
-   | ux_new / visual | tv | tv | tv |
+   | ux_change / ux_new | t4 | t4 | t4 |
+   | visual | tv | tv | tv |
 
-   段の候補（既定、左から）: t1 = antigravity `gemini-3.8-flash-high` → claude `haiku`。t2 = antigravity `gemini-3.8-flash-high` → codex `gpt-6-luna` → antigravity `claude-opus-4-6-thinking` → claude `sonnet`。t3 = codex `gpt-6-sol` → claude `sonnet`。t4 = claude `opus` → claude `fable`。tv = codex `gpt-6-astra`。
+   段の候補（既定、左から）: t1 = antigravity `gemini-3.8-flash-high` → claude `haiku`。t2 = antigravity `gemini-3.8-flash-high` → codex `gpt-6-luna` → antigravity `claude-opus-4-6-thinking` → claude `sonnet`。t3 = codex `gpt-6-sol` → claude `sonnet`。t4 = claude `opus` → claude `fable`。tv = codex `gpt-6-astra`（クリエイティブ作業＝`visual` だけに使う。新しい画面の `ux_new` は t4 の opus で足りる。[ADR 0058](adr/0058-delegation-creative-tier.md)）。
 5. **候補を 3 組に分ける。** Claude はアカウントごとに判定する（[ADR 0040](adr/0040-delegation-routing-headroom.md)）。
    - **使えない（外す）:** `unavailable`（バックエンドが有効でない・CLI が無い・Claude の登録アカウントにトークンが無い）、`model_unknown`（今のモデル一覧に無い）、委譲先でのモデル再確認による `rejected`、効く枠の今の使用率が 100% 以上の `quota_full`。`unavailable` の中身は `skipped[].detail`（`disabled`・`not_installed`・`no_token`。使用量をまだ一度も取っていないときは付けない）で、画面は「使えない（未インストール）」と添える。
    - **余裕が少ない（後回し）:** `usage_unknown`（取得失敗・取得中・枠なし・不明な枠あり）、`usage_stale`（取得間隔の 3 倍＝15 分を超えて古い。閾値は設定にはなく内部の定数）、`quota_high`（効く 5 時間以外の枠のどれかが後回しの線、既定 80%、以上）、`pace_high`、`pace_unknown`。`avoidPercent` は候補を除く線ではなく後回しにする線。5 時間の枠（`minutes === 300`）は 100% 以上のときだけ使えないと判定し、100% 未満なら後回しの判定には使わない。5 時間の使用率が不明でも、それだけでは `usage_unknown` にしない。
