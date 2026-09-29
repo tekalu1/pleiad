@@ -1422,17 +1422,21 @@ function makeEmit(turn) {
  */
 async function presentAttachments(sessionId, attachments, emit) {
   for (const a of attachments) {
-    const file = path.resolve(String(a?.path ?? ""));
+    const given = String(a?.path ?? "");
+    const file = path.resolve(given);
     const mime = String(a.mime ?? "");
-    if (!file.startsWith(UPLOAD_DIR + path.sep)) {
+    // Windows はドライブ・フォルダーの大小を区別しない（区別すると、置き場の中のファイルがホストのファイルの枝に入る）
+    const inUploads = process.platform === "win32" ? file.toLowerCase().startsWith((UPLOAD_DIR + path.sep).toLowerCase()) : file.startsWith(UPLOAD_DIR + path.sep);
+    if (!inUploads) {
       let stat;
       try { ({ stat } = await inspectFile(file, fileAccess)); } catch { continue; }
       if (!stat.isFile()) continue;
       const name = path.basename(file);
       const isImage = IMAGE_MIME.test(mime) || /\.(?:png|jpe?g|gif|webp|avif)$/i.test(name);
-      // path は本文の印と突き合わせる（web/timeline.mjs）ので、クライアントが渡したパスのまま（実パスに直さない）
+      // path は本文の印と突き合わせる（web/timeline.mjs）ので、クライアントが渡した文字列のまま（絶対パスに直さない・実パスに直さない）。
+      // 読めるかの検査（inspectFile）だけが、解決した後のパスで行う
       emit({ type: "present", sessionId, kind: isImage ? "image" : "file", caption: t('ui:saved.caption.attachment', { name, lng: 'ja' }), captionKey: 'attachment',
-        captionParams: { name }, path: file, by: "human", origin: "host", size: stat.size, truncated: true });
+        captionParams: { name }, path: given, by: "human", origin: "host", size: stat.size, truncated: true });
       continue;
     }
     const isImage = IMAGE_MIME.test(mime);

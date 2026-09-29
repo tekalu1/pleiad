@@ -135,6 +135,8 @@ export function createMarkdownEditor(root, o) {
     if (!records.length) return;
     docBlocks = docLayoutCache = docMd = docAtoms = null;
     for (const r of records) {
+      // 静的な訳（applyDom）が属性だけを差し替えても、aria-placeholder を合わせる
+      if (r.target === root && r.attributeName === 'placeholder' && root.getAttribute('aria-placeholder') !== root.getAttribute('placeholder')) root.setAttribute('aria-placeholder', root.getAttribute('placeholder') ?? '');
       if (r.type === 'childList' && r.target === root) divsCache = null;
       const d = blockOf(r.target);
       if (d) { divCache.delete(d); touched.add(d); }
@@ -836,7 +838,8 @@ export function createMarkdownEditor(root, o) {
     selectionEnd: { configurable: true, get: () => offsets().end, set: (n) => setRange(Math.min(n, offsets().start), n) },
     placeholder: {
       configurable: true, get: () => root.getAttribute('placeholder') ?? '',
-      set: (v) => { root.setAttribute('placeholder', v); root.setAttribute('aria-label', v); },
+      // 読み上げの名前は固定にし、placeholder（中断中は「指示を変えて続ける…」などに変わる）は aria-placeholder に入れる
+      set: (v) => { root.setAttribute('placeholder', v); root.setAttribute('aria-placeholder', v); },
     },
     readOnly: {
       configurable: true, get: () => root.getAttribute('aria-readonly') === 'true',
@@ -861,6 +864,7 @@ export function createMarkdownEditor(root, o) {
     setRange(start + text.length, start + text.length);
   };
   root.setAttribute('placeholder', root.getAttribute('placeholder') ?? '');
+  root.setAttribute('aria-placeholder', root.getAttribute('placeholder'));
 
   // ------------------------------------------------------------ 外から使う窓口
   const editor = {

@@ -1365,6 +1365,7 @@
       "firstMessage": "Write the first message for {{name}}",
       "placeholder": "Ctrl+Enter to send",
       "placeholderTouch": "Write a message",
+      "editorLabel": "Message",
       "queued": "Will send once the conversation is ready",
       "queuedCancel": "Cancel",
       "historyLoading": "Loading history…",

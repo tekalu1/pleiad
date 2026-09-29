@@ -146,6 +146,18 @@ export default async function (t) {
     await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: path.join(ROOT, "no-such-file.zzz"), name: "x", mime: "" }, { path: "\\\\server\\share\\x.txt", name: "x", mime: "" }] }, { ms: 20_000 });
     t.ok("無いファイル・UNC パスは載せない", !c.since(m2).some((e) => e.type === "present") && !c.since(m1).some((e) => e.type === "present" && e.path !== hostFile));
 
+    // present の path は、渡された文字列のまま（.. を含んでいても解決しない。本文の印と突き合わせるため）。検査だけが解決した後のパスで行う
+    const dotted = ROOT + path.sep + "core" + path.sep + ".." + path.sep + "package.json";
+    const m6 = c.mark();
+    const viaDots = await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: dotted, name: "package.json", mime: "" }] }, { ms: 20_000 });
+    t.ok("ホストのファイルの present の path は渡された文字列のまま（.. を解決しない）", viaDots.events.find((e) => e.type === "present")?.path === dotted, JSON.stringify(viaDots.events.find((e) => e.type === "present")?.path));
+    if (process.platform === "win32") {
+      const lowered = up.path[0].toLowerCase() + up.path.slice(1), uppered = up.path[0].toUpperCase() + up.path.slice(1);
+      const cased = lowered === up.path ? uppered : lowered;
+      const viaCase = await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: cased, name: "shot.png", mime: "image/png" }] }, { ms: 20_000 });
+      const pc = viaCase.events.find((e) => e.type === "present");
+      t.ok("Windows はドライブの大小が違っても置き場の中（端末から送ったもの）として扱う", pc?.origin === "device" && String(pc?.dataUri ?? "").startsWith("data:image/png"), JSON.stringify({ origin: pc?.origin, path: pc?.path }));
+    } else t.ok("置き場のパスの大小を区別しない判定は Windows だけ（skip）", true);
     // データ置き場の中（uploads の外。sessions.json など）と、置き場へのジャンクション・シンボリックリンクは、載せない（ADR 0050。/local-file と同じ検査）
     const dataDir = path.join(scratch, "data");
     const dataFile = path.join(dataDir, "sessions.json");

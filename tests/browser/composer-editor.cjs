@@ -286,6 +286,18 @@ async page => {
     p.dispatchEvent(ev);
     return { prevented: ev.defaultPrevented, value: p.value, marks: [...p.children].map(d => d.dataset.m ?? '').join('|') };
   }), { prevented: true, value: '- abc\n- ', marks: '- |- ' });
+  await clean();
+  // 一覧の「外す」を押した後も、フォーカスは <body> に落ちない（同じ位置の行のボタンへ。全部外したら入力欄へ）
+  await pasteImage('one.png'); await page.waitForTimeout(700); await pasteImage('two.png'); await page.waitForTimeout(700);
+  await page.click('.att-entry'); await page.waitForSelector('dialog.att-list[open]');
+  await page.evaluate(() => document.querySelector('dialog.att-list .att-list-row .att-list-action:last-child').focus());
+  await K.press('Enter'); await page.waitForTimeout(150);
+  check('一覧の「外す」の後も、フォーカスは面の中の同じ位置のボタン', await page.evaluate(() => {
+    const a = document.activeElement;
+    return { inDialog: Boolean(a.closest('dialog.att-list')), label: a.textContent, rows: document.querySelectorAll('dialog.att-list .att-list-row').length };
+  }), { inDialog: true, label: '外す', rows: 1 });
+  await K.press('Enter'); await page.waitForTimeout(250);
+  check('全部外して面が閉じたら、フォーカスは入力欄へ', await page.evaluate(() => ({ id: document.activeElement.id, open: document.querySelectorAll('dialog.att-list[open]').length })), { id: 'prompt', open: 0 });
   await reset();
   return `${results.length} 件通過\n${results.join('\n')}`;
 }

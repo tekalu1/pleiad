@@ -3,7 +3,7 @@ import {
   markdownToDoc, docToMarkdown, classifyLine, parseInline, serializeRuns, sliceRaw, fenceRoles, ensureShape,
   caret, deleteSelection, insertText, insertPlain, enter, backspaceAtStart, deleteAtEnd, insertAtom, removeAtoms, newAtom, atomKeys,
   pasteText, normalizeFences, applyTriggers, toggleMark, marksInRange, selectionMarkdown, createHistory,
-  posToOffset, offsetToPos, runsText, runsLength, normalizeAttachmentPath,
+  posToOffset, offsetToPos, runsText, runsLength, normalizeAttachmentPath, docLayout, memoRaw,
 } from "../../web/md-doc.mjs";
 import { codeFenceMask } from "../../web/render.mjs";
 
@@ -217,6 +217,42 @@ export default async function (t) {
   t.ok("送っていない添付・空の pad は文字列に無い（位置が詰まる）", (() => {
     const x = insertAtom(st("a", 0, 1), newAtom({ pid: "u1" }));
     return posToOffset(x.blocks, { b: 1, v: 0 }) === 1 && docToMarkdown(x.blocks) === "a";
+  })());
+  // 長い下書きで 1 打鍵ごとに全体を計算し直さないための使い回し（web/md-editor.mjs が、変わらないブロックの分を使い回す）
+  t.ok("docLayout に memo を渡しても結果は同じで、変わらないブロックは使い回す", (() => {
+    const blocks = doc("# H\n**ab**cd\n- x");
+    const memo = new WeakMap();
+    const a = docLayout(blocks, memo), b = docLayout(blocks);
+    const same = JSON.stringify(a) === JSON.stringify(b);
+    const first = memo.get(blocks[1]);
+    const replaced = blocks.slice(); replaced[1] = doc("**ab**cdX")[0];
+    const c = docLayout(replaced, memo);
+    return same && memo.get(blocks[1]) === first && c.lines[1].raw === "**ab**cdX" && c.lines[2].start === a.lines[2].start + 1 && JSON.stringify(c.lines[0].map) === JSON.stringify(a.lines[0].map);
+  })());
+  t.ok("posToOffset・offsetToPos は計算済みの layout を渡しても同じ", (() => {
+    const blocks = doc("# H\n**ab**cd\n- x"), lay = docLayout(blocks);
+    return posToOffset(blocks, { b: 1, v: 3 }, lay) === posToOffset(blocks, { b: 1, v: 3 }) && JSON.stringify(offsetToPos(blocks, 9, lay)) === JSON.stringify(offsetToPos(blocks, 9));
+  })());
+  t.ok("memoRaw は同じブロックの raw を使い回し、normalizeFences に渡しても結果は同じ", (() => {
+    const cache = new WeakMap(), raw = memoRaw(cache);
+    const a = doc("x\n```\ny\n```"), b = doc("x\n```\ny\n```");
+    const c1 = normalizeFences(a, { resolve, raw }), c2 = normalizeFences(b, { resolve });
+    return raw(a[0]) === "x" && cache.has(a[0]) && c1 === c2 && JSON.stringify(a) === JSON.stringify(b);
+  })());
+  t.ok("履歴はブロックを共有しても、配列の差し替えに影響されない（元に戻すで前の状態が返る）", (() => {
+    const hh = createHistory({ now: () => 0 });
+    hh.reset(st("a\nb"));
+    const s1 = st("a\nbX", 1, 2);
+    hh.push(s1, "edit");
+    s1.blocks[1] = doc("changed")[0];   // 積んだ後に配列の要素を差し替えても、履歴の中の並びは変わらない
+    const back = hh.undo(), fwd = hh.redo();
+    return md(back) === "a\nb" && md(fwd) === "a\nbX";
+  })());
+  t.ok("同じ文書を積み直しても増えない（同じブロックは参照で同じと見る）", (() => {
+    const hh = createHistory({ now: () => 0 });
+    const s1 = st("a\nb");
+    hh.reset(s1);
+    return hh.push({ blocks: s1.blocks.slice(), sel: caret(1, 1) }, "type") === false && hh.size === 1;
   })());
   t.ok("ensureShape: 先頭・末尾が添付なら pad を足す・閉じたコードの後ろにも足す", (() => {
     const a = ensureShape([{ kind: "att", marker: "", runs: [], raw: `[添付] ${P}`, path: P }]);

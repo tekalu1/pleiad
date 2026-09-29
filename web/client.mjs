@@ -572,7 +572,9 @@ function forkButton(m) {
           const attached = data.presents.filter(p => attachmentMessageIndex(data.messages, p) === index)
             // 名前は captionParams.name（新しい記録）。無い過去の記録は保存された見出し「添付: 名前」から取る
             .map(p => ({ path: p.path, name: p.captionParams?.name || p.caption?.replace(/^添付:\s*/, '') || p.path.split(/[\\/]/).at(-1),
-              mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri }));
+              mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri,
+              // 出どころと大きさも引き継ぐ（入力欄の一覧が出す）
+              ...(p.origin === 'host' || p.origin === 'device' ? { from: p.origin } : {}), ...(Number.isFinite(p.size) ? { size: p.size } : {}) }));
           // 印（[添付] / [Attachment]）は本文の位置のまま編集欄へ戻す。文中の位置を保つ（編集で印を消した添付は送らない。keptAttachments）
           const draft = { text: data.messages[index].text ?? '', attached, index };
           if (edit) editMessage(m, draft);
@@ -2650,7 +2652,7 @@ function syncResume() {
   const interrupted = isInterrupted(s) && !retiredHere() && state.current !== freshSessionId;
   const running = isRunningHere() || submittingMessages.has(state.current);
   const text = $('prompt').value;
-  const attached = state.attached.length > 0;
+  const attached = state.attached.length > 0 || uploadsHere().length > 0;   // 送っている途中の添付も「書いてある」に数える
   const show = resumeVisible({ interrupted, running, waiting: isWaitingHere(), text, attached });
   const button = $('resume');
   const paused = interrupted ? pausedCount(outboxes.get(state.current)) : 0;
@@ -4239,7 +4241,7 @@ function attachListRows() {
   const inline = t("chat.attachList.section.inline"), tail = t("chat.attachList.section.tail");
   const hints = attachFolderHints(state.attached, { deviceLabel: t("chat.attach.deviceFolder") });
   const attached = (a, section) => ({
-    id: attachedKey(a.path), kind: a.kind === "image" ? "image" : "file", name: a.name, path: hints[state.attached.indexOf(a)] || "",
+    id: attachedKey(a.path), kind: a.kind === "image" ? "image" : "file", name: a.name, path: a.path || "", hint: hints[state.attached.indexOf(a)] || null,
     thumb: a.kind === "image" ? attachedImageSrc(a) : null, origin: a.from === "host" || a.from === "device" ? a.from : null,
     size: Number.isFinite(a.size) ? a.size : null, status: a.from === "host" ? t("chat.attachList.byPath") : t("chat.attachList.sent"), section });
   const upload = (u, section) => {
@@ -4263,7 +4265,8 @@ function openAttachList() {
   b.setAttribute("aria-expanded", "true");
   attachList = openAttachmentList({
     anchor: b, title: t("chat.attachList.count", { count: state.attached.length + uploadsHere().length }), items: attachListRows(),
-    onClose: () => { attachList = null; b.setAttribute("aria-expanded", "false"); },
+    // 全部外して入口ごと隠れたときは、フォーカスが <body> に落ちないよう入力欄へ
+    onClose: () => { attachList = null; b.setAttribute("aria-expanded", "false"); if (!document.activeElement || document.activeElement === document.body) $("prompt").focus?.({ preventScroll: true }); },
     actions: (item) => {
       const key = item.id;
       if (key.startsWith("i:")) {
@@ -5715,7 +5718,7 @@ function syncRunState() {
   // 作ったばかりの会話（freshSessionId）を開いている間は押せる（送信を予約する。submit）
   $("send").disabled = submittingMessages.has(state.current)
     || state.loadingSession === state.current && Boolean(state.current) && state.current !== freshSessionId
-    || composerWait.blocksSend() || Boolean(retiredHere()) || connStatus.blocksSend() || Boolean(uploadBlockReason());
+    || composerWait.blocksSend() || Boolean(retiredHere()) || connStatus.blocksSend() || Boolean(composerShellMode ? null : uploadBlockReason());
   // 送れない理由（送信中・失敗の添付）は送信ボタンの title に出す
   const sendBtn = $("send"), upReason = composerShellMode ? null : uploadBlockReason();
   if (upReason) { if (sendBtn.dataset.upBlock === undefined) sendBtn.dataset.upBlock = sendBtn.getAttribute("title") ?? ""; sendBtn.setAttribute("title", upReason); }

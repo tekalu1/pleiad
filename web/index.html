@@ -187,7 +187,7 @@
         <!-- 入力欄の `!`（web/shell-composer.mjs）。シェルの形の間だけ、欄の上に「シェル · 作業ディレクトリ · 文として送る」。使えない会話では理由の一行 -->
         <div class="shell-head" id="shellHead" hidden></div>
         <!-- 字の欄。Markdown をその場で整える編集欄（web/md-editor.mjs、ADR 0060）。textarea と同じ窓口（value・selectionStart・placeholder など）を持つ -->
-        <div id="prompt" data-i18n-placeholder="chat.composer.placeholder" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="skillList"></div>
+        <div id="prompt" data-i18n-aria-label="chat.composer.editorLabel" data-i18n-placeholder="chat.composer.placeholder" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="skillList"></div>
         <!-- 書けない待ち（会話を開いている・初めて接続するまで）。150ms を越えたら字の欄の上に重ねる（web/composer-wait.mjs） -->
         <div class="composer-busy" id="composerBusy" hidden><span class="composer-busy-text" id="composerBusyText"></span></div>
         <!-- 候補を選んだ直後だけ、引数の書き方を薄く出す -->

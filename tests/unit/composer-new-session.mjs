@@ -15,7 +15,7 @@ export const name = 'composer-new-session';
 export const title = '新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る';
 
 const FUNCTIONS = ['startNew', 'select', 'loadAndPaint', 'paintSession', 'saveDraft', 'persistDraft', 'dropBlankDraft', 'loadDraft',
-  'syncRunState', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'runUpload'];
+  'syncRunState', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'runUpload', 'saveDraftSoon', 'flushDraft'];
 
 export default async function (t) {
   const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
@@ -62,7 +62,7 @@ export default async function (t) {
   const storage = new Map();
   const context = vm.createContext({
     state, $, cmd, refresh, t: k => k, html: { t: k => k }, sys: noop, escText: x => x, NL: '\n',
-    creatingSession: null, pendingNewSession: null, freshSessionId: null, draftTimer: null, draftSavedAt: 0, queuedSend: null, settingsFailure: null, syncSettingsHold: noop,
+    creatingSession: null, pendingNewSession: null, freshSessionId: null, draftTimer: null, draftSavedAt: 0, DRAFT_THROTTLE_MS: 400, queuedSend: null, settingsFailure: null, syncSettingsHold: noop,
     settingsWrite: Promise.resolve(), modeWrite: Promise.resolve(),
     DRAFT_STORE: 'drafts', draftWrites: new Map(), draftKey: () => state.current ?? '',
     localStorage: { setItem: (k, v) => storage.set(k, v), getItem: k => storage.get(k) ?? null },
@@ -245,9 +245,34 @@ export default async function (t) {
   await run('submit()');
   t.ok('送信中・失敗の添付があれば送らず、理由を知らせる', calls.filter(c => c.command === 'sendMessage').length === held && told === '添付を送っている間は送れません' && prompt.value === 'あとで送る');
   t.ok('送信ボタンは押せず、title に理由を出す', (run('syncRunState()'), $('send').disabled === true && $('send').getAttribute('title') === '添付を送っている間は送れません'));
+  // シェルの形（!）の実行は添付の送信と関係ないので、送っている途中の添付があってもボタンは押せて、title にも理由を出さない
+  context.composerShellMode = 'shell';
+  run('syncRunState()');
+  t.ok('シェルの形では、送っている途中の添付があっても送信ボタンは押せる（理由も出さない）', $('send').disabled === false && $('send').getAttribute('title') !== '添付を送っている間は送れません');
+  context.composerShellMode = null;
   context.uploadBlockReason = () => null;
   run('syncRunState()');
   t.ok('添付が届けば送信ボタンと title は元に戻る', $('send').disabled === false && $('send').getAttribute('title') !== '添付を送っている間は送れません', `${$('send').disabled} ${$('send').getAttribute('title')}`);
+
+  // 打鍵ごとの保存は間引く: 静かな間の最初の打鍵はすぐ、続く打鍵は 1 回にまとめ、最後の打鍵の分は必ず保存する。直ちに保存するときは待ちを捨てる
+  const savesOf = () => calls.filter(c => c.command === 'saveDraft' && c.args.sessionId === 'existing');
+  const settle = async () => { for (let k = 0; k < 4; k++) await new Promise(setImmediate); };
+  let timer = null;
+  context.setTimeout = (fn, ms) => { timer = { fn, ms }; return 7; };
+  context.draftSavedAt = 0; context.draftTimer = null;
+  state.attached = [];
+  const savesBefore = savesOf().length;
+  prompt.value = '打鍵 1'; run('saveDraftSoon()'); await settle();
+  prompt.value = '打鍵 2'; run('saveDraftSoon()');
+  prompt.value = '打鍵 3'; run('saveDraftSoon()'); await settle();
+  t.ok('静かな間の最初の打鍵はすぐ保存し、続く打鍵は保存せず待つ', savesOf().length === savesBefore + 1 && savesOf().at(-1).args.text === '打鍵 1' && timer && timer.ms <= 400 && context.draftTimer === 7);
+  timer.fn(); await settle();
+  t.ok('待っていた分は最後の打鍵の字で 1 回だけ保存する', savesOf().length === savesBefore + 2 && savesOf().at(-1).args.text === '打鍵 3' && context.draftTimer === null);
+  prompt.value = '打鍵 4'; run('saveDraftSoon()'); await settle();
+  t.ok('間引く間に来た打鍵は flushDraft で直ちに保存できる（欄を離れる・ページを隠すとき）', context.draftTimer === 7 && (run('flushDraft()'), await settle(), savesOf().at(-1).args.text === '打鍵 4' && context.draftTimer === null));
+  run('flushDraft()'); await settle();
+  t.ok('待ちが無ければ flushDraft は何も保存しない', savesOf().at(-1).args.text === '打鍵 4' && savesOf().length === savesBefore + 3);
+  context.setTimeout = () => 1;
 
   // 下書きは本文（印を含む Markdown）と添付の実体を version: 2 で保存する。印の無い古い下書きは添付だけ（文末に付く）
   state.attached = [{ path: A, name: 'a.png', kind: 'image', mime: 'image/png' }];

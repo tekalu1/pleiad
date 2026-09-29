@@ -20,6 +20,7 @@ let open = null;
  *   kind      'image' | 'file'
  *   name      名前
  *   path      パス（等幅・弱い字。無ければ出さない）
+ *   hint      同じ名前の行を見分ける一語（フォルダーなど）| null。名前が重なるときだけ渡す。meta に並ぶ
  *   thumb     画像の縮小の src（画像だけ。無ければ札のアイコン）
  *   origin    'host' | 'device' | null（分かるときだけ）
  *   size      バイト数 | null（分かるときだけ）
@@ -79,8 +80,29 @@ export function openAttachmentList({ anchor = null, title, items = [], actions =
   open = { dialog, close };
   return {
     dialog, close,
-    update(next) { list = next; paint(); place(dialog, anchor); },
+    update(next) {
+      // 行を作り直すので、フォーカスのあった行・ボタンの位置を覚え、作り直した後の同じ位置（無ければ前の行）へ戻す
+      // （「外す」を押した後にフォーカスが <body> へ落ちない）
+      const at = dialog.contains(document.activeElement) ? focusPath(body, document.activeElement) : null;
+      list = next; paint(); place(dialog, anchor);
+      if (at) restoreFocus(body, at, closeButton);
+    },
   };
+}
+
+/** フォーカスのある行の添字と、行の中のボタンの添字。行の外（閉じるボタンなど）なら null */
+function focusPath(body, active) {
+  const row = active.closest?.('.att-list-row');
+  if (!row || !body.contains(row)) return null;
+  return { row: [...body.querySelectorAll('.att-list-row')].indexOf(row), action: [...row.querySelectorAll('button')].indexOf(active) };
+}
+
+/** 同じ添字の行のボタンへ。その行が無ければ前の行、行が 1 つも無ければ閉じるボタン */
+function restoreFocus(body, at, fallback) {
+  const rows = [...body.querySelectorAll('.att-list-row')];
+  const buttons = [...(rows[at.row] ?? rows[at.row - 1] ?? body).querySelectorAll('button')];
+  const target = buttons.length ? buttons[Math.min(Math.max(at.action, 0), buttons.length - 1)] : fallback;
+  target.focus?.({ preventScroll: true });
 }
 
 function row(item, actions, close) {
@@ -98,7 +120,7 @@ function row(item, actions, close) {
   const copy = el('div', 'att-list-copy');
   copy.append(el('b', 'att-list-name', item.name));
   const meta = [item.origin ? `${ORIGIN_MARK[item.origin] ?? ''} ${t(`chat.attachList.origin.${item.origin}`)}`.trim() : null,
-    item.size ? formatBytes(item.size) : null, item.status].filter(Boolean);
+    item.size ? formatBytes(item.size) : null, item.hint, item.status].filter(Boolean);
   if (meta.length) copy.append(el('small', 'att-list-meta', meta.join(' · ')));
   if (item.progress != null) {
     const bar = el('span', 'att-list-bar');
