@@ -85,6 +85,11 @@ $$('[data-reveal]').forEach((el) => io.observe(el));
 const screen = $('.screen');
 const prologue = $('.prologue');
 const lines = $$('.leave-line', prologue);
+// 取り消し線は行の順に、句ごとに続けて引く
+lines.forEach((el, i) => {
+  el.style.setProperty('--d0', (i * 0.38).toFixed(2));
+  $$('.nw', el).forEach((s, k) => s.style.setProperty('--d', (i * 0.38 + k * 0.2).toFixed(2)));
+});
 const cam = $('.stage-cam');
 const app = $('.app');
 const steps = $$('.step');
