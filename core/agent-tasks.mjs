@@ -14,7 +14,10 @@ const LOG_MAX = 64 * 1024;
 // 1 タスクに持つ実行前の拒否（rejections）の上限。超えた分は捨て、rejectionsDropped に数だけ残す
 const MAX_REJECTIONS = 50;
 // これらの通知の状態なら、今の rejections は依頼元へ渡した（か、止めた）。ply_task_send で始まる次の回は新しく数え直す
-const NOTICED = new Set(['delivering', 'sent', 'unknown', 'suppressed']);
+// read: 依頼元が ply_task_status / ply_task_wait で完了と結果を受け取った（完了通知は送らない。ADR 0057）
+const NOTICED = new Set(['delivering', 'sent', 'unknown', 'suppressed', 'read']);
+// 依頼元が結果を受け取ったら通知の対象から外す状態（終わって、まだ通知を送っていない）
+const readable = r => ['completed', 'failed'].includes(r.status) && ['none', 'pending'].includes(r.notification);
 // call() のエラーと子への依頼文はエージェントが読むので、会話の言語（locale）で引く（agent 名前空間）
 const text = (locale, value, name, max = 60000) => {
   if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(agentT(locale, 'tasks.textLength', { name, max }));
@@ -43,7 +46,9 @@ export function finalReply(messages) {
 // - 障害の間は、スケジューラーは間隔を空けて保存をやり直すだけにする。list / status はメモリの状態を障害中の印付きで返す。
 // ready は「親が完了通知を受け取れるか」。受け取れない間は delivering にせず、ファイルも書かない。
 // io・log・renameDelays・retryMax はテストで失敗を差し込み、記録を読み、待ちを縮めるためのもの
-export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', deliverCommand = async () => 'ok', cancelBackground = async () => {}, ready = async () => true, changed = () => {}, waiting = () => false,
+// ready は「親が新しいターンで完了通知を受け取れるか」、steerable は「走っている親のターンへ今すぐ渡せるか」（ADR 0057）。
+// deliver は同じ親へ届ける完了通知（1 件以上）をまとめて受け取る。無音・コマンドの通知は ready だけで決める
+export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', deliverCommand = async () => 'ok', cancelBackground = async () => {}, ready = async () => true, steerable = async () => false, changed = () => {}, waiting = () => false,
   now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
   commandMinutes = Number(process.env.AGENT_HOST_TASK_COMMAND_MINUTES ?? 5),
   io = fs, log = line => console.error(line), renameDelays = RENAME_DELAYS, retryMax = RETRY_MAX }) {
@@ -81,7 +86,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   let fault = null, dirty = false;
   // ファイルに書けた通知の状態（taskId → notification）。ファイルがすでに delivering なら送る前に書き直さない
   let persisted = new Map(Object.values(records).map(r => [r.taskId, r.notification]));
-  const live = new Map(), notices = new Set(), silenceNotices = new Set(), silenceWaiting = new Map(), listeners = new Set();
+  // noticeOwners: 完了通知を送っている最中の親（同じ親への配送は 1 つずつ。次に溜まった分は次の kick でまとめて送る）
+  const live = new Map(), notices = new Set(), noticeOwners = new Set(), silenceNotices = new Set(), silenceWaiting = new Map(), listeners = new Set();
   const serial = fn => {
     const next = writes.then(async () => { mutating = true; try { return await fn(); } finally { mutating = false; } });
     writes = next.catch(() => {});
@@ -169,6 +175,13 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       touched();
     });
   }
+  // 依頼元が ply_task_status / ply_task_wait で終了状態と結果を受け取った。同じ結果の完了通知は後から送らない（ADR 0057）。
+  // 送っている最中（delivering）と送り終えたものは触らない。結果が長くて nextOffset が残っていても、受け取った時点で配達済みとする。
+  // 終わった直後で通知がまだ始まっていない（none）ものも対象で、その後の run.notice が read を pending に戻さない
+  async function markRead(r) {
+    if (!readable(r)) return;
+    await record(r.taskId, row => { if (readable(row)) row.notification = 'read'; }, 'notify.read');
+  }
   async function run(r, controller) {
     // stalled: 実行の開始を保存できなかった。子は動かしていないので queued のまま、次のタイマーでやり直す
     let stalled = false, requeued = false, activeInstructionId;
@@ -218,40 +231,54 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       live.delete(r.taskId);
       if (!stalled || controller.signal.aborted) {
         if (r.queue.length && !controller.signal.aborted) await record(r.taskId, row => { row.status = 'queued'; row.notification = 'none'; }, 'run.queued');
-        else if (!ACTIVE.has(r.status)) await record(r.taskId, row => { row.notification = row.status === 'cancelled' ? 'suppressed' : 'pending'; }, 'run.notice');
+        // 依頼元が結果を先に受け取っていたら（read）通知を送らない。通知は次の指示で走る回のためにまた始まる
+        else if (!ACTIVE.has(r.status)) await record(r.taskId, row => { row.notification = row.status === 'cancelled' ? 'suppressed' : row.notification === 'read' ? 'read' : 'pending'; }, 'run.notice');
         // Busy sessions retry on the timer, never in a recursive write loop. 止めた後に積まれた指示はすぐ走らせる
         if (r.status !== 'queued' || controller.signal.aborted) kick();
       }
     }
   }
   // 通知を送る前に delivering を保存する（送ったか分からないまま落ちたら、再起動で unknown にして再送しない）。
-  // ファイルがすでに delivering（直前の requeue をメモリだけで pending に戻した）なら書き直さない。保存できなければ送らない
-  async function begin(r) {
+  // ファイルがすでに delivering（直前の requeue をメモリだけで pending に戻した）なら書き直さない。保存できなければ送らない。
+  // 同じ親への通知は 1 回の保存にまとめる。まだ pending のものだけ返す（依頼元が受け取り済みの read は外れる）
+  async function begin(rows) {
     return serial(async () => {
-      if (r.notification !== 'pending' || ACTIVE.has(r.status)) return false;
-      r.notification = 'delivering';
-      if (persisted.get(r.taskId) === 'delivering') return true;
-      const updatedAt = r.updatedAt; r.updatedAt = Date.now();
-      try { await write(); } catch (e) { r.notification = 'pending'; r.updatedAt = updatedAt; failed(e, 'notify.delivering', r.taskId); return false; }
-      touched(); return true;
+      const list = rows.filter(r => r.notification === 'pending' && !ACTIVE.has(r.status));
+      if (!list.length) return [];
+      const before = list.map(r => r.updatedAt);
+      for (const r of list) r.notification = 'delivering';
+      if (list.every(r => persisted.get(r.taskId) === 'delivering')) return list;
+      for (const r of list) r.updatedAt = Date.now();
+      try { await write(); } catch (e) {
+        list.forEach((r, i) => { r.notification = 'pending'; r.updatedAt = before[i]; });
+        failed(e, 'notify.delivering', list[0].taskId); return [];
+      }
+      touched(); return list;
     });
   }
-  async function notify(r) {
-    notices.add(r.taskId);
-    const revision = r.revision ?? 0;
+  async function notify(owner, rows) {
+    noticeOwners.add(owner);
+    for (const r of rows) notices.add(r.taskId);
     try {
-      // 親が受け取れない間は delivering にせず、何も書かない（pending のまま次のタイマーで見る）
-      if (!(await ready(structuredClone(r)).catch(() => false))) return;
-      if (!(await begin(r))) return;
+      // 親が受け取れない間（新しいターンも、走っているターンへの途中送信も）は delivering にせず、何も書かない（pending のまま次のタイマーで見る）
+      const head = structuredClone(rows[0]);
+      if (!(await ready(head).catch(() => false)) && !(await steerable(head).catch(() => false))) return;
+      const sending = await begin(rows);
+      if (!sending.length) return;
+      const revisions = new Map(sending.map(r => [r.taskId, r.revision ?? 0]));
       // delivery callback only returns 'requeue' when no prompt was accepted.
-      const outcome = await deliver(structuredClone(r)).catch(() => 'error');
+      const outcome = await deliver(sending.map(r => structuredClone(r))).catch(() => 'error');
       if (outcome === 'requeue') {
         // 受け取られていない。親が空くまで何度も来るので、ファイルは delivering のまま書かず、メモリだけ pending に戻す
-        await serial(async () => { if ((r.revision ?? 0) === revision && r.notification === 'delivering') r.notification = 'pending'; });
+        await serial(async () => { for (const r of sending) if ((r.revision ?? 0) === revisions.get(r.taskId) && r.notification === 'delivering') r.notification = 'pending'; });
         return;
       }
-      await record(r.taskId, row => { if ((row.revision ?? 0) === revision) row.notification = outcome === 'ok' ? 'sent' : 'unknown'; }, 'notify.done');
-    } finally { notices.delete(r.taskId); }
+      await serial(async () => {
+        for (const r of sending) if ((r.revision ?? 0) === revisions.get(r.taskId)) { r.notification = outcome === 'ok' ? 'sent' : 'unknown'; r.updatedAt = Date.now(); }
+        await persist('notify.done', sending[0].taskId);
+        touched();
+      });
+    } finally { for (const r of rows) notices.delete(r.taskId); noticeOwners.delete(owner); }
   }
   async function notifySilence(r) {
     silenceNotices.add(r.taskId);
@@ -308,6 +335,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   function kick() {
     if (closed || mutating) return;
     if (fault) { probe(); return; }
+    const groups = new Map();
     for (const r of Object.values(records)) {
       pauseCommands(r, now(), waiting(r.sessionId));
       for (const c of r.activeCommands ?? []) {
@@ -333,8 +361,14 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         void run(r, ac).catch(e => { live.delete(r.taskId); report({ event: 'unexpected', operation: 'run', taskId: r.taskId, code: e?.code ?? null }); });
       }
       if (r.notification === 'pending' && !notices.has(r.taskId) && !ACTIVE.has(r.status)) {
-        void notify(r).catch(e => report({ event: 'unexpected', operation: 'notify', taskId: r.taskId, code: e?.code ?? null }));
+        if (!groups.has(r.parentSessionId)) groups.set(r.parentSessionId, []);
+        groups.get(r.parentSessionId).push(r);
       }
+    }
+    // 同じ親へ届ける完了通知は 1 つにまとめる（ADR 0057）
+    for (const [owner, rows] of groups) {
+      if (noticeOwners.has(owner)) continue;
+      void notify(owner, rows).catch(e => report({ event: 'unexpected', operation: 'notify', taskId: rows[0].taskId, code: e?.code ?? null }));
     }
   }
   const timer = setInterval(kick, 500); timer.unref();
@@ -358,6 +392,21 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (r?.status === 'running') { r.lastActivityAt = now(); r.silenceNotifiedAt = null; }
     },
     checkSilence: kick,
+    /**
+     * 走っているターンへ渡した完了通知が、読まれないままターンが終わった。まだ同じ回のものなら、空いたときの経路で送り直す
+     * （人間の発言と違い、通知は送り直してよい。ADR 0057）。items: [{ taskId, revision }]
+     */
+    async renotify(items) {
+      const rows = items.map(x => records[x.taskId] && [records[x.taskId], x.revision ?? 0]).filter(Boolean)
+        .filter(([r, revision]) => r.notification === 'sent' && (r.revision ?? 0) === revision && !ACTIVE.has(r.status));
+      if (!rows.length) return;
+      await serial(async () => {
+        for (const [r] of rows) if (r.notification === 'sent') { r.notification = 'pending'; r.updatedAt = Date.now(); }
+        await persist('notify.renotify', rows[0][0].taskId);
+        touched();
+      });
+      kick();
+    },
     instructions(taskId) { const r = records[taskId]; return r ? { taskId, revision: r.instructionRevision ?? 0, instructions: structuredClone(r.instructions) } : null; },
     /** 最初の依頼（task と context）。やり直しで同じ依頼を渡す。context を持つ前に作ったタスクは task だけ */
     request(taskId) { const r = records[taskId]; return r ? { task: r.task, title: r.title ?? null, context: r.context ?? null } : null; },
@@ -397,7 +446,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (name === 'ply_task_status') {
         const offset = args.offset ?? 0;
         if (!Number.isInteger(offset) || offset < 0) throw new Error(agentT(locale, 'tasks.offsetInvalid'));
-        return { ...shown(r, offset), ...storage(locale) };
+        const out = { ...shown(r, offset), ...storage(locale) };
+        await markRead(r);
+        return out;
       }
       if (name === 'ply_task_wait') {
         const seconds = args.seconds ?? 30;
@@ -410,7 +461,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           const timeout = setTimeout(done, seconds * 1000); listeners.add(check); signal?.addEventListener('abort', done, { once: true });
           if (signal?.aborted) done();
         });
-        return { ...shown(r), ...storage(locale) };
+        const out = { ...shown(r), ...storage(locale) };
+        await markRead(r);
+        return out;
       }
       if (name === 'ply_task_send') {
         text(locale, args.message, 'message');

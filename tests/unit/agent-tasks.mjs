@@ -31,7 +31,7 @@ export default async function(t) {
       if (prompt === 'error') throw new Error('fixture failure');
       return { outcome: signal.aborted ? 'aborted' : prompt === 'hold-fail' ? 'error' : 'ok', text: prompt === 'large' ? 'x'.repeat(40000) : prompt };
     },
-    deliver: async r => { if (notifyBlocked) return 'requeue'; notifications.push([r.taskId, r.result]); return 'ok'; },
+    deliver: async tasks => { if (notifyBlocked) return 'requeue'; for (const r of tasks) notifications.push([r.taskId, r.result]); return 'ok'; },
   };
   let manager = await createAgentTasks(options);
   const bridge = createAgentBridge({ call: (owner, name, args) => manager.call(owner, name, args) });

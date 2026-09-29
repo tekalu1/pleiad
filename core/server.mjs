@@ -9,7 +9,7 @@ import { migrateClaudeUsage } from './usage-migrations.mjs';
 // 承認の保留・猶予・中断（設計メモ §8.5）だけはここに残す。エージェントに散らすと
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
 import { createAgentTasks, finalReply } from './agent-tasks.mjs';
-import { createCompletionNotices, hasPendingChild } from './completion-notices.mjs';
+import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
 import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
@@ -1302,6 +1302,14 @@ function makeEmit(turn) {
       trimHookRuns(turn.hookRuns);
       return;
     }
+    // 走っているターンへ渡した完了通知（liveNotices）は人間の発言ではない。渡ったら通知の一行にし、捨てられたら送り直す
+    if ((event?.type === "userMessage.delivered" || event?.type === "userMessage.dropped") && liveNotices.has(event.messageId)) {
+      const notice = liveNotices.get(event.messageId);
+      liveNotices.delete(event.messageId);
+      if (event.type === "userMessage.delivered") emit({ type: "taskNotice", text: notice.prompt });
+      else agentTasks?.renotify(notice.items).catch(() => {});
+      return;
+    }
     // 受理済みの途中送信が読まれずに捨てられた（userMessage.dropped）。送信待ちへ戻す
     if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId) {
       outbox.returned(turn.info.sessionId, event.messageId).catch(() => {});
@@ -1734,6 +1742,10 @@ const outboxWatchers = new Map();
 // 会話の中断で取り消す委譲タスクの子の会話 -> 中断の理由。子のターンを実際に止める所（agentTasks の execute の stopChild）が
 // 読んで付ける。止まらなかった子には付けない（abortSessions が取り消しの後に片付ける）
 const taskStopReasons = new Map();
+// 走っている依頼元のターンへ途中送信（control.steer）で渡した完了通知のうち、「渡った」合図（steerConfirms）を待っているもの。
+// 通知の item id -> { owner, prompt, items: [{ taskId, revision }] }。渡れば画面へ通知の一行を出し、
+// 読まれないままターンが死んだら（userMessage.dropped・ターンの終わり）空いたときの経路で送り直す（ADR 0057）
+const liveNotices = new Map();
 const outbox = createMessageQueue({
   store,
   active: id => {
@@ -1772,6 +1784,64 @@ await outbox.recover();
 }
 // 親が走っている・裏の作業が残っている・送信待ちがあるときは完了通知を送らない（docs/agent-delegation.md「完了通知」）
 const noticeBlocked = async owner => sessionBusy(owner) || awaitedBackground(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
+
+/**
+ * 完了通知を今すぐ渡せる、依頼元の走っているターン（無ければ null）。docs/agent-delegation.md「完了通知」。
+ * 人間の送信待ちを優先する決まりは変えない（outbox に未送があれば渡さない）。
+ * 渡してよい条件は completion-notices.mjs の canSteerNotice
+ */
+async function noticeTarget(owner) {
+  const turn = runtime.turns.get(owner);
+  if (!turn) return null;
+  const unsent = (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
+  return canSteerNotice(turn, { unsent, nextSettings: (await store.get(owner)).nextSettings }) ? turn : null;
+}
+
+/** 完了通知の本文のハッシュを会話に残す。履歴が人間の発言と見分ける印（taskNotices）。すでにあれば書かない */
+async function recordTaskNotice(sessionId, prompt) {
+  const hashes = (await store.get(sessionId)).taskNotices ?? [];
+  const digest = crypto.createHash('sha256').update(prompt).digest('hex');
+  if (!hashes.includes(digest)) await store.setSessionData(sessionId, 'taskNotices', [...hashes, digest]);
+}
+
+/**
+ * 完了通知の本文。1 件は今までの文。2 件以上は 1 つにまとめ、taskId ごとの節を完了の早い順に並べる。
+ * 結果は 1 件 16000 字まで（まとめたときは全体で 16000 字ほどに分ける。切った分は ply_task_status の offset で読める）
+ */
+function completionNotice(lng, tasks) {
+  const limit = tasks.length > 1 ? Math.max(2000, Math.floor(16000 / tasks.length)) : 16000;
+  const parts = [...tasks].sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0)).map(task => ({
+    taskId: task.taskId, backend: task.backend, status: task.status, task: task.task,
+    result: task.result.slice(0, limit),
+    more: task.result.length > limit ? agentT(lng, 'delegation.noticeMore', { offset: limit }) : '',
+    error: task.error ?? '',
+    // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
+    retry: task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '',
+    rejections: rejectionNotice(lng, task.rejections) + stoppedBackgroundNotice(lng, task.stoppedBackground),
+  }));
+  if (parts.length === 1) return agentT(lng, 'delegation.notice', parts[0]);
+  return agentT(lng, 'delegation.noticeBatch', { count: parts.length, sections: parts.map(part => agentT(lng, 'delegation.noticeSection', part)).join('') });
+}
+
+/**
+ * 完了通知を、走っているターンへ途中送信（control.steer）で渡す。人間の発言ではないので、outbox は通さず
+ * 本文のハッシュを記録して（履歴が通知として描く）、画面へは通知の一行を出す。
+ * true=受理 → ok / false=受理できない → requeue（空いてから新しいターンで）/ throw=結果不明 → error（自動で再送しない）。
+ * 「渡った」合図を後から出すバックエンド（steerConfirms）では、通知の一行を渡った時点で出し、捨てられたら送り直す（liveNotices）
+ */
+async function steerNotice(turn, owner, prompt, tasks) {
+  await recordTaskNotice(owner, prompt);
+  const item = { id: `task-notice-${crypto.randomUUID()}`, args: { prompt } };
+  const confirms = Boolean(turn.control.steerConfirms);
+  // 合図は受理の応答より先に来ることがある。先に登録しておく
+  if (confirms) liveNotices.set(item.id, { owner, prompt, items: tasks.map(x => ({ taskId: x.taskId, revision: x.revision ?? 0 })) });
+  let accepted;
+  try { accepted = await turn.control.steer?.(item); }
+  catch { liveNotices.delete(item.id); return 'error'; }
+  if (!accepted) { liveNotices.delete(item.id); return 'requeue'; }
+  if (!confirms) emitGlobal({ type: 'taskNotice', sessionId: owner, text: prompt });
+  return 'ok';
+}
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
   changed: () => { broadcastRunning(); completionNotices.changed(); },
@@ -1864,17 +1934,17 @@ agentTasks = await createAgentTasks({
   },
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
   ready: async task => !(await noticeBlocked(task.parentSessionId)),
-  deliver: async task => {
-    const owner = task.parentSessionId;
-    if (await noticeBlocked(owner)) return 'requeue';
-    // 完了通知は依頼元の会話の言語で。人間の発言と見分ける印は文言ではなく、送った本文のハッシュ（taskNotices。runTurn の internal）
-    const lng = await ensureAgentLocale(owner);
-    const more = task.result.length > 16000 ? agentT(lng, 'delegation.noticeMore', { offset: 16000 }) : '';
-    // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
-    const retry = task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '';
-    const prompt = agentT(lng, 'delegation.notice', { taskId: task.taskId, backend: task.backend, status: task.status, task: task.task,
-      result: task.result.slice(0, 16000), more, error: task.error ?? '', retry, rejections: rejectionNotice(lng, task.rejections) + stoppedBackgroundNotice(lng, task.stoppedBackground) });
-    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
+  // 走っている依頼元のターンへ、今すぐ途中送信で渡せるか（無音・コマンドの通知は使わない。ADR 0057）
+  steerable: async task => Boolean(await noticeTarget(task.parentSessionId)),
+  // 同じ依頼元への完了通知をまとめて 1 つ届ける。走っているターンへ渡せれば途中送信で（noticeTarget）、
+  // 渡せなければ（requeue）空いてから新しいターンで
+  deliver: async tasks => {
+    const owner = tasks[0].parentSessionId;
+    const live = await noticeTarget(owner);
+    if (!live && await noticeBlocked(owner)) return 'requeue';
+    // 完了通知は依頼元の会話の言語で。人間の発言と見分ける印は文言ではなく、送った本文のハッシュ（taskNotices。recordTaskNotice）
+    const prompt = completionNotice(await ensureAgentLocale(owner), tasks);
+    return live ? steerNotice(live, owner, prompt, tasks) : runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
   },
   cancelBackground: async task => {
     for (const command of task.activeCommands) {
@@ -2152,9 +2222,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       syncRunningPoll();
       if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'preparing' });
       if (hooks.internal) {
-        const hashes = (await store.get(sessionId)).taskNotices ?? [];
-        const digest = crypto.createHash('sha256').update(prompt).digest('hex');
-        await store.setSessionData(sessionId, 'taskNotices', [...new Set([...hashes, digest])]);
+        await recordTaskNotice(sessionId, prompt);
         // 本文も載せる。画面の「タスクの結果で再開」の 1 行を開くと読める（ADR 0053）
         emit({ type: 'taskNotice', text: String(prompt ?? '') });
       }
@@ -2319,6 +2387,12 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // Retain turnEnd in snapshots already being read, then release the turn.
   emit({ type: "turnEnd", completedAt, outcome: turn.outcome, interrupted, ...(requeued ? { requeued: true } : {}), ...(delegated ? { delegated: true } : {}) });
   runtime.turns.delete(turn.key);
+  // 渡った合図が来ないまま終わった完了通知は、読まれたか分からない。通知は送り直してよいので、空いたときの経路へ戻す
+  for (const [id, notice] of [...liveNotices]) {
+    if (notice.owner !== turn.info.sessionId) continue;
+    liveNotices.delete(id);
+    agentTasks?.renotify(notice.items).catch(() => {});
+  }
   agentBrowser?.endTurn(turn.info.sessionId || turn.key);
   notifyFree(turn.key);
   syncRunningPoll();

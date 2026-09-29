@@ -41,6 +41,8 @@
     "commandNotice": "[Pleiad コマンド長時間通知 / {{taskId}} / {{noticeId}}]\n{{title}} の子が `{{command}}` を少なくとも {{minutes}} 分実行中、または完了を待っています。止まっている可能性があります。ply_task_status で様子を見るか、ply_task_cancel で止めてください。",
     "silenceNotice": "[Pleiad タスク無音通知 / {{taskId}}]\n{{title}} の子が {{minutes}} 分なにも出していません。止まっている可能性があります。ply_task_status で様子を見るか、ply_task_cancel で止めてください。",
     "notice": "[Pleiad タスク完了通知 / {{taskId}}]\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n{{rejections}}元の依頼に必要な作業を続けてください。",
+    "noticeBatch": "[Pleiad タスク完了通知 / {{count}} 件]\n{{count}} 件の子タスクが完了しました。結果は次のとおりです。\n\n{{sections}}元の依頼に必要な作業を続けてください。",
+    "noticeSection": "--- {{taskId}} ---\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n{{rejections}}\n",
     "noticeMore": "\n続きは ply_task_status の offset: {{offset}} で取得できます。",
     "noticeRetry": "利用者が {{of}} を別の委譲先でやり直したタスク\n",
     "noticeRejections": "実行前に拒否されたコマンド（Codex 自身の安全判定など）: {{count}} 件\n{{items}}\n全件は ply_task_status の rejections で読めます。",
