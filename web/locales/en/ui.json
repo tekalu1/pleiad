@@ -1279,7 +1279,23 @@
       "editCancel": "Cancel",
       "sendAsBranchTitle": "Send as branch (Ctrl+Enter)",
       "sendAsBranch": "Send as branch",
+      "showMore": "Show more",
+      "showLess": "Show less",
+      "showSource": "View what was sent to the agent",
+      "hideSource": "Hide source",
       "you": "You"
+    },
+    "attachList": {
+      "count_one": "{{count}} attachment",
+      "count_other": "{{count}} attachments",
+      "open": "Open",
+      "copyPath": "Copy path",
+      "close": "Close",
+      "sent": "Sent",
+      "origin": {
+        "host": "Host",
+        "device": "This device"
+      }
     },
     "next": {
       "title": "Applies from the next turn",

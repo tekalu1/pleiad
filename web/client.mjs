@@ -5,7 +5,8 @@ import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
 import { configureLinkOpen } from './link-open.mjs';
-import { download, notify } from './file-actions.mjs';
+import { download, notify, copyPathText } from './file-actions.mjs';
+import { paintUserBody, userTools, attachmentImageSrc } from './user-message.mjs';
 import { watchHostOnlyLinks } from './host-only-links.mjs';
 import { linkChoices, showLinkSheet, hideLinkSheet, linkSheetOpen } from './link-sheet.mjs';
 import { createRemoteBrowser } from './remote-browser.mjs';
@@ -25,7 +26,7 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
-import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, plainTextHtml } from "./render.mjs";
+import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints } from "./render.mjs";
 import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
 import { setupComposerControls, resolvedModel, folderBrowser } from "./composer-controls.mjs";
@@ -50,7 +51,7 @@ import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./bran
 import { el, svgEl, icon, relTime, randomId } from "./dom.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
 import { savedEvent, savedTitle } from "./saved-text.mjs";
-import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE } from "./timeline.mjs";
+import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE, normalizeAttachmentPath, inlineAttachments, showsAsCard } from "./timeline.mjs";
 import { commandParts, sysFold, teammateNode, shellFailed, elapsedText as shellElapsed } from "./system-messages.mjs";
 import { createShellComposer } from "./shell-composer.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
@@ -631,18 +632,42 @@ function whoLine(who, at) {
   return w;
 }
 
-function userMsg(text, { uuid, at } = {}) {
+/**
+ * 自分の発言。本文は Markdown で描き、この発言に結び付いた添付（presents。human の present）は本文の印の位置に置く
+ * （web/user-message.mjs、ADR 0058）。markdown: false は今までの平文（委譲の子の会話を読む面）
+ */
+function userMsg(text, { uuid, at, presents = [], markdown = true } = {}) {
   const m = el("div", "m user");
   m.dataset.role = "user";
   if (at) m.dataset.at = at;
   m.append(whoLine(t("chat.message.you"), at));
-  // 字は書いたとおり。パスだけ AI の本文と同じ判定でファイルリンクにする（render.mjs の plainTextHtml）
   const body = el("div", "body");
-  body.innerHTML = plainTextHtml(text);
   m.append(body);
   forkButton(m);
+  paintUser(m, text, presents, { markdown });
   setUuid(m, uuid);
   return m;
+}
+
+/** 発言の原文。描画は原文から作り直せるよう、吹き出しが持つ（履歴との突き合わせ・添付の突き合わせもこれを読む） */
+const userRaw = (m) => m.querySelector(":scope > .body")?.dataset.raw ?? m.querySelector(":scope > .body")?.textContent ?? "";
+
+/** 発言の本文と、その下の行（添付 N 件・原文）を描く。m.attached は結び付いた添付 */
+function paintUser(m, text, presents = [], { markdown = m.querySelector(":scope > .body")?.classList.contains("md-user") ?? true } = {}) {
+  const body = m.querySelector(":scope > .body");
+  m.attached = presents;
+  paintUserBody(body, text, presents, { markdown });
+  m.querySelector(":scope > .msg-tools")?.remove();
+  m.querySelector(":scope > .msg-source")?.remove();
+  if (!markdown) return;
+  const tools = userTools({ raw: text, presents,
+    openItem: (item, present) => {
+      const src = present && attachmentImageSrc(present);
+      if (src) openLightbox(src, item.name, item.path);
+      else if (item.path) filePreview.open({ path: item.path, line: null }, null);
+    },
+    copyPath: (path) => copyPathText(path) });
+  if (tools) body.after(tools.row, tools.source);
 }
 
 /**
@@ -1599,7 +1624,8 @@ function onEvent(ev, replay = false) {
         : append(userMsg(ev.text, { at: ev.at }), `live:${++liveSeq}`);
       if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
       row.dataset.messageStarted = '1';
-      row.querySelector('.m.user .body').innerHTML = plainTextHtml(ev.text);
+      const userRow = row.querySelector('.m.user');
+      if (userRow?.querySelector(':scope > .body')) paintUser(userRow, ev.text, userRow.attached ?? []);
       if (ev.at) { row.querySelector('.m').dataset.at = ev.at; row.querySelector('.who .when').textContent = hhmm(ev.at); }
       for (const boundary of thread.querySelectorAll('.mw[data-compaction-id]')) {
         const entry = state.compactions.find(item => item.id === boundary.dataset.compactionId);
@@ -1735,7 +1761,15 @@ function onEvent(ev, replay = false) {
     case "present": {
       if (ev.by === "human") {
         const rows = [...thread.querySelectorAll('.m[data-role="user"]')];
-        const index = attachmentMessageIndex(rows.map(row => ({role:"user", at:row.dataset.at, text:row.querySelector('.body')?.textContent})), ev);
+        const index = attachmentMessageIndex(rows.map(row => ({role:"user", at:row.dataset.at, text:userRaw(row)})), ev);
+        // 結び付いた発言が Markdown で描かれているなら、添付は本文の位置に取り込む（別のカードは出さない）
+        const owner = index >= 0 && rows[index].querySelector(':scope > .body')?.classList.contains('md-user') ? rows[index] : null;
+        if (owner) {
+          const same = (a, b) => normalizeAttachmentPath(a) === normalizeAttachmentPath(b);
+          if (!(owner.attached ?? []).some(p => same(p.path, ev.path))) paintUser(owner, userRaw(owner), [...(owner.attached ?? []), ev]);
+          relayoutBranches();
+          return owner.closest('.mw');
+        }
         const wrapper = append(renderPresent(ev), `live:${++liveSeq}`);
         wrapper.dataset.humanAttachment = "true";
         if (index >= 0) {
@@ -3281,7 +3315,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   const put = (node, key) => { const w = wrap(node, key); th.append(w); return w; };
   const readOnly = (m) => { m.querySelector(':scope > .message-actions')?.remove(); return m; };
   const requestNode = (text, at) => {
-    const m = readOnly(userMsg(text, { at }));
+    const m = readOnly(userMsg(text, { at, markdown: false }));
     m.querySelector('.who > span').textContent = t('dialog.work.request');
     const bubble = m.querySelector('.body');
     if (bubble) {
@@ -3330,7 +3364,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
       continue;
     }
     let node;
-    if (m.role === 'user') node = it.mi === 0 ? requestNode(m.text, m.at) : readOnly(userMsg(m.text, { at: m.at }));
+    if (m.role === 'user') node = it.mi === 0 ? requestNode(m.text, m.at) : readOnly(userMsg(m.text, { at: m.at, markdown: false }));
     else {
       node = readOnly(aiMsg({ at: m.at, backend: m.backend ?? backend, cont: prevRole === 'assistant' }));
       // 発言者はモデル名で出す（どのモデルが答えたかを見分けるため）。分からなければエージェント名のまま
@@ -4239,7 +4273,8 @@ function wireDropZone() {
   $("fileIn").onchange = () => { attachFiles([...$("fileIn").files]); $("fileIn").value = ""; };
   // 会話に載った画像も同じライトボックスで大きく見る
   const zoomImage = (e) => {
-    const img = e.target.closest(".present-body > img, .tc-preview > img, .md-img");
+    const zoom = e.target.closest(".msg-att-zoom");
+    const img = zoom ? zoom.querySelector("img") : e.target.closest(".present-body > img, .tc-preview > img, .md-img");
     if (img) openLightbox(img.src, img.alt, img.dataset.filePath, img);
   };
   log.addEventListener("click", zoomImage);
@@ -4995,9 +5030,13 @@ function paintHistoryRows(fromMi) {
   const added = [];
   let prevRole = fromMi > 0 ? state.messages[fromMi - 1]?.role : null;
   const startAt = fromMi > 0 ? new Date(state.messages[fromMi - 1]?.at ?? 0) : null;
+  // 発言に結び付いた human の present は、発言の本文の位置に取り込む（別のカードは出さない）。発言が描かれた添字だけ取り込み済みにする
+  const attachedTo = inlineAttachments(items);
+  const inlined = new Set();
   for (const it of items) {
     if (it.kind === "present") {
       if (it.anchorMi >= 0 && it.anchorMi < fromMi) continue;
+      if (!showsAsCard(it, inlined)) continue;
       if (it.anchorMi < 0 && startAt && new Date(it.p.at ?? 0) < startAt) continue;
       const wrapper = append(renderPresent(savedEvent(it.p)), `p:${it.pi}`);
       if (it.p.by === "human") wrapper.dataset.humanAttachment = "true";
@@ -5015,8 +5054,10 @@ function paintHistoryRows(fromMi) {
       continue;
     }
     let node;
-    if (m.role === "user") node = userMsg(m.text, { uuid: m.uuid, at: m.at });
-    else {
+    if (m.role === "user") {
+      node = userMsg(m.text, { uuid: m.uuid, at: m.at, presents: (attachedTo.get(it.mi) ?? []).map(savedEvent) });
+      inlined.add(it.mi);
+    } else {
       node = aiMsg({ uuid: m.uuid, at: m.at, backend: m.backend, cont: prevRole === "assistant" });
       if (m.thinking) node.append(thinkFromText(m.thinking));
       for (const c of m.toolCalls ?? []) {

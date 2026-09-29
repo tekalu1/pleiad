@@ -1241,7 +1241,22 @@
       "editCancel": "取り消し",
       "sendAsBranchTitle": "分岐して送信 (Ctrl+Enter)",
       "sendAsBranch": "分岐して送信",
+      "showMore": "続きを表示",
+      "showLess": "折りたたむ",
+      "showSource": "エージェントに渡した原文を見る",
+      "hideSource": "原文を閉じる",
       "you": "あなた"
+    },
+    "attachList": {
+      "count_other": "添付 {{count}} 件",
+      "open": "開く",
+      "copyPath": "パスをコピー",
+      "close": "閉じる",
+      "sent": "送信済み",
+      "origin": {
+        "host": "ホスト",
+        "device": "この端末"
+      }
     },
     "next": {
       "title": "次のターンから適用",

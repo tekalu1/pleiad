@@ -65,7 +65,7 @@ function safeImg(u) {
  * present の画像用。safeImg に加えて、同一オリジンの http(s) を許す。
  * core が token 付き HTTP で配信する経路（設計メモ §7）を塞がないため。外部ホストは通さない。
  */
-function presentImg(u) {
+export function presentImg(u) {
   const ok = safeImg(u);
   if (ok !== null) return ok;
   const raw = String(u ?? "").trim();
@@ -340,10 +340,36 @@ function cells(line) {
   return s.split(/(?<!\\)\|/).map((c) => c.trim());
 }
 
-function parseBlocks(lines, depth = 0) {
+/**
+ * 見た目の行数の見積もり。吹き出しの 1 行に入る字数（全角 1 字を 2、半角を 1 と数えて 88 桁）で折り返したものとして数える。
+ * 空行は数えない（自分の発言を約 8 行で畳む目安。実測はしない）
+ */
+export function visualLines(text) {
+  let n = 0;
+  for (const line of String(text ?? "").split("\n")) {
+    if (!line.trim()) continue;
+    let width = 0;
+    for (const ch of line) width += ch.charCodeAt(0) > 0xff ? 2 : 1;
+    n += Math.max(1, Math.ceil(width / 88));
+  }
+  return n;
+}
+
+/**
+ * ブロックに分ける。meta を渡すと、out の各要素に対応する { lines }（元の行の見た目の行数。visualLines）を積む
+ * （自分の発言の畳み込みが行数を見積もる。renderMarkdownBlocks）
+ */
+function parseBlocks(lines, depth = 0, meta = null) {
   const out = [];
-  let i = 0;
+  let i = 0, from = 0, seen = 0;
+  const note = () => {
+    if (!meta || out.length <= seen) return;
+    meta.push({ lines: visualLines(lines.slice(from, i).join("\n")) });
+    seen = out.length;
+  };
   while (i < lines.length) {
+    note();
+    from = i;
     const line = lines[i];
     if (!line.trim()) { i++; continue; }
 
@@ -420,7 +446,8 @@ function parseBlocks(lines, depth = 0) {
     while (i < lines.length && lines[i].trim() && !startsBlock(lines, i)) { buf.push(lines[i]); i++; }
     out.push(`<p>${inline(buf.join("\n").replace(/[ \t]+$/gm, ""))}</p>`);
   }
-  return out.join("");
+  note();
+  return meta ? out : out.join("");
 }
 
 /** 収集済みのリスト行から <ul>/<ol> を組む。ネストは2段まで */
@@ -467,6 +494,35 @@ export function renderMarkdown(src) {
   const s = String(src ?? "").replace(/\r\n?/g, "\n").replace(/\u0000/g, "");
   if (!s.trim()) return "";
   return parseBlocks(s.split("\n"));
+}
+
+/**
+ * renderMarkdown と同じ描画を、一番外のブロックごとに分けて返す（自分の発言。段落の境目で畳むため）。
+ * @returns {{html: string, lines: number}[]} lines は見た目の行数の見積もり（visualLines）
+ */
+export function renderMarkdownBlocks(src) {
+  const s = String(src ?? "").replace(/\r\n?/g, "\n").replace(/\u0000/g, "");
+  if (!s.trim()) return [];
+  const meta = [];
+  const blocks = parseBlocks(s.split("\n"), 0, meta);
+  return blocks.map((html, n) => ({ html, lines: meta[n]?.lines ?? 1 }));
+}
+
+/** 行ごとに、コードフェンスの中（開き・閉じの行も含む）か。renderMarkdown がコードとして読む範囲と同じ */
+export function codeFenceMask(lines) {
+  const mask = [];
+  let close = null;
+  for (const line of lines) {
+    if (close) {
+      mask.push(true);
+      if (close.test(line)) close = null;
+      continue;
+    }
+    const f = RE_FENCE.exec(line);
+    mask.push(Boolean(f));
+    if (f) close = new RegExp(`^[ ]{0,3}${f[2][0] === "`" ? "`" : "~"}{${f[2].length},}[ \\t]*$`);
+  }
+  return mask;
 }
 
 // ------------------------------------------------------------------- present

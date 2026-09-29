@@ -545,6 +545,63 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .who{font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em;margin-bottom:3px;display:flex;align-items:center;gap:8px}
 .who .when{font-family:var(--font-mono);margin-left:auto}
 .m.user .body{display:inline-block;max-width:680px;background:var(--surface-2);border-radius:var(--r-l);padding:9px 16px;white-space:pre-wrap;overflow-wrap:anywhere}
+/* ---- 自分の発言の Markdown と添付（web/user-message.mjs、docs/design-system.md「自分の発言」、ADR 0058）。
+   本文は AI の本文と同じ md の見た目。添付は本文の印の位置に縮小（画像）か札（ファイル）で出る ---- */
+/* 狭い画面で、折り返さないコード・表の幅に吹き出しが引きずられて画面の外へ出ないよう、幅は入れ物で止める（中身は横にスクロール） */
+.m.user .body.md-user{white-space:normal;max-width:min(680px,100%)}
+.msg-atts{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;margin:0 0 .8em}
+.msg-att-img{margin:0;min-width:96px;max-width:min(240px,100%)}
+.msg-att-zoom{display:block;padding:0;background:transparent;border-radius:var(--r-s);cursor:zoom-in;line-height:0}
+.msg-att-zoom img{display:block;width:auto;height:auto;max-width:min(240px,100%);max-height:144px;border-radius:var(--r-s);background:var(--surface-paper)}
+.msg-att-img figcaption{margin-top:4px;font-size:var(--fs-xs);line-height:1.5;color:var(--ink-weak);overflow-wrap:anywhere}
+.msg-att-file{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:3px 10px;background:var(--surface-paper);border-radius:var(--r-pill);font-size:var(--fs-s);color:var(--ink-blue);text-decoration:none}
+.msg-att-file span{min-width:0;overflow-wrap:anywhere}
+.msg-att-file[aria-current=true]{background:var(--surface-3)}
+@media (max-width:700px){.msg-att-img{max-width:min(220px,100%)}.msg-att-zoom img{max-width:min(220px,100%)}}
+/* 長い発言の「続きを表示」。段落・添付のまとまりの境目で畳む（foldIndex）。開くと「折りたたむ」 */
+.msg-more>summary{list-style:none;cursor:pointer;user-select:none;padding:2px 0;font-size:var(--fs-s);color:var(--ink-blue)}
+.msg-more>summary::-webkit-details-marker{display:none}
+.msg-more>summary::after{content:"▾";margin-left:4px}
+.msg-more[open]>summary::after{content:"▴"}
+.msg-more .more-close,.msg-more[open] .more-open{display:none}
+.msg-more[open] .more-close{display:inline}
+.msg-more[open]>summary{margin-bottom:.6em}
+/* 発言の下の弱い字の行（添付 N 件 ▾・エージェントに渡した原文を見る）。原文は送った本文そのまま（等幅） */
+.msg-tools{display:flex;flex-wrap:wrap;align-items:center;gap:0 12px;padding-top:2px;max-width:680px}
+.msg-tool{display:inline-flex;align-items:center;gap:5px;padding:4px 0;background:transparent;font-size:var(--fs-xs);color:var(--ink-weak);cursor:pointer}
+.msg-tool:hover{color:var(--ink)}
+.msg-tool svg.i{width:14px;height:14px}
+.msg-source{max-width:680px;margin:4px 0 0;padding:8px 12px;background:var(--surface-1);border-radius:var(--r-s);font:var(--fs-s)/1.7 var(--font-mono);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow:auto}
+.msg-source[hidden]{display:none}
+.m.editing > .msg-tools,.m.editing > .msg-source{display:none}
+/* 添付の一覧の面（web/attachment-list.mjs）。デスクトップは動線の近くに浮き、700px 以下は下からのシート */
+.att-list{position:fixed;margin:0;padding:0;border:0;background:var(--surface-paper);color:var(--ink);border-radius:var(--r-m);
+  width:min(560px,calc(100vw - 24px));max-height:min(70vh,640px);overflow:auto;box-shadow:0 8px 32px var(--shadow)}
+.att-list::backdrop{background:var(--surface-veil)}
+.att-list-in{padding:16px}
+.att-list-handle{display:none}
+.att-list-head{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.att-list-head h3{margin:0;font-size:var(--fs-l);font-weight:600}
+.att-list-close{font-size:var(--fs-s);padding:3px 10px}
+.att-list-caption{margin:16px 0 4px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.att-list-row{display:flex;align-items:flex-start;gap:12px;padding:10px 0;min-width:0}
+.att-list-thumb,.att-list-file{flex:none;width:48px;height:48px;border-radius:var(--r-s);background:var(--surface-1)}
+.att-list-thumb{object-fit:cover}
+.att-list-file{display:grid;place-items:center;color:var(--ink-weak)}
+.att-list-file svg.i{width:22px;height:22px}
+.att-list-copy{flex:1;min-width:0}
+.att-list-name{display:block;font-size:var(--fs-s);font-weight:600;overflow-wrap:anywhere}
+.att-list-meta{display:block;margin:3px 0;font-size:var(--fs-xs);color:var(--ink-weak)}
+.att-list-path{display:block;font:var(--fs-xs)/1.5 var(--font-mono);color:var(--ink-weak);overflow-wrap:anywhere}
+.att-list-bar{display:block;height:3px;margin:6px 0;background:var(--surface-3);border-radius:var(--r-s);overflow:hidden}
+.att-list-bar::after{content:"";display:block;width:var(--p,0%);height:100%;background:var(--fill-primary);color:var(--on-fill)}
+.att-list-actions{display:flex;flex-wrap:wrap;gap:0 16px;margin-top:4px}
+.att-list-action{padding:2px 0;background:transparent;font-size:var(--fs-s);color:var(--ink-blue);cursor:pointer}
+.att-list-action:hover{text-decoration:underline}
+@media (max-width:700px){
+  .att-list{left:0!important;right:0;top:auto!important;bottom:0;width:100%;max-width:none;max-height:85dvh;border-radius:var(--r-l) var(--r-l) 0 0}
+  .att-list-handle{display:block;width:32px;height:4px;margin:0 auto 14px;background:var(--surface-3);border-radius:var(--r-pill)}
+}
 .message-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:var(--sp-1);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
 .message-actions .btn{font-size:var(--fs-xs);padding:3px 10px}
 .m.ai > .message-actions{position:absolute;right:48px;top:-1px}
