@@ -23,9 +23,9 @@
       "design": "the deliverable is a recommendation, plan, or chosen approach (even if most of the work is gathering facts).",
       "ux_change": "changing how an existing screen looks or flows, where the child decides the form; not complex.",
       "ux_new": "a brand-new screen or product UX, or a complex UX rework.",
-      "visual": "images, logos, figures."
+      "visual": "advanced creative work where the visual quality decides the result: 3D modeling, vectorizing generated images, illustrations, logos."
     },
-    "kindBoundaries": "Boundaries: if the form of the screen is already decided, implement; if the child decides the form, ux_change. If the deliverable is a recommendation or chosen approach, design, even when most of the work is research. Checking only is review; finding a cause is investigate."
+    "kindBoundaries": "Boundaries: if the form of the screen is already decided, implement; if the child decides the form, ux_change. If the deliverable is a recommendation or chosen approach, design, even when most of the work is research. Checking only is review; finding a cause is investigate. Diagrams, charts, and screen mockups are not visual: implement if the form is decided, ux_change / ux_new if the child decides the form."
   },
   "delegation": {
     "notRunning": "This conversation is not running.",

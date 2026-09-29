@@ -23,9 +23,9 @@
       "design": "成果物が推奨・計画・選んだやり方（作業の大半が事実集めでも）。",
       "ux_change": "既存の画面の見た目や流れを変え、形を子が決める。複雑ではないもの。",
       "ux_new": "新しい画面や製品の UX、または複雑な UX の作り直し。",
-      "visual": "画像・ロゴ・図。"
+      "visual": "3D モデリング、生成画像のベクター化、イラスト・ロゴなど、見た目の出来栄えが成果を決める高度なクリエイティブ作業。"
     },
-    "kindBoundaries": "境目: 画面の形まで決まっていれば implement、形を子が決めるなら ux_change。成果物が推奨や選んだやり方なら、調べることが多くても design。確かめるだけなら review、原因を探すなら investigate。"
+    "kindBoundaries": "境目: 画面の形まで決まっていれば implement、形を子が決めるなら ux_change。成果物が推奨や選んだやり方なら、調べることが多くても design。確かめるだけなら review、原因を探すなら investigate。図・グラフ・画面のモックは visual ではなく、形が決まっていれば implement、形を子が決めるなら ux_change / ux_new。"
   },
   "delegation": {
     "notRunning": "この会話は実行中ではありません",
