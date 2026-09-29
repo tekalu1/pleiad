@@ -1,3 +1,5 @@
+import { mountBranch } from './branch.js';
+
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -135,16 +137,10 @@ function setRows(after) {
   Object.entries(want).forEach(([k, s]) => setRow(k, s));
 }
 
-// 分岐: x=20 にいるのが今の会話
-const nodeA = $('.fk-a-node'), nodeB = $('.fk-b-node');
+// 分岐（branch.js）。分かれ目の後の発言は、元の会話と作った枝で替わる
 const late = $('.is-late .bubble');
 const LATE = ['9月の内訳も出して', '列に前年比を足して'];
-function setBranch(toB) {
-  nodeA.classList.toggle('is-cur', !toB);
-  nodeA.classList.toggle('is-right', toB);
-  nodeB.classList.toggle('is-cur', toB);
-  nodeB.classList.toggle('is-right', !toB);
-}
+const branch = mountBranch($('.fork'), { swap: (toFork) => { late.textContent = LATE[toFork ? 1 : 0]; } });
 
 // 入力欄のエージェント
 const agentChip = $('.chip-agent');
@@ -171,13 +167,11 @@ function applyState(n, done) {
   app.classList.toggle('is-seen', past(n, done, S_SEE));
   app.classList.toggle('is-drawn', past(n, done, S_SEE));
   app.classList.toggle('has-fork', n >= S_FORK);
-  app.classList.remove('is-picking', 'is-moving');
+  app.classList.remove('is-picking');
   setRows(past(n, done, S_ROWS));
   const toB = past(n, done, S_FORK);
-  setBranch(toB);
+  branch.show(toB);
   app.classList.toggle('has-run', toB);
-  late.textContent = LATE[toB ? 1 : 0];
-  late.style.opacity = 1;
   setAgent(handed ? 'codex' : 'claude', false);
   trackArcs(app);
 }
@@ -262,18 +256,7 @@ async function playStep(n) {
     }
   }
   if (n === S_FORK) {
-    await wait(1500);
-    if (!alive()) return;
-    app.classList.add('is-moving');
-    late.style.opacity = 0;
-    await wait(130);
-    setBranch(true);
-    await wait(560);
-    late.textContent = LATE[1];
-    late.style.opacity = 1;
-    app.classList.remove('is-moving');
-    if (!alive()) return;
-    await wait(500);
+    if (!(await branch.play(alive))) return;
     app.classList.add('has-run');
     trackArcs(app);
   }

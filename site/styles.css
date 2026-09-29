@@ -244,13 +244,11 @@ h2 {
 
 .log { position: relative; flex: 1; min-height: 0; overflow: hidden; }
 .log-inner {
-  position: absolute; left: 0; right: 0; bottom: 0; min-height: 100%;
+  position: absolute; left: 8px; right: 0; bottom: 0; min-height: 100%;
   display: flex; flex-direction: column; justify-content: flex-end; gap: 18px;
   padding: 0 40px 14px 0;
 }
-.log-inner::before { content: ""; position: absolute; left: 20px; top: -40px; bottom: 0; width: 1.4px; background: var(--indigo-2); }
 .msg { position: relative; padding-left: 72px; }
-.msg::before { content: ""; position: absolute; left: 17.2px; top: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--indigo-2); }
 .bubble { display: inline-block; padding: 9px 16px; border-radius: 20px; background: #e8eaf1; transition: opacity .42s; }
 .spk { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--weak); margin-bottom: 4px; }
 .spk time { margin-left: auto; font: 11px/1 var(--mono); color: var(--weak); }
@@ -268,30 +266,44 @@ h2 {
 .app.is-drawn .viz-area { transition: opacity 1s var(--ease) 1.2s; opacity: 1; }
 .app.is-drawn .viz-dot { transition: opacity .3s 1.8s; opacity: 1; }
 
-/* 分岐（docs/design-system.md §7 の形。今の会話は x=20） */
-.fork { position: relative; height: 150px; flex: none; }
-.fork-svg { position: absolute; left: 0; top: 0; width: 400px; height: 150px; overflow: visible; }
-.fork-svg path { fill: none; stroke-width: 1.4; stroke-linecap: round; }
-.fk-a, .fk-c { stroke: var(--indigo-2); }
-.fk-b { stroke: #9eabde; stroke-dasharray: 1; stroke-dashoffset: 1; }
-.app.has-fork .fk-b { transition: stroke-dashoffset .78s cubic-bezier(.22, .72, .18, 1) .2s; stroke-dashoffset: 0; }
-.fk-node {
-  position: absolute; top: 89px; left: 13px;
-  display: flex; align-items: flex-start; gap: 8px; font-size: 11.5px; line-height: 1.4;
-  transition: transform .56s cubic-bezier(.22, .72, .18, 1), opacity .3s;
+/* 会話の筋と節、分岐（web/style.css の .spine・.mw.node・.branch-row と同じ寸法と色。docs/design-system.md §7）。
+   筋は x=20。branch.js が分岐のグループの上下で区切って描き、分岐のある会話（.is-branched）では青く太い */
+.log-inner > .spine { position: absolute; left: 0; top: 0; width: 72px; height: 100%; overflow: visible; pointer-events: none; }
+.spine path { fill: none; stroke: var(--line); stroke-width: 1px; transition: stroke .24s var(--ease), stroke-width .24s var(--ease); }
+.log-inner.is-branched .spine path { stroke: var(--indigo-2); stroke-width: 2; }
+/* 節は直径 7px、中心 (20, 話し手の行の中心 + 5.2)。branch.js の NODE_Y と揃える */
+.msg::before { content: ""; position: absolute; left: 16.5px; top: 11px; width: 7px; height: 7px; border-radius: 50%; background: #dcdee8; }
+.log-inner.is-branched .msg::before { background: var(--indigo-2); }
+/* グループは高さ 176px。上は返答の 16px 下、下は次の発言の話し手の行が 2px 下（節が 16px 下） */
+.fork { position: relative; height: 176px; flex: none; margin: -2px 0 -16px; overflow: hidden; }
+.fork .branch-track { position: relative; height: 176px; min-width: 100%; }
+.fork .branch-edges { position: absolute; inset: 0; height: 176px; overflow: visible; pointer-events: none; }
+.fork .branch-edges path { fill: none; stroke: #9eabde; stroke-width: 1.5; stroke-linecap: round; }
+.fork .branch-edges path.active { stroke: var(--indigo-2); stroke-width: 2; }
+.fork .branch-tip {
+  position: absolute; top: 84px; width: var(--tip-w, 64px); max-width: var(--tip-w, 64px); padding: 4px 0 0; transform: translateX(-20px);
+  display: flex; align-items: flex-start; flex-direction: column; gap: 3px; color: var(--weak); border-radius: 8px;
 }
-.fk-node i { width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: inset 0 0 0 1.5px #9eabde; transition: background .3s, box-shadow .3s; flex: none; }
-.fk-lb { display: grid; margin-top: -1px; transition: opacity .15s; }
-.fk-lb b { max-width: 120px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fk-lb span { white-space: nowrap; color: var(--weak); }
-.fk-node:not(.is-cur) .nm-cur, .fk-node.is-cur .nm-alt { display: none; }
-.fk-node.is-cur i { background: var(--indigo-2); box-shadow: none; }
-.fk-node:not(.is-cur) b { font-weight: 400; color: var(--weak); }
-.fk-node.is-right { transform: translateX(170px); }
-.app.is-moving .fk-lb { opacity: 0; transition-duration: .12s; }
-.fk-b-node { opacity: 0; transition: transform .56s cubic-bezier(.22, .72, .18, 1), opacity .3s .8s; }
-.app.has-fork .fk-b-node { opacity: 1; }
-.fork::before { content: ""; position: absolute; left: 20px; top: 110px; width: 1.4px; height: 32px; background: var(--indigo-2); }
+.fork .branch-ring { width: 16px; height: 16px; margin-left: 12px; flex: none; overflow: visible; }
+.fork .branch-ring circle { fill: #fff; stroke: #9eabde; stroke-width: 1.5; }
+.fork .branch-tip.is-cur { color: var(--indigo); }
+.fork :is(.branch-tip.is-cur, .branch-tip.emerging) circle { fill: var(--indigo-2); stroke: var(--indigo-2); stroke-width: 4; }
+.fork :is(.branch-name, .branch-note) {
+  display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  background: #fff; padding: 0 2px; border-radius: 8px; font-size: 11px; line-height: 1.5;
+}
+.fork .branch-note { font-size: 10px; color: var(--weak); }
+.fork .branch-tip.growing .branch-ring { transform: scale(var(--reveal)); opacity: var(--reveal); }
+.fork .branch-tip.growing :is(.branch-name, .branch-note) { opacity: var(--reveal); }
+/* 返答の「⑂ ここから分岐」。触れている間だけ出る（web/style.css の .m.ai > .message-actions と .btn） */
+.fk-actions { position: absolute; right: 48px; top: -1px; display: flex; opacity: 0; transition: opacity .12s var(--ease); }
+.fk-actions.is-shown { opacity: 1; }
+.fk-btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+  font-size: 11px; line-height: 1.5; color: var(--weak); white-space: nowrap;
+  transition: background-color .12s var(--ease), color .12s var(--ease);
+}
+.fk-btn.is-hover { background: #e8eaf1; color: var(--ink); }
 
 .handoff { display: flex; align-items: center; gap: 6px; padding-left: 72px; font-size: 12px; color: var(--weak); }
 .handoff svg { width: 12px; height: 12px; }
@@ -300,9 +312,7 @@ h2 {
 .think .arc { width: 14px; height: 14px; }
 .is-running::before { display: none; }
 
-.is-hand, .is-ask, .is-reply, .fork, .is-late, .is-late2 { max-height: 0; opacity: 0; margin-top: -18px; overflow: hidden; transition: max-height .8s var(--organic), opacity .5s var(--ease), margin .8s var(--organic); }
-.fork { overflow: visible; }
-.app.has-fork .fork { max-height: 150px; opacity: 1; margin-top: 0; }
+.is-hand, .is-ask, .is-reply, .is-late, .is-late2 { max-height: 0; opacity: 0; margin-top: -18px; overflow: hidden; transition: max-height .8s var(--organic), opacity .5s var(--ease), margin .8s var(--organic); }
 .app.has-fork .is-late { max-height: 80px; opacity: 1; margin-top: 0; }
 .app.has-run .is-late2 { max-height: 80px; opacity: 1; margin-top: 0; }
 .app.has-hand .is-hand { max-height: 40px; opacity: 1; margin-top: 0; }
@@ -340,7 +350,7 @@ h2 {
 .app[data-step="0"] :is(.main-head, .msg:not(.is-ask, .is-reply)),
 .app[data-step="1"] :is(.side, .main-head, .composer, .handoff, .msg:not(.is-reply)),
 .app[data-step="2"] :is(.main-head, .log, .composer),
-.app[data-step="3"] :is(.side, .main-head, .composer, .handoff, .msg:not(.is-late, .is-late2)) { opacity: .45; filter: saturate(.6); }
+.app[data-step="3"] :is(.side, .main-head, .composer, .handoff, .msg:not(.is-late, .is-late2, [data-zone="see"]), [data-zone="see"] :is(.spk, .see-body)) { opacity: .45; filter: saturate(.6); }
 
 /* 任せる・外から */
 .pair {

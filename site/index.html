@@ -162,14 +162,13 @@
                   </div>
                 </div>
 
-                <div class="fork" data-zone="branch">
-                  <svg class="fork-svg" viewBox="0 0 400 150">
-                    <path class="fk-a" d="M20 0 V96"/>
-                    <path class="fk-b" pathLength="1" d="M20 16 C20 60 190 52 190 96"/>
-                    <path class="fk-c" d="M20 142 V150"/>
-                  </svg>
-                  <div class="fk-node fk-a-node"><i></i><div class="fk-lb"><b>売上レポートを作る</b><span class="nm-cur">現在の会話</span><span class="nm-alt">3 件の続き</span></div></div>
-                  <div class="fk-node fk-b-node"><i></i><div class="fk-lb"><b>表にする</b><span class="nm-cur">現在の会話</span><span class="nm-alt">2 件の続き</span></div></div>
+                <div class="fork" data-zone="branch" hidden>
+                  <template>
+                    <b data-k="action">⑂ ここから分岐</b>
+                    <b data-k="source">売上レポートを作る</b><b data-k="sourceNote">3 件の続き</b>
+                    <b data-k="fork">表にする</b><b data-k="forkNote">0 件の続き</b>
+                    <b data-k="current">現在の会話</b>
+                  </template>
                 </div>
 
                 <div class="msg is-user is-late"><p class="spk">あなた<time>12:54</time></p><p class="bubble">9月の内訳も出して</p></div>
