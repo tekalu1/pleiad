@@ -14,7 +14,7 @@ Android 版（`mobile/`、Capacitor 8）の署名済み APK は、`main` への 
 
 ただし `mobile/android/**/src/test/**` と `mobile/android/**/src/androidTest/**`（JVM・instrumented テスト）だけの変更では出ない。デスクトップやサーバー（`core/`・`web/` など）だけの変更でも出ない（画面はホストが配るため、殻の APK は変わらない）。
 
-流れ: `npm ci` → `npx cap sync android` → `./gradlew :remote-core:test` → 版の決定 → 署名付き `assembleRelease` → 署名の検証 → リリース作成。どこかで落ちたらリリースは作られない。
+流れ: ルートと `mobile/` の `npm ci` → `npx cap sync android` → `./gradlew :remote-core:test` → 版の決定 → 署名付き `assembleRelease` → 署名の検証 → リリース作成。どこかで落ちたらリリースは作られない。
 
 ## 版とタグ
 
