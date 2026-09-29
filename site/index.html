@@ -3,17 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pleiad — 離れずに、続ける。</title>
-<meta name="description" content="Claude Code・Codex・Antigravity を、ひとつの画面で。">
+<title>Pleiad — 全ての作業を、一か所で。</title>
+<meta name="description" content="Claude Code・Codex・Antigravity を、ひとつの画面でどこからでも。">
+<link rel="canonical" href="https://tekalu1.github.io/pleiad/">
 <meta name="theme-color" content="#f5f6fa">
-<meta property="og:title" content="Pleiad">
-<meta property="og:description" content="Claude Code・Codex・Antigravity を、ひとつの画面で。">
+<meta property="og:title" content="Pleiad — 全ての作業を、一か所で。">
+<meta property="og:description" content="Claude Code・Codex・Antigravity を、ひとつの画面でどこからでも。">
+<meta property="og:url" content="https://tekalu1.github.io/pleiad/">
 <meta property="og:type" content="website">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="preload" href="assets/fonts/noto-sans-jp.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="assets/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
-<meta property="og:image" content="assets/og.png">
+<meta property="og:image" content="https://tekalu1.github.io/pleiad/assets/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <script type="importmap">
 { "imports": {
@@ -81,8 +83,8 @@
     <canvas class="sky" aria-hidden="true"></canvas>
     <div class="sky-labels" aria-hidden="true"></div>
     <div class="hero-copy">
-      <h1><span class="ln"><span>離れずに、</span></span><span class="ln"><span>続ける。</span></span></h1>
-      <p class="lede">Claude Code・Codex・Antigravity を、<span class="nw">ひとつの画面で。</span></p>
+      <h1><span class="ln"><span>全ての作業を、</span></span><span class="ln"><span>一か所で。</span></span></h1>
+      <p class="lede">Claude Code・Codex・Antigravity を、<span class="nw">ひとつの画面で</span><span class="nw">どこからでも。</span></p>
       <div class="cta">
         <a class="btn" href="https://github.com/tekalu1/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg>Windows 版をダウンロード</a>
         <a class="btn btn-ghost" href="https://github.com/tekalu1/pleiad"><svg aria-hidden="true"><use href="#i-gh"/></svg>GitHub</a>
@@ -94,10 +96,10 @@
   <section class="screen" aria-label="ひとつの画面で">
    <div class="screen-view">
     <div class="prologue">
-      <p class="leave-line" data-i="0">ファイルを、<span class="nw">見に行く。</span></p>
-      <p class="leave-line" data-i="1"><span class="nw">どれが動いているか、</span><span class="nw">探しに行く。</span></p>
-      <p class="leave-line" data-i="2"><span class="nw">分岐の行方を、</span><span class="nw">追いに行く。</span></p>
-      <p class="leave-end">もう、<span class="nw">会話から離れない。</span></p>
+      <p class="leave-line" data-i="0"><span class="nw">エージェントごとに、</span><span class="nw">ターミナルを開く。</span></p>
+      <p class="leave-line" data-i="1"><span class="nw">できたグラフは、</span><span class="nw">ブラウザーで開き直す。</span></p>
+      <p class="leave-line" data-i="2"><span class="nw">どれが承認を待っているか、</span><span class="nw">ひとつずつ覗く。</span></p>
+      <p class="leave-end">もう、<span class="nw">行き来しない。</span></p>
     </div>
     <div class="stage" aria-hidden="true">
       <div class="stage-cam">
@@ -138,9 +140,14 @@
 
             <div class="log">
               <div class="log-inner">
-                <div class="msg is-user"><p class="spk">あなた<time>12:51</time></p><p class="bubble">今月までの売上の推移をグラフにして</p></div>
-                <div class="msg is-ai" data-zone="see">
-                  <p class="spk"><img src="assets/claude.svg" alt="">Claude<time>12:52</time></p>
+                <div class="msg is-user"><p class="spk">あなた<time>12:48</time></p><p class="bubble">4月からの売上を集計して</p></div>
+                <div class="msg is-ai"><p class="spk"><img src="assets/claude.svg" alt="">Claude<time>12:49</time></p><p>月ごとの合計を sales.csv にまとめました。</p></div>
+                <div class="handoff is-hand"><img src="assets/claude.svg" alt=""><svg><use href="#i-arrow"/></svg><img src="assets/openai.svg" alt=""><span>Codex に切り替え</span></div>
+                <div class="msg is-user is-ask"><p class="spk">あなた<time>12:51</time></p><p class="bubble">推移をグラフにして</p></div>
+                <div class="msg is-ai is-reply" data-zone="see">
+                  <p class="spk"><img src="assets/openai.svg" alt="">Codex<time>12:52</time></p>
+                  <p class="think see-run"><svg class="arc" viewBox="0 0 14 14"><path/></svg>グラフを描いている<time>0:08</time></p>
+                  <div class="see-body">
                   <p>4月から9月の推移です。9月は前月比 +12% でした。</p>
                   <figure class="viz">
                     <div class="viz-head"><span>月次売上</span><b>1,284<small>万円</small></b></div>
@@ -152,6 +159,7 @@
                     </svg>
                     <div class="viz-x"><span>4月</span><span>5月</span><span>6月</span><span>7月</span><span>8月</span><span>9月</span></div>
                   </figure>
+                  </div>
                 </div>
 
                 <div class="fork" data-zone="branch">
@@ -165,7 +173,6 @@
                 </div>
 
                 <div class="msg is-user is-late"><p class="spk">あなた<time>12:54</time></p><p class="bubble">9月の内訳も出して</p></div>
-                <div class="handoff is-late2"><img src="assets/claude.svg" alt=""><svg><use href="#i-arrow"/></svg><img src="assets/openai.svg" alt=""><span>Codex に切り替え</span></div>
                 <div class="msg is-ai is-late2 is-running">
                   <p class="spk"><img src="assets/openai.svg" alt="">Codex<time>12:55</time></p>
                   <p class="think"><svg class="arc" viewBox="0 0 14 14"><path/></svg>前年比を足している<time>0:12</time></p>
@@ -191,21 +198,6 @@
 
     <div class="steps">
       <article class="step" data-step="0">
-        <p class="f-kicker">見る</p>
-        <h2>成果物は、<br>会話の中に。</h2>
-        <p class="f-sub">HTML・画像・ファイルを、その場で。</p>
-      </article>
-      <article class="step" data-step="1">
-        <p class="f-kicker">思い出す</p>
-        <h2>待っている会話が、<br>すぐわかる。</h2>
-        <p class="f-sub">状態は自由に。<span class="nw">人も AI も、</span><span class="nw">同じように付けられる。</span></p>
-      </article>
-      <article class="step" data-step="2">
-        <p class="f-kicker">続ける</p>
-        <h2>分岐しても、<br>迷わない。</h2>
-        <p class="f-sub">どの枝からでも、続けられる。</p>
-      </article>
-      <article class="step" data-step="3">
         <p class="f-kicker">選ばない</p>
         <h2>乗り換えても、<br>会話は続く。</h2>
         <ul class="agents-row">
@@ -215,6 +207,21 @@
         </ul>
         <p class="f-sub f-compat">OpenRouter・LiteLLM・Ollama <span class="nw">にもつなげる。</span></p>
       </article>
+      <article class="step" data-step="1">
+        <p class="f-kicker">見る</p>
+        <h2>成果物は、<br>会話の中に。</h2>
+        <p class="f-sub"><span class="nw">HTML・画像・ファイルを、</span><span class="nw">その場で。</span><br><span class="nw">あなたの認知負荷を</span><span class="nw">下げます。</span></p>
+      </article>
+      <article class="step" data-step="2">
+        <p class="f-kicker">思い出す</p>
+        <h2>待っている会話が、<br>すぐわかる。</h2>
+        <p class="f-sub"><span class="nw">カンバンのように、</span><span class="nw">会話に自由な状態を</span><span class="nw">持たせられます。</span></p>
+      </article>
+      <article class="step" data-step="3">
+        <p class="f-kicker">気楽に分岐</p>
+        <h2>分岐しても、<br>迷わない。</h2>
+        <p class="f-sub">どの枝からでも、続けられる。</p>
+      </article>
     </div>
    </div>
   </section>
@@ -223,8 +230,8 @@
     <article class="tile" id="delegate">
       <div class="tile-copy">
         <p class="f-kicker">任せる</p>
-        <h2>空いている<br>エージェントへ。</h2>
-        <p class="f-sub">種類・難しさ・使用量から、<span class="nw">Pleiad が選ぶ。</span></p>
+        <h2>サブエージェントの<br>モデルは自動で選びます</h2>
+        <p class="f-sub">種類・難しさ・使用量から。</p>
       </div>
       <div class="tile-visual">
       <div class="v-deleg" aria-hidden="true">
@@ -242,7 +249,7 @@
       <div class="tile-copy">
         <p class="f-kicker">外から</p>
         <h2>家の PC を、<br>ポケットから。</h2>
-        <p class="f-sub">中継サーバーは、<span class="nw">会話を読めない。</span></p>
+        <p class="f-sub">どこからでも作業を継続できます</p>
       </div>
       <div class="tile-visual">
       <div class="phone" aria-hidden="true">
@@ -271,7 +278,7 @@
 
   <section class="end">
     <svg class="end-mark" aria-hidden="true"><use href="#i-mark"/></svg>
-    <h2><span class="nw">離れずに、</span><span class="nw">続ける。</span></h2>
+    <h2><span class="nw">全ての作業を、</span><span class="nw">一か所で。</span></h2>
     <div class="cta">
       <a class="btn" href="https://github.com/tekalu1/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg>Windows 版をダウンロード</a>
       <a class="btn btn-ghost" href="https://github.com/tekalu1/pleiad#開発の始め方">macOS・Linux はソースから</a>

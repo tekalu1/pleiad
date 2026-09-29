@@ -90,18 +90,20 @@ const APP_H = 680, MAIN_X = 268;
 const APP_W = { wide: 1080, narrow: 688 };
 // 各場面の枠。辺は面の境目（x）か要素のすき間（y）にだけ置き、切れる辺はぼかす。
 // top: 上端をそこに揃える / bottomOf: その要素の下に揃える / bottomAbove: その要素の上に揃える（その要素は入れない）
+// 場面: 0 選ばない / 1 見る / 2 思い出す / 3 分岐
+const S_AGENT = 0, S_SEE = 1, S_ROWS = 2, S_FORK = 3;
 const SHOTS = {
   wide: [
     { full: true },
+    { x0: MAIN_X, bottomAbove: '.composer' },
     { x0: 0, x1: 560, top: 0, bottomOf: '.rows:last-of-type' },
     { x0: MAIN_X, bottomAbove: '.composer' },
-    { x0: MAIN_X, bottom: true },
   ],
   narrow: [
-    { x0: MAIN_X, bottomOf: '.msg.is-ai[data-zone="see"]' },
+    { x0: MAIN_X, bottom: true },
+    { x0: MAIN_X, bottomAbove: '.composer' },
     { x0: 0, x1: MAIN_X, top: 0, bottomOf: '.rows' },
     { x0: MAIN_X, bottomAbove: '.composer' },
-    { x0: MAIN_X, bottom: true },
   ],
 };
 
@@ -147,25 +149,33 @@ function setBranch(toB) {
 // 入力欄のエージェント
 const agentChip = $('.chip-agent');
 const AGENTS = { claude: ['assets/claude.svg', 'Claude Code'], codex: ['assets/openai.svg', 'Codex'] };
+const salesLogo = $('img', rows.sales);
 async function setAgent(name, animate) {
   if (agentChip.dataset.agent === name) return;
   agentChip.dataset.agent = name;
   if (animate) { agentChip.classList.add('is-swap'); await wait(200); }
   $('.ag-logo', agentChip).src = AGENTS[name][0];
   $('.ag-name', agentChip).textContent = AGENTS[name][1];
+  salesLogo.src = AGENTS[name][0];
   agentChip.classList.remove('is-swap');
 }
 
 // n 番目の場面の、動く前（done=false）か動き終えた（done=true）形
+const past = (n, done, s) => n > s || (n === s && done);
 function applyState(n, done) {
-  const handed = n === 3 && done;
+  const handed = past(n, done, S_AGENT);
   app.dataset.step = n;
-  app.classList.toggle('has-fork', n >= 2);
   app.classList.toggle('has-hand', handed);
+  app.classList.toggle('has-ask', handed);
+  app.classList.toggle('has-reply', handed);
+  app.classList.toggle('is-seen', past(n, done, S_SEE));
+  app.classList.toggle('is-drawn', past(n, done, S_SEE));
+  app.classList.toggle('has-fork', n >= S_FORK);
   app.classList.remove('is-picking', 'is-moving');
-  setRows(n === 1 && done);
-  const toB = n > 2 || (n === 2 && done);
+  setRows(past(n, done, S_ROWS));
+  const toB = past(n, done, S_FORK);
   setBranch(toB);
+  app.classList.toggle('has-run', toB);
   late.textContent = LATE[toB ? 1 : 0];
   late.style.opacity = 1;
   setAgent(handed ? 'codex' : 'claude', false);
@@ -220,7 +230,30 @@ async function playStep(n) {
   const alive = () => g === gen;
   if (reduce || stepDone[n]) { stepDone[n] = true; applyState(n, true); return; }
   applyState(n, false);
-  if (n === 1) {
+  if (n === S_AGENT) {
+    await wait(700);
+    if (!alive()) return;
+    app.classList.add('is-picking');
+    await wait(450);
+    if (!alive()) return;
+    await setAgent('codex', true);
+    await wait(300);
+    app.classList.remove('is-picking');
+    app.classList.add('has-hand');
+    await wait(700);
+    if (!alive()) return;
+    app.classList.add('has-ask');
+    await wait(800);
+    if (!alive()) return;
+    app.classList.add('has-reply');
+    trackArcs(app);
+  }
+  if (n === S_SEE) {
+    await wait(900);
+    if (!alive()) return;
+    app.classList.add('is-seen', 'is-drawn');
+  }
+  if (n === S_ROWS) {
     await wait(700);
     for (const [k, s] of ROWS_SCRIPT) {
       if (!alive()) return;
@@ -228,7 +261,7 @@ async function playStep(n) {
       await wait(1200);
     }
   }
-  if (n === 2) {
+  if (n === S_FORK) {
     await wait(1500);
     if (!alive()) return;
     app.classList.add('is-moving');
@@ -240,17 +273,8 @@ async function playStep(n) {
     late.style.opacity = 1;
     app.classList.remove('is-moving');
     if (!alive()) return;
-  }
-  if (n === 3) {
-    await wait(600);
-    if (!alive()) return;
-    app.classList.add('is-picking');
-    await wait(450);
-    if (!alive()) return;
-    await setAgent('codex', true);
-    await wait(300);
-    app.classList.remove('is-picking');
-    app.classList.add('has-hand');
+    await wait(500);
+    app.classList.add('has-run');
     trackArcs(app);
   }
   if (alive()) stepDone[n] = true;
@@ -272,7 +296,6 @@ function onScreen() {
   const come = clamp((p - 0.86) / 0.1);
   screen.style.setProperty('--in', come.toFixed(3));
   screen.classList.toggle('in', come > 0.6);
-  if (come > 0.9) app.classList.add('is-drawn');
   const n = clamp(Math.floor((y - P) / S), 0, 3);
   if (n === step) return;
   step = n;
