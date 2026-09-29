@@ -3960,7 +3960,21 @@ const draftKey = () => state.current ?? "";
 const DRAFT_STORE = "agent-host-drafts-v1";
 try { state.drafts = new Map(JSON.parse(localStorage.getItem(DRAFT_STORE) ?? "[]")); } catch { /* server copy remains available */ }
 const draftWrites = new Map();
+// 打鍵ごとの保存は間引く（長い下書きを毎打鍵ぶん localStorage とサーバーへ書かない）。静かな間の最初の打鍵はすぐ保存し、
+// 続く打鍵は DRAFT_THROTTLE_MS ごとに 1 回（最後の打鍵の分は必ず保存する）。会話の切り替え・送信・ページを離れる・欄を離れるときは直ちに保存する
+const DRAFT_THROTTLE_MS = 400;
+let draftTimer = null, draftSavedAt = 0;
+function saveDraftSoon() {
+  const wait = draftSavedAt + DRAFT_THROTTLE_MS - Date.now();
+  if (wait <= 0) saveDraft().catch(() => {});
+  else if (draftTimer === null) draftTimer = setTimeout(() => saveDraft().catch(() => {}), wait);
+}
+/** 間引いて待っている保存があれば、いま保存する */
+function flushDraft() { if (draftTimer !== null) saveDraft().catch(() => {}); }
 function saveDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = null;
+  draftSavedAt = Date.now();
   const id = draftKey();
   // 開いている途中の欄は前の下書きの写しなので保存しない。作ったばかりの会話（freshSessionId）は欄が正本なので保存する
   if (id && state.loadingSession === id && id !== freshSessionId) return Promise.resolve();
@@ -4083,7 +4097,9 @@ function attachHostFiles(files, { at = takeAttachAt() } = {}) {
   if (already && !added) notify(t("chat.attach.already"));
   return true;
 }
-$("prompt").addEventListener("input", () => saveDraft().catch(() => {}));
+$("prompt").addEventListener("input", saveDraftSoon);
+$("prompt").addEventListener("blur", flushDraft);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushDraft(); });
 addEventListener("pagehide", () => saveDraft().catch(() => {}));
 
 // ---------------------------------------------------------------- 添付

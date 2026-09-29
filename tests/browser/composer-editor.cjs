@@ -234,5 +234,58 @@ async page => {
   await cdp.send('Input.insertText', { text: 'テスト' }); await page.waitForTimeout(100);
   check('確定', await val(), 'テスト');
   await reset();
+
+  // ---------------------------------------------------------------- 6. 貼り付け・往復・打鍵の重さ・変換の後始末
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await K.type('x');
+  await page.evaluate(async () => {
+    await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob(['<h1 style="color:red">Big</h1><div>line2</div><img src="https://example.com/t.png">'], { type: 'text/html' }) })]);
+  });
+  await K.press('Control+v'); await page.waitForTimeout(300);
+  check('HTML だけの貼り付けは字だけが入る（要素・外の画像は入らない）',
+    await page.evaluate(() => ({ v: document.querySelector('#prompt').value, img: document.querySelectorAll('#prompt img[src^="http"]').length, h1: document.querySelectorAll('#prompt h1').length })),
+    { v: 'xBig\nline2', img: 0, h1: 0 });
+  await reset();
+  check('value の往復（設定した文字がそのまま読める）', await page.evaluate(() => {
+    const p = document.querySelector('#prompt');
+    return ['a\tb', '## h\n- x\n  - y\n\n> q\n```js\ncode\n```', '**a****b**', 'trailing  ', '\n先頭の空行', '末尾の改行\n'].map(s => { p.value = s; return p.value === s; });
+  }), [true, true, true, true, true, true]);
+  // 長い下書きの 1 打鍵で DOM を読み直す回数（行数に比例しない。値の読み取りは DOM が変わるまで読み直さない）
+  await page.evaluate(() => {
+    const p = document.querySelector('#prompt');
+    p.value = Array.from({ length: 300 }, (_, i) => `本文の行 ${i} の **太字** と [リンク](https://x.y/${i})`).join('\n');
+    p.focus(); const s = getSelection(); s.selectAllChildren(p.lastElementChild); s.collapseToEnd();
+  });
+  await K.press('a'); await page.waitForTimeout(50);   // 最初の 1 打鍵は全行を読む（写しが空）。数えるのはその次から
+  await page.evaluate(() => {
+    const desc = Object.getOwnPropertyDescriptor(Node.prototype, 'childNodes');
+    window.__reads = 0; window.__restoreReads = () => Object.defineProperty(Node.prototype, 'childNodes', desc);
+    Object.defineProperty(Node.prototype, 'childNodes', { configurable: true, get() { window.__reads++; return desc.get.call(this); } });
+  });
+  await K.press('b'); await page.waitForTimeout(50);
+  const oneKey = await page.evaluate(() => window.__reads);
+  const rereads = await page.evaluate(() => { const p = document.querySelector('#prompt'); const before = window.__reads; for (let i = 0; i < 5; i++) { p.value; p.selectionStart; p.selectionEnd; } return window.__reads - before; });
+  await page.evaluate(() => window.__restoreReads());
+  check('1 打鍵で DOM を読む回数は行数（300）に比例しない', oneKey < 50, true);
+  check('DOM が変わらなければ value・選択の読み取りで DOM を読み直さない', rereads, 0);
+  await reset();
+  // 変換中に添付の描き直し（refresh）が走っても、変換中の字は本文に残らない
+  await page.evaluate(() => { const p = document.querySelector('#prompt'); p.value = 'line1\nabc'; p.focus(); const s = getSelection(); s.selectAllChildren(p.lastElementChild); s.collapseToEnd(); });
+  await cdp.send('Input.imeSetComposition', { text: 'にほ', selectionStart: 2, selectionEnd: 2 });
+  await page.evaluate(() => document.querySelector('#prompt').editor.refresh());
+  await cdp.send('Input.imeSetComposition', { text: 'にほん', selectionStart: 3, selectionEnd: 3 });
+  await cdp.send('Input.insertText', { text: '日本' }); await page.waitForTimeout(100);
+  check('変換中に refresh が走っても変換中の字は残らない', await val(), 'line1\nabc日本');
+  // 確定の直後（同じ tick）の Enter は、ブラウザーの行の分割に任せず、モデルが割る（記号が増えない）
+  await page.evaluate(() => { const p = document.querySelector('#prompt'); p.value = '- abc'; p.focus(); const s = getSelection(); s.selectAllChildren(p.lastElementChild); s.collapseToEnd(); });
+  check('確定の直後の Enter はモデルが行を割る（default を止め、記号は 1 つずつ）', await page.evaluate(() => {
+    const p = document.querySelector('#prompt');
+    p.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    p.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'x' }));
+    const ev = new InputEvent('beforeinput', { inputType: 'insertParagraph', bubbles: true, cancelable: true });
+    p.dispatchEvent(ev);
+    return { prevented: ev.defaultPrevented, value: p.value, marks: [...p.children].map(d => d.dataset.m ?? '').join('|') };
+  }), { prevented: true, value: '- abc\n- ', marks: '- |- ' });
+  await reset();
   return `${results.length} 件通過\n${results.join('\n')}`;
 }

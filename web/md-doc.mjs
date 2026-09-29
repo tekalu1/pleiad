@@ -289,22 +289,34 @@ export function docToMarkdown(blocks) {
  * 文字列での位置の対応。lines は Markdown に出るブロックだけ { b, start, marker, map }。
  * 出ないブロック（送っている途中の添付・空の pad）は、次に出るブロックの頭と同じ位置に写る
  */
-export function docLayout(blocks) {
+export function docLayout(blocks, memo = null) {
   const lines = [];
   let start = 0;
   blocks.forEach((b, i) => {
     if (omitted(b)) return;
-    const raw = blockRaw(b);
-    const map = b.kind === 'att' || b.kind === 'code' ? null : serializeRunsMapped(b.runs);
-    lines.push({ b: i, start, raw, marker: b.kind === 'att' || b.kind === 'code' ? '' : b.marker, map, len: b.kind === 'att' || b.kind === 'code' ? raw.length : runsLength(b.runs) });
-    start += raw.length + 1;
+    // memo（WeakMap）を渡すと、変わらないブロックの分を使い回す。渡す側は、ブロックを作った後に書き換えないこと
+    let e = memo?.get(b);
+    if (!e) {
+      const raw = blockRaw(b);
+      const map = b.kind === 'att' || b.kind === 'code' ? null : serializeRunsMapped(b.runs);
+      e = { raw, marker: b.kind === 'att' || b.kind === 'code' ? '' : b.marker, map, len: b.kind === 'att' || b.kind === 'code' ? raw.length : runsLength(b.runs) };
+      memo?.set(b, e);
+    }
+    lines.push({ b: i, start, ...e });
+    start += e.raw.length + 1;
   });
   return { lines, length: Math.max(0, start - 1) };
 }
 
-/** 位置 → Markdown の文字列の位置（v 番目の見える文字の直後） */
-export function posToOffset(blocks, pos) {
-  const layout = docLayout(blocks);
+/** ブロックの Markdown の文字（blockRaw）を、変わらないブロックの分だけ使い回す関数にする（cache は WeakMap。ブロックは作った後に書き換えない） */
+export const memoRaw = (cache) => (b) => {
+  let r = cache.get(b);
+  if (r === undefined) { r = blockRaw(b); cache.set(b, r); }
+  return r;
+};
+
+/** 位置 → Markdown の文字列の位置（v 番目の見える文字の直後）。layout は docLayout(blocks) の結果を使い回すとき */
+export function posToOffset(blocks, pos, layout = docLayout(blocks)) {
   if (!layout.lines.length) return 0;
   const line = layout.lines.find(l => l.b >= pos.b) ?? layout.lines.at(-1);
   if (line.b > pos.b) return line.start;
@@ -314,8 +326,7 @@ export function posToOffset(blocks, pos) {
 }
 
 /** Markdown の文字列の位置 → 位置（その手前までにある見える文字の数） */
-export function offsetToPos(blocks, offset) {
-  const layout = docLayout(blocks);
+export function offsetToPos(blocks, offset, layout = docLayout(blocks)) {
   if (!layout.lines.length) return { b: 0, v: 0 };
   let line = layout.lines[0];
   for (const l of layout.lines) if (l.start <= offset) line = l;
@@ -626,9 +637,9 @@ export function pasteText(st, text, { plain = false, resolve = () => null } = {}
  * コードフェンスの範囲に合わせて、行の種類をそろえる（フェンスの中に入った行は code に、出た code の行は分類し直す）。
  * 書き換えたら true。undo で戻した「記号のままの行」を勝手に書式にしないよう、フェンス以外の種類は触らない
  */
-export function normalizeFences(blocks, { resolve = () => null, plain = false } = {}) {
+export function normalizeFences(blocks, { resolve = () => null, plain = false, raw = blockRaw } = {}) {
   if (plain) return false;
-  const roles = fenceRoles(blocks.map(blockRaw));
+  const roles = fenceRoles(blocks.map(raw));
   let changed = false;
   blocks.forEach((b, i) => {
     if (roles[i] && b.kind !== 'code') { blocks[i] = toCodeLine(b); changed = true; }
@@ -785,24 +796,30 @@ export function selectionMarkdown(st) {
 }
 
 // ------------------------------------------------------------------ 元に戻す
+const sameBlock = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);
+const sameBlocks = (a, b) => a.length === b.length && a.every((x, i) => sameBlock(x, b[i]));
+/** 履歴の 1 件分。ブロックの並びだけ写し、ブロック自体は共有する（作った後に書き換えない約束）。選択は写す */
+const keep = (state) => ({ blocks: state.blocks.slice(), sel: clone(state.sel) });
+
 /**
- * 元に戻す・やり直しの履歴。状態（{ blocks, sel }）の写しを並べる。
+ * 元に戻す・やり直しの履歴。状態（{ blocks, sel }）を並べる。ブロックは書き換えない前提で、変わらないブロックは履歴の間で共有する
+ * （長い下書きで 1 打鍵ごとに文書全体を写さない）。
  * 文字を打つだけの変更は同じ行の中で続けて 1 つにまとめる（reason: 'type'）。整形・構造の変更はまとめない。
  * 整形の直前（記号のままの状態）と直後を別々に積むので、整えた直後の元に戻すで記号に戻る
  */
 export function createHistory({ limit = 200, gap = 1000, now = () => Date.now() } = {}) {
   let stack = [], at = -1, lastAt = 0;
   return {
-    reset(state) { stack = [{ state: clone(state), reason: 'init' }]; at = 0; lastAt = 0; },
+    reset(state) { stack = [{ state: keep(state), reason: 'init' }]; at = 0; lastAt = 0; },
     push(state, reason = 'edit') {
       const t = now();
       const top = stack[at];
-      if (top && JSON.stringify(top.state.blocks) === JSON.stringify(state.blocks)) { top.state.sel = clone(state.sel); return false; }
+      if (top && sameBlocks(top.state.blocks, state.blocks)) { top.state.sel = clone(state.sel); return false; }
       stack.length = at + 1;
       if (reason === 'type' && top?.reason === 'type' && state.sel.s.b === top.state.sel.s.b && t - lastAt < gap) {
-        stack[at] = { state: clone(state), reason };
+        stack[at] = { state: keep(state), reason };
       } else {
-        stack.push({ state: clone(state), reason });
+        stack.push({ state: keep(state), reason });
         if (stack.length > limit) stack.shift();
         at = stack.length - 1;
       }
@@ -811,8 +828,8 @@ export function createHistory({ limit = 200, gap = 1000, now = () => Date.now() 
     },
     /** 選択だけを最新の記録に反映する（履歴は増やさない） */
     touch(sel) { if (stack[at]) stack[at].state.sel = clone(sel); },
-    undo() { if (at <= 0) return null; at--; return clone(stack[at].state); },
-    redo() { if (at >= stack.length - 1) return null; at++; return clone(stack[at].state); },
+    undo() { if (at <= 0) return null; at--; return keep(stack[at].state); },
+    redo() { if (at >= stack.length - 1) return null; at++; return keep(stack[at].state); },
     get canUndo() { return at > 0; },
     get canRedo() { return at < stack.length - 1; },
     get size() { return stack.length; },

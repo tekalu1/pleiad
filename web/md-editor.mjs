@@ -14,13 +14,43 @@ import { formatBytes } from './folder-upload.mjs';
 import { attachmentHtml } from './user-message.mjs';
 import { baseName } from './file-reference.mjs';
 import {
-  markdownToDoc, docToMarkdown, mergeRuns, runsText, runsLength, newMark, blockRaw, fenceRoles, normalizeFences, ensureShape, emptyBlock,
+  markdownToDoc, docToMarkdown, mergeRuns, runsText, runsLength, newMark, fenceRoles, normalizeFences, ensureShape, emptyBlock,
   caret, isCollapsed, orderSel, deleteSelection, insertText, enter, backspaceAtStart, deleteAtEnd, insertAtom, removeAtoms, newAtom,
   atomKey, atomKeys, normalizeAttachmentPath, pasteText, applyTriggers, toggleMark, marksInRange, selectionMarkdown, createHistory,
-  posToOffset, offsetToPos, insertPlain,
+  posToOffset, offsetToPos, insertPlain, docLayout, memoRaw,
 } from './md-doc.mjs';
 
 const KINDS = new Set(['p', 'h', 'ul', 'ol', 'quote', 'code', 'att']);
+
+const HTML_BLOCK = /^(?:ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|DD|DIV|DL|DT|FIELDSET|FIGCAPTION|FIGURE|FOOTER|FORM|H[1-6]|HEADER|HR|LI|MAIN|NAV|OL|P|PRE|SECTION|TABLE|TR|UL)$/;
+
+/**
+ * HTML を字にする（HTML だけのクリップボード）。要素は入れず、ブロックの区切りと <br> を改行にする。script・style は読まない。
+ * DOMParser は文書を作るだけで、スクリプトも外の画像も読み込まない
+ */
+export function htmlToText(html) {
+  const doc = new DOMParser().parseFromString(String(html), 'text/html');
+  let out = '';
+  const newline = () => { if (out && !out.endsWith('\n')) out += '\n'; };
+  const walk = (node, pre) => {
+    if (node.nodeType === 3) {
+      const text = pre ? node.nodeValue : node.nodeValue.replace(/[ \t\r\n\f]+/g, ' ');
+      out += !pre && (!out || out.endsWith('\n')) ? text.replace(/^ /, '') : text;
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const tag = node.tagName;
+    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEMPLATE' || tag === 'HEAD' || tag === 'TITLE') return;
+    if (tag === 'BR') { out += '\n'; return; }
+    const block = HTML_BLOCK.test(tag);
+    if (block) newline();
+    for (const child of node.childNodes) walk(child, pre || tag === 'PRE');
+    if (block) newline();
+    else if (tag === 'TD' || tag === 'TH') out += '\t';
+  };
+  walk(doc.body, false);
+  return out.replace(/[ \t]+\n/g, '\n').replace(/\n+$/, '');
+}
 
 /**
  * @param {HTMLElement} root 編集欄にする要素（#prompt）
@@ -87,20 +117,66 @@ export function createMarkdownEditor(root, o) {
     return b;
   }
 
-  const blockDivs = () => [...root.children].filter(n => n.classList?.contains('md-b'));
-  const readDoc = () => blockDivs().map(readBlock);
+  // 行の要素の並び。root の直下の増減（childList）があるまで使い回す。読む前に必ず DOM の変化を取り込む（flush）
+  let divsCache = null;
+  const touched = new Set();   // 中身が変わった行（sanitize が、空になった行を直す）
+  const flush = () => invalidate(observer.takeRecords());
+  const blockDivs = () => { flush(); return divsCache ??= [...root.children].filter(n => n.classList?.contains('md-b')); };
+
+  // DOM を読んだ結果は、DOM が変わるまで使い回す（長い下書きで、1 打鍵ごとに全行を読み直さない）。
+  //   - 行ごと: divCache（div → 読んだブロック）。変わった行だけ読み直す
+  //   - 文書ごと: docBlocks・docLayoutCache・docMd・docAtoms。DOM が 1 つでも変わったら捨てる
+  // DOM の変化は MutationObserver で知る。records は takeRecords() で同期に取れるので、読む直前に取り込めば、input の直後でも古い写しを返さない。
+  // 返すブロックは共有なので、読み取り専用として扱う（書き換える操作は必ず写しを取ってから: md-doc.mjs の各操作）
+  let divCache = new WeakMap(), docBlocks = null, docLayoutCache = null, docMd = null, docAtoms = null, cachedPlain = false;
+  const layoutMemo = new WeakMap(), rawMemo = new WeakMap(), rawOf = memoRaw(rawMemo), keyMemo = new WeakMap();
+  const observer = new MutationObserver((records) => invalidate(records));
+  function invalidate(records) {
+    if (!records.length) return;
+    docBlocks = docLayoutCache = docMd = docAtoms = null;
+    for (const r of records) {
+      if (r.type === 'childList' && r.target === root) divsCache = null;
+      const d = blockOf(r.target);
+      if (d) { divCache.delete(d); touched.add(d); }
+    }
+  }
+  observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true });
+
+  /** いまの文書（行ごとのブロックの並び）。共有の配列なので書き換えない（getState は写しを返す） */
+  function readDoc() {
+    flush();
+    const plainNow = plain();
+    if (plainNow !== cachedPlain) { cachedPlain = plainNow; divCache = new WeakMap(); docBlocks = docLayoutCache = docMd = docAtoms = null; }
+    if (docBlocks) return docBlocks;
+    docBlocks = blockDivs().map((div) => {
+      let b = divCache.get(div);
+      if (!b) { b = readBlock(div); divCache.set(div, b); }
+      return b;
+    });
+    observer.takeRecords();   // 読むときに付けた印（data-mid）の分は捨てる
+    return docBlocks;
+  }
+  const layout = () => docLayoutCache ??= docLayout(readDoc(), layoutMemo);
+  const markdownNow = () => docMd ??= layout().lines.map(l => l.raw).join('\n');
+  const atomsNow = () => { const blocks = readDoc(); return docAtoms ??= atomKeys(blocks); };
 
   /** ブラウザーの編集で block の外に出た字・空の欄を直す */
   function sanitize() {
-    let stray = null;
-    for (const n of [...root.childNodes]) {
-      if (n.nodeType === 1 && n.classList.contains('md-b')) { stray = null; continue; }
-      if (n.nodeType === 1 && n.tagName === 'BR') { n.remove(); continue; }
-      if (!stray) { stray = renderBlock(emptyBlock(), 0, []); stray.replaceChildren(); root.insertBefore(stray, n); }
-      stray.append(n);
+    // ふつうの打鍵は、行の中身が変わっただけ（root の直下は行だけ）。全部を見るのは、行の外の字・<br>・空の欄があるときだけ
+    if (root.childNodes.length !== blockDivs().length || !root.firstChild) {
+      let stray = null;
+      for (const n of [...root.childNodes]) {
+        if (n.nodeType === 1 && n.classList.contains('md-b')) { stray = null; continue; }
+        if (n.nodeType === 1 && n.tagName === 'BR') { n.remove(); continue; }
+        if (!stray) { stray = renderBlock(emptyBlock(), 0, []); stray.replaceChildren(); root.insertBefore(stray, n); }
+        stray.append(n);
+      }
+      if (!root.firstChild) root.append(renderBlock(emptyBlock(), 0, []));
+      for (const div of blockDivs()) if (div.dataset.k !== 'att' && !div.firstChild) div.append(document.createElement('br'));
+    } else {
+      for (const div of touched) if (div.parentNode === root && div.dataset.k !== 'att' && !div.firstChild) div.append(document.createElement('br'));
     }
-    if (!root.firstChild) root.append(renderBlock(emptyBlock(), 0, []));
-    for (const div of blockDivs()) if (div.dataset.k !== 'att' && !div.firstChild) div.append(document.createElement('br'));
+    touched.clear();
   }
 
   // ------------------------------------------------------------ 選択の対応
@@ -166,7 +242,7 @@ export function createMarkdownEditor(root, o) {
   const endSel = (blocks) => { const b = blocks.length - 1; return caret(b, blocks[b].kind === 'att' ? 0 : runsLength(blocks[b].runs)); };
 
   const getState = () => {
-    const blocks = readDoc();
+    const blocks = readDoc().slice();   // 共有の配列は書き換えない（normalizeFences などが要素を差し替える）
     const sel = getSel() ?? (lastSel && lastSel.s.b < blocks.length ? lastSel : endSel(blocks));
     return { blocks, sel };
   };
@@ -275,20 +351,22 @@ export function createMarkdownEditor(root, o) {
     return div;
   }
 
-  const keyOf = (b, i, roles) => (b.kind === 'att'
-    ? `att|${b.raw}|${b.path ?? ''}|${b.pid ?? ''}|${b.path ? '' : opts.pending(b.pid)?.state ?? (resolvedPids.has(b.pid) ? 'r' : 'x')}`
-    : `${b.kind}|${b.marker}|${b.pad ? 1 : 0}|${b.kind === 'code' ? roles[i] ?? '' : ''}${b.kind === 'code' ? roles[i + 1] ?? '' : ''}|${JSON.stringify(b.runs.map(r => [r.text, r.marks.map(m => [m.id, m.t, m.d, m.url])]))}`);
+  const keyOf = (b, i, roles) => {
+    if (b.kind === 'att') return `att|${b.raw}|${b.path ?? ''}|${b.pid ?? ''}|${b.path ? '' : opts.pending(b.pid)?.state ?? (resolvedPids.has(b.pid) ? 'r' : 'x')}`;
+    const body = () => { let k = keyMemo.get(b); if (k === undefined) { k = `|${JSON.stringify(b.runs.map(r => [r.text, r.marks.map(m => [m.id, m.t, m.d, m.url])]))}`; keyMemo.set(b, k); } return k; };
+    return `${b.kind}|${b.marker}|${b.pad ? 1 : 0}|${b.kind === 'code' ? roles[i] ?? '' : ''}${b.kind === 'code' ? roles[i + 1] ?? '' : ''}${body()}`;
+  };
 
   /**
    * 文書に合わせて DOM を作り直す。頭と尻で同じ行はそのまま残す（添付の画像を読み直さない）。
    * 同じかどうかは、いまの DOM を読んだ中身で比べる（打った字は DOM にだけあるので、描いたときの印は当てにならない）
    */
   function paint(blocks, { force = false } = {}) {
-    const roles = fenceRoles(blocks.map(blockRaw));
+    const roles = fenceRoles(blocks.map(rawOf));
     const keys = blocks.map((b, i) => keyOf(b, i, roles));
     const old = blockDivs();
-    const oldBlocks = old.map(readBlock);
-    const oldRoles = fenceRoles(oldBlocks.map(blockRaw));
+    const oldBlocks = readDoc();
+    const oldRoles = fenceRoles(oldBlocks.map(rawOf));
     const oldKeys = force ? [] : oldBlocks.map((b, i) => keyOf(b, i, oldRoles));
     let head = 0;
     while (head < old.length && head < blocks.length && oldKeys[head] === keys[head]) head++;
@@ -310,7 +388,7 @@ export function createMarkdownEditor(root, o) {
 
   // ------------------------------------------------------------ 状態の反映
   function report() {
-    const next = atomKeys(readDoc());
+    const next = atomsNow();
     const added = new Set([...next].filter(k => !known.has(k))), removed = new Set([...known].filter(k => !next.has(k)));
     known = next;
     if (added.size || removed.size) opts.onAtoms({ added, removed });
@@ -345,7 +423,12 @@ export function createMarkdownEditor(root, o) {
   }
 
   function fixPids(blocks) {
-    for (const b of blocks) if (b.kind === 'att' && !b.path && resolvedPids.has(b.pid)) { b.path = resolvedPids.get(b.pid); b.raw = newAtom({ path: b.path, locale: opts.locale() }).raw; delete b.pid; }
+    blocks.forEach((b, i) => {
+      if (b.kind !== 'att' || b.path || !resolvedPids.has(b.pid)) return;
+      const path = resolvedPids.get(b.pid);
+      const { pid, ...rest } = b;
+      blocks[i] = { ...rest, path, raw: newAtom({ path, locale: opts.locale() }).raw };
+    });
   }
 
   // ------------------------------------------------------------ ブラウザーの編集のあと
@@ -357,7 +440,7 @@ export function createMarkdownEditor(root, o) {
       if (trig) {
         history.push(st, 'type');
         st = trig.state;
-        normalizeFences(st.blocks, { resolve });
+        normalizeFences(st.blocks, { resolve, raw: rawOf });
         fixPids(st.blocks);
         paint(st.blocks);
         setDomSel(st.sel, st.sel.after);
@@ -369,7 +452,7 @@ export function createMarkdownEditor(root, o) {
       }
     }
     outside = null;
-    if (normalizeFences(st.blocks, { resolve, plain: plain() })) { paint(st.blocks); if (hasFocus()) setDomSel(st.sel); }
+    if (normalizeFences(st.blocks, { resolve, plain: plain(), raw: rawOf })) { paint(st.blocks); if (hasFocus()) setDomSel(st.sel); }
     history.push(st, 'type');
     syncEmpty();
     report();
@@ -377,7 +460,37 @@ export function createMarkdownEditor(root, o) {
 
   // ------------------------------------------------------------ イベント
   const isOutside = (sel) => outside && sel && isCollapsed(sel) && sel.s.b === outside.b && sel.s.v === outside.v;
+  // 変換が終わった（compositionend）が、まだ DOM を読み直していない間の印。次の tick か、その前に来た構造の操作が読み直す（finishComposition）
+  let endTimer = null;
+  // 変換中に来た「欄を描き直す」仕事（添付の情報の変化・届いた添付）は、変換が終わってから走らせる（変換中の字を消さないため）
+  let afterComposition = [];
+  const whenIdle = (fn) => { if (composing) { afterComposition.push(fn); return true; } return false; };
+
+  function dropZwsp() {
+    if (!zwsp) return;
+    const s = getSelection();
+    const at = s.anchorNode === zwsp ? s.anchorOffset : null;
+    const removed = zwsp.nodeValue.slice(0, at ?? undefined).split('\u200b').length - 1;
+    zwsp.nodeValue = zwsp.nodeValue.replace(/\u200b/g, '');
+    if (at !== null) s.setBaseAndExtent(zwsp, Math.max(0, at - removed), zwsp, Math.max(0, at - removed));
+    zwsp = null;
+  }
+
+  /** 変換の後始末（見えない字を取り除き、DOM から文書を読み直す）。次の tick で走るが、その前に来た Enter などがあれば先に走らせる */
+  function finishComposition() {
+    if (endTimer === null) return;
+    clearTimeout(endTimer);
+    endTimer = null;
+    dropZwsp();
+    syncFromDom(null);
+    const later = afterComposition;
+    afterComposition = [];
+    for (const fn of later) fn();
+  }
+
   root.addEventListener('compositionstart', () => {
+    // 続けて次の変換が始まった（単語ごとに変換を作るキーボード）: 前の後始末は、この変換が終わってからまとめて
+    if (endTimer !== null) { clearTimeout(endTimer); endTimer = null; dropZwsp(); }
     // 整えた直後の位置で変換を始めるときは、要素の外に立たせるために、見えない字（変換の後で取り除く）を置いて始める
     if (isOutside(getSel())) {
       const s = getSelection(), node = s.anchorNode, block = blockOf(node);
@@ -393,40 +506,64 @@ export function createMarkdownEditor(root, o) {
     composing = true;
   });
   root.addEventListener('compositionend', () => {
-    // Safari は compositionend のあとに最後の input が来る。読み直しはその後にする
-    setTimeout(() => {
-      composing = false;
-      if (zwsp) {
-        const s = getSelection();
-        const at = s.anchorNode === zwsp ? s.anchorOffset : null;
-        const removed = zwsp.nodeValue.slice(0, at ?? undefined).split('\u200b').length - 1;
-        zwsp.nodeValue = zwsp.nodeValue.replace(/\u200b/g, '');
-        if (at !== null) s.setBaseAndExtent(zwsp, Math.max(0, at - removed), zwsp, Math.max(0, at - removed));
-        zwsp = null;
-      }
-      syncFromDom(null);
-    }, 0);
+    // composing はここですぐ戻す（Android などで確定の直後に来る Enter を、ブラウザーの行の分割に任せない）。
+    // Safari は compositionend のあとに最後の input が来るので、DOM の読み直しは次の tick（それまでの input は読み直さない）
+    composing = false;
+    if (endTimer !== null) clearTimeout(endTimer);
+    endTimer = setTimeout(finishComposition, 0);
   });
 
   const singleBlockRange = (sel) => sel.s.b === sel.e.b && blockDivs()[sel.s.b]?.dataset.k !== 'att';
+
+  /** beforeinput の対象の範囲（スペルチェックの置き換えは、選択ではなく語が対象）。無ければ null */
+  function targetSel(e) {
+    const r = e.getTargetRanges?.()[0];
+    const a = r && domToPos(r.startContainer, r.startOffset), b = r && domToPos(r.endContainer, r.endOffset);
+    return a && b ? orderSel(a, b) : null;
+  }
+  /** クリップボード・ドロップの中身を字にする。text/plain があればそれ、無ければ text/html の字（ブロックごとに改行。HTML は入れない） */
+  function clipboardText(dt) {
+    const plainText = dt?.getData('text/plain');
+    if (plainText) return plainText;
+    const html = dt?.getData('text/html');
+    return html ? htmlToText(html) : '';
+  }
 
   root.addEventListener('beforeinput', (e) => {
     if (composing || e.isComposing) return;
     const type = e.inputType;
     if (root.getAttribute('contenteditable') !== 'true') return;
+    // 変換が終わった直後（まだ読み直していない）に来た操作は、読み直してから
+    if (endTimer !== null && !/Composition/.test(type)) finishComposition();
     const st = () => getState();
     const done = (next, reason) => { e.preventDefault(); apply(next, reason); };
     if (type === 'insertParagraph' || type === 'insertLineBreak') return done(enter(st(), { plain: plain() || type === 'insertLineBreak' }), 'enter');
     if (type === 'historyUndo') { e.preventDefault(); undo(); return; }
     if (type === 'historyRedo') { e.preventDefault(); redo(); return; }
     if (type.startsWith('format')) { e.preventDefault(); return; }
+    // 貼り付け（クリップボードの中身は paste が字にして入れる。ここに来るのは paste で止めなかった経路）。HTML はそのまま入れない
+    if (type === 'insertFromPaste' || type === 'insertFromPasteAsQuotation' || (type === 'insertReplacementText' && e.dataTransfer)) {
+      e.preventDefault();
+      const text = e.data ?? clipboardText(e.dataTransfer);
+      if (!text) return;
+      const s0 = st();
+      const target = type === 'insertReplacementText' ? targetSel(e) : null;   // スペルチェックの置き換えは対象の語を差し替える
+      const s = target ? { blocks: s0.blocks, sel: target } : s0;
+      done(text.includes('\n') ? pasteText(s, text, { plain: plain(), resolve }) : insertText(s, text), target ? 'type' : 'paste');
+      return;
+    }
     if (type === 'insertText' || type === 'insertReplacementText') {
-      const s = st();
       const data = e.data ?? '';
+      // 1 字の打鍵（ふつうの経路）は選択だけを見る。文書は構造の操作に入るときだけ読む
+      const sel = data.includes('\n') ? null : getSel();
+      if (sel && !(outside && data)) {
+        if (isCollapsed(sel) || singleBlockRange(sel)) return;   // 打った字はブラウザーに任せる（input で読み直し、整形を見る）
+      }
+      const s = st();
       if (data.includes('\n')) return done(pasteText(s, data, { plain: plain(), resolve }), 'paste');
       if (isOutside(s.sel) && data) { outside = null; return done(insertPlain(s, data), 'type'); }
       if (!isCollapsed(s.sel) && !singleBlockRange(s.sel)) return done(insertText(s, data), 'type');
-      return;   // 打った字はブラウザーに任せる（input で読み直し、整形を見る）
+      return;
     }
     if (type === 'insertFromDrop' || type === 'insertFromYank' || type === 'insertLink') {
       e.preventDefault();
@@ -452,7 +589,8 @@ export function createMarkdownEditor(root, o) {
 
   root.addEventListener('input', (e) => {
     if (synthetic) return;
-    if (composing || e.isComposing) { syncEmpty(); return; }
+    // 変換の最中と、確定の直後に来る変換の input（読み直しは finishComposition が）
+    if (composing || e.isComposing || (endTimer !== null && /Composition/.test(e.inputType))) { syncEmpty(); return; }
     const ch = e.inputType === 'insertText' && typeof e.data === 'string' && e.data.length === 1 ? e.data : null;
     syncFromDom(ch);
   });
@@ -471,6 +609,7 @@ export function createMarkdownEditor(root, o) {
 
   root.addEventListener('keydown', (e) => {
     if (composing || e.isComposing || e.keyCode === 229) return;
+    if (endTimer !== null) finishComposition();
     const mod = e.ctrlKey || e.metaKey;
     if (mod && !e.altKey && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
     if (mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
@@ -560,9 +699,11 @@ export function createMarkdownEditor(root, o) {
   root.addEventListener('paste', (e) => {
     // ファイル（画像）は client.mjs の paste が添付にする
     if (e.clipboardData?.files?.length) return;
-    const text = e.clipboardData?.getData('text/plain');
-    if (!text) return;
+    // HTML だけのクリップボード（ブラウザー・Word・メールなど）も字にして入れる。HTML そのものは入れない（外の画像を読みに行かせない）
     e.preventDefault();
+    const text = clipboardText(e.clipboardData);
+    if (!text) return;
+    if (endTimer !== null) finishComposition();
     apply(pasteText(getState(), text, { plain: plain(), resolve }), 'paste');
   });
 
@@ -651,7 +792,7 @@ export function createMarkdownEditor(root, o) {
     if (box.querySelector('.md-bar-input')) return;
     const range = getSelection().getRangeAt(0).getBoundingClientRect();
     if (!range.width && !range.height) { hideBar(); return; }
-    const state = { blocks: readDoc(), sel };
+    const state = { blocks: readDoc(), sel };   // 読み取りだけ
     const on = marksInRange(state);
     for (const b of box.querySelectorAll('.md-bar-btn')) b.setAttribute('aria-pressed', String(on.has(b.dataset.mark)));
     box.hidden = false;
@@ -678,18 +819,19 @@ export function createMarkdownEditor(root, o) {
   function offsets() {
     const blocks = readDoc();
     const sel = getSel() ?? lastSel ?? endSel(blocks);
-    return { start: posToOffset(blocks, sel.s), end: posToOffset(blocks, sel.e) };
+    const lay = layout();
+    return { start: posToOffset(blocks, sel.s, lay), end: posToOffset(blocks, sel.e, lay) };
   }
 
   function setRange(a, b) {
-    const blocks = readDoc();
-    const sel = orderSel(offsetToPos(blocks, a), offsetToPos(blocks, b));
+    const blocks = readDoc(), lay = layout();
+    const sel = orderSel(offsetToPos(blocks, a, lay), offsetToPos(blocks, b, lay));
     lastSel = sel;
     if (hasFocus()) setDomSel(sel);
   }
 
   Object.defineProperties(root, {
-    value: { configurable: true, get: () => docToMarkdown(readDoc()), set: setValue },
+    value: { configurable: true, get: markdownNow, set: setValue },
     selectionStart: { configurable: true, get: () => offsets().start, set: (n) => setRange(n, Math.max(n, offsets().end)) },
     selectionEnd: { configurable: true, get: () => offsets().end, set: (n) => setRange(Math.min(n, offsets().start), n) },
     placeholder: {
@@ -747,6 +889,7 @@ export function createMarkdownEditor(root, o) {
     /** 添付を入れる。'inserted' | 'duplicate' | 'unavailable'（平文の間・書けない間） */
     insertAttachment({ path, pid }, { at = null } = {}) {
       if (plain() || root.disabled || root.readOnly) return 'unavailable';
+      if (whenIdle(() => editor.insertAttachment({ path, pid }, { at }))) return 'inserted';
       const s = getState();
       if (path && atomKeys(s.blocks).has(`p:${normalizeAttachmentPath(path)}`)) return 'duplicate';
       const sel = at && at.s.b < s.blocks.length ? at : (hasFocus() ? s.sel : lastSel && lastSel.s.b < s.blocks.length ? lastSel : endSel(s.blocks));
@@ -757,7 +900,8 @@ export function createMarkdownEditor(root, o) {
     /** 送っている途中の添付が届いた。仮の ID をパスに替える（履歴には積まない） */
     resolvePending(pid, path) {
       resolvedPids.set(pid, path);
-      const blocks = readDoc();
+      if (whenIdle(() => editor.resolvePending(pid, path))) return true;
+      const blocks = readDoc().slice();
       if (!blocks.some(b => b.pid === pid)) return false;
       fixPids(blocks);
       paint(blocks);
@@ -791,8 +935,8 @@ export function createMarkdownEditor(root, o) {
       apply(removeAtoms(s, (b) => atomKey(b) === key), 'delete');
       return true;
     },
-    hasAttachment(key) { return atomKeys(readDoc()).has(key); },
-    attachmentKeys() { return atomKeys(readDoc()); },
+    hasAttachment(key) { return atomsNow().has(key); },
+    attachmentKeys() { return new Set(atomsNow()); },
     /** 添付の位置へ移動（見える所へ寄せ、短く強調） */
     reveal(key) {
       const div = blockDivs().find(d => d.dataset.k === 'att' && (d.dataset.path ? `p:${normalizeAttachmentPath(d.dataset.path)}` : `i:${d.dataset.pid}`) === key);
@@ -808,19 +952,21 @@ export function createMarkdownEditor(root, o) {
     },
     /** 末尾に Markdown の文字を足す（入力欄へ写す。記法は整える）。input イベントは出さない（呼び出し側が出す） */
     append(text) {
+      if (whenIdle(() => editor.append(text))) return;
       const s = getState();
       apply(pasteText({ blocks: s.blocks, sel: endSel(s.blocks) }, text, { plain: plain(), resolve }), 'paste', { silent: true });
     },
     /** 整形の内部の文字列（テスト・診断用）: いまの文書の Markdown */
-    markdown: () => docToMarkdown(readDoc()),
+    markdown: markdownNow,
     undo, redo,
     /** 平文の形が変わった（シェルの形に入った・出た）。書式は読み直さず、次の入力から効く */
     modeChanged() { hideBar(); syncEmpty(); },
     /** 添付の印の言語が変わった・添付の情報が変わった。札を描き直す */
     refresh() {
-      const s = getState();
-      paint(s.blocks, { force: true });
-      if (hasFocus()) setDomSel(s.sel); else lastSel = s.sel;
+      if (whenIdle(() => editor.refresh())) return;
+      // 描き直すのは添付の札だけ（字の行は触らない。キャレットも変換中の字もそのまま）
+      const blocks = readDoc();
+      blockDivs().forEach((div, i) => { if (div.dataset.k === 'att') div.replaceWith(renderBlock(blocks[i], i, [])); });
     },
   };
   root.editor = editor;
