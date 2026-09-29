@@ -79,6 +79,9 @@ export default async function (t) {
     // 入力欄の `!`（web/shell-composer.mjs）。tests/unit/shell-composer.mjs が見る。このテストでは使わない（ふつうの欄のまま）
     shellComposer: { active: false, blocked: false, draftText: () => prompt.value, reset: noop },
     completionNotifications: { requestPermission: noop }, slashSkills: { close: noop }, uiLang: 'ja', attachmentLine: (l, p) => p,
+    // 入力欄の編集欄（web/md-editor.mjs）と添付（文中の札・送っている途中）。このテストでは添付は使わない
+    composerEditor: { attachmentKeys: () => new Set(), hasAttachment: () => false }, uploads: new Map(), composerShellMode: null,
+    uploadBlockReason: () => null, orderedAttachments: () => state.attached.slice(), attachedKey: p => `p:${p}`, notify: noop, flashAttachEntry: noop,
     receipts: new Map(), saveReceipts: noop, messageRow: () => true, ensureMessageRow: noop, markDelivery: noop,
     createComposerWait,
     // 中断と再開（web/interrupt.mjs・client.mjs の syncResume / paintInterruptLine）。ここでは中断していない会話だけ
@@ -163,4 +166,41 @@ export default async function (t) {
   await reply('loadSession', { messages: [], presents: [], draft: { text: '既存の下書き', attached: [] } });
   for (let k = 0; k < 5; k++) await new Promise(setImmediate);
   t.ok('読めたら書けて送れる。失敗の前に書いた字は残る', !prompt.readOnly && $('send').disabled === false && $('composerNote').hidden && prompt.value === '既存の下書き!', prompt.value);
+
+  // ---------------------------------------------------------------- 文中の添付（ADR 0060）: 本文の印はそのまま送り、文中に無い添付だけ末尾に足す
+  const A = 'C:\\up\\a.png', B = 'C:\\up\\b.md';
+  state.attached = [{ path: B, name: 'b.md', kind: 'file', mime: '' }, { path: A, name: 'a.png', kind: 'image', mime: 'image/png' }];
+  context.composerEditor = { attachmentKeys: () => new Set([context.attachedKey(A)]) };   // a.png だけ文中に置いてある
+  context.orderedAttachments = () => [state.attached[1], state.attached[0]];             // 文中の位置の順（文中のものが先）
+  prompt.value = `# 見出し\n[添付] ${A}\n説明`;
+  const before = calls.filter(c => c.command === 'sendMessage').length;
+  await run('submit()');
+  const inline = calls.filter(c => c.command === 'sendMessage').slice(before);
+  t.ok('本文の印は 1 回だけ（二重にしない）・文中に無い添付だけ末尾に印を足す',
+    inline.length === 1 && inline[0].args.prompt === `# 見出し\n[添付] ${A}\n説明\n\n${B}` && inline[0].args.prompt.split(A).length === 2, JSON.stringify(inline.map(c => c.args.prompt)));
+  t.ok('runTurn の attachments は今までどおり全件（文中の位置の順）', inline[0].args.attachments?.map(a => a.path).join() === `${A},${B}`, JSON.stringify(inline[0].args.attachments));
+
+  // 送っている途中・失敗の添付があるうちは送らない
+  state.attached = [];
+  prompt.value = 'あとで送る';
+  let told = null;
+  context.uploadBlockReason = () => '添付を送っている間は送れません';
+  context.notify = (text) => { told = text; };
+  const held = calls.filter(c => c.command === 'sendMessage').length;
+  await run('submit()');
+  t.ok('送信中・失敗の添付があれば送らず、理由を知らせる', calls.filter(c => c.command === 'sendMessage').length === held && told === '添付を送っている間は送れません' && prompt.value === 'あとで送る');
+  t.ok('送信ボタンは押せず、title に理由を出す', (run('syncRunState()'), $('send').disabled === true && $('send').getAttribute('title') === '添付を送っている間は送れません'));
+  context.uploadBlockReason = () => null;
+  run('syncRunState()');
+  t.ok('添付が届けば送信ボタンと title は元に戻る', $('send').disabled === false && $('send').getAttribute('title') !== '添付を送っている間は送れません', `${$('send').disabled} ${$('send').getAttribute('title')}`);
+
+  // 下書きは本文（印を含む Markdown）と添付の実体を version: 2 で保存する。印の無い古い下書きは添付だけ（文末に付く）
+  state.attached = [{ path: A, name: 'a.png', kind: 'image', mime: 'image/png' }];
+  prompt.value = `x\n[添付] ${A}\ny`;
+  await run('saveDraft()');
+  const draft = calls.filter(c => c.command === 'saveDraft').at(-1).args;
+  t.ok('下書きは印を含む本文・添付の実体・version: 2 を保存する', draft.text === `x\n[添付] ${A}\ny` && draft.attached.length === 1 && draft.version === 2, JSON.stringify(draft));
+  state.drafts.set('existing', { text: '古い下書き', attached: [{ path: B, name: 'b.md', kind: 'file' }] });
+  run('loadDraft()');
+  t.ok('古い下書き（本文に印が無い）は本文と添付の実体をそのまま読む（位置は推測しない）', prompt.value === '古い下書き' && state.attached.length === 1 && state.attached[0].path === B);
 }

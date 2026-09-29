@@ -7,7 +7,7 @@ async page => {
   const results = [];
   const check = (ok, label) => { if (!ok) throw Error(label); results.push(label); };
   await page.reload();
-  await page.locator('#prompt:not(:disabled)').waitFor();
+  await page.locator('#prompt:not([aria-disabled="true"])').waitFor();
   await page.evaluate(async () => {
     const socket = new WebSocket(`ws://${location.host}/ws${location.search}`);
     const pending = new Map(); let seq = 0;
@@ -61,8 +61,9 @@ async page => {
   check(await code.locator('.code-copy').getAttribute('aria-label') === 'コピーしました', 'コピー成功を表示');
   await page.screenshot({ path: `${ROOT}/temporary/message-actions-attachment.png`, clip: { x: 0, y: 0, width: 16, height: 16 } });
   await page.locator('#fileIn').setInputFiles([`${ROOT}/README.md`, `${ROOT}/temporary/message-actions-attachment.png`]);
-  await page.locator('#attached').getByText('README.md').waitFor();
-  await page.locator('#attached').getByRole('img', { name: 'message-actions-attachment.png' }).waitFor();
+  // 添付は入力欄の文中（キャレットの位置）に札として入る。上の「添付 N 件」は入口だけ
+  await page.locator('#prompt').getByText('README.md').waitFor();
+  await page.locator('#prompt').getByRole('img', { name: 'message-actions-attachment.png' }).waitFor();
   await send('echo:編集前の本文');
   await send('echo:後続の発言');
   const original = await cmd('loadSession', { sessionId: source });
@@ -71,10 +72,12 @@ async page => {
   await user.hover(); await user.locator('.editbtn').click();
   const editor = page.getByRole('textbox', { name: 'メッセージを編集' });
   await editor.waitFor();
-  check(await editor.inputValue() === 'echo:編集前の本文', '編集欄から自動添付行を除外');
+  // 印（[添付] パス）は本文の位置のまま編集欄へ戻す（文中の位置を保つ）
+  const editValue = await editor.inputValue();
+  check(editValue.startsWith('echo:編集前の本文') && (editValue.match(/\[添付\]/g) ?? []).length === 2, '編集欄に本文と添付の印を位置ごと戻す');
   check((await user.innerText()).includes('README.md'), '編集時に添付名を表示');
   await editor.fill('取り消す変更'); await editor.press('Escape');
-  check(await page.locator('#prompt').inputValue() === '元の会話に残す下書き', '取り消しで元の入力欄の下書きを保持');
+  check(await page.locator('#prompt').evaluate(e => e.value) === '元の会話に残す下書き', '取り消しで元の入力欄の下書きを保持');
   await user.hover(); await user.locator('.editbtn').click(); await editor.fill('echo:変更後の本文');
   await page.screenshot({ path: `${ROOT}/temporary/message-actions-edit.png` });
   await editor.press('Control+Enter');
@@ -123,7 +126,7 @@ async page => {
   });
   await editor.press('Control+Enter');
   await page.waitForFunction(() => document.querySelector('#settingsError').textContent.includes('送信を確認できませんでした'));
-  check(await page.locator('#prompt').inputValue() === '送信に失敗しても残る文', '送信失敗でも分岐先の入力を保持');
+  check(await page.locator('#prompt').evaluate(e => e.value) === '送信に失敗しても残る文', '送信失敗でも分岐先の入力を保持');
   await page.evaluate(() => { window.restoreMessageActionsSend(); window.messageActionsProbeSocket.close(); });
   await page.setViewportSize({ width: 1280, height: 720 });
   return results;

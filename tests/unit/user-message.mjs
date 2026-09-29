@@ -1,5 +1,5 @@
 // 自分の発言の描画（web/user-message.mjs、ADR 0059）: 印の置き換え・末尾の古い形式・畳み込み・二重に出さない
-import { placeAttachments, bodyUnits, foldIndex, userBodyHtml, attachmentName, userTools } from "../../web/user-message.mjs";
+import { placeAttachments, bodyUnits, foldIndex, userBodyHtml, attachmentName, userTools, attachmentListItem } from "../../web/user-message.mjs";
 import { buildItems, inlineAttachments, showsAsCard } from "../../web/timeline.mjs";
 import { audit } from "../lib/audit.mjs";
 
@@ -13,6 +13,11 @@ const a = image("C:\\up\\a.png"), b = image("C:\\up\\b.png"), c = file("C:\\up\\
 const shape = segments => segments.map(s => (s.type === "text" ? `T(${s.text.replace(/\n/g, "|")})` : `${s.trailing ? "E" : "A"}(${attachmentName(s.present)})`)).join(" ");
 
 export default async function (t) {
+  // ---- 一覧の面の行: 出どころ・大きさは core が載せた present から出す（画像の dataUri からの見積もりより先）
+  const host = attachmentListItem({ ...file("D:\\work\\確認項目.md"), origin: "host", size: 4096 }, 0);
+  t.ok("present の origin・size を一覧の行に出す", host.origin === "host" && host.size === 4096, JSON.stringify(host));
+  t.ok("size が無い present は、画像なら dataUri から見積もり、ファイルなら出さない", attachmentListItem(image("C:\\up\\a.png"), 0).size > 0 && attachmentListItem(file("C:\\up\\c.md"), 0).size === null);
+
   // ---- 印の置き換え: 位置・一致しないパス・コードブロック内
   const mid = "説明1\n[添付] C:\\up\\a.png\n\n説明2\n[添付] C:\\up\\b.png\n\n確認項目\n[添付] C:\\up\\c.md\n\n- 箇条書き";
   t.ok("印の行は本文の位置に置く（前後の文字はそのまま）",

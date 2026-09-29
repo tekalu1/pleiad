@@ -852,38 +852,75 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .work-entry .work{font-size:var(--fs-xs);display:inline-flex;align-items:center;gap:6px}
 .work-entry .work.ended{color:var(--ink-weak)}
 .cbox{background:var(--surface-1);border-radius:var(--r-l);padding:2px 4px 4px;min-width:0}
-/* 送る前の添付。画像は 56px の角丸の縮小（押すと大きく見る）、それ以外はファイル名の札。× で外す。
-   出どころを選べる接続（リモート・ホストの画面ではないブラウザー）では札の頭に出どころのアイコン（⇄ ホスト / 端末） */
-.attached{display:flex;flex-wrap:wrap;gap:6px;padding:8px 6px 0;align-items:flex-start}
-.attached:empty{display:none}
-.att{display:inline-flex;align-items:center;gap:4px;background:var(--surface-paper);border-radius:var(--r-pill);padding:3px 4px 3px 10px;font-size:var(--fs-xs);max-width:260px;min-width:0}
-.att.att-img{padding:3px 4px 3px 3px;border-radius:var(--r-m)}
-.att-from{display:inline-grid;place-items:center;flex:none;color:var(--ink-weak)}
-.att-from svg.i{width:13px;height:13px}
-.att.att-img .att-from{padding-left:3px}
-.att-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-button.att-name{background:transparent;color:inherit;font:inherit;padding:0;cursor:pointer;min-width:0}
-button.att-name:hover{text-decoration:underline}
-.att-dir{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);color:var(--ink-weak)}
-/* 送っている途中の札（web/attach-upload.mjs）。名前の後ろに等幅の「42%」、札の下端に塗りの細い進み具合（フォルダーを送るバーと同じ色） */
-.att-sending{position:relative;overflow:hidden;padding-bottom:5px}
-.att-pct{flex:none;font-family:var(--font-mono);color:var(--ink-weak)}
-.att-bar{position:absolute;left:10px;right:10px;bottom:2px;height:2px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden}
-.att-bar::after{content:"";display:block;height:100%;width:var(--p,0%);background:var(--fill-primary);color:var(--on-fill);transition:width var(--dur-fast) linear}
-.att-thumb{display:block;width:56px;height:56px;padding:0;background:transparent;border-radius:var(--r-s);overflow:hidden;cursor:zoom-in}
-.att-thumb img{display:block;width:56px;height:56px;object-fit:cover}
-.att .x{background:transparent;color:var(--ink-weak);cursor:pointer;padding:0 6px;line-height:1;border-radius:var(--r-pill);flex:none}
-.att .x:hover{color:var(--ink)}
-/* 字の欄。1 行から始め、中身に合わせて伸ばす。上限はマウス 10 行・タッチ 6 行で、その先は中でスクロール（client.mjs の fitPrompt） */
-.composer textarea{width:100%;display:block;background:transparent;border-radius:var(--r-m);padding:9px 12px 3px;resize:none;line-height:1.6;overflow-y:hidden}
-.composer textarea:focus{outline:none}
-.composer textarea::placeholder{color:var(--ink-weak)}
+/* 添付の入口「添付 N 件 ▾」（web/client.mjs の renderAttached）。0 件なら出さない。状態（送信中・失敗）は同じ行の強い字。
+   押すと一覧の面（web/attachment-list.mjs）。添付そのものは字の欄の中の、置いた位置にある（下の .md-att） */
+.att-strip{padding:6px 8px 0;min-width:0}
+.att-strip[hidden]{display:none}
+.att-entry{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:3px 8px;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);font-size:var(--fs-s);cursor:pointer;min-width:0}
+.att-entry:hover,.att-entry[aria-expanded=true]{background:var(--surface-2)}
+.att-entry svg.i{width:14px;height:14px;flex:none}
+.att-entry .att-state{color:var(--ink-strong);white-space:nowrap}
+.att-entry[data-state=failed] .att-state{font-weight:600}
+.att-entry.flash{animation:note-flash 1.2s var(--ease-out)}
+@media (prefers-reduced-motion:reduce){.att-entry.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
+/* 字の欄（web/md-editor.mjs）。Markdown をその場で整える編集欄。1 行から始め、中身に合わせて伸ばす。上限はマウス 10 行・タッチ 6 行で、
+   その先は中でスクロール（client.mjs の fitPrompt が max-height を決める）。1 行 = 1 ブロック（.md-b）。記号は見せず、種類は見た目で表す */
+#prompt{position:relative;width:100%;display:block;background:transparent;border-radius:var(--r-m);padding:9px 12px 3px;line-height:1.6;
+  overflow-y:auto;overflow-x:hidden;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;min-height:calc(1.6em + 12px);
+  scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent;outline:none;cursor:text}
+#prompt:focus{outline:none}
+#prompt[aria-disabled=true]{cursor:not-allowed}
+#prompt[data-empty=true]::before{content:attr(placeholder);position:absolute;left:12px;top:9px;right:12px;color:var(--ink-weak);pointer-events:none;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#prompt.md-atom-sel{caret-color:transparent}
+.md-b{min-height:1.6em;margin:0}
+.md-b.md-h{font-weight:600;line-height:1.4;margin:.35em 0 .1em}
+.md-b.md-h[data-l="1"]{font-size:1.35em}
+.md-b.md-h[data-l="2"]{font-size:1.2em}
+.md-b.md-h[data-l="3"]{font-size:1.06em}
+.md-b.md-h[data-l="4"]{font-size:1em;color:var(--ink-weak)}
+.md-b.md-ul,.md-b.md-ol{position:relative;padding-left:calc(1.5em + var(--ind,0) * 1.2em)}
+.md-b.md-ul::before,.md-b.md-ol::before{content:attr(data-mk);position:absolute;left:calc(.4em + var(--ind,0) * 1.2em);color:var(--ink-weak);font-variant-numeric:tabular-nums;pointer-events:none;user-select:none}
+.md-b.md-quote{padding:0 12px;background:var(--surface-paper);color:var(--ink-weak)}
+.md-b.md-quote:not(.md-quote + .md-quote){border-top-left-radius:var(--r-s);border-top-right-radius:var(--r-s);padding-top:2px}
+.md-b.md-quote:not(:has(+ .md-quote)){border-bottom-left-radius:var(--r-s);border-bottom-right-radius:var(--r-s);padding-bottom:2px}
+.md-b.md-code{font:var(--fs-s)/1.7 var(--font-mono);background:var(--surface-paper);padding:0 14px;white-space:pre-wrap;tab-size:2}
+.md-b.md-code[data-pos^="top"]{border-top-left-radius:var(--r-s);border-top-right-radius:var(--r-s);padding-top:6px;color:var(--ink-weak)}
+.md-b.md-code[data-pos$="bottom"]{border-bottom-left-radius:var(--r-s);border-bottom-right-radius:var(--r-s);padding-bottom:6px}
+.md-b.md-code[data-pos="bottom"]{color:var(--ink-weak)}
+#prompt strong{color:var(--ink-strong);font-weight:650}
+#prompt code{background:var(--surface-2);border-radius:var(--r-s);padding:.05em .4em;font:.92em var(--font-mono)}
+.md-b.md-code code{background:none;padding:0}
+#prompt a.md-link{color:var(--ink-blue);text-decoration:underline;cursor:text}
+/* 添付（原子）。送信後と同じ見た目（.msg-att-img / .msg-att-file）を、字の間のブロックとして置く。押すと拡大・右パネル */
+.md-b.md-att{display:block;margin:4px 0;user-select:none;-webkit-user-select:none;border-radius:var(--r-s);cursor:default}
+.md-b.md-att+.md-b.md-att{margin-top:0}
+.md-b.md-att .msg-att-img{display:inline-block;vertical-align:top;margin-right:8px}
+.md-b.md-att.sel,.md-b.md-att.jump{outline:2px solid var(--line-blue);outline-offset:2px}
+.md-b.md-att .msg-att-file{cursor:pointer}
+/* 送っている途中・失敗の札。進み具合（%）と細い棒、中止・再試行・外す */
+.md-att-up{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;position:relative;max-width:min(420px,100%);padding:6px 12px 8px;background:var(--surface-paper);border-radius:var(--r-m);font-size:var(--fs-s);line-height:1.5}
+.md-att-up-name{min-width:0;overflow-wrap:anywhere;color:var(--ink)}
+.md-att-up-pct{flex:none;font-family:var(--font-mono);color:var(--ink-weak)}
+.md-att-up-err{flex:1 1 100%;color:var(--ink-strong);overflow-wrap:anywhere}
+.md-att-up-bar{position:absolute;left:12px;right:12px;bottom:3px;height:2px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden}
+.md-att-up-bar::after{content:"";display:block;height:100%;width:var(--p,0%);background:var(--fill-primary);color:var(--on-fill);transition:width var(--dur-fast) linear}
+.md-att-act{font-size:var(--fs-s);color:var(--ink-blue);padding:0 6px;margin-left:auto}
+.md-att-up-err ~ .md-att-act{margin-left:0}
+/* 範囲を選んだときだけ出る書式バー（B / I / コード / リンク） */
+.md-bar{position:absolute;z-index:20;display:flex;align-items:center;gap:0;padding:3px;background:var(--surface-paper);border-radius:var(--r-s);box-shadow:0 4px 18px var(--shadow)}
+.md-bar[hidden]{display:none}
+.md-bar-btn{min-width:32px;height:28px;padding:0 8px;border-radius:var(--r-s);background:transparent;font-size:var(--fs-s);color:var(--ink);cursor:pointer}
+.md-bar-btn:hover{background:var(--surface-2)}
+.md-bar-btn[aria-pressed=true]{background:var(--surface-3)}
+.md-bar-b{font-weight:700}.md-bar-i{font-style:italic}.md-bar-c{font-family:var(--font-mono)}
+.md-bar-input{width:220px;max-width:60vw;height:28px;padding:0 8px;background:var(--surface-1);border-radius:var(--r-s);font-size:var(--fs-s)}
 /* 入力欄の待ち（web/composer-wait.mjs、design-system.md「入力欄の待ち」）。
    書けない待ち（会話を開いている・初めて接続するまで）は欄を readonly にし、箱に aria-busy。150ms を越えたら（data-wait）
    中の字と案内を隠して、弧・待機文言・流れる棒（タイトル生成と同じ光）を重ねる。面は変えない。新しい色は足さない */
 .cbox{position:relative}
-.cbox[data-wait],.cbox[data-wait] textarea{cursor:progress}
-.cbox[data-wait] textarea,.cbox[data-wait] textarea::placeholder{color:transparent}
+.cbox[data-wait],.cbox[data-wait] #prompt{cursor:progress}
+.cbox[data-wait] #prompt,.cbox[data-wait] #prompt[data-empty=true]::before{color:transparent}
 .composer-busy{position:absolute;left:16px;right:56px;top:10px;display:flex;align-items:center;gap:8px;font-size:var(--fs-s);color:var(--ink-weak);pointer-events:none;min-width:0}
 .composer-busy[hidden]{display:none}
 .composer-busy-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -1413,13 +1450,14 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 @media (pointer:coarse){
   /* 入力欄の字は 16px 以上。iOS は 16px 未満の欄に触れると画面を拡大する（--fs は 14px）。
      欄ごとの字の大きさ（等幅の 12px など）は後に読む CSS にもあるので、下限として !important で上書きする */
-  input:not([type=checkbox],[type=radio],[type=range],[type=file],[type=button],[type=submit]),textarea,select{font-size:max(16px,1em) !important}
+  input:not([type=checkbox],[type=radio],[type=range],[type=file],[type=button],[type=submit]),textarea,select,#prompt{font-size:max(16px,1em) !important}
   /* 押せる大きさ。行・メニューの行・アイコンのボタンを指の幅に近づける（見た目の字の大きさは変えない） */
   .btn-icon{min-width:36px;min-height:36px}
   /* 入力欄のチップ・中断は添付と同じ 36px。字の欄は 16px の字で 1.5 行間（上限 6 行は fitPrompt） */
   .chip{height:36px}
   .abort,.resume{min-height:36px}
-  .composer textarea{line-height:1.5}
+  #prompt{line-height:1.5}
+  .md-b{min-height:1.5em}
   .row-more,.grp-more,.fam-more{min-width:32px;min-height:32px}
   .row{padding-top:9px;padding-bottom:9px}
   .pop .li{min-height:40px}

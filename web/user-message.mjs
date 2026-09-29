@@ -63,8 +63,8 @@ export function placeAttachments(text, presents = []) {
   return segments;
 }
 
-/** 添付 1 件の HTML。画像は縮小と名前、ほかは札。画像に出来ないもの（中身を外した・壊れた）は札にする */
-function attachmentHtml(p) {
+/** 添付 1 件の HTML。画像は縮小と名前、ほかは札。画像に出来ないもの（中身を外した・壊れた）は札にする。入力欄の添付（web/md-editor.mjs）も同じ部品 */
+export function attachmentHtml(p) {
   const name = attachmentName(p), path = String(p.path ?? '');
   const ref = path ? fileReference(path) : null;
   const src = attachmentImageSrc(p);
@@ -159,7 +159,7 @@ export function attachmentListItem(p, index) {
   const bytes = p.dataUri ? Math.floor((String(p.dataUri).length - String(p.dataUri).indexOf(',') - 1) * 3 / 4) : null;
   return {
     id: String(index), kind: src ? 'image' : 'file', name: attachmentName(p), path: String(p.path ?? ''),
-    thumb: src, size: bytes && bytes > 0 ? bytes : null, origin: p.origin ?? null, status: t('chat.attachList.sent'),
+    thumb: src, size: Number.isFinite(p.size) ? p.size : bytes && bytes > 0 ? bytes : null, origin: p.origin ?? null, status: t('chat.attachList.sent'),
   };
 }
 
