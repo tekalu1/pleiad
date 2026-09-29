@@ -2509,7 +2509,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   broadcastRunning();
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
   if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt);
-  // 利用者の送信でも、委譲の完了通知などで始まったターンでも予約する（ADR 0067）。圧縮のターンの後は予約し直さない
+  // 利用者の送信でも、委譲の完了通知などで始まったターンでも予約する（ADR 0068）。圧縮のターンの後は予約し直さない
   if (record && turn.outcome === 'ok' && !turn.compactTrigger && !turn.compaction
       && !delegated && turn.info.sessionId) {
     const id = turn.info.sessionId;
@@ -2540,7 +2540,7 @@ async function kickQueued() {
 // 同じ会話のターン（準備中を含む）が終わるのを待つ
 const sessionBusy = (id) => runtime.turns.has(id) || switching.has(id) || forking.has(id);
 const COMPACTION_SCHEDULE_FILE = path.join(store.dataDir, 'compaction-schedule.json');
-// 見えている予約をファイルに写す。同じティック内の連続変更は 1 回にまとめ、書き込みは順に行う（ADR 0068）
+// 見えている予約をファイルに写す。同じティック内の連続変更は 1 回にまとめ、書き込みは順に行う（ADR 0069）
 let compactionSaveTimer = null;
 let compactionSaveChain = Promise.resolve();
 function saveCompactionSchedule() {

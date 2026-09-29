@@ -71,7 +71,7 @@ export default async function (t) {
     await fs.rm(scratch, { recursive: true, force: true });
   }
 
-  // 委譲の完了通知で始まったターン（internal）の後にも予約する。委譲の子の会話には置かない（ADR 0067）
+  // 委譲の完了通知で始まったターン（internal）の後にも予約する。委譲の子の会話には置かない（ADR 0068）
   const noticeScratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-compact-notice-'));
   const noticeServer = await startServer({ dataDir: path.join(noticeScratch, 'data'),
     env: { AGENT_HOST_BACKENDS: 'fake' }, timeoutMs: 30_000 });
@@ -98,7 +98,7 @@ export default async function (t) {
     await fs.rm(noticeScratch, { recursive: true, force: true });
   }
 
-  // 予約はファイルに残り、同じデータ置き場で立て直すと戻る。猶予（8 分）を過ぎたものは戻らず、ファイルからも消える（ADR 0068）
+  // 予約はファイルに残り、同じデータ置き場で立て直すと戻る。猶予（8 分）を過ぎたものは戻らず、ファイルからも消える（ADR 0069）
   const restartScratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-compact-restart-'));
   const restartData = path.join(restartScratch, 'data');
   const clock = path.join(restartScratch, 'clock');

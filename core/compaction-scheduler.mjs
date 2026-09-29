@@ -1,5 +1,5 @@
 // A timer belongs to one conversation and one backend. The scheduler keeps them in memory only;
-// core/server.mjs saves the visible ones and puts them back after a restart (ADR 0068).
+// core/server.mjs saves the visible ones and puts them back after a restart (ADR 0069).
 export const COMPACTION_GRACE_MS = 8 * 60_000;
 
 export function idleCompactionGuards(current, busy) {
