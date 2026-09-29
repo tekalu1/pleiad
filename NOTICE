@@ -1,5 +1,18 @@
 Pleiad
 Copyright 2026 tekalu
 
-This product includes software developed by third parties.
-See README.md for attributions and the licenses that apply to them.
+This product includes software developed by third parties:
+
+- core/auth/oauth-page.mjs (the page shown on the OAuth callback) is derived
+  from pi-ai (MIT). See core/auth/LICENSE-pi-ai.md.
+- The agent logos in web/brand/ are trademarks of their respective owners.
+  Those derived from LobeHub's lobe-icons (MIT) are covered by
+  web/brand/lobe-icons-LICENSE; sources are listed in web/brand/README.md.
+- The Claude backend uses Anthropic's Claude Agent SDK
+  (@anthropic-ai/claude-agent-sdk). Use of the SDK and Claude is subject to
+  Anthropic's terms.
+- Other npm dependencies are covered by their own licenses
+  (see package-lock.json).
+
+The Pleiad name and logo are not licensed under the Apache License 2.0
+(Section 6). Forks that are distributed must use a different name.
