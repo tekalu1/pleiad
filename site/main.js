@@ -86,10 +86,7 @@ const screen = $('.screen');
 const prologue = $('.prologue');
 const lines = $$('.leave-line', prologue);
 // 取り消し線は行の順に、句ごとに続けて引く
-lines.forEach((el, i) => {
-  el.style.setProperty('--d0', (i * 0.38).toFixed(2));
-  $$('.nw', el).forEach((s, k) => s.style.setProperty('--d', (i * 0.38 + k * 0.2).toFixed(2)));
-});
+const chunks = lines.map((el) => $$('.nw', el));
 const cam = $('.stage-cam');
 const app = $('.app');
 const steps = $$('.step');
@@ -277,11 +274,18 @@ function onScreen() {
   const y = -r.top;
   // 前置き: 読み進めた分だけ濃くなり、言い切ったら舞台に替わる
   const p = y / P;
-  lines.forEach((el, i) => el.style.setProperty('--t', clamp((p - 0.04 - i * 0.14) / 0.1).toFixed(3)));
-  screen.classList.toggle('is-said', p > 0.5);
+  // 読み終えたら、行の順に句ごとに線を引いて消し、結びの一文を出す
+  let j = 0;
+  lines.forEach((el, i) => {
+    el.style.setProperty('--t', clamp((p - 0.04 - i * 0.14) / 0.1).toFixed(3));
+    let s = 0;
+    chunks[i].forEach((c) => { s = clamp((p - 0.44 - j++ * 0.022) / 0.03); c.style.setProperty('--s', s.toFixed(3)); });
+    el.style.setProperty('--x', s.toFixed(3));
+  });
+  prologue.style.setProperty('--e', clamp((p - 0.57) / 0.05).toFixed(3));
   // 前置きが消えきってから舞台が入る。どちらもスクロール量で動かし、重ならない
-  prologue.style.setProperty('--out', clamp((p - 0.74) / 0.1).toFixed(3));
-  const come = clamp((p - 0.86) / 0.1);
+  prologue.style.setProperty('--out', clamp((p - 0.8) / 0.08).toFixed(3));
+  const come = clamp((p - 0.9) / 0.08);
   screen.style.setProperty('--in', come.toFixed(3));
   screen.classList.toggle('in', come > 0.6);
   const n = clamp(Math.floor((y - P) / S), 0, 3);
