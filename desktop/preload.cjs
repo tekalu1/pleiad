@@ -29,5 +29,11 @@ contextBridge.exposeInMainWorld('plyDesktop', {
       ipcRenderer.on('ply:browser-state', handler);
       return () => ipcRenderer.removeListener('ply:browser-state', handler);
     },
+    // ページにフォーカスがあるときに押された開閉の近道（Ctrl+Shift+B。main の before-input-event が拾う）
+    onShortcut: listener => {
+      const handler = () => listener();
+      ipcRenderer.on('ply:browser-shortcut', handler);
+      return () => ipcRenderer.removeListener('ply:browser-shortcut', handler);
+    },
   },
 });

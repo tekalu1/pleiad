@@ -16,6 +16,7 @@ import { applySlots, fileSlots, visualizationSlots, customSlots, browserSlots } 
 import { normalizeAddress, addressParts, tabLabel, isLocalHost, linkOpenPref, linkOpenTarget } from '../../web/browser-address.mjs';
 import { browserPanelAvailable, openInBrowserPanel, createBrowserPanel } from '../../web/browser-panel.mjs';
 import { setupBrowserSettings } from '../../web/browser-settings.mjs';
+import { setupBrowserEntry } from '../../web/header-entries.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -133,15 +134,15 @@ function fakeElectron() {
 }
 
 function runPreload(file) {
-  const exposed = {}, sent = [], invoked = [];
+  const exposed = {}, sent = [], invoked = [], listeners = {};
   const electron = {
     contextBridge: { exposeInMainWorld: (key, api) => { exposed[key] = api; } },
-    ipcRenderer: { send: (ch, ...a) => sent.push([ch, ...a]), invoke: (ch, ...a) => { invoked.push([ch, ...a]); return Promise.resolve(null); }, on: () => {}, removeListener: () => {} },
+    ipcRenderer: { send: (ch, ...a) => sent.push([ch, ...a]), invoke: (ch, ...a) => { invoked.push([ch, ...a]); return Promise.resolve(null); }, on: (ch, fn) => { (listeners[ch] ??= []).push(fn); }, removeListener: () => {} },
   };
   const code = fs.readFileSync(path.join(ROOT, 'desktop', file), 'utf8');
   vm.runInNewContext(code, { require: m => { if (m === 'electron') return electron; throw new Error(m); }, process: { argv: [], platform: 'win32' }, decodeURIComponent, JSON },
     { filename: file });
-  return { exposed, sent, invoked };
+  return { exposed, sent, invoked, listeners };
 }
 
 export default async function (t) {
@@ -280,6 +281,91 @@ export default async function (t) {
   });
   t.ok('画面: openInBrowserPanel は正規化して開き、枠の位置を送り、状態から戻る・進む・印・タブを描き、隠すと外す', true);
 
+  // ---- 頭の行の内蔵ブラウザーのボタン（web/header-entries.mjs）と近道
+  await withWindow({ plyDesktop: { browser: null } }, async () => {
+    const bridge = fakeBridge();
+    let fromPage = null;
+    bridge.onShortcut = fn => { fromPage = fn; return () => {}; };
+    window.plyDesktop.browser = bridge;
+    const listeners = [], focused = [];
+    const savedAdd = document.addEventListener, savedFocus = N.prototype.focus, savedText = document.createTextNode;
+    document.addEventListener = (type, fn) => { if (type === 'keydown') listeners.push(fn); };
+    document.createTextNode = text => { const n = new N('span'); n.textContent = text; return n; };
+    N.prototype.focus = function () { focused.push(this); };
+    N.prototype.select = function () {};
+    let entry = null;
+    const panel = createBrowserPanel({ bridge, showMenu: () => {}, getSessionId: () => 's1', onChange: () => entry?.paint() });
+    panel.body.rect = { left: 700, top: 120, right: 1180, bottom: 820, width: 480, height: 700 };
+    panel.body.isConnected = true; panel.body.parentElement = new N('div');
+    // 右パネル（web/file-preview.mjs）の代わり。openBrowser・browserOpen・close の約束だけ持つ
+    let open = false, opener = null;
+    const preview = {
+      browserOpen: () => open,
+      openBrowser(element) { if (element) opener = element; if (!open) { open = true; panel.show(); entry?.paint(); } },
+      close(restore = true) { open = false; panel.hide(); entry?.paint(); if (restore) opener?.focus(); },
+    };
+    panel.connect({ openPanel: () => preview.openBrowser(), onEmpty: () => preview.close() });
+    const button = new N('button'); button.hidden = true;
+    const mark = () => { const s = new N('span'); s.className = 'run'; return s; };
+    try {
+      entry = setupBrowserEntry({ button, browser: panel, preview, bridge, getSessionId: () => 's1', getAgentName: () => 'Claude', mac: false, mark });
+      assert.equal(button.hidden, false, 'デスクトップ版のホストの画面では出す');
+      assert.equal(button.attrs.title, '内蔵ブラウザー（Ctrl+Shift+B）');
+      assert.equal(button.getAttribute('aria-label'), '内蔵ブラウザー');
+      assert.equal(button.getAttribute('aria-keyshortcuts'), 'Control+Shift+B');
+      assert.equal(button.getAttribute('aria-pressed'), 'false');
+      const newTabs = () => bridge.calls.filter(c => c[0] === 'newTab').length;
+      const click = async () => { button.dispatchEvent({ type: 'click' }); await new Promise(r => setTimeout(r, 0)); };
+
+      await click();
+      assert.equal(open, true, '押すと右パネルがブラウザーになる');
+      assert.equal(newTabs(), 1, 'タブが無ければ空の新しいタブを作る');
+      assert.equal(button.getAttribute('aria-pressed'), 'true'); assert.equal(button.classList.contains('on'), true, '表示中は青い字');
+      assert.equal(opener, button, '閉じたときのフォーカスの戻り先はボタン');
+      await click();
+      assert.equal(open, false, 'もう一度押すと閉じる');
+      assert.equal(focused.at(-1), button, 'フォーカスはボタンへ戻る');
+      assert.equal(button.getAttribute('aria-pressed'), 'false'); assert.equal(button.classList.contains('on'), false);
+      await click();
+      assert.equal(open, true); assert.equal(newTabs(), 1, '前のタブがあればそのまま（新しいタブを作らない）');
+      assert(!bridge.calls.some(c => c[0] === 'reload' || c[0] === 'open'), '開き直しで再読み込みしない');
+      preview.close();   // Esc・閉じるボタンの経路（右パネルが閉じる）
+      assert.equal(button.getAttribute('aria-pressed'), 'false', '右パネルの側で閉じても押されていない状態に戻る');
+      assert.equal(focused.at(-1), button);
+
+      // エージェントが操作中
+      const tab = { id: 't1', url: 'https://example.com/', title: '', loading: false, canGoBack: false, canGoForward: false };
+      bridge.push({ tabs: [tab], current: 't1', agent: { sessionId: 's1', tabId: 't1' } });
+      assert.equal(button.getAttribute('aria-label'), '内蔵ブラウザー · Claude が操作中');
+      assert.equal(button.querySelectorAll('.entry-run').length, 1, '操作中は右上に走っている弧');
+      bridge.push({ tabs: [tab], current: 't1', agent: { sessionId: 's1', tabId: 't1' } });
+      assert.equal(button.querySelectorAll('.entry-run').length, 1, '描き直しても弧は 1 つ');
+      bridge.push({ tabs: [tab], current: 't1', agent: { sessionId: 'other', tabId: 't1' } });
+      assert.equal(button.querySelectorAll('.entry-run').length, 0, 'ほかの会話のエージェントの操作では出さない');
+      assert.equal(button.getAttribute('aria-label'), '内蔵ブラウザー');
+      bridge.push({ tabs: [tab], current: 't1', agent: null });
+      assert.equal(button.querySelectorAll('.entry-run').length, 0, '操作が終われば外す');
+
+      // 近道: 画面の keydown と、ページにフォーカスがあるとき（main から）
+      const wasOpen = open;
+      const press = over => { const ev = { key: 'B', ctrlKey: true, shiftKey: true, altKey: false, metaKey: false, isComposing: false, keyCode: 66, defaultPrevented: false, prevented: false, ...over };
+        ev.preventDefault = () => { ev.prevented = true; }; for (const fn of listeners) fn(ev); return ev; };
+      assert.equal(press().prevented, true);
+      assert.equal(open, !wasOpen, 'Ctrl+Shift+B で開閉する');
+      assert.equal(press({ isComposing: true }).prevented, false);
+      assert.equal(open, !wasOpen, 'IME の変換中は効かない');
+      assert.equal(press({ keyCode: 229 }).prevented, false);
+      assert.equal(press({ shiftKey: false }).prevented, false, 'Ctrl+B は取らない');
+      assert.equal(typeof fromPage, 'function', 'ページからの近道を受ける');
+      fromPage();
+      assert.equal(open, wasOpen, 'ページにフォーカスがあるときの近道でも開閉する');
+    } finally {
+      document.addEventListener = savedAdd; document.createTextNode = savedText;
+      N.prototype.focus = savedFocus; delete N.prototype.select;
+    }
+  });
+  t.ok('頭の行のブラウザー: 押すと開く・もう一度で閉じてボタンへ戻る・タブが無いときだけ新しいタブ・aria-pressed・操作中の弧と名前・近道（IME の変換中は効かない・ページから）', true);
+
   // ---- preload
   const local = runPreload('preload.cjs'), remote = runPreload('remote-preload.cjs');
   assert.equal(typeof local.exposed.plyDesktop.browser?.command, 'function');
@@ -288,7 +374,11 @@ export default async function (t) {
   assert.deepEqual(local.invoked.at(-1), ['ply:browser', 'open', { url: 'https://example.com/' }]);
   assert.deepEqual(local.sent.at(-1), ['ply:browser-layout', { visible: false }]);
   assert(!('browser' in (remote.exposed.plyDesktop ?? {})), 'リモートの窓に browser を出さない');
-  t.ok('preload: ローカルの窓にだけ browser の口（ply:browser・ply:browser-layout）を出す', true);
+  let heard = 0;
+  local.exposed.plyDesktop.browser.onShortcut(() => { heard++; });
+  for (const fn of local.listeners['ply:browser-shortcut'] ?? []) fn({});
+  assert.equal(heard, 1, 'ページにフォーカスがあるときの近道（ply:browser-shortcut）を画面へ渡す');
+  t.ok('preload: ローカルの窓にだけ browser の口（ply:browser・ply:browser-layout・近道の知らせ）を出す', true);
 
   // ---- main（偽の electron）
   const fe = fakeElectron();
@@ -316,6 +406,35 @@ export default async function (t) {
   fe.handlers.on['ply:browser-layout']({ kind: 'remote' }, { visible: false });
   assert.equal(fe.log.removed.length, 0, 'リモートの窓からの位置は無視');
   await assert.rejects(call('open', { url: 'javascript:alert(1)' }), /invalid-url/);
+  // ページにフォーカスがあるときの開閉の近道（Ctrl+Shift+B、macOS は ⌘⇧B）。この近道だけページへ渡さず、本体の画面へ知らせてフォーカスを戻す
+  {
+    let focusedMain = 0;
+    fe.deps.window.webContents.focus = () => { focusedMain++; };
+    const mod = process.platform === 'darwin' ? { meta: true, control: false } : { control: true, meta: false };
+    const fire = over => {
+      let prevented = false;
+      view1.emit('before-input-event', { preventDefault: () => { prevented = true; } }, { type: 'keyDown', key: 'B', shift: true, alt: false, isComposing: false, isAutoRepeat: false, ...mod, ...over });
+      return prevented;
+    };
+    fe.log.sent = null;
+    assert.equal(fire(), true, '近道はページへ渡さない');
+    assert.deepEqual(fe.log.sent, ['ply:browser-shortcut', undefined], '本体の画面へ知らせる');
+    assert.equal(focusedMain, 1, '本体の画面へフォーカスを戻す（閉じた後はボタンへ）');
+    fe.log.sent = null;
+    assert.equal(fire({ type: 'keyUp' }), false, '離したときはページへ渡す');
+    assert.equal(fire({ shift: false }), false, 'Ctrl+B などほかのキーはページのもの');
+    assert.equal(fire({ key: 'c' }), false);
+    assert.equal(fire({ isComposing: true }), false, 'IME の変換中は奪わない');
+    assert.equal(fire({ alt: true }), false);
+    assert.equal(fe.log.sent, null);
+    assert.equal(fire({ isAutoRepeat: true }), true);
+    assert.equal(fe.log.sent, null, '押しっぱなしの繰り返しでは開閉しない');
+    delete fe.deps.window.webContents.focus;
+  }
+  assert.equal(bp.isPanelShortcut({ type: 'keyDown', key: 'b', meta: true, shift: true }, 'darwin'), true);
+  assert.equal(bp.isPanelShortcut({ type: 'keyDown', key: 'b', control: true, shift: true }, 'darwin'), false, 'macOS の Ctrl+Shift+B は取らない');
+  assert.equal(bp.isPanelShortcut({ type: 'keyDown', key: 'B', control: true, shift: true }, 'win32'), true);
+  assert.equal(bp.isPanelShortcut({ type: 'keyDown', key: 'B', control: true, meta: true, shift: true }, 'win32'), false);
   // 戻る・進む
   await call('open', { url: 'https://example.com/b' });
   state = await call('state');
