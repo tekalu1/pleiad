@@ -41,6 +41,8 @@ const cases = [
   await import('./unit/server-delegation-notice.mjs'),
   await import('./unit/background-model.mjs'),
   await import('./unit/task-instructions.mjs'),
+  // 作業の詳細: 走っている子の出来事（loadSession の live）を仮の発言に畳む・詳細とメインパネルが発言の描き方を共有する
+  await import('./unit/stream-messages.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
   // 委譲の子に裏の作業が残るとき: 終わらないコマンドも自動停止しない・サブエージェントは止めない・端末は待たない（子にも親にも）
   await import('./unit/server-delegation-background.mjs'),
