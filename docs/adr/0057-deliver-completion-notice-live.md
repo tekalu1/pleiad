@@ -33,5 +33,8 @@ Claude・Codex・fake は、走っているターンへ入力を足す `control.
 - 通知の状態に `read` が加わる（`none` → `pending` → `delivering` → `sent` / `unknown`、`suppressed`、`read`）。読み手は `core/agent-tasks.mjs`・`core/completion-notices.mjs`・`core/server.mjs` に限られ、画面は `unknown` だけを見る。`read` は `NOTICED` に含める。
 - `createAgentTasks` の `deliver` は 1 件のタスクではなく、同じ依頼元のタスクの配列を受け取る。`steerable`（走っているターンへ今すぐ渡せるか）を新しく受け取る。`ready`（新しいターンを受けられるか）は無音・コマンドの通知と共通のまま。
 - 走っているターンへ渡した通知は、画面の 1 行では「タスクの結果で再開」と同じ見せ方になる（ターンは再開していないので、文言はやや実際とずれる）。
-- バックエンドの実機での注意点は `temporary/reports/delegation-notify-live.md` にまとめた（Claude の入力が閉じる終わり際、Codex の `turn/steer` の `expectedTurnId`）。実 LLM での確認は未実施。
+- 実機（本物の Claude・Codex）での確認は未実施（fake で確かめた）。気を付ける点:
+  - Claude は `priority: "next"` で流すので、通知は次のツール結果の区切りで折り込まれる。長い 1 つのツール（`ply_task_wait` の待ちなど）の途中では、その終わりまで読まれない。入力を閉じた後（ターンの終わり際）は受け付けず（false）、空いたときの経路へ回る。人の途中送信と同時に流すと CLI が本文を `
+` でつなげて 1 本の user 発言にすることがあり、そのときは本文のハッシュが合わず、履歴では通知が人間の発言として見える。
+  - Codex の `turn/steer` は `expectedTurnId` が要る。`turn/start` の応答で ID が決まる前は false になり、空いたときの経路へ回る。`userMessage.dropped` の合図は持たないので、渡った合図が来ないままターンが終わったときは、`endTurn` が `pending` に戻して送り直す（受け取られたのに合図だけ来なかった場合は、通知が二重に届きうる）。
 - `docs/agent-delegation.md`「完了通知」を今の形に書き直した。
