@@ -189,6 +189,8 @@ export const COMMANDS = new Set([
 // 全イベントに sessionId が付く（emitGlobal が補う）。
 export const EVENTS = new Set([
   'taskNotice',
+  // { text, messageId? } 中断で止めたものを、このターンの発言の前に添えてエージェントへ伝えた（text は伝えた中身。docs/design.md「中断と再開」）
+  'interruptionNote',
   'usage', // { inputTokens?, outputTokens?, cachedTokens?, costUsd? } このターンの分（ターンの中では増えていき、最後の値が記録になる）。Claude は nativeSessionId と開始・終了時点の会話の累計 cumulativeStart / cumulativeEnd も付ける。分からない値は null か省略
   "outbox", "userMessage",
   // { messageId } 途中送信がエージェントに渡った（会話に入った）。渡るまでの表示を消す合図

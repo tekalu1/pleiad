@@ -23,9 +23,9 @@
       "design": "成果物が推奨・計画・選んだやり方（作業の大半が事実集めでも）。",
       "ux_change": "既存の画面の見た目や流れを変え、形を子が決める。複雑ではないもの。",
       "ux_new": "新しい画面や製品の UX、または複雑な UX の作り直し。",
-      "visual": "画像・ロゴ・図。"
+      "visual": "3D モデリング、生成画像のベクター化、イラスト・ロゴなど、見た目の出来栄えが成果を決める高度なクリエイティブ作業。"
     },
-    "kindBoundaries": "境目: 画面の形まで決まっていれば implement、形を子が決めるなら ux_change。成果物が推奨や選んだやり方なら、調べることが多くても design。確かめるだけなら review、原因を探すなら investigate。"
+    "kindBoundaries": "境目: 画面の形まで決まっていれば implement、形を子が決めるなら ux_change。成果物が推奨や選んだやり方なら、調べることが多くても design。確かめるだけなら review、原因を探すなら investigate。図・グラフ・画面のモックは visual ではなく、形が決まっていれば implement、形を子が決めるなら ux_change / ux_new。"
   },
   "delegation": {
     "notRunning": "この会話は実行中ではありません",
@@ -159,6 +159,34 @@
     "pinOnly": "model と effort は backend を指定したときだけ使えます。自動で選ばせるなら model と effort を省いてください。",
     "exhausted": "使える委譲先がありません（種類 {{kind}}、難しさ {{difficulty}}、後回しの線 {{avoidPercent}}%）。候補とアカウントごとの理由:\n{{skipped}}\nbackend を指定して固定で頼み直すか、ユーザーに確認してください。",
     "modelUnavailable": "振り分けで選んだモデル {{model}}（{{backend}}）を使えません。backend を指定して頼み直してください。"
+  },
+  "stops": {
+    "heading": "[Pleiad 中断の記録]\n前のターンが止まったとき（{{reason}}）、Pleiad は次のものを止めました。これは利用者の発言ではなく、Pleiad からのお知らせです。",
+    "reason": {
+      "user": "利用者が中断した",
+      "update": "Pleiad を更新するために中断した",
+      "quit": "Pleiad を終了するために中断した",
+      "hostAway": "利用者の画面が離れたまま時間切れになった",
+      "restart": "Pleiad が落ちた、または強制終了された",
+      "unknown": "理由は不明"
+    },
+    "cancelled": "取り消した委譲タスク（Pleiad からは再開しません。完了通知も届きません）:\n{{items}}",
+    "unread": "終わっていたが、完了通知を渡す前に止めた委譲タスク（結果は ply_task_status で読めます）:\n{{items}}",
+    "restarted": "Pleiad の再起動で止まった委譲タスク（再開しません。止まるまでの様子は ply_task_status で確かめられます）:\n{{items}}",
+    "taskItem": "- {{taskId}}「{{title}}」（止めた時点: {{status}}）",
+    "unreadItem": "- {{taskId}}「{{title}}」（{{status}}）",
+    "background": "止まったバックグラウンドの作業（もう動いていません。結果も届きません）:\n{{items}}",
+    "backgroundItem": "- {{id}}（{{kind}}）: {{label}}",
+    "kind": {
+      "shell": "コマンド",
+      "agent": "サブエージェント",
+      "terminal": "端末",
+      "other": "作業"
+    },
+    "approvals": "却下扱いにした承認待ち（実行されていません）:\n{{items}}",
+    "approvalItem": "- {{tool}}: {{target}}",
+    "dropped": "ほかに {{count}} 件ありますが、省きました。",
+    "footer": "止めたものを、そのままやり直さないでください。ファイル・コマンドの出力・ply_task_status で今の状態を確かめてから、委譲し直すか、コマンドを走らせ直すかを決めてください。"
   },
   "guide": {
     "heading": "{{name}}（Pleiad が追加した指示）:",

@@ -38,9 +38,13 @@ const cases = [
   await import('./unit/agent-tasks-storage.mjs'),
   // 完了通知: 受け取り済み（read）は送らない・同じ親の分は 1 つにまとめる・走っているターンへ渡す（steerable）と送り直し・途中送信の条件
   await import('./unit/agent-tasks-notice.mjs'),
+  // 中断で委譲タスクを止める: 届いていない結果を捨てずに返す・取り消したものを返す・cancel は終わったタスクの通知を止めない・再起動で止まったもの
+  await import('./unit/agent-tasks-interrupt.mjs'),
   await import('./unit/server-delegation-notice.mjs'),
   await import('./unit/background-model.mjs'),
   await import('./unit/task-instructions.mjs'),
+  // 作業の詳細: 走っている子の出来事（loadSession の live）を仮の発言に畳む・詳細とメインパネルが発言の描き方を共有する
+  await import('./unit/stream-messages.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
   // 委譲の子に裏の作業が残るとき: 終わらないコマンドも自動停止しない・サブエージェントは止めない・端末は待たない（子にも親にも）
   await import('./unit/server-delegation-background.mjs'),
@@ -210,6 +214,8 @@ const cases = [
   await import("./unit/ws-client-run-turn.mjs"),
   // 中断を会話の状態として残す・再開（保留の送り直しか理由の文）・委譲の子の中断・再起動で落ちたターン
   await import("./unit/server-interrupt-resume.mjs"),
+  // 中断で止めたもの（委譲タスク・届いていない結果・裏のコマンド・承認待ち・再起動）を残し、中断の後の最初のターンで 1 回だけ伝える
+  await import("./unit/server-interrupt-stops.mjs"),
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
   await import('./unit/claude-accounts.mjs'),
   await import('./unit/server-claude-accounts.mjs'),
@@ -236,6 +242,8 @@ const cases = [
   // antigravity バックエンド。agy の身代わり（tests/lib/fake-agy.mjs）と話すだけで、
   // 本物の agy も Google のログインも要らない
   await import("./unit/server-antigravity.mjs"),
+  // 控えはターンの途中から書く: 途中の書き込み・失敗／中断で残る・uuid が変わらない・forget した控えを作り直さない・書き込みは 1 本ずつ
+  await import("./unit/antigravity-partial-transcript.mjs"),
   // Pleiad の MCP 登録と認証の API、1 件つながらなくても会話が進むこと、antigravity では Pleiad 担当を開かないこと
   await import("./unit/server-mcp-auth.mjs"),
   await import("./unit/server-agy-context.mjs"),

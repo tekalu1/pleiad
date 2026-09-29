@@ -1,7 +1,8 @@
 // 履歴のシステム側のメッセージの見分けと置き換え（core/system-messages.mjs・claude-normalize.mjs の transcriptSystemMarks・
 // compaction-history.mjs の attachCompactSummaries・web/system-messages.mjs）。ADR 0053。
 // 材料は temporary/reports/system-messages-as-user.md の伏せ字の例から作った。実データは入れていない。
-import { classifySystemMessages, stripInjectedContext, parseTeammate } from "../../core/system-messages.mjs";
+import { classifySystemMessages, stripInjectedContext, parseTeammate, splitInterruptionNotes } from "../../core/system-messages.mjs";
+import { interruptionNote } from "../../core/interrupt-stops.mjs";
 import { transcriptSystemMarks, transcriptToMessages } from "../../core/backends/claude-normalize.mjs";
 import { attachCompactSummaries } from "../../core/compaction-history.mjs";
 import { commandParts, teammateNode } from "../../web/system-messages.mjs";
@@ -192,6 +193,26 @@ export default async function (t) {
     t.ok("出力が両方空なら折りたたみを出さず「出力なし」。終了コードは書かない", empty.length === 1 && text(empty[0]).includes("出力なし") && !text(empty[0]).includes("exit"));
     const mate = teammateNode({ kind: "teammate", from: "core-B", body: "API の型の修正が終わりました。" }, "16:18");
     t.ok("teammate は「別のセッションからのメッセージ（core-B）」の閉じた折りたたみ", text(mate).includes("別のセッションからのメッセージ（core-B）") && !mate.querySelector?.("details")?.open);
+  }
+  // ---- 中断で止めたものを Pleiad が伝えた文（<pleiad-interruption>。core/interrupt-stops.mjs）
+  {
+    const stops = { tasks: [{ key: "task:t1", taskId: "ply-task-1", title: "Build", status: "running", unread: false },
+      { key: "task:t2", taskId: "ply-task-2", title: "Docs", status: "completed", unread: true }],
+      background: [{ key: "bg:b1", id: "b1", kind: "shell", label: "npm run dev" }], approvals: [{ key: "ap:x", tool: "Bash", target: "rm -rf out" }] };
+    const ja = interruptionNote("ja", stops, "update");
+    const en = interruptionNote("en", stops, "update");
+    t.ok("止めたものが無ければ文を作らない", interruptionNote("ja", null) === null && interruptionNote("ja", { tasks: [] }) === null);
+    t.ok("文は会話の言語で、止めたものを全部載せ、伝えた項目の key を返す",
+      ja.text.includes("Pleiad を更新するために中断した") && ["ply-task-1", "ply-task-2", "npm run dev", "Bash: rm -rf out", "ply_task_status"].every(s => ja.text.includes(s))
+      && en.text.includes("stopped to update Pleiad") && en.text.includes("read the results with ply_task_status") && ja.keys.join() === "task:t1,task:t2,bg:b1,ap:x", ja.text);
+    // Claude・Codex は別のブロック・入力、agy は本文の前。履歴ではどれも 1 行の先頭に来る
+    const out = classifySystemMessages([u("n1", ja.text + "続けてください"), u("n2", ja.text)]);
+    t.ok("発言の前の文はシステム側の 1 行に分け、続く発言は元の文のまま（分岐点は発言に残す）",
+      out.length === 3 && out[0].kind === "interruptionNote" && out[0].role === "system" && out[0].body === ja.body && !out[0].uuid
+      && out[1].role === "user" && out[1].text === "続けてください" && out[1].uuid === "n1", JSON.stringify(out));
+    t.ok("続きが空なら、文の行が分岐点を持つ", out[2].kind === "interruptionNote" && out[2].uuid === "n2");
+    t.ok("何度かけても同じ", JSON.stringify(splitInterruptionNotes(out)) === JSON.stringify(out));
+    t.ok("文の途中の印は切り分けない（人が貼った文）", splitInterruptionNotes([u("n3", "見て: " + ja.text)])[0].role === "user");
   }
   // ---- 画面に出ない修正（ソースの形で見る。SDK も LLM も呼ばない）
   {
