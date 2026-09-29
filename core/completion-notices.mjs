@@ -26,3 +26,13 @@ export function createCompletionNotices({ busy, send }) {
     },
   };
 }
+
+/**
+ * 走っている依頼元のターンへ、完了通知を途中送信（control.steer）で渡してよいか（ADR 0057）。
+ * 人間の送信待ち（unsent）を優先し、次ターンの設定が予約されている会話（outbox も途中送信を断る）・圧縮のターン・
+ * 中断や終了に向かっているターン・途中送信を持たないバックエンド（Antigravity）には渡さない
+ */
+export function canSteerNotice(turn, { unsent, nextSettings }) {
+  if (!turn || turn.ac?.signal?.aborted || turn.outcome || turn.compactTrigger || typeof turn.control?.steer !== 'function') return false;
+  return !unsent && !nextSettings;
+}

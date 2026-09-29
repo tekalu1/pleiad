@@ -56,7 +56,7 @@ export default async function(t) {
       const m = await createAgentTasks({ dataDir: dir, io, log: () => {},
         prepare: async () => ({ sessionId: `c-${Math.random()}`, backend: 'codex' }),
         execute: async (_r, prompt) => { runs++; state.transient = 2; return { outcome: 'ok', text: prompt }; },
-        deliver: async r => { delivered.push(r.taskId); return 'ok'; } });
+        deliver: async tasks => { delivered.push(...tasks.map(r => r.taskId)); return 'ok'; } });
       managers.push(m);
       state.transient = 2;
       const job = await m.call('p', 'ply_delegate', { backend: 'codex', task: 'hello' });
@@ -82,7 +82,7 @@ export default async function(t) {
           if (prompt === 'hold-b') await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
           return { outcome: signal.aborted ? 'aborted' : 'ok', text: `RESULT-BODY-${prompt}` };
         },
-        deliver: async r => { delivered.push(r.taskId); return 'ok'; } });
+        deliver: async tasks => { delivered.push(...tasks.map(r => r.taskId)); return 'ok'; } });
       managers.push(m);
       const a = await m.call('parent-a', 'ply_delegate', { backend: 'codex', task: 'SECRET-PROMPT-A' });
       const b = await m.call('parent-b', 'ply_delegate', { backend: 'codex', task: 'hold-b' });
@@ -98,8 +98,9 @@ export default async function(t) {
       t.ok('障害中も別の親の list・status が返り、障害中である旨を添える',
         listB.tasks.length === 1 && listB.tasks[0].taskId === b.taskId && listB.storageFault?.code === 'EPERM' && /EPERM/.test(listB.storageFault.error)
         && statusB.status === 'running' && /cannot be saved/.test(statusB.storageFault?.error ?? ''), `${listB.tasks.length} / ${statusB.status} / ${listB.storageFault?.code}`);
-      const statusA = await m.call('parent-a', 'ply_task_status', { taskId: a.taskId });
-      t.ok('障害中も自分の子の結果はメモリから読める', statusA.status === 'completed' && statusA.result === 'RESULT-BODY-SECRET-PROMPT-A');
+      // ply_task_status / ply_task_wait で結果を受け取ると通知は送らない（read。tests/unit/agent-tasks-notice.mjs）。ここは通知を残したいので受け取らずに読む
+      const listA = await m.call('parent-a', 'ply_task_list', {});
+      t.ok('障害中も自分の子の状態と結果はメモリから読める', listA.tasks.find(x => x.taskId === a.taskId)?.status === 'completed' && m.get(a.taskId).result === 'RESULT-BODY-SECRET-PROMPT-A');
       const denied = await m.call('stranger', 'ply_task_status', { taskId: a.taskId }).then(() => null, e => e.message);
       t.ok('障害中も所有権の制限は変わらない', typeof denied === 'string' && !/EPERM/.test(denied));
       const before = prepared;
@@ -140,7 +141,7 @@ export default async function(t) {
         prepare: async (_o, a) => ({ sessionId: `busy-${Math.random()}`, backend: a.backend }),
         execute: async (_r, prompt) => ({ outcome: 'ok', text: prompt }),
         ready: async () => open,
-        deliver: async r => { if (busyDeliver) return 'requeue'; delivered.push(r.taskId); return 'ok'; } });
+        deliver: async tasks => { if (busyDeliver) return 'requeue'; delivered.push(...tasks.map(r => r.taskId)); return 'ok'; } });
       managers.push(m);
       const job = await m.call('p', 'ply_delegate', { backend: 'codex', task: 'x' });
       await until(() => m.get(job.taskId).notification === 'pending');
@@ -172,7 +173,7 @@ export default async function(t) {
       const m = await createAgentTasks({ dataDir: dir, log: () => {},
         prepare: async () => { throw new Error('unused'); },
         execute: async () => { runs++; return { outcome: 'ok', text: '' }; },
-        deliver: async r => { delivered.push(r.taskId); return 'ok'; } });
+        deliver: async tasks => { delivered.push(...tasks.map(r => r.taskId)); return 'ok'; } });
       managers.push(m);
       t.ok('再起動で配送途中（delivering）だけを unknown にし、pending は残す', m.get('dlv').notification === 'unknown' && ['pending', 'delivering', 'sent'].includes(m.get('pend').notification));
       await until(() => m.get('pend').notification === 'sent');

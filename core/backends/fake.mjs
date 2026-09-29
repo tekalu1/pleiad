@@ -125,6 +125,9 @@ async function background(text, { s, out, emit, signal, control }) {
     if (STEER_CONFIRM_MS) control.steerConfirms = true;
     control.steer = async (item) => {
       if (done || signal?.signal?.aborted) return false;
+      // テスト用: 完了通知（core/server.mjs の steerNotice。id が task-notice-）の本文に DECLINE_STEER があれば受理しない
+      // （Claude が入力を閉じた終わり際のように、受理できずに空いてからの新しいターンへ回る形）
+      if (String(item?.id ?? "").startsWith("task-notice-") && String(item?.args?.prompt ?? "").includes("DECLINE_STEER")) return false;
       inbox.push({ id: item?.id ?? null, text: String(item?.args?.prompt ?? "") });
       poke();
       return true;

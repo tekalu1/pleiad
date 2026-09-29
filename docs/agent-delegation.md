@@ -191,22 +191,48 @@ Claude の background 起動結果（`backgroundTaskId` または起動を示す
 
 ## 完了通知
 
-Pleiad は結果を保存し、親が空いたときに専用の完了通知で次のターンを開始する。
+Pleiad は結果を保存し、完了した時点で依頼元へ専用の完了通知を届ける（[ADR 0057](adr/0057-deliver-completion-notice-live.md)）。届け方は 2 通り。
+
+- **走っている依頼元のターンへ途中送信（`control.steer`）で渡す。** 依頼元がターンを実行中で、`control.steer` を持ち、次ターンの設定の予約と人の送信待ち（outbox の未送・失敗・保留・結果不明）が無いとき。判定は `core/completion-notices.mjs` の `canSteerNotice`。圧縮のターン・中断や終了に向かっているターン・途中送信を持たないバックエンド（Antigravity）には渡さない。人の送信を優先する決まりは変えない。
+- **空いたときに新しいターンで送る。** 上の条件を満たさず、依頼元が走っておらず・裏の作業が残っておらず・送信待ちも無いとき。渡せなかった通知（途中送信が受理されない）もこちらへ戻る。
+
 子がさらに Pleiad の子を作った場合は、その結果通知と子の回答が終わるまで待ち、最終回答を依頼元へ返す。
-OS の完了通知は依頼元の会話に出す。依頼元のターン後も子が動いている間は保留し、結果の配送で始まったターンが終わるか、キャンセルなどで結果が届かないまま作業がなくなった時点で 1 回出す。子の承認・質問が人間の返事待ちになったときは、その子の会話名で OS 通知を出す。
-親の人間からの送信待ちを優先する。通知は画面で「Pleiad タスクの結果を受け取って再開しました」と表示し、人間の発言と区別する。
-通知の文は依頼元の会話の言語（`[Pleiad タスク完了通知 / <taskId>]` / `[Pleiad task completion notice / <taskId>]`。docs/design.md「多言語対応」）。人間の発言との区別は文言ではなく、送った本文のハッシュ（セッションの記録の `taskNotices`）で行う。子の会話は親の会話の言語を継ぎ、ply_agents の instructions・ツールの説明・エラーも会話の言語で返す。
+OS の完了通知は依頼元の会話に出す。依頼元のターン後も子が動いている間は保留し、結果の配送で始まったターンが終わるか、キャンセルなどで結果が届かないまま作業がなくなった時点で 1 回出す。走っているターンへ渡した通知は新しいターンを作らないので、その依頼元のターンの終わりに 1 回出る。子の承認・質問が人間の返事待ちになったときは、その子の会話名で OS 通知を出す。
+通知は画面で「Pleiad タスクの結果を受け取って再開しました」と表示し、人間の発言と区別する。走っているターンへ渡した通知も同じ 1 行（`taskNotice`）で、人間の吹き出し・送信待ち（outbox）にはしない。
+通知の文は依頼元の会話の言語（`[Pleiad タスク完了通知 / <taskId>]` / `[Pleiad task completion notice / <taskId>]`。docs/design.md「多言語対応」）。人間の発言との区別は文言ではなく、送った本文のハッシュ（セッションの記録の `taskNotices`。`core/server.mjs` の `recordTaskNotice`。新しいターンの通知も途中送信の通知も同じ）で行う。子の会話は親の会話の言語を継ぎ、ply_agents の instructions・ツールの説明・エラーも会話の言語で返す。
 バックエンドのネイティブ履歴には、この通知が入力メッセージとして残る。
 
-親が走っている・裏の作業が残っている・送信待ちがあるときは通知を送らない。
-裏の作業に数えるのは終わりを待つものだけ（画面の衛星と同じ基準。`core/server.mjs` の `awaitedBackground`）。Codex のバックグラウンド端末（`kind: terminal`。dev サーバーなど）は数えない。以前は端末のある親には通知が届かなかった（2026-09-27）。
-送信が `requeue`（未受領）で返った場合だけ再送し、受領が不明な失敗は自動再送しない。
+### まとめて届ける
 
-通知の状態は `none` → `pending`（届ける結果がある）→ `delivering`（送っている）→ `sent` / `unknown`（受領が不明）。止めたタスクは `suppressed`。
-親が受け取れない間（上の 3 つ。サーバーが `ready` で渡す）は `pending` のまま何も書かない。
-送る直前に `delivering` を保存し、保存できなければ送らない。送ったか分からないまま落ちたときに、再起動で `unknown` にして再送しないため。
-`deliver` が `requeue` を返したら（受け取る直前に親が動き出した）、メモリだけ `pending` に戻し、ファイルは `delivering` のまま書かない。
+同じ依頼元へ届ける `pending` が複数あるときは 1 つの通知（1 ターン、または 1 回の途中送信）にまとめる。同じ依頼元への配送は同時に 1 つだけで、その間に完了した分は次の配送でまとめる。別の依頼元の通知は混ぜない。
+1 件のときの文は今までどおり。2 件以上は `[Pleiad タスク完了通知 / N 件]` の見出し（`agent:delegation.noticeBatch`）の後に、`--- <taskId> ---` から始まる節（`agent:delegation.noticeSection`。実行先・状態・依頼・結果・拒否など、1 件の文と同じ中身）を完了の早い順に並べ、最後に「元の依頼に必要な作業を続けてください。」を 1 度だけ置く。結果は 1 件 16000 字までで、まとめたときは全体で 16000 字ほどに分け（1 件あたり 2000 字を下限）、切った分は `ply_task_status` の `offset` で読める。子の報告後に Pleiad が止めた裏の作業と、実行前に拒否されたコマンドの段落は、各節の中に入る。
+
+### 受け取り済みの通知は送らない
+
+依頼元が `ply_task_status` / `ply_task_wait` で終了状態（`completed` / `failed`）と結果を受け取ったら、通知を `read` にして送らない。結果が長く `nextOffset` が残っていても、受け取った時点で配達済み。
+`ply_task_list` は結果を返さないので対象にしない。実行中の `status` も対象にしない。終わった直後で通知がまだ始まっていない（`none`）ときに受け取っても `read` にし、直後の `run.notice` が `pending` に戻さない。`delivering` 以降（送っている最中・送り終えた・不明・止めた）は変えない。`ply_task_send` は `none` に戻し、次に走る回の結果は通知する。依頼元が `ply_task_wait` でそのタスクを待っている間は、終わっても通知を送らない（結果は待ちの戻り値で渡る。走っているターンへ同じ結果を重ねないため）。
+
+### 状態と待つ条件
+
+通知の状態は `none` → `pending`（届ける結果がある）→ `delivering`（送っている）→ `sent` / `unknown`（受領が不明）。止めたタスクは `suppressed`。依頼元が結果を先に受け取ったものは `read`。
+
+| 状態 | いつ | 次 |
+|---|---|---|
+| `none` | 実行中・追加指示の受け付け直後 | 終わって `pending` / `suppressed`（止めた）/ `read`（受け取り済み） |
+| `pending` | 届ける結果がある。親が受け取れない間はここで待つ | 送る直前に `delivering`。受け取り済みなら `read` |
+| `delivering` | 送っている（保存してから渡す） | 受理なら `sent`。受理されない（`requeue`）ならメモリだけ `pending` へ。結果不明・例外は `unknown` |
+| `sent` | 渡した | 走っているターンへ渡した分が、読まれないままターンが死んだら `pending`（`renotify`。同じ回のものだけ） |
+| `unknown` | 受領が不明（再起動で `delivering` だったものも） | 自動で再送しない |
+| `suppressed` | 止めた | — |
+| `read` | 依頼元が結果を受け取った | `ply_task_send` で `none` |
+
+親が受け取れない間は `pending` のまま何も書かない。「受け取れる」は、新しいターンを受けられる（`ready`。上の 2 つ目の条件）か、走っているターンへ渡せる（`steerable`。1 つ目）のどちらか。無音・コマンドの通知は前者だけを使う（[ADR 0048](adr/0048-delegation-silence-notice.md)）。
+裏の作業に数えるのは終わりを待つものだけ（画面の衛星と同じ基準。`core/server.mjs` の `awaitedBackground`）。Codex のバックグラウンド端末（`kind: terminal`。dev サーバーなど）は数えない。以前は端末のある親には通知が届かなかった（2026-09-27）。裏の作業が残っているだけで依頼元のターンが走っていないときは、今までどおり保留する。
+送る直前に `delivering` を保存し、保存できなければ送らない（同じ依頼元の分は 1 回の保存）。送ったか分からないまま落ちたときに、再起動で `unknown` にして再送しないため。
+`deliver` が `requeue` を返したら（受け取る直前に親が動き出した・走っているターンが途中送信を受理しなかった）、メモリだけ `pending` に戻し、ファイルは `delivering` のまま書かない。
 次に送るとき、ファイルがすでに `delivering` なら書き直さない。以前は親が忙しい間、500ms ごとにファイル全体を 2 回ずつ書き直していた（2026-09-27）。
+
+走っているターンへ渡す道（`core/server.mjs` の `steerNotice`）は、outbox を通さず、item id `task-notice-<uuid>` で `control.steer` を呼ぶ。本文のハッシュを先に記録する。`true` は `sent`、`false` は `requeue`、例外は `unknown`。「渡った」合図を後から出すバックエンド（`steerConfirms`）では、合図（`userMessage.delivered`）で通知の 1 行を出し、捨てられた（`userMessage.dropped`）か、合図が来ないままターンが終わったら、`pending` に戻して送り直す（人間の発言と違い、通知は送り直してよい）。合図の無いバックエンドでは受理した時点で 1 行を出す。
 
 子の報告後も終わらず Pleiad が止めた裏の作業があれば、通知の本文の最後に 1 段落足す（`agent:delegation.noticeStoppedBackground`。件数、待った分数、先頭 3 件の見出し）。全件は `ply_task_status` の `stoppedBackground` で読める。
 
@@ -265,7 +291,7 @@ Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の�
 - `approvalRequested`: 同じターンで同じ call id の承認を求められたか。`never` の拒否は承認を経ないので、今は `false` になる。
 - 依頼元は別のエージェント・別の提供元のモデルのこともあるので、`command`・`reason`・`raw` は形で秘密を伏せてから 300 字で切る（`core/redact.mjs`。URL の userinfo とクエリの値、`Bearer …`、`sk-…`、`ghp_…`・`github_pat_…` などの既知のトークン、`password=` などの名前付きの値）。形を知らない秘密は残りうる。子の会話の画面は今までどおり伏せない。
 - 1 タスク 50 件まで（超えた分は `rejectionsDropped` に数だけ）。
-- 前の完了通知の後に走った回の分を足していく。`ply_task_send` を受けたとき、前の回の分をすでに依頼元へ渡していれば（通知が `delivering` / `sent` / `unknown` / `suppressed`）、次の回の分で置き換える。まだ渡していなければ（走っている・通知の前）足す。
+- 前の完了通知の後に走った回の分を足していく。`ply_task_send` を受けたとき、前の回の分をすでに依頼元へ渡していれば（通知が `delivering` / `sent` / `unknown` / `suppressed` / `read`）、次の回の分で置き換える。まだ渡していなければ（走っている・通知の前）足す。
 - 拾えないもの: code mode のスクリプトが例外を握りつぶしたとき（形が崩れる）、1 つのセルで複数拒否されたときの 2 件目以降（最初の例外で止まる）、rollout を読めないとき（読めなければ黙って空）。
 
 ## 保存・画面・再起動
@@ -300,6 +326,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 ## 検証
 
 `npm test` でタスクの管理と SDK MCP クライアント接続、fake を使ったサーバー全体の委譲・継続・停止と、承認の中継・`waiting` を検証する。
+完了通知は `tests/unit/agent-tasks-notice.mjs`（受け取り済み `read` は送らない・`ply_task_wait` の間は途中送信しない・同じ親の分を 1 回の配送にまとめる・`steerable` の途中送信で `sent`・受理されない/不明/捨てられた場合の状態・`canSteerNotice` の条件）と `tests/unit/server-delegation-notice.mjs`（fake の `bg` 台本で、依頼元のターンの中へ届く・人間の発言にしない・`ply_task_wait` の後は届かない・途中送信を止めている間に溜まった 2 件が 1 通・`steerConfirms` の合図と受理されない場合）。
 保存障害は `tests/unit/agent-tasks-storage.mjs`（rename に EPERM を差し込む。回復・閉じない・障害中の読み取りと断り・requeue を書かない・再起動後の送り直し）。
 実行前の拒否は `tests/unit/codex-rejections.mjs`（rollout の解析・読む範囲・伏せ方）と `tests/unit/server-codex-rejections.mjs`（身代わりの Codex が rollout に拒否を書き、会話・`ply_task_status`・完了通知・`ply_task_send` の次の回まで）。
 子に残った裏の作業と子の結果は `tests/unit/server-delegation-background.mjs`（fake の台本 `bg-shell` / `active-shell` / `bg` / `term` / `hook-follow` で、報告後のコマンドを上限まで待って止める・台帳を閉じて完了通知に載せる・結果に止める前の報告を残す・返答前とユーザーの会話では止めない・サブエージェントは止めない・端末は子でも親でも待たない・Stop フックの続きの一言を結果にしない）と `tests/unit/delegation-result.mjs`（2026-09-27 の transcript と同じ行の形で、続きの印・中身の仕事をした続き・区切り・結果の選び方）と `tests/unit/claude-turn-end.mjs`（SDK の身代わりで、Stop フックの続きではターンが終わり、裏へ回ったまま終わらないコマンドがあると終わらず、`stopTask` で終わる）。

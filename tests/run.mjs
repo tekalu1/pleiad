@@ -36,6 +36,9 @@ const cases = [
   await import('./unit/task-command-notice.mjs'),
   // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）
   await import('./unit/agent-tasks-storage.mjs'),
+  // 完了通知: 受け取り済み（read）は送らない・同じ親の分は 1 つにまとめる・走っているターンへ渡す（steerable）と送り直し・途中送信の条件
+  await import('./unit/agent-tasks-notice.mjs'),
+  await import('./unit/server-delegation-notice.mjs'),
   await import('./unit/background-model.mjs'),
   await import('./unit/task-instructions.mjs'),
   await import('./unit/server-agent-tasks.mjs'),
