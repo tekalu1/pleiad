@@ -1,21 +1,34 @@
-// 会話の地図（docs/design-system.md「会話の移動」B、ADR 0063）。#log の右端の細いレール。
-// 各ターン（利用者の発言）を点で置き、位置は本文の実際の高さに比例させる。今見えている範囲は淡い面。
-// 区別する形は ◆ 承認待ち・⋮ 圧縮の境目・⑂ 分岐・◉ 可視化だけ（失敗は出さない）。
+// 会話の地図（docs/design-system.md「会話の移動」B、ADR 0063・0064）。#log の右端の細い筋。
+// 会話の筋と同じ 1px の縦線に、各ターン（利用者の発言）を節として置く。位置は本文の実際の高さに比例させる。今見えている範囲は線の後ろの淡い pill。
+// 区別する印は ◆ 承認待ち・圧縮の境目（横棒）・分岐（枝）だけ（可視化・失敗は出さない）。印は線画（SVG）。
 // 位置は web/conversation-nav-view.mjs が持つ測定結果を使い、ここでは測らない（強制レイアウトを起こさない）。
-import { el } from './dom.mjs';
+import { el, svgEl } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { appendPieces } from './conversation-nav.mjs';
 
-const GLYPH = { pending: '◆', compact: '⋮', branch: '⑂', visual: '◉' };
+/** 印の箱は 13px（中心 6.5）。線幅 1.6・端は丸は CSS（.nav-g） */
+const C = 6.5;
+/** 区別する印。ふつうの発言は 5px の丸（fillc）で、今のターンだけ 7px の輪（ring）。輪の内側は下の面の色で塗り、線を通さない */
+function glyph(kind) {
+  const svg = svgEl('svg', { class: 'nav-g', width: 13, height: 13, viewBox: '0 0 13 13', 'aria-hidden': 'true' });
+  const path = (d, cls) => svg.append(svgEl('path', { d, class: cls }));
+  if (kind === 'pending') path(`M${C} ${C - 4.6}L${C + 4.6} ${C}L${C} ${C + 4.6}L${C - 4.6} ${C}Z`, 'solid');
+  else if (kind === 'compact') path(`M${C - 5} ${C}H${C + 5}`);
+  else if (kind === 'branch') path(`M${C} ${C + 5.2}V${C - 5.2}M${C} ${C + 2}C${C} ${C - 1.4} ${C + 4.4} ${C - 0.6} ${C + 4.4} ${C - 4.6}`);
+  else svg.append(svgEl('circle', { class: 'fillc', cx: C, cy: C, r: 2.5 }), svgEl('circle', { class: 'ring', cx: C, cy: C, r: 3.5 }));
+  return svg;
+}
 /** 点の高さ（当たり判定）の半分。端で切れないよう、点の中心はこの分だけ内側に寄せる */
 const HALF = 8;
+/** 凡例に並べる順 */
+const LEGEND = ['now', 'pending', 'compact', 'branch'];
 /** レールの上下の余白。CSS の top / bottom と同じ */
 const PAD_TOP = 14, PAD_BOTTOM = 16;   // 点の位置は rail の上端から測る（rail 自身が上下の余白の内側）
 
 /**
- * 各ターンに付ける区別の形を、筋の並びから 1 度の走査で決める（優先は 承認待ち > 圧縮 > 分岐 > 可視化）。
- * 圧縮の境目・分岐・可視化・承認は利用者の発言の後ろに並ぶので、直前の発言のターンに数える
- * @returns {string[]} ターンごとの種類（''・pending・compact・branch・visual）
+ * 各ターンに付ける区別の印を、筋の並びから 1 度の走査で決める（優先は 承認待ち > 圧縮 > 分岐）。
+ * 圧縮の境目・分岐・承認は利用者の発言の後ろに並ぶので、直前の発言のターンに数える。可視化は区別しない
+ * @returns {string[]} ターンごとの種類（''・pending・compact・branch）
  */
 export function turnKinds(thread, turns) {
   const kinds = turns.map(() => '');
@@ -26,7 +39,7 @@ export function turnKinds(thread, turns) {
     if (rows.has(child)) index = rows.get(child);
     owner.set(child, index);
   }
-  const RANK = ['', 'visual', 'branch', 'compact', 'pending'];
+  const RANK = ['', 'branch', 'compact', 'pending'];
   const mark = (node, kind) => {
     let child = node;
     while (child && child.parentElement !== thread) child = child.parentElement;
@@ -34,7 +47,6 @@ export function turnKinds(thread, turns) {
     if (i === undefined || i < 0) return;
     if (RANK.indexOf(kind) > RANK.indexOf(kinds[i])) kinds[i] = kind;
   };
-  for (const node of thread.querySelectorAll('.visualize-expand')) mark(node, 'visual');
   for (const node of thread.querySelectorAll(':scope > .branch-row')) mark(node, 'branch');
   for (const node of thread.querySelectorAll(':scope > .mw.compaction-boundary')) mark(node, 'compact');
   for (const node of thread.querySelectorAll(':scope > .mw.card:not(.done)')) mark(node, 'pending');
@@ -49,18 +61,20 @@ export function createConversationRail({ frame, log, thread, nav, narrow }) {
   rail.hidden = true;
   rail.setAttribute('role', 'group');
   rail.setAttribute('aria-label', t('nav.rail.label'));
-  const surface = el('div', 'nav-rail-surface');
+  const line = el('div', 'nav-rail-line');
   const range = el('div', 'nav-rail-range');
   const tip = el('div', 'nav-tip');
   tip.setAttribute('role', 'tooltip');
   tip.hidden = true;
-  rail.append(surface, range, tip);
+  rail.append(line, range, tip);
   frame.append(rail);
 
   /** @type {HTMLButtonElement[]} */
   let dots = [];
   let kinds = [], shown = false, height = 0, active = -1, dragging = false, dragFrom = 0, dragTurn = -1;
   let builtFor = null, timer = 0, tops = [], hovered = -1;
+  // 範囲（transform の y と高さ）と、今のターンが範囲の中か（輪の内側を範囲の色で塗るため。スクロールでは今のターンの 1 点だけ見る）
+  let rangeY = 0, rangeH = 12, activeInside = false, present = new Set();
 
   const label = (turn, i) => {
     const info = nav.turnInfo(turn), kind = kinds[i];
@@ -96,6 +110,7 @@ export function createConversationRail({ frame, log, thread, nav, narrow }) {
       return dot;
     });
     active = -1;
+    activeInside = false;
     hovered = -1;
   }
 
@@ -105,12 +120,14 @@ export function createConversationRail({ frame, log, thread, nav, narrow }) {
     dots.forEach((dot, i) => {
       if (kinds[i] === next[i] && dot.firstChild) return;
       const kind = next[i];
-      dot.className = `nav-dot${kind ? ` ${kind}` : ''}`;
-      dot.replaceChildren(kind ? GLYPH[kind] : el('span', 'nav-dot-normal'));
+      if (kinds[i]) dot.classList.remove(kinds[i]);
+      if (kind) dot.classList.add(kind);
+      dot.replaceChildren(glyph(kind));
       kinds[i] = kind;
       dot.setAttribute('aria-label', label(turns[i], i));
     });
     kinds.length = dots.length;
+    present = new Set(next.filter(Boolean));
   }
 
   function place(turns) {
@@ -118,8 +135,8 @@ export function createConversationRail({ frame, log, thread, nav, narrow }) {
     const h = height;
     const before = tops;
     tops = turns.map((turn) => Math.max(HALF, Math.min(h - HALF, turn.top / total * h)));
-    // transform で置く（top を書くと、点の数だけレイアウトが走る）。点の高さ 15px の半分を引いて中心を tops に合わせる。0.5px 以上動いた点だけ書く
-    dots.forEach((dot, i) => { if (before[i] === undefined || Math.abs(before[i] - tops[i]) >= 0.5) dot.style.transform = `translateY(${(tops[i] - 7.5).toFixed(1)}px)`; });
+    // transform で置く（top を書くと、点の数だけレイアウトが走る）。点の高さ 16px の半分を引いて中心を tops に合わせる。0.5px 以上動いた点だけ書く
+    dots.forEach((dot, i) => { if (before[i] === undefined || Math.abs(before[i] - tops[i]) >= 0.5) dot.style.transform = `translateY(${(tops[i] - HALF).toFixed(1)}px)`; });
   }
   /** レールの上の高さ y（レールの上端から）に一番近い点。近い点が無ければ -1。点は重なることがあるので、要素ではなく距離で選ぶ */
   function nearest(y) {
@@ -146,6 +163,7 @@ export function createConversationRail({ frame, log, thread, nav, narrow }) {
     if (builtFor !== turns) return;
     paintKinds(turns);
     place(turns);
+    markInside();
   }
 
   function showTip(i) {
@@ -155,12 +173,34 @@ export function createConversationRail({ frame, log, thread, nav, narrow }) {
     const info = nav.turnInfo(turn);
     const text = el('span', 'nav-tip-text');
     appendPieces(text, info.pieces);
-    tip.replaceChildren(el('span', 'nav-tip-time', info.at), text);
+    tip.replaceChildren(el('span', 'nav-tip-time', info.at), text, legend(i));
     tip.hidden = false;
     const top = tops[i] - 22;
     tip.style.top = `${Math.max(0, Math.min(height - tip.offsetHeight, top))}px`;
   }
+  /** 触れている間だけ、浮く面の下端に 1 行。その会話にある印と「今」だけ。触れている点の語だけ濃くする（読み上げには出さない） */
+  function legend(i) {
+    const row = el('div', 'nav-tip-legend');
+    row.setAttribute('aria-hidden', 'true');
+    for (const key of LEGEND) {
+      if (key !== 'now' && !present.has(key)) continue;
+      const item = el('span', (key === 'now' ? i === active : key === kinds[i]) ? 'on' : '');
+      // i18n-dynamic: nav.rail.kind.
+      item.append(glyph(key === 'now' ? '' : key), key === 'now' ? t('nav.rail.now') : t(`nav.rail.kind.${key}`));
+      if (key === 'now') item.classList.add('now');
+      if (key === 'pending') item.classList.add('pending');
+      row.append(item);
+    }
+    return row;
+  }
   function hideTip() { tip.hidden = true; }
+  /** 今のターンが範囲の中にあるか（輪の内側の色を決める）。変わったときだけ書く */
+  function markInside() {
+    const dot = dots[active];
+    if (!dot) return;
+    const inside = tops[active] >= rangeY && tops[active] <= rangeY + rangeH;
+    if (inside !== activeInside) { activeInside = inside; dot.classList.toggle('in-range', inside); }
+  }
 
   /** 会話欄の高さ・スクロールから、レールの出入り・範囲・いまの点を合わせる */
   function sync(remeasured) {
@@ -178,14 +218,17 @@ export function createConversationRail({ frame, log, thread, nav, narrow }) {
     }
     // 位置は transform（再レイアウトを起こさない）。高さはスクロールでは変わらないので、測り直したときだけ書く
     const total = log.scrollHeight;
-    if (remeasured) range.style.height = `${Math.max(12, log.clientHeight / total * height)}px`;
-    range.style.transform = `translateY(${log.scrollTop / total * height}px)`;
+    if (remeasured) { rangeH = Math.max(12, log.clientHeight / total * height); range.style.height = `${rangeH}px`; }
+    rangeY = log.scrollTop / total * height;
+    range.style.transform = `translateY(${rangeY}px)`;
     const current = nav.currentIndex();
     if (current !== active) {
-      if (dots[active]) { dots[active].removeAttribute('aria-current'); if (dots[active] !== document.activeElement) dots[active].tabIndex = -1; }
+      if (dots[active]) { dots[active].removeAttribute('aria-current'); dots[active].classList.remove('in-range'); if (dots[active] !== document.activeElement) dots[active].tabIndex = -1; }
       active = current;
+      activeInside = false;
       if (dots[current]) { dots[current].setAttribute('aria-current', 'true'); if (!rail.contains(document.activeElement) || document.activeElement === dots[current]) dots[current].tabIndex = 0; }
     }
+    markInside();
   }
   nav.onUpdate(sync);
 

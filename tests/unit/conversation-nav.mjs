@@ -53,27 +53,25 @@ export default async function (t) {
   const rows = ['user', 'answer', 'user', 'compact', 'user', 'branch', 'user', 'card', 'user', 'card-done', 'user', 'viz', 'user', 'both'].map((k) => node(k));
   const expand = node('expand', []);
   rows[11].children.push(expand); expand.parentElement = rows[11];
-  const expand2 = node('expand', []);
-  rows[13].children.push(expand2); expand2.parentElement = rows[13];
   const thread = node('thread', rows);
   for (const r of rows) r.parentElement = thread;
   const pick = (kind) => rows.filter((r) => r.kind === kind);
   thread.querySelectorAll = (sel) => ({
-    '.visualize-expand': [expand, expand2],
+    '.visualize-expand': [expand],
     ':scope > .branch-row': pick('branch'),
     ':scope > .mw.compaction-boundary': pick('compact'),
     ':scope > .mw.card:not(.done)': pick('card'),
   })[sel] ?? [];
   const turns = rows.filter((r) => r.kind === 'user').map((row) => ({ row }));
   // 圧縮は 1 番目の発言（rows[2]）の後ろではなく、その直前の発言（turn 1）のあと。分岐・承認・可視化も同じ
-  assert.deepEqual(turnKinds(thread, turns), ['', 'compact', 'branch', 'pending', '', 'visual', 'visual'],
-    '出来事は直前の発言のターンに付ける。決着した承認（done）は数えない');
-  // 優先は 承認待ち > 圧縮 > 分岐 > 可視化
+  assert.deepEqual(turnKinds(thread, turns), ['', 'compact', 'branch', 'pending', '', '', ''],
+    '出来事は直前の発言のターンに付ける。決着した承認（done）は数えない。可視化は区別しない');
+  // 優先は 承認待ち > 圧縮 > 分岐
   thread.querySelectorAll = (sel) => ({ ':scope > .mw.card:not(.done)': [rows[3]], ':scope > .mw.compaction-boundary': [rows[3]], ':scope > .branch-row': [rows[3]], '.visualize-expand': [] })[sel] ?? [];
   assert.equal(turnKinds(thread, turns)[1], 'pending', '同じターンに複数あれば承認待ちを出す');
   thread.querySelectorAll = () => [];
   assert.deepEqual(turnKinds(thread, turns), turns.map(() => ''), '何も無ければ空');
-  t.ok('地図の点の種類: 直前の発言のターンに数え、優先は 承認待ち > 圧縮 > 分岐 > 可視化', true);
+  t.ok('地図の点の種類: 直前の発言のターンに数え、優先は 承認待ち > 圧縮 > 分岐（可視化は区別しない）', true);
 
   // ---- 検索: 一致の数え方（重ならない・大文字小文字を区別しない）
   assert.deepEqual(matchRanges('aaaa', 'aa'), [{ start: 0, end: 2 }, { start: 2, end: 4 }], '重ならない');

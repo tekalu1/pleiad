@@ -1,5 +1,5 @@
 /* 会話の移動（docs/design-system.md「会話の移動」、ADR 0063）。
-   A 残る問い・C 最新へ（web/conversation-nav-view.mjs）。B 地図・D 目次は後の段で足す。
+   A 残る問い・C 最新へ（web/conversation-nav-view.mjs）。B 地図（ADR 0064）・D 目次。
    浮く面（最新へ・地図の浮く面）は、ライトでは --surface-paper。ダークでは地（--surface-paper）と同じ面が沈むので、一段明るい --surface-1 にする */
 
 /* 会話（#log）を包む相対位置の入れ物。残る問い・最新へ・地図は #log の外に重ねて、スクロールで動かない */
@@ -40,25 +40,54 @@
 .nav-unread{position:absolute;top:0;right:0;width:9px;height:9px;border-radius:50%;color:var(--ink-unread);background:currentColor;box-shadow:0 0 0 2px var(--surface-float)}
 @keyframes nav-rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
-/* ---- B 会話の地図。#log の右端の細いレール。普段 14px（操作領域 22px）、触れると 28px に 120ms で広がる。
+/* ---- B 会話の地図（ADR 0064）。#log の右端の細い筋。会話の筋と同じ 1px の縦線に、ターンを節として置く。帯の面は無い。
+   押せる領域は幅 23px（線を画素の中央に置くため奇数）。線・今見えている範囲・節の中心を一致させ、範囲は線の左右 5px ずつ（対称）。触れても幅は変えない。
+   普段は淡く、地図に触れている間（ホバー・フォーカス・ドラッグ）だけ濃くする（120ms）。承認待ち ◆ と今のターンの輪は、普段から今の色のまま。
    出ている間は #log の細いスクロールバーのつまみを透明にする（幅は残す。消すと本文の幅が変わり、レールの出入りが振動する） ---- */
 .log-frame.has-rail > #log::-webkit-scrollbar-thumb{background:transparent}
 @supports not selector(::-webkit-scrollbar){.log-frame.has-rail > #log{scrollbar-color:transparent transparent}}
-.nav-rail{position:absolute;right:5px;top:14px;bottom:16px;width:22px;z-index:6;touch-action:none}
-.nav-rail-surface{position:absolute;top:0;bottom:0;right:3px;width:14px;border-radius:var(--r-pill);background:var(--surface-1);transition:width var(--dur-fast) var(--ease-out)}
-.nav-rail:hover .nav-rail-surface,.nav-rail:focus-within .nav-rail-surface,.nav-rail.dragging .nav-rail-surface{width:28px}
-.nav-rail-range{position:absolute;top:0;right:0;width:20px;will-change:transform;min-height:12px;border-radius:var(--r-pill);background:var(--surface-3);pointer-events:none}
-.nav-dot{position:absolute;top:0;right:0;width:22px;height:15px;padding:0;display:grid;place-items:center;
-  background:transparent;color:var(--ink-weak);font-size:var(--fs-s);line-height:1;border-radius:var(--r-pill);cursor:pointer}
-.nav-dot-normal{width:5px;height:5px;background:currentColor;border-radius:50%}
+.nav-rail{position:absolute;right:5px;top:14px;bottom:16px;width:23px;z-index:6;touch-action:none}
+/* 線は --line、触れている間は --line-strong（背景に使える線の色は階調の形だけ） */
+.nav-rail-line{position:absolute;top:0;bottom:0;left:11px;width:1px;background:linear-gradient(var(--line),var(--line));pointer-events:none}
+.nav-rail-line::after{content:"";position:absolute;inset:0;background:linear-gradient(var(--line-strong),var(--line-strong));opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
+.nav-rail:is(:hover,:focus-within,.dragging) .nav-rail-line::after{opacity:1}
+/* 範囲: 普段は淡い面（ライト --surface-2。ダークは --surface-2 が地より沈むので --surface-1）、触れている間は --surface-3 */
+.nav-rail-range{position:absolute;top:0;left:6px;width:11px;will-change:transform;min-height:12px;border-radius:var(--r-pill);background:var(--surface-2);pointer-events:none;
+  transition:background var(--dur-fast) var(--ease-out)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .nav-rail-range{background:var(--surface-1)}}
+:root[data-theme="dark"] .nav-rail-range{background:var(--surface-1)}
+.nav-rail:is(:hover,:focus-within,.dragging) .nav-rail-range{background:var(--surface-3)}
+.nav-dot{position:absolute;top:0;left:0;right:0;height:16px;padding:0;display:grid;place-items:center;
+  background:transparent;color:var(--ink-weak);line-height:1;border-radius:var(--r-pill);cursor:pointer}
+.nav-dot:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
+/* 印は線画（線幅 1.6・端は丸）。普段は淡く（opacity）、触れている間は濃い。承認待ち ◆ と今のターンは普段から濃い。輪の内側は下の面（紙。範囲の中は範囲の色）で塗り、線を通さない */
+.nav-g{width:13px;height:13px;overflow:visible;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;opacity:.5;
+  transition:transform var(--dur-fast) var(--ease-out),opacity var(--dur-fast) var(--ease-out)}
+.nav-g .solid,.nav-g .fillc{fill:currentColor;stroke:none}
+.nav-g .ring{display:none;fill:var(--surface-paper);transition:fill var(--dur-fast) var(--ease-out)}
+.nav-rail:is(:hover,:focus-within,.dragging) .nav-g,.nav-dot.pending .nav-g,.nav-dot[aria-current=true] .nav-g{opacity:1}
+.nav-dot.in-range .ring{fill:var(--surface-2)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .nav-dot.in-range .ring{fill:var(--surface-1)}}
+:root[data-theme="dark"] .nav-dot.in-range .ring{fill:var(--surface-1)}
+.nav-rail:is(:hover,:focus-within,.dragging) .nav-dot.in-range .ring{fill:var(--surface-3)}
+.nav-dot[aria-current=true] .fillc{display:none}
+.nav-dot[aria-current=true] .ring{display:inline;stroke:var(--line-blue)}
+.nav-dot[aria-current=true].compact,.nav-dot[aria-current=true].branch{color:var(--ink-blue)}
+.nav-dot.hot:not(.pending),.nav-dot:focus-visible:not(.pending){color:var(--ink)}
 .nav-dot.pending{color:var(--ink-mark)}
-.nav-dot.hot,.nav-dot:focus-visible{background:var(--surface-sel)}
-.nav-dot[aria-current=true]:not(.pending){color:var(--ink)}
-/* 浮く面: 時刻と発言の中身だけ。幅 320px・最大 3 行 */
-.nav-tip{position:absolute;right:36px;z-index:10;width:320px;max-width:calc(100vw - 100px);border-radius:var(--r-m);background:var(--surface-float);
+.nav-dot.hot .nav-g,.nav-dot:focus-visible .nav-g{transform:scale(1.4)}
+/* 浮く面: 時刻と発言の中身、下端に凡例 1 行。幅 320px・最大 3 行 */
+.nav-tip{position:absolute;right:29px;z-index:10;width:320px;max-width:calc(100vw - 100px);border-radius:var(--r-m);background:var(--surface-float);
   box-shadow:0 8px 28px var(--shadow);padding:10px 14px 12px;pointer-events:none;font-size:var(--fs);line-height:1.55}
 .nav-tip-time{display:block;font:var(--fs-xs)/1.6 var(--font-mono);color:var(--ink-weak);margin-bottom:2px}
 .nav-tip-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden;overflow-wrap:anywhere}
+.nav-tip-legend{display:flex;flex-wrap:wrap;gap:0 12px;margin-top:8px;font-size:var(--fs-xs);line-height:1.5;color:var(--ink-weak);white-space:nowrap}
+.nav-tip-legend span{display:inline-flex;align-items:center;gap:4px}
+.nav-tip-legend .on{color:var(--ink)}
+.nav-tip-legend .nav-g{width:11px;height:11px;flex:none;opacity:1}
+.nav-tip-legend .ring{display:inline;fill:transparent;stroke:var(--line-blue)}
+.nav-tip-legend .fillc{display:none}
+.nav-tip-legend .pending .nav-g{color:var(--ink-mark)}
 
 /* ---- 狭い画面。地図は出さない。最新へは入力欄の右上。タップ領域は 44px ---- */
 @media (max-width:700px){
