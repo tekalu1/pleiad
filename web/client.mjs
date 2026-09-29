@@ -68,6 +68,7 @@ import { createComposerWait } from './composer-wait.mjs';
 import { createConnectionStatus } from './connection-status.mjs';
 import { attentionCounts, paintOpenSidebar } from './open-sidebar-mark.mjs';
 import { createConversationNav } from './conversation-nav-view.mjs';
+import { createConversationRail } from './conversation-rail.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
 const submittingMessages = new Set();
@@ -382,6 +383,7 @@ function scrollToEnd() {
 let navSession = null;   // 最新へのボタンの新着を数えている会話。替わったら数え直す（paintSession）
 const navNarrow = matchMedia("(max-width:700px)");
 const nav = createConversationNav({ frame: $("logFrame"), log, thread, scrollToEnd, isRunning: () => isRunningHere(), narrow: navNarrow });
+createConversationRail({ frame: $("logFrame"), log, thread, nav, narrow: navNarrow });
 
 /** 筋の末尾に置く。稼働表示（走っている間だけある）は常に一番下に残す */
 function place(w) {

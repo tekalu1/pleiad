@@ -33,10 +33,31 @@
 .nav-unread{position:absolute;top:0;right:0;width:9px;height:9px;border-radius:50%;color:var(--ink-unread);background:currentColor;box-shadow:0 0 0 2px var(--surface-float)}
 @keyframes nav-rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
+/* ---- B 会話の地図。#log の右端の細いレール。普段 14px（操作領域 22px）、触れると 28px に 120ms で広がる。
+   出ている間は #log の細いスクロールバーのつまみを透明にする（幅は残す。消すと本文の幅が変わり、レールの出入りが振動する） ---- */
+.log-frame.has-rail > #log::-webkit-scrollbar-thumb{background:transparent}
+@supports not selector(::-webkit-scrollbar){.log-frame.has-rail > #log{scrollbar-color:transparent transparent}}
+.nav-rail{position:absolute;right:5px;top:14px;bottom:16px;width:22px;z-index:6;touch-action:none}
+.nav-rail-surface{position:absolute;top:0;bottom:0;right:3px;width:14px;border-radius:var(--r-pill);background:var(--surface-1);transition:width var(--dur-fast) var(--ease-out)}
+.nav-rail:hover .nav-rail-surface,.nav-rail:focus-within .nav-rail-surface,.nav-rail.dragging .nav-rail-surface{width:28px}
+.nav-rail-range{position:absolute;top:0;right:0;width:20px;will-change:transform;min-height:12px;border-radius:var(--r-pill);background:var(--surface-3);pointer-events:none}
+.nav-dot{position:absolute;top:0;right:0;width:22px;height:15px;padding:0;display:grid;place-items:center;
+  background:transparent;color:var(--ink-weak);font-size:var(--fs-s);line-height:1;border-radius:var(--r-pill);cursor:pointer}
+.nav-dot-normal{width:5px;height:5px;background:currentColor;border-radius:50%}
+.nav-dot.pending{color:var(--ink-mark)}
+.nav-dot.hot,.nav-dot:focus-visible{background:var(--surface-sel)}
+.nav-dot[aria-current=true]:not(.pending){color:var(--ink)}
+/* 浮く面: 時刻と発言の中身だけ。幅 320px・最大 3 行 */
+.nav-tip{position:absolute;right:36px;z-index:10;width:320px;max-width:calc(100vw - 100px);border-radius:var(--r-m);background:var(--surface-float);
+  box-shadow:0 8px 28px var(--shadow);padding:10px 14px 12px;pointer-events:none;font-size:var(--fs);line-height:1.55}
+.nav-tip-time{display:block;font:var(--fs-xs)/1.6 var(--font-mono);color:var(--ink-weak);margin-bottom:2px}
+.nav-tip-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden;overflow-wrap:anywhere}
+
 /* ---- 狭い画面。地図は出さない。最新へは入力欄の右上。タップ領域は 44px ---- */
 @media (max-width:700px){
   .nav-sticky{right:0;height:62px;padding-left:74px}
   .nav-sticky-button{min-height:44px;padding-top:4px}
+  .nav-rail{display:none}
   .nav-latest{right:16px;bottom:12px}
   .nav-latest::after{content:"";position:absolute;inset:-5px;border-radius:var(--r-pill)}
 }

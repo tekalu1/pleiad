@@ -2970,6 +2970,15 @@
       "new_one": "{{count}} new reply",
       "new_other": "{{count}} new replies",
       "withNote": "Jump to latest · {{note}}"
+    },
+    "rail": {
+      "label": "Conversation map",
+      "kind": {
+        "pending": "Waiting for approval",
+        "compact": "Compaction",
+        "branch": "Branch",
+        "visual": "Visualization"
+      }
     }
   }
 }

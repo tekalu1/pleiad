@@ -2888,6 +2888,15 @@
       "running": "返答を書いている",
       "new_other": "新しい返答 {{count}} 件",
       "withNote": "最新へ · {{note}}"
+    },
+    "rail": {
+      "label": "会話の地図",
+      "kind": {
+        "pending": "承認待ち",
+        "compact": "圧縮の境目",
+        "branch": "分岐",
+        "visual": "可視化"
+      }
     }
   }
 }
