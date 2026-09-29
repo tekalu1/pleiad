@@ -122,9 +122,20 @@ export default async function (t) {
       && String(pres?.dataUri ?? "").startsWith("data:image/png;base64,"), JSON.stringify(pres && { kind: pres.kind, by: pres.by }));
     t.ok("present は履歴に残る",
       (await c.cmd("loadSession", { sessionId: sid })).presents.some((p) => p.path === up.path));
+    t.ok("端末から送った添付の present は出どころ device と大きさを持つ", pres?.origin === "device" && pres?.size === 8, JSON.stringify({ origin: pres?.origin, size: pres?.size }));
+    // ホストのファイルをパスのまま渡した添付（ADR 0060）: 読み取りの検査は /local-file と同じ。中身は載せず、パス・出どころ・大きさだけ
+    const hostFile = path.join(ROOT, "package.json");
     const m1 = c.mark();
-    await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: "C:/Windows/win.ini", name: "win.ini", mime: "text/plain" }] }, { ms: 20_000 });
-    t.ok("置き場の外のパスは載せない", !c.since(m1).some((e) => e.type === "present"));
+    const hosted = await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: hostFile, name: "package.json", mime: "" }] }, { ms: 20_000 });
+    const hp = hosted.events.find((e) => e.type === "present");
+    t.ok("ホストのファイルは中身を載せず、パス・出どころ host・大きさだけの present になる",
+      hp?.by === "human" && hp?.kind === "file" && hp?.path === hostFile && hp?.origin === "host" && hp?.size > 0 && hp?.truncated === true
+        && hp?.content === undefined && hp?.dataUri === undefined, JSON.stringify(hp));
+    t.ok("ホストのファイルの present は履歴に出どころと大きさを残す",
+      (await c.cmd("loadSession", { sessionId: sid })).presents.some((p) => p.path === hostFile && p.origin === "host" && p.size > 0));
+    const m2 = c.mark();
+    await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: path.join(ROOT, "no-such-file.zzz"), name: "x", mime: "" }, { path: "\\\\server\\share\\x.txt", name: "x", mime: "" }] }, { ms: 20_000 });
+    t.ok("無いファイル・UNC パスは載せない", !c.since(m2).some((e) => e.type === "present") && !c.since(m1).some((e) => e.type === "present" && e.path !== hostFile));
 
     // ---- 承認（保留せず往復する）
     const from = asked.length;

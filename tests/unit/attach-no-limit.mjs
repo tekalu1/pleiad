@@ -27,6 +27,13 @@ export default async function (t) {
     t.ok(`下書き: ${N + 1} 件の添付をそのまま保存する`, draft?.attached?.length === N + 1, String(draft?.attached?.length));
     t.ok('下書き: 出どころの印は host / device だけ残す', draft.attached[0].from === 'device' && draft.attached[1].from === 'host' && !('from' in draft.attached[N]), JSON.stringify(draft.attached.slice(0, 2).concat(draft.attached[N])));
 
+    // ADR 0060: 本文は文中の添付の印を含む Markdown（version: 2）で保存する。大きさは分かるときだけ残す
+    await c.cmd('saveDraft', { sessionId, text: `x\n[添付] ${many[0].path}\ny`, attached: [{ ...many[0], size: 1234 }, { ...many[1], size: 'x' }], version: 2 });
+    const v2 = (await c.cmd('loadSession', { sessionId })).draft;
+    t.ok('下書き: 印を含む本文・version: 2・添付の大きさを保存する（数でない大きさは捨てる）', v2?.version === 2 && v2.text.includes('[添付]') && v2.attached[0].size === 1234 && !('size' in v2.attached[1]), JSON.stringify(v2));
+    await c.cmd('saveDraft', { sessionId, text: '古い', attached: [] });
+    t.ok('下書き: version を送らなければ持たない（印の無い古い形式のまま）', !('version' in (await c.cmd('loadSession', { sessionId })).draft));
+
     const ups = [];
     for (let i = 0; i < N; i++) ups.push(await c.cmd('attachFile', { sessionId, name: `u${i}.txt`, mime: 'text/plain', data: Buffer.from(`x${i}`).toString('base64') }));
     const big = await c.cmd('attachFile', { sessionId, name: 'big.bin', mime: 'application/octet-stream', data: Buffer.alloc(8 * 1024 * 1024 + 1).toString('base64') }).then(() => null, (e) => e.message);
