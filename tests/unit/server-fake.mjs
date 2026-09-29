@@ -84,6 +84,15 @@ export default async function (t) {
       first.events.some((e) => e.type === "text.end" && typeof e.uuid === "string" && e.uuid),
       "走っている最中の発言から分岐する起点");
 
+    // ---- 最初の発言が Markdown（見出し・強調・添付の印）でも、題は記号・印・改行の無い一行になる
+    const titledId = (await c.cmd("newSession", { backend: "fake", cwd: ROOT })).sessionId;
+    await c.runTurn(
+      { prompt: "# 検索結果の余白\n**この画面**の行を直す\n[添付] C:\\up\\shot.png", sessionId: titledId, cwd: ROOT, mode: "default" },
+      { ms: 20_000 },
+    );
+    const titledRow = (await c.cmd("listSessions")).find((s) => s.id === titledId);
+    t.ok("一覧の題は最初の発言から作る（# ・** ・添付の印・改行を含めない）", titledRow?.title === "検索結果の余白 この画面の行を直す", JSON.stringify(titledRow?.title));
+
     // ---- 一覧と履歴
     const list = await c.cmd("listSessions");
     const row = list.find((s) => s.id === sid);
@@ -136,6 +145,29 @@ export default async function (t) {
     const m2 = c.mark();
     await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: path.join(ROOT, "no-such-file.zzz"), name: "x", mime: "" }, { path: "\\\\server\\share\\x.txt", name: "x", mime: "" }] }, { ms: 20_000 });
     t.ok("無いファイル・UNC パスは載せない", !c.since(m2).some((e) => e.type === "present") && !c.since(m1).some((e) => e.type === "present" && e.path !== hostFile));
+
+    // データ置き場の中（uploads の外。sessions.json など）と、置き場へのジャンクション・シンボリックリンクは、載せない（ADR 0050。/local-file と同じ検査）
+    const dataDir = path.join(scratch, "data");
+    const dataFile = path.join(dataDir, "sessions.json");
+    const m3 = c.mark();
+    await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: dataFile, name: "sessions.json", mime: "" }] }, { ms: 20_000 });
+    t.ok("データ置き場の中（uploads の外）のファイルは載せない", !c.since(m3).some((e) => e.type === "present"));
+    const linkDir = path.join(scratch, "link-to-data");
+    const linked = await fs.symlink(dataDir, linkDir, "junction").then(() => true, (e) => e.message);
+    if (linked !== true) t.ok("置き場へのジャンクションを作れない環境では確かめられない（skip）: " + linked, true);
+    else {
+      const m4 = c.mark();
+      await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: path.join(linkDir, "sessions.json"), name: "sessions.json", mime: "" }] }, { ms: 20_000 });
+      t.ok("データ置き場へのジャンクション・リンク越しのパスも載せない", !c.since(m4).some((e) => e.type === "present"));
+    }
+    const fileLink = path.join(scratch, "link-to-sessions.json");
+    const fileLinked = await fs.symlink(dataFile, fileLink, "file").then(() => true, (e) => e.code ?? e.message);
+    if (fileLinked !== true) t.ok("ファイルのシンボリックリンクを作れない環境では確かめられない（skip）: " + fileLinked, true);
+    else {
+      const m5 = c.mark();
+      await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: fileLink, name: "sessions.json", mime: "" }] }, { ms: 20_000 });
+      t.ok("データ置き場のファイルへのシンボリックリンクも載せない", !c.since(m5).some((e) => e.type === "present"));
+    }
 
     // ---- 承認（保留せず往復する）
     const from = asked.length;

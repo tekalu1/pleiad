@@ -112,6 +112,7 @@ import { createClaudeLogin } from './claude-login.mjs';
 import { createShellRuns, shellMode } from './shell-runs.mjs';
 import { taskStop, backgroundStop, approvalStop, interruptionNote } from './interrupt-stops.mjs';
 import { splitInterruptionNotes } from './system-messages.mjs';
+import { textForTitleModel } from './prompt-title.mjs';
 
 const PORT = Number(process.env.AGENT_HOST_PORT ?? 7420);
 const HOST = process.env.AGENT_HOST_BIND ?? "127.0.0.1";
@@ -3776,7 +3777,7 @@ wss.on("connection", (ws, req) => {
           const gist = messages
             .filter((m) => m.text)
             .slice(0, 6)
-            .map((m) => m.role === "user" ? agentT(lng, 'title.request', { text: m.text.slice(0, 600) }) : agentT(lng, 'title.response', { text: m.text.slice(0, 600) }))
+            .map((m) => m.role === "user" ? agentT(lng, 'title.request', { text: textForTitleModel(m.text).slice(0, 600) }) : agentT(lng, 'title.response', { text: m.text.slice(0, 600) }))
             .join(NL + NL);
           if (!gist) return reply(false, t('title.noContent'));
 
