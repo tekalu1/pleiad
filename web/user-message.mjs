@@ -13,6 +13,8 @@ import { renderMarkdownBlocks, codeFenceMask, plainTextHtml, presentImg } from '
 import { fileReference, baseName } from './file-reference.mjs';
 import { ATTACHMENT_LINE, normalizeAttachmentPath } from './timeline.mjs';
 import { openAttachmentList } from './attachment-list.mjs';
+import { mountFold } from './fold.mjs';
+import { pendingImageHtml, hydrateFrames } from './attachment-frame.mjs';
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ESC[c]);
@@ -68,6 +70,8 @@ export function attachmentHtml(p) {
   const name = attachmentName(p), path = String(p.path ?? '');
   const ref = path ? fileReference(path) : null;
   const src = attachmentImageSrc(p);
+  // 送った直後の仮の画像は、パスの字を出さず枠から始める（読み込みは paintUserBody の hydrateFrames）
+  if (src && p.provisional) return pendingImageHtml({ name, src, path: ref ? path : '', width: p.width, height: p.height });
   if (src) {
     const label = esc(t('chat.attach.enlarge', { name }));
     return `<figure class="msg-att msg-att-img"><button type="button" class="msg-att-zoom" aria-label="${label}" title="${label}">` +
@@ -127,7 +131,8 @@ const unitHtml = u => (u.kind === 'md' ? u.html : `<div class="msg-atts">${u.ite
  * @param {string} text 送った本文（原文）
  * @param {object[]} presents この発言に結び付いた human の present
  * @param {{ markdown?: boolean }} opts markdown: false は今までの平文（委譲の子の会話を読む面）。添付も置き換えない
- * @returns {{ html: string, attachments: number, placed: number, folded: boolean }} placed は本文の中の印を置き換えた数
+ * @returns {{ html: string, attachments: number, placed: number, folded: boolean }} placed は本文の中の印を置き換えた数。
+ * 畳むときは、畳む側を .fold-rest に入れる（畳みの部品は paintUserBody が付ける。web/fold.mjs）
  */
 export function userBodyHtml(text, presents = [], { markdown = true } = {}) {
   if (!markdown) return { html: plainTextHtml(text), attachments: 0, placed: 0, folded: false };
@@ -136,10 +141,7 @@ export function userBodyHtml(text, presents = [], { markdown = true } = {}) {
   const cut = foldIndex(units);
   const shown = cut < 0 ? units : units.slice(0, cut);
   let html = shown.map(unitHtml).join('');
-  if (cut >= 0) {
-    html += `<details class="msg-more"><summary><span class="more-open">${esc(t('chat.message.showMore'))}</span>` +
-      `<span class="more-close">${esc(t('chat.message.showLess'))}</span></summary>${units.slice(cut).map(unitHtml).join('')}</details>`;
-  }
+  if (cut >= 0) html += `<div class="fold-rest">${units.slice(cut).map(unitHtml).join('')}</div>`;
   const attachments = segments.filter(s => s.type === 'attachment');
   return { html, attachments: attachments.length, placed: attachments.filter(s => !s.trailing).length, folded: cut >= 0 };
 }
@@ -147,7 +149,11 @@ export function userBodyHtml(text, presents = [], { markdown = true } = {}) {
 /** 吹き出し（.body）に自分の発言を描く。原文は dataset.raw に持つ（履歴との突き合わせ・添付の突き合わせが読む） */
 export function paintUserBody(body, text, presents = [], { markdown = true } = {}) {
   const r = userBodyHtml(text, presents, { markdown });
+  body.classList.remove('fold', 'expanded', 'fold-fit');
+  delete body.fold;
   body.innerHTML = r.html;
+  if (r.folded) mountFold(body, body.querySelector(':scope > .fold-rest'));
+  hydrateFrames(body);
   body.dataset.raw = String(text ?? '');
   body.classList.toggle('md-user', markdown);
   return r;
@@ -165,11 +171,11 @@ export function attachmentListItem(p, index) {
 }
 
 /**
- * 発言の下の弱い字の行（添付 N 件 ▾・エージェントに渡した原文を見る）。添付が無ければ null。
- * openItem(item) は一覧の「開く」（画像は拡大、ほかは右パネル）。原文の面は行の直後に置く（source 要素）
- * @returns {{ row: HTMLElement, source: HTMLElement } | null}
+ * 発言の下の弱い字の行（📎 N ▾）。添付が無ければ null。原文はここに置かず、⋯ と右クリックのメニューからモーダルで見る（web/message-actions.mjs）。
+ * openItem(item) は一覧の「開く」（画像は拡大、ほかは右パネル）
+ * @returns {HTMLElement | null}
  */
-export function userTools({ raw, presents = [], openItem, copyPath }) {
+export function userTools({ presents = [], openItem, copyPath }) {
   if (!presents.length) return null;
   const row = el('div', 'msg-tools');
   const button = el('button', 'msg-tool msg-tool-atts');
@@ -195,17 +201,5 @@ export function userTools({ raw, presents = [], openItem, copyPath }) {
     ],
   });
   row.append(button);
-  const source = el('pre', 'msg-source', String(raw ?? ''));
-  source.hidden = true;
-  const toggle = el('button', 'msg-tool', t('chat.message.showSource'));
-  toggle.type = 'button';
-  toggle.setAttribute('aria-expanded', 'false');
-  toggle.onclick = () => {
-    const open = source.hidden;
-    source.hidden = !open;
-    toggle.setAttribute('aria-expanded', String(open));
-    toggle.textContent = open ? t('chat.message.hideSource') : t('chat.message.showSource');
-  };
-  row.append(toggle);
-  return { row, source };
+  return row;
 }

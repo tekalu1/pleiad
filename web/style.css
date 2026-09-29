@@ -549,9 +549,33 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 右端は「値の列」（時刻）と、その右の幅 24px の「操作の列」の 2 列（ツールの行・まとまりの見出しの ⌄ と同じ列）。値と操作の間は 10px。
    操作の列にはこの後 ⋯ が入る。時刻は触れている・焦点がある間（タッチは発言を押した 4 秒）だけ見える。場所は取ったままなので並びは動かない */
 .who::after{content:"";flex:none;width:24px}
+.who.acts::after{content:none}
 .who .row-be{margin-right:-4px}
 .who .when{margin-left:auto;opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
-.m:is(:hover,:focus-within,.peek)>.who .when{opacity:1}
+/* コピー（時刻の左）と ⋯（操作の列の 24px）。触れる・キーボードの焦点（:focus-visible）・メニューを開いている間（.menu-open）・
+   タッチで発言を押した 4 秒（.peek）だけ出す。マウスで押して焦点が残っただけでは出さない（:focus-within は使わない） */
+.who-btn{flex:none;position:relative;display:inline-grid;place-items:center;width:24px;height:22px;padding:0;border-radius:var(--r-s);
+  background:transparent;color:var(--ink-weak);opacity:0;
+  transition:opacity var(--dur-fast) var(--ease-out),background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.who-btn:hover{background:var(--surface-1);color:var(--ink)}
+.who-btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.who-more circle{fill:currentColor;stroke:none}
+.who-btn .ok{display:none}
+.who-btn.done .cp{display:none}
+.who-btn.done .ok{display:block}
+.who-copy{margin-left:auto}
+.who-copy+.when{margin-left:2px}
+.m:is(:has(:focus-visible),.menu-open,.peek)>.who :is(.when,.who-btn),.who-btn.done{opacity:1}
+/* 触れるのはホバーのある端末だけ。タッチでは押した後に :hover が残るので、時刻は .peek の 4 秒だけにする */
+@media (hover:hover){.m:hover>.who :is(.when,.who-btn){opacity:1}}
+.m.editing>.who .who-btn{visibility:hidden}
+/* タッチは薄く常に（押す領域は 36×32）。コピーは発言を押した 4 秒に時刻と一緒に出る */
+@media (hover:none){
+  .who-more{opacity:.6}
+  .who-btn::after{content:"";position:absolute;inset:-5px -6px}
+}
+/* 読み上げだけの知らせ（コピーしました） */
+.sr-live{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .m.user .body{display:inline-block;max-width:680px;background:var(--surface-2);border-radius:var(--r-l);padding:9px 16px;white-space:pre-wrap;overflow-wrap:anywhere}
 /* ---- 自分の発言の Markdown と添付（web/user-message.mjs、docs/design-system.md「自分の発言」、ADR 0059）。
    本文は AI の本文と同じ md の見た目。添付は本文の印の位置に縮小（画像）か札（ファイル）で出る ---- */
@@ -566,22 +590,87 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .msg-att-file span{min-width:0;overflow-wrap:anywhere}
 .msg-att-file[aria-current=true]{background:var(--surface-3)}
 @media (max-width:700px){.msg-att-img{max-width:min(220px,100%)}.msg-att-zoom img{max-width:min(220px,100%)}}
-/* 長い発言の「続きを表示」。段落・添付のまとまりの境目で畳む（foldIndex）。開くと「折りたたむ」 */
-.msg-more>summary{list-style:none;cursor:pointer;user-select:none;padding:2px 0;font-size:var(--fs-s);color:var(--ink-blue)}
-.msg-more>summary::-webkit-details-marker{display:none}
-.msg-more>summary::after{content:"▾";margin-left:4px}
-.msg-more[open]>summary::after{content:"▴"}
-.msg-more .more-close,.msg-more[open] .more-open{display:none}
-.msg-more[open] .more-close{display:inline}
-.msg-more[open]>summary{margin-bottom:.6em}
-/* 発言の下の弱い字の行（添付 N 件 ▾・エージェントに渡した原文を見る）。原文は送った本文そのまま（等幅） */
+/* 長い発言の畳み（web/fold.mjs、docs/design-system.md「長い発言の畳み」）。畳む境目は foldIndex（約 8 行・段落と添付の境目）。
+   畳んだ吹き出しは境目から 2 行分（56px）だけ続きを覗かせ、吹き出しの下端までを透明 → 面の色（--surface-2）のフェードにする。
+   シェブロンはフェードの上に重ね、下に不透明な帯は作らない。フェードは 2 枚重ねて下端 14px ほどをほぼ面の色まで溶かし、シェブロンと本文の字が重ならないようにする。
+   開くと rest が伸び（240ms）、シェブロンは吹き出しの下端（30px の余白）で上向きになって畳む。reduced-motion では --dur が 0 */
+.fold{position:relative}
+.fold-rest{position:relative;overflow:hidden;max-height:56px;transition:max-height var(--dur) var(--ease-out)}
+.fold-rest>:last-child{margin-bottom:0}
+.fold-fade{position:absolute;left:0;right:0;bottom:0;height:56px;cursor:pointer;transition:opacity var(--dur-fast) var(--ease-out)}
+.fold.expanded>.fold-fade{opacity:0;pointer-events:none}
+.fold:not(.expanded)>.fold-fade{transition-delay:var(--dur-fast)}
+.fold-row{position:absolute;left:var(--fold-x,11px);bottom:4px;z-index:1;display:flex;height:24px;align-items:center}
+.fold-btn{display:inline-flex;align-items:center;justify-content:center;height:24px;min-width:24px;padding:0 5px;margin-left:-5px;border-radius:var(--r-pill);
+  background:transparent;color:var(--ink);transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.fold-btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;transition:transform var(--dur) var(--ease-out)}
+.fold.expanded .fold-btn{color:var(--ink-weak)}
+.fold.expanded .fold-btn svg{transform:rotate(180deg)}
+.fold-btn:hover,.fold:has(>.fold-fade:hover) .fold-btn{background:var(--surface-3);color:var(--ink)}
+@media (hover:none){.fold-btn{height:32px;min-width:36px}}
+.fold.fold-fit>.fold-fade,.fold.fold-fit>.fold-row{display:none}
+.fold.fold-fit>.fold-rest{max-height:none}
+/* 自分の発言の吹き出し（.body）と、委譲の「依頼」（バックグラウンドの詳細の吹き出し・開いた委譲カードの中）が同じ部品 */
+.m.user .body.fold{overflow:hidden;padding-bottom:0;transition:padding-bottom var(--dur) var(--ease-out)}
+.m.user .body.fold.expanded{padding-bottom:30px}
+.m.user .body.fold.fold-fit{overflow:visible;padding-bottom:9px}
+.m.user .body.fold>.fold-fade{background:linear-gradient(to bottom,transparent,var(--surface-2)) center bottom/100% 50% no-repeat,linear-gradient(to bottom,transparent,var(--surface-2))}
+.bg-request>.fold-rest{max-height:calc(4lh + 28px)}
+.bg-request.fold-fit>.fold-rest{max-height:none}
+.bg-request-text{display:block}
+.rt-request.fold{padding-bottom:0;transition:padding-bottom var(--dur) var(--ease-out);--fold-x:5px}
+.rt-request.fold.expanded{padding-bottom:26px}
+.rt-request.fold.fold-fit{padding-bottom:0}
+.rt-request.fold>.fold-fade{background:linear-gradient(to bottom,transparent,var(--surface-paper)) center bottom/100% 50% no-repeat,linear-gradient(to bottom,transparent,var(--surface-paper))}
+.rt-request.fold>.fold-rest{max-height:calc(4lh + 28px)}
+.rt-request.fold.fold-fit>.fold-rest{max-height:none}
+.rt-request.fold .fold-btn:hover,.rt-request.fold:has(>.fold-fade:hover) .fold-btn{background:var(--surface-1)}
+/* 発言の下の弱い字の行（📎 N ▾）。原文は ⋯ のメニューからモーダルで見る */
 .msg-tools{display:flex;flex-wrap:wrap;align-items:center;gap:0 12px;padding-top:2px;max-width:680px}
 .msg-tool{display:inline-flex;align-items:center;gap:5px;padding:4px 0;background:transparent;font-size:var(--fs-xs);color:var(--ink-weak);cursor:pointer}
 .msg-tool:hover{color:var(--ink)}
 .msg-tool svg.i{width:14px;height:14px}
-.msg-source{max-width:680px;margin:4px 0 0;padding:8px 12px;background:var(--surface-1);border-radius:var(--r-s);font:var(--fs-s)/1.7 var(--font-mono);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow:auto}
-.msg-source[hidden]{display:none}
-.m.editing > .msg-tools,.m.editing > .msg-source{display:none}
+.m.editing > .msg-tools{display:none}
+/* エージェントに渡した原文のモーダル（web/message-actions.mjs）。添付の一覧の面（.att-list）と同じ作り。700px 以下は下からのシート */
+.src-dlg{margin:auto;padding:0;border:0;background:var(--surface-paper);color:var(--ink);border-radius:var(--r-m);
+  width:min(720px,calc(100vw - 24px));max-height:min(80vh,720px);box-shadow:0 8px 32px var(--shadow)}
+.src-dlg::backdrop{background:var(--surface-veil)}
+.src-dlg[open]{display:flex;flex-direction:column}
+.src-in{display:flex;flex-direction:column;flex:1;min-height:0;padding:16px}
+.src-handle{display:none}
+.src-head{display:flex;align-items:center;gap:8px}
+.src-head h3{margin:0;font-size:var(--fs-l);font-weight:600;flex:1;min-width:0}
+.src-time{font-size:var(--fs-xs);color:var(--ink-weak)}
+.src-btn{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-s);padding:3px 10px}
+.src-btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.src-btn .ok{display:none}
+.src-btn.done .cp{display:none}
+.src-btn.done .ok{display:block}
+.src-body{margin:12px 0 0;padding:10px 14px;background:var(--surface-1);border-radius:var(--r-s);font:var(--fs-s)/1.7 var(--font-mono);color:var(--ink);
+  white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;min-height:0}
+@media (max-width:700px){
+  .src-dlg{margin:auto 0 0;width:100%;max-width:none;max-height:85dvh;border-radius:var(--r-l) var(--r-l) 0 0}
+  .src-handle{display:block;width:32px;height:4px;margin:0 auto 12px;background:var(--surface-3);border-radius:var(--r-pill)}
+}
+/* 送った直後の添付画像の枠（web/attachment-frame.mjs）。無地 → 150 ms を越えたら光 → 読めたら 240ms のフェード。読めなければ同じ枠で「もう一度」 */
+.att-frame{position:relative;display:block;max-width:100%;border-radius:var(--r-s);background:var(--surface-3);overflow:hidden;
+  transition:width var(--dur) var(--ease-out),height var(--dur) var(--ease-out)}
+.att-frame .msg-att-zoom{position:absolute;inset:0}
+.att-frame .msg-att-zoom img{position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;opacity:0;transition:opacity var(--dur) var(--ease-out)}
+.att-frame.loaded .msg-att-zoom img{opacity:1}
+.att-glint{position:absolute;inset:0;opacity:0;background:var(--surface-paper);
+  -webkit-mask-image:linear-gradient(100deg,transparent 35%,#000 50%,transparent 65%);mask-image:linear-gradient(100deg,transparent 35%,#000 50%,transparent 65%);
+  -webkit-mask-size:250% 100%;mask-size:250% 100%;animation:att-glint 1.6s linear infinite;transition:opacity var(--dur) var(--ease-out)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .att-glint{background:var(--surface-thumb)}}
+:root[data-theme="dark"] .att-glint{background:var(--surface-thumb)}
+@keyframes att-glint{from{-webkit-mask-position:100% 0;mask-position:100% 0}to{-webkit-mask-position:0 0;mask-position:0 0}}
+.att-frame.slow .att-glint{opacity:.85}
+.att-frame.loaded .att-glint,.att-frame.failed .att-glint{opacity:0}
+@media (prefers-reduced-motion:reduce){.att-glint{animation:none;display:none}}
+.att-fail{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:8px;text-align:center;font-size:var(--fs-xs);color:var(--ink-weak)}
+.att-fail svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;margin-bottom:2px}
+.att-retry{padding:2px 10px;border-radius:var(--r-pill);font-size:var(--fs-xs);color:var(--ink-blue);background:transparent}
+.att-retry:hover{background:var(--surface-2)}
 /* 添付の一覧の面（web/attachment-list.mjs）。デスクトップは動線の近くに浮き、700px 以下は下からのシート */
 .att-list{position:fixed;margin:0;padding:0;border:0;background:var(--surface-paper);color:var(--ink);border-radius:var(--r-m);
   width:min(560px,calc(100vw - 24px));max-height:min(70vh,640px);overflow:auto;box-shadow:0 8px 32px var(--shadow)}
@@ -610,18 +699,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
   .att-list{left:0!important;right:0;top:auto!important;bottom:0;width:100%;max-width:none;max-height:85dvh;border-radius:var(--r-l) var(--r-l) 0 0}
   .att-list-handle{display:block;width:32px;height:4px;margin:0 auto 14px;background:var(--surface-3);border-radius:var(--r-pill)}
 }
-.message-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:var(--sp-1);opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
-.message-actions .btn{font-size:var(--fs-xs);padding:3px 10px}
-.m.ai > .message-actions{position:absolute;right:82px;top:-1px}
-/* 見出しの行が無い続きの発言がツールの行から始まるとき、操作は右端の結果・「開く」と重ならないよう左へ寄せる */
-@media (min-width:561px){.m.ai.cont > .message-actions:has(+ :is(.tc,.bundle)){right:198px;top:3px}}
-.m:hover > .message-actions,.message-actions:focus-within{opacity:1}
-.m.editing > .message-actions{visibility:hidden}
 .message-editor{max-width:680px;background:var(--surface-2);border-radius:var(--r-l);padding:var(--sp-3) var(--sp-4)}
 .message-edit-input{display:block;width:100%;min-height:80px;max-height:50vh;resize:vertical;background:transparent;color:var(--ink);font:inherit;border-radius:var(--r-s)}
 .message-edit-controls{display:flex;justify-content:flex-end;gap:var(--sp-2);margin-top:var(--sp-2)}
 .message-edit-attachments{font-size:var(--fs-s);color:var(--ink-weak);overflow-wrap:anywhere}
-@media (hover:none){.message-actions{opacity:1}}
 /* 出来事の一行（送信の失敗・状態やタイトルの変更）。筋の節は持たない */
 .m.sys{margin-bottom:8px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .m.sys b{color:var(--ink);font-weight:500}
@@ -1259,9 +1340,6 @@ main.dropping #log{background:var(--surface-1)}
 .bg-dt-title{margin:0;font-size:var(--fs-m);font-weight:600;display:flex;align-items:center;gap:8px;min-width:0}
 .bg-dt-title>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 切るのは吹き出しの中の字の包み。吹き出しそのものを切ると、overflow が padding の内側までしか切らず 5 行目が下の余白にのぞく */
-.bg-request:not(.expanded)>.bg-request-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
-.bg-request-toggle{display:block;border:0;background:none;color:var(--ink-blue);font:inherit;font-size:var(--fs-xs);padding:3px 0;cursor:pointer}
-.bg-request-toggle[hidden]{display:none}
 .bg-dt-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:var(--fs-xs);color:var(--ink-weak);margin-top:3px}
 .bg-dt-actions{display:flex;align-items:center;gap:6px;flex:none}
 #workBody{flex:1;min-height:0;overflow-y:auto;padding:4px 18px 18px 8px;display:flex;flex-direction:column;gap:8px}
@@ -1284,7 +1362,6 @@ main.dropping #log{background:var(--surface-1)}
 .rt-request{margin:4px 0 10px;font-size:var(--fs-s);color:var(--ink)}
 .rt-request-label{font-size:var(--fs-xs);color:var(--ink-weak)}
 .rt-request-text{white-space:pre-wrap;overflow-wrap:anywhere}
-.rt-request:not(.expanded)>.rt-request-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
 .rt-detail{margin:4px 0 10px;color:var(--ink);font-size:var(--fs-s)}
 .rt-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px 16px;margin:0 0 10px}
 .rt-facts>div{min-width:0}

@@ -18,7 +18,9 @@ async page => {
       if(window.watchBranch)requestAnimationFrame(sample);
     };requestAnimationFrame(sample);
   });
-  await m.locator('.forkbtn').click();
+  await m.hover();
+  await m.locator('.who-more').click();
+  await page.getByRole('menuitem', { name: 'ここから分岐', exact: true }).click();
   await page.waitForFunction(()=>!!document.querySelector('.branch-row[data-phase="growing"]'));
   await page.waitForFunction(()=>window.branchFrames.some(f=>f.phase==='switching')&&!document.querySelector('.branch-tip:disabled'));
   return await page.evaluate(()=>{

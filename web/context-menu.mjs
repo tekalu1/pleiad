@@ -5,7 +5,7 @@ import { runMark } from './arc.mjs';
 
 /** One menu chain, shared by pointer, touch, and keyboard. */
 export function createContextMenu() {
-  let panels = [], opener, openTimer, closeTimer, generation = 0;
+  let panels = [], opener, openTimer, closeTimer, closeHook, generation = 0;
   // Pointer hover must not destroy the field that owns keyboard focus.
   const editing = () => panels.some(p => p.contains(document.activeElement) && document.activeElement?.matches('input, textarea, [contenteditable]'));
   const cancelTimers = () => { clearTimeout(openTimer); clearTimeout(closeTimer); };
@@ -20,6 +20,8 @@ export function createContextMenu() {
   function close(restore = false) {
     generation++;
     clearTimeout(openTimer); clearTimeout(closeTimer); trim(0);
+    const hook = closeHook; closeHook = null;
+    hook?.();
     document.removeEventListener('pointerdown', outside, true);
     document.removeEventListener('keydown', key, true);
     if (restore && opener?.isConnected) opener.focus({ preventScroll: true });
@@ -104,10 +106,13 @@ export function createContextMenu() {
     panel.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
     return panel;
   }
-  return { close, open(x, y, items, title) {
+  // opts.onClose は閉じたときに 1 度呼ぶ（発言の ⋯ が「開いている」印を外す）。opts.alignRight は x を面の右端に合わせる（⋯ の下に右を揃える）
+  return { close, open(x, y, items, title, opts = {}) {
     close(); opener = document.activeElement;
+    closeHook = opts.onClose ?? null;
     const own = generation;
     const panel = panelAt(items, title, 0, x, y);
+    if (opts.alignRight) panel.style.left = `${Math.max(8, Math.min(x - panel.getBoundingClientRect().width, innerWidth - panel.getBoundingClientRect().width - 8))}px`;
     document.addEventListener('pointerdown', outside, true);
     document.addEventListener('keydown', key, true);
     buttons(panel)[0]?.focus({ preventScroll: true });

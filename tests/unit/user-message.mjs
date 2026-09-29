@@ -85,16 +85,27 @@ export default async function (t) {
   t.ok("最初の添付のまとまりが遠ければ、そこまでは見せない", foldIndex([md(9), md(9), atts(), md(2), md(4)]) === 1);
   const long = Array.from({ length: 30 }, (_, i) => `行 ${i}`).join("\n\n");
   const folded = userBodyHtml(long, []);
-  t.ok("長い発言は details で畳み、続きを開閉できる", folded.folded && folded.html.includes('<details class="msg-more">') && folded.html.includes("続きを表示") && folded.html.includes("折りたたむ"));
-  t.ok("畳んだ側にも本文が残る（原文は削らない）", folded.html.includes("行 29") && folded.html.indexOf("行 29") > folded.html.indexOf("<details"));
+  t.ok("長い発言は畳む側を .fold-rest に入れる（字は出さない。畳みの部品は paintUserBody が付ける）",
+    folded.folded && folded.html.includes('<div class="fold-rest">') && !folded.html.includes("<details") && !folded.html.includes("続きを表示"));
+  t.ok("畳んだ側にも本文が残る（原文は削らない）", folded.html.includes("行 29") && folded.html.indexOf("行 29") > folded.html.indexOf('class="fold-rest"'));
+  t.ok("短い発言は畳む入れ物を作らない", !userBodyHtml("短い", []).html.includes("fold-rest"));
 
   // ---- 発言の下の行
-  t.ok("添付が無い発言には下の行を出さない", userTools({ raw: "x", presents: [] }) === null);
-  const rawText = "x\n[添付] C:\\up\\a.png";
-  const tools = userTools({ raw: rawText, presents: [a, b] });
-  t.ok("添付の入口（字は件数だけ。名前と title は「添付 2 件の一覧を開く」）と原文の入口（原文は送った本文そのまま・初めは閉じている）",
-    tools.row.querySelectorAll(".msg-tool").length === 2 && !tools.row.shown.includes("添付") && tools.row.querySelector(".msg-tool-n")?.textContent === "2"
-    && tools.row.querySelector(".msg-tool-atts")?.attrs.title === "添付 2 件の一覧を開く" && tools.source.hidden === true && tools.source.textContent === rawText);
+  t.ok("添付が無い発言には下の行を出さない", userTools({ presents: [] }) === null);
+  const tools = userTools({ presents: [a, b] });
+  t.ok("添付の入口だけ（字は件数だけ。名前と title は「添付 2 件の一覧を開く」）。原文の入口は下の行に置かない（⋯ のメニューからモーダル）",
+    tools.querySelectorAll(".msg-tool").length === 1 && !tools.shown.includes("添付") && tools.querySelector(".msg-tool-n")?.textContent === "2"
+    && tools.querySelector(".msg-tool-atts")?.attrs.title === "添付 2 件の一覧を開く" && !tools.shown.includes("原文"));
+
+  // ---- 送った直後の仮の画像: パスの字を出さず、枠から始める
+  const sending = { by: "human", provisional: true, kind: "image", path: "C:\\up\\shot.png", captionParams: { name: "shot.png" }, width: 960, height: 540 };
+  const first = userBodyHtml("見て\n[添付] C:\\up\\shot.png", [sending]);
+  t.ok("仮の画像は枠（role=img・名前つき）で描き、パスの字を出さない", first.html.includes('class="att-frame"') && first.html.includes('role="img"')
+    && first.html.includes("shot.png") && !first.html.replace(/<[^>]*>/g, "").includes("C:\\up") && !first.html.includes("[添付]") && first.placed === 1, first.html.slice(0, 300));
+  t.ok("枠の寸法は縦横から先に取る（縮小の最大 240 × 144 に収める）", first.html.includes("width:240px;height:135px"), first.html.slice(0, 300));
+  t.ok("縦横が分からない枠は 240 × 144（5:3）", userBodyHtml("[添付] C:\\up\\shot.png", [{ ...sending, width: undefined, height: undefined }]).html.includes("width:240px;height:144px"));
+  t.ok("仮の画像でないもの（届いた present）は今までの figure", userBodyHtml("[添付] C:\\up\\a.png", [a]).html.includes('class="msg-att-zoom"'));
+  t.ok("画像以外の仮の添付は、すぐ札（枠にしない）", userBodyHtml("[添付] C:\\up\\c.md", [{ ...c, provisional: true }]).html.includes("msg-att-file") && !userBodyHtml("[添付] C:\\up\\c.md", [{ ...c, provisional: true }]).html.includes("att-frame"));
 
   // ---- 発言に結び付いた present を別カードとして二重に出さない
   const messages = [

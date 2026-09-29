@@ -150,6 +150,8 @@ const cases = [
   await import("./unit/user-message.mjs"),
   // ホバーの無い端末で発言を押すと時刻を 4 秒出す（リンク・ボタン・コード・字の選択の上では出さない）
   await import("./unit/message-peek.mjs"),
+  // 発言のメニュー（⋯・右クリック・キーボード）・長い発言の畳みを開く・送った直後の画像の枠（ADR 0067）
+  await import("./unit/message-actions.mjs"),
   await import("./unit/md-doc.mjs"),
   await import("./unit/prompt-title.mjs"),
   // 添付の件数に上限が無い（下書き・送信）。出どころの印。1 件 8MB の上限は残る

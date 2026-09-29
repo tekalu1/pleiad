@@ -15,6 +15,8 @@ import { createRemoteBrowser } from './remote-browser.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 import { setupMessagePeek } from './message-peek.mjs';
+import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog } from './message-actions.mjs';
+import { mountFold } from './fold.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
 import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
@@ -604,47 +606,135 @@ function spine() {
 
 // ---------------------------------------------------------------- 発言
 
-/** 「⑂ ここから分岐」。発言の uuid が分かってから見える */
-function forkButton(m) {
-  const actions = el('div', 'message-actions');
-  actions.hidden = true;
-  const b = el("button", "btn forkbtn", t("chat.message.fork"));
-  b.type = "button";
-  b.onclick = () => forkFrom(m);
-  actions.append(b);
-  if (m.dataset.role === 'user') {
-    for (const [label, className, edit] of [[t('chat.message.editResend'), 'editbtn', true], [t('chat.message.resend'), 'resendbtn', false]]) {
-      const action = el('button', `btn ${className}`, label);
-      action.type = 'button';
-      action.onclick = async () => {
-        if (state.busy || m.querySelector('.message-editor')) return;
-        const source = state.current;
-        action.disabled = true;
-        try {
-          const data = await cmd('loadSession', { sessionId: source });
-          if (state.current !== source || !m.isConnected || state.busy) return;
-          const index = data.messages.findIndex(row => row.uuid === m.dataset.uuid);
-          if (index < 0) throw new Error(t('chat.message.notSaved'));
-          const attached = data.presents.filter(p => attachmentMessageIndex(data.messages, p) === index)
-            // 名前は captionParams.name（新しい記録）。無い過去の記録は保存された見出し「添付: 名前」から取る
-            .map(p => ({ path: p.path, name: p.captionParams?.name || p.caption?.replace(/^添付:\s*/, '') || p.path.split(/[\\/]/).at(-1),
-              mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri,
-              // 出どころと大きさも引き継ぐ（入力欄の一覧が出す）
-              ...(p.origin === 'host' || p.origin === 'device' ? { from: p.origin } : {}), ...(Number.isFinite(p.size) ? { size: p.size } : {}) }));
-          // 印（[添付] / [Attachment]）は本文の位置のまま編集欄へ戻す。文中の位置を保つ（編集で印を消した添付は送らない。keptAttachments）
-          const draft = { text: data.messages[index].text ?? '', attached, index };
-          if (edit) editMessage(m, draft);
-          else await forkFrom(m, { draft });
-        } catch (e) { sys(html.t('chat.message.resendPrepareFailed', { error: e.message })); }
-        finally { action.disabled = false; }
-      };
-      actions.append(action);
-    }
-  }
-  m.append(actions);
-  return b;
+// 発言の操作（10）。発言者の行のコピーと ⋯、⋯ と右クリック（タッチは長押し）が開く同じメニュー、キーボード（Shift+F10・メニューキー）。
+// コピーは自分の発言なら原文、エージェントの返答なら次の自分の発言までの本文の Markdown（ツールは含めない）。
+// 「ここから分岐」は、返答では ⋯ からその返答の終わりから、続きの発言を右クリックしたときはその発言から。
+
+/** 発言者の行の操作を付ける（コピー・⋯）。ボタンは whoLine が置いてある。読むだけの筋（委譲の詳細）では stripActions で外す */
+function wireActions(m) {
+  const who = m.querySelector(':scope > .who');
+  const copy = who?.querySelector('.who-copy'), more = who?.querySelector('.who-more');
+  if (copy) copy.onclick = (e) => { e.stopPropagation(); copyToClipboard(messageCopyText(m), copy); };
+  if (more) more.onclick = (e) => { e.stopPropagation(); openMessageMenu({ m, part: false }, { via: more }); };
 }
 
+/** 読むだけの筋（委譲の詳細）の発言から、操作を外す */
+function stripActions(m) {
+  const who = m.querySelector(':scope > .who');
+  who?.querySelectorAll('.who-btn').forEach(b => b.remove());
+  who?.classList.remove('acts');
+  return m;
+}
+
+/** 返答の頭（見出しの行のある発言）。続きの発言から前へ辿る */
+function replyHead(m) {
+  if (!m.classList.contains('cont')) return m;
+  for (let w = m.closest('.mw')?.previousElementSibling; w; w = w.previousElementSibling) {
+    const x = w.querySelector?.(':scope .m.ai');
+    if (x && !x.classList.contains('cont')) return x;
+    if (w.querySelector?.(':scope .m.user:not(.cmd)')) break;
+  }
+  return m;
+}
+
+/** 返答（頭から、次の自分の発言・次の返答の前まで）の発言 */
+function replyMessages(head) {
+  const out = [head];
+  for (let w = head.closest('.mw')?.nextElementSibling; w; w = w.nextElementSibling) {
+    const x = w.querySelector?.(':scope .m[data-role]');
+    if (!x) continue;
+    if (x.dataset.role === 'user' && !x.classList.contains('cmd')) break;
+    if (x.classList.contains('ai')) { if (!x.classList.contains('cont')) break; out.push(x); }
+  }
+  return out;
+}
+
+/** コピーする字。自分の発言は原文、返答は本文の Markdown をつなげたもの（ツール・考え中は含めない） */
+function messageCopyText(m) {
+  if (m.dataset.role === 'user') return m.classList.contains('cmd') ? (m.commandText?.() ?? '') : userRaw(m);
+  return replyMessages(replyHead(m))
+    .flatMap(x => [...x.querySelectorAll(':scope > .body')].map(b => b.dataset.raw ?? b.textContent ?? ''))
+    .filter(Boolean).join('\n\n');
+}
+
+/** ⋯ から返答の終わりへ分岐するときの発言。uuid のある最後の発言（走っている最中の末尾は uuid がまだ無い） */
+function forkAtReplyEnd(head) {
+  return replyMessages(head).reverse().find(x => x.dataset.uuid) ?? null;
+}
+
+async function resendFrom(m, edit) {
+  if (state.busy || m.querySelector('.message-editor') || m.dataset.resending) return;
+  const source = state.current;
+  m.dataset.resending = '1';
+  try {
+    const data = await cmd('loadSession', { sessionId: source });
+    if (state.current !== source || !m.isConnected || state.busy) return;
+    const index = data.messages.findIndex(row => row.uuid === m.dataset.uuid);
+    if (index < 0) throw new Error(t('chat.message.notSaved'));
+    const attached = data.presents.filter(p => attachmentMessageIndex(data.messages, p) === index)
+      // 名前は captionParams.name（新しい記録）。無い過去の記録は保存された見出し「添付: 名前」から取る
+      .map(p => ({ path: p.path, name: p.captionParams?.name || p.caption?.replace(/^添付:\s*/, '') || p.path.split(/[\\/]/).at(-1),
+        mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri,
+        // 出どころと大きさも引き継ぐ（入力欄の一覧が出す）
+        ...(p.origin === 'host' || p.origin === 'device' ? { from: p.origin } : {}), ...(Number.isFinite(p.size) ? { size: p.size } : {}) }));
+    // 印（[添付] / [Attachment]）は本文の位置のまま編集欄へ戻す。文中の位置を保つ（編集で印を消した添付は送らない。keptAttachments）
+    const draft = { text: data.messages[index].text ?? '', attached, index };
+    if (edit) editMessage(m, draft);
+    else await forkFrom(m, { draft });
+  } catch (e) { sys(html.t('chat.message.resendPrepareFailed', { error: e.message })); }
+  finally { delete m.dataset.resending; }
+}
+
+/**
+ * 発言のメニューを開く。hit.m は触れた発言、hit.part は続きの発言（見出しの行が無い）を右クリックしたとき。
+ * at: { via } ⋯ のボタンの下に右を揃えて出す / { x, y } 押した位置 / { key: true } キーボード（⋯ の下）
+ */
+function openMessageMenu({ m, part = false }, at = {}) {
+  const head = replyHead(m);
+  const owner = part ? head : m;
+  const more = (part ? head : m).querySelector(':scope > .who .who-more');
+  const user = m.dataset.role === 'user';
+  const kind = user ? (m.classList.contains('cmd') ? 'cmd' : 'user') : 'ai';
+  const target = kind === 'ai' && !part ? forkAtReplyEnd(m) : (m.dataset.uuid ? m : null);
+  const canFork = Boolean(target) && capsOf(activeBackendId()).fork !== false;
+  const command = kind === 'cmd' ? m.shellCommand?.() : null;
+  const plan = messageMenuPlan({ kind, part, canFork, shell: Boolean(command), source: kind === 'user' });
+  const busy = state.busy;
+  const run = {
+    copy: () => copyToClipboard(messageCopyText(m), owner.querySelector(':scope > .who .who-copy')),
+    toComposer: () => copyShellToComposer(command),
+    fork: () => forkFrom(target, { pending: more }),
+    edit: () => resendFrom(m, true),
+    resend: () => resendFrom(m, false),
+    source: () => openSourceDialog({ text: userRaw(m), at: m.querySelector(':scope > .who .when')?.textContent ?? '', opener: more }),
+  };
+  const items = plan.map(p => (p.sep ? { sep: true } : { label: p.label, disabled: busy && ['fork', 'edit', 'resend'].includes(p.key), onClick: run[p.key] }));
+  // ホバーが無い端末は、時刻を出す手段が押すことしか無いので、メニューの先頭に置く
+  const when = m.querySelector(':scope > .who .when')?.textContent ?? '';
+  const title = hoverless() && when
+    ? (user ? t('chat.message.sentAt', { time: when }) : `${when} · ${m.querySelector(':scope > .who > span:not(.row-be):not(.when)')?.textContent ?? ''}`)
+    : undefined;
+  let x = at.x, y = at.y, alignRight = false;
+  if (at.via || at.key || (!x && !y)) {
+    const r = (more ?? m).getBoundingClientRect();
+    x = more ? r.right : r.left + 8; y = r.bottom + 4; alignRight = Boolean(more);
+  }
+  owner.classList.add('menu-open');
+  more?.setAttribute('aria-expanded', 'true');
+  showMenu(x, y, items, title, { alignRight, onClose: () => {
+    owner.classList.remove('menu-open');
+    more?.setAttribute('aria-expanded', 'false');
+  } });
+}
+
+setupMessageMenu(thread, {
+  resolve: (target) => {
+    const m = target.closest('.m[data-role]');
+    if (!m || m.classList.contains('editing')) return null;
+    return { m, part: m.classList.contains('ai') && m.classList.contains('cont') };
+  },
+  open: (hit, at) => openMessageMenu(hit, at),
+});
 /** 編集で本文から消した印の添付は、再送しない（元の本文に印があって、編集後に無くなったものだけを外す） */
 function keptAttachments(attached, before, after) {
   const marks = (text) => new Set(String(text ?? '').split(/\r?\n/).map(line => ATTACHMENT_LINE.exec(line.trim())?.[1]).filter(Boolean).map(normalizeAttachmentPath));
@@ -669,7 +759,7 @@ function editMessage(m, draft) {
   const close = () => {
     if (state.busy) return;
     editor.remove(); body.hidden = false; m.classList.remove('editing');
-    m.querySelector('.editbtn')?.focus(); relayoutBranches();
+    m.querySelector(':scope > .who .who-more')?.focus(); relayoutBranches();
   };
   cancel.onclick = close;
   const update = () => {
@@ -698,18 +788,15 @@ function editMessage(m, draft) {
 
 function setUuid(m, uuid) {
   if (!uuid) return;
-  m.dataset.uuid = uuid;
-  if (capsOf(activeBackendId()).fork !== false) {
-    const b = m.querySelector(":scope > .message-actions");
-    if (b) b.hidden = false;
-  }
+  m.dataset.uuid = uuid;   // ⋯ のメニューの「ここから分岐」は、uuid が分かった発言だけに出る（openMessageMenu）
 }
 
 /**
  * 発言者の行。「[ロゴ] 名前 …… 時刻」。ロゴ（エージェントの発言だけ。「あなた」には付けない）は名前の左に置き、読み上げには出さない。
- * 時刻は触れている・焦点がある間だけ見える（style.css。場所は取ったまま）。右端には操作の列（24px）を空けてある
+ * 時刻は触れている・焦点がある間だけ見える（style.css。場所は取ったままなので並びは動かない）。右端の操作の列（24px）は ⋯、
+ * 時刻の左にコピー（actions: false は操作を持たない行。wireActions が押したときの動きを付ける）
  */
-function whoLine(who, at, { backend } = {}) {
+function whoLine(who, at, { backend, actions = true } = {}) {
   const w = el("div", "who");
   if (backend) {
     const logo = backendLogo(backend, who);
@@ -717,7 +804,12 @@ function whoLine(who, at, { backend } = {}) {
     logo.setAttribute("aria-hidden", "true");
     w.append(logo);
   }
-  w.append(el("span", null, who), el("span", "when", hhmm(at)));
+  w.append(el("span", null, who));
+  if (actions) {
+    const { copy, more } = actionButtons();
+    w.classList.add("acts");
+    w.append(copy, el("span", "when", hhmm(at)), more);
+  } else w.append(el("span", "when", hhmm(at)));
   return w;
 }
 
@@ -732,7 +824,7 @@ function userMsg(text, { uuid, at, presents = [], markdown = true } = {}) {
   m.append(whoLine(t("chat.message.you"), at));
   const body = el("div", "body");
   m.append(body);
-  forkButton(m);
+  wireActions(m);
   paintUser(m, text, presents, { markdown });
   setUuid(m, uuid);
   return m;
@@ -746,18 +838,33 @@ function paintUser(m, text, presents = [], { markdown = m.querySelector(":scope 
   const body = m.querySelector(":scope > .body");
   m.attached = presents;
   paintUserBody(body, text, presents, { markdown });
+  if (markdown) paintUserTools(m);
+  else m.querySelector(":scope > .msg-tools")?.remove();
+}
+
+/** 発言の下の「📎 N ▾」。結び付いた添付（m.attached）から作り直す（本文は触らない） */
+function paintUserTools(m) {
   m.querySelector(":scope > .msg-tools")?.remove();
-  m.querySelector(":scope > .msg-source")?.remove();
-  if (!markdown) return;
-  const tools = userTools({ raw: text, presents,
+  const tools = userTools({ presents: m.attached ?? [],
     openItem: (item, present) => {
       const src = present && attachmentImageSrc(present);
       if (src) openLightbox(src, item.name, item.path);
       else if (item.path) filePreview.open({ path: item.path, line: null }, null);
     },
     copyPath: (path) => copyPathText(path) });
-  if (tools) body.after(tools.row, tools.source);
+  if (tools) m.querySelector(":scope > .body")?.after(tools);
 }
+
+/**
+ * 送った直後の吹き出しに渡す仮の添付（入力欄の添付から。web/attachment-frame.mjs）。パスの字を出さず、画像は枠から始める。
+ * 後から同じパスの present が届いたら、描き直さずに中身だけ差し替える（present のハンドラ）
+ */
+const provisionalPresent = (a) => ({ by: 'human', provisional: true, kind: a.kind === 'image' ? 'image' : 'file', path: a.path,
+  captionParams: { name: a.name }, mime: a.mime ?? '',
+  ...(a.from === 'host' || a.from === 'device' ? { origin: a.from } : {}), ...(Number.isFinite(a.size) ? { size: a.size } : {}),
+  ...(a.width > 0 && a.height > 0 ? { width: a.width, height: a.height } : {}) });
+/** 送ってから吹き出しができるまでの仮の添付（messageId で引く。行を作るときに 1 度だけ使う） */
+const provisionalByMessage = new Map();
 
 /**
  * Pleiad の完了通知の 1 行。✓/✕・「委譲の結果」・依頼の題・委譲先・届いた時刻・「開く」。開くと結果の本文だけで、
@@ -829,26 +936,16 @@ function commandMsg(m) {
     who.firstChild.append(' · ', el('span', 'handed', label));
     if (m.pending && m.runId && capsOf(m.backend ?? activeBackendId()).shell === 'host') who.firstChild.append(shellSkipButton(m));
   }
+  // 操作は ⋯ のメニュー（コピー・`!` は「入力欄に写す」・ここから分岐）。走らせ直した行の内容は、その時点の行から読む
+  node.commandText = () => (m.runId ? shellRows.get(m.runId)?.m : null)?.command ?? m.command ?? '';
+  node.shellCommand = () => { const x = (m.runId ? shellRows.get(m.runId)?.m : null) ?? m; return x.kind === 'shell' && x.command && !x.running ? x.command : null; };
   const parts = commandParts(m, { onStop: m.runId ? () => cmd('stopShell', { runId: m.runId }).catch(() => {}) : null });
   // 0 以外の終了コードが分かるときだけ、行の面を一段上げる（ツールの失敗と同じ語彙。design-system「システム側のメッセージ」）
   if (shellFailed(m)) { const box = el('div', 'cmd-box'); box.append(...parts); node.append(who, box); }
   else node.append(who, ...parts);
   if (m.runId) { node.dataset.runId = m.runId; shellRows.set(m.runId, { m, node }); if (m.running) syncShellTicker(); }
-  const actions = el('div', 'message-actions');
-  if (m.kind === 'shell' && m.command && !m.running) {
-    const copy = el('button', 'btn copybtn', t('chat.system.copyToComposer'));
-    copy.type = 'button';
-    copy.onclick = () => copyShellToComposer(m.command);
-    actions.append(copy);
-  }
+  wireActions(node);
   if (m.uuid) node.dataset.uuid = m.uuid;
-  if (m.uuid && capsOf(activeBackendId()).fork !== false) {
-    const fork = el('button', 'btn forkbtn', t('chat.message.fork'));
-    fork.type = 'button';
-    fork.onclick = () => forkFrom(node);
-    actions.append(fork);
-  }
-  if (actions.childElementCount) node.append(actions);
   return node;
 }
 
@@ -1036,7 +1133,7 @@ function aiMsg({ uuid, at, cont, backend } = {}) {
   if (at) m.dataset.at = at;
   const be = backend ?? activeBackendId();
   m.append(whoLine(labelOf(be) || "AI", at, { backend: be }));
-  forkButton(m);
+  wireActions(m);
   setUuid(m, uuid);
   return m;
 }
@@ -1823,7 +1920,9 @@ function markDelivery(row, kind) {
 function ensureMessageRow(messageId, text, at) {
   let row = messageRow(messageId);
   if (!row) {
-    row = append(userMsg(text, { at }), `live:${++liveSeq}`);
+    const presents = provisionalByMessage.get(messageId) ?? [];
+    provisionalByMessage.delete(messageId);
+    row = append(userMsg(text, { at, presents }), `live:${++liveSeq}`);
     row.dataset.messageId = messageId;
   }
   if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
@@ -1973,7 +2072,8 @@ function onEvent(ev, replay = false) {
       if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
       row.dataset.messageStarted = '1';
       const userRow = row.querySelector('.m.user');
-      if (userRow?.querySelector(':scope > .body')) paintUser(userRow, ev.text, userRow.attached ?? []);
+      // 本文が同じなら描き直さない（送った直後の画像の枠を、読み込みの途中でやり直さない）
+      if (userRow?.querySelector(':scope > .body') && userRaw(userRow) !== String(ev.text ?? '')) paintUser(userRow, ev.text, userRow.attached ?? []);
       if (ev.at) { row.querySelector('.m').dataset.at = ev.at; row.querySelector('.who .when').textContent = hhmm(ev.at); }
       // 放置中の圧縮で末尾に付いた区切りは、この発言の前へ置き直す（at で並べ直す）。
       // 区切りがすべてこの発言より前にあるときは作り直さない。古い区切りを最新の発言の前へ動かしていた不具合の再発を防ぐ
@@ -2138,7 +2238,13 @@ function onEvent(ev, replay = false) {
         const owner = index >= 0 && rows[index].querySelector(':scope > .body')?.classList.contains('md-user') ? rows[index] : null;
         if (owner) {
           const same = (a, b) => normalizeAttachmentPath(a) === normalizeAttachmentPath(b);
-          if (!(owner.attached ?? []).some(p => same(p.path, ev.path))) paintUser(owner, userRaw(owner), [...(owner.attached ?? []), ev]);
+          const known = (owner.attached ?? []).findIndex(p => same(p.path, ev.path));
+          if (known < 0) paintUser(owner, userRaw(owner), [...(owner.attached ?? []), ev]);
+          else if (owner.attached[known].provisional) {
+            // 送った直後に仮の添付で描いてある。描き直さず（画像を読み直さない）、持っている情報だけを本物に替える
+            owner.attached[known] = ev;
+            paintUserTools(owner);
+          }
           relayoutBranches();
           return owner.closest('.mw');
         }
@@ -3693,7 +3799,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   spine.append(svgEl('line', { x1: 20, y1: 0, x2: 20, y2: '100%' }));
   th.append(spine);
   const put = (node, key) => { const w = wrap(node, key); th.append(w); return w; };
-  const readOnly = (m) => { m.querySelector(':scope > .message-actions')?.remove(); return m; };
+  const readOnly = stripActions;
   const requestNode = (text, at) => {
     const m = readOnly(userMsg(text, { at, markdown: false }));
     m.querySelector('.who > span').textContent = t('dialog.work.request');
@@ -3703,14 +3809,8 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
       const text = el('span', 'bg-request-text');
       text.append(...bubble.childNodes);
       bubble.append(text);
-      const toggle = el('button', 'bg-request-toggle', t('dialog.work.showFull'));
-      toggle.type = 'button'; toggle.hidden = true;
-      toggle.onclick = () => {
-        const expanded = bubble.classList.toggle('expanded');
-        toggle.textContent = expanded ? t('dialog.work.collapse') : t('dialog.work.showFull');
-      };
-      bubble.after(toggle);
-      requestAnimationFrame(() => { toggle.hidden = text.scrollHeight <= text.clientHeight + 1; });
+      // 4 行で畳み、はみ出すときだけシェブロン（自分の長い発言と同じ部品。web/fold.mjs）
+      mountFold(bubble, text, { measure: true, labels: foldLabels() });
     }
     return m;
   };
@@ -3911,7 +4011,8 @@ function delegateDetail(card, routing) {
     ? routingDetail(routing, { names: routingNames, logo: routingLogo, onRetry: (root, button) => toggleRetry(card, root, button) })
     : pinnedDetail(routing, pinnedFacts(card, routing));
 }
-/** 開いた内訳の先頭の「依頼」。4 行で切り、はみ出すときだけ「全文を表示」（バックグラウンドの詳細と同じ） */
+const foldLabels = () => ({ open: t('dialog.work.showFull'), close: t('dialog.work.collapse') });
+/** 開いた内訳の先頭の「依頼」。4 行で畳み、はみ出すときだけシェブロン（自分の長い発言・バックグラウンドの詳細と同じ部品。web/fold.mjs） */
 function delegateRequest(card) {
   const task = cardJson(card, '.tc-input')?.task;
   if (typeof task !== 'string' || !task.trim()) return null;
@@ -3919,18 +4020,8 @@ function delegateRequest(card) {
   const text = el('div', 'rt-request-text');
   text.innerHTML = plainTextHtml(task.trim(), { paths: false });   // 字は書いたとおり。URL だけリンクにする
   box.append(el('div', 'rt-request-label', t('dialog.work.request')), text);
-  const toggle = el('button', 'bg-request-toggle', t('dialog.work.showFull'));
-  toggle.type = 'button'; toggle.hidden = true;
-  toggle.onclick = (e) => {
-    e.preventDefault();
-    const expanded = box.classList.toggle('expanded');
-    toggle.textContent = expanded ? t('dialog.work.collapse') : t('dialog.work.showFull');
-  };
-  box.append(toggle);
-  // 閉じたカードでは高さを測れないので、開いたときに測る
-  const measure = () => { if (!box.classList.contains('expanded')) toggle.hidden = text.scrollHeight <= text.clientHeight + 1; };
-  card.querySelector('.tc-details')?.addEventListener('toggle', measure);
-  requestAnimationFrame(measure);
+  // 閉じたカードでは高さが取れないので、開いて見えるようになってから測る（mountFold の measure）
+  mountFold(box, text, { measure: true, labels: foldLabels() });
   return box;
 }
 /** 入力・出力の JSON は「入力・出力（JSON）」の折りたたみの奥へ（消さずに残す）。結果の読み直しもこの中に入る（render.mjs の applyToolResult） */
@@ -4741,7 +4832,8 @@ async function thumbnailOf(file) {
     const c = document.createElement("canvas");
     c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
     c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-    return c.toDataURL("image/jpeg", 0.85);
+    // 縦横は、送った直後の吹き出しの枠の大きさに使う（web/attachment-frame.mjs）
+    return { dataUri: c.toDataURL("image/jpeg", 0.85), width: bmp.width, height: bmp.height };
   } finally { bmp.close?.(); }
 }
 /** 添付の置き場の画像を大きく見る URL（/local-file。認証はクッキー）。パスが無ければ縮小の data URI */
@@ -4812,7 +4904,8 @@ async function runUpload(u) {
       isImage ? thumbnailOf(file).catch(() => null) : null,
     ]);
     if (!r || u.cancelled) { u.cancelled = true; renderAttached(); return; }   // やめた（札は外れている）
-    const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: "device", size: file.size, ...(thumb ? { dataUri: thumb } : {}) };
+    const item = { name: file.name, path: r.path, kind: r.kind, mime: file.type, from: "device", size: file.size,
+      ...(thumb ? { dataUri: thumb.dataUri, width: thumb.width, height: thumb.height } : {}) };
     // 持ち主は届いた時点で読む（新しい会話を作っている間に始めたものは、できた会話の id に付け替わっている: adoptUploads）
     const owner = u.sessionId;
     if (state.current === owner) {
@@ -4950,7 +5043,7 @@ async function dropFolder(entries) {
 
 const contextMenu = createContextMenu();
 const closeMenu = () => contextMenu.close();
-function showMenu(x, y, items, title) { side.closePops(); return contextMenu.open(x, y, items, title); }
+function showMenu(x, y, items, title, opts) { side.closePops(); return contextMenu.open(x, y, items, title, opts); }
 
 /** クリップボードへ写し、結果を一行出す。done / failed は出す文（sys に渡す HTML） */
 const copy = (text, done, failed) => {
@@ -5631,7 +5724,7 @@ function paintHistoryRows(fromMi, retained = null) {
  * 履歴の発言 1 件の行。メインパネル（paintHistoryRows）と読むだけの筋（作業の詳細、readonlyThread）で共通。
  * node が null なら描かない。role は次の発言の cont（AI が続けて話したか）を決める。system はシステム側の行（systemHistoryNode）だったか。
  * prev は直前に置いた行。続けて残った中断（ツールの中断と、その直後の中断）は 1 行にする。
- * readonly は読むだけの筋: 操作（message-actions）を外し、発言者をモデル名で出し（どのモデルが答えたかを見分けるため。
+ * readonly は読むだけの筋: 操作（コピー・⋯）を外し、発言者をモデル名で出し（どのモデルが答えたかを見分けるため。
  * 分からなければエージェント名のまま）、ツールカードを state.toolCards に登録せず、委譲のカードに「開く」を付けない
  * （openFromCard はメインパネルの会話を親として子を探すので、別の会話の筋では違う子を開く）。
  * backend は発言に backend が無いときの発言者。sessionId は Web 検索の失敗に接続先の一文を足すときに引く会話。
@@ -5643,7 +5736,7 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
     const repeated = system?.matches('.m.sys.interrupted') && prev?.querySelector(':scope .m.sys.interrupted');
     const role = system?.classList.contains('user') ? 'user' : null;
     if (!system || repeated) return { node: null, role, system: true };
-    if (readonly) system.querySelector(':scope > .message-actions')?.remove();
+    if (readonly) stripActions(system);
     return { node: system, role, system: true };
   }
   let node;
@@ -5661,9 +5754,9 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
     });
     if (!m.toolCalls) for (const name of m.tools ?? []) cards.push(renderToolCall(name, null));
     node.append(...toolNodes(cards));
-    if (m.text) { const b = el("div", "body"); b.innerHTML = renderAssistantMarkdown(m.text, refs); node.append(b); }
+    if (m.text) { const b = el("div", "body"); b.dataset.raw = m.text; b.innerHTML = renderAssistantMarkdown(m.text, refs); node.append(b); }
   }
-  if (readonly) node.querySelector(':scope > .message-actions')?.remove();
+  if (readonly) stripActions(node);
   return { node, role: m.role };
 }
 
@@ -5918,8 +6011,6 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
     const m = w.querySelector('.m[data-role]');
     if (m && message) {
       delete m.dataset.uuid;
-      const button = m.querySelector('.message-actions');
-      if (button) button.hidden = true;
       setUuid(m, message.uuid);
     }
   }
@@ -6024,18 +6115,20 @@ function forkPending(button) {
   if (!button) return () => {};
   const old = [...button.childNodes].map(node => node.cloneNode(true));
   button.disabled = true;
-  const timer = setTimeout(() => button.replaceChildren(runMark(t('pending.creatingBranch')), t('pending.creatingBranch')), 150);
+  // 発言の ⋯ は絵だけのボタンなので、弧だけを出す（名前は今のまま）。ほかは弧と字
+  const icon = button.classList.contains('who-btn');
+  const timer = setTimeout(() => button.replaceChildren(...(icon ? [runMark(t('pending.creatingBranch'))] : [runMark(t('pending.creatingBranch')), t('pending.creatingBranch')])), 150);
   return () => { clearTimeout(timer); if (button.isConnected) button.replaceChildren(...old); button.disabled = false; };
 }
 
 /** Create the actual child first, then grow its edge, reveal its node, and promote it. */
-async function forkFrom(m, { draft } = {}) {
+async function forkFrom(m, { draft, pending } = {}) {
   const uuid = m.dataset.uuid, mw = m.closest('.mw');
   if (!uuid || !state.current || state.busy) return;
   const key = mw?.dataset.key ?? '';
   const mi = draft ? draft.index - 1 : key.startsWith('m:') ? Number(key.slice(2)) : state.messages.findIndex(x => x.uuid === uuid);
   const source = state.current;
-  const clearPending = forkPending(m.querySelector('.forkbtn'));
+  const clearPending = forkPending(pending ?? m.querySelector(':scope > .who .who-more'));
   let sendTo;
   state.busy = true;
   log.classList.add('branch-transition');
@@ -6210,7 +6303,8 @@ async function submit() {
     // 候補が開いたまま blur した場合の後片付けが先に走ると、送信の入力が書き換わる
     slashSkills.close();
     const text = $('prompt').value;
-    const attachments = orderedAttachments().map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
+    const ordered = orderedAttachments();
+    const attachments = ordered.map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
     if (!text.trim() && !attachments.length) return;
     if (text.trim() === '/compact' && !attachments.length) {
       if (canCompactHere()) {
@@ -6242,6 +6336,8 @@ async function submit() {
     }
     const request = previous && previous.prompt === full ? previous : { ...args, messageId: randomId() };
     receipts.set(sessionId, request); saveReceipts();
+    // 吹き出しは、受理の応答が先でも userMessage が先でも、この仮の添付で描く
+    if (ordered.length && !messageRow(request.messageId)) provisionalByMessage.set(request.messageId, ordered.map(provisionalPresent));
     await cmd('sendMessage', request);
     if (state.current === sessionId && !messageRow(request.messageId)) {
       markDelivery(ensureMessageRow(request.messageId, full, new Date().toISOString()), 'sending');

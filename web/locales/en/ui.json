@@ -1274,7 +1274,14 @@
       "defaultResolved": "Default ({{model}})"
     },
     "message": {
-      "fork": "⑂ Branch from here",
+      "fork": "Branch from here",
+      "forkPart": "Branch from this message",
+      "copy": "Copy",
+      "copyReply": "Copy reply",
+      "copied": "Copied",
+      "more": "Message actions",
+      "sentAt": "Sent at {{time}}",
+      "sourceTitle": "What was sent to the agent",
       "editResend": "Edit and resend",
       "resend": "Resend",
       "notSaved": "This message hasn't been saved yet. Wait a moment and try again.",
@@ -1286,7 +1293,6 @@
       "showMore": "Show more",
       "showLess": "Show less",
       "showSource": "View what was sent to the agent",
-      "hideSource": "Hide source",
       "you": "You"
     },
     "attachList": {
@@ -1411,6 +1417,9 @@
       "enlarge": "{{name}} (click to enlarge)",
       "remove": "Remove",
       "readFailed": "Couldn't read the file",
+      "imageLoading": "Loading image: {{name}}",
+      "imageFailed": "Couldn't load the image",
+      "imageRetry": "Try again",
       "tooLarge": "{{name}} is too large (max {{limit}})",
       "failed": "Couldn't attach {{name}}: {{error}}",
       "fromHost": "Host file {{path}} (passed by path, not uploaded)",

@@ -1236,7 +1236,14 @@
       "defaultResolved": "既定（{{model}}）"
     },
     "message": {
-      "fork": "⑂ ここから分岐",
+      "fork": "ここから分岐",
+      "forkPart": "この発言から分岐",
+      "copy": "コピー",
+      "copyReply": "返答をコピー",
+      "copied": "コピーしました",
+      "more": "この発言の操作",
+      "sentAt": "{{time}} に送信",
+      "sourceTitle": "エージェントに渡した原文",
       "editResend": "編集して再送信",
       "resend": "再送信",
       "notSaved": "この発言はまだ保存されていません。少し待って再試行してください",
@@ -1248,7 +1255,6 @@
       "showMore": "続きを表示",
       "showLess": "折りたたむ",
       "showSource": "エージェントに渡した原文を見る",
-      "hideSource": "原文を閉じる",
       "you": "あなた"
     },
     "attachList": {
@@ -1369,6 +1375,9 @@
       "enlarge": "{{name}}（押すと大きく見る）",
       "remove": "外す",
       "readFailed": "読めなかった",
+      "imageLoading": "画像を読み込んでいます: {{name}}",
+      "imageFailed": "読み込めませんでした",
+      "imageRetry": "もう一度",
       "tooLarge": "{{name}} は大きすぎる（上限 {{limit}}）",
       "failed": "{{name}} を渡せなかった: {{error}}",
       "fromHost": "ホストのファイル {{path}}（送らずにパスで渡します）",
