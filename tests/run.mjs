@@ -164,6 +164,8 @@ const cases = [
   await import("./unit/history-heights.mjs"),
   // 履歴を描く間、1 行ごとに筋を探し回らない（稼働表示の行は activity.el。issue #37）
   await import("./unit/place-scan.mjs"),
+  // 返答の本文は 1 コマに 1 回だけ描く・流れの終わりでは描き切る・会話を切り替えたら別の会話へ描かない
+  await import("./unit/stream-frames.mjs"),
   await import("./unit/work-attribution.mjs"),
   await import('./unit/work-status.mjs'),
   await import('./unit/background-labels.mjs'),

@@ -520,6 +520,7 @@ function clearThread() {
   if (heightPreparationTimer !== null) clearTimeout(heightPreparationTimer);
   heightPreparationTimer = null;
   activity.hide();
+  cancelStream();
   thread.replaceChildren(spine());
   thread.classList.remove("branched");
   state.streamEl = null;
@@ -923,7 +924,7 @@ function openTurnEl() {
 
 function closeTurnEl() {
   closeThink();
-  state.streamEl = null;
+  endStream();
   state.turnEl = null;
   state.turnClosed = false;
 }
@@ -1366,10 +1367,44 @@ function thinkFromText(text) {
 // ---------------------------------------------------------------- ターンの流れ
 // core が正規化して送ってくる（プロトコル v3）。エージェントごとの差は core で吸収済み。
 
+// 本文の描き直しは 1 コマに 1 回。デルタは文字を貯めるだけにする（正本は本文の要素の dataset.raw）。
+// デルタごとに返答の全体を Markdown から作り直し、会話全体のレイアウトを強制すると、スマホの CPU では
+// デルタの間隔に追いつかず、数秒〜十数秒コマが出なかった（issue #37）。
+// 流れが終わる所（text.end・ツール・thinking・発言を閉じる・中断・会話の切り替え）では、貯めた分を同期で描き切る（endStream・closeTurnEl）。
+let streamFrame = 0, streamTarget = null;
+
+/** 貯めた分を今描く。末尾を見ていたときだけ末尾へ追う（読み返している人を引き戻さない） */
+function flushStream() {
+  if (streamFrame) cancelAnimationFrame(streamFrame);
+  streamFrame = 0;
+  const target = streamTarget;
+  streamTarget = null;
+  if (!target) return;
+  const stick = target.isConnected && atBottom();
+  target.innerHTML = renderAssistantMarkdown(target.dataset.raw);
+  if (!target.isConnected) return;
+  relayoutBranches();
+  if (stick) log.scrollTop = log.scrollHeight;
+}
+
+/** 筋ごと捨てるとき（会話の切り替え）。貯めた分は捨てる本文の要素の中にあり、別の会話には描かない */
+function cancelStream() {
+  if (streamFrame) cancelAnimationFrame(streamFrame);
+  streamFrame = 0;
+  streamTarget = null;
+}
+
+/** 追記中の本文を終える。貯めた分を描き切ってから、次の本文・ツール・発言に移る */
+function endStream() {
+  flushStream();
+  state.streamEl = null;
+}
+
 function appendText(text) {
   closeThink();
-  activity.show(ACTIVITY_LABEL.writing);
-  const stick = atBottom();
+  // 稼働表示は文言が変わったときだけ更新する（show は行の置き直し・筋の貼り直し・作業の入口の更新まで行う）
+  const label = stoppingHere() ? ACTIVITY_LABEL.stopping : ACTIVITY_LABEL.writing;
+  if (!activity.el?.isConnected || activity.text !== label) activity.show(ACTIVITY_LABEL.writing);
   if (!state.streamEl) {
     // 閉じた発言の後は streamEl がリセットされるため、本文を作る前に開く。
     const turn = openTurnEl();
@@ -1378,8 +1413,8 @@ function appendText(text) {
     turn.append(state.streamEl);
   }
   state.streamEl.dataset.raw += text;
-  state.streamEl.innerHTML = renderAssistantMarkdown(state.streamEl.dataset.raw);
-  if (stick) log.scrollTop = log.scrollHeight;
+  streamTarget = state.streamEl;
+  streamFrame ||= requestAnimationFrame(flushStream);
 }
 
 const ACTIVITY_LABEL = {
@@ -1668,13 +1703,13 @@ function onEvent(ev, replay = false) {
       const m = openTurnEl();
       if (ev.uuid) setUuid(m, ev.uuid);
       closeThink();
-      state.streamEl = null;
+      endStream();
       state.turnClosed = true;
       return;
     }
 
     case "thinking.start":
-      state.streamEl = null;
+      endStream();
       state.thinkTokens = 0;
       activity.show(ACTIVITY_LABEL.thinking);
       return;
@@ -1694,7 +1729,7 @@ function onEvent(ev, replay = false) {
 
     case "tool.start": {
       if (ev.id && state.toolCards.has(ev.id)) return state.toolCards.get(ev.id);
-      state.streamEl = null;
+      endStream();
       const stick = atBottom();
       const card = renderToolCall(ev.name, ev.input, { id: ev.id });
       linkDelegateCard(card, ev.input);
