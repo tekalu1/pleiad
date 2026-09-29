@@ -1,4 +1,7 @@
-// A timer belongs to one conversation and one backend. Nothing survives a restart.
+// A timer belongs to one conversation and one backend. The scheduler keeps them in memory only;
+// core/server.mjs saves the visible ones and puts them back after a restart (ADR 0069).
+export const COMPACTION_GRACE_MS = 8 * 60_000;
+
 export function idleCompactionGuards(current, busy) {
   return { canStart: () => current() && !busy(), canInvoke: current };
 }
@@ -7,7 +10,7 @@ export function createCompactionScheduler({ now = Date.now, setTimer = setTimeou
   canRun, compact, changed = () => {} }) {
   const pending = new Map();
   const revisions = new Map();
-  const graceMs = 8 * 60_000;
+  const graceMs = COMPACTION_GRACE_MS;
 
   const revision = id => revisions.get(id) ?? 0;
   function cancel(id) {
@@ -57,6 +60,7 @@ export function createCompactionScheduler({ now = Date.now, setTimer = setTimeou
     return at;
   }
 
-  return { schedule, cancel, cancelFiring, revision, get: id => pending.get(id)?.visible ? pending.get(id).at : null,
-    entries: () => [...pending.values()].filter(entry => entry.visible).map(({ id, at }) => ({ sessionId: id, at })) };
+  return { schedule, cancel, cancelFiring, revision, now, graceMs, get: id => pending.get(id)?.visible ? pending.get(id).at : null,
+    entries: () => [...pending.values()].filter(entry => entry.visible)
+      .map(({ id, at, sessionId, usedTokens }) => ({ sessionId: id, at, backendId: sessionId, usedTokens })) };
 }
