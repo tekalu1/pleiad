@@ -14,14 +14,18 @@ import { t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
 import { userPieces, piecesText, appendPieces } from './conversation-nav.mjs';
 
-/** 末尾からこの距離（px）以上離れたときだけ「最新へ」を出す */
-export const AWAY = 120;
+/** 末尾からこの距離（px）以上離れたときだけ「最新へ」を出す（末尾の目印が、会話欄の下端からこの距離の内に見えなくなったとき） */
+const AWAY = 120;
+/** 目印から会話欄の下端までの余白（#log の下の余白 24px）。これを引いて、スクロール量の 120px にそろえる */
+const END_GAP = 24;
 /** 上端から見て、この位置より上に始まった発言を「いまの発言」とする */
 const PROBE = 48;
 /** 問いの下端がこの位置より上に出たときだけ、上に残す */
 const STICKY_EDGE = 8;
 /** 全発言の位置を測り直す間隔の下限（ms） */
 const MEASURE_EVERY = 200;
+/** 実寸の確定が続いている間、残る問い・地図の同期をまとめて行うまでの静かな時間（ms） */
+const SETTLE_IDLE = 250;
 
 /** 利用者の発言の行（.mw）。コマンド・シェルの行（.m.user.cmd）は問いではないので数えない */
 const TURN_USER = ':scope > .mw > .mw-body > .m.user:not(.cmd)';
@@ -67,6 +71,9 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
    * 全数で読むのは行そのものの位置だけにする
    */
   let turns = [];
+  // 実寸の確定中（web/history-heights.mjs の onBusy が知らせる）は、行の高さが変わり続け、位置を測るたび・残る問いを書き換えるたびに
+  // 再レイアウトが走ってスクロールが重くなる。最新へのボタンだけ即時にし、残りは静かになってから（または確定が済んでから）1 回にまとめる
+  let finalizing = false, stale = false, idleTimer = 0;
   let width = 0, turnsDirty = true, raf = 0, measureTimer = 0, lastMeasure = -Infinity, measured = false;
   const texts = new WeakMap();
   let stickyFor = null, stickyShown = null, newReplies = 0, running = false, runningMark = null, latestState = '';
@@ -105,7 +112,13 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   };
   const ensureTurns = () => { if (turnsDirty) { collect(); turnsDirty = false; } return turns; };
 
-  const distance = () => log.scrollHeight - log.clientHeight - log.scrollTop;
+  // 末尾から離れたかは、会話の末尾の目印（1px の要素）が見えているかで決める。scrollHeight / scrollTop を毎コマ読むと、
+  // 実寸の確定でレイアウトが崩れているときに、読むたびにレイアウトを強制してしまう（IntersectionObserver は描画の中で非同期に知らせる）
+  const endMark = el('div', 'nav-end');
+  endMark.setAttribute('aria-hidden', 'true');
+  log.append(endMark);
+  let endVisible = true;
+  new IntersectionObserver((records) => { endVisible = records.at(-1).isIntersecting; schedule(); }, { root: log, rootMargin: `0px 0px ${AWAY - END_GAP}px 0px` }).observe(endMark);
   /** 上端（PROBE）より上に始まった最後の発言。持っている位置の二分探索（DOM を読まない）。無ければ 0（発言が無ければ -1） */
   const currentIndex = () => {
     if (!turns.length) return -1;
@@ -135,7 +148,7 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   }
 
   function paintLatest() {
-    const away = distance() > AWAY;
+    const away = !endVisible;
     if (!away) newReplies = 0;
     // 末尾へ戻って消えるとき、ボタンにあったフォーカスは会話へ返す（body に落とさない）
     if (!away && !latest.hidden && latest.contains(document.activeElement)) log.focus({ preventScroll: true });
@@ -160,16 +173,28 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     raf = 0;
     ensureTurns();
     // 並びが変わって全数測定がまだなら、最初の 1 回だけ待たずに測る（地図の点を置くため）
-    if (!measured && turns.length) measureAll();
+    if ((!measured || stale) && turns.length) { measureAll(); stale = false; }
     const remeasured = fresh;
     fresh = false;
     paintSticky();
     paintLatest();
     for (const fn of listeners) fn(remeasured);
   }
-  const schedule = () => { if (!raf) raf = requestAnimationFrame(update); };
+  /** 確定中の軽い更新（最新へのボタンだけ） */
+  function quick() { raf = 0; paintLatest(); }
+  /** 静かになってから全部を 1 回。reset なら、いまの待ちを延ばす（スクロールが続いている間は待つ） */
+  function armIdle(reset) {
+    if (idleTimer && !reset) return;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { idleTimer = 0; if (raf) { cancelAnimationFrame(raf); raf = 0; } update(); }, SETTLE_IDLE);
+  }
+  const schedule = () => {
+    if (finalizing) { armIdle(false); if (!raf) raf = requestAnimationFrame(quick); return; }
+    if (!raf) raf = requestAnimationFrame(update);
+  };
   /** 筋の高さ・窓の大きさが変わった（ResizeObserver の中＝レイアウトの直後）。全数を測り直す。速すぎるときは間引いて、少し後に 1 度 */
   const invalidate = () => {
+    if (finalizing) { stale = true; armIdle(false); return; }
     if (measureTimer) return;
     const wait = MEASURE_EVERY - (performance.now() - lastMeasure);
     const run = () => {
@@ -214,7 +239,7 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   /** いまの位置より前（direction < 0）・後に始まる発言。無ければ -1。並びは上から順なので二分探索 */
   function neighbour(direction) {
     ensureTurns();
-    if (!measured) measureAll();
+    if (!measured || stale) { measureAll(); stale = false; }
     // 送り先は「行の上端 − 12px」。それが今の位置より 2px 以上前（後）にある発言
     const y = log.scrollTop;
     const before = (turn) => turn.top - 12 < y - 2;
@@ -240,7 +265,7 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     goTo(currentIndex());
   });
   latest.addEventListener('click', toLatest);
-  log.addEventListener('scroll', schedule, { passive: true });
+  log.addEventListener('scroll', () => { if (finalizing) armIdle(true); schedule(); }, { passive: true });
   log.addEventListener('keydown', (event) => {
     if (event.defaultPrevented || event.isComposing) return;
     const target = event.target;
@@ -272,7 +297,13 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     /** 会話を替えた。新着と位置の記憶を捨てる */
     reset() { newReplies = 0; stickyFor = null; turnsDirty = true; measured = false; schedule(); },
     /** 返答が 1 件届いた（ターンの終わり）。末尾から離れているときだけ新着に数える */
-    replyArrived() { if (distance() > AWAY) { newReplies++; schedule(); } },
+    replyArrived() { if (!endVisible) { newReplies++; schedule(); } },
+    /** 実寸の確定が続いているか（web/history-heights.mjs の onBusy）。済んだら、たまった分を 1 回まとめて行う */
+    finalizing(on) {
+      if (on === finalizing) return;
+      finalizing = on;
+      if (!on) { clearTimeout(idleTimer); idleTimer = 0; stale = true; if (raf) { cancelAnimationFrame(raf); raf = 0; } schedule(); }
+    },
     /** 走っているか（弧を出すか）が変わった */
     syncRunning() { const now = isRunning(); if (now !== running) { running = now; schedule(); } },
     goTo, neighbour, currentIndex, scrollToRow, schedule, invalidate,

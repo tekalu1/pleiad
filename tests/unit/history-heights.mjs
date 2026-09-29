@@ -258,4 +258,23 @@ export default async function (t) {
     s.settleFrames();
     t.ok("外れた行は確定しない", s.rows.slice(0, 200).every(r => !r.classList.contains("height-ready")));
   }
+
+  // ---- 確定が続いているかの知らせ（onBusy。会話の移動の部品が、確定が続く間の同期を間引くのに使う）
+  {
+    const s = screen(400), calls = [];
+    const settler = attach(s, { onBusy: on => calls.push(on) });
+    openAtEnd(s, settler);
+    t.ok("開くと、確定が続いていると知らせる（続けて同じ値は知らせない）", calls[0] === true && calls.every((v, i) => i === 0 || v !== calls[i - 1]), JSON.stringify(calls));
+    s.settleFrames();
+    t.ok("落ち着いたら、済んだと知らせる", calls.at(-1) === false && calls.length >= 2, JSON.stringify(calls));
+    const before = calls.length;
+    s.log.scrollTop = 0;
+    s.frame();
+    t.ok("スクロールで近づいた行があれば、また続いていると知らせる", calls.length > before && calls.at(-1) === true, JSON.stringify(calls));
+    s.settleFrames();
+    t.ok("それが落ち着いたら、また済んだと知らせる", calls.at(-1) === false);
+    settler.prepare();
+    settler.cancel();
+    t.ok("cancel（会話の切り替え）では、続いているままにしない", calls.at(-1) === false);
+  }
 }

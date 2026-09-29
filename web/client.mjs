@@ -514,7 +514,7 @@ function historyAnchor(rows = thread.querySelectorAll(':scope > .mw')) {
  */
 let heightSettler = null;
 function prepareHistoryHeights() {
-  heightSettler ??= createHeightSettler({ log, thread, atBottom, anchorRow: historyAnchor });
+  heightSettler ??= createHeightSettler({ log, thread, atBottom, anchorRow: historyAnchor, onBusy: (on) => nav.finalizing(on) });
   heightSettler.prepare();
 }
 
