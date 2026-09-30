@@ -28,8 +28,8 @@ main > .top{position:relative}
 .usage-mini{width:22px;height:6px;flex:none;background:var(--surface-3);border-radius:var(--r-pill);overflow:hidden}
 .usage-mini i,.usage-bar i{display:block;height:100%;background:var(--fill-primary);color:var(--on-fill);border-radius:var(--r-pill)}
 /* 棒の色を字の色（--ink-strong）にそろえる。面の族には濃い字の色が無いので currentColor で引く */
-.usage-chip.hi,.usage-chip.hi .lb{color:var(--ink-strong)}
-.usage-chip.hi .usage-mini i,.usage-bar.hi i{color:var(--ink-strong);background:currentColor}
+.usage-chip.high,.usage-chip.high .lb{color:var(--ink-strong)}
+.usage-chip.high .usage-mini i,.usage-bar.high i{color:var(--ink-strong);background:currentColor}
 /* 未認可・率が分からない・取得に失敗して前の値を出している */
 .usage-chip.dim,.usage-chip.dim .lb{color:var(--ink-weak)}
 .usage-chip.dim .usage-mini i{opacity:.5}
@@ -53,9 +53,9 @@ main > .top{position:relative}
 .usage-rows .wl{color:var(--ink-weak);max-width:9em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .usage-bar{height:6px;background:var(--surface-3);border-radius:var(--r-pill);overflow:hidden}
 .usage-rows .v{text-align:right;min-width:3.2em}
-.usage-rows .v.hi{color:var(--ink-strong)}
+.usage-rows .v.high{color:var(--ink-strong)}
 .usage-rows .rs{grid-column:2 / -1;margin-bottom:4px;font-size:var(--fs-xs);color:var(--ink-weak)}
-.usage-rows .rs.hi{color:var(--ink)}
+.usage-rows .rs.high{color:var(--ink)}
 .usage-pop .more{margin:4px 0 0;font-size:var(--fs-xs);color:var(--ink-weak)}
 .usage-pop .foot{margin-top:10px;display:flex;justify-content:flex-end}
 .usage-pop .foot button{background:transparent;color:var(--ink-blue);cursor:pointer;padding:2px 0}

@@ -159,7 +159,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     chip.hidden = !state;
     if (!state) { close(); return; }
     const agent = labelOf(shown.backend), stale = staleNote(entry);
-    chip.className = 'btn usage-chip' + (state.high ? ' hi' : '') + (state.kind !== 'value' || entry.failed ? ' dim' : '');
+    chip.className = 'btn usage-chip' + (state.high ? ' high' : '') + (state.kind !== 'value' || entry.failed ? ' dim' : '');
     if (state.kind !== 'value') {
       const text = state.kind === 'auth' ? t('usage.header.unauthorized') : t('usage.unknown');
       chip.replaceChildren(mini(0), el('span', 'lb', t('usage.header.title')), el('span', 'pc', '—'));
@@ -187,7 +187,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   function rows(windows) {
     const grid = el('div', 'usage-rows'), now = Date.now();
     for (const w of windows) {
-      const used = usedOf(w, now), high = used != null && used >= HIGH ? ' hi' : '';
+      const used = usedOf(w, now), high = used != null && used >= HIGH ? ' high' : '';
       const name = el('span', 'wl', shortLabel(w)); name.title = w.label;
       const bar = el('span', 'usage-bar' + high);
       bar.setAttribute('role', 'img'); bar.setAttribute('aria-label', t('usage.meter', { label: w.label }));
