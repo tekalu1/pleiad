@@ -81,7 +81,6 @@ export async function readBounded(file, maxBytes) {
   } finally { await handle.close(); }
 }
 
-const IGNORED_NAMES = new Set(['.git', 'node_modules', 'temporary', '.turbo', '.next', '.cache', 'dist', 'build']);
 /** ツリーの 1 フォルダーに一度に出す件数。続きは「さらに N 件を表示」で読む */
 export const TREE_PAGE = 200;
 
@@ -103,15 +102,13 @@ async function treeEntry(dir, name, access) {
 }
 
 /**
- * フォルダーの中身を 1 ページ（offset から TREE_PAGE 件）。除外名は出さない。
- * pin は開いたファイルへの経路の次の段の名前。除外名でも出し、ページの外なら末尾に足す（pinned）。
+ * フォルダーの中身を 1 ページ（offset から TREE_PAGE 件）。除外はせず、置いてあるものを全部並べる。
+ * pin は開いたファイルへの経路の次の段の名前。ページの外なら末尾に足す（pinned）。
  * more は続きの件数（足した pin は数えない）、next は続きを読むときの offset
  */
 async function listEntries(dir, access, { offset = 0, pin = null } = {}) {
   await inspectFile(dir, access);
-  const entries = (await fs.readdir(dir, { withFileTypes: true }))
-    .filter(entry => !IGNORED_NAMES.has(entry.name) || (pin && sameName(entry.name, pin)))
-    .sort(byKindAndName);
+  const entries = (await fs.readdir(dir, { withFileTypes: true })).sort(byKindAndName);
   const end = offset + TREE_PAGE;
   const children = (await Promise.all(entries.slice(offset, end).map(entry => treeEntry(dir, entry.name, access)))).filter(Boolean);
   let more = Math.max(0, entries.length - end);
@@ -125,23 +122,19 @@ async function listEntries(dir, access, { offset = 0, pin = null } = {}) {
 
 /**
  * プレビューの横のツリー。根から開いたもの（target）の親までの各段は中身を必ず返し、ほかのフォルダーは lazy のまま。
- * 深さの上限は無い（件数は段数 × TREE_PAGE で収まる）。除外名のフォルダーに入ったら、そこから先は経路だけを返し、
- * そのフォルダーに pathOnly を付ける（docs/design-system.md「右パネル」のツリー）
+ * 深さの上限は無い（件数は段数 × TREE_PAGE で収まる）。どの段もフォルダー名で除外せず、同じ listEntries で読む
+ * （docs/design-system.md「右パネル」のツリー）
  */
 async function buildTree(rootPath, target, access) {
   const root = { id: rootPath, name: path.basename(rootPath) || rootPath, kind: 'directory', open: true };
   const rel = path.relative(rootPath, target);
   const steps = rel && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel) ? rel.split(path.sep) : [];
-  let node = root, pathOnly = false;
+  let node = root;
   for (let i = 0; ; i++) {
     const pin = steps[i] ?? null;
     let listing;
     try {
-      if (pathOnly) {
-        await inspectFile(node.id, access);
-        const only = await treeEntry(node.id, pin, access);
-        listing = { children: only ? [only] : [], more: 0, next: null };
-      } else listing = await listEntries(node.id, access, { pin });
+      listing = await listEntries(node.id, access, { pin });
     } catch {
       if (node === root) root.children = [];   // 根が読めない。ほかの段は lazy のまま残し、開いたときに失敗を示す
       break;
@@ -151,7 +144,6 @@ async function buildTree(rootPath, target, access) {
     if (!pin || i === steps.length - 1) break;   // pin が開いたもの自身。フォルダーでも中身は開いたときに読む
     const next = listing.children.find(child => sameName(child.name, pin));
     if (!next || next.kind !== 'directory') break;
-    if (!pathOnly && IGNORED_NAMES.has(next.name)) { next.pathOnly = true; pathOnly = true; }
     node = next;
   }
   return [root];

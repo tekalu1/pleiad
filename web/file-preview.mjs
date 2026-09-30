@@ -117,12 +117,6 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
       dots.onclick = e => { e.stopPropagation(); const r = dots.getBoundingClientRect(); treeMenu(node, r.left, r.bottom + 4); };
       dots.ondblclick = e => e.stopPropagation();
       row.append(ic, nm);
-      // 除外名のフォルダー（temporary など）の中を開いたときだけ出る。兄弟は出さず、経路だけ
-      if (node.pathOnly) {
-        row.classList.add('path-only');
-        const tag = el('span', 'tag', t('filePreview.treePathOnly')); tag.title = t('filePreview.treePathOnlyTitle');
-        row.append(tag);
-      }
       row.append(dots);
     },
     onSelect(node) {
@@ -170,18 +164,13 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     return { children:[...kept, ...added, ...pins.values()], more:Math.max(0, page.more - pins.size), next:page.next };
   }
   /**
-   * 新しいツリーに、同じ会話で前に読んだフォルダーの中身を引き継ぐ（サーバーは経路の段しか読まないため）。
-   * 経路だけのフォルダー（pathOnly）は、別の場所のファイルへ移ったら消す
+   * 新しいツリーに、同じ会話で前に読んだフォルダーの中身を引き継ぐ（サーバーは経路の段しか読まないため）
    */
   function keepLoaded(nodes) {
-    const withoutPathOnly = list => list.filter(child => !child.pathOnly).map(child => {
-      if (Array.isArray(child.children)) child.children = withoutPathOnly(child.children);
-      return child;
-    });
     for (const n of nodes) {
       const old = tree.node(n.id);
-      if (n.lazy && old && !old.lazy && Array.isArray(old.children) && !old.pathOnly) {
-        Object.assign(n, { children:withoutPathOnly(old.children), more:old.more, next:old.next, lazy:false });
+      if (n.lazy && old && !old.lazy && Array.isArray(old.children)) {
+        Object.assign(n, { children:old.children, more:old.more, next:old.next, lazy:false });
       } else if (Array.isArray(n.children)) keepLoaded(n.children);
     }
   }
