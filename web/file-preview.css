@@ -34,9 +34,6 @@ body.file-preview-open{grid-template-columns:var(--side-col) minmax(360px,1fr) v
 .file-preview-tree-tools{display:flex;gap:2px;margin:-4px -6px -4px 0}
 .file-preview-tree-tools .btn-icon{width:24px;height:24px;letter-spacing:0;color:var(--ink-weak)}
 .file-preview-tree-tools .btn-icon svg.i{width:14px;height:14px}
-/* 除外名のフォルダーを経路だけ出す: 名前を弱い字、横に「経路のみ」。新しい色は使わない */
-.file-preview-tree .tree-row.path-only .nm{color:var(--ink-weak)}
-.file-preview-tree .tree-row .tag{margin-left:2px;flex:none;font-size:var(--fs-xs);color:var(--ink-weak)}
 /* 名前は省略せず、中身が欄より広ければ横にスクロールする（位置合わせは web/tree.mjs の scrollX）。
    一番外の ul を一番長い行の幅にし、行は ul いっぱいに伸ばして選択・ホバーの面の右端をそろえる。
    ⋯ は見えている範囲の右端に留め、下の名前が透けないよう行の面の色で塗る（左へぼかす）。

@@ -1,6 +1,6 @@
 // プレビューの横のツリー（core/file-preview.mjs の buildTree・listTreeFolder と /file-preview?list=1）。
 // 見るのは: 開いたファイルまでの経路の段は必ず中身を返す・深さの上限が無い・ほかのフォルダーは lazy・
-// 除外名のフォルダーは経路だけ・1 フォルダーの件数の枠と枠の外の経路の足し込み・続きの読み込み・roots の外は読めない
+// 除外名（temporary など）のフォルダーも全部出す・1 フォルダーの件数の枠と枠の外の経路の足し込み・続きの読み込み・roots の外は読めない
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -9,7 +9,7 @@ import { readPreview, listTreeFolder, TREE_PAGE } from '../../core/file-preview.
 import { startServer } from '../lib/server.mjs';
 
 export const name = 'file-preview-tree';
-export const title = 'プレビューのツリー: 経路の段・遅延読み込み・件数の枠・除外名の経路';
+export const title = 'プレビューのツリー: 経路の段・遅延読み込み・件数の枠・除外名も全部出す';
 
 const find = (nodes, id) => {
   for (const n of nodes ?? []) {
@@ -35,6 +35,7 @@ export default async function (t) {
   await fs.writeFile(path.join(ws, 'dirs', 'd230', 'in.md'), '# in');
   await fs.mkdir(path.join(ws, 'temporary', 'notes'), { recursive: true });
   await fs.writeFile(path.join(ws, 'temporary', 'notes', 'x.md'), '# x');
+  await fs.writeFile(path.join(ws, 'temporary', 'notes', 'y.md'), '# y');
   await fs.writeFile(path.join(ws, 'temporary', 'other.md'), '# other');
   await fs.mkdir(path.join(ws, 'node_modules', 'pkg'), { recursive: true });
   await fs.writeFile(path.join(ws, 'node_modules', 'pkg', 'index.js'), '');
@@ -59,9 +60,9 @@ export default async function (t) {
     t.ok('経路の各段のフォルダーは中身を持つ', ok);
     const big = find(deep.tree, path.join(ws, 'big'));
     t.ok('経路の外のフォルダーは中身を返さず lazy（空の [] と区別する）', big.lazy === true && big.children === undefined);
-    t.ok('除外名は出さない', !root.children.some(n => n.name === 'node_modules' || n.name === 'temporary'));
+    t.ok('除外名のフォルダーも出す（lazy）', ['node_modules', 'temporary'].every(name => find([root], path.join(ws, name))?.lazy === true));
     t.ok('データ置き場は出さない', !root.children.some(n => n.name === 'private'));
-    t.ok('フォルダーが先、名前順', root.children.map(n => n.name).join() === 'a,big,dirs,top.md', root.children.map(n => n.name).join());
+    t.ok('フォルダーが先、名前順', root.children.map(n => n.name).join() === 'a,big,dirs,node_modules,temporary,top.md', root.children.map(n => n.name).join());
 
     const top = await open(path.join(ws, 'top.md'));
     t.ok('根の直下のファイルも入り、ほかのフォルダーは読まない', !!find(top.tree, path.join(ws, 'top.md')) && find(top.tree, path.join(ws, 'a')).lazy === true);
@@ -79,13 +80,15 @@ export default async function (t) {
     const d230 = find(inDirs.tree, path.join(ws, 'dirs', 'd230'));
     t.ok('枠の外の経路のフォルダーも足し、その中身も返す', d230?.pinned === true && d230.children?.[0]?.name === 'in.md');
 
-    // ---- 除外名のフォルダーは経路だけ ----
+    // ---- 除外名のフォルダーも普通に出す ----
     const inTemp = await open(path.join(ws, 'temporary', 'notes', 'x.md'));
     const temp = find(inTemp.tree, path.join(ws, 'temporary'));
-    t.ok('除外名のフォルダーに入ったら経路を出し、pathOnly を付ける', temp?.pathOnly === true);
-    t.ok('除外名のフォルダーの中は経路だけ（兄弟は出さない）', temp.children.map(n => n.name).join() === 'notes'
-      && find(inTemp.tree, path.join(ws, 'temporary', 'notes')).children.map(n => n.name).join() === 'x.md');
-    t.ok('ほかの除外名は出さないまま', !find(inTemp.tree, path.join(ws, 'node_modules')));
+    t.ok('除外名のフォルダーの中は兄弟も出す', temp.children.map(n => n.name).join() === 'notes,other.md');
+    t.ok('経路の下の段も兄弟を出す', find(inTemp.tree, path.join(ws, 'temporary', 'notes')).children.map(n => n.name).join() === 'x.md,y.md');
+    t.ok('経路の外の除外名は lazy のまま', find(inTemp.tree, path.join(ws, 'node_modules'))?.lazy === true);
+    t.ok('除外名だった印（pathOnly）は付けない', temp.pathOnly === undefined);
+    const listedModules = await listTreeFolder(path.join(ws, 'node_modules'), { access });
+    t.ok('除外名のフォルダーも開いて読める', listedModules.children.map(n => n.name).join() === 'pkg');
 
     // ---- 遅延読み込み・続き・範囲 ----
     const lazy = await listTreeFolder(path.join(ws, 'a'), { access });
