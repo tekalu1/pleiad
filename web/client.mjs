@@ -17,6 +17,7 @@ import { setupCodeCopy, copyText } from './code-copy.mjs';
 import { setupMessagePeek } from './message-peek.mjs';
 import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog } from './message-actions.mjs';
 import { mountFold } from './fold.mjs';
+import { captureViewState, restoreViewState } from './view-state.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
 import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
@@ -3723,7 +3724,11 @@ async function refreshDetail({ first = false, force = false } = {}) {
     else {
       const content = item.source === 'task' ? await taskThread(item) : await subagentThread(item);
       if (bg.view !== view) return;
+      // 作り直すと開いていたツールの詳細・まとまり・畳みが閉じるので、読み込みの間に開いたものまで控えて戻す。位置も今のまま
+      const keep = body.scrollTop;
+      restoreViewState(content, captureViewState(body));
       body.replaceChildren(content);
+      body.scrollTop = keep;
     }
     view.wasLive = view.item.live;
     view.instructionRevision = view.item.instructionRevision;

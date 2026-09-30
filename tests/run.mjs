@@ -147,6 +147,8 @@ const cases = [
   await import("./unit/markdown-xss.mjs"),
   await import("./unit/tools-render.mjs"),
   await import("./unit/tool-bundle.mjs"),
+  // 作業の詳細の読み直し: 開いたツールの詳細・まとまり・長文の畳みを、作り直しの後も同じ所で開いたままにする
+  await import("./unit/view-state.mjs"),
   await import("./unit/timeline-images.mjs"),
   await import("./unit/attachment-order.mjs"),
   // 自分の発言: 添付の印を本文の位置に置く（コードブロック内・一致しないパスは残す・古い形式は末尾）・畳み込み・別カードを二重に出さない
