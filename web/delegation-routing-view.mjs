@@ -279,7 +279,7 @@ export function usageRows(windows, { avoidPercent = 80 } = {}) {
   const rows = el('div', 'usage-rows rt-usage');
   for (const w of windows ?? []) {
     const p = percent(w.usedPercent);
-    const high = p != null && (p >= 100 || (w.minutes !== 300 && p >= avoidPercent)) ? ' hi' : '';
+    const high = p != null && (p >= 100 || (w.minutes !== 300 && p >= avoidPercent)) ? ' high' : '';
     const label = el('span', 'wl', w.label ?? '');
     label.title = w.label ?? '';
     rows.append(label);
