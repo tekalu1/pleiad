@@ -84,7 +84,10 @@ export default async function(t) {
       t.ok('同じ親の 3 件は 1 回の配送にまとまる', mine.ids.length === 3 && ids.every(id => mine.ids.includes(id)), JSON.stringify(delivered));
       t.ok('別の親の通知は混ぜない', delivered.find(x => x.ids.includes(other)).ids.length === 1);
       t.ok('まとめた 3 件とも sent', ids.every(id => manager.get(id).notification === 'sent'));
-      const saved = JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'));
+      // メモリの sent は保存より先に立つ（保存は rename のやり直しで遅れうる）。ファイルが sent になるまで待つ
+      const savedNow = async () => JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'));
+      await until(async () => { const f = await savedNow().catch(() => null); return f && ids.every(id => f[id]?.notification === 'sent'); });
+      const saved = await savedNow();
       t.ok('まとめた分の送信済みは保存される', ids.every(id => saved[id].notification === 'sent'));
     }
 

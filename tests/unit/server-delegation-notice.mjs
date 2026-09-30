@@ -58,7 +58,7 @@ export default async function(t) {
       const p2 = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: delegate('bg 1 1.5') })).sessionId;
       const mark2 = c.mark();
       const waited = await c.runTurn({ sessionId: p2, prompt: ply('ply_task_wait', { taskId: (await tasksOf(p2))[0].taskId, seconds: 30 }) });
-      const got = JSON.parse(waited.events.find(e => e.type === 'tool.result').text);
+      const got = JSON.parse(waited.events.find(e => e.type === 'tool.result' && e.sessionId === p2).text);
       t.ok('依頼元は ply_task_wait で完了と結果を受け取る', got.status === 'completed');
       await sleep(2000);
       const read = (await tasksOf(p2))[0];
