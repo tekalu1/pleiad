@@ -241,7 +241,7 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
 
   /**
    * scrollX の使い手で、行の名前が見える横位置へ送る（scrollLeftFor）。left は合わせる前の scrollLeft（動かさないときはここへ戻す）。
-   * 頭は chevron の次（アイコンか名前）、終わりは ⋯ の前の最後の部品（名前・「経路のみ」の札）。
+   * 頭は chevron の次（アイコンか名前）、終わりは ⋯ の前の最後の部品（名前）。
    * ⋯ は右端に留まるので、その幅と行の右の余白を名前の右に空ける
    */
   function alignX(row, left, force = false) {
