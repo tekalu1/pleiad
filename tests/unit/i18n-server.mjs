@@ -39,8 +39,7 @@ export default async function (t) {
     delete process.env.AGENT_HOST_LOCALE;
     desktop.setLocale("en");
     t.ok("desktop の文言が英語になる", desktop.t("quit.busyTitle") === "Work is still running" && desktop.t("update.busy") === "An update is in progress. Wait for it to finish.");
-    const { AUTH_MESSAGE, authMessage } = require("../../desktop/update-auth.cjs");
-    t.ok("更新の認証の文も今の言語", AUTH_MESSAGE === authMessage() && authMessage().startsWith("Checking for updates requires GitHub authentication."));
+    t.ok("更新の認証・レート制限の文も今の言語", desktop.t("update.authFailed").startsWith("GitHub did not accept your credentials") && desktop.t("update.rateLimited").startsWith("GitHub's request limit"));
     t.ok("OS の言語で決める（設定・強制が無いとき）", desktop.resolveLocale({ env: {}, setting: null, system: "ja-JP" }) === "ja"
       && desktop.resolveLocale({ env: {}, setting: "en", system: "ja-JP" }) === "en" && desktop.resolveLocale({ env: { AGENT_HOST_LOCALE: "ja" }, setting: "en" }) === "ja");
     // 通知の見出しは画面が作って渡したもの。無いときだけ main の言語の既定

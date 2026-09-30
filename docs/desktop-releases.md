@@ -138,16 +138,16 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 ## 配布と利用者認証
 
 Releases は public で、ブラウザーからはログインなしで取得できる。評価版は自己署名のため、インストール前に公開証明書の扱いを確認する（下記「自己署名の先行版」）。
-自動更新は現在も認証付きの GitHub API で最新の先行版を選ぶ（更新設定は `private: true` のまま。認証なしの取得への切替は別作業）。
-正式配布版の自動更新では、GitHub CLI を導入し `gh auth login --hostname github.com` を実行しておく。
-Electron main が更新確認のたびに `gh auth token --hostname github.com` で資格情報を取得する。
-Windows の標準インストール先も探す。未導入・未ログインならログイン方法を案内し、再試行できる。
-すでに起動環境へ設定した `GH_TOKEN` / `GITHUB_TOKEN` があれば優先する。専用の fine-grained PAT なら配布先の Contents read 権限を与える。
-ブラウザーの GitHub ログイン状態を自動更新が共有することはない。
+自動更新に GitHub のログインは要らない。`gh auth login` も不要で、GitHub CLI が無い PC・未ログインの PC でも更新できる。
+更新設定は `private: true` のまま（外すと最新の先行版を semver で選ぶ `NewestReleaseProvider` が効かなくなり、先行版のメタデータ `beta.yml` も探されるため。導入済みのアプリにもこの設定が焼き込まれている）。
+資格情報が無いときは、`PrivateGitHubProvider` 系の同じプロバイダーが `authorization` ヘッダーを付けずに GitHub API を呼ぶ。アセットは API の URL を `Accept: application/octet-stream` で取り、S3 へのリダイレクトを追う。
+資格情報があれば使う（GitHub API のレート制限を避けるため）。Electron main が更新確認のたびに、起動環境の `GH_TOKEN` / `GITHUB_TOKEN`、なければ `gh auth token --hostname github.com`（Windows は標準インストール先も探す）の順で探す。
+専用の fine-grained PAT なら配布先の Contents read 権限を与える。ブラウザーの GitHub ログイン状態を自動更新が共有することはない。
+認証なしの GitHub API は 1 IP あたり 1 時間 60 回まで。確認 1 回は 1〜2 回の呼び出しだが、同じ回線を共有する PC が多いと上限に達し、403/429 になる。その場合は設定に「しばらく待つか、GitHub CLI で `gh auth login` すると上限が上がる」と出す。トークンを付けたのに 401/403 のときだけ、資格情報の確認を案内する。
 
 取得したトークンは Electron main のメモリーに留め、画面・設定ファイル・内部サーバーへ渡さない。
 更新ライブラリーの生ログと認証CLIの生エラーは出さない。Pleiadは GitHub CLI の認証情報を書き換えない。
-先行版・安定版とも、認証付きGitHubプロバイダー（PrivateGitHubProvider）が要求する `latest.yml` / `latest-mac.yml` を配る。
+先行版・安定版とも、`PrivateGitHubProvider` が要求する `latest.yml` / `latest-mac.yml` を配る。
 GitHub Release の prerelease 属性とアプリの先行版設定で選別し、安定版へ先行版を流さない。
 
 未署名の評価版は自動更新を無効のまま配布し、次の評価版は Releases から手動でインストールする。
