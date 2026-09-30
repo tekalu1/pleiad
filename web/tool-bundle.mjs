@@ -334,6 +334,18 @@ export class Bundle {
     this.relayout();
   }
 
+  /** 開いている範囲（読むだけの筋を作り直すときに控える。web/view-state.mjs） */
+  viewState() {
+    return { expanded: this.expanded, k: this.k };
+  }
+
+  /** 控えた範囲へ動かさずに戻す。作り直した直後（画面に置く前）に呼ぶので、開く動きは出ない */
+  restoreView({ expanded, k }) {
+    this.expanded = expanded;
+    this.k = Math.max(0, Math.min(k, this.inner.length));
+    this.layout();
+  }
+
   relayout() {
     anchored(this.live && this.cur ? this.latest : this.head, () => this.layout({ stagger: true }));
   }
