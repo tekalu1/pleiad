@@ -3,7 +3,8 @@
 //     「終わっていたが渡せていない結果」として返す。結果は ply_task_status で読める
 //   - 走っていたタスクは取り消したものとして返す。通知を送り終えたタスクは返さない
 //   - cancel: 終わったタスクには止めるものが無いので、届いていない完了通知はそのまま届ける。子孫の分は今どおり止める
-//   - 再起動で止まったタスク（interrupted）は restored に載る
+//   - 再起動で止まったタスク（interrupted）は restored に載る。正常終了（close）は走っていた子を cancelled にせず、走っていた状態のまま残す
+//     （利用者の取り消し cancel は cancelled を書く）
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,11 +18,17 @@ async function until(fn, ms = 8000) { const end = Date.now() + ms; while (Date.n
 export default async function(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-task-interrupt-'));
   let seq = 0, parentReady = false;
-  const delivered = [];
+  const delivered = [], started = new Set();
+  // 保存の動き（writeFile / rename）を数える。close の後に古い manager の書き込みが届かないことを、落ち着くのを待って確かめる
+  let inflight = 0, lastIo = Date.now();
+  const track = name => async (...args) => { inflight++; lastIo = Date.now(); try { return await fs[name](...args); } finally { inflight--; lastIo = Date.now(); } };
+  const io = { ...fs, writeFile: track('writeFile'), rename: track('rename') };
+  const settle = () => until(() => inflight === 0 && Date.now() - lastIo > 150);
   const options = {
-    dataDir: dir, log: () => {}, silenceMinutes: 0, commandMinutes: 0,
+    io, dataDir: dir, log: () => {}, silenceMinutes: 0, commandMinutes: 0,
     prepare: async (_owner, a) => ({ sessionId: `child-${++seq}`, backend: a.backend }),
     execute: async (_task, prompt, signal) => {
+      started.add(prompt);
       if (prompt.startsWith('slow')) await new Promise(resolve => { const timer = setTimeout(resolve, 5000); signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true }); });
       return { outcome: signal.aborted ? 'aborted' : 'ok', text: `result:${prompt}` };
     },
@@ -70,21 +77,24 @@ export default async function(t) {
     await manager.cancel(live.taskId);
     await until(() => manager.get(live.taskId).status === 'cancelled');
     t.ok('走っているタスクの cancel は通知を止める', manager.get(live.taskId).notification === 'suppressed');
+    await settle();
+    const onDisk = JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'))[live.taskId];
+    t.ok('取り消し（close 以外の abort）は cancelled として保存される', onDisk.status === 'cancelled' && onDisk.notification === 'suppressed', JSON.stringify({ status: onDisk.status, notification: onDisk.notification }));
 
-    // ---- 再起動で止まったタスクは restored に載る（依頼元・題・止まった時点の状態）
+    // ---- 正常終了（close）で走っていた子は、止めたことを書かない。再起動で restored に載り interrupted になる（依頼元・題・止まった時点の状態）
     parentReady = false;
     const cut2 = await delegate('p3', 'slow-c', { title: 'Slow C' });
-    await until(() => manager.get(cut2.taskId).status === 'running');
-    // 落ちたことにする: 保存された状態のまま、閉じずに作り直す（close は止めたことを書かない）
+    await until(() => manager.get(cut2.taskId).status === 'running' && started.has('slow-c'));
     manager.close();
-    const saved = JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'));
-    saved[cut2.taskId].status = 'running';
-    await fs.writeFile(path.join(dir, 'agent-tasks.json'), JSON.stringify(saved));
+    await settle();
+    const closedOnDisk = JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'))[cut2.taskId];
+    t.ok('close は走っていた子を cancelled にしない（走っていた状態のまま保存される）', closedOnDisk.status === 'running' && closedOnDisk.notification === 'none', JSON.stringify({ status: closedOnDisk.status, notification: closedOnDisk.notification }));
     manager = await createAgentTasks(options);
     const restored = manager.restored;
     t.ok('再起動で止まったタスクが restored に載る', restored.length === 1 && restored[0].taskId === cut2.taskId && restored[0].parentSessionId === 'p3'
       && restored[0].status === 'running' && restored[0].title === 'Slow C', JSON.stringify(restored));
     t.ok('そのタスクは interrupted になる', manager.get(cut2.taskId).status === 'interrupted');
+    t.ok('依頼元へ完了通知を送らない（close の後に通知を作らない）', manager.get(cut2.taskId).notification === 'none' && !delivered.flat().includes(cut2.taskId), manager.get(cut2.taskId).notification);
   } finally {
     manager.close();
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});

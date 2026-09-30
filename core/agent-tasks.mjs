@@ -243,6 +243,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   async function run(r, controller) {
     // stalled: 実行の開始を保存できなかった。子は動かしていないので queued のまま、次のタイマーでやり直す
     let stalled = false, requeued = false, activeInstructionId;
+    // close()（正常終了）の abort。止めたことは書かず、走っていた状態のままファイルに残す（再起動で interrupted になる。
+    // docs/agent-delegation.md「保存・画面・再起動」）。利用者の取り消しは先に cancelling にするので、それは cancelled を書く
+    const halted = () => closed && r.status !== 'cancelling';
     try {
       while (!controller.signal.aborted) {
         let prompt, instructionId;
@@ -256,6 +259,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         catch { stalled = true; break; }
         activeInstructionId = instructionId;
         const result = await execute(structuredClone(r), prompt, controller.signal);
+        if (halted()) return;
         if (result?.requeue) {
           await record(r.taskId, row => { row.queue.unshift(instructionId ? { instructionId } : prompt); setInstruction(row, instructionId, 'queued'); row.status = 'queued'; }, 'run.requeue');
           activeInstructionId = undefined; requeued = true;
@@ -281,8 +285,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         if (r.status !== 'queued') break;
       }
     } catch (e) {
-      await record(r.taskId, row => { row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); setInstruction(row, activeInstructionId, 'dropped'); dropInstructions(row); }, 'run.error');
+      if (!halted()) await record(r.taskId, row => { row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); setInstruction(row, activeInstructionId, 'dropped'); dropInstructions(row); }, 'run.error');
     } finally {
+      if (halted()) { live.delete(r.taskId); return; }
       // 止まった後（run.result / run.error で cancelled）に ply_task_send で積まれた指示は、止めた回の分ではない。
       // cancelled に戻して捨てず、下の kick で次の実行にする（docs/agent-delegation.md「ツール」の ply_task_send）
       if (r.status === 'cancelling' || controller.signal.aborted) await record(r.taskId, row => { if (!requeued && row.status === 'queued' && row.queue.length) return; row.status = 'cancelled'; dropInstructions(row); }, 'run.cancelled');
