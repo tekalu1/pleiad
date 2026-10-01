@@ -483,15 +483,20 @@ export default async function (t) {
   await call('clearSiteData');
   assert.deepEqual(fe.log.cleared, { origin: 'https://example.org' });
   assert.deepEqual(fe.log.cookieRemoved, ['https://example.com/', 'sid']);
-  // 会話ごとのタブ（次の段階の足場）
-  await call('context', { sessionId: 'sess-b' });
+  // 会話ごとのタブ。一覧と今のタブは、今の会話のものと、会話に属さないものだけ
   const addedBeforeBlank = fe.log.added.length, shownBeforeBlank = fe.log.added.at(-1);
+  state = await call('context', { sessionId: 'sess-b' });
+  assert.equal(state.tabs.length, 0, '別の会話のタブは一覧に出さない'); assert.equal(state.current, null, '見えるタブが無ければ current なし');
+  assert.equal(fe.log.removed.at(-1), shownBeforeBlank, '別の会話へ移ったら、前の会話のタブの View を窓から外す');
   await call('newTab');
   assert.equal(panel.tabsFor('sess-a').length, 2); assert.equal(panel.tabsFor('sess-b').length, 1);
   state = await call('state');
-  assert.equal(state.tabs.at(-1).url, '', '空のタブ');
+  assert.equal(state.tabs.length, 1); assert.equal(state.tabs[0].url, '', '空のタブ');
   assert.equal(fe.log.added.length, addedBeforeBlank, '空のタブは View を載せない（画面の案内を見せる）');
-  assert.equal(fe.log.removed.at(-1), shownBeforeBlank, '前のタブの View は外す');
+  // 会話を戻すと、その会話で最後に選んだタブ
+  state = await call('context', { sessionId: 'sess-a' });
+  assert.equal(state.tabs.length, 2); assert.equal(state.current, state.tabs[1].id, '戻した会話で最後に選んだタブへ');
+  assert.equal(fe.log.added.at(-1).webContents.url, 'https://example.org/', 'そのタブの View を載せ直す');
   // 別の窓に出す
   await call('select', { id: state.tabs[1].id });
   const detached = await call('detach');
@@ -499,14 +504,15 @@ export default async function (t) {
   const win = fe.log.windows.at(-1);
   assert.equal(win.children.length, 1); assert.deepEqual(win.children[0].bounds, { x: 0, y: 0, width: 900, height: 700 });
   state = await call('state');
-  assert.equal(state.tabs.length, 2, '別の窓に出したタブは一覧から外れる');
+  assert.equal(state.tabs.length, 1, '別の窓に出したタブは一覧から外れる');
   // タブを閉じる
   state = await call('close', { id: state.tabs[0].id });
-  assert.equal(state.tabs.length, 1);
+  assert.equal(state.tabs.length, 0); assert.equal(state.current, null);
+  assert.equal(panel.tabsFor('sess-b').length, 1, '別の会話のタブは閉じない');
   // 画面を読み直したら View を外す（ページ内の移動では外さない）
-  state = await call('select', { id: state.tabs[0].id });
+  state = await call('open', { url: 'https://example.net/' });
   const attachedNow = fe.log.added.at(-1);
-  assert.equal(attachedNow.webContents.url, 'https://example.org/');
+  assert.equal(attachedNow.webContents.url, 'https://example.net/');
   const removedBefore = fe.log.removed.length;
   fe.handlers.main(null, 'http://127.0.0.1/#x', true, true);
   assert.equal(fe.log.removed.length, removedBefore);
@@ -552,6 +558,7 @@ export default async function (t) {
     assert.deepEqual(await run('external'), { ok: false }, '無いファイルは断る');
     s = await run('newTab');
     assert.equal(now$(s).external, false, '空のタブは押せない');
+    await run('context', { sessionId: 'sess-x' });
     const blank = filePanel.createFor('sess-x');
     s = await run('select', { id: blank.id });
     assert.equal(now$(s).url, 'about:blank'); assert.equal(now$(s).external, false, 'about:blank は押せない');
@@ -572,6 +579,86 @@ export default async function (t) {
     assert.equal(bp.externalFile(fileUrl(html), { allowFile: false, requested: fileUrl(html) }), null);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   t.ok('main: 既定のブラウザーで開くは http・https と、画面が開いた file: の HTML だけ（実体を解決して openPath・連打の制限）。ページで移った file:・HTML 以外・about:blank は断る', true);
+
+  // ---- main: パネルの一覧と今のタブは、今の会話のタブと、会話に属さないタブだけ
+  {
+    const fv = fakeElectron();
+    const vp = bp.createBrowserPanel(fv.deps);
+    vp.attach();
+    const go = (action, args) => fv.handlers.handle['ply:browser'](local$, action, args);
+    const urls = st => st.tabs.map(tab => tab.url || tab.id);
+    const attachedView = () => { const last = fv.log.added.at(-1); return last && fv.log.removed.lastIndexOf(last) < fv.log.added.lastIndexOf(last) ? last : null; };
+    fv.handlers.on['ply:browser-layout'](local$, { visible: true, rect: { x: 0, y: 0, width: 400, height: 600 }, radius: 0 });
+
+    const a1 = vp.createFor('conv-a', 'https://a1.example/'), a2 = vp.createFor('conv-a', 'https://a2.example/');
+    const b1 = vp.createFor('conv-b', 'https://b1.example/');
+    let st = await go('context', { sessionId: 'conv-a' });
+    assert.deepEqual(urls(st), ['https://a1.example/', 'https://a2.example/'], '今の会話のタブだけ並べる');
+    assert.equal(st.current, a2.id, 'その会話で最後に作った（選んだ）タブ');
+    assert.equal(attachedView().webContents.url, 'https://a2.example/');
+    assert.equal(vp.tabsFor('conv-b').length, 1, '見えない会話のタブは消えず、中継からは引ける');
+
+    // 別の会話のタブを中継が作っても、今のタブと窓の View は動かない
+    const before = fv.log.added.length;
+    const b2 = vp.createFor('conv-b', 'https://b2.example/');
+    st = await go('state');
+    assert.deepEqual(urls(st), ['https://a1.example/', 'https://a2.example/']); assert.equal(st.current, a2.id);
+    assert.equal(fv.log.added.length, before, '別の会話のタブを作っても View を載せない');
+    vp.selectFor(b1.id);   // エージェントが別の会話のタブを前に出した。今の画面は動かさず、その会話で選んだタブとして覚える
+    st = await go('state'); assert.equal(st.current, a2.id, '別の会話のタブは今のタブにしない（selectFor）');
+    await go('select', { id: b1.id });
+    st = await go('state'); assert.equal(st.current, a2.id, '別の会話のタブは選ばせない（select）');
+
+    // 会話に属さないタブはどの会話でも見える
+    const loose = vp.createFor(null, 'https://loose.example/');
+    st = await go('state');
+    assert.deepEqual(urls(st), ['https://a1.example/', 'https://a2.example/', 'https://loose.example/'], '会話に属さないタブは出す');
+    assert.equal(st.current, loose.id);
+    st = await go('context', { sessionId: 'conv-b' });
+    assert.deepEqual(urls(st), ['https://b1.example/', 'https://b2.example/', 'https://loose.example/']);
+    assert.equal(st.current, b1.id, '会話を移ると、その会話で最後に選んだタブ（selectFor で前に出した b1）');
+    assert.equal(attachedView().webContents.url, 'https://b1.example/', '窓に載るのは今の会話のタブだけ');
+    await go('select', { id: b2.id });
+    st = await go('context', { sessionId: 'conv-a' });
+    assert.equal(st.current, loose.id, '戻した会話で最後に選んだタブ');
+    st = await go('context', { sessionId: 'conv-b' });
+    assert.equal(st.current, b2.id, 'conv-b は b2 を最後に選んだ');
+    await go('select', { id: b1.id });
+
+    // 閉じたときの移り先は、見えるタブの中から
+    st = await go('close', { id: b1.id });
+    assert.deepEqual(urls(st), ['https://b2.example/', 'https://loose.example/']);
+    assert.equal(st.current, b2.id, '見えるタブの隣へ（別の会話のタブへは移らない）');
+    await go('close', { id: b2.id });
+    st = await go('close', { id: loose.id });
+    assert.equal(st.tabs.length, 0); assert.equal(st.current, null, '見えるタブが無ければ current なし');
+    assert.equal(attachedView(), null, '見えるタブが無ければ View を窓に残さない');
+    st = await go('context', { sessionId: 'conv-a' });
+    assert.deepEqual(urls(st), ['https://a1.example/', 'https://a2.example/']);
+    assert.equal(st.current, a1.id, '最後に選んだタブ（loose）が閉じていれば、見えるタブの先頭'); assert.equal(attachedView().webContents.url, 'https://a1.example/');
+    st = await go('context', { sessionId: 'conv-none' });
+    assert.equal(st.tabs.length, 0); assert.equal(st.current, null, 'タブの無い会話では current なし');
+    assert.equal(attachedView(), null, '前の会話のタブの View を窓に残さない');
+
+    // 新規会話: 仮のキーで作ったタブが本物の会話 ID へ移ると、その会話を見ている画面に出る
+    const fresh = vp.createFor('new:key', 'https://fresh.example/');
+    st = await go('context', { sessionId: null });
+    assert.equal(st.tabs.length, 0, '仮のキーのタブは会話を決めていない画面には出ない');
+    vp.rebindSession('new:key', 'real-id');
+    st = await go('context', { sessionId: 'real-id' });
+    assert.deepEqual(urls(st), ['https://fresh.example/']); assert.equal(st.current, fresh.id);
+    // エージェントの操作中の表示は会話ごと。別の会話の操作では今のタブを動かさない
+    const other = vp.createFor('conv-a', 'https://agent.example/');
+    vp.setAgent('conv-a', other.id);
+    st = await go('state');
+    assert.equal(st.current, fresh.id); assert.equal(st.agent, null, '別の会話の操作中は出さない');
+    st = await go('context', { sessionId: 'conv-a' });
+    assert.equal(st.current, other.id, '操作中のタブを最後に選んだものとして覚える'); assert.deepEqual(st.agent, { sessionId: 'conv-a', tabId: other.id });
+    // 人が開く・新しいタブは今の会話のものになる
+    st = await go('open', { url: 'https://human.example/', newTab: true });
+    assert.equal(vp.tabsFor('conv-a').length, 4); assert.equal(st.tabs.at(-1).sessionId, 'conv-a');
+  }
+  t.ok('main: パネルの一覧と今のタブは今の会話と会話なしのタブだけ・別の会話のタブを作っても動かない・会話を移ると最後に選んだタブ・閉じた移り先・View を残さない・仮のキーからの付け替え', true);
 
   // ---- 補助
   assert.equal(bp.openable('https://a.example/'), 'https://a.example/'); assert.equal(bp.openable('chrome://gpu'), null);
