@@ -11,10 +11,16 @@ import { migrateClaudeUsage } from './usage-migrations.mjs';
 import { createAgentTasks, finalReply } from './agent-tasks.mjs';
 import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
+import { createComputerBridge, COMPUTER_MCP_PATH } from './computer-bridge.mjs';
+import { createComputerLock } from './computer-use/lock.mjs';
+import { createShots as createComputerShots } from './computer-use/shots.mjs';
+import { parentPortComputer, fakeComputerDriver } from './computer-use/driver.mjs';
+import { normalizeComputerUse } from './computer-use/policy.mjs';
+import { appendFileSync } from 'node:fs';
 import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
-import { canDelegate, resolveDelegatedMode } from './modes.mjs';
+import { canDelegate, resolveDelegatedMode, modePosition } from './modes.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
 import { localeInfo, setLocale, t, i18n, LOCALE_SETTINGS, agentT, agentLocaleOf, currentLocale } from './i18n.mjs';
@@ -540,6 +546,42 @@ function releaseAgentConnection(key) {
   if (!entry) return;
   agentConnections.delete(key);
   try { entry.close(); } catch {}
+  try { entry.computer?.close(); } catch {}
+  // 会話を消したら、その会話で撮ったスクリーンショットも消す（ADR 0075）
+  computerShots.removeSession(key).catch(() => {});
+}
+
+/**
+ * 会話ごとの ply_computer の口（docs/computer-use.md「MCP サーバー」）。会話の橋（conversationConnection）と同じ入れ物に持つので、
+ * 会話の id が決まったときの付け替えも片付けも同じ。会話の途中でエージェントを替えたら、渡し方（delivery）が変わるので開き直す
+ */
+function computerConnection(turn) {
+  const entry = conversationConnection(turn);
+  if (entry.computer && entry.computerBackend === turn.backend.id) return entry.computer;
+  try { entry.computer?.close(); } catch {}
+  entry.computerBackend = turn.backend.id;
+  entry.computer = computerBridge.open({ origin: localOrigin(), locale: entry.locale, delivery: turn.backend.capabilities?.computerUse || undefined,
+    agent: () => { const live = runtime.turns.get(entry.key) ?? turn; return { id: live.backend.id, label: live.backend.label }; },
+    owner: async () => {
+      const live = runtime.turns.get(entry.key);
+      if (!live) throw new Error(agentT(entry.locale, 'delegation.notRunning'));
+      await live.setup;
+      const sessionId = live.info.sessionId;
+      if (!sessionId) throw new Error(agentT(entry.locale, 'delegation.idPending'));
+      return { turnId: live.presentKey, sessionId, title: (await store.get(sessionId).catch(() => null))?.title ?? '',
+        mode: modePosition(live.backend.modes()[live.info.mode]), signal: live.ac.signal, ancestors: await delegationAncestors(sessionId),
+        agent: { id: live.backend.id, label: live.backend.label } };
+    } });
+  return entry.computer;
+}
+
+/** このターンに渡す ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（docs/computer-use.md「エージェントへの渡し方」） */
+async function computerRuntimeFor(turn) {
+  if (!computerBridge || computerDriver.state()?.supported !== true) return null;
+  if (!turn.backend.capabilities?.computerUse) return null;
+  if (normalizeComputerUse((await store.getPrefs()).computerUse).enabled === false) return null;
+  const { url, headers, instructions } = computerConnection(turn);
+  return { url, headers, instructions };
 }
 
 const MIME = {
@@ -607,6 +649,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (url.pathname === AGENTS_MCP_PATH) return agentBridge.handle(req, res);
   if (url.pathname === CONTEXT_MCP_PATH) return contextBridge.handle(req, res);
+  if (url.pathname === COMPUTER_MCP_PATH && computerBridge) return computerBridge.handle(req, res);
 
   // 静的ファイルもトークンで守る。守られているのが WebSocket だけだと、
   // リモートに出したときに UI 一式が誰でも取れてしまう。
@@ -621,6 +664,15 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/auth-check") {
     res.writeHead(204, { "cache-control": "no-store" });
     return res.end();
+  }
+
+  // コンピューターの操作のスクリーンショット（core/computer-use/shots.mjs）。id は 32 桁の hex だけ。トークンの認証は上で済んでいる（/local-file は使わない。ADR 0075）
+  const computerShot = /^\/computer-shot\/([0-9a-f]{32})\.jpg$/.exec(url.pathname)?.[1];
+  if (computerShot) {
+    const body = await computerShots.read(computerShot);
+    if (!body) { res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'private, no-store' }); return res.end('not found'); }
+    res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'private, max-age=31536000, immutable', 'x-content-type-options': 'nosniff', 'content-length': body.length });
+    return res.end(req.method === 'HEAD' ? undefined : body);
   }
 
   const name = url.pathname === "/" ? "/index.html" : url.pathname;
@@ -1094,7 +1146,7 @@ function giveUp() {
 // 会話の一覧の行を変えない、数の多い出来事。これ以外の出来事ではネイティブ一覧の使い回しを捨てる（nativeSessions）
 const LIST_NEUTRAL_EVENTS = new Set([
   "text.delta", "text.end", "thinking.start", "thinking.delta", "tool.start", "tool.result", "activity",
-  "userMessage.delivered", "running", "permission", "outbox", "mcpAuth", "claudeLogin",
+  "userMessage.delivered", "running", "permission", "outbox", "mcpAuth", "claudeLogin", "computer.state",
   "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
@@ -1618,6 +1670,8 @@ function attach(ws) {
 
   for (const frame of runtime.buffer.splice(0)) sendTo(frame);
   completionNotices.changed();
+  // 今ロックを持っている・待っている会話の状態を送り直す（接続し直した画面が「止める」と待ちの表示を出せるように）
+  for (const state of computerLock.snapshot()) sendTo({ kind: P.EVENT, event: { type: 'computer.state', ...state } });
 
   // 待たせていた承認を聞き直す。取りこぼすとツールが無期限に止まる
   for (const [id, w] of runtime.waiting) {
@@ -1700,7 +1754,7 @@ async function delegationAncestors(sessionId) {
  * 人間は最上位の会話に居るので、1段だけ上げても誰も見ない場所に出るだけになる。
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
-const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite }) => {
+const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp }) => {
   const ancestors = sessionId ? await delegationAncestors(sessionId) : [];
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
@@ -1723,6 +1777,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       conversationTitle,
       canAlways: Boolean(canAlways),
       ...(browserSite ? { browserSite } : {}),
+      ...(computerApp ? { computerApp } : {}),
       ...(questions ? { questions } : {}),
     };
     // 祖先ごとに別の id の複製を作り、どれも同じ settle を指す。
@@ -1730,9 +1785,9 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     const cards = [{ id: crypto.randomUUID(), payload, relay: false }, ...ancestors.map((ancestor) => ({
       id: crypto.randomUUID(),
       relay: true,
-      // Tool-wide grants stay in the child. Browser grants show the specific agent
-      // and origin, so the same three site choices are available to ancestors.
-      payload: { ...payload, sessionId: ancestor, canAlways: !!browserSite, title: title ? t('permission.relayTitleWith', { child: childTitle, title }) : t('permission.relayTitle', { child: childTitle }) },
+      // Tool-wide grants stay in the child. Browser and computer grants show the specific agent
+      // and origin / app, so the same choices are available to ancestors.
+      payload: { ...payload, sessionId: ancestor, canAlways: !!browserSite || !!computerApp, title: title ? t('permission.relayTitleWith', { child: childTitle, title }) : t('permission.relayTitle', { child: childTitle }) },
     }))];
     const onAbort = () => settle({ allow: false, messageKey: 'aborted' });
     const settle = (answer) => {
@@ -1777,6 +1832,43 @@ agentBrowser?.configureAuthorization(createBrowserSiteApprovals({
   remember: async site => { const prefs = await store.rememberBrowserSite(site); emitGlobal({ type: 'prefs', sessionId: null, prefs, locale }); },
 }));
 agentBrowser?.prefs(await store.getPrefs());
+
+// ---- コンピューターの操作（docs/computer-use.md、ADR 0070〜0075） ----------------------------
+// driver は main（Electron）への口。Electron でない起動では null で、ply_computer は渡さない。
+// AGENT_HOST_COMPUTER_DRIVER=fake は偽の driver（実画面には何もしない。テスト用）。AGENT_HOST_COMPUTER_LOG にその呼び出しを 1 行ずつ残す
+const computerDriver = process.env.AGENT_HOST_COMPUTER_DRIVER === 'fake'
+  ? fakeComputerDriver({ log: process.env.AGENT_HOST_COMPUTER_LOG ? entry => appendFileSync(process.env.AGENT_HOST_COMPUTER_LOG, JSON.stringify(entry) + '\n') : undefined })
+  : parentPortComputer(process.parentPort);
+const computerShots = createComputerShots({ dataDir: store.dataDir });
+const computerLock = createComputerLock({
+  waitMs: Number(process.env.AGENT_HOST_COMPUTER_LOCK_WAIT_MS) > 0 ? Number(process.env.AGENT_HOST_COMPUTER_LOCK_WAIT_MS) : undefined,
+  onState: state => emitGlobal({ type: 'computer.state', ...state }),
+  onArm: owner => computerDriver?.arm(owner),
+  onStop: owner => computerDriver?.stop(owner),
+});
+const computerBridge = computerDriver ? createComputerBridge({
+  driver: computerDriver, lock: computerLock, shots: computerShots, askPermission, translate: t,
+  access: {
+    getPrefs: store.getPrefs,
+    sessionApps: async sessionId => (await store.get(sessionId)).computerApps ?? [],
+    rememberSession: async (sessionId, ids) => store.setSessionData(sessionId, 'computerApps', [...new Set([...((await store.get(sessionId)).computerApps ?? []), ...ids])]),
+    rememberAlways: async app => { const prefs = await store.rememberComputerApp(app); emitGlobal({ type: 'prefs', sessionId: null, prefs, locale }); },
+    markIntroduced: async () => {
+      const current = normalizeComputerUse((await store.getPrefs()).computerUse);
+      if (!current.introduced) await savePref('computerUse', { ...current, introduced: true });
+    },
+  },
+}) : null;
+// 物理の Esc（main が離す・隠すまで済ませて知らせる）。ロックの持ち主と、貸し借りでつながるターン全部に止めた印を付ける
+computerDriver?.onEscape(owner => computerLock.escape(owner));
+// main か core が作り直された。持ち主を外し、待っている先頭に譲る
+computerDriver?.onReady(() => computerLock.reset());
+/** hostCapabilities.computerUse。reason は desktop（Electron でない）/ platform / native */
+const computerSupport = () => {
+  if (!computerDriver) return { supported: false, reason: 'desktop' };
+  const state = computerDriver.state();
+  return state?.supported ? { supported: true } : { supported: false, reason: state?.reason ?? 'native' };
+};
 
 // 送信待ちの一覧が変わるたびに呼ぶもの（sessionId -> Set<fn(messages)>）。再開の受け付けを、送った項目が出ていくまで保つのに使う
 const outboxWatchers = new Map();
@@ -1925,6 +2017,8 @@ agentTasks = await createAgentTasks({
   // 人間の承認を待っているか。承認は core/server.mjs 側にしかないので判定を渡す。
   // 中継の複製も数える（孫が止まっていれば、その子も止まっている）
   waiting: sessionId => [...runtime.waiting.values()].some(w => w.payload.sessionId === sessionId),
+  // コンピューターの操作のロックを待っている子は、黙っているとは数えない（承認待ちではないので ply_task_wait の waiting にはしない）
+  lockWaiting: sessionId => computerLock.snapshot().some(s => s.sessionId === sessionId && s.state === 'waiting'),
   rollback: async ({ sessionId }) => { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); },
   prepare: async (owner, args, taskId, signal) => {
     const parent = runtime.turns.get(owner);
@@ -2367,6 +2461,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         visualizeInstructions: visualizeInstructions(agentLocale),
         browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
         browserInstructions: null,
+        // ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（computerRuntimeFor）
+        computerRuntime: await computerRuntimeFor(turn),
         addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
         contextRuntime: runtimeContext,
         // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
@@ -2511,6 +2607,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
     await agentTasks?.settleSteers(turn.info.sessionId).catch(() => {});
   }
   agentBrowser?.endTurn(turn.info.sessionId || turn.key);
+  // ロックの解放、止めた印・このターンの拒否の消去、main への後始末（押したままの入力を離し、オーバーレイを消す）
+  if (computerLock.endTurn(turn.presentKey)) computerDriver?.turnEnded(turn.presentKey);
   notifyFree(turn.key);
   syncRunningPoll();
   // 片付けるのはこのセッションの承認待ちだけ。他のターンの分は残す
@@ -3546,16 +3644,19 @@ wss.on("connection", (ws, req) => {
           return reply(true, await delegationRoutingState());
         }
         case "resolvePermission": {
-          const { id, allow, always, message, messageKey, answers, annotations, response } = msg.args ?? {};
+          const { id, allow, always, scope, message, messageKey, answers, annotations, response } = msg.args ?? {};
           const w = runtime.waiting.get(id);
           if (!w) return reply(false, t('approval.alreadyResolved'));
           // 回答を伴うツール（質問カード）は、承認ではなく入力の差し替えとして返る。
           // ここでは解釈しない。エージェントが自分の形へ戻す（§2.2）。
           // 拒否の理由は画面の言語ではなく会話の言語でエージェントへ返すので、画面は文ではなく印（messageKey: 'userDenied'）で送る。
           // 文（message）で来たら従来どおりそのまま渡す
+          // scope（once / session / always）は ply_computer の承認が使う。無ければ always の真偽から読む（今の画面との互換）
+          const answeredScope = ['once', 'session', 'always'].includes(scope) ? scope : always ? 'always' : 'once';
           w.settle({
             allow: !!allow,
-            always: !!always,
+            always: !!always || answeredScope === 'always',
+            scope: answeredScope,
             message: message ?? null,
             ...(!allow && !message && messageKey === 'userDenied' ? { messageKey } : {}),
             answers: answers ?? null,
@@ -3734,7 +3835,14 @@ wss.on("connection", (ws, req) => {
         case "hostCapabilities":
           // hostName は添付の「ホストから <ホスト名>」の見出し（リモートの印の無いブラウザーで使う）
           // pcBrowser: この接続から PC の内蔵ブラウザーを見られるか（デスクトップ版で、リモートの接続のとき）
-          return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready });
+          return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready, computerUse: computerSupport() });
+        // コンピューターの操作を止める（docs/computer-use.md「computerStop」）。ホストの OS を操作する命令ではなく、止める側なので、リモートの端末からも受ける
+        case "computerStop": {
+          const { sessionId } = msg.args ?? {};
+          const result = typeof sessionId === 'string' && sessionId ? computerLock.stopSession(sessionId, 'stop') : { stopped: false };
+          if (result.stopped && result.owner) computerDriver?.stop(result.owner);
+          return reply(true, { stopped: result.stopped });
+        }
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));

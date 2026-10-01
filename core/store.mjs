@@ -107,6 +107,29 @@ export async function setPref(key, value, backendId) {
   });
 }
 
+/** 「常に許可」のアプリを覚える（prefs の computerUse.alwaysAllowed。docs/computer-use.md「設定と会話のデータ」）。同じ id は置き換える */
+export async function rememberComputerApp(app) {
+  return exclusive(async () => {
+    const all = await prefs.read();
+    const current = all.computerUse && typeof all.computerUse === "object" && !Array.isArray(all.computerUse) ? all.computerUse : {};
+    const list = Array.isArray(current.alwaysAllowed) ? current.alwaysAllowed.filter(row => row.id !== app.id) : [];
+    all.computerUse = { enabled: true, allowAllApps: false, introduced: false, ...current, alwaysAllowed: [...list, app] };
+    await prefs.write();
+    return { ...all };
+  });
+}
+
+/** 「常に許可」の一覧から 1 件消す。次にそのアプリを使うときは、また聞かれる */
+export async function forgetComputerApp(id) {
+  return exclusive(async () => {
+    const all = await prefs.read();
+    const current = all.computerUse && typeof all.computerUse === "object" && !Array.isArray(all.computerUse) ? all.computerUse : {};
+    all.computerUse = { enabled: true, allowAllApps: false, introduced: false, ...current, alwaysAllowed: (Array.isArray(current.alwaysAllowed) ? current.alwaysAllowed : []).filter(row => row.id !== id) };
+    await prefs.write();
+    return { ...all };
+  });
+}
+
 export async function rememberBrowserSite(site) {
   return exclusive(async () => {
     const all = await prefs.read();
@@ -357,7 +380,7 @@ export const dataDir = DIR;
 
 /** Host-only data; durable before acknowledging the client. Roll back a failed write. */
 export async function setSessionData(sessionId, field, value) {
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept"].includes(field)) throw new Error(t("store.invalidSessionField"));
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];
