@@ -32,10 +32,11 @@ function toAbsolute(value, origin, size) {
   return Math.min(65535, Math.max(0, abs));
 }
 
+/** @param {{ suspend(): () => void }|null} escape Esc の globalShortcut を外す。suspend() は戻す関数を返す（オーバーレイの suspendEscape） */
 function createInput({ win32, sleep = defaultSleep, virtualBounds, escape = null }) {
   const pressedKeys = new Map(); // vk → { vk, extended }
   const pressedButtons = new Set();
-  let escapeSuspended = false;
+  let resumeEscapeHook = null; // escape.suspend() が返す、Esc の登録を戻す関数
 
   const keyEvent = (key, up) => {
     const sc = win32.mapVirtualKey(key.vk, 4);
@@ -53,8 +54,13 @@ function createInput({ win32, sleep = defaultSleep, virtualBounds, escape = null
     if (sent !== events.length) throw new ComputerError('failed', `SendInput sent ${sent}/${events.length} (Win32 error ${error})`);
   }
 
-  function suspendEscape() { if (escape && !escapeSuspended) { escape.suspend(); escapeSuspended = true; } }
-  function resumeEscape() { if (escapeSuspended && !pressedKeys.has(VK.ESCAPE)) { escapeSuspended = false; escape.resume(); } }
+  function suspendEscape() { if (escape && !resumeEscapeHook) resumeEscapeHook = escape.suspend(); }
+  function resumeEscape() {
+    if (!resumeEscapeHook || pressedKeys.has(VK.ESCAPE)) return;
+    const resume = resumeEscapeHook;
+    resumeEscapeHook = null;
+    resume();
+  }
 
   const moveEvent = (x, y) => {
     const v = virtualBounds();
@@ -226,7 +232,7 @@ function createInput({ win32, sleep = defaultSleep, virtualBounds, escape = null
     for (const key of [...pressedKeys.values()].reverse()) { events.push(keyEvent(key, true)); released.push(keyName(key.vk)); }
     pressedButtons.clear();
     pressedKeys.clear();
-    try { if (events.length) send(events); } finally { if (escapeSuspended) { escapeSuspended = false; escape.resume(); } }
+    try { if (events.length) send(events); } finally { resumeEscape(); }
     return released;
   }
 

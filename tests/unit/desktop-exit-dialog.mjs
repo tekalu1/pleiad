@@ -75,6 +75,7 @@ async function start({ ready = true } = {}) {
     './agent-browser-bridge.cjs': { attachAgentBrowserBridge: () => ({ close: () => {} }) },
     './computer/service.cjs': { attachComputerService: () => ({}) },
     './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: () => ({ close: () => {} }) },
+    './computer-overlay.cjs': { attachComputerOverlay: () => ({ close: () => {} }) },
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
     'electron-updater': { autoUpdater: {} },

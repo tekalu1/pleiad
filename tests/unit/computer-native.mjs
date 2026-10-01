@@ -278,7 +278,7 @@ export default async function (t) {
     const w = fakeWin32();
     const log = [];
     w.sendInput = inputs => { log.push(`send${inputs.length}`); w.sent.push(inputs); return { sent: inputs.length, error: 0 }; };
-    const input = makeInput(w, { escape: { suspend: () => log.push('suspend'), resume: () => log.push('resume') } });
+    const input = makeInput(w, { escape: { suspend: () => { log.push('suspend'); return () => log.push('resume'); } } });
     await input.perform({ type: 'key', combo: 'Escape' });
     t.ok('Esc を送る前に解除し、送った後に戻す', log.join() === 'suspend,send1,send1,resume', log.join());
     log.length = 0;
@@ -381,6 +381,17 @@ export default async function (t) {
     const same = { dpi: { get: () => ({ awareness: 'per-monitor', perMonitorV2: false }), enter: () => { throw new Error('呼ばない'); } } };
     t.ok('Per-Monitor（V1 でも）なら包まない', withPerMonitorDpi(same) === same);
   }
+
+  // ===== main.cjs の配線（読んで確かめる。Electron は起こさない）=====
+  {
+    const fs = require('node:fs');
+    const main = fs.readFileSync(new URL('../../desktop/main.cjs', import.meta.url), 'utf8');
+    t.ok('main.cjs: service を worker につなぎ、Esc の登録の解除はオーバーレイの suspendEscape へ渡す', /attachComputerService\(worker,[\s\S]*?escape: \{ suspend: \(\) => computerOverlay\?\.suspendEscape\(\)/.test(main));
+    t.ok('main.cjs: オーバーレイが Esc を拾ったら service.escape（computer-escape はオーバーレイが送る）', /attachComputerOverlay\(worker, \{ onEscape: owner => computerService\?\.escape\(\{ owner, notify: false \}\) \}\)/.test(main));
+  }
+
+  // ===== オーバーレイとつないだ Esc =====
+  await overlayIntegrationTests(t);
 
   // ===== 本物の koffi の構造体の配置（Win32 を呼ばない。koffi が無い環境ではとばす）=====
   {
@@ -499,7 +510,7 @@ async function serviceTests(t) {
     const w = fakeWin32(over);
     const out = [];
     let clock = 1_000_000;
-    const escape = { log: [], suspend() { this.log.push('suspend'); }, resume() { this.log.push('resume'); } };
+    const escape = { log: [], suspend() { this.log.push('suspend'); return () => this.log.push('resume'); } };
     const svc = createComputerService({ post: m => out.push(m), win32: w, nativeImage: { createFromBitmap: (b, s) => ({ resize: o => ({ toJPEG: () => Buffer.from([1, o.width & 255]) }), toJPEG: () => Buffer.from([1, s.width & 255]) }) },
       sleep: noSleep, escape, selfPid: 1, selfExe: 'C:\\x\\Ply.exe', now: () => clock, timeouts: { op: 60, launch: 120, watchdog: 30_000 }, ...options });
     const result = id => out.find(m => m.type === 'computer-result' && m.id === id);
@@ -721,6 +732,13 @@ async function serviceTests(t) {
     t.ok('notify: false なら computer-escape は送らない（後から notifyEscape）', !out.some(m => m.type === 'computer-escape'));
     svc.notifyEscape('a');
     t.ok('notifyEscape で送る', out.some(m => m.type === 'computer-escape'));
+    // オーバーレイの onEscape(owner)（desktop/main.cjs の配線）: owner を渡すと、その持ち主と今の持ち主の両方を止める
+    out.length = 0;
+    svc.handleMessage({ type: 'computer-arm', owner: 'lent-to' });
+    const r = svc.escape({ owner: 'asker', notify: false });
+    t.ok('escape({ owner }) はその持ち主を返し、computer-escape は送らない', r.owner === 'asker' && !out.some(m => m.type === 'computer-escape'));
+    t.ok('渡した持ち主も今の持ち主（貸した先）も stopped', (await call('input', { actions: [{ type: 'move', x: 5, y: 5 }] }, 'asker')).error?.code === 'stopped'
+      && (await call('input', { actions: [{ type: 'move', x: 5, y: 5 }] }, 'lent-to')).error?.code === 'stopped');
   }
   {
     // 実行中の列を Esc で打ち切る
@@ -766,4 +784,54 @@ async function serviceTests(t) {
     svc.dispose();
     t.ok('dispose（will-quit・worker の終了）で押したままを離す', names(w).join() === 'k-1d');
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// オーバーレイ（desktop/computer-overlay.cjs）とつないだ Esc の流れ。desktop/main.cjs の配線と同じ形（偽の electron・偽の Win32）
+async function overlayIntegrationTests(t) {
+  const { createComputerOverlay } = require('../../desktop/computer-overlay.cjs');
+  const registered = new Map();
+  const log = [];
+  class Win {
+    constructor(opts) { this.bounds = { ...opts }; this.webContents = { send() {}, setWindowOpenHandler() {}, on() {}, once: (e, fn) => { this.loaded = fn; } }; this.on = () => {}; }
+    loadFile() { return Promise.resolve().then(() => this.loaded?.()); }
+    setAlwaysOnTop() {} setIgnoreMouseEvents() {} setContentProtection() {} setBounds(b) { this.bounds = { ...b }; } getBounds() { return this.bounds; }
+    showInactive() {} hide() {} isDestroyed() { return false; } destroy() {}
+  }
+  const display = { id: 11, scaleFactor: 1, bounds: { x: 0, y: 0, width: 1920, height: 1080 } };
+  const electron = {
+    BrowserWindow: Win,
+    globalShortcut: { register: (key, cb) => { registered.set(key, cb); return true; }, unregister: key => registered.delete(key) },
+    screen: { getAllDisplays: () => [display], dipToScreenRect: (_w, r) => r, screenToDipPoint: p => p, on() {}, removeListener() {} },
+  };
+  const w = fakeWin32();
+  w.sendInput = inputs => { w.sent.push(inputs); log.push(`send:${names({ sent: [inputs] }).join('+')}:esc=${registered.has('Escape')}`); return { sent: inputs.length, error: 0 }; };
+  const posted = [];
+  let overlay = null;
+  const service = createComputerService({ post: m => posted.push(m), win32: w, sleep: noSleep, selfPid: 1, selfExe: 'C:\\x\\Ply.exe',
+    escape: { suspend: () => overlay.suspendEscape() }, nativeImage: null, timeouts: { op: 2000, launch: 2000, watchdog: 30_000 } });
+  overlay = createComputerOverlay({ electron, post: m => posted.push(m), t: key => key, timing: { idleMs: 500, stopMs: 40, tailMs: 10, exitMs: 10, rmExitMs: 4, marginMs: 4, keepMs: 200, escapeWaitMs: 200 },
+    onEscape: owner => service.escape({ owner, notify: false }), log: () => {} });
+  const both = m => { service.handleMessage(m); overlay.handleMessage(m); }; // main.cjs では、同じ worker のメッセージを両方が受ける
+  const call = async (id, actions) => { service.handleMessage({ type: 'computer-call', id, owner: 'o1', op: 'input', args: { actions } }); for (let i = 0; i < 200 && !posted.some(m => m.id === id); i++) await new Promise(r => setTimeout(r, 5)); return posted.find(m => m.id === id); };
+
+  both({ type: 'computer-arm', owner: 'o1' });
+  overlay.handleMessage({ type: 'computer-overlay', owner: 'o1', state: 'activity', display: { id: 11, index: 1, bounds: display.bounds, scale: 1 }, agent: { id: 'claude', label: 'Claude' }, title: 't' });
+  await new Promise(r => setTimeout(r, 20));
+  t.ok('オーバーレイが出ている間だけ Esc を握る', registered.has('Escape'));
+
+  await call(1, [{ type: 'key', combo: 'Escape' }]);
+  const escSend = log.filter(l => l.startsWith('send:'));
+  t.ok('自分の Esc の注入の間は globalShortcut を外し、送ったら戻す', escSend.length === 2 && escSend.every(l => l.endsWith('esc=false')) && registered.has('Escape'), log.join(' | '));
+
+  await call(2, [{ type: 'keyDown', combo: 'ctrl' }, { type: 'down', x: 5, y: 5, button: 'left' }]);
+  log.length = 0;
+  registered.get('Escape')(); // 物理の Esc
+  await new Promise(r => setTimeout(r, 60));
+  t.ok('Esc: 押したままの入力を離す（ボタン → キー）', log.join(' | ').startsWith('send:m4+k-1d'), log.join(' | '));
+  t.ok('Esc の後、オーバーレイは computer-escape { owner } を送る', posted.some(m => m.type === 'computer-escape' && m.owner === 'o1'));
+  t.ok('computer-escape は 1 回だけ（service は notify: false）', posted.filter(m => m.type === 'computer-escape').length === 1);
+  const after = await call(3, [{ type: 'move', x: 5, y: 5 }]);
+  t.ok('その後の input は stopped', after.error?.code === 'stopped');
+  service.dispose(); overlay.close();
 }

@@ -30,6 +30,9 @@ const cases = [
   await import('./unit/side-panel.mjs'),
   // 内蔵ブラウザー: 右パネルの表・アドレス欄・リンクの開き先・使える画面・main のタブと位置（偽の electron）
   await import('./unit/inapp-browser.mjs'),
+
+  // computer use のオーバーレイと Esc: 窓・フェード・Esc の登録と解除・止める流れ・倍率の違うモニターの座標（偽の electron。OS の入力は送らない）
+  await import('./unit/computer-overlay.mjs'),
   // computer use の main 側（desktop/computer/*）: キーの解釈・SendInput の中身・releaseAll・撮影の縮小・アプリの特定・service の列と止め方（偽の Win32。本物の入力は送らない）
   await import('./unit/computer-native.mjs'),
   await import('./unit/header-entries.mjs'),

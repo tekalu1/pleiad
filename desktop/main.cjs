@@ -25,6 +25,9 @@ let computerService;
 let browserPanel;
 let agentBrowserBridge;
 let browserScreencastBridge;
+// コンピューターの操作中のオーバーレイと Esc（docs/computer-use.md、ADR 0073）。画面を撮る・入力する側（desktop/computer）はこの overlay を受け取って使う
+const { attachComputerOverlay } = require('./computer-overlay.cjs');
+let computerOverlay;
 const trust = createWindowTrust();
 let remoteWindows;
 let worker, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
@@ -159,7 +162,9 @@ async function boot() {
   attachSecretBridge(worker, { safeStorage, openExternal: url => shell.openExternal(url).catch(() => {}) });
   // 「エクスプローラーで表示」「ブラウザーで開く」。範囲と接続元はサーバーが確かめ、実行は本体の shell（窓を前に出せる）
   attachFileBridge(worker, { shell });
-  computerService = attachComputerService(worker, { electron: { screen, nativeImage }, app, log: line => console.warn('[computer]', line) });
+  // Esc の登録を外す・戻すのは、オーバーレイ（computerOverlay。下で作る）が持つ。Esc を拾ったら、オーバーレイが computerService.escape を呼ぶ
+  computerService = attachComputerService(worker, { electron: { screen, nativeImage }, app, log: line => console.warn('[computer]', line),
+    escape: { suspend: () => computerOverlay?.suspendEscape() ?? (() => {}) } });
   resident = attachResident({ app, worker, icon: path.join(__dirname, 'icon.png'), getWindow: () => window, quit: () => closeSafely() });
   let startupError = '';
   worker.stderr.on('data', data => { startupError = (startupError + data.toString()).replace(/token=\S+/g, 'token=[redacted]').slice(-2000); });
@@ -190,6 +195,7 @@ async function boot() {
   browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png'), agentControl: (action, id) => agentBrowserBridge?.[action]?.(id) });
   browserPanel.attach();
   agentBrowserBridge = attachAgentBrowserBridge(worker, browserPanel);
+  computerOverlay = attachComputerOverlay(worker, { onEscape: owner => computerService?.escape({ owner, notify: false }) });
   browserScreencastBridge = attachBrowserScreencastBridge(worker, browserPanel, {
     agentControl: (action, id) => agentBrowserBridge?.[action]?.(id),
     // 隠れた窓（常駐で閉じた）ではページが描かれない。見られている間だけ最小化で出し、終われば隠し直す
@@ -287,7 +293,7 @@ ipcMain.on('ply:title-bar', (event, colors) => {
 });
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('will-quit', () => { browserScreencastBridge?.close(); agentBrowserBridge?.close(); });
+  app.on('will-quit', () => { browserScreencastBridge?.close(); agentBrowserBridge?.close(); computerOverlay?.close(); });
   app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { exitInProgress = true; if (!quitting && window) { event.preventDefault(); void closeSafely(); } });
   app.on('will-quit', () => { exitInProgress = true; });

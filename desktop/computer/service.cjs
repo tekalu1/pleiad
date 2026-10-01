@@ -37,7 +37,7 @@ function withPerMonitorDpi(win32) {
  * @param {(message: object) => void} deps.post core へ送る
  * @param {object|null} deps.win32 win32.cjs の表（偽物でもよい）。null なら unsupported
  * @param {string} [deps.reason] win32 が null のときの理由（platform / native）
- * @param {{ suspend(): void, resume(): void }|null} [deps.escape] Esc の globalShortcut の解除と再登録（オーバーレイ側が持つ）
+ * @param {{ suspend(): () => void }|null} [deps.escape] Esc の globalShortcut を外す（オーバーレイの suspendEscape）。戻す関数を返す
  */
 function createComputerService({ post, win32: rawWin32 = null, reason = 'native', nativeImage = null, escape = null, sleep, listStartApps,
   selfPid, selfExe, now = Date.now, log = () => {}, timeouts = {} }) {
@@ -171,12 +171,13 @@ function createComputerService({ post, win32: rawWin32 = null, reason = 'native'
     tail = tail.then(() => execute(message), () => execute(message)); // 1 本の列。execute は投げない
   }
 
-  /** Esc・会話の止める: 止めた印を付け、走っている入力を打ち切り、押したままを離す。返り値は止めた持ち主 */
-  function stop(owner = armedOwner ?? lastCallOwner) {
-    if (owner) stopped.add(owner);
+  /** Esc・会話の止める: 止めた印（渡された持ち主と今の持ち主）を付け、走っている入力を打ち切り、押したままを離す。返り値は止めた持ち主 */
+  function stop(owner) {
+    const stoppedOwner = owner ?? armedOwner ?? lastCallOwner ?? null;
+    for (const o of [stoppedOwner, armedOwner]) if (o) stopped.add(o);
     active?.controller.abort();
     releaseAll();
-    return owner ?? null;
+    return stoppedOwner;
   }
 
   function handleMessage(message) {
@@ -224,11 +225,14 @@ function createComputerService({ post, win32: rawWin32 = null, reason = 'native'
     /** screen の display-added / display-removed / display-metrics-changed */
     onDisplaysChanged() { if (supported) refreshDisplays(true); },
     releaseAll,
-    /** オーバーレイの Esc から: 止めて離す。notify を false にすると computer-escape は notifyEscape で後から送る */
-    escape({ notify = true } = {}) {
-      const owner = stop();
-      if (notify && owner) post({ type: 'computer-escape', owner });
-      return { owner };
+    /**
+     * Esc を拾ったとき（オーバーレイの onEscape）: 止めて離す。owner を渡せばその持ち主を止める（無ければ今の持ち主）。
+     * notify を false にすると computer-escape は送らない（オーバーレイが、ピルの後始末の後に自分で送る）
+     */
+    escape({ owner, notify = true } = {}) {
+      const stoppedOwner = stop(owner);
+      if (notify && stoppedOwner) post({ type: 'computer-escape', owner: stoppedOwner });
+      return { owner: stoppedOwner };
     },
     notifyEscape(owner) { if (owner) post({ type: 'computer-escape', owner }); },
     armedOwner: () => armedOwner,

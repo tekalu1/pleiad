@@ -145,9 +145,9 @@ A が作った土台。`desktop/main.cjs` は `attachComputerService(worker, { e
 
 オーバーレイ側（C）へ渡す口。`attachComputerService` の返り値:
 
-- `escape({ notify? })`: Esc を拾ったとき。止めた印を付け、走っている入力を打ち切り、`releaseAll` する。`computer-escape` は既定ですぐ送る。ピルの 1.2 秒の後に送るなら `notify: false` にして `notifyEscape(owner)` を後で呼ぶ。返り値は `{ owner }`。
-- `attachComputerService` の `escape: { suspend(), resume() }` に、オーバーレイが持つ `globalShortcut('Escape')` の解除と再登録を渡す。`key` / `keyDown` に Escape があるとき、送る前に `suspend`、送った後（`keyDown` は離したとき・`releaseAll`）に `resume` が呼ばれる。
-- `armedOwner()`: 今の持ち主。
+- `escape({ owner?, notify? })`: Esc を拾ったとき。渡した持ち主と今の持ち主に止めた印を付け、走っている入力を打ち切り、`releaseAll` する。返り値は `{ owner }`。`computer-escape` は既定でここから送るが、オーバーレイ（C）は後始末のあとに自分で送るので、`desktop/main.cjs` は `notify: false` で呼ぶ（`attachComputerOverlay(worker, { onEscape: owner => computerService.escape({ owner, notify: false }) })`）。
+- `attachComputerService` の `escape: { suspend() }` に、オーバーレイの `suspendEscape()`（`globalShortcut('Escape')` を外し、戻す関数を返す）を渡す。`key` / `keyDown` に Escape があるとき、送る前に `suspend()`、送った後（`keyDown` は離したとき・`releaseAll`）に戻す関数が呼ばれる。
+- `notifyEscape(owner)`・`armedOwner()`。
 
 ### 実機（VM）での確認の手順
 
