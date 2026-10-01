@@ -44,7 +44,8 @@
       "about": "About & updates",
       "delegation": "Delegation",
       "autoCompaction": "Auto compaction",
-      "browser": "Browser"
+      "browser": "Browser",
+      "computer": "Computer use"
     },
     "usage": {
       "description": "Subscription limits apply to the whole account. Shows usage, remaining amount, and reset time.",
@@ -207,6 +208,32 @@
         "alwaysSite": "Always for this site",
         "deny": "Deny"
       }
+    },
+    "computer": {
+      "enable": "Let agents operate apps on this PC",
+      "enableNote": "Works in Claude, Codex and Antigravity conversations. While an agent is operating, it uses your mouse and keyboard. Press Esc to stop it.",
+      "allowAll": "Allow all apps",
+      "allowAllNote": "Lets agents operate any app without asking. The apps under “Apps agents can’t operate” (terminals, password managers, security software, Pleiad itself, and so on) stay off limits even when this is on.",
+      "antigravity": "Antigravity doesn’t ask for approval. It only runs without confirmation, so any app except those agents can’t operate is operated without asking.",
+      "allowedTitle": "Always-allowed apps",
+      "allowedAll": "All allowed",
+      "empty": "None yet",
+      "remove": "Remove",
+      "removeApp": "Remove “{{name}}” from always allowed",
+      "forbiddenTitle": "Apps agents can’t operate",
+      "forbidden": {
+        "terminal": { "name": "Terminals", "apps": "Windows Terminal, PowerShell, Command Prompt, WSL, Git Bash and more" },
+        "password": { "name": "Password managers", "apps": "1Password, Bitwarden, KeePass, LastPass and more" },
+        "security": { "name": "Security", "apps": "Windows Security, antivirus software" },
+        "system": { "name": "Windows internals", "apps": "Lock screen, Start, Search, User Account Control" },
+        "agent": { "name": "The agents themselves", "apps": "Pleiad, Claude, Codex, ChatGPT, Antigravity" }
+      },
+      "unsupported": {
+        "desktop": "Available in the desktop version of Pleiad. This way of running it can’t operate apps on the PC.",
+        "platform": "Only available on a Windows PC.",
+        "native": "The component that operates the screen couldn’t be loaded on this PC. Reinstalling Pleiad may fix it."
+      },
+      "saveFailed": "Could not save: {{error}}"
     }
   },
   "time": {

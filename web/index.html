@@ -19,6 +19,7 @@
 <link rel="stylesheet" href="/compaction.css">
 <link rel="stylesheet" href="/conversation-nav.css">
 <link rel="stylesheet" href="/remote-browser.css">
+<link rel="stylesheet" href="/computer-settings.css">
 <!-- i18next はビルドしないので、裸の名前をサーバーの配信口へ向ける（core/server.mjs の /vendor/i18next.mjs）。モジュールより前に置く -->
 <script type="importmap">{ "imports": { "i18next": "/vendor/i18next.mjs" } }</script>
 <!-- 最初の描画より前に、配色・言語・窓の枠（デスクトップ版だけ）・脇の開閉を決める。client.mjs を待つと一瞬ずれて見える。
@@ -76,6 +77,7 @@
       <button type="button" id="autoCompactionTab" aria-controls="autoCompactionPanel" data-i18n="settings.nav.autoCompaction"></button>
       <!-- 内蔵ブラウザー。デスクトップ版のホストの画面だけ出す（web/browser-settings.mjs） -->
       <button type="button" id="browserTab" aria-controls="browserPanel" data-i18n="settings.nav.browser" hidden></button>
+      <button type="button" id="computerTab" aria-controls="computerPanel" data-i18n="settings.nav.computer"></button>
       <button type="button" id="remoteTab" aria-controls="remotePanel" data-i18n="settings.nav.remote"></button>
       <button type="button" id="updatesTab" aria-controls="updatesPanel" data-i18n="settings.nav.about"></button>
     </nav>
@@ -314,6 +316,8 @@
         </section>
         <!-- 中身は web/browser-settings.mjs が作る -->
         <section id="browserPanel" data-i18n-aria-label="settings.nav.browser" hidden></section>
+        <!-- 中身は web/computer-settings.mjs が作る -->
+        <section id="computerPanel" data-i18n-aria-label="settings.nav.computer" hidden></section>
         <!-- 中身は web/remote.mjs が作る -->
         <section id="remotePanel" data-i18n-aria-label="settings.nav.remote" hidden></section>
       </div>

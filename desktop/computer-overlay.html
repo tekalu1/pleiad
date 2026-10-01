@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'">
+<title>Pleiad overlay</title>
+<link rel="stylesheet" href="computer-overlay.css">
+</head>
+<body>
+<div class="ov" id="ov">
+  <div class="glow" id="glow"><div class="gi" id="gi"></div></div>
+  <div class="pill" id="pill" role="status"><span class="p-run" id="pWho"></span><span class="p-run ptt" id="pTitle"></span><span class="p-run dot" id="pDot">·</span><span class="p-run" id="pHint"></span><span class="p-stop" id="pStop"></span></div>
+  <div class="acur" id="cur"><div class="fog"></div><div class="ring" id="ring"></div><svg class="arr" viewBox="0 0 17 22"><path d="M2 2 L2 17.5 L6.1 13.9 L8.8 20 L11.6 18.8 L8.9 12.8 L14.6 12.6 Z"/></svg></div>
+</div>
+<script src="computer-overlay-view.cjs"></script>
+</body>
+</html>

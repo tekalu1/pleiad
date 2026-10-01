@@ -1,0 +1,48 @@
+/* コンピューターの操作中のオーバーレイ（docs/computer-use.md、ADR 0073）。単位は DIP（窓が 1 倍で、倍率は Chromium が掛ける）。
+   PC 全体に重ねる面なので web/ の design-lint の対象にしない。色は Pleiad の操作色 #5665cd と、暗い壁紙でも縁が立つ明るい側 #8f9cf0。 */
+@property --d { syntax: '<number>'; inherits: false; initial-value: 0; }
+:root { --acc: 86 101 205; --acc-hi: 143 156 240; --pillbg: #3a499e; }
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; user-select: none; }
+
+.ov { position: fixed; inset: 0; pointer-events: none; visibility: hidden; font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; }
+.ov.vis { visibility: visible; }
+
+/* 縁: 外側 1.5 の明るい線 + 内側 1.5 の濃い線 + 内側へ薄くなるにじみ 2 層。深さ --d は静止 30、呼吸で 24 ↔ 36 */
+.glow { position: absolute; inset: 0; opacity: 0; }
+.gi { position: absolute; inset: 0; --d: 0;
+  box-shadow:
+    inset 0 0 0 1.5px rgb(var(--acc-hi)),
+    inset 0 0 0 3px rgb(var(--acc) / .95),
+    inset 0 0 calc(var(--d) * .55px) calc(var(--d) * .1px) rgb(var(--acc-hi) / .85),
+    inset 0 0 calc(var(--d) * 1.5px) calc(var(--d) * .32px) rgb(var(--acc) / .7); }
+@keyframes cuBreathe { from { --d: 24; } to { --d: 36; } }
+
+/* ピル: 上端中央、上から 12、高さ 32、左右 14 */
+.pill { position: absolute; left: 50%; top: 12px; transform: translate(-50%, -14px); opacity: 0;
+  display: flex; align-items: center; gap: 7px; max-width: calc(100% - 24px); height: 32px; padding: 0 14px;
+  border-radius: 999px; background: var(--pillbg); color: #fff; white-space: nowrap; font-size: 13px;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, .3), inset 0 0 0 1px rgb(var(--acc-hi) / .7);
+  transition: opacity 240ms cubic-bezier(.4, 0, 1, 1), transform 240ms cubic-bezier(.4, 0, 1, 1); }
+.pill.in { opacity: 1; transform: translate(-50%, 0); transition: opacity 320ms cubic-bezier(.2, .7, .2, 1), transform 320ms cubic-bezier(.2, .7, .2, 1); }
+.pill .ptt { min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: .85; max-width: 16em; }
+.pill .dot { opacity: .7; }
+.pill .p-stop { display: none; }
+.pill.stopped .p-run { display: none; }
+.pill.stopped .p-stop { display: inline; }
+.pill [hidden] { display: none; }
+
+/* カーソル: 直径 60 の霧に包まれた 17×22 の矢印。本物のカーソルは置き換えない */
+.acur { position: absolute; left: 0; top: 0; width: 0; height: 0; opacity: 0; transition: opacity 240ms cubic-bezier(.2, .7, .2, 1); will-change: transform; }
+.acur.in { opacity: 1; }
+.acur.out { transition-timing-function: cubic-bezier(.4, 0, 1, 1); }
+.acur .fog { position: absolute; left: -30px; top: -30px; width: 60px; height: 60px; border-radius: 50%;
+  background: radial-gradient(circle, rgb(var(--acc-hi) / .85) 0, rgb(var(--acc) / .55) 34%, rgb(var(--acc) / 0) 70%); filter: blur(3px);
+  transition: transform 180ms cubic-bezier(.2, .7, .2, 1); }
+.acur .arr { position: absolute; left: -2px; top: -2px; width: 17px; height: 22px; overflow: visible; transform-origin: 2px 2px; transition: transform 180ms cubic-bezier(.2, .7, .2, 1); }
+.acur .arr path { fill: #0e1424; stroke: #fff; stroke-width: 1.6; stroke-linejoin: round; }
+.acur.press .arr { transform: scale(.84); transition-duration: 90ms; }
+.acur.press .fog { transform: scale(1.28); transition-duration: 90ms; }
+.acur .ring { position: absolute; left: -26px; top: -26px; width: 52px; height: 52px; border-radius: 50%; border: 2px solid rgb(var(--acc-hi) / .95); opacity: 0; }
+.acur .ring.go { animation: cuRing 420ms cubic-bezier(.2, .7, .2, 1); }
+@keyframes cuRing { from { opacity: .95; transform: scale(.2); } to { opacity: 0; transform: scale(1); } }
