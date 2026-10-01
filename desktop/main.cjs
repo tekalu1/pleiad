@@ -22,6 +22,9 @@ const { prepareAgentBrowserBin } = require('./agent-browser-bin.cjs');
 let browserPanel;
 let agentBrowserBridge;
 let browserScreencastBridge;
+// コンピューターの操作中のオーバーレイと Esc（docs/computer-use.md、ADR 0073）。画面を撮る・入力する側（desktop/computer）はこの overlay を受け取って使う
+const { attachComputerOverlay } = require('./computer-overlay.cjs');
+let computerOverlay;
 const trust = createWindowTrust();
 let remoteWindows;
 let worker, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
@@ -186,6 +189,7 @@ async function boot() {
   browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png'), agentControl: (action, id) => agentBrowserBridge?.[action]?.(id) });
   browserPanel.attach();
   agentBrowserBridge = attachAgentBrowserBridge(worker, browserPanel);
+  computerOverlay = attachComputerOverlay(worker);
   browserScreencastBridge = attachBrowserScreencastBridge(worker, browserPanel, {
     agentControl: (action, id) => agentBrowserBridge?.[action]?.(id),
     // 隠れた窓（常駐で閉じた）ではページが描かれない。見られている間だけ最小化で出し、終われば隠し直す
@@ -283,7 +287,7 @@ ipcMain.on('ply:title-bar', (event, colors) => {
 });
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('will-quit', () => { browserScreencastBridge?.close(); agentBrowserBridge?.close(); });
+  app.on('will-quit', () => { browserScreencastBridge?.close(); agentBrowserBridge?.close(); computerOverlay?.close(); });
   app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { exitInProgress = true; if (!quitting && window) { event.preventDefault(); void closeSafely(); } });
   app.on('will-quit', () => { exitInProgress = true; });

@@ -113,5 +113,13 @@
   },
   "browser": {
     "navigationDenied": "サイトへの移動が許可されませんでした。"
+  },
+  "computer": {
+    "overlay": {
+      "who": "{{agent}} が操作中",
+      "title": "「{{title}}」",
+      "hint": "Esc で止める",
+      "stopped": "止めました"
+    }
   }
 }
