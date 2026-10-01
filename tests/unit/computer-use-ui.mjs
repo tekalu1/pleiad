@@ -8,7 +8,7 @@ import { Bundle, splitToolCalls } from "../../web/tool-bundle.mjs";
 import { renderToolCall, applyToolResult } from "../../web/render.mjs";
 import { createCompletionNotifications } from "../../web/notifications.mjs";
 import {
-  isComputerTool, computerInfo, reasonShort, reasonLong, pickRows, computerSummary, approvalApps, appWhere, approvalHeading, approvalNotice, approvalBody,
+  relayLabel, isComputerTool, computerInfo, reasonShort, reasonLong, pickRows, computerSummary, approvalApps, appWhere, approvalHeading, approvalNotice, approvalBody,
   shotUrl, shotsOf,
 } from "../../web/computer-use.mjs";
 
@@ -169,6 +169,8 @@ export default async function (t) {
     t.ok("所在は等幅の 1 行（モックの exe のパス）", text(first.querySelector(".sub")) === "c:/windows/system32/notepad.exe" && first.querySelector(".sub").classList.contains("mono"));
     const risk = approvalBody({ ...a, first: false, high: true });
     t.ok("高リスクは ⚠ と強い字の一言（許可はできる）", text(risk.querySelector(".warn")).startsWith("⚠"));
+    t.ok("中継された承認の題は「委譲先」の部分だけ使う（直接の承認の題は見出しの繰り返しなので使わない）",
+      relayLabel("委譲先「経費の入力」 / Claude に「Excel」の操作を許可しますか？") === "委譲先「経費の入力」" && relayLabel("Claude に「Excel」の操作を許可しますか？") === "" && relayLabel(null) === "");
     t.ok("エージェント名が無ければ「エージェント」", approvalApps({ ...payload, agent: {} }).agent === "エージェント");
     t.ok("OS の通知の見出し: 誰が何の許可を待っているか", approvalNotice(a) === "Claude が「メモ帳」の使用の許可を待っています" && approvalNotice(many) === "Claude が「メモ帳」ほか 1 件の使用の許可を待っています");
   }

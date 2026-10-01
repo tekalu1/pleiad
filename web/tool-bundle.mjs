@@ -301,6 +301,8 @@ export class Bundle {
     if (!this.stopEl) return;
     this.stopEl.disabled = on;
     this.stopEl.textContent = on ? t("timeline.computer.bundle.stopping") : t("timeline.computer.bundle.stop");
+    // 字が長くなる（止めています…）ので、見出しが空ける幅を測り直す
+    this.el.style.setProperty("--stop-w", `${this.stopEl.offsetWidth ?? 48}px`);
   }
 
   /** 新しいツールが始まる。今の最新は 1 つ前（薄い行）へ下がり、その前の薄い行は畳まれる */

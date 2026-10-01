@@ -132,7 +132,17 @@ export function approvalNotice(approval) {
     : t("notify.computerApproval", { agent: approval.agent, app: approval.apps[0].name });
 }
 
-/** 承認カードの中身（見出しの文・所在・警告・初めての説明）。置き場（行の中・単独のカード）は呼び出し側 */
+/**
+ * 委譲の子から中継された承認の見出し（「委譲先「経費の入力」 / {元の題}」の前半）。core が中継先の題をこの形で作る（core/server.mjs の askPermission）。
+ * 直接の承認の題は見出しの文そのものなので、「 / 」が無ければ空（繰り返さない）
+ */
+export function relayLabel(title) {
+  const s = String(title ?? "");
+  const i = s.indexOf(" / ");
+  return i > 0 ? s.slice(0, i) : "";
+}
+
+/** 承認カードの中身（見出しの文・所在・警告・初めての説明）。置き場（行の中・単独のカード）は呼び出し側。extra は見出しの下の 1 行（中継元の会話） */
 export function approvalBody(approval, extra = "") {
   const box = el("div", "cu-ap");
   const ln = el("div", "ln");

@@ -49,7 +49,7 @@ import { createMarkdownEditor } from "./md-editor.mjs";
 import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
-import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox } from "./computer-use.mjs";
+import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
 import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
@@ -1277,10 +1277,9 @@ function onComputerState(ev) {
 /** アプリの承認を出す行。ツールの行が分かればその行、無ければ今の塊の最新の行（待っているのは今の呼び出しなので）。見つからなければ null（単独のカード） */
 function computerApprovalRow(ev) {
   const live = (row) => (row?.isConnected && row.classList.contains("tc-computer") && bundleOf(row)?.live ? row : null);
-  if (ev.toolUseID) return live(state.toolCards.get(ev.toolUseID));
   // 中継された承認（委譲の子の分）は、こちらの塊の行ではない
-  const own = state.sessions.find((s) => s.id === ev.sessionId)?.title;
-  if (ev.conversationTitle && own && ev.conversationTitle !== own) return null;
+  if (relayLabel(ev.title)) return null;
+  if (ev.toolUseID) return live(state.toolCards.get(ev.toolUseID));
   return live(state.bundle?.kind === "computer" ? state.bundle.cards.at(-1) : null);
 }
 
@@ -1330,7 +1329,7 @@ function computerApproval(ev, approval, row) {
     box.setAttribute("role", "group");
     box.dataset.permId = ev.id;
     box.setAttribute("aria-label", `${t("chat.approval.headingMark")}: ${approvalHeading(approval)}`);
-    box.append(el("div", "h", t("chat.approval.headingMark")), approvalBody(approval, ev.title));
+    box.append(el("div", "h", t("chat.approval.headingMark")), approvalBody(approval, relayLabel(ev.title)));
     const acts = el("div", "acts");
     acts.append(res, ...(canAlways ? [b.always] : []), b.deny, b.session);
     box.append(acts);
@@ -1383,7 +1382,7 @@ function computerApproval(ev, approval, row) {
   m.append(card);
   const head = el("div", "card-head");
   head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.approval.headingMark")));
-  const body = approvalBody(approval, ev.title);
+  const body = approvalBody(approval, relayLabel(ev.title));
   const actions = el("div", "card-actions");
   actions.append(res, ...(canAlways ? [b.always] : []), b.deny, b.session);
   card.append(head, body, actions);

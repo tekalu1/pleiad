@@ -56,6 +56,7 @@ async page => {
   const shotStep = (n, title, ms = 500) => ({ tool: `${P}screenshot`, input: { title }, result: 'ディスプレイ 1', ms, images: [{ url: `/computer-shot/${ID(n)}.jpg`, shot: ID(n), width: 1460, height: 821 }], computer: comp('screenshot', { title, shot: ID(n), w: 1460, h: 821 }) });
   const send = async (script) => {
     await page.locator('#newSession').click();
+    await page.waitForFunction(() => !document.querySelector('.bundle.cu, .tc-appr'));   // 前の会話の塊に当たらない
     await page.locator('#prompt').fill('steps:' + JSON.stringify(script));
     await page.locator('#prompt').press('Control+Enter');
   };
@@ -206,12 +207,34 @@ async page => {
   await page.locator('#prompt').press('Control+Enter');
   await page.waitForFunction(() => document.querySelector('.m.ai'));
   const parent = await page.evaluate(() => localStorage.getItem('agent-host-current'));
-  await page.evaluate((id) => window.__deliver({ type: 'permission', id: 'relay-1', kind: 'tool', toolName: 'ply_computer', input: {}, sessionId: id, title: '委譲先「経費の入力」', conversationTitle: '経費の入力', canAlways: true,
+  await page.evaluate((id) => window.__deliver({ type: 'permission', id: 'relay-1', kind: 'tool', toolName: 'ply_computer', input: {}, sessionId: id, title: '委譲先「経費の入力」 / Codex に「Excel」の操作を許可しますか？', conversationTitle: '経費の入力', canAlways: true,
     computerApp: { agent: { id: 'codex', label: 'Codex' }, apps: [{ id: 'exe:c:/x/excel.exe', name: 'Excel', risk: 'normal' }], first: false } }), parent);
   await page.locator('.m.card .cu-ap').waitFor();
   const relay = await page.evaluate(() => ({ q: document.querySelector('.m.card .cu-ap .q').textContent, sub: [...document.querySelectorAll('.m.card .cu-ap .sub')].map((x) => x.textContent), buttons: [...document.querySelectorAll('.m.card .card-actions .btn')].map((x) => x.textContent) }));
   if (relay.q !== 'Codex に「Excel」の操作を許可しますか？' || relay.sub[0] !== '委譲先「経費の入力」' || relay.buttons.join() !== '常に許可,拒否,この会話で許可') throw Error('relay card: ' + JSON.stringify(relay));
   await page.locator('.m.card .btn', { hasText: '常に許可' }).click();
   await page.waitForFunction(() => (window.__sent.filter((x) => x.command === 'resolvePermission').at(-1)?.args.scope) === 'always');
+
+  // ============ 7. 開き直した会話（履歴）でも、塊・サムネイル・止めた行が同じに出る
+  await page.evaluate(() => { window.__computerApp = null; });
+  await send({ steps: [
+    shotStep('1', 'メモ帳の画面を撮る', 200),
+    { tool: `${P}left_click`, input: { title: '本文の欄を押す' }, result: '押しました', ms: 200, computer: comp('left_click', { title: '本文の欄を押す' }) },
+    { tool: `${P}left_click`, input: { title: '「保存」を押す' }, result: 'outside', error: true, ms: 200, computer: comp('left_click', { title: '「保存」を押す', state: 'failed' }) },
+    shotStep('2', '保存のダイアログを撮る', 200),
+    { tool: `${P}type`, input: { title: 'ファイル名を入力' }, result: 's', error: true, ms: 200, computer: comp('type', { title: 'ファイル名を入力', state: 'stopped', reason: 'escape' }) },
+    { text: '止めました。' },
+  ] });
+  await page.waitForFunction(() => document.querySelector('.bundle.cu:not(.live) .tc-stopped') && document.querySelector('.m.ai .body'));
+  await page.reload();
+  await later.click({ timeout: 5000 }).catch(() => {});
+  await page.locator('.bundle.cu:not(.live)').waitFor();
+  const history = await page.evaluate(() => {
+    const b = document.querySelector('.bundle.cu');
+    return { head: b.querySelector('.rhead .mix').textContent, n: b.querySelector('.rhead .n').textContent, xm: b.querySelector('.rhead .xm').textContent, thumbs: b.querySelectorAll('.tc-shot').length,
+      shown: [...b.querySelectorAll('.hist .hi')].filter((h) => !h.classList.contains('hid')).length, more: b.querySelector('.more')?.textContent, stop: !!b.querySelector('.rstop'), reason: b.querySelector('.tc-reason')?.textContent };
+  });
+  if (history.head !== 'コンピューターを操作しました' || history.n !== '5' || history.xm !== '✕ 失敗 1 · 止めた' || history.thumbs !== 2 || history.shown !== 3 || history.more !== 'ほか 2 件' || history.stop
+      || history.reason !== 'あなたが Esc で止めました') throw Error('history shape: ' + JSON.stringify(history));
   return 'ok';
 }
