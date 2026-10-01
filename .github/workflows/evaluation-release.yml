@@ -54,6 +54,17 @@ jobs:
           "TEMP=$testTemp" >> $env:GITHUB_ENV
           "TMP=$testTemp" >> $env:GITHUB_ENV
       - run: npm ci
+      # koffi（computer use の Win32 呼び出し）のネイティブ本体は @koromix/koffi-<os>-<cpu> という別のパッケージで、
+      # npm ci はこの runner（x64）の分しか入れない。arm64 のインストーラーにも入れるため、arm64 の本体を足す。
+      # --force は os / cpu の検査を外す（他の OS の本体は増えず、package.json とロックも変わらない）。版は koffi 本体に合わせる
+      - name: Add koffi native binary for Windows arm64
+        run: |
+          $koffi = (Get-Content -LiteralPath node_modules/koffi/package.json -Raw | ConvertFrom-Json).version
+          npm install --no-save --force "@koromix/koffi-win32-arm64@$koffi"
+          if ($LASTEXITCODE -ne 0) { throw 'koffi win32-arm64 install failed' }
+          foreach ($arch in 'x64', 'arm64') {
+            if (!(Test-Path -LiteralPath "node_modules/@koromix/koffi-win32-$arch/win32_$arch/koffi.node")) { throw "Missing koffi binary for win32-$arch" }
+          }
       - run: npm test
       - name: Sign, verify and publish
         env:

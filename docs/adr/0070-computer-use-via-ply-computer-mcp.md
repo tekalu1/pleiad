@@ -1,6 +1,6 @@
 # 0070 Windows の computer use を Pleiad の MCP（ply_computer）として渡す
 
-- 状態: 提案
+- 状態: 承認（2026-10-01）
 
 ## 状況
 
