@@ -206,6 +206,30 @@ export default async function (t) {
     t.ok('長い文字列は 40 文字ずつの塊で送る', w.sent.length === 3 && w.sent[0].length === 80 && w.sent[2].length === 40, w.sent.map(s => s.length).join());
   }
 
+  {
+    // IME が開いていると仮名が変換中に取り込まれて順序が崩れる: 打つ間だけ閉じて、打ち終えたら戻す
+    const order = [];
+    const w = fakeWin32({ imeClose: () => { order.push('close'); return () => order.push('restore'); } });
+    const origSend = w.sendInput;
+    w.sendInput = inputs => { order.push('send'); return origSend(inputs); };
+    const input = makeInput(w);
+    await input.perform({ type: 'text', text: 'ひらがな' });
+    t.ok('type: IME を閉じてから送り、送り終えてから戻す', order.join() === 'close,send,restore', order.join());
+    const order2 = [];
+    const ctl = new AbortController();
+    const w2 = fakeWin32({ imeClose: () => { order2.push('close'); return () => order2.push('restore'); } });
+    const send2 = w2.sendInput;
+    w2.sendInput = inputs => { order2.push('send'); ctl.abort(); return send2(inputs); };
+    await makeInput(w2).perform({ type: 'text', text: 'x'.repeat(100) }, ctl.signal).catch(() => {});
+    t.ok('type が途中で止められても、IME は戻す', order2.join() === 'close,send,restore', order2.join());
+    const w3 = fakeWin32({ imeClose: () => null });
+    await makeInput(w3).perform({ type: 'text', text: 'a' });
+    t.ok('IME が開いていなければ何もしない（そのまま送る）', w3.sent.length === 1);
+    const w4 = fakeWin32({ imeClose: () => { throw new Error('imm'); } });
+    await makeInput(w4).perform({ type: 'text', text: 'a' });
+    t.ok('IME を触れなくても打つ', w4.sent.length === 1);
+  }
+
   // ===== input: キー =====
   {
     const w = fakeWin32();

@@ -39,6 +39,7 @@ const DPI_AWARENESS = { 0: 'unaware', 1: 'system', 2: 'per-monitor' };
 const INPUT_DESKTOP_READ = 0x0001;
 const UOI_NAME = 2;
 const ERROR_ACCESS_DENIED = 5;
+const WM_IME_CONTROL = 0x283, IMC_GETOPENSTATUS = 5, IMC_SETOPENSTATUS = 6, SMTO_ABORTIFHUNG = 0x2;
 const GW_HWNDNEXT = 2;
 const GW_CHILD = 5;
 const GWL_EXSTYLE = -20;
@@ -57,6 +58,7 @@ function createWin32(koffi) {
   const dwmapi = koffi.load('dwmapi.dll');
   const shell32 = koffi.load('shell32.dll');
   const version = koffi.load('version.dll');
+  const imm32 = koffi.load('imm32.dll');
   const f = {
     GetSystemMetrics: user32.func('int __stdcall GetSystemMetrics(int index)'),
     EnumDisplayMonitors: user32.func('bool __stdcall EnumDisplayMonitors(intptr_t hdc, void *clip, CU_MonitorEnumProc *cb, intptr_t lParam)'),
@@ -77,6 +79,8 @@ function createWin32(koffi) {
     GetWindow: user32.func('intptr_t __stdcall GetWindow(intptr_t hwnd, uint32_t cmd)'),
     GetDC: user32.func('intptr_t __stdcall GetDC(intptr_t hwnd)'),
     ReleaseDC: user32.func('int __stdcall ReleaseDC(intptr_t hwnd, intptr_t hdc)'),
+    ImmGetDefaultIMEWnd: imm32.func('intptr_t __stdcall ImmGetDefaultIMEWnd(intptr_t hwnd)'),
+    SendMessageTimeoutW: user32.func('intptr_t __stdcall SendMessageTimeoutW(intptr_t hwnd, uint32_t msg, intptr_t wParam, intptr_t lParam, uint32_t flags, uint32_t timeout, _Out_ intptr_t *result)'),
     OpenInputDesktop: user32.func('intptr_t __stdcall OpenInputDesktop(uint32_t flags, bool inherit, uint32_t access)'),
     CloseDesktop: user32.func('bool __stdcall CloseDesktop(intptr_t hDesktop)'),
     GetUserObjectInformationW: user32.func('bool __stdcall GetUserObjectInformationW(intptr_t h, int index, _Out_ uint8_t *buf, uint32_t len, _Out_ uint32_t *needed)'),
@@ -303,6 +307,21 @@ function createWin32(koffi) {
         if (!f.GetUserObjectInformationW(h, UOI_NAME, buf, 512, needed)) return { name: null, error: lastError() };
         return { name: buf.toString('utf16le').replace(/\0.*$/s, ''), error: 0 };
       } finally { f.CloseDesktop(h); }
+    },
+    /**
+     * 前面の窓の IME が開いている（日本語入力がオン）なら閉じて、元に戻す関数を返す。開いていない・IME が無い・答えないときは null。
+     * IME が開いていると KEYEVENTF_UNICODE の仮名が変換中の文字列に取り込まれ、後の文字より遅れて確定する（順序が崩れる。2026-10-01、本物で確認）
+     */
+    imeClose() {
+      const fg = num(f.GetForegroundWindow());
+      if (!fg) return null;
+      const ime = num(f.ImmGetDefaultIMEWnd(fg));
+      if (!ime) return null;
+      const out = [0];
+      const ask = (wParam, lParam) => (f.SendMessageTimeoutW(ime, WM_IME_CONTROL, wParam, lParam, SMTO_ABORTIFHUNG, 200, out) ? Number(out[0]) : null);
+      if (!ask(IMC_GETOPENSTATUS, 0)) return null; // 閉じている・答えない
+      if (ask(IMC_SETOPENSTATUS, 0) === null) return null;
+      return () => { ask(IMC_SETOPENSTATUS, 1); };
     },
     ERROR_ACCESS_DENIED,
     /** inputs: { type, ki?: {wVk,wScan,dwFlags,time,dwExtraInfo}, mi?: {dx,dy,mouseData,dwFlags,time,dwExtraInfo} }[] */
