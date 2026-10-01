@@ -298,6 +298,10 @@ const cases = [
   // Pleiad の MCP 登録と認証の API、1 件つながらなくても会話が進むこと、antigravity では Pleiad 担当を開かないこと
   await import("./unit/server-mcp-auth.mjs"),
   await import("./unit/server-agy-context.mjs"),
+  // コンピューターの操作（ply_computer）: 3 つのエージェントへの注入（MCP・上限時間・指示文・承認・同梱を切るキー）と、印の行からの正規化
+  await import("./unit/computer-delivery.mjs"),
+  // 同じことをサーバーの橋（偽の driver）から Codex・Antigravity の身代わりへ: 注入・正規化・履歴・委譲の子・設定でオフ
+  await import("./unit/server-computer-delivery.mjs"),
   // インストールからログインまでの導線（未インストール -> 再起動なしで発見 -> 認可コード）
   await import("./unit/antigravity-onboarding.mjs"),
   // 孤児の agy の掃除。**名前を確かめてからでないと落とさない**

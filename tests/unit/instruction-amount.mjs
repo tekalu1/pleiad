@@ -44,6 +44,8 @@ export default async function (t) {
   const agyLike = plyParts({ plyAgents: false, context, visualize: 'visualize', browser: 'browser', agents: 'agents text', added });
   t.ok('受け取らないバックエンド（antigravity）には Visualize と委譲ツールの説明を数えない', agyLike.map(p => p.id).join() === 'skills,added,guide,browser', JSON.stringify(agyLike));
   t.ok('何も渡していなければ空', plyParts({ plyAgents: true }).length === 0);
+  const withComputer = plyParts({ plyAgents: false, computer: 'computer use guide' });
+  t.ok('ply_computer の指示文はどのバックエンドでも最後に数える', withComputer.map(p => p.id).join() === 'computer' && withComputer[0].tokens === estimateTokens('computer use guide'), JSON.stringify(withComputer));
 
   const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-instruction-amount-')));
   const home = path.join(tmp, 'home'), cwd = path.join(tmp, 'repo'), dataDir = path.join(tmp, 'data');
