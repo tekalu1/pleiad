@@ -27,6 +27,7 @@ import crypto from 'node:crypto';
 import { undelivered } from './undelivered.mjs';
 import { codexCompatThread, redactSecret } from '../compat-endpoints.mjs';
 import { MAX_RESULT_CHARS } from "./shared.mjs";
+import { codexComputerConfig, codexComputerName, computerFailed, computerPrompt, computerResult, computerToolInput, mcpText } from "./computer-delivery.mjs";
 import { readTurnRejections, rolloutPathOf, rolloutSize } from "./codex-rejections.mjs";
 import * as store from '../store.mjs';
 import { t, agentT } from "../i18n.mjs";
@@ -270,8 +271,16 @@ const toIso = (v) => {
 
 // ---------------------------------------------------------------- アイテム
 
+/**
+ * ThreadItem -> tool.start の名前。ply_computer の mcpToolCall は 3 つのエージェントでそろえた mcp__ply_computer__<ツール>、
+ * それ以外はアイテムの type（docs/computer-use.md「tool.start / tool.result」）
+ */
+const toolName = (item) => codexComputerName(item) ?? item?.type;
+
 /** ThreadItem -> tool.start の input。何をしようとしているかが1行で分かる形にする。 */
 function toolInput(item) {
+  const computer = codexComputerName(item);
+  if (computer) return computerToolInput(computer, item.arguments && typeof item.arguments === "object" ? item.arguments : {});
   switch (item?.type) {
     case "commandExecution":
       return { command: item.command ?? "", cwd: item.cwd ?? null };
@@ -315,6 +324,17 @@ function toolInput(item) {
   }
 }
 
+/**
+ * 同梱の computer use が切れたかを確かめる（ADR 0074）。上書きのキーは Codex の版で変わりうるので、残っていればログに 1 行出す。
+ * ターンは待たせない（失敗も黙って捨てる）
+ */
+function checkBundledComputerUse(rpc, threadId) {
+  rpc.request("mcpServerStatus/list", { threadId }, 15_000).then((out) => {
+    const left = (out?.data ?? []).filter((s) => s?.name === "cua_repl" || /computer-use/i.test(String(s?.pluginId ?? ""))).map((s) => s.name);
+    if (left.length) console.error(`  codex: 同梱の computer use が切れていない（${left.join(", ")}）。ADR 0074 の上書きのキーを確かめる`);
+  }).catch(() => {});
+}
+
 /** ThreadItem（完了後） -> tool.result の中身。 */
 function toolResult(item) {
   if (item?.type === "imageGeneration") {
@@ -339,6 +359,11 @@ function toolResult(item) {
     // 変更されたファイルの一覧。diff は長いので出さない（web は1行に要約する）
     const lines = (item.changes ?? []).map((c) => `${c.kind?.type ?? "update"} ${c.path}`);
     return { ...cut(lines.join(NL)), isError: item.status === "failed" };
+  }
+  // ply_computer: text ブロックだけをつなぎ（image の base64 は捨てる）、印の行から images と computer を作る。2000 字の切り詰めは印を除いた本文に掛ける
+  if (codexComputerName(item) && !item.error && item.result) {
+    const r = computerResult(mcpText(item.result), cut);
+    return { ...r, isError: Boolean(item.result.isError) || item.status === "failed" || computerFailed(r.computer) };
   }
   if (item?.type === "mcpToolCall") {
     const body = item.error
@@ -868,12 +893,14 @@ export function threadToMessages(thread, { fullResults = false } = {}) {
 
       if (TOOL_ITEMS.has(item?.type)) {
         const r = toolResult(item);
+        // ply_computer の全文は印を除いた text（item には画像の base64 が入っているので JSON にしない）
+        const full = !fullResults ? null : codexComputerName(item) && item.result ? computerResult(mcpText(item.result), (text) => ({ text, truncated: false })).text : JSON.stringify(item);
         toolCalls.push({
           id: item.id ?? null,
-          name: item.type,
+          name: toolName(item),
           input: toolInput(item),
           // 進行中のまま残っているアイテムは結果を持たない
-          result: item.status === "inProgress" ? null : { ...r, text: fullResults ? JSON.stringify(item) : r.text, truncated: fullResults ? false : r.truncated },
+          result: item.status === "inProgress" ? null : { ...r, text: fullResults ? full : r.text, truncated: fullResults ? false : r.truncated },
         });
       }
     }
@@ -1116,6 +1143,9 @@ export const backend = {
     liveMode: false,
     hostTools: false,   // set_status / set_title / fork は未接続。可視化は共通の参照形式で提供
     plyAgents: true,    // ply_agents を mcp_servers に、その instructions を developerInstructions に渡す
+    // ply_computer（runArgs.computerRuntime）を mcp_servers に、指示を developerInstructions に渡す。同梱の computer use は切る（ADR 0074）。
+    // MCP の image は gpt-5.x では自動で、gpt-6 系のコードモードでは image() で渡したときモデルに見える（指示文で頼む）
+    computerUse: { images: 'inline', waitSliceMs: null },
     alwaysAllow: true,  // acceptForSession
     login: true,
     // 互換の接続先（OpenAI Responses 互換）を会話ごとに選べる（core/compat-endpoints.mjs）
@@ -1303,7 +1333,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, endpoint = null, locale, notes = [] }) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, computerRuntime = null, hooksRuntime = null, endpoint = null, locale, notes = [] }) {
     const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
     // Hooks を Pleiad がそろえる会話。止める key はこのターンの直前に作り直す（起動の後に足された定義も、次のターンからは止まる）。
     // 作れなければターンを始めない（ネイティブと Pleiad の登録が二重に動くか、どちらも動かないため）
@@ -1411,7 +1441,7 @@ export const backend = {
           noteDelivered(item);
           if (!TOOL_ITEMS.has(item.type)) return;
           emit({ type: "activity", state: "running", label: t("activity.tool", { label: TOOL_HINTS[item.type]?.label ?? item.type }) });
-          return emit({ type: "tool.start", id: item.id, name: item.type, input: toolInput(item),
+          return emit({ type: "tool.start", id: item.id, name: toolName(item), input: toolInput(item),
             turnId: params.turnId, startedAt: params.startedAtMs, processId: item.processId });
         }
 
@@ -1436,7 +1466,7 @@ export const backend = {
           noteDelivered(item);
           if (item.type === "reasoning" && thinkingOpen) thinkingOpen = false;
           if (!TOOL_ITEMS.has(item.type)) return;
-          if (!started) emit({ type: "tool.start", id: item.id, name: item.type, input: toolInput(item),
+          if (!started) emit({ type: "tool.start", id: item.id, name: toolName(item), input: toolInput(item),
             turnId: params.turnId, startedAt: params.startedAtMs, processId: item.processId });
           const r = toolResult(item);
           return emit({ type: "tool.result", id: item.id, commandCompleted: item.type === "commandExecution", ...r });
@@ -1568,6 +1598,7 @@ export const backend = {
       if (browserEnv && m.sandbox === 'read-only') {
         browserInstructions = agentT(locale, 'browser.readonlyInstructions');
       }
+      const computerInstructions = computerPrompt(computerRuntime, { locale, agent: 'codex' });
       const common = {
         cwd,
         config: {
@@ -1576,6 +1607,8 @@ export const backend = {
           ...(agentRuntime ? { 'mcp_servers.ply_agents': { url: agentRuntime.url, http_headers: agentRuntime.headers, enabled: true, required: true, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: 60 } } : {}),
             // The context bridge applies the selected mode to external tool calls.
             ...(contextRuntime ? { 'mcp_servers.ply_context': { url: contextRuntime.url, http_headers: contextRuntime.headers, enabled: true, required: true, default_tools_approval_mode: 'approve', startup_timeout_sec: 20 } } : {}),
+          // コンピューターの操作（ply_computer）と、同梱の computer use を切る上書き。渡さない会話には何も足さない（利用者の ~/.codex に任せる）
+          ...codexComputerConfig(computerRuntime),
           ...(compat ? compat.config : {}),
           ...(browserEnv ? { 'shell_environment_policy.set': {
             AGENT_BROWSER_CONFIG: browserEnv.AGENT_BROWSER_CONFIG,
@@ -1586,7 +1619,7 @@ export const backend = {
           ...(hooks ? { hooks: hooks.config } : {}),
         },
         ...(compat ? { modelProvider: compat.modelProvider } : {}),
-        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions) ? { developerInstructions: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions].filter(Boolean).join('\n\n') } : {}),
+        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions) ? { developerInstructions: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions].filter(Boolean).join('\n\n') } : {}),
         approvalPolicy: m.approvalPolicy,
         sandbox: m.sandbox,
         ...(model ? { model } : {}),
@@ -1594,11 +1627,13 @@ export const backend = {
 
       let effectiveSandbox;
       const providerKey = compat ? compat.modelProvider : 'default';
+      // 指示と ply_computer の接続先。どちらかが変わったロード済みのスレッドは外して読み直す（resume は config の変更を黙って無視する）
+      const instructionsKey = (common.developerInstructions ?? '') + (computerRuntime ? `\0${computerRuntime.url} ${computerRuntime.headers?.Authorization ?? ''}` : '');
       if (threadId) {
         // 接続先が変わった（互換 ↔ 公式、別の互換、キーや URL の変更）ロード済みのスレッドは、いったん外してから読み直す。
         // 外さずに resume すると前の接続先のまま走る（スパイクで確認）
         const known = rpc === nativeRpc ? loadedProvider.get(threadId) : undefined;
-        const instructionsChanged = rpc === nativeRpc && loadedInstructions.has(threadId) && loadedInstructions.get(threadId) !== (common.developerInstructions ?? '');
+        const instructionsChanged = rpc === nativeRpc && loadedInstructions.has(threadId) && loadedInstructions.get(threadId) !== instructionsKey;
         // hooks は追跡していないロード済みのスレッド（圧縮・分岐でロードされたもの）も外す（unloadForHooks と同じ判断）
         const hooksChanged = rpc === nativeRpc && (loadedHooks.has(threadId) ? loadedHooks.get(threadId) !== hooksKey : hooksKey !== '');
         if ((known !== undefined && (known !== providerKey || instructionsChanged)) || hooksChanged) {
@@ -1627,14 +1662,14 @@ export const backend = {
         }
         effectiveSandbox = resumed?.sandbox;
         if (!ephemeral) rolloutPath = rolloutPathOf(resumed);
-        if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, common.developerInstructions ?? ''); loadedHooks.set(threadId, hooksKey); }
+        if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, instructionsKey); loadedHooks.set(threadId, hooksKey); }
       } else {
         const started = await rpc.request("thread/start", { ...common, ...(ephemeral ? { ephemeral: true } : {}) });
         effectiveSandbox = started?.sandbox;
         if (!ephemeral) rolloutPath = rolloutPathOf(started);
         threadId = started?.thread?.id ?? null;
         if (!threadId) throw new Error(t("codex.errors.noThreadId", { method: "thread/start" }));
-        if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, common.developerInstructions ?? ''); loadedHooks.set(threadId, hooksKey); }
+        if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, instructionsKey); loadedHooks.set(threadId, hooksKey); }
         // 受け皿を取り下げる前に attach する。逆にすると、預かっていた自分の通知が捨てられる
         detach = rpc.adopt(threadId, handlers);
         // **これを出さないと web が id を受け取れない**（P1 §5.1）。turn/start より前に出す。
@@ -1651,6 +1686,7 @@ export const backend = {
       // contextRuntime のターンはターンの終わりに app-server ごと落とす（端末も道連れ）。
       // ephemeral（タイトル生成）はそもそも会話ではないので数えない
       if (!contextRuntime && !ephemeral) watchThread(threadId, hostSessionId ?? threadId);
+      if (computerRuntime) checkBundledComputerUse(rpc, threadId);
 
       if (control) control.handle = { threadId, get turnId() { return turnId; } };
 

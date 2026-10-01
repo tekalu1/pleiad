@@ -163,6 +163,7 @@ if (process.env.FAKE_AGY_AGENT_FILE) {
     fs.writeFileSync(process.env.FAKE_AGY_AGENT_FILE, JSON.stringify({
       agent: agentName, found: Boolean(customAgent), file: customAgent?.file ?? null, front: customAgent?.front ?? null, body: customAgent?.body ?? null,
       authorization: process.env.PLY_CONTEXT_AUTHORIZATION ?? null, url: process.env.PLY_CONTEXT_URL ?? null,
+      computerAuthorization: process.env.PLY_COMPUTER_AUTHORIZATION ?? null, computerUrl: process.env.PLY_COMPUTER_URL ?? null,
     }));
   } catch {}
 }
@@ -243,10 +244,15 @@ async function agentScript(text) {
   const tool = server?.tools.find((t) => t.name === key || (t.description ?? "").includes(`[${key}]`));
   if (!tool) return `no-tool:${key}`;
   const index = ++stepIndex;
-  step({ step_index: index, state: "ACTIVE", step_type: "tool", tool_name: "call_mcp_tool", tool_info: { name: "call_mcp_tool", parameters: { ServerName: server.name, ToolName: tool.name } } });
-  const reply = await server.call("tools/call", { name: tool.name, arguments: json ? JSON.parse(json) : {} });
-  const output = reply.error ? `error:${reply.error.message}` : (reply.result?.content ?? []).map((c) => c.text ?? "").join("");
-  step({ step_index: index, state: "DONE", step_type: "tool", tool_name: "call_mcp_tool", tool_info: { name: "call_mcp_tool", parameters: { ServerName: server.name, ToolName: tool.name }, output } });
+  // 本物（agy 1.2.14）は ServerName を空のまま出し、引数は Arguments に入る。画像はファイルに退避して、出力の末尾に退避先の行を足す（2026-10-01 実測）
+  const args = json ? JSON.parse(json) : {};
+  const parameters = { ServerName: "", ToolName: tool.name, Arguments: args };
+  step({ step_index: index, state: "ACTIVE", step_type: "tool", tool_name: "call_mcp_tool", tool_info: { name: "call_mcp_tool", parameters } });
+  const reply = await server.call("tools/call", { name: tool.name, arguments: args });
+  const content = reply.result?.content ?? [];
+  const offloaded = content.filter((c) => c.type === "image").map((c, i) => `${NL}[Resource offloaded to file:///C:/fake-agy/brain/${conversationId}/.system_generated/steps/${index}/media_${i}.jpg]`).join("");
+  const output = reply.error ? `error:${reply.error.message}` : content.map((c) => c.text ?? "").join("") + offloaded;
+  step({ step_index: index, state: "DONE", step_type: "tool", tool_name: "call_mcp_tool", tool_info: { name: "call_mcp_tool", parameters, output } });
   return `mcp:${output}`;
 }
 

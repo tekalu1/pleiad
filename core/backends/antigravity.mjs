@@ -24,6 +24,7 @@ import * as pids from "./antigravity-pids.mjs";
 import * as transcript from "./antigravity-store.mjs";
 import { AGY_LEVELS, agyTarget, buildAgyModels, defaultLabelFromLog, parseAgyModels } from "./antigravity-models.mjs";
 import { MAX_RESULT_CHARS } from "./shared.mjs";
+import { AGY_WAIT_SLICE_MS, agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput, withoutOffloaded } from "./computer-delivery.mjs";
 import { t } from "../i18n.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -214,6 +215,9 @@ export const backend = {
     plyContext: "conversation",
     alwaysAllow: false, // **対話承認そのものが無い**
     login: true,
+    // ply_computer は 2 本目の中継（agy-context-relay.mjs --computer）で渡す。MCP の画像は agy がファイルに退避し、モデルは view_file で読む
+    // ので、保存先のパスも書く（images: 'path'）。1 回の呼び出しは 3 分で切れ、設定では伸びないので、ロックの待ちは 150 秒ごとに分けて返す
+    computerUse: { images: 'path', waitSliceMs: AGY_WAIT_SLICE_MS },
   },
 
   toolHints: TOOL_HINTS,
@@ -235,7 +239,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, addedInstructions, hooksRuntime = null, notes = [] }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, addedInstructions, computerRuntime = null, hooksRuntime = null, locale, notes = [] }) {
     const m = MODES[modeFor(mode)];
 
     // **控えはターンの途中から書き足すが、ユーザー発言の時刻は送信の時刻で打つ。**
@@ -311,18 +315,22 @@ export const backend = {
     // 内蔵ブラウザーの接続（browserEnv）と、Hooks を Pleiad がそろえる会話（ADR 0049）の置き場の .agents/hooks.json も起動時にしか渡せない。
     // ブラウザーの設定・登録・止める名前が変われば起こし直す
     const hooksShape = hooksRuntime?.shape ?? null;
+    // ply_computer（2 本目の中継）も起動時にしか渡せない。渡す・渡さない・接続先が変われば起こし直す
+    const computerKey = computerRuntime ? `${computerRuntime.url} ${computerRuntime.headers?.Authorization ?? ''}` : null;
     if (session && ((session.contextKey ?? null) !== contextKey || (session.contextShape ?? null) !== contextShape
-      || (session.browserConfig ?? null) !== (browserEnv?.AGENT_BROWSER_CONFIG ?? null) || (session.hooksShape ?? null) !== hooksShape)) { session.kill(); release(conversationId, session); session = null; }
+      || (session.browserConfig ?? null) !== (browserEnv?.AGENT_BROWSER_CONFIG ?? null) || (session.hooksShape ?? null) !== hooksShape
+      || (session.computerKey ?? null) !== computerKey)) { session.kill(); release(conversationId, session); session = null; }
 
     const fresh = !session;
     if (fresh) {
       // 会話ごとのエージェント定義（Pleiad の置き場）と、中継に渡す接続先・トークン（env）
       // カスタムエージェントを使うのは、Pleiad のコンテキスト・ブラウザーの指示・委譲の子への指示を渡すときだけ。
       // Hooks だけを Pleiad がそろえるときは、置き場（--add-dir）だけを作る（既定のエージェントのまま。inheritCustomizations に頼らない）
-      const useAgent = Boolean(contextRuntime || browserInstructions || addedInstructions);
+      const computerInstructions = computerPrompt(computerRuntime, { locale: contextRuntime?.locale ?? locale, agent: 'antigravity' });
+      const useAgent = Boolean(contextRuntime || browserInstructions || addedInstructions || computerRuntime);
       const agent = useAgent || hooksRuntime ? await prepareAgent({ owners: contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' },
-        prompt: [contextRuntime?.prompt, browserInstructions, addedInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale,
-        context: useAgent, hooks: hooksRuntime }) : null;
+        prompt: [contextRuntime?.prompt, browserInstructions, addedInstructions, computerInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale ?? locale,
+        context: useAgent, hooks: hooksRuntime, computer: computerRuntime ? { url: computerRuntime.url, authorization: computerRuntime.headers?.Authorization } : null }) : null;
       session = new AgySession({
         cwd,
         conversationId,
@@ -341,6 +349,7 @@ export const backend = {
       session.contextKey = contextKey;
       session.contextShape = contextShape;
       session.browserConfig = browserEnv?.AGENT_BROWSER_CONFIG ?? null;
+      session.computerKey = computerKey;
     }
 
     const handle = (ev) => {
@@ -382,8 +391,13 @@ export const backend = {
             // （実測。docs/multi-backend.md §2.8）
             const id = `${conversationId ?? "agy"}:${s.step_index ?? started.size}`;
             const prev = started.get(id);
-            const name = toolName(s.tool_name ?? s.tool_info?.name ?? prev?.name);
-            const input = s.tool_info?.parameters ?? prev?.input ?? {};
+            // ply_computer は call_mcp_tool（{ ServerName, ToolName, Arguments }）で出る。3 つのエージェントでそろえた
+            // mcp__ply_computer__<ツール> と、その引数に直す（docs/computer-use.md「tool.start / tool.result」）
+            const params = s.tool_info?.parameters;
+            const computer = prev?.computer ?? (s.tool_name === "call_mcp_tool" ? agyComputerName(params) : null);
+            const name = computer ?? toolName(s.tool_name ?? s.tool_info?.name ?? prev?.name);
+            const input = computer ? prev?.input ?? computerToolInput(computer, params?.Arguments && typeof params.Arguments === "object" ? params.Arguments : {})
+              : params ?? prev?.input ?? {};
             const output = s.tool_info?.output;
             const state = String(s.state ?? "").toUpperCase();
             // 知らない state・state 無しでも取りこぼさない: output があれば完了、無ければ開始
@@ -392,14 +406,17 @@ export const backend = {
               : output !== undefined && output !== null && output !== "";
 
             if (!started.has(id)) {
-              started.set(id, { name, input });
+              started.set(id, { name, input, computer });
               emit({ type: "activity", state: "running", label: t("activity.tool", { label: TOOL_HINTS[name]?.label ?? name }) });
               emit({ type: "tool.start", id, name, input });
             }
             if (!done) return;
-            const r = cut(typeof output === "string" ? output : JSON.stringify(output ?? ""));
-            emit({ type: "tool.result", id, ...r, isError: false });
-            toolCalls.push({ id, name, input, result: { ...r, isError: false } });
+            const raw = typeof output === "string" ? output : JSON.stringify(output ?? "");
+            // ply_computer: 画像を退避した行を除き、印の行から images と computer を作る。控えにもその形で残す（読み直しで印を読み直さない）
+            const r = computer ? computerResult(withoutOffloaded(raw), cut) : cut(raw);
+            const isError = computer ? computerFailed(r.computer) : false;
+            emit({ type: "tool.result", id, ...r, isError });
+            toolCalls.push({ id, name, input, result: { ...r, isError } });
             save();
             return;
           }
