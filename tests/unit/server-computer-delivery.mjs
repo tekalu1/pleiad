@@ -55,6 +55,9 @@ export default async function (t) {
     t.ok('Codex: 会話を開き直しても同じ名前・画像・印で出る', cHistory[0]?.name === 'mcp__ply_computer__screenshot' && cHistory[0]?.result?.images?.[0]?.url === cResults[0]?.images?.[0]?.url && cHistory[1]?.result?.computer?.app === 'メモ帳',
       JSON.stringify(cHistory).slice(0, 300));
 
+    const parts = (await c.cmd('sessionContext', { sessionId: codexTurn.sessionId }))?.plyParts ?? [];
+    t.ok('指示の量: ply_computer の指示文を「コンピューターの操作の説明」として数える', parts.find(p => p.id === 'computer')?.tokens > 0, JSON.stringify(parts));
+
     // ---- Antigravity
     const listed = await c.runTurn({ backend: 'antigravity', cwd: ROOT, prompt: 'mcp-tools' });
     const recorded = JSON.parse(await fs.readFile(agentFile, 'utf8').catch(() => 'null'));
