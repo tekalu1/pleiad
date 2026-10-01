@@ -52,7 +52,7 @@
 | main→core | `computer-displays-changed` | `{ displays, displaysVersion }`。`screen` の `display-added` / `display-removed` / `display-metrics-changed` で版を 1 進める |
 | core→main | `computer-arm` | `{ owner }` / `{ owner: null }`。ロックの持ち主が変わった。持ち主が変わると、main は前の持ち主の押したままの入力を離し（`releaseAll`）、その持ち主のオーバーレイを消す |
 | core→main | `computer-heartbeat` | `{ owner }`。持ち主がいる間、core が 10 秒ごとに送る |
-| core→main | `computer-overlay` | `{ owner, state, display, agent, title, cursor? }`。`state` は `activity` / `stopped` / `hide`。`cursor` は `{ x, y, pressed }`（物理）。`display` は `displays` の `id` |
+| core→main | `computer-overlay` | `{ owner, state, display, agent, title, cursor? }`。`state` は `activity` / `stopped` / `hide`。`cursor` は `{ x, y, pressed }`（物理）。`display` は `displays` の要素（`{ id, index, bounds, … }`）。main は物理の `bounds` でモニターを決める |
 | main→core | `computer-escape` | `{ owner }`。物理の Esc を拾った |
 | core→main | `computer-stop` | `{ owner }`。会話の「止める」・ターンの中断で止めた（main は Esc と同じ後始末をする。`computer-escape` は返さない） |
 | core→main | `computer-turn-ended` | `{ owner }`。`releaseAll` と `hide` をまとめて行う |

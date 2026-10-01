@@ -1,20 +1,13 @@
 // アプリの承認の判定（docs/computer-use.md「判定の順」、ADR 0071）。純粋な関数だけ。
 import { scopeRank, autonomyRank } from '../modes.mjs';
 import { isForbiddenApp, isHighRiskApp } from './apps.mjs';
+import { computerUsePrefs } from '../../web/computer-prefs.mjs';
 
-/** prefs.computerUse の既定（無いときの値） */
-export const COMPUTER_USE_DEFAULTS = Object.freeze({ enabled: true, allowAllApps: false, introduced: false, alwaysAllowed: [] });
-
-/** prefs.computerUse を、足りない項目を既定で埋めた形にする。形が崩れていても落とさない */
-export function normalizeComputerUse(value) {
-  const v = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  return {
-    enabled: v.enabled !== false,
-    allowAllApps: v.allowAllApps === true,
-    introduced: v.introduced === true,
-    alwaysAllowed: Array.isArray(v.alwaysAllowed) ? v.alwaysAllowed.filter(a => a && typeof a.id === 'string') : [],
-  };
-}
+/**
+ * prefs.computerUse を、足りない項目を既定で埋めた形にする。形が崩れていても落とさない。
+ * 設定の画面と同じ検査（web/computer-prefs.mjs）を通す。常に許可の 1 行は { id, name, kind } が揃ったものだけ読む
+ */
+export const normalizeComputerUse = value => computerUsePrefs({ computerUse: value });
 
 /** 会話の承認モードが確認なし（範囲 full かつ 自律 never）か。modePosition の形（{ scope, autonomy }）を受ける */
 export const isUnattendedMode = mode => Boolean(mode) && scopeRank(mode.scope) >= scopeRank('full') && autonomyRank(mode.autonomy) >= autonomyRank('never');

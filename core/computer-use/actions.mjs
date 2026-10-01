@@ -99,7 +99,8 @@ export function createActions({ driver, shots, access, askPermission, translate 
   function activity(ctx, { cursor, display } = {}) {
     try {
       const d = display ?? (cursor ? displayAt(displaysOf(), cursor.x, cursor.y) : null) ?? targetDisplay(ctx);
-      driver.overlay({ owner: ctx.turnId, state: 'activity', display: d?.id ?? null, agent: ctx.agent.label, title: ctx.info.title ?? '',
+      // オーバーレイには display の要素そのもの（{ id, index, bounds, … }）を渡す。main は物理の bounds でどのモニターかを決める
+      driver.overlay({ owner: ctx.turnId, state: 'activity', display: d ?? null, agent: ctx.agent.label, title: ctx.info.title ?? '',
         ...(cursor ? { cursor: { x: cursor.x, y: cursor.y, pressed: ctx.binding.pressed } } : {}) });
     } catch { /* オーバーレイは見た目だけ。操作の結果には響かせない */ }
   }

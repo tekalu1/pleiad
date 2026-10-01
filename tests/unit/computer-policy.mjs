@@ -16,6 +16,8 @@ const aumid = (a, extra = {}) => ({ id: `aumid:${a}`, kind: 'aumid', name: a, au
 const ASK = { scope: 'workspace', autonomy: 'ask' };
 const BYPASS = { scope: 'full', autonomy: 'never' };
 const notepad = FAKE_APPS.notepad;
+// 常に許可の 1 行（設定の画面と同じ検査を通るので、id・name・kind が揃っている）
+const row = a => ({ id: a.id, name: a.name, kind: a.kind });
 
 export default async function(t) {
   // ---- 判定の順（docs/computer-use.md「判定の順」）
@@ -24,7 +26,7 @@ export default async function(t) {
   t.ok('高リスク（エクスプローラー・設定・IDE・regedit）は警告付きで聞く', ['C:\\Windows\\explorer.exe', 'C:\\Windows\\regedit.exe', 'C:\\Windows\\System32\\taskmgr.exe', 'C:\\Program Files\\Microsoft VS Code\\Code.exe']
     .every(p => d({ app: exe(p) }) === 'ask-high') && d({ app: aumid('windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel') }) === 'ask-high');
   t.ok('この会話で許可済みなら許可', d({ sessionApps: [notepad.id] }) === 'allow');
-  t.ok('常に許可の一覧にあれば許可', d({ prefs: { computerUse: { alwaysAllowed: [{ id: notepad.id }] } } }) === 'allow');
+  t.ok('常に許可の一覧にあれば許可', d({ prefs: { computerUse: { alwaysAllowed: [row(notepad)] } } }) === 'allow');
   t.ok('すべて許可のスイッチで許可（高リスクも）', d({ prefs: { computerUse: { allowAllApps: true } } }) === 'allow'
     && d({ app: exe('C:\\Windows\\explorer.exe'), prefs: { computerUse: { allowAllApps: true } } }) === 'allow');
   t.ok('確認なし（範囲 full かつ自律 never）は聞かずに許可', d({ mode: BYPASS }) === 'allow');
@@ -38,7 +40,7 @@ export default async function(t) {
   t.ok('禁止のアプリは、確認なし・すべて許可・常に許可・Antigravity でも forbidden', ['forbidden'].every(want =>
     d({ app: terminal, mode: BYPASS }) === want && d({ app: terminal, prefs: { computerUse: { allowAllApps: true } } }) === want
     && d({ app: terminal, sessionApps: [terminal.id] }) === want && d({ app: terminal, agent: 'antigravity' }) === want
-    && d({ app: terminal, prefs: { computerUse: { alwaysAllowed: [{ id: terminal.id }] } } }) === want));
+    && d({ app: terminal, prefs: { computerUse: { alwaysAllowed: [row(terminal)] } } }) === want));
   t.ok('禁止は拒否済みより先に効く（denied ではなく forbidden）', d({ app: terminal, deniedThisTurn: new Set([terminal.id]) }) === 'forbidden');
   t.ok('Pleiad 自身（self）は禁止', d({ app: FAKE_APPS.pleiad, mode: BYPASS }) === 'forbidden' && isForbiddenApp({ id: 'exe:c:/x/whatever.exe', self: true }));
   t.ok('アプリが分からない（null）は forbidden に倒す', d({ app: null }) === 'forbidden');
@@ -63,12 +65,12 @@ export default async function(t) {
   // ---- 確認なし・すべて許可の印（grant）
   t.ok('grant の種類: 確認なしは bypass、すべて許可は all、普通に許可済みは付けない', autoGrantKind({ mode: BYPASS, prefs: {}, app: notepad }) === 'bypass'
     && autoGrantKind({ mode: ASK, prefs: { computerUse: { allowAllApps: true } }, app: notepad }) === 'all'
-    && autoGrantKind({ mode: ASK, prefs: { computerUse: { allowAllApps: true, alwaysAllowed: [{ id: notepad.id }] } }, app: notepad }) === null
+    && autoGrantKind({ mode: ASK, prefs: { computerUse: { allowAllApps: true, alwaysAllowed: [row(notepad)] } }, app: notepad }) === null
     && autoGrantKind({ mode: ASK, prefs: {}, sessionApps: [notepad.id], app: notepad }) === null
     && autoGrantKind({ agent: 'antigravity', mode: ASK, prefs: {}, app: notepad }) === 'bypass');
   t.ok('prefs.computerUse は足りない項目を既定で埋める（enabled: true・allowAllApps: false・introduced: false・alwaysAllowed: []）',
     JSON.stringify(normalizeComputerUse(undefined)) === JSON.stringify({ enabled: true, allowAllApps: false, introduced: false, alwaysAllowed: [] })
-    && normalizeComputerUse({ enabled: false }).enabled === false && normalizeComputerUse({ alwaysAllowed: [1, { id: 'a' }] }).alwaysAllowed.length === 1);
+    && normalizeComputerUse({ enabled: false }).enabled === false && normalizeComputerUse({ alwaysAllowed: [1, { id: 'a' }, row(notepad)] }).alwaysAllowed.length === 1);
 
   // ---- 印の行
   const line = computerMarker({ tool: 'left_click', state: 'ok', title: '保存を押す', app: 'メモ帳', display: 1, grant: undefined, reason: undefined });

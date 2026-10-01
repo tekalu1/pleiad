@@ -86,7 +86,7 @@ export default async function(t) {
     t.ok('聞く間はオーバーレイを hide にする。許可の後は入力され、activity が出る（owner・エージェント名・会話のタイトル・カーソル）', (() => {
       const kinds = h.driver.overlays.map(o => o.state);
       const act = h.driver.overlays.find(o => o.state === 'activity' && o.cursor);
-      return kinds[0] === 'activity' || kinds.includes('hide') ? kinds.indexOf('hide') >= 0 && act?.owner === c1.state.turnId && act.agent === 'Claude' && act.title === '見積もり' && typeof act.cursor.x === 'number' && act.cursor.pressed === false && act.display === 'fake-1' : false;
+      return kinds[0] === 'activity' || kinds.includes('hide') ? kinds.indexOf('hide') >= 0 && act?.owner === c1.state.turnId && act.agent === 'Claude' && act.title === '見積もり' && typeof act.cursor.x === 'number' && act.cursor.pressed === false && act.display?.id === 'fake-1' && act.display.bounds.width === 1920 : false;
     })(), JSON.stringify(h.driver.overlays));
     t.ok('「この会話で許可」は会話に覚える。印の行に app', h.db.session.get('c1')?.includes(FAKE_APPS.notepad.id) && mark(r1).app === 'メモ帳' && mark(r1).state === 'ok' && !('grant' in mark(r1)) && body(r1) === '左クリックしました（メモ帳）');
     t.ok('答えた後は introduced になる（次のカードは first: false）', h.db.introduced.length === 1);
@@ -329,7 +329,7 @@ export default async function(t) {
       t.ok('zoom の scale は上限に掛ける倍率（maxPixels・maxEdge を縮める）', (() => { const a = hx.driver.calls.filter(c => c.op === 'screenshot').at(-1).args; return a.maxPixels === 600_000 && a.maxEdge === 784; })() && mark(half).state === 'ok');
 
       const s2 = await x.call('switch_display', { display: 2, title: 'x' });
-      t.ok('switch_display: 以後の撮影の対象を替え、オーバーレイの光る場所も移る', mark(s2).display === 2 && hx.driver.overlays.at(-1).display === 'fake-2' && mark(await x.call('switch_display', { display: 9, title: 'x' })).reason === 'invalid');
+      t.ok('switch_display: 以後の撮影の対象を替え、オーバーレイの光る場所も移る', mark(s2).display === 2 && hx.driver.overlays.at(-1).display?.id === 'fake-2' && mark(await x.call('switch_display', { display: 9, title: 'x' })).reason === 'invalid');
       const second = await x.call('screenshot', { title: 'x' });
       t.ok('切り替えた後の screenshot は 2 番のディスプレイ（1280×720・縮小なし）', body(second) === 'ディスプレイ 2 / 2・1280×720' && mark(second).display === 2 && hx.driver.calls.filter(c => c.op === 'screenshot').at(-1).args.display === 'fake-2');
       const c2 = await x.call('left_click', { coordinate: [100, 100], title: 'x' });
