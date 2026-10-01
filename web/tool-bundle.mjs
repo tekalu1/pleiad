@@ -241,14 +241,7 @@ export class Bundle {
       this.moreEl.hidden = true;
       this.moreEl.onclick = () => { this.expanded = true; this.relayout(); };
       this.el.append(this.moreEl);
-      if (live) {
-        // 見出しの右（ボタンの中にボタンは置けないので、重ねて置く。間は .cu.live の見出しが空けてある）
-        this.stopEl = el("button", "btn btn-quiet rstop", t("timeline.computer.bundle.stop"));
-        this.stopEl.type = "button";
-        this.stopEl.title = t("timeline.computer.bundle.stopTitle");
-        this.stopEl.onclick = (e) => { e.preventDefault(); e.stopPropagation(); this.onStop?.(this); };
-        this.el.append(this.stopEl);
-      }
+      if (live) this.makeStop();
     }
 
     this.head.onclick = () => this.toggleAll();
@@ -294,6 +287,26 @@ export class Bundle {
   addAll(cards) {
     for (const c of cards) { this.cards.push(c); const w = this.wrap(c); w.classList.add("hid"); w.setAttribute("inert", ""); this.hist.append(w); }
     if (this.computer) this.layout(); else this.paint();
+  }
+
+  /** 「止める」。見出しの右（ボタンの中にボタンは置けないので、重ねて置く。間は見出しが空けてある） */
+  makeStop() {
+    this.stopEl = el("button", "btn btn-quiet rstop", t("timeline.computer.bundle.stop"));
+    this.stopEl.type = "button";
+    this.stopEl.title = t("timeline.computer.bundle.stopTitle");
+    this.stopEl.onclick = (e) => { e.preventDefault(); e.stopPropagation(); this.onStop?.(this); };
+    this.el.append(this.stopEl);
+  }
+
+  /**
+   * 開き直した会話で、まだ操作中（ロックを持っている）ときの「止める」。塊は履歴から作ったもので走っている行を持たないが、
+   * この会話のターンはまだ操作できる。on で出し、off で外す（走っている塊は自分で持つので触らない）
+   */
+  setOperating(on, onStop) {
+    if (!this.computer || this.live) return;
+    if (on && !this.stopEl) { this.onStop = onStop; this.makeStop(); }
+    else if (!on && this.stopEl) { this.stopEl.remove(); this.stopEl = null; }
+    this.paint();
   }
 
   /** 「止める」を押した後: 止め終えるまで押せなくする（止まれば塊が閉じて外れる）。失敗したら押し直せるように戻す */
@@ -457,11 +470,13 @@ export class Bundle {
     if (this.computer) {
       // 失敗は ✕ の数、止めたもの（Esc・止める・ロック・禁止・拒否）は失敗に数えず、最後の理由を短い字で
       const sum = computerSummary(items);
-      this.mixEl.textContent = this.live ? t("timeline.computer.bundle.running") : t("timeline.computer.bundle.done");
+      // Esc・「止める」で止まったら、もう止めるものは無い
+      const halted = items.some((x) => x.stopped && (x.reason === "escape" || x.reason === "stop"));
+      if (this.stopEl) this.stopEl.hidden = halted;
+      this.mixEl.textContent = this.live || (this.stopEl && !halted) ? t("timeline.computer.bundle.running") : t("timeline.computer.bundle.done");
       this.xmEl.textContent = [st.errors ? t("timeline.bundle.failed", { count: st.errors, n: st.errors }) : "", sum.stopped ? reasonShort(sum.stopped) : ""].filter(Boolean).join(" · ");
       this.head.classList.toggle("xm-err", st.errors > 0);
-      // Esc・「止める」で止まったら、もう止めるものは無い
-      if (this.stopEl) this.stopEl.hidden = items.some((x) => x.stopped && (x.reason === "escape" || x.reason === "stop"));
+
     } else this.xmEl.textContent = st.errors ? t("timeline.bundle.failed", { count: st.errors, n: st.errors }) : "";
     this.elEl.textContent = this.live ? clock((Date.now() - this.t0) / 1000) : "";   // 終わったまとまりに経過は出さない
     const open = this.head.getAttribute("aria-expanded") === "true";

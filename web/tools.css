@@ -277,7 +277,7 @@
 /* 塊: 1 件でも見出しを出す。走っている間は右に「止める」（ボタンの中にボタンは置けないので見出しの上に重ねる） */
 .bundle.cu{position:relative}
 .bundle.cu[data-n="1"]>.rhead{display:flex}
-.bundle.cu.live:has(>.rstop:not([hidden]))>.rhead{padding-right:calc(var(--stop-w,48px) + 20px)}
+.bundle.cu:has(>.rstop:not([hidden]))>.rhead{padding-right:calc(var(--stop-w,48px) + 20px)}
 .rstop{position:absolute;top:2px;right:8px;min-width:48px;padding:2px 10px;font-size:var(--fs-xs)}
 .rstop[hidden]{display:none}
 .bundle.cu .rhead .xm{color:var(--ink-weak);font-weight:400}

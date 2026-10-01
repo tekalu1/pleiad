@@ -142,6 +142,13 @@ export default async function (t) {
     t.ok("押した後は止め終えるまで押せない・失敗したら戻る", live.stopEl.disabled === true && text(live.stopEl) === "止めています…");
     live.setStopping(false);
     t.ok("戻す", live.stopEl.disabled === false && text(live.stopEl) === "止める");
+    const past = new Bundle({ kind: "computer" });
+    past.addAll([row("screenshot", { title: "画面" }, ok()), row("left_click", { title: "押す" }, ok())]);
+    t.ok("開き直した会話で操作中なら、履歴の塊にも「止める」を出す（見出しは操作中）。終われば外す",
+      !past.stopEl && (past.setOperating(true, () => {}), past.stopEl && text(past.head.querySelector(".mix")) === "コンピューターを操作中")
+      && (past.setOperating(false), !past.stopEl && text(past.head.querySelector(".mix")) === "コンピューターを操作しました"));
+    live.setOperating(true, () => {});
+    t.ok("走っている塊は setOperating で触らない", live.stopEl && text(live.stopEl) === "止める");
     t.ok("ふつうの塊は「止める」も「ほか」も持たない", !new Bundle({ live: true }).stopEl && !new Bundle({ live: true }).moreEl);
   }
 

@@ -1258,6 +1258,9 @@ function clearLockWait(box) {
 /** この会話の computer.state に合わせて、走っているコンピューターの行を「別の会話（{題}）が操作中です。終わったら続けます」にする / 戻す */
 function paintComputerWait() {
   const ev = state.computerStates.get(state.current);
+  // 開き直した会話でロックを持っている（操作中）なら、最後の塊に「止める」を出す。履歴から作った塊は走っている行を持たない
+  const bundles = [...thread.querySelectorAll(".bundle.cu")].map((n) => n.bundle).filter(Boolean);
+  for (const b of bundles) b.setOperating(Boolean(ev) && b === bundles.at(-1), stopComputer);
   const rows = [...thread.querySelectorAll(".tc.tc-computer.tc-running")];
   const row = ev?.state === "waiting" ? rows.at(-1) : null;
   for (const box of thread.querySelectorAll(".tc-lockwait")) if (box.closest?.(".tc") !== row) clearLockWait(box);
