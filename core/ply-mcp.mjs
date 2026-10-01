@@ -17,7 +17,7 @@ export const MASK = '••••';
 const record = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const own = (o, k) => Object.hasOwn(o, k);
 const NAME = /^[a-zA-Z0-9_.-]{1,128}$/;
-const RESERVED = ['__proto__', 'constructor', 'prototype', 'host', 'ply', 'ply_context', 'ply_agents'];
+const RESERVED = ['__proto__', 'constructor', 'prototype', 'host', 'ply', 'ply_context', 'ply_agents', 'ply_computer'];
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
 // 接続そのものを壊すか、Pleiad が決めるべきヘッダー。認証は auth の方で指定する
 export const FORBIDDEN_HEADERS = new Set(['host', 'content-length', 'content-type', 'connection', 'transfer-encoding', 'proxy-authorization', 'cookie', 'mcp-session-id', 'mcp-protocol-version', 'accept']);

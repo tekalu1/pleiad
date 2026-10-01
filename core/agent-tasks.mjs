@@ -52,6 +52,8 @@ export function finalReply(messages) {
 // 'delivered'（受理。合図の無いバックエンドは渡ったものとして扱う）/ 'pending'（受理。渡った合図を steered() で待つ）/
 // 'requeue'（受理されない。待機のまま次のターンで）/ 'error'（結果不明。送り直さない）を返す（ADR 0065）
 export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', deliverCommand = async () => 'ok', cancelBackground = async () => {}, ready = async () => true, steerable = async () => false, childSteerable = async () => false, steer = async () => 'requeue', changed = () => {}, waiting = () => false,
+  // コンピューターの操作のロックを待っているか（docs/computer-use.md「ロック・待ち・止めた印」）。承認待ちではないので status: waiting にはせず、沈黙の通知にだけ数えない
+  lockWaiting = () => false,
   now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
   commandMinutes = Number(process.env.AGENT_HOST_TASK_COMMAND_MINUTES ?? 5),
   io = fs, log = line => console.error(line), renameDelays = RENAME_DELAYS, retryMax = RETRY_MAX }) {
@@ -154,7 +156,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   const view = (r, offset = 0) => {
     const { result = '', queue, context, instructions, rejections = [], silenceNotifiedAt, activeCommands = [], ...rest } = r;
     pauseCommands(r, now(), waiting(r.sessionId));
-    return { ...rest, activeCommands: activeCommands.map(c => commandView(c, now())), silenceMinutes: r.status === 'running' && !waiting(r.sessionId) && r.lastActivityAt != null
+    return { ...rest, activeCommands: activeCommands.map(c => commandView(c, now())), silenceMinutes: r.status === 'running' && !waiting(r.sessionId) && !lockWaiting(r.sessionId) && r.lastActivityAt != null
       ? Math.max(0, Math.floor((now() - r.lastActivityAt) / 60000)) : null,
       rejections, pendingMessages: instructions.filter(x => x.state === 'queued').length, result: result.slice(offset, offset + 16000), resultOffset: offset,
       resultLength: result.length, nextOffset: offset + 16000 < result.length ? offset + 16000 : null };
@@ -348,11 +350,11 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     const activityAt = r.lastActivityAt;
     try {
       if (!(await ready(structuredClone(r)).catch(() => false))) return;
-      if (r.status !== 'running' || waiting(r.sessionId) || r.lastActivityAt !== activityAt || r.silenceNotifiedAt === activityAt) return;
+      if (r.status !== 'running' || waiting(r.sessionId) || lockWaiting(r.sessionId) || r.lastActivityAt !== activityAt || r.silenceNotifiedAt === activityAt) return;
       // Mark before delivery, as with completion notices: an uncertain delivery must not be repeated.
       try { await commit(r.taskId, row => { row.silenceNotifiedAt = activityAt; }, 'silence.notice'); }
       catch { return; }
-      if (r.status !== 'running' || waiting(r.sessionId) || r.lastActivityAt !== activityAt) return;
+      if (r.status !== 'running' || waiting(r.sessionId) || lockWaiting(r.sessionId) || r.lastActivityAt !== activityAt) return;
       const outcome = await deliverSilence(structuredClone(r), Math.max(1, Math.floor((now() - activityAt) / 60000))).catch(() => 'error');
       if (outcome === 'requeue' && r.lastActivityAt === activityAt) await record(r.taskId, row => { row.silenceNotifiedAt = null; }, 'silence.requeue');
     } finally { silenceNotices.delete(r.taskId); }
@@ -408,7 +410,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         }
       }
       if (r.status === 'running') {
-        const isWaiting = waiting(r.sessionId);
+        // 承認待ちとロック待ちは、どちらも「子が黙っている」ことに数えない（待ちが終わったら数え直す）
+        const isWaiting = waiting(r.sessionId) || lockWaiting(r.sessionId);
         if (isWaiting) {
           if (!silenceWaiting.has(r.taskId)) { r.lastActivityAt = now(); r.silenceNotifiedAt = null; }
           silenceWaiting.set(r.taskId, true);
