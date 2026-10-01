@@ -16,6 +16,8 @@
 //   "slow"         … 中断されるまで待つ
 //   "whoami"       … 渡されたアカウントのトークン（oauthToken）の指紋を本文にする。無ければ account:none
 //   "context:<json>" … ply_context（contextRuntime）のツールを { name, arguments } で 1 回呼び、返りを本文にする
+//   "computer:<json>" … ply_computer（computerRuntime）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。tool.result には印の行から作った images と computer を付ける
+//   "computer-hold:<json>" … "computer:" の後、中断されるまで走り続ける（ロックを持ったままのターン）。"computer-instructions" は ply_computer の指示文を返す
 //   "compact"      … 文脈の圧縮（Claude の activity compacting と同じ形）を流す
 //   "bg-shell <本文>" … 本文で返答した後、終わらない裏のコマンド（Claude の local_bash）を抱えて phase: waiting で待つ。
 //                    stopBackground で止めると main が再開して一言返し、ターンが終わる
@@ -27,6 +29,7 @@
 //   それ以外        … prompt をそのまま echo
 import crypto from "node:crypto";
 import { undelivered } from "./undelivered.mjs";
+import { computerDisplay, computerToolInput } from "../computer-use/display.mjs";
 
 const sessions = new Map();   // sessionId -> { sessionId, title, cwd, createdAt, lastModified, tag, messages, subagents }
 const auth = { loggedIn: false, account: null };
@@ -267,6 +270,11 @@ export const backend = {
     claudeAccounts: true,
     // 入力欄の `!` は Claude と同じく Pleiad がホストで走らせる。渡した行は発言として履歴に残す（Claude の transcript と同じ形）
     shell: 'host',
+    // ply_computer の渡し方（テストが環境変数で切り替える。FAKE_COMPUTER_USE=off で対応しない）
+    get computerUse() {
+      if (process.env.FAKE_COMPUTER_USE === 'off') return false;
+      return { images: process.env.FAKE_COMPUTER_IMAGES === 'path' ? 'path' : 'inline', waitSliceMs: Number(process.env.FAKE_COMPUTER_SLICE_MS) > 0 ? Number(process.env.FAKE_COMPUTER_SLICE_MS) : null };
+    },
   },
 
   subagentTools: ["Agent"],
@@ -285,7 +293,7 @@ export const backend = {
     emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
   },
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, oauthToken, hostSessionId, shellAppends = [], notes = [] }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, oauthToken, hostSessionId, shellAppends = [], notes = [] }) {
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
     if (String(prompt ?? "").trim().startsWith("undelivered")) {
       const error = "fake: failed before the prompt was delivered";
@@ -335,6 +343,34 @@ export const backend = {
         out.text = result.content[0].text;
         emit({ type: 'tool.result', id: callId, text: out.text, isError: Boolean(result.isError) });
         out.toolCalls = [{ id: callId, name: `mcp__ply_agents__${params.name}`, input: params.arguments, result: { text: out.text, isError: Boolean(result.isError) } }];
+        await say(emit, out.text, out.uuid);
+      } else if (text.startsWith('computer:') || text.startsWith('computer-hold:')) {
+        // ply_computer の呼び出し。表示は他のエージェントの正規化と同じく、印の行から images と computer を作る（docs/computer-use.md「正規化イベントと履歴」）
+        if (!computerRuntime) out.text = 'computer: unavailable';
+        else {
+          out.toolCalls = []; const texts = [];
+          for (const params of [].concat(JSON.parse(text.slice(text.indexOf(':') + 1)))) {
+            const callId = crypto.randomUUID();
+            const toolName = `mcp__ply_computer__${params.name}`;
+            emit({ type: 'tool.start', id: callId, name: toolName, input: computerToolInput(toolName, params.arguments) });
+            const response = await fetch(computerRuntime.url, { method: 'POST', headers: { ...computerRuntime.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params }) });
+            const result = (await response.json()).result;
+            const raw = result.content[0].text;
+            const shown = computerDisplay(raw);
+            emit({ type: 'tool.result', id: callId, text: shown?.text ?? raw, isError: Boolean(result.isError), ...(shown ? { images: shown.images, computer: shown.computer } : {}) });
+            out.toolCalls.push({ id: callId, name: toolName, input: params.arguments, result: { text: shown?.text ?? raw, isError: Boolean(result.isError) } });
+            texts.push(shown?.text ?? raw);
+          }
+          out.text = texts.join('\n');
+        }
+        await say(emit, out.text, out.uuid);
+        if (text.startsWith('computer-hold:')) {
+          await new Promise(resolve => { if (signal?.signal?.aborted) return resolve(); signal?.signal?.addEventListener?.('abort', resolve, { once: true }); });
+          emit({ type: 'turnResult', outcome: 'aborted' });
+          return { sessionId: id };
+        }
+      } else if (text === 'computer-instructions') {
+        out.text = computerRuntime?.instructions ?? '(none)';
         await say(emit, out.text, out.uuid);
       } else if (/(^|\n)context:[^\n]*$/.test(text)) {   // 分岐した会話の最初のターンは履歴の引き継ぎ文の末尾に来る
         const params = JSON.parse(text.slice(text.lastIndexOf('context:') + 8));

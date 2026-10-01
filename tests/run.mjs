@@ -37,6 +37,16 @@ const cases = [
   await import('./unit/browser-confirm.mjs'),
   // 設定 › コンピューターの操作: prefs の検査と既定・store の remember/forget・hostCapabilities.computerUse の判定・節の動き・setPref（docs/computer-use.md）
   await import('./unit/computer-settings.mjs'),
+  // コンピューターの操作（ply_computer。docs/computer-use.md）: アプリの判定の順・禁止の一覧・印の行・座標・スクショの保存
+  await import('./unit/computer-policy.mjs'),
+  // ロック: 1 つだけ・FIFO・待ちの上限・待ちを分ける・中断で抜ける・委譲の子へ貸す・止めた印
+  await import('./unit/computer-lock.mjs'),
+  // main への口（parentPort）: computer-* のメッセージの形・id での応答・エラーの code・ハートビート・偽の driver
+  await import('./unit/computer-driver.mjs'),
+  // 橋: MCP の面・座標の基準・ゲートの順・アプリの承認・止める・ロック画面・画像の渡し方（偽の driver）
+  await import('./unit/computer-bridge.mjs'),
+  // サーバー越し: 承認カードの payload・スクショの保存と配信・computer.state・computerStop・委譲の子の承認（fake + 偽の driver）
+  await import('./unit/server-computer.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
   await import('./unit/agent-tasks-silence.mjs'),
