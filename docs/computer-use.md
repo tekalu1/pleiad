@@ -133,7 +133,7 @@ A が作った土台。`desktop/main.cjs` は `attachComputerService(worker, { e
 
 契約の隙間を埋めた決め:
 
-- `screenshot` の `display` は `displays[].index`（1 から）。文字列を渡すと `id`。省略は主モニター。`region` は `display` の範囲に切る（外に出た分は捨て、全部外なら `outside`）。
+- `screenshot` の `display` は `displays[].id`（文字列。core の橋はこれを渡す）。数を渡すと `index`（1 から）でも通る。省略は主モニター。`region` は `display` の範囲に切る（外に出た分は捨て、全部外なら `outside`）。
 - `findApp` は、動いている窓（見えていて名前のある最上位の窓）に、スタートメニューのアプリ（PowerShell の `Get-StartApps`。5 分使い回す。初回は約 2 秒）を足して強い順に並べる。`{GUID}\x.exe` の形の AppID は既知のフォルダーを展開して exe のアプリにする。
 - `launch` は、動いているアプリなら起こし直さず前に出す（`alreadyRunning: true`、前に出せたかは `foregrounded`）。起こしたあとは窓が出るまで最長 8 秒待つ（出ない常駐アプリは `app` をそのまま返す）。`kind: 'exe'` は `.exe` の絶対パスだけ。
 - `error` に `done`（`input` が終えた動作の数）を足すことがある。途中で断られたら、押したままのものは離してから返す。
