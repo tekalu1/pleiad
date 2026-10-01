@@ -49,6 +49,8 @@
     "childConversation": "委譲した子の会話",
     "relayTitle": "委譲先「{{child}}」",
     "relayTitleWith": "委譲先「{{child}}」 / {{title}}",
+    "computerApp": "{{agent}} に「{{app}}」の操作を許可しますか？",
+    "computerAppJoin": "」「",
     "browserSite": "{{agent}} が {{site}} を使おうとしています",
     "browserAccount": "（ログイン済み: {{account}}）"
   },

@@ -184,6 +184,8 @@ export const COMMANDS = new Set([
   'browserScreencastInput',  // { sessionId, input: { type: tap|scroll|text|key, x?, y?, dx?, dy?, text?, key? } } -> {}。エージェントが操作中は断る（code: agent-active）
   'browserScreencastNav',    // { sessionId, action: back|forward|reload|stop|open, url? } -> {}
   'browserScreencastAgent',  // { sessionId, action: stop|takeOver } -> {}。エージェントの接続を止める・引き継ぐ
+  // コンピューターの操作（docs/computer-use.md）。ホストの OS を操作する命令ではなく止める側なので、リモートの端末からも受ける
+  'computerStop',            // { sessionId } -> { stopped }。その会話の走っているターン（貸している先の子のターンも）に止めた印を付け、main へ computer-stop を送る
 ]);
 
 // event.type の一覧（server -> client の EVENT ペイロード）。
@@ -227,7 +229,9 @@ export const EVENTS = new Set([
   "statusIcon",   // { status, icon } 状態グループのアイコンが変わった（sessionId は null）
   "title",        // タイトルが変わった
   "fork",         // 分岐した
-  "permission",   // 承認が要る { id, kind: tool|question, toolName, input, canAlways, questions? }
+  "permission",   // 承認が要る { id, kind: tool|question, toolName, input, canAlways, questions?, browserSite?, computerApp? }。computerApp は ply_computer のアプリの承認 { agent: { id, label }, apps: [{ id, name, risk: normal|high }], reason?, first }（docs/computer-use.md）
+  // { state: idle|running|waiting, holder?: { sessionId, title }, since? } コンピューターの操作のロック。running はこの会話のターンが持っている（借りている）、waiting は別の会話が操作中で待っている。承認と同じく全部の接続へ流す
+  "computer.state",
   "auth",         // { backend, phase: url|done|error, url?, message? }
   "mcpAuth",      // { name, phase: url|done|error, url?, message? } Pleiad に登録した外部 MCP のログイン（sessionId は null）
   "mode",         // 承認モードが変わった
