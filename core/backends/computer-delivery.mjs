@@ -12,8 +12,9 @@ export const AGY_WAIT_SLICE_MS = 150_000;
 // agy はツールの定義をサーバー名の階層なしで ~/.gemini/antigravity-cli/mcp/<ツール>.json に書く。
 // screenshot のような一般的な名前は他のサーバーと衝突するので、agy にだけ接頭辞を付けて見せる（core/agy-context-relay.mjs）
 export const AGY_TOOL_PREFIX = 'ply_computer_';
-// agy は MCP の結果の画像をファイルに退避し、出力の末尾にこの行を足す
-const AGY_OFFLOADED = /^\[Resource offloaded to file:\/\/\/[^\n\]]*\]\s*$/;
+// 画像をファイルに退避したことを知らせる、エージェントが足す行。agy は出力の末尾に [Resource offloaded to file:///…] を、
+// Claude の CLI（2.1.284）はライブの tool_result に [Image: source: <パス>] の text ブロックを足す（transcript には残らない）
+const IMAGE_NOTES = [/^\[Resource offloaded to file:\/\/\/[^\n\]]*\]\s*$/, /^\[Image: source: [^\n\]]*\]\s*$/];
 
 export const isComputerTool = name => typeof name === 'string' && name.startsWith(COMPUTER_TOOL_PREFIX);
 
@@ -35,11 +36,11 @@ export function mcpText(result) {
 }
 
 /**
- * ply_computer の結果の text -> tool.result の中身。印の行を除いた本文に cut（各エージェントの 2000 字の扱い）を掛け、
+ * ply_computer の結果の text -> tool.result の中身。印の行と画像の退避の行を除いた本文に cut（各エージェントの 2000 字の扱い）を掛け、
  * images と computer を足す。印が無ければ text をそのまま切る
  */
 export function computerResult(raw, cut) {
-  const shown = computerDisplay(raw);
+  const shown = computerDisplay(withoutImageNotes(raw));
   if (!shown) return cut(String(raw ?? ''));
   return { ...cut(shown.text), images: shown.images, computer: shown.computer };
 }
@@ -77,7 +78,7 @@ export function agyComputerName(parameters) {
   return parameters?.ServerName === COMPUTER_SERVER ? COMPUTER_TOOL_PREFIX + tool : null;
 }
 
-/** agy の出力から、画像を退避した印の行（[Resource offloaded to file:///…]）を除く */
-export function withoutOffloaded(text) {
-  return String(text ?? '').split('\n').filter(line => !AGY_OFFLOADED.test(line)).join('\n').replace(/\n+$/, '');
+/** 結果の本文から、エージェントが足した画像の退避の行（IMAGE_NOTES）を除く */
+export function withoutImageNotes(text) {
+  return String(text ?? '').split('\n').filter(line => !IMAGE_NOTES.some(rx => rx.test(line))).join('\n').replace(/\n+$/, '');
 }

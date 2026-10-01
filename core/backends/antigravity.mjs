@@ -24,7 +24,7 @@ import * as pids from "./antigravity-pids.mjs";
 import * as transcript from "./antigravity-store.mjs";
 import { AGY_LEVELS, agyTarget, buildAgyModels, defaultLabelFromLog, parseAgyModels } from "./antigravity-models.mjs";
 import { MAX_RESULT_CHARS } from "./shared.mjs";
-import { AGY_WAIT_SLICE_MS, agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput, withoutOffloaded } from "./computer-delivery.mjs";
+import { AGY_WAIT_SLICE_MS, agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
 import { t } from "../i18n.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -413,7 +413,7 @@ export const backend = {
             if (!done) return;
             const raw = typeof output === "string" ? output : JSON.stringify(output ?? "");
             // ply_computer: 画像を退避した行を除き、印の行から images と computer を作る。控えにもその形で残す（読み直しで印を読み直さない）
-            const r = computer ? computerResult(withoutOffloaded(raw), cut) : cut(raw);
+            const r = computer ? computerResult(raw, cut) : cut(raw);
             const isError = computer ? computerFailed(r.computer) : false;
             emit({ type: "tool.result", id, ...r, isError });
             toolCalls.push({ id, name, input, result: { ...r, isError } });

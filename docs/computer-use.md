@@ -248,7 +248,7 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 - `tool.result` に 2 つの任意の項目を足す（[ADR 0075](adr/0075-computer-screenshots-in-data-dir.md)）:
   - `images`: 既にある項目（Codex の画像生成と同じ）。`ply_computer` では `computerDisplay` の `images`。
   - `computer`: `computerDisplay` の `computer`。`{ tool, state, reason?, title, app?, display?, shot?, actions? }`。
-- `text` は印の行を除いた本文（agy は画像を退避した行 `[Resource offloaded to file:///…]` も除く）。Codex の image の base64 は捨てる。履歴の読み直しも同じ関数を通す。Codex の子のスレッド（`onChildNotification`）はツールを出さないので通さない。
+- `text` は印の行を除いた本文（エージェントが足す画像の退避の行、agy の `[Resource offloaded to file:///…]` と Claude の CLI の `[Image: source: …]` も除く）。Codex の image の base64 は捨てる。履歴の読み直しも同じ関数を通す。Codex の子のスレッド（`onChildNotification`）はツールを出さないので通さない。
 - 印を読むのは `ply_computer` のツールの結果だけ（Claude は `tool_result` に名前が無いので、ターンの間 `tool_use` の id を覚えて見分ける）。他のツールの結果に印の形の行があっても読まない。
 - `isError` は Claude・Codex は MCP の `isError`、agy は出力に印しか無いので印の `state` が `ok` 以外のとき true。agy の控えには `images` と `computer` の付いた結果を書く。
 
@@ -386,14 +386,14 @@ permission: { …, toolName: 'ply_computer', canAlways: true,
 
 ### エージェントごとの値（2026-10-01 実測）
 
-Codex `codex-cli 0.156.1`（app-server）、Claude Agent SDK 0.3.258（CLI 2.1.284）、agy 1.2.14 で測った。版が変わって合わなくなったら、`core/backends/computer-delivery.mjs` の値と各バックエンドの `capabilities.computerUse` だけを差し替える。
+Codex `codex-cli 0.156.1`（app-server）、Claude Agent SDK 0.3.258（CLI 2.1.284）、agy 1.2.14 で測った。Claude（haiku）と agy は、偽の driver の橋をつないだ Pleiad から本物で `screenshot` を呼ばせ、名前・表示・モデルが画像を読めることを確かめた。版が変わって合わなくなったら、`core/backends/computer-delivery.mjs` の値と各バックエンドの `capabilities.computerUse` だけを差し替える。
 
 | | Claude | Codex | Antigravity |
 |---|---|---|---|
 | `capabilities.computerUse` | `{ images: 'inline', waitSliceMs: null }` | `{ images: 'inline', waitSliceMs: null }` | `{ images: 'path', waitSliceMs: 150_000 }` |
 | 1 回の呼び出しの上限 | 既定は 60 秒、さらに無通信 300 秒で切れる。`mcpServers.ply_computer.timeout: 660000` で両方が上がる（他のサーバーには効かない） | 既定は 300 秒。`tool_timeout_sec: 660` | **3 分で固定**。agent.md に何を書いても伸びない。ロックの待ちは橋が 150 秒ごとに分けて返す（`state: 'waiting'`。画面は同じ待ちの行のまま）。中継の上限（330 秒）はそれより長いので触らない |
 | 画像がモデルに見えるか | 見える（`tool_result` の image）。1280×800・品質 75 の JPEG は `MAX_MCP_OUTPUT_TOKENS` の既定（25000）に収まるので、縮小の定数は今のまま | gpt-5.x は自動で見える。gpt-6 系はツールを `exec`（JS のコードモード）から呼び、`image(r.content[1])` を呼んだときだけ見える。指示文で頼む。`text(r)` だと base64 が文字のまま入る | 画像はファイルに退避され（出力の末尾に `[Resource offloaded to file:///…]`）、モデルは `view_file` で開いて読む。開くかはモデル次第なので、指示文で頼み、保存先のパスも text に書く（`images: 'path'`） |
-| ツールの出方 | `mcp__ply_computer__<ツール>` | `mcpToolCall`（`server: 'ply_computer'`）。ツールは遅延ロードで、最初の一覧に出ない（gpt-5.x は `tool_search`、gpt-6 系は `ALL_TOOLS` で探す）。指示文で探し方を書く | `call_mcp_tool`（`{ ServerName, ToolName, Arguments }`）。`ServerName` は空のことが多い。`DONE` の `output` は text ブロックをつないだもの（印の行はそのまま届く） |
+| ツールの出方 | `mcp__ply_computer__<ツール>`。CLI 2.1.284 は MCP のツールを遅延ロードし、モデルは `ToolSearch` で探してから呼ぶ（指示は無くても探せた）。ライブの `tool_result` に `[Image: source: <パス>]` の text ブロックを足す（transcript には無い）ので、表示の本文から除く | `mcpToolCall`（`server: 'ply_computer'`）。ツールは遅延ロードで、最初の一覧に出ない（gpt-5.x は `tool_search`、gpt-6 系は `ALL_TOOLS` で探す）。指示文で探し方を書く | `call_mcp_tool`（`{ ServerName, ToolName, Arguments }`）。`ServerName` は空のことが多い。`DONE` の `output` は text ブロックをつないだもの（印の行はそのまま届く） |
 | 名前の衝突 | — | — | agy はツールの定義をサーバー名の階層なしで `~/.gemini/antigravity-cli/mcp/<ツール>.json` に書く。`screenshot` のような名前は他のサーバーと衝突するので、agy にだけ `ply_computer_<ツール>` と見せる（Claude・Codex は Claude Desktop と API のメンバー名のまま）。`computer_batch` の `action` は接頭辞なし |
 | 同梱の computer use | — | `plugins.unified-computer-use@openai-bundled.enabled: false`（`cua_repl` を出す側）と `plugins.computer-use@openai-bundled.enabled: false`（スキルを出す側）の 2 つ。`features.computer_use: false` は効かず、`mcp_servers.cua_repl.enabled` は app-server が拒否する。`node_repl` は利用者の `config.toml` の定義なので触らない。開始時に `mcpServerStatus/list` を見て、残っていればログに 1 行出す（[ADR 0074](adr/0074-codex-bundled-computer-use-off.md)） | — |
 

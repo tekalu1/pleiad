@@ -11,7 +11,7 @@ import { backend as claude, setClaudeSdkForTest } from "../../core/backends/clau
 import { normalizeSdkMessage, transcriptToMessages } from "../../core/backends/claude-normalize.mjs";
 import { backend as codex, threadToMessages } from "../../core/backends/codex.mjs";
 import { rpc } from "../../core/backends/codex-rpc.mjs";
-import { codexComputerConfig, agyComputerName, computerPrompt, withoutOffloaded } from "../../core/backends/computer-delivery.mjs";
+import { codexComputerConfig, agyComputerName, computerPrompt, withoutImageNotes } from "../../core/backends/computer-delivery.mjs";
 
 export const name = "computer-delivery";
 export const title = "ply_computer: 3 つのエージェントへの注入（MCP・上限時間・指示文・承認）と、印の行からの正規化";
@@ -63,7 +63,8 @@ export default async function (t) {
     agyComputerName({ ServerName: "", ToolName: "ply_computer_left_click" }) === "mcp__ply_computer__left_click"
     && agyComputerName({ ServerName: "ply_computer", ToolName: "zoom" }) === "mcp__ply_computer__zoom"
     && agyComputerName({ ServerName: "", ToolName: "screenshot" }) === null && agyComputerName({ ServerName: "", ToolName: "ply_computer_" }) === null);
-  t.ok("agy の出力から画像の退避先の行だけを除く", withoutOffloaded(`a\n${MARK}\n[Resource offloaded to file:///C:/x/media_0.jpg]`) === `a\n${MARK}`);
+  t.ok("画像の退避の行（agy の Resource offloaded・Claude の CLI の Image: source）だけを除く", withoutImageNotes(`a\n${MARK}\n[Resource offloaded to file:///C:/x/media_0.jpg]`) === `a\n${MARK}`
+    && withoutImageNotes(`a\n${MARK}\n[Image: source: C:\\Users\\u\\.claude\\projects\\p\\tool-results\\mcp-ply_computer-blob-1]`) === `a\n${MARK}`);
   t.ok("指示文: Claude は共通の文だけ、Codex は遅延ロードと image() の渡し方を足す", computerPrompt(runtime, { locale: "ja", agent: "claude" }) === runtime.instructions
     && /tool_search/.test(computerPrompt(runtime, { locale: "ja", agent: "codex" })) && /image\(r\.content\[1\]\)/.test(computerPrompt(runtime, { locale: "en", agent: "codex" }))
     && computerPrompt(null, { locale: "ja", agent: "codex" }) === null);
@@ -81,7 +82,7 @@ export default async function (t) {
   const [start] = normalizeSdkMessage({ type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", name: "mcp__ply_computer__type", input: { title: "入力", text: "token=sk-abcdefghijklmnopqrstuv" } }] } }, { computerIds: ids }).filter((e) => e.type === "tool.start");
   t.ok("Claude: type の入力の秘密を伏せて tool.start に出す", start?.name === "mcp__ply_computer__type" && !start.input.text.includes("sk-abcdefghijklmnopqrstuv") && ids.has("tu1"), JSON.stringify(start));
   normalizeSdkMessage({ type: "assistant", message: { content: [{ type: "tool_use", id: "tu2", name: "mcp__ply_computer__screenshot", input: { title: "画面を確かめる" } }] } }, { computerIds: ids });
-  const shot = normalizeSdkMessage({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu2", content: [{ type: "text", text: SHOT_TEXT }, { type: "image", source: { type: "base64", media_type: "image/jpeg", data: IMAGE } }] }] } }, { computerIds: ids })[0];
+  const shot = normalizeSdkMessage({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu2", content: [{ type: "text", text: SHOT_TEXT }, { type: "image", source: { type: "base64", media_type: "image/jpeg", data: IMAGE } }, { type: "text", text: "[Image: source: C:\\tmp\\tool-results\\mcp-ply_computer-blob-1]" }] }] } }, { computerIds: ids })[0];
   t.ok("Claude: tool_result の印の行から images と computer を作り、text から印を除く", shot?.images?.[0]?.url === `/computer-shot/${SHOT}.jpg` && shot.images[0].width === 1460
     && shot.computer?.tool === "screenshot" && shot.computer?.state === "ok" && !("v" in shot.computer) && shot.text === "ディスプレイ 1 / 1・1460×821" && !JSON.stringify(shot).includes(IMAGE.slice(0, 40)), JSON.stringify(shot).slice(0, 300));
   const other = normalizeSdkMessage({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "read1", content: SHOT_TEXT }] } }, { computerIds: ids })[0];
