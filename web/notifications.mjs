@@ -1,6 +1,7 @@
 // Live completions only: replayed history must never produce desktop alerts.
 import { t } from './i18n.mjs';
 import { savedTitle } from './saved-text.mjs';
+import { approvalApps, approvalNotice } from './computer-use.mjs';
 
 export function createCompletionNotifications({ host = window, openSession }) {
   const seen = new Map();
@@ -39,8 +40,10 @@ export function createCompletionNotifications({ host = window, openSession }) {
       if (replay || event.type !== 'permission' || !event.notifyReply || !event.id || !event.sessionId
           || seenReplies.has(event.id)) return;
       seenReplies.add(event.id);
+      // コンピューターの操作のアプリの承認は、誰が何の許可を待っているかを見出しに出す（本文は会話の題）
+      const computer = event.computerApp ? approvalApps(event.computerApp) : null;
       show({ kind: 'reply', noticeId: event.id, sessionId: event.sessionId,
-        title: t('notify.waitingReply'), body: body(session?.title || event.conversationTitle) });
+        title: computer ? approvalNotice(computer) : t('notify.waitingReply'), body: body(session?.title || event.conversationTitle) });
     },
   };
 }

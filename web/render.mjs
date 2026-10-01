@@ -12,6 +12,7 @@ import { el, chevron } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { copyIcon, downloadIcon, sidePanelIcon, moreIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
+import { COMPUTER_PREFIX, isComputerTool, computerToolName, computerVerb, computerInfo, reasonShort, reasonLong, shotsOf, shotButton, stopMark } from './computer-use.mjs';
 
 // ---------------------------------------------------------------- エスケープ
 
@@ -1063,6 +1064,17 @@ function drawMcp(card, head, inp, name) {
   if (grid) card.append(grid);
 }
 
+/** ply_computer（コンピューターの操作）。主役はエージェントが書いた title、座標などの入力は開いた中に */
+function drawComputer(card, head, inp, name) {
+  const { title, ...rest } = inp;
+  const given = String(title ?? "").trim();
+  const main = textMain(given || computerToolName(name));
+  if (!given) main.dataset.untitled = "1";   // 結果が届いたら、橋が補った題（印の行）に替える
+  head.append(main);
+  const grid = kvGrid(rest);
+  if (grid) card.append(grid);
+}
+
 function drawUnknown(card, head, inp) {
   const s = summarizeInput(inp);
   if (s) head.append(textMain(s));
@@ -1151,11 +1163,13 @@ export function renderToolCall(name, input, opts) {
   // 1 行目は tc-line に積む（失敗の要点・委譲の行き先は、その下の行として head に足す）
   const line = el("span", "tc-line");
   head.append(line);
-  line.append(el("span", "tc-label", TOOL_LABEL[raw] ?? (raw.startsWith("mcp__") ? "MCP" : clip(raw, 24))));
+  const computer = isComputerTool(raw);
+  if (computer) card.classList.add("tc-computer");
+  line.append(el("span", "tc-label", TOOL_LABEL[raw] ?? (computer ? computerVerb(raw) : raw.startsWith("mcp__") ? "MCP" : clip(raw, 24))));
 
   // 描き分け。対象がファイルのツールは、バックエンドごとに違うパスのキーを file_path に揃えて渡す
   // （押すと右パネル、右クリックで操作。docs/design-system.md「ファイルの操作」）
-  const draw = TOOL_DRAW[raw] ?? (raw.startsWith("mcp__") ? drawMcp : drawUnknown);
+  const draw = TOOL_DRAW[raw] ?? (computer ? drawComputer : raw.startsWith("mcp__") ? drawMcp : drawUnknown);
   let drawInp = inp;
   if (FILE_DRAWS.has(draw) && !inp.file_path) {
     const target = FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v)
@@ -1277,6 +1291,38 @@ function fileList(text) {
 }
 
 /**
+ * ply_computer の行の仕上げ: 題（入力に無ければ橋が補ったもの）・対象のアプリ（と確認なしの自動許可）・撮った画面のサムネイル・
+ * まとめて実行した動作の内訳。撮った画面は結果の images（/computer-shot/…）から読み、行の右端に置く
+ */
+function decorateComputerRow(node, head, resEl, info, result) {
+  const main = head.querySelector(".tc-main");
+  if (main && info.title && main.dataset.untitled === "1") main.textContent = info.title;
+  const bits = [];
+  if (info.app) bits.push(info.app);
+  // 確認なし・すべて許可のときの、そのアプリのターンで最初の呼び出し（「許可 · 確認なしのため自動」）
+  // i18n-dynamic: timeline.computer.grant.
+  if (info.grant) bits.push(t(`timeline.computer.grant.${info.grant}`));
+  if (bits.length) {
+    let note = [...head.querySelectorAll(".tc-note")].find((n) => !n.classList.contains("tc-said"));
+    if (!note) { note = el("span", "tc-note"); head.querySelector(".tc-line")?.querySelector(".tc-res")?.before(note); }
+    note.textContent = bits.join(" · ");
+    note.title = bits.join(" · ");
+  }
+  if (resEl && info.state !== "stopped") {
+    const title = main?.textContent ?? "";
+    for (const shot of shotsOf(result).slice(0, 1)) resEl.prepend(shotButton(shot, { title, app: info.app ?? "" }));
+  }
+  if (info.actions.length) {
+    const rows = el("div", "tc-kv tc-batch");
+    for (const a of info.actions) {
+      const state = a.state === "failed" ? t("timeline.result.failed") : a.state === "stopped" ? reasonShort(a.reason) : "";
+      rows.append(el("span", "k", computerVerb(COMPUTER_PREFIX + String(a.tool ?? ""))), el("span", "v", [a.app, state].filter(Boolean).join(" · ")));
+    }
+    (node.querySelector(".tc-details-body") ?? node).prepend(rows);
+  }
+}
+
+/**
  * renderToolCall が作った要素に結果を反映する。**全文は出さない。**
  * 右端に要約、失敗は太字の「✕ 失敗 · exit 1」と要点の 1 行。開いた中はツールごとの見せ方で、生の出力は「入力・出力（JSON）」の奥。
  * @param {HTMLElement} node renderToolCall の戻り
@@ -1289,13 +1335,14 @@ export function applyToolResult(node, result) {
   // 呼び直されても二重に付かないよう、前回の結果を落としてから積む
   for (const old of [...node.querySelectorAll(".tc-out, .tc-preview, .tc-res-view, .tc-errline")]) old.remove();
   // 結果が届いたなら承認は決着している（別の端末で押した・自動で通った・中断）。行を置き換えていた承認カードは外して行を戻す
-  const pending = node.querySelector(".tc-appr");
+  const pending = node.querySelector(".tc-appr, .tc-lockwait");
   if (pending) {
     pending.remove();
     const shell = node.querySelector(".tc-details");
     if (shell) shell.hidden = false;
   }
-  node.classList.remove("tc-error", "tc-done", "tc-running", "tc-waiting");
+  node.classList.remove("tc-error", "tc-done", "tc-running", "tc-waiting", "tc-stopped");
+  if (node.dataset) node.dataset.stopReason = "";
   const resEl = node.querySelector(".tc-res");
   if (resEl) { resEl.textContent = ""; resEl.className = "tc-res"; resEl.paint = null; delete resEl.dataset.sig; }
   if (result == null) return node;
@@ -1305,26 +1352,38 @@ export function applyToolResult(node, result) {
   const body = resultText(result);
   // 人が承認を拒否したツールは失敗ではない（✕ にせず、見出しの「✕ n」にも数えない。web/client.mjs の rowApprovalCard が印を付ける）
   const denied = node.dataset?.denied === "1";
-  const isError = Boolean(result?.isError ?? result?.is_error) && !denied;
+  // コンピューターの操作は、止めた・断った・待っているを失敗に数えない（印の行の state。ADR 0073）
+  const computer = isComputerTool(tool) ? computerInfo(result) : null;
+  const isError = (computer ? computer.state === "failed" : Boolean(result?.isError ?? result?.is_error)) && !denied;
   const cut = Boolean(result?.truncated);
   const delegate = isDelegateToolName(tool);
   const draw = TOOL_DRAW[tool];
 
   node.classList.add(isError ? "tc-error" : "tc-done");
+  if (computer?.state === "stopped") { node.classList.add("tc-stopped"); node.dataset.stopReason = computer.reason ?? ""; }
   if (resEl) {
     if (isError) {
       // 失敗は記号と太字で。色は付けない（差し色は「あなたを待っている」だけ）
-      const code = exitCodeOf(body);
+      const code = computer ? null : exitCodeOf(body);
       resEl.className = "tc-res tc-res-err";
       resEl.textContent = code != null && code !== 0 ? t("timeline.result.failedExit", { code }) : t("timeline.result.failed");
       const why = failureLine(body);
       if (why && !delegate) { const line = el("span", "tc-errline", why); line.title = why; head.append(line); }
     } else if (denied) {
       resEl.textContent = t("chat.approval.denied");
+    } else if (computer) {
+      // 止めた（Esc・止める・ロック・禁止・拒否）は ✕ にせず、止めた印と短い理由。理由の 1 文は行の下に
+      if (computer.state === "stopped") {
+        resEl.replaceChildren(stopMark(), el("span", null, reasonShort(computer.reason)));
+        const why = reasonLong(computer.reason, computer.app) ?? failureLine(body);
+        if (why) { const line = el("span", "tc-errline tc-reason", why); line.title = why; head.append(line); }
+      } else if (computer.state === "waiting") resEl.textContent = t("timeline.computer.waiting");
     } else if (!delegate) {
       resEl.textContent = summarizeResult(tool, body, lineCount(body), node.toolChange);
     }
   }
+
+  if (computer) decorateComputerRow(node, head, resEl, computer, result);
 
   // 開いた中。出力の見せ方はツール別（実行 = 末尾、検索・探す = ファイル一覧）。生の出力は JSON の折りたたみへ
   const detailsBody = node.querySelector(".tc-details-body");
@@ -1342,7 +1401,7 @@ export function applyToolResult(node, result) {
   if (raw && (delegate || view)) raw.append(output);
   else if (jsonFold) jsonFold.before(output);
   else (detailsBody ?? node).append(output);
-  for (const img of result?.images ?? []) {
+  for (const img of computer ? [] : result?.images ?? []) {
     const src = presentImg(img.url ?? img.dataUri ?? "");
     if (!src) continue;
     const preview = el("div", "tc-preview");

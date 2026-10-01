@@ -1205,6 +1205,17 @@
       "sending": "{{action}}を送っています…",
       "sendFailedInline": "{{action}}を送れませんでした · {{error}}"
     },
+    "computerApproval": {
+      "label": "許可",
+      "agent": "エージェント",
+      "question": "{{agent}} に「{{app}}」の操作を許可しますか？",
+      "questionMore_other": "{{agent}} に「{{app}}」ほか {{count}} 件の操作を許可しますか？",
+      "allowSession": "この会話で許可",
+      "allowedSession": "この会話で許可した",
+      "explain": "許可したアプリの画面を撮り、マウスとキーボードで操作します。Esc でいつでも止められます。",
+      "warn": "⚠ このアプリは、ファイルや設定を広く読み書き・削除できます。",
+      "reason": "理由: {{reason}}"
+    },
     "thought_other": "考えた（{{chars}} 文字）",
     "delivery": {
       "sending": "送信中",
@@ -1812,6 +1823,77 @@
       "ghost": "1 つ前: {{verb}} {{target}}（押すと遡る）",
       "running": "実行中"
     },
+    "computer": {
+      "bundle": {
+        "running": "コンピューターを操作中",
+        "done": "コンピューターを操作しました",
+        "stop": "止める",
+        "stopTitle": "コンピューターの操作を止める（Esc と同じ）",
+        "stopping": "止めています…",
+        "stopFailed": "止められませんでした",
+        "more_other": "ほか {{n}} 件",
+        "label_other": "コンピューターの操作 {{n}} 件"
+      },
+      "verb": {
+        "shot": "撮る",
+        "zoom": "拡大",
+        "display": "画面",
+        "cursor": "位置",
+        "move": "動かす",
+        "click": "押す",
+        "drag": "ドラッグ",
+        "down": "押し続ける",
+        "up": "離す",
+        "scroll": "スクロール",
+        "type": "入力",
+        "key": "キー",
+        "wait": "待つ",
+        "open": "開く",
+        "access": "許可",
+        "list": "一覧",
+        "batch": "まとめて"
+      },
+      "reasonShort": {
+        "escape": "止めた",
+        "stop": "止めた",
+        "locked": "ロックで止まった",
+        "forbidden": "操作できない",
+        "denied": "拒否した",
+        "busy": "使用中",
+        "other": "止まった"
+      },
+      "reason": {
+        "escape": "あなたが Esc で止めました",
+        "stop": "あなたが止めました",
+        "locked": "画面がロックされています。ロックを解除してから、もう一度頼んでください。",
+        "forbidden": "「{{app}}」は操作できません。承認を出さずに断りました。",
+        "denied": "「{{app}}」の操作は拒否されました。",
+        "busy": "別の会話が操作中のため、使えませんでした。"
+      },
+      "thisApp": "このアプリ",
+      "grant": {
+        "bypass": "許可 · 確認なしのため自動",
+        "all": "許可 · すべて許可のため自動"
+      },
+      "stoppedMark": "停止",
+      "waiting": "待っている",
+      "shot": {
+        "open": "撮った画面を拡大: {{title}}",
+        "gone": "画面は消去済み",
+        "dialog": "撮った画面",
+        "prev": "前の画面",
+        "next": "次の画面",
+        "close": "閉じる",
+        "position": "撮った画面 {{at}}/{{total}}",
+        "size": "{{w}}×{{h}}（エージェントに送った大きさ）"
+      },
+      "wait": {
+        "text": "別の会話（{{title}}）が操作中です。終わったら続けます",
+        "textUntitled": "別の会話が操作中です。終わったら続けます",
+        "go": "その会話へ移る",
+        "running": "待っている"
+      }
+    },
     "delegate": {
       "openChild": "子の会話を開く",
       "label": "委譲: {{title}}（{{agent}} · {{state}}）。押すと開く"
@@ -2095,6 +2177,8 @@
   "notify": {
     "completed": "作業が完了しました",
     "waitingReply": "返事を待っています",
+    "computerApproval": "{{agent}} が「{{app}}」の使用の許可を待っています",
+    "computerApprovalMore_other": "{{agent}} が「{{app}}」ほか {{count}} 件の使用の許可を待っています",
     "untitled": "Pleiad の会話"
   },
   "remote": {

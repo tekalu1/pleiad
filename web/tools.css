@@ -269,3 +269,64 @@
 .tn-res .t{opacity:0}
 .m.sys.task-notice .sys-fold[open]>summary .tn-res .t,.m.sys.task-notice .sys-fold>summary:focus-visible .tn-res .t{opacity:1}
 @media (hover:hover){.m.sys.task-notice .sys-fold>summary:hover .tn-res .t{opacity:1}}
+
+/* ==================== コンピューターの操作（web/computer-use.mjs・web/tool-bundle.mjs の kind: "computer"） ====================
+   docs/design-system.md「コンピューターの操作」。塊・行・承認カード・サムネイル・拡大・別の会話を待つ行は、ツールのまとまり（上）と承認カードの部品をそのまま使う。
+   色は足さない。止めたものは ✕ にせず、弱い字と止めた印（—）。 */
+
+/* 塊: 1 件でも見出しを出す。走っている間は右に「止める」（ボタンの中にボタンは置けないので見出しの上に重ねる） */
+.bundle.cu{position:relative}
+.bundle.cu[data-n="1"]>.rhead{display:flex}
+.bundle.cu:has(>.rstop:not([hidden]))>.rhead{padding-right:calc(var(--stop-w,48px) + 20px)}
+.rstop{position:absolute;top:2px;right:8px;min-width:48px;padding:2px 10px;font-size:var(--fs-xs)}
+.rstop[hidden]{display:none}
+.bundle.cu .rhead .xm{color:var(--ink-weak);font-weight:400}
+.bundle.cu .rhead.xm-err .xm{color:var(--ink-strong);font-weight:700}
+.bundle.cu>.more{display:block;margin:0 0 2px calc(3.4 * var(--fs-xs) + 2px);padding:1px 8px;border:0;border-radius:var(--r-pill);background:transparent;font:inherit;font-size:var(--fs-xs);color:var(--ink-weak);cursor:pointer;
+  transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.bundle.cu>.more[hidden]{display:none}
+.bundle.cu>.more:hover{background:var(--surface-2);color:var(--ink)}
+.bundle.cu>.more:focus-visible,.tc-shot:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+
+/* 行の右端: 撮った画面のサムネイル（押すと拡大）・止めた印。止めた理由の 1 文は行の下（失敗の要点の行と同じ置き場） */
+.tc-shot{flex:none;display:block;align-self:center;width:40px;height:24px;padding:0;border:0;border-radius:var(--r-s);overflow:hidden;background:var(--surface-2);cursor:zoom-in}
+.tc-shot img{display:block;width:100%;height:100%;object-fit:cover}
+.tc-shot:hover{opacity:.85}
+.tc-shot-gone{font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
+.stopmk{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}
+.tc-res .stopmk{align-self:center}
+.tc-errline.tc-reason{font-family:var(--font);white-space:normal;overflow:visible}
+.tc-said{flex:none;max-width:none}
+.tc-batch{margin:0 0 6px}
+
+/* アプリの承認（行の中の .tc-appr・単独のカード .card）の中身 */
+.cu-ap{--tc-indent:calc(3.4 * var(--fs-xs) + 10px);min-width:0;font-size:var(--fs-s)}
+.card>.cu-ap{padding:2px 16px 4px}
+.cu-ap .ln{display:flex;align-items:baseline;gap:10px;min-width:0;margin-top:2px}
+.cu-ap .ln .lbl{flex:none;min-width:3.4em;font-size:var(--fs-xs);color:var(--ink-weak)}
+.cu-ap .ln .q{min-width:0;color:var(--ink);font-weight:600;font-size:var(--fs)}
+.cu-ap .sub{padding-left:var(--tc-indent);font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
+.cu-ap .sub.mono{font-family:var(--font-mono)}
+.cu-ap .warn{padding-left:var(--tc-indent);margin-top:4px;color:var(--ink-strong);font-weight:600}
+.cu-ap .expl{padding-left:var(--tc-indent);margin-top:4px;color:var(--ink);max-width:560px}
+.appic{display:inline-block;width:14px;height:14px;vertical-align:-2px;margin-right:6px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linejoin:round}
+@media (max-width:560px){.cu-ap .sub,.cu-ap .warn,.cu-ap .expl{padding-left:0}}
+
+/* 別の会話が操作中: 走っている行の場所に「待つ」と理由、その下に「その会話へ移る」 */
+.tc-lockwait{min-width:0;padding:2px 0}
+.tc-lockwait .ln{display:flex;align-items:baseline;gap:10px;min-width:0;min-height:20px;font-size:var(--fs-s);color:var(--ink-weak)}
+.tc-lockwait .tc-label{flex:none;min-width:3.4em;font-size:var(--fs-xs)}
+.tc-lockwait .tc-main.tc-wrap{white-space:normal;color:var(--ink)}
+.tc-lockwait .wait-ln{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 0 4px var(--tc-indent)}
+.tc-lockwait .wait-ln .btn{padding:2px 10px;font-size:var(--fs-xs);color:var(--ink-blue)}
+
+/* 撮った画面の拡大（← → で同じ塊の画面を順に見る） */
+dialog.tc-shot-dlg{border:0;padding:0;border-radius:var(--r-l);background:var(--surface-paper);color:var(--ink);box-shadow:0 8px 28px var(--shadow);max-width:min(880px,94vw);width:880px}
+dialog.tc-shot-dlg::backdrop{background:var(--surface-veil)}
+.tc-shot-dlg .dh{display:flex;align-items:center;gap:8px;padding:10px 14px;font-size:var(--fs-s)}
+.tc-shot-dlg .ttl{flex:1;min-width:0;color:var(--ink-weak);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-shot-dlg .ttl b{color:var(--ink);font-weight:600}
+.tc-shot-dlg .img{padding:0 14px 14px}
+.tc-shot-dlg .img img{display:block;width:100%;height:auto;border-radius:var(--r-s)}
+.tc-shot-dlg .img .tc-shot-gone{display:block;padding:48px 0;text-align:center}
+.tc-shot-dlg .btn:disabled{opacity:.4;pointer-events:none}
