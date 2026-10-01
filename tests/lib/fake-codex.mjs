@@ -501,6 +501,39 @@ function applyProvider(t, params) {
     contextWindow: params?.config?.model_context_window ?? null, webSearch: params?.config?.web_search ?? null };
   // developerInstructions も読み込んだときのものだけが効く（ロード済みの resume では変わらない）
   t.developerInstructions = params?.developerInstructions ?? null;
+  // ply_computer の MCP と、同梱の computer use を切る上書き（ADR 0074）も同じ
+  t.computer = params?.config?.["mcp_servers.ply_computer"] ?? null;
+  t.bundledComputerUse = Object.fromEntries(Object.entries(params?.config ?? {}).filter(([k]) => /computer[-_]use/.test(k)));
+}
+
+/**
+ * ply_computer のツールを呼ぶターン（"computer:<JSON>"。{ name, arguments } か、その配列）。
+ * thread/start の config の mcp_servers.ply_computer（url・http_headers）へ tools/call を送り、本物と同じ mcpToolCall のアイテムで返す
+ */
+async function runComputerTurn(t, turnId, text) {
+  notify("turn/started", { threadId: t.id, turn: { id: turnId, items: [], status: "inProgress" } });
+  const items = [];
+  for (const [i, call] of [].concat(JSON.parse(text.slice("computer:".length))).entries()) {
+    const item = { id: `mcp_${turnId}_${i}`, type: "mcpToolCall", server: "ply_computer", tool: call.name, arguments: call.arguments ?? {}, status: "inProgress", result: null, error: null };
+    notify("item/started", { threadId: t.id, turnId, startedAtMs: Date.now(), item });
+    let done;
+    if (!t.computer?.url) done = { ...item, status: "failed", error: { message: "ply_computer is not configured" } };
+    else {
+      const response = await fetch(t.computer.url, { method: "POST", headers: { ...(t.computer.http_headers ?? {}), "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: i + 1, method: "tools/call", params: { name: call.name, arguments: call.arguments ?? {} } }) });
+      const body = await response.json().catch(() => null);
+      done = body?.result ? { ...item, status: "completed", result: body.result } : { ...item, status: "failed", error: { message: `HTTP ${response.status}` } };
+    }
+    items.push(done);
+    notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item: done });
+  }
+  const reply = `computer:${items.length}`;
+  notify("item/agentMessage/delta", { threadId: t.id, turnId, itemId: `it_c_${turnId}`, delta: reply });
+  const message = { id: `it_c_${turnId}`, type: "agentMessage", text: reply };
+  notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item: message });
+  t.turns.push({ id: turnId, status: "completed", startedAt: secs(), completedAt: secs(), items: [{ id: `u_${turnId}`, type: "userMessage", content: [{ type: "text", text }] }, ...items, message] });
+  t.updatedAt = secs();
+  notify("turn/completed", { threadId: t.id, turn: { id: turnId, items: [], status: "completed", startedAt: secs(), completedAt: secs() } });
 }
 
 async function handle(method, params) {
@@ -577,7 +610,8 @@ async function handle(method, params) {
       const turnId = `tn_${++seq}`;
       const text = (params?.input ?? []).filter((i) => i?.type === "text").map((i) => i.text).join("");
       // folded: `!` のターンが閉じる前に来た。本物はこの発言を `!` のターンに入れ、返答しないまま閉じる（codex-cli 0.156.1）
-      record({ method, threadId: t.id, provider: t.provider ?? null, model: t.model ?? null, effort: params?.effort ?? null, ephemeral: Boolean(t.ephemeral), developerInstructions: t.developerInstructions ?? null, hooks: t.hooksConfig ?? null, ...(t.shellTurn ? { folded: true } : {}) });
+      record({ method, threadId: t.id, provider: t.provider ?? null, model: t.model ?? null, effort: params?.effort ?? null, ephemeral: Boolean(t.ephemeral), developerInstructions: t.developerInstructions ?? null, hooks: t.hooksConfig ?? null,
+        computer: t.computer ? { ...t.computer, http_headers: Object.keys(t.computer.http_headers ?? {}) } : null, bundledComputerUse: t.bundledComputerUse ?? {}, ...(t.shellTurn ? { folded: true } : {}) });
       if (t.ephemeral && process.env.FAKE_CODEX_CHECK_TITLE === "1") {
         if (t.model !== "gpt-5.6-luna" || params?.effort !== "low") {
           throw new Error("Title generation must use Luna with low effort");
@@ -589,6 +623,7 @@ async function handle(method, params) {
         : text.startsWith("subagent-slow") ? runSubagentTurn(t, turnId, { slow: true })
         : text.startsWith("subagent") ? runSubagentTurn(t, turnId)
         : text.startsWith("reject") ? runRejectTurn(t, turnId, text)
+        : text.startsWith("computer:") ? runComputerTurn(t, turnId, text)
         : runTurn(t, turnId, text);
       script.catch((err) => notify("error", {
         threadId: t.id, turnId, willRetry: false, error: { message: String(err?.message ?? err) },
