@@ -48,6 +48,7 @@ import { createMarkdownEditor } from "./md-editor.mjs";
 import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
+import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox } from "./computer-use.mjs";
 import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
@@ -211,6 +212,8 @@ const state = {
   // 未解決の承認: id -> permission イベントの中身。会話を開き直すたびに描き直す材料。
   // running が載せるのは id と道具名だけなので、カードを組み立てられるのはこちらだけ
   pendingPerms: new Map(),
+  // 会話ごとのコンピューター操作の状態（computer.state。running / waiting のものだけ。idle は消す）。waiting の行の表示に使う
+  computerStates: new Map(),
   submitting: false,       // 新規セッションを送った直後（id が決まるまで）
   messages: [],        // 今のセッションの履歴（loadSession の messages）
   contextInfo: null,   // 今のセッションの読み込み記録（sessionContext の戻り）。タイトル行の入口と筋の一行に使う
@@ -1178,12 +1181,12 @@ function closeBundle() {
   }
 }
 
-/** 今のまとまり。無ければ今の発言の末尾に作る */
-function liveBundle() {
+/** 今のまとまり。無ければ今の発言の末尾に作る。コンピューターの操作の連続は別の種類の塊（kind: "computer"）で、種類が替わればそこで切れる */
+function liveBundle(kind = "tools") {
   const turn = ensureTurnEl();
-  if (state.bundle && state.bundle.el.parentNode === turn) return state.bundle;
+  if (state.bundle && state.bundle.el.parentNode === turn && state.bundle.kind === kind) return state.bundle;
   closeBundle();
-  state.bundle = new Bundle({ live: true });
+  state.bundle = new Bundle({ live: true, kind, ...(kind === "computer" ? { onStop: stopComputer } : {}) });
   turn.append(state.bundle.el);
   return state.bundle;
 }
@@ -1218,10 +1221,196 @@ function settleStrays() {
     const res = row.querySelector(".tc-res");
     if (res) { res.paint = null; res.replaceChildren(); }
     row.querySelector(".tc-appr")?.remove();
+    row.querySelector(".tc-lockwait")?.remove();
     const shell = row.querySelector(".tc-details");
     if (shell) shell.hidden = false;
     bundleOf(row)?.paint();
   }
+}
+
+// ---------------------------------------------------------------- コンピューターの操作
+// 止める・別の会話を待つ・承認カード（docs/computer-use.md、ADR 0071・0073）。行と塊は web/render.mjs・web/tool-bundle.mjs、中身は web/computer-use.mjs
+
+/** 塊の「止める」。その会話の走っているターンに止めた印を付ける（Esc と同じ。ターンは続き、エージェントには止められたと返る）。リモートの端末からも押せる */
+async function stopComputer(bundle) {
+  if (!state.current) return;
+  bundle.setStopping(true);
+  try {
+    const r = await cmd("computerStop", { sessionId: state.current });
+    if (r?.stopped === false) bundle.setStopping(false);
+  } catch (e) {
+    bundle.setStopping(false);
+    if (bundle.stopEl) bundle.stopEl.title = e.message;
+  }
+}
+
+/** 別の会話が操作中で待っている行を外し、行を戻す */
+function clearLockWait(box) {
+  const row = box.closest?.(".tc");
+  box.remove();
+  const shell = row?.querySelector(".tc-details");
+  if (shell && !row.querySelector(".tc-appr")) shell.hidden = false;
+}
+
+/** この会話の computer.state に合わせて、走っているコンピューターの行を「別の会話（{題}）が操作中です。終わったら続けます」にする / 戻す */
+function paintComputerWait() {
+  const ev = state.computerStates.get(state.current);
+  const rows = [...thread.querySelectorAll(".tc.tc-computer.tc-running")];
+  const row = ev?.state === "waiting" ? rows.at(-1) : null;
+  for (const box of thread.querySelectorAll(".tc-lockwait")) if (box.closest?.(".tc") !== row) clearLockWait(box);
+  if (!row || row.querySelector(".tc-lockwait, .tc-appr")) return;
+  const details = row.querySelector(".tc-details"), host = row.closest(".in") ?? row;
+  const box = lockWaitBox(ev.holder, ev.since, (id) => select(id));
+  swapHeight(host, () => { if (details) details.hidden = true; row.append(box); });
+  fadeIn(box);
+  bundleOf(row)?.reveal(row);
+}
+
+function onComputerState(ev) {
+  if (!ev.sessionId) return;
+  if (ev.state === "running" || ev.state === "waiting") state.computerStates.set(ev.sessionId, ev);
+  else state.computerStates.delete(ev.sessionId);
+  if (ev.sessionId === state.current) paintComputerWait();
+}
+
+/** アプリの承認を出す行。ツールの行が分かればその行、無ければ今の塊の最新の行（待っているのは今の呼び出しなので）。見つからなければ null（単独のカード） */
+function computerApprovalRow(ev) {
+  const live = (row) => (row?.isConnected && row.classList.contains("tc-computer") && bundleOf(row)?.live ? row : null);
+  if (ev.toolUseID) return live(state.toolCards.get(ev.toolUseID));
+  // 中継された承認（委譲の子の分）は、こちらの塊の行ではない
+  const own = state.sessions.find((s) => s.id === ev.sessionId)?.title;
+  if (ev.conversationTitle && own && ev.conversationTitle !== own) return null;
+  return live(state.bundle?.kind === "computer" ? state.bundle.cards.at(-1) : null);
+}
+
+/**
+ * アプリの承認（permission の computerApp）。見出しは「{エージェント} に「{アプリ}」の操作を許可しますか？」、答えは
+ * 「常に許可」（文字だけ）・「拒否」（薄い面）・「この会話で許可」（塗り）。置き場はツールの承認と同じ（塊の最新の行の場所 / 単独のカード）
+ */
+function computerApproval(ev, approval, row) {
+  const canAlways = ev.canAlways !== false;
+  const scoped = (scope) => ({ allow: true, always: scope === "always", scope });
+  const verb = (scope) => (scope === null ? t("chat.approval.deny") : scope === "always" ? t("chat.approval.always") : t("chat.computerApproval.allowSession"));
+  const mk = () => {
+    const always = el("button", "btn", t("chat.approval.always"));
+    const deny = el("button", "btn btn-quiet", t("chat.approval.deny"));
+    const session = el("button", "btn btn-primary", t("chat.computerApproval.allowSession"));
+    for (const b of [always, deny, session]) b.type = "button";
+    return { always, deny, session, all: [always, deny, session] };
+  };
+  const b = mk();
+  const res = el("span", "res");
+  const send = async (scope, { buttons, onSending, onFailed }) => {
+    onSending();
+    res.className = "res";
+    res.removeAttribute("role");
+    res.replaceChildren(el("span", null, t("chat.approval.sending", { action: verb(scope) })));
+    const arc = setTimeout(() => res.prepend(runMark()), 150);
+    try {
+      await cmd("resolvePermission", { id: ev.id, ...(scope === null ? { allow: false, always: false, messageKey: "userDenied" } : scoped(scope)) });
+    } catch (err) {
+      clearTimeout(arc);
+      onFailed();
+      for (const x of buttons) x.disabled = false;
+      res.className = "res fail";
+      res.setAttribute("role", "alert");
+      res.replaceChildren(`✕ ${t("chat.approval.sendFailedInline", { action: verb(scope), error: err.message })}`);
+      return false;
+    }
+    clearTimeout(arc);
+    return true;
+  };
+
+  if (row) {
+    const details = row.querySelector(".tc-details");
+    const line = row.querySelector(".tc-line");
+    const host = row.closest(".in") ?? row;
+    const box = el("div", "tc-appr");
+    box.setAttribute("role", "group");
+    box.dataset.permId = ev.id;
+    box.setAttribute("aria-label", `${t("chat.approval.headingMark")}: ${approvalHeading(approval)}`);
+    box.append(el("div", "h", t("chat.approval.headingMark")), approvalBody(approval, ev.title));
+    const acts = el("div", "acts");
+    acts.append(res, ...(canAlways ? [b.always] : []), b.deny, b.session);
+    box.append(acts);
+    const settle = async (scope) => {
+      if (box.dataset.sending) return;
+      const ok = scope !== null;
+      const ran = await send(scope, {
+        buttons: b.all,
+        onSending: () => {
+          box.dataset.sending = "1";
+          box.classList.add("sending");
+          // 拒否の印は送る前に付ける（確認より先に結果が届いても、失敗と数えない）。送れなかったら外す
+          if (!ok) row.dataset.denied = "1";
+          for (const x of b.all) x.disabled = true;
+        },
+        onFailed: () => { delete box.dataset.sending; box.classList.remove("sending"); if (!ok) delete row.dataset.denied; },
+      });
+      if (!ran) return;
+      // カードを行に戻す。補足は「この会話で許可した」「常に許可した」、拒否は右端に弱い字で「拒否した」
+      swapHeight(host, () => {
+        box.remove();
+        if (details) details.hidden = false;
+        row.classList.remove("tc-waiting");
+        if (ok) {
+          const said = el("span", "tc-note tc-said", approvalSaid(scope, true, approval));
+          line.querySelector(".tc-res")?.before(said);
+        }
+        if (details) fadeIn(details);
+        const finished = row.classList.contains("tc-done") || row.classList.contains("tc-error");
+        if (ok) { if (!finished) markRunning(row); }
+        else if (!finished) line.querySelector(".tc-res").textContent = t("chat.approval.denied");
+      });
+      bundleOf(row)?.paint();
+      state.pendingPerms.delete(ev.id);
+      if (isRunningHere()) { if (ok) activity.suspend(); else activity.show(t("activity.continuing")); }
+    };
+    b.session.onclick = () => settle("session");
+    b.always.onclick = () => settle("always");
+    b.deny.onclick = () => settle(null);
+    markWaiting(row);
+    swapHeight(host, () => { if (details) details.hidden = true; row.append(box); });
+    fadeIn(box);
+    bundleOf(row)?.reveal(row);
+    return box;
+  }
+
+  // 単独のカード（塊の外。委譲の子から中継された承認・開き直した会話）
+  const m = el("div", "m card");
+  const card = el("div", "card");
+  m.append(card);
+  const head = el("div", "card-head");
+  head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.approval.headingMark")));
+  const body = approvalBody(approval, ev.title);
+  const actions = el("div", "card-actions");
+  actions.append(res, ...(canAlways ? [b.always] : []), b.deny, b.session);
+  card.append(head, body, actions);
+  const settle = async (scope) => {
+    if (card.dataset.sending) return;
+    const ok = scope !== null;
+    const ran = await send(scope, {
+      buttons: b.all,
+      onSending: () => { card.dataset.sending = "1"; for (const x of b.all) x.disabled = true; },
+      onFailed: () => { delete card.dataset.sending; },
+    });
+    if (!ran) return;
+    m.classList.add("done");
+    m.closest(".mw")?.classList.add("done");
+    card.classList.add("done");
+    for (const rest of head.querySelectorAll(".card-kind-rest")) rest.remove();
+    head.querySelector(".card-kind").textContent = t("chat.approval.done");
+    head.append(el("span", "desc", approvalHeading(approval)), el("span", "res", `${approvalSaid(scope, ok, approval)} · ${hhmm(new Date())}`));
+    body.remove();
+    actions.remove();
+    if (isRunningHere()) activity.show(ok ? t("activity.runningTool", { tool: "ply_computer" }) : t("activity.continuing"));
+    state.pendingPerms.delete(ev.id);
+  };
+  b.session.onclick = () => settle("session");
+  b.always.onclick = () => settle("always");
+  b.deny.onclick = () => settle(null);
+  placeCard(m, ev, null);
+  return m;
 }
 
 // ---------------------------------------------------------------- 質問カード
@@ -1579,6 +1768,15 @@ function permissionCard(ev, into = null) {
  */
 function renderPermission(ev) {
   if (thread.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"], [data-perm-id="${CSS.escape(ev.id)}"]`)) return;
+  // アプリの承認（コンピューターの操作）。アプリが読めなければ（形が違う）ふつうの承認として出す
+  const computerApp = ev.computerApp ? approvalApps(ev.computerApp) : null;
+  if (computerApp) {
+    const row = computerApprovalRow(ev);
+    if (row) { activity.suspend(); return computerApproval(ev, computerApp, row); }
+    closeTurnEl();
+    activity.show(t("activity.waitingApproval"));
+    return computerApproval(ev, computerApp, null);
+  }
   // ツールの承認で、そのツールの行が走っているまとまりの中にあるなら、まとまりを閉じずにその行の中に出す
   const row = ev.kind !== "question" && !ev.browserSite && ev.toolUseID ? state.toolCards.get(ev.toolUseID) : null;
   if (row?.isConnected && bundleOf(row)?.live) {
@@ -2048,6 +2246,8 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') { remoteSettings.event(ev); return; }
   // 委譲の振り分けの設定・キー・使用量が変わった。設定 › 委譲を開いていれば取り直す
   if (ev.type === 'delegationRoutingChanged') { delegationSettings.event(ev); return; }
+  // コンピューターの操作の状態（別の会話が操作中で待っている）。全部の会話の分が届くので、開いている会話の分だけ行に出す
+  if (ev.type === 'computer.state') { onComputerState(ev); return; }
   if (!isMine(ev)) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
@@ -2173,7 +2373,7 @@ function onEvent(ev, replay = false) {
       linkDelegateCard(card, ev.input);
       const boundary = isBoundaryTool(ev.name);
       if (boundary) { closeBundle(); ensureTurnEl().append(card); }
-      else { markRunning(card); liveBundle().add(card); }
+      else { markRunning(card); liveBundle(isComputerTool(ev.name) ? "computer" : "tools").add(card); }
       // 2 件目で見出しが現れ、行が伸びる間も、読んでいた下端に付いていく
       if (stick) followBottom();
       if (ev.id) state.toolCards.set(ev.id, card);
@@ -5845,10 +6045,11 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
  */
 function toolNodes(cards) {
   const out = [];
-  for (const seg of splitToolCalls(cards, (card) => isBoundaryTool(card.dataset.tool))) {
+  for (const seg of splitToolCalls(cards, (card) => isBoundaryTool(card.dataset.tool), (card) => (isComputerTool(card.dataset.tool) ? "computer" : "tools"))) {
     if (seg.type === "delegate") { out.push(seg.call); continue; }
-    if (seg.calls.length === 1) { out.push(seg.calls[0]); continue; }
-    const bundle = new Bundle();
+    // コンピューターの操作は 1 件でも塊（見出しが「コンピューターを操作しました」）
+    if (seg.calls.length === 1 && seg.kind !== "computer") { out.push(seg.calls[0]); continue; }
+    const bundle = new Bundle({ kind: seg.kind });
     bundle.addAll(seg.calls);
     out.push(bundle.el);
   }
@@ -6109,6 +6310,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   // loadSession が返す保留中の一覧から拾える
   for (const ev of data?.permissions ?? []) if (ev.id) state.pendingPerms.set(ev.id, ev);
   paintPendingPerms(id);
+  paintComputerWait();
   // 中断した会話は末尾に「■ 中断しました」（保存された状態から。読み直しても消えない）。loadSession の値が一覧より新しい
   const opened = state.sessions.find(s => s.id === id);
   if (opened && data && 'interrupted' in data) opened.interrupted = data.interrupted ?? null;

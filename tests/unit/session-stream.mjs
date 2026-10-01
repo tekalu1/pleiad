@@ -44,7 +44,7 @@ export default async function (t) {
     state, sessionLoads: loads, outboxes: new Map(), paintOutbox: noop, syncOutboxRows: noop, refreshOutbox: async () => [],
     displayedCompletions: new Map(), document: { visibilityState: "visible" },
     // 承認カードはこのテストの対象外（tests/unit/server-fake.mjs の reopenCase が見ている）
-    paintPendingPerms: noop,
+    paintPendingPerms: noop, paintComputerWait: noop,
     readCompletions: { mark: noop }, renderSessions: noop, acknowledgeDisplayed: noop, el: () => ({ dataset: {} }), renderMarkdown: x => x, renderAssistantMarkdown: x => x,
     closeBundle: noop, settleStrays: noop, followBottom: noop, closeThink: noop, activity: { show: noop, hide: noop }, atBottom: () => false,
     ensureTurnEl: () => ({ append: x => bodies.push(x) }),

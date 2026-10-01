@@ -136,6 +136,8 @@ const cases = [
   await import("./unit/composer-wait.mjs"),
   // 承認カード: 受け取られるまで送信中・失敗はカードの中・決着後の一行に対象と開閉
   await import("./unit/approval-card.mjs"),
+  // コンピューターの操作の表示: 行（題・動詞・サムネイル・止めた理由）・終わった塊の 3 行と「ほか N 件」・承認の中身・通知の見出し
+  await import("./unit/computer-use-ui.mjs"),
   // 接続の状態（web/connection-status.mjs）: 切れた一行・読み上げ・古いトークンの案内と再確認、開くボタンの印、/auth-check
   await import("./unit/connection-status.mjs"),
   // 新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る（client.mjs を vm で流す）

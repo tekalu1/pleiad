@@ -23,7 +23,7 @@
 //   "hook-follow <本文>" … 本文で返答した後、Stop フックに止められて続けた形（ToolSearch と load_skill を呼んで「ナレッジ化対象なし」）。
 //                    続きの発言には Claude の履歴と同じ stopHookFollowUp を付ける
 //   "steps:<json>" または "steps:@<json ファイルの絶対パス>" … ツールと本文を台本どおりに並べる。{"steps":[{"tool":"Grep","input":{…},"result":"…","error":false,"ms":600,"ask":false},{"text":"…"}]}
-//                    ms は結果を返すまでの時間、ask はツールを始めたあと承認（kind:"tool"）を待つ、text は本文を書く（前のツールは同じ発言に入る）、newMessage は発言の切れ目（text.end）だけを出す
+//                    ms は結果を返すまでの時間、ask はツールを始めたあと承認（kind:"tool"）を待つ（computerApp を添えるとアプリの承認）、images・computer は ply_computer の結果の画像と印、text は本文を書く（前のツールは同じ発言に入る）、newMessage は発言の切れ目（text.end）だけを出す
 //   それ以外        … prompt をそのまま echo
 import crypto from "node:crypto";
 import { undelivered } from "./undelivered.mjs";
@@ -393,7 +393,8 @@ export const backend = {
           const callId = crypto.randomUUID();
           emit({ type: "tool.start", id: callId, name: step.tool, input: step.input ?? {} });
           if (step.ask) {
-            const answer = await askPermission({ toolName: step.tool, input: step.input ?? {}, sessionId: id, toolUseID: callId, title: null, signal: signal?.signal, canAlways: true, kind: "tool", questions: null });
+            const answer = await askPermission({ toolName: step.tool, input: step.input ?? {}, sessionId: id, toolUseID: callId, title: null, signal: signal?.signal, canAlways: true, kind: "tool", questions: null,
+              ...(step.computerApp ? { computerApp: step.computerApp } : {}) });
             if (!answer?.allow) {
               const denied = { text: "user denied", isError: true, truncated: false };
               emit({ type: "tool.result", id: callId, ...denied });
@@ -402,7 +403,9 @@ export const backend = {
             }
           }
           await wait(step.ms ?? 300);
-          const result = { text: String(step.result ?? ""), isError: Boolean(step.error), truncated: false };
+          // images / computer は ply_computer の結果（tool.result の images と computer。docs/computer-use.md）。画面の確認用に台本から渡せる
+          const result = { text: String(step.result ?? ""), isError: Boolean(step.error), truncated: false,
+            ...(step.images ? { images: step.images } : {}), ...(step.computer ? { computer: step.computer } : {}) };
           emit({ type: "tool.result", id: callId, ...result });
           calls.push({ id: callId, name: step.tool, input: step.input ?? {}, result });
         }

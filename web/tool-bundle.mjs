@@ -5,9 +5,14 @@
 // 薄い行を押す・↑ で 1 件ずつ、最新を下端に固定したまま上へ伸びて遡れる。見出しを押すと全部を開く ⇄ 閉じる。
 // 失敗・変更したファイル・承認待ちは、まとまりの中に入れる（失敗は見出しの右端の「✕ 失敗 N」で分かる）。委譲だけは呼び出し側がまとまりの外に置く。
 // 動きは §8 の値（240ms・120ms）。prefers-reduced-motion では動かさない。
+//
+// コンピューターの操作（ply_computer）の連続は kind: "computer" の塊（docs/design-system.md「コンピューターの操作」、ADR 0073）。
+// 走っている間は同じ 3 行 + 右に「止める」。終わったら失敗・止めた行・最後に撮った画面・最後の行を最大 3 行見せ、残りは「ほか N 件」。
+// 1 件だけでも見出しを出す（「止める」の置き場）。
 import { el, svgEl, chevron } from "./dom.mjs";
 import { t } from "./i18n.mjs";
 import { runMark } from "./arc.mjs";
+import { pickRows, computerSummary, reasonShort } from "./computer-use.mjs";
 
 const DUR = 240, FAST = 120, STAG = 30, EASE = "cubic-bezier(.2,.7,.2,1)";
 const MAX_STAG = 8;
@@ -49,15 +54,16 @@ export function bundleStats(items) {
  * @template T
  * @param {T[]} calls
  * @param {(call:T)=>boolean} isBoundary 委譲のツールか
- * @returns {({type:"bundle", calls:T[]}|{type:"delegate", call:T})[]}
+ * @param {(call:T)=>string} [groupOf] まとまりの種類（"computer" など）。続いていても種類が替わればそこで切れる
+ * @returns {({type:"bundle", kind:string, calls:T[]}|{type:"delegate", call:T})[]}
  */
-export function splitToolCalls(calls, isBoundary) {
+export function splitToolCalls(calls, isBoundary, groupOf = () => "tools") {
   const out = [];
   for (const call of calls) {
     if (isBoundary(call)) { out.push({ type: "delegate", call }); continue; }
-    const last = out.at(-1);
-    if (last?.type === "bundle") last.calls.push(call);
-    else out.push({ type: "bundle", calls: [call] });
+    const last = out.at(-1), kind = groupOf(call);
+    if (last?.type === "bundle" && last.kind === kind) last.calls.push(call);
+    else out.push({ type: "bundle", kind, calls: [call] });
   }
   return out;
 }
@@ -169,10 +175,21 @@ const stackIcon = () => {
   return svg;
 };
 
+/** コンピューターの操作の見出しの絵（モニター） */
+const monitorIcon = () => {
+  const svg = svgEl("svg", { class: "stk", viewBox: "0 0 16 16", "aria-hidden": "true" });
+  svg.append(svgEl("rect", { x: 1.5, y: 2.5, width: 13, height: 9, rx: 2 }), svgEl("path", { d: "M6 14h4M8 11.5V14" }));
+  return svg;
+};
+
 /** 行（.tc）から見出しの数え方に要る情報を読む */
 function itemOf(card) {
   return {
     card,
+    failed: card.classList.contains("tc-error"),
+    stopped: card.classList.contains("tc-stopped"),
+    reason: card.dataset?.stopReason || null,
+    shot: Boolean(card.querySelector(".tc-shot, .tc-shot-gone")),
     verb: card.dataset.verb ?? card.querySelector(".tc-label")?.textContent ?? "",
     main: card.querySelector(".tc-main")?.textContent ?? "",
     err: card.classList.contains("tc-error"),
@@ -182,8 +199,15 @@ function itemOf(card) {
 }
 
 export class Bundle {
-  /** @param {{live?:boolean}} [o] live: 走っているまとまり（最新の行 + 薄い行）。false は履歴（全部が中の行で、閉じて始まる） */
-  constructor({ live = false } = {}) {
+  /**
+   * @param {{live?:boolean, kind?:"tools"|"computer", onStop?:(bundle:Bundle)=>void}} [o]
+   *   live: 走っているまとまり（最新の行 + 薄い行）。false は履歴（全部が中の行で、閉じて始まる）。
+   *   kind: "computer" はコンピューターの操作の塊。onStop はその「止める」（走っている間だけ）
+   */
+  constructor({ live = false, kind = "tools", onStop = null } = {}) {
+    this.kind = kind;
+    this.computer = kind === "computer";
+    this.onStop = onStop;
     this.cards = [];
     this.k = 0;              // 見出しから遡って開いている中の行の数
     this.expanded = false;   // 全部を開いているか
@@ -191,7 +215,7 @@ export class Bundle {
     this.cur = null;         // 最新の行（live のとき）
     this.t0 = Date.now();
 
-    this.el = el("div", live ? "bundle live" : "bundle");
+    this.el = el("div", `bundle${live ? " live" : ""}${this.computer ? " cu" : ""}`);
     this.el.bundle = this;
     this.head = el("button", "rhead");
     this.head.type = "button";
@@ -199,7 +223,8 @@ export class Bundle {
     // 「≡ ツール実行 12」。数は見出しの語の後ろに弱い字で置くだけ（丸いバッジにしない）。畳んでいる間は .verb 全体を沈める（tools.css）
     this.nEl = el("span", "n");
     const verb = el("span", "verb");
-    verb.append(stackIcon(), el("span", "mix", t("timeline.bundle.title")), this.nEl);
+    this.mixEl = el("span", "mix", this.computer ? t("timeline.computer.bundle.running") : t("timeline.bundle.title"));
+    verb.append(this.computer ? monitorIcon() : stackIcon(), this.mixEl, this.nEl);
     this.xmEl = el("span", "xm");
     this.elEl = el("span", "el");
     const res = el("span", "res");
@@ -209,6 +234,22 @@ export class Bundle {
     this.hist.setAttribute("role", "list");
     this.latest = el("div", "latest");
     this.el.append(this.head, this.hist, this.latest);
+    if (this.computer) {
+      // 終わった塊の「ほか N 件」（押すと全部を開く）。走っている間は出さない
+      this.moreEl = el("button", "more");
+      this.moreEl.type = "button";
+      this.moreEl.hidden = true;
+      this.moreEl.onclick = () => { this.expanded = true; this.relayout(); };
+      this.el.append(this.moreEl);
+      if (live) {
+        // 見出しの右（ボタンの中にボタンは置けないので、重ねて置く。間は .cu.live の見出しが空けてある）
+        this.stopEl = el("button", "btn btn-quiet rstop", t("timeline.computer.bundle.stop"));
+        this.stopEl.type = "button";
+        this.stopEl.title = t("timeline.computer.bundle.stopTitle");
+        this.stopEl.onclick = (e) => { e.preventDefault(); e.stopPropagation(); this.onStop?.(this); };
+        this.el.append(this.stopEl);
+      }
+    }
 
     this.head.onclick = () => this.toggleAll();
     this.el.addEventListener("keydown", (e) => {
@@ -249,10 +290,17 @@ export class Bundle {
     return w;
   }
 
-  /** 履歴: 全部を中の行として閉じて置く */
+  /** 履歴: 全部を中の行として閉じて置く（コンピューターの操作の塊は、見せる行だけ開けて置く） */
   addAll(cards) {
     for (const c of cards) { this.cards.push(c); const w = this.wrap(c); w.classList.add("hid"); w.setAttribute("inert", ""); this.hist.append(w); }
-    this.paint();
+    if (this.computer) this.layout(); else this.paint();
+  }
+
+  /** 「止める」を押した後: 止め終えるまで押せなくする（止まれば塊が閉じて外れる）。失敗したら押し直せるように戻す */
+  setStopping(on) {
+    if (!this.stopEl) return;
+    this.stopEl.disabled = on;
+    this.stopEl.textContent = on ? t("timeline.computer.bundle.stopping") : t("timeline.computer.bundle.stop");
   }
 
   /** 新しいツールが始まる。今の最新は 1 つ前（薄い行）へ下がり、その前の薄い行は畳まれる */
@@ -282,11 +330,13 @@ export class Bundle {
     if (!this.live) return;
     this.live = false;
     this.el.classList.remove("live");
+    this.stopEl?.remove();
+    this.stopEl = null;
     ticking.delete(this.head);
     const card = this.cur;
     this.cur = null;
-    // 1 件だけなら見出しは要らない。行のまま置く
-    if (this.cards.length === 1 && card && this.el.isConnected) { this.el.replaceWith(card); return; }
+    // 1 件だけなら見出しは要らない。行のまま置く（コンピューターの操作は 1 件でも見出しを残す）
+    if (this.cards.length === 1 && card && this.el.isConnected && !this.computer) { this.el.replaceWith(card); return; }
     const settle = () => {
       if (card) { const w = this.wrap(card); w.classList.add("hid"); w.setAttribute("inert", ""); this.hist.append(w); }
       this.latest.replaceChildren();
@@ -353,10 +403,12 @@ export class Bundle {
   /** 中の行の出入りを決め直し、見出しを書き直す */
   layout({ stagger = false, countAnimation = false } = {}) {
     const inner = this.inner, n = inner.length;
+    // 終わったコンピューターの操作の塊は、閉じていても失敗・止めた行・最後の画面・最後の行を見せる
+    const pick = this.computer && !this.live ? pickRows(this.items) : null;
     inner.forEach((card, i) => {
       const fromEnd = n - 1 - i;
       // 承認を待っている行は、まとまりの操作（閉じる・新しいツール）で薄い行や隠れた行に落とさない
-      const shown = this.expanded || fromEnd < this.k || card.classList.contains("tc-waiting");
+      const shown = this.expanded || fromEnd < this.k || card.classList.contains("tc-waiting") || Boolean(pick?.has(i));
       const ghost = !shown && this.live && !!this.cur && fromEnd === this.k;
       const w = card.hiWrap;
       if (!w) return;
@@ -378,12 +430,21 @@ export class Bundle {
       } else { w.removeAttribute("tabindex"); w.removeAttribute("aria-label"); }
     });
     this.head.setAttribute("aria-expanded", String(this.expanded || (this.k > 0 && this.k >= n)));
-    this.paint(countAnimation);
+    if (this.moreEl) {
+      const rest = pick ? n - pick.size : 0, open = this.expanded || this.k >= n;
+      this.moreEl.hidden = !(rest > 0 && !open);
+      this.moreEl.textContent = rest > 0 ? t("timeline.computer.bundle.more", { count: rest, n: rest }) : "";
+    }
+    this.laying = true;
+    try { this.paint(countAnimation); } finally { this.laying = false; }
   }
 
   /** 見出し。「ツール実行 N」・失敗の数（右端）・走っている間の経過。結果が届いたら呼び直す */
   paint(countAnimation = false) {
-    const st = bundleStats(this.items);
+    // 終わった塊に遅れて結果が届いたとき（見せる行が替わりうる）は、行の出入りから決め直す
+    if (this.computer && !this.live && !this.laying) return this.layout();
+    const items = this.items;
+    const st = bundleStats(items);
     this.el.dataset.n = String(st.count);   // 1 件の間は見出しを出さない（tools.css）
     const nText = st.count > 99 ? "99+" : String(st.count);
     if (this.nEl.textContent !== nText) {
@@ -391,11 +452,19 @@ export class Bundle {
       if (countAnimation) animate(this.nEl, [{ opacity: 0, transform: "translateY(-40%)" }, { opacity: 1, transform: "none" }], { duration: FAST });
     }
     this.nEl.title = t("timeline.bundle.count", { count: st.count, n: st.count });   // 100 以上の「99+」の実数
-    this.xmEl.textContent = st.errors ? t("timeline.bundle.failed", { count: st.errors, n: st.errors }) : "";
+    if (this.computer) {
+      // 失敗は ✕ の数、止めたもの（Esc・止める・ロック・禁止・拒否）は失敗に数えず、最後の理由を短い字で
+      const sum = computerSummary(items);
+      this.mixEl.textContent = this.live ? t("timeline.computer.bundle.running") : t("timeline.computer.bundle.done");
+      this.xmEl.textContent = [st.errors ? t("timeline.bundle.failed", { count: st.errors, n: st.errors }) : "", sum.stopped ? reasonShort(sum.stopped) : ""].filter(Boolean).join(" · ");
+      this.head.classList.toggle("xm-err", st.errors > 0);
+      // Esc・「止める」で止まったら、もう止めるものは無い
+      if (this.stopEl) this.stopEl.hidden = items.some((x) => x.stopped && (x.reason === "escape" || x.reason === "stop"));
+    } else this.xmEl.textContent = st.errors ? t("timeline.bundle.failed", { count: st.errors, n: st.errors }) : "";
     this.elEl.textContent = this.live ? clock((Date.now() - this.t0) / 1000) : "";   // 終わったまとまりに経過は出さない
     const open = this.head.getAttribute("aria-expanded") === "true";
     this.head.setAttribute("aria-label",
-      t("timeline.bundle.label", { count: st.count, n: st.count })
+      (this.computer ? t("timeline.computer.bundle.label", { count: st.count, n: st.count }) : t("timeline.bundle.label", { count: st.count, n: st.count }))
       + (st.errors ? t("timeline.bundle.labelFailed", { count: st.errors, n: st.errors }) : "")
       + (open ? t("timeline.bundle.labelClose") : t("timeline.bundle.labelOpen")));
   }

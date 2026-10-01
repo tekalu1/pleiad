@@ -1212,6 +1212,18 @@
       "sending": "Sending “{{action}}”…",
       "sendFailedInline": "Couldn't send “{{action}}” · {{error}}"
     },
+    "computerApproval": {
+      "label": "Allow",
+      "agent": "The agent",
+      "question": "Allow {{agent}} to control “{{app}}”?",
+      "questionMore_one": "Allow {{agent}} to control “{{app}}” and {{count}} other app?",
+      "questionMore_other": "Allow {{agent}} to control “{{app}}” and {{count}} other apps?",
+      "allowSession": "Allow in this conversation",
+      "allowedSession": "Allowed in this conversation",
+      "explain": "It captures the screen of the apps you allow and controls them with the mouse and keyboard. You can stop it any time with Esc.",
+      "warn": "⚠ This app can read, write and delete files and settings broadly.",
+      "reason": "Reason: {{reason}}"
+    },
     "thought_one": "Thought ({{chars}} char)",
     "thought_other": "Thought ({{chars}} chars)",
     "delivery": {
@@ -1848,6 +1860,78 @@
       "ghost": "Previous: {{verb}} {{target}} (press to go back)",
       "running": "Running"
     },
+    "computer": {
+      "bundle": {
+        "running": "Using your computer",
+        "done": "Used your computer",
+        "stop": "Stop",
+        "stopTitle": "Stop controlling the computer (same as Esc)",
+        "stopping": "Stopping…",
+        "more_one": "{{n}} more",
+        "more_other": "{{n}} more",
+        "label_one": "Computer use, {{n}} action",
+        "label_other": "Computer use, {{n}} actions"
+      },
+      "verb": {
+        "shot": "Capture",
+        "zoom": "Zoom",
+        "display": "Display",
+        "cursor": "Cursor",
+        "move": "Move",
+        "click": "Click",
+        "drag": "Drag",
+        "down": "Hold",
+        "up": "Release",
+        "scroll": "Scroll",
+        "type": "Type",
+        "key": "Key",
+        "wait": "Wait",
+        "open": "Open",
+        "access": "Access",
+        "list": "Apps",
+        "batch": "Batch"
+      },
+      "reasonShort": {
+        "escape": "Stopped",
+        "stop": "Stopped",
+        "locked": "Stopped (locked)",
+        "forbidden": "Not allowed",
+        "denied": "Denied",
+        "busy": "In use",
+        "other": "Stopped"
+      },
+      "reason": {
+        "escape": "You stopped it with Esc",
+        "stop": "You stopped it",
+        "locked": "The screen is locked. Unlock it, then ask again.",
+        "forbidden": "“{{app}}” can't be controlled. It was declined without asking.",
+        "denied": "Control of “{{app}}” was denied.",
+        "busy": "Another conversation was using the computer, so it couldn't be used."
+      },
+      "thisApp": "this app",
+      "grant": {
+        "bypass": "Allowed · automatic (no confirmation)",
+        "all": "Allowed · automatic (all apps allowed)"
+      },
+      "stoppedMark": "Stopped",
+      "waiting": "Waiting",
+      "shot": {
+        "open": "Enlarge screenshot: {{title}}",
+        "gone": "Screenshot deleted",
+        "dialog": "Screenshot",
+        "prev": "Previous screenshot",
+        "next": "Next screenshot",
+        "close": "Close",
+        "position": "Screenshot {{at}}/{{total}}",
+        "size": "{{w}}×{{h}} (as sent to the agent)"
+      },
+      "wait": {
+        "text": "Another conversation (“{{title}}”) is using the computer. Continuing when it's done.",
+        "textUntitled": "Another conversation is using the computer. Continuing when it's done.",
+        "go": "Go to that conversation",
+        "running": "Waiting"
+      }
+    },
     "delegate": {
       "openChild": "Open the child conversation",
       "label": "Delegation: {{title}} ({{agent}} · {{state}}). Press to open"
@@ -2146,6 +2230,9 @@
   "notify": {
     "completed": "Work finished",
     "waitingReply": "Waiting for your reply",
+    "computerApproval": "{{agent}} is waiting for permission to use “{{app}}”",
+    "computerApprovalMore_one": "{{agent}} is waiting for permission to use “{{app}}” and {{count}} other app",
+    "computerApprovalMore_other": "{{agent}} is waiting for permission to use “{{app}}” and {{count}} other apps",
     "untitled": "Pleiad conversation"
   },
   "remote": {
