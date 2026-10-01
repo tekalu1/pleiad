@@ -33,6 +33,8 @@ const cases = [
   await import('./unit/header-entries.mjs'),
   await import('./unit/agent-browser-relay.mjs'),
   await import('./unit/browser-confirm.mjs'),
+  // 設定 › コンピューターの操作: prefs の検査と既定・store の remember/forget・hostCapabilities.computerUse の判定・節の動き・setPref（docs/computer-use.md）
+  await import('./unit/computer-settings.mjs'),
   await import('./unit/modes.mjs'),
   await import('./unit/agent-tasks.mjs'),
   await import('./unit/agent-tasks-silence.mjs'),
