@@ -117,9 +117,64 @@ main の約束:
 - `activity` が来るたびに 6 秒を数え直し、過ぎたらフェードして消す。`hide` と `computer-turn-ended` ではすぐ消す。
 - **Pleiad の窓には `setContentProtection` を掛けない**。撮影から外すのはオーバーレイの窓だけ（2026-10-01 に決めた）。
 
+### main の実装（`desktop/computer/`）
+
+A が作った土台。`desktop/main.cjs` は `attachComputerService(worker, { electron: { screen, nativeImage }, app })` を 1 行呼ぶだけで、worker の終了と `will-quit` の後始末（`releaseAll`）、`screen` の 3 つのイベント、番犬はこの中でつなぐ。
+
+| ファイル | 持ち物 |
+|---|---|
+| `win32.cjs` | koffi の宣言。**koffi を知っているのはここだけ**。テストは同じ形の偽の表を渡す（`tests/unit/computer-native.mjs`）。koffi が読めない・Windows でないときは `loadWin32()` が `reason`（`native` / `platform`）付きで投げ、service は `computer-ready { supported: false, reason }` を返す |
+| `displays.cjs` | モニターの一覧。主モニターが `index` 1、残りは左から右・上から下。`id` は GDI のデバイス名（`\\.\DISPLAY1`）。`scale` は DPI / 96 |
+| `capture.cjs` | BitBlt（CAPTUREBLT）→ alpha を 255 にそろえる → `nativeImage.createFromBitmap`（BGRA のまま渡せる。実測）→ `resize`（best）→ `toJPEG`。縮小は切り捨て（1920×1080 → 1460×821） |
+| `input.cjs` + `keymap.cjs` | SendInput。押したままのキー・ボタンを覚え、`releaseAll` で押したものだけを離す。座標の絶対値は `ceil((x - 原点) * 65536 / 幅)`（Windows が戻す `floor(abs * 幅 / 65536)` が元の画素になる） |
+| `apps.cjs` | 点の下・前面の窓 → AppInfo。UWP は `ApplicationFrameHost` の枠ではなく中のプロセスの AUMID。名前の検索と起動 |
+| `desktop-state.cjs` | 入力デスクトップが `Default` か |
+| `service.cjs` | 上をつなぎ、parentPort の `computer-*` を受ける。操作の列・上限時間・止めた印・番犬 |
+
+契約の隙間を埋めた決め:
+
+- `screenshot` の `display` は `displays[].id`（文字列。core の橋はこれを渡す）。数を渡すと `index`（1 から）でも通る。省略は主モニター。`region` は `display` の範囲に切る（外に出た分は捨て、全部外なら `outside`）。
+- `findApp` は、動いている窓（見えていて名前のある最上位の窓）に、スタートメニューのアプリ（PowerShell の `Get-StartApps`。5 分使い回す。初回は約 2 秒）を足して強い順に並べる。`{GUID}\x.exe` の形の AppID は既知のフォルダーを展開して exe のアプリにする。
+- `launch` は、動いているアプリなら起こし直さず前に出す（`alreadyRunning: true`、前に出せたかは `foregrounded`）。起こしたあとは窓が出るまで最長 8 秒待つ（出ない常駐アプリは `app` をそのまま返す）。`kind: 'exe'` は `.exe` の絶対パスだけ。
+- `error` に `done`（`input` が終えた動作の数）を足すことがある。途中で断られたら、押したままのものは離してから返す。
+- `input` は動作ごとに、止めた印・昇格（`uipi`）・前面が Pleiad（`self`。`text` / `key` / `keyDown` だけ）を送る直前に見る。離す動作（`up` / `keyUp`）は止めない。昇格を確かめられないプロセス（開けない）は昇格とみなす。Pleiad 自身が昇格していれば `uipi` にしない。
+- 持ち主（`owner`）は `computer-arm` と `computer-call` の両方で見る。`computer-call` の持ち主が前の呼び出しと違えば、`computer-arm` が無くても前の分を離す。
+- `displaysVersion` は `screen` のイベントで必ず 1 進める。構成が変わったのを次の呼び出しで見つけたときも進めて `computer-displays-changed` を送る。
+- Electron の main のスレッドは Per-Monitor（V1。2026-10-01 実測）で、物理画素の座標が得られる。Per-Monitor でないときは、同期の呼び出しの間だけ PMv2 に切り替える。
+- 点の下の窓がクリックを通す窓（`WS_EX_TRANSPARENT` + `WS_EX_LAYERED`。オーバーレイ）なら飛ばして Z 順で下の窓を返す。オーバーレイが `self` として拾われ、全部のクリックが禁止になるのを防ぐ。
+
+オーバーレイ側（C）へ渡す口。`attachComputerService` の返り値:
+
+- `escape({ owner?, notify? })`: Esc を拾ったとき。渡した持ち主と今の持ち主に止めた印を付け、走っている入力を打ち切り、`releaseAll` する。返り値は `{ owner }`。`computer-escape` は既定でここから送るが、オーバーレイ（C）は後始末のあとに自分で送るので、`desktop/main.cjs` は `notify: false` で呼ぶ（`attachComputerOverlay(worker, { onEscape: owner => computerService.escape({ owner, notify: false }) })`）。
+- `attachComputerService` の `escape: { suspend() }` に、オーバーレイの `suspendEscape()`（`globalShortcut('Escape')` を外し、戻す関数を返す）を渡す。`key` / `keyDown` に Escape があるとき、送る前に `suspend()`、送った後（`keyDown` は離したとき・`releaseAll`）に戻す関数が呼ばれる。
+- `notifyEscape(owner)`・`armedOwner()`。
+
+### 実機（VM）での確認の手順
+
+本物の入力は利用者の画面・前面の窓に届くので、**利用者が使っている PC では送らない**（Windows Sandbox か Hyper-V の VM の中でだけ）。読み取りだけの確認（撮影・窓の列挙・`appAt`）は PC でもよい（2026-10-01 に実施: 4K + 2 枚目のモニターの撮影・色の並び・`appAt`・`findApp`・`screen` のイベントによる版）。
+
+```
+electron tests/manual/computer-use-probe.cjs --dry-run   # PC でよい。送るはずの INPUT を表示するだけ（アプリも起動しない）
+electron tests/manual/computer-use-probe.cjs             # VM の中で。メモ帳を起こして、撮る・押す・打つ・離す
+```
+
+`ELECTRON_RUN_AS_NODE=1` が引き継がれているシェルでは `env -u ELECTRON_RUN_AS_NODE` を前に付ける。プローブが自動で見るのは、撮影・`findApp`・`launch`・前面・クリックの位置（±1 画素）・`type`・`key`・`drag`・`scroll`・Windows キーの拒否・`releaseAll`・`zoom`。残りは手で確かめる:
+
+| 確認 | 見ること |
+|---|---|
+| `type` と IME | 日本語入力が有効なとき、`type`（UNICODE）が素通りして文字が入るか。`key`（`ctrl+a` など）が IME に食われないか |
+| 2 枚のモニター（倍率が違う） | 100% と 150% で、`display` 2 の撮影の座標からのクリックが狙いの位置に当たるか |
+| ロック画面・UAC | `Win+L` の間は `screenshot` と `input` が `locked`。解除すると同じターンで続けられる |
+| UIPI | 管理者で動かしたメモ帳・コマンドプロンプトの上では `input` が `uipi` になる（黙って落ちない） |
+| Esc | オーバーレイが出ている間の物理の Esc で、押したままの入力が離れ、次の `input` が `stopped` になる（C と一緒に確かめる）。Esc を送る `key` では自分の注入で止まらない |
+| 番犬 | `computer-arm` の後に core を落とす（ターンの途中でプロセスを止める）と、約 30 秒後に押したままのボタンが離れる |
+| 署名済みのインストーラー | `npm run desktop:dist` の成果物で koffi が読めて、`computer-ready { supported: true }` が返る（Windows の arm64 は下の注を参照） |
+
+arm64 の注: koffi 3 のネイティブ本体は `@koromix/koffi-<os>-<arch>` という別のパッケージで、`npm ci` はビルド機の分（x64 のランナーなら `win32-x64`）しか入れない。x64 のランナーで作る Windows の arm64 のインストーラーには arm64 の本体が入らず、そこでは `computer-ready { supported: false, reason: 'native' }` になる。arm64 でも使うなら、リリースのワークフローで `npm install --no-save --force @koromix/koffi-win32-arm64@3.3.2` を足してから作る。
+
 ### MCP サーバー `ply_computer`
 
-`core/agent-bridge.mjs`（`ply_agents`）と同じ型。会話ごとに Bearer の付いた HTTP の MCP を開く。パスは `COMPUTER_MCP_PATH = '/mcp/computer'`。名前は Claude CLI が予約している `computer-use` と Codex の同梱の `cua_repl` / `node_repl` を避けて `ply_computer` とし、`core/ply-mcp.mjs` の `RESERVED` に足す。Claude からは `mcp__ply_computer__<名前>`、Codex からは `server: ply_computer, tool: <名前>` に見える。
+`core/agent-bridge.mjs`（`ply_agents`）と同じ型。会話ごとに Bearer の付いた HTTP の MCP を開く。パスは `COMPUTER_MCP_PATH = '/mcp/computer'`。名前は Claude CLI が予約している `computer-use` と Codex の同梱の `cua_repl` と利用者の設定によくある `node_repl` を避けて `ply_computer` とし、`core/ply-mcp.mjs` の `RESERVED` に足す。Claude からは `mcp__ply_computer__<名前>`、Codex からは `server: ply_computer, tool: <名前>`、agy からは `call_mcp_tool` の `ply_computer_<名前>` に見える。
 
 ```js
 createComputerBridge({ driver, policy, lock, shots, askPermission, emit, translate })
@@ -244,11 +299,13 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 
 #### `tool.start` / `tool.result`
 
-- 名前は 3 つのエージェントで `mcp__ply_computer__<ツール名>` にそろえる（Claude はそのまま。Codex の `mcpToolCall` は `item.server === 'ply_computer'` を直す。agy は実測しだい）。入力は引数の object（`computerToolInput` を通したもの）。
+- 名前は 3 つのエージェントで `mcp__ply_computer__<ツール名>` にそろえる（Claude はそのまま。Codex の `mcpToolCall` は `item.server === 'ply_computer'` を直す。agy は `call_mcp_tool` の `ToolName` から接頭辞 `ply_computer_` を外す。下の「エージェントごとの値」）。入力は引数の object（`computerToolInput` を通したもの）。正規化は `core/backends/computer-delivery.mjs` にまとめてある。
 - `tool.result` に 2 つの任意の項目を足す（[ADR 0075](adr/0075-computer-screenshots-in-data-dir.md)）:
   - `images`: 既にある項目（Codex の画像生成と同じ）。`ply_computer` では `computerDisplay` の `images`。
   - `computer`: `computerDisplay` の `computer`。`{ tool, state, reason?, title, app?, display?, shot?, actions? }`。
-- `text` は印の行を除いた本文。Codex の image の base64 は捨てる。子のスレッド（`onChildNotification`）と履歴の読み直しも同じ関数を通す。
+- `text` は印の行を除いた本文（エージェントが足す画像の退避の行、agy の `[Resource offloaded to file:///…]` と Claude の CLI の `[Image: source: …]` も除く）。Codex の image の base64 は捨てる。履歴の読み直しも同じ関数を通す。Codex の子のスレッド（`onChildNotification`）はツールを出さないので通さない。
+- 印を読むのは `ply_computer` のツールの結果だけ（Claude は `tool_result` に名前が無いので、ターンの間 `tool_use` の id を覚えて見分ける）。他のツールの結果に印の形の行があっても読まない。
+- `isError` は Claude・Codex は MCP の `isError`、agy は出力に印しか無いので印の `state` が `ok` 以外のとき true。agy の控えには `images` と `computer` の付いた結果を書く。
 
 #### `computer.state`（新しいイベント）
 
@@ -374,21 +431,26 @@ permission: { …, toolName: 'ply_computer', canAlways: true,
 |---|---|---|---|
 | Claude | `plyServers` に `ply_computer: { type: 'http', url, headers }` | `systemPrompt.append` | `decidePermission` の先頭で `mcp__ply_computer__` を allow（アプリの承認は橋で行う） |
 | Codex | `thread/start` の `config` の `mcp_servers.ply_computer`（`url`・`http_headers`・`required: false`・`default_tools_approval_mode: 'approve'`・`tool_timeout_sec`）と、同梱の computer use を切る上書き（[ADR 0074](adr/0074-codex-bundled-computer-use-off.md)） | `developerInstructions` | Codex 側は `approve`。elicitation は使わない |
-| Antigravity | `agent.md` の `mcpServers` に 2 本目の stdio の中継（`core/agy-context-relay.mjs --computer`。env は `PLY_COMPUTER_URL` / `PLY_COMPUTER_AUTHORIZATION`） | agent.md の本文 | agy は yolo だけ。アプリの承認も聞かない（判定の順の 4） |
+| Antigravity | `agent.md` の `mcpServers` に 2 本目の stdio の中継（`core/agy-context-relay.mjs --computer`。env は `PLY_COMPUTER_URL` / `PLY_COMPUTER_AUTHORIZATION`）。中継はツール名に `ply_computer_` を付けて見せ、呼び出しで外す | agent.md の本文 | agy は yolo だけ。アプリの承認も聞かない（判定の順の 4） |
+
+指示文は 3 つに共通の `computer.instructions`（橋の `instructions`）に、エージェントごとの呼び方（`agent.json` の `computerDelivery.codex` / `computerDelivery.antigravity`）を足す。Claude には足す文が無い。右パネルの「指示の量」では、足した後の文を「コンピューターの操作の説明」（`plyParts` の `computer`）として数える。
+
+ロード済みの会話への反映: Codex は指示か `ply_computer` の接続先が変わったスレッドを外して読み直す（resume は config の変更を黙って無視する）。agy は渡す・渡さない・接続先が変わったら agy を起こし直す（`--conversation` で続く）。
 
 `ply_computer` を渡さない会話には何も足さない（Codex は利用者の `~/.codex` に任せ、`config.toml` は書き換えない）。
 
-### 実測しだいの箇所
+### エージェントごとの値（2026-10-01 実測）
 
-各エージェントの実測で決まる。結果は上の口の値を変えるだけで済むように切ってある。決まったらこの節を書き直す。
+Codex `codex-cli 0.156.1`（app-server）、Claude Agent SDK 0.3.258（CLI 2.1.284）、agy 1.2.14 で測った。Claude（haiku）と agy は、偽の driver の橋をつないだ Pleiad から本物で `screenshot` を呼ばせ、名前・表示・モデルが画像を読めることを確かめた。版が変わって合わなくなったら、`core/backends/computer-delivery.mjs` の値と各バックエンドの `capabilities.computerUse` だけを差し替える。
 
-| 何 | 差し替える所 | 今の仮の値 |
-|---|---|---|
-| Codex の同梱の computer use を切る上書きの書き方 | `codex.mjs` の `config` に足すキーだけ（ADR 0074） | `features.computer_use: false`・`plugins.computer-use@openai-bundled.enabled: false`・`plugins.unified-computer-use@openai-bundled.enabled: false`。効かなければ `mcp_servers.cua_repl.enabled: false` |
-| agy（と Codex）のモデルに MCP の image が渡るか | `capabilities.computerUse.images` | Claude・Codex は `inline`、agy は未定（`inline` / `path` / 渡さない＝`false` で設定に理由を出す） |
-| 長い待ちを分けて返すか | `capabilities.computerUse.waitSliceMs` と各エージェントの上限時間（Claude の `MCP_TOOL_TIMEOUT`、Codex の `tool_timeout_sec`、中継の上限） | 全部 `null`（1 回で 10 分）。上限時間は 660 秒 |
-| agy の stream-json で MCP のツールが出る名前と出力 | agy の正規化で `mcp__ply_computer__<名前>` と text を取り出す所 | 未定。印の行が text に残る前提 |
-| Claude の MCP の出力の上限（`MAX_MCP_OUTPUT_TOKENS`） | 縮小の定数（`maxPixels` / `maxEdge` / `quality`） | 1.2MP・1568px・75 |
+| | Claude | Codex | Antigravity |
+|---|---|---|---|
+| `capabilities.computerUse` | `{ images: 'inline', waitSliceMs: null }` | `{ images: 'inline', waitSliceMs: null }` | `{ images: 'path', waitSliceMs: 150_000 }` |
+| 1 回の呼び出しの上限 | 既定は 60 秒、さらに無通信 300 秒で切れる。`mcpServers.ply_computer.timeout: 660000` で両方が上がる（他のサーバーには効かない） | 既定は 300 秒。`tool_timeout_sec: 660` | **3 分で固定**。agent.md に何を書いても伸びない。ロックの待ちは橋が 150 秒ごとに分けて返す（`state: 'waiting'`。画面は同じ待ちの行のまま）。中継の上限（330 秒）はそれより長いので触らない |
+| 画像がモデルに見えるか | 見える（`tool_result` の image）。1280×800・品質 75 の JPEG は `MAX_MCP_OUTPUT_TOKENS` の既定（25000）に収まるので、縮小の定数は今のまま | gpt-5.x は自動で見える。gpt-6 系はツールを `exec`（JS のコードモード）から呼び、`image(r.content[1])` を呼んだときだけ見える。指示文で頼む。`text(r)` だと base64 が文字のまま入る | 画像はファイルに退避され（出力の末尾に `[Resource offloaded to file:///…]`）、モデルは `view_file` で開いて読む。開くかはモデル次第なので、指示文で頼み、保存先のパスも text に書く（`images: 'path'`） |
+| ツールの出方 | `mcp__ply_computer__<ツール>`。CLI 2.1.284 は MCP のツールを遅延ロードし、モデルは `ToolSearch` で探してから呼ぶ（指示は無くても探せた）。ライブの `tool_result` に `[Image: source: <パス>]` の text ブロックを足す（transcript には無い）ので、表示の本文から除く | `mcpToolCall`（`server: 'ply_computer'`）。ツールは遅延ロードで、最初の一覧に出ない（gpt-5.x は `tool_search`、gpt-6 系は `ALL_TOOLS` で探す）。指示文で探し方を書く | `call_mcp_tool`（`{ ServerName, ToolName, Arguments }`）。`ServerName` は空のことが多い。`DONE` の `output` は text ブロックをつないだもの（印の行はそのまま届く） |
+| 名前の衝突 | — | — | agy はツールの定義をサーバー名の階層なしで `~/.gemini/antigravity-cli/mcp/<ツール>.json` に書く。`screenshot` のような名前は他のサーバーと衝突するので、agy にだけ `ply_computer_<ツール>` と見せる（Claude・Codex は Claude Desktop と API のメンバー名のまま）。`computer_batch` の `action` は接頭辞なし |
+| 同梱の computer use | — | `plugins.unified-computer-use@openai-bundled.enabled: false`（`cua_repl` を出す側）と `plugins.computer-use@openai-bundled.enabled: false`（スキルを出す側）の 2 つ。`features.computer_use: false` は効かず、`mcp_servers.cua_repl.enabled` は app-server が拒否する。`node_repl` は利用者の `config.toml` の定義なので触らない。開始時に `mcpServerStatus/list` を見て、残っていればログに 1 行出す（[ADR 0074](adr/0074-codex-bundled-computer-use-off.md)） | — |
 
 ## 決定の記録
 

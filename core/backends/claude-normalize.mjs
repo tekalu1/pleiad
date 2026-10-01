@@ -12,6 +12,12 @@
 import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { t } from "../i18n.mjs";
 import { ZERO_COST, resultCost, usageTotals, claudeUsageDelta } from "./claude-cost-state.mjs";
+import { computerResult, computerToolInput, isComputerTool } from "./computer-delivery.mjs";
+
+// 履歴のツール結果の切り詰め（fullResults なら切らない）
+const cutResult = (raw, full) => !full && raw.length > MAX_RESULT_CHARS
+  ? { text: raw.slice(0, MAX_RESULT_CHARS) + t("claude.truncated"), truncated: true }
+  : { text: raw, truncated: false };
 
 /** tool_result の content は string か [{type:"text"}] で来る。文字列に均す */
 export function resultText(c) {
@@ -57,8 +63,10 @@ export function createClaudeCompactDiagnostic() {
 /**
  * costBase はターン開始時点の累計（transcript の最後の cost-state。claude-cost-state.mjs）。
  * result の累計からこれを引いて、そのターンの分を usage にする。null は「開始時点が分からない」で、数値を null にする
+ * computerIds はターンの間持ち回す Set。ply_computer の tool_use の id を覚え、その tool_result だけ印の行を読む
+ * （docs/computer-use.md「印の行」。画像は image ブロックからではなく印から作る）
  */
-export function normalizeSdkMessage(m, { costBase = ZERO_COST } = {}) {
+export function normalizeSdkMessage(m, { costBase = ZERO_COST, computerIds = null } = {}) {
   const out = [];
   if (!m || typeof m !== "object") return out;
 
@@ -110,11 +118,15 @@ export function normalizeSdkMessage(m, { costBase = ZERO_COST } = {}) {
     out.push({ type: "text.end", ...(m.uuid ? { uuid: String(m.uuid) } : {}) });
     for (const b of m.message?.content ?? []) {
       if (b?.type !== "tool_use" || !b.name) continue;
+      const name = String(b.name);
+      const input = b.input && typeof b.input === "object" ? b.input : {};
+      const computer = isComputerTool(name);
+      if (computer && b.id) computerIds?.add(String(b.id));
       out.push({
         type: "tool.start",
         id: b.id ? String(b.id) : null,
-        name: String(b.name),
-        input: b.input && typeof b.input === "object" ? b.input : {},
+        name,
+        input: computer ? computerToolInput(name, input) : input,
       });
     }
     return out;
@@ -124,6 +136,11 @@ export function normalizeSdkMessage(m, { costBase = ZERO_COST } = {}) {
   if (m.type === "user") {
     for (const b of m.message?.content ?? []) {
       if (b?.type !== "tool_result" || !b.tool_use_id) continue;
+      if (computerIds?.has(String(b.tool_use_id))) {
+        computerIds.delete(String(b.tool_use_id));
+        out.push({ type: "tool.result", id: String(b.tool_use_id), ...computerResult(resultText(b.content), raw => cutResult(raw, true)), isError: Boolean(b.is_error) });
+        continue;
+      }
       out.push({
         type: "tool.result",
         id: String(b.tool_use_id),
@@ -321,9 +338,10 @@ function extract(entry, fullResults = false) {
         const raw = resultText(block.content);
         results.push({
           id: String(block.tool_use_id),
-          text: !fullResults && raw.length > MAX_RESULT_CHARS ? raw.slice(0, MAX_RESULT_CHARS) + t("claude.truncated") : raw,
+          ...cutResult(raw, fullResults),
           isError: Boolean(block.is_error),
-          truncated: !fullResults && raw.length > MAX_RESULT_CHARS,
+          // ply_computer の結果は、tool_use と紐づけたところで印の行を読み直す（transcriptToMessages）
+          raw,
         });
       }
     }
@@ -340,10 +358,11 @@ function extract(entry, fullResults = false) {
     if (block?.type === "text" && typeof block.text === "string") text += block.text;
     // 名前だけでは何をしたか分からない。input も一緒に返す（web 側が1行に要約する）
     else if (block?.type === "tool_use" && block.name) {
+      const input = block.input && typeof block.input === "object" ? block.input : {};
       toolCalls.push({
         id: block.id ? String(block.id) : null,
         name: String(block.name),
-        input: block.input && typeof block.input === "object" ? block.input : {},
+        input: isComputerTool(block.name) ? computerToolInput(block.name, input) : input,
         result: null,
       });
     }
@@ -382,7 +401,10 @@ export function transcriptToMessages(entries, { includeNested = false, fullResul
     // 結果を先に畳み込む。messages に積んだ toolCall と同じオブジェクトなので、そのまま反映される
     for (const r of got.results ?? []) {
       const call = calls.get(r.id);
-      if (call) call.result = { text: r.text, isError: r.isError, truncated: r.truncated };
+      if (!call) continue;
+      call.result = isComputerTool(call.name)
+        ? { ...computerResult(r.raw, raw => cutResult(raw, fullResults)), isError: r.isError }
+        : { text: r.text, isError: r.isError, truncated: r.truncated };
     }
     for (const c of got.toolCalls ?? []) if (c.id) calls.set(c.id, c);
 

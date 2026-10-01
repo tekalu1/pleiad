@@ -30,8 +30,11 @@ const cases = [
   await import('./unit/side-panel.mjs'),
   // 内蔵ブラウザー: 右パネルの表・アドレス欄・リンクの開き先・使える画面・main のタブと位置（偽の electron）
   await import('./unit/inapp-browser.mjs'),
+
   // computer use のオーバーレイと Esc: 窓・フェード・Esc の登録と解除・止める流れ・倍率の違うモニターの座標（偽の electron。OS の入力は送らない）
   await import('./unit/computer-overlay.mjs'),
+  // computer use の main 側（desktop/computer/*）: キーの解釈・SendInput の中身・releaseAll・撮影の縮小・アプリの特定・service の列と止め方（偽の Win32。本物の入力は送らない）
+  await import('./unit/computer-native.mjs'),
   await import('./unit/header-entries.mjs'),
   await import('./unit/agent-browser-relay.mjs'),
   await import('./unit/browser-confirm.mjs'),
@@ -297,6 +300,10 @@ const cases = [
   // Pleiad の MCP 登録と認証の API、1 件つながらなくても会話が進むこと、antigravity では Pleiad 担当を開かないこと
   await import("./unit/server-mcp-auth.mjs"),
   await import("./unit/server-agy-context.mjs"),
+  // コンピューターの操作（ply_computer）: 3 つのエージェントへの注入（MCP・上限時間・指示文・承認・同梱を切るキー）と、印の行からの正規化
+  await import("./unit/computer-delivery.mjs"),
+  // 同じことをサーバーの橋（偽の driver）から Codex・Antigravity の身代わりへ: 注入・正規化・履歴・委譲の子・設定でオフ
+  await import("./unit/server-computer-delivery.mjs"),
   // インストールからログインまでの導線（未インストール -> 再起動なしで発見 -> 認可コード）
   await import("./unit/antigravity-onboarding.mjs"),
   // 孤児の agy の掃除。**名前を確かめてからでないと落とさない**

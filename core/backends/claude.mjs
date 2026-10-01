@@ -35,6 +35,7 @@ import { normalizeSdkMessage, createClaudeCompactDiagnostic, claudeCompactionsFr
 import { classifySystemMessages } from "../system-messages.mjs";
 import { promptTitle } from "../prompt-title.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
+import { COMPUTER_CALL_TIMEOUT_SEC, COMPUTER_SERVER, computerPrompt, isComputerTool } from "./computer-delivery.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -361,6 +362,8 @@ function makeCanUseTool(ctx, askPermission) {
 // deny の理由はツールの結果としてエージェントに返る（画面のツールの結果にも出る）。会話の言語（ctx.locale）で
 async function decidePermission(ctx, askPermission, toolName, input, options) {
   if (AUTO_ALLOW.has(toolName)) return { behavior: "allow", updatedInput: input };
+  // コンピューターの操作はツールごとに聞かない。アプリ単位の承認は橋（core/computer-bridge.mjs）の中で行う（ADR 0071）
+  if (isComputerTool(toolName)) return { behavior: "allow", updatedInput: input };
 
   if (typeof askPermission !== "function") {
     return { behavior: "deny", message: agentT(ctx.locale, 'approval.noHandler', { tool: toolName }) };
@@ -592,6 +595,8 @@ export const backend = {
     liveMode: true,
     hostTools: true,
     plyAgents: true,   // ply_agents を mcpServers に、その instructions を append に渡す
+    // ply_computer（runArgs.computerRuntime）を mcpServers に、指示を append に渡す。MCP の image はそのままモデルに見える（docs/computer-use.md）
+    computerUse: { images: 'inline', waitSliceMs: null },
     alwaysAllow: true,
     login: true,
     // 会話ごとのアカウント（claude setup-token のトークン）を選べる。server は oauthToken を渡す（core/claude-accounts.mjs）
@@ -624,9 +629,11 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [], notes = [] }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, computerRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [], notes = [] }) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, locale };
+    // このターンで呼んだ ply_computer の tool_use の id。tool_result に名前は載らないので、印の行を読むのはこの id の結果だけにする
+    const computerIds = new Set();
     let releaseContext;
     const readyContext = new Promise(resolve => { releaseContext = resolve; });
     const userMessage = (text) => ({ type: 'user', session_id: ctx.sessionId ?? '', parent_tool_use_id: null, message: { role: 'user', content: String(text ?? '') } });
@@ -678,7 +685,10 @@ export const backend = {
     const sdkAbort = new AbortController();
 
     // Pleiad 自身が渡す MCP。MCP を Pleiad が担当するときの「ネイティブ MCP を止められたか」の確認でも、これらは除く
-    const plyServers = { host: buildToolServer(ctx), ...(agentRuntime ? { ply_agents: { type: "http", url: agentRuntime.url, headers: agentRuntime.headers } } : {}), ...(contextRuntime ? { ply_context: { type: 'http', url: contextRuntime.url, headers: contextRuntime.headers } } : {}) };
+    // ply_computer はロックを最長 10 分待つ。HTTP の MCP は既定で 60 秒（と無通信 300 秒）で切れるので、timeout で両方を上げる（実測 2026-10-01）
+    const plyServers = { host: buildToolServer(ctx), ...(agentRuntime ? { ply_agents: { type: "http", url: agentRuntime.url, headers: agentRuntime.headers } } : {}), ...(contextRuntime ? { ply_context: { type: 'http', url: contextRuntime.url, headers: contextRuntime.headers } } : {}),
+      ...(computerRuntime ? { [COMPUTER_SERVER]: { type: 'http', url: computerRuntime.url, headers: computerRuntime.headers, timeout: COMPUTER_CALL_TIMEOUT_SEC * 1000 } } : {}) };
+    const computerInstructions = computerPrompt(computerRuntime, { locale, agent: 'claude' });
     // 互換の接続先（core/compat-endpoints.mjs）。env を組み替え（親の ANTHROPIC_* と OAuth トークンを外して接続先の値を入れる）、
     // 同じ値をフラグ設定のファイルにも書く（ユーザーの settings.json の env が options.env に勝つため。オブジェクトで渡すと argv にキーが載る）。
     // Pleiad の担当の設定（claudeContextOptions の settings）も同じファイルに入れる
@@ -716,7 +726,7 @@ export const backend = {
         ...contextOptions,
         extraArgs: claudeQueryExtraArgs(contextOptions),
         ...(flag ? { settings: flag.file } : {}),
-        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions].filter(Boolean).join('\n\n') } } : {}),
+        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions].filter(Boolean).join('\n\n') } } : {}),
         // adaptive = モデルが必要な分だけ考える。
         // 注意: このモデルの thinking ブロックは署名だけで平文が入らない（2026-08 時点、
         // display の有無を問わず `thinking` は空文字）。したがって思考の中身は表示できない。
@@ -960,7 +970,7 @@ export const backend = {
         // 中断を頼んだ後の result は、interrupt が効いた合図（応答より先に来ることがある）
         if (stop && message.type === "result") stopAcked();
 
-        for (const ev of normalizeSdkMessage(message, { costBase })) {
+        for (const ev of normalizeSdkMessage(message, { costBase, computerIds })) {
           // result は 1 回の query で何度も出る（裏の subagent が終わるたびに main が再開する・途中送信に答える）。
           // turnResult は「このターンが終わった」の合図で、server はそれを見て途中送信を止める。
           // 成功の分は最後の 1 つだけを query の終わりに出す。使用量（usage）は開始時点からの累計なので、その都度出してよい（server は上書きする）。

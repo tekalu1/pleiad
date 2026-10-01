@@ -73,7 +73,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `thinking.start` | `{ }` | `content_block_start(thinking)` |
 | `thinking.delta` | `{ text?, estimatedTokens? }` | `thinking_delta` |
 | `tool.start` | `{ id, name, input }` | `assistant` の `tool_use` |
-| `tool.result` | `{ id, text, isError, truncated, rejection? }` `rejection` は実行前に拒否されたコマンドの構造（Codex だけ。§2.5「Codex の実行前の拒否」）。server が委譲の結果に集める | `user` の `tool_result` |
+| `tool.result` | `{ id, text, isError, truncated, rejection?, images?, computer? }` `rejection` は実行前に拒否されたコマンドの構造（Codex だけ。§2.5「Codex の実行前の拒否」）。server が委譲の結果に集める。`images` は結果の画像（Codex の画像生成と、`ply_computer` のスクリーンショット）。`computer` は `ply_computer` の印の行の中身（[computer-use.md](computer-use.md)「tool.start / tool.result」。3 つのバックエンドが印から作り、名前も `mcp__ply_computer__<ツール>` にそろえる） | `user` の `tool_result` |
 | `activity` | `{ state: "thinking"\|"writing"\|"compacting"\|"waiting"\|"running"\|"idle", label? }` | `system/status`, `session_state_changed` |
 | `turnResult` | `{ outcome: "ok"\|"error"\|"aborted", turns?, costUsd?, error? }`（costUsd はこのターンの分。aborted には server が中断の理由 `reason` を足す。バックエンドは出さない） | `result` |
 | `permission` | `{ id, kind: "tool"\|"question", toolName, input, title?, canAlways, questions? }` | 既存 + AskUserQuestion の特別扱い |
@@ -231,6 +231,9 @@ export const backend = {
     hostTools: bool,    // set_status / set_title / fork を AI 側から呼べる。present は §2.6
     alwaysAllow: bool,  // 「常に許可」を返せる
     login: bool,        // auth.login がある
+    computerUse: false | { images: 'inline' | 'path', waitSliceMs: number | null },
+                        // ply_computer を受け取れる。server は runTurn に computerRuntime（{ url, headers, instructions } | null）を渡す。
+                        // 値はエージェントごとの実測（computer-use.md「エージェントごとの値」）
   },
 
   // ---- 語彙（UI はこれを <select> に流し込むだけ。値の意味は知らない）
@@ -624,6 +627,11 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
   打ち切りは stderr の上の文言で見分ける（`duration_seconds: 0` / `usage` 全 0 も同じ印だが、
   短いターンと区別が付かない）。落とすのは、Pleiad が見ていない所で走り続けさせないため。
   会話は `--conversation <id>` で拾い直せるので失われない
+- **MCP のツールは `tool_name: "call_mcp_tool"`、`tool_info.parameters = { ServerName, ToolName, Arguments }` で出る**（1.2.14 で実測）。
+  `ServerName` はモデルが埋めず空のことが多いので、`ToolName` で見分ける。ツールの定義はサーバー名の階層なしで
+  `~/.gemini/antigravity-cli/mcp/<ツール>.json` に書かれるので、一般的な名前は他のサーバーと衝突しうる（`ply_computer` は中継で `ply_computer_` を付けて見せる）。
+  `output` は text ブロックをつないだもので、画像はファイルに退避して末尾に `[Resource offloaded to file:///…]` を足す（モデルは `view_file` で開く）。
+  **1 回の MCP の呼び出しは 3 分で切れ**、agent.md の `mcpServers` に何を書いても伸びない（computer-use.md「エージェントごとの値」）
 - **ツールの `step_update` は同じ `step_index` で `state: "ACTIVE"` → `"DONE"` の 2 回来る。**
   ACTIVE 側には `tool_info.output` が無い。両方を同じに扱うとツールが二重に並び、1 つ目は結果が空になる。
   → **ACTIVE を `tool.start`・DONE を `tool.result` に分ける**。

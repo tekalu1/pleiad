@@ -65,11 +65,12 @@ export function contextRefusal(owners = {}) {
 /**
  * agent.md の中身。frontmatter の値は JSON で書く（YAML としても読める）。
  * locale は会話の言語（説明・見出し・注意書きはエージェントが読むので、その言語で書く。agent 名前空間）
+ * computerEnabled は ply_computer の 2 本目の中継（`--computer`）を足すか（docs/computer-use.md「エージェントへの渡し方」）
  */
-export function agentDefinition({ owners, prompt, cwd, home, locale, contextEnabled = true, execPath = process.execPath, electron = Boolean(process.versions.electron) }) {
-  const server = { serverName: 'ply_context', command: execPath, args: [RELAY],
-    // 配布版の Pleiad は Electron。Node として動かす印が無いと、中継ではなく Pleiad 本体が立ち上がる
-    ...(electron ? { env: { ELECTRON_RUN_AS_NODE: '1' } } : {}) };
+export function agentDefinition({ owners, prompt, cwd, home, locale, contextEnabled = true, computerEnabled = false, execPath = process.execPath, electron = Boolean(process.versions.electron) }) {
+  // 配布版の Pleiad は Electron。Node として動かす印が無いと、中継ではなく Pleiad 本体が立ち上がる
+  const relay = (serverName, args) => ({ serverName, command: execPath, args, ...(electron ? { env: { ELECTRON_RUN_AS_NODE: '1' } } : {}) });
+  const servers = [...(contextEnabled ? [relay('ply_context', [RELAY])] : []), ...(computerEnabled ? [relay('ply_computer', [RELAY, '--computer'])] : [])];
   const front = [
     `name: ${AGENT_NAME}`,
     `description: ${JSON.stringify(agentT(locale, 'antigravity.description'))}`,
@@ -79,7 +80,7 @@ export function agentDefinition({ owners, prompt, cwd, home, locale, contextEnab
     // Skills を Pleiad が持つならネイティブの Skills（と plugins・subagents）を切る。MCP は別に切り替える
     `inheritCustomizations: ${owners.skill !== 'ply'}`,
     `inheritMcp: ${owners.mcp !== 'ply'}`,
-    `mcpServers: ${JSON.stringify(contextEnabled ? [server] : [])}`,
+    `mcpServers: ${JSON.stringify(servers)}`,
     // 書かないと書き込み系ツールが 1 つも渡らない（TOOLS のコメント）
     `tools: ${JSON.stringify(TOOLS)}`,
   ];
@@ -89,16 +90,17 @@ export function agentDefinition({ owners, prompt, cwd, home, locale, contextEnab
 
 /**
  * 会話用のエージェントを Pleiad の置き場（<data>/antigravity/context/<pid>-<乱数>/）に書く。
- * `--add-dir <home> --agent ply-context` で agy に見せ、env を agy の環境変数に足す。agy が終わったら cleanup で消す
+ * `--add-dir <home> --agent ply-context` で agy に見せ、env を agy の環境変数に足す。agy が終わったら cleanup で消す。
+ * computer は ply_computer の接続先（{ url, authorization }）。あれば 2 本目の中継を書き、env で渡す
  */
-export async function prepareAgent({ owners, prompt, cwd, url, authorization, locale, context = true, hooks = null }) {
+export async function prepareAgent({ owners, prompt, cwd, url, authorization, locale, context = true, hooks = null, computer = null }) {
   const home = path.join(root(), `${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
   await fs.promises.mkdir(path.join(home, '.agents'), { recursive: true, mode: 0o700 });
   // context: カスタムエージェント（agent.md）を書くか（Pleiad のコンテキストかブラウザーの指示を渡すとき）。ply_context の中継は url があるときだけ
   if (context) {
     const file = path.join(home, '.agents', 'agents', AGENT_NAME, 'agent.md');
     await fs.promises.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-    await fs.promises.writeFile(file, agentDefinition({ owners, prompt, cwd, home, locale, contextEnabled: Boolean(url) }), { encoding: 'utf8', mode: 0o600 });
+    await fs.promises.writeFile(file, agentDefinition({ owners, prompt, cwd, home, locale, contextEnabled: Boolean(url), computerEnabled: Boolean(computer?.url) }), { encoding: 'utf8', mode: 0o600 });
   }
   // Hooks を Pleiad がそろえる会話（ADR 0049）: 置き場の .agents/hooks.json に登録（pleiad-<id>、アダプター越し）と、ネイティブの名前ごとの
   // { enabled: false } を書く。agy は --add-dir の .agents/hooks.json も読み、同じ名前の enabled:false はスコープをまたいで止める（実機で確認。2026-09-28）。
@@ -115,7 +117,9 @@ export async function prepareAgent({ owners, prompt, cwd, url, authorization, lo
     home,
     runs,
     // PLY_CONTEXT_LOCALE は中継が agy へ返すエラーの言語（会話の言語。core/agy-context-relay.mjs）
-    env: { ...(url ? { PLY_CONTEXT_URL: url, PLY_CONTEXT_AUTHORIZATION: authorization } : {}), ...(locale ? { PLY_CONTEXT_LOCALE: locale } : {}) },
+    env: { ...(url ? { PLY_CONTEXT_URL: url, PLY_CONTEXT_AUTHORIZATION: authorization } : {}),
+      ...(computer?.url ? { PLY_COMPUTER_URL: computer.url, PLY_COMPUTER_AUTHORIZATION: computer.authorization } : {}),
+      ...(locale ? { PLY_CONTEXT_LOCALE: locale } : {}) },
     cleanup: () => fs.rmSync(home, { recursive: true, force: true, maxRetries: 3 }),
   };
 }

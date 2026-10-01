@@ -736,7 +736,8 @@
         "agents": "Delegation tool guide",
         "added": "Pleiad instructions",
         "guide": "Context guide",
-        "browser": "Browser guide"
+        "browser": "Browser guide",
+        "computer": "Computer use guide"
       },
       "over": "Your instructions are {{ratio}}× the budget",
       "overDetail": " · ~{{own}} / {{budget}}",

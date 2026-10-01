@@ -32,6 +32,14 @@ Google のサブスクリプション枠（AI Pro / Ultra）を使える唯一�
 
 `agy` のヘッドレスには対話の承認が無いので、選べる承認モードは「全部自動」だけ。`--dangerously-skip-permissions` を付けない限りツールは黙って拒否されるため、「計画だけ」「編集は自動」「都度確認」は出さない。思考は流れず、ツールは終わってから出る。本文は逐次流れるので、会話の見え方は他と変わらない。`agy` に一覧も履歴も無いため、会話の控えは Pleiad が `AGENT_HOST_DATA` の下に書く。
 
+## コンピューターの操作
+
+デスクトップ版（Windows）では、3 つのエージェントに Pleiad の MCP `ply_computer` を渡し、画面を撮ってマウスとキーボードでアプリを操作させられる（[`computer-use.md`](computer-use.md)）。エージェントごとの違い:
+
+- Claude Code: 違いは無い。ツールごとの承認は出さず、アプリの承認だけを聞く。
+- Codex: Pleiad から起動した会話では、Codex に同梱の computer use を切る（利用者の `~/.codex/config.toml` は書き換えない。Pleiad の外の Codex には影響しない）。
+- Antigravity: アプリの承認を聞かない（承認モードが確認なししか無いため。禁止のアプリは拒む）。画像はファイルを開いて見るので、1 回の撮影に 2 手かかる。別の会話が操作中のときは、3 分ごとに呼び直しながら待つ。
+
 ## 互換の接続先
 
 Claude Code と Codex は、公式の接続先のほかに互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）を登録して会話ごとに選べる。詳しくは [`design.md`](design.md) の「互換の接続先」。
