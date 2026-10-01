@@ -122,10 +122,12 @@ export default async function (t) {
     await sleep(5);
     const show = lastPayload(w, 'show');
     t.ok('読み込みが済んでから show を送る。ピルは「Claude が操作中」「請求書の入力」· Esc で止める', show?.pill?.who === 'Claude が操作中' && show.pill.title === '「請求書の入力」' && show.pill.hint === 'Esc で止める' && w.sent[0].channel === 'ply:computer-overlay');
-    t.ok('Esc を握る（出ている間だけ）', h.overlay.snapshot().escapeRegistered && h.shortcuts.filter(s => s.startsWith('register')).length === 1);
+    t.ok('Shift・Ctrl・Alt を押したままの Esc も握る（RegisterHotKey は修飾キーまで合わないと反応しない）。Ctrl+Shift+Esc（タスクマネージャー）は奪わない',
+      ['Shift+Escape', 'Control+Escape', 'Alt+Escape'].every(k => h.shortcut.registered.has(k)) && !h.shortcut.registered.has('Control+Shift+Escape'));
+    t.ok('Esc を握る（出ている間だけ）', h.overlay.snapshot().escapeRegistered && h.shortcuts.filter(s => s.startsWith('register:Escape:')).length === 1);
     h.activity({ title: 'あ'.repeat(20) });
     await sleep(2);
-    t.ok('タイトルは 16 字で切る。変わったら pill だけ送り、窓も Esc も作り直さない', lastPayload(w, 'pill')?.pill.title === `「${'あ'.repeat(16)}…」` && h.wins.length === 1 && h.shortcuts.filter(s => s.startsWith('register')).length === 1);
+    t.ok('タイトルは 16 字で切る。変わったら pill だけ送り、窓も Esc も作り直さない', lastPayload(w, 'pill')?.pill.title === `「${'あ'.repeat(16)}…」` && h.wins.length === 1 && h.shortcuts.filter(s => s.startsWith('register:Escape:')).length === 1);
     h.overlay.close();
   }
 
@@ -163,7 +165,7 @@ export default async function (t) {
     h.activity(); await sleep(5);
     h.activity({ display: { id: 22, bounds: PHYS[22] } }); await sleep(2);
     t.ok('switch_display: 光る場所が移る。新しい窓が出て、前の窓へは hide が行く', h.wins.length === 2 && h.win(1).visible && lastPayload(h.win(0), 'hide')?.kind === 'now');
-    t.ok('Esc の登録は 1 つのまま', h.shortcuts.filter(s => s.startsWith('register')).length === 1 && h.overlay.snapshot().escapeRegistered);
+    t.ok('Esc の登録は 1 つのまま', h.shortcuts.filter(s => s.startsWith('register:Escape:')).length === 1 && h.overlay.snapshot().escapeRegistered);
     await sleep(40);
     t.ok('前の窓は消え終わったら隠す', !h.win(0).visible && h.win(1).visible);
     h.overlay.close();
@@ -332,12 +334,12 @@ export default async function (t) {
     h.activity(); await sleep(5);
     const before = h.shortcuts.length;
     const resume = h.overlay.suspendEscape();
-    t.ok('Esc を注入する前に外す', !h.shortcut.registered.has('Escape') && h.shortcuts.slice(before).join() === 'unregister:Escape');
+    t.ok('Esc を注入する前に外す', !h.shortcut.registered.has('Escape') && h.shortcuts.slice(before).at(-1) === 'unregister:Escape' && !h.shortcut.registered.has('Shift+Escape'));
     const resume2 = h.overlay.suspendEscape();
     resume();
     t.ok('入れ子: 外側が戻るまでは握り直さない', !h.shortcut.registered.has('Escape'));
     resume2(); resume2();
-    t.ok('注入の後に戻す（二重に戻しても 1 回）', h.shortcut.registered.has('Escape') && h.shortcuts.filter(s => s.startsWith('register')).length === 2);
+    t.ok('注入の後に戻す（二重に戻しても 1 回）', h.shortcut.registered.has('Escape') && h.shortcuts.filter(s => s.startsWith('register:Escape:')).length === 2);
     let ran = false;
     await h.overlay.withEscapeSuspended(async () => { ran = !h.shortcut.registered.has('Escape'); await sleep(2); });
     t.ok('withEscapeSuspended: 中は外れ、終われば戻る', ran && h.shortcut.registered.has('Escape'));
