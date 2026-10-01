@@ -1419,7 +1419,7 @@ function makeEmit(turn) {
     // （差し替えると sidecar に "null" キーの行が生える）。
     if (event?.type === "session" && event.sessionId && !turn.info.sessionId) {
       turn.info.sessionId = event.sessionId;
-      if (turn.browserRelayId && turn.browserRelayId !== event.sessionId) agentBrowser?.rebind(turn.browserRelayId, event.sessionId);
+      if (turn.browserRelayId && turn.browserRelayId !== event.sessionId) { agentBrowser?.rebind(turn.browserRelayId, event.sessionId); turn.browserRelayId = event.sessionId; }
       turn.compactionRevision = compactionScheduler.revision(event.sessionId);
       for (const read of liveReads) if (read.sessionId === event.sessionId) read.turn = turn;
       runtime.turns.delete(turn.key);
@@ -2472,7 +2472,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         ...(endpoint ? { endpoint } : {}),
       };
       if (runArgs.browserEnv) {
-        turn.browserRelayId = runArgs.browserEnv.AGENT_BROWSER_SESSION;
+        // 中継へ渡したキー。新規会話の id 決定での付け替え（rebind）と、承認の問い合わせ（getAgent）がこれで照合する
+        turn.browserRelayId = sessionId || turn.key;
         // i18n-dynamic: agent:browser.instructions
         runArgs.browserInstructions = browserInstruction(runArgs.browserEnv, agentLocale, agentT);
       }

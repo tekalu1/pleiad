@@ -17,10 +17,11 @@ const LAUNCHED = /http:\/\/(localhost|[\d.]+|\[[\da-f:]+\]):(\d+)\/\?token=(\S+)
  * サーバを起動し、ready になるまで待つ。
  * @param env サーバプロセスに足す環境変数（AGENT_HOST_GRACE_MS など）
  * @param dataDir sidecar の置き場。使い捨ての場所を渡すこと
+ * @param entry 起動するスクリプト（既定は core/server.mjs。parentPort の身代わりを置く tests/lib/parent-port-server.mjs など）
  */
-export async function startServer({ env = {}, dataDir, timeoutMs = 90_000 } = {}) {
+export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry = path.join(ROOT, "core", "server.mjs") } = {}) {
   const token = crypto.randomBytes(12).toString("hex");
-  const child = spawn(process.execPath, [path.join(ROOT, "core", "server.mjs")], {
+  const child = spawn(process.execPath, [entry], {
     cwd: ROOT,
     env: {
       ...process.env,
