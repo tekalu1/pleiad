@@ -29,6 +29,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { t } from "./i18n.mjs";
+import { COMPUTER_APP_LIMIT, computerAppRow, computerUsePrefs } from "../web/computer-prefs.mjs";
 
 const DIR = process.env.AGENT_HOST_DATA ?? path.join(os.homedir(), ".agent-host");
 const FILE = path.join(DIR, "sessions.json");
@@ -111,6 +112,32 @@ export async function rememberBrowserSite(site) {
   return exclusive(async () => {
     const all = await prefs.read();
     all.agentSitePermissions = [...(all.agentSitePermissions ?? []).filter(row => row.agent !== site.agent || row.origin !== site.origin), site];
+    await prefs.write();
+    return { ...all };
+  });
+}
+
+/** computer use の「常に許可」に 1 行足す（同じ id は名前・パス・日時を新しくする）。形が違えば足さない。一覧が上限なら古い順に落とす */
+export async function rememberComputerApp(app) {
+  return exclusive(async () => {
+    const all = await prefs.read();
+    const row = computerAppRow({ id: app?.id, name: app?.name, kind: app?.kind, ...(app?.path ? { path: app.path } : {}), at: new Date().toISOString() });
+    if (!row) return { ...all };
+    const current = computerUsePrefs(all);
+    const rows = [...current.alwaysAllowed.filter(r => r.id !== row.id), row];
+    all.computerUse = { ...current, alwaysAllowed: rows.slice(-COMPUTER_APP_LIMIT) };
+    await prefs.write();
+    return { ...all };
+  });
+}
+
+/** 「常に許可」から 1 行消す。次にそのアプリを触るとまた聞かれる */
+export async function forgetComputerApp(id) {
+  return exclusive(async () => {
+    const all = await prefs.read();
+    const current = computerUsePrefs(all);
+    if (!current.alwaysAllowed.some(r => r.id === id)) return { ...all };
+    all.computerUse = { ...current, alwaysAllowed: current.alwaysAllowed.filter(r => r.id !== id) };
     await prefs.write();
     return { ...all };
   });
@@ -357,7 +384,7 @@ export const dataDir = DIR;
 
 /** Host-only data; durable before acknowledging the client. Roll back a failed write. */
 export async function setSessionData(sessionId, field, value) {
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept"].includes(field)) throw new Error(t("store.invalidSessionField"));
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];

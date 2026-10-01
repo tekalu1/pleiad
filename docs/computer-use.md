@@ -52,7 +52,7 @@
 | main→core | `computer-displays-changed` | `{ displays, displaysVersion }`。`screen` の `display-added` / `display-removed` / `display-metrics-changed` で版を 1 進める |
 | core→main | `computer-arm` | `{ owner }` / `{ owner: null }`。ロックの持ち主が変わった。持ち主が変わると、main は前の持ち主の押したままの入力を離し（`releaseAll`）、その持ち主のオーバーレイを消す |
 | core→main | `computer-heartbeat` | `{ owner }`。持ち主がいる間、core が 10 秒ごとに送る |
-| core→main | `computer-overlay` | `{ owner, state, display, agent, title, cursor? }`。`state` は `activity` / `stopped` / `hide`。`cursor` は `{ x, y, pressed }`（物理） |
+| core→main | `computer-overlay` | `{ owner, state, display, agent, title, cursor? }`。`state` は `activity` / `stopped` / `hide`。`cursor` は `{ x, y, pressed }`（物理）。`display` は `displays` の要素（`{ id, index, bounds, … }`）。main は物理の `bounds` でモニターを決める |
 | main→core | `computer-escape` | `{ owner }`。物理の Esc を拾った |
 | core→main | `computer-stop` | `{ owner }`。会話の「止める」・ターンの中断で止めた（main は Esc と同じ後始末をする。`computer-escape` は返さない） |
 | core→main | `computer-turn-ended` | `{ owner }`。`releaseAll` と `hide` をまとめて行う |
@@ -64,7 +64,7 @@
 | op | args | data |
 |---|---|---|
 | `displays` | — | `{ displays, displaysVersion }` |
-| `screenshot` | `{ display, maxPixels, maxEdge, quality, region?, upscale? }`。`region` は物理の `{ x, y, width, height }`（zoom のとき） | `{ jpeg: Uint8Array, width, height, scale, origin: { x, y }, displaysVersion }`。`scale` は「画像の画素 / 物理画素」、`origin` は撮った範囲の左上（物理） |
+| `screenshot` | `{ display, maxPixels, maxEdge, quality, region?, upscale? }`。`region` は物理の `{ x, y, width, height }`（zoom のとき）。`display` は `displays` の `id`（`index` はモデルに見せる番号にだけ使う） | `{ jpeg: Uint8Array, width, height, scale, origin: { x, y }, displaysVersion }`。`scale` は「画像の画素 / 物理画素」、`origin` は撮った範囲の左上（物理） |
 | `appAt` | `{ x, y }` | `{ app: AppInfo \| null }`（点の下の窓の最上位の窓） |
 | `foreground` | — | `{ app: AppInfo \| null }` |
 | `findApp` | `{ name }`（表示名・exe 名・AUMID） | `{ apps: AppInfo[] }`（動いているものとスタートメニューのアプリから。一致の強い順） |
@@ -139,7 +139,7 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 - 座標は常に「**その会話で最後に撮った全画面のスクリーンショットの画素**」。zoom の後も変わらない。サーバーは会話ごとに最後の撮影 `{ shotId, display, scale, origin, width, height, displaysVersion }` を持つ。
   - 物理座標 = `origin + round(x / scale)`。画像の外は丸めずに `outside` で返し、撮り直させる。
   - 撮影の後に `displaysVersion` が変わったら、座標の操作は `stale` で返す。
-  - 撮影の前の座標の操作は `no_shot` で返す。
+  - 撮影の前の座標の操作は `no_shot` で返す。前のターンの撮影は使えない（ターンが替わったら `no_shot`）。
 - 結果は MCP の `content[]`。1 つ目は必ず text で、人が読める短い文と、最後の行に印の行（下の「印の行」）。画像を返すツールは 2 つ目に `{ type: 'image', mimeType: 'image/jpeg', data }` を置く。`delivery.images` が `path` なら、text に保存先の絶対パスの行（`computer.shotPath`）を足す。
 - `isError` は `state` が `ok` 以外のとき true。
 
@@ -284,7 +284,7 @@ permission: { …, toolName: 'ply_computer', canAlways: true,
 
 `resolvePermission` に `scope` を足す: `{ id, allow, scope?: 'once' | 'session' | 'always' }`。
 
-- `ply_computer` の答えは `allow: true, scope: 'session'`（この会話で許可）か `scope: 'always'`（常に許可）か `allow: false`（拒否）。
+- `ply_computer` の答えは `allow: true, scope: 'session'`（この会話で許可）か `scope: 'always'`（常に許可）か `allow: false`（拒否）。`scope: 'once'` は、そのターンの間だけの許可で、どこにも覚えない。
 - `scope` が無く `always: true` なら `always`、無ければ `once` と読む（今の画面との互換）。
 
 #### `hostCapabilities`

@@ -1,0 +1,26 @@
+/* 設定 › コンピューターの操作（web/computer-settings.mjs。docs/design-system.md「設定 › コンピューターの操作」） */
+#computerPanel{max-width:680px}
+#computerPanel .rm-state[hidden],#computerPanel [hidden]{display:none}
+.cu-switch{min-height:34px}
+.cu-body .cu-switch{margin-top:18px}
+.cu-h{display:flex;align-items:center;gap:8px;margin:22px 0 6px;font-size:var(--fs-s);font-weight:600;color:var(--ink)}
+.cu-tag{padding:1px 8px;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink-blue);font-size:var(--fs-xs);font-weight:600}
+.cu-apps{display:flex;flex-direction:column;gap:4px}
+.cu-apps.dim{opacity:.4}
+.cu-app{display:flex;align-items:center;gap:10px;min-width:0;padding:8px 12px;border-radius:var(--r-m);background:var(--surface-1)}
+.cu-appic{flex:none;width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linejoin:round}
+.cu-app-name{flex:none;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.cu-app-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak)}
+.cu-app .btn{flex:none;padding:2px 10px}
+.cu-empty{padding:8px 12px;color:var(--ink-weak);font-size:var(--fs-s)}
+.cu-deny{margin-top:18px}
+.cu-deny summary{cursor:pointer;font-size:var(--fs-s);font-weight:600;color:var(--ink)}
+.cu-deny-rows{margin-top:8px;border-radius:var(--r-m);overflow:hidden;background:var(--surface-1);font-size:var(--fs-s)}
+.cu-deny-row{display:flex;gap:16px;padding:6px 12px}
+.cu-deny-row:nth-child(even){background:var(--surface-2)}
+.cu-deny-name{flex:none;width:9em;color:var(--ink)}
+.cu-deny-apps{flex:1;min-width:0;color:var(--ink-weak);overflow-wrap:anywhere}
+@media (max-width:520px){
+  .cu-deny-row{flex-direction:column;gap:2px}
+  .cu-deny-name{width:auto}
+}

@@ -11,14 +11,14 @@ async function until(fn) { for (let i = 0; i < 100; i++) { if (fn()) return; awa
 
 export default async function(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-silence-'));
-  let clock = 0, approval = false, release;
+  let clock = 0, approval = false, lockWait = false, release;
   const notices = [];
   const manager = await createAgentTasks({
     dataDir: dir, now: () => clock, silenceMinutes: 15, log: () => {},
     prepare: async () => ({ sessionId: 'child', backend: 'fake' }),
     execute: async (_task, _prompt, signal) => { await new Promise(resolve => { release = resolve; signal.addEventListener('abort', resolve, { once: true }); }); return { outcome: 'ok', text: 'done' }; },
     deliver: async () => 'ok', deliverSilence: async (task, minutes) => { notices.push({ task, minutes }); return 'ok'; },
-    waiting: () => approval,
+    waiting: () => approval, lockWaiting: () => lockWait,
   });
   try {
     const task = await manager.call('parent', 'ply_delegate', { backend: 'fake', task: 'work', title: 'Long work' });
@@ -49,6 +49,17 @@ export default async function(t) {
     clock = 214 * 60000; manager.checkSilence(); await sleep(20);
     t.ok('承認後は待機時間を除いて数え直す', notices.length === 2);
     clock = 215 * 60000; manager.checkSilence(); await until(() => notices.length === 3);
+    // コンピューターの操作のロックを待っている間（承認待ちではない）も、無音に数えない。status は waiting にしない
+    manager.activity('child');
+    lockWait = true; manager.checkSilence();
+    clock = 400 * 60000; manager.checkSilence(); await sleep(20);
+    t.ok('ロック待ちは無音に数えず、承認待ち（status: waiting）にもしない', notices.length === 3
+      && (await manager.call('parent', 'ply_task_status', { taskId: task.taskId })).status === 'running'
+      && (await manager.call('parent', 'ply_task_list')).tasks[0].silenceMinutes === null);
+    lockWait = false; manager.checkSilence();
+    clock = 400 * 60000 + 14 * 60000; manager.checkSilence(); await sleep(20);
+    t.ok('ロック待ちが終わったら数え直す', notices.length === 3);
+    clock = 400 * 60000 + 15 * 60000; manager.checkSilence(); await until(() => notices.length === 4);
     release(); await until(() => manager.get(task.taskId).status === 'completed');
   } finally { manager.close(); await fs.rm(dir, { recursive: true, force: true }); }
 
