@@ -56,11 +56,12 @@ const button = (icon, label, action, className = 'btn btn-icon') => {
 /**
  * 部品を作る。bridge は window.plyDesktop.browser。showMenu は右クリックメニュー（web/client.mjs）。
  * getSessionId は今開いている会話（タブがどの会話から開かれたかを main が覚える）。
- * openPanel は右パネルをブラウザーのモードにする関数（web/file-preview.mjs が後から入れる）。onEmpty は最後のタブを閉じたとき。
+ * openPanel は右パネルをブラウザーのモードにする関数（web/file-preview.mjs が後から入れる）。onEmpty は同じ会話のまま最後のタブが無くなったとき
+ * （タブの無い会話へ移っただけなら呼ばず、パネルは開いたまま）。
  * onChange は main から状態（タブ・エージェントの操作）が届いて描き直した後（頭の行のボタンの操作中の印。web/header-entries.mjs）
  */
 export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMenu, getSessionId = () => null, getAgentName = () => 'Agent', onChange = () => {} } = {}) {
-  let state = { tabs: [], current: null, agent: null };
+  let state = { tabs: [], current: null, agent: null, sessionId: null };
   let shown = false, covered = false, freezing = null, editing = false;
   let hooks = { openPanel: () => {}, onEmpty: () => {} };
   const current = () => state.tabs.find(tab => tab.id === state.current) ?? null;
@@ -167,7 +168,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
 
   function paint(next) {
     const before = state;
-    state = { tabs: Array.isArray(next?.tabs) ? next.tabs : [], current: next?.current ?? null, agent: next?.agent ?? null };
+    state = { tabs: Array.isArray(next?.tabs) ? next.tabs : [], current: next?.current ?? null, agent: next?.agent ?? null, sessionId: next?.sessionId ?? null };
     const active = !!state.agent && state.agent.sessionId === getSessionId();
     agentRow.hidden = !active;
     agentStatus.replaceChildren();
@@ -185,8 +186,8 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
     openExternal.disabled = !tab?.external;
     empty.hidden = !!tab?.url;
     paintTabs(); paintAddress();
-    // 最後のタブを閉じたらパネルごと閉じる
-    if (before.tabs.length && !state.tabs.length && shown) hooks.onEmpty();
+    // 最後のタブを閉じたらパネルごと閉じる。タブの無い会話へ移っただけなら閉じない（一覧は会話ごと。desktop/browser-panel.cjs）
+    if (before.tabs.length && !state.tabs.length && shown && before.sessionId === state.sessionId) hooks.onEmpty();
     onChange(state);
   }
 

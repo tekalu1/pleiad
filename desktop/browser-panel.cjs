@@ -157,7 +157,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     };
   }
   function snapshot() {
-    return { tabs: visibleTabs().map(info), current, agent: agents.get(context.sessionId) ?? null };
+    return { tabs: visibleTabs().map(info), current, agent: agents.get(context.sessionId) ?? null, sessionId: context.sessionId };
   }
   let pushTimer = null;
   function push() {

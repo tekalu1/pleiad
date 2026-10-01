@@ -278,6 +278,13 @@ export default async function (t) {
     panel.show();
     bridge.push({ tabs: [], current: null });
     assert.equal(emptied, 1);
+    // タブの無い会話へ移っただけなら閉じない（パネルは開いたまま、空の表示）
+    bridge.push({ tabs: [{ id: 't2', url: 'https://example.com/', title: '', loading: false, canGoBack: false, canGoForward: false }], current: 't2', sessionId: 's1' });
+    bridge.push({ tabs: [], current: null, sessionId: 's2' });
+    assert.equal(emptied, 1, '会話を移って 0 枚になってもパネルを閉じない');
+    bridge.push({ tabs: [{ id: 't3', url: 'https://example.com/', title: '', loading: false, canGoBack: false, canGoForward: false }], current: 't3', sessionId: 's2' });
+    bridge.push({ tabs: [], current: null, sessionId: 's2' });
+    assert.equal(emptied, 2, '同じ会話で最後のタブを閉じたら閉じる');
   });
   t.ok('画面: openInBrowserPanel は正規化して開き、枠の位置を送り、状態から戻る・進む・印・タブを描き、隠すと外す', true);
 
