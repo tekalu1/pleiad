@@ -2,9 +2,18 @@
 
 エージェントが Windows の画面を撮り、マウスとキーボードで PC のアプリを操作する（[ADR 0070](adr/0070-computer-use-via-ply-computer-mcp.md)）。対象は Claude・Codex・Antigravity の 3 つで、どれにも Pleiad の MCP サーバー `ply_computer` を渡す。承認・止める・会話の中のスクリーンショット・設定は 3 つで同じにする。
 
-状態: 実装中（2026-10-01）。この文書は今は「仕組み」の節（実装の契約）だけを持つ。各担当はこの節だけを見て並行に作る。画面の形・承認・ロック・保存などの利用者向けの説明は、実装が揃った時点で足す。
+状態: 実装済み（2026-10-01）。第 1 段階はデスクトップ版の Windows だけ。ウィンドウ単位の撮影・背面での操作・クリップボード・OCR は第 2 段階。
 
-第 1 段階はデスクトップ版の Windows だけ。ウィンドウ単位の撮影・背面での操作・クリップボード・OCR は第 2 段階。
+## 使い方
+
+- **できること**: 会話の中でエージェントが Windows の画面を撮り、マウスとキーボードでアプリを操作する。使えるのは Windows のデスクトップ版だけ。macOS・Linux・`npm start` の起動では、設定のスイッチが止まり、使えない理由が出る。
+- **設定の場所**: 設定 › コンピューターの操作。全体のスイッチ（既定はオン）、すべてのアプリを許可、常に許可したアプリの一覧（ここから消せる）、操作できないアプリの一覧（読み取りのみ）がある。
+- **承認**: エージェントが初めてそのアプリを操作するとき、入力欄の上にカードが出る。「常に許可」「この会話で許可」「拒否」から選ぶ（拒否はそのターンの間だけ覚える）。ターミナル・パスワード管理・セキュリティソフトなどは承認の設定にかかわらず操作できない。
+- **確認なしの会話**: Claude の bypass・Codex の yolo の会話では承認を聞かずに操作する（操作できないアプリを除く）。Antigravity は確認なしでしか動かないため、同じく承認を聞かない。
+- **止める**: 操作中はディスプレイの縁が光り、上に「操作中」のピルが出る。Esc か会話の「止める」でいつでも止められ、押したままの入力も離れる。止めても会話は続く。
+- **同時に操作できる会話は 1 つ**。別の会話が操作中のときは終わるまで待つ。撮った画面は会話の中に小さな画像で残る。
+
+Windows の arm64 は実機で未確認。ワークフローで arm64 の koffi の本体を入れて作るが、読めるかは確かめていない（読めなければ設定に「この PC では画面を操作する部品を読み込めませんでした。」と出て、アプリは動く）。
 
 ## 仕組み
 
@@ -170,7 +179,14 @@ electron tests/manual/computer-use-probe.cjs             # VM の中で。メモ
 | 番犬 | `computer-arm` の後に core を落とす（ターンの途中でプロセスを止める）と、約 30 秒後に押したままのボタンが離れる |
 | 署名済みのインストーラー | `npm run desktop:dist` の成果物で koffi が読めて、`computer-ready { supported: true }` が返る（Windows の arm64 は下の注を参照） |
 
-arm64 の注: koffi 3 のネイティブ本体は `@koromix/koffi-<os>-<arch>` という別のパッケージで、`npm ci` はビルド機の分（x64 のランナーなら `win32-x64`）しか入れない。x64 のランナーで作る Windows の arm64 のインストーラーには arm64 の本体が入らず、そこでは `computer-ready { supported: false, reason: 'native' }` になる。arm64 でも使うなら、リリースのワークフローで `npm install --no-save --force @koromix/koffi-win32-arm64@3.3.2` を足してから作る。
+arm64 の注: koffi 3 のネイティブ本体は `@koromix/koffi-<os>-<arch>` という別のパッケージで、`npm ci` はビルド機の分（x64 のランナーなら `win32-x64`）しか入れない。x64 のランナーで作る Windows の arm64 のインストーラーには arm64 の本体が入らず、そこでは `computer-ready { supported: false, reason: 'native' }` になる。そのため `evaluation-release.yml`・`desktop-release.yml`・`desktop.yml` は `npm ci` の後に `npm install --no-save --force @koromix/koffi-win32-arm64@<koffi の版>` で arm64 の本体を足し、`scripts/release-preflight.mjs` が両方の本体の有無を確かめる。実機の arm64 で読めるかは未確認。
+
+本物の SendInput で通しを流して分かったこと（2026-10-01。利用者が席を外した PC で、操作先を自分で起動したテスト用の窓に限って実施）:
+
+- IME がオン（開いている）と、`type` の KEYEVENTF_UNICODE の仮名は変換中の文字列に取り込まれ、後ろの ASCII・漢字より遅れて確定する。1 字ずつ・15ms 空けても直らない。そのため `type` の間だけ前面の窓の IME を閉じて戻す（`win32.imeClose`）。
+- `RegisterHotKey` は修飾キーまで一致しないと反応しない。`hold_key shift` の最中は素の Esc が合わないので、Shift/Ctrl/Alt つきの Esc も握る（Ctrl+Shift+Esc は奪わない）。注入した Esc（`keybd_event`）でも `globalShortcut` は反応する。
+- 利用者のメモ帳が開いていると、`open_application` は動いているアプリを前面に出すので、そのメモ帳に入力してしまう。無人の確認では、メモ帳の代わりに自分で起こしたテスト用の窓を使い、入力の前に点の下・前面の窓が自分のものか確かめる。
+- Windows PowerShell 5.1 の `Graphics.CopyFromScreen` は `SourceCopy | CaptureBlt` を受け付けない（例外）。CAPTUREBLT の撮影は `BitBlt` を直に呼ぶ。
 
 ### MCP サーバー `ply_computer`
 

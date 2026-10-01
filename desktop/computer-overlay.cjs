@@ -131,6 +131,11 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
   }
 
   // ------------------------------------------------------------------ Esc
+  // RegisterHotKey は修飾キーまで一致しないと反応しない。エージェントが Shift・Ctrl・Alt を押したままにしている最中（hold_key・keyDown）は
+  // 素の Esc が合わず、止めたいときに限って止まらない（2026-10-01 に本物で確認）。修飾キーつきの Esc も同じ手で握る。
+  // Ctrl+Shift+Esc はタスクマネージャーの起動なので奪わない
+  const ESC_WITH_MODIFIERS = ['Shift+Escape', 'Control+Escape', 'Alt+Escape', 'Control+Alt+Escape', 'Alt+Shift+Escape'];
+  const extraEsc = new Set();
   function onKey() {
     if (!cur || cur.phase !== 'active') return;
     stop({ escape: true });
@@ -142,7 +147,13 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
     if (suspended || escRegistered) return true; // 注入の間だけ外している。戻すときにもう一度握る
     let ok = false;
     try { ok = globalShortcut.register('Escape', onKey); } catch (error) { log('could not register Escape:', error?.message ?? error); }
-    if (ok) { escRegistered = true; return true; }
+    if (ok) {
+      escRegistered = true;
+      for (const accelerator of ESC_WITH_MODIFIERS) { // 握れなくても（ほかのアプリが持っている）素の Esc があれば足りる
+        try { if (globalShortcut.register(accelerator, onKey)) extraEsc.add(accelerator); } catch { /* 無視 */ }
+      }
+      return true;
+    }
     log('could not register Escape (another app holds it); the pill omits the Esc hint and only the conversation Stop works');
     return false;
   }
@@ -150,6 +161,8 @@ function createComputerOverlay({ electron, post, t, onEscape, reducedMotion, con
   function releaseEscape() {
     if (!escRegistered) return;
     escRegistered = false;
+    for (const accelerator of extraEsc) { try { globalShortcut.unregister(accelerator); } catch { /* 解除済み */ } }
+    extraEsc.clear();
     try { globalShortcut.unregister('Escape'); } catch { /* 解除済み */ }
   }
 
