@@ -10,3 +10,7 @@ for (const arch of process.platform === 'win32' ? ['x64', 'arm64'] : process.pla
   await fs.access(new URL(`../node_modules/node-pty/prebuilds/${process.platform}-${arch}/pty.node`, import.meta.url));
 }
 if (typeof pty.spawn !== 'function') throw new Error('node-pty を読み込めません');
+// koffi（computer use）の Windows の本体は両 CPU の分が要る。npm ci はビルド機の分しか入れないので、ワークフローが arm64 を足す
+if (process.platform === 'win32') for (const arch of ['x64', 'arm64']) {
+  await fs.access(new URL(`../node_modules/@koromix/koffi-win32-${arch}/win32_${arch}/koffi.node`, import.meta.url));
+}
