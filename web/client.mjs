@@ -4,6 +4,7 @@ import { setupFilePreview } from './file-preview.mjs';
 import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
 import { isManagedContext, paintContextEntry as paintContextEntryButton, setupBrowserEntry } from './header-entries.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
+import { setupComputerSettings } from './computer-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
 import { configureLinkOpen } from './link-open.mjs';
 import { setupLinkMenu } from './link-menu.mjs';
@@ -2020,7 +2021,7 @@ function onEvent(ev, replay = false) {
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
   if (ev.type === 'compactionSchedule') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
@@ -4636,6 +4637,7 @@ browserEntry = setupBrowserEntry({ button: $('browserEntry'), browser: browserPa
   getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
 // External resource confirmation is available on every screen.
+const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getHostCaps: () => state.hostCaps });
 const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf });
 // 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
 configureLinkOpen({ getPrefs: () => state.prefs, chooseRemote: (url, openHere) => chooseRemote({ url, openHere }) });
@@ -5695,6 +5697,7 @@ async function runRefresh() {
   state.prefs = prefs ?? {};
   paintAutoCompactionSettings();
   browserSettings.paint();
+  computerSettings.paint();
   refreshPreviewConfirmation();
   await loadBackends();
   await syncTopbar();
@@ -6476,6 +6479,7 @@ function connect() {
       // 同じ答えで、添付の出どころを選ばせるか（ホストの画面でない接続）も決める（composer-layout.mjs の attachSources）
       cmd("hostCapabilities").then((c) => {
         state.hostCaps = c ?? null;
+        computerSettings.paint();
         state.osActions = c?.osActions === true && !window.plyRemote;
         filePreview.osChanged();
         syncAttachButton();

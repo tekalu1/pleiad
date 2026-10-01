@@ -65,6 +65,8 @@ import { parentPortBrowser, browserEnvironment, browserInstruction } from './age
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { validBrowserPref } from '../web/browser-confirm-policy.mjs';
+import { computerUsePrefs, validComputerUse } from '../web/computer-prefs.mjs';
+import { computerUseCapability } from './computer-use-capability.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { serveFrom } from "../web/history-sync.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, pendingHandoff, conversation } from "./conversations.mjs";
@@ -85,6 +87,9 @@ migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_C
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
 const agentBrowser = parentPortBrowser(process.parentPort);
+// main の computer-ready（設定の画面に、使えない理由を出すため。docs/computer-use.md）
+let computerReady = null;
+process.parentPort?.on('message', ({ data }) => { if (data?.type === 'computer-ready') computerReady = { supported: data.supported === true, reason: data.reason }; });
 // リモートの端末から PC の内蔵ブラウザーを見る（core/browser-screencast.mjs）。デスクトップ版だけ
 const screencastBridge = parentPortScreencast(process.parentPort);
 const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencastBridge }) : null;
@@ -3734,7 +3739,8 @@ wss.on("connection", (ws, req) => {
         case "hostCapabilities":
           // hostName は添付の「ホストから <ホスト名>」の見出し（リモートの印の無いブラウザーで使う）
           // pcBrowser: この接続から PC の内蔵ブラウザーを見られるか（デスクトップ版で、リモートの接続のとき）
-          return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready });
+          return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready,
+            computerUse: computerUseCapability({ hasParentPort: Boolean(process.parentPort), ready: computerReady }) });
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));
@@ -3993,6 +3999,15 @@ wss.on("connection", (ws, req) => {
             const prefs = await savePref(key, value);
             agentBrowser?.prefs(prefs);
             return reply(true, prefs);
+          }
+          // computer use の設定（docs/computer-use.md）。全体を受けて形を検査し、変わったときだけ全画面へ流す
+          if (key === 'computerUse') {
+            if (value === null) return reply(true, await savePref(key, null));
+            const current = await store.getPrefs();
+            const next = validComputerUse(value, computerUsePrefs(current));
+            if (!next) return reply(false, t('settings.unknownPrefValue', { key, value: JSON.stringify(value)?.slice(0, 80) ?? String(value) }));
+            if (JSON.stringify(next) === JSON.stringify(computerUsePrefs(current)) && current.computerUse) return reply(true, current);
+            return reply(true, await savePref(key, next));
           }
           if (key === "backend") {
             if (!getBackend(value)) return reply(false, t('agents.unknown'));
