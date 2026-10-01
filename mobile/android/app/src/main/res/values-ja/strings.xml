@@ -8,6 +8,7 @@
     <string name="remote_page_offline">中継につながりません。ネットワークを確かめてください。つながり次第、自動で開きます。</string>
     <string name="remote_token_required">トークンが要る（アプリから開いてください）</string>
     <string name="remote_lost">ホストとの接続が切れました</string>
+    <string name="remote_back_to_hosts">ホスト一覧に戻る</string>
     <string name="host_open_failed">このホストを開けませんでした。戻ってもう一度試してください。</string>
     <!-- ホストの窓のリンク（web/locales/ja/ui.json の timeline.link.hostOnly と同じ文言） -->
     <string name="link_host_only">localhost のリンクはホストの PC でだけ開けます。</string>

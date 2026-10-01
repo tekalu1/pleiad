@@ -88,6 +88,7 @@ class HostActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         hostId = intent.getStringExtra(EXTRA_HOST_ID) ?: return finish()
+        ResumeStore(this).remember(hostId)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         // The system bars are colored, but nothing of the page is drawn under them (2026-09-24): the page sits in `frame`,
         // padded by the bars, the cutout and the keyboard. The bars show the page's colors instead (topBand for the status
@@ -334,7 +335,7 @@ class HostActivity : ComponentActivity() {
                 "hello" -> { reply = replyProxy; pushStatus(px.link.status) }
                 "retry" -> px.retryNow()
                 "theme" -> applyTheme(message.data)
-                "back" -> finish()
+                "back" -> backToList()
             }
         }
         WebViewCompat.addDocumentStartJavaScript(w, remoteScript(info), setOf(origin))
@@ -386,9 +387,15 @@ class HostActivity : ComponentActivity() {
         try { r.postMessage(JSONObject().put("type", "status").put("status", s.toJson()).toString()) } catch (_: Exception) {}
     }
 
+    /** The user left for the host list: the next launcher start shows the list too, not this host (ResumeStore). */
+    private fun backToList() {
+        ResumeStore(this).forget(hostId)
+        runOnUiThread { finish() }
+    }
+
     private fun offerBack() {
         if (sheet != null) return closePopup()
-        val w = web ?: return finish()
+        val w = web ?: return backToList()
         w.evaluateJavascript("(() => { try { return !window.dispatchEvent(new CustomEvent('plyremote:back', { cancelable: true })); } catch (e) { return false; } })()") { result ->
             if (result != "true") moveTaskToBack(true)
         }
