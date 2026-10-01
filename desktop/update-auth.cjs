@@ -3,12 +3,11 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { parse } = require('yaml');
-const { t } = require('./i18n.cjs');
 
-/** GitHub の認証が要るときの文。今の言語で（読むたびに引く） */
-const authMessage = () => t('update.authRequired');
 const runFile = promisify(execFile);
 
+// 配布先は public なので、トークンが無くても更新は取れる（認証なしは 1 IP で 1 時間 60 回まで）。
+// トークンがあればレート制限を避けるために使う。取れなければ null を返す。
 async function resolveGitHubToken({ env = process.env, run = runFile, platform = process.platform } = {}) {
   // Credentials stay in Electron main memory: never save them in update
   // preferences, the renderer, package metadata, or the server environment.
@@ -27,9 +26,7 @@ async function resolveGitHubToken({ env = process.env, run = runFile, platform =
       if (stdout.trim()) return stdout.trim();
     } catch { /* CLI errors can contain credentials; never forward them. */ }
   }
-  const error = new Error(authMessage());
-  error.code = 'PLY_UPDATE_AUTH';
-  throw error;
+  return null;
 }
 
 // electron-updater は /releases の先頭のプレリリースをそのまま最新とみなす。GitHub はこの一覧を
@@ -40,11 +37,20 @@ function newestReleaseProvider() {
   const semver = require(require.resolve('semver', { paths: [updaterDir] }));
   const { PrivateGitHubProvider } = require('electron-updater/out/providers/PrivateGitHubProvider');
   return class NewestReleaseProvider extends PrivateGitHubProvider {
-    constructor(options, updater, runtimeOptions) { super(options, updater, options.token, runtimeOptions); }
+    constructor(options, updater, runtimeOptions) { super(options, updater, options.token || null, runtimeOptions); }
+    // トークンが無いときは authorization を付けない（`token undefined` を送ると 401 になる）。
+    configureHeaders(accept) {
+      return this.token ? super.configureHeaders(accept) : { accept };
+    }
     async getLatestVersionInfo(cancellationToken) {
-      if (!this.updater.allowPrerelease) return super.getLatestVersionInfo(cancellationToken);
+      const json = 'application/vnd.github.v3+json';
+      // 標準の実装は失敗を包み直して HTTP の状態コードを落とすので、状態コードでエラー文を分けられるよう自前で取る
+      if (!this.updater.allowPrerelease) {
+        const url = new URL(`${this.basePath}/latest`, this.baseUrl);
+        return JSON.parse(await this.httpRequest(url, this.configureHeaders(json), cancellationToken));
+      }
       const url = new URL(`${this.basePath}?per_page=100`, this.baseUrl);
-      const list = JSON.parse(await this.httpRequest(url, this.configureHeaders('application/vnd.github.v3+json'), cancellationToken));
+      const list = JSON.parse(await this.httpRequest(url, this.configureHeaders(json), cancellationToken));
       return newestRelease(list, semver);
     }
   };
@@ -67,6 +73,8 @@ async function prepareUpdateCheck(updater, configFile, authOptions) {
   if (config.host && config.host !== 'github.com') throw new Error('Unsupported private update host');
   const token = await resolveGitHubToken(authOptions);
   updater.setFeedURL({ ...config, token, provider: 'custom', updateProvider: newestReleaseProvider() });
+  // 呼び出し側がエラー文を分けるための印。トークンそのものは返さない。
+  return { authenticated: Boolean(token) };
 }
 
-module.exports = { get AUTH_MESSAGE() { return authMessage(); }, authMessage, resolveGitHubToken, prepareUpdateCheck, newestRelease };
+module.exports = { resolveGitHubToken, prepareUpdateCheck, newestRelease };

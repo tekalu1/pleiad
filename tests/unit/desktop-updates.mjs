@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { HttpError } from 'builder-util-runtime';
 import { createRequire } from 'node:module';
 import { parse, stringify } from 'yaml';
 import { createUpdateGate } from '../../core/update-gate.mjs';
@@ -15,7 +16,8 @@ const { releaseSigning } = createRequire(import.meta.url)('../../scripts/release
 const { AppUpdater } = createRequire(import.meta.url)('electron-updater/out/AppUpdater.js');
 const { GitHubProvider } = createRequire(import.meta.url)('electron-updater/out/providers/GitHubProvider.js');
 const { PrivateGitHubProvider } = createRequire(import.meta.url)('electron-updater/out/providers/PrivateGitHubProvider.js');
-const { AUTH_MESSAGE, resolveGitHubToken, prepareUpdateCheck } = createRequire(import.meta.url)('../../desktop/update-auth.cjs');
+const { resolveGitHubToken, prepareUpdateCheck } = createRequire(import.meta.url)('../../desktop/update-auth.cjs');
+const { t: tr } = createRequire(import.meta.url)('../../desktop/i18n.cjs');
 export const name = 'desktop-updates';
 export const title = 'Desktop update state, persistence, release integrity and safe shutdown';
 export default async function(t) {
@@ -24,7 +26,7 @@ export default async function(t) {
   try {
     class FakeUpdater extends EventEmitter {
       checks = 0; downloads = 0; latest = '0.2.0';
-      async checkForUpdates() { this.checks++; if (this.fail) throw new Error('network'); this.emit('update-available', { version: this.latest, releaseNotes: '<script>untrusted()</script>' }); }
+      async checkForUpdates() { this.checks++; if (this.fail) throw this.failure ?? new Error('network'); this.emit('update-available', { version: this.latest, releaseNotes: '<script>untrusted()</script>' }); }
       async downloadUpdate() { this.downloads++; this.emit('download-progress', { percent: 51 }); this.emit('update-downloaded'); }
     }
     const updater = new FakeUpdater(); let installed = 0, blocked = false;
@@ -59,11 +61,16 @@ export default async function(t) {
     const feedUpdater = { setFeedURL(value) { feed = value; } };
     await prepareUpdateCheck(feedUpdater, configFile, authOptions);
     t.ok('Private provider receives credentials only in memory', feed.private && feed.token === 'test-private-token' && await fs.readFile(configFile, 'utf8') === configText);
+    t.ok('Check reports it is authenticated without exposing the token', JSON.stringify(await prepareUpdateCheck(feedUpdater, configFile, { ...authOptions, env: { GH_TOKEN: 'env-token' } })) === '{"authenticated":true}');
     await prepareUpdateCheck(feedUpdater, configFile, authOptions);
     t.ok('Retry reloads CLI authentication', cliCalls === 2);
-    let authError;
-    try { await resolveGitHubToken({ env: {}, platform: 'linux', run: async () => { throw new Error('secret-output'); } }); } catch (e) { authError = e; }
-    t.ok('Missing authentication has a safe actionable error', authError?.code === 'PLY_UPDATE_AUTH' && authError.message === AUTH_MESSAGE && !authError.message.includes('secret-output'));
+    // 認証が無くても止めない（配布先は public）。CLI の生のエラーは握りつぶして外へ出さない
+    const noAuthOptions = { env: {}, platform: 'linux', run: async () => { throw new Error('secret-output'); } };
+    t.ok('Missing authentication resolves to no token instead of failing', await resolveGitHubToken(noAuthOptions) === null);
+    t.ok('Blank environment credential is ignored', await resolveGitHubToken({ ...noAuthOptions, env: { GH_TOKEN: '  ', GITHUB_TOKEN: '' } }) === null);
+    let anonymousFeed;
+    const anonymousResult = await prepareUpdateCheck({ setFeedURL(value) { anonymousFeed = value; } }, configFile, noAuthOptions);
+    t.ok('Update check proceeds without a token using the same newest-release provider', anonymousResult.authenticated === false && !anonymousFeed.token && anonymousFeed.provider === 'custom' && typeof anonymousFeed.updateProvider === 'function' && await fs.readFile(configFile, 'utf8') === configText);
     await fs.writeFile(configFile, stringify({ ...parse(configText), host: 'unexpected.example' }));
     await rejects('Credentials cannot go to an unexpected host', () => prepareUpdateCheck(feedUpdater, configFile, authOptions));
     t.ok('Unsupported host is rejected before credential lookup', cliCalls === 2);
@@ -93,6 +100,23 @@ export default async function(t) {
     const newest = await newestProvider.getLatestVersion();
     t.ok('Beta picks the newest version rather than the first listed', newest.version === '0.1.0-beta.11' && newestProvider.resolveFiles(newest)[0].url.pathname.endsWith('/installer'));
     t.ok('Newest-version provider keeps authentication', newestProvider.fileExtraDownloadHeaders.authorization === 'token test-private-token');
+    // トークン無し: 同じプロバイダーで、どの要求にも authorization を付けない
+    const anonymousRequests = [];
+    const anonymousProvider = new anonymousFeed.updateProvider(anonymousFeed, real, { platform: 'win32', executor: { request: async options => {
+      anonymousRequests.push(options);
+      if (options.path.includes('/releases?')) return JSON.stringify([{ ...release('0.1.0-beta.12', true), draft: true }, ...listed]);
+      if (options.path.endsWith('/releases/latest')) return JSON.stringify(release('0.2.0', false));
+      return stringify({ version: options.path.match(/assets\/([^/]+)/)[1], files: [{ url: 'Pleiad.exe', sha512: 'hash' }] });
+    } } });
+    real.channel = 'beta'; real.allowPrerelease = true;
+    const anonymousNewest = await anonymousProvider.getLatestVersion();
+    t.ok('Without a token the newest version is still chosen and files resolve', anonymousNewest.version === '0.1.0-beta.11' && anonymousProvider.resolveFiles(anonymousNewest)[0].url.pathname.endsWith('/installer'));
+    real.channel = 'latest'; real.allowPrerelease = false;
+    t.ok('Without a token the stable channel uses the latest release', (await anonymousProvider.getLatestVersion()).version === '0.2.0');
+    t.ok('Without a token no request carries an authorization header', anonymousRequests.length >= 4 && anonymousRequests.every(r => !Object.keys(r.headers).some(k => k.toLowerCase() === 'authorization') && r.headers.accept));
+    t.ok('Without a token downloads ask for the raw asset and carry no authorization', JSON.stringify(anonymousProvider.fileExtraDownloadHeaders) === '{"accept":"application/octet-stream"}');
+    real.channel = 'latest'; real.allowPrerelease = false;
+    t.ok('Stable-channel HTTP failures keep their status code so the error text can tell them apart', await new anonymousFeed.updateProvider(anonymousFeed, real, { platform: 'win32', executor: { request: async () => { throw new HttpError(429); } } }).getLatestVersion().then(() => 0, e => e.statusCode) === 429);
     real.channel = 'latest'; real.allowPrerelease = false;
     const file = path.join(dir, 'updates.json');
     const make = version => new Updates({ updater, version, file, enabled: true, install: async () => { if (blocked) throw new Error('Busy'); installed++; } });
@@ -155,14 +179,29 @@ export default async function(t) {
     await offline.command('check');
     t.ok('Without automatic download a newer release is offered', offline.snapshot().phase === 'available' && offline.snapshot().target === '0.4.0' && updater.downloads === downloadsBeforeNewer + 1);
     updater.latest = '0.2.0';
+    // 認証なしでも確認は進む。失敗の文は、トークンを付けたかと HTTP の状態コードで分ける
     let authenticated = false;
-    const privateController = new Updates({ updater, version: '0.2.0', file, enabled: true, install: async () => {}, prepareCheck: async () => { if (!authenticated) throw authError; } });
+    const privateController = new Updates({ updater, version: '0.2.0', file, enabled: true, install: async () => {}, prepareCheck: async () => ({ authenticated }) });
     privateController.state.autoDownload = false;
     const checksBeforeAuth = updater.checks;
-    await rejects('Missing authentication stops the update request', () => privateController.command('check'));
-    t.ok('Authentication failure is actionable and no request is sent', privateController.snapshot().error === AUTH_MESSAGE && updater.checks === checksBeforeAuth);
+    await privateController.command('check');
+    t.ok('A check without any credential is sent and succeeds', privateController.snapshot().phase === 'available' && updater.checks === checksBeforeAuth + 1 && !privateController.snapshot().error);
+    const failWith = async (controller, status) => {
+      updater.fail = true; updater.failure = Object.assign(new Error('secret request detail'), { statusCode: status });
+      try { await rejects('Failed check surfaces as an error', () => controller.command('check')); } finally { updater.fail = false; updater.failure = null; }
+      return controller.snapshot().error;
+    };
+    const anonymousLimit = await failWith(privateController, 403);
+    t.ok('Unauthenticated 403 explains the rate limit and suggests gh auth login', anonymousLimit === tr('update.rateLimited') && anonymousLimit.includes('gh auth login') && anonymousLimit.includes('60'));
+    t.ok('Unauthenticated 429 is also the rate limit', await failWith(privateController, 429) === tr('update.rateLimited'));
+    t.ok('Unauthenticated 404 is not presented as an authentication problem', await failWith(privateController, 404) === tr('update.networkFailed'));
     authenticated = true; await privateController.command('check');
-    t.ok('Login can be followed by retry without restarting', privateController.snapshot().phase === 'available' && updater.checks === checksBeforeAuth + 1 && !JSON.stringify(privateController.snapshot()).includes('test-private-token'));
+    t.ok('Authenticated check works and keeps the token out of state', privateController.snapshot().phase === 'available' && !JSON.stringify(privateController.snapshot()).includes('test-private-token'));
+    for (const status of [401, 403]) t.ok(`Authenticated ${status} points at the credential`, await failWith(privateController, status) === tr('update.authFailed'));
+    t.ok('Authenticated 404 (for example no stable release yet) is not blamed on the credential', await failWith(privateController, 404) === tr('update.networkFailed'));
+    const authenticatedLimit = await failWith(privateController, 429);
+    t.ok('Authenticated 429 is a plain rate limit without the login hint', authenticatedLimit === tr('update.rateLimitedAuth') && !authenticatedLimit.includes('gh auth login'));
+    t.ok('Error text never carries raw request details', !JSON.stringify(privateController.snapshot()).includes('secret request detail'));
     const corruptUpdater = new FakeUpdater();
     corruptUpdater.downloadUpdate = async () => {
       const error = Object.assign(new Error('private request secret'), { code: 'ERR_UPDATER_INVALID_SIGNATURE' });

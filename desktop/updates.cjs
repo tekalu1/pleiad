@@ -1,7 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { authMessage } = require('./update-auth.cjs');
 const { t } = require('./i18n.cjs');
 
 // No Electron dependency: the state machine is tested with a fake updater.
@@ -9,6 +8,7 @@ class Updates extends EventEmitter {
   constructor({ updater, version, file, enabled, install, prepareCheck = async () => {} }) {
     super();
     Object.assign(this, { updater, version, file, enabled, install, prepareCheck });
+    this.authenticated = false;
     this.state = { version, enabled, phase: enabled ? 'idle' : 'unavailable', channel: version.includes('-') ? 'beta' : 'stable', autoCheck: true, autoDownload: true, notice: false, lastChecked: null };
     this.busy = false;
     updater.autoDownload = false;
@@ -20,7 +20,7 @@ class Updates extends EventEmitter {
     updater.on('update-downloaded', () => this.patch({ phase: 'downloaded', progress: 100, error: null }));
     updater.on('error', e => {
       // The install lifecycle restores the downloaded state and releases its lock.
-      if (this.state.phase !== 'installing' && !this.recheck) this.patch({ phase: 'error', error: updateError(e) });
+      if (this.state.phase !== 'installing' && !this.recheck) this.patch({ phase: 'error', error: updateError(e, this.authenticated) });
     });
   }
   snapshot() { return { ...this.state }; }
@@ -83,7 +83,7 @@ class Updates extends EventEmitter {
           if (!ready) this.patch({ phase: 'checking', error: null });
           this.recheck = ready;
           try {
-            await this.prepareCheck();
+            this.authenticated = (await this.prepareCheck())?.authenticated === true;
             await this.updater.checkForUpdates();
           } catch (e) {
             if (ready && this.state.phase === 'downloaded') return this.snapshot();
@@ -103,14 +103,17 @@ class Updates extends EventEmitter {
       }
       return this.snapshot();
     } catch (e) {
-      if (['checking', 'downloading', 'error'].includes(this.state.phase)) this.patch({ phase: 'error', error: updateError(e) });
+      if (['checking', 'downloading', 'error'].includes(this.state.phase)) this.patch({ phase: 'error', error: updateError(e, this.authenticated) });
       throw e;
     } finally { this.busy = false; }
   }
   async download() { this.patch({ phase: 'downloading', progress: 0 }); await this.updater.downloadUpdate(); }
 }
-function updateError(error) {
-  if (error?.code === 'PLY_UPDATE_AUTH' || [401, 403, 404].includes(error?.statusCode)) return authMessage();
+// authenticated: この確認でトークンを付けたか。認証なしの 403/429 はレート制限（1 IP で 1 時間 60 回）
+function updateError(error, authenticated = false) {
+  const status = error?.statusCode;
+  if (authenticated && [401, 403].includes(status)) return t('update.authFailed');
+  if (status === 429 || (!authenticated && status === 403)) return authenticated ? t('update.rateLimitedAuth') : t('update.rateLimited');
   if (['ERR_UPDATER_INVALID_SIGNATURE', 'ERR_CHECKSUM_MISMATCH', 'ERR_UPDATER_NO_CHECKSUM'].includes(error?.code)) return t('update.verifyFailed');
   return t('update.networkFailed');
 }
