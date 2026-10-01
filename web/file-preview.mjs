@@ -783,5 +783,10 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
       if (browsing && !panel.hidden) { context = { ...context, sessionId:id }; browser.sessionChanged(id); return; }
       browser?.sessionChanged(id);
       if (!panel.hidden && context.sessionId !== id) close(false);
+    },
+    // 新しい会話に id が付いた（同じ会話のまま）。ブラウザーのタブは会話ごとに絞るので、今の会話だけ知らせる。ほかのモードのパネルは閉じない
+    sessionAssigned(id) {
+      if (browsing && !panel.hidden) context = { ...context, sessionId:id };
+      browser?.sessionChanged(id);
     } };
 }

@@ -33,11 +33,14 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
     const rows = await Promise.all(tabs(entry).map(tab => target(tab).catch(() => null)));
     return rows.filter(Boolean);
   }
-  async function ensureTab(entry) {
+  // エージェントが実際につないだときだけ、その会話にタブが無ければ作る。ターンの開始（endpoint）では作らない
+  // （使わないターンや委譲した子の会話で空のタブが増えるため）。最初のコマンドより前に同期で作るので、getTargets は 1 枚を返す
+  function ensureTab(entry) {
     if (!tabs(entry).length) panel.createFor(entry.id);
   }
   function connect(entry, ws) {
     entry.sockets.add(ws);
+    ensureTab(entry);
     const attached = new Map(); // CDP session ID -> tab and debugger listener
     const known = new Map(); // tab ID -> frame ID
     let discovering = false, autoAttach = false;
@@ -169,7 +172,6 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
     if (!address) address = await new Promise((resolve, reject) => server.listen(0, '127.0.0.1', () => resolve(server.address())).once('error', reject));
     let entry = entries.get(sessionId);
     if (!entry) { entry = { id: sessionId, key: random(), sockets: new Set(), stopped: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
-    await ensureTab(entry);
     return `ws://127.0.0.1:${address.port}/devtools/browser/${entry.key}`;
   }
   function disconnect(sessionId, stop = false) {

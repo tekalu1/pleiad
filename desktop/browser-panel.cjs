@@ -4,6 +4,7 @@
 //   - 置く場所は画面が決める（右パネルの本文の枠の位置と大きさを ply:browser-layout で送ってくる）。
 //     ネイティブの View は DOM より上に描かれるので、メニューなどが重なる間は画面が freeze を頼み、写した画像と差し替えて View を外す
 //   - タブは開いた会話（sessionId）を覚える。CDP 中継は会話ごとのタブへつなぐ（ADR 0043）
+//   - パネルの一覧と今のタブは、今の会話のタブと、会話に属さないタブ（sessionId が null）だけ。会話を移ると、その会話で最後に選んだタブへ替わる
 // 画面との口は ipcMain の ply:browser（invoke）・ply:browser-layout（send）と、画面への ply:browser-state。
 // 送り元はローカルの窓の本体フレームだけ（trust.check(event, ['local'])）。リモートの窓の preload には口を出さない。
 const path = require('node:path');
@@ -100,6 +101,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   let attached = null;             // 窓に載せている View（今のタブ）
   let visible = false, frozen = false, rect = null, radius = 0;
   let context = { sessionId: null };   // 画面で今開いている会話
+  const selected = new Map();      // 会話（sessionId。会話なしは null）-> その会話で最後に選んだタブの id
   let nextId = 1;
   const tabListeners = new Set();
   const agents = new Map();
@@ -125,6 +127,22 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
 
   const tabOf = id => tabs.get(id) ?? null;
   const currentTab = () => tabOf(current);
+  /** パネルに出してよいタブ: 今の会話のものと、会話に属さないもの */
+  const isVisible = tab => tab.sessionId === null || tab.sessionId === context.sessionId;
+  const visibleTabs = () => order.map(id => tabs.get(id)).filter(isVisible);
+  /** そのタブを、その会話で最後に選んだタブとして覚える（会話に属さないタブは今の会話の分） */
+  const remember = tab => { selected.set(tab.sessionId ?? context.sessionId, tab.id); };
+  /** 今のタブが見えないもの（無い・別の会話のもの）になっていたら、見えるタブの先頭へ。無ければ current なし */
+  function reconcile() {
+    const tab = currentTab();
+    if (tab && isVisible(tab)) return;
+    current = visibleTabs()[0]?.id ?? null;
+  }
+  /** 会話を移ったとき: その会話で最後に選んだタブ、なければ見えるタブの先頭、なければ current なし */
+  function pickForContext() {
+    const last = tabOf(selected.get(context.sessionId));
+    current = (last && isVisible(last) ? last : visibleTabs()[0])?.id ?? null;
+  }
   function info(tab) {
     const c = tab.view.webContents;
     // 読み込みが確定するまで getURL は空なので、頼んだ URL を見せる
@@ -139,7 +157,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     };
   }
   function snapshot() {
-    return { tabs: order.map(id => info(tabs.get(id))), current, agent: agents.get(context.sessionId) ?? null };
+    return { tabs: visibleTabs().map(info), current, agent: agents.get(context.sessionId) ?? null, sessionId: context.sessionId };
   }
   let pushTimer = null;
   function push() {
@@ -254,7 +272,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       window.webContents.send('ply:browser-shortcut');
     });
     c.on('destroyed', () => { if (tabs.has(tab.id)) removeTab(tab.id); });
-    if (select) current = tab.id;
+    if (select) { remember(tab); if (isVisible(tab)) current = tab.id; }
     if (url) load(tab, url);
     place(); push();
     for (const listener of tabListeners) listener('created', tab);
@@ -272,10 +290,14 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     if (attached === tab.view) { try { window.contentView.removeChildView(tab.view); } catch {} attached = null; }
     if (parked.delete(tab.view)) { try { window.contentView.removeChildView(tab.view); } catch {} }
     pinned.delete(id);
+    const shown = visibleTabs(), index = shown.indexOf(tab);
     tabs.delete(id);
-    const index = order.indexOf(id);
+    for (const [key, value] of selected) if (value === id) selected.delete(key);
     order = order.filter(x => x !== id);
-    if (current === id) current = order[Math.min(index, order.length - 1)] ?? null;
+    if (current === id) {
+      const rest = shown.filter(x => x !== tab);
+      current = rest[Math.min(index, rest.length - 1)]?.id ?? null;
+    }
     try { if (!tab.detached && !tab.view.webContents.isDestroyed()) tab.view.webContents.close(); } catch {}
     place(); push();
     for (const listener of tabListeners) listener('destroyed', tab);
@@ -324,17 +346,17 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       case 'state': return snapshot();
       case 'agentStop': agentControl('stop', context.sessionId); return snapshot();
       case 'agentTakeOver': agentControl('takeOver', context.sessionId); return snapshot();
-      case 'context': context = { sessionId: typeof args.sessionId === 'string' ? args.sessionId : null }; return snapshot();
+      case 'context': context = { sessionId: typeof args.sessionId === 'string' ? args.sessionId : null }; pickForContext(); place(); push(); return snapshot();
       case 'open': {
         if (tab) navigation?.human({ id: tab.id }, true);
         const url = openable(args.url);
         if (!url) throw new Error('invalid-url');
         if (!tab || args.newTab) createTab({ url });
-        else { current = tab.id; load(tab, url); }
+        else { current = tab.id; remember(tab); load(tab, url); }
         push(); return snapshot();
       }
       case 'newTab': createTab({}); return snapshot();
-      case 'select': if (tab) { current = tab.id; place(); push(); } return snapshot();
+      case 'select': if (tab && isVisible(tab)) { current = tab.id; remember(tab); place(); push(); } return snapshot();
       case 'close': if (tab) removeTab(tab.id); return snapshot();
       case 'back': if (tab) navigation?.human({ id: tab.id }, true); if (tab?.view.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack(); return snapshot();
       case 'forward': if (tab) navigation?.human({ id: tab.id }, true); if (tab?.view.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward(); return snapshot();
@@ -417,14 +439,15 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     tabsFor: sessionId => order.map(id => tabs.get(id)).filter(tab => tab.sessionId === sessionId).map(tab => ({ id: tab.id, webContents: tab.view.webContents })),
     contentsOf: id => tabs.get(id)?.view.webContents ?? null,
     createFor: (sessionId, url = '') => { const tab = createTab({ sessionId, url: url || 'about:blank', select: true }); return { id: tab.id, webContents: tab.view.webContents }; },
-    selectFor: id => { if (tabs.has(id)) { current = id; place(); push(); } },
+    selectFor: id => { const tab = tabs.get(id); if (!tab) return; remember(tab); if (isVisible(tab)) { current = id; place(); } push(); },
     closeFor: id => removeTab(id),
-    rebindSession: (from, to) => { for (const tab of tabs.values()) if (tab.sessionId === from) tab.sessionId = to; if (agents.has(from)) { const active = agents.get(from); agents.delete(from); agents.set(to, { ...active, sessionId: to }); } push(); },
+    rebindSession: (from, to) => { for (const tab of tabs.values()) if (tab.sessionId === from) tab.sessionId = to; if (selected.has(from) && !selected.has(to)) selected.set(to, selected.get(from)); selected.delete(from); reconcile(); place(); if (agents.has(from)) { const active = agents.get(from); agents.delete(from); agents.set(to, { ...active, sessionId: to }); } push(); },
     onTabsChanged: listener => { tabListeners.add(listener); return () => tabListeners.delete(listener); },
     setAgent: (sessionId, tabId) => {
       const before = agents.get(sessionId)?.tabId ?? null;
       if (tabId) agents.set(sessionId, { sessionId, tabId }); else agents.delete(sessionId);
-      if (tabId && context.sessionId === sessionId) { current = tabId; place(); }
+      if (tabId && tabs.has(tabId)) selected.set(sessionId, tabId);
+      if (tabId && context.sessionId === sessionId && tabs.has(tabId)) { current = tabId; place(); }
       push();
       if (before !== (tabId ?? null)) for (const listener of agentListeners) listener(sessionId);
     },

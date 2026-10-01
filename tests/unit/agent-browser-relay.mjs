@@ -62,11 +62,21 @@ function ask(ws, method, params = {}, sessionId) {
 export default async function (t) {
   const panel = fakePanel();
   const relay = createBrowserRelay(panel);
-  let ws;
+  let ws, wsTwo;
   try {
     const url = await relay.endpoint('one');
-    await relay.endpoint('two');
+    const urlTwo = await relay.endpoint('two');
+    await relay.endpoint('idle');
+    t.ok('endpoint() はタブを作らない（ターンの開始だけでは空のタブが増えない）', panel.tabsFor('one').length === 0 && panel.tabsFor('two').length === 0 && panel.tabsFor('idle').length === 0);
     ws = await open(url);
+    await ask(ws, 'Browser.getVersion');
+    t.ok('エージェントがつないだ会話にだけタブを 1 枚作る', panel.tabsFor('one').length === 1 && panel.tabsFor('two').length === 0 && panel.tabsFor('idle').length === 0);
+    wsTwo = await open(urlTwo);
+    await ask(wsTwo, 'Browser.getVersion');
+    t.ok('別の会話がつないでも、その会話の分だけ作る', panel.tabsFor('one').length === 1 && panel.tabsFor('two').length === 1);
+    const again = await open(url);
+    await ask(again, 'Browser.getVersion'); again.close();
+    t.ok('つなぎ直してもタブが残っていれば増やさない', panel.tabsFor('one').length === 1);
     const targets = (await ask(ws, 'Target.getTargets')).result.targetInfos;
     t.ok('ほかの会話と本体のターゲットは見えない', targets.length === 1 && targets[0].targetId === 'frame-t1');
     t.ok('Browser.getVersion と getBrowserContexts', !!(await ask(ws, 'Browser.getVersion')).result.product && Array.isArray((await ask(ws, 'Target.getBrowserContexts')).result.browserContextIds));
@@ -98,7 +108,25 @@ export default async function (t) {
     t.ok('引き継ぐと同じ鍵で再接続できる', takenOver.readyState !== WebSocket.CONNECTING);
     const bad = url.replace(/.$/, url.endsWith('0') ? '1' : '0');
     t.ok('違う鍵を拒否', await open(bad).then(() => false, () => true));
-  } finally { ws?.terminate(); relay.close(); }
+  } finally { ws?.terminate(); wsTwo?.terminate(); relay.close(); }
+
+  // 新規会話: 会話 ID が決まる前の turn.key で作ったタブが、rebind で本物の ID へ移り、次のターンで増えない
+  const rebindPanel = fakePanel();
+  const rebindRelay = createBrowserRelay(rebindPanel);
+  let rebindWs, rebindWs2;
+  try {
+    const first = await rebindRelay.endpoint('new:turn-key');
+    rebindWs = await open(first);
+    await ask(rebindWs, 'Browser.getVersion');
+    t.ok('新規会話の最初のターンのタブは turn.key の会話に付く', rebindPanel.tabsFor('new:turn-key').length === 1);
+    rebindRelay.rebind('new:turn-key', 'real-session');
+    t.ok('rebind で本物の会話 ID へ移る', rebindPanel.tabsFor('new:turn-key').length === 0 && rebindPanel.tabsFor('real-session').length === 1);
+    rebindWs.terminate();
+    const second = await rebindRelay.endpoint('real-session');
+    rebindWs2 = await open(second);
+    const targets = (await ask(rebindWs2, 'Target.getTargets')).result.targetInfos;
+    t.ok('次のターンは同じ鍵・同じタブで、もう 1 枚作らない', second === first && targets.length === 1 && rebindPanel.tabsFor('real-session').length === 1);
+  } finally { rebindWs?.terminate(); rebindWs2?.terminate(); rebindRelay.close(); }
 
   const confirmPanel = fakePanel();
   let approve, requested = 0;

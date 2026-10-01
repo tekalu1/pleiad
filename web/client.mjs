@@ -2079,6 +2079,7 @@ function isMine(ev) {
   // 再開ターンのモデル通知でも流れるので、それを掴むと他所の id を自分のものにしてしまう）。
   if (state.awaitingSession && ev.type === "session" && ev.first) {
     state.current = id;
+    filePreview.sessionAssigned(id);
     syncWorkEntry();
     state.awaitingSession = false;
     // 自分が走らせたターン。サーバの running が id を載せて来るまでの間も「走っている」扱いにする
@@ -2479,6 +2480,7 @@ function onEvent(ev, replay = false) {
     case "session":
       if (ev.sessionId && state.current !== ev.sessionId) {
         state.current = ev.sessionId;
+        filePreview.sessionAssigned(ev.sessionId);
         syncTopbar();
       }
       return;
