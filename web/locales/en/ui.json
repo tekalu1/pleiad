@@ -1894,6 +1894,7 @@
         "stop": "Stop",
         "stopTitle": "Stop controlling the computer (same as Esc)",
         "stopping": "Stopping…",
+        "stopFailed": "Couldn't stop it",
         "more_one": "{{n}} more",
         "more_other": "{{n}} more",
         "label_one": "Computer use, {{n}} action",

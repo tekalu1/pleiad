@@ -1236,8 +1236,10 @@ function settleStrays() {
 async function stopComputer(bundle) {
   if (!state.current) return;
   bundle.setStopping(true);
+  // 応答が来ないまま押せなくならないよう、一定時間で戻す（サーバーが知らないコマンドは黙って捨てられる）
+  const silent = new Promise((_, reject) => setTimeout(() => reject(new Error(t("timeline.computer.bundle.stopFailed"))), 8000));
   try {
-    const r = await cmd("computerStop", { sessionId: state.current });
+    const r = await Promise.race([cmd("computerStop", { sessionId: state.current }), silent]);
     if (r?.stopped === false) bundle.setStopping(false);
   } catch (e) {
     bundle.setStopping(false);

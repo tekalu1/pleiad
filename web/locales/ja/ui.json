@@ -1829,6 +1829,7 @@
         "stop": "止める",
         "stopTitle": "コンピューターの操作を止める（Esc と同じ）",
         "stopping": "止めています…",
+        "stopFailed": "止められませんでした",
         "more_other": "ほか {{n}} 件",
         "label_other": "コンピューターの操作 {{n}} 件"
       },
