@@ -7,6 +7,10 @@ afterPack: ./scripts/pack-agent-browser.cjs
 # 既定の npmRebuild はソースからビルドし直して build/Release に置き（prebuild より先に読まれる）、
 # x64 の runner で arm64 をクロスビルドすることになるので止める。ほかの本番依存に再ビルドの要る native モジュールは無い
 npmRebuild: false
+# koffi の .node は asar の外に置く（今は asar: false で全部が展開済みだが、asar を有効にしても読めるように）
+asarUnpack:
+  - node_modules/koffi/**/*.node
+  - node_modules/@koromix/**/*.node
 directories:
   output: dist-desktop
 files:
@@ -22,6 +26,10 @@ files:
   - "!node_modules/node-pty/binding.gyp"
   # 手元の npm install が置く build/Release/conpty（ビルド機のアーキテクチャの ConPTY DLL）も使わない。読むのは prebuilds だけ
   - "!node_modules/node-pty/build/**"
+  # koffi（computer use の Win32 呼び出し）のネイティブ本体は node_modules/@koromix/koffi-<os>-<arch>/ にある。
+  # ビルド機の OS・CPU の分だけが npm ci で入るので、ほかの構成の分は元から入らない
+  # koffi のビルド用の C++ のソース・ヘッダー・文書は実行に要らない。src/koffi/src は実行時に読む JS（static.cjs）なので残す
+  - "!node_modules/koffi/{doc,vendor,lib}/**"
 win:
   icon: desktop/icon.ico
   # 表示名は Pleiad だが、実行ファイルは改名前の Ply.exe のまま置く。

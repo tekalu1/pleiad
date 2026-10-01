@@ -26,6 +26,7 @@
     "agent-browser": "0.38.1",
     "electron-updater": "6.8.9",
     "i18next": "26.4.2",
+    "koffi": "3.3.2",
     "pdfjs-dist": "5.5.207",
     "smol-toml": "1.8.0",
     "ws": "^8.21.3",

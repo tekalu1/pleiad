@@ -117,6 +117,61 @@ main の約束:
 - `activity` が来るたびに 6 秒を数え直し、過ぎたらフェードして消す。`hide` と `computer-turn-ended` ではすぐ消す。
 - **Pleiad の窓には `setContentProtection` を掛けない**。撮影から外すのはオーバーレイの窓だけ（2026-10-01 に決めた）。
 
+### main の実装（`desktop/computer/`）
+
+A が作った土台。`desktop/main.cjs` は `attachComputerService(worker, { electron: { screen, nativeImage }, app })` を 1 行呼ぶだけで、worker の終了と `will-quit` の後始末（`releaseAll`）、`screen` の 3 つのイベント、番犬はこの中でつなぐ。
+
+| ファイル | 持ち物 |
+|---|---|
+| `win32.cjs` | koffi の宣言。**koffi を知っているのはここだけ**。テストは同じ形の偽の表を渡す（`tests/unit/computer-native.mjs`）。koffi が読めない・Windows でないときは `loadWin32()` が `reason`（`native` / `platform`）付きで投げ、service は `computer-ready { supported: false, reason }` を返す |
+| `displays.cjs` | モニターの一覧。主モニターが `index` 1、残りは左から右・上から下。`id` は GDI のデバイス名（`\\.\DISPLAY1`）。`scale` は DPI / 96 |
+| `capture.cjs` | BitBlt（CAPTUREBLT）→ alpha を 255 にそろえる → `nativeImage.createFromBitmap`（BGRA のまま渡せる。実測）→ `resize`（best）→ `toJPEG`。縮小は切り捨て（1920×1080 → 1460×821） |
+| `input.cjs` + `keymap.cjs` | SendInput。押したままのキー・ボタンを覚え、`releaseAll` で押したものだけを離す。座標の絶対値は `ceil((x - 原点) * 65536 / 幅)`（Windows が戻す `floor(abs * 幅 / 65536)` が元の画素になる） |
+| `apps.cjs` | 点の下・前面の窓 → AppInfo。UWP は `ApplicationFrameHost` の枠ではなく中のプロセスの AUMID。名前の検索と起動 |
+| `desktop-state.cjs` | 入力デスクトップが `Default` か |
+| `service.cjs` | 上をつなぎ、parentPort の `computer-*` を受ける。操作の列・上限時間・止めた印・番犬 |
+
+契約の隙間を埋めた決め:
+
+- `screenshot` の `display` は `displays[].index`（1 から）。文字列を渡すと `id`。省略は主モニター。`region` は `display` の範囲に切る（外に出た分は捨て、全部外なら `outside`）。
+- `findApp` は、動いている窓（見えていて名前のある最上位の窓）に、スタートメニューのアプリ（PowerShell の `Get-StartApps`。5 分使い回す。初回は約 2 秒）を足して強い順に並べる。`{GUID}\x.exe` の形の AppID は既知のフォルダーを展開して exe のアプリにする。
+- `launch` は、動いているアプリなら起こし直さず前に出す（`alreadyRunning: true`、前に出せたかは `foregrounded`）。起こしたあとは窓が出るまで最長 8 秒待つ（出ない常駐アプリは `app` をそのまま返す）。`kind: 'exe'` は `.exe` の絶対パスだけ。
+- `error` に `done`（`input` が終えた動作の数）を足すことがある。途中で断られたら、押したままのものは離してから返す。
+- `input` は動作ごとに、止めた印・昇格（`uipi`）・前面が Pleiad（`self`。`text` / `key` / `keyDown` だけ）を送る直前に見る。離す動作（`up` / `keyUp`）は止めない。昇格を確かめられないプロセス（開けない）は昇格とみなす。Pleiad 自身が昇格していれば `uipi` にしない。
+- 持ち主（`owner`）は `computer-arm` と `computer-call` の両方で見る。`computer-call` の持ち主が前の呼び出しと違えば、`computer-arm` が無くても前の分を離す。
+- `displaysVersion` は `screen` のイベントで必ず 1 進める。構成が変わったのを次の呼び出しで見つけたときも進めて `computer-displays-changed` を送る。
+- Electron の main のスレッドは Per-Monitor（V1。2026-10-01 実測）で、物理画素の座標が得られる。Per-Monitor でないときは、同期の呼び出しの間だけ PMv2 に切り替える。
+- 点の下の窓がクリックを通す窓（`WS_EX_TRANSPARENT` + `WS_EX_LAYERED`。オーバーレイ）なら飛ばして Z 順で下の窓を返す。オーバーレイが `self` として拾われ、全部のクリックが禁止になるのを防ぐ。
+
+オーバーレイ側（C）へ渡す口。`attachComputerService` の返り値:
+
+- `escape({ notify? })`: Esc を拾ったとき。止めた印を付け、走っている入力を打ち切り、`releaseAll` する。`computer-escape` は既定ですぐ送る。ピルの 1.2 秒の後に送るなら `notify: false` にして `notifyEscape(owner)` を後で呼ぶ。返り値は `{ owner }`。
+- `attachComputerService` の `escape: { suspend(), resume() }` に、オーバーレイが持つ `globalShortcut('Escape')` の解除と再登録を渡す。`key` / `keyDown` に Escape があるとき、送る前に `suspend`、送った後（`keyDown` は離したとき・`releaseAll`）に `resume` が呼ばれる。
+- `armedOwner()`: 今の持ち主。
+
+### 実機（VM）での確認の手順
+
+本物の入力は利用者の画面・前面の窓に届くので、**利用者が使っている PC では送らない**（Windows Sandbox か Hyper-V の VM の中でだけ）。読み取りだけの確認（撮影・窓の列挙・`appAt`）は PC でもよい（2026-10-01 に実施: 4K + 2 枚目のモニターの撮影・色の並び・`appAt`・`findApp`・`screen` のイベントによる版）。
+
+```
+electron tests/manual/computer-use-probe.cjs --dry-run   # PC でよい。送るはずの INPUT を表示するだけ（アプリも起動しない）
+electron tests/manual/computer-use-probe.cjs             # VM の中で。メモ帳を起こして、撮る・押す・打つ・離す
+```
+
+`ELECTRON_RUN_AS_NODE=1` が引き継がれているシェルでは `env -u ELECTRON_RUN_AS_NODE` を前に付ける。プローブが自動で見るのは、撮影・`findApp`・`launch`・前面・クリックの位置（±1 画素）・`type`・`key`・`drag`・`scroll`・Windows キーの拒否・`releaseAll`・`zoom`。残りは手で確かめる:
+
+| 確認 | 見ること |
+|---|---|
+| `type` と IME | 日本語入力が有効なとき、`type`（UNICODE）が素通りして文字が入るか。`key`（`ctrl+a` など）が IME に食われないか |
+| 2 枚のモニター（倍率が違う） | 100% と 150% で、`display` 2 の撮影の座標からのクリックが狙いの位置に当たるか |
+| ロック画面・UAC | `Win+L` の間は `screenshot` と `input` が `locked`。解除すると同じターンで続けられる |
+| UIPI | 管理者で動かしたメモ帳・コマンドプロンプトの上では `input` が `uipi` になる（黙って落ちない） |
+| Esc | オーバーレイが出ている間の物理の Esc で、押したままの入力が離れ、次の `input` が `stopped` になる（C と一緒に確かめる）。Esc を送る `key` では自分の注入で止まらない |
+| 番犬 | `computer-arm` の後に core を落とす（ターンの途中でプロセスを止める）と、約 30 秒後に押したままのボタンが離れる |
+| 署名済みのインストーラー | `npm run desktop:dist` の成果物で koffi が読めて、`computer-ready { supported: true }` が返る（Windows の arm64 は下の注を参照） |
+
+arm64 の注: koffi 3 のネイティブ本体は `@koromix/koffi-<os>-<arch>` という別のパッケージで、`npm ci` はビルド機の分（x64 のランナーなら `win32-x64`）しか入れない。x64 のランナーで作る Windows の arm64 のインストーラーには arm64 の本体が入らず、そこでは `computer-ready { supported: false, reason: 'native' }` になる。arm64 でも使うなら、リリースのワークフローで `npm install --no-save --force @koromix/koffi-win32-arm64@3.3.2` を足してから作る。
+
 ### MCP サーバー `ply_computer`
 
 `core/agent-bridge.mjs`（`ply_agents`）と同じ型。会話ごとに Bearer の付いた HTTP の MCP を開く。パスは `COMPUTER_MCP_PATH = '/mcp/computer'`。名前は Claude CLI が予約している `computer-use` と Codex の同梱の `cua_repl` / `node_repl` を避けて `ply_computer` とし、`core/ply-mcp.mjs` の `RESERVED` に足す。Claude からは `mcp__ply_computer__<名前>`、Codex からは `server: ply_computer, tool: <名前>` に見える。
