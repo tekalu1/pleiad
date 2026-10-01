@@ -65,10 +65,11 @@ export default async function(t) {
       t.ok('受け取った結果の完了通知は届かない（read）', read.notification === 'read' && noticesOf(p2, mark2).length === 0 && turnEnds(p2, mark2).length === 1, read.notification);
 
       // C: 依頼元が通知を受けられない間（次ターンの設定を予約して途中送信を止める）に溜まった通知は、空いたとき 1 つにまとまる
-      const p3 = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: delegate('bg 1 1.5') })).sessionId;
-      await c.runTurn({ sessionId: p3, prompt: delegate('bg 1 1.5') });
+      // 子は途中送信を止めた後に終わらせる。短いと遅い CI で止める前に終わり、走っているターンや前のターンへ届いてしまう
+      const p3 = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: delegate('bg 1 5') })).sessionId;
+      await c.runTurn({ sessionId: p3, prompt: delegate('bg 1 5') });
       const mark3 = c.mark();
-      const running3 = c.runTurn({ sessionId: p3, prompt: 'bg 1 6' });
+      const running3 = c.runTurn({ sessionId: p3, prompt: 'bg 1 12' });
       await c.waitFor(e => e.type === 'turnResult' || e.type === 'phase', { from: mark3, ms: 20000 });
       await c.cmd('setTurnSettings', { sessionId: p3, backend: 'fake', model: 'fast' });
       rows = await awaitTasks(p3, rows => rows.length === 2 && rows.every(r => r.status === 'completed'));
