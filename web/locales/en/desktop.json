@@ -114,5 +114,13 @@
   },
   "browser": {
     "navigationDenied": "Navigation to this site was not allowed."
+  },
+  "computer": {
+    "overlay": {
+      "who": "{{agent}} is using your computer",
+      "title": "“{{title}}”",
+      "hint": "Esc to stop",
+      "stopped": "Stopped"
+    }
   }
 }
