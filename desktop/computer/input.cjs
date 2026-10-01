@@ -136,6 +136,15 @@ function createInput({ win32, sleep = defaultSleep, virtualBounds, escape = null
   }
 
   async function typeText(text, signal) {
+    // IME が開いていると仮名が変換中の文字列に取り込まれて順序が崩れるので、打つ間だけ閉じる
+    let restoreIme = null;
+    try { restoreIme = win32.imeClose?.() ?? null; } catch { /* IME を触れなくても打つ */ }
+    try { await typeUnits(text, signal); } finally {
+      if (restoreIme) { await sleep(30); try { restoreIme(); } catch { /* 戻せなくても入力は済んでいる */ } }
+    }
+  }
+
+  async function typeUnits(text, signal) {
     let batch = [];
     const flush = () => { send(batch); batch = []; };
     const tap = vk => { flush(); send([keyEvent({ vk, extended: EXTENDED.has(vk) }, false), keyEvent({ vk, extended: EXTENDED.has(vk) }, true)]); };

@@ -181,6 +181,13 @@ electron tests/manual/computer-use-probe.cjs             # VM の中で。メモ
 
 arm64 の注: koffi 3 のネイティブ本体は `@koromix/koffi-<os>-<arch>` という別のパッケージで、`npm ci` はビルド機の分（x64 のランナーなら `win32-x64`）しか入れない。x64 のランナーで作る Windows の arm64 のインストーラーには arm64 の本体が入らず、そこでは `computer-ready { supported: false, reason: 'native' }` になる。そのため `evaluation-release.yml`・`desktop-release.yml`・`desktop.yml` は `npm ci` の後に `npm install --no-save --force @koromix/koffi-win32-arm64@<koffi の版>` で arm64 の本体を足し、`scripts/release-preflight.mjs` が両方の本体の有無を確かめる。実機の arm64 で読めるかは未確認。
 
+本物の SendInput で通しを流して分かったこと（2026-10-01。利用者が席を外した PC で、操作先を自分で起動したテスト用の窓に限って実施）:
+
+- IME がオン（開いている）と、`type` の KEYEVENTF_UNICODE の仮名は変換中の文字列に取り込まれ、後ろの ASCII・漢字より遅れて確定する。1 字ずつ・15ms 空けても直らない。そのため `type` の間だけ前面の窓の IME を閉じて戻す（`win32.imeClose`）。
+- `RegisterHotKey` は修飾キーまで一致しないと反応しない。`hold_key shift` の最中は素の Esc が合わないので、Shift/Ctrl/Alt つきの Esc も握る（Ctrl+Shift+Esc は奪わない）。注入した Esc（`keybd_event`）でも `globalShortcut` は反応する。
+- 利用者のメモ帳が開いていると、`open_application` は動いているアプリを前面に出すので、そのメモ帳に入力してしまう。無人の確認では、メモ帳の代わりに自分で起こしたテスト用の窓を使い、入力の前に点の下・前面の窓が自分のものか確かめる。
+- Windows PowerShell 5.1 の `Graphics.CopyFromScreen` は `SourceCopy | CaptureBlt` を受け付けない（例外）。CAPTUREBLT の撮影は `BitBlt` を直に呼ぶ。
+
 ### MCP サーバー `ply_computer`
 
 `core/agent-bridge.mjs`（`ply_agents`）と同じ型。会話ごとに Bearer の付いた HTTP の MCP を開く。パスは `COMPUTER_MCP_PATH = '/mcp/computer'`。名前は Claude CLI が予約している `computer-use` と Codex の同梱の `cua_repl` と利用者の設定によくある `node_repl` を避けて `ply_computer` とし、`core/ply-mcp.mjs` の `RESERVED` に足す。Claude からは `mcp__ply_computer__<名前>`、Codex からは `server: ply_computer, tool: <名前>`、agy からは `call_mcp_tool` の `ply_computer_<名前>` に見える。
