@@ -3,20 +3,13 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { t } = require('./i18n.cjs');
 
-// updates.json の channel を利用者の選択として扱う記録の形式の版
-const CHANNEL_CHOICE = 1;
-
 // No Electron dependency: the state machine is tested with a fake updater.
 class Updates extends EventEmitter {
   constructor({ updater, version, file, enabled, install, prepareCheck = async () => {} }) {
     super();
     Object.assign(this, { updater, version, file, enabled, install, prepareCheck });
     this.authenticated = false;
-    // 版に - が付いている（先行版）なら beta、付いていなければ stable。利用者が選ぶまではこれが受信先
-    this.defaultChannel = version.includes('-') ? 'beta' : 'stable';
-    // updates.json の channelChoice: 利用者が自分で選んだ受信先が channel に入っているという印
-    this.channelChosen = false;
-    this.state = { version, enabled, phase: enabled ? 'idle' : 'unavailable', channel: this.defaultChannel, autoCheck: true, autoDownload: true, notice: false, lastChecked: null };
+    this.state = { version, enabled, phase: enabled ? 'idle' : 'unavailable', channel: version.includes('-') ? 'beta' : 'stable', autoCheck: true, autoDownload: true, notice: false, lastChecked: null };
     this.busy = false;
     updater.autoDownload = false;
     updater.autoInstallOnAppQuit = false;
@@ -36,9 +29,7 @@ class Updates extends EventEmitter {
     let saved = {};
     try { saved = JSON.parse(await fs.readFile(this.file, 'utf8')); }
     catch (e) { if (e.code !== 'ENOENT') throw new Error(t('update.settingsReadFailed')); }
-    // 印の無い記録の channel は利用者の選択ではない（以前は init() が既定を書き込んでいた）ので、今の版の既定に戻す
-    this.channelChosen = saved.channelChoice === CHANNEL_CHOICE && ['stable', 'beta'].includes(saved.channel);
-    this.state.channel = this.channelChosen ? saved.channel : this.defaultChannel;
+    this.state.channel = ['stable', 'beta'].includes(saved.channel) ? saved.channel : this.state.channel;
     this.state.autoDownload = saved.autoDownload !== false;
     this.state.autoCheck = saved.autoCheck !== false;
     this.state.notice = Boolean(saved.lastVersion && saved.lastVersion !== this.version);
@@ -54,7 +45,7 @@ class Updates extends EventEmitter {
   }
   async save() {
     await fs.mkdir(path.dirname(this.file), { recursive: true });
-    await fs.writeFile(this.file + '.tmp', JSON.stringify({ channel: this.state.channel, ...(this.channelChosen ? { channelChoice: CHANNEL_CHOICE } : {}), autoCheck: this.state.autoCheck, autoDownload: this.state.autoDownload, lastVersion: this.version }));
+    await fs.writeFile(this.file + '.tmp', JSON.stringify({ channel: this.state.channel, autoCheck: this.state.autoCheck, autoDownload: this.state.autoDownload, lastVersion: this.version }));
     await fs.rename(this.file + '.tmp', this.file);
   }
   /**
@@ -77,11 +68,9 @@ class Updates extends EventEmitter {
       if (action === 'preferences') {
         if (!['stable', 'beta'].includes(value?.channel) || typeof value.autoDownload !== 'boolean' || typeof value.autoCheck !== 'boolean') throw new Error(t('update.invalidSettings'));
         if (['downloaded', 'downloading', 'installing'].includes(this.state.phase)) throw new Error(t('update.applyDownloadedFirst'));
-        const previous = this.snapshot(), previousChosen = this.channelChosen;
-        // 受信先を切り替えたときに選択の印を付ける。ほかの設定だけの保存では既定のままにする
-        if (value.channel !== this.state.channel) this.channelChosen = true;
+        const previous = this.snapshot();
         Object.assign(this.state, { channel: value.channel, autoCheck: value.autoCheck, autoDownload: value.autoDownload });
-        try { await this.save(); } catch (e) { this.state = previous; this.channelChosen = previousChosen; throw e; }
+        try { await this.save(); } catch (e) { this.state = previous; throw e; }
         this.applyChannel();
         this.patch({ phase: this.enabled ? 'idle' : 'unavailable', target: null, notes: '', error: null });
       } else {
