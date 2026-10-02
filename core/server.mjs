@@ -1386,7 +1386,11 @@ const worktreeHost = createWorktreeHost({
     return (diff?.total.files ?? 0) > 0;
   },
   log: line => { if (process.env.AGENT_HOST_WORKTREE_LOG) console.log(`  worktree: ${line}`); },
-  worktreeOptions: process.env.AGENT_HOST_WORKTREE_GRACE_MS !== undefined ? { graceMs: Number(process.env.AGENT_HOST_WORKTREE_GRACE_MS) || 0 } : {},
+  // AGENT_HOST_WORKTREES=off で分けた作業場所を作らない。テストのサーバーが開発中のリポジトリ（<リポジトリ>.pleiad）に残さないため（tests/lib/server.mjs）
+  worktreeOptions: {
+    ...(process.env.AGENT_HOST_WORKTREE_GRACE_MS !== undefined ? { graceMs: Number(process.env.AGENT_HOST_WORKTREE_GRACE_MS) || 0 } : {}),
+    ...(process.env.AGENT_HOST_WORKTREES === 'off' ? { disabled: true } : {}),
+  },
 });
 /** 片付けをまとめて 1 回（ターンの終わり・委譲の完了・パネルを開いたとき。重ならない） */
 let worktreeSweeping = false, worktreeSweepAgain = false;

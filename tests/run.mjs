@@ -10,6 +10,8 @@
 process.env.AGENT_HOST_LOCALE ||= "ja";
 import { installDomStub } from "./lib/dom-stub.mjs";
 import { runCase, summarize, pick } from "./lib/harness.mjs";
+import { ROOT } from "./lib/server.mjs";
+import { snapshotPleiadWorktrees, leakedWorktrees } from "./lib/worktree-guard.mjs";
 
 // web/render.mjs はブラウザ前提なので、読み込む**前**に DOM を差し替える。
 installDomStub();
@@ -68,6 +70,8 @@ const cases = [
   await import('./unit/server-worktree.mjs'),
   // 分けた作業場所を会話・委譲・画面につなぐ層: ぶつかりの判定・委譲で分けるか（並列の委譲のまとめ数え）・子の完了と片付け・準備中は消さない・残りの絞り込み・cwd を戻す・退避と作り直し
   await import('./unit/worktree-host.mjs'),
+  // テストが本体の git に分けた作業場所を残さない守り（run.mjs の各テストの後の検査・AGENT_HOST_WORKTREES=off）: 増えた作業場所を見つける・他の worktree は数えない・off では作らない
+  await import('./unit/worktree-leak-guard.mjs'),
   // 委譲の子の分けた作業場所: 子への指示・完了通知と status の「作業場所」の行・isolate の検査・ツールの定義
   await import('./unit/agent-tasks-workspace.mjs'),
   // 操作の一覧（core/ops/、ADR 0080・0081）: 権限の表（主体 × 危険度 × 会話の承認モード）・関所の順序と定義の検査・載せ忘れの lint（WS のコマンドと prefs のキーのラチェット）・
@@ -382,7 +386,17 @@ if (!selected.length) process.exit(1);
 
 const t0 = Date.now();
 const suites = [];
-for (const mod of selected) suites.push(await runCase(mod));
+// 各テストの後、このリポジトリの git に Pleiad の分けた作業場所（<リポジトリ>.pleiad/・pleiad/ のブランチ）が増えていたら、そのテストを落とす。
+// 後始末はしない（並行する別の作業のものかもしれないので、消すかどうかは人が決める）。理由と対処は tests/lib/worktree-guard.mjs
+let seen = await snapshotPleiadWorktrees(ROOT);
+for (const mod of selected) {
+  const suite = await runCase(mod);
+  const now = await snapshotPleiadWorktrees(ROOT);
+  const leaked = leakedWorktrees(seen, now);
+  if (leaked.length) suite.ok("テストの後に本体の git の分けた作業場所が増えていない", false, leaked.join(", "));
+  seen = now ?? seen;
+  suites.push(suite);
+}
 
 const code = summarize(suites);
 console.log(`  ${((Date.now() - t0) / 1000).toFixed(1)} 秒`);
