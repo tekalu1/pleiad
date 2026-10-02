@@ -584,6 +584,71 @@
     "delegateOpen": "この作業場所の git を開く",
     "jumpFailed": "会話の中に見つかりませんでした"
   },
+  "worktree": {
+    "label": "分けた作業場所",
+    "who": "「{{title}}」",
+    "whoMany": "「{{title}}」ほか {{count}} 件",
+    "whoAnother": "ほかの会話",
+    "note": "{{who}}が同じリポジトリで作業中",
+    "noteLabel": "同じリポジトリのほかの作業",
+    "split": "分けて始める",
+    "keep": "このまま",
+    "always": "いつも分ける",
+    "alwaysTitle": "今後は確かめずに、分けた作業場所で始めます。設定でいつでも戻せます",
+    "chipSuffix": "分けた作業場所",
+    "chipTitle": "分けた作業場所 · 元 {{origin}}",
+    "start": "分けた作業場所で始める",
+    "from": "元 {{path}}",
+    "back": "元の場所に戻す",
+    "next": "分けた作業場所（{{path}}）",
+    "splitFailed": "分けた作業場所を作れませんでした · {{error}}",
+    "line": {
+      "started": "分けた作業場所で始めました（{{who}}が作業中）",
+      "startedNoWho": "分けた作業場所で始めました",
+      "backing": "次のターンから元の場所に戻します",
+      "backed": "元の場所に戻しました",
+      "again": "もう一度分ける"
+    },
+    "ask": {
+      "text": "分けた作業場所 {{branch}}（{{path}}）の変更を、元の作業場所（{{origin}}）のブランチ {{base}} に取り込んでください。競合があれば解いてください。取り込めたら、分けた作業場所は Pleiad が片付けます。",
+      "textOriginal": "分けた作業場所 {{branch}}（{{path}}）の変更を、元の作業場所（{{origin}}）の元のブランチに取り込んでください。競合があれば解いてください。取り込めたら、分けた作業場所は Pleiad が片付けます。"
+    },
+    "left": {
+      "title": "残っている作業場所",
+      "ask": "エージェントに取り込みを頼む",
+      "archive": "退避して消す",
+      "keep": "残す",
+      "asked": "『{{title}}』に頼みました。取り込まれたら自動で消えます。",
+      "askedUndo": "取り消す",
+      "askedLate": "もう届いているので、取り消せません。",
+      "askFailed": "頼めませんでした · {{error}}",
+      "askNone": "取り込みを頼める会話がありません。",
+      "kept": "残します。",
+      "keptUndo": "戻す",
+      "archived": "退避して消しました。",
+      "archivedUndo": "元に戻す",
+      "restoreFailed": "元に戻せませんでした。",
+      "safetyLinks": "消す前に、中のリンクだけ外します。",
+      "safetyUse": "使っている会話やシェルがあるあいだは、消しません。",
+      "fail": {
+        "busy": "使っているものがあるので、消せません。",
+        "links": "中のリンクを外せなかったので、消していません。",
+        "changed": "退避のあとに変わったので、消していません。",
+        "archive": "退避を作れなかったので、消していません。",
+        "unowned": "Pleiad が作ったものではないので、消していません。",
+        "attached": "使っている会話があるので、消せません。",
+        "other": "消せませんでした。"
+      }
+    },
+    "settings": {
+      "title": "分けた作業場所",
+      "always": "同じリポジトリで別の会話が作業中のとき、確かめずに分けて始める",
+      "description": "オフのときは、入力欄の上で「分けて始める」か「このまま」かを選べます。オンにすると、人が始める会話は確かめずに分けた作業場所で始め、会話に一行だけ残します。"
+    },
+    "delegate": {
+      "unmerged": "未取り込み"
+    }
+  },
   "filePreview": {
     "kind": {
       "image": "画像",
@@ -1266,6 +1331,8 @@
   "saved": {
     "reason": {
       "resumeCwd": "再開時に変更",
+      "worktreeSplit": "分けた作業場所へ",
+      "worktreeBack": "元の場所へ",
       "cwdFrom": "{{from}} から",
       "contextReloaded": "指示・Skills を読み込み直した",
       "contextSettingsApplied": "プラグインの設定の変更を反映した",

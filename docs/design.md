@@ -38,6 +38,20 @@
 - **WS の読み取りコマンド**: `gitStatus`（状態。`summary: true` で会話の間のファイル・コミットの合計も）・`gitPanel`（状態・したこと・変更の一覧）・`gitDiff`（1 ファイルの統一差分をハンクの行に構造化して返す。バイナリ・大きいものは本文なし）。いずれも画面の内部の口（`tests/ops-baseline.json` の `ui-internal`）。`PROTOCOL_VERSION` は据え置き。
 - **委譲**: 子のタスクの完了時に子の作業場所の会話の間のファイル・コミットがあれば、完了通知と `ply_task_status` / `ply_task_wait` に 1 行 `変更: <branch> · N ファイル +a −d · コミット k`（`docs/agent-delegation.md`）。
 
+## 分けた作業場所（2026-10-03）
+
+同じリポジトリに書き手が 2 人いるときと、頼まれたときだけ、分けた作業場所（git の `worktree`）を作り、片付けまで Pleiad が持つ（[ADR 0089](adr/0089-worktree-on-demand.md)）。画面は `docs/design-system.md`「分けた作業場所」、委譲は `docs/agent-delegation.md`「分けた作業場所」。ADR 0003 の「作業ごとに worktree」はこの開発リポジトリの規則で、製品の仕様とは別。
+
+- **作る**（`core/worktrees.mjs`・`core/git-worktree.mjs`）: 置き場は `<リポジトリの親>/<リポジトリ名>.pleiad/<id>`（id は `ply-` と 16 進 4 桁。サーバーが決め、画面から任意のパスを受けない）、ブランチ `pleiad/<id>`、ベースは今の HEAD（サブフォルダーから分けたら中でも同じサブフォルダー）。依存は張らない。台帳（`<データ置き場>/worktrees.json`。項目の状態は `creating` → `ready` → `removing`）に「作成中」を書いてから `git worktree add -b` し、失敗したら worktree・ブランチ・台帳まで戻す。起動時の `reconcile` が台帳と `git worktree list` を突き合わせる（作成中のまま落ちたものは巻き戻し、片付けの途中のものは終わらせ、フォルダーも登録も無いものは台帳から外す）。台帳の置き場・ブランチが決めた形でないものには消す操作をしない。強制の削除（`--force`・`branch -D`）は持たない（例外は「退避して消す」だけ）。
+- **ぶつかりの判定**（`core/worktree-host.mjs`）: 走っているターン（`runtime.turns`。圧縮を除く）のうち、書き込みの範囲（`core/modes.mjs` の workspace 以上）で、cwd の Git ルートが同じ別の会話（委譲の子を含む）。読むだけの会話・git 管理外・自分は数えない。`worktreeCheck { sessionId, cwd?, backend?, mode? }` が `{ git, current, conflicts: [{ sessionId, title, child }], canSplit, always }` を返し、画面は入力欄の上の 1 行・チップ・作業場所の面に使う。
+- **分けて始める**: `worktreeSplit` が作り、画面が `setTurnSettings` の `cwd` で予約する（取り消し・別の場所への変更は予約から外れたものを片付ける）。下書き（送っていない会話）は作業場所そのものをそれにする。「いつも分ける」は台帳の `settings.always`（`worktreeSettings`・`setWorktreeSettings`。変わったら `worktreeSettings` イベント）で、`runTurn` が人の始めるターン（内部のターン・圧縮・委譲の子を除く）の前に判定して分けて始め、会話の id が決まってから present `kind: 'worktree'`（`worktree: { id, branch, path, origin, conflicts, count }`）を出す。
+- **委譲**: `agentBridge` の呼び出しが `decideIsolation` で分けるか決め、`prepare` が子の作業場所を作って子の cwd にする（`agentTasks` の行の `worktree`）。子が終わったら `taskDone` が状態（`workspace`）を取り、変更なし・取り込み済みなら片付ける。準備の途中（作ってから台帳に子が載るまで）は片付けない。
+- **片付け**（`worktrees.settle`・`host.sweep`）: 変更なし・取り込み済み（`merge-base --is-ancestor`。元のブランチ・ルートの HEAD のどちらかに入っている）なら消し、未取り込み・状態が分からない・使っているもの（走っているターン・シェル・委譲の子・裏の作業、cwd や次のターンの予約がそこにある会話）があれば残す。契機はターンの終わり・子の完了・起動時・右パネルを開いたとき・予約の取り消し・元の場所へ戻したターンの始まり。自動の片付けは作ってから 60 秒は対象にしない（`AGENT_HOST_WORKTREE_GRACE_MS`）。消す前に、中の ReparsePoint を全部列挙してリンクだけを外し（外せなければ中止）、会話の cwd を元の場所へ戻し、`git worktree remove` を掴まれているときだけ数回やり直す。ブランチは `branch -d`、取り込み先が今の HEAD でないときは先頭が取り込み先から辿れることを確かめて名前だけを外す。
+- **退避**: `refs/pleiad/archive/<id>/<時刻>` に作業ツリー全体（`snapshotTree`。親は worktree の HEAD）を撮り、撮り直した tree が同じことを確かめてから消す。コミットの本文に作り直しの控え（ベース・元の場所・種類）。`worktreeRestore` で新しい作業場所を作り直す。90 日で掃除。
+- **右パネルの残り**: `gitPanel` が `worktrees: { current, leftovers: [{ id, branch, path, origin, baseBranch, purpose, kept, files, fileNames, at, kind, mergeSessionId }] }` を返す（使っているもの・今いる場所・変更なし・取り込み済みは出さない）。`worktreeKeep`・`worktreeArchive`・`worktreeDiscard`。取り込みを頼むは画面が `sendMessage` で、取り込む役（委譲の子なら依頼元、人が分けた会話ならその会話）へ依頼文を送る。
+- **読み取りの許可**: 置き場はデータ置き場の外なので、ファイルのプレビューは [ADR 0050](adr/0050-local-file-access.md) のとおり読める（表示の基準 `fileRoots` にも台帳のパスを足す）。
+- **脇の会話の行**: 分けた作業場所の中の会話は `worktree: { id, branch, origin }` を持ち、行の場所は元の場所の名前に枝分かれの印を付ける（`place` も元の場所）。
+
 ## 多言語対応（2026-09-23）
 
 画面を日本語と英語で出せるようにする。段階 0（今）は土台と検査だけで、既存の日本語の画面の見た目は変えない（日付・数の書き方だけは画面の言語に揃えた）。文言の置き換えは段階 1 以降（小さい画面 → 会話画面 → 管理画面 → core → desktop → エージェント向け）。理由は [ADR 0020](adr/0020-i18n-dictionary-and-ratchet.md)。

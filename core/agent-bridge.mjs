@@ -15,7 +15,7 @@ const delegateDescription = locale => [agentT(locale, 'bridge.tools.ply_delegate
 /** ツールの定義。説明は会話の言語。名前と引数（inputSchema）は言語に依らない */
 export const agentTools = locale => [
   // backend を省けば Pleiad が委譲先を選ぶ（core/delegation-routing.mjs）。kind はどちらでも必須（振り分けの記録にも残す）
-  tool('ply_delegate', delegateDescription(locale), { kind: { type: 'string', enum: [...KINDS] }, task: str, title: str, backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, context: str, cwd: str, model: str, effort: str }, ['kind', 'task']),
+  tool('ply_delegate', delegateDescription(locale), { kind: { type: 'string', enum: [...KINDS] }, task: str, title: str, backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, context: str, cwd: str, model: str, effort: str, isolate: { type: 'boolean' } }, ['kind', 'task']),
   tool('ply_task_status', agentT(locale, 'bridge.tools.ply_task_status'), { taskId: str, offset: { type: 'integer', minimum: 0 } }, ['taskId']),
   tool('ply_task_wait', agentT(locale, 'bridge.tools.ply_task_wait'), { taskId: str, seconds: { type: 'integer', minimum: 1, maximum: 30 } }, ['taskId']),
   tool('ply_task_send', agentT(locale, 'bridge.tools.ply_task_send'), { taskId: str, message: str }, ['taskId', 'message']),

@@ -39,6 +39,23 @@ export function gitLine(locale, git) {
   return agentT(locale, 'delegation.noticeGit', { branch: git.branch ?? git.head ?? '(detached)', files: git.files, add: git.add, del: git.del, commits: git.commits });
 }
 
+/**
+ * 子の分けた作業場所の 1 行（作業場所: 分けた作業場所 <branch>（未取り込み · N ファイル）。ADR 0089）。依頼元の言語で。
+ * state は core/worktree-host.mjs の taskState（unmerged / merged / empty / unknown / gone）。完了通知と ply_task_status・ply_task_wait の workspaceSummary が同じ文を使う。
+ * 作業場所が無ければ（分けていない子）空
+ */
+export function workspaceLine(locale, worktree, state) {
+  if (!worktree) return '';
+  const branch = state?.branch ?? worktree.branch, path = state?.path ?? worktree.path, origin = state?.origin ?? worktree.origin;
+  const kind = state?.state ?? 'unknown';
+  if (kind === 'unmerged') return agentT(locale, 'delegation.noticeWorkspaceUnmerged', { branch, files: state.files ?? 0, path, origin });
+  if (kind === 'merged' || (kind === 'gone' && state?.removedAs === 'merged')) return agentT(locale, 'delegation.noticeWorkspaceMerged', { branch });
+  if (kind === 'empty' || (kind === 'gone' && state?.removedAs === 'empty')) return agentT(locale, 'delegation.noticeWorkspaceEmpty', { branch });
+  // 未取り込みだったものが、もう無い（依頼元が取り込んで片付いた・退避して消した）
+  if (kind === 'gone') return agentT(locale, 'delegation.noticeWorkspaceGone', { branch });
+  return agentT(locale, 'delegation.noticeWorkspaceUnknown', { branch, path });
+}
+
 export function finalReply(messages) {
   const list = Array.isArray(messages) ? messages : [];
   const reply = (m) => m?.role === 'assistant' && typeof m.text === 'string' && m.text;
@@ -63,6 +80,8 @@ export function finalReply(messages) {
 export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', deliverCommand = async () => 'ok', cancelBackground = async () => {}, ready = async () => true, steerable = async () => false, childSteerable = async () => false, steer = async () => 'requeue', changed = () => {}, waiting = () => false,
   // コンピューターの操作のロックを待っているか（docs/computer-use.md「ロック・待ち・止めた印」）。承認待ちではないので status: waiting にはせず、沈黙の通知にだけ数えない
   lockWaiting = () => false,
+  // 子の分けた作業場所の今の状態（core/worktree-host.mjs の taskState）。ply_task_status・ply_task_wait の workspaceSummary に使う
+  workspaceState = async () => null,
   now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
   commandMinutes = Number(process.env.AGENT_HOST_TASK_COMMAND_MINUTES ?? 5),
   io = fs, log = line => console.error(line), renameDelays = RENAME_DELAYS, retryMax = RETRY_MAX }) {
@@ -176,6 +195,16 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     const v = view(r, offset);
     return ACTIVE.has(r.status) && waiting(r.sessionId) ? { ...v, status: 'waiting' } : v;
   };
+  // 分けた作業場所の今の状態の 1 行（ply_task_status・ply_task_wait）。作業場所を持たない子・状態が引けないときは何も足さない。
+  // 片付け済み（もう無い）は、完了時の状態（row.workspace）から言う
+  async function workspaceOf(r, locale) {
+    if (!r.worktree) return {};
+    let state = await workspaceState(structuredClone(r)).catch(() => null);
+    if (state?.state === 'gone' && r.workspace) state = { ...r.workspace, ...state, state: 'gone', removedAs: r.workspace.state };
+    if (!state) state = r.workspace ?? null;
+    return { workspace: state ? { branch: state.branch ?? r.worktree.branch, path: state.path ?? r.worktree.path, origin: r.worktree.origin, state: state.state, files: state.files ?? 0 } : undefined,
+      workspaceSummary: workspaceLine(locale, r.worktree, state) };
+  }
   const restore = (r, before) => { for (const key of Object.keys(r)) delete r[key]; Object.assign(r, before); };
   // 保存できてから先へ進む書き換え。保存に失敗したらメモリを戻し、理由付きのエラーを投げる
   async function commit(id, fn, operation, locale) {
@@ -280,6 +309,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           row.result = String(result?.text ?? ''); row.error = result?.error ?? null;
           // 子の作業場所の git の要約（ADR 0085。変更・コミットが無ければ載せない）。完了通知と ply_task_status に出る
           if (result?.git) row.git = result.git; else delete row.git;
+          // 子の分けた作業場所の、終わった時点の状態（ADR 0089。取り込まれていなければ完了通知に 1 行出る）
+          if (result?.workspace) row.workspace = result.workspace; else delete row.workspace;
+          // 追加の指示で再開した回に、片付いていた作業場所を作り直したとき
+          if (result?.worktree) row.worktree = result.worktree;
           setInstruction(row, instructionId, 'delivered');
           // 実行前に拒否されたコマンド。前の完了通知の後に走った回の分を足していく（通知の前に続けて走った回の分も落とさない）
           const got = Array.isArray(result?.rejections) ? result.rejections : [];
@@ -507,6 +540,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (name === 'ply_delegate') {
         text(locale, args.backend, 'backend', 40); text(locale, args.task, 'task');
         if (args.context !== undefined) text(locale, args.context, 'context');
+        if (args.isolate !== undefined && typeof args.isolate !== 'boolean') throw new Error(agentT(locale, 'tasks.isolateInvalid'));
         if (args.title !== undefined && typeof args.title !== 'string') throw new Error(agentT(locale, 'tasks.textLength', { name: 'title', max: 40 }));
         args = { ...args, title: taskTitle(args.title, args.task) };
         const row = await serial(async () => {
@@ -522,7 +556,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           const row = { ...prepared, taskId, parentSessionId: owner, manager: 'ply', depth, task: args.task, title: args.title, ...(args.context !== undefined ? { context: args.context } : {}),
             createdAt: Date.now(), updatedAt: Date.now(), status: 'queued', notification: 'none',
             result: '', error: null, instructions: [], instructionRevision: 0,
-            queue: [args.context ? agentT(locale, 'tasks.withContext', { task: args.task, context: args.context }) : args.task] };
+            queue: [(args.context ? agentT(locale, 'tasks.withContext', { task: args.task, context: args.context }) : args.task)
+              + (prepared.worktree ? agentT(locale, 'tasks.worktreeInstruction', { path: prepared.worktree.path, branch: prepared.worktree.branch, origin: prepared.worktree.origin }) : '')] };
           records[taskId] = row; bySession.set(row.sessionId, row);
           try { await write(); } catch (e) { failed(e, 'delegate', taskId); throw refused(locale); }
           touched(); return view(row);
@@ -537,7 +572,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (name === 'ply_task_status') {
         const offset = args.offset ?? 0;
         if (!Number.isInteger(offset) || offset < 0) throw new Error(agentT(locale, 'tasks.offsetInvalid'));
-        const out = { ...shown(r, offset), ...(r.git ? { gitSummary: gitLine(locale, r.git) } : {}), ...storage(locale) };
+        const out = { ...shown(r, offset), ...(r.git ? { gitSummary: gitLine(locale, r.git) } : {}), ...(await workspaceOf(r, locale)), ...storage(locale) };
         await markRead(r);
         return out;
       }
@@ -555,7 +590,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
             const timeout = setTimeout(done, seconds * 1000); listeners.add(check); signal?.addEventListener('abort', done, { once: true });
             if (signal?.aborted) done();
           });
-          const out = { ...shown(r), ...(r.git ? { gitSummary: gitLine(locale, r.git) } : {}), ...storage(locale) };
+          const out = { ...shown(r), ...(r.git ? { gitSummary: gitLine(locale, r.git) } : {}), ...(await workspaceOf(r, locale)), ...storage(locale) };
           await markRead(r);
           return out;
         } finally {
