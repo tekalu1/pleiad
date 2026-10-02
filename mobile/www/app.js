@@ -16,6 +16,7 @@
   function show(view) {
     $('list').hidden = view !== 'list';
     $('pair').hidden = view !== 'pair';
+    $('notify').hidden = view !== 'notify';
   }
 
   function toast(text) {
@@ -229,6 +230,52 @@
     } catch {}
   }
 
+  // ── notifications while away (ADR 0086) ──
+  // Settings are per device and live natively (the notification service reads them); the host is told by the service.
+  // Turning on asks for the notification permission then (never at install) and starts the service.
+
+  let nstate = null;
+  let deniedOnce = false;
+
+  function paintNotify() {
+    const s = nstate?.settings ?? {};
+    const granted = nstate?.permission === 'granted';
+    const master = s.enabled === true && granted;
+    for (const b of document.querySelectorAll('#notify .sw')) {
+      const k = b.dataset.opt;
+      b.setAttribute('aria-checked', String(k === 'enabled' ? master : s[k] === true));
+    }
+    for (const g of document.querySelectorAll('#notify .dep')) g.classList.toggle('off', !master);
+    $('notifyDenied').hidden = granted || !(s.enabled === true || deniedOnce);
+  }
+
+  async function loadNotify() {
+    if (!Remote?.notifyState) return;
+    try { nstate = await Remote.notifyState(); paintNotify(); } catch {}
+  }
+
+  async function toggleNotify(key) {
+    if (!Remote?.notifyState || !nstate) return;
+    const on = key === 'enabled' ? nstate.enabled === true : nstate.settings?.[key] === true;
+    try {
+      if (key === 'enabled' && !on) {
+        const r = await Remote.notifyEnable();
+        deniedOnce = r.ok !== true;
+        nstate = r.state ?? nstate;
+      } else {
+        nstate = await Remote.notifyUpdate({ [key]: !on });
+      }
+    } catch {}
+    paintNotify();
+  }
+
+  document.querySelectorAll('#notify .srow').forEach(row => {
+    row.onclick = e => { if (e.target.closest('.link')) return; toggleNotify(row.dataset.row); };
+  });
+  $('notifyOpen').onclick = () => { show('notify'); loadNotify(); };
+  $('notifyBack').onclick = () => show('list');
+  $('notifySystem').onclick = () => Remote.notifyOpenSystemSettings?.();
+
   // ── wiring ──
 
   $('add').onclick = startPair;
@@ -239,7 +286,11 @@
   $('pairBack').onclick = async () => { await cancelPair(); show('list'); };
 
   // Android back: close the pairing screen first, then let the app go to the background
-  Plugins.App?.addListener?.('backButton', () => { if (!$('pair').hidden) { cancelPair(); show('list'); } else Plugins.App.minimizeApp?.(); });
+  Plugins.App?.addListener?.('backButton', () => {
+    if (!$('pair').hidden) { cancelPair(); show('list'); }
+    else if (!$('notify').hidden) show('list');
+    else Plugins.App.minimizeApp?.();
+  });
 
   if (Remote) {
     Remote.addListener('status', s => {
@@ -253,7 +304,8 @@
     Remote.addListener('pairCode', onPairCode);
     Remote.addListener('pairLink', takeLink);
     Remote.info().then(i => { $('plain').hidden = i.encrypted !== false; }).catch(() => {});
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+    // Coming back (from the system's notification settings, say): re-read what the system says
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); if (!$('notify').hidden) loadNotify(); } });
     refresh().then(takeLink);
   }
   show('list');

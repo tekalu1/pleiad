@@ -16,4 +16,33 @@
     <!-- Links in the host window (same text as timeline.link.hostOnly in web/locales/en/ui.json) -->
     <string name="link_host_only">localhost links open only on the host\'s PC.</string>
     <string name="sheet_close">Close</string>
+    <!-- Notifications while away (ADR 0086). Same wording as web/locales/en. The host sends what happened; these build the text -->
+    <string name="notify_channel_attention">Needs attention</string>
+    <string name="notify_channel_attention_desc">Approvals, questions and failed work</string>
+    <string name="notify_channel_done">Finished</string>
+    <string name="notify_channel_done_desc">Work that finished</string>
+    <string name="notify_channel_service">Connection</string>
+    <string name="notify_channel_service_desc">Shown while Pleiad is listening for notifications</string>
+    <string name="notify_service_text">Pleiad · Receiving notifications</string>
+    <string name="notify_approval">◆ Waiting for approval</string>
+    <string name="notify_approval_many">◆ %1$d approvals waiting</string>
+    <string name="notify_question">◆ A question for you</string>
+    <string name="notify_question_many">◆ %1$d replies waiting</string>
+    <string name="notify_failed">✕ Work failed</string>
+    <string name="notify_done">Work finished</string>
+    <plurals name="notify_bundle">
+        <item quantity="one">%1$d conversation finished</item>
+        <item quantity="other">%1$d conversations finished</item>
+    </plurals>
+    <string name="notify_bundle_more">and %1$d more</string>
+    <string name="notify_untitled">Pleiad conversation</string>
+    <!-- Shown on the lock screen unless the conversation names are allowed there -->
+    <string name="notify_public_approval">A conversation is waiting for approval</string>
+    <string name="notify_public_question">A conversation has a question</string>
+    <string name="notify_public_failed">Work failed in a conversation</string>
+    <string name="notify_public_done">A conversation finished</string>
+    <string name="notify_battery_title">Keep notifications reliable</string>
+    <string name="notify_battery_message">Battery optimization can delay notifications while the screen is off. Open the setting to exclude Pleiad?</string>
+    <string name="notify_battery_open">Open settings</string>
+    <string name="notify_battery_later">Later</string>
 </resources>
