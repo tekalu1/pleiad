@@ -37,6 +37,8 @@
 | 読むだけ | Read only |
 | あなたを待っている | Waiting for you |
 | 承認を待っている | waiting for approval |
+| 設定 › {節} / オン / オフ（設定の変更の承認カード） | Settings › {section} / On / Off |
+| 確認なしでできることが増える変更です | This lets the agent do more without asking you |
 | 答えを待っている | waiting for an answer |
 | 作業ディレクトリ | working directory |
 | フォルダーを選ぶ… | Choose folder… |

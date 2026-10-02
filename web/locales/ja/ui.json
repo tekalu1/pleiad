@@ -1324,10 +1324,17 @@
       "agent": "エージェント",
       "question": "{{agent}} が設定を変えようとしています",
       "reason": "理由: {{reason}}",
-      "warn": "⚠ このエージェントの関所を緩める変更です。",
+      "warn": "⚠ 確認なしでできることが増える変更です。",
       "allow": "変更を許可",
       "allowed": "変更を許可した",
-      "unset": "未設定"
+      "unset": "未設定",
+      "where": "設定 › {{section}}",
+      "on": "オン",
+      "off": "オフ",
+      "added": "追加",
+      "removed": "削除",
+      "join": "、",
+      "more_other": "ほか {{count}} 件"
     },
     "computerApproval": {
       "label": "許可",

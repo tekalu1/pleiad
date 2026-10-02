@@ -1510,18 +1510,99 @@ function computerApproval(ev, approval, row) {
   return m;
 }
 
+/** 設定の変更の承認を出す、ply_control のツールの行（走っていて、まだ承認を持たない最新の行）。ツールの行が分かればその行。見つからなければ null（単独のカード） */
+function settingChangeRow(ev) {
+  const mine = (row) => (row?.isConnected && row.dataset.tool?.startsWith("mcp__ply_control__") && bundleOf(row)?.live ? row : null);
+  // 中継された承認（委譲の子の分）は、こちらの塊の行ではない
+  if (relayLabel(ev.title)) return null;
+  if (ev.toolUseID) return mine(state.toolCards.get(ev.toolUseID));
+  // 承認の口（ply_control の HTTP）はツール呼び出しの id を持たない。待っているのは今走っている呼び出しなので、最新の行を取る
+  return mine((state.bundle?.cards ?? []).filter((c) => c.classList.contains("tc-running") && !c.querySelector(".tc-appr")).at(-1));
+}
+
 /**
- * 設定の変更の承認（permission の settingChange。ADR 0082）。単独のカードで、computerApproval の単独のカードと同じ型。
+ * 設定の変更の承認（permission の settingChange。ADR 0082・0088）。置き場はコンピューターの承認と同じ（ply_control のツールの行の下 / 単独のカード）。
  * ボタンは「拒否」と塗りの「変更を許可」だけ（「常に許可」は出さない）。答えには出したカードの受領証を添える（サーバーが照合する）。
- * 押したら「◯◯を送っています…」でボタンを止め、受け取られてから 1 行に畳む（失敗したら押す前の形に戻って押し直せる）
+ * 押したら「◯◯を送っています…」でボタンを止め、受け取られてから行（単独なら 1 行）に畳む（失敗したら押す前の形に戻って押し直せる）
  */
-function settingChangeApproval(ev, change) {
+function settingChangeApproval(ev, change, row) {
   const res = el("span", "res");
   const deny = el("button", "btn btn-quiet", t("chat.approval.deny"));
   const allow = el("button", "btn btn-primary", t("chat.settingApproval.allow"));
   for (const b of [deny, allow]) b.type = "button";
   const buttons = [deny, allow];
   const verb = (ok) => (ok ? t("chat.settingApproval.allow") : t("chat.approval.deny"));
+  const send = async (ok, { onSending, onFailed }) => {
+    onSending();
+    res.className = "res";
+    res.removeAttribute("role");
+    res.replaceChildren(el("span", null, t("chat.approval.sending", { action: verb(ok) })));
+    const arc = setTimeout(() => res.prepend(runMark()), 150);
+    try {
+      await cmd("resolvePermission", { id: ev.id, receipt: change.receipt, allow: ok, always: false, ...(ok ? {} : { messageKey: "userDenied" }) });
+    } catch (err) {
+      clearTimeout(arc);
+      onFailed();
+      for (const b of buttons) b.disabled = false;
+      res.className = "res fail";
+      res.setAttribute("role", "alert");
+      res.replaceChildren(`✕ ${t("chat.approval.sendFailedInline", { action: verb(ok), error: err.message })}`);
+      return false;
+    }
+    clearTimeout(arc);
+    return true;
+  };
+
+  if (row) {
+    const details = row.querySelector(".tc-details");
+    const line = row.querySelector(".tc-line");
+    const host = row.closest(".in") ?? row;
+    const box = el("div", "tc-appr");
+    box.setAttribute("role", "group");
+    box.dataset.permId = ev.id;
+    box.setAttribute("aria-label", `${t("chat.approval.headingMark")}: ${changeHeading(change)}`);
+    box.append(el("div", "h", t("chat.approval.headingMark")), changeBody(change, relayLabel(ev.title)));
+    const acts = el("div", "acts");
+    acts.append(res, deny, allow);
+    box.append(acts);
+    const settle = async (ok) => {
+      if (box.dataset.sending) return;
+      const ran = await send(ok, {
+        onSending: () => {
+          box.dataset.sending = "1";
+          box.classList.add("sending");
+          // 拒否の印は送る前に付ける（確認より先に結果が届いても、失敗と数えない）。送れなかったら外す
+          if (!ok) row.dataset.denied = "1";
+          for (const b of buttons) b.disabled = true;
+        },
+        onFailed: () => { delete box.dataset.sending; box.classList.remove("sending"); if (!ok) delete row.dataset.denied; },
+      });
+      if (!ran) return;
+      // カードを行に戻す。補足は「変更を許可した」、拒否は右端に弱い字で「拒否した」
+      swapHeight(host, () => {
+        box.remove();
+        if (details) details.hidden = false;
+        row.classList.remove("tc-waiting");
+        if (ok) line.querySelector(".tc-res")?.before(el("span", "tc-note tc-said", t("chat.settingApproval.allowed")));
+        if (details) fadeIn(details);
+        const finished = row.classList.contains("tc-done") || row.classList.contains("tc-error");
+        if (ok) { if (!finished) markRunning(row); }
+        else if (!finished) line.querySelector(".tc-res").textContent = t("chat.approval.denied");
+      });
+      bundleOf(row)?.paint();
+      state.pendingPerms.delete(ev.id);
+      if (isRunningHere()) { if (ok) activity.suspend(); else activity.show(t("activity.continuing")); }
+    };
+    allow.onclick = () => settle(true);
+    deny.onclick = () => settle(false);
+    markWaiting(row);
+    swapHeight(host, () => { if (details) details.hidden = true; row.append(box); });
+    fadeIn(box);
+    bundleOf(row)?.reveal(row);
+    return box;
+  }
+
+  // 単独のカード（塊の外。委譲の子から中継された承認・開き直した会話）
   const m = el("div", "m card");
   const card = el("div", "card");
   m.append(card);
@@ -1533,24 +1614,11 @@ function settingChangeApproval(ev, change) {
   card.append(head, body, actions);
   const settle = async (ok) => {
     if (card.dataset.sending) return;
-    card.dataset.sending = "1";
-    for (const b of buttons) b.disabled = true;
-    res.className = "res";
-    res.removeAttribute("role");
-    res.replaceChildren(el("span", null, t("chat.approval.sending", { action: verb(ok) })));
-    const arc = setTimeout(() => res.prepend(runMark()), 150);
-    try {
-      await cmd("resolvePermission", { id: ev.id, receipt: change.receipt, allow: ok, always: false, ...(ok ? {} : { messageKey: "userDenied" }) });
-    } catch (err) {
-      clearTimeout(arc);
-      delete card.dataset.sending;
-      for (const b of buttons) b.disabled = false;
-      res.className = "res fail";
-      res.setAttribute("role", "alert");
-      res.replaceChildren(`✕ ${t("chat.approval.sendFailedInline", { action: verb(ok), error: err.message })}`);
-      return;
-    }
-    clearTimeout(arc);
+    const ran = await send(ok, {
+      onSending: () => { card.dataset.sending = "1"; for (const b of buttons) b.disabled = true; },
+      onFailed: () => { delete card.dataset.sending; },
+    });
+    if (!ran) return;
     m.classList.add("done");
     m.closest(".mw")?.classList.add("done");
     card.classList.add("done");
@@ -1926,9 +1994,11 @@ function renderPermission(ev) {
   // 設定の変更の承認（ply_control の guarded。ADR 0082）。読めなければ（形が違う）ふつうの承認として出す
   const settingChange = ev.settingChange ? approvalChange(ev.settingChange) : null;
   if (settingChange) {
+    const row = settingChangeRow(ev);
+    if (row) { activity.suspend(); return settingChangeApproval(ev, settingChange, row); }
     closeTurnEl();
     activity.show(t("activity.waitingApproval"));
-    return settingChangeApproval(ev, settingChange);
+    return settingChangeApproval(ev, settingChange, null);
   }
   // アプリの承認（コンピューターの操作）。アプリが読めなければ（形が違う）ふつうの承認として出す
   const computerApp = ev.computerApp ? approvalApps(ev.computerApp) : null;
