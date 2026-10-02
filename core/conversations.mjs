@@ -111,6 +111,24 @@ async function save(additions = {}) {
   return next;
 }
 
+/**
+ * Pleiad が持つ会話の保存分の発言を、記録に載せずに読む（セッション検索の最初の読み込み用）。
+ * conversation() は読んだ発言を記録に持ち続けるので、全会話を読むと本文が二重にメモリへ載る。
+ * ネイティブの末尾は足さない。Pleiad が持つ会話でなければ null。
+ */
+export async function readStoredMessages(id) {
+  const r = (await all())[id];
+  if (!r) return null;
+  if (Array.isArray(r.messages)) return r.messages;
+  try {
+    const data = JSON.parse(await fs.readFile(sessionFilePath(id), "utf8"));
+    return Array.isArray(data.messages) ? data.messages : [];
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+    return [];
+  }
+}
+
 export async function conversation(id) {
   const entries = await all();
   if (!Object.hasOwn(entries, id)) return null;

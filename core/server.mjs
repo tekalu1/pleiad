@@ -124,6 +124,7 @@ try {
 import { installation, cliCommand } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
 import { createShellRuns, shellMode } from './shell-runs.mjs';
+import { createHostSessionSearch } from './session-search-host.mjs';
 import { taskStop, backgroundStop, approvalStop, interruptionNote } from './interrupt-stops.mjs';
 import { splitInterruptionNotes } from './system-messages.mjs';
 import { textForTitleModel } from './prompt-title.mjs';
@@ -939,7 +940,7 @@ function invalidateSessionLists() { nativeListGeneration++; }
  * 全エージェントのネイティブ一覧と sidecar を1つに合わせる（docs/multi-backend.md §2.1）。
  * ネイティブ一覧に出ないセッション（sidecar にしか無いもの）も落とさずに足す。
  */
-async function sessionList({ limit = 100 } = {}) {
+async function sessionList({ limit = 100, track = true } = {}) {
   const backends = listBackends();
   const [side, ...lists] = await Promise.all([
     store.getAll().catch(() => ({})),
@@ -978,9 +979,20 @@ async function sessionList({ limit = 100 } = {}) {
     }
   }
 
-  for (const row of rows.values()) if (row.cwd) workspaceRoots.add(row.cwd);
+  if (track) for (const row of rows.values()) if (row.cwd) workspaceRoots.add(row.cwd);
   return [...rows.values()].sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
 }
+
+/**
+ * セッション検索（会話の本文まで。docs/design.md「セッション検索」）。本文の写しを持ち、search(input) に答える。
+ * ここから呼ぶ（画面・MCP・CLI への口は core/ops/ が持つ）。起動後に裏で写しを作り、ターンの終わり・loadSession で更新する。
+ * 一覧は workspaceRoots に足さない（検索が読むだけで、ファイルの許可を広げない）。
+ */
+const sessionSearch = createHostSessionSearch({
+  listSessions: () => sessionList({ limit: 500, track: false }),
+  resolveBackend: resolveBackendForSession,
+  onError: (id, err) => console.error(`  セッション検索の読み込みに失敗${id ? ` (${id})` : ''}:`, String(err?.message ?? err)),
+});
 
 /**
  * 使用量の表示に使うアカウント。会話用のトークンではなく、アカウントごとの設定フォルダ（`claude auth login` 済み）で読む
@@ -2634,6 +2646,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
     await store.setMeta(turn.info.sessionId, patch).catch(err => {
       console.error("  完了の記録に失敗:", String(err?.message ?? err));
     });
+    // このターンで進んだ分を検索の写しへ（裏で読み直す。待たない）
+    if (!requeued) sessionSearch.refresh(turn.info.sessionId);
     // 中断で終わったターンが抱えていた裏の作業・承認待ちを、会話の「止めたもの」に残す（次のターンで伝える）
     if (stopped && turn.stops) await store.addStops(turn.info.sessionId, { ...turn.stops, reason: interrupted.reason }).catch(err => {
       console.error("  中断で止めたものの記録に失敗:", String(err?.message ?? err));
@@ -3749,7 +3763,10 @@ wss.on("connection", (ws, req) => {
             const completedAt = sidecar.completedAt ?? null;
             // 中断の印（一覧の行と同じ形）。会話の末尾の「中断しました」を保存された状態から描くため
             const interrupted = runtime.turns.has(sessionId) ? null : interruptedOf((await store.get(sessionId)).interrupted);
+            const readStarted = Date.now();
             const { compactSummaries, ...data } = await history.loadTranscript(sessionId, backend);
+            // 読んだ履歴をそのまま検索の写しにも入れる（追加の読み込みは要らない）。outline は本文が縮めてあるので入れない
+            if (!msg.args?.outline) sessionSearch.ingest(sessionId, data.messages, { sig: readStarted });
             // 入力欄の `!`: Pleiad が走らせた分の終了コードを付け、まだ渡していない分・走っている分を末尾に足す（ADR 0054）。
             // 渡さなかった分は、次の人の発言の前に差す（ADR 0055）
             data.messages = msg.args?.outline ? shellRuns.decorate(data.messages, sidecar, backend)
@@ -4557,5 +4574,7 @@ server.once("error", (err) => {
   server.listen(0, HOST, announce);
 });
 // 設定とバックエンドが揃った後に、前の起動の放置圧縮の予約を戻す
+// 検索の写しは、起動の混み合いが落ち着いてから裏で作る（探されたときは待たずに読めた分で答える）
+setTimeout(() => sessionSearch.start().catch(() => {}), 3000).unref();
 await restoreCompactionSchedule().catch(err => console.error('  自動圧縮の予約を戻せませんでした:', String(err?.message ?? err)));
 server.listen(PORT, HOST, announce);

@@ -136,6 +136,8 @@ export default async function (t) {
     // 入力欄の `!`（core/shell-runs.mjs）。このテストの対象外
     shellRuns: { decorate: m => m, rows: () => [], placeKept: m => m },
     history: { loadTranscript: () => new Promise(r => { resolveTranscript = r; }) },
+    // 読んだ履歴を検索の写しへ入れる口（core/session-search.mjs）。このテストの対象外
+    sessionSearch: { ingest: () => true },
     reply: (ok, data) => data, streamSequence: 3,
   });
   const loading = vm.runInContext(`(async () => { ${loadCase} })()`, serverContext);

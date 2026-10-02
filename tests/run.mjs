@@ -296,6 +296,10 @@ const cases = [
   await import("./unit/cwd-recent-places.mjs"),
   await import("./unit/conversations.mjs"),
   await import("./unit/conversations-storage.mjs"),
+  // セッション検索（core/session-search.mjs）: 照合（AND・NFKC・"…"・場所はフォルダー名）・発言者・委譲・期間・関連度の順・抜粋の ranges・写しの更新と partial
+  await import("./unit/session-search.mjs"),
+  // 読み込み元（core/session-search-host.mjs）: 保存分は直接・それ以外は getMessages・完了通知とコマンドの行とツールの出力は写さない
+  await import("./unit/session-search-host.mjs"),
   // codex バックエンド。app-server の身代わり（tests/lib/fake-codex.mjs）と話すだけで、
   // 本物の codex もネットワークも要らない
   await import("./unit/server-codex.mjs"),

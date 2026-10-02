@@ -158,6 +158,17 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 - **位置**: 確定するたびに、基準の行（`historyAnchor`）の位置が動かないよう `#log` の `scrollTop` を補正する。末尾を見ていたなら補正ではなく末尾へ合わせ直す。`scrollTop` は画面の 1px に丸められるので、丸めきれなかった端数は次の補正に足す。
 - **切り替え**: 会話の切り替え・描き直しは `cancel`、描き終えたら `prepare`（`prepareHistoryHeights`）。静かな読み直しで残した行は確定済みのまま残り、未確定の行だけを見張り直す。
 
+## セッション検索（2026-10-03）
+
+会話の題だけでなく本文まで探す core の関数 `search(input) → SearchResult`（`core/session-search.mjs`。[ADR 0080](adr/0080-session-fulltext-search.md)）。画面・MCP・CLI は `core/ops/` の `sessions.search` から同じものを呼ぶ（この段では core とサーバー内の呼び口だけで、WebSocket のコマンド・画面・MCP・CLI は無い）。
+
+- **方式**: 索引は作らず、会話ごとの発言の写し（本文と、NFKC・小文字に畳んだ本文）をメモリに持ち、探すたびに全件を走査する。写しは起動の数秒後から裏で作り（新しい会話から・並列 2 本。Pleiad が持つ会話は `conversations/<id>.json` を直接、ほかはバックエンドの `getMessages`）、ターンの終わり（`endTurn`）と `loadSession` で読んだ履歴で更新する。一覧の `lastModified` が写しより新しい会話は、探すときに読み直す（短く待ち、間に合わなければ古い写しで答える）。探された範囲の写しが揃っていない間は `partial: true`。`status()` は `{ indexed, pending, updatedAt }`。
+- **対象**: 人と AI の本文。thinking・ツールの出力・圧縮の要約・システムの行・委譲の完了通知・提示は対象外。ツールの入力（command・path・file_path・pattern・url などの短い項目を 400 字まで）は `filters.includeToolInputs` のときだけ。題・状態・場所も当てる。場所は作業ディレクトリのフォルダー名だけ。
+- **照合**: 空白区切りは AND（語ごとに、題・状態・場所・どの発言に当たってもよい）。`"…"` は 1 語で畳まず完全一致、ほかは NFKC と小文字の部分一致。演算子は解かない。語が 13 個以上は `RangeError`。
+- **絞り込み**（`filters`）: `backends`・`cwd`（完全一致）・`status`（`null` は状態なし）・`since`/`until`（会話の `lastModified`。ISO か epoch ms）・`speaker`（`any`/`user`/`assistant`）・`includeDelegated`（既定は委譲の子を含めない）・`includeToolInputs`・`sessionIds`。アーカイブという考えは無い。
+- **並びと続き**: `sort` は `relevance`（既定）か `recent`。関連度は題に当たった語 ×4 + 全部の語が 1 つの発言に揃えば 2 + `log2(1 + 一致した発言の数)` − 経過日数 / 30（同点は新しい順）。語が無ければ新しい順。`limit`（既定 50・最大 200）と `cursor`（`nextCursor` をそのまま返す）で会話の件数を区切る。
+- **結果**: 会話の平らな一覧。各会話に `matched`（`title`/`status`/`place`/`message`/`toolInput`）・`hitCount`（一致した発言の数）・`hits`（`hitsPerSession` 件。既定 1・最大 10）。hit は `uuid`（画面の行の `data-uuid` と同じ）・`index`・`role`・`at`・`excerpt`（改行と連続空白を畳み、最初の一致の手前 16 字から約 140 字）・`ranges`（excerpt の中の一致の位置）。抜粋に選ぶ発言は、題に無い語を多く含む → 語を多く含む → 新しい、の順。委譲の子（`includeDelegated`）には `parentSessionId` が付く。
+
 ## デスクトップの更新（2026-09-12）
 
 Pleiad の画面・サーバー・デスクトップを一つのバージョンとして配布する。
