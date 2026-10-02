@@ -32,7 +32,7 @@ export default async function (t) {
   sh(repo, 'add', '.'); sh(repo, 'commit', '-q', '-m', 'first');
 
   const dataDir = `${scratch}/data`;
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_WORKTREE_GRACE_MS: '0' }, dataDir, timeoutMs: 30_000 });
+  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_WORKTREES: 'on', AGENT_HOST_WORKTREE_GRACE_MS: '0' }, dataDir, timeoutMs: 30_000 });
   const c = await open({ port: server.port, token: server.token });
   const branches = () => sh(repo, 'branch', '--list', 'pleiad/*').split('\n').map((s) => s.replace(/^[*+ ]+/, '')).filter(Boolean);
   // 走っているターンが無く、委譲の完了通知で始まるターンも落ち着くまで待つ（続けて同じ会話へ送ると「切り替え中」になる）
