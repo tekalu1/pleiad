@@ -285,8 +285,63 @@ export default async function (t) {
     bridge.push({ tabs: [{ id: 't3', url: 'https://example.com/', title: '', loading: false, canGoBack: false, canGoForward: false }], current: 't3', sessionId: 's2' });
     bridge.push({ tabs: [], current: null, sessionId: 's2' });
     assert.equal(emptied, 2, '同じ会話で最後のタブを閉じたら閉じる');
+    // タブの無いプロフィールへ切り替えただけなら閉じない（ADR 0078）
+    bridge.push({ tabs: [{ id: 't4', url: 'https://example.com/', title: '', loading: false, canGoBack: false, canGoForward: false }], current: 't4', sessionId: 's2', profile: 'main' });
+    bridge.push({ tabs: [], current: null, sessionId: 's2', profile: 'pbbbbbbbb' });
+    assert.equal(emptied, 2, 'タブの無いプロフィールへ切り替えてもパネルを閉じない');
   });
   t.ok('画面: openInBrowserPanel は正規化して開き、枠の位置を送り、状態から戻る・進む・印・タブを描き、隠すと外す', true);
+
+  // ---- 画面: タブの列の左端のプロフィール（ADR 0078）
+  await withWindow({ plyDesktop: { browser: null } }, async () => {
+    const bridge = fakeBridge();
+    window.plyDesktop.browser = bridge;
+    const menus = [], changed = [], opened = [];
+    const profiles = [{ id: 'main', name: 'メイン' }, { id: 'pbbbbbbbb', name: '仕事' }];
+    const panel = createBrowserPanel({ bridge, getSessionId: () => 's1', getAgentName: () => 'Claude', showMenu: (x, y, items, title, opts) => menus.push({ items, title, opts }),
+      getProfiles: () => profiles, onProfileChanged: (sessionId, profile) => changed.push([sessionId, profile]), openProfiles: options => opened.push(options) });
+    const toast = () => document.body.children.find(n => n.className === 'file-toast')?.textContent ?? '';
+    // 知らせ（web/file-actions.mjs の notify）は画面下の .file-toast を探して使い回す
+    const savedQuery = document.querySelector, savedText = document.createTextNode;
+    document.createTextNode = text => { const n = new N('span'); n.textContent = text; return n; };
+    document.querySelector = sel => sel === '.file-toast' ? document.body.children.find(n => n.className === 'file-toast') ?? null : null;
+    bridge.push({ tabs: [], current: null, sessionId: 's1', profile: 'pbbbbbbbb' });
+    const pick = panel.tabsRow.children[0];
+    assert.equal(pick.className, 'browser-profile-pick', 'タブの列の左端');
+    assert.equal(pick.children[0].textContent, '仕', 'モノグラム'); assert.equal(pick.children[1].textContent, '仕事');
+    assert.equal(pick.getAttribute('aria-label'), 'プロフィール: 仕事');
+    pick.onclick();
+    const menu = menus.at(-1);
+    assert.deepEqual(menu.items.map(i => i.head ?? i.label ?? (i.sep ? '—' : '')), ['Pleiad', 'メイン', '仕事', '—', '新しいプロフィール…', 'プロフィールを管理…']);
+    assert.equal(menu.items.find(i => i.label === '仕事').checked, true); assert.equal(menu.title, undefined);
+    assert.equal(pick.getAttribute('aria-expanded'), 'true'); menu.opts.onClose(); assert.equal(pick.getAttribute('aria-expanded'), 'false');
+    // 選ぶと main に頼み、会話に残すのは呼び出し元。知らせを 1 回出す
+    bridge.command = async (action, args) => { bridge.calls.push([action, args]); return action === 'profile' ? { tabs: [], current: null, sessionId: 's1', profile: args.profile } : {}; };
+    menu.items.find(i => i.label === 'メイン').onClick();
+    await new Promise(r => setTimeout(r, 0));
+    assert.deepEqual(bridge.calls.at(-1), ['profile', { profile: 'main' }]);
+    assert.deepEqual(changed, [['s1', 'main']]);
+    assert.equal(toast(), 'この会話は「メイン」で開きます。エージェントもこのプロフィールを使います。');
+    assert.equal(pick.children[1].textContent, 'メイン');
+    menus.at(-1).items.at(-2).onClick(); menus.at(-1).items.at(-1).onClick();
+    assert.deepEqual(opened, [{ add: true }, { add: false }], '新しいプロフィール…・プロフィールを管理… は設定 › ブラウザーへ');
+    // エージェントが操作中は、メニューの頭に理由を出し、ほかのプロフィールは押せない
+    bridge.push({ tabs: [], current: null, sessionId: 's1', profile: 'main', agent: { sessionId: 's1', tabId: 't1' } });
+    pick.onclick();
+    const locked = menus.at(-1);
+    assert.deepEqual(locked.title, { text: 'エージェントが操作中は切り替えられません。止めてから選びます。', wrap: true });
+    assert.equal(locked.items.find(i => i.label === '仕事').disabled, true); assert.equal(locked.items.find(i => i.label === 'メイン').disabled, false);
+    // エージェントが切り替えた（main の notice）: 今の会話のものだけ 1 回知らせる
+    bridge.push({ tabs: [], current: null, sessionId: 's1', profile: 'pbbbbbbbb', notice: { seq: 1, sessionId: 's1', profile: 'pbbbbbbbb', agent: 'Claude' } });
+    assert.equal(toast(), 'Claude が「仕事」に切り替えました。');
+    document.body.children.find(n => n.className === 'file-toast').textContent = '';
+    bridge.push({ tabs: [], current: null, sessionId: 's1', profile: 'pbbbbbbbb', notice: { seq: 1, sessionId: 's1', profile: 'pbbbbbbbb', agent: 'Claude' } });
+    assert.equal(toast(), '', '同じ知らせは出し直さない');
+    bridge.push({ tabs: [], current: null, sessionId: 's1', profile: 'pbbbbbbbb', notice: { seq: 2, sessionId: 's9', profile: 'main', agent: 'Codex' } });
+    assert.equal(toast(), '', '別の会話の切り替えは出さない');
+    document.querySelector = savedQuery; document.createTextNode = savedText;
+  });
+  t.ok('画面: プロフィールはタブの列の左端（モノグラム・名前）・メニューは Pleiad の見出しの下に選択と管理・選ぶと main へ頼み会話に残して知らせる・エージェントが操作中は止める・エージェントの切り替えは 1 回だけ知らせる', true);
 
   // ---- 頭の行の内蔵ブラウザーのボタン（web/header-entries.mjs）と近道
   await withWindow({ plyDesktop: { browser: null } }, async () => {

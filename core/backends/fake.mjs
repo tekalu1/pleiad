@@ -18,6 +18,8 @@
 //   "context:<json>" … ply_context（contextRuntime）のツールを { name, arguments } で 1 回呼び、返りを本文にする
 //   "computer:<json>" … ply_computer（computerRuntime）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。tool.result には印の行から作った images と computer を付ける
 //   "computer-hold:<json>" … "computer:" の後、中断されるまで走り続ける（ロックを持ったままのターン）。"computer-instructions" は ply_computer の指示文を返す
+//   "browser:<json>" … ply_browser（browserRuntime。内蔵ブラウザーのプロフィール）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。
+//                     渡っていなければ "browser: unavailable"。"browser-instructions" は渡った内蔵ブラウザーの指示文を返す
 //   "compact"      … 文脈の圧縮（Claude の activity compacting と同じ形）を流す
 //   "bg-shell <本文>" … 本文で返答した後、終わらない裏のコマンド（Claude の local_bash）を抱えて phase: waiting で待つ。
 //                    stopBackground で止めると main が再開して一言返し、ターンが終わる
@@ -294,7 +296,7 @@ export const backend = {
     emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
   },
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, oauthToken, hostSessionId, shellAppends = [], notes = [] }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, browserInstructions, oauthToken, hostSessionId, shellAppends = [], notes = [] }) {
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
     if (String(prompt ?? "").trim().startsWith("undelivered")) {
       const error = "fake: failed before the prompt was delivered";
@@ -370,6 +372,28 @@ export const backend = {
           emit({ type: 'turnResult', outcome: 'aborted' });
           return { sessionId: id };
         }
+      } else if (text.startsWith('browser:')) {
+        // ply_browser の呼び出し（ADR 0078）。ほかの MCP と同じく mcp__ply_browser__<ツール> の行で残す
+        if (!browserRuntime) out.text = 'browser: unavailable';
+        else {
+          out.toolCalls = []; const texts = [];
+          for (const params of [].concat(JSON.parse(text.slice('browser:'.length)))) {
+            const callId = crypto.randomUUID();
+            const toolName = `mcp__ply_browser__${params.name}`;
+            emit({ type: 'tool.start', id: callId, name: toolName, input: params.arguments ?? {} });
+            const response = await fetch(browserRuntime.url, { method: 'POST', headers: { ...browserRuntime.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params }) });
+            const result = (await response.json()).result;
+            const raw = result.content[0].text;
+            emit({ type: 'tool.result', id: callId, text: raw, isError: Boolean(result.isError) });
+            out.toolCalls.push({ id: callId, name: toolName, input: params.arguments ?? {}, result: { text: raw, isError: Boolean(result.isError) } });
+            texts.push(raw);
+          }
+          out.text = texts.join('\n');
+        }
+        await say(emit, out.text, out.uuid);
+      } else if (text === 'browser-instructions') {
+        out.text = browserInstructions ?? '(none)';
+        await say(emit, out.text, out.uuid);
       } else if (text === 'computer-instructions') {
         out.text = computerRuntime?.instructions ?? '(none)';
         await say(emit, out.text, out.uuid);

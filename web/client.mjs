@@ -4,6 +4,7 @@ import { setupFilePreview } from './file-preview.mjs';
 import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
 import { isManagedContext, paintContextEntry as paintContextEntryButton, setupBrowserEntry } from './header-entries.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
+import { profileList, profileName } from './browser-profiles.mjs';
 import { setupComputerSettings } from './computer-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
 import { configureLinkOpen } from './link-open.mjs';
@@ -2301,7 +2302,7 @@ function onEvent(ev, replay = false) {
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); browserPanel?.profilesChanged(); computerSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
   if (ev.type === 'compactionSchedule') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
@@ -4900,8 +4901,12 @@ $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() 
 // 内蔵ブラウザー（web/browser-panel.mjs）。デスクトップ版のホストの画面だけ。右パネルの 1 つのモードになる
 let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry）。状態の知らせが先に届いても落ちないよう先に宣言する
 const browserPanel = browserPanelAvailable()
-  ? createBrowserPanel({ showMenu: (x, y, items, title) => showMenu(x, y, items, title), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
-    onChange: () => browserEntry?.paint() })
+  ? createBrowserPanel({ showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
+    onChange: () => browserEntry?.paint(),
+    // プロフィール（ADR 0078）: 一覧は設定から。人が切り替えたら会話に残す。「新しいプロフィール…」「プロフィールを管理…」は設定 › ブラウザーへ
+    getProfiles: () => profileList(state.prefs).map(p => ({ id: p.id, name: profileName(p, t('browser.profiles.main')) })),
+    onProfileChanged: (sessionId, profile) => { if (sessionId) cmd('setBrowserProfile', { sessionId, profile }).catch(e => notify(e.message)); },
+    openProfiles: ({ add }) => { onboarding.open('browser'); browserSettings.showProfiles({ add }); } })
   : null;
 // ホストの画面ではない端末から、ホストの内蔵ブラウザーを見る（web/remote-browser.mjs）。リンクを押したら開き先を選ぶ（web/link-sheet.mjs）
 const remoteBrowser = createRemoteBrowser({ cmd: (command, args) => cmd(command, args), getSessionId: () => state.current ?? null,
@@ -4934,7 +4939,8 @@ browserEntry = setupBrowserEntry({ button: $('browserEntry'), browser: browserPa
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
 // External resource confirmation is available on every screen.
 const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getHostCaps: () => state.hostCaps });
-const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf });
+const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf,
+  showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), onProfilesChanged: () => browserPanel?.profilesChanged() });
 // 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
 configureLinkOpen({ getPrefs: () => state.prefs, chooseRemote: (url, openHere) => chooseRemote({ url, openHere }) });
 // 文中の URL・名前付きのリンクの、行き先の一行と右クリックのメニュー（web/link-menu.mjs）

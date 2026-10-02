@@ -447,7 +447,7 @@ permission: { …, toolName: 'ply_computer', canAlways: true,
 |---|---|---|---|
 | Claude | `plyServers` に `ply_computer: { type: 'http', url, headers }` | `systemPrompt.append` | `decidePermission` の先頭で `mcp__ply_computer__` を allow（アプリの承認は橋で行う） |
 | Codex | `thread/start` の `config` の `mcp_servers.ply_computer`（`url`・`http_headers`・`required: false`・`default_tools_approval_mode: 'approve'`・`tool_timeout_sec`）と、同梱の computer use を切る上書き（[ADR 0074](adr/0074-codex-bundled-computer-use-off.md)） | `developerInstructions` | Codex 側は `approve`。elicitation は使わない |
-| Antigravity | `agent.md` の `mcpServers` に 2 本目の stdio の中継（`core/agy-context-relay.mjs --computer`。env は `PLY_COMPUTER_URL` / `PLY_COMPUTER_AUTHORIZATION`）。中継はツール名に `ply_computer_` を付けて見せ、呼び出しで外す | agent.md の本文 | agy は yolo だけ。アプリの承認も聞かない（判定の順の 4） |
+| Antigravity | `agent.md` の `mcpServers` に stdio の中継（`core/agy-context-relay.mjs --computer`。ply_context・ply_browser も渡す会話は 1 本に束ねる（agy は先頭の 1 本しか起こさない）。env は `PLY_COMPUTER_URL` / `PLY_COMPUTER_AUTHORIZATION`）。中継はツール名に `ply_computer_` を付けて見せ、呼び出しで外す | agent.md の本文 | agy は yolo だけ。アプリの承認も聞かない（判定の順の 4） |
 
 指示文は 3 つに共通の `computer.instructions`（橋の `instructions`）に、エージェントごとの呼び方（`agent.json` の `computerDelivery.codex` / `computerDelivery.antigravity`）を足す。Claude には足す文が無い。右パネルの「指示の量」では、足した後の文を「コンピューターの操作の説明」（`plyParts` の `computer`）として数える。
 

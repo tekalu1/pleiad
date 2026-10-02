@@ -178,16 +178,42 @@
       }
     },
     "browser": {
-      "description": "Choose where links in conversations and previews open.",
+      "description": "Choose where links in conversations and previews open, and the profiles that keep your sign-ins.",
       "linkOpen": {
         "title": "Open links in",
         "inapp": "Built-in browser",
         "external": "Default browser",
-        "note": "The built-in browser opens beside the conversation, and sign-ins stay in this app. Its storage is separate from Pleiad itself.",
+        "note": "The built-in browser opens beside the conversation. Sign-ins stay in this app, separately for each profile.",
         "shortcuts": "{{key}}+click and middle click always open in the default browser. Right-click to choose either."
       },
       "saveFailed": "Couldn't save: {{error}}",
       "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" },
+      "profiles": {
+        "title": "Profiles",
+        "default": "Default",
+        "add": "Add profile",
+        "nameLabel": "Profile name",
+        "namePlaceholder": "New profile",
+        "memoLabel": "Usage memo",
+        "memoPlaceholder": "Usage memo (helps agents choose)",
+        "actions": "Actions for {{name}}",
+        "rename": "Rename",
+        "editMemo": "Edit memo",
+        "makeDefault": "Make default",
+        "clear": "Clear sign-ins and data",
+        "delete": "Delete",
+        "defaultCannotDelete": "The default profile can't be deleted.",
+        "mainCannotDelete": "Main can't be deleted. You can clear its sign-ins and data.",
+        "confirmClear": "Clear sign-ins and data for \"{{name}}\"? Open tabs will reload.",
+        "confirmDelete": "Delete \"{{name}}\"? Its tabs close and its sign-ins and data are removed. This can't be undone.",
+        "cancel": "Cancel",
+        "cleared": "Cleared sign-ins and data for \"{{name}}\".",
+        "deleted": "Deleted \"{{name}}\".",
+        "tooMany": "You can have up to {{max}} profiles.",
+        "newConversation": "Profile for new conversations",
+        "newLast": "Last used in the working folder",
+        "newDefault": "Default"
+      },
       "confirm": {
         "title": "Confirmation",
         "external": "Ask before loading external resources",
@@ -3151,6 +3177,16 @@
     "externalTooMany": "Too many open requests in a row. Wait a moment and try again.",
     "siteDataCleared": "Cleared data for this site.",
     "failed": "The browser action failed.",
+    "profiles": {
+      "pick": "Profile: {{name}}",
+      "main": "Main",
+      "locked": "You can't switch while an agent is operating. Stop it first.",
+      "busy": "You can't switch while an agent is operating.",
+      "new": "New profile…",
+      "manage": "Manage profiles…",
+      "switched": "This conversation now opens in \"{{name}}\". Agents use this profile too.",
+      "switchedBy": "{{agent}} switched to \"{{name}}\"."
+    },
     "remote": {
       "title": "PC browser",
       "backToChat": "Back to conversation",
