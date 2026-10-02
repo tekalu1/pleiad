@@ -2,6 +2,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// semver の順。文字列の比較だと 0.1.0-beta.74 が 0.1.0 より新しくなるので、先行版は同じ番号の正式な版より前に置く
+export function compareVersions(a, b) {
+  const [coreA, preA] = a.split('-'), [coreB, preB] = b.split('-');
+  const core = coreA.localeCompare(coreB, undefined, { numeric: true });
+  if (core || preA === preB) return core;
+  if (!preA) return 1;
+  if (!preB) return -1;
+  return preA.localeCompare(preB, undefined, { numeric: true });
+}
 export async function generateReleaseInfo({ requireNewNotes = false } = {}) {
   const pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
   const files = (await fs.readdir(path.join(root, 'releases'))).filter(f => f.endsWith('.json'));
@@ -11,7 +20,7 @@ export async function generateReleaseInfo({ requireNewNotes = false } = {}) {
   for (const r of releases) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date) || !r.title || !r.sections?.length || !r.sections.every(s => s.title && s.items?.every(i => typeof i === 'string'))) throw new Error('Invalid release notes');
   }
-  releases.sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }));
+  releases.sort((a, b) => compareVersions(b.version, a.version));
   // 版だけ上げてノートを写したまま出さない。直前の版と見出し・項目が同じなら止める（タグ付けの検証で使う）
   if (requireNewNotes) {
     const previous = releases[releases.indexOf(current) + 1];

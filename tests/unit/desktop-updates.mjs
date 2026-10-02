@@ -10,7 +10,7 @@ import { createUpdateGate } from '../../core/update-gate.mjs';
 import { createMessageQueue } from '../../core/message-queue.mjs';
 import { ensureDataSchema } from '../../core/data-schema.mjs';
 import { prepareArtifacts } from '../../scripts/release-artifacts.mjs';
-import { generateReleaseInfo } from '../../scripts/release-info.mjs';
+import { generateReleaseInfo, compareVersions } from '../../scripts/release-info.mjs';
 const { Updates } = createRequire(import.meta.url)('../../desktop/updates.cjs');
 const { releaseSigning } = createRequire(import.meta.url)('../../scripts/release-signing.cjs');
 const { AppUpdater } = createRequire(import.meta.url)('electron-updater/out/AppUpdater.js');
@@ -279,5 +279,7 @@ export default async function(t) {
     const pkg = JSON.parse(await fs.readFile(new URL('../../package.json', import.meta.url), 'utf8'));
     const info = JSON.parse(await fs.readFile(new URL('../../web/release-info.json', import.meta.url), 'utf8'));
     t.ok('Package and visible version share a source', pkg.version === info.version && info.releases.some(r => r.version === pkg.version));
+    const ordered = ['0.1.0-beta.9', '0.2.0', '0.1.0', '0.10.0', '0.1.0-beta.74', '0.2.0-beta.1', '0.1.1'].sort((a, b) => compareVersions(b, a));
+    t.ok('Release history is newest first in semver order', ordered.join() === '0.10.0,0.2.0,0.2.0-beta.1,0.1.1,0.1.0,0.1.0-beta.74,0.1.0-beta.9');
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 }

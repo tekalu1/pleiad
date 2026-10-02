@@ -3,6 +3,7 @@
 // ユーザーの index・HEAD・ブランチに触れないこと、git 管理外は null になることも見る。
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as git from '../../core/git-info.mjs';
@@ -75,7 +76,8 @@ export default async function (t) {
     await fs.rm(outside, { recursive: true, force: true });
 
     const info = await git.repoInfo(path.join(repo, 'core'));
-    t.ok('ルートは cwd がサブディレクトリでも取れる・普通のリポジトリは linked でない', info?.root.toLowerCase() === repo.replaceAll('\\', '/').toLowerCase() && info.linked === false, JSON.stringify(info));
+    // 一時フォルダーは短い名前（CI の RUNNER~1）で返ることがあり、git は長い名前で答える。比べる前に実名へ直す
+    t.ok('ルートは cwd がサブディレクトリでも取れる・普通のリポジトリは linked でない', info?.root.toLowerCase() === realpathSync.native(repo).replaceAll('\\', '/').toLowerCase() && info.linked === false, JSON.stringify(info));
 
     const activity = createGitActivity();
     const sid = 'session-aaaa-1';
