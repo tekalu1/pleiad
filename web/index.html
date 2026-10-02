@@ -303,6 +303,14 @@
             <label><input type="checkbox" id="updateCheckAutomatic"><span data-i18n="settings.updates.autoCheck"></span></label>
             <label><input type="checkbox" id="updateBeta"><span data-i18n="settings.updates.beta"></span></label>
             <label><input type="checkbox" id="updateAutomatic"><span data-i18n="settings.updates.autoDownload"></span></label>          </div>
+          <!-- 外の AI の MCP に pleiad mcp を登録する設定のコピー。ホストの画面だけ（app.cliSetup が通ったら出す。web/cli-setup.mjs、ADR 0090） -->
+          <div id="cliSetup" hidden>
+            <h3 data-i18n="settings.updates.mcpTitle"></h3>
+            <div class="cli-setup-acts">
+              <button type="button" class="btn" id="copyMcpJson" data-i18n="settings.updates.copyMcpJson"></button>
+              <button type="button" class="btn" id="copyMcpClaude" data-i18n="settings.updates.copyMcpClaude"></button>
+            </div>
+          </div>
           <h3 data-i18n="settings.updates.releaseNotes"></h3><div id="releaseHistory"></div>
         </section>
         <section id="appearancePanel" hidden data-i18n-aria-label="settings.nav.appearance">

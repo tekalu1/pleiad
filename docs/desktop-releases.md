@@ -144,6 +144,11 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 表示名と配布物の名前は Pleiad。改名前の版からの更新とデータを保つため、`appId: jp.ply.desktop`・package.json の `name: agent-host`・実行ファイル名 `Ply.exe`・署名証明書の発行元名（`CN=Ply Evaluation …`）・`PLY_*` と `AGENT_HOST_*`・データ置き場（`~/.agent-host`）・MCP のサーバー名とツール名は変えない。
 アプリは更新の署名を発行元名で照合するので、鍵を替えるときも同じ発行元名にし、利用者には新しい公開証明書の信頼を求める。旧リポジトリ（非公開）からは橋渡し版を一度だけ配り、以後は `tekalu1/pleiad` から更新する（[ADR 0019](adr/0019-rename-ply-to-pleiad-keep-identifiers.md)）。
 
+## 同梱する CLI
+
+`pleiad` CLI（`bin/pleiad.mjs`）と起動口（`bin/pleiad.cmd`・`bin/pleiad`）を `resources/app/bin/` に同梱する（electron-builder.yml の `files`）。起動口は Ply の内蔵 Node（`ELECTRON_RUN_AS_NODE=1`）で走らせるので、利用者の PC に Node は要らない。インストーラーは OS の PATH を書き換えない（[ADR 0090](adr/0090-cli-in-desktop-app.md)）。
+確かめ方: `npm run desktop:pack` の `dist-desktop/win-unpacked/resources/app/bin/pleiad.cmd status` が、Pleiad が起動していなければ「起動していません」と終了コード 3 で終わる。
+
 ## 配布と利用者認証
 
 Releases は public で、ブラウザーからはログインなしで取得できる。評価版は自己署名のため、インストール前に公開証明書の扱いを確認する（下記「自己署名の配布」）。

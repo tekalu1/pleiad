@@ -16,6 +16,8 @@ directories:
 files:
   - desktop/**
   - core/**
+  # pleiad CLI（bin/pleiad.mjs）と起動口（pleiad.cmd・pleiad）。Ply の内蔵 Node で走らせる（ADR 0090）
+  - bin/**
   - web/**
   - skills/visualize/**
   - package.json

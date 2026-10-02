@@ -1,6 +1,21 @@
 {
   "ops": [
     {
+      "id": "app.cliSetup",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": true,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "app.running",
       "risk": "read",
       "riskOf": false,
