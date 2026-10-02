@@ -740,10 +740,6 @@ function fileRoots(sessions) {
     ...Object.values(sessions).flatMap(s => [s.cwd, ...(s.history ?? []).filter(h => h.field === 'cwd').flatMap(h => [h.from, h.to])])];
 }
 
-/**
- * git の問い合わせの作業場所（ADR 0085）。会話があればその会話の cwd（sidecar か、無ければエージェントの記録）。
- * 会話の無い下書きは、cwd を言ってきても、どれかの会話が使ったことのある場所だけ通す（任意のフォルダーで git を走らせない）。
- */
 /** 今の cwd が会話の予約・どれかの会話が使った場所・分けた作業場所のどれかか（画面が言ってきた場所で git を走らせてよいか） */
 async function knownCwd(cwd, sessionId = null) {
   const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
@@ -759,6 +755,10 @@ async function worktreeCwd(args) {
   if (asked && await knownCwd(asked, id)) return asked;
   return gitCwd(args);
 }
+/**
+ * git の問い合わせの作業場所（ADR 0085）。会話があればその会話の cwd（sidecar か、無ければエージェントの記録）。
+ * 会話の無い下書きは、cwd を言ってきても、どれかの会話が使ったことのある場所だけ通す（任意のフォルダーで git を走らせない）。
+ */
 async function gitCwd(args) {
   const id = typeof args?.sessionId === 'string' && args.sessionId ? args.sessionId : null;
   if (id) {
@@ -948,6 +948,17 @@ function statusChangedByAi(history) {
  * 正本が空なら片方へ落ちる。parent は host が分けたもの（sidecar）と向こうで分けたもの
  * （codex の forkedFromId）の両方から読む。一覧と系譜（lineage）が同じ行を見るよう、合成はここだけ。
  */
+/**
+ * 分けた作業場所の中で動いている会話の行に、元の場所と枝分かれの印を足す（ADR 0088）。行の場所は元の場所の名前で出し、
+ * 最近の場所の候補（place）にも分けた作業場所のパスを並べない。sessionRow は台帳を知らない純粋な組み立てのまま
+ */
+function withWorktree(row) {
+  const entry = row?.cwd ? worktreeHost.worktrees.lookup(row.cwd) : null;
+  if (!entry) return row;
+  row.worktree = { id: entry.id, branch: entry.branch, origin: entry.origin };
+  if (row.place) row.place = entry.origin;
+  return row;
+}
 function sessionRow(b, s, extra = {}) {
   const nativeTitle = b.capabilities?.title;
   return {
@@ -992,11 +1003,8 @@ function sessionRow(b, s, extra = {}) {
     // 人が host で作業ディレクトリを変えたなら sidecar が正本（ネイティブは古い cwd を返しうる）。
     // 変えていなければネイティブ優先（公式 CLI で移した分も拾える）
     cwd: ((extra.history ?? []).some((h) => h?.field === "cwd") ? extra.cwd ?? s?.cwd : s?.cwd ?? extra.cwd) ?? null,
-    // 最近の場所の候補（ユーザーが Pleiad で使った場所。委譲の子会話やネイティブのみの会話は除外）。
-    // 分けた作業場所の中なら、候補は元の場所（分けた作業場所のパスを最近の場所に並べない。ADR 0088）
-    place: (extra.delegation || typeof extra.cwd !== 'string' || !extra.cwd.trim()) ? null : (worktreeHost.worktrees.lookup(extra.cwd.trim())?.origin ?? extra.cwd.trim()),
-    // 分けた作業場所の中で動いている会話（行は元の場所の名前に枝分かれの印を付けて出す）
-    ...(entry => (entry ? { worktree: { id: entry.id, branch: entry.branch, origin: entry.origin } } : {}))(worktreeHost.worktrees.lookup(((extra.history ?? []).some((h) => h?.field === "cwd") ? extra.cwd ?? s?.cwd : s?.cwd ?? extra.cwd) ?? '')),
+    // 最近の場所の候補（ユーザーが Pleiad で使った場所。委譲の子会話やネイティブのみの会話は除外）
+    place: (extra.delegation || typeof extra.cwd !== 'string' || !extra.cwd.trim()) ? null : extra.cwd.trim(),
     lastModified: toMs(s?.lastModified) ?? toMs(extra.lastModified),
     createdAt: s?.createdAt ?? extra.createdAt ?? null,
   };
@@ -1083,7 +1091,7 @@ async function sessionList({ limit = 100, track = true } = {}) {
   const rows = new Map();
 
   backends.forEach((b, i) => {
-    for (const s of lists[i]) rows.set(s.sessionId, sessionRow(b, s, side[s.sessionId]));
+    for (const s of lists[i]) rows.set(s.sessionId, withWorktree(sessionRow(b, s, side[s.sessionId])));
   });
 
   // sidecar にしか無い行。どのエージェントのものか分からないもの（v1 から引き継いだ行で
@@ -1093,7 +1101,7 @@ async function sessionList({ limit = 100, track = true } = {}) {
     const b = rows.has(id) || !extra.backend ? null : sessionBackend(extra.backend);
     if (!b) continue;
     const managed = b.retired ? await b.getSession(id).catch(() => null) : null;
-    rows.set(id, sessionRow(b, managed, { ...extra, id }));
+    rows.set(id, withWorktree(sessionRow(b, managed, { ...extra, id })));
   }
 
   const places = new Set();
@@ -2015,7 +2023,7 @@ const opsSessions = {
       // 一覧の上限より古い会話。バックエンドに直に聞く
       const backend = await resolveBackendForSession(id);
       if (!backend) return null;
-      row = sessionRow(backend, await backend.getSession(id).catch(() => null), { ...side, id });
+      row = withWorktree(sessionRow(backend, await backend.getSession(id).catch(() => null), { ...side, id }));
     }
     return { row, children: rows.filter((r) => parentIdOf(r) === id).map((r) => r.id), history: side.history ?? [] };
   },

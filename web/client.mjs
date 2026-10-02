@@ -3120,6 +3120,7 @@ function paintSettingsNotice() {
   const s = state.sessions.find(s => s.id === state.current);
   const next = s?.nextSettings;
   $("nextSettings").hidden = !next;
+  if (!next) $("nextSettings").classList.remove("wt-compact");
   // main が返答を終えて裏だけを待っている間（ターンの phase が waiting）は、送信が予約より先に今のターンへ届く（途中送信）。
   // 予約は次のターンから効くので、そう書く（docs/multi-backend.md §2.2）
   const behind = Boolean(next) && (state.work.turns ?? []).find(belongsHere)?.phase === "waiting";
@@ -3140,7 +3141,15 @@ function paintSettingsNotice() {
     if (next.endpoint !== undefined) changes.push(t("chat.next.endpoint", { value: endpointLabel(next.endpoint) }));
     if (next.account !== undefined) changes.push(t("chat.next.account", { value: accountLabel(next.account) }));
     const joined = changes.join(" · ");
-    $("nextSettingsText").textContent = behind ? t("chat.next.summaryBehind", { changes: joined }) : t("chat.next.summary", { changes: joined });
+    // 変えるのが分けた作業場所だけのときは、軽い 1 行（「次のターンから適用」＋枝分かれの印の札。ADR 0088）
+    const compact = !behind && changes.length === 1 && Boolean(next.cwd && worktreeNextText(next.cwd));
+    $("nextSettings").classList.toggle("wt-compact", compact);
+    if (compact) {
+      const mark = el("span", "wt-ic");
+      mark.innerHTML = branchIcon;
+      mark.setAttribute("aria-hidden", "true");
+      $("nextSettingsText").replaceChildren(mark, el("span", null, joined));
+    } else $("nextSettingsText").textContent = behind ? t("chat.next.summaryBehind", { changes: joined }) : t("chat.next.summary", { changes: joined });
   }
   paintHandoffNote(s, next);
 }

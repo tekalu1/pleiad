@@ -17,6 +17,15 @@
 .wt-always:hover{color:var(--ink)}
 .wt-always:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px;border-radius:var(--r-s)}
 
+/* ---------- 次のターンから適用（変えるのが分けた作業場所だけのとき） ---------- */
+.next-settings.wt-compact{background:none;border-radius:0;padding:4px 6px 4px 14px;margin-bottom:2px;gap:0;flex-wrap:wrap;color:var(--ink-weak)}
+.next-settings.wt-compact > div{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0}
+.next-settings.wt-compact b{font-weight:400;color:var(--ink-weak)}
+.next-settings.wt-compact #nextSettingsText{display:inline-flex;align-items:center;gap:6px;min-width:0;background:var(--surface-2);color:var(--ink);border-radius:var(--r-pill) 0 0 var(--r-pill);padding:2px 4px 2px 10px}
+.next-settings.wt-compact .btn{position:relative;margin-left:0;flex:none;width:24px;height:24px;padding:0;font-size:0;line-height:0;border-radius:0 var(--r-pill) var(--r-pill) 0;background:var(--surface-2);color:var(--ink-weak)}
+.next-settings.wt-compact .btn::before{content:"×";font-size:var(--fs);line-height:24px}
+.next-settings.wt-compact .btn:hover{background:var(--surface-3);color:var(--ink)}
+
 /* ---------- 会話の中の静かな 1 行 ---------- */
 .wt-line{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin:2px 0 6px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .wt-line-t{min-width:0;flex:1 1 200px}
