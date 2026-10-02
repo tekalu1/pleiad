@@ -1,0 +1,112 @@
+/* git の動き（docs/design-system.md「git の動き」、ADR 0085）。
+   返答の下の要約行・委譲カードの「変更」の行・右パネル「git」・頭の行のアイコンと入力欄のブランチ。
+   色の族は面（surface）・文字（ink）だけ。枠線は使わない。差分に色は付けず、+ − の記号と面の階調で読む。 */
+
+/* ---------- 頭の行のアイコン ---------- */
+#gitEntry{position:relative}
+@media (max-width:700px){#gitEntry{display:none}}
+
+/* ---------- 返答の下の 1 行 ---------- */
+.git-sum-row{margin:2px 0 6px;min-width:0}
+.git-sum{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;margin-left:-10px;padding:5px 10px;border:0;border-radius:var(--r-pill);
+  background:transparent;color:var(--ink-weak);font:inherit;font-size:var(--fs-s);cursor:pointer;text-align:left;
+  transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.git-sum:hover{background:var(--surface-hover);color:var(--ink)}
+.git-sum:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.git-sum svg.i{width:14px;height:14px}
+.git-sum-ic{display:inline-flex;flex:none}
+.git-sum-br{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-sum-part{display:inline-flex;gap:6px;white-space:nowrap}
+.git-sum-sep{opacity:.55}
+.git-sum-go{display:inline-flex;flex:none;opacity:.6;transition:transform var(--dur) var(--ease-out),opacity var(--dur-fast) var(--ease-out)}
+.git-sum:hover .git-sum-go{opacity:1;transform:translateX(2px)}
+/* 委譲カードの「変更」の行は狭いと折り返す。› は最後の語に付いたまま（行頭へ落とさない） */
+.git-sum.wrap{display:inline-block;border-radius:var(--r-m);line-height:1.6;white-space:normal}
+.git-sum.wrap > *{display:inline}
+.git-sum.wrap > * + *{margin-left:6px}
+.git-sum.wrap .git-sum-part{white-space:nowrap}
+.git-sum.wrap .git-sum-part > * + *{margin-left:6px}
+.git-sum.wrap svg.i{vertical-align:-2px}
+.git-sum.wrap .git-sum-br{overflow:visible;white-space:normal;overflow-wrap:anywhere}
+@media (max-width:560px){.git-sum-row .git-sum-part.commit{display:none}}
+@media (hover:none){.git-sum-go{opacity:1}}
+
+/* 委譲カードの内訳の先頭の「変更」 */
+.git-delegate{margin:14px 0 4px}
+.git-delegate-label{font-size:var(--fs-xs);color:var(--ink-weak);margin:0 0 2px}
+
+/* ---------- 入力欄のブランチ ---------- */
+.chip .git-br{display:inline-flex;align-items:center;gap:4px;color:var(--ink-weak);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-s)}
+.chip .git-br svg.i{width:13px;height:13px}
+.crow.fit-nobranch .git-br{display:none}
+#cwdChip .git-br[hidden]{display:none}
+
+/* ---------- 右パネル ---------- */
+.git-panel{padding:18px 20px 24px}
+.git-st{display:grid;gap:10px;margin-bottom:22px}
+.git-bn{display:flex;align-items:center;gap:8px;font:600 var(--fs-l)/1.5 var(--font-mono);color:var(--ink-strong);word-break:break-all}
+.git-bn-ic{display:inline-flex;flex:none;color:var(--ink-weak)}
+.git-bn-ic svg.i{width:18px;height:18px}
+.git-chips{display:flex;flex-wrap:wrap;gap:6px}
+.git-chip,.git-tag{display:inline-flex;align-items:center;gap:6px;padding:2px 12px;border-radius:var(--r-pill);font-size:var(--fs-s);text-decoration:none;white-space:nowrap}
+.git-chip{background:var(--surface-2);color:var(--ink);transition:background var(--dur-fast) var(--ease-out)}
+.git-chip-link{color:var(--ink-blue)}
+.git-chip-link:hover{background:var(--surface-3)}
+.git-chip-ic{display:inline-flex}
+.git-chip-ic svg.i{width:13px;height:13px}
+.git-tag{background:var(--surface-3);color:var(--ink-weak);font-size:var(--fs-xs);padding:0 10px;line-height:1.7}
+.git-sec{margin-top:22px}
+.git-sec:first-child{margin-top:0}
+.git-sh{display:flex;align-items:baseline;gap:8px}
+.git-sh h3{margin:0;font-size:var(--fs-xs);font-weight:600;color:var(--ink-weak);letter-spacing:.06em}
+.git-tot{margin-left:auto;font:var(--fs-xs) var(--font-mono);color:var(--ink-weak)}
+.git-acts{list-style:none;margin:8px 0 0;padding:0}
+.git-act{display:grid;grid-template-columns:3.4em 16px minmax(0,1fr) 28px;align-items:center;column-gap:8px;min-height:36px;padding:4px 8px;margin:0 -8px;border-radius:var(--r-m);font-size:var(--fs-s);
+  transition:background var(--dur-fast) var(--ease-out)}
+.git-act time{font:var(--fs-xs) var(--font-mono);color:var(--ink-weak)}
+.git-act-ic{display:inline-flex;color:var(--ink-weak)}
+.git-act-ic svg.i{width:15px;height:15px}
+.git-act-tx{min-width:0;overflow-wrap:anywhere}
+.git-act-tx code{font-size:.95em}
+.git-act .git-act-go{opacity:0;width:28px;height:28px}
+.git-act:hover,.git-act:focus-within{background:var(--surface-hover)}
+.git-act:hover .git-act-go,.git-act:focus-within .git-act-go{opacity:1}
+@media (hover:none){.git-act .git-act-go{opacity:.6}}
+.git-rng{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 8px}
+.git-rp{border:0;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);padding:3px 12px;font:inherit;font-size:var(--fs-s);cursor:pointer;
+  transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.git-rp:hover{background:var(--surface-2);color:var(--ink)}
+.git-rp[aria-pressed="true"]{background:var(--surface-3);color:var(--ink-strong)}
+.git-frow{display:grid;grid-template-columns:2.8em minmax(0,1fr) auto 14px;align-items:center;gap:8px;width:calc(100% + 16px);min-height:36px;margin:0 -8px;padding:4px 8px;border:0;border-radius:var(--r-m);
+  background:transparent;text-align:left;cursor:pointer;font:var(--fs-s) var(--font-mono);color:var(--ink);transition:background var(--dur-fast) var(--ease-out)}
+.git-frow:hover{background:var(--surface-hover)}
+.git-k{font-family:var(--font);font-size:var(--fs-xs);color:var(--ink-weak)}
+.git-nm{overflow-wrap:anywhere}
+.git-dir{color:var(--ink-weak)}
+.git-cn{color:var(--ink-weak);white-space:nowrap}
+.git-go{display:inline-flex;color:var(--ink-weak);opacity:0;transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur) var(--ease-out)}
+.git-go svg.i{width:13px;height:13px}
+.git-frow:hover .git-go,.git-frow:focus-visible .git-go{opacity:1;transform:translateX(2px)}
+@media (hover:none){.git-go{opacity:.6}}
+.git-empty{color:var(--ink-weak);font-size:var(--fs-s);padding:8px 0}
+.git-vback{display:inline-flex;align-items:center;gap:2px;height:28px;padding:0 12px 0 6px;border:0;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink);font:inherit;font-size:var(--fs-s);cursor:pointer;
+  transition:background var(--dur-fast) var(--ease-out)}
+.git-vback:hover{background:var(--surface-3)}
+.git-vback svg.i{width:14px;height:14px}
+.git-vhead{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;margin:14px 0 10px;font:var(--fs-s) var(--font-mono);color:var(--ink)}
+.git-vhead .git-cn{margin-left:auto}
+
+/* 差分: 色は付けない。追加は紙の面と強い字、削除は沈んだ面と弱い字、記号は + − */
+.git-diff{background:var(--surface-2);border-radius:var(--r-m);padding:6px 0 8px;overflow:auto;font:var(--fs-s)/1.65 var(--font-mono)}
+.git-diff-in{display:block;min-width:max-content}
+.git-dh{padding:4px 12px 2px;color:var(--ink-weak);font-size:var(--fs-xs);white-space:pre}
+.git-dh ~ .git-dh{margin-top:6px}
+.git-dl{display:flex;white-space:pre;padding:0 14px 0 6px;color:var(--ink)}
+.git-sg{width:1.8em;flex:none;text-align:center;color:var(--ink-weak)}
+.git-dl.a{background:var(--surface-paper);color:var(--ink-strong)}
+.git-dl.a .git-sg{color:var(--ink-strong);font-weight:700}
+.git-dl.d{background:var(--surface-3);color:var(--ink-weak)}
+.git-dl.c{color:var(--ink-weak)}
+
+/* 右パネルの本文は白い紙の面（ほかの自前の中身は透明で、中にカードを置く）。モックの p-card */
+.file-preview[data-panel="git"] .file-preview-content{background:var(--surface-paper);border-radius:var(--r-l)}

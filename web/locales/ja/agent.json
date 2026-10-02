@@ -163,10 +163,11 @@
     "noticeUnknown": "子タスクの完了通知を確認できませんでした。子の会話を確認してください",
     "commandNotice": "[Pleiad コマンド長時間通知 / {{taskId}} / {{noticeId}}]\n{{title}} の子が `{{command}}` を少なくとも {{minutes}} 分実行中、または完了を待っています。止まっている可能性があります。ply_task_status で様子を見るか、ply_task_cancel で止めてください。",
     "silenceNotice": "[Pleiad タスク無音通知 / {{taskId}}]\n{{title}} の子が {{minutes}} 分なにも出していません。止まっている可能性があります。ply_task_status で様子を見るか、ply_task_cancel で止めてください。",
-    "notice": "[Pleiad タスク完了通知 / {{taskId}}]\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n{{rejections}}元の依頼に必要な作業を続けてください。",
+    "notice": "[Pleiad タスク完了通知 / {{taskId}}]\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n{{rejections}}{{git}}元の依頼に必要な作業を続けてください。",
     "noticeBatch": "[Pleiad タスク完了通知 / {{count}} 件]\n{{count}} 件の子タスクが完了しました。結果は次のとおりです。\n\n{{sections}}元の依頼に必要な作業を続けてください。",
-    "noticeSection": "--- {{taskId}} ---\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n{{rejections}}\n",
+    "noticeSection": "--- {{taskId}} ---\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n{{rejections}}{{git}}\n",
     "noticeMore": "\n続きは ply_task_status の offset: {{offset}} で取得できます。",
+    "noticeGit": "変更: {{branch}} · {{files}} ファイル +{{add}} −{{del}} · コミット {{commits}}",
     "noticeRetry": "利用者が {{of}} を別の委譲先でやり直したタスク\n",
     "noticeRejections": "実行前に拒否されたコマンド（Codex 自身の安全判定など）: {{count}} 件\n{{items}}\n全件は ply_task_status の rejections で読めます。",
     "noticeStoppedBackground": "子の返答の後も {{minutes}} 分以上終わらなかった裏の作業を、Pleiad が止めました: {{count}} 件\n{{items}}\n続きが要るなら、子の会話で結果を確かめてから ply_task_send で指示してください。",
@@ -331,6 +332,26 @@
     "app": {
       "status": {
         "summary": "Pleiad の版・起動時刻・画面の言語・走っている作業の数を返す。"
+      }
+    },
+    "sessions": {
+      "search": {
+        "summary": "会話の題・状態・場所・本文を探す。語は空白で AND、\"…\" で囲むと完全一致。結果は会話ごとに一致した発言の抜粋つき。",
+        "query": "検索語。空白区切りは AND（語ごとに題・状態・場所・本文のどこでもよい）。\"…\" で囲むと 1 語で大小・全角半角も区別する。空なら絞り込みだけで一覧を返す。",
+        "filters": "絞り込み。",
+        "backends": "エージェントの id（claude・codex・antigravity）。省略はすべて。",
+        "cwd": "作業ディレクトリの完全一致。",
+        "status": "状態の名前。null は状態なし。省略は絞らない。",
+        "since": "この日時以後に更新した会話（ISO 文字列か epoch ms）。",
+        "until": "この日時以前に更新した会話（ISO 文字列か epoch ms）。",
+        "speaker": "本文を探す発言者。any（既定）・user・assistant。",
+        "includeDelegated": "委譲の子の会話も含める。既定は含めない。",
+        "includeToolInputs": "ツールの入力（コマンド・パス）も探す。既定は含めない。",
+        "sessionIds": "この会話の中だけを探す。",
+        "sort": "relevance（既定。関連度）か recent（新しい順）。",
+        "limit": "会話の件数。既定 50・最大 200。",
+        "cursor": "続き。前の結果の nextCursor をそのまま渡す。",
+        "hitsPerSession": "会話ごとに返す一致の発言の数。既定 1・最大 10。"
       }
     },
     "errors": {

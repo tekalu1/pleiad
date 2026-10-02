@@ -29,6 +29,14 @@ const WARN = ["M12 3.5l9.5 16.5h-19z", "M12 10v4.5M12 17.2v.3"];
 const MODEL = ["M8 6h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z", "M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3"];
 const CARET = "M7 10l5 5 5-5";
 
+// git のブランチの線画（円 3 つと線。glyph は path だけなので別に作る）
+function branchGlyph() {
+  const svg = svgEl("svg", { class: "i", viewBox: "0 0 24 24", "aria-hidden": "true" });
+  for (const [cx, cy] of [[6.75, 5.4], [6.75, 18.6], [17.25, 8.1]]) svg.append(svgEl("circle", { cx, cy, r: 2.4 }));
+  svg.append(svgEl("path", { d: "M6.75 7.8v8.4M17.25 10.5c0 3.3-2.4 4.35-5.4 4.8-2.85.45-5.1 1.05-5.1 2.1" }));
+  return svg;
+}
+
 function glyph(...paths) {
   const svg = svgEl("svg", { class: "i", viewBox: "0 0 24 24", "aria-hidden": "true" });
   for (const d of paths) svg.append(svgEl("path", { d }));
@@ -250,7 +258,10 @@ export function setupComposerControls({ cmd, get, on }) {
 
   // チップの骨組み（アイコン + 字 + ▾）。3 つとも同じ形（docs/design-system.md「入力欄の設定」）
   const cwdName = el("span", "v");
-  chips.cwd.append(glyph(FOLDER), cwdName, glyph(CARET));
+  // ブランチ（作業場所が git のときだけ。ADR 0085）。狭いときは fitRow が最初に削る
+  const gitBranch = el("span", "git-br");
+  gitBranch.hidden = true;
+  chips.cwd.append(glyph(FOLDER), cwdName, gitBranch, glyph(CARET));
   chips.cwd.lastChild.classList.add("caret");
   const modelName = el("span", "v");
   chips.model.append(glyph(...MODEL), modelName, glyph(CARET));
@@ -618,6 +629,14 @@ export function setupComposerControls({ cmd, get, on }) {
     chips.cwd.setAttribute("aria-label", t("composer.cwd.chipAria", { cwd: cwd || t("composer.cwd.unset") }));
     chips.cwd.dataset.value = cwd;
     chips.cwd.disabled = Boolean(d.cwdDisabled);
+    // ブランチ。名前は title と読み上げにも足す
+    const gitName = d.git ? (d.git.branch ?? (d.git.head ? t("git.detached", { hash: d.git.head }) : "")) : "";
+    gitBranch.hidden = !gitName;
+    gitBranch.replaceChildren(...(gitName ? [branchGlyph(), gitName] : []));
+    if (gitName) {
+      chips.cwd.title = `${chips.cwd.title} · ${t("git.chipBranch", { branch: gitName })}`;
+      chips.cwd.setAttribute("aria-label", `${chips.cwd.getAttribute("aria-label")} · ${t("git.chipBranch", { branch: gitName })}`);
+    }
     // モデル
     // 互換の接続先は「接続先 · モデル · 段」。モデルは表示名（web/compat-models.mjs）で、1M は札。送る ID を含む全体は title に出す
     const row = d.endpoint?.row;
@@ -668,6 +687,7 @@ export function setupComposerControls({ cmd, get, on }) {
 
   /**
    * チップの行を 1 行に収める（docs/design-system.md「入力欄と上端」）。短い値は詰めない。足りない分だけ、この順に削る:
+   *   0. 作業場所のブランチを外す（git のとき。ADR 0085）
    *   1. 承認モードを短い名前に（都度確認 → 都度）  2. モデルの「 · 段」を外す
    *   3. モデル名を … で詰める（「Smart…」くらいまで）  4. 作業ディレクトリの名前を … で詰める（9 字くらいまでは残す）
    * 縮める前の幅は、チップを縮めない状態（.measuring）で測る。行の幅・中身が変わるたびに呼ぶ（paint・窓の幅・中断の出入り）
@@ -676,7 +696,7 @@ export function setupComposerControls({ cmd, get, on }) {
     const row = chips.cwd.parentElement;
     if (!row || !row.isConnected || !row.offsetParent) return;
     const cwd = chips.cwd, mdl = chips.model;
-    row.classList.remove("fit-short", "fit-noef");
+    row.classList.remove("fit-nobranch", "fit-short", "fit-noef");
     cwd.style.minWidth = ""; mdl.style.minWidth = "";
     row.classList.add("measuring");
     // 最後の部品（送信）の右端が行の右端に収まるか（scrollWidth は整数に丸められ、1px 足りないのを見逃す）
@@ -684,6 +704,7 @@ export function setupComposerControls({ cmd, get, on }) {
       const last = [...row.children].reverse().find((n) => n.offsetParent);
       return !last || last.getBoundingClientRect().right <= row.getBoundingClientRect().right + 0.01;
     };
+    if (!fits()) row.classList.add("fit-nobranch");
     if (!fits()) row.classList.add("fit-short");
     if (!fits()) row.classList.add("fit-noef");
     let size = null;

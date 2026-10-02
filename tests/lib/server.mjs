@@ -34,6 +34,9 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       // 判定器（OpenRouter の Jev・Cerebras）へは送らない。キーを登録するテストは偽の判定器を渡す
       AGENT_HOST_OPENROUTER_API: "http://127.0.0.1:9",
       AGENT_HOST_CEREBRAS_API: "http://127.0.0.1:9",
+      // ターンの始まりと終わりの git の撮影（refs/pleiad/）はしない。作業場所が開発中のリポジトリのテストが .git に ref を残さないため。
+      // 確かめるテスト（server-git）は "on" を渡す
+      AGENT_HOST_GIT_SNAPSHOTS: "off",
       // 言語は日本語に固定する。テストは日本語の文言に依存している（CI の OS の言語で変わらないように）
       AGENT_HOST_LOCALE: process.env.AGENT_HOST_LOCALE || "ja",
       ...(dataDir ? { AGENT_HOST_DATA: dataDir } : {}),
