@@ -59,6 +59,32 @@ export default async function(t, ctx) {
       t.ok(`${backend}: 続きのターンでも捨てた内容を覚えていない`, next.outcome === "ok" && nextText.includes(keep) && !nextText.includes(omit), nextText);
       const reloaded = await c.cmd("loadSession", { sessionId: id });
       t.ok(`${backend}: 続きのあとも履歴は 6 件`, reloaded.messages.length === 6, String(reloaded.messages.length));
+
+      // ツールを使った発言（tool_use・tool_result）を挟んだ会話。残す側にツールの発言があっても、捨てる側にあっても切れる
+      const keep2 = `teal_${crypto.randomBytes(4).toString("hex")}`;
+      const omit2 = `coral_${crypto.randomBytes(4).toString("hex")}`;
+      const toolFirst = await c.runTurn({ backend, cwd: ctx.work, model,
+        prompt: `Remember the code ${keep2}. Use the shell tool once to run: echo ${keep2}. Then reply READY only. Do not modify files.` });
+      t.ok(`${backend}: ツールを使う 1 つ目`, toolFirst.outcome === "ok" && toolFirst.tools.length > 0, JSON.stringify({ tools: toolFirst.tools, outcome: toolFirst.outcome }));
+      if (toolFirst.outcome !== "ok") continue;
+      const id2 = toolFirst.sessionId;
+      const toolSecond = await c.runTurn({ sessionId: id2, model,
+        prompt: `Another code is ${omit2}. Use the shell tool once to run: echo ${omit2}. Then reply READY only. Do not modify files.` });
+      t.ok(`${backend}: ツールを使う 2 つ目`, toolSecond.outcome === "ok");
+      const toolBefore = await c.cmd("loadSession", { sessionId: id2 });
+      const toolUsers = toolBefore.messages.filter(m => m.role === "user");
+      const askCodes = "Plain text extraction: list every teal_ or coral_ code that appears anywhere in the conversation history above (including tool output), separated by spaces, or NONE. Do not use tools.";
+      const toolMessageId = crypto.randomUUID();
+      const toolFrom = c.mark();
+      const toolSent = await c.cmd("sendMessage", { sessionId: id2, messageId: toolMessageId, prompt: askCodes, rewind: { beforeMessageId: toolUsers[1].uuid } });
+      await c.waitFor(e => e.type === "userMessage" && e.messageId === toolMessageId, { from: toolFrom });
+      const toolStarted = c.events.findIndex((e, i) => i >= toolFrom && e.type === "userMessage" && e.messageId === toolMessageId);
+      await c.waitFor(e => e.type === "turnEnd" && e.sessionId === id2, { from: toolStarted });
+      const toolEvents = c.since(toolStarted);
+      const toolText = said(toolEvents);
+      t.ok(`${backend}: ツールの発言を含む会話でも巻き戻せる`, toolEvents.some(e => e.type === "turnResult" && e.outcome === "ok") && toolSent.rewind?.mode === (backend === "claude" ? "resume" : "thread"),
+        JSON.stringify({ rewind: toolSent.rewind, text: toolText }));
+      t.ok(`${backend}: 残したツールの発言の中身は覚えていて、捨てたツールの発言は覚えていない`, toolText.includes(keep2) && !toolText.includes(omit2), toolText);
     }
   } finally { c.close(); }
 }
