@@ -44,6 +44,13 @@ export const DEFAULTS = Object.freeze({
   failureBlockMs: 10 * 60_000,
   pairingAttempts: 5,
   pairingWindowMs: 60_000,
+  // 通知の線（docs/remote.md §5.6）。通知の暗号文は読めないので、大きさと数と寿命だけで抑える
+  notifyMaxBlobChars: 2048,
+  notifyQueueMax: 16,
+  notifyMaxTtlMs: 15 * 60_000,
+  notifyDefaultTtlMs: 5 * 60_000,
+  notifyPingIntervalMs: 300_000,
+  notifyPerMinute: 120,
 });
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40, silent: 100 };
@@ -51,6 +58,7 @@ const HOST_ID = /^[a-z2-7]{26}$/;           // base32(SHA-256(公開鍵)) の先
 const DEVICE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const SECRET32 = /^[A-Za-z0-9_-]{43}$/;     // 256bit の base64url（パディングなし）
 const HASH_HEX = /^[0-9a-f]{64}$/;
+const BLOB = /^[A-Za-z0-9_-]+$/;            // 通知の暗号文（base64url）
 const MAX_FAILURE_ENTRIES = 10_000;
 
 /** 環境変数から設定を組む。おかしな値なら投げる（起動しない）。 */
@@ -149,6 +157,11 @@ export function createRelay(opts = {}) {
   const hostConns = new Map();
   /** IP → 認証の失敗の記録。 */
   const failures = new Map();
+  /** hostId → deviceId → 通知の線（端末が張る軽い線。docs/remote.md §5.6）。制御用の接続の張り直しをまたいで残す。 */
+  const notifyLines = new Map();
+  /** hostId → deviceId → 溜めた通知 [{ i, blob, expiresAt }]。暗号文のまま持つだけで、ディスクには書かない。 */
+  const notifyQueues = new Map();
+  let notifySeq = 0;
 
   const wss = new WebSocketServer({
     noServer: true,
@@ -168,15 +181,19 @@ export function createRelay(opts = {}) {
   server.on('upgrade', onUpgrade);
   server.on('clientError', (_err, socket) => socket.destroy());
 
-  // 30 秒ごとに ping。2 回続けて pong が返らない接続を捨てる（§4.4・§5.3）
-  const pinger = setInterval(() => {
+  // 30 秒ごとに ping。2 回続けて pong が返らない接続を捨てる（§4.4・§5.3）。通知の線は電池のために間隔を長くする（§5.6）
+  const pingAll = (wanted) => {
     for (const ws of wss.clients) {
+      if (Boolean(ws.notifyLine) !== wanted) continue;
       if (ws.missedPongs >= 2) { ws.terminate(); continue; }
       ws.missedPongs = (ws.missedPongs ?? 0) + 1;
       try { ws.ping(); } catch { /* 閉じかけ */ }
     }
-  }, o.pingIntervalMs);
+  };
+  const pinger = setInterval(() => pingAll(false), o.pingIntervalMs);
   pinger.unref();
+  const notifyPinger = setInterval(() => { pingAll(true); sweepNotify(); }, o.notifyPingIntervalMs);
+  notifyPinger.unref();
 
   // ── 認証の失敗と遮断 ──────────────────────────────────────────
 
@@ -229,7 +246,7 @@ export function createRelay(opts = {}) {
     let url;
     try { url = new URL(req.url, 'http://relay'); } catch { return rejectUpgrade(socket, 400); }
     const route = url.pathname;
-    if (route !== '/v1/host' && route !== '/v1/host/accept' && route !== '/v1/device') {
+    if (route !== '/v1/host' && route !== '/v1/host/accept' && route !== '/v1/device' && route !== '/v1/device/notify') {
       return rejectUpgrade(socket, 404);
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
@@ -240,6 +257,7 @@ export function createRelay(opts = {}) {
       ws.on('error', () => {});   // 1009 などは close で扱う
       if (route === '/v1/host') onControl(ws, req);
       else if (route === '/v1/host/accept') onAccept(ws, req, url);
+      else if (route === '/v1/device/notify') onNotifyLine(ws, req);
       else onDevice(ws, req);
     });
   }
@@ -274,6 +292,7 @@ export function createRelay(opts = {}) {
       ws,
       devices: new Map(),   // deviceId → SHA-256(トークン)
       synced: false,
+      notifyTimes: [],      // 通知を受け取った時刻（1 分あたりの上限）
       pairing: null,        // { hash, expiresAt }
       pairTimes: old?.pairTimes ?? [],
       openedAt: Date.now(),
@@ -334,6 +353,8 @@ export function createRelay(opts = {}) {
         log('info', 'revoke', { host: short(h.id), device: msg.id });
         return cutRevoked(h);
       }
+      case 'notify':
+        return onNotify(h, msg);
       case 'pairing': {
         if (msg.ticketHash == null) { h.pairing = null; return; }   // 取り下げ
         const hash = hashOf(msg.ticketHash);
@@ -355,6 +376,95 @@ export function createRelay(opts = {}) {
       const hash = h.devices.get(c.deviceId);
       if (!hash || !sameHash(hash, c.tokenHash)) endConn(c, CLOSE.UNAUTHORIZED, 'revoked');
     }
+    for (const [deviceId, line] of notifyLines.get(h.id) ?? []) {
+      const hash = h.devices.get(deviceId);
+      if (!hash || !sameHash(hash, line.tokenHash)) closeWs(line.ws, CLOSE.UNAUTHORIZED, 'revoked');
+    }
+    const queues = notifyQueues.get(h.id);
+    for (const deviceId of [...(queues?.keys() ?? [])]) if (!h.devices.has(deviceId)) queues.delete(deviceId);
+    if (queues && !queues.size) notifyQueues.delete(h.id);
+  }
+
+  // ── 通知の線（docs/remote.md §5.6） ───────────────────────────────
+  // ホストが端末ごとの鍵で暗号化した通知を、deviceId 宛てに流すだけ。中身（種類・会話名）は読めないし、読もうともしない。
+  // 端末が切れている間は暗号文のまま短く溜め（寿命と件数に上限）、つながったら渡す。端末が受け取りの印（ack）を返すまで残し、
+  // 線が半開きで落ちたときも次の線で送り直す（端末は通し番号で重複を捨てる）。
+
+  function pruneQueue(queue, now = Date.now()) {
+    while (queue.length && queue[0].expiresAt <= now) queue.shift();
+    return queue;
+  }
+
+  function sweepNotify() {
+    const now = Date.now();
+    for (const [hostId, queues] of notifyQueues) {
+      for (const [deviceId, queue] of queues) if (!pruneQueue(queue, now).length) queues.delete(deviceId);
+      if (!queues.size) notifyQueues.delete(hostId);
+    }
+  }
+
+  function sendLine(line, entry) {
+    const ws = line.ws;
+    if (ws.readyState !== WebSocket.OPEN) return;
+    if (ws.bufferedAmount > 64 * 1024) { ws.terminate(); return; }   // 読まない線に溜めない
+    ws.send(JSON.stringify({ type: 'notify', i: entry.i, blob: entry.blob }));
+  }
+
+  function onNotify(h, msg) {
+    const ok = typeof msg.deviceId === 'string' && DEVICE_ID.test(msg.deviceId)
+      && typeof msg.blob === 'string' && msg.blob.length > 0 && msg.blob.length <= o.notifyMaxBlobChars && BLOB.test(msg.blob);
+    if (!ok) return log('warn', 'notify-bad', { host: short(h.id) });   // 形が違っても制御用の接続は切らない
+    const now = Date.now();
+    h.notifyTimes = h.notifyTimes.filter((t) => now - t < 60_000);
+    if (h.notifyTimes.length >= o.notifyPerMinute) return log('warn', 'notify-rate', { host: short(h.id) });
+    h.notifyTimes.push(now);
+    if (!h.devices.has(msg.deviceId)) return log('debug', 'notify-unknown-device', { host: short(h.id), device: msg.deviceId });
+    const asked = Number(msg.ttlMs);
+    const ttl = Number.isFinite(asked) && asked > 0 ? Math.min(asked, o.notifyMaxTtlMs) : o.notifyDefaultTtlMs;
+    if (!notifyQueues.has(h.id)) notifyQueues.set(h.id, new Map());
+    const queues = notifyQueues.get(h.id);
+    if (!queues.has(msg.deviceId)) queues.set(msg.deviceId, []);
+    const queue = pruneQueue(queues.get(msg.deviceId), now);
+    const entry = { i: ++notifySeq, blob: msg.blob, expiresAt: now + ttl };
+    queue.push(entry);
+    while (queue.length > o.notifyQueueMax) queue.shift();
+    const line = notifyLines.get(h.id)?.get(msg.deviceId);
+    if (line) sendLine(line, entry);
+    log('debug', 'notify', { host: short(h.id), device: msg.deviceId, bytes: msg.blob.length, online: Boolean(line) });
+  }
+
+  function onNotifyLine(ws, req) {
+    ws.notifyLine = true;
+    const hostId = hostIdOf(req.headers['x-pleiad-host']);
+    if (!hostId) return fail(ws, CLOSE.BAD_REQUEST, 'host id');
+    const h = hosts.get(hostId);
+    if (!h || !h.synced) return closeWs(ws, CLOSE.NOT_FOUND, 'host offline');
+    const deviceId = req.headers['x-pleiad-device'];
+    const raw = secret32(bearer(req.headers.authorization));
+    const hash = typeof deviceId === 'string' ? h.devices.get(deviceId) : undefined;
+    if (!raw || !hash || !sameHash(sha256(raw), hash)) return fail(ws, CLOSE.UNAUTHORIZED, 'device token');
+    if (!notifyLines.has(hostId)) notifyLines.set(hostId, new Map());
+    const lines = notifyLines.get(hostId);
+    const old = lines.get(deviceId);
+    if (!old && lines.size >= o.maxDevices) return closeWs(ws, CLOSE.LIMIT, 'too many lines');
+    if (old) closeWs(old.ws, CLOSE.REPLACED, 'replaced');
+    const line = { ws, deviceId, tokenHash: hash, openedAt: Date.now() };
+    lines.set(deviceId, line);
+    ws.on('message', (data, isBinary) => {
+      if (isBinary) return;
+      let msg = null;
+      try { msg = JSON.parse(data.toString('utf8')); } catch { return; }
+      if (msg?.type !== 'ack' || !Number.isSafeInteger(msg.i)) return;
+      const queue = notifyQueues.get(hostId)?.get(deviceId);
+      while (queue?.length && queue[0].i <= msg.i) queue.shift();
+    });
+    ws.on('close', (code) => {
+      log('info', 'notify-close', { host: short(hostId), device: deviceId, code, ms: Date.now() - line.openedAt });
+      if (lines.get(deviceId) === line) lines.delete(deviceId);
+      if (!lines.size && notifyLines.get(hostId) === lines) notifyLines.delete(hostId);
+    });
+    log('info', 'notify-open', { host: short(hostId), device: deviceId });
+    for (const entry of pruneQueue(notifyQueues.get(hostId)?.get(deviceId) ?? [])) sendLine(line, entry);
   }
 
   function closePending(hostId, code, reason) {
@@ -493,7 +603,7 @@ export function createRelay(opts = {}) {
     server,
     options: o,
     /** 試験と監視用の数。中身は含まない。 */
-    stats: () => ({ hosts: hosts.size, conns: conns.size, blocked: [...failures.values()].filter((e) => e.blockedUntil > Date.now()).length }),
+    stats: () => ({ hosts: hosts.size, conns: conns.size, lines: [...notifyLines.values()].reduce((n, m) => n + m.size, 0), blocked: [...failures.values()].filter((e) => e.blockedUntil > Date.now()).length }),
     listen(port = o.port, host) {
       return new Promise((resolve, reject) => {
         server.once('error', reject);
@@ -502,6 +612,7 @@ export function createRelay(opts = {}) {
     },
     close() {
       clearInterval(pinger);
+      clearInterval(notifyPinger);
       for (const c of [...conns.values()]) endConn(c, CLOSE.SHUTDOWN, 'shutdown');
       for (const ws of wss.clients) closeWs(ws, CLOSE.SHUTDOWN, 'shutdown');
       return new Promise((resolve) => {

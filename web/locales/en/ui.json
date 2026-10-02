@@ -40,6 +40,7 @@
       "usage": "Usage",
       "appearance": "Appearance",
       "context": "Plugins",
+      "notify": "Notifications",
       "remote": "Remote",
       "about": "About & updates",
       "delegation": "Delegation",
@@ -90,6 +91,27 @@
       "beta": "Get beta versions",
       "autoDownload": "Download updates automatically",
       "releaseNotes": "Release notes"
+    },
+    "notify": {
+      "pc": {
+        "title": "This PC",
+        "done": "When a task finishes",
+        "reply": "When a reply is needed (approval or question)",
+        "failed": "When a task fails",
+        "viewing": "Not shown while you're viewing that conversation.",
+        "switch": "This PC: {{label}}"
+      },
+      "phone": {
+        "title": "Phones",
+        "empty": "No phones are paired. Add one in Settings › Remote.",
+        "lastSent": "Last sent {{when}}",
+        "never": "Nothing sent yet",
+        "on": "On",
+        "off": "Off",
+        "offOnPhone": "Off on the phone",
+        "noRelay": "Not connected to the relay. Phones won't be notified until it is.",
+        "switch": "{{name}}: notifications"
+      }
     },
     "remote": {
       "enable": "Allow remote access to this host",
@@ -2405,7 +2427,13 @@
     "computerApproval": "{{agent}} is waiting for permission to use “{{app}}”",
     "computerApprovalMore_one": "{{agent}} is waiting for permission to use “{{app}}” and {{count}} other app",
     "computerApprovalMore_other": "{{agent}} is waiting for permission to use “{{app}}” and {{count}} other apps",
-    "untitled": "Pleiad conversation"
+    "untitled": "Pleiad conversation",
+    "failed": "Work failed",
+    "mobile": {
+      "band": "Get notified when you're away?",
+      "enable": "Turn on",
+      "later": "Later"
+    }
   },
   "remote": {
     "badgeLabel": "Remote:",

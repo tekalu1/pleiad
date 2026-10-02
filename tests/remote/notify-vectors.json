@@ -1,0 +1,88 @@
+{
+  "_comment": "スマホへの通知の暗号文の例（core/notify/crypto.mjs と mobile/android/remote-core の NotifyCrypto が同じものを読む）。鍵・nonce は試験用の固定値",
+  "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "hostId": "abcdefghijklmnopqrstuvwxyz",
+  "deviceId": "dTestDevice123",
+  "blobBytes": 540,
+  "cases": [
+    {
+      "name": "approval",
+      "nonce": "000000000000000000000001",
+      "blob": "AAAAAAAAAAAAAAABFQbE3jLWCi8iDCJcnYQAxiKpK2ZWh2K0QzAz6AoSEioYrFbGHhu2Dmzp8zFc1DcfDH06_JnMJ2XfZW0XN8P6ZCZdR5J-OumProkOkyFb-42xw71_HTTrdK6XohBFLht9OYHWQiWh1Okkih_rT8g1VS57YiFZJIte-pBxqbpiIAoikBF4SnaovCpGBUWy3Y8OvsUc44qv6BPMu7SEaPzzRACTeuz-ZUpr5VYOte9C3jwTZU0JERGwzGmBvEf2kdTW1QokN24YlMc1z67FNeh0lNZ-3iWMI0JHlBuluy4JVOL4dSm2pjuGHaBNvFxJ8Tg_IxJjmCaneuZIChQazNbwx9hpHjkK9XntgnlDVGUVkES4z1JRepoyFio2y5zeSBDcl3ByyIMPZq-VWfvKBkZvjkm9cs2Lo2mq3sOq8E5lfIuTp6mF2_l932pS2s9CuJwXbMShXlxpdl0mlR4T3KNXereKTLiIqnR4u9Pu_cOkqfFrNBp5Z5yx_dTZi_Qo_v_B_sMj2gZdXery_k-nxwKRBKqPy1plNH9Myi3r_ZFmFXYPk6Q8FyEAxjnkzOb52Wf7fG3kt8QlzndNZwoQUG9YONKGXaiYFaI3-nRVlC0zyfhzvBfLbBw3_fZtyHP2Rssizn6ucMf4kMBK25RixPdrYQSu2Yior23jrIkp4OPgT5Tefq32YsX144I-_9Cu3QrF",
+      "notice": {
+        "v": 1,
+        "seq": 1767225600001,
+        "at": 1767225600000,
+        "kind": "approval",
+        "hostId": "abcdefghijklmnopqrstuvwxyz",
+        "host": "main-pc",
+        "session": "sess-1",
+        "title": "マイグレーションの実行前に確認",
+        "id": "perm-1"
+      }
+    },
+    {
+      "name": "done",
+      "nonce": "000000000000000000000002",
+      "blob": "AAAAAAAAAAAAAAACycpVX8Jp4OCVL090BmPRvbEhAuLcnDmfvk1iCF35OvDGGcj4EFYa1iz90gCnU6qOWGx4d8SiiAeVs-1FMk9VguQ1IJiXO8wCGk31HjMbsK5VhiF_0UE9KZRIXsYzZNbZvnS_M942ddzkJT0s7XLZOzcbA4Lbr_auCeHlBNb-heugqR60dYRAgXJ8RI5YHgFqab6qPBIL0H6u_WM5y8rioBx4XDg73_uGjm49xYPK8IUelQKmMHEG41dkOct4MayNbKBf3kDGj3o79RToLS6PAnHGEzeM3z8QSzmbMg3W31sfdRzn_sLxQtqK4qlmcUbR9gtBtmF108VqcDxDrERHzBYV3wDq0pAZ1Ox3ty4qugVmXyqf2LERZTyVaZTxNRDIEoMe1XNdPtKbGUQchRUBA8zw6wQt3EoNVgjZ9vOLCsLjZNMLYUPFqWnNrEYFOUYZn38wxZJn65g1xAcY8hoSfD7QeBV6_fwU935LHTKIm1xvZcQWykqjMRzbzWfWPayCXpZSbe6beKdh2VG_lFdBi_i1v_4yoyqynSw205kpt4ynmR5_23nEevXyvN8YynRexjwezGUNk-RiGSm_ug4yN7Vf3nPIZenFc4UWtTvnMn38BsQv-OsyJoJ3qKG4K4sd8m7RjWjOkejB_0Ut7eA1S72QUsUn_Rsl1YtmV0pOdDlui30fneMLQqX2GNvLbtDD",
+      "notice": {
+        "v": 1,
+        "seq": 1767225600002,
+        "at": 1767225600500,
+        "kind": "done",
+        "hostId": "abcdefghijklmnopqrstuvwxyz",
+        "host": "main-pc",
+        "session": "sess-2",
+        "title": "ログイン画面の文言を英訳する"
+      }
+    },
+    {
+      "name": "failed",
+      "nonce": "000000000000000000000003",
+      "blob": "AAAAAAAAAAAAAAADDbd1kSBUi-ufsOQa2idEsD21xm91FzB_EQkXWck2BSLPFFs0igGa9_DeA-3n0OXc546ttpcd9kY43VrIWPi04A962_66uiEqicmUdYeYMdiWCPh_6oXFgRpnm-3I5QCjB2JVopwFThHJDzlzNSO214fl4zMn_bpH_xCKza-3VZjVWh-1wX-UdfnKtNcgf3jRDmexqQEXCTcvlA6lbZ861oqfVkIBF8IZfUsj4DJIph0-m1YcGNICEyfNemYy25yJ2St0cfSoDsfGwVyYzWn5lihUdd5hc6fBDRAorIgt-bWxJqwaW7p03k5Hg-JuAi_zx6PzWWP37YexqXZuqBPUAWAVJwux-Qw_Wssc_OtX_Sd03JFzdmqp2UZvvq3vKNyy0ITERxq6I366nuAx3lxp2pxz1jf9aEUyzD5q3sv0BtdicgZcwTkrCVZ8So8sMVk_aEvJiFb9G7SrofXB53LmJMWyHmrB05odngu4pKIQ4Pq7oa8GtvMmyblU_Or-q5vT5YP626T970ZgTVvgvI8uNJ01nRQOQ4lThD95mViHI5IMoizGvU6MwF73nt4hX5MeB0Xztk5jXJ1lrMYD9Axw5pZ7Lmi04uR0HcngT-oPBG0rb12XbJVk3A7l-Gdsvwe41mVm4ItxUAcvM8XEjSKBzZn_GyBE4oOagh6STqPMkK7vDIgG-6cF_hf3OusokO0b",
+      "notice": {
+        "v": 1,
+        "seq": 1767225600003,
+        "at": 1767225601000,
+        "kind": "failed",
+        "hostId": "abcdefghijklmnopqrstuvwxyz",
+        "host": "main-pc",
+        "session": "sess-3",
+        "title": ""
+      }
+    },
+    {
+      "name": "cancel-approval",
+      "nonce": "000000000000000000000004",
+      "blob": "AAAAAAAAAAAAAAAEG_22I__TYSyr72TfXqx0jOTOsiZz5s5Xvb5x6EDVSG4QLve4WkwhR8JMC4o_yTQErkMS3QQTcMY3IEpxj26WyPBe1NVgD2QNrIXmL7lfeXpTqKFOKhouu8L5m9G8nOry7gt6IR9yMAmaTpK16zHXDGV5-r7mE_qBq5CPkn1xLDnrrr8gJ2cjyyKUkMTJN_OwbmGFrO_InHy0uwp4EE6qO28AcR1mFjOrZuJRRz8e9D7BhbotJ69uV4lJrRbwaTFIF1U8sPwIfD1-yAioV6YRJoWxsEg_MlIz9ponZbUGbm3UaL5mYKObv7vVyr0CxWi0uYGRAD86B4lqzN26MYnaP1WoEB5LW_MKMhKpdHxENlUrzjEc3leX7t9RP96SYJMDyycXmeQLi-fInWhB3pNqHQ73LmGN6jRSKsKKqn00mCtoSI94BIqeX_unTseVCs5IyVvHYkPpZvwBzASCZ3g0E5myAkTbs12yo9ZDCp_Kehf49Y085zZO_9YzYv4WSaM8UAlCb6pDymFmHxcZ-EuKDEc5XVkR7YeF2mewIVwt7VaJJFzbWsxjTIT1ETzpuNK-CykgieN20BhBBNk7MVQXfR43BkcoUerq5evBsUt6lasVqKSlFlJJS0J2qxFW1aO5H81CXcIi0SOMipot54dLkwQoTMJQ-xRPzlmAkzXizFxY1fNpvzMBcOWfa04zZ9vJ",
+      "notice": {
+        "v": 1,
+        "seq": 1767225600004,
+        "at": 1767225602000,
+        "kind": "cancel",
+        "hostId": "abcdefghijklmnopqrstuvwxyz",
+        "host": "main-pc",
+        "session": "sess-1",
+        "title": "",
+        "id": "perm-1",
+        "cancel": "approval"
+      }
+    },
+    {
+      "name": "cancel-seen",
+      "nonce": "000000000000000000000005",
+      "blob": "AAAAAAAAAAAAAAAFmAK5QLWcr3xEcDqUNNVv0ywyEMRDTgJdGO9dFyqdO86RsDB49DpS0ozqbRbWI0PBqVxvMvJm2-SnHhckjeusDHqJKQKyVnee0C2FvV_PPjSy_NsaolPn6v7zutFqgaVGC_u0lps1uVfCWC2c4DJkCrBhz1oaklMDAO96dhnyeFDL7okxjgQZvO22s2AUiEGs0v0p-YtnXWS7GqIrajlLZA-RARwUJQg6IiEl8ySJi4b36l1p8DCOlvXrpNfAP-tEZl1Y0z3Au_60G9FxbMsBNeDu_6D8sab9GgdXGQFVfiHSSL520YeUepEbjHImLP-e-jOSNqd9STA6NGOoYUMDuchB23Zyt3kAs7q291C7o0YLty5GtuwVzYHdNJ38Y8eGWyL3KKw-o6JWUpcazabadhIB2g_BpUKtwYFpwVE89ZihS4FoX0QS9KAAHGrUNDuE80zX0i7l17eX1hCHpV0O3f25xDINDBEkz9SRtX20HS8_lbTTmaRFe1Ci_zrE31x2KS9tSWv6tMS4v2c1bRTDivHHeHVyJDppuXPHxroLQPjq7-5cMoNaetULrU3LVM29m3eNLS-w1yt1OguwvKP5Kh567MqGJ8VYTHuNKvatUJXCPMaLpIhE7syyEN1JmebzoV-QLimR8VuUKHCI-AzSHb-lRzVv7krukR_Swi9KwBB1Qnz-oDkvvgq_-9TS2JQt",
+      "notice": {
+        "v": 1,
+        "seq": 1767225600005,
+        "at": 1767225603000,
+        "kind": "cancel",
+        "hostId": "abcdefghijklmnopqrstuvwxyz",
+        "host": "main-pc",
+        "session": "sess-2",
+        "title": "",
+        "cancel": "seen"
+      }
+    }
+  ]
+}

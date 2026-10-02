@@ -30,6 +30,9 @@ import { setupOnboarding } from "./onboarding.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
 import { setupCompatEndpoints } from './compat-endpoints.mjs';
 import { setupRemote } from './remote.mjs';
+import { setupNotifySettings } from './notify-settings.mjs';
+import { setupMobileNotify } from './mobile-notify.mjs';
+import { createPresenceReporter } from './presence.mjs';
 import { compatModelText } from './compat-models.mjs';
 import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
@@ -172,7 +175,13 @@ let queuedSend = null;
 
 const NL = String.fromCharCode(10);
 const PROTOCOL = 3;
-const completionNotifications = createCompletionNotifications({ openSession: id => select(id) });
+// この PC の通知（設定 › 通知 › この PC）。切った種類と、いま見ている会話は出さない（ADR 0086）
+let notifyPc = { done: true, reply: true, failed: true };
+// スマホのアプリの殻が背面に回っている間は、画面が可視でも見ていない（殻が plyremote:stop / plyremote:start を投げる）
+let shellStopped = false;
+const watchingNow = () => !shellStopped && document.visibilityState === 'visible';
+const completionNotifications = createCompletionNotifications({ openSession: id => select(id),
+  settings: () => notifyPc, isViewing: id => watchingNow() && state.current === id });
 
 let ws = null;
 let seq = 0;
@@ -2271,8 +2280,11 @@ function onEvent(ev, replay = false) {
   if (ev.type?.startsWith('shell.')) return onShellEvent(ev);
   if (ev.type === 'completionReady') {
     completionNotifications.completed(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
+    // スマホのアプリでは、最初の作業が終わったときに「離れていても知らせますか？」を尋ねる
+    if (ev.outcome !== 'error') void mobileNotify.completed(replay);
     return;
   }
+  if (ev.type === 'notifyStatus') { notifySettings.event(ev); return; }
   if (ev.type === 'outbox') {
     outboxes.set(ev.sessionId, ev.messages);
     if (state.current === ev.sessionId) syncOutboxRows(ev.messages);
@@ -6925,7 +6937,14 @@ function connect() {
       }).catch(() => {});
       // 開く前から承認待ちがあれば、ここでダイアログに出す
       remoteSettings.refresh();
+      // この PC の通知の設定。見ている会話を知らせ直す（つなぎ直した接続には、まだ印が無い）
+      notifySettings.refresh();
+      presenceReporter.reset();
+      presenceReporter.report(true);
       return refresh().then(async () => {
+        // スマホの通知を押して開いた会話（殻が ?open= で渡す）
+        const wanted = mobileNotify.takeOpenRequest();
+        if (wanted) return select(wanted);
         if (state.current) return select(state.current, { reload: true });
         let saved;
         try { saved = localStorage.getItem("agent-host-current"); } catch {}
@@ -7225,6 +7244,17 @@ const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () =
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   onUsageLogin: usageLogin });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page });
+// 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）
+const notifySettings = setupNotifySettings({ cmd, page: onboarding.page, onPc: pc => { notifyPc = pc; } });
+// スマホのアプリの中だけ: 最初の作業が終わったときの帯と、通知から開く会話
+const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id => select(id) });
+// 見ている会話をホストへ知らせる。スマホへの通知を送らない・消すのに使う
+const presenceReporter = createPresenceReporter({ send: (visible, sessionId) => cmd('presence', { visible, sessionId }),
+  current: () => state.current, visible: watchingNow });
+document.addEventListener('visibilitychange', () => presenceReporter.report());
+addEventListener('plyremote:stop', () => { shellStopped = true; presenceReporter.report(); });
+addEventListener('plyremote:start', () => { shellStopped = false; presenceReporter.report(true); });
+presenceReporter.start();
 // 設定 › 委譲（委譲先の自動振り分け）。モデルの名前は入力欄と同じ語彙から
 const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
   modelsOf: async (id) => (state.backends.some((b) => b.id === id) ? (await loadVocab(id)).models : null),

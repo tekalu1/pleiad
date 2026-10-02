@@ -40,6 +40,7 @@
       "usage": "使用量",
       "appearance": "外観",
       "context": "プラグイン",
+      "notify": "通知",
       "remote": "リモート",
       "about": "アプリ情報・更新",
       "delegation": "委譲",
@@ -90,6 +91,27 @@
       "beta": "先行版も受け取る",
       "autoDownload": "更新を自動でダウンロードする",
       "releaseNotes": "リリースノート"
+    },
+    "notify": {
+      "pc": {
+        "title": "この PC",
+        "done": "終わったとき",
+        "reply": "返事が要るとき（承認・質問）",
+        "failed": "失敗したとき",
+        "viewing": "その会話を見ている間は出しません。",
+        "switch": "この PC：{{label}}"
+      },
+      "phone": {
+        "title": "スマホ",
+        "empty": "ペアリングしたスマホはありません。設定 › リモートで追加します。",
+        "lastSent": "最後に送った {{when}}",
+        "never": "まだ送っていません",
+        "on": "オン",
+        "off": "オフ",
+        "offOnPhone": "スマホ側でオフ",
+        "noRelay": "中継につながっていません。つながるまでスマホには届きません。",
+        "switch": "{{name}}：通知"
+      }
     },
     "remote": {
       "enable": "このホストをリモートから使えるようにする",
@@ -2318,7 +2340,13 @@
     "waitingReply": "返事を待っています",
     "computerApproval": "{{agent}} が「{{app}}」の使用の許可を待っています",
     "computerApprovalMore_other": "{{agent}} が「{{app}}」ほか {{count}} 件の使用の許可を待っています",
-    "untitled": "Pleiad の会話"
+    "untitled": "Pleiad の会話",
+    "failed": "作業が失敗しました",
+    "mobile": {
+      "band": "離れていても知らせますか？",
+      "enable": "オンにする",
+      "later": "あとで"
+    }
   },
   "remote": {
     "badgeLabel": "リモート:",

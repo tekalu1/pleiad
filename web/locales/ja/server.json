@@ -1034,5 +1034,12 @@
     "invalid-input": "送れない入力です。",
     "failed": "PC のブラウザーの操作に失敗しました。",
     "unknown": "知らない操作です。"
+  },
+  "notify": {
+    "error": {
+      "badKey": "通知鍵の形が違います",
+      "notDevice": "登録済みのスマホからの接続ではありません",
+      "unknownDevice": "その端末は一覧にありません"
+    }
   }
 }

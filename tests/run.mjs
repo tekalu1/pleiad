@@ -168,6 +168,12 @@ const cases = [
   await import('./unit/context-review.mjs'),
   await import('./unit/slash-skills.mjs'),
   await import('./unit/notifications.mjs'),
+  // スマホへの通知（core/notify、ADR 0086）: 種類・抑制（見ている会話・古さ・短さ）・取り消し・暗号の往復と固定長・Android と共有する例・完了と失敗の保留
+  await import('./unit/push-notify.mjs'),
+  // ホスト（fake）→ 中継の通知の線 → 端末の代わりのクライアントで復号: 承認・質問・完了・失敗・取り消し・見ている会話・止めた端末・溜めて渡す
+  await import('./unit/server-push-notify.mjs'),
+  // 通知の画面側: この PC の設定・見ている間は出さない・失敗・presence の知らせ・設定 › 通知・スマホのアプリの帯と通知から開く会話
+  await import('./unit/notify-web.mjs'),
   await import("./unit/onboarding.mjs"),
   await import("./unit/tree.mjs"),
   await import("./unit/family.mjs"),

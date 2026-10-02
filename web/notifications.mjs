@@ -3,7 +3,12 @@ import { t } from './i18n.mjs';
 import { savedTitle } from './saved-text.mjs';
 import { approvalApps, approvalNotice } from './computer-use.mjs';
 
-export function createCompletionNotifications({ host = window, openSession }) {
+/**
+ * この PC の通知（デスクトップ版の OS 通知・ブラウザーの Notification）。
+ * settings は設定 › 通知 › この PC（{ done, reply, failed }。切った種類は出さない）、
+ * isViewing(sessionId) はその会話を今見ているか（見ている間は出さない。ADR 0086）
+ */
+export function createCompletionNotifications({ host = window, openSession, settings = () => ({ done: true, reply: true, failed: true }), isViewing = () => false }) {
   const seen = new Map();
   const seenReplies = new Set();
   let requested = false;
@@ -32,14 +37,18 @@ export function createCompletionNotifications({ host = window, openSession }) {
       if (session?.delegation) return;
       if (event.completedAt <= (seen.get(event.sessionId) ?? 0)) return;
       seen.set(event.sessionId, event.completedAt);
-      const notice = { sessionId: event.sessionId, completedAt: event.completedAt,
-        title: t('notify.completed'), body: body(session?.title) };
+      // 失敗（outcome: error）は完了と別の種類。見ている間・切った種類は出さない（出さなかった分も、後から出し直さない）
+      const failed = event.outcome === 'error';
+      if (!(failed ? settings().failed : settings().done) || isViewing(event.sessionId)) return;
+      const notice = { sessionId: event.sessionId, completedAt: event.completedAt, ...(failed ? { kind: 'failed' } : {}),
+        title: failed ? t('notify.failed') : t('notify.completed'), body: body(session?.title) };
       show(notice);
     },
     waiting(event, session, replay = false) {
       if (replay || event.type !== 'permission' || !event.notifyReply || !event.id || !event.sessionId
           || seenReplies.has(event.id)) return;
       seenReplies.add(event.id);
+      if (!settings().reply || isViewing(event.sessionId)) return;
       // コンピューターの操作のアプリの承認は、誰が何の許可を待っているかを見出しに出す（本文は会話の題）
       const computer = event.computerApp ? approvalApps(event.computerApp) : null;
       show({ kind: 'reply', noticeId: event.id, sessionId: event.sessionId,

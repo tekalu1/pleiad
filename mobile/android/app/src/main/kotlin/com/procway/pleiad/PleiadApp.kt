@@ -5,6 +5,7 @@ import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import com.procway.pleiad.remote.FileDeviceStore
+import com.procway.pleiad.remote.NotifyHub
 import com.procway.pleiad.remote.ProxyTexts
 import com.procway.pleiad.remote.RemoteDevice
 import java.io.File
@@ -13,6 +14,11 @@ import java.io.File
 class PleiadApp : Application() {
     lateinit var device: RemoteDevice
         private set
+
+    /** The notification lines and what arrives on them (ADR 0086). Started by [NotifyService]; idle until notifications are on. */
+    val notifyHub: NotifyHub by lazy {
+        NotifyHub(device.store, device.loop, BuildConfig.VERSION_NAME, deviceName(), NotifyPresenter(this), log = { Log.i("Pleiad", it) })
+    }
 
     override fun onCreate() {
         super.onCreate()
