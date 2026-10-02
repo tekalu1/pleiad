@@ -10,6 +10,18 @@
 - **WS**: 汎用コマンド `invoke { op, args }`（`PROTOCOL_VERSION` は据え置き）。新しい機能は protocol.mjs に足さずレジストリに書く。昔のコマンドは `legacyCommand` で対応を付けて段階的に置き換える。
 - **載せ忘れの検査**: `tests/lint-ops.mjs`（`npm test` の `ops-coverage`）。`COMMANDS` の各名前は、操作の `legacyCommand` か `tests/ops-baseline.json` の除外表（理由の種類: `ui-internal`・`stream`・`human-only`・`host-screen-only`・`gateway`・`todo`）に載る。`todo` と、prefs に書くキーの未移行の分（`prefKeys`）は増やせない（縮めるときだけ `node tests/lint-ops.mjs --update-baseline`）。権限の表・定義の検査・関所の順序は `ops-policy`・`ops-registry`、実際の一覧の snapshot（`tests/ops-surface.snap.json`。更新は `OPS_UPDATE_SNAPSHOT=1 npm test -- ops-surface`）・文の量・辞書・JSON Schema・伏せ字は `ops-surface`。
 
+## git の動き（2026-10-03）
+
+エージェントが git で何をしたかを、普段は隠し、いざというときに辿れるようにする（[ADR 0085](adr/0085-host-reads-git-and-turn-snapshots.md)）。画面は `docs/design-system.md`「git の動き」。
+
+- **ホストが git を読む**（`core/git-info.mjs`）: `execFile('git', …)`（シェルを通さない）・`windowsHide`・タイムアウト・`GIT_OPTIONAL_LOCKS=0`・読み取り系の許可表。cwd は検証済みの会話の cwd（会話の無い下書きは、どれかの会話が使ったことのある場所だけ。`gitCwd`）。git が無い・管理外・時間切れは「情報なし」（null）。ルートは `rev-parse --show-toplevel`、パスはルート相対。
+- **状態**（`core/git-activity.mjs` の `status`）: `status --porcelain=v2 --branch -z` の 1 回。ブランチ・先頭の hash・upstream・ahead/behind・変更の数（追跡の変更・未追跡・競合。未追跡の走査が時間切れなら数えずにやり直す）・分けた作業場所か（`git worktree` で作った .git の指す先が共有）。会話ごとに直列化し、cwd ごとに 2 秒のキャッシュ。画面は会話・作業場所が変わったとき、会話を開いたとき、ターンの終わりに取り直す。
+- **ターンの始まりと終わりの撮影**: 書き込みの範囲（読むだけより上）のターンで、作業場所が git のときだけ、`refs/pleiad/turn/<会話 id>/<n>-start|end` に作業ツリー（未追跡を含み .gitignore を守る）を撮る。本物の index を一時ファイルへ写し、その上で `add -A` → `write-tree` → `commit-tree`（親は HEAD）→ `update-ref`。ユーザーの index・HEAD・ブランチ・作業ツリーには触れない。何も動かなかったターンは `-end` を書かず、最初でない `-start` も消す。30 日で掃除する。「この会話の間」は最初の `-start` と今の作業ツリーの比較（前のターンの終わりを基準にしない。ターンの間に外で起きた変更が化けないため）。
+- **返答の下の要約**: ターンの終わりに、始まりと終わりの撮影の差（ファイル・行数）・HEAD の変化（コミット）・ブランチの作成や切り替え・`gh pr create` の URL のどれかがあれば、present の 1 種 `kind: 'git'`（`git: { branch, files, add, del, commits, commitCount, pr, created, n }`）を `turnEnd` の前に出して会話に保存する（`at` はターンの終わり）。動かなかったターンは出さない。
+- **会話に流れたコマンドの結果から拾う**（`core/git-timeline.mjs`）: `git checkout -b` / `git switch -c` の引数・`git commit` の結果の `[branch hash] subject`・`gh pr create` の結果の URL。Claude の Bash・PowerShell、Codex の commandExecution、Antigravity の run_command の入力（`command` / `CommandLine`）と結果の本文だけを見る。失敗・結果の無い呼び出しは拾わない。
+- **WS の読み取りコマンド**: `gitStatus`（状態。`summary: true` で会話の間のファイル・コミットの合計も）・`gitPanel`（状態・したこと・変更の一覧）・`gitDiff`（1 ファイルの統一差分をハンクの行に構造化して返す。バイナリ・大きいものは本文なし）。いずれも画面の内部の口（`tests/ops-baseline.json` の `ui-internal`）。`PROTOCOL_VERSION` は据え置き。
+- **委譲**: 子のタスクの完了時に子の作業場所の会話の間のファイル・コミットがあれば、完了通知と `ply_task_status` / `ply_task_wait` に 1 行 `変更: <branch> · N ファイル +a −d · コミット k`（`docs/agent-delegation.md`）。
+
 ## 多言語対応（2026-09-23）
 
 画面を日本語と英語で出せるようにする。段階 0（今）は土台と検査だけで、既存の日本語の画面の見た目は変えない（日付・数の書き方だけは画面の言語に揃えた）。文言の置き換えは段階 1 以降（小さい画面 → 会話画面 → 管理画面 → core → desktop → エージェント向け）。理由は [ADR 0020](adr/0020-i18n-dictionary-and-ratchet.md)。

@@ -20,6 +20,7 @@
 <link rel="stylesheet" href="/conversation-nav.css">
 <link rel="stylesheet" href="/remote-browser.css">
 <link rel="stylesheet" href="/computer-settings.css">
+<link rel="stylesheet" href="/git.css">
 <!-- i18next はビルドしないので、裸の名前をサーバーの配信口へ向ける（core/server.mjs の /vendor/i18next.mjs）。モジュールより前に置く -->
 <script type="importmap">{ "imports": { "i18next": "/vendor/i18next.mjs" } }</script>
 <!-- 最初の描画より前に、配色・言語・窓の枠（デスクトップ版だけ）・脇の開閉を決める。client.mjs を待つと一瞬ずれて見える。
@@ -155,6 +156,8 @@
       <!-- 会話の右パネル「この会話のプラグイン」の入口（web/session-context.mjs）。件数は title と名前にだけ入れ、「変更あり」は右上の点（web/header-entries.mjs）。
            data-i18n-aria-label は置かない（訳し直しで件数の無い名前に戻るため） -->
       <button type="button" class="btn btn-icon" id="contextEntry" data-i18n-title="session.context.entryTitle" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v4M15 3v4"/><path d="M6 7h12v3.5a6 6 0 0 1-12 0z"/><path d="M12 16.5V21"/></svg></button>
+      <!-- 会話の右パネル「git」の入口（web/git-panel.mjs）。作業場所が git のときだけ出し、コミットしていない変更があれば右上の点。700px 以下では出さず「…」のメニューに入れる -->
+      <button type="button" class="btn btn-icon" id="gitEntry" hidden aria-controls="filePreview" aria-expanded="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6.75" cy="5.4" r="2.4"/><circle cx="6.75" cy="18.6" r="2.4"/><circle cx="17.25" cy="8.1" r="2.4"/><path d="M6.75 7.8v8.4M17.25 10.5c0 3.3-2.4 4.35-5.4 4.8-2.85.45-5.1 1.05-5.1 2.1"/></svg></button>
       <!-- 内蔵ブラウザー（web/header-entries.mjs）。デスクトップ版のホストの画面だけに出す。名前・title・押されている状態・操作中の印は header-entries.mjs が書く -->
       <button type="button" class="btn btn-icon" id="browserEntry" hidden aria-controls="filePreview" aria-pressed="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.5 3.9 5.5 3.9 9s-1.3 6.5-3.9 9c-2.6-2.5-3.9-5.5-3.9-9s1.3-6.5 3.9-9z"/></svg></button>
       <!-- 委譲された子の会話でだけ出す、依頼元の会話へ戻る口（子の会話は脇の一覧に出ない）。サブエージェント・タスク・裏のコマンドの一覧は会話末尾の「バックグラウンド N」 -->

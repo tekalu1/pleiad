@@ -208,6 +208,11 @@
 | 渡す / 渡せない（登録をエージェントへ） | pass / cannot pass |
 | 一時の置き場（agy の --add-dir） | temporary folder |
 | 止めたはずの定義（漏れ） | should have been off |
+| ブランチ（git。会話の枝・分岐とは別） | branch（git のとき。会話の枝は branch のまま、文脈で分かるようにする） |
+| コミット / コミットしていない分 | commit / Uncommitted |
+| 分けた作業場所（git worktree） | Separate workspace |
+| この会話でしたこと（git） | Done in this conversation |
+| 会話のこの場所へ | Go to this point in the conversation |
 
 ## 揺れ（未統一）
 - 使用枠: `usage`（辞書での使用が多数派。例 server:antigravity.usage.badResponse・shared・none・timeout・tooLarge・cannotRead・needsUpdate） / `usage limits`（例 server:antigravity.usage.unsupported、server:usage.codexUnavailable、server:usage.claudeUnavailable）。本表には多い方の `usage` を採ったが、辞書は直していないので `usage limits` の箇所も残っている

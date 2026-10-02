@@ -18,7 +18,7 @@ import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 import { setupMessagePeek } from './message-peek.mjs';
 import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog } from './message-actions.mjs';
-import { mountFold } from './fold.mjs';
+import { mountFold, revealFold } from './fold.mjs';
 import { captureViewState, restoreViewState } from './view-state.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
@@ -89,6 +89,8 @@ import { attentionCounts, paintOpenSidebar } from './open-sidebar-mark.mjs';
 import { createConversationNav } from './conversation-nav-view.mjs';
 import { createConversationRail } from './conversation-rail.mjs';
 import { createConversationToc } from './conversation-toc.mjs';
+import { setupGitPanel } from './git-panel.mjs';
+import { renderDelegateGit, branchLabel } from './git-view.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
 const submittingMessages = new Set();
@@ -221,6 +223,7 @@ const state = {
   messages: [],        // 今のセッションの履歴（loadSession の messages）
   contextInfo: null,   // 今のセッションの読み込み記録（sessionContext の戻り）。タイトル行の入口と筋の一行に使う
   contextInfoId: null, // 上の記録がどのセッションのものか
+  git: { key: null, sessionId: null, data: null },   // 作業場所の git の状態（gitStatus。ADR 0085）。頭の行のアイコン・入力欄のブランチ・「…」のメニューに使う
   presents: [],
   turnEl: null,        // 追記中の AI の発言（.m.ai）
   bundle: null,        // 走っているツールのまとまり（本文・委譲・ターンの終わりで閉じる。web/tool-bundle.mjs）
@@ -2644,6 +2647,8 @@ function onEvent(ev, replay = false) {
       syncRunState();
       paintInterruptLine();
       syncHistory();
+      // git の状態（ブランチ・変更の数）はターンの終わりに取り直す。開いている git パネルも（ADR 0085）
+      if (ev.sessionId && ev.sessionId === state.current) { refreshGit({ force: true }).catch(() => {}); gitPanel?.changed(); }
       // 右パネルの Hooks の「発火の記録」はターンの終わりに会話へ残る。開いていれば取り直す
       if (ev.sessionId && ev.sessionId === state.current && sessionContext.isOpen()) sessionContext.refresh();
       return refresh();
@@ -3237,6 +3242,7 @@ const controls = setupComposerControls({
       accounts: state.accountShown ? accountOptions() : null, account: state.account,
       endpoint: endpointView(bid),
       modes: state.modes, mode: state.mode,
+      git: state.git.data,
     };
   },
   on: {
@@ -4138,6 +4144,8 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   if (prompt && messages[0]?.role !== 'user') { last = put(requestNode(prompt, messages[0]?.at), 'request'); prevRole = 'user'; }
   const refs = presents.map(p => p.reference);
   for (const it of buildItems(messages, presents)) {
+    // git の要約の行は、押して開く先（今の会話の右パネル）が読んでいる子の会話ではないので、読むだけの筋には出さない
+    if (it.kind === 'present' && it.p.kind === 'git') continue;
     if (it.kind === 'present') { last = put(renderPresent(savedEvent(it.p)), `p:${it.pi}`); continue; }
     const { node, role } = historyRow(it.m, { cont: prevRole === 'assistant', refs, prev: last, readonly: true, backend, sessionId,
       user: (m) => (it.mi === 0 ? requestNode : followUp)(m.text, m.at) });
@@ -4401,6 +4409,23 @@ function decorateDelegateCard(card) {
   card.querySelector('.tc-details-body')?.prepend(...(request ? [request] : []), where, delegateDetail(card, routing));
   paintRouteLine(card, routing);
   paintRetried(card);
+  // 開いたとき、子の作業場所の git の要約を「変更」の行として出す（開かれるまでは引かない。ADR 0085）
+  const shell = card.querySelector('.tc-details');
+  if (shell && !shell.dataset.gitHook) {
+    shell.dataset.gitHook = '1';
+    shell.addEventListener('toggle', () => { if (shell.open) paintDelegateGit(card); });
+    if (shell.open) paintDelegateGit(card);
+  }
+}
+/** 委譲カードの「変更」の行。子の会話の作業場所で、会話の間に変わったファイルとコミットがあるときだけ */
+async function paintDelegateGit(card) {
+  const task = (state.work.tasks ?? []).find(x => x.taskId === card.dataset.taskId);
+  if (!task?.sessionId) return;
+  const res = await cmd('gitStatus', { sessionId: task.sessionId, summary: true }).catch(() => null);
+  if (!card.isConnected) return;
+  card.querySelector('.git-delegate')?.remove();
+  const row = renderDelegateGit(res?.git, { sessionId: task.sessionId });
+  if (row) card.querySelector('.rt-where')?.after(row);
 }
 /**
  * 自動の振り分けで使える委譲先が無かったカード（タスクはできていない）。見出しを成功と同じ「委譲 · 自動 · 種類・難しさ →」にして
@@ -5725,6 +5750,7 @@ function rowMenu(s, x, y, lead = []) {
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, effort, rememberEffort: true })
           .then(refresh).catch(e => sideNote(t("session.menu.effortFailed", { error: e.message }))),
       })) },
+    ...(s.id === state.current && narrowView.matches && state.git.data ? [{ label: t('git.entry'), hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) }] : []),
     { label: t("session.menu.copyCwd"), hint: s.cwd ?? "", onClick: () => copy(s.cwd, t("session.menu.cwdCopied"), t("session.menu.cwdCopyFailed")) },
     { label: t("session.menu.copyId"), onClick: () => copy(s.id, t("session.menu.idCopied"), t("session.menu.idCopyFailed")) },
     ...(s.unsent ? [{ label: t("session.menu.deleteUnsent"), sub: () => [
@@ -5854,6 +5880,67 @@ async function refreshContextEntry({ force = false } = {}) {
   return state.contextInfo;
 }
 
+// ---------------------------------------------------------------- git の状態（ADR 0085）
+// 頭の行のアイコン（コミットしていない変更があれば右上の点）・入力欄の作業場所のチップのブランチ・狭い画面の「…」の項目。
+// 取り直しは、会話・作業場所が変わったとき、会話を開いたとき、ターンの終わり、パネルの再読み込み。git が無い・git 管理外は null（何も出さない）
+let gitPanel = null;
+let gitTicket = 0;
+function paintGitEntry() {
+  const button = $('gitEntry');
+  const data = state.current ? state.git.data : null;
+  button.hidden = !data;
+  if (!data) return;
+  const dirty = data.dirty > 0;
+  const label = dirty ? t('git.entryChanged') : t('git.entry');
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  const open = Boolean(gitPanel?.isOpen());
+  button.classList.toggle('on', open);
+  button.setAttribute('aria-expanded', String(open));
+  const dot = button.querySelector('.entry-dot');
+  if (dirty && !dot) { const mark = el('span', 'entry-dot'); mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
+  else if (!dirty && dot) dot.remove();
+}
+async function refreshGit({ force = false } = {}) {
+  const sessionId = state.current ?? null;
+  const s = state.sessions.find(x => x.id === sessionId);
+  // 次のターンから別の作業場所へ変える予約があるときは、その場所（使ったことのある場所だけサーバーが通す）
+  const reserved = Boolean(s && state.cwd && s.cwd && state.cwd !== s.cwd);
+  const key = `${sessionId ?? ''}${String.fromCharCode(10)}${reserved || !sessionId ? state.cwd ?? '' : ''}`;
+  if (!force && state.git.key === key) return;
+  if (state.git.sessionId !== sessionId) { state.git.data = null; gitPanel?.reset(); paintGit(); }
+  state.git.key = key; state.git.sessionId = sessionId;
+  const mine = ++gitTicket;
+  const res = await cmd('gitStatus', { ...(reserved || !sessionId ? { cwd: state.cwd } : { sessionId }), fresh: force }).catch(() => null);
+  if (mine !== gitTicket) return;
+  state.git.data = res?.git ?? null;
+  paintGit();
+}
+function paintGit() { paintGitEntry(); controls.paint(); }
+/** 会話の中のこの場所へ（ツールの行は畳まれたまとまりを開いて）。見つからなければ false。狭い画面は右パネルが全面なので閉じてから */
+function jumpToConversation({ uuid, toolId }) {
+  const card = toolId ? state.toolCards.get(toolId) : null;
+  const message = uuid ? thread.querySelector(`.m[data-uuid="${CSS.escape(uuid)}"]`) : null;
+  const target = card?.isConnected ? card : message;
+  if (!target) return false;
+  const bundle = card?.isConnected ? bundleOf(card) : null;
+  let animated = false;
+  if (bundle && !bundle.expanded && card !== bundle.cur) { bundle.reveal(card); animated = true; }
+  for (let node = target.closest('details'); node; node = node.parentElement?.closest('details')) node.open = true;
+  revealFold(target);
+  if (narrowView.matches) filePreview.close(false);
+  const row = target.closest('.mw') ?? target;
+  if (animated) setTimeout(() => nav.scrollToRow(row, 90), 320); else nav.scrollToRow(row, 90);
+  return true;
+}
+/** 「会話で使う」: 入力欄の末尾へ字を足す */
+function useGitText(text) {
+  const field = $('prompt');
+  field.value = field.value ? `${field.value}${String.fromCharCode(10)}${text}` : text;
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+  if (!narrowView.matches) field.focus();
+}
+
 // ---------------------------------------------------------------- 上部と入力欄の同期
 
 let topbarVersion = 0;
@@ -5946,6 +6033,7 @@ async function syncTopbar() {
   else if (state.draft.cwd) state.cwd = state.draft.cwd;
   else if (state.homeDir) state.cwd = state.homeDir;
   controls.paint();
+  refreshGit().catch(() => {});
 
   // 語彙はエージェントごとに違う。切り替えたら取り直す
   const { modes, models } = await loadVocab(bid);
@@ -6429,6 +6517,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   }
   // この会話が読み込んだ記録。取り直しは待たない（固定された会話では今のファイルとの突き合わせが入る）
   refreshContextEntry({ force: true }).catch(() => {});
+  refreshGit({ force: true }).catch(() => {});
   thread.classList.toggle("branched", branches.has(id));   // 枝があるとき、筋は「今いる枝」として青く太い
   if (isRunningHere()) activity.show(activity.text || ACTIVITY_LABEL.running);   // 走っている会話を開いたら末尾に弧
   else if (behindHere() || backgroundCounts().live) activity.show(t("activity.waitingBackground"));     // ターンは終わったが裏の子が残っている会話は衛星（待てないものだけなら印なし）
@@ -6864,6 +6953,18 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
 $('contextEntry').onclick = () => sessionContext.toggle($('contextEntry'));
 // 会話の目次と検索（右パネル。狭い画面は下からのシート）。会話の画面にいるときの Ctrl+F（macOS は ⌘F）でも開く
 const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry') });
+// 会話の右パネル「git」（ADR 0085）。頭の行のアイコン・返答の下の要約行・委譲カードの「変更」・狭い画面の「…」から開く
+gitPanel = setupGitPanel({ cmd, preview: filePreview, session: () => ({ id: state.current ?? null, cwd: state.cwd }),
+  jump: jumpToConversation, use: useGitText,
+  onState: (git, { foreign }) => { if (!foreign) { state.git.data = git; paintGit(); } } });
+gitPanel.onOpenChange(paintGitEntry);
+$('gitEntry').onclick = () => gitPanel.toggle($('gitEntry'));
+document.addEventListener('ply-git-open', (event) => {
+  const sessionId = event.detail?.sessionId ?? null;
+  if (!sessionId && !state.current) return;
+  gitPanel.open(event.target.closest?.('button') ?? null, { sessionId });
+  paintGitEntry();
+});
 document.addEventListener('keydown', event => {
   const mac = /Mac/.test(navigator.platform);
   if (event.defaultPrevented || isComposingKey(event) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'f' || (mac ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey)) return;
