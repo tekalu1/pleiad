@@ -1,5 +1,15 @@
 # 設計メモ
 
+## 操作の一覧（2026-10-03）
+
+画面・MCP・CLI が外へ出す操作の正本を `core/ops/` の操作の一覧（レジストリ）に置く（[ADR 0081](adr/0081-control-surface-registry.md)）。今は枠と最初の操作 `app.status` だけで、`ply_control`・`/api/ops`・CLI・設定の操作・セッションの操作は段階 1 以降。
+
+- **定義**: `defineOp`（操作）と `defineSetting`（設定）。操作は `<領域>.<動詞>` の id・説明の辞書キー（`agent:ops.<id>.summary`。引数の説明は zod の `.describe('agent:ops.…')`）・入力の zod（`strict`。JSON Schema は `z.toJSONSchema`）・出力の形（read は必須）・危険度・出す口（`ui` / `mcp: direct｜catalog｜false` / `cli`）・handler を持つ。write は `riskReason`（なぜ guarded でないか）を書く。値に依って危険度が上がる操作は `riskOf`（定義の危険度を下げられない）と `confirm` を持つ。
+- **関所**: すべての口は `registry.invoke(主体, id, args, deps)` を通る。順序は、操作が無い・その口に出していない・human-only を agent が呼んだ → `NOT_FOUND`（在ることを明かさない）→ `hostScreenOnly` で PC の画面の人間でない → `HOST_SCREEN_ONLY` → 入力の検査 → `INVALID`（`issues: [{ path, code, message }]`）→ `riskOf` → 権限（`core/ops/policy.mjs`）→ 記録（`deps.audit`。read 以外。引数は入れない）→ handler → 返り値の伏せ字（秘密らしい名前の欄の文字列を `••••` に）。失敗は `code` で見分け、文は `deps.locale` の言語。
+- **権限**（[ADR 0082](adr/0082-control-surface-principals-and-risk.md)）: 主体は `human`（画面）と `agent`（Pleiad の中の AI の MCP・CLI・`pleiad mcp`。`via` と、束縛された会話の `sessionId`）。human は全部通す。agent は、read を通し、human-only を出さず、write は会話の範囲が none / readonly なら断り（`READ_ONLY_MODE`）、guarded は会話の承認モードで決める: 範囲 full かつ自律 never（bypass・yolo）なら通して記録を残し、それ以外は承認カード（段階 2。今は判定 `ask` を `NEEDS_APPROVAL` で返す）、会話に束縛されていなければ `NEEDS_UI`、none / readonly の会話は `READ_ONLY_MODE`。承認モードが引けない会話は弱い側（workspace・ask）に倒す。
+- **WS**: 汎用コマンド `invoke { op, args }`（`PROTOCOL_VERSION` は据え置き）。新しい機能は protocol.mjs に足さずレジストリに書く。昔のコマンドは `legacyCommand` で対応を付けて段階的に置き換える。
+- **載せ忘れの検査**: `tests/lint-ops.mjs`（`npm test` の `ops-coverage`）。`COMMANDS` の各名前は、操作の `legacyCommand` か `tests/ops-baseline.json` の除外表（理由の種類: `ui-internal`・`stream`・`human-only`・`host-screen-only`・`gateway`・`todo`）に載る。`todo` と、prefs に書くキーの未移行の分（`prefKeys`）は増やせない（縮めるときだけ `node tests/lint-ops.mjs --update-baseline`）。権限の表・定義の検査・関所の順序は `ops-policy`・`ops-registry`、実際の一覧の snapshot（`tests/ops-surface.snap.json`。更新は `OPS_UPDATE_SNAPSHOT=1 npm test -- ops-surface`）・文の量・辞書・JSON Schema・伏せ字は `ops-surface`。
+
 ## 多言語対応（2026-09-23）
 
 画面を日本語と英語で出せるようにする。段階 0（今）は土台と検査だけで、既存の日本語の画面の見た目は変えない（日付・数の書き方だけは画面の言語に揃えた）。文言の置き換えは段階 1 以降（小さい画面 → 会話画面 → 管理画面 → core → desktop → エージェント向け）。理由は [ADR 0020](adr/0020-i18n-dictionary-and-ratchet.md)。
@@ -216,6 +226,8 @@ Claude Code を **セッションを離れずに扱えるようにするブラ�
 （ワークスペースへの破壊的操作の承認フローは Claude Code の権限層がそのまま担う。
 これはセッションのメタ情報とは別の層の話で、この思想とは直交する。）
 
+設定を変える操作の権限（AI が自分の関所を緩める変更を、どの会話なら通し、どこで承認を挟むか）は主体 × 危険度 × 会話の承認モードの表で決める（[ADR 0082](adr/0082-control-surface-principals-and-risk.md)）。
+
 ## 3. スコープ
 
 **やる**
@@ -298,8 +310,8 @@ sidecar が持つのは次の3つだけ。**いずれも後から追加すると
 {
   "statusChangedAt": "…",   // ★ tag がいつ変わったか。lastModified はセッション全体の mtime で代用できない
   "history": [              // ★ いつ・誰が・何を・なぜ。人間も AI も同じ形で残る
-    { "at": "…", "by": "ai|human", "field": "status|title|parent",
-      "from": "…", "to": "…", "reason": "…" }
+    { "at": "…", "by": "human|agent|ai", "via": "mcp|cli|mcp-stdio", "sessionId": "…",
+      "field": "status|title|parent", "from": "…", "to": "…", "reason": "…" }
   ],
   "parent": { "sessionId": "…", "atMessage": "…" }  // ★ forkSession は transcript 内の親子は保つが listSessions に出ない
 }
@@ -309,6 +321,7 @@ sidecar が持つのは次の3つだけ。**いずれも後から追加すると
 「いつ・誰が・何を・なぜ変えたか」を1箇所で追える。構造を二重にしない（思想 2.2）。
 
 `by` を記録するのは**制限のためではなく、可読性のため**。この値で権限を分岐させない。
+`agent` は操作の一覧（`core/ops/`）からの変更で、`via`（どの口から）と、会話に束縛されていればその `sessionId`（どの会話の AI か）を添える（[ADR 0082](adr/0082-control-surface-principals-and-risk.md)）。`ai` は昔の `host` のツール（Claude だけ）の記録で、画面では `agent` と同じ AI として扱う。
 
 ## 6. ステータスの設計
 
@@ -389,6 +402,10 @@ v1 は `canUseTool` から host に問い、**会話の流れの中にカード�
   思想 2.2 は「AI にできることと人間にできることを非対称にしない」だが、
   §2.2 の括弧書きのとおり**権限層はこの思想と直交する**。
   AI が自分の承認モードを緩められるなら、承認フローそのものが意味を失う
+  - 操作の一覧では承認モードは human-only（agent に一覧にも出さない。呼ばれても `NOT_FOUND` と同じ）。
+    そのほか AI 自身の関所を緩める設定（MCP の登録・Hooks・computer use の許可・サイトの確認・Pleiad の指示など）は guarded で、
+    AI が束縛された会話の承認モードで決める: 確認なし・制限なしのモード（範囲 full・自律 never）の会話は通して記録を残し、それ以外は会話の承認カード
+    （[ADR 0082](adr/0082-control-surface-principals-and-risk.md)）
 - 変更は `history` に `field: "mode"` として残る（status / title と同じ扱い）
 
 ### host が離れたとき（v1.2 で修正）

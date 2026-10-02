@@ -15,6 +15,7 @@
 ```
 core/     Node の HTTP + WebSocket サーバー。バックエンドに依存しない
   backends/  エージェント 1 種類 = 1 ファイル（claude・codex・antigravity と、テスト用の fake）
+  ops/       操作の一覧（レジストリ）。画面・MCP・CLI へ外に出す機能の正本（`docs/design.md`「操作の一覧」）
 web/      画面。素の ESM でビルドは無い。サーバーがリクエストごとにディスクから読む
 desktop/  Electron の main / preload と自動更新
 mobile/   モバイル版（Capacitor）
@@ -45,6 +46,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 - 作成直後の worktree には `node_modules` が無い。依存が `main` と同じなら、PowerShell から `cmd /c mklink /J <worktreeの絶対パス>\node_modules <メインの作業ディレクトリの絶対パス>\node_modules` でジャンクションを張れば足りる（Bash tool の `cmd //c mklink` は失敗する）。外すときは `cmd /c rmdir <worktreeの絶対パス>\node_modules`（`rm -rf` はリンク先の実体を消す恐れがある）。
 - テストは必ず作業用 worktree の中で実行する。`main` の作業ディレクトリで `npm test` を走らせても worktree の変更は検証できない。
 - 設計は `docs/design.md`、画面の変更は `docs/design-system.md` を参照する。
+- 画面・AI・CLI へ外に出す機能は、WS の case を足すだけにせず `core/ops/` に操作として定義する（ADR 0081）。足し忘れは `npm test` の ops-coverage が落とす（`tests/ops-baseline.json` の `todo` は増やせない）。操作の危険度・出す口を変えたら `OPS_UPDATE_SNAPSHOT=1 npm test -- ops-surface` で snapshot を更新し、差分を確認する。
 - 画面・エラー・エージェント向けの文言は辞書（`web/locales/<言語>/<名前空間>.json`）に置き、`t()` で引く（`docs/design.md`「多言語対応」、訳語は `docs/i18n-glossary.md` に従う）。直書きの日本語は `npm test` の lint-i18n が落とす。基準（`tests/i18n-baseline.json`）の更新は減らすときだけ（`node tests/lint-i18n.mjs --update-baseline`）。
   - `web/locales/*/ui.json` は `JSON.stringify(…, null, 2)` の整形と一致しないので、読んで書き直さず、キーは文字の置き換えで足す。`sed '/"connected"/d'` のような行単位の削除は別の節の同じキーまで消すので使わない。
 - コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。全件は約 8 分かかる（Bash tool の既定 2 分では途中で background へ回る）。1 本だけなら `node tests/run.mjs <ケース名>`。
