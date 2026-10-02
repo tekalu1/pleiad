@@ -44,7 +44,12 @@ export function createMessageQueue({ store, active, start, changed, delivered })
       }
       const turn = active(id);
       if (turn?.blocked) return setWait(id, turn.wait ?? { reason: 'turn' });
-      if (turn && (!turn.steer || (await store.get(id)).nextSettings)) return setWait(id, { reason: 'turn' });
+      if (turn && !turn.steer) return setWait(id, { reason: 'turn' });
+      // 次のターンの設定の予約（nextSettings）がある間、途中送信は予約より先に今のターンで処理される。
+      // main が動いている間は、すぐ終わるのでターンの終わりを待ち、新しいターンで予約を効かせる。
+      // main が返答を終えて裏だけを待っている間（phase: waiting）は終わらないことがあるので待たない。
+      // 予約は消さず、次のターンから効く（docs/multi-backend.md §2.2）
+      if (turn && turn.phase !== 'waiting' && (await store.get(id)).nextSettings) return setWait(id, { reason: 'turn', detail: 'reserved' });
       waits.delete(id);
       await update(id, item.id, { status: 'sending', error: null });
       if (turn) {

@@ -3025,6 +3025,11 @@ function paintSettingsNotice() {
   const s = state.sessions.find(s => s.id === state.current);
   const next = s?.nextSettings;
   $("nextSettings").hidden = !next;
+  // main が返答を終えて裏だけを待っている間（ターンの phase が waiting）は、送信が予約より先に今のターンへ届く（途中送信）。
+  // 予約は次のターンから効くので、そう書く（docs/multi-backend.md §2.2）
+  const behind = Boolean(next) && (state.work.turns ?? []).find(belongsHere)?.phase === "waiting";
+  $("nextSettingsBehind").hidden = !behind;
+  if (behind) $("nextSettingsBehind").textContent = t("chat.next.behindNote");
   if (next) {
     const changes = [];
     // 既定のモデルは実際に当たる名前を添える（分からなければ「既定」だけ）
@@ -3039,7 +3044,8 @@ function paintSettingsNotice() {
     if (next.mode !== undefined) changes.push(t("chat.next.mode", { value: state.modes[next.mode]?.label ?? next.mode }));
     if (next.endpoint !== undefined) changes.push(t("chat.next.endpoint", { value: endpointLabel(next.endpoint) }));
     if (next.account !== undefined) changes.push(t("chat.next.account", { value: accountLabel(next.account) }));
-    $("nextSettingsText").textContent = t("chat.next.summary", { changes: changes.join(" · ") });
+    const joined = changes.join(" · ");
+    $("nextSettingsText").textContent = behind ? t("chat.next.summaryBehind", { changes: joined }) : t("chat.next.summary", { changes: joined });
   }
   paintHandoffNote(s, next);
 }

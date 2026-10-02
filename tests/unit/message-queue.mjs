@@ -182,4 +182,56 @@ export default async function(t) {
   await waiting.action('w', 'request-5', 'cancel');
   for (let i = 0; i < 50 && (await waiting.list('w'))[1].status !== 'sent'; i++) await new Promise(r => setTimeout(r, 10));
   t.ok('送れたら理由は外れる', (await waiting.list('w')).every(m => !m.waiting));
+
+  // 次のターンの設定の予約（nextSettings）と途中送信。main が動いている間はターンの終わりを待ち、
+  // 裏だけを待つ間（phase: waiting）は予約を残したまま途中送信する（docs/multi-backend.md §2.2）
+  const reservedData = { r: { nextSettings: { cwd: 'D:/next' } } };
+  const steered = [];
+  let phase = 'active';
+  const reservedStore = { get: async id => reservedData[id] ?? {}, getAll: async () => reservedData,
+    setSessionData: async (id, field, value) => { (reservedData[id] ??= {})[field] = structuredClone(value); } };
+  const reserved = createMessageQueue({ store: reservedStore,
+    active: () => ({ phase, steer: async item => { steered.push(item.args.prompt); return true; } }),
+    start: () => { throw new Error('must not start'); }, changed: () => {}, delivered: () => {} });
+  await reserved.accept('r', 'reserved-1', { prompt: 'while active' });
+  await reserved.kick('r');
+  const held2 = (await reserved.list('r'))[0];
+  t.ok('予約あり・main が動いている間はターンの終わりを待つ',
+    held2.status === 'queued' && steered.length === 0 && held2.waiting?.reason === 'turn' && held2.waiting.detail === 'reserved', JSON.stringify(held2));
+  phase = 'waiting';
+  await reserved.kick('r');
+  t.ok('予約あり・裏だけを待つ間（phase: waiting）は途中送信する',
+    (await reserved.list('r'))[0].status === 'sent' && JSON.stringify(steered) === JSON.stringify(['while active']), JSON.stringify(steered));
+  t.ok('途中送信しても予約は消さない（次のターンから効く）', reservedData.r.nextSettings?.cwd === 'D:/next');
+  await reserved.accept('r', 'reserved-2', { prompt: 'while waiting' });
+  await reserved.kick('r');
+  t.ok('裏を待つ間に受理した送信もすぐ流れる', (await reserved.list('r'))[1].status === 'sent' && steered.length === 2, JSON.stringify(steered));
+  phase = 'active';
+  await reserved.accept('r', 'reserved-3', { prompt: 'active again' });
+  await reserved.kick('r');
+  t.ok('main が動き出したら再び待つ', (await reserved.list('r'))[2].status === 'queued' && steered.length === 2);
+  // 待っていた送信は、active から waiting に変わった時点の kick で流れる（core/server.mjs の phase 事象）
+  phase = 'waiting';
+  await reserved.kick('r');
+  t.ok('active から waiting に変わって kick し直すと待っていた送信が流れる', (await reserved.list('r'))[2].status === 'sent' && steered.length === 3, JSON.stringify(steered));
+
+  // 予約が無ければ phase に関わらず今までどおり途中送信、steer が無いバックエンドは予約が無くてもターンを待つ
+  const plainData = {};
+  const plainStore = { get: async id => plainData[id] ?? {}, getAll: async () => plainData,
+    setSessionData: async (id, field, value) => { (plainData[id] ??= {})[field] = structuredClone(value); } };
+  let plainTurn = { phase: 'active', steer: async () => true };
+  const plain2 = createMessageQueue({ store: plainStore, active: () => plainTurn,
+    start: () => { throw new Error('must not start'); }, changed: () => {}, delivered: () => {} });
+  await plain2.accept('p', 'plain-1', { prompt: 'no reservation' });
+  await plain2.kick('p');
+  t.ok('予約が無ければ active でも途中送信する', (await plain2.list('p'))[0].status === 'sent');
+  plainTurn = { phase: 'waiting', steer: null };
+  await plain2.accept('p', 'plain-2', { prompt: 'no steer' });
+  await plain2.kick('p');
+  const noSteer = (await plain2.list('p'))[1];
+  t.ok('steer が無いバックエンドは phase が waiting でもターンを待つ', noSteer.status === 'queued' && noSteer.waiting?.reason === 'turn' && !noSteer.waiting.detail, JSON.stringify(noSteer));
+  plainData.p.nextSettings = { model: 'x' };
+  plainTurn = { phase: 'waiting', blocked: true, steer: async () => true };
+  await plain2.kick('p');
+  t.ok('ターンが終わりかけ（blocked）なら予約があっても待つ', (await plain2.list('p'))[1].status === 'queued');
 }

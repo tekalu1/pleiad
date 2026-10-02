@@ -89,7 +89,8 @@ async function say(emit, text, uuid) {
   emit({ type: "text.end", ...(uuid ? { uuid } : {}) });
 }
 
-const STEER_LATENCY_MS = 300;
+// main が途中送信を受けてから本文を返すまで（phase: active の間）。テストでこの間に次の送信を重ねるときに延ばす
+const STEER_LATENCY_MS = Number(process.env.AGENT_HOST_FAKE_STEER_LATENCY_MS) || 300;
 // 途中送信を「受理」してから「渡った」までの間を作る（ミリ秒）。指定したときだけ steerConfirms を立て、
 // 本物（claude / codex）と同じ pending → userMessage.delivered の順で流す。画面の確認とテスト用
 const STEER_CONFIRM_MS = Number(process.env.AGENT_HOST_FAKE_STEER_CONFIRM_MS) || 0;
