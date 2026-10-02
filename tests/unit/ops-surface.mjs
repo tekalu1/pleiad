@@ -117,7 +117,8 @@ export default async function (t) {
   const deps = {
     locale: 'ja',
     app: { status: async () => ({ version: '0', protocolVersion: 0, startedAt: 0, locale: { setting: 'auto', lang: 'ja' }, running: 0, ...secret }),
-      running: async () => ({ count: 0, turns: [], tasks: [], waiting: 0, ...secret }) },
+      running: async () => ({ count: 0, turns: [], tasks: [], waiting: 0, ...secret }),
+      searchSessions: async () => ({ total: 1, partial: false, sessions: [{ sessionId: 's1', title: 't', hits: [], ...secret }] }) },
     sessions: {
       list: async () => [{ id: 's1', title: 't', backend: 'x', status: null, claudeAccount: MARKER, compatEndpoint: MARKER, ...secret }],
       get: async () => ({ row: { id: 's1', title: 't', backend: 'x', claudeAccount: MARKER, ...secret }, children: [], history: [{ at: 'a', by: 'agent', field: 'title', from: 'x', to: 'y', ...secret }] }),
@@ -130,7 +131,7 @@ export default async function (t) {
   // 必須の引数がある read 操作に渡す引数（設定は全部の key）
   const samples = {
     'settings.get': registry.settings.map((x) => ({ key: x.key })), 'settings.schema': registry.settings.map((x) => ({ key: x.key })),
-    'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
+    'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {
     const needs = Object.keys(op.input.shape).length && Object.values(op.input.shape).some((f) => !f.safeParse(undefined).success);

@@ -354,23 +354,25 @@
         "summary": "Return the work running now (conversation turns, delegated child tasks, and pending approvals)."
       }
     },
-    "errors": {
-      "NOT_FOUND": "No such operation: {{id}}.",
-      "HOST_SCREEN_ONLY": "This operation can only be done from the screen of the PC where Pleiad is running.",
-      "INVALID": "Invalid arguments: {{detail}}",
-      "READ_ONLY_MODE": "This conversation is in a read-only or plan mode, so it cannot change Pleiad's state ({{id}}).",
-      "NEEDS_UI": "{{id}} widens what the agent is allowed to do, so it cannot be run from here. Ask the user to do it on Pleiad's screen.",
-      "NEEDS_APPROVAL": "{{id}} needs the user's approval in this conversation.",
-      "INVALID_RISK": "The operation has an invalid risk level ({{id}}).",
-      "INVALID_PRINCIPAL": "The caller is not a valid principal ({{id}}).",
-      "SESSION_NOT_FOUND": "No conversation found with id {{id}}.",
-      "MESSAGE_NOT_FOUND": "Message {{id}} was not found in this conversation.",
-      "SETTING_NOT_FOUND": "No such setting: {{key}}. Find keys with settings.list.",
-      "TASK_NOT_FOUND": "No delegated task found with id {{id}}.",
-      "sessionRequired": "Pass sessionId (it can be omitted only when it means this conversation).",
-      "badCursor": "The cursor is not valid. Pass the previous result's next as is."
-    },
     "sessions": {
+      "search": {
+        "summary": "Search conversations by title, status, place and message text. Space-separated words are ANDed; quote a phrase for an exact match. Each result carries excerpts of the matching messages.",
+        "query": "Search words. Spaces mean AND (each word may match the title, status, place or any message). A \"quoted\" phrase is one word and is case- and width-sensitive. Empty returns the filtered list.",
+        "filters": "Filters.",
+        "backends": "Agent ids (claude, codex, antigravity). Omit for all.",
+        "cwd": "Exact working directory.",
+        "status": "Status name. null means no status. Omit to not filter.",
+        "since": "Conversations updated at or after this time (ISO string or epoch ms).",
+        "until": "Conversations updated at or before this time (ISO string or epoch ms).",
+        "speaker": "Whose messages to search: any (default), user or assistant.",
+        "includeDelegated": "Include delegated child conversations. Off by default.",
+        "includeToolInputs": "Also search tool inputs (commands, paths). Off by default.",
+        "sessionIds": "Search only inside these conversations.",
+        "sort": "relevance (default) or recent (newest first).",
+        "limit": "Number of conversations. Default 50, max 200.",
+        "cursor": "Continuation. Pass nextCursor from the previous result as is.",
+        "hitsPerSession": "Matching messages returned per conversation. Default 1, max 10."
+      },
       "list": {
         "summary": "List conversations, newest first, with filters and paging. To search their text, use search_sessions.",
         "backend": "Filter by agent id (claude, codex, antigravity).",
@@ -407,6 +409,22 @@
         "reason": "Why it is changed (kept in the change log).",
         "alone": "If true, move only this conversation and not the others in its group."
       }
+    },
+    "errors": {
+      "NOT_FOUND": "No such operation: {{id}}.",
+      "HOST_SCREEN_ONLY": "This operation can only be done from the screen of the PC where Pleiad is running.",
+      "INVALID": "Invalid arguments: {{detail}}",
+      "READ_ONLY_MODE": "This conversation is in a read-only or plan mode, so it cannot change Pleiad's state ({{id}}).",
+      "NEEDS_UI": "{{id}} widens what the agent is allowed to do, so it cannot be run from here. Ask the user to do it on Pleiad's screen.",
+      "NEEDS_APPROVAL": "{{id}} needs the user's approval in this conversation.",
+      "INVALID_RISK": "The operation has an invalid risk level ({{id}}).",
+      "INVALID_PRINCIPAL": "The caller is not a valid principal ({{id}}).",
+      "SESSION_NOT_FOUND": "No conversation found with id {{id}}.",
+      "MESSAGE_NOT_FOUND": "Message {{id}} was not found in this conversation.",
+      "SETTING_NOT_FOUND": "No such setting: {{key}}. Find keys with settings.list.",
+      "TASK_NOT_FOUND": "No delegated task found with id {{id}}.",
+      "sessionRequired": "Pass sessionId (it can be omitted only when it means this conversation).",
+      "badCursor": "The cursor is not valid. Pass the previous result's next as is."
     },
     "settings": {
       "list": {

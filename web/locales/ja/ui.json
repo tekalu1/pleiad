@@ -1599,7 +1599,7 @@
     "settings": "設定",
     "closeSidebarTitle": "サイドバーを閉じる（Ctrl+B）",
     "closeSidebar": "サイドバーを閉じる",
-    "search": "検索",
+    "search": "会話を検索",
     "filterTitle": "作業ディレクトリ・状態・エージェントで絞る",
     "filterOutside": "この会話はフィルター対象外です",
     "clearFilter": "絞り込みを解除",
@@ -2055,6 +2055,37 @@
       "menu": "メニュー",
       "sidebar": "サイドバー"
     },
+    "search": {
+      "title": "会話を検索（{{key}}）",
+      "clear": "検索語を消す",
+      "recent": "最近の検索",
+      "results": "検索の結果",
+      "count_other": "{{count}} 件の会話",
+      "none": "一致する会話がありません",
+      "more_other": "ほかに {{count}} 件",
+      "searching": "探しています",
+      "sort": {
+        "relevance": "関連度順",
+        "recent": "新しい順",
+        "toRelevance": "関連度順にする",
+        "toRecent": "新しい順にする"
+      },
+      "who": {
+        "user": "あなた",
+        "assistant": "AI",
+        "tool": "ツール"
+      },
+      "hits_other": "一致した発言 {{count}} 件",
+      "rowWho": "{{who}}: {{text}}",
+      "rowHits_other": "一致 {{count}} 件",
+      "delegated": "委譲 · {{parent}}",
+      "delegatedNoParent": "委譲",
+      "keyHint": {
+        "move": "選ぶ",
+        "open": "開く",
+        "clear": "消す"
+      }
+    },
     "group": {
       "pickIcon": "アイコンを選ぶ",
       "newSession": "この状態で新しいセッション"
@@ -2072,7 +2103,17 @@
       "placeholder": "絞り込む",
       "inputLabel": "候補を絞り込む",
       "agents": "エージェント（複数選択）",
-      "all": "すべて"
+      "all": "すべて",
+      "period": "期間",
+      "periodToday": "今日",
+      "period7": "7 日",
+      "period30": "30 日",
+      "speaker": "発言者",
+      "speakerUser": "自分",
+      "speakerAssistant": "AI",
+      "include": "含める",
+      "includeDelegated": "委譲した会話",
+      "includeTools": "ツールの入力"
     },
     "emoji": {
       "title": "「{{status}}」のアイコン",

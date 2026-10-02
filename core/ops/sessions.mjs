@@ -1,7 +1,7 @@
-// sessions.*: 会話に関する操作（一覧・メタ・本文の範囲・題と状態）。
+// sessions.*: 会話に関する操作（検索・一覧・メタ・本文の範囲・題と状態）。
 // 画面は WS の invoke から、MCP・CLI も同じ入口から呼ぶ。handler は人間の操作と同じ store・同じイベントを使う（ADR 0007）。
 // 本体はサーバーが ctx.sessions で渡す（list・get・read・setTitle・setStatus。core/server.mjs の opsDeps）。
-// sessions.search（本文まで探す）は core/session-search.mjs を呼ぶ別の定義で、ここには置かない（docs/design.md「セッション検索」）。
+// sessions.search は会話の題・状態・場所・本文を探す（core/session-search.mjs。docs/design.md「セッション検索」）。ctx.app.searchSessions を呼ぶ。入力と出力の形が SearchInput / SearchResult。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
@@ -100,6 +100,79 @@ export const changeRow = (c) => ({ at: c.at, by: c.by, ...(c.via ? { via: c.via 
 
 // ---- 操作
 
+// ---- sessions.search（本文まで探す）
+const DS = (key) => `agent:ops.sessions.search.${key}`;
+
+const stamp = z.union([z.string(), z.number()]);
+
+const searchInput = z.object({
+  query: z.string().max(2000).describe(DS('query')),
+  filters: z.object({
+    backends: z.array(z.string()).max(20).optional().describe(DS('backends')),
+    cwd: z.string().optional().describe(DS('cwd')),
+    status: z.string().nullable().optional().describe(DS('status')),
+    since: stamp.optional().describe(DS('since')),
+    until: stamp.optional().describe(DS('until')),
+    speaker: z.enum(['any', 'user', 'assistant']).optional().describe(DS('speaker')),
+    includeDelegated: z.boolean().optional().describe(DS('includeDelegated')),
+    includeToolInputs: z.boolean().optional().describe(DS('includeToolInputs')),
+    sessionIds: z.array(z.string()).max(500).optional().describe(DS('sessionIds')),
+  }).strict().optional().describe(DS('filters')),
+  sort: z.enum(['relevance', 'recent']).optional().describe(DS('sort')),
+  limit: z.number().int().min(1).max(200).optional().describe(DS('limit')),
+  cursor: z.string().optional().describe(DS('cursor')),
+  hitsPerSession: z.number().int().min(1).max(10).optional().describe(DS('hitsPerSession')),
+});
+
+const hit = z.object({
+  uuid: z.string(),
+  index: z.number().int(),
+  role: z.enum(['user', 'assistant', 'tool']),
+  at: z.string(),
+  excerpt: z.string(),
+  ranges: z.array(z.tuple([z.number().int(), z.number().int()])),
+});
+
+const searchOutput = z.object({
+  total: z.number().int(),
+  partial: z.boolean(),
+  nextCursor: z.string().optional(),
+  sessions: z.array(z.object({
+    sessionId: z.string(),
+    title: z.string(),
+    status: z.string().nullable(),
+    cwd: z.string(),
+    backend: z.string(),
+    lastModified: z.number(),
+    parentSessionId: z.string().optional(),
+    score: z.number(),
+    matched: z.array(z.enum(['title', 'status', 'place', 'message', 'toolInput'])),
+    hitCount: z.number().int(),
+    hits: z.array(hit),
+  })),
+});
+
+const searchOps = [
+  defineOp({
+    id: 'sessions.search',
+    summary: 'agent:ops.sessions.search.summary',
+    risk: 'read',
+    input: searchInput,
+    output: searchOutput,
+    surfaces: { ui: true, mcp: 'direct', cli: { path: ['sessions', 'search'], positional: 'query' } },
+    // サーバーが ctx.app.searchSessions（core/session-search.mjs の search）を渡す。壊れた入力（語が多すぎる・cursor）は INVALID にする
+    handler: async (ctx, args) => {
+      try {
+        return await ctx.app.searchSessions(args);
+      } catch (e) {
+        if (e instanceof TypeError || e instanceof RangeError) throw new OpError('INVALID', e.message);
+        throw e;
+      }
+    },
+  }),
+];
+
+// ---- 会話の一覧・メタ・本文・題と状態
 const sessionId = (id) => z.string().min(1).max(200).describe(D(id, 'sessionId'));
 const optionalSessionId = (id) => z.string().min(1).max(200).optional().describe(D(id, 'sessionId'));
 
@@ -115,6 +188,8 @@ const listItem = z.object({ id: z.string(), title: z.string(), backend: z.string
   parent: z.string().nullable(), delegated: z.boolean(), lastModified: z.number().nullable(), createdAt: z.union([z.string(), z.number()]).nullable() });
 
 export const sessionOps = [
+  ...searchOps,
+
   defineOp({
     id: 'sessions.list',
     summary: 'agent:ops.sessions.list.summary',

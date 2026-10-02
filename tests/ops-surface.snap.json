@@ -148,6 +148,27 @@
       "input": "62fa526050a3"
     },
     {
+      "id": "sessions.search",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "direct",
+        "cli": {
+          "path": [
+            "sessions",
+            "search"
+          ],
+          "positional": "query"
+        }
+      },
+      "legacyCommand": null,
+      "input": "e62fd6215a96"
+    },
+    {
       "id": "sessions.setStatus",
       "risk": "write",
       "riskOf": false,
@@ -432,6 +453,10 @@
   ],
   "mcp": [
     {
+      "name": "search_sessions",
+      "input": "59fc873e9691"
+    },
+    {
       "name": "get_session",
       "input": "641f73bc6645"
     },
@@ -495,6 +520,13 @@
       "positional": [
         "sessionId",
         "title"
+      ]
+    },
+    {
+      "id": "sessions.search",
+      "path": "sessions search",
+      "positional": [
+        "query"
       ]
     },
     {

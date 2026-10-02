@@ -117,7 +117,7 @@ export default async function (t) {
     const ask = open('ask'), plan = open('plan'), pending = open(null), en = open('ask', 'en');
     const call2 = (c, name, args) => rpc(url, c.headers, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }).then((r) => r.json.result);
     const list = (await rpc(url, ask.headers, { jsonrpc: '2.0', id: 1, method: 'tools/list' })).json.result.tools;
-    t.ok('ply_control の tools/list は直に出す操作と list_ops・call_op', list.at(-2).name === 'list_ops' && list.at(-1).name === 'call_op' && list.some((x) => x.name === 'get_session') && list.some((x) => x.name === 'read_session') && list.some((x) => x.name === 'get_setting'), list.map((x) => x.name).join());
+    t.ok('ply_control の tools/list は直に出す操作と list_ops・call_op', list.at(-2).name === 'list_ops' && list.at(-1).name === 'call_op' && list.some((x) => x.name === 'search_sessions') && list.some((x) => x.name === 'get_session') && list.some((x) => x.name === 'read_session') && list.some((x) => x.name === 'get_setting'), list.map((x) => x.name).join());
     t.ok('サーバー名は ply_control・パスは /mcp/control', CONTROL_SERVER === 'ply_control' && CONTROL_MCP_PATH === '/mcp/control');
     const j = (r) => JSON.parse(r.content[0].text);
     t.ok('直に出すツールで読める（get_session）', j(await call2(ask, 'get_session', { sessionId: 's1' })).id === 's1');

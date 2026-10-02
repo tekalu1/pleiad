@@ -68,6 +68,7 @@ const cases = [
   await import('./unit/ops-control.mjs'),
   await import('./unit/ops-cli.mjs'),
   await import('./unit/server-ops.mjs'),
+  await import('./unit/sessions-search-op.mjs'),
   await import('./unit/agent-tasks.mjs'),
   await import('./unit/agent-tasks-silence.mjs'),
   await import('./unit/task-command-notice.mjs'),
@@ -306,6 +307,8 @@ const cases = [
   await import("./unit/session-search.mjs"),
   // 読み込み元（core/session-search-host.mjs）: 保存分は直接・それ以外は getMessages・完了通知とコマンドの行とツールの出力は写さない
   await import("./unit/session-search-host.mjs"),
+  // 脇の検索の手元の照合（web/session-find.mjs）: core と同じ規則・並び・期間・最近の検索・近道
+  await import("./unit/session-find.mjs"),
   // codex バックエンド。app-server の身代わり（tests/lib/fake-codex.mjs）と話すだけで、
   // 本物の codex もネットワークも要らない
   await import("./unit/server-codex.mjs"),

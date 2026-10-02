@@ -155,6 +155,9 @@ export default async function (t) {
     const rest = await api(cli, 'POST', '/api/ops/sessions.list', { limit: 2, cursor: page.body.result.next });
     t.ok('ページ送り: 続きは重複なく、全部を 1 回ずつ', page.body.result.sessions.length === 2 && page.body.result.next && new Set([...page.body.result.sessions, ...rest.body.result.sessions].map((s) => s.id)).size === 2 + rest.body.result.sessions.length
       && 2 + rest.body.result.sessions.length === sessions.body.result.total);
+    const found = await api(cli, 'POST', '/api/ops/sessions.search', { query: '別の会話から' });
+    t.ok('sessions.search（別の定義）も同じ入口から呼べ、題に当たった会話を返す。その hit の会話を sessions.read で読める', found.status === 200 && found.body.result.sessions.some((x) => x.sessionId === ask.sessionId && x.matched.includes('title'))
+      && (await api(cli, 'POST', '/api/ops/sessions.read', { sessionId: found.body.result.sessions[0].sessionId })).body.ok === true, JSON.stringify(found.body).slice(0, 300));
     const read = await api(cli, 'POST', '/api/ops/sessions.read', { sessionId: ask.sessionId });
     t.ok('sessions.read は会話の本文を返す（末尾を中心に）', read.body.result.total >= 2 && read.body.result.messages.at(-1).role === 'assistant' && /list_ops/.test(read.body.result.messages.at(-1).text), JSON.stringify(read.body.result).slice(0, 300));
     const firstUuid = read.body.result.messages[0].uuid;
@@ -185,7 +188,7 @@ export default async function (t) {
       const required = o.input.required ?? [];
       const inputs = o.id === 'settings.get' || o.id === 'settings.schema'
         ? (await api(cli, 'POST', '/api/ops/settings.list', {})).body.result.settings.map((s) => ({ key: s.key }))
-        : o.id === 'sessions.get' || o.id === 'sessions.read' ? [{ sessionId: ask.sessionId }] : o.id === 'delegation.status' ? [{ taskId: 'none' }] : required.length ? null : [{}];
+        : o.id === 'sessions.get' || o.id === 'sessions.read' ? [{ sessionId: ask.sessionId }] : o.id === 'delegation.status' ? [{ taskId: 'none' }] : o.id === 'sessions.search' ? [{ query: 'control' }, { query: MARKER }] : required.length ? null : [{}];
       if (!inputs) { t.ok(`T6 ${o.id}: 必須の引数の例がある`, false); continue; }
       for (const args of inputs) everything.push([o.id, args, JSON.stringify((await api(cli, 'POST', `/api/ops/${o.id}`, args)).body)]);
     }

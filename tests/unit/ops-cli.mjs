@@ -144,7 +144,7 @@ export default async function (t) {
     ], env);
     t.ok('pleiad mcp: initialize は serverInfo・listChanged・指示文（pleiad の外の AI へ）', j(replies, 1).serverInfo.name === 'pleiad' && j(replies, 1).capabilities.tools.listChanged === true && /list_ops/.test(j(replies, 1).instructions), JSON.stringify(j(replies, 1)));
     const toolNames = j(replies, 2).tools.map((x) => x.name);
-    t.ok('pleiad mcp: tools/list は ply_control と同じ生成器（直に出す操作・list_ops・call_op）', toolNames.at(-2) === 'list_ops' && toolNames.at(-1) === 'call_op' && toolNames.includes('get_session') && toolNames.includes('read_session') && toolNames.includes('get_setting'), toolNames.join());
+    t.ok('pleiad mcp: tools/list は ply_control と同じ生成器（直に出す操作・list_ops・call_op）', toolNames.at(-2) === 'list_ops' && toolNames.at(-1) === 'call_op' && toolNames.includes('search_sessions') && toolNames.includes('get_session') && toolNames.includes('read_session') && toolNames.includes('get_setting'), toolNames.join());
     t.ok('pleiad mcp: 直に出すツールで読める', text(replies, 3).id === turn.sessionId);
     t.ok('pleiad mcp: call_op で呼べる', text(replies, 4).sessions.length === 1);
     t.ok('pleiad mcp: 会話に束縛されない（mcp-stdio）ので guarded は NEEDS_UI の isError', j(replies, 5).isError === true && text(replies, 5).code === 'NEEDS_UI');

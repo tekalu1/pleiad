@@ -354,23 +354,25 @@
         "summary": "いま走っている作業（会話のターン・委譲の子・承認待ちの数）を返す。"
       }
     },
-    "errors": {
-      "NOT_FOUND": "操作「{{id}}」はありません。",
-      "HOST_SCREEN_ONLY": "この操作は、Pleiad が動いている PC の画面からだけできます。",
-      "INVALID": "引数が正しくありません: {{detail}}",
-      "READ_ONLY_MODE": "この会話は読み取り専用か計画モードなので、Pleiad の状態を変える操作（{{id}}）はできません。",
-      "NEEDS_UI": "{{id}} はエージェントの権限を広げる変更なので、ここからは実行できません。ユーザーに Pleiad の画面での操作を頼んでください。",
-      "NEEDS_APPROVAL": "{{id}} は、この会話でのユーザーの承認が要ります。",
-      "INVALID_RISK": "操作の危険度が不正です（{{id}}）。",
-      "INVALID_PRINCIPAL": "呼び出した主体が不正です（{{id}}）。",
-      "SESSION_NOT_FOUND": "会話「{{id}}」が見つかりません。",
-      "MESSAGE_NOT_FOUND": "発言「{{id}}」が、この会話に見つかりません。",
-      "SETTING_NOT_FOUND": "設定「{{key}}」はありません。settings.list で探してください。",
-      "TASK_NOT_FOUND": "委譲のタスク「{{id}}」が見つかりません。",
-      "sessionRequired": "sessionId を指定してください（この会話を指す場合を除き、省けません）。",
-      "badCursor": "cursor が正しくありません。前の返り値の next をそのまま渡してください。"
-    },
     "sessions": {
+      "search": {
+        "summary": "会話の題・状態・場所・本文を探す。語は空白で AND、\"…\" で囲むと完全一致。結果は会話ごとに一致した発言の抜粋つき。",
+        "query": "検索語。空白区切りは AND（語ごとに題・状態・場所・本文のどこでもよい）。\"…\" で囲むと 1 語で大小・全角半角も区別する。空なら絞り込みだけで一覧を返す。",
+        "filters": "絞り込み。",
+        "backends": "エージェントの id（claude・codex・antigravity）。省略はすべて。",
+        "cwd": "作業ディレクトリの完全一致。",
+        "status": "状態の名前。null は状態なし。省略は絞らない。",
+        "since": "この日時以後に更新した会話（ISO 文字列か epoch ms）。",
+        "until": "この日時以前に更新した会話（ISO 文字列か epoch ms）。",
+        "speaker": "本文を探す発言者。any（既定）・user・assistant。",
+        "includeDelegated": "委譲の子の会話も含める。既定は含めない。",
+        "includeToolInputs": "ツールの入力（コマンド・パス）も探す。既定は含めない。",
+        "sessionIds": "この会話の中だけを探す。",
+        "sort": "relevance（既定。関連度）か recent（新しい順）。",
+        "limit": "会話の件数。既定 50・最大 200。",
+        "cursor": "続き。前の結果の nextCursor をそのまま渡す。",
+        "hitsPerSession": "会話ごとに返す一致の発言の数。既定 1・最大 10。"
+      },
       "list": {
         "summary": "会話の一覧を、新しい順に返す。絞り込みとページ送りができる。本文まで探すときは search_sessions。",
         "backend": "エージェントの id（claude・codex・antigravity）で絞る。",
@@ -407,6 +409,22 @@
         "reason": "変える理由（変更の記録に残る）。",
         "alone": "true なら、グループの中の会話をまとめて動かさず、この 1 本だけを動かす。"
       }
+    },
+    "errors": {
+      "NOT_FOUND": "操作「{{id}}」はありません。",
+      "HOST_SCREEN_ONLY": "この操作は、Pleiad が動いている PC の画面からだけできます。",
+      "INVALID": "引数が正しくありません: {{detail}}",
+      "READ_ONLY_MODE": "この会話は読み取り専用か計画モードなので、Pleiad の状態を変える操作（{{id}}）はできません。",
+      "NEEDS_UI": "{{id}} はエージェントの権限を広げる変更なので、ここからは実行できません。ユーザーに Pleiad の画面での操作を頼んでください。",
+      "NEEDS_APPROVAL": "{{id}} は、この会話でのユーザーの承認が要ります。",
+      "INVALID_RISK": "操作の危険度が不正です（{{id}}）。",
+      "INVALID_PRINCIPAL": "呼び出した主体が不正です（{{id}}）。",
+      "SESSION_NOT_FOUND": "会話「{{id}}」が見つかりません。",
+      "MESSAGE_NOT_FOUND": "発言「{{id}}」が、この会話に見つかりません。",
+      "SETTING_NOT_FOUND": "設定「{{key}}」はありません。settings.list で探してください。",
+      "TASK_NOT_FOUND": "委譲のタスク「{{id}}」が見つかりません。",
+      "sessionRequired": "sessionId を指定してください（この会話を指す場合を除き、省けません）。",
+      "badCursor": "cursor が正しくありません。前の返り値の next をそのまま渡してください。"
     },
     "settings": {
       "list": {
