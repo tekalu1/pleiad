@@ -2978,8 +2978,8 @@ let settingsFailure = null;
 let failedSettingsPatch = null;
 let failedSettingsError = "";
 let cwdSaving = 0;   // 作業ディレクトリを保存している間、チップの字を弱くする（docs/design-system.md §4.6）
-function reserveSettings(patch) {
-  const id = state.current;
+function reserveSettings(patch, targetId = state.current) {
+  const id = targetId;
   if (!id) return;
   const write = settingsWrite.catch(() => {}).then(async () => {
     const s = state.sessions.find(s => s.id === id);
@@ -3485,10 +3485,12 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
   setDrawer(false);
   saveDraft().catch(() => {});
   const source = state.current;
-  pendingNewSession = { id: `pending-${randomId()}`, title: t('pending.newSession'), status: status ?? '', cwd: cwd || state.cwd || state.homeDir || '',
+  const requestedCwd = cwd || state.cwd || state.homeDir || '';
+  pendingNewSession = { id: `pending-${randomId()}`, title: t('pending.newSession'), status: status ?? '', cwd: requestedCwd,
     backend: backend ?? state.backendId, lastModified: new Date().toISOString(), unsent: true };
   state.current = null;
-  state.draft = { status, cwd: pendingNewSession.cwd };
+  const draft = { status, cwd: pendingNewSession.cwd };
+  state.draft = draft;
   state.messages = [];
   state.contextInfo = null;
   state.contextInfoId = null;
@@ -3512,10 +3514,22 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
       await settingsWrite.catch(() => {});
       await modeWrite;
       const result = await cmd("newSession", { sourceSessionId: source, backend: backend ?? (source ? undefined : state.prefs.backend ?? state.backendId),
-        cwd: cwd || state.cwd || state.homeDir || "", status });
+        cwd: requestedCwd, status });
       pendingRows.delete(pendingNewSession.id);
       pendingNewSession = null;
       side.keep(status);
+
+      // 作成中に選んだ作業場所があれば、できた会話に反映する（select の前に反映を済ませて一覧の読み直しに載せる）
+      const chosenCwd = draft.cwd;
+      const cwdDiffers = Boolean(chosenCwd && chosenCwd !== requestedCwd);
+      if (cwdDiffers) {
+        const ticket = ++cwdSaving;
+        $("cwdChip")?.classList.add("saving");
+        const write = reserveSettings({ cwd: chosenCwd }, result.sessionId);
+        write?.catch(() => {}).finally(() => { if (ticket === cwdSaving) $("cwdChip")?.classList.remove("saving"); });
+        await settingsWrite.catch(() => {});
+      }
+
       await refresh().catch(() => {});
       if (state.current === null) {
         // 開き直しと違い、欄に触らない（無効にしない・下書きを読み直さない）。写しも取らない:
@@ -3539,7 +3553,11 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
       renderSessions();
       side.showUndo(t('pending.failed', { reason: e.message }), () => startNew({ status, cwd, backend }), { retry: true });
     }
-    finally { cancel(); creatingSession = null; }
+    finally {
+      cancel();
+      creatingSession = null;
+      if (state.draft === draft) state.draft = { status: null, cwd: "" };
+    }
   })();
   return creatingSession;
 }
