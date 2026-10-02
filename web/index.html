@@ -20,6 +20,7 @@
 <link rel="stylesheet" href="/conversation-nav.css">
 <link rel="stylesheet" href="/remote-browser.css">
 <link rel="stylesheet" href="/computer-settings.css">
+<link rel="stylesheet" href="/notify-settings.css">
 <!-- i18next はビルドしないので、裸の名前をサーバーの配信口へ向ける（core/server.mjs の /vendor/i18next.mjs）。モジュールより前に置く -->
 <script type="importmap">{ "imports": { "i18next": "/vendor/i18next.mjs" } }</script>
 <!-- 最初の描画より前に、配色・言語・窓の枠（デスクトップ版だけ）・脇の開閉を決める。client.mjs を待つと一瞬ずれて見える。
@@ -78,6 +79,7 @@
       <!-- 内蔵ブラウザー。デスクトップ版のホストの画面だけ出す（web/browser-settings.mjs） -->
       <button type="button" id="browserTab" aria-controls="browserPanel" data-i18n="settings.nav.browser" hidden></button>
       <button type="button" id="computerTab" aria-controls="computerPanel" data-i18n="settings.nav.computer"></button>
+      <button type="button" id="notifyTab" aria-controls="notifyPanel" data-i18n="settings.nav.notify"></button>
       <button type="button" id="remoteTab" aria-controls="remotePanel" data-i18n="settings.nav.remote"></button>
       <button type="button" id="updatesTab" aria-controls="updatesPanel" data-i18n="settings.nav.about"></button>
     </nav>
@@ -166,6 +168,8 @@
       <!-- この会話の操作（脇の行の右クリックと同じメニュー）。狭い画面・タッチのときだけ出す（脇が引き出しで隠れているため） -->
       <button type="button" class="btn btn-icon more-btn" id="sessionMore" hidden aria-haspopup="menu" data-i18n-title="session.more" data-i18n-aria-label="session.more"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></button>
     </header>
+    <!-- スマホのアプリで、最初の作業が終わったときの「離れていても知らせますか？」（web/mobile-notify.mjs）。ほかでは出ない -->
+    <div class="notify-band" id="notifyBand" role="region" data-i18n-aria-label="settings.nav.notify" hidden></div>
     <!-- 稼働表示（考えている・経過時間）は会話の筋の末尾の節として client.mjs が描く。固定の帯は置かない -->
     <!-- 会話を包む入れ物。残る問い・最新へ・地図（web/conversation-nav-view.mjs）を #log の外に重ねる -->
     <div class="log-frame" id="logFrame"><div id="log"><div class="thread" id="thread"></div></div></div>
@@ -319,6 +323,8 @@
         <section id="browserPanel" data-i18n-aria-label="settings.nav.browser" hidden></section>
         <!-- 中身は web/computer-settings.mjs が作る -->
         <section id="computerPanel" data-i18n-aria-label="settings.nav.computer" hidden></section>
+        <!-- 中身は web/notify-settings.mjs が作る -->
+        <section id="notifyPanel" data-i18n-aria-label="settings.nav.notify" hidden></section>
         <!-- 中身は web/remote.mjs が作る -->
         <section id="remotePanel" data-i18n-aria-label="settings.nav.remote" hidden></section>
       </div>

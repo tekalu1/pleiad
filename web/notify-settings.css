@@ -1,0 +1,21 @@
+/* 設定 › 通知（web/notify-settings.mjs）。面は surface-1 のカードに行を並べる。枠線は付けず、行の間は余白だけで分ける */
+.nf-section { margin-top:20px; }
+.nf-section:first-child { margin-top:8px; }
+.nf-section h4 { margin:0 0 8px; font-size:var(--fs-s); color:var(--ink-strong); }
+.nf-card { background:var(--surface-1); border-radius:var(--r-m); padding:2px 14px; }
+.nf-row { display:flex; align-items:center; gap:12px; min-height:48px; padding:6px 0; cursor:pointer; }
+.nf-info { flex:1; min-width:0; }
+.nf-label { display:block; overflow-wrap:anywhere; }
+.nf-info small { display:block; color:var(--ink-weak); font-size:var(--fs-s); line-height:1.5; overflow-wrap:anywhere; }
+.nf-state { color:var(--ink-weak); font-size:var(--fs-s); }
+.nf-state.nf-on { color:var(--ink); font-weight:600; }
+.nf-note { display:block; margin-top:8px; color:var(--ink-weak); font-size:var(--fs-s); overflow-wrap:anywhere; }
+.nf-section .mp-note { margin:0; }
+
+/* スマホのアプリで、最初の作業が終わったときに会話の上へ出す帯（web/mobile-notify.mjs）。押したら閉じる */
+.notify-band { display:flex; align-items:center; gap:8px; margin:6px 12px; padding:10px 8px 10px 16px; background:var(--surface-1); border-radius:var(--r-l); }
+.notify-band[hidden] { display:none; }
+.nb-text { flex:1; min-width:0; }
+.nb-enable { flex:none; min-height:36px; border-radius:var(--r-pill); background:var(--surface-3); font-weight:600; }
+.nb-enable:hover { background:var(--surface-sel); }
+.nb-later { width:36px; height:36px; color:var(--ink-weak); }
