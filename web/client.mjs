@@ -900,8 +900,11 @@ async function rewindSend({ m, source, tail, text, attached }) {
     provisionalByMessage.delete(messageId);
     for (const w of doomed) w.classList.remove('leaving');
     composerError(t('chat.resend.failed', { error: e.message }));
-    // 巻き戻しは済んで、送信待ちへの受け付けだけが失敗したこともある。画面を履歴に合わせ直す（何も変わっていなければ動かない）
-    if (state.current === source) select(source, { reload: true }).catch(() => {});
+    // 巻き戻しは済んで、送信待ちへの受け付けだけが失敗したこともある。履歴が変わっていたら画面を合わせ直す（変わっていなければ編集欄・帯はそのまま）
+    cmd('loadSession', { sessionId: source }).then(data => {
+      const uuids = list => (list ?? []).map(m => m.uuid).join();
+      if (state.current === source && uuids(data?.messages) !== uuids(state.messages)) return select(source, { reload: true });
+    }).catch(() => {});
     return false;
   } finally { rewindingNow = null; }
 }
