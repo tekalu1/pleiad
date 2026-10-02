@@ -11,11 +11,12 @@
 // `--computer` を付けて起こした中継は ply_computer（/mcp/computer）を中継し、PLY_COMPUTER_URL / PLY_COMPUTER_AUTHORIZATION を読む
 // （docs/computer-use.md「エージェントへの渡し方」）。agy はツールの定義をサーバー名の階層なしで書くので、ツール名に
 // ply_computer_ を付けて見せ、呼び出しでは外して Pleiad へ渡す（core/backends/computer-delivery.mjs の AGY_TOOL_PREFIX）。
+// `--control` を付けて起こした中継は ply_control（/mcp/control。Pleiad の操作の一覧。ADR 0081）を中継し、PLY_CONTROL_URL / PLY_CONTROL_AUTHORIZATION を読む。
 // `--browser` を付けて起こした中継は ply_browser（/mcp/browser。内蔵ブラウザーのプロフィールの一覧と切り替え、ADR 0078）を中継し、
 // PLY_BROWSER_URL / PLY_BROWSER_AUTHORIZATION を読む。ツール名（list_browser_profiles・use_browser_profile）は衝突しにくいので付け外ししない。
 // agy は agent.md の mcpServers に複数書いても先頭の 1 本しか起こさない（1.2.14 で実測。後ろの中継には initialize も来ない）ので、
-// 2 つ以上を渡す会話は 1 本の中継に束ねる。`--context` `--computer` `--browser` を並べて起こすと、接続先ごとの tools/list を足し合わせ、
-// 呼び出しは名前で振り分ける（ply_computer_ で始まる名前は computer、list_browser_profiles・use_browser_profile は browser、残りは context）。
+// 2 つ以上を渡す会話は 1 本の中継に束ねる。`--context` `--computer` `--browser` `--control` を並べて起こすと、接続先ごとの tools/list を足し合わせ、
+// 呼び出しは名前で振り分ける（ply_computer_ で始まる名前は computer、ply_control_ で始まる名前は control、list_browser_profiles・use_browser_profile は browser、残りは context）。
 // 受け取った JSON-RPC をそのまま Pleiad へ POST し、返事を stdout へ書く。env が無ければ（利用者が手で
 // このエージェントを選んだなど）ツールを持たない MCP として振る舞う。
 import readline from 'node:readline';
@@ -23,6 +24,9 @@ import { agentT } from './i18n.mjs';
 
 // computer-delivery.mjs の AGY_TOOL_PREFIX と同じ（中継は i18n 以外を読み込まずに軽く起こす）
 const TOOL_PREFIX = 'ply_computer_';
+// core/ops/surfaces/mcp.mjs の ply_control のツール名の接頭辞（同上、軽く起こすため読み込まない）。agy はツールの定義をサーバー名の階層なしで書くので、
+// search_sessions のような一般的な名前は他のサーバーと衝突する。tools/list の名前に付け、呼び出しでは外して Pleiad へ渡す
+const CONTROL_PREFIX = 'ply_control_';
 // core/browser-profiles.mjs の ply_browser のツール名（同上、軽く起こすため読み込まない）
 const BROWSER_TOOLS = new Set(['list_browser_profiles', 'use_browser_profile']);
 const locale = process.env.PLY_CONTEXT_LOCALE;
@@ -30,6 +34,7 @@ const KINDS = {
   context: { url: 'PLY_CONTEXT_URL', authorization: 'PLY_CONTEXT_AUTHORIZATION', server: 'Pleiad Context', methods: ['initialize', 'ping', 'tools/list', 'tools/call', 'resources/list', 'resources/read', 'prompts/list', 'prompts/get'] },
   computer: { url: 'PLY_COMPUTER_URL', authorization: 'PLY_COMPUTER_AUTHORIZATION', server: 'Pleiad Computer', methods: ['initialize', 'ping', 'tools/list', 'tools/call'] },
   browser: { url: 'PLY_BROWSER_URL', authorization: 'PLY_BROWSER_AUTHORIZATION', server: 'Pleiad Browser', methods: ['initialize', 'ping', 'tools/list', 'tools/call'] },
+  control: { url: 'PLY_CONTROL_URL', authorization: 'PLY_CONTROL_AUTHORIZATION', server: 'Pleiad Control', methods: ['initialize', 'ping', 'tools/list', 'tools/call'] },
 };
 // 旗の無い起動は ply_context だけ
 const wanted = Object.keys(KINDS).filter(kind => process.argv.includes(`--${kind}`));
@@ -48,14 +53,17 @@ const write = message => process.stdout.write(JSON.stringify(message) + '\n');
 const fail = (id, code, message) => write({ jsonrpc: '2.0', id, error: { code, message } });
 
 /** ply_computer の名前の付け外し。tools/list の名前に付け、tools/call の名前から外す */
+const PREFIXES = { computer: TOOL_PREFIX, control: CONTROL_PREFIX };
 function outgoing(up, message) {
-  if (up.kind !== 'computer' || message.method !== 'tools/call' || typeof message.params?.name !== 'string') return message;
-  const name = message.params.name.startsWith(TOOL_PREFIX) ? message.params.name.slice(TOOL_PREFIX.length) : message.params.name;
+  const prefix = PREFIXES[up.kind];
+  if (!prefix || message.method !== 'tools/call' || typeof message.params?.name !== 'string') return message;
+  const name = message.params.name.startsWith(prefix) ? message.params.name.slice(prefix.length) : message.params.name;
   return { ...message, params: { ...message.params, name } };
 }
 function incoming(up, method, body) {
-  if (up.kind !== 'computer' || method !== 'tools/list' || !Array.isArray(body?.result?.tools)) return body;
-  return { ...body, result: { ...body.result, tools: body.result.tools.map(tool => ({ ...tool, name: TOOL_PREFIX + tool.name })) } };
+  const prefix = PREFIXES[up.kind];
+  if (!prefix || method !== 'tools/list' || !Array.isArray(body?.result?.tools)) return body;
+  return { ...body, result: { ...body.result, tools: body.result.tools.map(tool => ({ ...tool, name: prefix + tool.name })) } };
 }
 
 /** 1 つの接続先へ POST する。通知（id なし）は返事を待たず null。失敗は { error: [code, message] } */
@@ -99,6 +107,7 @@ function target(message) {
   if (message.method !== 'tools/call') return find('context') ?? null;
   const name = message.params?.name;
   if (typeof name === 'string' && name.startsWith(TOOL_PREFIX) && find('computer')) return find('computer');
+  if (typeof name === 'string' && name.startsWith(CONTROL_PREFIX) && find('control')) return find('control');
   if (BROWSER_TOOLS.has(name) && find('browser')) return find('browser');
   return find('context') ?? null;
 }

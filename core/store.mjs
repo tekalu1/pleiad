@@ -277,10 +277,12 @@ async function resolveFrom(sessionId, entry, field, to, backend) {
 /**
  * メタ情報の変更を1件記録する。人間も AI も同じ経路を通る（設計メモ 2.2）。
  * `by` は可読性のためだけに残す。この値で権限を分岐させない。
+ * 操作の一覧（core/ops/）から来た変更は by: 'agent' に、どの口から（via: mcp | cli | mcp-stdio）と
+ * どの会話の AI か（bySession）を添える（ADR 0082）。
  * `from` を渡さない（または null の）場合は直前の値をこちらで補う。
  * `backend` はバックエンドのオブジェクト。from の復元と、行がどこのものかの記録に使う。
  */
-export async function recordChange(sessionId, { by, field, from, to, reason, reasonKey, reasonParams, backend }) {
+export async function recordChange(sessionId, { by, via, bySession, field, from, to, reason, reasonKey, reasonParams, backend }) {
   return exclusive(async () => {
     const all = await load();
     const entry = (all[sessionId] ??= { history: [] });
@@ -292,6 +294,8 @@ export async function recordChange(sessionId, { by, field, from, to, reason, rea
     entry.history.push({
       at,
       by,
+      ...(via ? { via } : {}),
+      ...(bySession ? { bySession } : {}),
       field,
       from: resolved ?? null,
       to: to ?? null,

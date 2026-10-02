@@ -39,6 +39,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
 import { registry as opsRegistry } from './ops/index.mjs';
+import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './ops/surfaces/control.mjs';
+import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
+import { writeControlFile, removeControlFile } from './control-file.mjs';
+import { parentIdOf } from './ops/sessions.mjs';
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
@@ -542,7 +546,7 @@ function conversationConnection(turn) {
   // 橋は会話ごとに使い回すので、ターンそのものを閉じ込めない（終わったターンが丸ごと残ってしまう）。
   // 持つのは鍵だけにして、呼ばれた時に今走っているターンを引く。
   // 会話の言語は会話を始めたときに決まり、以後は変わらない（runTurn）。橋の instructions・ツールの説明もその言語で開く
-  const entry = { key: turn.key, locale: turn.agentLocale };
+  const entry = { key: turn.key, locale: turn.agentLocale, sessionId: turn.info.sessionId ?? null };
   const binding = agentBridge.open({ origin: localOrigin(), locale: entry.locale,
     owner: async () => {
       const live = runtime.turns.get(entry.key);
@@ -592,6 +596,7 @@ function releaseAgentConnection(key) {
   try { entry.close(); } catch {}
   try { entry.computer?.close(); } catch {}
   try { entry.browser?.close(); } catch {}
+  try { entry.control?.close(); } catch {}
   // 会話を消したら、その会話で撮ったスクリーンショットも消す（ADR 0075）
   computerShots.removeSession(key).catch(() => {});
 }
@@ -650,6 +655,31 @@ function browserRuntimeFor(turn) {
   const entry = conversationConnection(turn);
   entry.browser ??= browserBridge.open({ origin: localOrigin(), locale: entry.locale, owner: () => entry.key });
   return { url: entry.browser.url, headers: entry.browser.headers };
+}
+
+// ply_control: 操作の一覧（core/ops/）を会話に渡す HTTP の MCP（ADR 0081）。会話に束縛し、その会話の承認モードで権限が決まる（ADR 0082）
+const controlBridge = createControlBridge({ registry: opsRegistry, depsFor: opsDeps });
+// CLI 用トークン（control.json に書く。画面のトークンとは別で、効くのは /api/ops だけ。ADR 0083）
+const CLI_TOKEN = crypto.randomBytes(32).toString('hex');
+const cliTokenOk = (given) => { const a = Buffer.from(String(given)), b = Buffer.from(CLI_TOKEN); return a.length === b.length && crypto.timingSafeEqual(a, b); };
+const opsHttp = createOpsHttp({
+  registry: opsRegistry, depsFor: opsDeps, serverLocale: currentLocale,
+  // 会話に束縛した接続のトークン（会話のシェルの環境変数）は、同じ会話に束縛された CLI になる
+  authenticate: (token) => { if (cliTokenOk(token)) return {}; const bound = controlBridge.lookup(token); return bound ? { owner: bound.owner, locale: bound.locale } : null; },
+});
+/** このターンに渡す ply_control（url・headers・instructions）と、会話のシェルへ渡す環境変数（CLI を同じ会話に束縛する）。全会話・3 つのエージェントに渡す */
+function controlRuntimeFor(turn) {
+  const entry = conversationConnection(turn);
+  entry.control ??= controlBridge.open({ origin: localOrigin(), locale: entry.locale,
+    // 会話の id が決まるまでは束縛を決められない。束縛なしの主体として通すと、読み取りの会話からの書き込みを断れなくなるので投げる
+    owner: async () => {
+      const live = runtime.turns.get(entry.key);
+      if (live) { await live.setup; if (live.info.sessionId) return live.info.sessionId; }
+      else if (entry.sessionId) return entry.sessionId;
+      throw new Error(agentT(entry.locale, 'delegation.idPending'));
+    } });
+  return { url: entry.control.url, headers: entry.control.headers, instructions: controlInstructions(entry.locale),
+    env: { PLEIAD_CONTROL_URL: localOrigin(), PLEIAD_CONTROL_TOKEN: entry.control.token } };
 }
 
 /** このターンに渡す ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（docs/computer-use.md「エージェントへの渡し方」） */
@@ -747,6 +777,9 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === CONTEXT_MCP_PATH) return contextBridge.handle(req, res);
   if (url.pathname === COMPUTER_MCP_PATH && computerBridge) return computerBridge.handle(req, res);
   if (url.pathname === BROWSER_MCP_PATH) return browserBridge.handle(req, res);
+  if (url.pathname === CONTROL_MCP_PATH) return controlBridge.handle(req, res);
+  // CLI の口。画面のトークンは受けず、CLI 用トークンか会話の接続のトークンだけを受ける（core/ops/surfaces/http.mjs）
+  if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
 
   // 静的ファイルもトークンで守る。守られているのが WebSocket だけだと、
   // リモートに出したときに UI 一式が誰でも取れてしまう。
@@ -1309,6 +1342,9 @@ const GIT_BEGIN_WAIT_MS = 6_000;
 const GIT_SNAPSHOTS = process.env.AGENT_HOST_GIT_SNAPSHOTS !== 'off';
 const GIT_END_WAIT_MS = 6_000;
 process.on('exit', () => shellRuns.stopAll());
+process.on('exit', () => removeControlFile({ dataDir: store.dataDir }));
+// 端末の Ctrl-C・kill でも 'exit' を通し、control.json を消す
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));
 const completionNotices = createCompletionNotices({
   // 裏の作業は委譲の完了と同じく awaitedBackground で見る。開きっぱなしの端末（開発サーバーなど）で通知が出なくならないように
   busy: sessionId => sessionBusy(sessionId) || awaitedBackground(sessionId) || hasPendingChild(agentTasks?.list(sessionId) ?? []),
@@ -1404,12 +1440,13 @@ function groupKin(rows, rootId) {
 }
 
 /** 人間からの状態の変更。setStatus コマンドと新規セッションの引き継ぎが同じ経路を通る。 */
-async function applyStatus(backend, sessionId, status, why) {
+async function applyStatus(backend, sessionId, status, why, actor) {
   const reason = reasonOf(why);
+  const who = changeBy(actor);
   // ネイティブに持てるなら**そこが正本**。持てなくても sidecar には必ず残る
   if (backend.capabilities?.tag && backend.setTag) await backend.setTag(sessionId, status);
-  await store.recordChange(sessionId, { by: "human", field: "status", to: status, ...reason, backend });
-  emitGlobal({ type: "status", sessionId, status, by: "human", ...reason });
+  await store.recordChange(sessionId, { ...who, field: "status", to: status, ...reason, backend });
+  emitGlobal({ type: "status", sessionId, status, by: who.by, ...reason });
 }
 
 // ---- 保存される変更理由（docs/design.md「多言語対応」） ------------------------
@@ -1562,7 +1599,7 @@ function makeEmit(turn) {
       for (const read of liveReads) if (read.sessionId === event.sessionId) read.turn = turn;
       runtime.turns.delete(turn.key);
       const connection = agentConnections.get(turn.key);
-      if (connection) { agentConnections.delete(turn.key); connection.key = event.sessionId; agentConnections.set(event.sessionId, connection); }
+      if (connection) { agentConnections.delete(turn.key); connection.key = event.sessionId; connection.sessionId = event.sessionId; agentConnections.set(event.sessionId, connection); }
       turn.key = event.sessionId;
       runtime.turns.set(turn.key, turn);
       // 新しい会話は id が決まったここで、始まりの撮影の ref を書く（ADR 0085）
@@ -1721,7 +1758,100 @@ async function subagentState(t, sessionId, agentId) {
 const opsApp = {
   searchSessions: (input) => sessionSearch.search(input),
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
+  // いま走っている作業の要約（app.running）。会話のターン・委譲の子・承認待ちの数
+  running: async () => {
+    const work = await runningWork();
+    return {
+      count: work.count,
+      turns: await Promise.all(work.turns.map(async (turn) => ({ sessionId: turn.sessionId ?? null, backend: turn.backend ?? null,
+        title: turn.sessionId ? (await store.get(turn.sessionId).catch(() => null))?.title ?? null : null }))),
+      tasks: work.tasks.filter((task) => ['queued', 'running', 'cancelling'].includes(task.status))
+        .map((task) => ({ taskId: task.taskId, status: task.status, parentSessionId: task.parentSessionId ?? null })),
+      waiting: work.permissions.filter((p) => !p.relay).length,
+    };
+  },
 };
+
+/** 変更の主体 → 記録の by・via・bySession（ADR 0082）。人間は by: 'human'（これまでの記録と同じ）、操作の一覧の agent は by: 'agent' と、どの口から・どの会話の AI か */
+const changeBy = (actor) => actor?.by === 'agent'
+  ? { by: 'agent', ...(actor.via ? { via: actor.via } : {}), ...(actor.sessionId ? { bySession: actor.sessionId } : {}) }
+  : { by: 'human' };
+
+/** 題の変更。setTitle コマンドと sessions.setTitle が同じ経路を通る（人間も AI も同じ store・同じイベント。ADR 0007）。reason は reasonOf / clientReason の形 */
+async function changeTitle(backend, sessionId, title, { actor, reason } = {}) {
+  const who = changeBy(actor);
+  if (backend.capabilities?.title && backend.setTitle) await backend.setTitle(sessionId, title);
+  await store.recordChange(sessionId, { ...who, field: "title", to: title, ...reason, backend });
+  emitGlobal({ type: "title", sessionId, title, by: who.by, ...reason });
+}
+
+/** 状態の変更。グループの根を動かすと、まとまりごと移る（中の会話も同じ状態に保つ、§4.1）。中の会話を動かしたときは、その 1 本だけが出る。移した会話の id を返す */
+async function changeStatus(backend, sessionId, status, { actor, reason, alone } = {}) {
+  const rows = alone ? [] : await sessionList().catch(() => []);
+  const kin = rows.length && isGroupRoot(rows, sessionId) ? groupKin(rows, sessionId) : [];
+  await applyStatus(backend, sessionId, status, reason, actor);
+  for (const r of kin) {
+    const b = getBackend(r.backend) ?? backend;
+    await applyStatus(b, r.id, status, reason.reason === null ? savedReason('groupMove') : reason, actor).catch(() => {});
+  }
+  return kin.map((r) => r.id);
+}
+
+// 会話に関する操作（sessions.*）の本体。画面の口と同じ一覧・同じ読み方を使う
+const opsSessions = {
+  list: () => sessionList({ limit: 500, track: false }),
+  get: async (id) => {
+    const rows = await sessionList({ limit: 500, track: false });
+    let row = rows.find((r) => r.id === id);
+    const side = await store.get(id).catch(() => ({}));
+    if (!row) {
+      // 一覧の上限より古い会話。バックエンドに直に聞く
+      const backend = await resolveBackendForSession(id);
+      if (!backend) return null;
+      row = sessionRow(backend, await backend.getSession(id).catch(() => null), { ...side, id });
+    }
+    return { row, children: rows.filter((r) => parentIdOf(r) === id).map((r) => r.id), history: side.history ?? [] };
+  },
+  read: async (id) => {
+    const backend = await resolveBackendForSession(id);
+    return backend ? (await history.loadTranscript(id, backend)).messages : null;
+  },
+  setTitle: async (id, title, { actor, reason } = {}) => changeTitle(await pickBackend(id), id, title, { actor, reason: reasonOf(reason) }),
+  setStatus: async (id, status, { actor, reason, alone } = {}) => changeStatus(await pickBackend(id), id, status, { actor, reason: reasonOf(reason), alone }),
+};
+
+/**
+ * 操作の一覧（registry.invoke）へ渡す依存。locale は呼び出し元の言語（会話の言語・PC の言語）。
+ * modeOf は束縛された会話の承認モード（引けなければ undefined。policy は弱い側に倒す）。audit は書く操作の記録（by: 'agent'・via・sessionId）
+ */
+function opsDeps(lng = currentLocale()) {
+  return {
+    locale: lng,
+    app: opsApp,
+    sessions: opsSessions,
+    delegation: { list: (owner) => agentTasks?.list(owner) ?? [], get: (taskId, offset) => agentTasks?.get(taskId, offset) ?? null },
+    prefs: () => store.getPrefs(),
+    compactionSettings: () => compactionSettings,
+    computerUse: async () => normalizeComputerUse((await store.getPrefs()).computerUse),
+    routingSettings: () => routingSettingsCache,
+    plyInstructions: () => plyInstructionsCache,
+    contextDefaults: () => contextSettings.get(os.homedir(), { level: 'default' }),
+    modeOf: async (sessionId) => {
+      try {
+        const live = runtime.turns.get(sessionId);
+        if (live) return live.backend.modes()[live.info.mode];
+        const backend = await resolveBackendForSession(sessionId);
+        return backend ? backend.modes()[await resolveMode(sessionId, undefined, backend)] : undefined;
+      } catch { return undefined; }
+    },
+    // 会話に束縛された呼び出しは、その会話の変更の記録に「どの口から何を呼んだか」を残す（束縛されない CLI は残す先が無い）。
+    // 記録できなければ投げる（registry は記録に失敗したら操作を実行しない）
+    audit: async ({ op, reason, actor }) => {
+      if (!actor?.sessionId) return;
+      await store.recordChange(actor.sessionId, { ...changeBy(actor), field: 'op', to: op, reason: reason ?? null });
+    },
+  };
+}
 
 async function runningWork() {
   const turns = [...runtime.turns.values()].map((t) => ({ kind: "turn", ...t.info }));
@@ -2629,6 +2759,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         browserRuntime: null,
         // ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（computerRuntimeFor）
         computerRuntime: await computerRuntimeFor(turn),
+        // ply_control（操作の一覧）。全会話に渡す。env は会話のシェルへ渡す CLI の接続情報
+        controlRuntime: controlRuntimeFor(turn),
         addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
         contextRuntime: runtimeContext,
         // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
@@ -2650,7 +2782,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       // Pleiad が足した文の量（右パネルの「指示の量」。ADR 0056）。このターンで渡す文が出そろったここで数え、変わったときだけ記録し直す
       const parts = plyParts({ plyAgents: Boolean(backend.capabilities?.plyAgents), context: runtimeContext?.sections ?? null,
         visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentConnection(turn).instructions, added: contextRecord.added,
-        computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }) });
+        computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime.instructions });
       if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await saveContext(); }
       // Preparation can await context and settings. A send or cancellation may have invalidated
       // an idle reservation since the first check; do not invoke the backend in that case.
@@ -4191,7 +4323,7 @@ wss.on("connection", (ws, req) => {
 
         // 操作の一覧（core/ops/）の汎用の口。画面は新しい機能をここから呼ぶ（protocol.mjs を触らずに増やせる。ADR 0080）
         case 'invoke': {
-          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, msg.args?.op, msg.args?.args, { locale: locale.lang, app: opsApp });
+          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, msg.args?.op, msg.args?.args, opsDeps(locale.lang));
           return r.ok ? reply(true, r.result) : reply(false, r.error, r.code, r.issues ? { issues: r.issues } : undefined);
         }
 
@@ -4561,16 +4693,7 @@ wss.on("connection", (ws, req) => {
           const reason = clientReason(msg.args);
           if (!sessionId) return reply(false, t('session.requiredForStatus'));
           const backend = await pickBackend(sessionId, msg.args?.backend);
-          // グループの根を動かすと、まとまりごと移る（中の会話も同じ状態に保つ、§4.1）。
-          // 中の会話を動かしたときは、その 1 本だけが出る
-          const rows = msg.args?.alone ? [] : await sessionList().catch(() => []);
-          const kin = rows.length && isGroupRoot(rows, sessionId) ? groupKin(rows, sessionId) : [];
-          await applyStatus(backend, sessionId, status, reason);
-          for (const r of kin) {
-            const b = getBackend(r.backend) ?? backend;
-            await applyStatus(b, r.id, status, reason.reason === null ? savedReason('groupMove') : reason).catch(() => {});
-          }
-          return reply(true, { moved: kin.map((r) => r.id) });
+          return reply(true, { moved: await changeStatus(backend, sessionId, status, { reason, alone: msg.args?.alone }) });
         }
 
         // 完了を確認した。ホストに 1 つで、別の窓・別の端末にも read で知らせる（store.markRead が巻き戻さない）。
@@ -4652,9 +4775,7 @@ wss.on("connection", (ws, req) => {
           const { sessionId, title } = msg.args;
           const reason = clientReason(msg.args);
           const backend = await pickBackend(sessionId, msg.args?.backend);
-          if (backend.capabilities?.title && backend.setTitle) await backend.setTitle(sessionId, title);
-          await store.recordChange(sessionId, { by: "human", field: "title", to: title, ...reason, backend });
-          emitGlobal({ type: "title", sessionId, title, by: "human", ...reason });
+          await changeTitle(backend, sessionId, title, { reason });
           return reply(true, "ok");
         }
 
@@ -4731,8 +4852,12 @@ process.parentPort?.on("message", async ({ data }) => {
   if (data?.type === "shutdown" && runtime.turns.size === 0 && !agentTasks.busy) process.exit(0);
 });
 
-function announce() {
+async function announce() {
   const { port } = server.address();
+  // CLI がつなぎ先を見つける control.json（ADR 0083）。権限 0600。終了時に pid が自分のときだけ消す。
+  // 起動の案内（下の URL の行）を見て CLI や検査が動き出すので、その前に書き終える
+  await writeControlFile({ dataDir: store.dataDir, origin: localOrigin(), cliToken: CLI_TOKEN, startedAt: SERVER_STARTED_AT, appVersion: APP_VERSION, kind: process.parentPort ? 'desktop' : 'server' })
+    .catch((err) => console.error('  control.json を書けませんでした:', String(err?.message ?? err)));
   process.parentPort?.postMessage({ type: "ready", port, token: TOKEN, locale: locale.lang });
   remote.start().catch(() => {});
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();

@@ -328,10 +328,31 @@
     "child": "あなたは委譲された子の会話なので、さらに委譲しない。",
     "codexPolicy": "Codex の承認なしのモード（full・YOLO）でも、Codex 自身の安全判定で一部のコマンドが実行前に拒否されることがある（`blocked by policy` など）。拒否されたら、言い換えや別のコマンドで回避しようとしない。実行できなかったコマンドと理由、その結果残ったもの（消せなかったファイル・止められなかったプロセスなど）を報告する。"
   },
+  "cli": {
+    "usage": "使い方: pleiad [--json] [--lang ja|en] <コマンド> [引数]",
+    "commands": "コマンド（走っている Pleiad の操作の一覧から作る）:",
+    "flags": "オプション: --json 結果を JSON で出す / --lang ja|en 言語 / --help 使い方（コマンドの後ろに付けるとそのコマンドの引数）。\n終了コード: 0 成功 / 2 入力の誤り / 3 Pleiad が起動していない / 4 拒否または画面での操作が必要 / 5 その他",
+    "opsSummary": "使える操作の一覧",
+    "callSummary": "操作を id で呼ぶ（--args '{…}' か --<名前> で入力を渡す）",
+    "mcpSummary": "同じ一覧を stdio の MCP サーバーとして出す（外の AI 向け）",
+    "connected": "つなぎ先: {{origin}}（{{bound}}）",
+    "boundYes": "この会話に束縛",
+    "boundNo": "会話に束縛されない",
+    "notRunning": "Pleiad が起動していません。",
+    "howToStart": "デスクトップ版を開くか、リポジトリで npm start を実行してください。別のデータ置き場なら AGENT_HOST_DATA を付けて pleiad を呼びます。",
+    "listedWhenRunning": "起動していると一覧が出ます",
+    "callUsage": "使い方: pleiad call <操作の id> [--args '{…}']",
+    "unknownCommand": "「{{command}}」というコマンドはありません。pleiad だけで一覧が出ます。",
+    "badArgument": "引数が正しくありません: {{detail}}",
+    "required": "必須"
+  },
   "ops": {
     "app": {
       "status": {
         "summary": "Pleiad の版・起動時刻・画面の言語・走っている作業の数を返す。"
+      },
+      "running": {
+        "summary": "いま走っている作業（会話のターン・委譲の子・承認待ちの数）を返す。"
       }
     },
     "sessions": {
@@ -352,6 +373,42 @@
         "limit": "会話の件数。既定 50・最大 200。",
         "cursor": "続き。前の結果の nextCursor をそのまま渡す。",
         "hitsPerSession": "会話ごとに返す一致の発言の数。既定 1・最大 10。"
+      },
+      "list": {
+        "summary": "会話の一覧を、新しい順に返す。絞り込みとページ送りができる。本文まで探すときは search_sessions。",
+        "backend": "エージェントの id（claude・codex・antigravity）で絞る。",
+        "cwd": "作業フォルダーで絞る（そのフォルダーとその下）。",
+        "status": "状態で絞る。空の文字列は状態の無い会話。",
+        "parent": "この会話の子（分岐・委譲）だけにする。親の会話の id。",
+        "query": "題に含まれる語で絞る（大文字小文字・全角半角は区別しない）。",
+        "includeDelegated": "委譲の子の会話を含めるか（既定は含める）。",
+        "limit": "返す件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      },
+      "get": {
+        "summary": "会話 1 件のメタ情報（題・状態・場所・エージェント・親子・最近の変更の記録）を返す。本文は read_session で読む。",
+        "sessionId": "会話の id。"
+      },
+      "read": {
+        "summary": "会話の本文を、発言の id（messageId）の前後だけ読む。messageId を省くと末尾。search_sessions の hit の uuid をそのまま渡せる。",
+        "sessionId": "会話の id。",
+        "messageId": "中心にする発言の id（uuid）。省くと最後の発言。",
+        "before": "messageId より前の件数（既定 4、最大 20）。",
+        "after": "messageId より後の件数（既定 4、最大 20）。",
+        "maxChars": "1 件の本文の最大の字数（既定 2000、最大 8000）。返り全体の本文は 40000 字まで。"
+      },
+      "setTitle": {
+        "summary": "会話の題を変える。変更の記録に、変えた主体と理由が残る。",
+        "sessionId": "会話の id。省くとこの会話。",
+        "title": "新しい題。",
+        "reason": "変える理由（変更の記録に残る）。"
+      },
+      "setStatus": {
+        "summary": "会話の状態（グループ）を変える。状態は自由な文字列で、既存の状態から選ぶ。グループの根を動かすと中の会話も移る。",
+        "sessionId": "会話の id。省くとこの会話。",
+        "status": "新しい状態。",
+        "reason": "変える理由（変更の記録に残る）。",
+        "alone": "true なら、グループの中の会話をまとめて動かさず、この 1 本だけを動かす。"
       }
     },
     "errors": {
@@ -362,7 +419,83 @@
       "NEEDS_UI": "{{id}} はエージェントの権限を広げる変更なので、ここからは実行できません。ユーザーに Pleiad の画面での操作を頼んでください。",
       "NEEDS_APPROVAL": "{{id}} は、この会話でのユーザーの承認が要ります。",
       "INVALID_RISK": "操作の危険度が不正です（{{id}}）。",
-      "INVALID_PRINCIPAL": "呼び出した主体が不正です（{{id}}）。"
+      "INVALID_PRINCIPAL": "呼び出した主体が不正です（{{id}}）。",
+      "SESSION_NOT_FOUND": "会話「{{id}}」が見つかりません。",
+      "MESSAGE_NOT_FOUND": "発言「{{id}}」が、この会話に見つかりません。",
+      "SETTING_NOT_FOUND": "設定「{{key}}」はありません。settings.list で探してください。",
+      "TASK_NOT_FOUND": "委譲のタスク「{{id}}」が見つかりません。",
+      "sessionRequired": "sessionId を指定してください（この会話を指す場合を除き、省けません）。",
+      "badCursor": "cursor が正しくありません。前の返り値の next をそのまま渡してください。"
+    },
+    "settings": {
+      "list": {
+        "summary": "設定の一覧（キー・説明・危険度・読むだけか）を返す。",
+        "prefix": "キーの先頭で絞る（例: compaction.）。"
+      },
+      "get": {
+        "summary": "設定の現在値・既定値・危険度を返す。キーは settings.list で探す。値の形は settings.schema。",
+        "key": "設定のキー。"
+      },
+      "schema": {
+        "summary": "設定の値の JSON Schema と既定値を返す。key を省くと全部。",
+        "key": "設定のキー。省くと全部。"
+      }
+    },
+    "delegation": {
+      "tasks": {
+        "summary": "委譲の子のタスクの一覧を、新しい順に返す（依頼・結果の本文は載せない）。",
+        "parentSessionId": "依頼元の会話の id で絞る。",
+        "status": "状態で絞る（queued・running・completed など）。",
+        "limit": "返す件数（既定 20、最大 100）。"
+      },
+      "status": {
+        "summary": "委譲の子のタスク 1 件の状態と結果を返す。結果は offset から 16000 字ずつ。",
+        "taskId": "タスクの id。",
+        "offset": "結果の読み始めの位置（前の返り値の nextOffset）。"
+      }
+    },
+    "control": {
+      "instructions": "Pleiad の機能と設定は ply_control から使えます。\nまず list_ops で操作を探し（id を渡すと入力の JSON Schema が分かります）、call_op で呼びます。会話の検索と読み出し（search_sessions・get_session・read_session）と設定の現在値（get_setting）は直に呼べます。\nPleiad の状態を変える操作は、この会話の承認モードに従います。code が NEEDS_UI・NEEDS_APPROVAL・READ_ONLY_MODE で返ったら、続けずにユーザーに Pleiad の画面での操作を頼んでください。",
+      "listOps": "Pleiad で使える操作の一覧。id を渡すと、その操作の説明・入力の JSON Schema・危険度を返す。呼ぶのは call_op。",
+      "listOpsId": "操作の id（例: sessions.list）。省くと全部の id と 1 行の説明。",
+      "callOp": "Pleiad の操作を呼ぶ。入力が合わないと、どの項目がなぜ違うかが code: INVALID で返る。",
+      "callOpOp": "操作の id（list_ops で探す）。",
+      "callOpArgs": "操作の入力。list_ops に id を渡して得た JSON Schema の形。"
+    },
+    "probe": {
+      "guarded": {
+        "summary": "検査用: 関所を緩める操作の代役（テストでだけ出る）。"
+      },
+      "humanOnly": {
+        "summary": "検査用: human-only の操作の代役（テストでだけ出る）。"
+      }
+    }
+  },
+  "settings": {
+    "locale": "画面の言語（auto は OS に合わせる）。",
+    "linkOpen": "リンクの開き先（inapp は内蔵ブラウザー、external は既定のブラウザー）。",
+    "instructionBudget": "自分で書いた指示の量の目安（トークン。右パネルの「指示の量」）。null で既定。",
+    "backend": "新しい会話の既定のエージェント。",
+    "model": "新しい会話の既定のモデル。",
+    "effort": "新しい会話の既定の思考の深さ。",
+    "mode": "承認モードの既定（人間だけが変える）。",
+    "claudeAccount": "既定の Claude のアカウント（id。トークンは持たない）。",
+    "compaction": {
+      "auto": "自動圧縮の設定（有効・閾値のトークン数・エージェントごとの放置の分数）。"
+    },
+    "confirmAgentSites": "エージェントのブラウザーが新しいサイトを開く前に確認するか。",
+    "confirmExternalLoads": "外部の読み込みの前に確認するか。",
+    "agentSitePermissions": "エージェントのブラウザーに「このサイトは常に許可」した一覧。",
+    "externalSitePermissions": "外部の読み込みに「このサイトは常に許可」した一覧。",
+    "browserProfiles": "内蔵ブラウザーのプロフィール（ログインを分けた保存領域）の一覧。",
+    "browserDefaultProfile": "内蔵ブラウザーの既定のプロフィールの id。",
+    "browserNewProfile": "新しい会話で使うプロフィールの決め方。",
+    "computerUse": "コンピューターの操作の設定（有効・全アプリの許可・常に許可のアプリ）。",
+    "delegationRouting": "委譲先の自動振り分けの設定（判定器・段・候補。キーは含まない）。",
+    "plyInstructions": "Pleiad が会話に足す指示の項目。",
+    "addedContext": "前の版の委譲の指示のスイッチ（plyInstructions に置き換わった）。",
+    "context": {
+      "default": "コンテキスト（指示・Skills・MCP）の既定の担当と探索の設定。"
     }
   }
 }

@@ -37,6 +37,7 @@ import { promptTitle } from "../prompt-title.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
 import { COMPUTER_CALL_TIMEOUT_SEC, COMPUTER_SERVER, computerPrompt, isComputerTool } from "./computer-delivery.mjs";
 import { BROWSER_SERVER } from "../browser-profiles.mjs";
+import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -367,6 +368,8 @@ async function decidePermission(ctx, askPermission, toolName, input, options) {
   if (isComputerTool(toolName)) return { behavior: "allow", updatedInput: input };
   // 内蔵ブラウザーのプロフィールの一覧と切り替えも聞かない。サイトの利用の確認はプロフィールごとに中継が行う（ADR 0078）
   if (typeof toolName === "string" && toolName.startsWith(`mcp__${BROWSER_SERVER}__`)) return { behavior: "allow", updatedInput: input };
+  // 操作の一覧（ply_control）も聞かない。権限と承認は registry.invoke が会話の承認モードで決める（ADR 0082）
+  if (typeof toolName === "string" && toolName.startsWith(`mcp__${CONTROL_SERVER}__`)) return { behavior: "allow", updatedInput: input };
 
   if (typeof askPermission !== "function") {
     return { behavior: "deny", message: agentT(ctx.locale, 'approval.noHandler', { tool: toolName }) };
@@ -632,7 +635,7 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [], notes = [] }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [], notes = [] }) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, locale };
     // このターンで呼んだ ply_computer の tool_use の id。tool_result に名前は載らないので、印の行を読むのはこの id の結果だけにする
@@ -692,7 +695,9 @@ export const backend = {
     const plyServers = { host: buildToolServer(ctx), ...(agentRuntime ? { ply_agents: { type: "http", url: agentRuntime.url, headers: agentRuntime.headers } } : {}), ...(contextRuntime ? { ply_context: { type: 'http', url: contextRuntime.url, headers: contextRuntime.headers } } : {}),
       ...(computerRuntime ? { [COMPUTER_SERVER]: { type: 'http', url: computerRuntime.url, headers: computerRuntime.headers, timeout: COMPUTER_CALL_TIMEOUT_SEC * 1000 } } : {}),
       // 内蔵ブラウザーのプロフィールの一覧と切り替え（core/browser-profiles.mjs。ADR 0078）
-      ...(browserRuntime ? { [BROWSER_SERVER]: { type: 'http', url: browserRuntime.url, headers: browserRuntime.headers } } : {}) };
+      ...(browserRuntime ? { [BROWSER_SERVER]: { type: 'http', url: browserRuntime.url, headers: browserRuntime.headers } } : {}),
+      // Pleiad の操作の一覧（core/ops/surfaces/control.mjs。ADR 0081）。全会話に渡す
+      ...(controlRuntime ? { [CONTROL_SERVER]: { type: 'http', url: controlRuntime.url, headers: controlRuntime.headers } } : {}) };
     const computerInstructions = computerPrompt(computerRuntime, { locale, agent: 'claude' });
     // 互換の接続先（core/compat-endpoints.mjs）。env を組み替え（親の ANTHROPIC_* と OAuth トークンを外して接続先の値を入れる）、
     // 同じ値をフラグ設定のファイルにも書く（ユーザーの settings.json の env が options.env に勝つため。オブジェクトで渡すと argv にキーが載る）。
@@ -714,7 +719,7 @@ export const backend = {
         // 待ちの上限は 0 = 無し。入力を開けている限り CLI は上限を見ないが、閉じた後の保険として外す。
         // 会話で選んだアカウントのトークンは、この会話の env にだけ入れる（process.env は触らない。core/claude-accounts.mjs）
         env: { ...(endpoint ? claudeCompatEnv(process.env, endpoint, { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" })
-          : claudeEnv(process.env, { token: oauthToken, extra: { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" } })), ...browserEnv },
+          : claudeEnv(process.env, { token: oauthToken, extra: { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" } })), ...browserEnv, ...controlRuntime?.env },
         // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークン・接続先のキーが紛れても伏せる
         stderr: createStderrLog({ secrets: [oauthToken, endpoint?.key].filter(Boolean) }),
         resume: sessionId ?? undefined,
@@ -731,7 +736,7 @@ export const backend = {
         ...contextOptions,
         extraArgs: claudeQueryExtraArgs(contextOptions),
         ...(flag ? { settings: flag.file } : {}),
-        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions].filter(Boolean).join('\n\n') } } : {}),
+        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions].filter(Boolean).join('\n\n') } } : {}),
         // adaptive = モデルが必要な分だけ考える。
         // 注意: このモデルの thinking ブロックは署名だけで平文が入らない（2026-08 時点、
         // display の有無を問わず `thinking` は空文字）。したがって思考の中身は表示できない。

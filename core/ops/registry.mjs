@@ -75,13 +75,15 @@ export function defineSetting(def) {
   if (!RISKS.includes(def.risk)) fail(key, `risk must be one of ${RISKS.join(' / ')}`);
   if (typeof def.schema?.parse !== 'function') fail(key, 'schema must be a zod schema');
   if (!('default' in def)) fail(key, 'default is required');
-  if (typeof def.read !== 'function' || typeof def.write !== 'function') fail(key, 'read and write are required');
+  // write は設定を書く段階（段階 2）で足す。無ければ読むだけの設定（readOnly）
+  if (typeof def.read !== 'function') fail(key, 'read is required');
+  if (def.write !== undefined && typeof def.write !== 'function') fail(key, 'write must be a function (ctx, value) => void');
   if (def.risk === 'write' && !(typeof def.riskReason === 'string' && def.riskReason.trim())) fail(key, 'a write setting needs riskReason');
   if (def.riskOf !== undefined && typeof def.riskOf !== 'function') fail(key, 'riskOf must be a function (before, after) => risk');
   // prefs.json に書くキー（既定は key 自身）。tests/lint-ops.mjs が「prefs に書くキーは設定の一覧にある」の照合に使う
   const prefKeys = def.prefKeys ?? [key];
   if (!Array.isArray(prefKeys) || !prefKeys.every((k) => typeof k === 'string' && k)) fail(key, 'prefKeys must be an array of strings');
-  return Object.freeze({ ...def, kind: 'setting', prefKeys });
+  return Object.freeze({ ...def, kind: 'setting', prefKeys, readOnly: def.write === undefined });
 }
 
 /** 口 → surfaces の欄。human は画面、agent は via で決まる（cli は CLI、mcp と mcp-stdio は MCP）。 */
@@ -89,6 +91,16 @@ export function surfaceOf(principal) {
   if (principal?.by === 'human') return 'ui';
   return principal?.via === 'cli' ? 'cli' : 'mcp';
 }
+
+/** MCP に直に出すツールの名前。決めてある操作は動詞が先（search_sessions）。無ければ id の . を _ にする（sessions.foo → sessions_foo） */
+export const DIRECT_TOOL_NAMES = {
+  'sessions.search': 'search_sessions',
+  'sessions.get': 'get_session',
+  'sessions.read': 'read_session',
+  'settings.get': 'get_setting',
+  'settings.set': 'set_setting',
+};
+const directToolName = (op) => DIRECT_TOOL_NAMES[op.id] ?? op.id.replace('.', '_');
 
 const onSurface = (op, surface) => (surface === 'ui' ? op.surfaces.ui : surface === 'cli' ? Boolean(op.surfaces.cli) : op.surfaces.mcp !== false);
 
@@ -175,7 +187,7 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
     const mode = sessionId ? await deps.modeOf?.(sessionId) : undefined;
     const subject = { by: principal.by, sessionId, mode };
     const actor = { by: principal.by, ...(principal.via ? { via: principal.via } : {}), ...(sessionId ? { sessionId } : {}) };
-    const ctx = { ...deps, actor, principal, op };
+    const ctx = { ...deps, actor, principal, op, registry: api };
 
     // 値に依って危険度が上がる操作は、定義の risk より下げない
     let risk = op.risk;
@@ -202,13 +214,32 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
     }
   }
 
-  return {
+  /**
+   * 主体から見える操作の説明（GET /api/ops と ply_control の tools/list の元。JSON にできる）。
+   * 説明と入力のスキーマの description は locale の言語。口が違っても同じ操作は同じ形で出る
+   */
+  function describe(principal, locale) {
+    return list(principal).map((op) => ({
+      id: op.id,
+      summary: agentT(locale, op.summary.slice('agent:'.length)),
+      risk: op.risk,
+      scope: op.scope,
+      input: inputJsonSchema(op, locale),
+      mcp: op.surfaces.mcp,
+      tool: op.surfaces.mcp === 'direct' ? directToolName(op) : null,
+      cli: op.surfaces.cli === true ? { path: op.id.split('.') } : op.surfaces.cli || null,
+    }));
+  }
+
+  const api = {
     ops: [...byId.values()],
     settings: [...settingsByKey.values()],
     get: (id) => byId.get(id),
     getSetting: (key) => settingsByKey.get(key),
     legacyCommands: () => new Set(byLegacy.keys()),
     list,
+    describe,
     invoke,
   };
+  return api;
 }

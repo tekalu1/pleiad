@@ -66,6 +66,12 @@ const cases = [
   await import('./unit/ops-registry.mjs'),
   await import('./unit/ops-coverage.mjs'),
   await import('./unit/ops-surface.mjs'),
+  // 操作の一覧の中身（会話・設定・委譲）・MCP の生成器と橋・ply_control の 3 つのエージェントへの渡し方・サーバー越しの HTTP と権限の配線・CLI と pleiad mcp
+  await import('./unit/ops-sessions.mjs'),
+  await import('./unit/ops-mcp.mjs'),
+  await import('./unit/control-delivery.mjs'),
+  await import('./unit/ops-control.mjs'),
+  await import('./unit/ops-cli.mjs'),
   await import('./unit/server-ops.mjs'),
   await import('./unit/sessions-search-op.mjs'),
   await import('./unit/agent-tasks.mjs'),

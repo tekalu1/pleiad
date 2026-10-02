@@ -452,7 +452,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   return {
     get busy() { return live.size > 0 || notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || Object.values(records).some(r => ACTIVE.has(r.status) || r.notification === 'pending'); },
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
-    get(taskId) { return records[taskId] ? view(records[taskId]) : null; },
+    get(taskId, offset = 0) { return records[taskId] ? view(records[taskId], offset) : null; },
     observe(sessionId, event) {
       const r = bySession.get(sessionId);
       if (!r || !event?.type) return;

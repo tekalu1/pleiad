@@ -328,10 +328,31 @@
     "child": "You are a delegated child conversation, so do not delegate further.",
     "codexPolicy": "Even in Codex modes without approvals (full, YOLO), Codex's own safety check may reject some commands before they run (for example `blocked by policy`). If a command is rejected, do not try to get around it by rewording it or using a different command. Report the commands that could not run, the reasons, and what was left behind as a result (files that could not be deleted, processes that could not be stopped, and so on)."
   },
+  "cli": {
+    "usage": "Usage: pleiad [--json] [--lang ja|en] <command> [arguments]",
+    "commands": "Commands (built from the running Pleiad's operations):",
+    "flags": "Options: --json print the result as JSON / --lang ja|en language / --help usage (after a command, that command's arguments).\nExit codes: 0 success / 2 invalid input / 3 Pleiad is not running / 4 refused, or must be done on the screen / 5 other",
+    "opsSummary": "List the available operations",
+    "callSummary": "Call an operation by id (pass input with --args '{…}' or --<name>)",
+    "mcpSummary": "Serve the same list as a stdio MCP server (for AIs outside Pleiad)",
+    "connected": "Connected to {{origin}} ({{bound}})",
+    "boundYes": "bound to this conversation",
+    "boundNo": "not bound to a conversation",
+    "notRunning": "Pleiad is not running.",
+    "howToStart": "Open the desktop app, or run npm start in the repository. For another data folder, set AGENT_HOST_DATA when you call pleiad.",
+    "listedWhenRunning": "the list appears while Pleiad is running",
+    "callUsage": "Usage: pleiad call <operation id> [--args '{…}']",
+    "unknownCommand": "There is no command \"{{command}}\". Run pleiad alone to list them.",
+    "badArgument": "Invalid argument: {{detail}}",
+    "required": "required"
+  },
   "ops": {
     "app": {
       "status": {
         "summary": "Return Pleiad's version, start time, display language, and the number of running tasks."
+      },
+      "running": {
+        "summary": "Return the work running now (conversation turns, delegated child tasks, and pending approvals)."
       }
     },
     "sessions": {
@@ -352,6 +373,42 @@
         "limit": "Number of conversations. Default 50, max 200.",
         "cursor": "Continuation. Pass nextCursor from the previous result as is.",
         "hitsPerSession": "Matching messages returned per conversation. Default 1, max 10."
+      },
+      "list": {
+        "summary": "List conversations, newest first, with filters and paging. To search their text, use search_sessions.",
+        "backend": "Filter by agent id (claude, codex, antigravity).",
+        "cwd": "Filter by working folder (that folder and everything under it).",
+        "status": "Filter by status. An empty string means conversations without a status.",
+        "parent": "Only children (branches and delegations) of this conversation id.",
+        "query": "Filter by a word in the title (case and width are ignored).",
+        "includeDelegated": "Whether to include delegated child conversations (default: included).",
+        "limit": "Number of rows to return (default 30, max 100).",
+        "cursor": "The next value from the previous result; returns the rest."
+      },
+      "get": {
+        "summary": "Return one conversation's metadata (title, status, folder, agent, parent and children, recent changes). Read the text with read_session.",
+        "sessionId": "The conversation id."
+      },
+      "read": {
+        "summary": "Read a conversation's text around a message id (messageId). Without messageId, the end. A hit's uuid from search_sessions can be passed as is.",
+        "sessionId": "The conversation id.",
+        "messageId": "The message id (uuid) to center on. Defaults to the last message.",
+        "before": "Number of messages before messageId (default 4, max 20).",
+        "after": "Number of messages after messageId (default 4, max 20).",
+        "maxChars": "Maximum characters per message (default 2000, max 8000). The whole result holds at most 40000 characters of text."
+      },
+      "setTitle": {
+        "summary": "Change a conversation's title. The change log records who changed it and why.",
+        "sessionId": "The conversation id. Defaults to this conversation.",
+        "title": "The new title.",
+        "reason": "Why it is changed (kept in the change log)."
+      },
+      "setStatus": {
+        "summary": "Change a conversation's status (group). A status is free text; pick an existing one. Moving a group's root moves the conversations inside it.",
+        "sessionId": "The conversation id. Defaults to this conversation.",
+        "status": "The new status.",
+        "reason": "Why it is changed (kept in the change log).",
+        "alone": "If true, move only this conversation and not the others in its group."
       }
     },
     "errors": {
@@ -362,7 +419,83 @@
       "NEEDS_UI": "{{id}} widens what the agent is allowed to do, so it cannot be run from here. Ask the user to do it on Pleiad's screen.",
       "NEEDS_APPROVAL": "{{id}} needs the user's approval in this conversation.",
       "INVALID_RISK": "The operation has an invalid risk level ({{id}}).",
-      "INVALID_PRINCIPAL": "The caller is not a valid principal ({{id}})."
+      "INVALID_PRINCIPAL": "The caller is not a valid principal ({{id}}).",
+      "SESSION_NOT_FOUND": "No conversation found with id {{id}}.",
+      "MESSAGE_NOT_FOUND": "Message {{id}} was not found in this conversation.",
+      "SETTING_NOT_FOUND": "No such setting: {{key}}. Find keys with settings.list.",
+      "TASK_NOT_FOUND": "No delegated task found with id {{id}}.",
+      "sessionRequired": "Pass sessionId (it can be omitted only when it means this conversation).",
+      "badCursor": "The cursor is not valid. Pass the previous result's next as is."
+    },
+    "settings": {
+      "list": {
+        "summary": "List settings (key, description, risk, and whether read-only).",
+        "prefix": "Filter by key prefix (for example compaction.)."
+      },
+      "get": {
+        "summary": "Return a setting's current value, default, and risk. Find keys with settings.list. The value's shape is in settings.schema.",
+        "key": "The setting key."
+      },
+      "schema": {
+        "summary": "Return a setting's JSON Schema and default. All settings if key is omitted.",
+        "key": "The setting key. All settings if omitted."
+      }
+    },
+    "delegation": {
+      "tasks": {
+        "summary": "List delegated child tasks, newest first (request and result text are not included).",
+        "parentSessionId": "Filter by the requesting conversation's id.",
+        "status": "Filter by status (queued, running, completed, and so on).",
+        "limit": "Number of rows to return (default 20, max 100)."
+      },
+      "status": {
+        "summary": "Return one delegated child task's status and result. The result comes 16000 characters at a time from offset.",
+        "taskId": "The task id.",
+        "offset": "Where to start reading the result (nextOffset from the previous result)."
+      }
+    },
+    "control": {
+      "instructions": "Pleiad's features and settings are available through ply_control.\nFind an operation with list_ops (pass an id to get its input JSON Schema) and call it with call_op. Conversation search and reading (search_sessions, get_session, read_session) and current setting values (get_setting) can be called directly.\nOperations that change Pleiad's state follow this conversation's approval mode. If the result's code is NEEDS_UI, NEEDS_APPROVAL, or READ_ONLY_MODE, do not go on; ask the user to do it on Pleiad's screen.",
+      "listOps": "List the operations available in Pleiad. Pass an id to get that operation's description, input JSON Schema, and risk. Call it with call_op.",
+      "listOpsId": "An operation id (for example sessions.list). Omit it to get every id with a one-line description.",
+      "callOp": "Call a Pleiad operation. If the input does not fit, the result has code: INVALID and says which field is wrong and why.",
+      "callOpOp": "The operation id (find it with list_ops).",
+      "callOpArgs": "The operation's input, in the shape of the JSON Schema you get by passing the id to list_ops."
+    },
+    "probe": {
+      "guarded": {
+        "summary": "Test only: a stand-in for an operation that loosens the gates (appears only in tests)."
+      },
+      "humanOnly": {
+        "summary": "Test only: a stand-in for a human-only operation (appears only in tests)."
+      }
+    }
+  },
+  "settings": {
+    "locale": "Display language (auto follows the OS).",
+    "linkOpen": "Where links open (inapp is the built-in browser, external is the default browser).",
+    "instructionBudget": "The guideline for the amount of instructions you wrote (tokens; the right panel's \"Instruction amount\"). null means the default.",
+    "backend": "The default agent for new conversations.",
+    "model": "The default model for new conversations.",
+    "effort": "The default thinking depth for new conversations.",
+    "mode": "The default approval mode (only a human changes it).",
+    "claudeAccount": "The default Claude account (an id; no token).",
+    "compaction": {
+      "auto": "Auto compaction (enabled, the token threshold, and the idle minutes per agent)."
+    },
+    "confirmAgentSites": "Whether to confirm before the agent's browser opens a new site.",
+    "confirmExternalLoads": "Whether to confirm before external loads.",
+    "agentSitePermissions": "Sites always allowed for the agent's browser.",
+    "externalSitePermissions": "Sites always allowed for external loads.",
+    "browserProfiles": "The built-in browser's profiles (storage areas that keep logins apart).",
+    "browserDefaultProfile": "The id of the built-in browser's default profile.",
+    "browserNewProfile": "How a new conversation picks its profile.",
+    "computerUse": "Computer use settings (enabled, allow all apps, always-allowed apps).",
+    "delegationRouting": "Automatic delegation routing (judges, tiers, candidates; no keys).",
+    "plyInstructions": "The instruction items Pleiad adds to conversations.",
+    "addedContext": "The previous version's delegation-instruction switch (replaced by plyInstructions).",
+    "context": {
+      "default": "The default owner and scan settings for context (instructions, skills, MCP)."
     }
   }
 }
