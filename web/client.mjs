@@ -3044,7 +3044,8 @@ function paintSettingsNotice() {
     if (next.mode !== undefined) changes.push(t("chat.next.mode", { value: state.modes[next.mode]?.label ?? next.mode }));
     if (next.endpoint !== undefined) changes.push(t("chat.next.endpoint", { value: endpointLabel(next.endpoint) }));
     if (next.account !== undefined) changes.push(t("chat.next.account", { value: accountLabel(next.account) }));
-    $("nextSettingsText").textContent = t(behind ? "chat.next.summaryBehind" : "chat.next.summary", { changes: changes.join(" · ") });
+    const joined = changes.join(" · ");
+    $("nextSettingsText").textContent = behind ? t("chat.next.summaryBehind", { changes: joined }) : t("chat.next.summary", { changes: joined });
   }
   paintHandoffNote(s, next);
 }
