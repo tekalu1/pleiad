@@ -27,6 +27,7 @@ const cases = [
   await import('./e2e/visualize-claude.mjs'),
   await import('./e2e/visualize-codex.mjs'),
   await import("./e2e/fork.mjs"),
+  await import("./e2e/rewind.mjs"),   // 同じ会話で巻き戻した先のモデルは、捨てた発言を覚えていない（Claude・Codex）
   await import("./e2e/ux.mjs"),
   await import("./e2e/title.mjs"),
   await import("./e2e/acceptance.mjs"),

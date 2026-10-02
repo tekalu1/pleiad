@@ -954,7 +954,8 @@ function openResend(m, { draft, tail, edit }) {
     if (state.current !== source || !m.isConnected) { close(); announce(t('chat.resend.doneBranch')); }
   };
   const cancel = () => { if (!sending) close({ focus: true }); };
-  const keys = (event) => resendKeys(event, { send, branch, cancel });
+  // onkeydown が false を返すと既定の動作（ボタンの Enter・Space）まで止まるので、返り値は捨てる
+  const keys = (event) => { resendKeys(event, { send, branch, cancel }); };
 
   if (edit) {
     editor = el('div', 'message-editor');

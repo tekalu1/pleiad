@@ -1,10 +1,16 @@
 // playwright-cli -s=message-actions run-code --filename=tests/browser/message-actions.cjs
 // 認証済みの、実データと分離した fake サーバーを開いてから実行する。
+// 発言の操作（コピー・⋯・編集して再送信・再送信・分岐して送る）。送り直しは同じ会話の中で行う（ADR 0089）。
 async page => {
   // run-code は Node のモジュールも process も使えない。このリポジトリの絶対パスを書いてから実行する。
   const ROOT = 'C:/path/to/ply';
   if (ROOT.startsWith('C:/path/to/')) throw Error('ROOT をこのリポジトリの絶対パスに書き換えてください');
+  // 画面を撮るときだけ、撮影の置き場（絶対パス）を書く。書かなければ撮らない
+  const SHOTS = 'C:/path/to/shots';
+  const shot = async name => { if (!SHOTS.startsWith('C:/path/to/')) await page.screenshot({ path: `${SHOTS}/resend-in-place-impl-${name}.png` }); };
   const results = [];
+  // 落ちたときに直前に通った項目を添える（run-code はスタックを出さない）
+  const fail = e => { throw Error(`${String(e.message).split(String.fromCharCode(10))[0]} （直前に通った項目: ${results.at(-1) ?? '無し'}）`); };
   const check = (ok, label) => { if (!ok) throw Error(label); results.push(label); };
   // 発言の操作は ⋯ のメニュー（右クリックと同じ）。項目は名前で引く（「再送信」が「編集して再送信」に当たらないよう exact）
   const menu = async (m, name) => { await m.hover(); await m.locator('.who-more').click(); await page.getByRole('menuitem', { name, exact: true }).click(); };
@@ -49,6 +55,11 @@ async page => {
     await history(id, d => d.messages.length >= before + 2 && d.messages.at(-1)?.role === 'assistant');
     await ready();
   };
+  const userTexts = () => page.$$eval('.m.user:not(.cmd) > .body', els => els.map(e => e.dataset.raw ?? e.textContent));
+  const humanPresents = d => d.presents.filter(p => p.by === 'human');
+  const band = page.locator('.resend-band');
+  const editor = page.getByRole('textbox', { name: 'メッセージを編集' });
+  try {
   const old = await current();
   await page.getByRole('button', { name: '新しいセッション（絞り込みの条件を引き継ぐ）' }).click();
   await page.waitForFunction(old => localStorage.getItem('agent-host-current') !== old, old);
@@ -62,74 +73,167 @@ async page => {
   check((await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, '\n') === await code.locator('code').textContent(), '本文のコードを元の文字列でコピー');
   check(await code.locator('.code-copy').getAttribute('aria-label') === 'コピーしました', 'コピー成功を表示');
   await page.screenshot({ path: `${ROOT}/temporary/message-actions-attachment.png`, clip: { x: 0, y: 0, width: 16, height: 16 } });
+  // 添付は入力欄の文中（キャレットの位置）に札として入る。上の「添付 N 件」は入口だけ。本文を先に書いてから添える（fill は札も置き換えるので）
+  await page.locator('#prompt').fill('echo:編集前の本文');
   await page.locator('#fileIn').setInputFiles([`${ROOT}/README.md`, `${ROOT}/temporary/message-actions-attachment.png`]);
-  // 添付は入力欄の文中（キャレットの位置）に札として入る。上の「添付 N 件」は入口だけ
   await page.locator('#prompt').getByText('README.md').waitFor();
   await page.locator('#prompt').getByRole('img', { name: 'message-actions-attachment.png' }).waitFor();
-  await send('echo:編集前の本文');
+  {
+    const before = (await cmd('loadSession', { sessionId: source })).messages.length;
+    await page.locator('#send').click();
+    await page.waitForFunction(() => document.querySelector('#prompt').value === '');
+    await history(source, d => d.messages.length >= before + 2 && d.messages.at(-1)?.role === 'assistant');
+    await ready();
+  }
   await send('echo:後続の発言');
   const original = await cmd('loadSession', { sessionId: source });
+  const sessionCount = (await cmd('listSessions')).length;
   await page.locator('#prompt').fill('元の会話に残す下書き');
+
+  // ---- 編集して再送信（後ろに自分の発言がある）: 帯が出て、編集欄は自前の送信ボタンを持たない
   const user = page.locator('.m.user').nth(1);
   await menu(user, '編集して再送信');
-  const editor = page.getByRole('textbox', { name: 'メッセージを編集' });
   await editor.waitFor();
   // 印（[添付] パス）は本文の位置のまま編集欄へ戻す（文中の位置を保つ）
   const editValue = await editor.inputValue();
   check(editValue.startsWith('echo:編集前の本文') && (editValue.match(/\[添付\]/g) ?? []).length === 2, '編集欄に本文と添付の印を位置ごと戻す');
   check((await user.innerText()).includes('README.md'), '編集時に添付名を表示');
+  await band.waitFor();
+  check(await band.getAttribute('role') === 'group' && await band.getAttribute('aria-label') === '送り方', '帯は「送り方」の group');
+  check((await band.innerText()).includes('この後の 1 件の発言は、送り直すと消え、分岐して送ると残ります。'), '帯に後ろの発言の件数と、送り直す・分岐して送るの違いを書く');
+  check(await page.locator('.message-edit-controls').count() === 0, '帯があるとき編集欄は自前の送信ボタンを持たない（送り先を 1 か所に）');
+  const buttons = await band.locator('button').allInnerTexts();
+  check(buttons.map(s => s.trim()).join('|') === '取り消し|分岐して送る|送り直す', '帯のボタンは［取り消し］［分岐して送る］［送り直す］の順（主が右端）');
+  check(await band.getByRole('button', { name: '送り直す、この後の 1 件の発言を消します' }).count() === 1, '主のボタンの読み上げ名に消える件数');
+  check(await editor.getAttribute('aria-describedby') === await band.locator('.rb-t').getAttribute('id'), '編集欄は帯の文を読み上げに結ぶ');
+  const doomedCount = await page.locator('#thread .mw.doomed').count();
+  check(doomedCount >= 3, '送り直すと消える範囲（後ろの行）を薄くする');
+  await page.waitForTimeout(300);   // 薄くする遷移（120ms）が終わってから見る
+  check(await page.evaluate(() => getComputedStyle(document.querySelector('#thread .mw.doomed')).opacity) === '0.42', '薄くする不透明度は .42');
+  check((await cmd('loadSession', { sessionId: source })).messages.length === original.messages.length, '押した時点では何も消えない');
+  await shot('edit-1280');
   await editor.fill('取り消す変更'); await editor.press('Escape');
+  check(await band.count() === 0 && await editor.count() === 0 && await page.locator('#thread .mw.doomed').count() === 0, 'Esc で編集欄と帯を閉じ、薄くした行も戻す');
+  check(await page.evaluate(() => document.activeElement?.classList.contains('who-more')), 'Esc のあとフォーカスは ⋯ へ戻る');
   check(await page.locator('#prompt').evaluate(e => e.value) === '元の会話に残す下書き', '取り消しで元の入力欄の下書きを保持');
-  await menu(user, '編集して再送信'); await editor.fill('echo:変更後の本文');
-  await page.screenshot({ path: `${ROOT}/temporary/message-actions-edit.png` });
+  await menu(user, '編集して再送信'); await band.waitFor();
+  await band.getByRole('button', { name: '取り消し' }).click();
+  check(await band.count() === 0 && await editor.count() === 0, '［取り消し］でも閉じる');
+
+  // ---- 送り直す（同じ会話）: 画面を切り替えず、後ろが消えて新しい返答が続く。会話は増えない
+  await menu(user, '編集して再送信'); await editor.fill(editValue.replace('echo:編集前の本文', 'echo:変更後の本文'));
   await editor.press('Control+Enter');
+  await page.waitForFunction(() => [...document.querySelectorAll('.m.user > .body')].some(b => b.textContent.includes('変更後の本文')) && !document.querySelector('.resend-band'));
+  await ready();
+  const after = await history(source, d => d.messages.length === 4 && d.messages.at(-1)?.role === 'assistant');
+  check(await current() === source, '送り直しでは会話を切り替えない');
+  check(after.messages[2].text.startsWith('echo:変更後の本文') && !after.messages.some(m => m.text?.includes('後続の発言')), '編集した本文を同じ会話で送り、後続の発言は消える');
+  check(after.messages[0].uuid === original.messages[0].uuid && after.messages[1].uuid === original.messages[1].uuid, '切り口より前の発言はそのまま');
+  check(humanPresents(after).length === 2 && after.presents.some(p => p.by === 'human' && p.kind === 'image'), '送り直しで画像とファイルを一度だけ引き継ぐ');
+  check((await cmd('listSessions')).length === sessionCount, '送り直しで会話（子）は増えない');
+  check((await userTexts()).length === 2 && (await userTexts()).at(-1).startsWith('echo:変更後の本文'), '画面でも消えた発言が片付き、新しい本文の吹き出しが置かれる');
+  check(await page.locator('#thread .mw.doomed, #thread .mw.leaving').count() === 0, '薄くした行・畳んだ行は残らない');
+  check(await page.locator('.branch-row').count() === 0, '送り直しでは枝の地図を作らない');
+  check(await page.locator('.sr-live', { hasText: '1 件の発言を消して送り直しました' }).count() === 1, '送ったら読み上げで知らせる');
+  check(await page.locator('#prompt').evaluate(e => e.value) === '元の会話に残す下書き', '送り直しでも入力欄の下書きに触らない');
+  // 後ろの返答だけでも帯を出す（返答も消える）。再送信は同じ帯・同じ位置で、フォーカスは主のボタン
+  const userAfter = page.locator('.m.user').nth(1);
+  await menu(userAfter, '再送信');
+  await band.waitFor();
+  check((await band.innerText()).includes('この後の返答は、送り直すと消え、分岐して送ると残ります。'), '後ろが返答だけのときは「この後の返答は…」');
+  check(await page.evaluate(() => document.activeElement?.classList.contains('rb-send')), '再送信で帯が出たらフォーカスは［送り直す］');
+  check(await page.locator('.message-editor').count() === 0, '再送信は編集欄を出さない（帯だけ）');
+  await shot('resend-1280');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => !document.querySelector('.resend-band'));
+  await ready();
+  const resent = await history(source, d => d.messages.length === 4 && d.messages.at(-1)?.role === 'assistant' && d.messages[2].uuid !== after.messages[2].uuid);
+  check(await current() === source && resent.messages[2].text === after.messages[2].text, '再送信は同じ本文を同じ会話で送り直す');
+  check(humanPresents(resent).length === 2 && resent.presents.some(p => p.by === 'human' && p.kind === 'image'), '再送信でも画像形式と添付を保持');
+  check((await cmd('listSessions')).length === sessionCount, '再送信でも会話は増えない');
+
+  // ---- 後ろに何も無いとき: 帯を出さず、編集欄が［取り消し］［送り直す］を持つ。再送信はすぐ送る
+  await page.locator('#prompt').fill('slow'); await page.locator('#send').click();
+  await page.waitForFunction(() => document.querySelector('#abort') && !document.querySelector('#abort').hidden);
+  await page.locator('#abort').click();
+  await ready();
+  await history(source, d => d.messages.length === 5 && d.messages.at(-1)?.role === 'user');
+  const last = page.locator('.m.user').last();
+  await menu(last, '編集して再送信'); await editor.waitFor();
+  check(await band.count() === 0, '後ろに何も無いときは帯を出さない');
+  const own = await page.locator('.message-edit-controls button').allInnerTexts();
+  check(own.map(s => s.trim()).join('|') === '取り消し|送り直す', '編集欄が［取り消し］［送り直す］を持つ');
+  check(await page.locator('#thread .mw.doomed').count() === 0, '消えるものが無ければ薄くしない');
+  await editor.fill('echo:止めた発言を直した'); await editor.press('Control+Enter');
+  await page.waitForFunction(() => [...document.querySelectorAll('.m.user > .body')].some(b => b.textContent.includes('止めた発言を直した')) && !document.querySelector('.message-editor'));
+  await ready();
+  const fixed = await history(source, d => d.messages.length === 6 && d.messages.at(-1)?.role === 'assistant');
+  check(await current() === source && fixed.messages[4].text === 'echo:止めた発言を直した', '後ろが無い発言は帯なしで同じ会話のまま送り直す');
+
+  // ---- 実行中: 帯に「止まります」を出し、主は［止めて送り直す］。止めてから巻き戻して送る
+  await page.locator('#prompt').fill('slow'); await page.locator('#send').click();
+  await page.waitForFunction(() => document.querySelector('#abort') && !document.querySelector('#abort').hidden);
+  await menu(page.locator('.m.user').nth(1), '再送信');
+  await band.waitFor();
+  check((await band.innerText()).includes('実行中の返答は、送り直すと止まります。分岐して送ると、元の会話で続きます。'), '実行中は帯に止まることを書く');
+  check(await band.getByRole('button', { name: '止めて送り直す', exact: false }).count() === 1, '主のボタンは［止めて送り直す］');
+  await shot('running-1280');
+  await band.locator('.rb-send').click();
+  await page.waitForFunction(() => !document.querySelector('.resend-band'));
+  await ready();
+  const stopped = await history(source, d => d.messages.length === 4 && d.messages.at(-1)?.role === 'assistant');
+  check(await current() === source && !stopped.interrupted && stopped.messages[2].text === after.messages[2].text, '止めて同じ会話で送り直し、中断の印は残さない');
+  check(!(await page.locator('#thread').innerText()).includes('中断しました'), '画面にも「中断しました」の行は残らない');
+
+  // ---- 分岐して送る: 今の分岐の経路。子の会話ができて切り替わり、元の会話は残る
+  const beforeBranch = await cmd('loadSession', { sessionId: source });
+  await menu(page.locator('.m.user').nth(1), '編集して再送信'); await editor.fill('echo:分岐で試す本文');
+  await band.getByRole('button', { name: '分岐して送る' }).click();
   await page.waitForFunction(source => localStorage.getItem('agent-host-current') !== source, source);
   await ready();
-  let edited = await current();
-  const after = await history(edited, d => d.messages.filter(m => m.role === 'user').at(-1)?.text.startsWith('echo:変更後の本文') && d.messages.at(-1)?.role === 'assistant');
+  const child = await current();
+  const branched = await history(child, d => d.messages.length === 4 && d.messages.at(-1)?.role === 'assistant');
+  check(branched.messages[2].text.startsWith('echo:分岐で試す本文') && branched.messages[0].uuid === beforeBranch.messages[0].uuid, '分岐して送ると子の会話で新しい本文を送る');
+  check(JSON.stringify((await cmd('loadSession', { sessionId: source })).messages) === JSON.stringify(beforeBranch.messages), '分岐して送ると元の会話は残る');
+  check((await cmd('listSessions')).length === sessionCount + 1, '分岐して送るときだけ子の会話が増える');
+  // Ctrl/⌘+Shift+Enter でも分岐して送る
+  await menu(page.locator('.m.user').nth(1), '編集して再送信'); await editor.fill('echo:近道で分岐');
+  await editor.press('Control+Shift+Enter');
+  await page.waitForFunction(child => localStorage.getItem('agent-host-current') !== child, child);
   await ready();
-  check(after.messages.filter(m => m.role === 'user').at(-1).text.startsWith('echo:変更後の本文'), '編集した本文を分岐先で送信');
-  check(!after.messages.some(m => m.text?.includes('後続の発言')), '後続の発言を分岐先に含めない');
-  check(after.presents.filter(p => p.by === 'human').length === 2 && after.presents.some(p => p.by === 'human' && p.kind === 'image'), '編集送信で画像とファイルを一度だけ引き継ぐ');
-  const unchanged = await cmd('loadSession', { sessionId: source });
-  check(JSON.stringify(unchanged.messages) === JSON.stringify(original.messages) && unchanged.draft.text === '元の会話に残す下書き', '元の履歴と下書きを保持');
-  await menu(page.locator('.m.user').nth(1), '再送信');
-  await page.waitForFunction(id => localStorage.getItem('agent-host-current') !== id, edited);
-  edited = await current();
-  const attachedResend = await history(edited, d => d.messages.filter(m => m.role === 'user').length === 2 && d.messages.at(-1)?.role === 'assistant');
-  check(attachedResend.presents.filter(p => p.by === 'human').length === 2 && attachedResend.presents.some(p => p.by === 'human' && p.kind === 'image'), '再送信でも画像形式と添付を保持');
-  // 最初の発言も、同じ本文の再送も根の分岐位置を保つ。
-  await menu(page.locator('.m.user').first(), '編集して再送信');
-  await editor.fill('echo:新しい最初の発言'); await editor.press('Control+Enter');
-  await page.waitForFunction(edited => localStorage.getItem('agent-host-current') !== edited, edited); await ready();
-  const root = await current();
-  await history(root, d => d.messages.length === 2);
-  check((await cmd('loadSession', { sessionId: root })).messages[0].text === 'echo:新しい最初の発言', '最初の発言から編集できる');
-  check(await page.locator('.branch-row[data-key="m:-1"]').count() === 1, '根に枝の切り替えを表示');
-  await menu(page.locator('.m.user').first(), '再送信');
-  await page.waitForFunction(root => localStorage.getItem('agent-host-current') !== root, root); await ready();
-  const resent = await current();
-  await history(resent, d => d.messages.length === 2);
-  check((await cmd('loadSession', { sessionId: resent })).messages[0].text === 'echo:新しい最初の発言', '再送信は同じ本文を送る');
-  check(await page.locator('.branch-row[data-key="m:-1"]').count() === 1, '同じ本文を再送しても根の分岐を維持');
-  await page.setViewportSize({ width: 390, height: 844 });
-  await menu(page.locator('.m.user').first(), '編集して再送信');
+  const grand = await current();
+  check((await history(grand, d => d.messages.length === 4 && d.messages.at(-1)?.role === 'assistant')).messages[2].text.startsWith('echo:近道で分岐'), 'Ctrl+Shift+Enter で分岐して送る');
+
+  // ---- 送れなかったら元の画面に戻して理由を出す
+  await menu(page.locator('.m.user').nth(1), '編集して再送信'); await band.waitFor();
   await editor.fill('送信に失敗しても残る文');
-  await page.screenshot({ path: `${ROOT}/temporary/message-actions-mobile.png` });
-  check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '狭い画面で横にはみ出さない');
   await page.evaluate(() => {
     const send = WebSocket.prototype.send;
     WebSocket.prototype.send = function(raw) {
       const msg = JSON.parse(raw);
-      if (msg.command === 'sendMessage') { msg.args.sessionId = 'missing-session-for-test'; raw = JSON.stringify(msg); }
+      if (msg.command === 'sendMessage' && msg.args.rewind) { msg.args.sessionId = 'missing-session-for-test'; raw = JSON.stringify(msg); }
       return send.call(this, raw);
     };
     window.restoreMessageActionsSend = () => { WebSocket.prototype.send = send; };
   });
   await editor.press('Control+Enter');
-  await page.waitForFunction(() => document.querySelector('#settingsError').textContent.includes('送信を確認できませんでした'));
-  check(await page.locator('#prompt').evaluate(e => e.value) === '送信に失敗しても残る文', '送信失敗でも分岐先の入力を保持');
-  await page.evaluate(() => { window.restoreMessageActionsSend(); window.messageActionsProbeSocket.close(); });
+  await page.waitForFunction(() => document.querySelector('#settingsError').textContent.includes('送り直せませんでした'));
+  check(await page.locator('#thread .mw.leaving').count() === 0, '送れなかったら畳んだ行を元に戻す');
+  check(await band.count() === 1 && await editor.inputValue() === '送信に失敗しても残る文', '送れなかったら編集欄と帯を開いたまま、書いた本文を残す');
+  check(await band.locator('button:disabled').count() === 0, '送れなかったあとはボタンを押し直せる');
+  await page.evaluate(() => window.restoreMessageActionsSend());
+
+  // ---- 狭い画面: 帯のボタンは折り返し、主が下段の全幅。横にはみ出さない
+  await page.setViewportSize({ width: 360, height: 780 });
+  await page.waitForTimeout(200);
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '狭い画面で横にはみ出さない');
+  const box = async sel => page.locator(sel).first().boundingBox();
+  const send2 = await box('.rb-send'), branch2 = await box('.rb-branch'), group = await box('.resend-band');
+  check(send2.y > branch2.y + branch2.height - 1 && send2.width >= group.width - 2, '360px では主のボタンが下段の全幅');
+  await shot('edit-360');
+  await editor.press('Escape');
   await page.setViewportSize({ width: 1280, height: 720 });
-  return results;
+  await page.evaluate(() => window.messageActionsProbeSocket.close());
+    return results;
+  } catch (e) { fail(e); }
 }
