@@ -93,6 +93,11 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 （`{ kind: "turn", …, phase, background }`）に載せ、変わった時点で `running` を配り直す（4 秒ごとの定期便を待たない）。
 web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧を衛星（design-system.md §6）に替える。
 `waiting` の間もターンは終わっていない。同じ会話への送信は途中送信（`control.steer`）で届く。
+ただし次のターンの設定の予約（`nextSettings`。実行中に作業ディレクトリ・モデルなどのチップを変えると立つ）があると、送信待ちは途中送信せず
+ターンの終わりを待つ（`core/message-queue.mjs` の `kick`）。終わらない裏のコマンド（headed のブラウザー・`npm run dev`）が残っていると、
+裏を作業ダイアログで止めるまで送られない（2026-10-02 に実例。表示は「送信待ち — 作業が終わると自動で送信」のまま。未対応）。
+届かない送信を切り分けるときは、`~/.agent-host/sessions.json` の会話の `outbox`（受理の `at`）と、Claude の transcript の
+`queue-operation` の `enqueue`（CLI が受け取った時刻）を突き合わせる。enqueue が無ければ Pleiad の送信待ちで止まっている。
 **ターンが終わった後も裏が残る**バックエンド（Codex）は、これではなく §2.7 の会話単位の background を使う。
 
 **`kind` の語彙（2026-09）**: web が衛星に数えるかどうかがここで決まる（`behindOfTasks`）。
