@@ -69,27 +69,38 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
       attached.delete(sid);
       send({ method: 'Target.detachedFromTarget', params: { sessionId: sid, targetId: record.targetId } });
     }
+    function forget(tabId) {
+      for (const [sid, record] of attached) if (record.tab.id === tabId) detach(sid);
+      const targetId = known.get(tabId);
+      known.delete(tabId);
+      if (discovering && targetId) send({ method: 'Target.targetDestroyed', params: { targetId } });
+    }
+    async function announce(tabId) {
+      if (ws.readyState !== 1 || known.has(tabId) || !tabs(entry).some(row => row.id === tabId)) return;
+      const row = await target(tabs(entry).find(row => row.id === tabId)).catch(() => null);
+      if (!row || known.has(tabId)) return;
+      known.set(tabId, row.id);
+      if (discovering) send({ method: 'Target.targetCreated', params: { targetInfo: publicInfo(row) } });
+      if (autoAttach) await attach(row);
+    }
     const unsubscribe = panel.onTabsChanged?.((change, tab) => {
       if (tab.sessionId !== entry.id) return;
-      if (change === 'destroyed') {
-        for (const [sid, record] of attached) if (record.tab.id === tab.id) detach(sid);
-        const targetId = known.get(tab.id);
-        known.delete(tab.id);
-        if (discovering && targetId) send({ method: 'Target.targetDestroyed', params: { targetId } });
-      } else if (change === 'created') {
-        queueMicrotask(async () => {
-          if (ws.readyState !== 1 || !tabs(entry).some(row => row.id === tab.id)) return;
-          const row = await target(tabs(entry).find(row => row.id === tab.id)).catch(() => null);
-          if (!row) return;
-          known.set(tab.id, row.id);
-          if (discovering) send({ method: 'Target.targetCreated', params: { targetInfo: publicInfo(row) } });
-          if (autoAttach) await attach(row);
-        });
-      }
+      if (change === 'destroyed') forget(tab.id);
+      else if (change === 'created') queueMicrotask(() => { void announce(tab.id); });
+    });
+    // 会話の今のプロフィールが替わった（人のメニュー・エージェントの use_browser_profile。ADR 0077）。
+    // 接続は保ったまま、前のプロフィールのタブはエージェントから外して（操作中のタブの接続も切る）、新しいプロフィールのタブ集合を見せる
+    const unsubscribeProfile = panel.onProfileChanged?.(sessionId => {
+      if (sessionId !== entry.id || ws.readyState !== 1) return;
+      const now = new Set(tabs(entry).map(row => row.id));
+      for (const tabId of new Set([...known.keys(), ...[...attached.values()].map(record => record.tab.id)])) if (!now.has(tabId)) forget(tabId);
+      ensureTab(entry);
+      for (const tabId of now) queueMicrotask(() => { void announce(tabId); });
     });
     const cleanup = () => {
       entry.sockets.delete(ws);
       unsubscribe?.();
+      unsubscribeProfile?.();
       for (const sid of [...attached.keys()]) detach(sid);
     };
     ws.on('close', cleanup);
@@ -167,8 +178,10 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
       } catch (error) { send({ id, error: { code: -32000, message: error.message }, ...(sid ? { sessionId: sid } : {}) }); }
     });
   }
-  async function endpoint(sessionId) {
+  // profile: サーバーが決めた会話の今のプロフィール（ターンの開始で渡る）。中継がタブを作る・絞る前に覚えさせる
+  async function endpoint(sessionId, { profile } = {}) {
     if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('invalid session');
+    if (profile) panel.setProfileFor?.(sessionId, profile);
     if (!address) address = await new Promise((resolve, reject) => server.listen(0, '127.0.0.1', () => resolve(server.address())).once('error', reject));
     let entry = entries.get(sessionId);
     if (!entry) { entry = { id: sessionId, key: random(), sockets: new Set(), stopped: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }

@@ -29,6 +29,7 @@ import { codexCompatThread, redactSecret } from '../compat-endpoints.mjs';
 import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { codexComputerConfig, codexComputerName, computerFailed, computerPrompt, computerResult, computerToolInput, mcpText } from "./computer-delivery.mjs";
 import { readTurnRejections, rolloutPathOf, rolloutSize } from "./codex-rejections.mjs";
+import { BROWSER_SERVER } from "../browser-profiles.mjs";
 import * as store from '../store.mjs';
 import { t, agentT } from "../i18n.mjs";
 import { stripInjectedContext } from "../system-messages.mjs";
@@ -1333,7 +1334,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, contextRuntime, agentRuntime, computerRuntime = null, hooksRuntime = null, endpoint = null, locale, notes = [] }) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, hooksRuntime = null, endpoint = null, locale, notes = [] }) {
     const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
     // Hooks を Pleiad がそろえる会話。止める key はこのターンの直前に作り直す（起動の後に足された定義も、次のターンからは止まる）。
     // 作れなければターンを始めない（ネイティブと Pleiad の登録が二重に動くか、どちらも動かないため）
@@ -1605,6 +1606,8 @@ export const backend = {
           // Clear the retired built-in connection on already-loaded threads too.
           'mcp_servers.ply': { command: process.execPath, enabled: false, required: false },
           ...(agentRuntime ? { 'mcp_servers.ply_agents': { url: agentRuntime.url, http_headers: agentRuntime.headers, enabled: true, required: true, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: 60 } } : {}),
+          // 内蔵ブラウザーのプロフィールの一覧と切り替え（core/browser-profiles.mjs。ADR 0077）
+          ...(browserRuntime ? { [`mcp_servers.${BROWSER_SERVER}`]: { url: browserRuntime.url, http_headers: browserRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: 60 } } : {}),
             // The context bridge applies the selected mode to external tool calls.
             ...(contextRuntime ? { 'mcp_servers.ply_context': { url: contextRuntime.url, http_headers: contextRuntime.headers, enabled: true, required: true, default_tools_approval_mode: 'approve', startup_timeout_sec: 20 } } : {}),
           // コンピューターの操作（ply_computer）と、同梱の computer use を切る上書き。渡さない会話には何も足さない（利用者の ~/.codex に任せる）
@@ -1628,7 +1631,8 @@ export const backend = {
       let effectiveSandbox;
       const providerKey = compat ? compat.modelProvider : 'default';
       // 指示と ply_computer の接続先。どちらかが変わったロード済みのスレッドは外して読み直す（resume は config の変更を黙って無視する）
-      const instructionsKey = (common.developerInstructions ?? '') + (computerRuntime ? `\0${computerRuntime.url} ${computerRuntime.headers?.Authorization ?? ''}` : '');
+      const instructionsKey = (common.developerInstructions ?? '') + (computerRuntime ? `\0${computerRuntime.url} ${computerRuntime.headers?.Authorization ?? ''}` : '')
+        + (browserRuntime ? `\0${browserRuntime.url} ${browserRuntime.headers?.Authorization ?? ''}` : '');
       if (threadId) {
         // 接続先が変わった（互換 ↔ 公式、別の互換、キーや URL の変更）ロード済みのスレッドは、いったん外してから読み直す。
         // 外さずに resume すると前の接続先のまま走る（スパイクで確認）

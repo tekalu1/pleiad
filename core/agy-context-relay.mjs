@@ -11,19 +11,22 @@
 // `--computer` を付けて起こした 2 本目は ply_computer（/mcp/computer）を中継し、PLY_COMPUTER_URL / PLY_COMPUTER_AUTHORIZATION を読む
 // （docs/computer-use.md「エージェントへの渡し方」）。agy はツールの定義をサーバー名の階層なしで書くので、ツール名に
 // ply_computer_ を付けて見せ、呼び出しでは外して Pleiad へ渡す（core/backends/computer-delivery.mjs の AGY_TOOL_PREFIX）。
+// `--browser` を付けて起こした 3 本目は ply_browser（/mcp/browser。内蔵ブラウザーのプロフィールの一覧と切り替え、ADR 0077）を中継し、
+// PLY_BROWSER_URL / PLY_BROWSER_AUTHORIZATION を読む。ツール名（list_browser_profiles・use_browser_profile）は衝突しにくいので付け外ししない。
 // 受け取った JSON-RPC をそのまま Pleiad へ POST し、返事を stdout へ書く。env が無ければ（利用者が手で
 // このエージェントを選んだなど）ツールを持たない MCP として振る舞う。
 import readline from 'node:readline';
 import { agentT } from './i18n.mjs';
 
 const computer = process.argv.includes('--computer');
+const browser = !computer && process.argv.includes('--browser');
 // computer-delivery.mjs の AGY_TOOL_PREFIX と同じ（中継は i18n 以外を読み込まずに軽く起こす）
 const TOOL_PREFIX = 'ply_computer_';
-const url = computer ? process.env.PLY_COMPUTER_URL : process.env.PLY_CONTEXT_URL;
-const authorization = computer ? process.env.PLY_COMPUTER_AUTHORIZATION : process.env.PLY_CONTEXT_AUTHORIZATION;
+const url = computer ? process.env.PLY_COMPUTER_URL : browser ? process.env.PLY_BROWSER_URL : process.env.PLY_CONTEXT_URL;
+const authorization = computer ? process.env.PLY_COMPUTER_AUTHORIZATION : browser ? process.env.PLY_BROWSER_AUTHORIZATION : process.env.PLY_CONTEXT_AUTHORIZATION;
 const locale = process.env.PLY_CONTEXT_LOCALE;
 const connected = Boolean(url && /^Bearer [a-f0-9]{64}$/.test(authorization ?? ''));
-const FORWARDED = new Set(computer ? ['initialize', 'ping', 'tools/list', 'tools/call']
+const FORWARDED = new Set(computer || browser ? ['initialize', 'ping', 'tools/list', 'tools/call']
   : ['initialize', 'ping', 'tools/list', 'tools/call', 'resources/list', 'resources/read', 'prompts/list', 'prompts/get']);
 // ツールの呼び出しは Pleiad 側で最長 300 秒まで待つ（context-bridge.mjs）。それより少し長く待つ。
 // ply_computer のロックの待ちは、橋が 150 秒ごとに分けて返す（agy は 1 回の呼び出しを 3 分で切り、設定では伸びない）
@@ -59,7 +62,7 @@ async function forward(message) {
 
 function local(message) {
   if (message.method === 'initialize') {
-    return write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: computer ? 'Pleiad Computer' : 'Pleiad Context', version: '1.0.0' } } });
+    return write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: computer ? 'Pleiad Computer' : browser ? 'Pleiad Browser' : 'Pleiad Context', version: '1.0.0' } } });
   }
   if (message.method === 'ping') return write({ jsonrpc: '2.0', id: message.id, result: {} });
   if (message.method === 'tools/list') return write({ jsonrpc: '2.0', id: message.id, result: { tools: [] } });

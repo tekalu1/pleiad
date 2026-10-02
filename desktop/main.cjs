@@ -192,7 +192,9 @@ async function boot() {
   remoteWindows = createRemoteWindows({ app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust,
     icon: path.join(__dirname, 'icon.png'), external });
   remoteWindows.attach();
-  browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png'), agentControl: (action, id) => agentBrowserBridge?.[action]?.(id) });
+  browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png'), agentControl: (action, id) => agentBrowserBridge?.[action]?.(id),
+    // 会話の今のプロフィール（正本はサーバーの会話のメタ。ADR 0077）
+    resolveProfile: sessionId => agentBrowserBridge?.resolveProfile(sessionId) ?? Promise.resolve(null) });
   browserPanel.attach();
   agentBrowserBridge = attachAgentBrowserBridge(worker, browserPanel);
   computerOverlay = attachComputerOverlay(worker, { onEscape: owner => computerService?.escape({ owner, notify: false }) });

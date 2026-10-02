@@ -239,7 +239,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, addedInstructions, computerRuntime = null, hooksRuntime = null, locale, notes = [] }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, addedInstructions, computerRuntime = null, hooksRuntime = null, locale, notes = [] }) {
     const m = MODES[modeFor(mode)];
 
     // **控えはターンの途中から書き足すが、ユーザー発言の時刻は送信の時刻で打つ。**
@@ -317,9 +317,11 @@ export const backend = {
     const hooksShape = hooksRuntime?.shape ?? null;
     // ply_computer（2 本目の中継）も起動時にしか渡せない。渡す・渡さない・接続先が変われば起こし直す
     const computerKey = computerRuntime ? `${computerRuntime.url} ${computerRuntime.headers?.Authorization ?? ''}` : null;
+    // ply_browser（3 本目の中継。プロフィールの一覧と切り替え、ADR 0077）も同じ。口は会話のあいだ同じなので、渡す・渡さないが変わったときだけ
+    const browserKey = browserRuntime ? `${browserRuntime.url} ${browserRuntime.headers?.Authorization ?? ''}` : null;
     if (session && ((session.contextKey ?? null) !== contextKey || (session.contextShape ?? null) !== contextShape
       || (session.browserConfig ?? null) !== (browserEnv?.AGENT_BROWSER_CONFIG ?? null) || (session.hooksShape ?? null) !== hooksShape
-      || (session.computerKey ?? null) !== computerKey)) { session.kill(); release(conversationId, session); session = null; }
+      || (session.computerKey ?? null) !== computerKey || (session.browserKey ?? null) !== browserKey)) { session.kill(); release(conversationId, session); session = null; }
 
     const fresh = !session;
     if (fresh) {
@@ -330,7 +332,8 @@ export const backend = {
       const useAgent = Boolean(contextRuntime || browserInstructions || addedInstructions || computerRuntime);
       const agent = useAgent || hooksRuntime ? await prepareAgent({ owners: contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' },
         prompt: [contextRuntime?.prompt, browserInstructions, addedInstructions, computerInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale ?? locale,
-        context: useAgent, hooks: hooksRuntime, computer: computerRuntime ? { url: computerRuntime.url, authorization: computerRuntime.headers?.Authorization } : null }) : null;
+        context: useAgent, hooks: hooksRuntime, computer: computerRuntime ? { url: computerRuntime.url, authorization: computerRuntime.headers?.Authorization } : null,
+        browser: browserRuntime ? { url: browserRuntime.url, authorization: browserRuntime.headers?.Authorization } : null }) : null;
       session = new AgySession({
         cwd,
         conversationId,
@@ -350,6 +353,7 @@ export const backend = {
       session.contextShape = contextShape;
       session.browserConfig = browserEnv?.AGENT_BROWSER_CONFIG ?? null;
       session.computerKey = computerKey;
+      session.browserKey = browserKey;
     }
 
     const handle = (ev) => {
