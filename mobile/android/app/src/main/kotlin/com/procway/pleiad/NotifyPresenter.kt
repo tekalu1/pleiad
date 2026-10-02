@@ -91,8 +91,10 @@ class NotifyPresenter(private val ctx: Context) : NotifySink {
         else -> R.string.notify_public_done
     })
 
-    private fun base(channel: String, host: String, at: Long, settings: NotifySettings, publicText: String): NotificationCompat.Builder {
+    private fun base(channel: String, key: String, host: String, at: Long, settings: NotifySettings, publicText: String): NotificationCompat.Builder {
         val b = NotificationCompat.Builder(ctx, channel)
+            // Our own bundling (NotifyPlanner) decides what is grouped; keep Android from folding four of them into its own group
+            .setGroup("$GROUP_KEY:$key")
             .setSmallIcon(R.drawable.ic_stat_pleiad)
             .setSubText(host.takeIf { it.isNotEmpty() })
             .setWhen(at.takeIf { it > 0 } ?: System.currentTimeMillis())
@@ -113,7 +115,7 @@ class NotifyPresenter(private val ctx: Context) : NotifySink {
 
     private fun post(a: NotifyAction.Post, settings: NotifySettings): Notification {
         val body = a.title.ifBlank { ctx.getString(R.string.notify_untitled) }
-        val b = base(if (a.attention) CH_ATTENTION else CH_DONE, a.host, a.at, settings, publicText(a.kind))
+        val b = base(if (a.attention) CH_ATTENTION else CH_DONE, a.key, a.host, a.at, settings, publicText(a.kind))
             .setContentTitle(title(a)).setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(intent(a.hostId, a.session, false, a.key))
@@ -128,7 +130,7 @@ class NotifyPresenter(private val ctx: Context) : NotifySink {
         val style = NotificationCompat.InboxStyle().setBigContentTitle(title)
         for (n in shown) style.addLine(n)
         if (names.size > shown.size) style.setSummaryText(ctx.getString(R.string.notify_bundle_more, names.size - shown.size))
-        val b = base(CH_DONE, a.host, a.at, settings, title)
+        val b = base(CH_DONE, a.key, a.host, a.at, settings, title)
             .setContentTitle(title).setContentText(names.take(3).joinToString(" / "))
             .setStyle(style)
             .setContentIntent(intent(a.hostId, a.session, true, a.key))
