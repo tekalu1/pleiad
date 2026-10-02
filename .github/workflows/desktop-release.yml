@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing source tag (v0.1.0-beta.1)
+        description: Existing source tag (v0.1.0 or v0.2.0-beta.1)
         required: true
         type: string
       platforms:
