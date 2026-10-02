@@ -262,7 +262,9 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   /** 上に残っている問いへ戻る。静かな読み直し（ADR 0062）で行が置き換わっていたら、押した時点で取り直して発言の uuid（無ければ並びの位置）で引き直す */
   function returnToQuestion() {
     const shown = stickyFor;
-    let index = shown ? turns.indexOf(shown) : -1;
+    // 並びが古いまま位置を取ると、goTo が取り直した並びと食い違う。先に取り直し、発言の要素で引く
+    ensureTurns();
+    let index = shown ? turns.findIndex((turn) => turn.user === shown.user) : -1;
     if (index < 0) index = currentIndex();
     if (!shown || !shown.row.isConnected || !shown.user.isConnected) {
       const uuid = shown?.user.dataset.uuid;

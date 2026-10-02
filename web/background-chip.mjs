@@ -71,7 +71,19 @@ export function createBackgroundChip(button) {
   const animate = (node, cls) => {
     if (reduced.matches) return;
     node.classList.remove(cls); void node.offsetWidth; node.classList.add(cls);
-    node.addEventListener('animationend', (event) => { if (event.target === node) node.classList.remove(cls); }, { once: true });
+    // 子（数の bump）の animationend も泡立って届くので、once にせず自分の終わりで外す
+    const onEnd = (event) => {
+      if (event.target !== node) return;
+      node.removeEventListener('animationend', onEnd);
+      node.classList.remove(cls);
+    };
+    node.addEventListener('animationend', onEnd);
+  };
+  /** 中身を空にする。消えた状態を持ち越すと、次に出たとき前の種類（別の会話のものも）が退場の動きをする */
+  const clear = () => {
+    for (const node of byKind.values()) node.remove();
+    byKind.clear(); more?.remove(); more = null;
+    slots.replaceChildren(); runSlot.replaceChildren(); running = false;
   };
 
   /** key が替わったら（別の会話）出入りの動きは付けずに描く */
@@ -80,7 +92,7 @@ export function createBackgroundChip(button) {
     const visible = summary.live > 0 || summary.ended > 0;
     const fresh = key !== sessionKey;
     sessionKey = key;
-    if (!visible) { shown = false; return; }
+    if (!visible) { if (shown || fresh) clear(); shown = false; return; }
     if (!shown && !fresh) animate(button, 'enter');
     shown = true;
     const name = backgroundName(summary);
