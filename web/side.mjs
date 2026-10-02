@@ -25,6 +25,7 @@ import { fmt, t } from "./i18n.mjs";
 import { familiesOf } from "./family.mjs";
 import { warnMark, interruptLabel, showsReasonInMeta } from "./interrupt.mjs";
 import { aiMarkTitle } from "./change-log.mjs";
+import { parseTerms, matchLocal, findRanges, localOrder, periodSince, pushRecentSearch, searchShortcutLabel, searchShortcutAria } from "./session-find.mjs";
 
 const backendLogos = {
   codex: "./brand/openai.svg",
@@ -104,6 +105,13 @@ const RECENT_KEY = "agent-host-emoji-recent";
 const RECENT_MAX = 16;
 const STALE_DAYS = 7;        // 状態がこれ以上動いていないものは ◌ と日数を出す（設計メモ §6）
 const UNDO_MS = 12000;       // 「元に戻す」の一行が出ている時間。押さなければ静かに消える
+const RECENT_SEARCH_KEY = "agent-host-side-recent";   // 最近の検索（結果を開いた語だけ。端末ごと）
+const RECENT_SEARCH_MAX = 5;
+const SEARCH_WAIT_MS = 120;  // 打ってから本文まで探す問い合わせを送るまでの待ち。題・状態・場所の一致はその間に手元で出す
+const PARTIAL_POLL_MS = 1500;   // サーバーが写しを読み込み中（partial）の間、結果を取り直す間隔
+const PARTIAL_POLL_MAX = 40;
+const SORT_POLL_MS = 2000;   // 一覧が動いたときの取り直しの下限（走っている会話が一覧を更新し続けても問い合わせを連打しない）
+const PERIODS = [0, 1, 7, 30];   // 期間の絞り込み（日数。0 = すべて、1 = 今日）
 
 const PLUS = "M12 5v14M5 12h14";
 // 既定のアイコン。アイコン未設定のグループはフォルダ（他のアイコンと同じ線幅 1.6・丸端）
@@ -118,18 +126,29 @@ function loadPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem(STORE_KEY) ?? "{}");
     return {
-      filter: { backends: Array.isArray(p.filter?.backends) ? p.filter.backends.filter(x => typeof x === "string") : [], dir: p.filter?.dir ?? null, status: "status" in (p.filter ?? {}) ? p.filter.status : undefined },
+      filter: { backends: Array.isArray(p.filter?.backends) ? p.filter.backends.filter(x => typeof x === "string") : [], dir: p.filter?.dir ?? null, status: "status" in (p.filter ?? {}) ? p.filter.status : undefined,
+        period: PERIODS.includes(p.filter?.period) ? p.filter.period : 0 },
       collapsed: new Set(Array.isArray(p.collapsed) ? p.collapsed : []),
       expanded: new Set(Array.isArray(p.expanded) ? p.expanded : []),
+      sort: p.sort === "recent" ? "recent" : "relevance",
     };
   } catch {
-    return { filter: { backends: [], dir: null, status: undefined }, collapsed: new Set(), expanded: new Set() };
+    return { filter: { backends: [], dir: null, status: undefined, period: 0 }, collapsed: new Set(), expanded: new Set(), sort: "relevance" };
   }
+}
+
+function loadRecentSearches() {
+  try {
+    const a = JSON.parse(localStorage.getItem(RECENT_SEARCH_KEY) ?? "[]");
+    return Array.isArray(a) ? a.filter((x) => typeof x === "string" && x.trim()).slice(0, RECENT_SEARCH_MAX) : [];
+  } catch { return []; }
 }
 
 /**
  * @param {object} o
- * @param {(sessionId: string|null) => void} o.onOpen       行を押した（null = まだ id の無い新しいセッション）
+ * @param {(sessionId: string|null, jump?: { uuid: string, role: string, query: string, speaker: string }|null) => void} o.onOpen
+ *   行を押した（null = まだ id の無い新しいセッション）。検索の抜粋を押したときは jump（その発言の uuid・探した語）も渡す
+ * @param {(input: object) => Promise<object>} [o.onSearch]  本文まで探す（sessions.search の入力を渡し、結果を返す）
  * @param {({status, cwd}) => void} o.onNew                 ＋（引き継ぐ状態と作業ディレクトリ付き）
  * @param {(sessionId: string|null, status: string) => void} o.onSetStatus  選ばれた行の combo で状態を変えた
  * @param {(status: string, icon: string) => void} o.onSetIcon         アイコンを選んだ（空 = なし）
@@ -143,7 +162,7 @@ function loadPrefs() {
  * @param {() => string} o.cwdNow  入力欄の今の作業ディレクトリ（絞っていないときの引き継ぎ元）
  */
 export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, onGroupContext, onFamilyContext,
-                             onSetGrouped, onJoinGroup, onMoveGroup, onListContext, onSettings, cwdNow }) {
+                             onSetGrouped, onJoinGroup, onMoveGroup, onListContext, onSettings, onSearch, cwdNow }) {
   const $ = (id) => document.getElementById(id);
   const root = $("groups");
   const prefs = loadPrefs();
@@ -165,7 +184,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const save = () => {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify({
-        filter: { backends: filter.backends, dir: filter.dir, ...(filter.status === undefined ? {} : { status: filter.status }) },
+        filter: { backends: filter.backends, dir: filter.dir, ...(filter.status === undefined ? {} : { status: filter.status }), ...(filter.period ? { period: filter.period } : {}) },
+        sort: sortMode,
         collapsed: [...collapsed],
         // 消えたセッションの id は溜めない（一覧を受け取る前は間引かない）
         expanded: last.sessions.length ? [...expanded].filter((id) => last.sessions.some((s) => s.id === id)) : [...expanded],
@@ -173,7 +193,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     } catch { /* 保存できなくても動く */ }
   };
 
-  const filtering = () => filter.dir != null || filter.status !== undefined || filter.backends.length > 0;
+  let sortMode = prefs.sort;                    // 結果の並び。"relevance" | "recent"（端末ごと）
+  const filtering = () => filter.dir != null || filter.status !== undefined || filter.backends.length > 0 || filter.period > 0;
   const statusKey = (s) => (s.status ? String(s.status) : null);
   const iconOf = (st) => last.statuses.find((x) => x.status === st)?.icon ?? null;
 
@@ -196,15 +217,16 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const matchesFilter = (s) =>
     (filter.dir == null || (s.cwd ?? "") === filter.dir) &&
     (filter.status === undefined || statusKey(s) === filter.status) &&
-    (!filter.backends.length || filter.backends.includes(s.backend));
-
-  const matchesQuery = (s, q) =>
-    !q || `${s.title ?? ""} ${s.status ?? ""} ${s.cwd ?? ""}`.toLowerCase().includes(q);
+    (!filter.backends.length || filter.backends.includes(s.backend)) &&
+    (!filter.period || (s.lastModified ?? 0) >= periodSince(filter.period));
 
   // ---- 描画 --------------------------------------------------------------
 
   function render() {
-    const q = $("q").value.trim().toLowerCase();
+    const q = $("q").value.trim();
+    syncSearchBar(q);
+    if (q) return renderResults(q);
+    resetRemote();
     root.replaceChildren();
     itemSeq = 0;
     if (last.pendingNew) {
@@ -218,7 +240,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
     // グループ（根とその子孫）にまとめる。器は根の状態の見出しの下に入り、枝は器の中だけに出る。
     // 親が絞り込みで消えている枝は、入れる一番近い祖先に付く。付ける先が無ければ自分が根（= ただの行）
-    const visible = last.sessions.filter((s) => matchesFilter(s) && matchesQuery(s, q));
+    const visible = last.sessions.filter(matchesFilter);
     const byGroup = new Map();
     inFamily.clear();
     for (const fam of familiesOf(visible, last.sessions)) {
@@ -233,7 +255,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const fams = (byGroup.get(st) ?? []).sort((a, b) => (famStale(b) - famStale(a)) || (famWhen(b) - famWhen(a)));
       const rows = fams.flatMap(members);        // このグループに出る行（器の中の枝を含む）
       const draftHere = last.draft && (last.draft.status ?? null) === st;
-      if (!rows.length && !draftHere && (filtering() || q)) continue;   // 絞っているときは空のグループを出さない
+      if (!rows.length && !draftHere && filtering()) continue;   // 絞っているときは空のグループを出さない
 
       const sec = el("section", "grp");
       sec.setAttribute("role", "none");
@@ -331,7 +353,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       sec.append(rowsEl);
       root.append(sec);
     }
-    if (!root.childElementCount) root.append(el("div", "empty", filtering() || q ? t("sidebar.noMatch") : t("sidebar.empty")));
+    if (!root.childElementCount) root.append(el("div", "empty", filtering() ? t("sidebar.noMatch") : t("sidebar.empty")));
 
     $("filterBtn").classList.toggle("on", filtering());
     renderChips();
@@ -461,18 +483,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     keyboard = true;
     syncKeyboard();
   });
-  // 検索欄の ↓ で一覧の先頭の行へ入る
-  $("q").addEventListener("keydown", (e) => {
-    if (e.key !== "ArrowDown" || isComposingKey(e) || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
-    const first = treeItems().find((n) => n.classList.contains("row"));
-    if (!first) return;
-    e.preventDefault();
-    activeKey = first.dataset.key;
-    keyboard = true;
-    root.focus();
-    paintActive(true);
-  });
-
   const isStale = (s) => Boolean(s.status) && staleDays(s.statusChangedAt) >= STALE_DAYS;
 
   // ---- 家族（fork した会話の器） ------------------------------------------
@@ -730,6 +740,376 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     $("filterOutside").hidden = !current || matchesFilter(current);
     if (filter.dir != null) chip(t("sidebar.filter.place"), shortDir(filter.dir) || filter.dir, () => { filter.dir = null; });
     if (filter.status !== undefined) chip(t("sidebar.filter.status"), filter.status ?? t("session.status.none"), () => { filter.status = undefined; });
+    if (filter.period) chip(t("sidebar.filter.period"), periodLabel(filter.period), () => { filter.period = 0; });
+    // 語があるときだけ効く絞り込み（発言者・含める）。語を消すと札も消える
+    if ($("q").value.trim()) {
+      if (scope.speaker !== "any") chip(t("sidebar.filter.speaker"), scope.speaker === "user" ? t("sidebar.filter.speakerUser") : t("sidebar.filter.speakerAssistant"), () => { scope.speaker = "any"; });
+      if (scope.delegated) chip(t("sidebar.filter.include"), t("sidebar.filter.includeDelegated"), () => { scope.delegated = false; });
+      if (scope.tools) chip(t("sidebar.filter.include"), t("sidebar.filter.includeTools"), () => { scope.tools = false; });
+    }
+  }
+
+  function periodLabel(days) {
+    return days === 1 ? t("sidebar.filter.periodToday") : days === 7 ? t("sidebar.filter.period7") : days === 30 ? t("sidebar.filter.period30") : t("sidebar.filter.all");
+  }
+
+  // ---- 検索 --------------------------------------------------------------
+  // 語があるときは、状態の木をやめて会話の平らな結果の一覧（role=listbox）にする。題・状態・場所の一致は手元で即座に出し、
+  // 120ms 待って sessions.search（本文まで。core/session-search.mjs）の結果が届いたら置き換える。語を消せばいつもの木へ戻る
+  // （開閉の状態はそのまま）。docs/design-system.md §4.1「検索」。
+
+  const searchBox = $("q");
+  const scope = { speaker: "any", delegated: false, tools: false };   // 語があるときだけ効く絞り込み。覚えない
+  let recentSearches = loadRecentSearches();
+  let remote = null;            // 本文まで探した最後の結果 { key, sig, at, result }（result が null なら失敗）
+  let wanted = null;            // 問い合わせを予約した・送っているキー
+  let remoteTimer = 0, remoteSeq = 0, partialTimer = 0, partialPolls = 0;
+  let listSig = "";             // 会話の一覧が動いたことを知る目印（動いたら結果を取り直す）
+  let resultNodes = [];         // 結果の行（↑↓ で選べるもの）
+  let optionAt = -1;            // 指している結果の位置
+  let optionId = null;          // 描き直しても同じ会話を指し続ける
+  let recentAt = -1;            // 指している「最近の検索」の位置
+  let searchKbd = false;        // 検索欄で ↑↓ を使った（下に操作キーの一行を出す）
+  let searchOn = false;         // いま結果の一覧を出している
+
+  searchBox.title = t("sidebar.search.title", { key: searchShortcutLabel() });
+  searchBox.setAttribute("aria-keyshortcuts", searchShortcutAria());
+
+  const searchKey = (q) => JSON.stringify([q, filter.backends, filter.dir, filter.status === undefined ? 0 : [filter.status], filter.period, scope.speaker, scope.delegated, scope.tools, sortMode]);
+
+  const searchInput = (q) => ({
+    query: q,
+    filters: {
+      ...(filter.backends.length ? { backends: [...filter.backends] } : {}),
+      ...(filter.dir != null ? { cwd: filter.dir } : {}),
+      ...(filter.status !== undefined ? { status: filter.status } : {}),
+      ...(filter.period ? { since: periodSince(filter.period) } : {}),
+      ...(scope.speaker !== "any" ? { speaker: scope.speaker } : {}),
+      ...(scope.delegated ? { includeDelegated: true } : {}),
+      ...(scope.tools ? { includeToolInputs: true } : {}),
+    },
+    sort: sortMode,
+    hitsPerSession: 1,
+  });
+
+  /** 語を消した・結果の一覧をやめた。待っている問い合わせと結果を捨てる */
+  function resetRemote() {
+    remoteSeq++;
+    clearTimeout(remoteTimer);
+    clearTimeout(partialTimer);
+    remote = null;
+    wanted = null;
+    partialPolls = 0;
+    optionAt = -1;
+    optionId = null;
+    resultNodes = [];
+    if (searchOn) { searchOn = false; paintMode(false); }
+  }
+
+  /** 結果が要るのに、今の条件の答えが無い（または一覧が動いた）ときだけ、少し待ってから問い合わせる */
+  function wantRemote(q) {
+    if (!onSearch) return;
+    const key = searchKey(q);
+    if (remote?.key === key && remote.sig === listSig) return;
+    if (wanted === key) return;
+    wanted = key;
+    clearTimeout(remoteTimer);
+    // 同じ条件で一覧だけが動いたときは、問い合わせの間隔に下限を置く
+    const same = remote?.key === key;
+    const wait = same ? Math.max(SEARCH_WAIT_MS, SORT_POLL_MS - (Date.now() - remote.at)) : SEARCH_WAIT_MS;
+    remoteTimer = setTimeout(() => fetchRemote(q, key), wait);
+  }
+
+  async function fetchRemote(q, key) {
+    const seq = ++remoteSeq;
+    const sig = listSig;
+    let result = null;
+    try { result = await onSearch(searchInput(q)); } catch { result = null; }
+    if (seq !== remoteSeq) return;                 // もっと新しい問い合わせが走っている
+    wanted = null;
+    if (searchBox.value.trim() !== q || searchKey(q) !== key) return;   // 打ち直した（次の問い合わせは予約済み）
+    remote = { key, sig, at: Date.now(), result };
+    clearTimeout(partialTimer);
+    if (result?.partial && partialPolls < PARTIAL_POLL_MAX) {
+      partialPolls++;
+      partialTimer = setTimeout(() => { if (remote) remote.sig = null; render(); }, PARTIAL_POLL_MS);
+    } else partialPolls = 0;
+    render();
+  }
+
+  /** 結果の 1 行分のデータ。手元の照合（題・状態・場所）とサーバーの結果を同じ形にそろえる */
+  function resultRows(q) {
+    const byId = new Map(last.sessions.map((s) => [s.id, s]));
+    const key = searchKey(q);
+    if (remote?.key === key && remote.result) {
+      const r = remote.result;
+      return {
+        server: true,
+        total: r.total,
+        partial: Boolean(r.partial),
+        rows: r.sessions.map((x) => ({
+          id: x.sessionId, session: byId.get(x.sessionId) ?? null, title: x.title === "(no title)" ? "" : x.title, status: x.status,
+          cwd: x.cwd, backend: x.backend, lastModified: x.lastModified,
+          parent: x.parentSessionId ? { id: x.parentSessionId, title: byId.get(x.parentSessionId)?.title ?? "" } : null,
+          count: x.hitCount, hit: x.hits?.[0] ?? null,
+        })),
+      };
+    }
+    const terms = parseTerms(q);
+    const local = [];
+    for (const s of last.sessions) {
+      if (!matchesFilter(s)) continue;
+      const m = matchLocal(s, terms);
+      if (m) local.push({ session: s, ...m });
+    }
+    const rows = localOrder(local, sortMode).map(({ session: s }) => ({
+      id: s.id, session: s, title: titleOf(s), status: s.status ?? null, cwd: s.cwd ?? "", backend: s.backend, lastModified: s.lastModified,
+      parent: null, count: 0, hit: null,
+    }));
+    // 本文まで探す口が無い・探すのに失敗したときは、手元の結果が最終
+    return { server: !onSearch || remote?.key === key, total: rows.length, partial: false, rows };
+  }
+
+  /** 一致の範囲に下線と太字（会話の中の検索と同じ印） */
+  function fillMarked(node, text, ranges) {
+    let at = 0;
+    for (const [a, b] of ranges ?? []) {
+      if (a < at || b > text.length) continue;
+      if (a > at) node.append(text.slice(at, a));
+      node.append(el("mark", "searchhit", text.slice(a, b)));
+      at = b;
+    }
+    if (at < text.length) node.append(text.slice(at));
+    return node;
+  }
+
+  function openResult(r) {
+    const q = searchBox.value.trim();
+    if (q) { recentSearches = pushRecentSearch(recentSearches, q, RECENT_SEARCH_MAX); try { localStorage.setItem(RECENT_SEARCH_KEY, JSON.stringify(recentSearches)); } catch { /* 保存できなくても動く */ } }
+    const hit = r.hit?.uuid ? r.hit : null;
+    onOpen?.(r.id, hit ? { uuid: hit.uuid, role: hit.role, query: q, speaker: scope.speaker } : null);
+  }
+
+  /** 結果の 1 行。題 + 件数の札、一致した発言の抜粋（2 行まで）、時刻・エージェント・状態・場所（委譲は「委譲 · 親の題」） */
+  function resultRow(r, index, terms) {
+    const open = r.id === last.currentId;
+    const row = el("div", "row res" + (open ? " sel" : ""));
+    row.id = `side-opt-${index}`;
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", "false");
+    row.dataset.session = r.id ?? "";
+    const head = el("div", "row-title");
+    head.append(fillMarked(el("span", "row-t"), r.title, findRanges(r.title, terms)));
+    if (r.count > 0) {
+      const badge = el("span", "hitc", String(r.count));
+      badge.title = t("sidebar.search.hits", { count: r.count });
+      head.append(badge);
+    }
+    row.append(head);
+    let spokenHit = "";
+    if (r.hit) {
+      // i18n-dynamic: sidebar.search.who.
+      const who = t(`sidebar.search.who.${r.hit.role}`);
+      // 誰の発言か + 抜粋を 1 つの流れにして 2 行で切る（-webkit-box の直下に並べると、誰の発言かが 1 行を取る）。
+      // 抜粋は一致の手前 16 字から始まるので、一致が 16 字目より後ろなら前が切れている（先頭に … を付ける）
+      const snip = el("div", "snip" + (r.hit.role === "tool" ? " tool" : ""));
+      const flow = el("span", "snip-flow");
+      flow.append(el("span", "snip-who", who));
+      if ((r.hit.ranges?.[0]?.[0] ?? 0) >= 16) flow.append("…");
+      fillMarked(flow, r.hit.excerpt, r.hit.ranges);
+      snip.append(flow);
+      row.append(snip);
+      spokenHit = t("sidebar.search.rowWho", { who, text: r.hit.excerpt });
+    }
+    const meta = el("div", "row-meta");
+    meta.append(el("span", "row-when", relTime(r.lastModified)));
+    if (last.backendLabels && r.backend) meta.append(backendLogo(r.backend, last.backendLabels[r.backend] ?? r.backend));
+    if (r.status) meta.append(el("span", "row-st", r.status));
+    if (r.parent) meta.append(el("span", "row-from", r.parent.title ? t("sidebar.search.delegated", { parent: r.parent.title }) : t("sidebar.search.delegatedNoParent")));
+    else {
+      const place = el("span", "row-cwd", shortDir(r.cwd));
+      if (r.cwd) place.title = r.cwd;
+      meta.append(place);
+    }
+    row.append(meta);
+    row.setAttribute("aria-label", [r.title || t("session.untitled"), spokenHit, r.count > 0 ? t("sidebar.search.rowHits", { count: r.count }) : "", relTime(r.lastModified)].filter(Boolean).join(", "));
+    row.onclick = () => openResult(r);
+    if (onContext && r.session) row.oncontextmenu = (e) => { e.preventDefault(); onContext(r.session, e.clientX, e.clientY); };
+    row._result = r;
+    return row;
+  }
+
+  function renderResults(q) {
+    if (!searchOn) { searchOn = true; paintMode(true); }
+    wantRemote(q);
+    const { server, total, partial, rows } = resultRows(q);
+    const terms = parseTerms(q);
+    root.replaceChildren();
+    resultNodes = rows.map((r, i) => resultRow(r, i, terms));
+    root.append(...resultNodes);
+    const more = el("div", "empty", server && total > rows.length ? t("sidebar.search.more", { count: total - rows.length }) : "");
+    more.setAttribute("role", "none");
+    if (more.textContent) root.append(more);
+    if (!rows.length && server) {
+      const none = el("div", "empty", t("sidebar.search.none"));
+      none.setAttribute("role", "none");
+      root.append(none);
+    }
+    // 描き直しても、指していた会話を指し続ける
+    optionAt = optionId == null ? -1 : resultNodes.findIndex((n) => n._result.id === optionId);
+    paintOption(false);
+    // 件数・弧（写しを読み込み中）・並び替え
+    $("resHead").hidden = false;
+    $("resCount").textContent = t("sidebar.search.count", { count: total });
+    $("resArc").replaceChildren(...(partial ? [runMark(t("sidebar.search.searching"))] : []));
+    const sort = $("resSort");
+    sort.setAttribute("aria-pressed", String(sortMode === "recent"));
+    sort.querySelector("span").textContent = sortMode === "recent" ? t("sidebar.search.sort.recent") : t("sidebar.search.sort.relevance");
+    sort.title = sortMode === "recent" ? t("sidebar.search.sort.toRelevance") : t("sidebar.search.sort.toRecent");
+    sort.setAttribute("aria-label", sort.title);
+    // 読み上げは、本文まで探した結果が届いてから 1 度（手元の結果で 2 度言わない）
+    if (server && !partial) $("resLive").textContent = rows.length ? t("sidebar.search.count", { count: total }) : t("sidebar.search.none");
+    $("filterBtn").classList.toggle("on", filtering());
+    renderChips();
+    syncSearchHint();
+  }
+
+  /** 一覧の入れ物を、結果（listbox・平ら）といつもの木（tree）で切り替える */
+  function paintMode(on) {
+    root.setAttribute("role", on ? "listbox" : "tree");
+    root.setAttribute("aria-label", on ? t("sidebar.search.results") : t("sidebar.list"));
+    root.classList.toggle("flat", on);
+    root.tabIndex = on ? -1 : 0;
+    if (on) root.removeAttribute("aria-activedescendant");
+    $("resHead").hidden = !on;
+    if (!on) { $("resArc").replaceChildren(); $("resLive").textContent = ""; searchBox.removeAttribute("aria-activedescendant"); syncSearchHint(); }
+  }
+
+  /** 検索欄まわり（消すボタン・展開の状態）を語に合わせる */
+  function syncSearchBar(q) {
+    $("qClear").hidden = !searchBox.value;
+    searchBox.setAttribute("aria-expanded", String(Boolean(q) || !$("recentPop").hidden));
+  }
+
+  /** ↑↓ で指している結果に印（輪）と aria-activedescendant を付ける */
+  function paintOption(scroll = true) {
+    resultNodes.forEach((n, i) => { n.classList.toggle("active", i === optionAt); n.setAttribute("aria-selected", String(i === optionAt)); });
+    const node = resultNodes[optionAt];
+    optionId = node ? node._result.id : null;
+    if (node) { searchBox.setAttribute("aria-activedescendant", node.id); if (scroll) node.scrollIntoView({ block: "nearest" }); }
+    else if (!$("recentPop").hidden && recentAt >= 0) searchBox.setAttribute("aria-activedescendant", `side-recent-${recentAt}`);
+    else searchBox.removeAttribute("aria-activedescendant");
+  }
+
+  /** 検索欄に入っていて ↑↓ を使った間だけ、脇の下に操作キーの一行 */
+  function syncSearchHint() {
+    $("searchHint").hidden = !(searchKbd && document.activeElement === searchBox && (searchOn || !$("recentPop").hidden));
+  }
+
+  // 最近の検索。空の検索欄に入ったときだけ候補に出す（design-system §2.4「入力する所は選択肢も出す」）
+  function syncRecent() {
+    const pop = $("recentPop");
+    const show = document.activeElement === searchBox && !searchBox.value && recentSearches.length > 0 && $("filterPop").hidden;
+    pop.hidden = !show;
+    if (!show) recentAt = -1;
+    else {
+      pop.replaceChildren(el("div", "head", t("sidebar.search.recent")));
+      recentSearches.forEach((word, i) => {
+        const b = el("button", "li" + (i === recentAt ? " kb" : ""));
+        b.type = "button";
+        b.id = `side-recent-${i}`;
+        b.tabIndex = -1;
+        b.setAttribute("role", "option");
+        b.setAttribute("aria-selected", String(i === recentAt));
+        b.append(icon("M12 7.5V12l3 2M20.5 12a8.5 8.5 0 1 1-17 0 8.5 8.5 0 0 1 17 0"), el("span", "lbl", word));
+        // 押すと検索欄にその語が入る（検索欄の focus を外さないよう mousedown で受ける）
+        b.onmousedown = (e) => { e.preventDefault(); useRecent(word); };
+        pop.append(b);
+      });
+    }
+    syncSearchBar(searchBox.value.trim());
+    paintOption(false);
+    syncSearchHint();
+  }
+
+  function useRecent(word) {
+    searchBox.value = word;
+    recentAt = -1;
+    render();
+    syncRecent();
+  }
+
+  searchBox.addEventListener("focus", syncRecent);
+  searchBox.addEventListener("blur", () => setTimeout(() => {
+    if (document.activeElement === searchBox) return;
+    $("recentPop").hidden = true;
+    recentAt = -1;
+    searchKbd = false;
+    syncSearchBar(searchBox.value.trim());
+    syncSearchHint();
+  }, 150));
+  searchBox.addEventListener("input", () => {
+    optionAt = -1;
+    optionId = null;
+    recentAt = -1;
+    render();
+    syncRecent();
+  });
+  $("qClear").onclick = () => { searchBox.value = ""; optionAt = -1; optionId = null; render(); searchBox.focus(); syncRecent(); };
+  $("resSort").onclick = () => { sortMode = sortMode === "recent" ? "relevance" : "recent"; save(); render(); };
+  root.addEventListener("pointerdown", () => { searchKbd = false; syncSearchHint(); });
+  searchBox.addEventListener("keydown", (e) => {
+    if (isComposingKey(e) || e.ctrlKey || e.metaKey || e.altKey) return;
+    const searching = searchBox.value.trim() !== "";
+    const recentOpen = !$("recentPop").hidden;
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !e.shiftKey) {
+      const down = e.key === "ArrowDown";
+      if (searching && resultNodes.length) {
+        e.preventDefault();
+        searchKbd = true;
+        optionAt = down ? (optionAt + 1) % resultNodes.length : (optionAt - 1 + resultNodes.length) % resultNodes.length;
+        paintOption();
+        syncSearchHint();
+      } else if (recentOpen) {
+        e.preventDefault();
+        searchKbd = true;
+        if (down && recentAt === recentSearches.length - 1) {
+          // 最近の検索の末尾から先は、いつもの一覧（木）へ
+          $("recentPop").hidden = true;
+          recentAt = -1;
+          enterTree();
+          return;
+        }
+        recentAt = down ? recentAt + 1 : Math.max(-1, recentAt - 1);
+        syncRecent();
+      } else if (down && !searching) {
+        // 検索欄で ↓ を押すと一覧の先頭の行へ入る
+        e.preventDefault();
+        enterTree();
+      }
+      return;
+    }
+    if (e.key === "Enter" && !e.shiftKey) {
+      if (recentOpen && recentAt >= 0) { e.preventDefault(); useRecent(recentSearches[recentAt]); return; }
+      const node = searching ? resultNodes[Math.max(0, optionAt)] : null;
+      if (node) { e.preventDefault(); openResult(node._result); }
+      return;
+    }
+    if (e.key === "Escape") {
+      // 語があれば消していつもの一覧へ戻る（会話の中の検索・narrow の引き出しの Esc には伝えない）
+      if (searchBox.value) { e.preventDefault(); searchBox.value = ""; optionAt = -1; optionId = null; render(); syncRecent(); }
+      else if (recentOpen) { e.preventDefault(); $("recentPop").hidden = true; recentAt = -1; syncSearchBar(""); syncSearchHint(); }
+      else searchBox.blur();
+    }
+  });
+
+  function enterTree() {
+    const first = treeItems().find((n) => n.classList.contains("row"));
+    if (!first) return;
+    activeKey = first.dataset.key;
+    keyboard = true;
+    root.focus();
+    paintActive(true);
   }
 
   // ---- 浮く面 --------------------------------------------------------------
@@ -774,6 +1154,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const counts = new Map();
     for (const s of last.sessions) { const k = statusKey(s); counts.set(k, (counts.get(k) ?? 0) + 1); }
     const pick = (f) => { f(); save(); render(); p.hidden = true; };
+    $("recentPop").hidden = true;
     const paint = () => {
       const needle = q.value.trim().toLowerCase();
       const hit = (s) => !needle || s.toLowerCase().includes(needle);
@@ -804,6 +1185,26 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       for (const st of groupOrder()) {
         if (!hit(st ?? t("session.status.none"))) continue;
         body.append(li(st ?? t("session.status.none"), String(counts.get(st) ?? 0), filter.status === st, () => pick(() => { filter.status = st; })));
+      }
+      body.append(el("div", "head", t("sidebar.filter.period")));
+      for (const days of PERIODS) {
+        if (needle ? !days || !hit(periodLabel(days)) : false) continue;
+        body.append(li(periodLabel(days), null, filter.period === days, () => pick(() => { filter.period = days; })));
+      }
+      // 語があるときだけ。語が無ければ意味が無いので出さない
+      if (searchBox.value.trim()) {
+        body.append(el("div", "head", t("sidebar.filter.speaker")));
+        for (const [who, label] of [["any", t("sidebar.filter.all")], ["user", t("sidebar.filter.speakerUser")], ["assistant", t("sidebar.filter.speakerAssistant")]]) {
+          if (needle && (who === "any" || !hit(label))) continue;
+          body.append(li(label, null, scope.speaker === who, () => pick(() => { scope.speaker = who; })));
+        }
+        body.append(el("div", "head", t("sidebar.filter.include")));
+        for (const [key, label] of [["delegated", t("sidebar.filter.includeDelegated")], ["tools", t("sidebar.filter.includeTools")]]) {
+          if (!hit(label)) continue;
+          const b = li(label, null, scope[key], () => { scope[key] = !scope[key]; render(); paint(); });
+          b.setAttribute("aria-pressed", String(scope[key]));
+          body.append(b);
+        }
       }
     };
     q.oninput = paint;
@@ -941,8 +1342,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (q.value.trim()) renderSearch(q.value); else renderAll();   // 待っている間に打ち始めていたらその結果から
   }
 
-  $("q").oninput = render;
-  $("clearFilterOutside").onclick = () => { filter.backends = []; filter.dir = null; filter.status = undefined; save(); render(); };
+  $("clearFilterOutside").onclick = () => { filter.backends = []; filter.dir = null; filter.status = undefined; filter.period = 0; save(); render(); };
   $("newSession").onclick = () => onNew?.({
     backend: filter.backends.length === 1 ? filter.backends[0] : undefined,
     status: filter.status !== undefined ? filter.status : null,
@@ -956,6 +1356,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   };
 
   return {
+    /** 検索欄へ移る（Ctrl+Shift+F）。語が入っていれば全選択 */
+    focusSearch() { searchBox.focus(); searchBox.select(); },
     /** この状態で新しいセッション（見出しのメニューから。見出しの ＋ と同じ） */
     newIn(status) { onNew?.({ status, cwd: filter.dir ?? cwdNow?.() ?? "", backend: filter.backends.length === 1 ? filter.backends[0] : undefined }); },
     /** グループのアイコン選択を開く（右クリックのメニューから。見出しのアイコンを押したのと同じ） */
@@ -994,6 +1396,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       };
       // 使われなくなった仮のグループは捨てる。使われ始めたものは statuses 側に移る
       for (const k of made) if (sessions.some((s) => statusKey(s) === k)) made.delete(k);
+      // 会話が増えた・更新された（ターンの終わりなど）。語があるなら、本文まで探した結果も取り直す
+      listSig = `${last.sessions.length}:${last.sessions.reduce((m, s) => Math.max(m, s.lastModified ?? 0), 0)}`;
       render();
     },
     /** この画面で作った、まだ誰も付いていない状態を一覧に出す */

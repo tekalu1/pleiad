@@ -9,6 +9,8 @@
 // ほかは NFKC と小文字に畳んだ部分一致。場所は作業ディレクトリのフォルダー名だけに当てる。
 
 const DAY_MS = 86_400_000;
+// 新しさの減点の上限（30 日で 1、3 まで = 90 日以上は同じ）
+const MAX_AGE_PENALTY = 3;
 const MAX_TERMS = 12;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -175,10 +177,13 @@ export function makeExcerpt(original, ranges) {
   return { excerpt: out, ranges: mergeRanges(shown) };
 }
 
-/** 関連度。題に当たった語 ×4・全部の語が 1 つの発言に揃えば +2・log2(1 + 一致した発言の数)・新しさ（30 日で 1 減る） */
+/**
+ * 関連度。題に当たった語 ×4・全部の語が 1 つの発言か題に揃えば +2・log2(1 + 一致した発言の数)・新しさの減点（30 日で 1。上限 3）。
+ * 減点に上限があるので、題に当たった古い会話が、新しい本文だけの当たりの下へ沈み続けない。
+ */
 export function relevanceScore({ titleTerms, allInOne, hitCount, lastModified }, now) {
   const age = Number.isFinite(lastModified) ? Math.max(0, now - lastModified) / DAY_MS : 0;
-  return titleTerms * 4 + (allInOne ? 2 : 0) + Math.log2(1 + hitCount) - age / 30;
+  return titleTerms * 4 + (allInOne ? 2 : 0) + Math.log2(1 + hitCount) - Math.min(MAX_AGE_PENALTY, age / 30);
 }
 
 const timeOf = (at) => {
@@ -277,7 +282,8 @@ export function matchSession(meta, msgs, terms, opts) {
   if (fieldMask.place) matched.push("place");
   if (textSeen) matched.push("message");
   if (toolSeen) matched.push("toolInput");
-  return { titleTerms: bits(titleMask), allInOne, hitCount, matched, top };
+  // 全部の語が題に揃う会話も「揃う」に数える（古い会話の題の一致が、新しい本文だけの当たりの下へ沈まないように）
+  return { titleTerms: bits(titleMask), allInOne: allInOne || (terms.length > 0 && titleMask === all), hitCount, matched, top };
 }
 
 /** 抜粋に選んだ発言を SearchResult の hit の形にする */

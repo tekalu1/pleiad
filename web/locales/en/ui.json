@@ -1697,7 +1697,7 @@
     "settings": "Settings",
     "closeSidebarTitle": "Close sidebar (Ctrl+B)",
     "closeSidebar": "Close sidebar",
-    "search": "Search",
+    "search": "Search conversations",
     "filterTitle": "Filter by working directory, status, or agent",
     "filterOutside": "This conversation doesn't match the filters",
     "clearFilter": "Clear filters",
@@ -2178,6 +2178,41 @@
       "menu": "Menu",
       "sidebar": "Sidebar"
     },
+    "search": {
+      "title": "Search conversations ({{key}})",
+      "clear": "Clear search",
+      "recent": "Recent searches",
+      "results": "Search results",
+      "count_one": "{{count}} conversation",
+      "count_other": "{{count}} conversations",
+      "none": "No matching conversations",
+      "more_one": "{{count}} more",
+      "more_other": "{{count}} more",
+      "searching": "Searching",
+      "sort": {
+        "relevance": "Relevance",
+        "recent": "Newest",
+        "toRelevance": "Sort by relevance",
+        "toRecent": "Sort by newest"
+      },
+      "who": {
+        "user": "You",
+        "assistant": "AI",
+        "tool": "Tool"
+      },
+      "hits_one": "{{count}} matching message",
+      "hits_other": "{{count}} matching messages",
+      "rowWho": "{{who}}: {{text}}",
+      "rowHits_one": "{{count}} match",
+      "rowHits_other": "{{count}} matches",
+      "delegated": "Delegated · {{parent}}",
+      "delegatedNoParent": "Delegated",
+      "keyHint": {
+        "move": "Select",
+        "open": "Open",
+        "clear": "Clear"
+      }
+    },
     "group": {
       "pickIcon": "Choose icon",
       "newSession": "New session with this status"
@@ -2195,7 +2230,17 @@
       "placeholder": "Filter",
       "inputLabel": "Filter options",
       "agents": "Agents (multiple)",
-      "all": "All"
+      "all": "All",
+      "period": "Period",
+      "periodToday": "Today",
+      "period7": "7 days",
+      "period30": "30 days",
+      "speaker": "Speaker",
+      "speakerUser": "You",
+      "speakerAssistant": "AI",
+      "include": "Include",
+      "includeDelegated": "Delegated conversations",
+      "includeTools": "Tool inputs"
     },
     "emoji": {
       "title": "Icon for \"{{status}}\"",

@@ -10,6 +10,8 @@
     "ui:activity.bgKind.claude",
     "ui:activity.bgKind.codex",
     "ui:changeLog.aiMark",
+    "ui:sidebar.filter.speakerAssistant",
+    "ui:sidebar.search.who.assistant",
     "ui:compaction.scheduledShort",
     "ui:changeLog.by.ai",
     "ui:changeLog.by.agent",

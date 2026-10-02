@@ -19,6 +19,7 @@ import { setupCodeCopy, copyText } from './code-copy.mjs';
 import { setupMessagePeek } from './message-peek.mjs';
 import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog } from './message-actions.mjs';
 import { mountFold, revealFold } from './fold.mjs';
+import { isSearchShortcut } from './session-find.mjs';
 import { captureViewState, restoreViewState } from './view-state.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
@@ -3289,7 +3290,9 @@ const slashSkills = setupSlashSkills({
 // ---------------------------------------------------------------- セッション一覧（web/side.mjs）
 
 const side = createSide({
-  onOpen: (id) => (id == null || id === pendingNewSession?.id ? startNew(state.draft) : select(id)),
+  onOpen: (id, jump) => (id == null || id === pendingNewSession?.id ? startNew(state.draft) : openFromSearch(id, jump)),
+  // 本文まで探す。画面は新しい WS コマンドを足さず、操作の一覧の sessions.search を汎用の invoke で呼ぶ（core/ops/sessions.mjs）
+  onSearch: (input) => cmd("invoke", { op: "sessions.search", args: input }),
   onNew: startNew,
   onSetStatus: (id, status) => {
     if (id == null) {
@@ -6323,8 +6326,9 @@ async function loadHistory(args, prev = null) {
  * 読めたら 1 回で描き替える。入力欄を止めない（止めると書いている途中でスマホのキーボードが閉じる）
  * fresh は作ったばかりの会話（startNew）。空なので骨組みも「読み込み中」も出さず、入力欄に触らない（書いている字が正本）。
  * retry は読み込みに失敗した今の会話を読み直す（「もう一度読む」。開き直しと同じ見せ方）
+ * jump は脇の検索の抜粋から開いたとき。読み込んだ後にその発言へ送って輪を付ける（openFromSearch・revealMessage）
  */
-async function select(id, { keepUpTo, reload = false, fresh = false, retry = false } = {}) {
+async function select(id, { keepUpTo, reload = false, fresh = false, retry = false, jump = null } = {}) {
   if (state.busy || (id === state.current && keepUpTo === undefined && !reload && !retry)) return;
   const quiet = reload && !retry && id === state.current && keepUpTo === undefined && !state.loadingSession;
   if (keepUpTo === undefined && !quiet && !fresh) setDrawer(false);
@@ -6360,6 +6364,45 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
   try {
     await loadAndPaint(id, { keepUpTo, quiet, fresh });
   } finally { if (freshSessionId === id) freshSessionId = null; }
+  if (jump && state.current === id && !state.loadingSession) revealMessage(jump);
+}
+
+/**
+ * 脇の検索の結果を押した。抜粋（jump）があればその発言へ飛び、無ければ（題・状態・場所だけの一致）ただ開く。
+ * 今開いている会話の抜粋なら、読み直さずにその発言へ送る
+ */
+async function openFromSearch(id, jump) {
+  if (!jump) return select(id);
+  if (id === state.current && !state.loadingSession) { if (narrowView.matches) setDrawer(false); revealMessage(jump); return; }
+  return select(id, { jump });
+}
+
+/**
+ * 検索で探した語を会話の中の検索へ引き継ぎ（開かない。Ctrl+F の 1 手で残りの一致へ進める）、その発言へ送って輪（note-flash）を付ける。
+ * 発言は uuid で引く（会話の行の data-uuid と、検索の結果の uuid は同じ値）。見つからなければ語だけ引き継ぐ
+ */
+function revealMessage({ uuid, role, query, speaker }) {
+  const m = [...thread.querySelectorAll('.m[data-uuid]')].find((x) => x.dataset.uuid === uuid) ?? null;
+  toc.carry(query, { scope: role === 'tool' ? 'tool' : speaker === 'user' ? 'user' : 'answer', uuid });
+  if (!m) return;
+  const mark = m.querySelector('mark.searchhit.active');
+  revealFold(mark ?? m);   // 長い発言の畳まれた部分に一致があれば、動かさずに開く（web/fold.mjs）
+  // 発言の頭を上から 90px の位置へ。長い発言で一致が画面の下に外れるときだけ、一致そのものへ送る
+  const row = m.closest('.mw') ?? m;
+  const deep = mark && mark.getBoundingClientRect().top - row.getBoundingClientRect().top > log.clientHeight - 160;
+  const target = deep ? mark : row;
+  nav.scrollToRow(target, 90, () => flashMessage(m, mark));
+}
+let flashedMessage = null, flashMessageTimer = 0;
+/** 着いた発言の吹き出しに輪を 1 度だけ（入力欄の上の一行・添付の入口と同じ note-flash）。一致のある塊があればその塊に */
+function flashMessage(m, mark) {
+  const body = mark?.closest('.body') ?? m.querySelector(':scope > .body') ?? m.querySelector('.body') ?? m;
+  clearTimeout(flashMessageTimer);
+  flashedMessage?.classList.remove('flash');
+  void body.offsetWidth;
+  body.classList.add('flash');
+  flashedMessage = body;
+  flashMessageTimer = setTimeout(() => { body.classList.remove('flash'); if (flashedMessage === body) flashedMessage = null; }, 1300);
 }
 
 async function loadAndPaint(id, { keepUpTo, quiet, fresh }) {
@@ -6974,6 +7017,15 @@ document.addEventListener('keydown', event => {
   if ((field.matches?.('input,textarea') || field.isContentEditable) && !field.closest?.('#prompt, .toc')) return;
   event.preventDefault();
   toc.focusSearch();
+});
+// 脇の会話検索へ移る（Ctrl+Shift+F。macOS は ⌘⇧F）。Ctrl+F は会話の中の検索のまま。脇が閉じていれば開く（狭い画面は引き出し）
+document.addEventListener('keydown', event => {
+  if (!isSearchShortcut(event)) return;
+  if (document.body.classList.contains('settings') || document.querySelector('dialog[open]')) return;
+  event.preventDefault();
+  if (narrowView.matches) setDrawer(true);
+  else if (document.documentElement.classList.contains('side-closed')) setSidebar(true);
+  side.focusSearch();
 });
 function openAutoCompactionSettings() { closeMeterPop(); onboarding.open('autoCompaction'); }
 $('contextMeter').onclick = () => {
