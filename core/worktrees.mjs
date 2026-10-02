@@ -97,9 +97,10 @@ export const publicEntry = (e) => ({
  * @param {(entry) => Promise<{ busy: string[], attached: { sessionId: string, kind: string }[] }>} [o.users] 使っているもの。
  *   busy は走っているターン・シェル・委譲の子（あれば消さない）、attached は cwd（予約を含む）がその中の会話
  * @param {(entry, sessionIds: string[]) => Promise<void>} [o.release] 消す前に、会話の cwd を元の場所へ戻す
+ * @param {boolean} [o.disabled] 作らない（create は reason: 'disabled'）。テストのサーバーが開発中のリポジトリに作業場所を残さないため（AGENT_HOST_WORKTREES=off）
  */
 export function createWorktrees({ dataDir, users = async () => ({ busy: [], attached: [] }), release = async () => {}, now = Date.now, io = fs,
-  retryMs = REMOVE_RETRY_MS, graceMs = NEW_GRACE_MS, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), archiveKeepMs = ARCHIVE_KEEP_MS, log = () => {},
+  disabled = false, retryMs = REMOVE_RETRY_MS, graceMs = NEW_GRACE_MS, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), archiveKeepMs = ARCHIVE_KEEP_MS, log = () => {},
   // 消す git の呼び出し（テストが「掴まれている」を差し込む）
   remove = wt.worktreeRemove, removeForced = wt.worktreeRemoveForced } = {}) {
   const file = path.join(dataDir, 'worktrees.json');
@@ -136,11 +137,12 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
   // ---------------------------------------------------------------- 作る
 
   /**
-   * cwd の Git ルートから、今の HEAD で分けた作業場所を作る。失敗は { ok: false, reason }（reason: not-git / no-commits / git）。
+   * cwd の Git ルートから、今の HEAD で分けた作業場所を作る。失敗は { ok: false, reason }（reason: not-git / no-commits / git / disabled）。
    * purpose: 'conversation'（人が分けた会話）か 'task'（委譲の子）。sessionId は使う会話、parentSessionId は取り込みを頼む相手（子なら依頼元）。
    * nested: 分けた作業場所の中からも作る（分けた作業場所の中で動く依頼元が子を分けるとき）
    */
   async function create({ cwd, sessionId = null, parentSessionId = null, taskId = null, purpose = 'conversation', nested = false, from = null }) {
+    if (disabled) return { ok: false, reason: 'disabled' };
     const info = await git.repoInfo(cwd);
     if (!info) return { ok: false, reason: 'not-git' };
     await load();

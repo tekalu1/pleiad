@@ -126,10 +126,11 @@ export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => []
    * 子を分けるか。isolate が真偽で来ればそれに従う（git でなければ分けない）。省略なら:
    * 子が書く（書き込みの範囲のモード・書く種類）うえで、同じリポジトリに書き手が（この子のほかに）いるときだけ分ける。
    * 書き手 = 依頼元が今のターンでファイルを変えている・走っている別の会話や子・同じターンから並列に呼ばれた別の子
-   * 戻り: { isolate, why }。why: explicit / not-git / readonly / alone / writers
+   * 戻り: { isolate, why }。why: explicit / disabled / not-git / readonly / alone / writers
    */
   async function decideIsolation({ owner, turn, cwd, kind, writes, isolate }) {
     if (isolate === false) return { isolate: false, why: 'explicit' };
+    if (worktreeOptions.disabled) return { isolate: false, why: 'disabled' };
     const info = await repoOf(cwd);
     if (!info) return { isolate: false, why: 'not-git' };
     if (isolate === true) return { isolate: true, why: 'explicit' };
