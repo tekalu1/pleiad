@@ -326,5 +326,22 @@
     "commandLifetime": "Run commands with a time limit. Start persistent processes (servers and graphical apps) in the background, record their PIDs, and stop them yourself; do not wait indefinitely for exit with commands such as `Start-Process -Wait`.",
     "child": "You are a delegated child conversation, so do not delegate further.",
     "codexPolicy": "Even in Codex modes without approvals (full, YOLO), Codex's own safety check may reject some commands before they run (for example `blocked by policy`). If a command is rejected, do not try to get around it by rewording it or using a different command. Report the commands that could not run, the reasons, and what was left behind as a result (files that could not be deleted, processes that could not be stopped, and so on)."
+  },
+  "ops": {
+    "app": {
+      "status": {
+        "summary": "Return Pleiad's version, start time, display language, and the number of running tasks."
+      }
+    },
+    "errors": {
+      "NOT_FOUND": "No such operation: {{id}}.",
+      "HOST_SCREEN_ONLY": "This operation can only be done from the screen of the PC where Pleiad is running.",
+      "INVALID": "Invalid arguments: {{detail}}",
+      "READ_ONLY_MODE": "This conversation is in a read-only or plan mode, so it cannot change Pleiad's state ({{id}}).",
+      "NEEDS_UI": "{{id}} widens what the agent is allowed to do, so it cannot be run from here. Ask the user to do it on Pleiad's screen.",
+      "NEEDS_APPROVAL": "{{id}} needs the user's approval in this conversation.",
+      "INVALID_RISK": "The operation has an invalid risk level ({{id}}).",
+      "INVALID_PRINCIPAL": "The caller is not a valid principal ({{id}})."
+    }
   }
 }

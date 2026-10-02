@@ -9,6 +9,7 @@
     "ui:changeLog.aiMark",
     "ui:compaction.scheduledShort",
     "ui:changeLog.by.ai",
+    "ui:changeLog.by.agent",
     "ui:changeLog.by.ply",
     "ui:chat.shell.exit",
     "ui:hooks.row.matcher",

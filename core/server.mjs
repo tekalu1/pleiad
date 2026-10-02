@@ -36,6 +36,7 @@ import { readPreview, listTreeFolder, resolveReference, cwdAt, inspectFile, prev
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
+import { registry as opsRegistry } from './ops/index.mjs';
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
@@ -816,10 +817,10 @@ function interruptedOf(value) {
   return { at: value.at, reason: INTERRUPT_REASONS.has(value.reason) ? value.reason : "user" };
 }
 
-/** 状態を最後に変えたのが AI なら { reason, reasonKey?, reasonParams? }、そうでなければ null */
+/** 状態を最後に変えたのが AI（host のツールの ai・操作の一覧の agent。ADR 0081）なら { reason, reasonKey?, reasonParams? }、そうでなければ null */
 function statusChangedByAi(history) {
   const row = [...(history ?? [])].reverse().find(h => h?.field === "status");
-  if (row?.by !== "ai") return null;
+  if (row?.by !== "ai" && row?.by !== "agent") return null;
   return { reason: row.reason ?? null, ...(row.reasonKey ? { reasonKey: row.reasonKey, ...(row.reasonParams ? { reasonParams: row.reasonParams } : {}) } : {}) };
 }
 
@@ -1615,6 +1616,11 @@ async function subagentState(t, sessionId, agentId) {
  * いま動いているものを集める。
  * 会話が終わってもサブエージェントが残ることがあるので、数だけでも常に見えるようにする。
  */
+// 操作の一覧（core/ops/）の handler へ渡す、サーバーの状態への口
+const opsApp = {
+  status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
+};
+
 async function runningWork() {
   const turns = [...runtime.turns.values()].map((t) => ({ kind: "turn", ...t.info }));
 
@@ -3108,8 +3114,9 @@ wss.on("connection", (ws, req) => {
     // Command IDs are scoped to a socket. Broadcast events, never private replies
     // (connection-check receipts and concurrent clients can share the same ID).
     // code: 失敗の種類。画面は文言（言語で変わる）ではなくこれで見分ける
-    const reply = (ok, payload, code) => {
-      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(ok ? { result: payload } : { error: payload, ...(code ? { code } : {}) }) }));
+    // extra: 失敗に添える機械が読む欄（invoke の issues）
+    const reply = (ok, payload, code, extra) => {
+      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) }));
     };
 
     let releaseUpdateGate;
@@ -3980,6 +3987,12 @@ wss.on("connection", (ws, req) => {
 
         case "running":
           return reply(true, await runningWork());
+
+        // 操作の一覧（core/ops/）の汎用の口。画面は新しい機能をここから呼ぶ（protocol.mjs を触らずに増やせる。ADR 0080）
+        case 'invoke': {
+          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, msg.args?.op, msg.args?.args, { locale: locale.lang, app: opsApp });
+          return r.ok ? reply(true, r.result) : reply(false, r.error, r.code, r.issues ? { issues: r.issues } : undefined);
+        }
 
         // 次に新しく始めるときの既定
         case "onboardingStatus":

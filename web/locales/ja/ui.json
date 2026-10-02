@@ -1186,6 +1186,7 @@
     "by": {
       "human": "あなた",
       "ai": "AI",
+      "agent": "AI",
       "ply": "Pleiad"
     }
   },

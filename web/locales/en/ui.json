@@ -1218,6 +1218,7 @@
     "by": {
       "human": "You",
       "ai": "AI",
+      "agent": "AI",
       "ply": "Pleiad"
     }
   },
