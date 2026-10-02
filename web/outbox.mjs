@@ -6,7 +6,8 @@ const statusLabel = (status) => (STATUSES.includes(status) ? t(`outbox.status.${
 
 // 送信待ちが何を待っているか（core/message-queue.mjs の waiting）
 function queuedLabel(wait) {
-  if (wait?.reason === 'turn') return t('outbox.waitTurn');
+  // 次のターンの設定の予約がある間は、main の返答が終わった時点（裏だけを待つ間も含む）で流れる（core/message-queue.mjs）
+  if (wait?.reason === 'turn') return t(wait.detail === 'reserved' ? 'outbox.waitReply' : 'outbox.waitTurn');
   if (wait?.reason === 'order') return t('outbox.waitOrder');
   return statusLabel('queued');
 }

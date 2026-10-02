@@ -1413,6 +1413,8 @@ function makeEmit(turn) {
       else turn.info.background = Array.isArray(event.tasks) ? event.tasks : [];
       if (event.type === "phase") watchChildBackground(turn);
       broadcastRunning();
+      // 裏だけを待つ間は、次のターンの設定の予約があっても途中送信できる。待っている送信をすぐ流す
+      if (event.type === "phase" && turn.info.phase === "waiting" && turn.info.sessionId) outbox.kick(turn.info.sessionId).catch(() => {});
     }
     // 新規セッションは走り出してから id が決まる。仮キーを本物へ差し替える。
     // sessionId が null の session は「まだ決まっていない」ので差し替えない
@@ -1891,7 +1893,7 @@ const outbox = createMessageQueue({
     const steer = turn.control.steer;
     // 送るのは outbox の item そのもの（本文だけではない）。バックエンドは item.id を
     // 相手に預け、「渡った」合図（userMessage.delivered）でこの id を返してくる
-    return { turn, blocked: turn.ac.signal.aborted || Boolean(turn.outcome),
+    return { turn, blocked: turn.ac.signal.aborted || Boolean(turn.outcome), phase: turn.info.phase,
       steer: steer ? item => steer(item) : null };
   },
   start: runTurn,

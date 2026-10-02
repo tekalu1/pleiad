@@ -1506,6 +1506,8 @@ main.dropping #log{background:var(--surface-1)}
 .next-settings{display:flex;align-items:center;gap:12px;background:var(--surface-2);border-radius:var(--r-m);padding:10px 16px;margin-bottom:10px;font-size:var(--fs-s)}
 .next-settings .btn{margin-left:auto;flex:none;font-size:var(--fs-s)}
 .next-settings b{font-weight:600}
+/* 裏だけを待っている間の注記（今の送信は今のターンの設定で処理される。docs/design-system.md「入力欄の設定」） */
+.next-behind{margin-top:4px;color:var(--ink-weak)}
 /* エージェントを変える予約のときの引き継ぎの 1 行と「詳しく」（既定は閉じる。docs/design-system.md「入力欄の設定」） */
 .next-handoff{margin-top:4px;color:var(--ink-weak)}
 .next-handoff>summary{list-style:none;cursor:pointer}
