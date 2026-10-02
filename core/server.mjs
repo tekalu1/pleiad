@@ -71,7 +71,7 @@ import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
 import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
-import { validBrowserPref } from '../web/browser-confirm-policy.mjs';
+import { validBrowserPref, externalOrigin } from '../web/browser-confirm-policy.mjs';
 import { computerUsePrefs, validComputerUse } from '../web/computer-prefs.mjs';
 import { computerUseCapability } from './computer-use-capability.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
@@ -1837,6 +1837,7 @@ agentBrowser?.configureAuthorization(createBrowserSiteApprovals({
   remember: async site => { const prefs = await store.rememberBrowserSite(site); emitGlobal({ type: 'prefs', sessionId: null, prefs, locale }); },
 }));
 agentBrowser?.prefs(await store.getPrefs());
+agentBrowser?.loadPolicy(await store.getPrefs());
 
 // ---- コンピューターの操作（docs/computer-use.md、ADR 0070〜0075） ----------------------------
 // driver は main（Electron）への口。Electron でない起動では null で、ply_computer は渡さない。
@@ -3863,7 +3864,7 @@ wss.on("connection", (ws, req) => {
             if (msg.command !== 'openPath' || args.returnPath !== true) {
               await openOnHost(msg.command === 'openPath' ? 'open' : 'reveal', file, { directory });
             }
-            return reply(true, { path: file });
+            return reply(true, { path: file, cwd: resolved.cwd ?? null });
           } catch (error) {
             const failure = previewFailure(error);
             return reply(false, failure.code === 'read-failed' && error?.message ? error.message : failure.message);
@@ -3879,7 +3880,9 @@ wss.on("connection", (ws, req) => {
             const record = await history.findVisualization(args.sessionId, await resolveBackendForSession(args.sessionId).catch(() => null), { id: args.id, at: args.at });
             if (!record) return reply(false, t('filePreview.visualize.snapshotNotFound'));
             if (!osActionAllowed()) return reply(false, t('files.tooMany'));
-            const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'), { prefs: await store.getPrefs() });
+            // allow: 内蔵ブラウザーの「読み込む」で、そのタブだけに加える https の出どころ（docs/inapp-browser.md）
+            const once = Array.isArray(args.allow) ? [...new Set(args.allow.slice(0, 50).map(externalOrigin).filter(Boolean))] : [];
+            const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'), { prefs: await store.getPrefs(), once, report: args.returnPath === true });
             if (args.returnPath !== true) await openOnHost('open', file, { directory: false });
             return reply(true, { path: file });
           } catch (error) {
@@ -4102,6 +4105,7 @@ wss.on("connection", (ws, req) => {
             if (!validBrowserPref(key, value)) return reply(false, t('settings.unknownPrefValue', { key, value: String(value) }));
             const prefs = await savePref(key, value);
             agentBrowser?.prefs(prefs);
+            agentBrowser?.loadPolicy(prefs);
             return reply(true, prefs);
           }
           // computer use の設定（docs/computer-use.md）。全体を受けて形を検査し、変わったときだけ全画面へ流す

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
+import { previewPolicy } from '../web/browser-confirm-policy.mjs';
 
 export function browserSocketDirectory(dir, platform = process.platform) {
   const hash = crypto.createHash('sha256').update(path.resolve(dir)).digest('hex').slice(0, 24);
@@ -18,9 +19,11 @@ export function parentPortBrowser(port, { timeoutMs = 10_000 } = {}) {
   let next = 0;
   let authorize = async () => ({ allow: false });
   let confirmationEnabled = false;
+  let policyMessage = { type: 'browser-load-policy', confirm: false, origins: [] };
   const approvals = new Map();
   port.on('message', event => {
     const message = event?.data ?? event;
+    if (message?.type === 'browser-load-policy-request') { port.postMessage(policyMessage); return; }
     if (message?.type === 'agent-browser-prefs-request') { port.postMessage({ type: 'agent-browser-prefs', enabled: confirmationEnabled }); return; }
     if (message?.type === 'agent-browser-authorize-cancel') { approvals.get(message.id)?.abort(); return; }
     if (message?.type === 'agent-browser-authorize') {
@@ -39,6 +42,12 @@ export function parentPortBrowser(port, { timeoutMs = 10_000 } = {}) {
   });
   return {
     configureAuthorization(handler) { authorize = handler; },
+    /** 「外部の読み込みの前に確認」と、常に許可した https の出どころ（main が内蔵ブラウザーの file: のタブで止める） */
+    loadPolicy(prefs) {
+      const { confirm, origins } = previewPolicy(prefs);
+      policyMessage = { type: 'browser-load-policy', confirm, origins };
+      port.postMessage(policyMessage);
+    },
     endTurn(sessionId) { port.postMessage({ type: 'agent-browser-turn-ended', sessionId }); },
     prefs(prefs) { confirmationEnabled = prefs.confirmAgentSites === true; port.postMessage({ type: 'agent-browser-prefs', enabled: confirmationEnabled }); },
     endpoint(sessionId, { unlock = false } = {}) { return new Promise((resolve, reject) => {

@@ -30,6 +30,7 @@ function attachAgentBrowserBridge(worker, panel) {
   } });
   worker.on('message', async message => {
     if (message?.type === 'agent-browser-turn-ended') { navigation.cancel(message.sessionId); return; }
+    if (message?.type === 'browser-load-policy') { panel.setLoadPolicy?.({ confirm: message.confirm === true, origins: message.origins }); return; }
     if (message?.type === 'agent-browser-prefs') { enabled = message.enabled === true; return; }
     if (message?.type === 'agent-browser-authorize') { const resolve = pending.get(message.id); pending.delete(message.id); resolve?.(message); return; }
     if (message?.type === 'agent-browser-rebind') { relay.rebind(message.from, message.to); return; }
@@ -42,6 +43,7 @@ function attachAgentBrowserBridge(worker, panel) {
       worker.postMessage({ type: 'agent-browser-endpoint', id: message.id, ok: false, error: error.message });
     }
   });
+  worker.postMessage({ type: 'browser-load-policy-request' });
   worker.postMessage({ type: 'agent-browser-prefs-request' });
   return {
     stop(sessionId) { relay.disconnect(sessionId, true); },
