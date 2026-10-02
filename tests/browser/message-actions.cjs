@@ -1,6 +1,6 @@
 // playwright-cli -s=message-actions run-code --filename=tests/browser/message-actions.cjs
 // 認証済みの、実データと分離した fake サーバーを開いてから実行する。
-// 発言の操作（コピー・⋯・編集して再送信・再送信・分岐して送る）。送り直しは同じ会話の中で行う（ADR 0089）。
+// 発言の操作（コピー・⋯・編集して再送信・再送信・分岐して送る）。送り直しは同じ会話の中で行う（ADR 0091）。
 async page => {
   // run-code は Node のモジュールも process も使えない。このリポジトリの絶対パスを書いてから実行する。
   const ROOT = 'C:/path/to/ply';
@@ -44,7 +44,9 @@ async page => {
   const ready = async () => {
     await page.waitForFunction(async () => {
       const work = await window.messageActionsProbe('running');
-      return !work.turns.length && !document.querySelector('.branch-transition') && !document.querySelector('#send').disabled;
+      // ターンの終わりの履歴の読み直しが済んで、自分の発言（⋯ の編集・再送信の元）に uuid が付くまで待つ
+      return !work.turns.length && !document.querySelector('.branch-transition') && !document.querySelector('#send').disabled
+        && [...document.querySelectorAll('.m.user:not(.cmd)')].every(m => m.dataset.uuid);
     });
   };
   const send = async text => {

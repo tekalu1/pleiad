@@ -1905,7 +1905,7 @@ export const backend = {
   },
 
   /**
-   * 同じ会話の中で、ある発言（ユーザーの発言の item id）の手前まで巻き戻す（conversations.mjs の rewind。ADR 0089）。
+   * 同じ会話の中で、ある発言（ユーザーの発言の item id）の手前まで巻き戻す（conversations.mjs の rewind。ADR 0091）。
    * 切れるのはターン単位なので、その発言がターンの先頭にあるときだけ（ターンの途中に差し込んだ送信は、前半も道連れになるので断る）。
    * まず thread/revert（paginated のスレッドだけ。codex-cli 0.156.1。履歴を置き換え、thread id は変わらない）。
    * 断られたら（以前に作った legacy のスレッド）thread/fork { beforeTurnId } で別スレッドに差し替える（thread id が変わるので返す）。

@@ -763,7 +763,7 @@ function forkAtReplyEnd(head) {
 }
 
 /**
- * 発言の「編集して再送信」「再送信」。基本は同じ会話の中で送り直す（後ろの発言は消える。ADR 0089）。
+ * 発言の「編集して再送信」「再送信」。基本は同じ会話の中で送り直す（後ろの発言は消える。ADR 0091）。
  * 送り直すと消えるものが 1 つでもあるときは、発言（編集欄）の直下の帯で「送り直す」と「分岐して送る」を選ぶ。
  * 何も消えないときは帯を出さず、再送信ならすぐ送り直す（編集は編集欄の［送り直す］で送る）
  */
@@ -896,6 +896,8 @@ async function rewindSend({ m, source, tail, text, attached }) {
     provisionalByMessage.delete(messageId);
     for (const w of doomed) w.classList.remove('leaving');
     composerError(t('chat.resend.failed', { error: e.message }));
+    // 巻き戻しは済んで、送信待ちへの受け付けだけが失敗したこともある。画面を履歴に合わせ直す（何も変わっていなければ動かない）
+    if (state.current === source) select(source, { reload: true }).catch(() => {});
     return false;
   } finally { rewindingNow = null; }
 }
@@ -984,7 +986,8 @@ function openResend(m, { draft, tail, edit }) {
   if (tail.any) {
     band = buildBand({ tail, onSend: send, onBranch: branch, onCancel: cancel });
     band.node.onkeydown = keys;
-    (editor ?? body).after(band.node);
+    // 発言の中身（添付の行・送信の状態）の下、発言の一番下。編集中は送信の状態の行を隠す（style.css）
+    m.append(band.node);
     input?.setAttribute('aria-describedby', `${band.node.id}t`);
   }
   resendOpen = { m, close };
@@ -6815,6 +6818,12 @@ async function syncHistory() {
     m.closest(".mw").dataset.key = `m:${idx}`;
     claimed.add(idx);
     j = idx + 1;
+  }
+  // 履歴の添字で描いた行にも、uuid の無いものがある。走っているターンの途中で読み直した（巻き戻して送り直した直後など）ときの
+  // 人の発言は、保存前の控えとして uuid 無しで来て m:<添字> の行になる。同じ添字の発言と役割・本文が合えば uuid を付ける
+  for (const m of thread.querySelectorAll('.mw[data-key^="m:"] .m[data-role]:not([data-uuid])')) {
+    const saved = state.messages[Number(m.closest('.mw').dataset.key.slice(2))];
+    if (saved?.uuid && saved.role === m.dataset.role && (m.dataset.role !== 'user' || (saved.text ?? '') === userRaw(m))) setUuid(m, saved.uuid);
   }
   branches.update(id, state.messages);
   if (!branches.has(id)) await branches.load(id, state.messages);

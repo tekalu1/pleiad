@@ -1,4 +1,4 @@
-// 同じ会話の中で、ある発言の手前まで巻き戻して送り直す（docs/message-fork.md「同じ会話で巻き戻す」、ADR 0089）。
+// 同じ会話の中で、ある発言の手前まで巻き戻して送り直す（docs/message-fork.md「同じ会話で巻き戻す」、ADR 0091）。
 // ここは形だけを扱う純粋な関数。ディスクにもバックエンドにも触れない。
 import { buildItems } from "../web/timeline.mjs";
 import { t } from "./i18n.mjs";

@@ -1,4 +1,4 @@
-// 同じ会話での巻き戻し（core/conversations.mjs の rewind。ADR 0089）の契約。身代わりのネイティブで、
+// 同じ会話での巻き戻し（core/conversations.mjs の rewind。ADR 0091）の契約。身代わりのネイティブで、
 // 保留の印・履歴の見かけ上の切り取り・提示の切り取り・ホスト管理への落とし先を測る。
 // 他のテストが store を先に読み込むので、自分のデータ置き場を持つ子プロセスで走らせる（tests/unit/server-rewind.mjs）
 import assert from "node:assert/strict";
@@ -91,7 +91,7 @@ const emit = () => {};
 
   const out = await backend.rewind(id, { beforeMessageId: "u2" });
   assert.deepEqual({ mode: out.mode, renumbered: out.renumbered, removed: out.removed },
-    { mode: "resume", renumbered: false, removed: { messages: 4, userMessages: 1 } }, "Claude の形は保留の印を置く");
+    { mode: "resume", renumbered: false, removed: { messages: 4, userMessages: 1, replies: 2 } }, "Claude の形は保留の印を置く");
   assert.deepEqual((await store.get(id)).rewind, { backend: "claude", nativeId: id, at: "a1", drops: "u2" });
   assert.equal(texts(await backend.getMessages(id)), "u1,a1", "次のターンまでは履歴を見かけ上切って返す");
   assert.equal(native.sessions.get(id).chain.length, 6, "JSONL（ネイティブ）はまだ動かない");

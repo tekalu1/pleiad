@@ -1885,7 +1885,7 @@ async function forkConversation({ sessionId, upToMessageId, beforeMessageId, tit
 }
 
 /**
- * 同じ会話の中で、ある発言（beforeMessageId。自分の発言）の手前まで巻き戻す（sendMessage の rewind。ADR 0089）。
+ * 同じ会話の中で、ある発言（beforeMessageId。自分の発言）の手前まで巻き戻す（sendMessage の rewind。ADR 0091）。
  * 会話の id は変わらない。分岐（forkConversation）と同じ排他（forking）で、実行中のターン・分岐・別の送り直しと重ならない。
  * 実行中のターンがあるときは stopRunning: true のときだけ止める（止まり終えてから巻き戻す）。
  * 巻き戻しは、バックエンドの履歴の切り方（conversations.mjs の rewind）のほかに、切り口より後のものを整える:
@@ -4166,7 +4166,7 @@ wss.on("connection", (ws, req) => {
           if (typeof messageId !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(messageId)) throw new Error(t('send.messageIdRequired'));
           if (typeof prompt !== 'string' || !prompt.trim()) throw new Error(t('send.messageRequired'));
           if (attachments !== undefined && !Array.isArray(attachments)) throw new Error(t('send.invalidAttachments'));
-          // 同じ会話の中で、発言の手前まで巻き戻して送り直す（ADR 0089）。{ beforeMessageId, stopRunning? }
+          // 同じ会話の中で、発言の手前まで巻き戻して送り直す（ADR 0091）。{ beforeMessageId, stopRunning? }
           if (rewind !== undefined && (typeof rewind?.beforeMessageId !== 'string' || !rewind.beforeMessageId)) throw new Error(t('rewind.invalid'));
           compactionScheduler.cancel(sessionId);
           const args = { prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}) };

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-// 同じ会話の中で巻き戻して送り直したあと、モデルが捨てた発言の中身を覚えていないこと（ADR 0089）。
+// 同じ会話の中で巻き戻して送り直したあと、モデルが捨てた発言の中身を覚えていないこと（ADR 0091）。
 // Claude は resume + resumeSessionAt + resumeDropsTurn、Codex は thread/revert（paginated）。
 // 使う実行先は AGENT_HOST_E2E_REWIND_BACKENDS（既定 claude,codex）。Codex のモデルは AGENT_HOST_E2E_CODEX_MODEL、Claude は AGENT_HOST_E2E_CLAUDE_MODEL（既定 haiku）
 export const name = "rewind";

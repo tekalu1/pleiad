@@ -5,21 +5,73 @@
 分岐でき、元のターンは継続する。切り替え・送信準備・重複分岐はロックで保護する。
 分岐と実行中ターンは別のロックを持つ。「ここから分岐」は末尾でも必ず発言IDを送る。
 画面は子の作成と履歴取得が成功してから選択を切り替える。
+自分の発言の「編集して再送信」「再送信」は分岐ではなく同じ会話の中での巻き戻し（次の節）で、分岐を使うのは「ここから分岐」と、送り方の帯の［分岐して送る］だけ。
 
-## 編集して再送信・再送信
+## 編集して再送信・再送信: 同じ会話の中で巻き戻して送り直す（承認済み（2026-10-03）、[ADR 0091](adr/0091-rewind-in-place.md)）
 
-ユーザー発言の操作は `fork(..., { beforeMessageId })` で対象発言の直前までを複製する。
-`upToMessageId` との同時指定と、見つからない発言IDはエラー。最初の発言の場合だけ履歴・提示が0件の分岐になる。
-この経路は全エージェントでホストの履歴複製を使い、親に `beforeMessage` と直前の `atMessage` を保存する。
-根の分岐は同じ本文を再送しても位置が変わらず、空の子からも親へ戻れる。
+自分の発言の「編集して再送信」「再送信」は、分岐ではなく**同じ会話の中で、対象の発言の手前まで巻き戻して送り直す**。
+会話の id・脇の一覧の行・画面は変わらない。対象の発言とその後ろ（返答だけでも）は消え、新しい本文が続く。画面の決まり
+（送り方の帯・キーボード・実行中の形）は docs/design-system.md「発言の操作」。分岐して残したいときは帯の［分岐して送る］で、
+こちらは下の「分岐して送る」（今の経路）を使う。「元に戻す」と版の切り替え（‹ 1/2 ›）は作らない。
 
-編集は吹き出し内で行い、Ctrl+Enter（または ⌘+Enter）で送信、Escで取り消す。元の入力欄の下書きは保持する。
-添付は元の発言に結び付いたものを復元し、自動挿入された添付行を編集本文から外す。
-分岐先に本文・添付を下書きとして保存してから切り替え、既存の送信処理へ渡す。
-送信の受領に失敗した場合は分岐先の入力欄に保持する。分岐・保存・履歴取得の失敗では元の会話を表示したまま案内する。
+### 操作
 
-実行中は全エージェントでホスト側の履歴複製を使う。保存前の発言IDや選択範囲に未完了ツールがある場合は
-再試行を案内する。ID省略時は保存済みの末尾まで。送信待ち・承認待ち・下書きはコピーしない。
+`sendMessage { sessionId, messageId, prompt, attachments?, rewind: { beforeMessageId, stopRunning? } }` の 1 つ（`core/server.mjs` の
+`rewindConversation`）。`beforeMessageId` は自分の発言（スラッシュコマンド・`!` の行・システム側の行・返答は断る）。
+
+- `forkConversation` と同じ排他（`forking`）で、実行中のターン・分岐・別の送り直しと重ならない。実行中のターンがあれば、`stopRunning: true`
+  のときだけ止めてから巻き戻す（止まり終えるまで最大 20 秒待つ）。`stopRunning` が無ければ断る（`SESSION_RUNNING`）。
+  止めたことは中断として残さない（中断の印・止めたものを消す）。
+- 同じ `messageId` の再送（応答が届かなかった）は巻き戻し直さず、受け付け済みの項目を返す。
+- 返り値は受け付けた項目に `rewind: { mode: 'resume' | 'thread' | 'host', renumbered, removed: { messages, userMessages, replies } }`。
+  完了は `rewind` イベント（`renumbered`・`removed`）で他の画面にも知らせ、画面は履歴を静かに読み直す
+  （自分が送り直した画面は、送り終えてから自分で読み直す）。
+- 送れなかったら（受け付けの前の失敗）画面は畳んだ行を戻して理由を出す。受け付けた後の失敗は、送信待ちの「失敗」として残る（再送か取り消し）。
+
+### 巻き戻し方（`core/conversations.mjs` の `wrapped.rewind` / `wrapped.runTurn`）
+
+| 会話 | 巻き戻し方 | 落とし先 |
+|---|---|---|
+| Claude（`capabilities.rewind: 'resumeAt'`） | 次のターンが `resume + resumeSessionAt + resumeDropsTurn`。JSONL は次のターンまで動かないので、sidecar の `rewind { backend, nativeId, at, drops }`（保留の印）で履歴を見かけ上切って返す | 最初の発言・今のネイティブの区間の外・切り口が見つからない・`resumeDropsTurn` の拒否（`Resume rejected by --resume-drops-turn:`）→ ホスト管理。拒否は繰り返し再試行しない |
+| Codex（`'thread'`） | 今すぐ `thread/revert { beforeTurnId }`（paginated のスレッド） | legacy は `thread/fork { beforeTurnId }` で別スレッドに差し替え（`nativeId` を替える。残す発言の uuid は付け直し）→ ターンの途中の発言・どちらもだめならホスト管理 |
+| Antigravity・ホスト管理・引き継ぎ済み | Pleiad の履歴を切り、`nativeId = null` にして次のターンで引き継ぐ。生きている agy のプロセスは手放す | — |
+
+- **保留の印は、捨てる発言がまだ鎖にある間だけ効く。** 次のターンが葉を付け替えれば、鎖から捨てる発言が消えて印は効かなくなる
+  （古い印で今の会話を切らない。送信が取り消されても、次のターンは必ず印を渡すので、画面から消した発言をモデルが見ることもない）。
+  ネイティブの uuid は、ホスト記録のある会話の `<backend>:<nativeId>:<uuid>` から接頭辞を外して渡す。
+- **ホスト管理に落とす**とは、履歴を切って `nativeId = null`・`base = 残した件数` にし、次のターンが引き継ぎの文（上の「保存と引き継ぎ」）で新しい
+  ネイティブの会話を起こすこと。ネイティブだけだった会話は、同じ id の記録を作る（`segments` に元のネイティブの id を持つので一覧に二重に出ない）。
+  最初の発言をやり直したときは、その発言から付いた題を付け直す（人が付けた題は残す）。
+- 切り口は「対象の発言の直前の発言」。提示（添付・可視化・git の行）は「ここから分岐」と同じ選び方（`buildItems` の並びで、残す発言より前に並ぶものと、
+  残す発言に結び付いた添付）で切る。AI の提示に時刻が無く決められないときは、何も変える前に断る。
+
+### 整合を取るもの
+
+| もの | 扱い |
+|---|---|
+| 送信待ち（outbox） | 送れていないものは全部取り消す（どれも切り口より後に送ったもの） |
+| 委譲した子 | 切り口より後に作られた子は取り消す（完了通知も届けない）。子の会話そのものは残る（`cancelOwner(owner, { since })`） |
+| ターンの外の裏の作業 | 止める（Codex の端末など） |
+| 渡し済みの控え `contextSession.delivered` | 捨てる（巻き戻した先のモデルは、捨てたターンで渡された本文を持っていない） |
+| 中断の印・止めたもの | 消す（中断した位置が消える） |
+| 圧縮の記録 | 切り口より後を捨てる |
+| 提示・添付 | 切り口より後を捨てる（ホスト記録の分と sidecar の JSONL の分） |
+| 下書き | 触らない。編集した本文は送信に直接渡す |
+| 脇の一覧の状態・グループ | 変わらない（同じ会話） |
+| 分岐した子（既存の枝） | 切り口より後を指す枝は、`branches.load` が共通接頭辞で分岐点を決める（コードを読んだだけで、画面での確認は未） |
+
+### 分岐して送る
+
+帯の［分岐して送る］は今の経路そのまま: `fork(…, { beforeMessageId })` が対象の発言の直前までを複製した子を作り（親に `beforeMessage` と直前の `atMessage`
+を保存）、子へ切り替えて送る。`upToMessageId` との同時指定と、見つからない発言 ID はエラー。最初の発言の場合だけ履歴・提示が 0 件の分岐になる。
+この経路は全エージェントでホストの履歴複製を使う。添付は元の発言に結び付いたものを復元し、自動挿入された添付行を編集本文から外す。分岐先に本文・添付を
+下書きとして保存してから切り替え、既存の送信処理へ渡す。送信の受領に失敗した場合は分岐先の入力欄に保持する。分岐・保存・履歴取得の失敗では元の会話を表示した
+まま案内する。
+
+### 分岐（ここから分岐）
+
+実行中は全エージェントでホスト側の履歴複製を使う。保存前の発言 ID や選択範囲に未完了ツールがある場合は再試行を案内する。ID 省略時は保存済みの末尾まで。
+送信待ち・承認待ち・下書きはコピーしない。
 
 停止中でネイティブが `capabilities.forkMessage` を宣言する Claude の未切り替え会話は SDK の指定メッセージ分岐を使う。Codex とホスト管理会話は
 正規化済みの履歴を複製する。SDK・実行アダプターは継続して使い、初回の再開だけ文脈を渡す。
@@ -33,7 +85,8 @@ Codex の UI の発言 ID は 1 ターンに複数ある（userMessage / agentMe
 `thread/revert { threadId, beforeTurnId }` がターン単位で履歴を置き換える（`thread/reverted` 通知。続けて `turn/start` もできる）が、
 `historyMode: "paginated"` のスレッドだけで、以前に作った legacy のスレッドは `thread/revert only supports paginated threads` で断られる。
 `thread/start` の既定は paginated。legacy の `thread/fork { beforeTurnId }` は効くが、子も legacy のまま。
-巻き戻した後にモデルが捨てた内容を見ないかは、使用上限に当たって未確認。
+巻き戻した後にモデルが捨てた内容を見ないかは、使用上限に当たって未確認（Oct 4 2:46 AM まで走れない）。アダプター（`rewind`）が実機の app-server に対して
+`thread/revert` で履歴を切ること（ターンが failed のままでも、ターンの先頭の userMessage から引ける）は 2026-10-03 に確かめた。
 
 Claude は `query({ resume, resumeSessionAt, resumeDropsTurn })` で同じ session id・同じ JSONL のまま巻き戻せる（SDK 0.3.258 で確認）。
 JSONL は消さずに追記され、`getSessionMessages` は最新の葉の鎖を返す。切り口を間違えると `resumeDropsTurn` が `Resume rejected by --resume-drops-turn:` を投げる。
@@ -87,3 +140,11 @@ JSONL は消さずに追記され、`getSessionMessages` は最新の葉の鎖�
 - `npm run test:e2e -- fork`: 実際の Codex モデルに、前半のコードだけを引き継げることを確認。
   使用モデルは `AGENT_HOST_E2E_CODEX_MODEL` で指定可能。
 - Playwright CLI: 「ここから分岐」による子への切り替え、元の会話への枝、保存失敗時の選択維持とエラー表示。
+- 同じ会話での巻き戻し: `tests/lib/rewind-storage-worker.mjs`（身代わりのネイティブで、保留の印・履歴の見かけ上の切り取り・提示の切り取り・拒否のホスト管理への落とし先・
+  Codex の revert / fork / 失敗・Antigravity の形）、`tests/unit/server-rewind.mjs`（fake の 4 つの形と、本物の Codex アダプター + 身代わりの app-server で、
+  同じ会話・件数・送信待ちの取り消し・実行中・検査）、`tests/lib/fork-contract.mjs` の `checkRewind`（Antigravity から回す共通契約）、
+  `tests/unit/server-context.mjs`（渡し済みの控えを捨てる）、`tests/unit/resend-band.mjs`。
+- `npm run test:e2e -- rewind`: 実際の Claude（既定 haiku）・Codex で、巻き戻した先のモデルが捨てた発言のコードを覚えていないこと（続きのターンでも）。
+  Claude は 2026-10-03 に通した。Codex は使用上限で走れなかった。
+- Playwright CLI（`tests/browser/message-actions.cjs`）: 編集・再送信の帯の出る条件と文・薄くする範囲・キーボード・同じ会話での送り直し（会話・一覧が増えない）・
+  後ろが無いときは帯なし・実行中の止めて送り直し・分岐して送る・送れなかったときの復帰・360px。

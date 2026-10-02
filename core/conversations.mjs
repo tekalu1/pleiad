@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import * as store from "./store.mjs";
 import { MAX_RESULT_CHARS } from "./backends/shared.mjs";
 import { readPresents, keepPresents } from "./history.mjs";
-import { applyRewindMark, markIsLive, nativeUuid, keptPresentIndexes } from "./rewind.mjs";
+import { applyRewindMark, markIsLive, nativeUuid, keptPresentIndexes, removedSummary } from "./rewind.mjs";
 import { buildItems } from "../web/timeline.mjs";
 import { t, agentT } from "./i18n.mjs";
 import { writeAtomic } from "./atomic-file.mjs";
@@ -407,14 +407,14 @@ export function wrapBackend(native) {
     return { sessionId: child, parent, persisted: true };
   };
   /**
-   * 会話を、ある発言（beforeMessageId。自分の発言）の手前まで巻き戻す。会話の id は変わらない（ADR 0089）。
+   * 会話を、ある発言（beforeMessageId。自分の発言）の手前まで巻き戻す。会話の id は変わらない（ADR 0091）。
    * 方式はバックエンドで違う（capabilities.rewind）:
    *   resumeAt … Claude。次のターンが resume + resumeSessionAt + resumeDropsTurn で葉を付け替える。それまでの間は保留の印（sidecar の rewind）で
    *              履歴を見かけ上切る
    *   thread   … Codex。今すぐスレッドの履歴を置き換える（thread/revert。legacy のスレッドは thread/fork { beforeTurnId } で別スレッドに差し替える）
    *   無し     … Antigravity。Pleiad の履歴を切り、次のターンで引き継ぐ（ホスト管理）
    * 最初の発言・今のネイティブの区間の外の発言・ネイティブが断ったときも、ホスト管理（nativeId = null + 引き継ぎ）に落とす。
-   * 返り値 { mode: "resume" | "thread" | "host", renumbered, removed: { messages, userMessages } }。
+   * 返り値 { mode: "resume" | "thread" | "host", renumbered, removed: { messages, userMessages, replies } }。
    * renumbered は残る発言の uuid が変わったか（Codex が別スレッドに差し替えたとき。画面は読み直す）
    */
   wrapped.rewind = async (id, { beforeMessageId } = {}) => {
@@ -429,7 +429,7 @@ export function wrapBackend(native) {
     const presents = await wrapped.getPresents(id);
     // 提示の時刻が無く境界を決められないときは、何も変える前に断る
     const keep = keptPresentIndexes(full, presents, at - 1);
-    const removed = { messages: full.length - at, userMessages: full.slice(at + 1).filter(m => m.role === "user" && !m.kind).length };
+    const removed = removedSummary(full, at);
     const nativeId = existing ? existing.nativeId : id;
     const segmentStart = existing ? existing.base : 0;
     const rawOf = uuid => (existing ? nativeUuid(uuid, native.id, nativeId) : uuid);

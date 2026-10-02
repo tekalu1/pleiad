@@ -768,8 +768,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .message-edit-input{display:block;width:100%;min-height:80px;max-height:50vh;resize:vertical;background:transparent;color:var(--ink);font:inherit;border-radius:var(--r-s)}
 .message-edit-controls{display:flex;justify-content:flex-end;gap:var(--sp-2);margin-top:var(--sp-2)}
 .message-edit-attachments{font-size:var(--fs-s);color:var(--ink-weak);overflow-wrap:anywhere}
-/* 送り直す・分岐して送る（web/resend-band.mjs。ADR 0089）。送り直すと消える範囲は薄く見せ、畳むときは高さと不透明度を 240ms で */
+/* 送り直す・分岐して送る（web/resend-band.mjs。ADR 0091）。送り直すと消える範囲は薄く見せ、畳むときは高さと不透明度を 240ms で */
 .mw.doomed{opacity:.42;transition-duration:var(--dur-fast)}
+.m.editing>.outbox-status{display:none}
 .mw.leaving{grid-template-rows:0fr;opacity:0;pointer-events:none;transition-duration:var(--dur)}
 /* 送り方の帯。編集欄（再送信は発言）の直下。主は右端の［送り直す］ */
 .resend-band{max-width:680px;margin:var(--sp-2) 0 0;font-size:var(--fs-s);color:var(--ink)}
