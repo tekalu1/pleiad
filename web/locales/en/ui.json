@@ -178,18 +178,22 @@
       }
     },
     "browser": {
-      "description": "Choose where links in conversations and previews open.",
+      "description": "Choose where links in conversations and previews open, and whether to confirm external loads.",
+      "descriptionRemote": "Choose whether to confirm external loads. Where links open is chosen on the PC (host) screen.",
       "linkOpen": {
         "title": "Open links in",
         "inapp": "Built-in browser",
         "external": "Default browser",
-        "note": "The built-in browser opens beside the conversation, and sign-ins stay in this app. Its storage is separate from Pleiad itself.",
+        "note": "The built-in browser opens beside the conversation, and HTML files open there too. Sign-ins stay in this app. Its storage is separate from Pleiad itself.",
         "shortcuts": "{{key}}+click and middle click always open in the default browser. Right-click to choose either."
       },
       "saveFailed": "Couldn't save: {{error}}",
       "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" },
       "confirm": {
-        "title": "Confirmation",
+        "title": "External resources",
+        "scope": "In visualizations, HTML previews, and PC HTML files opened in the built-in browser, blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages. This setting is shared by all screens.",
+        "scopeRemote": "In visualizations and HTML previews (and HTML files opened in the PC’s built-in browser), blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages. This setting is shared by all screens.",
+        "agentTitle": "Agent site access",
         "external": "Ask before loading external resources",
         "agent": "Ask before an agent uses a site",
         "sites": "Allowed sites",
@@ -1745,6 +1749,8 @@
   "files": {
     "menu": {
       "openInPanel": "Open in side panel",
+      "openInPreview": "Open in preview",
+      "viewSource": "View source",
       "openInBrowser": "Open in browser",
       "revealFile": "Show in Explorer",
       "revealFolder": "Open in Explorer",
@@ -1807,6 +1813,7 @@
       "copyPath": "Copy path",
       "download": "Save HTML",
       "sidePanel": "Show in side panel",
+      "browser": "Open in browser",
       "truncated": "Omitted because it's too large.",
       "badImage": "This image can't be displayed."
     },
@@ -3151,6 +3158,7 @@
     "externalTooMany": "Too many open requests in a row. Wait a moment and try again.",
     "siteDataCleared": "Cleared data for this site.",
     "failed": "The browser action failed.",
+    "reloaded": "Reloaded",
     "remote": {
       "title": "PC browser",
       "backToChat": "Back to conversation",

@@ -886,6 +886,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .present-tools .h-icon{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0}
 .present-tools .h-icon svg.i{width:14px;height:14px}
 .present-tools .visualize-expand[aria-current=true]{background:var(--surface-2);color:var(--ink-blue)}
+/* 内蔵ブラウザーの使えるホストの画面（web/file-preview.mjs が body に inapp-links を付ける）は「ブラウザーで開く」、それ以外は「サイドパネルに表示」（docs/visualize.md） */
+.present-tools .visualize-open-browser{display:none}
+body.inapp-links .present-tools .visualize-open-browser{display:inline-flex}
+body.inapp-links .present-tools .visualize-expand{display:none}
 
 /* ---- thinking ---- */
 .think{background:var(--surface-1);border-radius:var(--r-m);margin:0 0 10px;max-width:100%;min-width:0}

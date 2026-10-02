@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 import WebSocket from 'ws';
 import { looksLikePath, findWindowsPaths, fileReference } from '../../web/file-reference.mjs';
 import { renderMarkdown, renderToolCall, renderPresent, applyToolResult } from '../../web/render.mjs';
-import { fileMenuItems, relativeTo, samePath, fileUrl, openHostFile } from '../../web/file-actions.mjs';
+import { fileMenuItems, browserTabMenuItems, displayPath, relativeTo, samePath, fileUrl, openHostFile } from '../../web/file-actions.mjs';
 import { launchPlan, launch, isLocalRequest, createRateLimit, bridgeError } from '../../core/os-open.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open as openWs } from '../lib/ws-client.mjs';
@@ -82,7 +82,9 @@ export default async function (t) {
   // ---- 操作メニュー
   const run = () => {};
   assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: true, run })),
-    ['右パネルで開く', 'ブラウザーで開く', 'エクスプローラーで表示', 'パスをコピー', '相対パスをコピー', '保存', '会話で使う']);
+    ['ブラウザーで開く', 'プレビューで開く', 'エクスプローラーで表示', 'パスをコピー', '相対パスをコピー', '保存', '会話で使う']);
+  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: true, current: true, run })).slice(0, 2), ['ブラウザーで開く', 'エクスプローラーで表示'], '表示中はプレビューを出さない');
+  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/doc.md' }, { osActions: true, run })).slice(0, 2), ['右パネルで開く', 'エクスプローラーで表示'], 'HTML 以外は今までどおり');
   assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: false, run })),
     ['右パネルで開く', 'パスをコピー', '相対パスをコピー', '保存', '会話で使う']);
   assert.deepEqual(labels(fileMenuItems({ path: 'D:/a', kind: 'directory' }, { osActions: true, current: true, run })),
@@ -103,17 +105,33 @@ export default async function (t) {
   assert.equal(fileUrl('D:\\work\\100%.html'), 'file:///D:/work/100%25.html');
   await openHostFile('openPath', { path:'page.html' }, { cmd:openCmd, inApp:true, openInPanel:openTab });
   assert.deepEqual(sent, [['openPath', { path:'page.html', returnPath:true }]]);
-  assert.deepEqual(tabs, [['file:///D:/work/a%20%23%3F.html', { newTab:true }]]);
+  assert.deepEqual(tabs, [['file:///D:/work/a%20%23%3F.html', { newTab:true, reuse:false }]]);
   sent.length = 0;
   await openHostFile('openVisualization', { sessionId:'s', id:'v' }, { cmd:openCmd, inApp:true, openInPanel:openTab });
   assert.deepEqual(sent, [['openVisualization', { sessionId:'s', id:'v', returnPath:true }]]);
+  sent.length = 0;
+  // 同じファイル・同じ記録のタブを使い回す指定と、タブの印（⋯ のファイルの操作とアドレス欄）
+  tabs.length = 0;
+  const opened = await openHostFile('openPath', { path:'page.html' }, { cmd:async () => ({ path:'D:\\work\\sub\\a.html', cwd:'D:\\work' }), inApp:true, openInPanel:openTab, reuse:true,
+    source:found => ({ kind:'file', label:displayPath(found.path, found.cwd) }) });
+  assert.deepEqual(tabs, [['file:///D:/work/sub/a.html', { newTab:true, reuse:true, source:{ kind:'file', label:'sub/a.html' } }]]);
+  assert.equal(opened.inApp, true, '内蔵ブラウザーで開けたと分かる（リンクに「表示中」を添える）');
+  assert.equal(displayPath('D:\\w\\x\\a.html', 'D:\\w'), 'x/a.html'); assert.equal(displayPath('E:\\o\\a.html', 'D:\\w'), 'E:/o/a.html', '外は完全なパス');
   sent.length = 0;
   await openHostFile('openPath', { path:'page.html' }, { cmd:openCmd });
   assert.deepEqual(sent, [['openPath', { path:'page.html' }]], '既定のブラウザーは従来の経路');
   sent.length = 0;
   await openHostFile('openPath', { path:'page.html' }, { cmd:openCmd, inApp:true, openInPanel:() => false });
   assert.deepEqual(sent, [['openPath', { path:'page.html', returnPath:true }], ['openPath', { path:'page.html' }]], '内蔵ブラウザーを開けなければ既定へ');
-  t.ok('設定に応じた開き先と、検査済みパスの file: URL・新しいタブを使う', true);
+  // 内蔵ブラウザーの ⋯ のファイルの操作（画面が開いた PC のファイル・可視化の写しのタブだけ）
+  assert.deepEqual(labels(browserTabMenuItems('file', {}, { osActions: true, run })),
+    ['原文を見る', 'エクスプローラーで表示', 'パスをコピー', '相対パスをコピー', '保存', '会話で使う']);
+  assert.deepEqual(labels(browserTabMenuItems('file', {}, { osActions: false, canUse: false, run })), ['原文を見る', 'パスをコピー', '相対パスをコピー', '保存']);
+  assert.deepEqual(labels(browserTabMenuItems('snapshot', { origin: 'D:/w/a.html', hasHtml: true }, { osActions: true, run })),
+    ['原文を見る', '元のファイルを開く', 'エクスプローラーで表示', '元のパスをコピー', '相対パスをコピー', 'HTML を保存', '会話で使う']);
+  assert.deepEqual(labels(browserTabMenuItems('snapshot', { origin: null, hasHtml: true }, { osActions: true, run })), ['原文を見る', 'HTML を保存'], '元が分からない写しは元のパスの操作を出さない');
+  assert.deepEqual(labels(browserTabMenuItems('snapshot', { origin: 'D:/w/a.html', hasHtml: false }, { osActions: false, run })), ['元のファイルを開く', '元のパスをコピー', '相対パスをコピー', '会話で使う'], '手元に中身が無ければ原文と保存は出さない');
+  t.ok('設定に応じた開き先と、検査済みパスの file: URL・新しいタブを使う・同じファイルのタブの使い回しと印・内蔵ブラウザーの ⋯ のファイルの操作', true);
 
   // ---- 起動の組み立て（起動はしない）
   const env = { SystemRoot: 'C:\\Windows' };
@@ -195,7 +213,9 @@ export default async function (t) {
     assert.equal((await client.cmd('revealPath', { path: 'sub', sessionId: 'fixture' })).path, await real(path.join(work, 'sub')));
     assert.equal((await client.cmd('openPath', { path: 'escape/secret.html:3', sessionId: 'fixture' })).path, await real(path.join(outside, 'secret.html')));
     assert.equal((await client.cmd('openPath', { path:'./escape/secret.html', sessionId:'fixture', returnPath:true })).path, await real(path.join(outside, 'secret.html')));
-    const htmlUrl = fileUrl((await client.cmd('openPath', { path:'page.html', sessionId:'fixture', returnPath:true })).path);
+    const opened = await client.cmd('openPath', { path:'page.html', sessionId:'fixture', returnPath:true });
+    assert.equal(path.resolve(opened.cwd), path.resolve(work), '作業ディレクトリも返す（内蔵ブラウザーのタブの相対パス。docs/inapp-browser.md）');
+    const htmlUrl = fileUrl(opened.path);
     assert((await fs.readFile(new URL(htmlUrl), 'utf8')).includes('style.css'));
     assert((await fs.readFile(new URL('./style.css', htmlUrl), 'utf8')).includes('color: red'));
     assert((await fs.readFile(new URL('./script.js', htmlUrl), 'utf8')).includes('window.proof'));
