@@ -83,17 +83,20 @@ export function snapshotResponse(record, prefs = {}) {
 
 /**
  * 殻（デスクトップ版）は新しい窓を開かないので、サーバーのある PC の既定のブラウザーへ写しをファイルで渡す。
- * 置き場は dir（データ置き場の下）。1 日より古い写しは書くたびに消す。返すのは書いたファイルの絶対パス
+ * 置き場は dir（データ置き場の下）。1 日より古い写しは書くたびに消す。返すのは書いたファイルの絶対パス。
+ * once は内蔵ブラウザーの「読み込む」（そのタブだけの一時の許可）で加える https の出どころ。report は内蔵ブラウザーで開く写しで、
+ * 止めた資源を console へ知らせる橋を入れる（main が数える）
  */
-export async function writeSnapshotFile(record, dir, { now = Date.now(), prefs = {} } = {}) {
+export async function writeSnapshotFile(record, dir, { now = Date.now(), prefs = {}, once = [], report = false } = {}) {
   await fs.mkdir(dir, { recursive: true });
   for (const name of await fs.readdir(dir).catch(() => [])) {
     const old = path.join(dir, name);
     const stat = await fs.stat(old).catch(() => null);
     if (stat && now - stat.mtimeMs > 24 * 60 * 60 * 1000) await fs.rm(old, { force: true }).catch(() => {});
   }
-  const key = crypto.createHash('sha256').update(`${record.id ?? ''}\n${record.at ?? ''}\n${record.content}\n${JSON.stringify(previewPolicy(prefs))}`).digest('hex').slice(0, 24);
+  const policy = previewPolicy(prefs, once);
+  const key = crypto.createHash('sha256').update(`${record.id ?? ''}\n${record.at ?? ''}\n${record.content}\n${JSON.stringify(policy)}\n${report ? 'report' : ''}`).digest('hex').slice(0, 24);
   const file = path.join(dir, `${key}.html`);
-  await fs.writeFile(file, visualizationDocument(record.content, { resize: false, title: record.caption ?? '', policy: previewPolicy(prefs) }), 'utf8');
+  await fs.writeFile(file, visualizationDocument(record.content, { resize: false, title: record.caption ?? '', policy, report }), 'utf8');
   return file;
 }

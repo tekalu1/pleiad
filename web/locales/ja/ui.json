@@ -40,6 +40,7 @@
       "usage": "使用量",
       "appearance": "外観",
       "context": "プラグイン",
+      "notify": "通知",
       "remote": "リモート",
       "about": "アプリ情報・更新",
       "delegation": "委譲",
@@ -89,7 +90,33 @@
       "autoCheck": "更新を自動で確認する",
       "beta": "先行版も受け取る",
       "autoDownload": "更新を自動でダウンロードする",
-      "releaseNotes": "リリースノート"
+      "releaseNotes": "リリースノート",
+      "mcpTitle": "外の AI から Pleiad を使う",
+      "copyMcpJson": "MCP の設定をコピー",
+      "copyMcpClaude": "claude mcp add をコピー",
+      "copied": "コピーしました",
+      "copyFailed": "コピーできませんでした"
+    },
+    "notify": {
+      "pc": {
+        "title": "この PC",
+        "done": "終わったとき",
+        "reply": "返事が要るとき（承認・質問）",
+        "failed": "失敗したとき",
+        "viewing": "その会話を見ている間は出しません。",
+        "switch": "この PC：{{label}}"
+      },
+      "phone": {
+        "title": "スマホ",
+        "empty": "ペアリングしたスマホはありません。設定 › リモートで追加します。",
+        "lastSent": "最後に送った {{when}}",
+        "never": "まだ送っていません",
+        "on": "オン",
+        "off": "オフ",
+        "offOnPhone": "スマホ側でオフ",
+        "noRelay": "中継につながっていません。つながるまでスマホには届きません。",
+        "switch": "{{name}}：通知"
+      }
     },
     "remote": {
       "enable": "このホストをリモートから使えるようにする",
@@ -177,18 +204,48 @@
       }
     },
     "browser": {
-      "description": "会話やプレビューのリンクを開く場所を選びます。",
+      "description": "会話やプレビューのリンクを開く場所、外部の読み込みの確認、ログインを残すプロフィールを選びます。",
+      "descriptionRemote": "外部の読み込みの確認を選びます。リンクの開き先は PC（ホスト）の画面で選びます。",
       "linkOpen": {
         "title": "リンクの開き先",
         "inapp": "内蔵ブラウザー",
         "external": "既定のブラウザー",
-        "note": "内蔵ブラウザーは会話の右に開き、ログインはこのアプリの中に残ります。Pleiad 本体の保存領域とは分けています。",
+        "note": "内蔵ブラウザーは会話の右に開き、HTML ファイルもここで開きます。ログインはプロフィールごとにこのアプリの中に残ります。",
         "shortcuts": "{{key}}+クリックと中クリックは、いつも既定のブラウザーで開きます。右クリックでどちらでも選べます。"
       },
       "saveFailed": "保存できませんでした: {{error}}",
       "agentOperation": { "title": "エージェントの操作", "bundled": "agent-browser {{version}} · 同梱" },
+      "profiles": {
+        "title": "プロフィール",
+        "default": "既定",
+        "add": "プロフィールを追加",
+        "nameLabel": "プロフィールの名前",
+        "namePlaceholder": "新しいプロフィール",
+        "memoLabel": "用途のメモ",
+        "memoPlaceholder": "用途のメモ（エージェントが選ぶ手がかり）",
+        "actions": "{{name}} の操作",
+        "rename": "名前を変える",
+        "editMemo": "メモを編集",
+        "makeDefault": "既定にする",
+        "clear": "ログインとデータを消す",
+        "delete": "削除",
+        "defaultCannotDelete": "既定のプロフィールは削除できません。",
+        "mainCannotDelete": "メインは削除できません。ログインとデータは消せます。",
+        "confirmClear": "「{{name}}」のログインとデータを消します。開いているタブは読み直します。",
+        "confirmDelete": "「{{name}}」を削除します。タブを閉じ、ログインとデータも消えます。元に戻せません。",
+        "cancel": "やめる",
+        "cleared": "「{{name}}」のログインとデータを消しました。",
+        "deleted": "「{{name}}」を削除しました。",
+        "tooMany": "プロフィールは {{max}} 個までです。",
+        "newConversation": "新しい会話のプロフィール",
+        "newLast": "作業フォルダーで最後に使ったもの",
+        "newDefault": "既定"
+      },
       "confirm": {
-        "title": "確認",
+        "title": "外部の読み込み",
+        "scope": "可視化・HTML のプレビュー・内蔵ブラウザーで開いた PC の HTML ファイルで、「常に」許可したサイトのほかからの読み込み（画像・スクリプト・通信など）を止めます。Web のページには効きません。すべての画面で共通の設定です。",
+        "scopeRemote": "可視化と HTML のプレビュー（PC の内蔵ブラウザーで開いた HTML ファイルも）で、「常に」許可したサイトのほかからの読み込み（画像・スクリプト・通信など）を止めます。Web のページには効きません。すべての画面で共通の設定です。",
+        "agentTitle": "エージェントのサイト利用",
         "external": "外部の読み込みの前に確認",
         "agent": "エージェントがサイトを使う前に確認",
         "sites": "許可したサイト",
@@ -259,11 +316,21 @@
     "waitingApproval": "承認を待っている",
     "behindCount_other": "裏で {{count}} 本が動いている",
     "turnRunning": "ターンが走っている",
-    "background_other": "バックグラウンド {{count}}",
     "thinkingTokens_other": "考えている（約 {{count}} トークン）",
     "waitingBackground": "裏の作業を待っている",
-    "backgroundEnded_other": "バックグラウンド · 完了 {{count}}",
-    "backgroundOnly": "裏でコマンドが動いている"
+    "backgroundOnly": "裏でコマンドが動いている",
+    "bgKind": {
+      "claude": "Claude",
+      "codex": "Codex",
+      "antigravity": "Antigravity",
+      "compat": "互換",
+      "term": "ターミナル"
+    },
+    "bgItem": "{{name}} {{n}}",
+    "bgItemWaiting": "{{name}} {{n}}（{{w}} 本が承認待ち）",
+    "bgJoin": "・",
+    "bgSpoken": "バックグラウンド: {{items}}。一覧を開く",
+    "bgEndedSpoken": "バックグラウンド: 完了 {{n}}。一覧を開く"
   },
   "compat": {
     "kind": {
@@ -470,6 +537,121 @@
       "newHint": "発行されたトークン（sk-ant-oat01-…）をそのまま貼り付けてください。保存したトークンは表示しません。",
       "editHint": "変更するときだけ貼り付けてください。空のままなら保存済みのトークンを使います。",
       "nameRequired": "アカウントの表示名を入力してください"
+    }
+  },
+  "git": {
+    "panel": "git",
+    "entry": "git の状態",
+    "entryChanged": "git の状態 · コミットしていない変更あり",
+    "detached": "HEAD {{hash}}",
+    "noBranch": "（コミットなし）",
+    "worktree": "分けた作業場所",
+    "branchWorktree": "{{branch}}（分けた作業場所）",
+    "unpushed": "未 push",
+    "ahead": "↑{{count}}",
+    "behind": "↓{{count}}",
+    "pr": "PR #{{number}}",
+    "prTitle": "PR #{{number}} をブラウザーで開く",
+    "acts": "この会話でしたこと",
+    "actBranch": "ブランチ {{branch}} を作成",
+    "actCommit": "コミット {{hash}}「{{subject}}」",
+    "actPr": "PR #{{number}} を作成",
+    "jump": "会話のこの場所へ",
+    "changes": "変更",
+    "range": "範囲",
+    "rangeUncommitted": "コミットしていない分",
+    "rangeSession": "この会話の間",
+    "files_other": "{{count}} ファイル",
+    "commits_other": "コミット {{count}}",
+    "stateA": "新規",
+    "stateM": "変更",
+    "stateD": "削除",
+    "emptyUncommitted": "コミットしていない変更はありません",
+    "emptySession": "この会話の間に変わったファイルはありません",
+    "diffBack": "変更の一覧",
+    "binary": "バイナリなので差分は出しません",
+    "truncated": "長いので途中までです",
+    "noDiff": "差分はありません",
+    "loading": "読み込み中…",
+    "failed": "git の情報を取れませんでした",
+    "failedChanges": "変更を取れませんでした",
+    "failedDiff": "差分を取れませんでした",
+    "fetchedAt": "{{time}} に取得",
+    "reload": "再読み込み",
+    "use": "会話で使う",
+    "used": "会話に添えました",
+    "useStatus": "git: {{branch}}（{{summary}}）",
+    "useFile": "git の変更: {{path}}",
+    "sumOpen": "git の変更を開く",
+    "commitOne": "コミット {{hash}}",
+    "chipBranch": "ブランチ {{branch}}",
+    "delegateChanges": "変更",
+    "delegateOpen": "この作業場所の git を開く",
+    "jumpFailed": "会話の中に見つかりませんでした"
+  },
+  "worktree": {
+    "label": "分けた作業場所",
+    "who": "「{{title}}」",
+    "whoMany": "「{{title}}」ほか {{count}} 件",
+    "whoAnother": "ほかの会話",
+    "note": "{{who}}が同じリポジトリで作業中",
+    "noteLabel": "同じリポジトリのほかの作業",
+    "split": "分けて始める",
+    "keep": "このまま",
+    "always": "いつも分ける",
+    "alwaysTitle": "今後は確かめずに、分けた作業場所で始めます。設定でいつでも戻せます",
+    "chipSuffix": "分けた作業場所",
+    "chipTitle": "分けた作業場所 · 元 {{origin}}",
+    "start": "分けた作業場所で始める",
+    "from": "元 {{path}}",
+    "back": "元の場所に戻す",
+    "next": "分けた作業場所（{{path}}）",
+    "splitFailed": "分けた作業場所を作れませんでした · {{error}}",
+    "line": {
+      "started": "分けた作業場所で始めました（{{who}}が作業中）",
+      "startedNoWho": "分けた作業場所で始めました",
+      "backing": "次のターンから元の場所に戻します",
+      "backed": "元の場所に戻しました",
+      "again": "もう一度分ける"
+    },
+    "ask": {
+      "text": "分けた作業場所 {{branch}}（{{path}}）の変更を、元の作業場所（{{origin}}）のブランチ {{base}} に取り込んでください。競合があれば解いてください。取り込めたら、分けた作業場所は Pleiad が片付けます。",
+      "textOriginal": "分けた作業場所 {{branch}}（{{path}}）の変更を、元の作業場所（{{origin}}）の元のブランチに取り込んでください。競合があれば解いてください。取り込めたら、分けた作業場所は Pleiad が片付けます。"
+    },
+    "left": {
+      "title": "残っている作業場所",
+      "ask": "エージェントに取り込みを頼む",
+      "archive": "退避して消す",
+      "keep": "残す",
+      "asked": "『{{title}}』に頼みました。取り込まれたら自動で消えます。",
+      "askedUndo": "取り消す",
+      "askedLate": "もう届いているので、取り消せません。",
+      "askFailed": "頼めませんでした · {{error}}",
+      "askNone": "取り込みを頼める会話がありません。",
+      "kept": "残します。",
+      "keptUndo": "戻す",
+      "archived": "退避して消しました。",
+      "archivedUndo": "元に戻す",
+      "restoreFailed": "元に戻せませんでした。",
+      "safetyLinks": "消す前に、中のリンクだけ外します。",
+      "safetyUse": "使っている会話やシェルがあるあいだは、消しません。",
+      "fail": {
+        "busy": "使っているものがあるので、消せません。",
+        "links": "中のリンクを外せなかったので、消していません。",
+        "changed": "退避のあとに変わったので、消していません。",
+        "archive": "退避を作れなかったので、消していません。",
+        "unowned": "Pleiad が作ったものではないので、消していません。",
+        "attached": "使っている会話があるので、消せません。",
+        "other": "消せませんでした。"
+      }
+    },
+    "settings": {
+      "title": "分けた作業場所",
+      "always": "同じリポジトリで別の会話が作業中のとき、確かめずに分けて始める",
+      "description": "オフのときは、入力欄の上で「分けて始める」か「このまま」かを選べます。オンにすると、人が始める会話は確かめずに分けた作業場所で始め、会話に一行だけ残します。"
+    },
+    "delegate": {
+      "unmerged": "未取り込み"
     }
   },
   "filePreview": {
@@ -712,7 +894,8 @@
         "added": "Pleiad の指示",
         "guide": "コンテキストの案内",
         "browser": "ブラウザーの説明",
-        "computer": "コンピューターの操作の説明"
+        "computer": "コンピューターの操作の説明",
+        "control": "Pleiad の操作の説明"
       },
       "over": "自分で書いた指示が目安の {{ratio}} 倍",
       "overDetail": " · 約 {{own}} / {{budget}}",
@@ -1146,12 +1329,15 @@
     "by": {
       "human": "あなた",
       "ai": "AI",
+      "agent": "AI",
       "ply": "Pleiad"
     }
   },
   "saved": {
     "reason": {
       "resumeCwd": "再開時に変更",
+      "worktreeSplit": "分けた作業場所へ",
+      "worktreeBack": "元の場所へ",
       "cwdFrom": "{{from}} から",
       "contextReloaded": "指示・Skills を読み込み直した",
       "contextSettingsApplied": "プラグインの設定の変更を反映した",
@@ -1204,6 +1390,24 @@
       "denied": "拒否した",
       "sending": "{{action}}を送っています…",
       "sendFailedInline": "{{action}}を送れませんでした · {{error}}"
+    },
+    "settingApproval": {
+      "label": "設定",
+      "agent": "エージェント",
+      "question": "{{agent}} が設定を変えようとしています",
+      "reason": "理由: {{reason}}",
+      "warn": "⚠ 確認なしでできることが増える変更です。",
+      "allow": "変更を許可",
+      "allowed": "変更を許可した",
+      "unset": "未設定",
+      "where": "設定 › {{section}}",
+      "on": "オン",
+      "off": "オフ",
+      "added": "追加",
+      "removed": "削除",
+      "join": "、",
+      "more_other": "ほか {{count}} 件",
+      "withdrawn": "取り下げた"
     },
     "computerApproval": {
       "label": "許可",
@@ -1267,6 +1471,14 @@
       "taskResultState": "委譲の結果（{{state}}）",
       "taskFull": "エージェントに渡した全文",
       "interruptionNote": "中断で止めたものをエージェントに伝えました",
+      "settingResult": "設定の変更の結果（{{state}}）",
+      "settingResults_other": "設定の変更の結果（{{count}} 件）",
+      "settingState": {
+        "allowed": "変更した",
+        "denied": "拒否した",
+        "failed": "変更できなかった",
+        "withdrawn": "取り下げた"
+      },
       "failed": "{{head}} {{error}}",
       "unknownReason": "理由不明",
       "modeSaveFailed": "承認モードを保存できませんでした: {{error}}",
@@ -1346,6 +1558,8 @@
       "endpoint": "接続先: {{value}}",
       "account": "アカウント: {{value}}",
       "summary": "{{changes}} · 次に送信すると適用されます",
+      "summaryBehind": "{{changes}} · 次のターンから適用されます",
+      "behindNote": "裏の作業を待っている間に送ったメッセージは、今のターンで、今の設定のまま処理されます。",
       "handoff": {
         "line": "発言とツールの記録は引き継ぎます。「常に許可」などの承認と、考えた内容は引き継ぎません。",
         "more": "詳しく",
@@ -1555,7 +1769,7 @@
     "settings": "設定",
     "closeSidebarTitle": "サイドバーを閉じる（Ctrl+B）",
     "closeSidebar": "サイドバーを閉じる",
-    "search": "検索",
+    "search": "会話を検索",
     "filterTitle": "作業ディレクトリ・状態・エージェントで絞る",
     "filterOutside": "この会話はフィルター対象外です",
     "clearFilter": "絞り込みを解除",
@@ -1685,6 +1899,8 @@
   "files": {
     "menu": {
       "openInPanel": "右パネルで開く",
+      "openInPreview": "プレビューで開く",
+      "viewSource": "原文を見る",
       "openInBrowser": "ブラウザーで開く",
       "revealFile": "エクスプローラーで表示",
       "revealFolder": "エクスプローラーで開く",
@@ -1747,6 +1963,7 @@
       "copyPath": "パスをコピー",
       "download": "HTML を保存",
       "sidePanel": "サイドパネルに表示",
+      "browser": "ブラウザーで開く",
       "truncated": "大きすぎるため省略されました",
       "badImage": "表示できない画像です"
     },
@@ -2008,6 +2225,37 @@
       "menu": "メニュー",
       "sidebar": "サイドバー"
     },
+    "search": {
+      "title": "会話を検索（{{key}}）",
+      "clear": "検索語を消す",
+      "recent": "最近の検索",
+      "results": "検索の結果",
+      "count_other": "{{count}} 件の会話",
+      "none": "一致する会話がありません",
+      "more_other": "ほかに {{count}} 件",
+      "searching": "探しています",
+      "sort": {
+        "relevance": "関連度順",
+        "recent": "新しい順",
+        "toRelevance": "関連度順にする",
+        "toRecent": "新しい順にする"
+      },
+      "who": {
+        "user": "あなた",
+        "assistant": "AI",
+        "tool": "ツール"
+      },
+      "hits_other": "一致した発言 {{count}} 件",
+      "rowWho": "{{who}}: {{text}}",
+      "rowHits_other": "一致 {{count}} 件",
+      "delegated": "委譲 · {{parent}}",
+      "delegatedNoParent": "委譲",
+      "keyHint": {
+        "move": "選ぶ",
+        "open": "開く",
+        "clear": "消す"
+      }
+    },
     "group": {
       "pickIcon": "アイコンを選ぶ",
       "newSession": "この状態で新しいセッション"
@@ -2025,7 +2273,17 @@
       "placeholder": "絞り込む",
       "inputLabel": "候補を絞り込む",
       "agents": "エージェント（複数選択）",
-      "all": "すべて"
+      "all": "すべて",
+      "period": "期間",
+      "periodToday": "今日",
+      "period7": "7 日",
+      "period30": "30 日",
+      "speaker": "発言者",
+      "speakerUser": "自分",
+      "speakerAssistant": "AI",
+      "include": "含める",
+      "includeDelegated": "委譲した会話",
+      "includeTools": "ツールの入力"
     },
     "emoji": {
       "title": "「{{status}}」のアイコン",
@@ -2157,6 +2415,7 @@
       "unknown": "送信結果を確認できません"
     },
     "waitTurn": "送信待ち — 作業が終わると自動で送信",
+    "waitReply": "送信待ち — 今の返答が終わると自動で送信",
     "waitOrder": "送信待ち — 前のメッセージが送られてから送信",
     "unknownHint": "会話を確認してください。再送すると同じ指示が2回届くことがあります。",
     "retry": "再送する",
@@ -2177,9 +2436,16 @@
   "notify": {
     "completed": "作業が完了しました",
     "waitingReply": "返事を待っています",
+    "settingApproval": "{{agent}} が設定「{{key}}」の変更の許可を待っています",
     "computerApproval": "{{agent}} が「{{app}}」の使用の許可を待っています",
     "computerApprovalMore_other": "{{agent}} が「{{app}}」ほか {{count}} 件の使用の許可を待っています",
-    "untitled": "Pleiad の会話"
+    "untitled": "Pleiad の会話",
+    "failed": "作業が失敗しました",
+    "mobile": {
+      "band": "離れていても知らせますか？",
+      "enable": "オンにする",
+      "later": "あとで"
+    }
   },
   "remote": {
     "badgeLabel": "リモート:",
@@ -2504,6 +2770,16 @@
     "compact": "会話を圧縮",
     "compactNow": "圧縮する",
     "meterMenu": "文脈の操作",
+    "meterShort": "{{rate}}%",
+    "meterLabel": "文脈 {{rate}}%（{{used}} / {{window}}）",
+    "scheduledShort": "◷ {{time}}",
+    "scheduledSpoken": "{{time}} に自動で圧縮します",
+    "spokenJoin": "。",
+    "openActions": "操作を開く",
+    "menuTokens": "{{used}} / {{window}} トークン",
+    "cancelAt": "{{time}} の自動圧縮をキャンセル",
+    "runningShort": "圧縮しています…",
+    "failedShort": "圧縮できませんでした",
     "settings": "圧縮設定",
     "done": "会話を圧縮しました",
     "doneAuto": "自動で圧縮しました",
@@ -3036,6 +3312,17 @@
     "externalTooMany": "続けて開きすぎています。少し待ってからもう一度押してください。",
     "siteDataCleared": "このサイトのデータを消しました。",
     "failed": "ブラウザーの操作に失敗しました。",
+    "reloaded": "読み直しました",
+    "profiles": {
+      "pick": "プロフィール: {{name}}",
+      "main": "メイン",
+      "locked": "エージェントが操作中は切り替えられません。止めてから選びます。",
+      "busy": "エージェントが操作中は切り替えられません。",
+      "new": "新しいプロフィール…",
+      "manage": "プロフィールを管理…",
+      "switched": "この会話は「{{name}}」で開きます。エージェントもこのプロフィールを使います。",
+      "switchedBy": "{{agent}} が「{{name}}」に切り替えました。"
+    },
     "remote": {
       "title": "PC のブラウザー",
       "backToChat": "会話へ",
@@ -3067,8 +3354,8 @@
       "label": "会話の本文"
     },
     "sticky": {
-      "title": "{{text}}（押すと問いの先頭へ）",
-      "openToc": "目次を開く"
+      "title": "この問いへ戻る: {{text}}",
+      "label": "この問いへ戻る（{{time}}）: {{text}}"
     },
     "latest": {
       "label": "最新へ（End）",

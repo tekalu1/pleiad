@@ -5,13 +5,22 @@ Android 版の配布（`main` への push で署名済み APK を別のリリー
 ## バージョンと原稿
 
 Pleiad の画面・サーバー・Electron を一つの `package.json.version` で管理する。Windows/macOS も同じ番号。
-修正は PATCH、機能追加は MINOR、互換性に影響する大きな変更は MAJOR。先行版は `0.1.0-beta.1`。
-ソースのタグは `v` + バージョン。公開済みのタグ・配布物は差し替えず、新しい番号で修正する。
+番号は semver の `MAJOR.MINOR.PATCH`。機能追加は MINOR、修正だけは PATCH、データ形式・設定の互換性が切れる変更は MAJOR を上げる。
+`0.1.0-beta.N` を通し番号として増やす運用は `0.1.0-beta.73` で終えた。次の版を `0.1.0`（beta 卒業）にし、以後は `0.MINOR.PATCH` で進める。
+`1.0.0` は、正式な認証局の署名で一般向けに配ると決めたときに上げる（[ADR 0087](adr/0087-stable-versioning.md)）。
+`-beta.N` の付いた版は、先に試してほしい版にだけ使う（例 `0.5.0-beta.1`）。GitHub では Pre-release として出し、正式な版（`0.5.0`）は Latest として出す。
+先行版の次に出す正式な版は、先行版と同じ `MAJOR.MINOR.PATCH` から `-beta.N` を外した番号にする（`0.5.0-beta.2` の次が `0.5.0`）。semver では `0.5.0-beta.N` は `0.5.0` より古いので、先行版の利用者にもそのまま届く。
+ソースのタグは `v` + バージョン（`v0.1.0`、`v0.5.0-beta.1`）。公開済みのタグ・配布物は差し替えず、新しい番号で修正する。
 
 `releases/<version>.json` がリリースノートの正本。バージョン・公開日・見出し・利用者への影響を記載する。
 `npm run release:prepare` はアプリ内の `web/release-info.json` と公開用 `temporary/release-notes.md` を生成する。
 package.json と package-lock.json の番号を揃え、原稿と生成済み JSON をコミットする。
 番号は package.json の 1 か所と package-lock.json の 2 か所（先頭と `packages[""]`）。`release:prepare` は番号を上げて原稿を置いた後に走らせる（合う原稿が無いと止まる）。`npm test` も `web/release-info.json` を作り直すので、番号と原稿が食い違ったままでは落ちる。タグの前に `node scripts/release-info.mjs --require-new-notes` を通す（CI も前の版と同じ原稿なら止める）。
+`0.1.0` を出すときは、この順で行う。
+1. `package.json` の `version`、`package-lock.json` の 2 か所（先頭と `packages[""]`）を `0.1.0` にする。
+2. `releases/0.1.0.json` の原稿を書く（`releases/0.1.0-beta.73.json` の形に合わせる）。
+3. `npm run release:prepare` で `web/release-info.json` を作り直し、番号・原稿・生成済み JSON を一緒にコミットする。
+4. `npm test` と `node scripts/release-info.mjs --require-new-notes` を通してから、タグ `v0.1.0` を打つ（push は別途明示操作）。
 公開前に原稿の日付と検証結果を確定する。コミットの羅列はリリースノートの本文にしない。
 リリースノートは利用者が使える機能・操作の変更に絞り、リポジトリ移行などの運用経緯は載せない。
 
@@ -135,9 +144,14 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 表示名と配布物の名前は Pleiad。改名前の版からの更新とデータを保つため、`appId: jp.ply.desktop`・package.json の `name: agent-host`・実行ファイル名 `Ply.exe`・署名証明書の発行元名（`CN=Ply Evaluation …`）・`PLY_*` と `AGENT_HOST_*`・データ置き場（`~/.agent-host`）・MCP のサーバー名とツール名は変えない。
 アプリは更新の署名を発行元名で照合するので、鍵を替えるときも同じ発行元名にし、利用者には新しい公開証明書の信頼を求める。旧リポジトリ（非公開）からは橋渡し版を一度だけ配り、以後は `tekalu1/pleiad` から更新する（[ADR 0019](adr/0019-rename-ply-to-pleiad-keep-identifiers.md)）。
 
+## 同梱する CLI
+
+`pleiad` CLI（`bin/pleiad.mjs`）と起動口（`bin/pleiad.cmd`・`bin/pleiad`）を `resources/app/bin/` に同梱する（electron-builder.yml の `files`）。起動口は Ply の内蔵 Node（`ELECTRON_RUN_AS_NODE=1`）で走らせるので、利用者の PC に Node は要らない。インストーラーは OS の PATH を書き換えない（[ADR 0090](adr/0090-cli-in-desktop-app.md)）。
+確かめ方: `npm run desktop:pack` の `dist-desktop/win-unpacked/resources/app/bin/pleiad.cmd status` が、Pleiad が起動していなければ「起動していません」と終了コード 3 で終わる。
+
 ## 配布と利用者認証
 
-Releases は public で、ブラウザーからはログインなしで取得できる。評価版は自己署名のため、インストール前に公開証明書の扱いを確認する（下記「自己署名の先行版」）。
+Releases は public で、ブラウザーからはログインなしで取得できる。評価版は自己署名のため、インストール前に公開証明書の扱いを確認する（下記「自己署名の配布」）。
 自動更新に GitHub のログインは要らない。`gh auth login` も不要で、GitHub CLI が無い PC・未ログインの PC でも更新できる。
 更新設定は `private: true` のまま（外すと最新の先行版を semver で選ぶ `NewestReleaseProvider` が効かなくなり、先行版のメタデータ `beta.yml` も探されるため。導入済みのアプリにもこの設定が焼き込まれている）。
 資格情報が無いときは、`PrivateGitHubProvider` 系の同じプロバイダーが `authorization` ヘッダーを付けずに GitHub API を呼ぶ。アセットは API の URL を `Accept: application/octet-stream` で取り、S3 へのリダイレクトを追う。
@@ -158,10 +172,11 @@ GitHub Release の prerelease 属性とアプリの先行版設定で選別し�
 
 リリースごとに [外部エージェントの版の表](multi-backend.md#外部エージェントの版) を見直し、検証した版と非公開形式の依存を更新する。検証した版は `core/backend-shape-diagnostics.mjs` の `VERIFIED` にもあるので、両方をそろえる。
 
-### 自己署名の先行版（現在の運用）
+### 自己署名の配布（現在の運用）
 
 `Evaluation release` は GitHub-hosted `windows-latest` で動く。このPCの常駐プロセス、ログイン状態、self-hosted runnerには依存しない。
-`main` に含まれる `vX.Y.Z-beta.N` タグをpushすると、通常テスト・x64/ARM64ビルド・署名・署名検証を行い、そのリポジトリの Releases に先行版を配布する。
+`main` に含まれる `vX.Y.Z`（正式）または `vX.Y.Z-beta.N`（先行版）のタグをpushすると、通常テスト・x64/ARM64ビルド・署名・署名検証を行い、そのリポジトリの Releases に配布する（Android のタグ `android-v…` では動かない）。
+正式な版は Latest、先行版は Pre-release として公開する。手動実行（`workflow_dispatch`）でも同じ形のタグを受け付ける。
 下書きへアップロードした全ファイルを再取得してSHA-256を照合した後、100%配信で公開する。失敗時は公開へ進まない。既存リリースのバイナリは上書きしない。
 
 初回設定は `powershell -File scripts/setup-evaluation-secrets.ps1`。GitHub CLIで認証済みの管理者が実行する。
@@ -201,7 +216,9 @@ CIは無断でバージョンを決めたりコミット・タグを作ったり
 運用中の配信率変更ではメタデータとチェックサム一覧だけを差し替える。
 GitHubの複数アセット更新は完全な同時切り替えではないため、OSごとの反映に短い差が出る。
 
-安定版の利用者へbetaは配らない。先行版は明示的に選んだ利用者とbetaインストーラー利用者が対象。
+安定版の利用者へbetaは配らない。先行版は、設定の「先行版も受け取る」を選んだ利用者と、先行版（版に `-` が付いている）をインストールして選択を変えていない利用者が対象。
+受信先（`updates.json` の `channel`）の既定は版で決まり（`-` が無ければ stable、あれば beta）、起動時に保存される。保存後は版が変わっても保存した値を使う。
+そのため先行版を入れたことのある利用者は、正式な版に上がっても先行版を受け取り続ける。stable だけにするには「先行版も受け取る」を外す（[ADR 0087](adr/0087-stable-versioning.md)）。
 betaから安定版へ戻しても古い版へ戻さず、現在より新しい安定版を待つ。
 各OS/CPUに適合した配布物をupdaterが選ぶ。公開前に実機で選択結果を確認する。
 
@@ -214,7 +231,7 @@ betaから安定版へ戻しても古い版へ戻さず、現在より新しい�
 | ターン/承認/ログイン/保存中 | 適用を拒否し、処理を失わない |
 | ダウンロード失敗・回線断 | 現行版で作業を続けられ、再試行できる |
 | 改ざん・署名不正 | 更新を適用しない |
-| 安定版/先行版 | betaが安定版に流れず、古い版に戻らない |
+| 安定版/先行版 | betaが安定版に流れず、古い版に戻らない。正式な版が Latest、先行版が Pre-release で出る |
 | 段階配信 | 0%で対象外、100%で対象、設定変更後も同一端末の割当が安定 |
 | 更新通知 | 初回導入は通知なし、更新後1回、リロードで再表示なし |
 

@@ -239,7 +239,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, addedInstructions, computerRuntime = null, hooksRuntime = null, locale, notes = [] }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, addedInstructions, computerRuntime = null, controlRuntime = null, hooksRuntime = null, locale, notes = [] }) {
     const m = MODES[modeFor(mode)];
 
     // **控えはターンの途中から書き足すが、ユーザー発言の時刻は送信の時刻で打つ。**
@@ -315,11 +315,15 @@ export const backend = {
     // 内蔵ブラウザーの接続（browserEnv）と、Hooks を Pleiad がそろえる会話（ADR 0049）の置き場の .agents/hooks.json も起動時にしか渡せない。
     // ブラウザーの設定・登録・止める名前が変われば起こし直す
     const hooksShape = hooksRuntime?.shape ?? null;
-    // ply_computer（2 本目の中継）も起動時にしか渡せない。渡す・渡さない・接続先が変われば起こし直す
+    // ply_computer（中継）も起動時にしか渡せない。渡す・渡さない・接続先が変われば起こし直す
     const computerKey = computerRuntime ? `${computerRuntime.url} ${computerRuntime.headers?.Authorization ?? ''}` : null;
+    // ply_browser（プロフィールの一覧と切り替え、ADR 0078。ply_context・ply_computer と同じ 1 本の中継に束ねる）も同じ。口は会話のあいだ同じなので、渡す・渡さないが変わったときだけ
+    const browserKey = browserRuntime ? `${browserRuntime.url} ${browserRuntime.headers?.Authorization ?? ''}` : null;
+    // ply_control（操作の一覧。ADR 0081）と、会話のシェルへ渡す CLI の接続情報（PLEIAD_CONTROL_*）も起動時にしか渡せない。口は会話のあいだ同じ
+    const controlKey = controlRuntime ? `${controlRuntime.url} ${controlRuntime.headers?.Authorization ?? ''}` : null;
     if (session && ((session.contextKey ?? null) !== contextKey || (session.contextShape ?? null) !== contextShape
       || (session.browserConfig ?? null) !== (browserEnv?.AGENT_BROWSER_CONFIG ?? null) || (session.hooksShape ?? null) !== hooksShape
-      || (session.computerKey ?? null) !== computerKey)) { session.kill(); release(conversationId, session); session = null; }
+      || (session.computerKey ?? null) !== computerKey || (session.browserKey ?? null) !== browserKey || (session.controlKey ?? null) !== controlKey)) { session.kill(); release(conversationId, session); session = null; }
 
     const fresh = !session;
     if (fresh) {
@@ -327,10 +331,12 @@ export const backend = {
       // カスタムエージェントを使うのは、Pleiad のコンテキスト・ブラウザーの指示・委譲の子への指示を渡すときだけ。
       // Hooks だけを Pleiad がそろえるときは、置き場（--add-dir）だけを作る（既定のエージェントのまま。inheritCustomizations に頼らない）
       const computerInstructions = computerPrompt(computerRuntime, { locale: contextRuntime?.locale ?? locale, agent: 'antigravity' });
-      const useAgent = Boolean(contextRuntime || browserInstructions || addedInstructions || computerRuntime);
+      const useAgent = Boolean(contextRuntime || browserInstructions || addedInstructions || computerRuntime || controlRuntime);
       const agent = useAgent || hooksRuntime ? await prepareAgent({ owners: contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' },
-        prompt: [contextRuntime?.prompt, browserInstructions, addedInstructions, computerInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale ?? locale,
-        context: useAgent, hooks: hooksRuntime, computer: computerRuntime ? { url: computerRuntime.url, authorization: computerRuntime.headers?.Authorization } : null }) : null;
+        prompt: [contextRuntime?.prompt, browserInstructions, addedInstructions, computerInstructions, controlRuntime?.instructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale ?? locale,
+        context: useAgent, hooks: hooksRuntime, computer: computerRuntime ? { url: computerRuntime.url, authorization: computerRuntime.headers?.Authorization } : null,
+        browser: browserRuntime ? { url: browserRuntime.url, authorization: browserRuntime.headers?.Authorization } : null,
+        control: controlRuntime ? { url: controlRuntime.url, authorization: controlRuntime.headers?.Authorization, env: controlRuntime.env } : null }) : null;
       session = new AgySession({
         cwd,
         conversationId,
@@ -350,6 +356,8 @@ export const backend = {
       session.contextShape = contextShape;
       session.browserConfig = browserEnv?.AGENT_BROWSER_CONFIG ?? null;
       session.computerKey = computerKey;
+      session.browserKey = browserKey;
+      session.controlKey = controlKey;
     }
 
     const handle = (ev) => {

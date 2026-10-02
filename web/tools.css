@@ -309,6 +309,14 @@
 .cu-ap .sub.mono{font-family:var(--font-mono)}
 .cu-ap .warn{padding-left:var(--tc-indent);margin-top:4px;color:var(--ink-strong);font-weight:600}
 .cu-ap .expl{padding-left:var(--tc-indent);margin-top:4px;color:var(--ink);max-width:560px}
+.cu-ap .ap-row{margin-top:4px}
+.cu-ap .ap-key{font-size:var(--fs-s);color:var(--ink)}
+.cu-ap .ap-chg{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;font-size:var(--fs-s)}
+.cu-ap .ap-was{color:var(--ink-weak);text-decoration:line-through;text-decoration-thickness:1px}
+.cu-ap .ap-arrow{flex:none;color:var(--ink-weak)}
+.cu-ap .ap-now{color:var(--ink);overflow-wrap:anywhere}
+.cu-ap .ap-tag{flex:none;min-width:2.4em;font-size:var(--fs-xs);color:var(--ink-weak)}
+.cu-ap .ap-unset{font-family:var(--font);font-style:italic;text-decoration:none}
 .appic{display:inline-block;width:14px;height:14px;vertical-align:-2px;margin-right:6px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linejoin:round}
 @media (max-width:560px){.cu-ap .sub,.cu-ap .warn,.cu-ap .expl{padding-left:0}}
 

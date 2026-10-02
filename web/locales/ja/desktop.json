@@ -23,6 +23,7 @@
   },
   "notifications": {
     "completed": "作業が完了しました",
+    "failed": "作業が失敗しました",
     "waitingReply": "返事を待っています"
   },
   "secrets": {

@@ -11,6 +11,7 @@
 - **中継は中身を読めない。** 端末とホストの間で暗号化し、鍵は QR のペアリングで交換する
 - ホストの既存サーバーは今のまま `127.0.0.1:7420` で待ち受ける。外に出る口は増やさない
 - リモートの窓は、ローカルの窓と一目で見分けられる
+- 離れていても、返事が要るとき・失敗したとき・終わったときにスマホ（Android）へ通知する。同じ中継の通知の線で、中身はホストが端末ごとの鍵で暗号化する（§5.6・§11-5、[ADR 0086](adr/0086-notifications-through-relay.md)）
 
 ### やらないこと
 
@@ -19,7 +20,7 @@
 - ブラウザー・PWA からのリモート接続。E2E の中継はアプリ内のプロキシが前提なので、端末はデスクトップ版かモバイル版
 - 複数の利用者で 1 台の中継を共有すること。中継は 1 人の持ち物（§5.4）
 - P2P（WebRTC）、Tailscale・Cloudflare Tunnel（決定済み。第三者のアカウントや TLS 終端を挟まない）
-- プッシュ通知（§11 未決）、リモートからのホストのアプリ更新、リモートからのログイン操作（§7.3）、モバイルからのフォルダー送信
+- FCM・APNs などの第三者のプッシュ通知（§11-5）、iOS への通知、リモートからのホストのアプリ更新、リモートからのログイン操作（§7.3）、モバイルからのフォルダー送信
 
 ## 2. 全体構成
 
@@ -54,6 +55,7 @@
 | リモートの窓・ほかのホストにつなぐ窓 | `desktop/remote-windows.cjs`（窓・IPC・印。main プロセス）、`desktop/remote-preload.cjs`（リモートの窓の preload）、`desktop/remote-hosts.html`・`remote-hosts-view.cjs`・`remote-hosts-preload.cjs`（同梱の窓）、`desktop/window-trust.cjs`（窓ごとのオリジンの表）、`desktop/i18n.cjs`（本体の文言）。画面の印は `web/remote-badge.mjs` | Node |
 | 手元のフォルダーを送る（§8.1） | `core/folder-uploads.mjs`（`upload*` コマンドの中身・置き場・パスの検査）、`web/folder-upload.mjs`（送る流れとドロップの問い）、`web/attach-menu.mjs`（添付のボタンのメニュー） | Node / JS |
 | モバイルの殻 | `mobile/`（Capacitor 8。独立した `package.json`）。Android: `mobile/android/remote-core/`（端末側の Kotlin 移植。純粋な JVM で Gradle の試験）、`mobile/android/app/`（殻・ホストの窓・Keystore）、`mobile/www/`（同梱のホスト一覧）、`mobile/scripts/fake-host.mjs`（試験用の中継 + fake のホスト）。iOS は未着手。Android の配布は [android-releases.md](android-releases.md) | Kotlin / JS（iOS は Swift） |
+| 離れた端末への通知（§5.6・§11-5） | ホスト: `core/notify/`（`policy.mjs` 判定・`notifier.mjs` 送る・`crypto.mjs` 暗号・`presence.mjs` 見ている会話・`settings.mjs` この PC の設定）。Android: `mobile/android/remote-core/` の `Notify*.kt`（線・復号・束ね方・鍵の登録）と `mobile/android/app/` の `NotifyService`・`NotifyPresenter`・`NotifyControl`。試験の例は `tests/remote/notify-vectors.json` | Node / Kotlin |
 | 試験ベクトル | `tests/remote/vectors.json`（Noise の公式ベクトル + フレームの例。3 実装が同じものを読む） | — |
 
 ## 3. 暗号とペアリング
@@ -166,13 +168,13 @@ stream 0 はチャネル自体。端末が開くストリームは奇数、ホ�
 
 接続口は復号したストリームを `127.0.0.1:<PORT>` への HTTP / WebSocket に組み立て直す。そのとき:
 
-- **`/mcp/` で始まるパスは通さない**（`/mcp/agents` `core/agent-bridge.mjs:3`、`/mcp/context` `core/context-bridge.mjs:8`。エージェント CLI 用の内部口）。RESET で返す
+- **`/mcp/` で始まるパスと `/api/ops` は通さない**（`/mcp/agents` `core/agent-bridge.mjs:3`、`/mcp/context` `core/context-bridge.mjs:8`、`/mcp/control`。エージェント CLI 用の内部口と、CLI 用の操作の一覧の口 `/api/ops`。ADR 0083）。RESET で返す
 - HTTP は **GET と HEAD だけ**（今のサーバーの HTTP は読み取りだけで、状態の変更はすべて `/ws` のコマンド）。WebSocket は `/ws` だけ
 - 端末から来た `Cookie`・`Authorization`・`?token=`・`Host`・`Origin`・hop-by-hop のヘッダーを捨て、**ホストの UI トークンを接続口が付ける**（HTTP は Cookie、`/ws` は `?token=`）。接続口はサーバーと同じプロセスにいるので `TOKEN` と実際のポートを知っている
 - 応答の `Set-Cookie`（`agent_host_token`。`core/server.mjs` の静的配信）を捨てる。**ホストの UI トークンは端末に届かない**
 - 既存サーバーのコード（トークン照合・静的配信・`/ws`）は変えない。変えるのは起動時に接続口を立てる数行だけ
 
-実装（`core/remote/forward.mjs`）では、端末のヘッダーは決まったものだけを通す（`accept`・`accept-language`・`accept-encoding`・`cache-control`・`pragma`・`if-none-match`・`if-modified-since`・`if-range`・`range`・`user-agent`）。パスは WHATWG の URL で読み直し、`/mcp` の判定は小文字にしたものと復号したものの両方で行い、判定した形のまま送る。通さないもの（`/mcp`・GET/HEAD 以外・`/ws` 以外の WebSocket）はどれも RESET 3。
+実装（`core/remote/forward.mjs`）では、端末のヘッダーは決まったものだけを通す（`accept`・`accept-language`・`accept-encoding`・`cache-control`・`pragma`・`if-none-match`・`if-modified-since`・`if-range`・`range`・`user-agent`）。パスは WHATWG の URL で読み直し、`/mcp` の判定は小文字にしたものと復号したものの両方で行い、判定した形のまま送る。通さないもの（`/mcp`・`/api/ops`・GET/HEAD 以外・`/ws` 以外の WebSocket）はどれも RESET 3。
 
 将来、端末ごとの記録や権限を持たせるときは、接続口が `X-Pleiad-Device` を付ける余地がある（今は付けない）。
 
@@ -208,10 +210,11 @@ stream 0 はチャネル自体。端末が開くストリームは奇数、ホ�
 | `WS /v1/host` | `Authorization: Bearer <RELAY_ENROLL_SECRET>`、`X-Pleiad-Host: <hostId>` | ホストの制御用の接続。JSON の制御メッセージだけ（中身は通らない） |
 | `WS /v1/host/accept?conn=<id>` | 同上 | 端末 1 本ごとにホストが張るデータ用の接続。中継が端末の接続とつなぐ |
 | `WS /v1/device` | `Authorization: Bearer <中継用トークン>`、`X-Pleiad-Host`、`X-Pleiad-Device`。ペアリングは `X-Pleiad-Pairing: <入場券>` | 端末の接続。照合が通れば、ホストが accept を張るまで最大 10 秒待つ |
+| `WS /v1/device/notify` | `/v1/device` と同じ（ペアリングは無い） | 端末の通知の線（§5.6）。ホストが暗号化した通知を流すだけ |
 
 端末もホストもアプリ内のネイティブの WebSocket（Node の `ws`・URLSession・OkHttp）なので、ヘッダーで認証できる（URL に秘密を載せない）。
 
-制御メッセージ: ホスト→中継 `sync { devices: [{ id, tokenHash }] }`・`allow`・`revoke { id }`・`pairing { ticketHash, ttlMs }`、中継→ホスト `incoming { conn, deviceId | pairing: true }`・`closed { conn }`。
+制御メッセージ: ホスト→中継 `sync { devices: [{ id, tokenHash }] }`・`allow`・`revoke { id }`・`pairing { ticketHash, ttlMs }`・`notify { deviceId, blob, ttlMs }`（§5.6）、中継→ホスト `incoming { conn, deviceId | pairing: true }`・`closed { conn }`。
 
 細部（実装 `relay/server.mjs` で決めたこと）:
 
@@ -287,7 +290,18 @@ Coolify の設定: 新しいリソース → GitHub のリポジトリ → Build
 
 ### 5.5 試験
 
-`tests/unit/relay.mjs`（`npm test` から回す。LLM は使わない）: 登録用の秘密なし・違うトークン・取り消し済みでつながらない、入場券の 1 回きり・失効、ホストが居ないときの閉じ方（4404）、上限を超えるメッセージで切れる、背圧の上限で切れる、ホストの張り直しと `sync` で照合が戻る、2 本目の制御接続で古い方が閉じる。暗号は中継の外なので、試験はバイト列が変わらずに届くことだけを見る。
+`tests/unit/relay.mjs`（`npm test` から回す。LLM は使わない）: 登録用の秘密なし・違うトークン・取り消し済みでつながらない、入場券の 1 回きり・失効、ホストが居ないときの閉じ方（4404）、上限を超えるメッセージで切れる、背圧の上限で切れる、ホストの張り直しと `sync` で照合が戻る、2 本目の制御接続で古い方が閉じる、通知の線（溜めて渡す・`ack` で消す・寿命・取り消しで切れる）。暗号は中継の外なので、試験はバイト列が変わらずに届くことだけを見る。
+
+### 5.6 通知の線（2026-10-03）
+
+離れた端末への通知（§11-5、[ADR 0086](adr/0086-notifications-through-relay.md)）を運ぶ。中継は deviceId 宛てに暗号文を流すだけで、中身（種類・会話名）は読めない。
+
+- ホストは制御用の接続で `notify { deviceId, blob, ttlMs }` を送る。`blob` は base64url の暗号文で、平文が固定長なので大きさは常に同じ（§11-5）。形が違う・`blob` が 2048 字を超える・登録の無い端末宛ては捨てる（制御用の接続は切らない）。ホストあたり 1 分 120 件まで
+- 端末は `WS /v1/device/notify` を張る（認証は `/v1/device` と同じヘッダー。ホストが居ない・`sync` 前は 4404、トークンが合わない・取り消しは 4401）。同じ端末の 2 本目は古い方を 4409 で閉じる。中継は届いた通知を `{ type: "notify", i, blob }` で流し、端末は `{ type: "ack", i }` を返す
+- 端末が居ない間は、暗号文のままメモリに溜める（端末あたり 16 件。寿命は `ttlMs` で、最大 15 分・無ければ 5 分）。端末がつながったら寿命の内の分を順に渡し、`ack` で消す。線が半開きで落ちたときは次の線で送り直す（端末は通し番号で重複を捨てる）。ディスクには書かない
+- 線は電池のために軽くする: 中継の ping は 5 分ごと（会話の線は 30 秒）、端末は OkHttp の ping を 4 分ごと。切れたら端末は 5 秒から 5 分まで延ばしながら張り直す
+- `sync`・`revoke` で表から消えた端末の線は 4401 で切り、溜めた分も捨てる
+- 互換: 古い中継には `/v1/device/notify` が無い（404）。端末は張り直しを延ばしながら続け、会話の線には影響しない。古い中継は知らない制御メッセージ `notify` を無視する
 
 ## 6. ホスト側（#13）
 
@@ -529,7 +543,11 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 2. ~~**QR を作る部品**~~ 決定（2026-09-23）: `web/vendor/qrcode-generator.mjs`（MIT）を同梱（§6.1）。読み取りはモバイルのネイティブ（Capacitor のバーコードのプラグイン）
 3. ~~**Android の最低版**~~ 決定（2026-09-23）: **API 33（Android 13）以上**。X25519 を標準の `XDH` だけで済ませるため（`XDH` は API 33 から。31–32 のために自前の X25519 を持つ案は採らない。Tink も足さない）
 4. **WKWebView と `127.0.0.1` の secure context**: 実機で確かめる。だめなら §8.3 の代わりの UUID、それでもだめなら B 案
-5. **通知**: 背面のモバイルには完了・承認待ちが届かない。APNs / FCM の鍵を持つ中継が要るので、この中継に載せるかは別に決める（中身は端末の鍵で暗号化して載せる）
+5. ~~**通知**~~ 決定（2026-10-03）: FCM・APNs は使わず、Android のアプリが前面サービス（`remoteMessaging`）で中継へ軽い通知の線（§5.6）を保つ（[ADR 0086](adr/0086-notifications-through-relay.md)）。
+   - 鍵: 端末が 32 バイトの通知鍵を作り、ペアリング済みの E2E の線の中で `notifyRegister { key, settings }` を送ってホストに登録する（設定を変えるたび・6 時間ごとにも登録し直す）。ホストは `ready` の `notify: 1` で対応を示し、無いホスト（古い版）には登録しない。鍵は秘密の置き場の `notify:<deviceId>`、設定・止めたか・最後に送った時刻は `devices.json` の端末の `notify`
+   - 暗号: `blob = base64url(nonce 12 || AES-256-GCM(平文 512 バイト) || tag 16)`。平文は `u16(JSON の長さ) || JSON || 0 埋め` で、種類によらず同じ大きさ。AAD は `"pleiad-notify/1\n" + hostId + "\n" + deviceId`。JSON は `{ v: 1, seq, at, kind, hostId, host, session, title, id?, cancel? }`（`kind` は `approval`・`question`・`failed`・`done`・`cancel`。`cancel` は `approval`（決着した）か `seen`（どこかで見た））。会話名とホスト名は収まるまで詰める。Node（`core/notify/crypto.mjs`）と Kotlin（`NotifyCrypto.kt`）は `tests/remote/notify-vectors.json` で突き合わせる
+   - 判定（ホスト）: 種類・端末の設定・見ている会話（各画面の `presence`）・2 分より古い完了・30 秒未満のターンの完了で絞る（`docs/design.md`「通知」）。束ねる・上書きする・文面は端末が決める
+   - 中継の寿命: 完了 2 分、返事待ち・失敗・取り消し 10 分
 6. **送信の効率**: フォルダーの送信は base64 の WS コマンド（約 33% 増える）。バイナリのフレームにするかは、実際の速さを見てから
 7. **モバイルのアプリのロック**（生体認証で殻を開く）を最初から入れるか
 8. **端末ごとの記録・権限**: 当面は全権限。入れるときは接続口が `X-Pleiad-Device` を付け、`store.recordChange` の `by` に端末を残す

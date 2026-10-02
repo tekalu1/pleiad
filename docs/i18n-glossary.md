@@ -25,7 +25,7 @@
 | 委譲 / 委譲先 | delegate / delegated task |
 | Pleiad タスク | Pleiad task |
 | 承認 | approval |
-| 確認（ブラウザーの設定） | Confirmation |
+| 外部の読み込み（ブラウザーの設定の見出し。旧「確認」） | External resources |
 | 外部の読み込み / 許可したサイト / 止めた出どころ | External resources / Allowed sites / Blocked origins |
 | 一度だけ / このサイトは常に / 断る | Just once / Always for this site / Deny |
 | 常に / 毎回聞く | Always / Ask each time |
@@ -37,6 +37,8 @@
 | 読むだけ | Read only |
 | あなたを待っている | Waiting for you |
 | 承認を待っている | waiting for approval |
+| 設定 › {節} / オン / オフ（設定の変更の承認カード） | Settings › {section} / On / Off |
+| 確認なしでできることが増える変更です | This lets the agent do more without asking you |
 | 答えを待っている | waiting for an answer |
 | 作業ディレクトリ | working directory |
 | フォルダーを選ぶ… | Choose folder… |
@@ -208,6 +210,15 @@
 | 渡す / 渡せない（登録をエージェントへ） | pass / cannot pass |
 | 一時の置き場（agy の --add-dir） | temporary folder |
 | 止めたはずの定義（漏れ） | should have been off |
+| ブランチ（git。会話の枝・分岐とは別） | branch（git のとき。会話の枝は branch のまま、文脈で分かるようにする） |
+| コミット / コミットしていない分 | commit / Uncommitted |
+| 分けた作業場所（git worktree） | Separate workspace |
+| 分けて始める / このまま / いつも分ける | Start separately / Stay here / Always separate |
+| 残っている作業場所 / 未取り込み | Leftover workspaces / Not merged |
+| 取り込み（分けた作業場所のブランチを元の場所へ） | Merge back |
+| 退避して消す / 元に戻す | Archive and remove / Restore |
+| この会話でしたこと（git） | Done in this conversation |
+| 会話のこの場所へ | Go to this point in the conversation |
 
 ## 揺れ（未統一）
 - 使用枠: `usage`（辞書での使用が多数派。例 server:antigravity.usage.badResponse・shared・none・timeout・tooLarge・cannotRead・needsUpdate） / `usage limits`（例 server:antigravity.usage.unsupported、server:usage.codexUnavailable、server:usage.claudeUnavailable）。本表には多い方の `usage` を採ったが、辞書は直していないので `usage limits` の箇所も残っている

@@ -1,8 +1,8 @@
 import { taskTitle } from '../../core/task-title.mjs';
-import { backgroundTitle, taskTree, backgroundTotals } from '../../web/background-model.mjs';
+import { backgroundTitle, taskTree, backgroundTotals, backgroundKind, backgroundSummary } from '../../web/background-model.mjs';
 
 export const name = 'background-model';
-export const title = 'バックグラウンドのタイトル・集計・子孫の順序';
+export const title = 'バックグラウンドのタイトル・集計・子孫の順序・入口の種類のまとめ';
 export default async function(t) {
   t.ok('明示タイトルの空白を詰めて 40 文字に切る', taskTitle('  alpha\n  beta   ' + 'x'.repeat(50), 'fallback') === ('alpha beta ' + 'x'.repeat(50)).slice(0, 40));
   t.ok('絵文字を途中で切らず 40 文字にする', taskTitle('🚀'.repeat(40), 'fallback') === '🚀'.repeat(40));
@@ -20,4 +20,24 @@ export default async function(t) {
   t.ok('直下の委譲数と根の状態を子孫へ渡す', tree[1].childCount === 1 && tree[2].childCount === 1 && tree[3].rootLive === false);
   const totals = backgroundTotals([{ group: 'agent', live: true }, { group: 'agent', live: false }, { group: 'agent', live: false }, { group: 'command', live: true }]);
   t.ok('稼働中は全種、完了はサブエージェントと Pleiad タスクを数える', totals.live === 2 && totals.ended === 2);
+
+  // ---- 入口のチップ（docs/design-system.md「入力欄の上の帯」）
+  const agent = (backend, extra = {}) => ({ group: 'agent', backend, live: true, ...extra });
+  const command = () => ({ group: 'command', live: true });
+  t.ok('種類: ロゴのある接続先はそのまま、それ以外の接続先は互換、コマンドは term',
+    backgroundKind(agent('claude')) === 'claude' && backgroundKind(agent('codex')) === 'codex' && backgroundKind(agent('antigravity')) === 'antigravity'
+    && backgroundKind(agent('openrouter')) === 'compat' && backgroundKind({ group: 'agent', live: true }) === 'compat' && backgroundKind(command()) === 'term');
+  const mixed = backgroundSummary([agent('claude'), agent('claude'), agent('codex'), command(), agent('claude', { live: false })]);
+  t.ok('種類ごとにまとめ、並びは Claude・Codex・ターミナル（終わったものは数えない）',
+    mixed.live === 4 && mixed.groups.map(g => `${g.kind}:${g.n}`).join() === 'claude:2,codex:1,term:1' && mixed.visible.length === 3 && mixed.hidden === 0 && mixed.ended === 1);
+  const reversed = backgroundSummary([command(), agent('codex'), agent('claude')]);
+  t.ok('入れた順に依らず並びは固定', reversed.groups.map(g => g.kind).join() === 'claude,codex,term');
+  const many = backgroundSummary([agent('claude'), agent('codex'), agent('antigravity'), agent('openrouter'), command(), command()]);
+  t.ok('4 種類以上は 3 つまで並べ、残りの種類の数を hidden に', many.groups.length === 5 && many.visible.map(g => g.kind).join() === 'claude,codex,antigravity' && many.hidden === 2);
+  const waiting = backgroundSummary([agent('claude'), agent('codex'), agent('antigravity'), agent('openrouter', { waiting: true }), command()]);
+  t.ok('承認待ちを含む種類は先頭へ寄せ、「+N」に隠さない', waiting.visible[0].kind === 'compat' && waiting.visible[0].waiting === 1 && waiting.visible.length === 3 && waiting.hidden === 2);
+  const allWaiting = backgroundSummary([agent('claude', { waiting: true }), agent('codex', { waiting: true }), agent('antigravity', { waiting: true }), agent('openrouter', { waiting: true }), agent('x')]);
+  t.ok('承認待ちの種類が 3 を超えても全部出す', allWaiting.visible.length === 4 && allWaiting.visible.every(g => g.waiting) && allWaiting.hidden === 0);
+  const ended = backgroundSummary([agent('claude', { live: false }), agent('codex', { live: false }), { group: 'command', live: false }]);
+  t.ok('終わったものだけなら種類は出さず、完了の数だけ（コマンドは数えない）', ended.live === 0 && ended.groups.length === 0 && ended.ended === 2);
 }

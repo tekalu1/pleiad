@@ -1,6 +1,6 @@
 // ホストの接続口の防火壁（docs/remote.md §4.2）。復号したストリームを、ホストの既存サーバーへの HTTP / WebSocket に組み立て直す。
 //
-// - `/mcp` で始まるパス（エージェント CLI 用の内部口）は通さない
+// - `/mcp` で始まるパス（エージェント CLI 用の内部口）と、`/api/ops`（CLI 用の操作の一覧の口。ADR 0083）は通さない
 // - HTTP は GET と HEAD だけ、WebSocket は /ws だけ
 // - 端末から来たヘッダーは決まったものだけを通す（Cookie・Authorization・Host・Origin・hop-by-hop などは落ちる）。
 //   `?token=` も落とし、ホストの UI トークンは接続口が付ける（HTTP は Cookie、/ws は ?token=）
@@ -36,7 +36,7 @@ export function checkPath(raw) {
   const lower = u.pathname.toLowerCase();
   let decoded = lower;
   try { decoded = decodeURIComponent(lower); } catch { return null; }
-  for (const p of [lower, decoded]) if (p === '/mcp' || p.startsWith('/mcp/')) return null;
+  for (const p of [lower, decoded]) if (p === '/mcp' || p.startsWith('/mcp/') || p === '/api/ops' || p.startsWith('/api/ops/')) return null;
   u.searchParams.delete('token');
   return { path: u.pathname + u.search, pathname: u.pathname };
 }
@@ -72,8 +72,10 @@ function sendableCode(code) {
 
 /**
  * チャネルのストリーム 1 本を扱う。target() は { host, port }（ホストの既存サーバー）、token はホストの UI トークン。
+ * device は { id, platform }（この線の端末。ハンドシェイクで確かめた端末）。/ws には x-pleiad-device で渡し、
+ * サーバーが「どの端末の画面か」（スマホへの通知の見ている印・通知鍵の登録）を知る。端末が自分で名乗ったヘッダーは通さない（requestHeaders）。
  */
-export function forwardStream(stream, { target, token }) {
+export function forwardStream(stream, { target, token, device = null }) {
   const head = stream.request ?? {};
   const checked = checkPath(head.path);
   if (stream.kind === 'http') {
@@ -82,7 +84,7 @@ export function forwardStream(stream, { target, token }) {
     return forwardHttp(stream, method, checked.path, requestHeaders(head.headers), target(), token);
   }
   if (!checked || checked.pathname !== '/ws') return stream.reset(RESET_CODE.FORBIDDEN);
-  return forwardWs(stream, checked.path, head.protocols, target(), token);
+  return forwardWs(stream, checked.path, head.protocols, target(), token, device);
 }
 
 function forwardHttp(stream, method, path, headers, { host, port }, token) {
@@ -113,14 +115,14 @@ function forwardHttp(stream, method, path, headers, { host, port }, token) {
   req.end();
 }
 
-function forwardWs(stream, path, protocols, { host, port }, token) {
+function forwardWs(stream, path, protocols, { host, port }, token, device) {
   const sep = path.includes('?') ? '&' : '?';
   const url = `ws://${host.includes(':') ? `[${host}]` : host}:${port}${path}${sep}token=${encodeURIComponent(token)}`;
   const list = Array.isArray(protocols) ? protocols.filter(p => typeof p === 'string' && /^[\x21-\x7e]{1,64}$/.test(p)).slice(0, 8) : [];
   // ホストのサーバーから見るとループバックの接続なので、印を付けて「サーバーのある PC の画面」と区別させる
   // （core/os-open.mjs の isLocalRequest。エクスプローラーで表示・ブラウザーで開くをリモートの端末から動かさない）
   const local = new WebSocket(url, list, { perMessageDeflate: false, followRedirects: false, handshakeTimeout: 10_000,
-    headers: { 'x-forwarded-for': 'pleiad-remote' } });
+    headers: { 'x-forwarded-for': 'pleiad-remote', ...(device?.id ? { 'x-pleiad-device': String(device.id) } : {}) } });
   let opened = false;
   let inflight = 0;
 

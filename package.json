@@ -2,7 +2,7 @@
   "name": "agent-host",
   "private": true,
   "license": "Apache-2.0",
-  "version": "0.1.0-beta.70",
+  "version": "0.2.0",
   "type": "module",
   "engines": {
     "node": ">=20.19.0"
@@ -36,6 +36,9 @@
   "devDependencies": {
     "electron": "^44.3.0",
     "electron-builder": "^26.15.3"
+  },
+  "bin": {
+    "pleiad": "bin/pleiad.mjs"
   },
   "main": "desktop/main.cjs",
   "description": "Pleiad desktop workspace for coding agents",

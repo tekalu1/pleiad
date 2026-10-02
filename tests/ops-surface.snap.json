@@ -1,0 +1,903 @@
+{
+  "ops": [
+    {
+      "id": "app.cliSetup",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": true,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "app.running",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "running"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "app.status",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "delegation.status",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "delegation",
+            "status"
+          ],
+          "positional": [
+            "taskId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "e3b488cb7dc5"
+    },
+    {
+      "id": "delegation.tasks",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "delegation",
+            "tasks"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "3674e4e2e03f"
+    },
+    {
+      "id": "sessions.fork",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "fork"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "fork",
+      "input": "b52741627794"
+    },
+    {
+      "id": "sessions.get",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "direct",
+        "cli": {
+          "path": [
+            "sessions",
+            "get"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "18e4482f0f74"
+    },
+    {
+      "id": "sessions.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "9b44cafbe720"
+    },
+    {
+      "id": "sessions.read",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "direct",
+        "cli": {
+          "path": [
+            "sessions",
+            "read"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "62fa526050a3"
+    },
+    {
+      "id": "sessions.search",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "direct",
+        "cli": {
+          "path": [
+            "sessions",
+            "search"
+          ],
+          "positional": "query"
+        }
+      },
+      "legacyCommand": null,
+      "input": "e62fd6215a96"
+    },
+    {
+      "id": "sessions.setStatus",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "status"
+          ],
+          "positional": [
+            "sessionId",
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "638b344ef30c"
+    },
+    {
+      "id": "sessions.setTitle",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "rename"
+          ],
+          "positional": [
+            "sessionId",
+            "title"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "b7a5d60cc4c3"
+    },
+    {
+      "id": "settings.get",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "direct",
+        "cli": {
+          "path": [
+            "settings",
+            "get"
+          ],
+          "positional": [
+            "key"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "0b169eb59d73"
+    },
+    {
+      "id": "settings.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "settings",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "2ad119dad715"
+    },
+    {
+      "id": "settings.schema",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "settings",
+            "schema"
+          ],
+          "positional": [
+            "key"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "2e2f5e3b592a"
+    },
+    {
+      "id": "settings.set",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "direct",
+        "cli": {
+          "path": [
+            "settings",
+            "set"
+          ],
+          "positional": [
+            "key",
+            "value"
+          ]
+        }
+      },
+      "legacyCommand": "setPref",
+      "input": "cf5833e094bf"
+    },
+    {
+      "id": "statuses.create",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "statuses",
+            "create"
+          ],
+          "positional": [
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": "createStatus",
+      "input": "afc00334d287"
+    },
+    {
+      "id": "statuses.setIcon",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "statuses",
+            "icon"
+          ],
+          "positional": [
+            "status",
+            "icon"
+          ]
+        }
+      },
+      "legacyCommand": "setStatusIcon",
+      "input": "6bf6e7291226"
+    }
+  ],
+  "settings": [
+    {
+      "key": "addedContext",
+      "risk": "guarded",
+      "riskOf": false,
+      "writable": false,
+      "prefKeys": [
+        "addedContext"
+      ]
+    },
+    {
+      "key": "agentSitePermissions",
+      "risk": "write",
+      "riskOf": true,
+      "writable": true,
+      "prefKeys": [
+        "agentSitePermissions"
+      ]
+    },
+    {
+      "key": "backend",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "backend"
+      ]
+    },
+    {
+      "key": "browserDefaultProfile",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "browserDefaultProfile"
+      ]
+    },
+    {
+      "key": "browserNewProfile",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "browserNewProfile"
+      ]
+    },
+    {
+      "key": "browserProfiles",
+      "risk": "guarded",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "browserProfiles"
+      ]
+    },
+    {
+      "key": "claudeAccount",
+      "risk": "human-only",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "claudeAccount"
+      ]
+    },
+    {
+      "key": "compaction.auto",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "autoCompaction"
+      ]
+    },
+    {
+      "key": "computerUse",
+      "risk": "write",
+      "riskOf": true,
+      "writable": true,
+      "prefKeys": [
+        "computerUse"
+      ]
+    },
+    {
+      "key": "confirmAgentSites",
+      "risk": "write",
+      "riskOf": true,
+      "writable": true,
+      "prefKeys": [
+        "confirmAgentSites"
+      ]
+    },
+    {
+      "key": "confirmExternalLoads",
+      "risk": "write",
+      "riskOf": true,
+      "writable": true,
+      "prefKeys": [
+        "confirmExternalLoads"
+      ]
+    },
+    {
+      "key": "context.default",
+      "risk": "guarded",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": []
+    },
+    {
+      "key": "delegationRouting",
+      "risk": "guarded",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "delegationRouting"
+      ]
+    },
+    {
+      "key": "effort",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "effort"
+      ]
+    },
+    {
+      "key": "externalSitePermissions",
+      "risk": "write",
+      "riskOf": true,
+      "writable": true,
+      "prefKeys": [
+        "externalSitePermissions"
+      ]
+    },
+    {
+      "key": "instructionBudget",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "instructionBudget"
+      ]
+    },
+    {
+      "key": "linkOpen",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "linkOpen"
+      ]
+    },
+    {
+      "key": "locale",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "locale"
+      ]
+    },
+    {
+      "key": "mode",
+      "risk": "human-only",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "mode"
+      ]
+    },
+    {
+      "key": "model",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "model"
+      ]
+    },
+    {
+      "key": "plyInstructions",
+      "risk": "guarded",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "plyInstructions"
+      ]
+    }
+  ],
+  "settingPolicy": {
+    "agentSitePermissions": {
+      "human": "write=allow guarded=allow",
+      "agent-unbound": "write=allow guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "write=allow guarded=ask",
+      "agent-bound-never-full": "write=allow guarded=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
+    },
+    "backend": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "browserDefaultProfile": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "browserNewProfile": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "browserProfiles": {
+      "human": "guarded=allow",
+      "agent-unbound": "guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "guarded=ask",
+      "agent-bound-never-full": "guarded=allow",
+      "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
+    },
+    "claudeAccount": {
+      "human": "human-only=allow",
+      "agent-unbound": "human-only=hidden",
+      "agent-bound-ask": "human-only=hidden",
+      "agent-bound-never-full": "human-only=hidden",
+      "agent-bound-readonly": "human-only=hidden"
+    },
+    "compaction.auto": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "computerUse": {
+      "human": "write=allow guarded=allow",
+      "agent-unbound": "write=allow guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "write=allow guarded=ask",
+      "agent-bound-never-full": "write=allow guarded=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
+    },
+    "confirmAgentSites": {
+      "human": "write=allow guarded=allow",
+      "agent-unbound": "write=allow guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "write=allow guarded=ask",
+      "agent-bound-never-full": "write=allow guarded=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
+    },
+    "confirmExternalLoads": {
+      "human": "write=allow guarded=allow",
+      "agent-unbound": "write=allow guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "write=allow guarded=ask",
+      "agent-bound-never-full": "write=allow guarded=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
+    },
+    "context.default": {
+      "human": "guarded=allow",
+      "agent-unbound": "guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "guarded=ask",
+      "agent-bound-never-full": "guarded=allow",
+      "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
+    },
+    "delegationRouting": {
+      "human": "guarded=allow",
+      "agent-unbound": "guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "guarded=ask",
+      "agent-bound-never-full": "guarded=allow",
+      "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
+    },
+    "effort": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "externalSitePermissions": {
+      "human": "write=allow guarded=allow",
+      "agent-unbound": "write=allow guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "write=allow guarded=ask",
+      "agent-bound-never-full": "write=allow guarded=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
+    },
+    "instructionBudget": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "linkOpen": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "locale": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "mode": {
+      "human": "human-only=allow",
+      "agent-unbound": "human-only=hidden",
+      "agent-bound-ask": "human-only=hidden",
+      "agent-bound-never-full": "human-only=hidden",
+      "agent-bound-readonly": "human-only=hidden"
+    },
+    "model": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "plyInstructions": {
+      "human": "guarded=allow",
+      "agent-unbound": "guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "guarded=ask",
+      "agent-bound-never-full": "guarded=allow",
+      "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
+    }
+  },
+  "mcp": [
+    {
+      "name": "search_sessions",
+      "input": "59fc873e9691"
+    },
+    {
+      "name": "get_session",
+      "input": "641f73bc6645"
+    },
+    {
+      "name": "read_session",
+      "input": "64f25035b503"
+    },
+    {
+      "name": "get_setting",
+      "input": "3472c4008af7"
+    },
+    {
+      "name": "set_setting",
+      "input": "143e7692d1d3"
+    },
+    {
+      "name": "list_ops",
+      "input": "bb8cd515f6e5"
+    },
+    {
+      "name": "call_op",
+      "input": "0adc59c478ac"
+    }
+  ],
+  "cli": [
+    {
+      "id": "delegation.status",
+      "path": "delegation status",
+      "positional": [
+        "taskId"
+      ]
+    },
+    {
+      "id": "delegation.tasks",
+      "path": "delegation tasks",
+      "positional": []
+    },
+    {
+      "id": "app.running",
+      "path": "running",
+      "positional": []
+    },
+    {
+      "id": "sessions.fork",
+      "path": "sessions fork",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.get",
+      "path": "sessions get",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.list",
+      "path": "sessions list",
+      "positional": []
+    },
+    {
+      "id": "sessions.read",
+      "path": "sessions read",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.setTitle",
+      "path": "sessions rename",
+      "positional": [
+        "sessionId",
+        "title"
+      ]
+    },
+    {
+      "id": "sessions.search",
+      "path": "sessions search",
+      "positional": [
+        "query"
+      ]
+    },
+    {
+      "id": "sessions.setStatus",
+      "path": "sessions status",
+      "positional": [
+        "sessionId",
+        "status"
+      ]
+    },
+    {
+      "id": "settings.get",
+      "path": "settings get",
+      "positional": [
+        "key"
+      ]
+    },
+    {
+      "id": "settings.list",
+      "path": "settings list",
+      "positional": []
+    },
+    {
+      "id": "settings.schema",
+      "path": "settings schema",
+      "positional": [
+        "key"
+      ]
+    },
+    {
+      "id": "settings.set",
+      "path": "settings set",
+      "positional": [
+        "key",
+        "value"
+      ]
+    },
+    {
+      "id": "app.status",
+      "path": "status",
+      "positional": []
+    },
+    {
+      "id": "statuses.create",
+      "path": "statuses create",
+      "positional": [
+        "status"
+      ]
+    },
+    {
+      "id": "statuses.setIcon",
+      "path": "statuses icon",
+      "positional": [
+        "status",
+        "icon"
+      ]
+    }
+  ],
+  "policy": {
+    "human": {
+      "read": "allow",
+      "write": "allow",
+      "guarded": "allow",
+      "human-only": "allow"
+    },
+    "agent-unbound": {
+      "read": "allow",
+      "write": "allow",
+      "guarded": "deny:NEEDS_UI",
+      "human-only": "hidden"
+    },
+    "agent-bound-ask": {
+      "read": "allow",
+      "write": "allow",
+      "guarded": "ask",
+      "human-only": "hidden"
+    },
+    "agent-bound-never-full": {
+      "read": "allow",
+      "write": "allow",
+      "guarded": "allow",
+      "human-only": "hidden"
+    },
+    "agent-bound-readonly": {
+      "read": "allow",
+      "write": "deny:READ_ONLY_MODE",
+      "guarded": "deny:READ_ONLY_MODE",
+      "human-only": "hidden"
+    }
+  }
+}

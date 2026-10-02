@@ -4,6 +4,7 @@ import { setupFilePreview } from './file-preview.mjs';
 import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
 import { isManagedContext, paintContextEntry as paintContextEntryButton, setupBrowserEntry } from './header-entries.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
+import { profileList, profileName } from './browser-profiles.mjs';
 import { setupComputerSettings } from './computer-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
 import { configureLinkOpen } from './link-open.mjs';
@@ -17,10 +18,12 @@ import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 import { setupMessagePeek } from './message-peek.mjs';
 import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog } from './message-actions.mjs';
-import { mountFold } from './fold.mjs';
+import { mountFold, revealFold } from './fold.mjs';
+import { isSearchShortcut } from './session-find.mjs';
 import { captureViewState, restoreViewState } from './view-state.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
+import { setupCliSetup } from './cli-setup.mjs';
 import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
 import { setupUsage, createUsageSource } from './usage.mjs';
 import { setupHeaderUsage } from './header-usage.mjs';
@@ -28,6 +31,9 @@ import { setupOnboarding } from "./onboarding.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
 import { setupCompatEndpoints } from './compat-endpoints.mjs';
 import { setupRemote } from './remote.mjs';
+import { setupNotifySettings } from './notify-settings.mjs';
+import { setupMobileNotify } from './mobile-notify.mjs';
+import { createPresenceReporter } from './presence.mjs';
 import { compatModelText } from './compat-models.mjs';
 import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
@@ -50,7 +56,9 @@ import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
+import { approvalChange, changeBody, changeHeading } from "./setting-change.mjs";
 import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
+import { createBackgroundChip } from './background-chip.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
 import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, retryCandidates, splitCandidate, fallbackName, parseRoutingFailure, routingFailureParts, kindText, difficultyText } from './delegation-routing-view.mjs';
@@ -66,7 +74,7 @@ import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./
 import { savedEvent, savedTitle } from "./saved-text.mjs";
 import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE, normalizeAttachmentPath, inlineAttachments, showsAsCard } from "./timeline.mjs";
 import { commandParts, sysFold, teammateNode, shellFailed, elapsedText as shellElapsed } from "./system-messages.mjs";
-import { parseTaskNotice } from "./task-notice.mjs";
+import { parseTaskNotice, parseSettingNotices } from "./task-notice.mjs";
 import { createShellComposer } from "./shell-composer.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 const sessionLoads = createSessionLoads();
@@ -87,6 +95,10 @@ import { attentionCounts, paintOpenSidebar } from './open-sidebar-mark.mjs';
 import { createConversationNav } from './conversation-nav-view.mjs';
 import { createConversationRail } from './conversation-rail.mjs';
 import { createConversationToc } from './conversation-toc.mjs';
+import { setupGitPanel } from './git-panel.mjs';
+import { renderDelegateGit, branchLabel } from './git-view.mjs';
+import { renderSplitNote, paintWorktreeLine, setWorktreeLineMode, setupWorktreeSettings, askText, shortPath } from './worktree-ui.mjs';
+import { branchIcon } from './icons.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
 const submittingMessages = new Set();
@@ -167,7 +179,13 @@ let queuedSend = null;
 
 const NL = String.fromCharCode(10);
 const PROTOCOL = 3;
-const completionNotifications = createCompletionNotifications({ openSession: id => select(id) });
+// この PC の通知（設定 › 通知 › この PC）。切った種類と、いま見ている会話は出さない（ADR 0086）
+let notifyPc = { done: true, reply: true, failed: true };
+// スマホのアプリの殻が背面に回っている間は、画面が可視でも見ていない（殻が plyremote:stop / plyremote:start を投げる）
+let shellStopped = false;
+const watchingNow = () => !shellStopped && document.visibilityState === 'visible';
+const completionNotifications = createCompletionNotifications({ openSession: id => select(id),
+  settings: () => notifyPc, isViewing: id => watchingNow() && state.current === id });
 
 let ws = null;
 let seq = 0;
@@ -219,6 +237,9 @@ const state = {
   messages: [],        // 今のセッションの履歴（loadSession の messages）
   contextInfo: null,   // 今のセッションの読み込み記録（sessionContext の戻り）。タイトル行の入口と筋の一行に使う
   contextInfoId: null, // 上の記録がどのセッションのものか
+  // 分けた作業場所（ADR 0089）。worktreeCheck の結果（今の場所が分けた作業場所か・分けられるか・同じリポジトリで書き込み中の別の会話）。「このまま」を選んだ場所は dismissed
+  worktree: { key: null, data: null, always: false, dismissed: new Set(), ticket: 0 },
+  git: { key: null, sessionId: null, data: null },   // 作業場所の git の状態（gitStatus。ADR 0085）。頭の行のアイコン・入力欄のブランチ・「…」のメニューに使う
   presents: [],
   turnEl: null,        // 追記中の AI の発言（.m.ai）
   bundle: null,        // 走っているツールのまとまり（本文・委譲・ターンの終わりで閉じる。web/tool-bundle.mjs）
@@ -245,32 +266,108 @@ function closeMeterPop(focus = false) {
   $('contextMeter').setAttribute('aria-expanded', 'false');
   if (focus) $('contextMeter').focus();
 }
+/** 入力欄の上の帯の左（文脈）が描いたか。右端のバックグラウンドの入口（syncWorkEntry）と合わせて、帯ごと出すか決める */
+let contextShown = false;
+const stripNarrow = matchMedia('(max-width:480px)');
+function syncStripVisible() {
+  const strip = $('contextStrip');
+  strip.hidden = !contextShown && $('workEntry').hidden;
+  if (strip.hidden) closeMeterPop();
+}
+/** 狭い画面（480px 以下）は、メーターを「文脈 ▬ 30% · ◷ 17:57」に縮め、数値と予約のキャンセルはメニューの頭へ移す。圧縮中・失敗はメーターの位置に出す */
 function paintContextStrip() {
   const usage = state.contextWindow;
-  const show = state.current && activeBackendId() !== 'antigravity' && (usage || state.compactionAt || state.compactionPhase);
-  $('contextStrip').hidden = !show;
-  if (!show) { closeMeterPop(); return; }
-  $('contextMeter').hidden = !usage;
-  if (usage) {
-    const rate = Math.round(100 * usage.usedTokens / usage.windowTokens);
-    // 入力欄のチップと同じ ▾（composer-controls.mjs の CARET。12px の線画）
-    const caret = svgEl('svg', { class: 'i caret', viewBox: '0 0 24 24', 'aria-hidden': 'true' }); caret.append(svgEl('path', { d: 'M7 10l5 5 5-5' }));
-    $('contextMeter').replaceChildren(document.createTextNode(t('compaction.context')),
-      (() => { const bar = el('span', 'context-meter-bar'); const fill = el('span'); fill.style.width = `${Math.min(100, Math.max(0, rate))}%`; bar.append(fill); return bar; })(),
-      document.createTextNode(t('compaction.meter', { rate, used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) })), caret);
+  const show = Boolean(state.current && activeBackendId() !== 'antigravity' && (usage || state.compactionAt || state.compactionPhase));
+  contextShown = show;
+  const wrap = $('contextMeterWrap'), meter = $('contextMeter'), text = $('contextStripText'), status = $('contextStripStatus');
+  if (!show) {
+    wrap.hidden = true;
+    text.textContent = '';
+    for (const node of [...status.children]) if (node !== text) node.remove();
+    $('contextStrip').removeAttribute('data-phase');
+    syncStripVisible();
+    return;
   }
-  const status = $('contextStripStatus'); status.replaceChildren();
+  const narrow = stripNarrow.matches;
+  const phase = state.compactionPhase?.phase === 'start' ? 'running' : state.compactionPhase?.phase === 'failed' ? 'failed' : state.compactionAt ? 'scheduled' : null;
+  $('contextStrip').dataset.phase = phase ?? '';
+  const time = state.compactionAt ? compactTime(state.compactionAt) : '';
+  const amounts = usage ? { rate: Math.round(100 * usage.usedTokens / usage.windowTokens), used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) } : null;
+  // メーター: 文脈の使用量が分かるとき。狭い画面は予約だけでも出す（キャンセルの入口になる）。圧縮中・失敗は別の形に替わる
+  const showMeter = Boolean((usage || (narrow && phase === 'scheduled')) && !(narrow && (phase === 'running' || phase === 'failed')));
+  wrap.hidden = !showMeter;
+  if (!showMeter) closeMeterPop();
+  if (showMeter) {
+    const spoken = [];
+    const parts = [];
+    let caret = null;
+    if (usage) {
+      const rate = Math.min(100, Math.max(0, amounts.rate));
+      // 入力欄のチップと同じ ▾（composer-controls.mjs の CARET。12px の線画）
+      caret = svgEl('svg', { class: 'i caret', viewBox: '0 0 24 24', 'aria-hidden': 'true' }); caret.append(svgEl('path', { d: 'M7 10l5 5 5-5' }));
+      const bar = el('span', 'context-meter-bar'); const fill = el('span'); fill.style.width = `${rate}%`; bar.append(fill);
+      parts.push(document.createTextNode(t('compaction.context')), bar,
+        document.createTextNode(narrow ? t('compaction.meterShort', { rate: amounts.rate }) : t('compaction.meter', amounts)));
+      spoken.push(t('compaction.meterLabel', amounts));
+    }
+    if (phase === 'scheduled') {
+      if (narrow) {
+        if (usage) parts.push(el('span', 'context-meter-sep', '·'));
+        parts.push(el('span', 'context-meter-clock', t('compaction.scheduledShort', { time })));
+      }
+      spoken.push(t('compaction.scheduledSpoken', { time }));
+    }
+    spoken.push(t('compaction.openActions'));
+    if (caret) parts.push(caret);   // 480px 以下は compaction.css が隠す
+    meter.replaceChildren(...parts);
+    meter.setAttribute('aria-label', spoken.join(t('compaction.spokenJoin')));
+    paintMeterMenu(narrow, amounts, time, phase === 'scheduled');
+  }
+  // 状態の文（role=status は文だけ。ボタンの名前を状態として読ませない）
+  for (const node of [...status.children]) if (node !== text) node.remove();
   const action = (label, run) => { const button = el('button', null, label); button.type = 'button'; button.onclick = run; status.append(button); };
-  if (state.compactionPhase?.phase === 'start') status.append(t('compaction.running'));
-  else if (state.compactionPhase?.phase === 'failed') {
-    status.append(t('compaction.failed'));
+  text.replaceChildren();
+  const failed = state.compactionPhase?.phase === 'failed' ? state.compactionPhase : null;
+  if (phase === 'running') {
+    if (narrow) text.append(runMark(), t('compaction.runningShort'));
+    else text.append(t('compaction.running'));
+  } else if (phase === 'failed') {
+    if (narrow) {
+      const warn = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' }); warn.append(svgEl('path', { d: 'M12 4l9 16H3z' }), svgEl('path', { d: 'M12 10v4' }), svgEl('path', { d: 'M12 17h.01' }));
+      text.append(warn, t('compaction.failedShort'));
+    } else text.append(t('compaction.failed'));
+    text.title = failed.reason ?? '';
     if (canCompactHere()) action(t('compaction.retry'), () => requestCompaction());
-    if (state.compactionPhase.reason) status.append(el('small', null, state.compactionPhase.reason));
-  } else if (state.compactionAt) {
-    status.append(t('compaction.scheduled', { time: compactTime(state.compactionAt) }));
-    action(t('compaction.cancel'), () => cmd('cancelCompaction', { sessionId: state.current }).catch(showCompactionError));
+    if (failed.reason && !narrow) status.append(el('small', null, failed.reason));
+  } else if (phase === 'scheduled' && !narrow) {
+    text.append(t('compaction.scheduled', { time }));
+    action(t('compaction.cancel'), cancelScheduledCompaction);
   }
+  if (phase !== 'failed') text.removeAttribute('title');
+  syncStripVisible();
 }
+function cancelScheduledCompaction() { closeMeterPop(); cmd('cancelCompaction', { sessionId: state.current }).catch(showCompactionError); }
+/** メーターのメニューの頭（狭い画面だけ）: 数値と予約、予約のキャンセル。開いている間に描き直しても、中身が同じなら触らない */
+function paintMeterMenu(narrow, amounts, time, scheduled) {
+  const pop = $('contextMeterPop');
+  let head = pop.querySelector(':scope > .head');
+  let cancel = pop.querySelector(':scope > .meter-cancel');
+  if (!narrow) { head?.remove(); cancel?.remove(); return; }
+  const headText = [amounts ? t('compaction.menuTokens', amounts) : '', scheduled ? t('compaction.scheduled', { time }) : ''].filter(Boolean).join(' · ');
+  if (!head) { head = el('div', 'head wrap'); head.setAttribute('role', 'presentation'); pop.prepend(head); }
+  if (head.textContent !== headText) head.textContent = headText;
+  head.hidden = !headText;
+  const label = scheduled ? t('compaction.cancelAt', { time }) : '';
+  if (scheduled) {
+    if (!cancel) {
+      cancel = el('button', 'li meter-cancel'); cancel.type = 'button'; cancel.setAttribute('role', 'menuitem');
+      cancel.onclick = cancelScheduledCompaction;
+      head.after(cancel);
+    }
+    if (cancel.textContent !== label) cancel.textContent = label;
+  } else cancel?.remove();
+}
+stripNarrow.addEventListener('change', () => paintContextStrip());
 function showCompactionError(error) { state.compactionPhase = { phase: 'failed', reason: String(error?.message ?? error) }; paintContextStrip(); }
 async function showRowCompactionError(session, error, setting = false) {
   // i18n-dynamic: compaction.settingFailed
@@ -428,7 +525,7 @@ function scrollToEnd() {
 // 会話の移動（残る問い・最新へ。docs/design-system.md「会話の移動」）。末尾へ送るのは上の scrollToEnd（実寸の確定を待つ）
 let navSession = null;   // 最新へのボタンの新着を数えている会話。替わったら数え直す（paintSession）
 const navNarrow = matchMedia("(max-width:700px)");
-const nav = createConversationNav({ frame: $("logFrame"), log, thread, scrollToEnd, isRunning: () => isRunningHere(), narrow: navNarrow, openToc: () => toc.open() });
+const nav = createConversationNav({ frame: $("logFrame"), log, thread, scrollToEnd, isRunning: () => isRunningHere(), narrow: navNarrow });
 createConversationRail({ frame: $("logFrame"), log, thread, nav, narrow: navNarrow });
 
 /**
@@ -879,6 +976,11 @@ const provisionalByMessage = new Map();
  * 開くと結果の本文だけで、エージェントに渡した全文は奥の折りたたみ。読めない形（まとめ通知・古い形）や本文が無いときは、従来の「再開しました」の 1 行
  */
 function taskNoticeNode(text, at = '') {
+  // 設定の変更の結果（ADR 0088）。同じ届け方の別の通知なので、開ける 1 行にする
+  const settings = parseSettingNotices(text);
+  if (settings.length > 1) return sysFold(t('chat.sys.settingResults', { count: settings.length }), text, at);
+  // i18n-dynamic: chat.sys.settingState.
+  if (settings.length) return sysFold(t('chat.sys.settingResult', { state: t(`chat.sys.settingState.${settings[0].outcome}`) }), text, at);
   const notice = parseTaskNotice(text);
   if (!notice) return text ? sysFold(t('chat.sys.taskResumed'), text, at) : el('div', 'm sys', t('chat.sys.taskResumed'));
   const task = (state.work.tasks ?? []).find(x => x.taskId === notice.taskId);
@@ -1418,6 +1520,94 @@ function computerApproval(ev, approval, row) {
   return m;
 }
 
+// 出ている設定の変更の承認カード（requestId -> 決着を受けて 1 行に畳む関数の集合。中継の複製も同じ requestId）
+const settingCardsOpen = new Map();
+
+/** 設定の変更の承認の決着（settingApproval イベント）を、カードの 1 行の言葉にする */
+function settingOutcomeText(outcome) {
+  if (outcome === "allowed") return t("chat.settingApproval.allowed");
+  if (outcome === "denied") return t("chat.approval.denied");
+  if (outcome === "failed") return t("chat.sys.settingState.failed");
+  return t("chat.settingApproval.withdrawn");
+}
+
+/** サーバーから届いた決着。開いているカードは 1 行に畳み、押して畳んだカードは結果の言葉に合わせる（別の端末で答えた・取り下げた） */
+function settleSettingCards(ev) {
+  for (const settle of settingCardsOpen.get(ev.requestId) ?? []) settle(settingOutcomeText(ev.outcome));
+  settingCardsOpen.delete(ev.requestId);
+}
+
+/**
+ * 設定の変更の承認（permission の settingChange。ADR 0082・0088）。会話の単独のカード: 呼び出しは承認を待たずに返り、カードはターンが終わっても残るので、
+ * ツールの行の下には置かない（閉じた塊の中に隠れる）。ボタンは「拒否」と塗りの「変更を許可」だけ（「常に許可」は出さない）。
+ * 答えには出したカードの受領証を添える（サーバーが照合する）。押したら「◯◯を送っています…」でボタンを止め、受け取られてから 1 行に畳む
+ * （失敗したら押す前の形に戻って押し直せる）。別の端末で答えた・取り下げた決着は settingApproval イベントで畳む。稼働表示は変えない（エージェントは続けている）
+ */
+function settingChangeApproval(ev, change) {
+  const res = el("span", "res");
+  const deny = el("button", "btn btn-quiet", t("chat.approval.deny"));
+  const allow = el("button", "btn btn-primary", t("chat.settingApproval.allow"));
+  for (const b of [deny, allow]) b.type = "button";
+  const buttons = [deny, allow];
+  const verb = (ok) => (ok ? t("chat.settingApproval.allow") : t("chat.approval.deny"));
+  const m = el("div", "m card");
+  const card = el("div", "card");
+  m.append(card);
+  const head = el("div", "card-head");
+  head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.approval.headingMark")));
+  const body = changeBody(change, relayLabel(ev.title));
+  const actions = el("div", "card-actions");
+  actions.append(res, deny, allow);
+  card.append(head, body, actions);
+  let said = null;
+  // 1 行に畳む。畳んだ後に届いた決着は、右端の言葉だけ合わせる
+  const collapse = (text) => {
+    if (said) { said.textContent = `${text} · ${said.dataset.at}`; return; }
+    m.classList.add("done");
+    m.closest(".mw")?.classList.add("done");
+    card.classList.add("done");
+    for (const rest of head.querySelectorAll(".card-kind-rest")) rest.remove();
+    head.querySelector(".card-kind").textContent = t("chat.approval.done");
+    said = el("span", "res", "");
+    said.dataset.at = hhmm(new Date());
+    said.textContent = `${text} · ${said.dataset.at}`;
+    head.append(el("span", "desc", changeHeading(change)), said);
+    body.remove();
+    actions.remove();
+    state.pendingPerms.delete(ev.id);
+  };
+  if (change.requestId) {
+    if (!settingCardsOpen.has(change.requestId)) settingCardsOpen.set(change.requestId, new Set());
+    settingCardsOpen.get(change.requestId).add(collapse);
+  }
+  const settle = async (ok) => {
+    if (card.dataset.sending) return;
+    card.dataset.sending = "1";
+    for (const b of buttons) b.disabled = true;
+    res.className = "res";
+    res.removeAttribute("role");
+    res.replaceChildren(el("span", null, t("chat.approval.sending", { action: verb(ok) })));
+    const arc = setTimeout(() => res.prepend(runMark()), 150);
+    try {
+      await cmd("resolvePermission", { id: ev.id, receipt: change.receipt, allow: ok, always: false, ...(ok ? {} : { messageKey: "userDenied" }) });
+    } catch (err) {
+      clearTimeout(arc);
+      delete card.dataset.sending;
+      for (const b of buttons) b.disabled = false;
+      res.className = "res fail";
+      res.setAttribute("role", "alert");
+      res.replaceChildren(`✕ ${t("chat.approval.sendFailedInline", { action: verb(ok), error: err.message })}`);
+      return;
+    }
+    clearTimeout(arc);
+    collapse(ok ? t("chat.settingApproval.allowed") : t("chat.approval.denied"));
+  };
+  allow.onclick = () => settle(true);
+  deny.onclick = () => settle(false);
+  placeCard(m, ev, null);
+  return m;
+}
+
 // ---------------------------------------------------------------- 質問カード
 // 質問は「危ないから承認する」ツールではなく、**こちらに聞いている**ツール。
 // 承認チャネルはそのまま使い（core は保留・猶予をこの経路で面倒を見ている）、
@@ -1773,6 +1963,12 @@ function permissionCard(ev, into = null) {
  */
 function renderPermission(ev) {
   if (thread.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"], [data-perm-id="${CSS.escape(ev.id)}"]`)) return;
+  // 設定の変更の承認（ply_control の guarded。ADR 0082）。読めなければ（形が違う）ふつうの承認として出す
+  const settingChange = ev.settingChange ? approvalChange(ev.settingChange) : null;
+  if (settingChange) {
+    closeTurnEl();
+    return settingChangeApproval(ev, settingChange);
+  }
   // アプリの承認（コンピューターの操作）。アプリが読めなければ（形が違う）ふつうの承認として出す
   const computerApp = ev.computerApp ? approvalApps(ev.computerApp) : null;
   if (computerApp) {
@@ -2189,8 +2385,11 @@ function onEvent(ev, replay = false) {
   if (ev.type?.startsWith('shell.')) return onShellEvent(ev);
   if (ev.type === 'completionReady') {
     completionNotifications.completed(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
+    // スマホのアプリでは、最初の作業が終わったときに「離れていても知らせますか？」を尋ねる
+    if (ev.outcome !== 'error') void mobileNotify.completed(replay);
     return;
   }
+  if (ev.type === 'notifyStatus') { notifySettings.event(ev); return; }
   if (ev.type === 'outbox') {
     outboxes.set(ev.sessionId, ev.messages);
     if (state.current === ev.sessionId) syncOutboxRows(ev.messages);
@@ -2224,8 +2423,12 @@ function onEvent(ev, replay = false) {
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); browserPanel?.profilesChanged(); computerSettings.paint(); refreshPreviewConfirmation(); filePreview.prefsChanged(); sessionContext.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
+  // どの口（画面・AI・CLI）から設定を変えても届く。prefs などの既存の配信が無い設定（コンテキストの既定）は、開いている設定の画面がここで取り直す
+  if (ev.type === 'settingsChanged') { window.dispatchEvent(new CustomEvent('ply:settings-changed', { detail: ev })); return; }
+  // 設定の変更の承認が決着した（どの端末で答えても・取り下げても）。開いているカードを 1 行に畳む（ADR 0088）
+  if (ev.type === 'settingApproval') { settleSettingCards(ev); return; }
   if (ev.type === 'compactionSchedule') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
     if (row) row.compactionAt = ev.at;
@@ -2250,6 +2453,10 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); return; }
   // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
   if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') { remoteSettings.event(ev); return; }
+  // 「いつも分ける」が変わった（別の窓の操作・設定）。入力欄の 1 行と設定のスイッチを合わせる（ADR 0089）
+  if (ev.type === 'worktreeSettings') { worktreeSettings.paint(ev.always); refreshWorktree().catch(() => {}); return; }
+  // 分けた作業場所が増えた・消えた。開いている右パネルの「残っている作業場所」を取り直す
+  if (ev.type === 'worktreesChanged') { gitPanel?.changed(); return; }
   // 委譲の振り分けの設定・キー・使用量が変わった。設定 › 委譲を開いていれば取り直す
   if (ev.type === 'delegationRoutingChanged') { delegationSettings.event(ev); return; }
   // コンピューターの操作の状態（別の会話が操作中で待っている）。全部の会話の分が届くので、開いている会話の分だけ行に出す
@@ -2325,7 +2532,7 @@ function onEvent(ev, replay = false) {
       renderAuth();
       break;
     case "nextSettings":
-      return refresh().then(() => shellComposer.sync());
+      return refresh().then(() => { shellComposer.sync(); paintWorktreeLines(); });
     // エージェントの変更は会話に行を出さない（入力欄の「次のターンから」の行と引き継ぎの案内が持つ。ADR 0067）
     case "backend":
       return refresh().then(() => shellComposer.sync());
@@ -2566,6 +2773,8 @@ function onEvent(ev, replay = false) {
       syncRunState();
       paintInterruptLine();
       syncHistory();
+      // git の状態（ブランチ・変更の数）はターンの終わりに取り直す。開いている git パネルも（ADR 0085）
+      if (ev.sessionId && ev.sessionId === state.current) { refreshGit({ force: true }).catch(() => {}); gitPanel?.changed(); }
       // 右パネルの Hooks の「発火の記録」はターンの終わりに会話へ残る。開いていれば取り直す
       if (ev.sessionId && ev.sessionId === state.current && sessionContext.isOpen()) sessionContext.refresh();
       return refresh();
@@ -2612,7 +2821,7 @@ function applyRunning(work) {
   syncRunState();
   activity.sync();
   paintSettingsNotice();
-  if (changed) renderSessions();
+  if (changed) { renderSessions(); refreshWorktree().catch(() => {}); }
   updatesUi?.workChanged();
   // バックグラウンドはこの会話の分だけ稼働表示に出す。他所の分は一覧の行に付く
   syncWorkEntry();
@@ -2901,8 +3110,8 @@ let settingsFailure = null;
 let failedSettingsPatch = null;
 let failedSettingsError = "";
 let cwdSaving = 0;   // 作業ディレクトリを保存している間、チップの字を弱くする（docs/design-system.md §4.6）
-function reserveSettings(patch) {
-  const id = state.current;
+function reserveSettings(patch, targetId = state.current) {
+  const id = targetId;
   if (!id) return;
   const write = settingsWrite.catch(() => {}).then(async () => {
     const s = state.sessions.find(s => s.id === id);
@@ -2948,6 +3157,12 @@ function paintSettingsNotice() {
   const s = state.sessions.find(s => s.id === state.current);
   const next = s?.nextSettings;
   $("nextSettings").hidden = !next;
+  if (!next) $("nextSettings").classList.remove("wt-compact");
+  // main が返答を終えて裏だけを待っている間（ターンの phase が waiting）は、送信が予約より先に今のターンへ届く（途中送信）。
+  // 予約は次のターンから効くので、そう書く（docs/multi-backend.md §2.2）
+  const behind = Boolean(next) && (state.work.turns ?? []).find(belongsHere)?.phase === "waiting";
+  $("nextSettingsBehind").hidden = !behind;
+  if (behind) $("nextSettingsBehind").textContent = t("chat.next.behindNote");
   if (next) {
     const changes = [];
     // 既定のモデルは実際に当たる名前を添える（分からなければ「既定」だけ）
@@ -2958,11 +3173,20 @@ function paintSettingsNotice() {
     const epFallback = nextEndpoint ? t("chat.model.defaultResolved", { model: epMain ? compatModelText(epMain) : t("chat.next.endpointMain") }) : fallback;
     if (next.backend !== s.backend || next.model !== (s.model ?? "")) changes.push(`${labelOf(next.backend)} / ${next.model ? (nextEndpoint ? compatModelText(next.model) : state.models[next.model]?.label ?? next.model) : epFallback}${next.backend !== s.backend && !next.model && fallback === t("chat.model.default") ? t("chat.next.targetDefault") : ""}`);
     if (next.effort !== undefined && next.effort !== (s.effort ?? "")) changes.push(t("chat.next.effort", { value: next.effort || t("chat.next.useDefault") }));
-    if (next.cwd) changes.push(t("chat.next.cwd", { value: next.cwd }));
+    if (next.cwd) changes.push(worktreeNextText(next.cwd) ?? t("chat.next.cwd", { value: next.cwd }));
     if (next.mode !== undefined) changes.push(t("chat.next.mode", { value: state.modes[next.mode]?.label ?? next.mode }));
     if (next.endpoint !== undefined) changes.push(t("chat.next.endpoint", { value: endpointLabel(next.endpoint) }));
     if (next.account !== undefined) changes.push(t("chat.next.account", { value: accountLabel(next.account) }));
-    $("nextSettingsText").textContent = t("chat.next.summary", { changes: changes.join(" · ") });
+    const joined = changes.join(" · ");
+    // 変えるのが分けた作業場所だけのときは、軽い 1 行（「次のターンから適用」＋枝分かれの印の札。ADR 0089）
+    const compact = !behind && changes.length === 1 && Boolean(next.cwd && worktreeNextText(next.cwd));
+    $("nextSettings").classList.toggle("wt-compact", compact);
+    if (compact) {
+      const mark = el("span", "wt-ic");
+      mark.innerHTML = branchIcon;
+      mark.setAttribute("aria-hidden", "true");
+      $("nextSettingsText").replaceChildren(mark, el("span", null, joined));
+    } else $("nextSettingsText").textContent = behind ? t("chat.next.summaryBehind", { changes: joined }) : t("chat.next.summary", { changes: joined });
   }
   paintHandoffNote(s, next);
 }
@@ -3153,10 +3377,14 @@ const controls = setupComposerControls({
       accounts: state.accountShown ? accountOptions() : null, account: state.account,
       endpoint: endpointView(bid),
       modes: state.modes, mode: state.mode,
+      git: state.git.data,
+      worktree: state.worktree.data,
     };
   },
   on: {
     cwd: applyCwd,
+    worktreeSplit: () => startWorktree(),
+    worktreeBack: () => backFromWorktree(),
     backend: (v) => { state.shownBackend = v; controls.paint(); reserveSettings({ backend: v, model: "" }); },
     model: (v) => { state.model = v; controls.paint(); reserveSettings({ model: v, rememberModel: true }); },
     // 互換の接続先。'' は公式。モデルは接続先の既定（メイン）に戻る（server も同じ）
@@ -3199,7 +3427,9 @@ const slashSkills = setupSlashSkills({
 // ---------------------------------------------------------------- セッション一覧（web/side.mjs）
 
 const side = createSide({
-  onOpen: (id) => (id == null || id === pendingNewSession?.id ? startNew(state.draft) : select(id)),
+  onOpen: (id, jump) => (id == null || id === pendingNewSession?.id ? startNew(state.draft) : openFromSearch(id, jump)),
+  // 本文まで探す。画面は新しい WS コマンドを足さず、操作の一覧の sessions.search を汎用の invoke で呼ぶ（core/ops/sessions.mjs）
+  onSearch: (input) => cmd("invoke", { op: "sessions.search", args: input }),
   onNew: startNew,
   onSetStatus: (id, status) => {
     if (id == null) {
@@ -3408,10 +3638,12 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
   setDrawer(false);
   saveDraft().catch(() => {});
   const source = state.current;
-  pendingNewSession = { id: `pending-${randomId()}`, title: t('pending.newSession'), status: status ?? '', cwd: cwd || state.cwd || state.homeDir || '',
+  const requestedCwd = cwd || state.cwd || state.homeDir || '';
+  pendingNewSession = { id: `pending-${randomId()}`, title: t('pending.newSession'), status: status ?? '', cwd: requestedCwd,
     backend: backend ?? state.backendId, lastModified: new Date().toISOString(), unsent: true };
   state.current = null;
-  state.draft = { status, cwd: pendingNewSession.cwd };
+  const draft = { status, cwd: pendingNewSession.cwd };
+  state.draft = draft;
   state.messages = [];
   state.contextInfo = null;
   state.contextInfoId = null;
@@ -3435,10 +3667,22 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
       await settingsWrite.catch(() => {});
       await modeWrite;
       const result = await cmd("newSession", { sourceSessionId: source, backend: backend ?? (source ? undefined : state.prefs.backend ?? state.backendId),
-        cwd: cwd || state.cwd || state.homeDir || "", status });
+        cwd: requestedCwd, status });
       pendingRows.delete(pendingNewSession.id);
       pendingNewSession = null;
       side.keep(status);
+
+      // 作成中に選んだ作業場所があれば、できた会話に反映する（select の前に反映を済ませて一覧の読み直しに載せる）
+      const chosenCwd = draft.cwd;
+      const cwdDiffers = Boolean(chosenCwd && chosenCwd !== requestedCwd);
+      if (cwdDiffers) {
+        const ticket = ++cwdSaving;
+        $("cwdChip")?.classList.add("saving");
+        const write = reserveSettings({ cwd: chosenCwd }, result.sessionId);
+        write?.catch(() => {}).finally(() => { if (ticket === cwdSaving) $("cwdChip")?.classList.remove("saving"); });
+        await settingsWrite.catch(() => {});
+      }
+
       await refresh().catch(() => {});
       if (state.current === null) {
         // 開き直しと違い、欄に触らない（無効にしない・下書きを読み直さない）。写しも取らない:
@@ -3627,6 +3871,7 @@ function backgroundItems() {
       taskStatus: waiting ? 'waiting' : task.status, live, waiting, startedAt: task.createdAt ?? null, endedAt: live ? null : task.updatedAt ?? null,
       childId: task.sessionId, taskId: task.taskId, error: task.error, notification: task.notification, routing: task.routing ?? null,
       pendingMessages: task.pendingMessages ?? 0, instructionRevision: task.instructionRevision ?? 0,
+      worktree: task.worktree ?? null,
     });
   }
   for (const { task, entry } of backgroundHere()) items.push({
@@ -3657,20 +3902,13 @@ function backgroundCounts() {
   return backgroundTotals(backgroundItems());
 }
 
+const workChip = createBackgroundChip($('workEntryButton'));
 function syncWorkEntry() {
-  const { live, ended } = backgroundCounts();
-  const row = $('workEntry'), button = $('workEntryButton');
-  row.hidden = !live && !ended;
-  if (row.hidden) return;
-  const label = live ? t('activity.background', { count: live }) : t('activity.backgroundEnded', { count: ended });
-  const key = `${state.current}:${live}:${ended}`;
-  if (button.dataset.state !== key) {
-    button.dataset.state = key;
-    button.replaceChildren();
-    if (live) button.append(runMark(label));
-    button.append(label);
-    button.classList.toggle('ended', !live);
-  }
+  const items = backgroundItems();
+  const { live, ended } = backgroundTotals(items);
+  $('workEntry').hidden = !live && !ended;
+  workChip.update(items, state.current);
+  syncStripVisible();
 }
 $('workEntryButton').onclick = () => openWork();
 
@@ -4047,6 +4285,8 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   if (prompt && messages[0]?.role !== 'user') { last = put(requestNode(prompt, messages[0]?.at), 'request'); prevRole = 'user'; }
   const refs = presents.map(p => p.reference);
   for (const it of buildItems(messages, presents)) {
+    // git の要約の行は、押して開く先（今の会話の右パネル）が読んでいる子の会話ではないので、読むだけの筋には出さない
+    if (it.kind === 'present' && (it.p.kind === 'git' || it.p.kind === 'worktree')) continue;
     if (it.kind === 'present') { last = put(renderPresent(savedEvent(it.p)), `p:${it.pi}`); continue; }
     const { node, role } = historyRow(it.m, { cont: prevRole === 'assistant', refs, prev: last, readonly: true, backend, sessionId,
       user: (m) => (it.mi === 0 ? requestNode : followUp)(m.text, m.at) });
@@ -4246,7 +4486,8 @@ function pinnedFacts(card, routing) {
   const result = cardJson(card, '.tc-output') ?? {};
   const task = (state.work.tasks ?? []).find(x => x.taskId === card.dataset.taskId) ?? {};
   const mode = result.mode ?? task.mode ?? '';
-  return { names: routingNames, mode: mode ? state.vocab.get(routing.target.backend)?.modes?.[mode]?.label ?? mode : '', cwd: result.cwd ?? task.cwd ?? '' };
+  // 分けた作業場所の子は、パスの代わりに「作業場所」の行（ブランチ付き。paintDelegateWorkspace）が出る
+  return { names: routingNames, mode: mode ? state.vocab.get(routing.target.backend)?.modes?.[mode]?.label ?? mode : '', cwd: task.worktree ? '' : result.cwd ?? task.cwd ?? '' };
 }
 function delegateDetail(card, routing) {
   return isAutoRouting(routing)
@@ -4310,6 +4551,37 @@ function decorateDelegateCard(card) {
   card.querySelector('.tc-details-body')?.prepend(...(request ? [request] : []), where, delegateDetail(card, routing));
   paintRouteLine(card, routing);
   paintRetried(card);
+  // 開いたとき、子の作業場所の git の要約を「変更」の行として出す（開かれるまでは引かない。ADR 0085）
+  const shell = card.querySelector('.tc-details');
+  if (shell && !shell.dataset.gitHook) {
+    shell.dataset.gitHook = '1';
+    shell.addEventListener('toggle', () => { if (shell.open) { paintDelegateGit(card); paintDelegateWorkspace(card); } });
+    if (shell.open) { paintDelegateGit(card); paintDelegateWorkspace(card); }
+  }
+}
+/** 委譲カードの「作業場所」の行（分けた作業場所のとき。ブランチと「分けた作業場所」。ADR 0089）。開いたときに出す */
+function paintDelegateWorkspace(card) {
+  const task = (state.work.tasks ?? []).find(x => x.taskId === card.dataset.taskId);
+  card.querySelector('.wt-delegate')?.remove();
+  if (!task?.worktree) return;
+  const row = el('div', 'wt-delegate');
+  const value = el('div', 'wt-delegate-value');
+  const ic = el('span', 'wt-ic');
+  ic.innerHTML = branchIcon;
+  value.append(ic, el('span', null, t('worktree.label')), el('code', null, task.worktree.branch));
+  value.title = task.worktree.path;
+  row.append(el('div', 'wt-delegate-label', t('routing.detail.cwd')), value);
+  card.querySelector('.rt-where')?.after(row);
+}
+/** 委譲カードの「変更」の行。子の会話の作業場所で、会話の間に変わったファイルとコミットがあるときだけ */
+async function paintDelegateGit(card) {
+  const task = (state.work.tasks ?? []).find(x => x.taskId === card.dataset.taskId);
+  if (!task?.sessionId) return;
+  const res = await cmd('gitStatus', { sessionId: task.sessionId, summary: true }).catch(() => null);
+  if (!card.isConnected) return;
+  card.querySelector('.git-delegate')?.remove();
+  const row = renderDelegateGit(res?.git, { sessionId: task.sessionId });
+  if (row) card.querySelector('.rt-where')?.after(row);
 }
 /**
  * 自動の振り分けで使える委譲先が無かったカード（タスクはできていない）。見出しを成功と同じ「委譲 · 自動 · 種類・難しさ →」にして
@@ -4428,7 +4700,9 @@ function paintDelegateStates() {
     const item = card.dataset.taskId ? items.find(i => i.taskId === card.dataset.taskId) : items.find(i => i.origin && i.origin === card.dataset.id);
     const next = item ? delegateStateOf(item) : null;
     // 走っている間の経過は署名に入れない（秒ごとの書き換えは tickDelegateElapsed）
-    const sig = next ? `${next.key}|${next.when ?? ''}|${next.mark?.getAttribute('aria-label') ?? ''}` : '';
+    // 分けた作業場所が終わった後も台帳に残っている（未取り込み）。閉じた行の右端に出す（ADR 0089）
+    const unmerged = Boolean(item?.worktree?.live) && !item.live;
+    const sig = next ? `${next.key}|${next.when ?? ''}|${next.mark?.getAttribute('aria-label') ?? ''}|${unmerged ? 'u' : ''}` : '';
     // 読み上げ名は、題・委譲先・状態。押すと開く（summary は開閉の状態を持つ）
     const head = card.querySelector('.tc-head');
     const stateName = next ? (next.key === 'waiting' ? TASK_STATUS.waiting : next.mark?.getAttribute('aria-label') ?? next.text ?? '') : '';
@@ -4445,6 +4719,7 @@ function paintDelegateStates() {
     // 先頭の空きは、行の外に重ねた矢印（.tc-go）の場所
     const parts = [el('span', 'tc-go-slot')];
     if (next) {
+      if (unmerged) parts.push(el('span', 'wt-unm', t('worktree.delegate.unmerged')));
       if (next.mark) parts.push(next.mark);
       if (next.key === 'running' && next.start) { const span = el('span', 'tc-el', clockText(Date.now() - next.start)); span.dataset.start = String(next.start); parts.push(span); }
       else if (next.text) parts.push(el('span', next.key === 'failed' ? 'tc-res-err' : null, next.text));
@@ -4810,8 +5085,12 @@ $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() 
 // 内蔵ブラウザー（web/browser-panel.mjs）。デスクトップ版のホストの画面だけ。右パネルの 1 つのモードになる
 let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry）。状態の知らせが先に届いても落ちないよう先に宣言する
 const browserPanel = browserPanelAvailable()
-  ? createBrowserPanel({ showMenu: (x, y, items, title) => showMenu(x, y, items, title), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
-    onChange: () => browserEntry?.paint() })
+  ? createBrowserPanel({ showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
+    onChange: () => browserEntry?.paint(),
+    // プロフィール（ADR 0078）: 一覧は設定から。人が切り替えたら会話に残す。「新しいプロフィール…」「プロフィールを管理…」は設定 › ブラウザーへ
+    getProfiles: () => profileList(state.prefs).map(p => ({ id: p.id, name: profileName(p, t('browser.profiles.main')) })),
+    onProfileChanged: (sessionId, profile) => { if (sessionId) cmd('setBrowserProfile', { sessionId, profile }).catch(e => notify(e.message)); },
+    openProfiles: ({ add }) => { onboarding.open('browser'); browserSettings.showProfiles({ add }); } })
   : null;
 // ホストの画面ではない端末から、ホストの内蔵ブラウザーを見る（web/remote-browser.mjs）。リンクを押したら開き先を選ぶ（web/link-sheet.mjs）
 const remoteBrowser = createRemoteBrowser({ cmd: (command, args) => cmd(command, args), getSessionId: () => state.current ?? null,
@@ -4844,7 +5123,8 @@ browserEntry = setupBrowserEntry({ button: $('browserEntry'), browser: browserPa
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
 // External resource confirmation is available on every screen.
 const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getHostCaps: () => state.hostCaps });
-const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf });
+const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf,
+  showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), onProfilesChanged: () => browserPanel?.profilesChanged() });
 // 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
 configureLinkOpen({ getPrefs: () => state.prefs, chooseRemote: (url, openHere) => chooseRemote({ url, openHere }) });
 // 文中の URL・名前付きのリンクの、行き先の一行と右クリックのメニュー（web/link-menu.mjs）
@@ -5629,6 +5909,7 @@ function rowMenu(s, x, y, lead = []) {
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, effort, rememberEffort: true })
           .then(refresh).catch(e => sideNote(t("session.menu.effortFailed", { error: e.message }))),
       })) },
+    ...(s.id === state.current && narrowView.matches && state.git.data ? [{ label: t('git.entry'), hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) }] : []),
     { label: t("session.menu.copyCwd"), hint: s.cwd ?? "", onClick: () => copy(s.cwd, t("session.menu.cwdCopied"), t("session.menu.cwdCopyFailed")) },
     { label: t("session.menu.copyId"), onClick: () => copy(s.id, t("session.menu.idCopied"), t("session.menu.idCopyFailed")) },
     ...(s.unsent ? [{ label: t("session.menu.deleteUnsent"), sub: () => [
@@ -5758,6 +6039,156 @@ async function refreshContextEntry({ force = false } = {}) {
   return state.contextInfo;
 }
 
+// ---------------------------------------------------------------- git の状態（ADR 0085）
+// 頭の行のアイコン（コミットしていない変更があれば右上の点）・入力欄の作業場所のチップのブランチ・狭い画面の「…」の項目。
+// 取り直しは、会話・作業場所が変わったとき、会話を開いたとき、ターンの終わり、パネルの再読み込み。git が無い・git 管理外は null（何も出さない）
+let gitPanel = null;
+let gitTicket = 0;
+function paintGitEntry() {
+  const button = $('gitEntry');
+  const data = state.current ? state.git.data : null;
+  button.hidden = !data;
+  if (!data) return;
+  const dirty = data.dirty > 0;
+  const label = dirty ? t('git.entryChanged') : t('git.entry');
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  const open = Boolean(gitPanel?.isOpen());
+  button.classList.toggle('on', open);
+  button.setAttribute('aria-expanded', String(open));
+  const dot = button.querySelector('.entry-dot');
+  if (dirty && !dot) { const mark = el('span', 'entry-dot'); mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
+  else if (!dirty && dot) dot.remove();
+}
+async function refreshGit({ force = false } = {}) {
+  const sessionId = state.current ?? null;
+  const s = state.sessions.find(x => x.id === sessionId);
+  // 次のターンから別の作業場所へ変える予約があるときは、その場所（使ったことのある場所だけサーバーが通す）
+  const reserved = Boolean(s && state.cwd && s.cwd && state.cwd !== s.cwd);
+  const key = `${sessionId ?? ''}${String.fromCharCode(10)}${reserved || !sessionId ? state.cwd ?? '' : ''}`;
+  if (!force && state.git.key === key) return;
+  if (state.git.sessionId !== sessionId) { state.git.data = null; gitPanel?.reset(); paintGit(); }
+  state.git.key = key; state.git.sessionId = sessionId;
+  const mine = ++gitTicket;
+  const res = await cmd('gitStatus', { ...(reserved || !sessionId ? { cwd: state.cwd } : { sessionId }), fresh: force }).catch(() => null);
+  if (mine !== gitTicket) return;
+  state.git.data = res?.git ?? null;
+  paintGit();
+}
+function paintGit() { paintGitEntry(); controls.paint(); }
+
+// ---------------------------------------------------------------- 分けた作業場所（ADR 0089）
+const normDir = (p) => String(p ?? '').replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
+const insideDir = (dir, parent) => { const d = normDir(dir), p = normDir(parent); return Boolean(d && p) && (d === p || d.startsWith(`${p}/`)); };
+/** 次のターンの予約の行の文。予約が分けた作業場所なら「分けた作業場所（短い名前）」、そうでなければ null（作業ディレクトリのパスのまま） */
+function worktreeNextText(cwd) {
+  const current = state.worktree.data?.current;
+  return current && insideDir(cwd, current.path) ? t('worktree.next', { path: shortPath(current.path) }) : null;
+}
+/** 入力欄の上の 1 行・チップ・面の元になる worktreeCheck を取り直す（続けて呼ばれたら 1 回にまとめる） */
+let worktreeTimer = 0;
+function refreshWorktree() {
+  clearTimeout(worktreeTimer);
+  return new Promise((resolve) => { worktreeTimer = setTimeout(() => resolve(runWorktreeCheck()), 120); });
+}
+async function runWorktreeCheck() {
+  const sessionId = state.current ?? null;
+  if (!state.cwd) { state.worktree.data = null; paintWorktree(); return; }
+  const mine = ++state.worktree.ticket;
+  const res = await cmd('worktreeCheck', { ...(sessionId ? { sessionId } : {}), cwd: state.cwd, backend: state.shownBackend ?? activeBackendId(), mode: state.mode }).catch(() => null);
+  if (mine !== state.worktree.ticket) return;
+  state.worktree.data = res?.git ? res : null;
+  state.worktree.always = Boolean(res?.always);
+  paintWorktree();
+}
+function paintWorktree() { controls.paint(); paintWorktreeNote(); paintSettingsNotice(); paintWorktreeLines(); }
+/** 同じリポジトリで別の会話が書き込み中のとき、入力欄のすぐ上に 1 行。送信は止めない（選ばずに送れば「このまま」） */
+function paintWorktreeNote() {
+  const box = $('worktreeNote');
+  const d = state.worktree.data;
+  const key = `${state.current ?? ''}\n${state.cwd}`;
+  const show = Boolean(d && d.canSplit && d.conflicts?.length && !d.always && !state.worktree.dismissed.has(key) && !(state.current && state.runningIds.has(state.current)));
+  if (!show) { box.hidden = true; if (box.firstChild) box.replaceChildren(); delete box.dataset.sig; return; }
+  const sig = `${key}\n${d.conflicts.map((c) => `${c.sessionId}:${c.title}`).join('|')}`;
+  if (box.dataset.sig === sig && !box.hidden) return;
+  box.dataset.sig = sig;
+  box.replaceChildren(renderSplitNote({ conflicts: d.conflicts,
+    onSplit: () => startWorktree(),
+    onKeep: () => { state.worktree.dismissed.add(key); paintWorktreeNote(); },
+    onAlways: async () => { await cmd('setWorktreeSettings', { always: true }).catch(() => {}); worktreeSettings.paint(true); await startWorktree(); } }));
+  box.hidden = false;
+}
+/** 分けた作業場所を作り、次のターンの作業場所に予約する（下書きなら作業場所をそれにする） */
+async function startWorktree() {
+  try {
+    const res = await cmd('worktreeSplit', { ...(state.current ? { sessionId: state.current } : {}), cwd: state.cwd });
+    await applyCwd(res.cwd);
+    $('settingsError').textContent = '';
+  } catch (e) { $('settingsError').textContent = t('worktree.splitFailed', { error: e.message }); }
+  refreshWorktree().catch(() => {});
+}
+/** 元の場所へ戻す（次のターンから）。origin を言わなければ、今の分けた作業場所の元 */
+async function backFromWorktree(origin = state.worktree.data?.current?.origin) {
+  if (!origin) return;
+  try { await applyCwd(origin); $('settingsError').textContent = ''; }
+  catch (e) { $('settingsError').textContent = e.message; }
+  refreshWorktree().catch(() => {});
+}
+/** 会話の中の「分けた作業場所で始めました」の行の今の状態。会話の cwd と次のターンの予約から決める */
+function worktreeLineMode(note) {
+  const s = state.sessions.find((x) => x.id === state.current);
+  const actual = s?.cwd ?? state.cwd ?? '', reserved = s?.nextSettings?.cwd ?? '';
+  if (!note?.path || !insideDir(actual, note.path)) return 'back';
+  return reserved && !insideDir(reserved, note.path) ? 'backing' : 'here';
+}
+setWorktreeLineMode(worktreeLineMode);
+function paintWorktreeLines() {
+  for (const row of thread.querySelectorAll('.wt-line')) if (row.worktreeNote) paintWorktreeLine(row, worktreeLineMode(row.worktreeNote));
+}
+document.addEventListener('ply-worktree', (event) => {
+  const { act, note } = event.detail ?? {};
+  if (act === 'back') backFromWorktree(note?.origin);
+  else if (act === 'again') startWorktree();
+});
+/** 右パネル「残っている作業場所」の操作（web/worktree-ui.mjs の createLeftovers） */
+const worktreeOps = {
+  keep: (id, kept) => cmd('worktreeKeep', { id, kept }),
+  // 取り込みを頼む: 取り込む役（委譲の子なら依頼元、人が分けた会話ならその会話）へ依頼文を送る
+  ask: async (row) => {
+    if (!row.mergeSessionId) return null;
+    const title = state.sessions.find((s) => s.id === row.mergeSessionId)?.title ?? '';
+    const messageId = randomId();
+    await cmd('sendMessage', { sessionId: row.mergeSessionId, messageId, prompt: askText(row) });
+    return { title: title === '(no title)' ? '' : title, messageId, sessionId: row.mergeSessionId };
+  },
+  unask: (sent) => cmd('messageAction', { sessionId: sent.sessionId, messageId: sent.messageId, action: 'cancel' }).then(() => true, () => false),
+  archive: async (row) => { const res = await cmd('worktreeArchive', { id: row.id }); return res; },
+  restore: (row, ref) => cmd('worktreeRestore', { ...(state.current ? { sessionId: state.current } : {}), ref }).then(() => true, () => false),
+};
+/** 会話の中のこの場所へ（ツールの行は畳まれたまとまりを開いて）。見つからなければ false。狭い画面は右パネルが全面なので閉じてから */
+function jumpToConversation({ uuid, toolId }) {
+  const card = toolId ? state.toolCards.get(toolId) : null;
+  const message = uuid ? thread.querySelector(`.m[data-uuid="${CSS.escape(uuid)}"]`) : null;
+  const target = card?.isConnected ? card : message;
+  if (!target) return false;
+  const bundle = card?.isConnected ? bundleOf(card) : null;
+  let animated = false;
+  if (bundle && !bundle.expanded && card !== bundle.cur) { bundle.reveal(card); animated = true; }
+  for (let node = target.closest('details'); node; node = node.parentElement?.closest('details')) node.open = true;
+  revealFold(target);
+  if (narrowView.matches) filePreview.close(false);
+  const row = target.closest('.mw') ?? target;
+  if (animated) setTimeout(() => nav.scrollToRow(row, 90), 320); else nav.scrollToRow(row, 90);
+  return true;
+}
+/** 「会話で使う」: 入力欄の末尾へ字を足す */
+function useGitText(text) {
+  const field = $('prompt');
+  field.value = field.value ? `${field.value}${String.fromCharCode(10)}${text}` : text;
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+  if (!narrowView.matches) field.focus();
+}
+
 // ---------------------------------------------------------------- 上部と入力欄の同期
 
 let topbarVersion = 0;
@@ -5850,6 +6281,7 @@ async function syncTopbar() {
   else if (state.draft.cwd) state.cwd = state.draft.cwd;
   else if (state.homeDir) state.cwd = state.homeDir;
   controls.paint();
+  refreshGit().catch(() => {});
 
   // 語彙はエージェントごとに違う。切り替えたら取り直す
   const { modes, models } = await loadVocab(bid);
@@ -5873,6 +6305,7 @@ async function syncTopbar() {
   if (state.current !== id || version !== topbarVersion) return;
   controls.paint();
   paintSettingsNotice();
+  refreshWorktree().catch(() => {});
   renderSessions();
 }
 
@@ -5905,6 +6338,7 @@ async function runRefresh() {
   browserSettings.paint();
   computerSettings.paint();
   refreshPreviewConfirmation();
+  filePreview.prefsChanged();
   await loadBackends();
   await syncTopbar();
   cmd("running").then(applyRunning).catch(() => {});
@@ -6138,8 +6572,9 @@ async function loadHistory(args, prev = null) {
  * 読めたら 1 回で描き替える。入力欄を止めない（止めると書いている途中でスマホのキーボードが閉じる）
  * fresh は作ったばかりの会話（startNew）。空なので骨組みも「読み込み中」も出さず、入力欄に触らない（書いている字が正本）。
  * retry は読み込みに失敗した今の会話を読み直す（「もう一度読む」。開き直しと同じ見せ方）
+ * jump は脇の検索の抜粋から開いたとき。読み込んだ後にその発言へ送って輪を付ける（openFromSearch・revealMessage）
  */
-async function select(id, { keepUpTo, reload = false, fresh = false, retry = false } = {}) {
+async function select(id, { keepUpTo, reload = false, fresh = false, retry = false, jump = null } = {}) {
   if (state.busy || (id === state.current && keepUpTo === undefined && !reload && !retry)) return;
   const quiet = reload && !retry && id === state.current && keepUpTo === undefined && !state.loadingSession;
   if (keepUpTo === undefined && !quiet && !fresh) setDrawer(false);
@@ -6175,6 +6610,45 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
   try {
     await loadAndPaint(id, { keepUpTo, quiet, fresh });
   } finally { if (freshSessionId === id) freshSessionId = null; }
+  if (jump && state.current === id && !state.loadingSession) revealMessage(jump);
+}
+
+/**
+ * 脇の検索の結果を押した。抜粋（jump）があればその発言へ飛び、無ければ（題・状態・場所だけの一致）ただ開く。
+ * 今開いている会話の抜粋なら、読み直さずにその発言へ送る
+ */
+async function openFromSearch(id, jump) {
+  if (!jump) return select(id);
+  if (id === state.current && !state.loadingSession) { if (narrowView.matches) setDrawer(false); revealMessage(jump); return; }
+  return select(id, { jump });
+}
+
+/**
+ * 検索で探した語を会話の中の検索へ引き継ぎ（開かない。Ctrl+F の 1 手で残りの一致へ進める）、その発言へ送って輪（note-flash）を付ける。
+ * 発言は uuid で引く（会話の行の data-uuid と、検索の結果の uuid は同じ値）。見つからなければ語だけ引き継ぐ
+ */
+function revealMessage({ uuid, role, query, speaker }) {
+  const m = [...thread.querySelectorAll('.m[data-uuid]')].find((x) => x.dataset.uuid === uuid) ?? null;
+  toc.carry(query, { scope: role === 'tool' ? 'tool' : speaker === 'user' ? 'user' : 'answer', uuid });
+  if (!m) return;
+  const mark = m.querySelector('mark.searchhit.active');
+  revealFold(mark ?? m);   // 長い発言の畳まれた部分に一致があれば、動かさずに開く（web/fold.mjs）
+  // 発言の頭を上から 90px の位置へ。長い発言で一致が画面の下に外れるときだけ、一致そのものへ送る
+  const row = m.closest('.mw') ?? m;
+  const deep = mark && mark.getBoundingClientRect().top - row.getBoundingClientRect().top > log.clientHeight - 160;
+  const target = deep ? mark : row;
+  nav.scrollToRow(target, 90, () => flashMessage(m, mark));
+}
+let flashedMessage = null, flashMessageTimer = 0;
+/** 着いた発言の吹き出しに輪を 1 度だけ（入力欄の上の一行・添付の入口と同じ note-flash）。一致のある塊があればその塊に */
+function flashMessage(m, mark) {
+  const body = mark?.closest('.body') ?? m.querySelector(':scope > .body') ?? m.querySelector('.body') ?? m;
+  clearTimeout(flashMessageTimer);
+  flashedMessage?.classList.remove('flash');
+  void body.offsetWidth;
+  body.classList.add('flash');
+  flashedMessage = body;
+  flashMessageTimer = setTimeout(() => { body.classList.remove('flash'); if (flashedMessage === body) flashedMessage = null; }, 1300);
 }
 
 async function loadAndPaint(id, { keepUpTo, quiet, fresh }) {
@@ -6332,6 +6806,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   }
   // この会話が読み込んだ記録。取り直しは待たない（固定された会話では今のファイルとの突き合わせが入る）
   refreshContextEntry({ force: true }).catch(() => {});
+  refreshGit({ force: true }).catch(() => {});
   thread.classList.toggle("branched", branches.has(id));   // 枝があるとき、筋は「今いる枝」として青く太い
   if (isRunningHere()) activity.show(activity.text || ACTIVITY_LABEL.running);   // 走っている会話を開いたら末尾に弧
   else if (behindHere() || backgroundCounts().live) activity.show(t("activity.waitingBackground"));     // ターンは終わったが裏の子が残っている会話は衛星（待てないものだけなら印なし）
@@ -6512,7 +6987,8 @@ function isRunningHere() {
   return state.current ? state.runningIds.has(state.current) : state.submitting;
 }
 
-const isWaitingHere = () => (state.work.permissions ?? []).some(belongsHere);
+// 設定の変更の承認（detached）はターンを止めていない。中断しても残るので、中断・再開の判断には数えない（ADR 0088）
+const isWaitingHere = () => (state.work.permissions ?? []).some((p) => !p.detached && belongsHere(p));
 /** いま表示している会話の中断を受け付けて、止まり終えるのを待っているか */
 function stoppingHere() {
   return Boolean(state.current) && state.stopping.has(state.current);
@@ -6683,6 +7159,8 @@ function connect() {
       // 切れて止まっていたフォルダーの送信・添付の送信を、受け取り済みの位置から続ける
       folderUpload?.online();
       for (const wake of [...onlineWaiters]) wake();
+      // 設定 › アプリ情報の「外の AI から Pleiad を使う」。ホストの画面でだけ取れて、取れたら出す（web/cli-setup.mjs）
+      cliSetup.load();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
       // 同じ答えで、添付の出どころを選ばせるか（ホストの画面でない接続）も決める（composer-layout.mjs の attachSources）
       cmd("hostCapabilities").then((c) => {
@@ -6696,7 +7174,14 @@ function connect() {
       }).catch(() => {});
       // 開く前から承認待ちがあれば、ここでダイアログに出す
       remoteSettings.refresh();
+      // この PC の通知の設定。見ている会話を知らせ直す（つなぎ直した接続には、まだ印が無い）
+      notifySettings.refresh();
+      presenceReporter.reset();
+      presenceReporter.report(true);
       return refresh().then(async () => {
+        // スマホの通知を押して開いた会話（殻が ?open= で渡す）
+        const wanted = mobileNotify.takeOpenRequest();
+        if (wanted) return select(wanted);
         if (state.current) return select(state.current, { reload: true });
         let saved;
         try { saved = localStorage.getItem("agent-host-current"); } catch {}
@@ -6767,6 +7252,18 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
 $('contextEntry').onclick = () => sessionContext.toggle($('contextEntry'));
 // 会話の目次と検索（右パネル。狭い画面は下からのシート）。会話の画面にいるときの Ctrl+F（macOS は ⌘F）でも開く
 const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry') });
+// 会話の右パネル「git」（ADR 0085）。頭の行のアイコン・返答の下の要約行・委譲カードの「変更」・狭い画面の「…」から開く
+gitPanel = setupGitPanel({ cmd, preview: filePreview, session: () => ({ id: state.current ?? null, cwd: state.cwd }),
+  jump: jumpToConversation, use: useGitText, worktrees: worktreeOps,
+  onState: (git, { foreign }) => { if (!foreign) { state.git.data = git; paintGit(); } } });
+gitPanel.onOpenChange(paintGitEntry);
+$('gitEntry').onclick = () => gitPanel.toggle($('gitEntry'));
+document.addEventListener('ply-git-open', (event) => {
+  const sessionId = event.detail?.sessionId ?? null;
+  if (!sessionId && !state.current) return;
+  gitPanel.open(event.target.closest?.('button') ?? null, { sessionId });
+  paintGitEntry();
+});
 document.addEventListener('keydown', event => {
   const mac = /Mac/.test(navigator.platform);
   if (event.defaultPrevented || isComposingKey(event) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'f' || (mac ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey)) return;
@@ -6776,6 +7273,15 @@ document.addEventListener('keydown', event => {
   if ((field.matches?.('input,textarea') || field.isContentEditable) && !field.closest?.('#prompt, .toc')) return;
   event.preventDefault();
   toc.focusSearch();
+});
+// 脇の会話検索へ移る（Ctrl+Shift+F。macOS は ⌘⇧F）。Ctrl+F は会話の中の検索のまま。脇が閉じていれば開く（狭い画面は引き出し）
+document.addEventListener('keydown', event => {
+  if (!isSearchShortcut(event)) return;
+  if (document.body.classList.contains('settings') || document.querySelector('dialog[open]')) return;
+  event.preventDefault();
+  if (narrowView.matches) setDrawer(true);
+  else if (document.documentElement.classList.contains('side-closed')) setSidebar(true);
+  side.focusSearch();
 });
 function openAutoCompactionSettings() { closeMeterPop(); onboarding.open('autoCompaction'); }
 $('contextMeter').onclick = () => {
@@ -6935,6 +7441,7 @@ const onboarding = setupOnboarding({ cmd, refreshAuth, getAuth: () => state.auth
 });
 // 実行中でも更新できる（ADR 0036）。確認の段で止まる作業を並べ、「中断して更新」で全部を reason update で中断してから保存へ進む。
 // 下の flush の count > 0 の断りは、中断が済んだ後の安全網（サーバーの更新ロックも残る）
+const cliSetup = setupCliSetup({ cmd });
 updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lock, cmd,
   work: () => state.work,
   sessionName: (id) => rowLabel(state.sessions.find(s => s.id === id) ?? {}),
@@ -6975,10 +7482,24 @@ const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () =
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   onUsageLogin: usageLogin });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page });
+// 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）
+const notifySettings = setupNotifySettings({ cmd, page: onboarding.page, onPc: pc => { notifyPc = pc; } });
+// スマホのアプリの中だけ: 最初の作業が終わったときの帯と、通知から開く会話
+const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id => select(id) });
+// 見ている会話をホストへ知らせる。スマホへの通知を送らない・消すのに使う
+const presenceReporter = createPresenceReporter({ send: (visible, sessionId) => cmd('presence', { visible, sessionId }),
+  current: () => state.current, visible: watchingNow });
+document.addEventListener('visibilitychange', () => presenceReporter.report());
+addEventListener('plyremote:stop', () => { shellStopped = true; presenceReporter.report(); });
+addEventListener('plyremote:start', () => { shellStopped = false; presenceReporter.report(true); });
+presenceReporter.start();
 // 設定 › 委譲（委譲先の自動振り分け）。モデルの名前は入力欄と同じ語彙から
 const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
   modelsOf: async (id) => (state.backends.some((b) => b.id === id) ? (await loadVocab(id)).models : null),
   modelName: (backend, model) => routingNames.model(backend, model) });
+// 設定 › 委譲の末尾の「分けた作業場所」（いつも分ける。ADR 0089）
+const worktreeSettings = setupWorktreeSettings({ cmd });
+$('delegationPanel').append(worktreeSettings.element);
 clearThread();
 initTheme();
 initLocale();

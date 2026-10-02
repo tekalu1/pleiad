@@ -32,6 +32,8 @@ export default async function (t) {
     completionNotifications, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop,
     // ヘッダーの使用量のチップ（web/header-usage.mjs）。ターンの終わりで取り直す。このテストの対象外
     headerUsage: { turnEnded: noop },
+    // スマホのアプリの帯（web/mobile-notify.mjs）と設定 › 通知（web/notify-settings.mjs）。このテストの対象外
+    mobileNotify: { completed: noop }, notifySettings: { event: noop },
     // 会話の移動（web/conversation-nav-view.mjs）。最新へのボタンの新着と弧。このテストの対象外
     nav: { reset: noop, replyArrived: noop, syncRunning: noop }, navSession: null, toc: { reset: () => {}, refresh: () => {} },
     filePreview: { sessionChanged: noop },
@@ -52,7 +54,7 @@ export default async function (t) {
     spine: noop, branchSnapshots: () => [], localStorage: { setItem: noop },
     // 系譜は待たずに描く（paintSession）。届くのは描いた後
     branches: { load: () => new Promise(r => { releaseBranches = r; }), reset: noop, has: () => false }, scrollToEnd: noop,
-    $: () => ({}), syncRunState: noop, syncTopbar: noop, syncWorkEntry: noop, restorePastSubagents: noop, log: { scrollTop: 0, scrollHeight: 0 },
+    $: () => ({}), syncRunState: noop, syncTopbar: noop, syncWorkEntry: noop, refreshGit: async () => {}, gitPanel: null, restorePastSubagents: noop, log: { scrollTop: 0, scrollHeight: 0 },
     loadDraft: noop, saveDraft: async () => {}, settingsFailure: null, syncSettingsHold: noop, sys: noop,
     paintHistory: () => [], placeJunctions: () => [], isRunningHere: () => false, behindHere: () => null, backgroundCounts: () => ({ live: 0, ended: 0 }),
     relayoutBranches: noop, branchIsFresh: () => false, setUuid: noop,
@@ -128,6 +130,7 @@ export default async function (t) {
   const liveReads = new Set();
   const turn = { stream: { messages: [], presents: [], user: { role: "user", text: "input" }, initialMessageId: 'msg-initial', events: [event("先頭", 1)] } };
   const turns = new Map([["target", turn]]);
+  // server.mjs の case "loadSession" の本文をここで走らせる。本文で新しい関数を呼んだら、ここにも渡す（無いと ReferenceError）
   const serverContext = vm.createContext({
     msg: { args: { sessionId: "target", live: true } }, runtime: { turns, waiting: new Map() }, liveReads,
     resolveBackendForSession: async () => ({}), store: { get: async () => ({}) }, compactionScheduler: { get: () => null },
@@ -135,6 +138,8 @@ export default async function (t) {
     // 入力欄の `!`（core/shell-runs.mjs）。このテストの対象外
     shellRuns: { decorate: m => m, rows: () => [], placeKept: m => m },
     history: { loadTranscript: () => new Promise(r => { resolveTranscript = r; }) },
+    // 読んだ履歴を検索の写しへ入れる口（core/session-search.mjs）。このテストの対象外
+    sessionSearch: { ingest: () => true },
     reply: (ok, data) => data, streamSequence: 3,
   });
   const loading = vm.runInContext(`(async () => { ${loadCase} })()`, serverContext);

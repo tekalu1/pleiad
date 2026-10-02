@@ -483,6 +483,13 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
     renderAll();
     await Promise.all([plyInstructions.load(), loadScan(), hooks.load()]);
   }
+  // どの口（画面・AI・CLI）から変えても、開いている設定のページを取り直す（web/client.mjs が settingsChanged を ply:settings-changed として渡す）
+  window.addEventListener('ply:settings-changed', e => {
+    const keys = e.detail?.keys ?? [];
+    if (!document.body.classList.contains('settings') || panel.hidden) return;
+    if (keys.includes('context.default')) cmd('contextSettings', {}).then(v => { view = v; renderAll(); }).catch(() => {});
+    if (keys.includes('plyInstructions')) plyInstructions.load();
+  });
   // ログインが済んだら一覧の状態を取り直す（web/client.mjs が mcpAuth を ply:mcp-auth として渡す）
   window.addEventListener('ply:mcp-auth', e => {
     const ev = e.detail ?? {};

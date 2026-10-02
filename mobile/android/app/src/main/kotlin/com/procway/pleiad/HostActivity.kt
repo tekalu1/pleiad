@@ -61,6 +61,8 @@ import java.util.concurrent.Executors
 class HostActivity : ComponentActivity() {
     companion object {
         const val EXTRA_HOST_ID = "hostId"
+        /** A conversation to open once the page is up (a tapped notification, ADR 0086). */
+        const val EXTRA_OPEN_SESSION = "open"
         private const val BRIDGE = "plyRemoteBridge"
         private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "pleiad-host").also { it.isDaemon = true } }
     }
@@ -78,6 +80,13 @@ class HostActivity : ComponentActivity() {
     private lateinit var progress: ProgressBar
     @Volatile private var reply: JavaScriptReplyProxy? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
+    /** The conversation a tapped notification wants, until the page can be told. */
+    private var pendingOpen: String? = null
+    private var notifyPermissionCallback: ((Boolean) -> Unit)? = null
+    private val askNotifyPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        notifyPermissionCallback?.invoke(granted)
+        notifyPermissionCallback = null
+    }
     private val statusListener: (String, LinkStatus) -> Unit = { id, s -> if (id == hostId) runOnUiThread { pushStatus(s) } }
 
     private val pickFiles = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
@@ -89,6 +98,8 @@ class HostActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         hostId = intent.getStringExtra(EXTRA_HOST_ID) ?: return finish()
         ResumeStore(this).remember(hostId)
+        pendingOpen = intent.getStringExtra(EXTRA_OPEN_SESSION)
+        NotifyService.sync(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         // The system bars are colored, but nothing of the page is drawn under them (2026-09-24): the page sits in `frame`,
         // padded by the bars, the cutout and the keyboard. The bars show the page's colors instead (topBand for the status
@@ -213,7 +224,45 @@ class HostActivity : ComponentActivity() {
             } catch (_: Exception) {}
         }
         frame.addView(w, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        w.loadUrl(px.url)
+        // A tapped notification names the conversation: the page opens it after it is ready (?open=, taken once)
+        val open = pendingOpen?.let { "&open=" + Uri.encode(it) } ?: ""
+        pendingOpen = null
+        w.loadUrl(px.url + open)
+    }
+
+    /** A notification for this host was tapped while this window exists: tell the page, or keep it for when it is up. */
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        val target = intent.getStringExtra(EXTRA_HOST_ID)
+        val session = intent.getStringExtra(EXTRA_OPEN_SESSION)
+        if (target != null && target != hostId) {
+            // Another host's notification: this window goes, the other host's takes its place
+            finish()
+            startActivity(android.content.Intent(this, HostActivity::class.java).putExtras(intent))
+            return
+        }
+        if (session.isNullOrEmpty()) return
+        val w = web
+        if (w == null) { pendingOpen = session; return }
+        w.evaluateJavascript(
+            "window.dispatchEvent(new CustomEvent('plyremote:open', { detail: { sessionId: ${JSONObject.quote(session)} } }))", null,
+        )
+    }
+
+    /** The page is told when the app leaves / returns to the front, so a conversation open here does not count as being watched in the background. */
+    override fun onStart() {
+        super.onStart()
+        web?.evaluateJavascript("window.dispatchEvent(new Event('plyremote:start'))", null)
+    }
+
+    override fun onStop() {
+        web?.evaluateJavascript("window.dispatchEvent(new Event('plyremote:stop'))", null)
+        super.onStop()
+    }
+
+    /** Answers a request from the page: { type: 'reply', id, result } (the page's promise resolves with result). */
+    private fun replyTo(id: Int, result: JSONObject) {
+        runOnUiThread { try { reply?.postMessage(JSONObject().put("type", "reply").put("id", id).put("result", result).toString()) } catch (_: Exception) {} }
     }
 
     /** Where a link goes on this device (LinkPolicy). Web pages open in the device's browser, localhost only tells why not. */
@@ -336,10 +385,20 @@ class HostActivity : ComponentActivity() {
                 "retry" -> px.retryNow()
                 "theme" -> applyTheme(message.data)
                 "back" -> backToList()
+                // The notification band (web/mobile-notify.mjs, ADR 0086)
+                "notify.state" -> replyTo(idOf(message.data), NotifyControl.state(this))
+                "notify.enable" -> {
+                    val id = idOf(message.data)
+                    NotifyControl.enable(this, ask = { cb -> notifyPermissionCallback = cb; askNotifyPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS) },
+                        done = { result -> replyTo(id, result) })
+                }
+                "notify.dismiss" -> NotifyControl.dismissBand(this)
             }
         }
         WebViewCompat.addDocumentStartJavaScript(w, remoteScript(info), setOf(origin))
     }
+
+    private fun idOf(data: String?) = try { JSONObject(data ?: "").optInt("id") } catch (_: Exception) { 0 }
 
     private fun remoteScript(info: JSONObject) = """
 (() => {
@@ -350,11 +409,26 @@ class HostActivity : ComponentActivity() {
   const info = $info;
   const listeners = new Set();
   let last = null;
+  const waiting = new Map();
+  let nextId = 0;
   bridge.onmessage = (e) => {
     let m; try { m = JSON.parse(e.data); } catch (_) { return; }
     if (m && m.type === 'status') { last = m.status; for (const fn of listeners) { try { fn(last); } catch (_) {} } }
+    else if (m && m.type === 'reply' && waiting.has(m.id)) { const done = waiting.get(m.id); waiting.delete(m.id); done(m.result); }
   };
   const post = (type, extra) => bridge.postMessage(JSON.stringify(Object.assign({ type }, extra || {})));
+  const ask = (type) => new Promise((resolve) => {
+    const id = ++nextId;
+    waiting.set(id, resolve);
+    post(type, { id });
+    setTimeout(() => { if (waiting.delete(id)) resolve(null); }, 120000);
+  });
+  // Notifications while away (ADR 0086): the page shows the band and asks the shell to turn them on
+  const notify = Object.freeze({
+    state: () => ask('notify.state'),
+    enable: () => ask('notify.enable'),
+    dismiss: () => post('notify.dismiss'),
+  });
   const api = Object.freeze({
     hostId: info.hostId, hostName: info.hostName, relay: info.relay, device: info.device, shell: 'mobile',
     status: () => Promise.resolve(last),
@@ -363,6 +437,7 @@ class HostActivity : ComponentActivity() {
     backToHosts: () => post('back'),
     closeWindow: () => post('back'),
     setTheme: (dark, colors) => post('theme', { dark: dark === true, top: String((colors && colors.top) || ''), bottom: String((colors && colors.bottom) || '') }),
+    notify,
   });
   Object.defineProperty(window, 'plyRemote', { value: api, writable: false, configurable: false, enumerable: false });
   Object.defineProperty(window, 'backToHosts', { value: api.backToHosts, writable: false, configurable: false, enumerable: false });

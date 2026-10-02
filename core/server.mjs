@@ -8,8 +8,9 @@ import { migrateClaudeUsage } from './usage-migrations.mjs';
 // server は「どのエージェントに聞くか」を決めて、正規化イベントを web へ配るだけ。
 // 承認の保留・猶予・中断（設計メモ §8.5）だけはここに残す。エージェントに散らすと
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
-import { createAgentTasks, finalReply } from './agent-tasks.mjs';
+import { createAgentTasks, finalReply, gitLine, workspaceLine } from './agent-tasks.mjs';
 import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
+import { createSettingApprovals } from './setting-approvals.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
 import { createComputerBridge, COMPUTER_MCP_PATH } from './computer-bridge.mjs';
 import { createComputerLock } from './computer-use/lock.mjs';
@@ -20,7 +21,12 @@ import { appendFileSync } from 'node:fs';
 import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
-import { canDelegate, resolveDelegatedMode, modePosition } from './modes.mjs';
+import { canDelegate, resolveDelegatedMode, modePosition, scopeRank } from './modes.mjs';
+import { createGitActivity } from './git-activity.mjs';
+import * as gitInfo from './git-info.mjs';
+import { createWorktreeHost, writesScope } from './worktree-host.mjs';
+import { insideDir, sameDir } from './worktrees.mjs';
+import { createCallTracker, timelineOf } from './git-timeline.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
 import { localeInfo, setLocale, t, i18n, LOCALE_SETTINGS, agentT, agentLocaleOf, currentLocale } from './i18n.mjs';
@@ -36,6 +42,13 @@ import { readPreview, listTreeFolder, resolveReference, cwdAt, inspectFile, prev
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
+import { registry as opsRegistry } from './ops/index.mjs';
+import { targetText as settingTarget } from './ops/registry.mjs';
+import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './ops/surfaces/control.mjs';
+import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
+import { writeControlFile, removeControlFile } from './control-file.mjs';
+import { addCliToPath, mcpSetup } from './cli-launcher.mjs';
+import { parentIdOf } from './ops/sessions.mjs';
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
@@ -63,6 +76,9 @@ import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.m
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
 import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
+import { createPushNotifier } from './notify/notifier.mjs';
+import { createPresence } from './notify/presence.mjs';
+import { createNotifySettings } from './notify/settings.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
 import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
 import { plyParts } from './instruction-amount.mjs';
@@ -71,7 +87,9 @@ import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
 import { parentPortBrowser, browserEnvironment, browserInstruction } from './agent-browser.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
-import { validBrowserPref } from '../web/browser-confirm-policy.mjs';
+import { createBrowserProfiles, createBrowserBridge, findProfile, BROWSER_MCP_PATH } from './browser-profiles.mjs';
+import { profileList, profileName, validProfilePref, hasProfile, defaultProfile as defaultBrowserProfile, profileIds as browserProfileIds } from '../web/browser-profiles.mjs';
+import { validBrowserPref, externalOrigin } from '../web/browser-confirm-policy.mjs';
 import { computerUsePrefs, validComputerUse } from '../web/computer-prefs.mjs';
 import { computerUseCapability } from './computer-use-capability.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
@@ -101,6 +119,8 @@ const screencastClients = new WeakMap();   // ws -> hub に渡す端末
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
 delete process.env.AGENT_BROWSER_CONFIG;
 delete process.env.AGENT_BROWSER_SESSION;
+// 会話のシェルで pleiad CLI を使えるよう、起動口（bin/）を PATH の先頭に足す。エージェントのプロセスと `!` の行はこの env を継ぐ（ADR 0090）
+addCliToPath(process.env);
 // このサーバーが起動した時刻。ready で配る。画面は、これより前の更新による中断だけを「更新の後」とみなす（web/interrupt.mjs の updateInterrupted）
 const SERVER_STARTED_AT = Date.now();
 const WEB = path.join(HERE, "..", "web");
@@ -113,7 +133,7 @@ try {
 } catch (err) {
   console.error('  自動圧縮の保存済み設定が不正です。既定値に戻します:', String(err?.message ?? err));
   compactionSettings = normalizeCompactionSettings();
-  await store.setPref('autoCompaction', compactionSettings).catch(saveError => {
+  await store.setPref('autoCompaction', compactionSettings).catch(saveError => {   // ops-allow-setpref: 起動時に壊れた保存値を既定へ戻す（設定の一覧が読む前）
     console.error('  自動圧縮の既定値を保存できませんでした:', String(saveError?.message ?? saveError));
   });
 }
@@ -121,6 +141,7 @@ try {
 import { installation, cliCommand } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
 import { createShellRuns, shellMode } from './shell-runs.mjs';
+import { createHostSessionSearch } from './session-search-host.mjs';
 import { taskStop, backgroundStop, approvalStop, interruptionNote } from './interrupt-stops.mjs';
 import { splitInterruptionNotes } from './system-messages.mjs';
 import { textForTitleModel } from './prompt-title.mjs';
@@ -232,13 +253,37 @@ const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, 
     const status = withResident(event.status);
     emitGlobal({ ...event, status, sessionId: null });
     postResident({ status });
+    // スマホの一覧（つながり・最後に送った時刻）も同じ変化で変わる
+    notifyStatus().then(next => emitGlobal({ type: 'notifyStatus', status: next, sessionId: null })).catch(() => {});
   },
   log: line => console.log(`  ${line}`) });
+// スマホ（離れた端末）への通知（ADR 0086）。判定は core/notify/policy.mjs、暗号は crypto.mjs、送り先は中継の通知の線。
+// 各画面が送る presence（見ている会話）で「見ている間は送らない」を決める。PC の通知の設定は <data>/notify.json
+const notifyPresence = createPresence();
+const notifySettings = createNotifySettings({ dataDir: store.dataDir });
+const connectionDevices = new WeakMap();   // ws -> 中継越しの端末（x-pleiad-device。ホストの PC の画面は無い）
+const pushNotifier = createPushNotifier({
+  devices: () => remote.notifyTargets(),
+  presence: notifyPresence,
+  send: (deviceId, blob, ttlMs) => remote.sendNotify(deviceId, blob, ttlMs),
+  host: () => remote.hostInfo(),
+  onSent: (deviceId, at) => remote.markNotified(deviceId, at),
+  log: line => console.log(`  ${line}`),
+  // 試験で待たずに済むよう、短いターンの下限だけ環境変数で変えられる（既定 30 秒）
+  shortTurnMs: Number.isFinite(Number(process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS)) && process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS !== undefined
+    ? Number(process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS) : undefined,
+});
 // ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
 // トレイとスリープの抑止は main（desktop/resident.cjs）が持つので、リモートの状態か実行中の作業が変わるたびに送る
 const residentPrefs = createResidentPrefs({ dataDir: store.dataDir });
 const withResident = status => ({ ...status, resident: { available: Boolean(process.parentPort), ...residentPrefs.get() } });
 const remoteStatus = async () => withResident(await remote.status());
+/** 設定 › 通知の材料: この PC の設定と、スマホ（デスクトップ版の端末以外）の一覧。鍵は含まない */
+const notifyStatus = async () => ({
+  pc: await notifySettings.pc(),
+  devices: (await remote.devices()).filter(d => d.platform !== 'desktop'),
+  relayConnected: (await remote.status()).connection.state === 'connected',
+});
 let residentLast = '', residentStatus = null, residentWork = null;
 function postResident({ status, work } = {}) {
   if (!process.parentPort) return;
@@ -308,6 +353,8 @@ async function withCodexTrust(report, cwd, { trust = true } = {}) {
   } catch (e) { return applyCodexHooks(report, null, String(e?.message ?? e).slice(0, 200)); }
 }
 let agentTasks;
+// 設定の変更の承認の台帳と、結果を会話へ届ける待ち行列（core/setting-approvals.mjs、ADR 0088）
+let settingApprovals;
 const agentConnections = new Map();
 const taskExecutions = new Map();
 // 実行前に拒否されたコマンド（Codex。core/backends/codex-rejections.mjs）を依頼元へ返す形（docs/agent-delegation.md「実行前に拒否されたコマンド」）。
@@ -319,6 +366,16 @@ const peerRejection = r => ({
   kind: ['policy', 'spawn', 'other'].includes(r.kind) ? r.kind : 'other', reason: redactForPeer(r.reason ?? null, REJECTION_TEXT_MAX),
   raw: redactForPeer(r.raw ?? null, REJECTION_TEXT_MAX), approvalRequested: r.approvalRequested === true, callId: pick(r.callId, 200), turnId: pick(r.turnId, 200),
 });
+// 子の作業場所の git の要約（ADR 0085）。会話の間のファイル・コミットが無ければ載せない。完了通知と ply_task_status で依頼元が事実を確かめられる
+async function taskGitNote(task) {
+  const s = task.cwd ? await gitActivity.summary(task.cwd, task.sessionId).catch(() => null) : null;
+  const w = s?.session;
+  if (!w || (!w.files && !w.commits)) return null;
+  return { branch: s.branch, detached: s.detached, head: s.head, linked: s.linked, files: w.files, add: w.add, del: w.del, commits: w.commits };
+}
+const gitNotice = (lng, git) => (git ? gitLine(lng, git) + '\n' : '');
+// 子の分けた作業場所の 1 行（ADR 0089）。分けていない子には何も足さない
+const workspaceNotice = (lng, task) => (task.worktree ? workspaceLine(lng, task.worktree, task.workspace) + '\n' : '');
 // 完了通知に載せる拒否の件数（先頭から）。全件は ply_task_status の rejections で読む
 const NOTICE_REJECTIONS = 3;
 function rejectionNotice(lng, list) {
@@ -362,6 +419,14 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale
     const title = decided ? t('permission.delegateEscalation', { agent: child.label, mode: child.modes()[decided.mode]?.label ?? decided.mode, modeId: decided.mode }) : undefined;
     const answer = await askPermission({ toolName: name, input: args, title, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng });
     if (!answer.allow) throw new Error(agentT(lng, 'delegation.denied'));
+  }
+  // 分けた作業場所（ADR 0089）。同じリポジトリに書き手が並ぶとき（または isolate: true）、Pleiad が子ごとに作る。isolate: false・git でない・読むだけなら今の場所
+  if (name === 'ply_delegate') {
+    if (args.isolate !== undefined && typeof args.isolate !== 'boolean') throw new Error(agentT(lng, 'tasks.isolateInvalid'));
+    const childCwd = path.resolve(turn.info.cwd ?? process.cwd(), typeof args.cwd === 'string' ? args.cwd : '.');
+    const verdict = await worktreeHost.decideIsolation({ owner, turn, cwd: childCwd, kind: args.kind, isolate: args.isolate,
+      writes: child ? writesScope(child.modes()[decided?.mode]) : true });
+    args = { ...args, isolate: verdict.isolate };
   }
   const result = await agentTasks.call(owner, name, decided?.mode ? { ...args, mode: decided.mode } : args, turn.ac.signal, lng);
   // 子が使い始めるので、振り分けに使う使用量を取り直しておく（待たない）
@@ -482,7 +547,7 @@ async function retryAgentTask({ taskId, candidate, account, stop, approved } = {
   const request = agentTasks.request(original.taskId);
   const routing = manualRouting({ kind: original.routing?.kind ?? null, candidate, check, of: original.taskId, from });
   const task = await agentTasks.call(owner, 'ply_delegate', { kind: routing.kind, task: request.task, ...(request.title ? { title: request.title } : {}), ...(request.context ? { context: request.context } : {}),
-    cwd: original.cwd, backend: parsed.backend, model: parsed.model, account: check.account ?? '', routing, mode: decided.mode }, undefined, await agentLocaleFor(owner));
+    cwd: original.worktree?.origin ?? original.cwd, isolate: Boolean(original.worktree), backend: parsed.backend, model: parsed.model, account: check.account ?? '', routing, mode: decided.mode }, undefined, await agentLocaleFor(owner));
   // 子が使い始めるので、振り分けに使う使用量を取り直しておく（待たない）
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
   return { task };
@@ -501,7 +566,7 @@ function conversationConnection(turn) {
   // 橋は会話ごとに使い回すので、ターンそのものを閉じ込めない（終わったターンが丸ごと残ってしまう）。
   // 持つのは鍵だけにして、呼ばれた時に今走っているターンを引く。
   // 会話の言語は会話を始めたときに決まり、以後は変わらない（runTurn）。橋の instructions・ツールの説明もその言語で開く
-  const entry = { key: turn.key, locale: turn.agentLocale };
+  const entry = { key: turn.key, locale: turn.agentLocale, sessionId: turn.info.sessionId ?? null };
   const binding = agentBridge.open({ origin: localOrigin(), locale: entry.locale,
     owner: async () => {
       const live = runtime.turns.get(entry.key);
@@ -550,6 +615,8 @@ function releaseAgentConnection(key) {
   agentConnections.delete(key);
   try { entry.close(); } catch {}
   try { entry.computer?.close(); } catch {}
+  try { entry.browser?.close(); } catch {}
+  try { entry.control?.close(); } catch {}
   // 会話を消したら、その会話で撮ったスクリーンショットも消す（ADR 0075）
   computerShots.removeSession(key).catch(() => {});
 }
@@ -576,6 +643,63 @@ function computerConnection(turn) {
         agent: { id: live.backend.id, label: live.backend.label } };
     } });
   return entry.computer;
+}
+
+// ---- 内蔵ブラウザーのプロフィール（docs/inapp-browser.md「プロフィール」、ADR 0078） ----------------------------
+// 会話の今のプロフィールの正本は会話のメタ。ターンは開始時に決めた値を turn.browserProfile に持ち、ply_browser の切り替えはそれを書き換える
+const browserProfiles = createBrowserProfiles({ getPrefs: store.getPrefs, getSession: id => store.get(id), setSessionData: store.setSessionData, rememberLast: store.rememberBrowserProfile });
+/** 中継のキー（新しい会話の最初のターンは仮のキー）か会話 ID から、走っているターン */
+const browserTurn = id => id ? runtime.turns.get(id) ?? [...runtime.turns.values()].find(turn => turn.browserRelayId === id) ?? null : null;
+// ply_browser: エージェントがプロフィールの一覧を読み、会話の今のプロフィールを切り替える。文はエージェントの言語（agent 名前空間）
+const browserBridge = createBrowserBridge({ call: async (owner, name, args, { locale: lng0 } = {}) => {
+  const turn = runtime.turns.get(owner());
+  const lng = turn?.agentLocale ?? lng0;
+  if (!turn || turn.ac.signal.aborted) throw new Error(agentT(lng, 'delegation.notRunning'));
+  const prefs = await store.getPrefs();
+  const mainName = agentT(lng, 'browserProfiles.main');
+  const current = hasProfile(prefs, turn.browserProfile) ? turn.browserProfile : await browserProfiles.resolve(turn.info.sessionId);
+  const row = (p, now = current) => ({ id: p.id, name: profileName(p, mainName), ...(p.id === defaultBrowserProfile(prefs) ? { default: true } : {}),
+    ...(p.id === now ? { current: true } : {}), ...(p.memo ? { memo: p.memo } : {}) });
+  if (name === 'list_browser_profiles') return { current, profiles: profileList(prefs).map(p => row(p)) };
+  const target = findProfile(prefs, args.profile, mainName);
+  if (!target) throw new Error(agentT(lng, 'browserProfiles.unknown', { profile: String(args.profile ?? '').slice(0, 80), names: profileList(prefs).map(p => profileName(p, mainName)).join(', ') }));
+  if (target.id === current) return { profile: row(target), changed: false };
+  turn.browserProfile = target.id;
+  if (turn.info.sessionId) await browserProfiles.set(turn.info.sessionId, target.id, turn.info.cwd);
+  // main はタブの一覧と中継のタブ集合を替え、画面に「<エージェント名> が『…』に切り替えました」を出す
+  agentBrowser?.profile(turn.browserRelayId ?? turn.info.sessionId ?? turn.key, target.id, turn.backend.label);
+  return { profile: row(target, target.id), changed: true, note: agentT(lng, 'browserProfiles.switched') };
+} });
+/** このターンに渡す ply_browser（url・headers）。会話のあいだ同じ口を使う（agy は起動時にしか渡せない） */
+function browserRuntimeFor(turn) {
+  const entry = conversationConnection(turn);
+  entry.browser ??= browserBridge.open({ origin: localOrigin(), locale: entry.locale, owner: () => entry.key });
+  return { url: entry.browser.url, headers: entry.browser.headers };
+}
+
+// ply_control: 操作の一覧（core/ops/）を会話に渡す HTTP の MCP（ADR 0081）。会話に束縛し、その会話の承認モードで権限が決まる（ADR 0082）
+const controlBridge = createControlBridge({ registry: opsRegistry, depsFor: opsDeps });
+// CLI 用トークン（control.json に書く。画面のトークンとは別で、効くのは /api/ops だけ。ADR 0083）
+const CLI_TOKEN = crypto.randomBytes(32).toString('hex');
+const cliTokenOk = (given) => { const a = Buffer.from(String(given)), b = Buffer.from(CLI_TOKEN); return a.length === b.length && crypto.timingSafeEqual(a, b); };
+const opsHttp = createOpsHttp({
+  registry: opsRegistry, depsFor: opsDeps, serverLocale: currentLocale,
+  // 会話に束縛した接続のトークン（会話のシェルの環境変数）は、同じ会話に束縛された CLI になる
+  authenticate: (token) => { if (cliTokenOk(token)) return {}; const bound = controlBridge.lookup(token); return bound ? { owner: bound.owner, locale: bound.locale } : null; },
+});
+/** このターンに渡す ply_control（url・headers・instructions）と、会話のシェルへ渡す環境変数（CLI を同じ会話に束縛する）。全会話・3 つのエージェントに渡す */
+function controlRuntimeFor(turn) {
+  const entry = conversationConnection(turn);
+  entry.control ??= controlBridge.open({ origin: localOrigin(), locale: entry.locale,
+    // 会話の id が決まるまでは束縛を決められない。束縛なしの主体として通すと、読み取りの会話からの書き込みを断れなくなるので投げる
+    owner: async () => {
+      const live = runtime.turns.get(entry.key);
+      if (live) { await live.setup; if (live.info.sessionId) return live.info.sessionId; }
+      else if (entry.sessionId) return entry.sessionId;
+      throw new Error(agentT(entry.locale, 'delegation.idPending'));
+    } });
+  return { url: entry.control.url, headers: entry.control.headers, instructions: controlInstructions(entry.locale),
+    env: { PLEIAD_CONTROL_URL: localOrigin(), PLEIAD_CONTROL_TOKEN: entry.control.token } };
 }
 
 /** このターンに渡す ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（docs/computer-use.md「エージェントへの渡し方」） */
@@ -618,9 +742,41 @@ function tokenFromCookie(header) {
  * 作業ディレクトリ・添付の置き場・Codex の生成画像・全会話の cwd とその変更履歴
  */
 function fileRoots(sessions) {
-  return [...workspaceRoots, UPLOAD_DIR,
+  return [...workspaceRoots, UPLOAD_DIR, ...worktreeHost.worktrees.paths(),
     path.join(process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), "generated_images"),
     ...Object.values(sessions).flatMap(s => [s.cwd, ...(s.history ?? []).filter(h => h.field === 'cwd').flatMap(h => [h.from, h.to])])];
+}
+
+/** 今の cwd が会話の予約・どれかの会話が使った場所・分けた作業場所のどれかか（画面が言ってきた場所で git を走らせてよいか） */
+async function knownCwd(cwd, sessionId = null) {
+  const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+  if (await worktreeHost.worktrees.byPath(cwd).catch(() => null)) return true;
+  if (sessionId) { const reserved = (await store.get(sessionId).catch(() => null))?.nextSettings?.cwd; if (reserved && same(reserved, cwd)) return true; }
+  const known = Object.values(await store.getAll().catch(() => ({}))).flatMap(s => [s.cwd, ...(s.history ?? []).filter(h => h.field === 'cwd').map(h => h.to)]).filter(Boolean);
+  return known.some(k => same(k, cwd));
+}
+/** 分けた作業場所の問い合わせの cwd。明示があれば（知っている場所なら）それ、無ければ会話の cwd */
+async function worktreeCwd(args) {
+  const asked = typeof args?.cwd === 'string' && args.cwd ? args.cwd : null;
+  const id = typeof args?.sessionId === 'string' && args.sessionId ? args.sessionId : null;
+  if (asked && await knownCwd(asked, id)) return asked;
+  return gitCwd(args);
+}
+/**
+ * git の問い合わせの作業場所（ADR 0085）。会話があればその会話の cwd（sidecar か、無ければエージェントの記録）。
+ * 会話の無い下書きは、cwd を言ってきても、どれかの会話が使ったことのある場所だけ通す（任意のフォルダーで git を走らせない）。
+ */
+async function gitCwd(args) {
+  const id = typeof args?.sessionId === 'string' && args.sessionId ? args.sessionId : null;
+  if (id) {
+    const meta = await store.get(id).catch(() => null);
+    if (meta?.cwd) return meta.cwd;
+    const backend = await resolveBackendForSession(id).catch(() => null);
+    return (await backend?.getSession?.(id).catch(() => null))?.cwd ?? null;
+  }
+  const cwd = typeof args?.cwd === 'string' && args.cwd ? args.cwd : null;
+  if (!cwd) return null;
+  return await knownCwd(cwd) ? cwd : null;
 }
 
 /**
@@ -653,6 +809,10 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === AGENTS_MCP_PATH) return agentBridge.handle(req, res);
   if (url.pathname === CONTEXT_MCP_PATH) return contextBridge.handle(req, res);
   if (url.pathname === COMPUTER_MCP_PATH && computerBridge) return computerBridge.handle(req, res);
+  if (url.pathname === BROWSER_MCP_PATH) return browserBridge.handle(req, res);
+  if (url.pathname === CONTROL_MCP_PATH) return controlBridge.handle(req, res);
+  // CLI の口。画面のトークンは受けず、CLI 用トークンか会話の接続のトークンだけを受ける（core/ops/surfaces/http.mjs）
+  if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
 
   // 静的ファイルもトークンで守る。守られているのが WebSocket だけだと、
   // リモートに出したときに UI 一式が誰でも取れてしまう。
@@ -780,10 +940,10 @@ function interruptedOf(value) {
   return { at: value.at, reason: INTERRUPT_REASONS.has(value.reason) ? value.reason : "user" };
 }
 
-/** 状態を最後に変えたのが AI なら { reason, reasonKey?, reasonParams? }、そうでなければ null */
+/** 状態を最後に変えたのが AI（host のツールの ai・操作の一覧の agent。ADR 0081）なら { reason, reasonKey?, reasonParams? }、そうでなければ null */
 function statusChangedByAi(history) {
   const row = [...(history ?? [])].reverse().find(h => h?.field === "status");
-  if (row?.by !== "ai") return null;
+  if (row?.by !== "ai" && row?.by !== "agent") return null;
   return { reason: row.reason ?? null, ...(row.reasonKey ? { reasonKey: row.reasonKey, ...(row.reasonParams ? { reasonParams: row.reasonParams } : {}) } : {}) };
 }
 
@@ -795,6 +955,17 @@ function statusChangedByAi(history) {
  * 正本が空なら片方へ落ちる。parent は host が分けたもの（sidecar）と向こうで分けたもの
  * （codex の forkedFromId）の両方から読む。一覧と系譜（lineage）が同じ行を見るよう、合成はここだけ。
  */
+/**
+ * 分けた作業場所の中で動いている会話の行に、元の場所と枝分かれの印を足す（ADR 0089）。行の場所は元の場所の名前で出し、
+ * 最近の場所の候補（place）にも分けた作業場所のパスを並べない。sessionRow は台帳を知らない純粋な組み立てのまま
+ */
+function withWorktree(row) {
+  const entry = row?.cwd ? worktreeHost.worktrees.lookup(row.cwd) : null;
+  if (!entry) return row;
+  row.worktree = { id: entry.id, branch: entry.branch, origin: entry.origin };
+  if (row.place) row.place = entry.origin;
+  return row;
+}
 function sessionRow(b, s, extra = {}) {
   const nativeTitle = b.capabilities?.title;
   return {
@@ -899,10 +1070,25 @@ function nativeSessions(b, limit) {
 function invalidateSessionLists() { nativeListGeneration++; }
 
 /**
+ * 1 つの会話の題。一覧の行と同じ決め方（ネイティブの題と sidecar の題。sessionRow）で、スマホへの通知の見出しに使う。無ければ ''。
+ * ネイティブ一覧は使い回しを使う（毎回は読み直さない）
+ */
+async function conversationTitleOf(sessionId) {
+  try {
+    const side = await store.get(sessionId);
+    const b = await resolveBackendForSession(sessionId);
+    if (!b) return side.title ?? '';
+    const native = (await nativeSessions(b, 100)).find(s => s.sessionId === sessionId) ?? null;
+    const title = sessionRow(b, native, { ...side, id: sessionId }).title;
+    return title && title !== '(no title)' ? title : '';
+  } catch { return ''; }
+}
+
+/**
  * 全エージェントのネイティブ一覧と sidecar を1つに合わせる（docs/multi-backend.md §2.1）。
  * ネイティブ一覧に出ないセッション（sidecar にしか無いもの）も落とさずに足す。
  */
-async function sessionList({ limit = 100 } = {}) {
+async function sessionList({ limit = 100, track = true } = {}) {
   const backends = listBackends();
   const [side, ...lists] = await Promise.all([
     store.getAll().catch(() => ({})),
@@ -912,7 +1098,7 @@ async function sessionList({ limit = 100 } = {}) {
   const rows = new Map();
 
   backends.forEach((b, i) => {
-    for (const s of lists[i]) rows.set(s.sessionId, sessionRow(b, s, side[s.sessionId]));
+    for (const s of lists[i]) rows.set(s.sessionId, withWorktree(sessionRow(b, s, side[s.sessionId])));
   });
 
   // sidecar にしか無い行。どのエージェントのものか分からないもの（v1 から引き継いだ行で
@@ -922,7 +1108,7 @@ async function sessionList({ limit = 100 } = {}) {
     const b = rows.has(id) || !extra.backend ? null : sessionBackend(extra.backend);
     if (!b) continue;
     const managed = b.retired ? await b.getSession(id).catch(() => null) : null;
-    rows.set(id, sessionRow(b, managed, { ...extra, id }));
+    rows.set(id, withWorktree(sessionRow(b, managed, { ...extra, id })));
   }
 
   const places = new Set();
@@ -941,9 +1127,20 @@ async function sessionList({ limit = 100 } = {}) {
     }
   }
 
-  for (const row of rows.values()) if (row.cwd) workspaceRoots.add(row.cwd);
+  if (track) for (const row of rows.values()) if (row.cwd) workspaceRoots.add(row.cwd);
   return [...rows.values()].sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
 }
+
+/**
+ * セッション検索（会話の本文まで。docs/design.md「セッション検索」）。本文の写しを持ち、search(input) に答える。
+ * ここから呼ぶ（画面・MCP・CLI への口は core/ops/ が持つ）。起動後に裏で写しを作り、ターンの終わり・loadSession で更新する。
+ * 一覧は workspaceRoots に足さない（検索が読むだけで、ファイルの許可を広げない）。
+ */
+const sessionSearch = createHostSessionSearch({
+  listSessions: () => sessionList({ limit: 500, track: false }),
+  resolveBackend: resolveBackendForSession,
+  onError: (id, err) => console.error(`  セッション検索の読み込みに失敗${id ? ` (${id})` : ''}:`, String(err?.message ?? err)),
+});
 
 /**
  * 使用量の表示に使うアカウント。会話用のトークンではなく、アカウントごとの設定フォルダ（`claude auth login` 済み）で読む
@@ -1138,7 +1335,7 @@ function giveUp() {
   // 承認待ちを却下する前に、止めるターンが抱えているもの（承認待ち・裏の作業）を控える（中断で終わったら会話の「止めたもの」に残す）
   for (const t of runtime.turns.values()) t.stops ??= captureStops(t);
   // エージェントへの理由は承認ごとに会話の言語で（askPermission が messageKey を訳す）。ログは日本語のまま
-  for (const [, w] of [...runtime.waiting]) w.settle({ allow: false, messageKey: 'hostAway', messageParams: { seconds } });
+  for (const [, w] of [...runtime.waiting]) if (!w.detached) w.settle({ allow: false, messageKey: 'hostAway', messageParams: { seconds } });
   // 承認を返せないまま走らせ続けない。黙って deny し続けるより、止めて気づかせる。
   // 中断の理由は hostAway（会話に中断として残り、戻った人が「再開」で続けられる）
   for (const t of [...runtime.turns.values()]) { t.abortReason ??= "hostAway"; t.ac.abort(); }
@@ -1150,7 +1347,7 @@ function giveUp() {
 const LIST_NEUTRAL_EVENTS = new Set([
   "text.delta", "text.end", "thinking.start", "thinking.delta", "tool.start", "tool.result", "activity",
   "userMessage.delivered", "running", "permission", "outbox", "mcpAuth", "claudeLogin", "computer.state",
-  "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",
+  "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction", "settingsChanged", "settingApproval",
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
 ]);
@@ -1181,16 +1378,66 @@ function sendTo(frame) {
 }
 // 入力欄の `!`（シェルの行。ADR 0054）。走っている子のプロセスはサーバーの終わりに止める
 const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event) });
+// git の動き（ADR 0085）。状態・ターンの始まりと終わりの隠し ref・変更の一覧と差分。git が無い・git 管理外は null
+const gitActivity = createGitActivity();
+// 分けた作業場所（ADR 0089）。台帳・作成・片付けと、ぶつかり・委譲の判定。使っているもの（走っているターン・シェル・委譲の子）を見てから消す
+const worktreeHost = createWorktreeHost({
+  dataDir: store.dataDir, store,
+  turns: () => runtime.turns, shellCwds: () => shellRuns.cwds(), tasks: () => agentTasks?.list() ?? [], background: () => runtime.background,
+  emit: event => emitGlobal(event), reason: (key, params) => savedReason(key, params),
+  // 依頼元が今のターンでファイルを変えているか（ターンの始まりの撮影と今の作業ツリーの差）。撮影が無ければ分からないので false
+  parentWrote: async (turn, root) => {
+    if (!turn.git?.startTree || !sameDir(turn.git.root, root)) return false;
+    const tree = await gitInfo.snapshotTree(root);
+    const diff = tree ? await gitInfo.diffFiles(root, turn.git.startTree, tree) : null;
+    return (diff?.total.files ?? 0) > 0;
+  },
+  log: line => { if (process.env.AGENT_HOST_WORKTREE_LOG) console.log(`  worktree: ${line}`); },
+  // AGENT_HOST_WORKTREES=off で分けた作業場所を作らない。テストのサーバーが開発中のリポジトリ（<リポジトリ>.pleiad）に残さないため（tests/lib/server.mjs）
+  worktreeOptions: {
+    ...(process.env.AGENT_HOST_WORKTREE_GRACE_MS !== undefined ? { graceMs: Number(process.env.AGENT_HOST_WORKTREE_GRACE_MS) || 0 } : {}),
+    ...(process.env.AGENT_HOST_WORKTREES === 'off' ? { disabled: true } : {}),
+  },
+});
+/** 片付けをまとめて 1 回（ターンの終わり・委譲の完了・パネルを開いたとき。重ならない） */
+let worktreeSweeping = false, worktreeSweepAgain = false;
+function worktreeSweepSoon() {
+  if (worktreeSweeping) { worktreeSweepAgain = true; return; }
+  worktreeSweeping = true;
+  worktreeHost.sweep().catch(e => console.error('  分けた作業場所の片付けに失敗:', String(e?.message ?? e)))
+    .finally(() => { worktreeSweeping = false; if (worktreeSweepAgain) { worktreeSweepAgain = false; worktreeSweepSoon(); } });
+}
+/** 人が決めた次のターンの予約から外れた分けた作業場所を、使っていなければ片付ける */
+async function settleWorktreeAt(cwd) {
+  const entry = cwd ? await worktreeHost.worktrees.byPath(cwd).catch(() => null) : null;
+  if (entry && entry.state === 'ready') await worktreeHost.worktrees.settle(entry.id).catch(() => {});
+}
+const publicWorktree = entry => ({ id: entry.id, branch: entry.branch, path: entry.path, origin: entry.origin, baseBranch: entry.baseBranch ?? null });
+// ターンの始まりの撮影を待つ上限と、終わりの撮影・要約を待つ上限（超えたらその回の撮影・要約は諦める）
+const GIT_BEGIN_WAIT_MS = 6_000;
+// AGENT_HOST_GIT_SNAPSHOTS=off でターンの撮影（隠し ref）を止める。テストが開発中のリポジトリの .git に ref を残さないため（tests/lib/server.mjs）
+const GIT_SNAPSHOTS = process.env.AGENT_HOST_GIT_SNAPSHOTS !== 'off';
+const GIT_END_WAIT_MS = 6_000;
 process.on('exit', () => shellRuns.stopAll());
+process.on('exit', () => removeControlFile({ dataDir: store.dataDir }));
+// 端末の Ctrl-C・kill でも 'exit' を通し、control.json を消す
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));
 const completionNotices = createCompletionNotices({
   // 裏の作業は委譲の完了と同じく awaitedBackground で見る。開きっぱなしの端末（開発サーバーなど）で通知が出なくならないように
   busy: sessionId => sessionBusy(sessionId) || awaitedBackground(sessionId) || hasPendingChild(agentTasks?.list(sessionId) ?? []),
   send: event => sendTo({ kind: P.EVENT, event }),
+  // 落ち着いた時点で、画面が居なくてもスマホへ 1 回（委譲の子の完了は endTurn が渡さない。依頼元の完了に含む）
+  ready: ({ sessionId, outcome, completedAt, startedAt }) => {
+    store.get(sessionId).then(async meta => {
+      if (meta?.delegation) return;
+      pushNotifier.finished({ sessionId, outcome, completedAt, startedAt, title: await conversationTitleOf(sessionId) });
+    }).catch(() => {});
+  },
 });
 
 /** 保存した既定を全画面に通知する。セッション閲覧では既定を書き換えない。 */
 async function savePref(key, value, backendId) {
-  const prefs = await store.setPref(key, value, backendId);
+  const prefs = await store.setPref(key, value, backendId);   // ops-allow-setpref: prefs.json への書き込みの出口（設定の一覧 core/ops/settings.mjs と、既定の記憶だけがここを通る）
   locale = localeInfo(prefs);
   setLocale(locale.lang);
   // デスクトップ版の main（ダイアログ・通知・更新のエラー文）にも知らせる（desktop/main.cjs）
@@ -1270,12 +1517,13 @@ function groupKin(rows, rootId) {
 }
 
 /** 人間からの状態の変更。setStatus コマンドと新規セッションの引き継ぎが同じ経路を通る。 */
-async function applyStatus(backend, sessionId, status, why) {
+async function applyStatus(backend, sessionId, status, why, actor) {
   const reason = reasonOf(why);
+  const who = changeBy(actor);
   // ネイティブに持てるなら**そこが正本**。持てなくても sidecar には必ず残る
   if (backend.capabilities?.tag && backend.setTag) await backend.setTag(sessionId, status);
-  await store.recordChange(sessionId, { by: "human", field: "status", to: status, ...reason, backend });
-  emitGlobal({ type: "status", sessionId, status, by: "human", ...reason });
+  await store.recordChange(sessionId, { ...who, field: "status", to: status, ...reason, backend });
+  emitGlobal({ type: "status", sessionId, status, by: who.by, ...reason });
 }
 
 // ---- 保存される変更理由（docs/design.md「多言語対応」） ------------------------
@@ -1318,6 +1566,8 @@ function clientReason(args) {
 function makeEmit(turn) {
   const emit = (event, { recorded = false } = {}) => {
     if (event?.type) agentTasks?.observe(turn.info.sessionId, event);
+    // git でしたこと（PR の作成など）をターンの終わりの要約に使う
+    turn.gitCalls?.track(event);
     // Internal activity and command observations do not add conversation UI events.
     if (event?.type === 'task.activity' || event?.type === 'task.command') return;
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
@@ -1378,6 +1628,7 @@ function makeEmit(turn) {
       const notice = liveNotices.get(event.messageId);
       liveNotices.delete(event.messageId);
       if (event.type === "userMessage.delivered") emit({ type: "taskNotice", text: notice.prompt });
+      else if (notice.redeliver) notice.redeliver();
       else agentTasks?.renotify(notice.items).catch(() => {});
       return;
     }
@@ -1413,6 +1664,8 @@ function makeEmit(turn) {
       else turn.info.background = Array.isArray(event.tasks) ? event.tasks : [];
       if (event.type === "phase") watchChildBackground(turn);
       broadcastRunning();
+      // 裏だけを待つ間は、次のターンの設定の予約があっても途中送信できる。待っている送信をすぐ流す
+      if (event.type === "phase" && turn.info.phase === "waiting" && turn.info.sessionId) outbox.kick(turn.info.sessionId).catch(() => {});
     }
     // 新規セッションは走り出してから id が決まる。仮キーを本物へ差し替える。
     // sessionId が null の session は「まだ決まっていない」ので差し替えない
@@ -1424,9 +1677,11 @@ function makeEmit(turn) {
       for (const read of liveReads) if (read.sessionId === event.sessionId) read.turn = turn;
       runtime.turns.delete(turn.key);
       const connection = agentConnections.get(turn.key);
-      if (connection) { agentConnections.delete(turn.key); connection.key = event.sessionId; agentConnections.set(event.sessionId, connection); }
+      if (connection) { agentConnections.delete(turn.key); connection.key = event.sessionId; connection.sessionId = event.sessionId; agentConnections.set(event.sessionId, connection); }
       turn.key = event.sessionId;
       runtime.turns.set(turn.key, turn);
+      // 新しい会話は id が決まったここで、始まりの撮影の ref を書く（ADR 0085）
+      turn.gitSetup?.then(() => turn.git && gitActivity.attach(turn.git, event.sessionId)).catch(() => {});
       // 実際に使った承認モードとモデル、どのエージェントのものかをセッションに残す。
       // 既定から引き継いだ場合、書かないと一覧の表示と実際の挙動がずれる。
       // backend を書いておかないと、次に開いたときに誰に聞けばよいか分からない。
@@ -1437,6 +1692,8 @@ function makeEmit(turn) {
           backend: turn.backend.id, cwd, createdAt: turn.info.startedAt, lastModified: Date.now(),
           turnStartedAt: turn.startedAtMs, interrupted: null,
         }),
+        // ターンで使っていた内蔵ブラウザーのプロフィールを会話に残す（ADR 0078）
+        turn.browserProfile ? browserProfiles.set(sessionId, turn.browserProfile, cwd).catch(() => {}) : null,
         store.setMode(sessionId, mode),
           store.setModel(sessionId, model ?? ""),
           store.setSessionData(sessionId, "effort", turn.info.effort ?? ""),
@@ -1452,6 +1709,8 @@ function makeEmit(turn) {
         event.first && attachments?.length ? presentAttachments(sessionId, attachments, emit) : null,
       ]);
       turn.setup.catch((err) => console.error("  設定の記録に失敗:", String(err?.message ?? err)));
+      if (turn.worktreeId) worktreeHost.worktrees.update(turn.worktreeId, { sessionId: event.sessionId }).catch(() => {});
+      turn.setup.then(() => emitWorktreeNotice(turn, emit, event.sessionId)).catch(() => {});
     }
 
     // サブエージェントの transcript には依頼のユーザー発言が入らない（assistant 発言のみ）。
@@ -1575,6 +1834,349 @@ async function subagentState(t, sessionId, agentId) {
  * いま動いているものを集める。
  * 会話が終わってもサブエージェントが残ることがあるので、数だけでも常に見えるようにする。
  */
+// ---- 設定を書く・会話を分ける・状態のグループを作る。画面の WS コマンドと操作の一覧（core/ops/）が同じ関数を通る（ADR 0007・0081）
+
+/**
+ * 設定が変わったことを全画面へ。どの口から変えても開いている画面が更新される。prefs・autoCompactionSettings・delegationRoutingChanged など
+ * 既存の配信に加えて、配信の無かった設定（context の既定）のために全設定で出す。by・via・bySession は変えた主体（ADR 0082）。
+ */
+function settingsChanged(keys, actor = { by: 'human' }) {
+  const who = changeBy(actor);
+  emitGlobal({ type: 'settingsChanged', sessionId: null, keys, by: who.by, ...(who.via ? { via: who.via } : {}), ...(who.bySession ? { bySession: who.bySession } : {}) });
+}
+
+/** 自動圧縮の設定を保存して配る。予約が走っていれば新しい設定に合わせて取り消す。保存に失敗したら元に戻す */
+async function applyAutoCompaction(settings) {
+  const previousSettings = compactionSettings;
+  // A reservation already firing may be preparing its backend. Settings take effect before
+  // the disk write, and ineligible in-flight reservations are invalidated before invocation.
+  compactionScheduler.cancelFiring(entry => {
+    const row = settings[entry.backendId === 'fake' ? 'claude' : entry.backendId];
+    return !settings.enabled || !row?.enabled || entry.usedTokens < settings.minTokens;
+  });
+  compactionSettings = settings;
+  try { await store.setPref('autoCompaction', settings); }   // ops-allow-setpref: 配信が prefs ではなく autoCompactionSettings の設定
+  catch (err) { compactionSettings = previousSettings; throw err; }
+  for (const entry of compactionScheduler.entries()) {
+    const backend = await resolveBackendForSession(entry.sessionId);
+    const row = settings[backend?.id === 'fake' ? 'claude' : backend?.id];
+    if (!settings.enabled || !row?.enabled
+        || (await store.get(entry.sessionId)).contextWindow?.usedTokens < settings.minTokens)
+      compactionScheduler.cancel(entry.sessionId);
+  }
+  emitGlobal({ type: 'autoCompactionSettings', sessionId: null, settings });
+  return settings;
+}
+
+/** 委譲先の自動振り分けの設定。patch は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する */
+async function applyRoutingSettings(patch) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error(t('routing.settings.notObject', { key: 'settings' }));
+  const raw = { ...((await store.getPrefs()).delegationRouting ?? {}) };
+  for (const [key, value] of Object.entries(patch)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
+  for (const key of RETIRED_KEYS) delete raw[key];
+  let settings;
+  try { settings = normalizeSettings(raw, { strict: true }); } catch (e) { throw routingSettingsError(e); }
+  const previous = routingSettingsCache;
+  const known = routingUsage.snapshot();
+  const oldCandidates = new Set(TIERS.flatMap(tier => previous.tiers[tier] ?? []));
+  const missingCandidate = TIERS.flatMap(tier => settings.tiers[tier] ?? []).some(candidate => {
+    if (oldCandidates.has(candidate)) return false;
+    const at = candidate.indexOf(':');
+    return !Object.hasOwn(known[candidate.slice(0, at)]?.models ?? {}, candidate.slice(at + 1));
+  });
+  await savePref('delegationRouting', Object.keys(raw).length ? raw : null);
+  routingSettingsCache = settings;
+  if (!settings.enabled) routingUsage.stop();
+  else if (ROUTING_USAGE_AUTO) {
+    routingUsage.start();
+    if (previous.enabled && missingCandidate) routingUsage.refresh().catch(() => {});
+  }
+  emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
+  return settings;
+}
+
+/** Pleiad の指示の項目を保存する。前の版の委譲の指示のスイッチ（addedContext）は plyInstructions に写したので消す（残すと古い版に戻したときだけ効く） */
+async function applyPlyInstructions(next) {
+  await savePref('plyInstructions', { items: next });
+  await savePref('addedContext', null);
+  plyInstructionsCache = next;
+  return next;
+}
+
+/** 内蔵ブラウザーのプロフィール（ADR 0078）。一覧・既定・新しい会話の規則。消えたプロフィールの既定と「このサイトは常に」は片付ける。値の検査は呼び出し側 */
+async function applyBrowserProfilePref(key, value) {
+  let prefs = await savePref(key, value);
+  if (key === 'browserProfiles') {
+    const ids = browserProfileIds(prefs);
+    if (prefs.browserDefaultProfile && !ids.includes(prefs.browserDefaultProfile)) prefs = await savePref('browserDefaultProfile', null);
+    const sites = prefs.agentSitePermissions ?? [];
+    const kept = sites.filter(row => !row.profile || ids.includes(row.profile));
+    if (kept.length !== sites.length) prefs = await savePref('agentSitePermissions', kept);
+  }
+  agentBrowser?.prefs(prefs);
+  return prefs;
+}
+
+/** 内蔵ブラウザーの確認と「このサイトは常に」。保存して、走っているブラウザーの方針にも伝える。値の検査は呼び出し側 */
+async function applyBrowserPref(key, value) {
+  const prefs = await savePref(key, value);
+  agentBrowser?.prefs(prefs);
+  agentBrowser?.loadPolicy(prefs);
+  return prefs;
+}
+
+/** 会話を分ける。fork コマンドと sessions.fork が同じ経路を通る。actor は変更の記録の主体（無ければ人間） */
+async function forkConversation({ sessionId, upToMessageId, beforeMessageId, title, backend: given }, actor) {
+  const running = runtime.turns.get(sessionId);
+  if (!sessionId || forking.has(sessionId) || switching.has(sessionId) && !running) throw new Error(t('session.preparingFork'));
+  forking.add(sessionId);
+  try {
+    await settingsWrites.get(sessionId);
+    const backend = refuseRetired(await pickBackend(sessionId, given));
+    if (!backend.fork) throw new Error(t('session.cannotFork'));
+    const snapshot = running ? {
+      messageIds: running.stream.messages.map(m => m.uuid),
+      presents: structuredClone(running.stream.presents),
+    } : null;
+    const { sessionId: child, persisted, parent: forkParent } = await backend.fork(sessionId, { upToMessageId, beforeMessageId, title, snapshot });
+    // 「編集して再送信」は対象の発言の手前で切るので、その先で渡した本文は分岐先に残らない。渡し済みの控えを捨てる。
+    // 写した履歴があれば最初のターンの引き継ぎ（pendingHandoff）でも捨てるが、最初の発言を編集した分岐は履歴が空で引き継ぎが起きない。
+    // 「ここから分岐」は控えを引き継ぐ（Claude の SDK の分岐は履歴をそのまま写す）
+    if (beforeMessageId) {
+      const copied = (await store.get(child)).contextSession;
+      if (copied?.delivered) await store.setSessionData(child, 'contextSession', { ...copied, delivered: null });
+    }
+    const parent = forkParent ?? { sessionId, atMessage: upToMessageId ?? null };
+    if (!persisted) {
+      await store.setParent(child, parent);
+      await store.setMeta(child, { backend: backend.id, lastModified: Date.now() });
+      await store.recordChange(child, { ...changeBy(actor), field: "parent", to: parent, reason: "fork", backend });
+    }
+    // 枝は親と同じ状態で始まる。そうでないと生まれた瞬間に親のグループから外れる（§4.1）
+    const inherited = (await sessionList().catch(() => [])).find((r) => r.id === sessionId)?.status ?? null;
+    if (inherited) await applyStatus(backend, child, inherited, "fork").catch(() => {});
+    emitGlobal({ type: "fork", sessionId: child, parent });
+    return { sessionId: child, parent };
+  } finally {
+    forking.delete(sessionId);
+    completionNotices.changed(sessionId);
+    outbox.kick(sessionId).catch(() => {});
+  }
+}
+
+/** 状態グループのアイコン。人間が選んでも AI が渡しても同じ store に入る（設計メモ 2.2） */
+async function setStatusIconOf(status, icon) {
+  if (typeof status !== "string" || !status.trim()) throw new Error(t('statuses.statusRequired'));
+  const saved = await store.setStatusIcon(status, icon);
+  emitGlobal({ type: "statusIcon", sessionId: null, status, icon: saved });
+  return { status, icon: saved };
+}
+
+/** 空のグループを作る。人が先に作った器は statuses.json にある限り存在する（セッション 0 件でも一覧に出る） */
+async function createStatusGroup(status, actor) {
+  const name = String(status ?? "").trim();
+  if (!name) throw new Error(t('statuses.groupNameRequired'));
+  await store.createStatus(name);
+  emitGlobal({ type: "status", sessionId: null, status: name, by: changeBy(actor).by, bulk: 0, ...savedReason('createdGroup') });
+  return { status: name };
+}
+
+// 操作の一覧（core/ops/）の handler へ渡す、サーバーの状態への口
+const opsApp = {
+  searchSessions: (input) => sessionSearch.search(input),
+  status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
+  // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
+  cliSetup: () => mcpSetup({ dataDir: store.dataDir }),
+  // いま走っている作業の要約（app.running）。会話のターン・委譲の子・承認待ちの数
+  running: async () => {
+    const work = await runningWork();
+    return {
+      count: work.count,
+      turns: await Promise.all(work.turns.map(async (turn) => ({ sessionId: turn.sessionId ?? null, backend: turn.backend ?? null,
+        title: turn.sessionId ? (await store.get(turn.sessionId).catch(() => null))?.title ?? null : null }))),
+      tasks: work.tasks.filter((task) => ['queued', 'running', 'cancelling'].includes(task.status))
+        .map((task) => ({ taskId: task.taskId, status: task.status, parentSessionId: task.parentSessionId ?? null })),
+      waiting: work.permissions.filter((p) => !p.relay).length,
+    };
+  },
+};
+
+/** 変更の主体 → 記録の by・via・bySession（ADR 0082）。人間は by: 'human'（これまでの記録と同じ）、操作の一覧の agent は by: 'agent' と、どの口から・どの会話の AI か */
+const changeBy = (actor) => actor?.by === 'agent'
+  ? { by: 'agent', ...(actor.via ? { via: actor.via } : {}), ...(actor.sessionId ? { bySession: actor.sessionId } : {}) }
+  : { by: 'human' };
+
+/** 題の変更。setTitle コマンドと sessions.setTitle が同じ経路を通る（人間も AI も同じ store・同じイベント。ADR 0007）。reason は reasonOf / clientReason の形 */
+async function changeTitle(backend, sessionId, title, { actor, reason } = {}) {
+  const who = changeBy(actor);
+  if (backend.capabilities?.title && backend.setTitle) await backend.setTitle(sessionId, title);
+  await store.recordChange(sessionId, { ...who, field: "title", to: title, ...reason, backend });
+  emitGlobal({ type: "title", sessionId, title, by: who.by, ...reason });
+}
+
+/** 状態の変更。グループの根を動かすと、まとまりごと移る（中の会話も同じ状態に保つ、§4.1）。中の会話を動かしたときは、その 1 本だけが出る。移した会話の id を返す */
+async function changeStatus(backend, sessionId, status, { actor, reason, alone } = {}) {
+  const rows = alone ? [] : await sessionList().catch(() => []);
+  const kin = rows.length && isGroupRoot(rows, sessionId) ? groupKin(rows, sessionId) : [];
+  await applyStatus(backend, sessionId, status, reason, actor);
+  for (const r of kin) {
+    const b = getBackend(r.backend) ?? backend;
+    await applyStatus(b, r.id, status, reason.reason === null ? savedReason('groupMove') : reason, actor).catch(() => {});
+  }
+  return kin.map((r) => r.id);
+}
+
+// 会話に関する操作（sessions.*）の本体。画面の口と同じ一覧・同じ読み方を使う
+const opsSessions = {
+  list: () => sessionList({ limit: 500, track: false }),
+  get: async (id) => {
+    const rows = await sessionList({ limit: 500, track: false });
+    let row = rows.find((r) => r.id === id);
+    const side = await store.get(id).catch(() => ({}));
+    if (!row) {
+      // 一覧の上限より古い会話。バックエンドに直に聞く
+      const backend = await resolveBackendForSession(id);
+      if (!backend) return null;
+      row = withWorktree(sessionRow(backend, await backend.getSession(id).catch(() => null), { ...side, id }));
+    }
+    return { row, children: rows.filter((r) => parentIdOf(r) === id).map((r) => r.id), history: side.history ?? [] };
+  },
+  read: async (id) => {
+    const backend = await resolveBackendForSession(id);
+    return backend ? (await history.loadTranscript(id, backend)).messages : null;
+  },
+  setTitle: async (id, title, { actor, reason } = {}) => changeTitle(await pickBackend(id), id, title, { actor, reason: reasonOf(reason) }),
+  setStatus: async (id, status, { actor, reason, alone } = {}) => changeStatus(await pickBackend(id), id, status, { actor, reason: reasonOf(reason), alone }),
+  fork: (input, { actor } = {}) => forkConversation(input, actor),
+};
+
+// 状態のグループ（statuses.*）の本体
+const opsStatuses = { setIcon: setStatusIconOf, create: createStatusGroup };
+
+/** 変更の記録に残す値（長いものは切る。秘密は設定に持たないので入らない） */
+const clipValue = (value) => { const text = JSON.stringify(value) ?? 'null'; return text.length > 300 ? `${text.slice(0, 299)}…` : text; };
+
+// 出している設定の変更の承認カード（requestId -> 取り下げ用の AbortController）。カードはメモリだけで、台帳は settingApprovals
+const settingCards = new Map();
+
+/**
+ * 会話の承認カードで設定の変更を聞く（registry.invoke の approve。ADR 0088）。カードを出し、答えを待たずに { pending: true, requestId } を返す。
+ * カードは期限なしで残り（ターンの終わり・中断・host の不在では取り下げない。detached）、人の答えで決着する。
+ * 許可なら proceed()（受領証の照合と実行。値が変わっていれば同じ requestId で聞き直す）を呼び、結果（変えた・拒否・変えられなかった）を
+ * その会話へ届ける（settingApprovals。委譲の完了通知と同じ届け方）。同じ会話・同じ設定で待っている古いカードは取り下げ、置き換えたことを届ける。
+ */
+async function askSettingChange({ op, change, receipt, reason, actor, requestId, proceed }) {
+  const sessionId = actor?.sessionId;
+  if (!sessionId) return { allow: false, code: 'NEEDS_UI' };
+  const turn = runtime.turns.get(sessionId);
+  const backend = turn?.backend ?? await resolveBackendForSession(sessionId).catch(() => null);
+  const agent = { id: backend?.id ?? '', label: backend?.label ?? '' };
+  const key = change.key ?? null;
+  const id = requestId ?? `setting-${crypto.randomUUID()}`;
+  for (const old of settingApprovals.pendingFor(sessionId, key, op)) if (old.requestId !== id) await withdrawSettingCard(old.requestId, 'superseded');
+  await settingApprovals.add({ requestId: id, sessionId, key, op });
+  const ac = new AbortController();
+  settingCards.set(id, ac);
+  askPermission({
+    toolName: 'ply_control', input: {}, sessionId, kind: 'tool', canAlways: false, signal: ac.signal, detached: true,
+    title: t('permission.settingChange', { agent: agent.label, key: key ?? op }),
+    settingChange: { op, key: key ?? op, requestId: id, rows: change.rows ?? [], ...(change.note ? { note: change.note } : {}), loosens: Boolean(change.loosens), ...(reason ? { reason } : {}), receipt, agent },
+  }).then(async (answer) => {
+    if (settingCards.get(id) === ac) settingCards.delete(id);
+    // 取り下げた（置き換え）なら、取り下げた側が結果を積む
+    if (ac.signal.aborted) return;
+    if (!answer?.allow) return finishSettingApproval(id, 'denied');
+    let r;
+    try { r = await proceed(); } catch (e) { r = { ok: false, error: String(e?.message ?? e) }; }
+    // 許可のあとに値が変わっていたので、同じ requestId で聞き直した（新しいカードが出ている）
+    if (r?.pending) return;
+    await finishSettingApproval(id, r?.ok ? 'allowed' : 'failed', r?.ok ? {} : { error: r?.error ?? r?.code ?? '' });
+  }).catch((e) => console.error('  設定の変更の承認に失敗:', String(e?.message ?? e)));
+  return { pending: true, requestId: id };
+}
+
+/** 設定の変更の承認カードを取り下げ、その結果（outcome）を会話へ届ける */
+async function withdrawSettingCard(requestId, outcome) {
+  const ac = settingCards.get(requestId);
+  settingCards.delete(requestId);
+  ac?.abort();
+  await finishSettingApproval(requestId, outcome);
+}
+
+/** 設定の変更の承認の決着。台帳から外して結果を会話へ届ける列に積み、画面へ決着を知らせる（どの端末のカードも 1 行に畳む） */
+async function finishSettingApproval(requestId, outcome, extra = {}) {
+  const entry = await settingApprovals.settle(requestId, outcome, extra);
+  if (entry) emitGlobal({ type: 'settingApproval', sessionId: entry.sessionId, requestId, outcome });
+}
+
+/** 設定の変更の結果を、エージェントへ渡す文にする（会話の言語。1 件ずつの節を並べる） */
+function settingNotice(lng, notices) {
+  // i18n-dynamic: agent:ops.settingNotice.
+  return notices.map((n) => agentT(lng, 'ops.settingNotice.head', { requestId: n.requestId, status: agentT(lng, `ops.settingNotice.status.${n.outcome}`) })
+    + '\n' + agentT(lng, `ops.settingNotice.${n.outcome}`, { target: settingTarget(lng, n.op, n.key), error: n.error ?? '' })).join('\n\n');
+}
+
+/**
+ * 操作の一覧（registry.invoke）へ渡す依存。locale は呼び出し元の言語（会話の言語・PC の言語）。
+ * modeOf は束縛された会話の承認モード（引けなければ undefined。policy は弱い側に倒す）。audit は書く操作の記録（by: 'agent'・via・sessionId）
+ */
+function opsDeps(lng = currentLocale()) {
+  return {
+    locale: lng,
+    app: opsApp,
+    sessions: opsSessions,
+    delegation: { list: (owner) => agentTasks?.list(owner) ?? [], get: (taskId, offset) => agentTasks?.get(taskId, offset) ?? null },
+    prefs: () => store.getPrefs(),
+    compactionSettings: () => compactionSettings,
+    statuses: opsStatuses,
+    // 設定を検査するために、サーバーの知っていること（エージェントの有無・モデルと承認モードの語彙・アカウント・Pleiad の指示）を借りる
+    host: {
+      hasBackend: (id) => Boolean(getBackend(id)),
+      knows: async (key, value, backendId) => {
+        const list = (backendId ? [getBackend(backendId)] : listBackends()).filter(Boolean);
+        // 語彙はエージェントごとに違う。どれか 1 つでも知っていれば通す
+        return (await Promise.all(list.map(async (b) => (key === 'mode' ? Boolean(b.modes()[value]) : value in (await b.models()))))).some(Boolean);
+      },
+      accountIds: async () => (await claudeAccounts.list()).accounts.map((a) => a.id),
+      changePlyInstructions: (action) => changePlyInstructions(plyInstructionsCache, action, currentLocale()),
+    },
+    // 設定の保存。画面の setPref と同じ経路・同じ配信（prefs・autoCompactionSettings・delegationRoutingChanged）
+    writes: {
+      pref: (key, value, backendId) => savePref(key, value, backendId),
+      browserPref: applyBrowserPref,
+      browserProfiles: (value, key = 'browserProfiles') => applyBrowserProfilePref(key, value),
+      compaction: applyAutoCompaction,
+      routing: applyRoutingSettings,
+      plyInstructions: applyPlyInstructions,
+      context: (args) => contextSettings.set(args),
+    },
+    // 設定を変えたことを全画面へ配り、会話に束縛された呼び出しならその会話の変更の記録に残す（by: 'agent'・via・bySession）
+    recordSetting: async ({ key, before, after, reason, actor }) => {
+      settingsChanged([key], actor);
+      console.log(`  設定を変更: ${key} by=${actor?.by ?? 'human'}${actor?.via ? ` via=${actor.via}` : ''}${actor?.sessionId ? ` session=${actor.sessionId}` : ''}`);
+      if (actor?.sessionId) await store.recordChange(actor.sessionId, { ...changeBy(actor), field: 'setting', from: { key, value: clipValue(before) }, to: { key, value: clipValue(after) }, reason: reason ?? null }).catch(() => {});
+    },
+    approve: askSettingChange,
+    routingSettings: () => routingSettingsCache,
+    plyInstructions: () => plyInstructionsCache,
+    contextDefaults: () => contextSettings.get(os.homedir(), { level: 'default' }),
+    modeOf: async (sessionId) => {
+      try {
+        const live = runtime.turns.get(sessionId);
+        if (live) return live.backend.modes()[live.info.mode];
+        const backend = await resolveBackendForSession(sessionId);
+        return backend ? backend.modes()[await resolveMode(sessionId, undefined, backend)] : undefined;
+      } catch { return undefined; }
+    },
+    // 会話に束縛された呼び出しは、その会話の変更の記録に「どの口から何を呼んだか」を残す（束縛されない CLI は残す先が無い）。
+    // 記録できなければ投げる（registry は記録に失敗したら操作を実行しない）
+    audit: async ({ op, reason, actor }) => {
+      if (!actor?.sessionId) return;
+      await store.recordChange(actor.sessionId, { ...changeBy(actor), field: 'op', to: op, reason: reason ?? null });
+    },
+  };
+}
+
 async function runningWork() {
   const turns = [...runtime.turns.values()].map((t) => ({ kind: "turn", ...t.info }));
 
@@ -1585,6 +2187,7 @@ async function runningWork() {
     sessionId: w.payload.sessionId ?? null,
     askedAt: w.askedAt ?? null,
     relay: Boolean(w.relay),   // 祖先の会話へ中継した複製。元のカードと同じ1件を指す
+    ...(w.detached ? { detached: true } : {}),   // ターンを止めていない承認（設定の変更。ADR 0088）
   }));
 
   const nested = await Promise.all([...runtime.turns.values()].map(async (t) => {
@@ -1634,13 +2237,14 @@ async function runningWork() {
     turns,
     permissions,
     subagents,
-    tasks: agentTasks?.list().map(({ result, ...r }) => r) ?? [],
+    tasks: (live => agentTasks?.list().map(({ result, ...r }) => (r.worktree ? { ...r, worktree: { ...r.worktree, live: live.has(r.worktree.id) } } : r)) ?? [])(new Set(worktreeHost.worktrees.ids().map(x => x.id))),
     background,
     // 中継の複製は数えない。1つの承認が会話の数だけ増えて見える
     // サブエージェントは走っている子だけを数える。終わった子はターンが終わるまで一覧に残るので、
     // そのまま数えると更新のゲート（web の count > 0）が閉じたままになる。status が null の子
     // （状態を返せないバックエンド・まだ分からない子）は数える。数えないとゲートを緩めてしまう
-    count: turns.length + permissions.filter((p) => !p.relay).length
+    // 設定の変更の承認（detached）は期限なしで残るので数えない（数えると、答えるまで終了も更新もできない）
+    count: turns.length + permissions.filter((p) => !p.relay && !p.detached).length
       + subagents.filter((a) => a.status === "running" || a.status == null).length + (agentTasks?.list().filter(r => ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)).length ?? 0),
   };
 }
@@ -1688,7 +2292,7 @@ function attach(ws) {
 function detach(ws) {
   if (!runtime.sockets.delete(ws)) return;
   if (runtime.sockets.size > 0) return;          // まだ別のタブが居る
-  if (runtime.turns.size === 0 && runtime.waiting.size === 0) return;
+  if (runtime.turns.size === 0 && blockingWaits().length === 0) return;
 
   runtime.awaySince = Date.now();
   clearTimeout(runtime.graceTimer);
@@ -1701,6 +2305,9 @@ function detach(ws) {
   // 保険のタイマー。ただしこれ単体には頼らない（発火しなくても graceExpired() が拾う）
   runtime.graceTimer = setTimeout(giveUp, HOST_GRACE_MS + 500);
 }
+
+/** ターンを止めている承認待ち（設定の変更の承認 detached を除く。ADR 0088） */
+const blockingWaits = () => [...runtime.waiting.values()].filter(w => !w.detached);
 
 /**
  * 承認待ちを片付ける。どのセッションの分かは呼び出し側が必ず指定する。
@@ -1716,6 +2323,8 @@ function settleAll(messageKey, sessionId) {
     // この会話のターンが終わっても取り下げない（元の会話が決着すれば一緒に消える）。
     // 取り下げると、依頼元が ply_task_wait を終えただけで子の承認が拒否される
     if (w.relay) continue;
+    // 設定の変更の承認（detached）はターンを止めていない。ターンが終わっても、中断しても残す（ADR 0088）
+    if (w.detached) continue;
     w.settle({ allow: false, messageKey });
   }
 }
@@ -1757,7 +2366,7 @@ async function delegationAncestors(sessionId) {
  * 人間は最上位の会話に居るので、1段だけ上げても誰も見ない場所に出るだけになる。
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
-const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp }) => {
+const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, detached = false }) => {
   const ancestors = sessionId ? await delegationAncestors(sessionId) : [];
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
@@ -1781,6 +2390,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       canAlways: Boolean(canAlways),
       ...(browserSite ? { browserSite } : {}),
       ...(computerApp ? { computerApp } : {}),
+      ...(settingChange ? { settingChange } : {}),
       ...(questions ? { questions } : {}),
     };
     // 祖先ごとに別の id の複製を作り、どれも同じ settle を指す。
@@ -1798,14 +2408,23 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       let found = false;
       for (const card of cards) if (runtime.waiting.delete(card.id)) found = true;
       if (!found) return;
+      // スマホに出ている承認・質問の通知を消す（どの端末で答えても、ターンが終わっても）
+      pushNotifier.approvalResolved({ id: cards[0].id, sessionId: payload.sessionId });
       signal?.removeEventListener?.("abort", onAbort);
       const { messageKey, messageParams, ...rest } = localize(answer);
       resolve(rest);
       permissionsChanged();
     };
 
-    for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false });
+    for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false, detached });
     signal?.addEventListener?.("abort", onAbort, { once: true });
+    // 離れたスマホへ（画面が居るかによらない。委譲の子の承認・質問は子の会話の分だけ。中継の複製は送らない）
+    // （会話名を読むあいだに決着していたら送らない。送ると取り消しが先に行ってしまい、通知が残る）
+    if (payload.sessionId) {
+      conversationTitleOf(payload.sessionId).then(title => {
+        if (runtime.waiting.has(cards[0].id)) pushNotifier.approval({ id: cards[0].id, sessionId: payload.sessionId, kind: payload.kind, title });
+      }).catch(() => {});
+    }
 
     // 送れなければ黙って待つ。戻ってきたら attach() が聞き直す。
     // 既定では戻るまで待ち続け、AGENT_HOST_GRACE_MS を指定したときだけ猶予切れがターンごと中断する。
@@ -1832,9 +2451,14 @@ agentBrowser?.configureAuthorization(createBrowserSiteApprovals({
     return turn ? { id: turn.backend.id, label: turn.backend.label, sessionId: turn.info.sessionId || turn.key, signal: turn.ac.signal, locale: turn.agentLocale } : null;
   },
   askPermission, translate: t,
+  // 確認の文に添えるプロフィールの名前（画面の言語）
+  profileLabel: id => browserProfiles.label(id, t('browserProfiles.main')),
   remember: async site => { const prefs = await store.rememberBrowserSite(site); emitGlobal({ type: 'prefs', sessionId: null, prefs, locale }); },
 }));
+// main が覚えていない会話の今のプロフィール。走っているターン（仮のキーを含む）はターンの値、ほかは会話のメタ
+agentBrowser?.configureProfiles(async id => browserTurn(id)?.browserProfile ?? browserProfiles.resolve(id));
 agentBrowser?.prefs(await store.getPrefs());
+agentBrowser?.loadPolicy(await store.getPrefs());
 
 // ---- コンピューターの操作（docs/computer-use.md、ADR 0070〜0075） ----------------------------
 // driver は main（Electron）への口。Electron でない起動では null で、ply_computer は渡さない。
@@ -1891,7 +2515,7 @@ const outbox = createMessageQueue({
     const steer = turn.control.steer;
     // 送るのは outbox の item そのもの（本文だけではない）。バックエンドは item.id を
     // 相手に預け、「渡った」合図（userMessage.delivered）でこの id を返してくる
-    return { turn, blocked: turn.ac.signal.aborted || Boolean(turn.outcome),
+    return { turn, blocked: turn.ac.signal.aborted || Boolean(turn.outcome), phase: turn.info.phase,
       steer: steer ? item => steer(item) : null };
   },
   start: runTurn,
@@ -1952,6 +2576,7 @@ function completionNotice(lng, tasks) {
     // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
     retry: task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '',
     rejections: rejectionNotice(lng, task.rejections) + stoppedBackgroundNotice(lng, task.stoppedBackground),
+    git: workspaceNotice(lng, task) + gitNotice(lng, task.git),
   }));
   if (parts.length === 1) return agentT(lng, 'delegation.notice', parts[0]);
   return agentT(lng, 'delegation.noticeBatch', { count: parts.length, sections: parts.map(part => agentT(lng, 'delegation.noticeSection', part)).join('') });
@@ -1963,12 +2588,12 @@ function completionNotice(lng, tasks) {
  * true=受理 → ok / false=受理できない → requeue（空いてから新しいターンで）/ throw=結果不明 → error（自動で再送しない）。
  * 「渡った」合図を後から出すバックエンド（steerConfirms）では、通知の一行を渡った時点で出し、捨てられたら送り直す（liveNotices）
  */
-async function steerNotice(turn, owner, prompt, tasks) {
+async function steerNotice(turn, owner, prompt, tasks, redeliver = null) {
   await recordTaskNotice(owner, prompt);
   const item = { id: `task-notice-${crypto.randomUUID()}`, args: { prompt } };
   const confirms = Boolean(turn.control.steerConfirms);
   // 合図は受理の応答より先に来ることがある。先に登録しておく
-  if (confirms) liveNotices.set(item.id, { owner, prompt, items: tasks.map(x => ({ taskId: x.taskId, revision: x.revision ?? 0 })) });
+  if (confirms) liveNotices.set(item.id, { owner, prompt, items: tasks.map(x => ({ taskId: x.taskId, revision: x.revision ?? 0 })), ...(redeliver ? { redeliver } : {}) });
   let accepted;
   try { accepted = await turn.control.steer?.(item); }
   catch { liveNotices.delete(item.id); return 'error'; }
@@ -2008,15 +2633,66 @@ async function steerInstruction(task, instruction) {
   emitGlobal({ type: 'userMessage', sessionId: task.sessionId, messageId: item.id, text: instruction.text, at: Date.now(), ...(confirms ? { pending: true } : {}) });
   return confirms ? 'pending' : 'delivered';
 }
+/** 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）。作り直したら公開の形を返す */
+async function renewTaskWorktree(task) {
+  if (!task.worktree || await worktreeHost.worktrees.get(task.worktree.id)) return null;
+  if (!await fs.stat(task.worktree.origin).then(s => s.isDirectory(), () => false)) return null;
+  const made = await worktreeHost.createForTask({ cwd: task.worktree.origin, owner: task.parentSessionId, taskId: task.taskId, sessionId: task.sessionId });
+  if (!made.ok) return null;
+  const current = (await store.get(task.sessionId)).cwd ?? null;
+  await store.recordChange(task.sessionId, { by: 'ply', field: 'cwd', from: current, to: made.cwd, ...savedReason('worktreeSplit') });
+  emitGlobal({ type: 'cwd', sessionId: task.sessionId, cwd: made.cwd, by: 'ply', ...savedReason('worktreeSplit') });
+  return publicWorktree(made.entry);
+}
+
+/**
+ * 人が始めるターンで、「いつも分ける」を選んでいて、同じリポジトリの別の会話が書き込み中なら、確かめずに分ける（ADR 0089）。
+ * 分けなかった・分けられなかったときは null（今の場所のまま始める）
+ */
+async function autoSplitTurn({ sessionId, cwd }) {
+  if (!(await worktreeHost.worktrees.getSettings()).always) return null;
+  const check = await worktreeHost.check({ sessionId, cwd, writes: true });
+  if (!check.canSplit || !check.conflicts.length) return null;
+  const made = await worktreeHost.split({ cwd, sessionId });
+  if (!made.ok) return null;
+  return { entry: made.entry, cwd: made.cwd,
+    note: { id: made.entry.id, branch: made.entry.branch, path: made.entry.path, origin: cwd, conflicts: check.conflicts.map(c => c.title).filter(Boolean).slice(0, 3), count: check.conflicts.length } };
+}
+/** 分けて始めた印の 1 行を会話に残す（会話の id が決まってから 1 度だけ） */
+function emitWorktreeNotice(turn, emit, sessionId) {
+  const note = turn.worktreeNote;
+  if (!note || !sessionId) return;
+  turn.worktreeNote = null;
+  emit({ type: 'present', kind: 'worktree', sessionId, worktree: note, by: 'ai', at: new Date().toISOString() });
+}
+/** 画面が聞く「この会話の承認モードは書き込みの範囲か」。読むだけの会話には分ける注記を出さない */
+async function sessionWrites(sessionId, backendId, modeId) {
+  const backend = sessionId ? await resolveBackendForSession(sessionId).catch(() => null) : getBackend(backendId);
+  const useBackend = (backendId && getBackend(backendId)) || backend;
+  if (!useBackend) return false;
+  const mode = await resolveMode(sessionId, modeId, useBackend).catch(() => null);
+  return Boolean(mode) && writesScope(useBackend.modes()?.[mode]);
+}
+/** 会話を消した（下書きの削除）。その会話のために作った分けた作業場所を、使っていなければ片付ける */
+async function settleWorktreesOf(sessionId) {
+  for (const e of await worktreeHost.worktrees.list()) {
+    if (e.purpose === 'conversation' && e.sessionId === sessionId && e.state === 'ready') await worktreeHost.worktrees.settle(e.id).catch(() => {});
+  }
+}
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
   changed: () => { broadcastRunning(); completionNotices.changed(); },
   // 人間の承認を待っているか。承認は core/server.mjs 側にしかないので判定を渡す。
   // 中継の複製も数える（孫が止まっていれば、その子も止まっている）
-  waiting: sessionId => [...runtime.waiting.values()].some(w => w.payload.sessionId === sessionId),
+  waiting: sessionId => blockingWaits().some(w => w.payload.sessionId === sessionId),
   // コンピューターの操作のロックを待っている子は、黙っているとは数えない（承認待ちではないので ply_task_wait の waiting にはしない）
   lockWaiting: sessionId => computerLock.snapshot().some(s => s.sessionId === sessionId && s.state === 'waiting'),
-  rollback: async ({ sessionId }) => { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); },
+  rollback: async ({ sessionId, worktree }) => {
+    await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId);
+    if (worktree) await worktreeHost.abandon(worktree.id).catch(() => {});
+  },
+  // 子の分けた作業場所の今の状態（ply_task_status・ply_task_wait の workspaceSummary）
+  workspaceState: task => worktreeHost.taskState(task.worktree),
   prepare: async (owner, args, taskId, signal) => {
     const parent = runtime.turns.get(owner);
     // エラーは ply_delegate の結果として依頼元のエージェントが読む。子の会話は依頼元の会話の言語を継ぐ
@@ -2027,7 +2703,7 @@ agentTasks = await createAgentTasks({
     if ((!parent && !manual) || signal?.aborted) throw new Error(agentT(lng, 'delegation.parentEnded'));
     const backend = getBackend(args.backend);
     if (!backend) throw new Error(agentT(lng, 'delegation.backendDisabled'));
-    const cwd = path.resolve(parent?.info.cwd ?? (await store.get(owner)).cwd ?? process.cwd(), args.cwd ?? '.');
+    let cwd = path.resolve(parent?.info.cwd ?? (await store.get(owner)).cwd ?? process.cwd(), args.cwd ?? '.');
     if (!(await fs.stat(cwd)).isDirectory()) throw new Error(agentT(lng, 'delegation.cwdNotDirectory'));
     // 自動の振り分けで選んだ委譲先（agentBridge の call の routeDelegation）と、人が使用量を見て選び直した委譲先。
     // 候補は公式の使用枠で選んでいるので、接続先は継がず公式で走らせ、アカウントも選んだものを使う
@@ -2052,8 +2728,18 @@ agentTasks = await createAgentTasks({
     const account = auto && backend.id === 'claude' ? args.account ?? '' : (await store.get(owner)).claudeAccount ?? '';
     // 振り分けの記録（タスクと子の会話に残す）。委譲先は実際に使う値で書く（固定のときのモデルの既定への戻り・継いだアカウントも）
     const routing = args.routing ? { ...args.routing, target: { backend: backend.id, model, account: backend.id === 'claude' ? account : null } } : null;
+    // 分けた作業場所（ADR 0089）。子の作業場所をここで作る。作れなければ（git でない・コミットが無い・失敗）今の場所のまま走らせる
+    let worktree = null;
+    if (args.isolate === true) {
+      const made = await worktreeHost.createForTask({ cwd, owner, taskId });
+      if (made.ok) { worktree = publicWorktree(made.entry); cwd = made.cwd; }
+      else console.error('  分けた作業場所を作れなかったので、元の場所で走らせる:', made.reason, made.error ?? '');
+    }
     const info = { title: args.title, cwd, createdAt: Date.now(), lastModified: Date.now() };
-    const sessionId = await createConversation(backend, info);
+    let sessionId;
+    try { sessionId = await createConversation(backend, info); }
+    catch (e) { if (worktree) await worktreeHost.abandon(worktree.id).catch(() => {}); throw e; }
+    if (worktree) await worktreeHost.worktrees.update(worktree.id, { sessionId }).catch(() => {});
     try {
       await store.setMeta(sessionId, { ...info, backend: backend.id, unsent: true });
       await store.setMode(sessionId, mode); await store.setModel(sessionId, model);
@@ -2064,11 +2750,15 @@ agentTasks = await createAgentTasks({
       if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
       if (routing) await store.setSessionData(sessionId, 'routing', routing);
       if (signal?.aborted) throw new Error(agentT(lng, 'delegation.aborted'));
-    } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
-    return { backend: backend.id, model, effort, cwd, mode, sessionId, ...(routing ? { routing } : {}) };
+    } catch (e) {
+      await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId);
+      if (worktree) await worktreeHost.abandon(worktree.id).catch(() => {});
+      throw e;
+    }
+    return { backend: backend.id, model, effort, cwd, mode, sessionId, ...(worktree ? { worktree } : {}), ...(routing ? { routing } : {}) };
   },
   execute: async (task, prompt, signal) => {
-    if (signal.aborted) return { outcome: 'aborted' };
+    if (signal.aborted) { await worktreeHost.taskDone(task).catch(() => {}); return { outcome: 'aborted' }; }
     if (sessionBusy(task.sessionId)) return { requeue: true };
     const execution = { outcome: null, error: null, rejections: [], stopped: [], reply: null, timer: null };
     taskExecutions.set(task.sessionId, execution);
@@ -2083,6 +2773,8 @@ agentTasks = await createAgentTasks({
     };
     signal.addEventListener('abort', stopChild, { once: true });
     try {
+      // 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）
+      const renewed = await renewTaskWorktree(task).catch(() => null);
       const outcome = await runTurn({ sessionId: task.sessionId, backend: task.backend, prompt }, () => {}, { signal });
       if (outcome === 'requeue') return { requeue: true };
       // A child can itself delegate. Its result is final only after those results
@@ -2096,8 +2788,14 @@ agentTasks = await createAgentTasks({
       // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
       const rejections = execution.rejections.map(peerRejection);
       const stoppedBackground = execution.stopped.map(peerBackground);
-      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown'), rejections, stoppedBackground };
-      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: execution.error, rejections, stoppedBackground };
+      const nowCwd = (await store.get(task.sessionId).catch(() => null))?.cwd ?? task.cwd;
+      const git = await taskGitNote({ ...task, cwd: nowCwd });
+      // 子が終わった。変わっていなければ・取り込み済みなら片付け、そうでなければ残す。通知に載せる状態は片付ける前のもの
+      const workspace = await worktreeHost.taskDone({ ...task, worktree: renewed ?? task.worktree }).catch(() => null);
+      const extra = { ...(workspace ? { workspace } : {}), ...(renewed ? { worktree: renewed } : {}) };
+      worktreeSweepSoon();
+      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown'), rejections, stoppedBackground, git, ...extra };
+      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: execution.error, rejections, stoppedBackground, git, ...extra };
     } finally { signal.removeEventListener('abort', stopChild); clearTimeout(execution.timer); taskExecutions.delete(task.sessionId); }
   },
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
@@ -2142,6 +2840,28 @@ agentTasks = await createAgentTasks({
 // 前の起動で走っていて、再起動で止まった委譲タスクを、依頼元の会話の「止めたもの」に残す（次のターンで伝える）。
 // 裏の作業と承認待ちは保存していないので分からない（docs/design.md「中断と再開」）
 await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
+// 設定の変更の承認の結果を会話へ届ける（ADR 0088）。届け方は委譲の完了通知と同じ（ADR 0057）: 走っているターンへ途中送信で渡せればそこへ、
+// 渡せなければ会話が空いてから新しいターンで。前の起動で待っていた要求は、再起動で取り下げた結果として届ける
+settingApprovals = await createSettingApprovals({
+  dataDir: store.dataDir,
+  onError: e => console.error('  設定の変更の承認の台帳:', String(e?.message ?? e)),
+  deliver: async (sessionId, notices) => {
+    const live = await noticeTarget(sessionId);
+    if (!live && await noticeBlocked(sessionId)) return 'requeue';
+    const prompt = settingNotice(await ensureAgentLocale(sessionId), notices);
+    if (live) {
+      const r = await steerNotice(live, sessionId, prompt, [], () => settingApprovals.requeue(notices));
+      return r === 'requeue' ? 'requeue' : r === 'ok' ? 'ok' : 'error';
+    }
+    return (await runTurn({ sessionId, prompt }, () => {}, { internal: true })) === 'requeue' ? 'requeue' : 'ok';
+  },
+});
+if (settingApprovals.restored) console.log(`  前の起動で承認を待っていた設定の変更 ${settingApprovals.restored} 件を取り下げた（結果を会話へ届ける）`);
+// 分けた作業場所: 台帳と git worktree list を突き合わせ（作成の途中で落ちたものは巻き戻す）、使っていない片付けられるものを消す（ADR 0089）
+await worktreeHost.worktrees.reconcile()
+  .then(r => { const n = Object.values(r).reduce((a, l) => a + l.length, 0); if (n) console.log(`  分けた作業場所を ${n} 件整理した`); })
+  .catch(e => console.error('  分けた作業場所の整理に失敗:', String(e?.message ?? e)));
+worktreeSweepSoon();
 
 // ターンの外で起きたことをバックエンドから受け取る口（docs/multi-backend.md §2.7）。
 // codex（バックグラウンド端末）が使う
@@ -2178,7 +2898,7 @@ async function runTurnInternal(args, onStarted, hooks) {
     await settingsWrites.get(sessionId);
     let backend = refuseRetired(await pickBackend(sessionId, args?.backend));
     const reserved = sessionId ? (await store.get(sessionId)).nextSettings : null;
-    const { cwd, changedFrom } = await resolveCwd(sessionId, reserved?.cwd ?? args?.cwd, backend);
+    let { cwd, changedFrom } = await resolveCwd(sessionId, reserved?.cwd ?? args?.cwd, backend);
     // Claude のアカウント。削除済み・トークンが読めないものを選んでいる会話は、ここで止める
     // （黙ってログイン中のアカウントで走らせない）。予約の切り替えより前に確かめる
     const accountBackend = (reserved && getBackend(reserved.backend)) || backend;
@@ -2219,6 +2939,21 @@ async function runTurnInternal(args, onStarted, hooks) {
     const permissionMode = await resolveMode(sessionId, reserved ? reserved.mode : args?.mode, backend);
     const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd, endpointId);
     const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
+    // 分けた作業場所（ADR 0089）。使う場所が分けた作業場所の中なら控える（片付けの印・取り込みを頼む相手）。片付けている最中の場所では始めない。
+    // 「いつも分ける」を選んでいて、人が始めるターンで同じリポジトリの別の会話が書き込み中なら、確かめずに分けて始める
+    let worktreeEntry = await worktreeHost.worktrees.byPath(cwd);
+    if (worktreeEntry && worktreeEntry.state !== 'ready') throw new Error(t('worktree.cleaning'));
+    let worktreeNote = null;
+    if (!worktreeEntry && !hooks.internal && !hooks.compact && !hooks.signal && writesScope(backend.modes()?.[permissionMode])) {
+      const split = await autoSplitTurn({ sessionId, cwd }).catch(() => null);
+      if (split) {
+        if (sessionId) {
+          await store.recordChange(sessionId, { by: 'ply', field: 'cwd', from: cwd, to: split.cwd, ...savedReason('worktreeSplit'), backend });
+          emitGlobal({ type: 'cwd', sessionId, cwd: split.cwd, by: 'ply', ...savedReason('worktreeSplit') });
+        }
+        cwd = split.cwd; worktreeEntry = split.entry; worktreeNote = split.note;
+      }
+    }
     if (sessionId) {
       if (!hooks.compact) await store.setSessionData(sessionId, 'compacted', false);
       await store.setModel(sessionId, model);
@@ -2234,6 +2969,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       }
     }
 
+    if (changedFrom) settleWorktreeAt(changedFrom).catch(() => {});
     // 新規のときだけ効く状態。再開したセッションの状態は setStatus で変える
     const status = !sessionId && typeof args?.status === "string" && args.status.trim()
       ? args.status.trim() : null;
@@ -2353,6 +3089,11 @@ async function runTurnInternal(args, onStarted, hooks) {
     hooks.signal?.addEventListener('abort', abortFromTask, { once: true });
     runtime.turns.set(turn.key, turn);
     for (const read of liveReads) if (read.sessionId === sessionId) read.turn = turn;
+    // 分けた作業場所を使うターン。会話の id を台帳に控える（新しい会話は id が決まったとき）。分けて始めた印の行は id が決まってから出す
+    turn.worktreeId = worktreeEntry?.id ?? null;
+    turn.worktreeNote = worktreeNote;
+    if (turn.worktreeId && sessionId) worktreeHost.worktrees.update(turn.worktreeId, { sessionId }).catch(() => {});
+    turn.gitCalls = createCallTracker();
     const emit = makeEmit(turn);
     turn.visualizations = createVisualizationCollector({
       access: fileAccess,
@@ -2411,6 +3152,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       if (interruption) emit({ type: 'interruptionNote', text: interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
       broadcastRunning();
       syncRunningPoll();
+      emitWorktreeNotice(turn, emit, sessionId);
       if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'preparing' });
       if (hooks.internal) {
         await recordTaskNotice(sessionId, prompt);
@@ -2436,6 +3178,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         await shellRuns.settled(sessionId, turn.ac.signal);
         if (turn.ac.signal.aborted) throw new Error(t('turn.aborted'));
       }
+      // 内蔵ブラウザーのプロフィール（ADR 0078）。会話の今のもの。中継の準備で main に渡す。ply_browser の切り替えはここを書き換える
+      if (agentBrowser) turn.browserProfile = await (sessionId ? browserProfiles.resolve(sessionId) : browserProfiles.forNew(cwd)).catch(() => null);
       const runArgs = {
         prompt,
         ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
@@ -2456,10 +3200,14 @@ async function runTurnInternal(args, onStarted, hooks) {
         // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
         locale: agentLocale,
         visualizeInstructions: visualizeInstructions(agentLocale),
-        browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
+        browserEnv: await browserEnvironment({ bridge: agentBrowser, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated, profile: turn.browserProfile }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
         browserInstructions: null,
+        // ply_browser（プロフィールの一覧と切り替え）。内蔵ブラウザーを渡すターンだけ（下で入れる）
+        browserRuntime: null,
         // ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（computerRuntimeFor）
         computerRuntime: await computerRuntimeFor(turn),
+        // ply_control（操作の一覧）。全会話に渡す。env は会話のシェルへ渡す CLI の接続情報
+        controlRuntime: controlRuntimeFor(turn),
         addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
         contextRuntime: runtimeContext,
         // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
@@ -2476,17 +3224,31 @@ async function runTurnInternal(args, onStarted, hooks) {
         turn.browserRelayId = sessionId || turn.key;
         // i18n-dynamic: agent:browser.instructions
         runArgs.browserInstructions = browserInstruction(runArgs.browserEnv, agentLocale, agentT);
+        runArgs.browserRuntime = browserRuntimeFor(turn);
       }
       // Pleiad が足した文の量（右パネルの「指示の量」。ADR 0056）。このターンで渡す文が出そろったここで数え、変わったときだけ記録し直す
       const parts = plyParts({ plyAgents: Boolean(backend.capabilities?.plyAgents), context: runtimeContext?.sections ?? null,
         visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentConnection(turn).instructions, added: contextRecord.added,
-        computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }) });
+        computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime.instructions });
       if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await saveContext(); }
       // Preparation can await context and settings. A send or cancellation may have invalidated
       // an idle reservation since the first check; do not invoke the backend in that case.
       if (hooks.canInvoke && !hooks.canInvoke()) {
         turn.outcome = 'requeue';
         return 'requeue';
+      }
+      // git の作業場所なら、ターンの始まりの状態を隠し ref に撮る（書き込みの範囲のターンだけ。圧縮では撮らない。ADR 0085）。
+      // 撮影が遅いときは待たずに始める（その回は撮影なし）
+      if (GIT_SNAPSHOTS && !hooks.compact && scopeRank(modePosition(backend.modes()?.[permissionMode]).scope) > scopeRank('readonly')) {
+        turn.gitSetup = gitActivity.begin({ cwd }).then(g => {
+          if (turn.gitLate) return null;
+          turn.git = g;
+          return g && turn.info.sessionId ? gitActivity.attach(g, turn.info.sessionId) : null;
+        }).catch(() => {});
+        let began = false;
+        await Promise.race([turn.gitSetup.then(() => { began = true; }), new Promise(resolve => setTimeout(resolve, GIT_BEGIN_WAIT_MS).unref?.())]);
+        // 間に合わなかった。エージェントが動き出した後の撮影は基準にならないので、このターンは撮らない
+        if (!began) turn.gitLate = true;
       }
       backendInvoked = true;
       const result = hooks.compact && backend.compact
@@ -2537,6 +3299,14 @@ async function runTurnInternal(args, onStarted, hooks) {
       await turn.visualizations.close().catch(err => emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) }));
       await Promise.allSettled([runtimeContext?.close()]);
       await saveContext().catch(() => { emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') }); });
+      // git の動き（ADR 0085）: ターンの終わりの撮影と、返答の下の 1 行の元。ファイル・コミット・ブランチ・PR のどれかが動いたときだけ会話に残す
+      if (turn.gitSetup && didStart && turn.outcome !== 'requeue') {
+        const summary = await Promise.race([
+          turn.gitSetup.then(() => (turn.git ? gitActivity.finish(turn.git, turn.info.sessionId, turn.gitCalls.events()) : null)),
+          new Promise(resolve => setTimeout(resolve, GIT_END_WAIT_MS, null).unref?.()),
+        ]).catch(() => null);
+        if (summary && turn.info.sessionId) emit({ type: 'present', kind: 'git', git: summary, by: 'ai', at: new Date().toISOString(), sessionId: turn.info.sessionId });
+      }
       await endTurn(turn, emit, { record: didStart });
       hooks.signal?.removeEventListener("abort", abortFromTask);
     }
@@ -2578,6 +3348,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
     await store.setMeta(turn.info.sessionId, patch).catch(err => {
       console.error("  完了の記録に失敗:", String(err?.message ?? err));
     });
+    // このターンで進んだ分を検索の写しへ（裏で読み直す。待たない）
+    if (!requeued) sessionSearch.refresh(turn.info.sessionId);
     // 中断で終わったターンが抱えていた裏の作業・承認待ちを、会話の「止めたもの」に残す（次のターンで伝える）
     if (stopped && turn.stops) await store.addStops(turn.info.sessionId, { ...turn.stops, reason: interrupted.reason }).catch(err => {
       console.error("  中断で止めたものの記録に失敗:", String(err?.message ?? err));
@@ -2592,7 +3364,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
   for (const [id, notice] of [...liveNotices]) {
     if (notice.owner !== turn.info.sessionId) continue;
     liveNotices.delete(id);
-    agentTasks?.renotify(notice.items).catch(() => {});
+    if (notice.redeliver) notice.redeliver();
+    else agentTasks?.renotify(notice.items).catch(() => {});
   }
   // 子のターンに渡した追加指示のうち、渡った合図が来ないまま終わったものは読まれたか分からない（読まれていれば合図が先に来ている）。
   // 待機へ戻して次のターンで送る。子の結果を確定する execute がこの後に返るので、結果の記録より先に戻る。
@@ -2613,8 +3386,11 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 片付けるのはこのセッションの承認待ちだけ。他のターンの分は残す
   settleAll('turnEnded', turn.info.sessionId);
   broadcastRunning();
+  // 分けた作業場所: このターンで取り込まれたもの・使われなくなったものを片付ける（ADR 0089）
+  worktreeSweepSoon();
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
-  if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt);
+  if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt, { startedAt: turn.startedAtMs });
+  settingApprovals?.changed();
   // 利用者の送信でも、委譲の完了通知などで始まったターンでも予約する（ADR 0068）。圧縮のターンの後は予約し直さない
   if (record && turn.outcome === 'ok' && !turn.compactTrigger && !turn.compaction
       && !delegated && turn.info.sessionId) {
@@ -2627,7 +3403,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
         && !queued.some(m => !['sent', 'cancelled'].includes(m.status))
         && compactionSettings.enabled && row?.enabled && turn.backend.capabilities?.compact
         && usage?.usedTokens >= compactionSettings.minTokens && !meta.autoCompactionOff
-        && ![...runtime.waiting.values()].some(w => w.payload.sessionId === id))
+        && !blockingWaits().some(w => w.payload.sessionId === id))
       compactionScheduler.schedule(id, turn.backend.id, row.delayMinutes * 60_000,
         turn.compactionRevision, usage.usedTokens);
   }
@@ -2690,7 +3466,7 @@ const compactionScheduler = createCompactionScheduler({
       && !queued.some(m => !['sent', 'cancelled'].includes(m.status))
       && compactionSettings.enabled && row?.enabled && backend?.capabilities?.compact
       && meta.contextWindow?.usedTokens >= compactionSettings.minTokens
-      && ![...runtime.waiting.values()].some(w => w.payload.sessionId === id);
+      && !blockingWaits().some(w => w.payload.sessionId === id);
   },
   compact: async (id, _sessionId, current) => {
     if (current()) await runTurn({ sessionId: id, prompt: '/compact' }, () => {},
@@ -2890,7 +3666,7 @@ function captureStops(turn) {
   const id = turn.info.sessionId;
   return {
     background: (turn.info.background ?? []).map(backgroundStop),
-    approvals: id ? [...runtime.waiting].filter(([, w]) => !w.relay && w.payload.sessionId === id).map(([key, w]) => approvalStop(key, w.payload)) : [],
+    approvals: id ? [...runtime.waiting].filter(([, w]) => !w.relay && !w.detached && w.payload.sessionId === id).map(([key, w]) => approvalStop(key, w.payload)) : [],
   };
 }
 
@@ -3026,6 +3802,9 @@ async function resumeSession(sessionId) {
 wss.on("connection", (ws, req) => {
   // OS の操作（revealPath / openPath）を許すのは、サーバーのある PC の画面からの接続だけ（core/os-open.mjs）
   const local = isLocalRequest(req);
+  // 中継越しの端末の画面（接続口が付ける x-pleiad-device）。見ている印と通知鍵の登録はこの端末のものとして扱う
+  const via = local ? null : remote.deviceInfo(req.headers['x-pleiad-device']);
+  if (via) connectionDevices.set(ws, via);
   // 古い接続を閉じてはいけない。クライアントは切れると自動再接続するので、
   // 「新しい方に付け替える」と互いに閉じ合って永久に落ち着かなくなる。
   // タブが複数あってもよい設計にして、イベントは全部に配る（流れの出来事だけは開いている会話の分。sendTo）。
@@ -3040,11 +3819,14 @@ wss.on("connection", (ws, req) => {
     homeDir: os.homedir(),
     resumedTurn: resumed,
     startedAt: SERVER_STARTED_AT,
+    // 離れた端末への通知（ADR 0086）を受けられる。古いホストにはこの欄が無く、端末は鍵の登録を送らない
+    notify: 1,
     // 画面の言語。setting は設定値（auto|ja|en）、lang は実際に使う言語（ja|en）
     locale,
   }));
   ws.on("close", () => {
     detach(ws);
+    notifyPresence.clear(ws);
     // 見ていた PC のブラウザーは、見る端末がいなくなれば止める
     const viewer = screencastClients.get(ws);
     if (viewer) screencastHub?.forget(viewer);
@@ -3058,8 +3840,9 @@ wss.on("connection", (ws, req) => {
     // Command IDs are scoped to a socket. Broadcast events, never private replies
     // (connection-check receipts and concurrent clients can share the same ID).
     // code: 失敗の種類。画面は文言（言語で変わる）ではなくこれで見分ける
-    const reply = (ok, payload, code) => {
-      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(ok ? { result: payload } : { error: payload, ...(code ? { code } : {}) }) }));
+    // extra: 失敗に添える機械が読む欄（invoke の issues）
+    const reply = (ok, payload, code, extra) => {
+      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) }));
     };
 
     let releaseUpdateGate;
@@ -3146,11 +3929,8 @@ wss.on("connection", (ws, req) => {
         case 'plyInstructions':
           return reply(true, plyInstructionsState());
         case 'setPlyInstructions': {
-          const next = changePlyInstructions(plyInstructionsCache, msg.args, currentLocale());
-          await savePref('plyInstructions', { items: next });
-          // 前の版の委譲の指示のスイッチは plyInstructions に写したので消す（残すと古い版に戻したときだけ効く）
-          await savePref('addedContext', null);
-          plyInstructionsCache = next;
+          await applyPlyInstructions(changePlyInstructions(plyInstructionsCache, msg.args, currentLocale()));
+          settingsChanged(['plyInstructions']);
           return reply(true, plyInstructionsState());
         }
         case 'refreshContext':
@@ -3158,6 +3938,81 @@ wss.on("connection", (ws, req) => {
           return reply(true, { ok: true });
         case 'contextDiff':
           return reply(true, await contextSession.diff(msg.args?.sessionId));
+        // ---- git の動き（読み取りだけ。ADR 0085）。作業場所は会話の cwd。git が無い・git 管理外は git: null
+        case 'gitStatus': {
+          const cwd = await gitCwd(msg.args);
+          if (!cwd) return reply(true, { git: null });
+          return reply(true, { git: msg.args?.summary ? await gitActivity.summary(cwd, msg.args?.sessionId) : await gitActivity.status(cwd, { fresh: msg.args?.fresh === true }) });
+        }
+        case 'gitPanel': {
+          const sessionId = msg.args?.sessionId;
+          const cwd = await gitCwd(msg.args);
+          const state = cwd ? await gitActivity.status(cwd, { fresh: true }) : null;
+          if (!state) return reply(true, { git: null });
+          // 分けた作業場所（ADR 0089）: 今いる場所と、残っているもの（未取り込み）。開いたときに片付けられるものを片付ける
+          worktreeSweepSoon();
+          const worktrees = { current: await worktreeHost.worktrees.byPath(cwd).then(e => (e ? publicWorktree(e) : null)).catch(() => null), leftovers: await worktreeHost.leftovers({ cwd }).catch(() => []) };
+          const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
+          const timeline = sessionId ? timelineOf((await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [] }))).messages) : [];
+          const changes = await gitActivity.changes(cwd, sessionId, msg.args?.range === 'session' ? 'session' : 'uncommitted');
+          return reply(true, { git: state, timeline, changes, worktrees, at: Date.now() });
+        }
+        case 'gitDiff': {
+          const cwd = await gitCwd(msg.args);
+          return reply(true, { diff: cwd ? await gitActivity.diff(cwd, msg.args?.sessionId, msg.args?.range === 'session' ? 'session' : 'uncommitted', String(msg.args?.path ?? '')) : null });
+        }
+        // ---- 分けた作業場所（ADR 0089）。ぶつかりの確認・分ける・片付けの操作・「いつも分ける」の設定
+        case 'worktreeCheck': {
+          const sessionId = typeof msg.args?.sessionId === 'string' && msg.args.sessionId ? msg.args.sessionId : null;
+          const cwd = await worktreeCwd(msg.args);
+          const always = (await worktreeHost.worktrees.getSettings()).always;
+          if (!cwd) return reply(true, { git: false, current: null, conflicts: [], canSplit: false, always });
+          return reply(true, await worktreeHost.check({ sessionId, cwd, writes: await sessionWrites(sessionId, msg.args?.backend, msg.args?.mode) }));
+        }
+        case 'worktreeSplit': {
+          const sessionId = typeof msg.args?.sessionId === 'string' && msg.args.sessionId ? msg.args.sessionId : null;
+          const cwd = await worktreeCwd(msg.args);
+          if (!cwd) throw new Error(t('worktree.fail.not-git'));
+          const made = await worktreeHost.split({ cwd, sessionId });
+          // i18n-dynamic: server:worktree.fail.
+          if (!made.ok) throw new Error(t(`worktree.fail.${made.reason}`, { error: made.error ?? '' }));
+          return reply(true, { worktree: made.entry, cwd: made.cwd });
+        }
+        case 'worktreeDiscard': {
+          const entry = await worktreeHost.worktrees.get(String(msg.args?.id ?? ''));
+          if (!entry) return reply(true, { action: 'skip' });
+          return reply(true, await worktreeHost.worktrees.settle(entry.id));
+        }
+        case 'worktreeKeep': {
+          const entry = await worktreeHost.worktrees.get(String(msg.args?.id ?? ''));
+          if (!entry) throw new Error(t('worktree.notFound'));
+          await worktreeHost.worktrees.keep(entry.id, msg.args?.kept !== false);
+          return reply(true, { id: entry.id, kept: msg.args?.kept !== false });
+        }
+        case 'worktreeArchive': {
+          const entry = await worktreeHost.worktrees.get(String(msg.args?.id ?? ''));
+          if (!entry) throw new Error(t('worktree.notFound'));
+          const result = await worktreeHost.archive(entry.id);
+          emitGlobal({ type: 'worktreesChanged', sessionId: null });
+          return reply(true, result);
+        }
+        case 'worktreeRestore': {
+          const cwd = await gitCwd(msg.args);
+          if (!cwd) throw new Error(t('worktree.fail.not-git'));
+          const made = await worktreeHost.restore({ cwd, ref: String(msg.args?.ref ?? '') });
+          // i18n-dynamic: server:worktree.fail.
+          if (!made.ok) throw new Error(t(`worktree.fail.${made.reason}`, { error: made.error ?? '' }));
+          emitGlobal({ type: 'worktreesChanged', sessionId: null });
+          return reply(true, { worktree: made.entry, cwd: made.cwd });
+        }
+        case 'worktreeSettings':
+          return reply(true, await worktreeHost.worktrees.getSettings());
+        case 'setWorktreeSettings': {
+          if (typeof msg.args?.always !== 'boolean') throw new Error(t('worktree.settingsInvalid'));
+          const next = await worktreeHost.worktrees.setSettings({ always: msg.args.always });
+          emitGlobal({ type: 'worktreeSettings', sessionId: null, ...next });
+          return reply(true, next);
+        }
         case 'setSessionMcp':
           await contextSession.setMcp(msg.args?.sessionId, msg.args?.name, msg.args?.removed !== false);
           return reply(true, { ok: true });
@@ -3167,8 +4022,11 @@ wss.on("connection", (ws, req) => {
           return reply(true, await contextSession.nativeInstructions((await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd, msg.args?.backend));
         case 'contextFindings':
           return reply(true, await contextSession.findings(msg.args?.sessionId, (await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd, msg.args?.backend));
-        case 'setContextSettings':
-          return reply(true, await contextSettings.set(msg.args ?? {}));
+        case 'setContextSettings': {
+          const view = await contextSettings.set(msg.args ?? {});
+          settingsChanged(['context.default']);
+          return reply(true, view);
+        }
         // ---- Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。コマンドは実行しない
         case 'scanHooks': {
           const cwd = msg.args?.cwd ? await scanDirectory(msg.args.cwd) : null;
@@ -3285,6 +4143,31 @@ wss.on("connection", (ws, req) => {
           return reply(true, withResident(await remote.deny(msg.args?.id)));
         case 'remoteDevices':
           return reply(true, await remote.devices());
+
+        // 通知（ADR 0086）。この PC の設定とスマホの一覧は設定 › 通知。スマホの通知鍵と設定の登録は、端末の画面（中継越し）からだけ
+        case 'notifyStatus':
+          return reply(true, await notifyStatus());
+        case 'setNotifyPc': {
+          await notifySettings.set(msg.args ?? {});
+          const status = await notifyStatus();
+          emitGlobal({ type: 'notifyStatus', status, sessionId: null });
+          return reply(true, status);
+        }
+        case 'setNotifyDevice': {
+          const id = String(msg.args?.id ?? '');
+          if (!remote.deviceInfo(id)) throw new Error(t('notify.error.unknownDevice'));
+          await remote.setNotifyMuted(id, msg.args?.muted === true);
+          const status = await notifyStatus();
+          emitGlobal({ type: 'notifyStatus', status, sessionId: null });
+          return reply(true, status);
+        }
+        case 'notifyRegister': {
+          const via = connectionDevices.get(ws);
+          if (!via?.mobile) throw new Error(t('notify.error.notDevice'));
+          const registered = await remote.registerNotify(via.id, msg.args ?? {});
+          emitGlobal({ type: 'notifyStatus', status: await notifyStatus(), sessionId: null });
+          return reply(true, registered);
+        }
         case 'remoteRevoke':
           return reply(true, withResident(await remote.revoke(msg.args?.id)));
 
@@ -3410,6 +4293,8 @@ wss.on("connection", (ws, req) => {
             const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged && !endpointChanged)
               ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(accountChanged ? { account: selectedAccount } : {}), ...(endpointChanged ? { endpoint: selectedEndpoint } : {}) };
             await store.setSessionData(sessionId, "nextSettings", next);
+            // 取り消した・別の場所に替えた予約が分けた作業場所なら、使っていなければ片付ける（ADR 0089）
+            if (current.nextSettings?.cwd && current.nextSettings.cwd !== next?.cwd) settleWorktreeAt(current.nextSettings.cwd).catch(() => {});
             if (!cancel) {
               if (targetId !== undefined) await savePref("backend", target.id);
               // 互換の接続先のモデル・段は公式の既定（prefs）に覚えない。接続先の既定は設定の「既定にする」だけで決まる（決定 2）
@@ -3458,6 +4343,7 @@ wss.on("connection", (ws, req) => {
             await deleteUnsentConversation(sessionId);
             await store.removeSession(sessionId);
             releaseAgentConnection(sessionId);
+            settleWorktreesOf(sessionId).catch(() => {});
             emitGlobal({ type: "sessionsChanged", sessionId: null, deleted: sessionId });
             return reply(true, "deleted");
           } finally { switching.delete(sessionId); completionNotices.changed(sessionId); }
@@ -3603,29 +4489,8 @@ wss.on("connection", (ws, req) => {
           return reply(true, await delegationRoutingState());
         // settings は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する
         case 'setDelegationRouting': {
-          const patch = msg.args?.settings;
-          if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error(t('routing.settings.notObject', { key: 'settings' }));
-          const raw = { ...((await store.getPrefs()).delegationRouting ?? {}) };
-          for (const [key, value] of Object.entries(patch)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
-          for (const key of RETIRED_KEYS) delete raw[key];
-          let settings;
-          try { settings = normalizeSettings(raw, { strict: true }); } catch (e) { throw routingSettingsError(e); }
-          const previous = routingSettingsCache;
-          const known = routingUsage.snapshot();
-          const oldCandidates = new Set(TIERS.flatMap(tier => previous.tiers[tier] ?? []));
-          const missingCandidate = TIERS.flatMap(tier => settings.tiers[tier] ?? []).some(candidate => {
-            if (oldCandidates.has(candidate)) return false;
-            const at = candidate.indexOf(':');
-            return !Object.hasOwn(known[candidate.slice(0, at)]?.models ?? {}, candidate.slice(at + 1));
-          });
-          await savePref('delegationRouting', Object.keys(raw).length ? raw : null);
-          routingSettingsCache = settings;
-          if (!settings.enabled) routingUsage.stop();
-          else if (ROUTING_USAGE_AUTO) {
-            routingUsage.start();
-            if (previous.enabled && missingCandidate) routingUsage.refresh().catch(() => {});
-          }
-          emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
+          await applyRoutingSettings(msg.args?.settings);
+          settingsChanged(['delegationRouting']);
           return reply(true, await delegationRoutingState());
         }
         // 判定器のキー（service: openrouter = Jev / cerebras）。登録が外部送信の同意になる（キーが無ければ何も送らない）
@@ -3643,9 +4508,11 @@ wss.on("connection", (ws, req) => {
           return reply(true, await delegationRoutingState());
         }
         case "resolvePermission": {
-          const { id, allow, always, scope, message, messageKey, answers, annotations, response } = msg.args ?? {};
+          const { id, allow, always, scope, message, messageKey, answers, annotations, response, receipt } = msg.args ?? {};
           const w = runtime.waiting.get(id);
           if (!w) return reply(false, t('approval.alreadyResolved'));
+          // 設定の変更の承認は受領証つき。画面は出したカードの受領証を添えて答える。合わなければ別の変更への答えなので受け取らない（取り違え・再送を防ぐ）
+          if (w.payload.settingChange && w.payload.settingChange.receipt !== receipt) return reply(false, t('approval.receiptMismatch'), 'RECEIPT_MISMATCH');
           // 回答を伴うツール（質問カード）は、承認ではなく入力の差し替えとして返る。
           // ここでは解釈しない。エージェントが自分の形へ戻す（§2.2）。
           // 拒否の理由は画面の言語ではなく会話の言語でエージェントへ返すので、画面は文ではなく印（messageKey: 'userDenied'）で送る。
@@ -3672,6 +4539,16 @@ wss.on("connection", (ws, req) => {
           return reply(true, "ok");
         }
 
+        // 各画面が「いま見ている会話」を知らせる（可視でその会話を開いているときだけ）。スマホへの通知を送らない・消すために使う（ADR 0086）。
+        // 画面は変わるたびと 1 分ごとに送り直す（一定時間更新が無い印は捨てる）
+        case 'presence': {
+          const a = msg.args ?? {};
+          const via = connectionDevices.get(ws);
+          notifyPresence.set(ws, { deviceId: via?.id ?? null, platform: via?.platform ?? null, visible: a.visible === true, sessionId: a.sessionId });
+          if (a.visible === true && typeof a.sessionId === 'string' && a.sessionId) pushNotifier.viewed(a.sessionId);
+          return reply(true, 'ok');
+        }
+
         // 履歴を読み直す。sessionId が無いときは空（新規セッション相当）。
         case "loadSession": {
           const { sessionId } = msg.args ?? {};
@@ -3692,7 +4569,10 @@ wss.on("connection", (ws, req) => {
             const completedAt = sidecar.completedAt ?? null;
             // 中断の印（一覧の行と同じ形）。会話の末尾の「中断しました」を保存された状態から描くため
             const interrupted = runtime.turns.has(sessionId) ? null : interruptedOf((await store.get(sessionId)).interrupted);
+            const readStarted = Date.now();
             const { compactSummaries, ...data } = await history.loadTranscript(sessionId, backend);
+            // 読んだ履歴をそのまま検索の写しにも入れる（追加の読み込みは要らない）。outline は本文が縮めてあるので入れない
+            if (!msg.args?.outline) sessionSearch.ingest(sessionId, data.messages, { sig: readStarted });
             // 入力欄の `!`: Pleiad が走らせた分の終了コードを付け、まだ渡していない分・走っている分を末尾に足す（ADR 0054）。
             // 渡さなかった分は、次の人の発言の前に差す（ADR 0055）
             data.messages = msg.args?.outline ? shellRuns.decorate(data.messages, sidecar, backend)
@@ -3762,6 +4642,8 @@ wss.on("connection", (ws, req) => {
           const sessionId = await createConversation(backend, info);
           try {
             await store.setMeta(sessionId, { backend: backend.id, ...info, status, unsent: true });
+            // 内蔵ブラウザーのプロフィール: 引き継ぎ元があればそのもの、無ければ作業フォルダーで最後に使ったもの / 既定（ADR 0078）
+            await store.setSessionData(sessionId, 'browserProfile', await browserProfiles.forNew(cwd, source));
             // 互換の接続先（決定 2・3）: 同じエージェントの引き継ぎなら元の会話の接続先（予約中ならそれ）を継ぐ。
             // それ以外は設定で「既定にする」を押した接続先（無ければ公式）。削除済みは継がない
             let endpoint = '';
@@ -3861,7 +4743,7 @@ wss.on("connection", (ws, req) => {
             if (msg.command !== 'openPath' || args.returnPath !== true) {
               await openOnHost(msg.command === 'openPath' ? 'open' : 'reveal', file, { directory });
             }
-            return reply(true, { path: file });
+            return reply(true, { path: file, cwd: resolved.cwd ?? null });
           } catch (error) {
             const failure = previewFailure(error);
             return reply(false, failure.code === 'read-failed' && error?.message ? error.message : failure.message);
@@ -3877,7 +4759,9 @@ wss.on("connection", (ws, req) => {
             const record = await history.findVisualization(args.sessionId, await resolveBackendForSession(args.sessionId).catch(() => null), { id: args.id, at: args.at });
             if (!record) return reply(false, t('filePreview.visualize.snapshotNotFound'));
             if (!osActionAllowed()) return reply(false, t('files.tooMany'));
-            const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'), { prefs: await store.getPrefs() });
+            // allow: 内蔵ブラウザーの「読み込む」で、そのタブだけに加える https の出どころ（docs/inapp-browser.md）
+            const once = Array.isArray(args.allow) ? [...new Set(args.allow.slice(0, 50).map(externalOrigin).filter(Boolean))] : [];
+            const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'), { prefs: await store.getPrefs(), once, report: args.returnPath === true });
             if (args.returnPath !== true) await openOnHost('open', file, { directory: false });
             return reply(true, { path: file });
           } catch (error) {
@@ -3927,6 +4811,12 @@ wss.on("connection", (ws, req) => {
         case "running":
           return reply(true, await runningWork());
 
+        // 操作の一覧（core/ops/）の汎用の口。画面は新しい機能をここから呼ぶ（protocol.mjs を触らずに増やせる。ADR 0080）
+        case 'invoke': {
+          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, msg.args?.op, msg.args?.args, opsDeps(locale.lang));
+          return r.ok ? reply(true, r.result) : reply(false, r.error, r.code, r.issues ? { issues: r.issues } : undefined);
+        }
+
         // 次に新しく始めるときの既定
         case "onboardingStatus":
           return reply(true, { homeDir: os.homedir(), agents: listBackends().map(b => ({ id: b.id, label: b.label, description: b.description ?? "", ...installation(b.id) })), ...(await readOnboarding()) });
@@ -3944,7 +4834,7 @@ wss.on("connection", (ws, req) => {
           const saved = { seen: true, setupComplete: true, backend: backend.id, cwd: path.resolve(cwd) };
           await fs.mkdir(store.dataDir, { recursive: true });
           await fs.writeFile(path.join(store.dataDir, "onboarding.json"), JSON.stringify(saved), { mode: 0o600 });
-          await store.setPref("backend", backend.id);
+          await savePref("backend", backend.id);
           return reply(true, saved);
         }
         case "prefs": {
@@ -3954,28 +4844,8 @@ wss.on("connection", (ws, req) => {
           prefs.autoCompaction = compactionSettings;
           return reply(true, prefs);
         }
-        case 'setAutoCompaction': {
-          const settings = normalizeCompactionSettings(msg.args?.settings);
-          const previousSettings = compactionSettings;
-          // A reservation already firing may be preparing its backend. Settings take effect before
-          // the disk write, and ineligible in-flight reservations are invalidated before invocation.
-          compactionScheduler.cancelFiring(entry => {
-            const row = settings[entry.backendId === 'fake' ? 'claude' : entry.backendId];
-            return !settings.enabled || !row?.enabled || entry.usedTokens < settings.minTokens;
-          });
-          compactionSettings = settings;
-          try { await store.setPref('autoCompaction', settings); }
-          catch (err) { compactionSettings = previousSettings; throw err; }
-          for (const entry of compactionScheduler.entries()) {
-            const backend = await resolveBackendForSession(entry.sessionId);
-            const row = settings[backend?.id === 'fake' ? 'claude' : backend?.id];
-            if (!settings.enabled || !row?.enabled
-                || (await store.get(entry.sessionId)).contextWindow?.usedTokens < settings.minTokens)
-              compactionScheduler.cancel(entry.sessionId);
-          }
-          emitGlobal({ type: 'autoCompactionSettings', sessionId: null, settings });
-          return reply(true, settings);
-        }
+        case 'setAutoCompaction':
+          return reply(true, await applyAutoCompaction(normalizeCompactionSettings(msg.args?.settings)).then((r) => { settingsChanged(['compaction.auto']); return r; }));
 
         /**
          * AI にタイトルを考えてもらう。
@@ -4093,50 +4963,11 @@ wss.on("connection", (ws, req) => {
           return reply(true, await attachUploads.cancel({ uploadId: id }));
         }
 
-        // セッションを選んでいなくても既定は変えられる
+        // セッションを選んでいなくても既定は変えられる。検査も保存も配信も設定の一覧（core/ops/settings.mjs）の定義を通る（AI の settings.set と同じ）
         case "setPref": {
-          const { key, value, backend: backendId } = msg.args ?? {};
-          if (['confirmExternalLoads', 'confirmAgentSites', 'externalSitePermissions', 'agentSitePermissions'].includes(key)) {
-            if (!validBrowserPref(key, value)) return reply(false, t('settings.unknownPrefValue', { key, value: String(value) }));
-            const prefs = await savePref(key, value);
-            agentBrowser?.prefs(prefs);
-            return reply(true, prefs);
-          }
-          // computer use の設定（docs/computer-use.md）。全体を受けて形を検査し、変わったときだけ全画面へ流す
-          if (key === 'computerUse') {
-            if (value === null) return reply(true, await savePref(key, null));
-            const current = await store.getPrefs();
-            const next = validComputerUse(value, computerUsePrefs(current));
-            if (!next) return reply(false, t('settings.unknownPrefValue', { key, value: JSON.stringify(value)?.slice(0, 80) ?? String(value) }));
-            if (JSON.stringify(next) === JSON.stringify(computerUsePrefs(current)) && current.computerUse) return reply(true, current);
-            return reply(true, await savePref(key, next));
-          }
-          if (key === "backend") {
-            if (!getBackend(value)) return reply(false, t('agents.unknown'));
-            return reply(true, await savePref(key, value));
-          }
-          // 画面の言語。auto は OS に合わせる
-          if (key === "locale") {
-            if (!LOCALE_SETTINGS.includes(value)) return reply(false, t("errors.unknownLocale", { value }));
-            return reply(true, await savePref(key, value));
-          }
-          // リンクの開き先（inapp: 内蔵ブラウザー / external: 既定のブラウザー）。内蔵ブラウザーはデスクトップ版のホストの画面だけ（docs/inapp-browser.md）
-          if (key === "linkOpen") {
-            if (value !== "inapp" && value !== "external") return reply(false, t('settings.unknownPrefValue', { key, value: String(value) }));
-            return reply(true, await savePref(key, value));
-          }
-          // 自分で書いた指示の目安（トークン。右パネルの「指示の量」。ADR 0056）。null で既定（web/instruction-amount.mjs の DEFAULT_BUDGET）に戻す
-          if (key === "instructionBudget") {
-            if (value !== null && !(Number.isInteger(value) && value >= MIN_BUDGET && value <= MAX_BUDGET)) return reply(false, t('settings.unknownPrefValue', { key, value: String(value) }));
-            return reply(true, await savePref(key, value));
-          }
-          if (backendId && !getBackend(backendId)) return reply(false, t('agents.unknown'));
-          if (key !== "mode" && key !== "model") return reply(false, t('settings.unknownPref', { key }));
-          // 語彙はエージェントごとに違う。どれか1つでも知っていれば通す
-          const known = await Promise.all((backendId ? [getBackend(backendId)] : listBackends()).map(async (b) =>
-            key === "mode" ? Boolean(b.modes()[value]) : value in (await b.models())));
-          if (!known.some(Boolean)) return reply(false, t(key === "mode" ? 'settings.unknownMode' : 'settings.unknownModel', { value }));
-          return reply(true, await savePref(key, value, backendId));
+          const { key, value, backend } = msg.args ?? {};
+          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, 'settings.set', { key, value, ...(backend ? { backend } : {}) }, opsDeps(locale.lang));
+          return r.ok ? reply(true, await store.getPrefs()) : reply(false, r.error, r.code, r.issues ? { issues: r.issues } : undefined);
         }
 
         // 状態の一括改名。to が空なら状態を外す（＝グループの削除）。
@@ -4278,16 +5109,7 @@ wss.on("connection", (ws, req) => {
           const reason = clientReason(msg.args);
           if (!sessionId) return reply(false, t('session.requiredForStatus'));
           const backend = await pickBackend(sessionId, msg.args?.backend);
-          // グループの根を動かすと、まとまりごと移る（中の会話も同じ状態に保つ、§4.1）。
-          // 中の会話を動かしたときは、その 1 本だけが出る
-          const rows = msg.args?.alone ? [] : await sessionList().catch(() => []);
-          const kin = rows.length && isGroupRoot(rows, sessionId) ? groupKin(rows, sessionId) : [];
-          await applyStatus(backend, sessionId, status, reason);
-          for (const r of kin) {
-            const b = getBackend(r.backend) ?? backend;
-            await applyStatus(b, r.id, status, reason.reason === null ? savedReason('groupMove') : reason).catch(() => {});
-          }
-          return reply(true, { moved: kin.map((r) => r.id) });
+          return reply(true, { moved: await changeStatus(backend, sessionId, status, { reason, alone: msg.args?.alone }) });
         }
 
         // 完了を確認した。ホストに 1 つで、別の窓・別の端末にも read で知らせる（store.markRead が巻き戻さない）。
@@ -4297,6 +5119,8 @@ wss.on("connection", (ws, req) => {
           const reads = Array.isArray(a.reads) ? a.reads.slice(0, 5000) : [[a.sessionId, a.at]];
           const changed = await store.markRead(reads);
           if (changed.length) emitGlobal({ type: "read", sessionId: null, reads: changed });
+          // どこかで見た完了・失敗は、スマホに出ている通知を消す
+          for (const [id] of changed) pushNotifier.viewed(id);
           return reply(true, { reads: changed });
         }
 
@@ -4310,23 +5134,13 @@ wss.on("connection", (ws, req) => {
         }
 
         // 状態グループのアイコン。人間の操作。AI が set_status で渡す経路も同じ store に入る（設計メモ 2.2）
-        case "setStatusIcon": {
-          const { status, icon } = msg.args ?? {};
-          if (typeof status !== "string" || !status.trim()) return reply(false, t('statuses.statusRequired'));
-          const saved = await store.setStatusIcon(status, icon);
-          emitGlobal({ type: "statusIcon", sessionId: null, status, icon: saved });
-          return reply(true, { status, icon: saved });
-        }
+        case "setStatusIcon":
+          return reply(true, await setStatusIconOf(msg.args?.status, msg.args?.icon, { by: 'human' }));
 
         // 空のグループを作る。状態は使われた時点で存在する（設計メモ §6）が、
         // 人が先に作った器は statuses.json にある限り存在する（セッション 0 件でも一覧に出る）
-        case "createStatus": {
-          const status = String(msg.args?.status ?? "").trim();
-          if (!status) return reply(false, t('statuses.groupNameRequired'));
-          await store.createStatus(status);
-          emitGlobal({ type: "status", sessionId: null, status, by: "human", bulk: 0, ...savedReason('createdGroup') });
-          return reply(true, { status });
-        }
+        case "createStatus":
+          return reply(true, await createStatusGroup(msg.args?.status, { by: 'human' }));
 
         /**
          * 同じ根を持つセッション群。分岐の筋を描く材料。
@@ -4352,54 +5166,27 @@ wss.on("connection", (ws, req) => {
             ({ at, by, field, from: from ?? null, to: to ?? null, reason: reason ?? null, ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}) })) });
         }
 
+        // 会話の今の内蔵ブラウザーのプロフィールを人が替えた（右パネルのメニュー。main のタブの一覧は画面が先に替えている。ADR 0078）。
+        // 会話に残し、作業フォルダーの「最後に使ったもの」と、走っているターン（ply_browser の今のもの）にも伝える
+        case "setBrowserProfile": {
+          const { sessionId, profile } = msg.args ?? {};
+          if (typeof sessionId !== 'string' || !sessionId) return reply(false, t('session.required'));
+          const meta = await store.get(sessionId);
+          if (!await browserProfiles.set(sessionId, profile, meta.cwd)) return reply(false, t('settings.unknownPrefValue', { key: 'browserProfile', value: String(profile) }));
+          const live = browserTurn(sessionId);
+          if (live) live.browserProfile = profile;
+          return reply(true, { profile });
+        }
         case "setTitle": {
           const { sessionId, title } = msg.args;
           const reason = clientReason(msg.args);
           const backend = await pickBackend(sessionId, msg.args?.backend);
-          if (backend.capabilities?.title && backend.setTitle) await backend.setTitle(sessionId, title);
-          await store.recordChange(sessionId, { by: "human", field: "title", to: title, ...reason, backend });
-          emitGlobal({ type: "title", sessionId, title, by: "human", ...reason });
+          await changeTitle(backend, sessionId, title, { reason });
           return reply(true, "ok");
         }
 
-        case "fork": {
-          const { sessionId, upToMessageId, beforeMessageId, title } = msg.args;
-          const running = runtime.turns.get(sessionId);
-          if (!sessionId || forking.has(sessionId) || switching.has(sessionId) && !running) return reply(false, t('session.preparingFork'));
-          forking.add(sessionId);
-          try {
-            await settingsWrites.get(sessionId);
-            const backend = refuseRetired(await pickBackend(sessionId, msg.args?.backend));
-            if (!backend.fork) return reply(false, t('session.cannotFork'));
-            const snapshot = running ? {
-              messageIds: running.stream.messages.map(m => m.uuid),
-              presents: structuredClone(running.stream.presents),
-            } : null;
-            const { sessionId: child, persisted, parent: forkParent } = await backend.fork(sessionId, { upToMessageId, beforeMessageId, title, snapshot });
-            // 「編集して再送信」は対象の発言の手前で切るので、その先で渡した本文は分岐先に残らない。渡し済みの控えを捨てる。
-            // 写した履歴があれば最初のターンの引き継ぎ（pendingHandoff）でも捨てるが、最初の発言を編集した分岐は履歴が空で引き継ぎが起きない。
-            // 「ここから分岐」は控えを引き継ぐ（Claude の SDK の分岐は履歴をそのまま写す）
-            if (beforeMessageId) {
-              const copied = (await store.get(child)).contextSession;
-              if (copied?.delivered) await store.setSessionData(child, 'contextSession', { ...copied, delivered: null });
-            }
-            const parent = forkParent ?? { sessionId, atMessage: upToMessageId ?? null };
-            if (!persisted) {
-              await store.setParent(child, parent);
-              await store.setMeta(child, { backend: backend.id, lastModified: Date.now() });
-              await store.recordChange(child, { by: "human", field: "parent", to: parent, reason: "fork", backend });
-            }
-            // 枝は親と同じ状態で始まる。そうでないと生まれた瞬間に親のグループから外れる（§4.1）
-            const inherited = (await sessionList().catch(() => [])).find((r) => r.id === sessionId)?.status ?? null;
-            if (inherited) await applyStatus(backend, child, inherited, "fork").catch(() => {});
-            emitGlobal({ type: "fork", sessionId: child, parent });
-            return reply(true, { sessionId: child });
-          } finally {
-            forking.delete(sessionId);
-            completionNotices.changed(sessionId);
-            outbox.kick(sessionId).catch(() => {});
-          }
-        }
+        case "fork":
+          return reply(true, { sessionId: (await forkConversation(msg.args ?? {}, { by: 'human' })).sessionId });
       }
     } catch (err) {
       reply(false, String(err?.message ?? err), typeof err?.code === 'string' ? err.code : undefined);
@@ -4416,7 +5203,7 @@ process.parentPort?.on("message", async ({ data }) => {
   if (data?.type === 'update-lock') {
     // 断るときは何が止めているかを返す。画面に出さないと、見た目に何も動いていないのに更新できない理由が分からない
     const reason = runtime.turns.size ? t('updateLock.turns', { count: runtime.turns.size })
-      : runtime.waiting.size ? t('updateLock.approvals', { count: runtime.waiting.size })
+      : blockingWaits().length ? t('updateLock.approvals', { count: blockingWaits().length })
       : agentTasks.busy ? t('updateLock.delegation')
       : outbox.busy ? t('updateLock.steer')
       : switching.size || forking.size ? t('updateLock.switching')
@@ -4435,8 +5222,12 @@ process.parentPort?.on("message", async ({ data }) => {
   if (data?.type === "shutdown" && runtime.turns.size === 0 && !agentTasks.busy) process.exit(0);
 });
 
-function announce() {
+async function announce() {
   const { port } = server.address();
+  // CLI がつなぎ先を見つける control.json（ADR 0083）。権限 0600。終了時に pid が自分のときだけ消す。
+  // 起動の案内（下の URL の行）を見て CLI や検査が動き出すので、その前に書き終える
+  await writeControlFile({ dataDir: store.dataDir, origin: localOrigin(), cliToken: CLI_TOKEN, startedAt: SERVER_STARTED_AT, appVersion: APP_VERSION, kind: process.parentPort ? 'desktop' : 'server' })
+    .catch((err) => console.error('  control.json を書けませんでした:', String(err?.message ?? err)));
   process.parentPort?.postMessage({ type: "ready", port, token: TOKEN, locale: locale.lang });
   remote.start().catch(() => {});
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();
@@ -4464,5 +5255,7 @@ server.once("error", (err) => {
   server.listen(0, HOST, announce);
 });
 // 設定とバックエンドが揃った後に、前の起動の放置圧縮の予約を戻す
+// 検索の写しは、起動の混み合いが落ち着いてから裏で作る（探されたときは待たずに読めた分で答える）
+setTimeout(() => sessionSearch.start().catch(() => {}), 3000).unref();
 await restoreCompactionSchedule().catch(err => console.error('  自動圧縮の予約を戻せませんでした:', String(err?.message ?? err)));
 server.listen(PORT, HOST, announce);

@@ -6,7 +6,10 @@ import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
+import com.getcapacitor.PermissionState
 import com.getcapacitor.annotation.CapacitorPlugin
+import com.getcapacitor.annotation.Permission
+import com.getcapacitor.annotation.PermissionCallback
 import com.procway.pleiad.remote.LinkStatus
 import com.procway.pleiad.remote.PairError
 import com.procway.pleiad.remote.Pairing
@@ -19,7 +22,10 @@ import java.util.concurrent.Executors
  * cancelled, aborted, timeout, handshake, bad-response, storage, unknown-host); the page translates them.
  * Events: `status` { hostId, state, ... }, `pairCode` { code }, `pairLink` {} (then call takePairLink()).
  */
-@CapacitorPlugin(name = "PleiadRemote")
+@CapacitorPlugin(
+    name = "PleiadRemote",
+    permissions = [Permission(alias = "notifications", strings = [android.Manifest.permission.POST_NOTIFICATIONS])],
+)
 class PleiadRemotePlugin : Plugin() {
     companion object {
         private val worker = Executors.newCachedThreadPool { r -> Thread(r, "pleiad-plugin").also { it.isDaemon = true } }
@@ -34,6 +40,7 @@ class PleiadRemotePlugin : Plugin() {
 
     private val device get() = (context.applicationContext as PleiadApp).device
     @Volatile private var pairing: Pairing? = null
+    private var permissionCallback: ((Boolean) -> Unit)? = null
     private val statusListener: (String, LinkStatus) -> Unit = { hostId, s ->
         notifyListeners("status", JSObject(s.toJson().put("hostId", hostId).toString()))
     }
@@ -100,6 +107,7 @@ class PleiadRemotePlugin : Plugin() {
         bg(call) {
             try {
                 val rec = device.pair(payload, { code -> notifyListeners("pairCode", JSObject().put("code", code)) }, handle)
+                (context.applicationContext as PleiadApp).notifyHub.hostsChanged()
                 call.resolve(JSObject().put("host", JSObject(rec.toPublicJson().toString())))
             } finally {
                 if (pairing === handle) pairing = null
@@ -136,6 +144,44 @@ class PleiadRemotePlugin : Plugin() {
         val hostId = call.getString("hostId") ?: ""
         device.remove(hostId)
         ResumeStore(context).forget(hostId)
+        (context.applicationContext as PleiadApp).notifyHub.hostsChanged()
+        call.resolve()
+    }
+
+    // ── Notifications while away (ADR 0086): the app's 通知 screen ──
+
+    /** { settings, permission, enabled, dismissed, lines } */
+    @PluginMethod
+    fun notifyState(call: PluginCall) = bg(call) { call.resolve(JSObject(NotifyControl.state(context).toString())) }
+
+    /** Change some settings (reply / failed / done / lockNames / skipPc, or enabled = false). Turning on goes through notifyEnable. */
+    @PluginMethod
+    fun notifyUpdate(call: PluginCall) = bg(call) {
+        val patch = org.json.JSONObject(call.data.toString())
+        patch.remove("enabled")?.let { if (it == false) patch.put("enabled", false) }   // only "off" is accepted here
+        call.resolve(JSObject(NotifyControl.update(context, patch).toString()))
+    }
+
+    /** Ask for the permission if needed, turn notifications on, start the service, guide about battery optimization (once). */
+    @PluginMethod
+    fun notifyEnable(call: PluginCall) {
+        NotifyControl.enable(activity, ask = { cb ->
+            permissionCallback = cb
+            requestPermissionForAlias("notifications", call, "notifyPermissionResult")
+        }, done = { result -> call.resolve(JSObject(result.toString())) })
+    }
+
+    @PermissionCallback
+    private fun notifyPermissionResult(call: PluginCall) {
+        val cb = permissionCallback
+        permissionCallback = null
+        cb?.invoke(getPermissionState("notifications") == PermissionState.GRANTED)
+    }
+
+    /** The system's page for this app's notifications (after the permission was refused). */
+    @PluginMethod
+    fun notifyOpenSystemSettings(call: PluginCall) {
+        NotifyControl.openSystemSettings(context)
         call.resolve()
     }
 

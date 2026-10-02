@@ -50,9 +50,15 @@
     "relayTitle": "委譲先「{{child}}」",
     "relayTitleWith": "委譲先「{{child}}」 / {{title}}",
     "computerApp": "{{agent}} に「{{app}}」の操作を許可しますか？",
+    "settingChange": "{{agent}} が設定「{{key}}」を変えようとしています",
     "computerAppJoin": "」「",
     "browserSite": "{{agent}} が {{site}} を使おうとしています",
-    "browserAccount": "（ログイン済み: {{account}}）"
+    "browserNotes": "（{{notes}}）",
+    "browserProfile": "プロフィール: {{profile}}",
+    "browserAccountName": "ログイン済み: {{account}}"
+  },
+  "browserProfiles": {
+    "main": "メイン"
   },
   "quota": {
     "unsupported": "このエージェントは使用枠の取得に対応していません。",
@@ -73,6 +79,17 @@
     "missing": "作業ディレクトリが見つかりません: {{cwd}}",
     "notDirectory": "作業ディレクトリがフォルダーではありません: {{cwd}}",
     "required": "作業ディレクトリを入力してください"
+  },
+  "worktree": {
+    "cleaning": "この分けた作業場所は片付けています。少し待ってから、もう一度送ってください",
+    "notFound": "その分けた作業場所は見つかりません",
+    "settingsInvalid": "いつも分けるは、オンかオフで指定してください",
+    "fail": {
+      "not-git": "この作業場所は git のリポジトリではないので、分けられません",
+      "no-commits": "まだコミットの無いリポジトリは、分けられません（最初のコミットが要ります）",
+      "already-split": "ここはすでに分けた作業場所の中です",
+      "git": "分けた作業場所を作れませんでした: {{error}}"
+    }
   },
   "session": {
     "running": "このセッションは実行中",
@@ -140,6 +157,7 @@
     "taskNotFound": "Pleiad タスクが見つかりません"
   },
   "approval": {
+    "receiptMismatch": "この承認の受領証が合いません。カードを開き直してください",
     "alreadyResolved": "この承認はすでに処理されています"
   },
   "title": {
@@ -318,7 +336,8 @@
       "exists": "同名の MCP が存在します。編集から開いてください",
       "reformat": "この TOML 配置ではファイル全体の再整形が必要です。再整形を許可して保存してください",
       "tooLarge": "保存後の設定が1 MiBを超えます",
-      "changedReload": "保存先が変更されています。一覧を再読込してください"
+      "changedReload": "保存先が変更されています。一覧を再読込してください",
+      "masked": "「{{name}}」が伏せ字（••••）のままで、前の値が無いので保存できません。値を入力してください"
     }
   },
   "net": {
@@ -1028,5 +1047,12 @@
     "invalid-input": "送れない入力です。",
     "failed": "PC のブラウザーの操作に失敗しました。",
     "unknown": "知らない操作です。"
+  },
+  "notify": {
+    "error": {
+      "badKey": "通知鍵の形が違います",
+      "notDevice": "登録済みのスマホからの接続ではありません",
+      "unknownDevice": "その端末は一覧にありません"
+    }
   }
 }

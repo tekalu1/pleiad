@@ -13,10 +13,11 @@ import { createComposerWait } from '../../web/composer-wait.mjs';
 import { syncRequest, joinReply, retainPlan } from '../../web/history-sync.mjs';
 
 export const name = 'composer-new-session';
-export const title = '新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る';
+export const title = '新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・作成中の作業場所の反映・読み込み失敗で欄が戻る';
 
 const FUNCTIONS = ['startNew', 'select', 'loadHistory', 'loadAndPaint', 'paintSession', 'saveDraft', 'persistDraft', 'dropBlankDraft', 'loadDraft',
-  'syncRunState', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'runUpload', 'saveDraftSoon', 'flushDraft'];
+  'syncRunState', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'runUpload', 'saveDraftSoon', 'flushDraft',
+  'reserveSettings', 'applyCwd'];
 
 export default async function (t) {
   const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
@@ -61,14 +62,16 @@ export default async function (t) {
   const state = { current: 'old', busy: false, loadingSession: null, drafts: new Map(), attached: [], sessions: [], messages: [], presents: [],
     pendingPerms: new Map(), cwd: '', homeDir: 'C:/home', backendId: 'fake', prefs: {}, draft: {}, mode: 'default', runningIds: new Set(), stopping: new Set() };
   const storage = new Map();
+  // client.mjs の saveDraft・loadDraft・submit などをここで走らせる。そこから新しいモジュールの定数を引いたら、身代わりを足す
   const context = vm.createContext({
-    state, $, cmd, refresh, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop, t: k => k, html: { t: k => k }, sys: noop, escText: x => x, NL: '\n',
+    state, $, cmd, refresh, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop, t: (k, params) => params?.error ? `${k}: ${params.error}` : k, html: { t: k => k }, sys: noop, escText: x => x, NL: '\n',
     creatingSession: null, pendingNewSession: null, freshSessionId: null, draftTimer: null, draftSavedAt: 0, DRAFT_THROTTLE_MS: 400, queuedSend: null, settingsFailure: null, syncSettingsHold: noop,
+    failedSettingsPatch: null, failedSettingsError: '', cwdSaving: 0,
     settingsWrite: Promise.resolve(), modeWrite: Promise.resolve(),
     DRAFT_STORE: 'drafts', draftWrites: new Map(), draftKey: () => state.current ?? '',
     localStorage: { setItem: (k, v) => storage.set(k, v), getItem: k => storage.get(k) ?? null },
     setDrawer: noop, randomId: () => Math.random().toString(36).slice(2), renderAttached: noop, fitPrompt: noop, clearThread: noop, prepareHistoryHeights: noop, syncTopbar: noop,
-    syncWorkEntry: noop, restorePastSubagents: noop, paintContextStrip: noop, paintCompactions: noop,
+    syncWorkEntry: noop, refreshGit: async () => {}, restorePastSubagents: noop, paintContextStrip: noop, paintCompactions: noop,
     pendingRows: new Map(), renderSessions: noop, pendingAfterDelay: () => noop, side: { keep: noop, showUndo: noop },
     filePreview: { sessionChanged: noop }, setTimeout: () => 1, clearTimeout: noop, el: () => new N('div'), append: noop,
     activity: { show: noop, hide: noop }, sessionLoads: createSessionLoads(),
@@ -78,7 +81,7 @@ export default async function (t) {
     acknowledgeDisplayed: noop, placeJunctions: () => [], refreshContextEntry: async () => null,
     isRunningHere: () => false, behindHere: () => null, backgroundCounts: () => ({ live: 0, ended: 0 }), relayoutBranches: noop, branchIsFresh: () => true, promptPlaceholder: () => '',
     ACTIVITY_LABEL: {}, attachMenu: null, setDraftNote: noop,
-    isWaitingHere: () => false, stoppingHere: () => false, controls: { fit: noop }, retiredHere: () => null, submittingMessages: new Set(),
+    isWaitingHere: () => false, stoppingHere: () => false, controls: { fit: noop, paint: noop }, retiredHere: () => null, submittingMessages: new Set(),
     connStatus: { blocksSend: () => false },
     // 会話の移動（web/conversation-nav-view.mjs）。最新へのボタンの弧を合わせる呼び出しだけ受ける
     nav: { syncRunning: noop, reset: noop }, navSession: null, toc: { reset: () => {}, refresh: () => {} },
@@ -286,4 +289,84 @@ export default async function (t) {
   state.drafts.set('existing', { text: '古い下書き', attached: [{ path: B, name: 'b.md', kind: 'file' }] });
   run('loadDraft()');
   t.ok('古い下書き（本文に印が無い）は本文と添付の実体をそのまま読む（位置は推測しない）', prompt.value === '古い下書き' && state.attached.length === 1 && state.attached[0].path === B);
+
+  // ---------------------------------------------------------------- 作成中に作業場所を選ぶ（新しい会話への反映・送信予約）
+  context.orderedAttachments = () => state.attached.slice();
+  context.composerEditor = { attachmentKeys: () => new Set(), hasAttachment: () => false };
+  // 1. 作成中に作業場所を選んだら、できた会話に setTurnSettings で反映され、その後の送信もその場所で走る
+  state.cwd = 'C:/home';
+  state.attached = [];
+  prompt.value = '';
+  const makingCwd1 = run('startNew()');
+  t.ok('作成開始時の draft.cwd は初期 cwd', state.draft.cwd === 'C:/home');
+  run("applyCwd('D:/project-a')");
+  t.ok('作成中に選んだ場所は draft.cwd に入る', state.draft.cwd === 'D:/project-a' && state.cwd === 'D:/project-a');
+  await reply('newSession', { sessionId: 'cwd1' });
+  const turnSettings1 = calls.filter(c => c.command === 'setTurnSettings' && c.args.sessionId === 'cwd1');
+  t.ok('できた会話に setTurnSettings で作業場所を反映する', turnSettings1.length === 1 && turnSettings1[0].args.cwd === 'D:/project-a');
+  releaseRefresh(); releaseRefresh = null;
+  state.sessions.push({ id: 'cwd1', cwd: 'C:/home', nextSettings: { cwd: 'D:/project-a' } });
+  await reply('loadSession', { messages: [], presents: [], draft: { text: '', attached: [] } });
+  await makingCwd1;
+  prompt.value = 'hello cwd';
+  await run('submit()');
+  const sentCwd1 = calls.filter(c => c.command === 'sendMessage' && c.args.sessionId === 'cwd1');
+  t.ok('送信時の cwd は選んだ場所になる', sentCwd1.length === 1 && sentCwd1[0].args.cwd === 'D:/project-a');
+
+  // 2. 作成中に作業場所を選び、作成中に送信を予約する（queuedSend）
+  state.cwd = 'C:/home';
+  state.attached = [];
+  prompt.value = '';
+  const makingCwd2 = run('startNew()');
+  run("applyCwd('D:/project-b')");
+  prompt.value = 'queued with cwd';
+  const sendingCwd2 = run('submit()');
+  await reply('newSession', { sessionId: 'cwd2' });
+  const turnSettings2 = calls.filter(c => c.command === 'setTurnSettings' && c.args.sessionId === 'cwd2');
+  t.ok('送信予約があっても setTurnSettings で作業場所を反映する', turnSettings2.length === 1 && turnSettings2[0].args.cwd === 'D:/project-b');
+  releaseRefresh(); releaseRefresh = null;
+  state.sessions.push({ id: 'cwd2', cwd: 'C:/home', nextSettings: { cwd: 'D:/project-b' } });
+  await reply('loadSession', { messages: [], presents: [], draft: { text: '', attached: [] } });
+  await makingCwd2; await sendingCwd2;
+  const sentCwd2 = calls.filter(c => c.command === 'sendMessage' && c.args.sessionId === 'cwd2');
+  t.ok('予約された送信も選んだ場所で走る', sentCwd2.length === 1 && sentCwd2[0].args.cwd === 'D:/project-b' && sentCwd2[0].args.prompt === 'queued with cwd');
+
+  // 3. 作成中に別の会話へ移った場合も、作成中に選んだ場所はできた会話に反映する
+  state.cwd = 'C:/home';
+  state.attached = [];
+  prompt.value = '';
+  const makingCwd3 = run('startNew()');
+  run("applyCwd('D:/project-c')");
+  state.current = 'other-session';
+  await reply('newSession', { sessionId: 'cwd3' });
+  const turnSettings3 = calls.filter(c => c.command === 'setTurnSettings' && c.args.sessionId === 'cwd3');
+  t.ok('作成中に別の会話へ移っても、できた会話に作業場所を反映する', turnSettings3.length === 1 && turnSettings3[0].args.cwd === 'D:/project-c');
+  releaseRefresh(); releaseRefresh = null;
+  await makingCwd3;
+
+  // 4. 反映に失敗したときは、送信を止める
+  state.cwd = 'C:/home';
+  state.attached = [];
+  prompt.value = '';
+  let failTurnSettings = 'folder not found';
+  const oldCmd = context.cmd;
+  context.cmd = (command, args = {}) => {
+    if (command === 'setTurnSettings' && failTurnSettings) return Promise.reject(new Error(failTurnSettings));
+    return oldCmd(command, args);
+  };
+  const makingCwdFail = run('startNew()');
+  run("applyCwd('D:/deleted-dir')");
+  prompt.value = 'doomed send';
+  const sendingCwdFail = run('submit()');
+  await reply('newSession', { sessionId: 'cwd-fail' });
+  releaseRefresh(); releaseRefresh = null;
+  state.sessions.push({ id: 'cwd-fail', cwd: 'C:/home' });
+  await reply('loadSession', { messages: [], presents: [], draft: { text: '', attached: [] } });
+  await makingCwdFail; await sendingCwdFail;
+  t.ok('反映に失敗したら settingsFailure が記録される', context.settingsFailure === 'cwd-fail');
+  const sentFail = calls.filter(c => c.command === 'sendMessage' && c.args.sessionId === 'cwd-fail');
+  t.ok('反映に失敗したときは送信しない', sentFail.length === 0);
+  context.cmd = oldCmd;
+  context.settingsFailure = null;
+  context.failedSettingsPatch = null;
 }

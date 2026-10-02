@@ -1,5 +1,62 @@
 # 設計メモ
 
+## 操作の一覧（2026-10-03）
+
+画面・MCP・CLI が外へ出す操作の正本を `core/ops/` の操作の一覧（レジストリ）に置く（[ADR 0081](adr/0081-control-surface-registry.md)）。移行の段階は、0 枠と `app.status`、1 読むことと会話の題・状態・`ply_control`・`/api/ops`・CLI・`pleiad mcp`、2（今）設定を書くこと（`settings.set`）・設定の承認カード・`sessions.fork`・状態のグループの操作、3 `host`・`ply_browser`・`ply_agents` の移行。
+
+- **定義**: `defineOp`（操作）と `defineSetting`（設定）。操作は `<領域>.<動詞>` の id・説明の辞書キー（`agent:ops.<id>.summary`。引数の説明は zod の `.describe('agent:ops.…')`）・入力の zod（`strict`。JSON Schema は `z.toJSONSchema`）・出力の形（read は必須）・危険度・出す口（`ui` / `mcp: direct｜catalog｜false` / `cli`）・handler を持つ。write は `riskReason`（なぜ guarded でないか）を書く。値に依って危険度が上がる操作は `riskOf`（定義の危険度を下げられない）と `confirm` を持つ。
+- **関所**: すべての口は `registry.invoke(主体, id, args, deps)` を通る。順序は、操作が無い・その口に出していない・human-only を agent が呼んだ → `NOT_FOUND`（在ることを明かさない）→ `hostScreenOnly` で PC の画面の人間でない → `HOST_SCREEN_ONLY` → 入力の検査 → `INVALID`（`issues: [{ path, code, message }]`）→ `riskOf` → 権限（`core/ops/policy.mjs`）→ 記録（`deps.audit`。read 以外。引数は入れない）→ handler → 返り値の伏せ字（秘密らしい名前の欄の文字列を `••••` に）。失敗は `code` で見分け、文は `deps.locale` の言語。
+- **権限**（[ADR 0082](adr/0082-control-surface-principals-and-risk.md)）: 主体は `human`（画面）と `agent`（Pleiad の中の AI の MCP・CLI・`pleiad mcp`。`via` と、束縛された会話の `sessionId`）。human は全部通す。agent は、read を通し、human-only を出さず、write は会話の範囲が none / readonly なら断り（`READ_ONLY_MODE`）、guarded は会話の承認モードで決める: 範囲 full かつ自律 never（bypass・yolo）なら通して記録を残し、それ以外は会話の承認カード（下の「設定の変更の承認」。`deps.approve` が無い呼び出し元は判定 `ask` を `NEEDS_APPROVAL` で返す）、会話に束縛されていなければ `NEEDS_UI`、none / readonly の会話は `READ_ONLY_MODE`。承認モードが引けない会話は弱い側（workspace・ask）に倒す。
+- **WS**: 汎用コマンド `invoke { op, args }`（`PROTOCOL_VERSION` は据え置き）。新しい機能は protocol.mjs に足さずレジストリに書く。昔のコマンドは `legacyCommand` で対応を付けて段階的に置き換える。
+- **操作（段階 1）**: `app.status`・`app.running`、`sessions.list`（絞り込みとページ送り。`cursor` は更新時刻と id）・`sessions.get`（メタ・子・最近の変更 10 件）・`sessions.read`（`messageId` の前後 `before`・`after` 件。上限は各 20 件・1 件 8000 字・合計 40000 字。`messageId` を省くと末尾。検索の hit の `uuid` をそのまま渡せる）・`sessions.setTitle`・`sessions.setStatus`（write。`sessionId` を省くと AI は自分の会話。人間は省けない。グループの根を動かすと中の会話も移る。`sessions.search` は [セッション検索](#セッション検索2026-10-03) の定義）、`settings.list / get / schema`（読むだけ）、`delegation.tasks / status`（読むだけ。依頼・結果の本文は一覧に載せず、結果は `offset` から 16000 字ずつ）。write は変更の記録（`sessions.json` の history）に `by: 'agent'`・`via`・`bySession`（どの会話の AI か）を残す。人間の操作（`setTitle`・`setStatus` コマンドと `invoke`）は同じ関数を通り `by: 'human'` のまま。
+- **設定の一覧**（`core/ops/settings.mjs`）: prefs の全キー（locale・linkOpen・instructionBudget・backend・model・effort・mode・claudeAccount・confirmAgentSites・confirmExternalLoads・agentSitePermissions・externalSitePermissions・browserProfiles・browserDefaultProfile・browserNewProfile・computerUse・delegationRouting・plyInstructions・addedContext）と `compaction.auto`・`context.default` の 21 件。`defineSetting` は `key`・`summary`・`risk`・`schema`（読んだ値）・`default`・`read` に加えて、書ける設定は `normalize`（値の検査と書いたあとの値）・`write`（保存と配信。サーバーの状態に触る保存は `ctx.writes`、検査に要る知識は `ctx.host`）・`writeSchema`（`settings.set` の value の形が読む値と違うとき）を持つ。`addedContext`（前の版の名残）だけ読むだけ。秘密（トークン・鍵）は設定に持たない。画面の WS コマンド `setPref` は `settings.set` の `legacyCommand` で、`setPref` の中身はこの定義を通る（検査も保存も配信も AI の口と同じ）。
+  - **危険度**（write 14 件・guarded 5 件・human-only 2 件）: human-only は `mode`（承認モードの既定）と `claudeAccount`（既定のアカウント。新しい会話が別の契約・課金で動く）で、agent の `settings.list` にも `get` にも `set` にも出ない（呼ぶと無い設定と同じ `SETTING_NOT_FOUND`）。guarded は全体の構成を変える `browserProfiles`・`delegationRouting`・`plyInstructions`・`context.default` と、読むだけの `addedContext`。write は表示と既定の選択（`locale`・`linkOpen`・`instructionBudget`・`backend`・`model`・`effort`・`browserDefaultProfile`・`browserNewProfile`・`compaction.auto`）と、関所を緩める向きだけ guarded に上がる `riskOf` 持ち 5 件: `confirmAgentSites`・`confirmExternalLoads`（オン → オフ）、`agentSitePermissions`・`externalSitePermissions`（「常に許可」の行が増える・ask から always に変わる）、`computerUse`（有効にする・全アプリの許可・常に許可を足す）。`riskOf` を持つ設定は `riskExamples`（向きごとの例）を書き、`ops-settings` が突き合わせる。全設定 × 全主体の判定は `tests/ops-surface.snap.json` の `settingPolicy`。
+  - **値の渡し方**: オブジェクトの設定（`compaction.auto`・`computerUse`・`delegationRouting`）は変える項目だけ渡せば重なる（`delegationRouting` は null の項目で既定に戻る）。`plyInstructions` の value は action（`save`・`toggle`・`delete`・`reset`・`order`）、`context.default` の value は `{ kind, value }`（その種類の担当と探索元。null で既定）か `{ kind?, roots }`。`null` で消えるのは `instructionBudget`・`claudeAccount` だけ。`model`・`effort`・`mode` は `backend` を添えるとそのエージェントの既定として覚える。同じ値を書き直しても保存は通る（副作用のため）が、記録・配信と承認は変わったときだけ。
+- **settings.set**（write。`ply_control` の直のツール `set_setting`、CLI `pleiad settings set <key> <value>`、WS `setPref`）: 設定ごとの危険度（`riskOf` で値と向きに依って決まる）が、そのまま呼び出しの危険度になる。write の設定は agent も通す（読み取り・計画の会話は `READ_ONLY_MODE`）。guarded は会話の承認モードで決まる（bypass・yolo 相当は通す・それ以外は承認カード・束縛なしは `NEEDS_UI`）。値の検査（`INVALID`）は承認より先で、聞く前に断る。読むだけの設定は `SETTING_READ_ONLY`。変えたら `settingsChanged { keys, by, via?, bySession? }` を全画面へ配り（`prefs`・`autoCompactionSettings`・`delegationRoutingChanged` の既存の配信に加えて。コンテキストの既定のように配信の無かった設定のため。開いている設定のページは `ply:settings-changed` で取り直す）、会話に束縛された呼び出しはその会話の変更の記録に `field: 'setting'`（前後の値は 300 字まで。画面の変更の記録には出さない）を残す。
+- **設定の変更の承認**（[ADR 0088](adr/0088-setting-change-approval.md)）: 承認が要る会話の guarded は、`registry.invoke` が `confirm(ctx, args)`（項目・前後の行・関所を緩めるか）から作った変更に受領証（`sha256(op + 引数 + 承認時の前の値)`）を付け、`deps.approve`（`core/server.mjs` の `askSettingChange`）で会話の承認カード（`askPermission` の payload `settingChange { op, key, requestId, rows, loosens, reason, receipt, agent }`、`toolName: ply_control`、「常に許可」なし、`detached`）を出し、**待たずに**承認待ち `{ status: 'pending', code: 'PENDING_APPROVAL', requestId, message }` を返す（MCP は `isError` にしない。HTTP は 202 と `pending: true`）。
+  - **カード**: 期限なしで残る。ターンの終わり・中断・host の不在では取り下げず（`settleAll`・`giveUp` が `detached` を外す）、走っている作業の数（`count`。デスクトップの終了と更新のゲート）・中断の印・自動圧縮・委譲の子の「承認待ち」・中断で止めたもの（`captureStops`）にも数えない。一覧の「承認待ち」と `app.running` の `waiting` には数える。同じ会話・同じ設定（設定でない操作は同じ操作）の新しい要求は古いカードを取り下げる（結果は「取り下げ」）。会話を開き直すと `loadSession` の `permissions` で出し直す。
+  - **決着**: 許可なら `proceed()` が前の値を読み直して受領証を作り直し、合えば実行（記録はここで残る）、合わなければ同じ `requestId` の新しいカードで聞き直す（2 回まで。変わり続けたら `STALE`）。拒否は実行しない。画面の `resolvePermission` は出したカードの受領証を添え、合わない答えは `RECEIPT_MISMATCH` で受けない（取り違え・再送を防ぐ）。決着は画面へ `settingApproval { requestId, outcome }`（`allowed`・`denied`・`failed`・`superseded`・`restart`）で配る。
+  - **結果の通知**: 決着をその会話へ 1 つの文で届ける（`agent:ops.settingNotice.*`。`[Pleiad 設定の変更の結果 / {requestId}]`・`結果: 許可|拒否|失敗|取り下げ`・説明。同じ会話の分はまとめて 1 つ）。届け方は委譲の完了通知と同じ（`noticeTarget` が渡せる走っているターンへ途中送信、渡せなければ `noticeBlocked` が解けてから新しいターン。届けた文は `taskNotices` のハッシュで人の発言と見分ける）。台帳は `core/setting-approvals.mjs`（`<データ置き場>/setting-approvals.json`。答えを待つ要求と届ける前の結果。1 秒ごとと、ターンの終わりに届けてみる）。承認カードは再起動をまたがないので、次の起動で待っていた要求を「再起動で取り下げた」結果に変えて届ける。送る前に `delivering` を保存し、渡ったか分からないまま落ちた結果は送り直さない。
+  - 待ちの上限は `ply_control` の MCP（Claude の既定・Codex の `tool_timeout_sec: 60`・agy の中継の `control` の 60 秒）と CLI の POST とも 60 秒（ほかの Pleiad の MCP と同じ）。委譲の子の承認は `askPermission` が祖先の会話へ写す（既存の仕組み）。リモート・モバイルの画面も同じ `permission` イベントと `resolvePermission` なので、同じカードが出る。
+  - **カードの文言**（`web/setting-change.mjs`・[design-system.md](design-system.md)）: 「{エージェント名} が設定を変えようとしています」・設定画面と同じ名前と値の言い方（オン/オフ・一覧は追加/削除。キーと JSON は出さない。前は取り消し線）・「理由: …」（AI が書いたもの）・確認を減らす変更のときだけ ⚠ と 1 行・ボタンは「拒否」「変更を許可」。置き場は会話の単独のカード（ターンをまたいで残るので、ツールの行の下には置かない）。
+- **sessions.fork・statuses.setIcon・statuses.create**（write）: `sessions.fork` は画面の「ここから分岐」と同じ `forkConversation` を通り（親の履歴を写した新しい会話ができ、親は変わらない。分岐は親と同じ承認モードで始まる）、`statuses.setIcon`・`statuses.create` は状態のグループのアイコンと空のグループ（`legacyCommand` は `setStatusIcon`・`createStatus`・`fork`）。人間が全部の会話・グループに触れるので、agent も同じ（ADR 0082）。
+- **ply_control**（会話ごとの HTTP の MCP `/mcp/control`。骨格は `core/mcp-bridge.mjs`）: Claude・Codex・Antigravity の全会話に既定で渡す（止める設定は無い）。会話ごとの Bearer が会話に束縛され、呼び出しは主体 `{ by: 'agent', via: 'mcp', sessionId }` で `registry.invoke` を通る。会話の id が決まるまでは束縛を決められないので呼びを失敗させる（束縛なしとして通さない）。直に出すツールは `search_sessions`・`get_session`・`read_session`・`get_setting`・`set_setting` と `list_ops`（一覧。id を渡すと説明・入力の JSON Schema・危険度）・`call_op`（`{ op, args }`）。残りの操作は `list_ops` と `call_op` で呼ぶので、操作を足してもツールの量は変わらない（`mcp: 'direct'` を付けたものだけ増える。名前は `core/ops/registry.mjs` の `DIRECT_TOOL_NAMES`）。ツールの定義は `core/ops/surfaces/mcp.mjs` の生成器で作り、`pleiad mcp` も同じものを使う。`instructions`（3〜4 行）は MCP の `initialize` ではなく会話の指示欄に足す（二重にしない）。毎ターンの文の量（指示 + tools/list）は ja・en とも 1800 トークン以内（`ops-surface` の T4。今は ja 約 1730・en 約 1630。search_sessions の入力の説明が大きい。上限は上げず、説明を詰めて収める）。「指示の量」の内訳 `PLY_PARTS` に `control`。
+  - **渡し方**: Claude は `mcpServers.ply_control`（http）・指示を `systemPrompt.append`・ツールごとの承認は聞かない（権限と承認は `registry.invoke` が会話の承認モードで決める）。Codex は `mcp_servers.ply_control`（`default_tools_approval_mode: approve`）・指示を `developerInstructions`。Antigravity は mcpServers の先頭の 1 本しか起こさないので、既存の中継（`core/agy-context-relay.mjs`）に `--control` を足して context・computer・browser と 1 本に束ねる。ツール名には `ply_control_` を付けて見せ、呼び出しで外す（一般的な名前が他と衝突しないように）。口は会話のあいだ同じで、変わったときだけ起こし直す。
+  - **会話のシェルの環境変数**: `PLEIAD_CONTROL_URL`・`PLEIAD_CONTROL_TOKEN`（トークンは `ply_control` の Bearer と同じ）を渡し、会話のシェルから呼んだ `pleiad` をその会話に束縛する。Claude はクエリの env、Codex はスレッドごとの `shell_environment_policy.set`（内蔵ブラウザーの環境変数と束ねる。app-server は全会話で 1 本なのでプロセスの env では渡せない）、Antigravity は会話のプロセスの env。
+- **HTTP と CLI**（[ADR 0083](adr/0083-control-surface-cli.md)）: サーバーは起動の案内を出す前に `<データ置き場>/control.json`（権限 0600。`version`・`pid`・`origin`・`cliToken`・`startedAt`・`appVersion`・`kind`（デスクトップ版は `desktop`、`npm start` は `server`））を書き、終了時に pid が自分のときだけ消す（強制終了で残っても、CLI は pid で見分ける）。`cliToken` は画面のトークンと別の乱数で、効くのは `GET /api/ops[?surface=cli|mcp]` と `POST /api/ops/<id>`（本文が引数。`{ ok, result }` か `{ ok: false, code, error, issues? }`。承認待ちは 202 と `{ ok: true, pending: true, result }`。404 は `NOT_FOUND` 系・400 は `INVALID`・403 は `NEEDS_UI`・`NEEDS_APPROVAL`・`READ_ONLY_MODE`・`HOST_SCREEN_ONLY`）だけ。画面・WS・静的ファイル・`/mcp/control` には効かず、画面のトークンもここには効かない。主体は会話に束縛されない `agent`（`via: cli`。`pleiad mcp` は `x-pleiad-via: mcp-stdio`）で、guarded は `NEEDS_UI`。会話の接続のトークン（環境変数）は同じ会話に束縛された `via: cli` になり、その会話の承認モードに従う。言語は `x-pleiad-locale`（束縛された呼び出しは会話の言語）。
+  - **CLI**（`bin/pleiad.mjs`。package.json の `bin`。Node の組み込みだけ）: `pleiad status`・`sessions list|get|read|rename|status|fork`・`statuses icon|create`・`settings list|get|schema|set`・`delegation tasks|status`・`running`・`ops`（一覧）・`call <op> [--args '{…}']`・`mcp`。サブコマンドと引数は `GET /api/ops` を実行時に取って作る（id の `.` が区切り。位置引数は `cli.positional`、残りは `--<名前>`、型は JSON Schema から変換、型の無い欄（`settings set` の value）は JSON として読み、読めなければ文字列、`<コマンド> --help` で引数の説明）ので、サーバーに操作が増えれば CLI を作り直さずに出る。`--json` で結果（失敗も `code`・`error`・`issues`）を JSON に、`--lang ja|en`（既定は `AGENT_HOST_LOCALE`・PC の言語）。終了コードは 0 成功・2 入力の誤り（`INVALID`・`NOT_FOUND` 系）・3 Pleiad が起動していない（`control.json` が無い・pid が死んでいる・つながらない・401）・4 拒否または画面での操作が必要（`NEEDS_UI`・`NEEDS_APPROVAL`・`READ_ONLY_MODE`・`HOST_SCREEN_ONLY`・`DENIED`・`STALE`・`SETTING_READ_ONLY`）・5 その他・6 受け付けて承認待ち（まだ変わっていない）。会話に束縛された CLI（環境変数）の guarded は、会話に承認カードを出して待たずに 6 で終わる（結果は会話に届く。ADR 0088）。束縛されない CLI の guarded は `NEEDS_UI`（4）で、画面へ誘導する。つなぎ先は環境変数 `PLEIAD_CONTROL_URL`・`PLEIAD_CONTROL_TOKEN`（会話に束縛）→ `AGENT_HOST_DATA`（無ければ `~/.agent-host`）の `control.json`（束縛なし）。ファイルを直に読む読み取りのモードは無い。CLI から Pleiad を起こす `--start` は後で決める。
+  - **CLI の配り方**（[ADR 0090](adr/0090-cli-in-desktop-app.md)）: デスクトップ版は `bin/` を同梱する（`resources/app/bin/`。mac は `Pleiad.app/Contents/Resources/app/bin/`）。起動口は `bin/pleiad.cmd`（Windows）と `bin/pleiad`（シェルスクリプト）で、3 つ上に Ply の実行ファイルがあれば `ELECTRON_RUN_AS_NODE=1` でその内蔵 Node、無ければ（リポジトリ）`node` で `bin/pleiad.mjs` を走らせる。インストーラーは OS の PATH を書き換えない。サーバーは起動時に `bin/` を自分の PATH の先頭に足し（`core/cli-launcher.mjs`）、Claude・Codex・Antigravity のプロセスと `!` の行のシェルはそれを継ぐので、会話のシェルでは `pleiad` がそのまま使える。自分のターミナルで使うなら、そのフォルダーを自分で PATH に足す。
+  - **`pleiad mcp`**: 同じ一覧を stdio の MCP として出す（Pleiad の外の AI 向け。Pleiad の中の会話には束縛した `ply_control` を渡す）。Pleiad が起動していなければ `list_ops`・`call_op` の 2 本だけを出し、呼ぶと `code: NOT_RUNNING`。起動した・止まった・一覧が変わったときは `notifications/tools/list_changed`。登録の例: `claude mcp add pleiad -- node <リポジトリ>/bin/pleiad.mjs mcp`（別のデータ置き場は `AGENT_HOST_DATA` を環境に付ける）。設定 › アプリ情報・更新の「外の AI から Pleiad を使う」に「MCP の設定をコピー」（`mcpServers` の JSON）・「claude mcp add をコピー」があり、走っているこの Pleiad に合わせた形を写す（操作 `app.cliSetup`。read・画面だけ・ホストの画面だけで、取れなければ節ごと出さない）: `command` はサーバーの実行ファイル（Ply.exe か node。Windows の `.cmd` はシェル無しで起動できないので起動口は書かない）、`args` は `[<bin/pleiad.mjs>, "mcp"]`、`env` は Electron なら `ELECTRON_RUN_AS_NODE`、既定でないデータ置き場なら `AGENT_HOST_DATA`。押すとボタンの文字が 1.8 秒「コピーしました」（失敗は「コピーできませんでした」）になる。
+- **検査用の操作**: `AGENT_HOST_BACKENDS` に `fake` があるとき（テスト）だけ、権限の配線を確かめる `probe.guarded`（guarded）・`probe.humanOnly`（human-only。画面だけ）が載る（`core/ops/probe.mjs`）。fake バックエンドには、読み取り専用の `plan` と、確認なし・制限なしの `bypass` のモードがある。サーバー越しの検査は `ops-control`（`control.json`・HTTP の認証・会話への束縛・権限の配線・記録・伏せ字）、CLI と `pleiad mcp` は `ops-cli`、3 つのエージェントへの渡し方は `control-delivery`、会話・設定・委譲の中身は `ops-sessions`、生成器と橋は `ops-mcp`、設定を書く規則（全設定 × 全主体の判定・承認カード・受領証）は `ops-settings`（身代わりのサーバー）と `ops-control`（サーバー越し）、承認カードの中身は `setting-change-ui`、実ブラウザーは `tests/browser/setting-approval.cjs`。
+
+- **載せ忘れの検査**: `tests/lint-ops.mjs`（`npm test` の `ops-coverage`）。`COMMANDS` の各名前は、操作の `legacyCommand` か `tests/ops-baseline.json` の除外表（理由の種類: `ui-internal`・`stream`・`human-only`・`host-screen-only`・`gateway`・`todo`）に載る。`todo` と、`store.setPref` を直に呼ぶ印（`ops-allow-setpref`。prefs.json への書き込みの出口 `savePref`・起動時の修復・自動圧縮の 3 か所）は増やせない（縮めるときだけ `node tests/lint-ops.mjs --update-baseline`）。prefs に書くキー（`savePref` の呼び出し）は全部、設定の一覧にある（未移行の欄は無い）。`setPref` の WS コマンドは設定の一覧から作るので、キーの一覧を手で持たない。権限の表・定義の検査・関所の順序は `ops-policy`・`ops-registry`、実際の一覧の snapshot（`tests/ops-surface.snap.json`。更新は `OPS_UPDATE_SNAPSHOT=1 npm test -- ops-surface`）・文の量・辞書・JSON Schema・伏せ字は `ops-surface`。
+
+## git の動き（2026-10-03）
+
+エージェントが git で何をしたかを、普段は隠し、いざというときに辿れるようにする（[ADR 0085](adr/0085-host-reads-git-and-turn-snapshots.md)）。画面は `docs/design-system.md`「git の動き」。
+
+- **ホストが git を読む**（`core/git-info.mjs`）: `execFile('git', …)`（シェルを通さない）・`windowsHide`・タイムアウト・`GIT_OPTIONAL_LOCKS=0`・読み取り系の許可表。cwd は検証済みの会話の cwd（会話の無い下書きは、どれかの会話が使ったことのある場所だけ。`gitCwd`）。git が無い・管理外・時間切れは「情報なし」（null）。ルートは `rev-parse --show-toplevel`、パスはルート相対。
+- **状態**（`core/git-activity.mjs` の `status`）: `status --porcelain=v2 --branch -z` の 1 回。ブランチ・先頭の hash・upstream・ahead/behind・変更の数（追跡の変更・未追跡・競合。未追跡の走査が時間切れなら数えずにやり直す）・分けた作業場所か（`git worktree` で作った .git の指す先が共有）。会話ごとに直列化し、cwd ごとに 2 秒のキャッシュ。画面は会話・作業場所が変わったとき、会話を開いたとき、ターンの終わりに取り直す。
+- **ターンの始まりと終わりの撮影**: 書き込みの範囲（読むだけより上）のターンで、作業場所が git のときだけ、`refs/pleiad/turn/<会話 id>/<n>-start|end` に作業ツリー（未追跡を含み .gitignore を守る）を撮る。本物の index を一時ファイルへ写し、その上で `add -A` → `write-tree` → `commit-tree`（親は HEAD）→ `update-ref`。ユーザーの index・HEAD・ブランチ・作業ツリーには触れない。何も動かなかったターンは `-end` を書かず、最初でない `-start` も消す。30 日で掃除する。「この会話の間」は最初の `-start` と今の作業ツリーの比較（前のターンの終わりを基準にしない。ターンの間に外で起きた変更が化けないため）。
+- **返答の下の要約**: ターンの終わりに、始まりと終わりの撮影の差（ファイル・行数）・HEAD の変化（コミット）・ブランチの作成や切り替え・`gh pr create` の URL のどれかがあれば、present の 1 種 `kind: 'git'`（`git: { branch, files, add, del, commits, commitCount, pr, created, n }`）を `turnEnd` の前に出して会話に保存する（`at` はターンの終わり）。動かなかったターンは出さない。
+- **会話に流れたコマンドの結果から拾う**（`core/git-timeline.mjs`）: `git checkout -b` / `git switch -c` の引数・`git commit` の結果の `[branch hash] subject`・`gh pr create` の結果の URL。Claude の Bash・PowerShell、Codex の commandExecution、Antigravity の run_command の入力（`command` / `CommandLine`）と結果の本文だけを見る。失敗・結果の無い呼び出しは拾わない。
+- **WS の読み取りコマンド**: `gitStatus`（状態。`summary: true` で会話の間のファイル・コミットの合計も）・`gitPanel`（状態・したこと・変更の一覧）・`gitDiff`（1 ファイルの統一差分をハンクの行に構造化して返す。バイナリ・大きいものは本文なし）。いずれも画面の内部の口（`tests/ops-baseline.json` の `ui-internal`）。`PROTOCOL_VERSION` は据え置き。
+- **委譲**: 子のタスクの完了時に子の作業場所の会話の間のファイル・コミットがあれば、完了通知と `ply_task_status` / `ply_task_wait` に 1 行 `変更: <branch> · N ファイル +a −d · コミット k`（`docs/agent-delegation.md`）。
+
+## 分けた作業場所（2026-10-03）
+
+同じリポジトリに書き手が 2 人いるときと、頼まれたときだけ、分けた作業場所（git の `worktree`）を作り、片付けまで Pleiad が持つ（[ADR 0089](adr/0089-worktree-on-demand.md)）。画面は `docs/design-system.md`「分けた作業場所」、委譲は `docs/agent-delegation.md`「分けた作業場所」。ADR 0003 の「作業ごとに worktree」はこの開発リポジトリの規則で、製品の仕様とは別。
+
+- **作る**（`core/worktrees.mjs`・`core/git-worktree.mjs`）: 置き場は `<リポジトリの親>/<リポジトリ名>.pleiad/<id>`（id は `ply-` と 16 進 4 桁。サーバーが決め、画面から任意のパスを受けない）、ブランチ `pleiad/<id>`、ベースは今の HEAD（サブフォルダーから分けたら中でも同じサブフォルダー）。依存は張らない。台帳（`<データ置き場>/worktrees.json`。項目の状態は `creating` → `ready` → `removing`）に「作成中」を書いてから `git worktree add -b` し、失敗したら worktree・ブランチ・台帳まで戻す。起動時の `reconcile` が台帳と `git worktree list` を突き合わせる（作成中のまま落ちたものは巻き戻し、片付けの途中のものは終わらせ、フォルダーも登録も無いものは台帳から外す）。台帳の置き場・ブランチが決めた形でないものには消す操作をしない。強制の削除（`--force`・`branch -D`）は持たない（例外は「退避して消す」だけ）。
+- **ぶつかりの判定**（`core/worktree-host.mjs`）: 走っているターン（`runtime.turns`。圧縮を除く）のうち、書き込みの範囲（`core/modes.mjs` の workspace 以上）で、cwd の Git ルートが同じ別の会話（委譲の子を含む）。読むだけの会話・git 管理外・自分は数えない。`worktreeCheck { sessionId, cwd?, backend?, mode? }` が `{ git, current, conflicts: [{ sessionId, title, child }], canSplit, always }` を返し、画面は入力欄の上の 1 行・チップ・作業場所の面に使う。
+- **分けて始める**: `worktreeSplit` が作り、画面が `setTurnSettings` の `cwd` で予約する（取り消し・別の場所への変更は予約から外れたものを片付ける）。下書き（送っていない会話）は作業場所そのものをそれにする。「いつも分ける」は台帳の `settings.always`（`worktreeSettings`・`setWorktreeSettings`。変わったら `worktreeSettings` イベント）で、`runTurn` が人の始めるターン（内部のターン・圧縮・委譲の子を除く）の前に判定して分けて始め、会話の id が決まってから present `kind: 'worktree'`（`worktree: { id, branch, path, origin, conflicts, count }`）を出す。
+- **委譲**: `agentBridge` の呼び出しが `decideIsolation` で分けるか決め、`prepare` が子の作業場所を作って子の cwd にする（`agentTasks` の行の `worktree`）。子が終わったら `taskDone` が状態（`workspace`）を取り、変更なし・取り込み済みなら片付ける。準備の途中（作ってから台帳に子が載るまで）は片付けない。
+- **片付け**（`worktrees.settle`・`host.sweep`）: 変更なし・取り込み済み（`merge-base --is-ancestor`。元のブランチ・ルートの HEAD のどちらかに入っている）なら消し、未取り込み・状態が分からない・使っているもの（走っているターン・シェル・委譲の子・裏の作業、cwd や次のターンの予約がそこにある会話）があれば残す。契機はターンの終わり・子の完了・起動時・右パネルを開いたとき・予約の取り消し・元の場所へ戻したターンの始まり。自動の片付けは作ってから 60 秒は対象にしない（`AGENT_HOST_WORKTREE_GRACE_MS`）。`AGENT_HOST_WORKTREES=off` は作業場所を作らない（テスト用。cwd がこのリポジトリのテストのサーバーが、本体の git に `<リポジトリ>.pleiad/` の作業場所を残さないため。`tests/lib/server.mjs` が既定で渡し、確かめるテストだけが一時のリポジトリで `on` にする）。消す前に、中の ReparsePoint を全部列挙してリンクだけを外し（外せなければ中止）、会話の cwd を元の場所へ戻し、`git worktree remove` を掴まれているときだけ数回やり直す。ブランチは `branch -d`、取り込み先が今の HEAD でないときは先頭が取り込み先から辿れることを確かめて名前だけを外す。
+- **退避**: `refs/pleiad/archive/<id>/<時刻>` に作業ツリー全体（`snapshotTree`。親は worktree の HEAD）を撮り、撮り直した tree が同じことを確かめてから消す。コミットの本文に作り直しの控え（ベース・元の場所・種類）。`worktreeRestore` で新しい作業場所を作り直す。90 日で掃除。
+- **右パネルの残り**: `gitPanel` が `worktrees: { current, leftovers: [{ id, branch, path, origin, baseBranch, purpose, kept, files, fileNames, at, kind, mergeSessionId }] }` を返す（使っているもの・今いる場所・変更なし・取り込み済みは出さない）。`worktreeKeep`・`worktreeArchive`・`worktreeDiscard`。取り込みを頼むは画面が `sendMessage` で、取り込む役（委譲の子なら依頼元、人が分けた会話ならその会話）へ依頼文を送る。
+- **読み取りの許可**: 置き場はデータ置き場の外なので、ファイルのプレビューは [ADR 0050](adr/0050-local-file-access.md) のとおり読める（表示の基準 `fileRoots` にも台帳のパスを足す）。
+- **脇の会話の行**: 分けた作業場所の中の会話は `worktree: { id, branch, origin }` を持ち、行の場所は元の場所の名前に枝分かれの印を付ける（`place` も元の場所）。
+
 ## 多言語対応（2026-09-23）
 
 画面を日本語と英語で出せるようにする。段階 0（今）は土台と検査だけで、既存の日本語の画面の見た目は変えない（日付・数の書き方だけは画面の言語に揃えた）。文言の置き換えは段階 1 以降（小さい画面 → 会話画面 → 管理画面 → core → desktop → エージェント向け）。理由は [ADR 0020](adr/0020-i18n-dictionary-and-ratchet.md)。
@@ -79,9 +136,21 @@ setup-token が発行するトークンの scope は `user:inference` だけで�
 
 ## 完了通知・文中のスキル（2026-09-18）
 
-正常完了の `turnEnd` に結果と完了時刻を含め、開いている会話に限らずデスクトップ通知を出す。中断・失敗・再キュー・履歴の再表示は対象外。同じ会話の同じ完了は重複通知しない。デスクトップ版は信頼済みのメインフレームから IPC を通して Electron の OS 通知を使い、クリックでウィンドウを復帰して対象会話を開く。通知内容は会話名のみとし、本文やツール出力は載せない。ブラウザー版は送信操作時に通知許可を一度要求し、許可済みの場合に通知する。OS 未対応や通知拒否は会話の進行を妨げない。
+正常完了の `turnEnd` に結果と完了時刻を含め、開いている会話に限らずデスクトップ通知を出す。失敗（outcome が error）も別の種類として出す（下の「通知」）。中断・再キュー・履歴の再表示は対象外。同じ会話の同じ完了は重複通知しない。デスクトップ版は信頼済みのメインフレームから IPC を通して Electron の OS 通知を使い、クリックでウィンドウを復帰して対象会話を開く。通知内容は会話名のみとし、本文やツール出力は載せない。ブラウザー版は送信操作時に通知許可を一度要求し、許可済みの場合に通知する。OS 未対応や通知拒否は会話の進行を妨げない。
 
 スキル候補はカーソル位置の `/名前` を補完し、文中・複数指定・既存文の途中への挿入を扱う。Pleiad がスキル読み込みを担当する場合、文中の `/名前` も明示指定として扱い、手動呼び出し専用のスキルを公開する。
+
+## 通知（2026-10-03）
+
+この PC の OS 通知と、離れたスマホへの通知を同じ出来事から出す（[ADR 0086](adr/0086-notifications-through-relay.md)）。
+
+- **種類**: 返事が要る（承認・質問）・失敗（ターンの outcome が error。中断と、ホストが離れたことによる終わりは送らない）・完了。委譲の子の会話の完了は送らない（依頼元の完了に含む）。空いている間の自動圧縮のターンも送らない。完了と失敗は、子の作業や裏の作業が残る間は待ち、会話が落ち着いてから 1 回だけ（`core/completion-notices.mjs`。画面が居なくても、スマホへはその時点で送る）。
+- **見ている会話**: 各画面は「いま見ている会話」を `presence { visible, sessionId }` でホストへ送る（会話を移した・窓が隠れた/現れた・つなぎ直したときと、見ている間は 1 分ごと。`web/presence.mjs`）。ホストは 150 秒更新の無い印を捨て、接続が閉じたら消す（`core/notify/presence.mjs`）。スマホのアプリが背面に回った間は、画面が可視でも見ていない。
+- **この PC**: 設定 › 通知 › この PC の 3 つ（完了・返事待ち・失敗。既定はすべてオン。`<data>/notify.json`）で切った種類は出さない。その会話を見ている間も出さない（出さなかった分は後から出し直さない）。
+- **スマホ**（`core/notify/`）: ホストが端末ごとに判定し、端末ごとの通知鍵で暗号化して中継の通知の線へ渡す（`docs/remote.md` §5.6・§11-5）。送らない: 端末で切った種類・ホストで止めた端末・その端末自身の画面がその会話を見ている・他の画面（PC・別の端末）が見ていて端末の設定「PC で見ている会話は送らない」（既定オン）・2 分より古い完了・30 秒未満のターンの完了。承認・質問がどこかで決着した（ターンの終わりを含む）ら、出ている通知へ取り消しを送る。完了・失敗の会話をどこかで開いた・既読にしたときも取り消す。会話名は一覧の行と同じ題（無ければ空で、端末が「Pleiad の会話」にする）。
+- **端末の出し方**（Android。`NotifyPlanner`）: 同じ会話は 1 通を上書きし、承認・質問が複数なら件数を添える。完了はホストごとに 2 件目から「N 件の会話が終わりました」に束ねる（1 件に戻れば静かに戻す）。チャンネルは「要対応」（承認・質問・失敗）と「完了」。文面は会話名だけで、ホスト名をサブテキストに出す。ロック画面は既定で汎用の文。押すと `pleiad://open?h=&s=` でそのホストの窓がその会話を開く（束ねた通知は最新の会話）。通知から直接の許可は付けない。
+- **設定**: スマホのアプリの「通知」（受け取る・返事が要るとき・失敗・完了・ロック画面に会話名を出す・PC で見ている会話は送らない）は端末ごとで、変えたらホストへ登録し直す。デスクトップの設定 › 通知 の「スマホ」は、ペアリングしたスマホの一覧（最後に送った時刻・オン/オフ）で、ホスト側で止める切り替えだけを持つ。
+- **WS コマンド**: `presence`・`notifyStatus`・`setNotifyPc { done?, reply?, failed? }`・`setNotifyDevice { id, muted }`・`notifyRegister { key, settings }`（中継越しの端末の画面からだけ）。変わるたびに `notifyStatus` イベントを全画面へ。`ready` に `notify: 1`。
 
 ## タイトル生成（2026-09-15）
 
@@ -148,6 +217,17 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 - **位置**: 確定するたびに、基準の行（`historyAnchor`）の位置が動かないよう `#log` の `scrollTop` を補正する。末尾を見ていたなら補正ではなく末尾へ合わせ直す。`scrollTop` は画面の 1px に丸められるので、丸めきれなかった端数は次の補正に足す。
 - **切り替え**: 会話の切り替え・描き直しは `cancel`、描き終えたら `prepare`（`prepareHistoryHeights`）。静かな読み直しで残した行は確定済みのまま残り、未確定の行だけを見張り直す。
 
+## セッション検索（2026-10-03）
+
+会話の題だけでなく本文まで探す core の関数 `search(input) → SearchResult`（`core/session-search.mjs`。[ADR 0080](adr/0080-session-fulltext-search.md)）。画面・MCP・CLI は `core/ops/sessions.mjs` の操作 `sessions.search`（risk: read。画面・MCP 直・CLI `sessions search <query>`）から同じものを呼ぶ。画面は脇の検索で、WS の汎用 `invoke` から呼ぶ（新しい WS コマンドは足さない。見た目は design-system.md §4.1「検索」、[ADR 0084](adr/0084-sidebar-fulltext-search-ui.md)）。MCP は直に出すツール `search_sessions`（ply_control・`pleiad mcp`）、CLI は `pleiad sessions search <query>`。hit の `uuid` を `sessions.read` の `messageId` に渡すと、その発言の前後を読める。
+
+- **方式**: 索引は作らず、会話ごとの発言の写し（本文と、NFKC・小文字に畳んだ本文）をメモリに持ち、探すたびに全件を走査する。写しは起動の数秒後から裏で作り（新しい会話から・並列 2 本。Pleiad が持つ会話は `conversations/<id>.json` を直接、ほかはバックエンドの `getMessages`）、ターンの終わり（`endTurn`）と `loadSession` で読んだ履歴で更新する。一覧の `lastModified` が写しより新しい会話は、探すときに読み直す（短く待ち、間に合わなければ古い写しで答える）。探された範囲の写しが揃っていない間は `partial: true`。`status()` は `{ indexed, pending, updatedAt }`。
+- **対象**: 人と AI の本文。thinking・ツールの出力・圧縮の要約・システムの行・委譲の完了通知・提示は対象外。ツールの入力（command・path・file_path・pattern・url などの短い項目を 400 字まで）は `filters.includeToolInputs` のときだけ。題・状態・場所も当てる。場所は作業ディレクトリのフォルダー名だけ。
+- **照合**: 空白区切りは AND（語ごとに、題・状態・場所・どの発言に当たってもよい）。`"…"` は 1 語で畳まず完全一致、ほかは NFKC と小文字の部分一致。演算子は解かない。語が 13 個以上は `RangeError`。
+- **絞り込み**（`filters`）: `backends`・`cwd`（完全一致）・`status`（`null` は状態なし）・`since`/`until`（会話の `lastModified`。ISO か epoch ms）・`speaker`（`any`/`user`/`assistant`）・`includeDelegated`（既定は委譲の子を含めない）・`includeToolInputs`・`sessionIds`。アーカイブという考えは無い。
+- **並びと続き**: `sort` は `relevance`（既定）か `recent`。関連度は題に当たった語 ×4 + 全部の語が 1 つの発言か題に揃えば 2 + `log2(1 + 一致した発言の数)` − min(3, 経過日数 / 30)（同点は新しい順）。新しさの減点に上限（3 = 90 日）があるので、1 年前の会話も、題に全部の語が当たれば新しい本文だけの当たりより先に並ぶ（2026-10-03。ADR 0080 の式からの調整）。語が無ければ新しい順。`limit`（既定 50・最大 200）と `cursor`（`nextCursor` をそのまま返す）で会話の件数を区切る。
+- **結果**: 会話の平らな一覧。各会話に `matched`（`title`/`status`/`place`/`message`/`toolInput`）・`hitCount`（一致した発言の数）・`hits`（`hitsPerSession` 件。既定 1・最大 10）。hit は `uuid`（画面の行の `data-uuid` と同じ）・`index`・`role`・`at`・`excerpt`（改行と連続空白を畳み、最初の一致の手前 16 字から約 140 字）・`ranges`（excerpt の中の一致の位置）。抜粋に選ぶ発言は、題に無い語を多く含む → 語を多く含む → 新しい、の順。委譲の子（`includeDelegated`）には `parentSessionId` が付く。
+
 ## デスクトップの更新（2026-09-12）
 
 Pleiad の画面・サーバー・デスクトップを一つのバージョンとして配布する。
@@ -164,7 +244,7 @@ Electron main が electron-updater と更新設定を持ち、sandbox preload �
 
 途中送信は `control.steer(item)` で渡す。`item` は outbox の項目そのもの（`{ id, args }`）で、バックエンドは本文に `item.args.prompt` を、相手に預ける照合用の id に `item.id` を使う。返りは true = 受理 / false = 受理できない（送信待ちへ戻す）/ throw = 結果不明。
 
-Codex は実行中のハンドルに `steer` を公開し、`turn/steer` に `expectedTurnId` と `clientUserMessageId`（= `item.id`）を付けて途中入力する。公式仕様: https://learn.chatgpt.com/docs/app-server#steer-an-active-turn 。Claude（2026-09〜）もターンの間 CLI の入力を開けたままにして `steer` を公開し、開いた入力へ user メッセージを `priority: "next"` で流す。走っているツールの結果の区切り（承認待ちなら承認が返った区切り）で今のターンに折り込まれ、**そのターンの中で**答える。main が止まっていればその場が区切りになり、すぐ答える。入力を閉じた後（ターンの終わり際）は受け付けず、次のターンへ回す（詳細は multi-backend.md §2.2）。Antigravity（agy は 1 行 1 ターンで、途中の入力は今のターンが終わってから別のターンとして走る。実測 2026-09）と次ターン設定が予約されている場合は、現在のターンが終わってから順番に実行する。古い Codex がプロトコル上明示的に拒否した場合も待機する。通信切断・タイムアウトなど、受領結果が不明な場合は自動再送しない。
+Codex は実行中のハンドルに `steer` を公開し、`turn/steer` に `expectedTurnId` と `clientUserMessageId`（= `item.id`）を付けて途中入力する。公式仕様: https://learn.chatgpt.com/docs/app-server#steer-an-active-turn 。Claude（2026-09〜）もターンの間 CLI の入力を開けたままにして `steer` を公開し、開いた入力へ user メッセージを `priority: "next"` で流す。走っているツールの結果の区切り（承認待ちなら承認が返った区切り）で今のターンに折り込まれ、**そのターンの中で**答える。main が止まっていればその場が区切りになり、すぐ答える。入力を閉じた後（ターンの終わり際）は受け付けず、次のターンへ回す（詳細は multi-backend.md §2.2）。Antigravity（agy は 1 行 1 ターンで、途中の入力は今のターンが終わってから別のターンとして走る。実測 2026-09）は、現在のターンが終わってから順番に実行する。次ターン設定が予約されている場合も、main が動いている間は同じ。main が返答を終えて裏だけを待っている間（`phase: waiting`）は、予約を残したまま途中送信する（今のターンの設定で処理され、予約は次のターンから効く。[ADR 0077](adr/0077-steer-before-reservation-while-waiting.md)）。古い Codex がプロトコル上明示的に拒否した場合も待機する。通信切断・タイムアウトなど、受領結果が不明な場合は自動再送しない。
 
 受理と「エージェントに渡った」は別の瞬間として扱う。途中送信で渡った合図を後から出せるバックエンドは `control.steerConfirms = true` を立て、会話に入った時点で `userMessage.delivered { messageId }` を出す。server はこれが立っている途中送信の `userMessage` に `pending: true` を載せ、web は渡るまでの間だけ吹き出しの下に回る弧と「次の区切りで AI に渡します」を出す。渡れば消し、渡らないままターンが終わったら「この作業には間に合いませんでした。続けて答えます」に言い換える（その後で渡れば消える）。合図を出せないバックエンドの途中送信では `pending` を載せない＝今までどおり「AIへ送信済み」だけを出す。
 
@@ -215,6 +295,8 @@ Claude Code を **セッションを離れずに扱えるようにするブラ�
 
 （ワークスペースへの破壊的操作の承認フローは Claude Code の権限層がそのまま担う。
 これはセッションのメタ情報とは別の層の話で、この思想とは直交する。）
+
+設定を変える操作の権限（AI が自分の関所を緩める変更を、どの会話なら通し、どこで承認を挟むか）は主体 × 危険度 × 会話の承認モードの表で決める（[ADR 0082](adr/0082-control-surface-principals-and-risk.md)）。
 
 ## 3. スコープ
 
@@ -298,8 +380,8 @@ sidecar が持つのは次の3つだけ。**いずれも後から追加すると
 {
   "statusChangedAt": "…",   // ★ tag がいつ変わったか。lastModified はセッション全体の mtime で代用できない
   "history": [              // ★ いつ・誰が・何を・なぜ。人間も AI も同じ形で残る
-    { "at": "…", "by": "ai|human", "field": "status|title|parent",
-      "from": "…", "to": "…", "reason": "…" }
+    { "at": "…", "by": "human|agent|ai", "via": "mcp|cli|mcp-stdio", "sessionId": "…",
+      "field": "status|title|parent", "from": "…", "to": "…", "reason": "…" }
   ],
   "parent": { "sessionId": "…", "atMessage": "…" }  // ★ forkSession は transcript 内の親子は保つが listSessions に出ない
 }
@@ -309,6 +391,7 @@ sidecar が持つのは次の3つだけ。**いずれも後から追加すると
 「いつ・誰が・何を・なぜ変えたか」を1箇所で追える。構造を二重にしない（思想 2.2）。
 
 `by` を記録するのは**制限のためではなく、可読性のため**。この値で権限を分岐させない。
+`agent` は操作の一覧（`core/ops/`）からの変更で、`via`（どの口から）と、会話に束縛されていればその会話の id（`bySession`。どの会話の AI か）を添える。呼んだ操作そのものは `field: 'op'`（`to` が操作の id）の行として呼んだ会話に残る（画面の変更の記録には出さない）（[ADR 0082](adr/0082-control-surface-principals-and-risk.md)）。`ai` は昔の `host` のツール（Claude だけ）の記録で、画面では `agent` と同じ AI として扱う。
 
 ## 6. ステータスの設計
 
@@ -389,6 +472,10 @@ v1 は `canUseTool` から host に問い、**会話の流れの中にカード�
   思想 2.2 は「AI にできることと人間にできることを非対称にしない」だが、
   §2.2 の括弧書きのとおり**権限層はこの思想と直交する**。
   AI が自分の承認モードを緩められるなら、承認フローそのものが意味を失う
+  - 操作の一覧では承認モードは human-only（agent に一覧にも出さない。呼ばれても `NOT_FOUND` と同じ）。
+    そのほか AI 自身の関所を緩める設定（MCP の登録・Hooks・computer use の許可・サイトの確認・Pleiad の指示など）は guarded で、
+    AI が束縛された会話の承認モードで決める: 確認なし・制限なしのモード（範囲 full・自律 never）の会話は通して記録を残し、それ以外は会話の承認カード
+    （[ADR 0082](adr/0082-control-surface-principals-and-risk.md)。カードの流れ・拒否・時間切れ・受領証は「操作の一覧」の「設定の変更の承認」、[ADR 0088](adr/0088-setting-change-approval.md)）
 - 変更は `history` に `field: "mode"` として残る（status / title と同じ扱い）
 
 ### host が離れたとき（v1.2 で修正）

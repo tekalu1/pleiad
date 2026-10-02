@@ -111,7 +111,25 @@ export async function setPref(key, value, backendId) {
 export async function rememberBrowserSite(site) {
   return exclusive(async () => {
     const all = await prefs.read();
-    all.agentSitePermissions = [...(all.agentSitePermissions ?? []).filter(row => row.agent !== site.agent || row.origin !== site.origin), site];
+    // 鍵はエージェント・プロフィール・origin（ADR 0078）。プロフィールを持たない古い行はメインのもの
+    const profileOf = row => row.profile ?? 'main';
+    all.agentSitePermissions = [...(all.agentSitePermissions ?? []).filter(row => row.agent !== site.agent || row.origin !== site.origin || profileOf(row) !== profileOf(site)), site];
+    await prefs.write();
+    return { ...all };
+  });
+}
+
+/** 内蔵ブラウザーのプロフィールを、その作業フォルダーで最後に使ったものとして覚える（新しい会話の既定。ADR 0078）。古い順に 100 件まで */
+export async function rememberBrowserProfile(key, profile) {
+  return exclusive(async () => {
+    const all = await prefs.read();
+    const last = { ...(all.browserLastProfiles ?? {}) };
+    if (last[key] === profile) return { ...all };
+    delete last[key];
+    last[key] = profile;
+    const keys = Object.keys(last);
+    for (const old of keys.slice(0, Math.max(0, keys.length - 100))) delete last[old];
+    all.browserLastProfiles = last;
     await prefs.write();
     return { ...all };
   });
@@ -259,10 +277,12 @@ async function resolveFrom(sessionId, entry, field, to, backend) {
 /**
  * メタ情報の変更を1件記録する。人間も AI も同じ経路を通る（設計メモ 2.2）。
  * `by` は可読性のためだけに残す。この値で権限を分岐させない。
+ * 操作の一覧（core/ops/）から来た変更は by: 'agent' に、どの口から（via: mcp | cli | mcp-stdio）と
+ * どの会話の AI か（bySession）を添える（ADR 0082）。
  * `from` を渡さない（または null の）場合は直前の値をこちらで補う。
  * `backend` はバックエンドのオブジェクト。from の復元と、行がどこのものかの記録に使う。
  */
-export async function recordChange(sessionId, { by, field, from, to, reason, reasonKey, reasonParams, backend }) {
+export async function recordChange(sessionId, { by, via, bySession, field, from, to, reason, reasonKey, reasonParams, backend }) {
   return exclusive(async () => {
     const all = await load();
     const entry = (all[sessionId] ??= { history: [] });
@@ -274,6 +294,8 @@ export async function recordChange(sessionId, { by, field, from, to, reason, rea
     entry.history.push({
       at,
       by,
+      ...(via ? { via } : {}),
+      ...(bySession ? { bySession } : {}),
       field,
       from: resolved ?? null,
       to: to ?? null,
@@ -384,7 +406,7 @@ export const dataDir = DIR;
 
 /** Host-only data; durable before acknowledging the client. Roll back a failed write. */
 export async function setSessionData(sessionId, field, value) {
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps"].includes(field)) throw new Error(t("store.invalidSessionField"));
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "browserProfile"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];

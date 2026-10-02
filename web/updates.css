@@ -33,3 +33,6 @@
 .update-work-after { font-size: 12px; color: var(--ink-weak); margin: 0 2px 4px; }
 .update-work-after .warn-mark { vertical-align: -2px; margin: 0 1px; }
 .update-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+/* 外の AI の MCP に pleiad mcp を登録する設定のコピー（web/cli-setup.mjs、ADR 0090） */
+#cliSetup { margin: 20px 0; }
+.cli-setup-acts { display: flex; gap: 8px; flex-wrap: wrap; }

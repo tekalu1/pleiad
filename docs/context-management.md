@@ -87,7 +87,7 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
 - `sessionContext { sessionId }`：その会話の読み込み記録・担当・固定の有無と、固定された会話だけ行う今のファイルとの突き合わせ（`changed`）、Pleiad が入れた指示（`added`）を返す。詳細は `docs/context-runtime.md`。
 - `plyInstructions {}` / `setPlyInstructions { action, … }`：Pleiad の指示の一覧（画面の言語の文・項目ごとと合計のトークン数）と、足す・編集・スイッチ・削除・既定に戻す・並べ替え。`docs/context-runtime.md`「Pleiad の指示」。
 - `listMcpConfig { cwd, format, scope }`：保存先・リビジョン・登録名のみを返す。
-- `readMcpServer { cwd, format, scope, name }`：明示的に開いた1件の定義を返す。認証情報を含むことがあるため一覧・探索・ログに流用しない。
+- `readMcpServer { cwd, format, scope, name }`：明示的に開いた1件の定義を返す。`env`・ヘッダー（`headers`・`http_headers`）の値・`oauth.clientSecret`・URL のクエリと userinfo は伏せ字（`••••`）で返し、キーの名前だけ見せる。`saveMcpServer` の `edit` は、伏せ字のままの値を今の定義の値に戻して書く（前の値が無い伏せ字は断る）。値そのものが要る取り込み（`importPlyMcp`）はサーバーの中で `getWithSecrets` を使う。
 - `saveMcpServer { cwd, format, scope, name, value, revision, mode, allowReformat? }`：`mode` は add / edit。既存登録を誤って上書きしないよう区別する。
 - Pleiad 自身の登録（`listPlyMcp` など）は `docs/context-runtime.md`「MCP」。
 

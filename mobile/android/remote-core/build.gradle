@@ -26,6 +26,7 @@ dependencies {
 test {
     // Shared vectors (Node / Swift / Kotlin read the same file) and the interop host script.
     systemProperty 'pleiad.vectors', rootProject.file('../../tests/remote/vectors.json').absolutePath
+    systemProperty 'pleiad.notifyVectors', rootProject.file('../../tests/remote/notify-vectors.json').absolutePath
     systemProperty 'pleiad.repo', rootProject.file('../..').absolutePath
     systemProperty 'pleiad.interop', System.getenv('PLEIAD_INTEROP') ?: 'auto'
     testLogging {

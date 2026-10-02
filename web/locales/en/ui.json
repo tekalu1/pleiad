@@ -40,6 +40,7 @@
       "usage": "Usage",
       "appearance": "Appearance",
       "context": "Plugins",
+      "notify": "Notifications",
       "remote": "Remote",
       "about": "About & updates",
       "delegation": "Delegation",
@@ -89,7 +90,33 @@
       "autoCheck": "Check for updates automatically",
       "beta": "Get beta versions",
       "autoDownload": "Download updates automatically",
-      "releaseNotes": "Release notes"
+      "releaseNotes": "Release notes",
+      "mcpTitle": "Use Pleiad from other AI tools",
+      "copyMcpJson": "Copy MCP config",
+      "copyMcpClaude": "Copy claude mcp add",
+      "copied": "Copied",
+      "copyFailed": "Couldn't copy"
+    },
+    "notify": {
+      "pc": {
+        "title": "This PC",
+        "done": "When a task finishes",
+        "reply": "When a reply is needed (approval or question)",
+        "failed": "When a task fails",
+        "viewing": "Not shown while you're viewing that conversation.",
+        "switch": "This PC: {{label}}"
+      },
+      "phone": {
+        "title": "Phones",
+        "empty": "No phones are paired. Add one in Settings › Remote.",
+        "lastSent": "Last sent {{when}}",
+        "never": "Nothing sent yet",
+        "on": "On",
+        "off": "Off",
+        "offOnPhone": "Off on the phone",
+        "noRelay": "Not connected to the relay. Phones won't be notified until it is.",
+        "switch": "{{name}}: notifications"
+      }
     },
     "remote": {
       "enable": "Allow remote access to this host",
@@ -178,18 +205,48 @@
       }
     },
     "browser": {
-      "description": "Choose where links in conversations and previews open.",
+      "description": "Choose where links in conversations and previews open, whether to confirm external loads, and the profiles that keep your sign-ins.",
+      "descriptionRemote": "Choose whether to confirm external loads. Where links open is chosen on the PC (host) screen.",
       "linkOpen": {
         "title": "Open links in",
         "inapp": "Built-in browser",
         "external": "Default browser",
-        "note": "The built-in browser opens beside the conversation, and sign-ins stay in this app. Its storage is separate from Pleiad itself.",
+        "note": "The built-in browser opens beside the conversation, and HTML files open there too. Sign-ins stay in this app, separately for each profile.",
         "shortcuts": "{{key}}+click and middle click always open in the default browser. Right-click to choose either."
       },
       "saveFailed": "Couldn't save: {{error}}",
       "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" },
+      "profiles": {
+        "title": "Profiles",
+        "default": "Default",
+        "add": "Add profile",
+        "nameLabel": "Profile name",
+        "namePlaceholder": "New profile",
+        "memoLabel": "Usage memo",
+        "memoPlaceholder": "Usage memo (helps agents choose)",
+        "actions": "Actions for {{name}}",
+        "rename": "Rename",
+        "editMemo": "Edit memo",
+        "makeDefault": "Make default",
+        "clear": "Clear sign-ins and data",
+        "delete": "Delete",
+        "defaultCannotDelete": "The default profile can't be deleted.",
+        "mainCannotDelete": "Main can't be deleted. You can clear its sign-ins and data.",
+        "confirmClear": "Clear sign-ins and data for \"{{name}}\"? Open tabs will reload.",
+        "confirmDelete": "Delete \"{{name}}\"? Its tabs close and its sign-ins and data are removed. This can't be undone.",
+        "cancel": "Cancel",
+        "cleared": "Cleared sign-ins and data for \"{{name}}\".",
+        "deleted": "Deleted \"{{name}}\".",
+        "tooMany": "You can have up to {{max}} profiles.",
+        "newConversation": "Profile for new conversations",
+        "newLast": "Last used in the working folder",
+        "newDefault": "Default"
+      },
       "confirm": {
-        "title": "Confirmation",
+        "title": "External resources",
+        "scope": "In visualizations, HTML previews, and PC HTML files opened in the built-in browser, blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages. This setting is shared by all screens.",
+        "scopeRemote": "In visualizations and HTML previews (and HTML files opened in the PC’s built-in browser), blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages. This setting is shared by all screens.",
+        "agentTitle": "Agent site access",
         "external": "Ask before loading external resources",
         "agent": "Ask before an agent uses a site",
         "sites": "Allowed sites",
@@ -266,14 +323,22 @@
     "behindCount_one": "{{count}} task running in the background",
     "behindCount_other": "{{count}} tasks running in the background",
     "turnRunning": "Turn in progress",
-    "background_one": "Background {{count}}",
-    "background_other": "Background {{count}}",
     "thinkingTokens_one": "Thinking (about {{count}} token)",
     "thinkingTokens_other": "Thinking (about {{count}} tokens)",
     "waitingBackground": "Waiting for background tasks",
-    "backgroundEnded_one": "Background · completed {{count}}",
-    "backgroundEnded_other": "Background · completed {{count}}",
-    "backgroundOnly": "Commands running in the background"
+    "backgroundOnly": "Commands running in the background",
+    "bgKind": {
+      "claude": "Claude",
+      "codex": "Codex",
+      "antigravity": "Antigravity",
+      "compat": "Compatible",
+      "term": "Terminal"
+    },
+    "bgItem": "{{name}} {{n}}",
+    "bgItemWaiting": "{{name}} {{n}} ({{w}} waiting for approval)",
+    "bgJoin": ", ",
+    "bgSpoken": "Background: {{items}}. Open the list",
+    "bgEndedSpoken": "Background: {{n}} completed. Open the list"
   },
   "compat": {
     "kind": {
@@ -481,6 +546,123 @@
       "newHint": "Paste the issued token (sk-ant-oat01-…) as is. Saved tokens are never shown.",
       "editHint": "Paste only to change it. If left empty, the saved token is used.",
       "nameRequired": "Enter a display name for the account."
+    }
+  },
+  "git": {
+    "panel": "git",
+    "entry": "Git status",
+    "entryChanged": "Git status · uncommitted changes",
+    "detached": "HEAD {{hash}}",
+    "noBranch": "(no commits yet)",
+    "worktree": "Separate workspace",
+    "branchWorktree": "{{branch}} (separate workspace)",
+    "unpushed": "Not pushed",
+    "ahead": "↑{{count}}",
+    "behind": "↓{{count}}",
+    "pr": "PR #{{number}}",
+    "prTitle": "Open PR #{{number}} in the browser",
+    "acts": "Done in this conversation",
+    "actBranch": "Created branch {{branch}}",
+    "actCommit": "Commit {{hash}} \"{{subject}}\"",
+    "actPr": "Created PR #{{number}}",
+    "jump": "Go to this point in the conversation",
+    "changes": "Changes",
+    "range": "Range",
+    "rangeUncommitted": "Uncommitted",
+    "rangeSession": "This conversation",
+    "files_one": "{{count}} file",
+    "files_other": "{{count}} files",
+    "commits_one": "{{count}} commit",
+    "commits_other": "{{count}} commits",
+    "stateA": "New",
+    "stateM": "Edited",
+    "stateD": "Deleted",
+    "emptyUncommitted": "No uncommitted changes.",
+    "emptySession": "No files changed in this conversation.",
+    "diffBack": "Changes",
+    "binary": "Binary file; no diff shown.",
+    "truncated": "Too long; showing the first part.",
+    "noDiff": "No diff.",
+    "loading": "Loading…",
+    "failed": "Couldn't read git.",
+    "failedChanges": "Couldn't read the changes.",
+    "failedDiff": "Couldn't read the diff.",
+    "fetchedAt": "Read at {{time}}",
+    "reload": "Reload",
+    "use": "Use in chat",
+    "used": "Added to the message",
+    "useStatus": "git: {{branch}} ({{summary}})",
+    "useFile": "git changes: {{path}}",
+    "sumOpen": "Open git changes",
+    "commitOne": "Commit {{hash}}",
+    "chipBranch": "Branch {{branch}}",
+    "delegateChanges": "Changes",
+    "delegateOpen": "Open git for this workspace",
+    "jumpFailed": "Couldn't find it in the conversation."
+  },
+  "worktree": {
+    "label": "Separate workspace",
+    "who": "“{{title}}”",
+    "whoMany": "“{{title}}” and {{count}} more",
+    "whoAnother": "another conversation",
+    "note": "Same repository in use by {{who}}",
+    "noteLabel": "Other work in the same repository",
+    "split": "Start separately",
+    "keep": "Stay here",
+    "always": "Always separate",
+    "alwaysTitle": "From now on, start in a separate workspace without asking. You can turn this off in Settings.",
+    "chipSuffix": "separate workspace",
+    "chipTitle": "Separate workspace · from {{origin}}",
+    "start": "Start in a separate workspace",
+    "from": "from {{path}}",
+    "back": "Back to the original",
+    "next": "Separate workspace ({{path}})",
+    "splitFailed": "Could not create the separate workspace · {{error}}",
+    "line": {
+      "started": "Started in a separate workspace (same repository in use by {{who}})",
+      "startedNoWho": "Started in a separate workspace",
+      "backing": "Going back to the original from the next turn",
+      "backed": "Back in the original location",
+      "again": "Separate again"
+    },
+    "ask": {
+      "text": "Please merge the changes in the separate workspace {{branch}} ({{path}}) into branch {{base}} of the original workspace ({{origin}}). Resolve any conflicts. Once merged, Pleiad cleans up the separate workspace.",
+      "textOriginal": "Please merge the changes in the separate workspace {{branch}} ({{path}}) into the original branch of the original workspace ({{origin}}). Resolve any conflicts. Once merged, Pleiad cleans up the separate workspace."
+    },
+    "left": {
+      "title": "Leftover workspaces",
+      "ask": "Ask the agent to merge",
+      "archive": "Archive and remove",
+      "keep": "Keep",
+      "asked": "Asked “{{title}}”. It is removed automatically once merged.",
+      "askedUndo": "Cancel",
+      "askedLate": "Already delivered; it cannot be cancelled.",
+      "askFailed": "Could not ask · {{error}}",
+      "askNone": "There is no conversation to ask.",
+      "kept": "Keeping it.",
+      "keptUndo": "Undo",
+      "archived": "Archived and removed.",
+      "archivedUndo": "Restore",
+      "restoreFailed": "Could not restore it.",
+      "safetyLinks": "Before removing, only the links inside are unlinked.",
+      "safetyUse": "It is not removed while a conversation or shell is using it.",
+      "fail": {
+        "busy": "Something is using it, so it was not removed.",
+        "links": "The links inside could not be unlinked, so it was not removed.",
+        "changed": "It changed after the archive, so it was not removed.",
+        "archive": "The archive could not be made, so it was not removed.",
+        "unowned": "Pleiad did not create it, so it was not removed.",
+        "attached": "A conversation is using it, so it was not removed.",
+        "other": "It could not be removed."
+      }
+    },
+    "settings": {
+      "title": "Separate workspaces",
+      "always": "When another conversation is working in the same repository, always start separately without asking",
+      "description": "When off, you choose “Start separately” or “Stay here” above the composer. When on, conversations you start begin in a separate workspace and leave a single quiet line in the conversation."
+    },
+    "delegate": {
+      "unmerged": "Not merged"
     }
   },
   "filePreview": {
@@ -737,7 +919,8 @@
         "added": "Pleiad instructions",
         "guide": "Context guide",
         "browser": "Browser guide",
-        "computer": "Computer use guide"
+        "computer": "Computer use guide",
+        "control": "Pleiad control guide"
       },
       "over": "Your instructions are {{ratio}}× the budget",
       "overDetail": " · ~{{own}} / {{budget}}",
@@ -1180,12 +1363,15 @@
     "by": {
       "human": "You",
       "ai": "AI",
+      "agent": "AI",
       "ply": "Pleiad"
     }
   },
   "saved": {
     "reason": {
       "resumeCwd": "Changed on resume",
+      "worktreeSplit": "Moved to a separate workspace",
+      "worktreeBack": "Moved back to the original",
       "cwdFrom": "from {{from}}",
       "contextReloaded": "Reloaded instructions and Skills",
       "contextSettingsApplied": "Applied plugin settings changes",
@@ -1239,6 +1425,25 @@
       "denied": "Denied",
       "sending": "Sending “{{action}}”…",
       "sendFailedInline": "Couldn't send “{{action}}” · {{error}}"
+    },
+    "settingApproval": {
+      "label": "Setting",
+      "agent": "The agent",
+      "question": "{{agent}} wants to change a setting",
+      "reason": "Reason: {{reason}}",
+      "warn": "⚠ This lets the agent do more without asking you.",
+      "allow": "Allow change",
+      "allowed": "Change allowed",
+      "unset": "unset",
+      "where": "Settings › {{section}}",
+      "on": "On",
+      "off": "Off",
+      "added": "Added",
+      "removed": "Removed",
+      "join": ", ",
+      "more_one": "and {{count}} more",
+      "more_other": "and {{count}} more",
+      "withdrawn": "Withdrawn"
     },
     "computerApproval": {
       "label": "Allow",
@@ -1305,6 +1510,15 @@
       "taskResultState": "Delegation result ({{state}})",
       "taskFull": "Full text given to the agent",
       "interruptionNote": "Told the agent what the interruption stopped",
+      "settingResult": "Setting change result ({{state}})",
+      "settingResults_one": "Setting change results ({{count}})",
+      "settingResults_other": "Setting change results ({{count}})",
+      "settingState": {
+        "allowed": "changed",
+        "denied": "denied",
+        "failed": "not applied",
+        "withdrawn": "withdrawn"
+      },
       "failed": "{{head}} {{error}}",
       "unknownReason": "unknown reason",
       "modeSaveFailed": "Couldn't save the approval mode: {{error}}",
@@ -1388,6 +1602,8 @@
       "endpoint": "Endpoint: {{value}}",
       "account": "Account: {{value}}",
       "summary": "{{changes}} · Applies when you send next",
+      "summaryBehind": "{{changes}} · Applies from the next turn",
+      "behindNote": "A message you send while the agent is waiting on background tasks is handled in the current turn, with the current settings.",
       "handoff": {
         "line": "Messages and tool records carry over. \"Always allow\" approvals and thinking don't.",
         "more": "Details",
@@ -1604,7 +1820,7 @@
     "settings": "Settings",
     "closeSidebarTitle": "Close sidebar (Ctrl+B)",
     "closeSidebar": "Close sidebar",
-    "search": "Search",
+    "search": "Search conversations",
     "filterTitle": "Filter by working directory, status, or agent",
     "filterOutside": "This conversation doesn't match the filters",
     "clearFilter": "Clear filters",
@@ -1735,6 +1951,8 @@
   "files": {
     "menu": {
       "openInPanel": "Open in side panel",
+      "openInPreview": "Open in preview",
+      "viewSource": "View source",
       "openInBrowser": "Open in browser",
       "revealFile": "Show in Explorer",
       "revealFolder": "Open in Explorer",
@@ -1797,6 +2015,7 @@
       "copyPath": "Copy path",
       "download": "Save HTML",
       "sidePanel": "Show in side panel",
+      "browser": "Open in browser",
       "truncated": "Omitted because it's too large.",
       "badImage": "This image can't be displayed."
     },
@@ -2082,6 +2301,41 @@
       "menu": "Menu",
       "sidebar": "Sidebar"
     },
+    "search": {
+      "title": "Search conversations ({{key}})",
+      "clear": "Clear search",
+      "recent": "Recent searches",
+      "results": "Search results",
+      "count_one": "{{count}} conversation",
+      "count_other": "{{count}} conversations",
+      "none": "No matching conversations",
+      "more_one": "{{count}} more",
+      "more_other": "{{count}} more",
+      "searching": "Searching",
+      "sort": {
+        "relevance": "Relevance",
+        "recent": "Newest",
+        "toRelevance": "Sort by relevance",
+        "toRecent": "Sort by newest"
+      },
+      "who": {
+        "user": "You",
+        "assistant": "AI",
+        "tool": "Tool"
+      },
+      "hits_one": "{{count}} matching message",
+      "hits_other": "{{count}} matching messages",
+      "rowWho": "{{who}}: {{text}}",
+      "rowHits_one": "{{count}} match",
+      "rowHits_other": "{{count}} matches",
+      "delegated": "Delegated · {{parent}}",
+      "delegatedNoParent": "Delegated",
+      "keyHint": {
+        "move": "Select",
+        "open": "Open",
+        "clear": "Clear"
+      }
+    },
     "group": {
       "pickIcon": "Choose icon",
       "newSession": "New session with this status"
@@ -2099,7 +2353,17 @@
       "placeholder": "Filter",
       "inputLabel": "Filter options",
       "agents": "Agents (multiple)",
-      "all": "All"
+      "all": "All",
+      "period": "Period",
+      "periodToday": "Today",
+      "period7": "7 days",
+      "period30": "30 days",
+      "speaker": "Speaker",
+      "speakerUser": "You",
+      "speakerAssistant": "AI",
+      "include": "Include",
+      "includeDelegated": "Delegated conversations",
+      "includeTools": "Tool inputs"
     },
     "emoji": {
       "title": "Icon for \"{{status}}\"",
@@ -2238,6 +2502,7 @@
       "unknown": "Can't confirm whether it was sent"
     },
     "waitTurn": "Waiting to be sent — sends automatically when the current work finishes",
+    "waitReply": "Waiting to be sent — sends automatically when the current reply finishes",
     "waitOrder": "Waiting to be sent — sends after the previous message is sent",
     "unknownHint": "Check the conversation. Resending may deliver the same instruction twice.",
     "retry": "Resend",
@@ -2259,10 +2524,17 @@
   "notify": {
     "completed": "Work finished",
     "waitingReply": "Waiting for your reply",
+    "settingApproval": "{{agent}} is waiting for your approval to change the setting \"{{key}}\"",
     "computerApproval": "{{agent}} is waiting for permission to use “{{app}}”",
     "computerApprovalMore_one": "{{agent}} is waiting for permission to use “{{app}}” and {{count}} other app",
     "computerApprovalMore_other": "{{agent}} is waiting for permission to use “{{app}}” and {{count}} other apps",
-    "untitled": "Pleiad conversation"
+    "untitled": "Pleiad conversation",
+    "failed": "Work failed",
+    "mobile": {
+      "band": "Get notified when you're away?",
+      "enable": "Turn on",
+      "later": "Later"
+    }
   },
   "remote": {
     "badgeLabel": "Remote:",
@@ -2598,6 +2870,16 @@
     "compact": "Compact conversation",
     "compactNow": "Compact now",
     "meterMenu": "Context window actions",
+    "meterShort": "{{rate}}%",
+    "meterLabel": "Context {{rate}}% ({{used}} / {{window}})",
+    "scheduledShort": "◷ {{time}}",
+    "scheduledSpoken": "Auto compaction at {{time}}",
+    "spokenJoin": ". ",
+    "openActions": "Open actions",
+    "menuTokens": "{{used}} / {{window}} tokens",
+    "cancelAt": "Cancel auto compaction at {{time}}",
+    "runningShort": "Compacting…",
+    "failedShort": "Could not compact",
     "settings": "Compaction settings",
     "done": "Conversation compacted",
     "doneAuto": "Compacted automatically",
@@ -3130,6 +3412,17 @@
     "externalTooMany": "Too many open requests in a row. Wait a moment and try again.",
     "siteDataCleared": "Cleared data for this site.",
     "failed": "The browser action failed.",
+    "reloaded": "Reloaded",
+    "profiles": {
+      "pick": "Profile: {{name}}",
+      "main": "Main",
+      "locked": "You can't switch while an agent is operating. Stop it first.",
+      "busy": "You can't switch while an agent is operating.",
+      "new": "New profile…",
+      "manage": "Manage profiles…",
+      "switched": "This conversation now opens in \"{{name}}\". Agents use this profile too.",
+      "switchedBy": "{{agent}} switched to \"{{name}}\"."
+    },
     "remote": {
       "title": "PC browser",
       "backToChat": "Back to conversation",
@@ -3161,8 +3454,8 @@
       "label": "Conversation"
     },
     "sticky": {
-      "title": "{{text}} (press to go to the start of the question)",
-      "openToc": "Open contents"
+      "title": "Back to this question: {{text}}",
+      "label": "Back to this question ({{time}}): {{text}}"
     },
     "latest": {
       "label": "Jump to latest (End)",

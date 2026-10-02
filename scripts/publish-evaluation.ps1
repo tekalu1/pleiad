@@ -1,7 +1,7 @@
 param([Parameter(Mandatory = $true)][string]$Tag)
 $ErrorActionPreference = 'Stop'
 $package = Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json
-if ($Tag -notmatch '^v\d+\.\d+\.\d+-beta\.\d+$' -or $Tag -cne "v$($package.version)") { throw 'Evaluation tag must match the beta package version.' }
+if ($Tag -notmatch '^v\d+\.\d+\.\d+(-beta\.\d+)?$' -or $Tag -cne "v$($package.version)") { throw 'Evaluation tag must match the package version (vX.Y.Z or vX.Y.Z-beta.N).' }
 if (!$env:GH_TOKEN -or !$env:GITHUB_REPOSITORY) { throw 'Run from the evaluation release workflow.' }
 $env:RELEASE_TAG = $Tag
 $env:GH_REPO = $env:GITHUB_REPOSITORY

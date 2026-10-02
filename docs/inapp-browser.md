@@ -16,7 +16,20 @@ utilityProcess のサーバーは parentPort でメインプロセスに接続�
 
 agent-browser 0.38.1 の state ルートには専用の変更変数がない。`AGENT_BROWSER_STATE` は読み込む state ファイルの指定であり、保存先の指定ではない。この CDP 接続では自動 state 保存を設定せず、Cookie 等は Electron の保存領域を使う。Claude・Antigravity にも同じ env を渡す。Claude の Bash sandbox を利用者が有効にしている場合、書き込み先と loopback 接続の許可はその sandbox の設定にも必要で、Pleiad は設定を自動で緩めない。
 
-同じ `persist:pleiad-browser` のタブは会話が違っても Cookie を共有する。中継は主フレームのページと通常のタブ操作を対象とし、OOPIF・service worker・DevTools の同時接続などを CDP の完全なブラウザーとしては公開しない。Codex の読み込み済みスレッドは `thread/resume` の新しい config を無視する場合がある。新規会話のネイティブ ID が決まった後も、最初に渡した設定ファイルと `AGENT_BROWSER_SESSION` を保ち、接続鍵の変更は同じファイルを書き換えて届ける。
+同じプロフィールのタブは会話が違っても Cookie を共有し、プロフィールが違えば分かれる（下の「プロフィール」）。中継は、その会話の今のプロフィールのタブだけを見せる・作る。中継は主フレームのページと通常のタブ操作を対象とし、OOPIF・service worker・DevTools の同時接続などを CDP の完全なブラウザーとしては公開しない。Codex の読み込み済みスレッドは `thread/resume` の新しい config を無視する場合がある。新規会話のネイティブ ID が決まった後も、最初に渡した設定ファイルと `AGENT_BROWSER_SESSION` を保ち、接続鍵の変更は同じファイルを書き換えて届ける。
+
+## プロフィール
+
+保存領域を名前付きのプロフィールに分ける（承認済み（2026-10-02）、[ADR 0078](adr/0078-inapp-browser-profiles.md)）。ログインはプロフィールごとに残る。
+
+- 保存領域: メイン（id `main`）は今までの `persist:pleiad-browser` のまま。ほかは `persist:pleiad-browser-<id>`（id は `p` + 16 進）。権限・UA・ダウンロードの設定は session を初めて使うときに 1 回かける（`desktop/browser-panel.cjs` の `sessionFor`）。ポップアップの窓と「このサイトのデータを消す」は、開いた元のタブの session を使う。
+- 設定の値（`prefs.json`。`web/browser-profiles.mjs` が読み方と検査を持つ）: `browserProfiles: [{ id, name?, memo? }]`（メインは必ず先頭。名前を付けていないメインは画面の言語の「メイン」。20 個まで・名前 40 字・メモ 200 字）、`browserDefaultProfile`（無い・消えた id ならメイン）、`browserNewProfile`（`last` = 作業フォルダーで最後に使ったもの〈既定〉 / `default` = 既定）、`browserLastProfiles`（作業フォルダーの鍵 → id。サーバーだけが書く。100 件まで）。main には `agent-browser-prefs` で使える id と既定だけを渡す。
+- 1 会話 1 プロフィール: 会話は今のプロフィールを 1 つ持つ。置き場は会話のメタ（`sessions.json` の `browserProfile`）。新しい会話は作るとき（`newSession`）に決める（引き継ぎ元があればそのもの、無ければ `browserNewProfile` の規則）。持たない会話は初めて引いたときに同じ規則で決めて残し、消えたプロフィールを指していれば決め直す（`core/browser-profiles.mjs` の `resolve`）。main は会話ごとの今のプロフィールを覚え、知らない会話はサーバーに引く（`browser-profile-resolve`）。ターンの開始では中継の準備（`agent-browser-endpoint`）にプロフィールを添える。
+- パネルの一覧と中継: 今の会話（と会話に属さない）のタブのうち、今のプロフィールのものだけ。切り替えても前のプロフィールのタブは閉じずに残り、戻すとまた並び、そこで選んでいたタブも戻る（最後に選んだタブは会話とプロフィールの組ごと）。中継の `tabsFor`・`createFor`（と画面の転送の `pickTab`）も会話の今のプロフィールで絞る・作る。切り替えると、中継は接続を保ったまま前のタブを `Target.detachedFromTarget`・`Target.targetDestroyed` で外し、新しいタブを `Target.targetCreated` で見せる（無ければ 1 枚作る）。
+- 人の切り替え: タブの列の左端のメニュー（`profile`）。エージェントが中継で操作中は断る（`agent-busy`）。替えたら画面は知らせを出し、会話に残す（WS の `setBrowserProfile`。作業フォルダーの最後に使ったものも替わる）。
+- エージェントの切り替え: MCP の `ply_browser`（`core/browser-profiles.mjs`、`/mcp/browser`）。`list_browser_profiles` は id・名前・既定か・今のものか・用途のメモを返し、`use_browser_profile` は id か名前で会話の今のプロフィールを替える。内蔵ブラウザーを渡すターン（デスクトップ版で中継がある）にだけ渡す: Claude は `mcpServers`（ツールごとの承認は出さない）、Codex は `mcp_servers`（自動で承認）、Antigravity は stdio の中継 `core/agy-context-relay.mjs --browser`（`PLY_BROWSER_URL`・`PLY_BROWSER_AUTHORIZATION`）。agy は agent.md の `mcpServers` の先頭 1 本しか起こさない（1.2.14 で実測）ので、ply_context・ply_computer と一緒に渡すときは旗を並べた 1 本の中継に束ねる（`--context --computer --browser`。ツール名で振り分ける）。口は会話ごとに鍵付きで開き、会話のあいだ同じ値。替えると main へ `agent-browser-profile`（エージェントの名前付き）を送り、画面は「<エージェント名> が「…」に切り替えました。」を一度だけ出す。会話のツール履歴には `mcp__ply_browser__…` の行で残る。エージェント向けの指示（`browser.instructions`）に、プロフィールがあること・ログインが要るサイトは用途のメモで選ぶこと・理由なく切り替えを繰り返さないことを書く。
+- 削除: タブを閉じ、保存領域の中身を消し、そのプロフィールを使っていた会話は既定へ戻す。ディレクトリ（`<userData>/Partitions/pleiad-browser-<id>`）は Windows が使用中は消せないので、`<userData>/browser-profiles-removed.json` に書き、次の起動で session を作る前に消す。メインと既定のプロフィールは削除できない。消したプロフィールの「このサイトは常に」と既定は設定から片付ける。
+- PC の Chrome のプロフィールにはつながない（Cookie も写さない。ADR 0041）。
 
 ## 使える場所
 
@@ -42,7 +55,7 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 - ページは Electron の `WebContentsView`。本体の窓に重ね、右パネルの本文の枠（`.browser-viewport`）の位置と大きさに合わせる（`desktop/browser-panel.cjs`）。`<webview>` は使わない。
 - 画面は枠の位置（CSS の px）を `ply:browser-layout` で送る。ResizeObserver・窓の大きさの変化・パネルの幅の変更（`layout()`）で測り直し、同じ値は送らない。main は画面の倍率を掛け、角の丸み（本文の `--r-m`）も合わせる。広げる・幅の変更・760px 以下の全面表示でも同じ経路で追う。
 - タブごとに View を 1 つ持ち、窓に載せるのは今のタブだけ。ほかのタブは外したまま動き続ける。空のタブ（新しいタブ）は View を載せず、画面が「URL を入力して開きます」を出す。
-- 保存領域は `persist:pleiad-browser`。Pleiad 本体（既定の session）とリモートの窓（`persist:remote-<id>`）から分けるので、ページのスクリプトや Cookie は Pleiad の認証に届かない。一度ログインすれば次回も残る。
+- 保存領域はプロフィールごと（メインは `persist:pleiad-browser`、ほかは `persist:pleiad-browser-<id>`。上の「プロフィール」）。Pleiad 本体（既定の session）とリモートの窓（`persist:remote-<id>`）から分けるので、ページのスクリプトや Cookie は Pleiad の認証に届かない。一度ログインすれば次回も残る。
 - `webPreferences` は `contextIsolation`・`sandbox`・`nodeIntegration: false`、preload なし。権限の要求（カメラ・マイク・位置・通知など）は確認を出さずに断る。UA から `Electron/…` と Pleiad の印を外す（ログインを断るサイトがあるため）。
 - `target="_blank"` など通常の新しい窓の要求は新しいタブで開く（opener の関係は保たない、ADR 0041 の通り）。ただし、`window.open` でポップアップ（`features` 付き）として要求された窓は、ログイン等の連携（opener・`window.close()` 等）に要るため、例外として別の小さな窓で開く。どちらもページから `file:` や独自のスキームへは移らない。開けるのは http・https と、画面が明示した `file:`。
 - ダウンロードは確かめずに OS の既定のダウンロードの場所へ保存する（同じ名前があれば「名前 (2)」）。
@@ -64,54 +77,79 @@ View は DOM より上に描かれるので、メニュー・ダイアログ・�
 - 触れていない間はスキームと残りを弱く、ホスト名を強くする。左の印は https が鍵、この PC が PC の記号、http が注意の円、PC のファイルは紙。
 
 ⋯ の項目:
+- 画面が開いた PC のファイル・可視化の写しのタブだけ、先頭にファイルの操作の群（下の「PC のファイルのタブ」）。
 - DevTools: そのタブの DevTools を別の窓で開く。
 - 別の窓に出す: そのタブの View を独立した窓（道具の列の無い窓）へ移し、パネルの一覧から外す。窓を閉じるとページも閉じる。
 - このサイトのデータを消す: 今のページのオリジンの保存領域と、そのページへ送られる Cookie を消して読み直す。
 
 既定のブラウザーで開く は、http・https のページ（`shell.openExternal`）と、画面が明示して開いた `file:` の HTML（右パネルの「ブラウザーで開く」で開いた HTML ファイル・可視化の写し）で押せる。押せるかは main が決め、タブの状態の `external` で画面へ送る。`file:` は、そのタブが画面から開いた URL（`allowFile`）と同じファイルで拡張子が `.html`・`.htm` のときだけで、URL をパスに直し、実体を解決して HTML のファイルであることを確かめてから `shell.openPath` で開く（シェルは通さない）。連打はサーバーの `openPath` と同じく 10 秒に 5 回まで。ページの中で移った先の `file:`、HTML 以外、`about:blank` は押せない。
 
+## PC のファイルのタブ（HTML ファイル・可視化の写し）
+
+承認済み（2026-10-02、[ADR 0079](adr/0079-html-opens-in-inapp-browser.md)）。デスクトップ版のホストの画面で「リンクの開き先: 内蔵ブラウザー」のとき、HTML ファイルのリンク（会話・ツリー・ファイルのカード・Markdown の中）と、可視化のカードの「ブラウザーで開く」は、`file:` の URL を内蔵ブラウザーのタブで開く。入口は今あるファイルリンクのまま、行き先だけを変える。「画面が開いた `file:` のタブ」とは `allowFile`（画面が明示して `file:` を開いたタブ）で今のページがその URL のままのもの。ページの中で別のファイル・サイトへ移った後と、エージェントが開いたタブは含まない。
+
+- **タブの使い回し**: 同じ実体のパス（可視化の写しは会話と記録の id）のタブがその会話にあれば、新しく作らず前に出して読み直す（`open` の `reuse: true`。照合の鍵は main の `fileKey`）。リンクを押すのは「今のファイルを見たい」ときなので、読み直すと入力・スクロールは初期に戻る。タブを一瞬だけ輪で知らせ（`--dur`、動きを減らす設定では出さない）、画面下の知らせ「読み直しました」を出す。押したリンクには、今のプレビューと同じ「表示中」を添える（ブラウザーの今のタブが別のものになるか、ブラウザーを離れたら外す）。別のファイルは別のタブ、別の会話の同じファイルも別のタブ。
+- **既定のブラウザー**: Ctrl/⌘+クリックと中クリックは、HTML なら設定によらず既定のブラウザー（Web のリンクと同じ。`openPath` を `returnPath` なしで）。メニューは「ブラウザーで開く」が先頭で、設定の開き先に従う。「右パネルで開く」は HTML では「プレビューで開く」として残る。
+- **印**: 開くとき画面が `source` を渡す。ファイルは作業ディレクトリからの相対パス（`label`。`openPath` の返事の `cwd` から）、写しは会話・記録の id・題・元のパス。main は形を確かめて（`cleanSource`）タブの状態の `file` / `snapshot` に載せる。
+- **⋯ のファイルの操作**: 先頭に、原文を見る（右パネルをプレビューにして原文で開く。タブは残る）・エクスプローラーで表示（サーバーのある PC の画面だけ）・パスをコピー・相対パスをコピー・保存・会話で使う。写しは原文を見る・元のファイルを開く・エクスプローラーで表示・元のパスをコピー・相対パスをコピー・HTML を保存・会話で使う（元が分かるときだけ元のパスの操作、手元に会話の中身があるときだけ原文と保存）。中身は今のファイルの操作（`fileMenuItems`・`visualizationMenuItems`）と同じ処理を呼ぶ。道具の列は増やさない。会話の中身は、写しを開くとき画面が覚える（画面を読み直すと元のパスの操作だけが残る）。
+- **アドレス欄**: PC のファイルは作業ディレクトリからの相対（外なら完全なパス）、写しはデータ置き場のパスを見せず「可視化 · 題」。触れると今どおり URL の全文を出して編集できる。
+- **止める**: main は session の `webRequest.onBeforeRequest` を session ごとに 1 度だけ張り（`setupSession`）、要求の持ち主を `details.webContentsId` から引く（`byContents`。別の窓に出したタブも残す）。持ち主が「画面が開いた `file:` のタブ」のときだけ判定し、Web のページ・ページの中で移った先・ポップアップの窓・持ち主が分からない要求・ページ自身の移動（`mainFrame`）は止めない。
+  - `file:` の資源: UNC・デバイスパスと Pleiad のデータ置き場（添付の `uploads` を除く。`AGENT_HOST_DATA`、既定 `~/.agent-host`）を、確認の ON/OFF によらず止める（[ADR 0050](adr/0050-local-file-access.md) と同じ範囲。実体を解決して比べ、Windows は大文字小文字を区別しない）。リンクでそこへ移ることも断る。同じフォルダーの相対の資源は読める。
+  - http(s) の資源: 「外部の読み込みの前に確認」が ON のとき、「常に」許可した https の出どころと、そのタブだけの一時の許可（「読み込む」）だけ通す。**http は localhost も止める**。ws・wss は http・https と同じに見る。OFF のときは何も止めない（Web のページと同じ扱い。プレビューより緩い）。
+  - 設定は core から main へ `browser-load-policy`（`{ confirm, origins }`）で届く（`core/agent-browser.mjs` の `loadPolicy`。設定の変更と起動時の問い合わせに答える）。main の `setLoadPolicy` が受け、もう通る出どころは止めた一覧から外す。
+- **止めた件数の一行**: 確認が ON で止めたものがあるタブだけ、道具の列とページの間（ネイティブの View の上ではなく DOM。重なりの画像化が要らない）に「外部の読み込みを N 件止めています / 読み込む / 設定」を、プレビューと同じ語彙で出す（`.preview-blocked.browser-blocked`）。件数は http も数える。「読み込む」は止めた https の出どころを、このタブだけ一時的に通して読み直す（`allowOnce`）。件数が http だけのときは「読み込む」を出さない（設定が ON の間、http は通さない）。「設定」は許可したサイトへ移り、止めた https の出どころが「許可」付きで並ぶ（プレビューが止めたものと同じ一覧）。タブごとの一時の許可は、別のファイルを読むと捨て、同じファイルの読み直しでは残す。
+- **可視化の写し**: 写しは meta の CSP が先に止めるので `webRequest` には届かない。止めたものは、内蔵ブラウザーで開く写しにだけ入れる橋（`web/visualize-document.mjs` の `CONSOLE_BRIDGE`。`securitypolicyviolation` を `console.debug('ply-preview-blocked <URL>')` で知らせる。親が無いので `postMessage` は使えない）が知らせ、main が `console-message` で数える。「読み込む」は main が `rewrite` を返し、画面が `openVisualization { returnPath: true, allow: [出どころ] }` で一時の許可付きの写しを書き直し（鍵に許可を含むので別のファイル）、同じ記録のタブを使い回して開き直す。設定の許可は変えない。既定のブラウザーで開く写し・書き出し・リモートの写しには橋を入れない。
+- **既知の制約**: `file:` のページと可視化の写しは同じ保存領域（`persist:pleiad-browser`）の `localStorage` を共有し、互いの保存値を読める（確認が OFF なら外へ出せる）。今回は分けていない。「このサイトのデータを消す」が `file:` で何を消すかは確かめていない。
+- プロフィール（[ADR 0078](adr/0078-inapp-browser-profiles.md)）との関係: `webRequest` は session を初めて使うとき（`sessionFor` → `setupSession`）に 1 度張り、持ち主は webContents の id で引くので、どのプロフィールの `file:` のタブにも効く。タブの使い回しは会話の今のプロフィールのタブの中で探す（プロフィールを替えて同じリンクを押すと、今のプロフィールで新しいタブを開く）。外部の読み込みの許可と確認の設定はプレビューと共通で、プロフィールとは関係しない。
+
 ## 設定 › ブラウザー
 
-「リンクの開き先: 内蔵ブラウザー / 既定のブラウザー」。既定は内蔵ブラウザー。値はサーバーの `prefs.json` の `linkOpen`（`inapp` | `external`）で、`setPref` で保存し、`prefs` イベントでほかの画面にも届く。内蔵ブラウザーを使えない画面ではリンクの開き先の選択を出さない。リンクの開き先は `linkOpenTarget({ available, prefs })` で決め、使えない画面では設定によらず `external`（今どおり新しいタブか既定のブラウザー）。「エージェントの操作」には同梱した `agent-browser` の版を示す。
+見出しは「外部の読み込み」（確認のスイッチ）と、デスクトップ版のホストの画面だけ「リンクの開き先」「エージェントのサイト利用」。ページの説明は画面ごとに変わる: ホストの画面は「会話やプレビューのリンクを開く場所と、外部の読み込みの確認を選びます。」、それ以外（リモート・ブラウザーで開いた画面）は「外部の読み込みの確認を選びます。リンクの開き先は PC（ホスト）の画面で選びます。」。スイッチの下に、確認が効く範囲（プレビュー・内蔵ブラウザーで開いた PC の HTML ファイル・可視化の写し。Web のページには効かない。すべての画面で共通の設定）を弱い字で書く（承認済み、2026-10-02）。
+
+「リンクの開き先: 内蔵ブラウザー / 既定のブラウザー」。既定は内蔵ブラウザー。内蔵ブラウザーのときは HTML ファイルもここで開く（上の「PC のファイルのタブ」）。既定のブラウザーを選んだ人の HTML ファイルは、右パネルのプレビューのまま（⋯・Ctrl/⌘+クリック・「ブラウザーで開く」で既定のブラウザーへ出せる。外のブラウザーには確認の設定を効かせられない）。値はサーバーの `prefs.json` の `linkOpen`（`inapp` | `external`）で、`setPref` で保存し、`prefs` イベントでほかの画面にも届く。内蔵ブラウザーを使えない画面ではリンクの開き先の選択を出さない。リンクの開き先は `linkOpenTarget({ available, prefs })` で決め、使えない画面では設定によらず `external`（今どおり新しいタブか既定のブラウザー）。「エージェントの操作」には同梱した `agent-browser` の版を示す。
+
+「プロフィール」（内蔵ブラウザーのある画面だけ）: 1 行ずつ、モノグラム・名前・既定なら弱い字の「既定」・用途のメモ（弱い字、名前の下）・保存領域の大きさ（main が `<userData>/Partitions` のディレクトリを数える。`profileSizes`）・⋯（名前を変える / メモを編集 / 既定にする / ログインとデータを消す / 削除）。消す・削除は確かめるメニュー（「やめる」と実行）を挟む。名前とメモは行の中の欄で書き、Enter・欄を離れると保存、Esc で戻す。「プロフィールを追加」で名前の欄の行を足す。その下に「新しい会話のプロフィール: 作業フォルダーで最後に使ったもの / 既定」（`browserNewProfile`）。一覧・名前・メモ・既定・規則は `setPref` で保存する（`browserProfiles`・`browserDefaultProfile`・`browserNewProfile`）。ログインとデータを消す・削除は main の口（`clearProfile`・`deleteProfile`）。
 
 
 ### 確認
 
-「外部の読み込みの前に確認」（`confirmExternalLoads`）と「エージェントがサイトを使う前に確認」（`confirmAgentSites`）は既定 OFF。後者とリンクの開き先は内蔵ブラウザーがある画面だけに出す。外部読み込みの確認はブラウザーで開いた画面・リモート・デスクトップでないホストでも使える。
+「外部の読み込みの前に確認」（`confirmExternalLoads`）と「エージェントがサイトを使う前に確認」（`confirmAgentSites`）は既定 OFF。後者とリンクの開き先は内蔵ブラウザーがある画面だけに出す。外部読み込みの確認はブラウザーで開いた画面・リモート・デスクトップでないホストでも使え、プレビュー・可視化に加えて内蔵ブラウザーの PC のファイルのタブにも効く（設定は `prefs.json` の 1 つで全画面共通）。
 
-ON のとき「許可したサイト」を表示し、止めた出どころを「許可」付きで上に並べ、その下に外部の読み込みとエージェントの利用の一覧を分ける。各行は「常に / 毎回聞く」と「消す」。前者は `externalSitePermissions: [{origin, mode}]`、後者は `agentSitePermissions: [{agent, origin, mode}]`（`mode` は `always` / `ask`）に保存する。origin はスキーム・ホスト・ポートの完全一致で、外部資源は HTTPS のみ、サイトの利用は HTTP も含む。設定は `setPref` で保存し、接続中の画面にも反映する。
+ON のとき「許可したサイト」を表示し、止めた出どころを「許可」付きで上に並べ、その下に外部の読み込みとエージェントの利用の一覧を分ける。各行は「常に / 毎回聞く」と「消す」。前者は `externalSitePermissions: [{origin, mode}]`、後者は `agentSitePermissions: [{agent, origin, mode, profile?}]`（`mode` は `always` / `ask`。`profile` が無い行はメインのもの）に保存し、プロフィールが 2 つ以上あるときは行に名前を添える。origin はスキーム・ホスト・ポートの完全一致で、外部資源は HTTPS のみ、サイトの利用は HTTP も含む。設定は `setPref` で保存し、接続中の画面にも反映する。
 
 ### サイトの利用の確認
 
 ON のとき、エージェントが別の origin へ移る前に中継の `Page.navigate` と新しいタブの作成を保留する。ページ内の遷移・リダイレクト・新しい窓は Electron の `will-frame-navigate`・`will-redirect`・`setWindowOpenHandler` で止め、承認後に移動する。確認は `desktop/browser-navigation.cjs`、会話への受け渡しは `core/browser-confirm.mjs` が担当する。
 
-会話の承認カードに「<エージェント名> が <サイト> を使おうとしています」と「一度だけ / このサイトは常に / 断る」を出す。ログイン中のアカウント名が分かるときだけ「（ログイン済み: <アカウント>）」を添える。現在は GitHub の表示名 Cookie とログイン済みの印から読む。他のサイトの認証 Cookie から名前を推測しない。
+会話の承認カードに「<エージェント名> が <サイト> を使おうとしています」と「一度だけ / このサイトは常に / 断る」を出す。プロフィールが 2 つ以上あるときは「（プロフィール: <名前>）」を、ログイン中のアカウント名が分かるときは「ログイン済み: <アカウント>」を「 · 」でつないで添える。現在は GitHub の表示名 Cookie とログイン済みの印から読む。他のサイトの認証 Cookie から名前を推測しない。
 
-「一度だけ」はその移動を通す。同じ origin 内の移動は聞き直さず、離れて戻れば再度聞く。「このサイトは常に」はエージェントの種類と origin の組で記録し、同じエージェントの別の会話にも効く。「断る」は中継の失敗として返す。承認待ちは通常の permission と同じ管理に入り、委譲元にもカードを出し、委譲の待機時計も承認待ちとして扱う。中断・タブの破棄・「止める」「引き継ぐ」では保留を取り消す。
+「一度だけ」はその移動を通す。同じ origin 内の移動は聞き直さず、離れて戻れば再度聞く。「このサイトは常に」はエージェントの種類・プロフィール・origin の組で記録し、同じエージェントの別の会話にも効く（別のプロフィールでは聞き直す）。「断る」は中継の失敗として返す。承認待ちは通常の permission と同じ管理に入り、委譲元にもカードを出し、委譲の待機時計も承認待ちとして扱う。中断・タブの破棄・「止める」「引き継ぐ」では保留を取り消す。
 
 人がアドレス欄・戻る/進む・再読み込みを操作したときや、ページへ入力したときはエージェントの操作を解除し、人の遷移には確認を挟まない。ターン終了でも解除する。送信・購入・削除などの操作ごとの確認は持たない（[ADR 0042](adr/0042-preview-loads-external-by-default.md)）。
 
 ## 画面から呼ぶ口
 
 - `browserPanelAvailable()`: 使える画面か。
-- `openInBrowserPanel(url, { newTab })`: 右パネルをブラウザーにして開く。url はアドレス欄と同じ規則で直し、開けなければ何もせず false。url を省くと空の新しいタブ。
+- `openInBrowserPanel(url, { newTab, reuse, source })`: 右パネルをブラウザーにして開く。url はアドレス欄と同じ規則で直し、開けなければ何もせず false。url を省くと空の新しいタブ。reuse は同じ実体のファイルのタブを使い回す指定、source は PC のファイル・写しの印。
 - アプリの中の外部リンク（会話・作業のダイアログ・右パネルの Markdown の `a.md-link[target=_blank]`。文中の裸の URL・インラインコード全体の URL・取得の見出しを含む。形は docs/design-system.md「文中の URL」）とプレビュー（可視化・HTML ファイル）の中のリンクは、`web/link-open.mjs` の `openExternalLink` に集まり、開き先が内蔵ブラウザーなら新しいタブで開く（ダイアログの中のリンクはダイアログを閉じてから）。Ctrl/⌘+クリックと中クリック（`auxclick`）は既定のブラウザー（ADR 0041）。右クリック・長押し・Shift+F10 のメニュー（`web/link-menu.mjs`）は「内蔵ブラウザーで開く」（`openExternalLink` の `inapp`）と「既定のブラウザーで開く」（`external`）を選べる。既定のブラウザーへは殻の `openExternal`（http/https、userinfo 無し）で渡すので、本体の窓の `setWindowOpenHandler` が通さない http の localhost も開ける。使えない画面（ブラウザーで開いた Pleiad・リモートの窓）は今どおり新しいタブ。
-- 「ブラウザーで開く」（HTML ファイル・可視化の写し）も「リンクの開き先」に従う。内蔵ブラウザーが使えるホストの画面で設定が内蔵ブラウザーなら、検査済みの HTML ファイル、または会話に保存された可視化の写しを `file:` URL で新しいタブに開く。HTML ファイルでは同じフォルダーの相対資源を読める。可視化の写しには文書の meta の CSP が付く。使えない画面と既定のブラウザーを選んだ画面では従来の開き先を使う。アドレス欄は `file:` を「PC のファイル」と表示する。
+- HTML ファイルのリンクと「ブラウザーで開く」（HTML ファイル・可視化の写し）も「リンクの開き先」に従う。内蔵ブラウザーが使えるホストの画面で設定が内蔵ブラウザーなら、検査済みの HTML ファイル、または会話に保存された可視化の写しを `file:` URL で内蔵ブラウザーのタブに開く（同じファイル・同じ記録のタブは使い回す。上の「PC のファイルのタブ」）。HTML ファイルでは同じフォルダーの相対資源を読める。可視化の写しには文書の meta の CSP が付く。使えない画面と既定のブラウザーを選んだ画面では従来の開き先を使う。アドレス欄は `file:` を「PC のファイル」と表示する。
 
 ## main の口
 
 `desktop/preload.cjs` の `plyDesktop.browser`:
-- `command(action, args)` → `ply:browser`（invoke）。`open`・`newTab`・`select`・`close`・`back`・`forward`・`reload`・`stop`・`devtools`・`external`・`detach`・`clearSiteData`・`freeze`・`unfreeze`・`context`・`state`・`agentStop`・`agentTakeOver`。
+- `command(action, args)` → `ply:browser`（invoke）。`open`（`reuse`・`source` を受け、使い回したら `reused: <タブの id>` を返す）・`allowOnce`（止めた https の出どころをそのタブだけ通して読み直す。写しは `rewrite` を返す）・`newTab`・`select`・`close`・`back`・`forward`・`reload`・`stop`・`devtools`・`external`・`detach`・`clearSiteData`・`freeze`・`unfreeze`・`context`・`state`・`agentStop`・`agentTakeOver`・`profile`（今の会話のプロフィールを替える）・`profileSizes`・`clearProfile`・`deleteProfile`。
 - `layout({ visible, rect, radius })` → `ply:browser-layout`。
-- `onState(listener)` ← `ply:browser-state`（タブの一覧・今のタブ・URL・題・読み込み中・戻れるか/進めるか・操作中のエージェント）。
+- `onState(listener)` ← `ply:browser-state`（タブの一覧・今のタブ・URL・題・読み込み中・戻れるか/進めるか・操作中のエージェント・今の会話のプロフィール・エージェントが切り替えた知らせ `notice`。PC のファイルのタブは `file` / `snapshot` と、確認が ON のとき `guard: { blocked, origins }`）。
 - `onShortcut(listener)` ← `ply:browser-shortcut`（ページにフォーカスがあるときに押された開閉の近道）。
 
 ### 会話とタブ
 
-タブは開いたときに画面で開いていた会話（`sessionId`）を覚える。画面は開く・会話を切り替えるたびに `context` で今の会話を知らせ、`window.open` で開いたタブは元のタブの会話を引き継ぐ。パネルの一覧（`ply:browser-state` と `state`）と今のタブは、今の会話のタブと、会話に属さないタブ（`sessionId` が null）だけ。会話を切り替えると（`context`）、その会話で最後に選んだタブ、なければ見えるタブの先頭、なければ今のタブなしにし、窓に載せる View も替える。別の会話のタブをエージェントが作る・前に出しても、今の画面のタブと窓は動かない。新しい会話の最初のターンは会話 ID が無いので、タブは `turn.key` の会話に付き、ID が決まったところで本物の ID へ付け替える（`rebind`。画面も同じ時点で `context` を本物の ID に替える）。main の `createBrowserPanel` は `tabsFor(sessionId)`（その会話のタブと webContents）と `contentsOf(tabId)` を返し、会話別の CDP 中継はここから webContents の debugger へつなぐ（[ADR 0043](adr/0043-agent-browser-via-per-session-cdp-relay.md)）。
+タブは開いたときに画面で開いていた会話（`sessionId`）を覚える。画面は開く・会話を切り替えるたびに `context` で今の会話を知らせ、`window.open` で開いたタブは元のタブの会話を引き継ぐ。パネルの一覧（`ply:browser-state` と `state`）と今のタブは、今の会話のタブと、会話に属さないタブ（`sessionId` が null）のうち、今の会話のプロフィールのものだけ。会話を切り替えると（`context`）、その会話で最後に選んだタブ、なければ見えるタブの先頭、なければ今のタブなしにし、窓に載せる View も替える。別の会話のタブをエージェントが作る・前に出しても、今の画面のタブと窓は動かない。新しい会話の最初のターンは会話 ID が無いので、タブは `turn.key` の会話に付き、ID が決まったところで本物の ID へ付け替える（`rebind`。画面も同じ時点で `context` を本物の ID に替える）。main の `createBrowserPanel` は `tabsFor(sessionId)`（その会話のタブと webContents）と `contentsOf(tabId)` を返し、会話別の CDP 中継はここから webContents の debugger へつなぐ（[ADR 0043](adr/0043-agent-browser-via-per-session-cdp-relay.md)）。
 
 ## 検証
 
-`tests/unit/inapp-browser.mjs`（右パネルの表・アドレス欄・リンクの開き先・使える画面・preload・偽の electron での main のタブと位置）と `tests/unit/server-ux.mjs`（`linkOpen` の保存）。実機は fake バックエンドのデスクトップ版を別のデータ置き場と userData で起動し、http://example.com と手元の localhost のページで、タブ・戻る/進む・新しい窓・DevTools・既定のブラウザーで開く（呼ばれたことだけを記録）・メニューとの重なり・幅の変更・全面表示・別の窓を確かめた（2026-09-27）。`file:` の HTML（相対の CSS 付き）では、既定のブラウザーで開くが押せて実体のパスで `shell.openPath` が呼ばれること（呼ばれたことだけを記録）、ページのリンクで別の `file:` へ移った後と `.png` では押せないことを確かめた（2026-09-28）。
+`tests/unit/inapp-browser.mjs`（右パネルの表・アドレス欄・リンクの開き先・使える画面・preload・偽の electron での main のタブと位置・タブの列のプロフィールのメニュー）と `tests/unit/server-ux.mjs`（`linkOpen` の保存）。プロフィールは `tests/unit/browser-profiles.mjs`（保存領域の名前・session ごとの設定・ポップアップと clearSiteData の session・会話ごとの絞り込みと切り替え・中継の tabsFor / createFor と切り替え・削除と次の起動での片付け・サーバーの解決と保存・ply_browser・確認の鍵の移行・fake の `browser:` の台本でのサーバー越しの通し）。プロフィールの実機は fake バックエンドのデスクトップ版を一時のデータ置き場と userData で起動し、Cookie を書いて読む手元のページで、プロフィールごとに Cookie が分かれる・戻すと前のタブと Cookie が戻る・タブの無いプロフィールへ替えてもパネルは閉じない・fake の会話から `use_browser_profile` を呼ぶと知らせとツール履歴が出る・エージェントが操作中のメニュー・300px 未満で名前を畳む・新しい会話は作業フォルダーで最後に使ったもの・設定の一覧（大きさ・メモ・⋯）と追加と削除（次の起動で消す印）を確かめた（2026-10-02）。実機は fake バックエンドのデスクトップ版を別のデータ置き場と userData で起動し、http://example.com と手元の localhost のページで、タブ・戻る/進む・新しい窓・DevTools・既定のブラウザーで開く（呼ばれたことだけを記録）・メニューとの重なり・幅の変更・全面表示・別の窓を確かめた（2026-09-27）。`file:` の HTML（相対の CSS 付き）では、既定のブラウザーで開くが押せて実体のパスで `shell.openPath` が呼ばれること（呼ばれたことだけを記録）、ページのリンクで別の `file:` へ移った後と `.png` では押せないことを確かめた（2026-09-28）。
+
+PC のファイルのタブ（2026-10-02）は `tests/unit/inapp-browser.mjs`（`webRequest` の判定・使い回し・一時の許可・写しの書き直し・データ置き場と UNC・移った先と Web のページに効かせないこと・止めた件数の一行・⋯ のファイルの操作・アドレス欄・設定の説明）と `tests/unit/file-actions.mjs`・`tests/unit/server-visualize.mjs`・`tests/unit/browser-confirm.mjs`・`tests/unit/agent-browser-relay.mjs`。実機は fake バックエンドのデスクトップ版を別のデータ置き場と userData で起動し、確認の ON/OFF・読み込む・設定・タブの使い回し・⋯・可視化のカード・`file:` の資源（データ置き場・uploads・UNC）・リモート 360 幅のプレビューと設定を確かめた。
 
 リモートから見るは `tests/unit/remote-browser-view.mjs`（間引き・止める条件・ローカルの接続と見ていない接続とエージェント操作中の断り・入力の変換・座標の変換・シートの出し分け）。実機は fake バックエンドのデスクトップ版を一時のデータ置き場と userData で起動し、`X-Forwarded-For` を足すプロキシ越しに携帯の大きさの Chromium で開いて、シートの出し分け・画面が届く・タップでボタンが押せる・文字と Enter・戻る・ドラッグでスクロール・アドレス欄・画質の切り替え・閉じると止まる・ローカルの接続からは断ることを確かめた（2026-09-28）。

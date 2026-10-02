@@ -1,8 +1,17 @@
 // Shared by the renderer and snapshot responses. Only exact HTTPS origins enter CSP.
+import { validProfileId } from './browser-profiles.mjs';
 export function externalOrigin(value) {
   try {
     const url = new URL(value);
     return url.protocol === 'https:' && !url.username && !url.password ? url.origin : null;
+  } catch { return null; }
+}
+
+/** 止めた資源の出どころ（件数に数える）。http も含む。許可に加えられるのは https だけ（externalOrigin） */
+export function blockedOrigin(value) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password ? url.origin : null;
   } catch { return null; }
 }
 
@@ -14,7 +23,8 @@ export function validBrowserPref(key, value) {
     let url;
     try { url = new URL(row.origin); } catch { return false; }
     if (!['https:', ...(key === 'agentSitePermissions' ? ['http:'] : [])].includes(url.protocol) || url.origin !== row.origin || url.username || url.password) return false;
-    return key !== 'agentSitePermissions' || typeof row.agent === 'string' && /^[a-z0-9_-]{1,100}$/i.test(row.agent);
+    // agentSitePermissions の profile は省けばメイン（ADR 0078）
+    return key !== 'agentSitePermissions' || typeof row.agent === 'string' && /^[a-z0-9_-]{1,100}$/i.test(row.agent) && (row.profile === undefined || validProfileId(row.profile));
   });
 }
 

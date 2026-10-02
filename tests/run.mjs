@@ -10,6 +10,8 @@
 process.env.AGENT_HOST_LOCALE ||= "ja";
 import { installDomStub } from "./lib/dom-stub.mjs";
 import { runCase, summarize, pick } from "./lib/harness.mjs";
+import { ROOT } from "./lib/server.mjs";
+import { snapshotPleiadWorktrees, leakedWorktrees } from "./lib/worktree-guard.mjs";
 
 // web/render.mjs はブラウザ前提なので、読み込む**前**に DOM を差し替える。
 installDomStub();
@@ -39,6 +41,8 @@ const cases = [
   await import('./unit/agent-browser-relay.mjs'),
   // 新規会話の最初のターンの中継のキーを、会話 ID が決まったとき本物へ付け替える（parentPort の身代わり）
   await import('./unit/server-browser-rebind.mjs'),
+  // 内蔵ブラウザーのプロフィール（ADR 0078）: 保存領域・会話ごとの今のプロフィール・中継の絞り込み・AI の切り替え（ply_browser）・確認の鍵
+  await import('./unit/browser-profiles.mjs'),
   await import('./unit/browser-confirm.mjs'),
   // 設定 › コンピューターの操作: prefs の検査と既定・store の remember/forget・hostCapabilities.computerUse の判定・節の動き・setPref（docs/computer-use.md）
   await import('./unit/computer-settings.mjs'),
@@ -53,6 +57,44 @@ const cases = [
   // サーバー越し: 承認カードの payload・スクショの保存と配信・computer.state・computerStop・委譲の子の承認（fake + 偽の driver）
   await import('./unit/server-computer.mjs'),
   await import('./unit/modes.mjs'),
+  // git の動き（ADR 0085）: 状態・差分の解析、コマンド結果からのタイムライン（ブランチ・コミット・PR）、ターンの始まりと終わりの隠し ref の撮影・要約・掃除（一時リポジトリ）
+  await import('./unit/git-info.mjs'),
+  await import('./unit/server-git.mjs'),
+  // git の動きの画面（ADR 0085）: 要約行・委譲カードの変更の行・したことの行・差分の面（色なし）・右パネルの表（gitSlots）
+  await import('./unit/git-view.mjs'),
+  // 分けた作業場所の画面（ADR 0089）: 入力欄の上の 1 行・会話の中の静かな 1 行・残っている作業場所の操作と結果の行・取り込みの依頼文
+  await import('./unit/worktree-view.mjs'),
+  // 分けた作業場所（ADR 0089）: 作成と失敗の巻き戻し・片付けの判定・使用中は消さない・ジャンクションを外してから消す（リンク先が残る）・退避の隠し ref・台帳と git の突き合わせ（一時リポジトリ）
+  await import('./unit/worktrees.mjs'),
+  // 分けた作業場所（サーバー越し）: ぶつかりの判定・分けて始める（予約・取り消し・戻す）・いつも分ける・委譲の自動の分け方と isolate・完了通知と ply_task_status の作業場所の行・取り込み後の片付け・退避と作り直し
+  await import('./unit/server-worktree.mjs'),
+  // 分けた作業場所を会話・委譲・画面につなぐ層: ぶつかりの判定・委譲で分けるか（並列の委譲のまとめ数え）・子の完了と片付け・準備中は消さない・残りの絞り込み・cwd を戻す・退避と作り直し
+  await import('./unit/worktree-host.mjs'),
+  // テストが本体の git に分けた作業場所を残さない守り（run.mjs の各テストの後の検査・AGENT_HOST_WORKTREES=off）: 増えた作業場所を見つける・他の worktree は数えない・off では作らない
+  await import('./unit/worktree-leak-guard.mjs'),
+  // 委譲の子の分けた作業場所: 子への指示・完了通知と status の「作業場所」の行・isolate の検査・ツールの定義
+  await import('./unit/agent-tasks-workspace.mjs'),
+  // 操作の一覧（core/ops/、ADR 0080・0081）: 権限の表（主体 × 危険度 × 会話の承認モード）・関所の順序と定義の検査・載せ忘れの lint（WS のコマンドと prefs のキーのラチェット）・
+  // 一覧の中身（snapshot・文の量・主体ごとの見え方・伏せ字・辞書・JSON Schema）・WS の invoke をサーバー越しに
+  await import('./unit/ops-policy.mjs'),
+  await import('./unit/ops-registry.mjs'),
+  await import('./unit/ops-coverage.mjs'),
+  await import('./unit/ops-surface.mjs'),
+  // 操作の一覧の中身（会話・設定・委譲）・MCP の生成器と橋・ply_control の 3 つのエージェントへの渡し方・サーバー越しの HTTP と権限の配線・CLI と pleiad mcp
+  await import('./unit/ops-sessions.mjs'),
+  // pleiad CLI の起動口（ADR 0090）: 会話のシェルの PATH・外の AI の MCP の設定（app.cliSetup）・起動口の改行・デスクトップ版の同梱
+  await import('./unit/cli-launcher.mjs'),
+  // 設定を書く(settings.set): 全設定 × 全主体の判定・値の検査・承認カードと受領証・bypass で承認なし・束縛なしの NEEDS_UI（身代わりのサーバー）
+  await import('./unit/ops-settings.mjs'),
+  await import('./unit/setting-change-ui.mjs'),
+  await import('./unit/ops-mcp.mjs'),
+  await import('./unit/control-delivery.mjs'),
+  await import('./unit/ops-control.mjs'),
+  await import('./unit/ops-cli.mjs'),
+  // 設定の変更の承認: 待たずに返る・期限なしのカード・結果を会話へ届ける（ターンの終わり・中断・途中送信・置き換え・聞き直し・再起動。ADR 0088）
+  await import('./unit/server-setting-approval.mjs'),
+  await import('./unit/server-ops.mjs'),
+  await import('./unit/sessions-search-op.mjs'),
   await import('./unit/agent-tasks.mjs'),
   await import('./unit/agent-tasks-silence.mjs'),
   await import('./unit/task-command-notice.mjs'),
@@ -147,6 +189,12 @@ const cases = [
   await import('./unit/context-review.mjs'),
   await import('./unit/slash-skills.mjs'),
   await import('./unit/notifications.mjs'),
+  // スマホへの通知（core/notify、ADR 0086）: 種類・抑制（見ている会話・古さ・短さ）・取り消し・暗号の往復と固定長・Android と共有する例・完了と失敗の保留
+  await import('./unit/push-notify.mjs'),
+  // ホスト（fake）→ 中継の通知の線 → 端末の代わりのクライアントで復号: 承認・質問・完了・失敗・取り消し・見ている会話・止めた端末・溜めて渡す
+  await import('./unit/server-push-notify.mjs'),
+  // 通知の画面側: この PC の設定・見ている間は出さない・失敗・presence の知らせ・設定 › 通知・スマホのアプリの帯と通知から開く会話
+  await import('./unit/notify-web.mjs'),
   await import("./unit/onboarding.mjs"),
   await import("./unit/tree.mjs"),
   await import("./unit/family.mjs"),
@@ -287,6 +335,12 @@ const cases = [
   await import("./unit/cwd-recent-places.mjs"),
   await import("./unit/conversations.mjs"),
   await import("./unit/conversations-storage.mjs"),
+  // セッション検索（core/session-search.mjs）: 照合（AND・NFKC・"…"・場所はフォルダー名）・発言者・委譲・期間・関連度の順・抜粋の ranges・写しの更新と partial
+  await import("./unit/session-search.mjs"),
+  // 読み込み元（core/session-search-host.mjs）: 保存分は直接・それ以外は getMessages・完了通知とコマンドの行とツールの出力は写さない
+  await import("./unit/session-search-host.mjs"),
+  // 脇の検索の手元の照合（web/session-find.mjs）: core と同じ規則・並び・期間・最近の検索・近道
+  await import("./unit/session-find.mjs"),
   // codex バックエンド。app-server の身代わり（tests/lib/fake-codex.mjs）と話すだけで、
   // 本物の codex もネットワークも要らない
   await import("./unit/server-codex.mjs"),
@@ -336,7 +390,17 @@ if (!selected.length) process.exit(1);
 
 const t0 = Date.now();
 const suites = [];
-for (const mod of selected) suites.push(await runCase(mod));
+// 各テストの後、このリポジトリの git に Pleiad の分けた作業場所（<リポジトリ>.pleiad/・pleiad/ のブランチ）が増えていたら、そのテストを落とす。
+// 後始末はしない（並行する別の作業のものかもしれないので、消すかどうかは人が決める）。理由と対処は tests/lib/worktree-guard.mjs
+let seen = await snapshotPleiadWorktrees(ROOT);
+for (const mod of selected) {
+  const suite = await runCase(mod);
+  const now = await snapshotPleiadWorktrees(ROOT);
+  const leaked = leakedWorktrees(seen, now);
+  if (leaked.length) suite.ok("テストの後に本体の git の分けた作業場所が増えていない", false, leaked.join(", "));
+  seen = now ?? seen;
+  suites.push(suite);
+}
 
 const code = summarize(suites);
 console.log(`  ${((Date.now() - t0) / 1000).toFixed(1)} 秒`);

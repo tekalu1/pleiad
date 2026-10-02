@@ -93,6 +93,13 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 （`{ kind: "turn", …, phase, background }`）に載せ、変わった時点で `running` を配り直す（4 秒ごとの定期便を待たない）。
 web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧を衛星（design-system.md §6）に替える。
 `waiting` の間もターンは終わっていない。同じ会話への送信は途中送信（`control.steer`）で届く。
+次のターンの設定の予約（`nextSettings`。実行中に作業ディレクトリ・モデルなどのチップを変えると立つ）があっても、`waiting` の間は同じに途中送信する。
+送信は今のターンの設定のまま処理され、予約は消さずに次のターンから効く（[ADR 0077](adr/0077-steer-before-reservation-while-waiting.md)）。
+`core/message-queue.mjs` の `kick` は、予約があって main が動いている間（`active`）だけ、すぐ終わるのでターンの終わりを待つ（送信待ちの理由は `{ reason: 'turn', detail: 'reserved' }`）。
+`phase` が `waiting` に変わった時点で `core/server.mjs` が `kick` し直し、待っていた送信をすぐ流す。
+終わらない裏のコマンド（headed のブラウザー・`npm run dev`）が残るターンで、予約があると裏を止めるまで送られなかった（2026-10-02 に実例）のはこれで直した。
+届かない送信を切り分けるときは、`~/.agent-host/sessions.json` の会話の `outbox`（受理の `at`）と、Claude の transcript の
+`queue-operation` の `enqueue`（CLI が受け取った時刻）を突き合わせる。enqueue が無ければ Pleiad の送信待ちで止まっている。
 **ターンが終わった後も裏が残る**バックエンド（Codex）は、これではなく §2.7 の会話単位の background を使う。
 
 **`kind` の語彙（2026-09）**: web が衛星に数えるかどうかがここで決まる（`behindOfTasks`）。
@@ -471,6 +478,8 @@ Pleiad はターンの後で rollout を読んで拾う（`core/backends/codex-r
 - 読めない・形が違うときは診断ログに記録し、ターンの結果は変えない。rollout の行の形は公開の約束ではないので、Codex の版で変わりうる。
 - `approvalRequested` は、同じターンで同じ call id（承認要求の `itemId`）の承認を求められたか。
 - 上流が拒否を `commandExecution`（`declined`）のアイテムとして出すようになれば、この読み取りは要らなくなる。
+
+**分けた作業場所と作業ディレクトリ（2026-10-03、[ADR 0089](adr/0089-worktree-on-demand.md)）。** 会話の cwd が分けた作業場所（`<リポジトリ>.pleiad/<id>`）になることがある。人が「分けて始める」を選ぶと、サーバーが作った作業場所のパスを `setTurnSettings` の `cwd` で予約し（ターンの境界でだけ切り替わる）、「いつも分ける」ならターンの始まりに `runTurn` が分けて始める（変更履歴に `by: ply` の `cwd`、理由 `worktreeSplit`）。片付けで消すときは、先に会話の cwd と予約を元の場所へ戻す（理由 `worktreeBack`）。分けた作業場所の中の会話の一覧の行は、`cwd` はそのままで `worktree: { id, branch, origin }` を持ち、`place`（最近の場所の候補）は元の場所にする。
 
 **codex の実行ファイル**は `AGENT_HOST_CODEX_BIN`（既定 `codex`）。
 **agy の実行ファイル**は `AGENT_HOST_AGY_BIN`（既定 `agy`）。

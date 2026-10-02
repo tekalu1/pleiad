@@ -56,6 +56,8 @@ export function createContextMenu() {
     };
     for (const item of items) {
       if (item.sep) { panel.append(el('div', 'sep')); continue; }
+      // 途中の見出し（内蔵ブラウザーのプロフィールの「Pleiad」など）。wrap は全文を折り返す
+      if (item.head) { panel.append(el('div', 'head' + (item.wrap ? ' wrap' : ''), item.head)); continue; }
       if (item.input) {
         const input = el('input', 'field');
         input.placeholder = item.input.placeholder ?? ''; input.value = item.input.value ?? '';
@@ -64,9 +66,12 @@ export function createContextMenu() {
         panel.append(input); continue;
       }
       const row = el('button', 'li' + (item.checked ? ' on' : '') + (item.note ? ' has-note' : ''));
-      row.type = 'button'; row.setAttribute('role', 'menuitem');
+      row.type = 'button'; row.setAttribute('role', item.radio ? 'menuitemradio' : 'menuitem');
+      if (item.radio) row.setAttribute('aria-checked', String(!!item.checked));
       // 今は押せない項目（タイトル行の「…」のタイトルを生成: 生成中・未送信など）
       if (item.disabled) { row.disabled = true; row.setAttribute('aria-disabled', 'true'); }
+      // 名前の前の印（要素。プロフィールのモノグラムなど）
+      if (item.icon) row.append(item.icon);
       row.append(el('span', 'lbl', item.label));
       if (item.pending) { const label = el('span', 'hint pending-label'); label.append(runMark(t('pending.loading')), t('pending.loading')); row.append(label); }
       else if (item.hint) row.append(el('span', 'hint', item.hint));

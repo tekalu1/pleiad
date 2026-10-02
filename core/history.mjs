@@ -55,14 +55,22 @@ export async function loadTranscript(sessionId, backend) {
     backend?.getMessages ? backend.getMessages(sessionId) : Promise.resolve([]),
     backend?.getPresents ? backend.getPresents(sessionId) : readPresents(sessionId),
   ]);
-  // 中断の後に添えた「止めたもの」の文は、人の発言から切り分ける（どのバックエンドの行も通る。完了通知の見分けより先に）
-  const messages = splitInterruptionNotes(raw);
-
-  const notices = new Set((await store.get(sessionId)).taskNotices ?? []);
-  for (const m of messages) if (m.role === 'user' && !m.kind && notices.has(crypto.createHash('sha256').update(m.text ?? '').digest('hex'))) m.internalTaskNotice = true;
+  const messages = await prepareMessages(sessionId, raw);
   // 圧縮の要約は発言ではなく区切りの中身。分けて返し、server が区切りに入れる（core/compaction-history.mjs の attachCompactSummaries）
   const compactSummaries = messages.filter(m => m?.kind === 'compactSummary');
   return { messages: compactSummaries.length ? messages.filter(m => m?.kind !== 'compactSummary') : messages, presents, compactSummaries };
+}
+
+/**
+ * バックエンドが返した行を、画面に出す前の形へ整える。
+ * 中断の後に添えた「止めたもの」の文は、人の発言から切り分ける（どのバックエンドの行も通る。完了通知の見分けより先に）。
+ * 委譲の完了通知として送った発言には internalTaskNotice を付ける。loadTranscript とセッション検索の写しが同じ整え方を使う。
+ */
+export async function prepareMessages(sessionId, raw) {
+  const messages = splitInterruptionNotes(raw);
+  const notices = new Set((await store.get(sessionId)).taskNotices ?? []);
+  for (const m of messages) if (m.role === 'user' && !m.kind && notices.has(crypto.createHash('sha256').update(m.text ?? '').digest('hex'))) m.internalTaskNotice = true;
+  return messages;
 }
 
 // ------------------------------------------------------------------ present
@@ -98,7 +106,8 @@ export async function recordPresent(sessionId, payload) {
   if (!sessionId || !payload) return null;
 
   const record = {
-    at: new Date().toISOString(),
+    // git の要約の行（kind: 'git'。ADR 0085）は、ターンの終わりの時刻を渡されて、その並びで会話に出る
+    at: (payload.kind === 'git' || payload.kind === 'worktree') && typeof payload.at === 'string' ? payload.at : new Date().toISOString(),
     kind: payload.kind ?? "text",
     caption: payload.caption ?? null,
     // 添付の caption は日本語の文のまま残し、画面はキーで今の言語に訳す（core/server.mjs presentAttachments・web/saved-text.mjs）
@@ -112,6 +121,9 @@ export async function recordPresent(sessionId, payload) {
     ...(payload.origin === "host" || payload.origin === "device" ? { origin: payload.origin } : {}),
     ...(Number.isFinite(payload.size) && payload.size >= 0 ? { size: payload.size } : {}),
     ...(payload.turnKey ? { turnKey: payload.turnKey } : {}),
+    ...(payload.kind === 'git' ? { git: payload.git ?? null } : {}),
+    // 分けた作業場所で始めた印の行（ADR 0089）: { id, branch, origin, conflicts: [別の会話の題], count }
+    ...(payload.kind === 'worktree' ? { worktree: payload.worktree ?? null } : {}),
   };
 
   const inline =

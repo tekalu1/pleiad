@@ -2,8 +2,9 @@
    A 残る問い・C 最新へ（web/conversation-nav-view.mjs）。B 地図（ADR 0064）・D 目次。
    浮く面（最新へ・地図の浮く面）は、ライトでは --surface-paper。ダークでは地（--surface-paper）と同じ面が沈むので、一段明るい --surface-1 にする */
 
-/* 会話（#log）を包む相対位置の入れ物。残る問い・最新へ・地図は #log の外に重ねて、スクロールで動かない */
-.log-frame{flex:1;min-height:0;position:relative;
+/* 会話（#log）を包む相対位置の入れ物。残る問い・最新へ・地図は #log の外に重ねて、スクロールで動かない。
+   重ねる部品の z-index はこの中に閉じる（isolation）。閉じないと、会話を覆う設定のページ（style.css の .settings-view、z-index:1）の上に出る */
+.log-frame{flex:1;min-height:0;position:relative;isolation:isolate;
   --surface-float:var(--surface-paper);--surface-float-hover:var(--surface-1)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .log-frame{--surface-float:var(--surface-1);--surface-float-hover:var(--surface-3)}}
 :root[data-theme="dark"] .log-frame{--surface-float:var(--surface-1);--surface-float-hover:var(--surface-3)}

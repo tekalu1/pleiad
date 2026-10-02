@@ -19,7 +19,7 @@ export function stampSessionId(event, fallback) {
 }
 
 // server -> client
-export const READY = "ready";   // { protocolVersion, version, homeDir, resumedTurn, startedAt（サーバーの起動時刻 ms）, locale }
+export const READY = "ready";   // { protocolVersion, version, homeDir, resumedTurn, startedAt（サーバーの起動時刻 ms）, locale, notify（スマホへの通知に対応していれば 1） }
 export const EVENT = "event";
 export const RESPONSE = "response";
 export const ERROR = "error";
@@ -29,7 +29,10 @@ export const SCREENCAST = "screencast";
 // client -> server
 export const COMMAND = "command";
 
+// server.mjs に case を足したらここにも足す。無いコマンドはサーバーが黙って捨て、テストの cmd は応答待ちのまま止まる
 export const COMMANDS = new Set([
+  // 操作の一覧（core/ops/）の汎用の口。新しい機能はこの 1 つで足し、ここには足さない（ADR 0080）
+  'invoke',   // { op, args } -> その操作の返り値。失敗は code（NOT_FOUND・INVALID・READ_ONLY_MODE・NEEDS_UI・NEEDS_APPROVAL など）と、INVALID のとき issues: [{ path, code, message }]
   'agentTasks', 'agentTaskInstructions', 'cancelAgentTask',
   'retryAgentTask',             // { taskId, candidate: 'backend:model', account?, stop?, approved? } -> { task } | { confirm: { agent, mode } }。Claude の account は選んだ認証（'' はログイン中）。委譲カードの「別の候補でやり直す」
   // 委譲先の自動振り分け（core/delegation-routing.mjs。docs/agent-delegation.md「委譲先の自動振り分け」）。判定器のキーは返さない（hasKey だけ）
@@ -54,6 +57,12 @@ export const COMMANDS = new Set([
   'compatEndpointDelete',   // { id } -> 一覧。キーも消す。選んでいる会話は次の送信の前に選び直しを求める
   'compatEndpointDefault',  // { agent, id } -> 一覧。新しい会話の既定（'' = 公式）
   // リモート（ホスト側。core/remote/connector.mjs、docs/remote.md §6.1）。どの画面からも触れる（全権限）。秘密・トークンは返さない
+  // スマホ・この PC への通知（core/notify、ADR 0086）。presence は各画面の「いま見ている会話」、notifyRegister は中継越しのスマホの通知鍵と設定の登録
+  'presence',             // { visible, sessionId } -> 'ok'。見ている会話を知らせる（変わるたびと 1 分ごと）
+  'notifyStatus',         // {} -> { pc: { done, reply, failed }, devices: [{ id, name, platform, connected, notify: { registered, enabled, muted, lastSentAt } }], relayConnected }
+  'setNotifyPc',          // { done?, reply?, failed? } -> notifyStatus。notifyStatus イベントで全接続へ
+  'setNotifyDevice',      // { id, muted } -> notifyStatus。ホスト側でスマホ 1 台への通知を止める
+  'notifyRegister',       // { key（base64url の 32 バイト）, settings } -> { registered, enabled, muted, lastSentAt }。端末の画面（中継越し）からだけ
   'remoteStatus',          // {} -> RemoteStatus（{ enabled, configured, relayUrl, hasEnrollSecret, hostName, hostId, connection, pairing: { offer, requests }, devices, storage }）
   'setRemoteSettings',     // { enabled?, relayUrl?, enrollSecret?, hostName? } -> RemoteStatus。enrollSecret は省けば残し、'' で消す
   'remotePairingStart',    // {} -> { payload, expiresAt, hostId, hostName }。payload は QR とコピーに使う pleiad://pair?... の文字列（5 分・1 回）
@@ -71,6 +80,19 @@ export const COMMANDS = new Set([
   'setPlyInstructions', // { action: 'save'|'toggle'|'delete'|'reset'|'order', … } -> 同上。prefs.json の plyInstructions に保存。始まっている会話にも次のターンから効く
   'refreshContext', // { sessionId } -> 開始後に変わった指示・Skills を、やり取りを引き継いだまま読み込み直す（固定を取り直す）。返答中は不可
   'contextDiff',    // { sessionId } -> { files: [{ path, name, kind, modifiedAt, before, after, beforeMissing, removed }] } 開始時と今の中身
+  // git の動き（読み取りだけ。ADR 0085）。作業場所は会話の cwd（会話の無い下書きは、使ったことのある場所だけ）。git が無い・git 管理外は git: null
+  'gitStatus',      // { sessionId?, cwd?, fresh?, summary? } -> { git: { root, linked, branch, detached, head, upstream, ahead, behind, changed, untracked, conflicts, dirty, at, session?: { files, add, del, commits } | null } | null }。summary: true は会話の間の合計も返す（委譲カード）
+  'gitPanel',       // { sessionId, range?: 'uncommitted'|'session' } -> { git, timeline: [{ kind: branch|commit|pr, at, uuid, toolId, branch?, hash?, subject?, number?, url? }], changes: { range, hasSession, files: [{ path, state: A|M|D, add, del, binary }], total: { files, add, del }, failed? } | null, at } | { git: null }
+  'gitDiff',        // { sessionId, range, path } -> { diff: { range, path, hunks: [{ header, lines: [{ t: '+'|'-'|' ', s }] }], binary, truncated } | null }
+  // 分けた作業場所（ADR 0089）。作る・消すのはサーバーが決めた置き場・ブランチだけ（画面から任意のパスを受けない）
+  'worktreeCheck',  // { sessionId?, backend?, mode? } -> { git, current: { id, branch, path, origin, … } | null, conflicts: [{ sessionId, title, child }], canSplit, always }。同じリポジトリで書き込み中の別の会話（読むだけの会話・git 管理外では出さない）
+  'worktreeSplit',  // { sessionId? } -> { worktree: { id, branch, path, origin, … }, cwd }。今の作業場所の隣に分けた作業場所を作る。cwd の予約は画面が setTurnSettings で行う
+  'worktreeDiscard', // { id } -> { action }。予約を取り消したときなど。使っていなければ片付ける（変更があれば残る）
+  'worktreeKeep',   // { id, kept } -> { id, kept }。右パネルの「残す」
+  'worktreeArchive', // { id } -> { action, ref?, why? }。退避の隠し ref に作業ツリー全体を撮ってから消す
+  'worktreeRestore', // { ref } -> { worktree, cwd }。退避した作業場所を作り直す（右パネルの「元に戻す」）
+  'worktreeSettings', // {} -> { always }
+  'setWorktreeSettings', // { always } -> { always }。「いつも分ける」（確かめずに分けて始める）
   'setSessionMcp',  // { sessionId, name, removed } -> この会話だけ外部 MCP を外す（ply_context に出さない）/ 戻す。次のターンから効く
   'agentMcp',       // { cwd } -> { agents: { claude|codex: [{ name, transport, endpoint, command, path, scope, disabled }] } } 各エージェントの登録（読むだけ）
   'nativeInstructions', // { cwd, backend } -> { cwd, agent, entries: [{ id, name, path, scope, tokens }] | null } エージェント任せの指示を、そのエージェントの規則で探した量（読むだけ。ADR 0056）
@@ -132,6 +154,7 @@ export const COMMANDS = new Set([
   "markRead",     // { reads: [[sessionId, completedAt], ...] } -> { reads: 変わった分 }。完了を確認した（ホストに 1 つ・大きい方だけ）。read イベントで全接続へ
   "setGrouped",   // { sessionId, ungrouped }。fork のグループから外す / 戻す（§4.1）
   "setTitle",
+  "setBrowserProfile", // { sessionId, profile } 会話の今の内蔵ブラウザーのプロフィール（人が替えた。ADR 0078）
   "fork",
   "resolvePermission", // 承認ダイアログの応答
   "listStatuses",    // 既出の状態一覧（補完候補。強制ではない）
@@ -215,6 +238,8 @@ export const EVENTS = new Set([
   "session",      // sessionId が確定した { sessionId, model? }（model は実際に解決されたもの）
   "backend",      // { backend } 会話の実行先が変わった
   "nextSettings",
+  "worktreeSettings", // { always } 「いつも分ける」が変わった（sessionId は null。ADR 0089）
+  "worktreesChanged", // 分けた作業場所が増えた・消えた（sessionId は null）。右パネルの「残っている作業場所」を取り直す
   "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す
   "compatEndpointsChanged", // 互換の接続先の一覧・既定が変わった（sessionId は null）。中身は compatEndpoints コマンドで取り直す
   "delegationRoutingChanged", // change: settings|usage（旧送信元では省略）。sessionId は null。中身は delegationRouting コマンドで取り直す
@@ -229,6 +254,8 @@ export const EVENTS = new Set([
   "statusIcon",   // { status, icon } 状態グループのアイコンが変わった（sessionId は null）
   "title",        // タイトルが変わった
   "fork",         // 分岐した
+  // { requestId, outcome: allowed|denied|failed|superseded|restart } 設定の変更の承認（permission の settingChange）が決着した。カードを 1 行に畳む合図（ADR 0088）
+  "settingApproval",
   "permission",   // 承認が要る { id, kind: tool|question, toolName, input, canAlways, questions?, browserSite?, computerApp? }。computerApp は ply_computer のアプリの承認 { agent: { id, label }, apps: [{ id, name, risk: normal|high }], reason?, first }（docs/computer-use.md）
   // { state: idle|running|waiting, holder?: { sessionId, title }, since? } コンピューターの操作のロック。running はこの会話のターンが持っている（借りている）、waiting は別の会話が操作中で待っている。承認と同じく全部の接続へ流す
   "computer.state",

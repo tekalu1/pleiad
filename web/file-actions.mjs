@@ -14,13 +14,22 @@ export function fileUrl(path) {
   return url.href;
 }
 
-/** HTML または可視化の写しを、設定に応じたブラウザーで開く。 */
-export async function openHostFile(command, args, { cmd, inApp = false, openInPanel } = {}) {
+/**
+ * HTML または可視化の写しを、設定に応じたブラウザーで開く。内蔵ブラウザーでは、同じ実体のファイル（写しは同じ記録）のタブが
+ * その会話にあれば新しく作らず前に出して読み直す（reuse）。source(result) は、開いたタブの印（⋯ のファイルの操作とアドレス欄。
+ * web/browser-panel.mjs）。内蔵ブラウザーで開けたときは { inApp: true } を足して返す
+ */
+export async function openHostFile(command, args, { cmd, inApp = false, openInPanel, reuse = false, source } = {}) {
   if (inApp) {
     const result = await cmd(command, { ...args, returnPath: true });
-    if (openInPanel?.(fileUrl(result.path), { newTab: true })) return result;
+    if (openInPanel?.(fileUrl(result.path), { newTab: true, reuse, ...(source ? { source: source(result) } : {}) })) return { ...result, inApp: true };
   }
   return cmd(command, args);
+}
+
+/** タブ・アドレス欄に見せるパス。作業ディレクトリの中なら相対、外ならそのまま（区切りは / にそろえる） */
+export function displayPath(path, cwd) {
+  return String(relativeTo(path, cwd) ?? path).replaceAll('\\', '/');
 }
 
 const isHtml = path => /\.html?$/i.test(String(path ?? ''));
@@ -34,10 +43,12 @@ const isHtml = path => /\.html?$/i.test(String(path ?? ''));
 export function fileMenuItems(target, { osActions, current = false, canUse = true, run }) {
   const directory = target.kind === 'directory';
   const item = (label, action) => ({ label, onClick: () => run(action) });
+  // HTML は「ブラウザーで開く」が先頭（設定の開き先に従う）。プレビューは「プレビューで開く」として残す（docs/file-preview.md）
+  const browser = osActions && !directory && isHtml(target.path);
   const groups = [
     [
-      !current && item(t('files.menu.openInPanel'), 'panel'),
-      osActions && !directory && isHtml(target.path) && item(t('files.menu.openInBrowser'), 'browser'),
+      browser && item(t('files.menu.openInBrowser'), 'browser'),
+      !current && item(browser ? t('files.menu.openInPreview') : t('files.menu.openInPanel'), 'panel'),
       osActions && item(directory ? t('files.menu.revealFolder') : t('files.menu.revealFile'), 'reveal'),
     ],
     [item(t('files.menu.copyPath'), 'copy'), item(t('files.menu.copyRelative'), 'copyRelative')],
@@ -65,6 +76,28 @@ export function visualizationMenuItems({ origin = null } = {}, { osActions, canU
     [item(t('files.menu.saveHtml'), 'saveHtml'), origin && canUse && item(t('files.menu.use'), 'use')],
   ].map(group => group.filter(Boolean)).filter(group => group.length);
   return groups.flatMap((group, i) => (i ? [{ sep: true }, ...group] : group));
+}
+
+/**
+ * 内蔵ブラウザーの ⋯ の先頭に足すファイルの操作（画面が開いた PC のファイル・可視化の写しのタブだけ。docs/inapp-browser.md）。
+ * 中身は今のファイルの操作（fileMenuItems・visualizationMenuItems）と同じ処理を指す。kind は 'file' か 'snapshot'。
+ * 写しは origin（元のパス）が分かるときだけ元のパスの操作を、html（会話に残っている中身）が手元にあるときだけ原文と保存を出す。
+ * run(action) は web/file-preview.mjs
+ */
+export function browserTabMenuItems(kind, { origin = null, hasHtml = true } = {}, { osActions, canUse = true, run }) {
+  const item = (label, action) => ({ label, onClick: () => run(action) });
+  const snapshot = kind === 'snapshot';
+  const groups = snapshot ? [
+    [hasHtml && item(t('files.menu.viewSource'), 'source'), origin && item(t('files.menu.openOrigin'), 'origin'), origin && osActions && item(t('files.menu.revealFile'), 'reveal')],
+    origin ? [item(t('files.menu.copyOriginPath'), 'copy'), item(t('files.menu.copyRelative'), 'copyRelative')] : [],
+    [hasHtml && item(t('files.menu.saveHtml'), 'saveHtml'), origin && canUse && item(t('files.menu.use'), 'use')],
+  ] : [
+    [item(t('files.menu.viewSource'), 'source'), osActions && item(t('files.menu.revealFile'), 'reveal')],
+    [item(t('files.menu.copyPath'), 'copy'), item(t('files.menu.copyRelative'), 'copyRelative')],
+    [item(t('files.menu.save'), 'save'), canUse && item(t('files.menu.use'), 'use')],
+  ];
+  const kept = groups.map(group => group.filter(Boolean)).filter(group => group.length);
+  return kept.flatMap((group, i) => (i ? [{ sep: true }, ...group] : group));
 }
 
 /**

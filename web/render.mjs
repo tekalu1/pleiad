@@ -10,8 +10,10 @@ import { URL_SOURCE, bareUrl, wholeUrl } from './url-detect.mjs';
 // 構造をパースし、葉のテキストを出力する瞬間にだけエスケープする。
 import { el, chevron } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
-import { copyIcon, downloadIcon, sidePanelIcon, moreIcon } from './icons.mjs';
+import { copyIcon, downloadIcon, sidePanelIcon, openInBrowserIcon, moreIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
+import { renderGitSummary } from './git-view.mjs';
+import { renderWorktreeLine } from './worktree-ui.mjs';
 import { COMPUTER_PREFIX, isComputerTool, computerToolName, computerVerb, computerInfo, reasonShort, reasonLong, shotsOf, shotButton, stopMark } from './computer-use.mjs';
 
 // ---------------------------------------------------------------- エスケープ
@@ -588,6 +590,10 @@ function withCsp(html) {
  */
 export function renderPresent(ev) {
   const e = ev ?? {};
+  // git の要約の行（返答の下の 1 行。ADR 0085）。カードではない
+  if (e.kind === 'git') return renderGitSummary(e) ?? el('div', 'git-sum-row');
+  // 分けた作業場所で始めた印の行（ADR 0089）
+  if (e.kind === 'worktree') return renderWorktreeLine(e);
   const kind = ["image", "html", "text", "file", "visualization"].includes(e.kind) ? e.kind : "text";
   const card = el("figure", `present present-${kind}`);
 
@@ -623,10 +629,13 @@ export function renderPresent(ev) {
       // 開くのは右のプレビューパネル。ここは会話に載る面だけを組み立て、
       // 開く側とは要求イベントで繋ぐ（ファイルリンクと同じ一枚の面に集める）。
       // at・id は会話の記録の印。右パネルの「ブラウザーで開く」がサーバーから写しを引く（core/server.mjs /visualization-snapshot）
+      // 内蔵ブラウザーが使えるホストの画面では、同じ位置に「ブラウザーで開く」を出し、「サイドパネルに表示」は隠す
+      // （どちらを出すかは body の inapp-links。web/file-preview.mjs が設定と画面で決める。docs/visualize.md）
+      const detail = { content: e.content ?? '', title: e.caption ?? '', path: e.path ?? '', at: e.at ?? null, id: e.id ?? null };
       const expand = tool(sidePanelIcon, t('timeline.present.sidePanel'), 'visualize-expand');
-      expand.onclick = () => expand.dispatchEvent(new CustomEvent('ply-visualize-expand', {
-        bubbles: true, detail: { content: e.content ?? '', title: e.caption ?? '', path: e.path ?? '', at: e.at ?? null, id: e.id ?? null },
-      }));
+      expand.onclick = () => expand.dispatchEvent(new CustomEvent('ply-visualize-expand', { bubbles: true, detail }));
+      const open = tool(openInBrowserIcon, t('timeline.present.browser'), 'visualize-open-browser');
+      open.onclick = () => open.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles: true, detail }));
       cap.append(controls);
       if (e.mode === 'wide') card.classList.add('visualize-wide');
     }

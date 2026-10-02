@@ -141,6 +141,8 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
   }
   /** この会話で走っている分 */
   const runningIn = (sessionId) => [...runs.values()].some(r => r.sessionId === sessionId);
+  /** 走っているシェルの作業ディレクトリ（分けた作業場所を消してよいかの確かめに使う。ADR 0089） */
+  const cwds = () => [...runs.values()].map(r => r.cwd).filter(Boolean);
   /**
    * この会話で走っている分が全部終わるまで待つ。'native'（Codex）の会話で次のターンを始める前に使う。
    * Codex は `!` のターンの間に来た turn/start の発言を同じターンに入れ、モデルを呼ばずに閉じる（codex-cli 0.156.1 で確認）
@@ -296,5 +298,5 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     return out;
   }
 
-  return { start, stop, setSkip, stopSession, stopAll, runningIn, settled, appendsFor, release, delivered, switched, discard, rows, placeKept, decorate, running: () => runs.size };
+  return { start, stop, setSkip, stopSession, stopAll, runningIn, cwds, settled, appendsFor, release, delivered, switched, discard, rows, placeKept, decorate, running: () => runs.size };
 }

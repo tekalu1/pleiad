@@ -16,6 +16,8 @@ class MainActivity : BridgeActivity() {
         registerPlugin(PleiadRemotePlugin::class.java)
         super.onCreate(savedInstanceState)
         takePairLink(intent)
+        takeOpenLink(intent)
+        NotifyService.sync(this)
     }
 
     /**
@@ -35,6 +37,22 @@ class MainActivity : BridgeActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         takePairLink(intent)
+        takeOpenLink(intent)
+    }
+
+    /**
+     * pleiad://open?h=<hostId>&s=<sessionId> (a notification was tapped, ADR 0086): open that host's window on that conversation.
+     * The notification system forgets the tapped notification; the planner is told so a bundle can shrink or go.
+     */
+    private fun takeOpenLink(intent: Intent?) {
+        val (hostId, session, bundle) = NotifyControl.parseOpen(this, intent?.data) ?: return
+        intent?.data = null   // handled once (a recreated activity must not open it again)
+        (application as PleiadApp).notifyHub.opened(hostId, session.takeIf { it.isNotEmpty() }, bundle)
+        startActivity(
+            Intent(this, HostActivity::class.java).putExtra(HostActivity.EXTRA_HOST_ID, hostId)
+                .apply { if (session.isNotEmpty()) putExtra(HostActivity.EXTRA_OPEN_SESSION, session) }
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        )
     }
 
     /** pleiad://pair?... opened from the system camera or another app: hand it to the host list (it asks before pairing). */
