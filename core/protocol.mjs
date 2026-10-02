@@ -29,6 +29,7 @@ export const SCREENCAST = "screencast";
 // client -> server
 export const COMMAND = "command";
 
+// server.mjs に case を足したらここにも足す。無いコマンドはサーバーが黙って捨て、テストの cmd は応答待ちのまま止まる
 export const COMMANDS = new Set([
   'agentTasks', 'agentTaskInstructions', 'cancelAgentTask',
   'retryAgentTask',             // { taskId, candidate: 'backend:model', account?, stop?, approved? } -> { task } | { confirm: { agent, mode } }。Claude の account は選んだ認証（'' はログイン中）。委譲カードの「別の候補でやり直す」
@@ -132,6 +133,7 @@ export const COMMANDS = new Set([
   "markRead",     // { reads: [[sessionId, completedAt], ...] } -> { reads: 変わった分 }。完了を確認した（ホストに 1 つ・大きい方だけ）。read イベントで全接続へ
   "setGrouped",   // { sessionId, ungrouped }。fork のグループから外す / 戻す（§4.1）
   "setTitle",
+  "setBrowserProfile", // { sessionId, profile } 会話の今の内蔵ブラウザーのプロフィール（人が替えた。ADR 0078）
   "fork",
   "resolvePermission", // 承認ダイアログの応答
   "listStatuses",    // 既出の状態一覧（補完候補。強制ではない）

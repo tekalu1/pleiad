@@ -52,7 +52,12 @@
     "computerApp": "Allow {{agent}} to control \"{{app}}\"?",
     "computerAppJoin": "\", \"",
     "browserSite": "{{agent}} wants to use {{site}}",
-    "browserAccount": " (signed in as {{account}})"
+    "browserNotes": " ({{notes}})",
+    "browserProfile": "profile: {{profile}}",
+    "browserAccountName": "signed in as {{account}}"
+  },
+  "browserProfiles": {
+    "main": "Main"
   },
   "quota": {
     "unsupported": "This agent cannot report its usage limits.",

@@ -96,7 +96,11 @@ export default async function(t) {
     settings = setupBrowserSettings({ available: true, getPrefs: () => saved, cmd: async (_name, { key, value }) => { saved[key] = value; settings.paint(); } });
     const toggles = nodes.browserPanel.querySelectorAll('input'); assert.equal(toggles.length, 2); assert(toggles.every(toggle => !toggle.checked));
     toggles[0].checked = true; await toggles[0].onchange(); assert.equal(saved.confirmExternalLoads, true);
+    const subheads = () => nodes.browserPanel.querySelectorAll('h4').map(h => h.textContent);
+    assert(subheads().includes('止めた出どころ') && !subheads().includes('外部の読み込み'), '許可したサイトが無いとき、中身の無い小見出し「外部の読み込み」を出さない');
+    assert(!subheads().includes('エージェントの利用'), '一覧が空のエージェントの小見出しも出さない');
     const permit = nodes.browserPanel.querySelectorAll('button').find(button => button.textContent === '許可'); await permit.onclick();
+    assert(subheads().includes('外部の読み込み'), '許可したサイトが 1 件でもあれば小見出しを出す');
     assert.equal(saved.externalSitePermissions[0].mode, 'always');
     await nodes.browserPanel.querySelectorAll('button').find(button => button.textContent === '毎回聞く').onclick(); assert.equal(saved.externalSitePermissions[0].mode, 'ask');
     await nodes.browserPanel.querySelectorAll('button').find(button => button.textContent === '消す').onclick(); assert.equal(saved.externalSitePermissions.length, 0);

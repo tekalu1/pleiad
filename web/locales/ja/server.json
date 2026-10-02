@@ -52,7 +52,12 @@
     "computerApp": "{{agent}} に「{{app}}」の操作を許可しますか？",
     "computerAppJoin": "」「",
     "browserSite": "{{agent}} が {{site}} を使おうとしています",
-    "browserAccount": "（ログイン済み: {{account}}）"
+    "browserNotes": "（{{notes}}）",
+    "browserProfile": "プロフィール: {{profile}}",
+    "browserAccountName": "ログイン済み: {{account}}"
+  },
+  "browserProfiles": {
+    "main": "メイン"
   },
   "quota": {
     "unsupported": "このエージェントは使用枠の取得に対応していません。",

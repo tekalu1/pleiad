@@ -17,7 +17,7 @@ function createBrowserNavigation({ authorize, enabled = () => false }) {
     const s = state(tab), origin = originOf(url);
     if (!origin || !enabled() || origin === originOf(tab.webContents.getURL()) || s.granted.has(origin)) return;
     const signal = s.controller.signal;
-    const answer = await authorize({ sessionId: tab.sessionId, url, webContents: tab.webContents, signal });
+    const answer = await authorize({ sessionId: tab.sessionId, tabId: tab.id, url, webContents: tab.webContents, signal });
     if (!answer?.allow || signal.aborted || tab.webContents.isDestroyed()) throw new Error(answer?.message || denial().message);
     s.granted.add(origin);
   }
