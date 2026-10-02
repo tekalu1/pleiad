@@ -259,11 +259,21 @@
     "waitingApproval": "承認を待っている",
     "behindCount_other": "裏で {{count}} 本が動いている",
     "turnRunning": "ターンが走っている",
-    "background_other": "バックグラウンド {{count}}",
     "thinkingTokens_other": "考えている（約 {{count}} トークン）",
     "waitingBackground": "裏の作業を待っている",
-    "backgroundEnded_other": "バックグラウンド · 完了 {{count}}",
-    "backgroundOnly": "裏でコマンドが動いている"
+    "backgroundOnly": "裏でコマンドが動いている",
+    "bgKind": {
+      "claude": "Claude",
+      "codex": "Codex",
+      "antigravity": "Antigravity",
+      "compat": "互換",
+      "term": "ターミナル"
+    },
+    "bgItem": "{{name}} {{n}}",
+    "bgItemWaiting": "{{name}} {{n}}（{{w}} 本が承認待ち）",
+    "bgJoin": "・",
+    "bgSpoken": "バックグラウンド: {{items}}。一覧を開く",
+    "bgEndedSpoken": "バックグラウンド: 完了 {{n}}。一覧を開く"
   },
   "compat": {
     "kind": {
@@ -2504,6 +2514,16 @@
     "compact": "会話を圧縮",
     "compactNow": "圧縮する",
     "meterMenu": "文脈の操作",
+    "meterShort": "{{rate}}%",
+    "meterLabel": "文脈 {{rate}}%（{{used}} / {{window}}）",
+    "scheduledShort": "◷ {{time}}",
+    "scheduledSpoken": "{{time}} に自動で圧縮します",
+    "spokenJoin": "。",
+    "openActions": "操作を開く",
+    "menuTokens": "{{used}} / {{window}} トークン",
+    "cancelAt": "{{time}} の自動圧縮をキャンセル",
+    "runningShort": "圧縮しています…",
+    "failedShort": "圧縮できませんでした",
     "settings": "圧縮設定",
     "done": "会話を圧縮しました",
     "doneAuto": "自動で圧縮しました",
@@ -3067,8 +3087,8 @@
       "label": "会話の本文"
     },
     "sticky": {
-      "title": "{{text}}（押すと問いの先頭へ）",
-      "openToc": "目次を開く"
+      "title": "この問いへ戻る: {{text}}",
+      "label": "この問いへ戻る（{{time}}）: {{text}}"
     },
     "latest": {
       "label": "最新へ（End）",

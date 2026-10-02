@@ -16,8 +16,11 @@ import { userPieces, piecesText, appendPieces } from './conversation-nav.mjs';
 
 /** 末尾からこの距離（px）以上離れたときだけ「最新へ」を出す（末尾の目印が、会話欄の下端からこの距離の内に見えなくなったとき） */
 const AWAY = 120;
-/** 目印から会話欄の下端までの余白（#log の下の余白 24px）。これを引いて、スクロール量の 120px にそろえる */
-const END_GAP = 24;
+/** 目印から会話欄の下端までの余白（#log の下の余白。広い画面 24px・狭い画面 12px）。これを引いて、スクロール量の 120px にそろえる */
+const END_GAP_WIDE = 24;
+const END_GAP_NARROW = 12;
+/** 問いへ戻って着いたとき、吹き出しの輪（note-flash）を残す時間（ms） */
+const FLASH_MS = 1300;
 /** 上端から見て、この位置より上に始まった発言を「いまの発言」とする */
 const PROBE = 48;
 /** 問いの下端がこの位置より上に出たときだけ、上に残す */
@@ -38,10 +41,10 @@ const arrowIcon = () => {
 
 /**
  * @param {{ frame:HTMLElement, log:HTMLElement, thread:HTMLElement,
- *   scrollToEnd:()=>void, isRunning:()=>boolean, narrow:MediaQueryList, openToc?:()=>void }} o
+ *   scrollToEnd:()=>void, isRunning:()=>boolean, narrow:MediaQueryList }} o
  *   frame は #log を包む相対位置の入れ物。scrollToEnd は client.mjs の末尾追従（実寸の確定を待つ）
  */
-export function createConversationNav({ frame, log, thread, scrollToEnd, isRunning, narrow, openToc = null }) {
+export function createConversationNav({ frame, log, thread, scrollToEnd, isRunning, narrow }) {
   // ---- 部品
   const sticky = el('div', 'nav-sticky');
   sticky.hidden = true;
@@ -118,7 +121,14 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   endMark.setAttribute('aria-hidden', 'true');
   log.append(endMark);
   let endVisible = true;
-  new IntersectionObserver((records) => { endVisible = records.at(-1).isIntersecting; schedule(); }, { root: log, rootMargin: `0px 0px ${AWAY - END_GAP}px 0px` }).observe(endMark);
+  // 狭い画面は #log の下の余白が 12px（style.css）。余白の差だけ判定の枠を変える（幅が変わったら張り直す）
+  let endObserver = null;
+  const watchEnd = () => {
+    endObserver?.disconnect();
+    endObserver = new IntersectionObserver((records) => { endVisible = records.at(-1).isIntersecting; schedule(); }, { root: log, rootMargin: `0px 0px ${AWAY - (narrow.matches ? END_GAP_NARROW : END_GAP_WIDE)}px 0px` });
+    endObserver.observe(endMark);
+  };
+  watchEnd();
   /** 上端（PROBE）より上に始まった最後の発言。持っている位置の二分探索（DOM を読まない）。無ければ 0（発言が無ければ -1） */
   const currentIndex = () => {
     if (!turns.length) return -1;
@@ -144,7 +154,8 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     const body = el('span', 'nav-sticky-text');
     appendPieces(body, info.pieces);
     stickyButton.replaceChildren(...head, body);
-    stickyButton.title = narrow.matches && openToc ? t('nav.sticky.openToc') : t('nav.sticky.title', { text: info.plain });
+    stickyButton.title = t('nav.sticky.title', { text: info.plain });
+    stickyButton.setAttribute('aria-label', info.at ? t('nav.sticky.label', { time: info.at, text: info.plain }) : t('nav.sticky.title', { text: info.plain }));
   }
 
   function paintLatest() {
@@ -215,7 +226,7 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
    * 行の上端を会話欄の上端から gap の位置へ送る。画面の外の発言は仮の高さで並ぶので（style.css の content-visibility）、
    * 送った後に見えた分が実寸に伸びて位置がずれる。数フレームは合わせ直し、利用者が触れたらやめる
    */
-  function scrollToRow(row, gap = 12) {
+  function scrollToRow(row, gap = 12, onSettled = null) {
     settle?.abort();
     const run = settle = new AbortController();
     const want = () => !row.isConnected ? log.scrollTop : row.getBoundingClientRect().top - log.getBoundingClientRect().top + log.scrollTop - gap;
@@ -226,15 +237,45 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
       if (run.signal.aborted) return;
       const target = want();
       if (Math.abs(target - log.scrollTop) > 1) { log.scrollTop = target; calm = 0; } else calm++;
-      if (++frames > 30 || calm >= 3) return run.abort();
+      if (++frames > 30 || calm >= 3) { const aborted = run.signal.aborted; run.abort(); if (!aborted) onSettled?.(); return; }
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
     schedule();
   }
-  function goTo(index) {
+  function goTo(index, onSettled = null) {
     const turn = ensureTurns()[Math.max(0, Math.min(turns.length - 1, index))];
-    if (turn) scrollToRow(turn.row);
+    if (turn) scrollToRow(turn.row, 12, onSettled);
+  }
+  /** 着いた印: 問いの吹き出しに輪を 1 度だけ（入力欄の上の一行・添付の入口と同じ note-flash） */
+  let flashTimer = 0, flashed = null;
+  function flash(turn) {
+    const body = turn?.user.querySelector(':scope > .body');
+    if (!body) return;
+    clearTimeout(flashTimer);
+    flashed?.classList.remove('flash');
+    void body.offsetWidth;
+    body.classList.add('flash');
+    flashed = body;
+    flashTimer = setTimeout(() => { body.classList.remove('flash'); if (flashed === body) flashed = null; }, FLASH_MS);
+  }
+  /** 上に残っている問いへ戻る。静かな読み直し（ADR 0062）で行が置き換わっていたら、押した時点で取り直して発言の uuid（無ければ並びの位置）で引き直す */
+  function returnToQuestion() {
+    const shown = stickyFor;
+    let index = shown ? turns.indexOf(shown) : -1;
+    if (index < 0) index = currentIndex();
+    if (!shown || !shown.row.isConnected || !shown.user.isConnected) {
+      const uuid = shown?.user.dataset.uuid;
+      turnsDirty = true;
+      ensureTurns();
+      const found = uuid ? turns.findIndex((turn) => turn.user.dataset.uuid === uuid) : -1;
+      index = found >= 0 ? found : Math.min(Math.max(index, 0), turns.length - 1);
+    }
+    if (index < 0) return;
+    const turn = turns[index];
+    // 着くと残る問いは隠れる。ボタンにあったフォーカスは会話へ返す（body に落とさない）
+    if (sticky.contains(document.activeElement)) log.focus({ preventScroll: true });
+    goTo(index, () => flash(turn));
   }
   /** いまの位置より前（direction < 0）・後に始まる発言。無ければ -1。並びは上から順なので二分探索 */
   function neighbour(direction) {
@@ -260,10 +301,7 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   }
 
   // ---- 操作
-  stickyButton.addEventListener('click', () => {
-    if (narrow.matches && openToc) return openToc();
-    goTo(currentIndex());
-  });
+  stickyButton.addEventListener('click', returnToQuestion);
   latest.addEventListener('click', toLatest);
   log.addEventListener('scroll', () => { if (finalizing) armIdle(true); schedule(); }, { passive: true });
   log.addEventListener('keydown', (event) => {
@@ -289,7 +327,7 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   new MutationObserver((records) => {
     if (records.some((r) => r.addedNodes.length || r.removedNodes.length)) { turnsDirty = true; schedule(); }
   }).observe(thread, { childList: true });
-  narrow.addEventListener('change', () => { stickyFor = null; schedule(); });
+  narrow.addEventListener('change', () => { stickyFor = null; watchEnd(); schedule(); });
 
   return {
     /** 発言の並びが変わった（会話を開いた・描き直した） */

@@ -17,3 +17,5 @@ export const locateIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"
 export const collapseAllIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l5 5 5-5M7 20l5-5 5 5"/></svg>';
 // ファイルの操作メニュー（⋯）。点は太めの線で打つ
 export const moreIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="2.6"/></svg>';
+// バックグラウンドの入口: 裏のコマンド・端末の絵（ターミナルの >_）
+export const TERMINAL_PATHS = ['M4 5h16v14H4z', 'M7.5 10l2.5 2.5-2.5 2.5', 'M12.5 15h4'];

@@ -170,15 +170,16 @@
     <!-- 会話を包む入れ物。残る問い・最新へ・地図（web/conversation-nav-view.mjs）を #log の外に重ねる -->
     <div class="log-frame" id="logFrame"><div id="log"><div class="thread" id="thread"></div></div></div>
 
-    <div class="work-entry" id="workEntry" hidden><button type="button" class="btn work" id="workEntryButton" aria-controls="workDialog"></button></div>
     <form class="composer" id="composer">
+      <!-- 入力欄の上の 1 本の帯: 左に文脈（メーター・予約・圧縮中・失敗）、右端にバックグラウンドの入口（web/background-chip.mjs）。折り返さない -->
       <div class="context-strip" id="contextStrip" hidden>
-        <div class="context-meter-wrap"><button type="button" class="context-meter" id="contextMeter" aria-haspopup="menu" aria-expanded="false" aria-controls="contextMeterPop"></button>
+        <div class="context-meter-wrap" id="contextMeterWrap" hidden><button type="button" class="context-meter" id="contextMeter" aria-haspopup="menu" aria-expanded="false" aria-controls="contextMeterPop"></button>
           <div class="pop menu context-meter-pop" id="contextMeterPop" role="menu" data-i18n-aria-label="compaction.meterMenu" hidden>
             <button type="button" class="li" role="menuitem" id="meterCompact" data-i18n="compaction.compactNow"></button>
             <button type="button" class="li" role="menuitem" id="meterSettings" data-i18n="compaction.settings"></button>
           </div></div>
-        <div class="context-strip-status" id="contextStripStatus" role="status"></div>
+        <div class="context-strip-status" id="contextStripStatus"><span class="context-strip-text" id="contextStripText" role="status"></span></div>
+        <div class="work-entry" id="workEntry" hidden><button type="button" class="strip-chip bg-chip" id="workEntryButton" aria-controls="workDialog"></button></div>
       </div>
       <div id="outbox" class="outbox" aria-live="polite" hidden></div>
       <div class="next-settings" id="nextSettings" role="status" hidden><div><b data-i18n="chat.next.title"></b><div id="nextSettingsText"></div><details class="next-handoff" id="nextHandoff" hidden></details></div><button type="button" class="btn" id="cancelSettings" data-i18n="chat.next.cancel"></button></div>
