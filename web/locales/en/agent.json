@@ -409,6 +409,23 @@
         "status": "The new status.",
         "reason": "Why it is changed (kept in the change log).",
         "alone": "If true, move only this conversation and not the others in its group."
+      },
+      "fork": {
+        "summary": "Fork a conversation. It creates a new conversation with the parent's history copied; the parent is unchanged.",
+        "sessionId": "The id of the conversation to fork. Defaults to this conversation.",
+        "upToMessageId": "Copy up to this message (uuid). Defaults to all.",
+        "title": "The title of the forked conversation."
+      }
+    },
+    "statuses": {
+      "setIcon": {
+        "summary": "Change the icon of a status group (an empty string removes it).",
+        "status": "The status name.",
+        "icon": "One symbol (an emoji, for example). An empty string means none."
+      },
+      "create": {
+        "summary": "Create an empty status group.",
+        "status": "The group name."
       }
     },
     "errors": {
@@ -425,7 +442,12 @@
       "SETTING_NOT_FOUND": "No such setting: {{key}}. Find keys with settings.list.",
       "TASK_NOT_FOUND": "No delegated task found with id {{id}}.",
       "sessionRequired": "Pass sessionId (it can be omitted only when it means this conversation).",
-      "badCursor": "The cursor is not valid. Pass the previous result's next as is."
+      "badCursor": "The cursor is not valid. Pass the previous result's next as is.",
+      "DENIED": "The user did not allow the change ({{id}}). Do not retry; ask the user why.",
+      "APPROVAL_TIMEOUT": "The approval for {{id}} did not arrive in time and nothing was changed. Ask the user to check on Pleiad's screen.",
+      "APPROVAL_ABORTED": "The conversation stopped, or the call was cut off, while waiting for approval, so {{id}} was not done.",
+      "STALE": "The value kept changing after approval, so {{id}} was not done. Check the current value with settings.get and try again.",
+      "SETTING_READ_ONLY": "The setting {{key}} is read-only and cannot be changed with settings.set."
     },
     "settings": {
       "list": {
@@ -439,6 +461,13 @@
       "schema": {
         "summary": "Return a setting's JSON Schema and default. All settings if key is omitted.",
         "key": "The setting key. All settings if omitted."
+      },
+      "set": {
+        "summary": "Change a setting's value. Find keys with settings.list and the value's shape with settings.schema. For an object setting, pass only the fields to change. A change that loosens a gate waits for the user's approval in a conversation that needs it.",
+        "key": "The setting key.",
+        "value": "The new value. Some settings go back to the default with null.",
+        "reason": "Why it is changed (shown on the approval card and kept in the change log).",
+        "backend": "The agent id, to remember model, effort or mode per agent."
       }
     },
     "delegation": {
@@ -455,7 +484,7 @@
       }
     },
     "control": {
-      "instructions": "Pleiad's features and settings are available through ply_control.\nFind an operation with list_ops (pass an id to get its input JSON Schema) and call it with call_op. Conversation search and reading (search_sessions, get_session, read_session) and current setting values (get_setting) can be called directly.\nOperations that change Pleiad's state follow this conversation's approval mode. If the result's code is NEEDS_UI, NEEDS_APPROVAL, or READ_ONLY_MODE, do not go on; ask the user to do it on Pleiad's screen.",
+      "instructions": "Pleiad's features and settings are available through ply_control.\nFind an operation with list_ops (pass an id to get its input JSON Schema) and call it with call_op. Conversation search and reading (search_sessions, get_session, read_session) and current setting values (get_setting) can be called directly.\nOperations that change Pleiad's state follow this conversation's approval mode. A change that loosens a gate waits for the user's approval card in a conversation that needs it. If the code is NEEDS_UI, NEEDS_APPROVAL, READ_ONLY_MODE, DENIED, or APPROVAL_TIMEOUT, do not retry; tell the user.",
       "listOps": "List the operations available in Pleiad. Pass an id to get that operation's description, input JSON Schema, and risk. Call it with call_op.",
       "listOpsId": "An operation id (for example sessions.list). Omit it to get every id with a one-line description.",
       "callOp": "Call a Pleiad operation. If the input does not fit, the result has code: INVALID and says which field is wrong and why.",
@@ -479,7 +508,7 @@
     "model": "The default model for new conversations.",
     "effort": "The default thinking depth for new conversations.",
     "mode": "The default approval mode (only a human changes it).",
-    "claudeAccount": "The default Claude account (an id; no token).",
+    "claudeAccount": "The default Claude account (an id; no token. Only a human changes it).",
     "compaction": {
       "auto": "Auto compaction (enabled, the token threshold, and the idle minutes per agent)."
     },

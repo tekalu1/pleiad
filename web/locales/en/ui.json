@@ -1354,6 +1354,16 @@
       "sending": "Sending “{{action}}”…",
       "sendFailedInline": "Couldn't send “{{action}}” · {{error}}"
     },
+    "settingApproval": {
+      "label": "Setting",
+      "agent": "The agent",
+      "question": "{{agent}} wants to change a setting",
+      "reason": "Reason: {{reason}}",
+      "warn": "⚠ This loosens a gate on the agent.",
+      "allow": "Allow change",
+      "allowed": "Change allowed",
+      "unset": "unset"
+    },
     "computerApproval": {
       "label": "Allow",
       "agent": "The agent",
@@ -2424,6 +2434,7 @@
   "notify": {
     "completed": "Work finished",
     "waitingReply": "Waiting for your reply",
+    "settingApproval": "{{agent}} is waiting for your approval to change the setting \"{{key}}\"",
     "computerApproval": "{{agent}} is waiting for permission to use “{{app}}”",
     "computerApprovalMore_one": "{{agent}} is waiting for permission to use “{{app}}” and {{count}} other app",
     "computerApprovalMore_other": "{{agent}} is waiting for permission to use “{{app}}” and {{count}} other apps",

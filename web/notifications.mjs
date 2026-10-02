@@ -2,6 +2,7 @@
 import { t } from './i18n.mjs';
 import { savedTitle } from './saved-text.mjs';
 import { approvalApps, approvalNotice } from './computer-use.mjs';
+import { approvalChange, changeNotice } from './setting-change.mjs';
 
 /**
  * この PC の通知（デスクトップ版の OS 通知・ブラウザーの Notification）。
@@ -51,8 +52,9 @@ export function createCompletionNotifications({ host = window, openSession, sett
       if (!settings().reply || isViewing(event.sessionId)) return;
       // コンピューターの操作のアプリの承認は、誰が何の許可を待っているかを見出しに出す（本文は会話の題）
       const computer = event.computerApp ? approvalApps(event.computerApp) : null;
+      const change = event.settingChange ? approvalChange(event.settingChange) : null;
       show({ kind: 'reply', noticeId: event.id, sessionId: event.sessionId,
-        title: computer ? approvalNotice(computer) : t('notify.waitingReply'), body: body(session?.title || event.conversationTitle) });
+        title: computer ? approvalNotice(computer) : change ? changeNotice(change) : t('notify.waitingReply'), body: body(session?.title || event.conversationTitle) });
     },
   };
 }

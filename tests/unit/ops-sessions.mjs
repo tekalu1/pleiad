@@ -137,23 +137,23 @@ export default async function (t) {
   t.ok('agent が human-only の設定を引くと、無い設定と同じ SETTING_NOT_FOUND', hidden.code === 'SETTING_NOT_FOUND' && unknownKey.code === 'SETTING_NOT_FOUND' && hidden.error.replace('mode', 'X') === unknownKey.error.replace('nothing', 'X'));
   t.ok('human は承認モードの既定を読める', (await registry.invoke(human, 'settings.get', { key: 'mode' }, sdeps)).result.value === 'bypass');
   const got1 = await registry.invoke(agent(undefined), 'settings.get', { key: 'linkOpen' }, sdeps);
-  t.ok('settings.get は現在値・既定値・危険度・読むだけかを返す', got1.result.value === 'external' && got1.result.default === 'inapp' && got1.result.risk === 'write' && got1.result.readOnly === true);
+  t.ok('settings.get は現在値・既定値・危険度・読むだけか（書ける設定は false）を返す', got1.result.value === 'external' && got1.result.default === 'inapp' && got1.result.risk === 'write' && got1.result.readOnly === false);
   t.ok('未設定は既定値を返す', (await registry.invoke(agent(undefined), 'settings.get', { key: 'locale' }, sdeps)).result.value === 'auto');
   t.ok('モジュールが持つ値（自動圧縮）はその値を返す', (await registry.invoke(agent(undefined), 'settings.get', { key: 'compaction.auto' }, sdeps)).result.value.minTokens === 200000);
   const masked = await registry.invoke(agent(undefined), 'settings.get', { key: 'agentSitePermissions' }, sdeps);
   t.ok('秘密らしい名前の欄は伏せて返す（最後の網）', !JSON.stringify(masked.result).includes('SECRET-X') && masked.result.value[0].token === '••••');
   const sch = await registry.invoke(agent(undefined), 'settings.schema', { key: 'linkOpen' }, sdeps);
   t.ok('settings.schema は JSON Schema と既定値を返す', sch.result.settings[0].schema.enum.join() === 'inapp,external' && sch.result.settings[0].default === 'inapp');
-  t.ok('settings.schema は key を省くと全部（agent には human-only を除く）', (await registry.invoke(agent(undefined), 'settings.schema', {}, sdeps)).result.settings.length === settings.length - 1);
+  t.ok('settings.schema は key を省くと全部（agent には human-only を除く）', (await registry.invoke(agent(undefined), 'settings.schema', {}, sdeps)).result.settings.length === settings.length - settings.filter((s) => s.risk === 'human-only').length);
 
-  // 広げる向きだけ guarded（段階 2 で書くときの規則。定義だけ先に固定する）
+  // 広げる向きだけ guarded（settings.set の規則。書く側の検査は ops-settings）
   const def = (key) => registry.getSetting(key);
   t.ok('確認を切る向きは guarded、付ける向きは write（confirmAgentSites・confirmExternalLoads）', ['confirmAgentSites', 'confirmExternalLoads'].every((k) => def(k).riskOf(true, false) === 'guarded' && def(k).riskOf(false, true) === 'write' && def(k).riskOf(true, true) === 'write'));
   t.ok('computer use は有効にする・全アプリを許可する・常に許可を足す向きだけ guarded', def('computerUse').riskOf({ enabled: false }, { enabled: true }) === 'guarded'
     && def('computerUse').riskOf({}, { allowAllApps: true }) === 'guarded' && def('computerUse').riskOf({ alwaysAllowed: [] }, { alwaysAllowed: [{ id: 'x' }] }) === 'guarded'
     && def('computerUse').riskOf({ enabled: true }, { enabled: false }) === 'write' && def('computerUse').riskOf({ alwaysAllowed: [{ id: 'x' }] }, { alwaysAllowed: [] }) === 'write');
-  t.ok('承認モードは human-only。秘密を持つものは設定に無い', def('mode').risk === 'human-only' && !settings.some((s) => /key|token|secret|password/i.test(s.key)));
-  t.ok('段階 1 の設定は全部読むだけ', settings.every((s) => s.readOnly));
+  t.ok('承認モードとアカウントは human-only。秘密を持つものは設定に無い', def('mode').risk === 'human-only' && def('claudeAccount').risk === 'human-only' && !settings.some((s) => /key|token|secret|password/i.test(s.key)));
+  t.ok('書ける設定は、前の版の名残の addedContext 以外の全部', settings.filter((s) => s.readOnly).map((s) => s.key).join() === 'addedContext');
 
   // ---- 委譲
   const tasks = [
@@ -172,7 +172,7 @@ export default async function (t) {
 
   // ---- 一覧: どの口に出すか
   const direct = registry.list({ by: 'agent', via: 'mcp' }).filter((o) => o.surfaces.mcp === 'direct').map((o) => o.id).filter((id) => id !== 'sessions.search').sort().join();
-  t.ok('MCP に直に出す操作は 会話の取得・本文・設定の読み出し（検索 sessions.search は別の定義）', direct === 'sessions.get,sessions.read,settings.get', direct);
+  t.ok('MCP に直に出す操作は 会話の取得・本文・設定の読み書き（検索 sessions.search は別の定義）', direct === 'sessions.get,sessions.read,settings.get,settings.set', direct);
 }
 
 function encode(id, rows) {

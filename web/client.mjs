@@ -55,6 +55,7 @@ import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
+import { approvalChange, changeBody, changeHeading } from "./setting-change.mjs";
 import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
 import { createBackgroundChip } from './background-chip.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
@@ -1509,6 +1510,64 @@ function computerApproval(ev, approval, row) {
   return m;
 }
 
+/**
+ * 設定の変更の承認（permission の settingChange。ADR 0082）。単独のカードで、computerApproval の単独のカードと同じ型。
+ * ボタンは「拒否」と塗りの「変更を許可」だけ（「常に許可」は出さない）。答えには出したカードの受領証を添える（サーバーが照合する）。
+ * 押したら「◯◯を送っています…」でボタンを止め、受け取られてから 1 行に畳む（失敗したら押す前の形に戻って押し直せる）
+ */
+function settingChangeApproval(ev, change) {
+  const res = el("span", "res");
+  const deny = el("button", "btn btn-quiet", t("chat.approval.deny"));
+  const allow = el("button", "btn btn-primary", t("chat.settingApproval.allow"));
+  for (const b of [deny, allow]) b.type = "button";
+  const buttons = [deny, allow];
+  const verb = (ok) => (ok ? t("chat.settingApproval.allow") : t("chat.approval.deny"));
+  const m = el("div", "m card");
+  const card = el("div", "card");
+  m.append(card);
+  const head = el("div", "card-head");
+  head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.approval.headingMark")));
+  const body = changeBody(change, relayLabel(ev.title));
+  const actions = el("div", "card-actions");
+  actions.append(res, deny, allow);
+  card.append(head, body, actions);
+  const settle = async (ok) => {
+    if (card.dataset.sending) return;
+    card.dataset.sending = "1";
+    for (const b of buttons) b.disabled = true;
+    res.className = "res";
+    res.removeAttribute("role");
+    res.replaceChildren(el("span", null, t("chat.approval.sending", { action: verb(ok) })));
+    const arc = setTimeout(() => res.prepend(runMark()), 150);
+    try {
+      await cmd("resolvePermission", { id: ev.id, receipt: change.receipt, allow: ok, always: false, ...(ok ? {} : { messageKey: "userDenied" }) });
+    } catch (err) {
+      clearTimeout(arc);
+      delete card.dataset.sending;
+      for (const b of buttons) b.disabled = false;
+      res.className = "res fail";
+      res.setAttribute("role", "alert");
+      res.replaceChildren(`✕ ${t("chat.approval.sendFailedInline", { action: verb(ok), error: err.message })}`);
+      return;
+    }
+    clearTimeout(arc);
+    m.classList.add("done");
+    m.closest(".mw")?.classList.add("done");
+    card.classList.add("done");
+    for (const rest of head.querySelectorAll(".card-kind-rest")) rest.remove();
+    head.querySelector(".card-kind").textContent = t("chat.approval.done");
+    head.append(el("span", "desc", changeHeading(change)), el("span", "res", `${ok ? t("chat.settingApproval.allowed") : t("chat.approval.denied")} · ${hhmm(new Date())}`));
+    body.remove();
+    actions.remove();
+    if (isRunningHere()) activity.show(ok ? t("activity.runningTool", { tool: "ply_control" }) : t("activity.continuing"));
+    state.pendingPerms.delete(ev.id);
+  };
+  allow.onclick = () => settle(true);
+  deny.onclick = () => settle(false);
+  placeCard(m, ev, null);
+  return m;
+}
+
 // ---------------------------------------------------------------- 質問カード
 // 質問は「危ないから承認する」ツールではなく、**こちらに聞いている**ツール。
 // 承認チャネルはそのまま使い（core は保留・猶予をこの経路で面倒を見ている）、
@@ -1864,6 +1923,13 @@ function permissionCard(ev, into = null) {
  */
 function renderPermission(ev) {
   if (thread.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"], [data-perm-id="${CSS.escape(ev.id)}"]`)) return;
+  // 設定の変更の承認（ply_control の guarded。ADR 0082）。読めなければ（形が違う）ふつうの承認として出す
+  const settingChange = ev.settingChange ? approvalChange(ev.settingChange) : null;
+  if (settingChange) {
+    closeTurnEl();
+    activity.show(t("activity.waitingApproval"));
+    return settingChangeApproval(ev, settingChange);
+  }
   // アプリの承認（コンピューターの操作）。アプリが読めなければ（形が違う）ふつうの承認として出す
   const computerApp = ev.computerApp ? approvalApps(ev.computerApp) : null;
   if (computerApp) {
@@ -2320,6 +2386,8 @@ function onEvent(ev, replay = false) {
   if (!replay && sessionLoads.capture(ev, state.current)) return;
   if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); browserPanel?.profilesChanged(); computerSettings.paint(); refreshPreviewConfirmation(); filePreview.prefsChanged(); sessionContext.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
+  // どの口（画面・AI・CLI）から設定を変えても届く。prefs などの既存の配信が無い設定（コンテキストの既定）は、開いている設定の画面がここで取り直す
+  if (ev.type === 'settingsChanged') { window.dispatchEvent(new CustomEvent('ply:settings-changed', { detail: ev })); return; }
   if (ev.type === 'compactionSchedule') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
     if (row) row.compactionAt = ev.at;

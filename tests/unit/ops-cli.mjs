@@ -23,7 +23,7 @@ export default async function (t) {
   // ---- 純粋な部分
   t.ok('終了コード: 0 成功・2 入力の誤り・3 未起動・4 拒否・5 その他', EXIT.ok === 0 && EXIT.usage === 2 && EXIT.notRunning === 3 && EXIT.refused === 4 && EXIT.other === 5);
   t.ok('失敗の code → 終了コード（入力の誤りは 2、拒否・画面での操作は 4、知らないものは 5）', ['INVALID', 'NOT_FOUND', 'SESSION_NOT_FOUND', 'SETTING_NOT_FOUND'].every((c) => exitCodeOf(c) === 2)
-    && ['NEEDS_UI', 'NEEDS_APPROVAL', 'READ_ONLY_MODE', 'HOST_SCREEN_ONLY'].every((c) => exitCodeOf(c) === 4) && exitCodeOf('SOMETHING') === 5 && exitCodeOf(undefined) === 5);
+    && ['NEEDS_UI', 'NEEDS_APPROVAL', 'READ_ONLY_MODE', 'HOST_SCREEN_ONLY', 'DENIED', 'APPROVAL_TIMEOUT', 'APPROVAL_ABORTED', 'STALE', 'SETTING_READ_ONLY'].every((c) => exitCodeOf(c) === 4) && exitCodeOf('SOMETHING') === 5 && exitCodeOf(undefined) === 5);
   const entry = { id: 'x.go', cli: { path: ['x', 'go'], positional: ['name', 'count'] }, input: { properties: {
     name: { type: 'string' }, count: { type: 'integer' }, flag: { type: 'boolean' }, ratio: { type: 'number' }, tags: { type: 'array' }, deepKey: { type: 'string' }, filters: { type: 'object' } } } };
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -66,7 +66,7 @@ export default async function (t) {
 
   // ---- 起動しているサーバー
   const dataDir = path.join(scratch, 'data');
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir, timeoutMs: 60_000 });
+  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_OPS_APPROVAL_MS: '20000' }, dataDir, timeoutMs: 60_000 });
   const c = await open({ port: server.port, token: server.token });
   const env = baseEnv(dataDir);
   let mcpAfter = null;
@@ -116,7 +116,37 @@ export default async function (t) {
     t.ok('記録は by: agent・via: cli・その会話', change?.by === 'agent' && change.via === 'cli' && change.bySession === turn.sessionId);
     const ro = cli(['sessions', 'rename', '--title', 'x'], baseEnv(dataDir, { PLEIAD_CONTROL_URL: planInfo.envUrl, PLEIAD_CONTROL_TOKEN: planInfo.token }));
     t.ok('読み取り専用の会話に束縛された CLI の write は 4（READ_ONLY_MODE）', ro.code === 4 && /読み取り専用/.test(ro.err), ro.err);
-    t.ok('束縛された CLI でも guarded は会話の承認モードで決まる（ask の会話は 4）', cli(['probe', 'guarded'], bound).code === 4 && /承認/.test(cli(['probe', 'guarded'], bound).err));
+    // 承認が要る会話に束縛された CLI の guarded は、会話の承認カードを待つ（同期の spawnSync ではサーバーと一緒に止まるので非同期で呼ぶ）
+    const cliAsync = (args, env) => new Promise((resolve) => {
+      const child = spawn(process.execPath, [BIN, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '', err = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.stderr.on('data', (d) => { err += d; });
+      child.on('close', (code) => resolve({ code, out, err }));
+    });
+    const cardOf = (from) => c.waitFor((e) => e.type === 'permission' && e.settingChange && e.sessionId === turn.sessionId, { from, ms: 15_000 });
+    let from = c.mark();
+    const denied = cliAsync(['probe', 'guarded'], bound);
+    const card = await cardOf(from);
+    await c.cmd('resolvePermission', { id: card.id, allow: false, messageKey: 'userDenied', receipt: card.settingChange.receipt });
+    const deniedResult = await denied;
+    t.ok('束縛された CLI でも guarded は会話の承認カードを待ち、拒否されると 4（許可しなかった旨）', deniedResult.code === 4 && /許可しませんでした/.test(deniedResult.err), JSON.stringify(deniedResult));
+    from = c.mark();
+    const allowed = cliAsync(['probe', 'guarded', '--json'], bound);
+    const card2 = await cardOf(from);
+    await c.cmd('resolvePermission', { id: card2.id, allow: true, receipt: card2.settingChange.receipt });
+    const allowedResult = await allowed;
+    t.ok('許可されると実行されて 0', allowedResult.code === 0 && JSON.parse(allowedResult.out).done === true, JSON.stringify(allowedResult));
+
+    // settings set（値は JSON として読み、読めなければ文字列）
+    const setOk = run('settings', 'set', 'linkOpen', 'external');
+    t.ok('settings set <key> <value>: 文字列の値（束縛されない CLI の write は通る）', setOk.code === 0 && /changed: true/.test(setOk.out) && (await c.cmd('prefs')).linkOpen === 'external', setOk.out + setOk.err);
+    t.ok('settings set: 真偽・数は JSON として読む。同じ値は changed: false', run('settings', 'set', 'confirmAgentSites', 'true').code === 0 && (await c.cmd('prefs')).confirmAgentSites === true
+      && run('settings', 'set', 'instructionBudget', '9000').code === 0 && (await c.cmd('prefs')).instructionBudget === 9000 && /changed: false/.test(run('settings', 'set', 'instructionBudget', '9000').out));
+    const loosen = run('settings', 'set', 'confirmAgentSites', 'false');
+    t.ok('束縛されない CLI が関所を緩める設定（確認を切る）を変えると 4（NEEDS_UI。画面へ誘導）。値は変わらない', loosen.code === 4 && /画面/.test(loosen.err) && (await c.cmd('prefs')).confirmAgentSites === true, loosen.err);
+    t.ok('settings set: 値の誤りは 2、知らないキーは 2', run('settings', 'set', 'linkOpen', 'javascript:').code === 2 && run('settings', 'set', 'nothing', '1').code === 2 && run('settings', 'set', 'mode', 'auto').code === 2);
+    t.ok('settings set --help は json の value を示す', /<value> json/.test(run('settings', 'set', '--help').out));
     t.ok('間違ったトークンは未起動と同じ 3', cli(['status'], baseEnv(dataDir, { PLEIAD_CONTROL_URL: info.envUrl, PLEIAD_CONTROL_TOKEN: 'e'.repeat(64) })).code === 3);
     t.ok('英語の文（--lang en）: サーバーが返す説明と失敗も英語', /Return|version/i.test(run('status', '--lang', 'en').out) && /No conversation found/.test(run('sessions', 'get', 'nope', '--lang', 'en').err));
 
@@ -150,8 +180,13 @@ export default async function (t) {
     t.ok('pleiad mcp: 会話に束縛されない（mcp-stdio）ので guarded は NEEDS_UI の isError', j(replies, 5).isError === true && text(replies, 5).code === 'NEEDS_UI');
     t.ok('pleiad mcp: human-only は list_ops に出ない', !text(replies, 6).ops.some((o) => o.id === 'probe.humanOnly') && text(replies, 6).ops.some((o) => o.id === 'sessions.list'));
     t.ok('pleiad mcp: 失敗は code で返る（SESSION_NOT_FOUND）', j(replies, 7).isError === true && text(replies, 7).code === 'SESSION_NOT_FOUND');
-    t.ok('pleiad mcp: 会話に束縛された環境変数があっても、束縛しない（Pleiad の中の会話には束縛した HTTP の ply_control を渡すため）',
-      (await rpc([{ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'call_op', arguments: { op: 'probe.guarded', args: {} } } }], bound)).find((m) => m.id === 1).result.isError === true);
+    // 会話に束縛された環境変数で動かした pleiad mcp は、その会話に束縛される（トークンが会話のもの。承認モードを迂回できない）。ask の会話なので承認カードを待つ
+    from = c.mark();
+    const viaStdio = rpc([{ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'call_op', arguments: { op: 'probe.guarded', args: {} } } }], bound);
+    const card3 = await cardOf(from);
+    await c.cmd('resolvePermission', { id: card3.id, allow: false, messageKey: 'userDenied', receipt: card3.settingChange.receipt });
+    const stdioReply = (await viaStdio).find((m) => m.id === 1).result;
+    t.ok('pleiad mcp: 会話に束縛された環境変数なら、その会話の承認モードに従う（ask の会話は承認カード。拒否は DENIED の isError）', stdioReply.isError === true && JSON.parse(stdioReply.content[0].text).code === 'DENIED', JSON.stringify(stdioReply));
 
     // 未起動 → 起動で list_changed。本物のサーバーを止めたら元に戻る
     const offline = await rpc([

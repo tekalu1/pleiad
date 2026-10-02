@@ -295,4 +295,27 @@ export const sessionOps = [
       return { sessionId: id, status, moved };
     },
   }),
+
+  // 会話を分ける（画面の「ここから分岐」と同じ経路）。親の履歴をそのまま写した新しい会話ができるだけで、親は変わらない。分岐は親と同じ承認モードで始まる
+  defineOp({
+    id: 'sessions.fork',
+    summary: 'agent:ops.sessions.fork.summary',
+    risk: 'write',
+    riskReason: 'Forking only creates a new conversation as a copy of the history; the parent is untouched and the copy starts with the same approval mode as the parent, so no gate is loosened. A human can fork any conversation, so an agent is treated the same (ADR 0082)',
+    scope: 'session',
+    input: z.object({
+      sessionId: optionalSessionId('fork'),
+      upToMessageId: z.string().min(1).max(200).optional().describe(D('fork', 'upToMessageId')),
+      title: z.string().trim().min(1).max(200).optional().describe(D('fork', 'title')),
+    }),
+    output: z.object({ sessionId: z.string(), parent: z.string() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'fork'], positional: ['sessionId'] } },
+    legacyCommand: 'fork',
+    handler: async (ctx, { sessionId: given, upToMessageId, title }) => {
+      const id = targetOf(ctx, given);
+      if (!(await ctx.sessions.get(id))) throw missing(ctx, id);
+      const forked = await ctx.sessions.fork({ sessionId: id, upToMessageId, title }, { actor: ctx.actor });
+      return { sessionId: forked.sessionId, parent: id };
+    },
+  }),
 ];

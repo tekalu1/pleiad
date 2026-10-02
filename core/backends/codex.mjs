@@ -30,7 +30,7 @@ import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { codexComputerConfig, codexComputerName, computerFailed, computerPrompt, computerResult, computerToolInput, mcpText } from "./computer-delivery.mjs";
 import { readTurnRejections, rolloutPathOf, rolloutSize } from "./codex-rejections.mjs";
 import { BROWSER_SERVER } from "../browser-profiles.mjs";
-import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
+import { CONTROL_SERVER, CONTROL_CALL_TIMEOUT_SEC } from "../ops/surfaces/mcp.mjs";
 import * as store from '../store.mjs';
 import { t, agentT } from "../i18n.mjs";
 import { stripInjectedContext } from "../system-messages.mjs";
@@ -1610,7 +1610,7 @@ export const backend = {
           // 内蔵ブラウザーのプロフィールの一覧と切り替え（core/browser-profiles.mjs。ADR 0078）
           ...(browserRuntime ? { [`mcp_servers.${BROWSER_SERVER}`]: { url: browserRuntime.url, http_headers: browserRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: 60 } } : {}),
           // Pleiad の操作の一覧（core/ops/surfaces/control.mjs。ADR 0081）。承認は registry.invoke が会話の承認モードで決めるので、ツールごとには聞かない
-          ...(controlRuntime ? { [`mcp_servers.${CONTROL_SERVER}`]: { url: controlRuntime.url, http_headers: controlRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: 60 } } : {}),
+          ...(controlRuntime ? { [`mcp_servers.${CONTROL_SERVER}`]: { url: controlRuntime.url, http_headers: controlRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: CONTROL_CALL_TIMEOUT_SEC } } : {}),
             // The context bridge applies the selected mode to external tool calls.
             ...(contextRuntime ? { 'mcp_servers.ply_context': { url: contextRuntime.url, http_headers: contextRuntime.headers, enabled: true, required: true, default_tools_approval_mode: 'approve', startup_timeout_sec: 20 } } : {}),
           // コンピューターの操作（ply_computer）と、同梱の computer use を切る上書き。渡さない会話には何も足さない（利用者の ~/.codex に任せる）

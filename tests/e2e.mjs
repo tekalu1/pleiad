@@ -36,6 +36,7 @@ const cases = [
   await import("./e2e/prefs.mjs"),
   await import("./e2e/groups.mjs"),
   await import("./e2e/running.mjs"),
+  await import('./e2e/control.mjs'),   // ply_control（操作の一覧）の search_sessions・get_setting を Claude が呼ぶ
   await import("./e2e/disconnect.mjs"),   // 猶予を短くした専用サーバが要るので最後
 ];
 

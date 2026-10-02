@@ -111,7 +111,6 @@
     "setGrouped": "ui-internal",
     "setTitle": "todo",
     "setBrowserProfile": "todo",
-    "fork": "todo",
     "resolvePermission": "human-only",
     "listStatuses": "todo",
     "setMode": "human-only",
@@ -136,8 +135,7 @@
     "loadBackground": "ui-internal",
     "stopBackground": "ui-internal",
     "renameStatus": "todo",
-    "prefs": "todo",
-    "setPref": "todo",
+    "prefs": "ui-internal",
     "attachFile": "stream",
     "attachStart": "stream",
     "attachChunk": "stream",
@@ -150,8 +148,6 @@
     "uploadCancel": "stream",
     "suggestTitle": "todo",
     "sessionChanges": "todo",
-    "setStatusIcon": "todo",
-    "createStatus": "todo",
     "lineage": "todo",
     "browserScreencast": "stream",
     "browserScreencastStop": "stream",
@@ -161,7 +157,6 @@
     "browserScreencastAgent": "stream",
     "computerStop": "human-only"
   },
-  "todoMax": 71,
-  "prefKeys": [
-  ]
+  "todoMax": 66,
+  "setPrefAllowed": 3
 }

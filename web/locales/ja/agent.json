@@ -357,22 +357,22 @@
     },
     "sessions": {
       "search": {
-        "summary": "会話の題・状態・場所・本文を探す。語は空白で AND、\"…\" で囲むと完全一致。結果は会話ごとに一致した発言の抜粋つき。",
-        "query": "検索語。空白区切りは AND（語ごとに題・状態・場所・本文のどこでもよい）。\"…\" で囲むと 1 語で大小・全角半角も区別する。空なら絞り込みだけで一覧を返す。",
+        "summary": "会話の題・状態・場所・本文を探す。語は空白で AND、\"…\" で完全一致。結果は会話ごとの抜粋つき。",
+        "query": "検索語。空白区切りは AND、\"…\" で囲むと完全一致（大小・全角半角を区別）。空なら絞り込みだけ。",
         "filters": "絞り込み。",
-        "backends": "エージェントの id（claude・codex・antigravity）。省略はすべて。",
+        "backends": "エージェントの id。省略はすべて。",
         "cwd": "作業ディレクトリの完全一致。",
-        "status": "状態の名前。null は状態なし。省略は絞らない。",
-        "since": "この日時以後に更新した会話（ISO 文字列か epoch ms）。",
-        "until": "この日時以前に更新した会話（ISO 文字列か epoch ms）。",
-        "speaker": "本文を探す発言者。any（既定）・user・assistant。",
+        "status": "状態名。null は状態なし。",
+        "since": "この日時以後に更新（ISO か epoch ms）。",
+        "until": "この日時以前に更新（ISO か epoch ms）。",
+        "speaker": "発言者。any（既定）・user・assistant。",
         "includeDelegated": "委譲の子の会話も含める。既定は含めない。",
-        "includeToolInputs": "ツールの入力（コマンド・パス）も探す。既定は含めない。",
+        "includeToolInputs": "ツールの入力も探す（既定は探さない）。",
         "sessionIds": "この会話の中だけを探す。",
-        "sort": "relevance（既定。関連度）か recent（新しい順）。",
+        "sort": "relevance（既定）か recent。",
         "limit": "会話の件数。既定 50・最大 200。",
-        "cursor": "続き。前の結果の nextCursor をそのまま渡す。",
-        "hitsPerSession": "会話ごとに返す一致の発言の数。既定 1・最大 10。"
+        "cursor": "続き。前の結果の nextCursor。",
+        "hitsPerSession": "会話ごとの一致の数（既定 1・最大 10）。"
       },
       "list": {
         "summary": "会話の一覧を、新しい順に返す。絞り込みとページ送りができる。本文まで探すときは search_sessions。",
@@ -386,16 +386,16 @@
         "cursor": "前の返り値の next。続きから返す。"
       },
       "get": {
-        "summary": "会話 1 件のメタ情報（題・状態・場所・エージェント・親子・最近の変更の記録）を返す。本文は read_session で読む。",
+        "summary": "会話 1 件のメタ情報（題・状態・場所・エージェント・親子・最近の変更）を返す。本文は read_session。",
         "sessionId": "会話の id。"
       },
       "read": {
-        "summary": "会話の本文を、発言の id（messageId）の前後だけ読む。messageId を省くと末尾。search_sessions の hit の uuid をそのまま渡せる。",
+        "summary": "会話の本文を messageId の前後だけ読む。省くと末尾。search_sessions の hit の uuid を渡せる。",
         "sessionId": "会話の id。",
-        "messageId": "中心にする発言の id（uuid）。省くと最後の発言。",
+        "messageId": "中心にする発言の id（uuid）。省くと最後。",
         "before": "messageId より前の件数（既定 4、最大 20）。",
         "after": "messageId より後の件数（既定 4、最大 20）。",
-        "maxChars": "1 件の本文の最大の字数（既定 2000、最大 8000）。返り全体の本文は 40000 字まで。"
+        "maxChars": "1 件の最大字数（既定 2000・最大 8000）。全体は 40000 字まで。"
       },
       "setTitle": {
         "summary": "会話の題を変える。変更の記録に、変えた主体と理由が残る。",
@@ -409,6 +409,23 @@
         "status": "新しい状態。",
         "reason": "変える理由（変更の記録に残る）。",
         "alone": "true なら、グループの中の会話をまとめて動かさず、この 1 本だけを動かす。"
+      },
+      "fork": {
+        "summary": "会話を分ける。親の履歴を写した新しい会話ができ、親は変わらない。",
+        "sessionId": "分ける会話の id。省くとこの会話。",
+        "upToMessageId": "この発言（uuid）までを写す。省くと全部。",
+        "title": "分けた会話の題。"
+      }
+    },
+    "statuses": {
+      "setIcon": {
+        "summary": "状態のグループのアイコンを変える（空の文字列で外す）。",
+        "status": "状態の名前。",
+        "icon": "記号 1 つ（絵文字など）。空の文字列でなし。"
+      },
+      "create": {
+        "summary": "空の状態のグループを作る。",
+        "status": "グループの名前。"
       }
     },
     "errors": {
@@ -425,7 +442,12 @@
       "SETTING_NOT_FOUND": "設定「{{key}}」はありません。settings.list で探してください。",
       "TASK_NOT_FOUND": "委譲のタスク「{{id}}」が見つかりません。",
       "sessionRequired": "sessionId を指定してください（この会話を指す場合を除き、省けません）。",
-      "badCursor": "cursor が正しくありません。前の返り値の next をそのまま渡してください。"
+      "badCursor": "cursor が正しくありません。前の返り値の next をそのまま渡してください。",
+      "DENIED": "ユーザーが {{id}} の変更を許可しませんでした。やり直さず、ユーザーに理由を尋ねてください。",
+      "APPROVAL_TIMEOUT": "{{id}} の承認が時間内に得られず、変更していません。ユーザーに Pleiad の画面での確認を頼んでください。",
+      "APPROVAL_ABORTED": "承認を待つあいだに会話が止まったか呼び出しが切れたので、{{id}} は行っていません。",
+      "STALE": "承認のあとも値が変わり続けたので、{{id}} は行っていません。settings.get で今の値を確かめてからやり直してください。",
+      "SETTING_READ_ONLY": "設定「{{key}}」は読むだけで、settings.set では変えられません。"
     },
     "settings": {
       "list": {
@@ -433,12 +455,19 @@
         "prefix": "キーの先頭で絞る（例: compaction.）。"
       },
       "get": {
-        "summary": "設定の現在値・既定値・危険度を返す。キーは settings.list で探す。値の形は settings.schema。",
+        "summary": "設定の現在値・既定値・危険度を返す。キーは settings.list、値の形は settings.schema。",
         "key": "設定のキー。"
       },
       "schema": {
         "summary": "設定の値の JSON Schema と既定値を返す。key を省くと全部。",
         "key": "設定のキー。省くと全部。"
+      },
+      "set": {
+        "summary": "設定を変える（キーは settings.list、値の形は settings.schema）。オブジェクトは変える項目だけでよい。",
+        "key": "設定のキー。",
+        "value": "新しい値（null で既定に戻る設定もある）。",
+        "reason": "変える理由（承認カードと記録に出る）。",
+        "backend": "model・effort・mode をエージェントごとに覚えるときの id。"
       }
     },
     "delegation": {
@@ -455,7 +484,7 @@
       }
     },
     "control": {
-      "instructions": "Pleiad の機能と設定は ply_control から使えます。\nまず list_ops で操作を探し（id を渡すと入力の JSON Schema が分かります）、call_op で呼びます。会話の検索と読み出し（search_sessions・get_session・read_session）と設定の現在値（get_setting）は直に呼べます。\nPleiad の状態を変える操作は、この会話の承認モードに従います。code が NEEDS_UI・NEEDS_APPROVAL・READ_ONLY_MODE で返ったら、続けずにユーザーに Pleiad の画面での操作を頼んでください。",
+      "instructions": "Pleiad の機能と設定は ply_control から使えます。\nまず list_ops で操作を探し（id を渡すと入力の JSON Schema が分かります）、call_op で呼びます。検索・読み出し・設定の get/set は直に呼べます。\nPleiad の状態を変える操作はこの会話の承認モードに従い、関所を緩める変更はユーザーの承認カードを待ちます。code が NEEDS_UI・NEEDS_APPROVAL・READ_ONLY_MODE・DENIED・APPROVAL_TIMEOUT で返ったら、やり直さずユーザーに伝えてください。",
       "listOps": "Pleiad で使える操作の一覧。id を渡すと、その操作の説明・入力の JSON Schema・危険度を返す。呼ぶのは call_op。",
       "listOpsId": "操作の id（例: sessions.list）。省くと全部の id と 1 行の説明。",
       "callOp": "Pleiad の操作を呼ぶ。入力が合わないと、どの項目がなぜ違うかが code: INVALID で返る。",
@@ -479,7 +508,7 @@
     "model": "新しい会話の既定のモデル。",
     "effort": "新しい会話の既定の思考の深さ。",
     "mode": "承認モードの既定（人間だけが変える）。",
-    "claudeAccount": "既定の Claude のアカウント（id。トークンは持たない）。",
+    "claudeAccount": "既定の Claude のアカウント（id。トークンは持たない。人間だけが変える）。",
     "compaction": {
       "auto": "自動圧縮の設定（有効・閾値のトークン数・エージェントごとの放置の分数）。"
     },

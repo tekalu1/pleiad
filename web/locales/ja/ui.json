@@ -1319,6 +1319,16 @@
       "sending": "{{action}}を送っています…",
       "sendFailedInline": "{{action}}を送れませんでした · {{error}}"
     },
+    "settingApproval": {
+      "label": "設定",
+      "agent": "エージェント",
+      "question": "{{agent}} が設定を変えようとしています",
+      "reason": "理由: {{reason}}",
+      "warn": "⚠ このエージェントの関所を緩める変更です。",
+      "allow": "変更を許可",
+      "allowed": "変更を許可した",
+      "unset": "未設定"
+    },
     "computerApproval": {
       "label": "許可",
       "agent": "エージェント",
@@ -2338,6 +2348,7 @@
   "notify": {
     "completed": "作業が完了しました",
     "waitingReply": "返事を待っています",
+    "settingApproval": "{{agent}} が設定「{{key}}」の変更の許可を待っています",
     "computerApproval": "{{agent}} が「{{app}}」の使用の許可を待っています",
     "computerApprovalMore_other": "{{agent}} が「{{app}}」ほか {{count}} 件の使用の許可を待っています",
     "untitled": "Pleiad の会話",
