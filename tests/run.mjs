@@ -55,6 +55,11 @@ const cases = [
   // サーバー越し: 承認カードの payload・スクショの保存と配信・computer.state・computerStop・委譲の子の承認（fake + 偽の driver）
   await import('./unit/server-computer.mjs'),
   await import('./unit/modes.mjs'),
+  // git の動き（ADR 0085）: 状態・差分の解析、コマンド結果からのタイムライン（ブランチ・コミット・PR）、ターンの始まりと終わりの隠し ref の撮影・要約・掃除（一時リポジトリ）
+  await import('./unit/git-info.mjs'),
+  await import('./unit/server-git.mjs'),
+  // git の動きの画面（ADR 0085）: 要約行・委譲カードの変更の行・したことの行・差分の面（色なし）・右パネルの表（gitSlots）
+  await import('./unit/git-view.mjs'),
   // 操作の一覧（core/ops/、ADR 0080・0081）: 権限の表（主体 × 危険度 × 会話の承認モード）・関所の順序と定義の検査・載せ忘れの lint（WS のコマンドと prefs のキーのラチェット）・
   // 一覧の中身（snapshot・文の量・主体ごとの見え方・伏せ字・辞書・JSON Schema）・WS の invoke をサーバー越しに
   await import('./unit/ops-policy.mjs'),

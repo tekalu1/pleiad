@@ -8,7 +8,7 @@ import { migrateClaudeUsage } from './usage-migrations.mjs';
 // server は「どのエージェントに聞くか」を決めて、正規化イベントを web へ配るだけ。
 // 承認の保留・猶予・中断（設計メモ §8.5）だけはここに残す。エージェントに散らすと
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
-import { createAgentTasks, finalReply } from './agent-tasks.mjs';
+import { createAgentTasks, finalReply, gitLine } from './agent-tasks.mjs';
 import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
 import { createComputerBridge, COMPUTER_MCP_PATH } from './computer-bridge.mjs';
@@ -20,7 +20,9 @@ import { appendFileSync } from 'node:fs';
 import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, selectRetryAccount, parseCandidate, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
-import { canDelegate, resolveDelegatedMode, modePosition } from './modes.mjs';
+import { canDelegate, resolveDelegatedMode, modePosition, scopeRank } from './modes.mjs';
+import { createGitActivity } from './git-activity.mjs';
+import { createCallTracker, timelineOf } from './git-timeline.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
 import { localeInfo, setLocale, t, i18n, LOCALE_SETTINGS, agentT, agentLocaleOf, currentLocale } from './i18n.mjs';
@@ -323,6 +325,14 @@ const peerRejection = r => ({
   kind: ['policy', 'spawn', 'other'].includes(r.kind) ? r.kind : 'other', reason: redactForPeer(r.reason ?? null, REJECTION_TEXT_MAX),
   raw: redactForPeer(r.raw ?? null, REJECTION_TEXT_MAX), approvalRequested: r.approvalRequested === true, callId: pick(r.callId, 200), turnId: pick(r.turnId, 200),
 });
+// 子の作業場所の git の要約（ADR 0085）。会話の間のファイル・コミットが無ければ載せない。完了通知と ply_task_status で依頼元が事実を確かめられる
+async function taskGitNote(task) {
+  const s = task.cwd ? await gitActivity.summary(task.cwd, task.sessionId).catch(() => null) : null;
+  const w = s?.session;
+  if (!w || (!w.files && !w.commits)) return null;
+  return { branch: s.branch, detached: s.detached, head: s.head, linked: s.linked, files: w.files, add: w.add, del: w.del, commits: w.commits };
+}
+const gitNotice = (lng, git) => (git ? gitLine(lng, git) + '\n' : '');
 // 完了通知に載せる拒否の件数（先頭から）。全件は ply_task_status の rejections で読む
 const NOTICE_REJECTIONS = 3;
 function rejectionNotice(lng, list) {
@@ -658,6 +668,25 @@ function fileRoots(sessions) {
   return [...workspaceRoots, UPLOAD_DIR,
     path.join(process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), "generated_images"),
     ...Object.values(sessions).flatMap(s => [s.cwd, ...(s.history ?? []).filter(h => h.field === 'cwd').flatMap(h => [h.from, h.to])])];
+}
+
+/**
+ * git の問い合わせの作業場所（ADR 0085）。会話があればその会話の cwd（sidecar か、無ければエージェントの記録）。
+ * 会話の無い下書きは、cwd を言ってきても、どれかの会話が使ったことのある場所だけ通す（任意のフォルダーで git を走らせない）。
+ */
+async function gitCwd(args) {
+  const id = typeof args?.sessionId === 'string' && args.sessionId ? args.sessionId : null;
+  if (id) {
+    const meta = await store.get(id).catch(() => null);
+    if (meta?.cwd) return meta.cwd;
+    const backend = await resolveBackendForSession(id).catch(() => null);
+    return (await backend?.getSession?.(id).catch(() => null))?.cwd ?? null;
+  }
+  const cwd = typeof args?.cwd === 'string' && args.cwd ? args.cwd : null;
+  if (!cwd) return null;
+  const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+  const known = Object.values(await store.getAll().catch(() => ({}))).flatMap(s => [s.cwd, ...(s.history ?? []).filter(h => h.field === 'cwd').map(h => h.to)]).filter(Boolean);
+  return known.some(k => same(k, cwd)) ? cwd : null;
 }
 
 /**
@@ -1230,6 +1259,13 @@ function sendTo(frame) {
 }
 // 入力欄の `!`（シェルの行。ADR 0054）。走っている子のプロセスはサーバーの終わりに止める
 const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event) });
+// git の動き（ADR 0085）。状態・ターンの始まりと終わりの隠し ref・変更の一覧と差分。git が無い・git 管理外は null
+const gitActivity = createGitActivity();
+// ターンの始まりの撮影を待つ上限と、終わりの撮影・要約を待つ上限（超えたらその回の撮影・要約は諦める）
+const GIT_BEGIN_WAIT_MS = 6_000;
+// AGENT_HOST_GIT_SNAPSHOTS=off でターンの撮影（隠し ref）を止める。テストが開発中のリポジトリの .git に ref を残さないため（tests/lib/server.mjs）
+const GIT_SNAPSHOTS = process.env.AGENT_HOST_GIT_SNAPSHOTS !== 'off';
+const GIT_END_WAIT_MS = 6_000;
 process.on('exit', () => shellRuns.stopAll());
 const completionNotices = createCompletionNotices({
   // 裏の作業は委譲の完了と同じく awaitedBackground で見る。開きっぱなしの端末（開発サーバーなど）で通知が出なくならないように
@@ -1367,6 +1403,8 @@ function clientReason(args) {
 function makeEmit(turn) {
   const emit = (event, { recorded = false } = {}) => {
     if (event?.type) agentTasks?.observe(turn.info.sessionId, event);
+    // git でしたこと（PR の作成など）をターンの終わりの要約に使う
+    turn.gitCalls?.track(event);
     // Internal activity and command observations do not add conversation UI events.
     if (event?.type === 'task.activity' || event?.type === 'task.command') return;
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
@@ -1478,6 +1516,8 @@ function makeEmit(turn) {
       if (connection) { agentConnections.delete(turn.key); connection.key = event.sessionId; agentConnections.set(event.sessionId, connection); }
       turn.key = event.sessionId;
       runtime.turns.set(turn.key, turn);
+      // 新しい会話は id が決まったここで、始まりの撮影の ref を書く（ADR 0085）
+      turn.gitSetup?.then(() => turn.git && gitActivity.attach(turn.git, event.sessionId)).catch(() => {});
       // 実際に使った承認モードとモデル、どのエージェントのものかをセッションに残す。
       // 既定から引き継いだ場合、書かないと一覧の表示と実際の挙動がずれる。
       // backend を書いておかないと、次に開いたときに誰に聞けばよいか分からない。
@@ -2016,6 +2056,7 @@ function completionNotice(lng, tasks) {
     // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
     retry: task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '',
     rejections: rejectionNotice(lng, task.rejections) + stoppedBackgroundNotice(lng, task.stoppedBackground),
+    git: gitNotice(lng, task.git),
   }));
   if (parts.length === 1) return agentT(lng, 'delegation.notice', parts[0]);
   return agentT(lng, 'delegation.noticeBatch', { count: parts.length, sections: parts.map(part => agentT(lng, 'delegation.noticeSection', part)).join('') });
@@ -2160,8 +2201,9 @@ agentTasks = await createAgentTasks({
       // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
       const rejections = execution.rejections.map(peerRejection);
       const stoppedBackground = execution.stopped.map(peerBackground);
-      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown'), rejections, stoppedBackground };
-      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: execution.error, rejections, stoppedBackground };
+      const git = await taskGitNote(task);
+      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown'), rejections, stoppedBackground, git };
+      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: execution.error, rejections, stoppedBackground, git };
     } finally { signal.removeEventListener('abort', stopChild); clearTimeout(execution.timer); taskExecutions.delete(task.sessionId); }
   },
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
@@ -2417,6 +2459,7 @@ async function runTurnInternal(args, onStarted, hooks) {
     hooks.signal?.addEventListener('abort', abortFromTask, { once: true });
     runtime.turns.set(turn.key, turn);
     for (const read of liveReads) if (read.sessionId === sessionId) read.turn = turn;
+    turn.gitCalls = createCallTracker();
     const emit = makeEmit(turn);
     turn.visualizations = createVisualizationCollector({
       access: fileAccess,
@@ -2557,6 +2600,19 @@ async function runTurnInternal(args, onStarted, hooks) {
         turn.outcome = 'requeue';
         return 'requeue';
       }
+      // git の作業場所なら、ターンの始まりの状態を隠し ref に撮る（書き込みの範囲のターンだけ。圧縮では撮らない。ADR 0085）。
+      // 撮影が遅いときは待たずに始める（その回は撮影なし）
+      if (GIT_SNAPSHOTS && !hooks.compact && scopeRank(modePosition(backend.modes()?.[permissionMode]).scope) > scopeRank('readonly')) {
+        turn.gitSetup = gitActivity.begin({ cwd }).then(g => {
+          if (turn.gitLate) return null;
+          turn.git = g;
+          return g && turn.info.sessionId ? gitActivity.attach(g, turn.info.sessionId) : null;
+        }).catch(() => {});
+        let began = false;
+        await Promise.race([turn.gitSetup.then(() => { began = true; }), new Promise(resolve => setTimeout(resolve, GIT_BEGIN_WAIT_MS).unref?.())]);
+        // 間に合わなかった。エージェントが動き出した後の撮影は基準にならないので、このターンは撮らない
+        if (!began) turn.gitLate = true;
+      }
       backendInvoked = true;
       const result = hooks.compact && backend.compact
         ? await backend.compact({ ...runArgs, trigger: hooks.compact })
@@ -2606,6 +2662,14 @@ async function runTurnInternal(args, onStarted, hooks) {
       await turn.visualizations.close().catch(err => emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) }));
       await Promise.allSettled([runtimeContext?.close()]);
       await saveContext().catch(() => { emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') }); });
+      // git の動き（ADR 0085）: ターンの終わりの撮影と、返答の下の 1 行の元。ファイル・コミット・ブランチ・PR のどれかが動いたときだけ会話に残す
+      if (turn.gitSetup && didStart && turn.outcome !== 'requeue') {
+        const summary = await Promise.race([
+          turn.gitSetup.then(() => (turn.git ? gitActivity.finish(turn.git, turn.info.sessionId, turn.gitCalls.events()) : null)),
+          new Promise(resolve => setTimeout(resolve, GIT_END_WAIT_MS, null).unref?.()),
+        ]).catch(() => null);
+        if (summary && turn.info.sessionId) emit({ type: 'present', kind: 'git', git: summary, by: 'ai', at: new Date().toISOString(), sessionId: turn.info.sessionId });
+      }
       await endTurn(turn, emit, { record: didStart });
       hooks.signal?.removeEventListener("abort", abortFromTask);
     }
@@ -3230,6 +3294,26 @@ wss.on("connection", (ws, req) => {
           return reply(true, { ok: true });
         case 'contextDiff':
           return reply(true, await contextSession.diff(msg.args?.sessionId));
+        // ---- git の動き（読み取りだけ。ADR 0085）。作業場所は会話の cwd。git が無い・git 管理外は git: null
+        case 'gitStatus': {
+          const cwd = await gitCwd(msg.args);
+          if (!cwd) return reply(true, { git: null });
+          return reply(true, { git: msg.args?.summary ? await gitActivity.summary(cwd, msg.args?.sessionId) : await gitActivity.status(cwd, { fresh: msg.args?.fresh === true }) });
+        }
+        case 'gitPanel': {
+          const sessionId = msg.args?.sessionId;
+          const cwd = await gitCwd(msg.args);
+          const state = cwd ? await gitActivity.status(cwd, { fresh: true }) : null;
+          if (!state) return reply(true, { git: null });
+          const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
+          const timeline = sessionId ? timelineOf((await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [] }))).messages) : [];
+          const changes = await gitActivity.changes(cwd, sessionId, msg.args?.range === 'session' ? 'session' : 'uncommitted');
+          return reply(true, { git: state, timeline, changes, at: Date.now() });
+        }
+        case 'gitDiff': {
+          const cwd = await gitCwd(msg.args);
+          return reply(true, { diff: cwd ? await gitActivity.diff(cwd, msg.args?.sessionId, msg.args?.range === 'session' ? 'session' : 'uncommitted', String(msg.args?.path ?? '')) : null });
+        }
         case 'setSessionMcp':
           await contextSession.setMcp(msg.args?.sessionId, msg.args?.name, msg.args?.removed !== false);
           return reply(true, { ok: true });

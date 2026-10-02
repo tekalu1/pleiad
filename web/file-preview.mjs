@@ -8,7 +8,7 @@ import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fi
 import { fileMenuItems, visualizationMenuItems, browserTabMenuItems, copyPathText, relativeTo, samePath, notify, download, openHostFile, displayPath, fileUrl } from './file-actions.mjs';
 import { browserPanelAvailable, openInBrowserPanel } from './browser-panel.mjs';
 import { linkOpenTarget } from './browser-address.mjs';
-import { applySlots, fileSlots, visualizationSlots, customSlots, browserSlots, subtitleFor } from './side-panel.mjs';
+import { applySlots, fileSlots, visualizationSlots, customSlots, gitSlots, browserSlots, subtitleFor } from './side-panel.mjs';
 import { copyText } from './code-copy.mjs';
 import { createTree } from './tree.mjs';
 
@@ -234,7 +234,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   /** 今のモードの設定。状態（custom・visual・file）から毎回作り直す */
   function slots() {
     if (browsing) return browserSlots();
-    if (custom) return customSlots({ label:custom.label });
+    if (custom) return custom.footer ? gitSlots({ label:custom.label, footer:custom.footer }) : customSlots({ label:custom.label });
     if (visual) return visualizationSlots({ origin:visual.origin, html:visual.html, canBrowse:!!snapshotQuery(visual), canUse:!!useFile });
     return fileSlots({ file, osActions:osActions() });
   }
@@ -497,28 +497,31 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
    * ファイル以外の中身を同じパネルに出す（会話の右パネル「この会話のコンテキスト」）。
    * 幅・Esc・狭い画面の全面表示はファイルと共有する。出す部品は customSlots（見出しと本文と閉じるだけ）
    */
-  function openPanel({ key, title, subtitle = '', body, label, element, onClose, width = 0 }) {
+  function openPanel({ key, title, subtitle = '', body, label, element, onClose, width = 0, footer = null, status: statusText }) {
     const previous = custom;
     abort?.abort(); generation++; paintId++; disposePdf();
     if (previous && previous.key !== key) { leaveCustom(); previous.onClose?.(); }
     leaveBrowser();
     opener = element ?? null; file = null; reference = null; visual = null;
-    custom = { key, label, onClose, opener: element ?? null, width };
+    // 下の行のボタン（git の「再読み込み」「会話で使う」など）。枠の部品の表（parts.buttons）へ名前を付けて足し、モードの設定が並べる
+    const footerIds = (footer ?? []).map((f, i) => { parts.buttons[`custom${i}`] = button(f.label, f.onClick); return `custom${i}`; });
+    custom = { key, label, onClose, opener: element ?? null, width, footer: footerIds.length ? footerIds : null };
     context = getContext(element);
     panel.hidden = false; panel.dataset.panel = key; document.body.classList.add('file-preview-open');
     document.body.classList.remove('file-preview-wide');
     content.setAttribute('aria-label', label); content.tabIndex = -1; content.scrollTop = 0;
-    show({ title, subtitle, note:'', body });
+    show({ title, subtitle, note:'', body, ...(statusText !== undefined ? { status:statusText, statusTitle:'' } : {}) });
     clearCurrent();
     if (element) element.setAttribute('aria-expanded', 'true');
     layout(); panel.focus({ preventScroll:true });
   }
   /** 開いている自前の中身を差し替える（スクロール位置は保つ）。別の中身・閉じているときは何もしない */
-  function updatePanel(key, { title, subtitle, body } = {}) {
+  function updatePanel(key, { title, subtitle, body, status: statusText } = {}) {
     if (panel.hidden || custom?.key !== key) return false;
     const top = content.scrollTop;
     if (title !== undefined) name.textContent = title;
     if (subtitle !== undefined) path.textContent = subtitle;
+    if (statusText !== undefined) status.textContent = statusText;
     if (body) content.replaceChildren(body);
     content.scrollTop = top;
     return true;

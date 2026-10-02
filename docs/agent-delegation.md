@@ -134,6 +134,8 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 `cwd` の既定は親の作業場所。相対指定は親の作業場所から解決する。並行編集では別 worktree の絶対パスを指定する。
 Pleiad が自動的に worktree を作成・マージする機能ではない。
 
+子の作業場所の git の変更は、Pleiad が事実として依頼元へ返す（2026-10-03、[ADR 0085](adr/0085-host-reads-git-and-turn-snapshots.md)）。子のタスクの完了時に、子の会話の間（その会話の最初のターンの始まりの撮影から今まで）に変わったファイルかコミットがあれば、タスクの記録の `git`（`{ branch, detached, head, linked, files, add, del, commits }`）に持つ。完了通知の結果の後に 1 行 `変更: <branch> · N ファイル +a −d · コミット k`（`agent:delegation.noticeGit`。変更が無ければ載せない）を添え、`ply_task_status` / `ply_task_wait` は `git` と同じ 1 行の `gitSummary` を返す。人の画面では、委譲カードの内訳の「変更」の行（押すとその作業場所の右パネル「git」）。親は子の報告文を信じる代わりに、事実で確かめられる。
+
 子の承認モードは**親の強さまで継ぎ、それを超えない**。
 承認モードは範囲（`none` < `readonly` < `workspace` < `full`）と自律（`ask` < `judge` < `never`）の
 2軸で表してあり（`docs/multi-backend.md` §2.5、規則は `core/modes.mjs`）、
