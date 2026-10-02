@@ -55,6 +55,13 @@ const cases = [
   // サーバー越し: 承認カードの payload・スクショの保存と配信・computer.state・computerStop・委譲の子の承認（fake + 偽の driver）
   await import('./unit/server-computer.mjs'),
   await import('./unit/modes.mjs'),
+  // 操作の一覧（core/ops/、ADR 0080・0081）: 権限の表（主体 × 危険度 × 会話の承認モード）・関所の順序と定義の検査・載せ忘れの lint（WS のコマンドと prefs のキーのラチェット）・
+  // 一覧の中身（snapshot・文の量・主体ごとの見え方・伏せ字・辞書・JSON Schema）・WS の invoke をサーバー越しに
+  await import('./unit/ops-policy.mjs'),
+  await import('./unit/ops-registry.mjs'),
+  await import('./unit/ops-coverage.mjs'),
+  await import('./unit/ops-surface.mjs'),
+  await import('./unit/server-ops.mjs'),
   await import('./unit/agent-tasks.mjs'),
   await import('./unit/agent-tasks-silence.mjs'),
   await import('./unit/task-command-notice.mjs'),

@@ -173,7 +173,7 @@ export async function importNativeMcp({ items, includeSecrets = false, mcpConfig
     try {
       const cwd = item.cwd ?? process.cwd();
       const native = item.format === 'claude' && item.scope === 'local' ? await claudeLocal(home, cwd, item.name)
-        : (await mcpConfig.get({ cwd, format: item.format, scope: item.scope, name: item.name })).value;
+        : (await mcpConfig.getWithSecrets({ cwd, format: item.format, scope: item.scope, name: item.name })).value;
       const { value, notes } = convertNative(item.format, native, { includeSecrets, env });
       if (item.auth !== undefined) {
         if (!['none', 'oauth'].includes(item.auth) || value.transport === 'stdio' || (value.auth && value.auth !== 'none' && value.auth !== item.auth)) throw new Error(t('mcp.import.auth'));

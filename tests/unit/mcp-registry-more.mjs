@@ -40,6 +40,16 @@ export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-mcp-registry-'));
   const mocks = [];
   try {
+    // ================= 予約名: Pleiad 自身の MCP と同じ名前では登録できない（会話に渡す橋と取り違えるため）
+    {
+      const ply = createPlyMcp({ dataDir: path.join(tmp, 'reserved'), secrets: createSecretStore({ file: path.join(tmp, 'reserved', 'mcp-secrets.json'), cipher: plainCipher }) });
+      for (const reserved of ['ply_context', 'ply_agents', 'ply_computer', 'ply_browser']) {
+        let err = null;
+        try { await ply.save({ name: reserved, mode: 'add', value: { transport: 'http', url: 'https://mcp.example/mcp', auth: 'none' } }); } catch (e) { err = e; }
+        t.ok(`予約名 ${reserved} では登録できない`, err?.code === 'INVALID', String(err?.message ?? 'saved'));
+      }
+    }
+
     // ================= 6. 暗号化の切り替え
     {
       const file = path.join(tmp, 'switch', 'mcp-secrets.json');

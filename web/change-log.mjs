@@ -15,7 +15,7 @@ const known = (prefix, value) => {
   const text = t(key);
   return text === key ? String(value ?? '') : text;
 };
-/** 誰が。human → あなた、ai → AI、ply → Pleiad（知らない値は届いたまま） */
+/** 誰が。human → あなた、ai・agent → AI（agent は操作の一覧からの変更。ADR 0081）、ply → Pleiad（知らない値は届いたまま） */
 export const byText = (by) => known('changeLog.by', by);
 const valueText = (v) => (v == null || v === '' ? t('changeLog.none') : String(v));
 
@@ -23,7 +23,7 @@ const valueText = (v) => (v == null || v === '' ? t('changeLog.none') : String(v
 export function changeRows(changes) {
   return (changes ?? []).filter(c => FIELDS.includes(c?.field)).map(c => ({
     at: c.at, field: c.field, label: known('changeLog.field', c.field), from: valueText(c.from), to: valueText(c.to),
-    by: c.by, byText: byText(c.by), ai: c.by === 'ai', reason: savedReason(c),
+    by: c.by, byText: byText(c.by), ai: c.by === 'ai' || c.by === 'agent', reason: savedReason(c),
   })).reverse();
 }
 

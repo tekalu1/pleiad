@@ -31,6 +31,8 @@ export const COMMAND = "command";
 
 // server.mjs に case を足したらここにも足す。無いコマンドはサーバーが黙って捨て、テストの cmd は応答待ちのまま止まる
 export const COMMANDS = new Set([
+  // 操作の一覧（core/ops/）の汎用の口。新しい機能はこの 1 つで足し、ここには足さない（ADR 0080）
+  'invoke',   // { op, args } -> その操作の返り値。失敗は code（NOT_FOUND・INVALID・READ_ONLY_MODE・NEEDS_UI・NEEDS_APPROVAL など）と、INVALID のとき issues: [{ path, code, message }]
   'agentTasks', 'agentTaskInstructions', 'cancelAgentTask',
   'retryAgentTask',             // { taskId, candidate: 'backend:model', account?, stop?, approved? } -> { task } | { confirm: { agent, mode } }。Claude の account は選んだ認証（'' はログイン中）。委譲カードの「別の候補でやり直す」
   // 委譲先の自動振り分け（core/delegation-routing.mjs。docs/agent-delegation.md「委譲先の自動振り分け」）。判定器のキーは返さない（hasKey だけ）

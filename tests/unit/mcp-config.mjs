@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { parse } from 'smol-toml';
-import { createMcpConfig } from '../../core/mcp-config.mjs';
+import { createMcpConfig, MASK, maskUrl } from '../../core/mcp-config.mjs';
 import { containsPath } from '../../core/context-settings.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
@@ -22,10 +22,31 @@ export default async function(t) {
       t.ok(`${format}/${scope} は既存標準パス、読込だけでは作成しない`, !initial.path.includes('.ply') && initial.revision === 'missing');
       await service.save({ ...args, revision: initial.revision, mode: 'add', name: 'example', value: { command: 'node', args: ['SECRET-ARG'], env: { TOKEN: 'SECRET-TOKEN' } } });
       const list = await service.list(args), edit = await service.get({ ...args, name: 'example' });
-      t.ok(`${format}/${scope} は一覧に秘密を返さず明示編集で読める`, list.servers.join() === 'example' && !JSON.stringify(list).includes('SECRET') && edit.value.env.TOKEN === 'SECRET-TOKEN');
+      t.ok(`${format}/${scope} は一覧にも明示編集の読み出しにも秘密の値を返さない（env の値は伏せ字）`, list.servers.join() === 'example' && !JSON.stringify(list).includes('SECRET') && !JSON.stringify(edit).includes('SECRET-TOKEN') && edit.value.env.TOKEN === MASK && edit.value.command === 'node');
+      // 伏せ字のまま編集して保存すると、今の値が残る。伏せ字を実際の値として書かない
+      await service.save({ ...args, revision: edit.revision, mode: 'edit', name: 'example', value: { ...edit.value, args: ['CHANGED-ARG'] } });
+      const kept = JSON.stringify(await service.getWithSecrets({ ...args, name: 'example' }));
+      t.ok(`${format}/${scope} 伏せ字のまま保存しても env の値は前のまま`, kept.includes('SECRET-TOKEN') && kept.includes('CHANGED-ARG') && !kept.includes(MASK));
+      const edit2 = await service.get({ ...args, name: 'example' });
+      await reject(`${format}/${scope} 前の値が無い伏せ字は保存しない`, () => service.save({ ...args, revision: edit2.revision, mode: 'edit', name: 'example', value: { command: 'node', env: { NEW: MASK } } }));
+      const edit3 = await service.get({ ...args, name: 'example' });
+      edit.revision = edit3.revision;
       await service.save({ ...args, revision: edit.revision, mode: 'edit', name: 'example', value: { url: 'https://example.com/mcp' } });
       t.ok(`${format}/${scope} の編集が再読込に反映`, (await service.get({ ...args, name: 'example' })).value.url === 'https://example.com/mcp');
       await reject(`${format}/${scope} は古い編集の上書きを拒否`, () => service.save({ ...args, revision: edit.revision, mode: 'edit', name: 'example', value: { command: 'changed' } }));
+    }
+    t.ok('URL のクエリと userinfo を伏せる', maskUrl('https://user:pw@example.com/mcp?key=SECRET#x') === `https://${MASK}@example.com/mcp?${MASK}#x` && maskUrl('https://example.com/mcp') === 'https://example.com/mcp');
+    {
+      const args = { cwd, format: 'claude', scope: 'directory' };
+      const meta = await service.list(args);
+      await service.save({ ...args, revision: meta.revision, mode: 'add', name: 'remote', value: { url: 'https://example.com/mcp?key=SECRET-KEY', headers: { Authorization: 'Bearer SECRET-HDR' }, oauth: { clientId: 'id', clientSecret: 'SECRET-CS' } } });
+      const shown = await service.get({ ...args, name: 'remote' });
+      t.ok('HTTP の MCP: URL のクエリ・ヘッダーの値・OAuth のクライアントシークレットを伏せ、名前と clientId は見せる',
+        !JSON.stringify(shown).includes('SECRET') && shown.value.headers.Authorization === MASK && shown.value.oauth.clientId === 'id' && shown.value.url === `https://example.com/mcp?${MASK}`, JSON.stringify(shown.value));
+      await service.save({ ...args, revision: shown.revision, mode: 'edit', name: 'remote', value: shown.value });
+      const back = await service.getWithSecrets({ ...args, name: 'remote' });
+      t.ok('伏せ字のまま保存しても、URL・ヘッダー・OAuth の値は前のまま', back.value.url.endsWith('key=SECRET-KEY') && back.value.headers.Authorization === 'Bearer SECRET-HDR' && back.value.oauth.clientSecret === 'SECRET-CS');
+      await reject('URL が伏せ字のままでも、前の URL と合わなければ保存しない', () => service.save({ ...args, revision: back.revision, mode: 'edit', name: 'remote', value: { url: `https://other.example.com/mcp?${MASK}` } }));
     }
     const claude = { cwd, format: 'claude', scope: 'user' };
     const file = path.join(home, '.claude.json');
@@ -63,6 +84,9 @@ export default async function(t) {
     const api = { cwd, format: 'claude', scope: 'directory' }, inventory = await client.cmd('listMcpConfig', api);
     await client.cmd('saveMcpServer', { ...api, revision: inventory.revision, mode: 'add', name: 'api', value: { command: 'this-command-must-not-run' } });
     t.ok('認証付き API から追加・編集でき、サーバー起動はしない', (await client.cmd('readMcpServer', { ...api, name: 'api' })).value.command === 'this-command-must-not-run');
+    await client.cmd('saveMcpServer', { ...api, ...(await client.cmd('listMcpConfig', api)), mode: 'add', name: 'api2', value: { command: 'x', env: { TOKEN: 'SECRET-WS' } } });
+    const viaWs = await client.cmd('readMcpServer', { ...api, name: 'api2' });
+    t.ok('WS の readMcpServer も env の値を伏せ字で返す', viaWs.value.env.TOKEN === MASK && !JSON.stringify(viaWs).includes('SECRET-WS'));
   } finally {
     client?.close(); await server?.stop();
     if (!containsPath(os.tmpdir(), tmp) || !path.basename(tmp).startsWith('ply-mcp-config-')) throw new Error('unexpected test path');

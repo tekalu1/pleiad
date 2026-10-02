@@ -1,0 +1,56 @@
+{
+  "ops": [
+    {
+      "id": "app.status",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    }
+  ],
+  "settings": [],
+  "policy": {
+    "human": {
+      "read": "allow",
+      "write": "allow",
+      "guarded": "allow",
+      "human-only": "allow"
+    },
+    "agent-unbound": {
+      "read": "allow",
+      "write": "allow",
+      "guarded": "deny:NEEDS_UI",
+      "human-only": "hidden"
+    },
+    "agent-bound-ask": {
+      "read": "allow",
+      "write": "allow",
+      "guarded": "ask",
+      "human-only": "hidden"
+    },
+    "agent-bound-never-full": {
+      "read": "allow",
+      "write": "allow",
+      "guarded": "allow",
+      "human-only": "hidden"
+    },
+    "agent-bound-readonly": {
+      "read": "allow",
+      "write": "deny:READ_ONLY_MODE",
+      "guarded": "deny:READ_ONLY_MODE",
+      "human-only": "hidden"
+    }
+  }
+}

@@ -39,7 +39,7 @@ export async function open({ port, token, host = "127.0.0.1", onEvent, autoAllow
     if (m.kind === "response") {
       const p = pending.get(m.id);
       pending.delete(m.id);
-      return m.ok ? p?.res(m.result) : p?.rej(new Error(String(m.error)));
+      return m.ok ? p?.res(m.result) : p?.rej(Object.assign(new Error(String(m.error)), { code: m.code, issues: m.issues }));
     }
     if (m.kind !== "event") return;
     const ev = m.event;
