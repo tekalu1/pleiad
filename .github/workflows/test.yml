@@ -36,7 +36,7 @@ jobs:
           - { os: ubuntu-latest, node: "24" }
           # Windows は 1 本だけ残す。Windows 固有の経路（パス・ファイルの掴み合い・疑似端末など）を
           # main の push と PR で自動で通すのはこのジョブだけ（evaluation-release.yml も Windows で npm test を回すが、
-          # 発火は beta タグのみ）。
+          # 発火はリリースのタグ v* のみ）。
           # node 24 ではなく 20 を残す理由: リリースは node 22、開発機は node 24 なので、
           # 20 × Windows はここを外すとどこでも検証されなくなる。
           # 直近30日の Windows 固有の失敗 4 件は node の版と相関していない（20 が 3、24 が 2）。

@@ -150,6 +150,40 @@ export default async function(t) {
     t.ok('Same version next launch has no notice', !reloaded.snapshot().notice);
     await reloaded.command('preferences', { channel: 'beta', autoDownload: true, autoCheck: false });
     t.ok('Beta opt-in never enables downgrade', updater.channel === 'beta' && updater.allowPrerelease && !updater.allowDowngrade);
+    // 受信先の記録: 印（channelChoice）の無い channel は利用者の選択とみなさず、今の版の既定に戻す
+    const channelFile = path.join(dir, 'channel.json');
+    const channelOf = async (version, record) => {
+      if (record === undefined) await fs.rm(channelFile, { force: true }); else await fs.writeFile(channelFile, JSON.stringify(record));
+      const fake = new FakeUpdater();
+      const u = new Updates({ updater: fake, version, file: channelFile, enabled: true, install: async () => {} });
+      await u.init();
+      return { u, fake, saved: JSON.parse(await fs.readFile(channelFile, 'utf8')) };
+    };
+    const legacy = await channelOf('0.1.0', { channel: 'beta', autoCheck: true, autoDownload: true, lastVersion: '0.1.0-beta.60' });
+    t.ok('Legacy record without the mark returns a stable version to stable', legacy.u.snapshot().channel === 'stable' && legacy.fake.channel === 'latest' && !legacy.fake.allowPrerelease);
+    t.ok('Migration does not turn the default into a recorded choice', legacy.saved.channelChoice === undefined && legacy.saved.channel === 'stable');
+    t.ok('Migration keeps the other settings', legacy.u.snapshot().autoCheck && legacy.u.snapshot().autoDownload);
+    const legacyBeta = await channelOf('0.5.0-beta.1', { channel: 'stable', autoCheck: true, autoDownload: true });
+    t.ok('Legacy record on a prerelease version keeps the prerelease default', legacyBeta.u.snapshot().channel === 'beta' && legacyBeta.fake.allowPrerelease);
+    const legacyBetaSame = await channelOf('0.5.0-beta.1', { channel: 'beta', autoCheck: true, autoDownload: true });
+    t.ok('Legacy record on a prerelease version behaves as before', legacyBetaSame.u.snapshot().channel === 'beta');
+    const marked = await channelOf('0.1.0', { channel: 'beta', channelChoice: 1, autoCheck: true, autoDownload: true });
+    t.ok('Marked record is respected', marked.u.snapshot().channel === 'beta' && marked.fake.channel === 'beta' && marked.fake.allowPrerelease && marked.saved.channelChoice === 1);
+    const markedStable = await channelOf('0.5.0-beta.1', { channel: 'stable', channelChoice: 1, autoCheck: true, autoDownload: true });
+    t.ok('Marked stable choice is respected on a prerelease version', markedStable.u.snapshot().channel === 'stable' && markedStable.fake.channel === 'latest');
+    const invalidMark = await channelOf('0.1.0', { channel: 'nightly', channelChoice: 1 });
+    t.ok('Marked record with an unknown channel falls back to the default', invalidMark.u.snapshot().channel === 'stable' && invalidMark.saved.channelChoice === undefined);
+    const fresh = await channelOf('0.1.0');
+    t.ok('New install records no choice', fresh.u.snapshot().channel === 'stable' && fresh.saved.channelChoice === undefined);
+    await fresh.u.command('preferences', { channel: 'stable', autoDownload: false, autoCheck: true });
+    t.ok('Saving other settings does not turn the default into a choice', JSON.parse(await fs.readFile(channelFile, 'utf8')).channelChoice === undefined);
+    await fresh.u.command('preferences', { channel: 'beta', autoDownload: false, autoCheck: true });
+    t.ok('Switching the channel in settings records the mark', JSON.parse(await fs.readFile(channelFile, 'utf8')).channelChoice === 1);
+    t.ok('The switched channel survives a restart', (await channelOf('0.1.0', JSON.parse(await fs.readFile(channelFile, 'utf8')))).u.snapshot().channel === 'beta');
+    // 一度選んだ後は、版が変わっても保存された channel が優先される
+    const afterUpgrade = new Updates({ updater: new FakeUpdater(), version: '0.2.0', file: channelFile, enabled: true, install: async () => {} });
+    await afterUpgrade.init();
+    t.ok('A chosen channel is kept across version changes', afterUpgrade.snapshot().channel === 'beta');
     class QuietUpdater extends EventEmitter { checks = 0; async checkForUpdates() { this.checks++; this.emit(this.latest ? 'update-available' : 'update-not-available', { version: this.latest }); } async downloadUpdate() {} }
     const quiet = new QuietUpdater();
     const timed = new Updates({ updater: quiet, version: '0.1.0', file: path.join(dir, 'auto.json'), enabled: true, install: async () => {} });
