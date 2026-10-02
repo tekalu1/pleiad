@@ -42,6 +42,7 @@ async page => {
   await page.screenshot({ path: `${shots}/1-connecting.png` });
   await page.waitForFunction(() => !document.querySelector('#cbox').hasAttribute('aria-busy'), null, { timeout: 10000 });
   await page.locator('.row[data-session]').first().waitFor();
+  await page.evaluate(() => { const c = document.getElementById('closeOnboarding'); if (c && c.offsetParent) c.click(); });
 
   // ---- ＋ の直後から打つ（newSession・一覧の読み直し・空の履歴の読み込みをそれぞれ 700ms 遅らせる）
   await page.evaluate(() => Object.assign(window.__hold.delay, { newSession: 700, listSessions: 700, loadSession: 700 }));
@@ -119,13 +120,108 @@ async page => {
   s = await ui();
   check('失敗: 欄は書ける・欄の上に理由と「もう一度読む」・送信は押せず title に理由', !s.readOnly && !s.disabled && !s.busy && s.note.includes('もう一度読む')
     && s.sendDisabled && s.sendTitle.includes('履歴を読み込めていない'), JSON.stringify(s));
+  await page.locator('#prompt').focus();
+  await page.keyboard.press('End');
   await page.locator('#prompt').pressSequentially(' typed-after-fail');
-  check('失敗: 書ける', (await ui()).value.endsWith(' typed-after-fail'));
+  const valFail = (await ui()).value;
+  check('失敗: 書ける', valFail.endsWith(' typed-after-fail'), `got: "${valFail}"`);
   await page.screenshot({ path: `${shots}/7-load-failed.png` });
   await page.locator('#composerNote button').click();
   await page.waitForFunction(() => document.querySelector('#composerNote').hidden && !document.querySelector('#cbox').hasAttribute('aria-busy'), null, { timeout: 10000 });
   s = await ui();
   check('もう一度読む: 読めたら書けて送れる。失敗の後に書いた字は残る', !s.readOnly && !s.sendDisabled && s.value.endsWith(' typed-after-fail'), JSON.stringify(s));
   await page.screenshot({ path: `${shots}/8-retried.png` });
+
+  // ---- 作成中に作業場所を選ぶ（newSession を 1.5 秒遅らせる）
+  await page.evaluate(() => Object.assign(window.__hold.delay, { newSession: 1500, listSessions: 0, loadSession: 0 }));
+  const folderA = 'D:\\dev\\pleiad\\temporary\\cwd-race\\folder-A';
+  await page.locator('#newSession').click();
+  await page.locator('#cwdChip').click();
+  await page.locator('#cwdPop .cpath').fill(folderA);
+  await page.locator('#cwdPop .cpath').press('Enter');
+  await page.waitForTimeout(400);
+  const chipDuringA = await page.evaluate(() => document.querySelector('#cwdChip .v')?.textContent);
+  check('作成中: チップに選んだ作業場所が出る', chipDuringA === 'folder-A', chipDuringA);
+  await page.screenshot({ path: `${shots}/9-pick-cwd-during.png` });
+
+  // 作成が終わるまで待つ
+  await page.waitForFunction(() => {
+    const sel = document.querySelector('.row.sel')?.dataset.session;
+    return sel && !sel.startsWith('pending-');
+  }, null, { timeout: 10000 });
+  await page.waitForTimeout(600);
+  const chipAfterA = await page.evaluate(() => document.querySelector('#cwdChip .v')?.textContent);
+  check('作成後: チップがホームに戻らず選んだ場所のまま', chipAfterA === 'folder-A', chipAfterA);
+  const createdIdA = await page.evaluate(() => document.querySelector('.row.sel').dataset.session);
+  await page.screenshot({ path: `${shots}/10-created-cwd-kept.png` });
+
+  // 送信して sendMessage の cwd を確かめる
+  await page.locator('#prompt').fill('echo:hello-pick-during');
+  await page.locator('#send').click();
+  await page.waitForFunction(() => window.__hold.log.some(l => l.command === 'sendMessage' && /hello-pick-during/.test(l.args?.prompt)), null, { timeout: 10000 });
+  await page.waitForTimeout(1000);
+  const sendCmdA = await page.evaluate(() => window.__hold.log.find(l => l.command === 'sendMessage' && /hello-pick-during/.test(l.args?.prompt)));
+  check('作成後に送信: sendMessage の cwd が選んだ場所', sendCmdA?.args?.cwd === folderA, JSON.stringify(sendCmdA?.args));
+
+  // サーバーで実際に走った cwd を確かめる
+  const serverRowA = await page.evaluate((id) => new Promise(resolve => {
+    const loc = window.location;
+    const ws = new WebSocket(`${loc.protocol === 'https:' ? 'wss:' : 'ws:'}//${loc.host}/ws${loc.search}`);
+    const send = WebSocket.prototype.send;
+    ws.onopen = () => send.call(ws, JSON.stringify({ kind: 'command', command: 'listSessions', id: 9991, args: {} }));
+    ws.onmessage = (ev) => {
+      try {
+        const m = JSON.parse(ev.data);
+        if (m.kind === 'response' && m.id === 9991) {
+          const list = m.result?.sessions ?? m.result ?? [];
+          const row = (Array.isArray(list) ? list : []).find(s => (s.id ?? s.sessionId) === id);
+          resolve(row ? { cwd: row.cwd } : null);
+          ws.close();
+        }
+      } catch {}
+    };
+    setTimeout(() => resolve(null), 5000);
+  }), createdIdA);
+  check('サーバーで走った cwd が選んだ場所', serverRowA?.cwd === folderA, JSON.stringify(serverRowA));
+
+  // ---- 作成中に作業場所を選び、送信も予約する
+  await page.evaluate(() => Object.assign(window.__hold.delay, { newSession: 1500, listSessions: 0, loadSession: 0 }));
+  const folderB = 'D:\\dev\\pleiad\\temporary\\cwd-race\\folder-B';
+  await page.locator('#newSession').click();
+  await page.locator('#cwdChip').click();
+  await page.locator('#cwdPop .cpath').fill(folderB);
+  await page.locator('#cwdPop .cpath').press('Enter');
+  await page.waitForTimeout(400);
+  await page.locator('#prompt').fill('echo:hello-queued-cwd');
+  await page.locator('#send').click();
+  await page.waitForFunction(() => !document.querySelector('#composerNote').hidden);
+  check('作成中の送信: 予約状態になる', (await ui()).note.includes('会話ができしだい送ります'));
+
+  await page.waitForFunction(() => window.__hold.log.some(l => l.command === 'sendMessage' && /hello-queued-cwd/.test(l.args?.prompt)), null, { timeout: 10000 });
+  await page.waitForTimeout(1000);
+  const sendCmdB = await page.evaluate(() => window.__hold.log.find(l => l.command === 'sendMessage' && /hello-queued-cwd/.test(l.args?.prompt)));
+  check('送信予約: sendMessage の cwd が選んだ場所', sendCmdB?.args?.cwd === folderB, JSON.stringify(sendCmdB?.args));
+  const createdIdB = await page.evaluate(() => document.querySelector('.row.sel').dataset.session);
+
+  const serverRowB = await page.evaluate((id) => new Promise(resolve => {
+    const loc = window.location;
+    const ws = new WebSocket(`${loc.protocol === 'https:' ? 'wss:' : 'ws:'}//${loc.host}/ws${loc.search}`);
+    const send = WebSocket.prototype.send;
+    ws.onopen = () => send.call(ws, JSON.stringify({ kind: 'command', command: 'listSessions', id: 9992, args: {} }));
+    ws.onmessage = (ev) => {
+      try {
+        const m = JSON.parse(ev.data);
+        if (m.kind === 'response' && m.id === 9992) {
+          const list = m.result?.sessions ?? m.result ?? [];
+          const row = (Array.isArray(list) ? list : []).find(s => (s.id ?? s.sessionId) === id);
+          resolve(row ? { cwd: row.cwd } : null);
+          ws.close();
+        }
+      } catch {}
+    };
+    setTimeout(() => resolve(null), 5000);
+  }), createdIdB);
+  check('予約送信: サーバーで走った cwd が選んだ場所', serverRowB?.cwd === folderB, JSON.stringify(serverRowB));
+
   return { passed: true, checks };
 }
