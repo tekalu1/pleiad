@@ -454,10 +454,26 @@
       "sessionRequired": "sessionId を指定してください（この会話を指す場合を除き、省けません）。",
       "badCursor": "cursor が正しくありません。前の返り値の next をそのまま渡してください。",
       "DENIED": "ユーザーが {{id}} の変更を許可しませんでした。やり直さず、ユーザーに理由を尋ねてください。",
-      "APPROVAL_TIMEOUT": "{{id}} の承認が時間内に得られず、変更していません。ユーザーに Pleiad の画面での確認を頼んでください。",
-      "APPROVAL_ABORTED": "承認を待つあいだに会話が止まったか呼び出しが切れたので、{{id}} は行っていません。",
       "STALE": "承認のあとも値が変わり続けたので、{{id}} は行っていません。settings.get で今の値を確かめてからやり直してください。",
       "SETTING_READ_ONLY": "設定「{{key}}」は読むだけで、settings.set では変えられません。"
+    },
+    "pending": "{{target}}の変更は、ユーザーの承認を待っています（requestId: {{requestId}}）。まだ変わっていません。結果（許可・拒否）は後でこの会話に届きます。待たずにほかの作業を続けるか、応答を終えてかまいません。同じ変更を繰り返し求めないでください。",
+    "settingTarget": "設定「{{key}}」",
+    "opTarget": "操作「{{id}}」",
+    "settingNotice": {
+      "head": "[Pleiad 設定の変更の結果 / {{requestId}}]\n結果: {{status}}",
+      "status": {
+        "allowed": "許可",
+        "denied": "拒否",
+        "failed": "失敗",
+        "superseded": "取り下げ",
+        "restart": "取り下げ"
+      },
+      "allowed": "ユーザーが{{target}}の変更を許可し、Pleiad が変更しました。元の依頼に必要な作業を続けてください。",
+      "denied": "ユーザーが{{target}}の変更を拒否しました。設定は変わっていません。同じ変更を求め直さず、必要ならユーザーに理由を尋ねてください。",
+      "failed": "ユーザーが{{target}}の変更を許可しましたが、変更できませんでした: {{error}}",
+      "superseded": "{{target}}への新しい要求で置き換えたので、この要求は取り下げました。この要求では何も変わっていません。新しい要求の結果は別に届きます。",
+      "restart": "Pleiad が再起動したので、{{target}}の変更の承認を取り下げました。設定は変わっていません。まだ必要なら、もう一度求めてください。"
     },
     "settings": {
       "list": {
@@ -494,7 +510,7 @@
       }
     },
     "control": {
-      "instructions": "Pleiad の機能と設定は ply_control から使えます。\nまず list_ops で操作を探し（id を渡すと入力の JSON Schema が分かります）、call_op で呼びます。検索・読み出し・設定の get/set は直に呼べます。\nPleiad の状態を変える操作はこの会話の承認モードに従い、関所を緩める変更はユーザーの承認カードを待ちます。code が NEEDS_UI・NEEDS_APPROVAL・READ_ONLY_MODE・DENIED・APPROVAL_TIMEOUT で返ったら、やり直さずユーザーに伝えてください。",
+      "instructions": "Pleiad の機能と設定は ply_control から使えます。\nまず list_ops で操作を探し（id を渡すと入力の JSON Schema が分かります）、call_op で呼びます。検索・読み出し・設定の get/set は直に呼べます。\nPleiad の状態を変える操作はこの会話の承認モードに従います。関所を緩める変更はユーザーに承認カードを出し、待たずに status: pending で返ります（結果は後でこの会話に届きます）。code が NEEDS_UI・NEEDS_APPROVAL・READ_ONLY_MODE で返ったら、やり直さずユーザーに伝えてください。",
       "listOps": "Pleiad で使える操作の一覧。id を渡すと、その操作の説明・入力の JSON Schema・危険度を返す。呼ぶのは call_op。",
       "listOpsId": "操作の id（例: sessions.list）。省くと全部の id と 1 行の説明。",
       "callOp": "Pleiad の操作を呼ぶ。入力が合わないと、どの項目がなぜ違うかが code: INVALID で返る。",

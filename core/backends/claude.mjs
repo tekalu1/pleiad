@@ -37,7 +37,7 @@ import { promptTitle } from "../prompt-title.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
 import { COMPUTER_CALL_TIMEOUT_SEC, COMPUTER_SERVER, computerPrompt, isComputerTool } from "./computer-delivery.mjs";
 import { BROWSER_SERVER } from "../browser-profiles.mjs";
-import { CONTROL_SERVER, CONTROL_CALL_TIMEOUT_SEC } from "../ops/surfaces/mcp.mjs";
+import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -697,7 +697,8 @@ export const backend = {
       // 内蔵ブラウザーのプロフィールの一覧と切り替え（core/browser-profiles.mjs。ADR 0078）
       ...(browserRuntime ? { [BROWSER_SERVER]: { type: 'http', url: browserRuntime.url, headers: browserRuntime.headers } } : {}),
       // Pleiad の操作の一覧（core/ops/surfaces/control.mjs。ADR 0081）。全会話に渡す
-      ...(controlRuntime ? { [CONTROL_SERVER]: { type: 'http', url: controlRuntime.url, headers: controlRuntime.headers, timeout: CONTROL_CALL_TIMEOUT_SEC * 1000 } } : {}) };
+      // 承認が要る呼び出しも待たずに返る（ADR 0088）ので、待ちの上限はほかの Pleiad の MCP と同じ既定
+      ...(controlRuntime ? { [CONTROL_SERVER]: { type: 'http', url: controlRuntime.url, headers: controlRuntime.headers } } : {}) };
     const computerInstructions = computerPrompt(computerRuntime, { locale, agent: 'claude' });
     // 互換の接続先（core/compat-endpoints.mjs）。env を組み替え（親の ANTHROPIC_* と OAuth トークンを外して接続先の値を入れる）、
     // 同じ値をフラグ設定のファイルにも書く（ユーザーの settings.json の env が options.env に勝つため。オブジェクトで渡すと argv にキーが載る）。

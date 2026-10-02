@@ -108,6 +108,8 @@ export function approvalChange(settingChange) {
     reason: hasText(settingChange.reason) ? String(settingChange.reason).trim() : "",
     loosens: settingChange.loosens === true,
     receipt: typeof settingChange.receipt === "string" ? settingChange.receipt : "",
+    // 決着（settingApproval イベント）とカードを結ぶ印。聞き直したカードも同じ requestId
+    requestId: typeof settingChange.requestId === "string" ? settingChange.requestId : "",
   };
 }
 

@@ -10,7 +10,8 @@
 //
 // つなぎ先: 環境変数 PLEIAD_CONTROL_URL / PLEIAD_CONTROL_TOKEN（Pleiad が会話のシェルに渡す。その会話に束縛される）→
 //           <AGENT_HOST_DATA か ~/.agent-host>/control.json（会話に束縛されない）。居なければ終了コード 3。
-// 終了コード: 0 成功 / 2 入力の誤り / 3 Pleiad が起動していない / 4 拒否または画面での操作が必要 / 5 その他。--json で結果を JSON にする。
+// 終了コード: 0 成功 / 2 入力の誤り / 3 Pleiad が起動していない / 4 拒否または画面での操作が必要 / 5 その他 /
+//           6 受け付けて承認待ち（会話の承認カードを出した。まだ変わっていない。結果は後で会話に届く。ADR 0088）。--json で結果を JSON にする。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,8 +19,8 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { callMcpTool, mcpTools } from '../core/ops/surfaces/mcp.mjs';
 
-export const EXIT = { ok: 0, usage: 2, notRunning: 3, refused: 4, other: 5 };
-const REFUSED = new Set(['NEEDS_UI', 'NEEDS_APPROVAL', 'READ_ONLY_MODE', 'HOST_SCREEN_ONLY', 'DENIED', 'APPROVAL_TIMEOUT', 'APPROVAL_ABORTED', 'STALE', 'SETTING_READ_ONLY']);
+export const EXIT = { ok: 0, usage: 2, notRunning: 3, refused: 4, other: 5, pending: 6 };
+const REFUSED = new Set(['NEEDS_UI', 'NEEDS_APPROVAL', 'READ_ONLY_MODE', 'HOST_SCREEN_ONLY', 'DENIED', 'STALE', 'SETTING_READ_ONLY']);
 const USAGE_ERRORS = new Set(['INVALID', 'NOT_FOUND', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND']);
 export const exitCodeOf = (code) => (REFUSED.has(code) ? EXIT.refused : USAGE_ERRORS.has(code) ? EXIT.usage : EXIT.other);
 
@@ -65,7 +66,8 @@ async function request(conn, method, pathAndQuery, { body, lang, via } = {}) {
       method,
       headers: { authorization: `Bearer ${conn.token}`, 'x-pleiad-locale': lang, ...(via ? { 'x-pleiad-via': via } : {}), ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(method === 'GET' ? NOT_RUNNING_TIMEOUT_MS : 330_000),
+      // 操作は承認を待たずに返る（承認待ちは pending。ADR 0088）ので、ほかの Pleiad の MCP と同じ 60 秒で切る
+      signal: AbortSignal.timeout(method === 'GET' ? NOT_RUNNING_TIMEOUT_MS : 60_000),
     });
   } catch (e) { throw new Unreachable(String(e?.message ?? e)); }
   if (res.status === 401) throw new Unreachable('401');
@@ -344,6 +346,8 @@ export async function main(argv, { env = process.env, stdout = process.stdout, s
   let r;
   try { r = await invokeOp(conn, id, args, lang); }
   catch (e) { if (e instanceof Unreachable) return notRunning(); err(String(e?.message ?? e)); return EXIT.other; }
+  // 承認待ちは結果（requestId と文）を出して 6
+  if (r.ok && r.pending) { out(flags.json ? JSON.stringify(r.result, null, 2) : r.result?.message ?? render(r.result)); return EXIT.pending; }
   if (r.ok) { out(flags.json ? JSON.stringify(r.result, null, 2) : render(r.result)); return EXIT.ok; }
   if (flags.json) out(JSON.stringify({ ok: false, code: r.code, error: r.error, ...(r.issues ? { issues: r.issues } : {}) }, null, 2));
   else {

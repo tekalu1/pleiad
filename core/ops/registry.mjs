@@ -158,25 +158,43 @@ export const receiptOf = (opId, args, before) => crypto.createHash('sha256').upd
 const RECEIPT_RETRIES = 2;
 
 /**
- * 承認が要る呼び出し（policy の ask）。confirm(ctx, args) が承認カードに出す変更（{ key, rows, loosens } か説明の文字列）を返し、
- * deps.approve({ op, change, receipt, reason, actor, signal }) が会話にカードを出して { allow } か { allow: false, code } を返す。
- * 許可なら null（続けて実行する）、そうでなければ失敗の返り値。
+ * 承認が要る呼び出し（policy の ask）。承認を待たずに返す（ADR 0088）。
+ * confirm(ctx, args) が承認カードに出す変更（{ key, rows, loosens } か説明の文字列）を返し、
+ * deps.approve({ op, change, receipt, reason, actor, requestId?, proceed }) が会話にカードを出して { pending: true, requestId } か
+ * { allow: false, code } をすぐ返す。人が許可したら、サーバーが proceed() を呼ぶ: 前の値を読み直して受領証を作り直し、
+ * 合えば run()（記録と実行）の返り、合わなければ同じ requestId で聞き直して承認待ちの返り（変わり続けたら STALE）。
  */
-async function approval(ctx, op, args, failure) {
+async function approval(ctx, op, args, failure, run) {
   if (typeof ctx.approve !== 'function') return failure('NEEDS_APPROVAL', { id: op.id }, { decision: 'ask' });
   const describe = async () => {
     const c = await op.confirm(ctx, args);
     return typeof c === 'string' ? { note: c, before: null } : c;
   };
-  for (let attempt = 0; attempt <= RECEIPT_RETRIES; attempt++) {
+  const reason = typeof args?.reason === 'string' ? args.reason : null;
+  const ask = async (attempt, requestId) => {
     const change = await describe();
     const receipt = receiptOf(op.id, args, change.before);
-    const answer = await ctx.approve({ op: op.id, change: { ...change, op: op.id }, receipt, reason: typeof args?.reason === 'string' ? args.reason : null, actor: ctx.actor, signal: ctx.signal });
-    if (!answer?.allow) return failure(answer?.code ?? 'DENIED', { id: op.id }, { decision: 'ask' });
-    if (receiptOf(op.id, args, (await describe()).before) === receipt) return null;
-  }
-  return failure('STALE', { id: op.id }, { decision: 'ask' });
+    let id = requestId;
+    const proceed = async () => {
+      if (receiptOf(op.id, args, (await describe()).before) === receipt) return run();
+      return attempt < RECEIPT_RETRIES ? ask(attempt + 1, id) : failure('STALE', { id: op.id }, { decision: 'ask' });
+    };
+    const answer = await ctx.approve({ op: op.id, change: { ...change, op: op.id }, receipt, reason, actor: ctx.actor, ...(requestId ? { requestId } : {}), proceed });
+    if (!answer?.pending) return failure(answer?.code ?? 'DENIED', { id: op.id }, { decision: 'ask' });
+    id = answer.requestId;
+    return pendingResult(ctx.locale, op.id, change.key, id);
+  };
+  return ask(0, null);
 }
+
+/** 承認待ちの返り値。エージェントへの文（会話の言語）と requestId。結果は後で会話に届く（ADR 0088） */
+function pendingResult(locale, opId, key, requestId) {
+  const message = agentT(locale, 'ops.pending', { target: targetText(locale, opId, key), requestId });
+  return { ok: true, pending: true, decision: 'ask', result: { status: 'pending', code: 'PENDING_APPROVAL', requestId, message } };
+}
+
+/** エージェントへの文に入れる、変更の対象（設定ならその名前、ほかは操作の id） */
+export const targetText = (locale, opId, key) => (key ? agentT(locale, 'ops.settingTarget', { key }) : agentT(locale, 'ops.opTarget', { id: opId }));
 
 const issuesOf = (error) => error.issues.map((i) => ({ path: i.path.join('.'), code: i.code, message: i.message }));
 
@@ -209,7 +227,8 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
    * 関所。すべての口はここを通る。
    *   principal  { by: 'human', via?: 'ui', local?: boolean } | { by: 'agent', via: 'mcp'|'cli'|'mcp-stdio', sessionId?: string }
    *   deps       handler へ渡す依存。ほかに locale（失敗の文の言語）・modeOf(sessionId)（束縛された会話の承認モード）・audit(entry)
-   * 返り値: { ok: true, result, decision } | { ok: false, code, error, issues?, decision? }
+   * 返り値: { ok: true, result, decision } | { ok: false, code, error, issues?, decision? } |
+   *         承認待ち { ok: true, pending: true, result: { status: 'pending', code: 'PENDING_APPROVAL', requestId, message }, decision: 'ask' }
    */
   async function invoke(principal, id, args, deps = {}) {
     const locale = deps.locale;
@@ -234,7 +253,7 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
     const mode = sessionId ? await deps.modeOf?.(sessionId) : undefined;
     const subject = { by: principal.by, sessionId, mode };
     const actor = { by: principal.by, ...(principal.via ? { via: principal.via } : {}), ...(sessionId ? { sessionId } : {}) };
-    const ctx = { ...deps, actor, principal, op, registry: api, signal: deps.signal };
+    const ctx = { ...deps, actor, principal, op, registry: api };
 
     // 値に依って危険度が上がる操作は、定義の risk より下げない
     let risk = op.risk;
@@ -249,22 +268,20 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
     const verdict = decide(subject, risk, { modeGate: op.modeGate });
     if (verdict.decision === 'hidden') return notFound();
     if (verdict.decision === 'deny') return failure(verdict.code, { id: op.id }, { decision: 'deny' });
-    // 会話の承認カード（askPermission の settingChange）。人の許可で進み、拒否・時間切れ・中断・会話の終了は code で断る。
+    const run = async () => {
+      if (risk !== 'read') await deps.audit?.({ op: op.id, risk, reason: verdict.reason, actor, sessionScope: op.scope });
+      try {
+        const result = await op.handler(ctx, parsed.data);
+        return { ok: true, result: maskOutput(result ?? null), decision: verdict.decision };
+      } catch (err) {
+        if (err instanceof OpError) return { ok: false, code: err.code, error: err.message, decision: verdict.decision };
+        throw err;
+      }
+    };
+    // 会話の承認カード（askPermission の settingChange）。待たずに承認待ち（PENDING_APPROVAL）を返し、人が許可したら run する。
     // 許可のあとに値が変わっていれば（受領証が合わない）聞き直す。承認の口が無い呼び出し（単体の検査）は NEEDS_APPROVAL
-    if (verdict.decision === 'ask') {
-      const gate = await approval(ctx, op, parsed.data, failure);
-      if (gate) return gate;
-    }
-
-    if (risk !== 'read') await deps.audit?.({ op: op.id, risk, reason: verdict.reason, actor, sessionScope: op.scope });
-
-    try {
-      const result = await op.handler(ctx, parsed.data);
-      return { ok: true, result: maskOutput(result ?? null), decision: verdict.decision };
-    } catch (err) {
-      if (err instanceof OpError) return { ok: false, code: err.code, error: err.message, decision: verdict.decision };
-      throw err;
-    }
+    if (verdict.decision === 'ask') return approval(ctx, op, parsed.data, failure, run);
+    return run();
   }
 
   /**
