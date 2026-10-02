@@ -20,3 +20,9 @@ export const collapseAllIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="
 export const moreIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="2.6"/></svg>';
 // バックグラウンドの入口: 裏のコマンド・端末の絵（ターミナルの >_）
 export const TERMINAL_PATHS = ['M4 5h16v14H4z', 'M7.5 10l2.5 2.5-2.5 2.5', 'M12.5 15h4'];
+// git の動き（docs/design-system.md「git の動き」）: ブランチ・コミット・PR・会話のこの場所へ・›
+export const branchIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6.75" cy="5.4" r="2.4"/><circle cx="6.75" cy="18.6" r="2.4"/><circle cx="17.25" cy="8.1" r="2.4"/><path d="M6.75 7.8v8.4M17.25 10.5c0 3.3-2.4 4.35-5.4 4.8-2.85.45-5.1 1.05-5.1 2.1"/></svg>';
+export const commitIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.6"/><path d="M2.25 12h6.15M15.6 12h6.15"/></svg>';
+export const prIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6.75" cy="5.4" r="2.4"/><circle cx="6.75" cy="18.6" r="2.4"/><circle cx="17.25" cy="18.6" r="2.4"/><path d="M6.75 7.8v8.4M17.25 16.2v-5.85c0-1.95-1.2-3.15-3.15-3.15h-1.8M14.4 4.65 12 7.05l2.4 2.4"/></svg>';
+export const jumpIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M18.75 5.25v6a3 3 0 0 1-3 3H5.25M9.75 9l-4.5 5.25 4.5 5.25"/></svg>';
+export const chevRightIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>';

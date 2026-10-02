@@ -74,6 +74,10 @@ export const COMMANDS = new Set([
   'setPlyInstructions', // { action: 'save'|'toggle'|'delete'|'reset'|'order', … } -> 同上。prefs.json の plyInstructions に保存。始まっている会話にも次のターンから効く
   'refreshContext', // { sessionId } -> 開始後に変わった指示・Skills を、やり取りを引き継いだまま読み込み直す（固定を取り直す）。返答中は不可
   'contextDiff',    // { sessionId } -> { files: [{ path, name, kind, modifiedAt, before, after, beforeMissing, removed }] } 開始時と今の中身
+  // git の動き（読み取りだけ。ADR 0085）。作業場所は会話の cwd（会話の無い下書きは、使ったことのある場所だけ）。git が無い・git 管理外は git: null
+  'gitStatus',      // { sessionId?, cwd?, fresh?, summary? } -> { git: { root, linked, branch, detached, head, upstream, ahead, behind, changed, untracked, conflicts, dirty, at, session?: { files, add, del, commits } | null } | null }。summary: true は会話の間の合計も返す（委譲カード）
+  'gitPanel',       // { sessionId, range?: 'uncommitted'|'session' } -> { git, timeline: [{ kind: branch|commit|pr, at, uuid, toolId, branch?, hash?, subject?, number?, url? }], changes: { range, hasSession, files: [{ path, state: A|M|D, add, del, binary }], total: { files, add, del }, failed? } | null, at } | { git: null }
+  'gitDiff',        // { sessionId, range, path } -> { diff: { range, path, hunks: [{ header, lines: [{ t: '+'|'-'|' ', s }] }], binary, truncated } | null }
   'setSessionMcp',  // { sessionId, name, removed } -> この会話だけ外部 MCP を外す（ply_context に出さない）/ 戻す。次のターンから効く
   'agentMcp',       // { cwd } -> { agents: { claude|codex: [{ name, transport, endpoint, command, path, scope, disabled }] } } 各エージェントの登録（読むだけ）
   'nativeInstructions', // { cwd, backend } -> { cwd, agent, entries: [{ id, name, path, scope, tokens }] | null } エージェント任せの指示を、そのエージェントの規則で探した量（読むだけ。ADR 0056）

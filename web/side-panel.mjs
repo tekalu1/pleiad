@@ -69,6 +69,14 @@ export function customSlots({ label = '' } = {}) {
 }
 
 /**
+ * git（会話のブランチ・したこと・変更。ADR 0085）。見出し（git・ルートのパス）と本文、下の行（取得時刻・再読み込み・会話で使う）と閉じるだけ。
+ * footer は下の行に並べるボタンの名前の列（web/file-preview.mjs の openPanel が作る）
+ */
+export function gitSlots({ label = '', footer = null } = {}) {
+  return { mode: 'custom', label, kind: '', head: ['close'], views: false, toolbar: [], aside: false, footer };
+}
+
+/**
  * 見出しの下の行。作業ディレクトリの中なら相対、外ならそのまま（区切りは / にそろえる。ファイルと同じ）。
  * 元が無い可視化は、会話に保存された表示であることを書く
  */

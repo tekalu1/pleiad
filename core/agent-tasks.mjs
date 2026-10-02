@@ -30,6 +30,15 @@ const text = (locale, value, name, max = 60000) => {
  * stopHookFollowUp を付けた発言（Stop フックに止められて書いた、中身の仕事をしていない続き。Claude の
  * claude-normalize.mjs の stopHookFollowUps）は飛ばす。飛ばすと何も残らないときは、今までどおり最後の本文
  */
+/**
+ * 子の作業場所の git の 1 行の要約（変更: <branch> · N ファイル +a −d · コミット k。ADR 0085）。依頼元の言語で。
+ * 完了通知（core/server.mjs）と ply_task_status・ply_task_wait の gitSummary が同じ文を使う。要約が無ければ空
+ */
+export function gitLine(locale, git) {
+  if (!git) return '';
+  return agentT(locale, 'delegation.noticeGit', { branch: git.branch ?? git.head ?? '(detached)', files: git.files, add: git.add, del: git.del, commits: git.commits });
+}
+
 export function finalReply(messages) {
   const list = Array.isArray(messages) ? messages : [];
   const reply = (m) => m?.role === 'assistant' && typeof m.text === 'string' && m.text;
@@ -269,6 +278,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         }
         await record(r.taskId, row => {
           row.result = String(result?.text ?? ''); row.error = result?.error ?? null;
+          // 子の作業場所の git の要約（ADR 0085。変更・コミットが無ければ載せない）。完了通知と ply_task_status に出る
+          if (result?.git) row.git = result.git; else delete row.git;
           setInstruction(row, instructionId, 'delivered');
           // 実行前に拒否されたコマンド。前の完了通知の後に走った回の分を足していく（通知の前に続けて走った回の分も落とさない）
           const got = Array.isArray(result?.rejections) ? result.rejections : [];
@@ -526,7 +537,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (name === 'ply_task_status') {
         const offset = args.offset ?? 0;
         if (!Number.isInteger(offset) || offset < 0) throw new Error(agentT(locale, 'tasks.offsetInvalid'));
-        const out = { ...shown(r, offset), ...storage(locale) };
+        const out = { ...shown(r, offset), ...(r.git ? { gitSummary: gitLine(locale, r.git) } : {}), ...storage(locale) };
         await markRead(r);
         return out;
       }
@@ -544,7 +555,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
             const timeout = setTimeout(done, seconds * 1000); listeners.add(check); signal?.addEventListener('abort', done, { once: true });
             if (signal?.aborted) done();
           });
-          const out = { ...shown(r), ...storage(locale) };
+          const out = { ...shown(r), ...(r.git ? { gitSummary: gitLine(locale, r.git) } : {}), ...storage(locale) };
           await markRead(r);
           return out;
         } finally {
