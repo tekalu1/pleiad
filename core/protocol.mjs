@@ -243,6 +243,7 @@ export const EVENTS = new Set([
   "statusIcon",   // { status, icon } 状態グループのアイコンが変わった（sessionId は null）
   "title",        // タイトルが変わった
   "fork",         // 分岐した
+  "rewind",       // { renumbered, removed: { messages, userMessages } } 同じ会話の中で発言の手前まで巻き戻した（sendMessage の rewind）。画面は履歴を読み直す。renumbered は残る発言の uuid が変わった（Codex が別スレッドに差し替えた）
   "permission",   // 承認が要る { id, kind: tool|question, toolName, input, canAlways, questions?, browserSite?, computerApp? }。computerApp は ply_computer のアプリの承認 { agent: { id, label }, apps: [{ id, name, risk: normal|high }], reason?, first }（docs/computer-use.md）
   // { state: idle|running|waiting, holder?: { sessionId, title }, since? } コンピューターの操作のロック。running はこの会話のターンが持っている（借りている）、waiting は別の会話が操作中で待っている。承認と同じく全部の接続へ流す
   "computer.state",

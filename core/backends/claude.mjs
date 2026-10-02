@@ -596,6 +596,8 @@ export const backend = {
     tag: true,         // tagSession / tag。同上
     fork: true,
     forkMessage: true,
+    // 同じ会話で巻き戻せる（resume + resumeSessionAt + resumeDropsTurn。conversations.mjs の rewind）
+    rewind: 'resumeAt',
     subagents: true,
     liveModel: true,
     liveMode: true,
@@ -635,7 +637,7 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [], notes = [] }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [], notes = [], rewind = null }) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, locale };
     // このターンで呼んだ ply_computer の tool_use の id。tool_result に名前は載らないので、印の行を読むのはこの id の結果だけにする
@@ -723,6 +725,9 @@ export const backend = {
         // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークン・接続先のキーが紛れても伏せる
         stderr: createStderrLog({ secrets: [oauthToken, endpoint?.key].filter(Boolean) }),
         resume: sessionId ?? undefined,
+        // 同じ会話の中で巻き戻して送り直す（core/conversations.mjs の rewind。ADR 0089）。at は残す最後の発言、drops は捨てる発言（ユーザーの発言）の uuid。
+        // 同じ session id・同じ JSONL のまま、at から枝を伸ばす。捨てる範囲が drops のターンだけでなければ CLI が拒否する（下の catch）
+        ...(rewind && sessionId ? { resumeSessionAt: rewind.at, resumeDropsTurn: rewind.drops } : {}),
         cwd,
         abortController: sdkAbort,
         // 流し込んだ user メッセージが**折り込まれた瞬間**に echo（isReplay）を返させる。
@@ -1001,6 +1006,8 @@ export const backend = {
       if (stop) emit({ type: "turnResult", outcome: "aborted" });
       else if (heldResult) emit(heldResult);
     } catch (err) {
+      // 巻き戻しの拒否（切り口が合わない）は失敗として見せず、呼び出し側（conversations.mjs）がホスト管理に落として送り直す。何も渡る前の拒否で、繰り返し再試行しない
+      if (rewind && /Resume rejected by --resume-drops-turn/.test(String(err?.message ?? ''))) throw Object.assign(new Error(String(err.message)), { rewindRejected: true, undelivered: true });
       // 中断は「失敗」ではない。呼び出し側（server）は finally で片付けるだけなので、
       // 何が起きたかは turnResult で web に伝える。
       if (stop || signal?.signal?.aborted) {

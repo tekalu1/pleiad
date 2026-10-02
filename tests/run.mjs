@@ -310,6 +310,8 @@ const cases = [
   // 対応を終えた procway-code の会話・設定が残っていても安全に動く
   await import("./unit/server-retired.mjs"),
   await import("./unit/server-fork.mjs"),
+  // 同じ会話で巻き戻して送り直す（sendMessage の rewind。ADR 0089）: バックエンドの形ごと（Claude・拒否・Codex・巻き戻せない）× 実行中・送信待ち・検査。契約は身代わりのネイティブで
+  await import("./unit/server-rewind.mjs"),
   await import("./unit/server-ux.mjs"),
   // 変更の記録: sessionChanges の返す形と、statusByAi（AI が状態を変えたときだけ印。人が変えたら null）
   await import("./unit/server-session-changes.mjs"),

@@ -572,6 +572,14 @@ export const backend = {
     return transcript.getMessages(sessionId, options ?? {});
   },
 
+  // 生かしている agy のプロセスを止める。巻き戻して送り直す会話（core/conversations.mjs の rewind）は、新しい agy の会話を起こすので、古いプロセスは使わない
+  releaseConversation(conversationId) {
+    const session = conversationId ? live.get(conversationId) : null;
+    if (!session) return;
+    try { session.kill(); } catch {}
+    release(conversationId, session);
+  },
+
   // ---- 認証 ---------------------------------------------------------------
   //
   // `agy` は login サブコマンドを持たない。**ヘッドレスで走らせたときに、未ログインなら

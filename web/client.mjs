@@ -17,7 +17,8 @@ import { createRemoteBrowser } from './remote-browser.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 import { setupMessagePeek } from './message-peek.mjs';
-import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog } from './message-actions.mjs';
+import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog, announce } from './message-actions.mjs';
+import { tailInfo, buildBand, resendKeys, sendGlyph } from './resend-band.mjs';
 import { mountFold, revealFold } from './fold.mjs';
 import { isSearchShortcut } from './session-find.mjs';
 import { captureViewState, restoreViewState } from './view-state.mjs';
@@ -761,8 +762,13 @@ function forkAtReplyEnd(head) {
   return replyMessages(head).reverse().find(x => x.dataset.uuid) ?? null;
 }
 
+/**
+ * 発言の「編集して再送信」「再送信」。基本は同じ会話の中で送り直す（後ろの発言は消える。ADR 0089）。
+ * 送り直すと消えるものが 1 つでもあるときは、発言（編集欄）の直下の帯で「送り直す」と「分岐して送る」を選ぶ。
+ * 何も消えないときは帯を出さず、再送信ならすぐ送り直す（編集は編集欄の［送り直す］で送る）
+ */
 async function resendFrom(m, edit) {
-  if (state.busy || m.querySelector('.message-editor') || m.dataset.resending) return;
+  if (state.busy || m.querySelector('.message-editor') || m.querySelector('.resend-band') || m.dataset.resending) return;
   const source = state.current;
   m.dataset.resending = '1';
   try {
@@ -778,8 +784,7 @@ async function resendFrom(m, edit) {
         ...(p.origin === 'host' || p.origin === 'device' ? { from: p.origin } : {}), ...(Number.isFinite(p.size) ? { size: p.size } : {}) }));
     // 印（[添付] / [Attachment]）は本文の位置のまま編集欄へ戻す。文中の位置を保つ（編集で印を消した添付は送らない。keptAttachments）
     const draft = { text: data.messages[index].text ?? '', attached, index };
-    if (edit) editMessage(m, draft);
-    else await forkFrom(m, { draft });
+    openResend(m, { draft, tail: tailInfo(data.messages, index, { running: isRunningHere() }), edit });
   } catch (e) { composerError(t('chat.message.resendPrepareFailed', { error: e.message })); }
   finally { delete m.dataset.resending; }
 }
@@ -841,48 +846,151 @@ function keptAttachments(attached, before, after) {
   return attached.filter(a => { const k = normalizeAttachmentPath(a.path); return !had.has(k) || has.has(k); });
 }
 
-function editMessage(m, draft) {
-  if (m.querySelector('.message-editor')) return;
-  const body = m.querySelector(':scope > .body');
-  const editor = el('div', 'message-editor');
-  const input = el('textarea', 'message-edit-input');
-  input.value = draft.text;
-  input.setAttribute('aria-label', t('chat.message.editLabel'));
-  const controls = el('div', 'message-edit-controls');
-  const cancel = el('button', 'btn', t('chat.message.editCancel'));
-  const send = el('button', 'btn btn-primary');
-  send.innerHTML = $('send').innerHTML;
-  send.title = t('chat.message.sendAsBranchTitle');
-  send.setAttribute('aria-label', t('chat.message.sendAsBranch'));
-  cancel.type = send.type = 'button';
-  const close = () => {
-    if (state.busy) return;
-    editor.remove(); body.hidden = false; m.classList.remove('editing');
-    m.querySelector(':scope > .who .who-more')?.focus(); relayoutBranches();
+// 今開いている送り方（編集欄・帯）。1 つだけ。別の発言を送り直し始めたら前のは閉じる
+let resendOpen = null;
+// 同じ会話で送り直している間の会話（サーバーの rewind イベントで自分の画面を二重に読み直さない）
+let rewindingNow = null;
+
+/** 送り直す発言の後ろの行（送り直すと消える範囲） */
+function rowsAfter(m) {
+  const rows = [];
+  for (let w = m.closest('.mw')?.nextElementSibling; w; w = w.nextElementSibling) if (!w.classList.contains('spine')) rows.push(w);
+  return rows;
+}
+
+/** 送り直す本文と添付（入力欄の送信と同じ決め方: 文中に印の無い添付だけ末尾に印を足す） */
+function resendPayload(text, attached, sessionId) {
+  const agentLang = state.sessions.find(s => s.id === sessionId)?.agentLocale ?? uiLang;
+  const marked = new Set(String(text).split(/\r?\n/).map(line => ATTACHMENT_LINE.exec(line.trim())?.[1]).filter(Boolean).map(normalizeAttachmentPath));
+  const unmarked = attached.filter(a => !marked.has(normalizeAttachmentPath(a.path)));
+  return {
+    prompt: [text.trim(), unmarked.map(a => attachmentLine(agentLang, a.path)).join(NL)].filter(Boolean).join(NL + NL),
+    attachments: attached.map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' })),
   };
-  cancel.onclick = close;
-  const update = () => {
-    send.disabled = !input.value.trim() && !draft.attached.length;
-    input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`;
+}
+
+/**
+ * 同じ会話の中で送り直す（sendMessage の rewind）。消える範囲は先に畳み、サーバーが巻き戻して送り終えたら履歴を読み直して
+ * 消えた発言を片付け、新しい発言の吹き出しを置く（会話は切り替えない）。送れなかったら畳んだ範囲を戻して理由を出す。成功したら true
+ */
+async function rewindSend({ m, source, tail, text, attached }) {
+  const { prompt, attachments } = resendPayload(text, attached, source);
+  const messageId = randomId();
+  const doomed = rowsAfter(m);
+  for (const w of doomed) w.classList.add('leaving');
+  if (attached.length) provisionalByMessage.set(messageId, attached.map(provisionalPresent));
+  rewindingNow = source;
+  try {
+    await settingsWrite.catch(() => {});
+    await modeWrite;
+    const result = await cmd('sendMessage', { sessionId: source, messageId, prompt, cwd: state.cwd.trim() || undefined, mode: state.mode,
+      ...(attachments.length ? { attachments } : {}),
+      rewind: { beforeMessageId: m.dataset.uuid, ...(tail.running ? { stopRunning: true } : {}) } });
+    $('settingsError').textContent = '';
+    const removed = result?.rewind?.removed?.userMessages ?? 0;
+    announce(removed > 0 ? t('chat.resend.doneUsers', { count: removed }) : tail.saved > 0 ? t('chat.resend.doneReplies') : t('chat.resend.done'));
+    // 履歴を読み直す。同じ先頭の行は残し、巻き戻した所から後ろだけ描き替える（消えた発言と新しい発言）
+    if (state.current === source) await select(source, { reload: true });
+    return true;
+  } catch (e) {
+    provisionalByMessage.delete(messageId);
+    for (const w of doomed) w.classList.remove('leaving');
+    composerError(t('chat.resend.failed', { error: e.message }));
+    return false;
+  } finally { rewindingNow = null; }
+}
+
+/**
+ * 送り直す発言の操作を開く。編集（edit）なら編集欄を、後ろに消えるものがあれば帯を、発言の直下に置く。
+ * 帯があるとき、編集欄は自前の送信ボタンを持たず帯で送る。後ろに何も無い再送信は帯を出さずすぐ送る
+ */
+function openResend(m, { draft, tail, edit }) {
+  resendOpen?.close();
+  const source = state.current;
+  if (!edit && !tail.any) { void rewindSend({ m, source, tail, text: draft.text, attached: draft.attached }); return; }
+  const body = m.querySelector(':scope > .body');
+  const doomed = tail.any ? rowsAfter(m) : [];
+  for (const w of doomed) w.classList.add('doomed');
+  let editor = null, input = null, band = null, ownSend = null, sending = false;
+  const current = () => (input
+    ? { text: input.value, attached: keptAttachments(draft.attached, draft.text, input.value) }
+    : { text: draft.text, attached: draft.attached });
+  const valid = () => { const c = current(); return Boolean(c.text.trim() || c.attached.length); };
+  const close = ({ focus = false } = {}) => {
+    for (const w of doomed) w.classList.remove('doomed');
+    band?.node.remove();
+    if (editor) { editor.remove(); body.hidden = false; m.classList.remove('editing'); }
+    if (resendOpen?.m === m) resendOpen = null;
+    if (focus) m.querySelector(':scope > .who .who-more')?.focus();
     relayoutBranches();
   };
-  input.oninput = update;
-  send.onclick = async () => {
-    if (send.disabled || state.busy) return;
-    send.disabled = cancel.disabled = input.disabled = true;
-    try { await forkFrom(m, { draft: { ...draft, text: input.value, attached: keptAttachments(draft.attached, draft.text, input.value) } }); }
-    finally { cancel.disabled = input.disabled = false; update(); }
+  const refresh = () => {
+    const off = sending || !valid();
+    if (ownSend) ownSend.disabled = off;
+    if (band) { band.send.disabled = off; band.branch.disabled = off; }
+    if (input) { input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`; }
+    relayoutBranches();
   };
-  input.onkeydown = event => {
-    if (isComposingKey(event)) return;
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
-    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.stopPropagation(); send.click(); }
+  const busy = (on) => {
+    sending = on;
+    band?.busy(on);
+    if (input) input.disabled = on;
+    refresh();
   };
-  editor.append(input);
-  if (draft.attached.length) editor.append(el('div', 'message-edit-attachments', draft.attached.map(a => a.name).join(' · ')));
-  controls.append(cancel, send); editor.append(controls);
-  body.hidden = true; body.after(editor); m.classList.add('editing');
-  update(); input.focus();
+  const send = async () => {
+    if (sending || !valid()) return;
+    busy(true);
+    const ok = await rewindSend({ m, source, tail, ...current() });
+    busy(false);
+    if (ok) close();
+  };
+  const branch = async () => {
+    if (sending || !valid()) return;
+    const c = current();
+    busy(true);
+    try { await forkFrom(m, { draft: { ...c, index: draft.index } }); }
+    finally { busy(false); }
+    // 分岐の先へ移ったなら、この会話の編集欄・帯は役目を終えている。移れなかったら（理由は forkFrom が出した）開いたまま
+    if (state.current !== source || !m.isConnected) { close(); announce(t('chat.resend.doneBranch')); }
+  };
+  const cancel = () => { if (!sending) close({ focus: true }); };
+  const keys = (event) => resendKeys(event, { send, branch, cancel });
+
+  if (edit) {
+    editor = el('div', 'message-editor');
+    input = el('textarea', 'message-edit-input');
+    input.value = draft.text;
+    input.setAttribute('aria-label', t('chat.message.editLabel'));
+    editor.append(input);
+    if (draft.attached.length) editor.append(el('div', 'message-edit-attachments', draft.attached.map(a => a.name).join(' · ')));
+    if (!tail.any) {
+      // 後ろに何も無い: 帯は出さず、編集欄が［取り消し］と［送り直す］を持つ。近道（Ctrl/⌘+Enter・Ctrl/⌘+Shift+Enter・Esc）は同じに効く
+      const controls = el('div', 'message-edit-controls');
+      const cancelButton = el('button', 'btn', t('chat.resend.cancel'));
+      ownSend = el('button', 'btn btn-primary');
+      cancelButton.type = ownSend.type = 'button';
+      ownSend.append(sendGlyph(), el('span', null, t('chat.resend.send')));
+      ownSend.title = `${t('chat.resend.send')} (Ctrl+Enter) · ${t('chat.resend.branch')} (Ctrl+Shift+Enter)`;
+      cancelButton.onclick = cancel;
+      ownSend.onclick = send;
+      controls.append(cancelButton, ownSend);
+      editor.append(controls);
+    }
+    body.hidden = true; body.after(editor); m.classList.add('editing');
+    input.oninput = refresh;
+    input.onkeydown = keys;
+  }
+  if (tail.any) {
+    band = buildBand({ tail, onSend: send, onBranch: branch, onCancel: cancel });
+    band.node.onkeydown = keys;
+    (editor ?? body).after(band.node);
+    input?.setAttribute('aria-describedby', `${band.node.id}t`);
+  }
+  resendOpen = { m, close };
+  refresh();
+  // 編集は編集欄、再送信で帯が出たときは主のボタン［送り直す］へ。読み上げに帯の名前と文が届く
+  if (input) input.focus(); else band?.send.focus({ preventScroll: true });
+  band?.node.scrollIntoView?.({ block: 'nearest' });
 }
 
 function setUuid(m, uuid) {
@@ -2677,6 +2785,12 @@ function onEvent(ev, replay = false) {
     case "fork":
       // 今の会話の家族が増えたなら系譜を読み直し、分岐点の印を置き直す
       return refresh().then(() => reloadBranches(ev));
+
+    case "rewind":
+      // 同じ会話の中で巻き戻した（別の画面からの送り直しも）。履歴を静かに読み直す。
+      // 自分が送り直しているときは、送り終えてから自分で読み直す（rewindSend）
+      if (rewindingNow !== ev.sessionId) select(ev.sessionId, { reload: true }).catch(() => {});
+      return;
 
     case "mode":
     case "model":
