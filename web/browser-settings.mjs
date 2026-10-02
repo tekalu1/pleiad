@@ -37,7 +37,8 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   const shortcuts = el('p', 'browser-setting-note');
   const [before, after = ''] = t('settings.browser.linkOpen.shortcuts', { key: '\u0000' }).split('\u0000');
   shortcuts.append(...[before && el('span', null, before), el('kbd', null, modifierKey()), after && el('span', null, after)].filter(Boolean));
-  root.replaceChildren(...(available ? [el('p', null, t('settings.browser.description'))] : []), row, el('p', 'browser-setting-note', t('settings.browser.linkOpen.note')), shortcuts, error);
+  // どの画面でも効く範囲を書く。リンクの開き先はホストの画面だけなので、ほかの画面にはその理由を一言（docs/inapp-browser.md）
+  root.replaceChildren(el('p', null, available ? t('settings.browser.description') : t('settings.browser.descriptionRemote')), row, el('p', 'browser-setting-note', t('settings.browser.linkOpen.note')), shortcuts, error);
   if (!available) { row.remove(); agentSection.remove(); root.querySelectorAll('.browser-setting-note').forEach(n => n.remove()); }
   const confirmation = el('section', 'browser-confirm-settings');
   // プロフィール（ADR 0078）。内蔵ブラウザーのある画面（デスクトップ版のホストの画面）だけ
@@ -79,11 +80,14 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
     const prefs = getPrefs();
     confirmation.replaceChildren(el('h3', null, t('settings.browser.confirm.title')));
     for (const [key, labelKey] of [['confirmExternalLoads', 'external'], ...(available ? [['confirmAgentSites', 'agent']] : [])]) {
+      if (key === 'confirmAgentSites') confirmation.append(el('h3', null, t('settings.browser.confirm.agentTitle')));
       const row = el('label', 'browser-setting');
       // i18n-dynamic: settings.browser.confirm.
       const label = el('span', null, t(`settings.browser.confirm.${labelKey}`));
       const toggle = el('input'); toggle.type = 'checkbox'; toggle.setAttribute('role', 'switch'); toggle.checked = prefs[key] === true;
       toggle.onchange = () => save(key, toggle.checked); row.append(label, toggle); confirmation.append(row);
+      // 外部の読み込みの確認が効く範囲（プレビューと、内蔵ブラウザーで開いた PC のファイル）
+      if (key === 'confirmExternalLoads') confirmation.append(el('p', 'browser-setting-note', available ? t('settings.browser.confirm.scope') : t('settings.browser.confirm.scopeRemote')));
     }
     if (!prefs.confirmExternalLoads && !(available && prefs.confirmAgentSites)) return;
     const allowed = el('h3', null, t('settings.browser.confirm.sites')); allowed.id = 'browserAllowedSites'; allowed.tabIndex = -1; confirmation.append(allowed);
@@ -94,12 +98,14 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
         confirmation.append(el('h4', null, t('settings.browser.confirm.stopped')));
         for (const origin of pending) confirmation.append(siteRow('externalSitePermissions', { origin }, true));
       }
-      confirmation.append(el('h4', null, t('settings.browser.confirm.externalList')));
+      // 一覧が空のときは小見出しも出さない（中身の無い見出しが「許可したサイト」の下に残らない）
+      if (sites.length) confirmation.append(el('h4', null, t('settings.browser.confirm.externalList')));
       for (const site of sites) confirmation.append(siteRow('externalSitePermissions', site));
     }
     if (available && prefs.confirmAgentSites) {
-      confirmation.append(el('h4', null, t('settings.browser.confirm.agentList')));
-      for (const site of prefs.agentSitePermissions ?? []) confirmation.append(siteRow('agentSitePermissions', site));
+      const agentSites = prefs.agentSitePermissions ?? [];
+      if (agentSites.length) confirmation.append(el('h4', null, t('settings.browser.confirm.agentList')));
+      for (const site of agentSites) confirmation.append(siteRow('agentSitePermissions', site));
     }
   }
   onBlockedPreviewOrigins(paintConfirmation);

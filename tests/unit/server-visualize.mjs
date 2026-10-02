@@ -61,9 +61,21 @@ export default async function(t) {
     const written = await fs.readFile(opened.path, 'utf8');
     assert(written.includes('first') && written.includes('Content-Security-Policy'));
     const inApp = await c.cmd('openVisualization', { sessionId:id, id:saved.presents[0].id, returnPath:true });
-    assert.equal(inApp.path, opened.path, '内蔵ブラウザー向けにもデータ置き場の写しのパスを返す');
+    assert(inApp.path.startsWith(path.join(scratch,'data','visualization-snapshots')), '内蔵ブラウザー向けにもデータ置き場の写しのパスを返す');
     const inAppWritten = await fs.readFile(inApp.path, 'utf8');
     assert(inAppWritten.includes('Content-Security-Policy') && inAppWritten.includes("default-src 'none'"), 'file: の写しにも meta CSP を付ける');
+    assert(inAppWritten.includes("console.debug('ply-preview-blocked "), '内蔵ブラウザーの写しだけ、止めた資源を console へ知らせる橋を持つ（親が無いので postMessage ではない）');
+    assert(!written.includes('ply-preview-blocked') && !inAppWritten.includes('parent.postMessage'), '既定のブラウザーで開く写しには何も足さない');
+    // 内蔵ブラウザーの「読み込む」: そのタブだけの一時の許可（https の出どころ）を CSP に加えた写しを書き直す。設定の許可は変えない
+    await c.cmd('setPref', { key:'confirmExternalLoads', value:true });
+    const blockedCopy = await c.cmd('openVisualization', { sessionId:id, id:saved.presents[0].id, returnPath:true });
+    const allowedCopy = await c.cmd('openVisualization', { sessionId:id, id:saved.presents[0].id, returnPath:true, allow:['https://once.example', 'http://bad.example', 'javascript:1', 'https://u:p@x.example'] });
+    assert.notEqual(allowedCopy.path, blockedCopy.path, '一時の許可が違えば別のファイル');
+    const allowedText = await fs.readFile(allowedCopy.path, 'utf8'), blockedText = await fs.readFile(blockedCopy.path, 'utf8');
+    assert(allowedText.includes('img-src https://once.example data:') && !allowedText.includes('bad.example') && !allowedText.includes('x.example'), 'https の出どころだけが加わる');
+    assert(!blockedText.includes('once.example'), '許可の無い写しには加えない');
+    assert.deepEqual((await c.cmd('prefs'))?.externalSitePermissions ?? [], [], '一時の許可は保存しない');
+    await c.cmd('setPref', { key:'confirmExternalLoads', value:false });
     await assert.rejects(c.cmd('openVisualization', { sessionId:id, id:'missing' }));
     await assert.rejects(c.cmd('openVisualization', { sessionId:id, id:'missing', returnPath:true }));
     // 元のファイルが消えていても、在り処と作業ディレクトリは分かる（見出しの下の相対パス）

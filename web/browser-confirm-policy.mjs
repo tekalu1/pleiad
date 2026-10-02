@@ -7,6 +7,14 @@ export function externalOrigin(value) {
   } catch { return null; }
 }
 
+/** 止めた資源の出どころ（件数に数える）。http も含む。許可に加えられるのは https だけ（externalOrigin） */
+export function blockedOrigin(value) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password ? url.origin : null;
+  } catch { return null; }
+}
+
 export function validBrowserPref(key, value) {
   if (['confirmExternalLoads', 'confirmAgentSites'].includes(key)) return typeof value === 'boolean';
   if (!['externalSitePermissions', 'agentSitePermissions'].includes(key) || !Array.isArray(value) || value.length > 500) return false;

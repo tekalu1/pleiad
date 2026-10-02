@@ -11,6 +11,7 @@ import { runMark } from './arc.mjs';
 import { closeIcon, backIcon, moreIcon } from './icons.mjs';
 import { normalizeAddress, addressParts, tabLabel } from './browser-address.mjs';
 import { notify } from './file-actions.mjs';
+import { noteBlockedOrigins, openPreviewSettings } from './preview-confirm.mjs';
 import { monogram } from './browser-profiles.mjs';
 
 const svg = d => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
@@ -36,14 +37,16 @@ export function browserPanelAvailable() {
 let opener = null;
 /**
  * 内蔵ブラウザーで URL を開く（右パネルをブラウザーにして、今のタブで開く。newTab なら新しいタブ）。
- * url を省くと空の新しいタブ。使えない画面・開けない URL では何もせず false
+ * url を省くと空の新しいタブ。使えない画面・開けない URL では何もせず false。
+ * reuse: 同じ実体のファイル（可視化の写しは同じ記録）のタブがこの会話にあれば、新しく作らず前に出して読み直す。
+ * source: 画面が開いた PC のファイル・可視化の写しの印（⋯ のファイルの操作とアドレス欄の見せ方。desktop/browser-panel.cjs の cleanSource）
  */
-export function openInBrowserPanel(url, { newTab = false } = {}) {
+export function openInBrowserPanel(url, { newTab = false, reuse = false, source = null } = {}) {
   if (!browserPanelAvailable() || !opener) return false;
   if (url != null && url !== '') {
     const target = normalizeAddress(url);
     if (!target) return false;
-    opener({ url: target, newTab });
+    opener({ url: target, newTab, reuse, source });
   } else opener({ url: '', newTab: true });
   return true;
 }
@@ -66,7 +69,9 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   getProfiles = () => [], onProfileChanged = () => {}, openProfiles = () => {} } = {}) {
   let state = { tabs: [], current: null, agent: null, sessionId: null, profile: 'main' };
   let shown = false, covered = false, freezing = null, editing = false;
-  let hooks = { openPanel: () => {}, onEmpty: () => {} };
+  // tabMenu(tab): ⋯ の先頭に足すファイルの操作（PC のファイル・可視化の写しのタブだけ。web/file-preview.mjs）。
+  // rewriteSnapshot(rewrite): 写しの「読み込む」で、一時の許可付きの写しを書き直して同じタブで開く。onPaint(state): 状態が変わった
+  let hooks = { openPanel: () => {}, onEmpty: () => {}, tabMenu: () => [], rewriteSnapshot: async () => {}, onPaint: () => {} };
   // エージェントが切り替えた知らせ（main の notice）。読み込んだときに残っていた分は出さない
   let noticeSeen = null;
   const current = () => state.tabs.find(tab => tab.id === state.current) ?? null;
@@ -138,6 +143,33 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   agentTakeOver.onclick = () => run('agentTakeOver').catch(failed);
   agentRow.append(agentStatus, agentStop, agentTakeOver);
 
+  // ---- 止めた件数の一行（画面が開いた PC のファイルのタブで、外部の読み込みの確認が ON のとき。プレビューと同じ語彙）。
+  // ページ（ネイティブの View）の上ではなく、道具の列とページの間の DOM に置く
+  const guardRow = el('div', 'preview-blocked browser-blocked'); guardRow.hidden = true;
+  const guardLabel = el('span'); guardLabel.setAttribute('role', 'status');
+  const guardLoad = el('button'); guardLoad.type = 'button'; guardLoad.textContent = t('settings.browser.confirm.load');
+  guardLoad.onclick = () => allowOnce();
+  const guardSettings = el('button'); guardSettings.type = 'button'; guardSettings.textContent = t('settings.browser.confirm.settings');
+  guardSettings.onclick = () => openPreviewSettings();
+  guardRow.append(guardLabel, guardLoad, guardSettings);
+  /** 「読み込む」: このタブだけ一時的に通して読み直す。写しは一時の許可付きで書き直す */
+  async function allowOnce() {
+    const tab = current();
+    if (!tab) return;
+    try {
+      const next = await run('allowOnce', { id: tab.id });
+      if (next?.rewrite) await hooks.rewriteSnapshot(next.rewrite);
+    } catch { failed(); }
+  }
+  function paintGuard() {
+    const tab = current(), guard = tab?.guard;
+    const show = shown && !!guard && guard.blocked > 0;
+    guardRow.hidden = !show;
+    if (!show) return;
+    guardLabel.textContent = t('settings.browser.confirm.blocked', { count: guard.blocked });
+    guardLoad.hidden = !guard.origins.length;   // 読み込めるのは https だけ。http だけのときは件数と設定だけ
+  }
+
   // ---- 道具の列: 戻る・進む・再読み込み・アドレス欄・既定のブラウザーで開く・⋯
   const back = button(backIcon, t('browser.back'), () => run('back').catch(failed));
   const forward = button(ICON.forward, t('browser.forward'), () => run('forward').catch(failed));
@@ -152,7 +184,9 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   const openExternal = button(ICON.external, t('browser.openExternal'), () => run('external').then(r => { if (r && r.ok === false) notify(r.reason === 'too-many' ? t('browser.externalTooMany') : t('browser.externalUnavailable')); }).catch(failed));
   const more = button(moreIcon, t('browser.actions'), () => {
     const r = more.getBoundingClientRect(), tab = current();
+    const fileItems = tab ? hooks.tabMenu(tab) : [];
     showMenu?.(r.left, r.bottom + 4, [
+      ...(fileItems.length ? [...fileItems, { sep: true }] : []),
       { label: t('browser.menu.devtools'), disabled: !tab?.url, onClick: () => run('devtools').catch(failed) },
       { label: t('browser.menu.detach'), disabled: !tab?.url, onClick: () => run('detach').catch(failed) },
       { sep: true },
@@ -191,15 +225,26 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
     address.dataset.kind = parts.kind;
     if (!editing) input.value = tab?.url ?? '';
     shownText.replaceChildren();
-    if (parts.kind === 'file') shownText.append(el('b', null, t('browser.kind.file')), el('span', 'weak', ` · ${parts.rest}`));
+    // PC のファイルは作業ディレクトリからの相対（画面が開いたとき label を渡す）。可視化の写しはデータ置き場のパスを見せず「可視化 · 題」
+    if (tab?.snapshot) shownText.append(el('b', null, t('timeline.present.kind.visualization')), el('span', 'weak', ` · ${tab.snapshot.title || t('filePreview.visual.title')}`));
+    else if (parts.kind === 'file') shownText.append(el('b', null, t('browser.kind.file')), el('span', 'weak', ` · ${tab?.file?.label || parts.rest}`));
     else if (parts.kind !== 'blank') shownText.append(el('span', 'weak', parts.scheme), el('b', null, parts.host), el('span', 'weak', parts.rest));
   }
 
+  /** 使い回したタブを一瞬だけ輪で知らせる（動きを減らす設定では CSS が止める） */
+  function flashTab(id) {
+    requestAnimationFrame(() => {
+      const node = tabList.querySelector(`[data-tab="${id}"]`);
+      if (!node) return;
+      node.classList.remove('flash'); void node.offsetWidth; node.classList.add('flash');
+      node.addEventListener('animationend', () => node.classList.remove('flash'), { once: true });
+    });
+  }
   function paintTabs() {
     tabList.replaceChildren(...state.tabs.map(tab => {
       const selected = tab.id === state.current;
       const label = tabLabel(tab) || t('browser.untitled');
-      const item = el('div', 'browser-tab' + (selected ? ' on' : ''));
+      const item = el('div', 'browser-tab' + (selected ? ' on' : '')); item.dataset.tab = tab.id;
       const pick = el('button', 'browser-tab-pick'); pick.type = 'button';
       pick.setAttribute('role', 'tab'); pick.setAttribute('aria-selected', String(selected)); pick.tabIndex = selected ? 0 : -1;
       pick.title = tab.url ? `${label}\n${tab.url}` : label;
@@ -255,12 +300,14 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
     // 押せるかは main が決める（http・https と、画面が明示して開いた file: の HTML。desktop/browser-panel.cjs）
     openExternal.disabled = !tab?.external;
     empty.hidden = !!tab?.url;
-    paintTabs(); paintAddress();
+    paintTabs(); paintAddress(); paintGuard();
+    // 止めた https の出どころは、設定 › ブラウザーの「止めた出どころ」にも並べる
+    for (const entry of state.tabs) if (entry.guard?.origins?.length) noteBlockedOrigins(entry.guard.origins);
     // 重なりの間に今のタブ（かプロフィール）が替わったら、前のページの写しを残さず撮り直す（空のタブなら写しは出さない）
     if (covered && (before.current !== state.current || before.profile !== state.profile)) refreeze();
     // 最後のタブを閉じたらパネルごと閉じる。タブの無い会話・プロフィールへ移っただけなら閉じない（一覧は会話とプロフィールごと。desktop/browser-panel.cjs）
     if (before.tabs.length && !state.tabs.length && shown && before.sessionId === state.sessionId && before.profile === state.profile) hooks.onEmpty();
-    onChange(state);
+    onChange(state); hooks.onPaint(state);
   }
 
   // ---- 位置の報告と重なり
@@ -329,7 +376,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
 
   const api = {
     buttons: { back, forward, reloadPage: reload, address, openExternal, browserMore: more },
-    tabsRow, agentRow, body,
+    tabsRow, agentRow, guardRow, body,
     /** file-preview がパネルを開く関数と、最後のタブを閉じたときの関数を入れる */
     connect(next) { hooks = { ...hooks, ...next }; },
     /** パネルがブラウザーのモードで見えるようになった・隠れた */
@@ -337,12 +384,13 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
       if (shown) return sync();
       shown = true; lastSent = ''; watch(true);
       agentRow.hidden = !(state.agent && state.agent.sessionId === getSessionId());
+      paintGuard();
       bridge.command('context', { sessionId: getSessionId() }).then(paint).catch(() => {});
       sync();
     },
     hide() {
       if (!shown) return;
-      shown = false; watch(false);
+      shown = false; watch(false); paintGuard();
       if (frame) { cancelAnimationFrame(frame); frame = 0; }
       covered = false; freezing = null; still.hidden = true; still.removeAttribute('src');
       lastSent = ''; bridge.layout({ visible: false, rect: null });
@@ -353,9 +401,13 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
     profilesChanged: paintProfile,
     /** 今開いている会話が変わった（これから開くタブがどの会話のものかを main が覚える） */
     sessionChanged(sessionId) { bridge.command('context', { sessionId: sessionId ?? null }).then(paint).catch(() => {}); },
-    async open({ url = '', newTab: fresh = false } = {}) {
+    async open({ url = '', newTab: fresh = false, reuse = false, source = null } = {}) {
       hooks.openPanel();
-      if (url) await run('open', { url, newTab: fresh }).catch(failed);
+      if (url) {
+        const next = await run('open', { url, newTab: fresh, ...(reuse ? { reuse } : {}), ...(source ? { source } : {}) }).catch(failed);
+        // 同じファイルのタブを使い回して読み直した: そのタブを一瞬だけ光らせて知らせる
+        if (next?.reused) { flashTab(next.reused); notify(t('browser.reloaded')); }
+      }
       else if (fresh || !state.tabs.length) { await run('newTab').catch(failed); focusAddress(); }
       if (!state.tabs.length) { await run('newTab').catch(failed); focusAddress(); }
     },

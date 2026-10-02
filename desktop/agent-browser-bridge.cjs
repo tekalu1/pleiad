@@ -37,6 +37,7 @@ function attachAgentBrowserBridge(worker, panel, { timeoutMs = 5000 } = {}) {
   } });
   worker.on('message', async message => {
     if (message?.type === 'agent-browser-turn-ended') { navigation.cancel(message.sessionId); return; }
+    if (message?.type === 'browser-load-policy') { panel.setLoadPolicy?.({ confirm: message.confirm === true, origins: message.origins }); return; }
     if (message?.type === 'agent-browser-prefs') {
       enabled = message.enabled === true;
       if (Array.isArray(message.profiles)) panel.setProfiles?.({ ids: message.profiles, defaultProfile: message.defaultProfile });
@@ -56,6 +57,7 @@ function attachAgentBrowserBridge(worker, panel, { timeoutMs = 5000 } = {}) {
       worker.postMessage({ type: 'agent-browser-endpoint', id: message.id, ok: false, error: error.message });
     }
   });
+  worker.postMessage({ type: 'browser-load-policy-request' });
   worker.postMessage({ type: 'agent-browser-prefs-request' });
   return {
     stop(sessionId) { relay.disconnect(sessionId, true); },

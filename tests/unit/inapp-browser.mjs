@@ -82,6 +82,7 @@ function fakeBridge() {
 }
 
 // ---- 偽の electron（desktop/browser-panel.cjs 用）
+let contentsId = 0;
 function fakeElectron() {
   const log = { external: [], opened: [], openError: '', added: [], removed: [], windows: [], devtools: [] };
   const handlers = { handle: {}, on: {} };
@@ -93,12 +94,13 @@ function fakeElectron() {
       setPermissionCheckHandler: fn => { permissionCheck = fn; },
       setUserAgent: ua => { log.ua = ua; },
       on: () => {},
+      webRequest: { onBeforeRequest: fn => { log.request = fn; (log.requests ??= {})[partition] = fn; } },
       clearStorageData: async opts => { log.cleared = opts; },
       cookies: { get: async () => [{ domain: '.example.com', path: '/', name: 'sid', secure: true }], remove: async (url, name) => { log.cookieRemoved = [url, name]; } },
     }),
   };
   class Contents {
-    constructor() { this.url = 'about:blank'; this.title = ''; this.events = {}; this.history = []; this.index = -1; this.closed = false;
+    constructor() { this.id = ++contentsId; this.url = 'about:blank'; this.title = ''; this.events = {}; this.history = []; this.index = -1; this.closed = false;
       this.navigationHistory = { canGoBack: () => this.index > 0, canGoForward: () => this.index < this.history.length - 1,
         goBack: () => { this.index--; this.url = this.history[this.index]; }, goForward: () => { this.index++; this.url = this.history[this.index]; } }; }
     on(name, fn) { (this.events[name] ??= []).push(fn); }
@@ -111,7 +113,7 @@ function fakeElectron() {
     capturePage() { return Promise.resolve({ toDataURL: () => `data:image/png;base64,${this.url}` }); }
   }
   class WebContentsView {
-    constructor(opts) { this.opts = opts; this.webContents = new Contents(); this.bounds = null; }
+    constructor(opts) { this.opts = opts; this.webContents = new Contents(); this.webContents.sessionPartition = opts?.webPreferences?.session?.partition; this.bounds = null; }
     setBounds(b) { this.bounds = b; } getBounds() { return this.bounds ?? { x: 0, y: 0, width: 800, height: 600 }; }
     setBackgroundColor() {} setBorderRadius(r) { this.radius = r; }
   }
@@ -224,9 +226,17 @@ export default async function (t) {
   try {
     const hidden = setupBrowserSettings({ available: false, cmd: async () => {}, getPrefs: () => ({}) });
     assert.equal(settingNodes.browserTab.hidden, false); assert.equal(settingNodes.browserPanel.querySelectorAll('input').length, 1); hidden.paint();
+    // この設定がプレビューと内蔵ブラウザーの両方に効くことを、どの画面にも書く。リンクの開き先はホストの画面だけなので、その理由を一言
+    const remoteText = settingNodes.browserPanel.textContent;
+    assert(remoteText.includes('リンクの開き先は PC（ホスト）の画面で選びます'), remoteText);
+    assert(remoteText.includes('外部の読み込み') && remoteText.includes('PC の内蔵ブラウザーで開いた HTML ファイルも'), 'リモートにも効く範囲を書く');
+    assert(!remoteText.includes('エージェントのサイト利用'), 'エージェントの設定はホストの画面だけ');
     let prefs = {}; const sent = [];
     const settings = setupBrowserSettings({ available: true, cmd: async (c, a) => { sent.push([c, a]); }, getPrefs: () => prefs });
     assert.equal(settingNodes.browserTab.hidden, false);
+    const hostText = settingNodes.browserPanel.textContent;
+    assert(hostText.includes('外部の読み込みの確認、ログインを残すプロフィールを選びます') && hostText.includes('内蔵ブラウザーで開いた PC の HTML ファイル') && hostText.includes('HTML ファイルもここで開きます'), hostText);
+    assert(hostText.includes('エージェントのサイト利用'));
     const seg = settingNodes.browserPanel.querySelector('.browser-link-open');
     const [inapp, external] = seg.children;
     assert.equal(inapp.getAttribute('aria-pressed'), 'true'); assert.equal(external.getAttribute('aria-pressed'), 'false');
@@ -292,6 +302,77 @@ export default async function (t) {
   });
   t.ok('画面: openInBrowserPanel は正規化して開き、枠の位置を送り、状態から戻る・進む・印・タブを描き、隠すと外す', true);
 
+  // ---- 画面: 画面が開いた PC のファイルのタブ（止めた件数の一行・⋯ のファイルの操作・アドレス欄・使い回しの合図）
+  await withWindow({ plyDesktop: { browser: null } }, async () => {
+    const bridge = fakeBridge();
+    window.plyDesktop.browser = bridge;
+    const menus = [], rewrites = [];
+    const panel = createBrowserPanel({ bridge, showMenu: (x, y, items, title) => menus.push({ items, title }), getSessionId: () => 's1' });
+    panel.connect({ openPanel: () => panel.show(), rewriteSnapshot: async rewrite => { rewrites.push(rewrite); },
+      tabMenu: tab => tab.file ? [{ label: 'file-op' }] : tab.snapshot ? [{ label: 'snap-op' }] : [] });
+    panel.body.rect = { left: 700, top: 120, right: 1180, bottom: 820, width: 480, height: 700 };
+    panel.body.isConnected = true; panel.body.parentElement = new N('div');
+    panel.show(); await new Promise(r => setTimeout(r, 0));   // show() の context の返事（空の状態）が先に描かれる
+    const base = { loading: false, canGoBack: false, canGoForward: false, external: true };
+    const tab = extra => ({ id: 't1', url: 'file:///D:/dev/demo/report/index.html', title: '', ...base, ...extra });
+    const row = panel.guardRow, [label, load, settings] = row.children;
+    // 一行は、確認が ON で止めた資源があるタブだけ。道具の列とページの間に置く（panel.guardRow を右パネルが並べる）
+    bridge.push({ tabs: [tab({ file: { path: 'D:/dev/demo/report/index.html', label: 'report/index.html' } })], current: 't1' });
+    assert.equal(row.hidden, true, '確認が OFF（guard なし）なら出さない');
+    bridge.push({ tabs: [tab({ guard: { blocked: 0, origins: [] } })], current: 't1' });
+    assert.equal(row.hidden, true, '止めたものが無ければ出さない');
+    bridge.push({ tabs: [tab({ guard: { blocked: 3, origins: ['https://a.example', 'https://b.example'] } })], current: 't1' });
+    assert.equal(row.hidden, false); assert(label.textContent.includes('3'), '件数は http も含む'); assert.equal(load.hidden, false);
+    assert.equal(label.attrs.role, 'status');
+    bridge.push({ tabs: [tab({ guard: { blocked: 1, origins: [] } })], current: 't1' });
+    assert.equal(load.hidden, true, 'http だけなら「読み込む」を出さない（件数と設定だけ）');
+    bridge.push({ tabs: [tab({ guard: { blocked: 3, origins: ['https://a.example'] } })], current: 't1' });
+    bridge.calls.length = 0;
+    await load.onclick(); await new Promise(r => setTimeout(r, 0));
+    assert.deepEqual(bridge.calls.at(-1), ['allowOnce', { id: 't1' }], '読み込む = このタブだけ一時的に通す');
+    assert.equal(rewrites.length, 0, 'ファイルのタブは main が読み直す');
+    // 可視化の写し: main が rewrite を返すので、一時の許可付きで書き直す（meta CSP が先に止めているため）
+    const rewrite = { source: { kind: 'snapshot', sessionId: 's1', id: 'v1' }, origins: ['https://a.example'] };
+    const original = bridge.command;
+    bridge.command = async (action, args) => action === 'allowOnce' ? { tabs: [tab({})], current: 't1', rewrite } : original(action, args);
+    await load.onclick(); await new Promise(r => setTimeout(r, 0));
+    assert.deepEqual(rewrites, [rewrite]); bridge.command = original;
+    // 「設定」は許可したサイトへ（web/preview-confirm.mjs の openSettings）
+    assert.equal(typeof settings.onclick, 'function');
+    // 隠している間は出さない
+    bridge.push({ tabs: [tab({ guard: { blocked: 2, origins: ['https://a.example'] } })], current: 't1' });
+    panel.hide(); assert.equal(row.hidden, true, 'パネルを隠すと一行も隠す'); panel.show();
+    assert.equal(row.hidden, false);
+    // アドレス欄: PC のファイルは作業ディレクトリからの相対・写しは「可視化 · 題」（データ置き場のパスを見せない）
+    const text = () => panel.buttons.address.querySelector('.browser-address-text').textContent;
+    bridge.push({ tabs: [tab({ file: { path: 'D:/dev/demo/report/index.html', label: 'report/index.html' } })], current: 't1' });
+    assert(text().includes('PC のファイル') && text().includes('report/index.html') && !text().includes('D:/dev'), text());
+    bridge.push({ tabs: [tab({ url: 'file:///C:/data/visualization-snapshots/abc.html', snapshot: { sessionId: 's1', id: 'v1', title: '拠点別の売上', origin: null } })], current: 't1' });
+    assert(text().includes('可視化') && text().includes('拠点別の売上') && !text().includes('visualization-snapshots'), text());
+    bridge.push({ tabs: [tab({ url: 'file:///D:/dev/demo/other.html' })], current: 't1' });
+    assert(text().includes('other.html') || text().includes('D:/dev/demo/other.html'), 'label が無ければ今までどおり');
+    // ⋯: PC のファイル・写しのタブだけ、ファイルの操作を先頭に（区切りの後に DevTools など）
+    const labelsOf = () => menus.at(-1).items.map(item => item.sep ? '---' : item.label);
+    bridge.push({ tabs: [tab({ file: { path: 'D:/x.html', label: null } })], current: 't1' });
+    panel.buttons.browserMore.onclick();
+    assert.deepEqual(labelsOf().slice(0, 2), ['file-op', '---']); assert(labelsOf().includes('DevTools'));
+    bridge.push({ tabs: [tab({ snapshot: { sessionId: 's1', id: 'v1', title: 't', origin: null } })], current: 't1' });
+    panel.buttons.browserMore.onclick();
+    assert.equal(labelsOf()[0], 'snap-op');
+    bridge.push({ tabs: [tab({ url: 'https://example.com/' })], current: 't1' });
+    panel.buttons.browserMore.onclick();
+    assert.equal(labelsOf()[0], 'DevTools', 'Web のページには足さない');
+    // 使い回し: openInBrowserPanel の reuse・source は main へ渡り、使い回したタブが分かる
+    bridge.calls.length = 0;
+    const savedQuery = document.querySelector; document.querySelector = () => null;   // notify（「読み直しました」）が知らせの箱を探す
+    const reused = bridge.command;
+    let openedWith = null;
+    bridge.command = async (action, args) => action === 'open' ? (openedWith = args, { tabs: [tab({})], current: 't1', reused: 't1' }) : reused(action, args);
+    assert.equal(openInBrowserPanel('file:///D:/dev/demo/report/index.html', { newTab: true, reuse: true, source: { kind: 'file', label: 'report/index.html' } }), true);
+    await new Promise(r => setTimeout(r, 0)); bridge.command = reused; document.querySelector = savedQuery;
+    assert.deepEqual(openedWith, { url: 'file:///D:/dev/demo/report/index.html', newTab: true, reuse: true, source: { kind: 'file', label: 'report/index.html' } }, '使い回しの指定と印が main へ渡る');
+  });
+  t.ok('画面: 止めた件数の一行（http も数える・読み込むは https があるときだけ・写しは書き直す）・アドレス欄の相対パスと「可視化 · 題」・⋯ のファイルの操作は PC のファイルと写しのタブだけ', true);
   // ---- 画面: タブの列の左端のプロフィール（ADR 0078）
   await withWindow({ plyDesktop: { browser: null } }, async () => {
     const bridge = fakeBridge();
@@ -641,6 +722,232 @@ export default async function (t) {
     assert.equal(bp.externalFile(fileUrl(html), { allowFile: false, requested: fileUrl(html) }), null);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   t.ok('main: 既定のブラウザーで開くは http・https と、画面が開いた file: の HTML だけ（実体を解決して openPath・連打の制限）。ページで移った file:・HTML 以外・about:blank は断る', true);
+
+  // ---- main: 画面が開いた file: のタブ（docs/inapp-browser.md「PC のファイルのタブ」、ADR 0079）
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-inapp-guard-'));
+    const data = path.join(dir, 'data');
+    try {
+      fs.mkdirSync(path.join(data, 'uploads'), { recursive: true }); fs.mkdirSync(path.join(data, 'visualization-snapshots'), { recursive: true });
+      const html = path.join(dir, 'report.html'), page2 = path.join(dir, 'page2.html');
+      for (const file of [html, page2, path.join(data, 'secret.json'), path.join(data, 'uploads', 'a.png')]) fs.writeFileSync(file, 'x');
+      const snapshotFile = path.join(data, 'visualization-snapshots', 'aaa.html'), snapshotFile2 = path.join(data, 'visualization-snapshots', 'bbb.html');
+      fs.writeFileSync(snapshotFile, 'x'); fs.writeFileSync(snapshotFile2, 'x');
+      const fileUrl = file => pathToFileURL(file).href;
+
+      // 純粋な判定: file: は UNC・データ置き場（uploads を除く）を止め、http(s) は確認が ON のとき「常に」の https だけ通す
+      assert.equal(bp.protectedFile('file://server/share/a.png', data), true, 'UNC');
+      assert.equal(bp.protectedFile(fileUrl(path.join(data, 'secret.json')), data), true, 'データ置き場');
+      assert.equal(bp.protectedFile(fileUrl(path.join(data, 'nope', 'x.png')), data), true, '無いファイルでもデータ置き場の下は止める');
+      assert.equal(bp.protectedFile(fileUrl(path.join(data, 'uploads', 'a.png')), data), false, '添付の uploads は読める');
+      assert.equal(bp.protectedFile(fileUrl(page2), data), false, 'ふつうのファイル');
+      assert.equal(bp.protectedFile('https://a.example/', data), false, 'file: 以外は対象外');
+      assert.equal(bp.protectedFile(fileUrl(page2), path.join(dir, 'no-such-data')), false, '置き場が無ければ守る相手が無い');
+      const confirm = { confirm: true, origins: ['https://ok.example'], once: new Set(['https://once.example']) };
+      assert.equal(bp.externalVerdict('https://ok.example/a.png', confirm).block, false, '「常に」許可した https');
+      assert.equal(bp.externalVerdict('https://once.example/a.png', confirm).block, false, 'このタブだけの一時の許可');
+      assert.deepEqual(bp.externalVerdict('https://x.example/a.png', confirm), { block: true, origin: 'https://x.example', secure: true });
+      assert.deepEqual(bp.externalVerdict('http://localhost:5173/a.png', confirm), { block: true, origin: 'http://localhost:5173', secure: false }, 'http は localhost も止める');
+      assert.deepEqual(bp.externalVerdict('http://ok.example/a.png', confirm), { block: true, origin: 'http://ok.example', secure: false }, 'https の許可は http に効かない');
+      assert.equal(bp.externalVerdict('wss://ok.example/s', confirm).block, false, 'wss は https と同じに見る');
+      assert.equal(bp.externalVerdict('ws://ok.example/s', confirm).block, true, 'ws は http と同じ');
+      assert.equal(bp.externalVerdict('https://x.example/a.png', { confirm: false }).block, false, 'OFF は何も止めない');
+      assert.equal(bp.externalVerdict('data:image/png;base64,AAAA', confirm).block, false);
+      assert.equal(bp.requestVerdict({ url: 'https://x.example/', resourceType: 'mainFrame' }, confirm, data).block, false, 'ページ自身の移動は止めない');
+
+      // 鍵と印
+      assert.equal(bp.fileKey(fileUrl(html)), bp.fileKey(`${fileUrl(html)}#top`), '同じ実体は同じ鍵（#以降は無視）');
+      assert.notEqual(bp.fileKey(fileUrl(html)), bp.fileKey(fileUrl(page2)));
+      assert.equal(bp.fileKey('https://a.example/'), null);
+      assert.equal(bp.fileKey('file:///x.html', { kind: 'snapshot', sessionId: 's', id: 'v1' }), 'snapshot\0s\0v1');
+      assert.deepEqual(bp.cleanSource({ kind: 'file', label: 'a/b.html', x: 1 }, fileUrl(html)), { kind: 'file', label: 'a/b.html' });
+      assert.equal(bp.cleanSource({ kind: 'file', label: 'a' }, 'https://a.example/'), null, 'file: 以外には付けない');
+      assert.equal(bp.cleanSource({ kind: 'snapshot', sessionId: 's' }, fileUrl(snapshotFile)), null, 'id も at も無い写しは断る');
+      assert.equal(bp.cleanSource({ kind: 'weird' }, fileUrl(html)), null);
+
+      // 偽の electron で: 開く・使い回す・止める・読み込む
+      const fx = fakeElectron();
+      const panel = bp.createBrowserPanel({ ...fx.deps, dataDir: data });
+      panel.attach();
+      const go = (action, args) => fx.handlers.handle['ply:browser'](local$, action, args);
+      const cur = s => s.tabs.find(tab => tab.id === s.current);
+      const verdict = (tabId, url, resourceType = 'image') => new Promise(resolve => fx.log.request({ webContentsId: panel.contentsOf(tabId).id, url, resourceType }, r => resolve(r.cancel)));
+      await go('context', { sessionId: 's1' });
+      panel.setLoadPolicy({ confirm: true, origins: ['https://ok.example'] });
+
+      let s = await go('open', { url: fileUrl(html), newTab: true, reuse: true, source: { kind: 'file', label: 'report.html' } });
+      const tabId = s.current;
+      assert.equal(s.reused, undefined, '初めては新しいタブ');
+      assert.deepEqual(cur(s).file, { path: path.resolve(html), label: 'report.html' }, '⋯ のファイルの操作の対象と、アドレス欄の相対パス');
+      assert.equal(cur(s).snapshot, undefined);
+      assert.deepEqual(cur(s).guard, { blocked: 0, origins: [] });
+      // 止める: 外部（https の許可外・http）と、データ置き場・UNC の file:
+      assert.equal(await verdict(tabId, 'https://ok.example/a.png'), false, '「常に」許可した https は通す');
+      assert.equal(await verdict(tabId, 'https://x.example/a.png'), true, '許可外の https は止める');
+      assert.equal(await verdict(tabId, 'http://127.0.0.1:8080/a.png'), true, 'http は localhost も止める');
+      assert.equal(await verdict(tabId, fileUrl(path.join(dir, 'style.css'))), false, '同じフォルダーの相対資源は読む');
+      assert.equal(await verdict(tabId, fileUrl(path.join(data, 'secret.json'))), true, 'データ置き場は止める');
+      assert.equal(await verdict(tabId, fileUrl(path.join(data, 'uploads', 'a.png'))), false, 'uploads は読む');
+      assert.equal(await verdict(tabId, 'file://server/share/a.png'), true, 'UNC は止める');
+      assert.equal(await verdict(tabId, 'https://x.example/', 'mainFrame'), false, 'ページ自身の移動は止めない');
+      s = await go('state');
+      assert.deepEqual(cur(s).guard, { blocked: 2, origins: ['https://x.example'] }, '件数は http も数え、読み込める出どころは https だけ');
+      assert.equal(await verdict(tabId, 'https://x.example/a.png'), true); assert.equal(cur(await go('state')).guard.blocked, 2, '同じ URL は数え直さない');
+      // 読み込む: このタブだけ一時的に通して読み直す
+      const contents = panel.contentsOf(tabId);
+      s = await go('allowOnce', { id: tabId });
+      assert.equal(fx.log.reloaded, contents.url); assert.equal(s.rewrite, undefined);
+      assert.equal(await verdict(tabId, 'https://x.example/a.png'), false, '一時の許可で通す');
+      assert.equal(await verdict(tabId, 'http://127.0.0.1:8080/a.png'), true, 'http は一時の許可でも通さない');
+      assert.deepEqual(cur(await go('state')).guard, { blocked: 1, origins: [] }, '読み込み直したら数え直す（http だけが残る）');
+      // 同じファイルのリンクはタブを使い回して読み直す（一時の許可は残す）。別のファイルは別のタブ
+      fx.log.reloaded = null;
+      const loadedBefore = contents.history.length;
+      s = await go('open', { url: `${fileUrl(html)}#x`, newTab: true, reuse: true, source: { kind: 'file', label: 'report.html' } });
+      assert.equal(s.reused, tabId); assert.equal(s.tabs.length, 1); assert.equal(s.current, tabId);
+      assert.equal(contents.history.length, loadedBefore + 1, '読み直す');
+      assert.equal(await verdict(tabId, 'https://x.example/a.png'), false, '同じファイルなら一時の許可を引き継ぐ');
+      s = await go('open', { url: fileUrl(page2), newTab: true, reuse: true });
+      assert.equal(s.reused, undefined); assert.equal(s.tabs.length, 2, '別のファイルは別のタブ');
+      assert.deepEqual(cur(s).file, { path: path.resolve(page2), label: null }, '印が無くてもパスは出る');
+      const page2Id = s.current;
+      assert.equal(await verdict(page2Id, 'https://x.example/a.png'), true, '別のタブは一時の許可を持たない');
+      // reuse でなければ、同じファイルでも新しいタブ（今までの「ブラウザーで開く」と同じ）
+      s = await go('open', { url: fileUrl(html), newTab: true });
+      assert.equal(s.tabs.length, 3);
+      await go('close', { id: s.current });
+      // OFF のときは外部を止めない。file: のデータ置き場は OFF でも止める
+      panel.setLoadPolicy({ confirm: false, origins: [] });
+      assert.equal(await verdict(tabId, 'http://127.0.0.1:8080/a.png'), false, 'OFF は何も止めない');
+      assert.equal(await verdict(tabId, fileUrl(path.join(data, 'secret.json'))), true, 'データ置き場は OFF でも止める');
+      assert.equal(cur(await go('select', { id: tabId })).guard, undefined, 'OFF のときは一行を出さない');
+      panel.setLoadPolicy({ confirm: true, origins: ['https://ok.example'] });
+      // ページの中で別の場所へ移った後・Web のページ・別の窓のポップアップには効かせない
+      contents.url = 'https://elsewhere.example/';
+      assert.equal(await verdict(tabId, 'https://x.example/a.png'), false, 'ページの中で Web へ移った後は効かせない');
+      assert.equal(cur(await go('state')).file, undefined, '移った後はファイルの操作を出さない');
+      contents.url = fileUrl(page2);
+      assert.equal(await verdict(tabId, 'https://x.example/a.png'), false, 'ページの中で別の file: へ移った後は効かせない');
+      contents.url = fileUrl(html);
+      const web = (await go('open', { url: 'https://web.example/', newTab: true })).current;
+      assert.equal(await verdict(web, 'http://127.0.0.1:8080/a.png'), false, 'Web のページには効かせない');
+      assert.equal(cur(await go('state')).guard, undefined);
+      let stray; fx.log.request({ webContentsId: 99999, url: 'https://x.example/a.png', resourceType: 'image' }, r => { stray = r.cancel; });
+      assert.equal(stray, false, '持ち主の分からない要求は止めない');
+      // 設定が変わると、もう通る出どころは止めた一覧から外す
+      assert.equal(await verdict(tabId, 'https://y.example/a.png'), true);
+      assert.equal(cur(await go('select', { id: tabId })).guard.blocked, 1);
+      panel.setLoadPolicy({ confirm: true, origins: ['https://ok.example', 'https://y.example', 'http://bad.example', 'javascript:1'] });
+      assert.equal(cur(await go('state')).guard.blocked, 0, '許可に加わった出どころは件数から外す');
+      assert.equal(await verdict(tabId, 'http://bad.example/a.png'), true, '許可に http は入れない');
+
+      // 可視化の写し: 会話と記録で使い回す。読み込むは一時の許可付きで書き直すので rewrite を返す
+      s = await go('open', { url: fileUrl(snapshotFile), newTab: true, reuse: true, source: { kind: 'snapshot', sessionId: 's1', id: 'v1', title: '売上', origin: 'D:/w/a.html' } });
+      const snapId = s.current;
+      assert.deepEqual(cur(s).snapshot, { sessionId: 's1', id: 'v1', at: null, title: '売上', origin: 'D:/w/a.html' });
+      assert.equal(cur(s).file, undefined, '写しはファイルの操作ではなく写しの操作');
+      const snapContents = panel.contentsOf(snapId);
+      assert.equal(await verdict(snapId, 'https://s.example/a.png'), true);
+      snapContents.emit('console-message', { message: 'ply-preview-blocked https://s.example/b.png' }, 0, '');   // 写しの橋（meta CSP が先に止めた分）
+      snapContents.emit('console-message', { message: 'ply-preview-blocked javascript:alert(1)' });
+      snapContents.emit('console-message', { message: 'something else' });
+      s = await go('state');
+      assert.deepEqual(cur(s).guard, { blocked: 2, origins: ['https://s.example'] });
+      s = await go('allowOnce', { id: snapId });
+      assert.deepEqual(s.rewrite, { source: { kind: 'snapshot', sessionId: 's1', id: 'v1', at: null, title: '売上', origin: 'D:/w/a.html' }, origins: ['https://s.example'] });
+      // 画面が書き直した写し（別のファイル名）を同じ記録として開き直す: タブは増えず、一時の許可は残る
+      s = await go('open', { url: fileUrl(snapshotFile2), newTab: true, reuse: true, source: { kind: 'snapshot', sessionId: 's1', id: 'v1', title: '売上', origin: 'D:/w/a.html' } });
+      assert.equal(s.reused, snapId); assert.equal(snapContents.url, fileUrl(snapshotFile2));
+      assert.equal(await verdict(snapId, 'https://s.example/a.png'), false, '書き直した写しの一時の許可');
+      assert.equal(await verdict(snapId, fileUrl(path.join(data, 'visualization-snapshots', 'other.html'))), true, '写しは自分の置き場の別のファイルも読ませない');
+      // 別の会話の同じ記録は別のタブ（タブはその会話のもの）
+      await go('context', { sessionId: 's2' });
+      s = await go('open', { url: fileUrl(snapshotFile2), newTab: true, reuse: true, source: { kind: 'snapshot', sessionId: 's2', id: 'v1', title: '売上', origin: null } });
+      assert.equal(s.reused, undefined); assert.equal(s.tabs.length, 1, '会話ごとにタブを持つ');
+      // ページからのリンクで移る先: データ置き場・UNC の file: へは移らせない
+      const guardEvent = () => { let prevented = false; return { preventDefault() { prevented = true; }, get prevented() { return prevented; } }; };
+      for (const [url, blocked] of [[fileUrl(path.join(data, 'secret.json')), true], ['file://server/share/x.html', true], [fileUrl(page2), false]]) {
+        const ev = guardEvent(); contents.emit('will-navigate', ev, url);
+        assert.equal(ev.prevented, blocked, `リンクで ${url} へ移る`);
+      }
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+  t.ok('main: 画面が開いた file: のタブ — 同じファイルは使い回す・外部の読み込みを設定と一時の許可で止める（http は localhost も）・データ置き場と UNC を常に止める・移った先と Web のページには効かせない・写しの読み込む', true);
+
+  // ---- main: サーバーから届く外部の読み込みの設定（desktop/agent-browser-bridge.cjs）
+  {
+    const { attachAgentBrowserBridge } = require('../../desktop/agent-browser-bridge.cjs');
+    const worker = { handlers: [], posted: [], on(type, fn) { this.handlers.push(fn); }, postMessage(message) { this.posted.push(message); } };
+    const fw = fakeElectron();
+    const wp = bp.createBrowserPanel(fw.deps);
+    const applied = [];
+    const realSet = wp.setLoadPolicy;
+    wp.setLoadPolicy = policy => { applied.push(policy); realSet(policy); };
+    const attached = attachAgentBrowserBridge(worker, wp);
+    assert(worker.posted.some(m => m.type === 'browser-load-policy-request'), '起動時にサーバーへ設定を聞く');
+    for (const fn of worker.handlers) await fn({ type: 'browser-load-policy', confirm: true, origins: ['https://ok.example'] });
+    assert.deepEqual(applied, [{ confirm: true, origins: ['https://ok.example'] }]);
+    for (const fn of worker.handlers) await fn({ type: 'browser-load-policy', confirm: 'yes', origins: 'nope' });
+    assert.deepEqual(applied.at(-1), { confirm: false, origins: 'nope' }, 'true 以外は OFF（形の検査は panel.setLoadPolicy）');
+    attached.close();
+  }
+  t.ok('main: サーバーの外部の読み込みの設定を受けて panel に渡す', true);
+
+  // ---- main: プロフィール（ADR 0078）が複数の session を持っても、file: のタブの守りはどの session のタブにも効く
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-inapp-profile-guard-'));
+    const data = path.join(dir, 'data');
+    try {
+      fs.mkdirSync(data, { recursive: true });
+      const html = path.join(dir, 'report.html');
+      fs.writeFileSync(html, 'x'); fs.writeFileSync(path.join(data, 'secret.png'), 'x');
+      const fileUrl = file => pathToFileURL(file).href;
+      const WORK = 'p0123456789abcdef';
+      const fx = fakeElectron();
+      const panel = bp.createBrowserPanel({ ...fx.deps, dataDir: data });
+      panel.attach();
+      panel.setProfiles({ ids: ['main', WORK], defaultProfile: 'main' });
+      panel.setLoadPolicy({ confirm: true, origins: [] });
+      const go = (action, args) => fx.handlers.handle['ply:browser'](local$, action, args);
+      const cur = s => s.tabs.find(tab => tab.id === s.current);
+      const verdict = (tabId, url) => new Promise(resolve => {
+        const contents = panel.contentsOf(tabId);
+        const handler = fx.log.requests[contents.sessionPartition];
+        handler({ webContentsId: contents.id, url, resourceType: 'image' }, r => resolve(r.cancel));
+      });
+      await go('context', { sessionId: 's1' });
+      const open = args => go('open', { url: fileUrl(html), newTab: true, reuse: true, source: { kind: 'file', label: 'report.html' }, ...args });
+      let s = await open();
+      const mainTab = s.current;
+      assert.equal(Object.keys(fx.log.requests).length, 1, 'メインの session に張る');
+      // プロフィールを替えると、その session を初めて使うときに webRequest も張る（設定を 1 回だけかけるのと同じ口）
+      s = await go('profile', { profile: WORK });
+      assert.equal(s.tabs.length, 0, '前のプロフィールのタブは今のパネルに出ない');
+      s = await open();
+      const workTab = s.current;
+      assert.notEqual(workTab, mainTab, '使い回しは会話の今のプロフィールのタブの中で探す（別のプロフィールのタブは使わない）');
+      assert.equal(s.reused, undefined);
+      assert.deepEqual(Object.keys(fx.log.requests).sort(), ['persist:pleiad-browser', `persist:pleiad-browser-${WORK}`], 'プロフィールの session にも張る');
+      assert.equal(await verdict(workTab, 'https://x.example/a.png'), true, 'プロフィールのタブでも外部は止める');
+      assert.equal(await verdict(workTab, 'http://127.0.0.1:8080/a.png'), true, 'http も止める');
+      assert.equal(await verdict(workTab, fileUrl(path.join(data, 'secret.png'))), true, 'データ置き場も止める');
+      assert.equal(await verdict(workTab, fileUrl(path.join(dir, 'a.png'))), false, '同じフォルダーは読む');
+      assert.deepEqual(cur(await go('state')).guard, { blocked: 2, origins: ['https://x.example'] }, '件数は今のプロフィールのタブのもの');
+      s = await open();
+      assert.equal(s.reused, workTab); assert.equal(s.tabs.length, 1, '同じプロフィールの同じファイルは使い回す');
+      // メインへ戻す: メインのタブが残っていて、そこでも使い回し・止めるが効く
+      s = await go('profile', { profile: 'main' });
+      assert.equal(s.tabs.length, 1); assert.equal(cur(s).id, mainTab);
+      assert.equal(await verdict(mainTab, 'https://x.example/a.png'), true, 'メインのタブも止める');
+      assert.equal(cur(await go('state')).guard.blocked, 1, 'メインのタブの件数はプロフィールごとのタブのもの');
+      s = await open();
+      assert.equal(s.reused, mainTab, '戻したプロフィールでは、そこのタブを使い回す');
+      // 設定（許可）はプロフィールと関係なく、どちらのタブにも同じに効く
+      panel.setLoadPolicy({ confirm: true, origins: ['https://x.example'] });
+      assert.equal(await verdict(mainTab, 'https://x.example/a.png'), false); assert.equal(await verdict(workTab, 'https://x.example/a.png'), false);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+  t.ok('main: プロフィールごとの session にも file: のタブの webRequest が張られる・使い回しは今のプロフィールのタブの中・設定はプロフィールと関係なく効く', true);
 
   // ---- main: パネルの一覧と今のタブは、今の会話のタブと、会話に属さないタブだけ
   {

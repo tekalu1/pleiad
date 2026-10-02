@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
+import { previewPolicy } from '../web/browser-confirm-policy.mjs';
 import { profileIds, defaultProfile } from '../web/browser-profiles.mjs';
 
 export function browserSocketDirectory(dir, platform = process.platform) {
@@ -22,9 +23,12 @@ export function parentPortBrowser(port, { timeoutMs = 10_000 } = {}) {
   let confirmationEnabled = false;
   // main に知らせるプロフィールの設定（使える id と既定。ADR 0078）
   let profileState = { profiles: ['main'], defaultProfile: 'main' };
+  // 外部の読み込みの確認（内蔵ブラウザーの file: のタブに効かせる。ADR 0079）
+  let policyMessage = { type: 'browser-load-policy', confirm: false, origins: [] };
   const approvals = new Map();
   port.on('message', event => {
     const message = event?.data ?? event;
+    if (message?.type === 'browser-load-policy-request') { port.postMessage(policyMessage); return; }
     if (message?.type === 'agent-browser-prefs-request') { port.postMessage({ type: 'agent-browser-prefs', enabled: confirmationEnabled, ...profileState }); return; }
     // main がまだ覚えていない会話の今のプロフィールを引く（画面の会話の切り替え・画面の転送）
     if (message?.type === 'browser-profile-resolve') {
@@ -49,6 +53,12 @@ export function parentPortBrowser(port, { timeoutMs = 10_000 } = {}) {
   });
   return {
     configureAuthorization(handler) { authorize = handler; },
+    /** 「外部の読み込みの前に確認」と、常に許可した https の出どころ（main が内蔵ブラウザーの file: のタブで止める） */
+    loadPolicy(prefs) {
+      const { confirm, origins } = previewPolicy(prefs);
+      policyMessage = { type: 'browser-load-policy', confirm, origins };
+      port.postMessage(policyMessage);
+    },
     configureProfiles(handler) { resolveProfile = handler; },
     endTurn(sessionId) { port.postMessage({ type: 'agent-browser-turn-ended', sessionId }); },
     prefs(prefs) {

@@ -157,6 +157,21 @@ export default async function (t) {
   let endpointUrl = 'ws://127.0.0.1:1234/devtools/browser/key';
   port.postMessage = request => queueMicrotask(() => port.emit('message', { data: { type: request.type, id: request.id, ok: true, url: endpointUrl } }));
   const bridge = parentPortBrowser(port);
+  {
+    // 外部の読み込みの確認の設定を main へ（内蔵ブラウザーの file: のタブが使う。docs/inapp-browser.md）
+    const policyPort = new EventEmitter(), sent = [];
+    policyPort.postMessage = message => sent.push(message);
+    const policyBridge = parentPortBrowser(policyPort);
+    policyPort.emit('message', { data: { type: 'browser-load-policy-request' } });
+    assert.deepEqual(sent.at(-1), { type: 'browser-load-policy', confirm: false, origins: [] }, '設定が来る前は確認 OFF');
+    policyBridge.loadPolicy({ confirmExternalLoads: true, externalSitePermissions: [{ origin: 'https://cdn.example', mode: 'always' }, { origin: 'https://ask.example', mode: 'ask' }] });
+    assert.deepEqual(sent.at(-1), { type: 'browser-load-policy', confirm: true, origins: ['https://cdn.example'] }, '「常に」だけを渡す');
+    policyPort.emit('message', { data: { type: 'browser-load-policy-request' } });
+    assert.deepEqual(sent.at(-1), { type: 'browser-load-policy', confirm: true, origins: ['https://cdn.example'] }, 'main が起動時に聞き直したら最新を返す');
+    policyBridge.loadPolicy({});
+    assert.deepEqual(sent.at(-1), { type: 'browser-load-policy', confirm: false, origins: [] });
+    t.ok('外部の読み込みの確認の設定を main へ届ける（ON と「常に」の https だけ・main の問い合わせに最新を返す）', true);
+  }
   const dir = await mkdtemp(path.join(os.tmpdir(), 'pleiad-browser-test-'));
   const socketDirs = new Set();
   try {
