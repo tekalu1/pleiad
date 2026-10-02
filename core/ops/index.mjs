@@ -1,11 +1,18 @@
 // 既定のレジストリ。操作を足したら、領域のファイルに書いてここで集める（集め忘れは tests/unit/ops-coverage.mjs が落とす）。
-// 設定は各設定のモジュールが `export const settings = [defineSetting(…)]` で出し、ここで集める（段階 1 以降）。
+// 設定は `export const settings = [defineSetting(…)]` で出し、ここで集める（今は settings.mjs に置く。持ち主のモジュールへ移していく）。
 import { createRegistry } from './registry.mjs';
 import { appOps } from './app.mjs';
+import { sessionOps } from './sessions.mjs';
+import { settingOps, settings } from './settings.mjs';
+import { delegationOps } from './delegation.mjs';
+import { probeOps } from './probe.mjs';
+
+// 権限の配線を確かめる検査用の操作は、fake バックエンドを有効にしたとき（テスト）だけ載せる
+const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((s) => s.trim()).includes('fake');
 
 export const registry = createRegistry({
-  ops: [...appOps],
-  settings: [],
+  ops: [...appOps, ...sessionOps, ...settingOps, ...delegationOps, ...(withProbe ? probeOps : [])],
+  settings: [...settings],
 });
 
 export { createRegistry, defineOp, defineSetting, OpError } from './registry.mjs';

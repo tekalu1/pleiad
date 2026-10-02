@@ -36,7 +36,10 @@ function within(p, ms, label) {
 export default async function (t) {
   // ---- 純粋な部品
   t.ok('防火壁: /mcp で始まるパスを通さない（大文字・.. ・符号化も）',
-    ['/mcp/agents', '/MCP/context', '/x/../mcp/agents', '/%6Dcp/agents', '/mcp', '\\mcp/agents', '//evil/mcp'].every(p => checkPath(p) === null));
+    ['/mcp/agents', '/MCP/context', '/x/../mcp/agents', '/%6Dcp/agents', '/mcp', '\\mcp/agents', '//evil/mcp', '/mcp/control'].every(p => checkPath(p) === null));
+  t.ok('防火壁: CLI 用の操作の口（/api/ops。ADR 0083）も通さない（大文字小文字・符号化・.. の抜け道も）。似た名前は通る',
+    ['/api/ops', '/api/ops/app.status', '/API/OPS', '/api/ops?x=1', '/x/../api/ops/sessions.list', '/api/%6Fps', '/api/ops/'].every(p => checkPath(p) === null)
+      && checkPath('/api/opsx')?.pathname === '/api/opsx' && checkPath('/api')?.pathname === '/api');
   t.ok('防火壁: 普通のパスは通り、?token= は落ちる',
     checkPath('/?token=abc&x=1')?.path === '/?x=1' && checkPath('/app.mjs')?.path === '/app.mjs' && checkPath('/ws?token=a')?.pathname === '/ws');
   t.ok('中継の URL: http はループバックだけ', normalizeRelayUrl('http://127.0.0.1:8080/') === 'http://127.0.0.1:8080'

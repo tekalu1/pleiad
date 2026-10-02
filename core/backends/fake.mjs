@@ -20,6 +20,8 @@
 //   "computer-hold:<json>" … "computer:" の後、中断されるまで走り続ける（ロックを持ったままのターン）。"computer-instructions" は ply_computer の指示文を返す
 //   "browser:<json>" … ply_browser（browserRuntime。内蔵ブラウザーのプロフィール）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。
 //                     渡っていなければ "browser: unavailable"。"browser-instructions" は渡った内蔵ブラウザーの指示文を返す
+//   "control:<json>" … ply_control（controlRuntime。Pleiad の操作の一覧）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。渡っていなければ "control: unavailable"。
+//                     "control-info" は渡った接続の url・指示文・会話のシェルへ渡す環境変数の名前とトークンを JSON で返す
 //   "compact"      … 文脈の圧縮（Claude の activity compacting と同じ形）を流す
 //   "bg-shell <本文>" … 本文で返答した後、終わらない裏のコマンド（Claude の local_bash）を抱えて phase: waiting で待つ。
 //                    stopBackground で止めると main が再開して一言返し、ターンが終わる
@@ -47,6 +49,9 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms).unref?.());
 const MODES = {
   default: { label: "都度確認", short: "都度", note: "全部聞く",     scope: "workspace", autonomy: "ask",   enforced: false },
   auto:    { label: "auto",     note: "聞かずに進む", scope: "workspace", autonomy: "never", enforced: false },
+  // 操作の一覧の権限（ADR 0082）を会話の承認モードごとに確かめる。読み取り専用と、確認なし・制限なし（Claude の bypass 相当）
+  plan:    { label: "plan",     note: "読むだけ",     scope: "readonly",  autonomy: "ask",   enforced: false },
+  bypass:  { label: "bypass",   note: "全部通す",     scope: "full",      autonomy: "never", enforced: false },
 };
 
 // 画面の確かめ用に、本物と同じ形（版付きの名前・モデルごとの段と既定・既定がどれに当たるか）を持たせる。
@@ -296,7 +301,7 @@ export const backend = {
     emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
   },
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, browserInstructions, oauthToken, hostSessionId, shellAppends = [], notes = [] }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, browserInstructions, oauthToken, hostSessionId, shellAppends = [], notes = [] }) {
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
     if (String(prompt ?? "").trim().startsWith("undelivered")) {
       const error = "fake: failed before the prompt was delivered";
@@ -390,6 +395,30 @@ export const backend = {
           }
           out.text = texts.join('\n');
         }
+        await say(emit, out.text, out.uuid);
+      } else if (text.startsWith('control:')) {
+        // ply_control（操作の一覧。ADR 0081）の呼び出し。ほかの MCP と同じく mcp__ply_control__<ツール> の行で残す。渡っていなければ "control: unavailable"
+        if (!controlRuntime) out.text = 'control: unavailable';
+        else {
+          out.toolCalls = []; const texts = [];
+          for (const params of [].concat(JSON.parse(text.slice('control:'.length)))) {
+            const callId = crypto.randomUUID();
+            const toolName = `mcp__ply_control__${params.name}`;
+            emit({ type: 'tool.start', id: callId, name: toolName, input: params.arguments ?? {} });
+            const response = await fetch(controlRuntime.url, { method: 'POST', headers: { ...controlRuntime.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params }) });
+            const result = (await response.json()).result;
+            const raw = result.content[0].text;
+            emit({ type: 'tool.result', id: callId, text: raw, isError: Boolean(result.isError) });
+            out.toolCalls.push({ id: callId, name: toolName, input: params.arguments ?? {}, result: { text: raw, isError: Boolean(result.isError) } });
+            texts.push(raw);
+          }
+          out.text = texts.join('\n');
+        }
+        await say(emit, out.text, out.uuid);
+      } else if (text === 'control-info') {
+        // 実際に渡った ply_control の接続（url・指示文・会話のシェルへ渡す環境変数の名前とトークン）。テストが会話に束縛した呼び出しを作るのに使う
+        out.text = controlRuntime ? JSON.stringify({ url: controlRuntime.url, instructions: controlRuntime.instructions, env: Object.keys(controlRuntime.env ?? {}),
+          envUrl: controlRuntime.env?.PLEIAD_CONTROL_URL, token: controlRuntime.env?.PLEIAD_CONTROL_TOKEN, sameToken: controlRuntime.env?.PLEIAD_CONTROL_TOKEN === controlRuntime.headers?.Authorization?.replace('Bearer ', '') }) : 'control: unavailable';
         await say(emit, out.text, out.uuid);
       } else if (text === 'browser-instructions') {
         out.text = browserInstructions ?? '(none)';

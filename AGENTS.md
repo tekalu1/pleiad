@@ -16,6 +16,7 @@
 core/     Node の HTTP + WebSocket サーバー。バックエンドに依存しない
   backends/  エージェント 1 種類 = 1 ファイル（claude・codex・antigravity と、テスト用の fake）
   ops/       操作の一覧（レジストリ）。画面・MCP・CLI へ外に出す機能の正本（`docs/design.md`「操作の一覧」）
+bin/      CLI（`pleiad`。走っている Pleiad の操作の一覧を使う薄いクライアントと `pleiad mcp`。Node の組み込みだけ。`docs/design.md`「操作の一覧」）
 web/      画面。素の ESM でビルドは無い。サーバーがリクエストごとにディスクから読む
 desktop/  Electron の main / preload と自動更新
 mobile/   モバイル版（Capacitor）
@@ -36,6 +37,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `AGENT_HOST_BACKENDS` | 使うバックエンド（カンマ区切り。既定 `claude,codex,antigravity`） |
 | `AGENT_HOST_CODEX_BIN` | codex の実行ファイル（既定 `codex`） |
 | `AGENT_HOST_AGY_BIN` | Antigravity CLI の実行ファイル（既定 `agy`） |
+| `PLEIAD_CONTROL_URL` / `PLEIAD_CONTROL_TOKEN` | `pleiad` CLI のつなぎ先。Pleiad が会話のシェルへ渡し、その会話に束縛される（無ければ `AGENT_HOST_DATA` の `control.json`） |
 
 デスクトップ版は `npm run desktop`、インストーラーの生成は `npm run desktop:dist`（対象 OS で実行）。リリースの運用は `docs/desktop-releases.md`。
 

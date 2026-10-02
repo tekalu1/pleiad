@@ -166,13 +166,13 @@ stream 0 はチャネル自体。端末が開くストリームは奇数、ホ�
 
 接続口は復号したストリームを `127.0.0.1:<PORT>` への HTTP / WebSocket に組み立て直す。そのとき:
 
-- **`/mcp/` で始まるパスは通さない**（`/mcp/agents` `core/agent-bridge.mjs:3`、`/mcp/context` `core/context-bridge.mjs:8`。エージェント CLI 用の内部口）。RESET で返す
+- **`/mcp/` で始まるパスと `/api/ops` は通さない**（`/mcp/agents` `core/agent-bridge.mjs:3`、`/mcp/context` `core/context-bridge.mjs:8`、`/mcp/control`。エージェント CLI 用の内部口と、CLI 用の操作の一覧の口 `/api/ops`。ADR 0083）。RESET で返す
 - HTTP は **GET と HEAD だけ**（今のサーバーの HTTP は読み取りだけで、状態の変更はすべて `/ws` のコマンド）。WebSocket は `/ws` だけ
 - 端末から来た `Cookie`・`Authorization`・`?token=`・`Host`・`Origin`・hop-by-hop のヘッダーを捨て、**ホストの UI トークンを接続口が付ける**（HTTP は Cookie、`/ws` は `?token=`）。接続口はサーバーと同じプロセスにいるので `TOKEN` と実際のポートを知っている
 - 応答の `Set-Cookie`（`agent_host_token`。`core/server.mjs` の静的配信）を捨てる。**ホストの UI トークンは端末に届かない**
 - 既存サーバーのコード（トークン照合・静的配信・`/ws`）は変えない。変えるのは起動時に接続口を立てる数行だけ
 
-実装（`core/remote/forward.mjs`）では、端末のヘッダーは決まったものだけを通す（`accept`・`accept-language`・`accept-encoding`・`cache-control`・`pragma`・`if-none-match`・`if-modified-since`・`if-range`・`range`・`user-agent`）。パスは WHATWG の URL で読み直し、`/mcp` の判定は小文字にしたものと復号したものの両方で行い、判定した形のまま送る。通さないもの（`/mcp`・GET/HEAD 以外・`/ws` 以外の WebSocket）はどれも RESET 3。
+実装（`core/remote/forward.mjs`）では、端末のヘッダーは決まったものだけを通す（`accept`・`accept-language`・`accept-encoding`・`cache-control`・`pragma`・`if-none-match`・`if-modified-since`・`if-range`・`range`・`user-agent`）。パスは WHATWG の URL で読み直し、`/mcp` の判定は小文字にしたものと復号したものの両方で行い、判定した形のまま送る。通さないもの（`/mcp`・`/api/ops`・GET/HEAD 以外・`/ws` 以外の WebSocket）はどれも RESET 3。
 
 将来、端末ごとの記録や権限を持たせるときは、接続口が `X-Pleiad-Device` を付ける余地がある（今は付けない）。
 

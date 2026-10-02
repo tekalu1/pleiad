@@ -155,25 +155,5 @@
   },
   "todoMax": 71,
   "prefKeys": [
-    "addedContext",
-    "agentSitePermissions",
-    "autoCompaction",
-    "backend",
-    "browserDefaultProfile",
-    "browserNewProfile",
-    "browserProfiles",
-    "claudeAccount",
-    "computerUse",
-    "confirmAgentSites",
-    "confirmExternalLoads",
-    "delegationRouting",
-    "effort",
-    "externalSitePermissions",
-    "instructionBudget",
-    "linkOpen",
-    "locale",
-    "mode",
-    "model",
-    "plyInstructions"
   ]
 }

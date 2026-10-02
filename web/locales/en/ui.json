@@ -775,7 +775,8 @@
         "added": "Pleiad instructions",
         "guide": "Context guide",
         "browser": "Browser guide",
-        "computer": "Computer use guide"
+        "computer": "Computer use guide",
+        "control": "Pleiad control guide"
       },
       "over": "Your instructions are {{ratio}}× the budget",
       "overDetail": " · ~{{own}} / {{budget}}",

@@ -37,6 +37,9 @@
     "electron": "^44.3.0",
     "electron-builder": "^26.15.3"
   },
+  "bin": {
+    "pleiad": "bin/pleiad.mjs"
+  },
   "main": "desktop/main.cjs",
   "description": "Pleiad desktop workspace for coding agents",
   "author": "Pleiad",
