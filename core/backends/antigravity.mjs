@@ -315,9 +315,9 @@ export const backend = {
     // 内蔵ブラウザーの接続（browserEnv）と、Hooks を Pleiad がそろえる会話（ADR 0049）の置き場の .agents/hooks.json も起動時にしか渡せない。
     // ブラウザーの設定・登録・止める名前が変われば起こし直す
     const hooksShape = hooksRuntime?.shape ?? null;
-    // ply_computer（2 本目の中継）も起動時にしか渡せない。渡す・渡さない・接続先が変われば起こし直す
+    // ply_computer（中継）も起動時にしか渡せない。渡す・渡さない・接続先が変われば起こし直す
     const computerKey = computerRuntime ? `${computerRuntime.url} ${computerRuntime.headers?.Authorization ?? ''}` : null;
-    // ply_browser（3 本目の中継。プロフィールの一覧と切り替え、ADR 0078）も同じ。口は会話のあいだ同じなので、渡す・渡さないが変わったときだけ
+    // ply_browser（プロフィールの一覧と切り替え、ADR 0078。ply_context・ply_computer と同じ 1 本の中継に束ねる）も同じ。口は会話のあいだ同じなので、渡す・渡さないが変わったときだけ
     const browserKey = browserRuntime ? `${browserRuntime.url} ${browserRuntime.headers?.Authorization ?? ''}` : null;
     if (session && ((session.contextKey ?? null) !== contextKey || (session.contextShape ?? null) !== contextShape
       || (session.browserConfig ?? null) !== (browserEnv?.AGENT_BROWSER_CONFIG ?? null) || (session.hooksShape ?? null) !== hooksShape

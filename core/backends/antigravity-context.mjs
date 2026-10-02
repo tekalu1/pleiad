@@ -65,15 +65,17 @@ export function contextRefusal(owners = {}) {
 /**
  * agent.md の中身。frontmatter の値は JSON で書く（YAML としても読める）。
  * locale は会話の言語（説明・見出し・注意書きはエージェントが読むので、その言語で書く。agent 名前空間）
- * computerEnabled は ply_computer の 2 本目の中継（`--computer`）を足すか（docs/computer-use.md「エージェントへの渡し方」）。
- * browserEnabled は ply_browser の 3 本目の中継（`--browser`）を足すか（docs/inapp-browser.md「プロフィール」）
+ * computerEnabled は ply_computer（`--computer`）を足すか（docs/computer-use.md「エージェントへの渡し方」）。
+ * browserEnabled は ply_browser（`--browser`）を足すか（docs/inapp-browser.md「プロフィール」）。2 つ以上を足すときは 1 本の中継に束ねる（servers）
  */
 export function agentDefinition({ owners, prompt, cwd, home, locale, contextEnabled = true, computerEnabled = false, browserEnabled = false, execPath = process.execPath, electron = Boolean(process.versions.electron) }) {
   // 配布版の Pleiad は Electron。Node として動かす印が無いと、中継ではなく Pleiad 本体が立ち上がる
   const relay = (serverName, args) => ({ serverName, command: execPath, args, ...(electron ? { env: { ELECTRON_RUN_AS_NODE: '1' } } : {}) });
-  const servers = [...(contextEnabled ? [relay('ply_context', [RELAY])] : []), ...(computerEnabled ? [relay('ply_computer', [RELAY, '--computer'])] : []),
-    // ply_browser（内蔵ブラウザーのプロフィール。ADR 0078）は 3 本目の中継（--browser）
-    ...(browserEnabled ? [relay('ply_browser', [RELAY, '--browser'])] : [])];
+  // agy は mcpServers の先頭の 1 本しか起こさない（1.2.14 で実測）ので、2 つ以上を渡すときは 1 本の中継に束ねる（agy-context-relay.mjs）。
+  // 1 つだけなら従来どおりそのサーバー名と旗
+  const kinds = [contextEnabled && 'context', computerEnabled && 'computer', browserEnabled && 'browser'].filter(Boolean);
+  const servers = kinds.length > 1 ? [relay(`ply_${kinds[0]}`, [RELAY, ...kinds.map(kind => `--${kind}`)])]
+    : kinds[0] === 'context' ? [relay('ply_context', [RELAY])] : kinds.length ? [relay(`ply_${kinds[0]}`, [RELAY, `--${kinds[0]}`])] : [];
   const front = [
     `name: ${AGENT_NAME}`,
     `description: ${JSON.stringify(agentT(locale, 'antigravity.description'))}`,

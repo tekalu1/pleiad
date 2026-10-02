@@ -12,10 +12,12 @@ import http from 'node:http';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
+import { spawn } from 'node:child_process';
 import { WebSocket } from 'ws';
 import { profileList, profileForNew, validProfilePref, siteProfile, defaultProfile, folderKey, monogram, profileName, newProfileId, MAX_PROFILES } from '../../web/browser-profiles.mjs';
 import { validBrowserPref } from '../../web/browser-confirm-policy.mjs';
 import { createBrowserProfiles, createBrowserBridge, findProfile, browserTools } from '../../core/browser-profiles.mjs';
+import { agentDefinition } from '../../core/backends/antigravity-context.mjs';
 import { createBrowserSiteApprovals } from '../../core/browser-confirm.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
@@ -421,4 +423,71 @@ export default async function (t) {
     assert.equal((await messages()).filter(m => m.type === 'agent-browser-endpoint').at(-1).profile, 'main', '消えたプロフィールの会話は既定へ戻る');
   } finally { c?.close?.(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
   t.ok('サーバー越し: 設定を main に知らせる・新しい会話は作るときに決める・中継の準備にプロフィール・AI が一覧を読み切り替える（ツール履歴に残り、main に名前付きで知らせ、会話に残る）・人の切り替えを残す・消したプロフィールを片付ける', true);
+
+  // ---- agy: 2 つ以上のサーバーは 1 本の中継に束ねる（agy は agent.md の mcpServers の先頭 1 本しか起こさない。1.2.14 で実測）
+  {
+    const servers = opts => JSON.parse(/\nmcpServers: (\[[^\n]*\])\n/.exec(agentDefinition({ owners: {}, prompt: 'P', cwd: 'C:/w', home: 'C:/h', ...opts }))[1]);
+    const one = servers({ contextEnabled: false, browserEnabled: true });
+    t.ok('agy: 1 つだけなら従来どおりのサーバー名と旗', one.length === 1 && one[0].serverName === 'ply_browser' && one[0].args.at(-1) === '--browser'
+      && servers({ contextEnabled: true })[0].args.length === 1 && servers({ contextEnabled: false, computerEnabled: true })[0].args.at(-1) === '--computer', JSON.stringify(one));
+    const bundled = servers({ contextEnabled: false, computerEnabled: true, browserEnabled: true });
+    t.ok('agy: ply_computer と ply_browser は 1 本の中継に旗を並べる', bundled.length === 1 && bundled[0].serverName === 'ply_computer' && bundled[0].args.slice(-2).join() === '--computer,--browser', JSON.stringify(bundled));
+    const all = servers({ contextEnabled: true, computerEnabled: true, browserEnabled: true });
+    t.ok('agy: 3 つとも渡しても 1 本（先頭の名前）', all.length === 1 && all[0].serverName === 'ply_context' && all[0].args.slice(-3).join() === '--context,--computer,--browser', JSON.stringify(all));
+
+    const seen = [];
+    const upstream = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', d => { body += d; });
+      req.on('end', () => {
+        const m = JSON.parse(body);
+        const kind = req.url.split('/').pop();
+        seen.push(`${kind} ${m.method}${m.params?.name ? ` ${m.params.name}` : ''} ${req.headers.authorization?.slice(0, 8)}`);
+        const tools = { context: ['instructions_for_path'], computer: ['screenshot'], browser: ['list_browser_profiles', 'use_browser_profile'] }[kind].map(n => ({ name: n, inputSchema: { type: 'object' } }));
+        const result = m.method === 'tools/list' ? { tools } : m.method === 'initialize' ? { protocolVersion: '2025-06-18', capabilities: kind === 'context' ? { tools: {}, resources: {} } : { tools: {} }, serverInfo: { name: kind, version: '1' } }
+          : m.method === 'resources/list' ? { resources: [] } : { content: [{ type: 'text', text: `${kind}:${m.params?.name}` }] };
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }));
+      });
+    });
+    await new Promise(r => upstream.listen(0, '127.0.0.1', r));
+    try {
+      const base = `http://127.0.0.1:${upstream.address().port}/mcp`;
+      const auth = 'Bearer ' + 'a'.repeat(64);
+      const child = spawn(process.execPath, [path.join(ROOT, 'core', 'agy-context-relay.mjs'), '--context', '--computer', '--browser'], {
+        env: { ...process.env, PLY_CONTEXT_URL: `${base}/context`, PLY_CONTEXT_AUTHORIZATION: auth, PLY_COMPUTER_URL: `${base}/computer`, PLY_COMPUTER_AUTHORIZATION: auth, PLY_BROWSER_URL: `${base}/browser`, PLY_BROWSER_AUTHORIZATION: auth },
+        stdio: ['pipe', 'pipe', 'ignore'] });
+      let out = '';
+      child.stdout.on('data', d => { out += d; });
+      const requests = [
+        { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } },
+        { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+        { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ply_computer_screenshot', arguments: {} } },
+        { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'use_browser_profile', arguments: { profile: 'x' } } },
+        { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'instructions_for_path', arguments: {} } },
+        { jsonrpc: '2.0', id: 6, method: 'resources/list' },
+      ];
+      for (const r of requests) child.stdin.write(JSON.stringify(r) + '\n');
+      const deadline = Date.now() + 10000;
+      while (out.split('\n').filter(Boolean).length < requests.length && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+      child.kill();
+      const replies = Object.fromEntries(out.split('\n').filter(Boolean).map(l => JSON.parse(l)).map(m => [m.id, m]));
+      const names = (replies[2]?.result?.tools ?? []).map(x => x.name).sort().join();
+      t.ok('agy: 束ねた中継は接続先ごとの tools/list を足し合わせる（computer は ply_computer_ 付き、browser は付けない）',
+        names === 'instructions_for_path,list_browser_profiles,ply_computer_screenshot,use_browser_profile', names);
+      t.ok('agy: initialize は context の返事（resources を持つ）。呼び出しは名前で振り分け、computer の接頭辞は外す',
+        replies[1]?.result?.capabilities?.resources && replies[3]?.result?.content?.[0]?.text === 'computer:screenshot' && replies[4]?.result?.content?.[0]?.text === 'browser:use_browser_profile'
+        && replies[5]?.result?.content?.[0]?.text === 'context:instructions_for_path' && replies[6]?.result?.resources && seen.includes('browser tools/call use_browser_profile Bearer a'), JSON.stringify([replies, seen]).slice(0, 600));
+      // つながらない接続先（env 無し）は黙って外し、残りで動く
+      const partial = spawn(process.execPath, [path.join(ROOT, 'core', 'agy-context-relay.mjs'), '--computer', '--browser'], {
+        env: { ...process.env, PLY_COMPUTER_URL: '', PLY_COMPUTER_AUTHORIZATION: '', PLY_BROWSER_URL: `${base}/browser`, PLY_BROWSER_AUTHORIZATION: auth }, stdio: ['pipe', 'pipe', 'ignore'] });
+      let pout = '';
+      partial.stdout.on('data', d => { pout += d; });
+      partial.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) + '\n');
+      const until = Date.now() + 10000;
+      while (!pout.includes('\n') && Date.now() < until) await new Promise(r => setTimeout(r, 50));
+      partial.kill();
+      t.ok('agy: 接続先が欠けても束ねた中継は残りのツールだけを出す', JSON.parse(pout.split('\n')[0]).result.tools.map(x => x.name).join() === 'list_browser_profiles,use_browser_profile', pout.slice(0, 300));
+    } finally { upstream.close(); }
+  }
 }
