@@ -333,6 +333,26 @@
         "summary": "Pleiad の版・起動時刻・画面の言語・走っている作業の数を返す。"
       }
     },
+    "sessions": {
+      "search": {
+        "summary": "会話の題・状態・場所・本文を探す。語は空白で AND、\"…\" で囲むと完全一致。結果は会話ごとに一致した発言の抜粋つき。",
+        "query": "検索語。空白区切りは AND（語ごとに題・状態・場所・本文のどこでもよい）。\"…\" で囲むと 1 語で大小・全角半角も区別する。空なら絞り込みだけで一覧を返す。",
+        "filters": "絞り込み。",
+        "backends": "エージェントの id（claude・codex・antigravity）。省略はすべて。",
+        "cwd": "作業ディレクトリの完全一致。",
+        "status": "状態の名前。null は状態なし。省略は絞らない。",
+        "since": "この日時以後に更新した会話（ISO 文字列か epoch ms）。",
+        "until": "この日時以前に更新した会話（ISO 文字列か epoch ms）。",
+        "speaker": "本文を探す発言者。any（既定）・user・assistant。",
+        "includeDelegated": "委譲の子の会話も含める。既定は含めない。",
+        "includeToolInputs": "ツールの入力（コマンド・パス）も探す。既定は含めない。",
+        "sessionIds": "この会話の中だけを探す。",
+        "sort": "relevance（既定。関連度）か recent（新しい順）。",
+        "limit": "会話の件数。既定 50・最大 200。",
+        "cursor": "続き。前の結果の nextCursor をそのまま渡す。",
+        "hitsPerSession": "会話ごとに返す一致の発言の数。既定 1・最大 10。"
+      }
+    },
     "errors": {
       "NOT_FOUND": "操作「{{id}}」はありません。",
       "HOST_SCREEN_ONLY": "この操作は、Pleiad が動いている PC の画面からだけできます。",

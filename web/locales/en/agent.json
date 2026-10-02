@@ -333,6 +333,26 @@
         "summary": "Return Pleiad's version, start time, display language, and the number of running tasks."
       }
     },
+    "sessions": {
+      "search": {
+        "summary": "Search conversations by title, status, place and message text. Space-separated words are ANDed; quote a phrase for an exact match. Each result carries excerpts of the matching messages.",
+        "query": "Search words. Spaces mean AND (each word may match the title, status, place or any message). A \"quoted\" phrase is one word and is case- and width-sensitive. Empty returns the filtered list.",
+        "filters": "Filters.",
+        "backends": "Agent ids (claude, codex, antigravity). Omit for all.",
+        "cwd": "Exact working directory.",
+        "status": "Status name. null means no status. Omit to not filter.",
+        "since": "Conversations updated at or after this time (ISO string or epoch ms).",
+        "until": "Conversations updated at or before this time (ISO string or epoch ms).",
+        "speaker": "Whose messages to search: any (default), user or assistant.",
+        "includeDelegated": "Include delegated child conversations. Off by default.",
+        "includeToolInputs": "Also search tool inputs (commands, paths). Off by default.",
+        "sessionIds": "Search only inside these conversations.",
+        "sort": "relevance (default) or recent (newest first).",
+        "limit": "Number of conversations. Default 50, max 200.",
+        "cursor": "Continuation. Pass nextCursor from the previous result as is.",
+        "hitsPerSession": "Matching messages returned per conversation. Default 1, max 10."
+      }
+    },
     "errors": {
       "NOT_FOUND": "No such operation: {{id}}.",
       "HOST_SCREEN_ONLY": "This operation can only be done from the screen of the PC where Pleiad is running.",

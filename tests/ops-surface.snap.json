@@ -18,6 +18,27 @@
       },
       "legacyCommand": null,
       "input": "25c7d85c859a"
+    },
+    {
+      "id": "sessions.search",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "direct",
+        "cli": {
+          "path": [
+            "sessions",
+            "search"
+          ],
+          "positional": "query"
+        }
+      },
+      "legacyCommand": null,
+      "input": "e62fd6215a96"
     }
   ],
   "settings": [],
