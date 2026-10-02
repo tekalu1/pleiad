@@ -13,6 +13,37 @@ const hash = s => crypto.createHash('sha256').update(s).digest('hex');
 const own = (o, k) => Object.hasOwn(o, k);
 const LIMIT = 1024 * 1024;
 
+// 画面・API に返す定義では、秘密になりうる値（env・ヘッダーの値・OAuth のクライアントシークレット・URL のクエリと userinfo）を伏せ字にする。
+// キーの名前だけ見せる。保存するとき、伏せ字のままの値は今の定義の値を残す（core/ply-mcp.mjs の伏せ字と同じ扱い）。
+// 値そのものが要るのは取り込み（core/mcp-import.mjs）だけで、getWithSecrets を使う。
+export const MASK = '••••';
+const MAPS = ['env', 'headers', 'http_headers'];
+const maskMap = m => record(m) ? Object.fromEntries(Object.keys(m).map(k => [k, MASK])) : m;
+export const maskUrl = u => typeof u === 'string' ? u.replace(/\/\/[^/?#\s@]*@/, `//${MASK}@`).replace(/\?[^#]*/, `?${MASK}`) : u;
+export function maskDefinition(value) {
+  const out = { ...value };
+  for (const k of MAPS) if (own(out, k)) out[k] = maskMap(out[k]);
+  if (record(out.oauth) && typeof out.oauth.clientSecret === 'string') out.oauth = { ...out.oauth, clientSecret: MASK };
+  if (own(out, 'url')) out.url = maskUrl(out.url);
+  return out;
+}
+// 伏せ字のままの値を、今の定義（edit のとき）の値へ戻す。戻せない伏せ字は断る（伏せ字そのものを秘密として保存しない）
+function restoreMasked(value, current) {
+  const out = { ...value };
+  const keep = (label, got, before) => {
+    if (got !== MASK) return got;
+    if (typeof before !== 'string') throw new Error(t('mcp.config.masked', { name: label }));
+    return before;
+  };
+  for (const k of MAPS) if (record(out[k])) out[k] = Object.fromEntries(Object.entries(out[k]).map(([name, v]) => [name, keep(`${k}.${name}`, v, current?.[k]?.[name])]));
+  if (record(out.oauth) && out.oauth.clientSecret === MASK) out.oauth = { ...out.oauth, clientSecret: keep('oauth.clientSecret', MASK, current?.oauth?.clientSecret) };
+  if (typeof out.url === 'string' && out.url.includes(MASK)) {
+    if (typeof current?.url !== 'string' || out.url !== maskUrl(current.url)) throw new Error(t('mcp.config.masked', { name: 'url' }));
+    out.url = current.url;
+  }
+  return out;
+}
+
 // Keep unrelated TOML text (including comments) when the server has its own tables.
 // Inline/dotted definitions fall back to serialization, explicitly disclosed in the UI.
 function renderToml(text, config, name, value) {
@@ -80,7 +111,13 @@ export function createMcpConfig({ home = os.homedir(), codexHome = process.env.C
     const data = await read(args);
     return { ...data.info, revision: data.revision, servers: Object.keys(data.servers).sort() };
   }
+  // 値は伏せ字（maskDefinition）。画面・API・操作の一覧へ返すのはこちら
   async function get(args) {
+    const found = await getWithSecrets(args);
+    return { ...found, value: maskDefinition(found.value) };
+  }
+  // 秘密の値を含む定義。取り込み（core/mcp-import.mjs）だけが使う。画面・API へ返さない
+  async function getWithSecrets(args) {
     await writes.catch(() => {});
     const data = await read(args);
     if (typeof args.name !== 'string' || !own(data.servers, args.name) || !record(data.servers[args.name])) throw new Error(t('mcp.config.notFound'));
@@ -100,7 +137,8 @@ export function createMcpConfig({ home = os.homedir(), codexHome = process.env.C
       if (own(value, 'env') && (!record(value.env) || !Object.values(value.env).every(v => typeof v === 'string'))) throw new Error(t('mcp.config.env'));
       if (!['add', 'edit'].includes(operation)) throw new Error(t('mcp.config.operation'));
       const data = await read(args);
-      const definition = data.info.format === 'claude' ? { type: stdio ? 'stdio' : 'http', ...value } : value;
+      const restored = restoreMasked(value, operation === 'edit' ? data.servers[name] : undefined);
+      const definition = data.info.format === 'claude' ? { type: stdio ? 'stdio' : 'http', ...restored } : restored;
       if (data.info.format === 'claude' && (stdio ? definition.type !== 'stdio' : !['http', 'sse'].includes(definition.type))) throw new Error(t('mcp.config.typeMismatch'));
       if (revision !== data.revision) throw new Error(t('mcp.config.changed'));
       if (own(data.servers, name) !== (operation === 'edit')) throw new Error(operation === 'add' ? t('mcp.config.exists') : t('mcp.config.notFound'));
@@ -137,5 +175,5 @@ export function createMcpConfig({ home = os.homedir(), codexHome = process.env.C
     }
     return servers;
   }
-  return { list, get, save, runtimeServers };
+  return { list, get, getWithSecrets, save, runtimeServers };
 }

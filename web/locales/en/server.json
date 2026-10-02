@@ -325,7 +325,8 @@
       "exists": "An MCP with the same name already exists. Open it from Edit.",
       "reformat": "With this TOML layout, the whole file needs to be reformatted. Allow reformatting to save.",
       "tooLarge": "The config would exceed 1 MiB after saving.",
-      "changedReload": "The file has changed. Reload the list."
+      "changedReload": "The file has changed. Reload the list.",
+      "masked": "\"{{name}}\" is still masked (••••) and has no previous value to keep, so it can't be saved. Enter the value."
     }
   },
   "net": {
