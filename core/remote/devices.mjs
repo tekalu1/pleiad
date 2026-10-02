@@ -3,7 +3,8 @@
 //   <data>/remote/secrets.json   ホストの静的鍵（秘密鍵）と中継の登録用の秘密。core/secret-store.mjs
 //                                （デスクトップは safeStorage、npm start は 0600 の平文）
 //   <data>/remote/settings.json  { enabled, relayUrl, hostName }（秘密は入れない）
-//   <data>/remote/devices.json   { version: 1, devices: [{ id, name, platform, app, publicKey, tokenHash, createdAt, lastSeenAt }] }
+//   <data>/remote/devices.json   { version: 1, devices: [{ id, name, platform, app, publicKey, tokenHash, createdAt, lastSeenAt, notify? }] }
+//                                notify = { settings, muted, registeredAt, lastSentAt }（離れた端末への通知。鍵は秘密の置き場の notify:<id>）
 //                                公開鍵は base64url、tokenHash は中継用トークン（生の 32 バイト）の SHA-256 の 16 進。トークンそのものは持たない
 //
 // ファイルは一時ファイル + rename で 0600、フォルダーは 0700 で作る（Windows では効かないが、利用者のフォルダーの中に置く）。
@@ -124,6 +125,24 @@ export function createRemoteStore({ dataDir, cipher = plainCipher }) {
         return hit;
       });
     },
+    /**
+     * 通知の記録（docs/remote.md §11-5）。patch は { settings?, muted?, registeredAt?, lastSentAt? } で、書いたものだけ置き換える。
+     * 通知鍵そのものは devices.json には置かず、秘密の置き場（notify:<id>）に置く。
+     */
+    async setNotify(id, patch) {
+      return lockedDevices(async () => {
+        const data = await readDevices();
+        const hit = data.devices.find(d => d.id === id);
+        if (!hit) return null;
+        hit.notify = { ...(hit.notify ?? {}), ...patch };
+        await writeJson(devicesFile, data);
+        return hit;
+      });
+    },
+    notifyKey: id => secrets.get(`notify:${id}`),
+    setNotifyKey: (id, value) => secrets.set(`notify:${id}`, value),
+    removeNotifyKey: id => secrets.delete(`notify:${id}`),
+
     async touchDevice(id, at = new Date().toISOString()) {
       return lockedDevices(async () => {
         const data = await readDevices();

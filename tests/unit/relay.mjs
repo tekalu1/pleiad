@@ -428,4 +428,107 @@ export default async function (t) {
       await relay.close();
     }
   }
+
+  // ── 通知の線（docs/remote.md §5.6）──
+  {
+    const { relay, port } = await startRelay({ notifyQueueMax: 3, notifyPerMinute: 8 });
+    const blob = (n = 'a') => Buffer.from(`${n}`.padEnd(40, 'x')).toString('base64url');
+    const line = (hostId, deviceId, token, ip = newIp()) => client(port, '/v1/device/notify',
+      { authorization: `Bearer ${token}`, 'x-pleiad-host': hostId, 'x-pleiad-device': deviceId, 'x-forwarded-for': ip });
+    try {
+      const hostId = newHostId();
+      const tk = newToken();
+      const other = newToken();
+      const early = line(hostId, 'phone', tk.token);
+      t.ok('通知の線: ホストが居なければ 4404', (await early.closedWithin())?.code === CLOSE.NOT_FOUND);
+
+      const ctl = await host(port, hostId, [{ id: 'phone', tokenHash: tk.hash }, { id: 'tablet', tokenHash: other.hash }]);
+      t.ok('通知の線: 違うトークンは 4401', (await line(hostId, 'phone', other.token).closedWithin())?.code === CLOSE.UNAUTHORIZED);
+      t.ok('通知の線: 表に無い deviceId は 4401', (await line(hostId, 'ghost', tk.token).closedWithin())?.code === CLOSE.UNAUTHORIZED);
+
+      // つながる前に届いた分は溜めて、つながったら順に渡す。件数の上限を超えた古い分は捨てる
+      for (const n of ['one', 'two', 'three', 'four']) ctl.send({ type: 'notify', deviceId: 'phone', blob: blob(n) });
+      await sleep(60);
+      const phone = line(hostId, 'phone', tk.token);
+      t.ok('通知の線: 正しい端末はつながる', (await phone.opened).open === true);
+      const got = [await phone.json(), await phone.json(), await phone.json()];
+      const head = (g) => Buffer.from(g.blob, 'base64url').toString().slice(0, 3);
+      t.ok('通知の線: つながったら溜めた分を順に渡す（上限 3 件。古い分は捨てる）',
+        got.every((g) => g.type === 'notify') && got.map(head).join() === 'two,thr,fou');
+      t.ok('通知の線: 受け取りの前に、これ以上は届かない', await phone.next(150).then(() => false, () => true));
+
+      // 受け取りの印を返した分は、次の線では送り直さない。返さなかった分は送り直す
+      phone.send({ type: 'ack', i: got[1].i });
+      await sleep(60);
+      phone.ws.terminate();
+      await sleep(60);
+      const again = line(hostId, 'phone', tk.token);
+      await again.opened;
+      const left = await again.json();
+      t.ok('通知の線: ack しなかった分は次の線で送り直し、ack した分は送らない',
+        left.i === got[2].i && await again.next(150).then(() => false, () => true));
+
+      // つながっている線へはすぐ渡す
+      ctl.send({ type: 'notify', deviceId: 'phone', blob: blob('live') });
+      const live = await again.json();
+      t.ok('通知の線: つながっている間はすぐ渡す（暗号文はそのまま）', live.type === 'notify' && live.blob === blob('live') && live.i > left.i);
+
+      // 同じ端末の 2 本目は古い方を 4409 で閉じる
+      const replaced = line(hostId, 'phone', tk.token);
+      await replaced.opened;
+      t.ok('通知の線: 同じ端末の新しい線が古い線を置き換える（4409）', (await again.closedWithin())?.code === CLOSE.REPLACED);
+
+      // 表に無い端末宛て・形の違うもの・大きすぎるものは捨てる（制御用の接続は切らない）
+      ctl.send({ type: 'notify', deviceId: 'ghost', blob: blob('g') });
+      ctl.send({ type: 'notify', deviceId: 'phone', blob: 'not base64url!' });
+      ctl.send({ type: 'notify', deviceId: 'phone', blob: 'a'.repeat(5000) });
+      ctl.send({ type: 'notify', deviceId: 'phone' });
+      await sleep(80);
+      const resent = replaced.msgs.length;   // ack していなかった 2 件の送り直し
+      t.ok('通知の線: 形の違う通知は捨てるだけで、制御用の接続は残る', ctl.ws.readyState === WebSocket.OPEN && resent === 2);
+
+      // 寿命: ホストの指定でも上限でも切れた分は渡さない
+      ctl.send({ type: 'notify', deviceId: 'tablet', blob: blob('old'), ttlMs: 30 });
+      await sleep(120);
+      const tablet = line(hostId, 'tablet', other.token);
+      await tablet.opened;
+      t.ok('通知の線: 寿命が切れた分は渡さない', await tablet.next(200).then(() => false, () => true));
+
+      // 取り消し: 表から消えた端末の線は 4401 で閉じ、溜めた分も捨てる
+      ctl.send({ type: 'revoke', id: 'tablet' });
+      t.ok('通知の線: 取り消された端末の線は 4401', (await tablet.closedWithin())?.code === CLOSE.UNAUTHORIZED);
+      t.ok('通知の線: 数は stats に出る（中身は出ない）', relay.stats().lines === 1);
+
+      // 1 分あたりの件数の上限（notifyPerMinute 8）。超えた分は捨てる
+      const before = replaced.msgs.length;
+      for (let i = 0; i < 12; i++) ctl.send({ type: 'notify', deviceId: 'phone', blob: blob(`r${i}`) });
+      await sleep(150);
+      t.ok('通知の線: ホストごとの 1 分あたりの上限を超えた分は捨てる', replaced.msgs.length - before <= 8);
+      closeAll(ctl, phone, replaced);
+    } finally {
+      await relay.close();
+    }
+  }
+
+  // ── 通知の線: 古い中継へ新しいホストが送る・ホストの張り直しで線は残る ──
+  {
+    const { relay, port } = await startRelay();
+    try {
+      const hostId = newHostId();
+      const tk = newToken();
+      const ctl = await host(port, hostId, [{ id: 'phone', tokenHash: tk.hash }]);
+      const phone = client(port, '/v1/device/notify', { authorization: `Bearer ${tk.token}`, 'x-pleiad-host': hostId, 'x-pleiad-device': 'phone', 'x-forwarded-for': newIp() });
+      await phone.opened;
+      const ctl2 = await host(port, hostId, [{ id: 'phone', tokenHash: tk.hash }]);
+      await ctl.closedWithin();
+      t.ok('通知の線: ホストが張り直しても端末の線は残る', phone.ws.readyState === WebSocket.OPEN);
+      ctl2.send({ type: 'notify', deviceId: 'phone', blob: Buffer.from('after').toString('base64url') });
+      t.ok('通知の線: 張り直したホストからの通知も届く', (await phone.json()).type === 'notify');
+      ctl2.send({ type: 'sync', devices: [] });
+      t.ok('通知の線: sync で表から消えた端末の線は 4401', (await phone.closedWithin())?.code === CLOSE.UNAUTHORIZED);
+      closeAll(ctl2);
+    } finally {
+      await relay.close();
+    }
+  }
 }
