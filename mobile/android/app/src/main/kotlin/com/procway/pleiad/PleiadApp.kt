@@ -34,6 +34,7 @@ class PleiadApp : Application() {
             )
             override fun tokenRequired() = getString(R.string.remote_token_required)
             override fun lost() = getString(R.string.remote_lost)
+            override fun backToHosts() = getString(R.string.remote_back_to_hosts)
         }
         device = RemoteDevice(
             FileDeviceStore(File(noBackupFilesDir, "remote"), KeystoreCipher()),
