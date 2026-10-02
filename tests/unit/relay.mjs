@@ -497,6 +497,8 @@ export default async function (t) {
       // 取り消し: 表から消えた端末の線は 4401 で閉じ、溜めた分も捨てる
       ctl.send({ type: 'revoke', id: 'tablet' });
       t.ok('通知の線: 取り消された端末の線は 4401', (await tablet.closedWithin())?.code === CLOSE.UNAUTHORIZED);
+      // 端末側が閉じたのを見た時点では、中継側の close がまだ走っていないことがある（CI で落ちた）。少し待つ
+      for (let i = 0; i < 50 && relay.stats().lines !== 1; i++) await sleep(20);
       t.ok('通知の線: 数は stats に出る（中身は出ない）', relay.stats().lines === 1);
 
       // 1 分あたりの件数の上限（notifyPerMinute 8）。超えた分は捨てる
