@@ -14,6 +14,7 @@
 //   "ask-slow"     … "ask" の後、中断されるまで走り続ける（承認の前後で状態が変わるのを測る）
 //   "question"     … askPermission（kind:"question"）を呼び、回答を本文にする
 //   "slow"         … 中断されるまで待つ
+//   "fail"         … 失敗で終わる（outcome: error。離れた端末への「失敗」の通知を測る）
 //   "whoami"       … 渡されたアカウントのトークン（oauthToken）の指紋を本文にする。無ければ account:none
 //   "context:<json>" … ply_context（contextRuntime）のツールを { name, arguments } で 1 回呼び、返りを本文にする
 //   "computer:<json>" … ply_computer（computerRuntime）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。tool.result には印の行から作った images と computer を付ける
@@ -530,6 +531,8 @@ export const backend = {
         // トークンそのものは出さない。同じトークンかどうかだけ分かる指紋
         out.text = oauthToken ? `account:${crypto.createHash("sha256").update(oauthToken).digest("hex").slice(0, 12)}` : "account:none";
         await say(emit, out.text, out.uuid);
+      } else if (/^fail(\s|$)/.test(text)) {
+        throw new Error('fake: failure');
       } else if (/^bg(\s|$)/.test(text)) {
         if (await background(text, { s, out, emit, signal, control })) return { sessionId: id };
       } else if (/^(?:bg-shell|active-shell)(\s|$)/.test(text)) {

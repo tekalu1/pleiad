@@ -2,7 +2,7 @@ import { isComposingKey } from './keyboard.mjs';
 import { t } from './i18n.mjs';
 
 // ページを足したら、下の `$('<名前>Tab').onclick = () => page('<名>')` も足す（無いと札は出るが切り替わらない）
-const pages = [['setup', 'setupTab', 'setupPanel'], ['usage', 'usageTab', 'usagePanel'], ['delegation', 'delegationTab', 'delegationPanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['context', 'openContext', 'contextPanel'], ['autoCompaction', 'autoCompactionTab', 'autoCompactionPanel'], ['browser', 'browserTab', 'browserPanel'], ['computer', 'computerTab', 'computerPanel'], ['remote', 'remoteTab', 'remotePanel'], ['updates', 'updatesTab', 'updatesPanel']];
+const pages = [['setup', 'setupTab', 'setupPanel'], ['usage', 'usageTab', 'usagePanel'], ['delegation', 'delegationTab', 'delegationPanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['context', 'openContext', 'contextPanel'], ['autoCompaction', 'autoCompactionTab', 'autoCompactionPanel'], ['browser', 'browserTab', 'browserPanel'], ['computer', 'computerTab', 'computerPanel'], ['notify', 'notifyTab', 'notifyPanel'], ['remote', 'remoteTab', 'remotePanel'], ['updates', 'updatesTab', 'updatesPanel']];
 
 // A failed status check is not evidence that the account is unconfigured.
 export function shouldShowOnboarding(status, auth) {

@@ -6,6 +6,7 @@
 
 - `tests/lint-design.mjs --strict`（`npm test` の design-lint）は、CSS の `background` に `--surface-*`・`--fill-*`、`color` に `--ink-*` 以外を許さない。`--line-*` は svg の `fill`/`stroke`、`linear-gradient(var(--line-x),var(--line-x))` の背景、border だけ。独自の変数（`--rail-line` など）を経由した色も族が判らず落ちる。普段と触れたときで色を替えるときは、規則ごとに `--surface-*` / `--ink-*` を書くか、`opacity` で濃さを替える（2026-09-30、会話の地図）。単体の確認は `node tests/lint-design.mjs web/tokens.css <css> --strict`。
 - 設定のページ（左のメニューの項目）を足すときは、`web/onboarding.mjs` の `pages` の配列に加えて、同じファイルの `$('<名前>Tab').onclick = () => page('<名>')` の行も足す。配列だけだと札は出るが、押しても（`.click()` でも）ページが切り替わらない（2026-10-01、コンピューターの操作の節）。`hostCapabilities` に項目を足すと、返り値を `deepEqual` で比べる `tests/unit/file-actions.mjs` の 2 か所の期待値も変わる。
+- `web/client.mjs` の `onEvent` などに新しい部品（`setupXxx` が返すオブジェクト）の呼び出しを足したら、関数を切り出して `vm` で動かすテスト（`tests/unit/session-stream.mjs` など。`vm.createContext` で探す）の文脈にも身代わりを足す。足さないと全件のときに `ReferenceError: xxx is not defined` で落ちる（2026-10-03、`mobileNotify`・`notifySettings`。git の動きの `refreshGit`・`gitPanel` でも同じことが起きた）。
 - 全件で 1 本だけ落ちたら、まず単独で再実行する（2026-10-01、`server-shell` は全件のときだけ落ち、単独では 3 回とも通った）。
 - 本物の Codex の app-server の JSON-RPC（通知の順・item の中身）を見るときは、stdio を 1 行ずつファイルに書きながら本物の `codex.exe` へ中継する node スクリプトを `AGENT_HOST_CODEX_BIN='node "<スクリプト>"'` に渡し、別ポート・別のデータ置き場でサーバーを立てる。理由: Pleiad の出来事からは turn/started や item の形が見えず、fake-codex は本物の形を仮に出しているだけ。2026-09-28 は、`thread/shellCommand` の直後の `turn/start` が同じターンに入って返答が消えることを、これで突き止めた（`temporary/scripts/shell-real/codex-tap.mjs`）。記録には会話の本文が載るので、測り終えたら消す。
 - コンピューターの操作（`ply_computer`）を本物の Claude・agy で確かめるときは、実画面に触れないよう `AGENT_HOST_COMPUTER_DRIVER=fake` を付け、別ポート・別のデータ置き場・一時の作業場所（cwd）でサーバーを立てて、ws-client から「screenshot を 1 回だけ呼んで中身を答えて」と送る（2026-10-01 に haiku と gemini-3.8-flash で 1 回ずつ。名前・表示・画像を読めるかが分かる）。終わったら、agy は `~/.gemini/antigravity-cli/` の `annotations/<id>.pbtxt`・`brain/<id>`・`conversations/<id>.db`・`presence/<id>.lock`、Claude は `~/.claude/projects/<作業場所を - にした名前>` を消す。理由: どちらも本物の会話の一覧に残る。
@@ -28,7 +29,7 @@
 
 起動の基本は `AGENTS.md`（別ポート・別のデータ置き場の fake）。
 
-- fake は初回「未ログイン」で最初の案内が開き、作業ディレクトリも空のため、そのまま送った会話は「未送信」に残り、送信済みが前提の操作（タイトル生成など）が押せない。案内の「ログイン」→「あとで」→ 入力欄で作業ディレクトリを指定してから送る。
+- fake は初回「未ログイン」で最初の案内が開き、作業ディレクトリも空のため、そのまま送った会話は「未送信」に残り、送信済みが前提の操作（タイトル生成など）が押せない。案内の「ログイン」→「あとで」→ 入力欄で作業ディレクトリを指定してから送る。スクリプトで撮るときは、案内のダイアログが `#settings` への click を奪う（設定のメニューも隠れる）ので、先に `#closeOnboarding` を押す（2026-10-03）。
 - fake の応答は即座に返り、処理中の表示が一瞬で消える。見るときはページ上で `WebSocket.prototype.send` を包み、対象コマンド（例: `suggestTitle`）の送信を数秒遅らせる。
 - fake で下書きをサーバー側に仕込んで読み直す確認は、読み直しの `pagehide` が空の欄で上書きし、中身の無い未送信の会話は消される。仕込むより、その会話の欄で実際に打って読み直す。旧形式の下書きに相当する状態は、添付を入れてから `$('prompt').value = …`（添付の実体を残したまま本文だけ替わる）で作れる。
 - 任意の履歴（CLI が残す生の行など）を画面に出すなら、切り替え済みの会話の保存分として種を置く: データ置き場に `conversations.json`（`{ <id>: { backend: "fake", nativeId: null, segments, info, base } }`）・`conversations/<id>.json`（`{ messages: [NormalizedMessage…] }`）・`sessions.json`（`backend: "fake"`・`title`・`cwd` と、要るなら `compactions`・`taskNotices`・`interrupted`）を書いてから起動する。fake の会話は起動ごとに消えるが、保存分は残る。2026-09-28 に使った種は `temporary/scripts/sysmsg-ui/seed.mjs`。ページを読み直すと最初の案内がまた開くので、そのたびに「あとで」を押す。

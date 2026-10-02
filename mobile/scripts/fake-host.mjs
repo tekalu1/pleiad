@@ -12,7 +12,14 @@
 //   {"event":"offer","payload":"pleiad://pair?…"}             after start and after each "offer" command
 //   {"event":"request","id":"…","code":"123456","name":"…","platform":"android"}
 //   {"event":"approved","id":"…"} / {"event":"revoked","id":"…"} / {"event":"devices","devices":[…]} / {"event":"error",…}
+//   {"event":"turn","sessionId":"…"} / {"event":"permission","id":"…","sessionId":"…","kind":"tool|question"} / {"event":"turnEnd","sessionId":"…","outcome":"ok|error","completedAt":…}
+//   {"event":"notify","status":{…}}                            the host's notifyStatus (the phones list), after "notify-status"
 // Commands on stdin (one per line): offer | approve <id> | deny <id> | devices | revoke <deviceId> | revoke-all | login | disable | quit
+//   turn <prompt…>   start a fake turn in a new conversation ("ask" waits for an approval, "question" for an answer,
+//                    "echo:<text>" finishes, "fail" fails). Notifications to a phone that registered a key follow (ADR 0086)
+//   resolve          allow / answer the latest pending approval or question
+//   read <sessionId> mark that conversation's last completion as seen (cancels its notification on the phone)
+//   notify-status    print the phones list (name, last sent, on/off)
 // login = log the fake backend in on the host (remote windows ask to log in on the host's PC).
 // quit always disables remote on the host first (so a shared relay forgets it).
 //
@@ -45,8 +52,19 @@ if (!external) {
   const addr = await relay.listen(relayPort, '127.0.0.1');
   relayUrl = `http://127.0.0.1:${addr.port}`;
 }
-const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir: path.join(scratch, 'host'), timeoutMs: 60_000 });
+// AGENT_HOST_NOTIFY_MIN_TURN_MS=0: a fake turn is far shorter than the 30 s under which a completion is not notified
+const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_NOTIFY_MIN_TURN_MS: '0' }, dataDir: path.join(scratch, 'host'), timeoutMs: 60_000 });
+const pendingPermissions = [];
+const lastEnd = new Map();
 const c = await open({ port: server.port, token: server.token, onEvent: ev => {
+  if (ev.type === 'permission' && ev.id) {
+    pendingPermissions.push(ev);
+    out({ event: 'permission', id: ev.id, sessionId: ev.sessionId, kind: ev.kind });
+  }
+  if (ev.type === 'turnEnd' && ev.sessionId) {
+    lastEnd.set(ev.sessionId, ev.completedAt);
+    out({ event: 'turnEnd', sessionId: ev.sessionId, outcome: ev.outcome, completedAt: ev.completedAt });
+  }
   if (ev.type === 'remotePairing' && ev.phase === 'request') {
     const r = ev.request;
     out({ event: 'request', id: r.id, code: r.code, name: r.name, platform: r.platform });
@@ -89,6 +107,24 @@ rl.on('line', async line => {
     else if (command === 'revoke') { await c.cmd('remoteRevoke', { id }); out({ event: 'revoked', id }); }
     else if (command === 'revoke-all') {
       for (const d of (await c.cmd('remoteStatus')).devices) { await c.cmd('remoteRevoke', { id: d.id }); out({ event: 'revoked', id: d.id }); }
+    } else if (command === 'turn') {
+      const prompt = line.trim().slice('turn'.length).trim() || 'echo:done';
+      const sessionId = (await c.cmd('newSession', { backend: 'fake', cwd: ROOT })).sessionId;
+      out({ event: 'turn', sessionId });
+      c.cmd('runTurn', { prompt, sessionId, cwd: ROOT, backend: 'fake', mode: 'default' }).catch(e => out({ event: 'error', error: e.message }));
+    } else if (command === 'resolve') {
+      const perm = pendingPermissions.pop();
+      if (!perm) out({ event: 'error', error: 'no pending permission' });
+      else {
+        const answers = Object.fromEntries((perm.questions ?? []).map(q => [q.question, q.options?.[0]?.label ?? '']));
+        await c.cmd('resolvePermission', { id: perm.id, allow: true, ...(perm.kind === 'question' ? { answers } : {}) });
+        out({ event: 'resolved', id: perm.id });
+      }
+    } else if (command === 'read') {
+      await c.cmd('markRead', { reads: [[id, lastEnd.get(id)]] });
+      out({ event: 'read', sessionId: id });
+    } else if (command === 'notify-status') {
+      out({ event: 'notify', status: await c.cmd('notifyStatus') });
     } else if (command === 'quit') await stop();
     else if (command) out({ event: 'error', error: `unknown command ${command}` });
   } catch (e) {
