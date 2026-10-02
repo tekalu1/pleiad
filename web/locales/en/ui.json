@@ -266,14 +266,22 @@
     "behindCount_one": "{{count}} task running in the background",
     "behindCount_other": "{{count}} tasks running in the background",
     "turnRunning": "Turn in progress",
-    "background_one": "Background {{count}}",
-    "background_other": "Background {{count}}",
     "thinkingTokens_one": "Thinking (about {{count}} token)",
     "thinkingTokens_other": "Thinking (about {{count}} tokens)",
     "waitingBackground": "Waiting for background tasks",
-    "backgroundEnded_one": "Background · completed {{count}}",
-    "backgroundEnded_other": "Background · completed {{count}}",
-    "backgroundOnly": "Commands running in the background"
+    "backgroundOnly": "Commands running in the background",
+    "bgKind": {
+      "claude": "Claude",
+      "codex": "Codex",
+      "antigravity": "Antigravity",
+      "compat": "Compatible",
+      "term": "Terminal"
+    },
+    "bgItem": "{{name}} {{n}}",
+    "bgItemWaiting": "{{name}} {{n}} ({{w}} waiting for approval)",
+    "bgJoin": ", ",
+    "bgSpoken": "Background: {{items}}. Open the list",
+    "bgEndedSpoken": "Background: {{n}} completed. Open the list"
   },
   "compat": {
     "kind": {
@@ -2598,6 +2606,16 @@
     "compact": "Compact conversation",
     "compactNow": "Compact now",
     "meterMenu": "Context window actions",
+    "meterShort": "{{rate}}%",
+    "meterLabel": "Context {{rate}}% ({{used}} / {{window}})",
+    "scheduledShort": "◷ {{time}}",
+    "scheduledSpoken": "Auto compaction at {{time}}",
+    "spokenJoin": ". ",
+    "openActions": "Open actions",
+    "menuTokens": "{{used}} / {{window}} tokens",
+    "cancelAt": "Cancel auto compaction at {{time}}",
+    "runningShort": "Compacting…",
+    "failedShort": "Could not compact",
     "settings": "Compaction settings",
     "done": "Conversation compacted",
     "doneAuto": "Compacted automatically",
@@ -3161,8 +3179,8 @@
       "label": "Conversation"
     },
     "sticky": {
-      "title": "{{text}} (press to go to the start of the question)",
-      "openToc": "Open contents"
+      "title": "Back to this question: {{text}}",
+      "label": "Back to this question ({{time}}): {{text}}"
     },
     "latest": {
       "label": "Jump to latest (End)",

@@ -51,6 +51,7 @@ import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
 import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
+import { createBackgroundChip } from './background-chip.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
 import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, retryCandidates, splitCandidate, fallbackName, parseRoutingFailure, routingFailureParts, kindText, difficultyText } from './delegation-routing-view.mjs';
@@ -245,32 +246,108 @@ function closeMeterPop(focus = false) {
   $('contextMeter').setAttribute('aria-expanded', 'false');
   if (focus) $('contextMeter').focus();
 }
+/** 入力欄の上の帯の左（文脈）が描いたか。右端のバックグラウンドの入口（syncWorkEntry）と合わせて、帯ごと出すか決める */
+let contextShown = false;
+const stripNarrow = matchMedia('(max-width:480px)');
+function syncStripVisible() {
+  const strip = $('contextStrip');
+  strip.hidden = !contextShown && $('workEntry').hidden;
+  if (strip.hidden) closeMeterPop();
+}
+/** 狭い画面（480px 以下）は、メーターを「文脈 ▬ 30% · ◷ 17:57」に縮め、数値と予約のキャンセルはメニューの頭へ移す。圧縮中・失敗はメーターの位置に出す */
 function paintContextStrip() {
   const usage = state.contextWindow;
-  const show = state.current && activeBackendId() !== 'antigravity' && (usage || state.compactionAt || state.compactionPhase);
-  $('contextStrip').hidden = !show;
-  if (!show) { closeMeterPop(); return; }
-  $('contextMeter').hidden = !usage;
-  if (usage) {
-    const rate = Math.round(100 * usage.usedTokens / usage.windowTokens);
-    // 入力欄のチップと同じ ▾（composer-controls.mjs の CARET。12px の線画）
-    const caret = svgEl('svg', { class: 'i caret', viewBox: '0 0 24 24', 'aria-hidden': 'true' }); caret.append(svgEl('path', { d: 'M7 10l5 5 5-5' }));
-    $('contextMeter').replaceChildren(document.createTextNode(t('compaction.context')),
-      (() => { const bar = el('span', 'context-meter-bar'); const fill = el('span'); fill.style.width = `${Math.min(100, Math.max(0, rate))}%`; bar.append(fill); return bar; })(),
-      document.createTextNode(t('compaction.meter', { rate, used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) })), caret);
+  const show = Boolean(state.current && activeBackendId() !== 'antigravity' && (usage || state.compactionAt || state.compactionPhase));
+  contextShown = show;
+  const wrap = $('contextMeterWrap'), meter = $('contextMeter'), text = $('contextStripText'), status = $('contextStripStatus');
+  if (!show) {
+    wrap.hidden = true;
+    text.textContent = '';
+    for (const node of [...status.children]) if (node !== text) node.remove();
+    $('contextStrip').removeAttribute('data-phase');
+    syncStripVisible();
+    return;
   }
-  const status = $('contextStripStatus'); status.replaceChildren();
+  const narrow = stripNarrow.matches;
+  const phase = state.compactionPhase?.phase === 'start' ? 'running' : state.compactionPhase?.phase === 'failed' ? 'failed' : state.compactionAt ? 'scheduled' : null;
+  $('contextStrip').dataset.phase = phase ?? '';
+  const time = state.compactionAt ? compactTime(state.compactionAt) : '';
+  const amounts = usage ? { rate: Math.round(100 * usage.usedTokens / usage.windowTokens), used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) } : null;
+  // メーター: 文脈の使用量が分かるとき。狭い画面は予約だけでも出す（キャンセルの入口になる）。圧縮中・失敗は別の形に替わる
+  const showMeter = Boolean((usage || (narrow && phase === 'scheduled')) && !(narrow && (phase === 'running' || phase === 'failed')));
+  wrap.hidden = !showMeter;
+  if (!showMeter) closeMeterPop();
+  if (showMeter) {
+    const spoken = [];
+    const parts = [];
+    let caret = null;
+    if (usage) {
+      const rate = Math.min(100, Math.max(0, amounts.rate));
+      // 入力欄のチップと同じ ▾（composer-controls.mjs の CARET。12px の線画）
+      caret = svgEl('svg', { class: 'i caret', viewBox: '0 0 24 24', 'aria-hidden': 'true' }); caret.append(svgEl('path', { d: 'M7 10l5 5 5-5' }));
+      const bar = el('span', 'context-meter-bar'); const fill = el('span'); fill.style.width = `${rate}%`; bar.append(fill);
+      parts.push(document.createTextNode(t('compaction.context')), bar,
+        document.createTextNode(narrow ? t('compaction.meterShort', { rate: amounts.rate }) : t('compaction.meter', amounts)));
+      spoken.push(t('compaction.meterLabel', amounts));
+    }
+    if (phase === 'scheduled') {
+      if (narrow) {
+        if (usage) parts.push(el('span', 'context-meter-sep', '·'));
+        parts.push(el('span', 'context-meter-clock', t('compaction.scheduledShort', { time })));
+      }
+      spoken.push(t('compaction.scheduledSpoken', { time }));
+    }
+    spoken.push(t('compaction.openActions'));
+    if (caret) parts.push(caret);   // 480px 以下は compaction.css が隠す
+    meter.replaceChildren(...parts);
+    meter.setAttribute('aria-label', spoken.join(t('compaction.spokenJoin')));
+    paintMeterMenu(narrow, amounts, time, phase === 'scheduled');
+  }
+  // 状態の文（role=status は文だけ。ボタンの名前を状態として読ませない）
+  for (const node of [...status.children]) if (node !== text) node.remove();
   const action = (label, run) => { const button = el('button', null, label); button.type = 'button'; button.onclick = run; status.append(button); };
-  if (state.compactionPhase?.phase === 'start') status.append(t('compaction.running'));
-  else if (state.compactionPhase?.phase === 'failed') {
-    status.append(t('compaction.failed'));
+  text.replaceChildren();
+  const failed = state.compactionPhase?.phase === 'failed' ? state.compactionPhase : null;
+  if (phase === 'running') {
+    if (narrow) text.append(runMark(), t('compaction.runningShort'));
+    else text.append(t('compaction.running'));
+  } else if (phase === 'failed') {
+    if (narrow) {
+      const warn = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' }); warn.append(svgEl('path', { d: 'M12 4l9 16H3z' }), svgEl('path', { d: 'M12 10v4' }), svgEl('path', { d: 'M12 17h.01' }));
+      text.append(warn, t('compaction.failedShort'));
+    } else text.append(t('compaction.failed'));
+    text.title = failed.reason ?? '';
     if (canCompactHere()) action(t('compaction.retry'), () => requestCompaction());
-    if (state.compactionPhase.reason) status.append(el('small', null, state.compactionPhase.reason));
-  } else if (state.compactionAt) {
-    status.append(t('compaction.scheduled', { time: compactTime(state.compactionAt) }));
-    action(t('compaction.cancel'), () => cmd('cancelCompaction', { sessionId: state.current }).catch(showCompactionError));
+    if (failed.reason && !narrow) status.append(el('small', null, failed.reason));
+  } else if (phase === 'scheduled' && !narrow) {
+    text.append(t('compaction.scheduled', { time }));
+    action(t('compaction.cancel'), cancelScheduledCompaction);
   }
+  if (phase !== 'failed') text.removeAttribute('title');
+  syncStripVisible();
 }
+function cancelScheduledCompaction() { closeMeterPop(); cmd('cancelCompaction', { sessionId: state.current }).catch(showCompactionError); }
+/** メーターのメニューの頭（狭い画面だけ）: 数値と予約、予約のキャンセル。開いている間に描き直しても、中身が同じなら触らない */
+function paintMeterMenu(narrow, amounts, time, scheduled) {
+  const pop = $('contextMeterPop');
+  let head = pop.querySelector(':scope > .head');
+  let cancel = pop.querySelector(':scope > .meter-cancel');
+  if (!narrow) { head?.remove(); cancel?.remove(); return; }
+  const headText = [amounts ? t('compaction.menuTokens', amounts) : '', scheduled ? t('compaction.scheduled', { time }) : ''].filter(Boolean).join(' · ');
+  if (!head) { head = el('div', 'head wrap'); head.setAttribute('role', 'presentation'); pop.prepend(head); }
+  if (head.textContent !== headText) head.textContent = headText;
+  head.hidden = !headText;
+  const label = scheduled ? t('compaction.cancelAt', { time }) : '';
+  if (scheduled) {
+    if (!cancel) {
+      cancel = el('button', 'li meter-cancel'); cancel.type = 'button'; cancel.setAttribute('role', 'menuitem');
+      cancel.onclick = cancelScheduledCompaction;
+      head.after(cancel);
+    }
+    if (cancel.textContent !== label) cancel.textContent = label;
+  } else cancel?.remove();
+}
+stripNarrow.addEventListener('change', () => paintContextStrip());
 function showCompactionError(error) { state.compactionPhase = { phase: 'failed', reason: String(error?.message ?? error) }; paintContextStrip(); }
 async function showRowCompactionError(session, error, setting = false) {
   // i18n-dynamic: compaction.settingFailed
@@ -428,7 +505,7 @@ function scrollToEnd() {
 // 会話の移動（残る問い・最新へ。docs/design-system.md「会話の移動」）。末尾へ送るのは上の scrollToEnd（実寸の確定を待つ）
 let navSession = null;   // 最新へのボタンの新着を数えている会話。替わったら数え直す（paintSession）
 const navNarrow = matchMedia("(max-width:700px)");
-const nav = createConversationNav({ frame: $("logFrame"), log, thread, scrollToEnd, isRunning: () => isRunningHere(), narrow: navNarrow, openToc: () => toc.open() });
+const nav = createConversationNav({ frame: $("logFrame"), log, thread, scrollToEnd, isRunning: () => isRunningHere(), narrow: navNarrow });
 createConversationRail({ frame: $("logFrame"), log, thread, nav, narrow: navNarrow });
 
 /**
@@ -3657,20 +3734,13 @@ function backgroundCounts() {
   return backgroundTotals(backgroundItems());
 }
 
+const workChip = createBackgroundChip($('workEntryButton'));
 function syncWorkEntry() {
-  const { live, ended } = backgroundCounts();
-  const row = $('workEntry'), button = $('workEntryButton');
-  row.hidden = !live && !ended;
-  if (row.hidden) return;
-  const label = live ? t('activity.background', { count: live }) : t('activity.backgroundEnded', { count: ended });
-  const key = `${state.current}:${live}:${ended}`;
-  if (button.dataset.state !== key) {
-    button.dataset.state = key;
-    button.replaceChildren();
-    if (live) button.append(runMark(label));
-    button.append(label);
-    button.classList.toggle('ended', !live);
-  }
+  const items = backgroundItems();
+  const { live, ended } = backgroundTotals(items);
+  $('workEntry').hidden = !live && !ended;
+  workChip.update(items, state.current);
+  syncStripVisible();
 }
 $('workEntryButton').onclick = () => openWork();
 
