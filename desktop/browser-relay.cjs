@@ -88,7 +88,7 @@ function createBrowserRelay(panel, { onActivity = () => {}, navigation, WebSocke
       if (change === 'destroyed') forget(tab.id);
       else if (change === 'created') queueMicrotask(() => { void announce(tab.id); });
     });
-    // 会話の今のプロフィールが替わった（人のメニュー・エージェントの use_browser_profile。ADR 0077）。
+    // 会話の今のプロフィールが替わった（人のメニュー・エージェントの use_browser_profile。ADR 0078）。
     // 接続は保ったまま、前のプロフィールのタブはエージェントから外して（操作中のタブの接続も切る）、新しいプロフィールのタブ集合を見せる
     const unsubscribeProfile = panel.onProfileChanged?.(sessionId => {
       if (sessionId !== entry.id || ws.readyState !== 1) return;

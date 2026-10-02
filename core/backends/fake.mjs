@@ -373,7 +373,7 @@ export const backend = {
           return { sessionId: id };
         }
       } else if (text.startsWith('browser:')) {
-        // ply_browser の呼び出し（ADR 0077）。ほかの MCP と同じく mcp__ply_browser__<ツール> の行で残す
+        // ply_browser の呼び出し（ADR 0078）。ほかの MCP と同じく mcp__ply_browser__<ツール> の行で残す
         if (!browserRuntime) out.text = 'browser: unavailable';
         else {
           out.toolCalls = []; const texts = [];

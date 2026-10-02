@@ -136,7 +136,7 @@ function createBrowserScreencast(panel, { post = () => {}, agentControl = () => 
       return { tabId: existing.tabId, state: state(sessionId) };
     }
     if (existing) await stop(sessionId);
-    // 会話の今のプロフィールのタブで見る（ADR 0077）。まだ覚えていない会話ならサーバーに引いてから選ぶ
+    // 会話の今のプロフィールのタブで見る（ADR 0078）。まだ覚えていない会話ならサーバーに引いてから選ぶ
     await panel.ensureProfile?.(sessionId);
     const tab = pickTab(sessionId, target);
     const c = tab.webContents;

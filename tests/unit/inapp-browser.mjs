@@ -285,14 +285,14 @@ export default async function (t) {
     bridge.push({ tabs: [{ id: 't3', url: 'https://example.com/', title: '', loading: false, canGoBack: false, canGoForward: false }], current: 't3', sessionId: 's2' });
     bridge.push({ tabs: [], current: null, sessionId: 's2' });
     assert.equal(emptied, 2, '同じ会話で最後のタブを閉じたら閉じる');
-    // タブの無いプロフィールへ切り替えただけなら閉じない（ADR 0077）
+    // タブの無いプロフィールへ切り替えただけなら閉じない（ADR 0078）
     bridge.push({ tabs: [{ id: 't4', url: 'https://example.com/', title: '', loading: false, canGoBack: false, canGoForward: false }], current: 't4', sessionId: 's2', profile: 'main' });
     bridge.push({ tabs: [], current: null, sessionId: 's2', profile: 'pbbbbbbbb' });
     assert.equal(emptied, 2, 'タブの無いプロフィールへ切り替えてもパネルを閉じない');
   });
   t.ok('画面: openInBrowserPanel は正規化して開き、枠の位置を送り、状態から戻る・進む・印・タブを描き、隠すと外す', true);
 
-  // ---- 画面: タブの列の左端のプロフィール（ADR 0077）
+  // ---- 画面: タブの列の左端のプロフィール（ADR 0078）
   await withWindow({ plyDesktop: { browser: null } }, async () => {
     const bridge = fakeBridge();
     window.plyDesktop.browser = bridge;

@@ -1,5 +1,5 @@
 // Site approvals share the ordinary permission wait lifecycle (including delegation).
-// 鍵はエージェント・プロフィール・origin（ADR 0077）。プロフィールを持たない古い「このサイトは常に」はメインのものとして読む。
+// 鍵はエージェント・プロフィール・origin（ADR 0078）。プロフィールを持たない古い「このサイトは常に」はメインのものとして読む。
 // 確認の文には、プロフィールが 2 つ以上あるときだけ「プロフィール: <名前>」を添える（1 つなら見分ける必要が無い）
 import { siteProfile, MAIN_PROFILE, profileList } from '../web/browser-profiles.mjs';
 

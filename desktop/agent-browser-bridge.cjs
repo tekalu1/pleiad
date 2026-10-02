@@ -1,7 +1,7 @@
 const { createBrowserRelay } = require('./browser-relay.cjs');
 const { createBrowserNavigation } = require('./browser-navigation.cjs');
 
-// worker（core/agent-browser.mjs の parentPortBrowser）との口。プロフィール（ADR 0077）の分:
+// worker（core/agent-browser.mjs の parentPortBrowser）との口。プロフィール（ADR 0078）の分:
 //   worker -> main: agent-browser-prefs { enabled, profiles: [id], defaultProfile }・agent-browser-profile { sessionId, profile, agent }（エージェントが切り替えた）・
 //                   agent-browser-endpoint { …, profile }・browser-profile-resolve の応答 { id, profile }
 //   main -> worker: browser-profile-resolve { id, sessionId }（まだ覚えていない会話の今のプロフィールを引く）

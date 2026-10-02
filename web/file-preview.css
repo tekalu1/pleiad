@@ -141,7 +141,7 @@ body.file-preview-wide .file-preview-resize{display:none}
 .file-preview[data-mode=browser] .file-preview-path:empty{display:none}
 .file-preview[data-mode=browser] .file-preview-head{padding-bottom:8px}
 .browser-tabs{display:flex;align-items:center;gap:2px;padding:0 0 8px;min-width:0;container-type:inline-size}
-/* 会話の今のプロフィール（タブの列の左端。ADR 0077）。沈んだ面の pill で、タブ（地のまま / 紙）と形で分ける。色は使わず頭文字のモノグラム */
+/* 会話の今のプロフィール（タブの列の左端。ADR 0078）。沈んだ面の pill で、タブ（地のまま / 紙）と形で分ける。色は使わず頭文字のモノグラム */
 .browser-profile-mono{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:var(--surface-1);color:var(--ink);
   font-size:10px;font-weight:600;line-height:1;flex:none}
 .browser-profile-mono.lg{width:26px;height:26px;font-size:var(--fs-s)}
@@ -213,7 +213,7 @@ body.file-preview-wide .file-preview-resize{display:none}
 .browser-confirm-settings input[role=switch]:checked:before{transform:translateX(14px)}
 .browser-confirm-settings input[role=switch]:focus-visible{outline:2px solid var(--line-blue);outline-offset:3px}
 .browser-site-name{flex:1;min-width:140px;overflow-wrap:anywhere}
-/* 設定 › ブラウザー › プロフィール（ADR 0077）。行: モノグラム・名前と弱い字の「既定」・用途のメモ・大きさ（等幅）・⋯ */
+/* 設定 › ブラウザー › プロフィール（ADR 0078）。行: モノグラム・名前と弱い字の「既定」・用途のメモ・大きさ（等幅）・⋯ */
 .pf-list{display:flex;flex-direction:column;gap:2px;margin:0 0 6px}
 .pf-row{display:flex;align-items:center;gap:10px;min-height:42px;padding:4px 4px 4px 6px;border-radius:var(--r-m);min-width:0;
   transition:background-color var(--dur-fast) var(--ease-out)}

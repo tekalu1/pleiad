@@ -1,4 +1,4 @@
-// 内蔵ブラウザーのプロフィール（docs/inapp-browser.md「プロフィール」、ADR 0077）のサーバー側。
+// 内蔵ブラウザーのプロフィール（docs/inapp-browser.md「プロフィール」、ADR 0078）のサーバー側。
 //   - 会話の今のプロフィールの正本は会話のメタ（sessions.json の browserProfile）。新しい会話は作るときに決め、持たない会話（この機能より前の会話）は
 //     初めて引いたときに「新しい会話のプロフィール」の規則で決めて保存する。消えたプロフィールを指していれば規則で決め直す
 //   - 作業フォルダーで最後に使ったものは prefs の browserLastProfiles（store.rememberBrowserProfile）

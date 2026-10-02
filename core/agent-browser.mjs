@@ -20,7 +20,7 @@ export function parentPortBrowser(port, { timeoutMs = 10_000 } = {}) {
   let authorize = async () => ({ allow: false });
   let resolveProfile = async () => null;
   let confirmationEnabled = false;
-  // main に知らせるプロフィールの設定（使える id と既定。ADR 0077）
+  // main に知らせるプロフィールの設定（使える id と既定。ADR 0078）
   let profileState = { profiles: ['main'], defaultProfile: 'main' };
   const approvals = new Map();
   port.on('message', event => {

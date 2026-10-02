@@ -72,7 +72,7 @@ export function agentDefinition({ owners, prompt, cwd, home, locale, contextEnab
   // 配布版の Pleiad は Electron。Node として動かす印が無いと、中継ではなく Pleiad 本体が立ち上がる
   const relay = (serverName, args) => ({ serverName, command: execPath, args, ...(electron ? { env: { ELECTRON_RUN_AS_NODE: '1' } } : {}) });
   const servers = [...(contextEnabled ? [relay('ply_context', [RELAY])] : []), ...(computerEnabled ? [relay('ply_computer', [RELAY, '--computer'])] : []),
-    // ply_browser（内蔵ブラウザーのプロフィール。ADR 0077）は 3 本目の中継（--browser）
+    // ply_browser（内蔵ブラウザーのプロフィール。ADR 0078）は 3 本目の中継（--browser）
     ...(browserEnabled ? [relay('ply_browser', [RELAY, '--browser'])] : [])];
   const front = [
     `name: ${AGENT_NAME}`,

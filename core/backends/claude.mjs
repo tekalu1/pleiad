@@ -365,7 +365,7 @@ async function decidePermission(ctx, askPermission, toolName, input, options) {
   if (AUTO_ALLOW.has(toolName)) return { behavior: "allow", updatedInput: input };
   // コンピューターの操作はツールごとに聞かない。アプリ単位の承認は橋（core/computer-bridge.mjs）の中で行う（ADR 0071）
   if (isComputerTool(toolName)) return { behavior: "allow", updatedInput: input };
-  // 内蔵ブラウザーのプロフィールの一覧と切り替えも聞かない。サイトの利用の確認はプロフィールごとに中継が行う（ADR 0077）
+  // 内蔵ブラウザーのプロフィールの一覧と切り替えも聞かない。サイトの利用の確認はプロフィールごとに中継が行う（ADR 0078）
   if (typeof toolName === "string" && toolName.startsWith(`mcp__${BROWSER_SERVER}__`)) return { behavior: "allow", updatedInput: input };
 
   if (typeof askPermission !== "function") {
@@ -691,7 +691,7 @@ export const backend = {
     // ply_computer はロックを最長 10 分待つ。HTTP の MCP は既定で 60 秒（と無通信 300 秒）で切れるので、timeout で両方を上げる（実測 2026-10-01）
     const plyServers = { host: buildToolServer(ctx), ...(agentRuntime ? { ply_agents: { type: "http", url: agentRuntime.url, headers: agentRuntime.headers } } : {}), ...(contextRuntime ? { ply_context: { type: 'http', url: contextRuntime.url, headers: contextRuntime.headers } } : {}),
       ...(computerRuntime ? { [COMPUTER_SERVER]: { type: 'http', url: computerRuntime.url, headers: computerRuntime.headers, timeout: COMPUTER_CALL_TIMEOUT_SEC * 1000 } } : {}),
-      // 内蔵ブラウザーのプロフィールの一覧と切り替え（core/browser-profiles.mjs。ADR 0077）
+      // 内蔵ブラウザーのプロフィールの一覧と切り替え（core/browser-profiles.mjs。ADR 0078）
       ...(browserRuntime ? { [BROWSER_SERVER]: { type: 'http', url: browserRuntime.url, headers: browserRuntime.headers } } : {}) };
     const computerInstructions = computerPrompt(computerRuntime, { locale, agent: 'claude' });
     // 互換の接続先（core/compat-endpoints.mjs）。env を組み替え（親の ANTHROPIC_* と OAuth トークンを外して接続先の値を入れる）、

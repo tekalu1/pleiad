@@ -1,5 +1,5 @@
 // 内蔵ブラウザー（docs/inapp-browser.md、ADR 0041）。本体の窓（ローカルの画面）の右パネルの位置に WebContentsView を重ねる。
-//   - 保存領域はプロフィールごと（ADR 0077）。メインは今までの persist:pleiad-browser、ほかは persist:pleiad-browser-<id>。
+//   - 保存領域はプロフィールごと（ADR 0078）。メインは今までの persist:pleiad-browser、ほかは persist:pleiad-browser-<id>。
 //     Pleiad 本体（既定の session）とリモートの窓（persist:remote-<id>）から分ける。権限・UA・ダウンロードの設定は session ごとに 1 回
 //   - 会話は今のプロフィールを 1 つ持つ（正本はサーバーの会話のメタ。ここは resolveProfile で引いて覚える）。
 //     パネルの一覧・中継（tabsFor / createFor）は、会話の今のプロフィールのタブだけ。ほかのプロフィールのタブは閉じずに残す
@@ -499,7 +499,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
         context = { sessionId, profile: profileFor(sessionId) };
         pickForContext(); place(); push(); return snapshot();
       }
-      // 人がパネルのメニューで今の会話のプロフィールを替える。エージェントが操作中は替えない（1 会話 1 プロフィール。ADR 0077）
+      // 人がパネルのメニューで今の会話のプロフィールを替える。エージェントが操作中は替えない（1 会話 1 プロフィール。ADR 0078）
       case 'profile': {
         if (!known(args.profile)) throw new Error('unknown-profile');
         if (agents.has(context.sessionId) && args.profile !== context.profile) return { ...snapshot(), error: 'agent-busy' };
@@ -605,7 +605,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     contentsOf: id => tabs.get(id)?.view.webContents ?? null,
     createFor: (sessionId, url = '') => { const tab = createTab({ sessionId, profile: profileFor(sessionId), url: url || 'about:blank', select: true }); return { id: tab.id, profile: tab.profile, webContents: tab.view.webContents }; },
     profileOfTab: id => tabs.get(id)?.profile ?? null,
-    // ---- プロフィール（ADR 0077）。setProfiles はサーバーの設定（使える id と既定）、setProfileFor は会話の今のプロフィール
+    // ---- プロフィール（ADR 0078）。setProfiles はサーバーの設定（使える id と既定）、setProfileFor は会話の今のプロフィール
     setProfiles: ({ ids, defaultProfile } = {}) => {
       const next = Array.isArray(ids) ? ids.filter(validProfile) : [];
       profileIds = next.includes(MAIN_PROFILE) ? next : [MAIN_PROFILE, ...next];

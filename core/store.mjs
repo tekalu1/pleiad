@@ -111,7 +111,7 @@ export async function setPref(key, value, backendId) {
 export async function rememberBrowserSite(site) {
   return exclusive(async () => {
     const all = await prefs.read();
-    // 鍵はエージェント・プロフィール・origin（ADR 0077）。プロフィールを持たない古い行はメインのもの
+    // 鍵はエージェント・プロフィール・origin（ADR 0078）。プロフィールを持たない古い行はメインのもの
     const profileOf = row => row.profile ?? 'main';
     all.agentSitePermissions = [...(all.agentSitePermissions ?? []).filter(row => row.agent !== site.agent || row.origin !== site.origin || profileOf(row) !== profileOf(site)), site];
     await prefs.write();
@@ -119,7 +119,7 @@ export async function rememberBrowserSite(site) {
   });
 }
 
-/** 内蔵ブラウザーのプロフィールを、その作業フォルダーで最後に使ったものとして覚える（新しい会話の既定。ADR 0077）。古い順に 100 件まで */
+/** 内蔵ブラウザーのプロフィールを、その作業フォルダーで最後に使ったものとして覚える（新しい会話の既定。ADR 0078）。古い順に 100 件まで */
 export async function rememberBrowserProfile(key, profile) {
   return exclusive(async () => {
     const all = await prefs.read();

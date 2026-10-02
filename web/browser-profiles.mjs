@@ -1,4 +1,4 @@
-// 内蔵ブラウザーのプロフィール（docs/inapp-browser.md「プロフィール」、ADR 0077）。画面とサーバーが共有する、設定の値の読み方と検査。
+// 内蔵ブラウザーのプロフィール（docs/inapp-browser.md「プロフィール」、ADR 0078）。画面とサーバーが共有する、設定の値の読み方と検査。
 //   - 一覧は prefs の browserProfiles（[{ id, name?, memo? }]）。メイン（id: main）は常に先頭にあり、今までの保存領域 persist:pleiad-browser を使う。
 //     名前を付けていないメインは画面の言語で「メイン」と出す（name を持たない）
 //   - 既定は browserDefaultProfile（無い・消えた id ならメイン）。新しい会話のプロフィールは browserNewProfile（last: 作業フォルダーで最後に使ったもの / default: 既定）
@@ -95,5 +95,5 @@ export function validProfilePref(key, value, prefs = {}) {
   });
 }
 
-/** 「このサイトは常に」の行がそのプロフィールのものか。プロフィールを持たない古い行はメインのもの（ADR 0077） */
+/** 「このサイトは常に」の行がそのプロフィールのものか。プロフィールを持たない古い行はメインのもの（ADR 0078） */
 export const siteProfile = row => validProfileId(row?.profile) ? row.profile : MAIN_PROFILE;

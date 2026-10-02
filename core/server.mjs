@@ -581,7 +581,7 @@ function computerConnection(turn) {
   return entry.computer;
 }
 
-// ---- 内蔵ブラウザーのプロフィール（docs/inapp-browser.md「プロフィール」、ADR 0077） ----------------------------
+// ---- 内蔵ブラウザーのプロフィール（docs/inapp-browser.md「プロフィール」、ADR 0078） ----------------------------
 // 会話の今のプロフィールの正本は会話のメタ。ターンは開始時に決めた値を turn.browserProfile に持ち、ply_browser の切り替えはそれを書き換える
 const browserProfiles = createBrowserProfiles({ getPrefs: store.getPrefs, getSession: id => store.get(id), setSessionData: store.setSessionData, rememberLast: store.rememberBrowserProfile });
 /** 中継のキー（新しい会話の最初のターンは仮のキー）か会話 ID から、走っているターン */
@@ -1475,7 +1475,7 @@ function makeEmit(turn) {
           backend: turn.backend.id, cwd, createdAt: turn.info.startedAt, lastModified: Date.now(),
           turnStartedAt: turn.startedAtMs, interrupted: null,
         }),
-        // ターンで使っていた内蔵ブラウザーのプロフィールを会話に残す（ADR 0077）
+        // ターンで使っていた内蔵ブラウザーのプロフィールを会話に残す（ADR 0078）
         turn.browserProfile ? browserProfiles.set(sessionId, turn.browserProfile, cwd).catch(() => {}) : null,
         store.setMode(sessionId, mode),
           store.setModel(sessionId, model ?? ""),
@@ -2480,7 +2480,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         await shellRuns.settled(sessionId, turn.ac.signal);
         if (turn.ac.signal.aborted) throw new Error(t('turn.aborted'));
       }
-      // 内蔵ブラウザーのプロフィール（ADR 0077）。会話の今のもの。中継の準備で main に渡す。ply_browser の切り替えはここを書き換える
+      // 内蔵ブラウザーのプロフィール（ADR 0078）。会話の今のもの。中継の準備で main に渡す。ply_browser の切り替えはここを書き換える
       if (agentBrowser) turn.browserProfile = await (sessionId ? browserProfiles.resolve(sessionId) : browserProfiles.forNew(cwd)).catch(() => null);
       const runArgs = {
         prompt,
@@ -3811,7 +3811,7 @@ wss.on("connection", (ws, req) => {
           const sessionId = await createConversation(backend, info);
           try {
             await store.setMeta(sessionId, { backend: backend.id, ...info, status, unsent: true });
-            // 内蔵ブラウザーのプロフィール: 引き継ぎ元があればそのもの、無ければ作業フォルダーで最後に使ったもの / 既定（ADR 0077）
+            // 内蔵ブラウザーのプロフィール: 引き継ぎ元があればそのもの、無ければ作業フォルダーで最後に使ったもの / 既定（ADR 0078）
             await store.setSessionData(sessionId, 'browserProfile', await browserProfiles.forNew(cwd, source));
             // 互換の接続先（決定 2・3）: 同じエージェントの引き継ぎなら元の会話の接続先（予約中ならそれ）を継ぐ。
             // それ以外は設定で「既定にする」を押した接続先（無ければ公式）。削除済みは継がない
@@ -4147,7 +4147,7 @@ wss.on("connection", (ws, req) => {
         // セッションを選んでいなくても既定は変えられる
         case "setPref": {
           const { key, value, backend: backendId } = msg.args ?? {};
-          // 内蔵ブラウザーのプロフィール（ADR 0077）。一覧・既定・新しい会話の規則。消えたプロフィールの既定と「このサイトは常に」は片付ける
+          // 内蔵ブラウザーのプロフィール（ADR 0078）。一覧・既定・新しい会話の規則。消えたプロフィールの既定と「このサイトは常に」は片付ける
           if (['browserProfiles', 'browserDefaultProfile', 'browserNewProfile'].includes(key)) {
             if (!validProfilePref(key, value, await store.getPrefs())) return reply(false, t('settings.unknownPrefValue', { key, value: JSON.stringify(value)?.slice(0, 80) ?? String(value) }));
             let prefs = await savePref(key, value);
@@ -4417,7 +4417,7 @@ wss.on("connection", (ws, req) => {
             ({ at, by, field, from: from ?? null, to: to ?? null, reason: reason ?? null, ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}) })) });
         }
 
-        // 会話の今の内蔵ブラウザーのプロフィールを人が替えた（右パネルのメニュー。main のタブの一覧は画面が先に替えている。ADR 0077）。
+        // 会話の今の内蔵ブラウザーのプロフィールを人が替えた（右パネルのメニュー。main のタブの一覧は画面が先に替えている。ADR 0078）。
         // 会話に残し、作業フォルダーの「最後に使ったもの」と、走っているターン（ply_browser の今のもの）にも伝える
         case "setBrowserProfile": {
           const { sessionId, profile } = msg.args ?? {};

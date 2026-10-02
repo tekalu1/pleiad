@@ -73,7 +73,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   const run = (action, args) => bridge.command(action, args).then(next => { if (next?.tabs) paint(next); return next; });
   const failed = () => notify(t('browser.failed'));
 
-  // ---- タブの列（小さく。閉じる・新しいタブ）。左端に会話の今のプロフィール（docs/design-system.md「内蔵ブラウザー」、ADR 0077）
+  // ---- タブの列（小さく。閉じる・新しいタブ）。左端に会話の今のプロフィール（docs/design-system.md「内蔵ブラウザー」、ADR 0078）
   const tabsRow = el('div', 'browser-tabs'); tabsRow.hidden = true;
   const tabList = el('div', 'browser-tab-list'); tabList.setAttribute('role', 'tablist'); tabList.setAttribute('aria-label', t('browser.tabs'));
   const newTab = button(ICON.plus, t('browser.newTab'), () => run('newTab').then(() => focusAddress()).catch(failed), 'btn btn-icon browser-new-tab');

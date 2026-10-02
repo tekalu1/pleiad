@@ -40,7 +40,7 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   root.replaceChildren(...(available ? [el('p', null, t('settings.browser.description'))] : []), row, el('p', 'browser-setting-note', t('settings.browser.linkOpen.note')), shortcuts, error);
   if (!available) { row.remove(); agentSection.remove(); root.querySelectorAll('.browser-setting-note').forEach(n => n.remove()); }
   const confirmation = el('section', 'browser-confirm-settings');
-  // プロフィール（ADR 0077）。内蔵ブラウザーのある画面（デスクトップ版のホストの画面）だけ
+  // プロフィール（ADR 0078）。内蔵ブラウザーのある画面（デスクトップ版のホストの画面）だけ
   const profiles = available ? setupProfiles() : null;
   error.remove(); if (profiles) root.append(profiles.section); root.append(confirmation); if (available) root.append(agentSection); root.append(error);
   async function save(key, value) {
@@ -50,7 +50,7 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   }
   function siteRow(key, site, pending = false) {
     const row = el('div', 'browser-setting browser-site');
-    // エージェントの利用はプロフィールごとに覚える。プロフィールが 2 つ以上あるときだけ名前を添える（ADR 0077）
+    // エージェントの利用はプロフィールごとに覚える。プロフィールが 2 つ以上あるときだけ名前を添える（ADR 0078）
     const list = profileList(getPrefs());
     const profile = list.length > 1 && site.agent ? profileName(list.find(p => p.id === siteProfile(site)) ?? { id: siteProfile(site) }, t('browser.profiles.main')) : null;
     row.append(el('span', 'browser-site-name', site.agent ? [getAgentLabel(site.agent), profile, site.origin].filter(Boolean).join(' · ') : site.origin));
@@ -104,7 +104,7 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   }
   onBlockedPreviewOrigins(paintConfirmation);
 
-  // ---- プロフィール（docs/design-system.md「内蔵ブラウザー」、ADR 0077）。1 行ずつ: モノグラム・名前・弱い字の「既定」・用途のメモ・大きさ・⋯
+  // ---- プロフィール（docs/design-system.md「内蔵ブラウザー」、ADR 0078）。1 行ずつ: モノグラム・名前・弱い字の「既定」・用途のメモ・大きさ・⋯
   function setupProfiles() {
     const section = el('section', 'browser-confirm-settings browser-profile-settings');
     const title = el('h3', null, t('settings.browser.profiles.title')); title.id = 'browserProfilesTitle'; title.tabIndex = -1;

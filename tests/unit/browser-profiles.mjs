@@ -1,4 +1,4 @@
-// 内蔵ブラウザーのプロフィール（docs/inapp-browser.md「プロフィール」、ADR 0077）。
+// 内蔵ブラウザーのプロフィール（docs/inapp-browser.md「プロフィール」、ADR 0078）。
 //   - 共有の読み方（web/browser-profiles.mjs）: 一覧の正規化・新しい会話の規則・設定の検査・古い「このサイトは常に」の読み方
 //   - main（desktop/browser-panel.cjs を偽の electron で）: 保存領域の名前・session ごとに 1 回の設定・ポップアップと clearSiteData はタブの session・
 //     会話ごとの絞り込みと切り替え・エージェントが操作中は人の切り替えを止める・エージェントの切り替えの知らせ・削除と次の起動での片付け・大きさ

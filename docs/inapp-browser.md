@@ -20,7 +20,7 @@ agent-browser 0.38.1 の state ルートには専用の変更変数がない。`
 
 ## プロフィール
 
-保存領域を名前付きのプロフィールに分ける（承認済み（2026-10-02）、[ADR 0077](adr/0077-inapp-browser-profiles.md)）。ログインはプロフィールごとに残る。
+保存領域を名前付きのプロフィールに分ける（承認済み（2026-10-02）、[ADR 0078](adr/0078-inapp-browser-profiles.md)）。ログインはプロフィールごとに残る。
 
 - 保存領域: メイン（id `main`）は今までの `persist:pleiad-browser` のまま。ほかは `persist:pleiad-browser-<id>`（id は `p` + 16 進）。権限・UA・ダウンロードの設定は session を初めて使うときに 1 回かける（`desktop/browser-panel.cjs` の `sessionFor`）。ポップアップの窓と「このサイトのデータを消す」は、開いた元のタブの session を使う。
 - 設定の値（`prefs.json`。`web/browser-profiles.mjs` が読み方と検査を持つ）: `browserProfiles: [{ id, name?, memo? }]`（メインは必ず先頭。名前を付けていないメインは画面の言語の「メイン」。20 個まで・名前 40 字・メモ 200 字）、`browserDefaultProfile`（無い・消えた id ならメイン）、`browserNewProfile`（`last` = 作業フォルダーで最後に使ったもの〈既定〉 / `default` = 既定）、`browserLastProfiles`（作業フォルダーの鍵 → id。サーバーだけが書く。100 件まで）。main には `agent-browser-prefs` で使える id と既定だけを渡す。

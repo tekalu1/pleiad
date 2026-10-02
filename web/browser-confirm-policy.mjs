@@ -15,7 +15,7 @@ export function validBrowserPref(key, value) {
     let url;
     try { url = new URL(row.origin); } catch { return false; }
     if (!['https:', ...(key === 'agentSitePermissions' ? ['http:'] : [])].includes(url.protocol) || url.origin !== row.origin || url.username || url.password) return false;
-    // agentSitePermissions の profile は省けばメイン（ADR 0077）
+    // agentSitePermissions の profile は省けばメイン（ADR 0078）
     return key !== 'agentSitePermissions' || typeof row.agent === 'string' && /^[a-z0-9_-]{1,100}$/i.test(row.agent) && (row.profile === undefined || validProfileId(row.profile));
   });
 }

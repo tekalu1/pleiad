@@ -4903,7 +4903,7 @@ let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry�
 const browserPanel = browserPanelAvailable()
   ? createBrowserPanel({ showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
     onChange: () => browserEntry?.paint(),
-    // プロフィール（ADR 0077）: 一覧は設定から。人が切り替えたら会話に残す。「新しいプロフィール…」「プロフィールを管理…」は設定 › ブラウザーへ
+    // プロフィール（ADR 0078）: 一覧は設定から。人が切り替えたら会話に残す。「新しいプロフィール…」「プロフィールを管理…」は設定 › ブラウザーへ
     getProfiles: () => profileList(state.prefs).map(p => ({ id: p.id, name: profileName(p, t('browser.profiles.main')) })),
     onProfileChanged: (sessionId, profile) => { if (sessionId) cmd('setBrowserProfile', { sessionId, profile }).catch(e => notify(e.message)); },
     openProfiles: ({ add }) => { onboarding.open('browser'); browserSettings.showProfiles({ add }); } })
