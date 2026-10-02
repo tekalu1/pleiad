@@ -211,6 +211,10 @@
 | ブランチ（git。会話の枝・分岐とは別） | branch（git のとき。会話の枝は branch のまま、文脈で分かるようにする） |
 | コミット / コミットしていない分 | commit / Uncommitted |
 | 分けた作業場所（git worktree） | Separate workspace |
+| 分けて始める / このまま / いつも分ける | Start separately / Stay here / Always separate |
+| 残っている作業場所 / 未取り込み | Leftover workspaces / Not merged |
+| 取り込み（分けた作業場所のブランチを元の場所へ） | Merge back |
+| 退避して消す / 元に戻す | Archive and remove / Restore |
 | この会話でしたこと（git） | Done in this conversation |
 | 会話のこの場所へ | Go to this point in the conversation |
 

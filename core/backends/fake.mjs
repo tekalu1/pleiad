@@ -464,7 +464,10 @@ export const backend = {
         await say(emit, out.text, out.uuid);
       } else if (text.startsWith("steps:")) {
         // ツールの続き方（まとまり・入れ替わり・失敗・承認待ち）を画面で確かめるための台本
-        const raw = text.slice(6).trim();
+        // 委譲の子へは、依頼の後ろに Pleiad の指示（「---」の区切りの後ろ）が足されることがある。台本は区切りの前まで
+        const rawFull = text.slice(6).trim();
+        const cut = rawFull.indexOf("\n\n---\n");
+        const raw = cut > 0 ? rawFull.slice(0, cut) : rawFull;
         const script = JSON.parse(raw.startsWith("@") ? (await import("node:fs")).readFileSync(raw.slice(1), "utf8") : raw);
         let calls = [];
         for (const step of script.steps ?? []) {

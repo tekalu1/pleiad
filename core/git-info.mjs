@@ -16,6 +16,8 @@ const READ = new Set(['rev-parse', 'status', 'log', 'diff', 'diff-tree', 'for-ea
 const WRITE = new Set(['read-tree', 'add', 'write-tree', 'commit-tree', 'update-ref']);
 
 export const REF_PREFIX = 'refs/pleiad/turn/';
+/** 分けた作業場所を退避して消すときの隠し ref（refs/pleiad/archive/<id>/<時刻>。ADR 0088） */
+export const ARCHIVE_PREFIX = 'refs/pleiad/archive/';
 const READ_TIMEOUT = 4_000;
 const SNAPSHOT_TIMEOUT = 8_000;
 const MAX_BUFFER = 8 * 1024 * 1024;
@@ -28,7 +30,7 @@ export const setGitBin = (bin) => { gitBin = bin || 'git'; };
 
 /**
  * git を 1 回走らせる。例外にしない。
- * @returns {Promise<{ ok: boolean, stdout: string, code: number|string|null, truncated?: boolean }>}
+ * @returns {Promise<{ ok: boolean, stdout: string, stderr: string, code: number|string|null, truncated?: boolean }>}
  */
 function exec(cwd, args, { env = {}, timeout = READ_TIMEOUT, maxBuffer = MAX_BUFFER, input = null } = {}) {
   return new Promise((resolve) => {
@@ -37,14 +39,17 @@ function exec(cwd, args, { env = {}, timeout = READ_TIMEOUT, maxBuffer = MAX_BUF
       child = execFile(gitBin, ['-c', 'core.quotepath=false', '-c', 'commit.gpgsign=false', ...args], {
         cwd, encoding: 'utf8', windowsHide: true, timeout, maxBuffer,
         env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1', ...env },
-      }, (error, stdout) => {
-        if (!error) return resolve({ ok: true, stdout: String(stdout ?? ''), code: 0 });
-        resolve({ ok: false, stdout: String(stdout ?? ''), code: error.code ?? null, truncated: error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' });
+      }, (error, stdout, stderr) => {
+        if (!error) return resolve({ ok: true, stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), code: 0 });
+        resolve({ ok: false, stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), code: error.code ?? null, truncated: error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' });
       });
     } catch { return resolve({ ok: false, stdout: '', code: 'SPAWN' }); }
     if (input !== null) { child.stdin?.on('error', () => {}); child.stdin?.end(input); }
   });
 }
+
+/** 許可表を通さない git。core/git-worktree.mjs（分けた作業場所の作成・削除。ADR 0088）だけが使う */
+export const execGit = exec;
 
 /** 読み取りだけの git。許可していないサブコマンドは投げる（呼び出す側の誤り） */
 export function readGit(cwd, args, options) {
@@ -57,8 +62,9 @@ function writeGit(cwd, args, options = {}) {
   if (!WRITE.has(args[0])) throw new Error(`git: ${args[0]} is not allowed`);
   if (['read-tree', 'add', 'write-tree'].includes(args[0]) && !options.env?.GIT_INDEX_FILE) throw new Error('git: the temporary index is required');
   if (args[0] === 'update-ref') {
-    const deletes = args.includes('--stdin') && (options.input ?? '').split('\n').filter(Boolean).every((line) => line.startsWith(`delete ${REF_PREFIX}`));
-    if (!deletes && !args.some((a) => a.startsWith(REF_PREFIX))) throw new Error('git: update-ref is only for refs/pleiad/');
+    const ours = (ref) => ref.startsWith(REF_PREFIX) || ref.startsWith(ARCHIVE_PREFIX);
+    const deletes = args.includes('--stdin') && (options.input ?? '').split('\n').filter(Boolean).every((line) => line.startsWith('delete ') && ours(line.slice(7)));
+    if (!deletes && !args.some(ours)) throw new Error('git: update-ref is only for refs/pleiad/');
   }
   return exec(cwd, args, options);
 }
@@ -244,7 +250,7 @@ export async function commitTree(root, tree, parent, message = 'pleiad turn snap
 }
 
 export async function updateRef(root, ref, commit) {
-  if (!ref.startsWith(REF_PREFIX)) throw new Error('git: refs/pleiad/ only');
+  if (!ref.startsWith(REF_PREFIX) && !ref.startsWith(ARCHIVE_PREFIX)) throw new Error('git: refs/pleiad/ only');
   return (await writeGit(root, ['update-ref', ref, commit])).ok;
 }
 
@@ -264,7 +270,7 @@ export async function listTurnRefs(root, sessionId = null) {
 
 /** ref を消す（まとめて 1 回）。消した数 */
 export async function deleteRefs(root, refs) {
-  const list = refs.filter((r) => r.startsWith(REF_PREFIX));
+  const list = refs.filter((r) => r.startsWith(REF_PREFIX) || r.startsWith(ARCHIVE_PREFIX));
   if (!list.length) return 0;
   const r = await writeGit(root, ['update-ref', '--stdin'], { input: list.map((ref) => `delete ${ref}\n`).join('') });
   return r.ok ? list.length : 0;

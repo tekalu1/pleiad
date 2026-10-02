@@ -107,7 +107,7 @@ export async function recordPresent(sessionId, payload) {
 
   const record = {
     // git の要約の行（kind: 'git'。ADR 0085）は、ターンの終わりの時刻を渡されて、その並びで会話に出る
-    at: payload.kind === 'git' && typeof payload.at === 'string' ? payload.at : new Date().toISOString(),
+    at: (payload.kind === 'git' || payload.kind === 'worktree') && typeof payload.at === 'string' ? payload.at : new Date().toISOString(),
     kind: payload.kind ?? "text",
     caption: payload.caption ?? null,
     // 添付の caption は日本語の文のまま残し、画面はキーで今の言語に訳す（core/server.mjs presentAttachments・web/saved-text.mjs）
@@ -122,6 +122,8 @@ export async function recordPresent(sessionId, payload) {
     ...(Number.isFinite(payload.size) && payload.size >= 0 ? { size: payload.size } : {}),
     ...(payload.turnKey ? { turnKey: payload.turnKey } : {}),
     ...(payload.kind === 'git' ? { git: payload.git ?? null } : {}),
+    // 分けた作業場所で始めた印の行（ADR 0088）: { id, branch, origin, conflicts: [別の会話の題], count }
+    ...(payload.kind === 'worktree' ? { worktree: payload.worktree ?? null } : {}),
   };
 
   const inline =

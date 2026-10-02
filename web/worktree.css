@@ -1,0 +1,72 @@
+/* 分けた作業場所（docs/design-system.md「分けた作業場所」、ADR 0088）。
+   入力欄の上の 1 行・会話の中の静かな 1 行・入力欄のチップと作業場所の面・委譲カードの行・右パネル「git」の「残っている作業場所」・設定。
+   色の族は面（surface）・文字（ink）・塗り（fill）だけ。枠線は使わない。差し色（待っている専用）は使わない。 */
+
+.wt-ic{display:inline-flex;flex:none}
+.wt-ic svg.i{width:13px;height:13px}
+
+/* ---------- 入力欄の上の 1 行 ---------- */
+.wt-note{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:4px 6px 4px 14px;font-size:var(--fs-s);color:var(--ink-weak)}
+.wt-note[hidden]{display:none}
+.wt-note-t{display:inline-flex;align-items:center;flex-wrap:wrap;gap:0 6px;min-width:0;flex:1 1 auto}
+.wt-note b{color:var(--ink);font-weight:600}
+.wt-acts{display:inline-flex;flex-wrap:wrap;gap:4px}
+.wt-note .btn,.wt-line .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;padding:0 12px;border-radius:var(--r-pill);font-size:var(--fs-s);white-space:nowrap}
+.wt-always{margin-left:auto;padding:0 4px;border:0;background:none;color:var(--ink-weak);font:inherit;font-size:var(--fs-xs);text-decoration:underline;text-underline-offset:2px;cursor:pointer;
+  transition:color var(--dur-fast) var(--ease-out)}
+.wt-always:hover{color:var(--ink)}
+.wt-always:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px;border-radius:var(--r-s)}
+
+/* ---------- 会話の中の静かな 1 行 ---------- */
+.wt-line{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin:2px 0 6px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.wt-line-t{min-width:0;flex:1 1 200px}
+.wt-line .btn{height:24px;padding:0 10px;font-size:var(--fs-xs)}
+
+/* ---------- 脇の会話の行（分けた作業場所の中の会話は、元の場所の名前に枝分かれの印） ---------- */
+.row-cwd .wt-ic{margin-right:3px;vertical-align:-2px}
+.row-cwd .wt-ic svg.i{width:12px;height:12px}
+
+/* ---------- 入力欄のチップ ---------- */
+.chip.wt{color:var(--ink-blue)}
+.chip .wt-sfx{white-space:nowrap}
+.crow.fit-nosplit .wt-sfx{display:none}
+#cwdChip .wt-sfx[hidden]{display:none}
+
+/* ---------- 作業場所の面 ---------- */
+.wt-splitbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:8px 10px;margin:0 2px 8px;background:var(--surface-1);border-radius:var(--r-m);font-size:var(--fs-s);color:var(--ink-weak)}
+.wt-splitbar b{color:var(--ink-blue);font-weight:600}
+.wt-splitbar .wt-orig{min-width:0;overflow-wrap:anywhere}
+.wt-splitbar .btn{margin-left:auto;height:24px;padding:0 10px;font-size:var(--fs-xs);border-radius:var(--r-pill)}
+.caction.wt-start{color:var(--ink-blue);font-weight:600}
+
+/* ---------- 委譲カード ---------- */
+.wt-delegate{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;margin:14px 0 4px;font-size:var(--fs-s)}
+.wt-delegate-label{color:var(--ink-weak)}
+.wt-delegate-value{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;overflow-wrap:anywhere;color:var(--ink-blue)}
+.wt-delegate-value code{color:var(--ink-blue)}
+.tc-res .wt-unm{color:var(--ink-weak);font-size:var(--fs-xs);margin-right:8px}
+
+/* ---------- 右パネル「残っている作業場所」 ---------- */
+.wt-item{background:var(--surface-1);border-radius:var(--r-m);padding:12px 14px;margin-top:8px}
+.wt-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;width:100%;padding:4px 0;border:0;background:none;text-align:left;cursor:pointer;font:inherit;font-size:var(--fs-s);color:var(--ink-weak)}
+.wt-row code{color:var(--ink)}
+.wt-row:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px;border-radius:var(--r-s)}
+.wt-chev{display:inline-flex;margin-left:auto}
+.wt-chev svg.i{width:12px;height:12px;transition:transform var(--dur) var(--ease-out)}
+.wt-row[aria-expanded="true"] .wt-chev svg.i{transform:rotate(90deg)}
+.wt-files{list-style:none;margin:0 0 4px 21px;padding:0;font:var(--fs-xs)/1.7 var(--font-mono);color:var(--ink);overflow-wrap:anywhere}
+.wt-item-acts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding-top:6px}
+.wt-item-acts .btn,.wt-stat .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:var(--r-pill);font-size:var(--fs-s)}
+.wt-item-acts .btn-primary{height:32px;padding:0 16px}
+.wt-item-acts .btn-quiet{height:28px;padding:0 12px}
+.wt-item-acts .btn[disabled]{opacity:.55;cursor:default}
+.wt-stat{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-top:6px;font-size:var(--fs-s);color:var(--ink)}
+.wt-stat .btn{height:24px;padding:0 10px;font-size:var(--fs-xs)}
+.wt-stat.wt-fail{color:var(--ink-weak)}
+.wt-safety{list-style:none;margin:10px 4px 0;padding:0;font-size:var(--fs-xs);color:var(--ink-weak)}
+.wt-safety li{display:flex;align-items:flex-start;gap:6px;margin:2px 0}
+.wt-safety .wt-ic{margin-top:3px}
+
+/* ---------- 設定 ---------- */
+.wt-settings h3{margin:0 0 12px}
+.wt-settings .rm-switch{margin-bottom:8px}

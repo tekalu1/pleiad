@@ -8,7 +8,7 @@ import { migrateClaudeUsage } from './usage-migrations.mjs';
 // server は「どのエージェントに聞くか」を決めて、正規化イベントを web へ配るだけ。
 // 承認の保留・猶予・中断（設計メモ §8.5）だけはここに残す。エージェントに散らすと
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
-import { createAgentTasks, finalReply, gitLine } from './agent-tasks.mjs';
+import { createAgentTasks, finalReply, gitLine, workspaceLine } from './agent-tasks.mjs';
 import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
 import { createComputerBridge, COMPUTER_MCP_PATH } from './computer-bridge.mjs';
@@ -22,6 +22,9 @@ import { judgeDifficulty, normalizeKey, SECRET_PREFIX as ROUTING_SECRET_PREFIX, 
 import { createUsageMonitor } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode, modePosition, scopeRank } from './modes.mjs';
 import { createGitActivity } from './git-activity.mjs';
+import * as gitInfo from './git-info.mjs';
+import { createWorktreeHost, writesScope } from './worktree-host.mjs';
+import { insideDir, sameDir } from './worktrees.mjs';
 import { createCallTracker, timelineOf } from './git-timeline.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
@@ -364,6 +367,8 @@ async function taskGitNote(task) {
   return { branch: s.branch, detached: s.detached, head: s.head, linked: s.linked, files: w.files, add: w.add, del: w.del, commits: w.commits };
 }
 const gitNotice = (lng, git) => (git ? gitLine(lng, git) + '\n' : '');
+// 子の分けた作業場所の 1 行（ADR 0088）。分けていない子には何も足さない
+const workspaceNotice = (lng, task) => (task.worktree ? workspaceLine(lng, task.worktree, task.workspace) + '\n' : '');
 // 完了通知に載せる拒否の件数（先頭から）。全件は ply_task_status の rejections で読む
 const NOTICE_REJECTIONS = 3;
 function rejectionNotice(lng, list) {
@@ -407,6 +412,14 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale
     const title = decided ? t('permission.delegateEscalation', { agent: child.label, mode: child.modes()[decided.mode]?.label ?? decided.mode, modeId: decided.mode }) : undefined;
     const answer = await askPermission({ toolName: name, input: args, title, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng });
     if (!answer.allow) throw new Error(agentT(lng, 'delegation.denied'));
+  }
+  // 分けた作業場所（ADR 0088）。同じリポジトリに書き手が並ぶとき（または isolate: true）、Pleiad が子ごとに作る。isolate: false・git でない・読むだけなら今の場所
+  if (name === 'ply_delegate') {
+    if (args.isolate !== undefined && typeof args.isolate !== 'boolean') throw new Error(agentT(lng, 'tasks.isolateInvalid'));
+    const childCwd = path.resolve(turn.info.cwd ?? process.cwd(), typeof args.cwd === 'string' ? args.cwd : '.');
+    const verdict = await worktreeHost.decideIsolation({ owner, turn, cwd: childCwd, kind: args.kind, isolate: args.isolate,
+      writes: child ? writesScope(child.modes()[decided?.mode]) : true });
+    args = { ...args, isolate: verdict.isolate };
   }
   const result = await agentTasks.call(owner, name, decided?.mode ? { ...args, mode: decided.mode } : args, turn.ac.signal, lng);
   // 子が使い始めるので、振り分けに使う使用量を取り直しておく（待たない）
@@ -527,7 +540,7 @@ async function retryAgentTask({ taskId, candidate, account, stop, approved } = {
   const request = agentTasks.request(original.taskId);
   const routing = manualRouting({ kind: original.routing?.kind ?? null, candidate, check, of: original.taskId, from });
   const task = await agentTasks.call(owner, 'ply_delegate', { kind: routing.kind, task: request.task, ...(request.title ? { title: request.title } : {}), ...(request.context ? { context: request.context } : {}),
-    cwd: original.cwd, backend: parsed.backend, model: parsed.model, account: check.account ?? '', routing, mode: decided.mode }, undefined, await agentLocaleFor(owner));
+    cwd: original.worktree?.origin ?? original.cwd, isolate: Boolean(original.worktree), backend: parsed.backend, model: parsed.model, account: check.account ?? '', routing, mode: decided.mode }, undefined, await agentLocaleFor(owner));
   // 子が使い始めるので、振り分けに使う使用量を取り直しておく（待たない）
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
   return { task };
@@ -722,7 +735,7 @@ function tokenFromCookie(header) {
  * 作業ディレクトリ・添付の置き場・Codex の生成画像・全会話の cwd とその変更履歴
  */
 function fileRoots(sessions) {
-  return [...workspaceRoots, UPLOAD_DIR,
+  return [...workspaceRoots, UPLOAD_DIR, ...worktreeHost.worktrees.paths(),
     path.join(process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), "generated_images"),
     ...Object.values(sessions).flatMap(s => [s.cwd, ...(s.history ?? []).filter(h => h.field === 'cwd').flatMap(h => [h.from, h.to])])];
 }
@@ -731,6 +744,21 @@ function fileRoots(sessions) {
  * git の問い合わせの作業場所（ADR 0085）。会話があればその会話の cwd（sidecar か、無ければエージェントの記録）。
  * 会話の無い下書きは、cwd を言ってきても、どれかの会話が使ったことのある場所だけ通す（任意のフォルダーで git を走らせない）。
  */
+/** 今の cwd が会話の予約・どれかの会話が使った場所・分けた作業場所のどれかか（画面が言ってきた場所で git を走らせてよいか） */
+async function knownCwd(cwd, sessionId = null) {
+  const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+  if (await worktreeHost.worktrees.byPath(cwd).catch(() => null)) return true;
+  if (sessionId) { const reserved = (await store.get(sessionId).catch(() => null))?.nextSettings?.cwd; if (reserved && same(reserved, cwd)) return true; }
+  const known = Object.values(await store.getAll().catch(() => ({}))).flatMap(s => [s.cwd, ...(s.history ?? []).filter(h => h.field === 'cwd').map(h => h.to)]).filter(Boolean);
+  return known.some(k => same(k, cwd));
+}
+/** 分けた作業場所の問い合わせの cwd。明示があれば（知っている場所なら）それ、無ければ会話の cwd */
+async function worktreeCwd(args) {
+  const asked = typeof args?.cwd === 'string' && args.cwd ? args.cwd : null;
+  const id = typeof args?.sessionId === 'string' && args.sessionId ? args.sessionId : null;
+  if (asked && await knownCwd(asked, id)) return asked;
+  return gitCwd(args);
+}
 async function gitCwd(args) {
   const id = typeof args?.sessionId === 'string' && args.sessionId ? args.sessionId : null;
   if (id) {
@@ -741,9 +769,7 @@ async function gitCwd(args) {
   }
   const cwd = typeof args?.cwd === 'string' && args.cwd ? args.cwd : null;
   if (!cwd) return null;
-  const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
-  const known = Object.values(await store.getAll().catch(() => ({}))).flatMap(s => [s.cwd, ...(s.history ?? []).filter(h => h.field === 'cwd').map(h => h.to)]).filter(Boolean);
-  return known.some(k => same(k, cwd)) ? cwd : null;
+  return await knownCwd(cwd) ? cwd : null;
 }
 
 /**
@@ -966,8 +992,11 @@ function sessionRow(b, s, extra = {}) {
     // 人が host で作業ディレクトリを変えたなら sidecar が正本（ネイティブは古い cwd を返しうる）。
     // 変えていなければネイティブ優先（公式 CLI で移した分も拾える）
     cwd: ((extra.history ?? []).some((h) => h?.field === "cwd") ? extra.cwd ?? s?.cwd : s?.cwd ?? extra.cwd) ?? null,
-    // 最近の場所の候補（ユーザーが Pleiad で使った場所。委譲の子会話やネイティブのみの会話は除外）
-    place: (extra.delegation || typeof extra.cwd !== 'string' || !extra.cwd.trim()) ? null : extra.cwd.trim(),
+    // 最近の場所の候補（ユーザーが Pleiad で使った場所。委譲の子会話やネイティブのみの会話は除外）。
+    // 分けた作業場所の中なら、候補は元の場所（分けた作業場所のパスを最近の場所に並べない。ADR 0088）
+    place: (extra.delegation || typeof extra.cwd !== 'string' || !extra.cwd.trim()) ? null : (worktreeHost.worktrees.lookup(extra.cwd.trim())?.origin ?? extra.cwd.trim()),
+    // 分けた作業場所の中で動いている会話（行は元の場所の名前に枝分かれの印を付けて出す）
+    ...(entry => (entry ? { worktree: { id: entry.id, branch: entry.branch, origin: entry.origin } } : {}))(worktreeHost.worktrees.lookup(((extra.history ?? []).some((h) => h?.field === "cwd") ? extra.cwd ?? s?.cwd : s?.cwd ?? extra.cwd) ?? '')),
     lastModified: toMs(s?.lastModified) ?? toMs(extra.lastModified),
     createdAt: s?.createdAt ?? extra.createdAt ?? null,
   };
@@ -1336,6 +1365,35 @@ function sendTo(frame) {
 const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event) });
 // git の動き（ADR 0085）。状態・ターンの始まりと終わりの隠し ref・変更の一覧と差分。git が無い・git 管理外は null
 const gitActivity = createGitActivity();
+// 分けた作業場所（ADR 0088）。台帳・作成・片付けと、ぶつかり・委譲の判定。使っているもの（走っているターン・シェル・委譲の子）を見てから消す
+const worktreeHost = createWorktreeHost({
+  dataDir: store.dataDir, store,
+  turns: () => runtime.turns, shellCwds: () => shellRuns.cwds(), tasks: () => agentTasks?.list() ?? [], background: () => runtime.background,
+  emit: event => emitGlobal(event), reason: (key, params) => savedReason(key, params),
+  // 依頼元が今のターンでファイルを変えているか（ターンの始まりの撮影と今の作業ツリーの差）。撮影が無ければ分からないので false
+  parentWrote: async (turn, root) => {
+    if (!turn.git?.startTree || !sameDir(turn.git.root, root)) return false;
+    const tree = await gitInfo.snapshotTree(root);
+    const diff = tree ? await gitInfo.diffFiles(root, turn.git.startTree, tree) : null;
+    return (diff?.total.files ?? 0) > 0;
+  },
+  log: line => { if (process.env.AGENT_HOST_WORKTREE_LOG) console.log(`  worktree: ${line}`); },
+  worktreeOptions: process.env.AGENT_HOST_WORKTREE_GRACE_MS !== undefined ? { graceMs: Number(process.env.AGENT_HOST_WORKTREE_GRACE_MS) || 0 } : {},
+});
+/** 片付けをまとめて 1 回（ターンの終わり・委譲の完了・パネルを開いたとき。重ならない） */
+let worktreeSweeping = false, worktreeSweepAgain = false;
+function worktreeSweepSoon() {
+  if (worktreeSweeping) { worktreeSweepAgain = true; return; }
+  worktreeSweeping = true;
+  worktreeHost.sweep().catch(e => console.error('  分けた作業場所の片付けに失敗:', String(e?.message ?? e)))
+    .finally(() => { worktreeSweeping = false; if (worktreeSweepAgain) { worktreeSweepAgain = false; worktreeSweepSoon(); } });
+}
+/** 人が決めた次のターンの予約から外れた分けた作業場所を、使っていなければ片付ける */
+async function settleWorktreeAt(cwd) {
+  const entry = cwd ? await worktreeHost.worktrees.byPath(cwd).catch(() => null) : null;
+  if (entry && entry.state === 'ready') await worktreeHost.worktrees.settle(entry.id).catch(() => {});
+}
+const publicWorktree = entry => ({ id: entry.id, branch: entry.branch, path: entry.path, origin: entry.origin, baseBranch: entry.baseBranch ?? null });
 // ターンの始まりの撮影を待つ上限と、終わりの撮影・要約を待つ上限（超えたらその回の撮影・要約は諦める）
 const GIT_BEGIN_WAIT_MS = 6_000;
 // AGENT_HOST_GIT_SNAPSHOTS=off でターンの撮影（隠し ref）を止める。テストが開発中のリポジトリの .git に ref を残さないため（tests/lib/server.mjs）
@@ -1631,6 +1689,8 @@ function makeEmit(turn) {
         event.first && attachments?.length ? presentAttachments(sessionId, attachments, emit) : null,
       ]);
       turn.setup.catch((err) => console.error("  設定の記録に失敗:", String(err?.message ?? err)));
+      if (turn.worktreeId) worktreeHost.worktrees.update(turn.worktreeId, { sessionId: event.sessionId }).catch(() => {});
+      turn.setup.then(() => emitWorktreeNotice(turn, emit, event.sessionId)).catch(() => {});
     }
 
     // サブエージェントの transcript には依頼のユーザー発言が入らない（assistant 発言のみ）。
@@ -2131,7 +2191,7 @@ async function runningWork() {
     turns,
     permissions,
     subagents,
-    tasks: agentTasks?.list().map(({ result, ...r }) => r) ?? [],
+    tasks: (live => agentTasks?.list().map(({ result, ...r }) => (r.worktree ? { ...r, worktree: { ...r.worktree, live: live.has(r.worktree.id) } } : r)) ?? [])(new Set(worktreeHost.worktrees.ids().map(x => x.id))),
     background,
     // 中継の複製は数えない。1つの承認が会話の数だけ増えて見える
     // サブエージェントは走っている子だけを数える。終わった子はターンが終わるまで一覧に残るので、
@@ -2464,7 +2524,7 @@ function completionNotice(lng, tasks) {
     // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
     retry: task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '',
     rejections: rejectionNotice(lng, task.rejections) + stoppedBackgroundNotice(lng, task.stoppedBackground),
-    git: gitNotice(lng, task.git),
+    git: workspaceNotice(lng, task) + gitNotice(lng, task.git),
   }));
   if (parts.length === 1) return agentT(lng, 'delegation.notice', parts[0]);
   return agentT(lng, 'delegation.noticeBatch', { count: parts.length, sections: parts.map(part => agentT(lng, 'delegation.noticeSection', part)).join('') });
@@ -2521,6 +2581,52 @@ async function steerInstruction(task, instruction) {
   emitGlobal({ type: 'userMessage', sessionId: task.sessionId, messageId: item.id, text: instruction.text, at: Date.now(), ...(confirms ? { pending: true } : {}) });
   return confirms ? 'pending' : 'delivered';
 }
+/** 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）。作り直したら公開の形を返す */
+async function renewTaskWorktree(task) {
+  if (!task.worktree || await worktreeHost.worktrees.get(task.worktree.id)) return null;
+  if (!await fs.stat(task.worktree.origin).then(s => s.isDirectory(), () => false)) return null;
+  const made = await worktreeHost.createForTask({ cwd: task.worktree.origin, owner: task.parentSessionId, taskId: task.taskId, sessionId: task.sessionId });
+  if (!made.ok) return null;
+  const current = (await store.get(task.sessionId)).cwd ?? null;
+  await store.recordChange(task.sessionId, { by: 'ply', field: 'cwd', from: current, to: made.cwd, ...savedReason('worktreeSplit') });
+  emitGlobal({ type: 'cwd', sessionId: task.sessionId, cwd: made.cwd, by: 'ply', ...savedReason('worktreeSplit') });
+  return publicWorktree(made.entry);
+}
+
+/**
+ * 人が始めるターンで、「いつも分ける」を選んでいて、同じリポジトリの別の会話が書き込み中なら、確かめずに分ける（ADR 0088）。
+ * 分けなかった・分けられなかったときは null（今の場所のまま始める）
+ */
+async function autoSplitTurn({ sessionId, cwd }) {
+  if (!(await worktreeHost.worktrees.getSettings()).always) return null;
+  const check = await worktreeHost.check({ sessionId, cwd, writes: true });
+  if (!check.canSplit || !check.conflicts.length) return null;
+  const made = await worktreeHost.split({ cwd, sessionId });
+  if (!made.ok) return null;
+  return { entry: made.entry, cwd: made.cwd,
+    note: { id: made.entry.id, branch: made.entry.branch, path: made.entry.path, origin: cwd, conflicts: check.conflicts.map(c => c.title).filter(Boolean).slice(0, 3), count: check.conflicts.length } };
+}
+/** 分けて始めた印の 1 行を会話に残す（会話の id が決まってから 1 度だけ） */
+function emitWorktreeNotice(turn, emit, sessionId) {
+  const note = turn.worktreeNote;
+  if (!note || !sessionId) return;
+  turn.worktreeNote = null;
+  emit({ type: 'present', kind: 'worktree', sessionId, worktree: note, by: 'ai', at: new Date().toISOString() });
+}
+/** 画面が聞く「この会話の承認モードは書き込みの範囲か」。読むだけの会話には分ける注記を出さない */
+async function sessionWrites(sessionId, backendId, modeId) {
+  const backend = sessionId ? await resolveBackendForSession(sessionId).catch(() => null) : getBackend(backendId);
+  const useBackend = (backendId && getBackend(backendId)) || backend;
+  if (!useBackend) return false;
+  const mode = await resolveMode(sessionId, modeId, useBackend).catch(() => null);
+  return Boolean(mode) && writesScope(useBackend.modes()?.[mode]);
+}
+/** 会話を消した（下書きの削除）。その会話のために作った分けた作業場所を、使っていなければ片付ける */
+async function settleWorktreesOf(sessionId) {
+  for (const e of await worktreeHost.worktrees.list()) {
+    if (e.purpose === 'conversation' && e.sessionId === sessionId && e.state === 'ready') await worktreeHost.worktrees.settle(e.id).catch(() => {});
+  }
+}
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
   changed: () => { broadcastRunning(); completionNotices.changed(); },
@@ -2529,7 +2635,12 @@ agentTasks = await createAgentTasks({
   waiting: sessionId => [...runtime.waiting.values()].some(w => w.payload.sessionId === sessionId),
   // コンピューターの操作のロックを待っている子は、黙っているとは数えない（承認待ちではないので ply_task_wait の waiting にはしない）
   lockWaiting: sessionId => computerLock.snapshot().some(s => s.sessionId === sessionId && s.state === 'waiting'),
-  rollback: async ({ sessionId }) => { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); },
+  rollback: async ({ sessionId, worktree }) => {
+    await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId);
+    if (worktree) await worktreeHost.abandon(worktree.id).catch(() => {});
+  },
+  // 子の分けた作業場所の今の状態（ply_task_status・ply_task_wait の workspaceSummary）
+  workspaceState: task => worktreeHost.taskState(task.worktree),
   prepare: async (owner, args, taskId, signal) => {
     const parent = runtime.turns.get(owner);
     // エラーは ply_delegate の結果として依頼元のエージェントが読む。子の会話は依頼元の会話の言語を継ぐ
@@ -2540,7 +2651,7 @@ agentTasks = await createAgentTasks({
     if ((!parent && !manual) || signal?.aborted) throw new Error(agentT(lng, 'delegation.parentEnded'));
     const backend = getBackend(args.backend);
     if (!backend) throw new Error(agentT(lng, 'delegation.backendDisabled'));
-    const cwd = path.resolve(parent?.info.cwd ?? (await store.get(owner)).cwd ?? process.cwd(), args.cwd ?? '.');
+    let cwd = path.resolve(parent?.info.cwd ?? (await store.get(owner)).cwd ?? process.cwd(), args.cwd ?? '.');
     if (!(await fs.stat(cwd)).isDirectory()) throw new Error(agentT(lng, 'delegation.cwdNotDirectory'));
     // 自動の振り分けで選んだ委譲先（agentBridge の call の routeDelegation）と、人が使用量を見て選び直した委譲先。
     // 候補は公式の使用枠で選んでいるので、接続先は継がず公式で走らせ、アカウントも選んだものを使う
@@ -2565,8 +2676,18 @@ agentTasks = await createAgentTasks({
     const account = auto && backend.id === 'claude' ? args.account ?? '' : (await store.get(owner)).claudeAccount ?? '';
     // 振り分けの記録（タスクと子の会話に残す）。委譲先は実際に使う値で書く（固定のときのモデルの既定への戻り・継いだアカウントも）
     const routing = args.routing ? { ...args.routing, target: { backend: backend.id, model, account: backend.id === 'claude' ? account : null } } : null;
+    // 分けた作業場所（ADR 0088）。子の作業場所をここで作る。作れなければ（git でない・コミットが無い・失敗）今の場所のまま走らせる
+    let worktree = null;
+    if (args.isolate === true) {
+      const made = await worktreeHost.createForTask({ cwd, owner, taskId });
+      if (made.ok) { worktree = publicWorktree(made.entry); cwd = made.cwd; }
+      else console.error('  分けた作業場所を作れなかったので、元の場所で走らせる:', made.reason, made.error ?? '');
+    }
     const info = { title: args.title, cwd, createdAt: Date.now(), lastModified: Date.now() };
-    const sessionId = await createConversation(backend, info);
+    let sessionId;
+    try { sessionId = await createConversation(backend, info); }
+    catch (e) { if (worktree) await worktreeHost.abandon(worktree.id).catch(() => {}); throw e; }
+    if (worktree) await worktreeHost.worktrees.update(worktree.id, { sessionId }).catch(() => {});
     try {
       await store.setMeta(sessionId, { ...info, backend: backend.id, unsent: true });
       await store.setMode(sessionId, mode); await store.setModel(sessionId, model);
@@ -2577,11 +2698,15 @@ agentTasks = await createAgentTasks({
       if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
       if (routing) await store.setSessionData(sessionId, 'routing', routing);
       if (signal?.aborted) throw new Error(agentT(lng, 'delegation.aborted'));
-    } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
-    return { backend: backend.id, model, effort, cwd, mode, sessionId, ...(routing ? { routing } : {}) };
+    } catch (e) {
+      await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId);
+      if (worktree) await worktreeHost.abandon(worktree.id).catch(() => {});
+      throw e;
+    }
+    return { backend: backend.id, model, effort, cwd, mode, sessionId, ...(worktree ? { worktree } : {}), ...(routing ? { routing } : {}) };
   },
   execute: async (task, prompt, signal) => {
-    if (signal.aborted) return { outcome: 'aborted' };
+    if (signal.aborted) { await worktreeHost.taskDone(task).catch(() => {}); return { outcome: 'aborted' }; }
     if (sessionBusy(task.sessionId)) return { requeue: true };
     const execution = { outcome: null, error: null, rejections: [], stopped: [], reply: null, timer: null };
     taskExecutions.set(task.sessionId, execution);
@@ -2596,6 +2721,8 @@ agentTasks = await createAgentTasks({
     };
     signal.addEventListener('abort', stopChild, { once: true });
     try {
+      // 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）
+      const renewed = await renewTaskWorktree(task).catch(() => null);
       const outcome = await runTurn({ sessionId: task.sessionId, backend: task.backend, prompt }, () => {}, { signal });
       if (outcome === 'requeue') return { requeue: true };
       // A child can itself delegate. Its result is final only after those results
@@ -2609,9 +2736,14 @@ agentTasks = await createAgentTasks({
       // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
       const rejections = execution.rejections.map(peerRejection);
       const stoppedBackground = execution.stopped.map(peerBackground);
-      const git = await taskGitNote(task);
-      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown'), rejections, stoppedBackground, git };
-      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: execution.error, rejections, stoppedBackground, git };
+      const nowCwd = (await store.get(task.sessionId).catch(() => null))?.cwd ?? task.cwd;
+      const git = await taskGitNote({ ...task, cwd: nowCwd });
+      // 子が終わった。変わっていなければ・取り込み済みなら片付け、そうでなければ残す。通知に載せる状態は片付ける前のもの
+      const workspace = await worktreeHost.taskDone({ ...task, worktree: renewed ?? task.worktree }).catch(() => null);
+      const extra = { ...(workspace ? { workspace } : {}), ...(renewed ? { worktree: renewed } : {}) };
+      worktreeSweepSoon();
+      if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown'), rejections, stoppedBackground, git, ...extra };
+      return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: execution.error, rejections, stoppedBackground, git, ...extra };
     } finally { signal.removeEventListener('abort', stopChild); clearTimeout(execution.timer); taskExecutions.delete(task.sessionId); }
   },
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
@@ -2656,6 +2788,11 @@ agentTasks = await createAgentTasks({
 // 前の起動で走っていて、再起動で止まった委譲タスクを、依頼元の会話の「止めたもの」に残す（次のターンで伝える）。
 // 裏の作業と承認待ちは保存していないので分からない（docs/design.md「中断と再開」）
 await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
+// 分けた作業場所: 台帳と git worktree list を突き合わせ（作成の途中で落ちたものは巻き戻す）、使っていない片付けられるものを消す（ADR 0088）
+await worktreeHost.worktrees.reconcile()
+  .then(r => { const n = Object.values(r).reduce((a, l) => a + l.length, 0); if (n) console.log(`  分けた作業場所を ${n} 件整理した`); })
+  .catch(e => console.error('  分けた作業場所の整理に失敗:', String(e?.message ?? e)));
+worktreeSweepSoon();
 
 // ターンの外で起きたことをバックエンドから受け取る口（docs/multi-backend.md §2.7）。
 // codex（バックグラウンド端末）が使う
@@ -2692,7 +2829,7 @@ async function runTurnInternal(args, onStarted, hooks) {
     await settingsWrites.get(sessionId);
     let backend = refuseRetired(await pickBackend(sessionId, args?.backend));
     const reserved = sessionId ? (await store.get(sessionId)).nextSettings : null;
-    const { cwd, changedFrom } = await resolveCwd(sessionId, reserved?.cwd ?? args?.cwd, backend);
+    let { cwd, changedFrom } = await resolveCwd(sessionId, reserved?.cwd ?? args?.cwd, backend);
     // Claude のアカウント。削除済み・トークンが読めないものを選んでいる会話は、ここで止める
     // （黙ってログイン中のアカウントで走らせない）。予約の切り替えより前に確かめる
     const accountBackend = (reserved && getBackend(reserved.backend)) || backend;
@@ -2733,6 +2870,21 @@ async function runTurnInternal(args, onStarted, hooks) {
     const permissionMode = await resolveMode(sessionId, reserved ? reserved.mode : args?.mode, backend);
     const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd, endpointId);
     const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
+    // 分けた作業場所（ADR 0088）。使う場所が分けた作業場所の中なら控える（片付けの印・取り込みを頼む相手）。片付けている最中の場所では始めない。
+    // 「いつも分ける」を選んでいて、人が始めるターンで同じリポジトリの別の会話が書き込み中なら、確かめずに分けて始める
+    let worktreeEntry = await worktreeHost.worktrees.byPath(cwd);
+    if (worktreeEntry && worktreeEntry.state !== 'ready') throw new Error(t('worktree.cleaning'));
+    let worktreeNote = null;
+    if (!worktreeEntry && !hooks.internal && !hooks.compact && !hooks.signal && writesScope(backend.modes()?.[permissionMode])) {
+      const split = await autoSplitTurn({ sessionId, cwd }).catch(() => null);
+      if (split) {
+        if (sessionId) {
+          await store.recordChange(sessionId, { by: 'ply', field: 'cwd', from: cwd, to: split.cwd, ...savedReason('worktreeSplit'), backend });
+          emitGlobal({ type: 'cwd', sessionId, cwd: split.cwd, by: 'ply', ...savedReason('worktreeSplit') });
+        }
+        cwd = split.cwd; worktreeEntry = split.entry; worktreeNote = split.note;
+      }
+    }
     if (sessionId) {
       if (!hooks.compact) await store.setSessionData(sessionId, 'compacted', false);
       await store.setModel(sessionId, model);
@@ -2748,6 +2900,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       }
     }
 
+    if (changedFrom) settleWorktreeAt(changedFrom).catch(() => {});
     // 新規のときだけ効く状態。再開したセッションの状態は setStatus で変える
     const status = !sessionId && typeof args?.status === "string" && args.status.trim()
       ? args.status.trim() : null;
@@ -2867,6 +3020,10 @@ async function runTurnInternal(args, onStarted, hooks) {
     hooks.signal?.addEventListener('abort', abortFromTask, { once: true });
     runtime.turns.set(turn.key, turn);
     for (const read of liveReads) if (read.sessionId === sessionId) read.turn = turn;
+    // 分けた作業場所を使うターン。会話の id を台帳に控える（新しい会話は id が決まったとき）。分けて始めた印の行は id が決まってから出す
+    turn.worktreeId = worktreeEntry?.id ?? null;
+    turn.worktreeNote = worktreeNote;
+    if (turn.worktreeId && sessionId) worktreeHost.worktrees.update(turn.worktreeId, { sessionId }).catch(() => {});
     turn.gitCalls = createCallTracker();
     const emit = makeEmit(turn);
     turn.visualizations = createVisualizationCollector({
@@ -2926,6 +3083,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       if (interruption) emit({ type: 'interruptionNote', text: interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
       broadcastRunning();
       syncRunningPoll();
+      emitWorktreeNotice(turn, emit, sessionId);
       if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'preparing' });
       if (hooks.internal) {
         await recordTaskNotice(sessionId, prompt);
@@ -3158,6 +3316,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 片付けるのはこのセッションの承認待ちだけ。他のターンの分は残す
   settleAll('turnEnded', turn.info.sessionId);
   broadcastRunning();
+  // 分けた作業場所: このターンで取り込まれたもの・使われなくなったものを片付ける（ADR 0088）
+  worktreeSweepSoon();
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
   if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt, { startedAt: turn.startedAtMs });
   // 利用者の送信でも、委譲の完了通知などで始まったターンでも予約する（ADR 0068）。圧縮のターンの後は予約し直さない
@@ -3718,14 +3878,69 @@ wss.on("connection", (ws, req) => {
           const cwd = await gitCwd(msg.args);
           const state = cwd ? await gitActivity.status(cwd, { fresh: true }) : null;
           if (!state) return reply(true, { git: null });
+          // 分けた作業場所（ADR 0088）: 今いる場所と、残っているもの（未取り込み）。開いたときに片付けられるものを片付ける
+          worktreeSweepSoon();
+          const worktrees = { current: await worktreeHost.worktrees.byPath(cwd).then(e => (e ? publicWorktree(e) : null)).catch(() => null), leftovers: await worktreeHost.leftovers({ cwd }).catch(() => []) };
           const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
           const timeline = sessionId ? timelineOf((await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [] }))).messages) : [];
           const changes = await gitActivity.changes(cwd, sessionId, msg.args?.range === 'session' ? 'session' : 'uncommitted');
-          return reply(true, { git: state, timeline, changes, at: Date.now() });
+          return reply(true, { git: state, timeline, changes, worktrees, at: Date.now() });
         }
         case 'gitDiff': {
           const cwd = await gitCwd(msg.args);
           return reply(true, { diff: cwd ? await gitActivity.diff(cwd, msg.args?.sessionId, msg.args?.range === 'session' ? 'session' : 'uncommitted', String(msg.args?.path ?? '')) : null });
+        }
+        // ---- 分けた作業場所（ADR 0088）。ぶつかりの確認・分ける・片付けの操作・「いつも分ける」の設定
+        case 'worktreeCheck': {
+          const sessionId = typeof msg.args?.sessionId === 'string' && msg.args.sessionId ? msg.args.sessionId : null;
+          const cwd = await worktreeCwd(msg.args);
+          const always = (await worktreeHost.worktrees.getSettings()).always;
+          if (!cwd) return reply(true, { git: false, current: null, conflicts: [], canSplit: false, always });
+          return reply(true, await worktreeHost.check({ sessionId, cwd, writes: await sessionWrites(sessionId, msg.args?.backend, msg.args?.mode) }));
+        }
+        case 'worktreeSplit': {
+          const sessionId = typeof msg.args?.sessionId === 'string' && msg.args.sessionId ? msg.args.sessionId : null;
+          const cwd = await worktreeCwd(msg.args);
+          if (!cwd) throw new Error(t('worktree.fail.not-git'));
+          const made = await worktreeHost.split({ cwd, sessionId });
+          // i18n-dynamic: server:worktree.fail.
+          if (!made.ok) throw new Error(t(`worktree.fail.${made.reason}`, { error: made.error ?? '' }));
+          return reply(true, { worktree: made.entry, cwd: made.cwd });
+        }
+        case 'worktreeDiscard': {
+          const entry = await worktreeHost.worktrees.get(String(msg.args?.id ?? ''));
+          if (!entry) return reply(true, { action: 'skip' });
+          return reply(true, await worktreeHost.worktrees.settle(entry.id));
+        }
+        case 'worktreeKeep': {
+          const entry = await worktreeHost.worktrees.get(String(msg.args?.id ?? ''));
+          if (!entry) throw new Error(t('worktree.notFound'));
+          await worktreeHost.worktrees.keep(entry.id, msg.args?.kept !== false);
+          return reply(true, { id: entry.id, kept: msg.args?.kept !== false });
+        }
+        case 'worktreeArchive': {
+          const entry = await worktreeHost.worktrees.get(String(msg.args?.id ?? ''));
+          if (!entry) throw new Error(t('worktree.notFound'));
+          const result = await worktreeHost.archive(entry.id);
+          emitGlobal({ type: 'worktreesChanged', sessionId: null });
+          return reply(true, result);
+        }
+        case 'worktreeRestore': {
+          const cwd = await gitCwd(msg.args);
+          if (!cwd) throw new Error(t('worktree.fail.not-git'));
+          const made = await worktreeHost.restore({ cwd, ref: String(msg.args?.ref ?? '') });
+          // i18n-dynamic: server:worktree.fail.
+          if (!made.ok) throw new Error(t(`worktree.fail.${made.reason}`, { error: made.error ?? '' }));
+          emitGlobal({ type: 'worktreesChanged', sessionId: null });
+          return reply(true, { worktree: made.entry, cwd: made.cwd });
+        }
+        case 'worktreeSettings':
+          return reply(true, await worktreeHost.worktrees.getSettings());
+        case 'setWorktreeSettings': {
+          if (typeof msg.args?.always !== 'boolean') throw new Error(t('worktree.settingsInvalid'));
+          const next = await worktreeHost.worktrees.setSettings({ always: msg.args.always });
+          emitGlobal({ type: 'worktreeSettings', sessionId: null, ...next });
+          return reply(true, next);
         }
         case 'setSessionMcp':
           await contextSession.setMcp(msg.args?.sessionId, msg.args?.name, msg.args?.removed !== false);
@@ -4007,6 +4222,8 @@ wss.on("connection", (ws, req) => {
             const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged && !endpointChanged)
               ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(accountChanged ? { account: selectedAccount } : {}), ...(endpointChanged ? { endpoint: selectedEndpoint } : {}) };
             await store.setSessionData(sessionId, "nextSettings", next);
+            // 取り消した・別の場所に替えた予約が分けた作業場所なら、使っていなければ片付ける（ADR 0088）
+            if (current.nextSettings?.cwd && current.nextSettings.cwd !== next?.cwd) settleWorktreeAt(current.nextSettings.cwd).catch(() => {});
             if (!cancel) {
               if (targetId !== undefined) await savePref("backend", target.id);
               // 互換の接続先のモデル・段は公式の既定（prefs）に覚えない。接続先の既定は設定の「既定にする」だけで決まる（決定 2）
@@ -4055,6 +4272,7 @@ wss.on("connection", (ws, req) => {
             await deleteUnsentConversation(sessionId);
             await store.removeSession(sessionId);
             releaseAgentConnection(sessionId);
+            settleWorktreesOf(sessionId).catch(() => {});
             emitGlobal({ type: "sessionsChanged", sessionId: null, deleted: sessionId });
             return reply(true, "deleted");
           } finally { switching.delete(sessionId); completionNotices.changed(sessionId); }

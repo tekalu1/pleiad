@@ -84,6 +84,15 @@ export const COMMANDS = new Set([
   'gitStatus',      // { sessionId?, cwd?, fresh?, summary? } -> { git: { root, linked, branch, detached, head, upstream, ahead, behind, changed, untracked, conflicts, dirty, at, session?: { files, add, del, commits } | null } | null }。summary: true は会話の間の合計も返す（委譲カード）
   'gitPanel',       // { sessionId, range?: 'uncommitted'|'session' } -> { git, timeline: [{ kind: branch|commit|pr, at, uuid, toolId, branch?, hash?, subject?, number?, url? }], changes: { range, hasSession, files: [{ path, state: A|M|D, add, del, binary }], total: { files, add, del }, failed? } | null, at } | { git: null }
   'gitDiff',        // { sessionId, range, path } -> { diff: { range, path, hunks: [{ header, lines: [{ t: '+'|'-'|' ', s }] }], binary, truncated } | null }
+  // 分けた作業場所（ADR 0088）。作る・消すのはサーバーが決めた置き場・ブランチだけ（画面から任意のパスを受けない）
+  'worktreeCheck',  // { sessionId?, backend?, mode? } -> { git, current: { id, branch, path, origin, … } | null, conflicts: [{ sessionId, title, child }], canSplit, always }。同じリポジトリで書き込み中の別の会話（読むだけの会話・git 管理外では出さない）
+  'worktreeSplit',  // { sessionId? } -> { worktree: { id, branch, path, origin, … }, cwd }。今の作業場所の隣に分けた作業場所を作る。cwd の予約は画面が setTurnSettings で行う
+  'worktreeDiscard', // { id } -> { action }。予約を取り消したときなど。使っていなければ片付ける（変更があれば残る）
+  'worktreeKeep',   // { id, kept } -> { id, kept }。右パネルの「残す」
+  'worktreeArchive', // { id } -> { action, ref?, why? }。退避の隠し ref に作業ツリー全体を撮ってから消す
+  'worktreeRestore', // { ref } -> { worktree, cwd }。退避した作業場所を作り直す（右パネルの「元に戻す」）
+  'worktreeSettings', // {} -> { always }
+  'setWorktreeSettings', // { always } -> { always }。「いつも分ける」（確かめずに分けて始める）
   'setSessionMcp',  // { sessionId, name, removed } -> この会話だけ外部 MCP を外す（ply_context に出さない）/ 戻す。次のターンから効く
   'agentMcp',       // { cwd } -> { agents: { claude|codex: [{ name, transport, endpoint, command, path, scope, disabled }] } } 各エージェントの登録（読むだけ）
   'nativeInstructions', // { cwd, backend } -> { cwd, agent, entries: [{ id, name, path, scope, tokens }] | null } エージェント任せの指示を、そのエージェントの規則で探した量（読むだけ。ADR 0056）
@@ -229,6 +238,8 @@ export const EVENTS = new Set([
   "session",      // sessionId が確定した { sessionId, model? }（model は実際に解決されたもの）
   "backend",      // { backend } 会話の実行先が変わった
   "nextSettings",
+  "worktreeSettings", // { always } 「いつも分ける」が変わった（sessionId は null。ADR 0088）
+  "worktreesChanged", // 分けた作業場所が増えた・消えた（sessionId は null）。右パネルの「残っている作業場所」を取り直す
   "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す
   "compatEndpointsChanged", // 互換の接続先の一覧・既定が変わった（sessionId は null）。中身は compatEndpoints コマンドで取り直す
   "delegationRoutingChanged", // change: settings|usage（旧送信元では省略）。sessionId は null。中身は delegationRouting コマンドで取り直す

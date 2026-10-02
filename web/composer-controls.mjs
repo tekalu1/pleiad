@@ -90,7 +90,7 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
       render();
       self.place();
       onShow?.();
-      if (focus) (pop.querySelector('[aria-selected="true"]') ?? pop.querySelector("input:not([type=range]):not(:disabled), button:not(:disabled), [tabindex='0']"))?.focus();
+      if (focus) (pop.querySelector('[aria-selected="true"]') ?? pop.querySelector(".cpath") ?? pop.querySelector("input:not([type=range]):not(:disabled), button:not(:disabled), [tabindex='0']"))?.focus();
     },
     hide(returnFocus = true) {
       if (pop.hidden) return;
@@ -261,7 +261,11 @@ export function setupComposerControls({ cmd, get, on }) {
   // ブランチ（作業場所が git のときだけ。ADR 0085）。狭いときは fitRow が最初に削る
   const gitBranch = el("span", "git-br");
   gitBranch.hidden = true;
-  chips.cwd.append(glyph(FOLDER), cwdName, gitBranch, glyph(CARET));
+  // 分けた作業場所のとき: アイコンを枝分かれにし、名前の後ろに「· 分けた作業場所」（狭いと最初に畳む。ADR 0088）
+  const folderGlyph = glyph(FOLDER), splitGlyph = branchGlyph();
+  const splitSuffix = el("span", "wt-sfx");
+  splitSuffix.hidden = true;
+  chips.cwd.append(folderGlyph, cwdName, splitSuffix, gitBranch, glyph(CARET));
   chips.cwd.lastChild.classList.add("caret");
   const modelName = el("span", "v");
   chips.model.append(glyph(...MODEL), modelName, glyph(CARET));
@@ -376,10 +380,31 @@ export function setupComposerControls({ cmd, get, on }) {
     const box = el("div", "cbrowse");
     box.hidden = true;
     const browse = folderBrowser({ cmd, box, err, onChoose: commitCwd, onAt: (dir) => { browsing = dir; }, closed: () => pops.cwd.hidden });
-    pop.replaceChildren(inputWrap, msg, head(t("composer.cwd.recent")),
+    // 分けた作業場所（ADR 0088）: いるときは面の先頭に元の場所と「元の場所に戻す」、git の場所には末尾に「分けた作業場所で始める」
+    const current = d.worktree?.current;
+    const bar = current ? splitBar(current) : null;
+    const start = d.worktree?.canSplit ? splitItem() : null;
+    pop.replaceChildren(...(bar ? [bar] : []), inputWrap, msg, head(t("composer.cwd.recent")),
       recent.length ? listbox(t("composer.cwd.recent"), recent) : el("p", "cnote", t("composer.cwd.noRecent")),
-      pick, box, err);
+      pick, ...(start ? [start] : []), box, err);
     if (browsing != null) browse(browsing);
+  }
+  function splitBar(current) {
+    const bar = el("div", "wt-splitbar");
+    const back = el("button", "btn btn-quiet", t("worktree.back"));
+    back.type = "button";
+    back.onclick = () => { folder.hide(); on.worktreeBack?.(); };
+    const orig = el("span", "wt-orig");
+    orig.append("· ", ...t("worktree.from", { path: "\u2063p\u2063" }).split("\u2063").map((piece) => (piece === "p" ? el("code", null, current.origin) : piece)).filter((x) => x !== ""));
+    bar.append(branchGlyph(), el("b", null, t("worktree.label")), orig, back);
+    return bar;
+  }
+  function splitItem() {
+    const b = el("button", "caction wt-start");
+    b.type = "button";
+    b.append(branchGlyph(), el("span", null, t("worktree.start")));
+    b.onclick = () => { folder.hide(); on.worktreeSplit?.(); };
+    return b;
   }
   // 閉じたら確かめている途中のパスは取り消す（Esc・面の外で閉じたのに、後から確かめが通って変わらないように）
   const folder = panel(chips.cwd, pops.cwd, { align: "left", render: renderFolder, onHide: () => { checkSeq++; } });
@@ -624,14 +649,21 @@ export function setupComposerControls({ cmd, get, on }) {
     const d = get();
     // 作業ディレクトリ
     const cwd = d.cwd ?? "";
-    cwdName.textContent = cwd ? baseName(cwd) : t("chat.composer.cwd");
+    const split = d.worktree?.current ?? null;
+    cwdName.textContent = split ? baseName(split.origin) : cwd ? baseName(cwd) : t("chat.composer.cwd");
     chips.cwd.title = cwd ? t("composer.cwd.chipTitle", { cwd }) : t("chat.composer.cwd");
+    if (split) chips.cwd.title = `${chips.cwd.title} · ${t("worktree.chipTitle", { origin: split.origin })}`;
+    chips.cwd.classList.toggle("wt", Boolean(split));
+    splitSuffix.hidden = !split;
+    splitSuffix.textContent = split ? `· ${t("worktree.chipSuffix")}` : "";
+    const lead = split ? splitGlyph : folderGlyph;
+    if (chips.cwd.firstChild !== lead) chips.cwd.firstChild.replaceWith(lead);
     chips.cwd.setAttribute("aria-label", t("composer.cwd.chipAria", { cwd: cwd || t("composer.cwd.unset") }));
     chips.cwd.dataset.value = cwd;
     chips.cwd.disabled = Boolean(d.cwdDisabled);
     // ブランチ。名前は title と読み上げにも足す
     const gitName = d.git ? (d.git.branch ?? (d.git.head ? t("git.detached", { hash: d.git.head }) : "")) : "";
-    gitBranch.hidden = !gitName;
+    gitBranch.hidden = !gitName || Boolean(split);
     gitBranch.replaceChildren(...(gitName ? [branchGlyph(), gitName] : []));
     if (gitName) {
       chips.cwd.title = `${chips.cwd.title} · ${t("git.chipBranch", { branch: gitName })}`;
@@ -687,7 +719,7 @@ export function setupComposerControls({ cmd, get, on }) {
 
   /**
    * チップの行を 1 行に収める（docs/design-system.md「入力欄と上端」）。短い値は詰めない。足りない分だけ、この順に削る:
-   *   0. 作業場所のブランチを外す（git のとき。ADR 0085）
+   *   0. 分けた作業場所の「· 分けた作業場所」を畳み（ADR 0088）、次に作業場所のブランチを外す（git のとき。ADR 0085）
    *   1. 承認モードを短い名前に（都度確認 → 都度）  2. モデルの「 · 段」を外す
    *   3. モデル名を … で詰める（「Smart…」くらいまで）  4. 作業ディレクトリの名前を … で詰める（9 字くらいまでは残す）
    * 縮める前の幅は、チップを縮めない状態（.measuring）で測る。行の幅・中身が変わるたびに呼ぶ（paint・窓の幅・中断の出入り）
@@ -696,7 +728,7 @@ export function setupComposerControls({ cmd, get, on }) {
     const row = chips.cwd.parentElement;
     if (!row || !row.isConnected || !row.offsetParent) return;
     const cwd = chips.cwd, mdl = chips.model;
-    row.classList.remove("fit-nobranch", "fit-short", "fit-noef");
+    row.classList.remove("fit-nosplit", "fit-nobranch", "fit-short", "fit-noef");
     cwd.style.minWidth = ""; mdl.style.minWidth = "";
     row.classList.add("measuring");
     // 最後の部品（送信）の右端が行の右端に収まるか（scrollWidth は整数に丸められ、1px 足りないのを見逃す）
@@ -704,6 +736,7 @@ export function setupComposerControls({ cmd, get, on }) {
       const last = [...row.children].reverse().find((n) => n.offsetParent);
       return !last || last.getBoundingClientRect().right <= row.getBoundingClientRect().right + 0.01;
     };
+    if (!fits()) row.classList.add("fit-nosplit");
     if (!fits()) row.classList.add("fit-nobranch");
     if (!fits()) row.classList.add("fit-short");
     if (!fits()) row.classList.add("fit-noef");

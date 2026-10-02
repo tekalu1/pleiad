@@ -13,6 +13,7 @@ import { fmt, t } from "./i18n.mjs";
 import { copyIcon, downloadIcon, sidePanelIcon, openInBrowserIcon, moreIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
 import { renderGitSummary } from './git-view.mjs';
+import { renderWorktreeLine } from './worktree-ui.mjs';
 import { COMPUTER_PREFIX, isComputerTool, computerToolName, computerVerb, computerInfo, reasonShort, reasonLong, shotsOf, shotButton, stopMark } from './computer-use.mjs';
 
 // ---------------------------------------------------------------- エスケープ
@@ -591,6 +592,8 @@ export function renderPresent(ev) {
   const e = ev ?? {};
   // git の要約の行（返答の下の 1 行。ADR 0085）。カードではない
   if (e.kind === 'git') return renderGitSummary(e) ?? el('div', 'git-sum-row');
+  // 分けた作業場所で始めた印の行（ADR 0088）
+  if (e.kind === 'worktree') return renderWorktreeLine(e);
   const kind = ["image", "html", "text", "file", "visualization"].includes(e.kind) ? e.kind : "text";
   const card = el("figure", `present present-${kind}`);
 
