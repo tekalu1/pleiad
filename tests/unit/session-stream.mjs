@@ -128,6 +128,7 @@ export default async function (t) {
   const liveReads = new Set();
   const turn = { stream: { messages: [], presents: [], user: { role: "user", text: "input" }, initialMessageId: 'msg-initial', events: [event("先頭", 1)] } };
   const turns = new Map([["target", turn]]);
+  // server.mjs の case "loadSession" の本文をここで走らせる。本文で新しい関数を呼んだら、ここにも渡す（無いと ReferenceError）
   const serverContext = vm.createContext({
     msg: { args: { sessionId: "target", live: true } }, runtime: { turns, waiting: new Map() }, liveReads,
     resolveBackendForSession: async () => ({}), store: { get: async () => ({}) }, compactionScheduler: { get: () => null },

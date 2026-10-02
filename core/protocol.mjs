@@ -29,6 +29,7 @@ export const SCREENCAST = "screencast";
 // client -> server
 export const COMMAND = "command";
 
+// server.mjs に case を足したらここにも足す。無いコマンドはサーバーが黙って捨て、テストの cmd は応答待ちのまま止まる
 export const COMMANDS = new Set([
   'agentTasks', 'agentTaskInstructions', 'cancelAgentTask',
   'retryAgentTask',             // { taskId, candidate: 'backend:model', account?, stop?, approved? } -> { task } | { confirm: { agent, mode } }。Claude の account は選んだ認証（'' はログイン中）。委譲カードの「別の候補でやり直す」

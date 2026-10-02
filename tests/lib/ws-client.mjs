@@ -9,6 +9,8 @@ import WebSocket from "ws";
  * 1本つないで ready を受け取るまで待つ。
  * @param onEvent 受け取ったイベントごとに呼ばれる。第2引数はこの接続自身。
  * @param autoAllow 承認要求が来たら即 allow する（承認フロー自体を測らないテスト用）。
+ *   fake-codex の既定の台本はコマンドの承認を求めるので、そのターンを走らせるなら付ける。
+ *   引数は 1 つだけ: `open({ ...host, autoAllow: true })`（`open(host, { autoAllow: true })` は効かない）。
  */
 export async function open({ port, token, host = "127.0.0.1", onEvent, autoAllow = false } = {}) {
   const ws = new WebSocket(`ws://${host}:${port}/ws?token=${token}`);
