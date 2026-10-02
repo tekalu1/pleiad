@@ -1422,6 +1422,8 @@
       "endpoint": "Endpoint: {{value}}",
       "account": "Account: {{value}}",
       "summary": "{{changes}} · Applies when you send next",
+      "summaryBehind": "{{changes}} · Applies from the next turn",
+      "behindNote": "A message you send while the agent is waiting on background tasks is handled in the current turn, with the current settings.",
       "handoff": {
         "line": "Messages and tool records carry over. \"Always allow\" approvals and thinking don't.",
         "more": "Details",
@@ -2272,6 +2274,7 @@
       "unknown": "Can't confirm whether it was sent"
     },
     "waitTurn": "Waiting to be sent — sends automatically when the current work finishes",
+    "waitReply": "Waiting to be sent — sends automatically when the current reply finishes",
     "waitOrder": "Waiting to be sent — sends after the previous message is sent",
     "unknownHint": "Check the conversation. Resending may deliver the same instruction twice.",
     "retry": "Resend",

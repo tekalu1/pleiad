@@ -13,7 +13,7 @@ const turnOf = (ev, sessionId) => (ev.turns ?? []).find((t) => t.sessionId === s
 
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "ply-bg-"));
-  const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: "fake" } });
+  const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: "fake", AGENT_HOST_FAKE_STEER_LATENCY_MS: "1500" } });
   const c = await open(server);
   try {
     const { sessionId } = await c.cmd("newSession", { backend: "fake", cwd: ROOT });
@@ -106,5 +106,37 @@ export default async function (t) {
     t.ok("2 ターン目も見出しは本人のもの", await matches(second),
       second.map((a) => `${a.id}=${a.description}`).join(" "));
     await c.waitFor((e) => e.type === "turnEnd" && e.sessionId === sessionId, { from: from2, ms: 15000 });
+
+    // 次のターンの設定の予約（setTurnSettings）があっても、裏だけを待つ間（phase: waiting）の送信は途中送信で届く。
+    // 予約は消えず次のターンから効く。main が動いている間に受けた送信は、waiting に戻った時点で流れる（docs/multi-backend.md §2.2）
+    const reserved = await c.cmd("newSession", { backend: "fake", cwd: ROOT });
+    const rid = reserved.sessionId;
+    const from3 = c.mark();
+    await c.cmd("sendMessage", { sessionId: rid, messageId: "bg-reserved-0001", prompt: "bg 1 30" });
+    await c.waitFor((e) => e.type === "running" && turnOf(e, rid)?.phase === "waiting", { from: from3, ms: 10000 });
+    await c.cmd("setTurnSettings", { sessionId: rid, cwd: scratch });
+    const reservedOf = async () => (await c.cmd("listSessions")).find((s) => s.id === rid)?.nextSettings;
+    t.ok("予約が立つ", (await reservedOf())?.cwd === path.resolve(scratch));
+    const from4 = c.mark();
+    await c.cmd("sendMessage", { sessionId: rid, messageId: "bg-reserved-0002", prompt: "ping with reservation" });
+    await c.waitFor((e) => e.type === "userMessage" && e.messageId === "bg-reserved-0002", { from: from4, ms: 5000 });
+    t.ok("予約があっても、裏だけを待つ間の送信は今のターンへ届く（ターンは分かれない）",
+      !c.since(from4).some((e) => e.type === "turnEnd" && e.sessionId === rid));
+    t.ok("途中送信しても予約は残る（次のターンから効く）", (await reservedOf())?.cwd === path.resolve(scratch));
+    // main が答えている間（phase: active）に受けた送信も、waiting に戻れば流れる
+    // （fake は途中送信を受けてから本文を返すまで phase: active。AGENT_HOST_FAKE_STEER_LATENCY_MS で長くしてある）
+    await c.waitFor((e) => e.type === "running" && turnOf(e, rid)?.phase === "active", { from: from4, ms: 5000 });
+    const from5 = c.mark();
+    await c.cmd("sendMessage", { sessionId: rid, messageId: "bg-reserved-0003", prompt: "second ping" });
+    const queued = (await c.cmd("listMessages", { sessionId: rid })).find((m) => m.id === "bg-reserved-0003");
+    t.ok("main が動いている間は予約を残したまま待つ", queued?.status === "queued" && queued.waiting?.reason === "turn", JSON.stringify(queued));
+    await c.waitFor((e) => e.type === "userMessage" && e.messageId === "bg-reserved-0003", { from: from5, ms: 8000 });
+    t.ok("waiting に戻った時点で待っていた送信が今のターンへ流れる", !c.since(from5).some((e) => e.type === "turnEnd" && e.sessionId === rid)
+      && (await c.cmd("listMessages", { sessionId: rid })).every((m) => m.status === "sent"));
+    await c.waitFor((e) => e.type === "text.end" && c.since(from5).includes(e), { from: from5, ms: 8000 });
+    t.ok("main がその場で答える", c.since(from4).filter((e) => e.type === "text.delta").map((e) => e.text).join("").includes("受け取った: ping with reservation"));
+    t.ok("2 回送っても予約は残る", (await reservedOf())?.cwd === path.resolve(scratch));
+    await c.cmd("abort", { sessionId: rid });
+    await c.waitFor((e) => e.type === "turnEnd" && e.sessionId === rid, { from: from3, ms: 10000 });
   } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 }
