@@ -48,6 +48,8 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
   // ---- 状態（会話を開いている間は保つ。会話を替えたら reset）
   let query = '', scope = 'user', newestFirst = false, hitIndex = -1, total = 0;
   let entries = [], entriesDirty = true, opened = false, sheet = null, opener = null, typing = 0, active = -1;
+  /** 脇の検索から語を引き継いだ（carry）。パネルを開いていなくても、本文の一致に印を付けておく。開く・語を替える・会話を替えると終わる */
+  let carried = false;
   /** @type {Map<number, HTMLButtonElement>} 発言（ターン）→ 目次の行 */
   let turnRows = new Map();
   const markedEntries = new Set();
@@ -186,7 +188,7 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
   }
   function observeMarks() {
     observer?.disconnect();
-    if (!query || !opened) return;
+    if (!query || !(opened || carried)) return;
     observer ??= new IntersectionObserver((records) => {
       for (const r of records) if (r.isIntersecting) { const entry = entryByRow.get(r.target); if (entry) for (const e of entry) markEntry(e); observer.unobserve(r.target); }
     }, { root: log, rootMargin: MARK_MARGIN });
@@ -363,6 +365,7 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
   function cleanup() {
     if (!opened) return;
     opened = false;
+    carried = false;
     clearMarks();
     button.setAttribute('aria-expanded', 'false');
   }
@@ -478,9 +481,28 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
     focusSearch() { if (opened) { input.focus(); input.select(); } else open(button); },
     /** ターンの終わりなど、内容が変わった。開いていれば取り直す */
     refresh() { entriesDirty = true; if (opened) search({ select: false }); },
+    /**
+     * 脇の検索の結果から会話へ飛んだとき、探した語を引き継ぐ（パネルは開かない。ADR 0063 の D・docs/design-system.md「会話の移動」）。
+     * 語は検索欄に入り、本文の一致に印を付け、飛んだ先の発言の一致を指す。Ctrl+F・目次のボタンで開けば、同じ語で残りの一致へ進める。
+     * scope は対象の段（自分の発言だけを探したなら user、返答も当たるなら answer）。uuid は飛んだ先の発言
+     */
+    carry(word, { scope: next = 'answer', uuid = null } = {}) {
+      const text = String(word ?? '').trim();
+      if (!text) return;
+      query = text;
+      input.value = text;
+      if (SCOPES.includes(next)) scope = next;
+      carried = true;
+      entriesDirty = true;
+      search({ select: false });
+      const entry = uuid ? entries.find((e) => e.el?.dataset?.uuid === uuid && e.hitStart >= 0) : null;
+      if (entry) selectHit(entry.hitStart, { scroll: false });
+    },
     /** 会話を替えた。検索語・対象・並び順を初期に戻す */
     reset() {
       if (opened) close();
+      clearMarks();
+      carried = false;
       query = ''; scope = 'user'; newestFirst = false; hitIndex = -1; total = 0; input.value = '';
       entries = []; entriesDirty = true;
     },

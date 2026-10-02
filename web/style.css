@@ -200,8 +200,21 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .brand-icon{display:block;width:24px;height:24px}
 .brand-wordmark{display:block;width:86.5px;height:26px}
 .search{display:flex;align-items:center;gap:4px;padding:4px 12px 6px;position:relative}
-.search input{flex:1;min-width:0;background:var(--surface-paper);border-radius:var(--r-pill);padding:6px 12px;font-size:var(--fs-s)}
-.search input::placeholder{color:var(--ink-weak)}
+/* 検索欄。消すボタンは欄の中の右端（語があるときだけ）。焦点の輪は欄全体に付く */
+.qbox{flex:1;min-width:0;display:flex;align-items:center;background:var(--surface-paper);border-radius:var(--r-pill)}
+.qbox:has(input:focus-visible){outline:2px solid var(--line-blue);outline-offset:1px}
+.qbox input{flex:1;min-width:0;background:transparent;border-radius:var(--r-pill);padding:6px 12px;font-size:var(--fs-s)}
+.qbox input:focus-visible{outline:none}
+.qbox input::placeholder{color:var(--ink-weak)}
+.qbox input::-webkit-search-cancel-button{display:none}
+.qclear{flex:none;width:24px;height:24px;margin-right:3px;display:grid;place-items:center;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer;padding:0}
+.qclear:hover{background:var(--surface-hover);color:var(--ink)}
+.qclear svg.i{width:12px;height:12px}
+/* 最近の検索（空の検索欄に入ったときの候補。5 件） */
+#recentPop{top:40px;left:12px;right:44px}
+#recentPop .li svg.i{width:13px;height:13px;flex:none;color:var(--ink-weak)}
+#recentPop .li::before{display:none}
+#recentPop .li.kb{background:var(--surface-hover)}
 /* 絞られている条件の札。白い pill に本文色。× で外す */
 .fchips{display:flex;flex-wrap:wrap;gap:4px;padding:0 12px 6px}
 .fchips:empty{display:none}
@@ -276,6 +289,25 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 /* 器の中の行。グループの行と同じだけ字下げする */
 .fam-rows{display:flex;flex-direction:column;gap:2px;padding:0 4px 4px 16px}
 .row-meta{display:flex;align-items:center;gap:6px;margin-top:2px;font-size:var(--fs-xs);color:var(--ink-weak);min-width:0}
+/* ---- 検索の結果（平らな listbox。web/side.mjs。docs/design-system.md §4.1「検索」） ---- */
+.groups.flat{gap:2px}
+.res-head{display:flex;align-items:center;gap:6px;padding:0 14px 2px 22px;font-size:var(--fs-xs);color:var(--ink-weak);min-height:26px}
+.res-head .sp{flex:1}
+.res-arc{display:inline-flex;align-items:center}
+.res-sort{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);font-size:var(--fs-xs);cursor:pointer}
+.res-sort:hover{background:var(--surface-hover);color:var(--ink)}
+.res-sort svg.i{width:13px;height:13px}
+#groups .row.res{contain-intrinsic-size:auto 76px}
+.row.res.active{outline:2px solid var(--line-blue);outline-offset:-1px}
+.row.res .row-t{flex:1}
+/* 一致した発言の数の札（会話の中の検索の件数の札と同じ語彙） */
+.hitc{flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:var(--r-pill);background:var(--surface-3);font:400 var(--fs-xs)/18px var(--font-mono);text-align:center;color:var(--ink)}
+.row.sel .hitc{background:var(--surface-2)}
+.snip{margin-top:3px;font-size:var(--fs-s);line-height:1.5;color:var(--ink);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.snip .snip-who{font-size:var(--fs-xs);color:var(--ink-weak);margin-right:5px}
+.snip.tool{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak)}
+.row-st{flex:none;white-space:nowrap}
+.row-from{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row-when{font-family:var(--font-mono);flex:none}
 /* 状態を最後に変えたのが AI のときだけ付く小さな印（理由は title）。誰がいつ変えたかは行のメニューの「変更の記録」 */
 .row-ai{flex:none;padding:0 5px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-weak);font-size:10px;line-height:15px;font-weight:600;letter-spacing:0}
@@ -350,7 +382,7 @@ button.conn-lost:hover{color:var(--ink)}
    歯車を押すと、脇のセッション一覧が設定メニューに、会話が選んだページに入れ替わる。
    列の幅も面もそのままなので、切り替わったことは列の中身だけで分かる。モーダルは重ねない */
 .settings-menu,.settings-view,.back-chat{display:none}
-body.settings > #sidebar > :is(.search,.fchips,.filter-outside,.groups,#authNeed),
+body.settings > #sidebar > :is(.search,.fchips,.filter-outside,.res-head,.groups,#authNeed),
 body.settings .brand,body.settings #newSession,body.settings #settings,body.settings #closeSidebar{display:none}
 /* 会話は場所も描いた状態も残したまま、設定のページで覆う（下の .settings-view）。display:none にすると筋のスクロール位置と
    入力欄の高さが失われる。visibility:hidden で伏せると、開閉のたびに会話の全要素のスタイルを計算し直して止まっていた。
@@ -579,7 +611,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 読み上げだけの知らせ（コピーしました） */
 .sr-live{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .m.user .body.flash{animation:note-flash 1.2s var(--ease-out)}
-@media (prefers-reduced-motion:reduce){.m.user .body.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
+/* 検索の結果から飛んだ先の返答。吹き出しの無い面なので、角を丸めて輪を付ける */
+.m.ai .body.flash,.m.ai.flash{border-radius:var(--r-s);animation:note-flash 1.2s var(--ease-out)}
+@media (prefers-reduced-motion:reduce){.m.user .body.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}
+  .m.ai .body.flash,.m.ai.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
 .m.user .body{display:inline-block;max-width:680px;background:var(--surface-2);border-radius:var(--r-l);padding:9px 16px;white-space:pre-wrap;overflow-wrap:anywhere}
 /* ---- 自分の発言の Markdown と添付（web/user-message.mjs、docs/design-system.md「自分の発言」、ADR 0059）。
    本文は AI の本文と同じ md の見た目。添付は本文の印の位置に縮小（画像）か札（ファイル）で出る ---- */

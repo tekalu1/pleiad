@@ -1630,6 +1630,7 @@ async function subagentState(t, sessionId, agentId) {
  */
 // 操作の一覧（core/ops/）の handler へ渡す、サーバーの状態への口
 const opsApp = {
+  searchSessions: (input) => sessionSearch.search(input),
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
 };
 

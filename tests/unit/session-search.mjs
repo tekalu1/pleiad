@@ -116,7 +116,10 @@ export default async function (t) {
     t.ok("関連度: 題に当たる会話が、本文の 1 件だけの会話より先", ids(rel).indexOf("title") < ids(rel).indexOf("bodyonly") && ids(rel).indexOf("title") < ids(rel).indexOf("fresh"), ids(rel).join());
     t.ok("関連度: 一致した発言が多い会話が、少ない会話より先", ids(rel).indexOf("many") < ids(rel).indexOf("bodyonly"), ids(rel).join());
     t.ok("関連度: 同じ条件なら新しい会話が先（新しさは 30 日で 1 減る）", ids(rel).indexOf("fresh") < ids(rel).indexOf("bodyonly"), ids(rel).join());
-    t.ok("関連度: 古い会話は題に当たっても沈む（新しさの項）", ids(rel).indexOf("ancient") > ids(rel).indexOf("title"), ids(rel).join());
+    t.ok("関連度: 同じ題の一致なら新しい会話が先（新しさの項）", ids(rel).indexOf("ancient") > ids(rel).indexOf("title"), ids(rel).join());
+    t.ok("関連度: 新しさの減点には上限があり、1 年前の会話も題に当たれば新しい本文だけの当たりより先", ids(rel).indexOf("ancient") < ids(rel).indexOf("bodyonly"), ids(rel).join());
+    const old400 = rel.sessions.find((s) => s.sessionId === "ancient").score, fresh = rel.sessions.find((s) => s.sessionId === "title").score;
+    t.ok("関連度: 減点は 90 日で頭打ち（400 日前と 1 日前の差は 3 未満）", fresh - old400 > 2.9 && fresh - old400 <= 3.0, `${fresh - old400}`);
     const two = make([
       row("together", { title: "t1", messages: [msg("user", "alpha beta 同じ発言")] }),
       row("apart", { title: "t2", messages: [msg("user", "alpha だけ"), msg("assistant", "beta だけ")] }),
