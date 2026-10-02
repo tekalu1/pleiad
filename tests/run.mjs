@@ -60,6 +60,16 @@ const cases = [
   await import('./unit/server-git.mjs'),
   // git の動きの画面（ADR 0085）: 要約行・委譲カードの変更の行・したことの行・差分の面（色なし）・右パネルの表（gitSlots）
   await import('./unit/git-view.mjs'),
+  // 分けた作業場所の画面（ADR 0089）: 入力欄の上の 1 行・会話の中の静かな 1 行・残っている作業場所の操作と結果の行・取り込みの依頼文
+  await import('./unit/worktree-view.mjs'),
+  // 分けた作業場所（ADR 0089）: 作成と失敗の巻き戻し・片付けの判定・使用中は消さない・ジャンクションを外してから消す（リンク先が残る）・退避の隠し ref・台帳と git の突き合わせ（一時リポジトリ）
+  await import('./unit/worktrees.mjs'),
+  // 分けた作業場所（サーバー越し）: ぶつかりの判定・分けて始める（予約・取り消し・戻す）・いつも分ける・委譲の自動の分け方と isolate・完了通知と ply_task_status の作業場所の行・取り込み後の片付け・退避と作り直し
+  await import('./unit/server-worktree.mjs'),
+  // 分けた作業場所を会話・委譲・画面につなぐ層: ぶつかりの判定・委譲で分けるか（並列の委譲のまとめ数え）・子の完了と片付け・準備中は消さない・残りの絞り込み・cwd を戻す・退避と作り直し
+  await import('./unit/worktree-host.mjs'),
+  // 委譲の子の分けた作業場所: 子への指示・完了通知と status の「作業場所」の行・isolate の検査・ツールの定義
+  await import('./unit/agent-tasks-workspace.mjs'),
   // 操作の一覧（core/ops/、ADR 0080・0081）: 権限の表（主体 × 危険度 × 会話の承認モード）・関所の順序と定義の検査・載せ忘れの lint（WS のコマンドと prefs のキーのラチェット）・
   // 一覧の中身（snapshot・文の量・主体ごとの見え方・伏せ字・辞書・JSON Schema）・WS の invoke をサーバー越しに
   await import('./unit/ops-policy.mjs'),

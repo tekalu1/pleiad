@@ -6,6 +6,7 @@ import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { branchIcon, commitIcon, prIcon, jumpIcon, chevRightIcon, backIcon, openInBrowserIcon } from './icons.mjs';
 import { branchLabel, changeText, filesText } from './git-view.mjs';
+import { createLeftovers } from './worktree-ui.mjs';
 
 const KEY = 'git';
 const ACT_ICON = { branch: branchIcon, commit: commitIcon, pr: prIcon };
@@ -66,8 +67,11 @@ export function diffBody(diff) {
  * @param {(event:object) => boolean} o.jump 会話のこの場所へ（見つからなければ false）
  * @param {(text:string) => void} o.use 入力欄へ字を足す
  * @param {(git:object|null) => void} o.onState 取った状態を頭の行・入力欄へ渡す
+ * @param {object} o.worktrees 「残っている作業場所」の操作（keep・ask・unask・archive・restore。web/worktree-ui.mjs の createLeftovers）
  */
-export function setupGitPanel({ cmd, preview, session, jump, use, onState = () => {} }) {
+export function setupGitPanel({ cmd, preview, session, jump, use, onState = () => {}, worktrees }) {
+  // 残っている作業場所（分けた作業場所の未取り込み。ADR 0089）。操作の結果の行はこの部品が持ち、変わったら描き直す
+  const leftovers = createLeftovers({ ...worktrees, changed: () => paint() });
   let st = { key: null, range: 'session', data: null, loading: false, failed: false, file: null, diff: null, diffFailed: false, at: null, note: '' };
   let opener = null, ticket = 0, noteTimer = 0;
   // 開いている先の会話。別の会話の作業場所（委譲した子）を開いたときは今の会話と違う。その会話の中の場所へは飛べない
@@ -187,6 +191,8 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     if (st.failed || !st.data) { root.append(el('div', 'git-empty', t('git.failed'))); return root; }
     const { git, timeline, changes } = st.data;
     root.append(statusSection(git, timeline));
+    const left = leftovers.section(st.data.worktrees?.leftovers ?? []);
+    if (left) root.append(left);
     const acts = actsSection(timeline);
     if (acts) root.append(acts);
     root.append(changesSection(changes));
@@ -247,6 +253,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   function resetFor(id) {
     if (st.key === id) return;
     ticket++;
+    leftovers.reset();
     st = { key: id, range: 'session', data: null, loading: false, failed: false, file: null, diff: null, diffFailed: false, at: null, note: '' };
   }
 

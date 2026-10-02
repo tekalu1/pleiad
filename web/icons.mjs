@@ -26,3 +26,8 @@ export const commitIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"
 export const prIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6.75" cy="5.4" r="2.4"/><circle cx="6.75" cy="18.6" r="2.4"/><circle cx="17.25" cy="18.6" r="2.4"/><path d="M6.75 7.8v8.4M17.25 16.2v-5.85c0-1.95-1.2-3.15-3.15-3.15h-1.8M14.4 4.65 12 7.05l2.4 2.4"/></svg>';
 export const jumpIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M18.75 5.25v6a3 3 0 0 1-3 3H5.25M9.75 9l-4.5 5.25 4.5 5.25"/></svg>';
 export const chevRightIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>';
+// 分けた作業場所（ADR 0089）: 退避（箱）・リンク・鍵・元へ戻す
+export const archiveIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 5h17v4h-17zM5 9v10h14V9M10 13h4"/></svg>';
+export const linkIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>';
+export const lockIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+export const undoIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>';
