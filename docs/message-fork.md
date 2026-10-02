@@ -29,6 +29,16 @@
 
 Codex の UI の発言 ID は 1 ターンに複数ある（userMessage / agentMessage の item.id、ツールだけの発言は先頭ツールの item.id、思考だけの発言は turn.id に接尾辞を付けた値）が、ネイティブの `thread/fork` は `lastTurnId`（ターン単位）でしか切れない。任意の発言をターンに置き換えると後続が混ざるので、Codex の分岐は末尾も含めホスト経路に統一し、ネイティブの `thread/fork` の実装は残す（codex-cli 0.153.2、2026-09-11 に確認）。
 
+同じ会話の中で巻き戻す口（2026-10-03、codex-cli 0.156.1 を実機で確認）: `thread/rollback` は無い（`unknown variant`）。
+`thread/revert { threadId, beforeTurnId }` がターン単位で履歴を置き換える（`thread/reverted` 通知。続けて `turn/start` もできる）が、
+`historyMode: "paginated"` のスレッドだけで、以前に作った legacy のスレッドは `thread/revert only supports paginated threads` で断られる。
+`thread/start` の既定は paginated。legacy の `thread/fork { beforeTurnId }` は効くが、子も legacy のまま。
+巻き戻した後にモデルが捨てた内容を見ないかは、使用上限に当たって未確認。
+
+Claude は `query({ resume, resumeSessionAt, resumeDropsTurn })` で同じ session id・同じ JSONL のまま巻き戻せる（SDK 0.3.258 で確認）。
+JSONL は消さずに追記され、`getSessionMessages` は最新の葉の鎖を返す。切り口を間違えると `resumeDropsTurn` が `Resume rejected by --resume-drops-turn:` を投げる。
+最初の発言の手前には切り口にできる UUID が無い。
+
 ## Antigravity の境界
 
 2026-09-17、実機の `agy` で確かめた。分岐の口は無いままなので `capabilities.fork` は `false` で、
