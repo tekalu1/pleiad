@@ -18,7 +18,7 @@ const git = (id, n) => recordPresent(id, { kind: "git", at: iso(n), git: { n }, 
 let seq = 0;
 
 /** Claude と同じ形の身代わり: 次のターンが resumeSessionAt / resumeDropsTurn で葉を付け替える */
-function claudeLike({ reject = false } = {}) {
+function claudeLike({ reject = false, failWith = null } = {}) {
   const sessions = new Map();
   const api = {
     id: "claude", calls: [], sessions,
@@ -31,6 +31,8 @@ function claudeLike({ reject = false } = {}) {
       let id = args.sessionId;
       if (!id) { id = `n${++seq}`; sessions.set(id, { chain: [] }); args.emit({ type: "session", sessionId: id, first: true }); }
       const s = sessions.get(id);
+      // failWith: 巻き戻しを伴うターンが、拒否の形ではない例外で失敗し続ける（実機の拒否の形が想定と違った場合）
+      if (args.rewind && failWith) throw failWith;
       if (args.rewind) {
         const at = s.chain.findIndex(m => m.uuid === args.rewind.drops);
         if (reject || at < 0) throw Object.assign(new Error("Resume rejected by --resume-drops-turn: fake"), { rewindRejected: true });
@@ -234,6 +236,97 @@ for (const how of ["revert", "fork", "fail"]) {
   const again = await backend.rewind("agy-1", { beforeMessageId: "a1" }).catch(e => e);
   assert.match(String(again.message), /自分の発言/, "自分の発言以外は断る");
   await assert.rejects(backend.rewind("agy-1", { beforeMessageId: "nope" }), /見つかりません/);
+}
+
+// ---- 失敗の場面（レビューの指摘の再現）
+const index = path.join(scratch, "conversations.json");
+const blockIndex = async () => { await fs.rename(index, index + ".aside"); await fs.mkdir(index); };
+const unblockIndex = async () => { await fs.rmdir(index); await fs.rename(index + ".aside", index); };
+
+// R1: 拒否の形ではない例外で失敗し続けても、印を残さずホスト管理に落とす（3 回目は印を渡さない）
+{
+  const native = claudeLike({ failWith: new Error("boom: exit code 1") });
+  const backend = wrapBackend(native);
+  const id = "claude-fails";
+  native.sessions.set(id, { chain: [msg("user", "u1", 1), msg("assistant", "a1", 2), msg("user", "u2", 3), msg("assistant", "a2", 4)] });
+  await backend.rewind(id, { beforeMessageId: "u2" });
+  await assert.rejects(backend.runTurn({ sessionId: id, prompt: "1 回目", emit }), /boom/);
+  assert.equal((await store.get(id)).rewind.tries, 1, "失敗した回数を印に数える");
+  await assert.rejects(backend.runTurn({ sessionId: id, prompt: "2 回目", emit }), /boom/);
+  assert.equal((await store.get(id)).rewind.tries, 2);
+  native.calls.length = 0;
+  await backend.runTurn({ sessionId: id, prompt: "3 回目", emit });
+  assert.equal(native.calls.length, 1, "3 回目は巻き戻しを渡さずにホスト管理で走る");
+  assert.equal(native.calls[0].rewind, undefined);
+  assert.equal(native.calls[0].sessionId, null);
+  assert.equal((await store.get(id)).rewind, null, "印を残さない");
+  assert.equal((await conversation(id)).nativeId?.startsWith("n"), true);
+  assert.equal((await backend.getMessages(id)).some(m => m.uuid === "u2" || m.uuid === "a2"), false);
+}
+
+// R2: 検証で断られるときは、何も変えない（rewindPlan は何も書かない。presentNoTime など）
+{
+  const native = claudeLike();
+  const backend = wrapBackend(native);
+  const id = "claude-notime";
+  native.sessions.set(id, { chain: [msg("user", "u1", 1), msg("assistant", "a1", 2), msg("user", "u2", 3), msg("assistant", "a2", 4)] });
+  const planned = await backend.rewindPlan(id, { beforeMessageId: "u2" });
+  assert.deepEqual({ mode: planned.mode, removed: planned.removed }, { mode: "resume", removed: { messages: 2, userMessages: 0, replies: 1 } });
+  assert.equal(planned.since, Date.parse(iso(3)));
+  assert.equal((await store.get(id)).rewind, undefined, "検証だけでは印を置かない");
+  await fs.mkdir(path.join(scratch, "presents"), { recursive: true });
+  await fs.appendFile(path.join(scratch, "presents", `${id}.jsonl`), JSON.stringify({ kind: "text", by: "ai", content: "時刻の無い提示" }) + "\n");
+  await assert.rejects(backend.rewindPlan(id, { beforeMessageId: "u2" }), /時刻/, "AI の提示に時刻が無ければ検証で断る");
+  await assert.rejects(backend.rewind(id, { beforeMessageId: "u2" }), /時刻/);
+  assert.equal((await store.get(id)).rewind, undefined, "断られたら印も置かない");
+  assert.equal(texts(await backend.getMessages(id)), "u1,a1,u2,a2", "履歴は変わらない");
+  assert.equal((await readPresents(id)).length, 1, "提示も切らない");
+}
+
+// M1・M2: 保存の失敗で記録が割れない（メモリは元のまま・印は置かない）
+{
+  const native = claudeLike();
+  const backend = wrapBackend(native);
+  const { createConversation } = await import("../../core/conversations.mjs");
+  const id = await createConversation(native, { title: "T" });
+  const run = prompt => backend.runTurn({ sessionId: id, prompt, emit: () => {} });
+  await run("一つ目"); await run("二つ目"); await run("三つ目");
+  const before = structuredClone(await conversation(id));
+  const second = (await backend.getMessages(id)).filter(m => m.role === "user")[1];
+  await blockIndex();
+  await assert.rejects(backend.rewind(id, { beforeMessageId: second.uuid }));
+  assert.deepEqual((await conversation(id)).messages, before.messages, "巻き戻し（resume）の保存に失敗しても、記録の写しは切れたままにならない");
+  assert.equal((await store.get(id)).rewind ?? null, null, "印も置かない");
+  const first = (await backend.getMessages(id)).find(m => m.role === "user");
+  await assert.rejects(backend.rewind(id, { beforeMessageId: first.uuid }));
+  const kept = await conversation(id);
+  assert.equal(kept.nativeId, before.nativeId, "ホスト管理に落とす保存に失敗しても、メモリの記録は元のまま（ネイティブの id を失わない）");
+  assert.equal(kept.messages.length, before.messages.length);
+  await unblockIndex();
+  assert.equal((await backend.rewind(id, { beforeMessageId: second.uuid })).mode, "resume", "保存できるようになれば巻き戻せる");
+}
+
+// M4: 切り口の直前がツール呼びだけの発言（束ねた先頭の uuid）なら、ホスト管理（中途半端な枝から続けない）
+{
+  const native = claudeLike();
+  const backend = wrapBackend(native);
+  const id = "claude-tool-end";
+  native.sessions.set(id, { chain: [msg("user", "u1", 1), msg("assistant", "a1", 2), msg("user", "u2", 3),
+    { ...msg("assistant", "tools", 4), text: "", toolCalls: [{ id: "c1", name: "Bash", input: {}, result: null }] }, msg("user", "u3", 5), msg("assistant", "a3", 6)] });
+  assert.equal((await backend.rewindPlan(id, { beforeMessageId: "u3" })).mode, "host", "ツール呼びで終わった返答の後ろは Claude の切り口にしない");
+  assert.equal((await backend.rewind(id, { beforeMessageId: "u3" })).mode, "host");
+  assert.deepEqual((await conversation(id)).messages.map(m => m.uuid), ["u1", "a1", "u2", "tools"]);
+}
+
+// M5: 同じ id の発言が複数あるときは、どれか決められないので断る（最初に当たった発言で切らない）
+{
+  const native = claudeLike();
+  const backend = wrapBackend(native);
+  const id = "claude-dup";
+  native.sessions.set(id, { chain: [msg("user", "same", 1), msg("assistant", "a1", 2), msg("user", "same", 3), msg("assistant", "a2", 4)] });
+  await assert.rejects(backend.rewind(id, { beforeMessageId: "same" }), /同じ ID/);
+  assert.equal(texts(await backend.getMessages(id)), "same,a1,same,a2");
+  assert.equal((await store.get(id)).rewind, undefined);
 }
 
 await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});

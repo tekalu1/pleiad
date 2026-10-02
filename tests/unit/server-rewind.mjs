@@ -98,6 +98,43 @@ export default async function(t) {
       t.ok(label("中断の印は残らない"), !restarted.interrupted);
       t.ok(label("止めた時に溜まっていた送信待ちは取り消される"), (await c.cmd("listMessages", { sessionId: id })).every(m => ["sent", "cancelled"].includes(m.status)));
       t.ok(label("送信待ちだった発言は履歴に出ない"), !restarted.messages.some(m => /queued behind/.test(m.text ?? "")));
+
+      if (form === "resumeAt") {
+        // R2: 検証で断られる（AI の提示に時刻が無い）なら、「止めて送り直す」でも走っているターンを止めない・何も変えない
+        const s2 = await c.runTurn({ backend: "fake", cwd: ROOT, prompt: "echo:first" });
+        const sid = s2.sessionId;
+        await c.runTurn({ sessionId: sid, prompt: "echo:second" });
+        const before2 = (await c.cmd("loadSession", { sessionId: sid })).messages;
+        await fs.mkdir(path.join(scratch, "presents"), { recursive: true });
+        await fs.appendFile(path.join(scratch, "presents", `${sid}.jsonl`), JSON.stringify({ kind: "text", by: "ai", content: "時刻の無い提示" }) + "\n");
+        await c.cmd("runTurn", { sessionId: sid, prompt: "slow" });
+        const refusedAt = await c.cmd("sendMessage", { sessionId: sid, messageId: crypto.randomUUID(), prompt: "x",
+          rewind: { beforeMessageId: before2.filter(m => m.role === "user")[1].uuid, stopRunning: true } }).then(() => null, e => e.message);
+        t.ok(label("検証で断られる送り直しは「止めて送り直す」でも走っているターンを止めない"), /時刻/.test(refusedAt ?? "") && (await c.cmd("running")).turns.some(turn => turn.sessionId === sid), String(refusedAt));
+        await c.cmd("abort", { sessionId: sid });
+        await c.waitFor(e => e.type === "turnEnd" && e.sessionId === sid, { from: c.mark() - 1 }).catch(() => {});
+        await c.cmd("abort", { sessionId: sid }).catch(() => {});
+
+        // M6・M7: 切り口より後の「渡さなかった `!` の行」は捨て、文脈量の表示は捨てる
+        const s3 = await c.runTurn({ backend: "fake", cwd: ROOT, prompt: "echo:alpha" });
+        const kid = s3.sessionId;
+        await c.runTurn({ sessionId: kid, prompt: "echo:beta" });
+        await c.cmd("runShell", { sessionId: kid, runId: "shell-rewind-0001", command: "echo held-back", cwd: ROOT });
+        await c.waitFor(e => e.type === "shell.done" && e.runId === "shell-rewind-0001", { from: 0, ms: 20_000 });
+        await c.cmd("skipShell", { sessionId: kid, runId: "shell-rewind-0001", skip: true });
+        await c.runTurn({ sessionId: kid, prompt: "echo:gamma" });
+        const sidecar = async () => JSON.parse(await fs.readFile(path.join(scratch, "sessions.json"), "utf8"))[kid] ?? {};
+        t.ok(label("前提: 渡さなかった ! の行が会話に残り、文脈量を持っている"), (await sidecar()).shellKept?.length === 1 && Boolean((await sidecar()).contextWindow));
+        const betaId = (await c.cmd("loadSession", { sessionId: kid })).messages.filter(m => m.role === "user" && !m.kind)[1].uuid;
+        const keepId = crypto.randomUUID();
+        const keepFrom = c.mark();
+        await c.cmd("sendMessage", { sessionId: kid, messageId: keepId, prompt: "slow", rewind: { beforeMessageId: betaId } });
+        await c.waitFor(e => e.type === "userMessage" && e.messageId === keepId, { from: keepFrom });
+        const after3 = await sidecar();
+        t.ok(label("切り口より後の渡さなかった ! の行は捨てる"), !after3.shellKept?.length, JSON.stringify(after3.shellKept));
+        t.ok(label("古い文脈量の表示は捨てる（新しいターンの値で上書きされるまで古いままにしない）"), !after3.contextWindow, JSON.stringify(after3.contextWindow));
+        await c.cmd("abort", { sessionId: kid });
+      }
     } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }).catch(() => {}); }
   }
 
@@ -136,13 +173,52 @@ export default async function(t) {
         t.ok(label("thread id は変わらない"), sent.rewind.mode === "thread" && sent.rewind.renumbered === false);
       } else {
         const fork = (await calls()).find(x => x.method === "thread/fork");
-        t.ok(label("断られたら thread/fork { beforeTurnId } で別スレッドに差し替える"), Boolean(fork?.beforeTurnId) && names.includes("thread/revert") || fork?.beforeTurnId, names.join());
+        t.ok(label("断られたら thread/fork { beforeTurnId } で別スレッドに差し替える"), Boolean(fork?.beforeTurnId) && names.includes("thread/revert"), names.join());
         t.ok(label("差し替えたことを返す（画面は履歴を読み直す）"), sent.rewind.mode === "thread" && sent.rewind.renumbered === true);
       }
       // ターンの途中に差し込んだ発言・最初の発言はスレッドを切れないので、ホスト管理（引き継ぎ）に落とす
       const firstOut = await c.cmd("sendMessage", { sessionId: id, messageId: crypto.randomUUID(), prompt: "from the very beginning",
         rewind: { beforeMessageId: after.messages[0].uuid } });
       t.ok(label("最初の発言はホスト管理に落とす"), firstOut.rewind.mode === "host");
+    } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }).catch(() => {}); }
+  }
+
+  // M5: item id を使い回すネイティブ（身代わりの Codex は既定でターンごとに同じ id）では、どの発言か決められないので断る。最初に当たった発言で切らない
+  {
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "agent-host-rewind-codex-dup-"));
+    const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: "codex", AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, "tests/lib/fake-codex.mjs")}"` } });
+    const c = await open({ port: server.port, token: server.token, autoAllow: true });
+    try {
+      const first = await c.runTurn({ backend: "codex", cwd: ROOT, prompt: "first dup" });
+      await c.runTurn({ sessionId: first.sessionId, prompt: "second dup" });
+      const before = (await c.cmd("loadSession", { sessionId: first.sessionId })).messages;
+      const users = before.filter(m => m.role === "user");
+      const error = await c.cmd("sendMessage", { sessionId: first.sessionId, messageId: crypto.randomUUID(), prompt: "x", rewind: { beforeMessageId: users[1].uuid } }).then(() => null, e => e.message);
+      t.ok("[codex duplicate ids] 同じ id の発言が複数あるときは、送り直す発言を決められないと断る", users.length === 2 && users[0].uuid === users[1].uuid && /同じ ID/.test(error ?? ""), String(error));
+      t.ok("[codex duplicate ids] 断られた送り直しは履歴を変えない", JSON.stringify((await c.cmd("loadSession", { sessionId: first.sessionId })).messages) === JSON.stringify(before));
+    } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }).catch(() => {}); }
+  }
+
+  // M8: 委譲された作業の会話（子）は、同じ会話では送り直せない（委譲タスクの結果・状態が巻き戻した履歴と食い違う）。分岐して送るだけ
+  {
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "agent-host-rewind-child-"));
+    const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: "fake" } });
+    const c = await open({ port: server.port, token: server.token, autoAllow: true });
+    try {
+      const delegate = "ply:" + JSON.stringify({ name: "ply_delegate", arguments: { kind: "mechanical", backend: "fake", task: "echo:CHILD_RESULT" } });
+      await c.runTurn({ backend: "fake", cwd: ROOT, prompt: delegate }, { ms: 60_000 });
+      let child = null;
+      for (let i = 0; i < 400 && !child; i++) {
+        child = (await c.cmd("agentTasks")).find(row => row.sessionId && row.status === "completed") ?? null;
+        if (!child) await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      const messages = child ? (await c.cmd("loadSession", { sessionId: child.sessionId })).messages : [];
+      const error = child ? await c.cmd("sendMessage", { sessionId: child.sessionId, messageId: crypto.randomUUID(), prompt: "x",
+        rewind: { beforeMessageId: messages.find(m => m.role === "user").uuid } }).then(() => null, e => e.message) : "no child";
+      t.ok("[delegated child] 委譲された作業の会話は同じ会話では送り直せない（分岐して送るだけ）", /委譲された会話/.test(error ?? ""), String(error));
+      t.ok("[delegated child] 断られても子の履歴は変わらない", child && JSON.stringify((await c.cmd("loadSession", { sessionId: child.sessionId })).messages) === JSON.stringify(messages));
+      const branch = child ? await c.cmd("fork", { sessionId: child.sessionId, beforeMessageId: messages.find(m => m.role === "user").uuid }).then(r => r, () => null) : null;
+      t.ok("[delegated child] 分岐して送る（fork の beforeMessageId）は使える", Boolean(branch?.sessionId));
     } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }).catch(() => {}); }
   }
 }

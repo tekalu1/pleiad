@@ -11,13 +11,16 @@ const ai = (uuid, extra = {}) => ({ role: "assistant", uuid, text: uuid, at: "20
 export default async function(t) {
   // ---- 消えるものの見立て
   const history = [user("u1"), ai("a1"), user("u2"), ai("a2"), user("u3"), ai("a3")];
-  t.ok("後ろに自分の発言が 2 件・返答がある", JSON.stringify(tailInfo(history, 2)) === JSON.stringify({ saved: 3, users: 1, files: false, running: false, any: true }));
+  t.ok("後ろに自分の発言が 2 件・返答がある", JSON.stringify(tailInfo(history, 2)) === JSON.stringify({ saved: 3, users: 1, files: false, running: false, forkOnly: false, any: true }));
   t.ok("後ろに自分の発言が 1 件（2 件目の発言の後ろ）", tailInfo(history, 0).users === 2 && tailInfo(history, 0).saved === 5);
   t.ok("後ろが返答だけでも「消えるものがある」", tailInfo(history, 4).any === true && tailInfo(history, 4).users === 0 && tailInfo(history, 4).saved === 1);
   t.ok("後ろに何も無ければ帯は要らない", tailInfo(history.slice(0, 5), 4).any === false);
   t.ok("走っている返答があれば、保存済みの後ろが無くても帯は要る", tailInfo(history.slice(0, 5), 4, { running: true }).any === true && tailInfo(history.slice(0, 5), 4, { running: true }).running === true);
   t.ok("スラッシュコマンド・! の行・システム側の行は発言に数えない",
     tailInfo([user("u1"), user("c1", { kind: "shell" }), user("c2", { kind: "command" }), ai("a1")], 0).users === 0);
+  t.ok("委譲の完了通知として送った発言（internalTaskNotice）も人の発言に数えない（後ろが通知だけなら「返答」の文）",
+    tailInfo([user("u1"), ai("a1"), user("n1", { internalTaskNotice: true })], 0).users === 0);
+  t.ok("委譲された作業の会話は forkOnly（同じ会話では送り直せない）", tailInfo(history, 2, { forkOnly: true }).forkOnly === true && tailInfo(history, 2).forkOnly === false);
   t.ok("ファイルを変えた返答が消える範囲にあるときだけ files",
     tailInfo([user("u1"), ai("a1", { toolCalls: [{ id: "x", name: "Edit", input: { file_path: "README.md", old_string: "a", new_string: "b" } }] })], 0).files === true
     && tailInfo([user("u1"), ai("a1", { toolCalls: [{ id: "x", name: "Read", input: { file_path: "README.md" } }] })], 0).files === false);

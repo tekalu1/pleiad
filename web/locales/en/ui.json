@@ -1569,7 +1569,9 @@
       "doneReplies": "Removed the reply and resent",
       "done": "Resent",
       "doneBranch": "Sent as a branch",
-      "failed": "Couldn't resend: {{error}}"
+      "failed": "Couldn't resend: {{error}}",
+      "failedCopied": "Couldn't resend: {{error}} (The text you tried to send was copied to the clipboard.)",
+      "delegated": "This is a delegated task's conversation, so it can't be resent in place. Send as a branch to keep what follows and send in a separate conversation."
     },
     "attachList": {
       "count_one": "{{count}} attachment",

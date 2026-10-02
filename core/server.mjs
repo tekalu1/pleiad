@@ -1984,21 +1984,20 @@ async function rewindConversation({ sessionId, beforeMessageId, stopRunning = fa
     await settingsWrites.get(sessionId);
     const backend = refuseRetired(await pickBackend(sessionId));
     if (!backend.rewind) throw new Error(t('session.cannotRewind'));
-    // 画面が見ている履歴（loadSession と同じ整え方）で、やり直す発言の時刻を引く。委譲の子を取り消す境目に使う
-    const { messages } = await history.loadTranscript(sessionId, backend);
-    const target = messages.find(m => m.uuid === beforeMessageId);
-    if (!target) throw new Error(t('conversations.rewindMessageNotFound'));
-    const since = Date.parse(target.at ?? '');
+    // 委譲された会話（子）は、同じ会話では送り直せない。走らせた委譲タスクの結果・状態が、巻き戻した履歴と食い違う（画面は分岐して送るだけを出す）
+    if ((await store.get(sessionId)).delegation) throw new Error(t('rewind.delegated'));
+    // 検証は、走っているターンを止める・委譲の子を取り消すより前に済ませる（止めてから断られると戻せない）。時刻は委譲の子を取り消す境目に使う
+    const { since } = await backend.rewindPlan(sessionId, { beforeMessageId });
     if (running) {
       if (!stopRunning) throw Object.assign(new Error(t('rewind.running')), { code: 'SESSION_RUNNING' });
       await stopTurnForRewind(sessionId, running);
     }
-    // 切り口より後に生まれた委譲の子は取り消す（完了通知も届けない）。子の会話そのものは一覧に独立の会話として残る
+    const result = await backend.rewind(sessionId, { beforeMessageId });
+    // 巻き戻せたあとで、切り口より後に生まれた委譲の子を取り消す（完了通知も届けない）。子の会話そのものは一覧に独立の会話として残る
     if (Number.isFinite(since)) await agentTasks.cancelOwner(sessionId, { since });
     // ターンの外に残っている裏の作業（Codex の端末など）も止める
     const outside = runtime.background.get(sessionId);
     for (const x of outside?.tasks ?? []) await getBackend(outside.backend)?.stopBackground?.(sessionId, x.id).catch(() => {});
-    const result = await backend.rewind(sessionId, { beforeMessageId });
     // 送信待ちは、どれも切り口より後に送ったもの（送り終えたものは履歴にいる）。巻き戻した先では意味を失うので取り消す
     for (const m of await outbox.list(sessionId)) {
       if (!['sent', 'cancelled'].includes(m.status)) await outbox.action(sessionId, m.id, 'cancel').catch(() => {});
@@ -2008,9 +2007,15 @@ async function rewindConversation({ sessionId, beforeMessageId, stopRunning = fa
     // 中断した位置・止めたものは、捨てた範囲の出来事
     await store.setMeta(sessionId, { interrupted: null });
     await store.clearStops(sessionId);
-    if (Number.isFinite(since) && entry.compactions?.some(c => Number(c.at) >= since)) {
-      await store.setSessionData(sessionId, 'compactions', entry.compactions.filter(c => !(Number(c.at) >= since)));
+    // 切り口より後の記録（圧縮・渡さなかった `!` の行・hooks の発火）は捨てる。渡していない `!` の結果（shellPending）は次の発言と一緒に渡るので残す
+    if (Number.isFinite(since)) {
+      const time = at => (typeof at === 'number' ? at : Date.parse(at ?? ''));
+      for (const [field, list, at] of [['compactions', entry.compactions, c => Number(c.at)], ['shellKept', entry.shellKept, e => time(e.at)], ['hookRuns', entry.hookRuns, h => Number(h.at)]]) {
+        if (list?.some(x => at(x) >= since)) await store.setSessionData(sessionId, field, list.filter(x => !(at(x) >= since)));
+      }
     }
+    // 文脈量の表示は、巻き戻す前の履歴の量。次のターンの値で上書きされるまで古いままにしない
+    await store.setSessionData(sessionId, 'contextWindow', null);
     // 捨てたターンの「未読の完了」の点は残さない
     if (Number.isFinite(entry.completedAt)) await store.markRead([[sessionId, entry.completedAt]]).catch(() => []);
     emitGlobal({ type: 'rewind', sessionId, renumbered: Boolean(result.renumbered), removed: result.removed });

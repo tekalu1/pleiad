@@ -736,12 +736,12 @@ async function handle(method, params) {
     case "thread/revert": {
       const t = threads.get(params?.threadId);
       if (!t) throw new Error(`知らない threadId: ${params?.threadId}`);
+      record({ method, threadId: t.id, beforeTurnId: params?.beforeTurnId ?? null, ...(LEGACY ? { refused: true } : {}) });
       if (LEGACY) throw new RpcError("thread/revert only supports paginated threads", -32600);
       const at = t.turns.findIndex((turn) => turn.id === params?.beforeTurnId);
       if (at < 0) throw new RpcError(`turn not found: ${params?.beforeTurnId}`, -32600);
       t.turns = t.turns.slice(0, at);
       t.updatedAt = secs();
-      record({ method, threadId: t.id, beforeTurnId: params.beforeTurnId });
       notify("thread/reverted", { threadId: t.id });
       return {};
     }

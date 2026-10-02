@@ -1914,7 +1914,9 @@ export const backend = {
   async rewind(threadId, { beforeMessageId } = {}) {
     if (!validId(threadId)) throw new Error(t("codex.errors.noThreadId", { method: "thread/revert" }));
     const read = await nativeRpc.request("thread/read", { threadId, includeTurns: true }, 30_000);
-    const turn = (read?.thread?.turns ?? []).find(x => (x.items ?? []).some(item => item?.type === "userMessage" && item.id === beforeMessageId));
+    // item id を使い回すネイティブでは、最初に当たったターンで切ると残すべき履歴まで消える。当たるのが 1 つのターンだけのときだけ進む
+    const hits = (read?.thread?.turns ?? []).filter(x => (x.items ?? []).some(item => item?.type === "userMessage" && item.id === beforeMessageId));
+    const turn = hits.length === 1 ? hits[0] : null;
     if (!turn?.id) throw new Error(t("codex.errors.rewindTurnNotFound"));
     if (turn.items[0]?.id !== beforeMessageId) throw new Error(t("codex.errors.rewindMidTurn"));
     // この app-server に読み込まれていなければ読み込み、終わったら外す（次のターンが自分の設定で読み込めるように。shell と同じ）

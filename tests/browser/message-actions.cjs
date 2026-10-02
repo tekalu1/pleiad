@@ -14,6 +14,27 @@ async page => {
   const check = (ok, label) => { if (!ok) throw Error(label); results.push(label); };
   // 発言の操作は ⋯ のメニュー（右クリックと同じ）。項目は名前で引く（「再送信」が「編集して再送信」に当たらないよう exact）
   const menu = async (m, name) => { await m.hover(); await m.locator('.who-more').click(); await page.getByRole('menuitem', { name, exact: true }).click(); };
+  // 巻き戻しは済んだのに応答が失敗で返る（接続断など）場面を作る。failNextRewind を立てると、次の rewind 付き sendMessage の応答を失敗に差し替える
+  let failNextRewind = false;
+  const rewindIds = new Set();
+  await page.routeWebSocket(/\/ws/, ws => {
+    const server = ws.connectToServer();
+    ws.onMessage(raw => {
+      try { const m = JSON.parse(raw); if (m.command === 'sendMessage' && m.args?.rewind) rewindIds.add(m.id); } catch {}
+      server.send(raw);
+    });
+    server.onMessage(raw => {
+      try {
+        const m = JSON.parse(raw);
+        if (m.kind === 'response' && rewindIds.has(m.id) && failNextRewind) {
+          failNextRewind = false;
+          ws.send(JSON.stringify({ kind: 'response', id: m.id, ok: false, error: '接続が途中で切れました（テスト）' }));
+          return;
+        }
+      } catch {}
+      ws.send(raw);
+    });
+  });
   await page.reload();
   await page.locator('#prompt:not([aria-disabled="true"])').waitFor();
   await page.evaluate(async () => {
@@ -145,6 +166,7 @@ async page => {
   check((await band.innerText()).includes('この後の返答は、送り直すと消え、分岐して送ると残ります。'), '後ろが返答だけのときは「この後の返答は…」');
   check(await page.evaluate(() => document.activeElement?.classList.contains('rb-send')), '再送信で帯が出たらフォーカスは［送り直す］');
   check(await page.locator('.message-editor').count() === 0, '再送信は編集欄を出さない（帯だけ）');
+  await page.waitForTimeout(300);
   await shot('resend-1280');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => !document.querySelector('.resend-band'));
@@ -173,13 +195,31 @@ async page => {
   check(await current() === source && fixed.messages[4].text === 'echo:止めた発言を直した', '後ろが無い発言は帯なしで同じ会話のまま送り直す');
 
   // ---- 実行中: 帯に「止まります」を出し、主は［止めて送り直す］。止めてから巻き戻して送る
-  await page.locator('#prompt').fill('slow'); await page.locator('#send').click();
+  await page.locator('#prompt').fill('steps:{"steps":[{"text":"処理を始めます"},{"tool":"Read","input":{"file_path":"a.md"},"result":"ok","ms":2500},{"newMessage":true},{"text":"読み終えました。続きの返答です"}]}');
+  await page.locator('#send').click();
   await page.waitForFunction(() => document.querySelector('#abort') && !document.querySelector('#abort').hidden);
   await menu(page.locator('.m.user').nth(1), '再送信');
   await band.waitFor();
+  const rowsAtOpen = await page.locator('#thread > .mw').count();
   check((await band.innerText()).includes('実行中の返答は、送り直すと止まります。分岐して送ると、元の会話で続きます。'), '実行中は帯に止まることを書く');
   check(await band.getByRole('button', { name: '止めて送り直す', exact: false }).count() === 1, '主のボタンは［止めて送り直す］');
-  await shot('running-1280');
+  // 帯を開いたあとに、走っている返答が足す行にも消える範囲の薄さが付く
+  await page.waitForFunction(n => document.querySelectorAll('#thread > .mw').length > n, rowsAtOpen, { timeout: 8000 });
+  await page.waitForTimeout(400);
+  check(await page.evaluate(() => {
+    const host = document.querySelector('.resend-band').closest('.mw');
+    const after = [];
+    for (let n = host.nextElementSibling; n; n = n.nextElementSibling) if (!n.classList.contains('spine')) after.push(n);
+    return after.length > 0 && after.every(n => n.classList.contains('doomed'));
+  }), '実行中に後から増えた行にも「消える範囲」の薄さが付く');
+  // 帯から走っている返答の増えた行まで 1 枚に収めるため、縦を伸ばして撮る
+  if (!SHOTS.startsWith('C:/path/to/')) {
+    await page.setViewportSize({ width: 1280, height: 1500 });
+    await page.locator('.resend-band').evaluate(el => el.scrollIntoView({ block: 'start' }));
+    await page.waitForTimeout(400);
+    await shot('running-1280');
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
   await band.locator('.rb-send').click();
   await page.waitForFunction(() => !document.querySelector('.resend-band'));
   await ready();
@@ -205,6 +245,31 @@ async page => {
   await ready();
   const grand = await current();
   check((await history(grand, d => d.messages.length === 4 && d.messages.at(-1)?.role === 'assistant')).messages[2].text.startsWith('echo:近道で分岐'), 'Ctrl+Shift+Enter で分岐して送る');
+
+  // ---- 帯を開いたあとに増える行にも、消える範囲の薄さが付く（別の画面・別の送信が足す行）
+  await menu(page.locator('.m.user').nth(1), '編集して再送信'); await band.waitFor();
+  await page.locator('#prompt').fill('echo:帯を開いたあとに増える行'); await page.locator('#send').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.m.user > .body')].some(b => b.textContent.includes('帯を開いたあとに増える行')));
+  await page.waitForTimeout(400);
+  check(await page.evaluate(() => {
+    const host = document.querySelector('.resend-band').closest('.mw');
+    const after = [];
+    for (let n = host.nextElementSibling; n; n = n.nextElementSibling) if (!n.classList.contains('spine')) after.push(n);
+    return after.length > 0 && after.every(n => n.classList.contains('doomed'));
+  }), '帯を開いたあとに増えた行にも薄さが付く');
+  await editor.press('Escape');
+  await ready();
+
+  // ---- 巻き戻しは済んだのに応答が失敗で返る: 本文を失わず、巻き戻さずに同じ messageId で送り直す
+  await menu(page.locator('.m.user').nth(1), '編集して再送信'); await band.waitFor();
+  await editor.fill('echo:応答が失敗しても届く本文');
+  failNextRewind = true;
+  await editor.press('Control+Enter');
+  await page.waitForFunction(() => [...document.querySelectorAll('.m.user > .body')].some(b => b.textContent.includes('応答が失敗しても届く本文')) && !document.querySelector('.resend-band'));
+  await ready();
+  const recovered = await history(grand, d => d.messages.at(-1)?.role === 'assistant' && d.messages.some(m => m.text?.startsWith('echo:応答が失敗しても届く本文')));
+  check(await current() === grand && recovered.messages.length === 4 && recovered.messages[2].text.startsWith('echo:応答が失敗しても届く本文'), '巻き戻しは済んだのに応答が失敗しても、本文は失われず同じ会話で送られる');
+  check(failNextRewind === false && (await page.locator('#settingsError').textContent()) === '', '失敗の表示は残らない（送り直せたので）');
 
   // ---- 送れなかったら元の画面に戻して理由を出す
   await menu(page.locator('.m.user').nth(1), '編集して再送信'); await band.waitFor();

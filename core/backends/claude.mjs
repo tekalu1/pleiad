@@ -941,6 +941,8 @@ export const backend = {
     // （付けると、別タブが新規の id を待っている最中に再開ターンの id を掴んでしまう）。
     let toldModel = false;
     let heldResult = null;
+    // CLI から最初のメッセージが届いたか。巻き戻しを伴うターンが、これより前に失敗したら（catch の rewindRejected）
+    let sawMessage = false;
     try {
       if (contextRuntime) {
         await q.initializationResult();
@@ -959,6 +961,7 @@ export const backend = {
       }
       openSteer();
       for await (const message of q) {
+        sawMessage = true;
         compactDiagnostic?.observe(message);
         const model = message.type === "system" && message.subtype === "init" && message.model
           ? String(message.model) : null;
@@ -1007,8 +1010,11 @@ export const backend = {
       if (stop) emit({ type: "turnResult", outcome: "aborted" });
       else if (heldResult) emit(heldResult);
     } catch (err) {
-      // 巻き戻しの拒否（切り口が合わない）は失敗として見せず、呼び出し側（conversations.mjs）がホスト管理に落として送り直す。何も渡る前の拒否で、繰り返し再試行しない
-      if (rewind && /Resume rejected by --resume-drops-turn/.test(String(err?.message ?? ''))) throw Object.assign(new Error(String(err.message)), { rewindRejected: true, undelivered: true });
+      // 巻き戻しを伴うターンが、CLI から何も届かないうちに失敗した（resume の拒否。`Resume rejected by --resume-drops-turn:` の文面は SDK の例外に載るとは限らないので、
+      // 文面には頼らない）か、拒否の文そのものが来たときは、失敗として見せず呼び出し側（conversations.mjs）がホスト管理に落として 1 度だけ送り直す。繰り返し再試行しない
+      if (rewind && sessionId && !stop && !signal?.signal?.aborted && (!sawMessage || /Resume rejected by --resume-drops-turn/.test(String(err?.message ?? '')))) {
+        throw Object.assign(new Error(String(err?.message ?? err)), { rewindRejected: true, undelivered: true });
+      }
       // 中断は「失敗」ではない。呼び出し側（server）は finally で片付けるだけなので、
       // 何が起きたかは turnResult で web に伝える。
       if (stop || signal?.signal?.aborted) {

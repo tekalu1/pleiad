@@ -407,6 +407,40 @@ export function wrapBackend(native) {
     return { sessionId: child, parent, persisted: true };
   };
   /**
+   * 巻き戻せるかの検証と、切り口・方式の決定（何も変えない）。wrapped.rewind がこれを通ってから書き換える。
+   * server は、走っているターンを止める・委譲の子を取り消すより前に wrapped.rewindPlan で断られるかを確かめる（止めてから断られると戻せない）。
+   * 断る: 起点が見つからない・同じ id の発言が複数ある（どれか決められない）・自分の発言でない・AI の提示に時刻が無く境界を決められない
+   */
+  async function planRewind(id, beforeMessageId) {
+    if (typeof beforeMessageId !== "string" || !beforeMessageId) throw new Error(t("conversations.rewindMessageNotFound"));
+    const existing = await conversation(id);
+    if (existing && existing.backend !== native.id) throw new Error(t("conversations.backendMismatch"));
+    const full = await wrapped.getMessages(id, { fullResults: true });
+    const at = full.findIndex(m => m.uuid === beforeMessageId);
+    if (at < 0) throw new Error(t("conversations.rewindMessageNotFound"));
+    // ネイティブが item id を使い回すと、どの発言か決められない（最初に当たった発言で切ると、残すべき履歴まで消える）
+    if (full.some((m, i) => i !== at && m.uuid === beforeMessageId)) throw new Error(t("conversations.rewindAmbiguous"));
+    const target = full[at];
+    if (target.role !== "user" || target.kind) throw new Error(t("conversations.rewindNotUser"));
+    const presents = await wrapped.getPresents(id);
+    const keep = keptPresentIndexes(full, presents, at - 1);
+    const nativeId = existing ? existing.nativeId : id;
+    const rawOf = uuid => (existing ? nativeUuid(uuid, native.id, nativeId) : uuid);
+    const rawTarget = rawOf(target.uuid), rawBefore = at > 0 ? rawOf(full[at - 1].uuid) : null;
+    const how = native.capabilities?.rewind;
+    // Claude の切り口は「残す最後の発言」の uuid。ツール呼びだけの発言は連続するエントリを 1 つに束ねて先頭の uuid を持つので、
+    // その後ろが落ちて中途半端な枝から続く。本文のある返答が切り口のときだけ使う（ほかはホスト管理）
+    const before = at > 0 ? full[at - 1] : null;
+    const cutable = how !== "resumeAt" || Boolean(before?.role === "assistant" && String(before.text ?? "").trim());
+    const inSegment = Boolean(nativeId) && at > (existing ? existing.base : 0) && Boolean(rawTarget) && Boolean(rawBefore) && cutable;
+    return { existing, full, at, target, keep, nativeId, rawTarget, rawBefore, how, inSegment, removed: removedSummary(full, at), since: Date.parse(target.at ?? "") };
+  }
+  wrapped.rewindPlan = async (id, { beforeMessageId } = {}) => {
+    const { removed, since, inSegment, how } = await planRewind(id, beforeMessageId);
+    return { removed, since, mode: inSegment ? (how === "thread" ? "thread" : "resume") : "host" };
+  };
+
+  /**
    * 会話を、ある発言（beforeMessageId。自分の発言）の手前まで巻き戻す。会話の id は変わらない（ADR 0091）。
    * 方式はバックエンドで違う（capabilities.rewind）:
    *   resumeAt … Claude。次のターンが resume + resumeSessionAt + resumeDropsTurn で葉を付け替える。それまでの間は保留の印（sidecar の rewind）で
@@ -414,28 +448,16 @@ export function wrapBackend(native) {
    *   thread   … Codex。今すぐスレッドの履歴を置き換える（thread/revert。legacy のスレッドは thread/fork { beforeTurnId } で別スレッドに差し替える）
    *   無し     … Antigravity。Pleiad の履歴を切り、次のターンで引き継ぐ（ホスト管理）
    * 最初の発言・今のネイティブの区間の外の発言・ネイティブが断ったときも、ホスト管理（nativeId = null + 引き継ぎ）に落とす。
+   * 書き込みは、落ちても残すほうに倒れる順（記録の写しを先に切って保存 → 提示 → 保留の印）。途中で落ちたら記録を元に戻して投げる。
    * 返り値 { mode: "resume" | "thread" | "host", renumbered, removed: { messages, userMessages, replies } }。
    * renumbered は残る発言の uuid が変わったか（Codex が別スレッドに差し替えたとき。画面は読み直す）
    */
   wrapped.rewind = async (id, { beforeMessageId } = {}) => {
-    if (typeof beforeMessageId !== "string" || !beforeMessageId) throw new Error(t("conversations.rewindMessageNotFound"));
-    const existing = await conversation(id);
-    if (existing && existing.backend !== native.id) throw new Error(t("conversations.backendMismatch"));
-    const full = await wrapped.getMessages(id, { fullResults: true });
-    const at = full.findIndex(m => m.uuid === beforeMessageId);
-    if (at < 0) throw new Error(t("conversations.rewindMessageNotFound"));
-    const target = full[at];
-    if (target.role !== "user" || target.kind) throw new Error(t("conversations.rewindNotUser"));
-    const presents = await wrapped.getPresents(id);
-    // 提示の時刻が無く境界を決められないときは、何も変える前に断る
-    const keep = keptPresentIndexes(full, presents, at - 1);
-    const removed = removedSummary(full, at);
-    const nativeId = existing ? existing.nativeId : id;
-    const segmentStart = existing ? existing.base : 0;
-    const rawOf = uuid => (existing ? nativeUuid(uuid, native.id, nativeId) : uuid);
-    const rawTarget = rawOf(target.uuid), rawBefore = at > 0 ? rawOf(full[at - 1].uuid) : null;
-    const how = native.capabilities?.rewind;
-    const inSegment = Boolean(nativeId) && at > segmentStart && Boolean(rawTarget) && Boolean(rawBefore);
+    const { existing, full, at, keep, nativeId, rawTarget, rawBefore, how, inSegment, removed } = await planRewind(id, beforeMessageId);
+    // 提示（記録に写した分と、sidecar の JSONL の分）。記録の分が先頭、続けて JSONL の並び（getPresents と同じ）
+    const copied = existing?.presents?.length ?? 0;
+    const keptCopied = (existing?.presents ?? []).filter((_, i) => keep.has(i));
+    const keepFile = () => keepPresents(id, new Set([...keep].filter(i => i >= copied).map(i => i - copied)));
     let mode = null, renumbered = false, changedNativeId = null;
     if (inSegment && how === "thread") {
       try {
@@ -445,18 +467,17 @@ export function wrapBackend(native) {
       } catch (error) {
         console.error(`  rewind: ${native.id} のスレッドを巻き戻せないのでホスト管理に落とす:`, String(error?.message ?? error).slice(0, 200));
       }
-    } else if (inSegment && how === "resumeAt") {
-      await store.setSessionData(id, "rewind", { backend: native.id, nativeId, at: rawBefore, drops: rawTarget });
-      mode = "resume";
+    } else if (inSegment && how === "resumeAt") mode = "resume";
+    if (!mode) {
+      await becomeHostManaged(id, existing, full.slice(0, at), keptCopied, { firstMessage: at === 0 });
+      await keepFile();
+      return { mode: "host", renumbered, removed };
     }
-    // 提示（記録に写した分と、sidecar の JSONL の分）を切る。記録の分が先頭、続けて JSONL の並び（getPresents と同じ）
-    const copied = existing?.presents?.length ?? 0;
-    await keepPresents(id, new Set([...keep].filter(i => i >= copied).map(i => i - copied)));
-    const keptCopied = (existing?.presents ?? []).filter((_, i) => keep.has(i));
-    if (mode === "resume" || mode === "thread") {
+    // ネイティブ（Codex）はもう切れている。記録は切った形をメモリに持ち、保存に失敗しても次の保存が直す（_dirty）
+    const snapshot = existing && mode === "resume" ? structuredClone({ messages: existing.messages, presents: existing.presents, nativeId: existing.nativeId, base: existing.base, segments: existing.segments }) : null;
+    try {
       if (existing) {
-        const cut = existing.messages.findIndex(m => m.uuid === beforeMessageId);
-        existing.messages = existing.messages.slice(0, cut);
+        existing.messages = existing.messages.slice(0, existing.messages.findIndex(m => m.uuid === beforeMessageId));
         existing.presents = keptCopied;
         if (changedNativeId) {
           // 差し替えた先のスレッドは、残す分の履歴を丸ごと持つ。今の区間の写しは捨て、読むたびに差し替え先から取り込む
@@ -472,9 +493,15 @@ export function wrapBackend(native) {
           { backend: native.id, nativeId: id }, { backend: native.id, nativeId: changedNativeId }], info, _dirty: true };
         try { await save(); } catch (e) { delete records[id]; throw e; }
       }
-    } else {
-      await becomeHostManaged(id, existing, full.slice(0, at), keptCopied, { firstMessage: at === 0 });
-      mode = "host";
+      await keepFile();
+      // 保留の印は最後（先に置くと、記録の写しが切れていない間は捨てた発言が表示に残って次のターンの後ろへ足される）
+      if (mode === "resume") await store.setSessionData(id, "rewind", { backend: native.id, nativeId, at: rawBefore, drops: rawTarget });
+    } catch (error) {
+      if (snapshot) {
+        Object.assign(existing, snapshot, { _dirty: true });
+        await save().catch(() => {});
+      }
+      throw error;
     }
     return { mode, renumbered, removed };
   };
@@ -493,7 +520,8 @@ export function wrapBackend(native) {
   /**
    * ホスト管理に変える: 履歴を切って、nativeId = null にする（次のターンが引き継ぎで新しいネイティブの会話を起こす）。
    * 会話の id は変えない。ネイティブだけだった会話は、同じ id の記録を作る（switchBackend と同じ。元のネイティブの id は一覧から隠れる）。
-   * 巻き戻しの拒否で落ちてきた会話（resumeDropsTurn）は、すでに切ってある履歴のまま呼ぶ
+   * 巻き戻しの拒否・失敗で落ちてきた会話（resumeDropsTurn）は、すでに切ってある履歴のまま呼ぶ。
+   * 保存に失敗したら、メモリの記録は元のまま（作り替えは複製の上で行う）
    */
   async function becomeHostManaged(id, existing, messages, presents, { firstMessage = false } = {}) {
     const meta = await store.get(id);
@@ -501,7 +529,7 @@ export function wrapBackend(native) {
     const humanTitle = (meta.history ?? []).some(h => h.field === "title" && h.by === "human");
     const titleReset = firstMessage && !humanTitle;
     const nativeId = existing ? existing.nativeId : id;
-    const entry = existing ?? { backend: native.id, segments: [{ backend: native.id, nativeId: id }], info: await rewoundInfo(id, titleReset) };
+    const entry = existing ? structuredClone(existing) : { backend: native.id, segments: [{ backend: native.id, nativeId: id }], info: await rewoundInfo(id, titleReset) };
     entry.messages = structuredClone(messages);
     entry.presents = structuredClone(presents);
     entry.nativeId = null;
@@ -515,8 +543,8 @@ export function wrapBackend(native) {
     // 生きているネイティブのプロセス（antigravity は 1 会話 1 プロセスを生かしておく）は使わない
     if (nativeId) await Promise.resolve(native.releaseConversation?.(nativeId)).catch(() => {});
   }
-  // 巻き戻した次のターン。resumeDropsTurn が拒否したら（切り口が合わない）、ホスト管理に落として一度だけやり直す。
-  // 拒否は繰り返し再試行しない（SDK の注意）。拒否は何も渡る前に起きるので、やり直しても二重に送らない
+  // 巻き戻した次のターン。resumeDropsTurn が拒否したら（切り口が合わない。拒否の文面には依らず、バックエンドが rewindRejected を付けたもの）、
+  // ホスト管理に落として一度だけやり直す。拒否は繰り返し再試行しない（SDK の注意）。拒否はプロンプトを渡す前に起きるので、やり直しても二重に送らない
   wrapped.runTurn = async (args) => {
     try { return await runOnce(args); }
     catch (error) {
@@ -531,6 +559,9 @@ export function wrapBackend(native) {
     const id = args.sessionId;
     const r = id && await conversation(id);
     const mark = id && native.capabilities?.rewind === "resumeAt" ? await liveRewindMark(id, r ? r.nativeId : id) : null;
+    // 同じ印で何度も失敗する（拒否の形が想定と違った）ときは、無限に残さずホスト管理に落とす（3 回目は渡さない）
+    if (mark && (mark.tries ?? 0) >= 2) throw Object.assign(new Error("rewind kept failing"), { rewindRejected: true });
+    if (mark) await store.setSessionData(id, "rewind", { ...mark, tries: (mark.tries ?? 0) + 1 });
     const rewind = mark ? { at: mark.at, drops: mark.drops } : undefined;
     if (!r) return native.runTurn(rewind ? { ...args, rewind } : args);
     if (r.backend !== native.id) throw new Error(t("conversations.backendMismatch"));

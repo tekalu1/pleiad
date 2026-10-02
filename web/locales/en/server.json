@@ -158,7 +158,8 @@
   "rewind": {
     "running": "A reply is running. Stop it before resending.",
     "stopTimeout": "The running reply did not stop in time. Wait a moment and try again.",
-    "invalid": "The message to resend is not specified correctly."
+    "invalid": "The message to resend is not specified correctly.",
+    "delegated": "A delegated conversation cannot be resent in place. Send as a branch instead."
   },
   "delegation": {
     "taskNotFound": "Pleiad task not found."
@@ -810,6 +811,7 @@
     "forkMessageNotFound": "The message to branch from was not found.",
     "rewindMessageNotFound": "The message to resend was not found.",
     "rewindNotUser": "Only your own messages can be resent.",
+    "rewindAmbiguous": "More than one message has the same ID, so the message to resend cannot be decided. Send as a branch instead.",
     "presentNoTime": "Cannot determine the branch point because the presented output has no timestamp. Branch from the end.",
     "toolRunning": "A tool is still running in the selected range. Branch from a completed message.",
     "backendMismatch": "The conversation's backend does not match.",
