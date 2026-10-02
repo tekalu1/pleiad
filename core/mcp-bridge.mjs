@@ -3,7 +3,8 @@
 //
 //   createMcpBridge({ path, serverName, instructions?, tools, call, maxBody? })
 //     tools(locale, binding)               tools/list の中身（会話の言語で）
-//     call(binding, name, args, { locale }) ツールの本体。文字列か { text, isError } を返す（投げれば isError の文になる）
+//     call(binding, name, args, { locale, signal }) ツールの本体。文字列か { text, isError } を返す（投げれば isError の文になる）。
+//                                          signal は呼び出した側が切断したら中断される（承認を待つ呼び出しが取り下げるのに使う）
 //     instructions(locale)                 initialize の instructions。無ければ返さない（指示を別の経路で渡す会話の二重を避ける）
 //   bridge.open({ origin, locale, ...bound }) → { url, headers, token, close }   bound は call と tools に渡る束縛（owner など）
 //   bridge.lookup(token)                 そのトークンの束縛（無ければ undefined）。同じトークンで CLI（/api/ops）を束縛するのに使う
@@ -44,7 +45,10 @@ export function createMcpBridge({ path, serverName, version = '1.0.0', instructi
         const name = m.params?.name;
         const args = m.params?.arguments ?? {};
         if (typeof name !== 'string' || !args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Invalid tool call');
-        const out = await call(binding, name, args, { locale });
+        // 返す前に呼び出した側がつながりを切ったら（クライアントの時間切れ・プロセスの終了）、待っている承認などを取り下げられるようにする
+        const gone = new AbortController();
+        res.on('close', () => { if (!res.writableFinished) gone.abort(); });
+        const out = await call(binding, name, args, { locale, signal: gone.signal });
         const { text, isError = false } = typeof out === 'string' ? { text: out } : out;
         result = { content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) };
       } catch (e) { result = { isError: true, content: [{ type: 'text', text: String(e?.message ?? e) }] }; }

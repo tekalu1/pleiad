@@ -24,7 +24,7 @@ const SNAPSHOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '
 
 // T4: ply_control が毎ターン文脈に載せる文（指示 + tools/list。直に出すツール・list_ops・call_op の定義）の上限。ja・en それぞれ。上限を変えるのは ADR の範囲（docs/design.md「操作の一覧」）
 const CONTROL_TOKEN_LIMIT = 1800;
-const ERROR_CODES = ['NOT_FOUND', 'HOST_SCREEN_ONLY', 'INVALID', 'READ_ONLY_MODE', 'NEEDS_UI', 'NEEDS_APPROVAL', 'INVALID_RISK', 'INVALID_PRINCIPAL', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND', 'sessionRequired', 'badCursor'];
+const ERROR_CODES = ['NOT_FOUND', 'HOST_SCREEN_ONLY', 'INVALID', 'READ_ONLY_MODE', 'NEEDS_UI', 'NEEDS_APPROVAL', 'INVALID_RISK', 'INVALID_PRINCIPAL', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND', 'SETTING_READ_ONLY', 'DENIED', 'APPROVAL_TIMEOUT', 'APPROVAL_ABORTED', 'STALE', 'sessionRequired', 'badCursor'];
 const CONTROL_KEYS = ['instructions', 'listOps', 'listOpsId', 'callOp', 'callOpOp', 'callOpArgs'];
 
 const hash = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 12);
@@ -42,7 +42,13 @@ export function snapshotOf() {
       id: op.id, risk: op.risk, riskOf: Boolean(op.riskOf), scope: op.scope, modeGate: op.modeGate, hostScreenOnly: op.hostScreenOnly,
       surfaces: op.surfaces, legacyCommand: op.legacyCommand ?? null, input: hash(inputJsonSchema(op)),
     })),
-    settings: [...registry.settings].sort((a, b) => a.key.localeCompare(b.key)).map((s) => ({ key: s.key, risk: s.risk, riskOf: Boolean(s.riskOf), prefKeys: s.prefKeys })),
+    settings: [...registry.settings].sort((a, b) => a.key.localeCompare(b.key)).map((s) => ({ key: s.key, risk: s.risk, riskOf: Boolean(s.riskOf), writable: !s.readOnly, prefKeys: s.prefKeys })),
+    // 全設定 × 全主体の判定（settings.set。向きで危険度が変わる設定は guarded になる向きも）。読むだけの設定は書けない
+    settingPolicy: Object.fromEntries([...registry.settings].filter((s) => !s.readOnly).sort((a, b) => a.key.localeCompare(b.key)).map((s) => [s.key,
+      Object.fromEntries(Object.entries(principals).map(([who, p]) => [who, (s.riskOf ? [s.risk, 'guarded'] : [s.risk]).map((risk) => {
+        const v = decide(p, risk);
+        return `${risk}=${v.code ? `${v.decision}:${v.code}` : v.decision}`;
+      }).join(' ')]))])),
     // MCP の tools/list（ply_control・pleiad mcp 共通の生成器。名前と入力のハッシュ。説明の文は辞書なので載せない）と、CLI のコマンドの形
     mcp: mcpTools({ catalog: registry.describe({ by: 'agent', via: 'mcp' }, 'en'), texts: controlTexts('en') }).map((tool) => ({ name: tool.name, input: hash(tool.inputSchema) })),
     cli: registry.describe({ by: 'agent', via: 'cli' }, 'en').filter((e) => e.cli).map((e) => ({ id: e.id, path: e.cli.path.join(' '), positional: [].concat(e.cli.positional ?? []) })).sort((a, b) => a.path.localeCompare(b.path)),

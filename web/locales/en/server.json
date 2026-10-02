@@ -50,6 +50,7 @@
     "relayTitle": "Delegated task \"{{child}}\"",
     "relayTitleWith": "Delegated task \"{{child}}\" / {{title}}",
     "computerApp": "Allow {{agent}} to control \"{{app}}\"?",
+    "settingChange": "{{agent}} wants to change the setting \"{{key}}\"",
     "computerAppJoin": "\", \"",
     "browserSite": "{{agent}} wants to use {{site}}",
     "browserNotes": " ({{notes}})",
@@ -145,6 +146,7 @@
     "taskNotFound": "Pleiad task not found."
   },
   "approval": {
+    "receiptMismatch": "The receipt does not match this approval. Reopen the card.",
     "alreadyResolved": "That approval has already been resolved."
   },
   "title": {

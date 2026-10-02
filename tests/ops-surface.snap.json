@@ -82,6 +82,29 @@
       "input": "3674e4e2e03f"
     },
     {
+      "id": "sessions.fork",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "fork"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "fork",
+      "input": "b52741627794"
+    },
+    {
       "id": "sessions.get",
       "risk": "read",
       "riskOf": false,
@@ -281,6 +304,77 @@
       },
       "legacyCommand": null,
       "input": "2e2f5e3b592a"
+    },
+    {
+      "id": "settings.set",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "direct",
+        "cli": {
+          "path": [
+            "settings",
+            "set"
+          ],
+          "positional": [
+            "key",
+            "value"
+          ]
+        }
+      },
+      "legacyCommand": "setPref",
+      "input": "cf5833e094bf"
+    },
+    {
+      "id": "statuses.create",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "statuses",
+            "create"
+          ],
+          "positional": [
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": "createStatus",
+      "input": "afc00334d287"
+    },
+    {
+      "id": "statuses.setIcon",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "statuses",
+            "icon"
+          ],
+          "positional": [
+            "status",
+            "icon"
+          ]
+        }
+      },
+      "legacyCommand": "setStatusIcon",
+      "input": "6bf6e7291226"
     }
   ],
   "settings": [
@@ -288,14 +382,16 @@
       "key": "addedContext",
       "risk": "guarded",
       "riskOf": false,
+      "writable": false,
       "prefKeys": [
         "addedContext"
       ]
     },
     {
       "key": "agentSitePermissions",
-      "risk": "guarded",
-      "riskOf": false,
+      "risk": "write",
+      "riskOf": true,
+      "writable": true,
       "prefKeys": [
         "agentSitePermissions"
       ]
@@ -304,6 +400,7 @@
       "key": "backend",
       "risk": "write",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "backend"
       ]
@@ -312,6 +409,7 @@
       "key": "browserDefaultProfile",
       "risk": "write",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "browserDefaultProfile"
       ]
@@ -320,6 +418,7 @@
       "key": "browserNewProfile",
       "risk": "write",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "browserNewProfile"
       ]
@@ -328,14 +427,16 @@
       "key": "browserProfiles",
       "risk": "guarded",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "browserProfiles"
       ]
     },
     {
       "key": "claudeAccount",
-      "risk": "write",
+      "risk": "human-only",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "claudeAccount"
       ]
@@ -344,6 +445,7 @@
       "key": "compaction.auto",
       "risk": "write",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "autoCompaction"
       ]
@@ -352,6 +454,7 @@
       "key": "computerUse",
       "risk": "write",
       "riskOf": true,
+      "writable": true,
       "prefKeys": [
         "computerUse"
       ]
@@ -360,6 +463,7 @@
       "key": "confirmAgentSites",
       "risk": "write",
       "riskOf": true,
+      "writable": true,
       "prefKeys": [
         "confirmAgentSites"
       ]
@@ -368,6 +472,7 @@
       "key": "confirmExternalLoads",
       "risk": "write",
       "riskOf": true,
+      "writable": true,
       "prefKeys": [
         "confirmExternalLoads"
       ]
@@ -376,12 +481,14 @@
       "key": "context.default",
       "risk": "guarded",
       "riskOf": false,
+      "writable": true,
       "prefKeys": []
     },
     {
       "key": "delegationRouting",
       "risk": "guarded",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "delegationRouting"
       ]
@@ -390,14 +497,16 @@
       "key": "effort",
       "risk": "write",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "effort"
       ]
     },
     {
       "key": "externalSitePermissions",
-      "risk": "guarded",
-      "riskOf": false,
+      "risk": "write",
+      "riskOf": true,
+      "writable": true,
       "prefKeys": [
         "externalSitePermissions"
       ]
@@ -406,6 +515,7 @@
       "key": "instructionBudget",
       "risk": "write",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "instructionBudget"
       ]
@@ -414,6 +524,7 @@
       "key": "linkOpen",
       "risk": "write",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "linkOpen"
       ]
@@ -422,6 +533,7 @@
       "key": "locale",
       "risk": "write",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "locale"
       ]
@@ -430,6 +542,7 @@
       "key": "mode",
       "risk": "human-only",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "mode"
       ]
@@ -438,6 +551,7 @@
       "key": "model",
       "risk": "write",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "model"
       ]
@@ -446,11 +560,154 @@
       "key": "plyInstructions",
       "risk": "guarded",
       "riskOf": false,
+      "writable": true,
       "prefKeys": [
         "plyInstructions"
       ]
     }
   ],
+  "settingPolicy": {
+    "agentSitePermissions": {
+      "human": "write=allow guarded=allow",
+      "agent-unbound": "write=allow guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "write=allow guarded=ask",
+      "agent-bound-never-full": "write=allow guarded=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
+    },
+    "backend": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "browserDefaultProfile": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "browserNewProfile": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "browserProfiles": {
+      "human": "guarded=allow",
+      "agent-unbound": "guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "guarded=ask",
+      "agent-bound-never-full": "guarded=allow",
+      "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
+    },
+    "claudeAccount": {
+      "human": "human-only=allow",
+      "agent-unbound": "human-only=hidden",
+      "agent-bound-ask": "human-only=hidden",
+      "agent-bound-never-full": "human-only=hidden",
+      "agent-bound-readonly": "human-only=hidden"
+    },
+    "compaction.auto": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "computerUse": {
+      "human": "write=allow guarded=allow",
+      "agent-unbound": "write=allow guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "write=allow guarded=ask",
+      "agent-bound-never-full": "write=allow guarded=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
+    },
+    "confirmAgentSites": {
+      "human": "write=allow guarded=allow",
+      "agent-unbound": "write=allow guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "write=allow guarded=ask",
+      "agent-bound-never-full": "write=allow guarded=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
+    },
+    "confirmExternalLoads": {
+      "human": "write=allow guarded=allow",
+      "agent-unbound": "write=allow guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "write=allow guarded=ask",
+      "agent-bound-never-full": "write=allow guarded=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
+    },
+    "context.default": {
+      "human": "guarded=allow",
+      "agent-unbound": "guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "guarded=ask",
+      "agent-bound-never-full": "guarded=allow",
+      "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
+    },
+    "delegationRouting": {
+      "human": "guarded=allow",
+      "agent-unbound": "guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "guarded=ask",
+      "agent-bound-never-full": "guarded=allow",
+      "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
+    },
+    "effort": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "externalSitePermissions": {
+      "human": "write=allow guarded=allow",
+      "agent-unbound": "write=allow guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "write=allow guarded=ask",
+      "agent-bound-never-full": "write=allow guarded=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
+    },
+    "instructionBudget": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "linkOpen": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "locale": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "mode": {
+      "human": "human-only=allow",
+      "agent-unbound": "human-only=hidden",
+      "agent-bound-ask": "human-only=hidden",
+      "agent-bound-never-full": "human-only=hidden",
+      "agent-bound-readonly": "human-only=hidden"
+    },
+    "model": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "plyInstructions": {
+      "human": "guarded=allow",
+      "agent-unbound": "guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "guarded=ask",
+      "agent-bound-never-full": "guarded=allow",
+      "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
+    }
+  },
   "mcp": [
     {
       "name": "search_sessions",
@@ -467,6 +724,10 @@
     {
       "name": "get_setting",
       "input": "3472c4008af7"
+    },
+    {
+      "name": "set_setting",
+      "input": "143e7692d1d3"
     },
     {
       "name": "list_ops",
@@ -494,6 +755,13 @@
       "id": "app.running",
       "path": "running",
       "positional": []
+    },
+    {
+      "id": "sessions.fork",
+      "path": "sessions fork",
+      "positional": [
+        "sessionId"
+      ]
     },
     {
       "id": "sessions.get",
@@ -557,9 +825,32 @@
       ]
     },
     {
+      "id": "settings.set",
+      "path": "settings set",
+      "positional": [
+        "key",
+        "value"
+      ]
+    },
+    {
       "id": "app.status",
       "path": "status",
       "positional": []
+    },
+    {
+      "id": "statuses.create",
+      "path": "statuses create",
+      "positional": [
+        "status"
+      ]
+    },
+    {
+      "id": "statuses.setIcon",
+      "path": "statuses icon",
+      "positional": [
+        "status",
+        "icon"
+      ]
     }
   ],
   "policy": {

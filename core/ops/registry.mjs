@@ -8,6 +8,7 @@
 //
 // i18n-dynamic: agent:ops.
 // i18n-dynamic: agent:settings.
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { RISKS, decide, maxRisk } from './policy.mjs';
@@ -67,7 +68,16 @@ export function defineOp(def) {
   });
 }
 
-/** 設定を定義する。settings.list / get / set / schema の 4 操作はこの一覧から作る（段階 1・2）。 */
+/**
+ * 設定を定義する。settings.list / get / schema / set の 4 操作はこの一覧から作る。
+ *   必須: key・summary・risk・schema（読んだ値の形）・default・read(ctx)。write が無ければ読むだけ（readOnly）
+ *   書く設定（write あり）:
+ *     normalize(ctx, input, { before, backend })  渡された値の検査と、書いたあとの値。{ after, arg? } を返す（INVALID は OpError で投げる）。無ければ schema で検査して after = 入力
+ *     write(ctx, arg, { before, backend })         arg（無ければ after）を保存し、人間の操作と同じ配信を出す
+ *     writeSchema                                   settings.set の value の形（読んだ値と違うときだけ。既定は schema）
+ *   riskOf(before, after) は、関所を緩める向きだけ 'guarded' を返す（定義の risk を下げられない）。riskOf を持つ設定は riskExamples
+ *   （[{ before, after, risk }]。tests/unit/ops-settings.mjs が riskOf と突き合わせる）を書く。
+ */
 export function defineSetting(def) {
   const key = def?.key;
   if (typeof key !== 'string' || !KEY_RX.test(key)) fail(String(key), 'key must be dot-separated, starting with a lowercase letter');
@@ -75,11 +85,14 @@ export function defineSetting(def) {
   if (!RISKS.includes(def.risk)) fail(key, `risk must be one of ${RISKS.join(' / ')}`);
   if (typeof def.schema?.parse !== 'function') fail(key, 'schema must be a zod schema');
   if (!('default' in def)) fail(key, 'default is required');
-  // write は設定を書く段階（段階 2）で足す。無ければ読むだけの設定（readOnly）
   if (typeof def.read !== 'function') fail(key, 'read is required');
-  if (def.write !== undefined && typeof def.write !== 'function') fail(key, 'write must be a function (ctx, value) => void');
+  if (def.write !== undefined && typeof def.write !== 'function') fail(key, 'write must be a function (ctx, arg, { before, backend }) => void');
+  if (def.normalize !== undefined && typeof def.normalize !== 'function') fail(key, 'normalize must be a function (ctx, input, { before, backend }) => { after, arg? }');
+  if (def.writeSchema !== undefined && typeof def.writeSchema?.parse !== 'function') fail(key, 'writeSchema must be a zod schema');
   if (def.risk === 'write' && !(typeof def.riskReason === 'string' && def.riskReason.trim())) fail(key, 'a write setting needs riskReason');
   if (def.riskOf !== undefined && typeof def.riskOf !== 'function') fail(key, 'riskOf must be a function (before, after) => risk');
+  if (def.riskOf && !(Array.isArray(def.riskExamples) && def.riskExamples.length && def.riskExamples.every((e) => RISKS.includes(e?.risk) && 'before' in e && 'after' in e)))
+    fail(key, 'a setting with riskOf needs riskExamples: [{ before, after, risk }]');
   // prefs.json に書くキー（既定は key 自身）。tests/lint-ops.mjs が「prefs に書くキーは設定の一覧にある」の照合に使う
   const prefKeys = def.prefKeys ?? [key];
   if (!Array.isArray(prefKeys) || !prefKeys.every((k) => typeof k === 'string' && k)) fail(key, 'prefKeys must be an array of strings');
@@ -129,6 +142,40 @@ export function maskOutput(value, key = '') {
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, maskOutput(v, k)]));
   if (typeof value === 'string' && value !== '' && SECRET_KEY.test(key)) return MASK;
   return value;
+}
+
+/** キーを並べ替えた JSON（受領証の元。同じ内容なら同じ文字列になる） */
+export function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`;
+  return JSON.stringify(value) ?? 'null';
+}
+
+/** 承認の受領証。承認した変更（操作・引数・承認時の前の値）の印。書く直前に今の値で作り直して合わなければ、別の変更として聞き直す（ADR 0049 の確認票と同じ考え） */
+export const receiptOf = (opId, args, before) => crypto.createHash('sha256').update(stableStringify([opId, args, before ?? null])).digest('hex').slice(0, 32);
+
+// 許可のあとに値が変わって聞き直す上限（これを超えて変わり続けたら STALE）
+const RECEIPT_RETRIES = 2;
+
+/**
+ * 承認が要る呼び出し（policy の ask）。confirm(ctx, args) が承認カードに出す変更（{ key, rows, loosens } か説明の文字列）を返し、
+ * deps.approve({ op, change, receipt, reason, actor, signal }) が会話にカードを出して { allow } か { allow: false, code } を返す。
+ * 許可なら null（続けて実行する）、そうでなければ失敗の返り値。
+ */
+async function approval(ctx, op, args, failure) {
+  if (typeof ctx.approve !== 'function') return failure('NEEDS_APPROVAL', { id: op.id }, { decision: 'ask' });
+  const describe = async () => {
+    const c = await op.confirm(ctx, args);
+    return typeof c === 'string' ? { note: c, before: null } : c;
+  };
+  for (let attempt = 0; attempt <= RECEIPT_RETRIES; attempt++) {
+    const change = await describe();
+    const receipt = receiptOf(op.id, args, change.before);
+    const answer = await ctx.approve({ op: op.id, change: { ...change, op: op.id }, receipt, reason: typeof args?.reason === 'string' ? args.reason : null, actor: ctx.actor, signal: ctx.signal });
+    if (!answer?.allow) return failure(answer?.code ?? 'DENIED', { id: op.id }, { decision: 'ask' });
+    if (receiptOf(op.id, args, (await describe()).before) === receipt) return null;
+  }
+  return failure('STALE', { id: op.id }, { decision: 'ask' });
 }
 
 const issuesOf = (error) => error.issues.map((i) => ({ path: i.path.join('.'), code: i.code, message: i.message }));
@@ -187,12 +234,14 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
     const mode = sessionId ? await deps.modeOf?.(sessionId) : undefined;
     const subject = { by: principal.by, sessionId, mode };
     const actor = { by: principal.by, ...(principal.via ? { via: principal.via } : {}), ...(sessionId ? { sessionId } : {}) };
-    const ctx = { ...deps, actor, principal, op, registry: api };
+    const ctx = { ...deps, actor, principal, op, registry: api, signal: deps.signal };
 
     // 値に依って危険度が上がる操作は、定義の risk より下げない
     let risk = op.risk;
     if (op.riskOf) {
-      const raised = await op.riskOf(ctx, parsed.data);
+      let raised;
+      try { raised = await op.riskOf(ctx, parsed.data); }
+      catch (err) { if (err instanceof OpError) return { ok: false, code: err.code, error: err.message }; throw err; }
       if (!RISKS.includes(raised)) throw new Error(`ops: riskOf of ${op.id} returned an invalid risk: ${raised}`);
       risk = maxRisk(risk, raised);
     }
@@ -200,8 +249,12 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
     const verdict = decide(subject, risk, { modeGate: op.modeGate });
     if (verdict.decision === 'hidden') return notFound();
     if (verdict.decision === 'deny') return failure(verdict.code, { id: op.id }, { decision: 'deny' });
-    // 段階 2 で、ここに会話の承認カード（askPermission の settingChange）と受領証の照合が入る
-    if (verdict.decision === 'ask') return failure('NEEDS_APPROVAL', { id: op.id }, { decision: 'ask' });
+    // 会話の承認カード（askPermission の settingChange）。人の許可で進み、拒否・時間切れ・中断・会話の終了は code で断る。
+    // 許可のあとに値が変わっていれば（受領証が合わない）聞き直す。承認の口が無い呼び出し（単体の検査）は NEEDS_APPROVAL
+    if (verdict.decision === 'ask') {
+      const gate = await approval(ctx, op, parsed.data, failure);
+      if (gate) return gate;
+    }
 
     if (risk !== 'read') await deps.audit?.({ op: op.id, risk, reason: verdict.reason, actor, sessionScope: op.scope });
 

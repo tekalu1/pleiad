@@ -50,6 +50,7 @@
     "relayTitle": "委譲先「{{child}}」",
     "relayTitleWith": "委譲先「{{child}}」 / {{title}}",
     "computerApp": "{{agent}} に「{{app}}」の操作を許可しますか？",
+    "settingChange": "{{agent}} が設定「{{key}}」を変えようとしています",
     "computerAppJoin": "」「",
     "browserSite": "{{agent}} が {{site}} を使おうとしています",
     "browserNotes": "（{{notes}}）",
@@ -145,6 +146,7 @@
     "taskNotFound": "Pleiad タスクが見つかりません"
   },
   "approval": {
+    "receiptMismatch": "この承認の受領証が合いません。カードを開き直してください",
     "alreadyResolved": "この承認はすでに処理されています"
   },
   "title": {

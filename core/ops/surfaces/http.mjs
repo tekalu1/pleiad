@@ -9,7 +9,7 @@ import { controlTexts } from './control.mjs';
 
 export const OPS_PATH = '/api/ops';
 const MAX_BODY = 256_000;
-const STATUS = { NOT_FOUND: 404, SESSION_NOT_FOUND: 404, MESSAGE_NOT_FOUND: 404, SETTING_NOT_FOUND: 404, TASK_NOT_FOUND: 404, INVALID: 400, NEEDS_UI: 403, NEEDS_APPROVAL: 403, READ_ONLY_MODE: 403, HOST_SCREEN_ONLY: 403 };
+const STATUS = { NOT_FOUND: 404, SESSION_NOT_FOUND: 404, MESSAGE_NOT_FOUND: 404, SETTING_NOT_FOUND: 404, TASK_NOT_FOUND: 404, INVALID: 400, SETTING_READ_ONLY: 403, NEEDS_UI: 403, NEEDS_APPROVAL: 403, DENIED: 403, APPROVAL_TIMEOUT: 408, APPROVAL_ABORTED: 409, STALE: 409, READ_ONLY_MODE: 403, HOST_SCREEN_ONLY: 403 };
 
 /**
  * @param registry     操作の一覧
@@ -52,7 +52,10 @@ export function createOpsHttp({ registry, authenticate, depsFor, serverLocale })
     let principal;
     try { principal = { by: 'agent', via, ...(auth.owner ? { sessionId: await auth.owner() } : {}) }; }
     catch (e) { return reply(409, { ok: false, code: 'NOT_READY', error: String(e?.message ?? e) }); }
-    const r = await registry.invoke(principal, id, args, depsFor(locale));
+    // 承認を待つ呼び出しは、呼び出した側（CLI）が切れたら取り下げる
+    const gone = new AbortController();
+    res.on('close', () => { if (!res.writableFinished) gone.abort(); });
+    const r = await registry.invoke(principal, id, args, { ...depsFor(locale), signal: gone.signal });
     if (r.ok) return reply(200, { ok: true, result: r.result });
     return reply(STATUS[r.code] ?? 500, { ok: false, code: r.code, error: r.error, ...(r.issues ? { issues: r.issues } : {}) });
   }

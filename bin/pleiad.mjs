@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { callMcpTool, mcpTools } from '../core/ops/surfaces/mcp.mjs';
 
 export const EXIT = { ok: 0, usage: 2, notRunning: 3, refused: 4, other: 5 };
-const REFUSED = new Set(['NEEDS_UI', 'NEEDS_APPROVAL', 'READ_ONLY_MODE', 'HOST_SCREEN_ONLY']);
+const REFUSED = new Set(['NEEDS_UI', 'NEEDS_APPROVAL', 'READ_ONLY_MODE', 'HOST_SCREEN_ONLY', 'DENIED', 'APPROVAL_TIMEOUT', 'APPROVAL_ABORTED', 'STALE', 'SETTING_READ_ONLY']);
 const USAGE_ERRORS = new Set(['INVALID', 'NOT_FOUND', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND']);
 export const exitCodeOf = (code) => (REFUSED.has(code) ? EXIT.refused : USAGE_ERRORS.has(code) ? EXIT.usage : EXIT.other);
 
@@ -91,6 +91,8 @@ const positionalOf = (entry) => [].concat(entry.cli?.positional ?? []);
 export class UsageError extends Error {}
 
 function coerce(raw, schema, name) {
+  // 型の無い入力（設定の value など、何でも受ける欄）は JSON として読み、読めなければ文字列のまま（true・12・{"a":1}・en）
+  if (schema?.type === undefined && !schema?.enum && !schema?.anyOf && !schema?.oneOf) { try { return JSON.parse(String(raw)); } catch { return String(raw); } }
   const type = [].concat(schema?.type ?? 'string').find((t) => t !== 'null') ?? 'string';
   if (type === 'integer' || type === 'number') {
     const n = Number(raw);
@@ -180,7 +182,7 @@ function commandHelp(entry, t) {
   const names = positionalOf(entry);
   const lines = [`pleiad ${entry.cli.path.join(' ')}${names.map((n) => ` <${n}>`).join('')}${Object.keys(props).length > names.length ? ' [options]' : ''}`, `  ${entry.summary}`, `  (${entry.id}, ${entry.risk})`];
   for (const [name, schema] of Object.entries(props)) {
-    const type = [].concat(schema.type ?? 'string')[0];
+    const type = schema.type === undefined && !schema.enum && !schema.anyOf && !schema.oneOf ? 'json' : [].concat(schema.type ?? 'string')[0];
     const choices = schema.enum ? ` {${schema.enum.join('|')}}` : '';
     lines.push(`  ${names.includes(name) ? `<${name}>` : `--${kebab(name)}`} ${type}${choices}${required.has(name) ? ` (${t('cli.required')})` : ''}  ${schema.description ?? ''}`.trimEnd());
   }
