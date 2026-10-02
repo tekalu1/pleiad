@@ -1437,7 +1437,8 @@
       "removed": "Removed",
       "join": ", ",
       "more_one": "and {{count}} more",
-      "more_other": "and {{count}} more"
+      "more_other": "and {{count}} more",
+      "withdrawn": "Withdrawn"
     },
     "computerApproval": {
       "label": "Allow",
@@ -1504,6 +1505,15 @@
       "taskResultState": "Delegation result ({{state}})",
       "taskFull": "Full text given to the agent",
       "interruptionNote": "Told the agent what the interruption stopped",
+      "settingResult": "Setting change result ({{state}})",
+      "settingResults_one": "Setting change results ({{count}})",
+      "settingResults_other": "Setting change results ({{count}})",
+      "settingState": {
+        "allowed": "changed",
+        "denied": "denied",
+        "failed": "not applied",
+        "withdrawn": "withdrawn"
+      },
       "failed": "{{head}} {{error}}",
       "unknownReason": "unknown reason",
       "modeSaveFailed": "Couldn't save the approval mode: {{error}}",

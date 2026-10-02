@@ -1,7 +1,7 @@
 // settings.set: 設定の一覧から作る書き込み（registry 越し。サーバーは身代わりの依存）。ADR 0081・0082。
 //   - 全設定 × 全主体の判定表（human / agent の束縛なし・ask・bypass 相当・読み取り）と、関所を緩める向きの riskExamples
 //   - 値の検査（INVALID）と、読むだけの設定（SETTING_READ_ONLY）、human-only の設定は agent に無いのと同じ
-//   - 承認カード: 許可で実行・拒否・時間切れ・中断・会話の終了で断る。受領証（承認のあとに値が変わったら聞き直す）。変わらない設定は聞かない
+//   - 承認カード: 待たずに承認待ち（PENDING_APPROVAL・requestId）を返し、許可（proceed）で実行する。受領証（承認のあとに値が変わったら聞き直す）。変わらない設定は聞かない
 //   - bypass 相当の会話は承認なしで通り、記録（audit・recordSetting）が残る。束縛なしの guarded は NEEDS_UI
 import { registry } from '../../core/ops/index.mjs';
 import { decide } from '../../core/ops/policy.mjs';
@@ -20,7 +20,10 @@ const MODES = {
   plan: { scope: 'readonly', autonomy: 'ask' },
 };
 
-/** 身代わりのサーバー: prefs を持ち、書き込みは prefs へ。approve は呼ばれた内容を溜めて答えを返す */
+/**
+ * 身代わりのサーバー: prefs を持ち、書き込みは prefs へ。approve は呼ばれた内容を溜めて、既定では承認待ち（{ pending, requestId }）を返す。
+ * 人の許可は allow(i)（i 番目の要求の proceed を呼ぶ。サーバーが許可の後に呼ぶのと同じ）
+ */
 function fake({ prefs: initial = {}, answers = [] } = {}) {
   const prefs = { ...initial };
   const log = { writes: [], approvals: [], records: [], audits: [] };
@@ -50,10 +53,11 @@ function fake({ prefs: initial = {}, answers = [] } = {}) {
     approve: async (request) => {
       log.approvals.push(request);
       const next = queue.shift();
-      return typeof next === 'function' ? next(request, prefs) : next ?? { allow: true };
+      return typeof next === 'function' ? next(request, prefs) : next ?? { pending: true, requestId: request.requestId ?? `setting-${log.approvals.length}` };
     },
   };
-  return { prefs, log, deps };
+  const allow = (i = log.approvals.length - 1) => log.approvals[i].proceed();
+  return { prefs, log, deps, allow };
 }
 
 export default async function (t) {
@@ -144,41 +148,52 @@ export default async function (t) {
     t.ok('関所を狭める向きは write として承認なしで通る', ok.ok && f.prefs.confirmAgentSites === true && f.log.approvals.length === 0);
   }
 
-  // ---- 承認カード
+  // ---- 承認カード（待たずに返し、許可で実行する。ADR 0088）
   {
     const f = fake({ prefs: { confirmAgentSites: true } });
     const r = await registry.invoke(bound('ask'), 'settings.set', loosen, f.deps);
     const req = f.log.approvals[0];
-    t.ok('ask の会話: 承認を求め、許可で実行される', r.ok && f.prefs.confirmAgentSites === false && f.log.approvals.length === 1, JSON.stringify(r));
+    t.ok('ask の会話: 承認を求め、待たずに承認待ち（PENDING_APPROVAL・requestId・文）を返す。まだ書かない', r.ok && r.pending === true && r.result.status === 'pending' && r.result.code === 'PENDING_APPROVAL'
+      && r.result.requestId === 'setting-1' && r.result.message.includes('setting-1') && r.result.message.includes('confirmAgentSites')
+      && f.prefs.confirmAgentSites === true && f.log.writes.length === 0 && f.log.records.length === 0, JSON.stringify(r));
     t.ok('カードの中身: 操作・項目・前後の値（JSON の文字列）・理由・関所を緩める印・受領証・主体', req.op === 'settings.set' && req.change.key === 'confirmAgentSites'
       && req.change.rows.length === 1 && req.change.rows[0].path === 'confirmAgentSites' && req.change.rows[0].before === 'true' && req.change.rows[0].after === 'false'
-      && req.change.loosens === true && req.reason === 'テストのため' && /^[a-f0-9]{32}$/.test(req.receipt) && req.actor.sessionId === 'ask');
+      && req.change.loosens === true && req.reason === 'テストのため' && /^[a-f0-9]{32}$/.test(req.receipt) && req.actor.sessionId === 'ask' && !('requestId' in req));
     t.ok('受領証は 操作・引数・承認時の前の値 の印', req.receipt === receiptOf('settings.set', loosen, true));
-    t.ok('承認のあとに記録が残る（承認を飛ばさない）', f.log.records.length === 1 && f.log.audits.at(-1).reason === 'mode-needs-approval');
+    const done = await f.allow();
+    t.ok('許可（proceed）で実行され、結果を返す', done.ok && done.result.changed === true && f.prefs.confirmAgentSites === false, JSON.stringify(done));
+    t.ok('許可のあとに記録が残る（承認を飛ばさない）', f.log.records.length === 1 && f.log.audits.at(-1).reason === 'mode-needs-approval');
+    const en = await registry.invoke(bound('ask'), 'settings.set', { ...loosen, value: true }, { ...fake({ prefs: { confirmAgentSites: false } }).deps, locale: 'en' });
+    t.ok('狭める向きは承認なし（英語の会話でも同じ）', en.ok && !en.pending);
   }
   {
-    const f = fake({ prefs: { confirmAgentSites: true }, answers: [{ allow: false, code: 'DENIED' }] });
-    const r = await registry.invoke(bound('ask'), 'settings.set', loosen, f.deps);
-    t.ok('拒否は DENIED で、設定は変わらず記録も残らない', r.code === 'DENIED' && f.prefs.confirmAgentSites === true && f.log.records.length === 0 && f.log.writes.length === 0, JSON.stringify(r));
-    for (const code of ['APPROVAL_TIMEOUT', 'APPROVAL_ABORTED']) {
-      const g = fake({ prefs: { confirmAgentSites: true }, answers: [{ allow: false, code }] });
-      const x = await registry.invoke(bound('ask'), 'settings.set', loosen, g.deps);
-      t.ok(`${code}（時間切れ・会話の終了）は同じ code で断り、設定は変わらない`, x.code === code && g.prefs.confirmAgentSites === true && g.log.writes.length === 0);
-    }
+    // 拒否は proceed を呼ばない（サーバーが結果を会話へ届ける）。承認の口が承認待ちを返さなければ、その code で断る
+    const f = fake({ prefs: { confirmAgentSites: true } });
+    await registry.invoke(bound('ask'), 'settings.set', loosen, f.deps);
+    t.ok('答えが無い・拒否のあいだは何も書かれず、記録も残らない', f.prefs.confirmAgentSites === true && f.log.records.length === 0 && f.log.writes.length === 0 && f.log.audits.length === 0);
+    const g = fake({ prefs: { confirmAgentSites: true }, answers: [{ allow: false, code: 'NEEDS_UI' }] });
+    const x = await registry.invoke(bound('ask'), 'settings.set', loosen, g.deps);
+    t.ok('承認の口が断れば（会話が無いなど）、その code で断り、設定は変わらない', x.code === 'NEEDS_UI' && g.prefs.confirmAgentSites === true && g.log.writes.length === 0);
   }
   {
-    // 承認のあとに値が変わった（別の口が先に書いた）→ 受領証が合わず、聞き直す
-    const f = fake({ prefs: { agentSitePermissions: [] }, answers: [
-      (req, prefs) => { prefs.agentSitePermissions = [{ origin: 'https://other.example', mode: 'ask', agent: 'claude' }]; return { allow: true }; },
-      { allow: true },
-    ] });
+    // 承認のあとに値が変わった（別の口が先に書いた）→ 受領証が合わず、同じ requestId で聞き直す
+    const f = fake({ prefs: { agentSitePermissions: [] } });
     const add = { key: 'agentSitePermissions', value: [{ origin: 'https://a.example', mode: 'always', agent: 'claude' }] };
     const r = await registry.invoke(bound('ask'), 'settings.set', add, f.deps);
-    t.ok('承認のあとに前の値が変わっていたら、受領証が合わず聞き直す（2 回目の許可で実行）', r.ok && f.log.approvals.length === 2 && f.log.approvals[0].receipt !== f.log.approvals[1].receipt
-      && JSON.stringify(f.prefs.agentSitePermissions) === JSON.stringify(add.value), `${f.log.approvals.length}`);
-    const g = fake({ prefs: { agentSitePermissions: [] }, answers: [1, 2, 3, 4].map((n) => (req, prefs) => { prefs.agentSitePermissions = [{ origin: `https://x${n}.example`, mode: 'ask', agent: 'claude' }]; return { allow: true }; }) });
-    const x = await registry.invoke(bound('ask'), 'settings.set', add, g.deps);
-    t.ok('変わり続けたら STALE で行わない（無限に聞かない）', x.code === 'STALE' && g.log.approvals.length === 3 && g.log.writes.length === 0, JSON.stringify(x));
+    f.prefs.agentSitePermissions = [{ origin: 'https://other.example', mode: 'ask', agent: 'claude' }];
+    const again = await f.allow(0);
+    t.ok('許可のあとに前の値が変わっていたら、受領証が合わず同じ requestId で聞き直す（まだ書かない）', r.pending && again.pending === true && again.result.requestId === r.result.requestId
+      && f.log.approvals.length === 2 && f.log.approvals[1].requestId === r.result.requestId && f.log.approvals[0].receipt !== f.log.approvals[1].receipt && f.log.writes.length === 0, JSON.stringify(again));
+    const done = await f.allow(1);
+    t.ok('聞き直したカードの許可で実行される', done.ok && JSON.stringify(f.prefs.agentSitePermissions) === JSON.stringify(add.value));
+    const g = fake({ prefs: { agentSitePermissions: [] } });
+    await registry.invoke(bound('ask'), 'settings.set', add, g.deps);
+    let last;
+    for (let i = 0; i < 4 && (i === 0 || last?.pending); i++) {
+      g.prefs.agentSitePermissions = [{ origin: `https://x${i}.example`, mode: 'ask', agent: 'claude' }];
+      last = await g.allow(i);
+    }
+    t.ok('変わり続けたら STALE で行わない（無限に聞かない）', last.code === 'STALE' && g.log.approvals.length === 3 && g.log.writes.length === 0, JSON.stringify(last));
   }
   {
     // 承認の口が無い呼び出し（単体の検査・古い呼び出し元）は NEEDS_APPROVAL
@@ -192,7 +207,7 @@ export default async function (t) {
     const rm = await registry.invoke(bound('ask'), 'settings.set', { key: 'agentSitePermissions', value: [] }, f.deps);
     t.ok('「常に許可」を消す向きは write（承認なし）', rm.ok && f.log.approvals.length === 0);
     const add = await registry.invoke(bound('ask'), 'settings.set', { key: 'agentSitePermissions', value: [{ origin: 'https://b.example', mode: 'always', agent: 'claude' }] }, f.deps);
-    t.ok('「常に許可」を足す向きは承認カード。行は項目名と前後の値', add.ok && f.log.approvals.length === 1 && f.log.approvals[0].change.rows[0].before === '[]' && f.log.approvals[0].change.loosens === true);
+    t.ok('「常に許可」を足す向きは承認カード。行は項目名と前後の値', add.pending && f.log.approvals.length === 1 && f.log.approvals[0].change.rows[0].before === '[]' && f.log.approvals[0].change.loosens === true);
     t.ok('サイトの許可の形が違えば INVALID（聞く前に断る）', (await registry.invoke(bound('ask'), 'settings.set', { key: 'agentSitePermissions', value: [{ origin: 'ftp://x', mode: 'always', agent: 'a' }] }, f.deps)).code === 'INVALID' && f.log.approvals.length === 1);
   }
   {
@@ -203,14 +218,14 @@ export default async function (t) {
     const same = await registry.invoke(bound('ask'), 'settings.set', { key: 'browserProfiles', value: [{ id: 'main' }] }, f.deps);
     t.ok('変わらない値は聞かない（write と同じ扱いで通り、changed: false）', same.ok && same.result.changed === false && f.log.approvals.length === 0);
     const named = await registry.invoke(bound('ask'), 'settings.set', { key: 'browserProfiles', value: [{ id: 'main' }, { id: 'p0123456789ab', name: '仕事' }] }, f.deps);
-    t.ok('プロフィールの変更は guarded（承認カード）。⚠ の印は付けない（関所を緩める向きではない）', named.ok && f.log.approvals.length === 1 && f.log.approvals[0].change.loosens === false);
+    t.ok('プロフィールの変更は guarded（承認カード）。⚠ の印は付けない（関所を緩める向きではない）', named.pending && f.log.approvals.length === 1 && f.log.approvals[0].change.loosens === false);
   }
   {
     // computerUse: オブジェクトの設定は変わった項目だけを行にする
     const f = fake({ prefs: { computerUse: { enabled: false, allowAllApps: false } } });
     const r = await registry.invoke(bound('ask'), 'settings.set', { key: 'computerUse', value: { enabled: true } }, f.deps);
     const rows = f.log.approvals[0].change.rows;
-    t.ok('computerUse を有効にする: 承認カードの行は変わった項目だけ（computerUse.enabled）', r.ok && rows.length === 1 && rows[0].path === 'computerUse.enabled' && rows[0].before === 'false' && rows[0].after === 'true' && f.log.approvals[0].change.loosens === true, JSON.stringify(rows));
+    t.ok('computerUse を有効にする: 承認カードの行は変わった項目だけ（computerUse.enabled）', r.pending && rows.length === 1 && rows[0].path === 'computerUse.enabled' && rows[0].before === 'false' && rows[0].after === 'true' && f.log.approvals[0].change.loosens === true, JSON.stringify(rows));
   }
 
   // ---- 行の作り方

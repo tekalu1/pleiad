@@ -33,11 +33,11 @@ export function createControlBridge({ registry, depsFor }) {
     path: CONTROL_MCP_PATH,
     serverName: CONTROL_SERVER,
     tools: (locale) => mcpTools({ catalog: registry.describe(listPrincipal, locale), texts: controlTexts(locale) }),
-    call: async (binding, name, args, { locale, signal }) => {
+    call: async (binding, name, args, { locale }) => {
       // 会話の id がまだ決まっていないとき owner() は投げる。束縛なしの主体として通さない（読み取りの会話の書き込みを断れなくなる）
       const principal = { ...listPrincipal, sessionId: await binding.owner() };
       return callMcpTool({ catalog: registry.describe(principal, locale), texts: controlTexts(locale), name, args,
-        invoke: (id, input) => registry.invoke(principal, id, input, { ...depsFor(locale), signal }) });
+        invoke: (id, input) => registry.invoke(principal, id, input, depsFor(locale)) });
     },
   });
 }

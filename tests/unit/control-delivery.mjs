@@ -75,6 +75,7 @@ export default async function (t) {
       for (let i = 0; i < 200 && !q.options; i++) await sleep(5);
       const server = q.options?.mcpServers?.ply_control;
       t.ok('Claude: mcpServers に ply_control（http・Bearer）', server?.type === 'http' && server.url === runtime.url && server.headers?.Authorization === runtime.headers.Authorization, JSON.stringify(server));
+      t.ok('Claude: ply_control の待ちの上限はほかの Pleiad の MCP と同じ既定（承認は待たずに返る。ADR 0088）', !('timeout' in server), JSON.stringify(server));
       t.ok('Claude: 会話のシェルへ PLEIAD_CONTROL_URL・PLEIAD_CONTROL_TOKEN を渡す（CLI がこの会話に束縛される）', q.options?.env?.PLEIAD_CONTROL_URL === runtime.env.PLEIAD_CONTROL_URL && q.options.env.PLEIAD_CONTROL_TOKEN === TOKEN);
       t.ok('Claude: 指示文を systemPrompt.append に足す', q.options?.systemPrompt?.append?.includes('CONTROL-INSTRUCTIONS'), JSON.stringify(q.options?.systemPrompt ?? null).slice(0, 200));
       const decision = await q.options?.canUseTool?.('mcp__ply_control__call_op', { op: 'sessions.list' }, { signal: new AbortController().signal, suggestions: [] });
@@ -115,6 +116,7 @@ export default async function (t) {
     const start = requests.find((r) => r.method === 'thread/start')?.params;
     const server = start?.config?.['mcp_servers.ply_control'];
     t.ok('Codex: thread/start の config に ply_control（Bearer・approve・required: false）', server?.url === runtime.url && server.http_headers?.Authorization === runtime.headers.Authorization && server.required === false && server.default_tools_approval_mode === 'approve', JSON.stringify(server));
+    t.ok('Codex: ply_control の待ちの上限は 60 秒（ほかの Pleiad の MCP と同じ。ADR 0088）', server?.tool_timeout_sec === 60, JSON.stringify(server));
     t.ok('Codex: 会話のシェルの環境変数は、スレッドごとの shell_environment_policy.set で渡す（app-server は全会話で 1 本なのでプロセスの env では渡せない）',
       start?.config?.['shell_environment_policy.set']?.PLEIAD_CONTROL_TOKEN === TOKEN && start.config['shell_environment_policy.set'].PLEIAD_CONTROL_URL === runtime.env.PLEIAD_CONTROL_URL, JSON.stringify(start?.config?.['shell_environment_policy.set']));
     t.ok('Codex: developerInstructions に指示文', start?.developerInstructions?.includes('CONTROL-INSTRUCTIONS'), String(start?.developerInstructions ?? '').slice(-200));

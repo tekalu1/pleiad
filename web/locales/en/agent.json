@@ -451,10 +451,26 @@
       "sessionRequired": "Pass sessionId (it can be omitted only when it means this conversation).",
       "badCursor": "The cursor is not valid. Pass the previous result's next as is.",
       "DENIED": "The user did not allow the change ({{id}}). Do not retry; ask the user why.",
-      "APPROVAL_TIMEOUT": "The approval for {{id}} did not arrive in time and nothing was changed. Ask the user to check on Pleiad's screen.",
-      "APPROVAL_ABORTED": "The conversation stopped, or the call was cut off, while waiting for approval, so {{id}} was not done.",
       "STALE": "The value kept changing after approval, so {{id}} was not done. Check the current value with settings.get and try again.",
       "SETTING_READ_ONLY": "The setting {{key}} is read-only and cannot be changed with settings.set."
+    },
+    "pending": "The change to {{target}} is waiting for the user's approval (requestId: {{requestId}}). Nothing has changed yet. The result (allowed or denied) will be delivered to this conversation later. You may continue other work or end your response without waiting. Do not request the same change again.",
+    "settingTarget": "the setting {{key}}",
+    "opTarget": "the operation {{id}}",
+    "settingNotice": {
+      "head": "[Pleiad setting change result / {{requestId}}]\nResult: {{status}}",
+      "status": {
+        "allowed": "allowed",
+        "denied": "denied",
+        "failed": "failed",
+        "superseded": "withdrawn",
+        "restart": "withdrawn"
+      },
+      "allowed": "The user allowed the change to {{target}}, and Pleiad applied it. Continue the work needed for the original request.",
+      "denied": "The user denied the change to {{target}}. Nothing was changed. Do not request the same change again; ask the user why if needed.",
+      "failed": "The user allowed the change to {{target}}, but it could not be applied: {{error}}",
+      "superseded": "This request was withdrawn because a newer request for {{target}} replaced it. Nothing was changed by this request. The result of the newer request will be delivered separately.",
+      "restart": "Pleiad restarted, so the approval for the change to {{target}} was withdrawn. Nothing was changed. Request it again if it is still needed."
     },
     "settings": {
       "list": {
@@ -491,7 +507,7 @@
       }
     },
     "control": {
-      "instructions": "Pleiad's features and settings are available through ply_control.\nFind an operation with list_ops (pass an id to get its input JSON Schema) and call it with call_op. Conversation search and reading (search_sessions, get_session, read_session) and current setting values (get_setting) can be called directly.\nOperations that change Pleiad's state follow this conversation's approval mode. A change that loosens a gate waits for the user's approval card in a conversation that needs it. If the code is NEEDS_UI, NEEDS_APPROVAL, READ_ONLY_MODE, DENIED, or APPROVAL_TIMEOUT, do not retry; tell the user.",
+      "instructions": "Pleiad's features and settings are available through ply_control.\nFind an operation with list_ops (pass an id to get its input JSON Schema) and call it with call_op. Conversation search and reading (search_sessions, get_session, read_session) and current setting values (get_setting) can be called directly.\nOperations that change Pleiad's state follow this conversation's approval mode. A change that loosens a gate shows the user an approval card and returns status: pending without waiting; the result is delivered to this conversation later. If the code is NEEDS_UI, NEEDS_APPROVAL, or READ_ONLY_MODE, do not retry; tell the user.",
       "listOps": "List the operations available in Pleiad. Pass an id to get that operation's description, input JSON Schema, and risk. Call it with call_op.",
       "listOpsId": "An operation id (for example sessions.list). Omit it to get every id with a one-line description.",
       "callOp": "Call a Pleiad operation. If the input does not fit, the result has code: INVALID and says which field is wrong and why.",

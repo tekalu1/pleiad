@@ -1,6 +1,6 @@
 // 操作の一覧の HTTP の口（ADR 0083）。CLI（bin/pleiad.mjs）と pleiad mcp が使う。
 //   GET  /api/ops[?surface=cli|mcp]   その主体から見える操作の説明（id・説明・危険度・入力の JSON Schema・CLI の形）と、レジストリの版
-//   POST /api/ops/<id>                本文が引数の JSON。{ ok: true, result } か { ok: false, code, error, issues? }
+//   POST /api/ops/<id>                本文が引数の JSON。{ ok: true, result } か { ok: false, code, error, issues? }。承認待ちは 202 と { ok: true, pending: true, result }
 // 認証は Authorization: Bearer だけ。画面のトークン・クッキーは受けない。受けるトークンは 2 種類:
 //   CLI 用トークン（control.json）      会話に束縛されない agent（via: cli。x-pleiad-via: mcp-stdio なら pleiad mcp）
 //   会話の接続のトークン（環境変数）    その会話に束縛された agent（via: cli）。その会話の承認モードに従う
@@ -9,7 +9,7 @@ import { controlTexts } from './control.mjs';
 
 export const OPS_PATH = '/api/ops';
 const MAX_BODY = 256_000;
-const STATUS = { NOT_FOUND: 404, SESSION_NOT_FOUND: 404, MESSAGE_NOT_FOUND: 404, SETTING_NOT_FOUND: 404, TASK_NOT_FOUND: 404, INVALID: 400, SETTING_READ_ONLY: 403, NEEDS_UI: 403, NEEDS_APPROVAL: 403, DENIED: 403, APPROVAL_TIMEOUT: 408, APPROVAL_ABORTED: 409, STALE: 409, READ_ONLY_MODE: 403, HOST_SCREEN_ONLY: 403 };
+const STATUS = { NOT_FOUND: 404, SESSION_NOT_FOUND: 404, MESSAGE_NOT_FOUND: 404, SETTING_NOT_FOUND: 404, TASK_NOT_FOUND: 404, INVALID: 400, SETTING_READ_ONLY: 403, NEEDS_UI: 403, NEEDS_APPROVAL: 403, DENIED: 403, STALE: 409, READ_ONLY_MODE: 403, HOST_SCREEN_ONLY: 403 };
 
 /**
  * @param registry     操作の一覧
@@ -52,11 +52,9 @@ export function createOpsHttp({ registry, authenticate, depsFor, serverLocale })
     let principal;
     try { principal = { by: 'agent', via, ...(auth.owner ? { sessionId: await auth.owner() } : {}) }; }
     catch (e) { return reply(409, { ok: false, code: 'NOT_READY', error: String(e?.message ?? e) }); }
-    // 承認を待つ呼び出しは、呼び出した側（CLI）が切れたら取り下げる
-    const gone = new AbortController();
-    res.on('close', () => { if (!res.writableFinished) gone.abort(); });
-    const r = await registry.invoke(principal, id, args, { ...depsFor(locale), signal: gone.signal });
-    if (r.ok) return reply(200, { ok: true, result: r.result });
+    const r = await registry.invoke(principal, id, args, depsFor(locale));
+    // 承認待ち（会話の承認カードを出して、待たずに返した。ADR 0088）は 202 と pending: true
+    if (r.ok) return reply(r.pending ? 202 : 200, { ok: true, ...(r.pending ? { pending: true } : {}), result: r.result });
     return reply(STATUS[r.code] ?? 500, { ok: false, code: r.code, error: r.error, ...(r.issues ? { issues: r.issues } : {}) });
   }
 
