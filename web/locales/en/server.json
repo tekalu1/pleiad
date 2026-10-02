@@ -80,6 +80,17 @@
     "notDirectory": "Not a directory: {{cwd}}",
     "required": "Enter a working directory."
   },
+  "worktree": {
+    "cleaning": "This separate workspace is being cleaned up. Wait a moment and send again.",
+    "notFound": "That separate workspace was not found.",
+    "settingsInvalid": "Always separate must be on or off.",
+    "fail": {
+      "not-git": "This workspace is not a git repository, so it cannot be separated.",
+      "no-commits": "A repository with no commits yet cannot be separated (it needs a first commit).",
+      "already-split": "This is already inside a separate workspace.",
+      "git": "Could not create the separate workspace: {{error}}"
+    }
+  },
   "session": {
     "running": "This session is running.",
     "required": "A session is required.",

@@ -595,6 +595,71 @@
     "delegateOpen": "Open git for this workspace",
     "jumpFailed": "Couldn't find it in the conversation."
   },
+  "worktree": {
+    "label": "Separate workspace",
+    "who": "“{{title}}”",
+    "whoMany": "“{{title}}” and {{count}} more",
+    "whoAnother": "another conversation",
+    "note": "Same repository in use by {{who}}",
+    "noteLabel": "Other work in the same repository",
+    "split": "Start separately",
+    "keep": "Stay here",
+    "always": "Always separate",
+    "alwaysTitle": "From now on, start in a separate workspace without asking. You can turn this off in Settings.",
+    "chipSuffix": "separate workspace",
+    "chipTitle": "Separate workspace · from {{origin}}",
+    "start": "Start in a separate workspace",
+    "from": "from {{path}}",
+    "back": "Back to the original",
+    "next": "Separate workspace ({{path}})",
+    "splitFailed": "Could not create the separate workspace · {{error}}",
+    "line": {
+      "started": "Started in a separate workspace (same repository in use by {{who}})",
+      "startedNoWho": "Started in a separate workspace",
+      "backing": "Going back to the original from the next turn",
+      "backed": "Back in the original location",
+      "again": "Separate again"
+    },
+    "ask": {
+      "text": "Please merge the changes in the separate workspace {{branch}} ({{path}}) into branch {{base}} of the original workspace ({{origin}}). Resolve any conflicts. Once merged, Pleiad cleans up the separate workspace.",
+      "textOriginal": "Please merge the changes in the separate workspace {{branch}} ({{path}}) into the original branch of the original workspace ({{origin}}). Resolve any conflicts. Once merged, Pleiad cleans up the separate workspace."
+    },
+    "left": {
+      "title": "Leftover workspaces",
+      "ask": "Ask the agent to merge",
+      "archive": "Archive and remove",
+      "keep": "Keep",
+      "asked": "Asked “{{title}}”. It is removed automatically once merged.",
+      "askedUndo": "Cancel",
+      "askedLate": "Already delivered; it cannot be cancelled.",
+      "askFailed": "Could not ask · {{error}}",
+      "askNone": "There is no conversation to ask.",
+      "kept": "Keeping it.",
+      "keptUndo": "Undo",
+      "archived": "Archived and removed.",
+      "archivedUndo": "Restore",
+      "restoreFailed": "Could not restore it.",
+      "safetyLinks": "Before removing, only the links inside are unlinked.",
+      "safetyUse": "It is not removed while a conversation or shell is using it.",
+      "fail": {
+        "busy": "Something is using it, so it was not removed.",
+        "links": "The links inside could not be unlinked, so it was not removed.",
+        "changed": "It changed after the archive, so it was not removed.",
+        "archive": "The archive could not be made, so it was not removed.",
+        "unowned": "Pleiad did not create it, so it was not removed.",
+        "attached": "A conversation is using it, so it was not removed.",
+        "other": "It could not be removed."
+      }
+    },
+    "settings": {
+      "title": "Separate workspaces",
+      "always": "When another conversation is working in the same repository, always start separately without asking",
+      "description": "When off, you choose “Start separately” or “Stay here” above the composer. When on, conversations you start begin in a separate workspace and leave a single quiet line in the conversation."
+    },
+    "delegate": {
+      "unmerged": "Not merged"
+    }
+  },
   "filePreview": {
     "kind": {
       "image": "Image",
@@ -1300,6 +1365,8 @@
   "saved": {
     "reason": {
       "resumeCwd": "Changed on resume",
+      "worktreeSplit": "Moved to a separate workspace",
+      "worktreeBack": "Moved back to the original",
       "cwdFrom": "from {{from}}",
       "contextReloaded": "Reloaded instructions and Skills",
       "contextSettingsApplied": "Applied plugin settings changes",
@@ -1359,10 +1426,18 @@
       "agent": "The agent",
       "question": "{{agent}} wants to change a setting",
       "reason": "Reason: {{reason}}",
-      "warn": "⚠ This loosens a gate on the agent.",
+      "warn": "⚠ This lets the agent do more without asking you.",
       "allow": "Allow change",
       "allowed": "Change allowed",
-      "unset": "unset"
+      "unset": "unset",
+      "where": "Settings › {{section}}",
+      "on": "On",
+      "off": "Off",
+      "added": "Added",
+      "removed": "Removed",
+      "join": ", ",
+      "more_one": "and {{count}} more",
+      "more_other": "and {{count}} more"
     },
     "computerApproval": {
       "label": "Allow",

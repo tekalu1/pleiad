@@ -25,6 +25,7 @@ import { fmt, t } from "./i18n.mjs";
 import { familiesOf } from "./family.mjs";
 import { warnMark, interruptLabel, showsReasonInMeta } from "./interrupt.mjs";
 import { aiMarkTitle } from "./change-log.mjs";
+import { branchIcon } from "./icons.mjs";
 import { parseTerms, matchLocal, findRanges, localOrder, periodSince, pushRecentSearch, searchShortcutLabel, searchShortcutAria } from "./session-find.mjs";
 
 const backendLogos = {
@@ -215,7 +216,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   }
 
   const matchesFilter = (s) =>
-    (filter.dir == null || (s.cwd ?? "") === filter.dir) &&
+    (filter.dir == null || (s.worktree?.origin ?? s.cwd ?? "") === filter.dir) &&
     (filter.status === undefined || statusKey(s) === filter.status) &&
     (!filter.backends.length || filter.backends.includes(s.backend)) &&
     (!filter.period || (s.lastModified ?? 0) >= periodSince(filter.period));
@@ -690,8 +691,11 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       meta.append(ai);
     }
     if (last.backendLabels && s.backend) meta.append(backendLogo(s.backend, last.backendLabels[s.backend] ?? s.backend));
-    const cwd = el("span", "row-cwd", shortDir(s.cwd));
-    if (s.cwd) cwd.title = s.cwd;
+    const cwd = el("span", "row-cwd");
+    // 分けた作業場所の中の会話は、元の場所の名前に枝分かれの印（ADR 0089）
+    if (s.worktree) { const mark = el("span", "wt-ic"); mark.innerHTML = branchIcon; mark.setAttribute("aria-hidden", "true"); cwd.append(mark); }
+    cwd.append(shortDir(s.worktree?.origin ?? s.cwd));
+    if (s.cwd) cwd.title = s.worktree ? `${s.worktree.origin} · ${s.cwd}` : s.cwd;
     meta.append(cwd);
     if (s.unsent) meta.append(el("span", "row-unsent", s.hasDraft ? t("sidebar.unsentDraft") : t("sidebar.unsent")));
     if (s.compactionAt || s.compacted) meta.append(compactionMark(s));
@@ -927,7 +931,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (r.status) meta.append(el("span", "row-st", r.status));
     if (r.parent) meta.append(el("span", "row-from", r.parent.title ? t("sidebar.search.delegated", { parent: r.parent.title }) : t("sidebar.search.delegatedNoParent")));
     else {
-      const place = el("span", "row-cwd", shortDir(r.cwd));
+      const place = el("span", "row-cwd", shortDir(r.session?.worktree?.origin ?? r.cwd));
       if (r.cwd) place.title = r.cwd;
       meta.append(place);
     }
@@ -1150,7 +1154,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const body = el("div", "pop-body");
     p.append(q, body);
     const dirs = new Map();
-    for (const s of last.sessions) if (s.cwd) dirs.set(s.cwd, (dirs.get(s.cwd) ?? 0) + 1);
+    for (const s of last.sessions) { const dir = s.worktree?.origin ?? s.cwd; if (dir) dirs.set(dir, (dirs.get(dir) ?? 0) + 1); }
     const counts = new Map();
     for (const s of last.sessions) { const k = statusKey(s); counts.set(k, (counts.get(k) ?? 0) + 1); }
     const pick = (f) => { f(); save(); render(); p.hidden = true; };
