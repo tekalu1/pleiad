@@ -3553,11 +3553,7 @@ async function startNew({ status = null, cwd = "", backend } = {}) {
       renderSessions();
       side.showUndo(t('pending.failed', { reason: e.message }), () => startNew({ status, cwd, backend }), { retry: true });
     }
-    finally {
-      cancel();
-      creatingSession = null;
-      if (state.draft === draft) state.draft = { status: null, cwd: "" };
-    }
+    finally { cancel(); creatingSession = null; }
   })();
   return creatingSession;
 }
