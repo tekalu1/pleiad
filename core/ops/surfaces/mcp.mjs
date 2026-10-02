@@ -9,8 +9,6 @@
 //   texts    { instructions, listOps, listOpsId, callOp, callOpOp, callOpArgs, notFound } 会話（または PC）の言語の文
 
 export const CONTROL_SERVER = 'ply_control';
-/** 呼び出し 1 回を待つ上限（秒）。承認カードの待ち（core/server.mjs の OPS_APPROVAL_WAIT_MS = 300 秒）より長くする。CLI の待ちも同じ 330 秒 */
-export const CONTROL_CALL_TIMEOUT_SEC = 330;
 export const META_TOOLS = ['list_ops', 'call_op'];
 
 const object = (properties, required = []) => ({ type: 'object', properties, ...(required.length ? { required } : {}), additionalProperties: false });

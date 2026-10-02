@@ -30,24 +30,25 @@ const CONTROL_PREFIX = 'ply_control_';
 // core/browser-profiles.mjs の ply_browser のツール名（同上、軽く起こすため読み込まない）
 const BROWSER_TOOLS = new Set(['list_browser_profiles', 'use_browser_profile']);
 const locale = process.env.PLY_CONTEXT_LOCALE;
+// ツールの呼び出しは Pleiad 側で最長 300 秒まで待つ（context-bridge.mjs）。それより少し長く待つ。
+// ply_computer のロックの待ちは、橋が 150 秒ごとに分けて返す（agy は 1 回の呼び出しを 3 分で切り、設定では伸びない）
+const CALL_TIMEOUT_MS = 330_000;
 const KINDS = {
   context: { url: 'PLY_CONTEXT_URL', authorization: 'PLY_CONTEXT_AUTHORIZATION', server: 'Pleiad Context', methods: ['initialize', 'ping', 'tools/list', 'tools/call', 'resources/list', 'resources/read', 'prompts/list', 'prompts/get'] },
   computer: { url: 'PLY_COMPUTER_URL', authorization: 'PLY_COMPUTER_AUTHORIZATION', server: 'Pleiad Computer', methods: ['initialize', 'ping', 'tools/list', 'tools/call'] },
   browser: { url: 'PLY_BROWSER_URL', authorization: 'PLY_BROWSER_AUTHORIZATION', server: 'Pleiad Browser', methods: ['initialize', 'ping', 'tools/list', 'tools/call'] },
-  control: { url: 'PLY_CONTROL_URL', authorization: 'PLY_CONTROL_AUTHORIZATION', server: 'Pleiad Control', methods: ['initialize', 'ping', 'tools/list', 'tools/call'] },
+  // ply_control は承認が要る呼び出しも待たずに返る（ADR 0088）。ほかの Pleiad の MCP と同じ 60 秒で切る
+  control: { url: 'PLY_CONTROL_URL', authorization: 'PLY_CONTROL_AUTHORIZATION', server: 'Pleiad Control', methods: ['initialize', 'ping', 'tools/list', 'tools/call'], timeoutMs: 60_000 },
 };
 // 旗の無い起動は ply_context だけ
 const wanted = Object.keys(KINDS).filter(kind => process.argv.includes(`--${kind}`));
 const upstreams = (wanted.length ? wanted : ['context']).map(kind => {
   const url = process.env[KINDS[kind].url], authorization = process.env[KINDS[kind].authorization];
-  return { kind, url, authorization, connected: Boolean(url && /^Bearer [a-f0-9]{64}$/.test(authorization ?? '')), methods: new Set(KINDS[kind].methods) };
+  return { kind, url, authorization, connected: Boolean(url && /^Bearer [a-f0-9]{64}$/.test(authorization ?? '')), methods: new Set(KINDS[kind].methods), timeoutMs: KINDS[kind].timeoutMs ?? CALL_TIMEOUT_MS };
 });
 const bundled = upstreams.length > 1;
 const live = upstreams.filter(up => up.connected);
 const find = kind => live.find(up => up.kind === kind);
-// ツールの呼び出しは Pleiad 側で最長 300 秒まで待つ（context-bridge.mjs）。それより少し長く待つ。
-// ply_computer のロックの待ちは、橋が 150 秒ごとに分けて返す（agy は 1 回の呼び出しを 3 分で切り、設定では伸びない）
-const CALL_TIMEOUT_MS = 330_000;
 
 const write = message => process.stdout.write(JSON.stringify(message) + '\n');
 const fail = (id, code, message) => write({ jsonrpc: '2.0', id, error: { code, message } });
@@ -72,7 +73,7 @@ async function post(up, message) {
     method: 'POST',
     headers: { authorization: up.authorization, 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify(outgoing(up, message)),
-    signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+    signal: AbortSignal.timeout(up.timeoutMs),
   });
   if (message.id === undefined) { await response.body?.cancel().catch(() => {}); return null; }
   if (response.status === 401) return { error: [-32001, agentT(locale, 'relay.inactive')] };

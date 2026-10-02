@@ -90,7 +90,12 @@
       "autoCheck": "更新を自動で確認する",
       "beta": "先行版も受け取る",
       "autoDownload": "更新を自動でダウンロードする",
-      "releaseNotes": "リリースノート"
+      "releaseNotes": "リリースノート",
+      "mcpTitle": "外の AI から Pleiad を使う",
+      "copyMcpJson": "MCP の設定をコピー",
+      "copyMcpClaude": "claude mcp add をコピー",
+      "copied": "コピーしました",
+      "copyFailed": "コピーできませんでした"
     },
     "notify": {
       "pc": {
@@ -1401,7 +1406,8 @@
       "added": "追加",
       "removed": "削除",
       "join": "、",
-      "more_other": "ほか {{count}} 件"
+      "more_other": "ほか {{count}} 件",
+      "withdrawn": "取り下げた"
     },
     "computerApproval": {
       "label": "許可",
@@ -1465,6 +1471,14 @@
       "taskResultState": "委譲の結果（{{state}}）",
       "taskFull": "エージェントに渡した全文",
       "interruptionNote": "中断で止めたものをエージェントに伝えました",
+      "settingResult": "設定の変更の結果（{{state}}）",
+      "settingResults_other": "設定の変更の結果（{{count}} 件）",
+      "settingState": {
+        "allowed": "変更した",
+        "denied": "拒否した",
+        "failed": "変更できなかった",
+        "withdrawn": "取り下げた"
+      },
       "failed": "{{head}} {{error}}",
       "unknownReason": "理由不明",
       "modeSaveFailed": "承認モードを保存できませんでした: {{error}}",

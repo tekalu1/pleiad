@@ -35,4 +35,22 @@ export const appOps = [
     // いま走っている作業（会話のターン・委譲の子・承認待ちの数）。サーバーが ctx.app.running を渡す
     handler: (ctx) => ctx.app.running(),
   }),
+
+  defineOp({
+    id: 'app.cliSetup',
+    summary: 'agent:ops.app.cliSetup.summary',
+    risk: 'read',
+    input: z.object({}),
+    output: z.object({
+      command: z.string(),
+      args: z.array(z.string()),
+      env: z.record(z.string(), z.string()),
+      json: z.string(),
+      claude: z.string(),
+    }),
+    // 設定 › アプリ情報の「MCP の設定をコピー」。ホストの PC のパスなので、ホストの画面だけに出す（ADR 0090）
+    surfaces: { ui: true, mcp: false, cli: false },
+    hostScreenOnly: true,
+    handler: (ctx) => ctx.app.cliSetup(),
+  }),
 ];

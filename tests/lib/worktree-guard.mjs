@@ -4,6 +4,7 @@
 // cwd がこのリポジトリのテストが作ると、片付けの前にサーバーを止めたとき（一時の台帳ごと消えるので誰も片付けない）、
 // 開発中のリポジトリに残る。テストは一時の git リポジトリだけで作業場所を作る（tests/lib/server.mjs は既定で AGENT_HOST_WORKTREES=off）。
 // 並行して動く別の作業の worktree（temporary/worktrees/ など）は数えない: Pleiad が作った印（<…>.pleiad/ の置き場・pleiad/ のブランチ）だけを見る。
+// 本物の Pleiad が同じリポジトリで作った分は見分けられない（その間のテストが落ちる）。見分け方は docs/dev-verification.md「テスト」。
 import { execFile } from 'node:child_process';
 
 const git = (root, args) => new Promise((resolve) => {

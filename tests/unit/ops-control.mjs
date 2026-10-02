@@ -3,7 +3,8 @@
 //   - HTTP の認証: トークン無し・知らないトークン・画面のトークン・別の口のトークンは通らない。CLI 用トークンは /api/ops だけに効く
 //   - 会話への束縛: ply_control の接続は全会話に渡り、同じトークンで CLI（環境変数）も同じ会話に束縛される。会話ごとに別
 //   - 権限の配線: 会話の承認モード（bypass・ask・plan）→ policy。束縛なしは NEEDS_UI。human-only は agent に見えない
-//   - 承認カード: ask の会話の guarded は会話にカード（settingChange）を出して待つ。許可・拒否・受領証の不一致・時間切れ・呼び出しの切断。settings.set の実物と settingsChanged の配信
+//   - 承認カード: ask の会話の guarded は会話にカード（settingChange）を出し、待たずに承認待ち（202・requestId）で返る。許可・拒否・受領証の不一致。
+//     結果は会話へ届く（ターンの終わり・途中送信・置き換え・聞き直し・再起動は server-setting-approval）。settings.set の実物と settingsChanged の配信
 //   - 記録: by: 'agent'・via・どの会話の AI か。人間の操作は by: 'human' のまま
 //   - T6 伏せ字: 秘密に目印を入れた使い捨てのデータ置き場で、全 read 操作を呼んでも目印が出ない
 import fs from 'node:fs/promises';
@@ -32,8 +33,7 @@ export default async function (t) {
     computerUse: { enabled: true, secret: MARKER }, delegationRouting: { enabled: false, apiKey: MARKER }, linkOpen: 'external',
   }));
 
-  // 承認を待つ上限を短くして、時間切れも確かめる（既定は 300 秒）
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_OPS_APPROVAL_MS: '2500' }, dataDir, timeoutMs: 60_000 });
+  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir, timeoutMs: 60_000 });
   const c = await open({ port: server.port, token: server.token });
   const base = `http://127.0.0.1:${server.port}`;
   try {
@@ -94,9 +94,11 @@ export default async function (t) {
       return { sessionId: turn.sessionId, info: JSON.parse(loaded.messages.at(-1).text) };
     };
     const ask = await start('default'), bypass = await start('bypass'), plan = await start('plan');
+    // 承認カードを出す会話（結果の通知でターンが増えるので、後で本文を読む ask とは分ける）
+    const asker = await start('default');
     t.ok('全会話に ply_control が渡り、環境変数（PLEIAD_CONTROL_URL・TOKEN）と指示文がある', ask.info.url === `${base}/mcp/control` && ask.info.env.join() === 'PLEIAD_CONTROL_URL,PLEIAD_CONTROL_TOKEN'
       && ask.info.envUrl === base && ask.info.sameToken === true && /list_ops/.test(ask.info.instructions) && /^[a-f0-9]{64}$/.test(ask.info.token));
-    t.ok('会話ごとに別のトークン（CLI 用トークンとも別）', new Set([ask.info.token, bypass.info.token, plan.info.token, cli]).size === 4);
+    t.ok('会話ごとに別のトークン（CLI 用トークンとも別）', new Set([ask.info.token, bypass.info.token, plan.info.token, asker.info.token, cli]).size === 5);
     const again = await c.runTurn({ prompt: 'control-info', sessionId: ask.sessionId, cwd: ROOT, backend: 'fake', mode: 'default' }, { ms: 30_000 });
     t.ok('同じ会話の次のターンも同じ接続（会話のあいだ同じ口。agy は起動時にしか渡せない）', JSON.parse((await c.cmd('loadSession', { sessionId: again.sessionId })).messages.at(-1).text).token === ask.info.token);
     t.ok('指示文は 3〜4 行（会話の言語）', ask.info.instructions.split('\n').length >= 3 && ask.info.instructions.split('\n').length <= 4);
@@ -139,41 +141,37 @@ export default async function (t) {
     const allowed = await guard(bypass);
     t.ok('承認なしの会話（bypass: 範囲 full・自律 never）の guarded は通る', allowed.status === 200 && allowed.body.result.done === true, JSON.stringify(allowed.body));
     t.ok('その記録が会話に残る（by: agent・via・field: op）', (await api(cli, 'POST', '/api/ops/sessions.get', { sessionId: bypass.sessionId })).body.result.changes.some((x) => x.field === 'op' && x.to === 'probe.guarded' && x.by === 'agent'));
-    // 承認が要る会話（ask）: 会話に承認カード（settingChange）を出して待つ
+    // 承認が要る会話: 会話に承認カード（settingChange）を出し、待たずに承認待ちで返る（ADR 0088）
     const cardFor = (sessionId, from) => c.waitFor((e) => e.type === 'permission' && e.settingChange && e.sessionId === sessionId, { from, ms: 15_000 });
+    const noticeFor = (sessionId, requestId, from) => c.waitFor((e) => e.type === 'taskNotice' && e.sessionId === sessionId && String(e.text).includes(requestId), { from, ms: 30_000 });
+    const settledFor = (requestId, from) => c.waitFor((e) => e.type === 'settingApproval' && e.requestId === requestId, { from, ms: 15_000 });
     let from = c.mark();
-    const waiting = guard(ask);
-    const card = await cardFor(ask.sessionId, from);
-    t.ok('承認が要る会話（ask）の guarded は会話に承認カードを出して待つ（操作・受領証・エージェント。「常に許可」は無い）', card.toolName === 'ply_control' && card.canAlways === false
-      && card.settingChange.op === 'probe.guarded' && /^[a-f0-9]{32}$/.test(card.settingChange.receipt) && card.settingChange.agent.id === 'fake' && card.settingChange.note === 'probe', JSON.stringify(card.settingChange));
-    t.ok('待っているあいだ、承認待ちが走っている作業に数えられる', (await api(cli, 'POST', '/api/ops/app.running', {})).body.result.waiting >= 1);
+    const asked = await guard(asker);
+    const card = await cardFor(asker.sessionId, from);
+    t.ok('承認が要る会話の guarded は、待たずに 202 と承認待ち（pending・PENDING_APPROVAL・requestId・文）で返る', asked.status === 202 && asked.body.ok === true && asked.body.pending === true
+      && asked.body.result.status === 'pending' && asked.body.result.code === 'PENDING_APPROVAL' && /^setting-/.test(asked.body.result.requestId) && asked.body.result.message.includes(asked.body.result.requestId), JSON.stringify(asked.body));
+    t.ok('会話に承認カードを出す（操作・受領証・requestId・エージェント。「常に許可」は無い）', card.toolName === 'ply_control' && card.canAlways === false
+      && card.settingChange.op === 'probe.guarded' && /^[a-f0-9]{32}$/.test(card.settingChange.receipt) && card.settingChange.requestId === asked.body.result.requestId
+      && card.settingChange.agent.id === 'fake' && card.settingChange.note === 'probe', JSON.stringify(card.settingChange));
+    const runningNow = (await api(cli, 'POST', '/api/ops/app.running', {})).body.result;
+    t.ok('待っているカードは承認待ちに数えるが、走っている作業（終了・更新を止める数）には数えない', runningNow.waiting >= 1 && runningNow.count === 0, JSON.stringify(runningNow));
     t.ok('受領証の無い・合わない答えは断られ、カードは残る（別の変更への答えを受けない）',
       await c.cmd('resolvePermission', { id: card.id, allow: true }).then(() => false, (e) => e.code === 'RECEIPT_MISMATCH')
       && await c.cmd('resolvePermission', { id: card.id, allow: true, receipt: '0'.repeat(32) }).then(() => false, (e) => e.code === 'RECEIPT_MISMATCH'));
     await c.cmd('resolvePermission', { id: card.id, allow: true, receipt: card.settingChange.receipt });
-    const approved = await waiting;
-    t.ok('許可すると実行されて返る', approved.status === 200 && approved.body.result.done === true, JSON.stringify(approved.body));
+    const allowedNotice = await noticeFor(asker.sessionId, card.settingChange.requestId, from);
+    t.ok('許可すると実行され、結果（許可）がその会話へ通知として届く', /結果: 許可/.test(allowedNotice.text)
+      && (await settledFor(card.settingChange.requestId, from)).outcome === 'allowed'
+      && (await api(cli, 'POST', '/api/ops/sessions.get', { sessionId: asker.sessionId })).body.result.changes.some((x) => x.field === 'op' && x.to === 'probe.guarded'), allowedNotice.text);
     t.ok('同じカードへの再送は受け取られない（もう決着している）', await c.cmd('resolvePermission', { id: card.id, allow: true, receipt: card.settingChange.receipt }).then(() => false, () => true));
+    await c.waitFor((e) => e.type === 'turnEnd' && e.sessionId === asker.sessionId, { from, ms: 30_000 });
     from = c.mark();
-    const denied = guard(ask);
-    const card2 = await cardFor(ask.sessionId, from);
+    await guard(asker);
+    const card2 = await cardFor(asker.sessionId, from);
     await c.cmd('resolvePermission', { id: card2.id, allow: false, messageKey: 'userDenied', receipt: card2.settingChange.receipt });
-    const refused = await denied;
-    t.ok('拒否すると 403 と code: DENIED（実行されない）', refused.status === 403 && refused.body.code === 'DENIED', JSON.stringify(refused.body));
-    from = c.mark();
-    const slowAnswer = guard(ask);
-    const card3 = await cardFor(ask.sessionId, from);
-    const timedOut = await slowAnswer;
-    t.ok('答えが無いまま上限を過ぎると 408 と code: APPROVAL_TIMEOUT。カードは取り下げられる', timedOut.status === 408 && timedOut.body.code === 'APPROVAL_TIMEOUT'
-      && await c.cmd('resolvePermission', { id: card3.id, allow: true, receipt: card3.settingChange.receipt }).then(() => false, () => true), JSON.stringify(timedOut.body));
-    from = c.mark();
-    const gone = new AbortController();
-    const dropped = fetch(`${base}/api/ops/probe.guarded`, { method: 'POST', headers: { authorization: `Bearer ${bound(ask)}`, 'content-type': 'application/json' }, body: '{}', signal: gone.signal }).catch(() => null);
-    const card4 = await cardFor(ask.sessionId, from);
-    gone.abort();
-    await dropped;
-    await new Promise((r) => setTimeout(r, 300));
-    t.ok('呼び出した側が切れたら、待っているカードを取り下げる', await c.cmd('resolvePermission', { id: card4.id, allow: true, receipt: card4.settingChange.receipt }).then(() => false, () => true));
+    const deniedNotice = await noticeFor(asker.sessionId, card2.settingChange.requestId, from);
+    t.ok('拒否すると実行されず、結果（拒否）がその会話へ届く。画面へは決着（denied）が届く', /結果: 拒否/.test(deniedNotice.text) && (await settledFor(card2.settingChange.requestId, from)).outcome === 'denied', deniedNotice.text);
+    await c.waitFor((e) => e.type === 'turnEnd' && e.sessionId === asker.sessionId, { from, ms: 30_000 });
     t.ok('読み取り専用の会話（plan）の guarded は READ_ONLY_MODE', (await guard(plan)).body.code === 'READ_ONLY_MODE');
     const planWrite = await api(bound(plan), 'POST', '/api/ops/sessions.setTitle', { title: 'x' });
     t.ok('読み取り専用の会話の write も READ_ONLY_MODE。題は変わらない', planWrite.status === 403 && planWrite.body.code === 'READ_ONLY_MODE'
@@ -182,11 +180,12 @@ export default async function (t) {
     t.ok('human-only は束縛された会話にも出ない（bypass でも）', !(await api(bound(bypass), 'GET', '/api/ops')).body.result.ops.some((o) => o.id === 'probe.humanOnly') && (await api(bound(bypass), 'POST', '/api/ops/probe.humanOnly', {})).status === 404);
     t.ok('人間（画面）は guarded も human-only も通る', (await c.cmd('invoke', { op: 'probe.guarded', args: {} })).done === true && (await c.cmd('invoke', { op: 'probe.humanOnly', args: {} })).done === true);
     from = c.mark();
-    const viaMcpGuard = api(bound(ask), 'POST', '/mcp/control', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'call_op', arguments: { op: 'probe.guarded' } } });
-    const card5 = await cardFor(ask.sessionId, from);
+    const mcpPending = await api(bound(asker), 'POST', '/mcp/control', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'call_op', arguments: { op: 'probe.guarded' } } });
+    const card5 = await cardFor(asker.sessionId, from);
+    t.ok('MCP の承認待ちは isError ではなく、status: pending と requestId', mcpPending.body.result.isError !== true && JSON.parse(mcpPending.body.result.content[0].text).requestId === card5.settingChange.requestId, JSON.stringify(mcpPending.body));
     await c.cmd('resolvePermission', { id: card5.id, allow: false, messageKey: 'userDenied', receipt: card5.settingChange.receipt });
-    const mcpDenied = await viaMcpGuard;
-    t.ok('MCP の拒否は isError と code: DENIED', mcpDenied.body.result.isError === true && JSON.parse(mcpDenied.body.result.content[0].text).code === 'DENIED', JSON.stringify(mcpDenied.body));
+    await noticeFor(asker.sessionId, card5.settingChange.requestId, from);
+    await c.waitFor((e) => e.type === 'turnEnd' && e.sessionId === asker.sessionId, { from, ms: 30_000 });
 
     // ---- settings.set の実物（設定の一覧 → 画面と同じ保存・配信）
     await c.cmd('setPref', { key: 'confirmAgentSites', value: true });
@@ -203,15 +202,16 @@ export default async function (t) {
     t.ok('束縛されない CLI が確認を切る（関所を緩める）と NEEDS_UI。prefs は変わらない', (await api(cli, 'POST', '/api/ops/settings.set', { key: 'confirmAgentSites', value: false })).body.code === 'NEEDS_UI'
       && (await c.cmd('prefs')).confirmAgentSites === true);
     from = c.mark();
-    const loosening = api(bound(ask), 'POST', '/api/ops/settings.set', { key: 'confirmAgentSites', value: false, reason: '確認が多すぎるため' });
-    const card6 = await cardFor(ask.sessionId, from);
+    const loosening = await api(bound(asker), 'POST', '/api/ops/settings.set', { key: 'confirmAgentSites', value: false, reason: '確認が多すぎるため' });
+    const card6 = await cardFor(asker.sessionId, from);
     const sc = card6.settingChange;
-    t.ok('確認を切る(settings.set)は承認カード: 項目・前後の値（JSON）・AI が書いた理由・関所を緩める印', sc.op === 'settings.set' && sc.key === 'confirmAgentSites' && sc.rows[0].path === 'confirmAgentSites' && sc.rows[0].before === 'true' && sc.rows[0].after === 'false'
-      && sc.reason === '確認が多すぎるため' && sc.loosens === true, JSON.stringify(sc));
+    t.ok('確認を切る(settings.set)は承認カード: 項目・前後の値（JSON）・AI が書いた理由・関所を緩める印', loosening.status === 202 && sc.op === 'settings.set' && sc.key === 'confirmAgentSites' && sc.rows[0].path === 'confirmAgentSites' && sc.rows[0].before === 'true' && sc.rows[0].after === 'false'
+      && sc.reason === '確認が多すぎるため' && sc.loosens === true && loosening.body.result.message.includes('confirmAgentSites'), JSON.stringify(sc));
     t.ok('カードのあいだ、設定はまだ変わっていない', (await c.cmd('prefs')).confirmAgentSites === true);
     await c.cmd('resolvePermission', { id: card6.id, allow: true, receipt: sc.receipt });
-    const loosened = await loosening;
-    t.ok('許可すると書かれ、prefs イベントが届く', loosened.status === 200 && (await c.cmd('prefs')).confirmAgentSites === false);
+    const loosened = await noticeFor(asker.sessionId, sc.requestId, from);
+    t.ok('許可すると書かれ、prefs イベントが届き、結果が会話に届く', (await c.cmd('prefs')).confirmAgentSites === false && c.since(from).some((e) => e.type === 'prefs') && /結果: 許可/.test(loosened.text) && /confirmAgentSites/.test(loosened.text), loosened.text);
+    await c.waitFor((e) => e.type === 'turnEnd' && e.sessionId === asker.sessionId, { from, ms: 30_000 });
     await c.cmd('setPref', { key: 'confirmAgentSites', value: true });
     const bypassWrite = await api(bound(bypass), 'POST', '/api/ops/settings.set', { key: 'confirmAgentSites', value: false });
     t.ok('bypass の会話は承認カードなしで通り、記録が残る', bypassWrite.status === 200 && (await c.cmd('prefs')).confirmAgentSites === false

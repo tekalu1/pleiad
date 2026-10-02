@@ -10,6 +10,7 @@ import { migrateClaudeUsage } from './usage-migrations.mjs';
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
 import { createAgentTasks, finalReply, gitLine, workspaceLine } from './agent-tasks.mjs';
 import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
+import { createSettingApprovals } from './setting-approvals.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
 import { createComputerBridge, COMPUTER_MCP_PATH } from './computer-bridge.mjs';
 import { createComputerLock } from './computer-use/lock.mjs';
@@ -42,9 +43,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
 import { registry as opsRegistry } from './ops/index.mjs';
+import { targetText as settingTarget } from './ops/registry.mjs';
 import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './ops/surfaces/control.mjs';
 import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
 import { writeControlFile, removeControlFile } from './control-file.mjs';
+import { addCliToPath, mcpSetup } from './cli-launcher.mjs';
 import { parentIdOf } from './ops/sessions.mjs';
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
@@ -116,6 +119,8 @@ const screencastClients = new WeakMap();   // ws -> hub に渡す端末
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
 delete process.env.AGENT_BROWSER_CONFIG;
 delete process.env.AGENT_BROWSER_SESSION;
+// 会話のシェルで pleiad CLI を使えるよう、起動口（bin/）を PATH の先頭に足す。エージェントのプロセスと `!` の行はこの env を継ぐ（ADR 0090）
+addCliToPath(process.env);
 // このサーバーが起動した時刻。ready で配る。画面は、これより前の更新による中断だけを「更新の後」とみなす（web/interrupt.mjs の updateInterrupted）
 const SERVER_STARTED_AT = Date.now();
 const WEB = path.join(HERE, "..", "web");
@@ -348,6 +353,8 @@ async function withCodexTrust(report, cwd, { trust = true } = {}) {
   } catch (e) { return applyCodexHooks(report, null, String(e?.message ?? e).slice(0, 200)); }
 }
 let agentTasks;
+// 設定の変更の承認の台帳と、結果を会話へ届ける待ち行列（core/setting-approvals.mjs、ADR 0088）
+let settingApprovals;
 const agentConnections = new Map();
 const taskExecutions = new Map();
 // 実行前に拒否されたコマンド（Codex。core/backends/codex-rejections.mjs）を依頼元へ返す形（docs/agent-delegation.md「実行前に拒否されたコマンド」）。
@@ -1328,7 +1335,7 @@ function giveUp() {
   // 承認待ちを却下する前に、止めるターンが抱えているもの（承認待ち・裏の作業）を控える（中断で終わったら会話の「止めたもの」に残す）
   for (const t of runtime.turns.values()) t.stops ??= captureStops(t);
   // エージェントへの理由は承認ごとに会話の言語で（askPermission が messageKey を訳す）。ログは日本語のまま
-  for (const [, w] of [...runtime.waiting]) w.settle({ allow: false, messageKey: 'hostAway', messageParams: { seconds } });
+  for (const [, w] of [...runtime.waiting]) if (!w.detached) w.settle({ allow: false, messageKey: 'hostAway', messageParams: { seconds } });
   // 承認を返せないまま走らせ続けない。黙って deny し続けるより、止めて気づかせる。
   // 中断の理由は hostAway（会話に中断として残り、戻った人が「再開」で続けられる）
   for (const t of [...runtime.turns.values()]) { t.abortReason ??= "hostAway"; t.ac.abort(); }
@@ -1340,7 +1347,7 @@ function giveUp() {
 const LIST_NEUTRAL_EVENTS = new Set([
   "text.delta", "text.end", "thinking.start", "thinking.delta", "tool.start", "tool.result", "activity",
   "userMessage.delivered", "running", "permission", "outbox", "mcpAuth", "claudeLogin", "computer.state",
-  "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction", "settingsChanged",
+  "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction", "settingsChanged", "settingApproval",
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
 ]);
@@ -1621,6 +1628,7 @@ function makeEmit(turn) {
       const notice = liveNotices.get(event.messageId);
       liveNotices.delete(event.messageId);
       if (event.type === "userMessage.delivered") emit({ type: "taskNotice", text: notice.prompt });
+      else if (notice.redeliver) notice.redeliver();
       else agentTasks?.renotify(notice.items).catch(() => {});
       return;
     }
@@ -2053,6 +2061,8 @@ async function createStatusGroup(status, actor) {
 const opsApp = {
   searchSessions: (input) => sessionSearch.search(input),
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
+  // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
+  cliSetup: () => mcpSetup({ dataDir: store.dataDir }),
   // いま走っている作業の要約（app.running）。会話のターン・委譲の子・承認待ちの数
   running: async () => {
     const work = await runningWork();
@@ -2119,44 +2129,67 @@ const opsSessions = {
 // 状態のグループ（statuses.*）の本体
 const opsStatuses = { setIcon: setStatusIconOf, create: createStatusGroup };
 
-/** 承認を待つ上限（ミリ秒）。呼び出した側（CLI は 330 秒・Codex の MCP は 330 秒に揃える）が先に諦めないよう、それより短くする */
-const OPS_APPROVAL_WAIT_MS = Number(process.env.AGENT_HOST_OPS_APPROVAL_MS) > 0 ? Number(process.env.AGENT_HOST_OPS_APPROVAL_MS) : 300_000;
-
 /** 変更の記録に残す値（長いものは切る。秘密は設定に持たないので入らない） */
 const clipValue = (value) => { const text = JSON.stringify(value) ?? 'null'; return text.length > 300 ? `${text.slice(0, 299)}…` : text; };
 
+// 出している設定の変更の承認カード（requestId -> 取り下げ用の AbortController）。カードはメモリだけで、台帳は settingApprovals
+const settingCards = new Map();
+
 /**
- * 会話の承認カードで設定の変更を聞く（registry.invoke の ask。ADR 0082）。束縛された会話に askPermission のカード（settingChange）を出し、
- * 人の許可で { allow: true }、拒否・時間切れ・中断・会話の終了で { allow: false, code } を返す。host が居なければ拒否せず待つ（askPermission の規則）。
- * 待つのは、会話のターンが続き、呼び出した側がつながっていて、OPS_APPROVAL_WAIT_MS 以内のあいだ。どれかが尽きたらカードを取り下げる。
+ * 会話の承認カードで設定の変更を聞く（registry.invoke の approve。ADR 0088）。カードを出し、答えを待たずに { pending: true, requestId } を返す。
+ * カードは期限なしで残り（ターンの終わり・中断・host の不在では取り下げない。detached）、人の答えで決着する。
+ * 許可なら proceed()（受領証の照合と実行。値が変わっていれば同じ requestId で聞き直す）を呼び、結果（変えた・拒否・変えられなかった）を
+ * その会話へ届ける（settingApprovals。委譲の完了通知と同じ届け方）。同じ会話・同じ設定で待っている古いカードは取り下げ、置き換えたことを届ける。
  */
-async function askSettingChange({ op, change, receipt, reason, actor, signal }) {
+async function askSettingChange({ op, change, receipt, reason, actor, requestId, proceed }) {
   const sessionId = actor?.sessionId;
   if (!sessionId) return { allow: false, code: 'NEEDS_UI' };
   const turn = runtime.turns.get(sessionId);
-  if (turn?.ac.signal.aborted || signal?.aborted) return { allow: false, code: 'APPROVAL_ABORTED' };
   const backend = turn?.backend ?? await resolveBackendForSession(sessionId).catch(() => null);
   const agent = { id: backend?.id ?? '', label: backend?.label ?? '' };
+  const key = change.key ?? null;
+  const id = requestId ?? `setting-${crypto.randomUUID()}`;
+  for (const old of settingApprovals.pendingFor(sessionId, key, op)) if (old.requestId !== id) await withdrawSettingCard(old.requestId, 'superseded');
+  await settingApprovals.add({ requestId: id, sessionId, key, op });
   const ac = new AbortController();
-  let ended = null;
-  const stop = (why) => () => { ended ??= why; ac.abort(); };
-  const timer = setTimeout(stop('APPROVAL_TIMEOUT'), OPS_APPROVAL_WAIT_MS);
-  const onTurn = stop('APPROVAL_ABORTED'), onCaller = stop('APPROVAL_ABORTED');
-  turn?.ac.signal.addEventListener('abort', onTurn, { once: true });
-  signal?.addEventListener('abort', onCaller, { once: true });
-  try {
-    const key = change.key ?? op;
-    const answer = await askPermission({
-      toolName: 'ply_control', input: {}, sessionId, kind: 'tool', canAlways: false, signal: ac.signal,
-      title: t('permission.settingChange', { agent: agent.label, key }),
-      settingChange: { op, key, rows: change.rows ?? [], ...(change.note ? { note: change.note } : {}), loosens: Boolean(change.loosens), ...(reason ? { reason } : {}), receipt, agent },
-    });
-    return answer?.allow ? { allow: true } : { allow: false, code: ended ?? 'DENIED' };
-  } finally {
-    clearTimeout(timer);
-    turn?.ac.signal.removeEventListener('abort', onTurn);
-    signal?.removeEventListener('abort', onCaller);
-  }
+  settingCards.set(id, ac);
+  askPermission({
+    toolName: 'ply_control', input: {}, sessionId, kind: 'tool', canAlways: false, signal: ac.signal, detached: true,
+    title: t('permission.settingChange', { agent: agent.label, key: key ?? op }),
+    settingChange: { op, key: key ?? op, requestId: id, rows: change.rows ?? [], ...(change.note ? { note: change.note } : {}), loosens: Boolean(change.loosens), ...(reason ? { reason } : {}), receipt, agent },
+  }).then(async (answer) => {
+    if (settingCards.get(id) === ac) settingCards.delete(id);
+    // 取り下げた（置き換え）なら、取り下げた側が結果を積む
+    if (ac.signal.aborted) return;
+    if (!answer?.allow) return finishSettingApproval(id, 'denied');
+    let r;
+    try { r = await proceed(); } catch (e) { r = { ok: false, error: String(e?.message ?? e) }; }
+    // 許可のあとに値が変わっていたので、同じ requestId で聞き直した（新しいカードが出ている）
+    if (r?.pending) return;
+    await finishSettingApproval(id, r?.ok ? 'allowed' : 'failed', r?.ok ? {} : { error: r?.error ?? r?.code ?? '' });
+  }).catch((e) => console.error('  設定の変更の承認に失敗:', String(e?.message ?? e)));
+  return { pending: true, requestId: id };
+}
+
+/** 設定の変更の承認カードを取り下げ、その結果（outcome）を会話へ届ける */
+async function withdrawSettingCard(requestId, outcome) {
+  const ac = settingCards.get(requestId);
+  settingCards.delete(requestId);
+  ac?.abort();
+  await finishSettingApproval(requestId, outcome);
+}
+
+/** 設定の変更の承認の決着。台帳から外して結果を会話へ届ける列に積み、画面へ決着を知らせる（どの端末のカードも 1 行に畳む） */
+async function finishSettingApproval(requestId, outcome, extra = {}) {
+  const entry = await settingApprovals.settle(requestId, outcome, extra);
+  if (entry) emitGlobal({ type: 'settingApproval', sessionId: entry.sessionId, requestId, outcome });
+}
+
+/** 設定の変更の結果を、エージェントへ渡す文にする（会話の言語。1 件ずつの節を並べる） */
+function settingNotice(lng, notices) {
+  // i18n-dynamic: agent:ops.settingNotice.
+  return notices.map((n) => agentT(lng, 'ops.settingNotice.head', { requestId: n.requestId, status: agentT(lng, `ops.settingNotice.status.${n.outcome}`) })
+    + '\n' + agentT(lng, `ops.settingNotice.${n.outcome}`, { target: settingTarget(lng, n.op, n.key), error: n.error ?? '' })).join('\n\n');
 }
 
 /**
@@ -2230,6 +2263,7 @@ async function runningWork() {
     sessionId: w.payload.sessionId ?? null,
     askedAt: w.askedAt ?? null,
     relay: Boolean(w.relay),   // 祖先の会話へ中継した複製。元のカードと同じ1件を指す
+    ...(w.detached ? { detached: true } : {}),   // ターンを止めていない承認（設定の変更。ADR 0088）
   }));
 
   const nested = await Promise.all([...runtime.turns.values()].map(async (t) => {
@@ -2285,7 +2319,8 @@ async function runningWork() {
     // サブエージェントは走っている子だけを数える。終わった子はターンが終わるまで一覧に残るので、
     // そのまま数えると更新のゲート（web の count > 0）が閉じたままになる。status が null の子
     // （状態を返せないバックエンド・まだ分からない子）は数える。数えないとゲートを緩めてしまう
-    count: turns.length + permissions.filter((p) => !p.relay).length
+    // 設定の変更の承認（detached）は期限なしで残るので数えない（数えると、答えるまで終了も更新もできない）
+    count: turns.length + permissions.filter((p) => !p.relay && !p.detached).length
       + subagents.filter((a) => a.status === "running" || a.status == null).length + (agentTasks?.list().filter(r => ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)).length ?? 0),
   };
 }
@@ -2333,7 +2368,7 @@ function attach(ws) {
 function detach(ws) {
   if (!runtime.sockets.delete(ws)) return;
   if (runtime.sockets.size > 0) return;          // まだ別のタブが居る
-  if (runtime.turns.size === 0 && runtime.waiting.size === 0) return;
+  if (runtime.turns.size === 0 && blockingWaits().length === 0) return;
 
   runtime.awaySince = Date.now();
   clearTimeout(runtime.graceTimer);
@@ -2346,6 +2381,9 @@ function detach(ws) {
   // 保険のタイマー。ただしこれ単体には頼らない（発火しなくても graceExpired() が拾う）
   runtime.graceTimer = setTimeout(giveUp, HOST_GRACE_MS + 500);
 }
+
+/** ターンを止めている承認待ち（設定の変更の承認 detached を除く。ADR 0088） */
+const blockingWaits = () => [...runtime.waiting.values()].filter(w => !w.detached);
 
 /**
  * 承認待ちを片付ける。どのセッションの分かは呼び出し側が必ず指定する。
@@ -2361,6 +2399,8 @@ function settleAll(messageKey, sessionId) {
     // この会話のターンが終わっても取り下げない（元の会話が決着すれば一緒に消える）。
     // 取り下げると、依頼元が ply_task_wait を終えただけで子の承認が拒否される
     if (w.relay) continue;
+    // 設定の変更の承認（detached）はターンを止めていない。ターンが終わっても、中断しても残す（ADR 0088）
+    if (w.detached) continue;
     w.settle({ allow: false, messageKey });
   }
 }
@@ -2402,7 +2442,7 @@ async function delegationAncestors(sessionId) {
  * 人間は最上位の会話に居るので、1段だけ上げても誰も見ない場所に出るだけになる。
  * どれか1つで答えれば全部が決着し、残りは消える。
  */
-const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange }) => {
+const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, detached = false }) => {
   const ancestors = sessionId ? await delegationAncestors(sessionId) : [];
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
@@ -2452,7 +2492,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       permissionsChanged();
     };
 
-    for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false });
+    for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false, detached });
     signal?.addEventListener?.("abort", onAbort, { once: true });
     // 離れたスマホへ（画面が居るかによらない。委譲の子の承認・質問は子の会話の分だけ。中継の複製は送らない）
     // （会話名を読むあいだに決着していたら送らない。送ると取り消しが先に行ってしまい、通知が残る）
@@ -2624,12 +2664,12 @@ function completionNotice(lng, tasks) {
  * true=受理 → ok / false=受理できない → requeue（空いてから新しいターンで）/ throw=結果不明 → error（自動で再送しない）。
  * 「渡った」合図を後から出すバックエンド（steerConfirms）では、通知の一行を渡った時点で出し、捨てられたら送り直す（liveNotices）
  */
-async function steerNotice(turn, owner, prompt, tasks) {
+async function steerNotice(turn, owner, prompt, tasks, redeliver = null) {
   await recordTaskNotice(owner, prompt);
   const item = { id: `task-notice-${crypto.randomUUID()}`, args: { prompt } };
   const confirms = Boolean(turn.control.steerConfirms);
   // 合図は受理の応答より先に来ることがある。先に登録しておく
-  if (confirms) liveNotices.set(item.id, { owner, prompt, items: tasks.map(x => ({ taskId: x.taskId, revision: x.revision ?? 0 })) });
+  if (confirms) liveNotices.set(item.id, { owner, prompt, items: tasks.map(x => ({ taskId: x.taskId, revision: x.revision ?? 0 })), ...(redeliver ? { redeliver } : {}) });
   let accepted;
   try { accepted = await turn.control.steer?.(item); }
   catch { liveNotices.delete(item.id); return 'error'; }
@@ -2720,7 +2760,7 @@ agentTasks = await createAgentTasks({
   changed: () => { broadcastRunning(); completionNotices.changed(); },
   // 人間の承認を待っているか。承認は core/server.mjs 側にしかないので判定を渡す。
   // 中継の複製も数える（孫が止まっていれば、その子も止まっている）
-  waiting: sessionId => [...runtime.waiting.values()].some(w => w.payload.sessionId === sessionId),
+  waiting: sessionId => blockingWaits().some(w => w.payload.sessionId === sessionId),
   // コンピューターの操作のロックを待っている子は、黙っているとは数えない（承認待ちではないので ply_task_wait の waiting にはしない）
   lockWaiting: sessionId => computerLock.snapshot().some(s => s.sessionId === sessionId && s.state === 'waiting'),
   rollback: async ({ sessionId, worktree }) => {
@@ -2876,6 +2916,23 @@ agentTasks = await createAgentTasks({
 // 前の起動で走っていて、再起動で止まった委譲タスクを、依頼元の会話の「止めたもの」に残す（次のターンで伝える）。
 // 裏の作業と承認待ちは保存していないので分からない（docs/design.md「中断と再開」）
 await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
+// 設定の変更の承認の結果を会話へ届ける（ADR 0088）。届け方は委譲の完了通知と同じ（ADR 0057）: 走っているターンへ途中送信で渡せればそこへ、
+// 渡せなければ会話が空いてから新しいターンで。前の起動で待っていた要求は、再起動で取り下げた結果として届ける
+settingApprovals = await createSettingApprovals({
+  dataDir: store.dataDir,
+  onError: e => console.error('  設定の変更の承認の台帳:', String(e?.message ?? e)),
+  deliver: async (sessionId, notices) => {
+    const live = await noticeTarget(sessionId);
+    if (!live && await noticeBlocked(sessionId)) return 'requeue';
+    const prompt = settingNotice(await ensureAgentLocale(sessionId), notices);
+    if (live) {
+      const r = await steerNotice(live, sessionId, prompt, [], () => settingApprovals.requeue(notices));
+      return r === 'requeue' ? 'requeue' : r === 'ok' ? 'ok' : 'error';
+    }
+    return (await runTurn({ sessionId, prompt }, () => {}, { internal: true })) === 'requeue' ? 'requeue' : 'ok';
+  },
+});
+if (settingApprovals.restored) console.log(`  前の起動で承認を待っていた設定の変更 ${settingApprovals.restored} 件を取り下げた（結果を会話へ届ける）`);
 // 分けた作業場所: 台帳と git worktree list を突き合わせ（作成の途中で落ちたものは巻き戻す）、使っていない片付けられるものを消す（ADR 0089）
 await worktreeHost.worktrees.reconcile()
   .then(r => { const n = Object.values(r).reduce((a, l) => a + l.length, 0); if (n) console.log(`  分けた作業場所を ${n} 件整理した`); })
@@ -3383,7 +3440,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
   for (const [id, notice] of [...liveNotices]) {
     if (notice.owner !== turn.info.sessionId) continue;
     liveNotices.delete(id);
-    agentTasks?.renotify(notice.items).catch(() => {});
+    if (notice.redeliver) notice.redeliver();
+    else agentTasks?.renotify(notice.items).catch(() => {});
   }
   // 子のターンに渡した追加指示のうち、渡った合図が来ないまま終わったものは読まれたか分からない（読まれていれば合図が先に来ている）。
   // 待機へ戻して次のターンで送る。子の結果を確定する execute がこの後に返るので、結果の記録より先に戻る。
@@ -3408,6 +3466,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   worktreeSweepSoon();
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
   if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt, { startedAt: turn.startedAtMs });
+  settingApprovals?.changed();
   // 利用者の送信でも、委譲の完了通知などで始まったターンでも予約する（ADR 0068）。圧縮のターンの後は予約し直さない
   if (record && turn.outcome === 'ok' && !turn.compactTrigger && !turn.compaction
       && !delegated && turn.info.sessionId) {
@@ -3420,7 +3479,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
         && !queued.some(m => !['sent', 'cancelled'].includes(m.status))
         && compactionSettings.enabled && row?.enabled && turn.backend.capabilities?.compact
         && usage?.usedTokens >= compactionSettings.minTokens && !meta.autoCompactionOff
-        && ![...runtime.waiting.values()].some(w => w.payload.sessionId === id))
+        && !blockingWaits().some(w => w.payload.sessionId === id))
       compactionScheduler.schedule(id, turn.backend.id, row.delayMinutes * 60_000,
         turn.compactionRevision, usage.usedTokens);
   }
@@ -3483,7 +3542,7 @@ const compactionScheduler = createCompactionScheduler({
       && !queued.some(m => !['sent', 'cancelled'].includes(m.status))
       && compactionSettings.enabled && row?.enabled && backend?.capabilities?.compact
       && meta.contextWindow?.usedTokens >= compactionSettings.minTokens
-      && ![...runtime.waiting.values()].some(w => w.payload.sessionId === id);
+      && !blockingWaits().some(w => w.payload.sessionId === id);
   },
   compact: async (id, _sessionId, current) => {
     if (current()) await runTurn({ sessionId: id, prompt: '/compact' }, () => {},
@@ -3683,7 +3742,7 @@ function captureStops(turn) {
   const id = turn.info.sessionId;
   return {
     background: (turn.info.background ?? []).map(backgroundStop),
-    approvals: id ? [...runtime.waiting].filter(([, w]) => !w.relay && w.payload.sessionId === id).map(([key, w]) => approvalStop(key, w.payload)) : [],
+    approvals: id ? [...runtime.waiting].filter(([, w]) => !w.relay && !w.detached && w.payload.sessionId === id).map(([key, w]) => approvalStop(key, w.payload)) : [],
   };
 }
 
@@ -5227,7 +5286,7 @@ process.parentPort?.on("message", async ({ data }) => {
   if (data?.type === 'update-lock') {
     // 断るときは何が止めているかを返す。画面に出さないと、見た目に何も動いていないのに更新できない理由が分からない
     const reason = runtime.turns.size ? t('updateLock.turns', { count: runtime.turns.size })
-      : runtime.waiting.size ? t('updateLock.approvals', { count: runtime.waiting.size })
+      : blockingWaits().length ? t('updateLock.approvals', { count: blockingWaits().length })
       : agentTasks.busy ? t('updateLock.delegation')
       : outbox.busy ? t('updateLock.steer')
       : switching.size || forking.size ? t('updateLock.switching')
