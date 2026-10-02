@@ -97,8 +97,8 @@ export default async function (t) {
     const turn = await client.runTurn({ ...s, prompt: 'hello' }, { ms: 60_000 });
     const record = await client.cmd('sessionContext', s);
     const ids = (record?.plyParts ?? []).map(p => p.id).join();
-    t.ok('会話の記録に Pleiad が足した分が残る（Visualize・委譲ツール・Pleiad の指示・案内。内蔵ブラウザーの無い会話にブラウザーの説明は数えない）',
-      turn.outcome === 'ok' && ids === 'visualize,agents,added,guide' && record.plyParts.every(p => p.tokens > 0), ids);
+    t.ok('会話の記録に Pleiad が足した分が残る（Visualize・委譲ツール・Pleiad の指示・案内・Pleiad の操作（ply_control。全会話に渡す）。内蔵ブラウザーの無い会話にブラウザーの説明は数えない）',
+      turn.outcome === 'ok' && ids === 'visualize,agents,added,guide,control' && record.plyParts.every(p => p.tokens > 0), ids);
     t.ok('渡した指示の行に量が付く', record.report.entries.find(e => e.kind === 'instruction' && e.status === 'supplied')?.tokens === estimateTokens('ROOT_AGENTS '.repeat(30)));
     const usage = turn.events.filter(e => e.type === 'contextUsage');
     t.ok('ターンの記録の知らせ（contextUsage）にも載る', usage.at(-1)?.plyParts?.map(p => p.id).join() === ids);

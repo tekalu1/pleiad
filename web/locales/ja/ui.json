@@ -824,7 +824,8 @@
         "added": "Pleiad の指示",
         "guide": "コンテキストの案内",
         "browser": "ブラウザーの説明",
-        "computer": "コンピューターの操作の説明"
+        "computer": "コンピューターの操作の説明",
+        "control": "Pleiad の操作の説明"
       },
       "over": "自分で書いた指示が目安の {{ratio}} 倍",
       "overDetail": " · 約 {{own}} / {{budget}}",

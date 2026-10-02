@@ -56,6 +56,25 @@ npm test           # tests that do not call any LLM
 
 The browser version runs on Windows, macOS, and Linux. The desktop version runs on Windows and macOS.
 
+## Command line
+
+`bin/pleiad.mjs` (the `pleiad` bin in `package.json`) talks to a running Pleiad. Its subcommands come from the server's operation list, so new operations appear without changing the CLI.
+
+```bash
+node bin/pleiad.mjs status
+node bin/pleiad.mjs sessions list --limit 5
+node bin/pleiad.mjs sessions read <id> --before 2 --after 2
+node bin/pleiad.mjs settings get compaction.auto
+node bin/pleiad.mjs ops                      # every available operation
+node bin/pleiad.mjs call sessions.get --args '{"sessionId":"<id>"}'
+node bin/pleiad.mjs sessions list --json     # JSON output
+```
+
+It finds Pleiad through `control.json` in the data folder (`AGENT_HOST_DATA`, default `~/.agent-host`). Exit codes: 0 success, 2 invalid input, 3 Pleiad is not running, 4 refused or needs the Pleiad screen, 5 other.
+Inside a Pleiad conversation the shell already has `PLEIAD_CONTROL_URL` and `PLEIAD_CONTROL_TOKEN`, so the CLI acts on that conversation under its approval mode.
+`pleiad mcp` serves the same operations as a stdio MCP server for AI tools outside Pleiad: `claude mcp add pleiad -- node <repo>/bin/pleiad.mjs mcp`.
+Details: [Design](docs/design.md) ("操作の一覧").
+
 ## Documentation
 
 Detailed documentation is currently in Japanese.

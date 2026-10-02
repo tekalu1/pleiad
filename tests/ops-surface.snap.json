@@ -1,6 +1,25 @@
 {
   "ops": [
     {
+      "id": "app.running",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "running"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "app.status",
       "risk": "read",
       "riskOf": false,
@@ -18,6 +37,115 @@
       },
       "legacyCommand": null,
       "input": "25c7d85c859a"
+    },
+    {
+      "id": "delegation.status",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "delegation",
+            "status"
+          ],
+          "positional": [
+            "taskId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "e3b488cb7dc5"
+    },
+    {
+      "id": "delegation.tasks",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "delegation",
+            "tasks"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "3674e4e2e03f"
+    },
+    {
+      "id": "sessions.get",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "direct",
+        "cli": {
+          "path": [
+            "sessions",
+            "get"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "18e4482f0f74"
+    },
+    {
+      "id": "sessions.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "9b44cafbe720"
+    },
+    {
+      "id": "sessions.read",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "direct",
+        "cli": {
+          "path": [
+            "sessions",
+            "read"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "62fa526050a3"
     },
     {
       "id": "sessions.search",
@@ -39,9 +167,401 @@
       },
       "legacyCommand": null,
       "input": "e62fd6215a96"
+    },
+    {
+      "id": "sessions.setStatus",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "status"
+          ],
+          "positional": [
+            "sessionId",
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "638b344ef30c"
+    },
+    {
+      "id": "sessions.setTitle",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "rename"
+          ],
+          "positional": [
+            "sessionId",
+            "title"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "b7a5d60cc4c3"
+    },
+    {
+      "id": "settings.get",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "direct",
+        "cli": {
+          "path": [
+            "settings",
+            "get"
+          ],
+          "positional": [
+            "key"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "0b169eb59d73"
+    },
+    {
+      "id": "settings.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "settings",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "2ad119dad715"
+    },
+    {
+      "id": "settings.schema",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "settings",
+            "schema"
+          ],
+          "positional": [
+            "key"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "2e2f5e3b592a"
     }
   ],
-  "settings": [],
+  "settings": [
+    {
+      "key": "addedContext",
+      "risk": "guarded",
+      "riskOf": false,
+      "prefKeys": [
+        "addedContext"
+      ]
+    },
+    {
+      "key": "agentSitePermissions",
+      "risk": "guarded",
+      "riskOf": false,
+      "prefKeys": [
+        "agentSitePermissions"
+      ]
+    },
+    {
+      "key": "backend",
+      "risk": "write",
+      "riskOf": false,
+      "prefKeys": [
+        "backend"
+      ]
+    },
+    {
+      "key": "browserDefaultProfile",
+      "risk": "write",
+      "riskOf": false,
+      "prefKeys": [
+        "browserDefaultProfile"
+      ]
+    },
+    {
+      "key": "browserNewProfile",
+      "risk": "write",
+      "riskOf": false,
+      "prefKeys": [
+        "browserNewProfile"
+      ]
+    },
+    {
+      "key": "browserProfiles",
+      "risk": "guarded",
+      "riskOf": false,
+      "prefKeys": [
+        "browserProfiles"
+      ]
+    },
+    {
+      "key": "claudeAccount",
+      "risk": "write",
+      "riskOf": false,
+      "prefKeys": [
+        "claudeAccount"
+      ]
+    },
+    {
+      "key": "compaction.auto",
+      "risk": "write",
+      "riskOf": false,
+      "prefKeys": [
+        "autoCompaction"
+      ]
+    },
+    {
+      "key": "computerUse",
+      "risk": "write",
+      "riskOf": true,
+      "prefKeys": [
+        "computerUse"
+      ]
+    },
+    {
+      "key": "confirmAgentSites",
+      "risk": "write",
+      "riskOf": true,
+      "prefKeys": [
+        "confirmAgentSites"
+      ]
+    },
+    {
+      "key": "confirmExternalLoads",
+      "risk": "write",
+      "riskOf": true,
+      "prefKeys": [
+        "confirmExternalLoads"
+      ]
+    },
+    {
+      "key": "context.default",
+      "risk": "guarded",
+      "riskOf": false,
+      "prefKeys": []
+    },
+    {
+      "key": "delegationRouting",
+      "risk": "guarded",
+      "riskOf": false,
+      "prefKeys": [
+        "delegationRouting"
+      ]
+    },
+    {
+      "key": "effort",
+      "risk": "write",
+      "riskOf": false,
+      "prefKeys": [
+        "effort"
+      ]
+    },
+    {
+      "key": "externalSitePermissions",
+      "risk": "guarded",
+      "riskOf": false,
+      "prefKeys": [
+        "externalSitePermissions"
+      ]
+    },
+    {
+      "key": "instructionBudget",
+      "risk": "write",
+      "riskOf": false,
+      "prefKeys": [
+        "instructionBudget"
+      ]
+    },
+    {
+      "key": "linkOpen",
+      "risk": "write",
+      "riskOf": false,
+      "prefKeys": [
+        "linkOpen"
+      ]
+    },
+    {
+      "key": "locale",
+      "risk": "write",
+      "riskOf": false,
+      "prefKeys": [
+        "locale"
+      ]
+    },
+    {
+      "key": "mode",
+      "risk": "human-only",
+      "riskOf": false,
+      "prefKeys": [
+        "mode"
+      ]
+    },
+    {
+      "key": "model",
+      "risk": "write",
+      "riskOf": false,
+      "prefKeys": [
+        "model"
+      ]
+    },
+    {
+      "key": "plyInstructions",
+      "risk": "guarded",
+      "riskOf": false,
+      "prefKeys": [
+        "plyInstructions"
+      ]
+    }
+  ],
+  "mcp": [
+    {
+      "name": "search_sessions",
+      "input": "59fc873e9691"
+    },
+    {
+      "name": "get_session",
+      "input": "641f73bc6645"
+    },
+    {
+      "name": "read_session",
+      "input": "64f25035b503"
+    },
+    {
+      "name": "get_setting",
+      "input": "3472c4008af7"
+    },
+    {
+      "name": "list_ops",
+      "input": "bb8cd515f6e5"
+    },
+    {
+      "name": "call_op",
+      "input": "0adc59c478ac"
+    }
+  ],
+  "cli": [
+    {
+      "id": "delegation.status",
+      "path": "delegation status",
+      "positional": [
+        "taskId"
+      ]
+    },
+    {
+      "id": "delegation.tasks",
+      "path": "delegation tasks",
+      "positional": []
+    },
+    {
+      "id": "app.running",
+      "path": "running",
+      "positional": []
+    },
+    {
+      "id": "sessions.get",
+      "path": "sessions get",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.list",
+      "path": "sessions list",
+      "positional": []
+    },
+    {
+      "id": "sessions.read",
+      "path": "sessions read",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.setTitle",
+      "path": "sessions rename",
+      "positional": [
+        "sessionId",
+        "title"
+      ]
+    },
+    {
+      "id": "sessions.search",
+      "path": "sessions search",
+      "positional": [
+        "query"
+      ]
+    },
+    {
+      "id": "sessions.setStatus",
+      "path": "sessions status",
+      "positional": [
+        "sessionId",
+        "status"
+      ]
+    },
+    {
+      "id": "settings.get",
+      "path": "settings get",
+      "positional": [
+        "key"
+      ]
+    },
+    {
+      "id": "settings.list",
+      "path": "settings list",
+      "positional": []
+    },
+    {
+      "id": "settings.schema",
+      "path": "settings schema",
+      "positional": [
+        "key"
+      ]
+    },
+    {
+      "id": "app.status",
+      "path": "status",
+      "positional": []
+    }
+  ],
   "policy": {
     "human": {
       "read": "allow",

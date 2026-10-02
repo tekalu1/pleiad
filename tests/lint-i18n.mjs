@@ -5,7 +5,7 @@
      node tests/lint-i18n.mjs [--update-baseline [--moved]] [--json] [--selftest]
 
    検査すること:
-   1. 直書きの日本語（ラチェット）。web/・core/・desktop/ のコードに残る、日本語（ひらがな・カタカナ・漢字）を含む
+   1. 直書きの日本語（ラチェット）。web/・core/・desktop/・bin/ のコードに残る、日本語（ひらがな・カタカナ・漢字）を含む
       文字列リテラル・テンプレートリテラル・HTML のテキストと title / aria-label / placeholder / alt・CSS の content: を数える。
       数える単位は「リテラルの 1 行」（複数行のテンプレートは日本語を含む行ごとに 1 件）。コメントは数えない。
       ファイルごとの件数を tests/i18n-baseline.json と比べ、増えた・基準に無いファイルに出た → 失敗。
@@ -17,7 +17,7 @@
    4. 未訳。ja 以外の値に日本語が入っている、または ja と同じ値のまま → 失敗。
       固有名などは tests/i18n-allow.json の sameAsJa に「名前空間:キー」で許す。文字（\p{L}）を含まない値は数えない。
    5. キーの存在と未使用。コード中の静的な t('キー') と data-i18n* 属性のキーが ja にあること。
-      名前空間を書かないキーは置き場で決まる: web/ → ui、core/ → server、desktop/ → desktop。
+      名前空間を書かないキーは置き場で決まる: web/ → ui、core/ → server、desktop/ → desktop、bin/（CLI）→ agent。
       ほかの名前空間は 'agent:キー' のように書く。辞書にあってどこからも使われないキーも失敗。
       組み立てるキーは、同じファイルに `// i18n-dynamic: 接頭辞` の印を書けば、その接頭辞で始まるキーを使用済みとみなす。
    6. 自己診断（--selftest。npm test でも回す）。
@@ -35,13 +35,13 @@ export const ALLOW_FILE = path.join(ROOT, 'tests', 'i18n-allow.json');
 export const LOCALES_DIR = path.join(ROOT, 'web', 'locales');
 
 /* 検査する範囲。拡張子で読み方が決まる */
-const SCAN_DIRS = ['web', 'core', 'desktop'];
+const SCAN_DIRS = ['web', 'core', 'desktop', 'bin'];
 const JS_EXT = new Set(['.mjs', '.js', '.cjs']);
 const EXT = new Set([...JS_EXT, '.html', '.css']);
 /* 日本語を数えない場所（理由は冒頭） */
 const EXCLUDE = [/^web\/emoji\.mjs$/, /^core\/backends\/fake\.mjs$/, /^web\/locales\//];
 /* 名前空間を書かないキーの既定 */
-const DEFAULT_NS = [[/^web\//, 'ui'], [/^core\//, 'server'], [/^desktop\//, 'desktop']];
+const DEFAULT_NS = [[/^web\//, 'ui'], [/^core\//, 'server'], [/^desktop\//, 'desktop'], [/^bin\//, 'agent']];
 
 export const JP = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u;
 const IGNORE_MARK = /i18n-ignore\b(?:\s*:\s*(.*?))?\s*(?:\*\/|-->)?\s*$/;

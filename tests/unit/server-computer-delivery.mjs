@@ -62,11 +62,11 @@ export default async function (t) {
     const listed = await c.runTurn({ backend: 'antigravity', cwd: ROOT, prompt: 'mcp-tools' });
     const recorded = JSON.parse(await fs.readFile(agentFile, 'utf8').catch(() => 'null'));
     const relay = (recorded?.front?.mcpServers ?? []).find(s => s.serverName === 'ply_computer');
-    t.ok('agy: agent.md に ply_computer の中継（--computer）。接続先とトークンは env だけ', relay?.args?.at(-1) === '--computer' && /\/mcp\/computer$/.test(recorded?.computerUrl ?? '') && /^Bearer [a-f0-9]{64}$/.test(recorded?.computerAuthorization ?? '')
+    t.ok('agy: agent.md に ply_computer の中継（--computer。全会話に渡す ply_control の --control と 1 本に束ねる）。接続先とトークンは env だけ', relay?.args?.slice(1).join() === '--computer,--control' && /\/mcp\/computer$/.test(recorded?.computerUrl ?? '') && /^Bearer [a-f0-9]{64}$/.test(recorded?.computerAuthorization ?? '')
       && !JSON.stringify(recorded?.front ?? {}).includes(recorded?.computerAuthorization ?? '-'), JSON.stringify({ relay, url: recorded?.computerUrl }));
     t.ok('agy: 指示文に共通の文・画像をファイルで見る指示・agy での呼び方', String(recorded?.body ?? '').includes(common) && String(recorded?.body ?? '').includes(agentT('ja', 'computer.pathInstructions')) && String(recorded?.body ?? '').includes(agentT('ja', 'computerDelivery.antigravity')));
     const tools = JSON.parse((await c.cmd('loadSession', { sessionId: listed.sessionId })).messages.findLast(m => m.role === 'assistant')?.text || '[]');
-    t.ok('agy: 橋のツールが ply_computer_ の付いた名前で見える', tools.length > 10 && tools.every(x => x.name.startsWith('ply_computer_')) && tools.some(x => x.name === 'ply_computer_screenshot'), JSON.stringify(tools.map(x => x.name)).slice(0, 200));
+    t.ok('agy: 橋のツールが ply_computer_ の付いた名前で見える（束ねた ply_control のツールは ply_control_ の名前）', tools.filter(x => x.name.startsWith('ply_computer_')).length > 10 && tools.every(x => x.name.startsWith('ply_computer_') || x.name.startsWith('ply_control_')) && tools.some(x => x.name === 'ply_computer_screenshot') && tools.some(x => x.name === 'ply_control_call_op'), JSON.stringify(tools.map(x => x.name)).slice(0, 200));
     const agyTurn = await c.runTurn({ sessionId: listed.sessionId, prompt: `mcp-call:ply_computer_screenshot ${JSON.stringify(shotCall.arguments)}` });
     const aStart = agyTurn.events.find(e => e.type === 'tool.start' && e.sessionId === listed.sessionId);
     const aResult = agyTurn.events.find(e => e.type === 'tool.result' && e.sessionId === listed.sessionId);

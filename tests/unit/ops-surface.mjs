@@ -14,15 +14,18 @@ import { inputJsonSchema } from '../../core/ops/registry.mjs';
 import { decide, RISKS } from '../../core/ops/policy.mjs';
 import { LOCALES, readResources, agentT } from '../../core/i18n.mjs';
 import { estimateTokens } from '../../web/token-estimate.mjs';
+import { mcpTools } from '../../core/ops/surfaces/mcp.mjs';
+import { controlInstructions, controlTexts } from '../../core/ops/surfaces/control.mjs';
 
 export const name = 'ops-surface';
 export const title = '操作の一覧の中身: snapshot・文の量・主体ごとの見え方・伏せ字・辞書・JSON Schema';
 
 const SNAPSHOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ops-surface.snap.json');
 
-// T4: ply_control が毎ターン文脈に載せる文（直に出すツールの定義）の上限。ja・en それぞれ。上限を変えるのは ADR の範囲（docs/design.md「操作の一覧」）
+// T4: ply_control が毎ターン文脈に載せる文（指示 + tools/list。直に出すツール・list_ops・call_op の定義）の上限。ja・en それぞれ。上限を変えるのは ADR の範囲（docs/design.md「操作の一覧」）
 const CONTROL_TOKEN_LIMIT = 1800;
-const ERROR_CODES = ['NOT_FOUND', 'HOST_SCREEN_ONLY', 'INVALID', 'READ_ONLY_MODE', 'NEEDS_UI', 'NEEDS_APPROVAL', 'INVALID_RISK', 'INVALID_PRINCIPAL'];
+const ERROR_CODES = ['NOT_FOUND', 'HOST_SCREEN_ONLY', 'INVALID', 'READ_ONLY_MODE', 'NEEDS_UI', 'NEEDS_APPROVAL', 'INVALID_RISK', 'INVALID_PRINCIPAL', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND', 'sessionRequired', 'badCursor'];
+const CONTROL_KEYS = ['instructions', 'listOps', 'listOpsId', 'callOp', 'callOpOp', 'callOpArgs'];
 
 const hash = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 12);
 
@@ -40,6 +43,9 @@ export function snapshotOf() {
       surfaces: op.surfaces, legacyCommand: op.legacyCommand ?? null, input: hash(inputJsonSchema(op)),
     })),
     settings: [...registry.settings].sort((a, b) => a.key.localeCompare(b.key)).map((s) => ({ key: s.key, risk: s.risk, riskOf: Boolean(s.riskOf), prefKeys: s.prefKeys })),
+    // MCP の tools/list（ply_control・pleiad mcp 共通の生成器。名前と入力のハッシュ。説明の文は辞書なので載せない）と、CLI のコマンドの形
+    mcp: mcpTools({ catalog: registry.describe({ by: 'agent', via: 'mcp' }, 'en'), texts: controlTexts('en') }).map((tool) => ({ name: tool.name, input: hash(tool.inputSchema) })),
+    cli: registry.describe({ by: 'agent', via: 'cli' }, 'en').filter((e) => e.cli).map((e) => ({ id: e.id, path: e.cli.path.join(' '), positional: [].concat(e.cli.positional ?? []) })).sort((a, b) => a.path.localeCompare(b.path)),
     policy: Object.fromEntries(Object.entries(principals).map(([who, p]) => [who, Object.fromEntries(RISKS.map((risk) => {
       const v = decide(p, risk);
       return [risk, v.code ? `${v.decision}:${v.code}` : v.decision];
@@ -79,6 +85,7 @@ export default async function (t) {
       t.ok(`T7 ${op.id}: 全ての引数に説明がある（${lng}）`, undescribed.length === 0, undescribed.join(', '));
     }
     for (const s of registry.settings) t.ok(`T7 設定 ${s.key}: 説明が ${lng} にある`, has(s.summary.slice('agent:'.length)));
+    t.ok(`T7 ply_control の文（ops.control.*）が ${lng} にある`, CONTROL_KEYS.every((k) => has(`ops.control.${k}`)), CONTROL_KEYS.filter((k) => !has(`ops.control.${k}`)).join(', '));
     t.ok(`T7 失敗の文（ops.errors.*）が ${lng} にある`, ERROR_CODES.every((c) => has(`ops.errors.${c}`)), ERROR_CODES.filter((c) => !has(`ops.errors.${c}`)).join(', '));
   }
 
@@ -94,25 +101,44 @@ export default async function (t) {
     if (op.risk === 'human-only') t.ok(`T5 ${op.id}: human-only は MCP・CLI に出す設定が無い`, op.surfaces.mcp === false && op.surfaces.cli === false);
   }
 
-  // ---- T4 文の量
+  // ---- T4 文の量: 実際に会話へ渡す指示と tools/list（pleiad mcp と同じ生成器）を数える
   for (const lng of LOCALES) {
-    const direct = registry.list({ by: 'agent', via: 'mcp', sessionId: 's' }).filter((op) => op.surfaces.mcp === 'direct');
-    const text = JSON.stringify(direct.map((op) => ({ name: op.id, description: agentT(lng, op.summary.slice('agent:'.length)), inputSchema: inputJsonSchema(op, lng) })));
-    const tokens = estimateTokens(text);
-    t.ok(`T4 直に出すツールの定義が ${CONTROL_TOKEN_LIMIT} トークン以内（${lng}）`, tokens <= CONTROL_TOKEN_LIMIT, `${tokens} トークン・${direct.length} 本`);
+    const tools = mcpTools({ catalog: registry.describe({ by: 'agent', via: 'mcp' }, lng), texts: controlTexts(lng) });
+    const tokens = estimateTokens(JSON.stringify(tools) + controlInstructions(lng));
+    t.ok(`T4 ply_control の指示と tools/list が ${CONTROL_TOKEN_LIMIT} トークン以内（${lng}）`, tokens <= CONTROL_TOKEN_LIMIT, `${tokens} トークン・${tools.length} 本`);
+    t.note(`T4 ply_control の文の量（${lng}）: ${tokens} / ${CONTROL_TOKEN_LIMIT} トークン・${tools.length} 本`);
   }
 
   // ---- T6 伏せ字: 秘密の目印を入れた依存で、全 read 操作を既定の引数で呼ぶ。返りに目印が出ない
   // 段階 1 以降は、秘密の場所（mcp-secrets・アカウントのトークン・判定器の鍵・ヘッダー値）に目印を入れた一時のデータ置き場へ広げる
   const MARKER = 'SECRET-MARKER-7f3a';
+  // どの read 操作も、秘密らしい名前の欄に目印が入った生の値を受け取っても、返りに出さない（最後の網。実際のデータ置き場でのものは ops-control.mjs）
+  const secret = { token: MARKER, apiKey: MARKER, authorization: MARKER };
   const deps = {
     locale: 'ja',
-    app: { status: async () => ({ version: '0', protocolVersion: 0, startedAt: 0, locale: { setting: 'auto', lang: 'ja' }, running: 0, token: MARKER, apiKey: MARKER }) },
+    app: { status: async () => ({ version: '0', protocolVersion: 0, startedAt: 0, locale: { setting: 'auto', lang: 'ja' }, running: 0, ...secret }),
+      running: async () => ({ count: 0, turns: [], tasks: [], waiting: 0, ...secret }),
+      searchSessions: async () => ({ total: 1, partial: false, sessions: [{ sessionId: 's1', title: 't', hits: [], ...secret }] }) },
+    sessions: {
+      list: async () => [{ id: 's1', title: 't', backend: 'x', status: null, claudeAccount: MARKER, compatEndpoint: MARKER, ...secret }],
+      get: async () => ({ row: { id: 's1', title: 't', backend: 'x', claudeAccount: MARKER, ...secret }, children: [], history: [{ at: 'a', by: 'agent', field: 'title', from: 'x', to: 'y', ...secret }] }),
+      read: async () => [{ uuid: 'm', role: 'user', text: 'こんにちは', at: 'a', ...secret }],
+    },
+    prefs: async () => ({ agentSitePermissions: [{ origin: 'o', ...secret }], locale: 'ja' }),
+    compactionSettings: () => ({ enabled: true, ...secret }),
+    delegation: { list: () => [{ taskId: 't', status: 'completed', ...secret }], get: () => ({ taskId: 't', status: 'completed', result: 'done', ...secret }) },
+  };
+  // 必須の引数がある read 操作に渡す引数（設定は全部の key）
+  const samples = {
+    'settings.get': registry.settings.map((x) => ({ key: x.key })), 'settings.schema': registry.settings.map((x) => ({ key: x.key })),
+    'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {
     const needs = Object.keys(op.input.shape).length && Object.values(op.input.shape).some((f) => !f.safeParse(undefined).success);
-    if (needs) { t.note(`T6 ${op.id}: 必須の引数があるので既定の引数で呼べない（個別の検査が要る）`); continue; }
-    const r = await registry.invoke({ by: 'human', via: 'ui', local: true }, op.id, {}, deps);
-    t.ok(`T6 ${op.id}: 返りに秘密の目印が出ない`, r.ok && !JSON.stringify(r.result).includes(MARKER), r.ok ? '' : r.error);
+    if (needs && !samples[op.id]) { t.ok(`T6 ${op.id}: 必須の引数の例がある`, false); continue; }
+    for (const args of samples[op.id] ?? [{}]) {
+      const r = await registry.invoke({ by: 'human', via: 'ui', local: true }, op.id, args, deps);
+      t.ok(`T6 ${op.id}${args.key ? `（${args.key}）` : ''}: 返りに秘密の目印が出ない`, r.ok && !JSON.stringify(r.result).includes(MARKER), r.ok ? '' : r.error);
+    }
   }
 }
