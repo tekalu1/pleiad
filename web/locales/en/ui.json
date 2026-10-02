@@ -1426,10 +1426,18 @@
       "agent": "The agent",
       "question": "{{agent}} wants to change a setting",
       "reason": "Reason: {{reason}}",
-      "warn": "⚠ This loosens a gate on the agent.",
+      "warn": "⚠ This lets the agent do more without asking you.",
       "allow": "Allow change",
       "allowed": "Change allowed",
-      "unset": "unset"
+      "unset": "unset",
+      "where": "Settings › {{section}}",
+      "on": "On",
+      "off": "Off",
+      "added": "Added",
+      "removed": "Removed",
+      "join": ", ",
+      "more_one": "and {{count}} more",
+      "more_other": "and {{count}} more"
     },
     "computerApproval": {
       "label": "Allow",
