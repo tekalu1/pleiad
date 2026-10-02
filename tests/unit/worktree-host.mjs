@@ -1,4 +1,4 @@
-// 分けた作業場所を会話・委譲・画面につなぐ層（core/worktree-host.mjs。ADR 0088）。
+// 分けた作業場所を会話・委譲・画面につなぐ層（core/worktree-host.mjs。ADR 0089）。
 // ぶつかりの判定（書き込みの範囲だけ・別のルート・圧縮・自分）・委譲で分けるかの判定（isolate・読むだけ・書き手・並列に呼ばれた委譲のまとめ数え）・
 // 子の完了時の状態と片付け・準備中の子を片付けない・残っている作業場所の絞り込み・会話の cwd を戻す。
 import { execFileSync } from 'node:child_process';

@@ -1,4 +1,4 @@
-// 分けた作業場所（git worktree）の台帳・作成・片付け（docs/design.md「分けた作業場所」、ADR 0088）。
+// 分けた作業場所（git worktree）の台帳・作成・片付け（docs/design.md「分けた作業場所」、ADR 0089）。
 //
 //   - 作るのは、ぶつかりそうなとき・委譲で並行に書く子・人が頼んだときだけ（判定は core/server.mjs）。画面から任意のパスを受けない:
 //     置き場は <リポジトリの親>/<リポジトリ名>.pleiad/<短い id>、ブランチは pleiad/<短い id>、ベースは今の HEAD。依存（node_modules など）は張らない
@@ -24,7 +24,7 @@ export const insideDir = (dir, parent) => {
   return d === p || d.startsWith(`${p}/`);
 };
 
-/** 退避を残す期間（隠し ref。ADR 0088） */
+/** 退避を残す期間（隠し ref。ADR 0089） */
 export const ARCHIVE_KEEP_MS = 90 * 24 * 60 * 60 * 1000;
 const REMOVE_RETRY_MS = [200, 500, 1000, 2000];
 const LINK_WALK_LIMIT_MS = 120_000;

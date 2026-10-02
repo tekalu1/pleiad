@@ -1,4 +1,4 @@
-// 委譲の子の分けた作業場所（ADR 0088）: 子への指示の追記・完了時の状態（row.workspace）・完了通知と ply_task_status の 1 行・
+// 委譲の子の分けた作業場所（ADR 0089）: 子への指示の追記・完了時の状態（row.workspace）・完了通知と ply_task_status の 1 行・
 // isolate の型の検査・片付け済みの言い方・作り直しで row.worktree を替える。
 import fs from 'node:fs/promises';
 import os from 'node:os';

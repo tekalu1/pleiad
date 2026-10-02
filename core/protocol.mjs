@@ -84,7 +84,7 @@ export const COMMANDS = new Set([
   'gitStatus',      // { sessionId?, cwd?, fresh?, summary? } -> { git: { root, linked, branch, detached, head, upstream, ahead, behind, changed, untracked, conflicts, dirty, at, session?: { files, add, del, commits } | null } | null }。summary: true は会話の間の合計も返す（委譲カード）
   'gitPanel',       // { sessionId, range?: 'uncommitted'|'session' } -> { git, timeline: [{ kind: branch|commit|pr, at, uuid, toolId, branch?, hash?, subject?, number?, url? }], changes: { range, hasSession, files: [{ path, state: A|M|D, add, del, binary }], total: { files, add, del }, failed? } | null, at } | { git: null }
   'gitDiff',        // { sessionId, range, path } -> { diff: { range, path, hunks: [{ header, lines: [{ t: '+'|'-'|' ', s }] }], binary, truncated } | null }
-  // 分けた作業場所（ADR 0088）。作る・消すのはサーバーが決めた置き場・ブランチだけ（画面から任意のパスを受けない）
+  // 分けた作業場所（ADR 0089）。作る・消すのはサーバーが決めた置き場・ブランチだけ（画面から任意のパスを受けない）
   'worktreeCheck',  // { sessionId?, backend?, mode? } -> { git, current: { id, branch, path, origin, … } | null, conflicts: [{ sessionId, title, child }], canSplit, always }。同じリポジトリで書き込み中の別の会話（読むだけの会話・git 管理外では出さない）
   'worktreeSplit',  // { sessionId? } -> { worktree: { id, branch, path, origin, … }, cwd }。今の作業場所の隣に分けた作業場所を作る。cwd の予約は画面が setTurnSettings で行う
   'worktreeDiscard', // { id } -> { action }。予約を取り消したときなど。使っていなければ片付ける（変更があれば残る）
@@ -238,7 +238,7 @@ export const EVENTS = new Set([
   "session",      // sessionId が確定した { sessionId, model? }（model は実際に解決されたもの）
   "backend",      // { backend } 会話の実行先が変わった
   "nextSettings",
-  "worktreeSettings", // { always } 「いつも分ける」が変わった（sessionId は null。ADR 0088）
+  "worktreeSettings", // { always } 「いつも分ける」が変わった（sessionId は null。ADR 0089）
   "worktreesChanged", // 分けた作業場所が増えた・消えた（sessionId は null）。右パネルの「残っている作業場所」を取り直す
   "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す
   "compatEndpointsChanged", // 互換の接続先の一覧・既定が変わった（sessionId は null）。中身は compatEndpoints コマンドで取り直す

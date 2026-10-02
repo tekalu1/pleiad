@@ -40,7 +40,7 @@
 
 ## 分けた作業場所（2026-10-03）
 
-同じリポジトリに書き手が 2 人いるときと、頼まれたときだけ、分けた作業場所（git の `worktree`）を作り、片付けまで Pleiad が持つ（[ADR 0088](adr/0088-worktree-on-demand.md)）。画面は `docs/design-system.md`「分けた作業場所」、委譲は `docs/agent-delegation.md`「分けた作業場所」。ADR 0003 の「作業ごとに worktree」はこの開発リポジトリの規則で、製品の仕様とは別。
+同じリポジトリに書き手が 2 人いるときと、頼まれたときだけ、分けた作業場所（git の `worktree`）を作り、片付けまで Pleiad が持つ（[ADR 0089](adr/0089-worktree-on-demand.md)）。画面は `docs/design-system.md`「分けた作業場所」、委譲は `docs/agent-delegation.md`「分けた作業場所」。ADR 0003 の「作業ごとに worktree」はこの開発リポジトリの規則で、製品の仕様とは別。
 
 - **作る**（`core/worktrees.mjs`・`core/git-worktree.mjs`）: 置き場は `<リポジトリの親>/<リポジトリ名>.pleiad/<id>`（id は `ply-` と 16 進 4 桁。サーバーが決め、画面から任意のパスを受けない）、ブランチ `pleiad/<id>`、ベースは今の HEAD（サブフォルダーから分けたら中でも同じサブフォルダー）。依存は張らない。台帳（`<データ置き場>/worktrees.json`。項目の状態は `creating` → `ready` → `removing`）に「作成中」を書いてから `git worktree add -b` し、失敗したら worktree・ブランチ・台帳まで戻す。起動時の `reconcile` が台帳と `git worktree list` を突き合わせる（作成中のまま落ちたものは巻き戻し、片付けの途中のものは終わらせ、フォルダーも登録も無いものは台帳から外す）。台帳の置き場・ブランチが決めた形でないものには消す操作をしない。強制の削除（`--force`・`branch -D`）は持たない（例外は「退避して消す」だけ）。
 - **ぶつかりの判定**（`core/worktree-host.mjs`）: 走っているターン（`runtime.turns`。圧縮を除く）のうち、書き込みの範囲（`core/modes.mjs` の workspace 以上）で、cwd の Git ルートが同じ別の会話（委譲の子を含む）。読むだけの会話・git 管理外・自分は数えない。`worktreeCheck { sessionId, cwd?, backend?, mode? }` が `{ git, current, conflicts: [{ sessionId, title, child }], canSplit, always }` を返し、画面は入力欄の上の 1 行・チップ・作業場所の面に使う。

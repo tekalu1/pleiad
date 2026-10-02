@@ -592,7 +592,7 @@ export function renderPresent(ev) {
   const e = ev ?? {};
   // git の要約の行（返答の下の 1 行。ADR 0085）。カードではない
   if (e.kind === 'git') return renderGitSummary(e) ?? el('div', 'git-sum-row');
-  // 分けた作業場所で始めた印の行（ADR 0088）
+  // 分けた作業場所で始めた印の行（ADR 0089）
   if (e.kind === 'worktree') return renderWorktreeLine(e);
   const kind = ["image", "html", "text", "file", "visualization"].includes(e.kind) ? e.kind : "text";
   const card = el("figure", `present present-${kind}`);

@@ -261,7 +261,7 @@ export function setupComposerControls({ cmd, get, on }) {
   // ブランチ（作業場所が git のときだけ。ADR 0085）。狭いときは fitRow が最初に削る
   const gitBranch = el("span", "git-br");
   gitBranch.hidden = true;
-  // 分けた作業場所のとき: アイコンを枝分かれにし、名前の後ろに「· 分けた作業場所」（狭いと最初に畳む。ADR 0088）
+  // 分けた作業場所のとき: アイコンを枝分かれにし、名前の後ろに「· 分けた作業場所」（狭いと最初に畳む。ADR 0089）
   const folderGlyph = glyph(FOLDER), splitGlyph = branchGlyph();
   const splitSuffix = el("span", "wt-sfx");
   splitSuffix.hidden = true;
@@ -380,7 +380,7 @@ export function setupComposerControls({ cmd, get, on }) {
     const box = el("div", "cbrowse");
     box.hidden = true;
     const browse = folderBrowser({ cmd, box, err, onChoose: commitCwd, onAt: (dir) => { browsing = dir; }, closed: () => pops.cwd.hidden });
-    // 分けた作業場所（ADR 0088）: いるときは面の先頭に元の場所と「元の場所に戻す」、git の場所には末尾に「分けた作業場所で始める」
+    // 分けた作業場所（ADR 0089）: いるときは面の先頭に元の場所と「元の場所に戻す」、git の場所には末尾に「分けた作業場所で始める」
     const current = d.worktree?.current;
     const bar = current ? splitBar(current) : null;
     const start = d.worktree?.canSplit ? splitItem() : null;
@@ -719,7 +719,7 @@ export function setupComposerControls({ cmd, get, on }) {
 
   /**
    * チップの行を 1 行に収める（docs/design-system.md「入力欄と上端」）。短い値は詰めない。足りない分だけ、この順に削る:
-   *   0. 分けた作業場所の「· 分けた作業場所」を畳み（ADR 0088）、次に作業場所のブランチを外す（git のとき。ADR 0085）
+   *   0. 分けた作業場所の「· 分けた作業場所」を畳み（ADR 0089）、次に作業場所のブランチを外す（git のとき。ADR 0085）
    *   1. 承認モードを短い名前に（都度確認 → 都度）  2. モデルの「 · 段」を外す
    *   3. モデル名を … で詰める（「Smart…」くらいまで）  4. 作業ディレクトリの名前を … で詰める（9 字くらいまでは残す）
    * 縮める前の幅は、チップを縮めない状態（.measuring）で測る。行の幅・中身が変わるたびに呼ぶ（paint・窓の幅・中断の出入り）

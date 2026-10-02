@@ -40,7 +40,7 @@ export function gitLine(locale, git) {
 }
 
 /**
- * 子の分けた作業場所の 1 行（作業場所: 分けた作業場所 <branch>（未取り込み · N ファイル）。ADR 0088）。依頼元の言語で。
+ * 子の分けた作業場所の 1 行（作業場所: 分けた作業場所 <branch>（未取り込み · N ファイル）。ADR 0089）。依頼元の言語で。
  * state は core/worktree-host.mjs の taskState（unmerged / merged / empty / unknown / gone）。完了通知と ply_task_status・ply_task_wait の workspaceSummary が同じ文を使う。
  * 作業場所が無ければ（分けていない子）空
  */
@@ -309,7 +309,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           row.result = String(result?.text ?? ''); row.error = result?.error ?? null;
           // 子の作業場所の git の要約（ADR 0085。変更・コミットが無ければ載せない）。完了通知と ply_task_status に出る
           if (result?.git) row.git = result.git; else delete row.git;
-          // 子の分けた作業場所の、終わった時点の状態（ADR 0088。取り込まれていなければ完了通知に 1 行出る）
+          // 子の分けた作業場所の、終わった時点の状態（ADR 0089。取り込まれていなければ完了通知に 1 行出る）
           if (result?.workspace) row.workspace = result.workspace; else delete row.workspace;
           // 追加の指示で再開した回に、片付いていた作業場所を作り直したとき
           if (result?.worktree) row.worktree = result.worktree;

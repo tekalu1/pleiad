@@ -133,7 +133,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 子は新しい Pleiad 管理会話。親の会話全文や非公開の思考はコピーせず、`task` と明示された `context` を渡す。
 `cwd` の既定は親の作業場所。相対指定は親の作業場所から解決する。
 
-**分けた作業場所（2026-10-03、[ADR 0088](adr/0088-worktree-on-demand.md)）。** 同じリポジトリに書く子が並ぶとき、Pleiad が子ごとに分けた作業場所（`git worktree`）を作って子の `cwd` にし、終わった後の片付けまで持つ。**取り込み（マージ）は依頼元のエージェントがする**（Pleiad はマージしない）。
+**分けた作業場所（2026-10-03、[ADR 0089](adr/0089-worktree-on-demand.md)）。** 同じリポジトリに書く子が並ぶとき、Pleiad が子ごとに分けた作業場所（`git worktree`）を作って子の `cwd` にし、終わった後の片付けまで持つ。**取り込み（マージ）は依頼元のエージェントがする**（Pleiad はマージしない）。
 - **いつ分けるか**（`ply_delegate` の `isolate`。省略時の自動判定は `core/worktree-host.mjs` の `decideIsolation`）: `isolate: false` は分けない。`isolate: true` は書き手が居なくても分ける（git でなければ分けない）。省略なら、子が書く（書き込みの範囲のモード・種類が `trivial` `mechanical` `implement` `ux_change` `ux_new` `visual`。`investigate` `review` `design` は分けない）うえで、同じリポジトリに依頼元以外の書き手（走っている別の会話・子、依頼元が今のターンでファイルを変えている）が居るときだけ分ける。同じターンから並列に呼ばれた委譲は 250ms ほど待ってまとめて数える（書き手が 1 つなら今の場所のまま）。
 - **置き場**: `<リポジトリの親>/<リポジトリ名>.pleiad/<id>`、ブランチ `pleiad/<id>`、ベースは今の HEAD。依存（`node_modules` など）は張らない。作れなければ（git でない・コミットが無い・失敗）今の場所のまま走らせる。
 - **子への指示**（最初の依頼に足す。`agent:tasks.worktreeInstruction`）: 作業はこの作業場所の中だけ・元の場所の絶対パスに書かない・依存は入っていないので必要なら自分で入れる・終わったらこのブランチにコミットする。

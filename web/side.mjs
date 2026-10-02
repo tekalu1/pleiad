@@ -692,7 +692,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     }
     if (last.backendLabels && s.backend) meta.append(backendLogo(s.backend, last.backendLabels[s.backend] ?? s.backend));
     const cwd = el("span", "row-cwd");
-    // 分けた作業場所の中の会話は、元の場所の名前に枝分かれの印（ADR 0088）
+    // 分けた作業場所の中の会話は、元の場所の名前に枝分かれの印（ADR 0089）
     if (s.worktree) { const mark = el("span", "wt-ic"); mark.innerHTML = branchIcon; mark.setAttribute("aria-hidden", "true"); cwd.append(mark); }
     cwd.append(shortDir(s.worktree?.origin ?? s.cwd));
     if (s.cwd) cwd.title = s.worktree ? `${s.worktree.origin} · ${s.cwd}` : s.cwd;

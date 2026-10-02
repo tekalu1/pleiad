@@ -236,7 +236,7 @@ const state = {
   messages: [],        // 今のセッションの履歴（loadSession の messages）
   contextInfo: null,   // 今のセッションの読み込み記録（sessionContext の戻り）。タイトル行の入口と筋の一行に使う
   contextInfoId: null, // 上の記録がどのセッションのものか
-  // 分けた作業場所（ADR 0088）。worktreeCheck の結果（今の場所が分けた作業場所か・分けられるか・同じリポジトリで書き込み中の別の会話）。「このまま」を選んだ場所は dismissed
+  // 分けた作業場所（ADR 0089）。worktreeCheck の結果（今の場所が分けた作業場所か・分けられるか・同じリポジトリで書き込み中の別の会話）。「このまま」を選んだ場所は dismissed
   worktree: { key: null, data: null, always: false, dismissed: new Set(), ticket: 0 },
   git: { key: null, sessionId: null, data: null },   // 作業場所の git の状態（gitStatus。ADR 0085）。頭の行のアイコン・入力欄のブランチ・「…」のメニューに使う
   presents: [],
@@ -2416,7 +2416,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); return; }
   // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
   if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') { remoteSettings.event(ev); return; }
-  // 「いつも分ける」が変わった（別の窓の操作・設定）。入力欄の 1 行と設定のスイッチを合わせる（ADR 0088）
+  // 「いつも分ける」が変わった（別の窓の操作・設定）。入力欄の 1 行と設定のスイッチを合わせる（ADR 0089）
   if (ev.type === 'worktreeSettings') { worktreeSettings.paint(ev.always); refreshWorktree().catch(() => {}); return; }
   // 分けた作業場所が増えた・消えた。開いている右パネルの「残っている作業場所」を取り直す
   if (ev.type === 'worktreesChanged') { gitPanel?.changed(); return; }
@@ -3141,7 +3141,7 @@ function paintSettingsNotice() {
     if (next.endpoint !== undefined) changes.push(t("chat.next.endpoint", { value: endpointLabel(next.endpoint) }));
     if (next.account !== undefined) changes.push(t("chat.next.account", { value: accountLabel(next.account) }));
     const joined = changes.join(" · ");
-    // 変えるのが分けた作業場所だけのときは、軽い 1 行（「次のターンから適用」＋枝分かれの印の札。ADR 0088）
+    // 変えるのが分けた作業場所だけのときは、軽い 1 行（「次のターンから適用」＋枝分かれの印の札。ADR 0089）
     const compact = !behind && changes.length === 1 && Boolean(next.cwd && worktreeNextText(next.cwd));
     $("nextSettings").classList.toggle("wt-compact", compact);
     if (compact) {
@@ -4522,7 +4522,7 @@ function decorateDelegateCard(card) {
     if (shell.open) { paintDelegateGit(card); paintDelegateWorkspace(card); }
   }
 }
-/** 委譲カードの「作業場所」の行（分けた作業場所のとき。ブランチと「分けた作業場所」。ADR 0088）。開いたときに出す */
+/** 委譲カードの「作業場所」の行（分けた作業場所のとき。ブランチと「分けた作業場所」。ADR 0089）。開いたときに出す */
 function paintDelegateWorkspace(card) {
   const task = (state.work.tasks ?? []).find(x => x.taskId === card.dataset.taskId);
   card.querySelector('.wt-delegate')?.remove();
@@ -4663,7 +4663,7 @@ function paintDelegateStates() {
     const item = card.dataset.taskId ? items.find(i => i.taskId === card.dataset.taskId) : items.find(i => i.origin && i.origin === card.dataset.id);
     const next = item ? delegateStateOf(item) : null;
     // 走っている間の経過は署名に入れない（秒ごとの書き換えは tickDelegateElapsed）
-    // 分けた作業場所が終わった後も台帳に残っている（未取り込み）。閉じた行の右端に出す（ADR 0088）
+    // 分けた作業場所が終わった後も台帳に残っている（未取り込み）。閉じた行の右端に出す（ADR 0089）
     const unmerged = Boolean(item?.worktree?.live) && !item.live;
     const sig = next ? `${next.key}|${next.when ?? ''}|${next.mark?.getAttribute('aria-label') ?? ''}|${unmerged ? 'u' : ''}` : '';
     // 読み上げ名は、題・委譲先・状態。押すと開く（summary は開閉の状態を持つ）
@@ -6040,7 +6040,7 @@ async function refreshGit({ force = false } = {}) {
 }
 function paintGit() { paintGitEntry(); controls.paint(); }
 
-// ---------------------------------------------------------------- 分けた作業場所（ADR 0088）
+// ---------------------------------------------------------------- 分けた作業場所（ADR 0089）
 const normDir = (p) => String(p ?? '').replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
 const insideDir = (dir, parent) => { const d = normDir(dir), p = normDir(parent); return Boolean(d && p) && (d === p || d.startsWith(`${p}/`)); };
 /** 次のターンの予約の行の文。予約が分けた作業場所なら「分けた作業場所（短い名前）」、そうでなければ null（作業ディレクトリのパスのまま） */
@@ -7456,7 +7456,7 @@ presenceReporter.start();
 const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
   modelsOf: async (id) => (state.backends.some((b) => b.id === id) ? (await loadVocab(id)).models : null),
   modelName: (backend, model) => routingNames.model(backend, model) });
-// 設定 › 委譲の末尾の「分けた作業場所」（いつも分ける。ADR 0088）
+// 設定 › 委譲の末尾の「分けた作業場所」（いつも分ける。ADR 0089）
 const worktreeSettings = setupWorktreeSettings({ cmd });
 $('delegationPanel').append(worktreeSettings.element);
 clearThread();

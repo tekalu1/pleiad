@@ -367,7 +367,7 @@ async function taskGitNote(task) {
   return { branch: s.branch, detached: s.detached, head: s.head, linked: s.linked, files: w.files, add: w.add, del: w.del, commits: w.commits };
 }
 const gitNotice = (lng, git) => (git ? gitLine(lng, git) + '\n' : '');
-// 子の分けた作業場所の 1 行（ADR 0088）。分けていない子には何も足さない
+// 子の分けた作業場所の 1 行（ADR 0089）。分けていない子には何も足さない
 const workspaceNotice = (lng, task) => (task.worktree ? workspaceLine(lng, task.worktree, task.workspace) + '\n' : '');
 // 完了通知に載せる拒否の件数（先頭から）。全件は ply_task_status の rejections で読む
 const NOTICE_REJECTIONS = 3;
@@ -413,7 +413,7 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale
     const answer = await askPermission({ toolName: name, input: args, title, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng });
     if (!answer.allow) throw new Error(agentT(lng, 'delegation.denied'));
   }
-  // 分けた作業場所（ADR 0088）。同じリポジトリに書き手が並ぶとき（または isolate: true）、Pleiad が子ごとに作る。isolate: false・git でない・読むだけなら今の場所
+  // 分けた作業場所（ADR 0089）。同じリポジトリに書き手が並ぶとき（または isolate: true）、Pleiad が子ごとに作る。isolate: false・git でない・読むだけなら今の場所
   if (name === 'ply_delegate') {
     if (args.isolate !== undefined && typeof args.isolate !== 'boolean') throw new Error(agentT(lng, 'tasks.isolateInvalid'));
     const childCwd = path.resolve(turn.info.cwd ?? process.cwd(), typeof args.cwd === 'string' ? args.cwd : '.');
@@ -949,7 +949,7 @@ function statusChangedByAi(history) {
  * （codex の forkedFromId）の両方から読む。一覧と系譜（lineage）が同じ行を見るよう、合成はここだけ。
  */
 /**
- * 分けた作業場所の中で動いている会話の行に、元の場所と枝分かれの印を足す（ADR 0088）。行の場所は元の場所の名前で出し、
+ * 分けた作業場所の中で動いている会話の行に、元の場所と枝分かれの印を足す（ADR 0089）。行の場所は元の場所の名前で出し、
  * 最近の場所の候補（place）にも分けた作業場所のパスを並べない。sessionRow は台帳を知らない純粋な組み立てのまま
  */
 function withWorktree(row) {
@@ -1373,7 +1373,7 @@ function sendTo(frame) {
 const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event) });
 // git の動き（ADR 0085）。状態・ターンの始まりと終わりの隠し ref・変更の一覧と差分。git が無い・git 管理外は null
 const gitActivity = createGitActivity();
-// 分けた作業場所（ADR 0088）。台帳・作成・片付けと、ぶつかり・委譲の判定。使っているもの（走っているターン・シェル・委譲の子）を見てから消す
+// 分けた作業場所（ADR 0089）。台帳・作成・片付けと、ぶつかり・委譲の判定。使っているもの（走っているターン・シェル・委譲の子）を見てから消す
 const worktreeHost = createWorktreeHost({
   dataDir: store.dataDir, store,
   turns: () => runtime.turns, shellCwds: () => shellRuns.cwds(), tasks: () => agentTasks?.list() ?? [], background: () => runtime.background,
@@ -2602,7 +2602,7 @@ async function renewTaskWorktree(task) {
 }
 
 /**
- * 人が始めるターンで、「いつも分ける」を選んでいて、同じリポジトリの別の会話が書き込み中なら、確かめずに分ける（ADR 0088）。
+ * 人が始めるターンで、「いつも分ける」を選んでいて、同じリポジトリの別の会話が書き込み中なら、確かめずに分ける（ADR 0089）。
  * 分けなかった・分けられなかったときは null（今の場所のまま始める）
  */
 async function autoSplitTurn({ sessionId, cwd }) {
@@ -2684,7 +2684,7 @@ agentTasks = await createAgentTasks({
     const account = auto && backend.id === 'claude' ? args.account ?? '' : (await store.get(owner)).claudeAccount ?? '';
     // 振り分けの記録（タスクと子の会話に残す）。委譲先は実際に使う値で書く（固定のときのモデルの既定への戻り・継いだアカウントも）
     const routing = args.routing ? { ...args.routing, target: { backend: backend.id, model, account: backend.id === 'claude' ? account : null } } : null;
-    // 分けた作業場所（ADR 0088）。子の作業場所をここで作る。作れなければ（git でない・コミットが無い・失敗）今の場所のまま走らせる
+    // 分けた作業場所（ADR 0089）。子の作業場所をここで作る。作れなければ（git でない・コミットが無い・失敗）今の場所のまま走らせる
     let worktree = null;
     if (args.isolate === true) {
       const made = await worktreeHost.createForTask({ cwd, owner, taskId });
@@ -2796,7 +2796,7 @@ agentTasks = await createAgentTasks({
 // 前の起動で走っていて、再起動で止まった委譲タスクを、依頼元の会話の「止めたもの」に残す（次のターンで伝える）。
 // 裏の作業と承認待ちは保存していないので分からない（docs/design.md「中断と再開」）
 await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
-// 分けた作業場所: 台帳と git worktree list を突き合わせ（作成の途中で落ちたものは巻き戻す）、使っていない片付けられるものを消す（ADR 0088）
+// 分けた作業場所: 台帳と git worktree list を突き合わせ（作成の途中で落ちたものは巻き戻す）、使っていない片付けられるものを消す（ADR 0089）
 await worktreeHost.worktrees.reconcile()
   .then(r => { const n = Object.values(r).reduce((a, l) => a + l.length, 0); if (n) console.log(`  分けた作業場所を ${n} 件整理した`); })
   .catch(e => console.error('  分けた作業場所の整理に失敗:', String(e?.message ?? e)));
@@ -2878,7 +2878,7 @@ async function runTurnInternal(args, onStarted, hooks) {
     const permissionMode = await resolveMode(sessionId, reserved ? reserved.mode : args?.mode, backend);
     const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd, endpointId);
     const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
-    // 分けた作業場所（ADR 0088）。使う場所が分けた作業場所の中なら控える（片付けの印・取り込みを頼む相手）。片付けている最中の場所では始めない。
+    // 分けた作業場所（ADR 0089）。使う場所が分けた作業場所の中なら控える（片付けの印・取り込みを頼む相手）。片付けている最中の場所では始めない。
     // 「いつも分ける」を選んでいて、人が始めるターンで同じリポジトリの別の会話が書き込み中なら、確かめずに分けて始める
     let worktreeEntry = await worktreeHost.worktrees.byPath(cwd);
     if (worktreeEntry && worktreeEntry.state !== 'ready') throw new Error(t('worktree.cleaning'));
@@ -3324,7 +3324,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 片付けるのはこのセッションの承認待ちだけ。他のターンの分は残す
   settleAll('turnEnded', turn.info.sessionId);
   broadcastRunning();
-  // 分けた作業場所: このターンで取り込まれたもの・使われなくなったものを片付ける（ADR 0088）
+  // 分けた作業場所: このターンで取り込まれたもの・使われなくなったものを片付ける（ADR 0089）
   worktreeSweepSoon();
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
   if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt, { startedAt: turn.startedAtMs });
@@ -3886,7 +3886,7 @@ wss.on("connection", (ws, req) => {
           const cwd = await gitCwd(msg.args);
           const state = cwd ? await gitActivity.status(cwd, { fresh: true }) : null;
           if (!state) return reply(true, { git: null });
-          // 分けた作業場所（ADR 0088）: 今いる場所と、残っているもの（未取り込み）。開いたときに片付けられるものを片付ける
+          // 分けた作業場所（ADR 0089）: 今いる場所と、残っているもの（未取り込み）。開いたときに片付けられるものを片付ける
           worktreeSweepSoon();
           const worktrees = { current: await worktreeHost.worktrees.byPath(cwd).then(e => (e ? publicWorktree(e) : null)).catch(() => null), leftovers: await worktreeHost.leftovers({ cwd }).catch(() => []) };
           const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
@@ -3898,7 +3898,7 @@ wss.on("connection", (ws, req) => {
           const cwd = await gitCwd(msg.args);
           return reply(true, { diff: cwd ? await gitActivity.diff(cwd, msg.args?.sessionId, msg.args?.range === 'session' ? 'session' : 'uncommitted', String(msg.args?.path ?? '')) : null });
         }
-        // ---- 分けた作業場所（ADR 0088）。ぶつかりの確認・分ける・片付けの操作・「いつも分ける」の設定
+        // ---- 分けた作業場所（ADR 0089）。ぶつかりの確認・分ける・片付けの操作・「いつも分ける」の設定
         case 'worktreeCheck': {
           const sessionId = typeof msg.args?.sessionId === 'string' && msg.args.sessionId ? msg.args.sessionId : null;
           const cwd = await worktreeCwd(msg.args);
@@ -4230,7 +4230,7 @@ wss.on("connection", (ws, req) => {
             const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged && !endpointChanged)
               ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(accountChanged ? { account: selectedAccount } : {}), ...(endpointChanged ? { endpoint: selectedEndpoint } : {}) };
             await store.setSessionData(sessionId, "nextSettings", next);
-            // 取り消した・別の場所に替えた予約が分けた作業場所なら、使っていなければ片付ける（ADR 0088）
+            // 取り消した・別の場所に替えた予約が分けた作業場所なら、使っていなければ片付ける（ADR 0089）
             if (current.nextSettings?.cwd && current.nextSettings.cwd !== next?.cwd) settleWorktreeAt(current.nextSettings.cwd).catch(() => {});
             if (!cancel) {
               if (targetId !== undefined) await savePref("backend", target.id);

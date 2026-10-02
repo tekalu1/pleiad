@@ -16,7 +16,7 @@ const READ = new Set(['rev-parse', 'status', 'log', 'diff', 'diff-tree', 'for-ea
 const WRITE = new Set(['read-tree', 'add', 'write-tree', 'commit-tree', 'update-ref']);
 
 export const REF_PREFIX = 'refs/pleiad/turn/';
-/** 分けた作業場所を退避して消すときの隠し ref（refs/pleiad/archive/<id>/<時刻>。ADR 0088） */
+/** 分けた作業場所を退避して消すときの隠し ref（refs/pleiad/archive/<id>/<時刻>。ADR 0089） */
 export const ARCHIVE_PREFIX = 'refs/pleiad/archive/';
 const READ_TIMEOUT = 4_000;
 const SNAPSHOT_TIMEOUT = 8_000;
@@ -48,7 +48,7 @@ function exec(cwd, args, { env = {}, timeout = READ_TIMEOUT, maxBuffer = MAX_BUF
   });
 }
 
-/** 許可表を通さない git。core/git-worktree.mjs（分けた作業場所の作成・削除。ADR 0088）だけが使う */
+/** 許可表を通さない git。core/git-worktree.mjs（分けた作業場所の作成・削除。ADR 0089）だけが使う */
 export const execGit = exec;
 
 /** 読み取りだけの git。許可していないサブコマンドは投げる（呼び出す側の誤り） */

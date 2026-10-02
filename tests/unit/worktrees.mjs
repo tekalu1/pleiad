@@ -1,4 +1,4 @@
-// 分けた作業場所（core/worktrees.mjs・git-worktree.mjs。ADR 0088）。一時リポジトリで実際に作って消す。
+// 分けた作業場所（core/worktrees.mjs・git-worktree.mjs。ADR 0089）。一時リポジトリで実際に作って消す。
 // 作成と失敗時の巻き戻し・片付けの判定（変更なし／取り込み済み／未取り込み）・使用中は消さない・
 // ReparsePoint（ジャンクション）を外してから消す（リンク先が残る）・退避の隠し ref・台帳と git の突き合わせ。
 import { execFileSync } from 'node:child_process';

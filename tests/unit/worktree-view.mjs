@@ -1,4 +1,4 @@
-// 分けた作業場所の画面の部品（web/worktree-ui.mjs。ADR 0088）を最小の DOM で見る。
+// 分けた作業場所の画面の部品（web/worktree-ui.mjs。ADR 0089）を最小の DOM で見る。
 // 入力欄の上の 1 行（分けて始める / このまま / いつも分ける）・会話の中の静かな 1 行の状態（here / backing / back）・
 // 右パネルの「残っている作業場所」（取り込みを頼む・退避して消す・残す・取り消し・元に戻す・安全の 2 行）・取り込みの依頼文。
 import assert from 'node:assert/strict';

@@ -70,7 +70,7 @@ export function diffBody(diff) {
  * @param {object} o.worktrees 「残っている作業場所」の操作（keep・ask・unask・archive・restore。web/worktree-ui.mjs の createLeftovers）
  */
 export function setupGitPanel({ cmd, preview, session, jump, use, onState = () => {}, worktrees }) {
-  // 残っている作業場所（分けた作業場所の未取り込み。ADR 0088）。操作の結果の行はこの部品が持ち、変わったら描き直す
+  // 残っている作業場所（分けた作業場所の未取り込み。ADR 0089）。操作の結果の行はこの部品が持ち、変わったら描き直す
   const leftovers = createLeftovers({ ...worktrees, changed: () => paint() });
   let st = { key: null, range: 'session', data: null, loading: false, failed: false, file: null, diff: null, diffFailed: false, at: null, note: '' };
   let opener = null, ticket = 0, noteTimer = 0;
