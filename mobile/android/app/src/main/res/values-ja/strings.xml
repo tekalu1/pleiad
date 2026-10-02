@@ -12,4 +12,32 @@
     <!-- ホストの窓のリンク（web/locales/ja/ui.json の timeline.link.hostOnly と同じ文言） -->
     <string name="link_host_only">localhost のリンクはホストの PC でだけ開けます。</string>
     <string name="sheet_close">閉じる</string>
+    <!-- 離れていても届く通知（ADR 0086）。web/locales/ja と同じ文言。ホストは起きたことを送り、ここで文面を組み立てる -->
+    <string name="notify_channel_attention">要対応</string>
+    <string name="notify_channel_attention_desc">承認・質問・失敗した作業</string>
+    <string name="notify_channel_done">完了</string>
+    <string name="notify_channel_done_desc">終わった作業</string>
+    <string name="notify_channel_service">接続</string>
+    <string name="notify_channel_service_desc">通知を受け取っている間だけ出ます</string>
+    <string name="notify_service_text">Pleiad · 通知を受け取っています</string>
+    <string name="notify_approval">◆ 承認を待っています</string>
+    <string name="notify_approval_many">◆ 承認を待っています（%1$d 件）</string>
+    <string name="notify_question">◆ 質問があります</string>
+    <string name="notify_question_many">◆ 返事を待っています（%1$d 件）</string>
+    <string name="notify_failed">✕ 作業が失敗しました</string>
+    <string name="notify_done">作業が完了しました</string>
+    <plurals name="notify_bundle">
+        <item quantity="other">%1$d 件の会話が終わりました</item>
+    </plurals>
+    <string name="notify_bundle_more">ほか %1$d 件</string>
+    <string name="notify_untitled">Pleiad の会話</string>
+    <!-- 会話名を出す設定でなければ、ロック画面にはこの汎用の文を出す -->
+    <string name="notify_public_approval">承認を待っている会話があります</string>
+    <string name="notify_public_question">質問のある会話があります</string>
+    <string name="notify_public_failed">作業が失敗した会話があります</string>
+    <string name="notify_public_done">作業が終わった会話があります</string>
+    <string name="notify_battery_title">通知を確実に届けるために</string>
+    <string name="notify_battery_message">電池の最適化の対象だと、画面を消している間に通知が遅れることがあります。Pleiad を対象から外す設定を開きますか？</string>
+    <string name="notify_battery_open">設定を開く</string>
+    <string name="notify_battery_later">あとで</string>
 </resources>

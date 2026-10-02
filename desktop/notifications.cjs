@@ -5,15 +5,16 @@ function createDesktopNotifications({ Notification, getWindow, icon }) {
   const seen = new Map(), seenReplies = new Set(), live = new Set();
   return notice => {
     const reply = notice?.kind === 'reply';
+    // 種類: 完了（kind なし）・返事待ち（reply）・失敗（failed。完了と同じく completedAt で重複を抑える）
     if (!notice || typeof notice.sessionId !== 'string' || !notice.sessionId || notice.sessionId.length > 500
-        || typeof notice.body !== 'string' || (notice.kind && !reply)
+        || typeof notice.body !== 'string' || (notice.kind && !reply && notice.kind !== 'failed')
         || (reply ? typeof notice.noticeId !== 'string' || !notice.noticeId || notice.noticeId.length > 500
           : !Number.isFinite(notice.completedAt))) return false;
     if ((reply ? seenReplies.has(notice.noticeId) : notice.completedAt <= (seen.get(notice.sessionId) ?? 0))
         || !Notification.isSupported()) return false;
     try {
       const title = typeof notice.title === 'string' && notice.title.trim() ? notice.title.slice(0, 200)
-        : reply ? t('notifications.waitingReply') : t('notifications.completed');
+        : reply ? t('notifications.waitingReply') : notice.kind === 'failed' ? t('notifications.failed') : t('notifications.completed');
       const notification = new Notification({ title, body: notice.body.slice(0, 200), icon });
       notification.on('click', () => {
         const window = getWindow();

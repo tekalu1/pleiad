@@ -106,6 +106,38 @@ class FileDeviceStore(private val dir: File, private val cipher: SecretCipher = 
         KeyPair.fromPrivate(priv).also { keyPair = it }
     }
 
+    // ── Notifications while away (docs/remote.md §11-5): the device's notification key (one for all hosts; the AAD binds
+    //    each notice to a host and this device), the settings, and whether the "turn on notifications?" band was dismissed ──
+
+    private val notifyFile = File(dir, "notify.json")
+
+    /** The device's notification key. Created on first use, sealed with the other secrets. */
+    fun notifyKey(): ByteArray = synchronized(lock) {
+        val secrets = readSecrets()
+        secrets.optString("notifyKey").takeIf { it.isNotEmpty() }?.let { return PairingCodec.b64urlDecode(it) }
+        NotifyCrypto.generateKey().also { writeSecrets(secrets.put("notifyKey", PairingCodec.b64urlEncode(it))) }
+    }
+
+    private fun readNotify(): JSONObject = if (notifyFile.exists()) {
+        try { JSONObject(notifyFile.readText(Charsets.UTF_8)) } catch (_: Exception) { JSONObject() }
+    } else JSONObject()
+
+    fun notifySettings(): NotifySettings = synchronized(lock) { NotifySettings.fromJson(readNotify()) }
+
+    fun saveNotifySettings(s: NotifySettings): NotifySettings = synchronized(lock) {
+        val o = readNotify()
+        val merged = s.toJson()
+        for (k in merged.keys()) o.put(k, merged.get(k))
+        writeAtomic(notifyFile, o.toString(2).toByteArray(Charsets.UTF_8))
+        s
+    }
+
+    fun notifyBandDismissed(): Boolean = synchronized(lock) { readNotify().optBoolean("bandDismissed", false) }
+
+    fun setNotifyBandDismissed(value: Boolean) = synchronized(lock) {
+        writeAtomic(notifyFile, readNotify().put("bandDismissed", value).toString(2).toByteArray(Charsets.UTF_8))
+    }
+
     fun hosts(): List<HostRecord> = synchronized(lock) { readHosts() }
     fun host(hostId: String): HostRecord? = hosts().find { it.hostId == hostId }
 

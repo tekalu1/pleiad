@@ -5,19 +5,31 @@ export const hasPendingChild = tasks => tasks.some(r =>
   || ['pending', 'delivering'].includes(r.notification)
   || (['completed', 'failed'].includes(r.status) && r.notification === 'none'));
 
-export function createCompletionNotices({ busy, send }) {
+/**
+ * ターンの終わりを、会話が落ち着いてから 1 回だけ知らせる。正常終了（ok）と失敗（error）が対象で、中断は知らせない。
+ * send は画面へ（届け先が居なければ false を返し、次に誰かがつながったとき届ける）。
+ * ready は離れた端末への通知用で、画面が居るかによらず、落ち着いた時点で 1 回だけ呼ぶ（ADR 0086）。
+ * info.startedAt は 30 秒未満のターンを通知から外すために ready へ渡す。
+ */
+export function createCompletionNotices({ busy, send, ready = () => {} }) {
   const pending = new Map();
   const flush = (sessionId) => {
-    const completedAt = pending.get(sessionId);
-    if (!completedAt || busy(sessionId)) return false;
-    if (!send({ type: 'completionReady', sessionId, completedAt })) return false;
+    const entry = pending.get(sessionId);
+    if (!entry || busy(sessionId)) return false;
+    if (!entry.pushed) {
+      entry.pushed = true;
+      try { ready({ sessionId, outcome: entry.outcome, completedAt: entry.completedAt, startedAt: entry.startedAt }); } catch { /* 離れた端末への通知の失敗で画面の通知を止めない */ }
+    }
+    if (!send({ type: 'completionReady', sessionId, completedAt: entry.completedAt, outcome: entry.outcome })) return false;
     pending.delete(sessionId);
     return true;
   };
   return {
-    finished(sessionId, outcome, completedAt) {
+    finished(sessionId, outcome, completedAt, info = {}) {
       if (!sessionId) return;
-      if (outcome === 'ok' && Number.isFinite(completedAt)) pending.set(sessionId, completedAt);
+      if ((outcome === 'ok' || outcome === 'error') && Number.isFinite(completedAt)) {
+        pending.set(sessionId, { completedAt, outcome, startedAt: info.startedAt, pushed: false });
+      }
       flush(sessionId);
     },
     changed(sessionId) {

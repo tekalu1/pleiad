@@ -1036,5 +1036,12 @@
     "invalid-input": "Can't send this input.",
     "failed": "The PC browser action failed.",
     "unknown": "Unknown action."
+  },
+  "notify": {
+    "error": {
+      "badKey": "The notification key is malformed.",
+      "notDevice": "This connection is not from a paired phone.",
+      "unknownDevice": "That device is not in the list."
+    }
   }
 }

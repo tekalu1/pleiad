@@ -32,6 +32,8 @@ export default async function (t) {
     completionNotifications, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop,
     // ヘッダーの使用量のチップ（web/header-usage.mjs）。ターンの終わりで取り直す。このテストの対象外
     headerUsage: { turnEnded: noop },
+    // スマホのアプリの帯（web/mobile-notify.mjs）と設定 › 通知（web/notify-settings.mjs）。このテストの対象外
+    mobileNotify: { completed: noop }, notifySettings: { event: noop },
     // 会話の移動（web/conversation-nav-view.mjs）。最新へのボタンの新着と弧。このテストの対象外
     nav: { reset: noop, replyArrived: noop, syncRunning: noop }, navSession: null, toc: { reset: () => {}, refresh: () => {} },
     filePreview: { sessionChanged: noop },

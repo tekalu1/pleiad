@@ -66,6 +66,9 @@ import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.m
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
 import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
+import { createPushNotifier } from './notify/notifier.mjs';
+import { createPresence } from './notify/presence.mjs';
+import { createNotifySettings } from './notify/settings.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
 import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
 import { plyParts } from './instruction-amount.mjs';
@@ -238,13 +241,37 @@ const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, 
     const status = withResident(event.status);
     emitGlobal({ ...event, status, sessionId: null });
     postResident({ status });
+    // スマホの一覧（つながり・最後に送った時刻）も同じ変化で変わる
+    notifyStatus().then(next => emitGlobal({ type: 'notifyStatus', status: next, sessionId: null })).catch(() => {});
   },
   log: line => console.log(`  ${line}`) });
+// スマホ（離れた端末）への通知（ADR 0086）。判定は core/notify/policy.mjs、暗号は crypto.mjs、送り先は中継の通知の線。
+// 各画面が送る presence（見ている会話）で「見ている間は送らない」を決める。PC の通知の設定は <data>/notify.json
+const notifyPresence = createPresence();
+const notifySettings = createNotifySettings({ dataDir: store.dataDir });
+const connectionDevices = new WeakMap();   // ws -> 中継越しの端末（x-pleiad-device。ホストの PC の画面は無い）
+const pushNotifier = createPushNotifier({
+  devices: () => remote.notifyTargets(),
+  presence: notifyPresence,
+  send: (deviceId, blob, ttlMs) => remote.sendNotify(deviceId, blob, ttlMs),
+  host: () => remote.hostInfo(),
+  onSent: (deviceId, at) => remote.markNotified(deviceId, at),
+  log: line => console.log(`  ${line}`),
+  // 試験で待たずに済むよう、短いターンの下限だけ環境変数で変えられる（既定 30 秒）
+  shortTurnMs: Number.isFinite(Number(process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS)) && process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS !== undefined
+    ? Number(process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS) : undefined,
+});
 // ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
 // トレイとスリープの抑止は main（desktop/resident.cjs）が持つので、リモートの状態か実行中の作業が変わるたびに送る
 const residentPrefs = createResidentPrefs({ dataDir: store.dataDir });
 const withResident = status => ({ ...status, resident: { available: Boolean(process.parentPort), ...residentPrefs.get() } });
 const remoteStatus = async () => withResident(await remote.status());
+/** 設定 › 通知の材料: この PC の設定と、スマホ（デスクトップ版の端末以外）の一覧。鍵は含まない */
+const notifyStatus = async () => ({
+  pc: await notifySettings.pc(),
+  devices: (await remote.devices()).filter(d => d.platform !== 'desktop'),
+  relayConnected: (await remote.status()).connection.state === 'connected',
+});
 let residentLast = '', residentStatus = null, residentWork = null;
 function postResident({ status, work } = {}) {
   if (!process.parentPort) return;
@@ -966,6 +993,21 @@ function nativeSessions(b, limit) {
 function invalidateSessionLists() { nativeListGeneration++; }
 
 /**
+ * 1 つの会話の題。一覧の行と同じ決め方（ネイティブの題と sidecar の題。sessionRow）で、スマホへの通知の見出しに使う。無ければ ''。
+ * ネイティブ一覧は使い回しを使う（毎回は読み直さない）
+ */
+async function conversationTitleOf(sessionId) {
+  try {
+    const side = await store.get(sessionId);
+    const b = await resolveBackendForSession(sessionId);
+    if (!b) return side.title ?? '';
+    const native = (await nativeSessions(b, 100)).find(s => s.sessionId === sessionId) ?? null;
+    const title = sessionRow(b, native, { ...side, id: sessionId }).title;
+    return title && title !== '(no title)' ? title : '';
+  } catch { return ''; }
+}
+
+/**
  * 全エージェントのネイティブ一覧と sidecar を1つに合わせる（docs/multi-backend.md §2.1）。
  * ネイティブ一覧に出ないセッション（sidecar にしか無いもの）も落とさずに足す。
  */
@@ -1271,6 +1313,13 @@ const completionNotices = createCompletionNotices({
   // 裏の作業は委譲の完了と同じく awaitedBackground で見る。開きっぱなしの端末（開発サーバーなど）で通知が出なくならないように
   busy: sessionId => sessionBusy(sessionId) || awaitedBackground(sessionId) || hasPendingChild(agentTasks?.list(sessionId) ?? []),
   send: event => sendTo({ kind: P.EVENT, event }),
+  // 落ち着いた時点で、画面が居なくてもスマホへ 1 回（委譲の子の完了は endTurn が渡さない。依頼元の完了に含む）
+  ready: ({ sessionId, outcome, completedAt, startedAt }) => {
+    store.get(sessionId).then(async meta => {
+      if (meta?.delegation) return;
+      pushNotifier.finished({ sessionId, outcome, completedAt, startedAt, title: await conversationTitleOf(sessionId) });
+    }).catch(() => {});
+  },
 });
 
 /** 保存した既定を全画面に通知する。セッション閲覧では既定を書き換えない。 */
@@ -1897,6 +1946,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       let found = false;
       for (const card of cards) if (runtime.waiting.delete(card.id)) found = true;
       if (!found) return;
+      // スマホに出ている承認・質問の通知を消す（どの端末で答えても、ターンが終わっても）
+      pushNotifier.approvalResolved({ id: cards[0].id, sessionId: payload.sessionId });
       signal?.removeEventListener?.("abort", onAbort);
       const { messageKey, messageParams, ...rest } = localize(answer);
       resolve(rest);
@@ -1905,6 +1956,13 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
 
     for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false });
     signal?.addEventListener?.("abort", onAbort, { once: true });
+    // 離れたスマホへ（画面が居るかによらない。委譲の子の承認・質問は子の会話の分だけ。中継の複製は送らない）
+    // （会話名を読むあいだに決着していたら送らない。送ると取り消しが先に行ってしまい、通知が残る）
+    if (payload.sessionId) {
+      conversationTitleOf(payload.sessionId).then(title => {
+        if (runtime.waiting.has(cards[0].id)) pushNotifier.approval({ id: cards[0].id, sessionId: payload.sessionId, kind: payload.kind, title });
+      }).catch(() => {});
+    }
 
     // 送れなければ黙って待つ。戻ってきたら attach() が聞き直す。
     // 既定では戻るまで待ち続け、AGENT_HOST_GRACE_MS を指定したときだけ猶予切れがターンごと中断する。
@@ -2749,7 +2807,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   settleAll('turnEnded', turn.info.sessionId);
   broadcastRunning();
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
-  if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt);
+  if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt, { startedAt: turn.startedAtMs });
   // 利用者の送信でも、委譲の完了通知などで始まったターンでも予約する（ADR 0068）。圧縮のターンの後は予約し直さない
   if (record && turn.outcome === 'ok' && !turn.compactTrigger && !turn.compaction
       && !delegated && turn.info.sessionId) {
@@ -3161,6 +3219,9 @@ async function resumeSession(sessionId) {
 wss.on("connection", (ws, req) => {
   // OS の操作（revealPath / openPath）を許すのは、サーバーのある PC の画面からの接続だけ（core/os-open.mjs）
   const local = isLocalRequest(req);
+  // 中継越しの端末の画面（接続口が付ける x-pleiad-device）。見ている印と通知鍵の登録はこの端末のものとして扱う
+  const via = local ? null : remote.deviceInfo(req.headers['x-pleiad-device']);
+  if (via) connectionDevices.set(ws, via);
   // 古い接続を閉じてはいけない。クライアントは切れると自動再接続するので、
   // 「新しい方に付け替える」と互いに閉じ合って永久に落ち着かなくなる。
   // タブが複数あってもよい設計にして、イベントは全部に配る（流れの出来事だけは開いている会話の分。sendTo）。
@@ -3175,11 +3236,14 @@ wss.on("connection", (ws, req) => {
     homeDir: os.homedir(),
     resumedTurn: resumed,
     startedAt: SERVER_STARTED_AT,
+    // 離れた端末への通知（ADR 0086）を受けられる。古いホストにはこの欄が無く、端末は鍵の登録を送らない
+    notify: 1,
     // 画面の言語。setting は設定値（auto|ja|en）、lang は実際に使う言語（ja|en）
     locale,
   }));
   ws.on("close", () => {
     detach(ws);
+    notifyPresence.clear(ws);
     // 見ていた PC のブラウザーは、見る端末がいなくなれば止める
     const viewer = screencastClients.get(ws);
     if (viewer) screencastHub?.forget(viewer);
@@ -3441,6 +3505,31 @@ wss.on("connection", (ws, req) => {
           return reply(true, withResident(await remote.deny(msg.args?.id)));
         case 'remoteDevices':
           return reply(true, await remote.devices());
+
+        // 通知（ADR 0086）。この PC の設定とスマホの一覧は設定 › 通知。スマホの通知鍵と設定の登録は、端末の画面（中継越し）からだけ
+        case 'notifyStatus':
+          return reply(true, await notifyStatus());
+        case 'setNotifyPc': {
+          await notifySettings.set(msg.args ?? {});
+          const status = await notifyStatus();
+          emitGlobal({ type: 'notifyStatus', status, sessionId: null });
+          return reply(true, status);
+        }
+        case 'setNotifyDevice': {
+          const id = String(msg.args?.id ?? '');
+          if (!remote.deviceInfo(id)) throw new Error(t('notify.error.unknownDevice'));
+          await remote.setNotifyMuted(id, msg.args?.muted === true);
+          const status = await notifyStatus();
+          emitGlobal({ type: 'notifyStatus', status, sessionId: null });
+          return reply(true, status);
+        }
+        case 'notifyRegister': {
+          const via = connectionDevices.get(ws);
+          if (!via?.mobile) throw new Error(t('notify.error.notDevice'));
+          const registered = await remote.registerNotify(via.id, msg.args ?? {});
+          emitGlobal({ type: 'notifyStatus', status: await notifyStatus(), sessionId: null });
+          return reply(true, registered);
+        }
         case 'remoteRevoke':
           return reply(true, withResident(await remote.revoke(msg.args?.id)));
 
@@ -3826,6 +3915,16 @@ wss.on("connection", (ws, req) => {
           const { sessionId } = msg.args ?? {};
           if (sessionId) watching.set(ws, sessionId); else watching.delete(ws);
           return reply(true, "ok");
+        }
+
+        // 各画面が「いま見ている会話」を知らせる（可視でその会話を開いているときだけ）。スマホへの通知を送らない・消すために使う（ADR 0086）。
+        // 画面は変わるたびと 1 分ごとに送り直す（一定時間更新が無い印は捨てる）
+        case 'presence': {
+          const a = msg.args ?? {};
+          const via = connectionDevices.get(ws);
+          notifyPresence.set(ws, { deviceId: via?.id ?? null, platform: via?.platform ?? null, visible: a.visible === true, sessionId: a.sessionId });
+          if (a.visible === true && typeof a.sessionId === 'string' && a.sessionId) pushNotifier.viewed(a.sessionId);
+          return reply(true, 'ok');
         }
 
         // 履歴を読み直す。sessionId が無いときは空（新規セッション相当）。
@@ -4481,6 +4580,8 @@ wss.on("connection", (ws, req) => {
           const reads = Array.isArray(a.reads) ? a.reads.slice(0, 5000) : [[a.sessionId, a.at]];
           const changed = await store.markRead(reads);
           if (changed.length) emitGlobal({ type: "read", sessionId: null, reads: changed });
+          // どこかで見た完了・失敗は、スマホに出ている通知を消す
+          for (const [id] of changed) pushNotifier.viewed(id);
           return reply(true, { reads: changed });
         }
 

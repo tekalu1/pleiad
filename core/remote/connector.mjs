@@ -16,6 +16,8 @@ import { forwardStream } from './forward.mjs';
 import { createRemoteStore } from './devices.mjs';
 import { t } from '../i18n.mjs';
 import { normalizeRelayUrl, relayWsUrl, pairingPayload, cleanLabel, PAIRING_TTL_MS } from './pairing.mjs';
+import { parseNotifyKey } from '../notify/crypto.mjs';
+import { normalizeDeviceSettings } from '../notify/policy.mjs';
 
 /** ホストが閉じるときの close code。中継は 3000–4999 をそのまま端末へ渡す（§5.1）。 */
 export const HOST_CLOSE = Object.freeze({ BAD_REQUEST: 4400, UNAUTHORIZED: 4401, TIMEOUT: 4408, SHUTDOWN: 1001 });
@@ -43,9 +45,19 @@ function closeWs(ws, code, reason = '') {
   setTimeout(() => { if (ws.readyState !== WebSocket.CLOSED) ws.terminate(); }, 2000).unref();
 }
 
-function publicDevice(d, connections = 0) {
-  return { id: d.id, name: d.name, platform: d.platform, app: d.app ?? null, createdAt: d.createdAt, lastSeenAt: d.lastSeenAt ?? null, connected: connections > 0, connections };
+/** 通知の状態（スマホへの通知。設定 › 通知の「スマホ」の一覧に出す）。鍵は出さない。 */
+function publicNotify(d, registered) {
+  const n = d.notify ?? {};
+  return { registered, enabled: registered && n.settings?.enabled === true, muted: n.muted === true, lastSentAt: n.lastSentAt ?? null };
 }
+
+function publicDevice(d, connections = 0, registered = false) {
+  return { id: d.id, name: d.name, platform: d.platform, app: d.app ?? null, createdAt: d.createdAt, lastSeenAt: d.lastSeenAt ?? null, connected: connections > 0, connections, notify: publicNotify(d, registered) };
+}
+
+/** デスクトップ版の端末以外（スマホ）。通知を受ける相手。 */
+const isMobile = d => d.platform !== 'desktop';
+const NOTIFY_PERSIST_MS = 60_000;
 
 function publicRequest(r) {
   return { id: r.id, name: r.name, platform: r.platform, app: r.app, code: r.code, createdAt: r.createdAt, expiresAt: r.expiresAt };
@@ -85,6 +97,8 @@ export function createRemoteHost({
   let offer = null;                // { secret, psk, ticketHash, expiresAt, timer }
   const requests = new Map();      // id → 承認待ち
   const deviceCache = new Map();   // id → devices.json の 1 件（照合は同期で行う）
+  const notifyKeys = new Map();    // deviceId → 通知鍵（Buffer）。スマホへの通知を暗号化する（core/notify）
+  const notifyPersisted = new Map();   // deviceId → lastSentAt を最後にファイルへ書いた時刻
   const channels = new Map();      // deviceId → Set<{ ch, ws }>
   const dataConns = new Set();
   let applying = Promise.resolve();
@@ -119,7 +133,14 @@ export function createRemoteHost({
       secretFromEnv: !secretStored && Boolean(env.AGENT_HOST_RELAY_SECRET),
     };
     deviceCache.clear();
-    for (const d of await store.devices()) deviceCache.set(d.id, d);
+    notifyKeys.clear();
+    for (const d of await store.devices()) {
+      deviceCache.set(d.id, d);
+      if (d.notify) {
+        const key = parseNotifyKey(await store.notifyKey(d.id).catch(() => null));
+        if (key) notifyKeys.set(d.id, key);
+      }
+    }
     return cfg;
   }
 
@@ -270,7 +291,7 @@ export function createRemoteHost({
       if (!channels.has(deviceId)) channels.set(deviceId, new Set());
       channels.get(deviceId).add(entry);
       ws.on('message', b => ch.receive(b));
-      ch.on('stream', s => forwardStream(s, { target, token }));
+      ch.on('stream', s => forwardStream(s, { target, token, device: { id: deviceId, platform: device.platform } }));
       ch.on('close', err => closeWs(ws, err?.code === 'revoked' ? HOST_CLOSE.UNAUTHORIZED : err?.code === 'shutdown' ? HOST_CLOSE.SHUTDOWN : 1000));
       ws.on('close', () => {
         ch.close();
@@ -377,7 +398,7 @@ export function createRemoteHost({
         offer: offer ? { expiresAt: new Date(offer.expiresAt).toISOString() } : null,
         requests: [...requests.values()].map(publicRequest),
       },
-      devices: [...deviceCache.values()].map(d => publicDevice(d, channels.get(d.id)?.size ?? 0)),
+      devices: [...deviceCache.values()].map(d => publicDevice(d, channels.get(d.id)?.size ?? 0, notifyKeys.has(d.id))),
       storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
     };
   }
@@ -485,12 +506,80 @@ export function createRemoteHost({
 
     async devices() { return (await status()).devices; },
 
+    // ── スマホへの通知（ADR 0086） ───────────────────────────────
+
+    /** 端末の画面から来た接続（forward.mjs が付ける x-pleiad-device）の端末。一覧にあるものだけ。 */
+    deviceInfo(deviceId) {
+      const d = deviceCache.get(String(deviceId ?? ''));
+      return d ? { id: d.id, platform: d.platform, mobile: isMobile(d) } : null;
+    },
+
+    /** 端末が作った通知鍵と設定を登録する（端末の E2E の線の中のコマンド）。同じ端末なら置き換える。 */
+    async registerNotify(deviceId, { key, settings } = {}) {
+      const d = deviceCache.get(String(deviceId ?? ''));
+      if (!d) throw new Error(t('remote.pairing.requestGone'));
+      const raw = parseNotifyKey(key);
+      if (!raw) throw new Error(t('notify.error.badKey'));
+      const next = normalizeDeviceSettings(settings, d.notify?.settings);
+      await store.setNotifyKey(d.id, raw.toString('base64url'));
+      notifyKeys.set(d.id, raw);
+      d.notify = { ...(d.notify ?? {}), settings: next, registeredAt: d.notify?.registeredAt ?? new Date().toISOString() };
+      await store.setNotify(d.id, { settings: d.notify.settings, registeredAt: d.notify.registeredAt });
+      queueStatus();
+      return publicNotify(d, true);
+    },
+
+    /** ホスト側の端末ごとの切り替え（設定 › 通知 › スマホ）。 */
+    async setNotifyMuted(deviceId, muted) {
+      const d = deviceCache.get(String(deviceId ?? ''));
+      if (!d) throw new Error(t('remote.pairing.requestGone'));
+      d.notify = { ...(d.notify ?? {}), muted: muted === true };
+      await store.setNotify(d.id, { muted: d.notify.muted });
+      queueStatus();
+      return publicNotify(d, notifyKeys.has(d.id));
+    },
+
+    /** 通知を受けられる端末（スマホで、鍵と設定を登録済み）。通知の判定（core/notify）に渡す。 */
+    notifyTargets() {
+      const out = [];
+      for (const [id, key] of notifyKeys) {
+        const d = deviceCache.get(id);
+        if (!d || !isMobile(d) || !d.notify?.settings) continue;
+        out.push({ id, platform: d.platform, key, settings: d.notify.settings, muted: d.notify.muted === true });
+      }
+      return out;
+    },
+
+    /** 暗号化済みの通知を中継の通知の線へ渡す。制御用の接続が無ければ false。 */
+    sendNotify(deviceId, blob, ttlMs) {
+      if (control?.readyState !== WebSocket.OPEN || !deviceCache.has(deviceId)) return false;
+      sendControl({ type: 'notify', deviceId, blob, ttlMs });
+      return true;
+    },
+
+    /** 最後に送った時刻。ファイルへの書き込みは間引く。 */
+    markNotified(deviceId, at) {
+      const d = deviceCache.get(deviceId);
+      if (!d) return;
+      const iso = new Date(at).toISOString();
+      d.notify = { ...(d.notify ?? {}), lastSentAt: iso };
+      const last = notifyPersisted.get(deviceId) ?? 0;
+      if (at - last < NOTIFY_PERSIST_MS) return;
+      notifyPersisted.set(deviceId, at);
+      store.setNotify(deviceId, { lastSentAt: iso }).catch(() => {}).finally(queueStatus);
+    },
+
+    /** 通知の本文の頭に付けるホスト名と hostId（hostId は公開）。接続前は null。 */
+    hostInfo: () => identity ? { hostId: identity.hostId, hostName: cfg.hostName } : null,
+
     /** 取り消し: 一覧から消し、中継からも消し、つながり中のチャネルを切る。 */
     async revoke(id) {
       id = String(id ?? '');
       deviceCache.delete(id);   // 照合は先に止める（消し終わるのを待つ間にハンドシェイクを通さない）
       await store.removeDevice(id);
       sendControl({ type: 'revoke', id });
+      notifyKeys.delete(id);
+      await store.removeNotifyKey(id).catch(() => {});
       for (const { ch } of channels.get(id) ?? []) ch.goaway('revoked', 'device revoked');
       queueStatus();
       return status();

@@ -19,7 +19,7 @@ export function stampSessionId(event, fallback) {
 }
 
 // server -> client
-export const READY = "ready";   // { protocolVersion, version, homeDir, resumedTurn, startedAt（サーバーの起動時刻 ms）, locale }
+export const READY = "ready";   // { protocolVersion, version, homeDir, resumedTurn, startedAt（サーバーの起動時刻 ms）, locale, notify（スマホへの通知に対応していれば 1） }
 export const EVENT = "event";
 export const RESPONSE = "response";
 export const ERROR = "error";
@@ -57,6 +57,12 @@ export const COMMANDS = new Set([
   'compatEndpointDelete',   // { id } -> 一覧。キーも消す。選んでいる会話は次の送信の前に選び直しを求める
   'compatEndpointDefault',  // { agent, id } -> 一覧。新しい会話の既定（'' = 公式）
   // リモート（ホスト側。core/remote/connector.mjs、docs/remote.md §6.1）。どの画面からも触れる（全権限）。秘密・トークンは返さない
+  // スマホ・この PC への通知（core/notify、ADR 0086）。presence は各画面の「いま見ている会話」、notifyRegister は中継越しのスマホの通知鍵と設定の登録
+  'presence',             // { visible, sessionId } -> 'ok'。見ている会話を知らせる（変わるたびと 1 分ごと）
+  'notifyStatus',         // {} -> { pc: { done, reply, failed }, devices: [{ id, name, platform, connected, notify: { registered, enabled, muted, lastSentAt } }], relayConnected }
+  'setNotifyPc',          // { done?, reply?, failed? } -> notifyStatus。notifyStatus イベントで全接続へ
+  'setNotifyDevice',      // { id, muted } -> notifyStatus。ホスト側でスマホ 1 台への通知を止める
+  'notifyRegister',       // { key（base64url の 32 バイト）, settings } -> { registered, enabled, muted, lastSentAt }。端末の画面（中継越し）からだけ
   'remoteStatus',          // {} -> RemoteStatus（{ enabled, configured, relayUrl, hasEnrollSecret, hostName, hostId, connection, pairing: { offer, requests }, devices, storage }）
   'setRemoteSettings',     // { enabled?, relayUrl?, enrollSecret?, hostName? } -> RemoteStatus。enrollSecret は省けば残し、'' で消す
   'remotePairingStart',    // {} -> { payload, expiresAt, hostId, hostName }。payload は QR とコピーに使う pleiad://pair?... の文字列（5 分・1 回）

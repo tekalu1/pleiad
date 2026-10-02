@@ -59,6 +59,12 @@ PLY_ANDROID_KEY_PASSWORD=…
 
 ワークフローは `workflow_dispatch` でも動かせる（`main` の上だけ。他のブランチでは何もしない）。Secrets や変数の設定漏れで落ちたときは、直してから Actions の画面で「Android release」を手動で実行する。同じコミット数のタグが既にあると何もしないので、二重には出ない。実行は 1 つずつ順に走る（`concurrency: android-release`）。
 
+## 通知に要る権限（2026-10-03）
+
+離れていても届く通知（[ADR 0086](adr/0086-notifications-through-relay.md)）のため、APK は `POST_NOTIFICATIONS`・`FOREGROUND_SERVICE`・`FOREGROUND_SERVICE_REMOTE_MESSAGING`・`RECEIVE_BOOT_COMPLETED` を宣言する。通知の許可はインストール時には尋ねず、利用者が通知をオンにしたときに尋ねる。前面サービス（`NotifyService`、`remoteMessaging`）は通知がオンの間だけ動き、端末の再起動・アプリの更新の後は `BootReceiver` が戻す。Google Play 開発者サービス（FCM）には依存しない。
+
+`./gradlew :remote-core:test` には通知の試験（`NotifyCryptoTest`: 暗号と Node との突き合わせ、`NotifyPlannerTest`: 束ね方・上書き・取り消し、`NotifyInteropTest`: Node の中継と fake のホストを相手にした登録・受信・溜めて渡す）が入る。`NotifyInteropTest` は `node` が PATH に無いとき（または `-Dpleiad.interop=off`）は飛ばす。
+
 ## デスクトップの自動更新と干渉しない理由
 
 - デスクトップの自動更新（`desktop/update-auth.cjs` の `newestRelease`）は、タグから `v` を外して semver として有効なものだけを見る。`android-v0.1.0-1234` は有効な semver ではないので無視される。

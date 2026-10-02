@@ -10,7 +10,8 @@
 <!-- The shell's own screen (docs/remote.md §8.2). Bundled in the app;
      no host ever serves it. Host UIs open in a separate WebView without this bridge. -->
 <main id="list" class="shell">
-  <header class="top"><i class="logo"></i><b data-t="hosts.title"></b></header>
+  <header class="top"><i class="logo"></i><b data-t="hosts.title"></b>
+    <button id="notifyOpen" class="ib push" type="button" data-t-label="notify.open"><svg viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0112 0v5l2 2H4zM10 21h4"/></svg></button></header>
   <div id="hosts" class="card list" role="list"></div>
   <p id="empty" class="weak" hidden data-t="hosts.empty"></p>
   <button id="add" class="add" type="button"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span data-t="hosts.add"></span></button>
@@ -41,6 +42,24 @@
   </section>
   <p id="pairError" class="error" role="alert" hidden></p>
   <p class="foot weak" data-t="pair.fullAccess"></p>
+</main>
+
+<!-- 離れていても届く通知の設定（ADR 0086）。設定は端末ごと。アプリの中だけの画面で、ホストは配らない -->
+<main id="notify" class="shell" hidden>
+  <header class="top"><button id="notifyBack" class="ib" type="button" data-t-label="common.back"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><b data-t="notify.title"></b></header>
+  <div class="grp"><div class="srow" data-row="enabled"><div class="tx" id="notifyMasterLabel" data-t="notify.master"></div><button class="sw" role="switch" aria-checked="false" aria-labelledby="notifyMasterLabel" data-opt="enabled"><i></i></button></div></div>
+  <p id="notifyDenied" class="error" role="status" hidden><span data-t="notify.denied"></span> <button id="notifySystem" class="link" type="button" data-t="notify.openSettings"></button></p>
+  <div class="lbl" data-t="notify.section"></div>
+  <div class="grp dep">
+    <div class="srow" data-row="reply"><div class="tx" id="nlReply" data-t="notify.reply"></div><button class="sw" role="switch" aria-checked="true" aria-labelledby="nlReply" data-opt="reply"><i></i></button></div>
+    <div class="srow" data-row="failed"><div class="tx" id="nlFailed" data-t="notify.failed"></div><button class="sw" role="switch" aria-checked="true" aria-labelledby="nlFailed" data-opt="failed"><i></i></button></div>
+    <div class="srow" data-row="done"><div class="tx"><span id="nlDone" data-t="notify.done"></span><small data-t="notify.doneSub"></small></div><button class="sw" role="switch" aria-checked="true" aria-labelledby="nlDone" data-opt="done"><i></i></button></div>
+  </div>
+  <div class="grp dep" style="margin-top:12px">
+    <div class="srow" data-row="lockNames"><div class="tx" id="nlLock" data-t="notify.lockNames"></div><button class="sw" role="switch" aria-checked="false" aria-labelledby="nlLock" data-opt="lockNames"><i></i></button></div>
+    <div class="srow" data-row="skipPc"><div class="tx" id="nlSkip" data-t="notify.skipPc"></div><button class="sw" role="switch" aria-checked="true" aria-labelledby="nlSkip" data-opt="skipPc"><i></i></button></div>
+  </div>
+  <p class="foot weak" data-t="notify.foot"></p>
 </main>
 
 <div id="toast" class="toast" role="status" hidden></div>
