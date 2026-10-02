@@ -360,6 +360,9 @@
       },
       "running": {
         "summary": "Return the work running now (conversation turns, delegated child tasks, and pending approvals)."
+      },
+      "cliSetup": {
+        "summary": "Return how to start pleiad mcp from an outside AI (the MCP config JSON and the claude mcp add command)."
       }
     },
     "sessions": {

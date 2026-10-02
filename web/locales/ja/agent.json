@@ -360,6 +360,9 @@
       },
       "running": {
         "summary": "いま走っている作業（会話のターン・委譲の子・承認待ちの数）を返す。"
+      },
+      "cliSetup": {
+        "summary": "外の AI から pleiad mcp を起動する設定（MCP の設定の JSON と claude mcp add のコマンド）を返す。"
       }
     },
     "sessions": {

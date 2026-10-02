@@ -90,7 +90,12 @@
       "autoCheck": "更新を自動で確認する",
       "beta": "先行版も受け取る",
       "autoDownload": "更新を自動でダウンロードする",
-      "releaseNotes": "リリースノート"
+      "releaseNotes": "リリースノート",
+      "mcpTitle": "外の AI から Pleiad を使う",
+      "copyMcpJson": "MCP の設定をコピー",
+      "copyMcpClaude": "claude mcp add をコピー",
+      "copied": "コピーしました",
+      "copyFailed": "コピーできませんでした"
     },
     "notify": {
       "pc": {
