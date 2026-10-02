@@ -124,6 +124,7 @@ export default async function (t) {
     locale: 'ja',
     app: { status: async () => ({ version: '0', protocolVersion: 0, startedAt: 0, locale: { setting: 'auto', lang: 'ja' }, running: 0, ...secret }),
       running: async () => ({ count: 0, turns: [], tasks: [], waiting: 0, ...secret }),
+      cliSetup: () => ({ command: 'node', args: ['pleiad.mjs', 'mcp'], env: {}, json: '{}', claude: 'claude mcp add', ...secret }),
       searchSessions: async () => ({ total: 1, partial: false, sessions: [{ sessionId: 's1', title: 't', hits: [], ...secret }] }) },
     sessions: {
       list: async () => [{ id: 's1', title: 't', backend: 'x', status: null, claudeAccount: MARKER, compatEndpoint: MARKER, ...secret }],

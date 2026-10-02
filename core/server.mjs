@@ -45,6 +45,7 @@ import { registry as opsRegistry } from './ops/index.mjs';
 import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './ops/surfaces/control.mjs';
 import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
 import { writeControlFile, removeControlFile } from './control-file.mjs';
+import { addCliToPath, mcpSetup } from './cli-launcher.mjs';
 import { parentIdOf } from './ops/sessions.mjs';
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
@@ -116,6 +117,8 @@ const screencastClients = new WeakMap();   // ws -> hub に渡す端末
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
 delete process.env.AGENT_BROWSER_CONFIG;
 delete process.env.AGENT_BROWSER_SESSION;
+// 会話のシェルで pleiad CLI を使えるよう、起動口（bin/）を PATH の先頭に足す。エージェントのプロセスと `!` の行はこの env を継ぐ（ADR 0090）
+addCliToPath(process.env);
 // このサーバーが起動した時刻。ready で配る。画面は、これより前の更新による中断だけを「更新の後」とみなす（web/interrupt.mjs の updateInterrupted）
 const SERVER_STARTED_AT = Date.now();
 const WEB = path.join(HERE, "..", "web");
@@ -1973,6 +1976,8 @@ async function createStatusGroup(status, actor) {
 const opsApp = {
   searchSessions: (input) => sessionSearch.search(input),
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
+  // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
+  cliSetup: () => mcpSetup({ dataDir: store.dataDir }),
   // いま走っている作業の要約（app.running）。会話のターン・委譲の子・承認待ちの数
   running: async () => {
     const work = await runningWork();

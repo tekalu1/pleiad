@@ -78,6 +78,8 @@ const cases = [
   await import('./unit/ops-surface.mjs'),
   // 操作の一覧の中身（会話・設定・委譲）・MCP の生成器と橋・ply_control の 3 つのエージェントへの渡し方・サーバー越しの HTTP と権限の配線・CLI と pleiad mcp
   await import('./unit/ops-sessions.mjs'),
+  // pleiad CLI の起動口（ADR 0090）: 会話のシェルの PATH・外の AI の MCP の設定（app.cliSetup）・起動口の改行・デスクトップ版の同梱
+  await import('./unit/cli-launcher.mjs'),
   // 設定を書く(settings.set): 全設定 × 全主体の判定・値の検査・承認カードと受領証・bypass で承認なし・束縛なしの NEEDS_UI（身代わりのサーバー）
   await import('./unit/ops-settings.mjs'),
   await import('./unit/setting-change-ui.mjs'),
