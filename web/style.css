@@ -967,6 +967,8 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .mw.card .mw-gutter::before{content:"◆";background:transparent;width:auto;height:auto;left:14.5px;top:10.5px;font-size:11px;line-height:1;color:var(--ink-mark)}
 .mw.card.done .mw-gutter::before{content:"◇";color:var(--ink-weak)}
 .card{max-width:860px;background:var(--surface-1);border-radius:var(--r-l);overflow:hidden;transition:opacity var(--dur) var(--ease-out);min-width:0}
+/* .card は筋の入れ物にも付く。面は中身のカードだけに描き、溝は会話の列の外に残す。 */
+.mw.card,.m.card{max-width:none;background:none;border-radius:0;overflow:visible}
 .card-head{display:flex;align-items:center;gap:10px;padding:10px 16px 6px;font-size:var(--fs-s);min-width:0}
 .card-kind{color:var(--ink-mark);font-weight:600;letter-spacing:.04em;flex:none}
 .card-head .tool{font-family:var(--font-mono);color:var(--ink);flex:none}
@@ -983,6 +985,11 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 /* 送っている間の一行（弧を添える）と、送れなかった理由（強い字）。ボタンは押し直せる */
 .card-actions .res{display:inline-flex;align-items:center;gap:6px;min-width:0}
 .card-actions .res.fail{color:var(--ink-strong);font-weight:600}
+/* コンピューターと設定の単独の承認カードは、本文と同じ字下げに左からボタンを並べる。 */
+.card-actions.cu-actions{justify-content:flex-start;gap:6px;padding-left:calc(26px + 3.4 * var(--fs-xs))}
+.card-actions.cu-actions .res:empty{display:none}
+.card-actions.cu-actions .res:not(:empty){flex-basis:100%;margin-right:0}
+@media (max-width:560px){.card-actions.cu-actions{padding-left:16px}}
 /* 決着した承認の一行は押して入力を開閉できる（▸ はツールの行と同じ）。開いている・触れている間は沈めない */
 .card-head.done-toggle{cursor:pointer;border-radius:var(--r-l)}
 .card-head.done-toggle .caret{flex:none;display:inline-block;width:1em;color:var(--ink-weak);font-size:var(--fs-xs);transition:transform var(--dur-fast) var(--ease-out)}
