@@ -11,9 +11,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { dbPath, createDb, transaction, sessionTable, taskTable, usageTable, conversationTable } from './db.mjs';
+import { dbPath, createDb, transaction, sessionTable, taskTable, usageTable, conversationTable, threadTable, memoryStateTable } from './db.mjs';
 
-export const LEGACY_FILES = ['sessions.json', 'agent-tasks.json', 'usage.json', 'conversations.json'];
+// 形式 1 の JSON。channels/threads.json と memory/learn-state.json は 0.6.0（形式 1 のまま）が書いていた（スレッドの状態・夜の整理の進み）。
+// 置き場からの相対パス（写しの中でも同じ相対パスに置く）
+export const LEGACY_FILES = ['sessions.json', 'agent-tasks.json', 'usage.json', 'conversations.json', 'channels/threads.json', 'memory/learn-state.json'];
+const THREADS_FILE = 'channels/threads.json', LEARN_FILE = 'memory/learn-state.json';
+const onlyKeys = (value, allowed) => Object.keys(value).every(key => allowed.includes(key));
+const isMap = value => isObject(value);
+/** 0.6.0 の core/channels/threads.mjs が読めた形（version 1・threads が連想配列）。ほかの最上位の項目は保存先が無いので止める */
+const isThreadsFile = v => isObject(v) && v.version === 1 && isMap(v.threads) && onlyKeys(v, ['version', 'threads']);
+/** 0.6.0 の core/memory/learn.mjs が読めた形（version 1・cursor.sessions・cursor.posts・lastRunAt が数）。カーソルの各組は連想配列 */
+const isLearnFile = v => isObject(v) && v.version === 1 && isObject(v.cursor) && isMap(v.cursor.sessions) && isMap(v.cursor.posts) && Number.isFinite(v.lastRunAt)
+  && onlyKeys(v, ['version', 'cursor', 'lastRunAt']) && Object.values(v.cursor).every(isMap);
+/** 夜の整理の進みを DB の行（kind・id・value）にする。空の組は行にならない */
+const learnRows = v => [
+  ...Object.entries(v.cursor).flatMap(([group, map]) => Object.entries(map).map(([id, value]) => [`cursor.${group}`, id, value])),
+  ['meta', 'lastRunAt', v.lastRunAt],
+];
+/** DB の memory_state を learnRows と同じ形（{ kind: { id: value } }）にして比べるための期待値 */
+const learnExpected = v => learnRows(v).reduce((out, [kind, id, value]) => { (out[kind] ??= {})[id] = value; return out; }, {});
 const DB_SIDE_FILES = ['-wal', '-shm', '-journal'];
 
 const exists = file => { try { fs.accessSync(file); return true; } catch { return false; } };
@@ -50,6 +67,9 @@ export function migrateSchema1To2(dir, { now = new Date(), afterImport = null } 
   if (present.includes('agent-tasks.json')) sources.tasks = readJson(path.join(dir, 'agent-tasks.json'), 'agent-tasks.json', isObject);
   if (present.includes('usage.json')) sources.usage = readJson(path.join(dir, 'usage.json'), 'usage.json', v => isObject(v) && v.version === 1 && Array.isArray(v.records));
   if (present.includes('conversations.json')) sources.conversations = readJson(path.join(dir, 'conversations.json'), 'conversations.json', isObject);
+  // 0.6.0 が読めなかった形（壊れた JSON・知らない版）は、0.6.0 と同じく読み込まずに止める（上書きして消さない）
+  if (present.includes(THREADS_FILE)) sources.threads = readJson(path.join(dir, THREADS_FILE), THREADS_FILE, isThreadsFile);
+  if (present.includes(LEARN_FILE)) sources.learn = readJson(path.join(dir, LEARN_FILE), LEARN_FILE, isLearnFile);
 
   let backup = path.join(dir, `backup-schema1-${stamp(now)}`);
   for (let n = 2; exists(backup); n++) backup = path.join(dir, `backup-schema1-${stamp(now)}-${n}`);
@@ -57,7 +77,9 @@ export function migrateSchema1To2(dir, { now = new Date(), afterImport = null } 
   try {
     fs.mkdirSync(backup, { recursive: true });
     for (const name of [...present, 'data-schema.json']) {
-      if (exists(path.join(dir, name))) fs.copyFileSync(path.join(dir, name), path.join(backup, name));
+      if (!exists(path.join(dir, name))) continue;
+      fs.mkdirSync(path.dirname(path.join(backup, name)), { recursive: true });
+      fs.copyFileSync(path.join(dir, name), path.join(backup, name));
     }
     removeDb(dir);
     db = createDb(dbPath(dir));
@@ -88,6 +110,17 @@ export function migrateSchema1To2(dir, { now = new Date(), afterImport = null } 
         expected.conversations = sources.conversations;
         counts.conversations = Object.keys(sources.conversations).length;
       }
+      if (sources.threads) {
+        const table = threadTable(db);
+        for (const [key, state] of Object.entries(sources.threads.threads)) table.put(key, typeof state?.channelId === 'string' ? state.channelId : key.split('/')[0], JSON.stringify(state));
+        expected.threads = sources.threads.threads;
+        counts.threads = Object.keys(sources.threads.threads).length;
+      }
+      if (sources.learn) {
+        memoryStateTable(db).save(learnRows(sources.learn));
+        expected.learn = learnExpected(sources.learn);
+        counts.memoryState = learnRows(sources.learn).length;
+      }
     });
     afterImport?.(db);
 
@@ -97,6 +130,8 @@ export function migrateSchema1To2(dir, { now = new Date(), afterImport = null } 
     if (expected.tasks && !isDeepStrictEqual(taskTable(db).loadAll(), expected.tasks)) mismatch.push('agent-tasks.json');
     if (expected.usage && !isDeepStrictEqual(usageTable(db).snapshot(), expected.usage)) mismatch.push('usage.json');
     if (expected.conversations && !isDeepStrictEqual(conversationTable(db).loadAll(), expected.conversations)) mismatch.push('conversations.json');
+    if (expected.threads && !isDeepStrictEqual(threadTable(db).loadAll(), expected.threads)) mismatch.push(THREADS_FILE);
+    if (expected.learn && !isDeepStrictEqual(memoryStateTable(db).loadAll(), expected.learn)) mismatch.push(LEARN_FILE);
     if (mismatch.length) throw new Error(`read-back differs from the original: ${mismatch.join(', ')}`);
 
     db.exec('PRAGMA wal_checkpoint(TRUNCATE)');

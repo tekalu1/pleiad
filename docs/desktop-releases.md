@@ -74,7 +74,7 @@ package.json と package-lock.json の番号を揃え、原稿と生成済み JS
 再起動後は保存済みの会話を再度開ける。実行中の LLM ターンの自動復元はしない。中断した会話は中断の印（理由付き）で残り、人が「再開」を押したときだけ続きを送る（`docs/design.md`「中断と再開」）。
 
 デスクトップの終了も同じ形にする。実行中の作業があれば「作業に戻る」と「中断して終了」を選ばせ、中断して終了は worker に全部の中断（理由 `quit`）を頼み、実行中が 0 になるのを待ってから（上限 30 秒。超えたら残っている件数を出して終了しない）終了する（`desktop/main.cjs` の closeSafely）。
-データ置き場の形式番号（`data-schema.json`）は 2。形式 1 は記録ごとの JSON（`sessions.json`・`agent-tasks.json`・`usage.json`・`conversations.json`）、形式 2 は SQLite（`pleiad.db`）で、件数とともに増える記録は行に置く（[ADR 0115](adr/0115-records-in-sqlite.md)）。
+データ置き場の形式番号（`data-schema.json`）は 2。形式 1 は記録ごとの JSON（`sessions.json`・`agent-tasks.json`・`usage.json`・`conversations.json`と、0.6.0 が書く `channels/threads.json`・`memory/learn-state.json`）、形式 2 は SQLite（`pleiad.db`）で、件数とともに増える記録は行に置く（[ADR 0115](adr/0115-records-in-sqlite.md)）。
 形式 1（または形式番号が無い置き場）の起動では、書き込みを始める前に 1 回だけ移行する（`core/schema-migration.mjs`）:
 
 0. データ置き場のロック（`pleiad.lock.db` の SQLite の排他ロック。OS がプロセスの終了で外す）を取る。別のプロセスが持っていれば、移行を始めずに起動を止める
@@ -91,7 +91,7 @@ package.json と package-lock.json の番号を揃え、原稿と生成済み JS
 今後のデータ形式変更では、全書き込みを停止してから対象ファイルをバックアップし、コピー上で移行と検証を行い、
 成功後に形式番号を更新する移行処理とテストを同じPRに追加する。失敗時に元データを維持することを公開条件とする。
 形を変えずに値だけを直す移行は、形式番号を上げない。写しを残し、済んだことを対象のファイルに記録する（例: `usage.json` の Claude の記録。[ADR 0052](adr/0052-claude-usage-delta.md)）。
-0.6.0 は Channels・bot・記憶・ルーティンのデータ（`channels/`・`bots.json`・`memory/`・`routines.json`・`webhook-secrets.json` と会話の記録の `bot` の欄）を足し、同じ版でデータ置き場の形式番号を 2 に上げる（SQLite への移行。上の手順。[ADR 0115](adr/0115-records-in-sqlite.md)）。形式 2 を見た古い版は起動を止めるので、足したデータを古い版が読み違えて bot の会話が Chats の一覧に普通の会話として並ぶ、ということは起きない（古い版へ手で戻すなら、移行前の写し `backup-schema1-*` の JSON が元のデータで、移行後の記録は戻らない。[docs/channels.md](channels.md)「データ」）。
+0.6.0 は Channels・bot・記憶・ルーティンのデータ（`channels/`・`bots.json`・`memory/`・`routines.json`・`webhook-secrets.json` と会話の記録の `bot` の欄）を足し、同じ版でデータ置き場の形式番号を 2 に上げる（SQLite への移行。上の手順。[ADR 0115](adr/0115-records-in-sqlite.md)）。形式 2 を見た古い版は起動を止めるので、足したデータを古い版が読み違えて bot の会話が Chats の一覧に普通の会話として並ぶ、ということは起きない（0.6.0 の `channels/threads.json`・`memory/learn-state.json` も、移行で DB の行に取り込む。壊れている・知らない版なら、0.6.0 と同じく読み込まずに止める。古い版へ手で戻すなら、移行前の写し `backup-schema1-*` の JSON が元のデータで、移行後の記録は戻らない。[docs/channels.md](channels.md)「データ」）。
 アプリの自動ダウングレードは無効。問題があれば修正版の番号を上げて配る。
 
 ## 公開前の準備（管理者が一度設定）

@@ -253,6 +253,97 @@ export default async function (t) {
       t.ok('store・conversations も、形式 2 では残った元の JSON を読まない', child.error === null && !got.ids?.includes('ghost') && got.ids?.includes('a') && got.conv === null, child.stderr.slice(0, 300) + child.stdout);
     }
 
+    // ---- 0.6.0（形式 1 のまま）が書いた channels/threads.json・memory/learn-state.json を取り込む
+    {
+      // 0.6.0 の core/channels/threads.mjs・core/memory/learn.mjs が書いた形（どちらも整形した JSON）
+      const threadsFile = () => ({ version: 1, threads: {
+        'c_aaaaaaaa/p_11111111': { channelId: 'c_aaaaaaaa', threadId: 'p_11111111', sessions: { b_owl: 's-owl-1', b_lynx: 's-lynx-1' }, state: 'working', tokens: { input: 1200, output: 340, cached: 900 }, calls: 4, stopped: null, updatedAt: 1790000000000 },
+        'c_aaaaaaaa/p_22222222': { channelId: 'c_aaaaaaaa', threadId: 'p_22222222', sessions: { b_owl: 's-owl-2' }, state: 'idle', tokens: { input: 5, output: 6, cached: 0 }, calls: 1, stopped: { by: { kind: 'human' }, at: 1790000001000 }, origin: { channelId: 'c_aaaaaaaa', threadId: 'p_11111111' }, updatedAt: 1790000002000 },
+        'c_bbbbbbbb/p_33333333': { channelId: 'c_bbbbbbbb', threadId: 'p_33333333', sessions: {}, state: 'idle', tokens: { input: 0, output: 0, cached: 0 }, calls: 0, stopped: null, updatedAt: 1 },
+      } });
+      const learnFile = () => ({ version: 1, cursor: { sessions: { 'sess-1': 12, 'sess-2': 0, '会話-3': 7 }, posts: { c_aaaaaaaa: 'p_11111111' }, postOffsets: { c_aaaaaaaa: 4096 } }, lastRunAt: 1790000003000 });
+      const put = async (dir, relative, value) => { await fs.mkdir(path.dirname(path.join(dir, relative)), { recursive: true }); await fs.writeFile(path.join(dir, relative), `${JSON.stringify(value, null, 2)}\n`); };
+      const rowsOf = dir => { const db = openReadOnly(dir); try { return { threads: db.prepare('SELECT thread_key, channel_id, data FROM channel_threads ORDER BY thread_key').all(), state: db.prepare('SELECT kind, id, value FROM memory_state ORDER BY kind, id').all() }; } finally { db.close(); } };
+
+      const dir = await tmp('v060-bot-files');
+      await seed(dir);
+      await put(dir, 'channels/threads.json', threadsFile());
+      await put(dir, 'memory/learn-state.json', learnFile());
+      const beforeThreads = await read(path.join(dir, 'channels/threads.json')), beforeLearn = await read(path.join(dir, 'memory/learn-state.json'));
+      const result = await ensureDataSchema(dir);
+      const rows = rowsOf(dir);
+      t.ok('threads.json・learn-state.json があれば、移行で DB の行に取り込む（スレッド 3 行・カーソル 3+1+1 行と lastRunAt）', result?.counts?.threads === 3 && result.counts.memoryState === 6
+        && rows.threads.length === 3 && rows.state.length === 6, JSON.stringify(result));
+      t.ok('スレッドの状態は元と同じ値（channel_id の列はそのスレッドのチャンネル）', rows.threads.every(row => JSON.stringify(JSON.parse(row.data)) === JSON.stringify(threadsFile().threads[row.thread_key]) && row.channel_id === threadsFile().threads[row.thread_key].channelId));
+      t.ok('夜の整理の進みは元と同じ値（会話・チャンネルごとのカーソル・byte offset・lastRunAt）', JSON.stringify(rows.state.map(row => [row.kind, row.id, JSON.parse(row.value)])) === JSON.stringify([
+        ['cursor.postOffsets', 'c_aaaaaaaa', 4096], ['cursor.posts', 'c_aaaaaaaa', 'p_11111111'], ['cursor.sessions', 'sess-1', 12], ['cursor.sessions', 'sess-2', 0], ['cursor.sessions', '会話-3', 7], ['meta', 'lastRunAt', 1790000003000]]));
+      const backup = path.join(dir, (await backups(dir))[0]);
+      t.ok('写しに同じ相対パス（channels/threads.json・memory/learn-state.json）でそのまま入る', (await read(path.join(backup, 'channels/threads.json'))) === beforeThreads && (await read(path.join(backup, 'memory/learn-state.json'))) === beforeLearn);
+      t.ok('取り込んだあと、元の 2 つの JSON は外れる', !(await read(path.join(dir, 'channels/threads.json'))) && !(await read(path.join(dir, 'memory/learn-state.json'))));
+      // 移行したデータを、今のスレッドの部品が読める
+      const { createThreadStore } = await import('../../core/channels/threads.mjs');
+      const threads = createThreadStore({ dir: path.join(dir, 'channels') });
+      try {
+        const listed = await threads.list('c_aaaaaaaa');
+        t.ok('移行したスレッドの状態を、今のスレッドの部品（createThreadStore）が読める（会話・トークン・止めた印・起こした元が残る）', listed.length === 2
+          && listed.find(th => th.threadId === 'p_11111111')?.sessions.b_lynx === 's-lynx-1' && listed.find(th => th.threadId === 'p_22222222')?.stopped?.at === 1790000001000
+          && listed.find(th => th.threadId === 'p_22222222')?.origin?.threadId === 'p_11111111' && (await threads.get('c_aaaaaaaa', 'p_11111111')).tokens.input === 1200);
+      } finally { await threads.close(); }
+      t.ok('2 回目の起動では移行しない（写しも増えない）', (await ensureDataSchema(dir)) === null && (await backups(dir)).length === 1);
+
+      // この 2 つだけがある置き場（会話などの JSON が無い）も移行する
+      const only = await tmp('v060-only-bot-files');
+      await put(only, 'channels/threads.json', threadsFile());
+      t.ok('threads.json だけがある置き場も移行する（形式番号は 2、DB に 3 行）', (await ensureDataSchema(only))?.counts?.threads === 3 && rowsOf(only).threads.length === 3 && JSON.parse(await read(path.join(only, 'data-schema.json'))).schema === 2);
+      // 無ければ何もしない
+      const none = await tmp('v060-no-bot-files');
+      await seed(none);
+      const noneResult = await ensureDataSchema(none);
+      t.ok('無ければ何もしない（カウントに出ず、行も無い）', noneResult?.counts?.threads === undefined && noneResult?.counts?.memoryState === undefined && rowsOf(none).threads.length === 0 && rowsOf(none).state.length === 0);
+
+      // 壊れていたら、0.6.0 と同じく読み込まずに止める（元にも番号にも触れない。写しも作りかけの DB も残さない）
+      for (const [label, relative, content] of [
+        ['壊れた threads.json', 'channels/threads.json', '{"version":1,"threads":'],
+        ['知らない版の threads.json', 'channels/threads.json', JSON.stringify({ version: 2, threads: {} })],
+        ['threads が連想配列でない threads.json', 'channels/threads.json', JSON.stringify({ version: 1, threads: [] })],
+        ['壊れた learn-state.json', 'memory/learn-state.json', 'not json'],
+        ['知らない版の learn-state.json', 'memory/learn-state.json', JSON.stringify({ ...learnFile(), version: 2 })],
+        ['保存先の無い項目がある learn-state.json', 'memory/learn-state.json', JSON.stringify({ ...learnFile(), extra: { keep: true } })],
+      ]) {
+        const broken = await tmp(`v060-broken-${relative.replace(/\W/g, '')}-${label.length}`);
+        await seed(broken);
+        await fs.mkdir(path.dirname(path.join(broken, relative)), { recursive: true });
+        await fs.writeFile(path.join(broken, relative), content);
+        const before = await snapshot(broken);
+        const error = await ensureDataSchema(broken).then(() => null, e => e);
+        t.ok(`${label}: 読み込まずに起動を止める（元の JSON・形式番号はそのまま。写しも DB も残さない）`, new RegExp(relative.replace('/', '[\\\\/]').replace('.', '\\.')).test(error?.message ?? '') && sameJson(await snapshot(broken), before)
+          && (await read(path.join(broken, relative))) === content && (await backups(broken)).length === 0 && !(await read(dbPath(broken))), error?.message);
+      }
+
+      // 読み戻した中身が違えば、突き合わせで止める
+      const mismatch = await tmp('v060-mismatch');
+      await seed(mismatch);
+      await put(mismatch, 'channels/threads.json', threadsFile());
+      await put(mismatch, 'memory/learn-state.json', learnFile());
+      const dropped = await ensureDataSchema(mismatch, { afterImport: db => { db.exec("DELETE FROM channel_threads WHERE thread_key = 'c_bbbbbbbb/p_33333333'"); db.exec("DELETE FROM memory_state WHERE kind = 'cursor.sessions' AND id = 'sess-1'"); } }).then(() => null, e => e);
+      t.ok('スレッドの行・カーソルの行が欠けたら、突き合わせで移行を止める（元は残る）', /read-back differs/.test(dropped?.message ?? '') && /channels[\\/]threads\.json/.test(dropped.message) && /memory[\\/]learn-state\.json/.test(dropped.message)
+        && !!(await read(path.join(mismatch, 'channels/threads.json'))) && !!(await read(path.join(mismatch, 'memory/learn-state.json'))) && (await backups(mismatch)).length === 0);
+
+      // 形式 2 で元を外せなかった分は、次の起動で（写しにあることを確かめて）外し直す
+      const resume = await tmp('v060-cleanup-resume');
+      await seed(resume);
+      await put(resume, 'channels/threads.json', threadsFile());
+      await put(resume, 'memory/learn-state.json', learnFile());
+      const refuse = file => { if (/threads\.json$|learn-state\.json$/.test(file)) throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' }); return fsSync.rmSync(file, { force: true }); };
+      const first = await ensureDataSchema(resume, { remove: refuse });
+      t.ok('外せなくても移行は成功し、起動は止めない（元の 2 つが残る）', first?.counts?.threads === 3 && !!(await read(path.join(resume, 'channels/threads.json'))) && !!(await read(path.join(resume, 'memory/learn-state.json'))));
+      await ensureDataSchema(resume);
+      t.ok('次の起動（形式 2）で、写しにあることを確かめて外し直す', !(await read(path.join(resume, 'channels/threads.json'))) && !(await read(path.join(resume, 'memory/learn-state.json'))) && rowsOf(resume).threads.length === 3);
+      await put(resume, 'channels/threads.json', { version: 1, threads: { 'c_zzzzzzzz/p_zzzzzzzz': { channelId: 'c_zzzzzzzz', threadId: 'p_zzzzzzzz' } } });
+      await ensureDataSchema(resume);
+      t.ok('写しと中身が違う threads.json は外さず、読み込みもしない（形式 2 では DB だけを読む）', !!(await read(path.join(resume, 'channels/threads.json'))) && rowsOf(resume).threads.every(row => row.thread_key !== 'c_zzzzzzzz/p_zzzzzzzz'));
+    }
+
     // ---- 開く（openData）は、書き込みの前に移行を済ませる
     {
       const dir = await tmp('open');
