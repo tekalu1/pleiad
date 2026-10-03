@@ -4,20 +4,18 @@ import { z } from 'zod';
 import { defineOp } from './registry.mjs';
 import { agentT } from '../i18n.mjs';
 import { parseAt } from '../send-schedule.mjs';
+import { fromHost } from './host.mjs';
 
 const id = z.string().min(1).max(200);
 const uiCli = (path, positional) => ({ ui: true, mcp: false, cli: { path, ...(positional ? { positional } : {}) } });
 
 export const resumeOps = [
-  defineOp({ id: 'sessions.resume', summary: 'agent:ops.sessions.resume.summary', risk: 'write',
-    riskReason: 'Only the screen and CLI expose this human initiated action.',
+  // 中断した会話を続ける（保留の送信待ちを送り直すか、「続けて」の文を送る）。続きは、その会話の承認モードで動く（ADR 0091 追記）
+  defineOp({ id: 'sessions.resume', summary: 'agent:ops.sessions.resume.summary', risk: 'write', scope: 'session',
+    riskReason: 'Resuming sends only what the conversation already queued, or the fixed "continue" text, and the turn runs under that conversation\'s own approval mode, which this call cannot change. A human can resume any conversation, so an agent is treated the same',
     legacyCommand: 'resume', input: z.object({ sessionId: id.describe('agent:ops.sessions.resume.sessionId') }), output: z.object({ sent: z.enum(['outbox', 'text']), count: z.number() }),
-    surfaces: uiCli(['sessions', 'resume'], ['sessionId']),
-    handler: (ctx, args) => ctx.limitResume.resume(args.sessionId) }),
-  defineOp({ id: 'sessions.listMessages', summary: 'agent:ops.sessions.listMessages.summary', risk: 'read',
-    legacyCommand: 'listMessages', input: z.object({ sessionId: id.describe('agent:ops.sessions.listMessages.sessionId') }), output: z.array(z.any()),
-    surfaces: uiCli(['sessions', 'unsent'], ['sessionId']),
-    handler: (ctx, args) => ctx.limitResume.messages(args.sessionId) }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'resume'], positional: ['sessionId'] } },
+    handler: (ctx, args) => fromHost(() => ctx.limitResume.resume(args.sessionId)) }),
   defineOp({ id: 'sessions.schedules', summary: 'agent:ops.sessions.schedules.summary', risk: 'read',
     input: z.object({ sessionId: id.optional().describe('agent:ops.sessions.schedules.sessionId') }), output: z.array(z.any()),
     surfaces: uiCli(['sessions', 'schedules']), handler: (ctx, args) => ctx.limitResume.schedules(args.sessionId) }),

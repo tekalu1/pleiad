@@ -211,10 +211,13 @@ export const sessionOps = [
     }),
     output: z.object({ total: z.number().int(), sessions: z.array(listItem), next: z.string().nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'list'] } },
+    legacyCommand: 'listSessions',
     handler: async (ctx, args) => {
       try { return pageSessions(await ctx.sessions.list(), args); }
       catch (e) { if (e instanceof OpError && e.code === 'INVALID') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.badCursor')); throw e; }
     },
+    // 画面のサイドバーは、下書きの会話・状態・圧縮・中断・委譲の記録・作業場所など全部の欄を持つ行を、上限なしで読む
+    uiHandler: (ctx) => ctx.sessions.rows(),
   }),
 
   defineOp({
@@ -331,6 +334,31 @@ export const sessionOps = [
       const forked = await ctx.sessions.fork({ sessionId: id, upToMessageId, beforeMessageId, title,
         reason: ctx.principal.by === 'human' ? (ctx.sessions.clientReason?.({ reason, reasonKey, reasonParams }).reason ?? reason) : reason, backend }, { actor: ctx.actor });
       return { sessionId: forked.sessionId, parent: id };
+    },
+  }),
+
+  // 会話のモデルを替える。走っているターンにも即時に伝える（できるエージェントだけ）。人間の操作は、新しい会話の既定のモデルとしても覚える
+  defineOp({
+    id: 'sessions.setModel',
+    summary: 'agent:ops.sessions.setModel.summary',
+    risk: 'write',
+    riskReason: "Picks among the models the agent offers (or the model list of the conversation's endpoint); it does not touch the approval mode or the endpoint. The change is kept in the conversation's change log and can be switched back. The default for new conversations is remembered only from a human's change (ADR 0094)",
+    scope: 'session',
+    input: z.object({
+      sessionId: optionalSessionId('setModel'),
+      model: z.string().max(200).describe(D('setModel', 'model')),
+      reason: z.string().max(500).optional().describe(D('setModel', 'reason')),
+      ...reasonFields('setModel'),
+    }),
+    output: z.object({ sessionId: z.string(), model: z.string(), live: z.boolean() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'model'], positional: ['sessionId', 'model'] } },
+    legacyCommand: 'setModel',
+    handler: async (ctx, { sessionId: given, model, reason, reasonKey, reasonParams, backend }) => {
+      const id = targetOf(ctx, given);
+      // 画面はまだ送っていない下書きのモデルも替える（一覧に出ない）。AI は在る会話だけ
+      if (ctx.principal.by !== 'human' && !(await ctx.sessions.get(id))) throw missing(ctx, id);
+      const { live } = await ctx.sessions.setModel(id, model, { actor: ctx.actor, reason: ctx.principal.by === 'human' ? (ctx.sessions.clientReason?.({ reason, reasonKey, reasonParams }) ?? reason) : reason, backend });
+      return { sessionId: id, model, live };
     },
   }),
 ];

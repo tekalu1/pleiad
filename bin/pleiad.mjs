@@ -21,7 +21,7 @@ import { callMcpTool, mcpTools } from '../core/ops/surfaces/mcp.mjs';
 
 export const EXIT = { ok: 0, usage: 2, notRunning: 3, refused: 4, other: 5, pending: 6 };
 const REFUSED = new Set(['NEEDS_UI', 'NEEDS_APPROVAL', 'READ_ONLY_MODE', 'HOST_SCREEN_ONLY', 'DENIED', 'STALE', 'SETTING_READ_ONLY']);
-const USAGE_ERRORS = new Set(['INVALID', 'NOT_FOUND', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND']);
+const USAGE_ERRORS = new Set(['INVALID', 'NOT_FOUND', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND', 'WORKTREE_NOT_FOUND', 'ENDPOINT_NOT_FOUND', 'DEVICE_NOT_FOUND', 'HOOK_NOT_FOUND', 'NOT_GIT']);
 export const exitCodeOf = (code) => (REFUSED.has(code) ? EXIT.refused : USAGE_ERRORS.has(code) ? EXIT.usage : EXIT.other);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -207,6 +207,7 @@ const offlineTexts = {
   instructions: 'Pleiad is not running. Start Pleiad (the desktop app, or npm start in the repository) and these tools will update.',
   listOps: 'List the operations available in Pleiad (Pleiad is not running now).',
   listOpsId: 'An operation id.',
+  listOpsPrefix: 'An id prefix.',
   callOp: 'Call a Pleiad operation (Pleiad is not running now).',
   callOpOp: 'The operation id.',
   callOpArgs: 'The operation input.',

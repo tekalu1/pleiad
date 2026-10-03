@@ -6,7 +6,7 @@
 // 操作を足しても、直に出す印を付けない限りツールの量は変わらない（docs/design.md「操作の一覧」、ADR 0081）。
 //
 //   catalog  registry.describe の返り（GET /api/ops の ops）。その口に出す操作だけ
-//   texts    { instructions, listOps, listOpsId, callOp, callOpOp, callOpArgs, notFound } 会話（または PC）の言語の文
+//   texts    { instructions, listOps, listOpsId, listOpsPrefix, callOp, callOpOp, callOpArgs, notFound } 会話（または PC）の言語の文
 
 export const CONTROL_SERVER = 'ply_control';
 export const META_TOOLS = ['list_ops', 'call_op'];
@@ -18,7 +18,7 @@ export function mcpTools({ catalog, texts }) {
   const direct = catalog.filter((e) => e.mcp === 'direct' && e.tool).map((e) => ({ name: e.tool, description: e.summary, inputSchema: e.input }));
   return [
     ...direct,
-    { name: 'list_ops', description: texts.listOps, inputSchema: object({ id: { type: 'string', description: texts.listOpsId } }) },
+    { name: 'list_ops', description: texts.listOps, inputSchema: object({ id: { type: 'string', description: texts.listOpsId }, prefix: { type: 'string', description: texts.listOpsPrefix ?? 'Id prefix' } }) },
     { name: 'call_op', description: texts.callOp, inputSchema: object({ op: { type: 'string', description: texts.callOpOp }, args: { type: 'object', description: texts.callOpArgs } }, ['op']) },
   ];
 }
@@ -34,7 +34,11 @@ const failure = (r) => ({ isError: true, ...text({ error: r.error, code: r.code,
 export async function callMcpTool({ catalog, texts, name, args, invoke }) {
   if (name === 'list_ops') {
     const id = args?.id;
-    if (id === undefined) return text({ ops: catalog.map((e) => ({ id: e.id, summary: e.summary, risk: e.risk, ...(e.tool ? { tool: e.tool } : {}) })) });
+    if (id === undefined) {
+      // prefix（例: sessions.・delegation.）で絞る。操作が増えても 1 回の返りを小さく保つ
+      const prefix = typeof args?.prefix === 'string' ? args.prefix : '';
+      return text({ ops: catalog.filter((e) => e.id.startsWith(prefix)).map((e) => ({ id: e.id, summary: e.summary, risk: e.risk, ...(e.tool ? { tool: e.tool } : {}) })) });
+    }
     const entry = catalog.find((e) => e.id === id);
     if (!entry) return failure({ code: 'NOT_FOUND', error: String(texts.notFound ?? 'Not found: {{id}}').replace('{{id}}', String(id)) });
     return text({ id: entry.id, summary: entry.summary, risk: entry.risk, scope: entry.scope, ...(entry.tool ? { tool: entry.tool } : {}), input: entry.input });

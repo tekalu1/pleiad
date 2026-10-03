@@ -10,7 +10,7 @@
 // i18n-dynamic: agent:settings.
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { agentT } from '../i18n.mjs';
+import { agentT, i18n, agentLocaleOf, FALLBACK } from '../i18n.mjs';
 import { RISKS, decide, maxRisk } from './policy.mjs';
 
 const ID_RX = /^[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9]*$/;
@@ -51,6 +51,10 @@ export function defineOp(def) {
     fail(id, 'an op that can be guarded needs confirm(ctx, args) (the approval card line and the receipt)');
   if (def.scope !== undefined && !['session', 'global'].includes(def.scope)) fail(id, 'scope must be session | global');
   if (typeof def.handler !== 'function') fail(id, 'handler is required');
+  if (def.legacyAliases !== undefined && !(Array.isArray(def.legacyAliases) && def.legacyAliases.every((n) => typeof n === 'string' && n)))
+    fail(id, 'legacyAliases must be an array of WS command names');
+  if (def.uiHandler !== undefined && typeof def.uiHandler !== 'function') fail(id, 'uiHandler must be a function (ctx, args) => result');
+  if (def.uiHandler && def.surfaces?.ui !== true) fail(id, 'uiHandler needs surfaces.ui: true');
 
   const s = def.surfaces;
   if (!s || typeof s.ui !== 'boolean') fail(id, 'surfaces.ui (true | false) is required');
@@ -193,8 +197,19 @@ function pendingResult(locale, opId, key, requestId) {
   return { ok: true, pending: true, decision: 'ask', result: { status: 'pending', code: 'PENDING_APPROVAL', requestId, message } };
 }
 
-/** エージェントへの文に入れる、変更の対象（設定ならその名前、ほかは操作の id） */
-export const targetText = (locale, opId, key) => (key ? agentT(locale, 'ops.settingTarget', { key }) : agentT(locale, 'ops.opTarget', { id: opId }));
+/**
+ * エージェントへの文に入れる、変更の対象。設定なら画面でのラベルとキー（ラベルの辞書 agent:ops.settingLabel.<key> にある設定。
+ * 無ければキーだけ）、ほかは操作の id
+ */
+export function targetText(locale, opId, key) {
+  if (!key) return agentT(locale, 'ops.opTarget', { id: opId });
+  // i18n-dynamic: agent:ops.settingLabel.
+  const path = `ops.settingLabel.${key}`;
+  const label = [agentLocaleOf(locale), FALLBACK].map((lng) => lng && i18n.getResource(lng, 'agent', path)).find((x) => typeof x === 'string');
+  return label
+    ? agentT(locale, 'ops.settingTargetLabeled', { label, key })
+    : agentT(locale, 'ops.settingTarget', { key });
+}
 
 const issuesOf = (error) => error.issues.map((i) => ({ path: i.path.join('.'), code: i.code, message: i.message }));
 
@@ -205,9 +220,10 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
     if (op?.kind !== 'op') throw new Error('ops: createRegistry ops must come from defineOp');
     if (byId.has(op.id)) throw new Error(`ops: duplicate id: ${op.id}`);
     byId.set(op.id, op);
-    if (op.legacyCommand) {
-      if (byLegacy.has(op.legacyCommand)) throw new Error(`ops: duplicate legacyCommand: ${op.legacyCommand}`);
-      byLegacy.set(op.legacyCommand, op);
+    // legacyAliases: 同じ操作を別の引数の形で呼ぶ WS のコマンド（画面が持つ形のまま。例: setAutoCompaction は settings.set の compaction.auto）
+    for (const name of [op.legacyCommand, ...(op.legacyAliases ?? [])].filter(Boolean)) {
+      if (byLegacy.has(name)) throw new Error(`ops: duplicate legacyCommand: ${name}`);
+      byLegacy.set(name, op);
     }
   }
   const settingsByKey = new Map();
@@ -271,7 +287,8 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
     const run = async () => {
       if (risk !== 'read') await deps.audit?.({ op: op.id, risk, reason: verdict.reason, actor, sessionScope: op.scope });
       try {
-        const result = await op.handler(ctx, parsed.data);
+        // 画面（人）には、画面が読む全量の形を返せる（uiHandler）。AI・CLI は handler の、件数と字数に上限のある形（ADR 0091 追記）
+        const result = await (op.uiHandler && principal.by === 'human' ? op.uiHandler(ctx, parsed.data) : op.handler(ctx, parsed.data));
         return { ok: true, result: maskOutput(result ?? null), decision: verdict.decision };
       } catch (err) {
         if (err instanceof OpError) return { ok: false, code: err.code, error: err.message, decision: verdict.decision };
