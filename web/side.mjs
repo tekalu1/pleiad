@@ -174,7 +174,7 @@ function loadRecentSearches() {
  * @param {() => string} o.cwdNow  入力欄の今の作業ディレクトリ（絞っていないときの引き継ぎ元）
  */
 export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, onGroupContext, onFamilyContext,
-                             onSetGrouped, onJoinGroup, onMoveGroup, onListContext, onSettings, onSearch, cwdNow }) {
+                             onSetGrouped, onJoinGroup, onMoveGroup, onListContext, onSettings, onSearch, cwdNow, visible: isVisible = () => true }) {
   const $ = (id) => document.getElementById(id);
   const root = $("groups");
   const prefs = loadPrefs();
@@ -192,6 +192,67 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const decided = new Set();                    // 人が開閉を決めた家族。決めるまで、今いる会話の器は開いたまま
   const made = new Set();                       // この画面で作った（まだ誰も付いていない）仮の状態
   let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), unreadIds: new Set(), interrupted: new Map(), schedules: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null };
+  let renderedRows = new Map();
+  let nextRows = new Map();
+  let dirty = true;
+
+  // キーを持つ器と行だけを再利用する。見出しは少数なので作り直す。
+  function hydrate(node, old) {
+    for (const child of [...node.children]) {
+      if (child.dataset.sideKeep === '1') {
+        const previous = old.get(child.dataset.sideKey);
+        if (previous) child.replaceWith(previous);
+      } else hydrate(child, old);
+    }
+  }
+
+  function reconcile(parent, wanted, old) {
+    const before = new Map([...parent.children].map((node, index) => [node, index]));
+    const nodes = [];
+    for (const fresh of [...wanted.children]) {
+      const previous = fresh.dataset.sideKey && old.get(fresh.dataset.sideKey);
+      let node = fresh;
+      if (previous && fresh.dataset.sideKeep === '1') node = previous;
+      else if (previous && fresh.dataset.sideContainer === '1') {
+        previous.className = fresh.className;
+        previous.sideFamily = fresh.sideFamily;
+        reconcile(previous, fresh, old);
+        node = previous;
+      } else if (fresh.dataset.sideContainer === '1') hydrate(fresh, old);
+      nodes.push(node);
+    }
+
+    // すでに正しい相対順にある行を残す。先頭へ移った 1 行で後続を全部動かさない。
+    const tails = [], links = [];
+    for (let index = 0; index < nodes.length; index++) {
+      const at = before.get(nodes[index]);
+      if (at == null) continue;
+      let lo = 0, hi = tails.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (before.get(nodes[tails[mid]]) < at) lo = mid + 1;
+        else hi = mid;
+      }
+      links[index] = lo ? tails[lo - 1] : -1;
+      tails[lo] = index;
+    }
+    const stable = new Set();
+    for (let at = tails.at(-1); at != null && at >= 0; at = links[at]) stable.add(at);
+    let anchor = null;
+    for (let index = nodes.length - 1; index >= 0; index--) {
+      const node = nodes[index];
+      if (!stable.has(index) || node.parentNode !== parent) parent.insertBefore(node, anchor);
+      anchor = node;
+    }
+    const keep = new Set(nodes);
+    for (const node of [...parent.children]) if (!keep.has(node)) node.remove();
+  }
+
+  const keyed = (node, key, container = false) => {
+    node.dataset.sideKey = key;
+    if (container) node.dataset.sideContainer = '1';
+    return node;
+  };
 
   const save = () => {
     try {
@@ -235,17 +296,18 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   // ---- 描画 --------------------------------------------------------------
 
   function render() {
+    if (!isVisible()) { dirty = true; return; }
     const q = $("q").value.trim();
     syncSearchBar(q);
-    if (q) return renderResults(q);
+    if (q) { renderedRows.clear(); dirty = true; return renderResults(q); }
     resetRemote();
-    root.replaceChildren();
-    itemSeq = 0;
+    const wanted = document.createElement('div');
+    nextRows = new Map();
     if (last.pendingNew) {
-      const top = el('div', 'rows pending-new-top');
+      const top = keyed(el('div', 'rows pending-new-top'), 'pending-new', true);
       top.setAttribute("role", "none");
       top.append(row(last.pendingNew, 1));
-      root.append(top);
+      wanted.append(top);
     }
     const groups = groupOrder();
     const visibleGroups = filter.status === undefined ? groups : groups.filter((g) => g === filter.status);
@@ -269,7 +331,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const draftHere = last.draft && (last.draft.status ?? null) === st;
       if (!rows.length && !draftHere && filtering()) continue;   // 絞っているときは空のグループを出さない
 
-      const sec = el("section", "grp");
+      const sec = keyed(el("section", "grp"), `group:${st ?? ''}`, true);
       sec.setAttribute("role", "none");
       const isCollapsed = collapsed.has(st ?? "");
       // 動いている行（main が作業中）と、main は返答済みで裏だけを待っている行を分ける
@@ -357,15 +419,20 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         else onSetStatus?.(id, st ?? "");
       });
 
-      const rowsEl = el("div", "rows");
+      const rowsEl = keyed(el("div", "rows"), `rows:${st ?? ''}`, true);
       rowsEl.setAttribute("role", "group");
       if (draftHere) rowsEl.append(row({ id: null, title: "", cwd: last.draft.cwd, status: last.draft.status }, 2));
       for (const fam of fams) rowsEl.append(fam.kin.length ? family(fam) : row(fam.root, 2));
       if (!rows.length && !draftHere) rowsEl.append(el("div", "empty", t("sidebar.empty")));
       sec.append(rowsEl);
-      root.append(sec);
+      wanted.append(sec);
     }
-    if (!root.childElementCount) root.append(el("div", "empty", filtering() ? t("sidebar.noMatch") : t("sidebar.empty")));
+    if (!wanted.childElementCount) wanted.append(el("div", "empty", filtering() ? t("sidebar.noMatch") : t("sidebar.empty")));
+
+    const old = new Map([...root.querySelectorAll('[data-side-key]')].map((n) => [n.dataset.sideKey, n]));
+    reconcile(root, wanted, old);
+    renderedRows = nextRows;
+    dirty = false;
 
     $("filterBtn").classList.toggle("on", filtering());
     renderChips();
@@ -576,7 +643,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const here = list.some((s) => s.id === last.currentId);
     const open = expanded.has(id) || (!decided.has(id) && here);
     // 畳んだまま中の会話を見ていることがある。器の面を白へ持ち上げて「今いるのはこの中」を示す
-    const box = el("div", "fam" + (open ? " open" : "") + (here && !open ? " here" : ""));
+    const box = keyed(el("div", "fam" + (open ? " open" : "") + (here && !open ? " here" : "")), `family:${id}`, true);
+    box.sideFamily = fam;
     box.setAttribute("role", "none");
     const head = el("div", "fam-head");
     const setOpen = (next) => {
@@ -639,10 +707,10 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const s = last.sessions.find((x) => x.id === dragId);
       dragId = null;
       dragKind = null;
-      if (s) onJoinGroup?.(s, fam.root);
+      if (s) onJoinGroup?.(s, box.sideFamily.root);
     });
     if (open) {
-      const kids = el("div", "fam-rows");
+      const kids = keyed(el("div", "fam-rows"), `family-rows:${id}`, true);
       kids.id = `fam-${id}`;
       kids.setAttribute("role", "group");
       for (const s of list) kids.append(row(s, 3));
@@ -656,8 +724,20 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
    * @param {number} level ツリーの深さ（先頭の作成中 1・状態の見出しの下 2・器の中 3）
    */
   function row(s, level) {
+    const key = `session:${level}:${s.id ?? ''}`;
+    const signature = JSON.stringify([s, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id),
+      last.bgWaiting.get(s.id), last.unreadIds.has(s.id), last.interrupted.get(s.id), last.schedules.get(s.id),
+      last.pendingRows.get(s.id), last.backendLabels, document.documentElement.lang, Math.floor(Date.now() / 60000)]);
+    const cached = renderedRows.get(key);
+    if (cached?.signature === signature && cached.node.isConnected) {
+      nextRows.set(key, cached);
+      const keep = keyed(el('span'), key);
+      keep.dataset.sideKeep = '1';
+      return keep;
+    }
     const open = s.id === last.currentId;
-    const r = el("div", "row" + (open ? " sel" : ""));
+    const r = keyed(el("div", "row" + (open ? " sel" : "")), key);
+    nextRows.set(key, { signature, node: r });
     const pendingRow = last.pendingRows.get(s.id);
     const interactive = s.id != null && pendingRow?.kind !== 'new';
     if (pendingRow) r.classList.add('pending-row', `pending-${pendingRow.kind ?? 'move'}`);
@@ -1385,6 +1465,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   };
 
   return {
+    redraw() { if (dirty && isVisible()) render(); },
     /** 検索欄へ移る（Ctrl+Shift+F）。語が入っていれば全選択 */
     focusSearch() { searchBox.focus(); searchBox.select(); },
     /** この状態で新しいセッション（見出しのメニューから。見出しの ＋ と同じ） */

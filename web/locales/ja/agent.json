@@ -618,6 +618,99 @@
       "RELAY_LIMIT": "会話どうしの送信が {{max}} 回続いたので、これ以上は送れません。続けるかどうかをユーザーに聞いてください。",
       "SEND_RATE": "この会話からの送信が {{minutes}} 分で {{max}} 件を超えました。しばらく待つか、ユーザーに聞いてください。"
     },
+    "pendingOp": "{{target}}は、ユーザーの承認を待っています（requestId: {{requestId}}）。まだ{{notDone}}。結果（許可・拒否）は後でこの会話に届きます。待たずにほかの作業を続けるか、応答を終えてかまいません。同じ操作を繰り返し求めないでください。",
+    "approvalWords": {
+      "op": {
+        "target": "操作",
+        "done": "行いました",
+        "notDone": "行っていません",
+        "failed": "操作できませんでした"
+      },
+      "send": {
+        "target": "別の会話への送信",
+        "done": "送信しました",
+        "notDone": "送っていません",
+        "failed": "送信できませんでした"
+      },
+      "resend": {
+        "target": "別の会話への再送",
+        "done": "再送しました",
+        "notDone": "送り直していません",
+        "failed": "再送できませんでした"
+      },
+      "schedule": {
+        "target": "メッセージの送信予定への登録",
+        "done": "送信予定にしました",
+        "notDone": "送信予定にしていません",
+        "failed": "送信予定にできませんでした"
+      },
+      "sendNow": {
+        "target": "送信予定のメッセージの送信",
+        "done": "送信しました",
+        "notDone": "送っていません",
+        "failed": "送信できませんでした"
+      },
+      "shell": {
+        "target": "コマンドの実行",
+        "done": "実行しました",
+        "notDone": "実行していません",
+        "failed": "実行できませんでした"
+      },
+      "switchBackend": {
+        "target": "会話のエージェントの切り替え",
+        "done": "切り替えました",
+        "notDone": "切り替えていません",
+        "failed": "切り替えられませんでした"
+      },
+      "turnSettings": {
+        "target": "会話の設定の変更",
+        "done": "変更しました",
+        "notDone": "変えていません",
+        "failed": "変更できませんでした"
+      },
+      "mcp": {
+        "target": "MCP サーバーの設定の変更",
+        "done": "変更しました",
+        "notDone": "変えていません",
+        "failed": "変更できませんでした"
+      },
+      "mcpDelete": {
+        "target": "MCP サーバーの削除",
+        "done": "削除しました",
+        "notDone": "削除していません",
+        "failed": "削除できませんでした"
+      },
+      "hooks": {
+        "target": "Hooks の変更",
+        "done": "変更しました",
+        "notDone": "変えていません",
+        "failed": "変更できませんでした"
+      },
+      "hookDelete": {
+        "target": "Hook の削除",
+        "done": "削除しました",
+        "notDone": "削除していません",
+        "failed": "削除できませんでした"
+      },
+      "context": {
+        "target": "コンテキストの設定の変更",
+        "done": "変更しました",
+        "notDone": "変えていません",
+        "failed": "変更できませんでした"
+      },
+      "endpointDelete": {
+        "target": "接続先の削除",
+        "done": "削除しました",
+        "notDone": "削除していません",
+        "failed": "削除できませんでした"
+      },
+      "sessionDelete": {
+        "target": "未送信の会話の削除",
+        "done": "削除しました",
+        "notDone": "削除していません",
+        "failed": "削除できませんでした"
+      }
+    },
     "pending": "{{target}}の変更は、ユーザーの承認を待っています（requestId: {{requestId}}）。まだ変わっていません。結果（許可・拒否）は後でこの会話に届きます。待たずにほかの作業を続けるか、応答を終えてかまいません。同じ変更を繰り返し求めないでください。",
     "settingTarget": "設定「{{key}}」",
     "settingTargetLabeled": "設定「{{label}}」（{{key}}）",
@@ -650,7 +743,14 @@
       "denied": "ユーザーが{{target}}の変更を拒否しました。設定は変わっていません。同じ変更を求め直さず、必要ならユーザーに理由を尋ねてください。",
       "failed": "ユーザーが{{target}}の変更を許可しましたが、変更できませんでした: {{error}}",
       "superseded": "{{target}}への新しい要求で置き換えたので、この要求は取り下げました。この要求では何も変わっていません。新しい要求の結果は別に届きます。",
-      "restart": "Pleiad が再起動したので、{{target}}の変更の承認を取り下げました。設定は変わっていません。まだ必要なら、もう一度求めてください。"
+      "restart": "Pleiad が再起動したので、{{target}}の変更の承認を取り下げました。設定は変わっていません。まだ必要なら、もう一度求めてください。",
+      "opHead": "[Pleiad 操作の結果 / {{requestId}}]\n結果: {{status}}\n種類: {{words}}",
+      "opFromChild": "委譲した子「{{title}}」（taskId: {{taskId}}）が求めた操作です。この子のタスクはすでに終わっている（{{state}}）ので、結果は子ではなくあなたに届けました。子に続きを頼むときは ply_task_send を使ってください。",
+      "opAllowed": "ユーザーが{{target}}を許可し、Pleiad が{{done}}。元の依頼に必要な作業を続けてください。",
+      "opDenied": "ユーザーが{{target}}を拒否しました。Pleiad は{{notDone}}。同じ操作を求め直さず、必要ならユーザーに理由を尋ねてください。",
+      "opFailed": "ユーザーが{{target}}を許可しましたが、Pleiad は{{failed}}: {{error}}",
+      "opSuperseded": "{{target}}について新しい要求があったので、この要求は取り下げました。Pleiad は{{notDone}}。新しい要求の結果は別に届きます。",
+      "opRestart": "Pleiad が再起動したので、{{target}}の承認を取り下げました。Pleiad は{{notDone}}。まだ必要なら、もう一度求めてください。"
     },
     "settings": {
       "list": {
@@ -677,6 +777,8 @@
       "tasks": {
         "summary": "委譲の子のタスクの一覧を、新しい順に返す（依頼・結果の本文は載せない）。",
         "parentSessionId": "依頼元の会話の id で絞る。",
+        "tree": "parentSessionId と一緒に使う。子の会話がさらに委譲した子孫のタスクも含める。",
+        "taskIds": "このタスクの id だけを返す（最大 100）。",
         "status": "状態で絞る（queued・running・completed など）。",
         "limit": "返す件数（既定 20、最大 100）。"
       },

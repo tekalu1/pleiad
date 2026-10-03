@@ -2,6 +2,10 @@
   "about": "tests/lint-i18n.mjs の許可リスト。sameAsJa: ja と同じ値のままでよいキー（固有名など）を「名前空間:キー」で書く",
   "sameAsJa": [
     "server:codex.subagent.collab",
+    "ui:chat.opApproval.hookDelete.label",
+    "ui:chat.opApproval.hooks.label",
+    "ui:chat.opApproval.mcp.label",
+    "ui:chat.opApproval.mcpDelete.label",
     "ui:git.detached",
     "ui:git.panel",
     "ui:git.pr",

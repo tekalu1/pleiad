@@ -74,7 +74,7 @@ export default async function (t) {
   t.ok('弱い → 強い（ask → never）は guarded。承認の口が無ければ NEEDS_APPROVAL', !weakToStrong.ok && weakToStrong.code === 'NEEDS_APPROVAL', JSON.stringify(weakToStrong));
   const before = sent.length;
   const card = await send('ask', 'bypass', {}, deps({ approve: async (x) => { approvals.push(x); return { pending: true, requestId: 'setting-1' }; } }));
-  t.ok('弱い → 強い（範囲 workspace → full）は承認カード（待たずに PENDING_APPROVAL）。まだ送らない', card.ok && card.pending && card.result.code === 'PENDING_APPROVAL' && sent.length === before, JSON.stringify(card));
+  t.ok('弱い → 強い（範囲 workspace → full）は承認カード（待たずに PENDING_APPROVAL）。まだ送らない', card.ok && card.pending && card.result.code === 'PENDING_APPROVAL' && card.result.message.includes('別の会話への送信は') && card.result.message.includes('まだ送っていません') && !card.result.message.includes('sessions.send') && sent.length === before, JSON.stringify(card));
   t.ok('承認カードの一文: 宛先の題・宛先の承認モード・本文', approvals[0]?.op === 'sessions.send' && /会話 bypass/.test(approvals[0].change.note) && /bypass/.test(approvals[0].change.note) && /こんにちは/.test(approvals[0].change.note), JSON.stringify(approvals[0]?.change));
   await approvals[0].proceed();
   t.ok('許可されたら送る（受領証が合えば）', sent.length === before + 1 && sent.at(-1).sessionId === 'bypass');

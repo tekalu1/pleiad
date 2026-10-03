@@ -156,6 +156,7 @@ export const conversationOps = [
     output: z.object({ sessionId: z.string(), deleted: z.boolean() }),
     // 無い会話は承認カードを出す前に断る（riskOf の失敗は code で返る）
     riskOf: async (ctx, { sessionId: id }) => { await mustExist(ctx, id); return 'guarded'; },
+    approvalWords: 'sessionDelete',
     confirm: async (ctx, { sessionId: id }) => {
       const found = await ctx.sessions.get(id);
       if (!found) throw missing(ctx, id);
@@ -245,6 +246,7 @@ export const conversationOps = [
       await mustExist(ctx, targetOf(ctx, args.sessionId));   // 無い会話は承認カードを出す前に断る
       return 'guarded';
     },
+    approvalWords: 'turnSettings',
     confirm: async (ctx, args) => {
       const id = targetOf(ctx, args.sessionId);
       const found = await ctx.sessions.get(id);
@@ -319,6 +321,7 @@ export const conversationOps = [
     risk: 'write',
     riskReason: 'The message runs under the target conversation\'s own approval mode, the same as when a person types it there; it is queued like the screen\'s send and the target\'s history marks it as sent on the user\'s behalf by the sender. When the target\'s approval mode is stronger than the caller\'s (scope or autonomy higher), riskOf raises it to guarded so an agent cannot borrow a stronger conversation. Sending to itself, across a delegation (parent and child), past a relay chain of 3 or over 20 sends in 10 minutes is refused',
     riskOf: async (ctx, { sessionId: id }) => { await sendGuard(ctx, id); return sendRisk(ctx, id); },
+    approvalWords: 'send',
     confirm: (ctx, { sessionId: id, text }) => sendCard(ctx, id, 'ops.sessions.send.card', { text: clip(text, CARD_TEXT) }),
     scope: 'session',
     input: z.object({
@@ -353,6 +356,7 @@ export const conversationOps = [
       await mustExist(ctx, id);   // 無い会話は承認カードを出す前に断る
       return action === 'retry' ? sendRisk(ctx, id) : 'write';
     },
+    approvalWords: 'resend',
     confirm: (ctx, { sessionId: given, messageId }) => sendCard(ctx, targetOf(ctx, given), 'ops.sessions.messageAction.card', { messageId }),
     scope: 'session',
     input: z.object({

@@ -43,7 +43,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
 import { registry as opsRegistry } from './ops/index.mjs';
-import { OpError, targetText as settingTarget } from './ops/registry.mjs';
+import { OpError, approvalWords, targetText as settingTarget } from './ops/registry.mjs';
 import { FAILED } from './ops/host.mjs';
 import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './ops/surfaces/control.mjs';
 import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
@@ -3080,8 +3080,9 @@ async function askSettingChange({ op, change, receipt, reason, actor, requestId,
   settingCards.set(id, ac);
   askPermission({
     toolName: 'ply_control', input: {}, sessionId, kind: 'tool', canAlways: false, signal: ac.signal, detached: true,
-    title: t('permission.settingChange', { agent: agent.label, key: key ?? op }),
-    settingChange: { op, key: key ?? op, requestId: id, rows: change.rows ?? [], ...(change.note ? { note: change.note } : {}), loosens: Boolean(change.loosens), ...(reason ? { reason } : {}), receipt, agent },
+    title: key ? t('permission.settingChange', { agent: agent.label, key }) : t('permission.opApproval', { agent: agent.label, op }),
+    // words: 承認カードの言葉の組（defineOp の approvalWords。無ければ画面が共通の言葉にする）
+    settingChange: { op, key: key ?? op, requestId: id, ...(change.words ? { words: change.words } : {}), rows: change.rows ?? [], ...(change.note ? { note: change.note } : {}), loosens: Boolean(change.loosens), ...(reason ? { reason } : {}), receipt, agent },
   }).then(async (answer) => {
     if (settingCards.get(id) === ac) settingCards.delete(id);
     // 取り下げた（置き換え）なら、取り下げた側が結果を積む
@@ -3110,12 +3111,19 @@ async function finishSettingApproval(requestId, outcome, extra = {}) {
   if (entry) emitGlobal({ type: 'settingApproval', sessionId: entry.sessionId, requestId, outcome });
 }
 
-/** 設定の変更の結果を、エージェントへ渡す文にする（会話の言語。1 件ずつの節を並べる）。via は、求めた子ではなく依頼元へ届けるときの子（routeSettingNotice） */
+/** 設定と操作の承認結果を、エージェントへ渡す文にする。via は、求めた子ではなく依頼元へ届けるときの子（routeSettingNotice） */
 function settingNotice(lng, notices) {
   // i18n-dynamic: agent:ops.settingNotice.
-  return notices.map((n) => agentT(lng, 'ops.settingNotice.head', { requestId: n.requestId, status: agentT(lng, `ops.settingNotice.status.${n.outcome}`) })
-    + (n.via ? '\n' + agentT(lng, 'ops.settingNotice.fromChild', { taskId: n.via.taskId, title: n.via.title ?? '', state: n.via.status }) : '')
-    + '\n' + agentT(lng, `ops.settingNotice.${n.outcome}`, { target: settingTarget(lng, n.op, n.key), error: n.error ?? '' })).join('\n\n');
+  return notices.map((n) => {
+    const setting = n.op === 'settings.set';
+    const words = setting ? null : opsRegistry.get(n.op)?.approvalWords ?? 'op';
+    const params = setting ? { target: settingTarget(lng, n.op, n.key) } : approvalWords(lng, words);
+    const kind = setting ? '' : 'op';
+    const outcome = kind + n.outcome[0].toUpperCase() + n.outcome.slice(1);
+    return agentT(lng, `ops.settingNotice.${setting ? 'head' : 'opHead'}`, { requestId: n.requestId, status: agentT(lng, `ops.settingNotice.status.${n.outcome}`), words })
+      + (n.via ? '\n' + agentT(lng, `ops.settingNotice.${setting ? 'fromChild' : 'opFromChild'}`, { taskId: n.via.taskId, title: n.via.title ?? '', state: n.via.status }) : '')
+      + '\n' + agentT(lng, `ops.settingNotice.${setting ? n.outcome : outcome}`, { ...params, error: n.error ?? '' });
+  }).join('\n\n');
 }
 
 /**
@@ -3210,7 +3218,7 @@ function opsDeps(lng = currentLocale()) {
         return { ...resumeQueue.view(), schedules: schedule.list().filter(row => row.kind === 'resume'), settings: limitResumeSettings };
       },
     },
-    delegation: { list: (owner) => agentTasks?.list(owner) ?? [], get: (taskId, offset) => agentTasks?.get(taskId, offset) ?? null,
+    delegation: { list: (owner) => withWorktreeLive(agentTasks?.list(owner) ?? []), get: (taskId, offset) => agentTasks?.get(taskId, offset) ?? null,
       call: (owner, name, args, locale) => callAgentOp(owner, name, args, { locale }),
       instructions: (taskId) => agentTasks.instructions(taskId),
       // 画面の「止める」。どの会話の委譲でも止められる（AI は ply_task_cancel で自分の子だけ）
@@ -3364,6 +3372,8 @@ async function runningWork() {
   }));
 
   const dueRows = schedule.list();
+  // 委譲のタスクは、終わっていないものと完了通知が届いていないものだけ（agentTasks.running）。過去の分は会話ごとに delegation.tasks で読む
+  const tasks = withWorktreeLive(agentTasks?.running() ?? []);
   return {
     turns,
     permissions,
@@ -3372,7 +3382,7 @@ async function runningWork() {
     scheduled: { send: dueRows.filter(r => r.kind === 'send' && !r.held).length, held: dueRows.filter(r => r.kind === 'send' && r.held).length,
       resume: dueRows.filter(r => r.kind === 'resume').length,
       nextSendAt: Math.min(Infinity, ...dueRows.filter(r => r.kind === 'send' && !r.held).map(r => r.at)) },
-    tasks: (live => agentTasks?.list().map(({ result, ...r }) => (r.worktree ? { ...r, worktree: { ...r.worktree, live: live.has(r.worktree.id) } } : r)) ?? [])(new Set(worktreeHost.worktrees.ids().map(x => x.id))),
+    tasks,
     background,
     // 中継の複製は数えない。1つの承認が会話の数だけ増えて見える
     // サブエージェントは走っている子だけを数える。終わった子はターンが終わるまで一覧に残るので、
@@ -3380,26 +3390,38 @@ async function runningWork() {
     // （状態を返せないバックエンド・まだ分からない子）は数える。数えないとゲートを緩めてしまう
     // 設定の変更の承認（detached）は期限なしで残るので数えない（数えると、答えるまで終了も更新もできない）
     count: turns.length + permissions.filter((p) => !p.relay && !p.detached).length
-      + subagents.filter((a) => a.status === "running" || a.status == null).length + (agentTasks?.list().filter(r => ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)).length ?? 0),
+      + subagents.filter((a) => a.status === "running" || a.status == null).length + tasks.filter(r => ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)).length,
   };
+}
+
+/** 委譲の行に、分けた作業場所が台帳に残っているか（live。画面の「未取り込み」の印）を付ける */
+function withWorktreeLive(rows) {
+  if (!rows.some(r => r.worktree)) return rows;
+  const live = new Set(worktreeHost.worktrees.ids().map(x => x.id));
+  return rows.map(r => (r.worktree ? { ...r, worktree: { ...r.worktree, live: live.has(r.worktree.id) } } : r));
 }
 
 /**
  * 実行中の状況を配る。増減が見えないと「動いているのか分からない」に戻る。
  * 集めるのは非同期（サブエージェントの一覧を読む）なので、続けて呼ぶと古い方が後から届きうる。
- * phase と background は同じ瞬間に続けて変わるので、最後に始めた 1 回だけを配る
+ * phase と background は同じ瞬間に続けて変わるので、最後に始めた 1 回だけを配る。
+ * 4 秒ごとの定期便（poll）は、前に配ったものと中身が同じなら送らない（中継の細い帯域を埋めない）
  */
-let runningSeq = 0;
-async function broadcastRunning() {
+let runningSeq = 0, runningSent = '';
+async function broadcastRunning({ poll = false } = {}) {
   const seq = ++runningSeq;
   const work = await runningWork().catch(() => null);
-  if (work && seq === runningSeq) { emitGlobal({ type: "running", ...work }); postResident({ work }); }
+  if (!work || seq !== runningSeq) return;
+  const body = JSON.stringify(work);
+  if (poll && body === runningSent) return;
+  runningSent = body;
+  emitGlobal({ type: "running", ...work }); postResident({ work });
 }
 
 /** サブエージェントは走っている最中に増える。1本でも走っていれば（裏に残っていれば）定期的に配る。 */
 function syncRunningPoll() {
   const want = runtime.turns.size > 0 || runtime.background.size > 0;
-  if (want && !runtime.runningPoll) runtime.runningPoll = setInterval(broadcastRunning, 4000);
+  if (want && !runtime.runningPoll) runtime.runningPoll = setInterval(() => broadcastRunning({ poll: true }), 4000);
   if (!want && runtime.runningPoll) { clearInterval(runtime.runningPoll); runtime.runningPoll = null; }
 }
 
@@ -5458,7 +5480,7 @@ wss.on("connection", (ws, req) => {
           return viaOp('sessions.resume', args);
 
         case 'agentTasks':
-          return viaOp('delegation.tasks', { parentSessionId: args?.sessionId });
+          return viaOp('delegation.tasks', { parentSessionId: args?.sessionId, tree: args?.tree, taskIds: args?.taskIds });
         case 'agentTaskInstructions':
           return viaOp('delegation.instructions', args);
         case 'cancelAgentTask':

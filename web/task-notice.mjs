@@ -29,18 +29,18 @@ export function parseTaskNotice(text) {
   };
 }
 
-// i18n-ignore: core が会話の言語で組んでエージェントへ渡す設定の変更の結果を読む正規表現（web/locales/<言語>/agent.json の ops.settingNotice.head と対）
-const SETTING_HEAD = /^\[Pleiad (?:設定の変更の結果|setting change result) \/ (setting-[0-9a-f-]+)\]\n(?:結果|Result): (\S+)$/gm;
+// i18n-ignore: core が会話の言語で組んでエージェントへ渡す承認結果を読む正規表現（agent:ops.settingNotice.head / opHead と対）
+const SETTING_HEAD = /^\[Pleiad (設定の変更の結果|setting change result|操作の結果|operation result) \/ (setting-[0-9a-f-]+)\]\n(?:結果|Result): (\S+)(?:\n(?:種類|Type): ([a-zA-Z]+))?$/gm;
 // i18n-ignore: 結果の語（ops.settingNotice.status）。取り下げ（置き換え・再起動）は 1 つにまとめる
 const SETTING_STATUS = { 許可: "allowed", 拒否: "denied", 失敗: "failed", 取り下げ: "withdrawn", allowed: "allowed", denied: "denied", failed: "failed", withdrawn: "withdrawn" };
 
 /**
- * 設定の変更の結果（ADR 0088。core の settingNotice）。1 つの通知に複数の節が並ぶことがある。読めなければ空
+ * 設定と操作の承認結果（ADR 0088。core の settingNotice）。1 つの通知に複数の節が並ぶことがある。読めなければ空
  * @param {string} text
- * @returns {{requestId:string, outcome:"allowed"|"denied"|"failed"|"withdrawn"}[]}
+ * @returns {{requestId:string, outcome:"allowed"|"denied"|"failed"|"withdrawn", kind:"setting"|"op", words:string}[]}
  */
 export function parseSettingNotices(text) {
   const s = String(text ?? "").trim();
   if (!s.startsWith("[Pleiad ")) return [];
-  return [...s.matchAll(SETTING_HEAD)].map((m) => ({ requestId: m[1], outcome: SETTING_STATUS[m[2]] })).filter((x) => x.outcome);
+  return [...s.matchAll(SETTING_HEAD)].map((m) => ({ requestId: m[2], outcome: SETTING_STATUS[m[3]], kind: /^(?:操作の結果|operation result)$/.test(m[1]) ? 'op' : 'setting', words: m[4] ?? '' })).filter((x) => x.outcome);
 }

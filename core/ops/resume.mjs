@@ -27,6 +27,7 @@ export const resumeOps = [
     handler: (ctx, args) => ctx.limitResume.cancel(args.id) }),
   // 送信予定は人が決める。MCP には出さず、エージェントが CLI から呼ぶなら承認カードを挟む（guarded。ADR 0103）
   defineOp({ id: 'sessions.scheduleSend', summary: 'agent:ops.sessions.scheduleSend.summary', risk: 'guarded',
+    approvalWords: 'schedule',
     confirm: (ctx, args) => agentT(ctx.locale, 'ops.sessions.scheduleSend.confirm', { session: args.sessionId, at: Number.isFinite(parseAt(args.at)) ? new Date(parseAt(args.at)).toISOString() : String(args.at), prompt: args.prompt.slice(0, 120) }),
     input: z.object({
       sessionId: id.describe('agent:ops.sessions.scheduleSend.sessionId'),
@@ -41,6 +42,7 @@ export const resumeOps = [
     surfaces: uiCli(['sessions', 'schedule-send'], ['sessionId']),
     handler: (ctx, args) => ctx.limitResume.scheduleSend({ ...args, messageId: args.messageId ?? `sched-${crypto.randomUUID()}` }, ctx.principal?.by ?? 'human') }),
   defineOp({ id: 'sessions.sendScheduledNow', summary: 'agent:ops.sessions.sendScheduledNow.summary', risk: 'guarded',
+    approvalWords: 'sendNow',
     confirm: (ctx, args) => agentT(ctx.locale, 'ops.sessions.sendScheduledNow.confirm', { id: args.id }),
     input: z.object({ id: id.describe('agent:ops.sessions.sendScheduledNow.id') }),
     output: z.object({ sent: z.boolean(), sessionId: z.string(), messageId: z.string() }),
