@@ -64,7 +64,7 @@ bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集
 
 ## 操作（`core/ops/`）
 
-id は `<領域>.<動詞>`（ドットは 1 つ）。**直のツール（`mcp: 'direct'`）は 1 つも足さない**（`ops-surface` の T4 の余りが小さい）。新しい WS のコマンドも足さず、画面は `cmd('invoke', { op, args })`。失敗の code は辞書 `agent:ops.errors.<CODE>` と `tests/unit/ops-surface.mjs` の `ERROR_CODES` の両方（T7）。read の操作は T6 のスタブ deps と `samples` に足す。
+id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリングの 5 つだけ（[ADR 0082](adr/0082-control-surface-principals-and-risk.md)）。消す操作は guarded。**直のツール（`mcp: 'direct'`）は 1 つも足さない**（`ops-surface` の T4 の余りが小さい）。新しい WS のコマンドも足さず、画面は `cmd('invoke', { op, args })`。失敗の code は辞書 `agent:ops.errors.<CODE>` と `tests/unit/ops-surface.mjs` の `ERROR_CODES` の両方（T7）。read の操作は T6 のスタブ deps と `samples` に足す。
 
 | op | 危険度 | 備考 |
 |---|---|---|
@@ -73,22 +73,23 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。**直のツール（`mcp: '
 | `channels.post` | write・`modeGate: false` | 発言者は主体から決める（human / 束縛された会話が bot なら bot / それ以外の AI は agent / 束縛なしの CLI は `NEEDS_UI`）。`new: true` で新しい投稿、無ければそのターンの投稿の本文を置き換える |
 | `channels.edit` / `delete` | write | 自分の投稿だけ |
 | `channels.react` | write・`modeGate: false` | 絵文字 1 つ（`web/emoji.mjs` の `EMOJI_RE`）。人も bot も同じ操作 |
-| `channels.markRead` | write（口は画面の内部だけ） | |
+| `channels.markRead` | write（AI・CLI にも出す） | |
 | `channels.stopThread` | write・`modeGate: false` | `stopped.by` に止めた主体を残す |
 | `bots.list` / `get` | read | `usage: { weekTokens, cacheRatio }`・`state` を付ける |
 | `bots.create` | write（AI は `riskOf` で guarded） | 既定の弱いモード |
-| `bots.update` | write | backend を変えると次の新しい会話から |
-| `bots.setPermissions` | human-only | `mode`・`folders`・`sendToOthers`・`sendTargets` |
+| `bots.update` | write（範囲を広げる向きは `riskOf` で guarded） | 名前・アイコン・人格・backend（次の新しい会話から）・`folders`・`sendToOthers`・`sendTargets`。広げる向き = フォルダーを足す・送る先を足す・`sendToOthers` を ON にする |
+| `bots.setMode` | human-only | 承認モード（`mode`）だけ |
 | `bots.delete` | guarded | |
 | `memory.list` / `search` | read | `search` は `limit≤8`・各 150 トークンまで |
 | `memory.write` | write・`modeGate: false`（CLI は無し） | 出どころの検査（`MEMORY_SOURCE`・`MEMORY_REJECTED`） |
-| `memory.edit` / `forget` | human-only | |
+| `memory.edit` | write | AI も使える。人がしたか AI がしたかは `log.jsonl` の `by` |
+| `memory.forget` | guarded | 消す操作。墓石を残す |
 | `routines.list` / `get` | read | `nextAt` を付ける（P2） |
 | `routines.create` | write（AI は guarded） | |
 | `routines.update` | write（頻度を上げる・モードを強くする・対象を広げる向きだけ guarded） | `riskExamples` を書く |
-| `routines.pause` / `resume` / `run` / `delete` | write / guarded / guarded / write | `run` は `dryRun?` |
+| `routines.pause` / `resume` / `run` / `delete` | write / guarded / guarded / guarded | `run` は `dryRun?`。消す操作は guarded |
 | `routines.rotateSecret` | human-only | P3 |
-| `sessions.send` | write | P3。`{ sessionId, text, reason }` |
+| `sessions.send` | write | P3。AI 全般が使える（bot だけの操作にしない）。`{ sessionId, text, reason? }`。bot に束縛された主体のときだけ `sendToOthers`・`sendTargets` を追加で確かめる。別の作業が先に定義したらそれを正とする |
 
 ## WS の出来事（`core/protocol.mjs` の `EVENTS`）
 

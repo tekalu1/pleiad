@@ -12,8 +12,8 @@
 //   list(): Promise<Bot[]>・get({ botId }): Promise<Bot|null>
 //   byName(name): Promise<Bot|null>               … @ の解析（core/channels/mentions.mjs）が使う。名前はチャンネルを通して一意（NFKC・大小を区別しない）
 //   create({ name, icon, persona, backend, model?, effort? }, author): Promise<Bot>
-//   update({ botId, name?, icon?, persona?, backend?, model?, effort? }, author): Promise<Bot>
-//   setPermissions({ botId, mode?, folders?, sendToOthers?, sendTargets? }, author): Promise<Bot>   … human-only の操作から
+//   update({ botId, name?, icon?, persona?, backend?, model?, effort?, folders?, sendToOthers?, sendTargets? }, author): Promise<Bot>   … フォルダー・送る先を広げる向きは ops が guarded にする（riskOf）
+//   setMode({ botId, mode }, author): Promise<Bot>                 … 承認モード。human-only の操作から（Antigravity は 'yolo' だけ）
 //   remove({ botId }, author): Promise<void>
 //   usage({ botId }): Promise<{ weekTokens: number, cacheRatio: number|null }>   … usage.json の記録を sessionId で引く
 export function createBotService({ dataDir, channels, emit = () => {}, now = Date.now } = {}) {
@@ -25,7 +25,7 @@ export function createBotService({ dataDir, channels, emit = () => {}, now = Dat
     async list() { return []; },
     async get() { return null; },
     async byName() { return null; },
-    create: notYet('create'), update: notYet('update'), setPermissions: notYet('setPermissions'), remove: notYet('remove'),
+    create: notYet('create'), update: notYet('update'), setMode: notYet('setMode'), remove: notYet('remove'),
     async usage() { return { weekTokens: 0, cacheRatio: null }; },
   };
 }

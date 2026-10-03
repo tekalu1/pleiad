@@ -16,8 +16,8 @@ bot（0093）をどう動かすかを決める。常駐のプロセスを持つ�
 - **bot 同士の呼び出しに上限を置かない。** 返事と `channels.post` の @ で相手を同じ規則で起こす。起こした回数と使ったトークンを数えて静かに見せるだけ。止めるのは人が [止める]（そのスレッドの全ての bot の走っているターンを止め、保留中の出来事を取り消し、誰が止めたかをスレッドに残す）。
 - **届け方は委譲の完了通知と同じ道。** 走っているターンがあり途中送信できるなら書き足し、無ければ新しいターン、Antigravity と忙しいときはターンの終わりにまとめて 1 通。結果が分からないものは自動では送り直さない。bot へ届ける前の出来事は `inbox.json` に保存してから送り、再起動で送りかけは `unknown`、未送は順に配り直す。
 - **スレッドには生の流れを流さない。** 投稿の進捗（同じ投稿を置き換える）・最終の返答・提示だけをサーバーで投稿に畳んで配り、細部は「会話を開く」で Chats 側へ。
-- **権限。** 承認モードは人間だけが変える（[ADR 0082](0082-control-surface-principals-and-risk.md)）。Antigravity は「全部自動」だけ（確認を挟む手段を持たないため）。フォルダーの選択を「すべてのフォルダー」で無効にするのは、実際に書き込みの範囲を限れないモード（Claude の bypass・Antigravity・Codex の sandbox を外すモード）だけ。Codex の full が sandbox で作業場所に限っているなら、選択は活性のまま。アカウントは bot では選ばせず、既定のアカウントで走る。
-- **操作の危険度。** `channels.post`・`channels.react` は write で `modeGate: false`（読み取り・計画の bot も返事はできる）、`bots.create` は write（AI が作るときは guarded）で既定の弱いモード、`bots.setPermissions` は human-only、`bots.delete` は guarded。
+- **権限。** 承認モードは人間だけが変える（`bots.setMode` は human-only。[ADR 0082](0082-control-surface-principals-and-risk.md)）。人間だけの操作は承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリングの 5 つで、bot の操作もこの範囲に従う。Antigravity は「全部自動」だけ（確認を挟む手段を持たないため）。フォルダーの選択を「すべてのフォルダー」で無効にするのは、実際に書き込みの範囲を限れないモード（Claude の bypass・Antigravity・Codex の sandbox を外すモード）だけ。Codex の full が sandbox で作業場所に限っているなら、選択は活性のまま。アカウントは bot では選ばせず、既定のアカウントで走る。
+- **操作の危険度。** `channels.post`・`channels.react` は write で `modeGate: false`（読み取り・計画の bot も返事はできる）、`bots.create` は write（AI が作るときは guarded）で既定の弱いモード、`bots.setMode`（承認モードだけ）は human-only、フォルダー・他の会話に送るか・送れる会話は `bots.update` の欄で write（範囲を広げる向き = フォルダーを足す・送る先を足す・送るを ON にするは guarded、狭める向きは write）、`bots.delete` は guarded。`channels.markRead` も AI と CLI に出す（write）。bot の道具（投稿・リアクション・記憶）は直のツールを足さず、`list_ops` / `call_op` から呼ぶ。人格の固定の文によく使う操作の id を短く書く。
 
 ## 理由
 

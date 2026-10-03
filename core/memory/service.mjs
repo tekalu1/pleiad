@@ -11,6 +11,7 @@
 //   search({ query, layer?, limit }): Promise<MemoryEntry[]>      … 各 150 トークンまで
 //   write({ layer, text, why?, sources }, author): Promise<MemoryEntry>   … 出どころの検査（MEMORY_SOURCE・MEMORY_REJECTED）はここ
 //   edit({ id, text }, author): Promise<MemoryEntry>・forget({ id }, author): Promise<void>・unforget({ id }, author): Promise<MemoryEntry>
+//       … 人も AI も使える（edit は write、forget は guarded）。誰がしたかは log.jsonl の by に残す
 //   rev(): number                                                 … log.jsonl の最後の rev
 //   turnContext({ bot, session, incomingText, now }): Promise<{ notes: string[], memRev: number, delivered: string[] }>
 //       … ターンの末尾の包み（核の写し <pleiad-memory-core> は session.snapshotDue のときだけ、末尾 <pleiad-turn-context> は毎ターン）。

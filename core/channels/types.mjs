@@ -61,9 +61,9 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   id: string, name: string, icon: string,               // icon は絵文字 1 つ
  *   persona: string,                                      // 人格（自由文。1.5k トークンまで）
  *   backend: 'claude'|'codex'|'antigravity', model: string, effort: string,
- *   mode: string,                                         // core/backends/*.mjs の MODES の id。Antigravity は 'yolo' だけ
- *   folders: { path: string, access: 'rw'|'ro' }[],       // 先頭が既定の作業場所。書き込みの範囲を限れないモードでは「すべてのフォルダー」
- *   sendToOthers: boolean,                                // 既定 true（P3 の sessions.send で使う）
+ *   mode: string,                                         // core/backends/*.mjs の MODES の id。Antigravity は 'yolo' だけ。変えるのは bots.setMode（human-only）だけ
+ *   folders: { path: string, access: 'rw'|'ro' }[],       // 先頭が既定の作業場所。書き込みの範囲を限れないモードでは「すべてのフォルダー」。bots.update の欄（足すのは広げる向き = guarded）
+ *   sendToOthers: boolean,                                // 既定 true（P3 の sessions.send。bot に束縛された主体のときだけ確かめる。ON にするのは広げる向き = bots.update が guarded）
  *   sendTargets: string[],                                // P3。送れる会話（人が示した会話・その bot 自身が作った会話。ADR 0101）
  *   dmChannelId: string, dmSessionId: string|null,
  *   createdAt: number, updatedAt: number }} Bot */
