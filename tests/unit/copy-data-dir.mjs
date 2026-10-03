@@ -40,7 +40,7 @@ export default async function (t) {
     const dst = path.join(root, 'full');
     const result = JSON.parse(await run(dst, '--source', src));
     const names = await fs.readdir(dst);
-    t.ok('remote/・*-secrets.json・control.json・ロックを写さない', !names.includes('remote') && !names.some(name => /secrets|control|\.lock/.test(name)), names.join(','));
+    t.ok('remote/・*-secrets.json・control.json・ロック（pleiad.lock*）を写さない', !names.includes('remote') && !names.some(name => /secrets|control|\.lock|pleiad\.lock/.test(name)), names.join(','));
     t.ok('設定とそのほかのファイルは写す（会話の本文・引き継ぎも、--light なしなら）', names.includes('prefs.json') && names.includes('conversations') && names.includes('handoff-abc.json'));
     t.ok('DB は WAL の未反映の分ごと写る（VACUUM INTO）', readSessions(dst).live?.title === 'WAL の中だけにある' && readSessions(dst).a?.title === '会話', JSON.stringify(Object.keys(readSessions(dst))));
     t.ok('委譲のタスクは既定で空にする（委譲の続きを走らせない）', Object.keys(readAgentTasks(dst)).length === 0 && result.keepTasks === false);

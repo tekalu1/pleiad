@@ -273,6 +273,8 @@ const cases = [
   await import("./unit/data-lock.mjs"),
   // どの公開関数も、DB に書けなければ例外を返し、メモリは書く前のまま
   await import("./unit/store-failures.mjs"),
+  // 保存が全部失敗しても、サーバーは落ちず、拒否を受け損ねない（[unhandledRejection] が出ない）
+  await import("./unit/server-store-failures.mjs"),
   await import("./unit/db-tables.mjs"),
   // 実データの写しを作る道具: remote/ と秘密を写さない・DB は VACUUM INTO・委譲のタスクは既定で空
   await import("./unit/copy-data-dir.mjs"),

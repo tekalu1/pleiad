@@ -4,7 +4,7 @@
 //
 // 元は既定で AGENT_HOST_DATA、無ければ ~/.agent-host。**元は読むだけ**（DB は読み取り専用の接続で VACUUM INTO する。
 // 動いているサーバーの DB のファイルをそのままコピーしない。WAL に未反映の分が -wal にあり、途中の写しは壊れる）。
-//   写さないもの: remote/（同じホストの鍵で中継へつなぎ、本物のホストの接続を追い出す）・*-secrets.json・*.lock・control.json（接続情報）
+//   写さないもの: remote/（同じホストの鍵で中継へつなぎ、本物のホストの接続を追い出す）・*-secrets.json・*.lock・pleiad.lock*（データ置き場のロック）・control.json（接続情報）
 //   --keep-tasks  写しの agent_tasks（委譲のタスク）を残す。既定は空にする（委譲の続きを走らせない）。
 //                 委譲のタスクが載る送信量（running など）を測るときだけ使う
 //   --light       conversations/（会話の本文）・handoff-*.json・uploads/・presents/ などの大きなものを写さない（移行や 1 回の更新の時間を測るだけなら要らない）
@@ -27,7 +27,7 @@ fs.mkdirSync(out, { recursive: true });
 
 const SKIP_DIRS = new Set(['remote']);
 const LIGHT_SKIP_DIRS = new Set(['conversations', 'uploads', 'presents', 'visualization-snapshots', 'context-snapshots', 'agent-browser', 'claude-login-tmp', 'mcp-locks', 'computer-use', 'antigravity', 'claude-usage', 'run', 'hooks-runtime']);
-const skipFile = name => /-secrets\.json$/.test(name) || /\.lock$/.test(name) || name === 'control.json' || /^pleiad\.db(-wal|-shm)?$/.test(name)
+const skipFile = name => /-secrets\.json$/.test(name) || /\.lock$/.test(name) || /^pleiad\.lock/.test(name) || name === 'control.json' || /^pleiad\.db(-wal|-shm)?$/.test(name)
   || (flag('--light') && name.startsWith('handoff-')) || (!flag('--keep-tasks') && name === 'agent-tasks.json');
 let files = 0, bytes = 0;
 function copyDir(from, to, top) {

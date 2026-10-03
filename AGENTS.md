@@ -72,8 +72,8 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 - JSON ファイル（`writeAtomic`・`fs.writeFile`・`jsonFile` など）で丸ごと書くのは、**上限の決まったもの**（設定・台帳・固定の小ささの印）だけ。書く箇所を足すときは `tests/data-writes-allowlist.mjs` に、ファイル名・上限（定数名と値）・理由を書く。`npm test` の `data-writes` が、`core/`・`desktop/`・`bin/` の書き込み（別名・FileHandle・ストリーム・コピー・リネームを含む）でリストに無いものを落とす。上限を書けないものは、行にする。
 - 「上限が決まっていない」書き先は、許可リストの `unbounded: true` の既知の例外だけ（会話の本文など）。**増やさない**（`data-writes` が件数を数える）。行へ移したときに減らす。
 - 件数・会話の長さで増える項目を会話の記録（`store.setSessionData` の受け付ける項目）へ足すときは、大きくなりうるかを先に考える。件数に上限が無いなら、上限（会話あたりの件数・古いものを捨てる）を決めるか、別の行・表にする。`tests/unit/store-write-scale.mjs`（会話・タスク・使用量を 2,000 件入れて、1 件の更新が全体を直列化しないことを見る）を通す。
-- **データ置き場は 1 つのプロセスだけが持つ**（`core/data-lock.mjs`。`pleiad.lock`）。サーバー（と、それを経由する `store`・`usage`・`agent-tasks`・`conversations`）以外でデータ置き場の DB を開く道具は、読み取り専用の接続（`core/db.mjs` の `openReadOnly`）だけにする。書く道具を足さない（サーバーが動いている間に別のプロセスが書くと、消した会話が欠けた形で戻るなど記録が壊れる）。テストが DB へ直に書くときは、サーバー・store を止めている間に `tests/lib/data-store.mjs` を使う。
-- 公開関数（`core/store.mjs`）は、DB への書き込みが失敗したら例外を返し、メモリの記録を書く前のままにする。DB を先に書き、書けたらメモリへ反映する。書けなかった分を黙ってメモリに残さない。
+- **データ置き場は 1 つのプロセスだけが持つ**（`core/data-lock.mjs`。`pleiad.lock.db` の SQLite の排他ロック。OS がプロセスの終了で外すので、PID の生死では判断しない。`pleiad.lock` の PID は持ち主の表示だけ）。サーバー（と、それを経由する `store`・`usage`・`agent-tasks`・`conversations`）以外でデータ置き場の DB を開く道具は、読み取り専用の接続（`core/db.mjs` の `openReadOnly`）だけにする。書く道具を足さない（サーバーが動いている間に別のプロセスが書くと、消した会話が欠けた形で戻るなど記録が壊れる）。テストが DB へ直に書くときは、サーバー・store を止めている間に `tests/lib/data-store.mjs` を使う。
+- 公開関数（`core/store.mjs`）は、DB への書き込みが失敗したら例外を返し、メモリの記録を書く前のままにする。DB を先に書き、書けたらメモリへ反映する。書けなかった分を黙ってメモリに残さない。**例外が返るので、保存を呼ぶときは必ず await・return・`.catch` のどれかで受ける**（待たずに呼ぶと、処理されない拒否になる。`core/server.mjs` には念のための `unhandledRejection` の受け止めがあるが、頼らない）。`tests/unit/server-store-failures.mjs` が、書き込みを全部失敗させたサーバーで `[unhandledRejection]` が出ないことを見る。
 - DB の形（表・形式番号）を変える変更は、形式番号を上げ、`core/schema-migration.mjs` の形（写し → 取り込み → 読み戻して突き合わせ → 番号の更新。失敗したら元に触れない）で移行を足す（`docs/desktop-releases.md`「適用とデータ保護」）。
 
 ## 使い捨てのもの（temporary/）

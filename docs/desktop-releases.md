@@ -77,7 +77,7 @@ package.json と package-lock.json の番号を揃え、原稿と生成済み JS
 データ置き場の形式番号（`data-schema.json`）は 2。形式 1 は記録ごとの JSON（`sessions.json`・`agent-tasks.json`・`usage.json`・`conversations.json`）、形式 2 は SQLite（`pleiad.db`）で、件数とともに増える記録は行に置く（[ADR 0106](adr/0106-records-in-sqlite.md)）。
 形式 1（または形式番号が無い置き場）の起動では、書き込みを始める前に 1 回だけ移行する（`core/schema-migration.mjs`）:
 
-0. データ置き場のロック（`pleiad.lock`）を取る。別の生きているプロセスが持っていれば、移行を始めずに起動を止める
+0. データ置き場のロック（`pleiad.lock.db` の SQLite の排他ロック。OS がプロセスの終了で外す）を取る。別のプロセスが持っていれば、移行を始めずに起動を止める
 1. 対象の JSON と `data-schema.json` を `<データ置き場>/backup-schema1-<日時>/` へ写す
 2. 作りかけの `pleiad.db` があれば消し、新しい DB へ取り込む（1 つのトランザクション）
 3. DB から読み戻し、元の JSON と 1 つ残らず突き合わせる

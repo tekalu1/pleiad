@@ -106,6 +106,13 @@ import {
   getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession,
 } from "./backends/index.mjs";
 
+// 保存（DB への書き込み）の失敗は例外として返る（ADR 0106）。待たずに呼んで受けていない箇所が残っていると、Node の既定
+// （処理されない Promise の拒否でプロセスが落ちる）では、1 件の保存の失敗でサーバーごと落ち、走っている他の会話のターンまで止まる。
+// 呼び出し側で受けるのが先で（洗い出しは ADR 0106）、これは念のための受け止め: ログに出して、サーバーは落とさない。
+// 拒否した処理の結果は誰も待っていないので、続けても状態は食い違わない
+process.on('unhandledRejection', (reason) => {
+  console.error('  [unhandledRejection]', String(reason?.stack ?? reason));
+});
 const updateGate = createUpdateGate();
 const quotaCache = createQuotaCache();
 // 書き込みを始める前に、データ置き場をこのプロセスだけが持つようにする（別のプロセスが持っていれば、理由を出して起動を止める。

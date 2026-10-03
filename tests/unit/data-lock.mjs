@@ -1,18 +1,19 @@
 // データ置き場のプロセス単位の排他（core/data-lock.mjs、ADR 0106）。
 // 同じ置き場を 2 つのプロセスが開くと、片方がメモリに持った会話の記録が、もう片方の削除・更新と食い違い、
-// 消した会話が欠けた形で戻る。起動から終了まで 1 つのプロセスだけが持つ。持ち主が生きていれば起動を止め、いなければ取り直す。
+// 消した会話が欠けた形で戻る。起動から終了まで 1 つのプロセスだけが持つ。ロックは OS がプロセスの終了で外す SQLite の排他ロック
+// （core/data-lock.mjs）で、PID の生死では判断しない（Windows は PID をすぐ使い回す）。
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ROOT, startServer } from '../lib/server.mjs';
-import { acquireDataLock, DataLockedError, LOCK_FILE } from '../../core/data-lock.mjs';
+import { acquireDataLock, DataLockedError, LOCK_FILE, LOCK_DB_FILE } from '../../core/data-lock.mjs';
 import { ensureDataSchema, openData } from '../../core/data-schema.mjs';
 import { readSessions } from '../lib/data-store.mjs';
 
 export const name = 'data-lock';
-export const title = 'データ置き場のロック: 生きている別プロセスがあれば起動を止める・古いロックは取り直す・消した会話を更新で戻さない';
+export const title = 'データ置き場のロック: 別プロセスが持っている間は起動を止める・強制終了で OS が外す（PID で判断しない）・消した会話を更新で戻さない';
 
 const url = file => pathToFileURL(path.join(ROOT, file)).href;
 const exists = file => fs.stat(file).then(() => true, () => false);
@@ -66,19 +67,31 @@ export default async function (t) {
       release();
     }
     {
+      // PID は表示だけで、判断に使わない: 落ちて残ったファイルの PID が生きている別のプロセスに使われていても、起動できる
       const dir = await tmp('stale-variants');
-      await fs.writeFile(path.join(dir, LOCK_FILE), '{"pid":99999999,"token":"x"}');
-      const a = acquireDataLock(dir); a();
+      await fs.writeFile(path.join(dir, LOCK_FILE), JSON.stringify({ pid: process.pid, token: 'x' }));   // 生きているプロセス（このテスト自身）の PID
+      const a = acquireDataLock(dir);
+      t.ok('残ったロックファイルの PID が生きているプロセスのものでも、持ち主がいなければ取れる（PID で判断しない）', JSON.parse(await fs.readFile(path.join(dir, LOCK_FILE), 'utf8')).token !== 'x');
+      a();
+      await fs.writeFile(path.join(dir, LOCK_FILE), JSON.stringify({ pid: process.ppid, token: 'x' }));   // 親プロセス（生きている）の PID
+      const parentPid = acquireDataLock(dir); parentPid();
       await fs.writeFile(path.join(dir, LOCK_FILE), 'garbage, not json');
       const b = acquireDataLock(dir); b();
       await fs.writeFile(path.join(dir, LOCK_FILE), '');
       const c = acquireDataLock(dir); c();
-      t.ok('壊れた・空のロックファイルも取り直す', !(await exists(path.join(dir, LOCK_FILE))));
-      await fs.writeFile(path.join(dir, LOCK_FILE), JSON.stringify({ pid: 4242, token: 'x' }));
-      const alive = (() => { try { acquireDataLock(dir, { isAlive: pid => pid === 4242 }); return null; } catch (e) { return e; } })();
-      t.ok('持ち主の生死は PID で決める（生きていれば取れない）', alive?.pid === 4242);
-      const taken = acquireDataLock(dir, { isAlive: () => false }); taken();
-      t.ok('持ち主が死んでいれば取れる', !(await exists(path.join(dir, LOCK_FILE))));
+      t.ok('壊れた・空の pleiad.lock（表示用）があっても取れる', true);
+      await fs.writeFile(path.join(dir, LOCK_DB_FILE), 'not a sqlite database, a leftover');
+      const d = acquireDataLock(dir);
+      t.ok('壊れた pleiad.lock.db（SQLite でない）は作り直して取れる', (await fs.stat(path.join(dir, LOCK_DB_FILE))).size > 0 && !(await fs.readFile(path.join(dir, LOCK_DB_FILE))).includes('leftover'));
+      d();
+      // 持ち主がいる間は、表示の PID が死んでいる PID でも取れない（判断は OS のロック）
+      const other = await holder(dir);
+      await fs.writeFile(path.join(dir, LOCK_FILE), JSON.stringify({ pid: 99999999, token: 'x' }));
+      const held = (() => { try { acquireDataLock(dir); return null; } catch (e) { return e; } })();
+      t.ok('持ち主が生きていれば、表示の PID が死んだものでも取れない（判断は OS のロック。表示の PID は持ち主のものとは限らない）', held?.code === 'DATA_LOCKED' && held.pid === 99999999);
+      await other.kill();
+      const after = acquireDataLock(dir); after();
+      t.ok('持ち主が強制終了したら、表示の PID に関わらず取れる', true);
     }
 
     // ---- store: 持っている間は別のプロセスが store を開けず、形式の移行にも入れない
