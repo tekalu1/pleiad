@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { formatCode, remaining, qrPath, connectionLine, deviceLine, platformName } from '../../web/remote.mjs';
-import { normalizeResident, residentSignal, createResidentPrefs, DEFAULT_RESIDENT } from '../../core/remote/resident.mjs';
+import { normalizeResident, residentSignal, enabledRoutineCount, createResidentPrefs, DEFAULT_RESIDENT } from '../../core/remote/resident.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 
@@ -91,11 +91,25 @@ export default async function (t) {
     t.ok('知らないスリープの規則は受け付けない', threw);
   } finally { await fs.rm(scratch, { recursive: true, force: true }); }
 
+  // ---- ルーティンの件数。bots-host の公開された口だけを使う
+  const host = rows => ({ opsDeps: () => ({ routines: { list: async () => rows } }) });
+  t.ok('ルーティンの口が無い・未実装なら 0 件', await enabledRoutineCount() === 0
+    && await enabledRoutineCount({}) === 0 && await enabledRoutineCount({ opsDeps: () => ({}) }) === 0
+    && await enabledRoutineCount({ opsDeps: () => ({ routines: {} }) }) === 0);
+  t.ok('有効なものだけ数え、一時停止中は数えない', await enabledRoutineCount(host([
+    { paused: false }, { paused: true }, { paused: false },
+  ])) === 2 && await enabledRoutineCount(host([{ paused: true }])) === 0 && await enabledRoutineCount(host([])) === 0);
+  t.ok('ルーティンの読み込み失敗は常駐の更新を止めない', await enabledRoutineCount({ opsDeps: () => ({
+    routines: { list: async () => { throw new Error('unavailable'); } },
+  }) }) === 0);
+  t.ok('常駐の状態には有効件数だけ載せる', residentSignal({ routines: 2 }).routines === 2
+    && residentSignal({}).routines === 0 && residentSignal({ routines: -1 }).routines === 0);
+
   // ---- main の常駐
   const matrix = [['working', false, false], ['working', true, true], ['always', false, true], ['off', true, false]];
   t.ok('スリープ: 作業中だけ / リモートが有効な間 / 防がない', matrix.every(([sleep, working, want]) => sleepWanted({ remote: true, sleep, working }) === want)
     && !sleepWanted({ remote: false, sleep: 'always', working: true }));
-  t.ok('窓を閉じても続けるのは、リモートが有効で設定がオンのときだけ', keepRunning({ remote: true, keepRunning: true }) && !keepRunning({ remote: false, keepRunning: true }) && !keepRunning({ remote: true, keepRunning: false }));
+  t.ok('ルーティンが無ければ、リモートが有効で設定がオンのときだけ続ける', keepRunning({ remote: true, keepRunning: true }) && !keepRunning({ remote: false, keepRunning: true }) && !keepRunning({ remote: true, keepRunning: false }));
 
   const f = fakes();
   let quits = 0;
@@ -123,7 +137,29 @@ export default async function (t) {
   t.ok('リモートを無効にするとトレイを消し、隠れていた窓を出し直す', !r.hasTray && f.window.visible && !r.blocking);
   r.update({ remote: true, keepRunning: false, sleep: 'always', working: false, running: 0, devices: 0, relay: 'connected', locale: 'en' });
   t.ok('続ける設定がオフでも「常に防ぐ」は効く', !r.hasTray && !r.keepOnClose() && r.blocking);
+  r.update({ remote: false, routines: 2, keepRunning: false, sleep: 'always', working: false, locale: 'ja' });
+  t.ok('リモートと常駐設定がオフでも、有効なルーティンがあればトレイに残る', r.hasTray && r.keepOnClose() && !r.blocking);
+  t.ok('ルーティンのために残ることをメニューとツールチップへ 1 行添える',
+    f.Tray.live.menu.items[1].label === 'ルーティン 2 件のために常駐しています'
+    && f.Tray.live.menu.items[1].enabled === false && f.Tray.live.tooltip.includes('ルーティン 2 件のために常駐しています'));
+  f.window.hide();
+  r.update({ remote: true, routines: 1, keepRunning: true, sleep: 'working', working: false, locale: 'en' });
+  t.ok('リモートとルーティンが両方有効なら同じトレイを使い、英語の説明に更新する',
+    r.hasTray && !f.window.visible && f.Tray.live.menu.items[1].label === 'Staying in the tray for enabled routines: 1');
+  f.Tray.live.menu.items.find(item => item.label === 'Quit').click();
+  t.ok('ルーティンの常駐中も「終了」は確認付きの終了へ進む', quits === 2 && f.window.visible);
+  f.window.hide();
+  r.update({ remote: true, routines: 0, keepRunning: true, sleep: 'working', working: false, locale: 'en' });
+  t.ok('最後のルーティンを無効にしてもリモートの常駐があれば窓は隠れたまま',
+    r.hasTray && r.keepOnClose() && !f.window.visible && f.Tray.live.menu.items.length === 4);
+  r.update({ remote: false, routines: 1, keepRunning: false, sleep: 'working', working: true, locale: 'ja' });
+  t.ok('リモートを無効にしてもルーティンがあれば残る。スリープ抑止の条件は変えない',
+    r.hasTray && r.keepOnClose() && !f.window.visible && !r.blocking);
+  r.update({ remote: false, routines: 0, keepRunning: false, sleep: 'working', working: false, locale: 'ja' });
+  t.ok('最後の常駐理由が無くなればトレイを消し、隠れていた窓を出す', !r.hasTray && !r.keepOnClose() && f.window.visible);
+  r.update({ remote: false, routines: 1, keepRunning: false, sleep: 'off', working: true, locale: 'ja' });
   r.dispose();
+  t.ok('ルーティンの常駐も終了時にトレイを片付ける', !r.hasTray);
   t.ok('終了時に抑止を解く', !r.blocking && f.started.size === 0);
 
   const dicts = Object.fromEntries(await Promise.all(['ja', 'en'].map(async l => [l, JSON.parse(await fs.readFile(new URL(`../../web/locales/${l}/desktop.json`, import.meta.url), 'utf8'))])));

@@ -79,7 +79,7 @@ import { createPlyHooks } from './ply-hooks.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
-import { createResidentPrefs, residentSignal } from './remote/resident.mjs';
+import { createResidentPrefs, residentSignal, enabledRoutineCount } from './remote/resident.mjs';
 import { createPushNotifier } from './notify/notifier.mjs';
 import { createPresence } from './notify/presence.mjs';
 import { createNotifySettings } from './notify/settings.mjs';
@@ -281,7 +281,7 @@ const pushNotifier = createPushNotifier({
     ? Number(process.env.AGENT_HOST_NOTIFY_MIN_TURN_MS) : undefined,
 });
 // ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
-// トレイとスリープの抑止は main（desktop/resident.cjs）が持つので、リモートの状態か実行中の作業が変わるたびに送る
+// トレイとスリープの抑止は main（desktop/resident.cjs）が持つ。リモート・実行中の作業・ルーティンの変更時に送る
 const residentPrefs = createResidentPrefs({ dataDir: store.dataDir });
 const withResident = status => ({ ...status, resident: { available: Boolean(process.parentPort), ...residentPrefs.get() } });
 const remoteStatus = async () => withResident(await remote.status());
@@ -291,12 +291,15 @@ const notifyStatus = async () => ({
   devices: (await remote.devices()).filter(d => d.platform !== 'desktop'),
   relayConnected: (await remote.status()).connection.state === 'connected',
 });
-let residentLast = '', residentStatus = null, residentWork = null;
-function postResident({ status, work } = {}) {
+let residentLast = '', residentStatus = null, residentWork = null, residentSeq = 0;
+async function postResident({ status, work } = {}) {
   if (!process.parentPort) return;
   if (status) residentStatus = status;
   if (work) residentWork = work;
-  const signal = residentSignal({ status: residentStatus, prefs: residentPrefs.get(), work: residentWork, locale: locale.lang });
+  const seq = ++residentSeq;
+  const routines = await enabledRoutineCount(botHost);
+  if (seq !== residentSeq) return;
+  const signal = residentSignal({ status: residentStatus, prefs: residentPrefs.get(), work: residentWork, locale: locale.lang, routines });
   const key = JSON.stringify(signal);
   if (key === residentLast) return;
   residentLast = key;
@@ -1491,6 +1494,7 @@ async function savePref(key, value, backendId) {
 const liveReads = new Set();
 let streamSequence = 0;
 function emitGlobal(event) {
+  if (event.type === 'routinesChanged') void postResident();
   if (!LIST_NEUTRAL_EVENTS.has(event.type)) invalidateSessionLists();
   if (streamEvents.has(event.type)) event = { ...event, streamSeq: ++streamSequence };
   const live = runtime.turns.get(event.sessionId);

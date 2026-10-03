@@ -64,6 +64,13 @@
 .bp-folder-note[hidden]{display:none}
 .bp-addfolder{margin-top:2px}
 .bp-send{margin-top:6px}
+.bp-send-targets{margin-top:12px;min-width:0}
+.bp-send-title{font-size:var(--fs-s);font-weight:600;margin:0 0 6px}
+.bp-send-target{display:flex;align-items:center;gap:12px;padding:6px 0;min-width:0}
+.bp-send-info{display:flex;flex:1;flex-direction:column;min-width:0;gap:2px}
+.bp-send-open{justify-content:flex-start;padding:0;text-align:left;color:var(--ink);font-size:var(--fs-s);overflow-wrap:anywhere}
+.bp-send-open:hover{text-decoration:underline}
+.bp-send-target>.btn-quiet{flex:none}
 .bp-sw{width:34px;height:20px;border-radius:var(--r-pill);background:var(--surface-3);position:relative;flex:none;cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
 .bp-sw::after{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);transition:transform var(--dur-fast) var(--ease-out)}
 .bp-sw[aria-checked="true"]{background:var(--fill-primary);color:var(--on-fill)}

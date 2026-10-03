@@ -1,5 +1,5 @@
 // bot・Channels・ルーティンのつなぎ目（core/bots-host.mjs）と、P0 で足した土台: つなぎ目が空でも何も変えない・例外を外へ出さない・
-// 操作の deps・sidecar の許可リスト（bot・proxySends）・使用量の sessionId・fake の台本（包みを外す・notes・usage）。docs/channels.md
+// 操作の deps・sidecar の許可リスト（bot）・使用量の sessionId・fake の台本（包みを外す・notes・usage）。docs/channels.md
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';

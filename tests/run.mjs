@@ -90,6 +90,7 @@ const cases = [
   await import('./unit/ops-conversations.mjs'),
   // 別の会話への送信（sessions.send）・送信待ちの取り消しと送り直し・既読（ADR 0104）: 強さの比べ方・歯止め・送り手の印
   await import('./unit/ops-send.mjs'),
+  await import('./unit/sessions-send-bot.mjs'),
   await import('./unit/server-ops-send.mjs'),
   // pleiad CLI の起動口（ADR 0090）: 会話のシェルの PATH・外の AI の MCP の設定（app.cliSetup）・起動口の改行・デスクトップ版の同梱
   await import('./unit/cli-launcher.mjs'),
@@ -451,6 +452,8 @@ const cases = [
   await import("./unit/ops-routines.mjs"),
   // ルーティンをサーバー越しに: 毎分の実行のスレッド（テストの時計）・取りこぼしは起動時に 1 回・一時停止と再開・イベントのトリガ・承認の期限・試しの実行
   await import("./unit/routines-server.mjs"),
+  // ルーティンの編集 (W5): 検査・保存する欄・cron の見積もり・脇の並べ方・一覧の写し・入口の配線。画面の打鍵は tests/browser/routine-sheet.cjs
+  await import("./unit/routine-sheet-model.mjs"),
   // --- memory-learn・sessions-send・webhook (L1・X1・H1、P3) ---
 ];
 

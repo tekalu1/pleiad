@@ -1155,7 +1155,7 @@ function userMsg(text, { uuid, at, presents = [], markdown = true, scheduledFor,
 function markSentBy(m, sentBy) {
   const who = m.querySelector(':scope > .who');
   if (!who || who.querySelector('.sent-by')) return;
-  const sender = sentBy.name || (sentBy.title ? t('chat.message.sentByConversation', { title: sentBy.title }) : t('chat.message.sentByAnother'));
+  const sender = (sentBy.name ? [sentBy.icon, sentBy.name].filter(Boolean).join(' ') : '') || (sentBy.title ? t('chat.message.sentByConversation', { title: sentBy.title }) : t('chat.message.sentByAnother'));
   m.classList.add('relayed');
   who.firstChild.append(' · ', el('span', 'handed sent-by', t('chat.message.sentBy', { sender })));
   if (!sentBy.sessionId) return;

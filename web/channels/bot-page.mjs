@@ -163,7 +163,10 @@ export function createBotPage(host) {
 
   const runBlk = el('div', 'bp-blk');
   const runHead = el('h4', null, t('channels:bot.run.title'));
-  runBlk.append(runHead, chips, lockNote, modeFact, folderTitle, folderBox, folderNote, addBtn, sendRow);
+  let removingTarget = false;
+  const sendTargets = el('div', 'bp-send-targets');
+  sendTargets.setAttribute('aria-label', t('channels:bot.send.targets'));
+  runBlk.append(runHead, chips, lockNote, modeFact, folderTitle, folderBox, folderNote, addBtn, sendRow, sendTargets);
 
   // 記憶・使用量
   const memory = createMemoryList(host, {
@@ -340,6 +343,33 @@ export function createBotPage(host) {
     const cur = vm();
     if (!cur || S.draft) return;
     sw.setAttribute('aria-checked', String(cur.sendToOthers !== false));
+    sendTargets.replaceChildren(el('h3', 'bp-send-title', t('channels:bot.send.targets')));
+    const details = new Map((cur.sendTargetDetails ?? []).map((row) => [row.sessionId, row]));
+    if (!cur.sendTargets?.length) sendTargets.append(el('p', 'bp-nt', t('channels:bot.send.empty')));
+    for (const id of cur.sendTargets ?? []) {
+      const detail = details.get(id);
+      const title = detail?.title || id;
+      const row = el('div', 'bp-send-target');
+      const open = el('button', 'btn bp-send-open', title);
+      open.type = 'button'; open.title = id;
+      open.onclick = () => host.openSession(id);
+      const source = detail?.source === 'shown' ? t('channels:bot.send.shown')
+        : detail?.source === 'created' ? t('channels:bot.send.created') : t('channels:bot.send.manual');
+      const info = el('div', 'bp-send-info');
+      info.append(open, el('span', 'bp-nt', source));
+      const remove = el('button', 'btn btn-quiet', t('channels:bot.send.remove'));
+      remove.type = 'button';
+      remove.setAttribute('aria-label', t('channels:bot.send.removeLabel', { title }));
+      remove.disabled = removingTarget;
+      remove.onclick = async () => {
+        if (removingTarget) return;
+        removingTarget = true;
+        for (const button of sendTargets.querySelectorAll('.btn-quiet')) button.disabled = true;
+        try { await update({ sendTargets: S.bot.sendTargets.filter((target) => target !== id) }); }
+        finally { removingTarget = false; paintSend(); }
+      };
+      row.append(info, remove); sendTargets.append(row);
+    }
   }
 
   function paintUsage() {
@@ -370,6 +400,7 @@ export function createBotPage(host) {
     show(folderBox, !creating);
     show(addBtn, !creating);
     show(sendRow, !creating);
+    show(sendTargets, !creating);
     show(memBlk, !creating);
     show(usage, !creating);
     show(notice, S.gone);

@@ -60,6 +60,7 @@
   },
   "resident": {
     "summary": "中継 {{relay}} · 接続中の端末 {{devices}} · 実行中 {{running}}",
+    "routines": "ルーティン {{count}} 件のために常駐しています",
     "open": "Pleiad を開く",
     "quit": "終了",
     "relay": {

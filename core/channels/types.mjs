@@ -65,7 +65,8 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   mode: string,                                         // core/backends/*.mjs の MODES の id。Antigravity は 'yolo' だけ。変えるのは bots.setMode（human-only）だけ
  *   folders: { path: string, access: 'rw'|'ro' }[],       // 先頭が既定の作業場所。書き込みの範囲を限れないモードでは「すべてのフォルダー」。bots.update の欄（足すのは広げる向き = guarded）
  *   sendToOthers: boolean,                                // 既定 true（P3 の sessions.send。bot に束縛された主体のときだけ確かめる。ON にするのは広げる向き = bots.update が guarded）
- *   sendTargets: string[],                                // P3。送れる会話（人が示した会話・その bot 自身が作った会話。ADR 0113）
+ *   sendTargets: string[],                                // 送れる会話。自動追加と bots.update の置き換えを同じ一覧に保存（ADR 0113）
+ *   sendTargetSources?: { [sessionId: string]: 'shown'|'created'|'manual' }, // 外しても残し、自動で戻さない。入力では受け取らない
  *   dmChannelId: string, dmSessionId: string|null,
  *   createdAt: number, updatedAt: number }} Bot */
 
