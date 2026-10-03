@@ -12,6 +12,7 @@ if (typeof window !== 'undefined' && window.addEventListener) window.addEventLis
   // and only from a currently mounted visualization's own WindowProxy.
   for (const frame of document.querySelectorAll('iframe.visualize-frame:not(.visualize-fill)')) {
     if (frame.contentWindow !== event.source) continue;
+    if (frame.closest('.visualize-wide')) return;
     frame.style.height = `${Math.min(900, Math.max(120, event.data.height))}px`;
   }
 });
@@ -27,12 +28,12 @@ export function isolateFrame(frame) {
 
 // fill: the frame gets its height from the container (the preview panel), so the
 // iframe's own height report is ignored instead of clamping it to 900px.
-export function visualizationFrame(content, title, { fill = false } = {}) {
+export function visualizationFrame(content, title, { fill = false, conversation = false } = {}) {
   const frame = document.createElement('iframe');
   frame.className = fill ? 'visualize-frame visualize-fill' : 'visualize-frame';
   isolateFrame(frame);
   frame.title = title || t('timeline.present.kind.visualization');
-  confirmedPreview(frame, policy => visualizationDocument(content, { theme: document.documentElement?.dataset?.theme, policy }));
+  confirmedPreview(frame, policy => visualizationDocument(content, { theme: document.documentElement?.dataset?.theme, policy, conversation }));
   return frame;
 }
 
