@@ -6,6 +6,8 @@
     "channels:side.tabs.channels",
     "channels:side.sections.bots",
     "channels:event.post",
+    "agent:channel.envelope.from.bot",
+    "agent:channel.envelope.from.system",
     "ui:git.detached",
     "ui:git.panel",
     "ui:git.pr",

@@ -153,14 +153,15 @@ const attrs = (obj) => Object.entries(obj).filter(([, v]) => v !== null && v !==
 
 /**
  * 投稿 1 件の包み。`<pleiad-channel channel="#checkout-perf" thread="p_…" post="p_…" from="あなた" at="2026-10-03T10:41">本文</pleiad-channel>`
- * channel は表示名（`#名前`・DM は bot の名前）、from は表示名（bot は `🦉 Owl (bot)`）、at は ISO の分まで（呼び出し側が決める）
+ * channel は表示名（`#名前`・DM は bot の名前）、channelId は channels.post などの操作へ渡すチャンネルの id（`channel-id` 属性。任意）、
+ * from は表示名（bot は `🦉 Owl (bot)`）、at は ISO の分まで（呼び出し側が決める）
  */
-export function channelEnvelope({ channel, thread, post, from, at, text }) {
-  return `<${CHANNEL_TAG}${attrs({ channel, thread, post, from, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
+export function channelEnvelope({ channel, channelId, thread, post, from, at, text }) {
+  return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;
 }
 /** 初回に渡す、スレッドのそれまでの投稿。posts は channelEnvelope の引数の並び */
-export function channelThreadEnvelope({ channel, thread, posts }) {
-  return `<${CHANNEL_THREAD_TAG}${attrs({ channel, thread })}>\n${posts.map((p) => channelEnvelope(p)).join('\n')}\n</${CHANNEL_THREAD_TAG}>`;
+export function channelThreadEnvelope({ channel, channelId, thread, posts }) {
+  return `<${CHANNEL_THREAD_TAG}${attrs({ channel, 'channel-id': channelId, thread })}>\n${posts.map((p) => channelEnvelope(p)).join('\n')}\n</${CHANNEL_THREAD_TAG}>`;
 }
 /** 核の記憶の写し（会話の始まり・圧縮の後の最初のターンの notes） */
 export const memoryCoreEnvelope = (text) => `<${MEMORY_CORE_TAG}>\n${escapeBody(text)}\n</${MEMORY_CORE_TAG}>`;

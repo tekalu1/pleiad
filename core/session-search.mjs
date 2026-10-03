@@ -355,7 +355,8 @@ function decodeCursor(cursor) {
 /** 会話の行（一覧の 1 行）が、本文を見ない絞り込みに合うか */
 export function passesFilters(row, f) {
   if (f.sessionIds && !f.sessionIds.has(row.id)) return false;
-  if (!f.includeDelegated && row.delegation) return false;
+  // 委譲の子と bot の会話（Channels のスレッド・DM。ADR 0096）は既定で除く。includeDelegated で含める
+  if (!f.includeDelegated && (row.delegation || row.bot)) return false;
   if (f.backends && !f.backends.has(row.backend)) return false;
   if (f.cwd && !samePath(row.cwd, f.cwd)) return false;
   if (f.statusGiven && (row.status ?? null) !== f.status) return false;

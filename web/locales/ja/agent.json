@@ -324,7 +324,7 @@
     "bot": {
       "heading": "あなたは {{icon}} {{name}} です。Pleiad の bot として、チャンネル・スレッド・DM で人と話します（Pleiad が追加した指示）。",
       "personaLabel": "人格:",
-      "tools": "よく使う操作は `list_ops` で調べて `call_op` で呼ぶ。チャンネル・スレッドへの返事は `channels.post`、リアクションは `channels.react`、記憶は `memory.search` / `memory.write`。ほかのスレッドやチャンネルは `channels.read`、Chats の会話は `search_sessions` で読める。"
+      "tools": "よく使う操作は `list_ops` で調べて `call_op` で呼ぶ。チャンネル・スレッドへの返事は `channels.post`、リアクションは `channels.react`、記憶は `memory.search` / `memory.write`。ほかのスレッドやチャンネルは `channels.read`、Chats の会話は `search_sessions` で読める。返事は、受け取った包み（`<pleiad-channel …>`）の `channel-id` と `thread` を `channelId` と `threadId` に渡して書く。本文に `@名前` と書くとその bot が起きる。"
     },
     "heading": "{{name}}（Pleiad が追加した指示）:",
     "names": {
@@ -697,7 +697,11 @@
       "noHuman": "人の発言が根拠に入っていません。人が言ったことを sources に引用してください。AI の発言を根拠にするなら、それを採用した人の発言も一緒に挙げてください。"
     }
   },
-  "channel": { "envelope": {} },
+  "channel": {
+    "envelope": { "from": { "you": "あなた", "bot": "{{icon}} {{name}} (bot)", "agent": "Chats の会話の AI", "routine": "ルーティン", "system": "Pleiad" } },
+    "stopped": "{{who}} が止めました",
+    "turn": { "failed": "失敗しました: {{error}}", "stopped": "止めました" }
+  },
   "routine": {},
   "settings": {
     "locale": "画面の言語（auto は OS に合わせる）。",

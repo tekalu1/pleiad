@@ -35,7 +35,7 @@
 //   markRead({ channelId, at }): Promise<{ readAt: number }>      … 進める向きにだけ動く（別の端末が先に進めていたら戻さない）
 //   stopThread({ channelId, threadId }, author): Promise<ThreadState>
 //        … stopped: { by, at } を残して channelThread を出し、hooks.stopThread へ渡す（ターンを止める・システムの投稿は S4）
-//   threads: { get(channelId, threadId): Promise<ThreadState|null>, update(channelId, threadId, patch | fn): Promise<ThreadState> }
+//   threads: { get(channelId, threadId): Promise<ThreadState|null>, list(channelId?): Promise<ThreadState[]>, update(channelId, threadId, patch | fn): Promise<ThreadState> }
 //        … update は threads.mjs と同じ。channelThread を出す
 //
 // 失敗は ChannelError（code と params）。ops が OpError に直す（辞書 agent:ops.errors.<code>）。
@@ -388,6 +388,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
 
     threads: {
       get: (channelId, threadId) => threadStore.get(channelId, threadId),
+      list: (channelId) => threadStore.list(channelId),
       async update(channelId, threadId, patch) {
         const thread = await threadStore.update(channelId, threadId, patch);
         emitThread(thread);
