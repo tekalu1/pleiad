@@ -917,6 +917,7 @@ export const backend = {
     // （付けると、別タブが新規の id を待っている最中に再開ターンの id を掴んでしまう）。
     let toldModel = false;
     let heldResult = null;
+    let limit = null;
     // CLI から最初のメッセージが届いたか。巻き戻しを伴うターンが、これより前に失敗したら（catch の rewindRejected）
     let sawMessage = false;
     try {
@@ -970,7 +971,9 @@ export const backend = {
           // turnResult は「このターンが終わった」の合図で、server はそれを見て途中送信を止める。
           // 成功の分は最後の 1 つだけを query の終わりに出す。使用量（usage）は開始時点からの累計なので、その都度出してよい（server は上書きする）。
           // 中断を頼んだ後の result（打ち切られた内部ターン）は出さない。結果は最後に aborted で出す
+          if (ev.type === 'limit') { limit = ev; continue; }
           if (ev.type === "turnResult" && stop) continue;
+          if (ev.type === 'turnResult' && limit) { heldResult = { ...ev, outcome: 'limited', resetsAt: limit.resetsAt, window: limit.window }; continue; }
           if (ev.type === "turnResult" && ev.outcome === "ok") { heldResult = ev; continue; }
           emit(ev);
         }
@@ -984,6 +987,7 @@ export const backend = {
         settleInput();
       }
       if (stop) emit({ type: "turnResult", outcome: "aborted" });
+      else if (limit) emit({ type: 'turnResult', outcome: 'limited', resetsAt: limit.resetsAt, window: limit.window });
       else if (heldResult) emit(heldResult);
     } catch (err) {
       // 巻き戻しを伴うターンが、CLI から何も届かないうちに失敗した（resume の拒否。`Resume rejected by --resume-drops-turn:` の文面は SDK の例外に載るとは限らないので、
@@ -995,6 +999,10 @@ export const backend = {
       // 何が起きたかは turnResult で web に伝える。
       if (stop || signal?.signal?.aborted) {
         emit({ type: "turnResult", outcome: "aborted" });
+        return { sessionId: ctx.sessionId };
+      }
+      if (limit) {
+        emit({ type: 'turnResult', outcome: 'limited', resetsAt: limit.resetsAt, window: limit.window });
         return { sessionId: ctx.sessionId };
       }
       const message = hide(err?.message ?? err);

@@ -793,6 +793,28 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.sys code{font-size:var(--fs-xs)}
 /* 「■ 中断しました · 14:32」。保存された中断から描く一行（client.mjs の paintInterruptLine） */
 .m.sys.interrupted{display:flex;align-items:center;gap:6px}
+.limit-interrupt-body{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0}
+.limit-interrupt-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px}
+.limit-interrupt-detail{color:var(--ink-weak)}
+.limit-interrupt-actions{display:flex;flex-wrap:wrap;gap:6px}
+.limit-interrupt-actions .btn{font-size:var(--fs-xs);padding:2px 5px}
+.clock-mark{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;flex:none}
+.limit-cache-hint{padding:8px 12px;font-size:var(--fs-xs);color:var(--ink-weak);margin:0}
+.limit-strip{gap:6px}
+.limit-queue-dialog{position:fixed;inset:auto auto 80px 10px;margin:0;width:min(342px,calc(100vw - 20px));max-height:min(70vh,620px);border:0;border-radius:var(--r-l);background:var(--surface-paper);color:var(--ink);padding:14px;overflow:auto;box-shadow:0 8px 28px var(--shadow);z-index:31}
+.limit-queue-dialog h2{font-size:var(--fs-s);font-weight:600;margin:0 0 10px}
+.limit-queue-row{display:flex;align-items:center;gap:5px;padding:5px 0;font-size:var(--fs-s)}
+.limit-queue-row>span:nth-child(2){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.limit-queue-number{width:16px;text-align:center;color:var(--ink-weak);flex:none}
+.limit-queue-first{font-size:var(--fs-xs);padding:2px 4px;flex:none}
+.limit-queue-toggle{font-size:0;border:0;background:var(--surface-2);border-radius:99px;width:30px;height:18px;padding:2px;cursor:pointer;flex:none}
+.limit-queue-toggle:before{content:"";display:block;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);box-shadow:0 1px 2px var(--shadow)}
+.limit-queue-toggle[aria-pressed=true]{background:var(--fill-primary);color:var(--on-fill)}
+.limit-queue-toggle[aria-pressed=true]:before{margin-left:12px}
+.limit-queue-toggle:focus-visible{outline:2px solid var(--line-blue)}
+.limit-queue-setting{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0;font-size:var(--fs-s)}
+.limit-queue-setting select{font:inherit;min-width:84px}
+@media(max-width:700px){.limit-queue-dialog{inset:auto 8px 66px 8px;width:auto;max-height:70vh}}
 .m.sys .stop-mark{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linejoin:round}
 /* 一行の中から画面を開く（コンテキストの記録の「中身を見る」）。押すのはボタン、見た目はリンク */
 .m.sys .lnk{padding:0;font-size:var(--fs-xs);color:var(--ink-blue);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
