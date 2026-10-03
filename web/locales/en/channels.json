@@ -5,8 +5,101 @@
   },
   "feed": { "empty": "No channels yet." },
   "thread": {},
-  "bot": {},
-  "memory": {},
+  "bot": {
+    "iconLabel": "Change icon",
+    "nameLabel": "Name",
+    "namePlaceholder": "Name (e.g. Owl)",
+    "openDm": "Open DM",
+    "createButton": "Create",
+    "persona": {
+      "title": "Persona",
+      "label": "Persona",
+      "placeholder": "Tone, what it looks after, what to keep in mind (free text)"
+    },
+    "run": {
+      "title": "How it runs"
+    },
+    "modeHumanOnly": "Only a person can change the approval mode",
+    "modeOnly": "{{backend}} only has the approval mode “{{mode}}”",
+    "folders": {
+      "title": "Folders it may touch",
+      "add": "Add a folder",
+      "none": "None yet",
+      "rw": "Read & write",
+      "ro": "Read only",
+      "toggle": "Switch between read & write and read only",
+      "toggleAria": "{{path}}: {{access}} (press to switch)",
+      "remove": "Remove",
+      "removeAria": "Remove {{path}}",
+      "all": "All folders",
+      "unlimited": "Folders can’t be limited in {{mode}}",
+      "placeholder": "Folder path",
+      "inputLabel": "Path of the folder to add (Enter to add)"
+    },
+    "send": {
+      "label": "Send to other chats",
+      "hint": "This bot can send instructions to other chats. It can only send to chats you pointed it to and chats it made itself."
+    },
+    "memory": {
+      "title": "Memory",
+      "auto": "Learned automatically from all your chats"
+    },
+    "usage": {
+      "week": "This week",
+      "tokens": "tokens",
+      "cache": "cache reads",
+      "low": "(low)"
+    },
+    "state": {
+      "working": "Working",
+      "waiting": "Waiting for you",
+      "idle": "Idle"
+    },
+    "saveFailed": "Couldn’t save: {{error}}",
+    "createFailed": "Couldn’t create it: {{error}}",
+    "nameRequired": "Enter a name",
+    "notFound": "This bot wasn’t found",
+    "loadFailed": "Couldn’t load: {{error}}",
+    "removed": "This bot was deleted"
+  },
+  "memory": {
+    "user": {
+      "title": "About you",
+      "meta": "shared by all bots · {{n}}"
+    },
+    "own": {
+      "title": "Only {{name}}",
+      "meta": "{{n}}"
+    },
+    "loading": "Loading…",
+    "empty": "Nothing yet",
+    "loadFailed": "Couldn’t load memory: {{error}}",
+    "source": {
+      "line": "{{where}} · you, {{when}}",
+      "today": "today",
+      "dm": "DM ({{name}})",
+      "chat": "Chats “{{title}}”",
+      "chatGone": "Chats",
+      "channelGone": "a channel",
+      "written": "Written by you",
+      "none": "No record of where it came from",
+      "open": "Open the original message",
+      "more": "+{{n}} more",
+      "edited": "edited {{when}}"
+    },
+    "edit": "Edit",
+    "editAria": "Edit “{{text}}”",
+    "editLabel": "Edit this memory",
+    "editFailed": "Couldn’t edit it: {{error}}",
+    "cancel": "Cancel",
+    "save": "Save",
+    "forget": "Forget",
+    "forgetAria": "Forget “{{text}}”",
+    "forgetFailed": "Couldn’t forget it: {{error}}",
+    "forgotten": "Forgot “{{text}}”",
+    "undo": "Undo",
+    "undoFailed": "Couldn’t undo: {{error}}"
+  },
   "routines": {},
   "event": {
     "post": "{{channel}} · {{from}}",

@@ -30,6 +30,8 @@ export const CHANNEL_EVENTS = new Set([
   'channelsChanged', 'channelPost', 'channelReaction', 'channelThread', 'channelRead', 'botsChanged', 'memoryChanged', 'routinesChanged',
 ]);
 
+import { createBotPage } from './bot-page.mjs';
+
 export function setupChannels(host) {
   const parts = [];
 
@@ -41,7 +43,8 @@ export function setupChannels(host) {
 
   // W3 スレッドと空間モデル:  parts.push(createThread(host));   // web/channels/thread.mjs
 
-  // W4 bot のページ:  parts.push(createBotPage(host));   // web/channels/bot-page.mjs
+  // W4 bot のページ（show({ kind: 'bot', id })。id が 'new' なら作る画面）
+  parts.push(createBotPage(host));
 
   // W5 ルーティンの編集（P2）:  parts.push(createRoutineSheet(host));   // web/channels/routine-sheet.mjs
 
@@ -50,7 +53,7 @@ export function setupChannels(host) {
   // 狭い画面で脇を閉じている間の入口（#openSidebar と同じ働き。メインの頭が Channels の見出しに替わっている間だけ見える）
   document.getElementById('chOpenSidebar')?.addEventListener('click', () => host.openSidebar());
 
-  return {
+  const api = {
     /** 出来事を部品へ渡す。この画面の出来事なら true（client.mjs の onEvent はそこで終わる） */
     onEvent(ev, replay = false) {
       each('onEvent', ev, replay);
@@ -69,4 +72,7 @@ export function setupChannels(host) {
     setTab: (tab) => tabs.set(tab),
     tabs,
   };
+  // どこからでも開ける入口（脇の行・通知・テスト）: document へ new CustomEvent('channels:show', { detail: { kind: 'channel', id } })
+  document.addEventListener('channels:show', (e) => api.show(e.detail));
+  return api;
 }

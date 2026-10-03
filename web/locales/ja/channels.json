@@ -5,8 +5,101 @@
   },
   "feed": { "empty": "チャンネルはまだありません。" },
   "thread": {},
-  "bot": {},
-  "memory": {},
+  "bot": {
+    "iconLabel": "アイコンを変える",
+    "nameLabel": "名前",
+    "namePlaceholder": "名前（例: Owl）",
+    "openDm": "DM を開く",
+    "createButton": "作る",
+    "persona": {
+      "title": "人格",
+      "label": "人格",
+      "placeholder": "口調・受け持ち・守ってほしいこと（自由に書けます）"
+    },
+    "run": {
+      "title": "動かし方"
+    },
+    "modeHumanOnly": "承認モードは人間だけが変えられる",
+    "modeOnly": "{{backend}} では承認モードが「{{mode}}」だけです",
+    "folders": {
+      "title": "触れてよいフォルダー",
+      "add": "フォルダーを足す",
+      "none": "まだありません",
+      "rw": "読み書き",
+      "ro": "読み取り",
+      "toggle": "押すと読み書きと読み取りを切り替え",
+      "toggleAria": "{{path}}: {{access}}（押すと切り替え）",
+      "remove": "外す",
+      "removeAria": "{{path}} を外す",
+      "all": "すべてのフォルダー",
+      "unlimited": "{{mode}}ではフォルダーを限れません",
+      "placeholder": "フォルダーのパス",
+      "inputLabel": "足すフォルダーのパス（Enter で足す）"
+    },
+    "send": {
+      "label": "他の会話に送る",
+      "hint": "この bot が、ほかの会話へ指示を送れます。送り先は、あなたが示した会話と、この bot が作った会話だけです。"
+    },
+    "memory": {
+      "title": "記憶",
+      "auto": "全ての会話から自動で覚える"
+    },
+    "usage": {
+      "week": "今週",
+      "tokens": "トークン",
+      "cache": "キャッシュ読み出し",
+      "low": "（低め）"
+    },
+    "state": {
+      "working": "作業中",
+      "waiting": "あなた待ち",
+      "idle": "待機"
+    },
+    "saveFailed": "保存できませんでした: {{error}}",
+    "createFailed": "作れませんでした: {{error}}",
+    "nameRequired": "名前を入れてください",
+    "notFound": "この bot は見つかりません",
+    "loadFailed": "読み込めませんでした: {{error}}",
+    "removed": "この bot は削除されました"
+  },
+  "memory": {
+    "user": {
+      "title": "あなたについて",
+      "meta": "全 bot 共通 · {{n}} 件"
+    },
+    "own": {
+      "title": "{{name}} だけ",
+      "meta": "{{n}} 件"
+    },
+    "loading": "読み込んでいます…",
+    "empty": "まだ無い",
+    "loadFailed": "記憶を読み込めませんでした: {{error}}",
+    "source": {
+      "line": "{{where}} · {{when}} のあなたの発言",
+      "today": "今日",
+      "dm": "DM（{{name}}）",
+      "chat": "Chats『{{title}}』",
+      "chatGone": "Chats の会話",
+      "channelGone": "チャンネル",
+      "written": "あなたが書いた",
+      "none": "出どころの記録なし",
+      "open": "元の発言を開く",
+      "more": "ほか {{n}} 件",
+      "edited": "{{when}} に直した"
+    },
+    "edit": "直す",
+    "editAria": "「{{text}}」を直す",
+    "editLabel": "記憶を直す",
+    "editFailed": "直せませんでした: {{error}}",
+    "cancel": "やめる",
+    "save": "保存",
+    "forget": "忘れる",
+    "forgetAria": "「{{text}}」を忘れる",
+    "forgetFailed": "忘れられませんでした: {{error}}",
+    "forgotten": "「{{text}}」を忘れました",
+    "undo": "元に戻す",
+    "undoFailed": "元に戻せませんでした: {{error}}"
+  },
   "routines": {},
   "event": {
     "post": "{{channel}} · {{from}}",
