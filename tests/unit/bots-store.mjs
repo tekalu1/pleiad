@@ -101,13 +101,29 @@ export default async function (t) {
     try { await createBotStore({ file: dropFile }).load(); } finally { console.error = origError; }
     t.ok('S-7: id か name が無い行は読み込まれない（次の保存で消える）ので、捨てた件数をログへ出す', logged.some((l) => /2 row\(s\)/.test(l)), logged.join('\n'));
 
-    // ---- 保存に失敗したら巻き戻す（親が通常のファイルで、置き場を作れない）
+    // 親がファイルのとき、Linux は ENOTDIR、Windows は ENOENT を返す。
+    const blockedParent = path.join(dir, 'blocked-parent');
+    await fs.writeFile(blockedParent, 'x');
+    const blockedPath = path.join(blockedParent, 'bots.json');
+    const readError = await fs.readFile(blockedPath).then(() => null, (e) => e.code);
+    const blocked = createBotStore({ file: blockedPath });
+    const loadError = await code(() => blocked.load());
+    t.ok('親がファイルで ENOTDIR なら broken を立て、上書きしない', readError === 'ENOENT' ? loadError === null
+      : readError === 'ENOTDIR' && loadError === 'BOTS_UNREADABLE' && blocked.problem?.code === 'BOTS_UNREADABLE'
+        && (await code(() => blocked.put(bot('b_1', 'Owl')))) === 'BOTS_UNREADABLE' && (await fs.readFile(blockedParent, 'utf8')) === 'x', String(readError));
+
+    // ---- 読み込み後に置き場が使えなくなって保存に失敗したら巻き戻す
     const blocker = path.join(dir, 'blocker');
-    await fs.writeFile(blocker, 'x');
+    await fs.mkdir(blocker);
     const failing = createBotStore({ file: path.join(blocker, 'bots.json') });
     await failing.load();
+    await fs.rmdir(blocker);
+    await fs.writeFile(blocker, 'x');
     const failure = await code(() => failing.put(bot('b_1', 'Owl')));
-    t.ok('保存できなければ追加は巻き戻り、次の操作は通る', failure !== null && failing.list().length === 0, String(failure));
+    t.ok('保存できなければ追加は巻き戻る', failure !== null && failing.list().length === 0, String(failure));
+    await fs.unlink(blocker);
+    await fs.mkdir(blocker);
+    t.ok('置き場が戻れば次の操作は通る', (await code(() => failing.put(bot('b_1', 'Owl')))) === null && failing.list().length === 1);
 
     // ---- 整え方（古い・足りない欄・知らない欄）
     t.ok('id か name が無い行は捨てる', normalizeBot({ name: 'x' }) === null && normalizeBot({ id: 'b' }) === null && normalizeBot(null) === null);
