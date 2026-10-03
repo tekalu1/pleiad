@@ -49,6 +49,8 @@ export default async function (t) {
   t.ok('strict: 文中・全角の ＠・括弧・コード・引用の中は数えない', sids('#test に返事しました。＠マイケル も見て') === '' && sids('お願い @Lynx') === '' && sids('＠Owl やって') === ''
     && sids('(@Owl)') === '' && sids('`@Owl`') === '' && sids('> @Owl') === '' && sids('@Owl と @Lynx') === 'b_owl');
   t.ok('strict: @あなた は文中でも人への呼びかけ', parseMentions('終わりました @あなた', BOTS, { strict: true }).you === true);
+  t.ok('人の @here / @everyone は予約された集団宛て。コード・引用では数えない', ids('@here と ＠everyone') === 'here,everyone' && ids('`@here`\n> @everyone') === '');
+  t.ok('bot の @here / @everyone は行頭でも誰も呼ばない', sids('@here @everyone 起きて') === '' && sids('@Owl @here') === 'b_owl');
 
   // @あなた
   const you = parseMentions('@あなた 確認を お願いします。@Owl も', BOTS);

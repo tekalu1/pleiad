@@ -70,8 +70,8 @@ try {
   const { botInstructions: build } = await import("../../core/bots/sessions.mjs");
   const real = build({ id: "b_1", name: "Owl", icon: "🦉", persona: "" }, "ja");
   const withReal = await turn({ botInstructions: real });
-  ok("固定文の「覚えて」の 1 文（memory.write に書く・Claude 自身のメモリは使わない）が agy のエージェントの本文にも届く",
-    withReal.text.includes("`memory.write` に書く（Claude 自身のメモリのファイルや、作業場所の外のファイルには書かない）"), withReal.text.slice(0, 400));
+  ok("判断して覚える案内と内蔵メモリを使わない指示が agy のエージェントの本文にも届く",
+    withReal.text.includes("自分の判断で `memory.write` に覚えてよい") && withReal.text.includes("Claude 内蔵のメモリや作業場所の外のファイルには書かない"), withReal.text.slice(0, 400));
 } catch (error) {
   ok("worker が最後まで走る", false, error?.stack ?? error);
 } finally {

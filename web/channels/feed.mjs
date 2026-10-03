@@ -49,6 +49,7 @@ export function createFeed(host) {
     bucket: () => S.id,
     candidates: () => candidates(),
     suggest: () => suggestion(),
+    wakePreview: (text) => host.invoke('channels.wakePreview', { channelId: S.id, text }),
     backendLabel: (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id,
     onSend: (draft) => post(draft),
   });
@@ -91,6 +92,8 @@ export function createFeed(host) {
   function candidates() {
     if (!S.channel || S.channel.kind === 'dm') return [];
     return [
+      { id: 'here', name: 'here', icon: '@', hint: t('channels:feed.mention.here') },
+      { id: 'everyone', name: 'everyone', icon: '@', hint: t('channels:feed.mention.everyone') },
       ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon || '🤖', backend: b.backend ?? null, hint: stateHint(b) })),
       { id: 'you', name: t('channels:feed.you'), icon: youInitial(), you: true, hint: '' },
     ];
@@ -266,8 +269,8 @@ export function createFeed(host) {
   document.addEventListener('visibilitychange', () => { if (active()) markRead(); });
 
   // ---------------------------------------------------------------- 操作
-  async function post({ text, attachments }) {
-    const made = await host.invoke('channels.post', { channelId: S.id, text, ...(attachments?.length ? { attachments } : {}) });
+  async function post({ text, attachments, confirmedWake }) {
+    const made = await host.invoke('channels.post', { channelId: S.id, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}) });
     if (made?.id && !S.index.has(made.id) && !made.threadId) addPost(made);
     toBottom();
     // bot を @ で呼んだ投稿は新しいスレッドの根になる。ここで書いた人にその返事が見えるよう、スレッドを開く（DM は流れがスレッドの代わり）

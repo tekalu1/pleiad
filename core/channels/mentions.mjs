@@ -3,9 +3,9 @@
 //
 //   parseMentions(text, bots, { strict }?) → { mentions: string[], botIds: string[], you: boolean }
 //     bots … [{ id, name }]。名前は NFKC・大小を区別しない（チャンネルを通して一意。重複は bots.create / update が断る）
-//     mentions … 出てきた順の botId と 'you'（重複なし）。botIds … そのうち botId だけ。you … `@あなた` / `@you`
+//     mentions … 出てきた順の botId と 'you' / 'here' / 'everyone'（重複なし）。botIds … そのうち botId だけ。you … `@あなた` / `@you`
 //     strict … bot の投稿（ADR 0117）。bot を呼ぶのは行頭の半角の `@名前` だけ（行頭の `@A @B` のように続けて並べたものは数える）。
-//              文中・全角の `＠` の bot の名前は数えない（bot が報告の文の中で名前を出しただけで起こし合わないため）。`@あなた` は今までどおり
+//              文中・全角の `＠` の bot の名前は数えない（bot が報告の文の中で名前を出しただけで起こし合わないため）。`@here` / `@everyone` は常に数えない。`@あなた` は今までどおり
 //
 // 規則:
 //   - `@` の直前が英数字・`_` のときは数えない（`a@owl.com` のようなメールの形）。日本語の直後（`お願い@Owl`）は数える
@@ -18,6 +18,8 @@ import { ATTACHMENT_LINE } from '../../web/timeline.mjs';
 
 const YOU_NAMES = ['あなた', 'you']; // i18n-ignore: 本文の @あなた は記号としての綴り（表示する文ではない）
 export const YOU = 'you';
+export const HERE = 'here';
+export const EVERYONE = 'everyone';
 
 const fold = (s) => String(s ?? '').normalize('NFKC').toLowerCase();
 // 名前の直後に来てよい文字: 行末・空白・記号（`_` と `-` は名前の続きなので除く）
@@ -48,6 +50,7 @@ export function parseMentions(text, bots = [], { strict = false } = {}) {
   const folded = chars.map((c) => fold(c)); // 1 文字が複数文字になることもある（NFKC）
   const candidates = [
     ...YOU_NAMES.map((n) => ({ key: YOU, name: fold(n) })),
+    { key: HERE, name: HERE }, { key: EVERYONE, name: EVERYONE },
     ...bots.filter((b) => b?.id && b?.name).map((b) => ({ key: b.id, name: fold(b.name).trim() })).filter((c) => c.name),
   ].sort((a, b) => b.name.length - a.name.length);
 
@@ -71,7 +74,7 @@ export function parseMentions(text, bots = [], { strict = false } = {}) {
       const after = lastIdx + 1 < chars.length ? folded[lastIdx + 1][0] : undefined;
       if (!isBoundaryAfter(after)) continue;
       // bot の投稿の bot への呼びかけは、行頭の半角の @ だけ（全角の ＠・文中は数えないが、名前の分は読み飛ばす）
-      const counts = !strict || c.key === YOU || (atHead && chars[i] === '@');
+      const counts = !strict || c.key === YOU || (![HERE, EVERYONE].includes(c.key) && atHead && chars[i] === '@');
       if (counts) found.push(c.key);
       head = atHead && counts;
       i = lastIdx;
@@ -79,5 +82,5 @@ export function parseMentions(text, bots = [], { strict = false } = {}) {
     }
   }
   const mentions = [...new Set(found)];
-  return { mentions, botIds: mentions.filter((m) => m !== YOU), you: mentions.includes(YOU) };
+  return { mentions, botIds: mentions.filter((m) => ![YOU, HERE, EVERYONE].includes(m)), you: mentions.includes(YOU) };
 }

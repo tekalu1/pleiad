@@ -37,7 +37,7 @@ export default async function (t) {
 
     // ---- 名前・アイコン・人格の検査
     t.ok('名前: 空・前後の空白・空白を含む・@ や句読点・長すぎる・予約名を断る',
-      ['', ' a', 'a b', 'a@b', 'a,b', 'a。', 'あ'.repeat(33), 'you', 'あなた', 'YOU'].every((n) => nameProblem(n) !== null));
+      ['', ' a', 'a b', 'a@b', 'a,b', 'a。', 'あ'.repeat(33), 'you', 'あなた', 'YOU', 'here', 'everyone', 'ＨＥＲＥ'].every((n) => nameProblem(n) !== null));
     t.ok('名前: 普通の名前・日本語・絵文字を含まない記号は通る', ['Owl', 'ふくろう', 'bot-1', 'レビュアー_2'].every((n) => nameProblem(n) === null));
     t.ok('アイコン: 絵文字 1 つだけ', iconProblem('🦉') === null && iconProblem('') !== null && iconProblem('🦉🦊') !== null && iconProblem('a') !== null);
     t.ok('人格: 上限を超えると断る', personaProblem('あ'.repeat(PERSONA_MAX_CHARS)) === null && personaProblem('あ'.repeat(PERSONA_MAX_CHARS + 1)) !== null);

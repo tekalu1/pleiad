@@ -198,6 +198,7 @@ export default async function (t) {
     channels: {     // S1
       list: async () => [{ id: 'c_000000000aaaaaa', kind: 'channel', name: 'general', unread: 0, mentions: 0, threadsWorking: 0, ...secret }],
       get: async () => ({ id: 'c_000000000aaaaaa', kind: 'channel', name: 'general', ...secret }),
+      mentionsOf: async () => ['everyone'],
       read: async () => ({ posts: [{ id: 'p_000000000aaaaaa', text: 'こんにちは', ...secret }], threads: [{ threadId: 'p_000000000aaaaaa', ...secret }], summaries: {}, nextBefore: null }),
       search: async () => ({ hits: [{ postId: 'p_000000000aaaaaa', snippet: 'こんにちは', ...secret }] }),
     },
@@ -230,6 +231,7 @@ export default async function (t) {
     'git.diff': [{ path: 'a' }], 'sessions.readSubagent': [{ sessionId: 's1', agentId: 'a' }], 'sessions.background': [{ sessionId: 's1', taskId: 't' }],
     'sessions.subagents': [{ sessionId: 's1', toolId: 'x' }],
     'channels.get': [{ channelId: 'c_000000000aaaaaa' }], 'channels.read': [{ channelId: 'c_000000000aaaaaa' }], 'channels.search': [{ query: 'こんにちは' }],
+    'channels.wakePreview': [{ channelId: 'c_000000000aaaaaa', text: '@everyone' }],
     'memory.list': [{ layer: 'user' }], 'memory.search': [{ query: 'PR' }],
     'bots.get': [{ botId: 'b_1' }],
     'routines.get': [{ routineId: 'r_000000000aaaaaa' }],

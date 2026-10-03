@@ -20,12 +20,12 @@ import { agentT } from '../i18n.mjs';
 import { modePosition, scopeRank } from '../modes.mjs';
 import { folderKey } from './store.mjs';
 
-/** 人格の文。heading（誰か）→ 人格（あれば）→ 使い方の数行。区切りは空行 1 つ、末尾の改行なし */
+/** bot の名前・本人の人格・操作の要点。区切りは空行 1 つ、末尾の改行なし */
 export function botInstructions(bot, locale) {
   const persona = String(bot?.persona ?? '').replace(/\r\n/g, '\n').trim();
   return [
     agentT(locale, 'guide.bot.heading', { icon: bot?.icon ?? '', name: bot?.name ?? '' }),
-    persona ? `${agentT(locale, 'guide.bot.personaLabel')}\n${persona}` : null,
+    persona || null,
     agentT(locale, 'guide.bot.tools'),
   ].filter(Boolean).join('\n\n');
 }

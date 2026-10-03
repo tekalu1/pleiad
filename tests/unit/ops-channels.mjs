@@ -21,9 +21,9 @@ export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ops-channels-'));
   try {
     // ---- 定義
-    t.ok('操作は 14 個（channels.list / get / read / search / create / update / archive / post / edit / delete / react / markRead / stopThread / wake）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 14);
+    t.ok('操作は 15 個（集団宛ての wakePreview を含む）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 15);
     const risk = (id) => registry.get(id).risk;
-    t.ok('危険度: 読む 4 つは read・書く 9 つは write・wake は guarded（human-only はない。ADR 0082 の 5 つ以外は AI も使える）', ['list', 'get', 'read', 'search'].every((v) => risk(`channels.${v}`) === 'read')
+    t.ok('危険度: 読む 5 つは read・書く 9 つは write・wake は guarded（human-only はない。ADR 0082 の 5 つ以外は AI も使える）', ['list', 'get', 'read', 'search', 'wakePreview'].every((v) => risk(`channels.${v}`) === 'read')
       && ['create', 'update', 'archive', 'post', 'edit', 'delete', 'react', 'markRead', 'stopThread'].every((v) => risk(`channels.${v}`) === 'write') && risk('channels.wake') === 'guarded');
     t.ok('modeGate: false は post・react・stopThread だけ（読み取り・計画の bot も返事・リアクション・停止はできる）', IDS.filter((id) => registry.get(id).modeGate === false).join() === 'channels.post,channels.react,channels.stopThread');
     t.ok('口: どれも画面から。MCP は catalog（直のツールは足さない）。CLI は全部（markRead も AI・CLI に出す）', IDS.every((id) => registry.get(id).surfaces.ui === true && registry.get(id).surfaces.mcp === 'catalog' && registry.get(id).surfaces.cli));
@@ -32,10 +32,11 @@ export default async function (t) {
       && registry.get('channels.get').surfaces.cli.path.join(' ') === 'channels get');
     const aiSees = registry.describe({ by: 'agent', via: 'cli' }, 'ja').map((o) => o.id);
     t.ok('AI（CLI）の一覧にチャンネルの操作が全部出る。直のツールは 0', IDS.every((id) => aiSees.includes(id)) && registry.describe({ by: 'agent', via: 'mcp' }, 'ja').filter((o) => o.id.startsWith('channels.')).every((o) => o.tool === null));
+    t.ok('集団宛てのプレビューは読み取り操作で画面から使える', registry.get('channels.wakePreview').risk === 'read' && registry.get('channels.wakePreview').surfaces.ui);
 
     // ---- 実行
     let clock = 5000;
-    const channels = createChannelService({ dir: path.join(tmp, 'channels'), now: () => (clock += 10), listBots: async () => [{ id: 'b_owl', name: 'Owl' }] });
+    const channels = createChannelService({ dir: path.join(tmp, 'channels'), now: () => (clock += 10), listBots: async () => [{ id: 'b_owl', name: 'Owl' }, { id: 'b_lynx', name: 'Lynx' }] });
     await channels.start();
     const bound = { s_bot: { botId: 'b_owl', kind: 'thread' } };
     const modes = { s_ro: { scope: 'readonly', autonomy: 'ask' }, s_plan: { scope: 'readonly', autonomy: 'ask' } };
@@ -45,9 +46,28 @@ export default async function (t) {
     const made = await run(HUMAN, 'channels.create', { name: '#ops', purpose: 'テスト' });
     t.ok('create: 画面（人）から作れる', made.ok && made.result.name === 'ops', JSON.stringify(made));
     const cid = made.result.id;
+    const groupChannel = await run(HUMAN, 'channels.create', { name: 'group', members: ['b_owl', 'b_lynx'] });
+    const gid = groupChannel.result.id;
+    const root = await run(HUMAN, 'channels.post', { channelId: gid, text: '集団宛てのスレッド' });
+    const emptyHere = await run(HUMAN, 'channels.wakePreview', { channelId: gid, threadId: root.result.id, text: '@here まだ誰もいない' });
+    t.ok('まだ bot が話していないスレッドの @here は 0 体', emptyHere.ok && emptyHere.result.required && emptyHere.result.botIds.length === 0);
+    await run(agent('s_bot'), 'channels.post', { channelId: gid, threadId: root.result.id, text: 'Owl の返事' });
+    const hereArgs = { channelId: gid, threadId: root.result.id, text: '@here 続けて' };
+    const here = await run(HUMAN, 'channels.wakePreview', hereArgs);
+    t.ok('@here はそのスレッドで話した bot だけを数える', here.ok && here.result.required && here.result.botIds.join() === 'b_owl', JSON.stringify(here));
+    t.ok('確認なし・宛先が違う投稿は保存しない', (await run(HUMAN, 'channels.post', hereArgs)).code === 'INVALID'
+      && (await run(HUMAN, 'channels.post', { ...hereArgs, confirmedWake: ['b_lynx'] })).code === 'INVALID');
+    const confirmedHere = await run(HUMAN, 'channels.post', { ...hereArgs, confirmedWake: here.result.botIds });
+    t.ok('確認した @here はその botId を投稿へ保存する', confirmedHere.ok && confirmedHere.result.mentions.join() === 'here,b_owl');
+    const everyoneArgs = { channelId: gid, text: '@everyone 集まって' };
+    const everyone = await run(HUMAN, 'channels.wakePreview', everyoneArgs);
+    const confirmedEveryone = await run(HUMAN, 'channels.post', { ...everyoneArgs, confirmedWake: everyone.result.botIds });
+    t.ok('@everyone はチャンネルの bot 全員。確認してから投稿する', everyone.result.botIds.join() === 'b_owl,b_lynx' && confirmedEveryone.result.mentions.join() === 'everyone,b_owl,b_lynx');
+    const botGroup = await run(agent('s_bot'), 'channels.post', { channelId: gid, threadId: root.result.id, text: '@everyone 起きて' });
+    t.ok('bot が書いた集団宛ては誰も起こさない', botGroup.ok && botGroup.result.mentions.length === 0);
     const aiMade = await run(agent('s_chat'), 'channels.create', { name: 'ai-made' });
     t.ok('create: 会話の AI も作れる（write。人と同じ）', aiMade.ok);
-    t.ok('list・get: 画面と AI のどちらにも返る', (await run(HUMAN, 'channels.list', {})).result.channels.length === 2 && (await run(agent('s_chat', 'cli'), 'channels.get', { channelId: cid })).result.name === 'ops');
+    t.ok('list・get: 画面と AI のどちらにも返る', (await run(HUMAN, 'channels.list', {})).result.channels.length === 3 && (await run(agent('s_chat', 'cli'), 'channels.get', { channelId: cid })).result.name === 'ops');
 
     // 発言者
     const byHuman = await run(HUMAN, 'channels.post', { channelId: cid, text: '人の投稿 @Owl' });

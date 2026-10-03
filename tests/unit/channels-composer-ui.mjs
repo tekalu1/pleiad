@@ -57,8 +57,8 @@ export default function (t) {
   t.ok('字の欄は Chats と同じ編集欄。送信は Ctrl/⌘+Enter（Enter は改行）。伸びる上限は composer-layout の promptMaxHeight', /createMarkdownEditor\(input/.test(composer) && /e\.key === 'Enter' && \(e\.ctrlKey \|\| e\.metaKey\)/.test(composer) && /promptMaxHeight\(/.test(composer));
   t.ok('チップ（モデル・エフォート・承認モード）は持ち込まない', !/composer-controls|renderModel|renderMode|effortChip|modelChip|class="chip"|'chip'/.test(composer + att));
   t.ok('添付は断片の送り手（attach-upload）・一覧の面・札の描き方を Chats と共有する', /from '\.\.\/attach-upload\.mjs'/.test(att) && /from '\.\.\/attachment-list\.mjs'/.test(att) && /createMarkdownEditor/.test(composer) && /placeAttachments, attachmentHtml/.test(read('web/channels/post.mjs')));
-  t.ok('流れもスレッドも、投稿は channels.post の attachments で送る（新しい WS コマンドは足さない）', /'channels\.post', \{ channelId: S\.id, text, \.\.\.\(attachments\?\.length \? \{ attachments \} : \{\}\) \}/.test(feed)
-    && /text, \.\.\.\(attachments\?\.length \? \{ attachments \} : \{\}\) \}/.test(thread) && !/attach(Start|Chunk|Finish)/.test(feed + thread));
+  t.ok('流れもスレッドも、投稿は channels.post の attachments で送る（新しい WS コマンドは足さない）', /'channels\.post', \{ channelId: S\.id, text, \.\.\.\(attachments\?\.length \? \{ attachments \} : \{\}\)/.test(feed)
+    && /text, \.\.\.\(attachments\?\.length \? \{ attachments \} : \{\}\)/.test(thread) && !/attach(Start|Chunk|Finish)/.test(feed + thread));
   t.ok('書きかけは持ち主（チャンネル・スレッド）ごと。開くと切り替わり、閉じると残して空に戻す', /setDraftKey\(feedDraftKey\(view\.id\)\)/.test(feed) && /setDraftKey\(threadDraftKey\(channelId, threadId\)\)/.test(thread) && /composer\.setDraftKey\(null\)/.test(thread));
   t.ok('流れもスレッドも、板にファイルを落とせる（落とした先がその入力欄）', /composer\.bindDropZone\(root\)/.test(feed) && /composer\.bindDropZone\(root\)/.test(thread));
   t.ok('client.mjs: host に whenOnline・openImage を渡す。Chats の受け口は Channels の画面に落としたファイルを取らない', /whenOnline,/.test(client) && /openImage: \(src, caption, path, origin\) => openLightbox/.test(client) && /closest\?\.\("#channelsView"\)/.test(client));
