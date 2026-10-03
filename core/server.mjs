@@ -3079,8 +3079,9 @@ async function askSettingChange({ op, change, receipt, reason, actor, requestId,
   settingCards.set(id, ac);
   askPermission({
     toolName: 'ply_control', input: {}, sessionId, kind: 'tool', canAlways: false, signal: ac.signal, detached: true,
-    title: t('permission.settingChange', { agent: agent.label, key: key ?? op }),
-    settingChange: { op, key: key ?? op, requestId: id, rows: change.rows ?? [], ...(change.note ? { note: change.note } : {}), loosens: Boolean(change.loosens), ...(reason ? { reason } : {}), receipt, agent },
+    title: key ? t('permission.settingChange', { agent: agent.label, key }) : t('permission.opApproval', { agent: agent.label, op }),
+    // words: 承認カードの言葉の組（defineOp の approvalWords。無ければ画面が共通の言葉にする）
+    settingChange: { op, key: key ?? op, requestId: id, ...(change.words ? { words: change.words } : {}), rows: change.rows ?? [], ...(change.note ? { note: change.note } : {}), loosens: Boolean(change.loosens), ...(reason ? { reason } : {}), receipt, agent },
   }).then(async (answer) => {
     if (settingCards.get(id) === ac) settingCards.delete(id);
     // 取り下げた（置き換え）なら、取り下げた側が結果を積む

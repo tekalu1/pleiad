@@ -62,6 +62,7 @@ export const mcpOps = [
       allowReformat: z.boolean().optional().describe(D('nativeSave', 'allowReformat')),
       reason: z.string().max(500).optional().describe(A('reason')),
     }),
+    approvalWords: 'mcp',
     confirm: async (ctx, args) => {
       const at = await nativeWhere(ctx, args);
       const current = args.mode === 'edit' ? await ctx.mcp.native.get({ ...at, name: args.name }).catch(() => null) : null;
@@ -109,6 +110,7 @@ export const mcpOps = [
       revision: z.string().max(100).optional().describe(A('revision')),
       reason: z.string().max(500).optional().describe(A('reason')),
     }),
+    approvalWords: 'mcp',
     confirm: async (ctx, args) => {
       const current = args.mode === 'edit' ? await ctx.mcp.read(args.name).catch(() => null) : null;
       const list = await ctx.mcp.list().catch(() => null);
@@ -129,6 +131,7 @@ export const mcpOps = [
   defineOp({
     id: 'mcp.delete', summary: 'agent:ops.mcp.delete.summary', risk: 'guarded',
     input: z.object({ name: NAME.describe(A('name')), reason: z.string().max(500).optional().describe(A('reason')) }),
+    approvalWords: 'mcpDelete',
     confirm: async (ctx, { name }) => {
       const current = await ctx.mcp.read(name).catch(() => null);
       return { ...change(`mcp.${name}`, current ? maskMcp(current.value, true) : null, null, t('opsApproval.mcpDelete', { name }), { receipt: current?.revision ?? null }), loosens: false };
@@ -140,6 +143,7 @@ export const mcpOps = [
   defineOp({
     id: 'mcp.rename', summary: 'agent:ops.mcp.rename.summary', risk: 'guarded',
     input: z.object({ name: NAME.describe(A('name')), to: NAME.describe(D('rename', 'to')), reason: z.string().max(500).optional().describe(A('reason')) }),
+    approvalWords: 'mcp',
     confirm: async (ctx, { name, to }) => {
       const list = await ctx.mcp.list().catch(() => null);
       return { key: null, before: list?.revision ?? null, rows: [{ path: 'mcp.name', before: JSON.stringify(name), after: JSON.stringify(to) }], note: t('opsApproval.mcpRename', { name, to }), loosens: false };
@@ -157,6 +161,7 @@ export const mcpOps = [
       includeSecrets: z.boolean().optional().describe(D('import', 'includeSecrets')),
       reason: z.string().max(500).optional().describe(A('reason')),
     }),
+    approvalWords: 'mcp',
     confirm: async (ctx, { items, includeSecrets }) => {
       const list = await ctx.mcp.list().catch(() => null);
       return { key: null, before: list?.revision ?? null,
@@ -170,6 +175,7 @@ export const mcpOps = [
   defineOp({
     id: 'mcp.setSettings', summary: 'agent:ops.mcp.setSettings.summary', risk: 'guarded',
     input: z.object({ clientMetadataUrl: z.string().max(4096).nullable().optional().describe(D('setSettings', 'clientMetadataUrl')), reason: z.string().max(500).optional().describe(A('reason')) }),
+    approvalWords: 'mcp',
     confirm: async (ctx, { clientMetadataUrl }) => {
       const before = await ctx.mcp.settings().catch(() => null);
       return { key: null, before, rows: diffRows('mcp.settings', before, { ...before, ...(clientMetadataUrl !== undefined ? { clientMetadataUrl: clientMetadataUrl || null } : {}) }), note: t('opsApproval.mcpSettings'), loosens: true };

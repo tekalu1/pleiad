@@ -323,6 +323,7 @@ export const settingOps = [
       backend: z.string().max(40).optional().describe(D('set', 'backend')),
     }),
     riskOf: async (ctx, args) => (await prepare(ctx, args)).risk,
+    approvalWords: 'setting',
     confirm: async (ctx, args) => (await prepare(ctx, args)).change,
     surfaces: { ui: true, mcp: 'direct', cli: { path: ['settings', 'set'], positional: ['key', 'value'] } },
     handler: async (ctx, args) => {

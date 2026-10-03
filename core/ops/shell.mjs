@@ -48,6 +48,7 @@ export const shellOps = [
       reason: z.string().max(500).optional().describe(D('run', 'reason')),
     }),
     // 承認カード: どの会話で何を動かすか。受領証の元は会話とそのエージェント（承認の間に会話のエージェントが替われば聞き直す）
+    approvalWords: 'shell',
     confirm: async (ctx, { sessionId: given, command }) => {
       const id = target(ctx, given);
       const where = await ctx.shell.describe(id);

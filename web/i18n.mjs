@@ -66,6 +66,11 @@ export function t(key, options) {
   return i18n.t(key, { lng: lang, ...options });
 }
 
+/** 今の言語の ui の辞書にそのキーの訳文があるか（英語へ落とさずに確かめる。組み立てるキーで、無ければ別の言葉にするとき） */
+export function has(key) {
+  return typeof i18n.getResource(lang, 'ui', key) === 'string';
+}
+
 /**
  * 言語を切り替える。画面では使わない（読み直す）。テストと、将来の部分的な切り替えのため。
  * @returns 切り替えた後の言語

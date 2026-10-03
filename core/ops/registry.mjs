@@ -15,6 +15,7 @@ import { RISKS, decide, maxRisk } from './policy.mjs';
 
 const ID_RX = /^[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9]*$/;
 const KEY_RX = /^[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*)*$/;
+const APPROVAL_WORDS_RX = /^[a-z][a-zA-Z]*$/;
 
 export const MCP_SURFACES = ['direct', 'catalog'];
 export const MASK = '••••';
@@ -49,6 +50,10 @@ export function defineOp(def) {
   if (def.riskOf !== undefined && typeof def.riskOf !== 'function') fail(id, 'riskOf must be a function (ctx, args) => risk');
   if ((def.risk === 'guarded' || def.riskOf) && typeof def.confirm !== 'function')
     fail(id, 'an op that can be guarded needs confirm(ctx, args) (the approval card line and the receipt)');
+  // 承認カードの言葉の組（見出し・項目名・許可のボタン・畳んだ 1 行・⚠・通知）。画面の辞書 ui:chat.opApproval.<組> にある。無ければ共通の言葉（ADR 0088 追記）
+  if (def.approvalWords !== undefined && !(typeof def.approvalWords === 'string' && APPROVAL_WORDS_RX.test(def.approvalWords)))
+    fail(id, 'approvalWords must be a word set name of ui:chat.opApproval (lowercase start, letters only)');
+  if (def.approvalWords !== undefined && typeof def.confirm !== 'function') fail(id, 'approvalWords is for an op that can be guarded (it has confirm)');
   if (def.scope !== undefined && !['session', 'global'].includes(def.scope)) fail(id, 'scope must be session | global');
   if (typeof def.handler !== 'function') fail(id, 'handler is required');
   if (def.legacyAliases !== undefined && !(Array.isArray(def.legacyAliases) && def.legacyAliases.every((n) => typeof n === 'string' && n)))
@@ -183,7 +188,7 @@ async function approval(ctx, op, args, failure, run) {
       if (receiptOf(op.id, args, (await describe()).before) === receipt) return run();
       return attempt < RECEIPT_RETRIES ? ask(attempt + 1, id) : failure('STALE', { id: op.id }, { decision: 'ask' });
     };
-    const answer = await ctx.approve({ op: op.id, change: { ...change, op: op.id }, receipt, reason, actor: ctx.actor, ...(requestId ? { requestId } : {}), proceed });
+    const answer = await ctx.approve({ op: op.id, change: { ...change, op: op.id, ...(op.approvalWords ? { words: op.approvalWords } : {}) }, receipt, reason, actor: ctx.actor, ...(requestId ? { requestId } : {}), proceed });
     if (!answer?.pending) return failure(answer?.code ?? 'DENIED', { id: op.id }, { decision: 'ask' });
     id = answer.requestId;
     return pendingResult(ctx.locale, op.id, change.key, id);
