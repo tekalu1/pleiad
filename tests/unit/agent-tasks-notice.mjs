@@ -151,5 +151,5 @@ export default async function(t) {
       t.ok('中断された・終わったターンには渡さない', canSteerNotice(turn({ ac: { signal: { aborted: true } } }), ok) === false && canSteerNotice(turn({ outcome: 'ok' }), ok) === false);
       t.ok('圧縮のターンには渡さない', canSteerNotice(turn({ compactTrigger: 'auto' }), ok) === false);
     }
-  } finally { manager.close(); await fs.rm(dir, { recursive: true, force: true }); }
+  } finally { await manager.close(); await fs.rm(dir, { recursive: true, force: true }); }
 }

@@ -184,8 +184,7 @@ export default async function(t) {
       t.ok('再起動で実行中だったものは再実行しない', runs === 0 && m.get('run').status === 'interrupted');
     }
   } finally {
-    for (const m of managers) m.close();
-    await sleep(50);
+    for (const m of managers) await m.close();
     for (const d of dirs) await fs.rm(d, { recursive: true, force: true });
   }
 }
