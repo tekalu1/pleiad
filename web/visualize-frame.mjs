@@ -12,7 +12,6 @@ if (typeof window !== 'undefined' && window.addEventListener) window.addEventLis
   // and only from a currently mounted visualization's own WindowProxy.
   for (const frame of document.querySelectorAll('iframe.visualize-frame:not(.visualize-fill)')) {
     if (frame.contentWindow !== event.source) continue;
-    if (frame.closest('.visualize-wide')) return;
     frame.style.height = `${Math.min(900, Math.max(120, event.data.height))}px`;
   }
 });
