@@ -187,5 +187,5 @@ export default async function(t) {
     await until(() => manager.get(japaneseTask.taskId).notification === 'sent');
     connection.close();
     t.ok('失効した接続を拒否する', (await fetch(connection.url, { method: 'POST', headers: connection.headers, body: '{}' })).status === 401);
-  } finally { manager.close(); await client.close(); server.closeAllConnections(); await new Promise(r => server.close(r)); await fs.rm(dir, { recursive: true, force: true }); }
+  } finally { await manager.close(); await client.close(); server.closeAllConnections(); await new Promise(r => server.close(r)); await fs.rm(dir, { recursive: true, force: true }); }
 }
