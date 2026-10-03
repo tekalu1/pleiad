@@ -389,6 +389,7 @@ export function createFeed(host) {
       root.hidden = false;
       if (emptyNote) emptyNote.hidden = true;
       if (!same) { S.channel = null; S.posts = []; S.index = new Map(); S.threads = {}; S.summaries = {}; S.readSent = 0; paintHead(); }
+      else paintHead();   // 別の面（bot のページなど）へ移ると hide() が見出しを戻すので、同じチャンネルへ戻ったときも描き直す
       const done = same ? Promise.resolve().then(() => { toBottom(); markRead(); }) : load(view.id);
       done.then(() => {
         if (view.threadId) host.openThread?.(view.id, view.threadId);

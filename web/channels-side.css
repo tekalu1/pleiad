@@ -70,9 +70,14 @@ body.channels:not(.settings) .channels-view{display:flex;flex-direction:column;p
 .channels-view .top h2{flex:1;min-width:0;margin:0;padding:5px 10px;font-size:var(--fs-l);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ch-body{flex:1;min-height:0;position:relative;overflow-y:auto}
 .ch-empty{margin:24px 18px;color:var(--ink-weak);font-size:var(--fs-s)}
+/* bot のページを見せている間は、頭の見出しを引っ込める（bot のページ自身の頭が見出し。読み上げには残す）。頭の行は、脇を開く入口が要る間だけ残す */
+.channels-view .top.bot-top{padding-top:0;padding-bottom:0}
+.channels-view .top.bot-top h2{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);flex:none}
+:root.side-closed .channels-view .top.bot-top{padding:10px 18px 0}
 /* 脇を閉じている間の入口（#openSidebar と同じ出し方） */
 #chOpenSidebar{display:none}
 :root.side-closed #chOpenSidebar{display:inline-flex;margin-left:-6px}
 @media (max-width:700px){
   #chOpenSidebar{display:inline-flex;margin-left:-6px}
+  .channels-view .top.bot-top{padding:10px 18px 0}
 }

@@ -104,6 +104,12 @@ async page => {
   const firstId = await first.getAttribute('data-post-id');
   check((await page.locator('.ch-day').count()) === 1 && (await page.locator('.ch-day').textContent()) === '今日', 'a day separator says 今日');
 
+  // ---- 「（編集済み）」は本文が変わったときだけ。同じ本文での書き直し（付帯情報だけ）では出ない
+  const sameText = (await rpc('channels.read', { channelId: ch.id })).posts[0].text;
+  await rpc('channels.edit', { channelId: ch.id, postId: firstId, text: sameText });
+  await page.waitForTimeout(300);
+  check(await first.locator('.post-edited').count() === 0, 'editing a post back to the same text does not say 編集済み');
+
   // ---- リアクション: 👍 で付く・押すと外れる・＋でピッカーから任意の絵文字
   await first.hover();
   await first.locator('.post-tool.quick').click();
@@ -218,9 +224,9 @@ async page => {
   check(atEnd, 'new posts keep the log at the bottom when you were at the bottom');
   await page.evaluate(() => { document.querySelector('.ch-log').scrollTop = 0; });
   await deliver({ type: 'channelPost', channelId: ch.id, op: 'add', post: { id: 'p_late', channelId: ch.id, threadId: null, author: { kind: 'bot', botId: 'b_lynx' }, text: '遅れて届いた投稿', mentions: [], at: Date.now() + 100, reactions: {} } });
-  await page.locator('.ch-jump').waitFor({ state: 'visible' });
+  await page.locator('#chFeed .ch-jump').waitFor({ state: 'visible' });
   check(await page.evaluate(() => document.querySelector('.ch-log').scrollTop < 200), 'a post arriving while scrolled away does not yank the log');
-  await page.locator('.ch-jump').click();
+  await page.locator('#chFeed .ch-jump').click();
   check(await page.evaluate(() => { const l = document.querySelector('.ch-log'); return l.scrollHeight - l.scrollTop - l.clientHeight < 90; }), 'the jump button returns to the bottom');
   await deliver({ type: 'channelPost', channelId: ch.id, op: 'delete', post: { id: 'p_late', channelId: ch.id, threadId: null, author: { kind: 'bot', botId: 'b_lynx' }, text: '', deletedAt: Date.now(), at: Date.now(), reactions: {} } });
   check(await page.locator('[data-post-id="p_late"].deleted .post-deleted').count() === 1, 'a delete event leaves a placeholder');
@@ -267,6 +273,17 @@ async page => {
   const again = page.locator('.post').first();
   check((await again.locator('.thread-summary .ts-count').textContent()) === '💬 1 件の返信', 'after a reload the thread summary comes from the saved replies');
   check((await again.locator('.post-body').textContent()).includes('二行目') && await again.locator('.react-pill').count() === 1, 'after a reload the post and its reactions come back');
+
+  // ---- 別の面（bot のページ）へ移って同じチャンネルへ戻っても、見出しは「# 名前」のまま（汎用の「Channels」や空にならない）
+  const bots = (await rpc('bots.list')).bots ?? [];
+  if (bots.length) {
+    await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })), bots[0].id);
+    await page.locator('#botView').waitFor({ state: 'visible' });
+    await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id } })), ch.id);
+    await page.locator('#chFeed .post').first().waitFor();
+    const backHead = await page.evaluate(() => { const h = document.getElementById('channelsPageTitle'); return { text: h.textContent, shown: h.getBoundingClientRect().width > 20 }; });
+    check(backHead.shown && backHead.text.includes(name), 'coming back from the bot page to the same channel restores the # heading');
+  }
 
   // ---- 360 幅
   await page.setViewportSize({ width: 360, height: 760 });

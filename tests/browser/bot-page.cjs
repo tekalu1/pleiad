@@ -47,6 +47,7 @@ async page => {
   check(await page.locator('#botView .bp-folders').isHidden() && await page.locator('#botView .bp-memory').isHidden(), '作る画面にフォルダーと記憶は無い');
   await page.locator('#botView .bp-create').click();
   check(await page.locator('#botView .bp-err').isVisible(), '名前が空なら作らず、理由を出す');
+  check(await page.evaluate(() => { const h = document.getElementById('channelsPageTitle').getBoundingClientRect(); return h.width <= 1 && h.height <= 1; }), 'bot のページの上に、汎用の「Channels」の見出しは出さない');
   await shot('01-new');
   await page.locator('#botName').fill('Owl');
   await page.locator('#botPersona').fill('落ち着いた口調で、結論から短く。');
@@ -86,7 +87,8 @@ async page => {
   check(ticks.length >= 2 && step, 'エフォートの段が出る');
   await page.locator('#botModelPop input[data-key="effort"]').fill(String(step.i));
   await waitBot('Owl2', b => b.effort === step.text, 'エフォートを選ぶと保存される');
-  await page.keyboard.press('Escape');
+  // 保存の後に面が描き直されて、つまみのフォーカスが外れていることがある。面の中のつまみへ押して確かに Esc を届ける
+  await page.locator('#botModelPop input[data-key="effort"]').press('Escape');
   const sw = page.locator('#botSendSwitch');
   check(await sw.getAttribute('aria-checked') === 'true', '他の会話に送るは既定で ON');
   await sw.click();
@@ -128,7 +130,7 @@ async page => {
   const dm = (await call('bots.list')).bots.find(b => b.name === 'Owl2').dmChannelId;
   const post = await call('channels.post', { channelId: dm, text: 'ベンチマークは 3 回の中央値で比べて' });
   const botId = (await botOf('Owl2')).id;
-  await call('memory.write', { layer: botId, text: 'ベンチマークは 3 回の中央値で比べる', sources: [{ kind: 'post', channelId: dm, postId: post.id, quote: '3 回の中央値' }] });
+  await call('memory.write', { layer: botId, text: 'ベンチマークは 3 回の中央値で比べる', sources: [{ kind: 'post', channelId: dm, postId: post.id, quote: '3 回の中央値で比べて' }] });
   await call('memory.write', { layer: 'user', text: 'です・ます調で短く' });
   await page.waitForSelector('#botView .memcore[data-layer="own"] .mem');
   await page.waitForSelector('#botView .memcore[data-layer="user"] .mem');

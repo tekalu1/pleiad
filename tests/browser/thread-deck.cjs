@@ -159,7 +159,7 @@ async page => {
     rdiv: document.querySelector('.th-rdiv').textContent,
     open: [...document.querySelectorAll('#chThread .th-open')].length,
   }));
-  check(body.posts[0] === A.id && body.rdiv === '29 件の返信' && body.open === 1, 'the thread shows the root post first, then the replies, with the reply count');
+  check(body.posts[0] === A.id && body.rdiv === '29 件の返信' && body.open === 0, 'the thread shows the root post first, then the replies, with the reply count (no「会話を開く →」under the reply: the thread is the conversation)');
   await page.waitForFunction(() => document.querySelector('#chThread .th-tools .bundle'));
   const tools = await page.evaluate(() => { const b = document.querySelector('#chThread .th-tools .bundle'); return { n: b.dataset.n, label: b.querySelector('.rhead .mix')?.textContent, same: !!b.bundle }; });
   check(tools.n === '4' && tools.label === 'ツール実行' && tools.same, "the bot's reply carries the same collapsed tools row as Chats (「ツール実行 4」)");
@@ -404,6 +404,8 @@ async page => {
   });
   check(narrow.deck === 'solo' && near(narrow.w, 360, 1) && narrow.l >= 0 && narrow.side !== 'none', 'at 360px the thread is the whole screen and offers the sidebar button');
   check(!narrow.overflow && narrow.composerInView, 'nothing overflows sideways and the composer stays on screen');
+  const tok = await page.evaluate(() => { const n = document.querySelector('#chThread .th-band-tokens'); const r = n.getBoundingClientRect(); return { w: r.width, clipped: n.scrollWidth > n.clientWidth + 1, shown: n.querySelector('.th-tok-num')?.textContent, spoken: n.textContent, title: n.title }; });
+  check(tok.shown === '1.2k' && tok.w < 60 && !tok.clipped && tok.spoken === 'このスレッドで 1.2k トークン' && tok.title.includes('入力'), 'at 360px the band shows only 1.2k (never cut off); the words stay for screen readers and the details in the title');
   await page.locator(`#chThread [data-post-id="${turnA.id}"] .post-body a`).first().click();
   await sleep(300);
   const sheet = await page.evaluate(() => { const p = document.getElementById('filePreview').getBoundingClientRect(); return { panel: document.body.classList.contains('file-preview-open'), full: p.width >= innerWidth - 1 && p.height >= innerHeight - 1 }; });

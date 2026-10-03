@@ -202,7 +202,13 @@ export function createThread(host) {
       if (calls >= 1 && live.length > 1) pieces.push(el('span', null, t('channels:thread.band.calls', { count: calls })));
     } else if (stopped) pieces.push(el('span', null, t('channels:thread.band.stopped')));
     if (total) {
-      const tok = el('span', 'th-band-tokens', t('channels:thread.band.tokens', { tokens: tokensText(total) }));
+      // 「このスレッドで 1.2k トークン」。狭い幅は数字だけ（前後の語は CSS で見えなくするだけで、読み上げには残る）
+      const num = tokensText(total);
+      const full = t('channels:thread.band.tokens', { tokens: num });
+      const at = full.indexOf(num);
+      const tok = el('span', 'th-band-tokens');
+      if (at < 0) tok.textContent = full;
+      else tok.append(el('span', 'th-tok-aux', full.slice(0, at)), el('span', 'th-tok-num', num), el('span', 'th-tok-aux', full.slice(at + num.length)));
       tok.title = t('channels:thread.band.tokensTitle', { input: th.tokens.input ?? 0, output: th.tokens.output ?? 0, cached: th.tokens.cached ?? 0 });
       pieces.push(tok);
     }
@@ -261,7 +267,7 @@ export function createThread(host) {
     return c.wrap;
   }
 
-  /** fillPost の後に足すもの: 道具の行・進捗のチェックリスト・提示（可視化はインライン）・［会話を開く →］ */
+  /** fillPost の後に足すもの: 道具の行・進捗のチェックリスト・提示（可視化はインライン）。会話そのものを開く入口は投稿の ⋯（openMenu） */
   function decorate(node, p) {
     const main = node.querySelector(':scope > .post-main');
     if (!main || p.deletedAt) return;
@@ -276,13 +282,6 @@ export function createThread(host) {
         try { box.append(host.renderPresent(savedEvent(ev))); } catch { /* 描けない提示は飛ばす */ }
       }
       if (box.childElementCount) bodyEl.after(box);
-    }
-    if (p.turn?.sessionId) {
-      const open = el('button', 'th-open', t('channels:thread.openSession'));
-      open.type = 'button';
-      open.title = t('channels:thread.openSessionTitle');
-      open.onclick = () => host.openSession(p.turn.sessionId);
-      main.append(open);
     }
   }
 
