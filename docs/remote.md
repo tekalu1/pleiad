@@ -327,15 +327,16 @@ WS コマンド（`core/protocol.mjs`）: `remoteStatus`・`setRemoteSettings { 
 
 ### 6.3 ホストとして常駐する（推奨）
 
-今のデスクトップ版は窓を閉じると（作業が 0 件なら）アプリごと終了する（`desktop/main.cjs` の `closeSafely`）。リモートの端末はホストが動いていないとつながらない。
+デスクトップ版は、リモートの常駐がオン、または有効なルーティンが 1 件以上あれば、窓を閉じてもホストを続ける。それ以外は `desktop/main.cjs` の `closeSafely` を通って終了する。リモート接続もルーティンも、ホストが動いている間だけ使える。
 
 - **推奨: リモートを有効にしたら「窓を閉じてもホストを続ける」を既定でオン**にし、トレイ（macOS はメニューバー）に残す。トレイのメニュー: 状態（中継 · 接続中の端末 N · 実行中 N）、「Pleiad を開く」、「終了」（実行中なら今と同じ確認）
-- スリープ: 「作業中だけ防ぐ（既定）/ リモートが有効な間は防ぐ / 防がない」。作業中 = ターンが走っているか承認待ちがあるとき、`powerSaveBlocker.start('prevent-app-suspension')`。画面は消えてよい。常に防ぐのは電気代と熱の問題があるので選択にする
+- **ルーティン**: 一時停止していないものが 1 件以上あれば、リモートの有効・無効や「窓を閉じてもホストを続ける」の設定にかかわらずトレイに残す。メニューとツールチップに「ルーティン N 件のために常駐しています」を添える。「終了」は従来どおりホストを終了し、ルーティンも止まる。
+- スリープ: リモートが有効な場合だけ「作業中だけ防ぐ（既定）/ リモートが有効な間は防ぐ / 防がない」。作業中 = ターンが走っているか承認待ちがあるとき、`powerSaveBlocker.start('prevent-app-suspension')`。画面は消えてよい。常に防ぐのは電気代と熱の問題があるので選択にする。ルーティンだけの常駐ではスリープを抑止しない（PC がスリープ中の予定は動かない）
 - ログイン時の自動起動は任意（`app.setLoginItemSettings`）。既定はオフ（まだ作っていない）
 
 実装（2026-09-23）: 設定は `<data>/remote/resident.json` の `{ keepRunning, sleep }`（`core/remote/resident.mjs`。既定 `true` / `'working'`）。WS コマンド `setRemoteResident { keepRunning?, sleep? }`、`RemoteStatus.resident = { available, keepRunning, sleep }`（`available` はデスクトップ版のホストのとき）。
-サーバーはリモートの状態か実行中の作業（`broadcastRunning`）が変わるたびに、parentPort で `{ type: 'resident', state: { remote, keepRunning, sleep, working, running, waiting, devices, relay, locale } }` を送る（同じ内容は送らない）。作業中 = `runningWork().count > 0`。
-main は `desktop/resident.cjs`: トレイ（Windows・Linux は押すと窓を出す）、窓の close は `keepOnClose()` なら隠すだけ、リモートを無効にしてトレイが消えるとき窓が隠れていれば出し直す、「終了」は窓を出してから `closeSafely`。トレイの文言は `web/locales/<言語>/desktop.json`。
+サーバーは起動時と、リモートの状態・実行中の作業（`broadcastRunning`）・ルーティン（`routinesChanged`）が変わるたびに、parentPort で `{ type: 'resident', state: { remote, routines, keepRunning, sleep, working, running, waiting, devices, relay, locale } }` を送る（同じ内容は送らない）。`routines` は `botHost.opsDeps().routines.list()` のうち `paused: false` の件数。口が無い・0 件なら従来のリモートの条件だけで判断する。作業中 = `runningWork().count > 0`。
+main は `desktop/resident.cjs`: トレイ（Windows・Linux は押すと窓を出す）、窓の close は `keepOnClose()` なら隠すだけ、リモートの常駐も有効なルーティンも無くなってトレイが消えるとき窓が隠れていれば出し直す、「終了」は窓を出してから `closeSafely`。トレイの文言は `web/locales/<言語>/desktop.json`。
 - `npm start` のホストは窓が無いので、そのまま常駐と同じ。スリープ対策は OS の設定に任せる
 - 理由: 常駐しないと、リモートの価値（外出先から続きを見る）がほぼ成り立たない。一方で勝手にスリープを止めるのは不意打ちなので、既定は「作業中だけ」
 
