@@ -411,20 +411,26 @@
         "summary": "会話の題を変える。変更の記録に、変えた主体と理由が残る。",
         "sessionId": "会話の id。省くとこの会話。",
         "title": "新しい題。",
-        "reason": "変える理由（変更の記録に残る）。"
+        "reason": "変える理由（変更の記録に残る）。",
+        "reasonKey": "画面の定型理由のキー。", "reasonParams": "定型理由に入れる値。", "backend": "会話のエージェント。"
       },
       "setStatus": {
         "summary": "会話の状態（グループ）を変える。状態は自由な文字列で、既存の状態から選ぶ。グループの根を動かすと中の会話も移る。",
         "sessionId": "会話の id。省くとこの会話。",
         "status": "新しい状態。",
         "reason": "変える理由（変更の記録に残る）。",
-        "alone": "true なら、グループの中の会話をまとめて動かさず、この 1 本だけを動かす。"
+        "alone": "true なら、グループの中の会話をまとめて動かさず、この 1 本だけを動かす。",
+        "icon": "状態グループに付けるアイコン。",
+        "reasonKey": "画面の定型理由のキー。", "reasonParams": "定型理由に入れる値。", "backend": "会話のエージェント。"
       },
       "fork": {
         "summary": "会話を分ける。親の履歴を写した新しい会話ができ、親は変わらない。",
         "sessionId": "分ける会話の id。省くとこの会話。",
         "upToMessageId": "この発言（uuid）までを写す。省くと全部。",
-        "title": "分けた会話の題。"
+        "title": "分けた会話の題。",
+        "reason": "分ける理由（変更の記録に残る）。",
+        "beforeMessageId": "この発言（uuid）の手前まで写す。",
+        "reasonKey": "画面の定型理由のキー。", "reasonParams": "定型理由に入れる値。", "backend": "会話のエージェント。"
       }
     },
     "statuses": {
@@ -507,8 +513,16 @@
         "summary": "委譲の子のタスク 1 件の状態と結果を返す。結果は offset から 16000 字ずつ。",
         "taskId": "タスクの id。",
         "offset": "結果の読み始めの位置（前の返り値の nextOffset）。"
-      }
+      },
+      "delegate": { "summary": "子の会話へ仕事を委譲する。", "kind": "仕事の種類。", "task": "子への依頼。", "title": "子の短い題。", "backend": "委譲先のエージェント。", "context": "子へ渡す背景情報。", "cwd": "作業場所。", "model": "委譲先のモデル。", "effort": "推論の強さ。", "isolate": "子の作業場所を分けるか。" },
+      "taskStatus": { "summary": "自分が委譲した子の状態と結果を読む。", "taskId": "子のタスク id。", "offset": "結果の読み始めの位置。" },
+      "taskWait": { "summary": "自分が委譲した子を最大 30 秒待つ。", "taskId": "子のタスク id。", "seconds": "待つ秒数（最大 30）。" },
+      "taskSend": { "summary": "自分が委譲した子へ追加の指示を送る。", "taskId": "子のタスク id。", "message": "追加の指示。" },
+      "taskCancel": { "summary": "自分が委譲した子を止める。", "taskId": "子のタスク id。" },
+      "taskList": { "summary": "自分が委譲した子の一覧を読む。" },
+      "usage": { "summary": "委譲先の使用枠を読む。", "backend": "調べるエージェント。省くと全部。" }
     },
+    "browser": { "listProfiles": { "summary": "この会話で使えるブラウザーのプロフィール一覧を読む。" }, "useProfile": { "summary": "この会話のブラウザープロフィールを切り替える。", "profile": "プロフィールの id か名前。" }, "setProfile": { "summary": "会話のブラウザープロフィールを切り替える。", "sessionId": "会話の id。", "profile": "プロフィールの id。" } },
     "control": {
       "instructions": "Pleiad の機能と設定は ply_control から使えます。\nまず list_ops で操作を探し（id を渡すと入力の JSON Schema が分かります）、call_op で呼びます。検索・読み出し・設定の get/set は直に呼べます。\nPleiad の状態を変える操作はこの会話の承認モードに従います。関所を緩める変更はユーザーに承認カードを出し、待たずに status: pending で返ります（結果は後でこの会話に届きます）。code が NEEDS_UI・NEEDS_APPROVAL・READ_ONLY_MODE で返ったら、やり直さずユーザーに伝えてください。",
       "listOps": "Pleiad で使える操作の一覧。id を渡すと、その操作の説明・入力の JSON Schema・危険度を返す。呼ぶのは call_op。",

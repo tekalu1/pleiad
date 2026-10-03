@@ -178,6 +178,11 @@ export default async function (t) {
       && (await c.cmd('listSessions')).find((s) => s.id === plan.sessionId)?.title === '昔のコマンドで変えた題');
     t.ok('束縛されない CLI の guarded は NEEDS_UI（bypass の会話の接続とは別）', (await api(cli, 'POST', '/api/ops/probe.guarded', {})).body.code === 'NEEDS_UI');
     t.ok('human-only は束縛された会話にも出ない（bypass でも）', !(await api(bound(bypass), 'GET', '/api/ops')).body.result.ops.some((o) => o.id === 'probe.humanOnly') && (await api(bound(bypass), 'POST', '/api/ops/probe.humanOnly', {})).status === 404);
+    const hiddenList = await api(bound(bypass), 'POST', '/mcp/control', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_ops', arguments: {} } });
+    const hiddenCall = await api(bound(bypass), 'POST', '/mcp/control', { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'call_op', arguments: { op: 'probe.humanOnly', args: {} } } });
+    t.ok('human-only は ply_control の list_ops に現れず、call_op でも NOT_FOUND',
+      !JSON.parse(hiddenList.body.result.content[0].text).ops.some((o) => o.id === 'probe.humanOnly')
+      && hiddenCall.body.result.isError === true && JSON.parse(hiddenCall.body.result.content[0].text).code === 'NOT_FOUND');
     t.ok('人間（画面）は guarded も human-only も通る', (await c.cmd('invoke', { op: 'probe.guarded', args: {} })).done === true && (await c.cmd('invoke', { op: 'probe.humanOnly', args: {} })).done === true);
     from = c.mark();
     const mcpPending = await api(bound(asker), 'POST', '/mcp/control', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'call_op', arguments: { op: 'probe.guarded' } } });
@@ -278,7 +283,7 @@ export default async function (t) {
       const required = o.input.required ?? [];
       const inputs = o.id === 'settings.get' || o.id === 'settings.schema'
         ? (await api(cli, 'POST', '/api/ops/settings.list', {})).body.result.settings.map((s) => ({ key: s.key }))
-        : o.id === 'sessions.get' || o.id === 'sessions.read' ? [{ sessionId: ask.sessionId }] : o.id === 'delegation.status' ? [{ taskId: 'none' }] : o.id === 'sessions.search' ? [{ query: 'control' }, { query: MARKER }] : required.length ? null : [{}];
+        : o.id === 'sessions.get' || o.id === 'sessions.read' ? [{ sessionId: ask.sessionId }] : ['delegation.status', 'delegation.taskStatus', 'delegation.taskWait'].includes(o.id) ? [{ taskId: 'none' }] : o.id === 'sessions.search' ? [{ query: 'control' }, { query: MARKER }] : required.length ? null : [{}];
       if (!inputs) { t.ok(`T6 ${o.id}: 必須の引数の例がある`, false); continue; }
       for (const args of inputs) everything.push([o.id, args, JSON.stringify((await api(cli, 'POST', `/api/ops/${o.id}`, args)).body)]);
     }

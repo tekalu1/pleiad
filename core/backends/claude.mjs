@@ -278,16 +278,7 @@ function buildToolServer(ctx) {
         hosted("mcp__host__set_status", async (args) => {
           const sessionId = ctx.hostSessionId ?? ctx.sessionId;
           if (!sessionId) return { content: [{ type: "text", text: agentT(ctx.locale, 'host.sessionPending') }] };
-          await (ctx.hostBackend ?? backend).setTag(sessionId, args.status);
-          await store.recordChange(sessionId, {
-            by: "ai", field: "status", to: args.status, reason: args.reason, backend,
-          });
-          ctx.emit({ type: "status", sessionId, status: args.status, by: "ai", reason: args.reason ?? null });
-          // アイコンは人間が選ぶのと同じ表に入る（設計メモ 2.2）
-          if (args.icon) {
-            const icon = await store.setStatusIcon(args.status, args.icon);
-            ctx.emit({ type: "statusIcon", sessionId: null, status: args.status, icon });
-          }
+          await ctx.hostInvoke('sessions.setStatus', { sessionId, ...args });
           return { content: [{ type: "text", text: agentT(ctx.locale, 'host.setStatus.done', { status: args.status }) }] };
         }),
       ),
@@ -302,11 +293,7 @@ function buildToolServer(ctx) {
         hosted("mcp__host__set_title", async (args) => {
           const sessionId = ctx.hostSessionId ?? ctx.sessionId;
           if (!sessionId) return { content: [{ type: "text", text: agentT(ctx.locale, 'host.sessionPending') }] };
-          await (ctx.hostBackend ?? backend).setTitle(sessionId, args.title);
-          await store.recordChange(sessionId, {
-            by: "ai", field: "title", to: args.title, reason: args.reason, backend,
-          });
-          ctx.emit({ type: "title", sessionId, title: args.title, by: "ai", reason: args.reason ?? null });
+          await ctx.hostInvoke('sessions.setTitle', { sessionId, ...args });
           return { content: [{ type: "text", text: agentT(ctx.locale, 'host.setTitle.done', { title: args.title }) }] };
         }),
       ),
@@ -321,18 +308,7 @@ function buildToolServer(ctx) {
         hosted("mcp__host__fork", async (args) => {
           const sessionId = ctx.hostSessionId ?? ctx.sessionId;
           if (!sessionId) return { content: [{ type: "text", text: agentT(ctx.locale, 'host.sessionPending') }] };
-          const { sessionId: child } = ctx.hostBackend
-            ? await ctx.hostBackend.fork(sessionId, { title: args.title })
-            : await forkSession(sessionId, { title: args.title });
-          const parent = { sessionId, atMessage: null };
-          // 包んだバックエンドの fork は設定（モデル・アカウントなど）を引き継ぐ。直に分けたときも同じにする
-          if (!ctx.hostBackend) await store.inheritSettings(sessionId, child);
-          await store.setParent(child, parent);
-          await store.setMeta(child, { backend: backend.id });
-          await store.recordChange(child, {
-            by: "ai", field: "parent", to: parent, reason: args.reason ?? "fork", backend,
-          });
-          ctx.emit({ type: "fork", sessionId: child, parent, by: "ai", reason: args.reason ?? null });
+          const { sessionId: child } = await ctx.hostInvoke('sessions.fork', { sessionId, ...args });
           return { content: [{ type: "text", text: agentT(ctx.locale, 'host.fork.done', { sessionId: child }) }] };
         }),
       ),
@@ -637,9 +613,9 @@ export const backend = {
    * 1ターン回す。正規化イベントだけを emit する（生の SDK メッセージは外に出さない）。
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [], notes = [], rewind = null }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, locale, compact, shellAppends = [], notes = [], rewind = null }) {
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
-    const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, locale };
+    const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, hostInvoke, locale };
     // このターンで呼んだ ply_computer の tool_use の id。tool_result に名前は載らないので、印の行を読むのはこの id の結果だけにする
     const computerIds = new Set();
     let releaseContext;

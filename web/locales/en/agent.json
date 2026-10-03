@@ -411,20 +411,26 @@
         "summary": "Change a conversation's title. The change log records who changed it and why.",
         "sessionId": "The conversation id. Defaults to this conversation.",
         "title": "The new title.",
-        "reason": "Why it is changed (kept in the change log)."
+        "reason": "Why it is changed (kept in the change log).",
+        "reasonKey": "A predefined reason key from the UI.", "reasonParams": "Values for the predefined reason.", "backend": "Conversation agent."
       },
       "setStatus": {
         "summary": "Change a conversation's status (group). A status is free text; pick an existing one. Moving a group's root moves the conversations inside it.",
         "sessionId": "The conversation id. Defaults to this conversation.",
         "status": "The new status.",
         "reason": "Why it is changed (kept in the change log).",
-        "alone": "If true, move only this conversation and not the others in its group."
+        "alone": "If true, move only this conversation and not the others in its group.",
+        "icon": "Icon to assign to the status group.",
+        "reasonKey": "A predefined reason key from the UI.", "reasonParams": "Values for the predefined reason.", "backend": "Conversation agent."
       },
       "fork": {
         "summary": "Fork a conversation. It creates a new conversation with the parent's history copied; the parent is unchanged.",
         "sessionId": "The id of the conversation to fork. Defaults to this conversation.",
         "upToMessageId": "Copy up to this message (uuid). Defaults to all.",
-        "title": "The title of the forked conversation."
+        "title": "The title of the forked conversation.",
+        "reason": "Why the conversation is forked (kept in the change log).",
+        "beforeMessageId": "Copy up to before this message (uuid).",
+        "reasonKey": "A predefined reason key from the UI.", "reasonParams": "Values for the predefined reason.", "backend": "Conversation agent."
       }
     },
     "statuses": {
@@ -507,8 +513,16 @@
         "summary": "Return one delegated child task's status and result. The result comes 16000 characters at a time from offset.",
         "taskId": "The task id.",
         "offset": "Where to start reading the result (nextOffset from the previous result)."
-      }
+      },
+      "delegate": { "summary": "Delegate work to a child conversation.", "kind": "Kind of work.", "task": "Request for the child.", "title": "Short title for the child.", "backend": "Target agent.", "context": "Background for the child.", "cwd": "Working directory.", "model": "Target model.", "effort": "Reasoning effort.", "isolate": "Whether to create a separate workspace." },
+      "taskStatus": { "summary": "Read the status and result of your child task.", "taskId": "Child task id.", "offset": "Result offset." },
+      "taskWait": { "summary": "Wait up to 30 seconds for your child task.", "taskId": "Child task id.", "seconds": "Seconds to wait, at most 30." },
+      "taskSend": { "summary": "Send another instruction to your child task.", "taskId": "Child task id.", "message": "Additional instruction." },
+      "taskCancel": { "summary": "Stop your child task.", "taskId": "Child task id." },
+      "taskList": { "summary": "List your child tasks." },
+      "usage": { "summary": "Read quota usage for delegation targets.", "backend": "Agent to check; omit for all." }
     },
+    "browser": { "listProfiles": { "summary": "List the browser profiles available to this conversation." }, "useProfile": { "summary": "Switch this conversation's browser profile.", "profile": "Profile id or name." }, "setProfile": { "summary": "Switch a conversation's browser profile.", "sessionId": "Conversation id.", "profile": "Profile id." } },
     "control": {
       "instructions": "Pleiad's features and settings are available through ply_control.\nFind an operation with list_ops (pass an id to get its input JSON Schema) and call it with call_op. Conversation search and reading (search_sessions, get_session, read_session) and current setting values (get_setting) can be called directly.\nOperations that change Pleiad's state follow this conversation's approval mode. A change that loosens a gate shows the user an approval card and returns status: pending without waiting; the result is delivered to this conversation later. If the code is NEEDS_UI, NEEDS_APPROVAL, or READ_ONLY_MODE, do not retry; tell the user.",
       "listOps": "List the operations available in Pleiad. Pass an id to get that operation's description, input JSON Schema, and risk. Call it with call_op.",

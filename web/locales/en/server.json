@@ -94,7 +94,6 @@
   "session": {
     "running": "This session is running.",
     "required": "A session is required.",
-    "requiredForStatus": "A session is required (for a new session, pass status to runTurn).",
     "notFound": "Session not found.",
     "preparingSettings": "Preparing to send. Try changing the settings again.",
     "draftTooLarge": "The draft is too large.",
