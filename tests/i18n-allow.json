@@ -35,6 +35,11 @@
     "ui:routing.settings.service.cerebras",
     "ui:saved.reason.contextChanged",
     "ui:sessionContext.hooks.ms",
-    "ui:settings.remote.platform.android"
+    "ui:settings.remote.platform.android",
+    "channels:routines.kind.cron",
+    "channels:routines.kind.webhook",
+    "channels:routines.text.cron",
+    "channels:routines.text.webhook",
+    "channels:routines.where.dm"
   ]
 }

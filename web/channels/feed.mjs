@@ -12,6 +12,7 @@ import { withReaction } from './reactions.mjs';
 import { createChComposer } from './ch-composer.mjs';
 import { openChannelSettings } from './feed-settings.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
+import { headingButton } from './routine-entry.mjs';
 
 const PAGE = 50;
 const NEAR_BOTTOM = 80;
@@ -125,6 +126,7 @@ export function createFeed(host) {
     members.setAttribute('aria-label', members.title);
     members.append(el('span', 'ch-av you', youInitial()), ...memberBots().map((b) => el('span', 'ch-av', b.icon || '🤖')));
     x(members);
+    if (!ch.archivedAt) x(headingButton(host, ch));   // ［ルーティン n］（W5）
     const more = el('button', 'btn btn-icon ch-more');
     more.type = 'button';
     more.title = t('channels:feed.settings.open');

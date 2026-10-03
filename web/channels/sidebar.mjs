@@ -1,16 +1,19 @@
 // 脇の Channels 側（docs/channels.md「画面」、ADR 0106、モック 01）。#channelsSide の 3 つの節を描く:
 //   チャンネル … # 名前。未読は太字、あなた宛ては件数の札。＋でその場に名前の欄を出して作る（channels.create）
 //   Bots       … アイコン・名前・エージェント・状態（待機 / 作業中の回る弧 / あなた待ち）。押すと DM、＋は bot を作る画面（W4）
-//   ルーティン … P2（W5）が中身を入れる。今は節と空の状態だけ
+//   ルーティン … 次に動く時刻の近い順に 3 件（多いときは［ほか n 件］で全部）。一時停止中は薄く、直近の失敗は「✕ 失敗」。押すと編集のシート（routine-sheet.mjs）、＋で新規
 // 見ていない側のタブの札に点（あなたを待っているものは --ink-mark、未読だけなら青）を付ける。Chats 側の数は web/side.mjs の attention()。
 // 検索は Chats と同じ欄（#q）で両方を横断する（side.connectChannels。結果の行に「Chats」「#チャンネル」）。
-// 読むのは channels.list・bots.list・channels.search、更新は出来事 channelsChanged・channelPost・channelRead・channelThread・botsChanged。
+// 読むのは channels.list・bots.list・channels.search・routines.list（routine-store.mjs）、更新は出来事 channelsChanged・channelPost・channelRead・channelThread・botsChanged・routinesChanged。
 // 開く入口は document の channels:show（{ kind: 'channel', id, threadId? } / { kind: 'bot', id }。web/channels/index.mjs）。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
 import { sideChannels, botState, tabDots, channelNameRows, postRows, showDetail, selectedRow } from './side-model.mjs';
+import { getRoutineStore } from './routine-store.mjs';
+import { sortForSide, SIDE_LIMIT, lastFailed } from './routine-model.mjs';
+import { openRoutine, whenText, stateText } from './routine-entry.mjs';
 
 const ICONS = {
   hash: 'M10 4 8 20M16 4l-2 16M4.5 9h15M4 15h15',
@@ -41,6 +44,7 @@ export function createSidebar(host, getTabs) {
     loaded: false,           // 一度でも読めた
     stale: true,             // 読み直しが要る（接続の前に読もうとして失敗した・出来事が来た）
     view: null,              // メインに出している面（show の view）。脇の選ばれた行
+    routinesAll: false,      // ルーティンを 3 件に絞らず全部出している
     creating: false,         // チャンネルの名前の欄を出している
     createError: '',
     focusKey: null,          // キーボードで指している行（描き直しても指し続ける）
@@ -74,7 +78,7 @@ export function createSidebar(host, getTabs) {
   }
   head('channels', ICONS.hash, t('channels:side.sections.channels'), { label: t('channels:side.newChannel'), onClick: () => startCreate() });
   head('bots', ICONS.bot, t('channels:side.sections.bots'), { label: t('channels:side.newBot'), onClick: () => navigate({ kind: 'bot', id: 'new' }) });
-  head('routines', ICONS.clock, t('channels:side.sections.routines'), null);   // ＋は W5（P2）がルーティンの編集と一緒に足す
+  head('routines', ICONS.clock, t('channels:side.sections.routines'), { label: t('channels:routines.new'), onClick: () => openRoutine(S.view?.kind === 'channel' ? { channelId: S.view.id } : {}) });
 
   // 検索欄は両方を探す
   const q = document.getElementById('q');
@@ -200,11 +204,53 @@ export function createSidebar(host, getTabs) {
     ], b.name);
   }
 
+  // 次に動く時刻の近い順に 3 件。一時停止は後ろに薄く（.paused）、直近の失敗は「✕ 失敗」、時刻は「今日 23:00」
+  const routineStore = getRoutineStore(host);
   function paintRoutines() {
     const box = rowsOf.routines;
     if (!box) return;
-    box.replaceChildren(el('div', 'empty cs-empty', t('channels:side.routinesEmpty')));
+    const all = sortForSide(routineStore.list());
+    const shown = S.routinesAll ? all : all.slice(0, SIDE_LIMIT);
+    const channelName = (id) => S.channels.find((c) => c.id === id)?.name;
+    const nodes = shown.map((rt) => {
+      const where = channelName(rt.channelId);
+      const when = rt.paused ? t('channels:routines.paused') : whenText(rt.nextAt);
+      const failed = lastFailed(rt);
+      const spoken = [rt.name, where ? `#${where}` : '', failed ? stateText('failed') : '', when].filter(Boolean).join(', ');
+      const r = rowBase('routine', rt.id, spoken);
+      r.classList.remove('one');
+      r.classList.toggle('paused', Boolean(rt.paused));
+      const title = el('div', 'row-title');
+      title.append(el('span', 'row-t', rt.name));
+      const meta = el('div', 'row-meta');
+      if (where) meta.append(el('span', 'cs-rt-ch', `#${where}`));
+      if (failed) meta.append(el('span', 'cs-rt-fail', stateText('failed')));
+      meta.append(el('span', 'row-cwd row-when', when));
+      r.append(title, meta);
+      r.addEventListener('click', () => openRoutine({ routineId: rt.id }));
+      r.addEventListener('contextmenu', (e) => { e.preventDefault(); routineMenu(rt, e.clientX, e.clientY); });
+      r.botMenu = (x, y) => routineMenu(rt, x, y);   // 右クリックと同じ入口をキーボード（Shift+F10）からも
+      return r;
+    });
+    if (all.length > SIDE_LIMIT) {
+      const more = el('button', 'cs-more', S.routinesAll ? t('channels:routines.fewer') : t('channels:routines.more', { count: all.length - SIDE_LIMIT }));
+      more.type = 'button';
+      more.addEventListener('click', () => { S.routinesAll = !S.routinesAll; paintRoutines(); roving(false); });
+      nodes.push(more);
+    }
+    if (!nodes.length) nodes.push(el('div', 'empty cs-empty', routineStore.loaded ? t('channels:side.routinesEmpty') : t('channels:side.loading')));
+    box.replaceChildren(...nodes);
   }
+
+  function routineMenu(rt, x, y) {
+    host.showMenu?.(x, y, [
+      { label: t('channels:routines.edit'), onClick: () => openRoutine({ routineId: rt.id }) },
+      { label: t('channels:routines.openChannel'), onClick: () => navigate({ kind: 'channel', id: rt.channelId }) },
+      { label: rt.paused ? t('channels:routines.state.resume') : t('channels:routines.state.pause'),
+        onClick: () => host.invoke(rt.paused ? 'routines.resume' : 'routines.pause', { routineId: rt.id }).then((r) => routineStore.put({ ...rt, ...r })).catch(() => {}) },
+    ], rt.name);
+  }
+  routineStore.subscribe(() => { paintRoutines(); roving(false); });
 
   // ---------------------------------------------------------------- チャンネルを作る（＋ → その場の名前の欄）
   function startCreate() {

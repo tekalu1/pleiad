@@ -246,7 +246,72 @@
     "undo": "Undo",
     "undoFailed": "Couldn’t undo: {{error}}"
   },
-  "routines": {},
+  "routines": {
+    "title": "Routine",
+    "heading": "Routines",
+    "headingTitle_one": "Routines in this channel ({{count}})",
+    "headingTitle_other": "Routines in this channel ({{count}})",
+    "headingNone": "Create a routine for this channel",
+    "headingMenu": "Routines in #{{name}}",
+    "paused": "Paused",
+    "new": "New routine",
+    "edit": "Edit",
+    "openChannel": "Open channel",
+    "more_one": "Show {{count}} more",
+    "more_other": "Show {{count}} more",
+    "fewer": "Show 3",
+    "botEmpty": "This bot has no routines yet",
+    "cancel": "Cancel",
+    "create": "Create",
+    "save": "Save",
+    "delete": "Delete",
+    "deleteConfirm": "Press again to delete",
+    "deleteFailed": "Couldn't delete: {{error}}",
+    "saveFailed": "Couldn't save: {{error}}",
+    "neverRan": "Hasn't run yet",
+    "last": "Last run {{when}} · {{state}}",
+    "time": "Time",
+    "next": "Next: {{when}}",
+    "nextNone": "No upcoming run",
+    "daySep": ", ",
+    "when": { "label": "When", "today": "Today {{time}}", "tomorrow": "Tomorrow {{time}}", "date": "{{date}} {{time}}" },
+    "name": { "label": "Name", "placeholder": "e.g. Morning summary" },
+    "state": { "label": "Status", "on": "On", "off": "Paused", "pause": "Pause", "resume": "Resume" },
+    "kind": { "daily": "Daily", "weekly": "Weekly", "interval": "Interval", "cron": "cron", "event": "Event", "webhook": "webhook", "soon": "Not available yet" },
+    "day": { "0": "Sun", "1": "Mon", "2": "Tue", "3": "Wed", "4": "Thu", "5": "Fri", "6": "Sat" },
+    "daily": { "label": "Every day or weekdays", "everyday": "Every day", "weekdays": "Weekdays only" },
+    "weekly": { "label": "Days of the week" },
+    "interval": { "label": "Interval", "hint": "Counted from the previous run", "during": "between", "windowLabel": "Time window", "allDay": "All day", "window": "Set a time window", "from": "Start time", "to": "End time" },
+    "cron": { "label": "cron expression", "hint": "Five fields: minute hour day month weekday. Example: 0 9 * * 1-5", "daily": "Every day at {{time}}", "weekdays": "Weekdays at {{time}}", "weekly": "Every {{days}} at {{time}}" },
+    "event": {
+      "label": "Event", "done": "Conversation done", "failed": "Conversation failed", "waiting": "Waiting on you",
+      "scope": "Applies to", "scopeAll": "All conversations", "scopeSome_one": "{{count}} selected conversation", "scopeSome_other": "{{count}} selected conversations",
+      "hint": { "done": "Runs whenever a conversation finishes (bot and routine conversations excluded)", "failed": "Runs whenever a conversation fails (bot and routine conversations excluded)", "waiting": "Runs whenever a conversation is waiting on you (bot and routine conversations excluded)" }
+    },
+    "who": {
+      "label": "Who and where", "ga": "runs in", "de": "", "pickBot": "Choose a bot", "pickChannel": "Choose a channel",
+      "botAria": "Bot: {{name}}", "channelAria": "Channel: {{name}}", "noBots": "There are no bots. Create a bot first"
+    },
+    "where": { "label": "Where", "dm": "DM" },
+    "prompt": { "label": "What", "placeholder": "e.g. Look at conversations that failed or stopped overnight and summarize the cause and next step in 3 lines each" },
+    "mode": {
+      "label": "Approval mode", "hint": "Only you can make it stronger. Bots and AI can't change it",
+      "danger": "Runs without asking. It also runs when nobody is around, so mind the scope", "only": "{{backend}} only has “{{mode}}”"
+    },
+    "timeout": { "label": "While waiting for approval", "before": "Notify me, then cancel and report if", "after": "pass with no approval" },
+    "try": { "button": "Try it", "running": "Trying it (no posts, no changes)", "failed": "Couldn't try it: {{error}}" },
+    "unit": { "minutes_one": "{{count}} minute", "minutes_other": "{{count}} minutes", "hours_one": "{{count}} hour", "hours_other": "{{count}} hours", "days_one": "{{count}} day", "days_other": "{{count}} days" },
+    "text": {
+      "daily": "Every day {{time}}", "weekdays": "Weekdays {{time}}", "weekly": "Every {{days}} {{time}}", "interval": "Every {{every}}", "window": " ({{from}}–{{to}})",
+      "cron": "cron {{expr}}", "webhook": "webhook", "event": { "done": "Conversation done", "failed": "Conversation failed", "waiting": "Waiting on you" }
+    },
+    "error": {
+      "name": "Enter a name", "bot": "Choose a bot", "channel": "Choose a channel", "prompt": "Write what it should do",
+      "time": "Choose a time", "days": "Choose at least one day", "minutes": "Choose an interval",
+      "window": "Use different start and end times for the window", "cron": "Can't read the expression. Use five fields: minute hour day month weekday",
+      "event": "Choose an event", "kind": "This kind can't be created yet"
+    }
+  },
   "event": {
     "post": "{{channel}} · {{from}}",
     "thread": "Passed the earlier posts in {{channel}}",

@@ -443,6 +443,8 @@ const cases = [
   // スレッドと空間モデル (W3): 窓の状態（feed・split・solo）の判定・題とトークンの文言・道具の呼び出しを引く範囲・配線。描画・動き・承認のカードは tests/browser/thread-deck.cjs
   await import("./unit/thread-deck.mjs"),
   // --- routines (R1・R2・W5、P2) ---
+  // ルーティンの編集 (W5): 検査・保存する欄・cron の見積もり・脇の並べ方・一覧の写し・入口の配線。画面の打鍵は tests/browser/routine-sheet.cjs
+  await import("./unit/routine-sheet-model.mjs"),
   // --- memory-learn・sessions-send・webhook (L1・X1・H1、P3) ---
 ];
 
