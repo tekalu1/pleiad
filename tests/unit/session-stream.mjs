@@ -137,6 +137,7 @@ export default async function (t) {
     mergeCompactionHistory, attachCompactSummaries, serveFrom,
     // 入力欄の `!`（core/shell-runs.mjs）。このテストの対象外
     shellRuns: { decorate: m => m, rows: () => [], placeKept: m => m },
+    decorateScheduled: m => m,
     history: { loadTranscript: () => new Promise(r => { resolveTranscript = r; }) },
     // 読んだ履歴を検索の写しへ入れる口（core/session-search.mjs）。このテストの対象外
     sessionSearch: { ingest: () => true },

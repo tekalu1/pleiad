@@ -1600,6 +1600,29 @@
       "input": "5911c9a80b11"
     },
     {
+      "id": "sessions.scheduleSend",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "sessions",
+            "schedule-send"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "d0ef295ce476"
+    },
+    {
       "id": "sessions.search",
       "risk": "read",
       "riskOf": false,
@@ -1619,6 +1642,29 @@
       },
       "legacyCommand": null,
       "input": "e62fd6215a96"
+    },
+    {
+      "id": "sessions.sendScheduledNow",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "sessions",
+            "send-scheduled-now"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "6fd588228159"
     },
     {
       "id": "sessions.setAutoCompaction",
@@ -2924,6 +2970,13 @@
       ]
     },
     {
+      "id": "sessions.scheduleSend",
+      "path": "sessions schedule-send",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
       "id": "sessions.schedules",
       "path": "sessions schedules",
       "positional": []
@@ -2933,6 +2986,13 @@
       "path": "sessions search",
       "positional": [
         "query"
+      ]
+    },
+    {
+      "id": "sessions.sendScheduledNow",
+      "path": "sessions send-scheduled-now",
+      "positional": [
+        "id"
       ]
     },
     {

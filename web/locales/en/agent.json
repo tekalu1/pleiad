@@ -367,6 +367,8 @@
     },
     "resumeQueue": { "get": { "summary": "Show the queue and progress for resuming after usage limits." }, "set": { "summary": "Change the order and automatic recovery after usage limits.", "action": "The change to make.", "sessionId": "The conversation ID for first or auto.", "enabled": "Whether auto enables automatic resume." } },
     "sessions": {
+      "scheduleSend": { "summary": "Schedule a message in a conversation. When the time comes it joins the send queue like a normal send. A person decides this, so it needs approval.", "sessionId": "ID of the conversation to send to.", "prompt": "The message text.", "at": "When to send (Unix milliseconds or an ISO 8601 date and time).", "messageId": "Send ID (8–80 letters, digits or hyphens). A new one is made when omitted.", "attachments": "Attachments (path, name, MIME type).", "cwd": "Working directory.", "mode": "Approval mode.", "confirm": "Schedule a message in conversation {{session}} for {{at}}: {{prompt}}" },
+      "sendScheduledNow": { "summary": "Put a scheduled message into the send queue now without waiting for its time.", "id": "ID of the scheduled message.", "confirm": "Send scheduled message {{id}} now" },
       "schedules": { "summary": "List planned actions for conversations.", "sessionId": "Limit the list to one conversation; omit for all." },
       "cancelSchedule": { "summary": "Cancel a planned action.", "id": "The schedule ID." },
       "search": {

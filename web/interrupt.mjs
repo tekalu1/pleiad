@@ -81,12 +81,6 @@ export const resumeNoteText = (paused, interrupted) => reasonOf(interrupted) ===
   ? t('interrupt.limitSendNote', { time: limitTime(interrupted.resetsAt) ?? t('interrupt.unknownTime') })
   : (paused > 0 ? t("interrupt.resumeNoteHeld", { count: paused }) : t("interrupt.resumeNote"));
 
-export function clockMark(label) {
-  const svg = svgEl('svg', { viewBox: '0 0 14 14', class: 'clock-mark', role: 'img', 'aria-label': label });
-  svg.append(svgEl('circle', { cx: 7, cy: 7, r: 5.4 }), svgEl('path', { d: 'M7 3.6v3.7l2.5 1.5' }));
-  return svg;
-}
-
 /**
  * 再開ボタンを出すか。中断状態・走っていない・承認を待っていない・入力欄が空のとき。
  * 字があれば隠す（送ればその指示で続く。方針を変える道）

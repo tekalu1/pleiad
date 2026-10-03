@@ -44,6 +44,8 @@ import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall,
 import { Bundle, bundleOf, fadeIn, markRunning, markWaiting, splitToolCalls, swapHeight } from "./tool-bundle.mjs";
 import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
+import { whenText, timeText } from './schedule-times.mjs';
+import { setupSendMenu } from './send-menu.mjs';
 import { setupComposerControls, resolvedModel, folderBrowser, panel } from "./composer-controls.mjs";
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { setupAttachMenu } from "./attach-menu.mjs";
@@ -106,6 +108,9 @@ const submittingMessages = new Set();
 // Persist the request ID before transport so an acknowledgement lost on reload
 // can be reconciled with server acceptance instead of sending a second copy.
 const receipts = new Map();
+// 編集で入力欄へ戻した送信予定の時刻（sessionId -> 時刻）。送ると同じ時刻で予定し直し、チップの × で外せばふつうの送信になる
+const armedSends = new Map();
+let scheduleAttempt = null;   // 予定を置く応答が届かず送り直しても、同じ予定を二重に作らない
 try {
   for (const [id, request] of JSON.parse(localStorage.getItem('ply-message-receipts') ?? '[]')) receipts.set(id, request);
 } catch {}
@@ -117,9 +122,62 @@ function paintOutbox() {
   const shown = new Set([...thread.querySelectorAll('.mw[data-message-id]')].map(w => w.dataset.messageId));
   renderOutbox($('outbox'), outboxes.get(id) ?? [], async (messageId, action) => {
     await cmd('messageAction', { sessionId: id, messageId, action });
-  }, shown);
+  }, shown, { schedules: sendSchedules(id), scheduleActions });
   // 保留の件数で「再開」の字が変わる（renderSessions より先に届くこともある）
   syncResume();
+}
+/** この会話の送信予定（時刻順）。schedule.json の kind: 'send'（サーバーが持つので、どの端末からも同じ） */
+const sendSchedules = (id) => (state.schedules ?? []).filter(r => r.kind === 'send' && r.sessionId === id).sort((a, b) => a.at - b.at);
+/** 脇の行の印の材料（会話 -> { next: 次の時刻, missed: 送らず確かめを待っているものがあるか }） */
+function sideSchedules() {
+  const out = new Map();
+  for (const r of state.schedules ?? []) {
+    if (r.kind !== 'send') continue;
+    const now = out.get(r.sessionId) ?? { next: null, missed: false };
+    if (r.held) now.missed = true; else now.next = Math.min(now.next ?? Infinity, r.at);
+    out.set(r.sessionId, now);
+  }
+  return out;
+}
+const scheduleActions = {
+  now: async (entry) => { await limitOp('sessions.sendScheduledNow', { id: entry.id }); },
+  cancel: async (entry) => { await limitOp('sessions.cancelSchedule', { id: entry.id }); },
+  // 本文を入力欄へ戻す。取り出した予定は時刻が来ても動かず、送ると同じ時刻で予定し直す（時刻のチップ）
+  edit: async (entry) => {
+    const taken = await limitOp('sessions.cancelSchedule', { id: entry.id });
+    if (taken?.entry) restoreScheduled(taken.entry);
+  },
+};
+async function refreshSchedules() {
+  state.schedules = await limitOp('sessions.schedules');
+  if (state.current) paintOutbox();
+  renderSessions();
+}
+function restoreScheduled(entry) {
+  if (state.current !== entry.sessionId) return;
+  const prompt = entry.args?.prompt ?? '';
+  const current = $('prompt').value;
+  $('prompt').value = current.trim() ? `${prompt}\n\n${current}` : prompt;
+  for (const a of entry.args?.attachments ?? []) {
+    if (!attachedByPath(a.path)) state.attached.push({ path: a.path, name: a.name ?? shortPath(a.path), kind: 'file', mime: a.mime ?? '', from: 'host' });
+  }
+  armedSends.set(entry.sessionId, entry.at);
+  renderAttached(); fitPrompt(); paintArmed();
+  saveDraft().catch(() => {});
+  $('prompt').focus();
+}
+/** 時刻のチップ「◷ 10/4（日）9:00 ×」と、入力欄の下の「送ると、〜の送信予定にし直します」 */
+function paintArmed() {
+  const at = armedSends.get(state.current);
+  const chip = $('armedChip'), note = $('armedNote');
+  const was = !chip.hidden;
+  chip.hidden = !at;
+  if (was !== Boolean(at)) controls.fit();
+  if (!at) { if (note.dataset.armed) { note.hidden = true; delete note.dataset.armed; } return; }
+  $('armedText').textContent = whenText(at);
+  note.dataset.armed = '1';
+  note.hidden = false; note.classList.remove('quiet');
+  note.textContent = t('schedule.armedNoteEdit', { when: whenText(at) });
 }
 async function refreshOutbox(id) {
   const messages = await cmd('listMessages', { sessionId: id });
@@ -254,6 +312,8 @@ const state = {
   authUrl: new Map(),      // backendId -> { url, message } ログインの途中で出た URL
   busy: false,             // 枝の動きの最中。重ねて動かさない
   compactions: [],
+  schedules: [],
+  hostTimeZone: null,
   contextWindow: null,
   compactionAt: null,
   compactionPhase: null,
@@ -1072,7 +1132,7 @@ function whoLine(who, at, { backend, actions = true } = {}) {
  * 自分の発言。本文は Markdown で描き、この発言に結び付いた添付（presents。human の present）は本文の印の位置に置く
  * （web/user-message.mjs、ADR 0059）。markdown: false は今までの平文（委譲の子の会話を読む面）
  */
-function userMsg(text, { uuid, at, presents = [], markdown = true } = {}) {
+function userMsg(text, { uuid, at, presents = [], markdown = true, scheduledFor } = {}) {
   const m = el("div", "m user");
   m.dataset.role = "user";
   if (at) m.dataset.at = at;
@@ -1082,7 +1142,18 @@ function userMsg(text, { uuid, at, presents = [], markdown = true } = {}) {
   wireActions(m);
   paintUser(m, text, presents, { markdown });
   setUuid(m, uuid);
+  if (scheduledFor) markSentLate(m, at, scheduledFor);
   return m;
+}
+
+/** 送信予定の時刻に遅れて送った発言の下の一言「9:00 の予定を 9:32 に送りました」。時刻どおり（2 分以内）なら出さない */
+const LATE_NOTE_MS = 2 * 60_000;
+function markSentLate(m, at, planned) {
+  m.querySelector(':scope > .sent-late')?.remove();
+  const sent = Date.parse(at ?? '');
+  if (!Number.isFinite(sent) || !Number.isFinite(planned) || sent - planned < LATE_NOTE_MS) return;
+  const note = el('div', 'sent-late', t('schedule.late', { planned: whenText(planned, sent), sent: timeText(sent) }));
+  m.querySelector(':scope > .body')?.after(note);
 }
 
 /** 発言の原文。描画は原文から作り直せるよう、吹き出しが持つ（履歴との突き合わせ・添付の突き合わせもこれを読む） */
@@ -2577,7 +2648,13 @@ function onEvent(ev, replay = false) {
   if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); browserPanel?.profilesChanged(); computerSettings.paint(); refreshPreviewConfirmation(); filePreview.prefsChanged(); sessionContext.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
   if (ev.type === 'resumeQueue') { limitQueueState = { ...limitQueueState, ...ev.state }; syncLimitStrip(); if ($('limitQueueDialog').open) paintLimitQueue(); return; }
-  if (ev.type === 'schedules') { limitQueueState.schedules = ev.entries; syncLimitStrip(); if ($('limitQueueDialog').open) paintLimitQueue(); return; }
+  if (ev.type === 'schedules') {
+    state.schedules = ev.entries ?? [];
+    limitQueueState.schedules = state.schedules.filter(r => r.kind === 'resume');
+    syncLimitStrip(); if ($('limitQueueDialog').open) paintLimitQueue();
+    paintOutbox(); renderSessions();
+    return;
+  }
   if (ev.type === 'limitResumeReady') { refreshLimitQueue().catch(() => {}); return; }
   if (ev.type === 'limitResumeChanged') {
     const s = state.sessions.find(s => s.id === ev.sessionId);
@@ -2652,6 +2729,7 @@ function onEvent(ev, replay = false) {
       // 本文が同じなら描き直さない（送った直後の画像の枠を、読み込みの途中でやり直さない）
       if (userRow?.querySelector(':scope > .body') && userRaw(userRow) !== String(ev.text ?? '')) paintUser(userRow, ev.text, userRow.attached ?? []);
       if (ev.at) { row.querySelector('.m').dataset.at = ev.at; row.querySelector('.who .when').textContent = hhmm(ev.at); }
+      if (ev.scheduledFor) markSentLate(row.querySelector('.m'), ev.at, ev.scheduledFor);
       // 放置中の圧縮で末尾に付いた区切りは、この発言の前へ置き直す（at で並べ直す）。
       // 区切りがすべてこの発言より前にあるときは作り直さない。古い区切りを最新の発言の前へ動かしていた不具合の再発を防ぐ
       const rows = [...thread.children];
@@ -3662,6 +3740,7 @@ function renderSessions() {
     pendingRows,
     pendingStatuses,
     pendingNew: pendingNewSession,
+    schedules: sideSchedules(),
   });
   syncResumeStrip();
   syncLimitStrip();
@@ -3698,33 +3777,31 @@ function paintInterruptLine(live) {
   m.dataset.interrupted = reasonOf(interrupted);
   const at = Number(interrupted.at);
   if (reasonOf(interrupted) === 'limit') {
-    const body = el('div', 'limit-interrupt-body');
-    const head = el('div', 'limit-interrupt-head');
-    head.append(el('span', null, interruptLineText(interrupted)));
-    if (interrupted.backend === 'claude') head.append(el('span', 't', `(${accountLabel(interrupted.account)} · ${interrupted.window === 'five_hour' ? t('interrupt.limitWindowFiveHour') : interrupted.window ?? ''})`));
-    if (Number.isFinite(at) && at > 0) head.append(el('span', 't', `· ${hhmm(at)}`));
-    body.append(head);
+    // 1 行目は「■ 使用量の上限に達したため中断しました（private · 5 時間枠）· 01:43」。2 行目に自動で再開する旨とリンク
+    const scope = [capsOf(interrupted.backend).claudeAccounts ? accountLabel(interrupted.account) : '',
+      interrupted.window === 'five_hour' ? t('interrupt.limitWindowFiveHour') : interrupted.window ?? ''].filter(Boolean).join(' · ');
+    const head = [el('span', null, scope ? t('interrupt.limitHead', { line: interruptLineText(interrupted), scope }) : interruptLineText(interrupted))];
+    if (Number.isFinite(at) && at > 0) head.push(el('span', null, '·'), el('span', 't', hhmm(at)));
     const time = limitTime(interrupted.resetsAt) ?? t('interrupt.unknownTime');
     const order = state.sessions.filter(s => s.interrupted?.autoResume === true)
       .sort((a, b) => Number(Boolean(b.delegation)) - Number(Boolean(a.delegation)) || b.lastModified - a.lastModified)
       .findIndex(s => s.id === state.current) + 1;
-    body.append(el('div', 'limit-interrupt-detail', interrupted.notifyAtReset
+    const sub = el('span', 'limit-interrupt-sub');
+    sub.append(el('span', null, interrupted.notifyAtReset
       ? t('interrupt.limitAsk', { time }) : interrupted.autoResume === false
-        ? t('interrupt.limitWaiting') : t('interrupt.limitAfter', { time })
-          + (order ? ` (${t('interrupt.limitPosition', { count: order })})` : '')));
-    const actions = el('div', 'limit-interrupt-actions');
+        ? t('interrupt.limitWaiting') : order ? t('interrupt.limitAfterAt', { time, count: order }) : t('interrupt.limitAfter', { time })));
+    const link = (label, onClick) => {
+      const b = el('button', 'lnk', label); b.type = 'button'; b.onclick = onClick; sub.append(b);
+    };
     const selected = currentSession()?.nextSettings?.account ?? currentSession()?.claudeAccount ?? '';
-    if (interrupted.backend === 'claude' && currentSession()?.backend === 'claude'
-      && accountOptions().some(a => a.value !== selected
-        && (a.value === '' ? state.auth.get('claude')?.loggedIn : !a.hint))) {
-      const switchButton = el('button', 'btn btn-quiet', t('interrupt.limitSwitch'));
-      switchButton.type = 'button'; switchButton.onclick = () => limitResumeMenu.show(); actions.append(switchButton);
-    }
-    const toggle = el('button', 'btn btn-quiet', interrupted.autoResume === false ? t('interrupt.limitStartAuto') : t('interrupt.limitStopAuto'));
-    toggle.type = 'button'; toggle.onclick = () => setLimitAuto(interrupted.autoResume === false);
-    actions.append(toggle); body.append(actions);
-    m.replaceChildren(stopMark(), body);
+    const alternative = capsOf(interrupted.backend).claudeAccounts && currentSession()?.backend === interrupted.backend
+      ? accountOptions().find(a => a.value !== selected && (a.value === '' ? state.auth.get('claude')?.loggedIn : !a.hint)) : null;
+    if (alternative) link(t('interrupt.limitSwitchWith', { account: alternative.label }), () => limitResumeMenu.show());
+    link(t(interrupted.autoResume === false ? 'interrupt.limitStartAuto' : 'interrupt.limitStopAuto'), () => setLimitAuto(interrupted.autoResume === false));
+    m.classList.add('limit');
+    m.replaceChildren(stopMark(), ...head, sub);
   } else {
+    m.classList.remove('limit');
     m.replaceChildren(stopMark(), el('span', null, interruptLineText(interrupted)));
     if (Number.isFinite(at) && at > 0) m.append(el('span', null, '·'), el('span', 't', hhmm(at)));
   }
@@ -3751,6 +3828,7 @@ function syncResume() {
     button.title = label;
     button.setAttribute('aria-label', label);
   }
+  button.classList.toggle('is-limit', reasonOf(s?.interrupted) === 'limit');
   button.disabled = resuming.has(state.current);
   const note = $('resumeNote');
   note.hidden = !interrupted || running;
@@ -3765,6 +3843,7 @@ function syncResume() {
     else if ($('prompt').placeholder === placeholder) $('prompt').placeholder = promptPlaceholder();
   }
   if (button.hidden === show) { button.hidden = !show; controls.fit(); }
+  syncSendMore();
 }
 
 /**
@@ -3810,39 +3889,60 @@ async function setLimitAuto(enabled) {
   paintInterruptLine(); syncResume(); renderSessions();
   await refreshLimitQueue();
 }
+// 別のアカウントの 5 時間枠の使用率（「今すぐ OZ で続ける」の右に出す）。メニューを開いたときに取り、届いたら描き直す
+let limitUsage = null;
 const limitResumeMenu = panel($('resume'), $('limitResumePop'), { align: 'right', width: 330,
   when: () => reasonOf(currentSession()?.interrupted) === 'limit',
+  onShow: () => {
+    if (!capsOf(currentSession()?.backend).claudeAccounts) return;
+    cmd('providerUsage', { backend: currentSession().backend }).then(usage => { limitUsage = usage?.quota ?? null; if (limitResumeMenu.open) limitResumeMenu.render(); }).catch(() => {});
+  },
   render: () => {
     const pop = $('limitResumePop'); pop.replaceChildren();
     const s = currentSession();
     if (!s?.interrupted) return;
-    pop.append(el('p', 'limit-cache-hint', t('interrupt.limitAccountReset', {
-      account: accountLabel(s.interrupted.account), time: limitTime(s.interrupted.resetsAt) ?? t('interrupt.unknownTime'),
-    })));
-    const add = (label, onClick) => {
-      const b = el('button', 'copt', label); b.type = 'button';
+    const stopped = s.interrupted;
+    const time = limitTime(stopped.resetsAt) ?? t('interrupt.unknownTime');
+    const left = Number.isFinite(stopped.resetsAt) && stopped.resetsAt > Date.now() ? t('interrupt.limitResetLeft', { left: leftText(stopped.resetsAt) }) : '';
+    pop.append(el('div', 'chead', capsOf(stopped.backend).claudeAccounts
+      ? t('interrupt.limitAccountReset', { account: accountLabel(stopped.account), time, left }) : t('interrupt.limitReset', { time, left })));
+    const add = ({ label, tag, note, recommended }, onClick) => {
+      const b = el('button', 'copt copt-note'); b.type = 'button';
+      const body = el('span', 'cbody'); body.append(el('span', 'main', label));
+      if (note) body.append(el('span', 'sub', note));
+      b.append(body);
+      if (recommended) b.append(el('span', 'tag rec', t('interrupt.limitRecommend')));
+      else if (tag) b.append(el('span', 'r', tag));
       b.onclick = () => { limitResumeMenu.hide(false); Promise.resolve(onClick()).catch(e => { $('settingsError').textContent = e.message; }); };
       pop.append(b);
     };
-    add(t('interrupt.limitWait'), () => {});
-    if (s.backend === 'claude') {
-      const selected = s.nextSettings?.account ?? s.claudeAccount ?? '';
-      const alternatives = accountOptions().filter(a => a.value !== selected
-        && (a.value === '' ? state.auth.get('claude')?.loggedIn : !a.hint));
-      for (const account of alternatives) {
-        add(t('interrupt.limitSwitchWith', { account: account.label }), async () => {
-          await cmd('setTurnSettings', { sessionId: s.id, account: account.value });
-          await resumeSession(s.id);
-        });
-      }
-      const soon = Number.isFinite(s.interrupted.resetsAt) && s.interrupted.resetsAt - s.interrupted.at <= 55 * 60_000;
-      // i18n-dynamic: interrupt.limitCacheWait
-      // i18n-dynamic: interrupt.limitCacheSwitch
-      if (alternatives.length) pop.append(el('p', 'limit-cache-hint', t(soon ? 'interrupt.limitCacheWait' : 'interrupt.limitCacheSwitch')));
+    // i18n-dynamic: interrupt.limitAutoAt
+    // i18n-dynamic: interrupt.limitStartAuto
+    // 解除がキャッシュの持ち時間（止まってから約 1 時間）より前なら待つ、後なら読み直しは避けられないので余裕のある別のアカウントをすすめる
+    const cacheEnds = stopped.at + 60 * 60_000;
+    const soon = Number.isFinite(stopped.resetsAt) && stopped.resetsAt - stopped.at <= 55 * 60_000;
+    const selected = s.nextSettings?.account ?? s.claudeAccount ?? '';
+    const alternatives = capsOf(s.backend).claudeAccounts ? accountOptions().filter(a => a.value !== selected
+      && (a.value === '' ? state.auth.get('claude')?.loggedIn : !a.hint)) : [];
+    const waitNote = !capsOf(s.backend).claudeAccounts ? null
+      : soon ? t('interrupt.limitCacheKept', { time: limitTime(cacheEnds) }) : t('interrupt.limitCacheLost');
+    add({ label: t(stopped.autoResume === false ? 'interrupt.limitStartAutoAt' : 'interrupt.limitAutoAt', { time }), note: waitNote,
+      recommended: soon || !alternatives.length }, () => (stopped.autoResume === false ? setLimitAuto(true) : undefined));
+    const tokens = state.contextWindow?.usedTokens;
+    for (const account of alternatives) {
+      const windows = limitUsage?.accounts?.find(a => a.accountId === account.value)?.windows ?? (account.value === '' ? limitUsage?.accounts?.[0]?.windows : null) ?? [];
+      const five = windows.find(w => w.minutes === 300)?.usedPercent;
+      add({ label: t('interrupt.limitSwitchWith', { account: account.label }),
+        tag: Number.isFinite(five) ? t('interrupt.limitWindowUse', { percent: Math.round(five) }) : null,
+        note: tokens ? t('interrupt.limitSwitchNote', { tokens: compactNumber(tokens), account: account.label }) : t('interrupt.limitSwitchNoteShort', { account: account.label }),
+        recommended: !soon && account === alternatives[0] }, async () => {
+        await cmd('setTurnSettings', { sessionId: s.id, account: account.value });
+        await resumeSession(s.id);
+      });
     }
-    add(t('interrupt.order'), () => openLimitQueue());
-    add(t(s.interrupted.autoResume === false ? 'interrupt.limitStartAuto' : 'interrupt.limitStopAuto'),
-      () => setLimitAuto(s.interrupted.autoResume === false));
+    add({ label: t('interrupt.limitOrder') }, () => openLimitQueue());
+    pop.append(el('div', 'sep'));
+    if (stopped.autoResume !== false) add({ label: t('interrupt.limitStopAuto') }, () => setLimitAuto(false));
   },
 });
 
@@ -6817,7 +6917,7 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
     return { node: system, role, system: true };
   }
   let node;
-  if (m.role === "user") node = user ? user(m) : userMsg(m.text, { uuid: readonly ? undefined : m.uuid, at: m.at, presents, markdown: !readonly });
+  if (m.role === "user") node = user ? user(m) : userMsg(m.text, { uuid: readonly ? undefined : m.uuid, at: m.at, presents, markdown: !readonly, scheduledFor: m.scheduledFor });
   else {
     node = aiMsg({ uuid: readonly ? undefined : m.uuid, at: m.at, backend: m.backend ?? backend, cont });
     if (readonly && m.model) node.querySelector('.who > span:not(.row-be)').textContent = modelDisplayName(state.vocab.get(backend)?.models ?? {}, m.model);
@@ -7389,7 +7489,7 @@ async function clearSentDraft(id, text, attachments) {
   if (state.current === id) { $('prompt').value = ''; state.attached = []; renderAttached(); $('slashHint').textContent = ''; slashSkills.close(); fitPrompt(); }
   await persistDraft(id, { text: '', attached: [], dirty: true });
 }
-async function submit() {
+async function submit({ at = armedSends.get(state.current) } = {}) {
   // 入力欄の `!`: シェルの形なら走らせる。使えない会話の `!` は送らずに理由の一行を光らせる（文として送るのは「文として送る」だけ）
   if (shellComposer.active) return runShellFromComposer();
   if (shellComposer.blocked) return shellComposer.flash();
@@ -7440,9 +7540,11 @@ async function submit() {
       } else sys(t('compaction.antigravityManaged'));
       return;
     }
-    const row = state.sessions.find(s => s.id === sessionId);
-    if (row) { row.compacted = false; row.compactionAt = null; renderSessions(); }
-    state.compactionAt = null; paintContextStrip();
+    if (!at) {
+      const row = state.sessions.find(s => s.id === sessionId);
+      if (row) { row.compacted = false; row.compactionAt = null; renderSessions(); }
+      state.compactionAt = null; paintContextStrip();
+    }
     // 添付の印はエージェントが読むので会話の言語で（まだ決まっていない会話は、サーバーが決めるのと同じ画面の言語）
     const agentLang = state.sessions.find(s => s.id === sessionId)?.agentLocale ?? uiLang;
     // 本文は文中の印（[添付] パス）ごとそのまま送る。文中に無い添付（文末に付く）だけ、今までどおり末尾に印を足す
@@ -7451,6 +7553,18 @@ async function submit() {
     const full = [text.trim(), tail.map(a => attachmentLine(agentLang, a.path)).join(NL)].filter(Boolean).join(NL + NL);
     const args = { sessionId, prompt: full, cwd: state.cwd.trim() || undefined, mode: state.mode,
       ...(attachments.length ? { attachments } : {}) };
+    // 日時を指定した送信は、送信待ちではなく予定として置く（時刻が来たら同じ送信待ちへ入る。core/send-schedule.mjs）
+    if (at) {
+      const key = `${sessionId}\n${full}\n${at}`;
+      if (scheduleAttempt?.key !== key) scheduleAttempt = { key, messageId: randomId() };
+      await limitOp('sessions.scheduleSend', { sessionId, prompt: full, at, messageId: scheduleAttempt.messageId,
+        ...(args.cwd ? { cwd: args.cwd } : {}), ...(args.mode ? { mode: args.mode } : {}), ...(attachments.length ? { attachments } : {}) });
+      scheduleAttempt = null;
+      armedSends.delete(sessionId); paintArmed();
+      await clearSentDraft(sessionId, text, attachments);
+      $('settingsError').textContent = '';
+      return;
+    }
     const previous = receipts.get(sessionId);
     if (previous) {
       const known = (await refreshOutbox(sessionId)).find(m => m.id === previous.messageId);
@@ -7474,7 +7588,7 @@ async function submit() {
     receipts.delete(sessionId); saveReceipts();
     $('settingsError').textContent = '';
   } catch (e) {
-    $('settingsError').textContent = t('chat.send.failed', { error: e.message });
+    $('settingsError').textContent = at ? t('schedule.scheduleFailed', { error: e.message }) : t('chat.send.failed', { error: e.message });
   } finally {
     submittingMessages.delete(sessionId);
     syncRunState();
@@ -7516,6 +7630,8 @@ function connect() {
       if (applyLocale(m.locale)) return;
       connStatus.ready();
       refreshLimitQueue().catch(() => {});
+      state.hostTimeZone = m.hostTimeZone ?? null;
+      refreshSchedules().catch(() => {});
       // 切れている間の確認と、旧版がこのブラウザーに持っていた確認済みを送る（受け取られたら旧版の分は消す）
       readCompletions.flush();
       // 切れて止まっていたフォルダーの送信・添付の送信を、受け取り済みの位置から続ける
@@ -7583,6 +7699,30 @@ function connect() {
 
 // ---------------------------------------------------------------- 操作
 
+// 送信の日時の面（▾・送信の円の右クリックと長押し・Ctrl+Shift+Enter。web/send-menu.mjs）
+const sendMenu = setupSendMenu({ send: $('send'), more: $('sendMore'), pop: $('sendPop'), veil: $('sendVeil'),
+  narrow: matchMedia('(max-width:480px)'),
+  context: () => ({ available: canScheduleHere(), resetsAt: limitResetHere() }),
+  // 窓を閉じても動き続けるか（常駐しているか）。動き続けないときだけ、面の一言「閉じている間は送れません」を出す
+  environment: async () => {
+    const status = await cmd('remoteStatus').catch(() => null);
+    const resident = status?.resident;
+    return { persistent: !resident?.available || Boolean(status?.enabled && resident.keepRunning), hostZone: state.hostTimeZone };
+  },
+  onSchedule: (at) => submit({ at }),
+  onSendNow: () => submit({ at: null }) });
+$('armedRemove').onclick = () => { armedSends.delete(state.current); paintArmed(); $('prompt').focus(); };
+// 時刻が近づくと「あと 7 時間」が変わる。予定のある会話を開いている間だけ、30 秒ごとに描き直す
+setInterval(() => { if (state.current && sendSchedules(state.current).some(r => !r.held)) paintOutbox(); }, 30_000);
+/** いま日時を指定して送れるか（送る中身があり、シェルの形でなく、送れる会話か） */
+function canScheduleHere() { return Boolean(($('prompt').value.trim() || state.attached.length) && !composerShellMode && !retiredHere()); }
+/** 上限で止まっている会話の解除の時刻（候補の先頭「上限の解除後」） */
+function limitResetHere() {
+  const stopped = currentSession()?.interrupted;
+  return reasonOf(stopped) === 'limit' && stopped.resetsAt > Date.now() ? stopped.resetsAt : null;
+}
+function syncSendMore() { $('sendMore').disabled = !canScheduleHere() || $('send').disabled; }
+
 const shellComposer = createShellComposer({ box: $('cbox'), prompt: $('prompt'), head: $('shellHead'), send: $('send'), t,
   availability: shellAvailability,
   where: () => ({ cwd: state.cwd.trim() || state.sessions.find(s => s.id === state.current)?.cwd || '', host: remoteInfo(window.plyRemote)?.host ?? '' }),
@@ -7597,7 +7737,7 @@ $("prompt").onkeydown = (e) => {
   if (shellComposer.keydown(e)) return;
   // 入力欄の「/」の候補が開いている間は候補の操作を先に取る（Ctrl+Enter は送信のまま）
   if (slashSkills.keydown(e)) return;
-  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); }
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (e.shiftKey) sendMenu.open(); else submit(); }
 };
 // 設定 › コンテキストは全体の設定だけ（フォルダーごとは会話の右パネルの「この場所だけ変える」）。
 // 最近の会話の場所は「探す場所を足す」の候補、「設定 › 委譲で変える →」は委譲のページへ
