@@ -133,8 +133,6 @@
       "placeholder": "スレッドに返信",
       "working": "スレッドに返信 · 作業中でも {{name}} に届きます"
     },
-    "openSession": "会話を開く →",
-    "openSessionTitle": "この返事を作った bot の会話を Chats で開く",
     "stop": "止める",
     "stopping": "止めています…",
     "stopFailed": "止められませんでした: {{error}}",

@@ -73,9 +73,6 @@
 .post-main .th-tools .bundle{margin-bottom:2px}
 .post-presents{display:flex;flex-direction:column;gap:6px;margin:6px 0 2px;min-width:0}
 .post-presents .present{max-width:100%;margin:0}
-.th-open{display:inline-flex;align-self:flex-start;margin:4px 0 0 -8px;padding:2px 10px 2px 8px;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);font-size:var(--fs-xs);cursor:pointer;
-  transition:background-color var(--dur-fast) var(--ease-out)}
-.th-open:hover{background:var(--surface-2);color:var(--ink)}
 .post-body ul.ck{list-style:none;margin:8px 0 2px;padding:10px 12px;background:var(--surface-1);border-radius:var(--r-m);display:flex;flex-direction:column;gap:3px}
 .post:hover .post-body ul.ck{background:var(--surface-paper)}
 .ck li{display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:1.5;min-width:0;margin:0}
@@ -102,6 +99,7 @@
 .th-band-mark{color:var(--ink-mark);font-size:10px;line-height:1}
 .th-band-dot{opacity:.6}
 .th-band-tokens{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.th-tok-num{font-variant-numeric:tabular-nums}
 .th-stop{flex:none;display:inline-flex;align-items:center;gap:6px;padding:4px 12px 4px 8px}
 .th-stop svg.i{width:14px;height:14px}
 .th-jump{bottom:calc(var(--ch-composer-h,96px) + 56px)}
@@ -128,5 +126,7 @@
   .th-sys{margin-left:44px}
   .th-perms{--gut:44px}
   .th-band{margin:0 10px 6px}
+  .th-band-tokens{position:relative;flex:none}
+  .th-tok-aux{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}   /* 数字だけ見せる。語は読み上げに残す */
   .deck[data-deck=solo] .th-side{display:inline-flex;margin-left:-6px}
 }
