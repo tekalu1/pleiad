@@ -2160,10 +2160,132 @@ const opsSessions = {
   setTitle: async (id, title, { actor, reason, backend } = {}) => changeTitle(await pickBackend(id, backend), id, title, { actor, reason: reasonOf(reason) }),
   setStatus: async (id, status, { actor, reason, alone, backend } = {}) => changeStatus(await pickBackend(id, backend), id, status, { actor, reason: reasonOf(reason), alone }),
   fork: (input, { actor } = {}) => forkConversation(input, actor),
+  setModel: (id, model, { actor, reason, backend } = {}) => changeModel(id, model, { actor, reason: reasonOf(reason), backend }),
 };
+
+/**
+ * 会話のモデルの変更。setModel コマンドと sessions.setModel が同じ経路を通る（ADR 0007・0094）。走っているターンにも即時に伝える（できるエージェントだけ）。
+ * 新しい会話の既定のモデル（prefs）として覚えるのは人間の変更だけ（AI が自分の会話で替えたモデルを、黙って全体の既定にしない）
+ */
+async function changeModel(sessionId, model, { actor, reason, backend: given } = {}) {
+  const who = changeBy(actor);
+  const backend = refuseRetired(await pickBackend(sessionId, given));
+  // 互換の接続先の会話はモデル ID を形だけ見る（接続先の一覧＋自由入力）。公式の既定（prefs）には覚えない
+  const endpointId = endpointCapable(backend) ? (await store.get(sessionId)).compatEndpoint ?? '' : '';
+  if (!(await validModel(backend, model, undefined, endpointId))) throw new OpError('INVALID', t('settings.unknownModel', { value: model }));
+  const from = (await store.get(sessionId)).model ?? "";
+  await store.setModel(sessionId, model);
+  if (!endpointId && who.by === 'human') await savePref("model", model, backend.id);
+  await store.recordChange(sessionId, { ...who, field: "model", from, to: model, ...reason, backend });
+  let live = false;
+  const liveTurn = runtime.turns.get(sessionId);
+  if (model && liveTurn?.control.handle && backend.setModelLive) {
+    live = await backend.setModelLive(liveTurn.control.handle, model)
+      .catch((err) => { console.error("  モデルの即時切り替えに失敗:", String(err?.message ?? err)); return false; });
+  }
+  emitGlobal({ type: "model", sessionId, model, by: who.by, live });
+  return { live };
+}
 
 // 状態のグループ（statuses.*）の本体
 const opsStatuses = { setIcon: setStatusIconOf, create: createStatusGroup };
+
+/** 分けた作業場所を作れなかった理由 → 画面の言語の文（server:worktree.fail.<reason>）の OpError */
+// i18n-dynamic: server:worktree.fail.
+const worktreeFailure = (reason, error) => new OpError(reason === 'not-git' ? 'NOT_GIT' : 'WORKTREE_FAILED', t(`worktree.fail.${reason}`, { error: error ?? '' }));
+const worktreeEntry = async (id) => {
+  const entry = await worktreeHost.worktrees.get(String(id ?? ''));
+  if (!entry) throw new OpError('WORKTREE_NOT_FOUND', t('worktree.notFound'));
+  return entry;
+};
+// 分けた作業場所（worktrees.*。ADR 0089）の本体。画面の WS コマンドも AI もここを通る
+const opsWorktrees = {
+  split: async (args) => {
+    const sessionId = typeof args?.sessionId === 'string' && args.sessionId ? args.sessionId : null;
+    const cwd = await worktreeCwd(args);
+    if (!cwd) throw worktreeFailure('not-git');
+    const made = await worktreeHost.split({ cwd, sessionId });
+    if (!made.ok) throw worktreeFailure(made.reason, made.error);
+    return { worktree: made.entry, cwd: made.cwd };
+  },
+  // 変更なし・取り込み済みのときだけ消す（未取り込み・使っているものは残す）
+  discard: async (id) => {
+    const entry = await worktreeHost.worktrees.get(String(id ?? ''));
+    if (!entry) return { action: 'skip' };
+    return worktreeHost.worktrees.settle(entry.id);
+  },
+  keep: async (id, kept) => {
+    const entry = await worktreeEntry(id);
+    await worktreeHost.worktrees.keep(entry.id, kept);
+    return { id: entry.id, kept };
+  },
+  archive: async (id) => {
+    const entry = await worktreeEntry(id);
+    const result = await worktreeHost.archive(entry.id);
+    emitGlobal({ type: 'worktreesChanged', sessionId: null });
+    return result;
+  },
+  restore: async (args) => {
+    const cwd = await gitCwd(args);
+    if (!cwd) throw worktreeFailure('not-git');
+    const made = await worktreeHost.restore({ cwd, ref: String(args?.ref ?? '') });
+    if (!made.ok) throw worktreeFailure(made.reason, made.error);
+    emitGlobal({ type: 'worktreesChanged', sessionId: null });
+    return { worktree: made.entry, cwd: made.cwd };
+  },
+  setSettings: async ({ always }) => {
+    const next = await worktreeHost.worktrees.setSettings({ always });
+    emitGlobal({ type: 'worktreeSettings', sessionId: null, ...next });
+    return next;
+  },
+};
+
+// 通知の設定（notify.*。ADR 0086）の本体。変えたら設定 › 通知の材料を全画面へ配る
+const notifyChanged = async () => emitGlobal({ type: 'notifyStatus', status: await notifyStatus(), sessionId: null });
+const opsNotify = {
+  setPc: async (patch) => { const pc = await notifySettings.set(patch); await notifyChanged(); return pc; },
+  setDevice: async (id, muted) => {
+    if (!remote.deviceInfo(id)) throw new OpError('DEVICE_NOT_FOUND', t('notify.error.unknownDevice'));
+    await remote.setNotifyMuted(id, muted === true);
+    await notifyChanged();
+    return { id, muted: muted === true };
+  },
+};
+
+// Hooks の定義を読む（hooks.*）。失敗の文はファイルの読み方（hooks-config・ply-hooks）が持つ
+const hookFailure = (e) => new OpError('HOOK_NOT_FOUND', String(e?.message ?? e));
+const opsHooks = {
+  read: (args) => hooksConfig.read(args).catch((e) => { throw hookFailure(e); }),
+  readPly: (id) => plyHooks.readHook(id).catch((e) => { throw hookFailure(e); }),
+};
+
+// 互換の接続先のうち秘密を入力しない操作（compatEndpoints.*）。キーは返さない
+const opsCompat = {
+  get: (id) => compatEndpoints.get(String(id ?? '')),
+  deleteNote: (e) => t('compat.deleteConfirm', { name: e?.name ?? e?.id ?? '' }),
+  recheck: async (id) => {
+    let result;
+    try { result = await compatEndpoints.recheck(String(id ?? '')); }
+    catch (e) { if (e instanceof CheckError) throw new OpError('ENDPOINT_NOT_FOUND', e.message); throw e; }
+    emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
+    return result;
+  },
+  remove: async (id) => {
+    if (!(await compatEndpoints.has(String(id ?? '')))) throw new OpError('ENDPOINT_NOT_FOUND', t('compat.store.notRegistered'));
+    await compatEndpoints.remove(String(id));
+    emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
+    return { id: String(id), deleted: true };
+  },
+};
+
+// コンピューターの操作を止める（computer.stop。docs/computer-use.md「computerStop」）。止める側なので、リモートの端末からも AI からも受ける
+const opsComputer = {
+  stop: (sessionId) => {
+    const result = computerLock.stopSession(sessionId, 'stop');
+    if (result.stopped && result.owner) computerDriver?.stop(result.owner);
+    return { stopped: result.stopped };
+  },
+};
 
 /** 変更の記録に残す値（長いものは切る。秘密は設定に持たないので入らない） */
 const clipValue = (value) => { const text = JSON.stringify(value) ?? 'null'; return text.length > 300 ? `${text.slice(0, 299)}…` : text; };
@@ -2319,6 +2441,11 @@ function opsDeps(lng = currentLocale()) {
     prefs: () => store.getPrefs(),
     compactionSettings: () => compactionSettings,
     statuses: opsStatuses,
+    worktrees: opsWorktrees,
+    notify: opsNotify,
+    hooks: opsHooks,
+    compat: opsCompat,
+    computer: opsComputer,
     // 設定を検査するために、サーバーの知っていること（エージェントの有無・モデルと承認モードの語彙・アカウント・Pleiad の指示）を借りる
     host: {
       hasBackend: (id) => Boolean(getBackend(id)),
@@ -4126,6 +4253,11 @@ wss.on("connection", (ws, req) => {
     const reply = (ok, payload, code, extra) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) }));
     };
+    // 操作の一覧（core/ops/）へ移したコマンド: 画面（human）として op を呼ぶ。then は成功の返り値を画面の形に直す（無ければそのまま）
+    const viaOp = async (id, then = (result) => result) => {
+      const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, id, msg.args, opsDeps(locale.lang));
+      return r.ok ? reply(true, await then(r.result)) : reply(false, r.error, r.code);
+    };
 
     let releaseUpdateGate;
     try {
@@ -4251,50 +4383,22 @@ wss.on("connection", (ws, req) => {
           if (!cwd) return reply(true, { git: false, current: null, conflicts: [], canSplit: false, always });
           return reply(true, await worktreeHost.check({ sessionId, cwd, writes: await sessionWrites(sessionId, msg.args?.backend, msg.args?.mode) }));
         }
-        case 'worktreeSplit': {
-          const sessionId = typeof msg.args?.sessionId === 'string' && msg.args.sessionId ? msg.args.sessionId : null;
-          const cwd = await worktreeCwd(msg.args);
-          if (!cwd) throw new Error(t('worktree.fail.not-git'));
-          const made = await worktreeHost.split({ cwd, sessionId });
-          // i18n-dynamic: server:worktree.fail.
-          if (!made.ok) throw new Error(t(`worktree.fail.${made.reason}`, { error: made.error ?? '' }));
-          return reply(true, { worktree: made.entry, cwd: made.cwd });
-        }
-        case 'worktreeDiscard': {
-          const entry = await worktreeHost.worktrees.get(String(msg.args?.id ?? ''));
-          if (!entry) return reply(true, { action: 'skip' });
-          return reply(true, await worktreeHost.worktrees.settle(entry.id));
-        }
-        case 'worktreeKeep': {
-          const entry = await worktreeHost.worktrees.get(String(msg.args?.id ?? ''));
-          if (!entry) throw new Error(t('worktree.notFound'));
-          await worktreeHost.worktrees.keep(entry.id, msg.args?.kept !== false);
-          return reply(true, { id: entry.id, kept: msg.args?.kept !== false });
-        }
-        case 'worktreeArchive': {
-          const entry = await worktreeHost.worktrees.get(String(msg.args?.id ?? ''));
-          if (!entry) throw new Error(t('worktree.notFound'));
-          const result = await worktreeHost.archive(entry.id);
-          emitGlobal({ type: 'worktreesChanged', sessionId: null });
-          return reply(true, result);
-        }
-        case 'worktreeRestore': {
-          const cwd = await gitCwd(msg.args);
-          if (!cwd) throw new Error(t('worktree.fail.not-git'));
-          const made = await worktreeHost.restore({ cwd, ref: String(msg.args?.ref ?? '') });
-          // i18n-dynamic: server:worktree.fail.
-          if (!made.ok) throw new Error(t(`worktree.fail.${made.reason}`, { error: made.error ?? '' }));
-          emitGlobal({ type: 'worktreesChanged', sessionId: null });
-          return reply(true, { worktree: made.entry, cwd: made.cwd });
-        }
+        // 分ける・片付ける・残す・退避・元に戻す・いつも分けるは worktrees.*（core/ops/worktrees.mjs。AI も同じ操作を呼ぶ。ADR 0094）
+        case 'worktreeSplit':
+          return viaOp('worktrees.split');
+        case 'worktreeDiscard':
+          return viaOp('worktrees.discard');
+        case 'worktreeKeep':
+          return viaOp('worktrees.keep');
+        case 'worktreeArchive':
+          return viaOp('worktrees.archive');
+        case 'worktreeRestore':
+          return viaOp('worktrees.restore');
         case 'worktreeSettings':
           return reply(true, await worktreeHost.worktrees.getSettings());
-        case 'setWorktreeSettings': {
+        case 'setWorktreeSettings':
           if (typeof msg.args?.always !== 'boolean') throw new Error(t('worktree.settingsInvalid'));
-          const next = await worktreeHost.worktrees.setSettings({ always: msg.args.always });
-          emitGlobal({ type: 'worktreeSettings', sessionId: null, ...next });
-          return reply(true, next);
-        }
+          return viaOp('worktrees.setSettings');
         case 'setSessionMcp':
           await contextSession.setMcp(msg.args?.sessionId, msg.args?.name, msg.args?.removed !== false);
           return reply(true, { ok: true });
@@ -4316,7 +4420,7 @@ wss.on("connection", (ws, req) => {
           return reply(true, await withCodexTrust(report, cwd ?? os.homedir(), { trust: msg.args?.trust === true }));
         }
         case 'readHook':
-          return reply(true, await hooksConfig.read(msg.args ?? {}));
+          return viaOp('hooks.read');
         case 'hookTargets':
           return reply(true, await hooksConfig.targets(msg.args ?? {}));
         case 'saveHooks':
@@ -4343,7 +4447,7 @@ wss.on("connection", (ws, req) => {
         case 'plyHooks':
           return reply(true, await plyHooks.view(msg.args?.cwd ?? null));
         case 'readPlyHook':
-          return reply(true, await plyHooks.readHook(msg.args?.id));
+          return viaOp('hooks.readPly');
         case 'savePlyHook':
           return reply(true, await plyHooks.save(msg.args?.value ?? {}, { cwd: msg.args?.cwd ?? null }));
         case 'removePlyHook':
@@ -4429,20 +4533,11 @@ wss.on("connection", (ws, req) => {
         // 通知（ADR 0086）。この PC の設定とスマホの一覧は設定 › 通知。スマホの通知鍵と設定の登録は、端末の画面（中継越し）からだけ
         case 'notifyStatus':
           return reply(true, await notifyStatus());
-        case 'setNotifyPc': {
-          await notifySettings.set(msg.args ?? {});
-          const status = await notifyStatus();
-          emitGlobal({ type: 'notifyStatus', status, sessionId: null });
-          return reply(true, status);
-        }
-        case 'setNotifyDevice': {
-          const id = String(msg.args?.id ?? '');
-          if (!remote.deviceInfo(id)) throw new Error(t('notify.error.unknownDevice'));
-          await remote.setNotifyMuted(id, msg.args?.muted === true);
-          const status = await notifyStatus();
-          emitGlobal({ type: 'notifyStatus', status, sessionId: null });
-          return reply(true, status);
-        }
+        // この PC の通知・スマホごとの切り替えは notify.*（AI も同じ操作を呼ぶ。ADR 0094）。画面には設定 › 通知の材料を返す
+        case 'setNotifyPc':
+          return viaOp('notify.setPc', () => notifyStatus());
+        case 'setNotifyDevice':
+          return viaOp('notify.setDevice', () => notifyStatus());
         case 'notifyRegister': {
           const via = connectionDevices.get(ws);
           if (!via?.mobile) throw new Error(t('notify.error.notDevice'));
@@ -4466,16 +4561,11 @@ wss.on("connection", (ws, req) => {
           emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
           return reply(true, saved);
         }
-        case 'compatEndpointRecheck': {
-          const result = await compatEndpoints.recheck(String(msg.args?.id ?? ''));
-          emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
-          return reply(true, result);
-        }
-        case 'compatEndpointDelete': {
-          await compatEndpoints.remove(String(msg.args?.id ?? ''));
-          emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
-          return reply(true, await compatEndpoints.list());
-        }
+        // 保存済みの接続先の確認し直しと削除は compatEndpoints.*（キーを入力しない。AI も同じ操作を呼ぶ。ADR 0094）
+        case 'compatEndpointRecheck':
+          return viaOp('compatEndpoints.recheck');
+        case 'compatEndpointDelete':
+          return viaOp('compatEndpoints.delete', () => compatEndpoints.list());
         case 'compatEndpointDefault': {
           await compatEndpoints.setDefault(String(msg.args?.agent ?? ''), String(msg.args?.id ?? ''));
           emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
@@ -5027,13 +5117,9 @@ wss.on("connection", (ws, req) => {
           // pcBrowser: この接続から PC の内蔵ブラウザーを見られるか（デスクトップ版で、リモートの接続のとき）
           return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready,
             computerUse: computerUseCapability({ hasParentPort: Boolean(computerDriver), platform: computerDriver?.kind === 'fake' ? 'win32' : undefined, ready: computerDriver?.state() ?? null }) });
-        // コンピューターの操作を止める（docs/computer-use.md「computerStop」）。ホストの OS を操作する命令ではなく、止める側なので、リモートの端末からも受ける
-        case "computerStop": {
-          const { sessionId } = msg.args ?? {};
-          const result = typeof sessionId === 'string' && sessionId ? computerLock.stopSession(sessionId, 'stop') : { stopped: false };
-          if (result.stopped && result.owner) computerDriver?.stop(result.owner);
-          return reply(true, { stopped: result.stopped });
-        }
+        // コンピューターの操作を止める（docs/computer-use.md「computerStop」）。ホストの OS を操作する命令ではなく、止める側なので、リモートの端末からも受ける（computer.stop）
+        case "computerStop":
+          return viaOp('computer.stop');
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));
@@ -5366,28 +5452,9 @@ wss.on("connection", (ws, req) => {
           return reply(true, { agentId: null });
         }
 
-        // モデルの切り替えも人間の操作から。AI 用のツールは生やさない。
-        case "setModel": {
-          const { sessionId, model } = msg.args ?? {};
-          const backend = refuseRetired(await pickBackend(sessionId, msg.args?.backend));
-          // 互換の接続先の会話はモデル ID を形だけ見る（接続先の一覧＋自由入力）。公式の既定（prefs）には覚えない
-          const endpointId = endpointCapable(backend) ? (await store.get(sessionId)).compatEndpoint ?? '' : '';
-          if (!(await validModel(backend, model, undefined, endpointId))) return reply(false, t('settings.unknownModel', { value: model }));
-          const from = (await store.get(sessionId)).model ?? "";
-          await store.setModel(sessionId, model);
-          if (!endpointId) await savePref("model", model, backend.id);
-          await store.recordChange(sessionId, {
-            by: "human", field: "model", from, to: model, ...clientReason(msg.args), backend,
-          });
-          let live = false;
-          const liveTurn = runtime.turns.get(sessionId);
-          if (model && liveTurn?.control.handle && backend.setModelLive) {
-            live = await backend.setModelLive(liveTurn.control.handle, model)
-              .catch((err) => { console.error("  モデルの即時切り替えに失敗:", String(err?.message ?? err)); return false; });
-          }
-          emitGlobal({ type: "model", sessionId, model, by: "human", live });
-          return reply(true, { live });
-        }
+        // モデルの切り替え（sessions.setModel）。AI も同じ操作を呼ぶ（ADR 0094）。承認モードは人間だけ（下の setMode）
+        case "setModel":
+          return viaOp('sessions.setModel', (r) => ({ live: r.live }));
 
         // 承認モードの切り替えは人間の操作からしか来ない。AI にツールは生やさない。
         case "setMode": {

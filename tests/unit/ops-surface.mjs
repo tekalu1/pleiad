@@ -141,12 +141,14 @@ export default async function (t) {
     compactionSettings: () => ({ enabled: true, ...secret }),
     delegation: { list: () => [{ taskId: 't', status: 'completed', ...secret }], get: () => ({ taskId: 't', status: 'completed', result: 'done', ...secret }) },
     limitResume: { messages: () => [], schedules: () => [], queue: () => ({ pending: [], running: [] }) },
+    hooks: { read: async () => ({ agent: 'claude', scope: 'user', path: 'p', command: 'echo', ...secret }), readPly: async () => ({ id: 'h-1', name: 'n', command: 'echo', ...secret }) },
   };
   // 必須の引数がある read 操作に渡す引数（設定は全部の key）
   const samples = {
     'settings.get': registry.settings.map((x) => ({ key: x.key })), 'settings.schema': registry.settings.map((x) => ({ key: x.key })),
     'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }],
     'sessions.listMessages': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
+    'hooks.read': [{ agent: 'claude', scope: 'user', loc: { event: 'PreToolUse', group: 0, handler: 0 } }], 'hooks.readPly': [{ id: 'h-1' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {
     const needs = Object.keys(op.input.shape).length && Object.values(op.input.shape).some((f) => !f.safeParse(undefined).success);

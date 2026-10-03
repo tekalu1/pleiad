@@ -28,7 +28,7 @@
   | read（検索・一覧・設定の現在値。秘密は伏せる） | 通す | 通す |
   | write（タイトル・状態・分岐・圧縮の閾値・表示の言語・人間が作った選択肢から選ぶ） | 通す | 通す。会話の範囲（scope）が none / readonly なら断る（`READ_ONLY_MODE`） |
   | guarded（MCP の登録・Hooks の追加と有効化・computer use とサイトの確認を緩める向き・Pleiad の指示・委譲先の振り分け） | 通す | 下の表 |
-  | human-only（承認モード・秘密の値・アカウント・互換の接続先の鍵と既定・リモートの有効化とペアリング） | 通す | 出さない（呼ばれたら `NOT_FOUND` と同じに見せる） |
+  | human-only（5 つだけ: 承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリング。[ADR 0094](0094-human-only-five.md)） | 通す | 出さない（呼ばれたら `NOT_FOUND` と同じに見せる） |
 
 - **agent の guarded は、束縛された会話の承認モードで決める。**
 
@@ -44,6 +44,7 @@
 - **同じ設定でも、関所を緩める向きだけ guarded にする**（オンにする・許可を足す）。狭める向きは write にする（[ADR 0031](0031-confirm-before-unifying-mcp.md) の「広げる向きだけ確認」）。操作ごとの `riskOf` は定義の危険度を下げられない。
 - **他の会話への書き込み**（題・状態など write）は通し、どの会話の AI が変えたかを `sessionId` で記録する。人間は別の会話の題も変えられるので、非対称にしない。
 - human-only は、承認モードに関わらず agent に出さない。承認モードそのものは今までどおり人間だけが変える。
+- **human-only は 5 つに限る**（2026-10-03、[ADR 0094](0094-human-only-five.md)）。承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリングで、当たる操作と設定は `core/ops/policy.mjs` の `HUMAN_ONLY`。Pleiad の機能はほかは全部 agent も使える（read・write・guarded のどれか）。
 - 書く操作の既定は guarded に倒す。write にするときは理由（`riskReason`）を書き、危険度の表は snapshot に載せる。
 
 ## 理由
@@ -64,4 +65,5 @@
 - 承認なしのモードの会話からの guarded は黙って通る。履歴の `by: 'agent'` と `via`・`sessionId` で追える。
 - 会話に束縛されない CLI から guarded の設定は変えられない。人が CLI から変えたい場合の会話を持たない承認（画面の全体のカード）は、必要になったら別に決める。
 - 段階 0 は `ask` を `NEEDS_APPROVAL`（判定は ask）として返すところまで。承認カードは段階 2。
+- human-only の範囲（5 つと、当たる操作）は [ADR 0094](0094-human-only-five.md) に定める。
 - 段階 3 の host・委譲・ブラウザー各操作への危険度の割り当てと、既存ツールの可用性を保つ `modeGate: false` は [ADR 0091](0091-control-surface-host-delegation-browser.md) に定める。
