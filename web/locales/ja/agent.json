@@ -519,7 +519,7 @@
         "reason": "変える理由（変更の記録に残る）。",
         "reasonKey": "画面の定型理由のキー。", "reasonParams": "定型理由に入れる値。", "backend": "会話のエージェント。"
       },
-      "switchBackend": { "summary": "会話のエージェントを今すぐ切り替える（走っていない会話だけ）。承認モードは切り替え先の最初のモードになり、今より緩くなる切り替えはできない（画面で人が切り替える）。ユーザーの承認が要る。", "sessionId": "会話の id。省くとこの会話。", "backend": "切り替え先のエージェントの id。" },
+      "switchBackend": { "summary": "会話のエージェントを今すぐ切り替える（走っていない会話だけ）。承認モードは切り替え先の最初のモードになり、今より緩くなる切り替えはできない（画面で人が切り替える）。ユーザーの承認が要る。", "sessionId": "会話の id。省くとこの会話。", "backend": "切り替え先のエージェントの id。", "reason": "切り替える理由（承認カードと記録に出る）。" },
       "setGrouped": { "summary": "会話を一覧のグループから外す・戻す。", "sessionId": "会話の id。省くとこの会話。", "ungrouped": "true で外す、false で戻す。" },
       "background": { "summary": "会話のバックグラウンドの処理（端末・裏のエージェント）。taskId を省くと一覧、渡すとその処理の詳細と出力（末尾を残して切る）。", "sessionId": "会話の id。省くとこの会話。", "taskId": "処理の id（一覧の id）。", "maxChars": "出力の字数の上限（既定 8000、最大 20000）。末尾を残す。" },
       "stopBackground": { "summary": "会話のバックグラウンドの処理を 1 本止める。会話とターンはそのまま。", "sessionId": "会話の id。省くとこの会話。", "taskId": "止める処理の id。" },
@@ -878,7 +878,7 @@
       },
       "session": { "summary": "会話の文脈（開始時に固定した指示・Skills・外部 MCP の一覧と担当、外した MCP、今のファイルとの違い）。entries は区切って返し、本文は切る。", "compare": "固定した会話を今のファイルと突き合わせるか（既定 true）。" },
       "diff": { "summary": "会話の開始時に固定した指示・Skills と、今のファイルの中身の違い（変わったファイルごとの前後）。" },
-      "scan": { "summary": "作業場所から指示・Skills・外部 MCP を探した結果（見つかった場所・状態・本文）。種類で絞れ、本文は切る。", "place": "default で、場所ごとの上書きを使わず既定だけで探す。", "scope": "user で、ユーザーの範囲（home と足した場所）だけ探す。", "kind": "種類で絞る（instruction・skill・mcp）。" },
+      "scan": { "summary": "作業場所から指示・Skills・外部 MCP を探した結果（見つかった場所・状態・本文）。種類で絞れ、本文は切る。", "place": "default で、場所ごとの上書きを使わず既定だけで探す。", "scope": "user で、ユーザーの範囲（home と足した場所）だけ、directory で作業場所の範囲（Git のルートから作業場所まで）だけ探す。", "kind": "種類で絞る（instruction・skill・mcp）。" },
       "skills": { "summary": "作業場所で使える Skills の一覧（名前・説明・引数の目安・置き場所）。入力欄の「/」の候補と同じ。" },
       "agentMcp": { "summary": "各エージェント（Claude・Codex）の設定に登録されている外部 MCP の一覧。接続はしない。コマンドと URL の秘密は伏せる。" },
       "nativeInstructions": { "summary": "エージェントが自分で読む指示ファイル（Claude は CLAUDE.md・rules、Codex は AGENTS.md）の一覧とトークンの目安。" },

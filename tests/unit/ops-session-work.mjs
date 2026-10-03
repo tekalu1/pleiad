@@ -187,6 +187,7 @@ export default async function (t) {
   // ---- コンテキスト
   const scan = await call(agent('ask'), 'context.scan', {});
   t.ok('context.scan: 会話から cwd を省くとその会話の作業場所', scan.deps.calls.find((c) => c[0] === 'context.scan')?.[1].cwd === 'C:/work');
+  t.ok('context.scan: scope: directory で作業場所の範囲だけを探す', (await call(agent('ask'), 'context.scan', { scope: 'directory' })).deps.calls.find((c) => c[0] === 'context.scan')?.[1].scope === 'directory');
   t.ok('context.scan: entries を 30 件ずつ区切り、本文を 2000 字に切る', scan.r.result.total === 35 && scan.r.result.entries.length === 30 && scan.r.result.entries[0].content.length === 2000 && scan.r.result.entries[0].truncated === true);
   const mcpOnly = (await call(agent('ask'), 'context.scan', { kind: 'mcp' })).r;
   t.ok('context.scan: 種類で絞れ、MCP の行の生の本文と configs の本文は返さない。引数・env・ヘッダー・URL のクエリは伏せる', mcpOnly.result.total === 2 && mcpOnly.result.entries.every((e) => e.content === undefined)

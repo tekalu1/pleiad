@@ -2755,9 +2755,9 @@ const opsContext = {
   agentMcp: async (cwd) => contextSession.agentMcp((await contextSettings.get(cwd ?? process.cwd())).cwd),
   nativeInstructions: async (cwd, backend) => contextSession.nativeInstructions((await contextSettings.get(cwd ?? process.cwd())).cwd, backend),
   findings: async (sessionId, cwd, backend) => contextSession.findings(sessionId, (await contextSettings.get(cwd ?? process.cwd())).cwd, backend),
-  // place: 'default' なら場所ごとの上書きを使わず既定だけで探す（設定の「すべての場所」）。scope: 'user' ならユーザーの範囲（home と足した場所）だけ
+  // place: 'default' なら場所ごとの上書きを使わず既定だけで探す（設定の「すべての場所」）。scope: 'user' ならユーザーの範囲（home と足した場所）だけ、'directory' なら作業場所の範囲だけ
   scan: async ({ cwd, place, scope } = {}) => scanContext(await contextSettings.get(cwd ?? process.cwd(), { level: place === 'default' ? 'default' : null }),
-    { plyServers: await plyMcp.scanInput(), ...(scope === 'user' ? { scopes: ['user'] } : {}) }),
+    { plyServers: await plyMcp.scanInput(), ...(scope === 'user' || scope === 'directory' ? { scopes: [scope] } : {}) }),
   // 入力欄の「/」の候補。コンテキストの画面と同じ探索をそのまま使い、スキルだけを返す
   skills: async (cwd) => skillList(await scanContext(await contextSettings.get(cwd ?? process.cwd()))),
 };

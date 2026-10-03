@@ -22,7 +22,7 @@
 | `notifyStatus` | `notify.status` | read | 設定 › 通知の状態。AI には端末を数（`count`・`muted`）だけ返す。端末の一覧は「リモートのペアリング」で人だけ（ADR 0094）。 |
 | `sessionContext` | `context.session` | read | 会話に固定した指示・Skills・外部 MCP と担当。`entries` を区切り、本文を切る。 |
 | `contextDiff` | `context.diff` | read | 固定した文脈と今のファイルの違い。前後の本文を切る。 |
-| `scanContext` | `context.scan` | read | 作業場所の探索の結果。種類で絞れ、`entries` を区切り、本文を切る。 |
+| `scanContext` | `context.scan` | read | 作業場所の探索の結果。種類と範囲（`user`・`directory`。`directory` は AI のために足した）で絞れ、`entries` を区切り、本文を切る。 |
 | `slashSkills` | `context.skills` | read | 使える Skills（入力欄の「/」の候補）。区切る。 |
 | `agentMcp` | `context.agentMcp` | read | 各エージェントの設定の外部 MCP。 |
 | `nativeInstructions` | `context.nativeInstructions` | read | エージェントが自分で読む指示ファイルと量。区切る。 |
@@ -79,4 +79,4 @@
 - 操作の一覧の snapshot（`tests/ops-surface.snap.json`）に 24 の操作が載る。`ply_control` の指示と tools/list の量は増えない（ja 1757・en 1656 トークン。上限 1800）。新しい操作は `list_ops`・`call_op` から呼ぶ。
 - 画面からのコマンドは引数を操作の入力の型で検める。今まで黙って受けていた型の違う引数（例: `runShell` の形の違う `runId`）は `INVALID` になる。画面が送る引数は変わらない。
 - `shell.run` の AI の呼び出しのために、`core/shell-runs.mjs` に `wait`（終わった結果を新しい 50 件だけ覚えて返す）を足した。
-- 検査: `ops-session-work`（依存を差し替えて、分け方・危険度・AI に返す形・画面の形）、`ops-control`（秘密の目印の入った home で新しい read 操作を呼ぶ・bypass の会話から `call_op` の `shell.run`・list_ops に残した `ui-internal` が出ない）、`ops-surface`（T6 の依存）。
+- 検査: `ops-session-work`（依存を差し替えて、分け方・危険度・AI に返す形・画面の形）、`control-ui-internal`（e2e。実際の Codex の会話から `context.scan`・`sessions.switchBackend`・`shell.run` を `call_op` で呼び、guarded の承認待ち → 許可で反映）、`ops-control`（秘密の目印の入った home で新しい read 操作を呼ぶ・bypass の会話から `call_op` の `shell.run`・list_ops に残した `ui-internal` が出ない）、`ops-surface`（T6 の依存）。

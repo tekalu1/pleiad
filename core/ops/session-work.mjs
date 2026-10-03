@@ -57,7 +57,10 @@ export const sessionWorkOps = [
     summary: 'agent:ops.sessions.switchBackend.summary',
     risk: 'guarded',
     scope: 'session',
-    input: z.object({ sessionId: sessionId('switchBackend'), backend: z.string().min(1).max(40).describe(D('switchBackend', 'backend')) }),
+    input: z.object({
+      sessionId: sessionId('switchBackend'), backend: z.string().min(1).max(40).describe(D('switchBackend', 'backend')),
+      reason: z.string().max(500).optional().describe(D('switchBackend', 'reason')),
+    }),
     output: z.object({ sessionId: z.string(), backend: z.string() }),
     // AI から: 無い会話・知らないエージェントは承認カードの前に断り、承認モードが緩くなる切り替えは人の画面へ（NEEDS_UI）
     riskOf: async (ctx, { sessionId: given, backend }) => {

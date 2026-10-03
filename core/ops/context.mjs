@@ -198,7 +198,7 @@ export const contextOps = [
     input: z.object({
       cwd: cwdArg,
       place: z.enum(['default']).optional().describe(D('scan', 'place')),
-      scope: z.enum(['user']).optional().describe(D('scan', 'scope')),
+      scope: z.enum(['user', 'directory']).optional().describe(D('scan', 'scope')),
       kind: z.enum(['instruction', 'skill', 'mcp']).optional().describe(D('scan', 'kind')),
       limit, cursor, maxChars,
     }),

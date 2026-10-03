@@ -405,7 +405,7 @@
         }
       },
       "legacyCommand": "scanContext",
-      "input": "b10c8591c898"
+      "input": "46a528fd1b26"
     },
     {
       "id": "context.session",
@@ -2203,7 +2203,7 @@
         }
       },
       "legacyCommand": "switchBackend",
-      "input": "ed3e9aebcf48"
+      "input": "42d87f4763de"
     },
     {
       "id": "settings.get",
