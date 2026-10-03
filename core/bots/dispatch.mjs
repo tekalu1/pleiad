@@ -251,7 +251,9 @@ export function createDispatcher({ channels, bots, memory, episodes, host, emit 
     // ターンの投稿の作成・進捗では起こさない。bot が channels.post で書いた返事が入ったとき（extra.filled）は、新しい投稿と同じく @ を解く
     if (post?.turn && !extra?.filled) return Promise.resolve();
     // bot が自分のスレッドへ書いた返事を、そのターンの記録に残す（呼んだ bot へ返す返事・@ の重なりの判断）
-    const rec = post?.author?.kind === 'bot' ? [...active.values()].find((r) => r.spoke && !r.ended && r.botId === post.author.botId && r.channelId === post.channelId && (r.threadId ?? null) === (post.threadId ?? null)) : null;
+    const rec = post?.author?.kind === 'bot' ? [...active.values()].find((r) => r.spoke && !r.ended && r.botId === post.author.botId && r.channelId === post.channelId
+      && (r.threadId ?? null) === (post.threadId ?? null) && (!extra?.bySession || r.sessionId === extra.bySession)
+      && (!post.turn?.sessionId || r.sessionId === post.turn.sessionId)) : null;
     if (rec) { if (!post.turn) rec.explicit = post; for (const m of post.mentions ?? []) rec.explicitMentions.add(m); }
     return route(post, channel, extra);
   }
@@ -934,7 +936,7 @@ export function createDispatcher({ channels, bots, memory, episodes, host, emit 
   }
 
   /**
-   * B のターンが ok で終わったとき、B を呼んだ bot（A。B の投稿の @ ・channels.post の @ で起こした側）の会話へ、B の返事を「返事」の包みで届けて A を起こす。
+   * B が本文を書いて ok または failed で終わったとき、B を呼んだ bot（A。B の投稿の @ ・channels.post の @ で起こした側）の会話へ、B の返事を「返事」の包みで届けて A を起こす。
    * 人が直接 @B で起こしたときは返さない。A（と A のスレッド）が止められているときも返さない。B の返事が A への @ を含むときは、その @ で起こるので重ねない。
    * 回数の上限は置かず、チャンネルの予算を使い切ったら返さない（ADR 0119）
    */
@@ -959,7 +961,7 @@ export function createDispatcher({ channels, bots, memory, episodes, host, emit 
     }
   }
 
-  /** ターンの投稿に最終の返答と提示を入れて state を決める。返事で ok なら { woke: @ を含む投稿（次の bot を起こすため）, reply: 確定した返事の投稿（呼んだ bot へ返すため） } */
+  /** ターンの投稿に最終の返答と提示を入れて state を決める。本文のある返事なら failed でも @ と呼び元へ届ける */
   async function finalizePost(rec, state, ok, { limited = false, boundary = false } = {}) {
     const lng = locale();
     // bot が channels.post で自分のスレッドへ返事を書いたターンは、それが返事。最終の返答（作業の報告）は投稿に書かない（ADR 0117）
@@ -969,21 +971,23 @@ export function createDispatcher({ channels, bots, memory, episodes, host, emit 
     const current = await channels.getPost({ channelId: rec.channelId, postId: rec.postId }).catch(() => null);
     if (!current || current.deletedAt) return none;
     const bodyByBot = rec.filled || (current.text !== PLACEHOLDER && current.text !== rec.lastWritten);
-    if (!text && state === 'failed' && !rec.filled) text = agentT(lng, 'channel.turn.failed', { error: rec.error ?? '' });
+    const hasBody = Boolean(text || (bodyByBot && current.text !== PLACEHOLDER && current.text.trim()));
+    if (!text && state === 'failed' && !bodyByBot) text = agentT(lng, 'channel.turn.failed', { error: rec.error ?? '' });
     // 使用量の上限で終わったターンは、bot の発言に「止めました」も上限の文も書かない（知らせは Pleiad の投稿。ADR 0119）。bot が書いた分は残す
     if (!text && state === 'stopped' && !bodyByBot && !rec.presents.length && !limited) text = agentT(lng, 'channel.turn.stopped');
     // 何も言わずに終わった（文章を書かずにリアクションだけ・黙ってやめる。ADR 0119）・上限で何も書けなかった: 投稿は残さない
     if (!text && !bodyByBot && !rec.presents.length && (state === 'done' || limited)) { await channels.remove({ channelId: rec.channelId, postId: rec.postId }, botAuthor(rec.botId)); return none; }
     const edit = { channelId: rec.channelId, postId: rec.postId, state };
+    if (state === 'failed' && hasBody) edit.failedWithBody = true;
     // bot がこのターンの投稿に付けた「要確認」（channels.post の state: 'checking'。ルーティンの実行の状態になる）は、終わりで done に戻さない
     if (state === 'done' && current.state === 'checking') edit.state = 'checking';
     if (text) edit.text = text; else if (!bodyByBot && current.text === PLACEHOLDER) edit.text = '';
     if (rec.presents.length) edit.presents = rec.presents;
     const saved = await channels.edit(edit, botAuthor(rec.botId));
-    const done = ok && !rec.stopped;
+    const deliver = (ok || state === 'failed') && !rec.stopped && !limited && hasBody;
     // 返事を何件かに分けて書いたなら、呼んだ bot へ返すのは最後の 1 件（その前の投稿は文脈として一緒に渡る）
     // bot が channels.post で入れた返事の @ は、書いたときに解いてある（onPosted の extra.filled）。ここで重ねて起こさない
-    return { woke: done && !rec.filled && saved?.mentions?.some((m) => m !== 'you') ? saved : null, reply: done && saved ? (rec.explicit ?? saved) : null };
+    return { woke: deliver && !rec.filled && saved?.mentions?.some((m) => m !== 'you') ? saved : null, reply: deliver && saved ? (rec.explicit ?? saved) : null };
   }
 
   /**

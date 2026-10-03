@@ -183,12 +183,13 @@ function stateLine(post) {
   const state = post.state;
   if (!state) return null;
   if (state === 'done' && !post.routine) return null;
-  const row = el('div', `post-state ${state}`);
+  const softFailure = state === 'failed' && post.turn && post.failedWithBody;
+  const row = el('div', `post-state ${softFailure ? 'failed-body' : state}`);
   if (state === 'working') row.append(runMark(t('channels:feed.state.working')));
   else if (state === 'waiting') row.append(el('span', 'post-state-mark', '◆'));
-  else if (state === 'failed') row.append(el('span', 'post-state-mark', '✕'));
+  else if (state === 'failed' && !softFailure) row.append(el('span', 'post-state-mark', '✕'));
   // i18n-dynamic: channels:feed.state.
-  const label = t(`channels:feed.state.${state}`);
+  const label = t(`channels:feed.state.${softFailure ? 'failedWithBody' : state}`);
   const reason = post.routine?.missed ? t('channels:feed.state.missed') : post.routine?.reason;
   row.append(el('span', 'post-state-text', reason && (state === 'skipped' || post.routine?.missed) ? `${label} · ${reason}` : label));
   return row;

@@ -40,7 +40,7 @@
 //          origin: { channelId, threadId }（bot が自分のスレッドからチャンネルの流れへ書いた投稿。起こして新しくできるスレッドの ThreadState.origin になる）。どちらも保存せず、posted の extra へ渡すだけ
 //          bySession: 操作を呼んだ会話の id（ops が渡す。保存しない）。hooks.botPost と posted の extra へ渡す（別のスレッドへ書いた自分への @ の判断）
 //        … mentions を渡さなければ text から解く。author が bot なら、hooks.botPost が返す投稿（その会話のターンの投稿。ターンで最初の 1 件だけ）の本文に入れる（ADR 0117）。
-//          hooks.botPost が決めない（undefined）ときは、new が無く、同じスレッドにその bot の作業中（state: working）のターンの投稿があれば、その本文を置き換える。人の投稿は、そのスレッドの stopped を外す
+//          hooks.botPost が決めない（undefined）ときは、new が無く、同じスレッド・会話（bySession があれば一致）にその bot の作業中の投稿があれば置き換える。人の投稿は、そのスレッドの stopped を外す
 //   edit({ channelId, postId, text?, state?, presents?, mentions? }, author): Promise<Post>      … 自分の投稿だけ（検査は ops）。text を変えたら mentions も解き直す
 //   remove({ channelId, postId }, author): Promise<void>
 //   react({ channelId, postId, emoji, on }, author): Promise<{ reactions: Post['reactions'] }>
@@ -356,11 +356,11 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       const resolved = mentions ?? await resolveMentions(text, author);
 
       // bot がターンの中で書く: 返事をターンの投稿に入れるかは、その会話のターンを持つ dispatch が決める（最初の 1 件だけ。ADR 0117）。
-      // 会話が分からないとき（bySession なし・hooks.botPost なし）は、作業中のターンの投稿があればその本文を置き換える
+      // hook が決めないときも、投稿元の会話が分かれば別の会話の作業中の投稿には触れない
       if (author.kind === 'bot' && !turn) {
         const claim = hooks.botPost?.({ channelId, threadId, botId: author.botId, sessionId: bySession ?? null });
         const fill = claim !== undefined ? claim.postId
-          : forceNew ? null : [...all].reverse().find((p) => p.threadId === threadId && p.state === 'working' && p.turn?.botId === author.botId && !p.deletedAt)?.id;
+          : forceNew ? null : [...all].reverse().find((p) => p.threadId === threadId && p.state === 'working' && p.turn?.botId === author.botId && (!bySession || p.turn.sessionId === bySession) && !p.deletedAt)?.id;
         if (fill) {
           const saved = await service.edit({ channelId, postId: fill, text, taint, ...(state !== undefined ? { state } : {}), ...(presents !== undefined ? { presents } : {}), mentions: resolved }, author);
           // ターンの投稿に入った返事も、新しい投稿と同じく posted へ渡す（@ をここで解く。extra.filled）。決めたのが dispatch でない置き換え（進捗）は渡さない
@@ -391,7 +391,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       return saved;
     },
 
-    async edit({ channelId, postId, text, state, presents, mentions, taint }, _author) {
+    async edit({ channelId, postId, text, state, presents, mentions, taint, failedWithBody }, _author) {
       const post = await needPost(channelId, postId);
       if (post.deletedAt) throw new ChannelError('POST_NOT_FOUND', { id: String(postId) });
       const op = { op: 'edit', id: postId, at: now() };
@@ -406,6 +406,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
         op.state = state;
       }
       if (presents !== undefined) op.presents = clone(presents);
+      if (failedWithBody === true && post.turn) op.failedWithBody = true;
       const saved = await store.append(channelId, op);
       emitEdit(channelId, saved);
       if (text !== undefined && saved.author.kind === 'human') await hooks.edited?.(clone(saved), clone(await need(channelId)));
