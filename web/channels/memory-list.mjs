@@ -2,7 +2,7 @@
 // 各行に本文と出どころ（押すとその投稿・会話へ）と［直す］［忘れる］。凝った編集画面は作らず、その場で書き換える。
 // 忘れたら 12 秒の「元に戻す」の帯（memory.forget は墓石を残すので、戻すのは memory.unforget）。
 // 操作はすべて memory.* の op を host.invoke で呼ぶ。更新は memoryChanged（呼び出し側が refresh する）。
-// 頭に夜の整理の様子の 1 行（memory.learnStatus。最後に走った時刻・覚えた件数・飛ばした回数と理由・失敗・次の予定。ADR 0117）。
+// 頭に夜の整理の様子の 1 行（memory.learnStatus。最後に走った時刻・覚えた件数・飛ばした回数と理由・失敗・次の予定。ADR 0118）。
 // 各行に種類の札（約束・やめたこと…）と、薄れた記憶（会話の始まりには渡さないが、探せば出る）の印。
 // i18n-dynamic: channels:memory.learn.
 // i18n-dynamic: channels:memory.kind.

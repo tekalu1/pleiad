@@ -145,7 +145,7 @@ export default async function (t) {
     const botSmall = await botScale(small, SMALL), botLarge = await botScale(large, N);
     t.ok(`スレッド: 1 件の更新（トークンの足し算）が書く行は 1 行（変わった行 ${botLarge.thread.changes}、値 ${botLarge.thread.bytes}B）。${SMALL} 件でも ${N} 件でも同じ`, botLarge.thread.changes === 1 && botLarge.thread.bytes < MAX_BYTES
       && JSON.stringify(botSmall.thread) === JSON.stringify(botLarge.thread), `${JSON.stringify(botSmall.thread)} / ${JSON.stringify(botLarge.thread)}`);
-    t.ok(`夜の整理: ${N} 件のカーソルを持っていても、同じ内容の再実行が書くのは lastRunAt と様子（status。ADR 0117）の 2 行（変わった行 ${botLarge.rerun.changes}）`, botLarge.rerun.changes === 2 && JSON.stringify(botSmall.rerun) === JSON.stringify(botLarge.rerun), `${JSON.stringify(botSmall.rerun)} / ${JSON.stringify(botLarge.rerun)}`);
+    t.ok(`夜の整理: ${N} 件のカーソルを持っていても、同じ内容の再実行が書くのは lastRunAt と様子（status。ADR 0118）の 2 行（変わった行 ${botLarge.rerun.changes}）`, botLarge.rerun.changes === 2 && JSON.stringify(botSmall.rerun) === JSON.stringify(botLarge.rerun), `${JSON.stringify(botSmall.rerun)} / ${JSON.stringify(botLarge.rerun)}`);
     t.ok(`夜の整理: 会話が 1 件増えたときに書くのは、そのカーソル（読んだ位置と最後まで読んだ印 seen）と lastRunAt・様子の 4 行（変わった行 ${botLarge.added.changes}）。${SMALL} 件でも ${N} 件でも同じ`, botLarge.added.changes === 4 && JSON.stringify(botSmall.added) === JSON.stringify(botLarge.added), `${JSON.stringify(botSmall.added)} / ${JSON.stringify(botLarge.added)}`);
     t.ok(`夜の整理: カーソルは 1 会話 1 行で DB に入っている（${botLarge.stored} 行）`, botLarge.stored === N + 1 && botSmall.stored === SMALL + 1, `${botSmall.stored} / ${botLarge.stored}`);
   } finally {

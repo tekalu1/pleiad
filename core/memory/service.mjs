@@ -15,7 +15,7 @@
 //   get({ id }): Promise<MemoryEntry|null>
 //   search({ query, layer?, layers?, limit }): Promise<MemoryEntry[]>   … 各 150 トークンまで。layer 省略なら layers（無ければ全層）
 //   write({ layer, text, why?, sources, kind?, weight?, status? }, author, ctx): Promise<MemoryEntry>   … 出どころの検査（MEMORY_SOURCE・MEMORY_REJECTED）はここ。
-//       kind・weight・status は記憶の種類・重み・状態（strength.mjs。ADR 0117）。AI の重み 3 は guard.capWeight が根拠を見て 2 に抑える
+//       kind・weight・status は記憶の種類・重み・状態（strength.mjs。ADR 0118）。AI の重み 3 は guard.capWeight が根拠を見て 2 に抑える
 //   edit({ id, text?, why?, sources?, kind?, weight?, status? }, author, ctx): Promise<MemoryEntry>・forget({ id }, author, ctx): Promise<MemoryEntry>・unforget({ id }, author, ctx): Promise<MemoryEntry>
 //       … 人も AI も使える（edit は write、forget は guarded）。誰がしたかは log.jsonl の by に残す。無い id は MEMORY_NOT_FOUND
 //   rev(): number                                                 … log.jsonl の最後の rev

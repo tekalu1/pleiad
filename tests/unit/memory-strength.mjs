@@ -1,4 +1,4 @@
-// 記憶の強さ（ADR 0117）: 種類・重み・半減期、markdown の後方互換（知らないキーを捨てない）、核の写しは強さの順で薄れたものを外す。
+// 記憶の強さ（ADR 0118）: 種類・重み・半減期、markdown の後方互換（知らないキーを捨てない）、核の写しは強さの順で薄れたものを外す。
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';

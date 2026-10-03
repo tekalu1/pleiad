@@ -34,7 +34,7 @@ export default async function (t) {
   const now = new Date(2026, 9, 3, 12).getTime();
   t.ok('日付: 今日は null、昨日までは M/D', shortDate(new Date(2026, 9, 3, 1).getTime(), now) === null && shortDate(new Date(2026, 9, 2, 23).getTime(), now) === '10/2');
 
-  // 夜の記憶の整理の 1 行（ADR 0117）
+  // 夜の記憶の整理の 1 行（ADR 0118）
   t.ok('時刻: 今日は HH:MM、ほかの日は M/D HH:MM', shortTime(new Date(2026, 9, 3, 2, 5).getTime(), now) === '02:05' && shortTime(new Date(2026, 9, 2, 23, 0).getTime(), now) === '10/2 23:00');
   const keys = (v) => v.parts.map((p) => p.key).join();
   t.ok('整理: まだ走っていない・次の予定', keys(learnStatusView({ lastRunAt: null, lastResult: null, nextAt: now + 3600000, paused: false }, now)) === 'never,next');

@@ -57,7 +57,7 @@ export function shortTime(at, now = Date.now()) {
 }
 
 /**
- * 夜の記憶の整理の様子（memory.learnStatus の返り）を、記憶の見出しの下の 1 行の材料にする（ADR 0117）。
+ * 夜の記憶の整理の様子（memory.learnStatus の返り）を、記憶の見出しの下の 1 行の材料にする（ADR 0118）。
  * 返りは辞書の部品の並び [{ key, params }]（channels:memory.learn.<key>）と、目立たせるか（warn: 失敗・飛ばした）。null は出さない
  */
 export function learnStatusView(status, now = Date.now()) {

@@ -61,7 +61,7 @@ export function foldDelta(records, { layers, skipVia = null } = {}) {
 }
 
 /**
- * 核の写しに入れる記憶を選ぶ（ADR 0117）。層ごとの目安まで、強さ（strength.mjs: 重み × 新しさ）の強い順に入れる。同じ強さなら人が書いた・直した記憶
+ * 核の写しに入れる記憶を選ぶ（ADR 0118）。層ごとの目安まで、強さ（strength.mjs: 重み × 新しさ）の強い順に入れる。同じ強さなら人が書いた・直した記憶
  * （by.kind === 'human'）を先に、それから新しい更新から。人の行は重み 3 で薄れないので、書き込みを重ねる bot が新しさだけで人の記憶を押し出せない。
  * 薄れた記憶（FADED_BELOW 未満）は入れず、消しもしない（memory.search・関係する記憶では出る）。
  * 返りは { user, bot, omitted, faded, ids }。本文は種類の順（やめたこと → 約束 → …）、同じ種類の中は時系列。omitted は入れなかった数（faded を含む）

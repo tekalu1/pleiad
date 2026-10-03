@@ -24,7 +24,7 @@ const sourceInput = z.object({
   quote: z.string().min(QUOTE_MIN).max(600).describe(D('write', 'source.quote')),
 }).strict();
 
-// 種類・重み・状態（ADR 0117。どれも任意）と、今の強さ strength・薄れたか faded（list・search が付ける。保存しない）
+// 種類・重み・状態（ADR 0118。どれも任意）と、今の強さ strength・薄れたか faded（list・search が付ける。保存しない）
 const entryOut = z.object({
   id: z.string(), layer: z.string(), text: z.string(), why: z.string().optional(),
   sources: z.array(z.unknown()), at: z.number(), updatedAt: z.number(), by: z.unknown(), origBy: z.unknown().optional(),
@@ -160,7 +160,7 @@ export const memoryOps = [
     }),
     output: entryOut,
     // 人が書いた行の本文・種類・重み・状態を AI が変えるときだけ承認（自分・ほかの AI が書いた行、理由だけの直しは write）。
-    // 重みと種類は、その記憶が会話の始まりに渡るか（薄れるか）を決めるので、本文と同じに扱う（ADR 0117）
+    // 重みと種類は、その記憶が会話の始まりに渡るか（薄れるか）を決めるので、本文と同じに扱う（ADR 0118）
     riskOf: async (ctx, args) => {
       if (ctx.principal?.by !== 'agent' || (args.text === undefined && args.kind === undefined && args.weight === undefined && args.status === undefined)) return 'write';
       const who = await whoIs(ctx, { write: false });
@@ -204,7 +204,7 @@ export const memoryOps = [
     },
   }),
 
-  // 夜の記憶の整理の様子（最後に走った時刻・結果・次の予定・飛ばした回数と理由・失敗）。bot のページの記憶の見出しに出す（ADR 0117）
+  // 夜の記憶の整理の様子（最後に走った時刻・結果・次の予定・飛ばした回数と理由・失敗）。bot のページの記憶の見出しに出す（ADR 0118）
   defineOp({
     id: 'memory.learnStatus',
     summary: 'agent:ops.memory.learnStatus.summary',

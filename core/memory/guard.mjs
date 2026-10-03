@@ -118,13 +118,13 @@ export async function checkSources(sources, resolvers, { required = true } = {})
   return { sources: verified.map((r) => r.source), grounded, problems, humanQuotes: verified.filter((r) => r.kind === 'human').map((r) => r.source.quote) };
 }
 
-// 人の発言の中の、強く覚えてほしい合図（「覚えて」「絶対」「やめて」など）。AI が重み 3 を付けるときの根拠（ADR 0117）
+// 人の発言の中の、強く覚えてほしい合図（「覚えて」「絶対」「やめて」など）。AI が重み 3 を付けるときの根拠（ADR 0118）
 const STRONG_CUE_RX = /覚えて|忘れないで|忘れずに|絶対|必ず|二度と|やめて|ないで(?:ほしい|ください)|禁止|大事|重要|\b(?:remember|don'?t forget|never|always|must|stop doing|important)\b/i;
 /** 重み 3 を AI が付けてよい種類（やめたこと・約束・決めたこと）。ほかは人の強い合図が要る */
 const STRONG_KINDS = new Set(['stop', 'promise', 'decision']);
 
 /**
- * AI が付けた重みの上限（ADR 0117）。人が書く記憶は 1〜3 をそのまま。AI は 2 まで、重み 3 は
+ * AI が付けた重みの上限（ADR 0118）。人が書く記憶は 1〜3 をそのまま。AI は 2 まで、重み 3 は
  * 種類がやめたこと・約束・決めたこと、または根拠の人の発言に強い合図があるときだけ（全部を 3 にして人の記憶を押し出さないため）
  */
 export function capWeight(weight, { human = false, kind = null, humanQuotes = [] } = {}) {

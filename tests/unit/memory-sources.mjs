@@ -300,22 +300,22 @@ export default async function (t) {
       && (await edit({ by: 'human', via: 'ui', local: true }, { id: human, text: '人が自分で直す' })).ok === true && asked.length === 1);
     t.ok('S-1(e): 同じ本文のままの edit（変わらない）は承認なし', (await edit(agentP('sbot'), { id: human, text: '人が自分で直す', sources: g })).ok === true && asked.length === 1);
 
-    // ADR 0117: 種類・重み。AI の重み 3 は、やめたこと・約束・決めたこと、または人の強い合図（「〜ないでほしい」「覚えて」など）があるときだけ
+    // ADR 0118: 種類・重み。AI の重み 3 は、やめたこと・約束・決めたこと、または人の強い合図（「〜ないでほしい」「覚えて」など）があるときだけ
     const plain = [message('u1', Q_TEST)];
     // 会話ごとに分ける（bot が user 層へ書けるのは 1 ターン 5 件まで）
     const w = async (args, author = owl, c = { ...ctx, sessionId: `sw-${args.text}` }) => svc2.write({ layer: 'user', ...args }, author, c);
-    t.ok('ADR 0117: AI が好みに重み 3 を付けても、根拠が普通の発言なら 2 に下がる', (await w({ text: '重みの試し: テストは先', sources: plain, kind: 'pref', weight: 3 })).weight === 2);
-    t.ok('ADR 0117: 人の強い合図（〜ないでほしい）が根拠なら、AI の重み 3 はそのまま', (await w({ text: '重みの試し: 金曜は出さない', sources: g, kind: 'pref', weight: 3 })).weight === 3);
-    t.ok('ADR 0117: 約束・やめたこと・決めたことは、AI でも重み 3 を付けられる', (await w({ text: '重みの試し: 約束の行', sources: plain, kind: 'promise', weight: 3, status: 'open' })).weight === 3);
-    t.ok('ADR 0117: 人は重み 1〜3 をそのまま付けられる', (await w({ text: '重みの試し: 人の軽いメモ', kind: 'note', weight: 1 }, HUMAN, {})).weight === 1);
+    t.ok('ADR 0118: AI が好みに重み 3 を付けても、根拠が普通の発言なら 2 に下がる', (await w({ text: '重みの試し: テストは先', sources: plain, kind: 'pref', weight: 3 })).weight === 2);
+    t.ok('ADR 0118: 人の強い合図（〜ないでほしい）が根拠なら、AI の重み 3 はそのまま', (await w({ text: '重みの試し: 金曜は出さない', sources: g, kind: 'pref', weight: 3 })).weight === 3);
+    t.ok('ADR 0118: 約束・やめたこと・決めたことは、AI でも重み 3 を付けられる', (await w({ text: '重みの試し: 約束の行', sources: plain, kind: 'promise', weight: 3, status: 'open' })).weight === 3);
+    t.ok('ADR 0118: 人は重み 1〜3 をそのまま付けられる', (await w({ text: '重みの試し: 人の軽いメモ', kind: 'note', weight: 1 }, HUMAN, {})).weight === 1);
     const listed = (await svc2.list({ layer: 'user' })).find((e) => e.text === '重みの試し: 約束の行');
-    t.ok('ADR 0117: 一覧の行に種類・重み・状態と今の強さが付く', listed.kind === 'promise' && listed.weight === 3 && listed.status === 'open' && listed.strength === 3 && listed.faded === false);
+    t.ok('ADR 0118: 一覧の行に種類・重み・状態と今の強さが付く', listed.kind === 'promise' && listed.weight === 3 && listed.status === 'open' && listed.strength === 3 && listed.faded === false);
     const askedBefore = asked.length;
     const pendingWeight = await edit(agentP('sbot'), { id: human, weight: 1 });
-    t.ok('ADR 0117: 人が書いた行の重みを AI が変えるのは承認（カードに重みの行）', pendingWeight.pending === true && asked.length === askedBefore + 1
+    t.ok('ADR 0118: 人が書いた行の重みを AI が変えるのは承認（カードに重みの行）', pendingWeight.pending === true && asked.length === askedBefore + 1
       && asked.at(-1).change.rows.some((r) => r.path === 'weight' && r.after === 1) && svc2.store.get(human).weight === undefined);
     const aiLine = (await w({ text: '重みの試し: AI の行の重み', sources: plain, kind: 'pref' })).id;
-    t.ok('ADR 0117: AI が書いた行の種類・重み・状態の直しは承認なし', (await edit(agentP('sbot'), { id: aiLine, kind: 'decision', weight: 3 })).ok === true && asked.length === askedBefore + 1
+    t.ok('ADR 0118: AI が書いた行の種類・重み・状態の直しは承認なし', (await edit(agentP('sbot'), { id: aiLine, kind: 'decision', weight: 3 })).ok === true && asked.length === askedBefore + 1
       && svc2.store.get(aiLine).kind === 'decision' && svc2.store.get(aiLine).weight === 3);
 
     // memory.unforget は画面だけでなく、AI（MCP）・CLI にも出す（write）。bot は見える層（user と自分の層）のものだけ戻せる
