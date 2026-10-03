@@ -80,16 +80,18 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 | `bots.update` | write（範囲を広げる向きは `riskOf` で guarded） | 名前・アイコン・人格・backend（次の新しい会話から。モデル・エフォートは既定に戻り、承認モードは同じ id があれば保つ）・モデル・エフォート・`folders`（置き換え）・`sendToOthers`・`sendTargets`（置き換え）。広げる向き = フォルダーを足す・`ro` を `rw` にする・送る先を足す・`sendToOthers` を ON にする・承認モードが強くなる backend へ変える |
 | `bots.setMode` | human-only | 承認モード（`mode`）だけ |
 | `bots.delete` | guarded | 会話は消さず bot の印だけ外し（Chats の一覧に戻る）、DM のチャンネルは archive |
-| `memory.list` / `search` | read | `search` は `limit≤8`・各 150 トークンまで |
-| `memory.write` | write・`modeGate: false`（CLI は無し） | 出どころの検査（`MEMORY_SOURCE`・`MEMORY_REJECTED`） |
-| `memory.edit` | write | AI も使える。人がしたか AI がしたかは `log.jsonl` の `by` |
-| `memory.forget` | guarded | 消す操作。墓石を残す |
+| `memory.list` / `search` | read | `layer` は `user`・bot の id・`self`（bot の会話の自分の層）。bot に束縛された主体は `user` と自分の層だけ。`search` は `limit≤8`・各 150 トークンまで |
+| `memory.write` | write・`modeGate: false`（CLI は無し） | 出どころの検査（`MEMORY_SOURCE`・`MEMORY_REJECTED`）。`sources` は `{ kind: 'post'\|'message', channelId?, postId?, threadId?, sessionId?, messageId?, quote }[]`（実物を引いて確かめ、時刻を実物から入れる）。人が画面から書くときは出どころ・URL などの規則を掛けない。束縛されない AI は `NEEDS_UI` |
+| `memory.edit` | write | AI も使える。人がしたか AI がしたかは `log.jsonl` の `by`。AI が本文を変えるときは `sources`（任意の欄）に人の発言が要る |
+| `memory.forget` | guarded | 消す操作。墓石を残す。見えない記憶（ほかの bot の層）は `MEMORY_NOT_FOUND` |
 | `routines.list` / `get` | read | `nextAt` を付ける（P2） |
 | `routines.create` | write（AI は guarded） | |
 | `routines.update` | write（頻度を上げる・モードを強くする・対象を広げる向きだけ guarded） | `riskExamples` を書く |
 | `routines.pause` / `resume` / `run` / `delete` | write / guarded / guarded / guarded | `run` は `dryRun?`。消す操作は guarded |
 | `routines.rotateSecret` | human-only | P3 |
 | `sessions.send` | write | P3。AI 全般が使える（bot だけの操作にしない）。`{ sessionId, text, reason? }`。bot に束縛された主体のときだけ `sendToOthers`・`sendTargets` を追加で確かめる。別の作業が先に定義したらそれを正とする |
+
+記憶のサービス（`createMemoryService`）の `turnContext({ bot, session, sessionId?, incomingText, now?, locale? })` は `{ notes, memRev, delivered, snapshotDue }` を返す。dispatch は返りを sidecar の `bot.memRev`・`bot.delivered`・`bot.snapshotDue` に書き戻す（`snapshotDue` は核の写しを渡したら false）。`sessionId` を渡すと、その会話が自分で書いた記憶（履歴に tool の結果がある）を差分で繰り返さない。途中送信（steer）では呼ばない。失敗の code は `MEMORY_SOURCE`・`MEMORY_REJECTED`・`MEMORY_NOT_FOUND`、理由は辞書 `agent:memory.reason.*`。索引は `node:sqlite` を読み込めない・壊れているときはメモリ上の走査に切り替わる（`AGENT_HOST_MEMORY_NO_SQLITE=1` で読み込めない状態を作れる）。
 
 ## WS の出来事（`core/protocol.mjs` の `EVENTS`）
 

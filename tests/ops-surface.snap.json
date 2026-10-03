@@ -669,6 +669,113 @@
       "input": "e713b07977ab"
     },
     {
+      "id": "memory.edit",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "edit"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "b222ad84f2c0"
+    },
+    {
+      "id": "memory.forget",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "forget"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "a2135a18629b"
+    },
+    {
+      "id": "memory.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "list"
+          ],
+          "positional": [
+            "layer"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "5299217d33d7"
+    },
+    {
+      "id": "memory.search",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "search"
+          ],
+          "positional": [
+            "query"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "730dd7ff714a"
+    },
+    {
+      "id": "memory.write",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "3e594b62fe17"
+    },
+    {
       "id": "sessions.fork",
       "risk": "write",
       "riskOf": false,
@@ -1514,6 +1621,34 @@
       "id": "delegation.usage",
       "path": "delegation usage",
       "positional": []
+    },
+    {
+      "id": "memory.edit",
+      "path": "memory edit",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "memory.forget",
+      "path": "memory forget",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "memory.list",
+      "path": "memory list",
+      "positional": [
+        "layer"
+      ]
+    },
+    {
+      "id": "memory.search",
+      "path": "memory search",
+      "positional": [
+        "query"
+      ]
     },
     {
       "id": "app.running",
