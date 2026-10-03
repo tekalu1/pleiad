@@ -64,3 +64,4 @@
 - 承認なしのモードの会話からの guarded は黙って通る。履歴の `by: 'agent'` と `via`・`sessionId` で追える。
 - 会話に束縛されない CLI から guarded の設定は変えられない。人が CLI から変えたい場合の会話を持たない承認（画面の全体のカード）は、必要になったら別に決める。
 - 段階 0 は `ask` を `NEEDS_APPROVAL`（判定は ask）として返すところまで。承認カードは段階 2。
+- 段階 3 の host・委譲・ブラウザー各操作への危険度の割り当てと、既存ツールの可用性を保つ `modeGate: false` は [ADR 0091](0091-control-surface-host-delegation-browser.md) に定める。
