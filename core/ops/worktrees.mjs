@@ -79,7 +79,7 @@ export const worktreeOps = [
     handler: (ctx, { always }) => ctx.worktrees.setSettings({ always }),
   }),
 
-  // ---- 読む（ADR 0104）。入力欄の上の 1 行・チップの元（worktreeCheck）と、「いつも分ける」の今の値（worktreeSettings）
+  // ---- 読む（ADR 0105）。入力欄の上の 1 行・チップの元（worktreeCheck）と、「いつも分ける」の今の値（worktreeSettings）
   defineOp({
     id: 'worktrees.check',
     summary: 'agent:ops.worktrees.check.summary',

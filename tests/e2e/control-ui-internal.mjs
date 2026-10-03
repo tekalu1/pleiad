@@ -1,4 +1,4 @@
-// 実際の Codex 会話から、画面の中だけ（ui-internal）から移した操作（ADR 0104）を ply_control の call_op で呼ぶ。
+// 実際の Codex 会話から、画面の中だけ（ui-internal）から移した操作（ADR 0105）を ply_control の call_op で呼ぶ。
 //   1. context.scan（コンテキストの中身を見る）: 作業場所の AGENTS.md の本文が返りに入る
 //   2. sessions.switchBackend（guarded。バックエンドの切り替え）: 承認待ちで返り、会話に承認カード。許可すると別の会話のエージェントが替わり、結果が会話に届く
 //   3. shell.run（guarded。会話のシェルでコマンドを動かす）: 承認待ち → 許可で、別の会話のシェルで動いて行が残る

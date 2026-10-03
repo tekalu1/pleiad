@@ -1,5 +1,5 @@
 // sessions.* のうち、会話の中で動いているもの（バックグラウンドの処理・サブエージェント）を読む・止める操作と、
-// エージェントの切り替え・グループの外し方（ADR 0104）。画面の WS コマンド（loadBackground・stopBackground・loadSubagent・findSubagent・
+// エージェントの切り替え・グループの外し方（ADR 0105）。画面の WS コマンド（loadBackground・stopBackground・loadSubagent・findSubagent・
 // switchBackend・setGrouped）はこの操作を呼ぶ薄い外側。本体はサーバーが ctx.sessionWork で渡す（core/server.mjs の opsSessionWork）。
 // 画面（人）には今までの形を返し（uiHandler）、AI・CLI には一覧を limit / cursor で区切り、本文と出力を切った形を返す。
 //
@@ -88,7 +88,7 @@ export const sessionWorkOps = [
     id: 'sessions.setGrouped',
     summary: 'agent:ops.sessions.setGrouped.summary',
     risk: 'write',
-    riskReason: 'Only takes a conversation out of its group in the list (or puts it back); nothing in the conversation changes (ADR 0104)',
+    riskReason: 'Only takes a conversation out of its group in the list (or puts it back); nothing in the conversation changes (ADR 0105)',
     scope: 'session',
     input: z.object({ sessionId: sessionId('setGrouped'), ungrouped: z.boolean().describe(D('setGrouped', 'ungrouped')) }),
     output: z.object({ sessionId: z.string(), ungrouped: z.boolean() }),
@@ -127,7 +127,7 @@ export const sessionWorkOps = [
     id: 'sessions.stopBackground',
     summary: 'agent:ops.sessions.stopBackground.summary',
     risk: 'write',
-    riskReason: 'Only stops one background task (a terminal or a background agent) of a conversation; the conversation and its turns stay. It can stop another conversation\'s task, so it follows the caller\'s approval mode (refused in read-only), like sessions.abort (ADR 0104)',
+    riskReason: 'Only stops one background task (a terminal or a background agent) of a conversation; the conversation and its turns stay. It can stop another conversation\'s task, so it follows the caller\'s approval mode (refused in read-only), like sessions.abort (ADR 0105)',
     scope: 'session',
     input: z.object({ sessionId: sessionId('stopBackground'), taskId: z.string().min(1).max(200).describe(D('stopBackground', 'taskId')) }),
     output: z.object({ stopped: z.boolean() }),

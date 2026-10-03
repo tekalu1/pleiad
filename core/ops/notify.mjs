@@ -7,7 +7,7 @@ import { defineOp } from './registry.mjs';
 const D = (id, key) => `agent:ops.notify.${id}.${key}`;
 
 export const notifyOps = [
-  // 通知の状態（ADR 0104）。画面（設定 › 通知）にはスマホの一覧ごと返し、AI・CLI には端末を数だけで返す（一覧は human-only の「リモートのペアリング」）
+  // 通知の状態（ADR 0105）。画面（設定 › 通知）にはスマホの一覧ごと返し、AI・CLI には端末を数だけで返す（一覧は human-only の「リモートのペアリング」）
   defineOp({
     id: 'notify.status',
     summary: 'agent:ops.notify.status.summary',

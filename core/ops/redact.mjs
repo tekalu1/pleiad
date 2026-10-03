@@ -82,7 +82,7 @@ const maskUrls = (value, key = '') => {
 };
 
 /**
- * agent に返す、探索の結果・会話の文脈・git の差分などの木（ADR 0104）。どこに秘密が混じるか形で決まらないので、
+ * agent に返す、探索の結果・会話の文脈・git の差分などの木（ADR 0105）。どこに秘密が混じるか形で決まらないので、
  * Hooks の定義と同じ伏せ方（env・headers の表、秘密らしい名前のキー、コマンドの引数の秘密、形で分かる秘密）を全体に掛け、URL のクエリも伏せる
  */
 export const maskTree = (value) => maskUrls(maskShape(value));

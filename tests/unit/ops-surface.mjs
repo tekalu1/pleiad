@@ -173,7 +173,7 @@ export default async function (t) {
       unifyPreview: async () => ({ imports: [{ id: 'i', digest: 'd', command: 'x', ...secret }], revision: 'r' }),
     },
     context: { view: async () => ({ defaults: { ...secret }, places: [] }), plyInstructions: () => ({ items: [{ id: 'x', ...secret }] }),
-      // 中身を読む操作（ADR 0104）
+      // 中身を読む操作（ADR 0105）
       session: async () => ({ report: { entries: [{ kind: 'mcp', name: 'm', command: 'x', ...secret }] }, owners: {}, pinned: false, changed: null, ...secret }),
       diff: async () => ({ files: [{ path: 'p', before: 'a', after: 'b', ...secret }] }),
       scan: async () => ({ cwd: 'c', entries: [{ kind: 'instruction', content: 'x', ...secret }] }),
