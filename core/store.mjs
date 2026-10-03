@@ -26,8 +26,12 @@
 //   agentLocale     … 会話の言語（ja|en）。エージェントに渡す文（指示・ツールの説明・通知）の言語。会話を始めたときに
 //                     画面の言語で決め、以後は変えない（core/server.mjs。docs/design.md「多言語対応」）
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import crypto from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { writeAtomic, TRANSIENT_RENAME } from "./atomic-file.mjs";
 import { t } from "./i18n.mjs";
 import { COMPUTER_APP_LIMIT, computerAppRow, computerUsePrefs } from "../web/computer-prefs.mjs";
 
@@ -39,13 +43,15 @@ const STATUSES = path.join(DIR, "statuses.json");
 // sidecar が持つメタ情報のうち、外から丸ごと上書きしてよいもの。
 // history / parent / mode / model は専用の口があるので、ここには入れない。
 const META_KEYS = new Set(["backend", "title", "status", "cwd", "createdAt", "lastModified", "completedAt", "unsent", "interrupted", "turnStartedAt"]);
+// These fields must survive a restart as soon as their operation completes.
+const DURABLE_META_KEYS = new Set(["completedAt", "unsent", "interrupted", "turnStartedAt"]);
 
 /**
  * JSON ファイル 1 つ。読みは一度きりでキャッシュ、書きは一時ファイルへ書いてから置き換える
  * （書き込み中に落ちても既存を壊さない）。sidecar のファイルは全部この経路を通す。
  * 壊れている・無い・オブジェクトでないときは空から始める。
  */
-function jsonFile(file) {
+function jsonFile(file, { compact = false } = {}) {
   let cache = null;
   return {
     async read() {
@@ -61,18 +67,71 @@ function jsonFile(file) {
     async write() {
       await fs.mkdir(DIR, { recursive: true });
       const tmp = `${file}.${process.pid}.tmp`;
-      await fs.writeFile(tmp, JSON.stringify(cache, null, 2), "utf8");
-      await fs.rename(tmp, file);
+      if (compact) await writeAtomic(file, JSON.stringify(cache));
+      else {
+        await fs.writeFile(tmp, JSON.stringify(cache, null, 2), "utf8");
+        await fs.rename(tmp, file);
+      }
+    },
+    writeSync() {
+      fsSync.mkdirSync(DIR, { recursive: true });
+      const tmp = `${file}.${crypto.randomUUID()}.tmp`;
+      try {
+        fsSync.writeFileSync(tmp, JSON.stringify(cache), "utf8");
+        for (let attempt = 0; ; attempt++) {
+          try { fsSync.renameSync(tmp, file); break; }
+          catch (e) {
+            if (attempt >= 6 || !TRANSIENT_RENAME.includes(e?.code)) throw e;
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, [20, 40, 80, 160, 320, 480][attempt]);
+          }
+        }
+      } finally { try { fsSync.rmSync(tmp, { force: true }); } catch {} }
     },
   };
 }
 
-const sessions = jsonFile(FILE);
+const sessions = jsonFile(FILE, { compact: true });
 const prefs = jsonFile(PREFS);
 const statuses = jsonFile(STATUSES);
 
 const load = () => sessions.read();
-const flush = () => sessions.write();
+// Frequent metadata changes share one trailing write. The cache is updated before
+// returning, so readers in this process always see the latest value.
+const FLUSH_DELAY_MS = 750;
+let flushTimer = null;
+let dirty = false;
+function scheduleFlush() {
+  dirty = true;
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    void exclusive(async () => {
+      if (!dirty) return;
+      try { await sessions.write(); dirty = false; }
+      catch (e) {
+        console.error('sessions.json save failed:', e?.code ?? e?.message ?? e);
+        scheduleFlush();
+      }
+    });
+  }, FLUSH_DELAY_MS);
+  flushTimer.unref();
+}
+const flush = async () => { scheduleFlush(); };
+async function flushDurable() {
+  if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+  try { await sessions.write(); dirty = false; }
+  catch (e) { dirty = true; scheduleFlush(); throw e; }
+}
+// process.exit, signals, and the desktop worker shutdown all pass through exit.
+process.on('exit', () => {
+  if (!dirty) return;
+  if (flushTimer) clearTimeout(flushTimer);
+  try { sessions.writeSync(); dirty = false; }
+  catch (e) {
+    console.error('sessions.json final save failed:', e?.code ?? e?.message ?? e);
+    process.exitCode = 1;
+  }
+});
 
 // 書き込みを直列化する。人間と AI が同時に触っても read-modify-write が交錯しない
 let chain = Promise.resolve();
@@ -325,13 +384,15 @@ export async function setMeta(sessionId, patch) {
     const all = await load();
     const entry = (all[sessionId] ??= { history: [] });
     let touched = false;
+    let durable = false;
     for (const [k, v] of Object.entries(patch)) {
       if (!META_KEYS.has(k) || v === undefined) continue;
       if (entry[k] === v) continue;
       entry[k] = v;
       touched = true;
+      if (DURABLE_META_KEYS.has(k)) durable = true;
     }
-    if (touched) await flush();
+    if (touched) await (durable ? flushDurable() : flush());
     return entry;
   });
 }
@@ -347,8 +408,9 @@ export async function setMode(sessionId, mode) {
   return exclusive(async () => {
     const all = await load();
     const entry = (all[sessionId] ??= { history: [] });
+    if (entry.mode === mode) return entry;
     entry.mode = mode;
-    await flush();
+    await flushDurable();
     return entry;
   });
 }
@@ -360,8 +422,9 @@ export async function setModel(sessionId, model) {
   return exclusive(async () => {
     const all = await load();
     const entry = (all[sessionId] ??= { history: [] });
+    if (entry.model === model) return entry;
     entry.model = model;
-    await flush();
+    await flushDurable();
     return entry;
   });
 }
@@ -386,7 +449,7 @@ export async function inheritSettings(sourceId, childId) {
     if (source.agentLocale) entry.agentLocale = source.agentLocale;
     else delete entry.agentLocale;
     entry.contextSession = structuredClone(source.contextSession ?? null);
-    await flush();
+    await flushDurable();
   });
 }
 
@@ -396,8 +459,9 @@ export async function setParent(sessionId, parent) {
   return exclusive(async () => {
     const all = await load();
     const entry = (all[sessionId] ??= { history: [] });
+    if (entry.parent === parent) return entry;
     entry.parent = parent;
-    await flush();
+    await flushDurable();
     return entry;
   });
 }
@@ -410,9 +474,10 @@ export async function setSessionData(sessionId, field, value) {
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];
+    if (before && isDeepStrictEqual(before[field], value)) return before[field];
     const entry = { ...(before ?? { history: [] }), [field]: structuredClone(value) };
     all[sessionId] = entry;
-    try { await flush(); } catch (e) { if (before) all[sessionId] = before; else delete all[sessionId]; throw e; }
+    try { await flushDurable(); } catch (e) { if (before) all[sessionId] = before; else delete all[sessionId]; throw e; }
     return entry[field];
   });
 }
@@ -442,7 +507,7 @@ export async function markRead(reads) {
     }
     // 書けなければ元に戻す（確認済みと答えたのに再起動で戻る、を作らない）
     if (changed.size) {
-      try { await flush(); } catch (e) {
+      try { await flushDurable(); } catch (e) {
         for (const [id, prev] of before) { if (prev === undefined) delete all[id].readAt; else all[id].readAt = prev; }
         throw e;
       }
@@ -473,7 +538,7 @@ export async function recoverInterruptedTurns(at = Date.now()) {
       entry.turnStartedAt = null;
       touched = true;
     }
-    if (touched) await flush();
+    if (touched) await flushDurable();
     return changed;
   });
 }
@@ -507,7 +572,7 @@ export async function addStops(sessionId, patch) {
     // 理由は最後に止めたときのもの（伝える文の見出しに使う）
     if (patch.reason) next.reason = patch.reason;
     entry.stops = next;
-    await flush();
+    await flushDurable();
     return structuredClone(next);
   });
 }
@@ -531,7 +596,7 @@ export async function takeStops(sessionId, keys, { dropped = false } = {}) {
     if (!dropped && entry.stops.dropped) next.dropped = entry.stops.dropped;
     if (Object.keys(next).length && entry.stops.reason) next.reason = entry.stops.reason;
     entry.stops = Object.keys(next).length ? next : null;
-    await flush();
+    await flushDurable();
     return entry.stops;
   });
 }
@@ -544,7 +609,7 @@ export async function clearStops(sessionId) {
     const entry = all[sessionId];
     if (!entry?.stops) return null;
     entry.stops = null;
-    await flush();
+    await flushDurable();
     return null;
   });
 }
@@ -552,7 +617,8 @@ export async function clearStops(sessionId) {
 export async function removeSession(sessionId) {
   return exclusive(async () => {
     const all = await load(), before = all[sessionId];
+    if (!before) return;
     delete all[sessionId];
-    try { await flush(); } catch (e) { if (before) all[sessionId] = before; throw e; }
+    try { await flushDurable(); } catch (e) { if (before) all[sessionId] = before; throw e; }
   });
 }

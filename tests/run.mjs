@@ -114,6 +114,7 @@ const cases = [
   await import('./unit/task-command-notice.mjs'),
   // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）
   await import('./unit/agent-tasks-storage.mjs'),
+  await import('./unit/agent-tasks-command-storage.mjs'),
   // 完了通知: 受け取り済み（read）は送らない・同じ親の分は 1 つにまとめる・走っているターンへ渡す（steerable）と送り直し・途中送信の条件
   await import('./unit/agent-tasks-notice.mjs'),
   // 追加指示（ply_task_send）を走っている子のターンへ途中送信で渡す: 受理・合図・捨てられた・合図なし・順序・止めた後（ADR 0065）
@@ -257,6 +258,7 @@ const cases = [
   await import("./unit/web-interrupt.mjs"),
   // 確認済み（既読）の置き場と、2 本の接続で共有されること（fake バックエンド）
   await import("./unit/read-store.mjs"),
+  await import("./unit/store-flush.mjs"),
   await import("./unit/server-read.mjs"),
   // 開いている会話の宣言（流れの出来事を絞る）と、会話の一覧の使い回し（ADR 0024）
   await import("./unit/server-watch.mjs"),

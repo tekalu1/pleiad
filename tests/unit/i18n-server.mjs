@@ -95,8 +95,13 @@ export default async function (t) {
     t.ok("キーの無い理由は文字列のまま", events[1]?.reason === "自由な理由" && !events[1]?.reasonKey);
     t.ok("辞書に無いキーは受けず、文字列の理由を使う", events[2]?.reason === "偽のキー" && !events[2]?.reasonKey);
     t.ok("グループを作った知らせもキー付き", events[3]?.reasonKey === "createdGroup" && events[3]?.reason === "グループを作った");
-    const sessions = JSON.parse(await fs.readFile(path.join(dataDir, "sessions.json"), "utf8"));
-    const history = sessions[sessionId]?.history?.filter((h) => h.field === "status") ?? [];
+    let history = [];
+    for (let i = 0; i < 40; i++) {
+      const sessions = JSON.parse(await fs.readFile(path.join(dataDir, "sessions.json"), "utf8"));
+      history = sessions[sessionId]?.history?.filter((h) => h.field === "status") ?? [];
+      if (history.length >= 3) break;
+      await sleep(50);
+    }
     t.ok("変更履歴に reason（日本語）と reasonKey が残る", history[0]?.reason === "メニューから変更" && history[0]?.reasonKey === "menu"
       && history[1]?.reason === "自由な理由" && !("reasonKey" in history[1]), JSON.stringify(history));
     const res = await fetch(`http://127.0.0.1:${server.port}/`, { headers: { connection: "close" } }).catch(() => null);
