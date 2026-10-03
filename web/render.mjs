@@ -608,9 +608,15 @@ export function renderPresent(ev) {
   if (kind === 'visualization' && !e.truncated) {
     if (e.error) body.append(el('div', 'present-note', e.error));
     else {
-      const frame = visualizationFrame(e.content ?? '', e.caption);
+      card.classList.add('visualize-seamless');
+      card.setAttribute('aria-label', t('timeline.present.namedVisualization', { title: e.caption || kindLabel(kind) }));
+      cap.remove();
+      const frame = visualizationFrame(e.content ?? '', e.caption, { conversation: true });
       body.append(frame);
       const controls = el('span', 'present-tools');
+      controls.setAttribute('role', 'group');
+      controls.setAttribute('aria-label', t('filePreview.visual.actions'));
+      controls.append(el('span', 'visualize-title', `${kindLabel(kind)} · ${e.caption ?? ''}`));
       // 見出し行は狭いので、操作はアイコンにしてラベルは title / aria-label に持たせる。
       const tool = (icon, label, className = '') => {
         const b = el('button', `h-btn h-icon ${className}`.trim());
@@ -636,7 +642,7 @@ export function renderPresent(ev) {
       expand.onclick = () => expand.dispatchEvent(new CustomEvent('ply-visualize-expand', { bubbles: true, detail }));
       const open = tool(openInBrowserIcon, t('timeline.present.browser'), 'visualize-open-browser');
       open.onclick = () => open.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles: true, detail }));
-      cap.append(controls);
+      card.append(controls);
       if (e.mode === 'wide') card.classList.add('visualize-wide');
     }
   } else if (e.truncated) {

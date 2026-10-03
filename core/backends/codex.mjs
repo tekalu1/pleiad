@@ -1141,6 +1141,8 @@ export const backend = {
     title: true,        // thread/name/set。公式クライアントとタイトルを共有できる
     tag: false,         // 状態タグは持てない -> sidecar が正本
     fork: true,
+    // 同じ会話で巻き戻せる（thread/revert。legacy は thread/fork { beforeTurnId }。下の rewind）
+    rewind: 'thread',
     subagents: true,    // 子スレッド。thread/list { parentThreadId } と thread/read で読む
     liveModel: false,   // 走っている最中の切り替えは app-server に口が無い
     liveMode: false,
@@ -1902,6 +1904,43 @@ export const backend = {
 
   async setTitle(sessionId, title) {
     await rpc.request("thread/name/set", { threadId: sessionId, name: String(title ?? "") });
+  },
+
+  /**
+   * 同じ会話の中で、ある発言（ユーザーの発言の item id）の手前まで巻き戻す（conversations.mjs の rewind。ADR 0091）。
+   * 切れるのはターン単位なので、その発言がターンの先頭にあるときだけ（ターンの途中に差し込んだ送信は、前半も道連れになるので断る）。
+   * まず thread/revert（paginated のスレッドだけ。codex-cli 0.156.1。履歴を置き換え、thread id は変わらない）。
+   * 断られたら（以前に作った legacy のスレッド）thread/fork { beforeTurnId } で別スレッドに差し替える（thread id が変わるので返す）。
+   * どちらもだめなら投げる（呼び出し側がホスト管理に落とす）。返り値 { sessionId, via: "revert" | "fork" }
+   */
+  async rewind(threadId, { beforeMessageId } = {}) {
+    if (!validId(threadId)) throw new Error(t("codex.errors.noThreadId", { method: "thread/revert" }));
+    const read = await nativeRpc.request("thread/read", { threadId, includeTurns: true }, 30_000);
+    // item id を使い回すネイティブでは、最初に当たったターンで切ると残すべき履歴まで消える。当たるのが 1 つのターンだけのときだけ進む
+    const hits = (read?.thread?.turns ?? []).filter(x => (x.items ?? []).some(item => item?.type === "userMessage" && item.id === beforeMessageId));
+    const turn = hits.length === 1 ? hits[0] : null;
+    if (!turn?.id) throw new Error(t("codex.errors.rewindTurnNotFound"));
+    if (turn.items[0]?.id !== beforeMessageId) throw new Error(t("codex.errors.rewindMidTurn"));
+    // この app-server に読み込まれていなければ読み込み、終わったら外す（次のターンが自分の設定で読み込めるように。shell と同じ）
+    const loadedHere = !loadedProvider.has(threadId) && !nativeRpc.threads.has(threadId);
+    try {
+      if (loadedHere) await nativeRpc.request("thread/resume", { threadId });
+      try {
+        await nativeRpc.request("thread/revert", { threadId, beforeTurnId: turn.id }, 30_000);
+        return { sessionId: threadId, via: "revert" };
+      } catch (error) {
+        // 履歴の置き換えを断られた。legacy のスレッドは別スレッドへ切り出す
+        console.error("  codex: thread/revert を断られたので thread/fork で切り出す:", String(error?.message ?? error).slice(0, 200));
+      }
+      const forked = await nativeRpc.request("thread/fork", { threadId, beforeTurnId: turn.id }, 30_000);
+      const child = forked?.thread?.id;
+      if (!child) throw new Error(t("codex.errors.noThreadId", { method: "thread/fork" }));
+      // 切り出した子はロードされている。次のターンが自分の設定で読み込めるように外す
+      await nativeRpc.request("thread/unsubscribe", { threadId: child }).catch(() => {});
+      return { sessionId: child, via: "fork" };
+    } finally {
+      if (loadedHere) await nativeRpc.request("thread/unsubscribe", { threadId }).catch(() => {});
+    }
   },
 
   async fork(sessionId, { upToMessageId } = {}) {

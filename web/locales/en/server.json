@@ -94,7 +94,6 @@
   "session": {
     "running": "This session is running.",
     "required": "A session is required.",
-    "requiredForStatus": "A session is required (for a new session, pass status to runTurn).",
     "notFound": "Session not found.",
     "preparingSettings": "Preparing to send. Try changing the settings again.",
     "draftTooLarge": "The draft is too large.",
@@ -104,7 +103,9 @@
     "finishBeforeSwitch": "Wait for the run to finish before switching.",
     "sourceNotFound": "The session to continue from was not found.",
     "preparingFork": "The conversation is being prepared. Try branching again.",
-    "cannotFork": "This agent cannot branch."
+    "cannotFork": "This agent cannot branch.",
+    "preparingRewind": "The conversation is being prepared. Try resending again.",
+    "cannotRewind": "This agent cannot rewind the conversation."
   },
   "shell": {
     "unavailable": "Shell commands can't run in this conversation",
@@ -154,6 +155,12 @@
     "messageIdRequired": "A message ID is required.",
     "messageRequired": "Enter a message.",
     "invalidAttachments": "The attachments are not in a valid format."
+  },
+  "rewind": {
+    "running": "A reply is running. Stop it before resending.",
+    "stopTimeout": "The running reply did not stop in time. Wait a moment and try again.",
+    "invalid": "The message to resend is not specified correctly.",
+    "delegated": "A delegated conversation cannot be resent in place. Send as a branch instead."
   },
   "delegation": {
     "taskNotFound": "Pleiad task not found."
@@ -540,6 +547,8 @@
       "titleAborted": "Title generation was stopped.",
       "historyUnreadable": "Cannot read the Codex history.",
       "forkMidway": "codex cannot branch from the middle of a conversation (it can branch from the end).",
+      "rewindTurnNotFound": "The message to rewind to was not found in the Codex thread.",
+      "rewindMidTurn": "Codex cannot rewind from the middle of a turn.",
       "authReadFailed": "Could not read the codex sign-in status: {{message}}",
       "appServerDied": "codex app-server exited: {{why}}",
       "timeout": "codex {{method}} did not respond within {{ms}} ms.",
@@ -801,6 +810,9 @@
     "messageNotSaved": "This message has not been saved to the history yet. Wait a moment and try again.",
     "messageNotSavedFork": "This message has not been saved to the history yet. Wait a moment and try branching again.",
     "forkMessageNotFound": "The message to branch from was not found.",
+    "rewindMessageNotFound": "The message to resend was not found.",
+    "rewindNotUser": "Only your own messages can be resent.",
+    "rewindAmbiguous": "More than one message has the same ID, so the message to resend cannot be decided. Send as a branch instead.",
     "presentNoTime": "Cannot determine the branch point because the presented output has no timestamp. Branch from the end.",
     "toolRunning": "A tool is still running in the selected range. Branch from a completed message.",
     "backendMismatch": "The conversation's backend does not match.",

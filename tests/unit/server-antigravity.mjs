@@ -16,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
-import { checkFork } from "../lib/fork-contract.mjs";
+import { checkFork, checkRewind } from "../lib/fork-contract.mjs";
 
 export const name = "server-antigravity";
 export const title = "antigravity バックエンドが agy のヘッドレス越しに往復する";
@@ -230,6 +230,8 @@ export default async function (t) {
     // ---- 分岐。**agy に分岐の口が無いので、ホストの写しで分ける**（docs/message-fork.md）。
     // 汎用経路に相乗りしているだけなので、他のバックエンドと同じ契約で測る
     await checkFork(t, c, { id: sid, cwd: ROOT, firstText: "こんにちは", laterText: "つづき" });
+    // 同じ会話で巻き戻して送り直す。agy に巻き戻す口は無いので、Pleiad の履歴を切って次のターンで引き継ぐ（ホスト管理。docs/message-fork.md）
+    await checkRewind(t, c, { id: sid, firstText: "こんにちは", laterText: "つづき", sawPrefixOnly: true });
 
     // ---- 失敗
     const failed = await c.runTurn({ prompt: "fail", sessionId: sid, cwd: ROOT }, { ms: 60_000 })

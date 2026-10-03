@@ -269,6 +269,10 @@ export const backend = {
     tag: true,
     fork: true,
     forkMessage: true,
+    // 同じ会話での巻き戻し（core/conversations.mjs の rewind）。FAKE_REWIND で形を切り替える:
+    //   resumeAt（既定）… Claude と同じ。次のターンが drops の手前で切る / reject … 次のターンが拒否する（ホスト管理へ落とす経路） /
+    //   thread … Codex と同じ。rewind() が今すぐ切る / off … 巻き戻す口が無い（Antigravity と同じ。ホスト管理）
+    get rewind() { const v = process.env.FAKE_REWIND; return v === 'off' ? undefined : v === 'thread' ? 'thread' : 'resumeAt'; },
     subagents: true,
     liveModel: true,
     liveMode: true,
@@ -303,7 +307,7 @@ export const backend = {
     emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
   },
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, browserInstructions, oauthToken, hostSessionId, shellAppends = [], notes = [] }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, browserInstructions, oauthToken, hostSessionId, shellAppends = [], notes = [], rewind = null }) {
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
     if (String(prompt ?? "").trim().startsWith("undelivered")) {
       const error = "fake: failed before the prompt was delivered";
@@ -312,6 +316,12 @@ export const backend = {
     }
     const id = sessionId ?? `fake-${crypto.randomUUID()}`;
     const s = ensure(id, cwd);
+    // 巻き戻して送り直す（resumeSessionAt + resumeDropsTurn）。捨てる発言が無ければ、Claude と同じく何も渡る前に拒否する
+    if (rewind && sessionId) {
+      const at = s.messages.findIndex(m => m.uuid === rewind.drops);
+      if (process.env.FAKE_REWIND === 'reject' || at < 0) throw Object.assign(new Error('Resume rejected by --resume-drops-turn: fake'), { rewindRejected: true, undelivered: true });
+      s.messages.length = at;
+    }
     // claude と同じ形にする: 再開ターンでも session を 1 本出し、
     // 「id が確定した」ときだけ first を付ける。形が違うと、
     // 「再開ターンの session を新規待ちのタブが掴む」不具合が unit で踏めない。
@@ -676,6 +686,15 @@ export const backend = {
 
   async setTag(sessionId, tag) {
     ensure(sessionId).tag = tag || null;
+  },
+
+  // 今すぐ切る形の巻き戻し（FAKE_REWIND=thread。Codex の thread/revert と同じ）
+  async rewind(sessionId, { beforeMessageId } = {}) {
+    const s = sessions.get(sessionId);
+    const at = s?.messages.findIndex(m => m.uuid === beforeMessageId) ?? -1;
+    if (at < 0) throw new Error('fake: rewind target not found');
+    s.messages.length = at;
+    return { sessionId, via: 'revert' };
   },
 
   async fork(sessionId, { upToMessageId, title } = {}) {

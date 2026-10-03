@@ -112,11 +112,8 @@
     "saveDraft": "ui-internal",
     "deleteUnsentSession": "todo",
     "setTurnSettings": "todo",
-    "setStatus": "todo",
     "markRead": "ui-internal",
     "setGrouped": "ui-internal",
-    "setTitle": "todo",
-    "setBrowserProfile": "todo",
     "resolvePermission": "human-only",
     "listStatuses": "todo",
     "setMode": "human-only",
@@ -163,6 +160,6 @@
     "browserScreencastAgent": "stream",
     "computerStop": "human-only"
   },
-  "todoMax": 64,
+  "todoMax": 61,
   "setPrefAllowed": 3
 }

@@ -94,7 +94,6 @@
   "session": {
     "running": "このセッションは実行中",
     "required": "セッションが要る",
-    "requiredForStatus": "セッションが要る（新規なら runTurn の status に載せる）",
     "notFound": "セッションが見つかりません",
     "preparingSettings": "送信の準備中です。設定変更を再試行してください",
     "draftTooLarge": "下書きが大きすぎます",
@@ -104,7 +103,9 @@
     "finishBeforeSwitch": "実行が終わってから切り替えてください",
     "sourceNotFound": "引き継ぎ元のセッションが見つかりません",
     "preparingFork": "会話の準備中です。分岐を再試行してください",
-    "cannotFork": "このエージェントは分岐できない"
+    "cannotFork": "このエージェントは分岐できない",
+    "preparingRewind": "会話の準備中です。送り直しを再試行してください",
+    "cannotRewind": "このエージェントは会話を巻き戻せない"
   },
   "shell": {
     "unavailable": "この会話ではシェルを実行できません",
@@ -154,6 +155,12 @@
     "messageIdRequired": "送信IDが必要です",
     "messageRequired": "メッセージを入力してください",
     "invalidAttachments": "添付の形式が正しくありません"
+  },
+  "rewind": {
+    "running": "実行中の返答があります。止めてから送り直してください",
+    "stopTimeout": "実行中の返答を止められませんでした。少し待ってから再試行してください",
+    "invalid": "送り直す発言の指定が正しくありません",
+    "delegated": "委譲された会話は同じ会話では送り直せません。分岐して送ってください"
   },
   "delegation": {
     "taskNotFound": "Pleiad タスクが見つかりません"
@@ -538,6 +545,8 @@
       "titleAborted": "タイトル生成を中断しました",
       "historyUnreadable": "Codex の履歴を読み出せません",
       "forkMidway": "codex は途中の発言からは分岐できない（末尾からなら分岐できる）",
+      "rewindTurnNotFound": "巻き戻す発言が codex のスレッドに見つかりません",
+      "rewindMidTurn": "codex はターンの途中の発言からは巻き戻せない",
       "authReadFailed": "codex の認証状態を読めなかった: {{message}}",
       "appServerDied": "codex app-server が落ちた: {{why}}",
       "timeout": "codex {{method}} が {{ms}}ms で応答しなかった",
@@ -799,6 +808,9 @@
     "messageNotSaved": "この発言はまだ履歴に保存されていません。少し待って再試行してください",
     "messageNotSavedFork": "この発言はまだ履歴に保存されていません。少し待って分岐を再試行してください",
     "forkMessageNotFound": "分岐する発言が見つかりません",
+    "rewindMessageNotFound": "送り直す発言が見つかりません",
+    "rewindNotUser": "送り直せるのは自分の発言だけです",
+    "rewindAmbiguous": "同じ ID の発言が複数あり、送り直す発言を決められません。分岐して送ってください",
     "presentNoTime": "提示された成果物の時刻がなく分岐点を特定できません。末尾から分岐してください",
     "toolRunning": "選択範囲に実行中のツールがあります。完了済みの発言から分岐してください",
     "backendMismatch": "会話のバックエンドが一致しません",

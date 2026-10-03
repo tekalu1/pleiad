@@ -54,6 +54,66 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "browser.listProfiles",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "browser.setProfile",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": "setBrowserProfile",
+      "input": "0c962f58fe1d"
+    },
+    {
+      "id": "browser.useProfile",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "974c851ac5dd"
+    },
+    {
+      "id": "delegation.delegate",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "99f99ce422d2"
+    },
+    {
       "id": "delegation.status",
       "risk": "read",
       "riskOf": false,
@@ -77,6 +137,36 @@
       "input": "e3b488cb7dc5"
     },
     {
+      "id": "delegation.taskCancel",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "aa46a1003ecf"
+    },
+    {
+      "id": "delegation.taskList",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "delegation.tasks",
       "risk": "read",
       "riskOf": false,
@@ -95,6 +185,66 @@
       },
       "legacyCommand": null,
       "input": "3674e4e2e03f"
+    },
+    {
+      "id": "delegation.taskSend",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "754c258818cb"
+    },
+    {
+      "id": "delegation.taskStatus",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "27616efa3556"
+    },
+    {
+      "id": "delegation.taskWait",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "a61125b68fb1"
+    },
+    {
+      "id": "delegation.usage",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "e713b07977ab"
     },
     {
       "id": "resumeQueue.get",
@@ -180,7 +330,7 @@
         }
       },
       "legacyCommand": "fork",
-      "input": "b52741627794"
+      "input": "4ec236aaa329"
     },
     {
       "id": "sessions.get",
@@ -356,8 +506,8 @@
           ]
         }
       },
-      "legacyCommand": null,
-      "input": "638b344ef30c"
+      "legacyCommand": "setStatus",
+      "input": "d5bf02c82338"
     },
     {
       "id": "sessions.setTitle",
@@ -380,8 +530,8 @@
           ]
         }
       },
-      "legacyCommand": null,
-      "input": "b7a5d60cc4c3"
+      "legacyCommand": "setTitle",
+      "input": "a2ea8053be13"
     },
     {
       "id": "settings.get",
@@ -900,6 +1050,26 @@
   ],
   "cli": [
     {
+      "id": "browser.listProfiles",
+      "path": "browser listProfiles",
+      "positional": []
+    },
+    {
+      "id": "browser.setProfile",
+      "path": "browser setProfile",
+      "positional": []
+    },
+    {
+      "id": "browser.useProfile",
+      "path": "browser useProfile",
+      "positional": []
+    },
+    {
+      "id": "delegation.delegate",
+      "path": "delegation delegate",
+      "positional": []
+    },
+    {
       "id": "delegation.status",
       "path": "delegation status",
       "positional": [
@@ -907,8 +1077,38 @@
       ]
     },
     {
+      "id": "delegation.taskCancel",
+      "path": "delegation taskCancel",
+      "positional": []
+    },
+    {
+      "id": "delegation.taskList",
+      "path": "delegation taskList",
+      "positional": []
+    },
+    {
       "id": "delegation.tasks",
       "path": "delegation tasks",
+      "positional": []
+    },
+    {
+      "id": "delegation.taskSend",
+      "path": "delegation taskSend",
+      "positional": []
+    },
+    {
+      "id": "delegation.taskStatus",
+      "path": "delegation taskStatus",
+      "positional": []
+    },
+    {
+      "id": "delegation.taskWait",
+      "path": "delegation taskWait",
+      "positional": []
+    },
+    {
+      "id": "delegation.usage",
+      "path": "delegation usage",
       "positional": []
     },
     {
