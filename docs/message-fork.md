@@ -96,8 +96,9 @@ Codex の UI の発言 ID は 1 ターンに複数ある（userMessage / agentMe
 `thread/revert { threadId, beforeTurnId }` がターン単位で履歴を置き換える（`thread/reverted` 通知。続けて `turn/start` もできる）が、
 `historyMode: "paginated"` のスレッドだけで、以前に作った legacy のスレッドは `thread/revert only supports paginated threads` で断られる。
 `thread/start` の既定は paginated。legacy の `thread/fork { beforeTurnId }` は効くが、子も legacy のまま。
-巻き戻した後にモデルが捨てた内容を見ないかは、使用上限に当たって未確認（Oct 4 2:46 AM まで走れない）。アダプター（`rewind`）が実機の app-server に対して
-`thread/revert` で履歴を切ること（ターンが failed のままでも、ターンの先頭の userMessage から引ける）は 2026-10-03 に確かめた。
+巻き戻した後にモデルが捨てた内容を見ないことは、実モデル（gpt-6-luna）で確かめた（2026-10-03。`tests/e2e/rewind.mjs`）: paginated のスレッドは `thread/revert`（thread id は変わらない）、
+`historyMode: "legacy"` で作ったスレッドは `thread/revert` を断られて `thread/fork { beforeTurnId }` に差し替わり（会話の id は同じ・uuid は付け直し）、どちらも続きのターンまで捨てた内容を覚えていない。
+legacy のスレッドの item id は `item-1`・`item-2`… とスレッド内で連番。
 
 Claude は `query({ resume, resumeSessionAt, resumeDropsTurn })` で同じ session id・同じ JSONL のまま巻き戻せる（SDK 0.3.258 で確認）。
 JSONL は消さずに追記され、`getSessionMessages` は最新の葉の鎖を返す。切り口を間違えると `resumeDropsTurn` が `Resume rejected by --resume-drops-turn:` を投げる。
@@ -156,6 +157,6 @@ JSONL は消さずに追記され、`getSessionMessages` は最新の葉の鎖�
   同じ会話・件数・送信待ちの取り消し・実行中・検査）、`tests/lib/fork-contract.mjs` の `checkRewind`（Antigravity から回す共通契約）、
   `tests/unit/server-context.mjs`（渡し済みの控えを捨てる）、`tests/unit/resend-band.mjs`。
 - `npm run test:e2e -- rewind`: 実際の Claude（既定 haiku）・Codex で、巻き戻した先のモデルが捨てた発言のコードを覚えていないこと（続きのターンでも）。
-  Claude は 2026-10-03 に通した。Codex は使用上限で走れなかった。
+  Claude・Codex（paginated と、legacy のスレッドの差し替え）とも 2026-10-03 に通した（legacy のスレッドは e2e が app-server で `historyMode: "legacy"` を指定して作り、最初のターンまで走らせてから Pleiad が resume する）。
 - Playwright CLI（`tests/browser/message-actions.cjs`）: 編集・再送信の帯の出る条件と文・薄くする範囲・キーボード・同じ会話での送り直し（会話・一覧が増えない）・
   後ろが無いときは帯なし・実行中の止めて送り直し・分岐して送る・送れなかったときの復帰・360px。

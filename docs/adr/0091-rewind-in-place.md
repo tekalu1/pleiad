@@ -42,4 +42,4 @@
 - 巻き戻したあとの JSONL には、捨てた枝が残る（害はない）。Codex の revert は永続の履歴を置き換える。
 - 使用量の推計（Claude の cost-state は JSONL の末尾から読む）は、実機の確認で巻き戻したターンの推計が妥当だった（0 以上・桁違いにならない）。
 - ファイルの変更は戻らない（作業場所は同じ）。帯がそれを知らせる。
-- 実機での確認: Claude は `tests/e2e/rewind.mjs` で、巻き戻した先のモデルが捨てた発言を覚えていないことを見た。Codex は使用上限で走れない間は、履歴の操作（`thread/revert`）だけを実機の app-server で確かめ、モデルの確認は未実施。
+- 実機での確認: Claude は `tests/e2e/rewind.mjs` で、巻き戻した先のモデルが捨てた発言を覚えていないことを見た。Codex も同じ e2e で、paginated の `thread/revert` と、legacy のスレッドの `thread/fork { beforeTurnId }` への差し替えの両方で、捨てた発言を覚えていないことを見た。
