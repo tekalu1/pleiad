@@ -176,10 +176,11 @@ process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'PreToolU
       && seen.tool === 'Bash' && seen.cmd === 'rm -rf x' && seen.pd, `${r1.stdout} ${r1.stderr}`);
     const r2 = await runAdapter(['claude', 'antigravity', 'PreToolUse', '10', b64(`node ${guard}`)], agyIn.replace('rm -rf x', 'echo hi'));
     t.ok('実行: ask は agy の ask', JSON.parse(r2.stdout).decision === 'ask');
-    const slow = await script('slow.mjs', 'setTimeout(() => process.stdout.write("{}"), 5000);');
+    // 元のコマンドは 30 秒かかる。混んでいると node の起動と taskkill に数秒かかるので、待たなかったことは 15 秒で見る
+    const slow = await script('slow.mjs', 'setTimeout(() => process.stdout.write("{}"), 30000);');
     const started = Date.now();
     const r3 = await runAdapter(['claude', 'antigravity', 'PreToolUse', '1', b64(`node ${slow}`)], agyIn);
-    t.ok('実行: timeout（1 秒）で元のコマンドを止めて deny', JSON.parse(r3.stdout).decision === 'deny' && Date.now() - started < 4500, `${Date.now() - started}ms ${r3.stdout}`);
+    t.ok('実行: timeout（1 秒）で元のコマンドを止めて deny', JSON.parse(r3.stdout).decision === 'deny' && Date.now() - started < 15_000, `${Date.now() - started}ms ${r3.stdout}`);
     const r4 = await runAdapter(['claude', 'antigravity', 'PreToolUse', '10', b64('this-command-does-not-exist-xyz')], agyIn);
     t.ok('実行: 見つからないコマンド（シェルの exit 1 など）でも答えを返す', r4.code === 0 && ['deny', 'allow'].includes(JSON.parse(r4.stdout).decision), r4.stdout);
     const r5 = await runAdapter(['claude', 'antigravity', 'PreToolUse', '10', b64(`node ${guard}`)], 'not json');
