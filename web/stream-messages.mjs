@@ -74,6 +74,7 @@ export function streamMessages(events = [], { backend = null, model = null, init
         const m = known ?? { role: 'user', text: '', at: null };
         m.text = String(ev.text ?? '');
         m.at = isoAt(ev.at) ?? m.at;
+        if (ev.sentBy) m.sentBy = ev.sentBy;
         if (!known) { messages.push(m); if (ev.messageId) users.set(ev.messageId, m); }
         if (ev.pending && ev.messageId && !deliveredEarly.has(ev.messageId)) undelivered.add(m);
         else undelivered.delete(m);

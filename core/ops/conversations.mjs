@@ -1,11 +1,12 @@
-// sessions.* のうち、会話そのものの操作（作る・消す・止める・続ける・圧縮・次の設定・送信待ち・系譜・変更の記録・題の提案）。
+// sessions.* のうち、会話そのものの操作（作る・消す・止める・続ける・圧縮・次の設定・送信待ち・別の会話への送信・既読・系譜・変更の記録・題の提案）。
 // 画面の WS コマンド（newSession・deleteUnsentSession・abort・resume・compactConversation・cancelCompaction・setConversationAutoCompaction・
-// setTurnSettings・listMessages・lineage・sessionChanges・suggestTitle）の中身はここへ移した。WS は同じ操作を呼ぶだけの外側（core/server.mjs の viaOp）。
+// setTurnSettings・listMessages・messageAction・markRead・lineage・sessionChanges・suggestTitle）の中身はここへ移した。WS は同じ操作を呼ぶだけの外側（core/server.mjs の viaOp）。
 // 本体（実際に会話を動かす処理）はサーバーが ctx.conversations で渡す（core/server.mjs の opsConversations）。
 // 返り値は AI が 1 回で読める大きさに抑える（一覧は limit / cursor、本文は切る）。画面（人）には uiHandler で、画面が読む全量の形を返す（ADR 0091 追記）。
 import { z } from 'zod';
 import { agentT, t } from '../i18n.mjs';
 import { familyOf } from '../lineage.mjs';
+import { autonomyRank, modePosition, scopeRank } from '../modes.mjs';
 import { defineOp, OpError } from './registry.mjs';
 import { FAILED, fromHost, humanOnlyFields, pageOf, clip, PAGE_MAX } from './host.mjs';
 import { changeRow, listRowOf } from './sessions.mjs';
@@ -13,6 +14,81 @@ import { changeRow, listRowOf } from './sessions.mjs';
 const D = (id, key) => `agent:ops.sessions.${id}.${key}`;
 /** sessions.listMessages: 1 件の本文の字数 */
 export const OUTBOX_CHARS = 500;
+
+// ---- 別の会話へ送る（sessions.send）の強さの比べ方と歯止め（ADR 0104）
+
+/** sessions.send の本文の字数の上限 */
+export const SEND_TEXT_MAX = 100_000;
+/** 承認カードに出す本文の字数 */
+const CARD_TEXT = 300;
+/** 送信の連鎖の上限。人の発言から始まった会話どうしの送信が、この回数を超えて続いたら断る（会話どうしの往復が止まらないのを防ぐ） */
+export const RELAY_HOPS_MAX = 3;
+/** 同じ送り手（会話）からの送信の上限。windowMs の間に max 件まで */
+export const SEND_RATE = Object.freeze({ max: 20, windowMs: 10 * 60_000 });
+
+/** 宛先の承認の強さが送り手より強いか。範囲（scope）か自律（autonomy）のどちらかが送り手より上なら強い（宣言の無いモードは弱い側に倒す） */
+export function strongerMode(target, sender) {
+  const a = modePosition(target), b = modePosition(sender);
+  return scopeRank(a.scope) > scopeRank(b.scope) || autonomyRank(a.autonomy) > autonomyRank(b.autonomy);
+}
+
+/** 送り手ごとの送信の数え上げ（時刻の窓）。now は単体の検査が差し替える */
+export function createSendLimiter({ max = SEND_RATE.max, windowMs = SEND_RATE.windowMs, now = Date.now } = {}) {
+  const sent = new Map();
+  const recent = (key) => (sent.get(key) ?? []).filter((at) => now() - at < windowMs);
+  return {
+    allowed: (key) => recent(key).length < max,
+    note: (key) => { const list = recent(key); list.push(now()); sent.set(key, list); },
+  };
+}
+const sendLimiter = createSendLimiter();
+
+const delegationParentOf = (row) => row?.delegation?.parentSessionId ?? null;
+
+/**
+ * sessions.send の歯止め。承認カードを出す前（riskOf）と送る直前（handler）の 2 回確かめる。
+ * 断るときは送り手の会話の変更の記録に残す（ctx.conversations.refused）。返り値は { found: 宛先, hops: この送信の連鎖の数 }
+ */
+async function sendGuard(ctx, targetId) {
+  const sender = ctx.actor.sessionId ?? null;
+  const refuse = async (code, params = {}) => {
+    await Promise.resolve(ctx.conversations.refused?.({ actor: ctx.actor, op: ctx.op.id, sessionId: targetId, code })).catch(() => {});
+    return new OpError(code, agentT(ctx.locale, `ops.errors.${code}`, { id: targetId, ...params }));
+  };
+  if (sender && targetId === sender) throw await refuse('SEND_SELF');
+  const found = await ctx.sessions.get(targetId);
+  if (!found) throw missing(ctx, targetId);
+  if (sender) {
+    // 委譲の親子は委譲の道具で話す（子への追加の指示は ply_task_send、子の結果は依頼元へ自動で届く）。2 つの道具をまたぐ往復を作らない
+    if (delegationParentOf(found.row) === sender) throw await refuse('SEND_TO_CHILD');
+    if (delegationParentOf((await ctx.sessions.get(sender))?.row) === targetId) throw await refuse('SEND_TO_PARENT');
+  }
+  const hops = (sender ? await ctx.conversations.relayHops(sender) : 0) + 1;
+  if (hops > RELAY_HOPS_MAX) throw await refuse('RELAY_LIMIT', { max: RELAY_HOPS_MAX });
+  if (!sendLimiter.allowed(sender ?? '')) throw await refuse('SEND_RATE', { max: SEND_RATE.max, minutes: SEND_RATE.windowMs / 60_000 });
+  return { found, hops };
+}
+
+/**
+ * 宛先で次に走るときの承認の強さが、呼び出した会話より強いか。強いなら guarded（承認カード）。
+ * 人は比べない。会話に束縛されていない呼び出しは比べる強さが無いので guarded（policy が NEEDS_UI にする）
+ */
+async function sendRisk(ctx, targetId) {
+  if (ctx.principal.by !== 'agent') return 'write';
+  if (!ctx.actor.sessionId) return 'guarded';
+  const sender = await ctx.modeOf?.(ctx.actor.sessionId);
+  return (await ctx.conversations.modesOf(targetId)).some((m) => strongerMode(m, sender)) ? 'guarded' : 'write';
+}
+
+/** 承認カードの一文と受領証の元（宛先の承認モードが承認の前と変わっていたら聞き直す） */
+async function sendCard(ctx, targetId, key, params) {
+  const found = await ctx.sessions.get(targetId);
+  if (!found) throw missing(ctx, targetId);
+  const modes = await ctx.conversations.modesOf(targetId);
+  const mode = modes.map((m) => m?.label).find(Boolean) ?? '';
+  // loosens: 確認なしで進む会話を代わりに動かせるので、カードに「確認なしでできることが増える」の一行を出す
+  return { note: agentT(ctx.locale, key, { title: found.row.title || targetId, mode, ...params }), loosens: true, before: { id: targetId, modes: modes.map(modePosition) } };
+}
 
 const sessionId = (id) => z.string().min(1).max(200).describe(D(id, 'sessionId'));
 const optionalSessionId = (id) => z.string().min(1).max(200).optional().describe(D(id, 'sessionId'));
@@ -233,6 +309,98 @@ export const conversationOps = [
       return { total, messages: items.map(outboxRow), next };
     },
     uiHandler: (ctx, { sessionId: id }) => ctx.conversations.outbox(id),
+  }),
+
+  // 別の会話にメッセージを送る（AI・CLI・HTTP の口。ADR 0104）。画面の送信（WS の sendMessage）と同じ送信待ちに積み、宛先の会話の承認モードで走る。
+  // 宛先の履歴には「<送り手> があなたの代わりに送信」の印で出る（人の発言と見分ける）。画面の送信は添付・巻き戻し・承認モードの欄を持つので WS のまま
+  defineOp({
+    id: 'sessions.send',
+    summary: 'agent:ops.sessions.send.summary',
+    risk: 'write',
+    riskReason: 'The message runs under the target conversation\'s own approval mode, the same as when a person types it there; it is queued like the screen\'s send and the target\'s history marks it as sent on the user\'s behalf by the sender. When the target\'s approval mode is stronger than the caller\'s (scope or autonomy higher), riskOf raises it to guarded so an agent cannot borrow a stronger conversation. Sending to itself, across a delegation (parent and child), past a relay chain of 3 or over 20 sends in 10 minutes is refused',
+    riskOf: async (ctx, { sessionId: id }) => { await sendGuard(ctx, id); return sendRisk(ctx, id); },
+    confirm: (ctx, { sessionId: id, text }) => sendCard(ctx, id, 'ops.sessions.send.card', { text: clip(text, CARD_TEXT) }),
+    scope: 'session',
+    input: z.object({
+      sessionId: sessionId('send'),
+      text: z.string().trim().min(1).max(SEND_TEXT_MAX).describe(D('send', 'text')),
+      reason: z.string().trim().min(1).max(500).optional().describe(D('send', 'reason')),
+    }),
+    output: z.object({ sessionId: z.string(), messageId: z.string(), status: z.string() }),
+    surfaces: { ui: false, mcp: 'catalog', cli: { path: ['sessions', 'send'], positional: ['sessionId', 'text'] } },
+    handler: async (ctx, { sessionId: id, text, reason }) => {
+      const { hops } = await sendGuard(ctx, id);
+      const own = ctx.actor.sessionId ? (await ctx.sessions.get(ctx.actor.sessionId))?.row : null;
+      // 宛先の履歴に出す送り手。bot の会話は name・icon を足す（送り手の表示）
+      const sentBy = { by: ctx.actor.by, ...(ctx.actor.via ? { via: ctx.actor.via } : {}),
+        ...(own ? { sessionId: own.id, title: own.title ?? '', backend: own.backend ?? null } : {}), hops };
+      sendLimiter.note(ctx.actor.sessionId ?? '');
+      const item = await fromHost(() => ctx.conversations.send({ sessionId: id, text, sentBy, reason: reason ?? null, actor: ctx.actor }));
+      return { sessionId: id, messageId: item.id, status: item.status };
+    },
+  }),
+
+  // 送信待ちの 1 件を取り消す・送り直す（画面の「取り消す」「再送する」）。送り直しは宛先の会話の承認モードで走るので、sessions.send と同じく
+  // 呼び出した会話より強い会話では guarded
+  defineOp({
+    id: 'sessions.messageAction',
+    summary: 'agent:ops.sessions.messageAction.summary',
+    risk: 'write',
+    riskReason: 'Cancelling only withdraws a message that has not reached the agent (it stays in the outbox as cancelled); retrying re-sends one that failed or was held. A person does the same from the screen. A retry runs under the target conversation\'s approval mode, so riskOf raises it to guarded when that is stronger than the caller\'s, the same as sessions.send',
+    riskOf: async (ctx, { sessionId: given, action }) => {
+      if (ctx.principal.by !== 'agent') return 'write';
+      const id = targetOf(ctx, given);
+      await mustExist(ctx, id);   // 無い会話は承認カードを出す前に断る
+      return action === 'retry' ? sendRisk(ctx, id) : 'write';
+    },
+    confirm: (ctx, { sessionId: given, messageId }) => sendCard(ctx, targetOf(ctx, given), 'ops.sessions.messageAction.card', { messageId }),
+    scope: 'session',
+    input: z.object({
+      sessionId: optionalSessionId('messageAction'),
+      messageId: z.string().min(1).max(200).describe(D('messageAction', 'messageId')),
+      action: z.enum(['cancel', 'retry']).describe(D('messageAction', 'action')),
+    }),
+    output: z.object({ sessionId: z.string(), messageId: z.string(), status: z.string() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'messageAction'], positional: ['sessionId', 'messageId', 'action'] } },
+    legacyCommand: 'messageAction',
+    handler: async (ctx, { sessionId: given, messageId, action }) => {
+      const id = targetOf(ctx, given);
+      if (!(await ctx.conversations.outbox(id)).some((m) => m.id === messageId))
+        throw new OpError('MESSAGE_NOT_FOUND', agentT(ctx.locale, 'ops.errors.MESSAGE_NOT_FOUND', { id: messageId }));
+      await fromHost(() => ctx.conversations.messageAction(id, messageId, action));
+      const item = (await ctx.conversations.outbox(id)).find((m) => m.id === messageId);
+      return { sessionId: id, messageId, status: String(item?.status ?? '') };
+    },
+    // 画面は送信待ちの全部を読み直す（今までの返り）
+    uiHandler: async (ctx, { sessionId: id, messageId, action }) => {
+      await fromHost(() => ctx.conversations.messageAction(needSession(id), messageId, action));
+      return ctx.conversations.outbox(id);
+    },
+  }),
+
+  // 完了を確認した印（既読）。ホストに 1 つで、どの画面・端末にも同じ。at を省くと今の完了まで。巻き戻らない（大きい方だけ）
+  defineOp({
+    id: 'sessions.markRead',
+    summary: 'agent:ops.sessions.markRead.summary',
+    risk: 'write',
+    riskReason: 'Only the "seen" mark of a finished turn, a display state shared by the screens; the conversation does not change and the mark never goes back. A person sets it by opening the conversation',
+    scope: 'session',
+    input: z.object({
+      sessionId: sessionId('markRead'),
+      at: z.number().int().positive().optional().describe(D('markRead', 'at')),
+    }),
+    output: z.object({ sessionId: z.string(), readAt: z.number().nullable(), changed: z.boolean() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'markRead'], positional: ['sessionId'] } },
+    legacyCommand: 'markRead',
+    handler: async (ctx, { sessionId: id, at }) => {
+      await mustExist(ctx, id);
+      return ctx.conversations.markRead(id, at);
+    },
+    // 画面は変わった分（[[sessionId, readAt]]）を読む（今までの返り）
+    uiHandler: async (ctx, { sessionId: id, at }) => {
+      const { changed, readAt } = await ctx.conversations.markRead(needSession(id), at);
+      return { reads: changed ? [[id, readAt]] : [] };
+    },
   }),
 
   // 変更の記録（時刻・誰が・前 → 後・理由）。新しい方から

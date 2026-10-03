@@ -2437,6 +2437,53 @@ async function providerUsageOf(args) {
   return { backend: backend.id, label: backend.label, quota, local };
 }
 
+/**
+ * 会話へ発言を送る（送信待ちに積む）。画面の送信（WS の sendMessage）と、別の会話からの送信（sessions.send。ADR 0104）が同じ経路を通る。
+ * 走っている会話では送信待ちのまま順番を待つ（途中送信できるエージェントは渡す）。rewind は画面だけ（同じ会話の中で発言の手前まで巻き戻す。ADR 0102）
+ */
+async function acceptMessage(sessionId, messageId, args, { rewind } = {}) {
+  compactionScheduler.cancel(sessionId);
+  if (rewind) {
+    // 受け付け済みの再送（応答が届かず送り直した同じ messageId）は、巻き戻し直さない（もう巻き戻してある）
+    if ((await outbox.list(sessionId)).some(m => m.id === messageId)) return outbox.accept(sessionId, messageId, args);
+    const rewound = await rewindConversation({ sessionId, beforeMessageId: rewind.beforeMessageId, stopRunning: rewind.stopRunning === true });
+    return { ...(await outbox.accept(sessionId, messageId, args)), rewind: rewound };
+  }
+  return acceptSend(sessionId, messageId, args);
+}
+
+// 別の会話の AI が送った発言の印（sessions.send。ADR 0104）。本文のハッシュと送り手を会話に残し、履歴が「<送り手> があなたの代わりに送信」で描く
+// （完了通知の taskNotices と同じ見分け方）。古いものから捨てる
+const RELAYED_KEEP = 500;
+async function recordRelayed(sessionId, prompt, sentBy) {
+  const hash = crypto.createHash('sha256').update(prompt).digest('hex');
+  const kept = ((await store.get(sessionId)).relayed ?? []).filter(r => r.hash !== hash);
+  await store.setSessionData(sessionId, 'relayed', [...kept, { hash, sentBy: publicSender(sentBy) }].slice(-RELAYED_KEEP));
+}
+/** 画面と履歴に出す送り手（連鎖の数は内部の歯止めなので出さない）。bot の会話は name・icon を足す */
+const publicSender = (sentBy) => {
+  if (!sentBy) return null;
+  const { hops, ...shown } = sentBy;
+  return shown;
+};
+// 会話ごとの、送信の連鎖の数（sessions.send の歯止め。ADR 0104）。送信待ちから始まったターンで決め直す（人の発言は 0、
+// 別の会話からの発言はその送信の数）。途中送信で渡った分は大きい方を残す。保存しない（再起動で 0 に戻る）
+const relayHops = new Map();
+const noteRelayHops = (sessionId, args, { steered = false } = {}) => {
+  if (!sessionId) return;
+  const hops = Number.isInteger(args?.sentBy?.hops) ? args.sentBy.hops : 0;
+  relayHops.set(sessionId, steered ? Math.max(relayHops.get(sessionId) ?? 0, hops) : hops);
+};
+
+/** 完了を確認した印（readAt）を付け、変わった分を全画面へ知らせる（WS の markRead・sessions.markRead） */
+async function markReads(reads) {
+  const changed = await store.markRead(reads);
+  if (changed.length) emitGlobal({ type: "read", sessionId: null, reads: changed });
+  // どこかで見た完了・失敗は、スマホに出ている通知を消す
+  for (const [id] of changed) pushNotifier.viewed(id);
+  return changed;
+}
+
 // 会話の操作（sessions.new・abort・compact など。core/ops/conversations.mjs）の本体。画面の WS コマンドの中身を移したもの
 const opsConversations = {
   create: (args) => createSession(args),
@@ -2453,6 +2500,41 @@ const opsConversations = {
   setTurnSettings: (args) => reserveTurnSettings(args),
   suggestTitle: (sessionId) => suggestTitleOf({ sessionId }),
   outbox: (sessionId) => outbox.list(sessionId),
+  messageAction: async (sessionId, messageId, action) => { await outbox.action(sessionId, messageId, action); },
+  // 別の会話からの送信（sessions.send）。画面の送信と同じ送信待ちに積む。承認モードは渡さない（宛先の会話のモードで走る）。
+  // 宛先の変更の記録に、誰が・どこから・なぜを残す
+  send: async ({ sessionId, text, sentBy, reason, actor }) => {
+    if (!refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
+    const messageId = `send-${crypto.randomUUID()}`;
+    await recordRelayed(sessionId, text, sentBy);
+    const item = await acceptMessage(sessionId, messageId, { prompt: text, sentBy });
+    await store.recordChange(sessionId, { ...changeBy(actor), field: 'message', to: messageId, reason: reason ?? null });
+    console.log(`  別の会話から送信: ${sentBy?.sessionId ?? '(束縛なし)'} → ${sessionId}（連鎖 ${sentBy?.hops ?? 1}）`);
+    return item;
+  },
+  // 宛先で次に走るときの承認モード（走っているターンのモードと、次のターンのモード。予約があれば予約の分）。sessions.send が送り手と比べる
+  modesOf: async (sessionId) => {
+    const out = [];
+    const live = runtime.turns.get(sessionId);
+    if (live) out.push(live.backend.modes()[live.info.mode]);
+    const reserved = (await store.get(sessionId)).nextSettings;
+    const backend = (reserved?.backend && getBackend(reserved.backend)) || await resolveBackendForSession(sessionId).catch(() => null);
+    if (backend) out.push(backend.modes()[await resolveMode(sessionId, reserved ? reserved.mode : undefined, backend)]);
+    return out.filter(Boolean);
+  },
+  relayHops: (sessionId) => relayHops.get(sessionId) ?? 0,
+  // sessions.send の歯止めで断った（自分自身・委譲の親子・連鎖・回数）。送り手の会話の変更の記録に残す
+  refused: async ({ actor, op, sessionId, code }) => {
+    console.log(`  ${op} を断った: ${code}（${actor?.sessionId ?? '(束縛なし)'} → ${sessionId}）`);
+    if (actor?.sessionId) await store.recordChange(actor.sessionId, { ...changeBy(actor), field: 'opRefused', to: op, reason: code });
+  },
+  // 既読。at を省くと今の完了まで
+  markRead: async (sessionId, at) => {
+    const target = at ?? (await store.get(sessionId)).completedAt;
+    const changed = Number.isFinite(target) ? await markReads([[sessionId, target]]) : [];
+    const readAt = (await store.get(sessionId)).readAt;
+    return { sessionId, readAt: Number.isFinite(readAt) ? readAt : null, changed: changed.length > 0 };
+  },
 };
 
 // 選べるもの（agents.*。core/ops/agents.mjs）の本体
@@ -3344,7 +3426,8 @@ const outbox = createMessageQueue({
     // pending を立て、画面は渡るまで待っていることを出す。出せないバックエンドは今までどおり即時扱い
     emitGlobal({ type: 'userMessage', sessionId, messageId: item.id, text: item.args.prompt, at: item.at,
       ...(item.args.scheduledFor ? { scheduledFor: item.args.scheduledFor } : {}),
-      ...(turn.control.steerConfirms ? { pending: true } : {}) });
+      ...(turn.control.steerConfirms ? { pending: true } : {}), ...(item.args.sentBy ? { sentBy: publicSender(item.args.sentBy) } : {}) });
+    noteRelayHops(sessionId, item.args, { steered: true });
     if (item.args.attachments?.length) {
       (turn.steeredAttachments ??= []).push({ key: item.id, prompt: item.args.prompt });
       await presentAttachments(sessionId, item.args.attachments, makeEmit({ ...turn, presentKey: item.id }));
@@ -3908,6 +3991,8 @@ async function runTurnInternal(args, onStarted, hooks) {
     const abortFromTask = () => turn.ac.abort();
     hooks.signal?.addEventListener('abort', abortFromTask, { once: true });
     runtime.turns.set(turn.key, turn);
+    // 送信待ちから始まったターン（人の発言・別の会話からの発言）で、送信の連鎖の数を決め直す（sessions.send の歯止め）
+    if (args.messageId) noteRelayHops(sessionId, args);
     for (const read of liveReads) if (read.sessionId === sessionId) read.turn = turn;
     // 分けた作業場所を使うターン。会話の id を台帳に控える（新しい会話は id が決まったとき）。分けて始めた印の行は id が決まってから出す
     turn.worktreeId = worktreeEntry?.id ?? null;
@@ -3969,7 +4054,8 @@ async function runTurnInternal(args, onStarted, hooks) {
         interruption = interruptionNote(agentLocale, stops, stops?.reason);
       }
       if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true,
-        ...(args.scheduledFor ? { scheduledFor: args.scheduledFor } : {}) });
+        ...(args.scheduledFor ? { scheduledFor: args.scheduledFor } : {}),
+        ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}) });
       if (interruption) emit({ type: 'interruptionNote', text: interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
       broadcastRunning();
       syncRunningPoll();
@@ -5172,15 +5258,8 @@ wss.on("connection", (ws, req) => {
           if (attachments !== undefined && !Array.isArray(attachments)) throw new Error(t('send.invalidAttachments'));
           // 同じ会話の中で、発言の手前まで巻き戻して送り直す（ADR 0102）。{ beforeMessageId, stopRunning? }
           if (rewind !== undefined && (typeof rewind?.beforeMessageId !== 'string' || !rewind.beforeMessageId)) throw new Error(t('rewind.invalid'));
-          compactionScheduler.cancel(sessionId);
           const args = { prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}) };
-          if (rewind) {
-            // 受け付け済みの再送（応答が届かず送り直した同じ messageId）は、巻き戻し直さない（もう巻き戻してある）
-            if ((await outbox.list(sessionId)).some(m => m.id === messageId)) return reply(true, await outbox.accept(sessionId, messageId, args));
-            const rewound = await rewindConversation({ sessionId, beforeMessageId: rewind.beforeMessageId, stopRunning: rewind.stopRunning === true });
-            return reply(true, { ...(await outbox.accept(sessionId, messageId, args)), rewind: rewound });
-          }
-          return reply(true, await acceptSend(sessionId, messageId, args));
+          return reply(true, await acceptMessage(sessionId, messageId, args, { rewind }));
         }
         // 入力欄の `!`（シェルの行。ADR 0054）。人の操作なので承認モードは掛けない。送信待ちにも送り直しの控えにも積まない
         case 'runShell': {
@@ -5223,11 +5302,8 @@ wss.on("connection", (ws, req) => {
           return viaOp('sessions.cancelCompaction', args);
         case 'setConversationAutoCompaction':
           return viaOp('sessions.setAutoCompaction', args);
-        case 'messageAction': {
-          const { sessionId, messageId, action } = msg.args ?? {};
-          await outbox.action(sessionId, messageId, action);
-          return reply(true, await outbox.list(sessionId));
-        }
+        case 'messageAction':
+          return viaOp('sessions.messageAction', args);
         case 'listMessages':
           return viaOp('sessions.listMessages', args);
 
@@ -5733,14 +5809,11 @@ wss.on("connection", (ws, req) => {
 
         // 完了を確認した。ホストに 1 つで、別の窓・別の端末にも read で知らせる（store.markRead が巻き戻さない）。
         // 旧版がブラウザーに持っていた確認済みも、最初につないだときにここへまとめて届く（web/unread.mjs）
+        // 1 件（{ sessionId, at }）は sessions.markRead。画面がまとめて送る形（{ reads: [[sessionId, at], …] }）は同じ markReads を直に通す
         case "markRead": {
           const a = msg.args ?? {};
-          const reads = Array.isArray(a.reads) ? a.reads.slice(0, 5000) : [[a.sessionId, a.at]];
-          const changed = await store.markRead(reads);
-          if (changed.length) emitGlobal({ type: "read", sessionId: null, reads: changed });
-          // どこかで見た完了・失敗は、スマホに出ている通知を消す
-          for (const [id] of changed) pushNotifier.viewed(id);
-          return reply(true, { reads: changed });
+          if (!Array.isArray(a.reads)) return viaOp('sessions.markRead', { sessionId: a.sessionId, at: a.at });
+          return reply(true, { reads: await markReads(a.reads.slice(0, 5000)) });
         }
 
         // グループから外す / 戻す。まとまりは親子と状態から決まるので、覚えるのは「外した」ことだけ

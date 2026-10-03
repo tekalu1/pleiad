@@ -831,10 +831,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.user.cmd .cmdline .tc-label{color:var(--ink-weak)}
 .m.user.cmd .cmd-text{flex:1 1 12em;min-width:0;color:var(--ink);font-family:var(--font-mono);font-size:var(--fs-s);white-space:pre-wrap;overflow-wrap:anywhere}
 .m.user.cmd .cmd-res{flex:none;margin-left:auto;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
-.m.user.cmd .who .handed{letter-spacing:0}
-/* 渡す前の `!` の行の「渡さない」／「渡す」（ADR 0055）。見出しの字に並ぶ小さな字のボタン */
-.m.user.cmd .who .who-act{color:var(--ink-blue);padding:0 4px;font-size:var(--fs-xs);letter-spacing:0;border:0;background:transparent;cursor:pointer;font-family:inherit}
-.m.user.cmd .who .who-act:disabled{opacity:.5;cursor:default}
+.m.user:is(.cmd,.relayed) .who .handed{letter-spacing:0}
+/* 渡す前の `!` の行の「渡さない」／「渡す」（ADR 0055）と、別の会話の AI が送った発言の「開く」（ADR 0104）。見出しの字に並ぶ小さな字のボタン */
+.m.user:is(.cmd,.relayed) .who .who-act{color:var(--ink-blue);padding:0 4px;font-size:var(--fs-xs);letter-spacing:0;border:0;background:transparent;cursor:pointer;font-family:inherit}
+.m.user:is(.cmd,.relayed) .who .who-act:disabled{opacity:.5;cursor:default}
 .m.user.cmd .cmd-fold>summary{opacity:.8}
 .m.user.cmd .cmd-fold>summary .first{font-family:var(--font-mono);display:inline-block;max-width:calc(100% - 7em);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 .m.user.cmd .cmd-out{margin:0;padding:8px 12px;background:var(--surface-2);border-radius:var(--r-m);font:var(--fs-s)/1.6 var(--font-mono);color:var(--ink);

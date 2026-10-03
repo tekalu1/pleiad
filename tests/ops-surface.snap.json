@@ -1514,6 +1514,54 @@
       "input": "e9dac191d271"
     },
     {
+      "id": "sessions.markRead",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "markRead"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "markRead",
+      "input": "114b410e48d8"
+    },
+    {
+      "id": "sessions.messageAction",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "messageAction"
+          ],
+          "positional": [
+            "sessionId",
+            "messageId",
+            "action"
+          ]
+        }
+      },
+      "legacyCommand": "messageAction",
+      "input": "f2ed4d0a6ace"
+    },
+    {
       "id": "sessions.new",
       "risk": "write",
       "riskOf": false,
@@ -1642,6 +1690,30 @@
       },
       "legacyCommand": null,
       "input": "e62fd6215a96"
+    },
+    {
+      "id": "sessions.send",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "send"
+          ],
+          "positional": [
+            "sessionId",
+            "text"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "9ab6ba1a8ab7"
     },
     {
       "id": "sessions.sendScheduledNow",
@@ -2928,6 +3000,22 @@
       "positional": []
     },
     {
+      "id": "sessions.markRead",
+      "path": "sessions markRead",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.messageAction",
+      "path": "sessions messageAction",
+      "positional": [
+        "sessionId",
+        "messageId",
+        "action"
+      ]
+    },
+    {
       "id": "sessions.setModel",
       "path": "sessions model",
       "positional": [
@@ -2986,6 +3074,14 @@
       "path": "sessions search",
       "positional": [
         "query"
+      ]
+    },
+    {
+      "id": "sessions.send",
+      "path": "sessions send",
+      "positional": [
+        "sessionId",
+        "text"
       ]
     },
     {
