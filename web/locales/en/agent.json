@@ -500,6 +500,25 @@
         "limit": "How many to return (default 30, max 100).",
         "cursor": "The next of the previous result. Continues from there."
       },
+      "send": {
+        "summary": "Send a message to another conversation. It is queued like a message sent from the screen and runs under the target conversation's approval mode (if it is running, it waits its turn). The target's history shows that your conversation sent it on the user's behalf. If the target's approval mode is stronger than this conversation's, an approval card is shown in this conversation. Sending to itself, across a delegation (use ply_task_send for a child), past a chain of 3 conversations or over 20 sends in 10 minutes is refused.",
+        "sessionId": "Id of the conversation to send to.",
+        "text": "The message text.",
+        "reason": "Why you send it (up to 500 characters). Kept in the target conversation's change log.",
+        "card": "Send a message to the conversation \"{{title}}\". Its approval mode ({{mode}}) is stronger than this conversation's, so more will run there without asking.\nMessage: {{text}}"
+      },
+      "messageAction": {
+        "summary": "Cancel a queued message (cancel), or re-send one that failed or is held (retry). A cancelled message never reaches the agent. A retry runs under the target conversation's approval mode; if that is stronger than this conversation's, an approval card is shown.",
+        "sessionId": "Conversation id. Omit for your own.",
+        "messageId": "Id of the queued message (the id from sessions.listMessages, or the messageId from sessions.send).",
+        "action": "cancel or retry.",
+        "card": "Re-send the queued message {{messageId}} in the conversation \"{{title}}\". Its approval mode ({{mode}}) is stronger than this conversation's, so more will run there without asking."
+      },
+      "markRead": {
+        "summary": "Mark a conversation's finished turn as seen (read). One mark per host, the same on every screen and device. It never goes back.",
+        "sessionId": "Conversation id.",
+        "at": "Time of the finish you saw (milliseconds). Omit for the current finish."
+      },
       "changes": {
         "summary": "Return a conversation's change log (time, who, before → after, reason), newest first.",
         "sessionId": "Conversation id. Omit for your own.",
@@ -592,7 +611,12 @@
       "DENIED": "The user did not allow the change ({{id}}). Do not retry; ask the user why.",
       "STALE": "The value kept changing after approval, so {{id}} was not done. Check the current value with settings.get and try again.",
       "SETTING_READ_ONLY": "The setting {{key}} is read-only and cannot be changed with settings.set.",
-      "MASKED": "{{path}} has a masked value (••••) that does not match what was read, so it cannot be restored. Write the value, or pass it back exactly as read."
+      "MASKED": "{{path}} has a masked value (••••) that does not match what was read, so it cannot be restored. Write the value, or pass it back exactly as read.",
+      "SEND_SELF": "You cannot send to your own conversation.",
+      "SEND_TO_CHILD": "Conversation {{id}} is a child this conversation delegated to. Send further instructions with ply_task_send.",
+      "SEND_TO_PARENT": "Conversation {{id}} is the one that delegated to this conversation. Your result reaches it automatically when you finish, so do not send to it.",
+      "RELAY_LIMIT": "Sends between conversations have continued {{max}} times, so no more can be sent. Ask the user whether to go on.",
+      "SEND_RATE": "This conversation has sent more than {{max}} messages in {{minutes}} minutes. Wait a while, or ask the user."
     },
     "pending": "The change to {{target}} is waiting for the user's approval (requestId: {{requestId}}). Nothing has changed yet. The result (allowed or denied) will be delivered to this conversation later. You may continue other work or end your response without waiting. Do not request the same change again.",
     "settingTarget": "the setting {{key}}",

@@ -8,7 +8,7 @@
 
 ユーザーの決定（2026-10-03）: Pleiad の全機能を AI も使えるようにする。人だけの例外は、承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリングの 5 つ（ADR 0094）。
 
-送信と既読（`runTurn`・`sendMessage`・`messageAction`・`markRead`・`saveDraft`・`watchSession`）は別の作業で扱う。`loadSession` は ADR 0091 の追記で `ui-internal` と決めた。この ADR はそれ以外の 35 件を扱う。
+送信と既読（`runTurn`・`sendMessage`・`messageAction`・`markRead`・`saveDraft`・`watchSession`）は別の作業（[ADR 0104](0104-send-to-another-conversation.md)）で扱う。`loadSession` は ADR 0091 の追記で `ui-internal` と決めた。この ADR はそれ以外の 35 件を扱う。
 
 ## 決定
 
@@ -75,7 +75,7 @@
 
 ## 影響
 
-- `tests/ops-baseline.json` の `ui-internal` は 42 → 18（この ADR で残した 11 と、送信と既読の 6・`loadSession`）。
+- `tests/ops-baseline.json` の `ui-internal` は 42 → 16（この ADR で 24 を移し、[ADR 0104](0104-send-to-another-conversation.md) が `messageAction`・`markRead` を移した。残りはこの ADR で残した 11 と、送信の `runTurn`・`sendMessage`・`saveDraft`・`watchSession`、`loadSession`）。
 - 操作の一覧の snapshot（`tests/ops-surface.snap.json`）に 24 の操作が載る。`ply_control` の指示と tools/list の量は増えない（ja 1757・en 1656 トークン。上限 1800）。新しい操作は `list_ops`・`call_op` から呼ぶ。
 - 画面からのコマンドは引数を操作の入力の型で検める。今まで黙って受けていた型の違う引数（例: `runShell` の形の違う `runId`）は `INVALID` になる。画面が送る引数は変わらない。
 - `shell.run` の AI の呼び出しのために、`core/shell-runs.mjs` に `wait`（終わった結果を新しい 50 件だけ覚えて返す）を足した。

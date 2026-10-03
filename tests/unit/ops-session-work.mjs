@@ -115,7 +115,7 @@ export default async function (t) {
   }
   const listOps = registry.describe({ by: 'agent', via: 'mcp', sessionId: 's1', mode: MODES.bypass }, 'ja');
   t.ok('list_ops の説明（describe）に移した操作が辞書の文で載る', Object.values(MOVED).every((id) => listOps.some((e) => e.id === id && e.summary && !e.summary.startsWith('ops.'))));
-  t.ok('ui-internal の件数は 18（42 から 24 を移した）', Object.values(baseline).filter((k) => k === 'ui-internal').length === 18);
+  t.ok('ui-internal の件数は 16（42 から、この ADR で 24、ADR 0104 で messageAction・markRead を移した）', Object.values(baseline).filter((k) => k === 'ui-internal').length === 16);
 
   // ---- 危険度
   const risks = Object.fromEntries(Object.values(MOVED).map((id) => [id, registry.get(id).risk]));

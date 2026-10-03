@@ -1132,11 +1132,12 @@ function whoLine(who, at, { backend, actions = true } = {}) {
  * 自分の発言。本文は Markdown で描き、この発言に結び付いた添付（presents。human の present）は本文の印の位置に置く
  * （web/user-message.mjs、ADR 0059）。markdown: false は今までの平文（委譲の子の会話を読む面）
  */
-function userMsg(text, { uuid, at, presents = [], markdown = true, scheduledFor } = {}) {
+function userMsg(text, { uuid, at, presents = [], markdown = true, scheduledFor, sentBy = null } = {}) {
   const m = el("div", "m user");
   m.dataset.role = "user";
   if (at) m.dataset.at = at;
   m.append(whoLine(t("chat.message.you"), at));
+  if (sentBy) markSentBy(m, sentBy);
   const body = el("div", "body");
   m.append(body);
   wireActions(m);
@@ -1144,6 +1145,24 @@ function userMsg(text, { uuid, at, presents = [], markdown = true, scheduledFor 
   setUuid(m, uuid);
   if (scheduledFor) markSentLate(m, at, scheduledFor);
   return m;
+}
+
+/**
+ * 別の会話の AI が送った発言（sessions.send。ADR 0104）。見出しの「あなた」に「<送り手> があなたの代わりに送信」を添え、送った会話を開けるようにする
+ * （`!` の行の「{agent} に渡した」と同じ並び）。送り手は bot の名前（name）、無ければ送った会話の題
+ */
+function markSentBy(m, sentBy) {
+  const who = m.querySelector(':scope > .who');
+  if (!who || who.querySelector('.sent-by')) return;
+  const sender = sentBy.name || (sentBy.title ? t('chat.message.sentByConversation', { title: sentBy.title }) : t('chat.message.sentByAnother'));
+  m.classList.add('relayed');
+  who.firstChild.append(' · ', el('span', 'handed sent-by', t('chat.message.sentBy', { sender })));
+  if (!sentBy.sessionId) return;
+  const open = el('button', 'who-act', t('chat.message.openSender'));
+  open.type = 'button';
+  open.title = t('chat.message.openSenderTitle');
+  open.onclick = (e) => { e.stopPropagation(); select(sentBy.sessionId); };
+  who.firstChild.append(open);
 }
 
 /** 送信予定の時刻に遅れて送った発言の下の一言「9:00 の予定を 9:32 に送りました」。時刻どおり（2 分以内）なら出さない */
@@ -2544,14 +2563,14 @@ function markDelivery(row, kind) {
   }, 150));
 }
 
-function ensureMessageRow(messageId, text, at) {
+function ensureMessageRow(messageId, text, at, sentBy = null) {
   let row = messageRow(messageId);
   if (!row) {
     const presents = provisionalByMessage.get(messageId) ?? [];
     provisionalByMessage.delete(messageId);
-    row = append(userMsg(text, { at, presents }), `live:${++liveSeq}`);
+    row = append(userMsg(text, { at, presents, sentBy }), `live:${++liveSeq}`);
     row.dataset.messageId = messageId;
-  }
+  } else if (sentBy) markSentBy(row.querySelector('.m.user') ?? row, sentBy);
   if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
   return row;
 }
@@ -2587,7 +2606,7 @@ function syncOutboxRows(messages) {
       || ['paused', 'unknown', 'cancelled'].includes(item.status)) {
       if (row) { row.remove(); withdrawn = true; }
     } else if (item.status === 'failed') {
-      markFailedMessage(ensureMessageRow(item.id, item.args.prompt, item.at), item);
+      markFailedMessage(ensureMessageRow(item.id, item.args.prompt, item.at, item.args.sentBy), item);
       const failure = turnErrorRows.get(state.current);
       if (failure?.messageId === item.id) {
         failure.node.closest('.mw')?.remove();
@@ -2713,7 +2732,7 @@ function onEvent(ev, replay = false) {
     case 'compaction': acceptCompaction(ev); return;
     case 'userMessage': {
       if (replay && ev.messageId === state.initialMessageId) {
-        const row = ensureMessageRow(ev.messageId, ev.text, ev.at);
+        const row = ensureMessageRow(ev.messageId, ev.text, ev.at, ev.sentBy);
         const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);
         if (confirmed) row.dataset.delivered = '1';
         markDelivery(row, ev.pending && !confirmed ? 'sending' : 'sent');
@@ -2721,8 +2740,8 @@ function onEvent(ev, replay = false) {
         return;
       }
       closeTurnEl();
-      const row = ev.messageId ? ensureMessageRow(ev.messageId, ev.text, ev.at)
-        : append(userMsg(ev.text, { at: ev.at }), `live:${++liveSeq}`);
+      const row = ev.messageId ? ensureMessageRow(ev.messageId, ev.text, ev.at, ev.sentBy)
+        : append(userMsg(ev.text, { at: ev.at, sentBy: ev.sentBy }), `live:${++liveSeq}`);
       if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
       row.dataset.messageStarted = '1';
       const userRow = row.querySelector('.m.user');
@@ -6917,7 +6936,7 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
     return { node: system, role, system: true };
   }
   let node;
-  if (m.role === "user") node = user ? user(m) : userMsg(m.text, { uuid: readonly ? undefined : m.uuid, at: m.at, presents, markdown: !readonly, scheduledFor: m.scheduledFor });
+  if (m.role === "user") node = user ? user(m) : userMsg(m.text, { uuid: readonly ? undefined : m.uuid, at: m.at, presents, markdown: !readonly, scheduledFor: m.scheduledFor, sentBy: m.sentBy });
   else {
     node = aiMsg({ uuid: readonly ? undefined : m.uuid, at: m.at, backend: m.backend ?? backend, cont });
     if (readonly && m.model) node.querySelector('.who > span:not(.row-be)').textContent = modelDisplayName(state.vocab.get(backend)?.models ?? {}, m.model);
