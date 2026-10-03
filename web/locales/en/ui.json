@@ -2035,6 +2035,7 @@
         "file": "File",
         "visualization": "Visualization"
       },
+      "namedVisualization": "Visualization: {{title}}",
       "copyPath": "Copy path",
       "download": "Save HTML",
       "sidePanel": "Show in side panel",

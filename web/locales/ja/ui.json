@@ -1980,6 +1980,7 @@
         "file": "ファイル",
         "visualization": "可視化"
       },
+      "namedVisualization": "可視化: {{title}}",
       "copyPath": "パスをコピー",
       "download": "HTML を保存",
       "sidePanel": "サイドパネルに表示",
