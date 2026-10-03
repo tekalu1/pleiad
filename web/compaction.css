@@ -53,8 +53,8 @@
 .auto-compaction-settings #autoCompactionError { margin:6px 0 0; }
 .auto-compaction-settings #autoCompactionError:empty { display:none; }
 /* 脇の行の印。「未送信」（.row-unsent）と同じ字（本文の書体・--fs-xs・弱い字）で、作業ディレクトリの後ろに置く。アイコンは行の他の印と同じ 14px の線画 */
-.row-compaction { display:inline-flex; gap:3px; align-items:center; white-space:nowrap; flex:none; color:var(--ink-weak); font-size:var(--fs-xs); font-variant-numeric:tabular-nums; }
-.row-compaction svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+.row-compaction, .row-sched { display:inline-flex; gap:3px; align-items:center; white-space:nowrap; flex:none; color:var(--ink-weak); font-size:var(--fs-xs); font-variant-numeric:tabular-nums; }
+.row-compaction svg, .row-sched svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; flex:none; }
 /* 入力欄のチップと同じく、スマホの幅（480px 以下）は ▾ を省く（style.css の「入力欄の行」） */
 @media (max-width:480px) {
   .context-meter svg.caret { display:none; }

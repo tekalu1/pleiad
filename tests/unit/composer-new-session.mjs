@@ -98,6 +98,8 @@ export default async function (t) {
     ATTACH_MAX_BYTES: 1e9, IMAGE_READ_HINT_BYTES: 1e9, formatBytes: String, paintUpload: noop, takeAttachAt: () => null,
     // 中断と再開（web/interrupt.mjs・client.mjs の syncResume / paintInterruptLine）。ここでは中断していない会話だけ
     syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
+    // 送信予定（日時を指定した送信。web/client.mjs の submit が引く）。このテストは日時を指定しない
+    armedSends: new Map(), scheduleAttempt: null, limitOp: async () => ({}), paintArmed: noop,
   });
   vm.runInContext(code, context);
   context.composerWait = createComposerWait({ box: $('cbox'), prompt: $('prompt'), send: $('send'), note: $('composerNote'),

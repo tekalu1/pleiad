@@ -1,4 +1,4 @@
-// 別の会話への送信（sessions.send）・送信待ちの取り消しと送り直し（sessions.messageAction）・既読（sessions.markRead）の中身（ADR 0096）。
+// 別の会話への送信（sessions.send）・送信待ちの取り消しと送り直し（sessions.messageAction）・既読（sessions.markRead）の中身（ADR 0104）。
 // サーバーを立てずに、偽の依存を渡した invoke で確かめる（サーバー越しの検査は server-ops-send）。
 //   - 強さの比べ方: 宛先の承認の強さ（範囲・自律のどちらか）が送り手より上なら guarded、同じか弱い方へは write
 //   - bypass の送り手は確認なし、読み取り専用の会話は READ_ONLY_MODE、束縛なしは NEEDS_UI

@@ -15,7 +15,7 @@ const D = (id, key) => `agent:ops.sessions.${id}.${key}`;
 /** sessions.listMessages: 1 件の本文の字数 */
 export const OUTBOX_CHARS = 500;
 
-// ---- 別の会話へ送る（sessions.send）の強さの比べ方と歯止め（ADR 0096）
+// ---- 別の会話へ送る（sessions.send）の強さの比べ方と歯止め（ADR 0104）
 
 /** sessions.send の本文の字数の上限 */
 export const SEND_TEXT_MAX = 100_000;
@@ -311,7 +311,7 @@ export const conversationOps = [
     uiHandler: (ctx, { sessionId: id }) => ctx.conversations.outbox(id),
   }),
 
-  // 別の会話にメッセージを送る（AI・CLI・HTTP の口。ADR 0096）。画面の送信（WS の sendMessage）と同じ送信待ちに積み、宛先の会話の承認モードで走る。
+  // 別の会話にメッセージを送る（AI・CLI・HTTP の口。ADR 0104）。画面の送信（WS の sendMessage）と同じ送信待ちに積み、宛先の会話の承認モードで走る。
   // 宛先の履歴には「<送り手> があなたの代わりに送信」の印で出る（人の発言と見分ける）。画面の送信は添付・巻き戻し・承認モードの欄を持つので WS のまま
   defineOp({
     id: 'sessions.send',

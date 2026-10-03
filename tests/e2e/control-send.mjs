@@ -1,4 +1,4 @@
-// 別の会話への送信（sessions.send。ADR 0096）を実際の Codex の会話から呼ぶ。
+// 別の会話への送信（sessions.send。ADR 0104）を実際の Codex の会話から呼ぶ。
 // 1) 同じ強さ（auto）の宛先へ送ると、宛先の Codex がそれを受けて答え、宛先の履歴に送り手の印が付く。
 // 2) 送り手より強い宛先（full: 自律 never）へ送ると、承認待ち（PENDING_APPROVAL）が返り、送り手の会話に承認カードが出る。拒否すれば宛先には届かない。
 export const name = 'control-send';

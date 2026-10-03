@@ -1,4 +1,4 @@
-// Claude バックエンドの同じ会話での巻き戻し（resume + resumeSessionAt + resumeDropsTurn。ADR 0091）。
+// Claude バックエンドの同じ会話での巻き戻し（resume + resumeSessionAt + resumeDropsTurn。ADR 0102）。
 // SDK の query を身代わりに差し替え（setClaudeSdkForTest）、CLI も LLM も呼ばない。
 import { backend as claude, setClaudeSdkForTest } from "../../core/backends/claude.mjs";
 

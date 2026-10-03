@@ -64,7 +64,7 @@ export async function loadTranscript(sessionId, backend) {
 /**
  * バックエンドが返した行を、画面に出す前の形へ整える。
  * 中断の後に添えた「止めたもの」の文は、人の発言から切り分ける（どのバックエンドの行も通る。完了通知の見分けより先に）。
- * 委譲の完了通知として送った発言には internalTaskNotice を、別の会話の AI が送った発言（sessions.send。ADR 0096）には送り手（sentBy）を付ける。
+ * 委譲の完了通知として送った発言には internalTaskNotice を、別の会話の AI が送った発言（sessions.send。ADR 0104）には送り手（sentBy）を付ける。
  * loadTranscript とセッション検索の写しが同じ整え方を使う。
  */
 export async function prepareMessages(sessionId, raw) {

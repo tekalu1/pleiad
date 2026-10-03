@@ -23,7 +23,8 @@ import { runMark, satMark } from "./arc.mjs";
 import { el, icon, moreButton, relTime, svgEl } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { familiesOf } from "./family.mjs";
-import { warnMark, clockMark, interruptLabel, showsReasonInMeta, limitTime } from "./interrupt.mjs";
+import { timeText } from "./schedule-times.mjs";
+import { warnMark, interruptLabel, showsReasonInMeta, limitTime } from "./interrupt.mjs";
 import { aiMarkTitle } from "./change-log.mjs";
 import { branchIcon } from "./icons.mjs";
 import { parseTerms, matchLocal, findRanges, localOrder, periodSince, pushRecentSearch, searchShortcutLabel, searchShortcutAria } from "./session-find.mjs";
@@ -65,6 +66,16 @@ function unreadMark() {
   const title = svgEl("title");
   title.textContent = t("sidebar.unread");
   mark.append(title, svgEl("circle", { cx: 7, cy: 7, r: 4.5, fill: "currentColor" }));
+  return mark;
+}
+
+/** 脇の行の時計の印と時刻の字（「◷ 14:20」「◷ 2:30 に再開」）。圧縮の予定・上限の後の再開・送信予定が同じ形 */
+function scheduleMark(text, label = text) {
+  const mark = el('span', 'row-sched');
+  const svg = svgEl('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+  svg.append(svgEl('circle', { cx: 12, cy: 12, r: 8 }), svgEl('path', { d: 'M12 7v5l3 2' }));
+  mark.append(svg, document.createTextNode(text));
+  mark.setAttribute('aria-label', label);
   return mark;
 }
 
@@ -180,7 +191,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const expanded = prefs.expanded;              // 開いている家族（根の sessionId）。既定は畳んだ状態
   const decided = new Set();                    // 人が開閉を決めた家族。決めるまで、今いる会話の器は開いたまま
   const made = new Set();                       // この画面で作った（まだ誰も付いていない）仮の状態
-  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), unreadIds: new Set(), interrupted: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null };
+  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), unreadIds: new Set(), interrupted: new Map(), schedules: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null };
 
   const save = () => {
     try {
@@ -671,10 +682,17 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     // 中断した会話は注意の三角（未読は --ink、開いた後は --ink-weak）。次のターンが始まるまで残る。走っていればそちらが先
     const stopped = last.interrupted.get(s.id);
     const moving = last.runningIds.has(s.id) || behind;
+    // 解除の後に自動で再開する会話は、人の手が要らないので三角ではなく時計（「◷ 2:30 に再開」だけ。経過の時間は出さない）
+    const resumeAt = !moving && stopped?.reason === 'limit' && stopped.autoResume && Number.isFinite(stopped.resetsAt);
+    // 送信予定（時刻が先にある）は時計と「9:00 に送信」。過ぎて送らなかった予定は三角と「送信予定を過ぎた」
+    const sched = last.schedules.get(s.id);
+    const sendAt = !moving && !resumeAt && !stopped && !sched?.missed && Number.isFinite(sched?.next) ? sched.next : null;
+    const missed = !moving && !stopped && Boolean(sched?.missed);
     if (moving) meta.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
-    else if (stopped?.reason === 'limit' && stopped.autoResume && Number.isFinite(stopped.resetsAt))
-      meta.append(clockMark(t('interrupt.limitResumeAt', { time: limitTime(stopped.resetsAt) })));
+    else if (resumeAt) meta.append(scheduleMark(t('interrupt.limitResumeAt', { time: limitTime(stopped.resetsAt) })));
     else if (stopped) meta.append(warnMark(interruptLabel(stopped), { read: !stopped.unread }));
+    else if (missed) meta.append(warnMark(t('schedule.sideMissed')));
+    else if (sendAt) meta.append(scheduleMark(t('schedule.sideSend', { time: timeText(sendAt) })));
     else if (last.unreadIds.has(s.id)) meta.append(unreadMark());
     // 自分で押した中断でないもの（更新・終了・再起動）は理由の字も出す。読み上げは三角の名前が同じことを言うので読ませない
     if (stopped && !moving && showsReasonInMeta(stopped)) {
@@ -682,12 +700,15 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       why.setAttribute("aria-hidden", "true");
       meta.append(why);
     }
-    if (stopped?.reason === 'limit' && stopped.autoResume && !moving && Number.isFinite(stopped.resetsAt))
-      meta.append(el('span', 'row-why', t('interrupt.limitResumeAt', { time: limitTime(stopped.resetsAt) })));
+    if (missed) {
+      const why = el('span', 'row-why', t('schedule.sideMissed'));
+      why.setAttribute('aria-hidden', 'true');
+      meta.append(why);
+    }
     if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", t("sidebar.waiting")));
     if (pendingRow?.visible) meta.append(pendingLabel(pendingRow.text));
     else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
-    else meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
+    else if (!resumeAt && !sendAt && !missed) meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
     // 状態を最後に変えたのが AI のときだけ小さな「AI」の印（理由は title。誰がいつ変えたかは行のメニューの「変更の記録」）
     if (s.status && s.statusByAi) {
       const ai = el("span", "row-ai", t("changeLog.aiMark"));
@@ -1396,6 +1417,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         bgWaiting: o.bgWaiting ?? new Map(),
         unreadIds: o.unreadIds ?? new Set(),
         interrupted: o.interrupted ?? new Map(),
+        schedules: o.schedules ?? new Map(),
         draft: o.draft ?? null,
         backendLabels: o.backendLabels ?? null,
         pendingRows: o.pendingRows ?? new Map(),
