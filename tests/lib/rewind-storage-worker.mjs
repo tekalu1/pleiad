@@ -1,4 +1,4 @@
-// 同じ会話での巻き戻し（core/conversations.mjs の rewind。ADR 0091）の契約。身代わりのネイティブで、
+// 同じ会話での巻き戻し（core/conversations.mjs の rewind。ADR 0102）の契約。身代わりのネイティブで、
 // 保留の印・履歴の見かけ上の切り取り・提示の切り取り・ホスト管理への落とし先を測る。
 // 他のテストが store を先に読み込むので、自分のデータ置き場を持つ子プロセスで走らせる（tests/unit/server-rewind.mjs）
 import assert from "node:assert/strict";

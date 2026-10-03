@@ -282,7 +282,7 @@ ${waiting}` : t('quit.busyMessage'),
       if (response !== 1) return;
       await abortAll('quit');
     } else if (waiting) {
-      // 作業が無くても、送信予定や再開の予定があれば確かめる（終了している間は送られない。ADR 0094）
+      // 作業が無くても、送信予定や再開の予定があれば確かめる（終了している間は送られない。ADR 0103）
       const { response } = await dialog.showMessageBox(window, { type: 'info', title: t('quit.scheduledTitle'), message: waiting,
         buttons: [t('quit.backToWork'), t('quit.quitAnyway')], defaultId: 0, cancelId: 0, noLink: true });
       if (response !== 1) return;

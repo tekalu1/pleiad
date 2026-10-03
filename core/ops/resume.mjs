@@ -25,7 +25,7 @@ export const resumeOps = [
     output: z.object({ cancelled: z.boolean(), entry: z.any().optional() }),
     surfaces: uiCli(['sessions', 'cancel-schedule'], ['id']),
     handler: (ctx, args) => ctx.limitResume.cancel(args.id) }),
-  // 送信予定は人が決める。MCP には出さず、エージェントが CLI から呼ぶなら承認カードを挟む（guarded。ADR 0094）
+  // 送信予定は人が決める。MCP には出さず、エージェントが CLI から呼ぶなら承認カードを挟む（guarded。ADR 0103）
   defineOp({ id: 'sessions.scheduleSend', summary: 'agent:ops.sessions.scheduleSend.summary', risk: 'guarded',
     confirm: (ctx, args) => agentT(ctx.locale, 'ops.sessions.scheduleSend.confirm', { session: args.sessionId, at: Number.isFinite(parseAt(args.at)) ? new Date(parseAt(args.at)).toISOString() : String(args.at), prompt: args.prompt.slice(0, 120) }),
     input: z.object({
