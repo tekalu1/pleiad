@@ -761,6 +761,21 @@
       "input": "730dd7ff714a"
     },
     {
+      "id": "memory.unforget",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "4f9fc0d81908"
+    },
+    {
       "id": "memory.write",
       "risk": "write",
       "riskOf": false,

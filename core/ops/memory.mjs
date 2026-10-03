@@ -163,4 +163,19 @@ export const memoryOps = [
       return guarded(ctx, () => ctx.memory.forget({ id }, who.author, callCtx(ctx, who)));
     },
   }),
+
+  // 忘れた直後の「元に戻す」（画面だけ。墓石を外すので、AI には出さない）。戻すのは人だけ
+  defineOp({
+    id: 'memory.unforget',
+    summary: 'agent:ops.memory.unforget.summary',
+    risk: 'write',
+    riskReason: 'Brings back a line of memory that a person just forgot, with its grounds, and lifts the tombstone. Only the screen offers it (the Undo band), so an AI cannot revive what a person told it to forget',
+    input: z.object({ id: z.string().min(1).max(80).describe(D('unforget', 'id')) }),
+    output: entryOut,
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, { id }) => {
+      if (ctx.principal?.by !== 'human') throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI', { id: ctx.op.id }));
+      return guarded(ctx, () => ctx.memory.unforget({ id }, { kind: 'human' }, {}));
+    },
+  }),
 ];

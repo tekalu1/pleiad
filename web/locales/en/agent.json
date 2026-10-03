@@ -652,6 +652,10 @@
         "summary": "Forget one memory line. The same content cannot be written again later. Needs the user's approval.",
         "id": "Memory id (from memory.list).",
         "confirm": "Forget this memory: \"{{text}}\""
+      },
+      "unforget": {
+        "summary": "Bring back a memory that was just forgotten (the screen's Undo). Only a person uses this, on the screen.",
+        "id": "Id of the forgotten memory."
       }
     },
     "routines": {}
