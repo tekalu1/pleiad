@@ -509,13 +509,22 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 .remote-login-note{color:var(--ink-weak);font-size:var(--fs-s);flex-basis:100%}
 
 /* ==================== 走っている印（web/arc.mjs） ====================
-   弧だけ。台（暗い円）は置かない。色は本文の文字色（--ink）なので、ライトでは濃い紺、ダークでは明るい。
-   弧: 半径 5、線幅 1.6（アイコンと同じ）、端は丸。先端と尾の角度は JS が毎フレーム決める。
-       先端は止まることはあっても戻らない。弧が短くなるのは尾が追いつくとき */
+   弧: 半径 5、線幅 1.6、端は丸。CSS の回転と dasharray で動かす。 */
 .run{display:inline-grid;place-items:center;width:14px;height:14px;color:var(--ink);flex:none}
 .run svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}
-/* 裏で待っている印（衛星、§6）。弧と同じ場所・同じ色で、線ではなく点（半径 1.45）が軌道を回る */
+.run:not(.sat) path{transform-origin:7px 7px;stroke-dasharray:8 100;animation:run-spin 2s linear infinite,run-breathe 2.4s ease-in-out infinite}
+@keyframes run-spin{to{transform:rotate(360deg)}}
+@keyframes run-breathe{0%,100%{stroke-dasharray:2.1 100}50%{stroke-dasharray:19.2 100}}
+/* 裏で待っている印。点は共通の軌道を回り、各点が少しずつ前後する。 */
 .run.sat svg{fill:currentColor;stroke:none}
+.run.sat svg{transform-origin:7px 7px;animation:sat-spin 4s linear infinite}
+.run.sat circle{transform-origin:7px 7px;animation:sat-wobble 4.8s ease-in-out infinite alternate}
+.run.sat circle:nth-child(2){animation-delay:-1.6s}
+.run.sat circle:nth-child(3){animation-delay:-3.2s}
+@keyframes sat-spin{to{transform:rotate(360deg)}}
+@keyframes sat-wobble{from{transform:rotate(-14deg)}to{transform:rotate(14deg)}}
+.page-hidden .run :is(svg,path,circle){animation-play-state:paused}
+@media (prefers-reduced-motion:reduce){.run :is(svg,path,circle){animation:none!important}.run:not(.sat) path{stroke-dasharray:none}}
 
 /* ==================== 会話 ==================== */
 main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--surface-paper);position:relative}

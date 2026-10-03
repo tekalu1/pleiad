@@ -311,8 +311,11 @@ export function createHooksCard({ cmd, work, saved, opened }) {
     th.append(el('span', 'n', t('context.tier.user')), el('span', null, scan ? t('hooks.found', { counts }) : ''));
     tier.append(th);
     if (!scan) {
-      const p = el('p', 'cx-empty'); p.append(runMark(t('context.searching')), document.createTextNode(' ' + t('context.searchingDots')));
-      tier.append(p); root.append(tier); return;
+      if (loading) {
+        const p = el('p', 'cx-empty'); p.append(runMark(t('context.searching')), document.createTextNode(' ' + t('context.searchingDots')));
+        tier.append(p);
+      }
+      root.append(tier); return;
     }
     if (scan.failed) tier.append(el('p', 'cx-note', t('hooks.scanFailed', { error: scan.failed })));
     fileNotes(tier);
