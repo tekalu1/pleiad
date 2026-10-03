@@ -567,6 +567,41 @@ export default async function (t) {
         await running.d.stopThread({ channelId: 'c_1', threadId: 'p_root' }, { kind: 'human' });
         t.ok('E1-5: 走っている会話は 1 回だけ止める（二重に止めない）', running.aborted.filter((a) => a.sessionId === 's1').length === 1, JSON.stringify(running.aborted));
       }
+      // E1-2（Antigravity）: 会話を続けるときに人格（エージェント定義）を渡し直しても最初の指示のまま動くので、人格を直した後の最初のターンに、新しい人格を末尾の文脈として渡す
+      {
+        const mk = (backend) => {
+          const w = world('plain');
+          w.sessions.s1.backend = backend;
+          w.d.bots.instructions = (bot) => `PERSONA(${bot.persona ?? ''})`;
+          return w;
+        };
+        const begin = async (w) => (await w.d.turnExtras({ ...w.turn, info: { sessionId: 's1' } })).notes;
+        const deliver = async (w) => { w.d.onTurnEvent(w.turn, { type: 'text.delta', text: 'はい' }); await w.d.onTurnEnd(w.turn, { outcome: 'ok' }); await sleep(60); };
+        const w = mk('antigravity');
+        const owl = await w.d.bots.get({ botId: 'b_1' });
+        owl.persona = '一つ目';
+        t.ok('E1-2: Antigravity の最初のターンは人格の更新の文を足さない（人格はエージェント定義で渡る）', (await begin(w)).every((n) => !n.includes('PERSONA(')));
+        await deliver(w);
+        t.ok('E1-2: 渡った人格のハッシュを会話の sidecar に残す（personaKey）', typeof w.sessions.s1.bot.personaKey === 'string' && w.sessions.s1.bot.personaKey.length === 32, JSON.stringify(w.sessions.s1.bot));
+        t.ok('E1-2: 人格を直していなければ次のターンも足さない', (await begin(w)).every((n) => !n.includes('PERSONA(')));
+        await deliver(w);
+        owl.persona = '二つ目';
+        const changed = await begin(w);
+        t.ok('E1-2: 人格を直した後の最初のターンに、新しい人格を末尾の文脈（pleiad-turn-context）として渡す', changed.length >= 1 && changed[0].startsWith('<pleiad-turn-context>') && changed[0].includes('PERSONA(二つ目)') && !changed.join('').includes('PERSONA(一つ目)') && changed[0].includes('人格の指示が更新されました'), JSON.stringify(changed));
+        // 渡る前に失敗したターン（commit しない）は、次のターンもまた渡す
+        w.turns.delete('s1');
+        const retry = await begin(w);
+        t.ok('E1-2: 渡る前に終わったターンの次も、新しい人格をまた渡す（渡ったと分かるまでハッシュを進めない）', retry.some((n) => n.includes('PERSONA(二つ目)')), JSON.stringify(retry));
+        await deliver(w);
+        t.ok('E1-2: 渡った後はハッシュが進み、次のターンは足さない', (await begin(w)).every((n) => !n.includes('PERSONA(')));
+        // Claude・Codex は毎ターンの引数で届くので、この文は足さない
+        const other = mk(undefined);
+        const owl2 = await other.d.bots.get({ botId: 'b_1' });
+        owl2.persona = '一つ目';
+        await begin(other); await deliver(other);
+        owl2.persona = '二つ目';
+        t.ok('E1-2: Antigravity 以外の会話には人格の更新の文を足さない（Claude は毎ターン組み直し、Codex は毎ターン collaborationMode で渡る）', (await begin(other)).every((n) => !n.includes('PERSONA(')) && !('personaKey' in other.sessions.s1.bot));
+      }
     }
     }
 

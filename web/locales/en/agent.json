@@ -1119,6 +1119,7 @@
     "envelope": { "from": { "you": "You", "bot": "{{icon}} {{name}} (bot)", "agent": "An AI in a Chats conversation", "routine": "Routine", "system": "Pleiad" } },
     "stopped": "{{who}} stopped it",
     "heldWake": "{{bot}} runs in {{mode}}, so {{from}}'s reply did not wake it. It wakes when a person @-mentions it.",
+    "personaUpdated": "Your persona instructions have been updated. From now on, follow the instructions below in place of the persona and usage instructions given at the start of this conversation:\n{{persona}}",
     "turn": { "failed": "Failed: {{error}}", "stopped": "Stopped" }
   },
   "routine": {

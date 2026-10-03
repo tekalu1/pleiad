@@ -1119,6 +1119,7 @@
     "envelope": { "from": { "you": "あなた", "bot": "{{icon}} {{name}} (bot)", "agent": "Chats の会話の AI", "routine": "ルーティン", "system": "Pleiad" } },
     "stopped": "{{who}} が止めました",
     "heldWake": "{{bot}} は {{mode}} で動くので、{{from}} の返事からは起こしていません。人が @ すると起きます。",
+    "personaUpdated": "あなたの人格の指示が更新されました。この会話の始めに渡した人格・使い方の指示に代わって、これ以降は次の指示に従う:\n{{persona}}",
     "turn": { "failed": "失敗しました: {{error}}", "stopped": "止めました" }
   },
   "routine": {

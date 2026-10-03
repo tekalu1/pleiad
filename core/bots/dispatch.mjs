@@ -32,8 +32,9 @@
 //   ターンの中で bot が channels.post で同じスレッドへ書くと、service が同じ投稿の本文を置き換える（進捗）。終わりに最終の返答と提示を入れて state を決める。
 //   生の流れ（text.delta）はチャンネルへ流さず、サーバーで投稿に畳む（ADR 0024 の 1 接続 1 購読）。
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { agentT } from '../i18n.mjs';
-import { channelEnvelope, channelThreadEnvelope, channelEventRows } from '../channels/types.mjs';
+import { channelEnvelope, channelThreadEnvelope, channelEventRows, turnContextEnvelope } from '../channels/types.mjs';
 import { createInboxStore } from './inbox.mjs';
 import { strongerMode } from './approval.mjs';
 
@@ -514,6 +515,17 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       rec.tail = tail;
       notes = tail.notes ?? [];
     } catch (e) { log('could not build the turn tail:', errText(e)); }
+    // Antigravity は、会話を続けるときに人格（エージェント定義）を渡し直しても、最初の指示のまま動く（実機の確認。2026-10-03）。
+    // 人格を直した後の最初のターンに、新しい人格を末尾の文脈として渡す（会話の始めに渡した人格はこれに置き換わる）。
+    // 会話が最後に受け取った人格のハッシュは、渡った（commit）ときに sidecar へ残す
+    try {
+      const meta = await host.store.get(sessionId);
+      const text = meta?.backend === 'antigravity' ? bots.instructions?.(bot, turn.agentLocale ?? meta.agentLocale ?? locale()) : null;
+      if (text) {
+        rec.personaKey = crypto.createHash('sha256').update(text).digest('hex').slice(0, 32);
+        if (sb.personaKey && sb.personaKey !== rec.personaKey) notes = [turnContextEnvelope(agentT(turn.agentLocale ?? meta.agentLocale ?? locale(), 'channel.personaUpdated', { persona: text })), ...notes];
+      }
+    } catch (e) { log('could not check the persona of a conversation:', errText(e)); }
     if (channelId && POST_KINDS.has(sb.kind) && (sb.kind === 'dm' || rec.threadId)) {
       try {
         const post = await channels.post({ channelId, threadId: rec.threadId, text: PLACEHOLDER, state: 'working', turn: { botId: bot.id, sessionId }, new: true }, botAuthor(bot.id));
@@ -552,6 +564,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       ...sb,
       ...(tail ? { memRev: tail.memRev, delivered: rec.compactedDuring ? [] : tail.delivered, snapshotDue: rec.compactedDuring ? true : tail.snapshotDue } : {}),
       ...(rec.cursor ? { postCursor: rec.cursor } : {}),
+      ...(rec.personaKey ? { personaKey: rec.personaKey } : {}),
     }));
     const marked = rec.itemIds.length ? inbox.mark(rec.itemIds, 'sent').catch((e) => log('could not record a delivered event:', errText(e))) : Promise.resolve();
     // 渡る前にたまっていた出来事は、ここから途中送信で渡せる
