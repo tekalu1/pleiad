@@ -454,7 +454,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       // ターンの記録ができた（turnExtras が受け取った）後に、始まらずに戻された（canInvoke・requeue）。終わりは onTurnEnd へ届かないので、ここで片付ける
       const rec = active.get(sessionId);
       if (result === 'requeue' && rec && !rec.ended && !rec.committed && rec.itemIds === ids) {
-        try { await abandon(rec); await inbox.mark(ids, 'pending'); retryLater(sessionId); } catch (e) { log('could not clean up a requeued turn:', errText(e)); }
+        try { await abandon(rec, { requeue: true }); retryLater(sessionId); } catch (e) { log('could not clean up a requeued turn:', errText(e)); }
       }
       return;
     }
@@ -548,17 +548,17 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
   }
 
   /** 終わりの届かなかったターンの記録を片付ける: 投稿は stopped にして、書き換えの予約を止める */
-  async function abandon(rec) {
+  async function abandon(rec, { requeue = false } = {}) {
     rec.ended = true;
     clearTimeout(rec.timer);
     rec.timer = null;
     if (active.get(rec.sessionId) === rec) active.delete(rec.sessionId);
     if (rec.postId) await channels.edit({ channelId: rec.channelId, postId: rec.postId, state: 'stopped' }, botAuthor(rec.botId)).catch(() => {});
-    // 渡している最中（delivering）のまま固まらせない: 渡った合図が無かった途中送信は次のターンで送り直し、始めの出来事は結果不明にする（再起動の戻しと同じ）
+    // 渡った合図が無かった途中送信は次のターンで送り直す。始めの出来事も requeue なら未送のまま戻す。
     for (const [id, live] of [...liveSteers]) if (live.sessionId === rec.sessionId) { liveSteers.delete(id); await inbox.mark(live.ids, 'pending').catch(() => {}); }
     if (!rec.committed && rec.itemIds.length) {
       const stuck = (await inbox.list({ sessionId: rec.sessionId, status: 'delivering' }).catch(() => [])).filter((i) => rec.itemIds.includes(i.id)).map((i) => i.id);
-      if (stuck.length) await inbox.mark(stuck, 'unknown', { error: 'the turn ended without reporting' }).catch(() => {});
+      if (stuck.length) await inbox.mark(stuck, requeue ? 'pending' : 'unknown', requeue ? {} : { error: 'the turn ended without reporting' }).catch(() => {});
     }
     await refreshThread(rec.channelId, rec.threadId);
   }

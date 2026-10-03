@@ -333,16 +333,26 @@ export default async function (t) {
         const w = world('plain');
         w.turns.delete('s1');
         const calls = [];
+        const statuses = [];
+        let pendingWritten;
+        const cleaned = new Promise((resolve) => { pendingWritten = resolve; });
+        const mark = w.d.inbox.mark;
+        w.d.inbox.mark = async (...args) => {
+          const changed = await mark(...args);
+          statuses.push(...changed.map((item) => item.status));
+          if (changed.some((item) => item.postId === 'p_2' && item.status === 'pending')) pendingWritten();
+          return changed;
+        };
         w.host.runTurn = async (args) => {
           calls.push(args);
           await w.d.turnExtras({ info: { sessionId: args.sessionId }, agentLocale: 'ja', stream: {} });
           return calls.length === 1 ? 'requeue' : 'ok';
         };
         await w.d.wake({ botId: 'b_1', channel: w.channel, threadId: 'p_root', post: w.posts[1] });
-        await tick();
+        await Promise.race([cleaned, sleep(2000).then(() => { throw new Error('requeued turn was not returned to pending'); })]);
         const turnPosts = w.posts.filter((p) => p.turn);
         t.ok('F-2: turnExtras の後の requeue でも、出来事は delivering のままにならず pending に戻り、作業中の記録・投稿は片付く', (await w.d.inbox.list({})).find((i) => i.postId === 'p_2')?.status === 'pending' && w.d.activeCount() === 0
-          && turnPosts.length === 1 && turnPosts[0].state === 'stopped', JSON.stringify([await w.d.inbox.list({}), w.d.activeCount(), turnPosts.map((p) => p.state)]));
+          && turnPosts.length === 1 && turnPosts[0].state === 'stopped' && !statuses.includes('unknown'), JSON.stringify([await w.d.inbox.list({}), w.d.activeCount(), turnPosts.map((p) => p.state), statuses]));
         await sleep(3500);
         t.ok('F-2: 配り直しで新しいターンが始まり、同じ出来事を渡す', calls.length === 2 && calls[1].prompt.includes('post="p_2"'), String(calls.length));
         // 終わりが届かなかった記録（次のターンの turnExtras が片付ける）の途中送信（渡った合図待ち）も、delivering のまま固まらず、次のターンで送り直す

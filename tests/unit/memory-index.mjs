@@ -34,12 +34,24 @@ export default async function (t) {
 
     // ---- 2 つの道
     const sqliteFile = path.join(dir, 'a.sqlite');
-    const viaSqlite = createMemoryIndex({ file: sqliteFile });
+    const sqliteModule = await import('node:sqlite').catch(() => null);
+    let sqliteUsable = false;
+    if (typeof sqliteModule?.DatabaseSync === 'function') {
+      let probe;
+      try {
+        probe = new sqliteModule.DatabaseSync(':memory:');
+        probe.exec("CREATE VIRTUAL TABLE probe USING fts5(text, tokenize='trigram')");
+        sqliteUsable = true;
+      } catch { /* node:sqlite が読めても FTS5 が無ければ走査へ切り替わる */ }
+      finally { probe?.close(); }
+    }
+    const sqliteLogs = [];
+    const viaSqlite = createMemoryIndex({ file: sqliteFile, log: (message) => sqliteLogs.push(message) });
     await viaSqlite.sync(CORPUS, 'h1');
     const viaScan = createMemoryIndex({ file: path.join(dir, 'b.sqlite'), loadSqlite: unavailable });
     await viaScan.sync(CORPUS, 'h1');
     t.ok('node:sqlite を読み込めない状態を差し込むと走査に切り替わる', viaScan.mode() === 'scan');
-    t.ok('読み込めるときは sqlite の道（FTS5 trigram）', viaSqlite.mode() === 'sqlite', `mode=${viaSqlite.mode()}`);
+    t.ok('node:sqlite と FTS5 trigram が使えるときは sqlite の道、無ければ走査', viaSqlite.mode() === (sqliteUsable ? 'sqlite' : 'scan'), `mode=${viaSqlite.mode()}, ${sqliteLogs.join(' / ')}`);
     t.ok('走査の道は索引のファイルを作らない', await fs.access(path.join(dir, 'b.sqlite')).then(() => false, () => true));
 
     const queries = [
