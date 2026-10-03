@@ -17,6 +17,7 @@ import path from "node:path";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
 import { checkFork, checkRewind } from "../lib/fork-contract.mjs";
+import { loadSqlite } from "../../core/db.mjs";
 
 export const name = "server-antigravity";
 export const title = "antigravity バックエンドが agy のヘッドレス越しに往復する";
@@ -195,6 +196,9 @@ export default async function (t) {
     );
     t.ok("控えは Pleiad の置き場に入る", stored.conversationId === sid && stored.messages.length === 2,
          `${stored.messages?.length} 件`);
+    t.ok("成功 result の生 status と経路を控える",
+      stored.turnResults?.[0]?.status === "SUCCESS" && stored.turnResults[0].source === "result" && stored.turnResults[0].outcome === "ok",
+      JSON.stringify(stored.turnResults ?? null));
 
     const loaded = await c.cmd("loadSession", { sessionId: sid });
     const user = loaded.messages.find((m) => m.role === "user");
@@ -238,6 +242,28 @@ export default async function (t) {
       .catch((err) => ({ outcome: "error", error: String(err?.message ?? err) }));
     t.ok("status ERROR が turnResult error になる", failed.outcome === "error", String(failed.outcome));
 
+    // 本文が届いても result 自体が ERROR なら失敗。この区別を残し、次の成功ターンへ引きずらない。
+    const bodySession = await c.runTurn({ prompt: "基準", sessionId: null, cwd: ROOT, backend: "antigravity" }, { ms: 60_000 });
+    const bodySid = bodySession.sessionId;
+    const pidCount = (await spawned()).length;
+    const bodyError = await c.runTurn({ prompt: "error-body", sessionId: bodySid, cwd: ROOT }, { ms: 60_000 });
+    const diagnosed = JSON.parse(await fs.readFile(path.join(dataDir, "antigravity", `${bodySid}.json`), "utf8"));
+    const bodyTrace = diagnosed.turnResults.at(-1);
+    t.ok("本文付き ERROR は失敗だが本文を残す", bodyError.outcome === "error" && textOf(bodyError) === "本文は届いた"
+      && diagnosed.messages.at(-1)?.text === "本文は届いた", JSON.stringify(bodyTrace));
+    t.ok("生 status・失敗理由を会話の控えに残す", bodyTrace?.source === "result" && bodyTrace.status === "ERROR"
+      && bodyTrace.outcome === "error" && bodyTrace.error === "結果は失敗", JSON.stringify(bodyTrace));
+    const { DatabaseSync } = loadSqlite();
+    const db = new DatabaseSync(path.join(dataDir, "pleiad.db"), { readOnly: true });
+    let failures;
+    try { failures = JSON.parse(db.prepare("SELECT value FROM session_fields WHERE session_id = ? AND field = 'antigravityFailures'").get(bodySid)?.value ?? "[]"); }
+    finally { db.close(); }
+    t.ok("server が failed にした経路も残す", failures.at(-1)?.source === "backend.turnResult"
+      && failures.at(-1)?.error === "結果は失敗", JSON.stringify(failures.at(-1)));
+    const recovered = await c.runTurn({ prompt: "復帰", sessionId: bodySid, cwd: ROOT }, { ms: 60_000 });
+    t.ok("非成功 result が次のターンへ残らない", recovered.outcome === "ok" && (await spawned()).length === pidCount,
+      String(recovered.outcome));
+
     // ---- 出力の打ち切り（--print-timeout）。
     // 実機の agy は stderr に文言を出し、**本文が空のまま status:"SUCCESS"** を返す。
     // そのまま写すと「正常に終わったのに何も言わない」ターンになるので、失敗として畳む。
@@ -251,6 +277,9 @@ export default async function (t) {
     t.ok("打ち切りだと分かる文面が出る",
       /打ち切/.test(truncated.events.find((e) => e.type === "turnResult")?.error ?? ""),
       JSON.stringify(truncated.events.find((e) => e.type === "turnResult")?.error ?? null));
+    const timeoutTrace = JSON.parse(await fs.readFile(path.join(dataDir, "antigravity", `${truncated.sessionId}.json`), "utf8")).turnResults.at(-1);
+    t.ok("打ち切りは result と区別して控える", timeoutTrace?.source === "printTimeout"
+      && timeoutTrace.outcome === "error", JSON.stringify(timeoutTrace));
     t.ok("打ち切った agy は落とす", await gone(timedPid), `pid ${timedPid}`);
     t.ok("落とした agy は pid の控えから消える",
       !(await recorded()).includes(timedPid), JSON.stringify(await recorded()));

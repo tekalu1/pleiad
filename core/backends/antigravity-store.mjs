@@ -46,6 +46,7 @@ async function read(conversationId) {
       createdAt: raw.createdAt ?? null,
       lastModified: raw.lastModified ?? null,
       messages: raw.messages,
+      turnResults: Array.isArray(raw.turnResults) ? raw.turnResults : [],
     };
   } catch {
     return null;   // 無い・壊れている。どちらも「控えが無い」と同じ
@@ -87,7 +88,7 @@ const forgotten = new Set();
  * 同じ uuid が既にあれば差し替える（ターンの途中の書き直しでも二重にならない）。
  * `create: false` なら、控えが無いときに作らない（再開した会話の途中の書き込み。forget した控えを作り直さない）。
  */
-export function appendMessages(conversationId, { cwd, messages, create = true }) {
+export function appendMessages(conversationId, { cwd, messages, create = true, turnResult = null }) {
   if (!conversationId || !messages?.length) return Promise.resolve();
   return serial(conversationId, async () => {
     if (forgotten.has(String(conversationId))) return;
@@ -104,6 +105,11 @@ export function appendMessages(conversationId, { cwd, messages, create = true })
       const at = message.uuid ? record.messages.findIndex((m) => m.uuid === message.uuid) : -1;
       if (at >= 0) record.messages[at] = message;
       else record.messages.push(message);
+    }
+    // 生の result.status は会話本文・使用量には残らない。終わりの経路を会話ごとに少数だけ控える。
+    if (turnResult) {
+      const previous = record.turnResults ?? [];
+      record.turnResults = [...previous.filter((r) => r.sentAt !== turnResult.sentAt), turnResult].slice(-32);
     }
     await write(record);
   });
