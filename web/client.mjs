@@ -59,8 +59,9 @@ import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
-import { approvalChange, changeBody, changeHeading } from "./setting-change.mjs";
+import { approvalChange, changeBody, changeHeading, changeWord } from "./setting-change.mjs";
 import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
+import { mergeTasks, tasksToFetch, staleTasks } from './task-cards.mjs';
 import { createBackgroundChip } from './background-chip.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
@@ -1218,14 +1219,23 @@ const provisionalByMessage = new Map();
  * 開くと結果の本文だけで、エージェントに渡した全文は奥の折りたたみ。読めない形（まとめ通知・古い形）や本文が無いときは、従来の「再開しました」の 1 行
  */
 function taskNoticeNode(text, at = '') {
-  // 設定の変更の結果（ADR 0088）。同じ届け方の別の通知なので、開ける 1 行にする
+  // 設定と操作の承認結果（ADR 0088）は、開ける 1 行にする
   const settings = parseSettingNotices(text);
-  if (settings.length > 1) return sysFold(t('chat.sys.settingResults', { count: settings.length }), text, at);
+  if (settings.length > 1) return sysFold(settings.every((n) => n.kind === 'setting')
+    ? t('chat.sys.settingResults', { count: settings.length }) : t('chat.sys.opResults', { count: settings.length }), text, at);
   // i18n-dynamic: chat.sys.settingState.
-  if (settings.length) return sysFold(t('chat.sys.settingResult', { state: t(`chat.sys.settingState.${settings[0].outcome}`) }), text, at);
+  // i18n-dynamic: chat.sys.opState.
+  if (settings.length) {
+    const n = settings[0];
+    const state = n.kind === 'setting' ? t(`chat.sys.settingState.${n.outcome}`)
+      : n.outcome === 'allowed' ? t(`chat.sys.opState.${n.words}.allowed`, { defaultValue: t('chat.sys.opState.op.allowed') })
+        : n.outcome === 'failed' ? t(`chat.opApproval.${n.words}.failed`, { defaultValue: t('chat.opApproval.op.failed') })
+          : t(`chat.sys.opState.${n.outcome}`);
+    return sysFold(n.kind === 'setting' ? t('chat.sys.settingResult', { state }) : t('chat.sys.opResult', { state }), text, at);
+  }
   const notice = parseTaskNotice(text);
   if (!notice) return text ? sysFold(t('chat.sys.taskResumed'), text, at) : el('div', 'm sys', t('chat.sys.taskResumed'));
-  const task = (state.work.tasks ?? []).find(x => x.taskId === notice.taskId);
+  const task = taskById(notice.taskId);
   const first = notice.task.split(/\r?\n/).find(Boolean) ?? '';
   const title = task ? backgroundTitle(task) : [...first].slice(0, 40).join('');
   const backend = task?.backend || notice.backend;
@@ -1768,33 +1778,33 @@ function computerApproval(ev, approval, row) {
 // 出ている設定の変更の承認カード（requestId -> 決着を受けて 1 行に畳む関数の集合。中継の複製も同じ requestId）
 const settingCardsOpen = new Map();
 
-/** 設定の変更の承認の決着（settingApproval イベント）を、カードの 1 行の言葉にする */
-function settingOutcomeText(outcome) {
-  if (outcome === "allowed") return t("chat.settingApproval.allowed");
+/** 承認カードの決着（settingApproval イベント）を、カードの 1 行の言葉にする。許可した・できなかったは操作の言葉（「送信を許可した」など） */
+function settingOutcomeText(change, outcome) {
+  if (outcome === "allowed") return changeWord(change, "allowed");
   if (outcome === "denied") return t("chat.approval.denied");
-  if (outcome === "failed") return t("chat.sys.settingState.failed");
+  if (outcome === "failed") return changeWord(change, "failed");
   return t("chat.settingApproval.withdrawn");
 }
 
 /** サーバーから届いた決着。開いているカードは 1 行に畳み、押して畳んだカードは結果の言葉に合わせる（別の端末で答えた・取り下げた） */
 function settleSettingCards(ev) {
-  for (const settle of settingCardsOpen.get(ev.requestId) ?? []) settle(settingOutcomeText(ev.outcome));
+  for (const settle of settingCardsOpen.get(ev.requestId) ?? []) settle(ev.outcome);
   settingCardsOpen.delete(ev.requestId);
 }
 
 /**
- * 設定の変更の承認（permission の settingChange。ADR 0082・0088）。会話の単独のカード: 呼び出しは承認を待たずに返り、カードはターンが終わっても残るので、
- * ツールの行の下には置かない（閉じた塊の中に隠れる）。ボタンは「拒否」と塗りの「変更を許可」だけ（「常に許可」は出さない）。
+ * 設定の変更などの guarded の操作の承認（permission の settingChange。ADR 0082・0088）。会話の単独のカード: 呼び出しは承認を待たずに返り、カードはターンが終わっても残るので、
+ * ツールの行の下には置かない（閉じた塊の中に隠れる）。ボタンは「拒否」と塗りの許可（操作の言葉。設定なら「変更を許可」、送信なら「送信を許可」）だけ（「常に許可」は出さない）。
  * 答えには出したカードの受領証を添える（サーバーが照合する）。押したら「◯◯を送っています…」でボタンを止め、受け取られてから 1 行に畳む
  * （失敗したら押す前の形に戻って押し直せる）。別の端末で答えた・取り下げた決着は settingApproval イベントで畳む。稼働表示は変えない（エージェントは続けている）
  */
 function settingChangeApproval(ev, change) {
   const res = el("span", "res");
   const deny = el("button", "btn btn-quiet", t("chat.approval.deny"));
-  const allow = el("button", "btn btn-primary", t("chat.settingApproval.allow"));
+  const allow = el("button", "btn btn-primary", changeWord(change, "allow"));
   for (const b of [deny, allow]) b.type = "button";
   const buttons = [deny, allow];
-  const verb = (ok) => (ok ? t("chat.settingApproval.allow") : t("chat.approval.deny"));
+  const verb = (ok) => (ok ? changeWord(change, "allow") : t("chat.approval.deny"));
   const m = el("div", "m card");
   const card = el("div", "card");
   m.append(card);
@@ -1823,7 +1833,7 @@ function settingChangeApproval(ev, change) {
   };
   if (change.requestId) {
     if (!settingCardsOpen.has(change.requestId)) settingCardsOpen.set(change.requestId, new Set());
-    settingCardsOpen.get(change.requestId).add(collapse);
+    settingCardsOpen.get(change.requestId).add((outcome) => collapse(settingOutcomeText(change, outcome)));
   }
   const settle = async (ok) => {
     if (card.dataset.sending) return;
@@ -1845,7 +1855,7 @@ function settingChangeApproval(ev, change) {
       return;
     }
     clearTimeout(arc);
-    collapse(ok ? t("chat.settingApproval.allowed") : t("chat.approval.denied"));
+    collapse(settingOutcomeText(change, ok ? "allowed" : "denied"));
   };
   allow.onclick = () => settle(true);
   deny.onclick = () => settle(false);
@@ -2661,7 +2671,7 @@ function onEvent(ev, replay = false) {
     // ターンを回した分だけ使用量が動く。ヘッダーのチップをそのエージェントの分だけ取り直す（読み直しの再生では取らない）
     if (!replay && !ev.requeued) headerUsage.turnEnded(s?.backend);
     renderSessions();
-    if (ev.sessionId !== state.current) refresh();
+    if (ev.sessionId !== state.current) scheduleRefresh();
   }
   // 承認は一度きりしか届かない。開いていない会話の分も覚えておき、開いたときに描く
   // （覚えずに捨てると、一覧は「承認待ち」なのにカードがどこにも出ない）
@@ -2717,7 +2727,8 @@ function onEvent(ev, replay = false) {
   // 「いつも分ける」が変わった（別の窓の操作・設定）。入力欄の 1 行と設定のスイッチを合わせる（ADR 0089）
   if (ev.type === 'worktreeSettings') { worktreeSettings.paint(ev.always); refreshWorktree().catch(() => {}); return; }
   // 分けた作業場所が増えた・消えた。開いている右パネルの「残っている作業場所」を取り直す
-  if (ev.type === 'worktreesChanged') { gitPanel?.changed(); return; }
+  // 委譲の子の分けた作業場所が片付くと、カードの「未取り込み」の印が変わる（worktree.live）
+  if (ev.type === 'worktreesChanged') { gitPanel?.changed(); loadTaskCards(state.current).then(repaintTasks).catch(() => {}); return; }
   // 委譲の振り分けの設定・キー・使用量が変わった。設定 › 委譲を開いていれば取り直す
   if (ev.type === 'delegationRoutingChanged') { delegationSettings.event(ev); return; }
   // コンピューターの操作の状態（別の会話が操作中で待っている）。全部の会話の分が届くので、開いている会話の分だけ行に出す
@@ -2726,10 +2737,10 @@ function onEvent(ev, replay = false) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
       // 家族の枝の名前が変わったなら、筋と分岐点の印にも出す
-      if (ev.type === "title" && branches.has(ev.sessionId)) return refresh().then(paintBranchNames);
+      if (ev.type === "title" && branches.has(ev.sessionId)) return scheduleRefresh().then(paintBranchNames);
       // 開いている会話から枝が分かれた（fork イベントは子の id で来るのでここへ落ちる）
-      if (ev.type === "fork") return refresh().then(() => reloadBranches(ev));
-      refresh();
+      if (ev.type === "fork") return scheduleRefresh().then(() => reloadBranches(ev));
+      scheduleRefresh();
     }
     return;
   }
@@ -3059,6 +3070,7 @@ function onEvent(ev, replay = false) {
 /** running イベント / running コマンドの戻り。走っているもの・待っているものを一覧と稼働表示へ */
 function applyRunning(work) {
   state.work = work ?? { count: 0, turns: [], permissions: [], subagents: [], background: [] };
+  syncTaskCards();
   const running = new Set((state.work.turns ?? []).map((t) => t.sessionId).filter(Boolean));
   const waiting = new Set((state.work.permissions ?? []).map((p) => p.sessionId).filter(Boolean));
   // 誰が答えたか（別のタブ・中断）に関わらず、残っている承認はサーバが正。
@@ -3109,7 +3121,7 @@ function applyRunning(work) {
   for (const id of state.runningIds) {
     if (state.sessions.some((x) => x.id === id) || state.askedFor.has(id)) continue;
     state.askedFor.add(id);
-    refresh();
+    if (id === state.current) refresh(); else scheduleRefresh();
     break;
   }
 }
@@ -3747,6 +3759,7 @@ const side = createSide({
   onListContext: (x, y) => showMenu(x, y, [newGroupItem()]),
   onSettings: () => openSettings(),
   cwdNow: () => state.cwd,
+  visible: () => !document.body.classList.contains("settings") && (narrowView.matches ? drawerOpen() : !document.documentElement.classList.contains("side-closed")),
 });
 
 function renderSessions() {
@@ -4276,8 +4289,70 @@ const TASK_STATUS = { queued: t('dialog.tasks.status.queued'), running: t('dialo
 const TASK_MARK = { queued: 'running', running: 'running', cancelling: 'running', waiting: 'running',
   completed: 'completed', failed: 'failed', cancelled: 'stopped', interrupted: 'stopped' };
 const TASK_LIVE = new Set(['queued', 'running', 'cancelling']);
+/**
+ * 委譲のタスクの行（web/task-cards.mjs）。running は終わっていない・通知が届いていない短い行だけなので、
+ * 開いている会話の分（子孫まで。依頼文・振り分けの記録付き）を読んで持ち、running の行を重ねて使う。
+ * rows: taskId → 行、live: 前の running の行（taskId → 行）、asked: 会話の中のカードのために読みに行った id。
+ * 重ねた結果は、rows を書き換える（ver を進める）か running が届くまで使い回す（カードごとに引くので）
+ */
+const taskCards = { sessionId: null, rows: new Map(), ver: 0, live: new Map(), asked: new Set(), merged: null };
+function mergedTasks() {
+  const m = taskCards.merged;
+  if (m && m.ver === taskCards.ver && m.live === state.work.tasks) return m;
+  const list = mergeTasks(taskCards.rows, state.work.tasks);
+  return (taskCards.merged = { ver: taskCards.ver, live: state.work.tasks, list, byId: new Map(list.map(r => [r.taskId, r])) });
+}
+const allTasks = () => mergedTasks().list;
+const taskById = (id) => (id ? mergedTasks().byId.get(id) : undefined);
+/** その会話の分（子孫まで）を読む。読めなければ null */
+async function readTaskCards(sessionId) {
+  if (!sessionId) return null;
+  const rows = await cmd('agentTasks', { sessionId, tree: true }).catch(() => null);
+  return Array.isArray(rows) ? rows : null;
+}
+/** 会話を開いた・つなぎ直した・作業場所が変わった。その会話の分を読み直す（読めなければ今の分のまま） */
+async function loadTaskCards(sessionId) {
+  const rows = await readTaskCards(sessionId);
+  if (rows && state.current === sessionId) setTaskCards(sessionId, rows);
+}
+function setTaskCards(sessionId, rows) {
+  taskCards.sessionId = sessionId;
+  taskCards.rows = new Map(rows.map(r => [r.taskId, r]));
+  taskCards.ver++;
+  taskCards.asked.clear();
+  const stale = staleTasks(rows, state.work.tasks);
+  if (stale.length) fetchTaskCards(stale, { again: false }).catch(() => {});
+}
+/** 指定の行だけ読み直す。読んでいる間に終わったもの（running から外れた）は、もう一度だけ読む */
+async function fetchTaskCards(ids, { again = true } = {}) {
+  const sessionId = taskCards.sessionId;
+  const rows = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const part = await cmd('agentTasks', { taskIds: ids.slice(i, i + 100) }).catch(() => null);
+    if (!Array.isArray(part) || taskCards.sessionId !== sessionId) return;
+    rows.push(...part);
+  }
+  for (const r of rows) taskCards.rows.set(r.taskId, r);
+  taskCards.ver++;
+  if (state.current === sessionId) repaintTasks();
+  const stale = staleTasks(rows, state.work.tasks);
+  if (again && stale.length) fetchTaskCards(stale, { again: false }).catch(() => {});
+}
+/** running が届いた。この会話の木の新しい委譲と、終わって running から外れたものを読む */
+function syncTaskCards() {
+  const live = state.work.tasks ?? [];
+  const ids = taskCards.sessionId === state.current
+    ? tasksToFetch({ cards: taskCards.rows, live, prevLive: taskCards.live, sessionId: state.current }) : [];
+  taskCards.live = new Map(live.map(r => [r.taskId, r]));
+  if (ids.length) fetchTaskCards(ids).catch(() => {});
+}
+function repaintTasks() {
+  paintDelegateCards();
+  syncWorkEntry();
+  if ($('workDialog').open) renderBackground();
+}
 /** 子の会話を親として辿り、この会話からの委譲とその子孫を集める。 */
-const plyTasksHere = () => state.current ? taskTree(state.work.tasks, state.current) : [];
+const plyTasksHere = () => state.current ? taskTree(allTasks(), state.current) : [];
 /** 子の会話が人間の承認を待っているか。work.tasks の status は保存した値なので、承認の一覧から引く */
 const taskWaiting = (task) => (state.work.permissions ?? []).some(p => p.sessionId === task.sessionId && !p.relay);
 
@@ -4561,6 +4636,8 @@ function openWork(key) {
   // 先に開く。詳細の読み込みは開いているときだけ走る
   if (!$('workDialog').open) $('workDialog').showModal();
   renderBackground();
+  // 配信の間に始まって終わった子孫の委譲も一覧に出すため、会話の分を読み直す
+  loadTaskCards(state.current).then(repaintTasks).catch(() => {});
   if (typeof key !== 'string') $('workList').scrollTop = 0;
   else $('workList').querySelector(`[data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'nearest' });
 }
@@ -4970,7 +5047,7 @@ function inputRouting(card) {
 /** 固定の委譲の内訳（承認モード・作業場所）。ply_delegate の返り値から、無ければタスクの一覧から */
 function pinnedFacts(card, routing) {
   const result = cardJson(card, '.tc-output') ?? {};
-  const task = (state.work.tasks ?? []).find(x => x.taskId === card.dataset.taskId) ?? {};
+  const task = taskById(card.dataset.taskId) ?? {};
   const mode = result.mode ?? task.mode ?? '';
   // 分けた作業場所の子は、パスの代わりに「作業場所」の行（ブランチ付き。paintDelegateWorkspace）が出る
   return { names: routingNames, mode: mode ? state.vocab.get(routing.target.backend)?.modes?.[mode]?.label ?? mode : '', cwd: task.worktree ? '' : result.cwd ?? task.cwd ?? '' };
@@ -5006,7 +5083,7 @@ function foldDelegateJson(card) {
 }
 function decorateDelegateCard(card) {
   const taskId = card.dataset.taskId;
-  const routing = (state.work.tasks ?? []).find(x => x.taskId === taskId)?.routing ?? cardRouting.get(card) ?? inputRouting(card);
+  const routing = taskById(taskId)?.routing ?? cardRouting.get(card) ?? inputRouting(card);
   if (!routing?.target || card.dataset.routed) return;
   card.dataset.routed = '1';
   const auto = isAutoRouting(routing);
@@ -5047,7 +5124,7 @@ function decorateDelegateCard(card) {
 }
 /** 委譲カードの「作業場所」の行（分けた作業場所のとき。ブランチと「分けた作業場所」。ADR 0089）。開いたときに出す */
 function paintDelegateWorkspace(card) {
-  const task = (state.work.tasks ?? []).find(x => x.taskId === card.dataset.taskId);
+  const task = taskById(card.dataset.taskId);
   card.querySelector('.wt-delegate')?.remove();
   if (!task?.worktree) return;
   const row = el('div', 'wt-delegate');
@@ -5061,7 +5138,7 @@ function paintDelegateWorkspace(card) {
 }
 /** 委譲カードの「変更」の行。子の会話の作業場所で、会話の間に変わったファイルとコミットがあるときだけ */
 async function paintDelegateGit(card) {
-  const task = (state.work.tasks ?? []).find(x => x.taskId === card.dataset.taskId);
+  const task = taskById(card.dataset.taskId);
   if (!task?.sessionId) return;
   const res = await cmd('gitStatus', { sessionId: task.sessionId, summary: true }).catch(() => null);
   if (!card.isConnected) return;
@@ -5127,7 +5204,7 @@ function paintRouteLine(card, routing) {
 function paintRetried(card) {
   const box = card.querySelector('.rt-retried');
   if (!box) return;
-  const retries = (state.work.tasks ?? []).filter(x => x.routing?.retry?.of === card.dataset.taskId);
+  const retries = allTasks().filter(x => (x.routing?.retry?.of ?? x.retryOf) === card.dataset.taskId);
   // 4 秒ごとの放送で変わっていなければ触らない（「開く」のフォーカスを奪わない）
   const sig = retries.map(x => `${x.taskId}:${x.status}:${x.model}`).join();
   if (box.dataset.sig === sig && box.childElementCount === retries.length) return;
@@ -5146,11 +5223,16 @@ function paintRetried(card) {
 }
 /** タスクの一覧が変わったら、会話の中の委譲カードを追いつかせる（記録が後から届いたカード・やり直しの行） */
 function paintDelegateCards() {
+  const missing = [];
   for (const card of thread.querySelectorAll('.tc[data-task-id]')) {
     if (card.dataset.routed) paintRetried(card);
     else decorateDelegateCard(card);
+    // 始まって終わるまでが running の配信の間に収まった委譲は、会話の分を読んだ後に増えている。カードの分だけ 1 度読む
+    const id = card.dataset.taskId;
+    if (taskCards.sessionId === state.current && !taskCards.asked.has(id) && !taskById(id)) { taskCards.asked.add(id); missing.push(id); }
   }
   paintDelegateStates();
+  if (missing.length) fetchTaskCards(missing).catch(() => {});
 }
 
 /**
@@ -5223,7 +5305,7 @@ async function toggleRetry(card, root, button) {
   try {
     const data = await cmd('delegationRouting');
     const taskId = card.dataset.taskId;
-    const task = (state.work.tasks ?? []).find(x => x.taskId === taskId);
+    const task = taskById(taskId);
     const routing = task?.routing ?? cardRouting.get(card);
     for (const b of new Set((data.candidates ?? []).map(c => c.backend).filter(b => b && !state.vocab.has(b)))) await loadVocab(b).catch(() => {});
     const panel = retryPanel({ candidates: retryCandidates(data.candidates, routing, data.tiers), running: TASK_LIVE.has(task?.status),
@@ -5233,7 +5315,7 @@ async function toggleRetry(card, root, button) {
         panel.remove();
         button.setAttribute('aria-expanded', 'false');
         button.focus();
-        if (result?.task && !(state.work.tasks ?? []).some(x => x.taskId === result.task.taskId)) (state.work.tasks ??= []).push(result.task);
+        if (result?.task && !taskById(result.task.taskId)) { taskCards.rows.set(result.task.taskId, result.task); taskCards.ver++; }
         paintRetried(card);
       } });
     root.querySelector('.rt-actions').after(panel);
@@ -5425,6 +5507,7 @@ function setDrawer(open, { refocus = true } = {}) {
   const root = document.documentElement;
   if (drawerOpen() === open) return;
   root.classList.toggle("side-open", open);
+  if (open) side.redraw();
   $("openSidebar").setAttribute("aria-expanded", String(open));
   // 開いている間は背後を inert にする。Tab は脇の中だけを巡り、見えない会話を操作させない（設定で会話を覆うときと同じ手）
   for (const n of document.body.children) if (n.matches("main, .file-preview, .host-bar, #remoteBadge")) n.inert = open;
@@ -5445,6 +5528,7 @@ function setSidebar(open) {
   if (document.body.classList.contains("settings") || root.classList.contains("side-closed") !== open) return;
   document.body.classList.add("side-moving");
   root.classList.toggle("side-closed", !open);
+  if (open) side.redraw();
   try { localStorage.setItem(SIDEBAR_STORE, open ? "open" : "closed"); } catch { /* 保存できなくても動く */ }
   // 押したボタンは消える。居場所を body に落とさず、反対側のボタンへ移す
   const from = document.activeElement;
@@ -5470,7 +5554,7 @@ function initSidebar() {
     setDrawer(false);
   });
   // 広い画面へ戻ったら引き出しの印を外す（幕が残らないように）
-  narrowView.addEventListener("change", () => setDrawer(false, { refocus: false }));
+  narrowView.addEventListener("change", () => { setDrawer(false, { refocus: false }); side.redraw(); });
   // Ctrl+B（macOS は ⌘B）。入力欄でも太字などの既定の意味は無いので、どこからでも効かせる。
   // macOS の Ctrl+B は入力欄で「1 文字戻る」なので奪わない
   const mac = /Mac/.test(navigator.platform);
@@ -6814,9 +6898,22 @@ async function syncTopbar() {
  * 走っている取り直しがあれば、それが終わった後に 1 回だけ取り直す（その間に来た呼び出しは全部その 1 回を待つ）。
  * 走っている分は呼ばれる前に始まったので、それだけを待つと、呼んだ側が直前にした変更（fork など）が載らない
  */
-let refreshRun = null, refreshAgain = null;
-function refresh() {
-  if (!refreshRun) return refreshRun = runRefresh().finally(() => { refreshRun = null; });
+let refreshRun = null, refreshAgain = null, refreshSnapshotReady = false;
+let scheduledRefresh = null;
+function scheduleRefresh() {
+  if (scheduledRefresh) return scheduledRefresh;
+  scheduledRefresh = new Promise((resolve, reject) => {
+    setTimeout(() => {
+      scheduledRefresh = null;
+      refresh().then(resolve, reject);
+    }, 400);
+  });
+  return scheduledRefresh;
+}
+function refresh({ sharePending = false } = {}) {
+  // 起動時の重複だけは未受信の写しを共有する。出来事や自分の操作後は新しい写しを取り直す。
+  if (!refreshRun) return refreshRun = runRefresh().finally(() => { refreshRun = null; refreshSnapshotReady = false; });
+  if (sharePending && !refreshSnapshotReady) return refreshRun;
   return refreshAgain ??= refreshRun.catch(() => {}).then(() => { refreshAgain = null; return refresh(); });
 }
 
@@ -6828,6 +6925,7 @@ async function runRefresh() {
     cmd("listStatuses").catch(() => []),
     cmd("prefs").catch(() => ({})),
   ]);
+  refreshSnapshotReady = true;
   if (version !== refreshVersion) return;
   state.sessions = applyPendingPatches(sessions);
   readCompletions.fromSessions(sessions);
@@ -7168,7 +7266,10 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh }) {
   let data;
   try {
     // 静かな読み直し（つなぎ直したとき）は、今持っている履歴の続きだけを頼む
+    // 委譲カード・バックグラウンドの一覧の行（会話の分）も一緒に読み、描く前に揃える
+    const cards = loadTaskCards(id);
     data = await loadHistory({ sessionId: id, live: true, watch: true }, quiet && state.messages.length ? { messages: state.messages, presents: state.presents } : null);
+    await cards;
   } catch (e) {
     clearTimeout(historyTimer);
     sessionLoads.cancel(load);
@@ -7457,7 +7558,7 @@ async function changeBranch(id, row) {
   state.displayLoad = load;
   let painted = false;
   try {
-    const data = await cmd('loadSession', { sessionId: id, live: true, watch: true });
+    const [data, cards] = await Promise.all([cmd('loadSession', { sessionId: id, live: true, watch: true }), readTaskCards(id)]);
     const target = data?.messages ?? [];
     let keep = commonPrefix(state.messages, target);
     const cut = branches.boundary(source, id);
@@ -7468,6 +7569,7 @@ async function changeBranch(id, row) {
     const transition = row ? { key: row.dataset.key, snapshot: row.snapshot() } : null;
     await branches.load(id, target);
     if (state.current !== source) return;
+    if (cards) setTaskCards(id, cards);
     await paintSession(id, data, { keepUpTo: keep, transition, loaded: true, load });
     painted = true;
   } finally {
@@ -7700,7 +7802,7 @@ function connect() {
       notifySettings.refresh();
       presenceReporter.reset();
       presenceReporter.report(true);
-      return refresh().then(async () => {
+      return refresh({ sharePending: true }).then(async () => {
         // スマホの通知を押して開いた会話（殻が ?open= で渡す）
         const wanted = mobileNotify.takeOpenRequest();
         if (wanted) return select(wanted);
@@ -7976,7 +8078,7 @@ $("titleWand").onclick = async () => {
   $("titleEdit").select();
 };
 
-const onboarding = setupOnboarding({ cmd, refreshAuth, getAuth: () => state.auth, authLogin, authUrlBox, folderBrowser,
+const onboarding = setupOnboarding({ cmd, refreshAuth, getAuth: () => state.auth, authLogin, authUrlBox, folderBrowser, onClose: () => side.redraw(),
   begin: async (settings, prompt) => {
     if (state.busy || creatingSession) throw new Error(t("dialog.onboarding.busy"));
     const id = await startNew(settings);

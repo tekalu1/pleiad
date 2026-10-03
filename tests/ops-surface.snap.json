@@ -715,6 +715,86 @@
       "input": "668810693a42"
     },
     {
+      "id": "context.agentMcp",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "agent-mcp"
+          ]
+        }
+      },
+      "legacyCommand": "agentMcp",
+      "input": "046d7ac0be66"
+    },
+    {
+      "id": "context.diff",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "diff"
+          ]
+        }
+      },
+      "legacyCommand": "contextDiff",
+      "input": "5b5c3443aba4"
+    },
+    {
+      "id": "context.findings",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "findings"
+          ]
+        }
+      },
+      "legacyCommand": "contextFindings",
+      "input": "2d846c9b3216"
+    },
+    {
+      "id": "context.nativeInstructions",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "native-instructions"
+          ]
+        }
+      },
+      "legacyCommand": "nativeInstructions",
+      "input": "aef6b2aea2a9"
+    },
+    {
       "id": "context.plyInstructions",
       "risk": "read",
       "riskOf": false,
@@ -753,6 +833,46 @@
       },
       "legacyCommand": "refreshContext",
       "input": "d25acaa13541"
+    },
+    {
+      "id": "context.scan",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "scan"
+          ]
+        }
+      },
+      "legacyCommand": "scanContext",
+      "input": "46a528fd1b26"
+    },
+    {
+      "id": "context.session",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "session"
+          ]
+        }
+      },
+      "legacyCommand": "sessionContext",
+      "input": "9b61e58faf57"
     },
     {
       "id": "context.setPlyInstructions",
@@ -836,6 +956,26 @@
       },
       "legacyCommand": "contextSettings",
       "input": "e068ce313039"
+    },
+    {
+      "id": "context.skills",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "skills"
+          ]
+        }
+      },
+      "legacyCommand": "slashSkills",
+      "input": "4a83902d6688"
     },
     {
       "id": "delegation.delegate",
@@ -990,7 +1130,7 @@
         }
       },
       "legacyCommand": "agentTasks",
-      "input": "3674e4e2e03f"
+      "input": "7e323f4c8002"
     },
     {
       "id": "delegation.taskSend",
@@ -1071,6 +1211,92 @@
       },
       "legacyCommand": "compatEndpoints",
       "input": "4a12c48b5c1b"
+    },
+    {
+      "id": "files.listDirs",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "files",
+            "dirs"
+          ],
+          "positional": [
+            "path"
+          ]
+        }
+      },
+      "legacyCommand": "listDirs",
+      "input": "73882ac08044"
+    },
+    {
+      "id": "git.changes",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "git",
+            "changes"
+          ]
+        }
+      },
+      "legacyCommand": "gitPanel",
+      "input": "5638de2fdcf3"
+    },
+    {
+      "id": "git.diff",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "git",
+            "diff"
+          ],
+          "positional": [
+            "path"
+          ]
+        }
+      },
+      "legacyCommand": "gitDiff",
+      "input": "0161890a8b9d"
+    },
+    {
+      "id": "git.status",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "git",
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": "gitStatus",
+      "input": "c16539d234db"
     },
     {
       "id": "hooks.copy",
@@ -1320,6 +1546,26 @@
       },
       "legacyCommand": "togglePlyHook",
       "input": "e009d35c6ad6"
+    },
+    {
+      "id": "hooks.unifyPreview",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "unify-preview"
+          ]
+        }
+      },
+      "legacyCommand": "hooksUnifyPreview",
+      "input": "3f382d79ca3f"
     },
     {
       "id": "mcp.authStatus",
@@ -1761,6 +2007,26 @@
       "input": "54e061176cb6"
     },
     {
+      "id": "notify.status",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notify",
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": "notifyStatus",
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "remote.setResident",
       "risk": "write",
       "riskOf": false,
@@ -2055,6 +2321,26 @@
       },
       "legacyCommand": "abort",
       "input": "d70835b046e2"
+    },
+    {
+      "id": "sessions.background",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "background"
+          ]
+        }
+      },
+      "legacyCommand": "loadBackground",
+      "input": "444bc2fd7881"
     },
     {
       "id": "sessions.cancelCompaction",
@@ -2375,6 +2661,29 @@
       "input": "62fa526050a3"
     },
     {
+      "id": "sessions.readSubagent",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "read-subagent"
+          ],
+          "positional": [
+            "agentId"
+          ]
+        }
+      },
+      "legacyCommand": "loadSubagent",
+      "input": "212be68602f5"
+    },
+    {
       "id": "sessions.resume",
       "risk": "write",
       "riskOf": false,
@@ -2532,6 +2841,29 @@
       "input": "46ccb253749e"
     },
     {
+      "id": "sessions.setGrouped",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "set-grouped"
+          ],
+          "positional": [
+            "ungrouped"
+          ]
+        }
+      },
+      "legacyCommand": "setGrouped",
+      "input": "8c76c7a1d49d"
+    },
+    {
       "id": "sessions.setModel",
       "risk": "write",
       "riskOf": false,
@@ -2627,6 +2959,49 @@
       "input": "ab66527a27f3"
     },
     {
+      "id": "sessions.stopBackground",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "stop-background"
+          ],
+          "positional": [
+            "taskId"
+          ]
+        }
+      },
+      "legacyCommand": "stopBackground",
+      "input": "f964bf5419f3"
+    },
+    {
+      "id": "sessions.subagents",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "subagents"
+          ]
+        }
+      },
+      "legacyCommand": "findSubagent",
+      "input": "69b07ff00056"
+    },
+    {
       "id": "sessions.suggestTitle",
       "risk": "read",
       "riskOf": false,
@@ -2648,6 +3023,29 @@
       },
       "legacyCommand": "suggestTitle",
       "input": "4084dc263114"
+    },
+    {
+      "id": "sessions.switchBackend",
+      "risk": "guarded",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "switch-backend"
+          ],
+          "positional": [
+            "backend"
+          ]
+        }
+      },
+      "legacyCommand": "switchBackend",
+      "input": "42d87f4763de"
     },
     {
       "id": "settings.get",
@@ -2742,6 +3140,76 @@
         "setDelegationRouting"
       ],
       "input": "cf5833e094bf"
+    },
+    {
+      "id": "shell.run",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "shell",
+            "run"
+          ],
+          "positional": [
+            "command"
+          ]
+        }
+      },
+      "legacyCommand": "runShell",
+      "input": "10c005c94e1f"
+    },
+    {
+      "id": "shell.skip",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "shell",
+            "skip"
+          ],
+          "positional": [
+            "runId",
+            "skip"
+          ]
+        }
+      },
+      "legacyCommand": "skipShell",
+      "input": "af3c5f5d16df"
+    },
+    {
+      "id": "shell.stop",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "shell",
+            "stop"
+          ],
+          "positional": [
+            "runId"
+          ]
+        }
+      },
+      "legacyCommand": "stopShell",
+      "input": "1494237f3b8e"
     },
     {
       "id": "statuses.create",
@@ -2858,6 +3326,26 @@
       "input": "3e8683a89327"
     },
     {
+      "id": "worktrees.check",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "check"
+          ]
+        }
+      },
+      "legacyCommand": "worktreeCheck",
+      "input": "1ea3c81c0035"
+    },
+    {
       "id": "worktrees.discard",
       "risk": "write",
       "riskOf": false,
@@ -2948,6 +3436,26 @@
       },
       "legacyCommand": "setWorktreeSettings",
       "input": "b99244f5026b"
+    },
+    {
+      "id": "worktrees.settings",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "get-settings"
+          ]
+        }
+      },
+      "legacyCommand": "worktreeSettings",
+      "input": "25c7d85c859a"
     },
     {
       "id": "worktrees.split",
@@ -3580,13 +4088,43 @@
       ]
     },
     {
+      "id": "context.agentMcp",
+      "path": "context agent-mcp",
+      "positional": []
+    },
+    {
+      "id": "context.diff",
+      "path": "context diff",
+      "positional": []
+    },
+    {
+      "id": "context.findings",
+      "path": "context findings",
+      "positional": []
+    },
+    {
       "id": "context.plyInstructions",
       "path": "context instructions",
       "positional": []
     },
     {
+      "id": "context.nativeInstructions",
+      "path": "context native-instructions",
+      "positional": []
+    },
+    {
       "id": "context.refresh",
       "path": "context refresh",
+      "positional": []
+    },
+    {
+      "id": "context.scan",
+      "path": "context scan",
+      "positional": []
+    },
+    {
+      "id": "context.session",
+      "path": "context session",
       "positional": []
     },
     {
@@ -3609,6 +4147,11 @@
     {
       "id": "context.settings",
       "path": "context settings",
+      "positional": []
+    },
+    {
+      "id": "context.skills",
+      "path": "context skills",
       "positional": []
     },
     {
@@ -3698,6 +4241,30 @@
       ]
     },
     {
+      "id": "files.listDirs",
+      "path": "files dirs",
+      "positional": [
+        "path"
+      ]
+    },
+    {
+      "id": "git.changes",
+      "path": "git changes",
+      "positional": []
+    },
+    {
+      "id": "git.diff",
+      "path": "git diff",
+      "positional": [
+        "path"
+      ]
+    },
+    {
+      "id": "git.status",
+      "path": "git status",
+      "positional": []
+    },
+    {
       "id": "hooks.copy",
       "path": "hooks copy",
       "positional": []
@@ -3762,6 +4329,11 @@
       "positional": [
         "id"
       ]
+    },
+    {
+      "id": "hooks.unifyPreview",
+      "path": "hooks unify-preview",
+      "positional": []
     },
     {
       "id": "mcp.authStatus",
@@ -3889,6 +4461,11 @@
       "positional": []
     },
     {
+      "id": "notify.status",
+      "path": "notify status",
+      "positional": []
+    },
+    {
       "id": "remote.setResident",
       "path": "remote resident",
       "positional": []
@@ -3978,6 +4555,11 @@
       "positional": [
         "sessionId"
       ]
+    },
+    {
+      "id": "sessions.background",
+      "path": "sessions background",
+      "positional": []
     },
     {
       "id": "sessions.cancelSchedule",
@@ -4084,6 +4666,13 @@
       ]
     },
     {
+      "id": "sessions.readSubagent",
+      "path": "sessions read-subagent",
+      "positional": [
+        "agentId"
+      ]
+    },
+    {
       "id": "sessions.setTitle",
       "path": "sessions rename",
       "positional": [
@@ -4133,6 +4722,13 @@
       ]
     },
     {
+      "id": "sessions.setGrouped",
+      "path": "sessions set-grouped",
+      "positional": [
+        "ungrouped"
+      ]
+    },
+    {
       "id": "sessions.setStatus",
       "path": "sessions status",
       "positional": [
@@ -4141,10 +4737,29 @@
       ]
     },
     {
+      "id": "sessions.stopBackground",
+      "path": "sessions stop-background",
+      "positional": [
+        "taskId"
+      ]
+    },
+    {
+      "id": "sessions.subagents",
+      "path": "sessions subagents",
+      "positional": []
+    },
+    {
       "id": "sessions.suggestTitle",
       "path": "sessions suggestTitle",
       "positional": [
         "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.switchBackend",
+      "path": "sessions switch-backend",
+      "positional": [
+        "backend"
       ]
     },
     {
@@ -4179,6 +4794,28 @@
       "positional": [
         "key",
         "value"
+      ]
+    },
+    {
+      "id": "shell.run",
+      "path": "shell run",
+      "positional": [
+        "command"
+      ]
+    },
+    {
+      "id": "shell.skip",
+      "path": "shell skip",
+      "positional": [
+        "runId",
+        "skip"
+      ]
+    },
+    {
+      "id": "shell.stop",
+      "path": "shell stop",
+      "positional": [
+        "runId"
       ]
     },
     {
@@ -4222,11 +4859,21 @@
       ]
     },
     {
+      "id": "worktrees.check",
+      "path": "worktrees check",
+      "positional": []
+    },
+    {
       "id": "worktrees.discard",
       "path": "worktrees discard",
       "positional": [
         "id"
       ]
+    },
+    {
+      "id": "worktrees.settings",
+      "path": "worktrees get-settings",
+      "positional": []
     },
     {
       "id": "worktrees.keep",

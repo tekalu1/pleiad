@@ -78,4 +78,31 @@ export const worktreeOps = [
     legacyCommand: 'setWorktreeSettings',
     handler: (ctx, { always }) => ctx.worktrees.setSettings({ always }),
   }),
+
+  // ---- 読む（ADR 0105）。入力欄の上の 1 行・チップの元（worktreeCheck）と、「いつも分ける」の今の値（worktreeSettings）
+  defineOp({
+    id: 'worktrees.check',
+    summary: 'agent:ops.worktrees.check.summary',
+    risk: 'read',
+    input: z.object({
+      sessionId: sessionId('check'), cwd: cwd('check'),
+      backend: z.string().max(40).optional().describe(D('check', 'backend')),
+      mode: z.string().max(60).optional().describe(D('check', 'mode')),
+    }),
+    output: z.object({ git: z.boolean(), current: z.unknown(), conflicts: z.array(z.unknown()), canSplit: z.boolean(), always: z.boolean() }).passthrough(),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['worktrees', 'check'] } },
+    legacyCommand: 'worktreeCheck',
+    handler: (ctx, args) => ctx.worktrees.check(place(ctx, args)),
+  }),
+
+  defineOp({
+    id: 'worktrees.settings',
+    summary: 'agent:ops.worktrees.settings.summary',
+    risk: 'read',
+    input: z.object({}),
+    output: z.object({ always: z.boolean() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['worktrees', 'get-settings'] } },
+    legacyCommand: 'worktreeSettings',
+    handler: (ctx) => ctx.worktrees.getSettings(),
+  }),
 ];

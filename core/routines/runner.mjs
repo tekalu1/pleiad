@@ -102,7 +102,7 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
         entry.sessionId = made.sessionId;
         if (source === 'webhook') {
           const sb = (await host.store.get(made.sessionId)).bot;
-          await host.store.setSessionData(made.sessionId, 'bot', { ...sb, taint: 'webhook' });
+          await host.store.setSessionData(made.sessionId, 'bot', { ...sb, taint: 'webhook' }, { durable: true });
         }
         const mode = await modeFor(routine, bot);
         if (mode && mode !== made.mode) await host.store.setMode(made.sessionId, mode);

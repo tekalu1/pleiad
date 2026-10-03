@@ -111,7 +111,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       const sb = await readSidecar(sessionId);
       if (!sb) return null;
       const next = fn({ ...sb });
-      if (next) await host.store.setSessionData(sessionId, 'bot', next);
+      if (next) await host.store.setSessionData(sessionId, 'bot', next, { durable: true });
       return next;
     }).catch((e) => { log('could not write the bot field of a conversation:', errText(e)); return null; });
     const tail = run.then(() => {}, () => {});

@@ -16,7 +16,7 @@ export function shouldShowOnboarding(status, auth) {
 /**
  * folderBrowser はブラウザー版の「フォルダーを選ぶ…」の簡易ブラウザー（web/composer-controls.mjs。入力欄の面と同じ部品）
  */
-export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlBox, begin, folderBrowser }) {
+export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlBox, begin, folderBrowser, onClose }) {
   const $ = id => document.getElementById(id);
   const welcome = $('onboardingDialog');
   let status = null, selected = '', checked = false, locked = false;
@@ -50,6 +50,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
   function close() {
     if (locked || !isOpen()) return;
     document.body.classList.remove('settings');
+    onClose?.();
     for (const node of covered()) node.inert = false;
     $('settings').focus();
   }

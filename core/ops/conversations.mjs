@@ -173,6 +173,7 @@ export const conversationOps = [
     output: z.object({ sessionId: z.string(), deleted: z.boolean() }),
     // 無い会話は承認カードを出す前に断る（riskOf の失敗は code で返る）
     riskOf: async (ctx, { sessionId: id }) => { await mustExist(ctx, id); return 'guarded'; },
+    approvalWords: 'sessionDelete',
     confirm: async (ctx, { sessionId: id }) => {
       const found = await ctx.sessions.get(id);
       if (!found) throw missing(ctx, id);
@@ -262,6 +263,7 @@ export const conversationOps = [
       await mustExist(ctx, targetOf(ctx, args.sessionId));   // 無い会話は承認カードを出す前に断る
       return 'guarded';
     },
+    approvalWords: 'turnSettings',
     confirm: async (ctx, args) => {
       const id = targetOf(ctx, args.sessionId);
       const found = await ctx.sessions.get(id);
@@ -341,6 +343,7 @@ export const conversationOps = [
       await botSendGuard(ctx, id);
       return risk;
     },
+    approvalWords: 'send',
     confirm: (ctx, { sessionId: id, text }) => sendCard(ctx, id, 'ops.sessions.send.card', { text: clip(text, CARD_TEXT) }),
     scope: 'session',
     input: z.object({
@@ -376,6 +379,7 @@ export const conversationOps = [
       await mustExist(ctx, id);   // 無い会話は承認カードを出す前に断る
       return action === 'retry' ? sendRisk(ctx, id) : 'write';
     },
+    approvalWords: 'resend',
     confirm: (ctx, { sessionId: given, messageId }) => sendCard(ctx, targetOf(ctx, given), 'ops.sessions.messageAction.card', { messageId }),
     scope: 'session',
     input: z.object({

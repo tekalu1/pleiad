@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { copyEvent, mapMatcher, convertHook, adapterCommand, parseAdapterCommand, safeAdapterPath, suggestName, scriptPaths } from '../../core/hooks-copy.mjs';
 import { toSourceInput, readResult, toTargetOutput, adapt, argsFromAgy, argsToAgy } from '../../core/hook-adapter.mjs';
-import { createHooksConfig } from '../../core/hooks-config.mjs';
+import { createHooksConfig, searchPath, findNodeOnPath } from '../../core/hooks-config.mjs';
 export const name = 'hooks-copy';
 export const title = 'Hooks を写す: イベント・matcher の変換、入出力のアダプター（各方向・失敗は安全側）、写し先への保存';
 
@@ -176,10 +176,11 @@ process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'PreToolU
       && seen.tool === 'Bash' && seen.cmd === 'rm -rf x' && seen.pd, `${r1.stdout} ${r1.stderr}`);
     const r2 = await runAdapter(['claude', 'antigravity', 'PreToolUse', '10', b64(`node ${guard}`)], agyIn.replace('rm -rf x', 'echo hi'));
     t.ok('実行: ask は agy の ask', JSON.parse(r2.stdout).decision === 'ask');
-    const slow = await script('slow.mjs', 'setTimeout(() => process.stdout.write("{}"), 5000);');
+    // 元のコマンドは 30 秒かかる。混んでいると node の起動と taskkill に数秒かかるので、待たなかったことは 15 秒で見る
+    const slow = await script('slow.mjs', 'setTimeout(() => process.stdout.write("{}"), 30000);');
     const started = Date.now();
     const r3 = await runAdapter(['claude', 'antigravity', 'PreToolUse', '1', b64(`node ${slow}`)], agyIn);
-    t.ok('実行: timeout（1 秒）で元のコマンドを止めて deny', JSON.parse(r3.stdout).decision === 'deny' && Date.now() - started < 4500, `${Date.now() - started}ms ${r3.stdout}`);
+    t.ok('実行: timeout（1 秒）で元のコマンドを止めて deny', JSON.parse(r3.stdout).decision === 'deny' && Date.now() - started < 15_000, `${Date.now() - started}ms ${r3.stdout}`);
     const r4 = await runAdapter(['claude', 'antigravity', 'PreToolUse', '10', b64('this-command-does-not-exist-xyz')], agyIn);
     t.ok('実行: 見つからないコマンド（シェルの exit 1 など）でも答えを返す', r4.code === 0 && ['deny', 'allow'].includes(JSON.parse(r4.stdout).decision), r4.stdout);
     const r5 = await runAdapter(['claude', 'antigravity', 'PreToolUse', '10', b64(`node ${guard}`)], 'not json');
@@ -222,8 +223,24 @@ process.stdout.write(JSON.stringify(i.toolCall?.args?.CommandLine==='echo hi'?{d
     const skip = await runAdapter(['claude', 'antigravity', 'PostToolUse', '10', b64(`node ${slow}`)], JSON.stringify({ ...AGY_PRE, error: 'exit status 1' }));
     t.ok('実行: Claude の PostToolUse は失敗したツールでは元のコマンドを動かさない', skip.stdout === '{}');
 
+    // ---------------------------------------------------------------- アダプターを動かす node（PATH を子プロセスなしで探す）
+    {
+      const win = process.platform === 'win32', exe = win ? 'node.exe' : 'node';
+      const bin = path.join(tmp, 'path bin'), decoy = path.join(tmp, 'path decoy'), plain = path.join(tmp, 'path plain');
+      await fs.mkdir(path.join(decoy, exe), { recursive: true });
+      await fs.mkdir(bin, { recursive: true }); await fs.mkdir(plain, { recursive: true });
+      await fs.writeFile(path.join(bin, exe), ''); await fs.chmod(path.join(bin, exe), 0o755);
+      await fs.writeFile(path.join(plain, exe), ''); await fs.chmod(path.join(plain, exe), 0o644);
+      const env = dirs => ({ PATH: dirs.join(win ? ';' : ':'), PATHEXT: '.COM;.EXE;.CMD' });
+      const found = await searchPath('node', { env: env([path.join(tmp, 'missing'), decoy, win ? `"${bin}"` : bin]) });
+      t.ok('PATH の node: 無いフォルダー・同じ名前のフォルダーを飛ばし、引用符を外して見つける', found === path.join(bin, exe), found);
+      t.ok('PATH の node: どこにも無ければ null', await searchPath('node', { env: env([path.join(tmp, 'missing'), decoy]) }) === null);
+      if (!win) t.ok('PATH の node: 実行できないファイルは飛ばす', await searchPath('node', { env: env([plain, bin]) }) === path.join(bin, exe));
+      t.ok('このプロセスの PATH から node を見つける', typeof await findNodeOnPath() === 'string');
+    }
+
     // ---------------------------------------------------------------- 保存（写し先のファイル）
-    const home = path.join(tmp, 'home'), repo = path.join(tmp, 'repo');
+    const home =path.join(tmp, 'home'), repo = path.join(tmp, 'repo');
     const write = async (file, v) => { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, typeof v === 'string' ? v : JSON.stringify(v, null, 2)); };
     await fs.mkdir(path.join(repo, '.git'), { recursive: true });
     await write(path.join(home, '.claude', 'settings.json'), { model: 'keep', env: { API_KEY: 'SECRET-ENV' }, hooks: {

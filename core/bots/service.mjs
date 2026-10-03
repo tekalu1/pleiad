@@ -353,7 +353,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
         await channels.archive({ channelId: bot.dmChannelId, on: true }, { kind: 'system' }).catch((e) => log('could not archive the DM channel:', String(e?.message ?? e)));
       }
       // 会話は消さない。bot の印を外して Chats の一覧に戻す（履歴は残る）
-      for (const id of ids) await host.store.setSessionData(id, 'bot', null).catch(() => {});
+      for (const id of ids) await host.store.setSessionData(id, 'bot', null, { durable: true }).catch(() => {});
     },
 
     async usage({ botId }) {

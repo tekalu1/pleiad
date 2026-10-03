@@ -46,7 +46,12 @@ export default async function (t) {
     const hostEv = await host.waitFor((e) => e.type === "read", { ms: 5000, from: hostFrom }).catch(() => null);
     t.ok("移行した分もほかの接続へ届く", hostEv?.reads?.some(([id]) => id === b), JSON.stringify(hostEv));
     t.ok("自分の接続にも届く", remote.since(migrate).some((e) => e.type === "read"));
-    const saved = JSON.parse(await fs.readFile(path.join(scratch, "data", "sessions.json"), "utf8"));
+    let saved;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      saved = JSON.parse(await fs.readFile(path.join(scratch, "data", "sessions.json"), "utf8"));
+      if (saved[a]?.readAt === doneA && saved[b]?.readAt === doneB) break;
+      await sleep(50);
+    }
     t.ok("sidecar に残る", saved[a]?.readAt === doneA && saved[b]?.readAt === doneB, JSON.stringify({ a: saved[a]?.readAt, b: saved[b]?.readAt }));
     t.ok("無い会話の行は作らない", !("gone-session" in saved));
 

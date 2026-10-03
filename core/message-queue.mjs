@@ -19,7 +19,7 @@ export function createMessageQueue({ store, active, start, changed, delivered })
     return wait ? items.map(m => (m.status === 'queued' ? { ...m, waiting: wait } : m)) : items;
   };
   const save = async (id, items) => {
-    await store.setSessionData(id, 'outbox', items);
+    await store.setSessionData(id, 'outbox', items, { durable: true });
     changed(id, view(id, items));
   };
   const setWait = async (id, wait) => {

@@ -15,6 +15,7 @@ import { RISKS, decide, maxRisk } from './policy.mjs';
 
 const ID_RX = /^[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9]*$/;
 const KEY_RX = /^[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*)*$/;
+const APPROVAL_WORDS_RX = /^[a-z][a-zA-Z]*$/;
 
 export const MCP_SURFACES = ['direct', 'catalog'];
 export const MASK = '••••';
@@ -50,6 +51,10 @@ export function defineOp(def) {
   if (def.riskOf !== undefined && typeof def.riskOf !== 'function') fail(id, 'riskOf must be a function (ctx, args) => risk');
   if ((def.risk === 'guarded' || def.riskOf) && typeof def.confirm !== 'function')
     fail(id, 'an op that can be guarded needs confirm(ctx, args) (the approval card line and the receipt)');
+  // 承認カードの言葉の組（見出し・項目名・許可のボタン・畳んだ 1 行・⚠・通知）。画面の辞書 ui:chat.opApproval.<組> にある。無ければ共通の言葉（ADR 0088 追記）
+  if (def.approvalWords !== undefined && !(typeof def.approvalWords === 'string' && APPROVAL_WORDS_RX.test(def.approvalWords)))
+    fail(id, 'approvalWords must be a word set name of ui:chat.opApproval (lowercase start, letters only)');
+  if (def.approvalWords !== undefined && typeof def.confirm !== 'function') fail(id, 'approvalWords is for an op that can be guarded (it has confirm)');
   if (def.scope !== undefined && !['session', 'global'].includes(def.scope)) fail(id, 'scope must be session | global');
   if (typeof def.handler !== 'function') fail(id, 'handler is required');
   if (def.legacyAliases !== undefined && !(Array.isArray(def.legacyAliases) && def.legacyAliases.every((n) => typeof n === 'string' && n)))
@@ -184,23 +189,32 @@ async function approval(ctx, op, args, failure, run) {
       if (receiptOf(op.id, args, (await describe()).before) === receipt) return run();
       return attempt < RECEIPT_RETRIES ? ask(attempt + 1, id) : failure('STALE', { id: op.id }, { decision: 'ask' });
     };
-    const answer = await ctx.approve({ op: op.id, change: { ...change, op: op.id }, receipt, reason, actor: ctx.actor, ...(requestId ? { requestId } : {}), proceed });
+    const answer = await ctx.approve({ op: op.id, change: { ...change, op: op.id, ...(op.approvalWords ? { words: op.approvalWords } : {}) }, receipt, reason, actor: ctx.actor, ...(requestId ? { requestId } : {}), proceed });
     if (!answer?.pending) return failure(answer?.code ?? 'DENIED', { id: op.id }, { decision: 'ask' });
     id = answer.requestId;
-    return pendingResult(ctx.locale, op.id, change.key, id);
+    return pendingResult(ctx.locale, op.id, change.key, op.approvalWords, id);
   };
   return ask(0, null);
 }
 
 /** 承認待ちの返り値。エージェントへの文（会話の言語）と requestId。結果は後で会話に届く（ADR 0088） */
-function pendingResult(locale, opId, key, requestId) {
-  const message = agentT(locale, 'ops.pending', { target: targetText(locale, opId, key), requestId });
+function pendingResult(locale, opId, key, words, requestId) {
+  const message = opId === 'settings.set'
+    ? agentT(locale, 'ops.pending', { target: targetText(locale, opId, key), requestId })
+    : agentT(locale, 'ops.pendingOp', { ...approvalWords(locale, words), requestId });
   return { ok: true, pending: true, decision: 'ask', result: { status: 'pending', code: 'PENDING_APPROVAL', requestId, message } };
 }
 
+/** 操作の結果と承認待ちに使う言葉。未定義の組は共通の操作の言葉にする。 */
+export function approvalWords(locale, words) {
+  const lng = agentLocaleOf(locale) ?? FALLBACK;
+  const set = typeof words === 'string' && APPROVAL_WORDS_RX.test(words) && i18n.getResource(lng, 'agent', `ops.approvalWords.${words}`) ? words : 'op';
+  return Object.fromEntries(['target', 'done', 'notDone', 'failed'].map((field) => [field, agentT(locale, `ops.approvalWords.${set}.${field}`)]));
+}
+
 /**
- * エージェントへの文に入れる、変更の対象。設定なら画面でのラベルとキー（ラベルの辞書 agent:ops.settingLabel.<key> にある設定。
- * 無ければキーだけ）、ほかは操作の id
+ * エージェントへの設定の文に入れる対象。画面でのラベルとキー（ラベルの辞書 agent:ops.settingLabel.<key> にある設定。
+ * 無ければキーだけ）
  */
 export function targetText(locale, opId, key) {
   if (!key) return agentT(locale, 'ops.opTarget', { id: opId });

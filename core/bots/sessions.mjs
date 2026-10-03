@@ -121,7 +121,7 @@ export function createBotSessions({ host, now = Date.now } = {}) {
         await store.setMode(sessionId, mode); await store.setModel(sessionId, model);
         await store.setSessionData(sessionId, 'effort', effort);
         await store.setSessionData(sessionId, 'agentLocale', lang());
-        await store.setSessionData(sessionId, 'bot', sidecar);
+        await store.setSessionData(sessionId, 'bot', sidecar, { durable: true });
       } catch (e) {
         // 作りかけの会話を残さない（委譲の prepare と同じ片付け）
         const dropUnsent = host.deleteUnsent ?? (await import('../conversations.mjs')).deleteUnsentConversation;

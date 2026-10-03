@@ -123,7 +123,9 @@ web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧�
 - 見出し（`behindOfTasks` の `label`）は、全部 `agent` なら「サブエージェントを待っている」、
   全部 `shell` なら「バックグラウンドのコマンドを待っている」、混在なら「裏の作業を待っている」
 
-**`running` の形（2026-09）**: `{ turns, permissions, subagents, background, count }`。
+**`running` の形（2026-09）**: `{ turns, permissions, subagents, background, tasks, scheduled, count }`。
+`tasks` は委譲のタスクのうち終わっていないものと完了通知が届いていないものの短い行だけ（agent-delegation.md「保存・画面・再起動」）。
+ターンの始まり・終わりなど変わった時点では必ず配り、4 秒ごとの定期便は前に配ったものと中身が同じなら送らない（2026-10-03）。
 `background` は `[{ kind: "background", sessionId, backend, tasks, since }]`
 （ターンの外で裏に残っている作業、§2.7）。`count` に `background` は入れない（下の理由）。
 `subagents` の行は `{ id, kind: "subagent", sessionId, messages, description, saying, lastAt, status, startedAt, endedAt }`（2026-09-22 に後ろの 3 つを足した）。

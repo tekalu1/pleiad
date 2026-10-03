@@ -51,6 +51,7 @@
     "relayTitleWith": "Delegated task \"{{child}}\" / {{title}}",
     "computerApp": "Allow {{agent}} to control \"{{app}}\"?",
     "settingChange": "{{agent}} wants to change the setting \"{{key}}\"",
+    "opApproval": "{{agent}} is asking for your approval to run \"{{op}}\"",
     "computerAppJoin": "\", \"",
     "browserSite": "{{agent}} wants to use {{site}}",
     "browserNotes": " ({{notes}})",
@@ -1103,6 +1104,8 @@
     "contextSettings": "Changes the context settings for {{place}}. The instructions, Skills and external MCP every conversation gets will change.",
     "plyInstructions": "Changes Pleiad's instructions. The instructions added to agents in each conversation will change.",
     "sessionMcp": "Changes the external MCP \"{{name}}\" in this conversation.",
+    "shellRun": "Runs a command in the shell of the conversation \"{{title}}\" ({{cwd}}).",
+    "switchBackend": "Switches the agent of the conversation \"{{title}}\" to {{backend}}. The approval mode becomes the first mode of that agent.",
     "everywhere": "every place"
   }
 }

@@ -19,6 +19,10 @@ import { mcpOps } from './mcp.mjs';
 import { contextOps } from './context.mjs';
 import { remoteOps } from './remote.mjs';
 import { probeOps } from './probe.mjs';
+import { gitOps } from './git.mjs';
+import { shellOps } from './shell.mjs';
+import { sessionWorkOps } from './session-work.mjs';
+import { fileOps } from './files.mjs';
 import { channelOps } from './channels.mjs';
 import { botOps } from './bots.mjs';
 import { memoryOps } from './memory.mjs';
@@ -30,7 +34,7 @@ const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((
 export const registry = createRegistry({
   ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...statusOps, ...settingOps, ...delegationOps, ...browserOps,
     ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...mcpOps, ...contextOps, ...remoteOps,
-    ...channelOps, ...botOps, ...memoryOps, ...routineOps, ...(withProbe ? probeOps : [])],
+    ...gitOps, ...shellOps, ...sessionWorkOps, ...fileOps, ...channelOps, ...botOps, ...memoryOps, ...routineOps, ...(withProbe ? probeOps : [])],
   settings: [...settings],
 });
 

@@ -37,6 +37,8 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
   const writes = new Map();        // sessionId -> 書き込みの鎖（shellPending の読み書きを並べる）
   const closing = new Map();       // runId -> 終わって未送の追記に書くまでの分（この間の「渡さない」も拾う）
   const claims = new Map();        // sessionId -> 渡しかけの分 { ids, skipped }（appendsFor から delivered / release まで。この間は切り替えない）
+  const finished = new Map();      // runId -> 終わった結果 { exitCode, stdout, stderr, … }（wait で待つ AI の呼び出しへ返す。新しい FINISHED_KEEP 件だけ）
+  const FINISHED_KEEP = 50;
 
   const serial = (sessionId, work) => {
     const next = (writes.get(sessionId) ?? Promise.resolve()).then(work, work);
@@ -85,15 +87,27 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
         run.finishing = true;
         const entry = { runId: run.runId, command: run.command, cwd: run.cwd, at: run.at, backend: run.backend, stdout, stderr, ...done, ...(run.skip ? { skip: true } : {}) };
         const list = (await store.get(run.sessionId)).shellPending ?? [];
-        await store.setSessionData(run.sessionId, 'shellPending', [...list, entry]);
+        await store.setSessionData(run.sessionId, 'shellPending', [...list, entry], { durable: true });
       }).finally(() => closing.delete(run.runId)).catch(e => console.error('shell: 結果を控えられなかった:', e?.message ?? e));
     } else if (run.mode === 'native' && !done.error) {
       if (!nativeDone.has(run.sessionId)) nativeDone.set(run.sessionId, new Set());
       nativeDone.get(run.sessionId).add(run.runId);
     }
     closing.delete(run.runId);
+    finished.set(run.runId, { ...done, stdout, stderr });
+    if (finished.size > FINISHED_KEEP) finished.delete(finished.keys().next().value);
     emit({ type: 'shell.done', sessionId: run.sessionId, runId: run.runId, ...done,
       ...(run.mode === 'native' ? { stdout, stderr: null } : {}) });
+  }
+
+  /** 終わるまで最長 ms 待って結果を返す（shell.run の AI の呼び出し。ADR 0105）。待ちきれなければ null（走り続ける）。知らない runId も null */
+  async function wait(runId, ms) {
+    const run = runs.get(runId);
+    if (run && !finished.has(runId)) {
+      let timer;
+      await Promise.race([run.done, new Promise((resolve) => { timer = setTimeout(resolve, ms); })]).finally(() => clearTimeout(timer));
+    }
+    return finished.get(runId) ?? null;
   }
 
   /** 止める。止めた分の結果は「止めました」とそれまでの出力で残る */
@@ -121,7 +135,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
         if (e.runId !== runId) return e;
         const { skip: _, ...rest } = e;
         return want ? { ...rest, skip: true } : rest;
-      }));
+      }), { durable: true });
       return 'ok';
     });
     if (found === 'handing') throw Object.assign(new Error('shell handing'), { code: 'SHELL_HANDING' });
@@ -199,7 +213,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
         const keys = Object.keys(exits);
         for (const key of keys.slice(0, Math.max(0, keys.length - EXITS_KEEP))) delete exits[key];
         if (gone.length) await store.setSessionData(sessionId, 'shellExits', exits);
-        await store.setSessionData(sessionId, 'shellPending', list.filter(e => !ids.includes(e.runId) && !skipped.includes(e.runId)));
+        await store.setSessionData(sessionId, 'shellPending', list.filter(e => !ids.includes(e.runId) && !skipped.includes(e.runId)), { durable: true });
       }).finally(() => claims.delete(sessionId));
     }
     const native = nativeDone.get(sessionId);
@@ -238,7 +252,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
         await store.setSessionData(sessionId, 'shellKept', keepRows(sidecar.shellKept, keep));
         kept.push(...keep.map(e => e.runId));
       }
-      await store.setSessionData(sessionId, 'shellPending', []);
+      await store.setSessionData(sessionId, 'shellPending', [], { durable: true });
     });
     if (kept.length) emit({ type: 'shell.handed', sessionId, runIds: [], keptIds: kept });
   }
@@ -298,5 +312,5 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     return out;
   }
 
-  return { start, stop, setSkip, stopSession, stopAll, runningIn, cwds, settled, appendsFor, release, delivered, switched, discard, rows, placeKept, decorate, running: () => runs.size };
+  return { start, wait, stop, setSkip, stopSession, stopAll, runningIn, cwds, settled, appendsFor, release, delivered, switched, discard, rows, placeKept, decorate, running: () => runs.size };
 }

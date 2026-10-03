@@ -54,7 +54,12 @@ export default async function (t) {
     // ---- 外した印。覚えるのはこれだけ ----
     await c.cmd("setGrouped", { sessionId: grand, ungrouped: true });
     t.ok("外した印が一覧の行に出る", (await rowOf(grand))?.ungrouped === true);
-    const saved = JSON.parse(await fs.readFile(path.join(scratch, "data", "sessions.json"), "utf8"));
+    let saved;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      saved = JSON.parse(await fs.readFile(path.join(scratch, "data", "sessions.json"), "utf8"));
+      if (saved[grand]?.ungrouped === true) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
     t.ok("外した印は sidecar に残る（再起動しても外れたまま）", saved[grand]?.ungrouped === true, JSON.stringify(saved[grand]?.ungrouped));
     await c.cmd("setGrouped", { sessionId: grand, ungrouped: false });
     t.ok("戻すと印が消える", (await rowOf(grand))?.ungrouped === false);

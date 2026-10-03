@@ -184,7 +184,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     await host.store.setMode(sessionId, mode);
     await host.store.setModel(sessionId, model);
     await host.store.setSessionData(sessionId, 'effort', effort);
-    await host.store.setSessionData(sessionId, 'bot', { botId: LEARNER_ID, kind: 'learner', channelId: null, threadId: null });
+    await host.store.setSessionData(sessionId, 'bot', { botId: LEARNER_ID, kind: 'learner', channelId: null, threadId: null }, { durable: true });
     const outcome = await host.runTurn({ sessionId, prompt }, () => {}, { internal: true });
     if (outcome !== 'ok' && outcome !== 'done') throw new Error(`learner turn: ${outcome}`);
     const messages = await backend.getMessages(sessionId, { fullResults: true });
