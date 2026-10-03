@@ -42,6 +42,7 @@ const botRow = z.object({
   ...botShape,
   usage: z.object({ weekTokens: z.number(), cacheRatio: z.number().nullable() }),
   state: z.enum(['idle', 'working', 'waiting']),
+  sendTargetDetails: z.array(z.object({ sessionId: z.string(), title: z.string(), source: z.enum(['shown', 'created', 'manual']) })).optional(),
 });
 
 /** agent（bot 自身を含む AI）が人格を変えようとしているか。人格は毎ターン指示の最後に入るので、書き換えは権限を広げるのと同じ重さで承認にする */

@@ -7,6 +7,7 @@
 //   hooks    … 他のモジュールへの逆向きの口。host が bots-host.mjs で配線する（呼ぶだけ。無ければ何もしない）
 //     posted(post, channel, extra) … 投稿を保存した後（待たない）。誰を起こすかは S4（dispatch.onPosted）が決める。extra は post の hold・origin
 //                                    （hold があれば「承認の要る宛先を ops が決め済み」＝ checked。hold に入れた bot は起こさない）
+//     edited(post, channel)     … 人の本文の編集後。送れる会話の参照を解決する（bot は起こさない）
 //     stopThread(args, author)    … [止める]（待つ。投げたら stopThread も投げる）。走っているターンを止めるのは S4（dispatch.stopThread）
 //   now      … テストで時計を差し替える
 //   listBots … async () => Bot[]。@ の解析（mentions.mjs）が名前を突き合わせるのに使う。無ければ bot の @ は解かない（'you' だけ）
@@ -352,6 +353,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       if (presents !== undefined) op.presents = clone(presents);
       const saved = await store.append(channelId, op);
       emitEdit(channelId, saved);
+      if (text !== undefined && saved.author.kind === 'human') await hooks.edited?.(clone(saved), clone(await need(channelId)));
       return saved;
     },
     async remove({ channelId, postId }, _author) {

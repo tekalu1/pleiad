@@ -37,6 +37,7 @@ import { newId } from '../channels/types.mjs';
 import { modePosition, scopeRank, autonomyRank } from '../modes.mjs';
 import { createBotStore, BotStoreError, nameProblem, iconProblem, personaProblem, normalizeFolders, folderKey, FOLDERS_MAX, SEND_TARGETS_MAX } from './store.mjs';
 import { createBotSessions, defaultMode, botTurnSetup, botInstructions } from './sessions.mjs';
+import { referencedSessions, shownTo } from './send-targets.mjs';
 import { looserThanDefault } from './approval.mjs';
 
 const WEEK_MS = 7 * 24 * 3600_000;
@@ -166,6 +167,33 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
     async list() { return store.list(); },
     async get({ botId }) { return store.get(botId); },
     async byName(name) { return store.byName(name); },
+
+    /** Trusted host path only; ops callers change the effective list through bots.update. */
+    async addSendTargets({ botId, sessionIds, source }) {
+      requireStore();
+      const current = getBot(botId);
+      const fresh = sessionIds.filter((id) => !Object.hasOwn(current.sendTargetSources ?? {}, id) && !current.sendTargets.includes(id));
+      if (!fresh.length || current.sendTargets.length >= SEND_TARGETS_MAX) return current;
+      const bot = await store.update(botId, (b) => {
+        const sendTargets = [...b.sendTargets], sendTargetSources = { ...b.sendTargetSources };
+        for (const id of fresh) {
+          if (Object.hasOwn(sendTargetSources, id) || sendTargets.includes(id) || sendTargets.length >= SEND_TARGETS_MAX) continue;
+          sendTargets.push(id); sendTargetSources[id] = source;
+        }
+        return { ...b, sendTargets, sendTargetSources, updatedAt: now() };
+      });
+      send({ type: 'botsChanged', bot });
+      return bot;
+    },
+
+    async noteShown(post, channel) {
+      const recipients = await shownTo(post, channel, channels);
+      if (!recipients.length || !host?.store?.getAll) return;
+      const rows = Object.entries(await host.store.getAll()).map(([id, row]) => ({ ...row, id }));
+      const sessionIds = referencedSessions(post.text, rows);
+      if (!sessionIds.length) return;
+      for (const botId of recipients) if (store.get(botId)) await service.addSendTargets({ botId, sessionIds, source: 'shown' });
+    },
     modesOf,
 
     async approvalOf({ botId }) {
@@ -287,7 +315,14 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       const nameChanged = plan.next.name !== plan.bot.name;
       // 変わった欄だけを重ねる（DM の id など、検査のあとに別の操作が書いた欄を巻き戻さない）
       const patch = Object.fromEntries(Object.keys(plan.before).filter((k) => JSON.stringify(plan.next[k]) !== JSON.stringify(plan.bot[k])).map((k) => [k, plan.next[k]]));
-      const bot = await store.update(plan.bot.id, (b) => ({ ...b, ...patch, updatedAt: now() }));
+      const bot = await store.update(plan.bot.id, (b) => {
+        const sendTargetSources = { ...b.sendTargetSources };
+        if (input.sendTargets !== undefined) {
+          for (const id of b.sendTargets) sendTargetSources[id] ??= 'manual';
+          for (const id of input.sendTargets) if (!b.sendTargets.includes(id)) sendTargetSources[id] = 'manual';
+        }
+        return { ...b, ...patch, sendTargetSources, updatedAt: now() };
+      });
       send({ type: 'botsChanged', bot });
       if (nameChanged) await renameDm(bot);
       await syncSessions(bot);
@@ -334,7 +369,9 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
         for (const [id, v] of Object.entries(all)) if (v?.bot?.botId) (byBot.get(v.bot.botId) ?? byBot.set(v.bot.botId, []).get(v.bot.botId)).push(id);
       }
       const states = host?.runtime ? await stateByBot() : new Map();
-      return Promise.all(bots.map(async (bot) => ({ ...bot, usage: await usageFor(bot, byBot), state: states.get(bot.id) ?? 'idle' })));
+      return Promise.all(bots.map(async (bot) => ({ ...bot, usage: await usageFor(bot, byBot), state: states.get(bot.id) ?? 'idle',
+        sendTargetDetails: await Promise.all(bot.sendTargets.map(async (sessionId) => ({ sessionId,
+          title: (await host?.store?.get?.(sessionId))?.title || sessionId, source: bot.sendTargetSources?.[sessionId] ?? 'manual' }))) })));
     },
 
     ensureDm,
