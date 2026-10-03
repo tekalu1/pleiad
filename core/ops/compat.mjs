@@ -27,6 +27,7 @@ export const compatOps = [
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['endpoints', 'delete'], positional: ['id'] } },
     legacyCommand: 'compatEndpointDelete',
     // 承認カードの一文（PC の画面の言語）。受領証の前の値は、その接続先の今の形（消えていれば null）
+    approvalWords: 'endpointDelete',
     confirm: async (ctx, { id }) => {
       const e = await ctx.compat.get(id);
       return { note: ctx.compat.deleteNote(e ?? { id, name: id }), before: e ? { id: e.id, name: e.name, agent: e.agent, baseUrl: e.baseUrl ?? null } : null };

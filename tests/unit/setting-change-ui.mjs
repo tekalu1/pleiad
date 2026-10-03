@@ -3,16 +3,16 @@
 // 置き場と押したときの動き（受領証つきの resolvePermission・畳み方）は実ブラウザーで見る（tests/browser/setting-approval.cjs）。
 //
 // DOM シムは tests/run.mjs が入口で入れている。
-import { approvalChange, changeBody, changeHeading, changeNotice } from "../../web/setting-change.mjs";
+import { approvalChange, changeBody, changeHeading, changeNotice, changeWord } from "../../web/setting-change.mjs";
 import { createCompletionNotifications } from "../../web/notifications.mjs";
 import { readFileSync } from "node:fs";
 
 export const name = "setting-change-ui";
-export const title = "設定の変更の承認カード: payload の読み方・中身（前後は等幅・理由・⚠）・通知の見出し・辞書";
+export const title = "設定の変更の承認カード: payload の読み方・中身（前後は等幅・理由・⚠）・操作ごとの言葉・通知の見出し・辞書";
 
 const text = (node) => String(node?.textContent ?? "").replace(/\s+/g, " ").trim();
 const payload = {
-  op: "settings.set", key: "confirmAgentSites", agent: { id: "claude", label: "Claude" }, loosens: true, receipt: "a".repeat(32), reason: "確認が多すぎるため",
+  op: "settings.set", key: "confirmAgentSites", words: "setting", agent: { id: "claude", label: "Claude" }, loosens: true, receipt: "a".repeat(32), reason: "確認が多すぎるため",
   rows: [{ path: "confirmAgentSites", before: "true", after: "false" }],
 };
 
@@ -57,6 +57,25 @@ export default async function (t) {
   t.ok("読めない一覧は生の値で出す", text(unreadable.querySelector(".ap-was")) === "[1");
   t.ok("note(設定以外の操作)は弱い字で出す", text(changeBody({ ...c, rows: [], note: "probe" }).querySelectorAll(".sub")[0]) === "probe");
 
+  // 操作ごとの言葉（defineOp の approvalWords → payload の words。ADR 0088 追記）。組に無い欄・組の無い操作は共通の言葉
+  const send = approvalChange({ op: "sessions.send", key: "sessions.send", words: "send", agent: { label: "Claude" }, rows: [], note: "会話「経費」にメッセージを送ります", loosens: true });
+  const sendBody = changeBody(send);
+  t.ok("送信: 見出し・項目名・許可・畳んだ 1 行・⚠・通知が送信の言葉", text(sendBody.querySelector(".lbl")) === "送信" && text(sendBody.querySelector(".q")) === "Claude が別の会話にメッセージを送ろうとしています"
+    && changeWord(send, "allow") === "送信を許可" && changeWord(send, "allowed") === "送信を許可した" && changeWord(send, "failed") === "送れなかった"
+    && text(sendBody.querySelector(".warn")) === "⚠ 送り先の会話は、この会話より確認の少ない承認モードで動きます。" && changeNotice(send) === "Claude が別の会話への送信の許可を待っています", text(sendBody));
+  const shell = approvalChange({ op: "shell.run", key: "shell.run", words: "shell", agent: { label: "Codex" }, rows: [{ path: "shell.command", before: '""', after: '"npm test"' }], loosens: true });
+  const shellBody = changeBody(shell);
+  t.ok("シェル: 「コマンド」「コマンドを実行しようとしています」「実行を許可」と、権限の ⚠", text(shellBody.querySelector(".lbl")) === "コマンド" && changeHeading(shell) === "Codex がコマンドを実行しようとしています"
+    && changeWord(shell, "allow") === "実行を許可" && changeWord(shell, "allowed") === "実行を許可した" && text(shellBody.querySelector(".warn")) === "⚠ コマンドは確認なしで、あなたと同じ権限で動きます。", text(shellBody));
+  const del = approvalChange({ op: "mcp.delete", key: "mcp.delete", words: "mcpDelete", agent: { label: "Claude" }, rows: [], note: "x", loosens: false });
+  t.ok("削除: 「削除しようとしています」「削除を許可」。⚠ は出さない（できることは増えない）", changeHeading(del) === "Claude が MCP サーバーを削除しようとしています" && changeWord(del, "allow") === "削除を許可"
+    && changeBody(del).querySelector(".warn") === null);
+  const plain = approvalChange({ op: "probe.guarded", key: "probe.guarded", agent: { label: "Claude" }, rows: [], note: "probe", loosens: true });
+  t.ok("言葉の組の無い操作は共通の言葉（設定に限らない）", plain.words === "" && changeHeading(plain) === "Claude が操作をしようとしています" && text(changeBody(plain).querySelector(".lbl")) === "操作"
+    && changeWord(plain, "allow") === "許可" && changeWord(plain, "allowed") === "許可した" && text(changeBody(plain).querySelector(".warn")) === "⚠ 確認なしでできることが増える操作です。");
+  t.ok("知らない組・形の悪い組は共通の言葉。組に無い欄も共通の言葉（送信予定の ⚠）", changeHeading(approvalChange({ ...payload, words: "nope" })) === "Claude が操作をしようとしています"
+    && approvalChange({ ...payload, words: "a.b" }).words === "" && changeWord({ words: "schedule" }, "warn") === "⚠ 確認なしでできることが増える操作です。");
+
   // 通知: 画面が見ていない会話の承認待ちを OS の通知にするとき、見出しに誰が何の許可を待っているか
   const shown = [];
   const n = createCompletionNotifications({ host: { plyDesktop: { notifyCompletion: (x) => { shown.push(x); return Promise.resolve(true); } } }, openSession: () => {}, settings: () => ({ reply: true, done: true, failed: true }), isViewing: () => false });
@@ -66,4 +85,15 @@ export default async function (t) {
   // 辞書: ja と en に同じキーがある
   const dict = (l) => JSON.parse(readFileSync(new URL(`../../web/locales/${l}/ui.json`, import.meta.url), "utf8")).chat.settingApproval;
   t.ok("辞書: chat.settingApproval の キーが ja と en にそろい、「常に許可」に当たる語は無い", Object.keys(dict("ja")).sort().join() === Object.keys(dict("en")).filter((k) => !k.endsWith("_one")).sort().join() && !("always" in dict("ja")));
+  const words = (l) => JSON.parse(readFileSync(new URL(`../../web/locales/${l}/ui.json`, import.meta.url), "utf8")).chat.opApproval;
+  const FIELDS = ["label", "question", "allow", "allowed", "failed", "warn", "notice"];
+  t.ok("辞書: 共通の言葉（op）は全部の欄を持ち、組は欄の名前だけ（ja と en で同じ欄）", FIELDS.every((f) => typeof words("ja").op[f] === "string" && typeof words("en").op[f] === "string")
+    && Object.entries(words("ja")).every(([k, v]) => Object.keys(v).every((f) => FIELDS.includes(f)) && Object.keys(v).sort().join() === Object.keys(words("en")[k] ?? {}).sort().join()));
+
+  // 定義: approvalWords は辞書にある組だけ
+  const { registry } = await import("../../core/ops/index.mjs");
+  const worded = registry.ops.filter((o) => o.approvalWords);
+  t.ok("定義: approvalWords は辞書 chat.opApproval にある組。設定の変更・送信・シェルは固有の言葉", worded.every((o) => o.approvalWords in words("ja"))
+    && registry.get("settings.set").approvalWords === "setting" && registry.get("sessions.send").approvalWords === "send" && registry.get("shell.run").approvalWords === "shell",
+    worded.filter((o) => !(o.approvalWords in words("ja"))).map((o) => o.id).join());
 }

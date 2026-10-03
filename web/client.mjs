@@ -59,7 +59,7 @@ import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
-import { approvalChange, changeBody, changeHeading } from "./setting-change.mjs";
+import { approvalChange, changeBody, changeHeading, changeWord } from "./setting-change.mjs";
 import { backgroundTitle, taskTree, backgroundTotals } from './background-model.mjs';
 import { createBackgroundChip } from './background-chip.mjs';
 import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
@@ -1764,33 +1764,33 @@ function computerApproval(ev, approval, row) {
 // 出ている設定の変更の承認カード（requestId -> 決着を受けて 1 行に畳む関数の集合。中継の複製も同じ requestId）
 const settingCardsOpen = new Map();
 
-/** 設定の変更の承認の決着（settingApproval イベント）を、カードの 1 行の言葉にする */
-function settingOutcomeText(outcome) {
-  if (outcome === "allowed") return t("chat.settingApproval.allowed");
+/** 承認カードの決着（settingApproval イベント）を、カードの 1 行の言葉にする。許可した・できなかったは操作の言葉（「送信を許可した」など） */
+function settingOutcomeText(change, outcome) {
+  if (outcome === "allowed") return changeWord(change, "allowed");
   if (outcome === "denied") return t("chat.approval.denied");
-  if (outcome === "failed") return t("chat.sys.settingState.failed");
+  if (outcome === "failed") return changeWord(change, "failed");
   return t("chat.settingApproval.withdrawn");
 }
 
 /** サーバーから届いた決着。開いているカードは 1 行に畳み、押して畳んだカードは結果の言葉に合わせる（別の端末で答えた・取り下げた） */
 function settleSettingCards(ev) {
-  for (const settle of settingCardsOpen.get(ev.requestId) ?? []) settle(settingOutcomeText(ev.outcome));
+  for (const settle of settingCardsOpen.get(ev.requestId) ?? []) settle(ev.outcome);
   settingCardsOpen.delete(ev.requestId);
 }
 
 /**
- * 設定の変更の承認（permission の settingChange。ADR 0082・0088）。会話の単独のカード: 呼び出しは承認を待たずに返り、カードはターンが終わっても残るので、
- * ツールの行の下には置かない（閉じた塊の中に隠れる）。ボタンは「拒否」と塗りの「変更を許可」だけ（「常に許可」は出さない）。
+ * 設定の変更などの guarded の操作の承認（permission の settingChange。ADR 0082・0088）。会話の単独のカード: 呼び出しは承認を待たずに返り、カードはターンが終わっても残るので、
+ * ツールの行の下には置かない（閉じた塊の中に隠れる）。ボタンは「拒否」と塗りの許可（操作の言葉。設定なら「変更を許可」、送信なら「送信を許可」）だけ（「常に許可」は出さない）。
  * 答えには出したカードの受領証を添える（サーバーが照合する）。押したら「◯◯を送っています…」でボタンを止め、受け取られてから 1 行に畳む
  * （失敗したら押す前の形に戻って押し直せる）。別の端末で答えた・取り下げた決着は settingApproval イベントで畳む。稼働表示は変えない（エージェントは続けている）
  */
 function settingChangeApproval(ev, change) {
   const res = el("span", "res");
   const deny = el("button", "btn btn-quiet", t("chat.approval.deny"));
-  const allow = el("button", "btn btn-primary", t("chat.settingApproval.allow"));
+  const allow = el("button", "btn btn-primary", changeWord(change, "allow"));
   for (const b of [deny, allow]) b.type = "button";
   const buttons = [deny, allow];
-  const verb = (ok) => (ok ? t("chat.settingApproval.allow") : t("chat.approval.deny"));
+  const verb = (ok) => (ok ? changeWord(change, "allow") : t("chat.approval.deny"));
   const m = el("div", "m card");
   const card = el("div", "card");
   m.append(card);
@@ -1819,7 +1819,7 @@ function settingChangeApproval(ev, change) {
   };
   if (change.requestId) {
     if (!settingCardsOpen.has(change.requestId)) settingCardsOpen.set(change.requestId, new Set());
-    settingCardsOpen.get(change.requestId).add(collapse);
+    settingCardsOpen.get(change.requestId).add((outcome) => collapse(settingOutcomeText(change, outcome)));
   }
   const settle = async (ok) => {
     if (card.dataset.sending) return;
@@ -1841,7 +1841,7 @@ function settingChangeApproval(ev, change) {
       return;
     }
     clearTimeout(arc);
-    collapse(ok ? t("chat.settingApproval.allowed") : t("chat.approval.denied"));
+    collapse(settingOutcomeText(change, ok ? "allowed" : "denied"));
   };
   allow.onclick = () => settle(true);
   deny.onclick = () => settle(false);

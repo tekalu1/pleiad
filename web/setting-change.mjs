@@ -2,10 +2,21 @@
 // 型は computer use の承認カード（web/computer-use.mjs の approvalBody）と同じ: 「承認を待っている」の見出し・太字の一文・弱い字・理由・⚠ と強い字の一言・「拒否」と塗りのボタン。
 // 項目と値は、設定画面と同じ名前（辞書）と値の言い方（オン/オフ・サイトの一覧）で出す。設定のキーは出さない（辞書に無い設定だけ、名前の代わりに等幅で出す）。
 // 「常に許可」は出さない（設定の変更は、その 1 回の内容を見て決める）。置き場とボタンの動きは web/client.mjs の settingChangeApproval。ここは数え方（純粋）と中身の DOM。
+// 設定の変更のほかの guarded の操作（別の会話への送信・コマンドの実行・削除など）も同じカードに出る。見出し・項目名・許可のボタン・畳んだ 1 行・⚠・通知は、
+// 操作の言葉の組（defineOp の approvalWords → payload の words。辞書 chat.opApproval.<組>）で言い分け、組に無い欄は共通の言葉（op）にする（ADR 0088 追記）。
+//
+// i18n-dynamic: chat.opApproval.
 import { el } from "./dom.mjs";
-import { t } from "./i18n.mjs";
+import { has, t } from "./i18n.mjs";
 
 const hasText = (v) => typeof v === "string" && v.trim();
+const WORDS_RX = /^[a-z][a-zA-Z]*$/;
+
+/** 承認カードの言葉（field: label・question・allow・allowed・failed・warn・notice）。操作の言葉の組に無ければ共通の言葉 */
+export function changeWord(change, field) {
+  const set = change?.words && has(`chat.opApproval.${change.words}.${field}`) ? change.words : "op";
+  return t(`chat.opApproval.${set}.${field}`, { agent: change?.agent ?? "", name: change?.name ?? "" });
+}
 
 // 設定画面の節の名前（設定 › {節}）。辞書から引くので、画面と同じ言い方になる
 const SECTIONS = {
@@ -100,6 +111,9 @@ export function approvalChange(settingChange) {
   if (!rows.length && !note) return null;
   const key = hasText(settingChange.key) ? String(settingChange.key) : "";
   return {
+    op: hasText(settingChange.op) ? String(settingChange.op) : "",
+    // 言葉の組（defineOp の approvalWords）。無い・読めなければ共通の言葉
+    words: typeof settingChange.words === "string" && WORDS_RX.test(settingChange.words) ? settingChange.words : "",
     agent: hasText(settingChange.agent?.label) ? String(settingChange.agent.label).trim() : t("chat.settingApproval.agent"),
     key,
     // 通知と見出しに出す、設定の名前（設定画面での名前。分からなければキー）
@@ -114,10 +128,10 @@ export function approvalChange(settingChange) {
 }
 
 /** 見出しの一文。決着後の 1 行にも使う */
-export const changeHeading = (change) => t("chat.settingApproval.question", { agent: change.agent });
+export const changeHeading = (change) => changeWord(change, "question");
 
-/** 通知の本文用の語 */
-export const changeNotice = (change) => t("notify.settingApproval", { agent: change.agent, key: change.name });
+/** 通知の見出し */
+export const changeNotice = (change) => changeWord(change, "notice");
 
 /** 前後の 1 行。前は取り消し線の弱い字、後ろが現在。無かった値は「未設定」 */
 function changeLine(row) {
@@ -161,7 +175,7 @@ function changeRow(row, withWhere) {
 export function changeBody(change, extra = "") {
   const box = el("div", "cu-ap");
   const ln = el("div", "ln");
-  ln.append(el("span", "lbl", t("chat.settingApproval.label")));
+  ln.append(el("span", "lbl", changeWord(change, "label")));
   const q = el("span", "q");
   q.append(el("span", "qt", changeHeading(change)));
   ln.append(q);
@@ -173,6 +187,6 @@ export function changeBody(change, extra = "") {
   for (const row of change.rows) box.append(changeRow(row, !together));
   if (change.note) box.append(el("div", "sub", change.note));
   if (change.reason) box.append(el("div", "sub", t("chat.settingApproval.reason", { reason: change.reason })));
-  if (change.loosens) box.append(el("div", "warn", t("chat.settingApproval.warn")));
+  if (change.loosens) box.append(el("div", "warn", changeWord(change, "warn")));
   return box;
 }

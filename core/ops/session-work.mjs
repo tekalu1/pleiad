@@ -72,12 +72,14 @@ export const sessionWorkOps = [
         throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI', { id: `${ctx.op.id} (mode: ${plan.from.mode} → ${plan.to.mode})` }));
       return 'guarded';
     },
+    approvalWords: 'switchBackend',
+    // ⚠（loosens）は付けない: 承認モードが緩くなる切り替えは riskOf が NEEDS_UI で断るので、カードに来るのは緩くならない切り替えだけ
     confirm: async (ctx, { sessionId: given, backend }) => {
       const id = target(ctx, given);
       const plan = await ctx.sessionWork.switchPlan(id, backend);
       return { key: null, before: { sessionId: id, backend: plan?.from.backend ?? null, mode: plan?.from.mode ?? null },
         rows: [{ path: 'backend', before: JSON.stringify(plan?.from.backend ?? null), after: JSON.stringify(backend) }, { path: 'mode', before: JSON.stringify(plan?.from.mode ?? null), after: JSON.stringify(plan?.to?.mode ?? null) }],
-        note: t('opsApproval.switchBackend', { title: plan?.title || id, backend: plan?.to?.label ?? backend }), loosens: true };
+        note: t('opsApproval.switchBackend', { title: plan?.title || id, backend: plan?.to?.label ?? backend }), loosens: false };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'switch-backend'], positional: ['backend'] } },
     legacyCommand: 'switchBackend',
