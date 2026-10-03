@@ -24,7 +24,7 @@ const SNAPSHOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '
 
 // T4: ply_control が毎ターン文脈に載せる文（指示 + tools/list。直に出すツール・list_ops・call_op の定義）の上限。ja・en それぞれ。上限を変えるのは ADR の範囲（docs/design.md「操作の一覧」）
 const CONTROL_TOKEN_LIMIT = 1800;
-const ERROR_CODES = ['NOT_FOUND', 'HOST_SCREEN_ONLY', 'INVALID', 'READ_ONLY_MODE', 'NEEDS_UI', 'NEEDS_APPROVAL', 'INVALID_RISK', 'INVALID_PRINCIPAL', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'CHANNEL_NOT_FOUND', 'POST_NOT_FOUND', 'NOT_YOUR_POST', 'CHANNEL_NAME_TAKEN', 'CHANNEL_ARCHIVED', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND', 'SETTING_READ_ONLY', 'DENIED', 'STALE', 'sessionRequired', 'badCursor'];
+const ERROR_CODES = ['NOT_FOUND', 'HOST_SCREEN_ONLY', 'INVALID', 'READ_ONLY_MODE', 'NEEDS_UI', 'NEEDS_APPROVAL', 'INVALID_RISK', 'INVALID_PRINCIPAL', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'CHANNEL_NOT_FOUND', 'POST_NOT_FOUND', 'NOT_YOUR_POST', 'CHANNEL_NAME_TAKEN', 'CHANNEL_ARCHIVED', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND', 'SETTING_READ_ONLY', 'DENIED', 'STALE', 'sessionRequired', 'badCursor', 'BOT_NOT_FOUND', 'BOT_NAME_TAKEN'];
 const CONTROL_KEYS = ['instructions', 'listOps', 'listOpsId', 'callOp', 'callOpOp', 'callOpArgs'];
 
 const hash = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 12);
@@ -148,7 +148,9 @@ export default async function (t) {
       read: async () => ({ posts: [{ id: 'p_000000000aaaaaa', text: 'こんにちは', ...secret }], threads: [{ threadId: 'p_000000000aaaaaa', ...secret }], summaries: {}, nextBefore: null }),
       search: async () => ({ hits: [{ postId: 'p_000000000aaaaaa', snippet: 'こんにちは', ...secret }] }),
     },
-    bots: {},       // S2
+    bots: { overview: async ({ botId } = {}) => [{ id: botId ?? 'b_1', name: 'Owl', icon: '🦉', persona: '', backend: 'fake', model: '', effort: '', mode: 'default',
+      folders: [], sendToOthers: true, sendTargets: [], dmChannelId: 'c_1', dmSessionId: null, createdAt: 0, updatedAt: 0,
+      usage: { weekTokens: 0, cacheRatio: null }, state: 'idle', ...secret }] },   // S2
     memory: {},     // S3
     routines: {},   // R1（P2）
     botOfSession: async () => null,
@@ -157,7 +159,7 @@ export default async function (t) {
   const samples = {
     'settings.get': registry.settings.map((x) => ({ key: x.key })), 'settings.schema': registry.settings.map((x) => ({ key: x.key })),
     'channels.get': [{ channelId: 'c_000000000aaaaaa' }], 'channels.read': [{ channelId: 'c_000000000aaaaaa' }], 'channels.search': [{ query: 'こんにちは' }],
-    'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
+    'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }], 'bots.get': [{ botId: 'b_1' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {
     const needs = Object.keys(op.input.shape).length && Object.values(op.input.shape).some((f) => !f.safeParse(undefined).success);

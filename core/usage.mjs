@@ -179,6 +179,12 @@ export function createUsageStore(dir, { now = Date.now } = {}) {
         return next?.result ?? null;
       });
     },
+    /** 会話ごとの記録（bot ごと・スレッドごとの合計を引く。ADR 0096）。sessionIds に含まれる会話の、since（ms）以降の記録。sessionId を持たない古い記録は載らない */
+    async records({ sessionIds, since = 0 } = {}) {
+      await writes;
+      const wanted = new Set(sessionIds ?? []);
+      return (await read()).records.filter(r => r.sessionId && wanted.has(r.sessionId) && r.at >= since);
+    },
     async summary(backend) {
       await writes;
       const data = await read();

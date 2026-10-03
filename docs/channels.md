@@ -48,7 +48,7 @@ bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集
 | つなぎ目 | 呼ぶ場所 |
 |---|---|
 | `opsDeps()` | `opsDeps` に `channels`・`bots`・`memory`・`routines`・`botOfSession(sessionId)` を足す |
-| `turnExtras(turn)` → `{ botInstructions, notes }` | ターンの組み立て（`runArgs`）。`notes` は既存の中断の文の後ろ。`botInstructions` は新しい欄で、各バックエンドが人格の並びの最後に足す（S2） |
+| `turnExtras(turn)` → `{ botInstructions, notes, folders }` | ターンの組み立て（`runArgs`）。`notes` は既存の中断の文の後ろ。`botInstructions` は新しい欄で、各バックエンドが指示の並びの最後に足す。`folders`（`{ all, additionalDirectories, writableRoots }`）は `runArgs.botFolders` になり、Claude の `additionalDirectories`・Codex の `sandboxPolicy.writableRoots`・agy の `--add-dir` へ渡す（S2） |
 | `onTurnEvent(turn, event)` | `makeEmit`（`text.end`・`usage`・`activity`・`present`・`permission`・`turnResult`・`userMessage.delivered` / `dropped`） |
 | `onTurnEnd(turn, { outcome, interrupted, requeued })` | `endTurn` の最後（ターンを手放した後。待たない）。最終の返答の文は `host.lastReply(sessionId)`、提示は `onTurnEvent` の `present` から集める |
 | `onPermission(card, phase)` | `askPermission`（`'open'` / `'settled'`。card は `{ id, sessionId, kind, toolName, input, title }`） |
@@ -76,10 +76,10 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 | `channels.markRead` | write（AI・CLI にも出す） | `{ channelId, at? }`（省くと今）。進める向きにだけ動く。CLI は `pleiad channels mark-read <channelId>` |
 | `channels.stopThread` | write・`modeGate: false` | `stopped.by` に止めた主体を残す |
 | `bots.list` / `get` | read | `usage: { weekTokens, cacheRatio }`・`state` を付ける |
-| `bots.create` | write（AI は `riskOf` で guarded） | 既定の弱いモード |
-| `bots.update` | write（範囲を広げる向きは `riskOf` で guarded） | 名前・アイコン・人格・backend（次の新しい会話から）・`folders`・`sendToOthers`・`sendTargets`。広げる向き = フォルダーを足す・送る先を足す・`sendToOthers` を ON にする |
+| `bots.create` | write（AI は `riskOf` で guarded） | `{ name, icon?, persona?, backend?, model?, effort?, reason? }`。既定の弱いモード（作業場所に書けて毎回聞くもの。agy は yolo）・フォルダーなし・DM のチャンネルを作る |
+| `bots.update` | write（範囲を広げる向きは `riskOf` で guarded） | 名前・アイコン・人格・backend（次の新しい会話から。モデル・エフォートは既定に戻り、承認モードは同じ id があれば保つ）・モデル・エフォート・`folders`（置き換え）・`sendToOthers`・`sendTargets`（置き換え）。広げる向き = フォルダーを足す・`ro` を `rw` にする・送る先を足す・`sendToOthers` を ON にする・承認モードが強くなる backend へ変える |
 | `bots.setMode` | human-only | 承認モード（`mode`）だけ |
-| `bots.delete` | guarded | |
+| `bots.delete` | guarded | 会話は消さず bot の印だけ外し（Chats の一覧に戻る）、DM のチャンネルは archive |
 | `memory.list` / `search` | read | `search` は `limit≤8`・各 150 トークンまで |
 | `memory.write` | write・`modeGate: false`（CLI は無し） | 出どころの検査（`MEMORY_SOURCE`・`MEMORY_REJECTED`） |
 | `memory.edit` | write | AI も使える。人がしたか AI がしたかは `log.jsonl` の `by` |
@@ -122,6 +122,16 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 | `<routine-payload source hook at>` | `<pleiad-channel>` の本文の中。外から来た文 | （剥がさない） |
 
 本文に包みのタグが紛れても外へ出られない（`escapeBody`）。途中送信（`control.steer`）の道では末尾を付けず、`<pleiad-channel>` だけを渡す。
+
+## bot の定義と、バックエンドへの渡し方（`core/bots/`）
+
+- **定義**（`bots.json`。`createBotStore`）: `Bot`（型は `core/channels/types.mjs`）。名前はチャンネルを通して一意（NFKC・大小を区別しない）で、空白・`@`・句読点・`you` / `あなた` は使えない。人格は 6000 字まで。読めない版・壊れた JSON は読み込まずに止め（`BotStoreError`）、上書きしない。書き込みは全体で 1 本の直列化キュー（同じ名前の同時の作成でも 1 つだけ通る）。
+- **サービス**（`createBotService`。表は `core/bots/service.mjs` の先頭）: `create`・`update`（`planUpdate` が検査と「広げる向きか」を返し、`riskOf`・`confirm`・`update` が同じ結果を使う）・`setMode`・`remove`・`overview`（一覧の `usage` は `usageStore.records` を会話の `sessionId` で引いて今週分・`state` は走っているターン / 承認待ちから）。`ensureDm` は DM のチャンネルが無ければ作る（`channels.createDm({ bot })`。まだ使えなければ空のまま、起動時と次の呼び出しで作り直す）。`ensureDmSession` は DM の会話（バックエンドを変えた bot は新しく）、`createSession` はスレッド・ルーティン・学習の会話を作る（`ThreadState.sessions` への登録は呼び出し側）。
+- **会話の作り方**（`core/bots/sessions.mjs` の `createBotSessions`）: 委譲の `prepare` と同じ手順（`createConversation` → `setMeta({ unsent: true })` → モード・モデル・エフォート・言語 → sidecar `bot`）。題は「🦉 Owl · #チャンネル › 根の投稿の頭」（DM は「🦉 Owl」）。作業場所は、チャンネルの `cwd` が bot のフォルダーの中ならそれ、無ければ先頭のフォルダー（全部自動のモードならチャンネルの `cwd` をそのまま）。bot の承認モード・モデル・エフォートを変えたら、今ある会話にも揃える（backend を変えた会話は今のまま）。
+- **人格**（`botInstructions(bot, locale)`）: 見出し（辞書 `agent:guide.bot.heading`）・人格（`personaLabel`）・使い方（`guide.bot.tools`: `list_ops` / `call_op` と、よく使う op の id）を空行 1 つで区切る。**決定的**（時刻・件数を入れない）なので、同じ bot・同じ言語なら毎ターン同じバイト列で、名前・アイコン・人格を直したときだけ変わる。言語は会話を作ったときの `agentLocale`。渡す場所は、Claude は `systemPrompt.append`、Codex は `developerInstructions`、Antigravity はエージェント定義の本文で、どれも**並びの最後**。
+- **起こし直し**: Codex は `developerInstructions` が変わるとロード済みのスレッドを読み直す（既存の仕組み）。Antigravity は人格のハッシュ＋フォルダー（`botSessionKey`）を起こし直しの判定に足してある（指示はプロセスの起動時にしか渡せない）。
+- **触れてよいフォルダー**（`folderPlan(bot, modeEntry, cwd)` → `{ all, additionalDirectories, writableRoots }`）: 先頭が既定の作業場所（cwd）。Claude は cwd 以外の全部を `additionalDirectories`（読み取り専用の区別は宣言にとどまり強制されない）、Codex は `rw` のうち cwd 以外を `turn/start` の `sandboxPolicy.writableRoots`（`ro` は書き込みに入れないだけ。bot の会話は前のターンの書き込み先を引き継がず置き換える）、Antigravity は cwd 以外を `--add-dir`（ワークスペースに見せるだけ。書き込みの範囲は限れない）。**「すべてのフォルダー」（`all: true`）は、書き込みの範囲を限れないモード（`scope` が `full`: Claude の YOLO・Codex の YOLO・Antigravity の yolo）だけ**。Codex の `full` は sandbox が作業場所に限るので、選択は有効のまま（決定 7.2-2）。
+- **承認モード**: bot の `mode` は `bots.setMode`（human-only）でだけ変わる。Antigravity は `yolo` 以外を断る。
 
 ## 画面（`web/channels/`）
 
