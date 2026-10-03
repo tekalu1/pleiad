@@ -664,7 +664,8 @@ export default async function (t) {
       const mW = c.mark();
       const rootW = await call('channels.post', { channelId: dev.id, text: `@Owl ${viaBot({ channelId: dev.id, text: '@Wolf slow', new: true })}` });
       const card = await c.waitFor((e) => e.type === 'permission' && e.settingChange?.op === 'channels.wake', { from: mW, ms: 20_000 });
-      const w1 = await until(async () => { const r = await read(dev.id, rootW.id); return r.posts.some((p) => p.text === '@Wolf slow' && p.author.botId === owl.id) && botPost(r, owl, 'done').length ? r : null; }, { label: 'W 投稿と返事' });
+      const w1 = await until(async () => { const r = await read(dev.id, rootW.id); return r.posts.some((p) => p.text === '@Wolf slow' && p.author.botId === owl.id) && botPost(r, owl, 'done').length
+        && r.posts.some((p) => p.author.kind === 'system' && p.text.includes('起こしていません')) ? r : null; }, { label: 'W 投稿と返事と知らせ' });
       t.ok('S-2: 強い bot（Wolf）を @ した投稿は残るが、Wolf は起きず、承認カード（起こしますか・モードの行・loosens）が Owl の会話に出る', botPost(w1, wolf).length === 0 && card.sessionId === w1.threads[0].sessions[owl.id]
         && card.settingChange.note.includes('Wolf') && card.settingChange.note.includes('起こしますか') && card.settingChange.loosens === true && card.settingChange.rows.some((r) => r.path === 'mode'), JSON.stringify(card.settingChange));
       t.ok('S-2: Owl の返事の @Wolf も起こさず、知らせの投稿が残る（返事の @ も同じ確認）', w1.posts.some((p) => p.author.kind === 'system' && p.text.includes('Wolf') && p.text.includes('起こしていません')) && botPost(w1, wolf).length === 0, JSON.stringify(w1.posts.map((p) => [p.author.kind, p.text.slice(0, 40)])));
