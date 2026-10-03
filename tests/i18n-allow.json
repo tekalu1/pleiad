@@ -5,6 +5,7 @@
     "channels:side.tabs.chats",
     "channels:side.tabs.channels",
     "channels:side.sections.bots",
+    "channels:side.dm",
     "channels:event.post",
     "channels:feed.system",
     "agent:channel.envelope.from.bot",

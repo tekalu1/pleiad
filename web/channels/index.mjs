@@ -27,6 +27,7 @@
 //   スレッドの空間モデル（.deck・#chFeed・#chThread）・投稿・入力欄・bot のページ・ルーティンの編集は、各パッケージが #channelsBody の中に作る。
 import { createSideTabs } from './side-tabs.mjs';
 import { createFeed } from './feed.mjs';
+import { createSidebar } from './sidebar.mjs';
 
 /** WS の出来事のうち、この画面が受けるもの（core/protocol.mjs の EVENTS）。ほかの出来事も部品の onEvent には全部届く（permission など） */
 export const CHANNEL_EVENTS = new Set([
@@ -45,7 +46,8 @@ export function setupChannels(host) {
 
   // ---- 部品の一覧。1 行 = 1 パッケージ。足すのは自分の行だけ（行の間を空けてあるのは、並列の変更が競合しないため）
 
-  // W1 脇:  parts.push(createSidebar(host, tabs));   // web/channels/sidebar.mjs
+  // W1 脇（タブはこの一覧の後で作るので、関数で渡す）
+  parts.push(createSidebar(host, () => tabs));
 
   // W2 チャンネルの流れ
   parts.push(createFeed(host));
