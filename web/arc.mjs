@@ -7,7 +7,7 @@ const pt = (deg) => {
   const a = (deg - 90) * Math.PI / 180;
   return `${(ARC.cx + ARC.r * Math.cos(a)).toFixed(2)},${(ARC.cy + ARC.r * Math.sin(a)).toFixed(2)}`;
 };
-// 270° の道の先頭を dasharray で切り出す。reduced motion では道を丸ごと見せる。
+// 270° の道の先頭を固定長で切り出す。reduced motion では道を丸ごと見せる。
 const ARC_PATH = `M${pt(0)} A${ARC.r},${ARC.r} 0 1 1 ${pt(270)}`;
 
 // 裏で待っている印。点は最大 3 個、半径 4.6 の軌道を回る。

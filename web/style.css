@@ -509,22 +509,17 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 .remote-login-note{color:var(--ink-weak);font-size:var(--fs-s);flex-basis:100%}
 
 /* ==================== 走っている印（web/arc.mjs） ====================
-   弧: 半径 5、線幅 1.6、端は丸。CSS の回転と dasharray で動かす。 */
+   短い固定の弧と衛星を SVG ごと回す。線や点は毎フレーム描き直さない。 */
 .run{display:inline-grid;place-items:center;width:14px;height:14px;color:var(--ink);flex:none}
 .run svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}
-.run:not(.sat) path{transform-origin:7px 7px;stroke-dasharray:8 100;animation:run-spin 2s linear infinite,run-breathe 2.4s ease-in-out infinite}
+.run:not(.sat) svg{transform-origin:7px 7px;animation:run-spin 2s linear infinite;will-change:transform}
+.run:not(.sat) path{stroke-dasharray:10 100}
 @keyframes run-spin{to{transform:rotate(360deg)}}
-@keyframes run-breathe{0%,100%{stroke-dasharray:2.1 100}50%{stroke-dasharray:19.2 100}}
-/* 裏で待っている印。点は共通の軌道を回り、各点が少しずつ前後する。 */
-.run.sat svg{fill:currentColor;stroke:none}
-.run.sat svg{transform-origin:7px 7px;animation:sat-spin 4s linear infinite}
-.run.sat circle{transform-origin:7px 7px;animation:sat-wobble 4.8s ease-in-out infinite alternate}
-.run.sat circle:nth-child(2){animation-delay:-1.6s}
-.run.sat circle:nth-child(3){animation-delay:-3.2s}
+/* 裏で待っている印。点の間隔は固定で、弧の半分の速さで回す。 */
+.run.sat svg{fill:currentColor;stroke:none;transform-origin:7px 7px;animation:sat-spin 4s linear infinite;will-change:transform}
 @keyframes sat-spin{to{transform:rotate(360deg)}}
-@keyframes sat-wobble{from{transform:rotate(-14deg)}to{transform:rotate(14deg)}}
-.page-hidden .run :is(svg,path,circle){animation-play-state:paused}
-@media (prefers-reduced-motion:reduce){.run :is(svg,path,circle){animation:none!important}.run:not(.sat) path{stroke-dasharray:none}}
+.page-hidden .run svg{animation-play-state:paused}
+@media (prefers-reduced-motion:reduce){.run svg{animation:none!important}.run:not(.sat) path{stroke-dasharray:none}}
 
 /* ==================== 会話 ==================== */
 main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--surface-paper);position:relative}
