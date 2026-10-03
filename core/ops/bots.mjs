@@ -31,7 +31,7 @@ const folder = z.object({
 });
 
 const botShape = {
-  id: z.string(), name: z.string(), icon: z.string(), persona: z.string(),
+  id: z.string(), name: z.string(), icon: z.string(), iconImage: z.string(), persona: z.string(),
   backend: z.string(), model: z.string(), effort: z.string(), mode: z.string(),
   folders: z.array(z.object({ path: z.string(), access: z.enum(['rw', 'ro']) })),
   sendToOthers: z.boolean(), sendTargets: z.array(z.string()),
@@ -46,7 +46,7 @@ const botRow = z.object({
 });
 
 /** agent（bot 自身を含む AI）が人格を変えようとしているか。人格は毎ターン指示の最後に入るので、書き換えは権限を広げるのと同じ重さで承認にする */
-const personaByAgent = (ctx, plan) => ctx.principal?.by === 'agent' && plan.rows.some((r) => r.path === 'persona');
+const personaByAgent = (ctx, plan) => ctx.principal?.by === 'agent' && plan.rows.some((r) => r.path === 'persona' || r.path === 'iconImage');
 
 /** 承認カードの bot の頭（受領証の元の before にも使う） */
 const clip = (s, n = 80) => { const a = [...String(s ?? '')]; return a.length > n ? `${a.slice(0, n - 1).join('')}…` : a.join(''); };
@@ -80,6 +80,7 @@ export const botOps = [
     input: z.object({
       name: z.string().min(1).max(64).describe(D('create', 'name')),
       icon: z.string().max(32).optional().describe(D('create', 'icon')),
+      iconImage: z.string().max(2000).optional().describe(D('create', 'iconImage')),
       persona: z.string().max(12000).optional().describe(D('create', 'persona')),
       backend: z.string().max(40).optional().describe(D('create', 'backend')),
       model: z.string().max(200).optional().describe(D('create', 'model')),
@@ -109,11 +110,12 @@ export const botOps = [
     id: 'bots.update',
     summary: 'agent:ops.bots.update.summary',
     risk: 'write',
-    riskReason: 'Changing the name, icon, persona, model or effort, or narrowing the folders and send targets, only changes a bot definition. Widening what a bot can touch (adding a folder or send target, turning send-to-others on, a backend with a stronger approval mode) and an AI changing a persona (its own included, since text from outside could rewrite it) are raised to guarded by riskOf',
+    riskReason: 'Changing the name, emoji icon, model or effort, or narrowing the folders and send targets, only changes a bot definition. Widening what a bot can touch (adding a folder or send target, turning send-to-others on, a backend with a stronger approval mode) and an AI changing a persona or image icon (its own included) are raised to guarded by riskOf',
     input: z.object({
       botId: z.string().min(1).max(100).describe(D('update', 'botId')),
       name: z.string().min(1).max(64).optional().describe(D('update', 'name')),
       icon: z.string().max(32).optional().describe(D('update', 'icon')),
+      iconImage: z.string().max(2000).nullable().optional().describe(D('update', 'iconImage')),
       persona: z.string().max(12000).optional().describe(D('update', 'persona')),
       backend: z.string().max(40).optional().describe(D('update', 'backend')),
       model: z.string().max(200).optional().describe(D('update', 'model')),

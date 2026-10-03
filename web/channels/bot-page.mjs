@@ -19,6 +19,8 @@ import { openEmojiPicker, closeEmojiPicker } from '../emoji-picker.mjs';
 import { panel, renderModel, renderMode, folderBrowser, isDanger, modelChipLabel, resolvedModel } from '../composer-controls.mjs';
 import { splitChipLabel } from '../composer-layout.mjs';
 import { createMemoryList } from './memory-list.mjs';
+import { botIcon } from './bot-icon.mjs';
+import { sendAttachment } from '../attach-upload.mjs';
 import * as M from './bot-model.mjs';
 
 // 線画（composer-controls.mjs のチップと同じ。あちらは内部の定数）
@@ -40,6 +42,20 @@ function glyph(paths, cls = 'i') {
 const caret = () => { const g = glyph(CARET); g.classList.add('caret'); return g; };
 const message = (e) => (e && typeof e === 'object' && 'message' in e ? e.message : String(e));
 const show = (node, on) => { node.hidden = !on; };
+async function resizeIcon(file) {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas is unavailable');
+    const side = Math.min(bitmap.width, bitmap.height);
+    ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, 256, 256);
+    const blob = await new Promise((resolve, reject) => canvas.toBlob((result) => result ? resolve(result) : reject(new Error('WebP encoding failed')), 'image/webp', 0.8));
+    if (blob.type !== 'image/webp') throw new Error('WebP encoding failed');
+    return new File([blob], 'bot-icon.webp', { type: 'image/webp' });
+  } finally { bitmap.close(); }
+}
 
 export function createBotPage(host) {
   const body = document.getElementById('channelsBody');
@@ -74,6 +90,10 @@ export function createBotPage(host) {
   av.type = 'button';
   av.setAttribute('aria-label', t('channels:bot.iconLabel'));
   av.title = t('channels:bot.iconLabel');
+  const imageInput = el('input');
+  imageInput.type = 'file'; imageInput.accept = '.png,.jpg,.jpeg,.webp'; imageInput.hidden = true;
+  const imagePick = el('button', 'btn bp-image-pick', t('channels:bot.imagePick'));
+  imagePick.type = 'button';
   const nameIn = el('input', 'bp-name');
   nameIn.id = 'botName';
   nameIn.type = 'text';
@@ -91,7 +111,7 @@ export function createBotPage(host) {
   const idBox = el('div', 'bp-id');
   idBox.append(nameIn, sub);
   const head = el('div', 'bp-head');
-  head.append(av, idBox, el('span', 'bp-spacer'), dmBtn, createBtn);
+  head.append(av, imagePick, imageInput, idBox, el('span', 'bp-spacer'), dmBtn, createBtn);
 
   const err = el('p', 'bp-err');
   err.setAttribute('role', 'alert');
@@ -250,7 +270,7 @@ export function createBotPage(host) {
   function paintHead() {
     const cur = vm();
     if (!cur) return;
-    av.textContent = cur.icon || '🤖';
+    av.replaceChildren(...botIcon(cur, '').childNodes);
     if (document.activeElement !== nameIn) nameIn.value = cur.name ?? '';
     // 「Claude · Opus 5.5 · 作業中」
     const parts = [];
@@ -507,7 +527,7 @@ export function createBotPage(host) {
     setError('');
     createBtn.disabled = true;
     try {
-      const args = { name, icon: d.icon, backend: d.backend, ...(d.persona.trim() ? { persona: d.persona } : {}), ...(d.model ? { model: d.model } : {}), ...(d.effort ? { effort: d.effort } : {}) };
+      const args = { name, icon: d.icon, backend: d.backend, ...(d.iconImage ? { iconImage: d.iconImage } : {}), ...(d.persona.trim() ? { persona: d.persona } : {}), ...(d.model ? { model: d.model } : {}), ...(d.effort ? { effort: d.effort } : {}) };
       let bot = await host.invoke('bots.create', args);
       if (d.mode && d.mode !== bot.mode) bot = await host.invoke('bots.setMode', { botId: bot.id, mode: d.mode });
       S.bots.set(bot.id, bot);
@@ -586,8 +606,24 @@ export function createBotPage(host) {
     e.stopPropagation();   // 脇の document の click が、開いたばかりのピッカーを閉じないように（web/side.mjs の closePops）
     openEmojiPicker({
       anchor: av, current: vm()?.icon, title: t('channels:bot.iconLabel'),
-      onPick: (emoji) => update({ icon: emoji }),
+      onPick: (emoji) => update({ icon: emoji, iconImage: null }),
     });
+  });
+  imagePick.addEventListener('click', () => imageInput.click());
+  imageInput.addEventListener('change', async () => {
+    const file = imageInput.files?.[0];
+    imageInput.value = '';
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setError(t('channels:bot.imageTooLarge')); return; }
+    if (!/\.(png|jpe?g|webp)$/i.test(file.name)) { setError(t('channels:bot.imageType')); return; }
+    imagePick.disabled = true;
+    try {
+      const iconFile = await resizeIcon(file);
+      if (iconFile.size > 1024 * 1024) { setError(t('channels:bot.imageOutputTooLarge')); return; }
+      const upload = await sendAttachment({ cmd: host.cmd, file: iconFile, sessionId: 'bot-icon-upload' });
+      if (upload?.path) await update({ iconImage: upload.path });
+    } catch (e) { setError(t('channels:bot.saveFailed', { error: message(e) })); }
+    finally { imagePick.disabled = false; }
   });
 
   const commitName = async () => {

@@ -180,3 +180,7 @@
   .ch-settings{padding:16px}
 }
 @media (prefers-reduced-motion:reduce){.post.enter{animation:none}}
+.bot-icon-image{display:block;width:100%;height:100%;max-width:256px;max-height:256px;object-fit:cover;border-radius:inherit}
+.ch-hash .bot-icon-image{width:24px;height:24px;border-radius:50%}
+.ts-bot-icon{display:inline-grid;place-items:center;width:15px;height:15px;vertical-align:-3px;border-radius:50%;overflow:hidden}
+.th-band-icon{display:inline-grid;place-items:center;width:18px;height:18px;vertical-align:middle;border-radius:50%;overflow:hidden}

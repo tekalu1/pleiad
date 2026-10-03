@@ -7,6 +7,7 @@
 // 読むのは channels.list・bots.list・channels.search・routines.list（routine-store.mjs）、更新は出来事 channelsChanged・channelPost・channelRead・channelThread・botsChanged・routinesChanged。
 // 開く入口は document の channels:show（{ kind: 'channel', id, threadId? } / { kind: 'bot', id }。web/channels/index.mjs）。
 import { el, svgEl } from '../dom.mjs';
+import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
@@ -179,7 +180,7 @@ export function createSidebar(host, getTabs) {
       // i18n-dynamic: channels:side.botState.
       const stateText = t(`channels:side.botState.${state}`);
       const r = rowBase('bot', b.id, [b.name, label(b.backend), stateText].join(', '));
-      const av = el('span', 'av s', b.icon || '');
+      const av = botIcon(b, 'av s');
       av.setAttribute('aria-hidden', 'true');
       const name = el('span', 'row-t cs-bot-name', b.name);
       r.append(av, name);

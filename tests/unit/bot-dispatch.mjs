@@ -214,6 +214,15 @@ export default async function (t) {
         const later = await w.d.turnExtras(w.turn);
         t.ok('圧縮の後も申し送りを繰り返さない', !later.notes.some((n) => n.includes('<pleiad-bot-recent>')) && requested === 1, JSON.stringify({ notes: later.notes, requested }));
       }
+      {
+        const w = world('plain');
+        await w.d.turnExtras(w.turn);
+        w.d.onTurnEvent(w.turn, { type: 'tool.result', images: [{ path: '/tmp/generated.png' }] });
+        w.d.onTurnEvent(w.turn, { type: 'present', kind: 'image', by: 'ai', path: '/tmp/presented.png' });
+        await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
+        t.ok('生成画像の tool.result.images は bot のターンの投稿の提示に残る', w.posts.find((p) => p.turn)?.presents?.[0]?.path === '/tmp/generated.png');
+        t.ok('Claude・Antigravity の present も同じ投稿の提示に残る', w.posts.find((p) => p.turn)?.presents?.[1]?.path === '/tmp/presented.png');
+      }
 
       // 「渡った」合図を後から出すバックエンド（Codex の形。steerConfirms）
       {

@@ -12,6 +12,7 @@
 .bp-av{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;flex:none;font-size:30px;line-height:1;background:var(--surface-1);
   cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
 .bp-av:hover{background:var(--surface-2)}
+.bp-image-pick{font-size:var(--fs-s);white-space:nowrap}
 .bp-name{display:block;font:700 20px/1.4 var(--font);color:var(--ink);padding:2px 8px;margin-left:-8px;border-radius:var(--r-s);width:min(100%,12em);outline:none;background:transparent}
 .bp-name:hover,.bp-name:focus{background:var(--surface-1)}
 .bp-name::placeholder{color:var(--ink-weak);font-weight:400}
@@ -99,6 +100,7 @@
 .mem .src.untrusted{color:var(--ink-weak)}
 .mem .src-link{background:transparent;color:inherit;font:inherit;text-align:left;padding:0;cursor:pointer;overflow-wrap:anywhere}
 .mem .src-link:hover{text-decoration:underline}
+.mem .src-bot-icon{display:inline-grid;place-items:center;width:14px;height:14px;margin-right:4px;vertical-align:-2px;border-radius:50%;overflow:hidden}
 .mem .src-more{margin-left:6px;color:var(--ink-weak)}
 .mem .acts2{display:flex;flex:none}
 .mem .forget{opacity:0;flex:none;padding:3px 8px}

@@ -33,6 +33,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
+import { inspectFile } from '../file-preview.mjs';
 import { newId } from '../channels/types.mjs';
 import { modePosition, scopeRank, autonomyRank } from '../modes.mjs';
 import { createBotStore, BotStoreError, nameProblem, iconProblem, personaProblem, normalizeFolders, folderKey, FOLDERS_MAX, SEND_TARGETS_MAX } from './store.mjs';
@@ -42,6 +44,14 @@ import { looserThanDefault } from './approval.mjs';
 
 const WEEK_MS = 7 * 24 * 3600_000;
 const DEFAULT_ICON = '🤖';
+const ICON_INPUT_MAX = 1024 * 1024;
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const iconFormat = (bytes) => {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(PNG_MAGIC)) return 'png';
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'jpg';
+  if (bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') return 'webp';
+  return null;
+};
 
 /** ops が OpError にする。code は INVALID（detail に理由）・BOT_NOT_FOUND・BOT_NAME_TAKEN（保存の側と同じ BotStoreError） */
 const BotError = BotStoreError;
@@ -62,6 +72,33 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
   const send = (event) => { try { emit(event); } catch { /* 配信の失敗で保存を巻き戻さない */ } };
   const getBot = (botId) => { const b = store.get(botId); if (!b) throw new BotError('BOT_NOT_FOUND', `no such bot: ${botId}`, { id: String(botId) }); return b; };
   const requireStore = () => { if (store.problem) throw store.problem; };
+  const iconDir = path.join(dataDir, 'uploads', 'bot-icons');
+  const iconUploadDir = path.join(dataDir, 'uploads', 'bot-icon-upload');
+  const ownIcon = (file) => typeof file === 'string' && path.dirname(file) === iconDir;
+  const removeFile = async (file) => {
+    for (const delay of [0, 80, 250, 700]) {
+      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      try { await fs.unlink(file); return; }
+      catch (e) { if (e.code === 'ENOENT') return; if (!['EBUSY', 'EACCES', 'EPERM'].includes(e.code)) throw e; }
+    }
+  };
+  async function makeIcon(source, botId) {
+    const { file, stat } = await inspectFile(source, { dataDir, uploadDir: path.join(dataDir, 'uploads') }).catch(() => { throw invalid('iconImage: file cannot be read'); });
+    if (!stat.isFile() || !stat.size || stat.size > ICON_INPUT_MAX) throw invalid(`iconImage: image must be at most ${ICON_INPUT_MAX} bytes`);
+    const buffer = await fs.readFile(file).catch(() => { throw invalid('iconImage: file cannot be read'); });
+    if (!buffer.length || buffer.length > ICON_INPUT_MAX) throw invalid(`iconImage: image must be at most ${ICON_INPUT_MAX} bytes`);
+    const format = iconFormat(buffer);
+    if (!format) throw invalid('iconImage: PNG, JPEG or WebP image required');
+    await fs.mkdir(iconDir, { recursive: true });
+    const target = path.join(iconDir, `${botId}-${crypto.randomUUID()}.${format}`);
+    await fs.writeFile(target, buffer, { flag: 'wx' });
+    if (path.dirname(file) === iconUploadDir) await removeFile(file);
+    return target;
+  }
+  const removeIcon = async (file) => {
+    if (!ownIcon(file)) return;
+    await removeFile(file);
+  };
 
   /** bot の会話（sidecar の bot.botId が一致）の id の一覧 */
   async function sessionIdsOf(botId) {
@@ -226,11 +263,15 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       if (!backendId) throw invalid('backend: required');
       await checkModelEffort(backendId, input?.model ?? '', input?.effort ?? '', os.homedir());
       const t = now();
-      const bot = await store.put({
-        id: newId('bot', t), name, icon, persona, backend: backendId, model: input?.model ?? '', effort: input?.effort ?? '',
+      const id = newId('bot', t);
+      const iconImage = input?.iconImage ? await makeIcon(input.iconImage, id) : '';
+      let bot;
+      try { bot = await store.put({
+        id, name, icon, iconImage, persona, backend: backendId, model: input?.model ?? '', effort: input?.effort ?? '',
         mode: backend ? defaultMode(backend.modes()) : '', folders: [], sendToOthers: true, sendTargets: [],
         dmChannelId: '', dmSessionId: null, createdAt: t, updatedAt: t,
       });
+      } catch (e) { await removeIcon(iconImage); throw e; }
       send({ type: 'botsChanged', bot });
       return await ensureDm({ botId: bot.id }).catch(() => bot);
     },
@@ -255,6 +296,11 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
         const problem = iconProblem(input.icon);
         if (problem) throw invalid(problem);
         next.icon = input.icon; row('icon', bot.icon, next.icon);
+      }
+      if (input.iconImage !== undefined && input.iconImage !== bot.iconImage) {
+        if (input.iconImage !== null && (typeof input.iconImage !== 'string' || !path.isAbsolute(input.iconImage))) throw invalid('iconImage: absolute path or null required');
+        next.iconImage = input.iconImage || '';
+        row('iconImage', bot.iconImage ? path.basename(bot.iconImage) : '', next.iconImage ? path.basename(next.iconImage) : '');
       }
       if (input.persona !== undefined && input.persona !== bot.persona) {
         const problem = personaProblem(input.persona);
@@ -304,7 +350,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       return {
         bot, next, rows, reasons, loosens: reasons.length > 0, changed: rows.length > 0,
         // 受領証の元（承認のあとに読み直して、承認した変更と同じか確かめる）
-        before: { name: bot.name, icon: bot.icon, persona: bot.persona, backend: bot.backend, model: bot.model, effort: bot.effort, mode: bot.mode,
+        before: { name: bot.name, icon: bot.icon, iconImage: bot.iconImage, persona: bot.persona, backend: bot.backend, model: bot.model, effort: bot.effort, mode: bot.mode,
           folders: bot.folders, sendToOthers: bot.sendToOthers, sendTargets: bot.sendTargets },
       };
     },
@@ -315,14 +361,18 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       const nameChanged = plan.next.name !== plan.bot.name;
       // 変わった欄だけを重ねる（DM の id など、検査のあとに別の操作が書いた欄を巻き戻さない）
       const patch = Object.fromEntries(Object.keys(plan.before).filter((k) => JSON.stringify(plan.next[k]) !== JSON.stringify(plan.bot[k])).map((k) => [k, plan.next[k]]));
-      const bot = await store.update(plan.bot.id, (b) => {
+      const oldIcon = plan.bot.iconImage;
+      if (Object.hasOwn(patch, 'iconImage') && patch.iconImage) patch.iconImage = await makeIcon(patch.iconImage, plan.bot.id);
+      let bot;
+      try { bot = await store.update(plan.bot.id, (b) => {
         const sendTargetSources = { ...b.sendTargetSources };
         if (input.sendTargets !== undefined) {
           for (const id of b.sendTargets) sendTargetSources[id] ??= 'manual';
           for (const id of input.sendTargets) if (!b.sendTargets.includes(id)) sendTargetSources[id] = 'manual';
         }
         return { ...b, ...patch, sendTargetSources, updatedAt: now() };
-      });
+      }); } catch (e) { if (patch.iconImage && patch.iconImage !== oldIcon) await removeIcon(patch.iconImage); throw e; }
+      if (bot.iconImage !== oldIcon) await removeIcon(oldIcon);
       send({ type: 'botsChanged', bot });
       if (nameChanged) await renameDm(bot);
       await syncSessions(bot);
@@ -348,6 +398,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       const bot = getBot(botId);
       const ids = await sessionIdsOf(botId);
       await store.remove(botId);
+      await removeIcon(bot.iconImage);
       send({ type: 'botsChanged', removed: botId });
       if (bot.dmChannelId && typeof channels?.archive === 'function') {
         await channels.archive({ channelId: bot.dmChannelId, on: true }, { kind: 'system' }).catch((e) => log('could not archive the DM channel:', String(e?.message ?? e)));

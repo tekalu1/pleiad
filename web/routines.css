@@ -48,6 +48,8 @@
 .routine-sheet .chip .lead{display:inline-flex;flex:none}
 .routine-sheet .chip .lead[hidden]{display:none}
 .routine-sheet .chip .av.xs{width:18px;height:18px;flex:none;display:inline-grid;place-items:center;font-size:12px;line-height:1}
+.routine-sheet .copt .main.hasb{align-items:center;gap:6px}
+.routine-sheet .copt .av.xs{width:18px;height:18px;flex:none;display:inline-grid;place-items:center;font-size:12px;line-height:1}
 .routine-sheet .chip .v{display:inline-flex;align-items:center;gap:5px;min-width:0}
 .dayp{display:flex;gap:3px;flex-wrap:wrap}
 .dayp button{width:28px;height:28px;border-radius:50%;font-size:var(--fs-s);background:var(--surface-1);color:var(--ink-weak);cursor:pointer}

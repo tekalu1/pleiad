@@ -171,6 +171,10 @@
   },
   "bot": {
     "iconLabel": "アイコンを変える",
+    "imagePick": "画像を選ぶ",
+    "imageTooLarge": "画像は 10 MB までです。",
+    "imageOutputTooLarge": "縮小した画像は 1 MB までです。",
+    "imageType": "PNG・JPEG・WebP の画像を選んでください。",
     "nameLabel": "名前",
     "namePlaceholder": "名前（例: Owl）",
     "openDm": "DM を開く",

@@ -14,6 +14,7 @@ import { el } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { isComposingKey } from '../keyboard.mjs';
 import { sourceView, learnStatusView } from './bot-model.mjs';
+import { botIcon } from './bot-icon.mjs';
 
 export const UNDO_MS = 12000;
 const FADE_MS = 240;
@@ -74,13 +75,15 @@ export function createMemoryList(host, { lookup, openSource }) {
       box.textContent = entry.by?.kind === 'human' ? t('channels:memory.source.written') : t('channels:memory.source.none');
     } else {
       const v = sourceView(first, lookup());
-      const where = v.where.type === 'dm' ? t('channels:memory.source.dm', { name: [v.where.icon, v.where.name].filter(Boolean).join(' ') })
+      const where = v.where.type === 'dm' ? t('channels:memory.source.dm', { name: [v.where.iconImage ? '' : v.where.icon, v.where.name].filter(Boolean).join(' ') })
         : v.where.type === 'chat' ? (v.where.name ? t('channels:memory.source.chat', { title: v.where.name }) : t('channels:memory.source.chatGone'))
         : v.where.name ? `#${v.where.name}` : t('channels:memory.source.channelGone');
       const when = v.date ?? t('channels:memory.source.today');
       const text = t('channels:memory.source.line', { where, when });
+      const image = v.where.iconImage ? botIcon(v.where, 'src-bot-icon') : null;
       if (v.target) {
         const link = el('button', 'src-link', text);
+        if (image) link.prepend(image);
         link.type = 'button';
         link.title = t('channels:memory.source.open');
         link.onclick = () => openSource(v.target);
@@ -88,6 +91,7 @@ export function createMemoryList(host, { lookup, openSource }) {
       } else {
         box.classList.add('untrusted');
         box.textContent = text;
+        if (image) box.prepend(image);
       }
       if (sources.length > 1) box.append(el('span', 'src-more', t('channels:memory.source.more', { n: sources.length - 1 })));
     }

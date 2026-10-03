@@ -86,7 +86,7 @@ export function sourceView(src, { channels = new Map(), bots = new Map(), sessio
     const dmBot = ch?.kind === 'dm' ? bots.get(ch.botId) : null;
     return {
       kind: 'post',
-      where: ch ? { type: ch.kind === 'dm' ? 'dm' : 'channel', name: ch.name, icon: dmBot?.icon ?? '' } : { type: 'channel', name: '' },
+      where: ch ? { type: ch.kind === 'dm' ? 'dm' : 'channel', name: ch.name, icon: dmBot?.icon ?? '', iconImage: dmBot?.iconImage ?? '' } : { type: 'channel', name: '' },
       date,
       target: src.channelId ? { channelId: src.channelId, ...(src.threadId ? { threadId: src.threadId } : {}), ...(src.postId ? { postId: src.postId } : {}) } : null,
     };

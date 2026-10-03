@@ -789,6 +789,13 @@ export function createDispatcher({ channels, bots, memory, episodes, host, emit 
       case 'present':
         collectPresent(rec, event);
         break;
+      case 'tool.result':
+        // Chats は画像生成を tool.result.images に描く。スレッドの投稿にも同じ画像を提示する。
+        for (const image of Array.isArray(event.images) ? event.images : []) {
+          if (!image?.path && !image?.dataUri) continue;
+          collectPresent(rec, { type: 'present', by: 'ai', kind: 'image', path: image.path, dataUri: image.dataUri, caption: image.caption });
+        }
+        break;
       case 'turnResult':
         if (event.outcome === 'error') rec.error = event.error ?? rec.error;
         break;

@@ -2,6 +2,7 @@
 // 追加・編集のシートと同じ白い <dialog>（docs/design-system.md「追加・編集のシート」）。メンバーは「一覧に載る bot」で、起こすには投稿の @ が要る。
 import { el } from '../dom.mjs';
 import { t } from '../i18n.mjs';
+import { botIcon } from './bot-icon.mjs';
 
 const field = (label, control, hint) => {
   const wrap = el('label', 'cs-field');
@@ -64,7 +65,7 @@ export function openChannelSettings({ host, channel, bots, onSaved = () => {}, r
       box.type = 'checkbox';
       box.checked = members.has(bot.id);
       box.onchange = () => (box.checked ? members.add(bot.id) : members.delete(bot.id));
-      row.append(box, el('span', 'cs-member-icon', bot.icon), el('span', 'cs-member-name', bot.name));
+      row.append(box, botIcon(bot, 'cs-member-icon'), el('span', 'cs-member-name', bot.name));
       list.append(row);
     }
     if (!bots.length) list.append(el('span', 'cs-hint', t('channels:feed.settings.noBots')));

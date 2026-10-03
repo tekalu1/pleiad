@@ -84,7 +84,8 @@
 @media (prefers-reduced-motion:reduce){.th-worklog-head::before{transition:none}}
 .post-main .th-tools .bundle{margin-bottom:2px}
 .post-presents{display:flex;flex-direction:column;gap:6px;margin:6px 0 2px;min-width:0}
-.post-presents .present{max-width:100%;margin:0}
+.post-presents .present{width:100%;max-width:100%;min-width:0;margin:0}
+.post-presents .present-image .present-body>img{width:100%;height:360px;object-fit:contain}
 .post-body ul.ck{list-style:none;margin:8px 0 2px;padding:10px 12px;background:var(--surface-1);border-radius:var(--r-m);display:flex;flex-direction:column;gap:3px}
 .post:hover .post-body ul.ck{background:var(--surface-paper)}
 .ck li{display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:1.5;min-width:0;margin:0}
