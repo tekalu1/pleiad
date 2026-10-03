@@ -277,6 +277,8 @@ export default async function (t) {
 
       const turn = await c.runTurn({ prompt: 'control-info', sessionId: null, cwd: ROOT, backend: 'fake', mode: 'default' }, { ms: 30_000 });
       const info = JSON.parse((await c.cmd('loadSession', { sessionId: turn.sessionId })).messages.at(-1).text);
+      // 取り違えた会話（裏の会話の返事）で束縛なしの CLI を作ると、NEEDS_UI の別の顔で落ちる。ここで止める
+      t.ok('control-info: この会話のシェルへ渡す url・token が取れた（CLI を会話に束縛できる）', typeof info.envUrl === 'string' && typeof info.token === 'string' && info.token.length === 64, JSON.stringify(Object.keys(info)));
       const bound = env({ PLEIAD_CONTROL_URL: info.envUrl, PLEIAD_CONTROL_TOKEN: info.token });
       const m5 = c.mark();
       const posted = cli(['call', 'channels.post', '--args', JSON.stringify({ channelId: ch.id, threadId: p1.id, text: 'CLI から返信' }), '--json'], bound);
