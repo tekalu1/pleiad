@@ -62,6 +62,8 @@
 | `delegation.instructions`・`delegation.routing` | read | `routing` は判定器のキーを持たない（登録の有無だけ）。語彙は画面だけ。 |
 | `delegation.retry` | write | 新しい子のタスクを作る。AI は自分が委譲した子だけ（他は `TASK_NOT_FOUND`）。依頼元より強い承認モードの子になる確認（`approved`）とアカウントの選択は人だけ（AI は `NEEDS_UI`）。 |
 
+`sessions.resume`（`resume`）と `sessions.listMessages`（`listMessages`）は、使用量の上限解除後の再開（[ADR 0093](0093-resume-after-usage-limit.md)）が先に操作にしていたので、新しい操作は作らずそれに寄せた。`resume` は AI の口にも開き（`scope: session`・write。中身は同じ `resumeSession`）、`listMessages` は AI・CLI に件数（`limit`・`cursor`）と本文 500 字の形を返し、画面には従来の全量を返す。上限の解除で再開を待つ会話の `setTurnSettings`（アカウントかエージェントを替える）は、これまでどおり自動再開と解除の通知を取り消す。
+
 `delegation.taskCancel`（`cancelAgentTask`）と `delegation.usage`（`providerUsage`）は、AI の従来の動き（自分の子を止める・委譲先を選ぶ使用枠）を保ち、画面だけ `uiHandler` で全量を返す。`app.running`・`sessions.list`・`delegation.tasks` も同じ。
 
 ### 移さなかったもの
