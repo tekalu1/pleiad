@@ -553,7 +553,7 @@
     },
     "compatEndpoints": {
       "recheck": { "summary": "Check a saved compatible endpoint again with its saved URL and key, and record the result and the model list (no key is entered or returned).", "id": "The endpoint id." },
-      "delete": { "summary": "Delete a compatible endpoint (its saved key is deleted too). Needs the user's approval.", "id": "The endpoint id.", "reason": "Why it is deleted (shown on the approval card and kept in the log)." }
+      "delete": { "summary": "Delete a compatible endpoint (its saved key is deleted too). Approval-required conversations ask the user first.", "id": "The endpoint id.", "reason": "Why it is deleted (shown on the approval card and kept in the log)." }
     },
     "computer": {
       "stop": { "summary": "Stop a conversation's computer use (mouse and keyboard on this PC). It cannot start or permit it.", "sessionId": "The conversation id. Defaults to this conversation." }
