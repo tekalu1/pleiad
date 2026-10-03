@@ -68,7 +68,7 @@
 
 ### 移さなかったもの
 
-`loadSession` は `ui-internal`。画面が開いている会話に合わせる口（流れの続き・承認カード・下書き・圧縮の区切り・`watch`・`from`/`check` の差分）で、AI の同じ機能は `sessions.read` が持つ。`todo` は 63 件から 33 件になった。残りは別の作業（MCP・フック・コンテキストの移行、人だけの範囲の分け直し）が扱う。
+`loadSession` は `ui-internal`。画面が開いている会話に合わせる口（流れの続き・承認カード・下書き・圧縮の区切り・`watch`・`from`/`check` の差分）で、AI の同じ機能は `sessions.read` が持つ。`todo` は 63 件から 31 件になった（この追記で 28 件、ほかの作業で 4 件）。残りは別の作業（MCP・フック・コンテキストの移行）が扱う。
 
 ### 理由
 
@@ -76,6 +76,6 @@
 
 ### 影響
 
-- `todo` は 63 件から 33 件。`ops-baseline.json`・`ops-surface.snap.json`（`legacyAliases` も載る）・辞書（`agent.json` の `ops.sessions`・`statuses`・`agents`・`delegation`・`control.listOpsPrefix`）を更新した。
+- `todo` は 63 件から 31 件。`ops-baseline.json`・`ops-surface.snap.json`（`legacyAliases` も載る）・辞書（`agent.json` の `ops.sessions`・`statuses`・`agents`・`delegation`・`control.listOpsPrefix`）を更新した。
 - `delegation.taskCancel`・`delegation.usage` は画面にも出る（`ui: true`）。AI の動きは変わらない。
 - `ply_control` の文は ja 1733 → 1757・en 1632 → 1656 トークン（`prefix` の説明の分）。

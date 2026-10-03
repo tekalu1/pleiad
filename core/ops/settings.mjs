@@ -93,7 +93,9 @@ export const settings = [
   // 既定のアカウントを替えると、新しい会話が別の契約・課金で動く。アカウントは human-only（ADR 0082）
   defineSetting({ key: 'claudeAccount', summary: S('claudeAccount'), risk: 'human-only', schema: z.string().nullable(), default: null, read: fromPrefs('claudeAccount'),
     ...plainPref('claudeAccount', async (ctx, v) => { if (!(await ctx.host.accountIds()).includes(v)) throw invalid(ctx, `claudeAccount: ${String(v).slice(0, 40)}`); return v; }, { nullable: true }) }),
-  defineSetting({ key: 'limitResume', summary: S('limitResume'), risk: 'human-only',
+  defineSetting({ key: 'limitResume', summary: S('limitResume'), risk: 'write',
+    riskReason: 'Only chooses how conversations that already stopped at the usage limit continue (auto, ask or off), how many resume at once and the usage guard. '
+      + 'It never switches the Claude account (human-only) and does not touch approval modes or permissions; the default is already auto (ADR 0094)',
     prefKeys: ['limitResume'], schema: z.object({ mode: z.enum(['auto', 'ask', 'off']),
       concurrency: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]),
       guardPercent: z.union([z.literal(30), z.literal(50), z.null()]) }),
