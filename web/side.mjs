@@ -1,4 +1,5 @@
 import { isComposingKey } from "./keyboard.mjs";
+import { openEmojiPicker, closeEmojiPicker } from "./emoji-picker.mjs";
 // 脇のパネル（セッション一覧）。docs/design-system.md §4.1〜4.3。
 //
 // 別画面にすると「今どれが自分の番か」を見るのに会話から離れることになる（設計メモ §2.1）。
@@ -91,19 +92,7 @@ function pendingLabel(text) {
   return label;
 }
 
-// 絵文字の一覧（1363 件）は重いので、起動後の空き時間に先読みし、押した瞬間は面と弧を先に出す
-let emojiMod = null;
-const loadEmoji = () => (emojiMod ??= import("./emoji.mjs"));
-/** 絵文字のカテゴリの名前。辞書に無い id は emoji.mjs の名前のまま */
-// i18n-dynamic: sidebar.emoji.category.
-const CATEGORY_IDS = ["smileys", "nature", "food", "activity", "travel", "objects", "symbols", "flags"];
-const categoryLabel = (c) => (CATEGORY_IDS.includes(c.id) ? t(`sidebar.emoji.category.${c.id}`) : c.label);
-(globalThis.requestIdleCallback ?? ((f) => setTimeout(f, 1500)))(() => { loadEmoji().catch(() => {}); });
-const sections = new Map();   // カテゴリ id -> 一度作った格子。2 回目以降は作り直さない
-
 const STORE_KEY = "agent-host-side";
-const RECENT_KEY = "agent-host-emoji-recent";
-const RECENT_MAX = 16;
 const STALE_DAYS = 7;        // 状態がこれ以上動いていないものは ◌ と日数を出す（設計メモ §6）
 const UNDO_MS = 12000;       // 「元に戻す」の一行が出ている時間。押さなければ静かに消える
 const RECENT_SEARCH_KEY = "agent-host-side-recent";   // 最近の検索（結果を開いた語だけ。端末ごと）
@@ -283,6 +272,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       ic.title = t("sidebar.group.pickIcon");
       ic.onclick = (e) => { e.stopPropagation(); openIconPicker(st, ic); };
       const name = el("span", "grp-name" + (st == null ? " none" : ""), st ?? t("session.status.none"));
+      name.setAttribute("role", "button");
       name.onclick = () => setOpen(isCollapsed);
       head.append(ic, name);
       const pendingStatus = last.pendingStatuses.get(st);
@@ -1119,7 +1109,14 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   // ---- 浮く面 --------------------------------------------------------------
 
   const pops = ["filterPop", "iconPop"];
-  const closePops = (except) => { for (const id of pops) if (id !== except) $(id).hidden = true; };
+  const closePops = (except) => {
+    for (const id of pops) {
+      if (id !== except) {
+        if (id === "iconPop") closeEmojiPicker();
+        else $(id).hidden = true;
+      }
+    }
+  };
   document.addEventListener("click", (e) => { if (!e.target.closest(".pop")) closePops(); });
   document.addEventListener("keydown", (e) => { if (!isComposingKey(e) && e.key === "Escape") closePops(); });
 
@@ -1223,127 +1220,17 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   // ---- アイコン選択（絵文字ピッカー）。既定はフォルダ。人間が選ぶ経路。AI は set_status で同じ値を渡せる ----
 
-  const loadRecent = () => {
-    try { const a = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]"); return Array.isArray(a) ? a.filter((x) => typeof x === "string") : []; }
-    catch { return []; }
-  };
-  const pushRecent = (e) => {
-    const next = [e, ...loadRecent().filter((x) => x !== e)].slice(0, RECENT_MAX);
-    try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch { /* 保存できなくても動く */ }
-  };
-
-  async function openIconPicker(st, anchor) {
+  function openIconPicker(st, anchor) {
     if (st == null) return;                                 // 「状態なし」にアイコンは付けない
-    const p = $("iconPop");
     closePops("iconPop");
-    p.hidden = false;
-    const r = anchor.getBoundingClientRect();
-    const side = $("sidebar").getBoundingClientRect();
-    p.style.left = `${Math.max(4, Math.min(r.left - side.left, side.width - 316))}px`;
-    p.style.top = `${r.bottom - side.top + 4}px`;
-    const cur = iconOf(st) ?? "";
-    const choose = (e) => { p.hidden = true; pushRecent(e); onSetIcon?.(st, e); };
-
-    // 押した瞬間に面を出す。一覧の読み込みを待つ間は弧
-    p.replaceChildren(el("div", "head", t("sidebar.emoji.title", { status: st })));
-    const q = document.createElement("input");
-    q.className = "field";
-    q.placeholder = t("sidebar.emoji.placeholder");
-    q.setAttribute("aria-label", t("sidebar.emoji.search"));
-    p.append(q);
-    const tabs = el("div", "etabs");
-    const body = el("div", "ebody");
-    const wait = el("div", "empty ewait");
-    wait.append(runMark(t("sidebar.emoji.loadingMark")), el("span", null, t("sidebar.emoji.loading")));
-    body.append(wait);
-    p.append(tabs, body);
-    const reset = el("button", "li");
-    reset.type = "button";
-    reset.append(icon(FOLDER), el("span", "lbl", t("sidebar.emoji.reset")), el("span", "hint", t("sidebar.emoji.folder")));
-    reset.onclick = () => { p.hidden = true; onSetIcon?.(st, ""); };
-    p.append(reset);
-    setTimeout(() => q.focus(), 0);
-
-    const opened = (p.dataset.seq = String(Number(p.dataset.seq ?? 0) + 1));
-    let mod;
-    try { mod = await loadEmoji(); } catch { wait.textContent = t("sidebar.emoji.loadFailed"); return; }
-    if (p.hidden || p.dataset.seq !== opened) return;      // 待っている間に閉じた・別のを開いた
-    const { CATEGORIES, EMOJI_RE } = mod;
-
-    /** 格子。触れると薄い丸、押すと確定。押した先は body で受ける（格子は使い回すので、ここでは結ばない） */
-    const grid = (items) => {
-      const g = el("div", "egrid");
-      for (const [e, en, ja] of items) {
-        const b = el("button", null, e);
-        b.type = "button";
-        b.dataset.e = e;
-        b.title = `${ja} ${en}`.trim();
-        g.append(b);
-      }
-      return g;
-    };
-    const section = (id, label, items) => {
-      const s = el("div", "esec");
-      s.dataset.cat = id;
-      s.append(el("div", "head", label), grid(items));
-      return s;
-    };
-    // カテゴリの格子は一度作ったら使い回す（1363 個のボタンを毎回作らない）
-    const cached = (c) => {
-      if (!sections.has(c.id)) sections.set(c.id, section(c.id, categoryLabel(c), c.items));
-      return sections.get(c.id);
-    };
-    body.onclick = (e) => {
-      const b = e.target.closest(".egrid button");
-      if (b) choose(b.dataset.e);
-    };
-    const markCurrent = () => {
-      for (const b of body.querySelectorAll(".egrid button.on")) b.classList.remove("on");
-      if (cur) for (const b of body.querySelectorAll(`.egrid button[data-e="${CSS.escape(cur)}"]`)) b.classList.add("on");
-    };
-
-    for (const c of CATEGORIES) {
-      const tab = el("button", "etab", c.icon);
-      tab.type = "button";
-      tab.title = categoryLabel(c);
-      tab.onclick = () => { q.value = ""; renderAll(); body.querySelector(`.esec[data-cat="${c.id}"]`)?.scrollIntoView({ block: "start" }); };
-      tabs.append(tab);
-    }
-
-    const renderAll = () => {
-      body.replaceChildren();
-      const recent = loadRecent();
-      if (recent.length) {
-        const all = new Map(CATEGORIES.flatMap((c) => c.items).map((it) => [it[0], it]));
-        body.append(section("recent", t("sidebar.emoji.recent"), recent.map((e) => all.get(e) ?? [e, "", ""])));
-      }
-      for (const c of CATEGORIES) body.append(cached(c));
-      markCurrent();
-    };
-    const renderSearch = (text) => {
-      body.replaceChildren();
-      const typed = text.trim();
-      // 貼り付けた絵文字はそのまま候補の先頭に。一覧に無いものでも選べる
-      const pasted = [...new Set([...typed.matchAll(EMOJI_RE)].map((m) => m[0]))];
-      const words = typed.replace(EMOJI_RE, " ").toLowerCase().split(/\s+/).filter(Boolean);
-      const hits = words.length
-        ? CATEGORIES.flatMap((c) => c.items).filter(([e, en, ja]) => {
-            const hay = `${en} ${ja}`.toLowerCase();
-            return words.every((w) => hay.includes(w)) && !pasted.includes(e);
-          })
-        : [];
-      const items = [...pasted.map((e) => [e, "", ""]), ...hits];
-      body.append(items.length ? section("search", t("sidebar.emoji.hits", { count: items.length }), items) : el("div", "empty", t("sidebar.noMatch")));
-      markCurrent();
-    };
-    q.oninput = () => (q.value.trim() ? renderSearch(q.value) : renderAll());
-    q.onkeydown = (e) => {
-      if (isComposingKey(e)) return;
-      if (e.key === "Escape") { e.preventDefault(); p.hidden = true; }
-      // Enter は先頭の候補で確定
-      if (e.key === "Enter") { e.preventDefault(); body.querySelector(".egrid button")?.click(); }
-    };
-    if (q.value.trim()) renderSearch(q.value); else renderAll();   // 待っている間に打ち始めていたらその結果から
+    openEmojiPicker({
+      anchor,
+      within: $("sidebar"),
+      title: t("sidebar.emoji.title", { status: st }),
+      current: iconOf(st) ?? "",
+      onPick: (e) => onSetIcon?.(st, e),
+      onReset: () => onSetIcon?.(st, ""),
+    });
   }
 
   $("clearFilterOutside").onclick = () => { filter.backends = []; filter.dir = null; filter.status = undefined; filter.period = 0; save(); render(); };
