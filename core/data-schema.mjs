@@ -3,6 +3,7 @@ import path from 'node:path';
 import { t } from './i18n.mjs';
 import { acquire, checkDb, createDb, dbPath } from './db.mjs';
 import { acquireDataLock } from './data-lock.mjs';
+import { assertNotGuarded } from './test-guard.mjs';
 import { migrateSchema1To2, finishSchema1To2, legacyFiles, removeLegacy, writeSchemaFile } from './schema-migration.mjs';
 
 // 2: 件数とともに増える記録は SQLite（pleiad.db）の行（ADR 0115）。1 は記録ごとの JSON ファイル。
@@ -47,6 +48,7 @@ function createFresh(directory) {
  * 戻り値は移行したときの { backup, counts }、何もしなかったときは null。options はテストが失敗を差し込むためのもの
  */
 export function ensureDataSchemaSync(directory, options = {}) {
+  assertNotGuarded(directory, 'check or migrate');
   const file = path.join(directory, 'data-schema.json');
   let schema;
   try {

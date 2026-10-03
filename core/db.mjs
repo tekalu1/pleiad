@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
+import { assertNotGuarded } from './test-guard.mjs';
 
 export const DB_FILE = 'pleiad.db';
 // PRAGMA user_version。データ置き場の形式番号（data-schema.json）と同じ値
@@ -110,6 +111,7 @@ export const REQUIRED_TABLES = ['sessions', 'session_fields', 'context_entries',
  * busy_timeout は数百 ms: データ置き場はプロセス単位で排他する（core/data-lock.mjs）ので、待つ相手は調査・テストの短い接続だけ
  */
 export function openRaw(file, { readOnly = false, create = false } = {}) {
+  assertNotGuarded(path.dirname(file), 'open a database in');
   if (!readOnly && !create && !fs.existsSync(file)) throw new Error(`database file is missing: ${file}`);
   const { DatabaseSync } = loadSqlite();
   const db = new DatabaseSync(file, readOnly ? { readOnly: true } : {});
@@ -429,6 +431,7 @@ export function conversationTable(db) {
 const open = new Map();   // 解決したディレクトリ -> { db, refs }
 
 export function acquire(dir, prepare = () => {}) {
+  assertNotGuarded(dir, 'open');
   const key = path.resolve(dir);
   let slot = open.get(key);
   if (!slot) {

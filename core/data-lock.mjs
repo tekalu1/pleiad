@@ -15,6 +15,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { t } from './i18n.mjs';
 import { loadSqlite } from './db.mjs';
+import { assertNotGuarded } from './test-guard.mjs';
 
 export const LOCK_FILE = 'pleiad.lock';       // 持ち主の表示用（PID）。判断には使わない
 export const LOCK_DB_FILE = 'pleiad.lock.db'; // OS のロックを持つ小さな SQLite
@@ -57,6 +58,7 @@ function lockDatabase(file) {
  * 取る。戻り値は離す関数（何度呼んでも 1 回として数える）。pid はテストが表示用の持ち主を差し替えるためのもの
  */
 export function acquireDataLock(dir, { pid = process.pid } = {}) {
+  assertNotGuarded(dir, 'lock');
   const key = path.resolve(dir);
   if (!held.has(key)) {
     fs.mkdirSync(key, { recursive: true });

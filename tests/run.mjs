@@ -8,6 +8,8 @@
 // 画面とサーバーの言語は日本語に固定する（テストは日本語の文言に依存している。CI の OS の言語で変わらないように）。
 // 英語のケースは i18n のテストが明示的に切り替えて見る。起動するサーバーにも環境変数で引き継がれる。
 process.env.AGENT_HOST_LOCALE ||= "ja";
+// データ置き場を一時ディレクトリへ向け、本物（~/.agent-host）を開こうとしたら例外にする。**どの import よりも前**（最初の import）。理由は tests/lib/test-env.mjs
+import { cleanupTestData } from "./lib/test-env.mjs";
 import { installDomStub } from "./lib/dom-stub.mjs";
 import { runCase, summarize, pick } from "./lib/harness.mjs";
 import { ROOT } from "./lib/server.mjs";
@@ -280,6 +282,8 @@ const cases = [
   // 実データの写しを作る道具: remote/ と秘密を写さない・DB は VACUUM INTO・委譲のタスクは既定で空
   await import("./unit/copy-data-dir.mjs"),
   await import("./unit/data-writes.mjs"),
+  // 再発防止: テストが本物の ~/.agent-host を開いて移行で書き換えない（置き場は一時ディレクトリ・本物を開こうとしたら例外）
+  await import("./unit/test-guard.mjs"),
   await import("./unit/store-write-scale.mjs"),
   await import("./unit/server-read.mjs"),
   // 開いている会話の宣言（流れの出来事を絞る）と、会話の一覧の使い回し（ADR 0024）
@@ -502,4 +506,5 @@ for (const mod of selected) {
 
 const code = summarize(suites);
 console.log(`  ${((Date.now() - t0) / 1000).toFixed(1)} 秒`);
+await cleanupTestData();
 process.exit(code);

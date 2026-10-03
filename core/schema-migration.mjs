@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { assertNotGuarded } from './test-guard.mjs';
 import { dbPath, createDb, transaction, sessionTable, taskTable, usageTable, conversationTable, threadTable, memoryStateTable } from './db.mjs';
 
 // 形式 1 の JSON。channels/threads.json と memory/learn-state.json は 0.6.0（形式 1 のまま）が書いていた（スレッドの状態・夜の整理の進み）。
@@ -58,6 +59,7 @@ export const legacyFiles = dir => LEGACY_FILES.filter(name => exists(path.join(d
  * 戻り値は { backup, counts }。移行するものが無ければ null
  */
 export function migrateSchema1To2(dir, { now = new Date(), afterImport = null } = {}) {
+  assertNotGuarded(dir, 'migrate');
   const present = legacyFiles(dir);
   if (!present.length) return null;
 
@@ -155,6 +157,7 @@ const backupDirs = dir => fs.readdirSync(dir, { withFileTypes: true })
  * 形式 2 の次の起動（core/data-schema.mjs）がもう一度試す。形式 2 では、残った元の JSON は読まない（読む経路が無い）
  */
 export function removeLegacy(dir, names, { remove = file => fs.rmSync(file, { force: true }) } = {}) {
+  assertNotGuarded(dir, 'remove files in');
   const left = [];
   for (const name of names) {
     const file = path.join(dir, name);
@@ -176,6 +179,7 @@ export function finishSchema1To2(dir, present, options = {}) {
 
 /** data-schema.json を 1 回で置き換える（一時ファイルへ書いてから rename） */
 export function writeSchemaFile(dir, schema) {
+  assertNotGuarded(dir, 'write the format number in');
   const file = path.join(dir, 'data-schema.json');
   const tmp = `${file}.${crypto.randomUUID()}.tmp`;
   try {

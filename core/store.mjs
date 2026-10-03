@@ -31,6 +31,7 @@ import path from "node:path";
 import os from "node:os";
 import { isDeepStrictEqual } from "node:util";
 import { t } from "./i18n.mjs";
+import { assertNotGuarded } from "./test-guard.mjs";
 import { openData } from "./data-schema.mjs";
 import { sessionTable, transaction } from "./db.mjs";
 import { COMPUTER_APP_LIMIT, computerAppRow, computerUsePrefs } from "../web/computer-prefs.mjs";
@@ -63,6 +64,7 @@ function jsonFile(file) {
       return cache;
     },
     async write() {
+      assertNotGuarded(DIR, 'write settings in');
       await fs.mkdir(DIR, { recursive: true });
       const tmp = `${file}.${process.pid}.tmp`;
       await fs.writeFile(tmp, JSON.stringify(cache, null, 2), "utf8");
