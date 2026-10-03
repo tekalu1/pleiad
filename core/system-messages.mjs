@@ -41,7 +41,7 @@ export function splitInterruptionNotes(messages) {
   return out;
 }
 
-// bot の会話の user の行の先頭に付く包み（docs/design.md「Channels と bot」、ADR 0094・0095）。発言と同じ user の行に入る
+// bot の会話の user の行の先頭に付く包み（docs/design.md「Channels と bot」、ADR 0096・0097）。発言と同じ user の行に入る
 // （Claude は別の text ブロック、Codex は別の入力、agy は本文の前）ので、履歴で切り分ける。組み立ては core/channels/types.mjs
 export const MEMORY_CORE_TAG = "pleiad-memory-core";       // 会話の始まり・圧縮の後の最初のターンに 1 回だけ付く、核の記憶の写し
 export const TURN_CONTEXT_TAG = "pleiad-turn-context";     // 毎ターンの末尾: 時刻・記憶の差分・関係する記憶

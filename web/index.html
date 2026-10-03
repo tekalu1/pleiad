@@ -67,7 +67,7 @@
       <button type="button" class="btn btn-icon" id="settings" data-i18n-title="app.settings" data-i18n-aria-label="app.settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.5 2a8 8 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A8 8 0 0 0 9 19l.5 2h5l.5-2a8 8 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A8 8 0 0 0 15 5l-.5-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
       <button type="button" class="btn btn-icon side-toggle" id="closeSidebar" data-i18n-title="app.closeSidebarTitle" data-i18n-aria-label="app.closeSidebar" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
     </header>
-    <!-- 脇の Chats / Channels の切り替え（web/channels/side-tabs.mjs、ADR 0092）。見ていない側の札に点（.tab-dot.mark = あなた待ち / .unread = 未読） -->
+    <!-- 脇の Chats / Channels の切り替え（web/channels/side-tabs.mjs、ADR 0094）。見ていない側の札に点（.tab-dot.mark = あなた待ち / .unread = 未読） -->
     <nav class="side-tabs" id="sideTabs" role="tablist" data-i18n-aria-label="channels:side.tabs.label">
       <button type="button" class="side-tab" id="tabChats" role="tab" aria-selected="true" aria-controls="groups"><span data-i18n="channels:side.tabs.chats"></span><i class="tab-dot" hidden aria-hidden="true"></i></button>
       <button type="button" class="side-tab" id="tabChannels" role="tab" aria-selected="false" aria-controls="channelsSide" tabindex="-1"><span data-i18n="channels:side.tabs.channels"></span><i class="tab-dot" hidden aria-hidden="true"></i></button>

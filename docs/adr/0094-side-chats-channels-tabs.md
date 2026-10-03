@@ -1,10 +1,10 @@
-# 0092 脇を Chats / Channels の 2 タブにする（design-system「無いもの: 場面切替」の例外）
+# 0094 脇を Chats / Channels の 2 タブにする（design-system「無いもの: 場面切替」の例外）
 
 - 状態: 提案
 
 ## 状況
 
-bot と Channels（0091）を入れると、脇の一覧に別の並べ方の物が増える。Chats は「利用者が作る状態」で木を組み、行は会話。Channels は `# 名前` のチャンネル、アイコン付きの bot、次の時刻の近い順のルーティンで、並べ方も操作（未読・あなた宛て・状態）も違う。
+bot と Channels（0093）を入れると、脇の一覧に別の並べ方の物が増える。Chats は「利用者が作る状態」で木を組み、行は会話。Channels は `# 名前` のチャンネル、アイコン付きの bot、次の時刻の近い順のルーティンで、並べ方も操作（未読・あなた宛て・状態）も違う。
 
 `docs/design-system.md` §2.3 は「無いもの: 場面切替」として、モードやタブで画面を切り替える作りを置いていない（同じ画面で足す）。
 
@@ -27,6 +27,6 @@ bot と Channels（0091）を入れると、脇の一覧に別の並べ方の物
 
 ## 影響
 
-- `docs/design-system.md` §2.3 の「無いもの: 場面切替」に「（例外: 脇の Chats / Channels、ADR 0092）」を足し、脇の節を書く。
+- `docs/design-system.md` §2.3 の「無いもの: 場面切替」に「（例外: 脇の Chats / Channels、ADR 0094）」を足し、脇の節を書く。
 - `web/index.html` に `#sideTabs`・`#channelsSide`・`#channelsView` が入り、`html.side-channels` / `body.channels` で出し分ける。
 - 検索は Channels 側ではタブごとの検索から始め、Chats 側の結果にチャンネルの当たりを混ぜる横断は後の段で足す。

@@ -1,6 +1,6 @@
 # Channels・bot・記憶・ルーティン
 
-bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集まる Channels、定期の仕事のルーティンの、**今の動きと各モジュールの契約**。決めた理由は ADR 0091〜0099（[0091](adr/0091-bots-channels-routines.md) 全体、[0092](adr/0092-side-chats-channels-tabs.md) 脇のタブ、[0093](adr/0093-channel-posts-source-of-truth.md) 投稿の正本、[0094](adr/0094-bot-and-dispatch.md) bot と起こし方、[0095](adr/0095-bot-memory.md) 記憶、[0096](adr/0096-thread-spatial-model.md) スレッドの空間モデル、[0097](adr/0097-routines.md) ルーティン、[0098](adr/0098-webhook-receiver.md) webhook、[0099](adr/0099-send-on-your-behalf.md) 代わりに送る）。
+bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集まる Channels、定期の仕事のルーティンの、**今の動きと各モジュールの契約**。決めた理由は ADR 0093〜0101（[0093](adr/0093-bots-channels-routines.md) 全体、[0094](adr/0094-side-chats-channels-tabs.md) 脇のタブ、[0095](adr/0095-channel-posts-source-of-truth.md) 投稿の正本、[0096](adr/0096-bot-and-dispatch.md) bot と起こし方、[0097](adr/0097-bot-memory.md) 記憶、[0098](adr/0098-thread-spatial-model.md) スレッドの空間モデル、[0099](adr/0099-routines.md) ルーティン、[0100](adr/0100-webhook-receiver.md) webhook、[0101](adr/0101-send-on-your-behalf.md) 代わりに送る）。
 
 **今の状態:** つなぎ目と空の入れ物まで（脇の Chats / Channels の 2 タブ・空の `#channelsView`・各モジュールの工場）。チャンネル・bot・記憶・ルーティンの中身は、段ごとに入る（下の「モジュールと持ち主」）。
 

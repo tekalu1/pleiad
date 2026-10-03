@@ -1,4 +1,4 @@
-// 脇の Chats / Channels の 2 タブ（docs/design-system.md「脇の Chats / Channels」、ADR 0092）。
+// 脇の Chats / Channels の 2 タブ（docs/design-system.md「脇の Chats / Channels」、ADR 0094）。
 // 切り替えは html.side-channels（脇）と body.channels（メインの #channelsView）の付け外し。選んだ側は覚える。
 // 札の点（.tab-dot.mark = あなた待ち / .tab-dot.unread = 未読）は setDot() で付ける（W1 が数える）。
 const KEY = 'agent-host-side-tab';

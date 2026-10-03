@@ -131,7 +131,7 @@ const totals = value => value && typeof value === 'object' ? Object.fromEntries(
 export function usageRecord(record, at) {
   const safe = { id: record.id, backend: record.backend, at, ...Object.fromEntries(USAGE_KEYS.map(key => [key, number(record[key])])) };
   if (typeof record.nativeSessionId === 'string' && /^[\w-]{1,200}$/.test(record.nativeSessionId)) safe.nativeSessionId = record.nativeSessionId;
-  // どの会話のターンか（bot ごと・スレッドごとの合計を引くため。ADR 0094）。この欄が付く前の記録には無い
+  // どの会話のターンか（bot ごと・スレッドごとの合計を引くため。ADR 0096）。この欄が付く前の記録には無い
   if (typeof record.sessionId === 'string' && /^[\w-]{1,200}$/.test(record.sessionId)) safe.sessionId = record.sessionId;
   if ('cumulativeStart' in record || 'cumulativeEnd' in record) {
     safe.cumulativeStart = totals(record.cumulativeStart); safe.cumulativeEnd = totals(record.cumulativeEnd);
