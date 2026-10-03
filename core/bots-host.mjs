@@ -9,7 +9,8 @@
 //   各モジュールには deps をまとめた HostTools（下の host）を渡す。emit(event) は sessionId: null で全接続へ、emitSession(sessionId, event) は会話の出来事
 //
 //   BotHost（server.mjs のつなぎ目。どれも例外を外へ出さない。bot の会話でなければ何もしない）:
-//     opsDeps(): { channels, bots, memory, routines, botOfSession, wake }   … opsDeps() に足す。ops の handler が ctx.channels などで呼ぶ。
+//     opsDeps(): { channels, bots, memory, memoryLearner, routines, botOfSession, wake }   … opsDeps() に足す。ops の handler が ctx.channels などで呼ぶ。
+//                       memoryLearner は夜の整理（core/memory/learn.mjs）。memory.learnStatus が status() を呼ぶ
 //                       wake({ channelId, postId, botId }) は channels.wake の本体（dispatch.wakePost。起こせたかを { woken, reason? } で返す）
 //     turnExtras(turn): Promise<{ botInstructions: string|null, notes: string[], folders: object|null }>   … runArgs に足す（notes は既存の notes の後ろ。
 //                       folders は触れてよいフォルダーの渡し方 { all, additionalDirectories, writableRoots }。runArgs の botFolders になる）
@@ -76,7 +77,7 @@ export function createBotHost(deps) {
   };
 
   return {
-    opsDeps: () => ({ channels, bots, memory, routines, botOfSession, wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }) }),
+    opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, routines, botOfSession, wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }) }),
     // 人格とフォルダーは bots（S2）、末尾の notes は dispatch（S4。記憶の差分など）。bot の会話でなければどちらも空
     turnExtras: guard('turnExtras', async (turn) => {
       const setup = await bots.turnSetup(turn);

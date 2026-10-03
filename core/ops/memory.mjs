@@ -10,6 +10,7 @@ import { OpError, defineOp } from './registry.mjs';
 import { agentT } from '../i18n.mjs';
 import { MemoryError, QUOTE_MIN } from '../memory/guard.mjs';
 import { USER_LAYER, oneLine } from '../memory/store.mjs';
+import { MEMORY_KINDS, MEMORY_STATUSES, WEIGHT_MIN, WEIGHT_MAX } from '../memory/strength.mjs';
 
 const D = (id, key) => `agent:ops.memory.${id}.${key}`;
 
@@ -23,9 +24,26 @@ const sourceInput = z.object({
   quote: z.string().min(QUOTE_MIN).max(600).describe(D('write', 'source.quote')),
 }).strict();
 
+// 種類・重み・状態（ADR 0117。どれも任意）と、今の強さ strength・薄れたか faded（list・search が付ける。保存しない）
 const entryOut = z.object({
   id: z.string(), layer: z.string(), text: z.string(), why: z.string().optional(),
   sources: z.array(z.unknown()), at: z.number(), updatedAt: z.number(), by: z.unknown(), origBy: z.unknown().optional(),
+  kind: z.enum(MEMORY_KINDS).optional(), weight: z.number().int().optional(), status: z.enum(MEMORY_STATUSES).optional(),
+  strength: z.number().optional(), faded: z.boolean().optional(),
+});
+const tagInputs = (id) => ({
+  kind: z.enum(MEMORY_KINDS).optional().describe(D(id, 'kind')),
+  weight: z.number().int().min(WEIGHT_MIN).max(WEIGHT_MAX).optional().describe(D(id, 'weight')),
+  status: z.enum(MEMORY_STATUSES).optional().describe(D(id, 'status')),
+});
+/** 種類・重み・状態のうち、今の行から変わるものがあるか */
+const changesTags = (entry, args) => ['kind', 'weight', 'status'].some((key) => args[key] !== undefined && args[key] !== entry[key]);
+
+const learnStatusOut = z.object({
+  at: z.string(), paused: z.boolean(), running: z.boolean(), lastRunAt: z.number().nullable(), nextAt: z.number().nullable(),
+  lastResult: z.object({ at: z.number(), read: z.number(), changed: z.number(), deferred: z.number().optional(), more: z.boolean().optional(), scoped: z.boolean().optional() }).nullable(),
+  skip: z.object({ reason: z.string(), count: z.number(), at: z.number() }).nullable(),
+  failure: z.object({ message: z.string(), count: z.number(), at: z.number(), retryAt: z.number() }).nullable(),
 });
 
 /** MemoryError → OpError（会話の言語の文）。ほかの例外はそのまま */
@@ -116,13 +134,15 @@ export const memoryOps = [
       text: z.string().min(1).max(2000).describe(D('write', 'text')),
       why: z.string().max(600).optional().describe(D('write', 'why')),
       sources: z.array(sourceInput).max(8).default([]).describe(D('write', 'sources')),
+      ...tagInputs('write'),
     }),
     output: entryOut,
     surfaces: { ui: true, mcp: 'catalog', cli: false },
     handler: async (ctx, args) => {
       const who = await whoIs(ctx);
       const layer = layerOf(ctx, who, args.layer);
-      return guarded(ctx, () => ctx.memory.write({ layer, text: args.text, why: args.why, sources: args.sources }, who.author, callCtx(ctx, who)));
+      return guarded(ctx, () => ctx.memory.write({ layer, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status },
+        who.author, callCtx(ctx, who)));
     },
   }),
 
@@ -136,25 +156,33 @@ export const memoryOps = [
       text: z.string().min(1).max(2000).optional().describe(D('edit', 'text')),
       why: z.string().max(600).optional().describe(D('edit', 'why')),
       sources: z.array(sourceInput).max(8).optional().describe(D('edit', 'sources')),
+      ...tagInputs('edit'),
     }),
     output: entryOut,
-    // 人が書いた行の本文を AI が書き換えるときだけ承認（自分・ほかの AI が書いた行、理由だけの直しは write）
+    // 人が書いた行の本文・種類・重み・状態を AI が変えるときだけ承認（自分・ほかの AI が書いた行、理由だけの直しは write）。
+    // 重みと種類は、その記憶が会話の始まりに渡るか（薄れるか）を決めるので、本文と同じに扱う（ADR 0117）
     riskOf: async (ctx, args) => {
-      if (ctx.principal?.by !== 'agent' || args.text === undefined) return 'write';
+      if (ctx.principal?.by !== 'agent' || (args.text === undefined && args.kind === undefined && args.weight === undefined && args.status === undefined)) return 'write';
       const who = await whoIs(ctx, { write: false });
       const entry = await ctx.memory.get({ id: args.id });
       if (!entry || (who.botId && entry.layer !== USER_LAYER && entry.layer !== who.botId)) return 'write';   // 見えない記憶は handler が MEMORY_NOT_FOUND にする
-      return entry.by?.kind === 'human' && oneLine(args.text) !== entry.text ? 'guarded' : 'write';
+      const rewrites = (args.text !== undefined && oneLine(args.text) !== entry.text) || changesTags(entry, args);
+      return entry.by?.kind === 'human' && rewrites ? 'guarded' : 'write';
     },
     confirm: async (ctx, args) => {
       const entry = await ctx.memory.get({ id: args.id });
-      return { note: agentT(ctx.locale, 'ops.memory.edit.confirm'), before: entry?.text ?? null, loosens: false, rows: [{ path: 'text', before: entry?.text ?? null, after: oneLine(args.text ?? '') }] };
+      const rows = [
+        ...(args.text !== undefined ? [{ path: 'text', before: entry?.text ?? null, after: oneLine(args.text) }] : []),
+        ...['kind', 'weight', 'status'].filter((key) => args[key] !== undefined).map((key) => ({ path: key, before: entry?.[key] ?? null, after: args[key] })),
+      ];
+      return { note: agentT(ctx.locale, 'ops.memory.edit.confirm'), before: entry?.text ?? null, loosens: false, rows };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'edit'], positional: ['id'] } },
     handler: async (ctx, args) => {
       const who = await whoIs(ctx);
       await visibleEntry(ctx, who, args.id);
-      return guarded(ctx, () => ctx.memory.edit({ id: args.id, text: args.text, why: args.why, sources: args.sources }, who.author, callCtx(ctx, who)));
+      return guarded(ctx, () => ctx.memory.edit({ id: args.id, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status },
+        who.author, callCtx(ctx, who)));
     },
   }),
 
@@ -174,6 +202,17 @@ export const memoryOps = [
       await visibleEntry(ctx, who, id);
       return guarded(ctx, () => ctx.memory.forget({ id }, who.author, callCtx(ctx, who)));
     },
+  }),
+
+  // 夜の記憶の整理の様子（最後に走った時刻・結果・次の予定・飛ばした回数と理由・失敗）。bot のページの記憶の見出しに出す（ADR 0117）
+  defineOp({
+    id: 'memory.learnStatus',
+    summary: 'agent:ops.memory.learnStatus.summary',
+    risk: 'read',
+    input: z.object({}),
+    output: learnStatusOut,
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'learn-status'] } },
+    handler: async (ctx) => ctx.memoryLearner.status(),
   }),
 
   // 忘れた直後の「元に戻す」。画面の「元に戻す」の帯と、AI・CLI の両方に出す（全機能は AI も使える）。誰が戻したかは log.jsonl の by に残る

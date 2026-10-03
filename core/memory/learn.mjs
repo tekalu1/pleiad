@@ -1,4 +1,14 @@
 // 夜の整理。人の新しい発言をカーソルから読み、隠れた learner 会話で候補を抽出する。
+//
+// いつ走るか（ADR 0117）: 予定の時刻（既定 02:00）を過ぎて、その日の分がまだなら走る。ほかの会話のターンが走っていても待たない
+// （learner は自分の隠れた会話で走り、ターンの同時の数に上限は無い。以前は Chats を含む全部のターンが 0 になるまで待ち、ずっと走れなかった）。
+// 走っているターンの会話だけは読まずに次の回へ回す（deferred）。待つのは、learner 自身が走っている間・止めている間・失敗の後の間隔だけ。
+// 読む量の上限: 最後まで読んだ会話は、その時の更新時刻（cursor.seen）から変わるまで読み直さない。読むのは 14 日以内（最初の回は 3 日）の発言・投稿だけ。
+// 1 回に 40 束（200 件）まで読み、残りは次の回（lastResult.more）。
+// 走った・飛ばした・失敗したことは DB の memory_state の meta 'status' の 1 行に残し、memory.learnStatus（bot のページの記憶の見出し）で見せる。
+//
+// runNow({ scope? }) … scope は { sessionIds?, channelIds? }。渡すとその会話・チャンネルだけを読む（スレッドが静かになった後の整理のため。
+//   予定の分の実行には数えず、lastRunAt を進めない）。省くと全部（予定の分の実行）。
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -10,6 +20,7 @@ import { modePosition } from '../modes.mjs';
 import { prepareMessages } from '../history.mjs';
 import { agentT } from '../i18n.mjs';
 import { MemoryError } from './guard.mjs';
+import { isMemoryKind, isMemoryStatus, isWeight } from './strength.mjs';
 
 export const LEARNER_ID = 'b_learner';
 export const DEFAULT_LEARN_AT = '02:00';
@@ -17,7 +28,22 @@ export const DEFAULT_LEARN_AT = '02:00';
 const MAX_BATCH = 5;
 const MAX_TIMER = 2_147_483_647;
 const SETTINGS_POLL_MS = 60_000;
-const emptyState = () => ({ version: 1, cursor: { sessions: {}, posts: {} }, lastRunAt: 0 });
+/** 失敗した後に次を試すまでの間隔（15 分から倍に、6 時間まで）。失敗のたびにモデルを毎分呼ばないため */
+const RETRY_FIRST_MS = 15 * 60_000;
+const RETRY_MAX_MS = 6 * 3600_000;
+const ERROR_MAX = 300;
+/** 読む範囲。これより古い発言・投稿は読まない。一度も走っていない置き場の最初の回は 3 日（全部の履歴を読まないため。
+ *  2026-10-04 の実データの写しで、人の発言は全部で約 2,700・14 日で約 2,100（1 日に約 150）あった） */
+const LOOKBACK_MS = 14 * 86_400_000;
+const FIRST_LOOKBACK_MS = 3 * 86_400_000;
+/** 1 回に読む束の上限（5 件ずつで 200 件。1 束が学習の会話 1 回）。残りはカーソルから次の回に読む */
+const MAX_BATCHES = 40;
+/** ms の時刻（数・ISO の文字列）。読めなければ 0 */
+const timeOf = (value) => { const n = typeof value === 'number' ? value : Date.parse(value ?? ''); return Number.isFinite(n) ? n : 0; };
+// status: 最後の結果 lastResult { at, read, changed, deferred, scoped? }・その日の予定を飛ばした印 skip { due, reason, count, at }
+// （count は予定の回の数。同じ回を毎分数えない）・失敗 failure { at, message, count, retryAt }。成功で skip と failure を消す
+const emptyStatus = () => ({ lastResult: null, skip: null, failure: null });
+const emptyState = () => ({ version: 1, cursor: { sessions: {}, posts: {} }, lastRunAt: 0, status: emptyStatus() });
 const cleanTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value ?? '') ? value : DEFAULT_LEARN_AT;
 const ADOPTION = /採用|その案で|その方針で|それで(?:進め|お願い)|その通り|そうしてください|それに(?:しよう|します)|\b(?:I accept|let's use that|go with that|approved|adopt that)\b/i;
 const log = (...args) => console.error('  memory learn:', ...args);
@@ -55,6 +81,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
   const rowsOf = (s) => [
     ...Object.entries(s.cursor ?? {}).flatMap(([group, map]) => Object.entries(map ?? {}).map(([id, value]) => [`cursor.${group}`, id, value])),
     ['meta', 'lastRunAt', s.lastRunAt],
+    ['meta', 'status', s.status],
   ];
   async function save() {
     const rows = open();
@@ -69,7 +96,10 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     const rows = open().loadAll();
     const loaded = emptyState();
     for (const [kind, map] of Object.entries(rows)) {
-      if (kind === 'meta') { if (Number.isFinite(map.lastRunAt)) loaded.lastRunAt = map.lastRunAt; }
+      if (kind === 'meta') {
+        if (Number.isFinite(map.lastRunAt)) loaded.lastRunAt = map.lastRunAt;
+        if (map.status && typeof map.status === 'object') loaded.status = { ...emptyStatus(), ...map.status };
+      }
       else if (kind.startsWith('cursor.')) loaded.cursor[kind.slice('cursor.'.length)] = map;
     }
     state = loaded;
@@ -96,15 +126,30 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     return prepareMessages(row.id, await backend.getMessages(row.id, { fullResults: true }));
   }
 
-  async function collect() {
+  /** 走っているターンの会話か（host.sessionBusy。無ければ走っていない扱い） */
+  const sessionRunning = (id) => Boolean(host.sessionBusy?.(id));
+
+  async function collect(scope = null) {
     const items = [];
+    const deferred = new Set();
     const next = structuredClone(state.cursor);
-    for (const row of await sessionRows()) {
+    next.seen ??= {};
+    const since = now() - (state.lastRunAt ? LOOKBACK_MS : FIRST_LOOKBACK_MS);
+    const sessionScope = scope ? new Set(scope.sessionIds ?? []) : null;
+    const channelScope = scope ? new Set(scope.channelIds ?? []) : null;
+    for (const row of sessionScope?.size === 0 ? [] : await sessionRows()) {
       if (row?.id) knownRows.set(row.id, row);
       if (!row?.id || ['learner', 'routine'].includes(row.bot?.kind) || row.unsent) continue;
+      if (sessionScope && !sessionScope.has(row.id)) continue;
+      // 走っている会話は読まずに次の回へ（カーソルを進めない。予定の回の lastRunAt は始めた時刻なので、ターンが終わった更新で次に拾える）
+      if (sessionRunning(row.id)) { deferred.add(row.id); continue; }
       const index = next.sessions[row.id] ?? 0;
-      const modified = typeof row.lastModified === 'number' ? row.lastModified : Date.parse(row.lastModified ?? '');
-      if (index && Number.isFinite(modified) && modified <= state.lastRunAt) continue;
+      const modified = timeOf(row.lastModified);
+      const seenAt = next.seen[row.id];
+      // 最後まで読んだ後に変わっていない会話は読み直さない（束ごと・夜ごとに全部の会話を読み直さない）
+      if (modified && seenAt === modified) continue;
+      // 読む範囲より古い会話は読まずに印だけ付ける（後で更新されたら、範囲の中の発言だけを読む）
+      if (modified && modified < since) { next.seen[row.id] = modified; continue; }
       let messages;
       try { messages = await messagesOf(row); }
       catch (e) { log('could not read conversation:', row.id, e.message); continue; }
@@ -114,14 +159,16 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
       for (; i < messages.length && items.length < MAX_BATCH; i++) {
         const m = messages[i];
         if (i === firstUser || m?.role !== 'user' || m.kind || m.internalTaskNotice || m.sentBy || m.proxy || m.proxyBy || !m.uuid || !m.text?.trim()) continue;
+        if (timeOf(m.at) && timeOf(m.at) < since) continue;   // 読む範囲より古い発言
         const previous = messages[i - 1];
         const aiContext = ADOPTION.test(m.text) && previous?.role === 'assistant' && !previous.kind && previous.uuid && previous.text?.trim()
-          ? { kind: 'message', sessionId: row.id, messageId: previous.uuid, text: previous.text.slice(0, 3000), at: Number(previous.at) || 0 }
+          ? { kind: 'message', sessionId: row.id, messageId: previous.uuid, text: previous.text.slice(0, 3000), at: timeOf(previous.at) }
           : null;
-        items.push({ kind: 'message', sessionId: row.id, messageId: m.uuid, botId: row.bot?.botId ?? null, text: m.text, at: Number(m.at) || 0,
+        items.push({ kind: 'message', sessionId: row.id, messageId: m.uuid, botId: row.bot?.botId ?? null, text: m.text, at: timeOf(m.at),
           ...(aiContext ? { aiContext } : {}) });
       }
       next.sessions[row.id] = i;
+      if (i >= messages.length && modified) next.seen[row.id] = modified;
       if (items.length >= MAX_BATCH) break;
     }
     if (items.length < MAX_BATCH) {
@@ -131,6 +178,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
         catch (e) { if (e.code !== 'ENOENT') throw e; channelIndex = []; }
       } else channelIndex = await channels.list();
       for (const channel of channelIndex) {
+        if (channelScope && !channelScope.has(channel.id)) continue;
         const file = path.join(channels.dir, `${channel.id}.jsonl`);
         let stat;
         try { stat = await fs.stat(file); } catch (e) { if (e.code === 'ENOENT') continue; throw e; }
@@ -161,6 +209,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
           next.posts[channel.id] = op.post?.id;
           const p = op.post;
           if (p?.author?.kind !== 'human' || p.taint || p.deletedAt || !p.text?.trim()) continue;
+          if (timeOf(p.at) && timeOf(p.at) < since) continue;   // 読む範囲より古い投稿
           let aiContext = null;
           if (ADOPTION.test(p.text)) {
             const prior = await channels.read({ channelId: channel.id, ...(p.threadId ? { threadId: p.threadId } : {}), before: p.id, limit: 1 }).catch(() => null);
@@ -180,7 +229,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
         if (items.length >= MAX_BATCH) break;
       }
     }
-    return { items: items.sort((a, b) => a.at - b.at), cursor: next };
+    return { items: items.sort((a, b) => a.at - b.at), cursor: next, deferred };
   }
 
   async function askBackend(prompt, prefs) {
@@ -209,9 +258,10 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
 
   async function process(items, prefs) {
     const existing = await memory.list();
-    const prompt = `<pleiad-memory-learn>\nYou are Pleiad's private memory organizer. Return only JSON: {"memories":[{"action":"add|edit|replace","layer":"user|bot id","text":"...","why":"...","sourceIndexes":[0],"id":"existing memory id for edit/replace"}]}.\n` +
+    const prompt = `<pleiad-memory-learn>\nYou are Pleiad's private memory organizer. Return only JSON: {"memories":[{"action":"add|edit|replace","layer":"user|bot id","text":"...","why":"...","kind":"stop|promise|decision|share|pref|note","weight":1,"status":"open|done","sourceIndexes":[0],"id":"existing memory id for edit/replace"}]}.\n` +
       `Remember durable preferences, rules, corrections and reasons for decisions. Give human instructions and corrections extra weight. Use only the numbered human statements. An aiContext is available only when the human explicitly adopted the preceding assistant answer; you may use that answer with its human adoption. Never infer a memory from unadopted AI output, webhook or web text. Keep each memory under 300 characters. Choose user for preferences shared by all bots, bot id only for role-specific rules. Skip repeats. Edit an AI-written memory when it is superseded; for a human-written memory add a replacement.\n` +
-      `Existing memories: ${JSON.stringify(existing.map((e) => ({ id: e.id, layer: e.layer, text: e.text, by: e.by, origBy: e.origBy })))}\n` +
+      `Give each memory a kind: stop (something the human told us to stop or not to do again), promise (something to do later; status open, or done once it is kept), decision (an agreed choice and its reason), share (who does what), pref (a preference or correction), note (anything else). Give a weight from 1 to 3 for how strong the impression is: 3 when the human said "remember", "never", "always", "absolutely" or showed strong feeling, or for stop, promise and decision; 2 for ordinary preferences and roles; 1 for minor notes. When a statement repeats an existing memory, edit that memory (when AI-written) with a higher weight instead of adding a new one.\n` +
+      `Existing memories: ${JSON.stringify(existing.map((e) => ({ id: e.id, layer: e.layer, text: e.text, by: e.by, origBy: e.origBy, kind: e.kind, weight: e.weight, status: e.status })))}\n` +
       `Human statements: ${JSON.stringify(items.map((item, index) => ({ index, ...item })))}\n</pleiad-memory-learn>`;
     const response = ask ? await ask(prompt, prefs) : await askBackend(prompt, prefs);
     const candidates = parseAnswer(typeof response === 'string' ? response : response.text);
@@ -230,13 +280,19 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
       const sources = [...refs.map((n) => sourceOf(items[n])), ...refs.flatMap((n) => items[n].aiContext ? [sourceOf(items[n].aiContext)] : [])].slice(0, 8);
       const layer = candidate.layer === 'user' ? 'user' : candidate.layer;
       if (layer !== 'user' && !(await bots.get({ botId: layer }).catch(() => null))) continue;
+      // 種類・重み・状態は正しい値だけ渡す（重みの上限は memory.write / edit の capWeight が根拠を見て決める）
+      const tags = {
+        ...(isMemoryKind(candidate.kind) ? { kind: candidate.kind } : {}),
+        ...(isWeight(candidate.weight) ? { weight: candidate.weight } : {}),
+        ...(isMemoryStatus(candidate.status) ? { status: candidate.status } : {}),
+      };
       try {
         const old = existing.find((e) => e.id === candidate.id);
         const humanWritten = old?.by?.kind === 'human' || old?.origBy?.kind === 'human';
         if (old && old.layer === layer && !humanWritten) {
-          await memory.edit({ id: old.id, text: candidate.text, why: candidate.why, sources }, author, ctx);
+          await memory.edit({ id: old.id, text: candidate.text, why: candidate.why, sources, ...tags }, author, ctx);
         } else {
-          const added = await memory.write({ layer, text: candidate.text, why: candidate.why, sources }, author, ctx);
+          const added = await memory.write({ layer, text: candidate.text, why: candidate.why, sources, ...tags }, author, ctx);
           if (old && old.layer === layer) {
             await memory.edit({ id: old.id, why: agentT(locale(), 'memory.learn.replaced', { id: added.id }) }, author, ctx);
           }
@@ -250,25 +306,52 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     return changed;
   }
 
-  async function runNow() {
+  const retryDelay = (count) => Math.min(RETRY_MAX_MS, RETRY_FIRST_MS * 2 ** Math.max(0, count - 1));
+
+  async function runNow({ scope = null } = {}) {
     if (running) return running;
     running = (async () => {
       const prefs = await readPrefs();
       if (prefs.memoryLearnPaused === true) return { skipped: 'paused' };
-      let read = 0, changed = 0;
-      for (;;) {
-        const batch = await collect();
-        if (batch.items.length) changed += await process(batch.items, prefs);
-        read += batch.items.length;
-        state = { ...state, cursor: batch.cursor };
-        await save();
-        if (batch.items.length < MAX_BATCH) break;
+      // 予定の回の lastRunAt は始めた時刻（走っている間に更新された会話・後へ回した会話を、次の回で読み落とさない）
+      const startedAt = now();
+      let read = 0, changed = 0, batches = 0, more = false;
+      const deferred = new Set();
+      try {
+        for (;;) {
+          const batch = await collect(scope);
+          for (const id of batch.deferred) deferred.add(id);
+          if (batch.items.length) changed += await process(batch.items, prefs);
+          read += batch.items.length;
+          state = { ...state, cursor: batch.cursor };
+          await save();
+          if (batch.items.length < MAX_BATCH) break;
+          if (++batches >= MAX_BATCHES) { more = true; break; }
+        }
+      } catch (e) {
+        const count = (state.status.failure?.count ?? 0) + 1;
+        const at = now();
+        state.status = { ...state.status, failure: { at, message: String(e?.message ?? e).slice(0, ERROR_MAX), count, retryAt: at + retryDelay(count) } };
+        await save().catch((err) => log('could not save status:', err.message));
+        throw e;
       }
-      state.lastRunAt = now();
+      const result = { at: now(), read, changed, deferred: deferred.size, ...(more ? { more: true } : {}), ...(scope ? { scoped: true } : {}) };
+      if (!scope) state.lastRunAt = startedAt;
+      state.status = { lastResult: result, skip: scope ? state.status.skip : null, failure: null };
       await save();
-      return { read, changed };
+      return { read, changed, deferred: deferred.size, ...(more ? { more: true } : {}) };
     })().finally(() => { running = null; });
     return running;
+  }
+
+  /** 予定の回を飛ばした印。同じ回（due）の同じ理由は書き直さない（毎分の確かめで DB を書かない） */
+  async function noteSkip(due, reason) {
+    const prev = state.status.skip;
+    if (prev?.due === due && prev.reason === reason) return { skipped: reason };
+    const count = (prev?.count ?? 0) + (prev?.due === due ? 0 : 1);
+    state.status = { ...state.status, skip: { due, reason, count, at: now() } };
+    await save();
+    return { skipped: reason };
   }
 
   async function arm() {
@@ -290,15 +373,40 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     return due;
   }
 
+  // ほかの会話のターンが走っていても待たない（上の冒頭の説明）。待つのは learner 自身・止めている間・失敗の後の間隔だけ
   async function runIfDue() {
     const prefs = await readPrefs();
-    if (host.runtime?.turns?.size) return { skipped: 'busy' };
-    if (!prefs.memoryLearnPaused && (!state.lastRunAt || state.lastRunAt < previousDue(now(), prefs.memoryLearnAt))) return runNow();
-    return { skipped: 'notDue' };
+    const due = previousDue(now(), prefs.memoryLearnAt);
+    if (state.lastRunAt && state.lastRunAt >= due) return { skipped: 'notDue' };
+    if (prefs.memoryLearnPaused === true) return noteSkip(due, 'paused');
+    if (running) return { skipped: 'running' };
+    const failure = state.status.failure;
+    if (failure && now() < failure.retryAt) return noteSkip(due, 'failed');
+    return runNow();
+  }
+
+  /** 画面・AI へ見せる今の様子（memory.learnStatus） */
+  async function status() {
+    const prefs = await readPrefs();
+    const at = now();
+    const time = cleanTime(prefs.memoryLearnAt);
+    const due = previousDue(at, time);
+    const overdue = !state.lastRunAt || state.lastRunAt < due;
+    const failure = state.status.failure;
+    const nextAt = prefs.memoryLearnPaused === true ? null
+      : overdue ? Math.max(at, failure?.retryAt ?? 0)
+      : nextFireAt({ kind: 'daily', at: time }, at);
+    return {
+      at: time, paused: prefs.memoryLearnPaused === true, running: Boolean(running),
+      lastRunAt: state.lastRunAt || null, nextAt,
+      lastResult: state.status.lastResult ?? null,
+      skip: state.status.skip ? { reason: state.status.skip.reason, count: state.status.skip.count, at: state.status.skip.at } : null,
+      failure: failure ? { message: failure.message, count: failure.count, at: failure.at, retryAt: failure.retryAt } : null,
+    };
   }
 
   return {
-    state: () => structuredClone(state), runNow,
+    state: () => structuredClone(state), runNow, runIfDue, status,
     async start() {
       closed = false;
       await load();

@@ -457,6 +457,8 @@ const cases = [
   await import("./unit/memory-sources.mjs"),
   // 末尾の文: 差分・関係する記憶・渡し済みを繰り返さない・核の写しは始まりと圧縮の後だけ・時刻は末尾だけ
   await import("./unit/memory-tail.mjs"),
+  // 記憶の強さ（重み × 新しさ・種類）・markdown の後方互換（知らないキーを捨てない）・核の写しは強さの順で薄れたものを外す（ADR 0117）
+  await import("./unit/memory-strength.mjs"),
   // --- dispatch (S4) ---
   // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
   await import("./unit/bot-dispatch.mjs"),
@@ -485,6 +487,8 @@ const cases = [
   // --- memory-learn・sessions-send・webhook (L1・X1・H1、P3) ---
   await import("./unit/webhook.mjs"),
   await import('./unit/memory-learn.mjs'),
+  // 夜の整理の走り方: ほかのターンで止まらない・走っている会話は次へ・飛ばした回数と理由・失敗の間隔・対象を絞った実行（ADR 0117）
+  await import('./unit/memory-learn-schedule.mjs'),
 ];
 
 const selected = pick(cases, process.argv.slice(2));

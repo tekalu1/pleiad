@@ -58,7 +58,7 @@ export default async function (t) {
   t.ok('foldDelta は層で絞る', foldDelta([rec(1, 'add', 'm_a', 'あ', { layer: OTHER })], { layers: ['user', BOT.id] }).items.length === 0);
   t.ok('pickCore は新しいものから目安のトークンまで入れ、残りは件数にする', (() => {
     const list = Array.from({ length: 30 }, (_, i) => ({ id: `m_${i}`, text: `${'長い記憶 '.repeat(20)}${i}`, at: i, updatedAt: i }));
-    const core = pickCore(list, [], { layerTokens: 400 });
+    const core = pickCore(list, [], { layerTokens: 400, now: 30 });
     return core.user.length < 30 && core.omitted === 30 - core.user.length && core.user.at(-1).id === 'm_29' && core.ids.length === core.user.length;
   })());
   t.ok('記憶が 1 つも無ければ核の写しは作らない（空の包みを足さない）', coreSnapshot({ core: { user: [], bot: [], omitted: 0 }, locale: 'ja' }) === null);

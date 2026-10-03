@@ -212,6 +212,34 @@
   },
   "memory": {
     "new": "新しく覚えた",
+    "faded": "薄れた",
+    "fadedTitle": "古くなって弱くなった記憶です。会話の始まりには渡しませんが、探せば出ます（消えてはいません）",
+    "kind": {
+      "stop": "やめたこと",
+      "promise": "約束",
+      "promiseDone": "約束・済み",
+      "decision": "決めたこと",
+      "share": "分担",
+      "pref": "好み",
+      "note": "メモ"
+    },
+    "learn": {
+      "label": "夜の整理",
+      "running": "整理しています",
+      "ran": "{{when}} に {{n}} 件覚えた",
+      "ranNone": "{{when}} に整理した（新しく覚えたものなし）",
+      "never": "まだ一度も走っていない",
+      "more": "残りの発言は次の回に",
+      "deferred": "作業中だった会話 {{n}} 件は次の回に",
+      "failed": "失敗した（{{error}}）",
+      "skipped": "予定を {{n}} 回飛ばした（{{reason}}）",
+      "reason": {
+        "paused": "止めていた",
+        "failed": "失敗の後の待ち"
+      },
+      "paused": "止めている",
+      "next": "次は {{when}}"
+    },
     "user": {
       "title": "あなたについて",
       "meta": "全 bot 共通 · {{n}} 件"

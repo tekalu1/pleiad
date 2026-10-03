@@ -1,6 +1,6 @@
 // bot のページの決まりごと（web/channels/bot-model.mjs。DOM に触れない）: どのモードでフォルダーを限れないか（計画 §7.2-2）・
 // 承認モードの選び直し・使用量の字・記憶の出どころの行き先・フォルダーの足し引き。
-import { foldersUnlimited, validMode, onlyMode, modeAfterBackend, tokensText, usageView, sourceView, shortDate, newDraft, toggleAccess, addFolder, removeFolder } from '../../web/channels/bot-model.mjs';
+import { foldersUnlimited, validMode, onlyMode, modeAfterBackend, tokensText, usageView, sourceView, shortDate, shortTime, learnStatusView, newDraft, toggleAccess, addFolder, removeFolder } from '../../web/channels/bot-model.mjs';
 
 export const name = 'bot-page-model';
 export const title = 'bot のページ: 全部自動でフォルダーを限れないのは範囲 full だけ・承認モードの選び直し・使用量・出どころの行き先';
@@ -33,6 +33,18 @@ export default async function (t) {
 
   const now = new Date(2026, 9, 3, 12).getTime();
   t.ok('日付: 今日は null、昨日までは M/D', shortDate(new Date(2026, 9, 3, 1).getTime(), now) === null && shortDate(new Date(2026, 9, 2, 23).getTime(), now) === '10/2');
+
+  // 夜の記憶の整理の 1 行（ADR 0117）
+  t.ok('時刻: 今日は HH:MM、ほかの日は M/D HH:MM', shortTime(new Date(2026, 9, 3, 2, 5).getTime(), now) === '02:05' && shortTime(new Date(2026, 9, 2, 23, 0).getTime(), now) === '10/2 23:00');
+  const keys = (v) => v.parts.map((p) => p.key).join();
+  t.ok('整理: まだ走っていない・次の予定', keys(learnStatusView({ lastRunAt: null, lastResult: null, nextAt: now + 3600000, paused: false }, now)) === 'never,next');
+  const ran = learnStatusView({ lastRunAt: now - 3600000, lastResult: { at: now - 3600000, read: 4, changed: 3, deferred: 1 }, nextAt: now + 86400000, paused: false }, now);
+  t.ok('整理: 覚えた件数・後に回した会話・次の予定（目立たせない）', keys(ran) === 'ran,deferred,next' && ran.parts[0].params.n === 3 && ran.parts[0].params.when === '11:00' && !ran.warn, JSON.stringify(ran));
+  t.ok('整理: 何も覚えなかった回', keys(learnStatusView({ lastRunAt: now, lastResult: { at: now, read: 0, changed: 0 }, nextAt: null, paused: false }, now)) === 'ranNone');
+  const bad = learnStatusView({ lastRunAt: null, lastResult: null, nextAt: now, paused: false, failure: { message: 'down', count: 1 }, skip: { reason: 'failed', count: 2 } }, now);
+  t.ok('整理: 失敗と飛ばした回数（理由）は目立たせる', keys(bad) === 'never,failed,skipped,next' && bad.warn && bad.parts[2].params.reasonKey === 'failed');
+  t.ok('整理: 止めているときは次の予定の代わりに「止めている」', keys(learnStatusView({ lastRunAt: null, lastResult: null, nextAt: null, paused: true, skip: { reason: 'paused', count: 1 } }, now)) === 'never,skipped,paused');
+  t.ok('整理: 様子が無ければ出さない', learnStatusView(null) === null);
 
   const channels = new Map([['c1', { id: 'c1', kind: 'channel', name: 'checkout-perf' }], ['c2', { id: 'c2', kind: 'dm', name: 'Owl', botId: 'b1' }]]);
   const bots = new Map([['b1', { id: 'b1', name: 'Owl', icon: '🦉' }]]);
