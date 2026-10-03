@@ -416,6 +416,10 @@ const cases = [
   // 末尾の文: 差分・関係する記憶・渡し済みを繰り返さない・核の写しは始まりと圧縮の後だけ・時刻は末尾だけ
   await import("./unit/memory-tail.mjs"),
   // --- dispatch (S4) ---
+  // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
+  await import("./unit/bot-dispatch.mjs"),
+  // bot の会話は Chats の一覧に出さず、あなた待ちのときだけ出す（一覧の行の bot・承認待ち・検索の除外・スマホ通知）
+  await import("./unit/bot-sessions-list.mjs"),
   // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---
   // 流れ (W2): @ の補完の判定・候補の絞り込み・リアクションの札と先取り・時刻の文言・スレッドを開く口の配線（描画とキーは tests/browser/channels.cjs）
   await import("./unit/channels-feed-ui.mjs"),

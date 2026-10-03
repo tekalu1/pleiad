@@ -117,14 +117,15 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 
 | 包み | 渡し方 | 履歴の行 |
 |---|---|---|
-| `<pleiad-channel channel thread post from at>本文</pleiad-channel>` | `prompt`。起こした投稿・途中送信する投稿 1 件 | `kind: 'channelEvent'`（`history: false`） |
-| `<pleiad-channel-thread channel thread>…</pleiad-channel-thread>` | `prompt`。初回のスレッドの履歴（中に `<pleiad-channel>`） | `kind: 'channelEvent'`（`history: true`） |
+| `<pleiad-channel channel channel-id thread post from at>本文</pleiad-channel>` | `prompt`。起こした投稿・途中送信する投稿 1 件 | `kind: 'channelEvent'`（`history: false`） |
+| `<pleiad-channel-thread channel channel-id thread>…</pleiad-channel-thread>` | `prompt`。初回のスレッドの履歴（中に `<pleiad-channel>`） | `kind: 'channelEvent'`（`history: true`） |
 | `<pleiad-memory-core>` | `notes`。会話の始まり・圧縮の完了後の最初のターン | `kind: 'contextNote'`（`tag: 'memory-core'`） |
 | `<pleiad-turn-context>` | `notes`。毎ターンの末尾 | `kind: 'contextNote'`（`tag: 'turn-context'`） |
 | `<pleiad-interruption>` | `notes`。中断で止めたもの（既存） | `kind: 'interruptionNote'` |
 | `<routine-payload source hook at>` | `<pleiad-channel>` の本文の中。外から来た文 | （剥がさない） |
 
 本文に包みのタグが紛れても外へ出られない（`escapeBody`）。途中送信（`control.steer`）の道では末尾を付けず、`<pleiad-channel>` だけを渡す。
+`channel` は表示名（`#dev`・DM は bot の名前）、`channel-id` は `channels.post` などの操作へ渡すチャンネルの id（bot が自分で返事を書くのに要る。履歴の行は `channel` だけを持つ）、`thread` は根の投稿の id（DM は無い）、`from` は表示名（人は「あなた」、bot は「🦉 Owl (bot)」）、`at` は現地時刻の分まで。
 
 ## bot の定義と、バックエンドへの渡し方（`core/bots/`）
 
@@ -135,6 +136,30 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 - **起こし直し**: Codex は `developerInstructions` が変わるとロード済みのスレッドを読み直す（既存の仕組み）。Antigravity は人格のハッシュ＋フォルダー（`botSessionKey`）を起こし直しの判定に足してある（指示はプロセスの起動時にしか渡せない）。
 - **触れてよいフォルダー**（`folderPlan(bot, modeEntry, cwd)` → `{ all, additionalDirectories, writableRoots }`）: 先頭が既定の作業場所（cwd）。Claude は cwd 以外の全部を `additionalDirectories`（読み取り専用の区別は宣言にとどまり強制されない）、Codex は `rw` のうち cwd 以外を `turn/start` の `sandboxPolicy.writableRoots`（`ro` は書き込みに入れないだけ。bot の会話は前のターンの書き込み先を引き継がず置き換える）、Antigravity は cwd 以外を `--add-dir`（ワークスペースに見せるだけ。書き込みの範囲は限れない）。**「すべてのフォルダー」（`all: true`）は、書き込みの範囲を限れないモード（`scope` が `full`: Claude の YOLO・Codex の YOLO・Antigravity の yolo）だけ**。Codex の `full` は sandbox が作業場所に限るので、選択は有効のまま（決定 7.2-2）。
 - **承認モード**: bot の `mode` は `bots.setMode`（human-only）でだけ変わる。Antigravity は `yolo` 以外を断る。
+
+## bot を起こす・配る（`core/bots/dispatch.mjs`・`inbox.mjs`。S4）
+
+**起こす規則**（[ADR 0096](adr/0096-bot-and-dispatch.md)）。`channels.post` の後（`ChannelService.hooks.posted`）に `dispatch.onPosted` が宛先を決める。ターンの投稿（`post.turn`）では起こさない。
+- 起こすのは本文の**明示の `@名前`** だけ（人・bot・Chats の AI の投稿。システム・ルーティンの投稿は起こさない）。自分自身への `@` は数えない。bot がチャンネルのメンバーかは見ない。
+- チャンネルの流れ（スレッドの外）の投稿で `@` されたら、その投稿を根にスレッドを作る。スレッドの中の投稿は、そのスレッドの bot の会話（`ThreadState.sessions[botId]`。無ければ `bots.createSession` で作って登録）へ。
+- DM は人の投稿がすべてその bot 宛て（`@` 不要。会話は `bots.ensureDmSession` の 1 本）。DM の中の他の bot への `@` は起こさない（DM は 1 対 1）。
+- スレッドで `@` の無い人の投稿は、そのスレッドで今作業中の bot が 1 体だけならその会話へ書き足す。0 体・2 体以上なら誰も起こさない。
+- `ThreadState.stopped` があれば、人が次に書くまで起こさない（人の投稿で `stopped` を外すのは `ChannelService.post`）。
+- bot の返事（ターンの投稿の最終の文）の `@` も同じ規則で起こす（`onTurnEnd`。止めた・失敗した・止められたターンの返事では起こさない）。bot が `channels.post`（`new: true`）で書いた投稿の `@` は `hooks.posted` から。**呼び合いに回数の上限は無い**。`ThreadState.calls` を起こすたびに数えるだけ。
+
+**配る**。起こすと、まず `channels/inbox.json` に `pending` の出来事（会話・bot・チャンネル・スレッド・投稿の id。本文は配るときの投稿から組む）を保存してから、会話ごとに直列で配る。
+- 走っているターンがあり、`noticeTarget`（`canSteerNotice`）が真なら `control.steer({ id: 'channel-<出来事の id>', args: { prompt } })`。`prompt` は `<pleiad-channel>` の包み（まだ渡していない他の投稿が前にあれば `<pleiad-channel-thread>` で）だけで、末尾（記憶の差分・時刻）は付けない。受理したら `sent`、会話の画面へ `channelEvent` を出す。「渡った」合図を後から出すバックエンド（`steerConfirms`）では `delivering` のまま `userMessage.delivered` を待ち、`dropped` なら `pending` に戻す。受理されない・合図が来ないまま終わった・途中送信できない（Antigravity・圧縮のターン・人の送信待ち）ものは `pending` のまま、**ターンの終わりにまとめて 1 通**の新しいターンで渡す。
+- 走っていなければ（`noticeBlocked` が偽）`runTurn({ sessionId, prompt }, () => {}, { internal: true })`。忙しければ 3 秒後にまた。初回（`postCursor` が無い）は、スレッドのそれまでの投稿（30 件・2 万字まで）を `<pleiad-channel-thread>` で、以後は `postCursor` より後の投稿（他の bot の投稿も）を文脈として前に付ける。いちばん後ろの起こした投稿より後ろの投稿は次に渡す。書き途中の他の bot の投稿は文脈に入れず、`postCursor` もその手前まで。自分の会話のターンの投稿は文脈に入れない（会話に入っている）。
+- 結果不明（`steer` が投げた・始める前の失敗）は `unknown` にして**自動では送り直さない**（[ADR 0057](adr/0057-deliver-completion-notice-live.md) と同じ）。始められなかったターンはスレッドに失敗の投稿を足し、スレッドは `failed`。起動時（`start`）は `delivering` を `unknown` に、`pending` を順に配り直す。`sent` と `unknown` は新しい 100 件だけ残す。
+- 「渡った」の確定（`commit`）は、そのターンの最初の応答（`text.delta`・`text.end`・`thinking.delta`・`tool.start`）か、正常終了のとき。ここで `memRev`・`delivered`・`snapshotDue`（`memory.turnContext` の返り）と `postCursor` を会話の `bot` の欄へ書き、出来事を `sent` にする。始める前に失敗したら進めない。
+
+**ターンの投稿**（スレッドの画面は生の流れではなく、これで描く）。ターンが始まる（`turnExtras`）と、そのスレッド（DM なら流れ）に bot の投稿を 1 つ作る（`state: 'working'`、本文は `…`、`turn: { botId, sessionId }`）。本文は、今書いている発言（無ければ最後の発言）で **1 秒に 1 回まで**書き換える。bot が `channels.post` で同じスレッドへ書くと、`ChannelService.post` が同じ投稿の本文を置き換える（進捗のチェックリスト。`new: true` なら新しい投稿）。bot が書いた本文は途中経過で上書きしない。承認待ちの間は `waiting`。終わりに最終の返答（`host.lastReply`）・提示（`present`。人の添付と git・作業場所の行は除く）を入れ、`state` を `done` / `failed`（理由つき）/ `stopped` にする。何も言わずに終わった（絵文字だけなど）投稿は消す。Claude・Codex の `usage`（1 ターンの累計）は、書き足した分との差だけ `ThreadState.tokens` へ足す。`ThreadState.state` は走っているターン・承認待ち・最後の失敗から決める。前の起動で終わらなかった作業中の印は、起動時に `stopped` / `idle` にする。
+
+**止める**（`channels.stopThread` → `dispatch.stopThread`）。保留中（`pending`）の出来事を取り消し、そのスレッドで走っている bot のターンを `abortSessions({ reason: 'user' })` で止め、システムの投稿「<誰> が止めました」を足す。誰が止めたかは `ThreadState.stopped.by`。
+
+**末尾**（`turnExtras`）。毎ターンの `notes` は `memory.turnContext`（時刻・記憶の差分・関係する記憶。会話の始まりと圧縮の後だけ核の写しが先に付く）。圧縮の完了（`onCompacted`）で `snapshotDue = true`・`delivered = []`。人格（`botInstructions`）は S2 が `runArgs` へ載せる。圧縮のターン（`compactTrigger`）には何も足さない。人格・固定の文は変えず、変わるのは末尾だけ（キャッシュの並び）。
+
+**ほか**: Chats の一覧は bot の会話を出さず、あなた待ち（承認・質問）の間だけ出す（一覧の行の `bot` と `running` の承認待ち。画面の絞り込みは `client.mjs` の `renderSessions`）。スマホへは、bot の会話の完了を送らず、失敗・承認・質問は送る。セッション検索は bot の会話を既定で除く（委譲の子と同じ。`includeDelegated` で含める）。
 
 ## 画面（`web/channels/`）
 
@@ -150,3 +175,4 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 ## テスト
 
 `tests/run.mjs` にパッケージごとの区画のコメントがある（自分の区画の下にだけ足す）。fake バックエンドは、包みで始まる prompt の台本を、包みを外してから選び（`<pleiad-channel>` の中身は `@名前` を除いて台本）、`notes:` / `instructions:` の台本で Pleiad が足した `notes`・`botInstructions` を返し、`AGENT_HOST_FAKE_USAGE=1` で固定の `usage` を、`AGENT_HOST_FAKE_SLOW_STEER=1` で `slow` に途中送信を持たせる。`tests/unit/ops-surface.mjs` の T6 の deps に `channels`・`bots`・`memory`・`routines` の空の物がある。`tests/ops-surface.snap.json` は、パッケージの最後に取り直す（同時に直さない）。
+- bot の返事の `@` だけで次の bot を起こすテストは、人の投稿に `@` を書かない形にする（人の `@` でも起きて、返事の連鎖を確かめられない）。fake の `steps:` 台本の本文に `\\u0040Lynx slow` と書くと、台本が `@Lynx slow` に戻して返事にする。テストごとに `channels.dir` を分ける（`inbox.json` が前のケースの出来事を拾う）。

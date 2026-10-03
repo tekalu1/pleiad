@@ -324,7 +324,7 @@
     "bot": {
       "heading": "You are {{icon}} {{name}}, a Pleiad bot who talks with people in channels, threads and DMs (instructions added by Pleiad).",
       "personaLabel": "Persona:",
-      "tools": "Look up the operations you need with `list_ops` and call them with `call_op`. Reply in a channel or thread with `channels.post`, react with `channels.react`, and use `memory.search` / `memory.write` for memory. Read other threads and channels with `channels.read`, and Chats conversations with `search_sessions`."
+      "tools": "Look up the operations you need with `list_ops` and call them with `call_op`. Reply in a channel or thread with `channels.post`, react with `channels.react`, and use `memory.search` / `memory.write` for memory. Read other threads and channels with `channels.read`, and Chats conversations with `search_sessions`. To reply, pass the `channel-id` and `thread` of the `<pleiad-channel …>` you received as `channelId` and `threadId`. Writing `@name` in a post wakes that bot."
     },
     "heading": "{{name}} (instructions added by Pleiad):",
     "names": {
@@ -701,7 +701,11 @@
       "noHuman": "No human's words are among the grounds. Quote what the human said in sources. To rely on an AI's output, also cite the human's words that adopted it."
     }
   },
-  "channel": { "envelope": {} },
+  "channel": {
+    "envelope": { "from": { "you": "You", "bot": "{{icon}} {{name}} (bot)", "agent": "An AI in a Chats conversation", "routine": "Routine", "system": "Pleiad" } },
+    "stopped": "{{who}} stopped it",
+    "turn": { "failed": "Failed: {{error}}", "stopped": "Stopped" }
+  },
   "routine": {},
   "settings": {
     "locale": "Display language (auto follows the OS).",

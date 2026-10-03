@@ -13,7 +13,7 @@
 //     turnExtras(turn): Promise<{ botInstructions: string|null, notes: string[], folders: object|null }>   … runArgs に足す（notes は既存の notes の後ろ。
 //                       folders は触れてよいフォルダーの渡し方 { all, additionalDirectories, writableRoots }。runArgs の botFolders になる）
 //     onTurnEvent(turn, event): void                 … makeEmit の中。bot の会話の分
-//     onTurnEnd(turn, { outcome, text, presents }): Promise<void>    … endTurn の usage 記録の後
+//     onTurnEnd(turn, { outcome, interrupted, requeued }): Promise<void>    … endTurn の最後（ターンを手放した後。最終の返答は lastReply、提示は onTurnEvent の present）
 //     onPermission(card, phase): void                … askPermission（phase: 'open' | 'settled'）
 //     onSessionDone(sessionId, outcome): void        … 完了通知が落ち着いたとき（イベントのトリガ）
 //     onCompacted(sessionId): void                   … 圧縮の完了
