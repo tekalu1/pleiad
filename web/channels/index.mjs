@@ -33,6 +33,8 @@ export const CHANNEL_EVENTS = new Set([
   'channelsChanged', 'channelPost', 'channelReaction', 'channelThread', 'channelRead', 'botsChanged', 'memoryChanged', 'routinesChanged',
 ]);
 
+import { createBotPage } from './bot-page.mjs';
+
 export function setupChannels(host) {
   const parts = [];
   // スレッドを開く口。投稿の要約の行・「スレッドで返信」が呼ぶ（部品の openThread(channelId, threadId)。W3 が受ける。受ける部品が無ければ何も起きない）
@@ -50,7 +52,8 @@ export function setupChannels(host) {
 
   // W3 スレッドと空間モデル:  parts.push(createThread(host));   // web/channels/thread.mjs
 
-  // W4 bot のページ:  parts.push(createBotPage(host));   // web/channels/bot-page.mjs
+  // W4 bot のページ（show({ kind: 'bot', id })。id が 'new' なら作る画面）
+  parts.push(createBotPage(host));
 
   // W5 ルーティンの編集（P2）:  parts.push(createRoutineSheet(host));   // web/channels/routine-sheet.mjs
 
