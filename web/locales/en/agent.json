@@ -617,6 +617,7 @@
       "SETTING_READ_ONLY": "The setting {{key}} is read-only and cannot be changed with settings.set.",
       "BOT_NOT_FOUND": "Bot \"{{id}}\" was not found. Look it up with bots.list.",
       "BOT_NAME_TAKEN": "The bot name \"{{name}}\" is already used. Choose another name.",
+      "ROUTINE_NOT_FOUND": "Routine \"{{id}}\" was not found. Look it up with routines.list.",
       "MEMORY_SOURCE": "Cannot write to memory. The grounds are missing: {{reason}}",
       "MEMORY_REJECTED": "Cannot write to memory: {{reason}}",
       "MEMORY_NOT_FOUND": "Memory \"{{id}}\" was not found. Look it up with memory.list.",
@@ -1032,7 +1033,42 @@
         "id": "Id of the forgotten memory."
       }
     },
-    "routines": {}
+    "routines": {
+      "list": {"summary": "List routines (definitions that make a bot do work at fixed times, intervals or events): name, bot, channel, trigger, mode, paused, last run and the next run time (nextAt)."},
+      "get": {"summary": "Get one routine: its definition, last run and next run time.", "routineId": "The routine id."},
+      "create": {
+        "summary": "Create a routine. Each time it fires, a root post is made in the channel and the bot runs the prompt in that thread (the run history is the list of threads). An AI creating one needs approval.",
+        "name": "The routine name (one line; it becomes the first line of the root post).",
+        "botId": "The id of the bot that runs it (bots.list).",
+        "channelId": "The id of the channel where run threads are made (not a DM).",
+        "prompt": "The instruction given to the bot (this text is sent every run).",
+        "trigger": "When it runs. daily (at: HH:MM, weekdaysOnly), weekly (days: 0=Sun…6=Sat, at), interval (minutes, window: { from, to }), cron (expr: 5 fields \"minute hour day month weekday\"), event (on: done / failed / waiting, scope: all or { sessionIds }; conversations of bots and routines are ignored) or webhook (hookId). Times are this PC's local time.",
+        "mode": "The approval mode id the run uses (one of the bot's agent). Omit for the bot's current mode. It runs unattended, so an unanswered approval is cancelled after approvalTimeoutMin.",
+        "approvalTimeoutMin": "How long to wait for an approval, in minutes (default 30). After that the turn is stopped and reported in the thread.",
+        "paused": "true to create it paused.",
+        "reason": "Why it is created (shown on the approval card)."
+      },
+      "update": {
+        "summary": "Change a routine's name, bot, channel, prompt, trigger, mode or approval wait. Raising the frequency, strengthening the mode, widening the conversations an event trigger watches, or an AI changing the prompt needs approval.",
+        "routineId": "The routine id.",
+        "name": "The new name.",
+        "botId": "The id of the bot that runs it.",
+        "channelId": "The channel id.",
+        "prompt": "The whole new prompt (replaces the old one).",
+        "mode": "The approval mode id.",
+        "approvalTimeoutMin": "How long to wait for an approval, in minutes.",
+        "reason": "Why it is changed (shown on the approval card)."
+      },
+      "pause": {"summary": "Pause a routine (its schedule is removed; a run already going is not stopped).", "routineId": "The routine id."},
+      "resume": {"summary": "Resume a paused routine and schedule it again. Runs that would have fired while it was paused are not counted. Needs approval.", "routineId": "The routine id.", "reason": "Why it is resumed (shown on the approval card)."},
+      "run": {
+        "summary": "Run a routine once now (even when paused). dryRun runs a throwaway conversation in a plan (read-only) mode and posts nothing to the channel. Needs approval.",
+        "routineId": "The routine id.",
+        "dryRun": "true for a trial run (nothing is posted; read the result in the conversation of the returned sessionId).",
+        "reason": "Why it is run (shown on the approval card)."
+      },
+      "delete": {"summary": "Delete a routine. The threads of its past runs stay. Needs approval.", "routineId": "The routine id.", "reason": "Why it is deleted (shown on the approval card)."}
+    }
   },
   "memory": {
     "title": {
@@ -1083,7 +1119,18 @@
     "heldWake": "{{bot}} runs in {{mode}}, so {{from}}'s reply did not wake it. It wakes when a person @-mentions it.",
     "turn": { "failed": "Failed: {{error}}", "stopped": "Stopped" }
   },
-  "routine": {},
+  "routine": {
+    "event": {
+      "done": "Trigger: the conversation \"{{title}}\" finished.",
+      "failed": "Trigger: the conversation \"{{title}}\" ended with a failure.",
+      "waiting": "Trigger: the conversation \"{{title}}\" is waiting for your approval or answer.",
+      "untitled": "untitled"
+    },
+    "approvalTimeout": "No approval came, so the turn was cancelled",
+    "dryRunTitle": "Trial: {{name}}",
+    "dryRunStillRunning": "Still running (open the conversation to follow it)",
+    "dryRunNote": "This is a trial run of a routine. Do not post to any channel; answer in this conversation with what you would do and the result (you are running in a read-only mode)."
+  },
   "settings": {
     "locale": "Display language (auto follows the OS).",
     "linkOpen": "Where links open (inapp is the built-in browser, external is the default browser).",

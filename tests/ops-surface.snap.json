@@ -1841,6 +1841,184 @@
       "input": "b4a434de6904"
     },
     {
+      "id": "routines.create",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "create"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "26da7bce71ab"
+    },
+    {
+      "id": "routines.delete",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "delete"
+          ],
+          "positional": [
+            "routineId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "7dfd46eb9221"
+    },
+    {
+      "id": "routines.get",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "get"
+          ],
+          "positional": [
+            "routineId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "3bbbf14bf228"
+    },
+    {
+      "id": "routines.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "routines.pause",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "pause"
+          ],
+          "positional": [
+            "routineId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "7f851c95cb3d"
+    },
+    {
+      "id": "routines.resume",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "resume"
+          ],
+          "positional": [
+            "routineId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "2efd2644ef06"
+    },
+    {
+      "id": "routines.run",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "run"
+          ],
+          "positional": [
+            "routineId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "2a650714c939"
+    },
+    {
+      "id": "routines.update",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "routines",
+            "update"
+          ],
+          "positional": [
+            "routineId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "2524c41597fd"
+    },
+    {
       "id": "sessions.abort",
       "risk": "write",
       "riskOf": false,
@@ -3666,6 +3844,58 @@
       "id": "resumeQueue.set",
       "path": "resume-queue set",
       "positional": []
+    },
+    {
+      "id": "routines.create",
+      "path": "routines create",
+      "positional": []
+    },
+    {
+      "id": "routines.delete",
+      "path": "routines delete",
+      "positional": [
+        "routineId"
+      ]
+    },
+    {
+      "id": "routines.get",
+      "path": "routines get",
+      "positional": [
+        "routineId"
+      ]
+    },
+    {
+      "id": "routines.list",
+      "path": "routines list",
+      "positional": []
+    },
+    {
+      "id": "routines.pause",
+      "path": "routines pause",
+      "positional": [
+        "routineId"
+      ]
+    },
+    {
+      "id": "routines.resume",
+      "path": "routines resume",
+      "positional": [
+        "routineId"
+      ]
+    },
+    {
+      "id": "routines.run",
+      "path": "routines run",
+      "positional": [
+        "routineId"
+      ]
+    },
+    {
+      "id": "routines.update",
+      "path": "routines update",
+      "positional": [
+        "routineId"
+      ]
     },
     {
       "id": "app.running",

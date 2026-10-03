@@ -383,6 +383,7 @@ export default async function (t) {
         : ['sessions.get', 'sessions.read', 'sessions.listMessages'].includes(o.id) ? [{ sessionId: ask.sessionId }] : ['delegation.status', 'delegation.taskStatus', 'delegation.taskWait', 'delegation.instructions'].includes(o.id) ? [{ taskId: 'none' }] : o.id === 'bots.get' ? [{ botId: 'none' }] : o.id === 'sessions.search' ? [{ query: 'control' }, { query: MARKER }]
         : o.id === 'channels.get' || o.id === 'channels.read' ? [{ channelId: 'c_000000000aaaaaa' }] : o.id === 'channels.search' ? [{ query: 'control' }, { query: MARKER }]
         : o.id === 'memory.list' ? [{ layer: 'user' }] : o.id === 'memory.search' ? [{ query: 'control' }]
+        : o.id === 'routines.get' ? [{ routineId: 'none' }]
         : o.id === 'hooks.readPly' ? [{ id: 'none' }] : o.id === 'hooks.read' ? [{ agent: 'claude', scope: 'project', base: scratch, loc: { event: 'PreToolUse', group: 0, handler: 0 } }]
         : o.id === 'mcp.nativeList' ? [{ format: 'claude', scope: 'user', cwd: home }] : o.id === 'mcp.nativeRead' ? [{ format: 'claude', scope: 'user', cwd: home, name: 'leak' }, { format: 'claude', scope: 'user', cwd: home, name: 'web' }]
         : o.id === 'mcp.read' ? [{ name: 'x' }] : o.id === 'hooks.scan' ? [{}, { cwd: home }] : o.id === 'hooks.session' ? [{ sessionId: ask.sessionId, cwd: home, backend: 'claude' }]
