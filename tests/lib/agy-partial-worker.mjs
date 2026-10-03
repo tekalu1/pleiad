@@ -97,6 +97,8 @@ try {
   ok("失敗したターンもツールと本文が残り、前のターンも残る",
     afterFail?.messages?.length === 4 && reply(afterFail)?.toolCalls?.[0]?.result?.text === "partial-out" && afterFail.messages[1].text === "途中まで",
     JSON.stringify(afterFail?.messages?.map((m) => [m.role, m.text, m.toolCalls?.length ?? 0]) ?? null));
+  ok("途中失敗の生 status と経路を控える", afterFail?.turnResults?.at(-1)?.source === "result"
+    && afterFail.turnResults.at(-1).status === "ERROR", JSON.stringify(afterFail?.turnResults?.at(-1) ?? null));
 
   // ---- 3. 成功するターン。途中と同じ uuid の発言が、完了の時刻と最終の本文に差し替わる（二重にならない）
   const sentBefore = Date.now();
@@ -140,6 +142,8 @@ try {
   ok("途中で落ちたターンもツールと本文が残る",
     afterExit?.messages?.length === 12 && afterExit.messages[10].text === "partial-exit" && reply(afterExit)?.toolCalls?.length === 1,
     JSON.stringify(afterExit?.messages?.map((m) => [m.role, m.text]) ?? null));
+  ok("完了前の異常終了は result と区別して控える", afterExit?.turnResults?.at(-1)?.source === "exit"
+    && afterExit.turnResults.at(-1).outcome === "error", JSON.stringify(afterExit?.turnResults?.at(-1) ?? null));
 
   // ---- 6. 控えの無い会話を再開した（別の起動で forget した・控えが無い）。途中・失敗の書き込みで作らない
   const ghost = "ghost-conversation";

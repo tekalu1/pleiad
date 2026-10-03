@@ -338,6 +338,15 @@ async function runTurn(text) {
   const slowly = /^delay(\d+)?/.exec(text);
   if (slowly) await new Promise((r) => setTimeout(r, Number(slowly[1] ?? 300)));
 
+  if (text === "error-body") {
+    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "本文は届いた" });
+    return send({ event: "result", result: {
+      conversation_id: conversationId, status: "ERROR", response: "本文は届いた", error: "結果は失敗",
+      duration_seconds: 0.1, num_turns: 1,
+      usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 },
+    } });
+  }
+
   if (text.startsWith("fail")) {
     return send({
       event: "result",

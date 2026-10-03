@@ -1717,6 +1717,8 @@ function makeEmit(turn) {
       if (event.outcome === "aborted") event = { ...event, reason: turn.abortReason ?? "user" };
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）
       if (event.outcome === "error" || event.outcome === 'limited') turn.errorShown = true;
+      if (turn.backend.id === 'antigravity' && (event.outcome === 'error' || event.outcome === 'limited') && !turn.failureReason)
+        turn.failureReason = { source: 'backend.turnResult', error: String(event.error ?? '').slice(0, 1000) };
       const execution = taskExecutions.get(turn.info.sessionId);
       if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; }
     }
@@ -4547,7 +4549,10 @@ async function runTurnInternal(args, onStarted, hooks) {
       if (hooks.compact && turn.compaction?.phase !== 'complete') emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
         reason: String(err?.message ?? err) });
       if (resolvedContext) { contextRecord.report.status = 'failed'; await saveContext().catch(() => {}); }
-      if (!turn.errorShown) emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
+      if (!turn.errorShown) {
+        if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'server.catch', error: String(err?.message ?? err).slice(0, 1000) };
+        emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
+      }
       // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
       // 送信待ちの「失敗」に戻し、利用者に再送か取り消しを選ばせる
       if ((err?.undelivered || !backendInvoked) && sessionId && args.messageId) {
@@ -4558,9 +4563,15 @@ async function runTurnInternal(args, onStarted, hooks) {
       // 渡らずに終わった `!` の行は、また「渡さない」を切り替えられる
       if (shellHandoff && !shellHanded) shellRuns.release(sessionId, shellHandoff);
       if (didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
-      await turn.visualizations.close().catch(err => emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) }));
+      await turn.visualizations.close().catch(err => {
+        if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };
+        emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) });
+      });
       await Promise.allSettled([runtimeContext?.close()]);
-      await saveContext().catch(() => { emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') }); });
+      await saveContext().catch(() => {
+        if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
+        emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') });
+      });
       // git の動き（ADR 0085）: ターンの終わりの撮影と、返答の下の 1 行の元。ファイル・コミット・ブランチ・PR のどれかが動いたときだけ会話に残す
       if (turn.gitSetup && didStart && turn.outcome !== 'requeue') {
         const summary = await Promise.race([
@@ -4601,6 +4612,12 @@ async function endTurn(turn, emit, { record = true } = {}) {
   if (limited) interrupted.notifyAtReset = notifyAtReset;
   if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id, sessionId: turn.info.sessionId })
     .catch(() => { console.error('  使用量を記録できませんでした'); });
+  if (turn.backend.id === 'antigravity' && turn.info.sessionId && (turn.outcome === 'error' || turn.outcome === 'limited')) {
+    const previous = (await store.get(turn.info.sessionId).catch(() => ({}))).antigravityFailures ?? [];
+    await store.setSessionData(turn.info.sessionId, 'antigravityFailures', [...previous, {
+      at: completedAt, outcome: turn.outcome, ...(turn.failureReason ?? { source: 'unknown', error: '' }),
+    }].slice(-16)).catch(err => console.error('  agy の失敗理由を記録できませんでした:', String(err?.message ?? err)));
+  }
   if (turn.info.sessionId) {
     await turn.setup?.catch(() => {});
     await turn.compactionWrite;

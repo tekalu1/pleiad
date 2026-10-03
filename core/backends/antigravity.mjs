@@ -269,6 +269,7 @@ export const backend = {
     const toolCalls = [];          // 控えに残すツール呼び出し
     let settle = null;
     let failed = null;
+    let resultTrace = null;        // 終了経路と生の status。本文や usage だけでは後から分からない
     let timedOut = false;          // agy が出力を打ち切った（下の onPrintTimeout）
     const started = new Map();     // tool.start を出した step -> { name, input }
     let closed = false;            // このターンを畳み終えた（settle 済み）
@@ -297,7 +298,8 @@ export const backend = {
       writes = writes.then(() => {
         queued = false;
         const messages = final?.messages ?? snapshot(Date.now());
-        return transcript.appendMessages(conversationId, { cwd, messages, create: final?.create ?? !resumed });
+        return transcript.appendMessages(conversationId, { cwd, messages, create: final?.create ?? !resumed,
+          ...(final?.turnResult ? { turnResult: final.turnResult } : {}) });
       }).catch((err) => console.error("  agy の控えを書けなかった:", String(err?.message ?? err)));
       return writes;
     };
@@ -311,7 +313,8 @@ export const backend = {
     const seal = ({ ok }) => {
       clearTimeout(textTimer);
       if (final || !delivered) return writes;
-      final = { messages: snapshot(Date.now()), create: ok || !resumed };
+      final = { messages: snapshot(Date.now()), create: ok || !resumed,
+        turnResult: resultTrace ? { sentAt, at: new Date().toISOString(), ...resultTrace } : null };
       return save({ last: true });
     };
 
@@ -462,6 +465,8 @@ export const backend = {
           const usage = usageFor(r.usage);
           if (usage) emit(usage);
           const outcome = turnResultFor(r);
+          resultTrace = { source: "result", status: String(r.status ?? "").slice(0, 100), outcome: outcome.outcome,
+            ...(r.error ? { error: String(r.error).slice(0, 1000) } : {}) };
           if (outcome.outcome === "error") failed = new Error(outcome.error);
           emit(outcome);
           return settle?.();
@@ -498,6 +503,7 @@ export const backend = {
       if (sawText) emit({ type: "text.end" });
       const message = t("antigravity.errors.printTimeout");
       failed = new Error(message);
+      resultTrace = { source: "printTimeout", status: null, outcome: "error", error: message };
       emit({ type: "turnResult", outcome: "error", error: message });
       // **裏で走り続ける agy を残さない。** 放っておくと Pleiad の見ていない所でファイルを
       // 書き換え、Google の枠も食い続ける。会話は `--conversation <id>` で拾い直せる
@@ -513,6 +519,7 @@ export const backend = {
       // ターンの途中で落ちた。中断（kill）なら abort 側が畳むので、ここでは失敗にしない
       if (signal?.signal?.aborted) return settle?.();
       failed = err;
+      resultTrace = { source: "exit", status: null, outcome: "error", error: String(err?.message ?? err).slice(0, 1000) };
       emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
       settle?.();
     };
@@ -522,6 +529,7 @@ export const backend = {
     // （来ないのが正しい。立て直しの die と取り違えないため）。ここで settle しないと
     // runTurn が返らず、server の実行中一覧から消えなくなる
     const abort = () => {
+      resultTrace ??= { source: "abort", status: null, outcome: "aborted" };
       session.kill();
       release(conversationId, session);
       settle?.();
@@ -530,7 +538,11 @@ export const backend = {
     else signal?.signal?.addEventListener?.("abort", abort, { once: true });
 
     const timer = setTimeout(() => {
-      if (!conversationId) { failed = new Error(t("antigravity.errors.startTimeout", { ms: START_TIMEOUT_MS })); abort(); settle?.(); }
+      if (!conversationId) {
+        failed = new Error(t("antigravity.errors.startTimeout", { ms: START_TIMEOUT_MS }));
+        resultTrace = { source: "startTimeout", status: null, outcome: "error", error: failed.message };
+        abort(); settle?.();
+      }
     }, START_TIMEOUT_MS);
     timer.unref?.();
 
@@ -554,6 +566,7 @@ export const backend = {
       // 終わりの分を書く（時刻は発言ごとに変える: ユーザーは送信時、AI は完了時。提示はこの間に入る）。
       // 失敗・中断・打ち切りでも、そこまでのツールと本文を残す（中断の印は sidecar の interrupted が持つ）
       const aborted = Boolean(signal?.signal?.aborted);
+      if (aborted) resultTrace ??= { source: "abort", status: null, outcome: "aborted" };
       await seal({ ok: !aborted && !failed });
 
       if (aborted) {
@@ -561,6 +574,11 @@ export const backend = {
         return { sessionId: conversationId };
       }
       if (failed) throw failed;
+    } catch (err) {
+      if (resultTrace?.outcome === "ok") resultTrace = { ...resultTrace, source: "postResultException", outcome: "error",
+        error: String(err?.message ?? err).slice(0, 1000) };
+      else resultTrace ??= { source: "exception", status: null, outcome: "error", error: String(err?.message ?? err).slice(0, 1000) };
+      throw err;
     } finally {
       clearTimeout(timer);
       // 途中で投げた（seal まで来なかった）ときも、そこまでの分を書いてから返す。
