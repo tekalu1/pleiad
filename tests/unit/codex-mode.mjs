@@ -1,6 +1,6 @@
 // ロード済み thread/resume が以前の設定を返しても、次の turn には選択を適用する。
 // 子プロセスも LLM も使わず、実バックエンドと状態を持つ RPC の境界を検証する。
-import { backend } from "../../core/backends/codex.mjs";
+import { backend, approvalTitle } from "../../core/backends/codex.mjs";
 import { rpc } from "../../core/backends/codex-rpc.mjs";
 
 export const name = "codex-mode";
@@ -14,6 +14,7 @@ export default async function (t) {
   let lastTurn;
   let lastThread;
   let asked = 0;
+  let lastAsk = null;
   const sandbox = { type: "workspaceWrite", writableRoots: [process.cwd()], networkAccess: false, excludeSlashTmp: true };
 
   rpc.attach = (_id, h) => { handlers = h; return () => {}; };
@@ -61,7 +62,7 @@ export default async function (t) {
     const result = await backend.runTurn({
       mode, sessionId, effort, cwd: process.cwd(), prompt,
       emit: (e) => events.push(e),
-      askPermission: async () => { asked++; return { allow: true }; },
+      askPermission: async (request) => { asked++; lastAsk = request; return { allow: true }; },
     });
     t.ok(`${mode}: ターンが完了`, events.some((e) => e.type === "turnResult" && e.outcome === "ok"));
     return { id: result.sessionId, approvals: asked - before, policy: threads.get(result.sessionId).approvalPolicy,
@@ -73,6 +74,15 @@ export default async function (t) {
       backend.modes().yolo?.label === "YOLO" && backend.modes().yolo.note.includes("全ファイル"));
     const initial = await run("ask");
     t.ok("ask: 確認あり", initial.approvals === 1 && initial.policy === "untrusted");
+    // E1-6: Codex の承認要求は title を運ばない（commandExecution は null）。承認カード・スレッドの承認の見出しが空にならないよう、コマンドの先頭で補う
+    t.ok("Codex の承認カードの見出し（title）は、要求が運ばなくてもコマンドの先頭で補う", lastAsk?.toolName === "commandExecution" && lastAsk.title === "echo test", JSON.stringify(lastAsk));
+    t.ok("approvalTitle: コマンドの 1 行目・長いものは切る・ファイルの変更は名前・理由・何も無ければ null",
+      approvalTitle("commandExecution", { command: "\n  npm test\nnode x" }) === "npm test"
+      && approvalTitle("commandExecution", { command: "a".repeat(200) }) === `${"a".repeat(80)}…`
+      && approvalTitle("fileChange", { files: ["a.txt", "b.txt"] }) === "a.txt, b.txt"
+      && approvalTitle("permissions", { reason: "ネットワークが要る" }) === "ネットワークが要る"
+      && approvalTitle("commandExecution", { command: "", reason: "理由" }) === "理由"
+      && approvalTitle("permissions", {}) === null && approvalTitle("commandExecution", undefined) === null);
     await run("ask", initial.id, "normal", "high");
     t.ok("再開ターンに effort を渡す", lastTurn.effort === "high");
     await run("ask", initial.id, "normal", "");

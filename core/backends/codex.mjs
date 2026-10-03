@@ -432,6 +432,21 @@ function subagentLabel(child) {
   return name ? t("codex.subagent.named", { name }) : t("codex.subagent.name");
 }
 
+/**
+ * 承認カード・通知の見出し（title）。Codex の承認要求は title を運ばない（commandExecution は null で来る。2026-10-03 の実機の確認）ので、
+ * 何を許すのかが見出しで読めるよう、入力の対象（コマンドの 1 行目・変更するファイル・理由）で補う。無ければ null
+ */
+export function approvalTitle(toolName, input) {
+  const oneLine = (v) => {
+    const text = (Array.isArray(v) ? v.join(' ') : String(v ?? '')).split(/\r?\n/).map((x) => x.trim()).find(Boolean) ?? '';
+    return text.length > 80 ? `${text.slice(0, 80)}…` : text;
+  };
+  const picked = toolName === 'commandExecution' ? oneLine(input?.command)
+    : toolName === 'fileChange' ? oneLine((input?.files ?? []).join(', '))
+    : '';
+  return picked || oneLine(input?.reason) || null;
+}
+
 // ------------------------------------------------ サブエージェント（一覧 UI）
 //
 // 実行中一覧（server の runningWork）に載せるための口。docs/multi-backend.md §2.6。
@@ -1580,7 +1595,7 @@ export const backend = {
         input,
         sessionId: threadId,
         toolUseID: params?.itemId ?? null,
-        title,
+        title: title ?? approvalTitle(toolName, input),
         signal: signal?.signal,
         canAlways: true,
         kind: "tool",
@@ -1636,14 +1651,15 @@ export const backend = {
           ...(hooks ? { hooks: hooks.config } : {}),
         },
         ...(compat ? { modelProvider: compat.modelProvider } : {}),
-        // bot の人格（core/bots/sessions.mjs の botInstructions）は並びの最後。変わると instructionsKey が変わり、ロード済みのスレッドを読み直す
-        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions || botInstructions) ? { developerInstructions: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n') } : {}),
+        // bot の人格（core/bots/sessions.mjs の botInstructions）はここに入れない。thread/resume は developerInstructions を渡し直しても、
+        // 最初のターンの指示が履歴に残っていて効かない（人格を直した会話に届かない。2026-10-03 の実機の確認）ので、毎ターンの turn/start の collaborationMode で渡す
+        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions) ? { developerInstructions: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions].filter(Boolean).join('\n\n') } : {}),
         approvalPolicy: m.approvalPolicy,
         sandbox: m.sandbox,
         ...(model ? { model } : {}),
       };
 
-      let effectiveSandbox;
+      let effectiveSandbox, effectiveModel;
       const providerKey = compat ? compat.modelProvider : 'default';
       // 指示と ply_computer の接続先。どちらかが変わったロード済みのスレッドは外して読み直す（resume は config の変更を黙って無視する）
       const instructionsKey = (common.developerInstructions ?? '') + (computerRuntime ? `\0${computerRuntime.url} ${computerRuntime.headers?.Authorization ?? ''}` : '')
@@ -1681,11 +1697,13 @@ export const backend = {
           throw new Error(t("codex.errors.stillOldEndpoint"));
         }
         effectiveSandbox = resumed?.sandbox;
+        effectiveModel = resumed?.model;
         if (!ephemeral) rolloutPath = rolloutPathOf(resumed);
         if (rpc === nativeRpc && !ephemeral) { loadedProvider.set(threadId, providerKey); loadedInstructions.set(threadId, instructionsKey); loadedHooks.set(threadId, hooksKey); }
       } else {
         const started = await rpc.request("thread/start", { ...common, ...(ephemeral ? { ephemeral: true } : {}) });
         effectiveSandbox = started?.sandbox;
+        effectiveModel = started?.model;
         if (!ephemeral) rolloutPath = rolloutPathOf(started);
         threadId = started?.thread?.id ?? null;
         if (!threadId) throw new Error(t("codex.errors.noThreadId", { method: "thread/start" }));
@@ -1739,6 +1757,9 @@ export const backend = {
         approvalPolicy: m.approvalPolicy,
         sandboxPolicy: sandboxForTurn(m, effectiveSandbox, botFolders ? botFolders.writableRoots ?? [] : null),
         ...(effectiveEffort ? { effort: effectiveEffort } : {}),
+        // bot の人格。毎ターン同じ文を渡す（Codex は前のターンと同じなら履歴に足さないので、キャッシュは保たれ、直したターンだけ新しい文が入る）。
+        // collaborationMode は model が必須で、model・effort は上と同じ値を渡す
+        ...(botInstructions && (model || effectiveModel) ? { collaborationMode: { mode: 'default', settings: { model: model || effectiveModel, reasoning_effort: effectiveEffort || null, developer_instructions: botInstructions } } } : {}),
         // 中断の後に Pleiad が添える文（core/interrupt-stops.mjs）は、人の発言とは別の入力にして前に置く（本文は書き換えない）
         input: [...notes, String(prompt ?? "")].map(text => ({ type: "text", text })),
       });
