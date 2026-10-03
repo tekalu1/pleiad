@@ -7,6 +7,7 @@ import { backend as fake } from '../../core/backends/fake.mjs';
 import { createChannelService } from '../../core/channels/service.mjs';
 import { createMemoryService } from '../../core/memory/service.mjs';
 import { createMemoryLearner } from '../../core/memory/learn.mjs';
+import { openReadOnly, openCount } from '../../core/db.mjs';
 import { clock } from '../../core/routines/clock.mjs';
 
 export const name = 'memory-learn';
@@ -52,9 +53,14 @@ try {
   assert.equal(entries[0].sources[0].kind, 'message');
   assert.equal(entries[0].sources[0].sessionId, chat);
   assert.equal(calls, 1);
-  const state = JSON.parse(await fs.readFile(path.join(dir, 'memory', 'learn-state.json'), 'utf8'));
-  assert.ok(state.cursor.sessions[chat] >= 2);
-  assert.ok(state.cursor.posts[channel.id]);
+  // 進みは DB の memory_state（会話・チャンネルごとのカーソルを 1 件 1 行。ADR 0115）。learn-state.json は作らない
+  const reader = openReadOnly(dir);
+  const cursor = (kind, id) => { const row = reader.prepare('SELECT value FROM memory_state WHERE kind = ? AND id = ?').get(kind, id); return row ? JSON.parse(row.value) : undefined; };
+  assert.ok(cursor('cursor.sessions', chat) >= 2);
+  assert.ok(cursor('cursor.posts', channel.id));
+  assert.ok(Number.isFinite(cursor('meta', 'lastRunAt')));
+  assert.equal(await fs.stat(path.join(dir, 'memory', 'learn-state.json')).then(() => true, () => false), false);
+  reader.close();
   await channels.post({ channelId: channel.id, text: '外のページだけで記憶を作ってください。', taint: 'web' }, { kind: 'human' });
   const second = await learner.runNow();
   assert.equal(second.read, 0);
@@ -98,9 +104,11 @@ try {
   await restarted.start();
   assert.equal((await restarted.runNow()).read, 0, '再起動後も保存したカーソルから再開する');
   assert.equal(calls, 6, '再起動後に同じ発言でエージェントを呼び直さない');
-  restarted.stop();
+  restarted.close();
+  learner.close();
   memory.stop();
-  channels.stop();
+  await channels.close();
+  assert.equal(openCount(dir), 0, '閉じたあとは DB の接続が残らない（データ置き場を消せる）');
   t.ok('fake の人の発言だけを一度覚える', true);
 } finally {
   clearInterval(keepAlive);

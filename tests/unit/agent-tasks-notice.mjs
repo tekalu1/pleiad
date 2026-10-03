@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
+import { readAgentTasks } from '../lib/data-store.mjs';
 import { canSteerNotice } from '../../core/completion-notices.mjs';
 
 export const name = 'agent-tasks-notice';
@@ -41,7 +42,7 @@ export default async function(t) {
       await until(() => manager.get(a.taskId).notification === 'read');
       parentReady = true; await sleep(1300);
       t.ok('受け取った結果の完了通知は、親が空いても送らない', delivered.length === 0 && manager.get(a.taskId).notification === 'read', JSON.stringify(delivered));
-      const saved = JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'));
+      const saved = readAgentTasks(dir);
       t.ok('read は保存される（再起動しても送らない）', saved[a.taskId].notification === 'read');
 
       // status でも同じ。offset が残っていても（長い結果の続きがあっても）受け取った時点で配達済み
@@ -85,7 +86,7 @@ export default async function(t) {
       t.ok('別の親の通知は混ぜない', delivered.find(x => x.ids.includes(other)).ids.length === 1);
       t.ok('まとめた 3 件とも sent', ids.every(id => manager.get(id).notification === 'sent'));
       // メモリの sent は保存より先に立つ（保存は rename のやり直しで遅れうる）。ファイルが sent になるまで待つ
-      const savedNow = async () => JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'));
+      const savedNow = async () => readAgentTasks(dir);
       await until(async () => { const f = await savedNow().catch(() => null); return f && ids.every(id => f[id]?.notification === 'sent'); });
       const saved = await savedNow();
       t.ok('まとめた分の送信済みは保存される', ids.every(id => saved[id].notification === 'sent'));

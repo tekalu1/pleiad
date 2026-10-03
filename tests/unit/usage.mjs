@@ -90,11 +90,13 @@ export default async function(t) {
 
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-usage-'));
   let server, client;
+  const stores = [];
   try {
     let at = Date.now(); const store = createUsageStore(dir, { now: () => at });
     await Promise.all([store.record({ id: 'a', backend: 'codex', inputTokens: 12 }), store.record({ id: 'b', backend: 'claude', costUsd: .5 })]);
     await store.record({ id: 'a', backend: 'codex', inputTokens: 99 });
     const restored = createUsageStore(dir, { now: () => at });
+    stores.push(store, restored);
     assert.equal((await restored.summary('codex')).fiveHour.inputTokens.value, 12);
     assert.equal((await restored.summary('codex')).fiveHour.costUsd.value, null);
     at += 6 * 3600000;
@@ -109,5 +111,5 @@ export default async function(t) {
     assert.equal(result.local.fiveHour.outputTokens.value, 5);
     assert.equal(result.local.fiveHour.costUsd.value, null);
     t.ok('再起動・期間境界・エージェント別集計とWebSocket経路を検証', true);
-  } finally { client?.close(); await server?.stop(); await fs.rm(dir, { recursive: true, force: true }); }
+  } finally { client?.close(); await server?.stop(); for (const s of stores) await s.close(); await fs.rm(dir, { recursive: true, force: true }); }
 }

@@ -3,14 +3,17 @@ import path from 'node:path';
 import os from 'node:os';
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
 import { writeAtomic } from '../../core/atomic-file.mjs';
+import { openData } from '../../core/data-schema.mjs';
+import { taskTable } from '../../core/db.mjs';
+import { readAgentTasks, writeAgentTasks } from '../lib/data-store.mjs';
 
 export const name = 'agent-tasks-storage';
-export const title = 'Pleiad 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・再起動後の pending の送り直し';
+export const title = 'Pleiad 委譲の保存障害: 書き込みのやり直し・閉じない・障害中の読み取り・再起動後の pending の送り直し・変わった行だけを書く';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function until(fn, ms = 8000) { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return; await sleep(20); } throw new Error('timeout'); }
-const read = async dir => JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'));
+const read = async dir => readAgentTasks(dir);
 
-// rename に失敗を差し込む。transient: 次の n 回だけ EPERM。broken: 直すまで毎回 EPERM（Get-Content が開いたままの状態）
+// 共通の土台（atomic-file）の rename に失敗を差し込む。transient: 次の n 回だけ EPERM。broken: 直すまで毎回 EPERM（Get-Content が開いたままの状態）
 function faultyIo() {
   const state = { transient: 0, broken: false, renames: 0, failures: 0 };
   const io = { ...fs, rename: async (from, to) => {
@@ -25,12 +28,33 @@ function faultyIo() {
   return { io, state };
 }
 
+// 保存（SQLite の書き込み）に失敗を差し込む。transient: 次の n 回だけ失敗。broken: 直すまで毎回失敗（ディスクが一杯・ロックされたまま）
+function faultyStorage(dir) {
+  const handle = openData(dir);
+  const rows = taskTable(handle.db);
+  const state = { transient: 0, broken: false, saves: 0, failures: 0, written: [] };
+  const taskStorage = {
+    loadRows: () => rows.loadRows(),
+    save: list => {
+      state.saves++;
+      if (state.broken || state.transient > 0) {
+        if (state.transient > 0) state.transient--;
+        state.failures++;
+        throw Object.assign(new Error('database is locked'), { code: 'ERR_SQLITE_ERROR', errno: 5, syscall: 'write' });
+      }
+      state.written.push(list.map(([id]) => id));
+      rows.save(list);
+    },
+  };
+  return { taskStorage, state, close: () => handle.release() };
+}
+
 export default async function(t) {
   const dirs = [];
   const tmp = async () => { const d = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-tasks-storage-')); dirs.push(d); return d; };
-  const managers = [];
+  const managers = [], closers = [];
   try {
-    // ---- 共通の土台（atomic-file）
+    // ---- 共通の土台（atomic-file。設定などの小さな JSON ファイルの保存がまだ通る）
     {
       const dir = await tmp(), file = path.join(dir, 'x.json');
       const { io, state } = faultyIo();
@@ -51,30 +75,31 @@ export default async function(t) {
     // ---- 一時的な EPERM の後に保存が回復し、実行・配送の回数が増えない
     {
       const dir = await tmp();
-      const { io, state } = faultyIo();
+      const { taskStorage, state, close } = faultyStorage(dir);
+      closers.push(close);
       let runs = 0; const delivered = [];
-      const m = await createAgentTasks({ dataDir: dir, io, log: () => {},
+      const m = await createAgentTasks({ dataDir: dir, taskStorage, log: () => {}, retryMax: 50,
         prepare: async () => ({ sessionId: `c-${Math.random()}`, backend: 'codex' }),
         execute: async (_r, prompt) => { runs++; state.transient = 2; return { outcome: 'ok', text: prompt }; },
         deliver: async tasks => { delivered.push(...tasks.map(r => r.taskId)); return 'ok'; } });
       managers.push(m);
-      state.transient = 2;
       const job = await m.call('p', 'ply_delegate', { backend: 'codex', task: 'hello' });
-      await until(() => m.get(job.taskId).notification === 'sent');
-      await sleep(600);
+      await until(() => m.get(job.taskId).notification === 'sent' && m.fault === null);
+      await sleep(300);
       const saved = await read(dir);
-      t.ok('一時的な rename の EPERM の後に保存が回復する（manager は閉じず、障害も残らない）',
-        m.fault === null && state.failures === 4 && saved[job.taskId].status === 'completed' && saved[job.taskId].notification === 'sent');
+      t.ok('一時的な書き込みの失敗の後に保存が回復する（manager は閉じず、障害も残らない）',
+        m.fault === null && state.failures >= 2 && saved[job.taskId].status === 'completed' && saved[job.taskId].notification === 'sent');
       t.ok('やり直しで子の実行回数・通知の配送回数が増えない', runs === 1 && delivered.length === 1);
     }
 
     // ---- 続く保存障害: 閉じない・読み取りは答える・新しい仕事は断る・止めることはできる・直ったら続きを配る
     {
       const dir = await tmp();
-      const { io, state } = faultyIo();
+      const { taskStorage, state, close } = faultyStorage(dir);
+      closers.push(close);
       const logs = [];
       let runs = 0, prepared = 0, releaseA; const delivered = [];
-      const m = await createAgentTasks({ dataDir: dir, io, log: line => logs.push(line), renameDelays: [1, 1], retryMax: 200,
+      const m = await createAgentTasks({ dataDir: dir, taskStorage, log: line => logs.push(line), retryMax: 200,
         prepare: async (owner, a) => ({ sessionId: `child-${++prepared}`, backend: a.backend }),
         execute: async (_r, prompt, signal) => {
           runs++;
@@ -92,20 +117,20 @@ export default async function(t) {
       releaseA();
       await until(() => m.get(a.taskId).status === 'completed' && m.get(a.taskId).notification === 'pending' && m.fault);
       const fault = m.fault;
-      t.ok('保存に失敗しても manager を閉じない（障害として持つ）', fault?.code === 'EPERM' && fault.syscall === 'rename' && typeof fault.since === 'number');
+      t.ok('保存に失敗しても manager を閉じない（障害として持つ）', fault?.code === 'ERR_SQLITE_ERROR' && fault.syscall === 'write' && typeof fault.since === 'number');
       const listB = await m.call('parent-b', 'ply_task_list', {}, undefined, 'ja');
       const statusB = await m.call('parent-b', 'ply_task_status', { taskId: b.taskId }, undefined, 'en');
       t.ok('障害中も別の親の list・status が返り、障害中である旨を添える',
-        listB.tasks.length === 1 && listB.tasks[0].taskId === b.taskId && listB.storageFault?.code === 'EPERM' && /EPERM/.test(listB.storageFault.error)
+        listB.tasks.length === 1 && listB.tasks[0].taskId === b.taskId && listB.storageFault?.code === 'ERR_SQLITE_ERROR' && /ERR_SQLITE_ERROR/.test(listB.storageFault.error)
         && statusB.status === 'running' && /cannot be saved/.test(statusB.storageFault?.error ?? ''), `${listB.tasks.length} / ${statusB.status} / ${listB.storageFault?.code}`);
       // ply_task_status / ply_task_wait で結果を受け取ると通知は送らない（read。tests/unit/agent-tasks-notice.mjs）。ここは通知を残したいので受け取らずに読む
       const listA = await m.call('parent-a', 'ply_task_list', {});
       t.ok('障害中も自分の子の状態と結果はメモリから読める', listA.tasks.find(x => x.taskId === a.taskId)?.status === 'completed' && m.get(a.taskId).result === 'RESULT-BODY-SECRET-PROMPT-A');
       const denied = await m.call('stranger', 'ply_task_status', { taskId: a.taskId }).then(() => null, e => e.message);
-      t.ok('障害中も所有権の制限は変わらない', typeof denied === 'string' && !/EPERM/.test(denied));
+      t.ok('障害中も所有権の制限は変わらない', typeof denied === 'string' && !/ERR_SQLITE_ERROR/.test(denied));
       const before = prepared;
       const refused = await m.call('parent-b', 'ply_delegate', { backend: 'codex', task: 'new work' }, undefined, 'ja').then(() => null, e => e.message);
-      t.ok('保存できない間は新しい委譲を理由付きで断り、子の会話も作らない', /保存できない/.test(refused ?? '') && /EPERM/.test(refused) && prepared === before && m.list().length === 2);
+      t.ok('保存できない間は新しい委譲を理由付きで断り、子の会話も作らない', /保存できない/.test(refused ?? '') && /ERR_SQLITE_ERROR/.test(refused) && prepared === before && m.list().length === 2);
       const sendRefused = await m.call('parent-a', 'ply_task_send', { taskId: a.taskId, message: 'more' }).then(() => null, e => e.message);
       t.ok('保存できない間は追加の指示も断り、積まない', typeof sendRefused === 'string' && m.get(a.taskId).pendingMessages === 0 && m.get(a.taskId).status === 'completed');
       await m.cancel(b.taskId);
@@ -115,7 +140,7 @@ export default async function(t) {
       t.ok('障害の間は完了通知を配らない', delivered.length === 0);
       const joined = logs.join('\n');
       t.ok('元の例外（errno・操作・タスク ID・時刻）を記録に残す',
-        /"code":"EPERM"/.test(joined) && /"errno":-4048/.test(joined) && /"syscall":"rename"/.test(joined) && /"operation":"run\.result"/.test(joined) && joined.includes(a.taskId) && /"at":"\d{4}-/.test(joined));
+        /"code":"ERR_SQLITE_ERROR"/.test(joined) && /"errno":5/.test(joined) && /"syscall":"write"/.test(joined) && /"operation":"run\.result"/.test(joined) && joined.includes(a.taskId) && /"at":"\d{4}-/.test(joined));
       t.ok('記録に依頼文・結果・パスを入れない', !/SECRET-PROMPT|RESULT-BODY/.test(joined) && !joined.includes(dir) && !joined.includes('agent-tasks.json'));
       const errorsLog = await fs.readFile(path.join(dir, 'agent-tasks-errors.log'), 'utf8').catch(() => '');
       t.ok('記録はデータ置き場の agent-tasks-errors.log にも残る', /"event":"saveFailed"/.test(errorsLog) && !/SECRET-PROMPT|RESULT-BODY/.test(errorsLog));
@@ -135,9 +160,10 @@ export default async function(t) {
     // ---- 親が忙しい間の保存: ready が偽なら書かない。deliver の requeue はメモリだけで pending に戻す
     {
       const dir = await tmp();
-      const { io, state } = faultyIo();
+      const { taskStorage, state, close } = faultyStorage(dir);
+      closers.push(close);
       let open = false, busyDeliver = true; const delivered = [];
-      const m = await createAgentTasks({ dataDir: dir, io, log: () => {},
+      const m = await createAgentTasks({ dataDir: dir, taskStorage, log: () => {},
         prepare: async (_o, a) => ({ sessionId: `busy-${Math.random()}`, backend: a.backend }),
         execute: async (_r, prompt) => ({ outcome: 'ok', text: prompt }),
         ready: async () => open,
@@ -146,16 +172,16 @@ export default async function(t) {
       const job = await m.call('p', 'ply_delegate', { backend: 'codex', task: 'x' });
       await until(() => m.get(job.taskId).notification === 'pending');
       await sleep(100);
-      const w0 = state.renames;
+      const w0 = state.saves;
       await sleep(1200);
-      t.ok('親が受け取れない間は通知の状態を書かない（ファイルも pending のまま）', state.renames === w0 && (await read(dir))[job.taskId].notification === 'pending');
+      t.ok('親が受け取れない間は通知の状態を書かない（ファイルも pending のまま）', state.saves === w0 && (await read(dir))[job.taskId].notification === 'pending');
       open = true;
-      await until(() => state.renames > w0);
+      await until(() => state.saves > w0);
       await sleep(100);
-      const w1 = state.renames;
+      const w1 = state.saves;
       await sleep(1200);
       t.ok('deliver が requeue を返すだけの間は delivering→pending をファイルに書かない',
-        state.renames === w1 && w1 === w0 + 1 && m.get(job.taskId).notification !== 'sent' && (await read(dir))[job.taskId].notification === 'delivering');
+        state.saves === w1 && w1 === w0 + 1 && m.get(job.taskId).notification !== 'sent' && (await read(dir))[job.taskId].notification === 'delivering');
       busyDeliver = false;
       await until(() => m.get(job.taskId).notification === 'sent');
       await sleep(600);
@@ -167,8 +193,8 @@ export default async function(t) {
       const dir = await tmp();
       const row = (id, notification) => ({ taskId: id, sessionId: `s-${id}`, parentSessionId: 'p', manager: 'ply', backend: 'codex', depth: 1, task: 't', title: 't',
         createdAt: 1, updatedAt: 1, status: 'completed', notification, result: `r-${id}`, error: null, queue: [] });
-      await fs.writeFile(path.join(dir, 'agent-tasks.json'), JSON.stringify({ pend: row('pend', 'pending'), dlv: row('dlv', 'delivering'), sent: row('sent', 'sent'),
-        run: { ...row('run', 'none'), status: 'running', queue: ['next'] } }));
+      writeAgentTasks(dir, { pend: row('pend', 'pending'), dlv: row('dlv', 'delivering'), sent: row('sent', 'sent'),
+        run: { ...row('run', 'none'), status: 'running', queue: ['next'] } });
       let runs = 0; const delivered = [];
       const m = await createAgentTasks({ dataDir: dir, log: () => {},
         prepare: async () => { throw new Error('unused'); },
@@ -185,6 +211,7 @@ export default async function(t) {
     }
   } finally {
     for (const m of managers) await m.close();
+    for (const close of closers) close();
     for (const d of dirs) await fs.rm(d, { recursive: true, force: true });
   }
 }

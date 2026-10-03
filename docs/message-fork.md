@@ -125,7 +125,7 @@ JSONL は消さずに追記され、`getSessionMessages` は最新の葉の鎖�
 
 ## 保存と引き継ぎ
 
-`conversations.json` の索引に子レコード1件（ホストID、backend、親IDと分岐点、タイトル、状態、cwd、
+会話の索引（DB の `conversations`）に子レコード1件（ホストID、backend、親IDと分岐点、タイトル、状態、cwd、
 作成・更新時刻）、`conversations/<子のID>.json` に完全なメッセージと提示を保存する（→ [backend-handoff.md](backend-handoff.md)）。
 どちらも一時ファイルの rename 成功後に一覧へ公開する。
 子作成に sidecar の複数書き込みは必要ない。子の実行区間は一覧に重複して出さない。

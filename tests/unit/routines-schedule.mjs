@@ -55,6 +55,7 @@ function manualClock(start) {
 
 export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'routines-schedule-'));
+  const channelServices = [];   // 後片付けで DB の接続（スレッドの状態）を離す
   let n = 0;
   try {
     /** 1 つの世界: 本物のチャンネル・ルーティンのサービス、身代わりの bot・会話・dispatch */
@@ -72,6 +73,7 @@ export default async function (t) {
         async createSession(args) { const sessionId = `sess-${bots.sessions.length + 1}`; bots.sessions.push({ sessionId, ...args }); return { sessionId, backend: 'fake', model: 'm', effort: 'e', cwd: '/', mode: botList.find((b) => b.id === args.botId)?.mode ?? 'default' }; },
       };
       const channels = createChannelService({ dir: path.join(dataDir, 'channels'), emit: (e) => events.push(e), hooks: {}, listBots: async () => botList });
+      channelServices.push(channels);
       await channels.start();
       const hostSessions = {};
       const host = {
@@ -495,6 +497,7 @@ export default async function (t) {
       w.service.stop();
     }
   } finally {
+    for (const channels of channelServices) await channels.close();
     await fs.rm(tmp, { recursive: true, force: true });
   }
 }

@@ -1,6 +1,6 @@
 // 保存される文言を今の画面の言語で出す（docs/design.md「多言語対応」）。
 //
-// 変更履歴の理由（reason）・添付の見出し（caption）は sessions.json・presents/*.jsonl に残る。
+// 変更履歴の理由（reason）・添付の見出し（caption）は会話の記録（pleiad.db）・presents/*.jsonl に残る。
 // 新しい記録は日本語の文（reason / caption。過去の記録・古い画面と互換）に加えて、
 // キーと差し込み値（reasonKey + reasonParams / captionKey + captionParams）を持つ（core/server.mjs の savedReason・presentAttachments）。
 // キーがあれば辞書（ui の saved）で今の言語に訳し、無い過去の記録（と辞書に無いキー）は保存された文のまま出す。

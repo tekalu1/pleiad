@@ -84,7 +84,7 @@ export function runHostShell({ command, cwd, timeoutMs, signal, onOutput = () =>
 
 /**
  * エージェントへ渡す 2 行（Claude の CLI の `!` と同じ形。core/system-messages.mjs が同じ形で読む）。
- * 終了コードは CLI の形に入らないので、ここにも入れない（sessions.json の shellExits に控える）
+ * 終了コードは CLI の形に入らないので、ここにも入れない（会話の記録の shellExits に控える）
  */
 export function shellLines({ command, stdout, stderr }) {
   return [

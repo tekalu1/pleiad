@@ -4,7 +4,7 @@
 
 Pleiad は共通の web/core を Electron に同梱する。利用者による Node.js・サーバーの起動は不要。
 Windows は NSIS（x64/ARM64）、macOS は DMG/ZIP（Intel/Apple Silicon）。
-開発は Node.js 20.19.0 以上で `npm ci` → `npm run desktop`。
+開発は Node.js 22.13.0 以上で `npm ci` → `npm run desktop`。
 `npm run desktop:pack` は実行可能なディレクトリ、`npm run desktop:dist` はインストーラーを生成する。
 Windows で x64 だけ生成する場合は `npm run desktop:dist -- --win --x64 --publish never`。
 macOS の配布物は macOS 上で生成する。`.github/workflows/desktop.yml` は手動実行の両OSパッケージ生成。

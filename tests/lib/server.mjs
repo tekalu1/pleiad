@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertNotGuarded } from "../../core/test-guard.mjs";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -26,6 +27,8 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
   // 負荷で起動直後の読み取りが遅れると、テストが投稿した直後や runTurn の最中にその会話が走り、その session イベントを
   // ws-client.runTurn が自分の会話と取り違える（会話が control-info の返事でなく {"memories":[]} になる）。テストの server は止めておく。
   // 確かめるテストは prefs.json に memoryLearnPaused: false を置いてから起動する
+  // 本物のデータ置き場（PLEIAD_TEST_GUARD_HOME。tests/lib/test-env.mjs）には、prefs.json を置くことも、サーバーを立てることもしない
+  if (dataDir) assertNotGuarded(dataDir, "start a test server on", { ...process.env, ...env });
   if (dataDir) {
     const file = path.join(dataDir, "prefs.json");
     let prefs = {};

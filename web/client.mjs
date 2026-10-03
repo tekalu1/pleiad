@@ -6513,7 +6513,7 @@ function rowMenu(s, x, y, lead = []) {
   rowAccountItems(s).then(value => { accounts = value; repaint(); });
 }
 
-/** 脇の会話の行の「変更の記録」。sessions.json の history を、時刻・誰が・前 → 後・理由で並べる面を開く */
+/** 脇の会話の行の「変更の記録」。会話の記録の history を、時刻・誰が・前 → 後・理由で並べる面を開く */
 async function showChangeLog(s) {
   try {
     const { changes } = await cmd("sessionChanges", { sessionId: s.id });

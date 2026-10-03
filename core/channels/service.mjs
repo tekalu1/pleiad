@@ -1,5 +1,5 @@
 // チャンネルの保存と操作（S1。ADR 0108）。core/ops/channels.mjs の handler は `ctx.channels` としてこれを呼ぶ。
-// 形の正本は core/channels/types.mjs。保存は store.mjs（index.json・<channelId>.jsonl）と threads.mjs（threads.json）。
+// 形の正本は core/channels/types.mjs。保存は store.mjs（index.json・<channelId>.jsonl）と threads.mjs（SQLite の channel_threads。ADR 0115）。
 //
 // createChannelService({ dir, emit, hooks, now, listBots }) → ChannelService
 //   dir      … <data>/channels
@@ -13,7 +13,7 @@
 //   listBots … async () => Bot[]。@ の解析（mentions.mjs）が名前を突き合わせるのに使う。無ければ bot の @ は解かない（'you' だけ）
 //
 // ChannelService（author は types.mjs の Author。操作の主体から ops が決めて渡す）:
-//   start(): Promise<void>・stop(): void
+//   start(): Promise<void>・stop(): void・close(): Promise<void>（stop と、スレッドの状態の DB の接続の解放）
 //   list(): Promise<(Channel & { unread: number, mentions: number, threadsWorking: number })[]>   … archived も含む（archivedAt で見分ける）。
 //        unread = 既読の後の、人以外の発言者の投稿。mentions = そのうち `@あなた` を含むもの。threadsWorking = state が working のスレッドの数
 //   get({ channelId }): Promise<Channel>
@@ -193,6 +193,8 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     dir, emit, hooks, now,
     async start() { await store.channels(); await threadStore.load(); },
     stop() { for (const timer of timers) clearTimeout(timer); timers.clear(); edits.clear(); },
+    /** stop に加えて、スレッドの状態の DB の接続を離す（データ置き場を消す前。テストの後片付け用） */
+    async close() { this.stop(); await threadStore.close(); },
 
     async list() {
       const [channels, reads, threads] = await Promise.all([store.channels(), store.allReadStates(), threadStore.list()]);

@@ -137,15 +137,15 @@ export default async function(t) {
     assert(Array.isArray(directory.tree));
     const outsideDir=await (await fetch(url(scratch),auth)).json(); assert.equal(outsideDir.kind,'directory');
     assert(!outsideDir.items.some(item => item.name === 'data'));
-    assert(!JSON.stringify(outsideDir.tree).includes('sessions.json'));
+    assert(!JSON.stringify(outsideDir.tree).includes('pleiad.db'));
     const outside=await (await fetch(url(path.join(scratch,'secret.txt')),auth)).json(); assert.equal(outside.text,'private');
     await fs.symlink(scratch,path.join(one,'escape'),process.platform==='win32'?'junction':'dir');
     const symlink=await (await fetch(url(path.join(one,'escape/secret.txt')),auth)).json(); assert.equal(symlink.text,'private');
     const based=await (await fetch(url('secret.txt',{base:path.join(scratch,'secret.txt')}),auth)).json(); assert.equal(based.text,'private');
-    for (const target of [data, path.join(data,'sessions.json'), path.join(one,'escape/data/sessions.json')]) {
+    for (const target of [data, path.join(data,'pleiad.db'), path.join(one,'escape/data/pleiad.db')]) {
       const denied=await (await fetch(url(target),auth)).json(); assert.equal(denied.error.code,'protected-data');
     }
-    const deniedBase=await (await fetch(url('secret.txt',{base:path.join(data,'sessions.json')}),auth)).json(); assert.equal(deniedBase.error.code,'protected-data');
+    const deniedBase=await (await fetch(url('secret.txt',{base:path.join(data,'pleiad.db')}),auth)).json(); assert.equal(deniedBase.error.code,'protected-data');
     const upload=path.join(data,'uploads','attachment.txt');
     await fs.mkdir(path.dirname(upload),{recursive:true}); await fs.writeFile(upload,'attachment');
     const attachment=await (await fetch(url(upload),auth)).json(); assert.equal(attachment.text,'attachment');

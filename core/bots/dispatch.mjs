@@ -64,7 +64,7 @@ export function progressBody(rec) {
 const RETRY_MS = 3000;
 /** 始められなかったターンの後に、たまった出来事を配り直す回数（失敗が続くなら止める。次の @ でまとめて渡る） */
 const START_RETRIES = 3;
-/** スレッドのトークンの足し算を書く間隔（ms）。threads.json の全体書き込みと全接続への配信を毎秒にしない。ターンの終わりには必ず書く */
+/** スレッドのトークンの足し算を書く間隔（ms）。スレッドの状態の書き込みと全接続への配信を毎秒にしない。ターンの終わりには必ず書く */
 export const CREDIT_INTERVAL_MS = 5000;
 const PRESENT_MAX = 8;
 const PRESENT_BYTES = 1_000_000;
@@ -652,7 +652,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
     if (!rec.dirty || rec.ended || !rec.postId) return;
     rec.dirty = false;
     rec.lastFlush = now();
-    // トークンの足し算は間引く（足すたびに threads.json 全体を書き直し、全接続へ配る）。ターンの終わり（onTurnEnd）には必ず足す
+    // トークンの足し算は間引く（足すたびにスレッドの行を書き直し、全接続へ配る）。ターンの終わり（onTurnEnd）には必ず足す
     if (now() - (rec.lastCredit ?? 0) >= CREDIT_INTERVAL_MS) { rec.lastCredit = now(); await credit(rec); }
     // 出していた独り言を引っ込めたら、投稿は「…」に戻す（本文を持たないまま、前の本文が残らないように）
     const body = progressBody(rec) || (rec.lastWritten !== PLACEHOLDER ? PLACEHOLDER : '');

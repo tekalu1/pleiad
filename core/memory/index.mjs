@@ -1,5 +1,5 @@
 // 記憶の索引（派生。ADR 0110）。node:sqlite の FTS5（tokenize='trigram'）で候補を引き、順位づけは JS で行う。
-// node:sqlite は Node 22.5 以降（package.json の engines は >=20.19.0）なので、読み込めない・FTS5 の trigram が無い・ファイルが壊れた
+// node:sqlite は Node 22.13 以降（package.json の engines。ADR 0115）で使える。それでも読み込めない・FTS5 の trigram が無い・ファイルが壊れた
 // ときは、メモリ上の走査に切り替える（件数は数百〜数千。ADR 0080 と同じ作り）。どちらの道でも候補は同じ集合になり、
 // 最後の絞り込みと順位づけは同じ JS の関数を通るので、結果は同じになる。壊れた索引ファイルは捨てて markdown から作り直す。
 //
@@ -10,11 +10,12 @@
 //   mode(): 'sqlite' | 'scan' | 'unknown'        … 今どちらの道か（テスト・診断用）
 //   close() }
 import fs from 'node:fs/promises';
+import { loadSqlite as loadSqliteQuietly } from '../db.mjs';
 
-/** 既定の読み込み。AGENT_HOST_MEMORY_NO_SQLITE=1 で、読み込めない状態を作れる（Node 20.19 相当の確認用） */
+/** 既定の読み込み（node:sqlite の ExperimentalWarning は、core/db.mjs の loadSqlite が読み込みの間だけ捨てる）。AGENT_HOST_MEMORY_NO_SQLITE=1 で、読み込めない状態を作れる（フォールバックの確認用） */
 const defaultLoadSqlite = async () => {
   if (process.env.AGENT_HOST_MEMORY_NO_SQLITE) throw new Error('node:sqlite disabled by AGENT_HOST_MEMORY_NO_SQLITE');
-  return import('node:sqlite');
+  return loadSqliteQuietly();
 };
 
 /** 照合用の正規化: NFKC・小文字 */

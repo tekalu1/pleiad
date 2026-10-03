@@ -6,6 +6,7 @@ import { normalizeSdkMessage } from '../../core/backends/claude-normalize.mjs';
 import { commandActivity } from '../../core/backends/codex-background.mjs';
 import { normalizePlyInstructions, turnInstructions, withAdded } from '../../core/ply-instructions.mjs';
 import { agentT } from '../../core/i18n.mjs';
+import { readAgentTasks } from '../lib/data-store.mjs';
 
 export const name = 'task-command-notice';
 export const title = 'コマンドの時計・実際の終了・承認待ち・通知の配送・子だけの実行指示';
@@ -58,7 +59,7 @@ export default async function(t) {
       && status.activeCommands[0].observedAt === 0 && status.activeCommands[0].startedAt === null
       && !status.activeCommands[0].startKnown && list.tasks[0].activeCommands[1].elapsedMinutes === 29);
     t.ok('通知・保存・公開値は秘密値を伏せる', !JSON.stringify([f.notices, status, list]).includes('private')
-      && !(await fs.readFile(path.join(f.dir, 'agent-tasks.json'), 'utf8')).includes('private')
+      && !JSON.stringify(readAgentTasks(f.dir)).includes('private')
       && !JSON.stringify(status).includes('another-secret'));
     for (const lang of ['en', 'ja']) {
       const text = agentT(lang, 'delegation.commandNotice', { taskId: f.task.taskId, noticeId: 'command-a', title: 'Build', command: 'npm test', minutes: 5 });

@@ -13,6 +13,7 @@ import { checkSources } from '../../core/memory/guard.mjs';
 import { registry } from '../../core/ops/index.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
+import { readSessions } from '../lib/data-store.mjs';
 
 export const name = 'webhook';
 export const title = 'webhook: 署名・時刻・再送・256KB・毎分30回・202・秘密・taint・relay';
@@ -137,7 +138,7 @@ export default async function (t) {
     const reply = thread.posts.find((p) => p.author.kind === 'bot');
     t.ok('実行の根とbotの最終投稿がtaint:webhook', root.taint === 'webhook' && reply?.taint === 'webhook');
     t.ok('本文全体はroutine.payloadに保持される', root.routine.payload.includes(payload));
-    const meta = JSON.parse(await fs.readFile(path.join(dir, 'app', 'sessions.json'), 'utf8'));
+    const meta = readSessions(path.join(dir, 'app'));
     t.ok('実行の会話にもtaintを保持する', JSON.stringify(meta).includes('"taint":"webhook"') || JSON.stringify(meta).includes('"taint": "webhook"'));
     const sb = { botId: bot.id, channelId: channel.id, threadId: root.id, taint: 'webhook' };
     let written;

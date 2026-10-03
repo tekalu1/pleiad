@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
+import { writeAgentTasks } from '../lib/data-store.mjs';
 
 export const name = 'server-abort';
 export const title = '中断は委譲タスクの数によらず先に効き、受け付けたことをすぐ知らせる';
@@ -27,7 +28,7 @@ export default async function (t) {
         task: `t${i}`, createdAt: now, updatedAt: now, status: 'completed', notification: i % 2 ? 'suppressed' : 'sent',
         result: 'done', error: null, queue: [] };
     }
-    await fs.writeFile(path.join(dataDir, 'agent-tasks.json'), JSON.stringify(records));
+    writeAgentTasks(dataDir, records);
     server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir });
     c = await open(server);
 

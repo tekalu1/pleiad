@@ -7,6 +7,7 @@ import { createChannelStore, foldLines, foldOp } from '../../core/channels/store
 import { createThreadStore } from '../../core/channels/threads.mjs';
 import { ChannelError, createChannelService, isSingleEmoji, normalizeChannelName } from '../../core/channels/service.mjs';
 import { newId } from '../../core/channels/types.mjs';
+import { openReadOnly, openRaw, dbPath } from '../../core/db.mjs';
 
 export const name = 'channels-store';
 export const title = 'チャンネルの保存: index.json・.jsonl の追記と畳み込み・壊れた行・既読・threads.json・投稿とリアクションと出来事';
@@ -18,6 +19,8 @@ const exists = (p) => fs.stat(p).then(() => true, () => false);
 
 export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'channels-store-'));
+  const services = [], threadStores = [];
+  const makeService = (name, options) => { const service = createChannelService({ dir: path.join(tmp, name, 'channels'), ...options }); services.push(service); return service; };
   try {
     // ---- 畳み込み（純粋）
     const post = (id, over = {}) => ({ op: 'post', post: { id, channelId: 'c_a', threadId: null, author: HUMAN, text: `本文 ${id}`, mentions: [], at: 1000, reactions: {}, ...over } });
@@ -104,9 +107,10 @@ export default async function (t) {
     await fs.writeFile(path.join(dirB, 'index.json'), JSON.stringify({ version: 2, channels: [] }));
     t.ok('知らない版は読み込まない', (await createChannelStore({ dir: dirB }).channels().then(() => 'ok', (e) => e.message)).includes('version 2'));
 
-    // ---- ThreadStore（threads.json）
-    const dirT = path.join(tmp, 't');
+    // ---- ThreadStore（SQLite の channel_threads。ADR 0115）
+    const dirT = path.join(tmp, 't', 'channels');
     const threads = createThreadStore({ dir: dirT, now: () => 777 });
+    threadStores.push(threads);
     t.ok('無いスレッドは null・一覧は空', (await threads.get('c_a', 'p_1')) === null && (await threads.list()).length === 0);
     const th1 = await threads.update('c_a', 'p_1', { sessions: { b_owl: 's_1' }, state: 'working', calls: 1 });
     t.ok('update は空の状態から作り、欄を重ねる（sessions は bot ごと）', th1.state === 'working' && th1.sessions.b_owl === 's_1' && th1.calls === 1 && th1.updatedAt === 777 && th1.stopped === null && th1.tokens.input === 0);
@@ -123,17 +127,28 @@ export default async function (t) {
     await threads.update('c_b', 'p_9', { state: 'waiting' });
     await threads.update('c_a', 'p_child', { state: 'idle' });
     const reThreads = createThreadStore({ dir: dirT });
+    threadStores.push(reThreads);
     t.ok('開き直しても残り、channelId で絞れる', (await reThreads.list()).length === 3 && (await reThreads.list('c_b')).length === 1 && (await reThreads.get('c_b', 'p_9')).state === 'waiting');
-    t.ok('threads.json は version: 1', JSON.parse(await fs.readFile(path.join(dirT, 'threads.json'), 'utf8')).version === 1);
-    await fs.writeFile(path.join(dirT, 'threads.json'), '[]');
-    t.ok('読めない threads.json は投げて、上書きしない', (await createThreadStore({ dir: dirT }).update('c_a', 'p_1', { calls: 1 }).then(() => 'ok', () => 'rejected')) === 'rejected' && (await fs.readFile(path.join(dirT, 'threads.json'), 'utf8')) === '[]');
+    const rowReader = openReadOnly(path.join(tmp, 't'));
+    try {
+      const rows = rowReader.prepare('SELECT thread_key, channel_id FROM channel_threads ORDER BY thread_key').all();
+      t.ok('スレッドの状態は DB の 1 スレッド 1 行（threads.json は作らない）', rows.length === 3 && rows.every(row => row.thread_key.startsWith(`${row.channel_id}/`)) && !(await fs.stat(path.join(dirT, 'threads.json')).then(() => true, () => false)));
+    } finally { rowReader.close(); }
+    const failingTable = createThreadStore({ dir: path.join(tmp, 'blocked', 'channels') });
+    threadStores.push(failingTable);
+    await failingTable.update('c_z', 'p_1', { state: 'working' });
+    const blocker = openRaw(dbPath(path.join(tmp, 'blocked')));
+    blocker.exec('BEGIN IMMEDIATE');
+    const refused = await failingTable.update('c_z', 'p_1', { state: 'idle' }).then(() => 'ok', () => 'rejected');
+    blocker.exec('ROLLBACK'); blocker.close();
+    t.ok('DB に書けなければ投げ、メモリのスレッドの状態は書く前のまま（DB を先に書く）', refused === 'rejected' && (await failingTable.get('c_z', 'p_1')).state === 'working');
 
     // ---- サービス
     let clock = 10_000;
     const events = [];
     const hooked = [];
     const botList = [{ id: 'b_owl', name: 'Owl' }, { id: 'b_lynx', name: 'Lynx' }];
-    const svc = createChannelService({ dir: path.join(tmp, 's'), emit: (e) => events.push(e), now: () => (clock += 10), listBots: async () => botList, hooks: { posted: (p, c) => hooked.push([p, c]) } });
+    const svc = makeService('s', { emit: (e) => events.push(e), now: () => (clock += 10), listBots: async () => botList, hooks: { posted: (p, c) => hooked.push([p, c]) } });
     await svc.start();
     const types = (...kinds) => events.filter((e) => kinds.includes(e.type));
     t.ok('名前: 先頭の # と前後の空白を除く・空・改行入り・長すぎるのは断る', normalizeChannelName('  # dev-ops ') === 'dev-ops'
@@ -180,7 +195,7 @@ export default async function (t) {
 
     // 作業中の更新は 1 秒に 1 回まで配る
     const slowClock = 50_000; // 時計は動かさない（続きの更新は 1 秒後の実時間のタイマーなので、ここでは出ない）
-    const slowSvc = createChannelService({ dir: path.join(tmp, 'slow'), emit: (e) => events.push(e), now: () => slowClock });
+    const slowSvc = makeService('slow', { emit: (e) => events.push(e), now: () => slowClock });
     await slowSvc.start();
     const sc = await slowSvc.create({ name: 'slow' }, HUMAN);
     const sp = await slowSvc.post({ channelId: sc.id, text: '0', state: 'working', turn: { botId: 'b_owl', sessionId: 's' } }, BOT);
@@ -214,7 +229,7 @@ export default async function (t) {
       && (await codeOf(() => svc.react({ channelId: general.id, postId: reply1.id, emoji: '👍', on: true }, HUMAN))) === 'POST_NOT_FOUND');
 
     // 読む（ページ・スレッド・要約）
-    const feedSvc = createChannelService({ dir: path.join(tmp, 'feed'), now: () => (clock += 10) });
+    const feedSvc = makeService('feed', { now: () => (clock += 10) });
     await feedSvc.start();
     const fc = await feedSvc.create({ name: 'feed' }, HUMAN);
     const ids = [];
@@ -244,7 +259,7 @@ export default async function (t) {
 
     // 一覧・既読
     const clockBase = clock;
-    const unreadSvc = createChannelService({ dir: path.join(tmp, 'unread'), emit: (e) => events.push(e), now: () => (clock += 10), listBots: async () => botList });
+    const unreadSvc = makeService('unread', { emit: (e) => events.push(e), now: () => (clock += 10), listBots: async () => botList });
     await unreadSvc.start();
     const uc = await unreadSvc.create({ name: 'unread' }, HUMAN);
     await unreadSvc.post({ channelId: uc.id, text: '人の投稿は未読に数えない' }, HUMAN);
@@ -272,7 +287,7 @@ export default async function (t) {
 
     // スレッドを止める
     const stopSvcCalls = [];
-    const stopSvc = createChannelService({ dir: path.join(tmp, 'stop'), emit: (e) => events.push(e), now: () => (clock += 10), hooks: { stopThread: async (a, by) => { stopSvcCalls.push([a, by]); } } });
+    const stopSvc = makeService('stop', { emit: (e) => events.push(e), now: () => (clock += 10), hooks: { stopThread: async (a, by) => { stopSvcCalls.push([a, by]); } } });
     await stopSvc.start();
     const stc = await stopSvc.create({ name: 'stop' }, HUMAN);
     const str = await stopSvc.post({ channelId: stc.id, text: '起点' }, HUMAN);
@@ -286,14 +301,14 @@ export default async function (t) {
     events.length = 0;
     await stopSvc.post({ channelId: stc.id, threadId: str.id, text: '人がまた書く' }, HUMAN);
     t.ok('人が次に書くと止めた印を外し、channelThread を出す', (await stopSvc.threads.get(stc.id, str.id)).stopped === null && types('channelThread').length === 1);
-    const failing = createChannelService({ dir: path.join(tmp, 'fail'), now: () => (clock += 10), hooks: { stopThread: async () => { throw new Error('abort failed'); } } });
+    const failing = makeService('fail', { now: () => (clock += 10), hooks: { stopThread: async () => { throw new Error('abort failed'); } } });
     await failing.start();
     const fch = await failing.create({ name: 'fail' }, HUMAN);
     const fr = await failing.post({ channelId: fch.id, text: '起点' }, HUMAN);
     t.ok('止める口が失敗したら stopThread も失敗する（止まったと見せない）', (await failing.stopThread({ channelId: fch.id, threadId: fr.id }, HUMAN).then(() => 'ok', (e) => e.message)) === 'abort failed');
 
     // posted の後処理の失敗は投稿を巻き込まない
-    const flaky = createChannelService({ dir: path.join(tmp, 'flaky'), now: () => (clock += 10), hooks: { posted: () => { throw new Error('dispatch down'); } } });
+    const flaky = makeService('flaky', { now: () => (clock += 10), hooks: { posted: () => { throw new Error('dispatch down'); } } });
     await flaky.start();
     const flc = await flaky.create({ name: 'flaky' }, HUMAN);
     const origError = console.error;
@@ -304,12 +319,14 @@ export default async function (t) {
     t.ok('posted が投げても投稿は保存されている', (await flaky.read({ channelId: flc.id })).posts[0].id === survived.id);
 
     // 開き直し
-    const reopenedSvc = createChannelService({ dir: path.join(tmp, 's'), listBots: async () => botList });
+    const reopenedSvc = makeService('s', { listBots: async () => botList });
     await reopenedSvc.start();
     t.ok('開き直すと、チャンネル・投稿・リアクション・編集が残っている', (await reopenedSvc.get({ channelId: general.id })).memo === '決まり' && (await reopenedSvc.read({ channelId: general.id })).posts[0].mentions.join() === 'b_owl,you'
       && (await reopenedSvc.read({ channelId: general.id, threadId: root.id })).posts.some((p) => p.id === turn.id && p.state === 'done'));
     svc.stop();
   } finally {
+    for (const service of services) await service.close().catch(() => {});
+    for (const store of threadStores) await store.close().catch(() => {});
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
   }
 }

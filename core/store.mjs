@@ -1,4 +1,5 @@
 // バックエンドが持たない差分を持つ sidecar ストア。**全バックエンド横断のインデックス**でもある。
+// 置き場は SQLite（pleiad.db。形式 1 では sessions.json。ADR 0005 の索引の正本の置き場が変わっただけで、考え方は ADR 0115）。
 //
 // v1 では正本を全部 ~/.claude（SDK ネイティブ）に置いていたが、
 // codex には等価物が無い（docs/multi-backend.md §2.1 で改訂）。
@@ -26,32 +27,30 @@
 //   agentLocale     … 会話の言語（ja|en）。エージェントに渡す文（指示・ツールの説明・通知）の言語。会話を始めたときに
 //                     画面の言語で決め、以後は変えない（core/server.mjs。docs/design.md「多言語対応」）
 import fs from "node:fs/promises";
-import fsSync from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import crypto from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { writeAtomic, TRANSIENT_RENAME } from "./atomic-file.mjs";
 import { t } from "./i18n.mjs";
+import { assertNotGuarded } from "./test-guard.mjs";
+import { openData } from "./data-schema.mjs";
+import { sessionTable, transaction } from "./db.mjs";
 import { COMPUTER_APP_LIMIT, computerAppRow, computerUsePrefs } from "../web/computer-prefs.mjs";
 
 const DIR = process.env.AGENT_HOST_DATA ?? path.join(os.homedir(), ".agent-host");
-const FILE = path.join(DIR, "sessions.json");
 const PREFS = path.join(DIR, "prefs.json");
 const STATUSES = path.join(DIR, "statuses.json");
 
 // sidecar が持つメタ情報のうち、外から丸ごと上書きしてよいもの。
 // history / parent / mode / model は専用の口があるので、ここには入れない。
 const META_KEYS = new Set(["backend", "title", "status", "cwd", "createdAt", "lastModified", "completedAt", "unsent", "interrupted", "turnStartedAt"]);
-// These fields must survive a restart as soon as their operation completes.
-const DURABLE_META_KEYS = new Set(["completedAt", "unsent", "interrupted", "turnStartedAt"]);
 
 /**
- * JSON ファイル 1 つ。読みは一度きりでキャッシュ、書きは一時ファイルへ書いてから置き換える
- * （書き込み中に落ちても既存を壊さない）。sidecar のファイルは全部この経路を通す。
+ * 設定など、上限が決まっている小さな JSON ファイル（prefs.json・statuses.json）。読みは一度きりでキャッシュ、
+ * 書きは一時ファイルへ書いてから置き換える（書き込み中に落ちても既存を壊さない）。
  * 壊れている・無い・オブジェクトでないときは空から始める。
+ * 件数・会話の長さで増える記録をここへ置かない（SQLite の行へ。ADR 0115）。
  */
-function jsonFile(file, { compact = false } = {}) {
+function jsonFile(file) {
   let cache = null;
   return {
     async read() {
@@ -65,78 +64,90 @@ function jsonFile(file, { compact = false } = {}) {
       return cache;
     },
     async write() {
+      assertNotGuarded(DIR, 'write settings in');
       await fs.mkdir(DIR, { recursive: true });
       const tmp = `${file}.${process.pid}.tmp`;
-      if (compact) await writeAtomic(file, JSON.stringify(cache));
-      else {
-        await fs.writeFile(tmp, JSON.stringify(cache, null, 2), "utf8");
-        await fs.rename(tmp, file);
-      }
-    },
-    writeSync() {
-      fsSync.mkdirSync(DIR, { recursive: true });
-      const tmp = `${file}.${crypto.randomUUID()}.tmp`;
-      try {
-        fsSync.writeFileSync(tmp, JSON.stringify(cache), "utf8");
-        for (let attempt = 0; ; attempt++) {
-          try { fsSync.renameSync(tmp, file); break; }
-          catch (e) {
-            if (attempt >= 6 || !TRANSIENT_RENAME.includes(e?.code)) throw e;
-            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, [20, 40, 80, 160, 320, 480][attempt]);
-          }
-        }
-      } finally { try { fsSync.rmSync(tmp, { force: true }); } catch {} }
+      await fs.writeFile(tmp, JSON.stringify(cache, null, 2), "utf8");
+      await fs.rename(tmp, file);
     },
   };
 }
 
-const sessions = jsonFile(FILE, { compact: true });
 const prefs = jsonFile(PREFS);
 const statuses = jsonFile(STATUSES);
 
-const load = () => sessions.read();
-// Frequent metadata changes share one trailing write. The cache is updated before
-// returning, so readers in this process always see the latest value.
-const FLUSH_DELAY_MS = 750;
-let flushTimer = null;
-let dirty = false;
-function scheduleFlush() {
-  dirty = true;
-  if (flushTimer) clearTimeout(flushTimer);
-  flushTimer = setTimeout(() => {
-    flushTimer = null;
-    void exclusive(async () => {
-      if (!dirty) return;
-      try { flushNow(); }
-      catch (e) {
-        console.error('sessions.json save failed:', e?.code ?? e?.message ?? e);
-        scheduleFlush();
+// ---- 会話の記録（SQLite。sessions / session_fields。core/db.mjs） ---------------------------------------
+// 読みは最初の 1 回で全部をメモリへ組み、以後はメモリが答える。書きは変えた項目の行だけを、その場で書く
+// （変更のたびに全体を書き直していた sessions.json と違い、会話の数・大きさに 1 回の重さが比例しない）。
+// **DB を先に書き、書けたらメモリへ反映する。** 書けなければ例外を返し、メモリは書く前のまま。公開関数はどれも同じ（ADR 0115）。
+// 置き場は 1 つのプロセスだけが持つ（core/data-lock.mjs）ので、メモリの記録（cache）と DB は食い違わない。
+// cache にある会話は、DB に行がある会話に限る。
+let handle = null;
+let table = null;
+let cache = null;
+
+function open() {
+  if (!handle) {
+    handle = openData(DIR);
+    table = sessionTable(handle.db);
+  }
+}
+const load = async () => {
+  if (!cache) {
+    open();
+    cache = table.loadAll();
+    // 記録を置き換えて、どの会話からも参照されなくなった contextSession の項目の写しを、起動のたびに片付ける
+    try { table.sweepEntries(); } catch (e) { console.error("session store sweep failed:", e?.code ?? e?.message ?? e); }
+  }
+  return cache;
+};
+
+/** 別の手段で消された会話を、更新で欠けた形のまま作り直さないための印 */
+class GoneError extends Error {}
+
+/**
+ * changes: [[sessionId, patch]]。patch は { 項目: 新しい値 }（undefined の項目は消す）。全部を 1 つのトランザクションで DB に書き、
+ * 書けたらメモリへ反映する。書けなければ投げて、メモリは変えない。メモリに無い会話は新しい会話で、全項目を書いて行を作る。
+ * メモリにある会話の行が DB に無いとき（別の手段で消された）は、更新で作り直さず、その会話をメモリから外して投げる。
+ * 反映したあとの記録（メモリの実体）を、changes の順に返す
+ */
+function save(changes) {
+  const plans = changes.map(([id, patch]) => {
+    const live = Object.hasOwn(cache, id) ? cache[id] : undefined;
+    return { id, patch, live, merged: live ? null : Object.fromEntries(Object.entries({ history: [], ...patch }).filter(([, v]) => v !== undefined)) };
+  });
+  try {
+    transaction(handle.db, () => {
+      for (const p of plans) {
+        if (!p.live) table.writeAll(p.id, p.merged);
+        else if (!table.write(p.id, { ...p.live, ...p.patch }, Object.keys(p.patch))) throw new GoneError(p.id);
       }
     });
-  }, FLUSH_DELAY_MS);
-  flushTimer.unref();
-}
-const flush = async () => { scheduleFlush(); };
-export function flushNow() {
-  if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-  if (!dirty) return;
-  sessions.writeSync();
-  dirty = false;
-}
-async function flushDurable() {
-  dirty = true;
-  try { flushNow(); }
-  catch (e) { dirty = true; scheduleFlush(); throw e; }
-}
-// process.exit and signals pass through exit; desktop shutdown also calls flushNow.
-process.on('exit', () => {
-  if (!dirty) return;
-  try { flushNow(); }
-  catch (e) {
-    console.error('sessions.json final save failed:', e?.code ?? e?.message ?? e);
-    process.exitCode = 1;
+  } catch (e) {
+    if (e instanceof GoneError) {
+      delete cache[e.message];
+      throw new Error(`The conversation was removed from the data store by something else, so it was not written: ${e.message}`);
+    }
+    throw e;
   }
-});
+  return plans.map(p => {
+    if (!p.live) return (cache[p.id] = p.merged);
+    for (const [key, value] of Object.entries(p.patch)) { if (value === undefined) delete p.live[key]; else p.live[key] = value; }
+    return p.live;
+  });
+}
+const saveOne = (id, patch) => save([[id, patch]])[0];
+
+/** デスクトップの終了で呼ぶ。WAL を本体へ戻す（書き込みはその場で済んでいる） */
+export function flushNow() {
+  if (!handle) return;
+  try { handle.db.exec("PRAGMA wal_checkpoint(PASSIVE)"); } catch { /* 次の起動が回復する */ }
+}
+/** DB の接続とロックを離す（データ置き場を消す前。テストの後片付け用）。以後に呼べば開き直す */
+export function closeStore() {
+  handle?.release();
+  handle = null; table = null; cache = null;
+}
 
 // 書き込みを直列化する。人間と AI が同時に触っても read-modify-write が交錯しない
 let chain = Promise.resolve();
@@ -349,33 +360,33 @@ async function resolveFrom(sessionId, entry, field, to, backend) {
 export async function recordChange(sessionId, { by, via, bySession, field, from, to, reason, reasonKey, reasonParams, backend }) {
   return exclusive(async () => {
     const all = await load();
-    const entry = (all[sessionId] ??= { history: [] });
-    entry.history ??= [];
+    const entry = all[sessionId] ?? { history: [] };
 
     const resolved = from ?? (await resolveFrom(sessionId, entry, field, to ?? null, backend));
     const at = new Date().toISOString();
 
-    entry.history.push({
-      at,
-      by,
-      ...(via ? { via } : {}),
-      ...(bySession ? { bySession } : {}),
-      field,
-      from: resolved ?? null,
-      to: to ?? null,
-      reason: reason ?? null,
-      // 新しい記録は理由をキーでも持つ（画面が今の言語で出す。web/saved-text.mjs）。reason は従来どおりの日本語の文
-      ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}),
-    });
-    if (backend?.id) entry.backend = backend.id;
+    const patch = {
+      history: [...(entry.history ?? []), {
+        at,
+        by,
+        ...(via ? { via } : {}),
+        ...(bySession ? { bySession } : {}),
+        field,
+        from: resolved ?? null,
+        to: to ?? null,
+        reason: reason ?? null,
+        // 新しい記録は理由をキーでも持つ（画面が今の言語で出す。web/saved-text.mjs）。reason は従来どおりの日本語の文
+        ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}),
+      }],
+    };
+    if (backend?.id) patch.backend = backend.id;
     // ネイティブに持てるバックエンドでも sidecar に写す。
     // 正本がどちらであれ、一覧はここだけを読んでも組めるようにしておく（§2.4）。
-    if (field === "status") { entry.status = to ?? null; entry.statusChangedAt = at; }
-    if (field === "title") entry.title = to ?? null;
-    if (field === "parent") entry.parent = to;
-    if (field === "cwd") entry.cwd = to ?? null;
-    await flush();
-    return entry;
+    if (field === "status") { patch.status = to ?? null; patch.statusChangedAt = at; }
+    if (field === "title") patch.title = to ?? null;
+    if (field === "parent") patch.parent = to;
+    if (field === "cwd") patch.cwd = to ?? null;
+    return saveOne(sessionId, patch);
   });
 }
 
@@ -387,17 +398,15 @@ export async function setMeta(sessionId, patch) {
   if (!sessionId || !patch) return null;
   return exclusive(async () => {
     const all = await load();
-    const entry = (all[sessionId] ??= { history: [] });
-    let touched = false;
-    let durable = false;
+    const entry = all[sessionId] ?? { history: [] };
+    const changes = {};
     for (const [k, v] of Object.entries(patch)) {
       if (!META_KEYS.has(k) || v === undefined) continue;
       if (entry[k] === v) continue;
-      entry[k] = v;
-      touched = true;
-      if (DURABLE_META_KEYS.has(k)) durable = true;
+      changes[k] = v;
     }
-    if (touched) await (durable ? flushDurable() : flush());
+    // 変えた項目がなくても、新しい会話の行は作る
+    if (Object.keys(changes).length || !all[sessionId]) return saveOne(sessionId, changes);
     return entry;
   });
 }
@@ -412,11 +421,8 @@ export async function setMode(sessionId, mode) {
   if (!sessionId) return null;
   return exclusive(async () => {
     const all = await load();
-    const entry = (all[sessionId] ??= { history: [] });
-    if (entry.mode === mode) return entry;
-    entry.mode = mode;
-    await flushDurable();
-    return entry;
+    if (all[sessionId]?.mode === mode) return all[sessionId];
+    return saveOne(sessionId, { mode });
   });
 }
 
@@ -426,11 +432,8 @@ export async function setModel(sessionId, model) {
   if (!sessionId) return null;
   return exclusive(async () => {
     const all = await load();
-    const entry = (all[sessionId] ??= { history: [] });
-    if (entry.model === model) return entry;
-    entry.model = model;
-    await flushDurable();
-    return entry;
+    if (all[sessionId]?.model === model) return all[sessionId];
+    return saveOne(sessionId, { model });
   });
 }
 
@@ -439,22 +442,19 @@ export async function inheritSettings(sourceId, childId) {
   return exclusive(async () => {
     const all = await load();
     const source = all[sourceId] ?? {};
-    const entry = (all[childId] ??= { history: [] });
-    entry.model = source.model ?? "";
-    entry.effort = source.effort ?? "";
-    entry.mode = source.mode ?? "default";
-    entry.nextSettings = structuredClone(source.nextSettings ?? null);
-    // Claude のアカウント（core/claude-accounts.mjs）。分岐した先も同じアカウントで続ける
-    if (source.claudeAccount) entry.claudeAccount = source.claudeAccount;
-    else delete entry.claudeAccount;
-    // 互換の接続先（core/compat-endpoints.mjs）。分岐は同じエージェントなので、同じ接続先で続ける
-    if (source.compatEndpoint) entry.compatEndpoint = source.compatEndpoint;
-    else delete entry.compatEndpoint;
-    // 会話の言語（エージェントに渡す文の言語。core/server.mjs）。分岐・切り替えた先も同じ言語で続ける（履歴と同じ言語のまま）
-    if (source.agentLocale) entry.agentLocale = source.agentLocale;
-    else delete entry.agentLocale;
-    entry.contextSession = structuredClone(source.contextSession ?? null);
-    await flush();
+    saveOne(childId, {
+      model: source.model ?? "",
+      effort: source.effort ?? "",
+      mode: source.mode ?? "default",
+      nextSettings: structuredClone(source.nextSettings ?? null),
+      // Claude のアカウント（core/claude-accounts.mjs）。分岐した先も同じアカウントで続ける
+      claudeAccount: source.claudeAccount || undefined,
+      // 互換の接続先（core/compat-endpoints.mjs）。分岐は同じエージェントなので、同じ接続先で続ける
+      compatEndpoint: source.compatEndpoint || undefined,
+      // 会話の言語（エージェントに渡す文の言語。core/server.mjs）。分岐・切り替えた先も同じ言語で続ける（履歴と同じ言語のまま）
+      agentLocale: source.agentLocale || undefined,
+      contextSession: structuredClone(source.contextSession ?? null),
+    });
   });
 }
 
@@ -463,29 +463,22 @@ export async function setParent(sessionId, parent) {
   if (!sessionId) return null;
   return exclusive(async () => {
     const all = await load();
-    const entry = (all[sessionId] ??= { history: [] });
-    if (entry.parent === parent) return entry;
-    entry.parent = parent;
-    await flush();
-    return entry;
+    if (all[sessionId]?.parent === parent) return all[sessionId];
+    return saveOne(sessionId, { parent });
   });
 }
 
 export const dataDir = DIR;
 
-/** Host-only data. Callers mark restart-critical changes durable. */
+/** Host-only data. 書き込みはその場で行い、書けなければ投げる（durable は互換のために残す。意味は変わらない） */
 export async function setSessionData(sessionId, field, value, { durable = false } = {}) {
+  void durable;
   if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "browserProfile", "rewind", "scheduledSends", "bot"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];
     if (before && isDeepStrictEqual(before[field], value)) return before[field];
-    const entry = { ...(before ?? { history: [] }), [field]: structuredClone(value) };
-    all[sessionId] = entry;
-    if (durable) {
-      try { await flushDurable(); } catch (e) { if (before) all[sessionId] = before; else delete all[sessionId]; throw e; }
-    } else await flush();
-    return entry[field];
+    return saveOne(sessionId, { [field]: structuredClone(value) })[field];
   });
 }
 
@@ -493,7 +486,7 @@ export async function setSessionData(sessionId, field, value, { durable = false 
  * 完了を確認した印（readAt）を付ける。reads は [[sessionId, completedAt], ...]。
  * 何度送っても同じで（冪等）、巻き戻らない（大きい方だけ）。記録に無い会話・完了していない会話には付けず、
  * その会話の completedAt を超える値は completedAt に丸める（先の完了まで見たことにさせない）。
- * 変わった分だけを [[sessionId, readAt], ...] で返す。1 件でも変われば 1 回だけ書く。
+ * 変わった分だけを [[sessionId, readAt], ...] で返す。1 件でも変われば 1 回だけ書く（書けなければ投げて、どれも変わらない）。
  */
 export async function markRead(reads) {
   const list = Array.isArray(reads) ? reads : [];
@@ -506,13 +499,12 @@ export async function markRead(reads) {
         const entry = all[id];
         if (!Number.isFinite(entry?.completedAt)) continue;
         const next = Math.min(at, entry.completedAt);
-        if (next <= (Number.isFinite(entry.readAt) ? entry.readAt : 0)) continue;
-        entry.readAt = next;
+        const current = changed.get(id) ?? (Number.isFinite(entry.readAt) ? entry.readAt : 0);
+        if (next <= current) continue;
         changed.set(id, next);
       }
     }
-    // 保存失敗後もキャッシュの印は保ち、次のデバウンスで再試行する。
-    if (changed.size) await flush();
+    if (changed.size) save([...changed].map(([id, readAt]) => [id, { readAt }]));
     return [...changed];
   });
 }
@@ -527,19 +519,19 @@ export async function recoverInterruptedTurns(at = Date.now()) {
   return exclusive(async () => {
     const all = await load();
     const changed = [];
-    let touched = false;
+    const changes = [];
     for (const [id, entry] of Object.entries(all)) {
       if (!entry || entry.turnStartedAt == null) continue;
       const started = entry.turnStartedAt;
+      const patch = { turnStartedAt: null };
       if (Number.isFinite(started) && started > (Number.isFinite(entry.completedAt) ? entry.completedAt : 0)) {
-        entry.interrupted = { at, reason: "restart" };
-        entry.completedAt = at;
+        patch.interrupted = { at, reason: "restart" };
+        patch.completedAt = at;
         changed.push(id);
       }
-      entry.turnStartedAt = null;
-      touched = true;
+      changes.push([id, patch]);
     }
-    if (touched) await flushDurable();
+    if (changes.length) save(changes);
     return changed;
   });
 }
@@ -572,8 +564,7 @@ export async function addStops(sessionId, patch) {
     if (!touched) return entry.stops ?? null;
     // 理由は最後に止めたときのもの（伝える文の見出しに使う）
     if (patch.reason) next.reason = patch.reason;
-    entry.stops = next;
-    await flushDurable();
+    saveOne(sessionId, { stops: next });
     return structuredClone(next);
   });
 }
@@ -596,9 +587,7 @@ export async function takeStops(sessionId, keys, { dropped = false } = {}) {
     }
     if (!dropped && entry.stops.dropped) next.dropped = entry.stops.dropped;
     if (Object.keys(next).length && entry.stops.reason) next.reason = entry.stops.reason;
-    entry.stops = Object.keys(next).length ? next : null;
-    await flushDurable();
-    return entry.stops;
+    return saveOne(sessionId, { stops: Object.keys(next).length ? next : null }).stops;
   });
 }
 
@@ -607,19 +596,17 @@ export async function clearStops(sessionId) {
   if (!sessionId) return null;
   return exclusive(async () => {
     const all = await load();
-    const entry = all[sessionId];
-    if (!entry?.stops) return null;
-    entry.stops = null;
-    await flushDurable();
+    if (!all[sessionId]?.stops) return null;
+    saveOne(sessionId, { stops: null });
     return null;
   });
 }
 
 export async function removeSession(sessionId) {
   return exclusive(async () => {
-    const all = await load(), before = all[sessionId];
-    if (!before) return;
+    const all = await load();
+    if (!all[sessionId]) return;
+    table.remove(sessionId);   // DB を先に。書けなければ投げて、メモリは変えない
     delete all[sessionId];
-    try { await flushDurable(); } catch (e) { if (before) all[sessionId] = before; throw e; }
   });
 }

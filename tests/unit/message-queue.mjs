@@ -4,6 +4,7 @@ import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { createMessageQueue } from '../../core/message-queue.mjs';
+import { readSessions } from '../lib/data-store.mjs';
 
 export const name = 'message-queue';
 export const title = '実行中の送信を保存し、順序・取消・再接続・途中入力を保つ';
@@ -23,7 +24,7 @@ export default async function(t) {
     await c.cmd('messageAction', { sessionId, messageId: 'message-0003', action: 'cancel' });
     let queue = await c.cmd('listMessages', { sessionId });
     t.ok('同じIDの再送は増えず、本文と順序を保持', queue.length === 3 && queue[0].args.prompt === 'echo:first');
-    const saved = JSON.parse(await fs.readFile(path.join(dataDir, 'sessions.json'), 'utf8'));
+    const saved = readSessions(dataDir);
     t.ok('受領応答より先にディスクへ保存', saved[sessionId].outbox[1].args.prompt === 'echo:second');
     c.close(); c = await open(server);
     t.ok('接続し直しても送信待ちを取得できる', (await c.cmd('listMessages', { sessionId }))[0].status === 'queued');

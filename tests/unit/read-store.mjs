@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ROOT } from "../lib/server.mjs";
+import { readSessions } from '../lib/data-store.mjs';
 
 export const name = "read-store";
 export const title = "確認済みの完了時刻をホストに残す（冪等・巻き戻らない・完了を超えない）";
@@ -41,8 +42,8 @@ export default async function (t) {
     t.ok("完了時刻を超える確認は完了時刻に丸める", JSON.stringify(r.clamped) === JSON.stringify([["b", 2000]]), JSON.stringify(r.clamped));
     t.ok("記録に無い・完了していない・壊れた値は無視する", r.ignored.length === 0 && r.nonArray.length === 0, JSON.stringify(r.ignored));
     t.ok("記録に無い会話の行を作らない", r.missingCreated === false);
-    const saved = JSON.parse(await fs.readFile(path.join(dir, "sessions.json"), "utf8"));
-    t.ok("sessions.json に残る（再起動しても確認済み）", saved.a?.readAt === 1000 && saved.b?.readAt === 2000, JSON.stringify({ a: saved.a?.readAt, b: saved.b?.readAt }));
+    const saved = readSessions(dir);
+    t.ok("DB に残る（再起動しても確認済み）", saved.a?.readAt === 1000 && saved.b?.readAt === 2000, JSON.stringify({ a: saved.a?.readAt, b: saved.b?.readAt }));
     t.ok("完了していない会話には付けない", !("readAt" in (saved.n ?? {})));
   } finally {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});

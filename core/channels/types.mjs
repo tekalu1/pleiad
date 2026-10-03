@@ -5,7 +5,7 @@
 // 置き場（<data> = AGENT_HOST_DATA）:
 //   <data>/channels/index.json        チャンネル・DM の定義と既読
 //   <data>/channels/<channelId>.jsonl 投稿・編集・リアクション（追記だけの操作の記録）
-//   <data>/channels/threads.json      スレッドの状態
+//   SQLite の channel_threads（ADR 0115）  スレッドの状態
 //   <data>/channels/inbox.json        bot へ届ける前の出来事
 //   <data>/bots.json                  bot の定義
 //   <data>/memory/user.md・bots/<botId>.md・log.jsonl・index.sqlite   記憶
@@ -70,7 +70,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   dmChannelId: string, dmSessionId: string|null,
  *   createdAt: number, updatedAt: number }} Bot */
 
-/** sessions.json の会話の行の新しい欄 `bot`（core/store.mjs の setSessionData の許可リスト）
+/** 会話の記録（DB の session_fields）の新しい欄 `bot`（core/store.mjs の setSessionData の許可リスト）
  * @typedef {{
  *   botId: string, kind: 'thread'|'dm'|'routine'|'learner',
  *   channelId: string|null, threadId: string|null, routineId?: string, taint?: 'webhook',

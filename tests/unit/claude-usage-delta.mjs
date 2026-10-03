@@ -11,6 +11,7 @@ import { ZERO_COST, readCostState, decideCostBase, costStatesIn, claudeUsageDelt
 import { backend as claude, setClaudeSdkForTest } from '../../core/backends/claude.mjs';
 import { createUsageStore } from '../../core/usage.mjs';
 import { fixClaudeCumulative, migrateClaudeUsage, CLAUDE_COST_DELTA, USAGE_BACKUP } from '../../core/usage-migrations.mjs';
+import { readUsage, writeUsage } from '../lib/data-store.mjs';
 
 export const name = 'claude-usage-delta';
 export const title = 'Claude の使用量: 開始時点の累計（cost-state）からの差分・既存の記録の移行';
@@ -157,32 +158,37 @@ export default async function (t) {
 
   // ---- 移行（起動時。写し・冪等）
   const data = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-usage-migrate-'));
+  const others = [];
   try {
     const projects = path.join(data, 'projects');
     await fs.mkdir(path.join(projects, 'D--work'), { recursive: true });
     const transcript = [...sessions.get('A').map(s => costState(s.totalCostUSD, s.modelUsage))].map(line).join('\n');
     await fs.writeFile(path.join(projects, 'D--work', 'A.jsonl'), transcript + '\n');
     const store = createUsageStore(data);
-    t.ok('usage.json が無ければ何もしない', await migrateClaudeUsage({ store, projects, since }) === null);
+    t.ok('記録が無ければ何もしない', await migrateClaudeUsage({ store, projects, since }) === null);
     const original = { version: 1, since: since - 5000, records: records.filter(r => ['old', 'a1', 'a2', 'a3', 'a4'].includes(r.id)) };
-    await fs.writeFile(store.file, JSON.stringify(original));
+    writeUsage(data, original);
     const first = await migrateClaudeUsage({ store, projects, since });
-    const after = JSON.parse(await fs.readFile(store.file, 'utf8'));
+    const after = readUsage(data);
     const backup = JSON.parse(await fs.readFile(path.join(data, USAGE_BACKUP), 'utf8'));
-    t.ok('書き直す前の usage.json を写しに残し、直した件数を返す', first?.fixed === 4 && first.unlinked === 0 && JSON.stringify(backup) === JSON.stringify(original), JSON.stringify(first));
+    t.ok('書き直す前の記録を写しに残し、直した件数を返す', first?.fixed === 4 && first.unlinked === 0 && JSON.stringify(backup.records) === JSON.stringify(original.records) && backup.since === original.since, JSON.stringify(first));
     t.ok('直した記録の合計は実際の分', after.records.filter(r => r.at >= since).reduce((n, r) => n + r.costUsd, 0) === 4.5 && after.migrations.includes(CLAUDE_COST_DELTA));
-    const summary = await createUsageStore(data, { now: () => since + 3600_000 }).summary('claude');
+    const summaryStore = createUsageStore(data, { now: () => since + 3600_000 });
+    others.push(summaryStore);
+    const summary = await summaryStore.summary('claude');
     t.ok('画面の集計（summary）は直した値を足す', summary.sevenDay.costUsd.value === 3 + 4.5 && summary.sevenDay.inputTokens.value === 300 + 450, JSON.stringify(summary.sevenDay));
     await fs.writeFile(path.join(projects, 'D--work', 'A.jsonl'), transcript + '\n' + line(costState(99, { opus: model(1, 1) })) + '\n');
     t.ok('やり直しても二重に直さない（済みの印）', await migrateClaudeUsage({ store, projects, since }) === null
-      && await fs.readFile(store.file, 'utf8') === JSON.stringify(after));
+      && JSON.stringify(readUsage(data)) === JSON.stringify(after));
     await store.record({ id: 'later', backend: 'claude', inputTokens: 1, nativeSessionId: 'A', cumulativeStart: { inputTokens: 1 }, cumulativeEnd: { costUsd: 'x' } });
-    const later = JSON.parse(await fs.readFile(store.file, 'utf8')).records.at(-1);
+    const later = readUsage(data).records.at(-1);
     t.ok('記録は会話の id と累計（数値だけ）を残す', later.nativeSessionId === 'A' && later.cumulativeStart.inputTokens === 1 && later.cumulativeEnd.costUsd === null);
 
     const fresh = createUsageStore(path.join(data, 'fresh'));
+    others.push(fresh);
     await fresh.record({ id: 'x', backend: 'claude', costUsd: 1 });
-    t.ok('新しく作る usage.json は最初から移行済み', JSON.parse(await fs.readFile(fresh.file, 'utf8')).migrations.includes(CLAUDE_COST_DELTA)
+    t.ok('新しく作る記録は最初から移行済み', readUsage(path.join(data, 'fresh')).migrations.includes(CLAUDE_COST_DELTA)
       && await migrateClaudeUsage({ store: fresh, projects, since }) === null);
-  } finally { await fs.rm(data, { recursive: true, force: true }); }
+    others.push(store);
+  } finally { for (const s of others) await s.close(); await fs.rm(data, { recursive: true, force: true }); }
 }

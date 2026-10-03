@@ -140,6 +140,7 @@ export default async function (t) {
     t.ok('許可の後は消えている・実行の履歴の根の投稿は残る', (await service.get({ routineId })) === null && (await channels.read({ channelId: ch.id })).posts.some((p) => p.id === ran.result.postId));
     t.ok('消えたものの delete・run・resume は ROUTINE_NOT_FOUND', (await call(human, 'routines.delete', { routineId })).code === 'ROUTINE_NOT_FOUND' && (await call(human, 'routines.run', { routineId })).code === 'ROUTINE_NOT_FOUND');
     service.stop();
+    await channels.close();   // DB の接続（スレッドの状態）を離してから置き場を消す
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

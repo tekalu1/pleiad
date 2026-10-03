@@ -797,7 +797,6 @@
     "claudeUnavailable": "Cannot get usage limits. They are not shown for API connections, insufficient permissions, or unsupported CLIs.",
     "authChanged": "Sign-in status changed. Refresh to update.",
     "fetchFailed": "Could not get usage. Check that you are signed in and refresh after a while.",
-    "recordInvalid": "The usage record is malformed.",
     "migrated": "Corrected Claude usage records from conversation totals to per-turn values ({{fixed}} corrected, {{unlinked}} unmatched, {{ambiguous}} with multiple candidates; original values are in usage.v1-backup.json).",
     "migrateFailed": "Could not correct Claude usage records. The records are unchanged:"
   },
@@ -845,7 +844,11 @@
   },
   "data": {
     "schemaUnreadable": "Cannot determine the saved data format. Check data-schema.json.",
-    "schemaMismatch": "This saved data uses a different format. Use a newer version of Pleiad that supports it. The data was not changed."
+    "schemaMismatch": "This saved data uses a different format. Use a newer version of Pleiad that supports it. The data was not changed.",
+    "migrationFailed": "Could not migrate the saved data to the new format ({{reason}}). The original data was not changed. This version cannot start until this is resolved; keep using the previous version or contact support.",
+    "migrated": "Migrated the saved data to the new format (SQLite). A copy from before the migration is in {{backup}}.",
+    "locked": "This data folder is in use by another Pleiad process (PID {{pid}}). Opening the same data folder from two processes can corrupt records (for example, a deleted conversation coming back as a fragment), so this process will not start. Quit the other one and start again (folder: {{dir}}).",
+    "dbInvalid": "The saved data format is 2, but the database (pleiad.db) cannot be used ({{reason}}). Starting with an empty database would lose records, so this process will not start. The data was not changed. Check the data folder and the pre-migration copy (backup-schema1-*)."
   },
   "update": {
     "preparing": "Preparing an update. Wait a moment and try again."

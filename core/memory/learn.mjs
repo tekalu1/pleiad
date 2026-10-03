@@ -3,7 +3,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { writeAtomic } from '../atomic-file.mjs';
+import { openData } from '../data-schema.mjs';
+import { memoryStateTable } from '../db.mjs';
 import { nextFireAt } from '../routines/schedule.mjs';
 import { modePosition } from '../modes.mjs';
 import { prepareMessages } from '../history.mjs';
@@ -38,7 +39,6 @@ function parseAnswer(raw) {
 
 export function createMemoryLearner({ dataDir, channels, bots, memory, host, clock, readPrefs = () => host.store.getPrefs(),
   listSessions = null, readMessages = null, ask = null, now = () => clock.now() } = {}) {
-  const file = path.join(dataDir, 'memory', 'learn-state.json');
   let state = emptyState();
   let timer = null;
   let closed = true;
@@ -46,18 +46,34 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
   const knownRows = new Map();
   const locale = () => host.currentLocale?.() ?? 'ja';
 
+  // 進みは SQLite の memory_state（会話・チャンネルごとのカーソルを 1 件 1 行。core/db.mjs、ADR 0115）。以前は memory/learn-state.json で、
+  // 会話の数だけ増えるカーソルの全体を、束ごとに書き直していた。変わった行だけを書く
+  let handle = null;
+  let table = null;
+  let saved = new Map();   // 最後に DB へ書けた値（'kind\u0000id' -> JSON の文字列）。変わった行だけを書くための比べ元
+  const open = () => { if (!handle) { handle = openData(dataDir); table = memoryStateTable(handle.db); } return table; };
+  const rowsOf = (s) => [
+    ...Object.entries(s.cursor ?? {}).flatMap(([group, map]) => Object.entries(map ?? {}).map(([id, value]) => [`cursor.${group}`, id, value])),
+    ['meta', 'lastRunAt', s.lastRunAt],
+  ];
   async function save() {
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    await writeAtomic(file, `${JSON.stringify(state, null, 2)}\n`);
+    const rows = open();
+    const next = new Map(rowsOf(state).map(([kind, id, value]) => [`${kind}\u0000${id}`, { kind, id, value, json: JSON.stringify(value) }]));
+    const changes = [];
+    for (const [key, row] of next) if (saved.get(key) !== row.json) changes.push([row.kind, row.id, row.value]);
+    for (const key of saved.keys()) if (!next.has(key)) { const [kind, id] = key.split('\u0000'); changes.push([kind, id, undefined]); }
+    rows.save(changes);
+    saved = new Map([...next].map(([key, row]) => [key, row.json]));
   }
   async function load() {
-    let loaded;
-    try { loaded = JSON.parse(await fs.readFile(file, 'utf8')); }
-    catch (e) { if (e.code === 'ENOENT') return; throw e; }
-    if (loaded?.version !== 1 || !loaded.cursor || !loaded.cursor.sessions || !loaded.cursor.posts || !Number.isFinite(loaded.lastRunAt)) {
-      throw new Error('unsupported memory/learn-state.json');
+    const rows = open().loadAll();
+    const loaded = emptyState();
+    for (const [kind, map] of Object.entries(rows)) {
+      if (kind === 'meta') { if (Number.isFinite(map.lastRunAt)) loaded.lastRunAt = map.lastRunAt; }
+      else if (kind.startsWith('cursor.')) loaded.cursor[kind.slice('cursor.'.length)] = map;
     }
     state = loaded;
+    saved = new Map(rowsOf(state).map(([kind, id, value]) => [`${kind}\u0000${id}`, JSON.stringify(value)]));
   }
 
   async function sessionRows() {
@@ -290,5 +306,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
       await arm();
     },
     stop() { closed = true; if (timer) clock.clearTimer(timer); timer = null; },
+    /** stop に加えて、DB の接続を離す（データ置き場を消す前。テストの後片付け用） */
+    close() { this.stop(); handle?.release(); handle = null; table = null; },
   };
 }

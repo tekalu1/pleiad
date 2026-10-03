@@ -1,12 +1,12 @@
 // 入力欄の `!`（シェルの行）で走らせたコマンドの管理（ADR 0054、docs/multi-backend.md「シェルの行」）。
 //
 // - 走らせ方はバックエンドの capabilities.shell で決まる
-//   - 'host'   … Pleiad がホストのシェルで走らせ（core/host-shell.mjs）、結果を会話の「未送の追記」（sessions.json の shellPending）に貯める。
+//   - 'host'   … Pleiad がホストのシェルで走らせ（core/host-shell.mjs）、結果を会話の「未送の追記」（会話の記録の shellPending）に貯める。
 //                次のターンの始めにエージェントへ渡す（Claude は shouldQuery: false の 2 行）。渡したら終了コードを shellExits に控える
 //   - 'native' … エージェントが走らせる（Codex の thread/shellCommand）。記録もエージェントの会話に残る
 //   - 無し     … 使えない（Antigravity）
 // - エージェントは返答しない。送信待ち（outbox）にも送り直しの控え（receipts）にも積まない。同じ runId は 2 度走らせない
-// - 'host' の会話では、行ごとに「渡さない」を選べる（ADR 0055）。渡さなかった行は次の発言の後、sessions.json の shellKept に移して会話に残す
+// - 'host' の会話では、行ごとに「渡さない」を選べる（ADR 0055）。渡さなかった行は次の発言の後、会話の記録の shellKept に移して会話に残す
 // - 出来事: shell.start / shell.output / shell.done / shell.skip / shell.handed（全部の接続へ）
 import { messageShellKey, runHostShell, shellKey, shellLines } from './host-shell.mjs';
 
@@ -221,7 +221,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     if (handed.length || kept.length) emit({ type: 'shell.handed', sessionId, runIds: handed, ...(kept.length ? { keptIds: kept } : {}) });
   }
 
-  /** 渡さなかった行を残す行の末尾に足す。数と出力の長さに上限を掛ける（sessions.json を膨らませない） */
+  /** 渡さなかった行を残す行の末尾に足す。数と出力の長さに上限を掛ける（会話の記録を膨らませない） */
   function keepRows(before, entries) {
     const cut = (text) => typeof text === 'string' && text.length > KEPT_OUTPUT_MAX ? text.slice(0, KEPT_OUTPUT_MAX) : text;
     const fresh = entries.map(({ skip: _, ...e }) => {

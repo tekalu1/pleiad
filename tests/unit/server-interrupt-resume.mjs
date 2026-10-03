@@ -16,6 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
+import { readSessions, writeSessions } from '../lib/data-store.mjs';
 
 export const name = 'server-interrupt-resume';
 export const title = '中断は会話に理由付きで残り、「再開」で保留か理由の文を送って続けられる。落ちたターンは再起動で中断になる';
@@ -29,7 +30,7 @@ export default async function (t) {
   let server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir });
   let c = await open({ port: server.port, token: server.token, autoAllow: true });
   const row = async id => (await c.cmd('listSessions')).find(s => s.id === id);
-  const sidecar = async () => JSON.parse(await fs.readFile(path.join(dataDir, 'sessions.json'), 'utf8'));
+  const sidecar = async () => readSessions(dataDir);
   const rejected = async (p) => { try { await p; return null; } catch (e) { return e.message; } };
   // 走り出す（activity が届く）まで待つ
   const startSlow = async (sessionId, prompt = 'slow') => {
@@ -219,7 +220,7 @@ export default async function (t) {
       outbox: [{ id: 'failed-head-0001', args: { prompt: 'echo:failed-head' }, at: old, status: 'failed', error: 'x' }] };
     data[unknownId] = { ...data[unknownId], interrupted: { at: Date.now() - 1000, reason: 'user' },
       outbox: [{ id: 'unknown-head-0001', args: { prompt: 'echo:unknown-head' }, at: old, status: 'unknown', error: 'x' }] };
-    await fs.writeFile(path.join(dataDir, 'sessions.json'), JSON.stringify(data));
+    writeSessions(dataDir, data);
     const before = Date.now();
     server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir });
     c = await open({ port: server.port, token: server.token });

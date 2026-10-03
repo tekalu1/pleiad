@@ -114,7 +114,7 @@ export default async function (t) {
     t.ok('アーカイブしたチャンネルへの投稿は CHANNEL_ARCHIVED（戻し方を文で）', !arch.ok && arch.code === 'CHANNEL_ARCHIVED' && /channels\.archive/.test(arch.error), arch.error);
     t.ok('未知の引数・空の本文は INVALID', (await run(HUMAN, 'channels.post', { channelId: cid, text: '' })).code === 'INVALID' && (await run(HUMAN, 'channels.post', { channelId: cid, text: 'x', bogus: 1 })).code === 'INVALID');
     t.ok('英語の文でも出る', (await registry.invoke(HUMAN, 'channels.get', { channelId: 'c_nope0000' }, { ...deps, locale: 'en' })).error.includes('was not found'));
-    channels.stop();
+    await channels.close();   // DB の接続（スレッドの状態）を離す
 
     // ================================================================ 独立レビューの指摘（S-2・S-3・S-4）: 強い bot を起こす確認・スレッドの落ち・作業場所の変更
     {
@@ -234,7 +234,7 @@ export default async function (t) {
       t.ok('S-4: 人は cwd を承認なしで変えられる。AI が cwd つきで作るのも承認、cwd なしの作成は承認なし', (await call(HUMAN, 'channels.update', { channelId: made.id, cwd: path.join(tmp, 'work') })).ok === true
         && (await call(agent('s_chat'), 'channels.create', { name: 'with-cwd', cwd: path.join(tmp, 'work') })).pending === true
         && (await call(agent('s_chat'), 'channels.create', { name: 'without-cwd' })).ok === true);
-      reviewChannels.stop();
+      await reviewChannels.close();
     }
 
     // ---- サーバー越し（fake）: 画面（WS の invoke）の出来事と、CLI（束縛なし・会話に束縛）

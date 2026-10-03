@@ -6,6 +6,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
+import { readSessions, readAgentTasks } from '../lib/data-store.mjs';
 
 export const name = 'server-delegation-routing';
 export const title = '委譲先の自動振り分け: kind の検査・自動で選んで子を作る・記録・設定とキーの口・キーを出さない';
@@ -184,7 +185,7 @@ export default async function (t) {
     const before = jevCalls.length;
     const gone = await call(sid, { kind: 'trivial', task: 'agy-after-delete' });
     t.ok('キーを消せば送らない', state.keys.openrouter.hasKey === false && gone.data?.routing?.fallback === 'no_key' && jevCalls.length === before);
-    const files = await Promise.all(['agent-tasks.json', 'sessions.json', 'prefs.json'].map(f => fs.readFile(path.join(scratch, f), 'utf8').catch(() => '')));
+    const files = [JSON.stringify(readAgentTasks(scratch)), JSON.stringify(readSessions(scratch)), await fs.readFile(path.join(scratch, 'prefs.json'), 'utf8').catch(() => '')];
     t.ok('キーをタスク・会話の記録・設定に書かない', files.every(f => !f.includes(KEY)) && files[0].includes('"routing"'));
     t.ok('キーをサーバーのログに出さない', !server.tail(200).includes(KEY));
     // 後片付け: 走っている子を止める

@@ -9,6 +9,7 @@ import { parse, stringify } from 'yaml';
 import { createUpdateGate } from '../../core/update-gate.mjs';
 import { createMessageQueue } from '../../core/message-queue.mjs';
 import { ensureDataSchema } from '../../core/data-schema.mjs';
+import { readSessions } from '../lib/data-store.mjs';
 import { prepareArtifacts } from '../../scripts/release-artifacts.mjs';
 import { generateReleaseInfo, compareVersions } from '../../scripts/release-info.mjs';
 const { Updates } = createRequire(import.meta.url)('../../desktop/updates.cjs');
@@ -240,10 +241,14 @@ export default async function(t) {
     resolveQueue({ outbox: [] }); await read;
     t.ok('Queue releases update guard after persistence completes', !queue.busy);
     const data = path.join(dir, 'data'); await ensureDataSchema(data);
-    await fs.writeFile(path.join(data, 'sessions.json'), '{"keep":true}');
+    t.ok('A new data directory is registered as the current format', JSON.parse(await fs.readFile(path.join(data, 'data-schema.json'), 'utf8')).schema === 2);
+    await fs.writeFile(path.join(data, 'data-schema.json'), '{"schema":1}');
+    await fs.writeFile(path.join(data, 'sessions.json'), '{"keep":{"title":"kept"}}');
     await ensureDataSchema(data);
-    t.ok('Schema registration preserves existing sessions', await fs.readFile(path.join(data, 'sessions.json'), 'utf8') === '{"keep":true}');
-    await fs.writeFile(path.join(data, 'data-schema.json'), '{"schema":2}');
+    t.ok('Schema upgrade preserves existing sessions (migrated into the database, original kept in the backup)',
+      readSessions(data).keep?.title === 'kept' && JSON.parse(await fs.readFile(path.join(data, 'data-schema.json'), 'utf8')).schema === 2
+      && (await fs.readdir(data)).some(name => name.startsWith('backup-schema1-')));
+    await fs.writeFile(path.join(data, 'data-schema.json'), '{"schema":3}');
     await rejects('Future schema cannot be opened by older app', () => ensureDataSchema(data));
     await fs.writeFile(path.join(data, 'data-schema.json'), '{}');
     await rejects('Malformed schema does not silently reset', () => ensureDataSchema(data));

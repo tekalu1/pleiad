@@ -10,17 +10,17 @@ bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集
 |---|---|
 | チャンネル・DM の定義と既読 | `channels/index.json` |
 | 投稿・編集・リアクション（追記だけの操作の記録） | `channels/<channelId>.jsonl` |
-| スレッドの状態 | `channels/threads.json` |
+| スレッドの状態 | DB（`pleiad.db` の `channel_threads`。1 スレッド 1 行。[ADR 0115](adr/0115-records-in-sqlite.md)） |
 | bot へ届ける前の出来事 | `channels/inbox.json`（状態 `pending → delivering → sent / unknown`） |
 | bot の定義 | `bots.json` |
 | 記憶（正本）・変更の記録・索引 | `memory/user.md`・`memory/bots/<botId>.md`・`memory/log.jsonl`・`memory/index.sqlite` |
 | ルーティン | `routines.json` |
-| webhook の秘密（P3）・学習の進み | `webhook-secrets.json`・`memory/learn-state.json`（`version: 1`、会話ごとの発言 index・チャンネルごとの投稿 id、追記ログの byte offset、前回の実行時刻） |
+| webhook の秘密（P3）・学習の進み | `webhook-secrets.json`・DB（`pleiad.db` の `memory_state`。会話ごとの発言 index・チャンネルごとの投稿 id・追記ログの byte offset を 1 カーソル 1 行、前回の実行時刻を 1 行） |
 
-- 新しいファイルは `{ version: 1 }` を持つ。読めない版は読み込まずに画面へ出して止める。`DATA_SCHEMA` は上げない。
+- 新しい JSON ファイル（`index.json`・`inbox.json`・`bots.json`・`routines.json`）は `{ version: 1 }` を持つ。読めない版は読み込まずに画面へ出して止める。`DATA_SCHEMA` は 2（形式 1 の JSON から SQLite への移行で上がる。[ADR 0115](adr/0115-records-in-sqlite.md)）。スレッドの状態と学習の進みは、スレッド・会話の数だけ増えて更新のたびに全体を書き直すことになるので、JSON ではなく DB の行にした（`version` は持たない。0.6.0 が書いた `threads.json`・`learn-state.json` は、形式 1 → 2 の移行が取り込む）。投稿の追記ログ（`<channelId>.jsonl`・`memory/log.jsonl`）は追記だけで、記憶の markdown は人が直せる正本（[ADR 0110](adr/0110-bot-memory.md)）のまま。どれも `tests/data-writes-allowlist.mjs` に上限と理由を書いてある。
 - `editedAt`（画面の「（編集済み）」）は畳み込み（`foldOp`）が付ける。本文が実際に変わった `edit` だけ。同じ本文での `edit`（`mentions`・`state`・`presents` だけの更新）と、bot のターンの投稿（`turn`）の本文が埋まる更新は付けない。記録は操作の列なので、過去のデータも読み直すだけで直る。
 - id は `core/channels/types.mjs` の `newId(kind)`（`c_` `p_` `b_` `m_` `r_` `h_` `i_`）。
-- 会話（sessions.json）の新しい欄: `bot`（`SessionBot`。botId・種類・チャンネル・スレッド・記憶の進み）。代わりの送信の見分けは `sessions.send` の `relayed` を使う（[ADR 0114](adr/0114-send-on-your-behalf.md)）。使用量の記録（usage.json）に `sessionId`（足す前の分は無い）。一覧の行（`sessionRow`）に `bot: { botId, kind, channelId, threadId } | null`。
+- 会話の記録（DB の `session_fields`）の新しい欄: `bot`（`SessionBot`。botId・種類・チャンネル・スレッド・記憶の進み）。代わりの送信の見分けは `sessions.send` の `relayed` を使う（[ADR 0114](adr/0114-send-on-your-behalf.md)）。使用量の記録（DB の `usage_records`）に `sessionId`（足す前の分は無い。`usage.records({ sessionIds, since })` が引く）。一覧の行（`sessionRow`）に `bot: { botId, kind, channelId, threadId } | null`。
 - 会話の言語・題・モード・モデル・エフォートは普通のセッションと同じ（委譲の子の作り方 `prepare` と同じ手順）。
 
 ## モジュールと持ち主
@@ -233,7 +233,7 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 
 `createBotHost` は `core/memory/learn.mjs` を内部の毎日の予約として起動する。既定は現地時刻 02:00。PC が止まっていた予定は起動時に 1 回だけ実行する。利用者の `routines.list` には出ず、チャンネルにも投稿しない。`settings.set` の `memoryLearnBackend`（空なら会話の既定）、`memoryLearnAt`（HH:MM）、`memoryLearnPaused` で変更できる。いずれも AI から変更できる write の設定。
 
-`memory/learn-state.json` は `{ version: 1, cursor: { sessions: { [id]: messageIndex }, posts: { [channelId]: postId }, postOffsets: { [channelId]: byteOffset } }, lastRunAt }`。会話は更新時刻が変わったものの未読 index 以降、チャンネルは追記ログの未読 byte offset 以降だけを読む。人の通常の user 行と taint のない人の投稿を最大 5 件ずつ時刻順で学習用会話（sidecar `bot.kind: 'learner'`）へ渡す。共通層への 1 ターン 5 件の書き込み上限に合わせ、残りは次の束で読む。新しい材料がないときはエージェントを呼ばない。失敗時はカーソルを進めず、次回やり直す。
+夜の整理の進みは DB の `memory_state`（`kind` が `cursor.sessions`・`cursor.posts`・`cursor.postOffsets` の行と、`meta` の `lastRunAt` の行。以前の `memory/learn-state.json` の `{ cursor: { sessions: { [id]: messageIndex }, posts: { [channelId]: postId }, postOffsets: { [channelId]: byteOffset } }, lastRunAt }` と同じ中身を、1 カーソル 1 行にした）。会話は更新時刻が変わったものの未読 index 以降、チャンネルは追記ログの未読 byte offset 以降だけを読む。人の通常の user 行と taint のない人の投稿を最大 5 件ずつ時刻順で学習用会話（sidecar `bot.kind: 'learner'`）へ渡す。共通層への 1 ターン 5 件の書き込み上限に合わせ、残りは次の束で読む。新しい材料がないときはエージェントを呼ばない。失敗時はカーソルを進めず、次回やり直す。
 
 学習用会話は既定の bot と同じバックエンド・モデル設定に従い、読み取りモードで候補の JSON を返す。人が直前の AI の答えを明示的に採用した発言では、その答えも文脈に含める。候補の出どころは番号から実物の人の発言（採用した場合は AI の答えも）を引き、既存の `memory.write` / `memory.edit` の出どころ検査を通して 2 層へ書く。重複は書かない。古い記憶と矛盾すれば、AI が書いた行は直し、人が書いた行は新しい行を足して古い行の理由に「新しい記憶で置き換わった」の印を残す。その日に新しく増えた行は bot のページに小さな印が出る。
 

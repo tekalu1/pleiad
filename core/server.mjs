@@ -29,6 +29,7 @@ import { insideDir, sameDir } from './worktrees.mjs';
 import { createCallTracker, timelineOf } from './git-timeline.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
+import { acquireDataLock } from './data-lock.mjs';
 import { localeInfo, setLocale, t, i18n, LOCALE_SETTINGS, agentT, agentLocaleOf, currentLocale } from './i18n.mjs';
 import http from "node:http";
 import crypto from "node:crypto";
@@ -105,10 +106,21 @@ import {
   getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession,
 } from "./backends/index.mjs";
 
+// 保存（DB への書き込み）の失敗は例外として返る（ADR 0115）。待たずに呼んで受けていない箇所が残っていると、Node の既定
+// （処理されない Promise の拒否でプロセスが落ちる）では、1 件の保存の失敗でサーバーごと落ち、走っている他の会話のターンまで止まる。
+// 呼び出し側で受けるのが先で（洗い出しは ADR 0115）、これは念のための受け止め: ログに出して、サーバーは落とさない。
+// 拒否した処理の結果は誰も待っていないので、続けても状態は食い違わない
+process.on('unhandledRejection', (reason) => {
+  console.error('  [unhandledRejection]', String(reason?.stack ?? reason));
+});
 const updateGate = createUpdateGate();
 const quotaCache = createQuotaCache();
+// 書き込みを始める前に、データ置き場をこのプロセスだけが持つようにする（別のプロセスが持っていれば、理由を出して起動を止める。
+// 終了まで持つ。core/data-lock.mjs）。そのうえで形式を確かめ、古ければここで移行する（core/schema-migration.mjs。失敗すれば起動を止める）
+acquireDataLock(store.dataDir);
+const migrated = await ensureDataSchema(store.dataDir);
+if (migrated) console.log(`  ${t('data.migrated', { backup: migrated.backup })}`);
 const usageStore = createUsageStore(store.dataDir);
-await ensureDataSchema(store.dataDir);
 // Claude の記録に入っていた会話の累計を、ターンの分へ一度だけ直す（core/usage-migrations.mjs、ADR 0053）。
 // transcript を読むので起動は待たせない。記録の書き込みとは usageStore の中で直列になる
 migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects') })
@@ -1573,7 +1585,7 @@ async function applyStatus(backend, sessionId, status, why, actor) {
 }
 
 // ---- 保存される変更理由（docs/design.md「多言語対応」） ------------------------
-// 変更履歴（sessions.json の history）とイベントの reason は、従来どおり日本語の文を持つ（過去の記録・古い画面と互換）。
+// 変更履歴（会話の記録の history）とイベントの reason は、従来どおり日本語の文を持つ（過去の記録・古い画面と互換）。
 // 新しい記録には reasonKey（ui:saved.reason.<key>）と reasonParams を足し、画面が今の言語で出す（web/saved-text.mjs）。
 // 過去の記録は reason の文のまま出る。reasonParams の配列（names）は、ja は「・」、画面は言語の区切りでつなぐ。
 // i18n-dynamic: ui:saved.reason.
@@ -6059,7 +6071,7 @@ process.parentPort?.on("message", async ({ data }) => {
   if (data?.type === "shutdown") {
     try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy); }
     catch (e) {
-      console.error('sessions.json shutdown save failed:', e?.code ?? e?.message ?? e);
+      console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e);
       process.exitCode = 1;
     }
   }

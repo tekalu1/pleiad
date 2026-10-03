@@ -74,15 +74,15 @@ export default async function(t) {
     await c.cmd("abort", { sessionId: id });
     await c.waitFor(e => e.type === "turnEnd" && e.sessionId === id, { from: mark });
     const count = (await c.cmd("listSessions")).length;
-    // 一時ファイルの名前は毎回変わる（core/atomic-file.mjs）ので、置き換え先に同名のフォルダーを置いて rename を失敗させる。
-    // 索引はサーバーのメモリにあるので、本物は脇へ退けて後で戻す（次の保存がメモリから書き直す）
-    const index = path.join(scratch, "conversations.json");
+    // 会話の本文の置き場（conversations/）をファイルに置き換えて、保存（mkdir）を失敗させる。本物は脇へ退けて後で戻す
+    // （索引は DB にあり、本文の保存が先に失敗するので書かれない）
+    const index = path.join(scratch, "conversations");
     await fs.rename(index, index + ".aside");
-    await fs.mkdir(index);
+    await fs.writeFile(index, "blocked");
     await c.cmd("fork", { sessionId: id, upToMessageId: at }).then(
       () => t.ok("save failure reported", false), () => t.ok("save failure reported", true));
     t.ok("save failure leaves no visible child", (await c.cmd("listSessions")).length === count);
-    await fs.rmdir(index);
+    await fs.rm(index, { force: true });
     await fs.rename(index + ".aside", index);
     const child = await c.cmd("fork", { sessionId: id, upToMessageId: at, title: "persistent fork" });
     const before = await c.cmd("loadSession", { sessionId: child.sessionId });

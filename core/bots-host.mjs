@@ -20,7 +20,7 @@
 //     onSessionDone(sessionId, outcome): void        … 完了通知が落ち着いたとき（イベントのトリガ）
 //     onCompacted(sessionId): void                   … 圧縮の完了
 //     handleHttp(req, res): Promise<boolean>         … 認証の前。自分の要求（/hooks/）なら応答して true
-//     start(): Promise<void>・stop(): void
+//     start(): Promise<void>・stop(): void・close(): Promise<void>（stop と DB の接続の解放）
 //
 // 区画ごとの持ち主（区画の外は触らない）: channels = S1、bots = S2、memory = S3、dispatch = S4、routines = R1（P2）、webhook = H1（P3）。
 import path from 'node:path';
@@ -94,5 +94,7 @@ export function createBotHost(deps) {
     handleHttp: guard('handleHttp', (req, res) => webhook.handle(req, res), false),
     async start() { for (const s of services) await guard('start', () => s.start())(); },
     stop() { for (const s of [...services].reverse()) guard('stop', () => s.stop())(); },
+    /** stop に加えて、DB の接続を離す（スレッドの状態・夜の整理の進み。データ置き場を消す前。テストの後片付け用） */
+    async close() { this.stop(); await guard('close', () => channels.close())(); learner.close(); },
   };
 }

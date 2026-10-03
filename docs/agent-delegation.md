@@ -83,7 +83,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 **使用量の取り置き。** 振り分けのたびに使用量を取りに行って待たない。サーバーは待ち受けを始めてから、既存の使用量の取得（`providerQuota`。設定の「使用量」・`ply_usage` と同じ 1 分のキャッシュを通す）を 5 分ごとと委譲の直後に呼び直し、振り分けはその値を同期的に読む。起動直後でまだ一度も取れていない、または有効なバックエンドのどれかの値が古い（取得間隔の 3 倍を超える。取得中ならそれに相乗り）ときだけ、取り直しを判定と同じ 3 秒まで待つ（`createUsageMonitor` の `ensureFresh`）。それでも間に合わなければ、これまで通り `usage_stale` / `usage_unknown` で後回しになる。候補のモデルが一覧に無いバックエンド（agy はログインの確認でモデル一覧を覚える）は、30 分に 1 回までログインの確認で一覧を引き直す。振り分けが無効なら取らない。
 
-**`routing`**（返り値・`agent-tasks.json` のタスク・子の会話のメタデータ `routing`・会話の一覧の行に同じ形）:
+**`routing`**（返り値・DB（`agent_tasks`）のタスク・子の会話のメタデータ `routing`・会話の一覧の行に同じ形）:
 
 ```jsonc
 { "mode": "auto" | "pinned" | "manual", "kind": "implement",   // manual は人が「別の候補でやり直す」で選んだもの（下）
@@ -107,7 +107,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 **別の候補でやり直す**（委譲カードの操作。画面は design-system.md「委譲カード」、WebSocket の `retryAgentTask { taskId, candidate, account?, stop?, approved? }`。`core/server.mjs` の `retryAgentTask`）:
 - 自動で選んだ委譲のカードからだけ出す。候補は設定 › 委譲と同じ一覧（`delegationRouting` の `candidates`）のうち、余裕あり・余裕が少ないもの（使用量の取り置きで確かめる）。Claude は使える認証ごとに並べ、`account` に認証の id（ログイン中は `''`）を渡す。元の委譲先と同じ backend・model・account の組だけ除く。サーバーでも認証を含めて確かめ、使えない・元と同じ・形が不正なら断る
-- 同じ依頼（`task` と `context`）で**新しいタスク**を作る。元のタスクは書き換えない。タスクは最初の `context` を持つ（`agent-tasks.json` の `context`。一覧・`ply_task_status` には載せない）。`context` を持つ前に作ったタスクは `task` だけを渡す
+- 同じ依頼（`task` と `context`）で**新しいタスク**を作る。元のタスクは書き換えない。タスクは最初の `context` を持つ（タスクの記録の `context`。一覧・`ply_task_status` には載せない）。`context` を持つ前に作ったタスクは `task` だけを渡す
 - 依頼元は元のタスクと同じ会話（`parentSessionId`）。依頼元のターンの外で作る（`prepare` は `routing.mode: manual` のときだけ依頼元のターンを求めない）。作業場所は元のタスクの `cwd`。自動のときと同じく接続先は継がず公式で走り、Claude なら明示して選んだ認証
 - 子の承認モードは `ply_delegate` と同じく依頼元の会話の強さまで（`resolveDelegatedMode`）。それを超えるなら作らずに `{ confirm: { agent, mode } }` を返し、画面が 1 行で示して `approved: true` で頼み直す。依頼元の会話が読み取り・計画モードなら断る
 - 元のタスクが動いている（`queued` / `running` / `cancelling`）ときは `stop`（真偽）が要る。画面で「止めて◯◯でやり直す」「止めずにやり直す」を選ばせる。`stop: true` なら元のタスクを止めてから作る（止めたタスクの完了通知は出さない）
@@ -328,7 +328,7 @@ Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の�
 
 ## 保存・画面・再起動
 
-`AGENT_HOST_DATA/agent-tasks.json` にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）、実行前に拒否されたコマンド（`rejections`。伏せて切ったもの）、実行中コマンド（`activeCommands`）と通知済みの印、子の報告後に Pleiad が止めた裏の作業（`stoppedBackground`）を保存する。
+`AGENT_HOST_DATA/pleiad.db` の `agent_tasks`（1 タスク 1 行。[ADR 0115](adr/0115-records-in-sqlite.md)）にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）、実行前に拒否されたコマンド（`rejections`。伏せて切ったもの）、実行中コマンド（`activeCommands`）と通知済みの印、子の報告後に Pleiad が止めた裏の作業（`stoppedBackground`）を保存する。
 追加指示は各タスクの `instructions: [{ id, text, at, state }]` に受け付け順で保存する（[ADR 0044](adr/0044-task-instruction-delivery.md)）。`queue` は初回依頼の本文または `{ instructionId }` の FIFO。旧ファイルの文字列 `queue` は読み込み時に追加指示へ移し、初回依頼は区別する。`state` は `queued` → `sending` → `delivered`、受領前の再投入なら `queued`。途中送信で渡した指示は受け付け直後に `queue` から外して `sending` にし、渡れば `delivered`、渡らなければ `queued`（`queue` の先頭）へ戻る（「追加指示の配送」）。失敗・停止・再起動で待機中だったものは `dropped` として残す。子のターンに渡した `sending` は、中断や再起動でも `delivered` とし、実行の例外では渡る前に失敗したものとして `dropped` にする。件数上限は設けない。
 `ply_task_status` / `ply_task_list` は本文を含めず `pendingMessages` を保つ。`running` も待機件数と `instructionRevision` だけを含む。画面が選んだタスクの詳細を開くと `agentTaskInstructions` でそのタスクの本文を読み、まだ渡っていない指示を「追加の指示」の発言として示す（途中送信の合図待ち＝`sending` は会話の末尾の稼働表示の前に、メインパネルの作業中の送信と同じ状態の行「次の区切りで AI に渡します」つきで。渡れば子の履歴の user 発言に代わる。待機＝`queued` は末尾に時計の印で、未配送＝`dropped` は「✕ 届かずに終わった」を残す。画面は design-system.md「バックグラウンド」）。配送済みは子の通常の user 発言として履歴から描く。同じ本文を複数回送れるので、指示 ID・状態・配送順を使い、本文の一致では重複を判定しない。現状「会話として開く」の通常画面には待機中の指示を表示しない。
 会話メタデータの `delegation` に親とタスク ID を、`routing` にどう選ばれたかを記録する。会話の分岐を表す `parent` とは別にする。
@@ -338,7 +338,7 @@ Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の�
 `running` に新しく現れた行と、`running` から外れた行（終わって通知が届いた）は `agentTasks { taskIds }` でその行だけを読み直す。`tree`・`taskIds` で読む行は結果の本文と拒否の記録を載せない（結果は `delegation.status`）。
 入力欄の上の「バックグラウンド N」（全件終了後は「バックグラウンド · 完了 M」。design-system.md「バックグラウンド」）で子の会話を読む・停止する・承認に答える。「会話として開く」で子の会話そのものへ移り、子からはヘッダーの「依頼元の会話」で戻れる。完了後も札と、依頼元の会話の `ply_delegate` のカードの「開く」から確認できる。
 
-保存は一意な名前の一時ファイルに書いてから置き換える（`core/atomic-file.mjs`。`conversations.json`・`conversations/`・`presents/` の書き直しも同じ）。
+保存は、書き換えたタスクの行だけを 1 つのトランザクションで書く（保存した JSON から変わった行だけ。変わっていない行は起動でも書き直さない）。書けなかったときの扱いは下のとおり。一時ファイルに書いてから置き換える保存（`core/atomic-file.mjs`）は、設定の台帳・`conversations/`・`presents/` に使う。
 Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-Content` など）が置き換え先を開いている間だけ rename が `EPERM` / `EBUSY` / `EACCES` になる。
 この 3 つに限り、20ms から伸ばして合計 1.1 秒ほどやり直す。やり直すのは保存であり、子の実行や完了通知ではない。
 
