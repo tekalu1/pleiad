@@ -36,6 +36,25 @@ export default async function (t) {
       && /setTheme: \(dark, colors\) => post\('theme', \{ dark: dark === true, top: .*bottom: /.test(script));
   t.ok('戻るボタンはまず画面に plyremote:back（取り消せる）を投げ、取り消されなければ背面へ回る（ホスト一覧へは戻らない）',
     /new CustomEvent\('plyremote:back', \{ cancelable: true \}\)/.test(host) && /if \(result != "true"\) moveTaskToBack\(true\)/.test(host));
+  // ---- 起動時に前回のホストを開く（2026-10-01）。覚える・消す・開くの 3 か所がそろっている
+  const main = read(`${APP}/kotlin/com/procway/pleiad/MainActivity.kt`);
+  const plugin = read(`${APP}/kotlin/com/procway/pleiad/PleiadRemotePlugin.kt`);
+  t.ok('ホストの窓を開いたら覚え、一覧へ戻る口（back・戻るボタンで窓が無いとき）で消す。背面へ回すだけでは消さない',
+    /ResumeStore\(this\)\.remember\(hostId\)/.test(host) && /"back" -> backToList\(\)/.test(host) && /ResumeStore\(this\)\.forget\(hostId\)/.test(host)
+      && /val w = web \?: return backToList\(\)/.test(host) && /if \(result != "true"\) moveTaskToBack\(true\)/.test(host));
+  t.ok('ホストを削除したら覚えたホストも消す', /ResumeStore\(context\)\.forget\(hostId\)/.test(plugin));
+  t.ok('起動時は ResumePolicy が決める（復元でない・ACTION_MAIN）。Capacitor の WebView を作る前に HostActivity を起こす',
+    /ResumePolicy\.decide\(saved, device\.store\.hosts\(\), savedInstanceState == null, intent\?\.action == Intent\.ACTION_MAIN\)/.test(main)
+      && main.indexOf('resumeLastHost(savedInstanceState)') < main.indexOf('super.onCreate(savedInstanceState)'));
+  const proxyKt = read('mobile/android/remote-core/src/main/kotlin/com/procway/pleiad/remote/DeviceProxy.kt');
+  t.ok('オフライン・取り消しの案内に「ホスト一覧に戻る」（window.backToHosts があるときだけ出す）',
+    /id="back-to-hosts" hidden/.test(proxyKt) && /typeof window\.backToHosts==='function'/.test(proxyKt) && /fun backToHosts\(\): String/.test(proxyKt));
+  const xml = l => read(`${APP}/res/${l === 'ja' ? 'values-ja' : 'values'}/strings.xml`);
+  t.ok('案内の「ホスト一覧に戻る」は画面の辞書（ui.json の remote.backToHosts）と同じ文言（ja・en）',
+    ['ja', 'en'].every(l => {
+      const m = xml(l).match(/<string name="remote_back_to_hosts">([^<]*)<\/string>/)?.[1];
+      return m && m === JSON.parse(read(`web/locales/${l}/ui.json`)).remote?.backToHosts;
+    }));
   const client = read('web/client.mjs');
   t.ok('web/ は殻の戻るで開いている面を閉じ、殻へ上端・下端の地の色を送る',
     /addEventListener\("plyremote:back"/.test(client) && /watchShellBack\(\);/.test(client) && /setTheme\(dark, colors\)/.test(client) && /watchShellTheme\(\);/.test(client));

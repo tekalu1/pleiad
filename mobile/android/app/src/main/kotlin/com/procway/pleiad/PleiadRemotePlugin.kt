@@ -141,7 +141,9 @@ class PleiadRemotePlugin : Plugin() {
 
     @PluginMethod
     fun remove(call: PluginCall) = bg(call) {
-        device.remove(call.getString("hostId") ?: "")
+        val hostId = call.getString("hostId") ?: ""
+        device.remove(hostId)
+        ResumeStore(context).forget(hostId)
         (context.applicationContext as PleiadApp).notifyHub.hostsChanged()
         call.resolve()
     }

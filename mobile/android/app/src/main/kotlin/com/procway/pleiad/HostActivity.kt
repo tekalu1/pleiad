@@ -97,6 +97,7 @@ class HostActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         hostId = intent.getStringExtra(EXTRA_HOST_ID) ?: return finish()
+        ResumeStore(this).remember(hostId)
         pendingOpen = intent.getStringExtra(EXTRA_OPEN_SESSION)
         NotifyService.sync(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -383,7 +384,7 @@ class HostActivity : ComponentActivity() {
                 "hello" -> { reply = replyProxy; pushStatus(px.link.status) }
                 "retry" -> px.retryNow()
                 "theme" -> applyTheme(message.data)
-                "back" -> finish()
+                "back" -> backToList()
                 // The notification band (web/mobile-notify.mjs, ADR 0086)
                 "notify.state" -> replyTo(idOf(message.data), NotifyControl.state(this))
                 "notify.enable" -> {
@@ -461,9 +462,15 @@ class HostActivity : ComponentActivity() {
         try { r.postMessage(JSONObject().put("type", "status").put("status", s.toJson()).toString()) } catch (_: Exception) {}
     }
 
+    /** The user left for the host list: the next launcher start shows the list too, not this host (ResumeStore). */
+    private fun backToList() {
+        ResumeStore(this).forget(hostId)
+        runOnUiThread { finish() }
+    }
+
     private fun offerBack() {
         if (sheet != null) return closePopup()
-        val w = web ?: return finish()
+        val w = web ?: return backToList()
         w.evaluateJavascript("(() => { try { return !window.dispatchEvent(new CustomEvent('plyremote:back', { cancelable: true })); } catch (e) { return false; } })()") { result ->
             if (result != "true") moveTaskToBack(true)
         }

@@ -40,6 +40,8 @@ interface ProxyTexts {
     fun body(state: String): String
     fun tokenRequired(): String
     fun lost(): String
+    /** The notice page's button back to the host list (shown only where the app provides window.backToHosts). */
+    fun backToHosts(): String
 }
 
 object DefaultTexts : ProxyTexts {
@@ -51,6 +53,7 @@ object DefaultTexts : ProxyTexts {
     }
     override fun tokenRequired() = "A token is required (open this from the app)"
     override fun lost() = "Lost the connection to the host"
+    override fun backToHosts() = "Back to hosts"
 }
 
 class DeviceProxy(
@@ -238,8 +241,11 @@ class DeviceProxy(
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>${escapeHtml(title)}</title>
 <style>body{font:16px/1.6 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;color:#333;background:#f6f6f4}
 main{max-width:28rem;padding:24px}h1{font-size:18px;margin:0 0 8px}p{margin:0;color:#666}
+button{margin-top:20px;padding:10px 16px;font:inherit;color:inherit;background:transparent;border:1px solid #9995;border-radius:8px}button[hidden]{display:none}
 @media (prefers-color-scheme:dark){body{color:#ddd;background:#1c1c1c}p{color:#aaa}}</style></head>
-<body><main data-remote-state="${escapeHtml(state)}"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(body)}</p>${if (hostName.isNotEmpty()) "<p>${escapeHtml(hostName)}</p>" else ""}</main></body></html>
+<body><main data-remote-state="${escapeHtml(state)}"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(body)}</p>${if (hostName.isNotEmpty()) "<p>${escapeHtml(hostName)}</p>" else ""}<button type="button" id="back-to-hosts" hidden>${escapeHtml(texts.backToHosts())}</button></main>
+<script>/* the app's host window injects window.backToHosts (HostActivity); without it (a plain browser) the button stays hidden */
+var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='function'){b.hidden=false;b.onclick=function(){window.backToHosts()}}</script></body></html>
 """
     }
 
