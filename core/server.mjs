@@ -2208,11 +2208,29 @@ async function finishSettingApproval(requestId, outcome, extra = {}) {
   if (entry) emitGlobal({ type: 'settingApproval', sessionId: entry.sessionId, requestId, outcome });
 }
 
-/** 設定の変更の結果を、エージェントへ渡す文にする（会話の言語。1 件ずつの節を並べる） */
+/** 設定の変更の結果を、エージェントへ渡す文にする（会話の言語。1 件ずつの節を並べる）。via は、求めた子ではなく依頼元へ届けるときの子（routeSettingNotice） */
 function settingNotice(lng, notices) {
   // i18n-dynamic: agent:ops.settingNotice.
   return notices.map((n) => agentT(lng, 'ops.settingNotice.head', { requestId: n.requestId, status: agentT(lng, `ops.settingNotice.status.${n.outcome}`) })
+    + (n.via ? '\n' + agentT(lng, 'ops.settingNotice.fromChild', { taskId: n.via.taskId, title: n.via.title ?? '', state: n.via.status }) : '')
     + '\n' + agentT(lng, `ops.settingNotice.${n.outcome}`, { target: settingTarget(lng, n.op, n.key), error: n.error ?? '' })).join('\n\n');
+}
+
+/**
+ * 承認の結果（設定の変更・ほかの guarded な操作。settingApprovals に積むものすべて）の届け先（ADR 0088「届け先」）。
+ * 承認を求めた会話が委譲の子で、そのタスクが動いていない（完了・失敗・取り消しなど）なら、子の新しいターンは誰にも見られないので、
+ * 依頼元の会話へ届ける（via に子のタスクを添える。依頼元は ply_task_send で子に続きを頼める）。
+ * タスクが動いている（待機・実行中・子のターンが走っている）・依頼元の会話がもう無い・委譲の子でない会話は、求めた会話のまま（null）。
+ */
+async function routeSettingNotice(notice) {
+  const sessionId = notice.sessionId;
+  const delegation = (await store.get(sessionId)).delegation;
+  if (!delegation?.taskId || !delegation.parentSessionId || delegation.parentSessionId === sessionId) return null;
+  const task = agentTasks?.get(delegation.taskId);
+  if (!task || task.sessionId !== sessionId || task.parentSessionId !== delegation.parentSessionId) return null;
+  if (['queued', 'running', 'cancelling'].includes(task.status) || taskExecutions.has(sessionId)) return null;
+  if (!await resolveBackendForSession(delegation.parentSessionId).catch(() => null)) return null;
+  return { sessionId: delegation.parentSessionId, via: { taskId: task.taskId, title: task.title ?? null, status: task.status } };
 }
 
 /**
@@ -2952,6 +2970,7 @@ await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
 // 渡せなければ会話が空いてから新しいターンで。前の起動で待っていた要求は、再起動で取り下げた結果として届ける
 settingApprovals = await createSettingApprovals({
   dataDir: store.dataDir,
+  route: routeSettingNotice,
   onError: e => console.error('  設定の変更の承認の台帳:', String(e?.message ?? e)),
   deliver: async (sessionId, notices) => {
     const live = await noticeTarget(sessionId);

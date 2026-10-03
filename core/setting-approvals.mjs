@@ -3,6 +3,8 @@
 // 承認カード（core/server.mjs の askPermission）はメモリだけで、再起動をまたがない。台帳は <データ置き場>/setting-approvals.json に置き、
 // 起動したとき前の起動で待っていた要求を「再起動で取り下げた」結果に変えて届ける（エージェントが待ち続けないように）。
 // 届ける本文と届け方（走っているターンへ途中送信か、空いてから新しいターンか）は deliver が決める（委譲の完了通知と同じ経路。ADR 0057）。
+// 届け先の会話は route が決める: 承認を求めた会話が、作業を終えた委譲の子なら、子ではなく依頼元の会話へ（ADR 0088「届け先」）。
+// 決めるのは届けるたび（requeue で待っている間に、子が追加の指示で動き出したら子へ戻る）。台帳に残る sessionId は求めた会話のまま。
 //
 //   pending  [{ requestId, sessionId, key, op, askedAt }]                  人の答えを待っている要求
 //   notices  [{ requestId, sessionId, key, op, outcome, error?, at, state }] 届ける結果。state は queued か delivering
@@ -20,10 +22,11 @@ export const OUTCOMES = ['allowed', 'denied', 'failed', 'superseded', 'restart']
 /**
  * @param dataDir    データ置き場
  * @param deliver    (sessionId, notices) => 'ok' | 'requeue' | 'error'。requeue は受け取られていない（会話が空いてから送り直す）。
- *                   error は渡ったか分からない（送り直さない）
+ *                   error は渡ったか分からない（送り直さない）。sessionId は届け先で、求めた会話と違うとき、渡す結果に via（route の返り）が付く
+ * @param route      (notice) => { sessionId, via? } | null。届け先の会話。null（引けない・失敗）は求めた会話
  * @param intervalMs 届け直しを試す間隔
  */
-export async function createSettingApprovals({ dataDir, deliver, now = Date.now, intervalMs = 1000, onError = () => {} }) {
+export async function createSettingApprovals({ dataDir, deliver, route = null, now = Date.now, intervalMs = 1000, onError = () => {} }) {
   const file = path.join(dataDir, SETTING_APPROVALS_FILE);
   let pending = [], notices = [];
   try {
@@ -49,15 +52,21 @@ export async function createSettingApprovals({ dataDir, deliver, now = Date.now,
   if (restored || notices.length) await save();
 
   const sending = new Set();
-  async function deliverSession(sessionId) {
+  /** 結果の届け先。求めた会話か、その委譲のタスクが終わっているなら依頼元の会話（route） */
+  async function destinationOf(n) {
+    const to = await Promise.resolve().then(() => route?.({ ...n })).catch(() => null);
+    return to?.sessionId && to.sessionId !== n.sessionId ? { sessionId: to.sessionId, via: to.via ?? null } : { sessionId: n.sessionId, via: null };
+  }
+  async function deliverSession(sessionId, items) {
     if (sending.has(sessionId)) return;
-    const list = notices.filter((n) => n.sessionId === sessionId && n.state === 'queued');
+    const list = items.map((x) => x.n).filter((n) => n.state === 'queued');
     if (!list.length) return;
     sending.add(sessionId);
     try {
       for (const n of list) n.state = 'delivering';
       await save();
-      const outcome = await Promise.resolve().then(() => deliver(sessionId, list.map((n) => ({ ...n })))).catch(() => 'error');
+      const viaOf = new Map(items.map((x) => [x.n, x.via]));
+      const outcome = await Promise.resolve().then(() => deliver(sessionId, list.map((n) => ({ ...n, ...(viaOf.get(n) ? { via: viaOf.get(n) } : {}) })))).catch(() => 'error');
       if (outcome === 'requeue') for (const n of list) n.state = 'queued';
       else notices = notices.filter((n) => !list.includes(n));
       await save();
@@ -67,8 +76,15 @@ export async function createSettingApprovals({ dataDir, deliver, now = Date.now,
   async function kick() {
     if (kicking) return;
     kicking = true;
-    try { for (const id of new Set(notices.filter((n) => n.state === 'queued').map((n) => n.sessionId))) await deliverSession(id); }
-    finally { kicking = false; }
+    try {
+      const groups = new Map();
+      for (const n of notices.filter((x) => x.state === 'queued')) {
+        const to = await destinationOf(n);
+        if (!groups.has(to.sessionId)) groups.set(to.sessionId, []);
+        groups.get(to.sessionId).push({ n, via: to.via });
+      }
+      for (const [id, items] of groups) await deliverSession(id, items);
+    } finally { kicking = false; }
   }
   const timer = setInterval(() => { if (notices.length) kick().catch(onError); }, intervalMs);
   timer.unref?.();
@@ -96,7 +112,7 @@ export async function createSettingApprovals({ dataDir, deliver, now = Date.now,
     },
     /** 途中送信で渡した結果が読まれずに捨てられた。もう一度届ける列に戻す */
     async requeue(list) {
-      for (const n of list) if (!notices.some((x) => x.requestId === n.requestId && x.outcome === n.outcome)) notices.push({ ...n, state: 'queued' });
+      for (const { via, ...n } of list) if (!notices.some((x) => x.requestId === n.requestId && x.outcome === n.outcome)) notices.push({ ...n, state: 'queued' });
       await save();
       kick().catch(onError);
     },

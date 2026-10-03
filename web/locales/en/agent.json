@@ -465,6 +465,21 @@
     },
     "pending": "The change to {{target}} is waiting for the user's approval (requestId: {{requestId}}). Nothing has changed yet. The result (allowed or denied) will be delivered to this conversation later. You may continue other work or end your response without waiting. Do not request the same change again.",
     "settingTarget": "the setting {{key}}",
+    "settingTargetLabeled": "the setting \"{{label}}\" ({{key}})",
+    "settingLabel": {
+      "confirmAgentSites": "Ask before an agent uses a site",
+      "confirmExternalLoads": "Ask before loading external resources",
+      "agentSitePermissions": "Allowed sites · Agent access",
+      "externalSitePermissions": "Allowed sites · External resources",
+      "browserProfiles": "Built-in browser profiles",
+      "computerUse": "Computer use",
+      "delegationRouting": "Automatic delegation routing",
+      "plyInstructions": "Pleiad's instructions",
+      "addedContext": "Delegation instruction switch (previous version)",
+      "context": {
+        "default": "Context defaults"
+      }
+    },
     "opTarget": "the operation {{id}}",
     "settingNotice": {
       "head": "[Pleiad setting change result / {{requestId}}]\nResult: {{status}}",
@@ -475,6 +490,7 @@
         "superseded": "withdrawn",
         "restart": "withdrawn"
       },
+      "fromChild": "This change was requested by your delegated child \"{{title}}\" (taskId: {{taskId}}). The child's task has already ended ({{state}}), so the result is delivered to you instead of the child. To have the child continue, use ply_task_send.",
       "allowed": "The user allowed the change to {{target}}, and Pleiad applied it. Continue the work needed for the original request.",
       "denied": "The user denied the change to {{target}}. Nothing was changed. Do not request the same change again; ask the user why if needed.",
       "failed": "The user allowed the change to {{target}}, but it could not be applied: {{error}}",

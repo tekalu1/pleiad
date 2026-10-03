@@ -465,6 +465,21 @@
     },
     "pending": "{{target}}の変更は、ユーザーの承認を待っています（requestId: {{requestId}}）。まだ変わっていません。結果（許可・拒否）は後でこの会話に届きます。待たずにほかの作業を続けるか、応答を終えてかまいません。同じ変更を繰り返し求めないでください。",
     "settingTarget": "設定「{{key}}」",
+    "settingTargetLabeled": "設定「{{label}}」（{{key}}）",
+    "settingLabel": {
+      "confirmAgentSites": "エージェントがサイトを使う前に確認",
+      "confirmExternalLoads": "外部の読み込みの前に確認",
+      "agentSitePermissions": "許可したサイト · エージェントの利用",
+      "externalSitePermissions": "許可したサイト · 外部の読み込み",
+      "browserProfiles": "内蔵ブラウザーのプロフィール",
+      "computerUse": "コンピューターの操作",
+      "delegationRouting": "委譲先の自動振り分け",
+      "plyInstructions": "Pleiad の指示",
+      "addedContext": "委譲の指示のスイッチ（前の版）",
+      "context": {
+        "default": "コンテキストの既定"
+      }
+    },
     "opTarget": "操作「{{id}}」",
     "settingNotice": {
       "head": "[Pleiad 設定の変更の結果 / {{requestId}}]\n結果: {{status}}",
@@ -475,6 +490,7 @@
         "superseded": "取り下げ",
         "restart": "取り下げ"
       },
+      "fromChild": "委譲した子「{{title}}」（taskId: {{taskId}}）が求めた変更です。この子のタスクはすでに終わっている（{{state}}）ので、結果は子ではなくあなたに届けました。子に続きを頼むときは ply_task_send を使ってください。",
       "allowed": "ユーザーが{{target}}の変更を許可し、Pleiad が変更しました。元の依頼に必要な作業を続けてください。",
       "denied": "ユーザーが{{target}}の変更を拒否しました。設定は変わっていません。同じ変更を求め直さず、必要ならユーザーに理由を尋ねてください。",
       "failed": "ユーザーが{{target}}の変更を許可しましたが、変更できませんでした: {{error}}",
