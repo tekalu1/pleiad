@@ -432,6 +432,21 @@ function subagentLabel(child) {
   return name ? t("codex.subagent.named", { name }) : t("codex.subagent.name");
 }
 
+/**
+ * 承認カード・通知の見出し（title）。Codex の承認要求は title を運ばない（commandExecution は null で来る。2026-10-03 の実機の確認）ので、
+ * 何を許すのかが見出しで読めるよう、入力の対象（コマンドの 1 行目・変更するファイル・理由）で補う。無ければ null
+ */
+export function approvalTitle(toolName, input) {
+  const oneLine = (v) => {
+    const text = (Array.isArray(v) ? v.join(' ') : String(v ?? '')).split(/\r?\n/).map((x) => x.trim()).find(Boolean) ?? '';
+    return text.length > 80 ? `${text.slice(0, 80)}…` : text;
+  };
+  const picked = toolName === 'commandExecution' ? oneLine(input?.command)
+    : toolName === 'fileChange' ? oneLine((input?.files ?? []).join(', '))
+    : '';
+  return picked || oneLine(input?.reason) || null;
+}
+
 // ------------------------------------------------ サブエージェント（一覧 UI）
 //
 // 実行中一覧（server の runningWork）に載せるための口。docs/multi-backend.md §2.6。
@@ -1580,7 +1595,7 @@ export const backend = {
         input,
         sessionId: threadId,
         toolUseID: params?.itemId ?? null,
-        title,
+        title: title ?? approvalTitle(toolName, input),
         signal: signal?.signal,
         canAlways: true,
         kind: "tool",
