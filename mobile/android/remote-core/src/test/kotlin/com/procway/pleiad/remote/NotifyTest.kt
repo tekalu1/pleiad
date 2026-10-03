@@ -129,6 +129,19 @@ class NotifyPlannerTest {
         assertEquals(listOf<NotifyAction>(NotifyAction.Cancel(slot("x"))), seen)
     }
 
+    @Test fun limitReadyRequiresAttentionAndFollowsFailurePreference() {
+        val post = p.onNotice(notice(NoticeKind.LIMIT_READY, "s1"), on).single() as NotifyAction.Post
+        assertEquals(NoticeKind.LIMIT_READY, post.kind)
+        assertTrue(post.attention)
+        assertEquals(listOf<NotifyAction>(NotifyAction.Cancel(slot("s1"))),
+            p.onNotice(notice(NoticeKind.CANCEL, "s1", cancel = "seen"), on))
+        val noFailed = NotifySettings(enabled = true, failed = false)
+        assertTrue(p.onNotice(notice(NoticeKind.LIMIT_READY, "s2"), noFailed).isEmpty())
+        val guarded = p.onNotice(notice(NoticeKind.LIMIT_GUARDED, "s3"), on).single() as NotifyAction.Post
+        assertTrue(guarded.attention)
+        assertTrue(p.onNotice(notice(NoticeKind.LIMIT_GUARDED, "s4"), noFailed).isEmpty())
+    }
+
     @Test fun anApprovalOverwritesAFinishedConversationAndLeavesTheBundle() {
         p.onNotice(notice(NoticeKind.DONE, "a"), on); p.onNotice(notice(NoticeKind.DONE, "b"), on)
         val out = p.onNotice(notice(NoticeKind.APPROVAL, "a", id = "p9"), on)

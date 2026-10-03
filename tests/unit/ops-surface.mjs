@@ -156,12 +156,13 @@ export default async function (t) {
       instructions: () => ({ taskId: 't', revision: 1, instructions: [{ id: 'i', text: 'x', at: 1, state: 'queued', ...secret }] }),
       routing: async () => ({ settings: { enabled: true }, warnings: [], keys: { openrouter: { hasKey: true } }, candidates: [{ candidate: 'x:y' }], ...secret }),
       providerUsage: async () => ({ backend: 'x', label: 'X', quota: { ...secret }, local: {}, ...secret }) },
+    limitResume: { messages: () => [], schedules: () => [], queue: () => ({ pending: [], running: [] }) },
   };
   // 必須の引数がある read 操作に渡す引数（設定は全部の key）
   const samples = {
     'settings.get': registry.settings.map((x) => ({ key: x.key })), 'settings.schema': registry.settings.map((x) => ({ key: x.key })),
     'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
-    'sessions.outbox': [{ sessionId: 's1' }], 'sessions.changes': [{ sessionId: 's1' }], 'sessions.lineage': [{ sessionId: 's1' }], 'sessions.suggestTitle': [{ sessionId: 's1' }],
+    'sessions.listMessages': [{ sessionId: 's1' }], 'sessions.changes': [{ sessionId: 's1' }], 'sessions.lineage': [{ sessionId: 's1' }], 'sessions.suggestTitle': [{ sessionId: 's1' }],
     'delegation.instructions': [{ taskId: 't' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {

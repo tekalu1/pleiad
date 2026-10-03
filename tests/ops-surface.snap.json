@@ -414,6 +414,46 @@
       "input": "e713b07977ab"
     },
     {
+      "id": "resumeQueue.get",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "resume-queue",
+            "get"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "resumeQueue.set",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "resume-queue",
+            "set"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "b4a434de6904"
+    },
+    {
       "id": "sessions.abort",
       "risk": "write",
       "riskOf": false,
@@ -458,6 +498,29 @@
       },
       "legacyCommand": "cancelCompaction",
       "input": "e68070615d84"
+    },
+    {
+      "id": "sessions.cancelSchedule",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "sessions",
+            "cancel-schedule"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "fab80600bbbe"
     },
     {
       "id": "sessions.changes",
@@ -508,7 +571,7 @@
     {
       "id": "sessions.deleteUnsent",
       "risk": "guarded",
-      "riskOf": false,
+      "riskOf": true,
       "scope": "session",
       "modeGate": true,
       "hostScreenOnly": false,
@@ -618,6 +681,29 @@
       "input": "9b44cafbe720"
     },
     {
+      "id": "sessions.listMessages",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "unsent"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "listMessages",
+      "input": "e9dac191d271"
+    },
+    {
       "id": "sessions.new",
       "risk": "write",
       "riskOf": false,
@@ -636,29 +722,6 @@
       },
       "legacyCommand": "newSession",
       "input": "2796e364c1c8"
-    },
-    {
-      "id": "sessions.outbox",
-      "risk": "read",
-      "riskOf": false,
-      "scope": "session",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": "catalog",
-        "cli": {
-          "path": [
-            "sessions",
-            "outbox"
-          ],
-          "positional": [
-            "sessionId"
-          ]
-        }
-      },
-      "legacyCommand": "listMessages",
-      "input": "4744f227e870"
     },
     {
       "id": "sessions.read",
@@ -705,6 +768,26 @@
       },
       "legacyCommand": "resume",
       "input": "8bb0ecf306f5"
+    },
+    {
+      "id": "sessions.schedules",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "sessions",
+            "schedules"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "5911c9a80b11"
     },
     {
       "id": "sessions.search",
@@ -1174,6 +1257,15 @@
       ]
     },
     {
+      "key": "limitResume",
+      "risk": "human-only",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "limitResume"
+      ]
+    },
+    {
       "key": "linkOpen",
       "risk": "write",
       "riskOf": false,
@@ -1324,6 +1416,13 @@
       "agent-bound-ask": "write=allow",
       "agent-bound-never-full": "write=allow",
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "limitResume": {
+      "human": "human-only=allow",
+      "agent-unbound": "human-only=hidden",
+      "agent-bound-ask": "human-only=hidden",
+      "agent-bound-never-full": "human-only=hidden",
+      "agent-bound-readonly": "human-only=hidden"
     },
     "linkOpen": {
       "human": "write=allow",
@@ -1500,6 +1599,16 @@
       "positional": []
     },
     {
+      "id": "resumeQueue.get",
+      "path": "resume-queue get",
+      "positional": []
+    },
+    {
+      "id": "resumeQueue.set",
+      "path": "resume-queue set",
+      "positional": []
+    },
+    {
       "id": "app.running",
       "path": "running",
       "positional": []
@@ -1516,6 +1625,13 @@
       "path": "sessions autoCompaction",
       "positional": [
         "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.cancelSchedule",
+      "path": "sessions cancel-schedule",
+      "positional": [
+        "id"
       ]
     },
     {
@@ -1585,13 +1701,6 @@
       ]
     },
     {
-      "id": "sessions.outbox",
-      "path": "sessions outbox",
-      "positional": [
-        "sessionId"
-      ]
-    },
-    {
       "id": "sessions.read",
       "path": "sessions read",
       "positional": [
@@ -1614,6 +1723,11 @@
       ]
     },
     {
+      "id": "sessions.schedules",
+      "path": "sessions schedules",
+      "positional": []
+    },
+    {
       "id": "sessions.search",
       "path": "sessions search",
       "positional": [
@@ -1631,6 +1745,13 @@
     {
       "id": "sessions.suggestTitle",
       "path": "sessions suggestTitle",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.listMessages",
+      "path": "sessions unsent",
       "positional": [
         "sessionId"
       ]

@@ -365,7 +365,10 @@
         "summary": "Return how to start pleiad mcp from an outside AI (the MCP config JSON and the claude mcp add command)."
       }
     },
+    "resumeQueue": { "get": { "summary": "Show the queue and progress for resuming after usage limits." }, "set": { "summary": "Change the order and automatic recovery after usage limits.", "action": "The change to make.", "sessionId": "The conversation ID for first or auto.", "enabled": "Whether auto enables automatic resume." } },
     "sessions": {
+      "schedules": { "summary": "List planned actions for conversations.", "sessionId": "Limit the list to one conversation; omit for all." },
+      "cancelSchedule": { "summary": "Cancel a planned action.", "id": "The schedule ID." },
       "search": {
         "summary": "Search conversations by title, status, place and message text. Space-separated words are ANDed; quote a phrase for an exact match. Each result carries excerpts of the matching messages.",
         "query": "Search words. Spaces mean AND (each word may match the title, status, place or any message). A \"quoted\" phrase is one word and is case- and width-sensitive. Empty returns the filtered list.",
@@ -489,7 +492,7 @@
         "summary": "Ask for a short title from the conversation's contents. It does not change the conversation (sessions.setTitle sets it). One small call runs on the conversation's account.",
         "sessionId": "Conversation id. Omit for your own."
       },
-      "outbox": {
+      "listMessages": {
         "summary": "Return a conversation's outbox (messages not yet handed to the agent). Text is cut at 500 characters.",
         "sessionId": "Conversation id. Omit for your own.",
         "limit": "How many to return (default 30, max 100).",
@@ -682,6 +685,7 @@
     "effort": "The default thinking depth for new conversations.",
     "mode": "The default approval mode (only a human changes it).",
     "claudeAccount": "The default Claude account (an id; no token. Only a human changes it).",
+    "limitResume": "How to resume after usage limits, concurrency, and the usage guard.",
     "compaction": {
       "auto": "Auto compaction (enabled, the token threshold, and the idle minutes per agent)."
     },

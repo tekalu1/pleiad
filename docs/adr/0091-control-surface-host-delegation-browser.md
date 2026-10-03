@@ -45,7 +45,7 @@
 ### 決定
 
 - 次の WS コマンドを操作として定義し、WS の case は同じ操作を人（画面）として呼ぶだけの外側にする。画面の返り値・エラーの文は変えない（`viaOp`。送らない欄を省き、`code` が `FAILED` のときは画面へ `code` を付けない）。中身はサーバーの関数のまま（`ctx.conversations`・`ctx.agents`・`ctx.statuses`・`ctx.delegation`）。
-- **画面の全量と AI の上限**: 画面（人）が今まで読んでいた形（全部の欄・上限なし）と、AI・CLI が 1 回で読める大きさは別。操作に `uiHandler`（省略できる）を足し、`principal.by === 'human'` のときだけ `handler` の代わりに呼ぶ。口は偽れない（AI は `human` にならない）。入力の名前と意味は同じで、`handler` は一覧に `limit`（既定 30・最大 100）と `cursor`、本文に字数の上限（`sessions.outbox` 500 字・`delegation.instructions` 1000 字・語彙の注 200 字）を持つ。
+- **画面の全量と AI の上限**: 画面（人）が今まで読んでいた形（全部の欄・上限なし）と、AI・CLI が 1 回で読める大きさは別。操作に `uiHandler`（省略できる）を足し、`principal.by === 'human'` のときだけ `handler` の代わりに呼ぶ。口は偽れない（AI は `human` にならない）。入力の名前と意味は同じで、`handler` は一覧に `limit`（既定 30・最大 100）と `cursor`、本文に字数の上限（`sessions.listMessages` 500 字・`delegation.instructions` 1000 字・語彙の注 200 字）を持つ。
 - **別名**: `legacyCommand` は 1 つの操作に 1 つ。引数の形が違う別の入口を、同じ操作へ結ぶときは `legacyAliases` を使う。`setAutoCompaction`（設定 › 自動圧縮）は `settings.set` の `compaction.auto`、`setDelegationRouting`（設定 › 委譲）は `delegationRouting` に結ぶ。`delegationRouting` は設定の定義が guarded（どの判定器に依頼の文を送るかを決める。ADR 0082）なので、別の write の口を作らない。
 - **`list_ops` の `prefix`**: id の先頭で絞れる（例: `sessions.`）。操作が 70 を超えるので、全部の一覧は大きくなる。直接のツールは増やさない（T4 は ja 1757・en 1656 トークン）。
 
@@ -56,7 +56,7 @@
 | `sessions.abort` | write | 他の会話を止められる。止められるのはこのホストの会話だけ。AI は `reason` が必須で、止めた会話の変更の記録（`field: 'abort'`・`by: 'agent'`・`via`・`bySession`）に残す。中断した会話は人が再開できる。全部を止める（`sessionId` なし）のは画面だけ。 |
 | `sessions.resume`・`sessions.compact`・`sessions.cancelCompaction`・`sessions.setAutoCompaction` | write | 会話の発言は消えず、承認モードも変わらない（再開は、その会話の承認モードで動く）。 |
 | `sessions.setTurnSettings` | write。`cwd`・`backend` を替えるときは guarded（`riskOf`） | 作業フォルダーは承認モードが当たる場所、エージェントを替えると既定のモードが変わるので、AI 自身の権限を広げうる。承認モード・アカウント・接続先・`remember*` は AI が渡すと `NEEDS_UI`。 |
-| `sessions.suggestTitle`・`sessions.outbox`・`sessions.changes`・`sessions.lineage`・`statuses.list` | read | `suggestTitle` は会話のアカウントで小さな 1 回を回すが、会話は変えない。 |
+| `sessions.suggestTitle`・`sessions.listMessages`・`sessions.changes`・`sessions.lineage`・`statuses.list` | read | `suggestTitle` は会話のアカウントで小さな 1 回を回すが、会話は変えない。 |
 | `statuses.rename` | write | 付いている全会話に変更の記録が残り、名前を戻せば元に戻る。空の名前でも会話は消えない。 |
 | `agents.list`・`models`・`modes`・`efforts`・`authStatus` | read | 選べるものを読むだけ。`authStatus` は AI にはログインしているかだけ（メールアドレス・詳細・実行ファイルの場所を返さない）。 |
 | `delegation.instructions`・`delegation.routing` | read | `routing` は判定器のキーを持たない（登録の有無だけ）。語彙は画面だけ。 |

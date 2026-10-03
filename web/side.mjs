@@ -23,7 +23,7 @@ import { runMark, satMark } from "./arc.mjs";
 import { el, icon, moreButton, relTime, svgEl } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { familiesOf } from "./family.mjs";
-import { warnMark, interruptLabel, showsReasonInMeta } from "./interrupt.mjs";
+import { warnMark, clockMark, interruptLabel, showsReasonInMeta, limitTime } from "./interrupt.mjs";
 import { aiMarkTitle } from "./change-log.mjs";
 import { branchIcon } from "./icons.mjs";
 import { parseTerms, matchLocal, findRanges, localOrder, periodSince, pushRecentSearch, searchShortcutLabel, searchShortcutAria } from "./session-find.mjs";
@@ -672,6 +672,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const stopped = last.interrupted.get(s.id);
     const moving = last.runningIds.has(s.id) || behind;
     if (moving) meta.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
+    else if (stopped?.reason === 'limit' && stopped.autoResume && Number.isFinite(stopped.resetsAt))
+      meta.append(clockMark(t('interrupt.limitResumeAt', { time: limitTime(stopped.resetsAt) })));
     else if (stopped) meta.append(warnMark(interruptLabel(stopped), { read: !stopped.unread }));
     else if (last.unreadIds.has(s.id)) meta.append(unreadMark());
     // 自分で押した中断でないもの（更新・終了・再起動）は理由の字も出す。読み上げは三角の名前が同じことを言うので読ませない
@@ -680,6 +682,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       why.setAttribute("aria-hidden", "true");
       meta.append(why);
     }
+    if (stopped?.reason === 'limit' && stopped.autoResume && !moving && Number.isFinite(stopped.resetsAt))
+      meta.append(el('span', 'row-why', t('interrupt.limitResumeAt', { time: limitTime(stopped.resetsAt) })));
     if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", t("sidebar.waiting")));
     if (pendingRow?.visible) meta.append(pendingLabel(pendingRow.text));
     else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));

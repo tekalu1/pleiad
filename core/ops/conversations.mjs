@@ -11,7 +11,7 @@ import { fromHost, humanOnlyFields, pageOf, clip, PAGE_MAX } from './host.mjs';
 import { changeRow, listRowOf } from './sessions.mjs';
 
 const D = (id, key) => `agent:ops.sessions.${id}.${key}`;
-/** sessions.outbox: 1 件の本文の字数 */
+/** sessions.listMessages: 1 件の本文の字数 */
 export const OUTBOX_CHARS = 500;
 
 const sessionId = (id) => z.string().min(1).max(200).describe(D(id, 'sessionId'));
@@ -116,20 +116,6 @@ export const conversationOps = [
     },
   }),
 
-  // 中断した会話を続ける（保留の送信待ちを送り直すか、「続けて」の文を送る）。続けるのは、その会話の承認モードの範囲
-  defineOp({
-    id: 'sessions.resume',
-    summary: 'agent:ops.sessions.resume.summary',
-    risk: 'write',
-    riskReason: 'Resuming sends only what the conversation already queued, or the fixed "continue" text, and the turn runs under that conversation\'s own approval mode, which this call cannot change. A human can resume any conversation, so an agent is treated the same',
-    scope: 'session',
-    input: z.object({ sessionId: sessionId('resume') }),
-    output: z.object({ sent: z.string(), count: z.number().int() }),
-    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'resume'], positional: ['sessionId'] } },
-    legacyCommand: 'resume',
-    handler: (ctx, { sessionId: id }) => fromHost(() => ctx.conversations.resume(id)),
-  }),
-
   defineOp({
     id: 'sessions.compact',
     summary: 'agent:ops.sessions.compact.summary',
@@ -229,14 +215,14 @@ export const conversationOps = [
 
   // 送信待ち（まだエージェントに渡っていない発言）。本文は 500 字まで
   defineOp({
-    id: 'sessions.outbox',
-    summary: 'agent:ops.sessions.outbox.summary',
+    id: 'sessions.listMessages',
+    summary: 'agent:ops.sessions.listMessages.summary',
     risk: 'read',
     scope: 'session',
-    input: z.object({ sessionId: optionalSessionId('outbox'), limit: limitField('outbox'), cursor: cursorField('outbox') }),
+    input: z.object({ sessionId: optionalSessionId('listMessages'), limit: limitField('listMessages'), cursor: cursorField('listMessages') }),
     output: z.object({ total: z.number().int(), messages: z.array(z.object({ id: z.string(), status: z.string(), at: z.string().nullable(), text: z.string(), truncated: z.boolean(),
       attachments: z.number().int(), error: z.string().nullable(), waiting: z.string().nullable() })), next: z.string().nullable() }),
-    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'outbox'], positional: ['sessionId'] } },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'unsent'], positional: ['sessionId'] } },
     legacyCommand: 'listMessages',
     handler: async (ctx, { sessionId: given, ...page }) => {
       const id = targetOf(ctx, given);

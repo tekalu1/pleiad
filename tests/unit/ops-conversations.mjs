@@ -65,7 +65,7 @@ export default async function (t) {
   t.ok('書く操作は write、消す sessions.deleteUnsent は guarded、読むものは read',
     ['sessions.new', 'sessions.abort', 'sessions.resume', 'sessions.compact', 'sessions.cancelCompaction', 'sessions.setAutoCompaction', 'sessions.setTurnSettings', 'statuses.rename', 'delegation.retry'].every((id) => risk(id) === 'write')
     && risk('sessions.deleteUnsent') === 'guarded'
-    && ['sessions.suggestTitle', 'sessions.outbox', 'sessions.changes', 'sessions.lineage', 'statuses.list', 'agents.list', 'agents.models', 'agents.modes', 'agents.efforts', 'agents.authStatus', 'delegation.instructions', 'delegation.routing'].every((id) => risk(id) === 'read'));
+    && ['sessions.suggestTitle', 'sessions.listMessages', 'sessions.changes', 'sessions.lineage', 'statuses.list', 'agents.list', 'agents.models', 'agents.modes', 'agents.efforts', 'agents.authStatus', 'delegation.instructions', 'delegation.routing'].every((id) => risk(id) === 'read'));
   t.ok('legacyCommand: 移した WS コマンドが操作に結ばれている（別の入口は settings.set の別名）',
     registry.get('sessions.new').legacyCommand === 'newSession' && registry.get('sessions.list').legacyCommand === 'listSessions' && registry.get('app.running').legacyCommand === 'running'
     && registry.get('delegation.taskCancel').legacyCommand === 'cancelAgentTask' && registry.get('delegation.usage').legacyCommand === 'providerUsage'
@@ -117,15 +117,15 @@ export default async function (t) {
   t.ok('sessions.list: 画面には全部の欄の行（ページ送りなし）、AI には決まった欄だけ', Array.isArray(listHuman.result) && listHuman.result[0].claudeAccount === undefined
     && Object.keys((await run(agent(), 'sessions.list', {})).result.sessions[0]).join() === 'id,title,backend,status,cwd,parent,delegated,lastModified,createdAt');
 
-  const outHuman = await run(human, 'sessions.outbox', { sessionId: 'me' });
-  const outAgent = await run(agent(), 'sessions.outbox', { limit: 5 });
-  t.ok('sessions.outbox: 画面には送信待ちの行そのもの、AI には本文を 500 字に切った行と件数・next',
+  const outHuman = await run(human, 'sessions.listMessages', { sessionId: 'me' });
+  const outAgent = await run(agent(), 'sessions.listMessages', { limit: 5 });
+  t.ok('sessions.listMessages: 画面には送信待ちの行そのもの、AI には本文を 500 字に切った行と件数・next',
     outHuman.result.length === 40 && outHuman.result[0].args.prompt.length === 2000
     && outAgent.result.total === 40 && outAgent.result.messages.length === 5 && outAgent.result.messages[0].text.length === OUTBOX_CHARS && outAgent.result.messages[0].truncated === true
     && outAgent.result.messages[1].attachments === 1 && typeof outAgent.result.next === 'string');
-  const outPage2 = await run(agent(), 'sessions.outbox', { limit: 5, cursor: outAgent.result.next });
-  t.ok('cursor で続きを返し、最後は next が null', outPage2.result.messages[0].id === 'q5' && (await run(agent(), 'sessions.outbox', { limit: 100 })).result.next === null);
-  t.ok('壊れた cursor は INVALID（文は辞書から）', (await run(agent(), 'sessions.outbox', { cursor: '!!' })).code === 'INVALID');
+  const outPage2 = await run(agent(), 'sessions.listMessages', { limit: 5, cursor: outAgent.result.next });
+  t.ok('cursor で続きを返し、最後は next が null', outPage2.result.messages[0].id === 'q5' && (await run(agent(), 'sessions.listMessages', { limit: 100 })).result.next === null);
+  t.ok('壊れた cursor は INVALID（文は辞書から）', (await run(agent(), 'sessions.listMessages', { cursor: '!!' })).code === 'INVALID');
 
   const chHuman = await run(human, 'sessions.changes', { sessionId: 'me' });
   const chAgent = await run(agent(), 'sessions.changes', { limit: 2 });
