@@ -80,8 +80,8 @@ export default async function (t) {
       t.ok(`判定表 ${s.key}（${risk}）: 主体ごとの判定が ADR 0082 の表どおり`, JSON.stringify(got) === JSON.stringify(expected[risk]), JSON.stringify(got));
     }
   }
-  t.ok('危険度の内訳: human-only は 承認モード・アカウントだけ。guarded は許可の一覧以外の「全体の構成」。write は表示と既定の選択',
-    settings.filter((s) => s.risk === 'human-only').map((s) => s.key).sort().join() === 'claudeAccount,mode'
+  t.ok('危険度の内訳: 上限後の再開も人間の設定。guarded は許可の一覧以外の「全体の構成」',
+    settings.filter((s) => s.risk === 'human-only').map((s) => s.key).sort().join() === 'claudeAccount,limitResume,mode'
     && settings.filter((s) => s.risk === 'guarded').map((s) => s.key).sort().join() === 'addedContext,browserProfiles,context.default,delegationRouting,plyInstructions'
     && settings.filter((s) => s.riskOf).map((s) => s.key).sort().join() === 'agentSitePermissions,computerUse,confirmAgentSites,confirmExternalLoads,externalSitePermissions');
 

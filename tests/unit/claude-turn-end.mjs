@@ -84,6 +84,19 @@ export default async function (t) {
     } finally { restore(); }
   }
 
+  // SDK の result が success でも、上限の行を受けていたら限定された結果を一度だけ返す。
+  {
+    const { q, restore } = fakeSdk();
+    try {
+      const turn = await startTurn();
+      q.push(init(), { type: 'assistant', session_id: SESSION, error: 'rate_limit',
+        quotaLimits: { status: 'rejected', resetsAt: 1790962200, rateLimitType: 'five_hour' },
+        message: { role: 'assistant', content: [] } }, result());
+      t.ok('上限の assistant 行があれば SDK の success を limited に変える',
+        await until(turn.settled) && results(turn.events) === 'limited', results(turn.events));
+    } finally { restore(); }
+  }
+
   // ---- 2. 裏へ回ったまま終わらないコマンドが残ると、報告の後もターンは終わらない
   {
     const { q, restore } = fakeSdk({
