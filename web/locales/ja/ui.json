@@ -1505,7 +1505,12 @@
       "showMore": "続きを表示",
       "showLess": "折りたたむ",
       "showSource": "エージェントに渡した原文を見る",
-      "you": "あなた"
+      "you": "あなた",
+      "sentBy": "{{sender}} があなたの代わりに送信",
+      "sentByConversation": "「{{title}}」の AI",
+      "sentByAnother": "別の会話の AI",
+      "openSender": "開く",
+      "openSenderTitle": "送った会話を開く"
     },
     "resend": {
       "group": "送り方",

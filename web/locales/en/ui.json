@@ -1545,7 +1545,12 @@
       "showMore": "Show more",
       "showLess": "Show less",
       "showSource": "View what was sent to the agent",
-      "you": "You"
+      "you": "You",
+      "sentBy": "Sent on your behalf by {{sender}}",
+      "sentByConversation": "the AI in \"{{title}}\"",
+      "sentByAnother": "an AI in another conversation",
+      "openSender": "Open",
+      "openSenderTitle": "Open the conversation that sent it"
     },
     "resend": {
       "group": "How to send",
