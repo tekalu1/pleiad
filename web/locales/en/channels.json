@@ -113,6 +113,8 @@
   },
   "thread": {
     "log": "Thread posts",
+    "workLog": "Work log",
+    "workLogTools": "Work log · tools: {{count}}",
     "close": "Close thread",
     "back": "Back to the {{name}} feed",
     "untitled": "Thread",

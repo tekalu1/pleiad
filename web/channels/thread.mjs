@@ -16,7 +16,7 @@ import { openEmojiPicker } from '../emoji-picker.mjs';
 import { createDeck } from './deck.mjs';
 import { createThreadHead } from './thread-head.mjs';
 import { createThreadToc } from './thread-toc.mjs';
-import { createToolSource, turnWindows, callsInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
+import { createToolSource, turnWindows, logInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
 
 const PAGE = 50;
 const NEAR_BOTTOM = 80;
@@ -245,43 +245,64 @@ export function createThread(host) {
     return n;
   };
 
-  /** ターンの投稿の道具の行。会話の履歴から（まだ読んでいなければ無し） */
-  function toolSlot(p) {
+  /**
+   * ターンの投稿の作業ログ（ADR 0116）: 返事の下に畳んで残す、独り言・終わりの報告の文と道具の行。会話の履歴から（まだ読んでいなければ無し）。
+   * 開いている・閉じているは、作り直しても同じ要素を使って保つ
+   */
+  function logSlot(p) {
     const w = windows.get(p.id);
     const messages = w ? tools.messagesOf(w.sessionId) : null;
     if (!messages) return toolCache.get(p.id)?.wrap ?? null;
-    const calls = callsInWindow(messages, w);
-    if (!calls.length) return null;
+    const items = logInWindow(messages, w, p.text);
+    if (!items.length) return null;
     const running = p.state === 'working';   // 承認待ちの呼び出しは走っていない（弧を出さない）
-    const sig = `${signatureOf(calls)}${running ? '+' : ''}`;
+    const lastCalls = items.findLast((i) => i.kind === 'calls');
+    const count = items.reduce((n, i) => n + (i.kind === 'calls' ? i.calls.length : 0), 0);
+    const sig = `${items.map((i) => (i.kind === 'text' ? `t${i.text.length}` : signatureOf(i.calls))).join('/')}${running ? '+' : ''}`;
     let c = toolCache.get(p.id);
     if (!c || c.sig !== sig) {
-      const built = toolNodes(calls, { running });
-      const wrap = c?.wrap ?? el('div', 'th-tools');
+      const wrap = c?.wrap ?? el('details', 'th-worklog');
+      const head = el('summary', 'th-worklog-head', count ? t('channels:thread.workLogTools', { count }) : t('channels:thread.workLog'));
+      const box = el('div', 'th-worklog-body');
+      const bundles = [];
+      for (const item of items) {
+        if (item.kind === 'text') {
+          const text = el('div', 'th-log-text');
+          text.innerHTML = host.renderAssistantMarkdown(item.text);
+          box.append(text);
+          continue;
+        }
+        const built = toolNodes(item.calls, { running: running && item === lastCalls });
+        const group = el('div', 'th-tools');
+        group.append(...built.nodes);
+        box.append(group);
+        bundles.push(...built.bundles);
+      }
       // 開いていた行・まとまりは、作り直しても同じ範囲を開けておく
-      built.bundles.forEach((b, i) => { const old = c?.bundles[i]; if (old) b.restoreView(old.viewState()); });
-      wrap.replaceChildren(...built.nodes);
-      c = { sig, wrap, bundles: built.bundles };
+      bundles.forEach((b, i) => { const old = c?.bundles[i]; if (old) b.restoreView(old.viewState()); });
+      wrap.replaceChildren(head, box);
+      c = { sig, wrap, bundles };
       toolCache.set(p.id, c);
     }
     return c.wrap;
   }
 
-  /** fillPost の後に足すもの: 道具の行・進捗のチェックリスト・提示（可視化はインライン）。会話そのものを開く入口は投稿の ⋯（openMenu） */
+  /** fillPost の後に足すもの: 提示（可視化はインライン）と、その下に畳んだ作業ログ。会話そのものを開く入口は投稿の ⋯（openMenu） */
   function decorate(node, p) {
     const main = node.querySelector(':scope > .post-main');
     if (!main || p.deletedAt) return;
     const bodyEl = main.querySelector('.post-body');
-    if (p.turn?.sessionId) {
-      const slot = toolSlot(p);
-      if (slot) main.querySelector('.post-head')?.after(slot);
-    }
+    let below = bodyEl;
     if (p.presents?.length) {
       const box = el('div', 'post-presents');
       for (const ev of p.presents) {
         try { box.append(host.renderPresent(savedEvent(ev))); } catch { /* 描けない提示は飛ばす */ }
       }
-      if (box.childElementCount) bodyEl.after(box);
+      if (box.childElementCount) { bodyEl.after(box); below = box; }
+    }
+    if (p.turn?.sessionId) {
+      const slot = logSlot(p);
+      if (slot) below.after(slot);
     }
   }
 

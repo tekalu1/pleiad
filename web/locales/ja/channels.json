@@ -111,6 +111,8 @@
   },
   "thread": {
     "log": "スレッドの投稿",
+    "workLog": "作業ログ",
+    "workLogTools": "作業ログ · ツール {{count}} 件",
     "close": "スレッドを閉じる",
     "back": "{{name}} の流れに戻る",
     "untitled": "スレッド",

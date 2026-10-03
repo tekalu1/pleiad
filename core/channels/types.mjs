@@ -54,6 +54,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   state: 'idle'|'working'|'waiting'|'failed',
  *   tokens: { input: number, output: number, cached: number },  // このスレッドの bot の会話の合計（usage の出来事から）
  *   calls: number,                                        // bot が起こされた回数（表示だけ。上限には使わない）
+ *   chain?: number,                                       // 人が最後に書いてから、bot が bot を起こした続けての回数（origin の根のスレッドに持つ。CHAIN_LIMIT で止める。ADR 0116）
  *   stopped: null | { by: Author, at: number },           // [止める]。人が次に書くまで新しく起こさない
  *   origin?: { channelId: string, threadId: string },     // bot が自分のスレッドからチャンネルの流れへ @ を書いて新しくできたスレッドの、起こした元。[止める] は origin で結ばれた派生のスレッドにも届く
  *   updatedAt: number }} ThreadState */

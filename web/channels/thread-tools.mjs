@@ -1,4 +1,4 @@
-// スレッドの bot の返事に付ける「道具 n 件」の折りたたみの行（Chats と同じ部品。web/tool-bundle.mjs の Bundle・web/render.mjs の renderToolCall）。
+// スレッドの bot の返事の下に畳んで付ける「作業ログ」（ADR 0116）。独り言・終わりの報告の文と、道具の行（Chats と同じ部品。web/tool-bundle.mjs の Bundle・web/render.mjs の renderToolCall）。
 // 材料は bot の会話の履歴（loadSession）。スレッドの投稿は進捗の文と提示だけを持つので、そのターンの道具の呼び出しは会話から引く:
 //   ターンの投稿（turn.sessionId）の at から、同じ会話の次のターンの投稿の at までの間の AI の発言の toolCalls。
 // 走っているターンは履歴にまだ無いので、出来事（loadSession の live が返す stream.events）を stream-messages.mjs で畳んで後ろに足す。
@@ -46,6 +46,33 @@ export function callsInWindow(messages, { from, to }) {
     else for (const name of m.tools ?? []) calls.push({ id: null, name, input: null, result: undefined });
   }
   return calls;
+}
+
+/** 発言が窓に入るか（callsInWindow と同じ基準。時刻の無い仮の発言は最後の窓だけ） */
+function inWindow(m, { from, to }) {
+  const at = typeof m.at === 'number' ? m.at : Date.parse(m.at);
+  if (!Number.isFinite(at)) return to === Infinity;
+  return at >= from - 1500 && at < to;
+}
+
+/**
+ * 窓の中の作業ログ（ADR 0116。返事の下に畳んで残す）: 返事の本文（reply）以外の AI の文（道具の前の独り言・終わりの報告）と、道具の呼び出しを発言の順に。
+ * 発言の文が返事で終わる（Antigravity は 1 ターンの文を 1 つの発言に続けて書く）なら、その前の部分だけを入れる。続く呼び出しは 1 つにまとめる。
+ * @returns {({ kind: 'text', text: string } | { kind: 'calls', calls: object[] })[]}
+ */
+export function logInWindow(messages, w, reply = '') {
+  const answer = String(reply ?? '').trim();
+  const items = [];
+  const push = (item) => { const last = items.at(-1); if (item.kind === 'calls' && last?.kind === 'calls') last.calls.push(...item.calls); else items.push(item); };
+  for (const m of messages ?? []) {
+    if (m.role !== 'assistant' || !inWindow(m, w)) continue;
+    let text = String(m.text ?? '').trim();
+    if (answer && text.endsWith(answer)) text = text.slice(0, text.length - answer.length).trim();
+    if (text) push({ kind: 'text', text });
+    const calls = m.toolCalls?.length ? m.toolCalls : (m.tools ?? []).map((name) => ({ id: null, name, input: null, result: undefined }));
+    if (calls.length) push({ kind: 'calls', calls: [...calls] });
+  }
+  return items;
 }
 
 /** 呼び出しの並びの印。同じなら描き直さない（開いている行・まとまりを保つ） */

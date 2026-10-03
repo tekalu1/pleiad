@@ -199,11 +199,11 @@ export default async function (t) {
       t.ok('S-2: 承認の口が無い呼び出しは NEEDS_APPROVAL（起こさない）', noCard.result.wake[0].status === 'denied' && noCard.result.wake[0].code === 'NEEDS_APPROVAL');
       const dmPost = await call(agent('s_chat'), 'channels.post', { channelId: dm.id, text: 'DM の bot（全部自動）へ' });
       t.ok('S-2: DM（@ なしで bot へ届く）も、宛先の bot が強ければ確認が要る', dmPost.result.wake?.[0].status === 'pending' && dmPost.result.wake[0].botId === 'b_lynx');
-      // 進捗の置き換え（ターンの投稿）では誰も起こさない: 確認は、ターンの終わりの返事の @ で（dispatch の route）
+      // ターンの投稿に入った返事（ADR 0116）も、新しい投稿と同じく強い bot への @ は確認を出す（書いたときに @ を解く）
       const turnPost = await reviewChannels.post({ channelId: made.id, threadId: root.id, text: '…', state: 'working', turn: { botId: 'b_owl', sessionId: 's_owl' }, new: true }, { kind: 'bot', botId: 'b_owl' });
       const progressMark = asked.length;
-      const progress = await call(agent('s_owl'), 'channels.post', { channelId: made.id, text: '進捗: @Lynx にあとで頼む' });
-      t.ok('S-2: bot がターンの中で書く進捗（ターンの投稿の置き換え）では確認を出さない。返事の @ は終わりで同じ確認を通る', progress.ok && progress.result.id === turnPost.id && progress.result.wake === undefined && asked.length === progressMark);
+      const progress = await call(agent('s_owl'), 'channels.post', { channelId: made.id, text: '@Lynx あとで頼む' });
+      t.ok('S-2: bot がターンの中で書いた返事がターンの投稿に入っても、強い bot への @ は確認を出す（ADR 0116）', progress.ok && progress.result.id === turnPost.id && progress.result.wake?.[0]?.status === 'pending' && asked.length === progressMark + 1, JSON.stringify(progress.result.wake));
 
       // channels.wake そのもの
       const wakeMark = asked.length;
