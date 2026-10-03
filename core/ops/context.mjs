@@ -95,6 +95,7 @@ export const contextOps = [
       cwd: z.string().max(4096).optional().describe(A('cwd')),
       reason,
     }),
+    approvalWords: 'context',
     confirm: async (ctx, { reason: _r, ...args }) => {
       const view = await ctx.context.view(args.place ?? null).catch(() => null);
       return { key: null, before: view, rows: contextChange(view, args), note: t('opsApproval.contextSettings', { place: args.place ?? t('opsApproval.everywhere') }), loosens: true };
@@ -124,6 +125,7 @@ export const contextOps = [
       ids: z.array(z.string().max(100)).max(100).optional().describe(D('setPlyInstructions', 'ids')),
       reason,
     }),
+    approvalWords: 'context',
     confirm: async (ctx, { reason: _r, ...action }) => {
       const before = ctx.context.plyInstructionItems();
       let after = null;
@@ -153,6 +155,7 @@ export const contextOps = [
       removed: z.boolean().optional().describe(D('setSessionMcp', 'removed')),
       reason,
     }),
+    approvalWords: 'mcp',
     confirm: async (ctx, { sessionId, name, removed }) => {
       const id = sessionFor(ctx, sessionId);
       const list = id ? await ctx.context.removedMcp(id).catch(() => []) : [];

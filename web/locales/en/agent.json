@@ -618,6 +618,99 @@
       "RELAY_LIMIT": "Sends between conversations have continued {{max}} times, so no more can be sent. Ask the user whether to go on.",
       "SEND_RATE": "This conversation has sent more than {{max}} messages in {{minutes}} minutes. Wait a while, or ask the user."
     },
+    "pendingOp": "{{target}} is waiting for the user's approval (requestId: {{requestId}}). Pleiad {{notDone}}. The result (allowed or denied) will be delivered to this conversation later. You may continue other work or end your response without waiting. Do not request the same action again.",
+    "approvalWords": {
+      "op": {
+        "target": "the action",
+        "done": "performed the action",
+        "notDone": "has not performed the action",
+        "failed": "could not perform the action"
+      },
+      "send": {
+        "target": "sending to another conversation",
+        "done": "sent the message",
+        "notDone": "has not sent the message",
+        "failed": "could not send the message"
+      },
+      "resend": {
+        "target": "resending to another conversation",
+        "done": "resent the message",
+        "notDone": "has not resent the message",
+        "failed": "could not resend the message"
+      },
+      "schedule": {
+        "target": "scheduling the message",
+        "done": "scheduled the message",
+        "notDone": "has not scheduled the message",
+        "failed": "could not schedule the message"
+      },
+      "sendNow": {
+        "target": "sending the scheduled message",
+        "done": "sent the message",
+        "notDone": "has not sent the message",
+        "failed": "could not send the message"
+      },
+      "shell": {
+        "target": "running the command",
+        "done": "ran the command",
+        "notDone": "has not run the command",
+        "failed": "could not run the command"
+      },
+      "switchBackend": {
+        "target": "switching the conversation agent",
+        "done": "switched the agent",
+        "notDone": "has not switched the agent",
+        "failed": "could not switch the agent"
+      },
+      "turnSettings": {
+        "target": "changing the conversation settings",
+        "done": "changed the settings",
+        "notDone": "has not changed the settings",
+        "failed": "could not change the settings"
+      },
+      "mcp": {
+        "target": "changing the MCP server settings",
+        "done": "changed the settings",
+        "notDone": "has not changed the settings",
+        "failed": "could not change the settings"
+      },
+      "mcpDelete": {
+        "target": "deleting the MCP server",
+        "done": "deleted the server",
+        "notDone": "has not deleted the server",
+        "failed": "could not delete the server"
+      },
+      "hooks": {
+        "target": "changing Hooks",
+        "done": "changed Hooks",
+        "notDone": "has not changed Hooks",
+        "failed": "could not change Hooks"
+      },
+      "hookDelete": {
+        "target": "deleting the Hook",
+        "done": "deleted the Hook",
+        "notDone": "has not deleted the Hook",
+        "failed": "could not delete the Hook"
+      },
+      "context": {
+        "target": "changing the context settings",
+        "done": "changed the settings",
+        "notDone": "has not changed the settings",
+        "failed": "could not change the settings"
+      },
+      "endpointDelete": {
+        "target": "deleting the endpoint",
+        "done": "deleted the endpoint",
+        "notDone": "has not deleted the endpoint",
+        "failed": "could not delete the endpoint"
+      },
+      "sessionDelete": {
+        "target": "deleting the unsent conversation",
+        "done": "deleted the conversation",
+        "notDone": "has not deleted the conversation",
+        "failed": "could not delete the conversation"
+      }
+    },
     "pending": "The change to {{target}} is waiting for the user's approval (requestId: {{requestId}}). Nothing has changed yet. The result (allowed or denied) will be delivered to this conversation later. You may continue other work or end your response without waiting. Do not request the same change again.",
     "settingTarget": "the setting {{key}}",
     "settingTargetLabeled": "the setting \"{{label}}\" ({{key}})",
@@ -650,7 +743,14 @@
       "denied": "The user denied the change to {{target}}. Nothing was changed. Do not request the same change again; ask the user why if needed.",
       "failed": "The user allowed the change to {{target}}, but it could not be applied: {{error}}",
       "superseded": "This request was withdrawn because a newer request for {{target}} replaced it. Nothing was changed by this request. The result of the newer request will be delivered separately.",
-      "restart": "Pleiad restarted, so the approval for the change to {{target}} was withdrawn. Nothing was changed. Request it again if it is still needed."
+      "restart": "Pleiad restarted, so the approval for the change to {{target}} was withdrawn. Nothing was changed. Request it again if it is still needed.",
+      "opHead": "[Pleiad operation result / {{requestId}}]\nResult: {{status}}\nType: {{words}}",
+      "opFromChild": "This action was requested by your delegated child \"{{title}}\" (taskId: {{taskId}}). The child's task has already ended ({{state}}), so the result is delivered to you instead of the child. To have the child continue, use ply_task_send.",
+      "opAllowed": "The user allowed {{target}}, and Pleiad {{done}}. Continue the work needed for the original request.",
+      "opDenied": "The user denied {{target}}. Pleiad {{notDone}}. Do not request the same action again; ask the user why if needed.",
+      "opFailed": "The user allowed {{target}}, but Pleiad {{failed}}: {{error}}",
+      "opSuperseded": "This request was withdrawn because a newer request for {{target}} replaced it. Pleiad {{notDone}}. The result of the newer request will be delivered separately.",
+      "opRestart": "Pleiad restarted, so approval for {{target}} was withdrawn. Pleiad {{notDone}}. Request it again if it is still needed."
     },
     "settings": {
       "list": {
@@ -677,6 +777,8 @@
       "tasks": {
         "summary": "List delegated child tasks, newest first (request and result text are not included).",
         "parentSessionId": "Filter by the requesting conversation's id.",
+        "tree": "Use with parentSessionId. Also include tasks that child conversations delegated in turn.",
+        "taskIds": "Return only these task ids (at most 100).",
         "status": "Filter by status (queued, running, completed, and so on).",
         "limit": "Number of rows to return (default 20, max 100)."
       },

@@ -66,6 +66,29 @@ export default async function (t) {
     const strongMessages = await messagesOf(strong.sessionId);
     t.ok('許可したら送られ、宛先が答える', strongMessages.some((m) => m.role === 'user' && m.text === 'echo:許可された送信' && m.sentBy?.sessionId === sender.sessionId) && strongMessages.at(-1).text === '許可された送信');
     await turnEnd(sender.sessionId, from);   // 承認の結果の通知で送り手のターンが 1 回走る
+    const sendNotice = (await messagesOf(sender.sessionId)).find((m) => m.internalTaskNotice && m.text.includes(card.settingChange.requestId));
+    t.ok('送信の許可結果は操作の印と送信の言葉で届く', sendNotice?.text.includes('[Pleiad 操作の結果 /') && sendNotice.text.includes('種類: send')
+      && sendNotice.text.includes('ユーザーが別の会話への送信を許可し、Pleiad が送信しました。'), sendNotice?.text);
+
+    // ---- 拒否・置き換えも送信の言葉で届く
+    from = c.mark();
+    const deniedAsk = await api(sender.token, 'sessions.send', { sessionId: strong.sessionId, text: 'echo:拒否する送信' });
+    const deniedCard = await c.waitFor((e) => e.type === 'permission' && e.settingChange?.requestId === deniedAsk.body.result.requestId, { from, ms: 15_000 });
+    await c.cmd('resolvePermission', { id: deniedCard.id, allow: false, receipt: deniedCard.settingChange.receipt });
+    const deniedNotice = await c.waitFor((e) => e.type === 'taskNotice' && e.sessionId === sender.sessionId && String(e.text).includes(deniedAsk.body.result.requestId), { from, ms: 30_000 });
+    t.ok('送信の拒否結果は変更の文にならない', deniedNotice.text.includes('ユーザーが別の会話への送信を拒否しました。Pleiad は送っていません。') && !deniedNotice.text.includes('設定は変わっていません'), deniedNotice.text);
+    await turnEnd(sender.sessionId, from);
+    from = c.mark();
+    const oldAsk = await api(sender.token, 'sessions.send', { sessionId: strong.sessionId, text: 'echo:古い送信' });
+    const oldCard = await c.waitFor((e) => e.type === 'permission' && e.settingChange?.requestId === oldAsk.body.result.requestId, { from, ms: 15_000 });
+    const newerAsk = await api(sender.token, 'sessions.send', { sessionId: strong.sessionId, text: 'echo:新しい送信' });
+    const newerCard = await c.waitFor((e) => e.type === 'permission' && e.settingChange?.requestId === newerAsk.body.result.requestId, { from, ms: 15_000 });
+    const withdrawn = await c.waitFor((e) => e.type === 'taskNotice' && e.sessionId === sender.sessionId && String(e.text).includes(oldAsk.body.result.requestId), { from, ms: 30_000 });
+    t.ok('送信の古い要求の取り下げは「まだ送っていない」と届く', oldCard.id !== newerCard.id && withdrawn.text.includes('別の会話への送信について新しい要求') && withdrawn.text.includes('送っていません'), withdrawn.text);
+    await turnEnd(sender.sessionId, from);
+    from = c.mark();
+    await c.cmd('resolvePermission', { id: newerCard.id, allow: false, receipt: newerCard.settingChange.receipt });
+    await turnEnd(sender.sessionId, from);
 
     // ---- 自分自身
     const self = await api(sender.token, 'sessions.send', { sessionId: sender.sessionId, text: 'echo:x' });

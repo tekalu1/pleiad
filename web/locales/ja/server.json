@@ -51,6 +51,7 @@
     "relayTitleWith": "委譲先「{{child}}」 / {{title}}",
     "computerApp": "{{agent}} に「{{app}}」の操作を許可しますか？",
     "settingChange": "{{agent}} が設定「{{key}}」を変えようとしています",
+    "opApproval": "{{agent}} が操作「{{op}}」の許可を求めています",
     "computerAppJoin": "」「",
     "browserSite": "{{agent}} が {{site}} を使おうとしています",
     "browserNotes": "（{{notes}}）",

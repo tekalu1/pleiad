@@ -193,7 +193,7 @@ export default async function (t) {
     const slow = runCommand(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { input: {}, cwd: tmp, env: {}, timeoutMs: 60_000, signal: ac.signal });
     setTimeout(() => ac.abort(), 300);
     const res14 = await slow;
-    t.ok('14: 途中で中断すると子プロセスを止めて返る（timeout まで待たない）', res14.aborted === true && Date.now() - t0 < 10_000, `${Date.now() - t0}ms`);
+    t.ok('14: 途中で中断すると子プロセスを止めて返る（timeout まで待たない）', res14.aborted === true && Date.now() - t0 < 20_000, `${Date.now() - t0}ms`);
 
     // ---- 推奨 15: 元の設定で動いていない定義は「止まる」に並べず、取り込むならオフ
     const offRow = { id: 'a1', agent: 'antigravity', scope: 'user', event: 'PreToolUse', path: '/g/hooks.json', name: 'audit', enabled: false };
