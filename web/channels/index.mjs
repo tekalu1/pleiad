@@ -11,19 +11,22 @@
 //     filePreview                   … web/file-preview.mjs の返り。open(ref, element)・openPanel・close・panelOpen
 //     permissionCard(ev, into)      … 承認のカードを入れ物へ描く（client.mjs の permissionCard。決着は resolvePermission と同じ）
 //     openSession(id)               … Chats の会話を開く（Chats のタブへ戻して select）
+//     openThread(channelId, threadId) … スレッドを開く。setupChannels が足す（部品の openThread へ配る）。呼ぶのは W2（要約の行・「スレッドで返信」）、受けるのは W3
 //     openSidebar()                 … 脇を開く（狭い画面は引き出し）
 //     showMenu(x, y, items, title)  … 右クリックのメニュー（web/context-menu.mjs と同じ見え方）
 //     renderAssistantMarkdown(text, refs?)・renderPresent(ev)  … web/render.mjs
 //     side                          … web/side.mjs の返り（Chats の脇。行の描き方・バックエンドのロゴ）
 //     t                             … 訳（'channels:feed.empty' のように名前空間を付ける）
 //
-//   部品（part）: { onEvent?(ev, replay): void, show?(view): void, hide?(): void, sideTabChanged?(tab): void, contextForPanel?(anchor): { sessionId, at } | null }
+//   部品（part）: { onEvent?(ev, replay): void, show?(view): void, hide?(): void, sideTabChanged?(tab): void, contextForPanel?(anchor): { sessionId, at } | null,
+//                  openThread?(channelId, threadId): void }
 //     - show(view) … メインに出す面。view = { kind: 'channel' | 'bot' | 'routine', id, threadId? }
 //     - contextForPanel(anchor) … 右パネルの作業場所の基準（そのスレッドの bot の会話）。分からなければ null（Chats と同じ基準へ）
 //
 //   DOM（web/index.html）: #sideTabs・#tabChats・#tabChannels・#channelsSide・.cs-sec[data-sec]・#channelsView・#channelsBody。
 //   スレッドの空間モデル（.deck・#chFeed・#chThread）・投稿・入力欄・bot のページ・ルーティンの編集は、各パッケージが #channelsBody の中に作る。
 import { createSideTabs } from './side-tabs.mjs';
+import { createFeed } from './feed.mjs';
 
 /** WS の出来事のうち、この画面が受けるもの（core/protocol.mjs の EVENTS）。ほかの出来事も部品の onEvent には全部届く（permission など） */
 export const CHANNEL_EVENTS = new Set([
@@ -32,12 +35,18 @@ export const CHANNEL_EVENTS = new Set([
 
 export function setupChannels(host) {
   const parts = [];
+  // スレッドを開く口。投稿の要約の行・「スレッドで返信」が呼ぶ（部品の openThread(channelId, threadId)。W3 が受ける。受ける部品が無ければ何も起きない）
+  host.openThread ??= (channelId, threadId) => {
+    each('openThread', channelId, threadId);
+    document.dispatchEvent(new CustomEvent('channels:openthread', { detail: { channelId, threadId } }));   // 部品を持たない画面・テストが聞ける
+  };
 
   // ---- 部品の一覧。1 行 = 1 パッケージ。足すのは自分の行だけ（行の間を空けてあるのは、並列の変更が競合しないため）
 
   // W1 脇:  parts.push(createSidebar(host, tabs));   // web/channels/sidebar.mjs
 
-  // W2 チャンネルの流れ:  parts.push(createFeed(host));   // web/channels/feed.mjs
+  // W2 チャンネルの流れ
+  parts.push(createFeed(host));
 
   // W3 スレッドと空間モデル:  parts.push(createThread(host));   // web/channels/thread.mjs
 
@@ -50,7 +59,7 @@ export function setupChannels(host) {
   // 狭い画面で脇を閉じている間の入口（#openSidebar と同じ働き。メインの頭が Channels の見出しに替わっている間だけ見える）
   document.getElementById('chOpenSidebar')?.addEventListener('click', () => host.openSidebar());
 
-  return {
+  const api = {
     /** 出来事を部品へ渡す。この画面の出来事なら true（client.mjs の onEvent はそこで終わる） */
     onEvent(ev, replay = false) {
       each('onEvent', ev, replay);
@@ -69,4 +78,7 @@ export function setupChannels(host) {
     setTab: (tab) => tabs.set(tab),
     tabs,
   };
+  // どこからでも開ける入口（脇の行・通知・テスト）: document へ new CustomEvent('channels:show', { detail: { kind: 'channel', id } })
+  document.addEventListener('channels:show', (e) => api.show(e.detail));
+  return api;
 }

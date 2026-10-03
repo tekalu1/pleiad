@@ -6,6 +6,7 @@
     "channels:side.tabs.channels",
     "channels:side.sections.bots",
     "channels:event.post",
+    "channels:feed.system",
     "ui:git.detached",
     "ui:git.panel",
     "ui:git.pr",
