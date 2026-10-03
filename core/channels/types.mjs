@@ -39,12 +39,12 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   presents?: object[],                                  // そのターンの提示（可視化・添付）の写し。描き方は web/render.mjs の renderPresent
  *   reactions: { [emoji: string]: Author[] },
  *   taint?: 'webhook'|'web'|null,                         // 外から来た文を含む（記憶の根拠にしない）
- *   routine?: { routineId: string, runId: string, missed?: boolean, reason?: string },
+ *   routine?: { routineId: string, runId: string, missed?: boolean, reason?: string, payload?: string },
  *   proxy?: null }} Post */
 
 /** チャンネルの .jsonl の 1 行（読むときに畳む）
  * @typedef {{ op: 'post', post: Post }
- *          | { op: 'edit', id: string, text?: string, state?: Post['state'], presents?: object[], at: number }
+ *          | { op: 'edit', id: string, text?: string, state?: Post['state'], presents?: object[], taint?: 'webhook', at: number }
  *          | { op: 'delete', id: string, at: number }
  *          | { op: 'react', id: string, emoji: string, by: Author, on: boolean, at: number }} ChannelOp */
 
@@ -73,7 +73,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
 /** sessions.json の会話の行の新しい欄 `bot`（core/store.mjs の setSessionData の許可リスト）
  * @typedef {{
  *   botId: string, kind: 'thread'|'dm'|'routine'|'learner',
- *   channelId: string|null, threadId: string|null, routineId?: string,
+ *   channelId: string|null, threadId: string|null, routineId?: string, taint?: 'webhook',
  *   memRev: number,                                       // 末尾の差分をどこまで渡したか（memory/log.jsonl の rev）
  *   snapshotDue: boolean,                                 // 次のターンで核の写しを渡す（始まり・圧縮の完了で true）
  *   delivered: string[],                                  // この写しの後に渡した記憶の id（圧縮で空に）

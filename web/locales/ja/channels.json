@@ -249,6 +249,7 @@
     "undoFailed": "元に戻せませんでした: {{error}}"
   },
   "routines": {
+    "webhook": {"hostOnly": "受け口の URL は、この Pleiad が動く PC の画面で取得してください。", "invalidates": "作り直すと古い秘密は使えなくなります。", "url": "受け口の URL", "copyUrl": "URL を写す", "rotate": "秘密を作り直す", "secret": "秘密（HMAC）", "once": "この秘密は今だけ表示します。閉じる前に写してください。", "copySecret": "秘密を写す", "copied": "写しました", "saveFirst": "保存すると受け口の URL と秘密を作るボタンが出ます。", "tunnel": "外から届かせるには、あなたのトンネル（ngrok など）が必要です。"},
     "title": "ルーティン",
     "heading": "ルーティン",
     "headingTitle_other": "このチャンネルのルーティン（{{count}} 件）",

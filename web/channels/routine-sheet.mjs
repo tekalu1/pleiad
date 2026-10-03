@@ -1,5 +1,5 @@
 // ルーティンの編集のシート（W5。承認済みのモック 06、docs/channels.md「ルーティン」、ADR 0111）。
-// 白い <dialog>#routineSheet（広い画面は浮く面、狭い画面は全画面）。いつ（毎日・毎週・間隔・cron・イベント。webhook は P3 まで選べない形だけ）・
+// 白い <dialog>#routineSheet（広い画面は浮く面、狭い画面は全画面）。いつ（毎日・毎週・間隔・cron・イベント・webhook）・
 // 誰が（bot）・どこで（チャンネル）・何を（指示）・承認モード（入力欄と同じ選択）・承認待ちの期限・［試しに動かす］［取り消す］［作る］。
 // 操作はすべて routines.* を host.invoke で呼ぶ（新しい WS コマンドは足さない）。一覧は routine-store.mjs。出来事 routinesChanged で脇・見出し・bot のページが更新される。
 //
@@ -10,6 +10,7 @@
 // 取り消すと消す（作るを押したら再開）。保存済みのルーティンは、直した内容を先に保存してから走らせる。
 import { el } from '../dom.mjs';
 import { t } from '../i18n.mjs';
+import { remoteInfo } from '../remote-badge.mjs';
 import { isComposingKey } from '../keyboard.mjs';
 import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
@@ -87,7 +88,7 @@ export function createRoutineSheet(host) {
 // シート
 
 function buildSheet({ host, store, routine, bots, channels, channelId, botId, done }) {
-  const isNew = !routine;
+  let isNew = !routine;
   const botOf = (id) => bots.find((b) => b.id === id) ?? null;
   const channelOptions = () => {
     const live = sideChannels(channels).filter((c) => !c.archivedAt);
@@ -488,6 +489,45 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
       const n = tr.scope?.sessionIds?.length;
       nodes.push(row2(seg), row2(el('span', 'weak', t('channels:routines.event.scope')), el('span', 'rs-scope', n ? t('channels:routines.event.scopeSome', { count: n }) : t('channels:routines.event.scopeAll'))));
     }
+    if (tr.kind === 'webhook') {
+      const savedHook = current?.trigger?.kind === 'webhook' ? current.trigger.hookId : null;
+      if (savedHook) {
+        const url = el('input', 'fin mono');
+        url.id = 'rsWebhookUrl'; url.readOnly = true;
+        url.value = `${location.origin}/hooks/${encodeURIComponent(savedHook)}`;
+        url.setAttribute('aria-label', t('channels:routines.webhook.url'));
+        url.style.cssText = 'flex:1;min-width:0';
+        const copy = el('button', 'btn', t('channels:routines.webhook.copyUrl'));
+        copy.type = 'button';
+        copy.onclick = () => navigator.clipboard.writeText(url.value).then(() => { copy.textContent = t('channels:routines.webhook.copied'); }, (e) => showFail(message(e)));
+        if (remoteInfo(window.plyRemote)) nodes.push(el('span', 'nt', t('channels:routines.webhook.hostOnly')));
+        else nodes.push(row2(url, copy));
+        const rotate = el('button', 'btn', t('channels:routines.webhook.rotate'));
+        rotate.id = 'rsRotateSecret'; rotate.type = 'button';
+        const value = el('input', 'fin mono');
+        value.id = 'rsWebhookSecret'; value.readOnly = true; value.hidden = true;
+        value.style.cssText = 'width:100%;min-width:0';
+        value.setAttribute('aria-label', t('channels:routines.webhook.secret'));
+        const once = el('span', 'nt', t('channels:routines.webhook.once')); once.hidden = true;
+        const copySecret = el('button', 'btn', t('channels:routines.webhook.copySecret'));
+        copySecret.type = 'button'; copySecret.hidden = true;
+        copySecret.onclick = () => navigator.clipboard.writeText(value.value).then(() => { copySecret.textContent = t('channels:routines.webhook.copied'); }, (e) => showFail(message(e)));
+        rotate.onclick = async () => {
+          if (busy) return;
+          setBusy(true); rotate.disabled = true; value.value = ''; value.hidden = copySecret.hidden = once.hidden = true;
+          try {
+            const r = await host.invoke('routines.rotateSecret', { routineId: D.id });
+            if (closed || !value.isConnected) return;
+            value.value = r.secret; value.hidden = copySecret.hidden = once.hidden = false;
+            copySecret.textContent = t('channels:routines.webhook.copySecret');
+            value.focus(); value.select();
+          } catch (e) { showFail(message(e)); }
+          finally { setBusy(false); rotate.disabled = false; }
+        };
+        nodes.push(row2(el('span', 'weak', t('channels:routines.webhook.secret')), rotate), el('span', 'nt', t('channels:routines.webhook.invalidates')), value, row2(copySecret), once);
+      } else nodes.push(el('span', 'nt', t('channels:routines.webhook.saveFirst')));
+      nodes.push(el('span', 'nt', t('channels:routines.webhook.tunnel')));
+    }
     if (tr.kind !== 'cron') nodes.push(nextNote);
     whenBody.replaceChildren(...nodes);
     paintNext();
@@ -576,6 +616,7 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
       let r = await host.invoke('routines.create', { ...fields, paused: asTrial });
       if (asTrial && r && !r.paused) r = await host.invoke('routines.pause', { routineId: r.id }).catch(() => r);
       D.id = r.id;
+      D.trigger = structuredClone(r.trigger);
       current = r;
       store.put(r);
       tempCreated = asTrial;
@@ -585,6 +626,7 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
     if (dirty()) {
       const r = await host.invoke('routines.update', { routineId: D.id, ...fields });
       current = { ...current, ...r };
+      D.trigger = structuredClone(r.trigger);
       store.put(current);
       orig = structuredClone(D);
     }
@@ -596,6 +638,7 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
     setBusy(true);
     try {
       const wasTrial = tempCreated;
+      const newHook = D.trigger.kind === 'webhook' && current?.trigger?.kind !== 'webhook';
       const id = await persist({ asTrial: false });
       if (wasTrial) {
         const r = await host.invoke('routines.resume', { routineId: id });
@@ -603,7 +646,11 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
         store.put(current);
       }
       finalized = true;
-      closeSheet();
+      if (newHook) {
+        isNew = false; fState.f.hidden = false; delBtn.hidden = false;
+        saveBtn.textContent = t('channels:routines.save');
+        paintState(); paintWhen();
+      } else closeSheet();
     } catch (e) {
       showFail(t('channels:routines.saveFailed', { error: message(e) }));
     } finally {

@@ -62,7 +62,7 @@ export function createBotHost(deps) {
   // ---- webhook（H1）
   const webhook = createWebhookReceiver({ dataDir, routines, host });
 
-  const services = [channels, bots, memory, dispatch, routines];
+  const services = [channels, bots, memory, dispatch, routines, webhook];
   // つなぎ目は、bot の側の失敗でターン・承認・起動を巻き込まない
   const guard = (name, fn, fallback) => (...args) => {
     const fail = (err) => { console.error(`  bot host: ${name} に失敗:`, String(err?.message ?? err)); return fallback; };

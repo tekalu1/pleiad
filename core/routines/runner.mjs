@@ -80,25 +80,30 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
       // 走っている間の発火は、1 つの走っている間に 1 回だけ「スキップ」を残す（毎分のルーティンが遅い実行を待つたびに並べない）
       if (prev.skipNoted) return { runId, postId: null, state: 'skipped', reason: 'previousRunning' };
       prev.skipNoted = true;
-      return skipped(routine, channel, { runId, reason: 'previousRunning', missed, note }, { recordLast: false });
+      return skipped(routine, channel, { runId, reason: 'previousRunning', missed, note: source === 'webhook' ? '' : note }, { recordLast: false });
     }
     const entry = { routineId: routine.id, runId, postId: null, channelId: routine.channelId, botId: routine.botId, sessionId: null, startedAt: clock.now(),
       timeoutMin: routine.approvalTimeoutMin, timedOut: false, ended: false, skipNoted: false, timers: new Map(), startTimer: null };
     running.set(routine.id, entry);     // 確保。以降の await の間に同じルーティンが重ならない
     try {
       const bot = await bots.get({ botId: routine.botId }).catch(() => null);
-      if (!bot) { running.delete(routine.id); return await skipped(routine, channel, { runId, reason: 'botMissing', missed, note }, { recordLast: true }); }
+      if (!bot) { running.delete(routine.id); return await skipped(routine, channel, { runId, reason: 'botMissing', missed, note: source === 'webhook' ? '' : note }, { recordLast: true }); }
       if (!channel || channel.archivedAt) { running.delete(routine.id); return await skipped(routine, channel, { runId, reason: channel ? 'channelArchived' : 'channelMissing', missed, note }, { recordLast: true }); }
 
       const root = await channels.post({
-        channelId: channel.id, threadId: null, text: textOf(routine, note), state: 'working',
-        routine: { routineId: routine.id, runId, ...(missed ? { missed: true } : {}) },
+        channelId: channel.id, threadId: null, text: textOf(routine, source === 'webhook' ? '' : note), state: 'working',
+        ...(source === 'webhook' ? { taint: 'webhook', mentions: [] } : {}),
+        routine: { routineId: routine.id, runId, ...(missed ? { missed: true } : {}), ...(source === 'webhook' ? { payload: note } : {}) },
       }, routineAuthor(routine));
       entry.postId = root.id;
       await record(routine.id, { at: clock.now(), runId, state: 'working', postId: root.id });
       try {
         const made = await bots.createSession({ botId: bot.id, channel, threadId: root.id, kind: 'routine', routineId: routine.id, rootText: routine.name });
         entry.sessionId = made.sessionId;
+        if (source === 'webhook') {
+          const sb = (await host.store.get(made.sessionId)).bot;
+          await host.store.setSessionData(made.sessionId, 'bot', { ...sb, taint: 'webhook' });
+        }
         const mode = await modeFor(routine, bot);
         if (mode && mode !== made.mode) await host.store.setMode(made.sessionId, mode);
         bySession.set(made.sessionId, entry);

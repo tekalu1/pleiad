@@ -1,6 +1,6 @@
 // ホストの接続口の防火壁（docs/remote.md §4.2）。復号したストリームを、ホストの既存サーバーへの HTTP / WebSocket に組み立て直す。
 //
-// - `/mcp` で始まるパス（エージェント CLI 用の内部口）と、`/api/ops`（CLI 用の操作の一覧の口。ADR 0083）は通さない
+// - `/hooks`（webhook は利用者のトンネルで公開する）・`/mcp` で始まるパス（エージェント CLI 用の内部口）と、`/api/ops`（CLI 用の操作の一覧の口。ADR 0083）は通さない
 // - HTTP は GET と HEAD だけ、WebSocket は /ws だけ
 // - 端末から来たヘッダーは決まったものだけを通す（Cookie・Authorization・Host・Origin・hop-by-hop などは落ちる）。
 //   `?token=` も落とし、ホストの UI トークンは接続口が付ける（HTTP は Cookie、/ws は ?token=）
@@ -36,7 +36,7 @@ export function checkPath(raw) {
   const lower = u.pathname.toLowerCase();
   let decoded = lower;
   try { decoded = decodeURIComponent(lower); } catch { return null; }
-  for (const p of [lower, decoded]) if (p === '/mcp' || p.startsWith('/mcp/') || p === '/api/ops' || p.startsWith('/api/ops/')) return null;
+  for (const p of [lower, decoded]) if (p === '/mcp' || p.startsWith('/mcp/') || p === '/api/ops' || p.startsWith('/api/ops/') || p === '/hooks' || p.startsWith('/hooks/')) return null;
   u.searchParams.delete('token');
   return { path: u.pathname + u.search, pathname: u.pathname };
 }
