@@ -248,7 +248,7 @@
     {
       "id": "channels.create",
       "risk": "write",
-      "riskOf": false,
+      "riskOf": true,
       "scope": "global",
       "modeGate": true,
       "hostScreenOnly": false,
@@ -400,7 +400,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "c9aa8fd355a2"
+      "input": "1eb1b9e00627"
     },
     {
       "id": "channels.react",
@@ -500,7 +500,7 @@
     {
       "id": "channels.update",
       "risk": "write",
-      "riskOf": false,
+      "riskOf": true,
       "scope": "global",
       "modeGate": true,
       "hostScreenOnly": false,
@@ -519,6 +519,31 @@
       },
       "legacyCommand": null,
       "input": "82d73789eaf1"
+    },
+    {
+      "id": "channels.wake",
+      "risk": "guarded",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "wake"
+          ],
+          "positional": [
+            "channelId",
+            "postId",
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "ea7af0bff606"
     },
     {
       "id": "delegation.delegate",
@@ -671,7 +696,7 @@
     {
       "id": "memory.edit",
       "risk": "write",
-      "riskOf": false,
+      "riskOf": true,
       "scope": "global",
       "modeGate": true,
       "hostScreenOnly": false,
@@ -689,7 +714,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "b222ad84f2c0"
+      "input": "a0c75da9f533"
     },
     {
       "id": "memory.forget",
@@ -769,8 +794,16 @@
       "hostScreenOnly": false,
       "surfaces": {
         "ui": true,
-        "mcp": false,
-        "cli": false
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "unforget"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
       },
       "legacyCommand": null,
       "input": "4f9fc0d81908"
@@ -788,7 +821,7 @@
         "cli": false
       },
       "legacyCommand": null,
-      "input": "3e594b62fe17"
+      "input": "558cfb267283"
     },
     {
       "id": "sessions.fork",
@@ -1591,6 +1624,15 @@
       ]
     },
     {
+      "id": "channels.wake",
+      "path": "channels wake",
+      "positional": [
+        "channelId",
+        "postId",
+        "botId"
+      ]
+    },
+    {
       "id": "delegation.delegate",
       "path": "delegation delegate",
       "positional": []
@@ -1663,6 +1705,13 @@
       "path": "memory search",
       "positional": [
         "query"
+      ]
+    },
+    {
+      "id": "memory.unforget",
+      "path": "memory unforget",
+      "positional": [
+        "id"
       ]
     },
     {
