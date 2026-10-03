@@ -583,7 +583,8 @@
       "badCursor": "The cursor is not valid. Pass the previous result's next as is.",
       "DENIED": "The user did not allow the change ({{id}}). Do not retry; ask the user why.",
       "STALE": "The value kept changing after approval, so {{id}} was not done. Check the current value with settings.get and try again.",
-      "SETTING_READ_ONLY": "The setting {{key}} is read-only and cannot be changed with settings.set."
+      "SETTING_READ_ONLY": "The setting {{key}} is read-only and cannot be changed with settings.set.",
+      "MASKED": "{{path}} has a masked value (••••) that does not match what was read, so it cannot be restored. Write the value, or pass it back exactly as read."
     },
     "pending": "The change to {{target}} is waiting for the user's approval (requestId: {{requestId}}). Nothing has changed yet. The result (allowed or denied) will be delivered to this conversation later. You may continue other work or end your response without waiting. Do not request the same change again.",
     "settingTarget": "the setting {{key}}",
@@ -693,10 +694,6 @@
       "setPc": { "summary": "Turn this PC's notifications on or off per kind. Only the given fields change.", "done": "When work is done.", "reply": "When a reply (approval or question) is needed.", "failed": "When work failed." },
       "setDevice": { "summary": "Mute or unmute notifications to one paired phone. The device list is not shown (ask the user for the id).", "id": "The device id.", "muted": "Whether to mute." }
     },
-    "hooks": {
-      "read": { "summary": "Read one Hooks definition (command, timeout and so on) from an agent's settings file. Secret-looking values in the command are masked.", "agent": "The agent (claude, codex, antigravity).", "scope": "The scope (user, project and so on).", "base": "The place for the project scope.", "file": "The settings file path. Defaults to the usual location.", "loc": "Where the definition is (event, group, handler; name for Antigravity)." },
-      "readPly": { "summary": "Read one Pleiad Hooks registration (hooks.json). Secret-looking values in the command are masked.", "id": "The registration id." }
-    },
     "compatEndpoints": {
       "recheck": { "summary": "Check a saved compatible endpoint again with its saved URL and key, and record the result and the model list (no key is entered or returned).", "id": "The endpoint id." },
       "delete": { "summary": "Delete a compatible endpoint (its saved key is deleted too). Approval-required conversations ask the user first.", "id": "The endpoint id.", "reason": "Why it is deleted (shown on the approval card and kept in the log)." }
@@ -712,6 +709,173 @@
       "callOp": "Call a Pleiad operation. If the input does not fit, the result has code: INVALID and says which field is wrong and why.",
       "callOpOp": "The operation id (find it with list_ops).",
       "callOpArgs": "The operation's input, in the shape of the JSON Schema you get by passing the id to list_ops."
+    },
+    "mcp": {
+      "arg": {
+        "format": "Which agent's config file (claude: ~/.claude.json or .mcp.json, codex: config.toml).",
+        "scope": "user (home settings) or directory (working directory settings).",
+        "cwd": "The working directory. From a conversation, omit it to use that conversation's working directory.",
+        "nativeName": "The MCP server name in the config file.",
+        "name": "The name of the MCP server registered in Pleiad.",
+        "mode": "add (a new one) or edit (change the current one).",
+        "revision": "The revision you read. Nothing is saved if it changed since.",
+        "reason": "Why it is changed (shown on the approval card and kept in the change log)."
+      },
+      "nativeList": {
+        "summary": "Names and revision of the MCP servers in an agent's (Claude, Codex) config file."
+      },
+      "nativeRead": {
+        "summary": "One MCP server definition from an agent's config file. Env and header values, URL queries and secrets in arguments are masked (••••)."
+      },
+      "nativeSave": {
+        "summary": "Add or change an MCP server in an agent's config file. It can run any command, so the user must approve. A masked value passed back keeps the current value.",
+        "value": "The definition (stdio: command, args, env; HTTP: url and headers).",
+        "allowReformat": "Whether rewriting the TOML may change its formatting."
+      },
+      "list": {
+        "summary": "The MCP servers registered in Pleiad (definition, which secrets exist, OAuth state). Secret values are not returned."
+      },
+      "read": {
+        "summary": "One MCP server registered in Pleiad, in its editable form. Secrets are masked (••••); secrets not entered yet are null."
+      },
+      "save": {
+        "summary": "Register an MCP server in Pleiad or change a registration. It can run any command, so the user must approve. A masked secret passed back keeps the previous value.",
+        "value": "The definition (transport, command, args, env, url, auth, bearerToken, headers, oauth…; the shape of value from mcp.read)."
+      },
+      "delete": {
+        "summary": "Delete a Pleiad MCP server registration (its OAuth token is revoked). The user must approve."
+      },
+      "rename": {
+        "summary": "Rename a Pleiad MCP server registration (secrets and OAuth state move along). The user must approve.",
+        "to": "The new name."
+      },
+      "import": {
+        "summary": "Import MCP servers from an agent's config file into Pleiad's registrations. The user must approve.",
+        "items": "What to import: a list of { format, scope, name, cwd?, as? (the name to register), auth? }.",
+        "includeSecrets": "Also copy env values, header values and bearer tokens (by default they are left to fill in later)."
+      },
+      "setSettings": {
+        "summary": "Change Pleiad's MCP-wide setting (the OAuth Client ID Metadata Document URL). The user must approve.",
+        "clientMetadataUrl": "An https URL. null or empty removes it."
+      },
+      "authStatus": {
+        "summary": "OAuth state of Pleiad's MCP servers (signed in, expiry, needs sign-in). Tokens are not returned. Sign-in and sign-out are done by the user in the app.",
+        "name": "A name to look at just one. Omit for all."
+      },
+      "reconnect": {
+        "summary": "Check that a registered MCP server connects with the current credentials (returns the state and tool count)."
+      }
+    },
+    "hooks": {
+      "read": { "summary": "Read one Hooks definition (command, timeout and so on) from an agent's settings file. Secret-looking values in the command are masked.", "agent": "The agent (claude, codex, antigravity).", "scope": "The scope (user, project and so on).", "base": "The place for the project scope.", "file": "The settings file path. Defaults to the usual location.", "loc": "Where the definition is (event, group, handler; name for Antigravity)." },
+      "readPly": { "summary": "Read one Pleiad Hooks registration (hooks.json). Secret-looking values in the command are masked.", "id": "The registration id." },
+      "arg": {
+        "cwd": "The working directory. From a conversation, omit it to use that conversation's working directory.",
+        "sessionId": "The conversation id. From a conversation, omit it for that conversation.",
+        "id": "The id of a Pleiad hook registration (hooks[].id from hooks.list).",
+        "dryRun": "If true, write nothing and return only where it would write and the before/after text (masked). No approval needed.",
+        "allowReformat": "Whether rewriting may change the formatting.",
+        "reason": "Why it is changed (shown on the approval card and kept in the change log)."
+      },
+      "scan": {
+        "summary": "Hooks defined in each agent's config files (state per file, and the rows). Secrets in commands are masked.",
+        "scope": "user (home only) or directory (home, and from the Git root to cwd).",
+        "trust": "Also ask Codex for its trust state (takes a little longer)."
+      },
+      "saveNative": {
+        "summary": "Add, change, delete or enable hooks in agents' config files. Writing needs the user's approval (check with dryRun first).",
+        "items": "Changes: { op: add|edit|delete|enable, agent, scope, base?, file?, revision, loc?, event?, matcher?, command?, timeout?, name?, enabled? }."
+      },
+      "copy": {
+        "summary": "Copy one hook definition into another agent's config file (through an adapter when the formats differ). Writing needs the user's approval.",
+        "source": "The source: { agent, scope, base?, file, loc, revision } (a row from hooks.scan).",
+        "targets": "Where to copy: a list of { agent, scope, base?, matcher?, revision? }."
+      },
+      "session": {
+        "summary": "A conversation's hooks: definitions found in its working directory, what Pleiad unified, and the hook runs received.",
+        "backend": "The agent id. From a conversation, omit it for that conversation's agent."
+      },
+      "list": {
+        "summary": "Pleiad's hook registrations and the owner (leave to the agent / Pleiad unifies). Commands are masked."
+      },
+      "save": {
+        "summary": "Register a hook in Pleiad or change one (edit when value.id is given). Its command runs on every agent action, so the user must approve.",
+        "value": "{ id?, name, agent, event, matcher?, command, timeout?, async?, targets }. A masked command passed back keeps the previous value."
+      },
+      "remove": {
+        "summary": "Delete a Pleiad hook registration. The user must approve."
+      },
+      "toggle": {
+        "summary": "Turn a Pleiad hook registration on or off. Turning it on needs the user's approval.",
+        "enabled": "true for on, false for off (default true)."
+      },
+      "setOwner": {
+        "summary": "Change who owns hooks (leave to the agent / Pleiad unifies). The user must approve.",
+        "place": "A working directory path. null or omitted for the default everywhere.",
+        "value": "{ owner: native|ply, disabled?: [registration ids] }. null goes back to the setting above.",
+        "imports": "Native definitions to import at the same time ({ id, digest }).",
+        "revision": "The revision from hooks.list."
+      },
+      "repair": {
+        "summary": "Back up a broken Pleiad hooks registration file and rewrite it with the parts that could be read. The user must approve."
+      }
+    },
+    "context": {
+      "arg": {
+        "cwd": "The working directory. From a conversation, omit it to use that conversation's working directory.",
+        "sessionId": "The conversation id. From a conversation, omit it for that conversation.",
+        "reason": "Why it is changed (shown on the approval card and kept in the change log)."
+      },
+      "settings": {
+        "summary": "Context settings (where instructions, Skills and external MCP are read from, and who owns them): the default and the per-place overrides."
+      },
+      "setSettings": {
+        "summary": "Change one place in the context settings. It changes the context every conversation gets, so the user must approve.",
+        "place": "A working directory path. null for the default.",
+        "kind": "instruction, skill or mcp.",
+        "value": "The setting for that kind ({ owner, user, directory, disabled?, prefer? }). null goes back to the setting above.",
+        "roots": "Extra folders to search. null goes back to the setting above.",
+        "add": "true adds the place to the list.",
+        "remove": "true removes the place from the list (its overrides go too)."
+      },
+      "plyInstructions": {
+        "summary": "Pleiad's instructions (the items added to the agent in each conversation, and the size guideline)."
+      },
+      "setPlyInstructions": {
+        "summary": "Change one of Pleiad's instructions. It changes how agents behave, so the user must approve.",
+        "action": "save (add or change), toggle, delete (your own items), reset (default items) or order.",
+        "id": "The item id (omit on save to add).",
+        "name": "The item name (save).",
+        "body": "The instruction text (save).",
+        "target": "all, parent or child (save).",
+        "agents": "Which agents get it (save).",
+        "on": "On or off (toggle).",
+        "ids": "The item ids in the new order (order)."
+      },
+      "refresh": {
+        "summary": "Re-read the instructions and Skills pinned to a conversation from the current files (only when it is not running)."
+      },
+      "setSessionMcp": {
+        "summary": "Remove an external MCP server from a conversation or put it back (from the next turn). Putting it back needs the user's approval.",
+        "name": "The MCP server name.",
+        "removed": "true removes it (default), false puts it back."
+      }
+    },
+    "remote": {
+      "status": {
+        "summary": "Remote state (relay connection, devices, keep-running setting). Keys and pairing confirmation codes are not returned."
+      },
+      "setResident": {
+        "summary": "Change the desktop app keep-running setting (keep running when the window closes, keep the PC awake).",
+        "keepRunning": "Keep running in the tray when the window closes.",
+        "sleep": "When to keep the PC awake (working: while working, always, off: never)."
+      }
+    },
+    "endpoints": {
+      "list": {
+        "summary": "Compatible endpoints (URL, models, defaults, check results). API keys are not returned (only hasKey).",
+        "agent": "Filter by agent id."
+      }
     },
     "probe": {
       "guarded": {

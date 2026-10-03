@@ -2569,13 +2569,6 @@ const opsNotify = {
   },
 };
 
-// Hooks の定義を読む（hooks.*）。失敗の文はファイルの読み方（hooks-config・ply-hooks）が持つ
-const hookFailure = (e) => new OpError('HOOK_NOT_FOUND', String(e?.message ?? e));
-const opsHooks = {
-  read: (args) => hooksConfig.read(args).catch((e) => { throw hookFailure(e); }),
-  readPly: (id) => plyHooks.readHook(id).catch((e) => { throw hookFailure(e); }),
-};
-
 // 互換の接続先のうち秘密を入力しない操作（compatEndpoints.*）。キーは返さない
 const opsCompat = {
   get: (id) => compatEndpoints.get(String(id ?? '')),
@@ -2601,6 +2594,145 @@ const opsComputer = {
     const result = computerLock.stopSession(sessionId, 'stop');
     if (result.stopped && result.owner) computerDriver?.stop(result.owner);
     return { stopped: result.stopped };
+  },
+};
+
+// MCP の登録（core/ops/mcp.mjs）の本体。WS の listPlyMcp などがしていた処理をそのまま持つ
+const opsMcp = {
+  native: { list: (args) => mcpConfig.list(args), get: (args) => mcpConfig.get(args), getWithSecrets: (args) => mcpConfig.getWithSecrets(args), save: (args) => mcpConfig.save(args) },
+  list: async () => {
+    const data = await plyMcp.list();
+    const servers = await Promise.all(data.servers.map(async s => ({ ...s, authStatus: s.auth === 'oauth' ? await mcpOAuth.status(s.name, await plyMcp.registration(s.name)) : null })));
+    return { ...data, servers, storage: await mcpSecrets.status(), settings: await plyMcp.settings() };
+  },
+  read: (name) => plyMcp.read(name),
+  registration: (name) => plyMcp.registration(name),
+  save: async (args) => {
+    const saved = await plyMcp.save(args);
+    if (saved.oauthReset) mcpOAuth.cancel(saved.name);
+    return { ...saved, storage: await mcpSecrets.status() };
+  },
+  remove: async (name) => {
+    const definition = await plyMcp.registration(name);
+    // 消す前に失効させる（トークンを残したまま登録だけ消さない）
+    const logout = definition.auth === 'oauth' ? await mcpOAuth.logout(name, definition, await plyMcp.connection(name, process.cwd()).catch(() => null)).catch(e => ({ revoked: false, reason: e.message })) : null;
+    return { ...(await plyMcp.remove(name)), logout };
+  },
+  rename: async (name, to) => {
+    // 秘密・OAuth の状態・リフレッシュのロック名を引き継いで名前だけ変える
+    const renamed = await plyMcp.rename(name, to, { guard: (definition, fn) => mcpOAuth.rename(name, to, definition, fn) });
+    // 設定 › コンテキストで名前で指したもの（外す・同じ名前の定義の選択）も新しい名前へ
+    const followed = await contextSettings.renameMcp(name, to, { plyFile: (await plyMcp.scanInput()).file }).catch(() => 0);
+    return { ...renamed, settingsUpdated: followed };
+  },
+  // Claude / Codex の登録を取り込む。トークンは流用しない（core/mcp-import.mjs の先頭のコメント）
+  import: (items, includeSecrets) => importNativeMcp({ items, includeSecrets, mcpConfig, plyMcp, detect: definition => mcpOAuth.detect(definition) }),
+  settings: () => plyMcp.settings(),
+  setSettings: (value) => plyMcp.setSettings(value),
+  authStatus: async (name) => {
+    const names = name ? [name] : (await plyMcp.list()).servers.map(s => s.name);
+    const rows = await Promise.all(names.map(async n => mcpOAuth.status(n, await plyMcp.registration(n))));
+    return { servers: rows, storage: await mcpSecrets.status() };
+  },
+  reconnect: async (name, cwd) => {
+    // 接続はターンごとに作り直すので、ここでは今の資格情報でつながるかを確かめる（期限切れならリフレッシュもする）
+    const definition = await plyMcp.registration(name);
+    const result = await connectServer({ id: 'manual', name, origins: [{ source: 'ply' }], definition }, { cwd: cwd ?? process.cwd(), plyMcp, oauth: mcpOAuth });
+    await result.client?.close().catch(() => {});
+    return { name, status: result.status, tools: result.tools?.length ?? 0, reason: result.reason ?? null };
+  },
+};
+
+// Hooks の定義の読み出しの失敗の文はファイルの読み方（hooks-config・ply-hooks）が持つ
+const hookFailure = (e) => new OpError('HOOK_NOT_FOUND', String(e?.message ?? e));
+// Hooks（core/ops/hooks.mjs）の本体。各エージェントの設定ファイル（core/hooks-config.mjs。コマンドは実行しない）と、Pleiad の登録と担当（core/ply-hooks.mjs、ADR 0049）
+const opsHooks = {
+  scan: async ({ cwd: dir, scope, trust } = {}) => {
+    const cwd = dir ? await scanDirectory(dir) : null;
+    const report = await hooksConfig.scan({ cwd, scopes: cwd && scope !== 'user' ? ['user', 'directory'] : ['user'] });
+    return withCodexTrust(report, cwd ?? os.homedir(), { trust: trust === true });
+  },
+  read: (args) => hooksConfig.read(args).catch((e) => { throw hookFailure(e); }),
+  save: (args) => hooksConfig.save(args),
+  copy: (args) => hooksConfig.copy(args),
+  session: async (args = {}) => {
+    // 会話の右パネル: その会話の場所で見つかった定義（読み込まれたかは分からない）と、受け取った発火の記録。
+    // Hooks を Pleiad がそろえた会話は、そのターンの記録（渡した登録・止めたネイティブ・渡せなかったもの・漏れ）も返す（unify）
+    const id = args.sessionId ?? null;
+    const agent = HOOK_AGENTS.includes(args.backend) ? args.backend : null;
+    const cwd = args.cwd ? await scanDirectory(args.cwd).catch(() => null) : null;
+    const report = agent && cwd ? await hooksConfig.scan({ cwd, agents: [agent] }) : null;
+    if (report && agent === 'codex') await withCodexTrust(report, cwd, { trust: args.trust === true });
+    const saved = id ? await store.get(id).catch(() => ({})) : {};
+    const live = id ? runtime.turns.get(id) : null;
+    const unify = live?.contextRecord?.hooks ?? saved.contextSession?.hooks ?? null;
+    const owner = cwd ? (await plyHooks.resolve(cwd).catch(() => null))?.owner ?? 'native' : 'native';
+    // 発火を受け取れる接続: Claude（通知・コールバック）、Codex（hook/started・hook/completed）、Antigravity は Pleiad が渡した分だけ（アダプターの記録）
+    const observable = agent === 'claude' || agent === 'codex' ? 'all' : agent === 'antigravity' && unify?.owner === 'ply' ? 'pleiad' : null;
+    return { agent, cwd, report, observable: Boolean(observable), observed: observable, owner, unify, runs: trimHookRuns([...(saved.hookRuns ?? []), ...(live?.hookRuns ?? [])]) };
+  },
+  view: (cwd) => plyHooks.view(cwd),
+  readPly: (id) => plyHooks.readHook(id).catch((e) => { throw hookFailure(e); }),
+  saveHook: (value, cwd) => plyHooks.save(value ?? {}, { cwd }),
+  remove: (id, cwd) => plyHooks.remove(id, { cwd }),
+  toggle: (id, enabled, cwd) => plyHooks.toggle(id, enabled, { cwd }),
+  setOwner: async (args = {}) => {
+    // 担当と取り込みを 1 回で保存する。取り込む定義はサーバーがファイルから読み直す（画面から来たコマンドは使わない）
+    // 確認票: 確認の面で見た版（revision）と、取り込む行ごとの元の定義の hash（digest）。どちらかが変わっていれば保存しない（確認し直す）
+    const place = args.place ?? null;
+    if (typeof args.revision !== 'string') throw new Error(t('hooksUnify.reviewRequired'));
+    const wanted = Array.isArray(args.imports) ? args.imports : [];
+    if (wanted.length > 100 || wanted.some(x => typeof x?.id !== 'string' || typeof x?.digest !== 'string')) throw new Error(t('hooksUnify.importFailed'));
+    const imports = [...new Map(wanted.map(x => [x.id, x])).values()];
+    const dir = place ? await scanDirectory(place) : null;
+    const { raws } = imports.length ? await nativeRaws(dir, imports.map(x => x.id)) : { raws: [] };
+    const add = [];
+    for (const want of imports) {
+      const raw = raws.find(r => r.row.id === want.id);
+      const c = raw ? importCandidate(raw) : null;
+      if (!c?.importable) throw new Error(t('hooksUnify.importFailed'));
+      if (c.digest !== want.digest) throw new Error(t('hooksUnify.importChanged'));
+      add.push(c.value);
+    }
+    return plyHooks.setOwner({ place, value: args.value ?? null, add, cwd: args.cwd ?? place, expect: args.revision });
+  },
+  // 壊れた hooks.json を退避して、読めた部分だけで書き直す（画面で影響を知らせてから押させる）
+  repair: (cwd) => plyHooks.repair({ cwd }),
+};
+
+// コンテキスト（core/ops/context.mjs）の本体。設定を変えたら全画面へ settingsChanged（変えた主体つき）
+const opsContext = {
+  view: (cwd) => contextSettings.view(cwd),
+  set: async (args, actor) => {
+    const view = await contextSettings.set(args ?? {});
+    settingsChanged(['context.default'], actor);
+    return view;
+  },
+  plyInstructions: () => plyInstructionsState(),
+  plyInstructionItems: () => plyInstructionsCache,
+  previewPlyInstructions: (action) => changePlyInstructions(plyInstructionsCache, action, currentLocale()),
+  setPlyInstructions: async (action, actor) => {
+    await applyPlyInstructions(changePlyInstructions(plyInstructionsCache, action, currentLocale()));
+    settingsChanged(['plyInstructions'], actor);
+    return plyInstructionsState();
+  },
+  refresh: (sessionId) => contextSession.refresh(sessionId),
+  setSessionMcp: (sessionId, name, removed) => contextSession.setMcp(sessionId, name, removed),
+  removedMcp: async (sessionId) => {
+    const live = runtime.turns.get(sessionId)?.contextRecord;
+    return (live ?? (await store.get(sessionId)).contextSession)?.policy?.removedMcp ?? [];
+  },
+};
+
+// リモート（core/ops/remote.mjs）の本体。秘密・トークンは返さない（core/remote/connector.mjs）
+const opsRemote = {
+  status: () => remoteStatus(),
+  setResident: async (patch) => {
+    await residentPrefs.set({ keepRunning: patch.keepRunning, sleep: patch.sleep });
+    const status = await remoteStatus();
+    emitGlobal({ type: 'remoteStatus', status, sessionId: null });
+    postResident({ status });
+    return status;
   },
 };
 
@@ -2777,9 +2909,16 @@ function opsDeps(lng = currentLocale()) {
     statuses: opsStatuses,
     worktrees: opsWorktrees,
     notify: opsNotify,
-    hooks: opsHooks,
     compat: opsCompat,
     computer: opsComputer,
+    // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
+    mcp: opsMcp,
+    hooks: opsHooks,
+    context: opsContext,
+    remote: opsRemote,
+    endpoints: { list: (agent) => compatEndpoints.list(agent) },
+    sessionCwd: async (id) => (await store.get(id)).cwd ?? null,
+    sessionBackend: async (id) => (await resolveBackendForSession(id).catch(() => null))?.id,
     // 設定を検査するために、サーバーの知っていること（エージェントの有無・モデルと承認モードの語彙・アカウント・Pleiad の指示）を借りる
     host: {
       hasBackend: (id) => Boolean(getBackend(id)),
@@ -4587,14 +4726,21 @@ wss.on("connection", (ws, req) => {
     const reply = (ok, payload, code, extra) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) }));
     };
+
     // 画面のコマンドは、操作の一覧（core/ops/）の同じ操作を人（画面）として呼ぶだけの外側。返り値は人に返す形（uiHandler）のまま。
     // viaOp(id)                  msg.args をそのまま渡す。then（成功の返り値を画面の形に直す）は第 2 引数に関数で渡せる
     // viaOp(id, input, { shape })  input を渡す（送らない欄 null・undefined は省く）。shape は従来の返り値の形へ寄せるとき
     // code が FAILED（code の無い失敗）なら画面へは code を付けない
+    // msg.args をそのまま渡すときは、操作の入力に無い欄を無視する（昔の呼び出しは、前の返りをそのまま重ねて渡すことがある。ADR 0095）
     const args = msg.args;
+    const known = (id, raw) => {
+      const shape = opsRegistry.get(id)?.input?.shape;
+      if (!shape || !raw || typeof raw !== 'object' || Array.isArray(raw)) return raw ?? {};
+      return Object.fromEntries(Object.entries(raw).filter(([k]) => Object.hasOwn(shape, k)));
+    };
     const viaOp = async (id, second, { shape = (r) => r } = {}) => {
       const then = typeof second === 'function' ? second : shape;
-      const input = typeof second === 'function' || second === undefined ? (msg.args ?? {})
+      const input = typeof second === 'function' || second === undefined ? known(id, msg.args)
         : Object.fromEntries(Object.entries(second ?? {}).filter(([, v]) => v !== null && v !== undefined));
       const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, id, input, opsDeps(locale.lang));
       return r.ok ? reply(true, await then(r.result)) : reply(false, r.error, r.code === FAILED ? undefined : r.code, r.issues ? { issues: r.issues } : undefined);
@@ -4605,66 +4751,40 @@ wss.on("connection", (ws, req) => {
       releaseUpdateGate = updateGate.enter();
       switch (msg.command) {
         case 'listMcpConfig':
-          return reply(true, await mcpConfig.list(msg.args));
+          return await viaOp('mcp.nativeList');
         case 'readMcpServer':
-          return reply(true, await mcpConfig.get(msg.args));
+          return await viaOp('mcp.nativeRead');
         case 'saveMcpServer':
-          return reply(true, await mcpConfig.save(msg.args));
+          return await viaOp('mcp.nativeSave');
         // ---- Pleiad 自身の MCP 登録と、その認証（担当が Pleiad のときに使う）。秘密の値は返さない
-        case 'listPlyMcp': {
-          const data = await plyMcp.list();
-          const servers = await Promise.all(data.servers.map(async s => ({ ...s, authStatus: s.auth === 'oauth' ? await mcpOAuth.status(s.name, await plyMcp.registration(s.name)) : null })));
-          return reply(true, { ...data, servers, storage: await mcpSecrets.status(), settings: await plyMcp.settings() });
-        }
+        case 'listPlyMcp':
+          return await viaOp('mcp.list');
         case 'setPlyMcpSettings':
-          return reply(true, await plyMcp.setSettings(msg.args ?? {}));
-        case 'renamePlyMcp': {
-          // 秘密・OAuth の状態・リフレッシュのロック名を引き継いで名前だけ変える
-          const name = msg.args?.name, to = msg.args?.to;
-          const renamed = await plyMcp.rename(name, to, { guard: (definition, fn) => mcpOAuth.rename(name, to, definition, fn) });
-          // 設定 › コンテキストで名前で指したもの（外す・同じ名前の定義の選択）も新しい名前へ
-          const followed = await contextSettings.renameMcp(name, to, { plyFile: (await plyMcp.scanInput()).file }).catch(() => 0);
-          return reply(true, { ...renamed, settingsUpdated: followed });
-        }
+          return await viaOp('mcp.setSettings');
+        case 'renamePlyMcp':
+          return await viaOp('mcp.rename');
         case 'importPlyMcp':
-          // Claude / Codex の登録を取り込む。トークンは流用しない（core/mcp-import.mjs の先頭のコメント）
-          return reply(true, await importNativeMcp({ items: msg.args?.items, includeSecrets: msg.args?.includeSecrets === true, mcpConfig, plyMcp,
-            detect: definition => mcpOAuth.detect(definition) }));
+          return await viaOp('mcp.import');
         case 'readPlyMcp':
-          return reply(true, await plyMcp.read(msg.args?.name));
-        case 'savePlyMcp': {
-          const saved = await plyMcp.save(msg.args ?? {});
-          if (saved.oauthReset) mcpOAuth.cancel(saved.name);
-          return reply(true, { ...saved, storage: await mcpSecrets.status() });
-        }
-        case 'deletePlyMcp': {
-          const name = msg.args?.name, definition = await plyMcp.registration(name);
-          // 消す前に失効させる（トークンを残したまま登録だけ消さない）
-          const logout = definition.auth === 'oauth' ? await mcpOAuth.logout(name, definition, await plyMcp.connection(name, process.cwd()).catch(() => null)).catch(e => ({ revoked: false, reason: e.message })) : null;
-          return reply(true, { ...(await plyMcp.remove(name)), logout });
-        }
+          return await viaOp('mcp.read');
+        case 'savePlyMcp':
+          return await viaOp('mcp.save');
+        case 'deletePlyMcp':
+          return await viaOp('mcp.delete');
         case 'mcpAuthStart': {
           const name = msg.args?.name, definition = await plyMcp.registration(name);
           return reply(true, await mcpOAuth.start(name, definition, await plyMcp.connection(name, process.cwd())));
         }
-        case 'mcpAuthStatus': {
-          const names = msg.args?.name ? [msg.args.name] : (await plyMcp.list()).servers.map(s => s.name);
-          const rows = await Promise.all(names.map(async n => mcpOAuth.status(n, await plyMcp.registration(n))));
-          return reply(true, { servers: rows, storage: await mcpSecrets.status() });
-        }
+        case 'mcpAuthStatus':
+          return await viaOp('mcp.authStatus');
         case 'mcpAuthLogout': {
           const name = msg.args?.name, definition = await plyMcp.registration(name);
           return reply(true, await mcpOAuth.logout(name, definition, await plyMcp.connection(name, process.cwd()).catch(() => null)));
         }
-        case 'mcpReconnect': {
-          // 接続はターンごとに作り直すので、ここでは今の資格情報でつながるかを確かめる（期限切れならリフレッシュもする）
-          const name = msg.args?.name, definition = await plyMcp.registration(name);
-          const result = await connectServer({ id: 'manual', name, origins: [{ source: 'ply' }], definition }, { cwd: msg.args?.cwd ?? process.cwd(), plyMcp, oauth: mcpOAuth });
-          await result.client?.close().catch(() => {});
-          return reply(true, { name, status: result.status, tools: result.tools?.length ?? 0, reason: result.reason ?? null });
-        }
+        case 'mcpReconnect':
+          return await viaOp('mcp.reconnect');
         case 'contextSettings':
-          return reply(true, await contextSettings.view(msg.args?.cwd ?? null));
+          return await viaOp('context.settings');
         case 'sessionContext': {
           const saved = msg.args?.sessionId ? (await store.get(msg.args.sessionId)).contextSession : null;
           if (!saved?.report) return reply(true, null);
@@ -4682,15 +4802,11 @@ wss.on("connection", (ws, req) => {
             plyParts: saved.plyParts ?? null });
         }
         case 'plyInstructions':
-          return reply(true, plyInstructionsState());
-        case 'setPlyInstructions': {
-          await applyPlyInstructions(changePlyInstructions(plyInstructionsCache, msg.args, currentLocale()));
-          settingsChanged(['plyInstructions']);
-          return reply(true, plyInstructionsState());
-        }
+          return await viaOp('context.plyInstructions');
+        case 'setPlyInstructions':
+          return await viaOp('context.setPlyInstructions');
         case 'refreshContext':
-          await contextSession.refresh(msg.args?.sessionId);
-          return reply(true, { ok: true });
+          return await viaOp('context.refresh');
         case 'contextDiff':
           return reply(true, await contextSession.diff(msg.args?.sessionId));
         // ---- git の動き（読み取りだけ。ADR 0085）。作業場所は会話の cwd。git が無い・git 管理外は git: null
@@ -4741,60 +4857,39 @@ wss.on("connection", (ws, req) => {
           if (typeof msg.args?.always !== 'boolean') throw new Error(t('worktree.settingsInvalid'));
           return viaOp('worktrees.setSettings');
         case 'setSessionMcp':
-          await contextSession.setMcp(msg.args?.sessionId, msg.args?.name, msg.args?.removed !== false);
-          return reply(true, { ok: true });
+          return await viaOp('context.setSessionMcp');
         case 'agentMcp':
           return reply(true, await contextSession.agentMcp((await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd));
         case 'nativeInstructions':
           return reply(true, await contextSession.nativeInstructions((await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd, msg.args?.backend));
         case 'contextFindings':
           return reply(true, await contextSession.findings(msg.args?.sessionId, (await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd, msg.args?.backend));
-        case 'setContextSettings': {
-          const view = await contextSettings.set(msg.args ?? {});
-          settingsChanged(['context.default']);
-          return reply(true, view);
-        }
+        case 'setContextSettings':
+          return await viaOp('context.setSettings');
         // ---- Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。コマンドは実行しない
-        case 'scanHooks': {
-          const cwd = msg.args?.cwd ? await scanDirectory(msg.args.cwd) : null;
-          const report = await hooksConfig.scan({ cwd, scopes: cwd && msg.args?.scope !== 'user' ? ['user', 'directory'] : ['user'] });
-          return reply(true, await withCodexTrust(report, cwd ?? os.homedir(), { trust: msg.args?.trust === true }));
-        }
+        case 'scanHooks':
+          return await viaOp('hooks.scan');
         case 'readHook':
           return viaOp('hooks.read');
         case 'hookTargets':
           return reply(true, await hooksConfig.targets(msg.args ?? {}));
         case 'saveHooks':
-          return reply(true, await hooksConfig.save(msg.args ?? {}));
+          return await viaOp('hooks.saveNative');
         case 'copyHooks':
-          return reply(true, await hooksConfig.copy(msg.args ?? {}));
-        case 'sessionHooks': {
-          // 会話の右パネル: その会話の場所で見つかった定義（読み込まれたかは分からない）と、受け取った発火の記録。
-          // Hooks を Pleiad がそろえた会話は、そのターンの記録（渡した登録・止めたネイティブ・渡せなかったもの・漏れ）も返す（unify）
-          const id = msg.args?.sessionId ?? null;
-          const agent = HOOK_AGENTS.includes(msg.args?.backend) ? msg.args.backend : null;
-          const cwd = msg.args?.cwd ? await scanDirectory(msg.args.cwd).catch(() => null) : null;
-          const report = agent && cwd ? await hooksConfig.scan({ cwd, agents: [agent] }) : null;
-          if (report && agent === 'codex') await withCodexTrust(report, cwd, { trust: msg.args?.trust === true });
-          const saved = id ? await store.get(id).catch(() => ({})) : {};
-          const live = id ? runtime.turns.get(id) : null;
-          const unify = live?.contextRecord?.hooks ?? saved.contextSession?.hooks ?? null;
-          const owner = cwd ? (await plyHooks.resolve(cwd).catch(() => null))?.owner ?? 'native' : 'native';
-          // 発火を受け取れる接続: Claude（通知・コールバック）、Codex（hook/started・hook/completed）、Antigravity は Pleiad が渡した分だけ（アダプターの記録）
-          const observable = agent === 'claude' || agent === 'codex' ? 'all' : agent === 'antigravity' && unify?.owner === 'ply' ? 'pleiad' : null;
-          return reply(true, { agent, cwd, report, observable: Boolean(observable), observed: observable, owner, unify, runs: trimHookRuns([...(saved.hookRuns ?? []), ...(live?.hookRuns ?? [])]) });
-        }
+          return await viaOp('hooks.copy');
+        case 'sessionHooks':
+          return await viaOp('hooks.session');
         // ---- Pleiad の Hooks の登録と担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0049）。エージェントの設定ファイルは書かない
         case 'plyHooks':
-          return reply(true, await plyHooks.view(msg.args?.cwd ?? null));
+          return await viaOp('hooks.list');
         case 'readPlyHook':
           return viaOp('hooks.readPly');
         case 'savePlyHook':
-          return reply(true, await plyHooks.save(msg.args?.value ?? {}, { cwd: msg.args?.cwd ?? null }));
+          return await viaOp('hooks.save');
         case 'removePlyHook':
-          return reply(true, await plyHooks.remove(msg.args?.id, { cwd: msg.args?.cwd ?? null }));
+          return await viaOp('hooks.remove');
         case 'togglePlyHook':
-          return reply(true, await plyHooks.toggle(msg.args?.id, msg.args?.enabled !== false, { cwd: msg.args?.cwd ?? null }));
+          return await viaOp('hooks.toggle');
         case 'plyHookPreview': {
           // 追加・編集のシートの確認: エージェントごとの渡し方（イベント・matcher・アダプター・渡せない理由）。保存はしない
           const value = msg.args?.value ?? {};
@@ -4804,30 +4899,10 @@ wss.on("connection", (ws, req) => {
         }
         case 'hooksUnifyPreview':
           return reply(true, await hooksUnifyPreview({ cwd: msg.args?.cwd ?? null, direction: msg.args?.direction === 'native' ? 'native' : 'ply' }));
-        case 'setHooksOwner': {
-          // 担当と取り込みを 1 回で保存する。取り込む定義はサーバーがファイルから読み直す（画面から来たコマンドは使わない）
-          // 確認票: 確認の面で見た版（revision）と、取り込む行ごとの元の定義の hash（digest）。どちらかが変わっていれば保存しない（確認し直す）
-          const place = msg.args?.place ?? null;
-          if (typeof msg.args?.revision !== 'string') throw new Error(t('hooksUnify.reviewRequired'));
-          const wanted = Array.isArray(msg.args?.imports) ? msg.args.imports : [];
-          if (wanted.length > 100 || wanted.some(x => typeof x?.id !== 'string' || typeof x?.digest !== 'string')) throw new Error(t('hooksUnify.importFailed'));
-          const imports = [...new Map(wanted.map(x => [x.id, x])).values()];
-          const dir = place ? await scanDirectory(place) : null;
-          const { raws } = imports.length ? await nativeRaws(dir, imports.map(x => x.id)) : { raws: [] };
-          const add = [];
-          for (const want of imports) {
-            const raw = raws.find(r => r.row.id === want.id);
-            const c = raw ? importCandidate(raw) : null;
-            if (!c?.importable) throw new Error(t('hooksUnify.importFailed'));
-            if (c.digest !== want.digest) throw new Error(t('hooksUnify.importChanged'));
-            add.push(c.value);
-          }
-          return reply(true, await plyHooks.setOwner({ place, value: msg.args?.value ?? null, add, cwd: msg.args?.cwd ?? place, expect: msg.args.revision }));
-        }
-        case 'repairPlyHooks': {
-          // 壊れた hooks.json を退避して、読めた部分だけで書き直す（画面で影響を知らせてから押させる）
-          return reply(true, await plyHooks.repair({ cwd: msg.args?.cwd ?? null }));
-        }
+        case 'setHooksOwner':
+          return await viaOp('hooks.setOwner');
+        case 'repairPlyHooks':
+          return await viaOp('hooks.repair');
         case 'scanContext': {
           // One scan at a time per connection; no changes to running turns.
           // place: 'default' なら場所ごとの上書きを使わず既定だけで探す（設定の「すべての場所」）
@@ -4850,16 +4925,11 @@ wss.on("connection", (ws, req) => {
 
         // リモート（ホスト側）。秘密・トークンは返さない（core/remote/connector.mjs）
         case 'remoteStatus':
-          return reply(true, await remoteStatus());
+          return await viaOp('remote.status');
         case 'setRemoteSettings':
           return reply(true, withResident(await remote.setSettings(msg.args ?? {})));
-        case 'setRemoteResident': {
-          await residentPrefs.set({ keepRunning: msg.args?.keepRunning, sleep: msg.args?.sleep });
-          const status = await remoteStatus();
-          emitGlobal({ type: 'remoteStatus', status, sessionId: null });
-          postResident({ status });
-          return reply(true, status);
-        }
+        case 'setRemoteResident':
+          return await viaOp('remote.setResident');
         case 'remotePairingStart':
           return reply(true, await remote.startPairing());
         case 'remotePairingCancel':
@@ -4892,7 +4962,7 @@ wss.on("connection", (ws, req) => {
         // Claude のアカウント（会話ごとに選ぶ）。トークンは返さない（登録済みかどうかだけ）
         // 互換の接続先（core/compat-endpoints.mjs）。キーは返さない。確認の失敗は例外ではなく { ok: false, error, lines } で返す（理由の行を画面に出すため）
         case 'compatEndpoints':
-          return reply(true, await compatEndpoints.list(msg.args?.agent));
+          return await viaOp('endpoints.list');
         case 'compatEndpointCheck': {
           try { return reply(true, await compatEndpoints.check(msg.args?.input, { id: msg.args?.id ?? null })); }
           catch (e) { if (e instanceof CheckError) return reply(true, { ok: false, error: e.message, lines: e.lines ?? [], code: e.code }); throw e; }

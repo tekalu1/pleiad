@@ -1071,5 +1071,31 @@
       "notDevice": "This connection is not from a paired phone.",
       "unknownDevice": "That device is not in the list."
     }
+  },
+  "opsApproval": {
+    "mcpNativeSave": "Saves the MCP server \"{{name}}\" to {{file}}. This command runs when a conversation starts.",
+    "mcpSave": "Saves the Pleiad MCP server \"{{name}}\". This command runs when a conversation owned by Pleiad starts.",
+    "mcpDelete": "Deletes the Pleiad MCP server \"{{name}}\".",
+    "mcpRename": "Renames the Pleiad MCP server \"{{name}}\" to \"{{to}}\".",
+    "mcpImport_one": "Imports {{count}} of the agent's MCP servers into Pleiad.",
+    "mcpImport_other": "Imports {{count}} of the agent's MCP servers into Pleiad.",
+    "mcpImportSecrets_one": "Imports {{count}} of the agent's MCP servers into Pleiad, including secret values.",
+    "mcpImportSecrets_other": "Imports {{count}} of the agent's MCP servers into Pleiad, including secret values.",
+    "mcpSettings": "Changes Pleiad's MCP OAuth setting.",
+    "hooksSaveNative_one": "Changes {{count}} hook in the agents' config files. Commands run on every agent action.",
+    "hooksSaveNative_other": "Changes {{count}} hooks in the agents' config files. Commands run on every agent action.",
+    "hooksCopy_one": "Copies a hook to {{count}} place. Commands run on every agent action.",
+    "hooksCopy_other": "Copies a hook to {{count}} places. Commands run on every agent action.",
+    "hooksAdd": "Adds the hook \"{{name}}\" to Pleiad. Its command runs on every agent action.",
+    "hooksEdit": "Changes the Pleiad hook \"{{name}}\".",
+    "hooksRemove": "Deletes the Pleiad hook \"{{name}}\".",
+    "hooksEnable": "Turns the Pleiad hook \"{{name}}\" on or off ({{command}}).",
+    "hooksOwner_one": "Changes who owns hooks for {{place}} ({{count}} import).",
+    "hooksOwner_other": "Changes who owns hooks for {{place}} ({{count}} imports).",
+    "hooksRepair": "Backs up the broken hooks registration file and rewrites it with the parts that could be read.",
+    "contextSettings": "Changes the context settings for {{place}}. The instructions, Skills and external MCP every conversation gets will change.",
+    "plyInstructions": "Changes Pleiad's instructions. The instructions added to agents in each conversation will change.",
+    "sessionMcp": "Changes the external MCP \"{{name}}\" in this conversation.",
+    "everywhere": "every place"
   }
 }

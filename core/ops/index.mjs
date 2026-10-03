@@ -15,6 +15,9 @@ import { notifyOps } from './notify.mjs';
 import { hookOps } from './hooks.mjs';
 import { compatOps } from './compat.mjs';
 import { computerOps } from './computer.mjs';
+import { mcpOps } from './mcp.mjs';
+import { contextOps } from './context.mjs';
+import { remoteOps } from './remote.mjs';
 import { probeOps } from './probe.mjs';
 
 // 権限の配線を確かめる検査用の操作は、fake バックエンドを有効にしたとき（テスト）だけ載せる
@@ -22,7 +25,7 @@ const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((
 
 export const registry = createRegistry({
   ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...statusOps, ...settingOps, ...delegationOps, ...browserOps,
-    ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...(withProbe ? probeOps : [])],
+    ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...mcpOps, ...contextOps, ...remoteOps, ...(withProbe ? probeOps : [])],
   settings: [...settings],
 });
 

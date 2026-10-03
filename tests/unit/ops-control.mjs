@@ -36,7 +36,17 @@ export default async function (t) {
     computerUse: { enabled: true, secret: MARKER }, delegationRouting: { enabled: false, apiKey: MARKER }, linkOpen: 'external',
   }));
 
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir, timeoutMs: 60_000 });
+  // MCP・Hooks の秘密（ADR 0095）: 各エージェントの設定ファイル（使い捨ての home）の env・引数・ヘッダー・Hook のコマンドと、Pleiad の登録の引数
+  const home = path.join(scratch, 'home');
+  const writeJson = async (p, v) => { await fs.mkdir(path.dirname(p), { recursive: true }); await fs.writeFile(p, JSON.stringify(v)); };
+  await writeJson(path.join(home, '.claude.json'), { mcpServers: {
+    leak: { type: 'stdio', command: 'node', args: ['srv.js', '--token', MARKER, `--api-key=${MARKER}`], env: { PLAIN_NAME: MARKER } },
+    web: { type: 'http', url: `https://mcp.example/m?key=${MARKER}`, headers: { 'X-Api': MARKER } },
+  } });
+  await writeJson(path.join(home, '.claude', 'settings.json'), { hooks: { Stop: [{ hooks: [{ type: 'command', command: `notify --token ${MARKER}` }] }] } });
+  await writeJson(path.join(dataDir, 'mcp-servers.json'), { version: 1, servers: { x: { transport: 'stdio', auth: 'none', enabled: true, command: 'node', args: ['srv.js', '--token', MARKER], envKeys: ['PLAIN_NAME'] } } });
+
+  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', USERPROFILE: home, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude') }, dataDir, timeoutMs: 60_000 });
   const c = await open({ port: server.port, token: server.token });
   const base = `http://127.0.0.1:${server.port}`;
   try {
@@ -281,6 +291,37 @@ export default async function (t) {
       && c.events.some((e) => e.type === 'settingsChanged' && e.keys?.join() === 'context.default'));
     await c.cmd('setPref', { key: 'linkOpen', value: 'external' });
 
+    // ---- MCP・Hooks の操作（ADR 0095）: 画面の昔のコマンドは同じ操作を通り、agent には秘密を伏せ、guarded は承認カード
+    const legacyList = await c.cmd('listPlyMcp', {});
+    t.ok('画面の listPlyMcp（昔のコマンド）は mcp.list を通り、編集に要る引数はそのまま返る（人）', legacyList.servers.find((s) => s.name === 'x')?.args.includes(MARKER), JSON.stringify(legacyList.servers));
+    const agentList = await api(bound(ask), 'POST', '/api/ops/mcp.list', {});
+    t.ok('agent の mcp.list は引数の秘密を伏せる', agentList.status === 200 && !JSON.stringify(agentList.body).includes(MARKER) && agentList.body.result.servers.some((s) => s.name === 'x'), JSON.stringify(agentList.body));
+    // 許可: Pleiad の Hook の登録（エージェントの操作のたびにコマンドが動く）。この置き場の mcp-secrets.json は T6 の目印入りで読めないので、MCP は拒否の流れで見る
+    from = c.mark();
+    const hookAsk = await api(bound(asker), 'POST', '/api/ops/hooks.save', { value: { name: 'guard', agent: 'claude', event: 'Stop', command: 'node guard.mjs', targets: ['claude'] }, reason: '止める前に確かめる' });
+    const hookCard = await cardFor(asker.sessionId, from);
+    t.ok('hooks.save: 承認が要る会話は 202 と承認待ち。会話に承認カード（操作・前後・説明・理由・緩める印）が出て、まだ登録されない', hookAsk.status === 202 && hookCard.settingChange.op === 'hooks.save'
+      && hookCard.settingChange.rows.length > 0 && hookCard.settingChange.note && hookCard.settingChange.reason === '止める前に確かめる' && hookCard.settingChange.loosens === true
+      && !(await c.cmd('plyHooks', {})).hooks.some((h) => h.name === 'guard'), JSON.stringify(hookCard.settingChange));
+    await c.cmd('resolvePermission', { id: hookCard.id, allow: true, receipt: hookCard.settingChange.receipt });
+    const hookNotice = await noticeFor(asker.sessionId, hookCard.settingChange.requestId, from);
+    const guardHook = (await c.cmd('plyHooks', {})).hooks.find((h) => h.name === 'guard');
+    t.ok('hooks.save: 許可すると登録され、結果（許可）が会話に届く', /結果: 許可/.test(hookNotice.text) && guardHook?.command === 'node guard.mjs', hookNotice.text);
+    await c.waitFor((e) => e.type === 'turnEnd' && e.sessionId === asker.sessionId, { from, ms: 30_000 });
+    from = c.mark();
+    await api(bound(asker), 'POST', '/api/ops/mcp.save', { name: 'added', mode: 'add', value: { transport: 'stdio', command: 'node', args: ['tool.js'] } });
+    const mcpCard = await cardFor(asker.sessionId, from);
+    await c.cmd('resolvePermission', { id: mcpCard.id, allow: false, messageKey: 'userDenied', receipt: mcpCard.settingChange.receipt });
+    const mcpNotice = await noticeFor(asker.sessionId, mcpCard.settingChange.requestId, from);
+    t.ok('mcp.save: 拒否すると登録されず、結果（拒否）が会話に届く', mcpCard.settingChange.op === 'mcp.save' && /結果: 拒否/.test(mcpNotice.text)
+      && !(await c.cmd('listPlyMcp', {})).servers.some((s) => s.name === 'added'), mcpNotice.text);
+    await c.waitFor((e) => e.type === 'turnEnd' && e.sessionId === asker.sessionId, { from, ms: 30_000 });
+    const hookBypass = await api(bound(bypass), 'POST', '/api/ops/hooks.remove', { id: guardHook.id });
+    t.ok('bypass の会話の hooks.remove は確認なしで通り、会話の記録に残る', hookBypass.status === 200 && !(await c.cmd('plyHooks', {})).hooks.some((h) => h.name === 'guard')
+      && (await api(cli, 'POST', '/api/ops/sessions.get', { sessionId: bypass.sessionId })).body.result.changes.some((x) => x.field === 'op' && x.to === 'hooks.remove'), JSON.stringify(hookBypass.body));
+    t.ok('束縛されない CLI の mcp.save は NEEDS_UI、読み取りの会話の hooks.remove は READ_ONLY_MODE', (await api(cli, 'POST', '/api/ops/mcp.save', { name: 'y', mode: 'add', value: { command: 'node' } })).body.code === 'NEEDS_UI'
+      && (await api(bound(plan), 'POST', '/api/ops/hooks.remove', { id: 'h' })).body.code === 'READ_ONLY_MODE');
+
     // ---- 会話を分ける・状態のグループ（write）
     const forked = await api(bound(ask), 'POST', '/api/ops/sessions.fork', { title: '分けた会話' });
     const childRow = forked.body.ok ? (await api(cli, 'POST', '/api/ops/sessions.get', { sessionId: forked.body.result.sessionId })).body.result : null;
@@ -340,11 +381,21 @@ export default async function (t) {
       const inputs = o.id === 'settings.get' || o.id === 'settings.schema'
         ? (await api(cli, 'POST', '/api/ops/settings.list', {})).body.result.settings.map((s) => ({ key: s.key }))
         : ['sessions.get', 'sessions.read', 'sessions.listMessages'].includes(o.id) ? [{ sessionId: ask.sessionId }] : ['delegation.status', 'delegation.taskStatus', 'delegation.taskWait', 'delegation.instructions'].includes(o.id) ? [{ taskId: 'none' }] : o.id === 'sessions.search' ? [{ query: 'control' }, { query: MARKER }]
-        : o.id === 'hooks.readPly' ? [{ id: 'none' }] : o.id === 'hooks.read' ? [{ agent: 'claude', scope: 'project', base: scratch, loc: { event: 'PreToolUse', group: 0, handler: 0 } }] : required.length ? null : [{}];
+        : o.id === 'hooks.readPly' ? [{ id: 'none' }] : o.id === 'hooks.read' ? [{ agent: 'claude', scope: 'project', base: scratch, loc: { event: 'PreToolUse', group: 0, handler: 0 } }]
+        : o.id === 'mcp.nativeList' ? [{ format: 'claude', scope: 'user', cwd: home }] : o.id === 'mcp.nativeRead' ? [{ format: 'claude', scope: 'user', cwd: home, name: 'leak' }, { format: 'claude', scope: 'user', cwd: home, name: 'web' }]
+        : o.id === 'mcp.read' ? [{ name: 'x' }] : o.id === 'hooks.scan' ? [{}, { cwd: home }] : o.id === 'hooks.session' ? [{ sessionId: ask.sessionId, cwd: home, backend: 'claude' }]
+        : required.length ? null : [{}];
       if (!inputs) { t.ok(`T6 ${o.id}: 必須の引数の例がある`, false); continue; }
       for (const args of inputs) everything.push([o.id, args, JSON.stringify((await api(cli, 'POST', `/api/ops/${o.id}`, args)).body)]);
     }
     t.ok('T6 全 read 操作・全設定の返りに、秘密の目印が出ない', everything.length > 20 && everything.every(([, , body]) => !body.includes(MARKER)), everything.filter(([, , body]) => body.includes(MARKER)).map(([id, args]) => `${id} ${JSON.stringify(args)}`).join(', '));
+    const bodyOf = (id, pick = () => true) => JSON.parse(everything.find(([x, args, body]) => x === id && pick(args) && body)?.[2] ?? 'null');
+    const leak = bodyOf('mcp.nativeRead', (a) => a.name === 'leak'), web = bodyOf('mcp.nativeRead', (a) => a.name === 'web');
+    t.ok('T6 MCP: 設定ファイルの定義が実際に読めていて、env・引数の秘密（--token 値・--api-key=…）・URL のクエリ・ヘッダーが伏せてある', leak?.ok && leak.result.value.env.PLAIN_NAME === '••••' && leak.result.value.args[2] === '••••'
+      && /--api-key=\*\*\*/.test(leak.result.value.args[3]) && web?.ok && web.result.value.headers['X-Api'] === '••••' && !web.result.value.url.includes(MARKER), JSON.stringify([leak, web]));
+    const hookScan = bodyOf('hooks.scan', (a) => !a.cwd), plyRead = bodyOf('mcp.read');
+    t.ok('T6 Hooks・Pleiad の登録: 定義が実際に読めていて、コマンドと引数の秘密が伏せてある', hookScan?.ok && hookScan.result.entries.some((e) => e.event === 'Stop' && e.command.includes('••••'))
+      && plyRead?.ok && plyRead.result.value.args[2] === '••••', JSON.stringify([hookScan?.result?.entries, plyRead]));
     t.ok('T6 伏せ字は秘密らしい名前の欄に効いている（agentSitePermissions の token）', (await api(cli, 'POST', '/api/ops/settings.get', { key: 'agentSitePermissions' })).body.result.value[0].token === '••••');
     const files = await Promise.all((await fs.readdir(dataDir)).map(async (f) => [f, await fs.readFile(path.join(dataDir, f), 'utf8').catch(() => '')]));
     t.ok('（確認）目印は秘密の置き場に実際に入っている', files.filter(([, text]) => text.includes(MARKER)).length >= 4);

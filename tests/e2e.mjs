@@ -42,6 +42,7 @@ const cases = [
   await import('./e2e/control-stage3.mjs'), // Codex から sessions.setTitle を呼ぶ
   await import('./e2e/control-conversations.mjs'), // Codex から会話の一覧・別の会話の発言・送信待ち・委譲の一覧を call_op で読む
   await import('./e2e/control-human-only.mjs'), // Codex から human-only を外した worktrees.setSettings を呼び、承認モードは見えない（ADR 0094）
+  await import('./e2e/control-mcp-hooks.mjs'), // Codex から MCP の登録を読む（秘密は伏せ字）・mcp.save の承認待ちを許可する（ADR 0095）
   await import("./e2e/disconnect.mjs"),   // 猶予を短くした専用サーバが要るので最後
 ];
 
