@@ -260,7 +260,7 @@ Electron main が electron-updater と更新設定を持ち、sandbox preload �
 
 ## 送信予定（2026-10-03）
 
-承認済み（2026-10-03）。日時を指定して送る。理由と決定は [ADR 0094](adr/0094-scheduled-send.md)、見た目は `docs/design-system.md`「送信日時の指定」。
+承認済み（2026-10-03）。日時を指定して送る。理由と決定は [ADR 0103](adr/0103-scheduled-send.md)、見た目は `docs/design-system.md`「送信日時の指定」。
 
 - 予定は送信待ち（outbox）の状態にせず、`schedule.json` に `{ id: "send:<messageId>", kind: "send", sessionId, messageId, at, createdAt, by, args: { prompt, attachments?, cwd?, mode? } }` で持つ（形と判定は `core/send-schedule.mjs`、置き場は `core/schedule.mjs`）。`at` は UTC のミリ秒。置けるのは「今から 1 秒より先・1 年以内」で、1 会話 50 件・全体 500 件まで。同じ `messageId` で同じ内容の置き直しは 1 件のまま、内容が違えば断る。
 - 時刻が来たら `acceptSend`（画面の `sendMessage` と同じ入口。中断した会話の保留を先に戻す規則も同じ）で、本文に `scheduledFor`（予定の時刻）を添えて送信待ちの末尾へ入れる。会話が走っていれば「作業が終わると自動で送信」、上限で止まっていれば解除まで（`waiting: { reason: "limit" }`）待つ。送れなければ（失敗）1 分後に再試行し、予定の時刻 `at` は変えない。会話が無くなっていれば捨てる。

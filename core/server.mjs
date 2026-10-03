@@ -1997,7 +1997,7 @@ async function forkConversation({ sessionId, upToMessageId, beforeMessageId, tit
 }
 
 /**
- * 同じ会話の中で、ある発言（beforeMessageId。自分の発言）の手前まで巻き戻す（sendMessage の rewind。ADR 0091）。
+ * 同じ会話の中で、ある発言（beforeMessageId。自分の発言）の手前まで巻き戻す（sendMessage の rewind。ADR 0102）。
  * 会話の id は変わらない。分岐（forkConversation）と同じ排他（forking）で、実行中のターン・分岐・別の送り直しと重ならない。
  * 実行中のターンがあるときは stopRunning: true のときだけ止める（止まり終えてから巻き戻す）。
  * 巻き戻しは、バックエンドの履歴の切り方（conversations.mjs の rewind）のほかに、切り口より後のものを整える:
@@ -4720,7 +4720,7 @@ const schedule = createSchedule({ file: path.join(store.dataDir, 'schedule.json'
 /**
  * 送信予定の時刻が来た。ふつうの送信と同じ入口（acceptSend）から送信待ちの末尾へ入れるので、会話が走っていれば
  * 「作業が終わると自動で送信」で待ち、上限で止まっていれば解除まで待つ。予定は送信待ちの順番を塞がない。
- * 遅れが 1 時間以内なら送り、それより遅れていたら送らずに行を残して確かめさせる（ADR 0094）
+ * 遅れが 1 時間以内なら送り、それより遅れていたら送らずに行を残して確かめさせる（ADR 0103）
  */
 async function fireScheduledSend(row) {
   if (!(await resolveBackendForSession(row.sessionId).catch(() => null))) {
@@ -4792,7 +4792,7 @@ wss.on("connection", (ws, req) => {
     notify: 1,
     // 画面の言語。setting は設定値（auto|ja|en）、lang は実際に使う言語（ja|en）
     locale,
-    // 送信予定の時刻をこの PC の時刻でも添えるため（見ている端末と時刻帯が違うとき。ADR 0094）
+    // 送信予定の時刻をこの PC の時刻でも添えるため（見ている端末と時刻帯が違うとき。ADR 0103）
     hostTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   }));
   ws.on("close", () => {
@@ -5170,7 +5170,7 @@ wss.on("connection", (ws, req) => {
           if (typeof messageId !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(messageId)) throw new Error(t('send.messageIdRequired'));
           if (typeof prompt !== 'string' || !prompt.trim()) throw new Error(t('send.messageRequired'));
           if (attachments !== undefined && !Array.isArray(attachments)) throw new Error(t('send.invalidAttachments'));
-          // 同じ会話の中で、発言の手前まで巻き戻して送り直す（ADR 0091）。{ beforeMessageId, stopRunning? }
+          // 同じ会話の中で、発言の手前まで巻き戻して送り直す（ADR 0102）。{ beforeMessageId, stopRunning? }
           if (rewind !== undefined && (typeof rewind?.beforeMessageId !== 'string' || !rewind.beforeMessageId)) throw new Error(t('rewind.invalid'));
           compactionScheduler.cancel(sessionId);
           const args = { prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}) };

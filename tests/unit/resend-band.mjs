@@ -1,4 +1,4 @@
-// 送り方の帯（web/resend-band.mjs。ADR 0091）: 送り直すと消えるものの見立てとキーの受け方。見た目と動きは tests/browser/message-actions.cjs
+// 送り方の帯（web/resend-band.mjs。ADR 0102）: 送り直すと消えるものの見立てとキーの受け方。見た目と動きは tests/browser/message-actions.cjs
 import { tailInfo, resendKeys } from "../../web/resend-band.mjs";
 import { removedSummary, applyRewindMark, markIsLive, nativeUuid, keptPresentIndexes } from "../../core/rewind.mjs";
 

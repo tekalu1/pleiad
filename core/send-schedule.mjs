@@ -1,4 +1,4 @@
-// 送信予定（schedule.json の kind: 'send'）の取り決め。副作用の無い関数だけ（ADR 0094、docs/design.md「送信予定」）。
+// 送信予定（schedule.json の kind: 'send'）の取り決め。副作用の無い関数だけ（ADR 0103、docs/design.md「送信予定」）。
 //
 // 時刻は UTC のミリ秒で持つ。画面が見ている端末の時刻帯で出す。
 // 送信予定は送信待ち（outbox）の状態にしない。送信待ちは再起動で保留になり、順番も塞ぐので、

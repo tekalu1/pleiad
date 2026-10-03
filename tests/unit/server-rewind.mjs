@@ -8,7 +8,7 @@ import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
 
 export const name = "server-rewind";
-export const title = "同じ会話で巻き戻して送り直す（sendMessage の rewind。ADR 0091）";
+export const title = "同じ会話で巻き戻して送り直す（sendMessage の rewind。ADR 0102）";
 
 // 巻き戻しの契約（保留の印・提示・ホスト管理への落とし先）は、自分のデータ置き場を持つ子プロセスで（tests/lib/rewind-storage-worker.mjs）
 async function worker(t) {
