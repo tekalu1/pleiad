@@ -1,4 +1,162 @@
-// bot の定義（S2。ADR 0096）の操作（`bots.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。
-// 持ち主のパッケージが defineOp を足す。id・危険度・口・引数と返りの形の契約は docs/channels.md「操作」。
-// handler は `ctx.bots`（core/bots-host.mjs の BotHost.opsDeps）を呼ぶ。直のツール（mcp: 'direct'）は足さない（tests/unit/ops-surface.mjs の T4）。
-export const botOps = [];
+// bot の定義（S2。ADR 0096）の操作（`bots.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。id・危険度・口・引数と返りの形の契約は docs/channels.md「操作」。
+// handler は `ctx.bots`（core/bots-host.mjs の BotHost.opsDeps → core/bots/service.mjs）を呼ぶ。直のツール（mcp: 'direct'）は足さない（tests/unit/ops-surface.mjs の T4）。
+//
+// 危険度（ADR 0082。human-only は承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリングの 5 つだけ）:
+//   bots.list / get      read
+//   bots.create          write。agent（AI）が作るときは riskOf で guarded（承認カード）。作る bot は既定の弱い承認モード
+//   bots.update          write。権限を広げる向き（フォルダーを足す・rw にする・送る先を足す・他の会話へ送るを ON にする・backend を変えて承認モードが強くなる）は
+//                        riskOf で guarded。名前・アイコン・人格・モデル・エフォート・狭める向きは write
+//   bots.setMode         human-only。承認モード（Antigravity の bot は yolo だけ）。AI には存在しないのと同じに見える
+//   bots.delete          guarded（消す操作）。bot の会話は残り（Chats の一覧に戻る）、DM のチャンネルは archive
+import { z } from 'zod';
+import { agentT } from '../i18n.mjs';
+import { defineOp, OpError } from './registry.mjs';
+import { BotStoreError } from '../bots/store.mjs';
+
+const D = (id, key) => `agent:ops.bots.${id}.${key}`;
+
+/** BotStoreError を OpError にする（保存の側の失敗の code を、辞書にある code に写す）。ほかの例外はそのまま投げる */
+function asOpError(ctx, err) {
+  if (!(err instanceof BotStoreError)) return err;
+  if (err.code === 'BOT_NOT_FOUND') return new OpError('BOT_NOT_FOUND', agentT(ctx.locale, 'ops.errors.BOT_NOT_FOUND', { id: err.id ?? '' }));
+  if (err.code === 'BOT_NAME_TAKEN') return new OpError('BOT_NAME_TAKEN', agentT(ctx.locale, 'ops.errors.BOT_NAME_TAKEN', { name: err.name ?? '' }));
+  return new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: err.detail ?? err.message }));
+}
+const guarded = (fn) => async (ctx, args) => { try { return await fn(ctx, args); } catch (e) { throw asOpError(ctx, e); } };
+
+const folder = z.object({
+  path: z.string().min(1).max(1000).describe(D('update', 'folderPath')),
+  access: z.enum(['rw', 'ro']).optional().describe(D('update', 'folderAccess')),
+});
+
+const botShape = {
+  id: z.string(), name: z.string(), icon: z.string(), persona: z.string(),
+  backend: z.string(), model: z.string(), effort: z.string(), mode: z.string(),
+  folders: z.array(z.object({ path: z.string(), access: z.enum(['rw', 'ro']) })),
+  sendToOthers: z.boolean(), sendTargets: z.array(z.string()),
+  dmChannelId: z.string(), dmSessionId: z.string().nullable(),
+  createdAt: z.number(), updatedAt: z.number(),
+};
+const botRow = z.object({
+  ...botShape,
+  usage: z.object({ weekTokens: z.number(), cacheRatio: z.number().nullable() }),
+  state: z.enum(['idle', 'working', 'waiting']),
+});
+
+/** 承認カードの bot の頭（受領証の元の before にも使う） */
+const clip = (s, n = 80) => { const a = [...String(s ?? '')]; return a.length > n ? `${a.slice(0, n - 1).join('')}…` : a.join(''); };
+
+export const botOps = [
+  defineOp({
+    id: 'bots.list',
+    summary: 'agent:ops.bots.list.summary',
+    risk: 'read',
+    input: z.object({}),
+    output: z.object({ bots: z.array(botRow) }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['bots', 'list'] } },
+    handler: guarded(async (ctx) => ({ bots: await ctx.bots.overview() })),
+  }),
+
+  defineOp({
+    id: 'bots.get',
+    summary: 'agent:ops.bots.get.summary',
+    risk: 'read',
+    input: z.object({ botId: z.string().min(1).max(100).describe(D('get', 'botId')) }),
+    output: botRow,
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['bots', 'get'], positional: ['botId'] } },
+    handler: guarded(async (ctx, { botId }) => (await ctx.bots.overview({ botId }))[0]),
+  }),
+
+  defineOp({
+    id: 'bots.create',
+    summary: 'agent:ops.bots.create.summary',
+    risk: 'write',
+    riskReason: 'A new bot starts in the weakest approval mode with no folders; only a person can raise the mode (bots.setMode). When an AI creates one, riskOf raises it to guarded so the user approves it first',
+    input: z.object({
+      name: z.string().min(1).max(64).describe(D('create', 'name')),
+      icon: z.string().max(32).optional().describe(D('create', 'icon')),
+      persona: z.string().max(12000).optional().describe(D('create', 'persona')),
+      backend: z.string().max(40).optional().describe(D('create', 'backend')),
+      model: z.string().max(200).optional().describe(D('create', 'model')),
+      effort: z.string().max(40).optional().describe(D('create', 'effort')),
+      reason: z.string().max(500).optional().describe(D('create', 'reason')),
+    }),
+    riskOf: (ctx) => (ctx.principal?.by === 'agent' ? 'guarded' : 'write'),
+    confirm: (_ctx, args) => ({
+      before: null, loosens: false,
+      rows: [{ path: 'name', before: null, after: args.name }, { path: 'icon', before: null, after: args.icon ?? '🤖' },
+        ...(args.backend ? [{ path: 'backend', before: null, after: args.backend }] : []),
+        ...(args.persona ? [{ path: 'persona', before: null, after: clip(args.persona) }] : [])],
+    }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['bots', 'create'] } },
+    handler: guarded(async (ctx, { reason: _reason, ...input }) => {
+      const bot = await ctx.bots.create(input, ctx.principal?.by === 'agent' ? { kind: 'agent', sessionId: ctx.actor?.sessionId ?? '' } : { kind: 'human' });
+      return (await ctx.bots.overview({ botId: bot.id }))[0];
+    }),
+  }),
+
+  defineOp({
+    id: 'bots.update',
+    summary: 'agent:ops.bots.update.summary',
+    risk: 'write',
+    riskReason: 'Changing the name, icon, persona, model or effort, or narrowing the folders and send targets, only changes a bot definition. Widening what a bot can touch (adding a folder or send target, turning send-to-others on, a backend with a stronger approval mode) is raised to guarded by riskOf',
+    input: z.object({
+      botId: z.string().min(1).max(100).describe(D('update', 'botId')),
+      name: z.string().min(1).max(64).optional().describe(D('update', 'name')),
+      icon: z.string().max(32).optional().describe(D('update', 'icon')),
+      persona: z.string().max(12000).optional().describe(D('update', 'persona')),
+      backend: z.string().max(40).optional().describe(D('update', 'backend')),
+      model: z.string().max(200).optional().describe(D('update', 'model')),
+      effort: z.string().max(40).optional().describe(D('update', 'effort')),
+      folders: z.array(folder).max(20).optional().describe(D('update', 'folders')),
+      sendToOthers: z.boolean().optional().describe(D('update', 'sendToOthers')),
+      sendTargets: z.array(z.string().min(1).max(200)).max(100).optional().describe(D('update', 'sendTargets')),
+      reason: z.string().max(500).optional().describe(D('update', 'reason')),
+    }),
+    riskOf: async (ctx, args) => { try { return (await ctx.bots.planUpdate(args)).loosens ? 'guarded' : 'write'; } catch (e) { throw asOpError(ctx, e); } },
+    confirm: async (ctx, args) => {
+      try { const plan = await ctx.bots.planUpdate(args); return { before: plan.before, rows: plan.rows, loosens: plan.loosens }; }
+      catch (e) { throw asOpError(ctx, e); }
+    },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['bots', 'update'], positional: ['botId'] } },
+    handler: guarded(async (ctx, { reason: _reason, ...input }) => {
+      const bot = await ctx.bots.update(input, ctx.principal?.by === 'agent' ? { kind: 'agent', sessionId: ctx.actor?.sessionId ?? '' } : { kind: 'human' });
+      return (await ctx.bots.overview({ botId: bot.id }))[0];
+    }),
+  }),
+
+  // 承認モードは人だけが決める（ADR 0082）。agent の一覧・list_ops・呼び出しのどれにも無い。Antigravity の bot は yolo だけ
+  defineOp({
+    id: 'bots.setMode',
+    summary: 'agent:ops.bots.setMode.summary',
+    risk: 'human-only',
+    input: z.object({
+      botId: z.string().min(1).max(100).describe(D('setMode', 'botId')),
+      mode: z.string().min(1).max(40).describe(D('setMode', 'mode')),
+    }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: guarded(async (ctx, { botId, mode }) => {
+      const bot = await ctx.bots.setMode({ botId, mode }, { kind: 'human' });
+      return (await ctx.bots.overview({ botId: bot.id }))[0];
+    }),
+  }),
+
+  defineOp({
+    id: 'bots.delete',
+    summary: 'agent:ops.bots.delete.summary',
+    risk: 'guarded',
+    input: z.object({
+      botId: z.string().min(1).max(100).describe(D('delete', 'botId')),
+      reason: z.string().max(500).optional().describe(D('delete', 'reason')),
+    }),
+    confirm: async (ctx, { botId }) => {
+      const bot = await ctx.bots.get({ botId });
+      return { before: bot ? { id: bot.id, name: bot.name } : null, loosens: false, rows: [{ path: 'bot', before: bot ? `${bot.icon} ${bot.name}` : botId, after: null }] };
+    },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['bots', 'delete'], positional: ['botId'] } },
+    handler: guarded(async (ctx, { botId }) => {
+      await ctx.bots.remove({ botId }, ctx.principal?.by === 'agent' ? { kind: 'agent', sessionId: ctx.actor?.sessionId ?? '' } : { kind: 'human' });
+      return { botId, deleted: true };
+    }),
+  }),
+];

@@ -54,6 +54,130 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "bots.create",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "bots",
+            "create"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "5bbb30b5ae47"
+    },
+    {
+      "id": "bots.delete",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "bots",
+            "delete"
+          ],
+          "positional": [
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "ca36324b5bf0"
+    },
+    {
+      "id": "bots.get",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "bots",
+            "get"
+          ],
+          "positional": [
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "1f60ac102bdb"
+    },
+    {
+      "id": "bots.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "bots",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "bots.setMode",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "9e0192ce82cc"
+    },
+    {
+      "id": "bots.update",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "bots",
+            "update"
+          ],
+          "positional": [
+            "botId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "b4ab3d833bb6"
+    },
+    {
       "id": "browser.listProfiles",
       "risk": "read",
       "riskOf": false,
@@ -904,6 +1028,37 @@
     }
   ],
   "cli": [
+    {
+      "id": "bots.create",
+      "path": "bots create",
+      "positional": []
+    },
+    {
+      "id": "bots.delete",
+      "path": "bots delete",
+      "positional": [
+        "botId"
+      ]
+    },
+    {
+      "id": "bots.get",
+      "path": "bots get",
+      "positional": [
+        "botId"
+      ]
+    },
+    {
+      "id": "bots.list",
+      "path": "bots list",
+      "positional": []
+    },
+    {
+      "id": "bots.update",
+      "path": "bots update",
+      "positional": [
+        "botId"
+      ]
+    },
     {
       "id": "browser.listProfiles",
       "path": "browser listProfiles",

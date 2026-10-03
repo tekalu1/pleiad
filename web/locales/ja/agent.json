@@ -321,7 +321,11 @@
     "footer": "止めたものを、そのままやり直さないでください。ファイル・コマンドの出力・ply_task_status で今の状態を確かめてから、委譲し直すか、コマンドを走らせ直すかを決めてください。"
   },
   "guide": {
-    "bot": {},
+    "bot": {
+      "heading": "あなたは {{icon}} {{name}} です。Pleiad の bot として、チャンネル・スレッド・DM で人と話します（Pleiad が追加した指示）。",
+      "personaLabel": "人格:",
+      "tools": "よく使う操作は `list_ops` で調べて `call_op` で呼ぶ。チャンネル・スレッドへの返事は `channels.post`、リアクションは `channels.react`、記憶は `memory.search` / `memory.write`。ほかのスレッドやチャンネルは `channels.read`、Chats の会話は `search_sessions` で読める。"
+    },
     "heading": "{{name}}（Pleiad が追加した指示）:",
     "names": {
       "delegate": "委譲の進め方",
@@ -462,7 +466,9 @@
       "badCursor": "cursor が正しくありません。前の返り値の next をそのまま渡してください。",
       "DENIED": "ユーザーが {{id}} の変更を許可しませんでした。やり直さず、ユーザーに理由を尋ねてください。",
       "STALE": "承認のあとも値が変わり続けたので、{{id}} は行っていません。settings.get で今の値を確かめてからやり直してください。",
-      "SETTING_READ_ONLY": "設定「{{key}}」は読むだけで、settings.set では変えられません。"
+      "SETTING_READ_ONLY": "設定「{{key}}」は読むだけで、settings.set では変えられません。",
+      "BOT_NOT_FOUND": "bot「{{id}}」が見つかりません。bots.list で探してください。",
+      "BOT_NAME_TAKEN": "bot の名前「{{name}}」はすでに使われています。別の名前にしてください。"
     },
     "pending": "{{target}}の変更は、ユーザーの承認を待っています（requestId: {{requestId}}）。まだ変わっていません。結果（許可・拒否）は後でこの会話に届きます。待たずにほかの作業を続けるか、応答を終えてかまいません。同じ変更を繰り返し求めないでください。",
     "settingTarget": "設定「{{key}}」",
@@ -541,7 +547,51 @@
       }
     },
     "channels": {},
-    "bots": {},
+    "bots": {
+      "list": {
+        "summary": "bot の一覧（名前・アイコン・人格・エージェント・承認モード・フォルダー・今週の使用量・今の状態）を返す。"
+      },
+      "get": {
+        "summary": "bot 1 つの定義・今週の使用量・今の状態を返す。",
+        "botId": "bot の id。"
+      },
+      "create": {
+        "summary": "bot を作る。承認モードは最も弱いもの・フォルダーなしで始まる（承認モードは人だけが変えられる）。DM のチャンネルも作る。",
+        "name": "bot の名前（@名前 で呼ぶ。空白・@・句読点は使えない。ほかの bot と重ならない）。",
+        "icon": "絵文字 1 つ。省略は 🤖。",
+        "persona": "人格（性格・役割・話し方の自由文）。",
+        "backend": "エージェントの id（claude・codex・antigravity）。省略は既定。",
+        "model": "モデル。省略はそのエージェントの既定。",
+        "effort": "エフォート。省略は既定。",
+        "reason": "作る理由（承認カードに出る）。"
+      },
+      "update": {
+        "summary": "bot の名前・アイコン・人格・エージェント・モデル・エフォート・触れてよいフォルダー・他の会話へ送る設定を変える。フォルダーや送る先を増やすときは承認が要る。承認モードは変えられない。",
+        "botId": "bot の id。",
+        "name": "新しい名前。",
+        "icon": "絵文字 1 つ。",
+        "persona": "人格の全文（差分ではなく置き換え）。",
+        "backend": "エージェントの id。今ある会話はそのまま、次の新しい会話から変わる。",
+        "model": "モデル。",
+        "effort": "エフォート。",
+        "folders": "触れてよいフォルダーの全部（置き換え）。先頭が既定の作業場所。絶対パス。",
+        "folderPath": "フォルダーの絶対パス。",
+        "folderAccess": "rw（書ける・既定）か ro（読むだけ）。",
+        "sendToOthers": "他の会話へメッセージを送ってよいか。",
+        "sendTargets": "送ってよい会話の id の全部（置き換え）。",
+        "reason": "変える理由（承認カードに出る）。"
+      },
+      "setMode": {
+        "summary": "bot の承認モードを変える（画面だけ。AI からは呼べない）。Antigravity の bot は yolo だけ。",
+        "botId": "bot の id。",
+        "mode": "承認モードの id（エージェントごとの一覧から）。"
+      },
+      "delete": {
+        "summary": "bot を消す。会話は残り Chats の一覧に戻り、DM のチャンネルは閉じる。承認が要る。",
+        "botId": "bot の id。",
+        "reason": "消す理由（承認カードに出る）。"
+      }
+    },
     "memory": {},
     "routines": {}
   },

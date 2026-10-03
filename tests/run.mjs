@@ -397,6 +397,10 @@ const cases = [
   await import("./unit/bots-host.mjs"),
   // --- channels (S1) ---
   // --- bots (S2) ---
+  // bot の定義の保存: 名前の一意・予約名・読めない bots.json は上書きしない・同時の作成の直列化
+  await import("./unit/bots-store.mjs"),
+  // bots.* の操作: 作成と DM・AI が見える操作と見えない操作・フォルダーを広げる向きは承認・承認モードは人だけ・Antigravity は yolo だけ・削除
+  await import("./unit/ops-bots.mjs"),
   // --- memory (S3) ---
   // --- dispatch (S4) ---
   // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---

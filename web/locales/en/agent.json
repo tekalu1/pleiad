@@ -321,7 +321,11 @@
     "footer": "Do not simply redo what was stopped. Check the current state (files, command output, ply_task_status) first, then decide whether to delegate again or rerun commands."
   },
   "guide": {
-    "bot": {},
+    "bot": {
+      "heading": "You are {{icon}} {{name}}, a Pleiad bot who talks with people in channels, threads and DMs (instructions added by Pleiad).",
+      "personaLabel": "Persona:",
+      "tools": "Look up the operations you need with `list_ops` and call them with `call_op`. Reply in a channel or thread with `channels.post`, react with `channels.react`, and use `memory.search` / `memory.write` for memory. Read other threads and channels with `channels.read`, and Chats conversations with `search_sessions`."
+    },
     "heading": "{{name}} (instructions added by Pleiad):",
     "names": {
       "delegate": "How to delegate",
@@ -462,7 +466,9 @@
       "badCursor": "The cursor is not valid. Pass the previous result's next as is.",
       "DENIED": "The user did not allow the change ({{id}}). Do not retry; ask the user why.",
       "STALE": "The value kept changing after approval, so {{id}} was not done. Check the current value with settings.get and try again.",
-      "SETTING_READ_ONLY": "The setting {{key}} is read-only and cannot be changed with settings.set."
+      "SETTING_READ_ONLY": "The setting {{key}} is read-only and cannot be changed with settings.set.",
+      "BOT_NOT_FOUND": "Bot \"{{id}}\" was not found. Look it up with bots.list.",
+      "BOT_NAME_TAKEN": "The bot name \"{{name}}\" is already used. Choose another name."
     },
     "pending": "The change to {{target}} is waiting for the user's approval (requestId: {{requestId}}). Nothing has changed yet. The result (allowed or denied) will be delivered to this conversation later. You may continue other work or end your response without waiting. Do not request the same change again.",
     "settingTarget": "the setting {{key}}",
@@ -541,7 +547,51 @@
       }
     },
     "channels": {},
-    "bots": {},
+    "bots": {
+      "list": {
+        "summary": "List bots (name, icon, persona, agent, approval mode, folders, this week's usage and current state)."
+      },
+      "get": {
+        "summary": "Get one bot's definition, this week's usage and current state.",
+        "botId": "The bot id."
+      },
+      "create": {
+        "summary": "Create a bot. It starts in the weakest approval mode with no folders (only a person can change the approval mode), and gets a DM channel.",
+        "name": "The bot's name (mentioned as @name; no spaces, @ or punctuation; must differ from other bots).",
+        "icon": "A single emoji. Defaults to 🤖.",
+        "persona": "The persona (free text: character, role, way of speaking).",
+        "backend": "Agent id (claude, codex, antigravity). Defaults to the default agent.",
+        "model": "Model. Defaults to the agent's default.",
+        "effort": "Effort. Defaults to the default.",
+        "reason": "Why you are creating it (shown on the approval card)."
+      },
+      "update": {
+        "summary": "Change a bot's name, icon, persona, agent, model, effort, folders it may touch, or send-to-others settings. Adding folders or send targets needs approval. The approval mode cannot be changed here.",
+        "botId": "The bot id.",
+        "name": "New name.",
+        "icon": "A single emoji.",
+        "persona": "The whole persona (replaces it; not a diff).",
+        "backend": "Agent id. Existing conversations stay as they are; new conversations use it.",
+        "model": "Model.",
+        "effort": "Effort.",
+        "folders": "All folders the bot may touch (replaces the list). The first is the default working folder. Absolute paths.",
+        "folderPath": "Absolute path of the folder.",
+        "folderAccess": "rw (can write; default) or ro (read only).",
+        "sendToOthers": "Whether the bot may send messages to other conversations.",
+        "sendTargets": "All conversation ids the bot may send to (replaces the list).",
+        "reason": "Why you are changing it (shown on the approval card)."
+      },
+      "setMode": {
+        "summary": "Change a bot's approval mode (screen only; AI cannot call it). Antigravity bots only have yolo.",
+        "botId": "The bot id.",
+        "mode": "Approval mode id (from the agent's list)."
+      },
+      "delete": {
+        "summary": "Delete a bot. Its conversations stay and return to the Chats list; its DM channel is archived. Needs approval.",
+        "botId": "The bot id.",
+        "reason": "Why you are deleting it (shown on the approval card)."
+      }
+    },
     "memory": {},
     "routines": {}
   },
