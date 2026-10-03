@@ -91,7 +91,7 @@ export default async function (t) {
           get: async () => channel, getPost: async ({ postId }) => structuredClone(posts.find((x) => x.id === postId) ?? null),
           read: async () => ({ posts: structuredClone(posts) }),
           post: async (a) => { const post = { id: `p_t${posts.length}`, channelId: a.channelId, threadId: a.threadId, author: { kind: 'bot', botId: 'b_1' }, text: a.text, state: a.state, turn: a.turn, mentions: [], at: 4000, reactions: {} }; posts.push(post); return post; },
-          edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }].filter(Boolean)); return structuredClone(post); },
+          edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }, a.presents && { presents: a.presents }].filter(Boolean)); return structuredClone(post); },
           remove: async () => {},
           threads: {
             get: async (c, th) => structuredClone(threads[`${c}/${th}`] ?? null), list: async (c) => structuredClone(Object.values(threads).filter((x) => !c || x.channelId === c)),
@@ -125,6 +125,81 @@ export default async function (t) {
       };
       const statusOf = async (w, postId) => (await w.d.inbox.list({})).find((i) => i.postId === postId)?.status;
       const tick = () => sleep(60);
+
+      // 前の返事が画像を含んでいても、届いた途中送信の後の返事は別の投稿になる。
+      {
+        const w = world('confirm');
+        w.host.lastReply = async () => '二つ目の返事';
+        await w.d.turnExtras(w.turn);
+        const first = w.posts.find((p) => p.turn);
+        w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '最初の返事' });
+        w.d.onTurnEvent(w.turn, { type: 'text.end' });
+        w.d.onTurnEvent(w.turn, { type: 'present', kind: 'image', dataUri: 'data:image/png;base64,AA==' });
+        await w.d.onPosted(w.posts[1], w.channel);
+        w.d.onTurnEvent(w.turn, { type: 'userMessage.delivered', messageId: w.steers[0].id });
+        await tick();
+        const second = w.posts.filter((p) => p.turn)[1];
+        t.ok('途中送信の受領で、画像つきの先の返事を確定して別の投稿を作る', first.text === '最初の返事' && first.state === 'done'
+          && first.presents?.[0]?.kind === 'image' && second?.id !== first.id && second?.state === 'working', JSON.stringify(w.posts));
+        w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '二つ目の返事' });
+        w.d.onTurnEvent(w.turn, { type: 'text.end' });
+        w.turns.delete('s1');
+        await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
+        t.ok('最終の返答は後の投稿だけに入り、先の本文と画像は残る', first.text === '最初の返事' && first.presents?.length === 1
+          && second.text === '二つ目の返事' && second.state === 'done' && !second.presents?.length, JSON.stringify(w.posts));
+      }
+      {
+        const w = world('confirm');
+        w.host.lastReply = async () => '三つ目の返事';
+        await w.d.turnExtras(w.turn);
+        w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '最初' });
+        await w.d.onPosted(w.posts[1], w.channel);
+        w.d.onTurnEvent(w.turn, { type: 'userMessage.delivered', messageId: w.steers[0].id });
+        w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '二つ目' });
+        await w.d.onPosted(w.posts[2], w.channel);
+        w.d.onTurnEvent(w.turn, { type: 'userMessage.delivered', messageId: w.steers[1].id });
+        w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '三つ目の返事' });
+        await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
+        const replies = w.posts.filter((p) => p.turn);
+        t.ok('連続して途中送信されても、受領の順に返事を三つの投稿へ分ける', replies.length === 3
+          && replies.map((p) => p.text).join('|') === '最初|二つ目|三つ目の返事' && replies.every((p) => p.state === 'done'), JSON.stringify(replies));
+      }
+      {
+        const w = world('confirm');
+        await w.d.turnExtras(w.turn);
+        const mine = { channelId: 'c_1', threadId: 'p_root', botId: 'b_1', sessionId: 's1' };
+        const first = w.d.claimPost(mine);
+        await w.d.channels.edit({ channelId: 'c_1', postId: first.postId, text: '投稿で書いた先の返事' });
+        await w.d.onPosted(w.posts[1], w.channel);
+        w.d.onTurnEvent(w.turn, { type: 'userMessage.delivered', messageId: w.steers[0].id });
+        await tick();
+        const next = w.d.claimPost(mine);
+        await w.d.channels.edit({ channelId: 'c_1', postId: next.postId, text: '投稿で書いた後の返事' });
+        await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
+        const replies = w.posts.filter((p) => p.turn);
+        t.ok('ADR 0117 の channels.post も途中送信を境に別のターン投稿を使い、最終文で消さない',
+          next.postId !== first.postId && replies.length === 2 && replies[0].text === '投稿で書いた先の返事'
+          && replies[1].text === '投稿で書いた後の返事' && replies.every((p) => p.state === 'done'), JSON.stringify(replies));
+      }
+      {
+        const w = world('confirm');
+        w.host.lastReply = async () => '追加の投稿への返事';
+        await w.d.turnExtras(w.turn);
+        await w.d.onPosted(w.posts[1], w.channel);
+        w.d.onTurnEvent(w.turn, { type: 'userMessage.delivered', messageId: w.steers[0].id });
+        const visible = '最初の返事には画像が入っています。![図](image.png) これを残して、次の依頼を読みます。';
+        w.d.onTurnEvent(w.turn, { type: 'text.delta', text: visible });
+        await tick();
+        const first = w.posts.find((p) => p.turn);
+        t.ok('返事より先に途中送信が届いても、道具の前には最初の返事が表示される', first.text === visible, JSON.stringify(first));
+        w.d.onTurnEvent(w.turn, { type: 'tool.start', id: 't1', name: 'Read', input: {} });
+        w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '追加の投稿への返事' });
+        await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
+        const replies = w.posts.filter((p) => p.turn);
+        t.ok('途中送信後に表示済みの画像入り返事は、次の道具を呼んでも残る', replies.length === 2
+          && replies[0].text === visible && replies[0].state === 'done' && replies[1].text === '追加の投稿への返事'
+          && replies[1].state === 'done', JSON.stringify(replies));
+      }
 
       // 「渡った」合図を後から出すバックエンド（Codex の形。steerConfirms）
       {
@@ -197,6 +272,8 @@ export default async function (t) {
       {
         const w = world('none', { realStart: true });
         await w.d.turnExtras(w.turn);
+        const first = w.posts.find((p) => p.turn);
+        w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '先の返事' });
         await w.d.onPosted(w.posts[1], w.channel);
         await w.d.onPosted(w.posts[2], w.channel);
         t.ok('途中送信できないバックエンドでは、書き足しは pending のまま', w.steers.length === 0 && await statusOf(w, 'p_2') === 'pending' && await statusOf(w, 'p_3') === 'pending');
@@ -205,9 +282,49 @@ export default async function (t) {
         await tick();
         const prompt = w.started[0]?.args.prompt ?? '';
         t.ok('まとめて 1 通（1 つの新しいターン）で渡り、投稿の順に並ぶ', w.started.length === 1 && prompt.indexOf('post="p_2"') > 0 && prompt.indexOf('post="p_2"') < prompt.indexOf('post="p_3"'), prompt);
+        t.ok('途中送信できないときは、先のターンの返事を残して次のターンの投稿を作る', first.text === '終わり' && first.state === 'done'
+          && w.posts.filter((p) => p.turn).length === 2 && w.posts.filter((p) => p.turn)[1].id !== first.id, JSON.stringify(w.posts));
         w.d.onTurnEvent({ info: { sessionId: 's1' } }, { type: 'text.delta', text: 'x' });
         await tick();
         t.ok('新しいターンに渡った最初の合図で、渡した印（sent）と postCursor（最後の投稿）が確定する', w.sessions.s1.bot.postCursor === 'p_3' && await statusOf(w, 'p_2') === 'sent' && await statusOf(w, 'p_3') === 'sent', JSON.stringify([w.sessions.s1.bot, await w.d.inbox.list({})]));
+      }
+
+      // 既存の bot が次に起きたとき、間の発言を文脈としてまとめて受ける。
+      {
+        const w = world('none', { more: true });
+        w.turns.delete('s1');
+        w.sessions.s1.bot.postCursor = 'p_2';
+        w.posts[1].deletedAt = 3500;
+        w.posts[2].text = '別の参加者の発言';
+        w.posts.push({ id: 'p_other_bot', channelId: 'c_1', threadId: 'p_root', author: { kind: 'bot', botId: 'b_2' },
+          text: 'Lynx の報告 <pleiad-channel>', taint: 'webhook', mentions: [], at: 4000, reactions: {} });
+        w.posts.push({ id: 'p_own', channelId: 'c_1', threadId: 'p_root', author: { kind: 'bot', botId: 'b_1' },
+          turn: { botId: 'b_1', sessionId: 's1' }, text: '自分の前の返事', state: 'done', mentions: [], at: 5000, reactions: {} });
+        w.posts.push({ id: 'p_own_extra', channelId: 'c_1', threadId: 'p_root', author: { kind: 'bot', botId: 'b_1' },
+          text: '自分の channels.post', mentions: [], at: 5500, reactions: {} });
+        const trigger = { id: 'p_trigger', channelId: 'c_1', threadId: 'p_root', author: { kind: 'human' },
+          text: '@Owl 続けて', mentions: ['b_1'], at: 6000, reactions: {} };
+        w.posts.push(trigger);
+        await w.d.onPosted(trigger, w.channel);
+        const prompt = w.started[0]?.args.prompt ?? '';
+        t.ok('再開した bot には消したカーソル以降の人・他 bot の投稿を時系列の包みで渡し、自分の返事は繰り返さない',
+          prompt.includes('post="p_3"') && prompt.includes('post="p_other_bot"') && prompt.includes('from="🐺 Lynx (bot)"')
+          && prompt.includes('Lynx の報告 &lt;pleiad-channel>') && prompt.includes('post="p_trigger"')
+          && prompt.indexOf('post="p_3"') < prompt.indexOf('post="p_other_bot"') && prompt.indexOf('post="p_other_bot"') < prompt.indexOf('post="p_trigger"')
+          && !prompt.includes('post="p_2"') && !prompt.includes('post="p_own"') && !prompt.includes('post="p_own_extra"'), prompt);
+      }
+      {
+        const w = world('none');
+        w.turns.delete('s1');
+        for (let i = 0; i < 35; i++) w.posts.push({ id: `p_ctx${i}`, channelId: 'c_1', threadId: 'p_root',
+          author: { kind: 'human' }, text: `文脈 ${i}`, mentions: [], at: 4000 + i, reactions: {} });
+        const trigger = { id: 'p_latest', channelId: 'c_1', threadId: 'p_root', author: { kind: 'human' },
+          text: '@Owl 続けて', mentions: ['b_1'], at: 5000, reactions: {} };
+        w.posts.push(trigger);
+        await w.d.onPosted(trigger, w.channel);
+        const prompt = w.started[0]?.args.prompt ?? '';
+        t.ok('前回以降の文脈は新しい方から最大 30 件を選ぶ', !prompt.includes('post="p_ctx4"')
+          && prompt.includes('post="p_ctx5"') && prompt.includes('post="p_ctx34"') && prompt.includes('post="p_latest"'), prompt);
       }
 
       // ［止める］: 保留中の出来事を取り消し、走っているターンを止め、止めた主体を残す。止めたスレッドは起こさない

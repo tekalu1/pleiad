@@ -40,6 +40,7 @@
 //   終わりに最終の返答（最後の道具の呼び出しより後の文。前の独り言は入れない）と提示を入れて state を決める。
 //   ターンの中で bot が channels.post で自分のスレッドへ書いたら、それがこのターンの返事（ADR 0117）: 最初の 1 件はターンの投稿に入り、2 件目からは新しい投稿。
 //   最終の返答（「投稿しました」のような作業の報告）は、そのときは投稿に書かない。
+//   途中送信が届いたら、これまでの返事と提示を確定し、次の返事は新しい投稿に入れる。
 //   生の流れ（text.delta）はチャンネルへ流さず、サーバーで投稿に畳む（ADR 0024 の 1 接続 1 購読）。
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -225,17 +226,18 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
    */
   async function buildPrompt({ sessionId, sb, channel, threadId, items, lng }) {
     const [botList, page] = await Promise.all([bots.list(), channels.read({ channelId: channel.id, ...(threadId ? { threadId } : {}), limit: 100 })]);
-    const posts = page.posts.filter((p) => !p.deletedAt);
+    // 消した投稿もカーソルの位置を探す材料に残す。消された投稿を境に古い文脈を再送しない。
+    const posts = page.posts;
     const triggerIds = new Set(items.map((i) => i.postId));
     const from = sb?.postCursor ? posts.findIndex((p) => p.id === sb.postCursor) : -1;
     const afterCursor = from >= 0 ? posts.slice(from + 1) : posts;
     const lastTrigger = afterCursor.reduce((at, p, i) => (triggerIds.has(p.id) ? i : at), -1);
     const fresh = afterCursor.slice(0, lastTrigger + 1);     // いちばん後ろの trigger まで
-    const own = (p) => p.turn?.sessionId === sessionId;
+    const own = (p) => p.turn?.sessionId === sessionId || (p.author?.kind === 'bot' && p.author.botId === sb?.botId);
     // 書き途中の他の bot の投稿は文脈に入れず、その手前までしか進めない
     let cut = fresh.findIndex((p) => p.state === 'working' && !own(p) && !triggerIds.has(p.id));
     if (cut < 0) cut = fresh.length;
-    const settled = fresh.slice(0, cut).filter((p) => !triggerIds.has(p.id) && !own(p) && p.state !== 'working');
+    const settled = fresh.slice(0, cut).filter((p) => !p.deletedAt && !triggerIds.has(p.id) && !own(p) && p.state !== 'working');
     // 上限は新しい方から数える
     const picked = [];
     let chars = 0;
@@ -521,12 +523,47 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
 
   /** 途中送信が渡った: 渡した印を残し、会話の画面へ出す */
   async function steered(sessionId, ids, text, cursor, callers = []) {
-    await inbox.mark(ids, 'sent');
     const rec = active.get(sessionId);
+    if (rec && !rec.ended) { rotateReply(rec); rec.receivedSteer = true; }
+    await inbox.mark(ids, 'sent');
     if (rec && !rec.committed && cursor) rec.cursor = cursor;
     if (rec) for (const c of callers) rec.callers.set(c.botId, c);   // 渡った呼び出しの返事も、このターンの終わりに返す
     if (cursor) await updateSidecar(sessionId, (sb) => ({ ...sb, postCursor: cursor }));
     host.emitSession?.(sessionId, { type: 'channelEvent', rows: channelEventRows(text) });
+  }
+
+  /** 途中送信が実際に届いた位置で、それまでの返事を確定して次の返事の投稿を用意する。 */
+  function rotateReply(rec) {
+    const hasReply = rec.spoke || rec.presents.length || rec.cur.trim() || rec.last.trim() || rec.narration.trim();
+    if (!hasReply || !rec.postReady) return;
+    clearTimeout(rec.timer);
+    rec.timer = null;
+    const previous = { ...rec, presents: rec.presents, callers: rec.callers };
+    const priorPost = rec.postReady;
+    rec.postId = null;
+    rec.cur = ''; rec.last = ''; rec.narration = '';
+    rec.sawText = false; rec.sinceTool = ''; rec.lastSeg = ''; rec.sawTool = false;
+    rec.presents = []; rec.spoke = false; rec.filled = false; rec.explicit = null; rec.explicitMentions = new Set();
+    rec.callers = new Map();
+    rec.lastWritten = PLACEHOLDER; rec.postedState = 'working'; rec.botControlled = false;
+    rec.dirty = false;
+    rec.postReady = rec.chain.then(async () => {
+      previous.postId = await priorPost;
+      try {
+        const { woke, reply } = await finalizePost(previous, rec.abandoned ? 'stopped' : 'done', !rec.abandoned, { boundary: true });
+        if (!rec.abandoned && woke) await route(woke, await channels.get({ channelId: rec.channelId }));
+        if (!rec.abandoned && reply && previous.callers.size) await returnReply(previous, reply, woke);
+      } catch (e) { log('could not finalize a reply before a steer:', errText(e)); }
+      if (rec.abandoned) return null;
+      const post = await channels.post({ channelId: rec.channelId, threadId: rec.threadId, text: PLACEHOLDER,
+        state: rec.state, taint: rec.taint, turn: { botId: rec.botId, sessionId: rec.sessionId }, new: true }, botAuthor(rec.botId));
+      if (rec.abandoned) { await channels.edit({ channelId: rec.channelId, postId: post.id, state: 'stopped' }, botAuthor(rec.botId)); return null; }
+      if (rec.postReady === ready) { rec.postId = post.id; rec.postedState = rec.state; }
+      if (rec.dirty || rec.cur || rec.last || rec.presents.length) progress(rec, { immediate: true });
+      return post.id;
+    }).catch((e) => log('could not separate replies after a steer:', errText(e)));
+    const ready = rec.postReady;
+    rec.chain = ready.then(() => {}, () => {});
   }
 
   /** 新しいターンで渡す */
@@ -606,7 +643,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
     if (old && !old.ended) await abandon(old);
     const channelId = sb.channelId ?? (sb.kind === 'dm' ? bot.dmChannelId : null);
     const rec = {
-      sessionId, botId: bot.id, kind: sb.kind, channelId, threadId: sb.threadId ?? null, postId: null,
+      sessionId, botId: bot.id, kind: sb.kind, channelId, threadId: sb.threadId ?? null, taint: sb.taint, postId: null, postReady: null,
       itemIds: pre?.itemIds ?? [], cursor: pre?.cursor ?? null, tail: null, callers: new Map((pre?.callers ?? []).map((c) => [c.botId, c])),
       cur: '', last: '', narration: '', sawText: false, presents: [],
       // 最後の道具の呼び出しより後の文（sinceTool）と、道具の前で終わった最後の文（lastSeg）。最終の返答から前の独り言を外すのに使う（finalReplyText）
@@ -614,7 +651,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       // bot が channels.post で自分のスレッドへ書いた（spoke）・そのうち最初の 1 件がターンの投稿に入った（filled）・2 件目からの新しい投稿の最後（explicit）
       spoke: false, filled: false, explicit: null, explicitMentions: new Set(), usage: {}, credited: { input: 0, output: 0, cached: 0 }, waiting: new Set(),
       state: 'working', postedState: 'working', lastWritten: PLACEHOLDER, botControlled: false, error: null,
-      committed: false, compactedDuring: false, ended: false, stopped: false,
+      committed: false, compactedDuring: false, ended: false, stopped: false, receivedSteer: false, abandoned: false,
       timer: null, lastFlush: 0, dirty: false, chain: Promise.resolve(),
     };
     active.set(sessionId, rec);
@@ -643,6 +680,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       try {
         const post = await channels.post({ channelId, threadId: rec.threadId, text: PLACEHOLDER, state: 'working', taint: sb.taint, turn: { botId: bot.id, sessionId }, new: true }, botAuthor(bot.id));
         rec.postId = post.id;
+        rec.postReady = Promise.resolve(post.id);
       } catch (e) { log('could not create the turn post:', errText(e)); }
     }
     if (rec.threadId) {
@@ -655,6 +693,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
   /** 終わりの届かなかったターンの記録を片付ける: 投稿は stopped にして、書き換えの予約を止める */
   async function abandon(rec, { requeue = false } = {}) {
     rec.ended = true;
+    rec.abandoned = true;
     clearTimeout(rec.timer);
     rec.timer = null;
     if (active.get(rec.sessionId) === rec) active.delete(rec.sessionId);
@@ -703,6 +742,8 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
         progress(rec);
         break;
       case 'tool.start':
+        // 途中送信の後に見えていた返事は、後続の道具呼び出しで「…」へ戻さず、その投稿に残す。
+        if (rec.receivedSteer && ((rec.lastWritten !== PLACEHOLDER && rec.lastWritten.trim()) || rec.presents.length)) rotateReply(rec);
         // 道具を呼ぶ前の文章は、最終の返事ではなく独り言。本文には出さず、出していたら「…」に戻す。終わりの本文（止めた・失敗）の控えには残す
         rec.narration = (rec.cur || rec.last || rec.narration);
         rec.cur = ''; rec.last = '';
@@ -878,11 +919,11 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
   }
 
   /** ターンの投稿に最終の返答と提示を入れて state を決める。返事で ok なら { woke: @ を含む投稿（次の bot を起こすため）, reply: 確定した返事の投稿（呼んだ bot へ返すため） } */
-  async function finalizePost(rec, state, ok) {
+  async function finalizePost(rec, state, ok, { boundary = false } = {}) {
     const lng = locale();
     // bot が channels.post で自分のスレッドへ返事を書いたターンは、それが返事。最終の返答（作業の報告）は投稿に書かない（ADR 0117）
     let text = rec.spoke ? '' : (rec.cur || rec.last || rec.narration).trim();
-    if (ok && rec.sawText && !rec.spoke) text = finalReplyText(rec, await host.lastReply?.(rec.sessionId).catch(() => null)) || text;
+    if (ok && rec.sawText && !rec.spoke) text = finalReplyText(rec, boundary ? null : await host.lastReply?.(rec.sessionId).catch(() => null)) || text;
     const none = { woke: null, reply: null };
     const current = await channels.getPost({ channelId: rec.channelId, postId: rec.postId }).catch(() => null);
     if (!current || current.deletedAt) return none;
