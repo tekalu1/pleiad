@@ -1853,7 +1853,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "a0c75da9f533"
+      "input": "861c78dcef55"
     },
     {
       "id": "memory.forget",
@@ -1877,6 +1877,26 @@
       },
       "legacyCommand": null,
       "input": "a2135a18629b"
+    },
+    {
+      "id": "memory.learnStatus",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "learn-status"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
     },
     {
       "id": "memory.list",
@@ -1960,7 +1980,7 @@
         "cli": false
       },
       "legacyCommand": null,
-      "input": "558cfb267283"
+      "input": "619d48f70b75"
     },
     {
       "id": "notify.setDevice",
@@ -4425,6 +4445,11 @@
       "positional": [
         "id"
       ]
+    },
+    {
+      "id": "memory.learnStatus",
+      "path": "memory learn-status",
+      "positional": []
     },
     {
       "id": "memory.list",

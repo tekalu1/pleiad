@@ -5,8 +5,10 @@
 //   <!-- pleiad-memory v1 layer=user -->
 //   # あなたについて
 //
-//   - 本文 <!-- {"id":"m_…","at":…,"up":…,"by":{…},"why":"…","src":[{…}]} -->
+//   - 本文 <!-- {"id":"m_…","at":…,"up":…,"by":{…},"why":"…","src":[{…}],"k":"promise","w":3,"st":"open"} -->
 //   1 行 1 件。本文は人が読めて直せる。メタは行末の HTML コメントの JSON（読めない・無い行は「出どころ不明」の人の記憶として読む）。
+//   k（種類）・w（重み 1〜3）・st（状態）は任意（ADR 0117。無い行は strength.mjs の既定）。知らないキーは捨てずに、書き直しでもそのまま残す
+//   （新しい版が足した欄を古い版が読んで書き直しても消さないため。版の印 v1 は変えない）。
 //   人が markdown を直接直したら、次に読むとき（sync）に差分を人の変更として log.jsonl に記録する。
 //
 // log.jsonl の 1 行: { rev, at, op: 'add'|'edit'|'forget'|'unforget', layer, id, text, fp, by, via?, entry? }
@@ -18,6 +20,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { writeAtomic } from '../atomic-file.mjs';
 import { newId, isId, isAuthor, authorKey } from '../channels/types.mjs';
+import { isMemoryKind, isMemoryStatus, isWeight } from './strength.mjs';
 
 export const MEMORY_TEXT_MAX = 300;
 export const USER_LAYER = 'user';
@@ -36,6 +39,16 @@ export const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
 const HEADER = (layer) => `<!-- pleiad-memory v1 layer=${layer} -->`;
 // JSON の中の < と > は \u003c \u003e にする（-->  が本文に入っても、行末のコメントを閉じない）
 const metaJson = (value) => JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+
+/** メタの JSON のうち、この版が読むキー。ほかは extraMeta に入れて、書き直しで戻す */
+const META_KEYS = new Set(['id', 'at', 'up', 'by', 'ob', 'why', 'src', 'k', 'w', 'st']);
+
+/** 種類・重み・状態（どれも任意）。正しくない値は無いものとして読む */
+const tagsOf = (value) => ({
+  ...(isMemoryKind(value?.kind) ? { kind: value.kind } : {}),
+  ...(isWeight(value?.weight) ? { weight: value.weight } : {}),
+  ...(isMemoryStatus(value?.status) ? { status: value.status } : {}),
+});
 
 /** 本文だけから決める id（メタの無い手書きの行用。同じ本文は同じ id なので、読むたびに変わらない） */
 export const derivedId = (layer, text) => `m_h${crypto.createHash('sha256').update(`${layer}\n${text}`).digest('hex').slice(0, 12)}`;
@@ -57,6 +70,7 @@ export function parseLayer(markdown, layer) {
     const text = oneLine(body);
     if (!text) continue;
     const id = isId(meta?.id, 'memory') ? meta.id : derivedId(layer, text);
+    const extra = meta ? Object.fromEntries(Object.entries(meta).filter(([key]) => !META_KEYS.has(key))) : {};
     entries.push({
       id, layer, text,
       ...(typeof meta?.why === 'string' && meta.why ? { why: meta.why } : {}),
@@ -65,6 +79,8 @@ export function parseLayer(markdown, layer) {
       updatedAt: Number.isFinite(meta?.up) ? meta.up : Number.isFinite(meta?.at) ? meta.at : 0,
       by: isAuthor(meta?.by) ? meta.by : { kind: 'human' },
       ...(isAuthor(meta?.ob) ? { origBy: meta.ob } : {}),
+      ...tagsOf({ kind: meta?.k, weight: meta?.w, status: meta?.st }),
+      ...(Object.keys(extra).length ? { extraMeta: extra } : {}),
       hadMeta: Boolean(meta),
     });
   }
@@ -74,13 +90,17 @@ export function parseLayer(markdown, layer) {
 /** 1 層の markdown を作る。title は見出し（辞書の文。呼び出し側が言語を決める） */
 export function renderLayer(layer, entries, title) {
   const lines = entries.map((e) => `- ${oneLine(e.text)} <!-- ${metaJson({
+    ...(e.extraMeta ?? {}),
     id: e.id, at: e.at, up: e.updatedAt, by: e.by, ...(e.origBy ? { ob: e.origBy } : {}), ...(e.why ? { why: e.why } : {}), src: e.sources ?? [],
+    ...(e.kind ? { k: e.kind } : {}), ...(e.weight ? { w: e.weight } : {}), ...(e.status ? { st: e.status } : {}),
   })} -->`);
   return `${HEADER(layer)}\n# ${title}\n\n${lines.join('\n')}${lines.length ? '\n' : ''}`;
 }
 
-/** 外へ出す形（hadMeta を落とす） */
-const publicEntry = (entry) => { const { hadMeta: _hadMeta, ...rest } = entry; return rest; };
+/** 外へ出す形（hadMeta・extraMeta を落とす） */
+const publicEntry = (entry) => { const { hadMeta: _hadMeta, extraMeta: _extraMeta, ...rest } = entry; return rest; };
+/** 忘れた記録に残す形（戻したときに知らないキーも戻す） */
+const keptEntry = (entry) => ({ ...publicEntry(entry), ...(entry.extraMeta ? { extraMeta: entry.extraMeta } : {}) });
 
 // ------------------------------------------------------------------ store
 const sigOf = (st) => `${st.mtimeMs}:${st.size}`;
@@ -255,34 +275,42 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
     hash: () => crypto.createHash('sha256').update(JSON.stringify([...cache.keys()].sort().map((l) => [l, cache.get(l).map((e) => [e.id, e.text, e.why ?? '', e.updatedAt])]))).digest('hex'),
 
     /** 追加。by は発言者、via は書いた会話。entry は id・at 以外が入った形 */
-    add: ({ layer, text, why, sources = [], by, via, unique = false }) => serial(async () => {
+    add: ({ layer, text, why, sources = [], by, via, unique = false, kind, weight, status }) => serial(async () => {
       await ensureReady(); await syncNow();
       // 同じ文を同時に 2 回書いても、直列化の中で見れば後の 1 つは弾ける（呼び出し側の事前の検査は直列化の外）
       if (unique && (cache.get(layer) ?? []).some((e) => fingerprintOf(e.text) === fingerprintOf(text))) return { duplicate: true };
       const at = now();
-      const entry = { id: newId('memory', at), layer, text: oneLine(text), ...(why ? { why } : {}), sources, at, updatedAt: at, by, hadMeta: true };
+      const entry = { id: newId('memory', at), layer, text: oneLine(text), ...(why ? { why } : {}), sources, at, updatedAt: at, by,
+        ...tagsOf({ kind, weight, status }), hadMeta: true };
       cache.set(layer, [...(cache.get(layer) ?? []), entry]);
       await writeLayer(layer);
       const rec = await appendLog({ op: 'add', layer, id: entry.id, text: entry.text, fp: fingerprintOf(entry.text), by, ...(via ? { via } : {}) });
       return { entry: publicEntry(entry), rev: rec.rev };
     }),
 
-    /** 本文・理由・出どころを直す。無い id は null */
-    edit: ({ id, text, why, sources, by, via }) => serial(async () => {
+    /** 本文・理由・出どころ・種類・重み・状態を直す。種類・重み・状態は null で外す（undefined は触らない）。無い id は null */
+    edit: ({ id, text, why, sources, by, via, kind, weight, status }) => serial(async () => {
       await ensureReady(); await syncNow();
       for (const [layer, list] of cache) {
         const i = list.findIndex((e) => e.id === id);
         if (i < 0) continue;
         const old = list[i];
+        // by は今の本文を書いた者なので、本文が変わるときだけ替える（理由・種類・重みだけの直しや同じ本文の直しで、
+        // AI が人の行を自分の行にしてしまわないため。そうすると次から承認なしで本文を書き換えられる）。直した者は log.jsonl の by に残る
+        const textChanged = text !== undefined && oneLine(text) !== old.text;
         const entry = {
           ...old,
           ...(text !== undefined ? { text: oneLine(text) } : {}),
           ...(why !== undefined ? (why ? { why } : { why: undefined }) : {}),
           sources: sources ? [...old.sources, ...sources] : old.sources,
-          updatedAt: now(), by,
+          updatedAt: now(), by: textChanged ? by : old.by,
         };
-        // 書き手が替わったら、元の書き手を残す（人の行を AI が直したときに、元が人だったと分かるように）。by は今の本文を書いた者
-        if (authorKey(old.by) !== authorKey(by)) entry.origBy = old.origBy ?? old.by;
+        for (const [key, value] of [['kind', kind], ['weight', weight], ['status', status]]) {
+          if (value === null) delete entry[key];
+          else if (value !== undefined) Object.assign(entry, tagsOf({ [key]: value }));
+        }
+        // 書き手が替わったら、元の書き手を残す（人の行を AI が直したときに、元が人だったと分かるように）
+        if (authorKey(old.by) !== authorKey(entry.by)) entry.origBy = old.origBy ?? old.by;
         if (!entry.why) delete entry.why;
         const next = [...list]; next[i] = entry;
         cache.set(layer, next);
@@ -302,7 +330,7 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
         cache.set(layer, list.filter((e) => e !== old));
         await writeLayer(layer);
         const fp = fingerprintOf(old.text);
-        const rec = await appendLog({ op: 'forget', layer, id, text: old.text, fp, by, ...(via ? { via } : {}), entry: publicEntry(old) });
+        const rec = await appendLog({ op: 'forget', layer, id, text: old.text, fp, by, ...(via ? { via } : {}), entry: keptEntry(old) });
         return { entry: publicEntry(old), rev: rec.rev, fp };
       }
       return null;

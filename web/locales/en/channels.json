@@ -221,6 +221,34 @@
   },
   "memory": {
     "new": "Newly learned",
+    "faded": "Faded",
+    "fadedTitle": "An old memory that has grown weak. It is no longer given at the start of a conversation, but a search still finds it (it is not deleted)",
+    "kind": {
+      "stop": "Stopped",
+      "promise": "Promise",
+      "promiseDone": "Promise, kept",
+      "decision": "Decision",
+      "share": "Who does what",
+      "pref": "Preference",
+      "note": "Note"
+    },
+    "learn": {
+      "label": "Nightly organizing",
+      "running": "organizing now",
+      "ran": "learned {{n}} at {{when}}",
+      "ranNone": "ran at {{when}} (nothing new)",
+      "never": "has not run yet",
+      "more": "the rest is left for the next run",
+      "deferred": "{{n}} busy conversations left for the next run",
+      "failed": "failed ({{error}})",
+      "skipped": "skipped {{n}} scheduled runs ({{reason}})",
+      "reason": {
+        "paused": "paused",
+        "failed": "waiting after a failure"
+      },
+      "paused": "paused",
+      "next": "next at {{when}}"
+    },
     "user": {
       "title": "About you",
       "meta": "shared by all bots · {{n}}"

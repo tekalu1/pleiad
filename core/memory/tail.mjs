@@ -2,12 +2,14 @@
 //   核の写し … <pleiad-memory-core>。会話の始まりと圧縮の完了後の最初のターンの notes に 1 回だけ（session.snapshotDue）
 //   末尾    … <pleiad-turn-context>。毎ターンの notes に: 時刻（分まで）・前のターンからの記憶の差分（20 件まで）・この話に関係する記憶（5 件まで）
 // i18n-dynamic: agent:memory.turn.
+// i18n-dynamic: agent:memory.kind.
 // 文は辞書 agent:memory.*（会話の言語）。ここは文の組み立てだけで、ファイルも索引も触らない（service.mjs が材料を渡す）。
 // 途中送信（control.steer）の道では末尾を付けない。差分は memRev を進めないので、次の新しいターンで渡る（dispatch の責務）。
 import { agentT } from '../i18n.mjs';
 import { memoryCoreEnvelope, turnContextEnvelope } from '../channels/types.mjs';
 import { estimateTokens } from '../../web/token-estimate.mjs';
 import { USER_LAYER } from './store.mjs';
+import { strengthOf, kindOrder, FADED_BELOW } from './strength.mjs';
 
 /** 末尾の差分に出す件数の上限。超えたら件数と memory.search で引けることだけ */
 export const DELTA_MAX = 20;
@@ -59,32 +61,44 @@ export function foldDelta(records, { layers, skipVia = null } = {}) {
 }
 
 /**
- * 核の写しに入れる記憶を選ぶ。層ごとの目安まで、人が書いた・人が直した記憶（by.kind === 'human'）を先に、bot・AI が書いたものを後に
- * （それぞれ新しい更新から）。書き込みを重ねる bot が、新しさだけで人の古い記憶を押し出せないようにする。返りは { user, bot, omitted, ids }（本文は時系列）
+ * 核の写しに入れる記憶を選ぶ（ADR 0117）。層ごとの目安まで、強さ（strength.mjs: 重み × 新しさ）の強い順に入れる。同じ強さなら人が書いた・直した記憶
+ * （by.kind === 'human'）を先に、それから新しい更新から。人の行は重み 3 で薄れないので、書き込みを重ねる bot が新しさだけで人の記憶を押し出せない。
+ * 薄れた記憶（FADED_BELOW 未満）は入れず、消しもしない（memory.search・関係する記憶では出る）。
+ * 返りは { user, bot, omitted, faded, ids }。本文は種類の順（やめたこと → 約束 → …）、同じ種類の中は時系列。omitted は入れなかった数（faded を含む）
  */
-export function pickCore(userEntries, botEntries, { layerTokens = CORE_LAYER_TOKENS } = {}) {
+export function pickCore(userEntries, botEntries, { layerTokens = CORE_LAYER_TOKENS, now = Date.now() } = {}) {
   const humanFirst = (e) => (e.by?.kind === 'human' ? 0 : 1);
   const take = (list) => {
+    const strength = new Map(list.map((e) => [e.id, strengthOf(e, now)]));
+    const live = list.filter((e) => strength.get(e.id) >= FADED_BELOW);
     const picked = [];
     let used = 0;
-    for (const e of [...list].sort((a, b) => (humanFirst(a) - humanFirst(b)) || (b.updatedAt - a.updatedAt) || (b.at - a.at))) {
+    for (const e of [...live].sort((a, b) => (strength.get(b.id) - strength.get(a.id)) || (humanFirst(a) - humanFirst(b)) || (b.updatedAt - a.updatedAt) || (b.at - a.at))) {
       const cost = estimateTokens(e.text) + 3;
       if (used + cost > layerTokens && picked.length) break;
       picked.push(e); used += cost;
     }
     const keep = new Set(picked.map((e) => e.id));
-    return { picked: list.filter((e) => keep.has(e.id)), omitted: list.length - picked.length };
+    const shown = list.map((e, i) => [e, i]).filter(([e]) => keep.has(e.id)).sort(([a, i], [b, j]) => (kindOrder(a) - kindOrder(b)) || (i - j)).map(([e]) => e);
+    return { picked: shown, omitted: list.length - picked.length, faded: list.length - live.length };
   };
   const u = take(userEntries), b = take(botEntries);
-  return { user: u.picked, bot: b.picked, omitted: u.omitted + b.omitted, ids: [...u.picked, ...b.picked].map((e) => e.id) };
+  return { user: u.picked, bot: b.picked, omitted: u.omitted + b.omitted, faded: u.faded + b.faded, ids: [...u.picked, ...b.picked].map((e) => e.id) };
 }
+
+/** 核の写しの 1 行。種類があれば見出しの代わりに頭に付ける（「[約束] …」。済んだ約束は「[約束・済み] …」） */
+const coreLine = (locale, e) => {
+  if (!e.kind) return `- ${e.text}`;
+  const label = agentT(locale, `memory.kind.${e.kind}`);
+  return `- [${e.kind === 'promise' && e.status === 'done' ? agentT(locale, 'memory.kind.promiseDone') : label}] ${e.text}`;
+};
 
 /** 核の写しの notes 1 件。記憶が 1 つも無いときは null（始まりに空の包みを足さない） */
 export function coreSnapshot({ core, locale }) {
   if (!core.user.length && !core.bot.length) return null;
   const lines = [agentT(locale, 'memory.core.intro')];
-  if (core.user.length) lines.push('', agentT(locale, 'memory.core.user'), ...core.user.map((e) => `- ${e.text}`));
-  if (core.bot.length) lines.push('', agentT(locale, 'memory.core.bot'), ...core.bot.map((e) => `- ${e.text}`));
+  if (core.user.length) lines.push('', agentT(locale, 'memory.core.user'), ...core.user.map((e) => coreLine(locale, e)));
+  if (core.bot.length) lines.push('', agentT(locale, 'memory.core.bot'), ...core.bot.map((e) => coreLine(locale, e)));
   if (core.omitted) lines.push('', agentT(locale, 'memory.more', { n: core.omitted }));
   return memoryCoreEnvelope(lines.join('\n'));
 }

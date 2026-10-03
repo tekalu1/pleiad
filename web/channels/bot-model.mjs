@@ -48,6 +48,34 @@ export function shortDate(at, now = Date.now()) {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+/** 時刻の短い書き方: 今日は「HH:MM」、ほかの日は「M/D HH:MM」 */
+export function shortTime(at, now = Date.now()) {
+  const d = new Date(at);
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const date = shortDate(at, now);
+  return date ? `${date} ${hm}` : hm;
+}
+
+/**
+ * 夜の記憶の整理の様子（memory.learnStatus の返り）を、記憶の見出しの下の 1 行の材料にする（ADR 0117）。
+ * 返りは辞書の部品の並び [{ key, params }]（channels:memory.learn.<key>）と、目立たせるか（warn: 失敗・飛ばした）。null は出さない
+ */
+export function learnStatusView(status, now = Date.now()) {
+  if (!status) return null;
+  const parts = [];
+  const result = status.lastResult;
+  if (status.running) parts.push({ key: 'running' });
+  else if (status.lastRunAt && result) parts.push({ key: result.changed ? 'ran' : 'ranNone', params: { when: shortTime(result.at ?? status.lastRunAt, now), n: result.changed } });
+  else if (!status.lastRunAt) parts.push({ key: 'never' });
+  if (result?.more) parts.push({ key: 'more' });
+  if (result?.deferred) parts.push({ key: 'deferred', params: { n: result.deferred } });
+  if (status.failure) parts.push({ key: 'failed', params: { error: status.failure.message } });
+  if (status.skip?.count) parts.push({ key: 'skipped', params: { n: status.skip.count, reasonKey: status.skip.reason } });
+  if (status.paused) parts.push({ key: 'paused' });
+  else if (status.nextAt) parts.push({ key: 'next', params: { when: shortTime(status.nextAt, now) } });
+  return { parts, warn: Boolean(status.failure || status.skip?.count) };
+}
+
 /** 記憶の出どころ 1 件の行き先と、字の材料。
  *  返り: { kind: 'post'|'message'|'none', where, date, target } 。target は { channelId, threadId?, postId? } か { sessionId }（開けるとき）か null */
 export function sourceView(src, { channels = new Map(), bots = new Map(), sessions = new Map() } = {}, now = Date.now()) {

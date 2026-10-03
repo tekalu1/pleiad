@@ -11,11 +11,12 @@
 //
 // MemoryService（author は types.mjs の Author。ctx は { sessions, sessionId, locale }）:
 //   start(): Promise<void>・stop(): void
-//   list({ layer }): Promise<MemoryEntry[]>                       … layer は 'user' か botId。ファイルの順
+//   list({ layer }): Promise<MemoryEntry[]>                       … layer は 'user' か botId。ファイルの順。各行に今の強さ strength と faded（核の写しに入らない）を付ける
 //   get({ id }): Promise<MemoryEntry|null>
 //   search({ query, layer?, layers?, limit }): Promise<MemoryEntry[]>   … 各 150 トークンまで。layer 省略なら layers（無ければ全層）
-//   write({ layer, text, why?, sources }, author, ctx): Promise<MemoryEntry>   … 出どころの検査（MEMORY_SOURCE・MEMORY_REJECTED）はここ
-//   edit({ id, text?, why?, sources? }, author, ctx): Promise<MemoryEntry>・forget({ id }, author, ctx): Promise<MemoryEntry>・unforget({ id }, author, ctx): Promise<MemoryEntry>
+//   write({ layer, text, why?, sources, kind?, weight?, status? }, author, ctx): Promise<MemoryEntry>   … 出どころの検査（MEMORY_SOURCE・MEMORY_REJECTED）はここ。
+//       kind・weight・status は記憶の種類・重み・状態（strength.mjs。ADR 0117）。AI の重み 3 は guard.capWeight が根拠を見て 2 に抑える
+//   edit({ id, text?, why?, sources?, kind?, weight?, status? }, author, ctx): Promise<MemoryEntry>・forget({ id }, author, ctx): Promise<MemoryEntry>・unforget({ id }, author, ctx): Promise<MemoryEntry>
 //       … 人も AI も使える（edit は write、forget は guarded）。誰がしたかは log.jsonl の by に残す。無い id は MEMORY_NOT_FOUND
 //   rev(): number                                                 … log.jsonl の最後の rev
 //   turnContext({ bot, session, sessionId?, incomingText, now?, locale? }):
@@ -27,7 +28,8 @@ import { agentT } from '../i18n.mjs';
 import { estimateTokens } from '../../web/token-estimate.mjs';
 import { createMemoryStore, fingerprintOf, isLayer, oneLine, USER_LAYER } from './store.mjs';
 import { createMemoryIndex } from './index.mjs';
-import { MemoryError, checkText, checkSources, sourceResolvers } from './guard.mjs';
+import { MemoryError, checkText, checkSources, sourceResolvers, capWeight } from './guard.mjs';
+import { strengthOf, FADED_BELOW } from './strength.mjs';
 import { foldDelta, pickCore, coreSnapshot, turnContext as turnContextText } from './tail.mjs';
 
 export { MemoryError };
@@ -38,6 +40,12 @@ export const RESULT_TOKENS = 150;
 const DELIVERED_MAX = 400;
 /** bot が 1 ターンに user 層へ書ける件数（全 bot が読む層なので、暴走・汚染の幅を抑える。超えたら MEMORY_REJECTED:userWriteLimit） */
 export const USER_WRITES_PER_TURN = 5;
+
+/** 外へ出す行に今の強さを付ける（保存はしない。小数 2 桁） */
+const withStrength = (entry, at) => {
+  const strength = strengthOf(entry, at);
+  return { ...entry, strength: Math.round(strength * 100) / 100, faded: strength < FADED_BELOW };
+};
 
 /** 150 トークンに収まるまで切る（本文は 300 字までなので、普通は切らない） */
 const clip = (entry) => {
@@ -77,13 +85,13 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
   const needLayer = (layer) => { if (!isLayer(layer)) throw new MemoryError('MEMORY_REJECTED', 'layer', String(layer)); };
   const isHuman = (author) => author?.kind === 'human';
 
-  /** 出どころの検査（人でなければ必須）。返りは確かめた出どころ */
+  /** 出どころの検査（人でなければ必須）。返りは { sources: 確かめた出どころ, humanQuotes: そのうち人の発言の引用 } */
   async function verified(sources, author, ctx) {
     const resolvers = sourceResolvers({ channels, sessions: ctx?.sessions, botOfSession: ctx?.botOfSession });
     const human = isHuman(author);
-    if (human && !sources?.length) return [];
+    if (human && !sources?.length) return { sources: [], humanQuotes: [] };
     const out = await checkSources(sources, resolvers, { required: !human });
-    return out.sources;
+    return { sources: out.sources, humanQuotes: out.humanQuotes };
   }
 
   /** bot が user 層へ書く（本文を変える）ときの 1 ターンの上限。数えるのは書けたときだけ（ensure → bump の順） */
@@ -104,7 +112,8 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
 
     async list({ layer } = {}) {
       await catchUp();
-      return layer ? store.entries(layer) : store.entries();
+      const at = now();
+      return (layer ? store.entries(layer) : store.entries()).map((e) => withStrength(e, at));
     },
     async get({ id } = {}) {
       await catchUp();
@@ -113,10 +122,11 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
     async search({ query, layer, layers, limit = 5 } = {}) {
       await ensureIndex();
       const scope = layer ? [layer] : layers?.length ? layers : null;
-      return (await index.search({ query, ...(scope ? { layers: scope } : {}), limit })).map(clip);
+      const at = now();
+      return (await index.search({ query, ...(scope ? { layers: scope } : {}), limit })).map((e) => withStrength(clip(e), at));
     },
 
-    async write({ layer, text, why, sources } = {}, author, ctx = {}) {
+    async write({ layer, text, why, sources, kind, weight, status } = {}, author, ctx = {}) {
       needLayer(layer);
       await catchUp();
       const human = isHuman(author);
@@ -126,7 +136,8 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       const proven = await verified(sources, author, ctx);
       const fp = fingerprintOf(clean);
       if (store.entries(layer).some((e) => fingerprintOf(e.text) === fp)) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
-      const added = await store.add({ layer, text: clean, why: note, sources: proven, by: author, via: ctx.sessionId, unique: true });
+      const tags = { kind, weight: capWeight(weight, { human, kind, humanQuotes: proven.humanQuotes }), status };
+      const added = await store.add({ layer, text: clean, why: note, sources: proven.sources, by: author, via: ctx.sessionId, unique: true, ...tags });
       if (added.duplicate) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
       const { entry } = added;
       bump(budget);
@@ -134,7 +145,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       return entry;
     },
 
-    async edit({ id, text, why, sources } = {}, author, ctx = {}) {
+    async edit({ id, text, why, sources, kind, weight, status } = {}, author, ctx = {}) {
       await catchUp();
       const old = store.get(id);
       if (!old) throw notFound(id);
@@ -144,12 +155,14 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       const clean = text === undefined ? undefined : checkText(text, { human, isTombstoned: store.isTombstoned, fingerprint: fingerprintOf });
       const note = why === undefined ? undefined : why === '' ? '' : checkText(why, { human, isTombstoned: null }).slice(0, 300);
       // AI が本文を変えるときは、新しく書くときと同じく人の発言の根拠が要る
-      const proven = clean !== undefined && clean !== old.text ? await verified(sources, author, ctx) : [];
+      const proven = clean !== undefined && clean !== old.text ? await verified(sources, author, ctx) : { sources: [], humanQuotes: [] };
       if (clean !== undefined && clean !== old.text) {
         const fp = fingerprintOf(clean);
         if (store.entries(old.layer).some((e) => e.id !== id && fingerprintOf(e.text) === fp)) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
       }
-      const done = await store.edit({ id, text: clean, why: note, sources: proven.length ? proven : undefined, by: author, via: ctx.sessionId });
+      const cappedWeight = capWeight(weight, { human, kind: kind ?? old.kind ?? null, humanQuotes: proven.humanQuotes });
+      const done = await store.edit({ id, text: clean, why: note, sources: proven.sources.length ? proven.sources : undefined, by: author, via: ctx.sessionId,
+        kind, weight: cappedWeight, status });
       if (!done) throw notFound(id);
       bump(budget);
       announce(done.entry.layer);
@@ -191,7 +204,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       let delta = [];
       if (due) {
         // 核の写しが今の全体を含むので、差分は要らない
-        const core = pickCore(store.entries(USER_LAYER), bot?.id ? store.entries(bot.id) : []);
+        const core = pickCore(store.entries(USER_LAYER), bot?.id ? store.entries(bot.id) : [], { now: at });
         const snapshot = coreSnapshot({ core, locale });
         if (snapshot) notes.push(snapshot);
         delivered = core.ids;

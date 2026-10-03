@@ -1143,6 +1143,9 @@
         "layer": "Layer: user (about the user, shared by every bot) or your own layer (self or a bot id).",
         "text": "What to remember: one line, a factual note (300 characters max).",
         "why": "Why it is worth remembering (optional).",
+        "kind": "Kind (optional): stop (something we stopped doing), promise, decision, share (who does what), pref (a preference or correction), note (anything else). It sets the order of the memory given at the start of a conversation and how fast the line fades.",
+        "weight": "How strong the impression is, 1-3 (optional; the kind's default when omitted). 3 only for stop, promise and decision, or when a human said it strongly (\"remember\", \"never\", \"always\"); otherwise it is lowered to 2.",
+        "status": "State of a promise (optional): open or done (a kept promise fades faster).",
         "sources": "Grounds. Include at least one human's words. To rely on an AI's output, also cite the human's words that adopted it.",
         "source": {
           "kind": "post (a channel post) or message (a line in a conversation).",
@@ -1159,8 +1162,14 @@
         "id": "Memory id (from memory.list).",
         "text": "The corrected text (300 characters max).",
         "why": "Why it was changed (an empty string clears it).",
+        "kind": "Kind (same as write's kind).",
+        "weight": "How strong the impression is, 1-3 (same as write's weight).",
+        "status": "State of a promise (open or done).",
         "sources": "Grounds for changing the text (same as write's sources).",
         "confirm": "An AI is rewriting a memory that a person wrote."
+      },
+      "learnStatus": {
+        "summary": "When the nightly memory organizer last ran, its result and the next run, and how many times and why it did not run."
       },
       "forget": {
         "summary": "Forget one memory line. The same content cannot be written again later. Needs the user's approval.",
@@ -1226,6 +1235,15 @@
       "bot": "Remembered by this bot only:"
     },
     "more": "{{n}} more (find them with memory.search)",
+    "kind": {
+      "stop": "stopped",
+      "promise": "promise",
+      "promiseDone": "promise, kept",
+      "decision": "decision",
+      "share": "who does what",
+      "pref": "preference",
+      "note": "note"
+    },
     "turn": {
       "time": "Current time: {{time}}",
       "changes": "Memory changed since the previous turn:",
