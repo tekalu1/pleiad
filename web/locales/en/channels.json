@@ -1,7 +1,24 @@
 {
   "side": {
     "tabs": { "label": "Sidebar view", "chats": "Chats", "channels": "Channels" },
-    "sections": { "channels": "Channels", "bots": "Bots", "routines": "Routines" }
+    "sections": { "channels": "Channels", "bots": "Bots", "routines": "Routines" },
+    "newChannel": "New channel",
+    "newChannelPlaceholder": "Channel name (Enter to create)",
+    "newBot": "New bot",
+    "loading": "Loading…",
+    "channelsEmpty": "No channels yet",
+    "botsEmpty": "No bots yet",
+    "routinesEmpty": "No routines yet",
+    "unread": "Unread",
+    "mentions_one": "{{count}} mention of you",
+    "mentions_other": "{{count}} mentions of you",
+    "archived": "Archived",
+    "botState": { "idle": "Idle", "working": "Working", "waiting": "Waiting on you" },
+    "openDm": "Open DM",
+    "openBot": "Open bot page",
+    "dm": "DM",
+    "searchPlaceholder": "Search chats and channels",
+    "search": { "count_one": "{{count}} result", "count_other": "{{count}} results", "none": "No matching chats or channels" }
   },
   "feed": {
     "empty": "No channels yet.",
