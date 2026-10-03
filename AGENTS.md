@@ -54,7 +54,9 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 - 画面・AI・CLI へ外に出す機能は、WS の case を足すだけにせず `core/ops/` に操作として定義する（ADR 0081）。足し忘れは `npm test` の ops-coverage が落とす（`tests/ops-baseline.json` の `todo` は増やせない）。設定（prefs.json）を足す・変えるときは `core/ops/settings.mjs` の `defineSetting`（危険度・`normalize`・`write`）に書き、`store.setPref` を直に呼ばない（画面の `setPref` も AI の `settings.set` も同じ定義を通る。`ops-coverage` が落とす）。操作の危険度・出す口を変えたら `OPS_UPDATE_SNAPSHOT=1 npm test -- ops-surface` で snapshot を更新し、差分を確認する。
 - 画面・エラー・エージェント向けの文言は辞書（`web/locales/<言語>/<名前空間>.json`）に置き、`t()` で引く（`docs/design.md`「多言語対応」、訳語は `docs/i18n-glossary.md` に従う）。直書きの日本語は `npm test` の lint-i18n が落とす。基準（`tests/i18n-baseline.json`）の更新は減らすときだけ（`node tests/lint-i18n.mjs --update-baseline`）。
   - `web/locales/*/ui.json` は `JSON.stringify(…, null, 2)` の整形と一致しないので、読んで書き直さず、キーは文字の置き換えで足す。`sed '/"connected"/d'` のような行単位の削除は別の節の同じキーまで消すので使わない。
-- コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。全件は約 8 分かかる（Bash tool の既定 2 分では途中で background へ回る）。1 本だけなら `node tests/run.mjs <ケース名>`。
+- コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。1 本だけなら `node tests/run.mjs <ケース名>`。
+  - 全件（244 本・約 8700 判定。2026-10-03）は 1 回で 12〜15 分かかり、Bash tool の 1 回の上限（600 秒）を超える。`timeout 590 npm test` は途中で打ち切られ、その結果は通ったとみなさない。
+  - 分けて流す: `node tests/run.mjs __none__ 2>&1 | grep "あるのは"` で名前の一覧を取り、ファイルに書いて分け、`node tests/run.mjs <名前…>` で 1 回ずつ流す。全部の「全て通過」の行を確かめる。名前は部分一致で選ぶので、短い名前は別のテストも拾い、本数は少し増える。2 つに分けた前半（125 本）が 568 秒だったので、3 つに分けると余裕がある。
 - `npm run test:e2e` は実際の LLM を呼び出すため、実サービスとの接続確認が必要な変更で実行する。
 - 現在は独立したビルドコマンドはない。文書のみの変更では、内容と `git diff --check` の確認を行えばよい。
 - UI の変更では必要に応じてブラウザーで表示・操作を確認する。`agent-browser` を使い（会話に内蔵ブラウザーがあればそれ）、無ければ `playwright-cli`。ユーザーによるツール・ブラウザー指定があればそれに従う。
