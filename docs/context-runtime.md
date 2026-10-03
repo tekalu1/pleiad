@@ -24,14 +24,14 @@
 
 固定の対象はその会話が使ったものではなく**探索結果すべて**（`contextPin`）なので、`~/.claude/skills/**` や `~/.codex/AGENTS.md` のような home 側の編集 1 件で、その内容と無関係な会話でも「変更あり」が出て、次の送信で読み込み直しが走る（送信は止まらない）。Skill 本文だけの編集では pin は動かない。
 
-どのファイルが変わったかは `pinChanges` をそのまま呼んで確かめる（引数は `sessions.json` の `contextSession`）。送信時の自動の読み込み直しは、探索を二度走らせないために前後の記録を突き合わせる（`pinnedChanges`）。
+どのファイルが変わったかは `pinChanges` をそのまま呼んで確かめる（引数は DB の会話の記録の `contextSession`）。送信時の自動の読み込み直しは、探索を二度走らせないために前後の記録を突き合わせる（`pinnedChanges`）。
 
 ```js
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pinChanges } from '../core/context-runtime.mjs';
-const all = JSON.parse(await fs.readFile(path.join(os.homedir(), '.agent-host', 'sessions.json'), 'utf8'));
+const all = readSessions(path.join(os.homedir(), '.agent-host'));   // tests/lib/data-store.mjs。読み取り専用の接続で DB から組み直す
 console.log(await pinChanges(all['<sessionId>'].contextSession, {}));
 // -> { differs, paths, files: [{ path, before, after, modifiedAt }] }
 ```

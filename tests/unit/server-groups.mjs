@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
+import { readSessions } from '../lib/data-store.mjs';
 
 export const name = "server-groups";
 export const title = "fork のグループが状態と一緒に動く";
@@ -56,7 +57,7 @@ export default async function (t) {
     t.ok("外した印が一覧の行に出る", (await rowOf(grand))?.ungrouped === true);
     let saved;
     for (let attempt = 0; attempt < 60; attempt++) {
-      saved = JSON.parse(await fs.readFile(path.join(scratch, "data", "sessions.json"), "utf8"));
+      saved = readSessions(path.join(scratch, "data"));
       if (saved[grand]?.ungrouped === true) break;
       await new Promise(resolve => setTimeout(resolve, 50));
     }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { readConversationIndex } from "./data-store.mjs";
 
 const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "agent-host-conv-storage-"));
 process.env.AGENT_HOST_DATA = scratch;
@@ -32,7 +33,7 @@ const sessRaw = JSON.parse(await fs.readFile(sessFile, "utf8"));
 assert.equal(sessRaw.messages?.[0]?.text, "hello old", "個別ファイルに messages が分割保存される");
 
 // インデックスから messages が除外され軽量化されていることを確認
-const indexRaw = JSON.parse(await fs.readFile(convFile, "utf8"));
+const indexRaw = readConversationIndex(scratch);
 assert.equal(indexRaw["migrated-1"].messages, undefined, "インデックス側には messages が含まれない");
 
 // 新規セッション作成と削除
@@ -44,5 +45,7 @@ assert.equal(await fs.stat(newSessFile).then(() => true, () => false), true, "�
 await deleteUnsentConversation(newId);
 assert.equal(await fs.stat(newSessFile).then(() => false, () => true), true, "未送信セッション削除で個別ファイルが削除される");
 
+await (await import("../../core/conversations.mjs")).closeConversations();
+(await import("../../core/store.mjs")).closeStore();
 await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
 console.log("conversations storage split and migration verified");

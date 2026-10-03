@@ -180,6 +180,8 @@ const cases = [
   await import('./unit/desktop-updates.mjs'),
   await import('./unit/desktop-exit-dialog.mjs'),
   await import('./unit/message-queue.mjs'),
+  // 送り終わった outbox は直近だけ残す: 並び・未送の項目・二重送信の判定を保つ（ADR 0106）
+  await import("./unit/outbox-prune.mjs"),
   await import('./unit/message-steer.mjs'),
   await import('./unit/visualize.mjs'),
   await import('./unit/server-visualize.mjs'),
@@ -264,6 +266,14 @@ const cases = [
   // 確認済み（既読）の置き場と、2 本の接続で共有されること（fake バックエンド）
   await import("./unit/read-store.mjs"),
   await import("./unit/store-flush.mjs"),
+  // 再発防止（ADR 0106）: データ置き場への丸ごと書きは許可リスト（上限と理由）に載ったものだけ・件数が増えても 1 件の更新は全体を直列化しない
+  // 形式 1（記録ごとの JSON）→ 2（SQLite）の移行: 成功・失敗しても元が残る・2 回目は移行しない・整形済み/compact
+  await import("./unit/schema-migration.mjs"),
+  await import("./unit/db-tables.mjs"),
+  // 実データの写しを作る道具: remote/ と秘密を写さない・DB は VACUUM INTO・委譲のタスクは既定で空
+  await import("./unit/copy-data-dir.mjs"),
+  await import("./unit/data-writes.mjs"),
+  await import("./unit/store-write-scale.mjs"),
   await import("./unit/server-read.mjs"),
   // 開いている会話の宣言（流れの出来事を絞る）と、会話の一覧の使い回し（ADR 0024）
   await import("./unit/server-watch.mjs"),

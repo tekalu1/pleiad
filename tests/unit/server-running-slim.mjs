@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
+import { writeAgentTasks } from '../lib/data-store.mjs';
 export const name = 'server-running-slim';
 export const title = 'running は過去の委譲を配らない（会話の分は agentTasks の tree・taskIds で読む）・定期便は同じ中身を送らない';
 const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
@@ -22,7 +23,7 @@ export default async function(t) {
   // 子の会話がさらに委譲した孫と、別の会話の委譲
   records['seed-grand'] = seeded('seed-grand', 'seed-child-0', 'seed-grandchild', 5_000);
   records['seed-other'] = seeded('seed-other', 'other-parent', 'other-child', 6_000);
-  await fs.writeFile(path.join(scratch, 'agent-tasks.json'), JSON.stringify(records));
+  writeAgentTasks(scratch, records);
 
   const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir: scratch });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });

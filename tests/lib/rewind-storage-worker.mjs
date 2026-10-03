@@ -239,9 +239,11 @@ for (const how of ["revert", "fork", "fail"]) {
 }
 
 // ---- 失敗の場面（レビューの指摘の再現）
-const index = path.join(scratch, "conversations.json");
-const blockIndex = async () => { await fs.rename(index, index + ".aside"); await fs.mkdir(index); };
-const unblockIndex = async () => { await fs.rmdir(index); await fs.rename(index + ".aside", index); };
+// 会話の保存（本文は conversations/<id>.json、索引は SQLite）に書けない状態を作る:
+// 本文の置き場（conversations/）をファイルに置き換える（mkdir が EEXIST で失敗する）。索引は変わらないので、本文の保存が失敗の入り口
+const convDir = path.join(scratch, "conversations");
+const blockIndex = async () => { await fs.rename(convDir, convDir + ".aside"); await fs.writeFile(convDir, "blocked"); };
+const unblockIndex = async () => { await fs.rm(convDir, { force: true }); await fs.rename(convDir + ".aside", convDir); };
 
 // R1: 拒否の形ではない例外で失敗し続けても、印を残さずホスト管理に落とす（3 回目は印を渡さない）
 {

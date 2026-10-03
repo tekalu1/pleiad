@@ -21,6 +21,7 @@ import { agentDefinition } from '../../core/backends/antigravity-context.mjs';
 import { createBrowserSiteApprovals } from '../../core/browser-confirm.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
+import { readSessions } from '../lib/data-store.mjs';
 
 const require = createRequire(import.meta.url);
 const bp = require('../../desktop/browser-panel.cjs');
@@ -378,7 +379,7 @@ export default async function (t) {
   const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', FAKE_PARENT_PORT_LOG: log }, dataDir, entry: path.join(ROOT, 'tests', 'lib', 'parent-port-server.mjs') });
   let c;
   const messages = async () => (await fs.readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean).map(l => JSON.parse(l));
-  const meta = async id => JSON.parse(await fs.readFile(path.join(dataDir, 'sessions.json'), 'utf8'))[id] ?? {};
+  const meta = async id => readSessions(dataDir)[id] ?? {};
   try {
     c = await open({ port: server.port, token: server.token, autoAllow: true });
     await c.cmd('setPref', { key: 'browserProfiles', value: [{ id: 'main' }, { id: WORK, name: '仕事', memo: 'seamth.com の Google アカウント' }] });

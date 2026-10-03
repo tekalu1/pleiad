@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
+import { readSessions } from '../lib/data-store.mjs';
 
 export const name = 'server-context';
 export const title = 'この会話のコンテキスト: 即時保存・この会話では外す・読み込み直し・差分・エージェント任せの MCP';
@@ -124,7 +125,7 @@ export default async function (t) {
     t.ok('全体の設定の変更が、次のターンから始まっている会話に効く', turn.outcome === 'ok' && record.report.owners.mcp === 'ply'
       && record.report.entries.find(e => e.name === 'fixture')?.status === 'connected' && await count() === beforeFollow + 1, JSON.stringify(record.report.owners));
     t.ok('反映したことを記録する（開始時刻は保つ）', typeof record.refreshedAt === 'string' && record.startedAt === followStarted);
-    const history = JSON.parse(await fs.readFile(path.join(dataDir, 'sessions.json'), 'utf8'))[fs1.sessionId]?.history ?? [];
+    const history = readSessions(dataDir)[fs1.sessionId]?.history ?? [];
     t.ok('反映したことが会話の履歴に残る', history.some(h => h.field === 'context' && h.reasonKey === 'contextSettingsApplied'), JSON.stringify(history).slice(0, 400));
     await client.cmd('setContextSettings', { cwd: follow, place: null, kind: 'mcp', value: { owner: 'ply', user: none, directory: { sources: ['claude'], excludePaths: [] }, disabled: ['fixture'] } });
     await client.runTurn({ ...fs1, prompt: 'echo:follow-3' }, { ms: 60_000 });

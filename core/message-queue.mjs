@@ -1,6 +1,20 @@
 // Durable acceptance is separate from execution. A lost backend acknowledgement
 // is never retried automatically: the original may already have been consumed.
 import { t } from './i18n.mjs';
+
+// 送り終わった（sent）・取り消した（cancelled）項目は、会話ごとに直近この件数だけ残す。
+// 二重送信を防ぐ判定（accept の同じ id の照合）は、直近の送信の再試行にしか効かない。古い項目の id が再び来ることはなく、
+// 並びの判定（kick）も sent・cancelled を飛ばすので、捨てても送り漏れ・二重送信は起きない。残さないと outbox が会話の長さで増え続ける
+export const OUTBOX_KEEP_FINISHED = 20;
+const finished = m => m.status === 'sent' || m.status === 'cancelled';
+/** 終わった項目のうち古いものを落とす（並びは保つ）。落とすものが無ければ同じ配列を返す */
+export function pruneOutbox(items, keep = OUTBOX_KEEP_FINISHED) {
+  const done = items.filter(finished).length;
+  if (done <= keep) return items;
+  let drop = done - keep;
+  return items.filter(m => !(finished(m) && drop > 0 && drop--));
+}
+
 export function createMessageQueue({ store, active, start, changed, delivered }) {
   const locks = new Map();
   const serial = (id, fn) => {
@@ -19,6 +33,7 @@ export function createMessageQueue({ store, active, start, changed, delivered })
     return wait ? items.map(m => (m.status === 'queued' ? { ...m, waiting: wait } : m)) : items;
   };
   const save = async (id, items) => {
+    items = pruneOutbox(items);
     await store.setSessionData(id, 'outbox', items, { durable: true });
     changed(id, view(id, items));
   };

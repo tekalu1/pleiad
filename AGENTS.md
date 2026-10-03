@@ -47,7 +47,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 ## 実装と検証
 
 - 作業用 worktree 内で実装・検証・コミットを行い、依頼に必要な変更だけを含める。
-- 開発環境は Node.js 20 以上。依存関係の導入には `npm ci` を使う。
+- 開発環境は Node.js 22.13 以上（`node:sqlite` を使う。ADR 0106）。依存関係の導入には `npm ci` を使う。
 - 作成直後の worktree には `node_modules` が無い。依存が `main` と同じなら、PowerShell から `cmd /c mklink /J <worktreeの絶対パス>\node_modules <メインの作業ディレクトリの絶対パス>\node_modules` でジャンクションを張れば足りる（Bash tool の `cmd //c mklink` は失敗する）。外すときは `cmd /c rmdir <worktreeの絶対パス>\node_modules`（`rm -rf` はリンク先の実体を消す恐れがある）。
 - テストは必ず作業用 worktree の中で実行する。`main` の作業ディレクトリで `npm test` を走らせても worktree の変更は検証できない。
 - 設計は `docs/design.md`、画面の変更は `docs/design-system.md` を参照する。
@@ -62,9 +62,17 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 - UI の変更では必要に応じてブラウザーで表示・操作を確認する。`agent-browser` を使い（会話に内蔵ブラウザーがあればそれ）、無ければ `playwright-cli`。ユーザーによるツール・ブラウザー指定があればそれに従う。
   - LLM を呼ばずに画面を見るなら、fake バックエンドを別ポート・別のデータ置き場で立てる（実データを汚さないため）: `AGENT_HOST_BACKENDS=fake AGENT_HOST_DATA=<一時ディレクトリ> AGENT_HOST_PORT=7499 node core/server.mjs`。トークン付き URL は起動ログに出る。tests/browser/*.cjs は日本語の文言で要素を引くので、OS が日本語でなければ `AGENT_HOST_LOCALE=ja` も付ける。
   - 指定ポートが埋まっていると空きポートへ移る。止めるときは起動したプロセスの PID か、起動ログの実際のポートで引いた PID を使う。**指定したポート番号で PID を引いて止めない**（そのポートを持っていた別の作業のサーバーを殺す）。
-  - 実データで測るときは `~/.agent-host` を `temporary/` の下へ写し、`<写し>/remote/` と `<写し>/agent-tasks.json` を消してから `AGENT_HOST_DATA=<写し>` で立てる。理由: リモートを有効にした置き場の写しは同じホストの鍵で中継へつなぎ、本物のホストの接続を追い出す。委譲の続きも走らせないため。写しには秘密も入るので、測り終えたら消す。委譲のタスクが載る送信量（`running` など）を測るときだけは `agent-tasks.json` を残す（`docs/dev-verification.md`「重さと動きを測る」）。
+  - 実データで測るときは `node scripts/copy-data-dir.mjs <temporary/ の下の写し先>` で `~/.agent-host` を写し（手でコピーしない。**`remote/` と `*-secrets.json` は写さない**。DB は動いている間にファイルをコピーせず、読み取り専用の接続で `VACUUM INTO` する。写しの `agent_tasks` は既定で空になる）、`AGENT_HOST_DATA=<写し>` で立てる。理由: リモートを有効にした置き場の写しは同じホストの鍵で中継へつなぎ、本物のホストの接続を追い出す。委譲の続きも走らせないため。写しには会話の中身も入るので、測り終えたら消す。委譲のタスクが載る送信量（`running` など）を測るときだけは `--keep-tasks` で残す（`docs/dev-verification.md`「重さと動きを測る」）。
   - fake の台本・種の置き方・測り方・デスクトップ版のハーネス、`playwright-cli` の落とし穴は `docs/dev-verification.md`。テストやブラウザーの確認でつまずいたら先に見る。
 - コミット前に差分を確認し、対象ファイルを明示してステージする。検証が失敗した場合は原因を調べ、未解決のまま完了扱いにしない。
+
+## データ置き場の保存（ADR 0106）
+
+- **データ置き場に、記録の件数や会話の長さとともに大きくなる単一ファイルを作らない。** 件数・長さ・時間で増える記録は、DB（`pleiad.db`。`core/db.mjs`）の行にし、書くのは変わった行だけにする。会話の記録・委譲のタスク・使用量・会話の索引は、すでに行になっている。
+- JSON ファイル（`writeAtomic`・`fs.writeFile`・`jsonFile` など）で丸ごと書くのは、**上限の決まったもの**（設定・台帳・固定の小ささの印）だけ。書く箇所を足すときは `tests/data-writes-allowlist.mjs` に、ファイル名・上限（定数名と値）・理由を書く。`npm test` の `data-writes` が、`core/` の書き込みでリストに無いものを落とす。上限を書けないものは、行にする。
+- 「上限が決まっていない」書き先は、許可リストの `unbounded: true` の既知の例外だけ（会話の本文など）。**増やさない**（`data-writes` が件数を数える）。行へ移したときに減らす。
+- 件数・会話の長さで増える項目を会話の記録（`store.setSessionData` の受け付ける項目）へ足すときは、大きくなりうるかを先に考える。件数に上限が無いなら、上限（会話あたりの件数・古いものを捨てる）を決めるか、別の行・表にする。`tests/unit/store-write-scale.mjs`（会話・タスク・使用量を 2,000 件入れて、1 件の更新が全体を直列化しないことを見る）を通す。
+- DB の形（表・形式番号）を変える変更は、形式番号を上げ、`core/schema-migration.mjs` の形（写し → 取り込み → 読み戻して突き合わせ → 番号の更新。失敗したら元に触れない）で移行を足す（`docs/desktop-releases.md`「適用とデータ保護」）。
 
 ## 使い捨てのもの（temporary/）
 

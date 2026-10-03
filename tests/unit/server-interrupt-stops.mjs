@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
+import { readSessions } from '../lib/data-store.mjs';
 
 export const name = 'server-interrupt-stops';
 export const title = '中断で止めたもの（委譲タスク・届いていない結果・裏のコマンド・承認待ち）を残し、再開・送り直し・新しい送信の最初に 1 回だけ伝える';
@@ -27,7 +28,7 @@ export default async function (t) {
   let server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir });
   // 承認は自分で答える（自動では許可しない）
   let c = await open({ port: server.port, token: server.token });
-  const sidecar = async () => JSON.parse(await fs.readFile(path.join(dataDir, 'sessions.json'), 'utf8'));
+  const sidecar = async () => readSessions(dataDir);
   const until = async (fn, ms = 20000) => { const end = Date.now() + ms; while (Date.now() < end) { const v = await fn(); if (v) return v; await sleep(50); } return null; };
   const tasksOf = async owner => c.cmd('agentTasks', { sessionId: owner });
   const idle = async sessionId => until(async () => {

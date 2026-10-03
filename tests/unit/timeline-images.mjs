@@ -75,7 +75,7 @@ export default async function(t) {
     t.ok("HTMLは実行せず添付として返す", html.headers.get("content-type")==="application/octet-stream" && html.headers.get("content-disposition").startsWith("attachment"));
     await fs.symlink(scratch,path.join(workspace,"escape"),process.platform==="win32"?"junction":"dir");
     t.ok("作業場所外へのリンクも読める",(await fetch(url(path.join(workspace,"escape/secret.txt")),auth)).status===200);
-    t.ok("データ置き場の秘密はリンク経由も拒否",(await fetch(url(path.join(workspace,"escape/data/sessions.json")),auth)).status===404);
+    t.ok("データ置き場の秘密はリンク経由も拒否",(await fetch(url(path.join(workspace,"escape/data/pleiad.db")),auth)).status===404);
     const upload=path.join(data,'uploads','logo.png');
     await fs.mkdir(path.dirname(upload),{recursive:true}); await fs.copyFile(local,upload);
     t.ok("添付は画像として読める",(await fetch(url(upload),auth)).headers.get('content-type')==='image/png');

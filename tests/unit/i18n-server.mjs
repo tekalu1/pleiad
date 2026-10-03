@@ -12,6 +12,7 @@ import * as ui from "../../web/i18n.mjs";
 import { savedReason, savedCaption, savedEvent, savedTitle } from "../../web/saved-text.mjs";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open, sleep } from "../lib/ws-client.mjs";
+import { readSessions } from '../lib/data-store.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -97,7 +98,7 @@ export default async function (t) {
     t.ok("グループを作った知らせもキー付き", events[3]?.reasonKey === "createdGroup" && events[3]?.reason === "グループを作った");
     let history = [];
     for (let i = 0; i < 40; i++) {
-      const sessions = JSON.parse(await fs.readFile(path.join(dataDir, "sessions.json"), "utf8"));
+      const sessions = readSessions(dataDir);
       history = sessions[sessionId]?.history?.filter((h) => h.field === "status") ?? [];
       if (history.length >= 3) break;
       await sleep(50);

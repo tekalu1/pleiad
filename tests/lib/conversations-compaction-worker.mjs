@@ -7,4 +7,9 @@ try {
   const { compactionContracts } = await import('../unit/conversations.mjs');
   await compactionContracts();
   console.log('compaction contracts passed');
-} finally { await fs.rm(scratch, { recursive: true, force: true }); }
+} finally {
+  // データ置き場を消す前に DB の接続を離す（Windows は開いたままのファイルを消せない）
+  await (await import('../../core/conversations.mjs')).closeConversations();
+  (await import('../../core/store.mjs')).closeStore();
+  await fs.rm(scratch, { recursive: true, force: true });
+}

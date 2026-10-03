@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
+import { readAgentTasks } from '../lib/data-store.mjs';
 
 export const name = 'agent-tasks-steer';
 export const title = '追加指示（ply_task_send）: 走っている子のターンへ途中送信で渡す・受理されない/捨てられた/合図なしは待機へ戻り 1 回だけ次のターンで';
@@ -60,7 +61,7 @@ export default async function(t) {
       await until(() => manager.get(id).status === 'completed');
       await sleep(200);
       t.ok('同じ回の結果で完了し、新しいターンは走らない', JSON.stringify(runsOf(id)) === '["hold-a"]' && manager.get(id).result === 'result:hold-a');
-      const saved = JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'));
+      const saved = readAgentTasks(dir);
       t.ok('配送済みは保存される', saved[id].instructions[0].state === 'delivered' && saved[id].queue.length === 0);
       await until(() => manager.get(id).notification === 'sent');
       t.ok('完了通知は走っていた回の結果を 1 回だけ渡す', manager.get(id).notification === 'sent');

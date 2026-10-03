@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open, sleep } from "../lib/ws-client.mjs";
+import { readSessions } from '../lib/data-store.mjs';
 
 export const name = "server-fake";
 export const title = "サーバ全体が LLM 無しで往復する";
@@ -98,7 +99,7 @@ export default async function (t) {
     const row = list.find((s) => s.id === sid);
     const completedAt = first.events.find(e => e.type === "turnEnd")?.completedAt;
     t.ok("完了通知と一覧に同じ完了時刻がある", Number.isFinite(completedAt) && row?.completedAt === completedAt);
-    const savedCompletion = JSON.parse(await fs.readFile(path.join(scratch, "data", "sessions.json"), "utf8"));
+    const savedCompletion = readSessions(path.join(scratch, "data"));
     t.ok("切断中の完了も復元できるよう永続化する", savedCompletion[sid]?.completedAt === completedAt);
     t.ok("一覧に backend が付く", row?.backend === "fake", row?.backend ?? "(なし)");
     t.ok("一覧に cwd が乗る", row?.cwd === ROOT, row?.cwd ?? "(なし)");
@@ -158,26 +159,26 @@ export default async function (t) {
       const pc = viaCase.events.find((e) => e.type === "present");
       t.ok("Windows はドライブの大小が違っても置き場の中（端末から送ったもの）として扱う", pc?.origin === "device" && String(pc?.dataUri ?? "").startsWith("data:image/png"), JSON.stringify({ origin: pc?.origin, path: pc?.path }));
     } else t.ok("置き場のパスの大小を区別しない判定は Windows だけ（skip）", true);
-    // データ置き場の中（uploads の外。sessions.json など）と、置き場へのジャンクション・シンボリックリンクは、載せない（ADR 0050。/local-file と同じ検査）
+    // データ置き場の中（uploads の外。pleiad.db など）と、置き場へのジャンクション・シンボリックリンクは、載せない（ADR 0050。/local-file と同じ検査）
     const dataDir = path.join(scratch, "data");
-    const dataFile = path.join(dataDir, "sessions.json");
+    const dataFile = path.join(dataDir, "pleiad.db");
     const m3 = c.mark();
-    await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: dataFile, name: "sessions.json", mime: "" }] }, { ms: 20_000 });
+    await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: dataFile, name: "pleiad.db", mime: "" }] }, { ms: 20_000 });
     t.ok("データ置き場の中（uploads の外）のファイルは載せない", !c.since(m3).some((e) => e.type === "present"));
     const linkDir = path.join(scratch, "link-to-data");
     const linked = await fs.symlink(dataDir, linkDir, "junction").then(() => true, (e) => e.message);
     if (linked !== true) t.ok("置き場へのジャンクションを作れない環境では確かめられない（skip）: " + linked, true);
     else {
       const m4 = c.mark();
-      await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: path.join(linkDir, "sessions.json"), name: "sessions.json", mime: "" }] }, { ms: 20_000 });
+      await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: path.join(linkDir, "pleiad.db"), name: "pleiad.db", mime: "" }] }, { ms: 20_000 });
       t.ok("データ置き場へのジャンクション・リンク越しのパスも載せない", !c.since(m4).some((e) => e.type === "present"));
     }
-    const fileLink = path.join(scratch, "link-to-sessions.json");
+    const fileLink = path.join(scratch, "link-to-pleiad.db");
     const fileLinked = await fs.symlink(dataFile, fileLink, "file").then(() => true, (e) => e.code ?? e.message);
     if (fileLinked !== true) t.ok("ファイルのシンボリックリンクを作れない環境では確かめられない（skip）: " + fileLinked, true);
     else {
       const m5 = c.mark();
-      await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: fileLink, name: "sessions.json", mime: "" }] }, { ms: 20_000 });
+      await c.runTurn({ prompt: "echo:x", sessionId: sid, cwd: ROOT, attachments: [{ path: fileLink, name: "pleiad.db", mime: "" }] }, { ms: 20_000 });
       t.ok("データ置き場のファイルへのシンボリックリンクも載せない", !c.since(m5).some((e) => e.type === "present"));
     }
 

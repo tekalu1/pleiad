@@ -1,8 +1,8 @@
 // Provider quota snapshots and local usage are deliberately separate: tokens cannot
 // be converted into subscription percentages. Never persist account credentials.
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { t, agentT } from './i18n.mjs';
+import { openData } from './data-schema.mjs';
+import { usageTable } from './db.mjs';
 import { CLAUDE_COST_DELTA } from './usage-migrations.mjs';
 
 export const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -139,55 +139,55 @@ export function usageRecord(record, at) {
 // 済んだ移行の名前（core/usage-migrations.mjs）。新しく作る記録は直す必要が無いので、最初から済みにする
 export const USAGE_MIGRATIONS = Object.freeze([CLAUDE_COST_DELTA]);
 
+/**
+ * 使用量の記録（SQLite の usage_meta・usage_records。core/db.mjs）。1 ターン 1 行で、足すのは新しい 1 行だけ。
+ * 以前の usage.json（全体を毎回書き直す）は形式 2 への移行で取り込む（ADR 0106）。dir は データ置き場
+ */
 export function createUsageStore(dir, { now = Date.now } = {}) {
-  const file = path.join(dir, 'usage.json');
+  let handle = null, table = null;
+  const open = () => {
+    if (!handle) { handle = openData(dir); table = usageTable(handle.db); }
+    return table;
+  };
   let writes = Promise.resolve();
-  async function read() {
-    try {
-      const data = JSON.parse(await fs.readFile(file, 'utf8'));
-      if (data.version !== 1 || !Array.isArray(data.records)) throw new Error(t('usage.recordInvalid'));
-      return data;
-    } catch (e) { if (e.code === 'ENOENT') return { version: 1, since: now(), migrations: [...USAGE_MIGRATIONS], records: [] }; throw e; }
-  }
-  async function write(data) {
-    await fs.mkdir(dir, { recursive: true });
-    const tmp = file + '.tmp';
-    await fs.writeFile(tmp, JSON.stringify(data), { mode: 0o600 }); await fs.rename(tmp, file);
-  }
-  // 書き込みは直列にする（記録と移行が同じ usage.json を読み書きする）
+  // 書き込みは直列にする（記録と移行が同じ記録を読み書きする）
   const serial = fn => { const task = writes.catch(() => {}).then(fn); writes = task; return task; };
   return {
-    file,
+    dir,
     record(record) {
       return serial(async () => {
-        const data = await read();
+        const rows = open();
         const safe = usageRecord(record, now());
-        if (!data.records.some(r => r.id === safe.id)) data.records.push(safe);
-        await write(data);
+        if (!rows.has(safe.id)) rows.add(safe, { since: now(), migrations: [...USAGE_MIGRATIONS] });
       });
     },
-    /** 移行（core/usage-migrations.mjs）。fn が新しい中身を返したときだけ書く。ファイルが無ければ何もしない */
+    /** 記録の全体（{ version, since, migrations, records }）。まだ 1 件も書いていなければ null。移行（core/usage-migrations.mjs）が読む */
+    async snapshot() { await writes; return open().snapshot(); },
+    /** 移行（core/usage-migrations.mjs）。fn が新しい中身を返したときだけ書く。記録が無ければ何もしない */
     update(fn) {
       return serial(async () => {
-        let data;
-        try { data = JSON.parse(await fs.readFile(file, 'utf8')); } catch (e) { if (e.code === 'ENOENT') return null; throw e; }
-        if (data.version !== 1 || !Array.isArray(data.records)) throw new Error(t('usage.recordInvalid'));
+        const data = open().snapshot();
+        if (!data) return null;
         const next = await fn(data);
-        if (next?.data) await write(next.data);
+        if (next?.data) open().replace(next.data);
         return next?.result ?? null;
       });
     },
+    /** DB の接続を離す（データ置き場を消す前。サーバーは閉じない） */
+    async close() { await writes.catch(() => {}); handle?.release(); handle = null; table = null; },
     async summary(backend) {
       await writes;
-      const data = await read();
+      const rows = open();
+      // 7 日分（5 時間分はその一部）だけを DB から取る
+      const recent = rows.recent(backend, now() - 168 * 3600_000);
       const summarize = hours => {
-        const rows = data.records.filter(r => r.backend === backend && r.at >= now() - hours * 3600_000);
+        const rows = recent.filter(r => r.backend === backend && r.at >= now() - hours * 3600_000);
         return { turns: rows.length, ...Object.fromEntries(['inputTokens', 'outputTokens', 'cachedTokens', 'costUsd'].map(key => {
           const known = rows.filter(r => number(r[key]) != null);
           return [key, { value: known.length ? known.reduce((sum, r) => sum + r[key], 0) : null, measured: known.length }];
         })) };
       };
-      return { since: data.records.length ? data.since : null, fiveHour: summarize(5), sevenDay: summarize(168) };
+      return { since: rows.count() ? rows.since() : null, fiveHour: summarize(5), sevenDay: summarize(168) };
     },
   };
 }

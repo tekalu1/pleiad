@@ -9,14 +9,22 @@ import { applyRewindMark, markIsLive, nativeUuid, keptPresentIndexes, removedSum
 import { buildItems } from "../web/timeline.mjs";
 import { t, agentT } from "./i18n.mjs";
 import { writeAtomic } from "./atomic-file.mjs";
+import { openData } from "./data-schema.mjs";
+import { conversationTable } from "./db.mjs";
 import { classifySystemMessages } from "./system-messages.mjs";
 import { promptTitle } from "./prompt-title.mjs";
 
-const file = path.join(store.dataDir, "conversations.json");
+// 会話の索引（本文を除いたメタ情報）は SQLite の conversations（1 会話 1 行。core/db.mjs、ADR 0106）、本文は
+// conversations/<id>.json（会話ごとに 1 ファイル）。索引は変えた会話の行だけを書く。本文はまだ変更のたびに 1 会話分を丸ごと書く
+// （会話の長さに比例する。tests/unit/data-writes.mjs の許可リストに既知の例外として載せている）
 const convDir = path.join(store.dataDir, "conversations");
 let records;
 let loading;
+let table = null;
+let handle = null;
 let writes = Promise.resolve();
+const indexSaved = new Map();   // 索引に最後に書けた JSON（id -> 文字列）。変わった会話だけを書くための比べ元
+const indexOf = ({ messages, presents, _dirty, ...meta }) => JSON.stringify(meta);
 
 function sessionFilePath(id) {
   const safe = String(id).replace(/[^A-Za-z0-9._-]/g, "_");
@@ -51,12 +59,10 @@ async function loadSessionFile(id, record) {
 
 async function all() {
   loading ??= (async () => {
-    try {
-      records = JSON.parse(await fs.readFile(file, "utf8"));
-    } catch (e) {
-      if (e.code !== "ENOENT") throw e;
-      records = {};
-    }
+    handle = openData(store.dataDir);
+    table = conversationTable(handle.db);
+    records = {};
+    for (const [id, json] of table.loadRows()) { records[id] = JSON.parse(json); indexSaved.set(id, json); }
     // 既存データのマイグレーション（旧 conversations.json に messages がある場合、個別ファイルへ切り離す）
     let needsMigration = false;
     for (const r of Object.values(records)) {
@@ -64,18 +70,19 @@ async function all() {
     }
     if (needsMigration) {
       await fs.mkdir(convDir, { recursive: true });
-      const indexOnly = {};
+      const upserts = [];
       for (const [id, r] of Object.entries(records)) {
         const { messages = [], presents, ...meta } = r;
-        indexOnly[id] = meta;
         for (const m of messages) {
           for (const c of m.toolCalls ?? []) if (c.result) sanitizeToolResult(c.result);
         }
         const payload = { messages, ...(presents ? { presents } : {}) };
         await writeAtomic(sessionFilePath(id), JSON.stringify(payload));
+        upserts.push([id, JSON.stringify(meta)]);
+        records[id] = meta;
       }
-      await fs.mkdir(store.dataDir, { recursive: true });
-      await writeAtomic(file, JSON.stringify(indexOnly));
+      table.save(upserts);
+      for (const [id, json] of upserts) indexSaved.set(id, json);
     }
     return records;
   })();
@@ -88,6 +95,7 @@ async function save(additions = {}) {
     Object.assign(entries, additions);
     await fs.mkdir(convDir, { recursive: true });
     const targetIds = new Set(Object.keys(additions));
+    const upserts = [];
     for (const [id, r] of Object.entries(entries)) {
       if (r._dirty || targetIds.has(id)) {
         const payload = {
@@ -97,19 +105,32 @@ async function save(additions = {}) {
         // 一意な一時ファイル＋一時的に開けないときだけ rename をやり直す（core/atomic-file.mjs）
         await writeAtomic(sessionFilePath(id), JSON.stringify(payload));
         r._dirty = false;
+        const json = indexOf(r);
+        if (indexSaved.get(id) !== json) upserts.push([id, json]);
       }
     }
-    const indexOnly = {};
-    for (const [id, r] of Object.entries(entries)) {
-      const { messages, presents, _dirty, ...meta } = r;
-      indexOnly[id] = meta;
+    const removals = [...indexSaved.keys()].filter(id => !Object.hasOwn(entries, id));
+    if (upserts.length || removals.length) {
+      try { table.save(upserts, removals); }
+      catch (e) {
+        // 索引に書けなかった会話は、次の保存で本文と索引をもう一度書く
+        for (const [id] of upserts) if (entries[id]) entries[id]._dirty = true;
+        throw e;
+      }
+      for (const [id, json] of upserts) indexSaved.set(id, json);
+      for (const id of removals) indexSaved.delete(id);
     }
-    const json = JSON.stringify(indexOnly);
-    await fs.mkdir(store.dataDir, { recursive: true });
-    await writeAtomic(file, json);
   });
   writes = next.catch(() => {});
   return next;
+}
+
+/** DB の接続を離す（データ置き場を消す前。テストの後片付け用）。書き込み中の保存を待ってから離す。以後に呼べば開き直す */
+export async function closeConversations() {
+  await writes;
+  handle?.release();
+  handle = null; table = null; loading = undefined; records = undefined;
+  indexSaved.clear();
 }
 
 /**

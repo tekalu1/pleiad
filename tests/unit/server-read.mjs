@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open, sleep } from "../lib/ws-client.mjs";
+import { readSessions } from '../lib/data-store.mjs';
 
 export const name = "server-read";
 export const title = "完了の確認をホストに残し、ほかの窓・端末へ知らせる";
@@ -48,7 +49,7 @@ export default async function (t) {
     t.ok("自分の接続にも届く", remote.since(migrate).some((e) => e.type === "read"));
     let saved;
     for (let attempt = 0; attempt < 60; attempt++) {
-      saved = JSON.parse(await fs.readFile(path.join(scratch, "data", "sessions.json"), "utf8"));
+      saved = readSessions(path.join(scratch, "data"));
       if (saved[a]?.readAt === doneA && saved[b]?.readAt === doneB) break;
       await sleep(50);
     }

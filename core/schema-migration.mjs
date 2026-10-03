@@ -1,0 +1,126 @@
+// データ置き場の形式 1 → 2 の移行（ADR 0106）。形式 1 は記録ごとの JSON ファイル、形式 2 は SQLite（pleiad.db）。
+//
+// 手順（docs/desktop-releases.md「適用とデータ保護」）。起動時、書き込みを始める前に 1 回だけ走る:
+//   1. 対象の JSON を <data>/backup-schema1-<日時>/ へ写す
+//   2. 作りかけの pleiad.db があれば消し、新しい DB に取り込む
+//   3. DB から読み戻して、元の JSON と突き合わせる（1 つでも違えば失敗）
+//   4. 成功してから data-schema.json を 2 にする。その後で元の JSON を消す（写しは残る）
+// 失敗したら作りかけの DB と写しを消し、元の JSON にも data-schema.json にも触れずに投げる（起動が止まる）。
+// 全部同期で動く。起動の途中の 1 回きりで、その間に別の書き込みは無い。
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { dbPath, openRaw, transaction, sessionTable, taskTable, usageTable, conversationTable } from './db.mjs';
+
+export const LEGACY_FILES = ['sessions.json', 'agent-tasks.json', 'usage.json', 'conversations.json'];
+const DB_SIDE_FILES = ['-wal', '-shm', '-journal'];
+
+const exists = file => { try { fs.accessSync(file); return true; } catch { return false; } };
+
+function readJson(file, what, check) {
+  let value;
+  try { value = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (e) { throw new Error(`${what}: ${e?.message ?? e}`); }
+  if (!check(value)) throw new Error(`${what}: unexpected shape`);
+  return value;
+}
+const isObject = value => !!value && typeof value === 'object' && !Array.isArray(value);
+
+export function removeDb(dir) {
+  for (const suffix of ['', ...DB_SIDE_FILES]) fs.rmSync(dbPath(dir) + suffix, { force: true });
+}
+
+const stamp = date => date.toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
+
+/** 形式 1 のファイルがあるか（無ければ、移行するものが無い新しい置き場） */
+export const legacyFiles = dir => LEGACY_FILES.filter(name => exists(path.join(dir, name)));
+
+/**
+ * 形式 1 → 2。options.afterImport(db) はテスト用（取り込み後・突き合わせ前に失敗を差し込む）。
+ * 戻り値は { backup, counts }。移行するものが無ければ null
+ */
+export function migrateSchema1To2(dir, { now = new Date(), afterImport = null } = {}) {
+  const present = legacyFiles(dir);
+  if (!present.length) return null;
+
+  // 先に全部を読んで形を確かめる。読めないものがあれば、何も作らずに止める
+  const sources = {};
+  if (present.includes('sessions.json')) sources.sessions = readJson(path.join(dir, 'sessions.json'), 'sessions.json', isObject);
+  if (present.includes('agent-tasks.json')) sources.tasks = readJson(path.join(dir, 'agent-tasks.json'), 'agent-tasks.json', isObject);
+  if (present.includes('usage.json')) sources.usage = readJson(path.join(dir, 'usage.json'), 'usage.json', v => isObject(v) && v.version === 1 && Array.isArray(v.records));
+  if (present.includes('conversations.json')) sources.conversations = readJson(path.join(dir, 'conversations.json'), 'conversations.json', isObject);
+
+  let backup = path.join(dir, `backup-schema1-${stamp(now)}`);
+  for (let n = 2; exists(backup); n++) backup = path.join(dir, `backup-schema1-${stamp(now)}-${n}`);
+  let db = null;
+  try {
+    fs.mkdirSync(backup, { recursive: true });
+    for (const name of [...present, 'data-schema.json']) {
+      if (exists(path.join(dir, name))) fs.copyFileSync(path.join(dir, name), path.join(backup, name));
+    }
+    removeDb(dir);
+    db = openRaw(dbPath(dir));
+    const counts = {};
+    const expected = {};
+    transaction(db, () => {
+      if (sources.sessions) {
+        const table = sessionTable(db);
+        for (const [id, entry] of Object.entries(sources.sessions)) table.writeAll(id, entry);
+        expected.sessions = sources.sessions;
+        counts.sessions = Object.keys(sources.sessions).length;
+      }
+      if (sources.tasks) {
+        taskTable(db).save(Object.entries(sources.tasks).map(([id, record]) => [id, JSON.stringify(record)]));
+        expected.tasks = sources.tasks;
+        counts.tasks = Object.keys(sources.tasks).length;
+      }
+      if (sources.usage) {
+        const normalized = { version: 1, since: sources.usage.since ?? null, migrations: sources.usage.migrations ?? [], records: sources.usage.records };
+        usageTable(db).replace(normalized);
+        expected.usage = normalized;
+        counts.usage = normalized.records.length;
+      }
+      if (sources.conversations) {
+        conversationTable(db).save(Object.entries(sources.conversations).map(([id, record]) => [id, JSON.stringify(record)]));
+        expected.conversations = sources.conversations;
+        counts.conversations = Object.keys(sources.conversations).length;
+      }
+    });
+    afterImport?.(db);
+
+    // 読み戻して突き合わせる。キーの順は問わず、値は 1 つ残らず同じでなければならない
+    const mismatch = [];
+    if (expected.sessions && !isDeepStrictEqual(sessionTable(db).loadAll(), expected.sessions)) mismatch.push('sessions.json');
+    if (expected.tasks && !isDeepStrictEqual(taskTable(db).loadAll(), expected.tasks)) mismatch.push('agent-tasks.json');
+    if (expected.usage && !isDeepStrictEqual(usageTable(db).snapshot(), expected.usage)) mismatch.push('usage.json');
+    if (expected.conversations && !isDeepStrictEqual(conversationTable(db).loadAll(), expected.conversations)) mismatch.push('conversations.json');
+    if (mismatch.length) throw new Error(`read-back differs from the original: ${mismatch.join(', ')}`);
+
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    db.close();
+    db = null;
+    return { backup, counts, present };
+  } catch (e) {
+    try { db?.close(); } catch { /* 閉じるだけ */ }
+    removeDb(dir);
+    fs.rmSync(backup, { recursive: true, force: true });
+    throw e;
+  }
+}
+
+/** 検証が済んだ後。形式番号を 2 にしてから、移行した元の JSON を消す */
+export function finishSchema1To2(dir, present) {
+  writeSchemaFile(dir, 2);
+  for (const name of present) fs.rmSync(path.join(dir, name), { force: true });
+}
+
+/** data-schema.json を 1 回で置き換える（一時ファイルへ書いてから rename） */
+export function writeSchemaFile(dir, schema) {
+  const file = path.join(dir, 'data-schema.json');
+  const tmp = `${file}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify({ schema }) + '\n', 'utf8');
+    fs.renameSync(tmp, file);
+  } finally { fs.rmSync(tmp, { force: true }); }
+}

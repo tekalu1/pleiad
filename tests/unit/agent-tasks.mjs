@@ -3,6 +3,8 @@ import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
+import { hookedTaskStorage } from '../lib/task-storage.mjs';
+import { readAgentTasks, writeAgentTasks } from '../lib/data-store.mjs';
 import { createAgentBridge, DELEGATING_TOOLS } from '../../core/agent-bridge.mjs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -16,11 +18,11 @@ export default async function(t) {
   let seq = 0, release, rolledBack = 0;
   const calls = [], notifications = [];
   let notifyBlocked = true, retry = true, gated, renameBroken = false;
-  // 保存の失敗は rename に差し込む（一時ファイルの名前は毎回変わるので、置き場に物を置いては塞げない）
+  // 保存の失敗は保存（SQLite の書き込み）に差し込む
   // renameHold: 条件が真の間の保存を、開くまで止める（止めた後の後片付けの間に指示を割り込ませる）
   let renameHold = null;
-  const io = { ...fs, rename: async (from, to) => { if (renameHold?.when()) await renameHold.opened; if (renameBroken) throw Object.assign(new Error('injected'), { code: 'ENOSPC', syscall: 'rename' }); return fs.rename(from, to); } };
-  const options = { dataDir: dir, io, log: () => {}, prepare: async (_owner, a) => ({ sessionId: `child-${++seq}`, backend: a.backend }),
+  const hooked = hookedTaskStorage(dir, { beforeSave: async () => { if (renameHold?.when()) await renameHold.opened; if (renameBroken) throw Object.assign(new Error('injected'), { code: 'ENOSPC', syscall: 'write' }); } });
+  const options = { dataDir: dir, taskStorage: hooked.taskStorage, log: () => {}, prepare: async (_owner, a) => ({ sessionId: `child-${++seq}`, backend: a.backend }),
     rollback: async () => { rolledBack++; },
     execute: async (r, prompt, signal) => {
       calls.push([r.taskId, prompt]);
@@ -140,13 +142,13 @@ export default async function(t) {
     t.ok('実行失敗を成功として扱わない', manager.get(failed.taskId).error === 'fixture failure');
     manager.close();
     await sleep(100);
-    const raw = JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'));
+    const raw = readAgentTasks(dir);
     raw[slow.taskId].status = 'running'; raw[slow.taskId].notification = 'delivering';
     raw[slow.taskId].queue = ['legacy pending']; delete raw[slow.taskId].instructions;
     raw[failing.taskId].status = 'running';
     raw[failing.taskId].instructions = [{ id: 'restarting-sending', text: 'already started', at: Date.now(), state: 'sending' }];
     raw[failing.taskId].queue = [];
-    await fs.writeFile(path.join(dir, 'agent-tasks.json'), JSON.stringify(raw));
+    writeAgentTasks(dir, raw);
     const before = calls.length;
     manager = await createAgentTasks(options);
     t.ok('再起動で実行を再送せず中断・配送不明にする', manager.get(slow.taskId).status === 'interrupted' && manager.get(slow.taskId).notification === 'unknown' && calls.length === before);
@@ -187,5 +189,5 @@ export default async function(t) {
     await until(() => manager.get(japaneseTask.taskId).notification === 'sent');
     connection.close();
     t.ok('失効した接続を拒否する', (await fetch(connection.url, { method: 'POST', headers: connection.headers, body: '{}' })).status === 401);
-  } finally { await manager.close(); await client.close(); server.closeAllConnections(); await new Promise(r => server.close(r)); await fs.rm(dir, { recursive: true, force: true }); }
+  } finally { await manager.close(); hooked.close(); await client.close(); server.closeAllConnections(); await new Promise(r => server.close(r)); await fs.rm(dir, { recursive: true, force: true }); }
 }

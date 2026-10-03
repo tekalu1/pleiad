@@ -4,6 +4,7 @@ import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import * as P from '../../core/protocol.mjs';
+import { readSessions } from '../lib/data-store.mjs';
 
 export const name = 'server-computer';
 export const title = 'ply_computer をサーバー越しに: 承認カードの payload・スクショの保存と配信・ロックと computer.state・止める・委譲の子の承認（fake + 偽の driver）';
@@ -42,7 +43,7 @@ export default async function(t) {
     servers.push(server);
     const entries = async () => (await fs.readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean).map(l => JSON.parse(l));
     const shotUrl = (id, withToken = true) => `http://127.0.0.1:${server.port}/computer-shot/${id}.jpg${withToken ? `?token=${server.token}` : ''}`;
-    const sessionsFile = async () => JSON.parse(await fs.readFile(path.join(dataDir, 'sessions.json'), 'utf8'));
+    const sessionsFile = async () => readSessions(dataDir);
     return { server, c, cards, state, connect, entries, shotUrl, dataDir, sessionsFile };
   };
   try {
@@ -80,7 +81,7 @@ export default async function(t) {
     const body = Buffer.from(await got.arrayBuffer());
     t.ok('GET /computer-shot/<id>.jpg は保存した JPEG を返す（トークンの認証つき）', got.status === 200 && got.headers.get('content-type') === 'image/jpeg' && body.equals(saved));
     t.ok('トークンが無ければ 401。形の違う id・無い id は 404', (await fetch(shotUrl(shotId, false))).status === 401 && (await fetch(shotUrl('zz', true))).status === 404 && (await fetch(shotUrl('0'.repeat(32)))).status === 404
-      && (await fetch(`http://127.0.0.1:${server.port}/computer-shot/..%2f..%2fsessions.json?token=${server.token}`)).status === 404);
+      && (await fetch(`http://127.0.0.1:${server.port}/computer-shot/..%2f..%2fpleiad.db?token=${server.token}`)).status === 404);
 
     const prefs1 = await c.cmd('prefs');
     const sessions = await sessionsFile();

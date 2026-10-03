@@ -45,7 +45,7 @@ SDK は 2 つの役割を兼ねていた（棚卸しの結論）。
 
 | | 旧（v1） | 新（v3） |
 |---|---|---|
-| セッションの存在・一覧 | `~/.claude`（SDK `listSessions`） | **各バックエンドのネイティブ一覧 ∪ sidecar**。sidecar `sessions.json` が全バックエンド横断のインデックス |
+| セッションの存在・一覧 | `~/.claude`（SDK `listSessions`） | **各バックエンドのネイティブ一覧 ∪ sidecar**。sidecar（形式 2 では `pleiad.db`。形式 1 の `sessions.json`。[ADR 0106](adr/0106-records-in-sqlite.md)）が全バックエンド横断のインデックス |
 | タイトル / 状態 | `~/.claude`（customTitle / tag） | **バックエンドがネイティブに持てるならそれが正本**（Claude: customTitle/tag、Codex: thread name）。持てないものは sidecar が正本。書くときは両方に書く |
 | cwd / createdAt | SDK | ネイティブ優先、無ければ sidecar |
 | 変更履歴・parent・statusChangedAt・mode・model・present | sidecar | 変わらず sidecar |
@@ -98,7 +98,7 @@ web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧�
 `core/message-queue.mjs` の `kick` は、予約があって main が動いている間（`active`）だけ、すぐ終わるのでターンの終わりを待つ（送信待ちの理由は `{ reason: 'turn', detail: 'reserved' }`）。
 `phase` が `waiting` に変わった時点で `core/server.mjs` が `kick` し直し、待っていた送信をすぐ流す。
 終わらない裏のコマンド（headed のブラウザー・`npm run dev`）が残るターンで、予約があると裏を止めるまで送られなかった（2026-10-02 に実例）のはこれで直した。
-届かない送信を切り分けるときは、`~/.agent-host/sessions.json` の会話の `outbox`（受理の `at`）と、Claude の transcript の
+届かない送信を切り分けるときは、`~/.agent-host/pleiad.db` の会話の `outbox`（受理の `at`。`session_fields` の行。`tests/lib/data-store.mjs` の `readSessions` で組み直して読める）と、Claude の transcript の
 `queue-operation` の `enqueue`（CLI が受け取った時刻）を突き合わせる。enqueue が無ければ Pleiad の送信待ちで止まっている。
 **ターンが終わった後も裏が残る**バックエンド（Codex）は、これではなく §2.7 の会話単位の background を使う。
 
@@ -346,7 +346,7 @@ Claude の `getCompactions` は、区切りを transcript の `system:compact_bo
 
 ### 2.4 sidecar の拡張
 
-`~/.agent-host/sessions.json` の Entry に足す: `backend`, `title`, `status`, `cwd`, `createdAt`, `lastModified`。
+`~/.agent-host/pleiad.db` の会話の記録（Entry）に足す: `backend`, `title`, `status`, `cwd`, `createdAt`, `lastModified`。
 `title` / `status` は capabilities に応じて「ミラー」か「正本」かが変わるが、**書き込みは常に両方**。
 読み出し規則: どちらも「持てる方が正本、無ければもう片方へ落ちる」で揃える。
 `capabilities.title ? (native.title ?? sidecar.title) : (sidecar.title ?? native.title)`、

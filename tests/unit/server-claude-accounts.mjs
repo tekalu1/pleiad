@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { startFakeAnthropicApi } from '../lib/fake-anthropic-api.mjs';
+import { readSessions } from '../lib/data-store.mjs';
 
 export const name = 'server-claude-accounts';
 export const title = 'Claude のアカウント: 登録・トークンの持ち主の照合・会話ごとの選択・分岐と委譲での引き継ぎ・削除したら止める';
@@ -121,7 +122,7 @@ export default async function (t) {
       () => t.ok('タイトル生成も別のアカウントへ落とさない', false),
       e => t.ok('タイトル生成も別のアカウントへ落とさない', e.message.includes('削除されています')));
 
-    const files = await Promise.all(['claude-accounts.json', 'sessions.json'].map(f => fs.readFile(path.join(scratch, f), 'utf8').catch(() => '')));
+    const files = [await fs.readFile(path.join(scratch, 'claude-accounts.json'), 'utf8').catch(() => ''), JSON.stringify(readSessions(scratch))];
     t.ok('一覧・会話の記録にトークンを書かない', files.every(text => !text.includes(TOKEN)));
     t.ok('サーバーのログにトークンを出さない', !server.tail(200).includes(TOKEN) && !server.tail(200).includes(TOKEN_OFFLINE));
     t.ok('サーバーのログに組織・メールアドレスを出さない', !server.tail(200).includes(ORG_TOKEN) && !server.tail(200).includes('@example.com'));

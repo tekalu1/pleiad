@@ -4,7 +4,8 @@ import crypto from 'node:crypto';
 import { t, agentT } from './i18n.mjs';
 import { observeCommand, pauseCommands, commandElapsed, commandView } from './task-commands.mjs';
 import { taskTitle } from './task-title.mjs';
-import { writeAtomic, RENAME_DELAYS } from './atomic-file.mjs';
+import { openData } from './data-schema.mjs';
+import { taskTable } from './db.mjs';
 
 const ACTIVE = new Set(['queued', 'running', 'cancelling']);
 // 完了通知がまだ依頼元に届いていない（終わった直後・送る前・送っている最中）。running にはこの間だけ終わったタスクも載せる
@@ -73,7 +74,8 @@ export function finalReply(messages) {
 // - 起きたことの記録（結果・送った通知・止めたこと）は取り消せないので、メモリはそのままにして後で書き直す（record）。
 // - 障害の間は、スケジューラーは間隔を空けて保存をやり直すだけにする。list / status はメモリの状態を障害中の印付きで返す。
 // ready は「親が完了通知を受け取れるか」。受け取れない間は delivering にせず、ファイルも書かない。
-// io・log・renameDelays・retryMax はテストで失敗を差し込み、記録を読み、待ちを縮めるためのもの
+// 記録は SQLite の agent_tasks（1 タスク 1 行。core/db.mjs、ADR 0106）。保存するのは変わった行だけで、タスクが増えても 1 回の保存は重くならない。
+// taskStorage・io・log・retryMax はテストで失敗を差し込み、記録を読み、待ちを縮めるためのもの（taskStorage は { loadRows(), save(rows) }、io は障害の記録のファイル）
 // ready は「親が新しいターンで完了通知を受け取れるか」、steerable は「走っている親のターンへ今すぐ渡せるか」（ADR 0057）。
 // deliver は同じ親へ届ける完了通知（1 件以上）をまとめて受け取る。無音・コマンドの通知は ready だけで決める
 // childSteerable は「走っている子のターンへ追加指示を今すぐ渡せるか」、steer(task, { id, text }) はその途中送信。
@@ -86,14 +88,22 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   workspaceState = async () => null,
   now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
   commandMinutes = Number(process.env.AGENT_HOST_TASK_COMMAND_MINUTES ?? 5),
-  io = fs, log = line => console.error(line), renameDelays = RENAME_DELAYS, retryMax = RETRY_MAX }) {
+  io = fs, log = line => console.error(line), retryMax = RETRY_MAX, taskStorage = null }) {
   const silenceMs = Number.isFinite(silenceMinutes) && silenceMinutes > 0 ? silenceMinutes * 60000 : 0;
   const commandMs = Number.isFinite(commandMinutes) && commandMinutes > 0 ? commandMinutes * 60000 : 0;
   const commandNotices = new Set();
-  const file = path.join(dataDir, 'agent-tasks.json');
   const logFile = path.join(dataDir, 'agent-tasks-errors.log');
+  let handle = null;
+  let rowStore = taskStorage;
+  if (!rowStore) {
+    handle = openData(dataDir);
+    const rows = taskTable(handle.db);
+    rowStore = { loadRows: () => rows.loadRows(), save: list => rows.save(list) };
+  }
+  // 最後に DB へ書けた JSON（taskId -> 文字列）。変わった行だけを書くための比べ元
+  const saved = new Map();
   let records = {};
-  try { records = JSON.parse(await io.readFile(file, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  for (const [taskId, json] of rowStore.loadRows()) { records[taskId] = JSON.parse(json); saved.set(taskId, json); }
   const bySession = new Map(Object.values(records).map(r => [r.sessionId, r]));
   // Older files kept only prompt strings in queue. Preserve their order and make
   // pending follow-ups visible without replaying the initial delegation request.
@@ -147,11 +157,22 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       await io.appendFile(logFile, line + '\n');
     })().catch(() => {}));
   };
-  const write = async () => {
-    const notes = new Map(Object.values(records).map(r => [r.taskId, r.notification]));
-    await io.mkdir(dataDir, { recursive: true });
-    await writeAtomic(file, JSON.stringify(records), { io, delays: renameDelays });
-    persisted = notes; dirty = false;
+  // ids の行（と、前に書けなかった行）のうち、最後に書けた JSON から変わったものだけを書く。ids が無ければ全部の行を見る。
+  // 保存障害の間は、変わった行が無くても書き込みを試す（書けるようになったかを確かめる）
+  const unsaved = new Set();
+  const write = async ids => {
+    const targets = new Set([...(ids === undefined ? Object.keys(records) : ids), ...unsaved]);
+    const rows = [];
+    for (const id of targets) {
+      if (!records[id]) continue;
+      const json = JSON.stringify(records[id]);
+      if (saved.get(id) !== json) rows.push([id, json]);
+    }
+    try { if (rows.length || fault) await rowStore.save(rows); }
+    catch (e) { for (const id of targets) unsaved.add(id); throw e; }
+    for (const [id, json] of rows) { saved.set(id, json); persisted.set(id, records[id].notification); }
+    for (const id of targets) { unsaved.delete(id); if (records[id] && !rows.some(([rowId]) => rowId === id)) persisted.set(id, records[id].notification); }
+    dirty = unsaved.size > 0;
     if (fault) { report({ event: 'saveRecovered', failures: fault.failures, since: new Date(fault.since).toISOString() }); fault = null; }
   };
   const failed = (e, operation, taskId = null) => {
@@ -161,7 +182,11 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     report({ event: 'saveFailed', code: fault.code, errno: e?.errno ?? null, syscall: fault.syscall, operation, taskId, failures });
   };
   // 起きたことを書く。失敗したらメモリはそのままにし、スケジューラーが後で書き直す
-  const persist = async (operation, taskId) => { try { await write(); } catch (e) { dirty = true; failed(e, operation, taskId); } };
+  // taskIds: 書き換えたタスクの id（1 つか配列）。無ければ全部。障害の記録には先頭の 1 件を載せる
+  const persist = async (operation, taskIds) => {
+    const ids = taskIds === undefined ? undefined : [taskIds].flat();
+    try { await write(ids); } catch (e) { dirty = true; failed(e, operation, ids?.[0]); }
+  };
   // 保存できないので受け付けなかった、という依頼元への返事
   const refused = locale => new Error(agentT(locale, 'tasks.storageFailed', { code: fault?.code ?? 'UNKNOWN' }));
   const storage = locale => fault ? { storageFault: { error: agentT(locale, 'tasks.storageFault', { code: fault.code, since: new Date(fault.since).toISOString() }),
@@ -217,7 +242,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     return serial(async () => {
       const r = records[id], before = structuredClone(r);
       try { fn(r); r.updatedAt = Date.now(); } catch (e) { restore(r, before); throw e; }
-      try { await write(); } catch (e) { restore(r, before); failed(e, operation, id); throw refused(locale); }
+      try { await write([id]); } catch (e) { restore(r, before); failed(e, operation, id); throw refused(locale); }
       touched();
     });
   }
@@ -364,7 +389,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       for (const r of list) r.notification = 'delivering';
       if (list.every(r => persisted.get(r.taskId) === 'delivering')) return list;
       for (const r of list) r.updatedAt = Date.now();
-      try { await write(); } catch (e) {
+      try { await write(list.map(r => r.taskId)); } catch (e) {
         list.forEach((r, i) => { r.notification = 'pending'; r.updatedAt = before[i]; });
         failed(e, 'notify.delivering', list[0].taskId); return [];
       }
@@ -390,7 +415,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       }
       await serial(async () => {
         for (const r of sending) if ((r.revision ?? 0) === revisions.get(r.taskId)) { r.notification = outcome === 'ok' ? 'sent' : 'unknown'; r.updatedAt = Date.now(); }
-        await persist('notify.done', sending[0].taskId);
+        await persist('notify.done', sending.map(r => r.taskId));
         touched();
       });
     } finally { for (const r of rows) notices.delete(r.taskId); noticeOwners.delete(owner); }
@@ -422,7 +447,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       const marked = await serial(async () => {
         if (!eligible() || current().notified) return false;
         current().notified = true;
-        try { await write(); return true; }
+        try { await write([r.taskId]); return true; }
         catch (e) {
           if (current()) current().notified = false;
           failed(e, 'command.notice', r.taskId);
@@ -444,7 +469,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   function probe() {
     if (probing || Date.now() < fault.retryAt) return;
     probing = true;
-    spawn(serial(async () => { try { await write(); touched(); } catch (e) { failed(e, dirty ? 'flush' : 'retry'); } })
+    spawn(serial(async () => { try { await write([]); touched(); } catch (e) { failed(e, dirty ? 'flush' : 'retry'); } })
       .finally(() => { probing = false; }));
   }
   function kick() {
@@ -529,7 +554,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (!rows.length) return;
       await serial(async () => {
         for (const [r] of rows) if (r.notification === 'sent') { r.notification = 'pending'; r.updatedAt = Date.now(); }
-        await persist('notify.renotify', rows[0][0].taskId);
+        await persist('notify.renotify', rows.map(([r]) => r.taskId));
         touched();
       });
       kick();
@@ -562,7 +587,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         args = { ...args, title: taskTitle(args.title, args.task) };
         const row = await serial(async () => {
           // 保存できない間は新しい仕事を受けない。子の会話を作る前に、書けるかを確かめる
-          if (fault) { try { await write(); touched(); } catch (e) { failed(e, 'delegate'); throw refused(locale); } }
+          if (fault) { try { await write([]); touched(); } catch (e) { failed(e, 'delegate'); throw refused(locale); } }
           // 同時の件数・1 会話の件数・深さに上限は置かない（2026-09-27 に廃止。depth は記録だけ残す）
           const parent = Object.values(records).find(r => r.sessionId === owner);
           const depth = (parent?.depth ?? 0) + 1;
@@ -576,7 +601,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
             queue: [(args.context ? agentT(locale, 'tasks.withContext', { task: args.task, context: args.context }) : args.task)
               + (prepared.worktree ? agentT(locale, 'tasks.worktreeInstruction', { path: prepared.worktree.path, branch: prepared.worktree.branch, origin: prepared.worktree.origin }) : '')] };
           records[taskId] = row; bySession.set(row.sessionId, row);
-          try { await write(); } catch (e) { failed(e, 'delegate', taskId); throw refused(locale); }
+          try { await write([taskId]); } catch (e) { failed(e, 'delegate', taskId); throw refused(locale); }
           touched(); return view(row);
           } catch (e) { delete records[taskId]; bySession.delete(prepared.sessionId); await rollback(prepared); throw e; }
         });
@@ -689,7 +714,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           if (ACTIVE.has(r.status)) r.status = live.has(r.taskId) ? 'cancelling' : 'cancelled';
           r.updatedAt = Date.now();
         }
-        await persist('cancelOwner');
+        await persist('cancelOwner', change.map(r => r.taskId));
         touched();
       });
       for (const r of change) live.get(r.taskId)?.abort();
@@ -705,6 +730,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       closed = true; clearInterval(timer); for (const ac of live.values()) ac.abort();
       while (background.size) await Promise.all([...background]);
       await writes;
+      handle?.release(); handle = null;
     },
   };
 }

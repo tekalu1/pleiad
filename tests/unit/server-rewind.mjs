@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
+import { readSessions } from '../lib/data-store.mjs';
 
 export const name = "server-rewind";
 export const title = "同じ会話で巻き戻して送り直す（sendMessage の rewind。ADR 0102）";
@@ -123,7 +124,7 @@ export default async function(t) {
         await c.waitFor(e => e.type === "shell.done" && e.runId === "shell-rewind-0001", { from: 0, ms: 20_000 });
         await c.cmd("skipShell", { sessionId: kid, runId: "shell-rewind-0001", skip: true });
         await c.runTurn({ sessionId: kid, prompt: "echo:gamma" });
-        const sidecar = async () => JSON.parse(await fs.readFile(path.join(scratch, "sessions.json"), "utf8"))[kid] ?? {};
+        const sidecar = async () => readSessions(scratch)[kid] ?? {};
         t.ok(label("前提: 渡さなかった ! の行が会話に残り、文脈量を持っている"), (await sidecar()).shellKept?.length === 1 && Boolean((await sidecar()).contextWindow));
         const betaId = (await c.cmd("loadSession", { sessionId: kid })).messages.filter(m => m.role === "user" && !m.kind)[1].uuid;
         const keepId = crypto.randomUUID();

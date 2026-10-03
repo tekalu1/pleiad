@@ -9,6 +9,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
+import { hookedTaskStorage } from '../lib/task-storage.mjs';
+import { readAgentTasks } from '../lib/data-store.mjs';
 
 export const name = 'agent-tasks-interrupt';
 export const title = '中断で委譲タスクを止める: 届いていない結果を捨てずに返す・取り消したものを返す・cancel は終わったタスクの通知を止めない';
@@ -19,13 +21,15 @@ export default async function(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-task-interrupt-'));
   let seq = 0, parentReady = false;
   const delivered = [], started = new Set();
-  // 保存の動き（writeFile / rename）を数える。close の後に古い manager の書き込みが届かないことを、落ち着くのを待って確かめる
+  // 保存の動きを数える。close の後に古い manager の書き込みが届かないことを、落ち着くのを待って確かめる
   let inflight = 0, lastIo = Date.now();
-  const track = name => async (...args) => { inflight++; lastIo = Date.now(); try { return await fs[name](...args); } finally { inflight--; lastIo = Date.now(); } };
-  const io = { ...fs, writeFile: track('writeFile'), rename: track('rename') };
+  const hooked = hookedTaskStorage(dir, {
+    beforeSave: () => { inflight++; lastIo = Date.now(); },
+    afterSave: () => { inflight--; lastIo = Date.now(); },
+  });
   const settle = () => until(() => inflight === 0 && Date.now() - lastIo > 150);
   const options = {
-    io, dataDir: dir, log: () => {}, silenceMinutes: 0, commandMinutes: 0,
+    taskStorage: hooked.taskStorage, dataDir: dir, log: () => {}, silenceMinutes: 0, commandMinutes: 0,
     prepare: async (_owner, a) => ({ sessionId: `child-${++seq}`, backend: a.backend }),
     execute: async (_task, prompt, signal) => {
       started.add(prompt);
@@ -92,7 +96,7 @@ export default async function(t) {
     await until(() => manager.get(live.taskId).status === 'cancelled');
     t.ok('走っているタスクの cancel は通知を止める', manager.get(live.taskId).notification === 'suppressed');
     await settle();
-    const onDisk = JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'))[live.taskId];
+    const onDisk = readAgentTasks(dir)[live.taskId];
     t.ok('取り消し（close 以外の abort）は cancelled として保存される', onDisk.status === 'cancelled' && onDisk.notification === 'suppressed', JSON.stringify({ status: onDisk.status, notification: onDisk.notification }));
 
     // ---- 正常終了（close）で走っていた子は、止めたことを書かない。再起動で restored に載り interrupted になる（依頼元・題・止まった時点の状態）
@@ -101,7 +105,7 @@ export default async function(t) {
     await until(() => manager.get(cut2.taskId).status === 'running' && started.has('slow-c'));
     manager.close();
     await settle();
-    const closedOnDisk = JSON.parse(await fs.readFile(path.join(dir, 'agent-tasks.json'), 'utf8'))[cut2.taskId];
+    const closedOnDisk = readAgentTasks(dir)[cut2.taskId];
     t.ok('close は走っていた子を cancelled にしない（走っていた状態のまま保存される）', closedOnDisk.status === 'running' && closedOnDisk.notification === 'none', JSON.stringify({ status: closedOnDisk.status, notification: closedOnDisk.notification }));
     manager = await createAgentTasks(options);
     const restored = manager.restored;

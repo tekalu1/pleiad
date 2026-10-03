@@ -7,6 +7,7 @@ import path from "node:path";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
 import { startFakeCompatApi } from "../lib/fake-compat-api.mjs";
+import { readSessions } from '../lib/data-store.mjs';
 
 export const name = "server-compat-endpoints";
 export const title = "互換の接続先: 登録・会話ごとの選択・Codex のスレッドへの注入・引き継ぎ・使えない接続先で止める";
@@ -148,7 +149,7 @@ export default async function (t) {
     // ---- キーが画面へ出ない
     const everything = JSON.stringify({ events: c.events, replies });
     t.ok("イベントと応答にキーが出ない", !everything.includes(KEY));
-    const sidecar = await fs.readFile(path.join(scratch, "sessions.json"), "utf8");
+    const sidecar = JSON.stringify(readSessions(scratch));
     t.ok("会話の記録（sidecar）にキーを書かない", !sidecar.includes(KEY));
     t.ok("server のログにキーが出ない", !server.tail(200).includes(KEY));
   } finally {

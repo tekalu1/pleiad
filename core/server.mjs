@@ -107,8 +107,10 @@ import {
 
 const updateGate = createUpdateGate();
 const quotaCache = createQuotaCache();
+// 書き込みを始める前に、データ置き場の形式を確かめる。古ければここで移行する（core/schema-migration.mjs。失敗すれば起動を止める）
+const migrated = await ensureDataSchema(store.dataDir);
+if (migrated) console.log(`  ${t('data.migrated', { backup: migrated.backup })}`);
 const usageStore = createUsageStore(store.dataDir);
-await ensureDataSchema(store.dataDir);
 // Claude の記録に入っていた会話の累計を、ターンの分へ一度だけ直す（core/usage-migrations.mjs、ADR 0053）。
 // transcript を読むので起動は待たせない。記録の書き込みとは usageStore の中で直列になる
 migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects') })
@@ -1554,7 +1556,7 @@ async function applyStatus(backend, sessionId, status, why, actor) {
 }
 
 // ---- 保存される変更理由（docs/design.md「多言語対応」） ------------------------
-// 変更履歴（sessions.json の history）とイベントの reason は、従来どおり日本語の文を持つ（過去の記録・古い画面と互換）。
+// 変更履歴（会話の記録の history）とイベントの reason は、従来どおり日本語の文を持つ（過去の記録・古い画面と互換）。
 // 新しい記録には reasonKey（ui:saved.reason.<key>）と reasonParams を足し、画面が今の言語で出す（web/saved-text.mjs）。
 // 過去の記録は reason の文のまま出る。reasonParams の配列（names）は、ja は「・」、画面は言語の区切りでつなぐ。
 // i18n-dynamic: ui:saved.reason.
@@ -6015,7 +6017,7 @@ process.parentPort?.on("message", async ({ data }) => {
   if (data?.type === "shutdown") {
     try { finishShutdown(store.flushNow, () => runtime.turns.size > 0 || agentTasks.busy); }
     catch (e) {
-      console.error('sessions.json shutdown save failed:', e?.code ?? e?.message ?? e);
+      console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e);
       process.exitCode = 1;
     }
   }
