@@ -14,6 +14,8 @@ export const name = 'server-setting-approval-delegated';
 export const title = '委譲の子の設定の変更の承認: 子のタスクが終わっていれば結果は依頼元へ・動いていれば子へ・再起動の取り下げも同じ（fake）';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// 届けるたびに台帳を書く（送る前と後）。混んだ CI では決め打ちの時間で済まないので、条件がそろうまで待つ
+const until = async (fn, ms = 10_000) => { const end = Date.now() + ms; while (!fn() && Date.now() < end) await sleep(20); return fn(); };
 const ply = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 const control = (name, args) => 'control:' + JSON.stringify({ name, arguments: args });
 const delegate = (task, title) => ply('ply_delegate', { kind: 'mechanical', backend: 'fake', task, title });
@@ -127,20 +129,21 @@ async function ledger(t) {
     await ap.add({ requestId: 'r2', sessionId: 'other', key: 'k', op: 'settings.set' });
     await ap.add({ requestId: 'r3', sessionId: 'parent', key: 'k2', op: 'settings.set' });
     await ap.settle('r1', 'allowed'); await ap.settle('r2', 'denied'); await ap.settle('r3', 'denied');
-    await sleep(120);
     const seen = (id) => delivered.filter(([s, l]) => s === id).flatMap(([, l]) => l);
+    const together = () => delivered.some(([s, l]) => s === 'parent' && l.includes('r1:child:task-1') && l.includes('r3:parent:'));
+    await until(() => seen('parent').includes('r1:child:task-1') && seen('other').includes('r2:other:') && together());
     t.ok('終わった子の結果は依頼元の会話へ（via に子のタスクを添える）、ほかは求めた会話へ', seen('parent').includes('r1:child:task-1') && seen('other').includes('r2:other:') && !seen('child').length);
-    t.ok('依頼元の会話の結果と、子の結果は同じ届け先なら 1 回でまとめて渡す', delivered.some(([s, l]) => s === 'parent' && l.includes('r1:child:task-1') && l.includes('r3:parent:')));
+    t.ok('依頼元の会話の結果と、子の結果は同じ届け先なら 1 回でまとめて渡す', together());
     t.ok('渡す結果の sessionId は求めた会話のまま、台帳に via は残さない', ap.snapshot().notices.every((n) => !('via' in n)) && ap.snapshot().notices.find((n) => n.requestId === 'r1')?.sessionId === 'child');
     // 届くまでの間に子が動き出した（追加の指示）: 次の試みでは子へ届く
     routeOf = () => null;
     delivered.length = 0;
-    await sleep(120);
+    await until(() => seen('child').includes('r1:child:'));
     t.ok('受け取られない間も届け先は試みごとに決め直す（動き出した子には子へ）', seen('child').includes('r1:child:'));
     // route が落ちる・不明な値は求めた会話
     routeOf = () => { throw new Error('boom'); };
     delivered.length = 0; answer = 'ok';
-    await sleep(120);
+    await until(() => seen('child').includes('r1:child:') && ap.snapshot().notices.length === 0);
     t.ok('route が失敗しても求めた会話へ届ける', seen('child').includes('r1:child:') && ap.snapshot().notices.length === 0);
     await ap.flush();
     ap.close();

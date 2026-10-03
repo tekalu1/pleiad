@@ -10,7 +10,6 @@
 // 書き込みは core/mcp-config.mjs に倣う: 読んだ本文の SHA-256（revision）で競合を見つける、JSON は他のキーを残す、
 // TOML は hooks の表だけを置き換えて本文とコメントを残す（置き換えで意味が変わるなら書き直しの許可を求める）、一時ファイルから rename。
 import fs from 'node:fs/promises';
-import { execFile } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -252,17 +251,31 @@ async function insideBase(file, base) {
   }
 }
 
-/** PATH の node（写した hook のアダプターを動かす）。見つからなければ null。結果は 30 秒覚える */
+/** PATH の実行ファイル（`where`・`which` と同じ並び）。見つからなければ null。
+ *  子プロセスを起こさずに探す。`where` は負荷が高いと数秒かかり、打ち切ると node があっても「無い」になる */
+export async function searchPath(name, { env = process.env, platform = process.platform } = {}) {
+  const win = platform === 'win32', p = win ? path.win32 : path.posix;
+  const dirs = String(env.PATH ?? env.Path ?? '').split(win ? ';' : ':').map(s => s.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean);
+  const exts = win ? String(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').map(s => s.trim().toLowerCase()).filter(Boolean) : [''];
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const file = p.join(dir, name + ext);
+      try {
+        if (!(await fs.stat(file)).isFile()) continue;
+        if (!win) await fs.access(file, fs.constants.X_OK);
+        return file;
+      } catch { /* 次の候補 */ }
+    }
+  }
+  return null;
+}
+/** PATH の node（写した hook のアダプターを動かす）。見つからなければ null。見つかった場所は 30 秒覚える（無いことは覚えず、入れた直後から使える） */
 let nodeCache = null;
 export function findNodeOnPath() {
   if (nodeCache && Date.now() - nodeCache.at < 30_000) return nodeCache.value;
-  const value = new Promise(resolve => {
-    execFile(process.platform === 'win32' ? 'where' : 'which', ['node'], { timeout: 5_000, windowsHide: true }, (error, stdout) => {
-      const first = String(stdout ?? '').split(/\r?\n/).map(s => s.trim()).find(Boolean);
-      resolve(error || !first ? null : first);
-    });
-  });
+  const value = searchPath('node').catch(() => null);
   nodeCache = { at: Date.now(), value };
+  value.then(found => { if (!found && nodeCache?.value === value) nodeCache = null; });
   return value;
 }
 /** 写す先に書き出すアダプター（core/hook-adapter.mjs をそのまま）。名前に中身の hash を入れ、版が変わっても前の写しを壊さない */
