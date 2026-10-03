@@ -152,6 +152,8 @@ export default async function (t) {
       scan: async () => ({ files: [], entries: [{ command: 'x', ...secret }] }),
       session: async () => ({ agent: null, runs: [], unify: { ...secret } }),
       view: async () => ({ hooks: [{ id: 'h', command: 'x', ...secret }] }),
+      read: async () => ({ agent: 'claude', scope: 'user', path: 'p', command: 'echo', ...secret }),
+      readPly: async () => ({ id: 'h-1', name: 'n', command: 'echo', ...secret }),
     },
     context: { view: async () => ({ defaults: { ...secret }, places: [] }), plyInstructions: () => ({ items: [{ id: 'x', ...secret }] }) },
     remote: { status: async () => ({ enabled: false, connection: { ...secret }, devices: [], ...secret }) },
@@ -165,6 +167,7 @@ export default async function (t) {
     'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }],
     'sessions.listMessages': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
     'mcp.nativeList': [{ format: 'claude', scope: 'user', cwd: 'x' }], 'mcp.nativeRead': [{ format: 'codex', scope: 'directory', cwd: 'x', name: 'a' }], 'mcp.read': [{ name: 'a' }],
+    'hooks.read': [{ agent: 'claude', scope: 'user', loc: { event: 'PreToolUse', group: 0, handler: 0 } }], 'hooks.readPly': [{ id: 'h-1' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {
     const needs = Object.keys(op.input.shape).length && Object.values(op.input.shape).some((f) => !f.safeParse(undefined).success);

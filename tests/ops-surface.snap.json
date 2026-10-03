@@ -99,6 +99,75 @@
       "input": "974c851ac5dd"
     },
     {
+      "id": "compatEndpoints.delete",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "endpoints",
+            "delete"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "compatEndpointDelete",
+      "input": "b0301f257a02"
+    },
+    {
+      "id": "compatEndpoints.recheck",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "endpoints",
+            "recheck"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "compatEndpointRecheck",
+      "input": "8f322763f141"
+    },
+    {
+      "id": "computer.stop",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "computer",
+            "stop"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "computerStop",
+      "input": "668810693a42"
+    },
+    {
       "id": "context.plyInstructions",
       "risk": "read",
       "riskOf": false,
@@ -428,6 +497,49 @@
       },
       "legacyCommand": "plyHooks",
       "input": "2a25f7c7c09a"
+    },
+    {
+      "id": "hooks.read",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "read"
+          ]
+        }
+      },
+      "legacyCommand": "readHook",
+      "input": "8f85e97463e7"
+    },
+    {
+      "id": "hooks.readPly",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "read-ply"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "readPlyHook",
+      "input": "968065a24633"
     },
     {
       "id": "hooks.remove",
@@ -861,6 +973,50 @@
       "input": "f16d1746215b"
     },
     {
+      "id": "notify.setDevice",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notify",
+            "device"
+          ],
+          "positional": [
+            "id",
+            "muted"
+          ]
+        }
+      },
+      "legacyCommand": "setNotifyDevice",
+      "input": "8280a0cbad06"
+    },
+    {
+      "id": "notify.setPc",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notify",
+            "pc"
+          ]
+        }
+      },
+      "legacyCommand": "setNotifyPc",
+      "input": "54e061176cb6"
+    },
+    {
       "id": "remote.setResident",
       "risk": "write",
       "riskOf": false,
@@ -1140,6 +1296,30 @@
       "input": "e62fd6215a96"
     },
     {
+      "id": "sessions.setModel",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "model"
+          ],
+          "positional": [
+            "sessionId",
+            "model"
+          ]
+        }
+      },
+      "legacyCommand": "setModel",
+      "input": "f599bf658363"
+    },
+    {
       "id": "sessions.setStatus",
       "risk": "write",
       "riskOf": false,
@@ -1323,6 +1503,141 @@
       },
       "legacyCommand": "setStatusIcon",
       "input": "6bf6e7291226"
+    },
+    {
+      "id": "worktrees.archive",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "archive"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "worktreeArchive",
+      "input": "3e8683a89327"
+    },
+    {
+      "id": "worktrees.discard",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "discard"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "worktreeDiscard",
+      "input": "66e4e5056d19"
+    },
+    {
+      "id": "worktrees.keep",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "keep"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "worktreeKeep",
+      "input": "8b21cc520a6e"
+    },
+    {
+      "id": "worktrees.restore",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "restore"
+          ],
+          "positional": [
+            "ref"
+          ]
+        }
+      },
+      "legacyCommand": "worktreeRestore",
+      "input": "f58ff1aa555f"
+    },
+    {
+      "id": "worktrees.setSettings",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "settings"
+          ],
+          "positional": [
+            "always"
+          ]
+        }
+      },
+      "legacyCommand": "setWorktreeSettings",
+      "input": "b99244f5026b"
+    },
+    {
+      "id": "worktrees.split",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "split"
+          ]
+        }
+      },
+      "legacyCommand": "worktreeSplit",
+      "input": "451dd4526c20"
     }
   ],
   "settings": [
@@ -1470,7 +1785,7 @@
     },
     {
       "key": "limitResume",
-      "risk": "human-only",
+      "risk": "write",
       "riskOf": false,
       "writable": true,
       "prefKeys": [
@@ -1630,11 +1945,11 @@
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
     },
     "limitResume": {
-      "human": "human-only=allow",
-      "agent-unbound": "human-only=hidden",
-      "agent-bound-ask": "human-only=hidden",
-      "agent-bound-never-full": "human-only=hidden",
-      "agent-bound-readonly": "human-only=hidden"
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
     },
     "linkOpen": {
       "human": "write=allow",
@@ -1719,6 +2034,13 @@
       "positional": []
     },
     {
+      "id": "computer.stop",
+      "path": "computer stop",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
       "id": "context.plyInstructions",
       "path": "context instructions",
       "positional": []
@@ -1798,9 +2120,23 @@
       "positional": []
     },
     {
+      "id": "compatEndpoints.delete",
+      "path": "endpoints delete",
+      "positional": [
+        "id"
+      ]
+    },
+    {
       "id": "endpoints.list",
       "path": "endpoints list",
       "positional": []
+    },
+    {
+      "id": "compatEndpoints.recheck",
+      "path": "endpoints recheck",
+      "positional": [
+        "id"
+      ]
     },
     {
       "id": "hooks.copy",
@@ -1816,6 +2152,18 @@
       "id": "hooks.setOwner",
       "path": "hooks owner",
       "positional": []
+    },
+    {
+      "id": "hooks.read",
+      "path": "hooks read",
+      "positional": []
+    },
+    {
+      "id": "hooks.readPly",
+      "path": "hooks read-ply",
+      "positional": [
+        "id"
+      ]
     },
     {
       "id": "hooks.remove",
@@ -1934,6 +2282,19 @@
       "positional": []
     },
     {
+      "id": "notify.setDevice",
+      "path": "notify device",
+      "positional": [
+        "id",
+        "muted"
+      ]
+    },
+    {
+      "id": "notify.setPc",
+      "path": "notify pc",
+      "positional": []
+    },
+    {
       "id": "remote.setResident",
       "path": "remote resident",
       "positional": []
@@ -1983,6 +2344,14 @@
       "id": "sessions.list",
       "path": "sessions list",
       "positional": []
+    },
+    {
+      "id": "sessions.setModel",
+      "path": "sessions model",
+      "positional": [
+        "sessionId",
+        "model"
+      ]
     },
     {
       "id": "sessions.read",
@@ -2079,6 +2448,46 @@
         "status",
         "icon"
       ]
+    },
+    {
+      "id": "worktrees.archive",
+      "path": "worktrees archive",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "worktrees.discard",
+      "path": "worktrees discard",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "worktrees.keep",
+      "path": "worktrees keep",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "worktrees.restore",
+      "path": "worktrees restore",
+      "positional": [
+        "ref"
+      ]
+    },
+    {
+      "id": "worktrees.setSettings",
+      "path": "worktrees settings",
+      "positional": [
+        "always"
+      ]
+    },
+    {
+      "id": "worktrees.split",
+      "path": "worktrees split",
+      "positional": []
     }
   ],
   "policy": {

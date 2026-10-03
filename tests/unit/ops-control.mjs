@@ -3,6 +3,7 @@
 //   - HTTP の認証: トークン無し・知らないトークン・画面のトークン・別の口のトークンは通らない。CLI 用トークンは /api/ops だけに効く
 //   - 会話への束縛: ply_control の接続は全会話に渡り、同じトークンで CLI（環境変数）も同じ会話に束縛される。会話ごとに別
 //   - 権限の配線: 会話の承認モード（bypass・ask・plan）→ policy。束縛なしは NEEDS_UI。human-only は agent に見えない
+//   - human-only は 5 つだけ（ADR 0094）: 外した操作は agent の一覧に出て呼べ（同じ本体・記録は by: agent）、5 つは一覧にも呼び出しにも出ない
 //   - 承認カード: ask の会話の guarded は会話にカード（settingChange）を出し、待たずに承認待ち（202・requestId）で返る。許可・拒否・受領証の不一致。
 //     結果は会話へ届く（ターンの終わり・途中送信・置き換え・聞き直し・再起動は server-setting-approval）。settings.set の実物と settingsChanged の配信
 //   - 記録: by: 'agent'・via・どの会話の AI か。人間の操作は by: 'human' のまま
@@ -13,6 +14,8 @@ import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { controlFilePath, removeControlFile, writeControlFile, CONTROL_VERSION } from '../../core/control-file.mjs';
+import { registry } from '../../core/ops/index.mjs';
+import { HUMAN_ONLY_COMMANDS, HUMAN_ONLY_SETTINGS } from '../../core/ops/policy.mjs';
 
 export const name = 'ops-control';
 export const title = '操作の一覧をサーバー越しに: control.json・HTTP の認証・会話への束縛・権限の配線・記録・伏せ字';
@@ -202,6 +205,59 @@ export default async function (t) {
     await noticeFor(asker.sessionId, card5.settingChange.requestId, from);
     await c.waitFor((e) => e.type === 'turnEnd' && e.sessionId === asker.sessionId, { from, ms: 30_000 });
 
+    // ---- human-only は 5 つだけ（ADR 0094）
+    const MOVED = ['worktrees.split', 'worktrees.discard', 'worktrees.keep', 'worktrees.archive', 'worktrees.restore', 'worktrees.setSettings', 'notify.setPc', 'notify.setDevice',
+      'hooks.read', 'hooks.readPly', 'compatEndpoints.recheck', 'compatEndpoints.delete', 'sessions.setModel', 'computer.stop'];
+    const cliIds = (await api(cli, 'GET', '/api/ops')).body.result.ops.map((o) => o.id);
+    const boundOps = (await api(bound(bypass), 'GET', '/api/ops')).body.result.ops;
+    const listedOps = JSON.parse(hiddenList.body.result.content[0].text).ops;
+    t.ok('human-only から外した 14 の操作は、外の CLI・会話の CLI・ply_control の list_ops に出る', MOVED.every((id) => cliIds.includes(id) && boundOps.some((o) => o.id === id) && listedOps.some((o) => o.id === id)),
+      MOVED.filter((id) => !listedOps.some((o) => o.id === id)).join(' '));
+    const ofFive = (o) => o.risk === 'human-only' || HUMAN_ONLY_COMMANDS.has(registry.get(o.id)?.legacyCommand);
+    t.ok('5 つ（承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリング）に当たる操作は、どの agent の一覧にも無い', !boundOps.some(ofFive) && !listedOps.some(ofFive));
+    const callCode = async (op, args = {}) => JSON.parse((await api(bound(bypass), 'POST', '/mcp/control', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'call_op', arguments: { op, args } } })).body.result.content[0].text).code;
+    t.ok('5 つのコマンドの名前で call_op を呼んでも NOT_FOUND（setMode・resolvePermission・claudeAccounts・remoteDevices・compatEndpointDefault・setRemoteSettings・compatEndpointSave）',
+      (await Promise.all(['setMode', 'resolvePermission', 'claudeAccounts', 'remoteDevices', 'compatEndpointDefault', 'setRemoteSettings', 'compatEndpointSave'].map((n) => callCode(n)))).every((code) => code === 'NOT_FOUND'));
+    const agentSettings = (await api(bound(bypass), 'POST', '/api/ops/settings.list', {})).body.result.settings.map((x) => x.key);
+    t.ok('agent の settings.list に、承認モードの既定（mode）と既定のアカウント（claudeAccount）は無い', [...HUMAN_ONLY_SETTINGS].every((k) => !agentSettings.includes(k)) && agentSettings.includes('model'));
+    t.ok('agent が設定 mode を get しても SETTING_NOT_FOUND（ply_control の call_op）', (await callCode('settings.get', { key: 'mode' })) === 'SETTING_NOT_FOUND');
+
+    // 外した操作を agent が呼ぶ。画面のコマンドと同じ本体・同じ配信を通る
+    from = c.mark();
+    const always = await api(bound(ask), 'POST', '/api/ops/worktrees.setSettings', { always: true });
+    t.ok('worktrees.setSettings: ask の会話の agent が承認なしで「いつも分ける」を変え、画面へ worktreeSettings が届く', always.status === 200 && always.body.result.always === true
+      && (await c.cmd('worktreeSettings')).always === true && Boolean(await c.waitFor((e) => e.type === 'worktreeSettings' && e.always === true, { from, ms: 5_000 })), JSON.stringify(always.body));
+    t.ok('画面の setWorktreeSettings（昔のコマンド）も同じ操作を通る。真偽でなければ拒否', (await c.cmd('setWorktreeSettings', { always: false })).always === false
+      && await c.cmd('setWorktreeSettings', { always: 'yes' }).then(() => false, () => true));
+    t.ok('読み取り専用の会話（plan）の worktrees.setSettings は READ_ONLY_MODE', (await api(bound(plan), 'POST', '/api/ops/worktrees.setSettings', { always: true })).body.code === 'READ_ONLY_MODE');
+    t.ok('worktrees.keep: 無い作業場所は 404 と WORKTREE_NOT_FOUND', (await api(bound(ask), 'POST', '/api/ops/worktrees.keep', { id: 'nope' })).body.code === 'WORKTREE_NOT_FOUND');
+    const prefsBefore = JSON.stringify((await c.cmd('prefs')).backends ?? null);
+    from = c.mark();
+    const model = await api(bound(ask), 'POST', '/api/ops/sessions.setModel', { model: 'tiny', reason: '軽い作業なので' });
+    t.ok('sessions.setModel: agent が自分の会話のモデルを替える（sessionId を省ける）', model.status === 200 && model.body.result.sessionId === ask.sessionId && model.body.result.model === 'tiny', JSON.stringify(model.body));
+    const modelChange = (await api(cli, 'POST', '/api/ops/sessions.get', { sessionId: ask.sessionId })).body.result.changes.find((x) => x.field === 'model' && x.to === 'tiny');
+    t.ok('sessions.setModel: 記録は by: agent・via・どの会話か・理由。画面へ model のイベント（by: agent）', modelChange?.by === 'agent' && modelChange.via === 'cli' && modelChange.bySession === ask.sessionId && modelChange.reason === '軽い作業なので'
+      && Boolean(await c.waitFor((e) => e.type === 'model' && e.sessionId === ask.sessionId && e.model === 'tiny' && e.by === 'agent', { from, ms: 5_000 })), JSON.stringify(modelChange));
+    t.ok('sessions.setModel: agent の変更は新しい会話の既定のモデルにしない', JSON.stringify((await c.cmd('prefs')).backends ?? null) === prefsBefore);
+    t.ok('sessions.setModel: 知らないモデルは INVALID・知らない会話は SESSION_NOT_FOUND', (await api(bound(ask), 'POST', '/api/ops/sessions.setModel', { model: 'nope' })).body.code === 'INVALID'
+      && (await api(bound(ask), 'POST', '/api/ops/sessions.setModel', { sessionId: 'nope', model: 'tiny', backend: 'fake' })).body.code === 'SESSION_NOT_FOUND');
+    t.ok('画面の setModel（昔のコマンド）は同じ操作を通り、人間の変更は既定のモデルとして覚える', (await c.cmd('setModel', { sessionId: ask.sessionId, model: 'smart' })).live === false
+      && (await c.cmd('prefs')).backends?.fake?.model === 'smart');
+    t.ok('computer.stop: agent は自分の会話を止められる（使っていなければ stopped: false）。読み取り専用の会話からも呼べる', (await api(bound(plan), 'POST', '/api/ops/computer.stop', {})).body.result?.stopped === false);
+    t.ok('notify.setDevice: 一覧に無い端末は DEVICE_NOT_FOUND（端末の一覧は返さない）', (await api(bound(ask), 'POST', '/api/ops/notify.setDevice', { id: 'nope', muted: true })).body.code === 'DEVICE_NOT_FOUND');
+    const pc = await api(bound(ask), 'POST', '/api/ops/notify.setPc', { done: false });
+    t.ok('notify.setPc: この PC の通知の設定だけを返す（スマホの一覧を混ぜない）', pc.status === 200 && JSON.stringify(Object.keys(pc.body.result).sort()) === '["done","failed","reply"]' && pc.body.result.done === false
+      && (await c.cmd('notifyStatus')).pc.done === false, JSON.stringify(pc.body));
+    await c.cmd('setNotifyPc', { done: true });
+    t.ok('compatEndpoints.delete: 承認なしのモードの会話は通る（無い接続先は ENDPOINT_NOT_FOUND）', (await api(bound(bypass), 'POST', '/api/ops/compatEndpoints.delete', { id: 'nope' })).body.code === 'ENDPOINT_NOT_FOUND');
+    from = c.mark();
+    const deleting = await api(bound(asker), 'POST', '/api/ops/compatEndpoints.delete', { id: 'nope', reason: '使っていない' });
+    const card7 = await cardFor(asker.sessionId, from);
+    t.ok('compatEndpoints.delete: ask の会話は承認カード（取り返しがつかない削除。guarded）', deleting.status === 202 && card7.settingChange.op === 'compatEndpoints.delete' && /nope/.test(card7.settingChange.note ?? ''), JSON.stringify(card7.settingChange));
+    await c.cmd('resolvePermission', { id: card7.id, allow: false, messageKey: 'userDenied', receipt: card7.settingChange.receipt });
+    await noticeFor(asker.sessionId, card7.settingChange.requestId, from);
+    await c.waitFor((e) => e.type === 'turnEnd' && e.sessionId === asker.sessionId, { from, ms: 30_000 });
+
     // ---- settings.set の実物（設定の一覧 → 画面と同じ保存・配信）
     await c.cmd('setPref', { key: 'confirmAgentSites', value: true });
     t.ok('画面の setPref（昔のコマンド）は settings.set を通り、prefs と settingsChanged が届く（by: human）', (await c.cmd('prefs')).confirmAgentSites === true
@@ -325,6 +381,7 @@ export default async function (t) {
       const inputs = o.id === 'settings.get' || o.id === 'settings.schema'
         ? (await api(cli, 'POST', '/api/ops/settings.list', {})).body.result.settings.map((s) => ({ key: s.key }))
         : ['sessions.get', 'sessions.read', 'sessions.listMessages'].includes(o.id) ? [{ sessionId: ask.sessionId }] : ['delegation.status', 'delegation.taskStatus', 'delegation.taskWait'].includes(o.id) ? [{ taskId: 'none' }] : o.id === 'sessions.search' ? [{ query: 'control' }, { query: MARKER }]
+        : o.id === 'hooks.readPly' ? [{ id: 'none' }] : o.id === 'hooks.read' ? [{ agent: 'claude', scope: 'project', base: scratch, loc: { event: 'PreToolUse', group: 0, handler: 0 } }]
         : o.id === 'mcp.nativeList' ? [{ format: 'claude', scope: 'user', cwd: home }] : o.id === 'mcp.nativeRead' ? [{ format: 'claude', scope: 'user', cwd: home, name: 'leak' }, { format: 'claude', scope: 'user', cwd: home, name: 'web' }]
         : o.id === 'mcp.read' ? [{ name: 'x' }] : o.id === 'hooks.scan' ? [{}, { cwd: home }] : o.id === 'hooks.session' ? [{ sessionId: ask.sessionId, cwd: home, backend: 'claude' }]
         : required.length ? null : [{}];

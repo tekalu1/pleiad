@@ -50,11 +50,11 @@
   1. モジュールが画面へ返す形はもう伏せてある（`core/mcp-config.mjs`・`core/ply-mcp.mjs`・`core/hooks-config.mjs` の `maskText`・`core/ply-hooks.mjs` の `publicHook`・接続先の `hasKey`）。それを使い回す。
   2. 操作の層（`core/ops/redact.mjs`）が、どの主体にも同じ伏せ字をもう一度掛ける（env・ヘッダーの値・bearer・clientSecret・URL の userinfo とクエリ。伏せ字は冪等）。agent にはさらに、コマンドの引数の秘密（`--token 値`・`--api-key=…`・形で分かるトークン）、OAuth のログインの途中の承認の URL のクエリ、ペアリングの確認の番号、中継・接続先の URL のクエリ、会話の記録に残った Hook のコマンドを伏せる。人（画面）には引数・承認の URL・ペアリングの番号を返す（編集欄・ログイン・端末との見比べに要る。画面の振る舞いは変えない）。
   3. registry の最後の網（秘密らしい名前の欄）。
-  - 元の値を返す `readHook`・`readPlyHook`、ログインとログアウト（`mcpAuthStart`・`mcpAuthLogout`）は human-only のまま。
+  - 定義 1 つを読む `hooks.read`・`hooks.readPly`（`readHook`・`readPlyHook`。ADR 0094 で human-only から外した）は同じ `core/ops/hooks.mjs` に置き、agent にはコマンドを形で伏せて返す。ログインとログアウト（`mcpAuthStart`・`mcpAuthLogout`）は秘密の値に当たるので human-only のまま（ADR 0094 の 5 つ）。
 - **伏せ字の書き戻し。** agent が読んだ値（伏せ字入り）をそのまま保存したら、伏せ字の所は今の値を残す。agent に見せた形と同じ場所で同じ値なら伏せる前の値に戻し、伏せ字を含むのに合わなければ `MASKED` で断る（伏せ字そのものを値として保存しない）。並びは位置で突き合わせる。Pleiad の MCP の秘密（env・bearer・ヘッダー・clientSecret）は登録のモジュールが前の値を残すので、操作の層は引数だけ戻す。
 - **会話から呼ぶときの既定。** 会話に束縛された agent が `cwd` を省けばその会話の作業場所、`sessionId` を省けばその会話（`hooks.session` は会話のエージェントも）。人の画面からの呼び出しは今までどおり省いたまま。
 - **出す口。** 全部 `ui: true`・`mcp: 'catalog'`（直のツールは増やさない）・CLI。CLI の最初の語は `mcp-servers`（`pleiad mcp` は stdio の MCP の起動に使っている）・`hooks`・`context`・`remote`・`endpoints`。
-- **移さなかったもの。** 承認モード・秘密の値・アカウント・接続先の保存と既定・リモートのペアリングと端末の取り消し・中継の設定・OAuth のログインとログアウト・元のコマンドを返す読み出しは human-only のまま（除外表）。範囲の分け直しは別の作業で行う。
+- **移さなかったもの。** ADR 0094 の human-only の 5 つ（承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリング）に当たる、OAuth のログインとログアウト（`mcpAuthStart`・`mcpAuthLogout`）・接続先の保存と確認（`compatEndpointSave`・`compatEndpointCheck`）と既定・リモートのペアリングと端末の一覧・取り消し・中継の設定（`setRemoteSettings`）。
 
 ## 理由
 
@@ -64,7 +64,7 @@
 
 ## 影響
 
-- `tests/ops-baseline.json` の `todo` は 61 → 30。操作の一覧の snapshot（`tests/ops-surface.snap.json`）に 31 の操作が載る。
+- `tests/ops-baseline.json` の `todo` は 59 → 28。操作の一覧の snapshot（`tests/ops-surface.snap.json`）に 31 の操作が載る。
 - `ply_control` の指示と tools/list の量は変わらない（ja 1733・en 1632 トークン。上限 1800）。新しい操作は `list_ops`・`call_op` から呼ぶ。
 - 失敗の code に `MASKED`（伏せ字の書き戻しが合わない）が増える。agent へのモジュールの失敗は、モジュールの `code`（大文字）か `FAILED`。
 - 検査: `ops-mcp-hooks`（依存を差し替えて、agent への伏せ字・書き戻し・guarded と `riskOf`）、`ops-control`（使い捨ての home とデータ置き場に秘密の目印を入れ、全 read 操作の返りに出ないこと・Hook の登録の承認カードと許可・MCP の登録の拒否・bypass の記録）、`ops-surface`（T6 の依存に MCP・Hooks・コンテキスト・リモート・接続先）。

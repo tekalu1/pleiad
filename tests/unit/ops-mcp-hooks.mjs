@@ -47,7 +47,7 @@ function fakeDeps() {
       scan: async () => ({ files: [], entries: [] }),
       session: async (a) => { calls.push(['hooks.session', a]); return { agent: a.backend, runs: [], unify: { registered: [{ command: `deploy --token ${MARKER}` }] } }; },
       view: async () => ({ revision: 'hv1', hooks: [{ ...hook, command: '••••' }] }),
-      readHook: async () => structuredClone(hook),
+      readPly: async () => structuredClone(hook),
       read: async () => ({ command: hook.command }),
       save: async (a) => { calls.push(['hooks.saveNative', a]); return { dryRun: a.dryRun === true, results: [{ agent: 'claude', op: 'edit', ok: true, revision: 'fr1', path: 'C:/home/.claude/settings.json' }] }; },
       saveHook: async (v) => { calls.push(['hooks.save', v]); return { hooks: [] }; },
@@ -105,7 +105,7 @@ export default async function (t) {
   const hookBack = await call(agent('bypass'), 'hooks.save', { value: { id: 'h1', name: 'guard', agent: 'claude', event: 'PreToolUse', command: '••••' } });
   t.ok('hooks.save: 伏せた形と合わないコマンドの伏せ字は断る', hookBack.r.code === 'MASKED');
   const { maskText } = await import('../../core/hooks-config.mjs');
-  const hook = await fakeDeps().hooks.readHook('h1');
+  const hook = await fakeDeps().hooks.readPly('h1');
   const hookKeep = await call(agent('bypass'), 'hooks.save', { value: { id: 'h1', name: 'guard2', agent: 'claude', event: 'PreToolUse', command: maskText(hook.command) } });
   t.ok('hooks.save: 読んだ（伏せた）コマンドのまま名前だけ変えると、元のコマンドを残す', hookKeep.r.ok && hookKeep.deps.calls.find((c) => c[0] === 'hooks.save')?.[1].command === hook.command, JSON.stringify(hookKeep.r));
   const nativeHookKeep = await call(agent('bypass'), 'hooks.saveNative', { items: [{ op: 'edit', agent: 'claude', scope: 'user', file: 'f', revision: 'fr1', loc: { event: 'PreToolUse', group: 0, handler: 0 }, event: 'PreToolUse', command: maskText(hook.command) }] });

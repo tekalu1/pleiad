@@ -2,10 +2,11 @@
 // 画面の WS コマンド（scanHooks・savePlyHook など）はこの操作を呼ぶ薄い外側（ADR 0095）。本体はサーバーが ctx.hooks で渡す（core/server.mjs の opsDeps）。
 // Hooks はエージェントの操作のたびに任意のコマンドを動かすので、書き込み（保存・写す・有効にする・担当・修復・削除）は guarded。
 // 例外: 書く前の確認（dryRun）は書かないので write、無効にする向き（togglePlyHook の enabled: false）は関所を狭めるので write（riskOf が上げる）。
-// 返りのコマンドはモジュールが形で伏せる（maskText）。agent にはさらに、会話の記録に載るコマンドも伏せる。元のコマンドを返す readHook・readPlyHook は human-only。
+// 返りのコマンドはモジュールが形で伏せる（maskText）。agent にはさらに、会話の記録に載るコマンドも伏せる。
+// 定義 1 つを読む hooks.read・hooks.readPly（readHook・readPlyHook。ADR 0094）は、画面の編集のシートには元のコマンドを、agent には形で伏せたコマンドを返す。
 import { z } from 'zod';
 import { t } from '../i18n.mjs';
-import { maskText } from '../hooks-config.mjs';
+import { HOOK_AGENTS, maskText } from '../hooks-config.mjs';
 import { defineOp } from './registry.mjs';
 import { diffRows } from './settings.mjs';
 import { byAgent, cwdFor, hasMask, restoreMasked, run, sessionFor } from './redact.mjs';
@@ -25,6 +26,8 @@ function maskCommands(value) {
   return value;
 }
 const shown = (ctx, value) => (byAgent(ctx) ? maskCommands(value) : value);
+/** 定義 1 つの command（元の文字列）: 人にはそのまま、agent には形で伏せる */
+const masked = (ctx, value) => (ctx.principal.by === 'human' || typeof value?.command !== 'string' ? value : { ...value, command: maskText(value.command) });
 
 /** 書く前の確認（dryRun）は書かないので write のまま、書くときだけ guarded */
 const unlessDryRun = (_ctx, args) => (args.dryRun === true ? 'write' : 'guarded');
@@ -55,6 +58,30 @@ export const hookOps = [
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'scan'] } },
     legacyCommand: 'scanHooks',
     handler: async (ctx, args) => run(ctx, async () => shown(ctx, await ctx.hooks.scan({ ...args, cwd: await cwdFor(ctx, args.cwd) }))),
+  }),
+  defineOp({
+    id: 'hooks.read',
+    summary: 'agent:ops.hooks.read.summary',
+    risk: 'read',
+    input: z.object({
+      agent: z.enum(HOOK_AGENTS).describe(D('read', 'agent')),
+      scope: z.string().min(1).max(40).describe(D('read', 'scope')),
+      base: z.string().max(4000).nullable().optional().describe(D('read', 'base')),
+      file: z.string().max(4000).nullable().optional().describe(D('read', 'file')),
+      loc: z.object({
+        event: z.string().min(1).max(100),
+        group: z.number().int().min(-1),
+        handler: z.number().int().min(0),
+        name: z.string().max(200).nullable().optional(),
+      }).describe(D('read', 'loc')),
+    }),
+    output: z.object({
+      agent: z.string(), scope: z.string(), path: z.string(), revision: z.string(), event: z.string(), name: z.string().nullable(), matcher: z.string().nullable(),
+      command: z.string().nullable(), timeout: z.unknown(), async: z.boolean(), keys: z.array(z.string()), editable: z.boolean(), enabled: z.boolean().optional(),
+    }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'read'] } },
+    legacyCommand: 'readHook',
+    handler: async (ctx, args) => masked(ctx, await ctx.hooks.read({ ...args, base: args.base ?? undefined, file: args.file ?? undefined })),
   }),
   defineOp({
     id: 'hooks.saveNative', summary: 'agent:ops.hooks.saveNative.summary', risk: 'write', riskReason: WRITE_PREVIEW,
@@ -129,6 +156,16 @@ export const hookOps = [
     handler: async (ctx, { cwd: dir }) => run(ctx, async () => shown(ctx, await ctx.hooks.view((await cwdFor(ctx, dir)) ?? null))),
   }),
   defineOp({
+    id: 'hooks.readPly',
+    summary: 'agent:ops.hooks.readPly.summary',
+    risk: 'read',
+    input: z.object({ id: z.string().min(1).max(200).describe(D('readPly', 'id')) }),
+    output: z.object({ id: z.string(), name: z.string(), agent: z.string(), event: z.string(), matcher: z.string(), command: z.string(), targets: z.array(z.string()), enabled: z.boolean() }).passthrough(),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'read-ply'], positional: ['id'] } },
+    legacyCommand: 'readPlyHook',
+    handler: async (ctx, { id }) => masked(ctx, await ctx.hooks.readPly(id)),
+  }),
+  defineOp({
     id: 'hooks.save', summary: 'agent:ops.hooks.save.summary', risk: 'guarded',
     input: z.object({ value: loose.describe(D('save', 'value')), cwd, reason }),
     confirm: async (ctx, { value }) => {
@@ -142,7 +179,7 @@ export const hookOps = [
     handler: (ctx, { value, cwd: dir }) => run(ctx, async () => {
       let next = value;
       if (byAgent(ctx) && typeof value.id === 'string' && hasMask(value.command)) {
-        const original = await ctx.hooks.readHook(value.id).catch(() => null);
+        const original = await ctx.hooks.readPly(value.id).catch(() => null);
         next = { ...value, command: keepCommand(ctx, value.command, original?.command, 'value.command') };
       }
       return shown(ctx, await ctx.hooks.saveHook(next, (await cwdFor(ctx, dir)) ?? null));
