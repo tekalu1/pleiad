@@ -9,7 +9,8 @@
 //     invoke(op, args)              … 操作の一覧（cmd('invoke', { op, args }) の短縮。失敗は throw）
 //     state                         … client の state（読むだけ。current・sessions・runningIds・waitingIds など）
 //     filePreview                   … web/file-preview.mjs の返り。open(ref, element)・openPanel・close・panelOpen
-//     permissionCard(ev, into)      … 承認のカードを入れ物へ描く（client.mjs の permissionCard。決着は resolvePermission と同じ）
+//     browser                       … 内蔵ブラウザーの部品（web/browser-panel.mjs の返り。使えない画面では null。スレッドの見出しの入口が使う）
+//     permissionCard(ev, into)      … 承認のカードを入れ物へ描く（client.mjs の permissionCard。質問は質問のカード。決着は resolvePermission と同じ）
 //     openSession(id)               … Chats の会話を開く（Chats のタブへ戻して select）
 //     openThread(channelId, threadId) … スレッドを開く。setupChannels が足す（部品の openThread へ配る）。呼ぶのは W2（要約の行・「スレッドで返信」）、受けるのは W3
 //     openSidebar()                 … 脇を開く（狭い画面は引き出し）
@@ -27,6 +28,7 @@
 //   スレッドの空間モデル（.deck・#chFeed・#chThread）・投稿・入力欄・bot のページ・ルーティンの編集は、各パッケージが #channelsBody の中に作る。
 import { createSideTabs } from './side-tabs.mjs';
 import { createFeed } from './feed.mjs';
+import { createThread } from './thread.mjs';
 
 /** WS の出来事のうち、この画面が受けるもの（core/protocol.mjs の EVENTS）。ほかの出来事も部品の onEvent には全部届く（permission など） */
 export const CHANNEL_EVENTS = new Set([
@@ -50,7 +52,8 @@ export function setupChannels(host) {
   // W2 チャンネルの流れ
   parts.push(createFeed(host));
 
-  // W3 スレッドと空間モデル:  parts.push(createThread(host));   // web/channels/thread.mjs
+  // W3 スレッドと空間モデル（流れの板を #chDeck へ移すので、流れの後に置く）
+  parts.push(createThread(host));
 
   // W4 bot のページ（show({ kind: 'bot', id })。id が 'new' なら作る画面）
   parts.push(createBotPage(host));

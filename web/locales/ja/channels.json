@@ -92,7 +92,45 @@
       "failed": "保存できませんでした: {{error}}"
     }
   },
-  "thread": {},
+  "thread": {
+    "log": "スレッドの投稿",
+    "close": "スレッドを閉じる",
+    "back": "{{name}} の流れに戻る",
+    "untitled": "スレッド",
+    "loading": "読み込んでいます…",
+    "loadFailed": "読み込めませんでした: {{error}}",
+    "replies_other": "{{count}} 件の返信",
+    "noReplies": "返信はまだありません",
+    "entry": {
+      "toc": "このスレッドの目次",
+      "browser": "内蔵ブラウザー"
+    },
+    "toc": {
+      "title": "目次",
+      "search": "スレッド内を検索",
+      "empty": "投稿がありません",
+      "noMatch": "一致する言葉がありません",
+      "present": "（提示）"
+    },
+    "composer": {
+      "placeholder": "スレッドに返信",
+      "working": "スレッドに返信 · 作業中でも {{name}} に届きます"
+    },
+    "openSession": "会話を開く →",
+    "openSessionTitle": "この返事を作った bot の会話を Chats で開く",
+    "stop": "止める",
+    "stopping": "止めています…",
+    "stopFailed": "止められませんでした: {{error}}",
+    "band": {
+      "working": "{{who}} が作業中",
+      "waiting": "{{who}} があなたを待っています",
+      "someone": "bot",
+      "calls": "呼び合い {{count}} 回",
+      "stopped": "止めました",
+      "tokens": "このスレッドで {{tokens}} トークン",
+      "tokensTitle": "入力 {{input}} · 出力 {{output}} · キャッシュ読み出し {{cached}}"
+    }
+  },
   "bot": {
     "iconLabel": "アイコンを変える",
     "nameLabel": "名前",

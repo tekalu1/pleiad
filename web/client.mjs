@@ -5296,7 +5296,8 @@ const channelsUi = setupChannels({
   cmd: (command, args) => cmd(command, args),
   invoke: async (op, args = {}) => cmd('invoke', { op, args }),
   state, filePreview, side, t,
-  permissionCard: (ev, into) => permissionCard(ev, into),
+  browser: browserPanel,   // 内蔵ブラウザー（スレッドの見出しの入口が右パネルをブラウザーにする。使えない画面では null）
+  permissionCard: (ev, into) => (ev.kind === 'question' ? questionCard(ev, into) : permissionCard(ev, into)),   // 質問も同じ口（bot の質問）
   openSession: async (id) => { channelsUi.setTab('chats'); await select(id); },
   openSidebar: () => setSidebar(true),
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
