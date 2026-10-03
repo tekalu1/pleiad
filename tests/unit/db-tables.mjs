@@ -93,7 +93,7 @@ export default async function (t) {
     t.ok('会話の索引: 行を足し・消す', sameJson(Object.keys(conversations.loadAll()), ['y']));
 
     // ---- WAL・接続の共有
-    t.ok('WAL・synchronous=FULL で開き、形式番号を user_version に書く', db.prepare('PRAGMA journal_mode').get().journal_mode === 'wal' && db.prepare('PRAGMA synchronous').get().synchronous === 2 && db.prepare('PRAGMA user_version').get().user_version === 2);
+    t.ok('WAL・synchronous=NORMAL で開き、形式番号を user_version に書く', db.prepare('PRAGMA journal_mode').get().journal_mode === 'wal' && db.prepare('PRAGMA synchronous').get().synchronous === 1 && db.prepare('PRAGMA user_version').get().user_version === 2);
     t.ok('busy_timeout は数百 ms（イベントループを長く塞がない）', db.prepare('PRAGMA busy_timeout').get().timeout <= 500);
   } finally { db.close(); }
 
