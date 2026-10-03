@@ -34,6 +34,7 @@ const cases = [
   await import('./unit/file-actions.mjs'),
   // 右パネルの枠（web/side-panel.mjs）: モードごとの部品・渡さない部品は隠す・可視化の ⋯
   await import('./unit/side-panel.mjs'),
+  await import('./unit/refresh-batch.mjs'),
   // 内蔵ブラウザー: 右パネルの表・アドレス欄・リンクの開き先・使える画面・main のタブと位置（偽の electron）
   await import('./unit/inapp-browser.mjs'),
 

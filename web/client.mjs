@@ -2655,7 +2655,7 @@ function onEvent(ev, replay = false) {
     // ターンを回した分だけ使用量が動く。ヘッダーのチップをそのエージェントの分だけ取り直す（読み直しの再生では取らない）
     if (!replay && !ev.requeued) headerUsage.turnEnded(s?.backend);
     renderSessions();
-    if (ev.sessionId !== state.current) refresh();
+    if (ev.sessionId !== state.current) scheduleRefresh();
   }
   // 承認は一度きりしか届かない。開いていない会話の分も覚えておき、開いたときに描く
   // （覚えずに捨てると、一覧は「承認待ち」なのにカードがどこにも出ない）
@@ -2720,10 +2720,10 @@ function onEvent(ev, replay = false) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
       // 家族の枝の名前が変わったなら、筋と分岐点の印にも出す
-      if (ev.type === "title" && branches.has(ev.sessionId)) return refresh().then(paintBranchNames);
+      if (ev.type === "title" && branches.has(ev.sessionId)) return scheduleRefresh().then(paintBranchNames);
       // 開いている会話から枝が分かれた（fork イベントは子の id で来るのでここへ落ちる）
-      if (ev.type === "fork") return refresh().then(() => reloadBranches(ev));
-      refresh();
+      if (ev.type === "fork") return scheduleRefresh().then(() => reloadBranches(ev));
+      scheduleRefresh();
     }
     return;
   }
@@ -3098,7 +3098,7 @@ function applyRunning(work) {
   for (const id of state.runningIds) {
     if (state.sessions.some((x) => x.id === id) || state.askedFor.has(id)) continue;
     state.askedFor.add(id);
-    refresh();
+    if (id === state.current) refresh(); else scheduleRefresh();
     break;
   }
 }
@@ -3736,6 +3736,7 @@ const side = createSide({
   onListContext: (x, y) => showMenu(x, y, [newGroupItem()]),
   onSettings: () => openSettings(),
   cwdNow: () => state.cwd,
+  visible: () => !document.body.classList.contains("settings") && (narrowView.matches ? drawerOpen() : !document.documentElement.classList.contains("side-closed")),
 });
 
 function renderSessions() {
@@ -5413,6 +5414,7 @@ function setDrawer(open, { refocus = true } = {}) {
   const root = document.documentElement;
   if (drawerOpen() === open) return;
   root.classList.toggle("side-open", open);
+  if (open) side.redraw();
   $("openSidebar").setAttribute("aria-expanded", String(open));
   // 開いている間は背後を inert にする。Tab は脇の中だけを巡り、見えない会話を操作させない（設定で会話を覆うときと同じ手）
   for (const n of document.body.children) if (n.matches("main, .file-preview, .host-bar, #remoteBadge")) n.inert = open;
@@ -5433,6 +5435,7 @@ function setSidebar(open) {
   if (document.body.classList.contains("settings") || root.classList.contains("side-closed") !== open) return;
   document.body.classList.add("side-moving");
   root.classList.toggle("side-closed", !open);
+  if (open) side.redraw();
   try { localStorage.setItem(SIDEBAR_STORE, open ? "open" : "closed"); } catch { /* 保存できなくても動く */ }
   // 押したボタンは消える。居場所を body に落とさず、反対側のボタンへ移す
   const from = document.activeElement;
@@ -5458,7 +5461,7 @@ function initSidebar() {
     setDrawer(false);
   });
   // 広い画面へ戻ったら引き出しの印を外す（幕が残らないように）
-  narrowView.addEventListener("change", () => setDrawer(false, { refocus: false }));
+  narrowView.addEventListener("change", () => { setDrawer(false, { refocus: false }); side.redraw(); });
   // Ctrl+B（macOS は ⌘B）。入力欄でも太字などの既定の意味は無いので、どこからでも効かせる。
   // macOS の Ctrl+B は入力欄で「1 文字戻る」なので奪わない
   const mac = /Mac/.test(navigator.platform);
@@ -6789,9 +6792,22 @@ async function syncTopbar() {
  * 走っている取り直しがあれば、それが終わった後に 1 回だけ取り直す（その間に来た呼び出しは全部その 1 回を待つ）。
  * 走っている分は呼ばれる前に始まったので、それだけを待つと、呼んだ側が直前にした変更（fork など）が載らない
  */
-let refreshRun = null, refreshAgain = null;
-function refresh() {
-  if (!refreshRun) return refreshRun = runRefresh().finally(() => { refreshRun = null; });
+let refreshRun = null, refreshAgain = null, refreshSnapshotReady = false;
+let scheduledRefresh = null;
+function scheduleRefresh() {
+  if (scheduledRefresh) return scheduledRefresh;
+  scheduledRefresh = new Promise((resolve, reject) => {
+    setTimeout(() => {
+      scheduledRefresh = null;
+      refresh().then(resolve, reject);
+    }, 400);
+  });
+  return scheduledRefresh;
+}
+function refresh({ sharePending = false } = {}) {
+  // 起動時の重複だけは未受信の写しを共有する。出来事や自分の操作後は新しい写しを取り直す。
+  if (!refreshRun) return refreshRun = runRefresh().finally(() => { refreshRun = null; refreshSnapshotReady = false; });
+  if (sharePending && !refreshSnapshotReady) return refreshRun;
   return refreshAgain ??= refreshRun.catch(() => {}).then(() => { refreshAgain = null; return refresh(); });
 }
 
@@ -6803,6 +6819,7 @@ async function runRefresh() {
     cmd("listStatuses").catch(() => []),
     cmd("prefs").catch(() => ({})),
   ]);
+  refreshSnapshotReady = true;
   if (version !== refreshVersion) return;
   state.sessions = applyPendingPatches(sessions);
   readCompletions.fromSessions(sessions);
@@ -7675,7 +7692,7 @@ function connect() {
       notifySettings.refresh();
       presenceReporter.reset();
       presenceReporter.report(true);
-      return refresh().then(async () => {
+      return refresh({ sharePending: true }).then(async () => {
         // スマホの通知を押して開いた会話（殻が ?open= で渡す）
         const wanted = mobileNotify.takeOpenRequest();
         if (wanted) return select(wanted);
@@ -7951,7 +7968,7 @@ $("titleWand").onclick = async () => {
   $("titleEdit").select();
 };
 
-const onboarding = setupOnboarding({ cmd, refreshAuth, getAuth: () => state.auth, authLogin, authUrlBox, folderBrowser,
+const onboarding = setupOnboarding({ cmd, refreshAuth, getAuth: () => state.auth, authLogin, authUrlBox, folderBrowser, onClose: () => side.redraw(),
   begin: async (settings, prompt) => {
     if (state.busy || creatingSession) throw new Error(t("dialog.onboarding.busy"));
     const id = await startNew(settings);
