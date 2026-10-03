@@ -259,6 +259,16 @@ async function agentScript(text) {
 async function runTurn(text) {
   emitInit();
 
+  // 結果を返した直後にプロセスが終わる agy の再現。stdout を書き切ってから終了する。
+  if (text === "result-then-exit") {
+    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "完了した返事" });
+    process.stdout.write(JSON.stringify({
+      event: "result",
+      result: { conversation_id: conversationId, status: "SUCCESS", response: "完了した返事", num_turns: 1 },
+    }) + NL, () => process.exit(0));
+    return;
+  }
+
   // カスタムエージェントの確認（agent-body / mcp-tools / mcp-call:…）。本文だけ返して終える
   const scripted = await agentScript(text);
   if (scripted !== null) {

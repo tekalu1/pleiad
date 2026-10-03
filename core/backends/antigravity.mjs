@@ -505,6 +505,8 @@ export const backend = {
 
     session.onExit = (err) => {
       release(conversationId, session);
+      // result で畳んだターンは、直後に agy が終了してもその結果を変えない。
+      if (closed) return;
       // ターンの途中で落ちた。中断（kill）なら abort 側が畳むので、ここでは失敗にしない
       if (signal?.signal?.aborted) return settle?.();
       failed = err;

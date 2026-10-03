@@ -12,6 +12,7 @@ process.env.AGENT_HOST_DATA = scratch;
 process.env.AGENT_HOST_AGY_BIN = `node "${path.join(ROOT, "tests", "lib", "fake-agy.mjs")}"`;
 process.env.AGENT_HOST_AGY_SAVE_MS = "30";
 process.env.FAKE_AGY_PARTIAL_HOLD_MS = "600";
+process.env.FAKE_AGY_PID_FILE = path.join(scratch, "agy-pids.json");
 
 const { backend } = await import("../../core/backends/antigravity.mjs");
 const store = await import("../../core/backends/antigravity-store.mjs");
@@ -19,6 +20,22 @@ const store = await import("../../core/backends/antigravity-store.mjs");
 const checks = [];
 const ok = (label, pass, detail = "") => checks.push({ label, pass: Boolean(pass), detail: String(detail) });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const pids = async () => JSON.parse(await fs.readFile(process.env.FAKE_AGY_PID_FILE, "utf8").catch(() => "[]"));
+const gone = async (pid) => {
+  for (let i = 0; i < 100; i++) {
+    try { process.kill(pid, 0); } catch { return true; }
+    await sleep(20);
+  }
+  return false;
+};
+const released = async (pid) => {
+  for (let i = 0; i < 100; i++) {
+    const live = JSON.parse(await fs.readFile(path.join(scratch, "antigravity", "pids.json"), "utf8").catch(() => "[]"));
+    if (!live.some((entry) => entry.pid === pid)) return true;
+    await sleep(20);
+  }
+  return false;
+};
 const fileOf = (id) => path.join(scratch, "antigravity", `${id}.json`);
 const record = async (id) => JSON.parse(await fs.readFile(fileOf(id), "utf8").catch(() => "null"));
 const exists = (id) => fs.access(fileOf(id)).then(() => true, () => false);
@@ -100,28 +117,43 @@ try {
   ok("ユーザー発言は送信の時刻、AI の発言は完了の時刻で残る", askedAt >= sentBefore && repliedAt - askedAt >= 500 && repliedAt >= Date.parse(okMidReply?.at),
     `送信から ${askedAt - sentBefore}ms / 返答まで ${repliedAt - askedAt}ms`);
 
-  // ---- 4. agy が途中で落ちたターン。そこまでの分が残る
+  // ---- 4. SUCCESS の result を返してからプロセスが終了しても、完了済みのターンは成功のまま
+  const completed = await turn({ prompt: "result-then-exit", sessionId: sid }).done;
+  const completedPid = (await pids()).at(-1);
+  const exitedAfterResult = await gone(completedPid);
+  // pid の控えが外れた時点で onExit の判定も済んでいる。
+  const exitHandled = await released(completedPid);
+  ok("SUCCESS の後に agy が終了する台本が動く", exitedAfterResult && exitHandled, String(completedPid));
+  ok("完了後の終了で成功ターンを失敗に変えない",
+    !completed.error && completed.events.filter((e) => e.type === "turnResult").map((e) => e.outcome).join() === "ok",
+    JSON.stringify({ error: completed.error?.message, results: completed.events.filter((e) => e.type === "turnResult") }));
+  const restarted = await turn({ prompt: "再開", sessionId: sid }).done;
+  ok("完了後に終了した会話は次のターンで起こし直せる",
+    !restarted.error && restarted.events.some((e) => e.type === "turnResult" && e.outcome === "ok") && (await pids()).at(-1) !== completedPid,
+    String(restarted.error?.message ?? ""));
+
+  // ---- 5. agy が途中で落ちたターン。そこまでの分が残る
   const exiting = turn({ prompt: "partial-exit", sessionId: sid });
   const exited = await exiting.done;
   const afterExit = await record(sid);
   ok("途中で落ちたターンは失敗で終わる", Boolean(exited.error), String(exited.error?.message ?? "(投げない)"));
   ok("途中で落ちたターンもツールと本文が残る",
-    afterExit?.messages?.length === 8 && afterExit.messages[6].text === "partial-exit" && reply(afterExit)?.toolCalls?.length === 1,
+    afterExit?.messages?.length === 12 && afterExit.messages[10].text === "partial-exit" && reply(afterExit)?.toolCalls?.length === 1,
     JSON.stringify(afterExit?.messages?.map((m) => [m.role, m.text]) ?? null));
 
-  // ---- 5. 控えの無い会話を再開した（別の起動で forget した・控えが無い）。途中・失敗の書き込みで作らない
+  // ---- 6. 控えの無い会話を再開した（別の起動で forget した・控えが無い）。途中・失敗の書き込みで作らない
   const ghost = "ghost-conversation";
   const ghostRun = await turn({ prompt: "partial-fail", sessionId: ghost }).done;
   ok("控えの無い会話を再開して失敗しても控えを作らない", Boolean(ghostRun.error) && !(await exists(ghost)), String(await exists(ghost)));
 
-  // ---- 6. forget した会話は、後から届いた書き込みで作り直さない（成功のターンでも）
+  // ---- 7. forget した会話は、後から届いた書き込みで作り直さない（成功のターンでも）
   const forgotten = turn({ prompt: "partial-ok", sessionId: sid });
-  await until(sid, (r) => r.messages.length === 10);
+  await until(sid, (r) => r.messages.length === 14);
   await store.forget(sid);
   const forgottenRun = await forgotten.done;
   ok("forget した会話は、走っていたターンの書き込みで作り直さない", !forgottenRun.error && !(await exists(sid)), String(await exists(sid)));
 
-  // ---- 7. 同じ会話への書き込みは 1 本ずつ（read-modify-write が重なって発言が消えない）
+  // ---- 8. 同じ会話への書き込みは 1 本ずつ（read-modify-write が重なって発言が消えない）
   const burst = "burst-conversation";
   await Promise.all(Array.from({ length: 20 }, (_, i) =>
     store.appendMessages(burst, { cwd: scratch, messages: [{ role: "user", text: `m${i}`, uuid: `${burst}:u${i}` }] })));
