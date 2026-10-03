@@ -20,7 +20,7 @@ async page => {
 
   const call = (args) => 'control:' + JSON.stringify({ name: 'set_setting', arguments: args });
   const send = async (prompt) => {
-    await page.locator('#newSession').click();
+    await page.evaluate(() => document.getElementById('newSession').click());
     await page.waitForFunction(() => !document.querySelector('.mw.card'));
     await page.locator('#prompt').fill(prompt);
     await page.locator('#prompt').press('Control+Enter');
@@ -36,11 +36,18 @@ async page => {
   const card = await page.evaluate(() => {
     const m = document.querySelector('.mw.card');
     const q = (s) => m.querySelector(s);
-    const box = m.querySelector('.card').getBoundingClientRect(), col = document.querySelector('.m.ai').getBoundingClientRect();
+    const surface = m.querySelector('.m.card > .card');
+    const box = surface.getBoundingClientRect(), col = document.querySelector('.m.ai').getBoundingClientRect();
+    const deny = q('.card-actions .btn-quiet').getBoundingClientRect();
+    const allow = q('.card-actions .btn-primary').getBoundingClientRect();
+    const key = q('.ap-key'), keyTextLeft = key.getBoundingClientRect().left + parseFloat(getComputedStyle(key).paddingLeft);
     return {
       mark: q('.card-head').textContent, q: q('.q').textContent, label: q('.lbl').textContent, key: q('.ap-key').textContent, was: q('.ap-was').textContent, now: q('.ap-now').textContent,
       sub: [...m.querySelectorAll('.cu-ap .sub')].map((x) => x.textContent), warn: q('.warn')?.textContent, buttons: [...m.querySelectorAll('.card-actions .btn')].map((x) => x.textContent),
-      text: m.textContent, inRow: Boolean(m.closest('.tc')), column: box.left >= col.left - 1 && box.right <= col.right + 1,
+      text: m.textContent, inRow: Boolean(m.closest('.tc')),
+      column: Math.abs(box.left - col.left) <= 1 && Math.abs(box.right - col.right) <= 1,
+      gutterClear: getComputedStyle(m).backgroundColor === 'rgba(0, 0, 0, 0)',
+      buttonsAligned: Math.abs(deny.left - keyTextLeft) <= 1 && deny.right < allow.left && allow.right <= box.right,
       activity: document.querySelector('.m.activity')?.textContent ?? '', abort: !document.getElementById('abort').hidden,
     };
   });
@@ -50,9 +57,15 @@ async page => {
       || card.buttons.join() !== '拒否,変更を許可' || /confirmAgentSites|関所|true|\{/.test(card.text))
     throw Error('setting approval card: ' + JSON.stringify(card));
   // 会話の単独のカード（ツールの行の中ではない。ターンが終わっても残る）・会話の列の内側・「承認を待っている」の稼働表示も「中断」も出さない
-  if (card.inRow || !card.column || /承認を待っている/.test(card.activity) || card.abort) throw Error('setting approval placement: ' + JSON.stringify(card));
+  if (card.inRow || !card.column || !card.gutterClear || !card.buttonsAligned || /承認を待っている/.test(card.activity) || card.abort) throw Error('setting approval placement: ' + JSON.stringify(card));
   await page.getByRole('button', { name: '変更を許可', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.mw.card .card.done') && /変更を許可した/.test(document.querySelector('.mw.card')?.textContent ?? ''));
+  const folded = await page.evaluate(() => {
+    const m = document.querySelector('.mw.card'), box = m.querySelector('.m.card > .card').getBoundingClientRect();
+    const col = document.querySelector('.m.ai').getBoundingClientRect();
+    return { left: box.left, right: box.right, colLeft: col.left, colRight: col.right };
+  });
+  if (Math.abs(folded.left - folded.colLeft) > 1 || Math.abs(folded.right - folded.colRight) > 1) throw Error('folded placement: ' + JSON.stringify(folded));
   const answered = await page.evaluate(() => window.__sent.filter((x) => x.command === 'resolvePermission').at(-1));
   if (answered.args.allow !== true || !/^[a-f0-9]{32}$/.test(answered.args.receipt || '') || answered.args.always) throw Error('resolvePermission: ' + JSON.stringify(answered));
   // 結果の通知が会話に届き、開ける 1 行になる（エージェントに渡した全文は開くと読める）
@@ -73,4 +86,27 @@ async page => {
   const refused = await page.evaluate(() => window.__sent.filter((x) => x.command === 'resolvePermission').at(-1));
   if (refused.args.allow !== false || refused.args.messageKey !== 'userDenied' || !refused.args.receipt) throw Error('deny: ' + JSON.stringify(refused));
   await page.waitForFunction(() => [...document.querySelectorAll('.m.sys summary')].some((s) => /設定の変更の結果（拒否した）/.test(s.textContent)), null, { timeout: 15000 });
+
+  // 狭い幅でも待機中の面・ボタンと、決着後の一行が会話の列から出ない。
+  await page.setViewportSize({ width: 360, height: 760 });
+  await send(call({ key: 'confirmAgentSites', value: false, reason: '狭い画面での確認' }));
+  await page.locator('.mw.card .cu-ap').waitFor();
+  const narrow = await page.evaluate(() => {
+    const m = document.querySelector('.mw.card'), box = m.querySelector('.m.card > .card').getBoundingClientRect();
+    const col = document.querySelector('.m.ai').getBoundingClientRect();
+    const buttons = [...m.querySelectorAll('.card-actions button')].map((b) => b.getBoundingClientRect());
+    return { box: [box.left, box.right], col: [col.left, col.right], buttons: buttons.map((b) => [b.left, b.right]), scrollWidth: document.documentElement.scrollWidth };
+  });
+  if (Math.abs(narrow.box[0] - narrow.col[0]) > 1 || Math.abs(narrow.box[1] - narrow.col[1]) > 1
+      || narrow.buttons.some(([left, right]) => left < narrow.box[0] || right > narrow.box[1]) || narrow.scrollWidth > 360)
+    throw Error('narrow pending placement: ' + JSON.stringify(narrow));
+  await page.getByRole('button', { name: '拒否', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.mw.card .card.done'));
+  const narrowDone = await page.evaluate(() => {
+    const box = document.querySelector('.mw.card .m.card > .card').getBoundingClientRect();
+    const col = document.querySelector('.m.ai').getBoundingClientRect();
+    return { box: [box.left, box.right], col: [col.left, col.right], scrollWidth: document.documentElement.scrollWidth };
+  });
+  if (Math.abs(narrowDone.box[0] - narrowDone.col[0]) > 1 || Math.abs(narrowDone.box[1] - narrowDone.col[1]) > 1 || narrowDone.scrollWidth > 360)
+    throw Error('narrow folded placement: ' + JSON.stringify(narrowDone));
 }
