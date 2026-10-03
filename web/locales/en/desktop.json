@@ -63,6 +63,7 @@
   },
   "resident": {
     "summary": "Relay {{relay}} · Devices online {{devices}} · Running {{running}}",
+    "routines": "Staying in the tray for enabled routines: {{count}}",
     "open": "Open Pleiad",
     "quit": "Quit",
     "relay": {
