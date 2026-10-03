@@ -81,3 +81,46 @@
 
 - 依頼元の会話には、子の題・taskId つきの結果が通知として届き、依頼元が読んで答える。子の会話に新しいターンは立たない。
 - 台帳（`setting-approvals.json`）の形は変わらない。
+
+## 追記（2026-10-03）: 承認カードの言葉は操作ごとに持つ
+
+### 状況
+
+承認カードは設定の変更のために作った。そのあと同じカードを出す guarded な操作が増えた（MCP・Hooks・コンテキストの書き込み（[ADR 0095](0095-control-surface-mcp-hooks-context.md)）、別の会話への送信（[ADR 0104](0104-send-to-another-conversation.md)）、会話のシェルでのコマンドの実行・エージェントの切り替え・接続先の削除など（[ADR 0105](0105-control-surface-ui-internal.md)））。カードの一文（`note`）は操作の内容を言っていたが、見出し・項目名・許可のボタン・決着後の 1 行は、どの操作でも「{エージェント名} が設定を変えようとしています」「設定」「変更を許可」「変更を許可した」のままだった。送信やコマンドの実行を「設定の変更」として許可させていた。
+
+### 決定
+
+- **操作の定義（`defineOp`）に、承認カードの言葉の組の名前（`approvalWords`）を持たせる。** 言葉は画面の辞書 `ui:chat.opApproval.<組>`（ja・en）に置き、欄は `label`（項目名の札）・`question`（見出し）・`allow`（許可のボタン）・`allowed`（決着後の 1 行の右端）・`failed`（許可したが実行できなかった）・`warn`（⚠ の 1 行）・`notice`（OS の通知の見出し）。`registry.invoke` が承認の変更に `words` を添え、`askSettingChange` が payload の `settingChange.words` に載せ、画面（`web/setting-change.mjs` の `changeWord`）が引く。
+- **組を持たない操作・組に無い欄は、共通の言葉（`op`）にする。** 共通の言葉は設定に限らない言い方（「{エージェント名} が操作をしようとしています」「操作」「許可」「許可した」「⚠ 確認なしでできることが増える操作です。」）。知らない組の名前が来ても共通の言葉で出る（古い画面・新しい操作）。
+- **組と操作**（ja の見出し / 項目名 / 許可のボタン）:
+  - `setting`（`settings.set`）: 設定を変えようとしています / 設定 / 変更を許可（今までどおり）
+  - `send`（`sessions.send`）: 別の会話にメッセージを送ろうとしています / 送信 / 送信を許可
+  - `resend`（`sessions.messageAction` の再送）: 別の会話にメッセージを送り直そうとしています / 再送 / 再送を許可
+  - `schedule`（`sessions.scheduleSend`）: メッセージを送信予定にしようとしています / 送信予定 / 送信予定を許可
+  - `sendNow`（`sessions.sendScheduledNow`）: 送信予定のメッセージを今すぐ送ろうとしています / 送信 / 送信を許可
+  - `shell`（`shell.run`）: コマンドを実行しようとしています / コマンド / 実行を許可
+  - `switchBackend`（`sessions.switchBackend`）: 会話のエージェントを切り替えようとしています / エージェント / 切り替えを許可
+  - `turnSettings`（`sessions.setTurnSettings` の作業フォルダー・エージェント）: 会話の設定を変えようとしています / 会話 / 変更を許可
+  - `mcp`（`mcp.save`・`mcp.nativeSave`・`mcp.rename`・`mcp.import`・`mcp.setSettings`・`context.setSessionMcp`）: MCP サーバーの設定を変えようとしています / MCP / 変更を許可
+  - `hooks`（`hooks.save`・`hooks.saveNative`・`hooks.copy`・`hooks.toggle`・`hooks.setOwner`・`hooks.repair`）: Hooks を変えようとしています / Hooks / 変更を許可
+  - `context`（`context.setSettings`・`context.setPlyInstructions`）: コンテキストの設定を変えようとしています / コンテキスト / 変更を許可
+  - 削除: `mcpDelete`（`mcp.delete`。MCP サーバーを）・`hookDelete`（`hooks.remove`。Hook を）・`endpointDelete`（`compatEndpoints.delete`。接続先を）・`sessionDelete`（`sessions.deleteUnsent`。未送信の会話を）… を削除しようとしています / 削除を許可
+- **⚠ の 1 行は、出すかどうかを今までどおり `loosens` で決め、言葉は操作ごとに言い分ける。** 「確認なしでできることが増える変更です」が合わない操作は、その操作で本当に増えるものを言う。
+  - 送信・再送: 「送り先の会話は、この会話より確認の少ない承認モードで動きます。」（承認カードになるのは、宛先の承認モードが送り手より強いときだけ）
+  - コマンドの実行: 「コマンドは確認なしで、あなたと同じ権限で動きます。」
+  - Hooks: 「Hooks は、決まったときに確認なしでコマンドを動かします。」
+  - 削除は `loosens: false` のままで ⚠ を出さない（消すと AI ができることは減る。消す操作であることは見出しとボタンで分かる）。
+  - エージェントの切り替え（`sessions.switchBackend`）は `loosens: false` にした。承認モードが緩くなる切り替えは `riskOf` が `NEEDS_UI` で断るので、カードに来るのは緩くならない切り替えだけ。
+- 拒否のボタン（「拒否」）・「常に許可」を出さないこと・カードの並び（[ADR 0073](0073-computer-use-ui.md) の computer use の承認カードに揃えた列とボタン）は変えない。
+- サーバーの permission の `title`（中継先の見出しの元）は、設定でない操作では「{エージェント名} が操作「{id}」の許可を求めています」（`server:permission.opApproval`）にする。
+
+### 理由
+
+- 人が押すボタンは、押すと起きることを言う。「変更を許可」で送信やコマンドの実行を許可させると、何を許したかを読み違える。
+- 言葉を辞書に置き、操作の定義が組の名前だけを持つのは、言語ごとの言い方を画面の辞書（ja・en の揃いと未訳を `lint-i18n` が見る）で管理するため。組を名前で共有すれば、同じ種類の操作（MCP の保存・取り込み・名前の変更）は同じ言葉になる。
+- 共通の言葉に落とすのは、組を書き忘れた操作や、画面より新しいサーバーでも、設定の言葉で出るよりはましな言い方にするため。
+
+### 影響
+
+- guarded の操作を足すときは、`approvalWords` を書き、組が無ければ `ui:chat.opApproval` に ja・en で足す（`tests/unit/setting-change-ui.mjs` が、定義の組が辞書にあることを確かめる）。
+- 決着の結果として会話に届く通知の 1 行（「設定の変更の結果（変更した）」）と、エージェントへ渡す結果の文（`agent:ops.settingNotice.*`）は、まだ設定の言葉のまま。

@@ -92,6 +92,7 @@ export const hookOps = [
       allowReformat: z.boolean().optional().describe(A('allowReformat')),
       reason,
     }),
+    approvalWords: 'hooks',
     confirm: async (ctx, { items }) => {
       const dry = await ctx.hooks.save({ items, dryRun: true }).catch(() => null);
       const rows = (dry?.results ?? []).slice(0, 8).map((r) => ({ path: `hooks.${r.agent ?? ''}.${r.op ?? ''}`, before: null, after: JSON.stringify(r.path ?? r.error ?? '') }));
@@ -120,6 +121,7 @@ export const hookOps = [
       allowReformat: z.boolean().optional().describe(A('allowReformat')),
       reason,
     }),
+    approvalWords: 'hooks',
     confirm: async (ctx, { source, targets }) => {
       const dry = await ctx.hooks.copy({ source, targets, dryRun: true }).catch(() => null);
       const rows = (dry?.results ?? []).slice(0, 6).map((r) => ({ path: `hooks.${r.agent ?? ''}`, before: null, after: JSON.stringify(r.command ?? r.error ?? '') }));
@@ -168,6 +170,7 @@ export const hookOps = [
   defineOp({
     id: 'hooks.save', summary: 'agent:ops.hooks.save.summary', risk: 'guarded',
     input: z.object({ value: loose.describe(D('save', 'value')), cwd, reason }),
+    approvalWords: 'hooks',
     confirm: async (ctx, { value }) => {
       const view = await ctx.hooks.view(null).catch(() => null);
       const before = value.id ? hookView(findHook(view, value.id)) : null;
@@ -188,6 +191,7 @@ export const hookOps = [
   defineOp({
     id: 'hooks.remove', summary: 'agent:ops.hooks.remove.summary', risk: 'guarded',
     input: z.object({ id: z.string().min(1).max(100).describe(A('id')), cwd, reason }),
+    approvalWords: 'hookDelete',
     confirm: async (ctx, { id }) => {
       const view = await ctx.hooks.view(null).catch(() => null);
       const h = findHook(view, id);
@@ -202,6 +206,7 @@ export const hookOps = [
     riskReason: 'Turning a registered hook off only narrows what runs; turning it on is raised to guarded by riskOf (it starts running a command)',
     riskOf: (_ctx, { enabled }) => (enabled === false ? 'write' : 'guarded'),
     input: z.object({ id: z.string().min(1).max(100).describe(A('id')), enabled: z.boolean().optional().describe(D('toggle', 'enabled')), cwd, reason }),
+    approvalWords: 'hooks',
     confirm: async (ctx, { id, enabled }) => {
       const view = await ctx.hooks.view(null).catch(() => null);
       const h = findHook(view, id);
@@ -230,6 +235,7 @@ export const hookOps = [
       revision: z.string().max(100).optional().describe(D('setOwner', 'revision')),
       cwd, reason,
     }),
+    approvalWords: 'hooks',
     confirm: async (ctx, { place, value, imports }) => {
       const view = await ctx.hooks.view(place ?? null).catch(() => null);
       const before = place ? view?.place?.value ?? null : view?.defaults?.value ?? null;
@@ -243,6 +249,7 @@ export const hookOps = [
   defineOp({
     id: 'hooks.repair', summary: 'agent:ops.hooks.repair.summary', risk: 'guarded',
     input: z.object({ cwd, reason }),
+    approvalWords: 'hooks',
     confirm: async (ctx) => {
       const view = await ctx.hooks.view(null).catch(() => null);
       return { key: null, before: view?.revision ?? view?.error ?? null, rows: [], note: t('opsApproval.hooksRepair'), loosens: true };
