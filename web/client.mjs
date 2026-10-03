@@ -1490,7 +1490,7 @@ function computerApproval(ev, approval, row) {
   const head = el("div", "card-head");
   head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.approval.headingMark")));
   const body = approvalBody(approval, relayLabel(ev.title));
-  const actions = el("div", "card-actions");
+  const actions = el("div", "card-actions cu-actions");
   actions.append(res, ...(canAlways ? [b.always] : []), b.deny, b.session);
   card.append(head, body, actions);
   const settle = async (scope) => {
@@ -1556,7 +1556,7 @@ function settingChangeApproval(ev, change) {
   const head = el("div", "card-head");
   head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.approval.headingMark")));
   const body = changeBody(change, relayLabel(ev.title));
-  const actions = el("div", "card-actions");
+  const actions = el("div", "card-actions cu-actions");
   actions.append(res, deny, allow);
   card.append(head, body, actions);
   let said = null;
