@@ -28,7 +28,9 @@
 //   createDm({ bot }): Promise<Channel>                         … bot を作ったとき（S2 の bots.create が呼ぶ）。同じ bot の DM があればそれを返す
 //   update({ channelId, name?, purpose?, cwd?, members?, memo? }, author): Promise<Channel>
 //   archive({ channelId, on }, author): Promise<Channel>
-//   post({ channelId, threadId?, text, new?, state?, presents?, turn?, taint?, routine?, mentions?, hold?, origin? }, author): Promise<Post>
+//   post({ channelId, threadId?, text, new?, state?, presents?, attachments?, turn?, taint?, routine?, mentions?, hold?, origin? }, author): Promise<Post>
+//        … attachments: 人（と AI）が付けたファイル { path, name?, kind?, mime?, size?, origin? }[]（上限 LIMITS.attachments）。実物の確かめは ops（core/ops/channels.mjs）が済ませる。
+//          本文の `[添付] パス` の行と対で、bot へは本文の印のまま渡る。印だけの本文でも投稿できる（ADR 0116）
 //        … hold: 起こさない bot の id の配列（ops の channels.post が、動くモードが投稿の主体より強い宛先を入れる。空でも渡せば「確認済み」）。
 //          origin: { channelId, threadId }（bot が自分のスレッドからチャンネルの流れへ書いた投稿。起こして新しくできるスレッドの ThreadState.origin になる）。どちらも保存せず、posted の extra へ渡すだけ
 //        … mentions を渡さなければ text から解く。author が bot で new が無く、同じスレッドにその bot の作業中（state: working）のターンの投稿があれば、
@@ -51,7 +53,7 @@ import { createChannelStore } from './store.mjs';
 import { createThreadStore, emptyThread } from './threads.mjs';
 import { parseMentions } from './mentions.mjs';
 
-export const LIMITS = Object.freeze({ name: 60, purpose: 300, memo: 4000, cwd: 1000, text: 20000, members: 50, reactionKinds: 30, readDefault: 50, readMax: 100, searchDefault: 20, searchMax: 50 });
+export const LIMITS = Object.freeze({ name: 60, purpose: 300, memo: 4000, cwd: 1000, text: 20000, attachments: 50, members: 50, reactionKinds: 30, readDefault: 50, readMax: 100, searchDefault: 20, searchMax: 50 });
 /** 作業中の投稿の更新を全接続へ配る間隔（ms。ADR 0108。リモートの端末の通信量のため） */
 export const WORKING_EDIT_INTERVAL_MS = 1000;
 
@@ -82,6 +84,25 @@ export function isSingleEmoji(value) {
   if (typeof value !== 'string' || !value) return false;
   const found = value.match(new RegExp(EMOJI_RE.source, EMOJI_RE.flags.includes('g') ? EMOJI_RE.flags : `${EMOJI_RE.flags}g`));
   return found?.length === 1 && found[0] === value;
+}
+
+/** 添付の記録の形にそろえる（知らない欄は持たない）。パスの無いものは断る */
+export function normalizeAttachments(list) {
+  if (list === undefined || list === null) return [];
+  if (!Array.isArray(list)) throw invalid('attachments must be an array');
+  if (list.length > LIMITS.attachments) throw invalid(`attachments has more than ${LIMITS.attachments} files`);
+  return list.map((a) => {
+    const file = typeof a?.path === 'string' ? a.path : '';
+    if (!file) throw invalid('an attachment needs a path');
+    return {
+      path: file,
+      name: typeof a.name === 'string' && a.name ? a.name : file.split(/[\\/]/).pop(),
+      kind: a.kind === 'image' ? 'image' : 'file',
+      mime: typeof a.mime === 'string' ? a.mime : '',
+      size: Number.isFinite(a.size) ? a.size : null,
+      origin: a.origin === 'device' ? 'device' : 'host',
+    };
+  });
 }
 
 function checkText(text, { allowEmpty = false } = {}) {
@@ -300,11 +321,12 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       });
     },
 
-    async post({ channelId, threadId = null, text, new: forceNew = false, state, presents, turn, taint, routine, mentions, hold, origin }, author) {
+    async post({ channelId, threadId = null, text, new: forceNew = false, state, presents, attachments, turn, taint, routine, mentions, hold, origin }, author) {
       if (!isAuthor(author)) throw invalid('author is invalid');
       const channel = await need(channelId);
       if (channel.archivedAt) throw new ChannelError('CHANNEL_ARCHIVED', { id: channel.id });
-      checkText(text, { allowEmpty: Array.isArray(presents) && presents.length > 0 });
+      const files = normalizeAttachments(attachments);
+      checkText(text, { allowEmpty: (Array.isArray(presents) && presents.length > 0) || files.length > 0 });
       if (state !== undefined && !POST_STATES.includes(state)) throw invalid(`state must be one of ${POST_STATES.join(' / ')}`);
       const all = await store.snapshot(channelId);
       if (threadId !== null) {
@@ -325,7 +347,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       const post = {
         id: newId('post', at), channelId, threadId, author: clone(author), text, mentions: resolved, at,
         ...(state !== undefined ? { state } : {}), ...(turn ? { turn: clone(turn) } : {}), ...(presents ? { presents: clone(presents) } : {}),
-        reactions: {}, ...(taint ? { taint } : {}), ...(routine ? { routine: clone(routine) } : {}), proxy: null,
+        ...(files.length ? { attachments: files } : {}), reactions: {}, ...(taint ? { taint } : {}), ...(routine ? { routine: clone(routine) } : {}), proxy: null,
       };
       const saved = await store.append(channelId, { op: 'post', post });
       const updated = await store.updateChannel(channelId, (c) => ({ ...c, lastPostAt: Math.max(c.lastPostAt ?? 0, at) })) ?? channel;

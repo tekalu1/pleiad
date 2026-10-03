@@ -7,9 +7,10 @@
 // スレッドを開く空間（W3）はここに無い。要約の行・「スレッドで返信」は host.openThread(channelId, threadId) を呼ぶだけ。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
-import { fillPost, renderPost, dayText, authorInfo } from './post.mjs';
+import { fillPost, renderPost, dayText, authorInfo, wireAttachmentZoom } from './post.mjs';
 import { withReaction } from './reactions.mjs';
 import { createChComposer } from './ch-composer.mjs';
+import { feedDraftKey } from './ch-attach-model.mjs';
 import { openChannelSettings } from './feed-settings.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
 import { headingButton } from './routine-entry.mjs';
@@ -44,12 +45,16 @@ export function createFeed(host) {
   jump.hidden = true;
   const composer = createChComposer({
     id: 'chFeedComposer',
+    host,
+    bucket: () => S.id,
     candidates: () => candidates(),
     suggest: () => suggestion(),
     backendLabel: (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id,
-    onSend: (text) => post(text),
+    onSend: (draft) => post(draft),
   });
   root.append(log, jump, composer.el);
+  composer.bindDropZone(root);
+  wireAttachmentZoom(log, host);
   body.append(root);
   const emptyNote = body.querySelector(':scope > .ch-empty');
 
@@ -102,9 +107,11 @@ export function createFeed(host) {
   function paintPlaceholder() {
     const ch = S.channel;
     if (!ch) return;
-    if (ch.kind === 'dm') composer.setPlaceholder(t('channels:feed.composer.dm', { name: ch.name }));
+    // 送信の近道は、指で使う画面には出さない（Chats の入力欄の案内と同じ決まり）
+    const keys = window.matchMedia?.('(pointer:coarse)').matches ? '' : ` · ${t('channels:feed.composer.sendKeys')}`;
+    if (ch.kind === 'dm') composer.setPlaceholder(t('channels:feed.composer.dm', { name: ch.name }) + keys);
     else if (narrow()) composer.setPlaceholder(t('channels:feed.composer.shortPlaceholder', { name: ch.name }));
-    else composer.setPlaceholder(t('channels:feed.composer.placeholder', { name: ch.name }));
+    else composer.setPlaceholder(t('channels:feed.composer.placeholder', { name: ch.name }) + keys);
   }
   window.matchMedia?.('(max-width: 700px)').addEventListener?.('change', paintPlaceholder);
 
@@ -259,8 +266,8 @@ export function createFeed(host) {
   document.addEventListener('visibilitychange', () => { if (active()) markRead(); });
 
   // ---------------------------------------------------------------- 操作
-  async function post(text) {
-    const made = await host.invoke('channels.post', { channelId: S.id, text });
+  async function post({ text, attachments }) {
+    const made = await host.invoke('channels.post', { channelId: S.id, text, ...(attachments?.length ? { attachments } : {}) });
     if (made?.id && !S.index.has(made.id) && !made.threadId) addPost(made);
     toBottom();
     // bot を @ で呼んだ投稿は新しいスレッドの根になる。ここで書いた人にその返事が見えるよう、スレッドを開く（DM は流れがスレッドの代わり）
@@ -351,7 +358,7 @@ export function createFeed(host) {
   }
 
   function onChannelsChanged(ev) {
-    if (ev.removed === S.id) { S.id = null; S.channel = null; root.hidden = true; clearHead(); if (emptyNote) emptyNote.hidden = false; return; }
+    if (ev.removed === S.id) { S.id = null; S.channel = null; root.hidden = true; composer.setDraftKey(null); clearHead(); if (emptyNote) emptyNote.hidden = false; return; }
     if (ev.channel?.id === S.id) { S.channel = ev.channel; paintHead(); }
   }
 
@@ -386,6 +393,7 @@ export function createFeed(host) {
       if (view?.kind !== 'channel' || !view.id) { this.hide(); return; }
       const same = S.id === view.id && S.ready;
       S.id = view.id;
+      composer.setDraftKey(feedDraftKey(view.id));   // 書きかけはチャンネルごと（別のチャンネルへ移っても残り、戻ると出る）
       root.hidden = false;
       if (emptyNote) emptyNote.hidden = true;
       if (!same) { S.channel = null; S.posts = []; S.index = new Map(); S.threads = {}; S.summaries = {}; S.readSent = 0; paintHead(); }

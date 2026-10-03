@@ -6,6 +6,7 @@ import { el, svgEl } from '../dom.mjs';
 import { fmt, t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
+import { placeAttachments, attachmentHtml } from '../user-message.mjs';
 import { renderReactions, addButton } from './reactions.mjs';
 
 /** 同じ日か */
@@ -83,6 +84,36 @@ export function highlightMentions(root, names) {
     frag.append(text.slice(last));
     node.replaceWith(frag);
   }
+}
+
+/** 投稿の添付（Post.attachments）を、札・画像の描き方の部品（web/user-message.mjs の attachmentHtml）が読む形にする */
+const presentOf = (a) => ({ kind: a.kind === 'image' ? 'image' : 'file', path: a.path, captionParams: { name: a.name }, size: a.size, origin: a.origin });
+
+/**
+ * 添付つきの投稿の本文の HTML。本文の `[添付] パス` の行は、その位置で添付（画像は縮小、ほかは札）に置き換わる（Chats の自分の発言と同じ。
+ * web/user-message.mjs の placeAttachments）。印の無い添付は本文の後ろに並ぶ。文字の区間は renderMarkdown（bot の返事と同じ描き方）
+ * @param {string} text 投稿の本文（原文）
+ * @param {object[]} attachments Post.attachments
+ * @param {(text: string) => string} renderMarkdown エスケープ済みの HTML を返す
+ */
+export function attachedBodyHtml(text, attachments, renderMarkdown) {
+  let html = '', run = [];
+  const flush = () => { if (run.length) html += `<div class="msg-atts">${run.map(attachmentHtml).join('')}</div>`; run = []; };
+  for (const seg of placeAttachments(text, attachments.map(presentOf))) {
+    if (seg.type === 'attachment') { run.push(seg.present); continue; }
+    flush();
+    if (seg.text.trim()) html += renderMarkdown(seg.text);
+  }
+  flush();
+  return html;
+}
+
+/** 添付の画像を押すと大きく見る（Chats の会話と同じライトボックス。host.openImage）。log は投稿の列 */
+export function wireAttachmentZoom(log, host) {
+  log.addEventListener('click', (e) => {
+    const img = e.target.closest?.('.msg-att-zoom')?.querySelector('img');
+    if (img) host.openImage?.(img.src, img.alt, img.dataset.filePath, img);
+  });
 }
 
 const replyIcon = () => {
@@ -227,7 +258,9 @@ export function fillPost(root, post, ctx) {
   if (post.deletedAt) {
     body.append(el('span', 'post-deleted', t('channels:feed.deleted')));
   } else {
-    body.innerHTML = ctx.host.renderAssistantMarkdown(post.text ?? '');
+    body.innerHTML = post.attachments?.length
+      ? attachedBodyHtml(post.text ?? '', post.attachments, (s) => ctx.host.renderAssistantMarkdown(s))
+      : ctx.host.renderAssistantMarkdown(post.text ?? '');
     const names = (post.mentions ?? []).map((m) => (m === 'you' ? t('channels:feed.you') : ctx.bots.get(m)?.name));
     if (post.mentions?.includes('you')) names.push('you');
     highlightMentions(body, names);

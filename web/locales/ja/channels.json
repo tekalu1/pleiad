@@ -80,7 +80,11 @@
       "shortPlaceholder": "#{{name}} へ投稿",
       "dm": "{{name}} にメッセージ",
       "send": "投稿（Ctrl+Enter）",
+      "sendKeys": "Ctrl+Enter で送信",
       "failed": "投稿できませんでした: {{error}}"
+    },
+    "attach": {
+      "folder": "フォルダーは添付できません。中のファイルを選んでください"
     },
     "mention": {
       "head": "bot とメンバー",

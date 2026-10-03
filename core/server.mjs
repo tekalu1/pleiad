@@ -1824,7 +1824,7 @@ async function presentAttachments(sessionId, attachments, emit) {
     const file = path.resolve(given);
     const mime = String(a.mime ?? "");
     // Windows はドライブ・フォルダーの大小を区別しない（区別すると、置き場の中のファイルがホストのファイルの枝に入る）
-    const inUploads = process.platform === "win32" ? file.toLowerCase().startsWith((UPLOAD_DIR + path.sep).toLowerCase()) : file.startsWith(UPLOAD_DIR + path.sep);
+    const inUploads = inUploadDir(file);
     if (!inUploads) {
       let stat;
       try { ({ stat } = await inspectFile(file, fileAccess)); } catch { continue; }
@@ -1860,6 +1860,36 @@ async function presentAttachments(sessionId, attachments, emit) {
         : { content: buf.toString("utf8").slice(0, PRESENT_TEXT_CHARS) }),
     });
   }
+}
+
+/** パスが添付の置き場（UPLOAD_DIR）の中か。Windows はドライブ・フォルダーの大小を区別しない */
+function inUploadDir(file) {
+  return process.platform === "win32" ? file.toLowerCase().startsWith((UPLOAD_DIR + path.sep).toLowerCase()) : file.startsWith(UPLOAD_DIR + path.sep);
+}
+
+/**
+ * チャンネルの投稿に付ける添付の実物を確かめる（channels.post の attachments。ADR 0116）。会話の添付（presentAttachments）と同じ規則で、
+ * 置き場（attachFile が置いた、この端末から送ったもの）の中のファイルと、読んでよいホストのファイル（ADR 0050。UNC・データ置き場は断る）だけ。
+ * 中身は載せない（記録はパス・名前・種類・大きさだけ。画像は /local-file で見せる）。返りの rejected は読めなかったものの名前
+ */
+async function describeAttachments(list) {
+  const files = [], rejected = [];
+  for (const a of list) {
+    const given = String(a?.path ?? "");
+    const file = path.resolve(given);
+    const mime = String(a?.mime ?? "");
+    const device = inUploadDir(file);
+    let size;
+    try {
+      const stat = device ? await fs.stat(file) : (await inspectFile(file, fileAccess)).stat;
+      if (!stat.isFile()) throw new Error("not a file");
+      size = stat.size;
+    } catch { rejected.push(path.basename(given) || given); continue; }
+    const name = path.basename(file).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z_/, "");
+    const isImage = IMAGE_MIME.test(mime) || /\.(?:png|jpe?g|gif|webp|avif)$/i.test(name);
+    files.push({ path: device ? file : given, name, kind: isImage ? "image" : "file", mime, size, origin: device ? "device" : "host" });
+  }
+  return { files, rejected };
 }
 
 /** ファイルの先頭 bytes バイトだけを読む */
@@ -3335,6 +3365,7 @@ function opsDeps(lng = currentLocale()) {
     contextDefaults: () => contextSettings.get(os.homedir(), { level: 'default' }),
     // channels・bots・memory・routines・botOfSession（ops の handler が ctx.channels などで呼ぶ）
     ...botHost?.opsDeps(),
+    describeAttachments,
     modeOf: async (sessionId) => {
       try {
         const live = runtime.turns.get(sessionId);

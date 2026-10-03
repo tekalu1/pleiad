@@ -60,6 +60,14 @@ async function strongTargets(ctx, channelId, text, author) {
   return held;
 }
 
+/** 添付の実物を確かめて記録の形にする（置き場の中のファイル・読んでよいホストのファイル）。読めないものがあれば全体を断る */
+async function describeFiles(ctx, list) {
+  if (!ctx.describeAttachments) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'attachments are not available here' }));
+  const { files, rejected } = await ctx.describeAttachments(list);
+  if (rejected.length) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: `cannot attach: ${rejected.join(', ')}` }));
+  return files;
+}
+
 /** 自分の投稿だけ直せる・消せる（人は人の投稿、bot はその bot の投稿、AI はその会話の投稿） */
 async function ownPost(ctx, args) {
   const author = await authorOf(ctx);
@@ -161,13 +169,15 @@ export const channelOps = [
       channelId: channelId('post'),
       threadId: z.string().min(1).nullable().optional().describe(D('post', 'threadId')),
       text: z.string().min(1).max(LIMITS.text).describe(D('post', 'text')),
+      attachments: z.array(z.object({ path: z.string().min(1), name: z.string().optional(), mime: z.string().optional() })).max(LIMITS.attachments).optional().describe(D('post', 'attachments')),
       new: z.boolean().optional().describe(D('post', 'new')),
       state: z.enum(['checking']).optional().describe(D('post', 'state')),
     }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'post'], positional: ['channelId', 'text'] } },
-    handler: async (ctx, { state, threadId, ...args }) => {
+    handler: async (ctx, { state, threadId, attachments, ...args }) => {
       const author = await authorOf(ctx);
+      const files = attachments?.length ? await describeFiles(ctx, attachments) : null;
       // bot の会話のスレッドの中の会話（スレッド・同じチャンネル）では、threadId を省いたらそのスレッド。流れへの新しい投稿は threadId: null と new: true を明示したときだけ
       // （落とした threadId が新しいスレッドを作って、元のスレッドの［止める］から外れるのを防ぐ）
       const sb = author.kind === 'bot' ? await boundBot(ctx) : null;
@@ -181,7 +191,7 @@ export const channelOps = [
       const held = author.kind === 'human' ? [] : await run(ctx, () => strongTargets(ctx, args.channelId, args.text, author));
       // 要確認の印は、実行を担う bot（ルーティンの実行を含む）だけが付けられる
       const saved = await run(ctx, () => ctx.channels.post({
-        ...args, ...(sb?.taint ? { taint: sb.taint } : {}), ...(target !== undefined ? { threadId: target } : {}), ...(state && author.kind === 'bot' ? { state } : {}),
+        ...args, ...(files ? { attachments: files } : {}), ...(sb?.taint ? { taint: sb.taint } : {}), ...(target !== undefined ? { threadId: target } : {}), ...(state && author.kind === 'bot' ? { state } : {}),
         ...(author.kind === 'human' ? {} : { hold: held }), ...(origin ? { origin } : {}),
       }, author));
       // ターンの投稿の置き換え（進捗）では誰も起こさない。@ はターンの終わりの返事で解かれ、そこで同じ確認を通る
