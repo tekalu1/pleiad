@@ -243,6 +243,241 @@ export function folderBrowser({ cmd, box, err, onChoose, onAt = () => {}, closed
   return browse;
 }
 
+// ---- エージェント・モデル・エフォート・アカウント
+/**
+ * モデルの面を描く。入力欄・bot など、対象の保存先には依存しない。
+ * @param {object} o
+ * @param {HTMLElement} o.pop 描画先（面の開閉は panel() で呼び出し側が扱う）
+ * @param {object} o.target 今の値と候補。backend/backends/backendSwitchable、model/models、effort/efforts/effortDisabled。
+ *   endpoint と account/accounts は任意。省けば接続先・アカウントの節を出さない。
+ * @param {object} o.on 変更先 { backend, model, effort, endpoint?, account? }。選べる項目の関数を渡す。
+ *   保存後、更新した target で描き直す。既定に戻す model/effort は空文字を渡す。
+ * @param {(returnFocus?: boolean) => void} o.hide 接続先の管理へ移るとき、面を閉じる
+ */
+export function renderModel({ pop, target: d, on, hide }) {
+  const parts = [];
+  if (d.backendSwitchable) {
+    parts.push(head(t("composer.agent")));
+    const seg = el("div", "seg cseg");
+    seg.setAttribute("role", "group");
+    seg.setAttribute("aria-label", t("composer.agent"));
+    for (const b of d.backends) {
+      const btn = el("button", b.id === d.backend ? "on" : "", b.label);
+      btn.type = "button";
+      btn.dataset.key = `backend:${b.id}`;
+      btn.setAttribute("aria-pressed", String(b.id === d.backend));
+      btn.onclick = () => { if (b.id !== d.backend) on.backend(b.id); };
+      seg.append(btn);
+    }
+    parts.push(seg);
+  }
+  // 互換の接続先（Claude Code・Codex）。先頭は「公式」、下に登録した接続先。選んでいる間は使えないものを短い一行で出す
+  const ep = d.endpoint;
+  if (ep) parts.push(...endpointSection(d, on));
+  if (ep?.row) parts.push(...compatModelSection(d, on));
+  else parts.push(...officialModelSection(d, on));
+  parts.push(head(t("composer.effort.title")));
+  parts.push(effortBlock(d, on.effort));
+  if (d.accounts) {
+    parts.push(head(t("composer.account.title")));
+    // 互換の接続先ではアカウントを使わない（接続先のキーで送る）。節は残し、選べない見た目と理由を出す
+    const off = Boolean(ep?.row);
+    if (off) parts.push(el("p", "cnote", t("composer.account.compatOff")));
+    parts.push(listbox(t("composer.account.title"), d.accounts.map((a) => row({
+      on: !off && a.value === d.account, main: a.label, right: off ? "" : a.hint, tag: !off && a.value === "" ? DEFAULT_TAG() : "", key: `account:${a.value}`, disabled: off,
+      onPick: () => { if (!off && a.value !== d.account) on.account(a.value); },
+    }))));
+  }
+  if (ep) {
+    const foot = el("div", "cfoot");
+    const manage = el("button", "clink", t("composer.endpoint.manage"));
+    manage.type = "button";
+    manage.dataset.key = "epmanage";
+    manage.onclick = () => { hide(false); ep.manage(); };
+    foot.append(manage);
+    parts.push(foot);
+  }
+  pop.replaceChildren(...parts);
+}
+
+/** 接続先の節。d.endpoint は client.mjs の endpointView() */
+function endpointSection(d, on) {
+  const ep = d.endpoint;
+  const out = [head(t("composer.endpoint.title"))];
+  out.push(listbox(t("composer.endpoint.title"), ep.options.map((o) => row({
+    on: o.value === ep.selected, main: (o.warn ? "⚠ " : "") + o.label, sub: o.sub, tag: o.isDefault ? DEFAULT_TAG() : "", key: `endpoint:${o.value}`, title: o.title ?? o.label,
+    onPick: () => { if (o.value !== ep.selected && !o.gone) on.endpoint(o.value); },
+  }))));
+  if (ep.row) {
+    out.push(el("p", "cnote", t("composer.endpoint.lost", { items: ep.lost })));
+  }
+  return out;
+}
+
+/**
+ * 互換の接続先のモデル: 検索と ID の入力を兼ねる欄＋接続先の一覧。空はメインのモデル（「既定」の札）。
+ * 字は表示名（web/compat-models.mjs。`anthropic/` の名前空間と [1m] を隠し、1M は札）、送るのは一覧どおりの ID（title）。
+ * 打った字で絞る（大文字小文字を区別しない部分一致、空白区切りは AND。表示名・送る ID・display_name のどれでも）。
+ * 描くのは先頭の SHOW_LIMIT 件だけ。↓ で一覧へ、Enter は打った字（一覧の ID か表示名に当たればその ID、無ければそのまま）
+ */
+function compatModelSection(d, on) {
+  const ep = d.endpoint;
+  const out = [head(t("composer.model.title"))];
+  const main = ep.row.roles?.main ?? "";
+  const cur = d.model || main;
+  // メイン → 今のモデル → 一覧の順（今のものは絞らなくても見える）
+  const cands = modelCandidates(ep.row.models ?? [], ep.row.modelInfo ?? {}, [main, cur]);
+  const initial = d.model ? compatModelLabel(d.model).text : "";
+  const input = el("input", "cpath");
+  input.value = initial;
+  if (d.model) input.title = d.model;
+  input.placeholder = main ? t("composer.model.searchMain", { model: compatModelLabel(main).text }) : t("composer.model.search");
+  input.setAttribute("aria-label", t("composer.model.searchLabel"));
+  input.dataset.key = "epmodel";
+  input.autocomplete = "off"; input.spellcheck = false;
+  const box = el("div");
+  const roleOf = (id) => ep.roleNames.filter(([k]) => ep.row.roles?.[k] === id && k !== "main").map(([, n]) => n).join("・");
+  const commit = (id) => {
+    const v = String(id ?? "").trim();
+    const next = v === main ? "" : v;
+    if (next !== (d.model ?? "")) on.model(next);
+  };
+  const commitTyped = () => {
+    const typed = input.value.trim();
+    // 触っていない（今のモデルの表示名のまま）なら変えない。表示名が同じ候補（x と x[1m]）を取り違えないため
+    if (typed === initial) return;
+    commit(resolveTyped(cands, typed));
+  };
+  const paintList = () => {
+    const q = input.value.trim().toLowerCase();
+    // 今の値のままなら全部（先頭の SHOW_LIMIT 件）を出す
+    const exact = !q || q === initial.toLowerCase() || cands.some((c) => c.id.toLowerCase() === q);
+    const { shown, more } = searchModels(cands, exact ? "" : q);
+    const rows = shown.map((c) => row({
+      on: c.id === cur, main: c.text, sub: c.sub, key: `epmodel:${c.id}`, title: c.id, tag: c.id === main ? DEFAULT_TAG() : "", right: roleOf(c.id),
+      badge: c.oneM ? { text: "1M", title: ONE_M_TITLE } : null,
+      onPick: () => commit(c.id),
+    }));
+    const notes = [];
+    if (more > 0) notes.push(el("p", "cnote", moreText(more)));
+    box.replaceChildren(...(rows.length ? [listbox(t("composer.model.candidates"), rows)] : [el("p", "cnote", q ? t("composer.model.notListed") : t("composer.model.noList"))]), ...notes);
+  };
+  input.addEventListener("focus", () => input.select());
+  input.addEventListener("input", paintList);
+  input.addEventListener("keydown", (e) => {
+    if (isComposingKey(e) || e.key !== "Enter") return;
+    e.preventDefault();     // フォームの送信にしない
+    commitTyped();
+  });
+  paintList();
+  out.push(input, box);
+  return out;
+}
+
+/** 公式のモデルの一覧（版付きの名前＋補足、既定の行に「既定」の札） */
+function officialModelSection(d, on) {
+  const parts = [head(t("composer.model.title"))];
+  const models = d.models ?? {};
+  const { id: resolved, entry: current } = resolvedModel(models, d.model);
+  const def = models[""]?.resolvesTo;
+  // 段違いを系統にまとめた一覧（antigravity）は系統ごとに 1 行（composer-labels.mjs の modelRowIds）
+  const ids = modelRowIds(models, d.model);
+  // 既定が一覧のどれにも当たらない（分からない）ときは「既定に従う」の行を残す
+  const rows = [];
+  if (!def || !ids.some((id) => holdsDefault(models, id))) rows.push(row({
+    on: !d.model, main: models[""]?.resolvedLabel ?? models[""]?.label ?? t("chat.next.useDefault"), sub: models[""]?.note, tag: DEFAULT_TAG(),
+    key: "model:", onPick: () => d.model && on.model(""),
+  }));
+  for (const id of ids) {
+    const m = models[id];
+    rows.push(row({
+      on: id === resolved || Boolean(m.family && m.family === current?.family),
+      main: m.label ?? id, sub: m.note, tag: holdsDefault(models, id) ? DEFAULT_TAG() : "", key: `model:${id}`,
+      // 既定の行を選ぶと '' を保存する（既定が変われば追従する）。選んでいる系統の行は何もしない
+      onPick: () => { const v = id === def ? "" : id; if (v !== d.model && id !== resolved) on.model(v); },
+    }));
+  }
+  parts.push(listbox(t("composer.model.title"), rows));
+  return parts;
+}
+
+/** エフォートの段を描く。onPick(value) へ選んだ段（既定へ戻すときは空文字）を返す。 */
+export function effortBlock(d, onPick) {
+  const box = el("div", "ceffort");
+  const { stops, def, current, unset } = effortStops(d.efforts, d.effort);
+  const top = el("div", "etop");
+  const val = el("span", "val");
+  const note = el("span", "note");
+  const reset = el("button", "reset", t("composer.effort.reset"));
+  reset.type = "button";
+  top.append(val, note, reset);
+  const range = el("input");
+  range.type = "range";
+  range.min = "0"; range.step = "1";
+  range.setAttribute("aria-label", t("composer.effort.label"));
+  range.dataset.key = "effort";
+  const ticks = el("div", "ticks");
+  const { label: modelLabel } = resolvedModel(d.models, d.model);
+  // 既定に従うときに誰の設定が効くか
+  // i18n-dynamic: composer.effort.follow.
+  // i18n-dynamic: composer.effort.defaultFollow.
+  const owner = d.endpoint?.row ? "endpoint" : d.backend === "antigravity" ? "agy" : "agent";
+  const paintVal = (v) => {
+    val.textContent = v || DEFAULT_TAG();
+    note.textContent = !v ? t(`composer.effort.follow.${owner}`) : v === def && !d.effort ? t("composer.effort.modelDefault", { model: modelLabel }) : "";
+    range.setAttribute("aria-valuetext", v ? (v === def ? t("composer.effort.levelDefault", { level: v }) : v) : t(`composer.effort.defaultFollow.${owner}`));
+  };
+  if (!stops.length || d.effortDisabled) {
+    range.disabled = true; range.max = "0"; range.value = "0";
+    val.textContent = "—";
+    note.textContent = d.efforts?.[""]?.reason ?? t("composer.effort.noLevels", { model: modelLabel });
+    note.title = note.textContent;
+    reset.hidden = true;
+    box.classList.add("off");
+    box.append(top, range);
+    return box;
+  }
+  range.max = String(stops.length - 1);
+  // 既定の段が分からず既定に従っているときは、つまみを出さない（どの段も指さない。unset）。
+  // 目盛りに「既定」の段は作らない（本当の段ではないため）。動かすと段が決まり、「既定に戻す」で外せる
+  range.value = String(Math.max(0, stops.indexOf(current)));
+  range.classList.toggle("unset", unset);
+  for (const s of stops) ticks.append(el("span", s === def ? "def" : "", s));
+  paintVal(current);
+  reset.hidden = !d.effort;
+  // 動かしている間は字だけ変え、離したとき（change）に決める。既定の段に戻したら '' を保存する
+  let done = false;
+  const commit = () => {
+    if (done) return;
+    done = true;
+    const v = stops[+range.value];
+    const next = v === def ? "" : v;
+    if (next !== (d.effort ?? "")) onPick(next);
+  };
+  range.addEventListener("input", () => { range.classList.remove("unset"); paintVal(stops[+range.value]); });
+  range.addEventListener("change", commit);
+  // つまみが出ていないときは、今の位置の目盛りを押しても change が来ない。離したときに決める
+  range.addEventListener("pointerup", () => { if (unset) commit(); });
+  range.addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
+  reset.onclick = () => onPick("");
+  box.append(top, range, ticks);
+  return box;
+}
+
+// ---- 承認モード
+/**
+ * 承認モードの面を描く。target は { mode, modes }、on.mode(id) が変更先。
+ * 選択時は hide() で面を閉じ、今と違う値のときだけ変更先を呼ぶ。
+ */
+export function renderMode({ pop, target: d, on, hide }) {
+  const def = defaultModeOf(d.modes);
+  const rows = Object.entries(d.modes ?? {}).map(([id, m]) => row({
+    on: id === d.mode, main: (isDanger(m) ? "⚠ " : "") + (m.label ?? id), sub: m.note, tag: id === def ? DEFAULT_TAG() : "", danger: isDanger(m), key: `mode:${id}`,
+    onPick: () => { hide(); if (id !== d.mode) on.mode(id); },
+  }));
+  pop.replaceChildren(head(t("chat.composer.mode")), listbox(t("chat.composer.mode"), rows));
+}
+
 // ---------------------------------------------------------------- 本体
 
 /**
@@ -418,231 +653,16 @@ export function setupComposerControls({ cmd, get, on }) {
     input.select?.();
   }
 
-  // ---- エージェント・モデル・エフォート・アカウント
-  function renderModel() {
-    const d = get();
-    const pop = pops.model;
-    const parts = [];
-    if (d.backendSwitchable) {
-      parts.push(head(t("composer.agent")));
-      const seg = el("div", "seg cseg");
-      seg.setAttribute("role", "group");
-      seg.setAttribute("aria-label", t("composer.agent"));
-      for (const b of d.backends) {
-        const btn = el("button", b.id === d.backend ? "on" : "", b.label);
-        btn.type = "button";
-        btn.dataset.key = `backend:${b.id}`;
-        btn.setAttribute("aria-pressed", String(b.id === d.backend));
-        btn.onclick = () => { if (b.id !== d.backend) on.backend(b.id); };
-        seg.append(btn);
-      }
-      parts.push(seg);
-    }
-    // 互換の接続先（Claude Code・Codex）。先頭は「公式」、下に登録した接続先。選んでいる間は使えないものを短い一行で出す
-    const ep = d.endpoint;
-    if (ep) parts.push(...endpointSection(d));
-    if (ep?.row) parts.push(...compatModelSection(d));
-    else parts.push(...officialModelSection(d));
-    parts.push(head(t("composer.effort.title")));
-    parts.push(effortBlock(d));
-    if (d.accounts) {
-      parts.push(head(t("composer.account.title")));
-      // 互換の接続先ではアカウントを使わない（接続先のキーで送る）。節は残し、選べない見た目と理由を出す
-      const off = Boolean(ep?.row);
-      if (off) parts.push(el("p", "cnote", t("composer.account.compatOff")));
-      parts.push(listbox(t("composer.account.title"), d.accounts.map((a) => row({
-        on: !off && a.value === d.account, main: a.label, right: off ? "" : a.hint, tag: !off && a.value === "" ? DEFAULT_TAG() : "", key: `account:${a.value}`, disabled: off,
-        onPick: () => { if (!off && a.value !== d.account) on.account(a.value); },
-      }))));
-    }
-    if (ep) {
-      const foot = el("div", "cfoot");
-      const manage = el("button", "clink", t("composer.endpoint.manage"));
-      manage.type = "button";
-      manage.dataset.key = "epmanage";
-      manage.onclick = () => { model.hide(false); ep.manage(); };
-      foot.append(manage);
-      parts.push(foot);
-    }
-    pop.replaceChildren(...parts);
-  }
-
-  /** 接続先の節。d.endpoint は client.mjs の endpointView() */
-  function endpointSection(d) {
-    const ep = d.endpoint;
-    const out = [head(t("composer.endpoint.title"))];
-    out.push(listbox(t("composer.endpoint.title"), ep.options.map((o) => row({
-      on: o.value === ep.selected, main: (o.warn ? "⚠ " : "") + o.label, sub: o.sub, tag: o.isDefault ? DEFAULT_TAG() : "", key: `endpoint:${o.value}`, title: o.title ?? o.label,
-      onPick: () => { if (o.value !== ep.selected && !o.gone) on.endpoint(o.value); },
-    }))));
-    if (ep.row) {
-      out.push(el("p", "cnote", t("composer.endpoint.lost", { items: ep.lost })));
-    }
-    return out;
-  }
-
-  /**
-   * 互換の接続先のモデル: 検索と ID の入力を兼ねる欄＋接続先の一覧。空はメインのモデル（「既定」の札）。
-   * 字は表示名（web/compat-models.mjs。`anthropic/` の名前空間と [1m] を隠し、1M は札）、送るのは一覧どおりの ID（title）。
-   * 打った字で絞る（大文字小文字を区別しない部分一致、空白区切りは AND。表示名・送る ID・display_name のどれでも）。
-   * 描くのは先頭の SHOW_LIMIT 件だけ。↓ で一覧へ、Enter は打った字（一覧の ID か表示名に当たればその ID、無ければそのまま）
-   */
-  function compatModelSection(d) {
-    const ep = d.endpoint;
-    const out = [head(t("composer.model.title"))];
-    const main = ep.row.roles?.main ?? "";
-    const cur = d.model || main;
-    // メイン → 今のモデル → 一覧の順（今のものは絞らなくても見える）
-    const cands = modelCandidates(ep.row.models ?? [], ep.row.modelInfo ?? {}, [main, cur]);
-    const initial = d.model ? compatModelLabel(d.model).text : "";
-    const input = el("input", "cpath");
-    input.value = initial;
-    if (d.model) input.title = d.model;
-    input.placeholder = main ? t("composer.model.searchMain", { model: compatModelLabel(main).text }) : t("composer.model.search");
-    input.setAttribute("aria-label", t("composer.model.searchLabel"));
-    input.dataset.key = "epmodel";
-    input.autocomplete = "off"; input.spellcheck = false;
-    const box = el("div");
-    const roleOf = (id) => ep.roleNames.filter(([k]) => ep.row.roles?.[k] === id && k !== "main").map(([, n]) => n).join("・");
-    const commit = (id) => {
-      const v = String(id ?? "").trim();
-      const next = v === main ? "" : v;
-      if (next !== (d.model ?? "")) on.model(next);
-    };
-    const commitTyped = () => {
-      const typed = input.value.trim();
-      // 触っていない（今のモデルの表示名のまま）なら変えない。表示名が同じ候補（x と x[1m]）を取り違えないため
-      if (typed === initial) return;
-      commit(resolveTyped(cands, typed));
-    };
-    const paintList = () => {
-      const q = input.value.trim().toLowerCase();
-      // 今の値のままなら全部（先頭の SHOW_LIMIT 件）を出す
-      const exact = !q || q === initial.toLowerCase() || cands.some((c) => c.id.toLowerCase() === q);
-      const { shown, more } = searchModels(cands, exact ? "" : q);
-      const rows = shown.map((c) => row({
-        on: c.id === cur, main: c.text, sub: c.sub, key: `epmodel:${c.id}`, title: c.id, tag: c.id === main ? DEFAULT_TAG() : "", right: roleOf(c.id),
-        badge: c.oneM ? { text: "1M", title: ONE_M_TITLE } : null,
-        onPick: () => commit(c.id),
-      }));
-      const notes = [];
-      if (more > 0) notes.push(el("p", "cnote", moreText(more)));
-      box.replaceChildren(...(rows.length ? [listbox(t("composer.model.candidates"), rows)] : [el("p", "cnote", q ? t("composer.model.notListed") : t("composer.model.noList"))]), ...notes);
-    };
-    input.addEventListener("focus", () => input.select());
-    input.addEventListener("input", paintList);
-    input.addEventListener("keydown", (e) => {
-      if (isComposingKey(e) || e.key !== "Enter") return;
-      e.preventDefault();     // フォームの送信にしない
-      commitTyped();
-    });
-    paintList();
-    out.push(input, box);
-    return out;
-  }
-
-  /** 公式のモデルの一覧（版付きの名前＋補足、既定の行に「既定」の札） */
-  function officialModelSection(d) {
-    const parts = [head(t("composer.model.title"))];
-    const models = d.models ?? {};
-    const { id: resolved, entry: current } = resolvedModel(models, d.model);
-    const def = models[""]?.resolvesTo;
-    // 段違いを系統にまとめた一覧（antigravity）は系統ごとに 1 行（composer-labels.mjs の modelRowIds）
-    const ids = modelRowIds(models, d.model);
-    // 既定が一覧のどれにも当たらない（分からない）ときは「既定に従う」の行を残す
-    const rows = [];
-    if (!def || !ids.some((id) => holdsDefault(models, id))) rows.push(row({
-      on: !d.model, main: models[""]?.resolvedLabel ?? models[""]?.label ?? t("chat.next.useDefault"), sub: models[""]?.note, tag: DEFAULT_TAG(),
-      key: "model:", onPick: () => d.model && on.model(""),
-    }));
-    for (const id of ids) {
-      const m = models[id];
-      rows.push(row({
-        on: id === resolved || Boolean(m.family && m.family === current?.family),
-        main: m.label ?? id, sub: m.note, tag: holdsDefault(models, id) ? DEFAULT_TAG() : "", key: `model:${id}`,
-        // 既定の行を選ぶと '' を保存する（既定が変われば追従する）。選んでいる系統の行は何もしない
-        onPick: () => { const v = id === def ? "" : id; if (v !== d.model && id !== resolved) on.model(v); },
-      }));
-    }
-    parts.push(listbox(t("composer.model.title"), rows));
-    return parts;
-  }
-
-  function effortBlock(d) {
-    const box = el("div", "ceffort");
-    const { stops, def, current, unset } = effortStops(d.efforts, d.effort);
-    const top = el("div", "etop");
-    const val = el("span", "val");
-    const note = el("span", "note");
-    const reset = el("button", "reset", t("composer.effort.reset"));
-    reset.type = "button";
-    top.append(val, note, reset);
-    const range = el("input");
-    range.type = "range";
-    range.min = "0"; range.step = "1";
-    range.setAttribute("aria-label", t("composer.effort.label"));
-    range.dataset.key = "effort";
-    const ticks = el("div", "ticks");
-    const { label: modelLabel } = resolvedModel(d.models, d.model);
-    // 既定に従うときに誰の設定が効くか
-    // i18n-dynamic: composer.effort.follow.
-    // i18n-dynamic: composer.effort.defaultFollow.
-    const owner = d.endpoint?.row ? "endpoint" : d.backend === "antigravity" ? "agy" : "agent";
-    const paintVal = (v) => {
-      val.textContent = v || DEFAULT_TAG();
-      note.textContent = !v ? t(`composer.effort.follow.${owner}`) : v === def && !d.effort ? t("composer.effort.modelDefault", { model: modelLabel }) : "";
-      range.setAttribute("aria-valuetext", v ? (v === def ? t("composer.effort.levelDefault", { level: v }) : v) : t(`composer.effort.defaultFollow.${owner}`));
-    };
-    if (!stops.length || d.effortDisabled) {
-      range.disabled = true; range.max = "0"; range.value = "0";
-      val.textContent = "—";
-      note.textContent = d.efforts?.[""]?.reason ?? t("composer.effort.noLevels", { model: modelLabel });
-      note.title = note.textContent;
-      reset.hidden = true;
-      box.classList.add("off");
-      box.append(top, range);
-      return box;
-    }
-    range.max = String(stops.length - 1);
-    // 既定の段が分からず既定に従っているときは、つまみを出さない（どの段も指さない。unset）。
-    // 目盛りに「既定」の段は作らない（本当の段ではないため）。動かすと段が決まり、「既定に戻す」で外せる
-    range.value = String(Math.max(0, stops.indexOf(current)));
-    range.classList.toggle("unset", unset);
-    for (const s of stops) ticks.append(el("span", s === def ? "def" : "", s));
-    paintVal(current);
-    reset.hidden = !d.effort;
-    // 動かしている間は字だけ変え、離したとき（change）に決める。既定の段に戻したら '' を保存する
-    let done = false;
-    const commit = () => {
-      if (done) return;
-      done = true;
-      const v = stops[+range.value];
-      const next = v === def ? "" : v;
-      if (next !== (d.effort ?? "")) on.effort(next);
-    };
-    range.addEventListener("input", () => { range.classList.remove("unset"); paintVal(stops[+range.value]); });
-    range.addEventListener("change", commit);
-    // つまみが出ていないときは、今の位置の目盛りを押しても change が来ない。離したときに決める
-    range.addEventListener("pointerup", () => { if (unset) commit(); });
-    range.addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
-    reset.onclick = () => on.effort("");
-    box.append(top, range, ticks);
-    return box;
-  }
-
-  const model = panel(chips.model, pops.model, { align: "right", render: renderModel, onShow: () => on.openModel?.() });
-
-  // ---- 承認モード
-  function renderMode() {
-    const d = get();
-    const def = defaultModeOf(d.modes);
-    const rows = Object.entries(d.modes ?? {}).map(([id, m]) => row({
-      on: id === d.mode, main: (isDanger(m) ? "⚠ " : "") + (m.label ?? id), sub: m.note, tag: id === def ? DEFAULT_TAG() : "", danger: isDanger(m), key: `mode:${id}`,
-      onPick: () => { mode.hide(); if (id !== d.mode) on.mode(id); },
-    }));
-    pops.mode.replaceChildren(head(t("chat.composer.mode")), listbox(t("chat.composer.mode"), rows));
-  }
-  const mode = panel(chips.mode, pops.mode, { align: "right", render: renderMode });
+  // ---- エージェント・モデル・エフォート・アカウント / 承認モード
+  const model = panel(chips.model, pops.model, {
+    align: "right",
+    render: () => renderModel({ pop: pops.model, target: get(), on, hide: (focus) => model.hide(focus) }),
+    onShow: () => on.openModel?.(),
+  });
+  const mode = panel(chips.mode, pops.mode, {
+    align: "right",
+    render: () => renderMode({ pop: pops.mode, target: get(), on, hide: () => mode.hide() }),
+  });
 
   /** チップの字を今の値に合わせる。開いている面も描き直す（値が変わった・候補が届いた） */
   function paint() {
