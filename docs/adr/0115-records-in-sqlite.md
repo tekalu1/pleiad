@@ -19,7 +19,7 @@
 
 ## 決定
 
-- **件数・会話の長さ・時間とともに増える記録は、SQLite の行に置く。** データ置き場に DB ファイルを 1 つ（`pleiad.db`）。Node 組み込みの `node:sqlite`（`DatabaseSync`）を使い、WAL・`synchronous=FULL`（確定した書き込みは電源断でも戻らない。書く頻度は 1 ターンに数回なので、遅さは問題にならない）。書くのは変わった行だけで、記録が増えても 1 回の書き込みは重くならない。
+- **件数・会話の長さ・時間とともに増える記録は、SQLite の行に置く。** データ置き場に DB ファイルを 1 つ（`pleiad.db`）。Node 組み込みの `node:sqlite`（`DatabaseSync`）を使い、WAL・`synchronous=NORMAL`（アプリが落ちても確定した書き込みは残り、DB は壊れない。電源断・OS の異常終了のときだけ直前の数件が戻りうる。初めは `FULL` にしたが、Windows の CI でテストの所要時間が 2〜3 割延び、時間に頼るテストが毎回別の本で落ちたので戻した。それまでの JSON の書き方は fsync を一度もしておらず、電源断ではファイルごと壊れえたので、`NORMAL` でもそれより確かになる）。書くのは変わった行だけで、記録が増えても 1 回の書き込みは重くならない。
 - **JSON ファイルは、設定や台帳のように上限が決まっているものだけ。** 上限と理由は `tests/data-writes-allowlist.mjs` の許可リストに書く。`core/`・`desktop/`・`bin/` がファイルを書く箇所（別名・FileHandle・ストリーム・コピー・リネームを含む）は、リストに無ければテストが落ちる（`AGENTS.md`）。
 - **表**（`core/db.mjs`）:
   - `sessions`＋`session_fields`: 1 会話 1 行、項目（`backend`・`title`・`outbox`・`contextSession`・`hookRuns` …）ごとに 1 行。項目が変わったらその項目の行だけを書く。
@@ -56,4 +56,4 @@
   - **追記だけのログ**（`appendOnly`。1 回の更新が 1 行の追記で、更新の重さが大きさに比例しない）: `channels/<channelId>.jsonl`（ADR 0108）・`memory/log.jsonl`。
   - **既知の例外に足した**: 記憶の markdown（`memory/user.md`・`memory/bots/<botId>.md`。変更のたびに 1 層を丸ごと書く。件数の上限はコードに無い）。記憶の正本は人が読んで直せる markdown だと [ADR 0110](0110-bot-memory.md) が決めているので、行にするなら、その決定の置き換えが要る。
 - データ置き場を直接読む手順は DB に合わせた。実データの写しは `scripts/copy-data-dir.mjs`（`remote/`・`*-secrets.json` を写さず、DB は読み取り専用の接続で `VACUUM INTO`）、テストは `tests/lib/data-store.mjs`。
-- 2026-10-03 の実データでの測定（開発機。写しで測った）: JSON 4 つ計 35.4MB（`sessions.json` 27.3MB・`agent-tasks.json` 5.0MB・`usage.json` 1.4MB・`conversations.json` 1.7MB）が `pleiad.db` 25.5MB になった。移行は 0.9 秒。会話 1,112 件の読み込み 0.13 秒（以前と同じメモリへの読み込み）。1 回の更新は、`sessions.json` の全体を書き直す 70〜80 ミリ秒（`JSON.stringify` と書き込み。毎回）に対して、`synchronous=FULL` で会話の項目 0.6〜0.8 ミリ秒（`contextSession` は 1.3 ミリ秒）、タスクの状態変化 2.5 ミリ秒（1 回の操作で数回書く）、使用量の記録 0.6 ミリ秒（`NORMAL` なら 0.02〜0.08 ミリ秒だった。fsync の分）。`contextSession` は 9.4MB が 1.8MB（`report.entries` は 788 行・0.34MB に寄る）。
+- 2026-10-03 の実データでの測定（開発機。写しで測った）: JSON 4 つ計 35.4MB（`sessions.json` 27.3MB・`agent-tasks.json` 5.0MB・`usage.json` 1.4MB・`conversations.json` 1.7MB）が `pleiad.db` 25.5MB になった。移行は 0.9 秒。会話 1,112 件の読み込み 0.13 秒（以前と同じメモリへの読み込み）。1 回の更新は、`sessions.json` の全体を書き直す 70〜80 ミリ秒（`JSON.stringify` と書き込み。毎回）に対して、`synchronous=FULL`（初めの設定）で会話の項目 0.6〜0.8 ミリ秒（`contextSession` は 1.3 ミリ秒）、タスクの状態変化 2.5 ミリ秒（1 回の操作で数回書く）、使用量の記録 0.6 ミリ秒（`NORMAL` なら 0.02〜0.08 ミリ秒だった。fsync の分）。`contextSession` は 9.4MB が 1.8MB（`report.entries` は 788 行・0.34MB に寄る）。

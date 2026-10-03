@@ -107,7 +107,7 @@ export const REQUIRED_TABLES = ['sessions', 'session_fields', 'context_entries',
 /**
  * 開く。既にある DB を開くだけで、無ければ投げる（形式 2 の置き場で DB が消えているときに、空の DB を作って起動しない）。
  * 新しい DB を作るときだけ create: true（表と user_version を書く）。readOnly は別のプロセス（テスト・調査）から中身を読むとき。
- * 書き込みの接続は WAL・synchronous=FULL（確定した書き込みは電源断でも戻らない。書く頻度は低い）。
+ * 書き込みの接続は WAL・synchronous=NORMAL（アプリが落ちても確定した書き込みは残り、DB は壊れない。OS ごと落ちたときだけ直前の数件が戻りうる。ADR 0115）。
  * busy_timeout は数百 ms: データ置き場はプロセス単位で排他する（core/data-lock.mjs）ので、待つ相手は調査・テストの短い接続だけ
  */
 export function openRaw(file, { readOnly = false, create = false } = {}) {
@@ -118,7 +118,7 @@ export function openRaw(file, { readOnly = false, create = false } = {}) {
   db.exec('PRAGMA busy_timeout = 300');
   if (!readOnly) {
     db.exec('PRAGMA journal_mode = WAL');
-    db.exec('PRAGMA synchronous = FULL');
+    db.exec('PRAGMA synchronous = NORMAL');
     if (create) {
       db.exec(SCHEMA_SQL);
       db.exec(LATE_TABLES_SQL);
