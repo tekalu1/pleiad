@@ -171,7 +171,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "5bbb30b5ae47"
+      "input": "e273dc2b33f3"
     },
     {
       "id": "bots.delete",
@@ -275,7 +275,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "b4ab3d833bb6"
+      "input": "2fff207a517a"
     },
     {
       "id": "browser.listProfiles",

@@ -14,12 +14,14 @@ bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集
 | スレッドの状態 | DB（`pleiad.db` の `channel_threads`。1 スレッド 1 行。[ADR 0115](adr/0115-records-in-sqlite.md)） |
 | bot へ届ける前の出来事 | `channels/inbox.json`（状態 `pending → delivering → sent / unknown`） |
 | bot の定義 | `bots.json` |
+| bot の画像アイコン | `uploads/bot-icons/<botId>-<random>.webp`（現行の 1 枚。元の画像から縮小して写す） |
 | 記憶（正本）・変更の記録・索引 | `memory/user.md`・`memory/bots/<botId>.md`・`memory/log.jsonl`・`memory/index.sqlite` |
 | ルーティン | `routines.json` |
 | webhook の秘密（P3）・学習の進み | `webhook-secrets.json`・DB（`pleiad.db` の `memory_state`。会話ごとの発言 index・チャンネルごとの投稿 id・追記ログの byte offset を 1 カーソル 1 行、前回の実行時刻を 1 行、最後の結果・飛ばした回数と理由・失敗の様子を 1 行） |
 
 - 新しい JSON ファイル（`index.json`・`inbox.json`・`bots.json`・`routines.json`）は `{ version: 1 }` を持つ。読めない版は読み込まずに画面へ出して止める。`DATA_SCHEMA` は 2（形式 1 の JSON から SQLite への移行で上がる。[ADR 0115](adr/0115-records-in-sqlite.md)）。スレッドの状態と学習の進みは、スレッド・会話の数だけ増えて更新のたびに全体を書き直すことになるので、JSON ではなく DB の行にした（`version` は持たない。0.6.0 が書いた `threads.json`・`learn-state.json` は、形式 1 → 2 の移行が取り込む）。投稿の追記ログ（`<channelId>.jsonl`・`memory/log.jsonl`）は追記だけで、記憶の markdown は人が直せる正本（[ADR 0110](adr/0110-bot-memory.md)）のまま。どれも `tests/data-writes-allowlist.mjs` に上限と理由を書いてある。
 - **添付つきの投稿**（[ADR 0116](adr/0116-channel-composer-attachments.md)）: 本文に Chats と同じ印の行 `[添付] パス`（画面の言語で `[Attachment]`）を持ち、任意の欄 `Post.attachments: { path, name, kind: 'image'\|'file', mime, size, origin: 'device'\|'host' }[]`（上限 50 件。中身は載せない）が描き方の材料になる。bot へは本文のまま包みの中に入って届く（Chats で添付を渡すのと同じ形）。`@` の解析は印の行を見ない。消した投稿は `attachments` を外す（置き場のファイルは残す）。足すだけの欄なので `DATA_SCHEMA` は上げない。
+- **bot の画像**（[ADR 0124](adr/0124-bot-images.md)）: `bots.json` に任意の `iconImage` を足す。PNG・JPEG・WebP（元は 10 MiB 以下）を 256×256 の WebP（256 KiB 以下）に変え、置き場の `uploads/bot-icons/` へ写す。画像を外すと従来の `icon`（絵文字）を表示する。古い bot は読み出し時に `iconImage: ''` となる。画像の更新・削除の後、古い写しを消す。
 - `editedAt`（画面の「（編集済み）」）は畳み込み（`foldOp`）が付ける。本文が実際に変わった `edit` だけ。同じ本文での `edit`（`mentions`・`state`・`presents` だけの更新）と、bot のターンの投稿（`turn`）の本文が埋まる更新は付けない。記録は操作の列なので、過去のデータも読み直すだけで直る。
 - id は `core/channels/types.mjs` の `newId(kind)`（`c_` `p_` `b_` `m_` `r_` `h_` `i_`）。
 - 会話の記録（DB の `session_fields`）の新しい欄: `bot`（`SessionBot`。botId・種類・チャンネル・スレッド・記憶の進み）。代わりの送信の見分けは `sessions.send` の `relayed` を使う（[ADR 0114](adr/0114-send-on-your-behalf.md)）。使用量の記録（DB の `usage_records`）に `sessionId`（足す前の分は無い。`usage.records({ sessionIds, since })` が引く）。一覧の行（`sessionRow`）に `bot: { botId, kind, channelId, threadId } | null`。
@@ -79,8 +81,8 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 | `channels.markRead` | write（AI・CLI にも出す） | `{ channelId, at? }`（省くと今）。進める向きにだけ動く。CLI は `pleiad channels mark-read <channelId>` |
 | `channels.stopThread` | write・`modeGate: false` | `stopped.by` に止めた主体を残す。bot が自分のスレッドから流れへ `@` を書いて起こした先のスレッド（`ThreadState.origin` で結ばれたもの。孫も）も止める |
 | `bots.list` / `get` | read | `usage: { weekTokens, cacheRatio }`・`state` を付ける |
-| `bots.create` | write（AI は `riskOf` で guarded） | `{ name, icon?, persona?, backend?, model?, effort?, reason? }`。backend の既定のモード（作業場所に書けて毎回聞く、いちばん弱いもの。agy は yolo だけ）・フォルダーなし・DM のチャンネルを作る。AI が作るときの承認カードに、**作られる承認モードの行**を出し、弱くない（範囲・自律が `workspace`・`ask` より上の）モードなら `loosens` |
-| `bots.update` | write（範囲を広げる向き・AI が人格を変えるのは `riskOf` で guarded） | 名前・アイコン・人格（AI が変えるのは bot 自身の人格も承認。外から来た文に押された bot が自分の人格を書き換える足場を作らない）・backend（次の新しい会話から。モデル・エフォートは既定に戻り、承認モードは同じ id があれば保つ）・モデル・エフォート・`folders`（置き換え）・`sendToOthers`・`sendTargets`（置き換え）。広げる向き = フォルダーを足す・`ro` を `rw` にする・送る先を足す・`sendToOthers` を ON にする・承認モードが強くなる backend へ変える |
+| `bots.create` | write（AI は `riskOf` で guarded） | `{ name, icon?, iconImage?, persona?, backend?, model?, effort?, reason? }`。`iconImage` は元画像のパス。backend の既定のモード（作業場所に書けて毎回聞く、いちばん弱いもの。agy は yolo だけ）・フォルダーなし・DM のチャンネルを作る。AI が作るときの承認カードに、**作られる承認モードの行**を出し、弱くない（範囲・自律が `workspace`・`ask` より上の）モードなら `loosens` |
+| `bots.update` | write（範囲を広げる向き・AI が人格か画像アイコンを変えるのは `riskOf` で guarded） | 名前・絵文字の `icon`・画像の `iconImage`（元画像のパス。`null` で画像を外して絵文字に戻す）・人格（AI が変えるのは bot 自身の人格も承認。外から来た文に押された bot が自分の人格を書き換える足場を作らない）・backend（次の新しい会話から。モデル・エフォートは既定に戻り、承認モードは同じ id があれば保つ）・モデル・エフォート・`folders`（置き換え）・`sendToOthers`・`sendTargets`（置き換え）。広げる向き = フォルダーを足す・`ro` を `rw` にする・送る先を足す・`sendToOthers` を ON にする・承認モードが強くなる backend へ変える |
 | `bots.setMode` | human-only | 承認モード（`mode`）だけ |
 | `bots.delete` | guarded | 会話は消さず bot の印だけ外し（Chats の一覧に戻る）、DM のチャンネルは archive |
 | `memory.list` / `search` | read | `layer` は `user`・bot の id・`self`（bot の会話の自分の層）。bot に束縛された主体は `user` と自分の層だけ。`search` は `limit≤8`・各 150 トークンまで |
@@ -190,6 +192,8 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 **末尾**（`turnExtras`）。毎ターンの `notes` は `memory.turnContext`（時刻・記憶の差分・関係する記憶。会話の始まりと圧縮の後だけ核の写しが先に付く）。圧縮の完了（`onCompacted`）で `snapshotDue = true`・`delivered = []`。人格（`botInstructions`）は S2 が `runArgs` へ載せる。圧縮のターン（`compactTrigger`）には何も足さない。人格・固定の文は変えず、変わるのは末尾だけ（キャッシュの並び）。
 
 **ほか**: Chats の一覧は bot の会話を出さず、あなた待ち（承認・質問）の間だけ出す（一覧の行の `bot` と `running` の承認待ち。画面の絞り込みは `client.mjs` の `renderSessions`）。スマホへは、bot の会話の完了を送らず、失敗・承認・質問は送る。セッション検索は bot の会話を既定で除く（委譲の子と同じ。`includeDelegated` で含める）。
+
+Chats が `tool.result.images` に描く生成画像は、bot のターンでは画像の `present` としてターンの投稿にも付ける。Claude・Antigravity が直接出した `present` も同じ投稿の `presents` に集める。bot の `channels.post` がターンの投稿に入る場合、指定した `attachments` も本文とともに編集操作に残す。
 
 ## ルーティン（`core/routines/`・`core/ops/routines.mjs`。R1。[ADR 0112](adr/0112-routines.md)）
 

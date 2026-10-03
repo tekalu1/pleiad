@@ -91,7 +91,7 @@ export default async function (t) {
           get: async () => channel, getPost: async ({ postId }) => structuredClone(posts.find((x) => x.id === postId) ?? null),
           read: async () => ({ posts: structuredClone(posts) }),
           post: async (a) => { const post = { id: `p_t${posts.length}`, channelId: a.channelId, threadId: a.threadId, author: { kind: 'bot', botId: 'b_1' }, text: a.text, state: a.state, turn: a.turn, mentions: [], at: 4000, reactions: {} }; posts.push(post); return post; },
-          edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }].filter(Boolean)); return structuredClone(post); },
+          edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }, a.presents && { presents: a.presents }].filter(Boolean)); return structuredClone(post); },
           remove: async () => {},
           threads: {
             get: async (c, th) => structuredClone(threads[`${c}/${th}`] ?? null), list: async (c) => structuredClone(Object.values(threads).filter((x) => !c || x.channelId === c)),
@@ -125,6 +125,16 @@ export default async function (t) {
       };
       const statusOf = async (w, postId) => (await w.d.inbox.list({})).find((i) => i.postId === postId)?.status;
       const tick = () => sleep(60);
+
+      {
+        const w = world('plain');
+        await w.d.turnExtras(w.turn);
+        w.d.onTurnEvent(w.turn, { type: 'tool.result', images: [{ path: '/tmp/generated.png' }] });
+        w.d.onTurnEvent(w.turn, { type: 'present', kind: 'image', by: 'ai', path: '/tmp/presented.png' });
+        await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
+        t.ok('生成画像の tool.result.images は bot のターンの投稿の提示に残る', w.posts.find((p) => p.turn)?.presents?.[0]?.path === '/tmp/generated.png');
+        t.ok('Claude・Antigravity の present も同じ投稿の提示に残る', w.posts.find((p) => p.turn)?.presents?.[1]?.path === '/tmp/presented.png');
+      }
 
       // 「渡った」合図を後から出すバックエンド（Codex の形。steerConfirms）
       {

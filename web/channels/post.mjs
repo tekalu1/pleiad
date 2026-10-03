@@ -8,6 +8,7 @@ import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
 import { placeAttachments, attachmentHtml } from '../user-message.mjs';
 import { renderReactions, addButton } from './reactions.mjs';
+import { botIcon } from './bot-icon.mjs';
 
 /** 同じ日か */
 const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
@@ -206,11 +207,13 @@ export function renderSummary(post, ctx) {
   const lastBot = [...(s.authors ?? [])].reverse().find((a) => a.kind === 'bot');
   const botId = lastBot?.botId ?? Object.keys(th?.sessions ?? {})[0];
   const bot = botId ? ctx.bots.get(botId) : null;
-  const who = bot ? `${bot.icon} ${bot.name}` : t('channels:feed.unknownBot');
   const status = el('span', 'ts-status');
   if (th?.state === 'working') {
     status.classList.add('working');
-    status.append(`· ${who} ${t('channels:feed.threadWorking')}`, runMark(t('channels:feed.state.working')));
+    status.append('· ');
+    if (bot) status.append(botIcon(bot, 'ts-bot-icon'), ` ${bot.name}`);
+    else status.append(t('channels:feed.unknownBot'));
+    status.append(` ${t('channels:feed.threadWorking')}`, runMark(t('channels:feed.state.working')));
   } else if (th?.state === 'waiting') {
     status.classList.add('waiting');
     status.append('· ', el('span', 'ts-mark', '◆'), ` ${t('channels:feed.threadWaiting', { name: bot?.name ?? t('channels:feed.unknownBot') })}`);
@@ -236,7 +239,7 @@ export function fillPost(root, post, ctx) {
   root.className = `post${post.deletedAt ? ' deleted' : ''}${info.you ? ' mine' : ''}`;
   root.dataset.postId = post.id;
   root.dataset.author = info.kind;
-  const av = el('span', `post-av${info.you ? ' you' : ''}`, info.avatar);
+  const av = info.kind === 'bot' ? botIcon(ctx.bots.get(post.author.botId), 'post-av') : el('span', `post-av${info.you ? ' you' : ''}`, info.avatar);
   av.setAttribute('aria-hidden', 'true');
   const main = el('div', 'post-main');
 

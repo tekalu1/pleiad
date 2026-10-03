@@ -4,6 +4,7 @@
 // 確定すると `@名前 ` まで入り、続けて本文を打てる。slash-skills.mjs は候補の id と CSS が / 専用なので、写して接頭辞だけ替えた（共通化は後で）。
 import { isComposingKey } from '../keyboard.mjs';
 import { el } from '../dom.mjs';
+import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
 import { backendLogo } from '../side.mjs';
 
@@ -68,7 +69,7 @@ export function setupMentionComplete({ input, list, candidates, idPrefix = 'ment
       li.setAttribute('role', 'option');
       li.setAttribute('aria-selected', String(i === active));
       li.dataset.id = c.id;
-      const av = el('span', `mention-av${c.you ? ' you' : ''}`, c.icon);
+      const av = c.you ? el('span', 'mention-av you', c.icon) : botIcon(c, 'mention-av');
       av.setAttribute('aria-hidden', 'true');
       li.append(av, el('span', 'lbl', c.name));
       if (c.backend) li.append(backendLogo(c.backend, backendLabel(c.backend)));

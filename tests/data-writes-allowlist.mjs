@@ -139,6 +139,9 @@ export const DATA_WRITES = [
   { file: 'core/bots/store.mjs', sites: 1, targets: [
     { name: 'bots.json', limit: 'bot の定義。人が 1 件ずつ作る（1 件の大きさは NAME_MAX=32 字・PERSONA_MAX_CHARS=6000 字・FOLDERS_MAX=20・SEND_TARGETS_MAX=100。件数の上限はコードに無いが、通常は数個から数十）', reason: '設定の台帳。増え方は利用量ではなく利用者の操作に比例する' },
   ] },
+  { file: 'core/bots/service.mjs', sites: 1, targets: [
+    { name: 'uploads/bot-icons/<botId>-<random>.webp', limit: '入力は ICON_INPUT_MAX=10MiB、256×256 WebP に縮小し、ICON_OUTPUT_MAX=256KiB。bot ごとに現行の 1 枚だけ保持する', reason: 'bot の画像アイコンの写し。保存成功後に古い写しを消す' },
+  ] },
   { file: 'core/routines/store.mjs', sites: 1, targets: [
     { name: 'routines.json', limit: 'ルーティンの定義と最後に動いた時刻（last）。人が 1 件ずつ作る（1 件は NAME_MAX=80 字・PROMPT_MAX=12000 字。件数の上限はコードに無いが、通常は数個から数十）', reason: '設定の台帳。発火のたびに last を書き直すが、行は定義の数しか無い' },
   ] },

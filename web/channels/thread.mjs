@@ -6,6 +6,7 @@
 // 板の並べ方・滑らせ方は deck.mjs（流れとの 2 枚）。この部品は #chThread の中身だけを持つ。
 // 部品の口（web/channels/index.mjs）: openThread(channelId, threadId)・show(view)・hide()・onEvent(ev)・contextForPanel(anchor)。
 import { el, svgEl } from '../dom.mjs';
+import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
 import { savedEvent } from '../saved-text.mjs';
@@ -147,7 +148,7 @@ export function createThread(host) {
   function candidates() {
     const live = new Set(liveBots().map((b) => b.id));
     return [
-      ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon || '🤖', backend: b.backend ?? null,
+      ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon || '🤖', iconImage: b.iconImage, backend: b.backend ?? null,
         // i18n-dynamic: channels:feed.botState.
         hint: live.has(b.id) ? t(`channels:feed.botState.${S.posts.findLast((p) => p.turn?.botId === b.id && LIVE.has(p.state))?.state ?? 'working'}`) : '' })),
       { id: 'you', name: t('channels:feed.you'), icon: youInitial(), you: true, hint: '' },
@@ -198,10 +199,11 @@ export function createThread(host) {
     const text = el('span', 'th-band-text');
     const pieces = [];
     if (working) {
-      const who = live.map((b) => `${b.icon || '🤖'} ${b.name}`).join(' ⇄ ');
+      const who = live.map((b) => b.name).join(' ⇄ ');
       const span = el('span', 'th-band-live');
       if (waiting) span.append(el('span', 'th-band-mark', '◆'));
       else span.append(runMark(t('channels:feed.state.working')));
+      for (const b of live) span.append(botIcon(b, 'th-band-icon'));
       const name = who || t('channels:thread.band.someone');
       span.append(el('span', 'th-band-who', waiting ? t('channels:thread.band.waiting', { who: name }) : t('channels:thread.band.working', { who: name })));
       pieces.push(span);

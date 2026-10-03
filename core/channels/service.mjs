@@ -349,7 +349,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
         const fill = claim !== undefined ? claim.postId
           : forceNew ? null : [...all].reverse().find((p) => p.threadId === threadId && p.state === 'working' && p.turn?.botId === author.botId && !p.deletedAt)?.id;
         if (fill) {
-          const saved = await service.edit({ channelId, postId: fill, text, taint, ...(state !== undefined ? { state } : {}), ...(presents !== undefined ? { presents } : {}), mentions: resolved }, author);
+          const saved = await service.edit({ channelId, postId: fill, text, taint, ...(state !== undefined ? { state } : {}), ...(presents !== undefined ? { presents } : {}), ...(attachments !== undefined ? { attachments: files } : {}), mentions: resolved }, author);
           // ターンの投稿に入った返事も、新しい投稿と同じく posted へ渡す（@ をここで解く。extra.filled）。決めたのが dispatch でない置き換え（進捗）は渡さない
           if (claim !== undefined) {
             const extra = { filled: true, ...(Array.isArray(hold) ? { hold: [...hold], checked: true } : {}), ...(origin ? { origin: clone(origin) } : {}), ...(bySession ? { bySession } : {}) };
@@ -378,13 +378,13 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       return saved;
     },
 
-    async edit({ channelId, postId, text, state, presents, mentions, taint }, _author) {
+    async edit({ channelId, postId, text, state, presents, attachments, mentions, taint }, _author) {
       const post = await needPost(channelId, postId);
       if (post.deletedAt) throw new ChannelError('POST_NOT_FOUND', { id: String(postId) });
       const op = { op: 'edit', id: postId, at: now() };
       if (taint === 'webhook') op.taint = taint;
       if (text !== undefined) {
-        checkText(text, { allowEmpty: Boolean(presents?.length || post.presents?.length) });
+        checkText(text, { allowEmpty: Boolean(presents?.length || post.presents?.length || attachments?.length || post.attachments?.length) });
         op.text = text;
         op.mentions = mentions ?? await resolveMentions(text, post.author);
       } else if (mentions !== undefined) op.mentions = mentions;
@@ -393,6 +393,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
         op.state = state;
       }
       if (presents !== undefined) op.presents = clone(presents);
+      if (attachments !== undefined) op.attachments = normalizeAttachments(attachments);
       const saved = await store.append(channelId, op);
       emitEdit(channelId, saved);
       if (text !== undefined && saved.author.kind === 'human') await hooks.edited?.(clone(saved), clone(await need(channelId)));

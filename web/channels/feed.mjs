@@ -6,6 +6,7 @@
 // 部品の口（web/channels/index.mjs）: show({ kind: 'channel', id, threadId? })・hide()・onEvent(ev)。
 // スレッドを開く空間（W3）はここに無い。要約の行・「スレッドで返信」は host.openThread(channelId, threadId) を呼ぶだけ。
 import { el, svgEl } from '../dom.mjs';
+import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
 import { fillPost, renderPost, dayText, authorInfo, wireAttachmentZoom } from './post.mjs';
 import { withReaction } from './reactions.mjs';
@@ -91,7 +92,7 @@ export function createFeed(host) {
   function candidates() {
     if (!S.channel || S.channel.kind === 'dm') return [];
     return [
-      ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon || '🤖', backend: b.backend ?? null, hint: stateHint(b) })),
+      ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon || '🤖', iconImage: b.iconImage, backend: b.backend ?? null, hint: stateHint(b) })),
       { id: 'you', name: t('channels:feed.you'), icon: youInitial(), you: true, hint: '' },
     ];
   }
@@ -122,7 +123,7 @@ export function createFeed(host) {
     if (!ch) return;
     title.removeAttribute('data-i18n');
     const dmBot = ch.kind === 'dm' ? S.bots.get(ch.botId) : null;
-    title.replaceChildren(el('span', 'ch-hash', dmBot?.icon ?? '#'), document.createTextNode(ch.name));
+    title.replaceChildren(dmBot ? botIcon(dmBot, 'ch-hash') : el('span', 'ch-hash', '#'), document.createTextNode(ch.name));
     title.title = ch.name;
     const x = (node) => { node.classList.add('ch-head-x'); top.append(node); return node; };
     x(el('span', 'ch-purpose', ch.kind === 'dm' ? '' : ch.purpose ?? ''));
@@ -131,7 +132,7 @@ export function createFeed(host) {
     members.title = t('channels:feed.members', { names: who.join(t('channels:feed.reactionSep')) });
     members.setAttribute('role', 'img');
     members.setAttribute('aria-label', members.title);
-    members.append(el('span', 'ch-av you', youInitial()), ...memberBots().map((b) => el('span', 'ch-av', b.icon || '🤖')));
+    members.append(el('span', 'ch-av you', youInitial()), ...memberBots().map((b) => botIcon(b, 'ch-av')));
     x(members);
     if (!ch.archivedAt) x(headingButton(host, ch));   // ［ルーティン n］（W5）
     const more = el('button', 'btn btn-icon ch-more');

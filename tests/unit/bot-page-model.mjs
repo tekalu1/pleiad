@@ -55,6 +55,8 @@ export default async function (t) {
     && JSON.stringify(post.target) === JSON.stringify({ channelId: 'c1', threadId: 'p_1', postId: 'p_2' }), JSON.stringify(post));
   const dm = sourceView({ kind: 'post', channelId: 'c2', postId: 'p_3', at: now }, look, now);
   t.ok('出どころ（DM）: bot のアイコンと名前、今日', dm.where.type === 'dm' && dm.where.icon === '🦉' && dm.where.name === 'Owl' && dm.date === null);
+  bots.get('b1').iconImage = 'C:/icons/owl.webp';
+  t.ok('出どころ（DM）: 画像アイコンも渡す', sourceView({ kind: 'post', channelId: 'c2', at: now }, look, now).where.iconImage === 'C:/icons/owl.webp');
   const chat = sourceView({ kind: 'message', sessionId: 's1', at: now }, look, now);
   t.ok('出どころ（Chats の会話）: 題と行き先', chat.where.type === 'chat' && chat.where.name === 'p95 の調査' && chat.target.sessionId === 's1');
   const gone = sourceView({ kind: 'message', sessionId: 'nope', at: now }, look, now);

@@ -22,6 +22,7 @@ import { openEmojiPicker, closeEmojiPicker } from "./emoji-picker.mjs";
 // 矢印は指す項目を動かすだけで会話は開かない。Enter / Space で開く（docs/design-system.md §4.1「キーボード」）。
 import { runMark, satMark } from "./arc.mjs";
 import { el, icon, moreButton, relTime, svgEl } from "./dom.mjs";
+import { botIcon } from './channels/bot-icon.mjs';
 import { fmt, t } from "./i18n.mjs";
 import { familiesOf } from "./family.mjs";
 import { timeText } from "./schedule-times.mjs";
@@ -601,7 +602,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const bot = directory.bots.get(s.bot.botId);
     const channel = s.bot.channelId ? directory.channels.get(s.bot.channelId) : null;
     const mark = el("span", "row-ch");
-    const av = el("span", "av xs", bot?.icon || String(s.title ?? "").split(/\s/, 1)[0] || "");
+    const av = botIcon(bot, 'av xs', String(s.title ?? '').split(/\s/, 1)[0] || '🤖');
     av.setAttribute("aria-hidden", "true");
     const name = channel?.name ?? botTitleParts(s).channel;   // 一覧をまだ読めていなければ会話の題から（id は出さない）
     const where = s.bot.kind === "dm" || channel?.kind === "dm" ? t("channels:side.dm") : name ? `#${name}` : "";

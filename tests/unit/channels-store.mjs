@@ -353,6 +353,9 @@ export default async function (t) {
       && withAtt.attachments[1].name === 'b.txt' && withAtt.attachments[1].kind === 'file' && withAtt.attachments[1].origin === 'host' && withAtt.attachments[1].size === null, JSON.stringify(withAtt.attachments));
     const imageOnly = await attSvc.post({ channelId: atc.id, text: '', attachments: [img] }, HUMAN);
     t.ok('添付があれば本文が空でも投稿できる。添付も本文も無ければ INVALID', imageOnly.attachments.length === 1 && (await codeOf(() => attSvc.post({ channelId: atc.id, text: '' }, HUMAN))) === 'INVALID');
+    const turnWithImage = await attSvc.post({ channelId: atc.id, text: '…', state: 'working', turn: { botId: 'b_owl', sessionId: 's1' } }, BOT);
+    const filledImage = await attSvc.post({ channelId: atc.id, text: '[添付] /tmp/bot.png', attachments: [{ path: '/tmp/bot.png', kind: 'image' }] }, BOT);
+    t.ok('bot の返事をターンの投稿へ入れるときも添付が残る', filledImage.id === turnWithImage.id && filledImage.attachments?.[0]?.path === '/tmp/bot.png');
     t.ok('添付の形が不正（配列でない・パスが無い・多すぎる）は INVALID', (await codeOf(() => attSvc.post({ channelId: atc.id, text: 'x', attachments: 'a' }, HUMAN))) === 'INVALID'
       && (await codeOf(() => attSvc.post({ channelId: atc.id, text: 'x', attachments: [{ name: 'a' }] }, HUMAN))) === 'INVALID'
       && (await codeOf(() => attSvc.post({ channelId: atc.id, text: 'x', attachments: Array.from({ length: 51 }, (_, i) => ({ path: `/f${i}` })) }, HUMAN))) === 'INVALID');
@@ -365,6 +368,7 @@ export default async function (t) {
     const attReopened = makeService('att', { listBots: async () => botList });
     await attReopened.start();
     t.ok('開き直しても添付が残る', (await attReopened.read({ channelId: atc.id })).posts.find((p) => p.id === imageOnly.id).attachments[0].path === img.path);
+    t.ok('ターンの投稿の添付も開き直して残る', (await attReopened.read({ channelId: atc.id })).posts.find((p) => p.id === turnWithImage.id).attachments?.[0]?.path === '/tmp/bot.png');
     attSvc.stop();
 
     // 開き直し

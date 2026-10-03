@@ -157,6 +157,9 @@
   },
   "bot": {
     "iconLabel": "Change icon",
+    "imagePick": "Choose image",
+    "imageTooLarge": "Choose an image under 10 MB.",
+    "imageType": "Choose a PNG, JPEG or WebP image.",
     "nameLabel": "Name",
     "namePlaceholder": "Name (e.g. Owl)",
     "openDm": "Open DM",

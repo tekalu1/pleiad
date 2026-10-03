@@ -63,6 +63,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
 /** @typedef {{
  *   id: string, name: string, icon: string,               // icon は絵文字 1 つ
  *   persona: string,                                      // 人格（自由文。1.5k トークンまで）
+ *   iconImage?: string,                                   // 画像アイコンの写し（uploads/bot-icons/ の WebP）。空なら icon の絵文字を使う
  *   backend: 'claude'|'codex'|'antigravity', model: string, effort: string,
  *   mode: string,                                         // core/backends/*.mjs の MODES の id。Antigravity は 'yolo' だけ。変えるのは bots.setMode（human-only）だけ
  *   folders: { path: string, access: 'rw'|'ro' }[],       // 先頭が既定の作業場所。書き込みの範囲を限れないモードでは「すべてのフォルダー」。bots.update の欄（足すのは広げる向き = guarded）

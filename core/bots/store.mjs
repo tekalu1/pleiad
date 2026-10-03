@@ -78,7 +78,7 @@ export function folderKey(p) {
 export function normalizeBot(raw, now = Date.now()) {
   if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !raw.id || typeof raw.name !== 'string' || !raw.name) return null;
   return {
-    id: raw.id, name: raw.name, icon: str(raw.icon, '🤖'), persona: str(raw.persona),
+    id: raw.id, name: raw.name, icon: str(raw.icon, '🤖'), iconImage: str(raw.iconImage), persona: str(raw.persona),
     backend: str(raw.backend), model: str(raw.model), effort: str(raw.effort), mode: str(raw.mode),
     folders: normalizeFolders(raw.folders),
     sendToOthers: raw.sendToOthers !== false,
