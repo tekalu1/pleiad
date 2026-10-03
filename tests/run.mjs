@@ -443,6 +443,14 @@ const cases = [
   // スレッドと空間モデル (W3): 窓の状態（feed・split・solo）の判定・題とトークンの文言・道具の呼び出しを引く範囲・配線。描画・動き・承認のカードは tests/browser/thread-deck.cjs
   await import("./unit/thread-deck.mjs"),
   // --- routines (R1・R2・W5、P2) ---
+  // ルーティンの式 (R1): 5 欄の cron の解析と次の時刻・毎日/毎週/間隔（時間帯つき）の次の発火・トリガの検査・頻度の目安・イベントの選び方
+  await import("./unit/routines-cron.mjs"),
+  // ルーティンのサービス (R1): 予約と発火・取りこぼしは最新の 1 回・一時停止と再開・実行の状態・走っている間はスキップ・承認の期限・イベントのトリガ・試しの実行・広げる向き・保存
+  await import("./unit/routines-schedule.mjs"),
+  // routines.* の操作: 口の出し分け・危険度・AI が作ると承認・広げる向きの update は承認・resume / run / delete は承認・試しの実行・失敗の code
+  await import("./unit/ops-routines.mjs"),
+  // ルーティンをサーバー越しに: 毎分の実行のスレッド（テストの時計）・取りこぼしは起動時に 1 回・一時停止と再開・イベントのトリガ・承認の期限・試しの実行
+  await import("./unit/routines-server.mjs"),
   // --- memory-learn・sessions-send・webhook (L1・X1・H1、P3) ---
 ];
 

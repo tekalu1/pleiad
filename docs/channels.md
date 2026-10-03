@@ -86,11 +86,12 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 | `memory.edit` | write（AI が人の書いた行の本文を書き換えるのは `riskOf` で guarded） | AI も使える。人がしたか AI がしたかは `log.jsonl` の `by`。AI が本文を変えるときは `sources`（任意の欄）に人の発言が要る。**書き手が替わる直しは、元の書き手を `origBy`（記憶のメタ `ob`・`log.jsonl` の `origBy`）に残す**（`by` は今の本文を書いた者）。人が書いた行（`by.kind === 'human'`）の本文を AI が書き換えるときは承認カード（今の本文と新しい本文の行）。自分や別の AI が書いた行・理由だけの直しは承認なし |
 | `memory.forget` | guarded | 消す操作。墓石を残す。見えない記憶（ほかの bot の層）は `MEMORY_NOT_FOUND` |
 | `memory.unforget` | write（画面・AI・CLI のすべてに出す） | 忘れた直後の「元に戻す」（W4）。出どころごと戻し、墓石を外す。誰が戻したかは `log.jsonl` の `by`。bot は見える層（`user` と自分の層）のものだけ（それ以外は `MEMORY_NOT_FOUND`）。束縛されない AI は `NEEDS_UI`。CLI は `pleiad memory unforget <id>`。全機能は AI も使える決定のため。人が忘れさせた記憶を AI が戻せることになるが、戻した主体が記録に残る |
-| `routines.list` / `get` | read | `nextAt` を付ける（P2） |
-| `routines.create` | write（AI は guarded） | |
-| `routines.update` | write（頻度を上げる・モードを強くする・対象を広げる向きだけ guarded） | `riskExamples` を書く |
-| `routines.pause` / `resume` / `run` / `delete` | write / guarded / guarded / guarded | `run` は `dryRun?`。消す操作は guarded |
-| `routines.rotateSecret` | human-only | P3 |
+| `routines.list` / `get` | read | 定義に `nextAt`（次の実行の時刻。一時停止・出来事・webhook は `null`）・`last`（最後の実行）を付ける |
+| `routines.create` | write（AI は guarded） | `{ name, botId, channelId, prompt, trigger, mode?, approvalTimeoutMin?, paused?, reason? }`。`mode` を省くと bot の今の承認モード。承認カードに名前・トリガ・モード・指示を出し、弱くないモードなら `loosens`。チャンネルは DM 不可 |
+| `routines.update` | write（広げる向きと、AI が指示を変えるときだけ guarded） | 広げる向き = 頻度を上げる（1 週間の発火の回数が増える。時刻のトリガから出来事・webhook に変えるのも）・モードを強くする・出来事の対象（`scope`）を広げる。AI が `prompt` を変えるのも guarded（無人で動く指示は人格と同じ重さ。外から来た文に書き換えられる足場にしない）。トリガを変えたら予定を数え始める基準を今にする |
+| `routines.pause` | write | 狭める向き |
+| `routines.resume` / `run` / `delete` | guarded | `run` は `{ routineId, dryRun? }`（一時停止中でも手では走らせられる。`dryRun` でも承認。`dryRun` は走り終えるまで待って `state`・`summary?` を返す）。`delete` は消す操作で、実行の履歴のスレッドは残る |
+| `routines.rotateSecret` | human-only | P3（H1）。まだ定義していない |
 | `sessions.send` | write（宛先が強いと guarded） | 定義は `core/ops/conversations.mjs`（[ADR 0104](adr/0104-send-to-another-conversation.md)）。bot の分は P3 の X1: 主体が bot に束縛された会話のときだけ、強さの比べ方の後で `sendToOthers`・`sendTargets` を追加で確かめ、送り手の `sentBy` に bot の `name`・`icon` を足す（[ADR 0113](adr/0113-send-on-your-behalf.md)） |
 
 記憶のサービス（`createMemoryService`）の `turnContext({ bot, session, sessionId?, incomingText, now?, locale? })` は `{ notes, memRev, delivered, snapshotDue }` を返す。dispatch は返りを sidecar の `bot.memRev`・`bot.delivered`・`bot.snapshotDue` に書き戻す（`snapshotDue` は核の写しを渡したら false）。`sessionId` を渡すと、その会話が自分で書いた記憶（履歴に tool の結果がある）を差分で繰り返さない。途中送信（steer）では呼ばない。失敗の code は `MEMORY_SOURCE`・`MEMORY_REJECTED`・`MEMORY_NOT_FOUND`、理由は辞書 `agent:memory.reason.*`。索引は `node:sqlite` を読み込めない・壊れているときはメモリ上の走査に切り替わる（`AGENT_HOST_MEMORY_NO_SQLITE=1` で読み込めない状態を作れる）。核の写し（`pickCore`）は、層ごとの目安（1200 トークン）の中で、**人が書いた・人が直した記憶（`by.kind === 'human'`）を先に、bot・AI が書いたものを後に**入れる（それぞれ新しい更新から。書き込みを重ねる bot が新しさで人の古い記憶を押し出せない）。`log.jsonl` の追記は、最後の行が改行で終わっていなければ先に改行を足す（壊れた最後の行の後ろに次の記録をつなげて失わない。チャンネルの `.jsonl` と同じ）。同じ文の同時の書き込みは `store.add` の直列化の中でも重複を確かめる。出どころの検査が効くのは `memory.write` を通る書き込みだけで、データ置き場の `memory/*.md` をファイルとして直接書ける bot（全部自動のモード）には効かない（`sync` が「人の変更」として記録する。[ADR 0109](adr/0109-bot-memory.md)）。
@@ -163,6 +164,21 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 **末尾**（`turnExtras`）。毎ターンの `notes` は `memory.turnContext`（時刻・記憶の差分・関係する記憶。会話の始まりと圧縮の後だけ核の写しが先に付く）。圧縮の完了（`onCompacted`）で `snapshotDue = true`・`delivered = []`。人格（`botInstructions`）は S2 が `runArgs` へ載せる。圧縮のターン（`compactTrigger`）には何も足さない。人格・固定の文は変えず、変わるのは末尾だけ（キャッシュの並び）。
 
 **ほか**: Chats の一覧は bot の会話を出さず、あなた待ち（承認・質問）の間だけ出す（一覧の行の `bot` と `running` の承認待ち。画面の絞り込みは `client.mjs` の `renderSessions`）。スマホへは、bot の会話の完了を送らず、失敗・承認・質問は送る。セッション検索は bot の会話を既定で除く（委譲の子と同じ。`includeDelegated` で含める）。
+
+## ルーティン（`core/routines/`・`core/ops/routines.mjs`。R1。[ADR 0111](adr/0111-routines.md)）
+
+定義は `routines.json`（`createRoutineStore`。`version: 1`。読めない版・壊れた JSON は読み込まず上書きしない: `ROUTINES_CORRUPT`・`ROUTINES_UNSUPPORTED_VERSION`・`ROUTINES_UNREADABLE`。サービスは立ち上がるがルーティンは止まる）。`Routine`（型は `core/channels/types.mjs`）に任意の欄を 2 つ足した: `armedAt`（予定を数え始める基準の時刻。作った・再開した・トリガを変えた・発火した時刻）と `last.postId`（その実行の根の投稿）。
+
+- **トリガ**（`schedule.mjs` の `validateTrigger`・`nextFireAt`）: 毎日（`at` と平日だけ）・毎週（`days` は 0=日〜6=土）・間隔（`minutes` と時間帯 `window`）・cron（5 欄。`cron.mjs` に自前。`*`・`a`・`a-b`・`a,b`・`*/n`・`a-b/n`・`a/n`、月と曜日は英語 3 字も。日と曜日の両方を絞ると「どちらかに当たれば」。秒は持たない）・イベント（`on`: done / failed / waiting、`scope`: `'all'` か `{ sessionIds }`）・webhook（型と分岐の入れ物だけ。受け口は P3 の H1）。時刻は PC の現地時刻で、毎日・毎週は cron の式に落として同じ関数で次を決める。間隔は「前に動いた時刻から `minutes` 後」で、時間帯の外なら次の帯の頭（`from`）に寄せる（`from` > `to` は夜をまたぐ）。基準は `baselineOf` = `armedAt`（無ければ `createdAt`）と `last.at` のうち後ろのほう。
+- **予約**: ルーティンごとにタイマー 1 本（`unref`）。時計は `core/routines/clock.mjs`（`now`・`setTimer`・`clearTimer`。テストは `tests/lib/routines-clock-loader.mjs` で `core/bots-host.mjs` が読むこのモジュールをファイルで進む時計に差し替える）。発火では `armedAt` を今にして次を予約してから走らせる（走るのが遅くても次の予約が遅れない）。一時停止中・出来事・webhook は予約しない。再開（`resume`）は再開した時刻から数え直す（止めていた間の分は走らせない）。
+- **取りこぼし**: 起動時（`start`）に、基準の後で今より前の予定が 1 つ以上あれば**最新の 1 回だけ**走らせ（根の投稿に `routine.missed: true`。画面は「Pleiad が止まっていた間の分」）、予約を今から数え直す。一時停止中は走らせない。Pleiad が止まって終わりを記録できなかった実行（`last.state` が `working`）は、根の投稿を `stopped` にする。
+- **実行**（`runner.mjs`）: 発火のたびにチャンネルへ根の投稿（`author: { kind: 'routine', routineId }`・`state: 'working'`・本文は「名前」の行と指示・出来事なら続けてきっかけの一行・`routine: { routineId, runId, missed? }`）を立て、bot の**そのスレッドの会話**（`bots.createSession` の `kind: 'routine'`・`routineId`。承認モードは `routine.mode`、そのバックエンドに無ければ bot の今のモード）を作って `ThreadState.sessions` に登録し、`dispatch.wake` で起こす（`dispatch` の `sessionFor` は登録済みの会話をそのまま使う）。実行の会話の承認モードは `routine.mode` で、人が `bots.setMode` で bot のモードを変えても揃えない（`createBotSessions.sync` が `kind: 'routine'` の会話を飛ばす）。実行の履歴 = スレッドの並び。同じルーティンの前の実行が走っている間の発火は「スキップ（`previousRunning`）」の根の投稿を、走っている間に 1 回だけ残す（毎分のルーティンが遅い実行を待つたびに並べない）。bot が居ない（`botMissing`）・チャンネルが無い・アーカイブ済みのときも `skipped`（根の投稿を立てられなければ `last` だけ）。会話を作れない・ターンが 60 秒たっても走り始めない（`START_GRACE_MS`）は `failed`。
+- **状態**（根の投稿の `state`。緑の「成功」とは出さない）: `done`（終了）・`checking`（bot が `channels.post` に `state: 'checking'` を付けた＝要確認。`new: true` の別の投稿でも、ターンの投稿でもよい。ターンの投稿に付けたものは終わりで `done` に戻さない）・`failed`（ターンの失敗・使用量の上限・承認の期限で取り消した）・`stopped`（人が止めた・更新・終了）・`skipped`（理由は `routine.reason`）。`routines.list` の `last.state` も同じ。
+- **承認待ちの期限**: 実行の会話の承認（`onPermission('open')`）に `approvalTimeoutMin`（既定 30）のタイマーを付け、決着（`'settled'`）で外す。過ぎたらスレッドにシステムの投稿「承認が無かったので取り消しました」を足し、`abortSessions({ reason: 'timeout' })` でターンを止める（`INTERRUPT_REASONS`・`ABORT_REASONS` に `timeout` を足した。中断の理由として会話に残る）。止めた実行は `failed`（バックエンドが拒否を受けて `ok` で終えても「終了」と見せない）。
+- **イベントのトリガ**（`events.mjs`）: `onSessionDone`（`ok` → `done`、`error` → `failed`）と `onPermission('open')`（`waiting`）で、`on` と `scope` が当たる有効なルーティンを走らせる。**bot・ルーティン・学習の会話（sidecar `bot` を持つ会話）から来たものは対象にしない**（自分の実行の失敗で自分が動く輪を作らない）。委譲の子は server が渡さない。
+- **試しの実行**（`run` の `dryRun`）: 使い捨ての会話（`kind: 'routine'`・スレッドなし）を、そのバックエンドの計画（読み取りのモード。`plan`、無ければ範囲が `readonly` / `none` の最初のもの）で走らせ、チャンネルへは投稿しない（試しの一文を前に付けた指示を内部のターンで渡す。`last` も変えない）。**走り終えるまで待って**（画面の［試しに動かす］は結果を足に出す）返りは `{ postId: null, runId, sessionId, mode, state, summary?, dryRun: true }`: `state` は `done`・`failed`・`stopped`（`working` は 10 分待っても終わらなかったとき。会話はそのまま走り続ける）、`summary` は返事の最初の 1 行（失敗なら理由）。承認待ちには期限（`approvalTimeoutMin`。ただし最大 5 分。画面の前で待っている人のための実行なので）を付け、過ぎたらターンを止めて `failed`（理由は「承認が無かったので取り消しました」）。結果の全文は `sessionId` の会話で読む。計画のモードを持たないバックエンド（Antigravity）は `INVALID`。
+- **外から起こす入口**（P3 の webhook など）: `fire(routineId, { source, note })`。一時停止中は `skipped`（`paused`）。
+- **つなぎ目**（`core/bots-host.mjs` の routines の区画）: `onPermission`・`onSessionDone`・`start`・`stop` に加え、`onTurnEnd` は dispatch がターンの投稿を確定した**後**に `routines.onTurnEnd` を呼ぶ（根の投稿の状態を決める）。
 
 ## 画面（`web/channels/`）
 
