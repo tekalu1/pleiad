@@ -67,6 +67,7 @@ export default async function (t) {
     t.ok('包みの無い prompt は今までどおり', scriptOf('  echo: hi ') === 'echo: hi');
     t.ok('<pleiad-channel> の中身を台本として読む（@名前を除く）', scriptOf(channelEnvelope({ channel: '#c', from: 'あなた', text: '@Owl echo:やった' })) === 'echo:やった');
     t.ok('記憶の包みは台本ではない', scriptOf(memoryCoreEnvelope('x') + channelEnvelope({ channel: '#c', text: 'slow' })) === 'slow');
+    t.ok('最近のスレッドの包みも台本ではない', scriptOf('<pleiad-bot-recent>前の話</pleiad-bot-recent>' + channelEnvelope({ channel: '#c', text: 'slow' })) === 'slow');
     t.ok('発言が包みの後ろに続くなら、その発言が台本', scriptOf(channelEnvelope({ channel: '#c', text: 'a' }) + 'notes:') === 'notes:');
   } finally {
     await Promise.all(hosts.map(h => h.close()));

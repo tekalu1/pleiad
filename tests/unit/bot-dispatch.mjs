@@ -71,7 +71,7 @@ export default async function (t) {
     // ================================================================ 途中送信の形ごとの扱い（身代わりのサービス・バックエンド）
     {
       let worlds = 0;
-      const world = (steerKind, { realStart = false, more = false, modes = null } = {}) => {
+      const world = (steerKind, { realStart = false, more = false, modes = null, episodes = null, memoryNotes = [] } = {}) => {
         let dRef = null;
         const posts = [
           { id: 'p_root', channelId: 'c_1', threadId: null, author: { kind: 'human' }, text: '根', mentions: ['b_1'], at: 1000, reactions: {} },
@@ -118,8 +118,8 @@ export default async function (t) {
           ...(modes ? { approvalOf: async ({ botId }) => { const b = BOT_LIST.find((x) => x.id === botId); const m = modes[botId]; return b && m ? { ...b, mode: m.id, label: m.label, entry: m } : null; },
             createSession: async ({ botId, threadId }) => { const sessionId = `s_new_${botId}`; sessions[sessionId] = { bot: { botId, kind: 'thread', channelId: 'c_1', threadId, memRev: 0, snapshotDue: false, delivered: [], postCursor: null } }; return { sessionId }; } } : {}),
         };
-        const memory = { turnContext: async () => ({ notes: [], memRev: 0, delivered: [], snapshotDue: false }) };
-        const d = createDispatcher({ channels, bots, memory, host });
+        const memory = { turnContext: async () => ({ notes: [...memoryNotes], memRev: 0, delivered: [], snapshotDue: false }) };
+        const d = createDispatcher({ channels, bots, memory, episodes, host });
         dRef = d;
         return { d, posts, threads, sessions, steers, emitted, started, aborted, turn, turns, control, channel, host, setAccept: (f) => { accept = f; } };
       };
@@ -199,6 +199,20 @@ export default async function (t) {
         t.ok('途中送信後に表示済みの画像入り返事は、次の道具を呼んでも残る', replies.length === 2
           && replies[0].text === visible && replies[0].state === 'done' && replies[1].text === '追加の投稿への返事'
           && replies[1].state === 'done', JSON.stringify(replies));
+      }
+      {
+        let requested = 0;
+        const w = world('none', { episodes: { recent: async () => { requested++; return '<pleiad-bot-recent>前の話</pleiad-bot-recent>'; }, onTurnEnd: () => {} },
+          memoryNotes: ['<pleiad-memory-core>核</pleiad-memory-core>', '<pleiad-turn-context>末尾</pleiad-turn-context>'] });
+        const first = await w.d.turnExtras(w.turn);
+        t.ok('申し送りは核の後・今のターンの文脈の前に置く', first.notes.filter((n) => n.includes('<pleiad-bot-recent>')).length === 1 && first.notes[0].includes('核') && first.notes[1].includes('前の話') && first.notes[2].includes('末尾'), JSON.stringify(first.notes));
+        w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '返事' });
+        await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
+        await tick();
+        t.ok('入力が渡ったときだけ申し送りの済んだ印を残す', w.sessions.s1.bot.recentDelivered === true);
+        await w.d.onCompacted('s1');
+        const later = await w.d.turnExtras(w.turn);
+        t.ok('圧縮の後も申し送りを繰り返さない', !later.notes.some((n) => n.includes('<pleiad-bot-recent>')) && requested === 1, JSON.stringify({ notes: later.notes, requested }));
       }
 
       // 「渡った」合図を後から出すバックエンド（Codex の形。steerConfirms）

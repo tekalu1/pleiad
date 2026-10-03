@@ -490,6 +490,7 @@ const cases = [
   // --- memory-learn・sessions-send・webhook (L1・X1・H1、P3) ---
   await import("./unit/webhook.mjs"),
   await import('./unit/memory-learn.mjs'),
+  await import('./unit/memory-episodes.mjs'),
   // 夜の整理の走り方: ほかのターンで止まらない・走っている会話は次へ・飛ばした回数と理由・失敗の間隔・対象を絞った実行（ADR 0118）
   await import('./unit/memory-learn-schedule.mjs'),
 ];

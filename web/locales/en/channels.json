@@ -376,6 +376,7 @@
     "post": "{{channel}} · {{from}}",
     "thread": "Passed the earlier posts in {{channel}}",
     "memoryCore": "Passed what it remembers",
+    "botRecent": "Passed the recent threads",
     "turnContext": "Passed the time and memory changes"
   }
 }
