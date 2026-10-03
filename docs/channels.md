@@ -64,16 +64,16 @@ bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集
 
 ## 操作（`core/ops/`）
 
-id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリングの 5 つだけ（[ADR 0082](adr/0082-control-surface-principals-and-risk.md)）。消す操作は guarded。**直のツール（`mcp: 'direct'`）は 1 つも足さない**（`ops-surface` の T4 の余りが小さい）。新しい WS のコマンドも足さず、画面は `cmd('invoke', { op, args })`。失敗の code は辞書 `agent:ops.errors.<CODE>` と `tests/unit/ops-surface.mjs` の `ERROR_CODES` の両方（T7）。read の操作は T6 のスタブ deps と `samples` に足す。
+id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリングの 5 つだけ（[ADR 0082](adr/0082-control-surface-principals-and-risk.md)）。消す操作は guarded。**直のツール（`mcp: 'direct'`）は 1 つも足さない**（`ops-surface` の T4 の余りが小さい）。新しい WS のコマンドも足さず、画面は `cmd('invoke', { op, args })`。失敗の code は辞書 `agent:ops.errors.<CODE>` と `tests/unit/ops-surface.mjs` の `ERROR_CODES` の両方（T7）。read の操作は T6 のスタブ deps と `samples` に足す（必須の引数がある read は `tests/unit/ops-control.mjs` の T6 の `inputs` にも例が要る。無いと全件のときだけ「必須の引数の例がある」で落ちる）。
 
 | op | 危険度 | 備考 |
 |---|---|---|
-| `channels.list` / `get` / `read` / `search` | read | `read` は `{ channelId, threadId?, before?, limit≤100 }` → `{ posts, threads, nextBefore }` |
+| `channels.list` / `get` / `read` / `search` | read | `list` → `{ channels: (Channel & { unread, mentions, threadsWorking })[] }`（アーカイブしたものも含む。`unread` = 既読の後の人以外の投稿、`mentions` = そのうち `@あなた`）。`read` は `{ channelId, threadId?, before?, limit≤100 }` → `{ posts, threads, summaries, nextBefore }`（新しい方から `limit` 件を時間順で。`threadId` ありは根が先頭。`summaries` = 返信のある根ごとの `{ count, lastAt, authors }`）。消した投稿は `deletedAt` 付きの空の本文で残る。`search` → `{ hits }` |
 | `channels.create` / `update` / `archive` | write | 消さない（archive） |
 | `channels.post` | write・`modeGate: false` | 発言者は主体から決める（human / 束縛された会話が bot なら bot / それ以外の AI は agent / 束縛なしの CLI は `NEEDS_UI`）。`new: true` で新しい投稿、無ければそのターンの投稿の本文を置き換える |
 | `channels.edit` / `delete` | write | 自分の投稿だけ |
 | `channels.react` | write・`modeGate: false` | 絵文字 1 つ（`web/emoji.mjs` の `EMOJI_RE`）。人も bot も同じ操作 |
-| `channels.markRead` | write（AI・CLI にも出す） | |
+| `channels.markRead` | write（AI・CLI にも出す） | `{ channelId, at? }`（省くと今）。進める向きにだけ動く。CLI は `pleiad channels mark-read <channelId>` |
 | `channels.stopThread` | write・`modeGate: false` | `stopped.by` に止めた主体を残す |
 | `bots.list` / `get` | read | `usage: { weekTokens, cacheRatio }`・`state` を付ける |
 | `bots.create` | write（AI は `riskOf` で guarded） | 既定の弱いモード |

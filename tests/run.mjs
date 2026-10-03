@@ -396,6 +396,10 @@ const cases = [
   // つなぎ目（core/bots-host.mjs）と土台: 空のままでは何も変えない・例外を出さない・使用量の sessionId・fake の台本の包み外し
   await import("./unit/bots-host.mjs"),
   // --- channels (S1) ---
+  // チャンネルの保存（index.json・.jsonl の追記と畳み込み・壊れた行・threads.json・投稿とリアクションと出来事）・@ の解析・操作（主体から発言者を決める・危険度・口）
+  await import("./unit/channels-store.mjs"),
+  await import("./unit/channels-mentions.mjs"),
+  await import("./unit/ops-channels.mjs"),
   // --- bots (S2) ---
   // --- memory (S3) ---
   // --- dispatch (S4) ---
