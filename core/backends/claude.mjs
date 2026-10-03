@@ -702,7 +702,7 @@ export const backend = {
         // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークン・接続先のキーが紛れても伏せる
         stderr: createStderrLog({ secrets: [oauthToken, endpoint?.key].filter(Boolean) }),
         resume: sessionId ?? undefined,
-        // 同じ会話の中で巻き戻して送り直す（core/conversations.mjs の rewind。ADR 0091）。at は残す最後の発言、drops は捨てる発言（ユーザーの発言）の uuid。
+        // 同じ会話の中で巻き戻して送り直す（core/conversations.mjs の rewind。ADR 0102）。at は残す最後の発言、drops は捨てる発言（ユーザーの発言）の uuid。
         // 同じ session id・同じ JSONL のまま、at から枝を伸ばす。捨てる範囲が drops のターンだけでなければ CLI が拒否する（下の catch）
         ...(rewind && sessionId ? { resumeSessionAt: rewind.at, resumeDropsTurn: rewind.drops } : {}),
         cwd,

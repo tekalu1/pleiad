@@ -62,7 +62,7 @@ export default async function(t) {
     t.ok('親が空いても、止めたタスクの通知は送らない', !delivered.flat().some(id => [finished.taskId, running.taskId].includes(id)), JSON.stringify(delivered));
     t.ok('もう一度止めても何も返らない（止め終えたもの）', (await manager.cancelOwner('p1')).length === 0);
 
-    // ---- cancelOwner の since: 巻き戻して送り直す（ADR 0091）ときに、切り口より後に作ったタスクだけを止める
+    // ---- cancelOwner の since: 巻き戻して送り直す（ADR 0102）ときに、切り口より後に作ったタスクだけを止める
     parentReady = false;
     const older = await delegate('p3', 'slow-older', { title: 'Older' });
     await sleep(30);

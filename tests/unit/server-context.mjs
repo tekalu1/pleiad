@@ -171,7 +171,7 @@ export default async function (t) {
     const nativeFork = await client.cmd('fork', { sessionId: nativeTurn.sessionId, upToMessageId: (await client.cmd('loadSession', { sessionId: nativeTurn.sessionId })).messages.at(-1).uuid });
     text = await fetchSub(nativeFork);
     t.ok('履歴そのものを写す分岐は控えを引き継ぐ', said(nativeTurn).includes('DEDUP_SUB') && isShort(text), text);
-    // 同じ会話で巻き戻して送り直す（sendMessage の rewind。ADR 0091）も控えを捨てる。巻き戻した先のモデルは、捨てたターンで渡された本文を持っていない
+    // 同じ会話で巻き戻して送り直す（sendMessage の rewind。ADR 0102）も控えを捨てる。巻き戻した先のモデルは、捨てたターンで渡された本文を持っていない
     const rw = await client.cmd('newSession', { cwd: dedup, backend: 'fake' });
     await fetchSub(rw);
     t.ok('巻き戻す前は渡し済みを覚えている', isShort(await fetchSub(rw)));

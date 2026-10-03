@@ -124,7 +124,7 @@ export default async function (t) {
     t.ok('session-end は shutdown を送り、サーバー終了を通知しない', calls.messages.some(m => m.type === 'shutdown') && calls.dialogs.length === 0);
   }
   {
-    // 作業が無くても、送信予定や再開の予定があれば終了の前に確かめる（終了している間は送られない。ADR 0094）
+    // 作業が無くても、送信予定や再開の予定があれば終了の前に確かめる（終了している間は送られない。ADR 0103）
     const { calls, resolveDialog } = await start({ work: { count: 0, scheduled: { send: 2, held: 0, resume: 12, nextSendAt: Date.UTC(2026, 9, 4, 0, 0) } } });
     calls.window.emit('close', { preventDefault() {} });
     await tick();
