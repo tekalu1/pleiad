@@ -83,6 +83,8 @@ export function normalizeBot(raw, now = Date.now()) {
     folders: normalizeFolders(raw.folders),
     sendToOthers: raw.sendToOthers !== false,
     sendTargets: [...new Set((Array.isArray(raw.sendTargets) ? raw.sendTargets : []).filter((s) => typeof s === 'string' && s))].slice(0, SEND_TARGETS_MAX),
+    // Keep origins even after removal: later human references must not silently re-grant access.
+    sendTargetSources: Object.fromEntries(Object.entries(raw.sendTargetSources ?? {}).filter(([id, source]) => id && ['shown', 'created', 'manual'].includes(source))),
     dmChannelId: str(raw.dmChannelId), dmSessionId: typeof raw.dmSessionId === 'string' && raw.dmSessionId ? raw.dmSessionId : null,
     createdAt: num(raw.createdAt, now), updatedAt: num(raw.updatedAt, num(raw.createdAt, now)),
   };

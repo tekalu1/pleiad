@@ -90,6 +90,7 @@ const cases = [
   await import('./unit/ops-conversations.mjs'),
   // 別の会話への送信（sessions.send）・送信待ちの取り消しと送り直し・既読（ADR 0104）: 強さの比べ方・歯止め・送り手の印
   await import('./unit/ops-send.mjs'),
+  await import('./unit/sessions-send-bot.mjs'),
   await import('./unit/server-ops-send.mjs'),
   // pleiad CLI の起動口（ADR 0090）: 会話のシェルの PATH・外の AI の MCP の設定（app.cliSetup）・起動口の改行・デスクトップ版の同梱
   await import('./unit/cli-launcher.mjs'),

@@ -333,6 +333,8 @@ export const sessionOps = [
       if (!(await ctx.sessions.get(id))) throw missing(ctx, id);
       const forked = await ctx.sessions.fork({ sessionId: id, upToMessageId, beforeMessageId, title,
         reason: ctx.principal.by === 'human' ? (ctx.sessions.clientReason?.({ reason, reasonKey, reasonParams }).reason ?? reason) : reason, backend }, { actor: ctx.actor });
+      const binding = ctx.actor.sessionId ? await ctx.botOfSession?.(ctx.actor.sessionId) : null;
+      if (binding?.botId) await ctx.bots.addSendTargets({ botId: binding.botId, sessionIds: [forked.sessionId], source: 'created' });
       return { sessionId: forked.sessionId, parent: id };
     },
   }),

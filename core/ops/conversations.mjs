@@ -43,6 +43,20 @@ export function createSendLimiter({ max = SEND_RATE.max, windowMs = SEND_RATE.wi
 }
 const sendLimiter = createSendLimiter();
 
+/** Bot limits run after the shared guards and mode comparison, and again immediately before sending. */
+async function botSendGuard(ctx, targetId) {
+  const binding = ctx.actor.sessionId ? await ctx.botOfSession?.(ctx.actor.sessionId) : null;
+  if (!binding?.botId) return null;
+  const bot = await ctx.bots.get({ botId: binding.botId });
+  const code = !bot || bot.sendToOthers === false ? 'BOT_SEND_DISABLED'
+    : !bot.sendTargets.includes(targetId) ? 'BOT_SEND_TARGET' : null;
+  if (code) {
+    await Promise.resolve(ctx.conversations.refused?.({ actor: ctx.actor, op: ctx.op.id, sessionId: targetId, code })).catch(() => {});
+    throw new OpError(code, agentT(ctx.locale, `ops.errors.${code}`, { id: targetId }));
+  }
+  return bot;
+}
+
 const delegationParentOf = (row) => row?.delegation?.parentSessionId ?? null;
 
 /**
@@ -140,9 +154,12 @@ export const conversationOps = [
     output: z.object({ sessionId: z.string() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'new'] } },
     legacyCommand: 'newSession',
-    handler: (ctx, args) => {
+    handler: async (ctx, args) => {
       humanOnlyFields(ctx, args, ['mode', 'endpoint']);
-      return fromHost(() => ctx.conversations.create(args));
+      const binding = ctx.actor.sessionId ? await ctx.botOfSession?.(ctx.actor.sessionId) : null;
+      const made = await fromHost(() => ctx.conversations.create(args));
+      if (binding?.botId) await ctx.bots.addSendTargets({ botId: binding.botId, sessionIds: [made.sessionId], source: 'created' });
+      return made;
     },
   }),
 
@@ -318,7 +335,12 @@ export const conversationOps = [
     summary: 'agent:ops.sessions.send.summary',
     risk: 'write',
     riskReason: 'The message runs under the target conversation\'s own approval mode, the same as when a person types it there; it is queued like the screen\'s send and the target\'s history marks it as sent on the user\'s behalf by the sender. When the target\'s approval mode is stronger than the caller\'s (scope or autonomy higher), riskOf raises it to guarded so an agent cannot borrow a stronger conversation. Sending to itself, across a delegation (parent and child), past a relay chain of 3 or over 20 sends in 10 minutes is refused',
-    riskOf: async (ctx, { sessionId: id }) => { await sendGuard(ctx, id); return sendRisk(ctx, id); },
+    riskOf: async (ctx, { sessionId: id }) => {
+      await sendGuard(ctx, id);
+      const risk = await sendRisk(ctx, id);
+      await botSendGuard(ctx, id);
+      return risk;
+    },
     confirm: (ctx, { sessionId: id, text }) => sendCard(ctx, id, 'ops.sessions.send.card', { text: clip(text, CARD_TEXT) }),
     scope: 'session',
     input: z.object({
@@ -330,10 +352,11 @@ export const conversationOps = [
     surfaces: { ui: false, mcp: 'catalog', cli: { path: ['sessions', 'send'], positional: ['sessionId', 'text'] } },
     handler: async (ctx, { sessionId: id, text, reason }) => {
       const { hops } = await sendGuard(ctx, id);
+      const bot = await botSendGuard(ctx, id);
       const own = ctx.actor.sessionId ? (await ctx.sessions.get(ctx.actor.sessionId))?.row : null;
       // 宛先の履歴に出す送り手。bot の会話は name・icon を足す（送り手の表示）
       const sentBy = { by: ctx.actor.by, ...(ctx.actor.via ? { via: ctx.actor.via } : {}),
-        ...(own ? { sessionId: own.id, title: own.title ?? '', backend: own.backend ?? null } : {}), hops };
+        ...(own ? { sessionId: own.id, title: own.title ?? '', backend: own.backend ?? null } : {}), ...(bot ? { botId: bot.id, name: bot.name, icon: bot.icon } : {}), hops };
       sendLimiter.note(ctx.actor.sessionId ?? '');
       const item = await fromHost(() => ctx.conversations.send({ sessionId: id, text, sentBy, reason: reason ?? null, actor: ctx.actor }));
       return { sessionId: id, messageId: item.id, status: item.status };

@@ -184,6 +184,13 @@
     },
     "send": {
       "label": "Send to other chats",
+      "targets": "Conversations this bot can send to",
+      "empty": "No conversations yet.",
+      "shown": "Shown by you",
+      "created": "Created by this bot",
+      "manual": "Added in settings",
+      "remove": "Remove",
+      "removeLabel": "Remove {{title}} from send targets",
       "hint": "This bot can send instructions to other chats. It can only send to chats you pointed it to and chats it made itself."
     },
     "memory": {

@@ -21,7 +21,7 @@ bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集
 
 - 新しいファイルは `{ version: 1 }` を持つ。読めない版は読み込まずに画面へ出して止める。`DATA_SCHEMA` は上げない。
 - id は `core/channels/types.mjs` の `newId(kind)`（`c_` `p_` `b_` `m_` `r_` `h_` `i_`）。
-- 会話（sessions.json）の新しい欄: `bot`（`SessionBot`。botId・種類・チャンネル・スレッド・記憶の進み）と `proxySends`（使わない。代わりの送信の見分けは `sessions.send` の `relayed`。P3 の X1 で許可リストから外す。[ADR 0113](adr/0113-send-on-your-behalf.md)）。使用量の記録（usage.json）に `sessionId`（足す前の分は無い）。一覧の行（`sessionRow`）に `bot: { botId, kind, channelId, threadId } | null`。
+- 会話（sessions.json）の新しい欄: `bot`（`SessionBot`。botId・種類・チャンネル・スレッド・記憶の進み）。代わりの送信の見分けは `sessions.send` の `relayed` を使う（[ADR 0113](adr/0113-send-on-your-behalf.md)）。使用量の記録（usage.json）に `sessionId`（足す前の分は無い）。一覧の行（`sessionRow`）に `bot: { botId, kind, channelId, threadId } | null`。
 - 会話の言語・題・モード・モデル・エフォートは普通のセッションと同じ（委譲の子の作り方 `prepare` と同じ手順）。
 
 ## モジュールと持ち主
@@ -39,7 +39,7 @@ bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集
 | `core/ops/{channels,bots,memory,routines}.mjs` | 操作（`defineOp`）。空の配列から始まる | それぞれ S1 / S2 / S3 / R1 |
 | `web/channels/` | `setupChannels(host)`・`side-tabs.mjs`・各画面（`sidebar` `feed` `thread` `bot-page` `routine-sheet`） | P0 / W1〜W5 |
 
-各工場の引数と返りの形は、そのファイルの先頭のコメントが正本。`createBotHost` は工場を束ね、`ChannelService.hooks`（`posted`・`stopThread`）で逆向きの口を配線する。
+各工場の引数と返りの形は、そのファイルの先頭のコメントが正本。`createBotHost` は工場を束ね、`ChannelService.hooks`（`posted`・任意の `edited(post, channel)`・`stopThread`）で逆向きの口を配線する。
 
 ## サーバーのつなぎ目（`core/server.mjs`）
 
@@ -91,9 +91,25 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 | `routines.update` | write（頻度を上げる・モードを強くする・対象を広げる向きだけ guarded） | `riskExamples` を書く |
 | `routines.pause` / `resume` / `run` / `delete` | write / guarded / guarded / guarded | `run` は `dryRun?`。消す操作は guarded |
 | `routines.rotateSecret` | human-only | P3 |
-| `sessions.send` | write（宛先が強いと guarded） | 定義は `core/ops/conversations.mjs`（[ADR 0104](adr/0104-send-to-another-conversation.md)）。bot の分は P3 の X1: 主体が bot に束縛された会話のときだけ、強さの比べ方の後で `sendToOthers`・`sendTargets` を追加で確かめ、送り手の `sentBy` に bot の `name`・`icon` を足す（[ADR 0113](adr/0113-send-on-your-behalf.md)） |
+| `sessions.send` | write（宛先が強いと guarded） | 定義は `core/ops/conversations.mjs`（[ADR 0104](adr/0104-send-to-another-conversation.md)）。主体が bot に束縛された会話のときだけ、強さの比べ方の後で `sendToOthers`・`sendTargets` を追加で確かめ、送り手の `sentBy` に bot の `name`・`icon` を足す（[ADR 0113](adr/0113-send-on-your-behalf.md)） |
 
 記憶のサービス（`createMemoryService`）の `turnContext({ bot, session, sessionId?, incomingText, now?, locale? })` は `{ notes, memRev, delivered, snapshotDue }` を返す。dispatch は返りを sidecar の `bot.memRev`・`bot.delivered`・`bot.snapshotDue` に書き戻す（`snapshotDue` は核の写しを渡したら false）。`sessionId` を渡すと、その会話が自分で書いた記憶（履歴に tool の結果がある）を差分で繰り返さない。途中送信（steer）では呼ばない。失敗の code は `MEMORY_SOURCE`・`MEMORY_REJECTED`・`MEMORY_NOT_FOUND`、理由は辞書 `agent:memory.reason.*`。索引は `node:sqlite` を読み込めない・壊れているときはメモリ上の走査に切り替わる（`AGENT_HOST_MEMORY_NO_SQLITE=1` で読み込めない状態を作れる）。核の写し（`pickCore`）は、層ごとの目安（1200 トークン）の中で、**人が書いた・人が直した記憶（`by.kind === 'human'`）を先に、bot・AI が書いたものを後に**入れる（それぞれ新しい更新から。書き込みを重ねる bot が新しさで人の古い記憶を押し出せない）。`log.jsonl` の追記は、最後の行が改行で終わっていなければ先に改行を足す（壊れた最後の行の後ろに次の記録をつなげて失わない。チャンネルの `.jsonl` と同じ）。同じ文の同時の書き込みは `store.add` の直列化の中でも重複を確かめる。出どころの検査が効くのは `memory.write` を通る書き込みだけで、データ置き場の `memory/*.md` をファイルとして直接書ける bot（全部自動のモード）には効かない（`sync` が「人の変更」として記録する。[ADR 0109](adr/0109-bot-memory.md)）。
+
+## bot が別の会話へ送る
+
+`sessions.send` は既存の自己送信・委譲の親子・連鎖・頻度の検査と宛先の承認の強さの比較を先に行い、主体の会話が bot に束縛されているときだけ `sendToOthers` と `sendTargets` を検査する。承認カードの前と送信直前の両方で検査し、OFF（削除済みの bot を含む）は `BOT_SEND_DISABLED`、一覧にない宛先は `BOT_SEND_TARGET` と辞書の文で断り、既存の `opRefused` の記録に残す。宛先が強いときの承認は省かない。
+
+送れる会話の正本は `Bot.sendTargets`（最大 100 件）。自動追加も `bots.update { sendTargets }` による置き換えも同じ一覧を使う。
+
+- 人の投稿・編集の本文にある会話 ID（リンク内も含む）か、一意な題を `「…」`・`『…』`・二重引用符・バッククォートで囲んだ名指しを解決する。ID は部分一致せず、同名の会話は題から選ばない。曖昧な自然文を AI に解釈させて許可を広げることはしない。
+- チャンネルの流れと DM はその場のメンバー、スレッドは参加中の bot、および本文で @ した bot へ追加する。bot・ほかの AI・webhook 由来の投稿は根拠にしない。過去の投稿全体の遡及走査は行わない。
+- bot に束縛された会話が `sessions.new`・`sessions.fork` で作った会話を追加する。委譲の親子への送信は引き続き既存の検査で断る。
+- 任意の保存欄 `sendTargetSources` は会話 ID ごとの `shown`・`created`・`manual`。外した先の出どころも残し、再提示や再起動で自動復活させない。戻すには `bots.update` で明示して追加する。設定を AI が広げるときは既存の guarded。
+- `BotService.addSendTargets({ botId, sessionIds, source })` と `noteShown(post, channel)` はホスト内部の口。操作の入力から出どころを指定することはできない。
+
+`bots.list/get/create/update/setMode` の返りに任意の `sendTargetDetails: { sessionId, title, source }[]` を足す。bot ページは「他の会話に送る」の下に題・出どころ・［外す］を出し、題を押すと会話を開く。OFF でも一覧は保つ。［外す］は `bots.update` を通る。
+
+送り手は既存の `sentBy` に `botId`・`name`・`icon` を足し、流れと履歴の両方で「🦉 Owl があなたの代わりに送信」と出す。保存は既存の `relayed` で、別の記録や送信経路は作らない。
 
 ## WS の出来事（`core/protocol.mjs` の `EVENTS`）
 
