@@ -692,6 +692,8 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
     // 何も言わずに終わった（絵文字だけなど）: 投稿は残さない
     if (!text && !bodyByBot && !rec.presents.length && state === 'done') { await channels.remove({ channelId: rec.channelId, postId: rec.postId }, botAuthor(rec.botId)); return null; }
     const edit = { channelId: rec.channelId, postId: rec.postId, state };
+    // bot がこのターンの投稿に付けた「要確認」（channels.post の state: 'checking'。ルーティンの実行の状態になる）は、終わりで done に戻さない
+    if (state === 'done' && current.state === 'checking') edit.state = 'checking';
     if (text) edit.text = text; else if (!bodyByBot && current.text === PLACEHOLDER) edit.text = '';
     if (rec.presents.length) edit.presents = rec.presents;
     const saved = await channels.edit(edit, botAuthor(rec.botId));

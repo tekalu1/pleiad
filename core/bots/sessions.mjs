@@ -137,7 +137,8 @@ export function createBotSessions({ host, now = Date.now } = {}) {
       const meta = await host.store.get(sessionId);
       if (!backend || meta.backend !== backend.id) return false;   // backend を変えた bot の古い会話は、次の新しい会話から（そのままにする）
       const modes = backend.modes();
-      if (modes[bot.mode] && meta.mode !== bot.mode) await host.store.setMode(sessionId, bot.mode);
+      // ルーティンの会話の承認モードはルーティンの mode（core/routines/runner.mjs）。人が bot のモードを変えても、実行中・過去の実行の強さは変えない
+      if (modes[bot.mode] && meta.mode !== bot.mode && meta.bot?.kind !== 'routine') await host.store.setMode(sessionId, bot.mode);
       const cwd = meta.cwd ?? bot.folders?.[0]?.path ?? os.homedir();
       const model = await host.resolveModel(null, bot.model || undefined, backend, cwd, '');
       if (meta.model !== model) await host.store.setModel(sessionId, model);

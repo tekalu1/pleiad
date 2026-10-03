@@ -956,10 +956,11 @@ const toMs = (v) => (Number.isFinite(v) ? v : (v ? Date.parse(v) || null : null)
 
 // ---- 中断と再開（docs/design.md「中断と再開」・ADR 0036） ----------------------------
 // 中断の理由。user = 中断ボタン、update = 更新のため、quit = 終了のため、hostAway = ホスト不在の猶予切れ、
-// restart = Pleiad が落ちた・強制終了で終わりが記録されていないターン（起動時に store.recoverInterruptedTurns が付ける）
-const INTERRUPT_REASONS = new Set(["user", "update", "quit", "hostAway", "restart", "limit"]);
-// abort で画面・デスクトップが渡せる理由。ほかの値（不正・省略）は user として扱う
-const ABORT_REASONS = new Set(["user", "update", "quit"]);
+// restart = Pleiad が落ちた・強制終了で終わりが記録されていないターン（起動時に store.recoverInterruptedTurns が付ける）、
+// timeout = ルーティンの承認待ちが期限（approvalTimeoutMin）を過ぎて止めた（ADR 0111）
+const INTERRUPT_REASONS = new Set(["user", "update", "quit", "hostAway", "restart", "limit", "timeout"]);
+// abort で画面・デスクトップ・ルーティンが渡せる理由。ほかの値（不正・省略）は user として扱う
+const ABORT_REASONS = new Set(["user", "update", "quit", "timeout"]);
 const abortReason = (value) => (ABORT_REASONS.has(value) ? value : "user");
 /** 保存された中断の印を、画面へ渡す形 { at, reason } に揃える。形が崩れていれば null */
 function interruptedOf(value) {

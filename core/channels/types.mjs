@@ -96,7 +96,8 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *          | { kind: 'webhook', hookId: string },         // P3
  *   mode: string, approvalTimeoutMin: number,             // 既定 30
  *   paused: boolean, createdBy: Author, createdAt: number,
- *   last?: { at: number, runId: string, state: Post['state'] } }} Routine */
+ *   armedAt?: number,                                     // 予定を数え始める基準の時刻（作った・再開した・トリガを変えた・発火した時刻）。取りこぼしの判定に使う
+ *   last?: { at: number, runId: string, state: Post['state'], postId?: string } }} Routine */   // postId = その実行の根の投稿
 
 /** bot の会話の sidecar の `bot.kind`（ThreadState.sessions・Bot.dmSessionId の会話がどれか） */
 export const BOT_SESSION_KINDS = Object.freeze(['thread', 'dm', 'routine', 'learner']);
