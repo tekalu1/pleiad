@@ -506,11 +506,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (!r || !event?.type) return;
       this.activity(sessionId);
       if (!['tool.start', 'tool.result', 'task.command'].includes(event.type)) return;
-      const before = JSON.stringify(r.activeCommands ?? []);
       observeCommand(r, event, now(), waiting(sessionId));
-      if (before !== JSON.stringify(r.activeCommands)) void serial(async () => {
-        await persist('command.observe', r.taskId);
-      });
+      // These observations are live state. A restart marks saved commands as
+      // unknown, so saving the whole task file for each command adds no value.
     },
     activity(sessionId) {
       const r = bySession.get(sessionId);
