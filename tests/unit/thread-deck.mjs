@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { deckState, SOLO_BELOW } from '../../web/channels/deck.mjs';
 import { titleOf, tokensText } from '../../web/channels/thread.mjs';
-import { turnWindows, callsInWindow, signatureOf } from '../../web/channels/thread-tools.mjs';
+import { turnWindows, callsInWindow, logInWindow, signatureOf } from '../../web/channels/thread-tools.mjs';
 
 export const name = 'thread-deck';
 export const title = 'スレッドと空間モデル: 窓の状態の判定（右パネル・幅）・題とトークンの文言・道具の呼び出しの範囲・配線';
@@ -55,6 +55,19 @@ export default function (t) {
   t.ok('次のターンの窓は、そのターンの呼び出しだけ（結果がまだ無い呼び出しも数える）', second.map((c) => c.id).join() === 'c3,c4');
   t.ok('時刻の無い仮の発言（走っているターン）は、いちばん後ろの窓にだけ入る', callsInWindow([{ role: 'assistant', text: '', toolCalls: [call('c9', 'Bash')] }], w.get('p_a2')).length === 1
     && callsInWindow([{ role: 'assistant', text: '', toolCalls: [call('c9', 'Bash')] }], w.get('p_a1')).length === 0);
+  // ---- 作業ログ（ADR 0117）: 返事の本文以外の AI の文（独り言・終わりの報告）と道具の呼び出しを、発言の順に
+  const logHistory = [
+    msg(new Date(2100).toISOString(), [call('c1', 'list_ops')], { text: 'Server name is empty. Let me check the call_op schema.' }),
+    msg(new Date(2200).toISOString(), [call('c2', 'call_op')]),
+    msg(new Date(2300).toISOString(), [], { text: '#test のスレッドに返事を投稿しました。' }),
+    msg(new Date(5100).toISOString(), [], { text: '次のターン' }),
+  ];
+  const log = logInWindow(logHistory, w.get('p_a1'), '返事の本文');
+  t.ok('作業ログ: 窓の中の独り言・道具・終わりの報告を発言の順に。続く呼び出しは 1 つにまとめ、次のターンの発言は入れない', log.map((i) => (i.kind === 'text' ? `t:${i.text.split(' ')[0]}` : `c:${i.calls.map((c) => c.id).join('+')}`)).join('|') === 't:Server|c:c1+c2|t:#test'
+    , JSON.stringify(log));
+  const agyLog = logInWindow([msg(new Date(2100).toISOString(), [call('c1', 'call_op')], { text: '確かめます。いまは D:/dev で作業しています。' })], w.get('p_a1'), 'いまは D:/dev で作業しています。');
+  t.ok('作業ログ: 発言の文が返事で終わる（Antigravity の形）なら、返事の前の部分だけを入れる。返事そのものの発言は入れない', agyLog[0].kind === 'text' && agyLog[0].text === '確かめます。' && agyLog[1].kind === 'calls'
+    && logInWindow([msg(new Date(2100).toISOString(), [], { text: '返事の本文' })], w.get('p_a1'), '返事の本文').length === 0, JSON.stringify(agyLog));
   t.ok('呼び出しの印は、id と結果の有無・失敗で変わる（同じなら描き直さない）', signatureOf(second) === 'c3:e|c4:p' && signatureOf(first) === 'c1:r|c2:r'
     && signatureOf([call('c4', 'Edit', { text: 'ok' })]) !== signatureOf([call('c4', 'Edit')]));
 

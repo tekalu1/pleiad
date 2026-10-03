@@ -6,7 +6,9 @@ import { el, svgEl } from '../dom.mjs';
 import { fmt, t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
+import { placeAttachments, attachmentHtml } from '../user-message.mjs';
 import { renderReactions, addButton } from './reactions.mjs';
+import { botIcon } from './bot-icon.mjs';
 
 /** 同じ日か */
 const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
@@ -85,6 +87,36 @@ export function highlightMentions(root, names) {
   }
 }
 
+/** 投稿の添付（Post.attachments）を、札・画像の描き方の部品（web/user-message.mjs の attachmentHtml）が読む形にする */
+const presentOf = (a) => ({ kind: a.kind === 'image' ? 'image' : 'file', path: a.path, captionParams: { name: a.name }, size: a.size, origin: a.origin });
+
+/**
+ * 添付つきの投稿の本文の HTML。本文の `[添付] パス` の行は、その位置で添付（画像は縮小、ほかは札）に置き換わる（Chats の自分の発言と同じ。
+ * web/user-message.mjs の placeAttachments）。印の無い添付は本文の後ろに並ぶ。文字の区間は renderMarkdown（bot の返事と同じ描き方）
+ * @param {string} text 投稿の本文（原文）
+ * @param {object[]} attachments Post.attachments
+ * @param {(text: string) => string} renderMarkdown エスケープ済みの HTML を返す
+ */
+export function attachedBodyHtml(text, attachments, renderMarkdown) {
+  let html = '', run = [];
+  const flush = () => { if (run.length) html += `<div class="msg-atts">${run.map(attachmentHtml).join('')}</div>`; run = []; };
+  for (const seg of placeAttachments(text, attachments.map(presentOf))) {
+    if (seg.type === 'attachment') { run.push(seg.present); continue; }
+    flush();
+    if (seg.text.trim()) html += renderMarkdown(seg.text);
+  }
+  flush();
+  return html;
+}
+
+/** 添付の画像を押すと大きく見る（Chats の会話と同じライトボックス。host.openImage）。log は投稿の列 */
+export function wireAttachmentZoom(log, host) {
+  log.addEventListener('click', (e) => {
+    const img = e.target.closest?.('.msg-att-zoom')?.querySelector('img');
+    if (img) host.openImage?.(img.src, img.alt, img.dataset.filePath, img);
+  });
+}
+
 const replyIcon = () => {
   const svg = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
   svg.append(svgEl('path', { d: 'M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z' }));
@@ -152,12 +184,13 @@ function stateLine(post) {
   const state = post.state;
   if (!state) return null;
   if (state === 'done' && !post.routine) return null;
-  const row = el('div', `post-state ${state}`);
+  const softFailure = state === 'failed' && post.turn && post.failedWithBody;
+  const row = el('div', `post-state ${softFailure ? 'failed-body' : state}`);
   if (state === 'working') row.append(runMark(t('channels:feed.state.working')));
   else if (state === 'waiting') row.append(el('span', 'post-state-mark', '◆'));
-  else if (state === 'failed') row.append(el('span', 'post-state-mark', '✕'));
+  else if (state === 'failed' && !softFailure) row.append(el('span', 'post-state-mark', '✕'));
   // i18n-dynamic: channels:feed.state.
-  const label = t(`channels:feed.state.${state}`);
+  const label = t(`channels:feed.state.${softFailure ? 'failedWithBody' : state}`);
   const reason = post.routine?.missed ? t('channels:feed.state.missed') : post.routine?.reason;
   row.append(el('span', 'post-state-text', reason && (state === 'skipped' || post.routine?.missed) ? `${label} · ${reason}` : label));
   return row;
@@ -175,11 +208,13 @@ export function renderSummary(post, ctx) {
   const lastBot = [...(s.authors ?? [])].reverse().find((a) => a.kind === 'bot');
   const botId = lastBot?.botId ?? Object.keys(th?.sessions ?? {})[0];
   const bot = botId ? ctx.bots.get(botId) : null;
-  const who = bot ? `${bot.icon} ${bot.name}` : t('channels:feed.unknownBot');
   const status = el('span', 'ts-status');
   if (th?.state === 'working') {
     status.classList.add('working');
-    status.append(`· ${who} ${t('channels:feed.threadWorking')}`, runMark(t('channels:feed.state.working')));
+    status.append('· ');
+    if (bot) status.append(botIcon(bot, 'ts-bot-icon'), ` ${bot.name}`);
+    else status.append(t('channels:feed.unknownBot'));
+    status.append(` ${t('channels:feed.threadWorking')}`, runMark(t('channels:feed.state.working')));
   } else if (th?.state === 'waiting') {
     status.classList.add('waiting');
     status.append('· ', el('span', 'ts-mark', '◆'), ` ${t('channels:feed.threadWaiting', { name: bot?.name ?? t('channels:feed.unknownBot') })}`);
@@ -205,7 +240,7 @@ export function fillPost(root, post, ctx) {
   root.className = `post${post.deletedAt ? ' deleted' : ''}${info.you ? ' mine' : ''}`;
   root.dataset.postId = post.id;
   root.dataset.author = info.kind;
-  const av = el('span', `post-av${info.you ? ' you' : ''}`, info.avatar);
+  const av = info.kind === 'bot' ? botIcon(ctx.bots.get(post.author.botId), 'post-av') : el('span', `post-av${info.you ? ' you' : ''}`, info.avatar);
   av.setAttribute('aria-hidden', 'true');
   const main = el('div', 'post-main');
 
@@ -227,7 +262,9 @@ export function fillPost(root, post, ctx) {
   if (post.deletedAt) {
     body.append(el('span', 'post-deleted', t('channels:feed.deleted')));
   } else {
-    body.innerHTML = ctx.host.renderAssistantMarkdown(post.text ?? '');
+    body.innerHTML = post.attachments?.length
+      ? attachedBodyHtml(post.text ?? '', post.attachments, (s) => ctx.host.renderAssistantMarkdown(s))
+      : ctx.host.renderAssistantMarkdown(post.text ?? '');
     const names = (post.mentions ?? []).map((m) => (m === 'you' ? t('channels:feed.you') : ctx.bots.get(m)?.name));
     if (post.mentions?.includes('you')) names.push('you');
     highlightMentions(body, names);

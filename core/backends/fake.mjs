@@ -113,7 +113,7 @@ const FAKE_USAGE = process.env.AGENT_HOST_FAKE_USAGE === "1";
 
 // bot の会話の user の行の先頭に付く包み（core/system-messages.mjs の LEADING_TAGS と同じ）。台本の接頭辞はこれを外してから判定する。
 // <pleiad-channel> は中身が発言なので、@名前 の呼びかけを除いて台本として読む（"@Owl echo:やった"）。記憶・スレッドの履歴・中断の文は台本ではない
-const LEADING_WRAPPER = /^\s*<(pleiad-interruption|pleiad-memory-core|pleiad-turn-context|pleiad-channel-thread|pleiad-channel)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>\s*/;
+const LEADING_WRAPPER = /^\s*<(pleiad-interruption|pleiad-memory-core|pleiad-bot-recent|pleiad-turn-context|pleiad-channel-thread|pleiad-channel)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>\s*/;
 export function scriptOf(prompt) {
   let rest = String(prompt ?? "");
   let said = null;

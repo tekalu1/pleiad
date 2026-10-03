@@ -13,7 +13,7 @@
     "mentions_one": "{{count}} mention of you",
     "mentions_other": "{{count}} mentions of you",
     "archived": "Archived",
-    "botState": { "idle": "Idle", "working": "Working", "waiting": "Waiting on you" },
+    "botState": { "idle": "Idle", "working": "Working", "waiting": "Waiting on you", "resting": "Resting" },
     "openDm": "Open DM",
     "openBot": "Open bot page",
     "dm": "DM",
@@ -68,6 +68,7 @@
       "done": "Done",
       "checking": "Needs a look",
       "failed": "Failed",
+      "failedWithBody": "There was a problem finishing",
       "stopped": "Stopped",
       "skipped": "Skipped",
       "missed": "Missed while Pleiad was not running"
@@ -82,11 +83,23 @@
       "shortPlaceholder": "Post to #{{name}}",
       "dm": "Message {{name}}",
       "send": "Post (Ctrl+Enter)",
+      "sendKeys": "Ctrl+Enter to send",
       "failed": "Couldn't post: {{error}}"
+    },
+    "attach": {
+      "folder": "Folders can't be attached. Pick the files inside"
     },
     "mention": {
       "head": "Bots and members",
-      "label": "@ suggestions"
+      "label": "@ suggestions",
+      "here": "Bots who spoke in this thread",
+      "everyone": "All bots in this channel"
+    },
+    "wakeConfirm": {
+      "label": "Confirm waking bots",
+      "count": "Wake {{count}} bots?",
+      "cancel": "Cancel",
+      "wake": "Wake"
     },
     "hint": {
       "nobody": "Nobody is mentioned, so no bot will respond",
@@ -103,6 +116,13 @@
       "membersHint": "Members are the bots listed here. To wake a bot, @ it in a post.",
       "noBots": "No bots yet.",
       "memo": "House rules (notes)",
+      "budget": "Budget",
+      "budgetDaily": "Per day",
+      "budgetPerThread": "Per thread up to",
+      "budgetDailyLabel": "Daily budget (% of the weekly usage window)",
+      "budgetPerThreadLabel": "Share one thread may use (% of the daily budget)",
+      "budgetHint": "An estimate against the weekly usage window of each bot's backend. Turns started by a person count too; once it runs out, only calls between bots stop (they still answer a person). Leave the daily field empty for no budget.",
+      "budgetToday": "Used today: {{spent}}%",
       "memoHint": "Short rules that every bot working in this channel reads each time.",
       "archive": "Archive",
       "unarchive": "Unarchive",
@@ -113,6 +133,8 @@
   },
   "thread": {
     "log": "Thread posts",
+    "workLog": "Work log",
+    "workLogTools": "Work log · tools: {{count}}",
     "close": "Close thread",
     "back": "Back to the {{name}} feed",
     "untitled": "Thread",
@@ -146,11 +168,17 @@
       "calls": "{{count}} hand-offs",
       "stopped": "Stopped",
       "tokens": "{{tokens}} tokens in this thread",
-      "tokensTitle": "Input {{input}} · output {{output}} · cache read {{cached}}"
+      "tokensTitle": "Input {{input}} · output {{output}} · cache read {{cached}}",
+      "budget": "Budget {{spent}}% / {{allowance}}%",
+      "budgetTitle": "Used by this thread today / share per thread (an estimate against the weekly usage window of each bot's backend). Once it runs out, only calls between bots stop"
     }
   },
   "bot": {
     "iconLabel": "Change icon",
+    "imagePick": "Choose image",
+    "imageTooLarge": "Choose an image under 10 MB.",
+    "imageOutputTooLarge": "The resized image must be under 1 MB.",
+    "imageType": "Choose a PNG, JPEG or WebP image.",
     "nameLabel": "Name",
     "namePlaceholder": "Name (e.g. Owl)",
     "openDm": "Open DM",
@@ -204,7 +232,9 @@
     "state": {
       "working": "Working",
       "waiting": "Waiting for you",
-      "idle": "Idle"
+      "idle": "Idle",
+      "resting": "Resting",
+      "restingUntil": "Resting until about {{time}} because of its usage limit"
     },
     "saveFailed": "Couldn’t save: {{error}}",
     "createFailed": "Couldn’t create it: {{error}}",
@@ -215,6 +245,34 @@
   },
   "memory": {
     "new": "Newly learned",
+    "faded": "Faded",
+    "fadedTitle": "An old memory that has grown weak. It is no longer given at the start of a conversation, but a search still finds it (it is not deleted)",
+    "kind": {
+      "stop": "Stopped",
+      "promise": "Promise",
+      "promiseDone": "Promise, kept",
+      "decision": "Decision",
+      "share": "Who does what",
+      "pref": "Preference",
+      "note": "Note"
+    },
+    "learn": {
+      "label": "Nightly organizing",
+      "running": "organizing now",
+      "ran": "learned {{n}} at {{when}}",
+      "ranNone": "ran at {{when}} (nothing new)",
+      "never": "has not run yet",
+      "more": "the rest is left for the next run",
+      "deferred": "{{n}} busy conversations left for the next run",
+      "failed": "failed ({{error}})",
+      "skipped": "skipped {{n}} scheduled runs ({{reason}})",
+      "reason": {
+        "paused": "paused",
+        "failed": "waiting after a failure"
+      },
+      "paused": "paused",
+      "next": "next at {{when}}"
+    },
     "user": {
       "title": "About you",
       "meta": "shared by all bots · {{n}}"
@@ -323,6 +381,7 @@
     "post": "{{channel}} · {{from}}",
     "thread": "Passed the earlier posts in {{channel}}",
     "memoryCore": "Passed what it remembers",
+    "botRecent": "Passed the recent threads",
     "turnContext": "Passed the time and memory changes"
   }
 }

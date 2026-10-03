@@ -102,22 +102,31 @@
 .ch-composer{position:relative;flex:none;padding:4px 16px 12px;min-width:0}
 .ch-box{background:var(--surface-1);border-radius:var(--r-l);padding:2px 4px 4px;min-width:0;cursor:text}
 .ch-composer.disabled .ch-box{opacity:.6;cursor:not-allowed}
-.ch-input{position:relative;width:100%;display:block;background:transparent;border-radius:var(--r-m);padding:9px 12px 3px;line-height:1.6;max-height:calc(1.6em * 9 + 12px);
+/* 字の欄の高さの上限は JS（ch-composer.mjs の fit）が --ch-input-max に入れる（マウス 10 行・タッチ 6 行・画面の 40%。Chats の fitPrompt と同じ決まり） */
+.ch-input{position:relative;width:100%;display:block;background:transparent;border-radius:var(--r-m);padding:9px 12px 3px;line-height:1.6;max-height:var(--ch-input-max,calc(1.6em * 10 + 12px));
   overflow-y:auto;overflow-x:hidden;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;min-height:calc(1.6em + 12px);
   scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent;outline:none;cursor:text}
 .ch-input:focus{outline:none}
+.ch-input.md-atom-sel{caret-color:transparent}
 .ch-input[aria-disabled=true]{cursor:not-allowed}
 .ch-input[data-empty=true]::before{content:attr(placeholder);position:absolute;left:12px;top:9px;right:12px;color:var(--ink-weak);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ch-input strong{color:var(--ink-strong);font-weight:650}
 .ch-input code{background:var(--surface-2);border-radius:var(--r-s);padding:.05em .4em;font:.92em var(--font-mono)}
 .ch-input a.md-link{color:var(--ink-blue);text-decoration:underline;cursor:text}
 .ch-row{display:flex;align-items:center;gap:8px;padding:0 2px;min-width:0}
+.ch-attach{flex:none}
+.ch-composer.disabled .ch-attach{cursor:not-allowed}
+/* ファイルを落とせることが分かるように、板の列を一段沈める（Chats の main.dropping #log と同じ） */
+.ch-feed.dropping .ch-log,.ch-thread.dropping .th-log{background:var(--surface-1)}
 .ch-note{flex:1;min-width:0;padding-left:10px;font-size:var(--fs-xs);color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ch-send{flex:none;width:34px;height:34px;padding:0;border-radius:50%}
 .ch-hint{display:flex;align-items:center;gap:6px;padding:0 14px 6px;font-size:var(--fs-xs);color:var(--ink-weak);opacity:.9;flex-wrap:wrap}
 .ch-hint[hidden]{display:none}
 .ch-hint button{background:transparent;padding:1px 8px;border-radius:var(--r-pill);color:var(--ink-blue);font-size:var(--fs-xs);cursor:pointer}
 .ch-hint button:hover{background:var(--surface-2)}
+.ch-wake-confirm{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 8px 8px;padding:8px 10px;font-size:var(--fs-s)}
+.ch-wake-confirm[hidden]{display:none}
+.ch-wake-count{flex:1;min-width:140px;font-weight:600}
 
 /* ---- @ の候補（web/style.css の .clist と同じ面。slash-skills の #skillList と同じ位置） */
 .mention-list{position:absolute;left:16px;bottom:calc(100% - 2px);z-index:20;min-width:260px;max-width:calc(100% - 32px);max-height:240px;overflow-y:auto;list-style:none;margin:0;padding:6px;
@@ -147,11 +156,18 @@
 .cs-member{display:inline-flex;align-items:center;gap:6px;padding:4px 10px 4px 8px;border-radius:var(--r-pill);background:var(--surface-1);cursor:pointer;font-size:var(--fs-s)}
 .cs-member:has(input:checked){background:var(--surface-3)}
 .cs-member-icon{font-size:14px;line-height:1}
+.cs-budget{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;font-size:var(--fs-s)}
+.cs-budget .cs-input{width:6.5em}
+.cs-budget-gap{margin-left:8px}
 .cs-error{margin:0;min-height:0;color:var(--ink-strong);font-size:var(--fs-s);font-weight:600}
 .cs-error:empty{display:none}
 .cs-actions{display:flex;align-items:center;gap:8px}
 .cs-sp{flex:1}
 
+/* 指で使う画面は、入力欄の字を 16px 以上に（iOS は 16px 未満の欄に触れると画面を拡大する）。行間は Chats の #prompt と同じ */
+@media (pointer:coarse){
+  .ch-input{font-size:max(16px,1em) !important;line-height:1.5}
+}
 @media (max-width:700px){
   .ch-log{padding:2px 6px 10px}
   .post{grid-template-columns:28px minmax(0,1fr);gap:8px;padding:8px}
@@ -164,3 +180,7 @@
   .ch-settings{padding:16px}
 }
 @media (prefers-reduced-motion:reduce){.post.enter{animation:none}}
+.bot-icon-image{display:block;width:100%;height:100%;max-width:256px;max-height:256px;object-fit:cover;border-radius:inherit}
+.ch-hash .bot-icon-image{width:24px;height:24px;border-radius:50%}
+.ts-bot-icon{display:inline-grid;place-items:center;width:15px;height:15px;vertical-align:-3px;border-radius:50%;overflow:hidden}
+.th-band-icon{display:inline-grid;place-items:center;width:18px;height:18px;vertical-align:middle;border-radius:50%;overflow:hidden}

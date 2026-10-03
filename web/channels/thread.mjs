@@ -6,17 +6,19 @@
 // 板の並べ方・滑らせ方は deck.mjs（流れとの 2 枚）。この部品は #chThread の中身だけを持つ。
 // 部品の口（web/channels/index.mjs）: openThread(channelId, threadId)・show(view)・hide()・onEvent(ev)・contextForPanel(anchor)。
 import { el, svgEl } from '../dom.mjs';
+import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
 import { savedEvent } from '../saved-text.mjs';
-import { renderPost, fillPost, authorInfo } from './post.mjs';
+import { renderPost, fillPost, authorInfo, wireAttachmentZoom } from './post.mjs';
 import { withReaction } from './reactions.mjs';
 import { createChComposer } from './ch-composer.mjs';
+import { threadDraftKey } from './ch-attach-model.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
 import { createDeck } from './deck.mjs';
 import { createThreadHead } from './thread-head.mjs';
 import { createThreadToc } from './thread-toc.mjs';
-import { createToolSource, turnWindows, callsInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
+import { createToolSource, turnWindows, logInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
 
 const PAGE = 50;
 const NEAR_BOTTOM = 80;
@@ -55,7 +57,6 @@ export function createThread(host) {
     channelId: null, threadId: null, channel: null, posts: [], index: new Map(), thread: null, bots: new Map(),
     nextBefore: null, ready: false, seq: 0, queue: [], loadingOlder: false,
   };
-  const drafts = new Map();     // threadId -> 書きかけの返信（ほかのスレッドへ移っても残す）
   const toolCache = new Map();  // postId -> { sig, wrap, bundles }（道具の行。同じなら作り直さず、開いた状態を保つ）
   const cards = new Map();      // 承認の id -> .mw
   let windows = new Map();
@@ -84,14 +85,19 @@ export function createThread(host) {
   band.setAttribute('role', 'status');
   const composer = createChComposer({
     id: 'chThreadComposer',
+    host,
+    bucket: () => S.channelId,
     candidates: () => candidates(),
     suggest: () => suggestion(),
+    wakePreview: (text) => host.invoke('channels.wakePreview', { channelId: S.channelId, threadId: S.threadId, text }),
     backendLabel: (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id,
-    onSend: (text) => send(text),
+    onSend: (draft) => send(draft),
   });
   const toc = createThreadToc({ host, posts: () => S.posts, ctx: () => ctx, go: (p) => goTo(p) });
   const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: (b) => toc.toggle(b) });
   root.append(head.el, log, jump, band, composer.el);
+  composer.bindDropZone(root);
+  wireAttachmentZoom(log, host);
   const deck = createDeck({ view, body, feed: feedRoot, thread: root, top });
 
   const nearBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < NEAR_BOTTOM;
@@ -143,7 +149,9 @@ export function createThread(host) {
   function candidates() {
     const live = new Set(liveBots().map((b) => b.id));
     return [
-      ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon || '🤖', backend: b.backend ?? null,
+      { id: 'here', name: 'here', icon: '@', hint: t('channels:feed.mention.here') },
+      { id: 'everyone', name: 'everyone', icon: '@', hint: t('channels:feed.mention.everyone') },
+      ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon || '🤖', iconImage: b.iconImage, backend: b.backend ?? null,
         // i18n-dynamic: channels:feed.botState.
         hint: live.has(b.id) ? t(`channels:feed.botState.${S.posts.findLast((p) => p.turn?.botId === b.id && LIVE.has(p.state))?.state ?? 'working'}`) : '' })),
       { id: 'you', name: t('channels:feed.you'), icon: youInitial(), you: true, hint: '' },
@@ -157,7 +165,9 @@ export function createThread(host) {
   }
   function paintPlaceholder() {
     const live = liveBots();
-    composer.setPlaceholder(live.length === 1 ? t('channels:thread.composer.working', { name: live[0].name }) : t('channels:thread.composer.placeholder'));
+    // 送信の近道は、指で使う画面には出さない（Chats の入力欄と同じ）
+    const keys = window.matchMedia?.('(pointer:coarse)').matches ? '' : ` · ${t('channels:feed.composer.sendKeys')}`;
+    composer.setPlaceholder((live.length === 1 ? t('channels:thread.composer.working', { name: live[0].name }) : t('channels:thread.composer.placeholder')) + keys);
   }
 
   /** そのスレッドの bot の会話（右パネルの作業場所の基準・git・ブラウザー）。最後に動いた bot の会話 */
@@ -183,7 +193,8 @@ export function createThread(host) {
     const waiting = !working ? false : (th?.state === 'waiting' || S.posts.some((p) => p.turn && p.state === 'waiting' && !p.deletedAt)) && !S.posts.some((p) => p.turn && p.state === 'working' && !p.deletedAt);
     const stopped = !working && Boolean(th?.stopped);
     const calls = Math.max(0, (th?.calls ?? 0) - 1);
-    const sig = JSON.stringify([working, waiting, stopped, total, calls, live.map((b) => b.id), th?.tokens, stopBusy]);
+    const budget = budgetUse(th);
+    const sig = JSON.stringify([working, waiting, stopped, total, calls, live.map((b) => b.id), th?.tokens, stopBusy, budget]);
     if (sig === bandSig) return;
     bandSig = sig;
     if (!total && !working && !stopped) { band.hidden = true; band.replaceChildren(); return; }
@@ -192,10 +203,11 @@ export function createThread(host) {
     const text = el('span', 'th-band-text');
     const pieces = [];
     if (working) {
-      const who = live.map((b) => `${b.icon || '🤖'} ${b.name}`).join(' ⇄ ');
+      const who = live.map((b) => b.name).join(' ⇄ ');
       const span = el('span', 'th-band-live');
       if (waiting) span.append(el('span', 'th-band-mark', '◆'));
       else span.append(runMark(t('channels:feed.state.working')));
+      for (const b of live) span.append(botIcon(b, 'th-band-icon'));
       const name = who || t('channels:thread.band.someone');
       span.append(el('span', 'th-band-who', waiting ? t('channels:thread.band.waiting', { who: name }) : t('channels:thread.band.working', { who: name })));
       pieces.push(span);
@@ -212,6 +224,12 @@ export function createThread(host) {
       tok.title = t('channels:thread.band.tokensTitle', { input: th.tokens.input ?? 0, output: th.tokens.output ?? 0, cached: th.tokens.cached ?? 0 });
       pieces.push(tok);
     }
+    if (budget) {
+      // 「予算 0.8% / 2.5%」: このスレッドが今日使った分と、1 スレッドの配分（ADR 0119）
+      const use = el('span', 'th-band-budget', t('channels:thread.band.budget', budget));
+      use.title = t('channels:thread.band.budgetTitle');
+      pieces.push(use);
+    }
     pieces.forEach((p, i) => { if (i) text.append(el('span', 'th-band-dot', '·')); text.append(p); });
     band.replaceChildren(text);
     if (working) {
@@ -222,6 +240,15 @@ export function createThread(host) {
       stop.onclick = () => stopThread();
       band.append(stop);
     }
+  }
+  /** このスレッドが今日予算に数えた分と配分（%）。予算の無いチャンネル・まだ使っていないスレッドは null */
+  function budgetUse(th) {
+    const b = S.channel?.kind === 'channel' ? S.channel.budget : null;
+    if (!b || b.daily == null || !th?.spend) return null;
+    const d = new Date(), day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (th.spend.day !== day || !(th.spend.percent > 0)) return null;
+    const r = (n) => Math.round(n * 100) / 100;
+    return { spent: r(th.spend.percent), allowance: r((b.daily * b.perThread) / 100) };
   }
   async function stopThread() {
     if (stopBusy || !S.threadId) return;
@@ -245,43 +272,64 @@ export function createThread(host) {
     return n;
   };
 
-  /** ターンの投稿の道具の行。会話の履歴から（まだ読んでいなければ無し） */
-  function toolSlot(p) {
+  /**
+   * ターンの投稿の作業ログ（ADR 0117）: 返事の下に畳んで残す、独り言・終わりの報告の文と道具の行。会話の履歴から（まだ読んでいなければ無し）。
+   * 開いている・閉じているは、作り直しても同じ要素を使って保つ
+   */
+  function logSlot(p) {
     const w = windows.get(p.id);
     const messages = w ? tools.messagesOf(w.sessionId) : null;
     if (!messages) return toolCache.get(p.id)?.wrap ?? null;
-    const calls = callsInWindow(messages, w);
-    if (!calls.length) return null;
+    const items = logInWindow(messages, w, p.text);
+    if (!items.length) return null;
     const running = p.state === 'working';   // 承認待ちの呼び出しは走っていない（弧を出さない）
-    const sig = `${signatureOf(calls)}${running ? '+' : ''}`;
+    const lastCalls = items.findLast((i) => i.kind === 'calls');
+    const count = items.reduce((n, i) => n + (i.kind === 'calls' ? i.calls.length : 0), 0);
+    const sig = `${items.map((i) => (i.kind === 'text' ? `t${i.text.length}` : signatureOf(i.calls))).join('/')}${running ? '+' : ''}`;
     let c = toolCache.get(p.id);
     if (!c || c.sig !== sig) {
-      const built = toolNodes(calls, { running });
-      const wrap = c?.wrap ?? el('div', 'th-tools');
+      const wrap = c?.wrap ?? el('details', 'th-worklog');
+      const head = el('summary', 'th-worklog-head', count ? t('channels:thread.workLogTools', { count }) : t('channels:thread.workLog'));
+      const box = el('div', 'th-worklog-body');
+      const bundles = [];
+      for (const item of items) {
+        if (item.kind === 'text') {
+          const text = el('div', 'th-log-text');
+          text.innerHTML = host.renderAssistantMarkdown(item.text);
+          box.append(text);
+          continue;
+        }
+        const built = toolNodes(item.calls, { running: running && item === lastCalls });
+        const group = el('div', 'th-tools');
+        group.append(...built.nodes);
+        box.append(group);
+        bundles.push(...built.bundles);
+      }
       // 開いていた行・まとまりは、作り直しても同じ範囲を開けておく
-      built.bundles.forEach((b, i) => { const old = c?.bundles[i]; if (old) b.restoreView(old.viewState()); });
-      wrap.replaceChildren(...built.nodes);
-      c = { sig, wrap, bundles: built.bundles };
+      bundles.forEach((b, i) => { const old = c?.bundles[i]; if (old) b.restoreView(old.viewState()); });
+      wrap.replaceChildren(head, box);
+      c = { sig, wrap, bundles };
       toolCache.set(p.id, c);
     }
     return c.wrap;
   }
 
-  /** fillPost の後に足すもの: 道具の行・進捗のチェックリスト・提示（可視化はインライン）。会話そのものを開く入口は投稿の ⋯（openMenu） */
+  /** fillPost の後に足すもの: 提示（可視化はインライン）と、その下に畳んだ作業ログ。会話そのものを開く入口は投稿の ⋯（openMenu） */
   function decorate(node, p) {
     const main = node.querySelector(':scope > .post-main');
     if (!main || p.deletedAt) return;
     const bodyEl = main.querySelector('.post-body');
-    if (p.turn?.sessionId) {
-      const slot = toolSlot(p);
-      if (slot) main.querySelector('.post-head')?.after(slot);
-    }
+    let below = bodyEl;
     if (p.presents?.length) {
       const box = el('div', 'post-presents');
       for (const ev of p.presents) {
         try { box.append(host.renderPresent(savedEvent(ev))); } catch { /* 描けない提示は飛ばす */ }
       }
-      if (box.childElementCount) bodyEl.after(box);
+      if (box.childElementCount) { bodyEl.after(box); below = box; }
+    }
+    if (p.turn?.sessionId) {
+      const slot = logSlot(p);
+      if (slot) below.after(slot);
     }
   }
 
@@ -401,8 +449,8 @@ export function createThread(host) {
   }
 
   // ---------------------------------------------------------------- 操作
-  async function send(text) {
-    const made = await host.invoke('channels.post', { channelId: S.channelId, threadId: S.threadId, text });
+  async function send({ text, attachments, confirmedWake }) {
+    const made = await host.invoke('channels.post', { channelId: S.channelId, threadId: S.threadId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}) });
     if (made?.id && !S.index.has(made.id) && made.threadId === S.threadId) { addPost(made); afterPosts(); }
     toBottom();
   }
@@ -589,14 +637,9 @@ export function createThread(host) {
   const feedLog = feedRoot.querySelector('.ch-log');
   if (feedLog) new MutationObserver(() => { if (S.threadId) markSelected(); }).observe(feedLog, { childList: true });
 
-  function saveDraft() {
-    if (S.threadId) drafts.set(S.threadId, composer.input.value ?? '');
-  }
-
   function open(channelId, threadId) {
     if (!channelId || !threadId) return;
     const same = S.channelId === channelId && S.threadId === threadId;
-    saveDraft();
     S.channelId = channelId;
     S.threadId = threadId;
     deck.setThread(true);
@@ -607,7 +650,7 @@ export function createThread(host) {
     }
     S.seq++;
     reset();
-    composer.input.value = drafts.get(threadId) ?? '';
+    composer.setDraftKey(threadDraftKey(channelId, threadId));   // 書きかけはスレッドごと（ほかのスレッドへ移っても残る）
     composer.refresh();
     toc.close();
     head.setTitle({ channel: document.getElementById('channelsPageTitle')?.title ?? '', title: '' });
@@ -617,7 +660,7 @@ export function createThread(host) {
 
   function close() {
     if (!S.threadId) return;
-    saveDraft();
+    composer.setDraftKey(null);   // 書きかけは持ち主の下書きへ残して、入力欄を空に戻す
     toc.close();
     S.seq++;
     S.threadId = null;

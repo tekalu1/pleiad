@@ -25,7 +25,7 @@
 .deck > .ch-feed > .top{flex:none;min-height:48px}
 .deck:not([data-deck=feed]) > .ch-feed .ch-purpose{display:none}
 .deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within){padding-bottom:6px}
-.deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within) :is(.ch-row,.ch-hint){display:none}
+.deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within) :is(.ch-row,.ch-hint,.att-strip){display:none}
 .deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within) .ch-input{max-height:calc(1.6em + 12px);overflow:hidden}
 /* 開いているスレッドの根の投稿（選択中）。背景と、左の細い棒（枠線ではなく面の棒。.file-preview-resize::before と同じ作り） */
 .ch-feed .post[data-open]{background:var(--surface-hover)}
@@ -70,9 +70,22 @@
 
 /* bot の返事の中: 道具の行・チェックリスト・提示・［会話を開く →］ */
 .th-tools{margin:4px 0 2px}
+/* 作業ログ（ADR 0117）: 返事の下に畳む。独り言・終わりの報告の文と道具の行 */
+.th-worklog{margin:6px 0 2px;min-width:0}
+.th-worklog-head{display:inline-flex;align-items:center;gap:6px;margin-left:-8px;padding:2px 10px 2px 8px;border-radius:var(--r-pill);font-size:var(--fs-xs);color:var(--ink-weak);cursor:pointer;list-style:none;user-select:none}
+.th-worklog-head::-webkit-details-marker{display:none}
+.th-worklog-head::before{content:'\203A';display:inline-block;transition:transform var(--dur-fast) var(--ease-out)}
+.th-worklog[open]>.th-worklog-head::before{transform:rotate(90deg)}
+.th-worklog-head:hover{background:var(--surface-2);color:var(--ink)}
+.th-worklog-body{display:flex;flex-direction:column;gap:4px;margin:4px 0 0;padding:8px 10px;border-radius:var(--r-m);background:var(--surface-1);min-width:0}
+.th-log-text{font-size:var(--fs-s);color:var(--ink-weak);min-width:0;overflow-wrap:anywhere}
+.th-log-text>:first-child{margin-top:0}
+.th-log-text>:last-child{margin-bottom:0}
+@media (prefers-reduced-motion:reduce){.th-worklog-head::before{transition:none}}
 .post-main .th-tools .bundle{margin-bottom:2px}
 .post-presents{display:flex;flex-direction:column;gap:6px;margin:6px 0 2px;min-width:0}
-.post-presents .present{max-width:100%;margin:0}
+.post-presents .present{width:100%;max-width:100%;min-width:0;margin:0}
+.post-presents .present-image .present-body>img{width:100%;height:360px;object-fit:contain}
 .post-body ul.ck{list-style:none;margin:8px 0 2px;padding:10px 12px;background:var(--surface-1);border-radius:var(--r-m);display:flex;flex-direction:column;gap:3px}
 .post:hover .post-body ul.ck{background:var(--surface-paper)}
 .ck li{display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:1.5;min-width:0;margin:0}

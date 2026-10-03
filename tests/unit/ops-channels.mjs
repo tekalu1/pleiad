@@ -21,9 +21,9 @@ export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ops-channels-'));
   try {
     // ---- 定義
-    t.ok('操作は 14 個（channels.list / get / read / search / create / update / archive / post / edit / delete / react / markRead / stopThread / wake）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 14);
+    t.ok('操作は 15 個（集団宛ての wakePreview を含む）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 15);
     const risk = (id) => registry.get(id).risk;
-    t.ok('危険度: 読む 4 つは read・書く 9 つは write・wake は guarded（human-only はない。ADR 0082 の 5 つ以外は AI も使える）', ['list', 'get', 'read', 'search'].every((v) => risk(`channels.${v}`) === 'read')
+    t.ok('危険度: 読む 5 つは read・書く 9 つは write・wake は guarded（human-only はない。ADR 0082 の 5 つ以外は AI も使える）', ['list', 'get', 'read', 'search', 'wakePreview'].every((v) => risk(`channels.${v}`) === 'read')
       && ['create', 'update', 'archive', 'post', 'edit', 'delete', 'react', 'markRead', 'stopThread'].every((v) => risk(`channels.${v}`) === 'write') && risk('channels.wake') === 'guarded');
     t.ok('modeGate: false は post・react・stopThread だけ（読み取り・計画の bot も返事・リアクション・停止はできる）', IDS.filter((id) => registry.get(id).modeGate === false).join() === 'channels.post,channels.react,channels.stopThread');
     t.ok('口: どれも画面から。MCP は catalog（直のツールは足さない）。CLI は全部（markRead も AI・CLI に出す）', IDS.every((id) => registry.get(id).surfaces.ui === true && registry.get(id).surfaces.mcp === 'catalog' && registry.get(id).surfaces.cli));
@@ -32,10 +32,11 @@ export default async function (t) {
       && registry.get('channels.get').surfaces.cli.path.join(' ') === 'channels get');
     const aiSees = registry.describe({ by: 'agent', via: 'cli' }, 'ja').map((o) => o.id);
     t.ok('AI（CLI）の一覧にチャンネルの操作が全部出る。直のツールは 0', IDS.every((id) => aiSees.includes(id)) && registry.describe({ by: 'agent', via: 'mcp' }, 'ja').filter((o) => o.id.startsWith('channels.')).every((o) => o.tool === null));
+    t.ok('集団宛てのプレビューは読み取り操作で画面から使える', registry.get('channels.wakePreview').risk === 'read' && registry.get('channels.wakePreview').surfaces.ui);
 
     // ---- 実行
     let clock = 5000;
-    const channels = createChannelService({ dir: path.join(tmp, 'channels'), now: () => (clock += 10), listBots: async () => [{ id: 'b_owl', name: 'Owl' }] });
+    const channels = createChannelService({ dir: path.join(tmp, 'channels'), now: () => (clock += 10), listBots: async () => [{ id: 'b_owl', name: 'Owl' }, { id: 'b_lynx', name: 'Lynx' }] });
     await channels.start();
     const bound = { s_bot: { botId: 'b_owl', kind: 'thread' } };
     const modes = { s_ro: { scope: 'readonly', autonomy: 'ask' }, s_plan: { scope: 'readonly', autonomy: 'ask' } };
@@ -45,9 +46,28 @@ export default async function (t) {
     const made = await run(HUMAN, 'channels.create', { name: '#ops', purpose: 'テスト' });
     t.ok('create: 画面（人）から作れる', made.ok && made.result.name === 'ops', JSON.stringify(made));
     const cid = made.result.id;
+    const groupChannel = await run(HUMAN, 'channels.create', { name: 'group', members: ['b_owl', 'b_lynx'] });
+    const gid = groupChannel.result.id;
+    const root = await run(HUMAN, 'channels.post', { channelId: gid, text: '集団宛てのスレッド' });
+    const emptyHere = await run(HUMAN, 'channels.wakePreview', { channelId: gid, threadId: root.result.id, text: '@here まだ誰もいない' });
+    t.ok('まだ bot が話していないスレッドの @here は 0 体', emptyHere.ok && emptyHere.result.required && emptyHere.result.botIds.length === 0);
+    await run(agent('s_bot'), 'channels.post', { channelId: gid, threadId: root.result.id, text: 'Owl の返事' });
+    const hereArgs = { channelId: gid, threadId: root.result.id, text: '@here 続けて' };
+    const here = await run(HUMAN, 'channels.wakePreview', hereArgs);
+    t.ok('@here はそのスレッドで話した bot だけを数える', here.ok && here.result.required && here.result.botIds.join() === 'b_owl', JSON.stringify(here));
+    t.ok('確認なし・宛先が違う投稿は保存しない', (await run(HUMAN, 'channels.post', hereArgs)).code === 'INVALID'
+      && (await run(HUMAN, 'channels.post', { ...hereArgs, confirmedWake: ['b_lynx'] })).code === 'INVALID');
+    const confirmedHere = await run(HUMAN, 'channels.post', { ...hereArgs, confirmedWake: here.result.botIds });
+    t.ok('確認した @here はその botId を投稿へ保存する', confirmedHere.ok && confirmedHere.result.mentions.join() === 'here,b_owl');
+    const everyoneArgs = { channelId: gid, text: '@everyone 集まって' };
+    const everyone = await run(HUMAN, 'channels.wakePreview', everyoneArgs);
+    const confirmedEveryone = await run(HUMAN, 'channels.post', { ...everyoneArgs, confirmedWake: everyone.result.botIds });
+    t.ok('@everyone はチャンネルの bot 全員。確認してから投稿する', everyone.result.botIds.join() === 'b_owl,b_lynx' && confirmedEveryone.result.mentions.join() === 'everyone,b_owl,b_lynx');
+    const botGroup = await run(agent('s_bot'), 'channels.post', { channelId: gid, threadId: root.result.id, text: '@everyone 起きて' });
+    t.ok('bot が書いた集団宛ては誰も起こさない', botGroup.ok && botGroup.result.mentions.length === 0);
     const aiMade = await run(agent('s_chat'), 'channels.create', { name: 'ai-made' });
     t.ok('create: 会話の AI も作れる（write。人と同じ）', aiMade.ok);
-    t.ok('list・get: 画面と AI のどちらにも返る', (await run(HUMAN, 'channels.list', {})).result.channels.length === 2 && (await run(agent('s_chat', 'cli'), 'channels.get', { channelId: cid })).result.name === 'ops');
+    t.ok('list・get: 画面と AI のどちらにも返る', (await run(HUMAN, 'channels.list', {})).result.channels.length === 3 && (await run(agent('s_chat', 'cli'), 'channels.get', { channelId: cid })).result.name === 'ops');
 
     // 発言者
     const byHuman = await run(HUMAN, 'channels.post', { channelId: cid, text: '人の投稿 @Owl' });
@@ -65,6 +85,26 @@ export default async function (t) {
     const sneaky = await run(agent('s_chat'), 'channels.post', { channelId: cid, text: 'x', state: 'checking' });
     t.ok('post: state: checking は bot だけが付けられる（AI の agent の投稿には付かない）', sneaky.ok && sneaky.result.state === undefined
       && (await run(agent('s_bot'), 'channels.post', { channelId: cid, text: '要確認', state: 'checking', new: true })).result.state === 'checking');
+
+    // 添付（ADR 0116）: 実物の確かめは server.mjs の describeAttachments（ここでは偽）。読めないものがあれば全体を INVALID で断る
+    const described = [];
+    const attDeps = { ...deps, describeAttachments: async (list) => {
+      described.push(list.map((a) => a.path));
+      const ok = list.filter((a) => !/missing/.test(a.path));
+      return { files: ok.map((a) => ({ path: a.path, name: a.name ?? 'f', kind: 'file', mime: a.mime ?? '', size: 3, origin: 'host' })), rejected: list.filter((a) => /missing/.test(a.path)).map((a) => a.path) };
+    } };
+    const runAtt = (p, args) => registry.invoke(p, 'channels.post', { channelId: cid, ...args }, attDeps);
+    const withAttach = await runAtt(HUMAN, { text: '見て\n[添付] /tmp/a.txt', attachments: [{ path: '/tmp/a.txt', name: 'a.txt' }] });
+    t.ok('post: attachments は実物を確かめた形で保存される（本文の印と対）', withAttach.ok && withAttach.result.attachments?.[0]?.path === '/tmp/a.txt' && withAttach.result.attachments[0].origin === 'host'
+      && (await channels.getPost({ channelId: cid, postId: withAttach.result.id })).attachments.length === 1, JSON.stringify(withAttach));
+    const missing = await runAtt(HUMAN, { text: '読めない添付', attachments: [{ path: '/tmp/a.txt' }, { path: '/tmp/missing.txt' }] });
+    t.ok('post: 読めない添付が 1 つでもあれば INVALID（投稿は残らない）', !missing.ok && missing.code === 'INVALID' && /missing\.txt/.test(missing.error)
+      && !(await channels.read({ channelId: cid })).posts.some((p) => p.text === '読めない添付'), JSON.stringify(missing));
+    const noCheck = await run(HUMAN, 'channels.post', { channelId: cid, text: 'y', attachments: [{ path: '/tmp/a.txt' }] });
+    t.ok('post: 確かめる口の無い所（deps に describeAttachments が無い）では添付を断る', !noCheck.ok && noCheck.code === 'INVALID');
+    const agentAtt = await runAtt(agent('s_chat'), { text: '資料', attachments: [{ path: '/tmp/a.txt' }] });
+    t.ok('post: 会話の AI も添付を付けられる（同じ確かめを通る）', agentAtt.ok && agentAtt.result.attachments.length === 1 && described.length === 3);
+    t.ok('post: 添付の件数の上限（50）を超えると断る', !(await runAtt(HUMAN, { text: 'z', attachments: Array.from({ length: 51 }, (_, i) => ({ path: `/tmp/${i}` })) })).ok);
 
     // modeGate
     const ro = agent('s_ro');
@@ -199,11 +239,11 @@ export default async function (t) {
       t.ok('S-2: 承認の口が無い呼び出しは NEEDS_APPROVAL（起こさない）', noCard.result.wake[0].status === 'denied' && noCard.result.wake[0].code === 'NEEDS_APPROVAL');
       const dmPost = await call(agent('s_chat'), 'channels.post', { channelId: dm.id, text: 'DM の bot（全部自動）へ' });
       t.ok('S-2: DM（@ なしで bot へ届く）も、宛先の bot が強ければ確認が要る', dmPost.result.wake?.[0].status === 'pending' && dmPost.result.wake[0].botId === 'b_lynx');
-      // 進捗の置き換え（ターンの投稿）では誰も起こさない: 確認は、ターンの終わりの返事の @ で（dispatch の route）
+      // ターンの投稿に入った返事（ADR 0117）も、新しい投稿と同じく強い bot への @ は確認を出す（書いたときに @ を解く）
       const turnPost = await reviewChannels.post({ channelId: made.id, threadId: root.id, text: '…', state: 'working', turn: { botId: 'b_owl', sessionId: 's_owl' }, new: true }, { kind: 'bot', botId: 'b_owl' });
       const progressMark = asked.length;
-      const progress = await call(agent('s_owl'), 'channels.post', { channelId: made.id, text: '進捗: @Lynx にあとで頼む' });
-      t.ok('S-2: bot がターンの中で書く進捗（ターンの投稿の置き換え）では確認を出さない。返事の @ は終わりで同じ確認を通る', progress.ok && progress.result.id === turnPost.id && progress.result.wake === undefined && asked.length === progressMark);
+      const progress = await call(agent('s_owl'), 'channels.post', { channelId: made.id, text: '@Lynx あとで頼む' });
+      t.ok('S-2: bot がターンの中で書いた返事がターンの投稿に入っても、強い bot への @ は確認を出す（ADR 0117）', progress.ok && progress.result.id === turnPost.id && progress.result.wake?.[0]?.status === 'pending' && asked.length === progressMark + 1, JSON.stringify(progress.result.wake));
 
       // channels.wake そのもの
       const wakeMark = asked.length;
@@ -234,6 +274,20 @@ export default async function (t) {
       t.ok('S-4: 人は cwd を承認なしで変えられる。AI が cwd つきで作るのも承認、cwd なしの作成は承認なし', (await call(HUMAN, 'channels.update', { channelId: made.id, cwd: path.join(tmp, 'work') })).ok === true
         && (await call(agent('s_chat'), 'channels.create', { name: 'with-cwd', cwd: path.join(tmp, 'work') })).pending === true
         && (await call(agent('s_chat'), 'channels.create', { name: 'without-cwd' })).ok === true);
+
+      // ADR 0119: 予算は channels.get が既定を埋めて返す。AI が外す・上げるのは承認、下げるのは承認なし。人はどちらも承認なし
+      const shownBudget = await reviewChannels.get({ channelId: made.id });
+      t.ok('予算: 設定の無いチャンネルは既定（1 日 5%・1 スレッド 50%）と今日の使用（spentToday）を返す', shownBudget.budget?.daily === 5 && shownBudget.budget?.perThread === 50 && shownBudget.spentToday === 0, JSON.stringify(shownBudget));
+      const budgetMark = asked.length;
+      const lower = await call(agent('s_chat'), 'channels.update', { channelId: made.id, budget: { daily: 2 } });
+      t.ok('予算: AI が下げるのは承認なし（渡した欄だけ変わる）', lower.ok === true && asked.length === budgetMark && (await reviewChannels.get({ channelId: made.id })).budget.daily === 2 && (await reviewChannels.get({ channelId: made.id })).budget.perThread === 50);
+      const raise = await call(agent('s_chat'), 'channels.update', { channelId: made.id, budget: { daily: null } });
+      t.ok('予算: AI が外す（null）・上げるのは承認（before・after の行）。許可前は変わらない', raise.pending === true && asked.length === budgetMark + 1
+        && asked.at(-1).change.rows.some((r) => r.path === 'budget.daily' && r.before === 2 && r.after === null) && (await reviewChannels.get({ channelId: made.id })).budget.daily === 2);
+      await asked.at(-1).proceed();
+      t.ok('予算: 許可されたら変わる。人は承認なしで上げ下げできる。範囲の外は断る', (await reviewChannels.get({ channelId: made.id })).budget.daily === null
+        && (await call(HUMAN, 'channels.update', { channelId: made.id, budget: { daily: 10, perThread: 80 } })).ok === true && asked.length === budgetMark + 1
+        && (await call(HUMAN, 'channels.update', { channelId: made.id, budget: { perThread: 0 } })).ok !== true);
       await reviewChannels.close();
     }
 
@@ -258,6 +312,20 @@ export default async function (t) {
       t.ok('既読で channelRead が出る（別の端末・窓へ）', c.since(m4).some((e) => e.type === 'channelRead' && e.channelId === ch.id && e.readAt === 7));
       t.ok('定義は <data>/channels/index.json、投稿は <id>.jsonl に追記される', JSON.parse(await fs.readFile(path.join(dataDir, 'channels', 'index.json'), 'utf8')).channels.some((x) => x.id === ch.id)
         && (await fs.readFile(path.join(dataDir, 'channels', `${ch.id}.jsonl`), 'utf8')).split('\n').filter(Boolean).length === 2);
+
+      // 添付つきの投稿（ADR 0116）: 置き場に送ったファイル（device）と読んでよいホストのファイル（host）が載り、データ置き場の中・無いファイルは断る
+      const sent = await c.cmd('attachFile', { sessionId: ch.id, name: 'shot.png', mime: 'image/png', data: Buffer.from('png-bytes').toString('base64') });
+      const hostFile = path.join(tmp, 'host-note.txt');
+      await fs.writeFile(hostFile, 'host file');
+      const m6 = c.mark();
+      const withFiles = await call('channels.post', { channelId: ch.id, text: `見て\n[添付] ${sent.path}\n[添付] ${hostFile}`, attachments: [{ path: sent.path, mime: 'image/png' }, { path: hostFile }] });
+      const [a1, a2] = withFiles.attachments ?? [];
+      t.ok('画面の投稿に添付を載せられる: 置き場のファイルは device・画像、ホストのファイルは host（パスのまま）。名前・大きさも入る', a1?.origin === 'device' && a1.kind === 'image' && a1.name === 'shot.png' && a1.size === 9
+        && a2?.origin === 'host' && a2.kind === 'file' && a2.path === hostFile && a2.name === 'host-note.txt' && a2.size === 9, JSON.stringify(withFiles.attachments));
+      t.ok('添付つきの投稿が channelPost で全接続へ届く（中身は載せない）', c.since(m6).some((e) => e.type === 'channelPost' && e.post.id === withFiles.id && e.post.attachments?.length === 2 && !JSON.stringify(e.post).includes('png-bytes')));
+      const secret = await call('channels.post', { channelId: ch.id, text: 'x', attachments: [{ path: path.join(dataDir, 'channels', 'index.json') }] }).then(() => null, (e) => e.message);
+      const gone = await call('channels.post', { channelId: ch.id, text: 'x', attachments: [{ path: path.join(tmp, 'no-such-file.txt') }] }).then(() => null, (e) => e.message);
+      t.ok('データ置き場の中のファイル・無いファイルは添付できない（INVALID。会話の添付と同じ読み取りの検査）', /cannot attach/.test(secret ?? '') && /cannot attach/.test(gone ?? ''), `${secret} / ${gone}`);
 
       const env = (extra = {}) => {
         const e = { ...process.env, AGENT_HOST_DATA: dataDir, AGENT_HOST_LOCALE: 'ja', ...extra };

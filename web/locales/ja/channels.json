@@ -12,7 +12,7 @@
     "unread": "未読あり",
     "mentions_other": "あなた宛て {{count}} 件",
     "archived": "アーカイブ済み",
-    "botState": { "idle": "待機", "working": "作業中", "waiting": "あなた待ち" },
+    "botState": { "idle": "待機", "working": "作業中", "waiting": "あなた待ち", "resting": "休憩中" },
     "openDm": "DM を開く",
     "openBot": "bot のページを開く",
     "dm": "DM",
@@ -66,6 +66,7 @@
       "done": "終了",
       "checking": "要確認",
       "failed": "失敗",
+      "failedWithBody": "終わり方に問題がありました",
       "stopped": "止めました",
       "skipped": "スキップ",
       "missed": "Pleiad が止まっていた間の分"
@@ -80,11 +81,23 @@
       "shortPlaceholder": "#{{name}} へ投稿",
       "dm": "{{name}} にメッセージ",
       "send": "投稿（Ctrl+Enter）",
+      "sendKeys": "Ctrl+Enter で送信",
       "failed": "投稿できませんでした: {{error}}"
+    },
+    "attach": {
+      "folder": "フォルダーは添付できません。中のファイルを選んでください"
     },
     "mention": {
       "head": "bot とメンバー",
-      "label": "@ の候補"
+      "label": "@ の候補",
+      "here": "このスレッドで話した bot",
+      "everyone": "チャンネルの bot 全員"
+    },
+    "wakeConfirm": {
+      "label": "bot を起こす確認",
+      "count": "{{count}}体を起こします",
+      "cancel": "やめる",
+      "wake": "起こす"
     },
     "hint": {
       "nobody": "誰も呼ばれていないので、bot は反応しません",
@@ -102,6 +115,13 @@
       "noBots": "bot はまだありません。",
       "memo": "ここでの決まり（メモ）",
       "memoHint": "このチャンネルで動く bot が毎回読む、短い決まり事を書けます。",
+      "budget": "予算",
+      "budgetDaily": "1 日",
+      "budgetPerThread": "1 スレッドまで",
+      "budgetDailyLabel": "1 日の予算（週の使用枠に対する %）",
+      "budgetPerThreadLabel": "1 スレッドが使える分（1 日の予算に対する %）",
+      "budgetHint": "bot のバックエンドの週の使用枠に対する目安です。人が呼んだ分も数え、使い切ると bot どうしの呼びかけだけ止まります（人が呼べば答えます）。1 日を空にすると予算なし。",
+      "budgetToday": "今日の使用: {{spent}}%",
       "archive": "アーカイブする",
       "unarchive": "アーカイブをやめる",
       "cancel": "やめる",
@@ -111,6 +131,8 @@
   },
   "thread": {
     "log": "スレッドの投稿",
+    "workLog": "作業ログ",
+    "workLogTools": "作業ログ · ツール {{count}} 件",
     "close": "スレッドを閉じる",
     "back": "{{name}} の流れに戻る",
     "untitled": "スレッド",
@@ -143,11 +165,17 @@
       "calls": "呼び合い {{count}} 回",
       "stopped": "止めました",
       "tokens": "このスレッドで {{tokens}} トークン",
-      "tokensTitle": "入力 {{input}} · 出力 {{output}} · キャッシュ読み出し {{cached}}"
+      "tokensTitle": "入力 {{input}} · 出力 {{output}} · キャッシュ読み出し {{cached}}",
+      "budget": "予算 {{spent}}% / {{allowance}}%",
+      "budgetTitle": "このスレッドが今日使った分 / 1 スレッドの配分（bot のバックエンドの週の使用枠に対する目安）。使い切ると bot どうしの呼びかけだけ止まります"
     }
   },
   "bot": {
     "iconLabel": "アイコンを変える",
+    "imagePick": "画像を選ぶ",
+    "imageTooLarge": "画像は 10 MB までです。",
+    "imageOutputTooLarge": "縮小した画像は 1 MB までです。",
+    "imageType": "PNG・JPEG・WebP の画像を選んでください。",
     "nameLabel": "名前",
     "namePlaceholder": "名前（例: Owl）",
     "openDm": "DM を開く",
@@ -201,7 +229,9 @@
     "state": {
       "working": "作業中",
       "waiting": "あなた待ち",
-      "idle": "待機"
+      "idle": "待機",
+      "resting": "休憩中",
+      "restingUntil": "使用量の上限で {{time}} ごろまで休んでいます"
     },
     "saveFailed": "保存できませんでした: {{error}}",
     "createFailed": "作れませんでした: {{error}}",
@@ -212,6 +242,34 @@
   },
   "memory": {
     "new": "新しく覚えた",
+    "faded": "薄れた",
+    "fadedTitle": "古くなって弱くなった記憶です。会話の始まりには渡しませんが、探せば出ます（消えてはいません）",
+    "kind": {
+      "stop": "やめたこと",
+      "promise": "約束",
+      "promiseDone": "約束・済み",
+      "decision": "決めたこと",
+      "share": "分担",
+      "pref": "好み",
+      "note": "メモ"
+    },
+    "learn": {
+      "label": "夜の整理",
+      "running": "整理しています",
+      "ran": "{{when}} に {{n}} 件覚えた",
+      "ranNone": "{{when}} に整理した（新しく覚えたものなし）",
+      "never": "まだ一度も走っていない",
+      "more": "残りの発言は次の回に",
+      "deferred": "作業中だった会話 {{n}} 件は次の回に",
+      "failed": "失敗した（{{error}}）",
+      "skipped": "予定を {{n}} 回飛ばした（{{reason}}）",
+      "reason": {
+        "paused": "止めていた",
+        "failed": "失敗の後の待ち"
+      },
+      "paused": "止めている",
+      "next": "次は {{when}}"
+    },
     "user": {
       "title": "あなたについて",
       "meta": "全 bot 共通 · {{n}} 件"
@@ -318,6 +376,7 @@
     "post": "{{channel}} · {{from}}",
     "thread": "{{channel}} のこれまでの投稿を渡しました",
     "memoryCore": "覚えていることを渡しました",
+    "botRecent": "最近のスレッドを申し送りました",
     "turnContext": "時刻と記憶の変更を渡しました"
   }
 }

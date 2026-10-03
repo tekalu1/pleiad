@@ -4,6 +4,7 @@
 import { el } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { authorInfo, whenText } from './post.mjs';
+import { botIcon } from './bot-icon.mjs';
 
 const KEY = 'thread-toc';
 const clean = (text) => String(text ?? '').replace(/```[\s\S]*?```/g, ' ').replace(/[`*_>#-]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -39,7 +40,7 @@ export function createThreadToc({ host, posts, ctx, go }) {
       b.type = 'button';
       b.dataset.postId = p.id;
       b.title = text;
-      b.append(el('span', 'th-toc-av', info.avatar), el('span', 'th-toc-name', info.name), el('span', 'th-toc-text', text), el('small', null, whenText(p.at)));
+      b.append(p.author?.kind === 'bot' ? botIcon(ctx().bots.get(p.author.botId), 'th-toc-av') : el('span', 'th-toc-av', info.avatar), el('span', 'th-toc-name', info.name), el('span', 'th-toc-text', text), el('small', null, whenText(p.at)));
       b.onclick = () => go(p);
       return b;
     });

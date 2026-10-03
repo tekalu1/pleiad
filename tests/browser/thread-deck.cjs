@@ -90,17 +90,19 @@ async page => {
     { tool: 'Bash', input: { command: cmdline }, ask: true, result: 'done', ms: 40 },
     { text: '回しました。' },
   ] });
-  const A = await rpc('channels.post', { channelId: ch.id, text: `@Owl steps:${JSON.stringify(DONE)}` });
+  // A は、bot がまだ話していないうちに人の返信を足してログを長くし（@ の無い人の投稿は、そのスレッドで最後に話した bot を起こすので。ADR 0117）、最後の返信の @Owl で起こす
+  const A = await rpc('channels.post', { channelId: ch.id, text: ROOT.replace(/^@Owl /, '') });
+  for (let i = 0; i < 28; i++) await rpc('channels.post', { channelId: ch.id, threadId: A.id, text: `追加の確認 ${i + 1}: 負荷試験の結果を見て、キャッシュの効き方も確かめたい。` });
+  const askA = await rpc('channels.post', { channelId: ch.id, threadId: A.id, text: `@Owl steps:${JSON.stringify(DONE)}` });
   await until(async () => (await turnPosts(A.id, 'done')).length, 'A done');
   await rpc('channels.edit', { channelId: ch.id, postId: A.id, text: ROOT });
+  await rpc('channels.edit', { channelId: ch.id, postId: askA.id, text: '@Owl 原因を調べて直して' });
   const B = await rpc('channels.post', { channelId: ch.id, text: `@Lynx steps:${JSON.stringify(ASK('npm run bench -- --target prod-like'))}` });
   await until(async () => (await turnPosts(B.id, 'waiting')).length, 'B waiting');
   await rpc('channels.edit', { channelId: ch.id, postId: B.id, text: '@Lynx 修正が入ったら checkout だけもう一度回して。本番相当の設定で' });
   const C = await rpc('channels.post', { channelId: ch.id, text: '@Owl slow' });
   await until(async () => (await turnPosts(C.id, 'working')).length, 'C working');
   await rpc('channels.edit', { channelId: ch.id, postId: C.id, text: '@Owl カートの見積もりを一括にしたい。まず今の呼び出しを洗い出して' });
-  // A に返信を足してログを長くする（人の返信。@ が無く作業中の bot も居ないので誰も起こさない）
-  for (let i = 0; i < 28; i++) await rpc('channels.post', { channelId: ch.id, threadId: A.id, text: `追加の確認 ${i + 1}: 負荷試験の結果を見て、キャッシュの効き方も確かめたい。` });
   const owlSessionA = (await readThread(A.id)).threads[0].sessions[owl.id];
 
   // ---- 計測の道具
@@ -159,8 +161,13 @@ async page => {
     rdiv: document.querySelector('.th-rdiv').textContent,
     open: [...document.querySelectorAll('#chThread .th-open')].length,
   }));
-  check(body.posts[0] === A.id && body.rdiv === '29 件の返信' && body.open === 0, 'the thread shows the root post first, then the replies, with the reply count (no「会話を開く →」under the reply: the thread is the conversation)');
-  await page.waitForFunction(() => document.querySelector('#chThread .th-tools .bundle'));
+  check(body.posts[0] === A.id && body.rdiv === '30 件の返信' && body.open === 0, 'the thread shows the root post first, then the replies, with the reply count (no「会話を開く →」under the reply: the thread is the conversation)');
+  // 道具の行は返事の下の畳んだ「作業ログ」の中（ADR 0117）。最初は閉じていて、見出しに道具の数が出る
+  await page.waitForFunction(() => document.querySelector('#chThread .th-worklog .th-tools .bundle'));
+  const log = await page.evaluate(() => { const d = document.querySelector('#chThread .th-worklog'); const body = d.closest('.post-main').querySelector('.post-body'); return { open: d.open, head: d.querySelector('.th-worklog-head').textContent, below: !!(body.compareDocumentPosition(d) & Node.DOCUMENT_POSITION_FOLLOWING) }; });
+  check(!log.open && log.head === '作業ログ · ツール 4 件' && log.below, 'the tool rows sit in a folded「作業ログ」under the reply (closed at first, with the tool count)');
+  await page.locator('#chThread .th-worklog-head').first().click();
+  check(await page.locator('#chThread .th-worklog').first().evaluate((d) => d.open), 'clicking「作業ログ」opens it');
   const tools = await page.evaluate(() => { const b = document.querySelector('#chThread .th-tools .bundle'); return { n: b.dataset.n, label: b.querySelector('.rhead .mix')?.textContent, same: !!b.bundle }; });
   check(tools.n === '4' && tools.label === 'ツール実行' && tools.same, "the bot's reply carries the same collapsed tools row as Chats (「ツール実行 4」)");
   check(await page.locator('#chThread .th-tools .bundle .hist .hi.hid').count() === 4, 'the tool rows start folded');
@@ -292,7 +299,7 @@ async page => {
   await page.locator('.th-toc').click();
   await page.locator('#filePreview .th-toc-row').first().waitFor();
   const toc = await page.evaluate(() => ({ rows: document.querySelectorAll('#filePreview .th-toc-row').length, deck: document.getElementById('chDeck').dataset.deck }));
-  check(toc.rows >= 29 && toc.deck === 'solo', 'the outline entry opens the right panel with the posts of the thread');
+  check(toc.rows >= 30 && toc.deck === 'solo', 'the outline entry opens the right panel with the posts of the thread');
   await page.locator('#filePreview .th-toc-search').fill('キャッシュの効き方');
   await page.waitForFunction(() => document.querySelectorAll('#filePreview .th-toc-row').length === 28);
   check(true, 'the outline narrows by search');

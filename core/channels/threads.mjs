@@ -6,13 +6,14 @@
 //     get(channelId, threadId): Promise<ThreadState|null>
 //     list(channelId?): Promise<ThreadState[]>
 //     update(channelId, threadId, patch | (current) => patch): Promise<ThreadState>
-//         … 無ければ空のスレッドから作る。patch の欄: sessions（bot ごとに足す）・state・tokens（欄ごとに足し直す）・calls・stopped・origin（{ channelId, threadId }。bot が自分のスレッドから起こして新しくできたスレッドの、起こした元。null で外す）。
+//         … 無ければ空のスレッドから作る。patch の欄: sessions（bot ごとに足す）・state・tokens（欄ごとに足し直す）・calls・spend（{ day: 'YYYY-MM-DD', percent }。チャンネルの予算に数えた、その日に使った分。ADR 0119）・stopped・origin（{ channelId, threadId }。bot が自分のスレッドから起こして新しくできたスレッドの、起こした元。null で外す）。
 //           関数で渡すと、直列化された中で今の値（写し）を受け取って patch を返す（トークンの足し算など、読んでから書く更新はこちら）
 //   emptyThread(channelId, threadId, now) → ThreadState
 import path from 'node:path';
 import { openData } from '../data-schema.mjs';
 import { threadTable } from '../db.mjs';
 import { THREAD_STATES, isAuthor } from './types.mjs';
+import { DAY_RX } from './budget.mjs';
 
 export const threadKey = (channelId, threadId) => `${channelId}/${threadId}`;
 
@@ -39,6 +40,19 @@ export function applyThreadPatch(current, patch, now) {
     for (const k of ['input', 'output', 'cached']) next.tokens[k] = num(patch.tokens[k], next.tokens[k]);
   }
   if (patch.calls !== undefined) next.calls = num(patch.calls, next.calls);
+  if (patch.spend !== undefined) {
+    if (!(typeof patch.spend?.day === 'string' && DAY_RX.test(patch.spend.day) && Number.isFinite(patch.spend?.percent) && patch.spend.percent >= 0)) throw new Error('spend must be { day: YYYY-MM-DD, percent: number }');
+    next.spend = { day: patch.spend.day, percent: patch.spend.percent };
+  }
+  if (patch.digest !== undefined) {
+    if (!patch.digest || typeof patch.digest !== 'object' || Array.isArray(patch.digest)) throw new Error('digest must be an object');
+    next.digest ??= {};
+    for (const [botId, entry] of Object.entries(patch.digest)) {
+      if (entry === null) { delete next.digest[botId]; continue; }
+      if (typeof entry?.text !== 'string' || [...entry.text].length > 500 || !Number.isFinite(entry.at) || !Number.isFinite(entry.lastAt) || typeof entry.fingerprint !== 'string') throw new Error('invalid thread digest');
+      next.digest[botId] = { text: entry.text, at: entry.at, lastAt: entry.lastAt, fingerprint: entry.fingerprint };
+    }
+  }
   if (patch.origin !== undefined) {
     if (patch.origin !== null && !(typeof patch.origin?.channelId === 'string' && patch.origin.channelId && typeof patch.origin?.threadId === 'string' && patch.origin.threadId)) throw new Error('origin must be null or { channelId: string, threadId: string }');
     if (patch.origin === null) delete next.origin; else next.origin = { channelId: patch.origin.channelId, threadId: patch.origin.threadId };

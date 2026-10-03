@@ -141,7 +141,8 @@ export class AgySession {
       this.exited = new Error(t("antigravity.errors.exited", { why }) + (this.stderr.length ? NL + this.stderr.join("") : ""));
       this.onExit?.(this.exited);
     };
-    proc.on("exit", (code, sig) => die(`exit=${code} signal=${sig}`));
+    // exit 時点では stdout の result がまだ届いていないことがある。パイプを読み切った close で判定する。
+    proc.on("close", (code, sig) => die(`exit=${code} signal=${sig}`));
     proc.on("error", (err) => die(String(err?.message ?? err)));
     // 片付けはプロセスが本当に終わってから（kill() の後でも exit は来る。die は来ない）
     proc.once("exit", () => this.#gone());

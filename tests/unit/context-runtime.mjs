@@ -152,6 +152,31 @@ export default async function(t) {
     const homeRuntime=await resolveRuntime({version:2,cwd:selfHome,owners:{instruction:'native',skill:'ply',mcp:'native'},
       plan:{user:{roots:[],kinds:{instruction:null,skill:skillOnly,mcp:null}},directory:{roots:[],kinds:{instruction:null,skill:skillOnly,mcp:null}}}},{home:selfHome});
     t.ok('作業場所が home でも同じ Skill を同名の重複として止めない',homeRuntime.skills.filter(s=>s.name==='twice').length===1&&homeRuntime.report.entries.filter(e=>e.name==='twice').some(e=>e.status==='duplicate'),JSON.stringify(homeRuntime.report.entries));
+    // User-wide files can also be found while walking cwd when cwd is home. A junction gives
+    // the directory scan a different spelling of the same files, so compare their real paths.
+    await write(path.join(selfHome,'.claude/CLAUDE.md'),'HOME_CLAUDE_ONCE');
+    await write(path.join(selfHome,'.codex/AGENTS.md'),'HOME_CODEX_ONCE');
+    const homeAlias=path.join(tmp,'home-alias');
+    await fs.symlink(selfHome,homeAlias,'junction');
+    const instructionOnly={sources:['claude','codex'],excludePaths:[]};
+    const instructionPolicy=(place,roots=[])=>({version:2,cwd:place,owners:{instruction:'ply',skill:'native',mcp:'native'},
+      plan:{user:{roots:[],kinds:{instruction:instructionOnly,skill:null,mcp:null}},directory:{roots:{instruction:roots},kinds:{instruction:instructionOnly,skill:null,mcp:null}}}});
+    const sameHome=await resolveRuntime(instructionPolicy(homeAlias,[path.join(selfHome,'.codex')]),{home:selfHome});
+    t.ok('home の共通指示は実体パスで各 1 回だけ渡し、広い適用範囲を残す',
+      ['HOME_CLAUDE_ONCE','HOME_CODEX_ONCE'].every(body=>sameHome.prompt.split(body).length===2)
+      &&sameHome.instructions.length===2&&sameHome.instructions.every(i=>i.scope==='user'&&i.appliesTo===null)
+      &&sameHome.report.entries.filter(e=>e.kind==='instruction'&&e.status==='duplicate').length===2,
+      JSON.stringify(sameHome.report.entries.map(e=>({path:e.path,status:e.status,scope:e.scope,appliesTo:e.appliesTo}))));
+    const otherCwd=path.join(tmp,'other-repo');
+    await fs.mkdir(path.join(otherCwd,'.git'),{recursive:true});
+    await write(path.join(otherCwd,'CLAUDE.md'),'PROJECT_CLAUDE_ONCE');
+    await write(path.join(otherCwd,'AGENTS.md'),'PROJECT_CODEX_ONCE');
+    const otherRuntime=await resolveRuntime(instructionPolicy(otherCwd),{home:selfHome});
+    t.ok('home 以外の作業場所ではユーザーと作業場所の指示を従来どおり渡す',
+      ['HOME_CLAUDE_ONCE','HOME_CODEX_ONCE','PROJECT_CLAUDE_ONCE','PROJECT_CODEX_ONCE'].every(body=>otherRuntime.prompt.split(body).length===2)
+      &&otherRuntime.instructions.length===4&&otherRuntime.instructions.filter(i=>i.scope==='user'&&i.appliesTo===null).length===2
+      &&otherRuntime.instructions.filter(i=>i.scope==='directory'&&i.appliesTo===otherCwd).length===2,
+      JSON.stringify(otherRuntime.instructions.map(i=>({path:i.path,scope:i.scope,appliesTo:i.appliesTo}))));
     // Claude の .claude/rules。paths の無いものは開始時に渡し、paths 付きは当たるファイルを instructions_for_path で求めたときだけ返す
     t.ok('rules の glob（**・*・?・{a,b}）',[['src/**/*.{ts,tsx}','src/a/b/c.tsx',true],['src/**/*.ts','src/c.ts',true],['src/*.ts','src/a/c.ts',false],['**/*.md','a.md',true],['a?.js','ab.js',true],['apps/main/**','apps/main',true],['docs/**','src/x.ts',false]]
       .every(([g,p,want])=>matchesGlobs([g],tmp,path.join(tmp,p))===want));

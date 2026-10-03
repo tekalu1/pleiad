@@ -14,6 +14,7 @@ export const title = 'チャンネルの保存: index.json・.jsonl の追記と
 
 const HUMAN = { kind: 'human' };
 const BOT = { kind: 'bot', botId: 'b_owl' };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const codeOf = async (fn) => { try { await fn(); return null; } catch (e) { return e instanceof ChannelError ? e.code : `other:${e.message}`; } };
 const exists = (p) => fs.stat(p).then(() => true, () => false);
 
@@ -187,11 +188,44 @@ export default async function (t) {
     const progress = await svc.post({ channelId: general.id, threadId: root.id, text: '- [x] 調べる\n- [ ] 直す' }, BOT);
     t.ok('同じスレッドで bot がもう一度書くと、新しい投稿ではなくそのターンの投稿の本文を置き換える（進捗）', progress.id === turn.id && progress.text.includes('直す')
       && (await svc.read({ channelId: general.id, threadId: root.id })).posts.length === 3 && types('channelPost').every((e) => e.op === 'edit'));
+    const elsewhere = await svc.post({ channelId: general.id, threadId: root.id, text: '別会話からの返事', bySession: 's_other' }, BOT);
+    t.ok('別会話の bot は同じスレッドの作業中の投稿を置き換えない（hook の無い経路）', elsewhere.id !== turn.id
+      && (await svc.getPost({ channelId: general.id, postId: turn.id })).text === progress.text);
     const fresh = await svc.post({ channelId: general.id, threadId: root.id, text: '別の投稿', new: true }, BOT);
     t.ok('new: true なら置き換えずに新しい投稿を作る', fresh.id !== turn.id);
     await svc.edit({ channelId: general.id, postId: turn.id, state: 'done' }, BOT);
     const afterDone = await svc.post({ channelId: general.id, threadId: root.id, text: '終わった後の発言' }, BOT);
     t.ok('ターンが終わった（working でない）後の bot の発言は新しい投稿', afterDone.id !== turn.id);
+
+    // ターンの会話が分かる書き込み（ADR 0117）: ターンの投稿に入れるかは hooks.botPost（dispatch.claimPost）が決める。入れた返事も posted へ渡す
+    {
+      const asked = [], posted = [];
+      let answer = undefined;
+      const claimSvc = makeService('claim', { now: () => (clock += 10), listBots: async () => botList,
+        hooks: { botPost: (a) => { asked.push(a); return answer; }, posted: (p, c, extra) => posted.push([p, extra]) } });
+      await claimSvc.start();
+      const ch = await claimSvc.create({ name: 'claim' }, HUMAN);
+      const croot = await claimSvc.post({ channelId: ch.id, text: '根' }, HUMAN);
+      const cturn = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '…', state: 'working', turn: { botId: 'b_owl', sessionId: 's_o' }, new: true }, BOT);
+      t.ok('ADR 0117: ターンの投稿そのものを作るときは botPost に聞かない', asked.length === 0);
+      const other = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '別会話から', bySession: 's_other' }, BOT);
+      t.ok('botPost が claim しない別会話の投稿は、同じ bot の作業中でも新しい投稿になる', other.id !== cturn.id
+        && (await claimSvc.getPost({ channelId: ch.id, postId: cturn.id })).text === '…');
+      answer = { postId: cturn.id };
+      await sleep(5);
+      posted.length = 0;
+      const first = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '@Lynx 返事', new: true, bySession: 's_o' }, BOT);
+      await sleep(5);
+      t.ok('ADR 0117: botPost が返した投稿（ターンの投稿）に、new: true でも返事が入る。呼んだ会話の id が渡る', first.id === cturn.id && first.text === '@Lynx 返事'
+        && asked.at(-1).sessionId === 's_o' && asked.at(-1).threadId === croot.id && asked.at(-1).botId === 'b_owl', JSON.stringify(asked.at(-1)));
+      t.ok('ADR 0117: 入れた返事も posted へ渡る（extra.filled。@ をここで解く）', posted.length === 1 && posted[0][0].id === cturn.id && posted[0][1].filled === true && posted[0][0].mentions.includes('b_lynx'), JSON.stringify(posted.map((x) => x[1])));
+      answer = { postId: null };
+      const second = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '2 件目', bySession: 's_o' }, BOT);
+      t.ok('ADR 0117: botPost が null を返したら、new が無くても新しい投稿（前の返事を同じ id で消さない）', second.id !== cturn.id && (await claimSvc.getPost({ channelId: ch.id, postId: cturn.id })).text === '@Lynx 返事');
+      const softened = await claimSvc.edit({ channelId: ch.id, postId: cturn.id, state: 'failed', failedWithBody: true }, BOT);
+      t.ok('本文のある failed の印は編集後も保存され、画面が区別できる', softened.failedWithBody === true
+        && (await claimSvc.getPost({ channelId: ch.id, postId: cturn.id })).failedWithBody === true);
+    }
 
     // 作業中の更新は 1 秒に 1 回まで配る
     const slowClock = 50_000; // 時計は動かさない（続きの更新は 1 秒後の実時間のタイマーなので、ここでは出ない）
@@ -317,6 +351,34 @@ export default async function (t) {
     await new Promise((r) => setImmediate(r));
     console.error = origError;
     t.ok('posted が投げても投稿は保存されている', (await flaky.read({ channelId: flc.id })).posts[0].id === survived.id);
+
+    // 添付つきの投稿（ADR 0116）: 本文の印と対で保存・形をそろえる・印だけでも投稿できる・消すと外れる・開き直しで残る・@ の解析は印の行を見ない
+    const attSvc = makeService('att', { now: () => (clock += 10), listBots: async () => botList });
+    await attSvc.start();
+    const atc = await attSvc.create({ name: 'att' }, HUMAN);
+    const img = { path: 'C:\\data\\uploads\\c_x\\a.png', name: 'a.png', kind: 'image', mime: 'image/png', size: 12, origin: 'device', extra: 'x' };
+    const withAtt = await attSvc.post({ channelId: atc.id, text: '見て\n[添付] C:\\data\\uploads\\c_x\\a.png', attachments: [img, { path: '/tmp/b.txt' }] }, HUMAN);
+    t.ok('attachments は形をそろえて保存する（知らない欄は持たない・名前・種類・出どころの既定）', withAtt.attachments.length === 2 && !('extra' in withAtt.attachments[0])
+      && withAtt.attachments[1].name === 'b.txt' && withAtt.attachments[1].kind === 'file' && withAtt.attachments[1].origin === 'host' && withAtt.attachments[1].size === null, JSON.stringify(withAtt.attachments));
+    const imageOnly = await attSvc.post({ channelId: atc.id, text: '', attachments: [img] }, HUMAN);
+    t.ok('添付があれば本文が空でも投稿できる。添付も本文も無ければ INVALID', imageOnly.attachments.length === 1 && (await codeOf(() => attSvc.post({ channelId: atc.id, text: '' }, HUMAN))) === 'INVALID');
+    const turnWithImage = await attSvc.post({ channelId: atc.id, text: '…', state: 'working', turn: { botId: 'b_owl', sessionId: 's1' } }, BOT);
+    const filledImage = await attSvc.post({ channelId: atc.id, text: '[添付] /tmp/bot.png', attachments: [{ path: '/tmp/bot.png', kind: 'image' }] }, BOT);
+    t.ok('bot の返事をターンの投稿へ入れるときも添付が残る', filledImage.id === turnWithImage.id && filledImage.attachments?.[0]?.path === '/tmp/bot.png');
+    t.ok('添付の形が不正（配列でない・パスが無い・多すぎる）は INVALID', (await codeOf(() => attSvc.post({ channelId: atc.id, text: 'x', attachments: 'a' }, HUMAN))) === 'INVALID'
+      && (await codeOf(() => attSvc.post({ channelId: atc.id, text: 'x', attachments: [{ name: 'a' }] }, HUMAN))) === 'INVALID'
+      && (await codeOf(() => attSvc.post({ channelId: atc.id, text: 'x', attachments: Array.from({ length: 51 }, (_, i) => ({ path: `/f${i}` })) }, HUMAN))) === 'INVALID');
+    const botAtt = await attSvc.post({ channelId: atc.id, text: '@Owl これ見て\n[添付] /tmp/b.txt', attachments: [{ path: '/tmp/b.txt' }] }, HUMAN);
+    const markOnly = await attSvc.post({ channelId: atc.id, text: '[添付] C:\\Users\\x@Owl\\f.png', attachments: [{ path: 'C:\\Users\\x@Owl\\f.png' }] }, HUMAN);
+    t.ok('@ の解析は添付の印の行を見ない（パスの @Owl は呼びかけではない）。本文の @ は数える', markOnly.mentions.length === 0 && botAtt.mentions.join() === 'b_owl', `${markOnly.mentions} / ${botAtt.mentions}`);
+    await attSvc.remove({ channelId: atc.id, postId: withAtt.id }, HUMAN);
+    const afterDelete = (await attSvc.read({ channelId: atc.id })).posts.find((p) => p.id === withAtt.id);
+    t.ok('消した投稿は添付も外れる（スレッドの形だけ残る）', afterDelete.deletedAt && !('attachments' in afterDelete));
+    const attReopened = makeService('att', { listBots: async () => botList });
+    await attReopened.start();
+    t.ok('開き直しても添付が残る', (await attReopened.read({ channelId: atc.id })).posts.find((p) => p.id === imageOnly.id).attachments[0].path === img.path);
+    t.ok('ターンの投稿の添付も開き直して残る', (await attReopened.read({ channelId: atc.id })).posts.find((p) => p.id === turnWithImage.id).attachments?.[0]?.path === '/tmp/bot.png');
+    attSvc.stop();
 
     // 開き直し
     const reopenedSvc = makeService('s', { listBots: async () => botList });

@@ -50,7 +50,7 @@ import { setupComposerControls, resolvedModel, folderBrowser, panel } from "./co
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { setupAttachMenu } from "./attach-menu.mjs";
 import { promptMaxHeight, attachSources, attachFolderHints } from "./composer-layout.mjs";
-import { sendAttachment, ATTACH_MAX_BYTES } from "./attach-upload.mjs";
+import { sendAttachment, ATTACH_MAX_BYTES, IMAGE_READ_HINT_BYTES } from "./attach-upload.mjs";
 import { formatBytes } from "./folder-upload.mjs";
 import { modelRowIds, modelDisplayName } from "./composer-labels.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
@@ -1279,7 +1279,7 @@ function systemHistoryNode(m) {
   if (m.kind === 'interruptionNote') return sysFold(t('chat.sys.interruptionNote'), m.body ?? '');
   // bot の会話の先頭の包み（core/system-messages.mjs の splitLeadingNotes）。チャンネルの出来事は「#チャンネル · 発言者」、記憶は渡した印。開くと中身が読める
   if (m.kind === 'channelEvent') return sysFold(m.history ? t('channels:event.thread', { channel: m.channel }) : t('channels:event.post', { channel: m.channel, from: m.from }), m.body ?? '', hhmm(m.at));
-  if (m.kind === 'contextNote') return sysFold(m.tag === 'memory-core' ? t('channels:event.memoryCore') : t('channels:event.turnContext'), m.body ?? '', hhmm(m.at));
+  if (m.kind === 'contextNote') return sysFold(m.tag === 'memory-core' ? t('channels:event.memoryCore') : m.tag === 'bot-recent' ? t('channels:event.botRecent') : t('channels:event.turnContext'), m.body ?? '', hhmm(m.at));
   // Pleiad の完了通知。「タスクの結果で再開」の 1 行を開くと、エージェントに渡した本文が読める
   if (m.internalTaskNotice) return taskNoticeNode(m.text, hhmm(m.at));
   return undefined;
@@ -5698,6 +5698,8 @@ const channelsUi = setupChannels({
   invoke: async (op, args = {}) => cmd('invoke', { op, args }),
   state, filePreview, side, t,
   browser: browserPanel,   // 内蔵ブラウザー（スレッドの見出しの入口が右パネルをブラウザーにする。使えない画面では null）
+  whenOnline,              // 切れている間、つながり直すのを待つ（入力欄の添付の断片の送り手。web/attach-upload.mjs）
+  openImage: (src, caption, path, origin) => openLightbox(src, caption, path, origin),   // 添付の画像を大きく見る（会話と同じライトボックス）
   permissionCard: (ev, into) => (ev.kind === 'question' ? questionCard(ev, into) : permissionCard(ev, into)),   // 質問も同じ口（bot の質問）
   openSession: async (id) => { channelsUi.setTab('chats'); await select(id); },
   openSidebar: () => setSidebar(true),
@@ -6073,9 +6075,6 @@ async function runUpload(u) {
     renderAttached();
   }
 }
-// これより大きな画像は、エージェントが画像として読めないことがある（Claude の API の画像の上限は 1 枚 5MB）
-const IMAGE_READ_HINT_BYTES = 5 * 1024 * 1024;
-
 /**
  * 入力欄の高さの上限を決める。1 行から始めて中身に合わせて伸び（CSS）、上限はマウス 10 行・タッチ 6 行（promptMaxLines）。
  * その先は欄の中でスクロールする（送信の行は常に見える）。画面が低いとき（キーボードが出ている）は画面の 40% でも止める
@@ -6129,18 +6128,25 @@ function wireDropZone() {
   const zone = document.querySelector("main");
   let depth = 0;
   const show = (on) => zone.classList.toggle("dropping", on);
+  // Channels の画面（#channelsView）に落としたファイルは、そこの入力欄（web/channels/ch-attachments.mjs）が受ける。Chats の入力欄へは入れない
+  // （受け口の無い所へ落としたときも、ブラウザーがファイルを開いて画面を離れないよう、既定の動作だけは止める）
+  const inChannels = (e) => Boolean(e.target?.closest?.("#channelsView"));
   zone.addEventListener("dragenter", (e) => {
     if (![...e.dataTransfer.types].includes("Files")) return;
-    e.preventDefault(); depth++; show(true);
+    e.preventDefault();
+    if (!inChannels(e)) { depth++; show(true); }
   });
   zone.addEventListener("dragover", (e) => {
     if (![...e.dataTransfer.types].includes("Files")) return;
-    e.preventDefault(); e.dataTransfer.dropEffect = "copy";
+    e.preventDefault();
+    if (!inChannels(e)) e.dataTransfer.dropEffect = "copy";
   });
   zone.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; show(false); } });
   zone.addEventListener("drop", (e) => {
     if (!e.dataTransfer.files?.length) return;
-    e.preventDefault(); depth = 0; show(false);
+    e.preventDefault();
+    if (inChannels(e)) return;
+    depth = 0; show(false);
     // リモートの窓にフォルダーを落としたら、添付するか作業フォルダーとして送るかを聞く。
     // webkitGetAsEntry はイベントの中でしか読めないので、先に取っておく
     if (folderUpload) {

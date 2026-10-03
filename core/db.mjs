@@ -351,6 +351,11 @@ export function usageTable(db) {
     recent(backend, since) {
       return prepared(db, 'SELECT data FROM usage_records WHERE backend = ? AND at >= ? ORDER BY seq').all(backend, since).map(row => JSON.parse(row.data));
     },
+    /** backend の記録のうち、at が since 以後のもののトークン（入力・出力・キャッシュ）の合計（チャンネルの予算の目安。ADR 0119） */
+    tokensSince(backend, since) {
+      const row = prepared(db, "SELECT SUM(COALESCE(json_extract(data, '$.inputTokens'), 0) + COALESCE(json_extract(data, '$.outputTokens'), 0) + COALESCE(json_extract(data, '$.cachedTokens'), 0)) AS n FROM usage_records WHERE backend = ? AND at >= ?").get(backend, since);
+      return Number(row?.n ?? 0);
+    },
     /** 会話ごとの記録（bot ごと・スレッドごとの合計。ADR 0109）。sessionIds の会話の、at が since 以後のもの（作った順）。sessionId を持たない古い記録は載らない */
     forSessions(sessionIds, since = 0) {
       const out = [];

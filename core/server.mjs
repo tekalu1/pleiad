@@ -1717,6 +1717,8 @@ function makeEmit(turn) {
       if (event.outcome === "aborted") event = { ...event, reason: turn.abortReason ?? "user" };
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）
       if (event.outcome === "error" || event.outcome === 'limited') turn.errorShown = true;
+      if (turn.backend.id === 'antigravity' && (event.outcome === 'error' || event.outcome === 'limited') && !turn.failureReason)
+        turn.failureReason = { source: 'backend.turnResult', error: String(event.error ?? '').slice(0, 1000) };
       const execution = taskExecutions.get(turn.info.sessionId);
       if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; }
     }
@@ -1824,7 +1826,7 @@ async function presentAttachments(sessionId, attachments, emit) {
     const file = path.resolve(given);
     const mime = String(a.mime ?? "");
     // Windows はドライブ・フォルダーの大小を区別しない（区別すると、置き場の中のファイルがホストのファイルの枝に入る）
-    const inUploads = process.platform === "win32" ? file.toLowerCase().startsWith((UPLOAD_DIR + path.sep).toLowerCase()) : file.startsWith(UPLOAD_DIR + path.sep);
+    const inUploads = inUploadDir(file);
     if (!inUploads) {
       let stat;
       try { ({ stat } = await inspectFile(file, fileAccess)); } catch { continue; }
@@ -1860,6 +1862,36 @@ async function presentAttachments(sessionId, attachments, emit) {
         : { content: buf.toString("utf8").slice(0, PRESENT_TEXT_CHARS) }),
     });
   }
+}
+
+/** パスが添付の置き場（UPLOAD_DIR）の中か。Windows はドライブ・フォルダーの大小を区別しない */
+function inUploadDir(file) {
+  return process.platform === "win32" ? file.toLowerCase().startsWith((UPLOAD_DIR + path.sep).toLowerCase()) : file.startsWith(UPLOAD_DIR + path.sep);
+}
+
+/**
+ * チャンネルの投稿に付ける添付の実物を確かめる（channels.post の attachments。ADR 0116）。会話の添付（presentAttachments）と同じ規則で、
+ * 置き場（attachFile が置いた、この端末から送ったもの）の中のファイルと、読んでよいホストのファイル（ADR 0050。UNC・データ置き場は断る）だけ。
+ * 中身は載せない（記録はパス・名前・種類・大きさだけ。画像は /local-file で見せる）。返りの rejected は読めなかったものの名前
+ */
+async function describeAttachments(list) {
+  const files = [], rejected = [];
+  for (const a of list) {
+    const given = String(a?.path ?? "");
+    const file = path.resolve(given);
+    const mime = String(a?.mime ?? "");
+    const device = inUploadDir(file);
+    let size;
+    try {
+      const stat = device ? await fs.stat(file) : (await inspectFile(file, fileAccess)).stat;
+      if (!stat.isFile()) throw new Error("not a file");
+      size = stat.size;
+    } catch { rejected.push(path.basename(given) || given); continue; }
+    const name = path.basename(file).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z_/, "");
+    const isImage = IMAGE_MIME.test(mime) || /\.(?:png|jpe?g|gif|webp|avif)$/i.test(name);
+    files.push({ path: device ? file : given, name, kind: isImage ? "image" : "file", mime, size, origin: device ? "device" : "host" });
+  }
+  return { files, rejected };
 }
 
 /** ファイルの先頭 bytes バイトだけを読む */
@@ -3335,6 +3367,7 @@ function opsDeps(lng = currentLocale()) {
     contextDefaults: () => contextSettings.get(os.homedir(), { level: 'default' }),
     // channels・bots・memory・routines・botOfSession（ops の handler が ctx.channels などで呼ぶ）
     ...botHost?.opsDeps(),
+    describeAttachments,
     modeOf: async (sessionId) => {
       try {
         const live = runtime.turns.get(sessionId);
@@ -4072,6 +4105,8 @@ botHost = createBotHost({
   createConversation, runTurn, noticeTarget, noticeBlocked, abortSessions, emitGlobal,
   getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
   sessionBusy: id => sessionBusy(id),
+  // チャンネルの予算（ADR 0119）が読む使用枠。設定の「使用量」・ply_usage と同じ quotaCache を通す
+  readQuota: id => { const b = getBackend(id); return b ? providerQuota(b) : null; },
 });
 // ターンの外で起きたことをバックエンドから受け取る口（docs/multi-backend.md §2.7）。
 // codex（バックグラウンド端末）が使う
@@ -4514,7 +4549,10 @@ async function runTurnInternal(args, onStarted, hooks) {
       if (hooks.compact && turn.compaction?.phase !== 'complete') emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
         reason: String(err?.message ?? err) });
       if (resolvedContext) { contextRecord.report.status = 'failed'; await saveContext().catch(() => {}); }
-      if (!turn.errorShown) emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
+      if (!turn.errorShown) {
+        if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'server.catch', error: String(err?.message ?? err).slice(0, 1000) };
+        emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
+      }
       // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
       // 送信待ちの「失敗」に戻し、利用者に再送か取り消しを選ばせる
       if ((err?.undelivered || !backendInvoked) && sessionId && args.messageId) {
@@ -4525,9 +4563,15 @@ async function runTurnInternal(args, onStarted, hooks) {
       // 渡らずに終わった `!` の行は、また「渡さない」を切り替えられる
       if (shellHandoff && !shellHanded) shellRuns.release(sessionId, shellHandoff);
       if (didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
-      await turn.visualizations.close().catch(err => emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) }));
+      await turn.visualizations.close().catch(err => {
+        if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };
+        emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) });
+      });
       await Promise.allSettled([runtimeContext?.close()]);
-      await saveContext().catch(() => { emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') }); });
+      await saveContext().catch(() => {
+        if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
+        emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') });
+      });
       // git の動き（ADR 0085）: ターンの終わりの撮影と、返答の下の 1 行の元。ファイル・コミット・ブランチ・PR のどれかが動いたときだけ会話に残す
       if (turn.gitSetup && didStart && turn.outcome !== 'requeue') {
         const summary = await Promise.race([
@@ -4568,6 +4612,12 @@ async function endTurn(turn, emit, { record = true } = {}) {
   if (limited) interrupted.notifyAtReset = notifyAtReset;
   if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id, sessionId: turn.info.sessionId })
     .catch(() => { console.error('  使用量を記録できませんでした'); });
+  if (turn.backend.id === 'antigravity' && turn.info.sessionId && (turn.outcome === 'error' || turn.outcome === 'limited')) {
+    const previous = (await store.get(turn.info.sessionId).catch(() => ({}))).antigravityFailures ?? [];
+    await store.setSessionData(turn.info.sessionId, 'antigravityFailures', [...previous, {
+      at: completedAt, outcome: turn.outcome, ...(turn.failureReason ?? { source: 'unknown', error: '' }),
+    }].slice(-16)).catch(err => console.error('  agy の失敗理由を記録できませんでした:', String(err?.message ?? err)));
+  }
   if (turn.info.sessionId) {
     await turn.setup?.catch(() => {});
     await turn.compactionWrite;

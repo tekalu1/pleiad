@@ -25,6 +25,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   purpose: string, cwd: string|null,                    // 既定の作業フォルダー
  *   members: string[],                                    // botId の並び（あなたは常に居る）
  *   memo: string,                                         // 「ここでの決まり」
+ *   budget?: { daily: number|null, perThread: number },   // 予算（ADR 0119。core/channels/budget.mjs）。無ければ既定。daily = 1 日の予算（週の使用枠に対する %。null は予算なし）、perThread = 1 スレッドの配分（daily に対する %）
  *   botId?: string,                                       // dm のときだけ
  *   createdAt: number, archivedAt?: number, lastPostAt: number }} Channel */
 
@@ -37,6 +38,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   state?: 'working'|'waiting'|'done'|'checking'|'failed'|'stopped'|'skipped',  // bot のターンの投稿・ルーティンの実行の根だけ
  *   turn?: { botId: string, sessionId: string },          // bot のターンの投稿（会話を開く → の行き先）
  *   presents?: object[],                                  // そのターンの提示（可視化・添付）の写し。描き方は web/render.mjs の renderPresent
+ *   attachments?: { path: string, name: string, kind: 'image'|'file', mime: string, size: number|null, origin: 'device'|'host' }[],  // 人（と AI）が付けたファイル。本文の `[添付] パス` の行と対（Chats の添付と同じ印。ADR 0116）。bot へは本文の印のまま渡る
  *   reactions: { [emoji: string]: Author[] },
  *   taint?: 'webhook'|'web'|null,                         // 外から来た文を含む（記憶の根拠にしない）
  *   routine?: { routineId: string, runId: string, missed?: boolean, reason?: string, payload?: string },
@@ -54,6 +56,8 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   state: 'idle'|'working'|'waiting'|'failed',
  *   tokens: { input: number, output: number, cached: number },  // このスレッドの bot の会話の合計（usage の出来事から）
  *   calls: number,                                        // bot が起こされた回数（表示だけ。上限には使わない）
+ *   spend?: { day: string, percent: number },             // チャンネルの予算に数えた、その日（現地の日付）に使った分（bot のバックエンドの週の使用枠に対する %。origin の根のスレッドに持つ。ADR 0119）
+ *   digest?: { [botId: string]: { text: string, at: number, lastAt: number, fingerprint: string } }, // bot ごとのエピソード要約（ADR 0125）
  *   stopped: null | { by: Author, at: number },           // [止める]。人が次に書くまで新しく起こさない
  *   origin?: { channelId: string, threadId: string },     // bot が自分のスレッドからチャンネルの流れへ @ を書いて新しくできたスレッドの、起こした元。[止める] は origin で結ばれた派生のスレッドにも届く
  *   updatedAt: number }} ThreadState */
@@ -61,6 +65,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
 /** @typedef {{
  *   id: string, name: string, icon: string,               // icon は絵文字 1 つ
  *   persona: string,                                      // 人格（自由文。1.5k トークンまで）
+ *   iconImage?: string,                                   // 画像アイコンの写し（uploads/bot-icons/ の WebP）。空なら icon の絵文字を使う
  *   backend: 'claude'|'codex'|'antigravity', model: string, effort: string,
  *   mode: string,                                         // core/backends/*.mjs の MODES の id。Antigravity は 'yolo' だけ。変えるのは bots.setMode（human-only）だけ
  *   folders: { path: string, access: 'rw'|'ro' }[],       // 先頭が既定の作業場所。書き込みの範囲を限れないモードでは「すべてのフォルダー」。bots.update の欄（足すのは広げる向き = guarded）
@@ -76,6 +81,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   channelId: string|null, threadId: string|null, routineId?: string, taint?: 'webhook',
  *   memRev: number,                                       // 末尾の差分をどこまで渡したか（memory/log.jsonl の rev）
  *   snapshotDue: boolean,                                 // 次のターンで核の写しを渡す（始まり・圧縮の完了で true）
+ *   recentDelivered?: boolean,                            // 最近のスレッドの申し送りを最初のターンで渡した印
  *   delivered: string[],                                  // この写しの後に渡した記憶の id（圧縮で空に）
  *   postCursor: string|null,                              // このスレッドの投稿をどこまで渡したか
  *   personaKey?: string }} SessionBot */                  // Antigravity の会話が最後に受け取った人格のハッシュ（直したら次のターンに新しい人格を渡す。ADR 0109）

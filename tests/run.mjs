@@ -457,9 +457,12 @@ const cases = [
   await import("./unit/memory-sources.mjs"),
   // 末尾の文: 差分・関係する記憶・渡し済みを繰り返さない・核の写しは始まりと圧縮の後だけ・時刻は末尾だけ
   await import("./unit/memory-tail.mjs"),
+  // 記憶の強さ（重み × 新しさ・種類）・markdown の後方互換（知らないキーを捨てない）・核の写しは強さの順で薄れたものを外す（ADR 0118）
+  await import("./unit/memory-strength.mjs"),
   // --- dispatch (S4) ---
   // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
   await import("./unit/bot-dispatch.mjs"),
+  await import("./unit/bot-budget.mjs"),
   // bot の会話は Chats の一覧に出さず、あなた待ちのときだけ出す（一覧の行の bot・承認待ち・検索の除外・スマホ通知）
   await import("./unit/bot-sessions-list.mjs"),
   // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---
@@ -467,6 +470,8 @@ const cases = [
   await import("./unit/channels-side-ui.mjs"),
   // 流れ (W2): @ の補完の判定・候補の絞り込み・リアクションの札と先取り・時刻の文言・スレッドを開く口の配線（描画とキーは tests/browser/channels.cjs）
   await import("./unit/channels-feed-ui.mjs"),
+  // 入力欄を Chats に揃えた分 (ADR 0116): 送る本文と添付の印・書きかけの保存と上限・添付つきの投稿の描き方・配線。画面の打鍵は tests/browser/channels-composer.cjs
+  await import("./unit/channels-composer-ui.mjs"),
   // bot のページの決まりごと（フォルダーを限れないモードは範囲 full だけ・承認モードの選び直し・使用量・記憶の出どころの行き先）。画面の打鍵は tests/browser/bot-page.cjs
   await import("./unit/bot-page-model.mjs"),
   // スレッドと空間モデル (W3): 窓の状態（feed・split・solo）の判定・題とトークンの文言・道具の呼び出しを引く範囲・配線。描画・動き・承認のカードは tests/browser/thread-deck.cjs
@@ -485,6 +490,9 @@ const cases = [
   // --- memory-learn・sessions-send・webhook (L1・X1・H1、P3) ---
   await import("./unit/webhook.mjs"),
   await import('./unit/memory-learn.mjs'),
+  await import('./unit/memory-episodes.mjs'),
+  // 夜の整理の走り方: ほかのターンで止まらない・走っている会話は次へ・飛ばした回数と理由・失敗の間隔・対象を絞った実行（ADR 0118）
+  await import('./unit/memory-learn-schedule.mjs'),
 ];
 
 const selected = pick(cases, process.argv.slice(2));

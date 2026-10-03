@@ -182,6 +182,11 @@ export function createUsageStore(dir, { now = Date.now } = {}) {
       await writes;
       return open().forSessions([...new Set(sessionIds ?? [])], since);
     },
+    /** backend の、since（ms）以後の記録のトークンの合計（入力・出力・キャッシュ）。チャンネルの予算が週の枠 1% あたりを割り出すのに使う（core/bots/budget.mjs。ADR 0119） */
+    async tokensSince(backend, since = 0) {
+      await writes;
+      return open().tokensSince(backend, since);
+    },
     async summary(backend) {
       await writes;
       const rows = open();

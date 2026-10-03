@@ -16,6 +16,7 @@ import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
 import { panel, renderMode, isDanger } from '../composer-controls.mjs';
 import { onlyMode } from './bot-model.mjs';
+import { botIcon } from './bot-icon.mjs';
 import { sideChannels } from './side-model.mjs';
 import { getRoutineStore } from './routine-store.mjs';
 import { glyph, CLOCK, whenText, stateText, botBlock } from './routine-entry.mjs';
@@ -307,7 +308,7 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
   function paintBot() {
     const b = botOf(D.botId);
     if (!b) { labelOf(botChip, document.createTextNode(t('channels:routines.who.pickBot'))); return; }
-    const av = el('span', 'av xs', b.icon || '');
+    const av = botIcon(b, 'av xs');
     av.setAttribute('aria-hidden', 'true');
     labelOf(botChip, av, document.createTextNode(b.name));
     if (b.backend) botChip.label.append(backendLogo(b.backend, backendLabel(b.backend)));
@@ -316,8 +317,9 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
   function paintChannel() {
     const c = channelOf(D.channelId);
     if (!c) { labelOf(chChip, document.createTextNode(t('channels:routines.who.pickChannel'))); return; }
-    const name = c.kind === 'dm' ? `${botOf(c.botId)?.icon ?? ''} ${c.name}` : `# ${c.name}`;
-    labelOf(chChip, document.createTextNode(name.trim()));
+    const b = c.kind === 'dm' ? botOf(c.botId) : null;
+    if (b) labelOf(chChip, botIcon(b, 'av xs'), document.createTextNode(c.name));
+    else labelOf(chChip, document.createTextNode(c.kind === 'dm' ? c.name : `# ${c.name}`));
     chChip.btn.setAttribute('aria-label', t('channels:routines.who.channelAria', { name: c.name }));
   }
   function paintMode() {
@@ -535,10 +537,10 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
 
   // ---- 選べる面の定義
   chooser(botChip, { title: t('channels:routines.who.label'), width: 300, items: () => bots.map((b) => ({
-    key: `bot:${b.id}`, main: `${b.icon ?? ''} ${b.name}`.trim(), sub: backendLabel(b.backend), on: b.id === D.botId, pick: () => setBot(b.id),
+    key: `bot:${b.id}`, main: b.name, avatar: b, sub: backendLabel(b.backend), on: b.id === D.botId, pick: () => setBot(b.id),
   })), when: () => bots.length > 0 });
   chooser(chChip, { title: t('channels:routines.where.label'), width: 300, items: () => channelOptions().map((c) => ({
-    key: `channel:${c.id}`, main: c.kind === 'dm' ? `${botOf(c.botId)?.icon ?? ''} ${c.name}`.trim() : `# ${c.name}`, sub: c.kind === 'dm' ? t('channels:routines.where.dm') : c.purpose || '', on: c.id === D.channelId,
+    key: `channel:${c.id}`, main: c.kind === 'dm' ? c.name : `# ${c.name}`, avatar: c.kind === 'dm' ? botOf(c.botId) : null, sub: c.kind === 'dm' ? t('channels:routines.where.dm') : c.purpose || '', on: c.id === D.channelId,
     pick: () => { D.channelId = c.id; paintChannel(); paintState(); },
   })), when: () => channelOptions().length > 0 });
   const modePop = el('div', 'pop cpop');
@@ -827,7 +829,7 @@ function chipButton(id) {
 }
 
 /** 一覧の行（入力欄の面の行と同じ形: ✓・名前・補足） */
-function optionRow({ key, main, sub, on, pick }, onPick) {
+function optionRow({ key, main, avatar, sub, on, pick }, onPick) {
   const b = el('button', 'copt');
   b.type = 'button';
   b.dataset.key = key;
@@ -835,7 +837,10 @@ function optionRow({ key, main, sub, on, pick }, onPick) {
   b.setAttribute('aria-selected', String(Boolean(on)));
   b.append(el('span', 'tick', on ? '✓' : ''));
   const mid = el('span', 'cbody');
-  mid.append(el('span', 'main', main));
+  const title = el('span', avatar ? 'main hasb' : 'main');
+  if (avatar) title.append(botIcon(avatar, 'av xs'), el('span', 'txt', main));
+  else title.textContent = main;
+  mid.append(title);
   if (sub) mid.append(el('span', 'sub', sub));
   b.append(mid);
   b.onclick = onPick;

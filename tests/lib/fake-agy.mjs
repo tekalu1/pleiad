@@ -259,6 +259,16 @@ async function agentScript(text) {
 async function runTurn(text) {
   emitInit();
 
+  // 結果を返した直後にプロセスが終わる agy の再現。stdout を書き切ってから終了する。
+  if (text === "result-then-exit") {
+    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "完了した返事" });
+    process.stdout.write(JSON.stringify({
+      event: "result",
+      result: { conversation_id: conversationId, status: "SUCCESS", response: "完了した返事", num_turns: 1 },
+    }) + NL, () => process.exit(0));
+    return;
+  }
+
   // カスタムエージェントの確認（agent-body / mcp-tools / mcp-call:…）。本文だけ返して終える
   const scripted = await agentScript(text);
   if (scripted !== null) {
@@ -327,6 +337,15 @@ async function runTurn(text) {
   // 送信と完了で時刻が変わることを測るための、少しかかるターン（delay / delay500）
   const slowly = /^delay(\d+)?/.exec(text);
   if (slowly) await new Promise((r) => setTimeout(r, Number(slowly[1] ?? 300)));
+
+  if (text === "error-body") {
+    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "本文は届いた" });
+    return send({ event: "result", result: {
+      conversation_id: conversationId, status: "ERROR", response: "本文は届いた", error: "結果は失敗",
+      duration_seconds: 0.1, num_turns: 1,
+      usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 },
+    } });
+  }
 
   if (text.startsWith("fail")) {
     return send({

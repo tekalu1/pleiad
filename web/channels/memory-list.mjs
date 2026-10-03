@@ -2,6 +2,10 @@
 // 各行に本文と出どころ（押すとその投稿・会話へ）と［直す］［忘れる］。凝った編集画面は作らず、その場で書き換える。
 // 忘れたら 12 秒の「元に戻す」の帯（memory.forget は墓石を残すので、戻すのは memory.unforget）。
 // 操作はすべて memory.* の op を host.invoke で呼ぶ。更新は memoryChanged（呼び出し側が refresh する）。
+// 頭に夜の整理の様子の 1 行（memory.learnStatus。最後に走った時刻・覚えた件数・飛ばした回数と理由・失敗・次の予定。ADR 0118）。
+// 各行に種類の札（約束・やめたこと…）と、薄れた記憶（会話の始まりには渡さないが、探せば出る）の印。
+// i18n-dynamic: channels:memory.learn.
+// i18n-dynamic: channels:memory.kind.
 //
 //   createMemoryList(host, { lookup, openSource }) → { el, setBot(bot), refresh(layer?), layers() }
 //     lookup() … { channels: Map<id, Channel>, bots: Map<id, Bot>, sessions: Map<id, session> }（出どころの字に使う）
@@ -9,7 +13,8 @@
 import { el } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { isComposingKey } from '../keyboard.mjs';
-import { sourceView } from './bot-model.mjs';
+import { sourceView, learnStatusView } from './bot-model.mjs';
+import { botIcon } from './bot-icon.mjs';
 
 export const UNDO_MS = 12000;
 const FADE_MS = 240;
@@ -38,6 +43,9 @@ export function createMemoryList(host, { lookup, openSource }) {
   const note = el('p', 'mem-err');
   note.setAttribute('role', 'alert');
   note.hidden = true;
+  const learnLine = el('p', 'mem-learn');
+  learnLine.hidden = true;
+  let learnSeq = 0;
 
   for (const key of ['user', 'own']) {
     const head = el('div', 'memh');
@@ -49,7 +57,7 @@ export function createMemoryList(host, { lookup, openSource }) {
     core.setAttribute('aria-label', '');
     groups[key] = { head, title, meta, core };
   }
-  root.append(groups.user.head, groups.user.core, groups.own.head, groups.own.core, note, undo);
+  root.append(learnLine, groups.user.head, groups.user.core, groups.own.head, groups.own.core, note, undo);
   groups.own.head.classList.add('second');
 
   const layerId = (key) => (key === 'user' ? 'user' : S.bot?.id);
@@ -67,13 +75,15 @@ export function createMemoryList(host, { lookup, openSource }) {
       box.textContent = entry.by?.kind === 'human' ? t('channels:memory.source.written') : t('channels:memory.source.none');
     } else {
       const v = sourceView(first, lookup());
-      const where = v.where.type === 'dm' ? t('channels:memory.source.dm', { name: [v.where.icon, v.where.name].filter(Boolean).join(' ') })
+      const where = v.where.type === 'dm' ? t('channels:memory.source.dm', { name: [v.where.iconImage ? '' : v.where.icon, v.where.name].filter(Boolean).join(' ') })
         : v.where.type === 'chat' ? (v.where.name ? t('channels:memory.source.chat', { title: v.where.name }) : t('channels:memory.source.chatGone'))
         : v.where.name ? `#${v.where.name}` : t('channels:memory.source.channelGone');
       const when = v.date ?? t('channels:memory.source.today');
       const text = t('channels:memory.source.line', { where, when });
+      const image = v.where.iconImage ? botIcon(v.where, 'src-bot-icon') : null;
       if (v.target) {
         const link = el('button', 'src-link', text);
+        if (image) link.prepend(image);
         link.type = 'button';
         link.title = t('channels:memory.source.open');
         link.onclick = () => openSource(v.target);
@@ -81,6 +91,7 @@ export function createMemoryList(host, { lookup, openSource }) {
       } else {
         box.classList.add('untrusted');
         box.textContent = text;
+        if (image) box.prepend(image);
       }
       if (sources.length > 1) box.append(el('span', 'src-more', t('channels:memory.source.more', { n: sources.length - 1 })));
     }
@@ -125,7 +136,19 @@ export function createMemoryList(host, { lookup, openSource }) {
         queueMicrotask(() => { input.focus(); input.setSelectionRange(input.value.length, input.value.length); });
       }
     } else {
-      tx.append(el('span', 'tx-text', entry.text));
+      const textLine = el('span', 'tx-text');
+      if (entry.kind) {
+        const kindKey = entry.kind === 'promise' && entry.status === 'done' ? 'promiseDone' : entry.kind;
+        textLine.append(el('span', 'mem-kind', t(`channels:memory.kind.${kindKey}`)), ' ');
+      }
+      textLine.append(entry.text);
+      if (entry.faded) {
+        row.classList.add('faded');
+        const faded = el('span', 'src-more mem-faded', t('channels:memory.faded'));
+        faded.title = t('channels:memory.fadedTitle');
+        textLine.append(faded);
+      }
+      tx.append(textLine);
       if (learnedToday) tx.append(el('span', 'src-more mem-new', t('channels:memory.new')));
       tx.append(sourceNode(entry));
       const fix = el('button', 'btn forget', t('channels:memory.edit'));
@@ -162,6 +185,28 @@ export function createMemoryList(host, { lookup, openSource }) {
   }
 
   function paint() { paintGroup('user'); paintGroup('own'); }
+
+  // ---------------------------------------------------------------- 夜の整理の様子
+  function paintLearn(status) {
+    const view = learnStatusView(status);
+    learnLine.hidden = !view;
+    if (!view) return;
+    const parts = view.parts.map(({ key, params = {} }) => t(`channels:memory.learn.${key}`, {
+      ...params, ...(params.reasonKey ? { reason: t(`channels:memory.learn.reason.${params.reasonKey}`) } : {}),
+    }));
+    learnLine.textContent = `${t('channels:memory.learn.label')}: ${parts.join(' · ')}`;
+    learnLine.classList.toggle('warn', view.warn);
+  }
+
+  async function loadLearn() {
+    const seq = ++learnSeq;
+    try {
+      const status = await host.invoke('memory.learnStatus', {});
+      if (seq === learnSeq) paintLearn(status);
+    } catch {
+      if (seq === learnSeq) paintLearn(null);   // 様子が読めなくても記憶の一覧は使える
+    }
+  }
 
   // ---------------------------------------------------------------- 読み込み
   async function load(key) {
@@ -262,7 +307,8 @@ export function createMemoryList(host, { lookup, openSource }) {
       clearUndo();
       showError('');
       paint();
-      if (bot) { load('user'); load('own'); }
+      if (bot) { load('user'); load('own'); loadLearn(); }
+      else { learnSeq++; learnLine.hidden = true; }
     },
     /** 層を読み直す（memoryChanged）。layer を省けば両方。直している間は本文を上書きしないよう、描き直しは直し終えてから */
     refresh(layer) {
@@ -270,6 +316,7 @@ export function createMemoryList(host, { lookup, openSource }) {
       const key = layer == null ? null : keyOf(layer);
       if (layer != null && !key) return;
       for (const k of key ? [key] : ['user', 'own']) load(k);
+      loadLearn();
     },
     /** 出どころの字に使う外の写し（チャンネル・bot・会話）が変わった */
     repaint: paint,

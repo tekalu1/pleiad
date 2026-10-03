@@ -171,7 +171,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "5bbb30b5ae47"
+      "input": "e273dc2b33f3"
     },
     {
       "id": "bots.delete",
@@ -275,7 +275,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "b4ab3d833bb6"
+      "input": "2fff207a517a"
     },
     {
       "id": "browser.listProfiles",
@@ -500,7 +500,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "1eb1b9e00627"
+      "input": "a55e45280bf7"
     },
     {
       "id": "channels.react",
@@ -618,7 +618,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "82d73789eaf1"
+      "input": "0ab4cd8ce86b"
     },
     {
       "id": "channels.wake",
@@ -644,6 +644,21 @@
       },
       "legacyCommand": null,
       "input": "ea7af0bff606"
+    },
+    {
+      "id": "channels.wakePreview",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "6d11fb613445"
     },
     {
       "id": "compatEndpoints.delete",
@@ -1853,7 +1868,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "a0c75da9f533"
+      "input": "861c78dcef55"
     },
     {
       "id": "memory.forget",
@@ -1877,6 +1892,26 @@
       },
       "legacyCommand": null,
       "input": "a2135a18629b"
+    },
+    {
+      "id": "memory.learnStatus",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "learn-status"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
     },
     {
       "id": "memory.list",
@@ -1960,7 +1995,7 @@
         "cli": false
       },
       "legacyCommand": null,
-      "input": "558cfb267283"
+      "input": "619d48f70b75"
     },
     {
       "id": "notify.setDevice",
@@ -4425,6 +4460,11 @@
       "positional": [
         "id"
       ]
+    },
+    {
+      "id": "memory.learnStatus",
+      "path": "memory learn-status",
+      "positional": []
     },
     {
       "id": "memory.list",
