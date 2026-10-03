@@ -14,6 +14,7 @@
 
 ## ブラウザー
 
+- fake バックエンドのサーバーを画面で確かめるときは、**起動のたびに Fake のログインが要る**（認証の状態がメモリだけ。ログインしないと送信しても何も返らない）。新しい置き場なら onboarding のダイアログも出る。画面からは `#authNeed` → 設定の「ログイン」→ `#backToChat`。送信は **Ctrl+Enter**（Enter は改行）。Playwright を node のライブラリとして使うなら、同じ手順を最初に踏む（2026-10-03、bot・Channels の土台の確認）。`agent-browser screenshot` は Windows で os error 10060 になることがあり、撮影は playwright-core（skill `windows-app-testing`）に替えると撮れる。
 - `agent-browser` を PowerShell から打つときは、`@e455` のような参照を `'@e455'` とシングルクォートで囲む（囲まないと `@` が splatting に食われ、`Missing arguments for: click` で落ちる）。
 - `playwright-cli` は `file:` を開けない（"Access to file: protocol is blocked"）。`temporary/mockups/` のモックを見るときは `python -m http.server 8799` をそのディレクトリで起動して `goto http://127.0.0.1:8799/<name>.html` で開く。`eval` は式の文字列ではなく `"() => { … }"` の関数を渡す（式だと `UtilityScript` のエラーで落ちる）。確認したら `playwright-cli close` とサーバー停止まで行う。
 - Visualize 向けに `<html>` の無い断片で書いたモックは、先頭に `<meta charset="utf-8">` を置く。無いと http.server で開いたとき日本語が文字化けし、`text=…` のセレクターも当たらない（2026-09-27）。
