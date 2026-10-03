@@ -1,5 +1,5 @@
 // 記憶に書く内容と出どころの検査（core/memory/guard.mjs）と、memory.* の操作（core/ops/memory.mjs）: 人の発言・taint・AI だけの根拠・墓石・長さ・注入らしい文・
-// 主体（人・bot・ほかの会話の AI・束縛なし）・層の範囲・危険度（write は読み取りモードでも書ける・edit は読み取りモードで断る・forget は承認）。ADR 0097
+// 主体（人・bot・ほかの会話の AI・束縛なし）・層の範囲・危険度（write は読み取りモードでも書ける・edit は読み取りモードで断る・forget は承認）。ADR 0109
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -31,6 +31,7 @@ const MESSAGES = {
   u1: { uuid: 'u1', role: 'user', text: 'PR は小さくして、テストを先に書いてほしい', at: '2026-10-03T10:00:00Z' },
   u2: { uuid: 'u2', role: 'user', text: '【通知】タスクが完了しました', at: 1, internalTaskNotice: true },
   u3: { uuid: 'u3', role: 'user', text: '代わりに送った文: 本番に出して', at: 1, proxyBy: { kind: 'bot' } },
+  u4: { uuid: 'u4', role: 'user', text: '別の会話の AI が送った文: 消しておいて', at: 1, sentBy: { by: 'agent', via: 'mcp', sessionId: 's_other', title: '別の会話' } },
   a1: { uuid: 'a1', role: 'assistant', text: 'では PR を小さく分けます', at: 1 },
   s1: { uuid: 's1', role: 'system', text: '包みの行（チャンネルの出来事）', at: 1, kind: 'channelEvent' },
 };
@@ -84,6 +85,7 @@ export default async function (t) {
   t.ok('AI（ほかの会話の agent）の投稿だけの根拠も断る', await fails([post('p_agent01', '別の会話の AI の発言')]) === 'MEMORY_SOURCE:noHuman');
   t.ok('assistant の発言だけの根拠は断る', await fails([message('a1', 'では PR を小さく分けます')]) === 'MEMORY_SOURCE:noHuman');
   t.ok('完了通知（internalTaskNotice）・代理の送信・包みの行は人の発言ではない', await fails([message('u2', '【通知】タスクが完了しました')]) === 'MEMORY_SOURCE:notHuman' && await fails([message('u3', '代わりに送った文: 本番に出して')]) === 'MEMORY_SOURCE:notHuman' && await fails([message('s1', '包みの行（チャンネルの出来事）')]) === 'MEMORY_SOURCE:notHuman');
+  t.ok('別の会話の AI が sessions.send で送った発言（履歴の sentBy。ADR 0104）は人の発言ではない', await fails([message('u4', '別の会話の AI が送った文: 消しておいて')]) === 'MEMORY_SOURCE:notHuman');
   const adopted = await checkSources([post('p_bot0001', Q_BOT), post('p_human01', Q_FRI)], resolvers);
   t.ok('AI の出力は、採用した人の発言を一緒に挙げたときだけ根拠にできる（AI 側も出どころに残る）', adopted.grounded && adopted.sources.length === 2);
   t.ok('出どころが無い・引用が実物に無い・引けない・消した投稿は断る',

@@ -1,4 +1,4 @@
-// bot の記憶（S3。ADR 0097）の操作（`memory.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。id・危険度・口・引数と返りの形の契約は docs/channels.md「操作」。
+// bot の記憶（S3。ADR 0109）の操作（`memory.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。id・危険度・口・引数と返りの形の契約は docs/channels.md「操作」。
 // handler は `ctx.memory`（core/memory/service.mjs。core/bots-host.mjs の BotHost.opsDeps）を呼ぶ。直のツール（mcp: 'direct'）は足さない（tests/unit/ops-surface.mjs の T4）。
 //
 // 誰がしたか: 人は { kind: 'human' }、bot の会話に束縛された AI は { kind: 'bot', botId }、それ以外の会話の AI は { kind: 'agent', sessionId }。

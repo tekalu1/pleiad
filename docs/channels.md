@@ -1,6 +1,6 @@
 # Channels・bot・記憶・ルーティン
 
-bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集まる Channels、定期の仕事のルーティンの、**今の動きと各モジュールの契約**。決めた理由は ADR 0093〜0101（[0093](adr/0093-bots-channels-routines.md) 全体、[0094](adr/0094-side-chats-channels-tabs.md) 脇のタブ、[0095](adr/0095-channel-posts-source-of-truth.md) 投稿の正本、[0096](adr/0096-bot-and-dispatch.md) bot と起こし方、[0097](adr/0097-bot-memory.md) 記憶、[0098](adr/0098-thread-spatial-model.md) スレッドの空間モデル、[0099](adr/0099-routines.md) ルーティン、[0100](adr/0100-webhook-receiver.md) webhook、[0101](adr/0101-send-on-your-behalf.md) 代わりに送る）。
+bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集まる Channels、定期の仕事のルーティンの、**今の動きと各モジュールの契約**。決めた理由は ADR 0105〜0113（[0105](adr/0105-bots-channels-routines.md) 全体、[0106](adr/0106-side-chats-channels-tabs.md) 脇のタブ、[0107](adr/0107-channel-posts-source-of-truth.md) 投稿の正本、[0108](adr/0108-bot-and-dispatch.md) bot と起こし方、[0109](adr/0109-bot-memory.md) 記憶、[0110](adr/0110-thread-spatial-model.md) スレッドの空間モデル、[0111](adr/0111-routines.md) ルーティン、[0112](adr/0112-webhook-receiver.md) webhook、[0113](adr/0113-send-on-your-behalf.md) 代わりに送る）。
 
 **今の状態:** つなぎ目と空の入れ物まで（脇の Chats / Channels の 2 タブ・空の `#channelsView`・各モジュールの工場）。チャンネル・bot・記憶・ルーティンの中身は、段ごとに入る（下の「モジュールと持ち主」）。
 
@@ -21,7 +21,7 @@ bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集
 
 - 新しいファイルは `{ version: 1 }` を持つ。読めない版は読み込まずに画面へ出して止める。`DATA_SCHEMA` は上げない。
 - id は `core/channels/types.mjs` の `newId(kind)`（`c_` `p_` `b_` `m_` `r_` `h_` `i_`）。
-- 会話（sessions.json）の新しい欄: `bot`（`SessionBot`。botId・種類・チャンネル・スレッド・記憶の進み）と `proxySends`（P3。代わりの送信の見分け）。使用量の記録（usage.json）に `sessionId`（足す前の分は無い）。一覧の行（`sessionRow`）に `bot: { botId, kind, channelId, threadId } | null`。
+- 会話（sessions.json）の新しい欄: `bot`（`SessionBot`。botId・種類・チャンネル・スレッド・記憶の進み）と `proxySends`（使わない。代わりの送信の見分けは `sessions.send` の `relayed`。P3 の X1 で許可リストから外す。[ADR 0113](adr/0113-send-on-your-behalf.md)）。使用量の記録（usage.json）に `sessionId`（足す前の分は無い）。一覧の行（`sessionRow`）に `bot: { botId, kind, channelId, threadId } | null`。
 - 会話の言語・題・モード・モデル・エフォートは普通のセッションと同じ（委譲の子の作り方 `prepare` と同じ手順）。
 
 ## モジュールと持ち主
@@ -91,9 +91,9 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 | `routines.update` | write（頻度を上げる・モードを強くする・対象を広げる向きだけ guarded） | `riskExamples` を書く |
 | `routines.pause` / `resume` / `run` / `delete` | write / guarded / guarded / guarded | `run` は `dryRun?`。消す操作は guarded |
 | `routines.rotateSecret` | human-only | P3 |
-| `sessions.send` | write | P3。AI 全般が使える（bot だけの操作にしない）。`{ sessionId, text, reason? }`。bot に束縛された主体のときだけ `sendToOthers`・`sendTargets` を追加で確かめる。別の作業が先に定義したらそれを正とする |
+| `sessions.send` | write（宛先が強いと guarded） | 定義は `core/ops/conversations.mjs`（[ADR 0104](adr/0104-send-to-another-conversation.md)）。bot の分は P3 の X1: 主体が bot に束縛された会話のときだけ、強さの比べ方の後で `sendToOthers`・`sendTargets` を追加で確かめ、送り手の `sentBy` に bot の `name`・`icon` を足す（[ADR 0113](adr/0113-send-on-your-behalf.md)） |
 
-記憶のサービス（`createMemoryService`）の `turnContext({ bot, session, sessionId?, incomingText, now?, locale? })` は `{ notes, memRev, delivered, snapshotDue }` を返す。dispatch は返りを sidecar の `bot.memRev`・`bot.delivered`・`bot.snapshotDue` に書き戻す（`snapshotDue` は核の写しを渡したら false）。`sessionId` を渡すと、その会話が自分で書いた記憶（履歴に tool の結果がある）を差分で繰り返さない。途中送信（steer）では呼ばない。失敗の code は `MEMORY_SOURCE`・`MEMORY_REJECTED`・`MEMORY_NOT_FOUND`、理由は辞書 `agent:memory.reason.*`。索引は `node:sqlite` を読み込めない・壊れているときはメモリ上の走査に切り替わる（`AGENT_HOST_MEMORY_NO_SQLITE=1` で読み込めない状態を作れる）。核の写し（`pickCore`）は、層ごとの目安（1200 トークン）の中で、**人が書いた・人が直した記憶（`by.kind === 'human'`）を先に、bot・AI が書いたものを後に**入れる（それぞれ新しい更新から。書き込みを重ねる bot が新しさで人の古い記憶を押し出せない）。`log.jsonl` の追記は、最後の行が改行で終わっていなければ先に改行を足す（壊れた最後の行の後ろに次の記録をつなげて失わない。チャンネルの `.jsonl` と同じ）。同じ文の同時の書き込みは `store.add` の直列化の中でも重複を確かめる。出どころの検査が効くのは `memory.write` を通る書き込みだけで、データ置き場の `memory/*.md` をファイルとして直接書ける bot（全部自動のモード）には効かない（`sync` が「人の変更」として記録する。[ADR 0097](adr/0097-bot-memory.md)）。
+記憶のサービス（`createMemoryService`）の `turnContext({ bot, session, sessionId?, incomingText, now?, locale? })` は `{ notes, memRev, delivered, snapshotDue }` を返す。dispatch は返りを sidecar の `bot.memRev`・`bot.delivered`・`bot.snapshotDue` に書き戻す（`snapshotDue` は核の写しを渡したら false）。`sessionId` を渡すと、その会話が自分で書いた記憶（履歴に tool の結果がある）を差分で繰り返さない。途中送信（steer）では呼ばない。失敗の code は `MEMORY_SOURCE`・`MEMORY_REJECTED`・`MEMORY_NOT_FOUND`、理由は辞書 `agent:memory.reason.*`。索引は `node:sqlite` を読み込めない・壊れているときはメモリ上の走査に切り替わる（`AGENT_HOST_MEMORY_NO_SQLITE=1` で読み込めない状態を作れる）。核の写し（`pickCore`）は、層ごとの目安（1200 トークン）の中で、**人が書いた・人が直した記憶（`by.kind === 'human'`）を先に、bot・AI が書いたものを後に**入れる（それぞれ新しい更新から。書き込みを重ねる bot が新しさで人の古い記憶を押し出せない）。`log.jsonl` の追記は、最後の行が改行で終わっていなければ先に改行を足す（壊れた最後の行の後ろに次の記録をつなげて失わない。チャンネルの `.jsonl` と同じ）。同じ文の同時の書き込みは `store.add` の直列化の中でも重複を確かめる。出どころの検査が効くのは `memory.write` を通る書き込みだけで、データ置き場の `memory/*.md` をファイルとして直接書ける bot（全部自動のモード）には効かない（`sync` が「人の変更」として記録する。[ADR 0109](adr/0109-bot-memory.md)）。
 
 ## WS の出来事（`core/protocol.mjs` の `EVENTS`）
 
@@ -140,7 +140,7 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 
 ## bot を起こす・配る（`core/bots/dispatch.mjs`・`inbox.mjs`。S4）
 
-**起こす規則**（[ADR 0096](adr/0096-bot-and-dispatch.md)）。`channels.post` の後（`ChannelService.hooks.posted`）に `dispatch.onPosted` が宛先を決める。ターンの投稿（`post.turn`）では起こさない。
+**起こす規則**（[ADR 0108](adr/0108-bot-and-dispatch.md)）。`channels.post` の後（`ChannelService.hooks.posted`）に `dispatch.onPosted` が宛先を決める。ターンの投稿（`post.turn`）では起こさない。
 - 起こすのは本文の**明示の `@名前`** だけ（人・bot・Chats の AI の投稿。システム・ルーティンの投稿は起こさない）。自分自身への `@` は数えない。bot がチャンネルのメンバーかは見ない。
 - チャンネルの流れ（スレッドの外）の投稿で `@` されたら、その投稿を根にスレッドを作る。スレッドの中の投稿は、そのスレッドの bot の会話（`ThreadState.sessions[botId]`。無ければ `bots.createSession` で作って登録）へ。
 - DM は人の投稿がすべてその bot 宛て（`@` 不要。会話は `bots.ensureDmSession` の 1 本）。DM の中の他の bot への `@` は起こさない（DM は 1 対 1）。

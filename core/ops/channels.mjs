@@ -1,4 +1,4 @@
-// チャンネルと投稿・リアクション・スレッド（S1。ADR 0095）の操作（`channels.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。
+// チャンネルと投稿・リアクション・スレッド（S1。ADR 0107）の操作（`channels.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。
 // id・危険度・口・引数と返りの形の契約は docs/channels.md「操作」。handler は `ctx.channels`（core/bots-host.mjs の BotHost.opsDeps）を呼ぶ。
 // 直のツール（mcp: 'direct'）は足さない（tests/unit/ops-surface.mjs の T4）。bot の道具（投稿・リアクション）も list_ops / call_op から呼ぶ。
 //
@@ -9,7 +9,7 @@
 // post・react・stopThread は modeGate: false（読み取り・計画モードの bot も返事・リアクション・停止はできる）。
 // AI が作業場所（cwd）を決める・変えるのは riskOf で guarded（フォルダーを持たない bot の作業場所になるので、bots.update のフォルダーと同じ重さ）。
 // post は、投稿の主体が AI（bot を含む）で、@ の宛先の bot の承認モードが主体の会話より強い（範囲・自律のどちらかが上）ときは、投稿は残すが起こさず、
-// channels.wake（guarded。「<bot> は <モード> で動きます。起こしますか」の承認カード）を出す。人の投稿・同じか弱い bot への @ は確認なし。呼び合いの回数の上限は置かない（ADR 0096）。
+// channels.wake（guarded。「<bot> は <モード> で動きます。起こしますか」の承認カード）を出す。人の投稿・同じか弱い bot への @ は確認なし。呼び合いの回数の上限は置かない（ADR 0108）。
 // bot の会話に束縛された post は、threadId を省くとその会話のスレッド。チャンネルの流れへ書くのは threadId: null と new: true を一緒に渡したときだけ。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
@@ -156,7 +156,7 @@ export const channelOps = [
 
   defineOp({
     id: 'channels.post', summary: D('post', 'summary'), risk: 'write', modeGate: false,
-    riskReason: 'Writing a message in a channel is what a human and a bot are for, so it is allowed even from a read-only or plan-mode bot. It only adds a post; an explicit @ may wake another bot, which runs in that bot\'s own approval mode (ADR 0096)',
+    riskReason: 'Writing a message in a channel is what a human and a bot are for, so it is allowed even from a read-only or plan-mode bot. It only adds a post; an explicit @ may wake another bot, which runs in that bot\'s own approval mode (ADR 0108)',
     input: z.object({
       channelId: channelId('post'),
       threadId: z.string().min(1).nullable().optional().describe(D('post', 'threadId')),
@@ -250,7 +250,7 @@ export const channelOps = [
   defineOp({
     id: 'channels.markRead', summary: D('markRead', 'summary'), risk: 'write',
     riskReason: 'Moves the read position of a channel forward (never back). It only changes unread badges and does not touch any post',
-    input: z.object({ channelId: channelId('markRead'), at: z.number().int().min(0).optional().describe(D('markRead', 'at')) }),
+    input: z.object({ channelId: channelId('markRead'), at: z.number().int().positive().optional().describe(D('markRead', 'at')) }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'mark-read'], positional: ['channelId'] } },
     // at は今を超えない（既読の位置は進める向きにしか動かないので、未来の時刻を 1 回入れられると、そのチャンネルの未読の印が二度と付かなくなる）

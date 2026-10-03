@@ -1,4 +1,4 @@
-// 記憶の正本（core/memory/store.mjs。ADR 0097）: markdown の読み書き・手で壊した行・手書きの直しの記録・墓石・rev・再起動。
+// 記憶の正本（core/memory/store.mjs。ADR 0109）: markdown の読み書き・手で壊した行・手書きの直しの記録・墓石・rev・再起動。
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';

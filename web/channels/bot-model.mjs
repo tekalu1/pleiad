@@ -1,4 +1,4 @@
-// bot のページの、DOM に触れない決まりごと（テストから直接呼ぶ。ADR 0096・docs/channels.md）。
+// bot のページの、DOM に触れない決まりごと（テストから直接呼ぶ。ADR 0108・docs/channels.md）。
 // 画面の部品は bot-page.mjs・memory-list.mjs。
 
 /** 読み書きの範囲を限れないモードか。範囲 full（Claude の YOLO・Antigravity の yolo・Codex の sandbox なしの yolo）だけ。

@@ -1,4 +1,4 @@
-// bot・Channels・ルーティンを束ねて、core/server.mjs に「つなぎ目（seam）」を出す工場（ADR 0093〜0101、docs/channels.md）。
+// bot・Channels・ルーティンを束ねて、core/server.mjs に「つなぎ目（seam）」を出す工場（ADR 0105〜0113、docs/channels.md）。
 // server.mjs が触るのはここの返り（BotHost）だけ。各パッケージは自分のモジュールを埋め、server.mjs・client.mjs には触らない。
 //
 //   createBotHost(deps) → BotHost

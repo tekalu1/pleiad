@@ -1,4 +1,4 @@
-// bot の会話は Chats の一覧に出さず、あなた待ち（承認・質問）のときだけ出す（ADR 0096、docs/channels.md）。
+// bot の会話は Chats の一覧に出さず、あなた待ち（承認・質問）のときだけ出す（ADR 0108、docs/channels.md）。
 // 一覧に出さない判定の材料（一覧の行の bot・承認待ち）と、検索の除外（includeDelegated で含める）、スマホ通知（完了は送らず、失敗・承認は送る）を、
 // fake バックエンドのサーバー → 中継 → 端末の代わりの Node のクライアントで通す。LLM もネットワークも使わない。
 import fs from 'node:fs/promises';

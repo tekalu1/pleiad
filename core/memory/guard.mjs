@@ -1,4 +1,4 @@
-// 記憶に書く内容と出どころの検査（ADR 0097）。AI が書く記憶は、人が承認する段を持たない代わりに、ここでコードが断る。
+// 記憶に書く内容と出どころの検査（ADR 0109）。AI が書く記憶は、人が承認する段を持たない代わりに、ここでコードが断る。
 //   本文: 300 字まで・1 行・URL・コマンドらしい文・「前の指示を無視」型・包みの開閉タグ・忘れた記憶と同じ内容（墓石）は断る（MEMORY_REJECTED）
 //   出どころ: 人の発言を 1 つ以上含むこと。チャンネルの人の投稿（taint の無いもの）か、Chats の user の行（完了通知・代理の送信・包みの行でないもの）。
 //     AI の出力（bot・agent の投稿、assistant の発言）は、それを採用した人の発言を一緒に挙げたときだけ根拠にできる。
@@ -90,9 +90,10 @@ async function verifyOne(src, resolvers) {
     if (!includesQuote(msg.text, quote)) return { problem: 'quote' };
     const at = typeof msg.at === 'number' ? msg.at : Date.parse(msg.at ?? '');
     const stored = { kind: 'message', sessionId: src.sessionId, messageId: src.messageId, quote, at: Number.isFinite(at) ? at : 0 };
-    // 委譲の子・bot・ルーティンの会話の最初の user の行は、親の AI・仕組みが書いた依頼で、人の発言ではない
+    // 委譲の子・bot・ルーティンの会話の最初の user の行は、親の AI・仕組みが書いた依頼で、人の発言ではない。
+    // 完了通知・別の会話の AI が送った発言（sessions.send の sentBy。ADR 0104・0113）も人の発言ではない
     if (msg.role === 'user' && msg.origin && msg.firstUser) return { problem: 'notHuman' };
-    if (msg.role === 'user' && !msg.kind && !msg.internalTaskNotice && !msg.proxyBy && !msg.proxy) return { kind: 'human', source: stored };
+    if (msg.role === 'user' && !msg.kind && !msg.internalTaskNotice && !msg.sentBy && !msg.proxyBy && !msg.proxy) return { kind: 'human', source: stored };
     if (msg.role === 'assistant' && !msg.kind) return { kind: 'ai', source: stored };
     return { problem: 'notHuman' };
   }

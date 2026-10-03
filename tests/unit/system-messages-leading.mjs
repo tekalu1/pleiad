@@ -1,5 +1,5 @@
 // bot の会話の user の行の先頭に付く包み（<pleiad-interruption>・<pleiad-memory-core>・<pleiad-turn-context>・<pleiad-channel-thread>・<pleiad-channel>）の
-// 組み立て（core/channels/types.mjs）と剥がし（core/system-messages.mjs の splitLeadingNotes）。ADR 0053・0096・0097。
+// 組み立て（core/channels/types.mjs）と剥がし（core/system-messages.mjs の splitLeadingNotes）。ADR 0053・0108・0109。
 import crypto from "node:crypto";
 import { splitLeadingNotes, classifySystemMessages, splitInterruptionNotes } from "../../core/system-messages.mjs";
 import { prepareMessages } from "../../core/history.mjs";

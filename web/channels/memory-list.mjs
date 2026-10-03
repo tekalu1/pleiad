@@ -1,4 +1,4 @@
-// 記憶の一覧（bot のページの右。ADR 0097・docs/channels.md「記憶」）。2 層: あなたについて（全 bot 共通）と、この bot だけ。
+// 記憶の一覧（bot のページの右。ADR 0109・docs/channels.md「記憶」）。2 層: あなたについて（全 bot 共通）と、この bot だけ。
 // 各行に本文と出どころ（押すとその投稿・会話へ）と［直す］［忘れる］。凝った編集画面は作らず、その場で書き換える。
 // 忘れたら 12 秒の「元に戻す」の帯（memory.forget は墓石を残すので、戻すのは memory.unforget）。
 // 操作はすべて memory.* の op を host.invoke で呼ぶ。更新は memoryChanged（呼び出し側が refresh する）。

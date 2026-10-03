@@ -1,5 +1,5 @@
 // チャンネル・bot・記憶・ルーティンのデータの形（契約）と、id の作り方・発言者の検査・bot の会話へ渡す包みの組み立て。
-// 正本は docs/channels.md（今の動き）と ADR 0093〜0101。SDK も DOM も import しない純粋な部品。
+// 正本は docs/channels.md（今の動き）と ADR 0105〜0113。SDK も DOM も import しない純粋な部品。
 // 各パッケージ（channels / bots / memory / routines）はこの形に従い、形を変えるときはここと docs を直す。
 //
 // 置き場（<data> = AGENT_HOST_DATA）:
@@ -50,7 +50,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
 
 /** @typedef {{
  *   channelId: string, threadId: string,
- *   sessions: { [botId: string]: string },                // スレッドごと・bot ごとの会話（ADR 0096）
+ *   sessions: { [botId: string]: string },                // スレッドごと・bot ごとの会話（ADR 0108）
  *   state: 'idle'|'working'|'waiting'|'failed',
  *   tokens: { input: number, output: number, cached: number },  // このスレッドの bot の会話の合計（usage の出来事から）
  *   calls: number,                                        // bot が起こされた回数（表示だけ。上限には使わない）
@@ -65,7 +65,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   mode: string,                                         // core/backends/*.mjs の MODES の id。Antigravity は 'yolo' だけ。変えるのは bots.setMode（human-only）だけ
  *   folders: { path: string, access: 'rw'|'ro' }[],       // 先頭が既定の作業場所。書き込みの範囲を限れないモードでは「すべてのフォルダー」。bots.update の欄（足すのは広げる向き = guarded）
  *   sendToOthers: boolean,                                // 既定 true（P3 の sessions.send。bot に束縛された主体のときだけ確かめる。ON にするのは広げる向き = bots.update が guarded）
- *   sendTargets: string[],                                // P3。送れる会話（人が示した会話・その bot 自身が作った会話。ADR 0101）
+ *   sendTargets: string[],                                // P3。送れる会話（人が示した会話・その bot 自身が作った会話。ADR 0113）
  *   dmChannelId: string, dmSessionId: string|null,
  *   createdAt: number, updatedAt: number }} Bot */
 

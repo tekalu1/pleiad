@@ -1,4 +1,4 @@
-// スレッドの状態（ThreadState）の保存（S1。ADR 0096）。<data>/channels/threads.json = { version: 1, threads: { [channelId/rootPostId]: ThreadState } }。
+// スレッドの状態（ThreadState）の保存（S1。ADR 0108）。<data>/channels/threads.json = { version: 1, threads: { [channelId/rootPostId]: ThreadState } }。
 // スレッドの本体（投稿）は channels/<channelId>.jsonl。ここにあるのは「どの bot がどの会話で・作業中か・トークン・止めた印」だけ。
 //
 //   createThreadStore({ dir, now }) → { get, list, update, load }

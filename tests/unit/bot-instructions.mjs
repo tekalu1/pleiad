@@ -1,4 +1,4 @@
-// bot の人格の文と触れてよいフォルダーを、3 つのバックエンドへ渡す形（ADR 0096）。LLM も本物の CLI も呼ばない（tests/unit/control-delivery.mjs と同じ作り）:
+// bot の人格の文と触れてよいフォルダーを、3 つのバックエンドへ渡す形（ADR 0108）。LLM も本物の CLI も呼ばない（tests/unit/control-delivery.mjs と同じ作り）:
 //   - 人格の文は決定的（毎ターン同じバイト列。時刻・件数を入れない）で、人格・名前・アイコンを直したときだけ変わる
 //   - Claude: systemPrompt.append の最後・additionalDirectories。Codex: developerInstructions の最後・sandboxPolicy の writableRoots。
 //     Antigravity: エージェント定義の本文・--add-dir と、人格のハッシュによる起こし直しの判定（別プロセス）

@@ -1,4 +1,4 @@
-// 投稿の本文の明示的な @ の解析（ADR 0096。S1）。投稿の時点で botId に解き、Post.mentions に保存する（あとで名前が変わっても壊れない）。
+// 投稿の本文の明示的な @ の解析（ADR 0108。S1）。投稿の時点で botId に解き、Post.mentions に保存する（あとで名前が変わっても壊れない）。
 // 暗黙の宛先（DM・スレッドで作業中の bot）は ここでは扱わない（S4 の dispatch が決める）。
 //
 //   parseMentions(text, bots) → { mentions: string[], botIds: string[], you: boolean }

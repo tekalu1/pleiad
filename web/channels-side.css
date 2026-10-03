@@ -1,4 +1,4 @@
-/* ==================== 脇の Chats / Channels（web/channels/side-tabs.mjs、ADR 0094） ====================
+/* ==================== 脇の Chats / Channels（web/channels/side-tabs.mjs、ADR 0106） ====================
    切り替えは html.side-channels（脇）と body.channels（メイン）。見えているのは片側だけで、見ていない側の札に点を付ける。
    面は --surface-*、字は --ink-*、枠線は使わない（選んでいる札は面の持ち上がりで示す） */
 

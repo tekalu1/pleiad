@@ -1,4 +1,4 @@
-// チャンネルの保存と操作（S1。ADR 0095）。core/ops/channels.mjs の handler は `ctx.channels` としてこれを呼ぶ。
+// チャンネルの保存と操作（S1。ADR 0107）。core/ops/channels.mjs の handler は `ctx.channels` としてこれを呼ぶ。
 // 形の正本は core/channels/types.mjs。保存は store.mjs（index.json・<channelId>.jsonl）と threads.mjs（threads.json）。
 //
 // createChannelService({ dir, emit, hooks, now, listBots }) → ChannelService
@@ -31,7 +31,7 @@
 //        … hold: 起こさない bot の id の配列（ops の channels.post が、動くモードが投稿の主体より強い宛先を入れる。空でも渡せば「確認済み」）。
 //          origin: { channelId, threadId }（bot が自分のスレッドからチャンネルの流れへ書いた投稿。起こして新しくできるスレッドの ThreadState.origin になる）。どちらも保存せず、posted の extra へ渡すだけ
 //        … mentions を渡さなければ text から解く。author が bot で new が無く、同じスレッドにその bot の作業中（state: working）のターンの投稿があれば、
-//          新しい投稿を作らずにその投稿の本文を置き換える（進捗のチェックリスト。ADR 0096）。人の投稿は、そのスレッドの stopped を外す
+//          新しい投稿を作らずにその投稿の本文を置き換える（進捗のチェックリスト。ADR 0108）。人の投稿は、そのスレッドの stopped を外す
 //   edit({ channelId, postId, text?, state?, presents?, mentions? }, author): Promise<Post>      … 自分の投稿だけ（検査は ops）。text を変えたら mentions も解き直す
 //   remove({ channelId, postId }, author): Promise<void>
 //   react({ channelId, postId, emoji, on }, author): Promise<{ reactions: Post['reactions'] }>
@@ -51,7 +51,7 @@ import { createThreadStore, emptyThread } from './threads.mjs';
 import { parseMentions } from './mentions.mjs';
 
 export const LIMITS = Object.freeze({ name: 60, purpose: 300, memo: 4000, cwd: 1000, text: 20000, members: 50, reactionKinds: 30, readDefault: 50, readMax: 100, searchDefault: 20, searchMax: 50 });
-/** 作業中の投稿の更新を全接続へ配る間隔（ms。ADR 0095。リモートの端末の通信量のため） */
+/** 作業中の投稿の更新を全接続へ配る間隔（ms。ADR 0107。リモートの端末の通信量のため） */
 export const WORKING_EDIT_INTERVAL_MS = 1000;
 
 export class ChannelError extends Error {
