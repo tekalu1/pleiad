@@ -124,7 +124,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
   "table": { "trivial": ["t1", "t1", "t2"], … } }                               // low・mid・high の段
 ```
 
-画面（委譲カード・設定 › 委譲。design-system.md）が使う WebSocket のコマンド（`core/protocol.mjs`）: `delegationRouting { refresh? }`（設定・既定値・一覧・キーの `hasKey`・秘密の置き場の状態・今のモデル一覧に無い候補と使えないバックエンド `warnings`・候補ごとの今の使用量と使えるかどうか `candidates`）、`setDelegationRouting { settings }`、`setDelegationRoutingKey { service, key }`・`deleteDelegationRoutingKey { service }`（`service` は `openrouter`（Jev）/ `cerebras`）。変わったら `delegationRoutingChanged` イベント（`change: 'settings'`）。使用量の取り直しが終わったときは同じイベントの `change: 'usage'`。種類のない旧イベントは設定の変更として扱える。設定保存は使用量の取得を待たない。自動選択をオンにしたとき、または使用量をまだ持たない候補を増やしたときだけ裏で取り直す。タスクごとの `routing` は `agentTasks` の各行（`running` の配信の `tasks` にも同じ形）。やり直しは `retryAgentTask`（上）。
+画面（委譲カード・設定 › 委譲。design-system.md）が使う WebSocket のコマンド（`core/protocol.mjs`）: `delegationRouting { refresh? }`（設定・既定値・一覧・キーの `hasKey`・秘密の置き場の状態・今のモデル一覧に無い候補と使えないバックエンド `warnings`・候補ごとの今の使用量と使えるかどうか `candidates`）、`setDelegationRouting { settings }`、`setDelegationRoutingKey { service, key }`・`deleteDelegationRoutingKey { service }`（`service` は `openrouter`（Jev）/ `cerebras`）。変わったら `delegationRoutingChanged` イベント（`change: 'settings'`）。使用量の取り直しが終わったときは同じイベントの `change: 'usage'`。種類のない旧イベントは設定の変更として扱える。設定保存は使用量の取得を待たない。自動選択をオンにしたとき、または使用量をまだ持たない候補を増やしたときだけ裏で取り直す。タスクごとの `routing` は `agentTasks` の各行（`running` の配信の `tasks` には載せない。下の「保存・画面・再起動」）。やり直しは `retryAgentTask`（上）。
 
 **鍵と外部送信。** 判定器のキーは互換の接続先と同じ秘密の置き場（`compat-endpoint-secrets.json`。`delegation-routing:openrouter` / `delegation-routing:cerebras`）に置き、画面には `hasKey` だけ返す。キーの中身は確かめない（確かめると登録の時点で外へ送ることになる）。キーをログ・タスク・会話の記録・エラーに出さない。**外部送信の同意はキーの登録**: キーが無ければ外へは何も送らず、難しさは `mid`。送り先の URL は固定で、リダイレクトは追わない。
 
@@ -139,7 +139,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 - **子への指示**（最初の依頼に足す。`agent:tasks.worktreeInstruction`）: 作業はこの作業場所の中だけ・元の場所の絶対パスに書かない・依存は入っていないので必要なら自分で入れる・終わったらこのブランチにコミットする。
 - **依頼元へ返す**: タスクの記録に `worktree`（上の形）と、完了時の状態 `workspace`（`{ state: unmerged | merged | empty | unknown, files, ahead, dirty, removed }`）。完了通知の結果の後に `作業場所: 分けた作業場所 <branch>（未取り込み · N ファイル）`（`agent:delegation.noticeWorkspace*`。取り込み済み・変更なしで片付けたものはその旨、もう無いものは「片付け済み」）。`ply_task_status` / `ply_task_wait` は今の状態の 1 行 `workspaceSummary` と構造 `workspace` を返す。
 - **片付け**: 子が終わったとき（変更なし・取り込み済みなら消す。子の会話の cwd は元の場所へ戻してから）・ターンの終わり・起動時・右パネルを開いたときに状態を見る。未取り込みは残り、右パネル「git」の「残っている作業場所」に出る（取り込みを頼む相手は依頼元の会話）。追加の指示（`ply_task_send`）で片付け済みの子が再開したときは、元の場所から新しい分けた作業場所を作り直す。
-- **一覧**: `running` の `tasks` の `worktree` に、台帳にまだあるか（`live`）。委譲カードの開いた内訳の「作業場所」は `⑂ 分けた作業場所 <branch>`、終わって取り込まれていなければ閉じた行の右端に「未取り込み」。
+- **一覧**: `agentTasks`（と `running` の `tasks`）の行の `worktree` に、台帳にまだあるか（`live`）。画面は作業場所が変わった（`worktreesChanged`）ら会話の分を読み直す。委譲カードの開いた内訳の「作業場所」は `⑂ 分けた作業場所 <branch>`、終わって取り込まれていなければ閉じた行の右端に「未取り込み」。
 
 子の作業場所の git の変更は、Pleiad が事実として依頼元へ返す（2026-10-03、[ADR 0085](adr/0085-host-reads-git-and-turn-snapshots.md)）。子のタスクの完了時に、子の会話の間（その会話の最初のターンの始まりの撮影から今まで）に変わったファイルかコミットがあれば、タスクの記録の `git`（`{ branch, detached, head, linked, files, add, del, commits }`）に持つ。完了通知の結果の後に 1 行 `変更: <branch> · N ファイル +a −d · コミット k`（`agent:delegation.noticeGit`。変更が無ければ載せない）を添え、`ply_task_status` / `ply_task_wait` は `git` と同じ 1 行の `gitSummary` を返す。人の画面では、委譲カードの内訳の「変更」の行（押すとその作業場所の右パネル「git」）。親は子の報告文を信じる代わりに、事実で確かめられる。
 
@@ -330,8 +330,12 @@ Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の�
 
 `AGENT_HOST_DATA/agent-tasks.json` にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）、実行前に拒否されたコマンド（`rejections`。伏せて切ったもの）、実行中コマンド（`activeCommands`）と通知済みの印、子の報告後に Pleiad が止めた裏の作業（`stoppedBackground`）を保存する。
 追加指示は各タスクの `instructions: [{ id, text, at, state }]` に受け付け順で保存する（[ADR 0044](adr/0044-task-instruction-delivery.md)）。`queue` は初回依頼の本文または `{ instructionId }` の FIFO。旧ファイルの文字列 `queue` は読み込み時に追加指示へ移し、初回依頼は区別する。`state` は `queued` → `sending` → `delivered`、受領前の再投入なら `queued`。途中送信で渡した指示は受け付け直後に `queue` から外して `sending` にし、渡れば `delivered`、渡らなければ `queued`（`queue` の先頭）へ戻る（「追加指示の配送」）。失敗・停止・再起動で待機中だったものは `dropped` として残す。子のターンに渡した `sending` は、中断や再起動でも `delivered` とし、実行の例外では渡る前に失敗したものとして `dropped` にする。件数上限は設けない。
-`ply_task_status` / `ply_task_list` は本文を含めず `pendingMessages` を保つ。4 秒ごとの `running` も待機件数と `instructionRevision` だけを含む。画面が選んだタスクの詳細を開くと `agentTaskInstructions` でそのタスクの本文を読み、まだ渡っていない指示を「追加の指示」の発言として示す（途中送信の合図待ち＝`sending` は会話の末尾の稼働表示の前に、メインパネルの作業中の送信と同じ状態の行「次の区切りで AI に渡します」つきで。渡れば子の履歴の user 発言に代わる。待機＝`queued` は末尾に時計の印で、未配送＝`dropped` は「✕ 届かずに終わった」を残す。画面は design-system.md「バックグラウンド」）。配送済みは子の通常の user 発言として履歴から描く。同じ本文を複数回送れるので、指示 ID・状態・配送順を使い、本文の一致では重複を判定しない。現状「会話として開く」の通常画面には待機中の指示を表示しない。
+`ply_task_status` / `ply_task_list` は本文を含めず `pendingMessages` を保つ。`running` も待機件数と `instructionRevision` だけを含む。画面が選んだタスクの詳細を開くと `agentTaskInstructions` でそのタスクの本文を読み、まだ渡っていない指示を「追加の指示」の発言として示す（途中送信の合図待ち＝`sending` は会話の末尾の稼働表示の前に、メインパネルの作業中の送信と同じ状態の行「次の区切りで AI に渡します」つきで。渡れば子の履歴の user 発言に代わる。待機＝`queued` は末尾に時計の印で、未配送＝`dropped` は「✕ 届かずに終わった」を残す。画面は design-system.md「バックグラウンド」）。配送済みは子の通常の user 発言として履歴から描く。同じ本文を複数回送れるので、指示 ID・状態・配送順を使い、本文の一致では重複を判定しない。現状「会話として開く」の通常画面には待機中の指示を表示しない。
 会話メタデータの `delegation` に親とタスク ID を、`routing` にどう選ばれたかを記録する。会話の分岐を表す `parent` とは別にする。
+`running`（全部の端末へ配る）の `tasks` は、終わっていないタスク（`queued`・`running`・`cancelling`）と、完了通知がまだ依頼元に届いていない（`notification` が `none`・`pending`・`delivering`）タスクだけの短い行（`agentTasks.running()`。題・状態・依頼元・子の会話・委譲先・モデル・時刻・通知・失敗の理由（500 字まで）・`pendingMessages`・`instructionRevision`・`worktree`・やり直しの元 `retryOf`）。依頼文・振り分けの記録・結果は載せない。
+以前は消さない全部の記録（依頼文と振り分けの記録付き）を載せていて、実データで 1 回 3.26MB になり、中継経由のスマホで帯域を埋めていた（2026-10-03）。
+委譲カードとバックグラウンドの一覧が使う過去のタスクは、画面が会話を開いたとき（つなぎ直したとき・一覧を開いたとき・作業場所が変わったときも）に `agentTasks { sessionId, tree: true }`（操作 `delegation.tasks` の `parentSessionId`・`tree`。子の会話がさらに委譲した子孫まで）でその会話の分だけを読み、`running` の行を重ねて使う（`web/task-cards.mjs`）。
+`running` に新しく現れた行と、`running` から外れた行（終わって通知が届いた）は `agentTasks { taskIds }` でその行だけを読み直す。`tree`・`taskIds` で読む行は結果の本文と拒否の記録を載せない（結果は `delegation.status`）。
 入力欄の上の「バックグラウンド N」（全件終了後は「バックグラウンド · 完了 M」。design-system.md「バックグラウンド」）で子の会話を読む・停止する・承認に答える。「会話として開く」で子の会話そのものへ移り、子からはヘッダーの「依頼元の会話」で戻れる。完了後も札と、依頼元の会話の `ply_delegate` のカードの「開く」から確認できる。
 
 保存は一意な名前の一時ファイルに書いてから置き換える（`core/atomic-file.mjs`。`conversations.json`・`conversations/`・`presents/` の書き直しも同じ）。

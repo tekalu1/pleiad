@@ -677,6 +677,8 @@
       "tasks": {
         "summary": "委譲の子のタスクの一覧を、新しい順に返す（依頼・結果の本文は載せない）。",
         "parentSessionId": "依頼元の会話の id で絞る。",
+        "tree": "parentSessionId と一緒に使う。子の会話がさらに委譲した子孫のタスクも含める。",
+        "taskIds": "このタスクの id だけを返す（最大 100）。",
         "status": "状態で絞る（queued・running・completed など）。",
         "limit": "返す件数（既定 20、最大 100）。"
       },
