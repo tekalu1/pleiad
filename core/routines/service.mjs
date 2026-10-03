@@ -227,7 +227,7 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
     if (bot) {
       const modes = modesOf(bot);
       let mode = next.mode;
-      if (input.mode !== undefined) mode = await resolveMode(bot, input.mode);
+      if (input.mode !== undefined && input.mode !== '') mode = await resolveMode(bot, input.mode);
       else if (modes && !modes[mode]) mode = await resolveMode(bot, '');
       if (mode !== cur.mode) {
         const curBot = await bots.get({ botId: cur.botId }).catch(() => null);

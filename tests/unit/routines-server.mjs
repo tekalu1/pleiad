@@ -146,6 +146,18 @@ export default async function (t) {
     t.ok('使い捨ての会話は計画（plan）のモード・bot の会話（kind: routine）で、試しの一文と指示を受け取って走った', dry.mode === 'plan' && dryRow?.bot?.kind === 'routine' && !dryRow.bot.threadId
       && JSON.stringify((await c.cmd('loadSession', { sessionId: dry.sessionId })).messages).includes('集計して'), JSON.stringify(dryRow));
 
+    // ---- 画面のシート（W5）の流れ: 一時停止の下書きを作る → 試しに動かす → 保存して再開する／取り消して消す
+    const draft = await call('routines.create', { name: 'echo:下書き', botId: owl.id, channelId: ops.id, prompt: '集計して', trigger: { kind: 'weekly', days: [1, 3], at: '09:00' }, mode: 'default', approvalTimeoutMin: 30, paused: true });
+    const listed = await call('routines.list', {});
+    t.ok('下書き（paused: true）は一時停止で作られ、次の実行は無い。list は { routines } で、各行は nextAt（無ければ null）を持つ', draft.paused === true && draft.nextAt === null && Array.isArray(listed.routines) && listed.routines.every((r) => 'nextAt' in r)
+      && listed.routines.find((r) => r.id === draft.id)?.trigger.days.join() === '1,3', JSON.stringify(draft));
+    const trialRun = await call('routines.run', { routineId: draft.id, dryRun: true });
+    t.ok('一時停止の下書きでも試しに動かせる（state・summary が返り、チャンネルに投稿しない）', trialRun.state === 'done' && trialRun.summary.length > 0 && trialRun.postId === null && (await roots(draft.id)).length === 0);
+    const resumedDraft = await call('routines.resume', { routineId: draft.id });
+    t.ok('［作る］の resume で有効になり、次の実行の時刻（nextAt）が付く（毎週・月・水の 9:00）', resumedDraft.paused === false && Number.isFinite(resumedDraft.nextAt) && [1, 3].includes(new Date(resumedDraft.nextAt).getDay()) && new Date(resumedDraft.nextAt).getHours() === 9, JSON.stringify(resumedDraft));
+    await call('routines.delete', { routineId: draft.id });
+    t.ok('消した後の get は ROUTINE_NOT_FOUND で失敗する', await call('routines.get', { routineId: draft.id }).then(() => null, (e) => e.code) === 'ROUTINE_NOT_FOUND');
+
     // ---- 消す: 実行の履歴のスレッドは残る
     const sizeBefore = (await roots()).length;
     await call('routines.delete', { routineId: every.id });

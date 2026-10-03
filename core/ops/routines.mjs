@@ -83,7 +83,7 @@ export const routineOps = [
       channelId: z.string().min(1).max(100).describe(D('create', 'channelId')),
       prompt: z.string().min(1).max(PROMPT_MAX).describe(D('create', 'prompt')),
       trigger,
-      mode: z.string().min(1).max(40).optional().describe(D('create', 'mode')),
+      mode: z.string().max(40).optional().describe(D('create', 'mode')),   // 空は「省略」（bot の今のモード）
       approvalTimeoutMin: z.number().int().min(1).max(APPROVAL_TIMEOUT_MAX_MIN).optional().describe(D('create', 'approvalTimeoutMin')),
       paused: z.boolean().optional().describe(D('create', 'paused')),
       reason: z.string().max(500).optional().describe(D('create', 'reason')),
@@ -112,7 +112,7 @@ export const routineOps = [
       channelId: z.string().min(1).max(100).optional().describe(D('update', 'channelId')),
       prompt: z.string().min(1).max(PROMPT_MAX).optional().describe(D('update', 'prompt')),
       trigger: trigger.optional(),
-      mode: z.string().min(1).max(40).optional().describe(D('update', 'mode')),
+      mode: z.string().max(40).optional().describe(D('update', 'mode')),   // 空は「変えない」
       approvalTimeoutMin: z.number().int().min(1).max(APPROVAL_TIMEOUT_MAX_MIN).optional().describe(D('update', 'approvalTimeoutMin')),
       reason: z.string().max(500).optional().describe(D('update', 'reason')),
     }),
