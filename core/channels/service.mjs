@@ -5,7 +5,8 @@
 //   dir      … <data>/channels
 //   emit     … (event) => void。channelsChanged・channelPost・channelReaction・channelThread・channelRead を出す（core/protocol.mjs の EVENTS。sessionId は付けなくてよい）
 //   hooks    … 他のモジュールへの逆向きの口。host が bots-host.mjs で配線する（呼ぶだけ。無ければ何もしない）
-//     posted(post, channel)       … 投稿を保存した後（待たない）。誰を起こすかは S4（dispatch.onPosted）が決める
+//     posted(post, channel, extra) … 投稿を保存した後（待たない）。誰を起こすかは S4（dispatch.onPosted）が決める。extra は post の hold・origin
+//                                    （hold があれば「承認の要る宛先を ops が決め済み」＝ checked。hold に入れた bot は起こさない）
 //     stopThread(args, author)    … [止める]（待つ。投げたら stopThread も投げる）。走っているターンを止めるのは S4（dispatch.stopThread）
 //   now      … テストで時計を差し替える
 //   listBots … async () => Bot[]。@ の解析（mentions.mjs）が名前を突き合わせるのに使う。無ければ bot の @ は解かない（'you' だけ）
@@ -26,7 +27,9 @@
 //   createDm({ bot }): Promise<Channel>                         … bot を作ったとき（S2 の bots.create が呼ぶ）。同じ bot の DM があればそれを返す
 //   update({ channelId, name?, purpose?, cwd?, members?, memo? }, author): Promise<Channel>
 //   archive({ channelId, on }, author): Promise<Channel>
-//   post({ channelId, threadId?, text, new?, state?, presents?, turn?, taint?, routine?, mentions? }, author): Promise<Post>
+//   post({ channelId, threadId?, text, new?, state?, presents?, turn?, taint?, routine?, mentions?, hold?, origin? }, author): Promise<Post>
+//        … hold: 起こさない bot の id の配列（ops の channels.post が、動くモードが投稿の主体より強い宛先を入れる。空でも渡せば「確認済み」）。
+//          origin: { channelId, threadId }（bot が自分のスレッドからチャンネルの流れへ書いた投稿。起こして新しくできるスレッドの ThreadState.origin になる）。どちらも保存せず、posted の extra へ渡すだけ
 //        … mentions を渡さなければ text から解く。author が bot で new が無く、同じスレッドにその bot の作業中（state: working）のターンの投稿があれば、
 //          新しい投稿を作らずにその投稿の本文を置き換える（進捗のチェックリスト。ADR 0096）。人の投稿は、そのスレッドの stopped を外す
 //   edit({ channelId, postId, text?, state?, presents?, mentions? }, author): Promise<Post>      … 自分の投稿だけ（検査は ops）。text を変えたら mentions も解き直す
@@ -35,6 +38,7 @@
 //   markRead({ channelId, at }): Promise<{ readAt: number }>      … 進める向きにだけ動く（別の端末が先に進めていたら戻さない）
 //   stopThread({ channelId, threadId }, author): Promise<ThreadState>
 //        … stopped: { by, at } を残して channelThread を出し、hooks.stopThread へ渡す（ターンを止める・システムの投稿は S4）
+//   mentionsOf(text): Promise<string[]>                          … text の @ を解いた bot の id（'you' も入る）。post の mentions と同じ解き方
 //   threads: { get(channelId, threadId): Promise<ThreadState|null>, list(channelId?): Promise<ThreadState[]>, update(channelId, threadId, patch | fn): Promise<ThreadState> }
 //        … update は threads.mjs と同じ。channelThread を出す
 //
@@ -293,7 +297,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       });
     },
 
-    async post({ channelId, threadId = null, text, new: forceNew = false, state, presents, turn, taint, routine, mentions }, author) {
+    async post({ channelId, threadId = null, text, new: forceNew = false, state, presents, turn, taint, routine, mentions, hold, origin }, author) {
       if (!isAuthor(author)) throw invalid('author is invalid');
       const channel = await need(channelId);
       if (channel.archivedAt) throw new ChannelError('CHANNEL_ARCHIVED', { id: channel.id });
@@ -327,7 +331,8 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
         const th = await threadStore.get(channelId, threadId);
         if (th?.stopped) emitThread(await threadStore.update(channelId, threadId, { stopped: null }));
       }
-      Promise.resolve().then(() => hooks.posted?.(clone(saved), clone(updated))).catch((e) => console.error('  channels: posted の後処理に失敗:', String(e?.message ?? e)));
+      const extra = { ...(Array.isArray(hold) ? { hold: [...hold], checked: true } : {}), ...(origin ? { origin: clone(origin) } : {}) };
+      Promise.resolve().then(() => hooks.posted?.(clone(saved), clone(updated), extra)).catch((e) => console.error('  channels: posted の後処理に失敗:', String(e?.message ?? e)));
       return saved;
     },
 
@@ -385,6 +390,8 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       await hooks.stopThread?.({ channelId, threadId }, clone(author));
       return (await threadStore.get(channelId, threadId));
     },
+
+    mentionsOf: (text) => resolveMentions(String(text ?? '')),
 
     threads: {
       get: (channelId, threadId) => threadStore.get(channelId, threadId),

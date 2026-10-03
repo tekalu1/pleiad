@@ -5,7 +5,7 @@
 //     get(channelId, threadId): Promise<ThreadState|null>
 //     list(channelId?): Promise<ThreadState[]>
 //     update(channelId, threadId, patch | (current) => patch): Promise<ThreadState>
-//         … 無ければ空のスレッドから作る。patch の欄: sessions（bot ごとに足す）・state・tokens（欄ごとに足し直す）・calls・stopped。
+//         … 無ければ空のスレッドから作る。patch の欄: sessions（bot ごとに足す）・state・tokens（欄ごとに足し直す）・calls・stopped・origin（{ channelId, threadId }。bot が自分のスレッドから起こして新しくできたスレッドの、起こした元。null で外す）。
 //           関数で渡すと、直列化された中で今の値（写し）を受け取って patch を返す（トークンの足し算など、読んでから書く更新はこちら）
 //   emptyThread(channelId, threadId, now) → ThreadState
 // 読めない版・壊れた JSON は、上書きせずに投げる（hooks.json と同じ方針。壊れたまま新しい状態で上書きしない）。
@@ -39,6 +39,10 @@ export function applyThreadPatch(current, patch, now) {
     for (const k of ['input', 'output', 'cached']) next.tokens[k] = num(patch.tokens[k], next.tokens[k]);
   }
   if (patch.calls !== undefined) next.calls = num(patch.calls, next.calls);
+  if (patch.origin !== undefined) {
+    if (patch.origin !== null && !(typeof patch.origin?.channelId === 'string' && patch.origin.channelId && typeof patch.origin?.threadId === 'string' && patch.origin.threadId)) throw new Error('origin must be null or { channelId: string, threadId: string }');
+    if (patch.origin === null) delete next.origin; else next.origin = { channelId: patch.origin.channelId, threadId: patch.origin.threadId };
+  }
   if (patch.stopped !== undefined) {
     if (patch.stopped !== null && !(isAuthor(patch.stopped?.by) && Number.isFinite(patch.stopped?.at))) throw new Error('stopped must be null or { by: Author, at: number }');
     next.stopped = patch.stopped;

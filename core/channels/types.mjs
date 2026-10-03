@@ -55,6 +55,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   tokens: { input: number, output: number, cached: number },  // このスレッドの bot の会話の合計（usage の出来事から）
  *   calls: number,                                        // bot が起こされた回数（表示だけ。上限には使わない）
  *   stopped: null | { by: Author, at: number },           // [止める]。人が次に書くまで新しく起こさない
+ *   origin?: { channelId: string, threadId: string },     // bot が自分のスレッドからチャンネルの流れへ @ を書いて新しくできたスレッドの、起こした元。[止める] は origin で結ばれた派生のスレッドにも届く
  *   updatedAt: number }} ThreadState */
 
 /** @typedef {{
@@ -81,7 +82,9 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   id: string, layer: 'user'|string,                     // 'user' か botId
  *   text: string, why?: string,
  *   sources: { kind: 'post'|'message', channelId?: string, postId?: string, sessionId?: string, messageId?: string, quote: string, at: number }[],
- *   at: number, updatedAt: number, by: Author }} MemoryEntry */
+ *   at: number, updatedAt: number,
+ *   by: Author,                                           // 今の本文を書いた者
+ *   origBy?: Author }} MemoryEntry */                     // 書き手が替わる直し（人の行を AI が直すなど）のとき、元の書き手（最初の者）
 
 /** @typedef {{
  *   id: string, name: string, botId: string, channelId: string, prompt: string,

@@ -3,9 +3,10 @@
 //
 // 危険度（ADR 0082。human-only は承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリングの 5 つだけ）:
 //   bots.list / get      read
-//   bots.create          write。agent（AI）が作るときは riskOf で guarded（承認カード）。作る bot は既定の弱い承認モード
-//   bots.update          write。権限を広げる向き（フォルダーを足す・rw にする・送る先を足す・他の会話へ送るを ON にする・backend を変えて承認モードが強くなる）は
-//                        riskOf で guarded。名前・アイコン・人格・モデル・エフォート・狭める向きは write
+//   bots.create          write。agent（AI）が作るときは riskOf で guarded（承認カード。作られる承認モードの行つき。backend の既定が弱くなければ loosens）
+//   bots.update          write。権限を広げる向き（フォルダーを足す・rw にする・送る先を足す・他の会話へ送るを ON にする・backend を変えて承認モードが強くなる）と、
+//                        agent が人格を変える（bot 自身の人格を含む。外から来た文に押された bot が人格を書き換える足場になる）のは riskOf で guarded。
+//                        名前・アイコン・人の人格の変更・モデル・エフォート・狭める向きは write
 //   bots.setMode         human-only。承認モード（Antigravity の bot は yolo だけ）。AI には存在しないのと同じに見える
 //   bots.delete          guarded（消す操作）。bot の会話は残り（Chats の一覧に戻る）、DM のチャンネルは archive
 import { z } from 'zod';
@@ -43,6 +44,9 @@ const botRow = z.object({
   state: z.enum(['idle', 'working', 'waiting']),
 });
 
+/** agent（bot 自身を含む AI）が人格を変えようとしているか。人格は毎ターン指示の最後に入るので、書き換えは権限を広げるのと同じ重さで承認にする */
+const personaByAgent = (ctx, plan) => ctx.principal?.by === 'agent' && plan.rows.some((r) => r.path === 'persona');
+
 /** 承認カードの bot の頭（受領証の元の before にも使う） */
 const clip = (s, n = 80) => { const a = [...String(s ?? '')]; return a.length > n ? `${a.slice(0, n - 1).join('')}…` : a.join(''); };
 
@@ -71,7 +75,7 @@ export const botOps = [
     id: 'bots.create',
     summary: 'agent:ops.bots.create.summary',
     risk: 'write',
-    riskReason: 'A new bot starts in the weakest approval mode with no folders; only a person can raise the mode (bots.setMode). When an AI creates one, riskOf raises it to guarded so the user approves it first',
+    riskReason: 'A new bot starts in the default approval mode of its backend (the weakest one that can write to its workspace and asks each time; Antigravity has only a fully automatic one) with no folders; only a person can raise the mode (bots.setMode). When an AI creates one, riskOf raises it to guarded so the user approves it first, and the card shows the mode it will start in',
     input: z.object({
       name: z.string().min(1).max(64).describe(D('create', 'name')),
       icon: z.string().max(32).optional().describe(D('create', 'icon')),
@@ -82,12 +86,17 @@ export const botOps = [
       reason: z.string().max(500).optional().describe(D('create', 'reason')),
     }),
     riskOf: (ctx) => (ctx.principal?.by === 'agent' ? 'guarded' : 'write'),
-    confirm: (_ctx, args) => ({
-      before: null, loosens: false,
-      rows: [{ path: 'name', before: null, after: args.name }, { path: 'icon', before: null, after: args.icon ?? '🤖' },
-        ...(args.backend ? [{ path: 'backend', before: null, after: args.backend }] : []),
-        ...(args.persona ? [{ path: 'persona', before: null, after: clip(args.persona) }] : [])],
-    }),
+    // 承認カードに、作られる承認モード（backend の既定）も出す。弱くないモード（Antigravity の yolo など）なら loosens
+    confirm: async (ctx, args) => {
+      const plan = await ctx.bots.planCreate(args).catch(() => null);
+      return {
+        before: null, loosens: Boolean(plan?.loosens),
+        rows: [{ path: 'name', before: null, after: args.name }, { path: 'icon', before: null, after: args.icon ?? '🤖' },
+          ...(args.backend ? [{ path: 'backend', before: null, after: args.backend }] : []),
+          ...(plan ? [{ path: 'mode', before: null, after: plan.label }] : []),
+          ...(args.persona ? [{ path: 'persona', before: null, after: clip(args.persona) }] : [])],
+      };
+    },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['bots', 'create'] } },
     handler: guarded(async (ctx, { reason: _reason, ...input }) => {
       const bot = await ctx.bots.create(input, ctx.principal?.by === 'agent' ? { kind: 'agent', sessionId: ctx.actor?.sessionId ?? '' } : { kind: 'human' });
@@ -99,7 +108,7 @@ export const botOps = [
     id: 'bots.update',
     summary: 'agent:ops.bots.update.summary',
     risk: 'write',
-    riskReason: 'Changing the name, icon, persona, model or effort, or narrowing the folders and send targets, only changes a bot definition. Widening what a bot can touch (adding a folder or send target, turning send-to-others on, a backend with a stronger approval mode) is raised to guarded by riskOf',
+    riskReason: 'Changing the name, icon, persona, model or effort, or narrowing the folders and send targets, only changes a bot definition. Widening what a bot can touch (adding a folder or send target, turning send-to-others on, a backend with a stronger approval mode) and an AI changing a persona (its own included, since text from outside could rewrite it) are raised to guarded by riskOf',
     input: z.object({
       botId: z.string().min(1).max(100).describe(D('update', 'botId')),
       name: z.string().min(1).max(64).optional().describe(D('update', 'name')),
@@ -113,9 +122,14 @@ export const botOps = [
       sendTargets: z.array(z.string().min(1).max(200)).max(100).optional().describe(D('update', 'sendTargets')),
       reason: z.string().max(500).optional().describe(D('update', 'reason')),
     }),
-    riskOf: async (ctx, args) => { try { return (await ctx.bots.planUpdate(args)).loosens ? 'guarded' : 'write'; } catch (e) { throw asOpError(ctx, e); } },
+    riskOf: async (ctx, args) => {
+      try {
+        const plan = await ctx.bots.planUpdate(args);
+        return plan.loosens || personaByAgent(ctx, plan) ? 'guarded' : 'write';
+      } catch (e) { throw asOpError(ctx, e); }
+    },
     confirm: async (ctx, args) => {
-      try { const plan = await ctx.bots.planUpdate(args); return { before: plan.before, rows: plan.rows, loosens: plan.loosens }; }
+      try { const plan = await ctx.bots.planUpdate(args); return { before: plan.before, rows: plan.rows, loosens: plan.loosens || personaByAgent(ctx, plan) }; }
       catch (e) { throw asOpError(ctx, e); }
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['bots', 'update'], positional: ['botId'] } },

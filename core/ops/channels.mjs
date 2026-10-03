@@ -7,11 +7,16 @@
 //   会話に束縛された AI                  → その会話が bot の会話なら { kind: 'bot', botId }、それ以外は { kind: 'agent', sessionId }
 //   会話に束縛されない CLI・外の MCP      → NEEDS_UI（人として書かせない。画面へ誘導）
 // post・react・stopThread は modeGate: false（読み取り・計画モードの bot も返事・リアクション・停止はできる）。
+// AI が作業場所（cwd）を決める・変えるのは riskOf で guarded（フォルダーを持たない bot の作業場所になるので、bots.update のフォルダーと同じ重さ）。
+// post は、投稿の主体が AI（bot を含む）で、@ の宛先の bot の承認モードが主体の会話より強い（範囲・自律のどちらかが上）ときは、投稿は残すが起こさず、
+// channels.wake（guarded。「<bot> は <モード> で動きます。起こしますか」の承認カード）を出す。人の投稿・同じか弱い bot への @ は確認なし。呼び合いの回数の上限は置かない（ADR 0096）。
+// bot の会話に束縛された post は、threadId を省くとその会話のスレッド。チャンネルの流れへ書くのは threadId: null と new: true を一緒に渡したときだけ。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { authorKey } from '../channels/types.mjs';
 import { ChannelError, LIMITS } from '../channels/service.mjs';
 import { OpError, defineOp } from './registry.mjs';
+import { strongerMode } from '../bots/approval.mjs';
 
 const D = (id, key) => `agent:ops.channels.${id}.${key}`;
 const channelId = (id) => z.string().min(1).describe(D(id, 'channelId'));
@@ -33,6 +38,26 @@ export async function authorOf(ctx) {
   if (!actor?.sessionId) throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI', { id: ctx.op?.id ?? 'channels' }));
   const bot = await ctx.botOfSession?.(actor.sessionId);
   return bot?.botId ? { kind: 'bot', botId: bot.botId } : { kind: 'agent', sessionId: actor.sessionId };
+}
+
+/** 束縛された会話が bot の会話なら、その sidecar の bot（botId・kind・channelId・threadId）。そうでなければ null */
+const boundBot = async (ctx) => (ctx.actor?.sessionId ? (await ctx.botOfSession?.(ctx.actor.sessionId)) ?? null : null);
+
+/** この投稿が起こす宛先の bot のうち、動く承認モードが投稿の主体の会話より強いものの id（確認が要る）。route（core/bots/dispatch.mjs）と同じ宛先の決め方 */
+async function strongTargets(ctx, channelId, text, author) {
+  if (!ctx.bots?.approvalOf || !ctx.channels.mentionsOf) return [];
+  const channel = await ctx.channels.get({ channelId }).catch(() => null);
+  if (!channel || channel.archivedAt) return [];
+  const ids = channel.kind === 'dm'
+    ? (author.kind === 'bot' || !channel.botId ? [] : [channel.botId])
+    : (await ctx.channels.mentionsOf(text)).filter((m) => m !== 'you' && m !== author.botId);
+  const subject = await ctx.modeOf?.(ctx.actor.sessionId);
+  const held = [];
+  for (const id of new Set(ids)) {
+    const target = await ctx.bots.approvalOf({ botId: id });
+    if (target && strongerMode(target.entry, subject)) held.push(id);
+  }
+  return held;
 }
 
 /** 自分の投稿だけ直せる・消せる（人は人の投稿、bot はその bot の投稿、AI はその会話の投稿） */
@@ -83,7 +108,7 @@ export const channelOps = [
 
   defineOp({
     id: 'channels.create', summary: D('create', 'summary'), risk: 'write',
-    riskReason: 'Creates an empty channel (a name, purpose, default folder and member list). It runs nothing by itself, and a human can create one too, so an agent is treated the same (ADR 0082)',
+    riskReason: 'Creates an empty channel (a name, purpose, default folder and member list). It runs nothing by itself, and a human can create one too, so an agent is treated the same (ADR 0082). An AI setting a default folder is raised to guarded by riskOf, because that folder becomes the working place of bots that have no folders of their own',
     input: z.object({
       name: z.string().trim().min(1).max(LIMITS.name + 1).describe(D('create', 'name')),
       purpose: z.string().max(LIMITS.purpose).optional().describe(D('create', 'purpose')),
@@ -91,12 +116,14 @@ export const channelOps = [
       members: z.array(z.string().min(1)).max(LIMITS.members).optional().describe(D('create', 'members')),
     }),
     output: z.unknown(),
+    riskOf: (ctx, args) => (ctx.principal?.by === 'agent' && args.cwd ? 'guarded' : 'write'),
+    confirm: (_ctx, args) => ({ before: null, loosens: true, rows: [{ path: 'name', before: null, after: args.name }, { path: 'cwd', before: null, after: args.cwd ?? null }] }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'create'], positional: ['name'] } },
     handler: async (ctx, args) => run(ctx, async () => ctx.channels.create(args, await authorOf(ctx))),
   }),
   defineOp({
     id: 'channels.update', summary: D('update', 'summary'), risk: 'write',
-    riskReason: 'Edits a channel\'s name, purpose, default folder, members or house rules. Members only decide who is listed there; waking a bot still needs an explicit @ in a post. A human can do the same, so an agent is treated the same (ADR 0082)',
+    riskReason: 'Edits a channel\'s name, purpose, default folder, members or house rules. Members only decide who is listed there; waking a bot still needs an explicit @ in a post. A human can do the same, so an agent is treated the same (ADR 0082), except that an AI changing the default folder is raised to guarded by riskOf: that folder becomes the working place of bots that have no folders of their own',
     input: z.object({
       channelId: channelId('update'),
       name: z.string().trim().min(1).max(LIMITS.name + 1).optional().describe(D('update', 'name')),
@@ -106,6 +133,15 @@ export const channelOps = [
       memo: z.string().max(LIMITS.memo).optional().describe(D('update', 'memo')),
     }),
     output: z.unknown(),
+    riskOf: async (ctx, args) => {
+      if (ctx.principal?.by !== 'agent' || args.cwd === undefined) return 'write';
+      const channel = await run(ctx, () => ctx.channels.get({ channelId: args.channelId }));
+      return args.cwd && args.cwd !== (channel.cwd ?? null) ? 'guarded' : 'write';   // 外す（null）・同じ値は広げないので write
+    },
+    confirm: async (ctx, args) => {
+      const channel = await run(ctx, () => ctx.channels.get({ channelId: args.channelId }));
+      return { before: channel.cwd ?? null, loosens: true, rows: [{ path: 'cwd', before: channel.cwd ?? null, after: args.cwd || null }] };
+    },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'update'], positional: ['channelId'] } },
     handler: async (ctx, args) => run(ctx, async () => ctx.channels.update(args, await authorOf(ctx))),
   }),
@@ -123,18 +159,65 @@ export const channelOps = [
     riskReason: 'Writing a message in a channel is what a human and a bot are for, so it is allowed even from a read-only or plan-mode bot. It only adds a post; an explicit @ may wake another bot, which runs in that bot\'s own approval mode (ADR 0096)',
     input: z.object({
       channelId: channelId('post'),
-      threadId: z.string().min(1).optional().describe(D('post', 'threadId')),
+      threadId: z.string().min(1).nullable().optional().describe(D('post', 'threadId')),
       text: z.string().min(1).max(LIMITS.text).describe(D('post', 'text')),
       new: z.boolean().optional().describe(D('post', 'new')),
       state: z.enum(['checking']).optional().describe(D('post', 'state')),
     }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'post'], positional: ['channelId', 'text'] } },
-    handler: async (ctx, { state, ...args }) => {
+    handler: async (ctx, { state, threadId, ...args }) => {
       const author = await authorOf(ctx);
+      // bot の会話のスレッドの中の会話（スレッド・同じチャンネル）では、threadId を省いたらそのスレッド。流れへの新しい投稿は threadId: null と new: true を明示したときだけ
+      // （落とした threadId が新しいスレッドを作って、元のスレッドの［止める］から外れるのを防ぐ）
+      const sb = author.kind === 'bot' ? await boundBot(ctx) : null;
+      const inThread = Boolean(sb?.threadId) && sb.channelId === args.channelId;
+      if (inThread && threadId === null && args.new !== true) {
+        throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'threadId: null writes to the channel flow, which is not the thread of this conversation; pass new: true with it. Omit threadId to write to this thread' }));
+      }
+      const target = inThread && threadId === undefined ? sb.threadId : threadId;
+      const origin = inThread && target === null ? { channelId: sb.channelId, threadId: sb.threadId } : undefined;
+      // 起こす宛先に強い bot がいれば、投稿は残して起こさず、承認（channels.wake）を出す。人の投稿は確認しない
+      const held = author.kind === 'human' ? [] : await run(ctx, () => strongTargets(ctx, args.channelId, args.text, author));
       // 要確認の印は、実行を担う bot（ルーティンの実行を含む）だけが付けられる
-      return run(ctx, () => ctx.channels.post({ ...args, ...(state && author.kind === 'bot' ? { state } : {}) }, author));
+      const saved = await run(ctx, () => ctx.channels.post({
+        ...args, ...(target !== undefined ? { threadId: target } : {}), ...(state && author.kind === 'bot' ? { state } : {}),
+        ...(author.kind === 'human' ? {} : { hold: held }), ...(origin ? { origin } : {}),
+      }, author));
+      // ターンの投稿の置き換え（進捗）では誰も起こさない。@ はターンの終わりの返事で解かれ、そこで同じ確認を通る
+      if (!held.length || saved.turn) return saved;
+      const wake = [];
+      for (const botId of held) {
+        const r = await ctx.registry.invoke(ctx.principal, 'channels.wake', { channelId: args.channelId, postId: saved.id, botId }, ctx);
+        wake.push({ botId, status: r.pending ? 'pending' : r.ok ? (r.result?.woken ? 'woken' : 'notWoken') : 'denied', ...(r.pending ? { requestId: r.result.requestId, message: r.result.message } : r.ok ? {} : { code: r.code, message: r.error }) });
+      }
+      return { ...saved, wake };
     },
+  }),
+  defineOp({
+    id: 'channels.wake', summary: D('wake', 'summary'), risk: 'guarded',
+    input: z.object({
+      channelId: channelId('wake'), postId: postId('wake'),
+      botId: z.string().min(1).describe(D('wake', 'botId')),
+      reason: z.string().max(500).optional().describe(D('wake', 'reason')),
+    }),
+    output: z.unknown(),
+    // 起こす bot の動くモードを見せる（承認カード）。bot が無ければここで断る（承認のあとに変わったら聞き直す: before にモードを入れる）
+    riskOf: async (ctx, args) => {
+      if (!(await ctx.bots.approvalOf({ botId: args.botId }))) throw new OpError('BOT_NOT_FOUND', agentT(ctx.locale, 'ops.errors.BOT_NOT_FOUND', { id: args.botId }));
+      return 'guarded';
+    },
+    confirm: async (ctx, args) => {
+      const bot = await ctx.bots.approvalOf({ botId: args.botId });
+      const who = `${bot.icon} ${bot.name}`.trim();
+      return {
+        note: agentT(ctx.locale, 'ops.channels.wake.confirm', { bot: who, mode: bot.label }),
+        before: { botId: bot.id, mode: bot.mode }, loosens: true,
+        rows: [{ path: 'wake', before: null, after: who }, { path: 'mode', before: null, after: bot.label }],
+      };
+    },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'wake'], positional: ['channelId', 'postId', 'botId'] } },
+    handler: async (ctx, args) => run(ctx, async () => ({ ...(await ctx.wake({ channelId: args.channelId, postId: args.postId, botId: args.botId })), botId: args.botId })),
   }),
   defineOp({
     id: 'channels.edit', summary: D('edit', 'summary'), risk: 'write',

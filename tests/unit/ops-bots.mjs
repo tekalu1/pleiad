@@ -104,6 +104,16 @@ export default async function (t) {
     t.ok('承認カードに名前・アイコン・バックエンドが出る', approvals.at(-1).change.rows.some((r) => r.path === 'name' && r.after === 'Fox') && approvals.at(-1).reason === '調べ物用');
     await approvals.at(-1).proceed();
     t.ok('人が許可すると作られる', (await f.service.byName('Fox'))?.backend === 'claude');
+    // S-5: 承認カードに、作られる承認モードの行を出す。弱くないモード（Antigravity の yolo）は loosens
+    const agyCard = await call(asking, 'bots.create', { name: 'Gravity2', backend: 'antigravity' });
+    t.ok('S-5: AI が作る Antigravity の bot の承認カードに、作られる承認モード（yolo）の行と loosens: true が出る（まだ作られない）', agyCard.pending === true && approvals.at(-1).change.loosens === true
+      && approvals.at(-1).change.rows.some((r) => r.path === 'mode' && r.after === 'yolo') && !(await f.service.byName('Gravity2')), JSON.stringify(approvals.at(-1).change));
+    const claudeCard = await call(asking, 'bots.create', { name: 'Calm', backend: 'claude' });
+    t.ok('S-5: Claude の bot は既定の弱いモード（default）の行で、loosens は false', claudeCard.pending === true && approvals.at(-1).change.loosens === false && approvals.at(-1).change.rows.some((r) => r.path === 'mode' && r.after === 'default'));
+    const defaultCard = await call(asking, 'bots.create', { name: 'Plain' });
+    t.ok('S-5: backend を省いても、既定の backend のモードの行が出る', defaultCard.pending === true && approvals.at(-1).change.rows.some((r) => r.path === 'mode' && r.after === 'default'));
+    t.ok('S-5: riskReason は「いつも最も弱いモード」とは言わず、backend の既定のモードで始まりカードに出ると言う', /default approval mode of its backend/.test(registry.get('bots.create').riskReason) && /Antigravity/.test(registry.get('bots.create').riskReason) && !/weakest approval mode with no folders/.test(registry.get('bots.create').riskReason));
+    approvals.length -= 3;
     const bypassed = await call({ ...agent('bypass'), mode: MODES.bypass }, 'bots.create', { name: 'Hawk', backend: 'claude' });
     t.ok('すべて自動のモードの会話は承認なしで作れる', bypassed.ok && !bypassed.pending && (await f.service.byName('Hawk')) !== null);
     t.ok('束縛されていない AI（外の CLI）は画面へ誘導（NEEDS_UI）', (await call({ by: 'agent', via: 'cli' }, 'bots.create', { name: 'Nope' })).code === 'NEEDS_UI');
@@ -125,8 +135,15 @@ export default async function (t) {
 
     // ---- update: 狭める向きは通る・広げる向きは承認
     const before = approvals.length;
-    const rename = await call(asking, 'bots.update', { botId: owl, name: 'NightOwl', persona: '夜型', model: 'm-x', effort: 'high' });
-    t.ok('名前・人格・モデル・エフォートは承認なしで通る', rename.ok && !rename.pending && rename.result.name === 'NightOwl' && rename.result.persona === '夜型' && approvals.length === before, JSON.stringify(rename));
+    const rename = await call(asking, 'bots.update', { botId: owl, name: 'NightOwl', model: 'm-x', effort: 'high' });
+    t.ok('名前・モデル・エフォートは承認なしで通る', rename.ok && !rename.pending && rename.result.name === 'NightOwl' && approvals.length === before, JSON.stringify(rename));
+    // S-2: AI が人格を変えるのは承認（外から来た文に押された bot が、自分の人格を恒久的に書き換える足場になる）。人が変えるのは承認なし
+    const personaAsk = await call(asking, 'bots.update', { botId: owl, persona: '夜型' });
+    t.ok('AI が人格を変えると承認カード（loosens・まだ変わらない）。bot 自身の人格も同じ', personaAsk.pending === true && approvals.length === before + 1 && approvals.at(-1).change.loosens === true
+      && approvals.at(-1).change.rows.some((r) => r.path === 'persona' && r.after === '夜型') && (await f.service.get({ botId: owl })).persona === 'のんびり屋');
+    approvals.pop();
+    const personaHuman = await call(human, 'bots.update', { botId: owl, persona: '夜型' });
+    t.ok('人が人格を変えるのは承認なし', personaHuman.ok && !personaHuman.pending && personaHuman.result.persona === '夜型' && approvals.length === before);
     t.ok('名前を変えると DM のチャンネルの表示名も揃える', calls.update.some((u) => u.channelId === `c_dm_${owl}` && u.name === 'NightOwl'));
     t.ok('モデル・エフォートの変更が今ある会話に反映される', sessions[sess.sessionId].model === 'm-x' && sessions[sess.sessionId].effort === 'high');
     t.ok('ほかの bot の名前への変更は BOT_NAME_TAKEN', (await call(asking, 'bots.update', { botId: owl, name: 'fox' })).code === 'BOT_NAME_TAKEN');

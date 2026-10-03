@@ -106,9 +106,15 @@ export default async function (t) {
     t.ok('sessions の null はその bot の会話を外す', !('b_owl' in (await threads.update('c_a', 'p_1', { sessions: { b_owl: null } })).sessions));
     t.ok('不正な state・stopped は投げる（保存しない）', (await threads.update('c_a', 'p_1', { state: 'zzz' }).then(() => 'ok', () => 'rejected')) === 'rejected'
       && (await threads.update('c_a', 'p_1', { stopped: { by: { kind: 'bot' }, at: 1 } }).then(() => 'ok', () => 'rejected')) === 'rejected' && (await threads.get('c_a', 'p_1')).state === 'working');
+    // S-3(b): bot が自分のスレッドから起こして新しくできたスレッドの、起こした元（origin）
+    const orig = await threads.update('c_a', 'p_child', { origin: { channelId: 'c_a', threadId: 'p_1' } });
+    t.ok('origin: { channelId, threadId } を残し、写しを返す。無いスレッドには付かない', orig.origin.threadId === 'p_1' && orig.origin.channelId === 'c_a' && !('origin' in th1) && !('origin' in (await threads.get('c_a', 'p_1'))));
+    t.ok('origin は他の更新で消えない・null で外せる', (await threads.update('c_a', 'p_child', { state: 'working' })).origin.threadId === 'p_1' && !('origin' in (await threads.update('c_a', 'p_child', { origin: null }))));
+    t.ok('不正な origin は投げる（保存しない）', (await threads.update('c_a', 'p_child', { origin: { channelId: 'c_a' } }).then(() => 'ok', () => 'rejected')) === 'rejected' && !('origin' in (await threads.get('c_a', 'p_child'))));
     await threads.update('c_b', 'p_9', { state: 'waiting' });
+    await threads.update('c_a', 'p_child', { state: 'idle' });
     const reThreads = createThreadStore({ dir: dirT });
-    t.ok('開き直しても残り、channelId で絞れる', (await reThreads.list()).length === 2 && (await reThreads.list('c_b')).length === 1 && (await reThreads.get('c_b', 'p_9')).state === 'waiting');
+    t.ok('開き直しても残り、channelId で絞れる', (await reThreads.list()).length === 3 && (await reThreads.list('c_b')).length === 1 && (await reThreads.get('c_b', 'p_9')).state === 'waiting');
     t.ok('threads.json は version: 1', JSON.parse(await fs.readFile(path.join(dirT, 'threads.json'), 'utf8')).version === 1);
     await fs.writeFile(path.join(dirT, 'threads.json'), '[]');
     t.ok('読めない threads.json は投げて、上書きしない', (await createThreadStore({ dir: dirT }).update('c_a', 'p_1', { calls: 1 }).then(() => 'ok', () => 'rejected')) === 'rejected' && (await fs.readFile(path.join(dirT, 'threads.json'), 'utf8')) === '[]');

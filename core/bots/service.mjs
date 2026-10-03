@@ -28,6 +28,8 @@
 //                                                 … スレッド・ルーティン・学習の会話。ThreadState.sessions への登録は呼び出し側
 //   turnSetup(turn): Promise<{ botInstructions, folders }|null>   … bot の会話のターンに足す人格とフォルダー（bots-host の turnExtras が足す）
 //   modesOf(backendId): object|null
+//   approvalOf({ botId }): Promise<{ id, name, icon, mode, label, entry }|null>   … その bot が動く承認モード（modes() のエントリ・表示名）。起こす確認の強さの比較・承認カードの文に使う
+//   planCreate(input): Promise<{ mode, label, loosens }|null>   … create が作る bot の承認モード（backend の既定）と、弱くないか。create の承認カードに出す
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -35,6 +37,7 @@ import { newId } from '../channels/types.mjs';
 import { modePosition, scopeRank, autonomyRank } from '../modes.mjs';
 import { createBotStore, BotStoreError, nameProblem, iconProblem, personaProblem, normalizeFolders, folderKey, FOLDERS_MAX, SEND_TARGETS_MAX } from './store.mjs';
 import { createBotSessions, defaultMode, botTurnSetup, botInstructions } from './sessions.mjs';
+import { looserThanDefault } from './approval.mjs';
 
 const WEEK_MS = 7 * 24 * 3600_000;
 const DEFAULT_ICON = '🤖';
@@ -164,6 +167,23 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
     async get({ botId }) { return store.get(botId); },
     async byName(name) { return store.byName(name); },
     modesOf,
+
+    async approvalOf({ botId }) {
+      const bot = store.get(botId);
+      if (!bot) return null;
+      const modes = modesOf(bot.backend);
+      const mode = modes ? (modes[bot.mode] ? bot.mode : defaultMode(modes)) : bot.mode;
+      const entry = modes?.[mode];
+      return { id: bot.id, name: bot.name, icon: bot.icon, mode, label: entry?.label ?? mode, entry };
+    },
+
+    async planCreate(input) {
+      const backendId = input?.backend ?? host?.listBackends?.()[0]?.id ?? '';
+      const modes = modesOf(backendId);
+      if (!modes) return null;
+      const mode = defaultMode(modes);
+      return { mode, label: modes[mode]?.label ?? mode, loosens: looserThanDefault(modes[mode]) };
+    },
 
     async create(input, _author) {
       requireStore();
