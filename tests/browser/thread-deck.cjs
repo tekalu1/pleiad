@@ -1,5 +1,5 @@
 // playwright-cli run-code --filename=tests/browser/thread-deck.cjs
-// スレッドと空間モデル（docs/design-system.md「スレッドの空間モデル」、ADR 0098）: 3 つの幅・右パネルの開閉・✕・動き（と動きを減らす設定）・
+// スレッドと空間モデル（docs/design-system.md「スレッドの空間モデル」、ADR 0111）: 3 つの幅・右パネルの開閉・✕・動き（と動きを減らす設定）・
 // スクロール位置と下書きの保持・ほかのスレッドへの切り替え・承認のカード・［止める］と書き足し・道具の行・可視化のインライン・見出しの出し分け。
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (port 7436, token thread-deck-test):
 //   AGENT_HOST_BACKENDS=fake AGENT_HOST_FAKE_USAGE=1 AGENT_HOST_FAKE_SLOW_STEER=1 AGENT_HOST_GIT_SNAPSHOTS=off AGENT_HOST_WORKTREES=off AGENT_HOST_LOCALE=ja AGENT_HOST_TOKEN=thread-deck-test AGENT_HOST_PORT=7436 AGENT_HOST_DATA=<一時の置き場> node core/server.mjs

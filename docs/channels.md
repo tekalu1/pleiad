@@ -2,8 +2,6 @@
 
 bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集まる Channels、定期の仕事のルーティンの、**今の動きと各モジュールの契約**。決めた理由は ADR 0106〜0114（[0106](adr/0106-bots-channels-routines.md) 全体、[0107](adr/0107-side-chats-channels-tabs.md) 脇のタブ、[0108](adr/0108-channel-posts-source-of-truth.md) 投稿の正本、[0109](adr/0109-bot-and-dispatch.md) bot と起こし方、[0110](adr/0110-bot-memory.md) 記憶、[0111](adr/0111-thread-spatial-model.md) スレッドの空間モデル、[0112](adr/0112-routines.md) ルーティン、[0113](adr/0113-webhook-receiver.md) webhook、[0114](adr/0114-send-on-your-behalf.md) 代わりに送る）。
 
-**今の状態:** つなぎ目と空の入れ物まで（脇の Chats / Channels の 2 タブ・空の `#channelsView`・各モジュールの工場）。チャンネル・bot・記憶・ルーティンの中身は、段ごとに入る（下の「モジュールと持ち主」）。
-
 ## データ
 
 型の正本は `core/channels/types.mjs`（JSDoc）。置き場は `<データ置き場>/` の下:
@@ -218,7 +216,7 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 - 辞書は `web/locales/{ja,en}/channels.json`（節 `side`・`feed`・`thread`・`bot`・`memory`・`routines`・`event`。節ごとに持ち主が決まり、読んで書き直さず文字の置き換えで足す）と `agent.json`（`ops.channels|bots|memory|routines`・`guide.bot`・`channel.envelope`・`routine`）。コードでは `t('channels:feed.empty')`。
 - スレッドを開く口: `host.openThread(channelId, threadId)`（`setupChannels` が足す）は、部品の `openThread(channelId, threadId)` へ配り、`document` へ `channels:openthread`（`detail: { channelId, threadId }`）も投げる。呼ぶのは流れ（W2。要約の行・「スレッドで返信」）、受けるのはスレッド（W3）。開く入口は `document` へ `new CustomEvent('channels:show', { detail: { kind: 'channel', id, threadId? } })`（脇の行・テストから。`show(view)` と同じ）。
 - 流れ（`web/channels/feed.mjs`）: 見出し（`# 名前`・目的・メンバーのアイコン・⋯のメモと設定）はメインの頭（`#channelsView > .top`）に出し、`#channelsBody` に `section#chFeed.ch-feed`（`.ch-log` と `#chFeedComposer`）を作る。投稿は `post.mjs`、札は `reactions.mjs`、`@` の補完は `mention-complete.mjs`、入力欄は `ch-composer.mjs`（`createChComposer`。スレッドの入力欄 `#chThreadComposer` も同じ部品）。読み書きは `channels.read / post / react / markRead / get / update / archive` と `bots.list`（定義が引けなくても投稿は出る）。
-- **スレッドと空間モデル**（W3。`deck.mjs`・`thread.mjs`・`thread-head.mjs`・`thread-tools.mjs`・`thread-toc.mjs`・`web/channels-thread.css`。[ADR 0098](adr/0098-thread-spatial-model.md)）:
+- **スレッドと空間モデル**（W3。`deck.mjs`・`thread.mjs`・`thread-head.mjs`・`thread-tools.mjs`・`thread-toc.mjs`・`web/channels-thread.css`。[ADR 0111](adr/0111-thread-spatial-model.md)）:
   - **窓**: `#channelsBody > #chDeck.deck[data-deck=feed|split|solo] > #chFeed + #chThread`。`createThread` が流れの板（`#chFeed`）を窓へ移し、流れの見出し（`#channelsView > .top`）も流れが出ている間は `#chFeed` の頭に置く（スレッドの見出しと横に並ぶ。流れが無い面＝bot のページでは元の位置）。右パネルは body の 3 列目なので、窓が持つのは 2 枚だけ。状態は `deckState({ hasThread, panelOpen, width })`: スレッドが無ければ `feed`（流れが全幅）、右パネル（`body.file-preview-open`）が開いているか窓（= main）の幅が 900px 未満なら `solo`（スレッドだけ全幅。流れは左へ抜ける）、そうでなければ `split`（流れ 4｜スレッド 6）。760px 以下の右パネルは今までどおり全画面（Chats と同じ）。
   - **動き**: 状態が替わるとき、2 枚を「前にあった位置」から「今の位置」へ transform で滑らせるだけ（FLIP。`--dur-deck` = 200ms。流れは幅も動く。動きを減らす設定では 0 で切り替えだけ）。中身は作り直さないのでスクロール位置・下書き・入力欄の位置が保たれる。窓の外の板は `visibility:hidden` と `inert` で隠すだけ（DOM も下書きも残す）。動いている間は `.deck.moving`（隠れる側も見せる・流れの入力欄は畳んだまま）。ほかのスレッドを押したときは `data-deck` が変わらないので板は動かず、中身だけ入れ替わる。
   - **入力欄**: 流れ側（`#chFeedComposer`）はスレッドが開いている間、押す（フォーカス）まで 1 行に畳む。スレッド側（`#chThreadComposer`）は作業中でも書ける（途中送信）。スレッドを開くとフォーカスはスレッド側へ。下書きはスレッドごとに覚える。チャンネル側で bot を `@` した投稿は、その場で新しいスレッドを開く。
