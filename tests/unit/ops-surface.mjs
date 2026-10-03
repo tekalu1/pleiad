@@ -106,6 +106,12 @@ export default async function (t) {
     }
     if (op.risk === 'human-only') t.ok(`T5 ${op.id}: human-only は MCP・CLI に出す設定が無い`, op.surfaces.mcp === false && op.surfaces.cli === false);
   }
+  const readonly = { by: 'agent', via: 'mcp', sessionId: 'own' };
+  const compatDeps = { locale: 'ja', modeOf: async () => ({ scope: 'readonly', autonomy: 'ask' }),
+    delegation: { call: async () => ({ stopped: true }) }, browser: { call: async () => ({ changed: true }) } };
+  t.ok('読み取りモードでも自分の子を止められる', (await registry.invoke(readonly, 'delegation.taskCancel', { taskId: 'ply-task-1' }, compatDeps)).result?.stopped === true);
+  t.ok('読み取りモードでも自分のブラウザープロフィールを選べる', (await registry.invoke(readonly, 'browser.useProfile', { profile: 'main' }, compatDeps)).result?.changed === true);
+  t.ok('読み取りモードから子に追加指示は送れない', (await registry.invoke(readonly, 'delegation.taskSend', { taskId: 'ply-task-1', message: 'work' }, compatDeps)).code === 'READ_ONLY_MODE');
 
   // ---- T4 文の量: 実際に会話へ渡す指示と tools/list（pleiad mcp と同じ生成器）を数える
   for (const lng of LOCALES) {

@@ -56,3 +56,4 @@ Pleiad の外で動く Claude Code などからも、セッション検索を使
 - デスクトップ版の利用者に `pleiad` を PATH で渡す方法と、CLI から Pleiad を起動する `--start` は、利用を見て別に決める。
 - `docs/` に CLI の節を足す（つなぎ先・終了コード・`pleiad mcp` の登録の例）。
 - 段階 0 では CLI も `control.json` も作らない（決定だけ）。段階 1 で作る。
+- 段階 3 で追加する委譲と会話中のブラウザー操作は、会話に束縛されない CLI からは `NEEDS_UI` とする（[ADR 0091](0091-control-surface-host-delegation-browser.md)）。

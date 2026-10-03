@@ -94,7 +94,6 @@
   "session": {
     "running": "このセッションは実行中",
     "required": "セッションが要る",
-    "requiredForStatus": "セッションが要る（新規なら runTurn の status に載せる）",
     "notFound": "セッションが見つかりません",
     "preparingSettings": "送信の準備中です。設定変更を再試行してください",
     "draftTooLarge": "下書きが大きすぎます",

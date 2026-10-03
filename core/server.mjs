@@ -43,7 +43,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
 import { registry as opsRegistry } from './ops/index.mjs';
-import { targetText as settingTarget } from './ops/registry.mjs';
+import { OpError, targetText as settingTarget } from './ops/registry.mjs';
 import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './ops/surfaces/control.mjs';
 import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
 import { writeControlFile, removeControlFile } from './control-file.mjs';
@@ -396,7 +396,7 @@ function stoppedBackgroundNotice(lng, list) {
   return agentT(lng, 'delegation.noticeStoppedBackground', { count: list.length, minutes: Math.max(1, Math.round(DELEGATION_BACKGROUND_WAIT_MS / 60000)), items }) + '\n';
 }
 // エラー・結果の文はツールの結果としてエージェントが読むので、会話の言語で引く（agent 名前空間。橋は会話ごとに開き、locale はその会話の言語）
-const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale } = {}) => {
+async function callAgentOp(owner, name, args, { locale } = {}) {
   const turn = runtime.turns.get(owner);
   const lng = turn?.agentLocale ?? locale;
   if (!turn || turn.ac.signal.aborted) throw new Error(agentT(lng, 'delegation.notRunning'));
@@ -432,6 +432,15 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale
   // 子が使い始めるので、振り分けに使う使用量を取り直しておく（待たない）
   if (name === 'ply_delegate' && routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
   return result;
+}
+const agentOpIds = {
+  ply_delegate: 'delegation.delegate', ply_task_status: 'delegation.taskStatus', ply_task_wait: 'delegation.taskWait',
+  ply_task_send: 'delegation.taskSend', ply_task_cancel: 'delegation.taskCancel', ply_task_list: 'delegation.taskList', ply_usage: 'delegation.usage',
+};
+const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale } = {}) => {
+  const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId: owner }, agentOpIds[name], args, opsDeps(locale));
+  if (!result.ok) throw new Error(result.error);
+  return result.result;
 } });
 
 // ---- 委譲先の自動振り分け ------------------------------------------------------
@@ -651,8 +660,8 @@ const browserProfiles = createBrowserProfiles({ getPrefs: store.getPrefs, getSes
 /** 中継のキー（新しい会話の最初のターンは仮のキー）か会話 ID から、走っているターン */
 const browserTurn = id => id ? runtime.turns.get(id) ?? [...runtime.turns.values()].find(turn => turn.browserRelayId === id) ?? null : null;
 // ply_browser: エージェントがプロフィールの一覧を読み、会話の今のプロフィールを切り替える。文はエージェントの言語（agent 名前空間）
-const browserBridge = createBrowserBridge({ call: async (owner, name, args, { locale: lng0 } = {}) => {
-  const turn = runtime.turns.get(owner());
+async function callBrowserOp(owner, name, args, { locale: lng0 } = {}) {
+  const turn = runtime.turns.get(owner);
   const lng = turn?.agentLocale ?? lng0;
   if (!turn || turn.ac.signal.aborted) throw new Error(agentT(lng, 'delegation.notRunning'));
   const prefs = await store.getPrefs();
@@ -669,6 +678,13 @@ const browserBridge = createBrowserBridge({ call: async (owner, name, args, { lo
   // main はタブの一覧と中継のタブ集合を替え、画面に「<エージェント名> が『…』に切り替えました」を出す
   agentBrowser?.profile(turn.browserRelayId ?? turn.info.sessionId ?? turn.key, target.id, turn.backend.label);
   return { profile: row(target, target.id), changed: true, note: agentT(lng, 'browserProfiles.switched') };
+}
+const browserOpIds = { list_browser_profiles: 'browser.listProfiles', use_browser_profile: 'browser.useProfile' };
+const browserBridge = createBrowserBridge({ call: async (owner, name, args, { locale } = {}) => {
+  const sessionId = owner();
+  const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId }, browserOpIds[name], args, opsDeps(locale));
+  if (!result.ok) throw new Error(result.error);
+  return result.result;
 } });
 /** このターンに渡す ply_browser（url・headers）。会話のあいだ同じ口を使う（agy は起動時にしか渡せない） */
 function browserRuntimeFor(turn) {
@@ -1926,7 +1942,7 @@ async function applyBrowserPref(key, value) {
 }
 
 /** 会話を分ける。fork コマンドと sessions.fork が同じ経路を通る。actor は変更の記録の主体（無ければ人間） */
-async function forkConversation({ sessionId, upToMessageId, beforeMessageId, title, backend: given }, actor) {
+async function forkConversation({ sessionId, upToMessageId, beforeMessageId, title, reason, backend: given }, actor) {
   const running = runtime.turns.get(sessionId);
   if (!sessionId || forking.has(sessionId) || switching.has(sessionId) && !running) throw new Error(t('session.preparingFork'));
   forking.add(sessionId);
@@ -1950,12 +1966,13 @@ async function forkConversation({ sessionId, upToMessageId, beforeMessageId, tit
     if (!persisted) {
       await store.setParent(child, parent);
       await store.setMeta(child, { backend: backend.id, lastModified: Date.now() });
-      await store.recordChange(child, { ...changeBy(actor), field: "parent", to: parent, reason: "fork", backend });
     }
+    await store.recordChange(child, { ...changeBy(actor), field: "parent", to: parent, reason: reason ?? "fork", backend });
     // 枝は親と同じ状態で始まる。そうでないと生まれた瞬間に親のグループから外れる（§4.1）
     const inherited = (await sessionList().catch(() => [])).find((r) => r.id === sessionId)?.status ?? null;
     if (inherited) await applyStatus(backend, child, inherited, "fork").catch(() => {});
-    emitGlobal({ type: "fork", sessionId: child, parent });
+    emitGlobal({ type: "fork", sessionId: child, parent,
+      ...(actor?.by === 'agent' ? { by: 'ai', reason: reason ?? null } : {}) });
     return { sessionId: child, parent };
   } finally {
     forking.delete(sessionId);
@@ -2028,6 +2045,7 @@ async function changeStatus(backend, sessionId, status, { actor, reason, alone }
 
 // 会話に関する操作（sessions.*）の本体。画面の口と同じ一覧・同じ読み方を使う
 const opsSessions = {
+  clientReason,
   list: () => sessionList({ limit: 500, track: false }),
   get: async (id) => {
     const rows = await sessionList({ limit: 500, track: false });
@@ -2045,8 +2063,8 @@ const opsSessions = {
     const backend = await resolveBackendForSession(id);
     return backend ? (await history.loadTranscript(id, backend)).messages : null;
   },
-  setTitle: async (id, title, { actor, reason } = {}) => changeTitle(await pickBackend(id), id, title, { actor, reason: reasonOf(reason) }),
-  setStatus: async (id, status, { actor, reason, alone } = {}) => changeStatus(await pickBackend(id), id, status, { actor, reason: reasonOf(reason), alone }),
+  setTitle: async (id, title, { actor, reason, backend } = {}) => changeTitle(await pickBackend(id, backend), id, title, { actor, reason: reasonOf(reason) }),
+  setStatus: async (id, status, { actor, reason, alone, backend } = {}) => changeStatus(await pickBackend(id, backend), id, status, { actor, reason: reasonOf(reason), alone }),
   fork: (input, { actor } = {}) => forkConversation(input, actor),
 };
 
@@ -2125,7 +2143,16 @@ function opsDeps(lng = currentLocale()) {
     locale: lng,
     app: opsApp,
     sessions: opsSessions,
-    delegation: { list: (owner) => agentTasks?.list(owner) ?? [], get: (taskId, offset) => agentTasks?.get(taskId, offset) ?? null },
+    delegation: { list: (owner) => agentTasks?.list(owner) ?? [], get: (taskId, offset) => agentTasks?.get(taskId, offset) ?? null,
+      call: (owner, name, args, locale) => callAgentOp(owner, name, args, { locale }) },
+    browser: { call: (owner, name, args, locale) => callBrowserOp(owner, name, args, { locale }),
+      setProfile: async (sessionId, profile) => {
+        const meta = await store.get(sessionId);
+        if (!await browserProfiles.set(sessionId, profile, meta.cwd)) throw new OpError('INVALID', t('settings.unknownPrefValue', { key: 'browserProfile', value: String(profile) }));
+        const live = browserTurn(sessionId);
+        if (live) live.browserProfile = profile;
+        return { profile };
+      } },
     prefs: () => store.getPrefs(),
     compactionSettings: () => compactionSettings,
     statuses: opsStatuses,
@@ -3195,6 +3222,11 @@ async function runTurnInternal(args, onStarted, hooks) {
         onPromptDelivered,
         // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
         askPermission: request => askPermission({ ...request, locale: agentLocale }),
+        hostInvoke: async (op, args) => {
+          const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId: args.sessionId }, op, args, opsDeps(agentLocale));
+          if (!result.ok) throw new Error(result.error);
+          return result.result;
+        },
         signal: turn.ac,
         control: turn.control,
         // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
@@ -5105,11 +5137,8 @@ wss.on("connection", (ws, req) => {
 
         // 人間からの変更。AI 用ツールと同じ store・同じイベントを通る（設計メモ 2.2）
         case "setStatus": {
-          const { sessionId, status } = msg.args;
-          const reason = clientReason(msg.args);
-          if (!sessionId) return reply(false, t('session.requiredForStatus'));
-          const backend = await pickBackend(sessionId, msg.args?.backend);
-          return reply(true, { moved: await changeStatus(backend, sessionId, status, { reason, alone: msg.args?.alone }) });
+          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, 'sessions.setStatus', msg.args, opsDeps(locale.lang));
+          return r.ok ? reply(true, { moved: r.result.moved }) : reply(false, r.error, r.code);
         }
 
         // 完了を確認した。ホストに 1 つで、別の窓・別の端末にも read で知らせる（store.markRead が巻き戻さない）。
@@ -5169,24 +5198,18 @@ wss.on("connection", (ws, req) => {
         // 会話の今の内蔵ブラウザーのプロフィールを人が替えた（右パネルのメニュー。main のタブの一覧は画面が先に替えている。ADR 0078）。
         // 会話に残し、作業フォルダーの「最後に使ったもの」と、走っているターン（ply_browser の今のもの）にも伝える
         case "setBrowserProfile": {
-          const { sessionId, profile } = msg.args ?? {};
-          if (typeof sessionId !== 'string' || !sessionId) return reply(false, t('session.required'));
-          const meta = await store.get(sessionId);
-          if (!await browserProfiles.set(sessionId, profile, meta.cwd)) return reply(false, t('settings.unknownPrefValue', { key: 'browserProfile', value: String(profile) }));
-          const live = browserTurn(sessionId);
-          if (live) live.browserProfile = profile;
-          return reply(true, { profile });
+          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, 'browser.setProfile', msg.args, opsDeps(locale.lang));
+          return r.ok ? reply(true, r.result) : reply(false, r.error, r.code);
         }
         case "setTitle": {
-          const { sessionId, title } = msg.args;
-          const reason = clientReason(msg.args);
-          const backend = await pickBackend(sessionId, msg.args?.backend);
-          await changeTitle(backend, sessionId, title, { reason });
-          return reply(true, "ok");
+          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, 'sessions.setTitle', msg.args, opsDeps(locale.lang));
+          return r.ok ? reply(true, "ok") : reply(false, r.error, r.code);
         }
 
-        case "fork":
-          return reply(true, { sessionId: (await forkConversation(msg.args ?? {}, { by: 'human' })).sessionId });
+        case "fork": {
+          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, 'sessions.fork', msg.args, opsDeps(locale.lang));
+          return r.ok ? reply(true, { sessionId: r.result.sessionId }) : reply(false, r.error, r.code);
+        }
       }
     } catch (err) {
       reply(false, String(err?.message ?? err), typeof err?.code === 'string' ? err.code : undefined);
