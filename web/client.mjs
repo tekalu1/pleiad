@@ -44,6 +44,7 @@ import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall,
 import { Bundle, bundleOf, fadeIn, markRunning, markWaiting, splitToolCalls, swapHeight } from "./tool-bundle.mjs";
 import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
+import { leftText } from './schedule-times.mjs';
 import { setupComposerControls, resolvedModel, folderBrowser, panel } from "./composer-controls.mjs";
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { setupAttachMenu } from "./attach-menu.mjs";
@@ -3698,33 +3699,31 @@ function paintInterruptLine(live) {
   m.dataset.interrupted = reasonOf(interrupted);
   const at = Number(interrupted.at);
   if (reasonOf(interrupted) === 'limit') {
-    const body = el('div', 'limit-interrupt-body');
-    const head = el('div', 'limit-interrupt-head');
-    head.append(el('span', null, interruptLineText(interrupted)));
-    if (interrupted.backend === 'claude') head.append(el('span', 't', `(${accountLabel(interrupted.account)} · ${interrupted.window === 'five_hour' ? t('interrupt.limitWindowFiveHour') : interrupted.window ?? ''})`));
-    if (Number.isFinite(at) && at > 0) head.append(el('span', 't', `· ${hhmm(at)}`));
-    body.append(head);
+    // 1 行目は「■ 使用量の上限に達したため中断しました（private · 5 時間枠）· 01:43」。2 行目に自動で再開する旨とリンク
+    const scope = [capsOf(interrupted.backend).claudeAccounts ? accountLabel(interrupted.account) : '',
+      interrupted.window === 'five_hour' ? t('interrupt.limitWindowFiveHour') : interrupted.window ?? ''].filter(Boolean).join(' · ');
+    const head = [el('span', null, scope ? t('interrupt.limitHead', { line: interruptLineText(interrupted), scope }) : interruptLineText(interrupted))];
+    if (Number.isFinite(at) && at > 0) head.push(el('span', null, '·'), el('span', 't', hhmm(at)));
     const time = limitTime(interrupted.resetsAt) ?? t('interrupt.unknownTime');
     const order = state.sessions.filter(s => s.interrupted?.autoResume === true)
       .sort((a, b) => Number(Boolean(b.delegation)) - Number(Boolean(a.delegation)) || b.lastModified - a.lastModified)
       .findIndex(s => s.id === state.current) + 1;
-    body.append(el('div', 'limit-interrupt-detail', interrupted.notifyAtReset
+    const sub = el('span', 'limit-interrupt-sub');
+    sub.append(el('span', null, interrupted.notifyAtReset
       ? t('interrupt.limitAsk', { time }) : interrupted.autoResume === false
-        ? t('interrupt.limitWaiting') : t('interrupt.limitAfter', { time })
-          + (order ? ` (${t('interrupt.limitPosition', { count: order })})` : '')));
-    const actions = el('div', 'limit-interrupt-actions');
+        ? t('interrupt.limitWaiting') : order ? t('interrupt.limitAfterAt', { time, count: order }) : t('interrupt.limitAfter', { time })));
+    const link = (label, onClick) => {
+      const b = el('button', 'lnk', label); b.type = 'button'; b.onclick = onClick; sub.append(b);
+    };
     const selected = currentSession()?.nextSettings?.account ?? currentSession()?.claudeAccount ?? '';
-    if (interrupted.backend === 'claude' && currentSession()?.backend === 'claude'
-      && accountOptions().some(a => a.value !== selected
-        && (a.value === '' ? state.auth.get('claude')?.loggedIn : !a.hint))) {
-      const switchButton = el('button', 'btn btn-quiet', t('interrupt.limitSwitch'));
-      switchButton.type = 'button'; switchButton.onclick = () => limitResumeMenu.show(); actions.append(switchButton);
-    }
-    const toggle = el('button', 'btn btn-quiet', interrupted.autoResume === false ? t('interrupt.limitStartAuto') : t('interrupt.limitStopAuto'));
-    toggle.type = 'button'; toggle.onclick = () => setLimitAuto(interrupted.autoResume === false);
-    actions.append(toggle); body.append(actions);
-    m.replaceChildren(stopMark(), body);
+    const alternative = capsOf(interrupted.backend).claudeAccounts && currentSession()?.backend === interrupted.backend
+      ? accountOptions().find(a => a.value !== selected && (a.value === '' ? state.auth.get('claude')?.loggedIn : !a.hint)) : null;
+    if (alternative) link(t('interrupt.limitSwitchWith', { account: alternative.label }), () => limitResumeMenu.show());
+    link(t(interrupted.autoResume === false ? 'interrupt.limitStartAuto' : 'interrupt.limitStopAuto'), () => setLimitAuto(interrupted.autoResume === false));
+    m.classList.add('limit');
+    m.replaceChildren(stopMark(), ...head, sub);
   } else {
+    m.classList.remove('limit');
     m.replaceChildren(stopMark(), el('span', null, interruptLineText(interrupted)));
     if (Number.isFinite(at) && at > 0) m.append(el('span', null, '·'), el('span', 't', hhmm(at)));
   }
@@ -3751,6 +3750,7 @@ function syncResume() {
     button.title = label;
     button.setAttribute('aria-label', label);
   }
+  button.classList.toggle('is-limit', reasonOf(s?.interrupted) === 'limit');
   button.disabled = resuming.has(state.current);
   const note = $('resumeNote');
   note.hidden = !interrupted || running;
@@ -3810,39 +3810,60 @@ async function setLimitAuto(enabled) {
   paintInterruptLine(); syncResume(); renderSessions();
   await refreshLimitQueue();
 }
+// 別のアカウントの 5 時間枠の使用率（「今すぐ OZ で続ける」の右に出す）。メニューを開いたときに取り、届いたら描き直す
+let limitUsage = null;
 const limitResumeMenu = panel($('resume'), $('limitResumePop'), { align: 'right', width: 330,
   when: () => reasonOf(currentSession()?.interrupted) === 'limit',
+  onShow: () => {
+    if (!capsOf(currentSession()?.backend).claudeAccounts) return;
+    cmd('providerUsage', { backend: currentSession().backend }).then(usage => { limitUsage = usage?.quota ?? null; if (limitResumeMenu.open) limitResumeMenu.render(); }).catch(() => {});
+  },
   render: () => {
     const pop = $('limitResumePop'); pop.replaceChildren();
     const s = currentSession();
     if (!s?.interrupted) return;
-    pop.append(el('p', 'limit-cache-hint', t('interrupt.limitAccountReset', {
-      account: accountLabel(s.interrupted.account), time: limitTime(s.interrupted.resetsAt) ?? t('interrupt.unknownTime'),
-    })));
-    const add = (label, onClick) => {
-      const b = el('button', 'copt', label); b.type = 'button';
+    const stopped = s.interrupted;
+    const time = limitTime(stopped.resetsAt) ?? t('interrupt.unknownTime');
+    const left = Number.isFinite(stopped.resetsAt) && stopped.resetsAt > Date.now() ? t('interrupt.limitResetLeft', { left: leftText(stopped.resetsAt) }) : '';
+    pop.append(el('div', 'chead', capsOf(stopped.backend).claudeAccounts
+      ? t('interrupt.limitAccountReset', { account: accountLabel(stopped.account), time, left }) : t('interrupt.limitReset', { time, left })));
+    const add = ({ label, tag, note, recommended }, onClick) => {
+      const b = el('button', 'copt copt-note'); b.type = 'button';
+      const body = el('span', 'cbody'); body.append(el('span', 'main', label));
+      if (note) body.append(el('span', 'sub', note));
+      b.append(body);
+      if (recommended) b.append(el('span', 'tag rec', t('interrupt.limitRecommend')));
+      else if (tag) b.append(el('span', 'r', tag));
       b.onclick = () => { limitResumeMenu.hide(false); Promise.resolve(onClick()).catch(e => { $('settingsError').textContent = e.message; }); };
       pop.append(b);
     };
-    add(t('interrupt.limitWait'), () => {});
-    if (s.backend === 'claude') {
-      const selected = s.nextSettings?.account ?? s.claudeAccount ?? '';
-      const alternatives = accountOptions().filter(a => a.value !== selected
-        && (a.value === '' ? state.auth.get('claude')?.loggedIn : !a.hint));
-      for (const account of alternatives) {
-        add(t('interrupt.limitSwitchWith', { account: account.label }), async () => {
-          await cmd('setTurnSettings', { sessionId: s.id, account: account.value });
-          await resumeSession(s.id);
-        });
-      }
-      const soon = Number.isFinite(s.interrupted.resetsAt) && s.interrupted.resetsAt - s.interrupted.at <= 55 * 60_000;
-      // i18n-dynamic: interrupt.limitCacheWait
-      // i18n-dynamic: interrupt.limitCacheSwitch
-      if (alternatives.length) pop.append(el('p', 'limit-cache-hint', t(soon ? 'interrupt.limitCacheWait' : 'interrupt.limitCacheSwitch')));
+    // i18n-dynamic: interrupt.limitAutoAt
+    // i18n-dynamic: interrupt.limitStartAuto
+    // 解除がキャッシュの持ち時間（止まってから約 1 時間）より前なら待つ、後なら読み直しは避けられないので余裕のある別のアカウントをすすめる
+    const cacheEnds = stopped.at + 60 * 60_000;
+    const soon = Number.isFinite(stopped.resetsAt) && stopped.resetsAt - stopped.at <= 55 * 60_000;
+    const selected = s.nextSettings?.account ?? s.claudeAccount ?? '';
+    const alternatives = capsOf(s.backend).claudeAccounts ? accountOptions().filter(a => a.value !== selected
+      && (a.value === '' ? state.auth.get('claude')?.loggedIn : !a.hint)) : [];
+    const waitNote = !capsOf(s.backend).claudeAccounts ? null
+      : soon ? t('interrupt.limitCacheKept', { time: limitTime(cacheEnds) }) : t('interrupt.limitCacheLost');
+    add({ label: t(stopped.autoResume === false ? 'interrupt.limitStartAutoAt' : 'interrupt.limitAutoAt', { time }), note: waitNote,
+      recommended: soon || !alternatives.length }, () => (stopped.autoResume === false ? setLimitAuto(true) : undefined));
+    const tokens = state.contextWindow?.usedTokens;
+    for (const account of alternatives) {
+      const windows = limitUsage?.accounts?.find(a => a.accountId === account.value)?.windows ?? (account.value === '' ? limitUsage?.accounts?.[0]?.windows : null) ?? [];
+      const five = windows.find(w => w.minutes === 300)?.usedPercent;
+      add({ label: t('interrupt.limitSwitchWith', { account: account.label }),
+        tag: Number.isFinite(five) ? t('interrupt.limitWindowUse', { percent: Math.round(five) }) : null,
+        note: tokens ? t('interrupt.limitSwitchNote', { tokens: compactNumber(tokens), account: account.label }) : t('interrupt.limitSwitchNoteShort', { account: account.label }),
+        recommended: !soon && account === alternatives[0] }, async () => {
+        await cmd('setTurnSettings', { sessionId: s.id, account: account.value });
+        await resumeSession(s.id);
+      });
     }
-    add(t('interrupt.order'), () => openLimitQueue());
-    add(t(s.interrupted.autoResume === false ? 'interrupt.limitStartAuto' : 'interrupt.limitStopAuto'),
-      () => setLimitAuto(s.interrupted.autoResume === false));
+    add({ label: t('interrupt.limitOrder') }, () => openLimitQueue());
+    pop.append(el('div', 'sep'));
+    if (stopped.autoResume !== false) add({ label: t('interrupt.limitStopAuto') }, () => setLimitAuto(false));
   },
 });
 

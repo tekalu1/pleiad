@@ -793,13 +793,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.sys code{font-size:var(--fs-xs)}
 /* 「■ 中断しました · 14:32」。保存された中断から描く一行（client.mjs の paintInterruptLine） */
 .m.sys.interrupted{display:flex;align-items:center;gap:6px}
-.limit-interrupt-body{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0}
-.limit-interrupt-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px}
-.limit-interrupt-detail{color:var(--ink-weak)}
-.limit-interrupt-actions{display:flex;flex-wrap:wrap;gap:6px}
-.limit-interrupt-actions .btn{font-size:var(--fs-xs);padding:2px 5px}
-.clock-mark{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;flex:none}
-.limit-cache-hint{padding:8px 12px;font-size:var(--fs-xs);color:var(--ink-weak);margin:0}
+/* 上限のための中断は 1 行目に「■ 中断しました（private · 5 時間枠）· 01:43」、2 行目（字の左を 1 行目の字に揃える）に自動で再開する旨とリンク */
+.m.sys.interrupted.limit{flex-wrap:wrap}
+.limit-interrupt-sub{flex-basis:100%;padding-left:20px;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;color:var(--ink-weak)}
 .limit-strip{gap:6px}
 .limit-queue-dialog{position:fixed;inset:auto auto 80px 10px;margin:0;width:min(342px,calc(100vw - 20px));max-height:min(70vh,620px);border:0;border-radius:var(--r-l);background:var(--surface-paper);color:var(--ink);padding:14px;overflow:auto;box-shadow:0 8px 28px var(--shadow);z-index:31}
 .limit-queue-dialog h2{font-size:var(--fs-s);font-weight:600;margin:0 0 10px}
@@ -1248,6 +1244,12 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 /* 再開。中断と同じ位置・同じ薄い面。再生の三角と字（480px 以下は三角だけ） */
 .resume{flex:none;margin-left:4px}
 .resume svg.i{width:16px;height:16px}
+/* 上限で止まった会話の再開は「◷ 2:30 に再開 ▾」。三角は時計に替わり、▾ から面（待つ・別のアカウント・順番）が開く */
+.resume .resume-clock,.resume .resume-caret{display:none}
+.resume.is-limit .resume-play{display:none}
+.resume.is-limit .resume-clock{display:block}
+.resume.is-limit .resume-caret{display:block;width:12px;height:12px;color:var(--ink-weak)}
+.resume.is-limit{font-variant-numeric:tabular-nums}
 /* 中断中に字を書いたときの「送ると、この指示で続けます」。入力の箱の下に小さく。書いていない間も高さは保つ */
 .resume-note{font-size:var(--fs-xs);color:var(--ink-weak);padding:4px 10px 0;min-height:22px}
 .resume-note[hidden]{display:none}
@@ -1304,6 +1306,9 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .copt .sub{display:block;font-size:var(--fs-xs);color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .copt.cmono .sub{font-family:var(--font-mono)}
 /* 「既定」の札は弱い字だけ（面も色も付けない） */
+.copt .tag.rec{color:var(--ink-blue);font-weight:600}
+.copt.copt-note{align-items:flex-start}
+.copt.copt-note .sub{white-space:normal;line-height:1.5}
 .copt .tag,.copt .r{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
 .copt .r{margin-left:auto}
 .copt.danger .main{color:var(--ink-strong);font-weight:600}
@@ -1789,6 +1794,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .abort span{display:none}
   .resume{width:36px;height:36px;padding:0;border-radius:50%}
   .resume span{display:none}
+  .resume.is-limit .resume-caret{display:none}
 }
 @media (max-width:399px){
   .chip{padding:0 5px;gap:4px}
