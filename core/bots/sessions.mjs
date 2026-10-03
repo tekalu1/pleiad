@@ -20,13 +20,15 @@ import { agentT } from '../i18n.mjs';
 import { modePosition, scopeRank } from '../modes.mjs';
 import { folderKey } from './store.mjs';
 
-/** 人格の文。heading（誰か）→ 人格（あれば）→ 使い方の数行。区切りは空行 1 つ、末尾の改行なし */
+/** 人格の文。heading（誰か）→ 人格（あれば）→ 使い方の数行 → 黙って終えてよいこと。区切りは空行 1 つ、末尾の改行なし */
 export function botInstructions(bot, locale) {
   const persona = String(bot?.persona ?? '').replace(/\r\n/g, '\n').trim();
   return [
     agentT(locale, 'guide.bot.heading', { icon: bot?.icon ?? '', name: bot?.name ?? '' }),
     persona ? `${agentT(locale, 'guide.bot.personaLabel')}\n${persona}` : null,
     agentT(locale, 'guide.bot.tools'),
+    // 黙る自由（ADR 0119）: 文章を書かずに終えたターンは投稿を残さない（core/bots/dispatch.mjs の finalizePost）
+    agentT(locale, 'guide.bot.quiet'),
   ].filter(Boolean).join('\n\n');
 }
 

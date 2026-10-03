@@ -8,7 +8,7 @@ import path from 'node:path';
 import { startServer } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { createInboxStore } from '../../core/bots/inbox.mjs';
-import { createDispatcher, PLACEHOLDER, PROGRESS_MIN_CHARS, CHAIN_LIMIT, progressBody } from '../../core/bots/dispatch.mjs';
+import { createDispatcher, PLACEHOLDER, PROGRESS_MIN_CHARS, progressBody } from '../../core/bots/dispatch.mjs';
 
 export const name = 'bot-dispatch';
 export const title = 'bot を起こす・配る: @ で起こす・返事の @ で連鎖・止める・途中送信とたまった出来事・DM・暗黙では起こさない・再起動の戻し・inbox.json';
@@ -589,7 +589,7 @@ export default async function (t) {
         t.ok('E1-4: Lynx の返事が、Owl の会話の出来事として届く（reply = Lynx。返事の投稿を指す）', back.length === 1 && back[0].reply === 'b_2' && back[0].postId === resultPost.id && back[0].botId === 'b_1', JSON.stringify(await itemsOf(w, 's1')));
         const owlPrompt = w.started.find((s) => s.args.sessionId === 's1')?.args.prompt ?? '';
         t.ok('E1-4: Owl の会話が新しいターンで起き、包みは reply="true"・from は Lynx・本文は Lynx の返事', owlPrompt.includes(' reply="true"') && owlPrompt.includes('from="🐺 Lynx (bot)"') && owlPrompt.includes('>調べた結果です</pleiad-channel>'), owlPrompt);
-        t.ok('E1-4: 起こした回数が増える（呼び合いの回数の上限は置かず、数えるだけ）', w.threads['c_1/p_root'].calls === 2, String(w.threads['c_1/p_root'].calls));
+        t.ok('E1-4: 起こした回数が増える（回数の上限は置かず、数えるだけ）', w.threads['c_1/p_root'].calls === 2, String(w.threads['c_1/p_root'].calls));
 
         // 人が @Lynx で直接起こしたときは返さない
         const human = mkWorld();
@@ -629,18 +629,17 @@ export default async function (t) {
         const owlItems = await itemsOf(mention, 's1');
         t.ok('E1-4: 返事が呼んだ bot への @ を含むときは、@ で 1 回だけ起こす（reply の出来事を重ねない）', owlItems.length === 1 && !owlItems[0].reply && owlItems[0].caller === 'b_2', JSON.stringify(owlItems));
 
-        // 呼び合いは、人が書かないまま 6 回（CHAIN_LIMIT）までで止まる（ADR 0117）: Owl → Lynx → Owl → Lynx …を 3 往復させる（7 回目は起こさない）
+        // 呼び合いの回数に上限は置かない: 予算の無いチャンネル（使用枠が読めず数えられない）では、人が書かないまま何往復でも続く（ADR 0119）
         const loop = mkWorld();
         await callOwl(loop);
         await tick();
-        for (let round = 1; round <= 3; round++) {
+        for (let round = 1; round <= 4; round++) {
           await finish(loop, 's_new_b_2', `返事 ${round}`);                  // Lynx が答える → Owl が起きる
           await finish(loop, 's1', '@Lynx もう 1 回', 'ok');                // Owl が答えて、また Lynx を呼ぶ → Lynx が起きる
         }
         const owlStarts = loop.started.filter((s) => s.args.sessionId === 's1').length, lynxStarts = loop.started.filter((s) => s.args.sessionId === 's_new_b_2').length;
-        t.ok('ADR 0117: 人が書かないまま bot どうしが 6 回呼び合うと、7 回目は起こさない', CHAIN_LIMIT === 6 && owlStarts === 3 && lynxStarts === 3 && loop.threads['c_1/p_root'].calls === 6 && loop.threads['c_1/p_root'].chain === 7, JSON.stringify([owlStarts, lynxStarts, loop.threads['c_1/p_root']]));
-        const limitNotes = loop.posts.filter((p) => String(p.text).includes('あなたが書けば続けます'));
-        t.ok('ADR 0117: 止めたときに「あなたが書けば続けます」をスレッドに 1 回だけ残す', limitNotes.length === 1 && limitNotes[0].threadId === 'p_root', JSON.stringify(limitNotes));
+        t.ok('ADR 0119: 回数の上限は無い（数えられないときは止めない。8 回呼び合っても 9 回目が起きる）', owlStarts === 4 && lynxStarts === 5 && loop.threads['c_1/p_root'].calls === 9 && !('chain' in loop.threads['c_1/p_root']), JSON.stringify([owlStarts, lynxStarts, loop.threads['c_1/p_root']]));
+        t.ok('ADR 0119: 回数で止めた知らせ（「あなたが書けば続けます」）は出さない', !loop.posts.some((p) => String(p.text).includes('あなたが書けば続けます')));
         await loop.d.stopThread({ channelId: 'c_1', threadId: 'p_root' }, { kind: 'human' });
         const before = loop.started.length;
         await finish(loop, 's_new_b_2', '止めた後の Lynx の返事');
@@ -654,6 +653,72 @@ export default async function (t) {
           await tick();
           return loop.started.length === before + 1;
         })());
+
+        // チャンネルの予算（ADR 0119）: 使った分を週の使用枠の % の目安で数え、使い切ったら bot どうしの呼びかけだけ起こさない。人が呼べば起きる。お知らせは出さない
+        {
+          const b = mkWorld();
+          b.channel.budget = { daily: 1, perThread: 100 };                    // 1 スレッド 1%
+          b.host.readQuota = async () => ({ windows: [{ label: 'week', minutes: 10080, usedPercent: 10, resetsAt: new Date(Date.now() + 86_400_000).toISOString() }], checkedAt: Date.now() });
+          b.host.usageStore = { tokensSince: async () => 10_000 };            // 週の枠 1% = 1,000 トークン
+          const spend = async (sessionId, text, tokens) => {
+            b.host.lastReply = async () => text;
+            const turn = { ...turnOf(sessionId), info: { sessionId, backend: 'fake', model: '' } };
+            b.d.onTurnEvent(turn, { type: 'text.delta', text });
+            b.d.onTurnEvent(turn, { type: 'usage', inputTokens: tokens });
+            await b.d.onTurnEnd(turn, { outcome: 'ok' });
+            await tick();
+          };
+          const owlRuns = () => b.started.filter((s) => s.args.sessionId === 's1').length;
+          const lynxRuns = () => b.started.filter((s) => s.args.sessionId === 's_new_b_2').length;
+          await callOwl(b);
+          await tick();
+          await spend('s_new_b_2', '返事 1', 400);                            // 0.4%: 残りがあるので Owl へ返す
+          t.ok('ADR 0119: 予算が残っている間は、呼んだ bot へ返事を返して起こす', owlRuns() === 1, String(owlRuns()));
+          await spend('s1', '@Lynx もう 1 回', 400);                           // 0.8%: まだ残る → Lynx が起きる
+          t.ok('ADR 0119: 予算が残っている間は、bot の @ で相手が起きる', lynxRuns() === 2, String(lynxRuns()));
+          await spend('s_new_b_2', '返事 2', 400);                            // 1.2%: 使い切った → Owl へは返さない
+          const root = b.threads['c_1/p_root'];
+          t.ok('ADR 0119: 使った分は根のスレッドの spend（今日の日付・%）に足す', root.spend?.day === new Date().toLocaleDateString('sv-SE') && Math.abs(root.spend.percent - 1.2) < 1e-9, JSON.stringify(root.spend));
+          t.ok('ADR 0119: 使い切ったら、呼んだ bot へ返事を返さない（起こさない）', owlRuns() === 1 && !(await b.d.inbox.list({ sessionId: 's1', status: 'pending' })).length, String(owlRuns()));
+          t.ok('ADR 0119: 使い切っても、Pleiad はスレッドにお知らせを出さない', !b.posts.some((p) => p.author?.kind === 'system' || /予算/.test(String(p.text))), JSON.stringify(b.posts.map((p) => p.text)));
+          const again = botPost('p_budget_bot', ['b_2'], { text: '@Lynx まだ？' });
+          b.posts.push(again);
+          await b.d.onPosted(again, b.channel);
+          await tick();
+          t.ok('ADR 0119: 使い切った後の bot の @ も起こさない', lynxRuns() === 2, String(lynxRuns()));
+          const human = botPost('p_budget_human', ['b_2'], { author: { kind: 'human' }, text: '@Lynx お願い' });
+          b.posts.push(human);
+          await b.d.onPosted(human, b.channel);
+          await tick();
+          t.ok('ADR 0119: 使い切っても、人が呼べば bot は起きる', lynxRuns() === 3, String(lynxRuns()));
+          const notes = (await b.d.turnExtras({ info: { sessionId: 's1', backend: 'fake', model: '' }, agentLocale: 'ja', stream: {} })).notes;
+          t.ok('ADR 0119: 毎ターン、末尾の文脈で予算の残りを渡す（使い切ったら 0）', notes.some((n) => n.startsWith('<pleiad-turn-context>') && n.includes('このスレッドの予算の残り: 0%') && n.includes('チャンネルの今日の残り: 0%')), JSON.stringify(notes));
+        }
+
+        // 予算の残り: 使用枠が読めないバックエンドでは「不明」と渡す。予算なし（daily: null）のチャンネルでは渡さない
+        {
+          const u = mkWorld();
+          const notesOf = async () => (await u.d.turnExtras({ info: { sessionId: 's1', backend: 'fake', model: '' }, agentLocale: 'ja', stream: {} })).notes;
+          t.ok('ADR 0119: 使用枠が読めないときは、残りを「不明」として渡す', (await notesOf()).some((n) => n.includes('このスレッドの予算の残り: 不明')));
+          u.channel.budget = { daily: null, perThread: 50 };
+          t.ok('ADR 0119: 予算なしのチャンネルでは、残りを渡さない', !(await notesOf()).some((n) => n.includes('予算の残り')));
+        }
+
+        // 黙る自由（ADR 0119）: 文章を書かずに（リアクションだけで）終えたターンは投稿を残さず、呼んだ bot へも返さない
+        {
+          const q = mkWorld();
+          const removed = [];
+          q.d.channels.remove = async ({ postId }) => { removed.push(postId); const p = q.posts.find((x) => x.id === postId); if (p) p.deletedAt = 1; };
+          await callOwl(q);
+          await tick();
+          const lynxPost = q.posts.find((p) => p.turn?.sessionId === 's_new_b_2');
+          const turn = turnOf('s_new_b_2');
+          q.d.onTurnEvent(turn, { type: 'tool.start', id: 'r1', name: 'call_op' });   // channels.react だけ
+          await q.d.onTurnEnd(turn, { outcome: 'ok' });
+          await tick();
+          t.ok('ADR 0119: 文章なしで正常に終えたターンは、作業中の投稿（…）を消す', removed.includes(lynxPost?.id), JSON.stringify(removed));
+          t.ok('ADR 0119: 黙って終えたら、呼んだ bot へ返事を返さない（呼び合いが自然に終わる）', !q.started.some((s) => s.args.sessionId === 's1') && !(await itemsOf(q, 's1')).length);
+        }
       }
 
       // E1-5: ［止める］は、ターンの終わった bot の会話にも届く（委譲の子のタスクの取り消しは会話の中断に付いてくる）
@@ -666,6 +731,46 @@ export default async function (t) {
         await running.d.turnExtras(running.turn);
         await running.d.stopThread({ channelId: 'c_1', threadId: 'p_root' }, { kind: 'human' });
         t.ok('E1-5: 走っている会話は 1 回だけ止める（二重に止めない）', running.aborted.filter((a) => a.sessionId === 's1').length === 1, JSON.stringify(running.aborted));
+      }
+
+      // 使用量の上限（ADR 0119）: 何も書けずに上限で終わったターンは作業中の投稿を消し、Pleiad のお知らせを出して休憩中にする。休憩中の @ は配らず、場所ごとに 1 回だけ知らせる
+      {
+        const w = world('plain');
+        const removed = [];
+        w.d.channels.remove = async ({ postId }) => { removed.push(postId); const p = w.posts.find((x) => x.id === postId); if (p) p.deletedAt = 1; };
+        await w.d.turnExtras(w.turn);
+        const turnPost = w.posts.find((p) => p.turn);
+        const resetsAt = Date.now() + 3 * 3600_000;
+        w.d.onTurnEvent(w.turn, { type: 'turnResult', outcome: 'limited', error: 'Individual quota reached. Resets in 3h.' });
+        await w.d.onTurnEnd(w.turn, { outcome: 'limited', interrupted: { reason: 'limit', resetsAt } });
+        await tick();
+        const notes = w.posts.filter((p) => String(p.text).includes('使用量の上限'));
+        t.ok('上限: 何も書けずに終わったターンの作業中の投稿（…）は消す（「止めました」も英語の生の文も bot の発言にしない）', removed.includes(turnPost.id) && !w.posts.some((p) => /quota|止めました|失敗しました/.test(String(p.text))), JSON.stringify(w.posts.map((p) => p.text)));
+        t.ok('上限: 同じスレッドに Pleiad のお知らせを 1 回出す（解除の時刻つき）', notes.length === 1 && notes[0].threadId === 'p_root' && notes[0].text.includes('休みます'), JSON.stringify(notes));
+        const owl = await w.d.bots.get({ botId: 'b_1' });
+        t.ok('上限: その bot は解除の時刻まで休憩中（bots.overview の restingUntil の元）', w.d.restingUntil(owl) === resetsAt);
+        w.turns.delete('s1');
+        const before = w.started.length;
+        await w.d.onPosted({ ...w.posts[1], id: 'p_rest1', text: '@Owl まだ？', mentions: ['b_1'] }, w.channel);
+        await tick();
+        t.ok('上限: 休憩中の @ は配らない（依頼は預からない）。上限の知らせを出したスレッドには重ねない', w.started.length === before && !(await w.d.inbox.list({ sessionId: 's1' })).some((i) => i.postId === 'p_rest1')
+          && w.posts.filter((p) => String(p.text).includes('使用量の上限')).length === 1);
+        const other = { id: 'p_other', channelId: 'c_1', threadId: null, author: { kind: 'human' }, text: '@Owl 別件', mentions: ['b_1'], at: 9000, reactions: {} };
+        w.posts.push(other);
+        await w.d.onPosted(other, w.channel);
+        await w.d.onPosted({ ...other, id: 'p_other2', threadId: 'p_other', text: '@Owl もう一度' }, w.channel);
+        await tick();
+        const restNotes = w.posts.filter((p) => String(p.text).includes('届けていません'));
+        t.ok('上限: 休憩中の @ には、その場所（スレッド）へ 1 回だけ Pleiad のお知らせを出す', restNotes.length === 1 && restNotes[0].threadId === 'p_other' && w.started.length === before, JSON.stringify(restNotes));
+        // bot が何か書いた後に上限で終わったら、書いた分は残す
+        const k = world('plain');
+        await k.d.turnExtras(k.turn);
+        k.d.onTurnEvent(k.turn, { type: 'text.delta', text: '途中まで書いた返事です。' });
+        await k.d.onTurnEnd(k.turn, { outcome: 'limited', interrupted: { reason: 'limit', resetsAt: null } });
+        await tick();
+        const kept = k.posts.find((p) => p.turn);
+        t.ok('上限: bot が書いた分は残し、解除の時刻が分からなければ時刻なしで知らせる（休憩中にはしない）', kept.text === '途中まで書いた返事です。' && kept.state === 'stopped'
+          && k.posts.some((p) => String(p.text).includes('しばらく答えられません')) && k.d.restingUntil(await k.d.bots.get({ botId: 'b_1' })) === null, JSON.stringify(k.posts.map((p) => [p.text, p.state])));
       }
       // E1-2（Antigravity）: 会話を続けるときに人格（エージェント定義）を渡し直しても最初の指示のまま動くので、人格を直した後の最初のターンに、新しい人格を末尾の文脈として渡す
       {

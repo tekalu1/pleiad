@@ -189,7 +189,8 @@ export function createThread(host) {
     const waiting = !working ? false : (th?.state === 'waiting' || S.posts.some((p) => p.turn && p.state === 'waiting' && !p.deletedAt)) && !S.posts.some((p) => p.turn && p.state === 'working' && !p.deletedAt);
     const stopped = !working && Boolean(th?.stopped);
     const calls = Math.max(0, (th?.calls ?? 0) - 1);
-    const sig = JSON.stringify([working, waiting, stopped, total, calls, live.map((b) => b.id), th?.tokens, stopBusy]);
+    const budget = budgetUse(th);
+    const sig = JSON.stringify([working, waiting, stopped, total, calls, live.map((b) => b.id), th?.tokens, stopBusy, budget]);
     if (sig === bandSig) return;
     bandSig = sig;
     if (!total && !working && !stopped) { band.hidden = true; band.replaceChildren(); return; }
@@ -218,6 +219,12 @@ export function createThread(host) {
       tok.title = t('channels:thread.band.tokensTitle', { input: th.tokens.input ?? 0, output: th.tokens.output ?? 0, cached: th.tokens.cached ?? 0 });
       pieces.push(tok);
     }
+    if (budget) {
+      // 「予算 0.8% / 2.5%」: このスレッドが今日使った分と、1 スレッドの配分（ADR 0119）
+      const use = el('span', 'th-band-budget', t('channels:thread.band.budget', budget));
+      use.title = t('channels:thread.band.budgetTitle');
+      pieces.push(use);
+    }
     pieces.forEach((p, i) => { if (i) text.append(el('span', 'th-band-dot', '·')); text.append(p); });
     band.replaceChildren(text);
     if (working) {
@@ -228,6 +235,15 @@ export function createThread(host) {
       stop.onclick = () => stopThread();
       band.append(stop);
     }
+  }
+  /** このスレッドが今日予算に数えた分と配分（%）。予算の無いチャンネル・まだ使っていないスレッドは null */
+  function budgetUse(th) {
+    const b = S.channel?.kind === 'channel' ? S.channel.budget : null;
+    if (!b || b.daily == null || !th?.spend) return null;
+    const d = new Date(), day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (th.spend.day !== day || !(th.spend.percent > 0)) return null;
+    const r = (n) => Math.round(n * 100) / 100;
+    return { spent: r(th.spend.percent), allowance: r((b.daily * b.perThread) / 100) };
   }
   async function stopThread() {
     if (stopBusy || !S.threadId) return;

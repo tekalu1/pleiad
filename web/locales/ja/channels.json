@@ -12,7 +12,7 @@
     "unread": "未読あり",
     "mentions_other": "あなた宛て {{count}} 件",
     "archived": "アーカイブ済み",
-    "botState": { "idle": "待機", "working": "作業中", "waiting": "あなた待ち" },
+    "botState": { "idle": "待機", "working": "作業中", "waiting": "あなた待ち", "resting": "休憩中" },
     "openDm": "DM を開く",
     "openBot": "bot のページを開く",
     "dm": "DM",
@@ -106,6 +106,13 @@
       "noBots": "bot はまだありません。",
       "memo": "ここでの決まり（メモ）",
       "memoHint": "このチャンネルで動く bot が毎回読む、短い決まり事を書けます。",
+      "budget": "予算",
+      "budgetDaily": "1 日",
+      "budgetPerThread": "1 スレッドまで",
+      "budgetDailyLabel": "1 日の予算（週の使用枠に対する %）",
+      "budgetPerThreadLabel": "1 スレッドが使える分（1 日の予算に対する %）",
+      "budgetHint": "bot のバックエンドの週の使用枠に対する目安です。人が呼んだ分も数え、使い切ると bot どうしの呼びかけだけ止まります（人が呼べば答えます）。1 日を空にすると予算なし。",
+      "budgetToday": "今日の使用: {{spent}}%",
       "archive": "アーカイブする",
       "unarchive": "アーカイブをやめる",
       "cancel": "やめる",
@@ -149,7 +156,9 @@
       "calls": "呼び合い {{count}} 回",
       "stopped": "止めました",
       "tokens": "このスレッドで {{tokens}} トークン",
-      "tokensTitle": "入力 {{input}} · 出力 {{output}} · キャッシュ読み出し {{cached}}"
+      "tokensTitle": "入力 {{input}} · 出力 {{output}} · キャッシュ読み出し {{cached}}",
+      "budget": "予算 {{spent}}% / {{allowance}}%",
+      "budgetTitle": "このスレッドが今日使った分 / 1 スレッドの配分（bot のバックエンドの週の使用枠に対する目安）。使い切ると bot どうしの呼びかけだけ止まります"
     }
   },
   "bot": {
@@ -207,7 +216,9 @@
     "state": {
       "working": "作業中",
       "waiting": "あなた待ち",
-      "idle": "待機"
+      "idle": "待機",
+      "resting": "休憩中",
+      "restingUntil": "使用量の上限で {{time}} ごろまで休んでいます"
     },
     "saveFailed": "保存できませんでした: {{error}}",
     "createFailed": "作れませんでした: {{error}}",

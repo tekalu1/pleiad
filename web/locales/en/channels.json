@@ -13,7 +13,7 @@
     "mentions_one": "{{count}} mention of you",
     "mentions_other": "{{count}} mentions of you",
     "archived": "Archived",
-    "botState": { "idle": "Idle", "working": "Working", "waiting": "Waiting on you" },
+    "botState": { "idle": "Idle", "working": "Working", "waiting": "Waiting on you", "resting": "Resting" },
     "openDm": "Open DM",
     "openBot": "Open bot page",
     "dm": "DM",
@@ -107,6 +107,13 @@
       "membersHint": "Members are the bots listed here. To wake a bot, @ it in a post.",
       "noBots": "No bots yet.",
       "memo": "House rules (notes)",
+      "budget": "Budget",
+      "budgetDaily": "Per day",
+      "budgetPerThread": "Per thread up to",
+      "budgetDailyLabel": "Daily budget (% of the weekly usage window)",
+      "budgetPerThreadLabel": "Share one thread may use (% of the daily budget)",
+      "budgetHint": "An estimate against the weekly usage window of each bot's backend. Turns started by a person count too; once it runs out, only calls between bots stop (they still answer a person). Leave the daily field empty for no budget.",
+      "budgetToday": "Used today: {{spent}}%",
       "memoHint": "Short rules that every bot working in this channel reads each time.",
       "archive": "Archive",
       "unarchive": "Unarchive",
@@ -152,7 +159,9 @@
       "calls": "{{count}} hand-offs",
       "stopped": "Stopped",
       "tokens": "{{tokens}} tokens in this thread",
-      "tokensTitle": "Input {{input}} · output {{output}} · cache read {{cached}}"
+      "tokensTitle": "Input {{input}} · output {{output}} · cache read {{cached}}",
+      "budget": "Budget {{spent}}% / {{allowance}}%",
+      "budgetTitle": "Used by this thread today / share per thread (an estimate against the weekly usage window of each bot's backend). Once it runs out, only calls between bots stop"
     }
   },
   "bot": {
@@ -210,7 +219,9 @@
     "state": {
       "working": "Working",
       "waiting": "Waiting for you",
-      "idle": "Idle"
+      "idle": "Idle",
+      "resting": "Resting",
+      "restingUntil": "Resting until about {{time}} because of its usage limit"
     },
     "saveFailed": "Couldn’t save: {{error}}",
     "createFailed": "Couldn’t create it: {{error}}",

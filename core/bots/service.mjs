@@ -369,7 +369,8 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
         for (const [id, v] of Object.entries(all)) if (v?.bot?.botId) (byBot.get(v.bot.botId) ?? byBot.set(v.bot.botId, []).get(v.bot.botId)).push(id);
       }
       const states = host?.runtime ? await stateByBot() : new Map();
-      return Promise.all(bots.map(async (bot) => ({ ...bot, usage: await usageFor(bot, byBot), state: states.get(bot.id) ?? 'idle',
+      // restingUntil: 使用量の上限で休憩中なら解除の時刻（ms）。画面は作業中・あなた待ちを優先し、それ以外を「休憩中」と出す（ADR 0119）
+      return Promise.all(bots.map(async (bot) => ({ ...bot, usage: await usageFor(bot, byBot), state: states.get(bot.id) ?? 'idle', restingUntil: host?.restingUntil?.(bot) ?? null,
         sendTargetDetails: await Promise.all(bot.sendTargets.map(async (sessionId) => ({ sessionId,
           title: (await host?.store?.get?.(sessionId))?.title || sessionId, source: bot.sendTargetSources?.[sessionId] ?? 'manual' }))) })));
     },

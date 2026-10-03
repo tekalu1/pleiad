@@ -24,6 +24,7 @@ import * as pids from "./antigravity-pids.mjs";
 import * as transcript from "./antigravity-store.mjs";
 import { AGY_LEVELS, agyTarget, buildAgyModels, defaultLabelFromLog, parseAgyModels } from "./antigravity-models.mjs";
 import { MAX_RESULT_CHARS } from "./shared.mjs";
+import { antigravityLimit } from "./antigravity-limit.mjs";
 import { AGY_WAIT_SLICE_MS, agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
 import { t } from "../i18n.mjs";
 import crypto from "node:crypto";
@@ -168,11 +169,13 @@ const cut = (s) => {
 const modeFor = (id) => (Object.hasOwn(MODES, id) ? id : "yolo");
 const effortFor = (e) => (EFFORTS.includes(e) ? e : "");
 
-/** `result.status` -> turnResult（公式ドキュメントの 7 値）。 */
+/** `result.status` -> turnResult（公式ドキュメントの 7 値）。使用量の上限の失敗は limited と解除の時刻にそろえる（antigravity-limit.mjs。ADR 0119） */
 function turnResultFor(result) {
   const status = result?.status;
   if (status === "SUCCESS") return { type: "turnResult", outcome: "ok", turns: result?.num_turns ?? 1 };
   if (status === "CANCELED" || status === "INTERRUPTED") return { type: "turnResult", outcome: "aborted", turns: 1 };
+  const limit = antigravityLimit(result?.error);
+  if (limit) return { type: "turnResult", outcome: "limited", turns: result?.num_turns ?? 1, error: String(result.error), resetsAt: limit.resetsAt, window: null };
   return {
     type: "turnResult", outcome: "error", turns: result?.num_turns ?? 1,
     error: String(result?.error || t("antigravity.errors.endedWith", { status: status ?? t("antigravity.errors.unknownStatus") })),

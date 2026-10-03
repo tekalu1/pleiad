@@ -462,6 +462,7 @@ const cases = [
   // --- dispatch (S4) ---
   // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
   await import("./unit/bot-dispatch.mjs"),
+  await import("./unit/bot-budget.mjs"),
   // bot の会話は Chats の一覧に出さず、あなた待ちのときだけ出す（一覧の行の bot・承認待ち・検索の除外・スマホ通知）
   await import("./unit/bot-sessions-list.mjs"),
   // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---

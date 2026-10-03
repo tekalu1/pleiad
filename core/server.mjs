@@ -4103,6 +4103,8 @@ botHost = createBotHost({
   createConversation, runTurn, noticeTarget, noticeBlocked, abortSessions, emitGlobal,
   getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
   sessionBusy: id => sessionBusy(id),
+  // チャンネルの予算（ADR 0119）が読む使用枠。設定の「使用量」・ply_usage と同じ quotaCache を通す
+  readQuota: id => { const b = getBackend(id); return b ? providerQuota(b) : null; },
 });
 // ターンの外で起きたことをバックエンドから受け取る口（docs/multi-backend.md §2.7）。
 // codex（バックグラウンド端末）が使う

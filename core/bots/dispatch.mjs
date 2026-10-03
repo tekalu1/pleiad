@@ -29,8 +29,9 @@
 //     （いちばん新しい bot の投稿の bot）、bot の投稿がまだ無ければスレッドの会話を持つ bot が 1 体だけならそれ。決まらなければ誰も起こさない。
 //     bot・Chats の AI の @ の無い投稿は誰も起こさない（暗黙の宛先は人の投稿だけ。bot 同士が起こし合わない）。
 //   - ThreadState.stopped があれば、人が次に書くまで起こさない。ThreadState.calls は数えるだけ。
-//   - bot が bot を起こす（返事・channels.post の @、呼んだ bot へ返す返事）のは、人が書かないまま CHAIN_LIMIT（6）回まで（ADR 0117。ADR 0109 の「上限なし」を改めた）。
-//     超えたら起こさず「あなたが書けば続けます」をスレッドに残す。数えるのは origin の根のスレッドの ThreadState.chain。人がそのスレッドか派生に書くと 0 に戻る。
+//   - bot が bot を起こす（返事・channels.post の @、呼んだ bot へ返す返事）のは、チャンネルの予算が残っている間だけ（ADR 0119。回数の上限は置かない）。
+//     使い切ったら起こさない（Pleiad はお知らせを出さない。人が呼べば起きる）。数えるのは core/bots/budget.mjs。残りは毎ターン末尾の文脈で bot に渡す。
+//   - 使用量の上限に当たった bot は休憩中（core/bots/resting.mjs）。休憩中の @ は配らず、その場所に 1 回だけ Pleiad のお知らせを出す（ADR 0119）。
 //   - bot の投稿で bot を呼ぶのは行頭の半角の @名前 だけ（mentions.mjs の strict）。人は全角の ＠ も文中も数える。どちらも括弧・コード・引用の中は数えない。
 //   - 動く承認モードが投稿した bot より強い bot（範囲・自律のどちらかが上）は、bot の返事の @ では起こさない（起こさなかったことをスレッドの投稿で知らせる。人が @ すると起きる）。
 //     channels.post の @ は ops が決め済み（extra.hold・checked）で、承認（channels.wake）が出る。人の投稿は確認しない。
@@ -45,8 +46,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { agentT } from '../i18n.mjs';
 import { channelEnvelope, channelThreadEnvelope, channelEventRows, turnContextEnvelope } from '../channels/types.mjs';
+import { TURN_CONTEXT_TAG } from '../system-messages.mjs';
 import { createInboxStore } from './inbox.mjs';
 import { strongerMode } from './approval.mjs';
+import { createBudget } from './budget.mjs';
+import { createResting, restKey } from './resting.mjs';
 
 /** ターンの投稿の本文を書き換える間隔の下限（ms）。全接続へ配る間隔と同じ */
 export const PROGRESS_INTERVAL_MS = 1000;
@@ -71,8 +75,6 @@ export function progressBody(rec) {
   }
   return '';
 }
-/** 人が書かないまま bot が bot を続けて起こせる回数（ADR 0117）。超えたら止めて「あなたが書けば続けます」を残す。人がそのスレッド（origin の派生を含む）に書くと数え直す */
-export const CHAIN_LIMIT = 6;
 const RETRY_MS = 3000;
 /** 始められなかったターンの後に、たまった出来事を配り直す回数（失敗が続くなら止める。次の @ でまとめて渡る） */
 const START_RETRIES = 3;
@@ -91,6 +93,13 @@ const sum = (a, b) => ({ input: (a?.input ?? 0) + (b?.input ?? 0), output: (a?.o
 const botAuthor = (botId) => ({ kind: 'bot', botId });
 const threadKeyOf = (channelId, threadId) => (threadId ? `${channelId}/${threadId}` : null);
 const log = (...a) => console.error('  dispatch:', ...a);
+/** 末尾の文脈（<pleiad-turn-context>。記憶の tail が作る）の最後のものに text を足す。無ければ新しく足す（末尾を 1 つの包みに保つ） */
+function withTail(notes, text) {
+  const open = `<${TURN_CONTEXT_TAG}>\n`, close = `\n</${TURN_CONTEXT_TAG}>`, env = turnContextEnvelope(text);
+  const at = notes.findLastIndex((n) => n.startsWith(open) && n.endsWith(close));
+  if (at < 0) return [...notes, env];
+  return notes.map((n, i) => (i === at ? `${n.slice(0, -close.length)}\n\n${env.slice(open.length)}` : n));
+}
 const errText = (e) => String(e?.message ?? e);
 
 export function createDispatcher({ channels, bots, memory, host, emit = () => {}, now = Date.now } = {}) {
@@ -107,6 +116,8 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
   const startFailures = new Map(); // sessionId → 始められなかった回数（配り直しの上限用。始まったら消す）
   const stoppedKeys = new Set();   // 止めたスレッド（canStart の同期の判定用。人が書いたら外す）
   const failedKeys = new Set();    // 最後のターンが失敗で終わったスレッド
+  const budget = createBudget({ channels, host, now, log });
+  const resting = createResting({ now, onChange: (key) => restingChanged(key) });
   let closed = false;
 
   const rt = () => host?.runtime;
@@ -151,41 +162,6 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
     threadChains.set(key, tail);
     tail.then(() => { if (threadChains.get(key) === tail) threadChains.delete(key); });
     return run;
-  }
-
-  /** 呼び合いを数えるスレッド: origin をたどった根（bot が流れへ書いて新しいスレッドを作り続けても、数えるのは 1 か所） */
-  async function chainRoot(channelId, threadId) {
-    let at = { channelId, threadId };
-    for (let i = 0; i < 20; i++) {
-      const origin = (await channels.threads.get(at.channelId, at.threadId).catch(() => null))?.origin;
-      if (!origin || (origin.channelId === at.channelId && origin.threadId === at.threadId)) break;
-      at = origin;
-    }
-    return at;
-  }
-
-  /**
-   * bot が bot を起こす前に 1 回数える。CHAIN_LIMIT 回までは true。超えた最初の 1 回だけ、起こす先のスレッドに「あなたが書けば続けます」を残す（以後は黙って起こさない）
-   */
-  async function takeChain(channelId, threadId) {
-    if (!threadId) return true;
-    const root = await chainRoot(channelId, threadId);
-    let allowed = false, notice = false;
-    await channels.threads.update(root.channelId, root.threadId, (cur) => {
-      const n = cur.chain ?? 0;
-      if (n < CHAIN_LIMIT) { allowed = true; return { chain: n + 1 }; }
-      if (n === CHAIN_LIMIT) { notice = true; return { chain: n + 1 }; }
-      return {};
-    }).catch((e) => { allowed = true; log('could not count the bot chain:', errText(e)); });
-    if (notice) await systemPost(channelId, threadId, agentT(locale(), 'channel.chainLimit', { count: CHAIN_LIMIT }));
-    return allowed;
-  }
-
-  /** 人がスレッドに書いた: 呼び合いの数を 0 に戻す */
-  async function resetChain(channelId, threadId) {
-    const root = await chainRoot(channelId, threadId);
-    const th = await channels.threads.get(root.channelId, root.threadId).catch(() => null);
-    if (th?.chain) await channels.threads.update(root.channelId, root.threadId, { chain: 0 }).catch((e) => log('could not reset the bot chain:', errText(e)));
   }
 
   const bumpCalls = (channelId, threadId) => channels.threads.update(channelId, threadId, (cur) => ({ calls: (cur.calls ?? 0) + 1 })).catch((e) => log('could not write the wake count:', errText(e)));
@@ -337,7 +313,6 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       if (kind !== 'human' && kind !== 'bot' && kind !== 'agent') return;
       const key = threadKeyOf(channel.id, post.threadId);
       if (kind === 'human' && key) stoppedKeys.delete(key);   // 人が書いた（service が ThreadState.stopped を外している）
-      if (kind === 'human' && key) await resetChain(channel.id, post.threadId);   // 人が書いたら、bot どうしの呼び合いを数え直す
       if (channel.archivedAt) return;
       const ownBot = kind === 'bot' ? post.author.botId : null;
       let threadId = post.threadId;
@@ -434,8 +409,10 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
   async function wake({ botId, channel, threadId, post, approved = false }) {
     const bot = await getBot(botId);
     if (!bot) return;
-    // bot が bot を起こすのは、人が書かないまま CHAIN_LIMIT 回まで（人が承認した channels.wake は人の操作なので数えない）
-    if (post.author?.kind === 'bot' && !approved && !(await takeChain(channel.id, threadId))) return;
+    // 使用量の上限で休憩中なら配らない（解除の後にもう一度呼んでもらう）。その場所で初めてなら知らせる
+    if (await restingWake(bot, channel, threadId)) return;
+    // bot が bot を起こすのは、チャンネルの予算が残っている間だけ（人が承認した channels.wake は人の操作なので止めない）。使い切っても知らせない
+    if (post.author?.kind === 'bot' && !approved && !(await budget.allows({ channelId: channel.id, threadId }))) return;
     const sessionId = await sessionFor({ bot, channel, threadId, post });
     // 呼んだのが別の bot なら、この会話のターンが終わったときに返事を返す相手として残す（人・ルーティン・外から来た文には返さない）
     const caller = post.author?.kind === 'bot' && post.author.botId !== botId ? post.author.botId : null;
@@ -581,6 +558,41 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
 
   const systemPost = (channelId, threadId, text) => channels.post({ channelId, threadId, text }, { kind: 'system' }).catch((e) => log('could not write a system post:', errText(e)));
 
+  // ------------------------------------------------------------ 休憩中（使用量の上限。ADR 0119）
+
+  const botLabel = (bot) => `${bot?.icon ?? ''} ${bot?.name ?? ''}`.trim();
+  /** 解除の時刻: 今日なら「14:20」、別の日なら「10/5 14:20」 */
+  const whenOf = (ms) => {
+    const d = new Date(ms), hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return d.toDateString() === new Date(now()).toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+  };
+
+  /** 休憩中の bot を起こそうとした: 配らずに true（依頼は預からない。解除の後にもう一度呼んでもらう）。その場所（スレッド・DM）で休憩中に初めてなら、Pleiad のお知らせを出す */
+  async function restingWake(bot, channel, threadId) {
+    const until = resting.until(bot);
+    if (!until) return false;
+    if (resting.noticeOnce(bot, `${channel.id}/${threadId ?? ''}`)) await systemPost(channel.id, threadId ?? null, agentT(locale(), 'channel.resting.wake', { bot: botLabel(bot), time: whenOf(until) }));
+    return true;
+  }
+
+  /** ターンが使用量の上限で終わった: その bot（同じバックエンド・モデルの bot も）を解除の時刻まで休ませ、このスレッド（DM）に知らせる */
+  async function limitReached(rec, resetsAt) {
+    const bot = await getBot(rec.botId);
+    if (!bot) return;
+    const until = resting.rest(bot, resetsAt) ?? resting.until(bot);
+    if (until) resting.noticeOnce(bot, `${rec.channelId}/${rec.threadId ?? ''}`);   // この後の @ で同じ知らせを重ねない
+    await systemPost(rec.channelId, rec.threadId, until
+      ? agentT(locale(), 'channel.resting.limited', { bot: botLabel(bot), time: whenOf(until) })
+      : agentT(locale(), 'channel.resting.limitedNoTime', { bot: botLabel(bot) }));
+  }
+
+  /** 休み始めた・休み終えた: 同じバックエンド・モデルの bot の画面を描き直させる（bots.overview の restingUntil） */
+  async function restingChanged(key) {
+    try {
+      for (const bot of await bots.list()) if (restKey(bot) === key) emit({ type: 'botsChanged', bot: { ...bot, restingUntil: resting.until(bot) } });
+    } catch (e) { log('could not announce a resting bot:', errText(e)); }
+  }
+
   // ------------------------------------------------------------ ターン
 
   async function turnExtras(turn) {
@@ -639,6 +651,15 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
         if (sb.personaKey && sb.personaKey !== rec.personaKey) notes = [turnContextEnvelope(agentT(turn.agentLocale ?? meta.agentLocale ?? locale(), 'channel.personaUpdated', { persona: text })), ...notes];
       }
     } catch (e) { log('could not check the persona of a conversation:', errText(e)); }
+    // チャンネルの予算の残り（ADR 0119）。毎ターン末尾の文脈で渡し、続けるか・ここでやめるかは bot が決める（型は付けない）
+    if (rec.threadId) {
+      try {
+        const left = await budget.left({ channelId, threadId: rec.threadId, backend: turn.info?.backend ?? bot.backend, model: turn.info?.model ?? bot.model });
+        const lng = turn.agentLocale ?? locale();
+        const pct = (n) => String(Math.round(n * 100) / 100);
+        if (left) notes = withTail(notes, left.known ? agentT(lng, 'channel.budget.left', { thread: pct(left.thread), channel: pct(left.channel) }) : agentT(lng, 'channel.budget.unknown'));
+      } catch (e) { log('could not read the budget:', errText(e)); }
+    }
     if (channelId && POST_KINDS.has(sb.kind) && (sb.kind === 'dm' || rec.threadId)) {
       try {
         const post = await channels.post({ channelId, threadId: rec.threadId, text: PLACEHOLDER, state: 'working', taint: sb.taint, turn: { botId: bot.id, sessionId }, new: true }, botAuthor(bot.id));
@@ -804,6 +825,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       return;
     }
     let woke = null, reply = null;
+    const limited = outcome === 'limited';
     try {
       rec.ended = true;
       clearTimeout(rec.timer);
@@ -815,7 +837,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       const state = ok ? 'done' : outcome === 'error' && !interrupted ? 'failed' : 'stopped';
       if (ok && !rec.committed) commit(rec);
       if (!rec.committed && rec.itemIds.length) await inbox.mark(rec.itemIds, 'unknown', { error: rec.error ?? String(outcome) });
-      if (rec.postId) ({ woke, reply } = await finalizePost(rec, state, ok));
+      if (rec.postId) ({ woke, reply } = await finalizePost(rec, state, ok, { limited }));
       const key = threadKeyOf(rec.channelId, rec.threadId);
       if (key) { if (state === 'failed') failedKeys.add(key); else failedKeys.delete(key); }
     } catch (e) { log('could not finalize the turn post:', errText(e)); }
@@ -826,6 +848,11 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       for (const [id, live] of [...liveSteers]) if (live.sessionId === sessionId) { liveSteers.delete(id); inbox.mark(live.ids, 'pending').catch(() => {}); }
     }
     await refreshThread(rec.channelId, rec.threadId);
+    // 使ったトークンをチャンネルの予算に数える（人が呼んだターンも。次の bot を起こす前に）
+    await budget.charge({ channelId: rec.channelId, threadId: rec.threadId, backend: turn.info?.backend, model: turn.info?.model, usage: rec.usage })
+      .catch((e) => log('could not charge the budget:', errText(e)));
+    // 使用量の上限に当たった: 休憩中にして、Pleiad のお知らせを出す（bot の発言には上限の文を書かない）
+    if (limited) await limitReached(rec, Number(interrupted?.resetsAt)).catch((e) => log('could not record a usage limit:', errText(e)));
     // 返事の中の @ で、次の bot を起こす（止められたスレッドは起こさない）
     if (woke) {
       try {
@@ -855,7 +882,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
   /**
    * B のターンが ok で終わったとき、B を呼んだ bot（A。B の投稿の @ ・channels.post の @ で起こした側）の会話へ、B の返事を「返事」の包みで届けて A を起こす。
    * 人が直接 @B で起こしたときは返さない。A（と A のスレッド）が止められているときも返さない。B の返事が A への @ を含むときは、その @ で起こるので重ねない。
-   * 呼び合いの回数に上限は置かない（止めるのは人の［止める］だけ）
+   * 回数の上限は置かず、チャンネルの予算を使い切ったら返さない（ADR 0119）
    */
   async function returnReply(rec, reply, woke) {
     if (closed || rec.stopped || !reply?.text?.trim()) return;
@@ -869,8 +896,9 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       if ((await threadStopped(rec.channelId, rec.threadId)) || (await threadStopped(target.channelId, target.threadId))) continue;
       const key = threadKeyOf(target.channelId, target.threadId);
       if (key && stoppedKeys.has(key)) continue;
-      // 返事を返して呼んだ bot を起こすのも、bot どうしの呼び合いとして数える
-      if (!(await takeChain(target.channelId, target.threadId))) continue;
+      // 返事を返して呼んだ bot を起こすのも bot どうしの呼びかけ: 予算を使い切っていたら起こさない（知らせない）。休憩中なら知らせて配らない
+      if (!(await budget.allows({ channelId: target.channelId, threadId: target.threadId }))) continue;
+      if (await restingWake(await getBot(caller.botId), { id: target.channelId }, target.threadId)) continue;
       await inbox.add({ sessionId: target.sessionId, botId: caller.botId, channelId: target.channelId, threadId: target.threadId, postId: reply.id, reply: rec.botId });
       if (target.threadId) await bumpCalls(target.channelId, target.threadId);
       await pump(target.sessionId);
@@ -878,7 +906,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
   }
 
   /** ターンの投稿に最終の返答と提示を入れて state を決める。返事で ok なら { woke: @ を含む投稿（次の bot を起こすため）, reply: 確定した返事の投稿（呼んだ bot へ返すため） } */
-  async function finalizePost(rec, state, ok) {
+  async function finalizePost(rec, state, ok, { limited = false } = {}) {
     const lng = locale();
     // bot が channels.post で自分のスレッドへ返事を書いたターンは、それが返事。最終の返答（作業の報告）は投稿に書かない（ADR 0117）
     let text = rec.spoke ? '' : (rec.cur || rec.last || rec.narration).trim();
@@ -888,9 +916,10 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
     if (!current || current.deletedAt) return none;
     const bodyByBot = rec.filled || (current.text !== PLACEHOLDER && current.text !== rec.lastWritten);
     if (!text && state === 'failed' && !rec.filled) text = agentT(lng, 'channel.turn.failed', { error: rec.error ?? '' });
-    if (!text && state === 'stopped' && !bodyByBot && !rec.presents.length) text = agentT(lng, 'channel.turn.stopped');
-    // 何も言わずに終わった（絵文字だけなど）: 投稿は残さない
-    if (!text && !bodyByBot && !rec.presents.length && state === 'done') { await channels.remove({ channelId: rec.channelId, postId: rec.postId }, botAuthor(rec.botId)); return none; }
+    // 使用量の上限で終わったターンは、bot の発言に「止めました」も上限の文も書かない（知らせは Pleiad の投稿。ADR 0119）。bot が書いた分は残す
+    if (!text && state === 'stopped' && !bodyByBot && !rec.presents.length && !limited) text = agentT(lng, 'channel.turn.stopped');
+    // 何も言わずに終わった（文章を書かずにリアクションだけ・黙ってやめる。ADR 0119）・上限で何も書けなかった: 投稿は残さない
+    if (!text && !bodyByBot && !rec.presents.length && (state === 'done' || limited)) { await channels.remove({ channelId: rec.channelId, postId: rec.postId }, botAuthor(rec.botId)); return none; }
     const edit = { channelId: rec.channelId, postId: rec.postId, state };
     // bot がこのターンの投稿に付けた「要確認」（channels.post の state: 'checking'。ルーティンの実行の状態になる）は、終わりで done に戻さない
     if (state === 'done' && current.state === 'checking') edit.state = 'checking';
@@ -999,6 +1028,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
     for (const rec of active.values()) clearTimeout(rec.timer);
     for (const timer of retries.values()) clearTimeout(timer);
     retries.clear();
+    resting.stop();
   }
 
   return {
@@ -1006,5 +1036,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
     start, stop, onPosted, claimPost, wake, wakePost, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted,
     /** テスト・診断用: 走っている bot のターンの数 */
     activeCount: () => active.size,
+    /** 使用量の上限で休んでいれば解除の時刻（ms）。bots.overview の restingUntil（ADR 0119） */
+    restingUntil: (bot) => resting.until(bot),
   };
 }

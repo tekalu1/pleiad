@@ -20,6 +20,7 @@
 //   list(): Promise<(Channel & { unread: number, mentions: number, threadsWorking: number })[]>   … archived も含む（archivedAt で見分ける）。
 //        unread = 既読の後の、人以外の発言者の投稿。mentions = そのうち `@あなた` を含むもの。threadsWorking = state が working のスレッドの数
 //   get({ channelId }): Promise<Channel>
+//        … list・get・channelsChanged のチャンネル（kind: 'channel'）は、budget に既定を埋め、spentToday（今日スレッドが予算に数えた % の合計）を付けて返す
 //   getPost({ channelId, postId }): Promise<Post|null>
 //   read({ channelId, threadId?, before?, limit }): Promise<{ posts: Post[], threads: ThreadState[], summaries, nextBefore: string|null }>
 //        … 新しい方から limit 件（時間順に並べて返す）。before = その投稿より前。nextBefore = まだ前があるとき、返した先頭の投稿の id。
@@ -29,7 +30,7 @@
 //   search({ query, channelId?, limit }): Promise<{ hits: { channelId, channelName, postId, threadId, author, at, snippet }[] }>
 //   create({ name, purpose?, cwd?, members? }, author): Promise<Channel>
 //   createDm({ bot }): Promise<Channel>                         … bot を作ったとき（S2 の bots.create が呼ぶ）。同じ bot の DM があればそれを返す
-//   update({ channelId, name?, purpose?, cwd?, members?, memo? }, author): Promise<Channel>
+//   update({ channelId, name?, purpose?, cwd?, members?, memo?, budget? }, author): Promise<Channel>   … budget は { daily?, perThread? }（渡した欄だけ。core/channels/budget.mjs。ADR 0119）
 //   archive({ channelId, on }, author): Promise<Channel>
 //   post({ channelId, threadId?, text, new?, state?, presents?, attachments?, turn?, taint?, routine?, mentions?, hold?, origin?, bySession? }, author): Promise<Post>
 //        … attachments: 人（と AI）が付けたファイル { path, name?, kind?, mime?, size?, origin? }[]（上限 LIMITS.attachments）。実物の確かめは ops（core/ops/channels.mjs）が済ませる。
@@ -56,6 +57,7 @@ import { authorKey, isAuthor, isId, newId, POST_STATES } from './types.mjs';
 import { createChannelStore } from './store.mjs';
 import { createThreadStore, emptyThread } from './threads.mjs';
 import { parseMentions } from './mentions.mjs';
+import { budgetOf, normalizeBudget, spentToday, dayOf } from './budget.mjs';
 
 export const LIMITS = Object.freeze({ name: 60, purpose: 300, memo: 4000, cwd: 1000, text: 20000, attachments: 50, members: 50, reactionKinds: 30, readDefault: 50, readMax: 100, searchDefault: 20, searchMax: 50 });
 /** 作業中の投稿の更新を全接続へ配る間隔（ms。ADR 0108。リモートの端末の通信量のため） */
@@ -160,14 +162,20 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     const taken = (await store.channels()).some((c) => c.kind === 'channel' && !c.archivedAt && c.id !== exceptId && foldName(c.name) === foldName(name));
     if (taken) throw new ChannelError('CHANNEL_NAME_TAKEN', { name });
   }
+  /** 外へ返すチャンネル: 予算は既定を埋め、今日使った分を付ける（ADR 0119）。DM は予算を持たない。threads は読み済みならそれを使う */
+  async function shown(channel, threads) {
+    if (!channel || channel.kind !== 'channel') return channel;
+    return { ...channel, budget: budgetOf(channel), spentToday: spentToday(threads ?? await threadStore.list(channel.id), channel.id, dayOf(now())) };
+  }
   async function saveChannel(channel) {
-    const saved = await store.saveChannel(channel);
+    const saved = await shown(await store.saveChannel(channel));
     emit({ type: 'channelsChanged', channel: saved });
     return saved;
   }
   async function patchChannel(channelId, fn) {
-    const saved = await store.updateChannel(channelId, fn);
-    if (!saved) throw new ChannelError('CHANNEL_NOT_FOUND', { id: String(channelId) });
+    const raw = await store.updateChannel(channelId, fn);
+    if (!raw) throw new ChannelError('CHANNEL_NOT_FOUND', { id: String(channelId) });
+    const saved = await shown(raw);
     emit({ type: 'channelsChanged', channel: saved });
     return saved;
   }
@@ -232,10 +240,10 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
           if (p.at > read.readAt) unread++;
           if (p.at > read.mentionAt && p.mentions?.includes('you')) mentions++;
         }
-        return { ...channel, unread, mentions, threadsWorking: threads.filter((t) => t.channelId === channel.id && t.state === 'working').length };
+        return { ...(await shown(channel, threads)), unread, mentions, threadsWorking: threads.filter((t) => t.channelId === channel.id && t.state === 'working').length };
       }));
     },
-    get: async ({ channelId }) => need(channelId),
+    get: async ({ channelId }) => shown(await need(channelId)),
     async getPost({ channelId, postId }) {
       await need(channelId);
       return clone((await store.snapshot(channelId)).find((p) => p.id === postId) ?? null);
@@ -302,7 +310,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       const t = now();
       return saveChannel({ id: isId(bot.dmChannelId, 'channel') ? bot.dmChannelId : newId('channel', t), kind: 'dm', name: bot.name, purpose: '', cwd: null, members: [bot.id], memo: '', botId: bot.id, createdAt: t, lastPostAt: t });
     },
-    async update({ channelId, name, purpose, cwd, members, memo }, _author) {
+    async update({ channelId, name, purpose, cwd, members, memo, budget }, _author) {
       const channel = await need(channelId);
       const patch = {};
       if (name !== undefined) {
@@ -314,6 +322,10 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       if (memo !== undefined) { if (typeof memo !== 'string' || memo.length > LIMITS.memo) throw invalid(`memo is longer than ${LIMITS.memo} characters`); patch.memo = memo; }
       if (cwd !== undefined) patch.cwd = checkCwd(cwd);
       if (members !== undefined) { patch.members = validateMembers(members); await checkMembers(patch.members); }
+      if (budget !== undefined) {
+        if (channel.kind !== 'channel') throw invalid('a DM has no budget');
+        try { patch.budget = normalizeBudget(budget, channel.budget); } catch (e) { throw invalid(e.message); }
+      }
       return patchChannel(channelId, (c) => ({ ...c, ...patch }));
     },
     async archive({ channelId, on }, _author) {
