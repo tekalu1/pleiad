@@ -336,7 +336,7 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 
 #### `computerStop`（新しいコマンド）
 
-`{ sessionId } → { stopped: boolean }`。その会話の走っているターンに止めた印を付け、`computer-stop` を main へ送る。ロックを貸している先（子）のターンにも付ける。`core/protocol.mjs` の `COMMANDS` に登録する。`hostCapabilities.osActions` の制限は掛けず、リモートの端末からも受ける。
+`{ sessionId } → { stopped: boolean }`。その会話の走っているターンに止めた印を付け、`computer-stop` を main へ送る。ロックを貸している先（子）のターンにも付ける。`core/protocol.mjs` の `COMMANDS` に登録する。`hostCapabilities.osActions` の制限は掛けず、リモートの端末からも受ける。中身は操作 `computer.stop`（write・`modeGate: false`）で、AI も `ply_control` の `call_op`・CLI の `pleiad computer stop` で止められる（`sessionId` を省くと自分の会話。[ADR 0094](adr/0094-human-only-five.md)）。
 
 #### 承認（`permission` と `resolvePermission`）
 

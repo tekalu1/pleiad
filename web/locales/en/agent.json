@@ -436,6 +436,13 @@
         "reason": "Why the conversation is forked (kept in the change log).",
         "beforeMessageId": "Copy up to before this message (uuid).",
         "reasonKey": "A predefined reason key from the UI.", "reasonParams": "Values for the predefined reason.", "backend": "Conversation agent."
+      },
+      "setModel": {
+        "summary": "Change a conversation's model. A running turn picks it up at once when the agent supports it. The change log keeps who changed it and why. The choices are the model setting in settings.schema.",
+        "sessionId": "The conversation id. Defaults to this conversation.",
+        "model": "The model id. An empty string means the agent's default.",
+        "reason": "Why the model is changed (kept in the change log).",
+        "reasonKey": "A predefined reason key from the UI.", "reasonParams": "Values for the predefined reason.", "backend": "Conversation agent."
       }
     },
     "statuses": {
@@ -528,6 +535,29 @@
       "usage": { "summary": "Read quota usage for delegation targets.", "backend": "Agent to check; omit for all." }
     },
     "browser": { "listProfiles": { "summary": "List the browser profiles available to this conversation." }, "useProfile": { "summary": "Switch this conversation's browser profile.", "profile": "Profile id or name." }, "setProfile": { "summary": "Switch a conversation's browser profile.", "sessionId": "Conversation id.", "profile": "Profile id." } },
+    "worktrees": {
+      "split": { "summary": "Split a conversation's place (git) into a separate worktree on its own branch. The original working tree is unchanged. Work in the returned cwd (the next turn's place is not changed).", "sessionId": "The conversation id. Omit both sessionId and cwd for this conversation.", "cwd": "The place to split (only places a conversation has used)." },
+      "discard": { "summary": "Clean up a separate worktree. It is removed only when it has no changes or is already merged; with unmerged changes or a conversation using it, it is kept (action: kept).", "id": "The worktree id (in the split result and in a delegated child's result)." },
+      "keep": { "summary": "Keep a separate worktree out of the automatic cleanup (kept: false clears it).", "id": "The worktree id.", "kept": "Whether to keep it (default true)." },
+      "archive": { "summary": "Archive and remove a separate worktree. The whole working tree is saved to a hidden ref first and can be brought back with worktrees.restore for 90 days. Not removed while a conversation uses it.", "id": "The worktree id." },
+      "restore": { "summary": "Recreate an archived worktree as a new separate worktree.", "ref": "The archive ref (starts with refs/pleiad/archive/; returned by worktrees.archive).", "sessionId": "The conversation whose repository to use. Omit both sessionId and cwd for this conversation.", "cwd": "The repository place (only places a conversation has used)." },
+      "setSettings": { "summary": "Turn \"always split\" on or off (split without asking when another conversation is writing to the same repository).", "always": "Whether to always split." }
+    },
+    "notify": {
+      "setPc": { "summary": "Turn this PC's notifications on or off per kind. Only the given fields change.", "done": "When work is done.", "reply": "When a reply (approval or question) is needed.", "failed": "When work failed." },
+      "setDevice": { "summary": "Mute or unmute notifications to one paired phone. The device list is not shown (ask the user for the id).", "id": "The device id.", "muted": "Whether to mute." }
+    },
+    "hooks": {
+      "read": { "summary": "Read one Hooks definition (command, timeout and so on) from an agent's settings file. Secret-looking values in the command are masked.", "agent": "The agent (claude, codex, antigravity).", "scope": "The scope (user, project and so on).", "base": "The place for the project scope.", "file": "The settings file path. Defaults to the usual location.", "loc": "Where the definition is (event, group, handler; name for Antigravity)." },
+      "readPly": { "summary": "Read one Pleiad Hooks registration (hooks.json). Secret-looking values in the command are masked.", "id": "The registration id." }
+    },
+    "compatEndpoints": {
+      "recheck": { "summary": "Check a saved compatible endpoint again with its saved URL and key, and record the result and the model list (no key is entered or returned).", "id": "The endpoint id." },
+      "delete": { "summary": "Delete a compatible endpoint (its saved key is deleted too). Approval-required conversations ask the user first.", "id": "The endpoint id.", "reason": "Why it is deleted (shown on the approval card and kept in the log)." }
+    },
+    "computer": {
+      "stop": { "summary": "Stop a conversation's computer use (mouse and keyboard on this PC). It cannot start or permit it.", "sessionId": "The conversation id. Defaults to this conversation." }
+    },
     "control": {
       "instructions": "Pleiad's features and settings are available through ply_control.\nFind an operation with list_ops (pass an id to get its input JSON Schema) and call it with call_op. Conversation search and reading (search_sessions, get_session, read_session) and current setting values (get_setting) can be called directly.\nOperations that change Pleiad's state follow this conversation's approval mode. A change that loosens a gate shows the user an approval card and returns status: pending without waiting; the result is delivered to this conversation later. If the code is NEEDS_UI, NEEDS_APPROVAL, or READ_ONLY_MODE, do not retry; tell the user.",
       "listOps": "List the operations available in Pleiad. Pass an id to get that operation's description, input JSON Schema, and risk. Call it with call_op.",

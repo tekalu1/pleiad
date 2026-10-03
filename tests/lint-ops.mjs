@@ -9,7 +9,7 @@
       (b) 基準の commands に「理由の種類」付きで載っている。
         ui-internal       画面の内部（下書き・既読・watch・ピッカー）。外へ出す意味が無い
         stream            断片の送信・screencast。1 回の呼び出しで済まない
-        human-only        承認モード・秘密・アカウント・リモートのペアリングなど。agent には出さない（ADR 0081）
+        human-only        core/ops/policy.mjs の HUMAN_ONLY の 5 つ（承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリング）だけ。agent には出さない（ADR 0094）
         host-screen-only  サーバーのある PC の画面からだけ（OS で開く。ADR 0010）
         gateway           操作の一覧への入口そのもの（invoke）
         todo              未移行。操作として定義する候補。**件数（todoMax）は増やせない**
@@ -19,10 +19,13 @@
       画面の WS コマンド setPref は設定の一覧から作る（settings.set の legacyCommand）ので、キーの一覧を手で持たない。
    3. store.setPref を一覧の外から呼んでいない。prefs.json へ書く出口は core/server.mjs の savePref（設定の一覧の writes と、既定の記憶だけが通る）に
       絞り、それ以外の store.setPref( の呼び出しは、同じ行に `ops-allow-setpref: 理由` の印を付けたものだけ。印の数（setPrefAllowed）は増やせない。
-   4. 自己診断（npm test でも回す）。 */
+   4. human-only は 5 つに限る（ADR 0094）。基準の human-only・操作の risk: human-only（検査用の probe.* を除く）・設定の risk: human-only は、
+      core/ops/policy.mjs の HUMAN_ONLY にあるものだけ。逆に HUMAN_ONLY にあるものは human-only のまま（todo や write にしない）。
+   5. 自己診断（npm test でも回す）。 */
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { HUMAN_ONLY_COMMANDS, HUMAN_ONLY_SETTINGS } from '../core/ops/policy.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const BASELINE_FILE = path.join(ROOT, 'tests', 'ops-baseline.json');
@@ -68,8 +71,9 @@ export function scanSetPrefCalls(root = ROOT) {
  * @param registry  操作の一覧（createRegistry の結果）
  * @param prefKeys  scanPrefKeys() の結果
  * @param setPrefCalls scanSetPrefCalls() の結果
+ * @param humanOnly  human-only にしてよいもの { commands, settings }（既定は core/ops/policy.mjs の HUMAN_ONLY）
  */
-export function checkCoverage({ baseline, commands, registry, prefKeys, setPrefCalls = [] }) {
+export function checkCoverage({ baseline, commands, registry, prefKeys, setPrefCalls = [], humanOnly = { commands: HUMAN_ONLY_COMMANDS, settings: HUMAN_ONLY_SETTINGS } }) {
   const problems = [];
   const add = (rule, message) => problems.push({ rule, message });
   const legacy = registry.legacyCommands();
@@ -99,6 +103,21 @@ export function checkCoverage({ baseline, commands, registry, prefKeys, setPrefC
   const allowed = setPrefCalls.filter((x) => x.allowed).length;
   if (allowed > baseline.setPrefAllowed) add('setpref-allowed-grew', `ops-allow-setpref の印が ${allowed} か所で、上限 ${baseline.setPrefAllowed} を超えた。増やさず savePref を通す`);
   if (allowed < baseline.setPrefAllowed) add('setpref-allowed-shrank', `ops-allow-setpref の印が ${allowed} か所に減った。setPrefAllowed を ${allowed} に下げる（node tests/lint-ops.mjs --update-baseline）`);
+
+  // human-only は 5 つに限る（ADR 0094）
+  const outside = (what) => `${what} は human-only の 5 つ（core/ops/policy.mjs の HUMAN_ONLY）に当たらない。agent も使える操作として定義する（危険度は read・write・guarded から選ぶ）`;
+  for (const [name, kind] of Object.entries(listed)) if (kind === 'human-only' && !legacy.has(name) && !humanOnly.commands.has(name)) add('human-only-outside', outside(`除外表の ${name}`));
+  for (const op of registry.ops) {
+    if (op.risk === 'human-only' && !op.id.startsWith('probe.') && !humanOnly.commands.has(op.legacyCommand)) add('human-only-outside', outside(`操作 ${op.id}`));
+    if (op.legacyCommand && humanOnly.commands.has(op.legacyCommand) && op.risk !== 'human-only') add('human-only-missing', `操作 ${op.id}（${op.legacyCommand}）は human-only の 5 つに当たる。risk を human-only にする`);
+  }
+  for (const s of registry.settings) {
+    if (s.risk === 'human-only' && !humanOnly.settings.has(s.key)) add('human-only-outside', outside(`設定 ${s.key}`));
+    if (humanOnly.settings.has(s.key) && s.risk !== 'human-only') add('human-only-missing', `設定 ${s.key} は human-only の 5 つに当たる。risk を human-only にする`);
+  }
+  for (const name of humanOnly.commands) {
+    if (commands.has(name) && !legacy.has(name) && listed[name] !== undefined && listed[name] !== 'human-only') add('human-only-missing', `${name} は human-only の 5 つに当たる。tests/ops-baseline.json で human-only にする（今は ${listed[name]}）`);
+  }
   return problems;
 }
 
