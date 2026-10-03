@@ -219,6 +219,13 @@
 | 退避して消す / 元に戻す | Archive and remove / Restore |
 | この会話でしたこと（git） | Done in this conversation |
 | 会話のこの場所へ | Go to this point in the conversation |
+| チャンネル（人と bot が集まる場。脇のタブは英語のまま Chats / Channels） | channel |
+| スレッド（投稿への返信の流れ。bot の作業の会話に当たる） | thread |
+| bot（名前・人格・記憶・権限を持つ。Pleiad のエージェントとは別の語） | bot |
+| ルーティン（時刻・間隔・イベント・webhook で起こす定期の仕事） | routine |
+| 記憶（bot が覚えていること。「あなたについて」と「この bot だけ」の 2 層） | memory |
+| 代わりに送る（bot がユーザーの代わりに他の会話へ送る） | send on your behalf |
+| 止める（スレッドの作業を止める） | Stop |
 
 ## 揺れ（未統一）
 - 使用枠: `usage`（辞書での使用が多数派。例 server:antigravity.usage.badResponse・shared・none・timeout・tooLarge・cannotRead・needsUpdate） / `usage limits`（例 server:antigravity.usage.unsupported、server:usage.codexUnavailable、server:usage.claudeUnavailable）。本表には多い方の `usage` を採ったが、辞書は直していないので `usage limits` の箇所も残っている
