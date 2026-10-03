@@ -45,7 +45,7 @@
   - `rows` は変わる項目の前後（`mcp.<名前>.<欄>`・`hooks.<名前>`・`context.default.<種類>` など。値は agent に見せる形で伏せる）。`note` は何が起きるかの 1 文（server 辞書の `opsApproval.*`。画面の言語）。`loosens` はコマンドを動かせるようになる・文脈を変える変更で立てる（消す・名前を変えるは立てない）。
   - `key` は持たない。同じ会話の同じ操作の承認待ちは、新しい要求で置き換える（ADR 0088 の「設定でない操作は同じ操作」）。結果の文の対象は「操作「mcp.save」」。
   - カードの節は「設定 › プラグイン」（`web/setting-change.mjs` の `SECTION_OF_ROOT` に `mcp`・`hooks`・`context`・`plyInstructions`）。
-  - 結果の届け先は設定の承認と同じ（承認を求めた会話）。委譲の子のタスクが終わっていたら依頼元の会話へ届ける共通の関数（ブランチ `fix/approval-to-requester`）は、この変更を入れる時点で main に無い。その関数は `registry.invoke` と承認の置き場（`core/setting-approvals.mjs`）の共通の道に入るので、入れば汎用の操作の承認にもそのまま効く。
+  - 結果の届け先は設定の承認と同じ（ADR 0088「届け先」）。承認を求めた会話へ届け、それが作業を終えた委譲の子なら依頼元の会話へ届ける（`core/setting-approvals.mjs` の `route`）。承認の置き場は設定と汎用の操作で共通なので、この操作の承認にも同じ届け先が効く。
 - **秘密は返さない。** 3 段にする。
   1. モジュールが画面へ返す形はもう伏せてある（`core/mcp-config.mjs`・`core/ply-mcp.mjs`・`core/hooks-config.mjs` の `maskText`・`core/ply-hooks.mjs` の `publicHook`・接続先の `hasKey`）。それを使い回す。
   2. 操作の層（`core/ops/redact.mjs`）が、どの主体にも同じ伏せ字をもう一度掛ける（env・ヘッダーの値・bearer・clientSecret・URL の userinfo とクエリ。伏せ字は冪等）。agent にはさらに、コマンドの引数の秘密（`--token 値`・`--api-key=…`・形で分かるトークン）、OAuth のログインの途中の承認の URL のクエリ、ペアリングの確認の番号、中継・接続先の URL のクエリ、会話の記録に残った Hook のコマンドを伏せる。人（画面）には引数・承認の URL・ペアリングの番号を返す（編集欄・ログイン・端末との見比べに要る。画面の振る舞いは変えない）。
