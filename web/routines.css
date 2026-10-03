@@ -18,7 +18,7 @@
 .routine-sheet .fld{display:grid;grid-template-columns:6.6em minmax(0,1fr);gap:6px 12px;align-items:start;padding:7px 0}
 .routine-sheet .fld[hidden]{display:none}
 .routine-sheet .fld>.k{color:var(--ink-weak);font-size:var(--fs-s);padding-top:5px}
-.routine-sheet .fld .v{min-width:0;display:flex;flex-direction:column;gap:6px}
+.routine-sheet .fld>.v{min-width:0;display:flex;flex-direction:column;gap:6px}
 .routine-sheet .fld .row2{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px;min-width:0}
 .routine-sheet .fld .weak{color:var(--ink-weak)}
 .routine-sheet .fld .nt{margin:0;font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5}
@@ -68,6 +68,7 @@
 @media (max-width:700px){
   .routine-sheet{width:100%;max-width:none;height:100dvh;max-height:none;border-radius:0}
   .rs-form{max-height:none;height:100%;padding:14px 14px max(14px,env(safe-area-inset-bottom,0px))}
+  .rs-body{flex:1 1 auto}
   .routine-sheet .fld{grid-template-columns:minmax(0,1fr);gap:4px}
   .routine-sheet .fld>.k{padding-top:0}
   .routine-sheet .sheet-foot .res{flex-basis:100%;margin-right:0;order:-1}
@@ -77,7 +78,7 @@
 .cs-row.paused{opacity:.5}
 .cs-row .row-meta .cs-rt-ch{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cs-rt-fail{flex:none;font-weight:700;color:var(--ink-strong);white-space:nowrap}
-.cs-more{display:block;width:100%;text-align:left;padding:4px 10px;border-radius:var(--r-m);font-size:var(--fs-xs);color:var(--ink-weak);cursor:pointer}
+.cs-more{display:block;width:100%;background:transparent;text-align:left;padding:4px 10px;border-radius:var(--r-m);font-size:var(--fs-xs);color:var(--ink-weak);cursor:pointer}
 .cs-more:hover{background:var(--surface-hover);color:var(--ink)}
 .cs-more:focus-visible{outline:2px solid var(--line-blue);outline-offset:-1px}
 
@@ -85,7 +86,7 @@
 .ch-routines{flex:none;gap:5px}
 .ch-routines svg.i{width:15px;height:15px;color:var(--ink-weak);flex:none}
 .ch-routines .rt-n:empty{display:none}
-.ch-routines .rt-n{font-family:var(--font-mono);font-size:var(--fs-xs)}
+.ch-routines .rt-n{color:var(--ink-weak)}
 @media (max-width:700px){
   .ch-routines .rtl{display:none}
 }

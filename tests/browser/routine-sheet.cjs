@@ -198,6 +198,14 @@ async page => {
   await page.locator('#rsPrompt').fill('夜の間に失敗した会話をまとめて');
   await page.locator('#rsAt').fill('09:00');
   await pick('#rsWeekdays', 'weekdays');
+  await page.locator('#rsModeChip').click();
+  await page.waitForSelector('#rsModePop:not([hidden]) [data-key="mode:plan"]');
+  await shot('06b-mode-picker');
+  await page.keyboard.press('Escape');
+  await page.locator('#rsBotChip').click();
+  await page.waitForSelector('.cpop:not([hidden]) [data-key="bot:b_lynx"]');
+  await shot('06c-bot-picker');
+  await page.keyboard.press('Escape');
   await pick('#rsModeChip', 'mode:plan');
   check(await page.locator('#rsModeChip').getAttribute('data-value') === 'plan', '承認モードを入力欄と同じ面から選べる');
   await pick('#rsTimeoutChip', 'timeout:60');

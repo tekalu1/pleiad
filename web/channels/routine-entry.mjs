@@ -4,7 +4,7 @@
 import { el, svgEl } from '../dom.mjs';
 import { t, fmt } from '../i18n.mjs';
 import { getRoutineStore } from './routine-store.mjs';
-import { dayKind, triggerText, lastFailed } from './routine-model.mjs';
+import { dayKind, triggerText, lastFailed, sortForSide } from './routine-model.mjs';
 
 export const CLOCK = 'M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM12 7.5V12l3 2';
 const PLUS = 'M12 5v14M5 12h14';
@@ -89,7 +89,7 @@ export function botBlock(host) {
   root.append(title, list, add);
   let botId = null, channels = new Map();
   const paint = () => {
-    const mine = botId ? store.forBot(botId) : [];
+    const mine = botId ? sortForSide(store.forBot(botId)) : [];
     const rows = mine.map((r) => {
       const row = el('button', `bp-rt${r.paused ? ' paused' : ''}`);
       row.type = 'button';

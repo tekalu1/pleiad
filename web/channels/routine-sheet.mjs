@@ -17,7 +17,7 @@ import { panel, renderMode, isDanger } from '../composer-controls.mjs';
 import { onlyMode } from './bot-model.mjs';
 import { sideChannels } from './side-model.mjs';
 import { getRoutineStore } from './routine-store.mjs';
-import { glyph, CLOCK, openRoutine, whenText, stateText, botBlock } from './routine-entry.mjs';
+import { glyph, CLOCK, whenText, stateText, botBlock } from './routine-entry.mjs';
 import * as M from './routine-model.mjs';
 
 const SHIELD = 'M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z';
@@ -282,6 +282,8 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
     pop.setAttribute('aria-label', title);
     pop.hidden = true;
     dlg.append(pop);
+    chip.btn.dataset.title = title;
+    chip.btn.setAttribute('aria-label', `${title}: ${chip.label.textContent}`);
     const p = placed(panel(chip.btn, pop, {
       width, align, when,
       render: () => {
@@ -297,7 +299,10 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
   };
 
   // ---- 値の描画
-  const labelOf = (chip, ...nodes) => { chip.label.replaceChildren(...nodes); };
+  const labelOf = (chip, ...nodes) => {
+    chip.label.replaceChildren(...nodes);
+    if (chip.btn.dataset.title) chip.btn.setAttribute('aria-label', `${chip.btn.dataset.title}: ${chip.label.textContent}`);   // 面の名前 + 今の値
+  };
   function paintBot() {
     const b = botOf(D.botId);
     if (!b) { labelOf(botChip, document.createTextNode(t('channels:routines.who.pickBot'))); return; }
@@ -523,8 +528,10 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
     await ensureVocab(b?.backend);
     if (D.botId !== id) return;
     const modes = vocab.get(b?.backend) ?? {};
-    D.mode = modeTouched ? M.validRoutineMode(modes, D.mode) : M.defaultRoutineMode(modes, b?.mode);
-    if (isNew) orig.mode = D.mode;
+    if (Object.keys(modes).length) {
+      D.mode = modeTouched ? M.validRoutineMode(modes, D.mode) : M.defaultRoutineMode(modes, b?.mode);
+      if (isNew) orig.mode = D.mode;
+    }
     paintMode();
   }
 
@@ -612,6 +619,7 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
     res.classList.remove('fail');
     try {
       const id = await persist({ asTrial: true });
+      if (closed) { dropTemp(); return; }   // 作っている間に閉じられた
       const r = await host.invoke('routines.run', { routineId: id, dryRun: true });
       if (!dlg.isConnected) return;
       const state = typeof r?.state === 'string' ? r.state : 'done';
@@ -674,15 +682,19 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
   // ---- 閉じる（試しのために作った下書きは、確定しなければ消す）
   let closed = false;
   const closeSheet = () => { if (dlg.open) dlg.close(); };
+  /** 試すために作った下書きを、確定しないまま閉じたら消す */
+  function dropTemp() {
+    if (!tempCreated || finalized || !D.id) return;
+    const id = D.id;
+    tempCreated = false;
+    host.invoke('routines.delete', { routineId: id }).then(() => store.drop(id)).catch(() => {});
+  }
   // Esc・［取り消す］・× のどれで閉じても通る後始末
   dlg.addEventListener('close', () => {
     closed = true;
     closePops();
     clearTimeout(deleteArmed);
-    if (tempCreated && !finalized && D.id) {
-      const id = D.id;
-      host.invoke('routines.delete', { routineId: id }).then(() => store.drop(id)).catch(() => {});
-    }
+    dropTemp();
     dlg.remove();
     done();
     returnTo?.focus?.({ preventScroll: true });
@@ -730,8 +742,10 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
     await ensureVocab(b?.backend);
     if (closed) return;
     const modes = vocab.get(b?.backend) ?? {};
-    if (isNew) { D.mode = M.defaultRoutineMode(modes, b?.mode); orig.mode = D.mode; } else D.mode = M.validRoutineMode(modes, D.mode);
-    orig.mode = D.mode;
+    if (Object.keys(modes).length) {
+      D.mode = isNew ? M.defaultRoutineMode(modes, b?.mode) : M.validRoutineMode(modes, D.mode);
+      orig.mode = D.mode;
+    }
     paintMode();
   })();
   paintMode();
@@ -780,5 +794,3 @@ function optionRow({ key, main, sub, on, pick }, onPick) {
   b.onclick = onPick;
   return b;
 }
-
-export { openRoutine };
