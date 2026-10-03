@@ -99,6 +99,304 @@
       "input": "974c851ac5dd"
     },
     {
+      "id": "channels.archive",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "archive"
+          ],
+          "positional": [
+            "channelId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "d2c542cd9935"
+    },
+    {
+      "id": "channels.create",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "create"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "d63f6603a488"
+    },
+    {
+      "id": "channels.delete",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "delete"
+          ],
+          "positional": [
+            "channelId",
+            "postId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "df30662261e2"
+    },
+    {
+      "id": "channels.edit",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "edit"
+          ],
+          "positional": [
+            "channelId",
+            "postId",
+            "text"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "88044904e06c"
+    },
+    {
+      "id": "channels.get",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "get"
+          ],
+          "positional": [
+            "channelId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "e475f1a687e9"
+    },
+    {
+      "id": "channels.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "channels.markRead",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "mark-read"
+          ],
+          "positional": [
+            "channelId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "9986ae343fc8"
+    },
+    {
+      "id": "channels.post",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "post"
+          ],
+          "positional": [
+            "channelId",
+            "text"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "c9aa8fd355a2"
+    },
+    {
+      "id": "channels.react",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "react"
+          ],
+          "positional": [
+            "channelId",
+            "postId",
+            "emoji"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "3eb9323f205d"
+    },
+    {
+      "id": "channels.read",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "read"
+          ],
+          "positional": [
+            "channelId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "11de5b77aa28"
+    },
+    {
+      "id": "channels.search",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "search"
+          ],
+          "positional": [
+            "query"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "5fb08bd9af74"
+    },
+    {
+      "id": "channels.stopThread",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "stop-thread"
+          ],
+          "positional": [
+            "channelId",
+            "threadId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "3f31d9d4d283"
+    },
+    {
+      "id": "channels.update",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "channels",
+            "update"
+          ],
+          "positional": [
+            "channelId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "82d73789eaf1"
+    },
+    {
       "id": "delegation.delegate",
       "risk": "write",
       "riskOf": false,
@@ -918,6 +1216,102 @@
       "id": "browser.useProfile",
       "path": "browser useProfile",
       "positional": []
+    },
+    {
+      "id": "channels.archive",
+      "path": "channels archive",
+      "positional": [
+        "channelId"
+      ]
+    },
+    {
+      "id": "channels.create",
+      "path": "channels create",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "channels.delete",
+      "path": "channels delete",
+      "positional": [
+        "channelId",
+        "postId"
+      ]
+    },
+    {
+      "id": "channels.edit",
+      "path": "channels edit",
+      "positional": [
+        "channelId",
+        "postId",
+        "text"
+      ]
+    },
+    {
+      "id": "channels.get",
+      "path": "channels get",
+      "positional": [
+        "channelId"
+      ]
+    },
+    {
+      "id": "channels.list",
+      "path": "channels list",
+      "positional": []
+    },
+    {
+      "id": "channels.markRead",
+      "path": "channels mark-read",
+      "positional": [
+        "channelId"
+      ]
+    },
+    {
+      "id": "channels.post",
+      "path": "channels post",
+      "positional": [
+        "channelId",
+        "text"
+      ]
+    },
+    {
+      "id": "channels.react",
+      "path": "channels react",
+      "positional": [
+        "channelId",
+        "postId",
+        "emoji"
+      ]
+    },
+    {
+      "id": "channels.read",
+      "path": "channels read",
+      "positional": [
+        "channelId"
+      ]
+    },
+    {
+      "id": "channels.search",
+      "path": "channels search",
+      "positional": [
+        "query"
+      ]
+    },
+    {
+      "id": "channels.stopThread",
+      "path": "channels stop-thread",
+      "positional": [
+        "channelId",
+        "threadId"
+      ]
+    },
+    {
+      "id": "channels.update",
+      "path": "channels update",
+      "positional": [
+        "channelId"
+      ]
     },
     {
       "id": "delegation.delegate",

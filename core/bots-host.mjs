@@ -43,7 +43,7 @@ export function createBotHost(deps) {
 
   // ---- channels（S1）
   const channels = createChannelService({
-    dir: path.join(dataDir, 'channels'), emit,
+    dir: path.join(dataDir, 'channels'), emit, listBots: () => bots.list(),
     hooks: { posted: lazy(() => dispatch.onPosted), stopThread: lazy(() => dispatch.stopThread) },
   });
   // ---- bots（S2）

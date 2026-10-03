@@ -68,12 +68,12 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 
 | op | 危険度 | 備考 |
 |---|---|---|
-| `channels.list` / `get` / `read` / `search` | read | `read` は `{ channelId, threadId?, before?, limit≤100 }` → `{ posts, threads, nextBefore }` |
+| `channels.list` / `get` / `read` / `search` | read | `list` → `{ channels: (Channel & { unread, mentions, threadsWorking })[] }`（アーカイブしたものも含む。`unread` = 既読の後の人以外の投稿、`mentions` = そのうち `@あなた`）。`read` は `{ channelId, threadId?, before?, limit≤100 }` → `{ posts, threads, summaries, nextBefore }`（新しい方から `limit` 件を時間順で。`threadId` ありは根が先頭。`summaries` = 返信のある根ごとの `{ count, lastAt, authors }`）。消した投稿は `deletedAt` 付きの空の本文で残る。`search` → `{ hits }` |
 | `channels.create` / `update` / `archive` | write | 消さない（archive） |
 | `channels.post` | write・`modeGate: false` | 発言者は主体から決める（human / 束縛された会話が bot なら bot / それ以外の AI は agent / 束縛なしの CLI は `NEEDS_UI`）。`new: true` で新しい投稿、無ければそのターンの投稿の本文を置き換える |
 | `channels.edit` / `delete` | write | 自分の投稿だけ |
 | `channels.react` | write・`modeGate: false` | 絵文字 1 つ（`web/emoji.mjs` の `EMOJI_RE`）。人も bot も同じ操作 |
-| `channels.markRead` | write（AI・CLI にも出す） | |
+| `channels.markRead` | write（AI・CLI にも出す） | `{ channelId, at? }`（省くと今）。進める向きにだけ動く。CLI は `pleiad channels mark-read <channelId>` |
 | `channels.stopThread` | write・`modeGate: false` | `stopped.by` に止めた主体を残す |
 | `bots.list` / `get` | read | `usage: { weekTokens, cacheRatio }`・`state` を付ける |
 | `bots.create` | write（AI は `riskOf` で guarded） | 既定の弱いモード |

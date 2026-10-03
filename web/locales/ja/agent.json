@@ -456,6 +456,11 @@
       "INVALID_PRINCIPAL": "呼び出した主体が不正です（{{id}}）。",
       "SESSION_NOT_FOUND": "会話「{{id}}」が見つかりません。",
       "MESSAGE_NOT_FOUND": "発言「{{id}}」が、この会話に見つかりません。",
+      "CHANNEL_NOT_FOUND": "チャンネル「{{id}}」が見つかりません。channels.list で探してください。",
+      "POST_NOT_FOUND": "投稿「{{id}}」が、そのチャンネルに見つかりません（消された投稿は読めません）。",
+      "NOT_YOUR_POST": "投稿「{{id}}」は自分の投稿ではないので、直したり消したりできません。",
+      "CHANNEL_NAME_TAKEN": "チャンネル名「{{name}}」はすでに使われています（アーカイブしたものを除く）。",
+      "CHANNEL_ARCHIVED": "チャンネル「{{id}}」はアーカイブされているので、新しく書けません。channels.archive で戻してください。",
       "SETTING_NOT_FOUND": "設定「{{key}}」はありません。settings.list で探してください。",
       "TASK_NOT_FOUND": "委譲のタスク「{{id}}」が見つかりません。",
       "sessionRequired": "sessionId を指定してください（この会話を指す場合を除き、省けません）。",
@@ -540,7 +545,21 @@
         "summary": "検査用: human-only の操作の代役（テストでだけ出る）。"
       }
     },
-    "channels": {},
+    "channels": {
+      "list": {"summary": "チャンネル・DM の一覧（未読の数・あなた宛ての数・作業中のスレッドの数つき。アーカイブしたものも含む）を返す。"},
+      "get": {"summary": "チャンネル 1 つの定義（名前・目的・作業フォルダー・メンバー・ここでの決まり）を返す。", "channelId": "チャンネルの id。"},
+      "read": {"summary": "チャンネルの流れ、または 1 つのスレッドの投稿を新しい方から読む。before に前の返り値の nextBefore を渡すと続きが読める。", "channelId": "チャンネルの id。", "threadId": "スレッドの根の投稿の id。省くとチャンネルの流れ。", "before": "この投稿より前を読む（前の返り値の nextBefore）。", "limit": "返す件数（既定 50、最大 100）。"},
+      "search": {"summary": "チャンネルの投稿を本文で探す（新しい順）。", "query": "探す語（大文字小文字・全角半角を区別しない）。", "channelId": "このチャンネルだけに絞る。", "limit": "返す件数（既定 20、最大 50）。"},
+      "create": {"summary": "チャンネルを作る。", "name": "チャンネルの名前（先頭の # は要らない。アーカイブしていないチャンネルの中で重ならない）。", "purpose": "目的の説明。", "cwd": "既定の作業フォルダー（絶対パス）。", "members": "メンバーの bot の id の並び。"},
+      "update": {"summary": "チャンネルの名前・目的・作業フォルダー・メンバー・ここでの決まりを直す。", "channelId": "チャンネルの id。", "name": "新しい名前。", "purpose": "新しい目的。", "cwd": "新しい作業フォルダー（絶対パス。null でなし）。", "members": "メンバーの bot の id の並び（置き換え）。", "memo": "ここでの決まり（bot が毎回読む）。"},
+      "archive": {"summary": "チャンネルをアーカイブする（消さない。一覧から外れ、新しく書けなくなる）。on を false にすると戻す。", "channelId": "チャンネルの id。", "on": "true でアーカイブ、false で戻す。"},
+      "post": {"summary": "チャンネルに投稿する（本文の @名前 でその bot を起こす）。bot が作業中のターンの中で同じスレッドへ書くと、新しい投稿ではなくそのターンの投稿の本文を置き換える（進捗の更新）。", "channelId": "チャンネルの id。", "threadId": "スレッドの根の投稿の id。省くとチャンネルの流れ。", "text": "本文。", "new": "true にすると、置き換えずに新しい投稿を作る。", "state": "ルーティンの実行の結果を「要確認」にするとき checking（bot だけ）。"},
+      "edit": {"summary": "自分の投稿の本文を直す。", "channelId": "チャンネルの id。", "postId": "投稿の id。", "text": "新しい本文。"},
+      "delete": {"summary": "自分の投稿を消す（スレッドの形は「削除されました」の行で残る）。", "channelId": "チャンネルの id。", "postId": "投稿の id。"},
+      "react": {"summary": "投稿に絵文字 1 つのリアクションを付ける・外す。", "channelId": "チャンネルの id。", "postId": "投稿の id。", "emoji": "絵文字 1 つ。", "on": "true で付ける（既定）、false で外す。"},
+      "markRead": {"summary": "チャンネルを既読にする（進める向きだけ）。", "channelId": "チャンネルの id。", "at": "ここまで読んだ時刻（ミリ秒。省くと今）。"},
+      "stopThread": {"summary": "スレッドで走っている bot のターンを止め、人が次に書くまで bot を起こさない。", "channelId": "チャンネルの id。", "threadId": "スレッドの根の投稿の id。"}
+    },
     "bots": {},
     "memory": {},
     "routines": {}
