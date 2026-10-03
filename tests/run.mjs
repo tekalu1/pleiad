@@ -401,6 +401,8 @@ const cases = [
   await import("./unit/bots-store.mjs"),
   // bots.* の操作: 作成と DM・AI が見える操作と見えない操作・フォルダーを広げる向きは承認・承認モードは人だけ・Antigravity は yolo だけ・削除
   await import("./unit/ops-bots.mjs"),
+  // bot の人格の文（毎ターン同じバイト列）・フォルダーの渡し方・3 つのバックエンドへの渡し方・agy の起こし直しの判定
+  await import("./unit/bot-instructions.mjs"),
   // --- memory (S3) ---
   // --- dispatch (S4) ---
   // --- channels-ui: 脇・流れ・スレッド・bot のページ (W1・W2・W3・W4) ---

@@ -10,7 +10,8 @@
 //
 //   BotHost（server.mjs のつなぎ目。どれも例外を外へ出さない。bot の会話でなければ何もしない）:
 //     opsDeps(): { channels, bots, memory, routines, botOfSession }   … opsDeps() に足す。ops の handler が ctx.channels などで呼ぶ
-//     turnExtras(turn): Promise<{ botInstructions: string|null, notes: string[] }>   … runArgs に足す（notes は既存の notes の後ろ）
+//     turnExtras(turn): Promise<{ botInstructions: string|null, notes: string[], folders: object|null }>   … runArgs に足す（notes は既存の notes の後ろ。
+//                       folders は触れてよいフォルダーの渡し方 { all, additionalDirectories, writableRoots }。runArgs の botFolders になる）
 //     onTurnEvent(turn, event): void                 … makeEmit の中。bot の会話の分
 //     onTurnEnd(turn, { outcome, text, presents }): Promise<void>    … endTurn の usage 記録の後
 //     onPermission(card, phase): void                … askPermission（phase: 'open' | 'settled'）
@@ -47,7 +48,7 @@ export function createBotHost(deps) {
     hooks: { posted: lazy(() => dispatch.onPosted), stopThread: lazy(() => dispatch.stopThread) },
   });
   // ---- bots（S2）
-  const bots = createBotService({ dataDir, channels, emit });
+  const bots = createBotService({ dataDir, channels, host, emit });
   // ---- memory（S3）
   const memory = createMemoryService({ dataDir, emit });
   // ---- dispatch（S4）
@@ -69,7 +70,12 @@ export function createBotHost(deps) {
 
   return {
     opsDeps: () => ({ channels, bots, memory, routines, botOfSession }),
-    turnExtras: guard('turnExtras', (turn) => dispatch.turnExtras(turn), { botInstructions: null, notes: [] }),
+    // 人格とフォルダーは bots（S2）、末尾の notes は dispatch（S4。記憶の差分など）。bot の会話でなければどちらも空
+    turnExtras: guard('turnExtras', async (turn) => {
+      const setup = await bots.turnSetup(turn);
+      const extra = await dispatch.turnExtras(turn);
+      return { botInstructions: extra?.botInstructions ?? setup?.botInstructions ?? null, notes: extra?.notes ?? [], folders: setup?.folders ?? null };
+    }, { botInstructions: null, notes: [], folders: null }),
     onTurnEvent: guard('onTurnEvent', (turn, event) => dispatch.onTurnEvent(turn, event)),
     onTurnEnd: guard('onTurnEnd', (turn, end) => dispatch.onTurnEnd(turn, end)),
     onPermission: guard('onPermission', (card, phase) => { dispatch.onPermission(card, phase); routines.onPermission(card, phase); }),

@@ -58,15 +58,17 @@ const vocab = ({ label, short, note, scope, autonomy, enforced }) => ({ label, .
 
 // thread/resume が以前の設定を返しても、選んだアクセス範囲を turn/start に適用する。
 // 同じ種類なら設定済みの追加ルートなどを保持し、YOLO から戻る場合は制限を復元する。
-function sandboxForTurn(mode, current) {
+// writableRoots は bot の触れてよいフォルダーのうち書けるもの（cwd の外の分。core/bots/sessions.mjs の folderPlan）。
+// null（bot でない会話）は何も足さない。bot の会話は、前のターンの書き込み先を引き継がず、渡した分に置き換える
+export function sandboxForTurn(mode, current, writableRoots = null) {
   const type = {
     "workspace-write": "workspaceWrite",
     "read-only": "readOnly",
     "danger-full-access": "dangerFullAccess",
   }[mode.sandbox];
   if (type === "dangerFullAccess") return { type };
-  if (current?.type === type) return current;
-  return { type, networkAccess: false };
+  const base = current?.type === type ? current : { type, networkAccess: false };
+  return type === "workspaceWrite" && writableRoots ? { ...base, writableRoots } : base;
 }
 
 /** ツール（アイテム）の表示ヒント。web/render.mjs の TOOL_LABEL を補う。 */
@@ -1337,7 +1339,7 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, endpoint = null, locale, notes = [] }) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, endpoint = null, locale, notes = [], botInstructions = null, botFolders = null }) {
     const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
     // Hooks を Pleiad がそろえる会話。止める key はこのターンの直前に作り直す（起動の後に足された定義も、次のターンからは止まる）。
     // 作れなければターンを始めない（ネイティブと Pleiad の登録が二重に動くか、どちらも動かないため）
@@ -1632,7 +1634,8 @@ export const backend = {
           ...(hooks ? { hooks: hooks.config } : {}),
         },
         ...(compat ? { modelProvider: compat.modelProvider } : {}),
-        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions) ? { developerInstructions: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions].filter(Boolean).join('\n\n') } : {}),
+        // bot の人格（core/bots/sessions.mjs の botInstructions）は並びの最後。変わると instructionsKey が変わり、ロード済みのスレッドを読み直す
+        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions || botInstructions) ? { developerInstructions: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n') } : {}),
         approvalPolicy: m.approvalPolicy,
         sandbox: m.sandbox,
         ...(model ? { model } : {}),
@@ -1732,7 +1735,7 @@ export const backend = {
         // ロード済み thread の resume だけに設定更新を任せない。
         // 毎ターン指定し、auto/full への変更も ask への復帰も確実に適用する。
         approvalPolicy: m.approvalPolicy,
-        sandboxPolicy: sandboxForTurn(m, effectiveSandbox),
+        sandboxPolicy: sandboxForTurn(m, effectiveSandbox, botFolders ? botFolders.writableRoots ?? [] : null),
         ...(effectiveEffort ? { effort: effectiveEffort } : {}),
         // 中断の後に Pleiad が添える文（core/interrupt-stops.mjs）は、人の発言とは別の入力にして前に置く（本文は書き換えない）
         input: [...notes, String(prompt ?? "")].map(text => ({ type: "text", text })),

@@ -3328,6 +3328,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
         ...(notes.length ? { notes } : {}),
         ...(botExtras.botInstructions ? { botInstructions: botExtras.botInstructions } : {}),
+        ...(botExtras.folders ? { botFolders: botExtras.folders } : {}),
         ...(hooks.compact ? { compact: hooks.compact } : {}),
         sessionId,
         cwd,
