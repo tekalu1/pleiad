@@ -321,6 +321,7 @@
     "footer": "Do not simply redo what was stopped. Check the current state (files, command output, ply_task_status) first, then decide whether to delegate again or rerun commands."
   },
   "guide": {
+    "bot": {},
     "heading": "{{name}} (instructions added by Pleiad):",
     "names": {
       "delegate": "How to delegate",
@@ -524,8 +525,14 @@
       "humanOnly": {
         "summary": "Test only: a stand-in for a human-only operation (appears only in tests)."
       }
-    }
+    },
+    "channels": {},
+    "bots": {},
+    "memory": {},
+    "routines": {}
   },
+  "channel": { "envelope": {} },
+  "routine": {},
   "settings": {
     "locale": "Display language (auto follows the OS).",
     "linkOpen": "Where links open (inapp is the built-in browser, external is the default browser).",

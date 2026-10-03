@@ -64,6 +64,7 @@ import { behindOfTasks, liveTasksOf } from './work-status.mjs';
 import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, retryCandidates, splitCandidate, fallbackName, parseRoutingFailure, routingFailureParts, kindText, difficultyText } from './delegation-routing-view.mjs';
 import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
+import { setupChannels } from "./channels/index.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { retainPlan, syncRequest, joinReply } from "./history-sync.mjs";
@@ -1025,6 +1026,9 @@ function systemHistoryNode(m) {
   if (m.kind === 'command' || m.kind === 'shell') return commandMsg(m);
   // 中断で止めたものを Pleiad がエージェントへ伝えた文。開くと中身が読める
   if (m.kind === 'interruptionNote') return sysFold(t('chat.sys.interruptionNote'), m.body ?? '');
+  // bot の会話の先頭の包み（core/system-messages.mjs の splitLeadingNotes）。チャンネルの出来事は「#チャンネル · 発言者」、記憶は渡した印。開くと中身が読める
+  if (m.kind === 'channelEvent') return sysFold(m.history ? t('channels:event.thread', { channel: m.channel }) : t('channels:event.post', { channel: m.channel, from: m.from }), m.body ?? '', hhmm(m.at));
+  if (m.kind === 'contextNote') return sysFold(m.tag === 'memory-core' ? t('channels:event.memoryCore') : t('channels:event.turnContext'), m.body ?? '', hhmm(m.at));
   // Pleiad の完了通知。「タスクの結果で再開」の 1 行を開くと、エージェントに渡した本文が読める
   if (m.internalTaskNotice) return taskNoticeNode(m.text, hhmm(m.at));
   return undefined;
@@ -2382,6 +2386,8 @@ function syncOutboxRows(messages) {
 }
 
 function onEvent(ev, replay = false) {
+  // bot・Channels・ルーティンの画面（web/channels/）。この画面の出来事ならここで終わる。ほかの出来事（permission など）も部品へ渡る
+  if (channelsUi.onEvent(ev, replay)) return;
   if (ev.type?.startsWith('shell.')) return onShellEvent(ev);
   if (ev.type === 'completionReady') {
     completionNotifications.completed(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
@@ -2618,6 +2624,11 @@ function onEvent(ev, replay = false) {
       closeTurnEl();
       // 本文があれば開ける 1 行（既定は閉じた状態。履歴の systemHistoryNode と同じ形）
       append(taskNoticeNode(ev.text, hhmm(ev.at ?? new Date())));
+      return;
+    case 'channelEvent':
+      // bot の会話へチャンネルの出来事・記憶の包みを渡した。履歴と同じ行（systemHistoryNode）で出す（サーバーが履歴と同じ形の rows を付ける）
+      closeTurnEl();
+      for (const row of ev.rows ?? []) { const node = systemHistoryNode({ at: new Date().toISOString(), ...row }); if (node) append(node); }
       return;
     case 'interruptionNote': {
       // 中断で止めたものをエージェントへ伝えた。開くと伝えた中身が読める（履歴の systemHistoryNode と同じ形）。
@@ -3456,7 +3467,8 @@ const side = createSide({
 
 function renderSessions() {
   // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から
-  const listed = state.sessions.filter(s => !s.delegation);
+  // bot の会話（Channels のスレッド・DM・ルーティン。ADR 0094）も出さない。あなたを待っている間だけ出る
+  const listed = state.sessions.filter(s => !s.delegation && (!s.bot || state.waitingIds.has(s.id)));
   const unreadIds = new Set(listed.filter(s => readCompletions.hasUnread(s)).map(s => s.id));
   // 脇が見えていない間の印（web/open-sidebar-mark.mjs）。今の会話は数えない
   paintOpenSidebar($("openSidebar"), attentionCounts(listed, { currentId: state.current, waitingIds: state.waitingIds, unreadIds,
@@ -5107,7 +5119,8 @@ const filePreview = setupFilePreview({
   chooseSnapshot: (query, openHere) => chooseRemote({ kind: 'snapshot', label: t('filePreview.visual.title'), openHere,
     target: { visualization: { sessionId: query.sessionId, id: query.id, at: query.at } } }),
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
-  getContext: anchor => ({ sessionId:anchor?.closest('#workBody')?.dataset.sessionId || state.current, at:anchor?.closest('.m')?.dataset.at }),
+  // Channels の中のリンクは、そのスレッドの bot の会話を基準にする（web/channels/）。それ以外は今の会話
+  getContext: anchor => channelsUi.contextForPanel(anchor) ?? ({ sessionId:anchor?.closest('#workBody')?.dataset.sessionId || state.current, at:anchor?.closest('.m')?.dataset.at }),
   onLayout: () => requestAnimationFrame(relayoutBranches),
   // ファイルの操作メニューは会話一覧と同じ 1 つを使う。OS の操作はサーバーが「この PC の画面」と答えたときだけ
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
@@ -5121,6 +5134,17 @@ const filePreview = setupFilePreview({
 browserEntry = setupBrowserEntry({ button: $('browserEntry'), browser: browserPanel, preview: filePreview, bridge: window.plyDesktop?.browser,
   getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
+// bot・Channels・ルーティンの画面（web/channels/index.mjs。docs/channels.md「画面の口」）。client.mjs が持つのはこの 1 つの口だけ
+const channelsUi = setupChannels({
+  cmd: (command, args) => cmd(command, args),
+  invoke: async (op, args = {}) => cmd('invoke', { op, args }),
+  state, filePreview, side, t,
+  permissionCard: (ev, into) => permissionCard(ev, into),
+  openSession: async (id) => { channelsUi.setTab('chats'); await select(id); },
+  openSidebar: () => setSidebar(true),
+  showMenu: (x, y, items, title) => showMenu(x, y, items, title),
+  renderAssistantMarkdown, renderPresent,
+});
 // External resource confirmation is available on every screen.
 const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getHostCaps: () => state.hostCaps });
 const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf,

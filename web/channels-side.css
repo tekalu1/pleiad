@@ -1,0 +1,37 @@
+/* ==================== 脇の Chats / Channels（web/channels/side-tabs.mjs、ADR 0092） ====================
+   切り替えは html.side-channels（脇）と body.channels（メイン）。見えているのは片側だけで、見ていない側の札に点を付ける。
+   面は --surface-*、字は --ink-*、枠線は使わない（選んでいる札は面の持ち上がりで示す） */
+
+/* ---- 2 タブ（.seg と同じ pill の 2 択） */
+.side-tabs{display:flex;gap:2px;margin:2px 12px 4px;padding:2px;background:var(--surface-1);border-radius:var(--r-pill)}
+.side-tab{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:4px 0;border-radius:var(--r-pill);background:transparent;
+  color:var(--ink-weak);font-size:var(--fs-s);cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
+.side-tab:hover{color:var(--ink)}
+.side-tab[aria-selected=true]{background:var(--surface-paper);color:var(--ink);box-shadow:0 1px 4px var(--shadow)}
+/* 札の点。あなた待ちは差し色（--ink-mark はこの意味にだけ）、未読は一覧と同じ青い丸 */
+.tab-dot{display:none;font-style:normal;line-height:1}
+.tab-dot:not([hidden]){display:inline-block}
+.tab-dot::before{content:"●";font-size:8px}
+.tab-dot.mark::before{content:"◆";font-size:9px;color:var(--ink-mark)}
+.tab-dot.unread::before{color:var(--ink-unread)}
+/* 設定を開いている間は、一覧と同じくタブも隠す */
+body.settings > #sidebar > :is(#sideTabs,#channelsSide){display:none}
+
+/* ---- Channels 側の一覧（#channelsSide。行は W1 が作る） */
+.channels-side{display:none}
+html.side-channels :is(#sidebar .search,.fchips,.filter-outside,.res-head,.groups){display:none}   /* Chats 側の検索と一覧。Channels 側の検索は W1 がつなぐ */
+html.side-channels .channels-side:not([hidden]){display:flex;flex-direction:column;flex:1;min-height:0;overflow-y:auto;padding:4px 10px 16px}
+.cs-sec h2{display:flex;align-items:center;min-height:28px;margin:0;padding:2px 4px 6px 2px;font-size:var(--fs-s);font-weight:600}
+
+/* ---- メインの面（#channelsView）。設定の画面と同じく会話を覆う（会話は描いたまま、スクロール位置も残す） */
+.channels-view{display:none}
+body.channels:not(.settings) .channels-view{display:flex;flex-direction:column;position:absolute;inset:0;z-index:1;background:var(--surface-paper);border-radius:inherit}
+.channels-view .top h2{flex:1;min-width:0;margin:0;padding:5px 10px;font-size:var(--fs-l);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ch-body{flex:1;min-height:0;position:relative;overflow-y:auto}
+.ch-empty{margin:24px 18px;color:var(--ink-weak);font-size:var(--fs-s)}
+/* 脇を閉じている間の入口（#openSidebar と同じ出し方） */
+#chOpenSidebar{display:none}
+:root.side-closed #chOpenSidebar{display:inline-flex;margin-left:-6px}
+@media (max-width:700px){
+  #chOpenSidebar{display:inline-flex;margin-left:-6px}
+}

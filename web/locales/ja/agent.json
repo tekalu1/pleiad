@@ -321,6 +321,7 @@
     "footer": "止めたものを、そのままやり直さないでください。ファイル・コマンドの出力・ply_task_status で今の状態を確かめてから、委譲し直すか、コマンドを走らせ直すかを決めてください。"
   },
   "guide": {
+    "bot": {},
     "heading": "{{name}}（Pleiad が追加した指示）:",
     "names": {
       "delegate": "委譲の進め方",
@@ -524,8 +525,14 @@
       "humanOnly": {
         "summary": "検査用: human-only の操作の代役（テストでだけ出る）。"
       }
-    }
+    },
+    "channels": {},
+    "bots": {},
+    "memory": {},
+    "routines": {}
   },
+  "channel": { "envelope": {} },
+  "routine": {},
   "settings": {
     "locale": "画面の言語（auto は OS に合わせる）。",
     "linkOpen": "リンクの開き先（inapp は内蔵ブラウザー、external は既定のブラウザー）。",

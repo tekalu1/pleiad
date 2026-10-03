@@ -1,0 +1,17 @@
+{
+  "side": {
+    "tabs": { "label": "Sidebar view", "chats": "Chats", "channels": "Channels" },
+    "sections": { "channels": "Channels", "bots": "Bots", "routines": "Routines" }
+  },
+  "feed": { "empty": "No channels yet." },
+  "thread": {},
+  "bot": {},
+  "memory": {},
+  "routines": {},
+  "event": {
+    "post": "{{channel}} · {{from}}",
+    "thread": "Passed the earlier posts in {{channel}}",
+    "memoryCore": "Passed what it remembers",
+    "turnContext": "Passed the time and memory changes"
+  }
+}

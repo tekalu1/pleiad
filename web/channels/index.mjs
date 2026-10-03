@@ -1,0 +1,72 @@
+// bot・Channels・ルーティンの画面の入口（docs/channels.md「画面の口」、ADR 0091〜0099）。
+// web/client.mjs が持つのはここの setupChannels(host) の 1 つの口だけ。各パッケージは自分のファイルを書き、
+// 下の「部品の一覧」へ 1 か所ずつ足す（client.mjs には触らない）。
+//
+//   setupChannels(host) → { onEvent(ev, replay), show(view), hide(), sideTabChanged(tab), contextForPanel(anchor), tab, setTab(tab), tabs }
+//
+//   host（client.mjs が渡す道具の束）:
+//     cmd(command, args)            … WS のコマンド
+//     invoke(op, args)              … 操作の一覧（cmd('invoke', { op, args }) の短縮。失敗は throw）
+//     state                         … client の state（読むだけ。current・sessions・runningIds・waitingIds など）
+//     filePreview                   … web/file-preview.mjs の返り。open(ref, element)・openPanel・close・panelOpen
+//     permissionCard(ev, into)      … 承認のカードを入れ物へ描く（client.mjs の permissionCard。決着は resolvePermission と同じ）
+//     openSession(id)               … Chats の会話を開く（Chats のタブへ戻して select）
+//     openSidebar()                 … 脇を開く（狭い画面は引き出し）
+//     showMenu(x, y, items, title)  … 右クリックのメニュー（web/context-menu.mjs と同じ見え方）
+//     renderAssistantMarkdown(text, refs?)・renderPresent(ev)  … web/render.mjs
+//     side                          … web/side.mjs の返り（Chats の脇。行の描き方・バックエンドのロゴ）
+//     t                             … 訳（'channels:feed.empty' のように名前空間を付ける）
+//
+//   部品（part）: { onEvent?(ev, replay): void, show?(view): void, hide?(): void, sideTabChanged?(tab): void, contextForPanel?(anchor): { sessionId, at } | null }
+//     - show(view) … メインに出す面。view = { kind: 'channel' | 'bot' | 'routine', id, threadId? }
+//     - contextForPanel(anchor) … 右パネルの作業場所の基準（そのスレッドの bot の会話）。分からなければ null（Chats と同じ基準へ）
+//
+//   DOM（web/index.html）: #sideTabs・#tabChats・#tabChannels・#channelsSide・.cs-sec[data-sec]・#channelsView・#channelsBody。
+//   スレッドの空間モデル（.deck・#chFeed・#chThread）・投稿・入力欄・bot のページ・ルーティンの編集は、各パッケージが #channelsBody の中に作る。
+import { createSideTabs } from './side-tabs.mjs';
+
+/** WS の出来事のうち、この画面が受けるもの（core/protocol.mjs の EVENTS）。ほかの出来事も部品の onEvent には全部届く（permission など） */
+export const CHANNEL_EVENTS = new Set([
+  'channelsChanged', 'channelPost', 'channelReaction', 'channelThread', 'channelRead', 'botsChanged', 'memoryChanged', 'routinesChanged',
+]);
+
+export function setupChannels(host) {
+  const parts = [];
+
+  // ---- 部品の一覧。1 行 = 1 パッケージ。足すのは自分の行だけ（行の間を空けてあるのは、並列の変更が競合しないため）
+
+  // W1 脇:  parts.push(createSidebar(host, tabs));   // web/channels/sidebar.mjs
+
+  // W2 チャンネルの流れ:  parts.push(createFeed(host));   // web/channels/feed.mjs
+
+  // W3 スレッドと空間モデル:  parts.push(createThread(host));   // web/channels/thread.mjs
+
+  // W4 bot のページ:  parts.push(createBotPage(host));   // web/channels/bot-page.mjs
+
+  // W5 ルーティンの編集（P2）:  parts.push(createRoutineSheet(host));   // web/channels/routine-sheet.mjs
+
+  const each = (name, ...args) => { for (const part of parts) part[name]?.(...args); };
+  const tabs = createSideTabs({ onChange: (tab) => each('sideTabChanged', tab) });
+  // 狭い画面で脇を閉じている間の入口（#openSidebar と同じ働き。メインの頭が Channels の見出しに替わっている間だけ見える）
+  document.getElementById('chOpenSidebar')?.addEventListener('click', () => host.openSidebar());
+
+  return {
+    /** 出来事を部品へ渡す。この画面の出来事なら true（client.mjs の onEvent はそこで終わる） */
+    onEvent(ev, replay = false) {
+      each('onEvent', ev, replay);
+      return CHANNEL_EVENTS.has(ev?.type);
+    },
+    show(view) { tabs.set('channels'); each('show', view); },
+    hide() { each('hide'); tabs.set('chats'); },
+    sideTabChanged(tab) { each('sideTabChanged', tab); },
+    /** 右パネルの作業場所の基準。Channels の中の要素でなければ null */
+    contextForPanel(anchor) {
+      if (!anchor?.closest?.('#channelsView')) return null;
+      for (const part of parts) { const ctx = part.contextForPanel?.(anchor); if (ctx) return ctx; }
+      return { sessionId: null, at: undefined };
+    },
+    get tab() { return tabs.tab; },
+    setTab: (tab) => tabs.set(tab),
+    tabs,
+  };
+}

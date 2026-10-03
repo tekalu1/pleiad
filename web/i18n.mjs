@@ -4,7 +4,7 @@
 // ここではそれを待たずに、index.html のインライン script が localStorage の写しから先に決めた <html lang> で始める。
 // 届いた言語と違えば client.mjs が写しを直してページを読み直す（途中で言語を差し替える経路は持たない）。
 //
-// 辞書は web/locales/<言語>/<名前空間>.json。画面は ui だけを読む。キーの名前空間を書かなければ ui。
+// 辞書は web/locales/<言語>/<名前空間>.json。画面は ui と channels（bot・Channels・ルーティンの画面。'channels:feed.empty' のように書く）を読む。キーの名前空間を書かなければ ui。
 // t() の結果は HTML としてエスケープしない（interpolation.escapeValue: false）。textContent で入れるか、escText を通す。
 //
 // トップレベルで辞書を読み終えてから抜けるので、import したモジュールは読み込みの時点から t() を使える。
@@ -14,7 +14,7 @@ import i18next from 'i18next';
 export const LOCALES = ['ja', 'en'];
 export const FALLBACK = 'en';
 export const STORE_KEY = 'agent-host-lang';
-const NAMESPACES = ['ui'];
+const NAMESPACES = ['ui', 'channels'];
 const isNode = Boolean(globalThis.process?.versions?.node);
 
 const pickLang = (v) => (LOCALES.includes(v) ? v : null);

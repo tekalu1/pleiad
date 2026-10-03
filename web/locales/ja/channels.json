@@ -1,0 +1,17 @@
+{
+  "side": {
+    "tabs": { "label": "脇の切り替え", "chats": "Chats", "channels": "Channels" },
+    "sections": { "channels": "チャンネル", "bots": "Bots", "routines": "ルーティン" }
+  },
+  "feed": { "empty": "チャンネルはまだありません。" },
+  "thread": {},
+  "bot": {},
+  "memory": {},
+  "routines": {},
+  "event": {
+    "post": "{{channel}} · {{from}}",
+    "thread": "{{channel}} のこれまでの投稿を渡しました",
+    "memoryCore": "覚えていることを渡しました",
+    "turnContext": "時刻と記憶の変更を渡しました"
+  }
+}

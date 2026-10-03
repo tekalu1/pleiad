@@ -37,6 +37,8 @@ export default async function (t) {
     // 会話の移動（web/conversation-nav-view.mjs）。最新へのボタンの新着と弧。このテストの対象外
     nav: { reset: noop, replyArrived: noop, syncRunning: noop }, navSession: null, toc: { reset: () => {}, refresh: () => {} },
     filePreview: { sessionChanged: noop },
+    // bot・Channels・ルーティンの画面（web/channels/）。onEvent の先頭で出来事を渡す。このテストの対象外
+    channelsUi: { onEvent: () => false },
     paintContextStrip: noop, paintCompactions: noop,
     // 狭い画面の引き出し（client.mjs の setDrawer）。会話を開くと閉じる。このテストの対象外
     setDrawer: noop,
