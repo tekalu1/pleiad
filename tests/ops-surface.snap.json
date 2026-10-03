@@ -99,6 +99,129 @@
       "input": "974c851ac5dd"
     },
     {
+      "id": "context.plyInstructions",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "instructions"
+          ]
+        }
+      },
+      "legacyCommand": "plyInstructions",
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "context.refresh",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "refresh"
+          ]
+        }
+      },
+      "legacyCommand": "refreshContext",
+      "input": "d25acaa13541"
+    },
+    {
+      "id": "context.setPlyInstructions",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "set-instructions"
+          ]
+        }
+      },
+      "legacyCommand": "setPlyInstructions",
+      "input": "ea97bb332f04"
+    },
+    {
+      "id": "context.setSessionMcp",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "session-mcp"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "setSessionMcp",
+      "input": "5db0bc9fccea"
+    },
+    {
+      "id": "context.setSettings",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "set"
+          ]
+        }
+      },
+      "legacyCommand": "setContextSettings",
+      "input": "d5af065783bd"
+    },
+    {
+      "id": "context.settings",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "settings"
+          ]
+        }
+      },
+      "legacyCommand": "contextSettings",
+      "input": "e068ce313039"
+    },
+    {
       "id": "delegation.delegate",
       "risk": "write",
       "riskOf": false,
@@ -245,6 +368,537 @@
       },
       "legacyCommand": null,
       "input": "e713b07977ab"
+    },
+    {
+      "id": "endpoints.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "endpoints",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": "compatEndpoints",
+      "input": "4a12c48b5c1b"
+    },
+    {
+      "id": "hooks.copy",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "copy"
+          ]
+        }
+      },
+      "legacyCommand": "copyHooks",
+      "input": "b0beb6b52083"
+    },
+    {
+      "id": "hooks.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": "plyHooks",
+      "input": "2a25f7c7c09a"
+    },
+    {
+      "id": "hooks.remove",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "remove"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "removePlyHook",
+      "input": "4a04b07e235a"
+    },
+    {
+      "id": "hooks.repair",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "repair"
+          ]
+        }
+      },
+      "legacyCommand": "repairPlyHooks",
+      "input": "2b3554901af9"
+    },
+    {
+      "id": "hooks.save",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "save"
+          ]
+        }
+      },
+      "legacyCommand": "savePlyHook",
+      "input": "e9a5be51a5ac"
+    },
+    {
+      "id": "hooks.saveNative",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "save-native"
+          ]
+        }
+      },
+      "legacyCommand": "saveHooks",
+      "input": "f580e751da12"
+    },
+    {
+      "id": "hooks.scan",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "scan"
+          ]
+        }
+      },
+      "legacyCommand": "scanHooks",
+      "input": "fc081f92bac6"
+    },
+    {
+      "id": "hooks.session",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "session"
+          ]
+        }
+      },
+      "legacyCommand": "sessionHooks",
+      "input": "c75aa5072de2"
+    },
+    {
+      "id": "hooks.setOwner",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "owner"
+          ]
+        }
+      },
+      "legacyCommand": "setHooksOwner",
+      "input": "ece98b454bc4"
+    },
+    {
+      "id": "hooks.toggle",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "toggle"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "togglePlyHook",
+      "input": "e009d35c6ad6"
+    },
+    {
+      "id": "mcp.authStatus",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "auth"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "mcpAuthStatus",
+      "input": "d0522fb33a1b"
+    },
+    {
+      "id": "mcp.delete",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "delete"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "deletePlyMcp",
+      "input": "4efa7b071261"
+    },
+    {
+      "id": "mcp.import",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "import"
+          ]
+        }
+      },
+      "legacyCommand": "importPlyMcp",
+      "input": "c716d50bd360"
+    },
+    {
+      "id": "mcp.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": "listPlyMcp",
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "mcp.nativeList",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "native"
+          ]
+        }
+      },
+      "legacyCommand": "listMcpConfig",
+      "input": "e062309ea1e6"
+    },
+    {
+      "id": "mcp.nativeRead",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "native-read"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "readMcpServer",
+      "input": "c2792a8c9829"
+    },
+    {
+      "id": "mcp.nativeSave",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "native-save"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "saveMcpServer",
+      "input": "051d03827897"
+    },
+    {
+      "id": "mcp.read",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "read"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "readPlyMcp",
+      "input": "066008b800ca"
+    },
+    {
+      "id": "mcp.reconnect",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "reconnect"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "mcpReconnect",
+      "input": "2027bcdfada0"
+    },
+    {
+      "id": "mcp.rename",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "rename"
+          ],
+          "positional": [
+            "name",
+            "to"
+          ]
+        }
+      },
+      "legacyCommand": "renamePlyMcp",
+      "input": "c7a591ea2191"
+    },
+    {
+      "id": "mcp.save",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "save"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "savePlyMcp",
+      "input": "584014bc9682"
+    },
+    {
+      "id": "mcp.setSettings",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "settings"
+          ]
+        }
+      },
+      "legacyCommand": "setPlyMcpSettings",
+      "input": "f16d1746215b"
+    },
+    {
+      "id": "remote.setResident",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "remote",
+            "resident"
+          ]
+        }
+      },
+      "legacyCommand": "setRemoteResident",
+      "input": "b3365589d9ee"
+    },
+    {
+      "id": "remote.status",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "remote",
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": "remoteStatus",
+      "input": "25c7d85c859a"
     },
     {
       "id": "sessions.fork",
@@ -920,6 +1574,38 @@
       "positional": []
     },
     {
+      "id": "context.plyInstructions",
+      "path": "context instructions",
+      "positional": []
+    },
+    {
+      "id": "context.refresh",
+      "path": "context refresh",
+      "positional": []
+    },
+    {
+      "id": "context.setSessionMcp",
+      "path": "context session-mcp",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "context.setSettings",
+      "path": "context set",
+      "positional": []
+    },
+    {
+      "id": "context.setPlyInstructions",
+      "path": "context set-instructions",
+      "positional": []
+    },
+    {
+      "id": "context.settings",
+      "path": "context settings",
+      "positional": []
+    },
+    {
       "id": "delegation.delegate",
       "path": "delegation delegate",
       "positional": []
@@ -964,6 +1650,152 @@
     {
       "id": "delegation.usage",
       "path": "delegation usage",
+      "positional": []
+    },
+    {
+      "id": "endpoints.list",
+      "path": "endpoints list",
+      "positional": []
+    },
+    {
+      "id": "hooks.copy",
+      "path": "hooks copy",
+      "positional": []
+    },
+    {
+      "id": "hooks.list",
+      "path": "hooks list",
+      "positional": []
+    },
+    {
+      "id": "hooks.setOwner",
+      "path": "hooks owner",
+      "positional": []
+    },
+    {
+      "id": "hooks.remove",
+      "path": "hooks remove",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "hooks.repair",
+      "path": "hooks repair",
+      "positional": []
+    },
+    {
+      "id": "hooks.save",
+      "path": "hooks save",
+      "positional": []
+    },
+    {
+      "id": "hooks.saveNative",
+      "path": "hooks save-native",
+      "positional": []
+    },
+    {
+      "id": "hooks.scan",
+      "path": "hooks scan",
+      "positional": []
+    },
+    {
+      "id": "hooks.session",
+      "path": "hooks session",
+      "positional": []
+    },
+    {
+      "id": "hooks.toggle",
+      "path": "hooks toggle",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "mcp.authStatus",
+      "path": "mcp-servers auth",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.delete",
+      "path": "mcp-servers delete",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.import",
+      "path": "mcp-servers import",
+      "positional": []
+    },
+    {
+      "id": "mcp.list",
+      "path": "mcp-servers list",
+      "positional": []
+    },
+    {
+      "id": "mcp.nativeList",
+      "path": "mcp-servers native",
+      "positional": []
+    },
+    {
+      "id": "mcp.nativeRead",
+      "path": "mcp-servers native-read",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.nativeSave",
+      "path": "mcp-servers native-save",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.read",
+      "path": "mcp-servers read",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.reconnect",
+      "path": "mcp-servers reconnect",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.rename",
+      "path": "mcp-servers rename",
+      "positional": [
+        "name",
+        "to"
+      ]
+    },
+    {
+      "id": "mcp.save",
+      "path": "mcp-servers save",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.setSettings",
+      "path": "mcp-servers settings",
+      "positional": []
+    },
+    {
+      "id": "remote.setResident",
+      "path": "remote resident",
+      "positional": []
+    },
+    {
+      "id": "remote.status",
+      "path": "remote status",
       "positional": []
     },
     {

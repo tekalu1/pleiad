@@ -1066,5 +1066,26 @@
       "notDevice": "登録済みのスマホからの接続ではありません",
       "unknownDevice": "その端末は一覧にありません"
     }
+  },
+  "opsApproval": {
+    "mcpNativeSave": "MCP サーバー「{{name}}」を {{file}} に保存します。会話の始まりにこのコマンドが動きます。",
+    "mcpSave": "Pleiad の MCP サーバー「{{name}}」を保存します。担当が Pleiad の会話の始まりにこのコマンドが動きます。",
+    "mcpDelete": "Pleiad の MCP サーバー「{{name}}」の登録を消します。",
+    "mcpRename": "Pleiad の MCP サーバー「{{name}}」の名前を「{{to}}」に変えます。",
+    "mcpImport_other": "エージェントの MCP サーバー {{count}} 件を Pleiad に取り込みます。",
+    "mcpImportSecrets_other": "エージェントの MCP サーバー {{count}} 件を、秘密の値も含めて Pleiad に取り込みます。",
+    "mcpSettings": "Pleiad の MCP の OAuth の設定を変えます。",
+    "hooksSaveNative_other": "エージェントの設定ファイルの Hooks を {{count}} 件変えます。エージェントの操作のたびにコマンドが動きます。",
+    "hooksCopy_other": "Hook を {{count}} か所へ写します。エージェントの操作のたびにコマンドが動きます。",
+    "hooksAdd": "Pleiad に Hook「{{name}}」を足します。エージェントの操作のたびにコマンドが動きます。",
+    "hooksEdit": "Pleiad の Hook「{{name}}」を変えます。",
+    "hooksRemove": "Pleiad の Hook「{{name}}」を消します。",
+    "hooksEnable": "Pleiad の Hook「{{name}}」の有効・無効を変えます（{{command}}）。",
+    "hooksOwner_other": "{{place}}の Hooks の担当を変えます（取り込み {{count}} 件）。",
+    "hooksRepair": "壊れた Hooks の登録ファイルを退避し、読めた部分だけで書き直します。",
+    "contextSettings": "{{place}}のコンテキストの設定を変えます。全部の会話に渡る指示・Skills・外部 MCP が変わります。",
+    "plyInstructions": "Pleiad の指示を変えます。会話ごとにエージェントへ足す指示が変わります。",
+    "sessionMcp": "この会話の外部 MCP「{{name}}」を変えます。",
+    "everywhere": "すべての場所"
   }
 }

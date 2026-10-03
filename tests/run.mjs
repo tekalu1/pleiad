@@ -87,6 +87,8 @@ const cases = [
   // 設定を書く(settings.set): 全設定 × 全主体の判定・値の検査・承認カードと受領証・bypass で承認なし・束縛なしの NEEDS_UI（身代わりのサーバー）
   await import('./unit/ops-settings.mjs'),
   await import('./unit/setting-change-ui.mjs'),
+  // MCP・Hooks・コンテキスト・リモートの操作（ADR 0094）: agent への伏せ字・伏せ字の書き戻し・guarded と riskOf
+  await import('./unit/ops-mcp-hooks.mjs'),
   await import('./unit/ops-mcp.mjs'),
   await import('./unit/control-delivery.mjs'),
   await import('./unit/ops-control.mjs'),

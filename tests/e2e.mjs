@@ -39,6 +39,7 @@ const cases = [
   await import("./e2e/running.mjs"),
   await import('./e2e/control.mjs'),   // ply_control（操作の一覧）の search_sessions・get_setting を Claude が呼ぶ
   await import('./e2e/control-stage3.mjs'), // Codex から sessions.setTitle を呼ぶ
+  await import('./e2e/control-mcp-hooks.mjs'), // Codex から MCP の登録を読む（秘密は伏せ字）・mcp.save の承認待ちを許可する（ADR 0094）
   await import("./e2e/disconnect.mjs"),   // 猶予を短くした専用サーバが要るので最後
 ];
 

@@ -461,7 +461,8 @@
       "badCursor": "cursor が正しくありません。前の返り値の next をそのまま渡してください。",
       "DENIED": "ユーザーが {{id}} の変更を許可しませんでした。やり直さず、ユーザーに理由を尋ねてください。",
       "STALE": "承認のあとも値が変わり続けたので、{{id}} は行っていません。settings.get で今の値を確かめてからやり直してください。",
-      "SETTING_READ_ONLY": "設定「{{key}}」は読むだけで、settings.set では変えられません。"
+      "SETTING_READ_ONLY": "設定「{{key}}」は読むだけで、settings.set では変えられません。",
+      "MASKED": "{{path}} に伏せ字（••••）が入っていますが、読んだときの値と合わないので戻せません。値を書くか、読んだときのまま渡してください。"
     },
     "pending": "{{target}}の変更は、ユーザーの承認を待っています（requestId: {{requestId}}）。まだ変わっていません。結果（許可・拒否）は後でこの会話に届きます。待たずにほかの作業を続けるか、応答を終えてかまいません。同じ変更を繰り返し求めないでください。",
     "settingTarget": "設定「{{key}}」",
@@ -530,6 +531,171 @@
       "callOp": "Pleiad の操作を呼ぶ。入力が合わないと、どの項目がなぜ違うかが code: INVALID で返る。",
       "callOpOp": "操作の id（list_ops で探す）。",
       "callOpArgs": "操作の入力。list_ops に id を渡して得た JSON Schema の形。"
+    },
+    "mcp": {
+      "arg": {
+        "format": "どのエージェントの設定ファイルか（claude: ~/.claude.json・.mcp.json、codex: config.toml）。",
+        "scope": "user（ホームの設定）か directory（作業場所の設定）。",
+        "cwd": "作業場所のフォルダー。会話から呼ぶときは省くとその会話の作業場所。",
+        "nativeName": "設定ファイルの中の MCP サーバーの名前。",
+        "name": "Pleiad に登録した MCP サーバーの名前。",
+        "mode": "add（新しく足す）か edit（今の登録を変える）。",
+        "revision": "読んだときの revision。読んだ後で変わっていれば保存しない。",
+        "reason": "変える理由（承認カードと変更の記録に出る）。"
+      },
+      "nativeList": {
+        "summary": "エージェント（Claude・Codex）の設定ファイルにある MCP サーバーの名前の一覧と revision。"
+      },
+      "nativeRead": {
+        "summary": "エージェントの設定ファイルにある MCP サーバー 1 つの定義。env・ヘッダーの値・URL のクエリ・引数の秘密は伏せ字（••••）。"
+      },
+      "nativeSave": {
+        "summary": "エージェントの設定ファイルに MCP サーバーを足す・変える。任意のコマンドを動かせるようになるので、ユーザーの承認が要る。伏せ字のまま渡した値は今の値を残す。",
+        "value": "定義（stdio は command・args・env、HTTP は url と headers）。",
+        "allowReformat": "TOML を書き直して整形が変わってもよいか。"
+      },
+      "list": {
+        "summary": "Pleiad に登録した MCP サーバーの一覧（定義・どの秘密があるか・OAuth の状態）。秘密の値は返さない。"
+      },
+      "read": {
+        "summary": "Pleiad に登録した MCP サーバー 1 つの編集用の定義。秘密は伏せ字（••••）、まだ入れていない秘密は null。"
+      },
+      "save": {
+        "summary": "Pleiad に MCP サーバーを登録する・登録を変える。任意のコマンドを動かせるようになるので、ユーザーの承認が要る。伏せ字のまま渡した秘密は前の値を残す。",
+        "value": "定義（transport・command・args・env・url・auth・bearerToken・headers・oauth など。mcp.read の value の形）。"
+      },
+      "delete": {
+        "summary": "Pleiad の MCP サーバーの登録を消す（OAuth のトークンは失効させる）。ユーザーの承認が要る。"
+      },
+      "rename": {
+        "summary": "Pleiad の MCP サーバーの登録の名前を変える（秘密と OAuth の状態は引き継ぐ）。ユーザーの承認が要る。",
+        "to": "新しい名前。"
+      },
+      "import": {
+        "summary": "エージェントの設定ファイルの MCP サーバーを Pleiad の登録に取り込む。ユーザーの承認が要る。",
+        "items": "取り込むもの: { format, scope, name, cwd?, as?（登録する名前）, auth? } の並び。",
+        "includeSecrets": "env・ヘッダーの値・bearer も写すか（既定は写さず、後で入れる）。"
+      },
+      "setSettings": {
+        "summary": "Pleiad の MCP 全体の設定（OAuth の Client ID Metadata Document の URL）を変える。ユーザーの承認が要る。",
+        "clientMetadataUrl": "https の URL。null か空で外す。"
+      },
+      "authStatus": {
+        "summary": "Pleiad の MCP サーバーの OAuth の状態（ログイン済み・期限・要ログイン）。トークンは返さない。ログインとログアウトはユーザーが画面で行う。",
+        "name": "1 つだけ見るときの名前。省くと全部。"
+      },
+      "reconnect": {
+        "summary": "登録した MCP サーバーに今の資格情報でつながるかを確かめる（ツールの数と状態を返す）。"
+      }
+    },
+    "hooks": {
+      "arg": {
+        "cwd": "作業場所のフォルダー。会話から呼ぶときは省くとその会話の作業場所。",
+        "sessionId": "会話の id。会話から呼ぶときは省くとその会話。",
+        "id": "Pleiad の Hook の登録の id（hooks.list の hooks[].id）。",
+        "dryRun": "true なら書かずに、書き先と前後の本文（伏せ字）だけを返す。承認は要らない。",
+        "allowReformat": "書き直して整形が変わってもよいか。",
+        "reason": "変える理由（承認カードと変更の記録に出る）。"
+      },
+      "scan": {
+        "summary": "各エージェントの設定ファイルの Hooks の定義（ファイルごとの状態と行）。コマンドの秘密は伏せる。",
+        "scope": "user（ホームだけ）か directory（ホームと、Git のルートから cwd まで）。",
+        "trust": "Codex の信頼の状態も Codex に聞くか（少し時間がかかる）。"
+      },
+      "saveNative": {
+        "summary": "各エージェントの設定ファイルの Hooks を足す・変える・消す・有効にする。書くときはユーザーの承認が要る（先に dryRun で確かめる）。",
+        "items": "変更の並び: { op: add|edit|delete|enable, agent, scope, base?, file?, revision, loc?, event?, matcher?, command?, timeout?, name?, enabled? }。"
+      },
+      "copy": {
+        "summary": "ある Hook の定義を、別のエージェントの設定ファイルへ写す（形が違えばアダプターを通す）。書くときはユーザーの承認が要る。",
+        "source": "写す元: { agent, scope, base?, file, loc, revision }（hooks.scan の行）。",
+        "targets": "写し先の並び: { agent, scope, base?, matcher?, revision? }。"
+      },
+      "session": {
+        "summary": "会話の Hooks: その会話の場所で見つかった定義・Pleiad がそろえた記録・受け取った発火の記録。",
+        "backend": "エージェントの id。会話から呼ぶときは省くとその会話のエージェント。"
+      },
+      "list": {
+        "summary": "Pleiad の Hooks の登録と担当（エージェントに任せる／Pleiad がそろえる）。コマンドは伏せる。"
+      },
+      "save": {
+        "summary": "Pleiad に Hook を登録する・登録を変える（value.id があれば編集）。エージェントの操作のたびにコマンドが動くので、ユーザーの承認が要る。",
+        "value": "{ id?, name, agent, event, matcher?, command, timeout?, async?, targets }。伏せ字のまま渡したコマンドは前の値を残す。"
+      },
+      "remove": {
+        "summary": "Pleiad の Hook の登録を消す。ユーザーの承認が要る。"
+      },
+      "toggle": {
+        "summary": "Pleiad の Hook の登録を有効・無効にする。有効にするときはユーザーの承認が要る。",
+        "enabled": "true で有効、false で無効（既定 true）。"
+      },
+      "setOwner": {
+        "summary": "Hooks の担当（エージェントに任せる／Pleiad がそろえる）を変える。ユーザーの承認が要る。",
+        "place": "作業場所のパス。null か省くと全体の既定。",
+        "value": "{ owner: native|ply, disabled?: [登録の id] }。null で上の設定に戻す。",
+        "imports": "一緒に取り込むネイティブの定義（{ id, digest }）。",
+        "revision": "hooks.list の revision。"
+      },
+      "repair": {
+        "summary": "壊れた Pleiad の Hooks の登録ファイルを退避し、読めた部分だけで書き直す。ユーザーの承認が要る。"
+      }
+    },
+    "context": {
+      "arg": {
+        "cwd": "作業場所のフォルダー。会話から呼ぶときは省くとその会話の作業場所。",
+        "sessionId": "会話の id。会話から呼ぶときは省くとその会話。",
+        "reason": "変える理由（承認カードと変更の記録に出る）。"
+      },
+      "settings": {
+        "summary": "コンテキストの設定（指示・Skills・外部 MCP をどこから読み、誰が担当するか）。既定と、保存した場所ごとの上書き。"
+      },
+      "setSettings": {
+        "summary": "コンテキストの設定を 1 か所変える。全部の会話に渡る文脈が変わるので、ユーザーの承認が要る。",
+        "place": "作業場所のパス。null で既定。",
+        "kind": "instruction・skill・mcp のどれか。",
+        "value": "その種類の設定（{ owner, user, directory, disabled?, prefer? }）。null で上の設定に戻す。",
+        "roots": "追加で探すフォルダーの並び。null で上の設定に戻す。",
+        "add": "true で場所を一覧に足す。",
+        "remove": "true で場所を一覧から外す（上書きも消える）。"
+      },
+      "plyInstructions": {
+        "summary": "Pleiad の指示（会話ごとにエージェントへ足す指示の項目と、量の目安）。"
+      },
+      "setPlyInstructions": {
+        "summary": "Pleiad の指示を 1 つ変える。エージェントの振る舞いが変わるので、ユーザーの承認が要る。",
+        "action": "save（足す・変える）・toggle・delete（自分で足したもの）・reset（既定の項目）・order。",
+        "id": "項目の id（save で省くと足す）。",
+        "name": "項目の名前（save）。",
+        "body": "指示の本文（save）。",
+        "target": "all・parent・child（save）。",
+        "agents": "渡すエージェント（save）。",
+        "on": "オン・オフ（toggle）。",
+        "ids": "並べ替えた項目の id（order）。"
+      },
+      "refresh": {
+        "summary": "会話に固定した指示・Skills を、今のファイルから読み直す（走っていない会話だけ）。"
+      },
+      "setSessionMcp": {
+        "summary": "会話で外部 MCP サーバーを外す・戻す（次のターンから）。戻すときはユーザーの承認が要る。",
+        "name": "MCP サーバーの名前。",
+        "removed": "true で外す（既定）、false で戻す。"
+      }
+    },
+    "remote": {
+      "status": {
+        "summary": "リモートの状態（中継への接続・端末の一覧・常駐の設定）。鍵とペアリングの確認の番号は返さない。"
+      },
+      "setResident": {
+        "summary": "デスクトップ版の常駐の設定（窓を閉じても続けるか・スリープを止めるか）を変える。",
+        "keepRunning": "窓を閉じてもトレイで続けるか。",
+        "sleep": "スリープを止める規則（working: 作業中だけ、always: いつも、off: 止めない）。"
+      }
+    },
+    "endpoints": {
+      "list": {
+        "summary": "互換の接続先の一覧（URL・モデル・既定・確認の結果）。API キーは返さない（hasKey だけ）。",
+        "agent": "エージェントの id で絞る。"
+      }
     },
     "probe": {
       "guarded": {

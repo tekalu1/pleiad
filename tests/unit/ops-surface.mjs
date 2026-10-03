@@ -24,7 +24,7 @@ const SNAPSHOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '
 
 // T4: ply_control が毎ターン文脈に載せる文（指示 + tools/list。直に出すツール・list_ops・call_op の定義）の上限。ja・en それぞれ。上限を変えるのは ADR の範囲（docs/design.md「操作の一覧」）
 const CONTROL_TOKEN_LIMIT = 1800;
-const ERROR_CODES = ['NOT_FOUND', 'HOST_SCREEN_ONLY', 'INVALID', 'READ_ONLY_MODE', 'NEEDS_UI', 'NEEDS_APPROVAL', 'INVALID_RISK', 'INVALID_PRINCIPAL', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND', 'SETTING_READ_ONLY', 'DENIED', 'STALE', 'sessionRequired', 'badCursor'];
+const ERROR_CODES = ['NOT_FOUND', 'HOST_SCREEN_ONLY', 'INVALID', 'READ_ONLY_MODE', 'NEEDS_UI', 'NEEDS_APPROVAL', 'INVALID_RISK', 'INVALID_PRINCIPAL', 'SESSION_NOT_FOUND', 'MESSAGE_NOT_FOUND', 'SETTING_NOT_FOUND', 'TASK_NOT_FOUND', 'SETTING_READ_ONLY', 'MASKED', 'DENIED', 'STALE', 'sessionRequired', 'badCursor'];
 const CONTROL_KEYS = ['instructions', 'listOps', 'listOpsId', 'callOp', 'callOpOp', 'callOpArgs'];
 
 const hash = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 12);
@@ -140,11 +140,29 @@ export default async function (t) {
     prefs: async () => ({ agentSitePermissions: [{ origin: 'o', ...secret }], locale: 'ja' }),
     compactionSettings: () => ({ enabled: true, ...secret }),
     delegation: { list: () => [{ taskId: 't', status: 'completed', ...secret }], get: () => ({ taskId: 't', status: 'completed', result: 'done', ...secret }) },
+    // MCP・Hooks・コンテキスト・リモート・接続先（ADR 0094）。秘密の値の置き場（env・ヘッダー・bearer・clientSecret・URL のクエリ）に目印を入れる
+    mcp: {
+      native: { list: async () => ({ path: 'p', format: 'claude', scope: 'user', revision: 'r', servers: ['a'], ...secret }),
+        get: async () => ({ name: 'a', revision: 'r', value: { command: 'node', env: { PLAIN_NAME: MARKER }, headers: { X: MARKER }, http_headers: { Y: MARKER }, url: `https://u:${MARKER}@x.example/m?k=${MARKER}`, oauth: { clientSecret: MARKER } } }) },
+      list: async () => ({ file: 'f', revision: 'r', servers: [{ name: 'a', transport: 'http', url: `https://x.example/m?k=${MARKER}`, envKeys: ['A'], ...secret }], storage: { encrypted: true } }),
+      read: async () => ({ name: 'a', revision: 'r', value: { transport: 'stdio', command: 'node', env: { PLAIN_NAME: MARKER }, bearerToken: MARKER, headers: { X: MARKER }, oauth: { clientSecret: MARKER } } }),
+      authStatus: async () => ({ servers: [{ name: 'a', state: 'signed-in', ...secret }], storage: null }),
+    },
+    hooks: {
+      scan: async () => ({ files: [], entries: [{ command: 'x', ...secret }] }),
+      session: async () => ({ agent: null, runs: [], unify: { ...secret } }),
+      view: async () => ({ hooks: [{ id: 'h', command: 'x', ...secret }] }),
+    },
+    context: { view: async () => ({ defaults: { ...secret }, places: [] }), plyInstructions: () => ({ items: [{ id: 'x', ...secret }] }) },
+    remote: { status: async () => ({ enabled: false, connection: { ...secret }, devices: [], ...secret }) },
+    endpoints: { list: async () => ({ endpoints: [{ id: 'e', baseUrl: 'https://e.example', ...secret }], defaults: {} }) },
   };
+  // 人の画面には返すが agent には伏せるもの（引数の秘密・承認の URL・ペアリングの番号・URL のクエリ）は tests/unit/ops-mcp-hooks.mjs
   // 必須の引数がある read 操作に渡す引数（設定は全部の key）
   const samples = {
     'settings.get': registry.settings.map((x) => ({ key: x.key })), 'settings.schema': registry.settings.map((x) => ({ key: x.key })),
     'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
+    'mcp.nativeList': [{ format: 'claude', scope: 'user', cwd: 'x' }], 'mcp.nativeRead': [{ format: 'codex', scope: 'directory', cwd: 'x', name: 'a' }], 'mcp.read': [{ name: 'a' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {
     const needs = Object.keys(op.input.shape).length && Object.values(op.input.shape).some((f) => !f.safeParse(undefined).success);
