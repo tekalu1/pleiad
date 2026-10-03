@@ -250,7 +250,70 @@
     "undo": "元に戻す",
     "undoFailed": "元に戻せませんでした: {{error}}"
   },
-  "routines": {},
+  "routines": {
+    "title": "ルーティン",
+    "heading": "ルーティン",
+    "headingTitle_other": "このチャンネルのルーティン（{{count}} 件）",
+    "headingNone": "このチャンネルのルーティンを作る",
+    "headingMenu": "#{{name}} のルーティン",
+    "paused": "一時停止",
+    "new": "ルーティンを作る",
+    "edit": "編集",
+    "openChannel": "チャンネルを開く",
+    "more_other": "ほか {{count}} 件を見る",
+    "fewer": "3 件に戻す",
+    "botEmpty": "この bot のルーティンはまだありません",
+    "cancel": "取り消す",
+    "create": "作る",
+    "save": "保存",
+    "delete": "削除",
+    "deleteConfirm": "もう一度押すと削除",
+    "deleteFailed": "削除できませんでした: {{error}}",
+    "saveFailed": "保存できませんでした: {{error}}",
+    "neverRan": "まだ動いていません",
+    "last": "前回 {{when}} · {{state}}",
+    "time": "時刻",
+    "next": "次は {{when}}",
+    "nextNone": "次の予定がありません",
+    "daySep": "・",
+    "when": { "label": "いつ", "today": "今日 {{time}}", "tomorrow": "明日 {{time}}", "date": "{{date}} {{time}}" },
+    "name": { "label": "名前", "placeholder": "例: 朝のまとめ" },
+    "state": { "label": "状態", "on": "有効", "off": "一時停止", "pause": "一時停止にする", "resume": "再開する" },
+    "kind": { "daily": "毎日", "weekly": "毎週", "interval": "間隔", "cron": "cron", "event": "イベント", "webhook": "webhook", "soon": "準備中です" },
+    "day": { "0": "日", "1": "月", "2": "火", "3": "水", "4": "木", "5": "金", "6": "土" },
+    "daily": { "label": "毎日か平日か", "everyday": "毎日", "weekdays": "平日だけ" },
+    "weekly": { "label": "曜日" },
+    "interval": { "label": "間隔", "hint": "前回から数えて、この間隔で動きます", "during": "の間", "windowLabel": "時間帯", "allDay": "終日", "window": "時間帯を指定", "from": "開始の時刻", "to": "終了の時刻" },
+    "cron": { "label": "cron の式", "hint": "5 欄（分 時 日 月 曜日）で書きます。例: 0 9 * * 1-5", "daily": "毎日 {{time}}", "weekdays": "平日の {{time}}", "weekly": "毎週 {{days}} の {{time}}" },
+    "event": {
+      "label": "イベント", "done": "会話の完了", "failed": "会話の失敗", "waiting": "あなた待ち",
+      "scope": "対象", "scopeAll": "すべての会話", "scopeSome_other": "選んだ会話 {{count}} 件",
+      "hint": { "done": "会話が完了するたびに動きます（bot とルーティンの会話は除きます）", "failed": "会話が失敗するたびに動きます（bot とルーティンの会話は除きます）", "waiting": "会話があなたを待つたびに動きます（bot とルーティンの会話は除きます）" }
+    },
+    "who": {
+      "label": "誰が・どこで", "ga": "が", "de": "で", "pickBot": "bot を選ぶ", "pickChannel": "チャンネルを選ぶ",
+      "botAria": "bot: {{name}}", "channelAria": "チャンネル: {{name}}", "noBots": "bot がいません。先に bot を作ってください"
+    },
+    "where": { "label": "どこで", "dm": "DM" },
+    "prompt": { "label": "何を", "placeholder": "例: 夜の間に失敗・中断した会話を調べて、原因と次の一手を 3 行ずつまとめて" },
+    "mode": {
+      "label": "承認モード", "hint": "強くできるのは人だけです。bot や AI は変えられません",
+      "danger": "確認なしで動きます。誰もいない間も動くので、範囲に注意してください", "only": "{{backend}} では「{{mode}}」だけです"
+    },
+    "timeout": { "label": "承認待ちで", "before": "通知して、", "after": "を過ぎたら取り消して報告" },
+    "try": { "button": "試しに動かす", "running": "試しに動いています（投稿・変更はしない）", "failed": "試せませんでした: {{error}}" },
+    "unit": { "minutes_other": "{{count}} 分", "hours_other": "{{count}} 時間", "days_other": "{{count}} 日" },
+    "text": {
+      "daily": "毎日 {{time}}", "weekdays": "平日 {{time}}", "weekly": "毎週 {{days}} {{time}}", "interval": "{{every}}ごと", "window": "（{{from}}–{{to}}）",
+      "cron": "cron {{expr}}", "webhook": "webhook", "event": { "done": "会話の完了", "failed": "会話の失敗", "waiting": "あなた待ち" }
+    },
+    "error": {
+      "name": "名前を入れてください", "bot": "bot を選んでください", "channel": "チャンネルを選んでください", "prompt": "何をするか書いてください",
+      "time": "時刻を選んでください", "days": "曜日を 1 つ以上選んでください", "minutes": "間隔を選んでください",
+      "window": "時間帯の開始と終了を、違う時刻で入れてください", "cron": "式を読めません。5 欄（分 時 日 月 曜日）で書いてください",
+      "event": "イベントを選んでください", "kind": "この種類はまだ作れません"
+    }
+  },
   "event": {
     "post": "{{channel}} · {{from}}",
     "thread": "{{channel}} のこれまでの投稿を渡しました",

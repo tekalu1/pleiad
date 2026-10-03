@@ -1,3 +1,106 @@
 /* ==================== ルーティンの編集のシート（P2 の W5）: #routineSheet ====================
-   空のファイル（P0）。持ち主のパッケージが埋める。面は --surface-* / --fill-*、字は --ink-*、枠線なし（tests/lint-design.mjs）。
-   docs/design-system.md に承認済みの形を書いてから足す */
+   承認済みのモック 06（temporary/mockups/bots-channels.html）の形。web/channels/routine-sheet.mjs・routine-entry.mjs。
+   面は --surface-* / --fill-*、字は --ink-*、枠線なし（tests/lint-design.mjs）。チップ・.cpop の面・.seg は style.css をそのまま使う */
+
+/* ---- 白い <dialog>（追加・編集のシートと同じ。広い画面は浮く面、狭い画面は全画面） */
+.routine-sheet{position:fixed;inset:0;margin:auto;width:min(560px,calc(100vw - 32px));max-height:calc(100dvh - 48px);padding:0;border:0;border-radius:var(--r-l);
+  background:var(--surface-paper);color:var(--ink);box-shadow:0 8px 28px var(--shadow);overflow:visible}
+.routine-sheet[open]{display:flex;flex-direction:column}
+.routine-sheet::backdrop{background:var(--surface-veil)}
+.rs-form{display:flex;flex-direction:column;min-height:0;flex:1;max-height:calc(100dvh - 48px);padding:16px 18px 14px}
+.rs-title{margin:0 0 6px;font-size:var(--fs-l);display:flex;align-items:center;gap:8px;flex:none}
+.rs-title svg.i{width:16px;height:16px;color:var(--ink-weak);flex:none}
+.rs-sp{flex:1}
+.rs-x{flex:none}
+.rs-body{min-height:0;overflow-y:auto;overscroll-behavior:contain;margin:0 -8px;padding:0 8px;scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent}
+
+/* ---- 欄（ラベル | 中身） */
+.routine-sheet .fld{display:grid;grid-template-columns:6.6em minmax(0,1fr);gap:6px 12px;align-items:start;padding:7px 0}
+.routine-sheet .fld[hidden]{display:none}
+.routine-sheet .fld>.k{color:var(--ink-weak);font-size:var(--fs-s);padding-top:5px}
+.routine-sheet .fld>.v{min-width:0;display:flex;flex-direction:column;gap:6px}
+.routine-sheet .fld .row2{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px;min-width:0}
+.routine-sheet .fld .weak{color:var(--ink-weak)}
+.routine-sheet .fld .nt{margin:0;font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5}
+.routine-sheet .fld .nt.strong{color:var(--ink-strong)}
+.routine-sheet .fld .nt[hidden],.routine-sheet .fld .fe[hidden]{display:none}
+.routine-sheet .fld .fe{font-size:var(--fs-xs);color:var(--ink-strong);font-weight:600}
+.routine-sheet .fld .seg{flex-wrap:wrap}
+.routine-sheet .fld .seg button{flex:0 0 auto;padding:3px 10px}
+.routine-sheet .fld .seg button:disabled{opacity:.45;cursor:not-allowed}
+.rs-last{font-size:var(--fs-s);color:var(--ink-weak)}
+.rs-last.fail{color:var(--ink-strong);font-weight:600}
+.rs-open{padding:3px 10px;font-size:var(--fs-s)}
+.rs-scope{font-size:13px}
+.rs-win{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.rs-next{min-height:1.5em}
+
+/* ---- 入力（名前・時刻・式・指示） */
+.routine-sheet .fin{background:var(--surface-1);color:var(--ink);border-radius:var(--r-pill);padding:5px 12px;font:400 13px/1.5 var(--font);min-width:0;outline:none}
+.routine-sheet .fin.mono{font-family:var(--font-mono);font-size:12px}
+#rsName{width:100%;box-sizing:border-box}
+.routine-sheet .rs-time{width:7.6em;box-sizing:border-box}
+.routine-sheet .fta{display:block;width:100%;box-sizing:border-box;resize:none;background:var(--surface-1);color:var(--ink);border-radius:var(--r-m);padding:8px 12px;font:400 13px/1.6 var(--font);min-height:5.6em;outline:none}
+.routine-sheet .fta::placeholder,.routine-sheet .fin::placeholder{color:var(--ink-weak)}
+.routine-sheet :is(.fin,.fta):focus-visible,.routine-sheet :is(.chip,.dayp button,.seg button):focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
+.routine-sheet .chip.fld-chip{background:var(--surface-1);padding:0 10px}
+.routine-sheet .chip.fld-chip:hover,.routine-sheet .chip.fld-chip[aria-expanded=true]{background:var(--surface-2)}
+.routine-sheet .chip .lead{display:inline-flex;flex:none}
+.routine-sheet .chip .lead[hidden]{display:none}
+.routine-sheet .chip .av.xs{width:18px;height:18px;flex:none;display:inline-grid;place-items:center;font-size:12px;line-height:1}
+.routine-sheet .chip .v{display:inline-flex;align-items:center;gap:5px;min-width:0}
+.dayp{display:flex;gap:3px;flex-wrap:wrap}
+.dayp button{width:28px;height:28px;border-radius:50%;font-size:var(--fs-s);background:var(--surface-1);color:var(--ink-weak);cursor:pointer}
+.dayp button.on{background:var(--surface-3);color:var(--ink);font-weight:600}
+
+/* ---- 足 */
+.rs-err{margin:8px 0 0;padding:8px 12px;border-radius:var(--r-m);background:var(--surface-1);color:var(--ink-strong);font-size:var(--fs-s);overflow-wrap:anywhere}
+.rs-err[hidden]{display:none}
+.routine-sheet .sheet-foot{display:flex;align-items:center;gap:6px;margin-top:10px;flex-wrap:wrap;flex:none}
+.routine-sheet .sheet-foot .res{margin-right:auto;font-size:var(--fs-s);color:var(--ink-weak);display:inline-flex;align-items:center;gap:6px;min-width:0;overflow-wrap:anywhere}
+.routine-sheet .sheet-foot .res.fail{color:var(--ink-strong);font-weight:600}
+.rs-delete{color:var(--ink-weak);background:transparent}
+.rs-delete:hover{background:var(--surface-2);color:var(--ink)}
+.rs-delete.armed{color:var(--ink-strong);font-weight:600;background:var(--surface-2)}
+.rs-delete[hidden]{display:none}
+
+/* ---- 狭い画面は全画面 */
+@media (max-width:700px){
+  .routine-sheet{width:100%;max-width:none;height:100dvh;max-height:none;border-radius:0}
+  .rs-form{max-height:none;height:100%;padding:14px 14px max(14px,env(safe-area-inset-bottom,0px))}
+  .rs-body{flex:1 1 auto}
+  .routine-sheet .fld{grid-template-columns:minmax(0,1fr);gap:4px}
+  .routine-sheet .fld>.k{padding-top:0}
+  .routine-sheet .sheet-foot .res{flex-basis:100%;margin-right:0;order:-1}
+}
+
+/* ---- 脇のルーティンの行（web/channels/sidebar.mjs）。2 行（名前 / #チャンネル · 時刻）。一時停止は薄く、直近の失敗は「✕ 失敗」 */
+.cs-row.paused{opacity:.5}
+.cs-row .row-meta .cs-rt-ch{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cs-rt-fail{flex:none;font-weight:700;color:var(--ink-strong);white-space:nowrap}
+.cs-more{display:block;width:100%;background:transparent;text-align:left;padding:4px 10px;border-radius:var(--r-m);font-size:var(--fs-xs);color:var(--ink-weak);cursor:pointer}
+.cs-more:hover{background:var(--surface-hover);color:var(--ink)}
+.cs-more:focus-visible{outline:2px solid var(--line-blue);outline-offset:-1px}
+
+/* ---- チャンネルの見出しの［ルーティン n］ */
+.ch-routines{flex:none;gap:5px}
+.ch-routines svg.i{width:15px;height:15px;color:var(--ink-weak);flex:none}
+.ch-routines .rt-n:empty{display:none}
+.ch-routines .rt-n{color:var(--ink-weak)}
+@media (max-width:700px){
+  .ch-routines .rtl{display:none}
+}
+
+/* ---- bot のページの「ルーティン」の節（web/channels/routine-entry.mjs が左の列の末尾へ差し込む） */
+.bp-routines[hidden],.bot-page.is-new .bp-routines{display:none}
+.bp-col>.bp-routines{margin-top:16px}
+.bp-rt-list{display:flex;flex-direction:column;gap:4px;margin-bottom:6px}
+.bp-rt{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 10px;width:100%;text-align:left;padding:6px 10px;border-radius:var(--r-m);background:var(--surface-paper);cursor:pointer;font-size:var(--fs-s)}
+.bp-rt:hover{background:var(--surface-hover)}
+.bp-rt:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
+.bp-rt.paused{opacity:.5}
+.bp-rt-name{grid-column:1;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bp-rt-meta{grid-column:1;grid-row:2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-xs);color:var(--ink-weak)}
+.bp-rt-fail{grid-column:2;grid-row:1;justify-self:end;font-weight:700;color:var(--ink-strong);font-size:var(--fs-xs);white-space:nowrap}
+.bp-rt-when{grid-column:2;grid-row:2;justify-self:end;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
+.bp-routines .bp-empty{margin:0 0 6px;font-size:var(--fs-s);color:var(--ink-weak)}

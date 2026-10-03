@@ -37,6 +37,7 @@ export const CHANNEL_EVENTS = new Set([
 ]);
 
 import { createBotPage } from './bot-page.mjs';
+import { createRoutineSheet } from './routine-sheet.mjs';
 
 export function setupChannels(host) {
   const parts = [];
@@ -60,7 +61,8 @@ export function setupChannels(host) {
   // W4 bot のページ（show({ kind: 'bot', id })。id が 'new' なら作る画面）
   parts.push(createBotPage(host));
 
-  // W5 ルーティンの編集（P2）:  parts.push(createRoutineSheet(host));   // web/channels/routine-sheet.mjs
+  // W5 ルーティンの編集（P2。document の channels:routine で開く。bot のページに「ルーティン」の節を足す）
+  parts.push(createRoutineSheet(host));
 
   const each = (name, ...args) => { for (const part of parts) part[name]?.(...args); };
   const tabs = createSideTabs({ onChange: (tab) => each('sideTabChanged', tab) });
