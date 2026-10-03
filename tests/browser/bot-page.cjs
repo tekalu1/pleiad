@@ -1,7 +1,7 @@
 // playwright-cli -s=bot-page run-code --filename=tests/browser/bot-page.cjs
 // fake,codex,antigravity を有効にした、実データと分離したサーバー（別ポート・使い捨ての置き場）を開いてから実行する
 // （AGENT_HOST_BACKENDS=fake,codex,antigravity AGENT_HOST_CODEX_BIN="node tests/lib/fake-codex.mjs" AGENT_HOST_AGY_BIN="node tests/lib/fake-agy.mjs"）。
-// bot のページと作成・記憶の一覧（web/channels/bot-page.mjs・memory-list.mjs。ADR 0108・0109）:
+// bot のページと作成・記憶の一覧（web/channels/bot-page.mjs・memory-list.mjs。ADR 0109・0110）:
 //   作成（名前が空なら作らない・承認モードも選べる）・設定の変更（名前・アイコン・人格・モデル・エフォート・承認モード・フォルダー・他の会話に送る）、
 //   Antigravity（承認モードは全部自動だけ）・全部自動ではフォルダーを「すべてのフォルダー」で非活性（Codex の全部自動は限れるので活性のまま）、
 //   記憶の直す・忘れる・元に戻す・出どころ、360 幅で横にはみ出さない。

@@ -44,7 +44,7 @@
   - **`pleiad mcp`**: 同じ一覧を stdio の MCP として出す（Pleiad の外の AI 向け。Pleiad の中の会話には束縛した `ply_control` を渡す）。Pleiad が起動していなければ `list_ops`・`call_op` の 2 本だけを出し、呼ぶと `code: NOT_RUNNING`。起動した・止まった・一覧が変わったときは `notifications/tools/list_changed`。登録の例: `claude mcp add pleiad -- node <リポジトリ>/bin/pleiad.mjs mcp`（別のデータ置き場は `AGENT_HOST_DATA` を環境に付ける）。設定 › アプリ情報・更新の「外の AI から Pleiad を使う」に「MCP の設定をコピー」（`mcpServers` の JSON）・「claude mcp add をコピー」があり、走っているこの Pleiad に合わせた形を写す（操作 `app.cliSetup`。read・画面だけ・ホストの画面だけで、取れなければ節ごと出さない）: `command` はサーバーの実行ファイル（Ply.exe か node。Windows の `.cmd` はシェル無しで起動できないので起動口は書かない）、`args` は `[<bin/pleiad.mjs>, "mcp"]`、`env` は Electron なら `ELECTRON_RUN_AS_NODE`、既定でないデータ置き場なら `AGENT_HOST_DATA`。押すとボタンの文字が 1.8 秒「コピーしました」（失敗は「コピーできませんでした」）になる。
 - **検査用の操作**: `AGENT_HOST_BACKENDS` に `fake` があるとき（テスト）だけ、権限の配線を確かめる `probe.guarded`（guarded）・`probe.humanOnly`（human-only。画面だけ）が載る（`core/ops/probe.mjs`）。fake バックエンドには、読み取り専用の `plan` と、確認なし・制限なしの `bypass` のモードがある。サーバー越しの検査は `ops-control`（`control.json`・HTTP の認証・会話への束縛・権限の配線・記録・伏せ字）、CLI と `pleiad mcp` は `ops-cli`、3 つのエージェントへの渡し方は `control-delivery`、会話・設定・委譲の中身は `ops-sessions`、生成器と橋は `ops-mcp`、設定を書く規則（全設定 × 全主体の判定・承認カード・受領証）は `ops-settings`（身代わりのサーバー）と `ops-control`（サーバー越し）、承認カードの中身は `setting-change-ui`、MCP・Hooks・コンテキスト・リモートの操作の伏せ字と危険度は `ops-mcp-hooks`、実ブラウザーは `tests/browser/setting-approval.cjs`。
 
-- **載せ忘れの検査**: `tests/lint-ops.mjs`（`npm test` の `ops-coverage`）。`COMMANDS` の各名前は、操作の `legacyCommand` か `tests/ops-baseline.json` の除外表（理由の種類: `ui-internal`・`stream`・`human-only`・`host-screen-only`・`gateway`・`todo`）に載る。`human-only` は `HUMAN_ONLY` の 5 つとちょうど同じで、操作と設定の risk も突き合わせる（WS のコマンドを持たない操作は `HUMAN_ONLY` の `ops`。今は bot の承認モードの `bots.setMode` だけ。[ADR 0108](adr/0108-bot-and-dispatch.md)）（5 つに当たらないものを human-only にしても、当たるものを外しても落ちる）。`todo` と、`store.setPref` を直に呼ぶ印（`ops-allow-setpref`。prefs.json への書き込みの出口 `savePref`・起動時の修復・自動圧縮の 3 か所）は増やせない（縮めるときだけ `node tests/lint-ops.mjs --update-baseline`）。prefs に書くキー（`savePref` の呼び出し）は全部、設定の一覧にある（未移行の欄は無い）。`setPref` の WS コマンドは設定の一覧から作るので、キーの一覧を手で持たない。権限の表・定義の検査・関所の順序は `ops-policy`・`ops-registry`、実際の一覧の snapshot（`tests/ops-surface.snap.json`。更新は `OPS_UPDATE_SNAPSHOT=1 npm test -- ops-surface`）・文の量・辞書・JSON Schema・伏せ字は `ops-surface`。
+- **載せ忘れの検査**: `tests/lint-ops.mjs`（`npm test` の `ops-coverage`）。`COMMANDS` の各名前は、操作の `legacyCommand` か `tests/ops-baseline.json` の除外表（理由の種類: `ui-internal`・`stream`・`human-only`・`host-screen-only`・`gateway`・`todo`）に載る。`human-only` は `HUMAN_ONLY` の 5 つとちょうど同じで、操作と設定の risk も突き合わせる（WS のコマンドを持たない操作は `HUMAN_ONLY` の `ops`。今は bot の承認モードの `bots.setMode` だけ。[ADR 0109](adr/0109-bot-and-dispatch.md)）（5 つに当たらないものを human-only にしても、当たるものを外しても落ちる）。`todo` と、`store.setPref` を直に呼ぶ印（`ops-allow-setpref`。prefs.json への書き込みの出口 `savePref`・起動時の修復・自動圧縮の 3 か所）は増やせない（縮めるときだけ `node tests/lint-ops.mjs --update-baseline`）。prefs に書くキー（`savePref` の呼び出し）は全部、設定の一覧にある（未移行の欄は無い）。`setPref` の WS コマンドは設定の一覧から作るので、キーの一覧を手で持たない。権限の表・定義の検査・関所の順序は `ops-policy`・`ops-registry`、実際の一覧の snapshot（`tests/ops-surface.snap.json`。更新は `OPS_UPDATE_SNAPSHOT=1 npm test -- ops-surface`）・文の量・辞書・JSON Schema・伏せ字は `ops-surface`。
 
 ## git の動き（2026-10-03）
 
@@ -325,7 +325,7 @@ Claude Code を **セッションを離れずに扱えるようにするブラ�
 
 機能の採否はこれで判定する。3つに寄与しないものは入れない（[ADR 0007](adr/0007-symmetric-ai-and-human.md)）。
 
-bot・Channels・ルーティンは、思い出すために離れること（bot の記憶とチャンネルの履歴）と、続けるために離れること（ルーティンと代わりの送信）を減らすものとして入れた（[ADR 0105](adr/0105-bots-channels-routines.md)）。
+bot・Channels・ルーティンは、思い出すために離れること（bot の記憶とチャンネルの履歴）と、続けるために離れること（ルーティンと代わりの送信）を減らすものとして入れた（[ADR 0106](adr/0106-bots-channels-routines.md)）。
 
 ### 2.2 AI は人間と同じパートナー
 
@@ -345,7 +345,7 @@ bot・Channels・ルーティンは、思い出すために離れること（bot
 
 設定を変える操作の権限（AI が自分の関所を緩める変更を、どの会話なら通し、どこで承認を挟むか）は主体 × 危険度 × 会話の承認モードの表で決める（[ADR 0082](adr/0082-control-surface-principals-and-risk.md)）。
 
-bot も「会話に束縛された agent」として同じ表に載る。bot の承認モードは人間だけが決める（`bots.setMode`）。フォルダー・送れる会話・記憶の直しと消去は AI も使えるが、範囲を広げる向きと消す操作は承認を通す（guarded）。投稿・リアクション・記憶を書くなどは人間と同じ口で、発言者の欄で見分ける（[ADR 0108](adr/0108-bot-and-dispatch.md)・[0109](adr/0109-bot-memory.md)）。
+bot も「会話に束縛された agent」として同じ表に載る。bot の承認モードは人間だけが決める（`bots.setMode`）。フォルダー・送れる会話・記憶の直しと消去は AI も使えるが、範囲を広げる向きと消す操作は承認を通す（guarded）。投稿・リアクション・記憶を書くなどは人間と同じ口で、発言者の欄で見分ける（[ADR 0109](adr/0109-bot-and-dispatch.md)・[0110](adr/0110-bot-memory.md)）。
 
 ## 3. スコープ
 
@@ -366,7 +366,7 @@ bot も「会話に束縛された agent」として同じ表に載る。bot の
   - **v3 で改訂した**（`docs/multi-backend.md`、[ADR 0004](adr/0004-multiple-agent-backends.md)）。`AgentBackend` を切り、Claude / Codex / Antigravity を並べる（procway-code も並べていたが 2026-09 に対応を終えた）
 - タイトルの**暗黙の**自動更新。ターンごとに勝手に書き換わる挙動は入れない（人間が追えなくなる）。
   明示的な変更は人間・AI とも可
-- 会話を手で入れて整理する器（グループ機能）。R3 と R5 で代替する。Channels は仕事が**始まる**場で、会話を後から入れる・移す操作は持たない（[ADR 0105](adr/0105-bots-channels-routines.md)）
+- 会話を手で入れて整理する器（グループ機能）。R3 と R5 で代替する。Channels は仕事が**始まる**場で、会話を後から入れる・移す操作は持たない（[ADR 0106](adr/0106-bots-channels-routines.md)）
 
 ## 4. アーキテクチャ
 

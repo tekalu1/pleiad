@@ -1,4 +1,4 @@
-// 承認モードの強さの比べ方（bot が別の bot を起こすときの確認。ADR 0108）。範囲（scope）・自律（autonomy）のどちらかが上なら強い。
+// 承認モードの強さの比べ方（bot が別の bot を起こすときの確認。ADR 0109）。範囲（scope）・自律（autonomy）のどちらかが上なら強い。
 // modes() の 1 エントリ（core/modes.mjs の宣言）を渡す。宣言が無いものは弱い側に倒す（modePosition）。
 import { modePosition, scopeRank, autonomyRank } from '../modes.mjs';
 

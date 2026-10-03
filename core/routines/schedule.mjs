@@ -1,4 +1,4 @@
-// ルーティンのトリガの検査と「次の発火」の計算（R1。ADR 0111）。時刻は PC の現地時刻。純粋な部品（SDK も DOM も import しない）。
+// ルーティンのトリガの検査と「次の発火」の計算（R1。ADR 0112）。時刻は PC の現地時刻。純粋な部品（SDK も DOM も import しない）。
 //
 //   validateTrigger(trigger) → 整えたトリガ                  … 形が違えば TriggerError（detail に理由）。余計な欄は落とす
 //   isTimed(trigger) → boolean                              … 時刻で動くトリガ（daily・weekly・interval・cron）か。event・webhook は予約しない

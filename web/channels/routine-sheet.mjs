@@ -1,4 +1,4 @@
-// ルーティンの編集のシート（W5。承認済みのモック 06、docs/channels.md「ルーティン」、ADR 0111）。
+// ルーティンの編集のシート（W5。承認済みのモック 06、docs/channels.md「ルーティン」、ADR 0112）。
 // 白い <dialog>#routineSheet（広い画面は浮く面、狭い画面は全画面）。いつ（毎日・毎週・間隔・cron・イベント・webhook）・
 // 誰が（bot）・どこで（チャンネル）・何を（指示）・承認モード（入力欄と同じ選択）・承認待ちの期限・［試しに動かす］［取り消す］［作る］。
 // 操作はすべて routines.* を host.invoke で呼ぶ（新しい WS コマンドは足さない）。一覧は routine-store.mjs。出来事 routinesChanged で脇・見出し・bot のページが更新される。

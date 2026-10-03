@@ -1,8 +1,8 @@
-// ルーティン（P2 の R1。ADR 0111。sessions.send は core/ops/conversations.mjs（ADR 0104）。bot の検査は P3 の X1 が足す。ADR 0113）の操作（`routines.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。
+// ルーティン（P2 の R1。ADR 0112。sessions.send は core/ops/conversations.mjs（ADR 0104）。bot の検査は P3 の X1 が足す。ADR 0114）の操作（`routines.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。
 // id・危険度・口・引数と返りの形の契約は docs/channels.md「操作」。handler は `ctx.routines`（core/bots-host.mjs の BotHost.opsDeps → core/routines/service.mjs）を呼ぶ。
 // 直のツール（mcp: 'direct'）は足さない（tests/unit/ops-surface.mjs の T4）。
 //
-// 危険度（ADR 0082・0111。human-only は承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリングの 5 つだけ）:
+// 危険度（ADR 0082・0112。human-only は承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリングの 5 つだけ）:
 //   routines.list / get      read
 //   routines.create          write。AI が作るときは riskOf で guarded（承認カード。モードの行つき。弱くないモードなら loosens）
 //   routines.update          write。広げる向き（頻度を上げる・モードを強くする・対象を広げる。出来事・webhook は回数に上限が無いので、時刻のトリガから変えるのも頻度を上げる向き）と、
@@ -10,7 +10,7 @@
 //   routines.pause           write（狭める向き）
 //   routines.resume / run    guarded（動き出す。run は dryRun でも承認カードを出す）
 //   routines.delete          guarded（消す操作。実行の履歴のスレッドは残る）
-//   routines.rotateSecret    human-only（秘密の値。ADR 0112）
+//   routines.rotateSecret    human-only（秘密の値。ADR 0113）
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';

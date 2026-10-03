@@ -1,4 +1,4 @@
-// bot のページと作成（W4。ADR 0108・docs/channels.md「bot のページ」・承認済みのモック 05）。
+// bot のページと作成（W4。ADR 0109・docs/channels.md「bot のページ」・承認済みのモック 05）。
 // #channelsBody の中に section#botView.bot-page を作る。見せるのは show({ kind: 'bot', id }) のとき（id が 'new' なら作る画面）。
 //
 // 設定は Chats の入力欄と同じ程度に簡単にする:

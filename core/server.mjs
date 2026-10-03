@@ -841,7 +841,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === CONTROL_MCP_PATH) return controlBridge.handle(req, res);
   // CLI の口。画面のトークンは受けず、CLI 用トークンか会話の接続のトークンだけを受ける（core/ops/surfaces/http.mjs）
   if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
-  // webhook の受け口（P3。/hooks/<id>。画面のトークンの前。ADR 0112）。自分の要求でなければ false
+  // webhook の受け口（P3。/hooks/<id>。画面のトークンの前。ADR 0113）。自分の要求でなければ false
   if (await botHost?.handleHttp(req, res)) return;
 
   // 静的ファイルもトークンで守る。守られているのが WebSocket だけだと、
@@ -960,7 +960,7 @@ const toMs = (v) => (Number.isFinite(v) ? v : (v ? Date.parse(v) || null : null)
 // ---- 中断と再開（docs/design.md「中断と再開」・ADR 0036） ----------------------------
 // 中断の理由。user = 中断ボタン、update = 更新のため、quit = 終了のため、hostAway = ホスト不在の猶予切れ、
 // restart = Pleiad が落ちた・強制終了で終わりが記録されていないターン（起動時に store.recoverInterruptedTurns が付ける）、
-// timeout = ルーティンの承認待ちが期限（approvalTimeoutMin）を過ぎて止めた（ADR 0111）
+// timeout = ルーティンの承認待ちが期限（approvalTimeoutMin）を過ぎて止めた（ADR 0112）
 const INTERRUPT_REASONS = new Set(["user", "update", "quit", "hostAway", "restart", "limit", "timeout"]);
 // abort で画面・デスクトップ・ルーティンが渡せる理由。ほかの値（不正・省略）は user として扱う
 const ABORT_REASONS = new Set(["user", "update", "quit", "timeout"]);
@@ -1040,7 +1040,7 @@ function sessionRow(b, s, extra = {}) {
     // 対応を終えたエージェントの会話（core/backends/index.mjs の RETIRED）。読めるが続けられない理由
     ...(b.retired ? { retired: b.retired } : {}),
     unsent: extra.unsent ?? false,
-    // bot の会話（Chats の一覧には出さない。あなた待ちの間だけ出る。ADR 0108）。bot でなければ null
+    // bot の会話（Chats の一覧には出さない。あなた待ちの間だけ出る。ADR 0109）。bot でなければ null
     bot: extra.bot ? { botId: extra.bot.botId, kind: extra.bot.kind, channelId: extra.bot.channelId ?? null, threadId: extra.bot.threadId ?? null } : null,
     hasDraft: Boolean(extra.draft?.text || extra.draft?.attached?.length),
     historyCount: (extra.history ?? []).length,
@@ -1471,7 +1471,7 @@ const completionNotices = createCompletionNotices({
     store.get(sessionId).then(async meta => {
       if (meta?.delegation) return;
       botHost?.onSessionDone(sessionId, outcome);
-      // bot の会話の完了はスレッドで見える。スマホへは送らない（承認・質問・失敗は送る。ADR 0108）
+      // bot の会話の完了はスレッドで見える。スマホへは送らない（承認・質問・失敗は送る。ADR 0109）
       if (meta?.bot && outcome !== 'error') return;
       pushNotifier.finished({ sessionId, outcome, completedAt, startedAt, title: await conversationTitleOf(sessionId) });
     }).catch(() => {});

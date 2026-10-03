@@ -1,4 +1,4 @@
-// ルーティンの 1 回の実行（R1。ADR 0111）。発火ごとにチャンネルへ根の投稿（author.kind: 'routine'）を立て、bot のそのスレッドの会話
+// ルーティンの 1 回の実行（R1。ADR 0112）。発火ごとにチャンネルへ根の投稿（author.kind: 'routine'）を立て、bot のそのスレッドの会話
 // （sidecar bot.kind: 'routine'・モードはルーティンの mode）で走らせる。実行の履歴 = スレッドの並び。
 //
 //   createRunner({ channels, bots, dispatch, host, clock, record, agentT?, locale? }) → Runner

@@ -1,4 +1,4 @@
-// bot の定義の保存と操作（S2。ADR 0108）。core/ops/bots.mjs の handler は `ctx.bots` としてこれを呼ぶ。
+// bot の定義の保存と操作（S2。ADR 0109）。core/ops/bots.mjs の handler は `ctx.bots` としてこれを呼ぶ。
 // 形の正本は core/channels/types.mjs の Bot。bot の会話を作る部分・人格の文・フォルダーの渡し方は core/bots/sessions.mjs。
 //
 // createBotService({ dataDir, channels, host, emit, now }) → BotService

@@ -1,4 +1,4 @@
-// 5 欄の cron 式（分 時 日 月 曜日）の解析と、次に当たる時刻の計算（R1。ADR 0111）。依存を足さず、秒は持たない。
+// 5 欄の cron 式（分 時 日 月 曜日）の解析と、次に当たる時刻の計算（R1。ADR 0112）。依存を足さず、秒は持たない。
 // 時刻は PC の現地時刻（Date の getHours など）。SDK も DOM も import しない純粋な部品。
 //
 //   parseCron(expr) → { expr, minute, hour, dom, month, dow, domAny, dowAny }   … 各欄は値の Set。曜日は 0〜6（日曜が 0。7 も日曜）。解析できなければ CronError

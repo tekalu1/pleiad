@@ -406,7 +406,7 @@ const cases = [
   // リモートから PC の内蔵ブラウザーを見る: フレームの間引き・止める条件・ローカルとエージェント操作中の断り・入力の変換・シートの出し分け
   await import("./unit/remote-browser-view.mjs"),
 
-  // ==== bot・Channels・ルーティン（docs/channels.md、ADR 0105〜0113）。パッケージごとの区画。各パッケージは自分の区画の下にだけ足す（並列の衝突を避ける）====
+  // ==== bot・Channels・ルーティン（docs/channels.md、ADR 0106〜0114）。パッケージごとの区画。各パッケージは自分の区画の下にだけ足す（並列の衝突を避ける）====
   // つなぎ目（core/bots-host.mjs）と土台: 空のままでは何も変えない・例外を出さない・使用量の sessionId・fake の台本の包み外し
   await import("./unit/bots-host.mjs"),
   // --- channels (S1) ---

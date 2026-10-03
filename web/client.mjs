@@ -3751,7 +3751,7 @@ const side = createSide({
 
 function renderSessions() {
   // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から
-  // bot の会話（Channels のスレッド・DM・ルーティン。ADR 0108）も出さない。あなたを待っている間だけ出る
+  // bot の会話（Channels のスレッド・DM・ルーティン。ADR 0109）も出さない。あなたを待っている間だけ出る
   const listed = state.sessions.filter(s => !s.delegation && (!s.bot || state.waitingIds.has(s.id)));
   const unreadIds = new Set(listed.filter(s => readCompletions.hasUnread(s)).map(s => s.id));
   // 脇が見えていない間の印（web/open-sidebar-mark.mjs）。今の会話は数えない

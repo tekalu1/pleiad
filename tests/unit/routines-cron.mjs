@@ -1,4 +1,4 @@
-// 5 欄の cron 式の解析と次の時刻・トリガの検査・次の発火・頻度の目安・イベントの選び方（core/routines/{cron,schedule,events}.mjs。ADR 0111）。
+// 5 欄の cron 式の解析と次の時刻・トリガの検査・次の発火・頻度の目安・イベントの選び方（core/routines/{cron,schedule,events}.mjs。ADR 0112）。
 // 時刻は PC の現地時刻（テストも new Date(年, 月, 日, 時, 分) の現地時刻で書くので、どのタイムゾーンでも同じ結果になる）。
 import { parseCron, cronProblem, nextCron, CronError } from '../../core/routines/cron.mjs';
 import { validateTrigger, TriggerError, nextFireAt, firesPerWeek, isTimed } from '../../core/routines/schedule.mjs';

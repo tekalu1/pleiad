@@ -1,4 +1,4 @@
-// bot・Channels・ルーティンの画面の入口（docs/channels.md「画面の口」、ADR 0105〜0113）。
+// bot・Channels・ルーティンの画面の入口（docs/channels.md「画面の口」、ADR 0106〜0114）。
 // web/client.mjs が持つのはここの setupChannels(host) の 1 つの口だけ。各パッケージは自分のファイルを書き、
 // 下の「部品の一覧」へ 1 か所ずつ足す（client.mjs には触らない）。
 //

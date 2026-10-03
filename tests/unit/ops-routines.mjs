@@ -1,5 +1,5 @@
 // routines.* の操作（registry 越し。bot・会話・dispatch は身代わり、チャンネルは本物）: 口の出し分け（rotateSecret は人だけ）・危険度・
-// AI が作る・広げる向きの update・AI が指示を変える・狭める向きは通る・resume / run / delete は承認・試しの実行・失敗の code。ADR 0082・0111
+// AI が作る・広げる向きの update・AI が指示を変える・狭める向きは通る・resume / run / delete は承認・試しの実行・失敗の code。ADR 0082・0112
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';

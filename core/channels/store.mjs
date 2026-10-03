@@ -1,4 +1,4 @@
-// チャンネル・DM の定義と既読（index.json）、チャンネルごとの追記だけの操作の記録（<channelId>.jsonl）とその畳み込み（S1。ADR 0107）。
+// チャンネル・DM の定義と既読（index.json）、チャンネルごとの追記だけの操作の記録（<channelId>.jsonl）とその畳み込み（S1。ADR 0108）。
 //   <data>/channels/index.json       { version: 1, channels: Channel[], reads: { [channelId]: { readAt, mentionAt } } }
 //   <data>/channels/<channelId>.jsonl 1 行 1 操作（ChannelOp。post・edit・delete・react）。読むときに畳んで投稿の並びにする
 // index.json は writeAtomic で全体を置き換える（全体で 1 つの直列化キュー）。.jsonl は fs.appendFile（チャンネルごとの直列化キュー）。

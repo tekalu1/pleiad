@@ -1,4 +1,4 @@
-// 脇の Channels 側（docs/channels.md「画面」、ADR 0106、モック 01）。#channelsSide の 3 つの節を描く:
+// 脇の Channels 側（docs/channels.md「画面」、ADR 0107、モック 01）。#channelsSide の 3 つの節を描く:
 //   チャンネル … # 名前。未読は太字、あなた宛ては件数の札。＋でその場に名前の欄を出して作る（channels.create）
 //   Bots       … アイコン・名前・エージェント・状態（待機 / 作業中の回る弧 / あなた待ち）。押すと DM、＋は bot を作る画面（W4）
 //   ルーティン … 次に動く時刻の近い順に 3 件（多いときは［ほか n 件］で全部）。一時停止中は薄く、直近の失敗は「✕ 失敗」。押すと編集のシート（routine-sheet.mjs）、＋で新規

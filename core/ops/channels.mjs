@@ -1,4 +1,4 @@
-// チャンネルと投稿・リアクション・スレッド（S1。ADR 0107）の操作（`channels.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。
+// チャンネルと投稿・リアクション・スレッド（S1。ADR 0108）の操作（`channels.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。
 // id・危険度・口・引数と返りの形の契約は docs/channels.md「操作」。handler は `ctx.channels`（core/bots-host.mjs の BotHost.opsDeps）を呼ぶ。
 // 直のツール（mcp: 'direct'）は足さない（tests/unit/ops-surface.mjs の T4）。bot の道具（投稿・リアクション）も list_ops / call_op から呼ぶ。
 //
@@ -9,7 +9,7 @@
 // post・react・stopThread は modeGate: false（読み取り・計画モードの bot も返事・リアクション・停止はできる）。
 // AI が作業場所（cwd）を決める・変えるのは riskOf で guarded（フォルダーを持たない bot の作業場所になるので、bots.update のフォルダーと同じ重さ）。
 // post は、投稿の主体が AI（bot を含む）で、@ の宛先の bot の承認モードが主体の会話より強い（範囲・自律のどちらかが上）ときは、投稿は残すが起こさず、
-// channels.wake（guarded。「<bot> は <モード> で動きます。起こしますか」の承認カード）を出す。人の投稿・同じか弱い bot への @ は確認なし。呼び合いの回数の上限は置かない（ADR 0108）。
+// channels.wake（guarded。「<bot> は <モード> で動きます。起こしますか」の承認カード）を出す。人の投稿・同じか弱い bot への @ は確認なし。呼び合いの回数の上限は置かない（ADR 0109）。
 // bot の会話に束縛された post は、threadId を省くとその会話のスレッド。チャンネルの流れへ書くのは threadId: null と new: true を一緒に渡したときだけ。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
@@ -156,7 +156,7 @@ export const channelOps = [
 
   defineOp({
     id: 'channels.post', summary: D('post', 'summary'), risk: 'write', modeGate: false,
-    riskReason: 'Writing a message in a channel is what a human and a bot are for, so it is allowed even from a read-only or plan-mode bot. It only adds a post; an explicit @ may wake another bot, which runs in that bot\'s own approval mode (ADR 0108)',
+    riskReason: 'Writing a message in a channel is what a human and a bot are for, so it is allowed even from a read-only or plan-mode bot. It only adds a post; an explicit @ may wake another bot, which runs in that bot\'s own approval mode (ADR 0109)',
     input: z.object({
       channelId: channelId('post'),
       threadId: z.string().min(1).nullable().optional().describe(D('post', 'threadId')),

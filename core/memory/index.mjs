@@ -1,4 +1,4 @@
-// 記憶の索引（派生。ADR 0109）。node:sqlite の FTS5（tokenize='trigram'）で候補を引き、順位づけは JS で行う。
+// 記憶の索引（派生。ADR 0110）。node:sqlite の FTS5（tokenize='trigram'）で候補を引き、順位づけは JS で行う。
 // node:sqlite は Node 22.5 以降（package.json の engines は >=20.19.0）なので、読み込めない・FTS5 の trigram が無い・ファイルが壊れた
 // ときは、メモリ上の走査に切り替える（件数は数百〜数千。ADR 0080 と同じ作り）。どちらの道でも候補は同じ集合になり、
 // 最後の絞り込みと順位づけは同じ JS の関数を通るので、結果は同じになる。壊れた索引ファイルは捨てて markdown から作り直す。

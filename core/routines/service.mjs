@@ -1,4 +1,4 @@
-// ルーティン（P2 の R1。ADR 0111）。core/ops/routines.mjs の handler は `ctx.routines` としてこれを呼ぶ。
+// ルーティン（P2 の R1。ADR 0112）。core/ops/routines.mjs の handler は `ctx.routines` としてこれを呼ぶ。
 // 形の正本は core/channels/types.mjs の Routine。式・次の発火・イベントの選び方・1 回の実行は core/routines/{cron,schedule,events,runner}.mjs、保存は store.mjs（<data>/routines.json）。
 //
 // createRoutineService({ dataDir, channels, bots, dispatch, host, emit, now, clock }) → RoutineService

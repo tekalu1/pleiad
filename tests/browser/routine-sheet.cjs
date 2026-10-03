@@ -1,6 +1,6 @@
 // playwright-cli -s=routine-sheet run-code --filename=tests/browser/routine-sheet.cjs
 // 実データと分離したサーバー（AGENT_HOST_BACKENDS=fake・別ポート・使い捨ての置き場。ポート 7433・トークン routine-test）を開いてから実行する。
-// ルーティンの編集のシート・脇のルーティンの節・チャンネルの見出しの［ルーティン n］・bot のページの節（web/channels/routine-sheet.mjs・routine-entry.mjs・sidebar.mjs。ADR 0111）:
+// ルーティンの編集のシート・脇のルーティンの節・チャンネルの見出しの［ルーティン n］・bot のページの節（web/channels/routine-sheet.mjs・routine-entry.mjs・sidebar.mjs。ADR 0112）:
 //   作る（検査・種類ごとの欄・次の時刻・承認モード・期限）・試しに動かす（一時停止で作って dryRun で走らせ、取り消すと消す）・直して保存・一時停止/再開・削除（2 度押し）・
 //   脇は次の時刻の近い順に 3 件（一時停止は薄く、失敗は「✕ 失敗」）・出来事 routinesChanged で脇と見出しが更新される・360 幅は全画面で横にはみ出さない。
 // チャンネルは本物の channels.*。routines.*（R1 の操作）と bots.list / bots.get はページの中で答える（記録は window.__rcalls）。

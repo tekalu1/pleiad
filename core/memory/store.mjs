@@ -1,4 +1,4 @@
-// 記憶の正本（ADR 0109）。markdown（<dir>/user.md・<dir>/bots/<botId>.md）と、変更の記録 <dir>/log.jsonl（rev・墓石・誰がしたか）。
+// 記憶の正本（ADR 0110）。markdown（<dir>/user.md・<dir>/bots/<botId>.md）と、変更の記録 <dir>/log.jsonl（rev・墓石・誰がしたか）。
 // 索引（index.mjs）は派生で、ここが持つのは正本だけ。
 //
 // markdown の形（docs/channels.md の元の計画 §1.6）:

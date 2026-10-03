@@ -1,5 +1,5 @@
 // チャンネル・bot・記憶・ルーティンのデータの形（契約）と、id の作り方・発言者の検査・bot の会話へ渡す包みの組み立て。
-// 正本は docs/channels.md（今の動き）と ADR 0105〜0113。SDK も DOM も import しない純粋な部品。
+// 正本は docs/channels.md（今の動き）と ADR 0106〜0114。SDK も DOM も import しない純粋な部品。
 // 各パッケージ（channels / bots / memory / routines）はこの形に従い、形を変えるときはここと docs を直す。
 //
 // 置き場（<data> = AGENT_HOST_DATA）:
@@ -50,7 +50,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
 
 /** @typedef {{
  *   channelId: string, threadId: string,
- *   sessions: { [botId: string]: string },                // スレッドごと・bot ごとの会話（ADR 0108）
+ *   sessions: { [botId: string]: string },                // スレッドごと・bot ごとの会話（ADR 0109）
  *   state: 'idle'|'working'|'waiting'|'failed',
  *   tokens: { input: number, output: number, cached: number },  // このスレッドの bot の会話の合計（usage の出来事から）
  *   calls: number,                                        // bot が起こされた回数（表示だけ。上限には使わない）
@@ -65,7 +65,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   mode: string,                                         // core/backends/*.mjs の MODES の id。Antigravity は 'yolo' だけ。変えるのは bots.setMode（human-only）だけ
  *   folders: { path: string, access: 'rw'|'ro' }[],       // 先頭が既定の作業場所。書き込みの範囲を限れないモードでは「すべてのフォルダー」。bots.update の欄（足すのは広げる向き = guarded）
  *   sendToOthers: boolean,                                // 既定 true（P3 の sessions.send。bot に束縛された主体のときだけ確かめる。ON にするのは広げる向き = bots.update が guarded）
- *   sendTargets: string[],                                // 送れる会話。自動追加と bots.update の置き換えを同じ一覧に保存（ADR 0113）
+ *   sendTargets: string[],                                // 送れる会話。自動追加と bots.update の置き換えを同じ一覧に保存（ADR 0114）
  *   sendTargetSources?: { [sessionId: string]: 'shown'|'created'|'manual' }, // 外しても残し、自動で戻さない。入力では受け取らない
  *   dmChannelId: string, dmSessionId: string|null,
  *   createdAt: number, updatedAt: number }} Bot */
@@ -78,7 +78,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   snapshotDue: boolean,                                 // 次のターンで核の写しを渡す（始まり・圧縮の完了で true）
  *   delivered: string[],                                  // この写しの後に渡した記憶の id（圧縮で空に）
  *   postCursor: string|null,                              // このスレッドの投稿をどこまで渡したか
- *   personaKey?: string }} SessionBot */                  // Antigravity の会話が最後に受け取った人格のハッシュ（直したら次のターンに新しい人格を渡す。ADR 0108）
+ *   personaKey?: string }} SessionBot */                  // Antigravity の会話が最後に受け取った人格のハッシュ（直したら次のターンに新しい人格を渡す。ADR 0109）
 
 /** @typedef {{
  *   id: string, layer: 'user'|string,                     // 'user' か botId
@@ -161,7 +161,7 @@ const attrs = (obj) => Object.entries(obj).filter(([, v]) => v !== null && v !==
  * 投稿 1 件の包み。`<pleiad-channel channel="#checkout-perf" thread="p_…" post="p_…" from="あなた" at="2026-10-03T10:41">本文</pleiad-channel>`
  * channel は表示名（`#名前`・DM は bot の名前）、channelId は channels.post などの操作へ渡すチャンネルの id（`channel-id` 属性。任意）、
  * from は表示名（bot は `🦉 Owl (bot)`）、at は ISO の分まで（呼び出し側が決める）。
- * reply: `reply="true"`。呼んだ bot（@ で起こした相手）の返事（bot の会話でそのターンの終わりに返す。ADR 0108）
+ * reply: `reply="true"`。呼んだ bot（@ で起こした相手）の返事（bot の会話でそのターンの終わりに返す。ADR 0109）
  */
 export function channelEnvelope({ channel, channelId, thread, post, from, at, reply, text }) {
   return `<${CHANNEL_TAG}${attrs({ channel, 'channel-id': channelId, thread, post, from, reply, at })}>${escapeBody(text)}</${CHANNEL_TAG}>`;

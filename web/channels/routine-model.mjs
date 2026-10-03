@@ -1,4 +1,4 @@
-// ルーティンの編集のシート・脇・見出しの、DOM に触れない決まりごと（テストから直接呼ぶ。ADR 0111・docs/channels.md）。
+// ルーティンの編集のシート・脇・見出しの、DOM に触れない決まりごと（テストから直接呼ぶ。ADR 0112・docs/channels.md）。
 // i18n-dynamic: channels:routines.day.
 // i18n-dynamic: channels:routines.text.event.
 // 画面の部品は routine-sheet.mjs・routine-store.mjs。型の正本は core/channels/types.mjs の Routine。

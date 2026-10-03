@@ -1,4 +1,4 @@
-// bot へ届ける前の出来事の保存（S4。ADR 0108）。<data>/channels/inbox.json = { version: 1, items: InboxItem[] }。
+// bot へ届ける前の出来事の保存（S4。ADR 0109）。<data>/channels/inbox.json = { version: 1, items: InboxItem[] }。
 // 投稿から bot を起こすとき、まずここへ `pending` で保存してから会話へ渡す（保存できなければ受け付けない。agent-tasks.json と同じ）。
 // 状態: pending（未送）→ delivering（渡している最中）→ sent（渡った）/ unknown（結果が分からない。自動では送り直さない）。
 // 起動時は delivering を unknown にして、pending だけを配り直す（recover）。

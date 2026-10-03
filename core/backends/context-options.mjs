@@ -9,7 +9,7 @@ export const CLAUDE_MD_EXCLUDES = ['**/CLAUDE.md', '**/CLAUDE.local.md', '**/AGE
 /**
  * Pleiad の担当の分の query() のオプション。hooks: Hooks を Pleiad がそろえる会話（ADR 0049）なら、フラグ設定に disableAllHooks を入れて
  * ユーザー・プロジェクト・ローカル・プラグインの hooks を止める（管理者の hooks は止まらない）。登録はコールバックで渡す（claude.mjs）
- * bot: bot の会話（ADR 0108）。Claude Code の組み込みの自動メモリを切る。「覚えて」は Pleiad の記憶（memory.write）に入れるもので、
+ * bot: bot の会話（ADR 0109）。Claude Code の組み込みの自動メモリを切る。「覚えて」は Pleiad の記憶（memory.write）に入れるもので、
  * 組み込みのメモリは本物のホーム（~/.claude/projects/…/memory）へ確認なしに書いてしまう（2026-10-03 の実機の確認）
  */
 export function claudeContextOptions(context, { compact = false, hooks = false, bot = false } = {}) {

@@ -31,7 +31,7 @@ export const DECISIONS = ['allow', 'ask', 'deny', 'hidden'];
  * 足すのは ADR の範囲。
  */
 export const HUMAN_ONLY = Object.freeze({
-  // 承認モード。AI が自分の関所を緩められると承認フローが意味を失う（design.md §8.5）。承認カードへの応答も同じ。bot の承認モード（bots.setMode。ADR 0108）も
+  // 承認モード。AI が自分の関所を緩められると承認フローが意味を失う（design.md §8.5）。承認カードへの応答も同じ。bot の承認モード（bots.setMode。ADR 0109）も
   mode: { commands: ['setMode', 'resolvePermission'], settings: ['mode'], ops: ['bots.setMode'] },
   // 秘密の値を入れる・消す・認可する（委譲の判定器のキー・互換の接続先のキー・MCP の OAuth）
   secrets: { commands: ['setDelegationRoutingKey', 'deleteDelegationRoutingKey', 'compatEndpointCheck', 'compatEndpointSave', 'mcpAuthStart', 'mcpAuthLogout'], settings: [], ops: ['routines.rotateSecret'] },

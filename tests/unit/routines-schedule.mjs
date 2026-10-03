@@ -1,4 +1,4 @@
-// ルーティンのサービス（core/routines/{store,service,runner}.mjs。ADR 0111）: 保存・予約と発火・取りこぼしは最新の 1 回・一時停止と再開・実行の状態・
+// ルーティンのサービス（core/routines/{store,service,runner}.mjs。ADR 0112）: 保存・予約と発火・取りこぼしは最新の 1 回・一時停止と再開・実行の状態・
 // 走っている間の発火はスキップ・承認待ちの期限・イベントのトリガ（bot の会話は対象にしない）・試しの実行・「広げる向き」の判定。
 // 時計は手で進める（clock の身代わり）。チャンネルは本物（一時の置き場）、bot・会話・dispatch は身代わり。サーバー越しの確かめは routines-server.mjs。
 import fs from 'node:fs/promises';

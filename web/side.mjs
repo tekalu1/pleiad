@@ -235,7 +235,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     root.replaceChildren();
     itemSeq = 0;
     const visible = last.sessions.filter(matchesFilter);
-    // あなたを待っている bot の会話（client があなた待ちの間だけ渡す。ADR 0108）。状態を持たないので利用者の状態のグループには入れず、
+    // あなたを待っている bot の会話（client があなた待ちの間だけ渡す。ADR 0109）。状態を持たないので利用者の状態のグループには入れず、
     // 一覧の先頭（全グループの上）に短い見出しを付けて置く（計画 §7.2-4: いちばん上で目に入る位置）
     const botWaits = visible.filter((s) => s.bot).sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
     if (botWaits.length) {
@@ -907,7 +907,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   /** 結果の 1 行分のデータ。手元の照合（題・状態・場所）とサーバーの結果を同じ形にそろえる */
   /**
-   * 会話の結果に、チャンネルの当たり（名前の一致・投稿の本文）を混ぜる（脇の 2 タブを横断する検索。ADR 0106）。
+   * 会話の結果に、チャンネルの当たり（名前の一致・投稿の本文）を混ぜる（脇の 2 タブを横断する検索。ADR 0107）。
    * 名前の一致は手元で即座に先頭へ、投稿は会話の本文と同じ問い合わせで届いてから（新しい順なら会話と時刻で混ぜ、関連度順なら会話の後）。
    * Chats の絞り込み（場所・状態・エージェント・期間）をかけている間は会話だけを探す（チャンネルには当てはまらない）
    */

@@ -1,4 +1,4 @@
-// bot の会話の作り方・人格の文・触れてよいフォルダーの渡し方（S2。ADR 0108）。SDK も DOM も import しない。
+// bot の会話の作り方・人格の文・触れてよいフォルダーの渡し方（S2。ADR 0109）。SDK も DOM も import しない。
 //
 //   botInstructions(bot, locale)          … 人格の文。各バックエンドの指示の最後に足す。**決定的**（時刻・件数・順序の揺れを入れない）。
 //                                            同じ bot・同じ言語なら毎ターン同じバイト列。人格・名前・アイコンを直したときだけ変わる
@@ -12,7 +12,7 @@
 //   Codex         rw のうち cwd 以外を turn/start の sandboxPolicy.workspaceWrite.writableRoots（ro は書き込みに入れないだけ。cwd そのものは sandbox が常に書ける）
 //   Antigravity   cwd 以外の全部を --add-dir（ワークスペースに見せるだけ。書き込みは範囲を限れない）
 //   書き込みの範囲を限れないモード（modes() の scope が full。Claude の YOLO・Codex の YOLO・Antigravity の yolo）では、
-//   フォルダーの選択は無効で「すべてのフォルダー」（all: true。ADR 0108・計画 §7.2-2）。Codex の full は sandbox で書き込みを
+//   フォルダーの選択は無効で「すべてのフォルダー」（all: true。ADR 0109・計画 §7.2-2）。Codex の full は sandbox で書き込みを
 //   作業場所に限るので scope が workspace のまま、選択は有効
 import path from 'node:path';
 import os from 'node:os';

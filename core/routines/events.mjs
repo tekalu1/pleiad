@@ -1,4 +1,4 @@
-// イベントのトリガ（会話の完了・失敗・あなた待ち）に当たるルーティンを選ぶ（R1。ADR 0111）。純粋な部品。
+// イベントのトリガ（会話の完了・失敗・あなた待ち）に当たるルーティンを選ぶ（R1。ADR 0112）。純粋な部品。
 //
 //   eventOfOutcome(outcome) → 'done' | 'failed' | null    … onSessionDone の outcome（'ok' | 'error'）→ トリガの on
 //   fromBotSide(sidecarBot) → boolean                      … bot・ルーティン・学習の会話から来た出来事か（対象にしない。自分の実行の失敗で自分が動く輪を作らない）。

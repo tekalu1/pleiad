@@ -1,4 +1,4 @@
-// bot を起こす・配る（S4。ADR 0108・0107）。投稿の @ から会話を決め、途中送信・ターンの投稿の更新・止める・トークンの集計までを持つ。
+// bot を起こす・配る（S4。ADR 0109・0108）。投稿の @ から会話を決め、途中送信・ターンの投稿の更新・止める・トークンの集計までを持つ。
 // core/bots-host.mjs がこれを束ね、core/server.mjs のつなぎ目（turnExtras・onTurnEvent・onTurnEnd・onPermission・onCompacted・start）はここへ届く。
 //
 // createDispatcher({ channels, bots, memory, host, emit, now }) → Dispatcher

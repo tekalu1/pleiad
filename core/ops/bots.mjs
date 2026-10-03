@@ -1,4 +1,4 @@
-// bot の定義（S2。ADR 0108）の操作（`bots.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。id・危険度・口・引数と返りの形の契約は docs/channels.md「操作」。
+// bot の定義（S2。ADR 0109）の操作（`bots.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。id・危険度・口・引数と返りの形の契約は docs/channels.md「操作」。
 // handler は `ctx.bots`（core/bots-host.mjs の BotHost.opsDeps → core/bots/service.mjs）を呼ぶ。直のツール（mcp: 'direct'）は足さない（tests/unit/ops-surface.mjs の T4）。
 //
 // 危険度（ADR 0082。human-only は承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリングの 5 つだけ）:

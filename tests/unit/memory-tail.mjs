@@ -1,4 +1,4 @@
-// ターンの末尾の文（core/memory/tail.mjs・service.turnContext。ADR 0109）: 時刻・記憶の差分（rev）・関係する記憶・渡し済みを繰り返さない・
+// ターンの末尾の文（core/memory/tail.mjs・service.turnContext。ADR 0110）: 時刻・記憶の差分（rev）・関係する記憶・渡し済みを繰り返さない・
 // 核の写しは会話の始まりと圧縮の後だけ・時刻は末尾だけ。sidecar の memRev・snapshotDue・delivered を使う。
 import os from 'node:os';
 import fs from 'node:fs/promises';

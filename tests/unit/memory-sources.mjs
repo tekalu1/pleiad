@@ -1,5 +1,5 @@
 // 記憶に書く内容と出どころの検査（core/memory/guard.mjs）と、memory.* の操作（core/ops/memory.mjs）: 人の発言・taint・AI だけの根拠・墓石・長さ・注入らしい文・
-// 主体（人・bot・ほかの会話の AI・束縛なし）・層の範囲・危険度（write は読み取りモードでも書ける・edit は読み取りモードで断る・forget は承認）。ADR 0109
+// 主体（人・bot・ほかの会話の AI・束縛なし）・層の範囲・危険度（write は読み取りモードでも書ける・edit は読み取りモードで断る・forget は承認）。ADR 0110
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';

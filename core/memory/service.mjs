@@ -1,4 +1,4 @@
-// bot の記憶（S3。ADR 0109）。正本は store.mjs の markdown、索引は index.mjs、ターンの末尾の文は tail.mjs、出どころの検査は guard.mjs。
+// bot の記憶（S3。ADR 0110）。正本は store.mjs の markdown、索引は index.mjs、ターンの末尾の文は tail.mjs、出どころの検査は guard.mjs。
 // 夜の整理（学習）は P3 の core/memory/learn.mjs。core/ops/memory.mjs の handler は `ctx.memory` としてこれを呼ぶ。
 // 形の正本は core/channels/types.mjs の MemoryEntry、置き場は <data>/memory/（types.mjs の冒頭）。
 //
