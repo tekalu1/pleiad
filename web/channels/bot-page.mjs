@@ -58,6 +58,9 @@ export function createBotPage(host) {
     seq: 0,
     chain: Promise.resolve(),   // 保存を 1 本ずつ流す（続けて押しても順番を保つ）
   };
+  // メインの頭（#channelsView > .top）は、bot のページを見せている間は見出しを引っ込める（bot のページ自身の頭が見出し。汎用の「Channels」は出さない）。
+  // 流れの部品が show/hide で見出しを替える順（流れ → 自分）の後に付け外しする。頭は流れの有無で置き場所が動くので、その都度引く
+  const topEl = () => document.getElementById('channelsPageTitle')?.closest('.top') ?? null;
   const navigate = (detail) => document.dispatchEvent(new CustomEvent('channels:show', { detail }));
   const vm = () => S.draft ?? S.bot;
   const unlimited = () => M.foldersUnlimited(S.v?.modes?.[vm()?.mode]);
@@ -654,9 +657,11 @@ export function createBotPage(host) {
     show(view) {
       if (view?.kind !== 'bot' || !view.id) { this.hide(); return; }
       root.hidden = false;
+      topEl()?.classList.add('bot-top');
       open(view.id);
     },
     hide() {
+      topEl()?.classList.remove('bot-top');
       if (root.hidden) return;
       closePanels();
       root.hidden = true;
