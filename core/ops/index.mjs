@@ -3,10 +3,21 @@
 import { createRegistry } from './registry.mjs';
 import { appOps } from './app.mjs';
 import { sessionOps } from './sessions.mjs';
+import { conversationOps } from './conversations.mjs';
+import { agentOps } from './agents.mjs';
+import { resumeOps } from './resume.mjs';
 import { statusOps } from './statuses.mjs';
 import { settingOps, settings } from './settings.mjs';
 import { delegationOps } from './delegation.mjs';
 import { browserOps } from './browser.mjs';
+import { worktreeOps } from './worktrees.mjs';
+import { notifyOps } from './notify.mjs';
+import { hookOps } from './hooks.mjs';
+import { compatOps } from './compat.mjs';
+import { computerOps } from './computer.mjs';
+import { mcpOps } from './mcp.mjs';
+import { contextOps } from './context.mjs';
+import { remoteOps } from './remote.mjs';
 import { probeOps } from './probe.mjs';
 import { channelOps } from './channels.mjs';
 import { botOps } from './bots.mjs';
@@ -17,7 +28,9 @@ import { routineOps } from './routines.mjs';
 const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((s) => s.trim()).includes('fake');
 
 export const registry = createRegistry({
-  ops: [...appOps, ...sessionOps, ...statusOps, ...settingOps, ...delegationOps, ...browserOps, ...channelOps, ...botOps, ...memoryOps, ...routineOps, ...(withProbe ? probeOps : [])],
+  ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...statusOps, ...settingOps, ...delegationOps, ...browserOps,
+    ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...mcpOps, ...contextOps, ...remoteOps,
+    ...channelOps, ...botOps, ...memoryOps, ...routineOps, ...(withProbe ? probeOps : [])],
   settings: [...settings],
 });
 

@@ -12,6 +12,8 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { controlFilePath } from '../../core/control-file.mjs';
 import { EXIT, exitCodeOf, matchCommand, parseArgs, render, runMcp } from '../../bin/pleiad.mjs';
+import { registry } from '../../core/ops/index.mjs';
+import { HUMAN_ONLY_COMMANDS } from '../../core/ops/policy.mjs';
 
 export const name = 'ops-cli';
 export const title = 'CLI（pleiad）と pleiad mcp: サブコマンドの生成・終了コード・つなぎ先・stdio の MCP';
@@ -79,6 +81,14 @@ export default async function (t) {
     t.ok('引数なしはコマンドの一覧（操作の一覧から作る）とつなぎ先', (() => { const o = run().out; return /sessions list/.test(o) && /settings get/.test(o) && /つなぎ先: http:\/\/127\.0\.0\.1:\d+（会話に束縛されない）/.test(o); })());
     t.ok('ops: 使える操作の一覧（--json は id・説明・危険度・CLI の形）', /sessions\.list/.test(run('ops').out) && JSON.parse(run('ops', '--json').out).some((o) => o.id === 'sessions.read' && o.cli.path.join(' ') === 'sessions read'));
     t.ok('human-only の代役は CLI の一覧に出ない', !/probe\.humanOnly/.test(run('ops').out));
+    // human-only は 5 つだけ（ADR 0094）。外した操作は CLI のコマンドになり、5 つに当たる操作は出ない
+    const cliOps = JSON.parse(run('ops', '--json').out);
+    t.ok('human-only から外した操作（モデル・分けた作業場所・通知・Hooks の読み出し・接続先・computer の停止）が CLI の一覧に出る',
+      ['sessions.setModel', 'worktrees.setSettings', 'worktrees.archive', 'notify.setPc', 'hooks.readPly', 'compatEndpoints.recheck', 'compatEndpoints.delete', 'computer.stop'].every((id) => cliOps.some((o) => o.id === id)));
+    t.ok('CLI の一覧に、human-only の 5 つに当たる操作は無い', !cliOps.some((o) => o.risk === 'human-only' || HUMAN_ONLY_COMMANDS.has(registry.get(o.id)?.legacyCommand)));
+    t.ok('worktrees settings true / false: 束縛されない CLI から「いつも分ける」を変えられる（write）', run('worktrees', 'settings', 'true').code === 0 && (await c.cmd('worktreeSettings')).always === true
+      && run('worktrees', 'settings', 'false').code === 0 && (await c.cmd('worktreeSettings')).always === false);
+    t.ok('CLI に 5 つのコマンドは無い（mode・accounts の類は知らないコマンドで 2）', run('call', 'setMode').code === 2 && run('call', 'remoteDevices').code === 2);
     t.ok('--help（コマンドの後ろ）はそのコマンドの引数', (() => { const o = run('sessions', 'read', '--help').out; return /pleiad sessions read <sessionId>/.test(o) && /--message-id/.test(o) && /--before integer/.test(o); })());
     t.ok('途中までのコマンド（sessions）は配下を一覧にして 2', (() => { const r = run('sessions'); return r.code === 2 && /sessions list/.test(r.out) && /sessions rename/.test(r.out); })());
     t.ok('知らないコマンドは 2', run('nothing').code === 2 && /nothing/.test(run('nothing').err));
@@ -185,6 +195,8 @@ export default async function (t) {
     t.ok('pleiad mcp: call_op で呼べる', text(replies, 4).sessions.length === 1);
     t.ok('pleiad mcp: 会話に束縛されない（mcp-stdio）ので guarded は NEEDS_UI の isError', j(replies, 5).isError === true && text(replies, 5).code === 'NEEDS_UI');
     t.ok('pleiad mcp: human-only は list_ops に出ない', !text(replies, 6).ops.some((o) => o.id === 'probe.humanOnly') && text(replies, 6).ops.some((o) => o.id === 'sessions.list'));
+    t.ok('pleiad mcp: list_ops に外した操作（sessions.setModel・worktrees.setSettings）があり、5 つに当たる操作は無い', text(replies, 6).ops.some((o) => o.id === 'sessions.setModel') && text(replies, 6).ops.some((o) => o.id === 'worktrees.setSettings')
+      && !text(replies, 6).ops.some((o) => HUMAN_ONLY_COMMANDS.has(registry.get(o.id)?.legacyCommand)));
     t.ok('pleiad mcp: 失敗は code で返る（SESSION_NOT_FOUND）', j(replies, 7).isError === true && text(replies, 7).code === 'SESSION_NOT_FOUND');
     // 会話に束縛された環境変数で動かした pleiad mcp は、その会話に束縛される（トークンが会話のもの。承認モードを迂回できない）。ask の会話なので承認カードを出す
     from = c.mark();

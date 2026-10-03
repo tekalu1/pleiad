@@ -768,7 +768,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .message-edit-input{display:block;width:100%;min-height:80px;max-height:50vh;resize:vertical;background:transparent;color:var(--ink);font:inherit;border-radius:var(--r-s)}
 .message-edit-controls{display:flex;justify-content:flex-end;gap:var(--sp-2);margin-top:var(--sp-2)}
 .message-edit-attachments{font-size:var(--fs-s);color:var(--ink-weak);overflow-wrap:anywhere}
-/* 送り直す・分岐して送る（web/resend-band.mjs。ADR 0091）。送り直すと消える範囲は薄く見せ、畳むときは高さと不透明度を 240ms で */
+/* 送り直す・分岐して送る（web/resend-band.mjs。ADR 0102）。送り直すと消える範囲は薄く見せ、畳むときは高さと不透明度を 240ms で */
 .mw.doomed{opacity:.42;transition-duration:var(--dur-fast)}
 .m.editing>.outbox-status{display:none}
 .mw.leaving{grid-template-rows:0fr;opacity:0;pointer-events:none;transition-duration:var(--dur)}
@@ -793,6 +793,24 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.sys code{font-size:var(--fs-xs)}
 /* 「■ 中断しました · 14:32」。保存された中断から描く一行（client.mjs の paintInterruptLine） */
 .m.sys.interrupted{display:flex;align-items:center;gap:6px}
+/* 上限のための中断は 1 行目に「■ 中断しました（private · 5 時間枠）· 01:43」、2 行目（字の左を 1 行目の字に揃える）に自動で再開する旨とリンク */
+.m.sys.interrupted.limit{flex-wrap:wrap}
+.limit-interrupt-sub{flex-basis:100%;padding-left:20px;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;color:var(--ink-weak)}
+.limit-strip{gap:6px}
+.limit-queue-dialog{position:fixed;inset:auto auto 80px 10px;margin:0;width:min(342px,calc(100vw - 20px));max-height:min(70vh,620px);border:0;border-radius:var(--r-l);background:var(--surface-paper);color:var(--ink);padding:14px;overflow:auto;box-shadow:0 8px 28px var(--shadow);z-index:31}
+.limit-queue-dialog h2{font-size:var(--fs-s);font-weight:600;margin:0 0 10px}
+.limit-queue-row{display:flex;align-items:center;gap:5px;padding:5px 0;font-size:var(--fs-s)}
+.limit-queue-row>span:nth-child(2){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.limit-queue-number{width:16px;text-align:center;color:var(--ink-weak);flex:none}
+.limit-queue-first{font-size:var(--fs-xs);padding:2px 4px;flex:none}
+.limit-queue-toggle{font-size:0;border:0;background:var(--surface-2);border-radius:99px;width:30px;height:18px;padding:2px;cursor:pointer;flex:none}
+.limit-queue-toggle:before{content:"";display:block;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);box-shadow:0 1px 2px var(--shadow)}
+.limit-queue-toggle[aria-pressed=true]{background:var(--fill-primary);color:var(--on-fill)}
+.limit-queue-toggle[aria-pressed=true]:before{margin-left:12px}
+.limit-queue-toggle:focus-visible{outline:2px solid var(--line-blue)}
+.limit-queue-setting{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0;font-size:var(--fs-s)}
+.limit-queue-setting select{font:inherit;min-width:84px}
+@media(max-width:700px){.limit-queue-dialog{inset:auto 8px 66px 8px;width:auto;max-height:70vh}}
 .m.sys .stop-mark{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linejoin:round}
 /* 一行の中から画面を開く（コンテキストの記録の「中身を見る」）。押すのはボタン、見た目はリンク */
 .m.sys .lnk{padding:0;font-size:var(--fs-xs);color:var(--ink-blue);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
@@ -813,10 +831,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.user.cmd .cmdline .tc-label{color:var(--ink-weak)}
 .m.user.cmd .cmd-text{flex:1 1 12em;min-width:0;color:var(--ink);font-family:var(--font-mono);font-size:var(--fs-s);white-space:pre-wrap;overflow-wrap:anywhere}
 .m.user.cmd .cmd-res{flex:none;margin-left:auto;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
-.m.user.cmd .who .handed{letter-spacing:0}
-/* 渡す前の `!` の行の「渡さない」／「渡す」（ADR 0055）。見出しの字に並ぶ小さな字のボタン */
-.m.user.cmd .who .who-act{color:var(--ink-blue);padding:0 4px;font-size:var(--fs-xs);letter-spacing:0;border:0;background:transparent;cursor:pointer;font-family:inherit}
-.m.user.cmd .who .who-act:disabled{opacity:.5;cursor:default}
+.m.user:is(.cmd,.relayed) .who .handed{letter-spacing:0}
+/* 渡す前の `!` の行の「渡さない」／「渡す」（ADR 0055）と、別の会話の AI が送った発言の「開く」（ADR 0104）。見出しの字に並ぶ小さな字のボタン */
+.m.user:is(.cmd,.relayed) .who .who-act{color:var(--ink-blue);padding:0 4px;font-size:var(--fs-xs);letter-spacing:0;border:0;background:transparent;cursor:pointer;font-family:inherit}
+.m.user:is(.cmd,.relayed) .who .who-act:disabled{opacity:.5;cursor:default}
 .m.user.cmd .cmd-fold>summary{opacity:.8}
 .m.user.cmd .cmd-fold>summary .first{font-family:var(--font-mono);display:inline-block;max-width:calc(100% - 7em);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 .m.user.cmd .cmd-out{margin:0;padding:8px 12px;background:var(--surface-2);border-radius:var(--r-m);font:var(--fs-s)/1.6 var(--font-mono);color:var(--ink);
@@ -942,7 +960,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .present-tools .visualize-open-browser{display:none}
 body.inapp-links .present-tools .visualize-open-browser{display:inline-flex}
 body.inapp-links .present-tools .visualize-expand{display:none}
-/* 承認済みの会話内の可視化（ADR 0091）。折り畳み中の .mw-body からも左右の 4px を見せる。 */
+/* 承認済みの会話内の可視化（ADR 0092）。折り畳み中の .mw-body からも左右の 4px を見せる。 */
 .mw-body:has(.present-visualization.visualize-seamless){overflow:clip;overflow-clip-margin:5px}
 .present-visualization.visualize-seamless{position:relative;margin:20px -4px;max-width:none;min-width:0;background:transparent;overflow:visible;border-radius:var(--r-m);box-shadow:0 0 0 1px transparent;transition:box-shadow var(--dur-fast) var(--ease-out)}
 .visualize-seamless .present-body{padding:0;max-width:none}
@@ -1226,6 +1244,12 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 /* 再開。中断と同じ位置・同じ薄い面。再生の三角と字（480px 以下は三角だけ） */
 .resume{flex:none;margin-left:4px}
 .resume svg.i{width:16px;height:16px}
+/* 上限で止まった会話の再開は「◷ 2:30 に再開 ▾」。三角は時計に替わり、▾ から面（待つ・別のアカウント・順番）が開く */
+.resume .resume-clock,.resume .resume-caret{display:none}
+.resume.is-limit .resume-play{display:none}
+.resume.is-limit .resume-clock{display:block}
+.resume.is-limit .resume-caret{display:block;width:12px;height:12px;color:var(--ink-weak)}
+.resume.is-limit{font-variant-numeric:tabular-nums}
 /* 中断中に字を書いたときの「送ると、この指示で続けます」。入力の箱の下に小さく。書いていない間も高さは保つ */
 .resume-note{font-size:var(--fs-xs);color:var(--ink-weak);padding:4px 10px 0;min-height:22px}
 .resume-note[hidden]{display:none}
@@ -1282,6 +1306,9 @@ body.inapp-links .present-tools .visualize-expand{display:none}
 .copt .sub{display:block;font-size:var(--fs-xs);color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .copt.cmono .sub{font-family:var(--font-mono)}
 /* 「既定」の札は弱い字だけ（面も色も付けない） */
+.copt .tag.rec{color:var(--ink-blue);font-weight:600}
+.copt.copt-note{align-items:flex-start}
+.copt.copt-note .sub{white-space:normal;line-height:1.5}
 .copt .tag,.copt .r{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
 .copt .r{margin-left:auto}
 .copt.danger .main{color:var(--ink-strong);font-weight:600}
@@ -1657,6 +1684,68 @@ main.dropping #log{background:var(--surface-1)}
 .outbox-status-failed { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .outbox-status-failed b { color: var(--ink-strong); }
 .outbox-status-failed button { font-size: 12px; padding: 1px 10px; }
+/* 送信予定（web/outbox.mjs の scheduleRow）。1 行に畳む。時刻が先で強い字、「あと 7 時間」と本文は弱い字。狭ければ操作は ⋯ にまとめる */
+.outbox{container-type:inline-size}
+.sched{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--surface-1);border-radius:var(--r-m);padding:5px 6px 5px 12px;margin-bottom:6px;font-size:13px;min-width:0;transition:opacity var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}
+.sched.enter{opacity:0;transform:translateY(6px)}
+.sched .when{display:inline-flex;gap:4px;align-items:center;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}
+.sched .when svg.i{width:14px;height:14px;color:var(--ink-weak)}
+.sched .when .left{color:var(--ink-weak)}
+.sched .txt{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink-weak)}
+.sched .acts{display:flex;flex:none}
+.sched .acts .btn{padding:2px 9px;font-size:12.5px}
+.sched .more{display:none;width:28px;height:28px;padding:0;align-items:center;justify-content:center;color:var(--ink-weak)}
+.sched.missed .when,.sched.missed .when svg.i{color:var(--ink-strong);font-weight:600}
+@container (max-width:540px){
+  .sched .acts{display:none}
+  .sched .more{display:inline-flex}
+  .sched .when .left{display:none}
+  .sched.open .acts{display:flex;flex-basis:100%;justify-content:flex-end}
+}
+@media (prefers-reduced-motion:reduce){.sched{transition:none}}
+/* 遅れて送った送信予定の発言の下の一言（「9:00 の予定を 9:32 に送りました」） */
+.m.user .sent-late{margin-top:2px;font-size:var(--fs-xs);color:var(--ink-weak)}
+/* 送信の円の右の ▾（web/send-menu.mjs）。円と同じ高さで、面は付けない。480px 以下は出さない（長押しで下からシート） */
+.send-more{flex:none;width:20px;height:34px;padding:0;margin-left:1px;border-radius:var(--r-pill);display:inline-flex;align-items:center;justify-content:center;color:var(--ink-weak);transition:background-color var(--dur-fast) var(--ease-out)}
+.send-more:hover,.send-more[aria-expanded=true]{background:var(--surface-2);color:var(--ink)}
+.send-more svg.i{width:13px;height:13px}
+/* 日時を指定した送信の時刻のチップ（編集で戻したときの「◷ 10/4（日）9:00 ×」） */
+.chip.armed{background:var(--surface-2);font-variant-numeric:tabular-nums;flex:none;cursor:default}
+.chip.armed .v{overflow:visible}
+.chip.armed .x{width:18px;height:18px;padding:0;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-weak);cursor:pointer}
+.chip.armed .x:hover{color:var(--ink);background:var(--surface-3)}
+.chip.armed .x svg.i{width:12px;height:12px;color:inherit}
+/* 送信の日時の面の中身（候補は .copt。日時を指定は日のチップと時刻の欄） */
+.cpop .sep{height:6px}
+.send-picker{padding:2px 4px}
+.send-days{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 8px}
+.send-days button{padding:3px 9px;border-radius:var(--r-pill);font-size:var(--fs-s);color:var(--ink);background:var(--surface-1)}
+.send-days button:hover{background:var(--surface-2)}
+.send-days button[aria-pressed=true]{background:var(--surface-sel);box-shadow:inset 0 0 0 1.5px var(--line-blue)}
+.send-days button small{color:var(--ink-weak);font-size:var(--fs-xs);margin-left:3px}
+.send-time{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+.send-time input{flex:none;width:84px;background:var(--surface-1);border:0;border-radius:var(--r-pill);padding:5px 12px;font:13px var(--font-mono);color:var(--ink)}
+.send-time input:focus{outline:none;background:var(--surface-2)}
+.send-steps{display:flex;gap:4px;flex-wrap:wrap;flex:1;min-width:0}
+.send-steps button{font:var(--fs-xs) var(--font-mono);padding:3px 8px;border-radius:var(--r-pill);color:var(--ink-weak);background:var(--surface-1)}
+.send-steps button:hover{color:var(--ink);background:var(--surface-2)}
+.send-sum{font-size:13px;color:var(--ink);margin:2px 0 4px;font-variant-numeric:tabular-nums}
+.send-sum.bad{color:var(--ink-weak)}
+.send-note{font-size:var(--fs-xs);color:var(--ink-weak);margin:0 0 8px;line-height:1.5}
+.send-note[hidden]{display:none}
+.send-foot{display:flex;justify-content:flex-end;gap:6px}
+.send-foot .btn{font-size:13px}
+.send-foot .btn:not(.btn-primary){background:transparent}
+.send-foot .btn:not(.btn-primary):hover{background:var(--surface-2)}
+.send-foot .btn:disabled{opacity:.4;cursor:default}
+/* 狭い幅（480px 以下）の送信の日時は、▾ を出さず下からのシートで出す（送信の円の長押し） */
+.send-veil{position:fixed;inset:0;background:var(--surface-veil);z-index:39}
+.send-veil[hidden]{display:none}
+.cpop.sheet{left:0!important;right:0!important;bottom:0!important;width:auto!important;max-height:75vh!important;border-radius:20px 20px 0 0;padding:8px 10px max(14px,env(safe-area-inset-bottom,0px));z-index:40;animation:sheet-in var(--dur) var(--ease-out)}
+.cpop.sheet .copt{min-height:44px;align-items:center;font-size:14px}
+.sheet-grab{width:36px;height:4px;border-radius:2px;background:var(--surface-3);margin:2px auto 8px}
+@keyframes sheet-in{from{transform:translateY(30px);opacity:0}}
+@media (prefers-reduced-motion:reduce){.cpop.sheet{animation:none}}
 /* 委譲した子の詳細: 途中送信できずに待機している追加の指示（ADR 0067）。一段明るい面・節なしで末尾に置き、「待機中」の字の代わりに発言者の行に時計の印を出す */
 .m.user.queued>.body { background: var(--surface-1); }
 .who-queued { display: inline-grid; place-items: center; color: var(--ink-weak); margin-left: -4px; }
@@ -1767,6 +1856,8 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .abort span{display:none}
   .resume{width:36px;height:36px;padding:0;border-radius:50%}
   .resume span{display:none}
+  .resume.is-limit .resume-caret{display:none}
+  .send-more{display:none}
 }
 @media (max-width:399px){
   .chip{padding:0 5px;gap:4px}

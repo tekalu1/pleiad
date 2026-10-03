@@ -370,7 +370,12 @@
         "summary": "Return how to start pleiad mcp from an outside AI (the MCP config JSON and the claude mcp add command)."
       }
     },
+    "resumeQueue": { "get": { "summary": "Show the queue and progress for resuming after usage limits." }, "set": { "summary": "Change the order and automatic recovery after usage limits.", "action": "The change to make.", "sessionId": "The conversation ID for first or auto.", "enabled": "Whether auto enables automatic resume." } },
     "sessions": {
+      "scheduleSend": { "summary": "Schedule a message in a conversation. When the time comes it joins the send queue like a normal send. A person decides this, so it needs approval.", "sessionId": "ID of the conversation to send to.", "prompt": "The message text.", "at": "When to send (Unix milliseconds or an ISO 8601 date and time).", "messageId": "Send ID (8–80 letters, digits or hyphens). A new one is made when omitted.", "attachments": "Attachments (path, name, MIME type).", "cwd": "Working directory.", "mode": "Approval mode.", "confirm": "Schedule a message in conversation {{session}} for {{at}}: {{prompt}}" },
+      "sendScheduledNow": { "summary": "Put a scheduled message into the send queue now without waiting for its time.", "id": "ID of the scheduled message.", "confirm": "Send scheduled message {{id}} now" },
+      "schedules": { "summary": "List planned actions for conversations.", "sessionId": "Limit the list to one conversation; omit for all." },
+      "cancelSchedule": { "summary": "Cancel a planned action.", "id": "The schedule ID." },
       "search": {
         "summary": "Search conversations by title, status, place and message text. Space-separated words are ANDed; quote a phrase for an exact match. Each result carries excerpts of the matching messages.",
         "query": "Search words. Spaces mean AND (each word may match the title, status, place or any message). A \"quoted\" phrase is one word and is case- and width-sensitive. Empty returns the filtered list.",
@@ -436,6 +441,107 @@
         "reason": "Why the conversation is forked (kept in the change log).",
         "beforeMessageId": "Copy up to before this message (uuid).",
         "reasonKey": "A predefined reason key from the UI.", "reasonParams": "Values for the predefined reason.", "backend": "Conversation agent."
+      },
+      "new": {
+        "summary": "Create a new conversation (an unsent draft). It only creates it; a person sends the first message. The approval mode and the endpoint cannot be chosen (inherited or default).",
+        "sourceSessionId": "Id of the conversation to inherit settings from (agent, model, effort, approval mode).",
+        "backend": "Agent id (claude, codex, antigravity).",
+        "model": "Model id. Omit to inherit or use the default.",
+        "effort": "Thinking effort. Omit to inherit or use the default.",
+        "mode": "Approval mode id. Only a person (the screen) can set it; an agent gets NEEDS_UI.",
+        "cwd": "Working folder. Omit for the home folder.",
+        "status": "Status (group name) to give it.",
+        "draft": "Text to put in the input box (it is not sent).",
+        "endpoint": "Compatible endpoint id. Only a person (the screen) can set it; an agent gets NEEDS_UI."
+      },
+      "deleteUnsent": {
+        "summary": "Delete a conversation that was never sent (a draft only). Sent conversations cannot be deleted. An approval card is shown in the conversation; it is deleted only if the user allows it.",
+        "sessionId": "Id of the conversation to delete.",
+        "card": "Delete the unsent conversation \"{{title}}\"."
+      },
+      "abort": {
+        "summary": "Stop a conversation's running turn. Only conversations running on this host. The stopped turn stays in the conversation as interrupted and a person can resume it. A reason is required and is kept in the stopped conversation's change log.",
+        "sessionId": "Id of the conversation to stop. Omit for your own.",
+        "kind": "Kind of stop (user, update, quit). Omit for user.",
+        "reason": "Why you stop it (up to 500 characters). Required for an agent. Kept in the stopped conversation's change log with who and from where."
+      },
+      "resume": {
+        "summary": "Continue an interrupted conversation: re-send the paused queued messages, or send the \"continue\" text. It runs under that conversation's approval mode.",
+        "sessionId": "Id of the conversation to continue."
+      },
+      "compact": {
+        "summary": "Start compaction (a summary of the context) of a conversation. If it is running, it goes after the turn. The transcript does not change.",
+        "sessionId": "Id of the conversation to compact."
+      },
+      "cancelCompaction": {
+        "summary": "Cancel a scheduled or queued compaction.",
+        "sessionId": "Conversation id."
+      },
+      "setAutoCompaction": {
+        "summary": "Turn the automatic compaction of this conversation off or on. The host-wide setting is settings.set compaction.auto.",
+        "sessionId": "Conversation id. Omit for your own.",
+        "off": "true to turn it off, false to turn it on."
+      },
+      "setTurnSettings": {
+        "summary": "Reserve settings for the next turn (agent, model, thinking effort, working folder). Changing the working folder or the agent needs an approval card. The approval mode, account and endpoint are for a person only.",
+        "sessionId": "Conversation id. Omit for your own.",
+        "backend": "Agent id for the next turn. Changing it needs an approval card.",
+        "model": "Model id for the next turn.",
+        "effort": "Thinking effort for the next turn.",
+        "cwd": "Working folder for the next turn. Changing it needs an approval card.",
+        "cancel": "true cancels the reservation.",
+        "mode": "Approval mode id. Only a person (the screen); an agent gets NEEDS_UI.",
+        "account": "Claude account id. Only a person (the screen); an agent gets NEEDS_UI.",
+        "endpoint": "Compatible endpoint id. Only a person (the screen); an agent gets NEEDS_UI.",
+        "remember": "Remember the chosen value as the default. Only a person (the screen); an agent uses settings.set."
+      },
+      "suggestTitle": {
+        "summary": "Ask for a short title from the conversation's contents. It does not change the conversation (sessions.setTitle sets it). One small call runs on the conversation's account.",
+        "sessionId": "Conversation id. Omit for your own."
+      },
+      "listMessages": {
+        "summary": "Return a conversation's outbox (messages not yet handed to the agent). Text is cut at 500 characters.",
+        "sessionId": "Conversation id. Omit for your own.",
+        "limit": "How many to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      },
+      "send": {
+        "summary": "Send a message to another conversation. It is queued like a message sent from the screen and runs under the target conversation's approval mode (if it is running, it waits its turn). The target's history shows that your conversation sent it on the user's behalf. If the target's approval mode is stronger than this conversation's, an approval card is shown in this conversation. Sending to itself, across a delegation (use ply_task_send for a child), past a chain of 3 conversations or over 20 sends in 10 minutes is refused.",
+        "sessionId": "Id of the conversation to send to.",
+        "text": "The message text.",
+        "reason": "Why you send it (up to 500 characters). Kept in the target conversation's change log.",
+        "card": "Send a message to the conversation \"{{title}}\". Its approval mode ({{mode}}) is stronger than this conversation's, so more will run there without asking.\nMessage: {{text}}"
+      },
+      "messageAction": {
+        "summary": "Cancel a queued message (cancel), or re-send one that failed or is held (retry). A cancelled message never reaches the agent. A retry runs under the target conversation's approval mode; if that is stronger than this conversation's, an approval card is shown.",
+        "sessionId": "Conversation id. Omit for your own.",
+        "messageId": "Id of the queued message (the id from sessions.listMessages, or the messageId from sessions.send).",
+        "action": "cancel or retry.",
+        "card": "Re-send the queued message {{messageId}} in the conversation \"{{title}}\". Its approval mode ({{mode}}) is stronger than this conversation's, so more will run there without asking."
+      },
+      "markRead": {
+        "summary": "Mark a conversation's finished turn as seen (read). One mark per host, the same on every screen and device. It never goes back.",
+        "sessionId": "Conversation id.",
+        "at": "Time of the finish you saw (milliseconds). Omit for the current finish."
+      },
+      "changes": {
+        "summary": "Return a conversation's change log (time, who, before → after, reason), newest first.",
+        "sessionId": "Conversation id. Omit for your own.",
+        "limit": "How many to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      },
+      "lineage": {
+        "summary": "Return the conversations that share a root (the branch family), breadth first from the root.",
+        "sessionId": "Id of the starting conversation. Omit for your own.",
+        "limit": "How many to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      },
+      "setModel": {
+        "summary": "Change a conversation's model. A running turn picks it up at once when the agent supports it. The change log keeps who changed it and why. The choices are the model setting in settings.schema.",
+        "sessionId": "The conversation id. Defaults to this conversation.",
+        "model": "The model id. An empty string means the agent's default.",
+        "reason": "Why the model is changed (kept in the change log).",
+        "reasonKey": "A predefined reason key from the UI.", "reasonParams": "Values for the predefined reason.", "backend": "Conversation agent."
       }
     },
     "statuses": {
@@ -447,6 +553,43 @@
       "create": {
         "summary": "Create an empty status group.",
         "status": "The group name."
+      },
+      "list": {
+        "summary": "Return the statuses (groups) that have been used, oldest first. With the count, the first and last time used and the icon.",
+        "limit": "How many to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      },
+      "rename": {
+        "summary": "Rename a status group. Every conversation in it gets the new status and a change-log row. An empty to removes the group and the status.",
+        "from": "The current group name.",
+        "to": "The new name. Empty removes the group."
+      }
+    },
+    "agents": {
+      "list": {
+        "summary": "List the available agents (claude, codex, antigravity, …): id, name, description and what each can do."
+      },
+      "models": {
+        "summary": "List an agent's models (id, name, note).",
+        "backend": "Agent id. Omit for the default agent.",
+        "cwd": "Working folder (when the model list depends on the place).",
+        "limit": "How many to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      },
+      "modes": {
+        "summary": "List an agent's approval modes (id, name, note). Only a person chooses one.",
+        "backend": "Agent id. Omit for the default agent."
+      },
+      "efforts": {
+        "summary": "List the thinking-effort values an agent offers (id, name, note).",
+        "backend": "Agent id. Omit for the default agent.",
+        "model": "Model id (the steps depend on the model).",
+        "cwd": "Working folder.",
+        "endpoint": "Compatible endpoint id."
+      },
+      "authStatus": {
+        "summary": "Return whether you are logged in to an agent (installed, logged in). No email address or token is returned. Login and logout are for the screen only.",
+        "backend": "Agent id. Omit for the default agent."
       }
     },
     "errors": {
@@ -476,10 +619,31 @@
       "BOT_NAME_TAKEN": "The bot name \"{{name}}\" is already used. Choose another name.",
       "MEMORY_SOURCE": "Cannot write to memory. The grounds are missing: {{reason}}",
       "MEMORY_REJECTED": "Cannot write to memory: {{reason}}",
-      "MEMORY_NOT_FOUND": "Memory \"{{id}}\" was not found. Look it up with memory.list."
+      "MEMORY_NOT_FOUND": "Memory \"{{id}}\" was not found. Look it up with memory.list.",
+      "MASKED": "{{path}} has a masked value (••••) that does not match what was read, so it cannot be restored. Write the value, or pass it back exactly as read.",
+      "SEND_SELF": "You cannot send to your own conversation.",
+      "SEND_TO_CHILD": "Conversation {{id}} is a child this conversation delegated to. Send further instructions with ply_task_send.",
+      "SEND_TO_PARENT": "Conversation {{id}} is the one that delegated to this conversation. Your result reaches it automatically when you finish, so do not send to it.",
+      "RELAY_LIMIT": "Sends between conversations have continued {{max}} times, so no more can be sent. Ask the user whether to go on.",
+      "SEND_RATE": "This conversation has sent more than {{max}} messages in {{minutes}} minutes. Wait a while, or ask the user."
     },
     "pending": "The change to {{target}} is waiting for the user's approval (requestId: {{requestId}}). Nothing has changed yet. The result (allowed or denied) will be delivered to this conversation later. You may continue other work or end your response without waiting. Do not request the same change again.",
     "settingTarget": "the setting {{key}}",
+    "settingTargetLabeled": "the setting \"{{label}}\" ({{key}})",
+    "settingLabel": {
+      "confirmAgentSites": "Ask before an agent uses a site",
+      "confirmExternalLoads": "Ask before loading external resources",
+      "agentSitePermissions": "Allowed sites · Agent access",
+      "externalSitePermissions": "Allowed sites · External resources",
+      "browserProfiles": "Built-in browser profiles",
+      "computerUse": "Computer use",
+      "delegationRouting": "Automatic delegation routing",
+      "plyInstructions": "Pleiad's instructions",
+      "addedContext": "Delegation instruction switch (previous version)",
+      "context": {
+        "default": "Context defaults"
+      }
+    },
     "opTarget": "the operation {{id}}",
     "settingNotice": {
       "head": "[Pleiad setting change result / {{requestId}}]\nResult: {{status}}",
@@ -490,6 +654,7 @@
         "superseded": "withdrawn",
         "restart": "withdrawn"
       },
+      "fromChild": "This change was requested by your delegated child \"{{title}}\" (taskId: {{taskId}}). The child's task has already ended ({{state}}), so the result is delivered to you instead of the child. To have the child continue, use ply_task_send.",
       "allowed": "The user allowed the change to {{target}}, and Pleiad applied it. Continue the work needed for the original request.",
       "denied": "The user denied the change to {{target}}. Nothing was changed. Do not request the same change again; ask the user why if needed.",
       "failed": "The user allowed the change to {{target}}, but it could not be applied: {{error}}",
@@ -535,16 +700,223 @@
       "taskSend": { "summary": "Send another instruction to your child task.", "taskId": "Child task id.", "message": "Additional instruction." },
       "taskCancel": { "summary": "Stop your child task.", "taskId": "Child task id." },
       "taskList": { "summary": "List your child tasks." },
-      "usage": { "summary": "Read quota usage for delegation targets.", "backend": "Agent to check; omit for all." }
+      "usage": { "summary": "Read quota usage for delegation targets.", "backend": "Agent to check; omit for all." },
+      "instructions": {
+        "summary": "Return the history of follow-up instructions sent to a delegated child, newest first (text is cut at 1,000 characters).",
+        "taskId": "Task id.",
+        "limit": "How many to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      },
+      "retry": {
+        "summary": "Redo the same request as a new child task on another candidate. Only a child you delegated. If the child would get a stronger approval mode than the requester, you get NEEDS_UI (the user must confirm).",
+        "taskId": "Id of the task to redo.",
+        "candidate": "The candidate (<agent>:<model>). Pick one from the candidates of delegation.routing.",
+        "stop": "Whether to stop the original task if it is running (required then).",
+        "account": "Claude account id. Only a person (the screen); an agent gets NEEDS_UI.",
+        "approved": "Whether the stronger-approval-mode confirmation was done. Only a person (the screen); an agent gets NEEDS_UI."
+      },
+      "routing": {
+        "summary": "Return the current state of the automatic delegation routing (settings, warnings, usable candidates). Judge keys are never returned (only whether one is registered). settings.set delegationRouting changes the settings.",
+        "refresh": "true re-reads the usage before returning.",
+        "limit": "How many candidates to return (default 30, max 100).",
+        "cursor": "The next of the previous result. Continues from there."
+      }
     },
     "browser": { "listProfiles": { "summary": "List the browser profiles available to this conversation." }, "useProfile": { "summary": "Switch this conversation's browser profile.", "profile": "Profile id or name." }, "setProfile": { "summary": "Switch a conversation's browser profile.", "sessionId": "Conversation id.", "profile": "Profile id." } },
+    "worktrees": {
+      "split": { "summary": "Split a conversation's place (git) into a separate worktree on its own branch. The original working tree is unchanged. Work in the returned cwd (the next turn's place is not changed).", "sessionId": "The conversation id. Omit both sessionId and cwd for this conversation.", "cwd": "The place to split (only places a conversation has used)." },
+      "discard": { "summary": "Clean up a separate worktree. It is removed only when it has no changes or is already merged; with unmerged changes or a conversation using it, it is kept (action: kept).", "id": "The worktree id (in the split result and in a delegated child's result)." },
+      "keep": { "summary": "Keep a separate worktree out of the automatic cleanup (kept: false clears it).", "id": "The worktree id.", "kept": "Whether to keep it (default true)." },
+      "archive": { "summary": "Archive and remove a separate worktree. The whole working tree is saved to a hidden ref first and can be brought back with worktrees.restore for 90 days. Not removed while a conversation uses it.", "id": "The worktree id." },
+      "restore": { "summary": "Recreate an archived worktree as a new separate worktree.", "ref": "The archive ref (starts with refs/pleiad/archive/; returned by worktrees.archive).", "sessionId": "The conversation whose repository to use. Omit both sessionId and cwd for this conversation.", "cwd": "The repository place (only places a conversation has used)." },
+      "setSettings": { "summary": "Turn \"always split\" on or off (split without asking when another conversation is writing to the same repository).", "always": "Whether to always split." }
+    },
+    "notify": {
+      "setPc": { "summary": "Turn this PC's notifications on or off per kind. Only the given fields change.", "done": "When work is done.", "reply": "When a reply (approval or question) is needed.", "failed": "When work failed." },
+      "setDevice": { "summary": "Mute or unmute notifications to one paired phone. The device list is not shown (ask the user for the id).", "id": "The device id.", "muted": "Whether to mute." }
+    },
+    "compatEndpoints": {
+      "recheck": { "summary": "Check a saved compatible endpoint again with its saved URL and key, and record the result and the model list (no key is entered or returned).", "id": "The endpoint id." },
+      "delete": { "summary": "Delete a compatible endpoint (its saved key is deleted too). Approval-required conversations ask the user first.", "id": "The endpoint id.", "reason": "Why it is deleted (shown on the approval card and kept in the log)." }
+    },
+    "computer": {
+      "stop": { "summary": "Stop a conversation's computer use (mouse and keyboard on this PC). It cannot start or permit it.", "sessionId": "The conversation id. Defaults to this conversation." }
+    },
     "control": {
       "instructions": "Pleiad's features and settings are available through ply_control.\nFind an operation with list_ops (pass an id to get its input JSON Schema) and call it with call_op. Conversation search and reading (search_sessions, get_session, read_session) and current setting values (get_setting) can be called directly.\nOperations that change Pleiad's state follow this conversation's approval mode. A change that loosens a gate shows the user an approval card and returns status: pending without waiting; the result is delivered to this conversation later. If the code is NEEDS_UI, NEEDS_APPROVAL, or READ_ONLY_MODE, do not retry; tell the user.",
       "listOps": "List the operations available in Pleiad. Pass an id to get that operation's description, input JSON Schema, and risk. Call it with call_op.",
       "listOpsId": "An operation id (for example sessions.list). Omit it to get every id with a one-line description.",
+      "listOpsPrefix": "Only ids that start with this (for example sessions.).",
       "callOp": "Call a Pleiad operation. If the input does not fit, the result has code: INVALID and says which field is wrong and why.",
       "callOpOp": "The operation id (find it with list_ops).",
       "callOpArgs": "The operation's input, in the shape of the JSON Schema you get by passing the id to list_ops."
+    },
+    "mcp": {
+      "arg": {
+        "format": "Which agent's config file (claude: ~/.claude.json or .mcp.json, codex: config.toml).",
+        "scope": "user (home settings) or directory (working directory settings).",
+        "cwd": "The working directory. From a conversation, omit it to use that conversation's working directory.",
+        "nativeName": "The MCP server name in the config file.",
+        "name": "The name of the MCP server registered in Pleiad.",
+        "mode": "add (a new one) or edit (change the current one).",
+        "revision": "The revision you read. Nothing is saved if it changed since.",
+        "reason": "Why it is changed (shown on the approval card and kept in the change log)."
+      },
+      "nativeList": {
+        "summary": "Names and revision of the MCP servers in an agent's (Claude, Codex) config file."
+      },
+      "nativeRead": {
+        "summary": "One MCP server definition from an agent's config file. Env and header values, URL queries and secrets in arguments are masked (••••)."
+      },
+      "nativeSave": {
+        "summary": "Add or change an MCP server in an agent's config file. It can run any command, so the user must approve. A masked value passed back keeps the current value.",
+        "value": "The definition (stdio: command, args, env; HTTP: url and headers).",
+        "allowReformat": "Whether rewriting the TOML may change its formatting."
+      },
+      "list": {
+        "summary": "The MCP servers registered in Pleiad (definition, which secrets exist, OAuth state). Secret values are not returned."
+      },
+      "read": {
+        "summary": "One MCP server registered in Pleiad, in its editable form. Secrets are masked (••••); secrets not entered yet are null."
+      },
+      "save": {
+        "summary": "Register an MCP server in Pleiad or change a registration. It can run any command, so the user must approve. A masked secret passed back keeps the previous value.",
+        "value": "The definition (transport, command, args, env, url, auth, bearerToken, headers, oauth…; the shape of value from mcp.read)."
+      },
+      "delete": {
+        "summary": "Delete a Pleiad MCP server registration (its OAuth token is revoked). The user must approve."
+      },
+      "rename": {
+        "summary": "Rename a Pleiad MCP server registration (secrets and OAuth state move along). The user must approve.",
+        "to": "The new name."
+      },
+      "import": {
+        "summary": "Import MCP servers from an agent's config file into Pleiad's registrations. The user must approve.",
+        "items": "What to import: a list of { format, scope, name, cwd?, as? (the name to register), auth? }.",
+        "includeSecrets": "Also copy env values, header values and bearer tokens (by default they are left to fill in later)."
+      },
+      "setSettings": {
+        "summary": "Change Pleiad's MCP-wide setting (the OAuth Client ID Metadata Document URL). The user must approve.",
+        "clientMetadataUrl": "An https URL. null or empty removes it."
+      },
+      "authStatus": {
+        "summary": "OAuth state of Pleiad's MCP servers (signed in, expiry, needs sign-in). Tokens are not returned. Sign-in and sign-out are done by the user in the app.",
+        "name": "A name to look at just one. Omit for all."
+      },
+      "reconnect": {
+        "summary": "Check that a registered MCP server connects with the current credentials (returns the state and tool count)."
+      }
+    },
+    "hooks": {
+      "read": { "summary": "Read one Hooks definition (command, timeout and so on) from an agent's settings file. Secret-looking values in the command are masked.", "agent": "The agent (claude, codex, antigravity).", "scope": "The scope (user, project and so on).", "base": "The place for the project scope.", "file": "The settings file path. Defaults to the usual location.", "loc": "Where the definition is (event, group, handler; name for Antigravity)." },
+      "readPly": { "summary": "Read one Pleiad Hooks registration (hooks.json). Secret-looking values in the command are masked.", "id": "The registration id." },
+      "arg": {
+        "cwd": "The working directory. From a conversation, omit it to use that conversation's working directory.",
+        "sessionId": "The conversation id. From a conversation, omit it for that conversation.",
+        "id": "The id of a Pleiad hook registration (hooks[].id from hooks.list).",
+        "dryRun": "If true, write nothing and return only where it would write and the before/after text (masked). No approval needed.",
+        "allowReformat": "Whether rewriting may change the formatting.",
+        "reason": "Why it is changed (shown on the approval card and kept in the change log)."
+      },
+      "scan": {
+        "summary": "Hooks defined in each agent's config files (state per file, and the rows). Secrets in commands are masked.",
+        "scope": "user (home only) or directory (home, and from the Git root to cwd).",
+        "trust": "Also ask Codex for its trust state (takes a little longer)."
+      },
+      "saveNative": {
+        "summary": "Add, change, delete or enable hooks in agents' config files. Writing needs the user's approval (check with dryRun first).",
+        "items": "Changes: { op: add|edit|delete|enable, agent, scope, base?, file?, revision, loc?, event?, matcher?, command?, timeout?, name?, enabled? }."
+      },
+      "copy": {
+        "summary": "Copy one hook definition into another agent's config file (through an adapter when the formats differ). Writing needs the user's approval.",
+        "source": "The source: { agent, scope, base?, file, loc, revision } (a row from hooks.scan).",
+        "targets": "Where to copy: a list of { agent, scope, base?, matcher?, revision? }."
+      },
+      "session": {
+        "summary": "A conversation's hooks: definitions found in its working directory, what Pleiad unified, and the hook runs received.",
+        "backend": "The agent id. From a conversation, omit it for that conversation's agent."
+      },
+      "list": {
+        "summary": "Pleiad's hook registrations and the owner (leave to the agent / Pleiad unifies). Commands are masked."
+      },
+      "save": {
+        "summary": "Register a hook in Pleiad or change one (edit when value.id is given). Its command runs on every agent action, so the user must approve.",
+        "value": "{ id?, name, agent, event, matcher?, command, timeout?, async?, targets }. A masked command passed back keeps the previous value."
+      },
+      "remove": {
+        "summary": "Delete a Pleiad hook registration. The user must approve."
+      },
+      "toggle": {
+        "summary": "Turn a Pleiad hook registration on or off. Turning it on needs the user's approval.",
+        "enabled": "true for on, false for off (default true)."
+      },
+      "setOwner": {
+        "summary": "Change who owns hooks (leave to the agent / Pleiad unifies). The user must approve.",
+        "place": "A working directory path. null or omitted for the default everywhere.",
+        "value": "{ owner: native|ply, disabled?: [registration ids] }. null goes back to the setting above.",
+        "imports": "Native definitions to import at the same time ({ id, digest }).",
+        "revision": "The revision from hooks.list."
+      },
+      "repair": {
+        "summary": "Back up a broken Pleiad hooks registration file and rewrite it with the parts that could be read. The user must approve."
+      }
+    },
+    "context": {
+      "arg": {
+        "cwd": "The working directory. From a conversation, omit it to use that conversation's working directory.",
+        "sessionId": "The conversation id. From a conversation, omit it for that conversation.",
+        "reason": "Why it is changed (shown on the approval card and kept in the change log)."
+      },
+      "settings": {
+        "summary": "Context settings (where instructions, Skills and external MCP are read from, and who owns them): the default and the per-place overrides."
+      },
+      "setSettings": {
+        "summary": "Change one place in the context settings. It changes the context every conversation gets, so the user must approve.",
+        "place": "A working directory path. null for the default.",
+        "kind": "instruction, skill or mcp.",
+        "value": "The setting for that kind ({ owner, user, directory, disabled?, prefer? }). null goes back to the setting above.",
+        "roots": "Extra folders to search. null goes back to the setting above.",
+        "add": "true adds the place to the list.",
+        "remove": "true removes the place from the list (its overrides go too)."
+      },
+      "plyInstructions": {
+        "summary": "Pleiad's instructions (the items added to the agent in each conversation, and the size guideline)."
+      },
+      "setPlyInstructions": {
+        "summary": "Change one of Pleiad's instructions. It changes how agents behave, so the user must approve.",
+        "action": "save (add or change), toggle, delete (your own items), reset (default items) or order.",
+        "id": "The item id (omit on save to add).",
+        "name": "The item name (save).",
+        "body": "The instruction text (save).",
+        "target": "all, parent or child (save).",
+        "agents": "Which agents get it (save).",
+        "on": "On or off (toggle).",
+        "ids": "The item ids in the new order (order)."
+      },
+      "refresh": {
+        "summary": "Re-read the instructions and Skills pinned to a conversation from the current files (only when it is not running)."
+      },
+      "setSessionMcp": {
+        "summary": "Remove an external MCP server from a conversation or put it back (from the next turn). Putting it back needs the user's approval.",
+        "name": "The MCP server name.",
+        "removed": "true removes it (default), false puts it back."
+      }
+    },
+    "remote": {
+      "status": {
+        "summary": "Remote state (relay connection, devices, keep-running setting). Keys and pairing confirmation codes are not returned."
+      },
+      "setResident": {
+        "summary": "Change the desktop app keep-running setting (keep running when the window closes, keep the PC awake).",
+        "keepRunning": "Keep running in the tray when the window closes.",
+        "sleep": "When to keep the PC awake (working: while working, always, off: never)."
+      }
+    },
+    "endpoints": {
+      "list": {
+        "summary": "Compatible endpoints (URL, models, defaults, check results). API keys are not returned (only hasKey).",
+        "agent": "Filter by agent id."
+      }
     },
     "probe": {
       "guarded": {
@@ -721,6 +1093,7 @@
     "effort": "The default thinking depth for new conversations.",
     "mode": "The default approval mode (only a human changes it).",
     "claudeAccount": "The default Claude account (an id; no token. Only a human changes it).",
+    "limitResume": "How to resume after usage limits, concurrency, and the usage guard.",
     "compaction": {
       "auto": "Auto compaction (enabled, the token threshold, and the idle minutes per agent)."
     },

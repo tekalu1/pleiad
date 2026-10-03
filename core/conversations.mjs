@@ -441,7 +441,7 @@ export function wrapBackend(native) {
   };
 
   /**
-   * 会話を、ある発言（beforeMessageId。自分の発言）の手前まで巻き戻す。会話の id は変わらない（ADR 0091）。
+   * 会話を、ある発言（beforeMessageId。自分の発言）の手前まで巻き戻す。会話の id は変わらない（ADR 0102）。
    * 方式はバックエンドで違う（capabilities.rewind）:
    *   resumeAt … Claude。次のターンが resume + resumeSessionAt + resumeDropsTurn で葉を付け替える。それまでの間は保留の印（sidecar の rewind）で
    *              履歴を見かけ上切る

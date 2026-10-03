@@ -20,7 +20,7 @@ export const KEY_BYTES = 32;
 const AAD_PREFIX = 'pleiad-notify/1\n';
 
 /** 通知の種類。cancel は出ている通知を消す（取り消しも同じ線で送る）。 */
-export const KINDS = Object.freeze(['approval', 'question', 'failed', 'done', 'cancel']);
+export const KINDS = Object.freeze(['approval', 'question', 'failed', 'done', 'limitReady', 'limitGuarded', 'scheduleMissed', 'cancel']);
 /** cancel の対象: approval = 承認・質問が決着した（id 指定可）、seen = 完了・失敗をどこかで見た。 */
 export const CANCELS = Object.freeze(['approval', 'seen']);
 

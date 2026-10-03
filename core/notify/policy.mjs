@@ -1,6 +1,6 @@
 // 離れた端末へ通知を送るかどうかの判定（docs/design.md「通知」、ADR 0086）。副作用のない関数だけ。
 //
-// 種類: approval / question（返事が要るとき）・failed（失敗したとき）・done（終わったとき）。
+// 種類: approval / question（返事が要るとき）・failed / limitReady / limitGuarded / scheduleMissed（確認が要るとき）・done（終わったとき）。
 // 送らない: 端末がその種類を切っている・その会話を見ている（その端末自身の画面、または設定が許す他の画面）・
 //           2 分より古い完了・30 秒未満のターンの完了。委譲の子の完了は呼び出し側が渡さない（依頼元の完了に含む）。
 
@@ -8,7 +8,7 @@ export const SHORT_TURN_MS = 30_000;
 export const STALE_DONE_MS = 2 * 60_000;
 export const PRESENCE_TTL_MS = 150_000;
 /** 中継に溜めておく寿命。完了は古くなると意味が無い。返事待ち・失敗は戻ってから気づけるように少し長く。 */
-export const TTL_MS = Object.freeze({ done: STALE_DONE_MS, approval: 10 * 60_000, question: 10 * 60_000, failed: 10 * 60_000, cancel: 10 * 60_000 });
+export const TTL_MS = Object.freeze({ done: STALE_DONE_MS, approval: 10 * 60_000, question: 10 * 60_000, failed: 10 * 60_000, limitReady: 10 * 60_000, limitGuarded: 10 * 60_000, scheduleMissed: 10 * 60_000, cancel: 10 * 60_000 });
 
 export const DEFAULT_DEVICE_SETTINGS = Object.freeze({ enabled: false, reply: true, failed: true, done: true, lockNames: false, skipPc: true });
 export const DEFAULT_PC_SETTINGS = Object.freeze({ done: true, reply: true, failed: true });
@@ -34,7 +34,7 @@ export function normalizePcSettings(raw, base = DEFAULT_PC_SETTINGS) {
 }
 
 /** 設定の項目名。approval と question はどちらも「返事が要るとき」。 */
-export const settingOf = kind => kind === 'approval' || kind === 'question' ? 'reply' : kind === 'failed' ? 'failed' : kind === 'done' ? 'done' : null;
+export const settingOf = kind => kind === 'approval' || kind === 'question' ? 'reply' : ['failed', 'limitReady', 'limitGuarded', 'scheduleMissed'].includes(kind) ? 'failed' : kind === 'done' ? 'done' : null;
 
 export const ttlFor = kind => TTL_MS[kind] ?? TTL_MS.cancel;
 

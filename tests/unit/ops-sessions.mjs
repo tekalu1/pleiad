@@ -94,9 +94,9 @@ export default async function (t) {
   const deps = { locale: 'ja', sessions: sessionsDep, modeOf: async () => ({ scope: 'workspace', autonomy: 'ask' }), audit: () => {} };
   const run = (p, id, args) => registry.invoke(p, id, args, deps);
 
-  const list = await run(human, 'sessions.list', { limit: 2 });
+  const list = await run(agent('me'), 'sessions.list', { limit: 2 });
   t.ok('sessions.list は件数・行・next を返す', list.ok && list.result.sessions.length === 2 && list.result.total === 5 && typeof list.result.next === 'string');
-  const bad = await run(human, 'sessions.list', { cursor: 'zzz' });
+  const bad = await run(agent('me'), 'sessions.list', { cursor: 'zzz' });
   t.ok('壊れた cursor は INVALID（文は辞書から）', !bad.ok && bad.code === 'INVALID' && /cursor/.test(bad.error), bad.error);
   const got = await run(agent('me'), 'sessions.get', { sessionId: 'a' });
   t.ok('sessions.get はメタ・子・最近の変更（新しい方から 10 件）を返し、変えた主体と口と会話を残す', got.ok && got.result.children.join() === 'c' && got.result.changes.length === 10
@@ -162,9 +162,9 @@ export default async function (t) {
     { taskId: 't3', status: 'completed', parentSessionId: 'p', createdAt: 20 },
   ];
   const ddeps = { locale: 'ja', delegation: { list: (owner) => tasks.filter((r) => !owner || r.parentSessionId === owner), get: (id, offset) => { const r = tasks.find((x) => x.taskId === id); return r ? { ...r, result: (r.result ?? '').slice(offset), resultOffset: offset, resultLength: (r.result ?? '').length, nextOffset: null } : null; } } };
-  const dl = await registry.invoke(human, 'delegation.tasks', { status: 'completed' }, ddeps);
-  t.ok('delegation.tasks は新しい順で、状態・依頼元で絞れる', dl.result.tasks.map((x) => x.taskId).join() === 't2,t3' && (await registry.invoke(human, 'delegation.tasks', { parentSessionId: 'p' }, ddeps)).result.total === 2);
-  const row1 = (await registry.invoke(human, 'delegation.tasks', { parentSessionId: 'p', limit: 1 }, ddeps)).result.tasks[0];
+  const dl = await registry.invoke(agent('me'), 'delegation.tasks', { status: 'completed' }, ddeps);
+  t.ok('delegation.tasks は新しい順で、状態・依頼元で絞れる', dl.result.tasks.map((x) => x.taskId).join() === 't2,t3' && (await registry.invoke(agent('me'), 'delegation.tasks', { parentSessionId: 'p' }, ddeps)).result.total === 2);
+  const row1 = (await registry.invoke(agent('me'), 'delegation.tasks', { parentSessionId: 'p', limit: 1 }, ddeps)).result.tasks[0];
   t.ok('一覧の行は依頼・結果・コンテキストを載せず、振り分けの要約だけ（アカウントは載せない）', row1.taskId === 't3' && !('result' in row1) && !('queue' in row1) && taskRow(tasks[0]).routing.backend === 'codex' && !JSON.stringify(taskRow(tasks[0])).includes('acct') && !JSON.stringify(taskRow(tasks[0])).includes('secret prompt'));
   const ds = await registry.invoke(human, 'delegation.status', { taskId: 't1', offset: 5 }, ddeps);
   t.ok('delegation.status は結果を offset から返す', ds.ok && ds.result.result === 'result' && ds.result.resultOffset === 5 && ds.result.resultLength === 11);

@@ -126,12 +126,14 @@
     "running": "This conversation is running. Resume it after it finishes.",
     "notInterrupted": "This conversation was not stopped.",
     "outboxUnknown": "Can't resume: a message couldn't be confirmed as sent. Check the conversation, then resend or cancel that message in the unsent list.",
+    "limitWaiting": "This account is waiting for its usage limit to reset. Choose another account or wait for the reset.",
     "prompt": {
       "user": "Please continue.",
       "update": "Stopped for a Pleiad update. Check the result of any operation that was in progress, then continue.",
       "quit": "Stopped because Pleiad was quit. Check the result of any operation that was in progress, then continue.",
       "restart": "Stopped because Pleiad restarted. Check the result of any operation that was in progress, then continue.",
-      "hostAway": "Stopped because the connection was lost. Check the result of any operation that was in progress, then continue."
+      "hostAway": "Stopped because the connection was lost. Check the result of any operation that was in progress, then continue.",
+      "limit": "Work stopped at the usage limit. Continue from where it stopped."
     }
   },
   "scan": {
@@ -200,6 +202,7 @@
   },
   "compat": {
     "redactedKey": "[key]",
+    "deleteConfirm": "Delete the compatible endpoint \"{{name}}\". Its saved key is deleted too, and the key has to be entered again to use it. Conversations on this endpoint can no longer continue.",
     "listSeparator": ", ",
     "url": {
       "empty": "Enter a URL.",
@@ -826,6 +829,13 @@
     "openFailed": "Cannot open the folder: {{dir}}",
     "invalidPath": "Invalid path."
   },
+  "schedule": {
+    "invalidTime": "Couldn't read the send time",
+    "past": "A time in the past or right now can't be scheduled. Send the message instead",
+    "tooFar": "Scheduled messages can be at most a year ahead",
+    "full": "A conversation can hold at most {{max}} scheduled messages",
+    "notFound": "The scheduled message wasn't found (it may already be sent or cancelled)"
+  },
   "queue": {
     "idConflict": "Cannot change the content under the same send ID.",
     "full": "Up to {{max}} messages can wait to be sent.",
@@ -1068,5 +1078,31 @@
       "notDevice": "This connection is not from a paired phone.",
       "unknownDevice": "That device is not in the list."
     }
+  },
+  "opsApproval": {
+    "mcpNativeSave": "Saves the MCP server \"{{name}}\" to {{file}}. This command runs when a conversation starts.",
+    "mcpSave": "Saves the Pleiad MCP server \"{{name}}\". This command runs when a conversation owned by Pleiad starts.",
+    "mcpDelete": "Deletes the Pleiad MCP server \"{{name}}\".",
+    "mcpRename": "Renames the Pleiad MCP server \"{{name}}\" to \"{{to}}\".",
+    "mcpImport_one": "Imports {{count}} of the agent's MCP servers into Pleiad.",
+    "mcpImport_other": "Imports {{count}} of the agent's MCP servers into Pleiad.",
+    "mcpImportSecrets_one": "Imports {{count}} of the agent's MCP servers into Pleiad, including secret values.",
+    "mcpImportSecrets_other": "Imports {{count}} of the agent's MCP servers into Pleiad, including secret values.",
+    "mcpSettings": "Changes Pleiad's MCP OAuth setting.",
+    "hooksSaveNative_one": "Changes {{count}} hook in the agents' config files. Commands run on every agent action.",
+    "hooksSaveNative_other": "Changes {{count}} hooks in the agents' config files. Commands run on every agent action.",
+    "hooksCopy_one": "Copies a hook to {{count}} place. Commands run on every agent action.",
+    "hooksCopy_other": "Copies a hook to {{count}} places. Commands run on every agent action.",
+    "hooksAdd": "Adds the hook \"{{name}}\" to Pleiad. Its command runs on every agent action.",
+    "hooksEdit": "Changes the Pleiad hook \"{{name}}\".",
+    "hooksRemove": "Deletes the Pleiad hook \"{{name}}\".",
+    "hooksEnable": "Turns the Pleiad hook \"{{name}}\" on or off ({{command}}).",
+    "hooksOwner_one": "Changes who owns hooks for {{place}} ({{count}} import).",
+    "hooksOwner_other": "Changes who owns hooks for {{place}} ({{count}} imports).",
+    "hooksRepair": "Backs up the broken hooks registration file and rewrites it with the parts that could be read.",
+    "contextSettings": "Changes the context settings for {{place}}. The instructions, Skills and external MCP every conversation gets will change.",
+    "plyInstructions": "Changes Pleiad's instructions. The instructions added to agents in each conversation will change.",
+    "sessionMcp": "Changes the external MCP \"{{name}}\" in this conversation.",
+    "everywhere": "every place"
   }
 }

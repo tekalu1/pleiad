@@ -38,7 +38,12 @@ const cases = [
   await import("./e2e/groups.mjs"),
   await import("./e2e/running.mjs"),
   await import('./e2e/control.mjs'),   // ply_control（操作の一覧）の search_sessions・get_setting を Claude が呼ぶ
+  await import('./e2e/control-delegated-approval.mjs'), // 委譲の子が承認待ちで終わった後の許可は、依頼元の Claude に届く
   await import('./e2e/control-stage3.mjs'), // Codex から sessions.setTitle を呼ぶ
+  await import('./e2e/control-conversations.mjs'), // Codex から会話の一覧・別の会話の発言・送信待ち・委譲の一覧を call_op で読む
+  await import('./e2e/control-human-only.mjs'), // Codex から human-only を外した worktrees.setSettings を呼び、承認モードは見えない（ADR 0094）
+  await import('./e2e/control-mcp-hooks.mjs'),
+  await import('./e2e/control-send.mjs'), // Codex から sessions.send で別の会話へ送り、宛先が答える。強い宛先へは承認待ち（ADR 0104） // Codex から MCP の登録を読む（秘密は伏せ字）・mcp.save の承認待ちを許可する（ADR 0095）
   await import("./e2e/disconnect.mjs"),   // 猶予を短くした専用サーバが要るので最後
 ];
 

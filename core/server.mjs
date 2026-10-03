@@ -44,6 +44,7 @@ import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
 import { registry as opsRegistry } from './ops/index.mjs';
 import { OpError, targetText as settingTarget } from './ops/registry.mjs';
+import { FAILED } from './ops/host.mjs';
 import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './ops/surfaces/control.mjs';
 import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
 import { writeControlFile, removeControlFile } from './control-file.mjs';
@@ -52,6 +53,9 @@ import { parentIdOf } from './ops/sessions.mjs';
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
+import { createSchedule } from './schedule.mjs';
+import { createResumeQueue, normalizeLimitResume } from './resume-queue.mjs';
+import { buildSendRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings } from './compaction-settings.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
@@ -128,6 +132,7 @@ const WEB = path.join(HERE, "..", "web");
 let locale = localeInfo(await store.getPrefs());
 setLocale(locale.lang);
 let compactionSettings;
+let limitResumeSettings = normalizeLimitResume((await store.getPrefs()).limitResume);
 try {
   compactionSettings = normalizeCompactionSettings((await store.getPrefs()).autoCompaction ?? {});
 } catch (err) {
@@ -952,14 +957,18 @@ const toMs = (v) => (Number.isFinite(v) ? v : (v ? Date.parse(v) || null : null)
 // ---- 中断と再開（docs/design.md「中断と再開」・ADR 0036） ----------------------------
 // 中断の理由。user = 中断ボタン、update = 更新のため、quit = 終了のため、hostAway = ホスト不在の猶予切れ、
 // restart = Pleiad が落ちた・強制終了で終わりが記録されていないターン（起動時に store.recoverInterruptedTurns が付ける）
-const INTERRUPT_REASONS = new Set(["user", "update", "quit", "hostAway", "restart"]);
+const INTERRUPT_REASONS = new Set(["user", "update", "quit", "hostAway", "restart", "limit"]);
 // abort で画面・デスクトップが渡せる理由。ほかの値（不正・省略）は user として扱う
 const ABORT_REASONS = new Set(["user", "update", "quit"]);
 const abortReason = (value) => (ABORT_REASONS.has(value) ? value : "user");
 /** 保存された中断の印を、画面へ渡す形 { at, reason } に揃える。形が崩れていれば null */
 function interruptedOf(value) {
   if (!value || typeof value !== "object" || !Number.isFinite(value.at)) return null;
-  return { at: value.at, reason: INTERRUPT_REASONS.has(value.reason) ? value.reason : "user" };
+  return { at: value.at, reason: INTERRUPT_REASONS.has(value.reason) ? value.reason : "user",
+    ...(value.reason === 'limit' ? { resetsAt: Number.isFinite(value.resetsAt) ? value.resetsAt : null,
+      window: value.window ?? null, account: value.account ?? null, backend: value.backend ?? null,
+      autoResume: value.autoResume === true, notifyAtReset: value.notifyAtReset === true,
+      sentAt: Number.isFinite(value.sentAt) ? value.sentAt : value.at } : {}) };
 }
 
 /** 状態を最後に変えたのが AI（host のツールの ai・操作の一覧の agent。ADR 0081）なら { reason, reasonKey?, reasonParams? }、そうでなければ null */
@@ -1468,6 +1477,7 @@ const completionNotices = createCompletionNotices({
 /** 保存した既定を全画面に通知する。セッション閲覧では既定を書き換えない。 */
 async function savePref(key, value, backendId) {
   const prefs = await store.setPref(key, value, backendId);   // ops-allow-setpref: prefs.json への書き込みの出口（設定の一覧 core/ops/settings.mjs と、既定の記憶だけがここを通る）
+  if (key === 'limitResume') { limitResumeSettings = normalizeLimitResume(prefs.limitResume); resumeQueue.update(); }
   locale = localeInfo(prefs);
   setLocale(locale.lang);
   // デスクトップ版の main（ダイアログ・通知・更新のエラー文）にも知らせる（desktop/main.cjs）
@@ -1680,10 +1690,15 @@ function makeEmit(turn) {
       if (turn.compactTrigger) event = { ...event, compact: true };
       if (turn.stream.initialMessageId) event = { ...event, messageId: turn.stream.initialMessageId };
       turn.outcome = event.outcome;
+      if (event.outcome === 'limited') {
+        turn.limit = { resetsAt: Number.isFinite(event.resetsAt) ? event.resetsAt : null,
+          window: event.window ?? null, account: turn.info.account ?? null, backend: turn.backend.id };
+        event = { ...event, ...turn.limit };
+      }
       // 中断で終わったら理由を添える（画面は会話の末尾の「中断しました」の文言を理由で選ぶ）
       if (event.outcome === "aborted") event = { ...event, reason: turn.abortReason ?? "user" };
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）
-      if (event.outcome === "error") turn.errorShown = true;
+      if (event.outcome === "error" || event.outcome === 'limited') turn.errorShown = true;
       const execution = taskExecutions.get(turn.info.sessionId);
       if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; }
     }
@@ -2000,7 +2015,7 @@ async function forkConversation({ sessionId, upToMessageId, beforeMessageId, tit
 }
 
 /**
- * 同じ会話の中で、ある発言（beforeMessageId。自分の発言）の手前まで巻き戻す（sendMessage の rewind。ADR 0091）。
+ * 同じ会話の中で、ある発言（beforeMessageId。自分の発言）の手前まで巻き戻す（sendMessage の rewind。ADR 0102）。
  * 会話の id は変わらない。分岐（forkConversation）と同じ排他（forking）で、実行中のターン・分岐・別の送り直しと重ならない。
  * 実行中のターンがあるときは stopRunning: true のときだけ止める（止まり終えてから巻き戻す）。
  * 巻き戻しは、バックエンドの履歴の切り方（conversations.mjs の rewind）のほかに、切り口より後のものを整える:
@@ -2103,6 +2118,8 @@ const opsApp = {
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
   // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
   cliSetup: () => mcpSetup({ dataDir: store.dataDir }),
+  // 画面が読む走っている作業の全量（turns・permissions・tasks・subagents・background・count）
+  runningWork: () => runningWork(),
   // いま走っている作業の要約（app.running）。会話のターン・委譲の子・承認待ちの数
   running: async () => {
     const work = await runningWork();
@@ -2146,6 +2163,10 @@ async function changeStatus(backend, sessionId, status, { actor, reason, alone }
 const opsSessions = {
   clientReason,
   list: () => sessionList({ limit: 500, track: false }),
+  // 画面のサイドバーが読む全部の行（作業場所を許可する場所に覚える。track）
+  rows: () => sessionList(),
+  // 変更の記録（会話が無ければ null）
+  history: async (id) => ((await resolveBackendForSession(id)) ? (await store.get(id)).history ?? [] : null),
   get: async (id) => {
     const rows = await sessionList({ limit: 500, track: false });
     let row = rows.find((r) => r.id === id);
@@ -2165,10 +2186,657 @@ const opsSessions = {
   setTitle: async (id, title, { actor, reason, backend } = {}) => changeTitle(await pickBackend(id, backend), id, title, { actor, reason: reasonOf(reason) }),
   setStatus: async (id, status, { actor, reason, alone, backend } = {}) => changeStatus(await pickBackend(id, backend), id, status, { actor, reason: reasonOf(reason), alone }),
   fork: (input, { actor } = {}) => forkConversation(input, actor),
+  setModel: (id, model, { actor, reason, backend } = {}) => changeModel(id, model, { actor, reason: reasonOf(reason), backend }),
 };
 
+/** 新しい会話を作る（sessions.new。WS の newSession の中身）。まだ送っていない（unsent）下書きの会話ができる */
+async function createSession(args) {
+  const sourceId = args?.sourceSessionId;
+  if (sourceId) await settingsWrites.get(sourceId);
+  const sourceBackend = sourceId ? await resolveBackendForSession(sourceId) : null;
+  if (sourceId && !sourceBackend) throw new Error(t('session.sourceNotFound'));
+  const source = sourceId ? await store.get(sourceId) : null;
+  const selected = source?.nextSettings?.backend ?? sourceBackend?.id;
+  // 引き継ぎ元が対応を終えたエージェントなら、エージェントは継がない（既定へ落とす）
+  const selectedBackend = getBackend(selected) ? selected : undefined;
+  const backend = await pickBackend(null, args?.backend ?? selectedBackend);
+  const inherit = source && backend.id === selectedBackend;
+  const model = args?.model ?? (inherit ? source.nextSettings?.model ?? source.model ?? "" : undefined);
+  const mode = args?.mode ?? (inherit ? source.nextSettings?.mode ?? (backend.id === sourceBackend.id ? source.mode : undefined) : undefined);
+  const cwd = typeof args?.cwd === "string" && args.cwd.trim() ? args.cwd.trim() : os.homedir();
+  const status = typeof args?.status === "string" ? args.status.trim() || null : null;
+  // draft: 入力欄に入れておく文（「見直しを頼む」。ADR 0056）。作るのと同時に下書きとして保存し、送らない
+  const draft = args?.draft;
+  if (draft !== undefined && (typeof draft !== "string" || draft.length > 2_000_000)) throw new Error(t('session.draftTooLarge'));
+  const now = Date.now();
+  // 既定のタイトルは保存しない（空）。画面が今の言語で既定名を出す（web/style.css の .row-t:empty など）。過去の記録には「新しいセッション」が残っている
+  const info = { title: "", cwd, tag: status, createdAt: now, lastModified: now };
+  const sessionId = await createConversation(backend, info);
+  try {
+    await store.setMeta(sessionId, { backend: backend.id, ...info, status, unsent: true });
+    // 内蔵ブラウザーのプロフィール: 引き継ぎ元があればそのもの、無ければ作業フォルダーで最後に使ったもの / 既定（ADR 0078）
+    await store.setSessionData(sessionId, 'browserProfile', await browserProfiles.forNew(cwd, source));
+    // 互換の接続先（決定 2・3）: 同じエージェントの引き継ぎなら元の会話の接続先（予約中ならそれ）を継ぐ。
+    // それ以外は設定で「既定にする」を押した接続先（無ければ公式）。削除済みは継がない
+    let endpoint = '';
+    if (endpointCapable(backend)) {
+      if (typeof args?.endpoint === 'string') {
+        endpoint = args.endpoint;
+        if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) throw new Error(t('settings.endpointNotRegistered'));
+      } else {
+        endpoint = inherit ? source.nextSettings?.endpoint ?? source.compatEndpoint ?? '' : await compatEndpoints.defaultFor(backend.id);
+        if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) endpoint = '';
+      }
+    }
+    if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
+    const selected = await resolveModel(null, inherit || args?.model !== undefined ? model : undefined, backend, cwd || undefined, endpoint);
+    await store.setModel(sessionId, selected);
+    const effort = args?.effort ?? (inherit ? source.nextSettings?.effort ?? source.effort : undefined);
+    await store.setSessionData(sessionId, 'effort', await resolveEffort(null, effort, backend, selected, cwd || undefined, await endpointRow(endpoint)));
+    await store.setMode(sessionId, await resolveMode(null, mode, backend));
+    // 引き継ぎ元の会話で選んでいた Claude のアカウントも継ぐ（予約中ならそれを）
+    // 引き継ぎ元が無ければ前回選んだアカウント（削除済みなら、ログイン中のアカウントのまま）
+    const account = source ? source.nextSettings?.account ?? source.claudeAccount ?? '' : (await store.getPrefs()).claudeAccount ?? '';
+    if (account && await claudeAccounts.has(account)) await store.setSessionData(sessionId, 'claudeAccount', account);
+    if (draft) await store.setSessionData(sessionId, "draft", { text: draft, attached: [] });
+  } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
+  emitGlobal({ type: "sessionsChanged", sessionId: null });
+  return { sessionId };
+}
+
+/** 次のターンの設定を予約する（sessions.setTurnSettings。WS の setTurnSettings の中身）。予約は nextSettings。返り値は予約（取り消しは null） */
+async function reserveTurnSettings(args) {
+  const { sessionId, backend: targetId, model, mode, cwd: requestedCwd, cancel, account, endpoint } = args ?? {};
+  if (!sessionId) throw new Error(t('session.required'));
+  if (forking.has(sessionId) || switching.has(sessionId) && !runtime.turns.has(sessionId)) throw new Error(t('session.preparingSettings'));
+  const work = (settingsWrites.get(sessionId) ?? Promise.resolve()).catch(() => {}).then(async () => {
+    const source = refuseRetired(await resolveBackendForSession(sessionId));
+    if (!source) throw new Error(t('session.notFound'));
+    const current = { ...(await store.get(sessionId)) };
+    // 予約の行き先が今は無いエージェント（対応を終えた procway など）なら、予約は無かったものとして扱う（取り消し・選び直しができるように）
+    if (current.nextSettings?.backend && !getBackend(current.nextSettings.backend)) current.nextSettings = null;
+    const target = getBackend(targetId ?? current.nextSettings?.backend ?? source.id);
+    if (!target) throw new Error(t('agents.notFound'));
+    const selectedMode = mode ?? (target.id === (current.nextSettings?.backend ?? source.id)
+      ? current.nextSettings?.mode : target.id !== source.id ? await resolveMode(null, undefined, target) : undefined);
+    if (!cancel && selectedMode !== undefined && !target.modes()[selectedMode]) throw new Error(t('settings.modeUnavailable'));
+    const settingsCwd = requestedCwd || current.nextSettings?.cwd || current.cwd;
+    // 互換の接続先（'' = 公式）。エージェントを変えたら、変えた先の既定（設定で「既定にする」を押したもの。無ければ公式）。
+    // 元のエージェントへ戻したら、この会話の今の接続先に戻る
+    if (endpoint !== undefined && typeof endpoint !== 'string') throw new Error(t('settings.endpointInvalid'));
+    const previousSelection = current.nextSettings?.backend ?? source.id;
+    const currentEndpoint = current.compatEndpoint ?? '';
+    const previousEndpoint = current.nextSettings?.endpoint ?? currentEndpoint;
+    let selectedEndpoint = !endpointCapable(target) ? ''
+      : endpoint ?? (target.id === previousSelection ? previousEndpoint : target.id === source.id ? currentEndpoint : await compatEndpoints.defaultFor(target.id));
+    if (!cancel && endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error(t('settings.endpointNotRegistered'));
+    const endpointChanged = selectedEndpoint !== currentEndpoint;
+    // 接続先を変えたらモデルは接続先の既定（メインのモデル）に戻す（公式のモデル名を互換の先へ送らない）
+    const selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
+    if (!cancel && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) throw new Error(t('settings.modelUnavailable'));
+    const selectedEndpointRow = await endpointRow(selectedEndpoint);
+    const previousBackend = current.nextSettings?.backend ?? source.id;
+    const previousEffort = target.id === previousBackend ? current.nextSettings?.effort ?? current.effort ?? ''
+      : target.id === source.id ? current.effort ?? '' : (await store.getPrefs()).backends?.[target.id]?.effort ?? '';
+    const choices = cancel ? { '': {} } : await effortOptions(target, selectedModel, settingsCwd, selectedEndpointRow);
+    const selectedEffort = cancel ? '' : args.effort !== undefined
+      ? await validateEffort(target, args.effort, selectedModel, settingsCwd, selectedEndpointRow)
+      : Object.hasOwn(choices, previousEffort) ? previousEffort : '';
+    // Claude のアカウント（'' = ログイン中のアカウント）。モデルと同じく次のターンから効く
+    if (account !== undefined && typeof account !== 'string') throw new Error(t('settings.accountInvalid'));
+    const selectedAccount = account ?? current.nextSettings?.account ?? current.claudeAccount ?? '';
+    if (!cancel && account && !(await claudeAccounts.has(account))) throw new Error(t('settings.accountNotRegistered'));
+    const accountChanged = selectedAccount !== (current.claudeAccount ?? '');
+    let selectedCwd = current.nextSettings?.cwd;
+    if (!cancel && requestedCwd !== undefined) {
+      if (typeof requestedCwd !== "string" || !requestedCwd.trim() || requestedCwd.length > 8192) throw new Error(t('cwd.required'));
+      selectedCwd = (await resolveCwd(null, path.resolve(requestedCwd.trim()), source)).cwd;
+      const info = await source.getSession(sessionId);
+      const own = (current.history ?? []).some(h => h?.field === "cwd") ? current.cwd ?? info?.cwd : info?.cwd ?? current.cwd;
+      if (own && path.resolve(own) === selectedCwd) selectedCwd = undefined;
+    }
+    const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged && !endpointChanged)
+      ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(accountChanged ? { account: selectedAccount } : {}), ...(endpointChanged ? { endpoint: selectedEndpoint } : {}) };
+    await store.setSessionData(sessionId, "nextSettings", next);
+    if (current.interrupted?.reason === 'limit'
+      && ((account !== undefined && accountChanged) || (!cancel && next?.backend && next.backend !== source.id))) {
+      await schedule.cancel(`resume:${sessionId}`);
+      resumeQueue.remove(sessionId);
+      const interrupted = { ...current.interrupted, autoResume: false, notifyAtReset: false };
+      await store.setMeta(sessionId, { interrupted });
+      limitStates.set(sessionId, interruptedOf(interrupted));
+      emitGlobal({ type: 'limitResumeChanged', sessionId, interrupted });
+    }
+    // 取り消した・別の場所に替えた予約が分けた作業場所なら、使っていなければ片付ける（ADR 0089）
+    if (current.nextSettings?.cwd && current.nextSettings.cwd !== next?.cwd) settleWorktreeAt(current.nextSettings.cwd).catch(() => {});
+    if (!cancel) {
+      if (targetId !== undefined) await savePref("backend", target.id);
+      // 互換の接続先のモデル・段は公式の既定（prefs）に覚えない。接続先の既定は設定の「既定にする」だけで決まる（決定 2）
+      if (args.rememberEffort && !selectedEndpoint) await savePref("effort", selectedEffort, target.id);
+      if (args.rememberModel && !selectedEndpoint) await savePref("model", selectedModel, target.id);
+      if (args.rememberMode && selectedMode !== undefined) await savePref("mode", selectedMode, target.id);
+      // 人が選んだ Claude のアカウントは、次に開く新しい会話の既定にする（newSession）
+      if (account !== undefined) await savePref("claudeAccount", account || null);
+    }
+    emitGlobal({ type: "nextSettings", sessionId, nextSettings: next });
+    return next;
+  });
+  settingsWrites.set(sessionId, work);
+  try { return await work; }
+  finally { if (settingsWrites.get(sessionId) === work) settingsWrites.delete(sessionId); }
+}
+
+/** 送っていない会話を消す（sessions.deleteUnsent。WS の deleteUnsentSession の中身） */
+async function deleteUnsentSessionOf(args) {
+  const { sessionId } = args ?? {};
+  if (!sessionId || switching.has(sessionId) || forking.has(sessionId) || runtime.turns.has(sessionId)
+      || (await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status))
+      || schedule.list().some(row => row.sessionId === sessionId && row.kind === 'send')) throw new Error(t('session.cannotDeleteBusy'));
+  switching.add(sessionId);
+  try {
+    if (!(await store.get(sessionId)).unsent) throw new Error(t('session.onlyUnsentDeletable'));
+    compactionScheduler.cancel(sessionId);
+    queuedCompactions.delete(sessionId);
+    shellRuns.stopSession(sessionId);
+    await deleteUnsentConversation(sessionId);
+    await store.removeSession(sessionId);
+    releaseAgentConnection(sessionId);
+    settleWorktreesOf(sessionId).catch(() => {});
+    emitGlobal({ type: "sessionsChanged", sessionId: null, deleted: sessionId });
+    return "deleted";
+  } finally { switching.delete(sessionId); completionNotices.changed(sessionId); }
+}
+
+/** 会話の圧縮を頼む（sessions.compact。WS の compactConversation の中身） */
+async function requestCompaction(args) {
+  const sessionId = args?.sessionId;
+  compactionScheduler.cancel(sessionId);
+  const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
+  if (!backend) throw new Error(t('session.notFound'));
+  if (!backend.capabilities?.compact) throw new Error(t('compaction.unsupported'));
+  const queued = sessionBusy(sessionId);
+  void compactConversation(sessionId).catch(err => compactionStartFailed(sessionId, 'manual', err));
+  return { status: queued ? 'queued' : 'started' };
+}
+
+/** 予約・待ちの圧縮を取り消す（sessions.cancelCompaction） */
+async function cancelRequestedCompaction(args) {
+  const sessionId = args?.sessionId;
+  compactionScheduler.cancel(sessionId);
+  queuedCompactions.delete(sessionId);
+  return { cancelled: true };
+}
+
+/** 会話ごとの自動圧縮の切り替え（sessions.setAutoCompaction） */
+async function setConversationAutoCompactionOf(args) {
+  const sessionId = args?.sessionId;
+  const off = args?.off;
+  if (typeof off !== 'boolean') throw new Error(t('compaction.invalidSetting'));
+  if (!sessionId) throw new Error(t('session.notFound'));
+  if (off) compactionScheduler.cancel(sessionId);
+  if (!(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
+  await store.setSessionData(sessionId, 'autoCompactionOff', off);
+  emitGlobal({ type: 'conversationAutoCompaction', sessionId, off });
+  return { off };
+}
+
+/** 会話の題を考えてもらう（sessions.suggestTitle。WS の suggestTitle の中身）。会話は変えない */
+async function suggestTitleOf(args) {
+  const { sessionId } = args ?? {};
+  if (!sessionId) throw new Error(t('session.required'));
+  const backend = await resolveBackendForSession(sessionId);
+  if (!backend) throw new Error(t('agents.notFound'));
+  if (!backend.suggestTitle) throw new Error(t('title.unsupported'));
+  const { messages } = await history.loadTranscript(sessionId, backend);
+  // タイトルは会話の言語で作る（渡す見出しもその言語）
+  const lng = await ensureAgentLocale(sessionId);
+  const gist = messages
+    .filter((m) => m.text)
+    .slice(0, 6)
+    .map((m) => m.role === "user" ? agentT(lng, 'title.request', { text: textForTitleModel(m.text).slice(0, 600) }) : agentT(lng, 'title.response', { text: m.text.slice(0, 600) }))
+    .join(NL + NL);
+  if (!gist) throw new Error(t('title.noContent'));
+
+  let title = "";
+  const context = {};
+  try {
+    // タイトル生成もその会話で選んだアカウントで回す。使えないアカウントなら生成しない（別のアカウントへ落とさない）
+    // 互換の接続先の会話は、その接続先の Haiku 相当（Codex は既定）のモデルで作る。使えない接続先なら作らない
+    const saved = await store.get(sessionId);
+    if (endpointCapable(backend) && saved.compatEndpoint) context.endpoint = await compatEndpoints.resolve(saved.compatEndpoint, backend.id);
+    if (!context.endpoint && backend.capabilities?.claudeAccounts) {
+      const account = await claudeAccounts.resolve(saved.claudeAccount ?? '');
+      if (account) context.oauthToken = account.token;
+    }
+    title = String(await backend.suggestTitle({ transcript: gist, locale: lng, ...context }) ?? "");
+  } catch (err) {
+    throw new Error(t('title.failed', { error: redactSecret(redactToken(err?.message ?? err, context.oauthToken), context.endpoint?.key) }));
+  }
+
+  // 前後の記号を落とす。モデルが鉤括弧やクオートで包むことがある
+  title = title.trim().split(NL)[0].replace(/^["'「『]|["'」』。]$/g, "").trim().slice(0, 60);
+  if (!title) throw new Error(t('title.empty'));
+  return { title };
+}
+
+/** 状態のグループの名前を替える（statuses.rename。WS の renameStatus の中身）。付いている会話ごとに変更の記録を残す */
+async function renameStatusGroup(args, actor) {
+  const { from, to } = args ?? {};
+  if (typeof from !== "string" || !from) throw new Error(t('statuses.renameFromRequired'));
+  const next = typeof to === "string" ? to.trim() : "";
+  const hit = (await sessionList({ limit: 500 })).filter((x) => (x.status ?? "") === from);
+  let done = 0;
+  for (const x of hit) {
+    const backend = getBackend(x.backend);
+    if (backend?.capabilities?.tag && backend.setTag) {
+      await backend.setTag(x.id, next || null).catch(() => {});
+    }
+    await store.recordChange(x.id, {
+      ...changeBy(actor), field: "status", from, to: next || null, backend,
+      ...(next ? savedReason('renameStatus', { to: next }) : savedReason('deleteGroup')),
+    });
+    emitGlobal({ type: 'statusProgress', from, to: next, done: ++done, total: hit.length });
+  }
+  // statuses.json の器（アイコン・作った時刻）も一緒に移す。削除なら捨てる（空のグループはこれで消える）
+  await store.moveStatus(from, next || null);
+  emitGlobal({ type: "status", sessionId: null, status: next, by: changeBy(actor).by, bulk: hit.length,
+         ...(next ? savedReason('renamedGroup', { from, to: next }) : savedReason('deletedGroup', { from })) });
+  return { moved: hit.length };
+}
+
+/** 設定の「使用量」の 1 エージェント分（delegation.usage。WS の providerUsage の中身） */
+async function providerUsageOf(args) {
+  const backend = getBackend(args?.backend);
+  if (!backend) throw new Error(t('agents.notFound'));
+  const quota = await providerQuota(backend);
+  let local;
+  try { local = await usageStore.summary(backend.id); }
+  catch { local = { error: t('quota.localFailed') }; }
+  return { backend: backend.id, label: backend.label, quota, local };
+}
+
+/**
+ * 会話へ発言を送る（送信待ちに積む）。画面の送信（WS の sendMessage）と、別の会話からの送信（sessions.send。ADR 0104）が同じ経路を通る。
+ * 走っている会話では送信待ちのまま順番を待つ（途中送信できるエージェントは渡す）。rewind は画面だけ（同じ会話の中で発言の手前まで巻き戻す。ADR 0102）
+ */
+async function acceptMessage(sessionId, messageId, args, { rewind } = {}) {
+  compactionScheduler.cancel(sessionId);
+  if (rewind) {
+    // 受け付け済みの再送（応答が届かず送り直した同じ messageId）は、巻き戻し直さない（もう巻き戻してある）
+    if ((await outbox.list(sessionId)).some(m => m.id === messageId)) return outbox.accept(sessionId, messageId, args);
+    const rewound = await rewindConversation({ sessionId, beforeMessageId: rewind.beforeMessageId, stopRunning: rewind.stopRunning === true });
+    return { ...(await outbox.accept(sessionId, messageId, args)), rewind: rewound };
+  }
+  return acceptSend(sessionId, messageId, args);
+}
+
+// 別の会話の AI が送った発言の印（sessions.send。ADR 0104）。本文のハッシュと送り手を会話に残し、履歴が「<送り手> があなたの代わりに送信」で描く
+// （完了通知の taskNotices と同じ見分け方）。古いものから捨てる
+const RELAYED_KEEP = 500;
+async function recordRelayed(sessionId, prompt, sentBy) {
+  const hash = crypto.createHash('sha256').update(prompt).digest('hex');
+  const kept = ((await store.get(sessionId)).relayed ?? []).filter(r => r.hash !== hash);
+  await store.setSessionData(sessionId, 'relayed', [...kept, { hash, sentBy: publicSender(sentBy) }].slice(-RELAYED_KEEP));
+}
+/** 画面と履歴に出す送り手（連鎖の数は内部の歯止めなので出さない）。bot の会話は name・icon を足す */
+const publicSender = (sentBy) => {
+  if (!sentBy) return null;
+  const { hops, ...shown } = sentBy;
+  return shown;
+};
+// 会話ごとの、送信の連鎖の数（sessions.send の歯止め。ADR 0104）。送信待ちから始まったターンで決め直す（人の発言は 0、
+// 別の会話からの発言はその送信の数）。途中送信で渡った分は大きい方を残す。保存しない（再起動で 0 に戻る）
+const relayHops = new Map();
+const noteRelayHops = (sessionId, args, { steered = false } = {}) => {
+  if (!sessionId) return;
+  const hops = Number.isInteger(args?.sentBy?.hops) ? args.sentBy.hops : 0;
+  relayHops.set(sessionId, steered ? Math.max(relayHops.get(sessionId) ?? 0, hops) : hops);
+};
+
+/** 完了を確認した印（readAt）を付け、変わった分を全画面へ知らせる（WS の markRead・sessions.markRead） */
+async function markReads(reads) {
+  const changed = await store.markRead(reads);
+  if (changed.length) emitGlobal({ type: "read", sessionId: null, reads: changed });
+  // どこかで見た完了・失敗は、スマホに出ている通知を消す
+  for (const [id] of changed) pushNotifier.viewed(id);
+  return changed;
+}
+
+// 会話の操作（sessions.new・abort・compact など。core/ops/conversations.mjs）の本体。画面の WS コマンドの中身を移したもの
+const opsConversations = {
+  create: (args) => createSession(args),
+  deleteUnsent: (sessionId) => deleteUnsentSessionOf({ sessionId }),
+  // 止めた会話の変更の記録に、誰が・どこから・なぜを残す（AI の呼び出しだけ。画面の「止める」は今までどおり記録しない）
+  abort: async ({ sessionId, kind, note, actor }) => {
+    const result = await abortSessions({ sessionId, reason: kind });
+    if (note && sessionId) await store.recordChange(sessionId, { ...changeBy(actor), field: 'abort', to: result.reason, reason: note });
+    return result;
+  },
+  compact: (sessionId) => requestCompaction({ sessionId }),
+  cancelCompaction: (sessionId) => cancelRequestedCompaction({ sessionId }),
+  setAutoCompaction: (sessionId, off) => setConversationAutoCompactionOf({ sessionId, off }),
+  setTurnSettings: (args) => reserveTurnSettings(args),
+  suggestTitle: (sessionId) => suggestTitleOf({ sessionId }),
+  outbox: (sessionId) => outbox.list(sessionId),
+  messageAction: async (sessionId, messageId, action) => { await outbox.action(sessionId, messageId, action); },
+  // 別の会話からの送信（sessions.send）。画面の送信と同じ送信待ちに積む。承認モードは渡さない（宛先の会話のモードで走る）。
+  // 宛先の変更の記録に、誰が・どこから・なぜを残す
+  send: async ({ sessionId, text, sentBy, reason, actor }) => {
+    if (!refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
+    const messageId = `send-${crypto.randomUUID()}`;
+    await recordRelayed(sessionId, text, sentBy);
+    const item = await acceptMessage(sessionId, messageId, { prompt: text, sentBy });
+    await store.recordChange(sessionId, { ...changeBy(actor), field: 'message', to: messageId, reason: reason ?? null });
+    console.log(`  別の会話から送信: ${sentBy?.sessionId ?? '(束縛なし)'} → ${sessionId}（連鎖 ${sentBy?.hops ?? 1}）`);
+    return item;
+  },
+  // 宛先で次に走るときの承認モード（走っているターンのモードと、次のターンのモード。予約があれば予約の分）。sessions.send が送り手と比べる
+  modesOf: async (sessionId) => {
+    const out = [];
+    const live = runtime.turns.get(sessionId);
+    if (live) out.push(live.backend.modes()[live.info.mode]);
+    const reserved = (await store.get(sessionId)).nextSettings;
+    const backend = (reserved?.backend && getBackend(reserved.backend)) || await resolveBackendForSession(sessionId).catch(() => null);
+    if (backend) out.push(backend.modes()[await resolveMode(sessionId, reserved ? reserved.mode : undefined, backend)]);
+    return out.filter(Boolean);
+  },
+  relayHops: (sessionId) => relayHops.get(sessionId) ?? 0,
+  // sessions.send の歯止めで断った（自分自身・委譲の親子・連鎖・回数）。送り手の会話の変更の記録に残す
+  refused: async ({ actor, op, sessionId, code }) => {
+    console.log(`  ${op} を断った: ${code}（${actor?.sessionId ?? '(束縛なし)'} → ${sessionId}）`);
+    if (actor?.sessionId) await store.recordChange(actor.sessionId, { ...changeBy(actor), field: 'opRefused', to: op, reason: code });
+  },
+  // 既読。at を省くと今の完了まで
+  markRead: async (sessionId, at) => {
+    const target = at ?? (await store.get(sessionId)).completedAt;
+    const changed = Number.isFinite(target) ? await markReads([[sessionId, target]]) : [];
+    const readAt = (await store.get(sessionId)).readAt;
+    return { sessionId, readAt: Number.isFinite(readAt) ? readAt : null, changed: changed.length > 0 };
+  },
+};
+
+// 選べるもの（agents.*。core/ops/agents.mjs）の本体
+const opsAgents = {
+  list: () => describeBackends(),
+  models: async (id, cwd) => { const backend = await pickBackend(null, id); return { backend: backend.id, models: await backend.models(cwd) }; },
+  modes: async (id) => { const backend = await pickBackend(null, id); return { backend: backend.id, modes: backend.modes() }; },
+  efforts: async ({ backend: id, model, cwd, endpoint }) => {
+    const backend = await pickBackend(null, id);
+    // endpoint を渡すと互換の接続先の段（既定の段を作らない。Claude は「思考を送る」がオフなら段なし）
+    const row = endpointCapable(backend) && typeof endpoint === 'string' ? await endpointRow(endpoint) : null;
+    return { backend: backend.id, efforts: await effortOptions(backend, model ?? '', cwd, row) };
+  },
+  // 認証はエージェントごとに持ち方が違う。持たないものは supported:false を返す（web はボタンごと隠す）
+  authStatus: async (id) => {
+    const backend = await pickBackend(null, id);
+    const installed = installation(backend.id);
+    if (!installed.installed) return { backend: backend.id, status: { supported: true, ...installed } };
+    if (!backend.auth?.status) return { backend: backend.id, status: { supported: false } };
+    return { backend: backend.id, status: { supported: true, ...installed, ...(await backend.auth.status()) } };
+  },
+};
+
+/**
+ * 会話のモデルの変更。setModel コマンドと sessions.setModel が同じ経路を通る（ADR 0007・0094）。走っているターンにも即時に伝える（できるエージェントだけ）。
+ * 新しい会話の既定のモデル（prefs）として覚えるのは人間の変更だけ（AI が自分の会話で替えたモデルを、黙って全体の既定にしない）
+ */
+async function changeModel(sessionId, model, { actor, reason, backend: given } = {}) {
+  const who = changeBy(actor);
+  const backend = refuseRetired(await pickBackend(sessionId, given));
+  // 互換の接続先の会話はモデル ID を形だけ見る（接続先の一覧＋自由入力）。公式の既定（prefs）には覚えない
+  const endpointId = endpointCapable(backend) ? (await store.get(sessionId)).compatEndpoint ?? '' : '';
+  if (!(await validModel(backend, model, undefined, endpointId))) throw new OpError('INVALID', t('settings.unknownModel', { value: model }));
+  const from = (await store.get(sessionId)).model ?? "";
+  await store.setModel(sessionId, model);
+  if (!endpointId && who.by === 'human') await savePref("model", model, backend.id);
+  await store.recordChange(sessionId, { ...who, field: "model", from, to: model, ...reason, backend });
+  let live = false;
+  const liveTurn = runtime.turns.get(sessionId);
+  if (model && liveTurn?.control.handle && backend.setModelLive) {
+    live = await backend.setModelLive(liveTurn.control.handle, model)
+      .catch((err) => { console.error("  モデルの即時切り替えに失敗:", String(err?.message ?? err)); return false; });
+  }
+  emitGlobal({ type: "model", sessionId, model, by: who.by, live });
+  return { live };
+}
+
 // 状態のグループ（statuses.*）の本体
-const opsStatuses = { setIcon: setStatusIconOf, create: createStatusGroup };
+const opsStatuses = {
+  setIcon: setStatusIconOf,
+  create: createStatusGroup,
+  // 既出の状態一覧。事前定義ではなく補完候補（設計メモ §6）
+  list: () => history.listStatuses(listBackends(), { list: nativeSessions }),
+  rename: (from, to, actor) => renameStatusGroup({ from, to }, actor),
+};
+
+/** 分けた作業場所を作れなかった理由 → 画面の言語の文（server:worktree.fail.<reason>）の OpError */
+// i18n-dynamic: server:worktree.fail.
+const worktreeFailure = (reason, error) => new OpError(reason === 'not-git' ? 'NOT_GIT' : 'WORKTREE_FAILED', t(`worktree.fail.${reason}`, { error: error ?? '' }));
+const worktreeEntry = async (id) => {
+  const entry = await worktreeHost.worktrees.get(String(id ?? ''));
+  if (!entry) throw new OpError('WORKTREE_NOT_FOUND', t('worktree.notFound'));
+  return entry;
+};
+// 分けた作業場所（worktrees.*。ADR 0089）の本体。画面の WS コマンドも AI もここを通る
+const opsWorktrees = {
+  split: async (args) => {
+    const sessionId = typeof args?.sessionId === 'string' && args.sessionId ? args.sessionId : null;
+    const cwd = await worktreeCwd(args);
+    if (!cwd) throw worktreeFailure('not-git');
+    const made = await worktreeHost.split({ cwd, sessionId });
+    if (!made.ok) throw worktreeFailure(made.reason, made.error);
+    return { worktree: made.entry, cwd: made.cwd };
+  },
+  // 変更なし・取り込み済みのときだけ消す（未取り込み・使っているものは残す）
+  discard: async (id) => {
+    const entry = await worktreeHost.worktrees.get(String(id ?? ''));
+    if (!entry) return { action: 'skip' };
+    return worktreeHost.worktrees.settle(entry.id);
+  },
+  keep: async (id, kept) => {
+    const entry = await worktreeEntry(id);
+    await worktreeHost.worktrees.keep(entry.id, kept);
+    return { id: entry.id, kept };
+  },
+  archive: async (id) => {
+    const entry = await worktreeEntry(id);
+    const result = await worktreeHost.archive(entry.id);
+    emitGlobal({ type: 'worktreesChanged', sessionId: null });
+    return result;
+  },
+  restore: async (args) => {
+    const cwd = await gitCwd(args);
+    if (!cwd) throw worktreeFailure('not-git');
+    const made = await worktreeHost.restore({ cwd, ref: String(args?.ref ?? '') });
+    if (!made.ok) throw worktreeFailure(made.reason, made.error);
+    emitGlobal({ type: 'worktreesChanged', sessionId: null });
+    return { worktree: made.entry, cwd: made.cwd };
+  },
+  setSettings: async ({ always }) => {
+    const next = await worktreeHost.worktrees.setSettings({ always });
+    emitGlobal({ type: 'worktreeSettings', sessionId: null, ...next });
+    return next;
+  },
+};
+
+// 通知の設定（notify.*。ADR 0086）の本体。変えたら設定 › 通知の材料を全画面へ配る
+const notifyChanged = async () => emitGlobal({ type: 'notifyStatus', status: await notifyStatus(), sessionId: null });
+const opsNotify = {
+  setPc: async (patch) => { const pc = await notifySettings.set(patch); await notifyChanged(); return pc; },
+  setDevice: async (id, muted) => {
+    if (!remote.deviceInfo(id)) throw new OpError('DEVICE_NOT_FOUND', t('notify.error.unknownDevice'));
+    await remote.setNotifyMuted(id, muted === true);
+    await notifyChanged();
+    return { id, muted: muted === true };
+  },
+};
+
+// 互換の接続先のうち秘密を入力しない操作（compatEndpoints.*）。キーは返さない
+const opsCompat = {
+  get: (id) => compatEndpoints.get(String(id ?? '')),
+  deleteNote: (e) => t('compat.deleteConfirm', { name: e?.name ?? e?.id ?? '' }),
+  recheck: async (id) => {
+    let result;
+    try { result = await compatEndpoints.recheck(String(id ?? '')); }
+    catch (e) { if (e instanceof CheckError) throw new OpError('ENDPOINT_NOT_FOUND', e.message); throw e; }
+    emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
+    return result;
+  },
+  remove: async (id) => {
+    if (!(await compatEndpoints.has(String(id ?? '')))) throw new OpError('ENDPOINT_NOT_FOUND', t('compat.store.notRegistered'));
+    await compatEndpoints.remove(String(id));
+    emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
+    return { id: String(id), deleted: true };
+  },
+};
+
+// コンピューターの操作を止める（computer.stop。docs/computer-use.md「computerStop」）。止める側なので、リモートの端末からも AI からも受ける
+const opsComputer = {
+  stop: (sessionId) => {
+    const result = computerLock.stopSession(sessionId, 'stop');
+    if (result.stopped && result.owner) computerDriver?.stop(result.owner);
+    return { stopped: result.stopped };
+  },
+};
+
+// MCP の登録（core/ops/mcp.mjs）の本体。WS の listPlyMcp などがしていた処理をそのまま持つ
+const opsMcp = {
+  native: { list: (args) => mcpConfig.list(args), get: (args) => mcpConfig.get(args), getWithSecrets: (args) => mcpConfig.getWithSecrets(args), save: (args) => mcpConfig.save(args) },
+  list: async () => {
+    const data = await plyMcp.list();
+    const servers = await Promise.all(data.servers.map(async s => ({ ...s, authStatus: s.auth === 'oauth' ? await mcpOAuth.status(s.name, await plyMcp.registration(s.name)) : null })));
+    return { ...data, servers, storage: await mcpSecrets.status(), settings: await plyMcp.settings() };
+  },
+  read: (name) => plyMcp.read(name),
+  registration: (name) => plyMcp.registration(name),
+  save: async (args) => {
+    const saved = await plyMcp.save(args);
+    if (saved.oauthReset) mcpOAuth.cancel(saved.name);
+    return { ...saved, storage: await mcpSecrets.status() };
+  },
+  remove: async (name) => {
+    const definition = await plyMcp.registration(name);
+    // 消す前に失効させる（トークンを残したまま登録だけ消さない）
+    const logout = definition.auth === 'oauth' ? await mcpOAuth.logout(name, definition, await plyMcp.connection(name, process.cwd()).catch(() => null)).catch(e => ({ revoked: false, reason: e.message })) : null;
+    return { ...(await plyMcp.remove(name)), logout };
+  },
+  rename: async (name, to) => {
+    // 秘密・OAuth の状態・リフレッシュのロック名を引き継いで名前だけ変える
+    const renamed = await plyMcp.rename(name, to, { guard: (definition, fn) => mcpOAuth.rename(name, to, definition, fn) });
+    // 設定 › コンテキストで名前で指したもの（外す・同じ名前の定義の選択）も新しい名前へ
+    const followed = await contextSettings.renameMcp(name, to, { plyFile: (await plyMcp.scanInput()).file }).catch(() => 0);
+    return { ...renamed, settingsUpdated: followed };
+  },
+  // Claude / Codex の登録を取り込む。トークンは流用しない（core/mcp-import.mjs の先頭のコメント）
+  import: (items, includeSecrets) => importNativeMcp({ items, includeSecrets, mcpConfig, plyMcp, detect: definition => mcpOAuth.detect(definition) }),
+  settings: () => plyMcp.settings(),
+  setSettings: (value) => plyMcp.setSettings(value),
+  authStatus: async (name) => {
+    const names = name ? [name] : (await plyMcp.list()).servers.map(s => s.name);
+    const rows = await Promise.all(names.map(async n => mcpOAuth.status(n, await plyMcp.registration(n))));
+    return { servers: rows, storage: await mcpSecrets.status() };
+  },
+  reconnect: async (name, cwd) => {
+    // 接続はターンごとに作り直すので、ここでは今の資格情報でつながるかを確かめる（期限切れならリフレッシュもする）
+    const definition = await plyMcp.registration(name);
+    const result = await connectServer({ id: 'manual', name, origins: [{ source: 'ply' }], definition }, { cwd: cwd ?? process.cwd(), plyMcp, oauth: mcpOAuth });
+    await result.client?.close().catch(() => {});
+    return { name, status: result.status, tools: result.tools?.length ?? 0, reason: result.reason ?? null };
+  },
+};
+
+// Hooks の定義の読み出しの失敗の文はファイルの読み方（hooks-config・ply-hooks）が持つ
+const hookFailure = (e) => new OpError('HOOK_NOT_FOUND', String(e?.message ?? e));
+// Hooks（core/ops/hooks.mjs）の本体。各エージェントの設定ファイル（core/hooks-config.mjs。コマンドは実行しない）と、Pleiad の登録と担当（core/ply-hooks.mjs、ADR 0049）
+const opsHooks = {
+  scan: async ({ cwd: dir, scope, trust } = {}) => {
+    const cwd = dir ? await scanDirectory(dir) : null;
+    const report = await hooksConfig.scan({ cwd, scopes: cwd && scope !== 'user' ? ['user', 'directory'] : ['user'] });
+    return withCodexTrust(report, cwd ?? os.homedir(), { trust: trust === true });
+  },
+  read: (args) => hooksConfig.read(args).catch((e) => { throw hookFailure(e); }),
+  save: (args) => hooksConfig.save(args),
+  copy: (args) => hooksConfig.copy(args),
+  session: async (args = {}) => {
+    // 会話の右パネル: その会話の場所で見つかった定義（読み込まれたかは分からない）と、受け取った発火の記録。
+    // Hooks を Pleiad がそろえた会話は、そのターンの記録（渡した登録・止めたネイティブ・渡せなかったもの・漏れ）も返す（unify）
+    const id = args.sessionId ?? null;
+    const agent = HOOK_AGENTS.includes(args.backend) ? args.backend : null;
+    const cwd = args.cwd ? await scanDirectory(args.cwd).catch(() => null) : null;
+    const report = agent && cwd ? await hooksConfig.scan({ cwd, agents: [agent] }) : null;
+    if (report && agent === 'codex') await withCodexTrust(report, cwd, { trust: args.trust === true });
+    const saved = id ? await store.get(id).catch(() => ({})) : {};
+    const live = id ? runtime.turns.get(id) : null;
+    const unify = live?.contextRecord?.hooks ?? saved.contextSession?.hooks ?? null;
+    const owner = cwd ? (await plyHooks.resolve(cwd).catch(() => null))?.owner ?? 'native' : 'native';
+    // 発火を受け取れる接続: Claude（通知・コールバック）、Codex（hook/started・hook/completed）、Antigravity は Pleiad が渡した分だけ（アダプターの記録）
+    const observable = agent === 'claude' || agent === 'codex' ? 'all' : agent === 'antigravity' && unify?.owner === 'ply' ? 'pleiad' : null;
+    return { agent, cwd, report, observable: Boolean(observable), observed: observable, owner, unify, runs: trimHookRuns([...(saved.hookRuns ?? []), ...(live?.hookRuns ?? [])]) };
+  },
+  view: (cwd) => plyHooks.view(cwd),
+  readPly: (id) => plyHooks.readHook(id).catch((e) => { throw hookFailure(e); }),
+  saveHook: (value, cwd) => plyHooks.save(value ?? {}, { cwd }),
+  remove: (id, cwd) => plyHooks.remove(id, { cwd }),
+  toggle: (id, enabled, cwd) => plyHooks.toggle(id, enabled, { cwd }),
+  setOwner: async (args = {}) => {
+    // 担当と取り込みを 1 回で保存する。取り込む定義はサーバーがファイルから読み直す（画面から来たコマンドは使わない）
+    // 確認票: 確認の面で見た版（revision）と、取り込む行ごとの元の定義の hash（digest）。どちらかが変わっていれば保存しない（確認し直す）
+    const place = args.place ?? null;
+    if (typeof args.revision !== 'string') throw new Error(t('hooksUnify.reviewRequired'));
+    const wanted = Array.isArray(args.imports) ? args.imports : [];
+    if (wanted.length > 100 || wanted.some(x => typeof x?.id !== 'string' || typeof x?.digest !== 'string')) throw new Error(t('hooksUnify.importFailed'));
+    const imports = [...new Map(wanted.map(x => [x.id, x])).values()];
+    const dir = place ? await scanDirectory(place) : null;
+    const { raws } = imports.length ? await nativeRaws(dir, imports.map(x => x.id)) : { raws: [] };
+    const add = [];
+    for (const want of imports) {
+      const raw = raws.find(r => r.row.id === want.id);
+      const c = raw ? importCandidate(raw) : null;
+      if (!c?.importable) throw new Error(t('hooksUnify.importFailed'));
+      if (c.digest !== want.digest) throw new Error(t('hooksUnify.importChanged'));
+      add.push(c.value);
+    }
+    return plyHooks.setOwner({ place, value: args.value ?? null, add, cwd: args.cwd ?? place, expect: args.revision });
+  },
+  // 壊れた hooks.json を退避して、読めた部分だけで書き直す（画面で影響を知らせてから押させる）
+  repair: (cwd) => plyHooks.repair({ cwd }),
+};
+
+// コンテキスト（core/ops/context.mjs）の本体。設定を変えたら全画面へ settingsChanged（変えた主体つき）
+const opsContext = {
+  view: (cwd) => contextSettings.view(cwd),
+  set: async (args, actor) => {
+    const view = await contextSettings.set(args ?? {});
+    settingsChanged(['context.default'], actor);
+    return view;
+  },
+  plyInstructions: () => plyInstructionsState(),
+  plyInstructionItems: () => plyInstructionsCache,
+  previewPlyInstructions: (action) => changePlyInstructions(plyInstructionsCache, action, currentLocale()),
+  setPlyInstructions: async (action, actor) => {
+    await applyPlyInstructions(changePlyInstructions(plyInstructionsCache, action, currentLocale()));
+    settingsChanged(['plyInstructions'], actor);
+    return plyInstructionsState();
+  },
+  refresh: (sessionId) => contextSession.refresh(sessionId),
+  setSessionMcp: (sessionId, name, removed) => contextSession.setMcp(sessionId, name, removed),
+  removedMcp: async (sessionId) => {
+    const live = runtime.turns.get(sessionId)?.contextRecord;
+    return (live ?? (await store.get(sessionId)).contextSession)?.policy?.removedMcp ?? [];
+  },
+};
+
+// リモート（core/ops/remote.mjs）の本体。秘密・トークンは返さない（core/remote/connector.mjs）
+const opsRemote = {
+  status: () => remoteStatus(),
+  setResident: async (patch) => {
+    await residentPrefs.set({ keepRunning: patch.keepRunning, sleep: patch.sleep });
+    const status = await remoteStatus();
+    emitGlobal({ type: 'remoteStatus', status, sessionId: null });
+    postResident({ status });
+    return status;
+  },
+};
 
 /** 変更の記録に残す値（長いものは切る。秘密は設定に持たないので入らない） */
 const clipValue = (value) => { const text = JSON.stringify(value) ?? 'null'; return text.length > 300 ? `${text.slice(0, 299)}…` : text; };
@@ -2226,11 +2894,29 @@ async function finishSettingApproval(requestId, outcome, extra = {}) {
   if (entry) emitGlobal({ type: 'settingApproval', sessionId: entry.sessionId, requestId, outcome });
 }
 
-/** 設定の変更の結果を、エージェントへ渡す文にする（会話の言語。1 件ずつの節を並べる） */
+/** 設定の変更の結果を、エージェントへ渡す文にする（会話の言語。1 件ずつの節を並べる）。via は、求めた子ではなく依頼元へ届けるときの子（routeSettingNotice） */
 function settingNotice(lng, notices) {
   // i18n-dynamic: agent:ops.settingNotice.
   return notices.map((n) => agentT(lng, 'ops.settingNotice.head', { requestId: n.requestId, status: agentT(lng, `ops.settingNotice.status.${n.outcome}`) })
+    + (n.via ? '\n' + agentT(lng, 'ops.settingNotice.fromChild', { taskId: n.via.taskId, title: n.via.title ?? '', state: n.via.status }) : '')
     + '\n' + agentT(lng, `ops.settingNotice.${n.outcome}`, { target: settingTarget(lng, n.op, n.key), error: n.error ?? '' })).join('\n\n');
+}
+
+/**
+ * 承認の結果（設定の変更・ほかの guarded な操作。settingApprovals に積むものすべて）の届け先（ADR 0088「届け先」）。
+ * 承認を求めた会話が委譲の子で、そのタスクが動いていない（完了・失敗・取り消しなど）なら、子の新しいターンは誰にも見られないので、
+ * 依頼元の会話へ届ける（via に子のタスクを添える。依頼元は ply_task_send で子に続きを頼める）。
+ * タスクが動いている（待機・実行中・子のターンが走っている）・依頼元の会話がもう無い・委譲の子でない会話は、求めた会話のまま（null）。
+ */
+async function routeSettingNotice(notice) {
+  const sessionId = notice.sessionId;
+  const delegation = (await store.get(sessionId)).delegation;
+  if (!delegation?.taskId || !delegation.parentSessionId || delegation.parentSessionId === sessionId) return null;
+  const task = agentTasks?.get(delegation.taskId);
+  if (!task || task.sessionId !== sessionId || task.parentSessionId !== delegation.parentSessionId) return null;
+  if (['queued', 'running', 'cancelling'].includes(task.status) || taskExecutions.has(sessionId)) return null;
+  if (!await resolveBackendForSession(delegation.parentSessionId).catch(() => null)) return null;
+  return { sessionId: delegation.parentSessionId, via: { taskId: task.taskId, title: task.title ?? null, status: task.status } };
 }
 
 /**
@@ -2242,8 +2928,91 @@ function opsDeps(lng = currentLocale()) {
     locale: lng,
     app: opsApp,
     sessions: opsSessions,
+    limitResume: {
+      resume: resumeSession,
+      messages: id => outbox.list(id),
+      schedules: id => schedule.list().filter(row => !id || row.sessionId === id),
+      scheduleSend: (input, by) => scheduleSendMessage(input, by),
+      // 「今すぐ送る」。取り出した予定を同じ入口で送る。送れなければ予定に戻す（失っても二重にもしない）
+      sendScheduledNow: async id => {
+        if (schedule.get(id)?.kind !== 'send') throw new Error(t('schedule.notFound'));
+        const taken = await schedule.take(id);
+        if (!taken) throw new Error(t('schedule.notFound'));
+        try { await sendScheduledNow(taken); }
+        catch (e) { await schedule.put(taken).catch(() => {}); throw e; }
+        return { sent: true, sessionId: taken.sessionId, messageId: taken.messageId };
+      },
+      cancel: async id => {
+        const row = schedule.list().find(entry => entry.id === id);
+        // 送信予定は取り出して返す（画面の「編集」は本文を入力欄へ戻す。取り出したものは時刻が来ても動かない）
+        if (row?.kind === 'send') {
+          const taken = await schedule.take(id);
+          return { cancelled: Boolean(taken), ...(taken ? { entry: taken } : {}) };
+        }
+        const cancelled = await schedule.cancel(id);
+        if (cancelled && row?.kind === 'resume') {
+          const meta = await store.get(row.sessionId);
+          if (meta.interrupted?.reason === 'limit' && meta.interrupted.at === row.createdAt) {
+            const interrupted = { ...meta.interrupted, autoResume: false, notifyAtReset: false };
+            await store.setMeta(row.sessionId, { interrupted });
+            limitStates.set(row.sessionId, interruptedOf(interrupted));
+            emitGlobal({ type: 'limitResumeChanged', sessionId: row.sessionId, interrupted });
+          }
+        }
+        return { cancelled };
+      },
+      queue: () => ({ ...resumeQueue.view(), schedules: schedule.list().filter(row => row.kind === 'resume'), settings: limitResumeSettings }),
+      setQueue: async ({ action, sessionId, enabled }) => {
+        if (action === 'stop') resumeQueue.stop();
+        else if (action === 'continue') resumeQueue.continue();
+        else if (action === 'release') {
+          for (const [id, meta] of Object.entries(await store.getAll())) {
+            const stopped = meta.interrupted;
+            if (stopped?.reason !== 'limit' || !stopped.notifyAtReset || !Number.isFinite(stopped.resetsAt)
+              || stopped.resetsAt > Date.now()) continue;
+            await store.setMeta(id, { interrupted: { ...stopped, notifyAtReset: false } });
+            resumeQueue.enqueue({ sessionId: id, interruptedAt: stopped.at, backend: meta.backend,
+              account: stopped.account, window: stopped.window, sentAt: await limitSentAt(id, stopped.sentAt ?? stopped.at),
+              priority: meta.delegation ? 1 : 0 });
+          }
+        }
+        else if (action === 'first') {
+          if (!resumeQueue.first(sessionId)) {
+            const row = schedule.list().find(r => r.id === `resume:${sessionId}`);
+            if (row) await schedule.put({ ...row, priority: Date.now() });
+          }
+        } else if (action === 'auto') {
+          const meta = await store.get(sessionId);
+          if (meta.interrupted?.reason !== 'limit') throw new Error(t('resume.notInterrupted'));
+          const changed = { ...meta.interrupted, autoResume: Boolean(enabled), notifyAtReset: false };
+          await store.setMeta(sessionId, { interrupted: changed });
+          emitGlobal({ type: 'limitResumeChanged', sessionId, interrupted: changed });
+          if (!enabled) { await schedule.cancel(`resume:${sessionId}`); resumeQueue.remove(sessionId); }
+          else if (Number.isFinite(changed.resetsAt)) await schedule.put({ id: `resume:${sessionId}`, kind: 'resume',
+            sessionId, at: Math.max(changed.resetsAt, Date.now()), createdAt: changed.at, by: 'limit', account: changed.account });
+        }
+        return { ...resumeQueue.view(), schedules: schedule.list().filter(row => row.kind === 'resume'), settings: limitResumeSettings };
+      },
+    },
     delegation: { list: (owner) => agentTasks?.list(owner) ?? [], get: (taskId, offset) => agentTasks?.get(taskId, offset) ?? null,
-      call: (owner, name, args, locale) => callAgentOp(owner, name, args, { locale }) },
+      call: (owner, name, args, locale) => callAgentOp(owner, name, args, { locale }),
+      instructions: (taskId) => agentTasks.instructions(taskId),
+      // 画面の「止める」。どの会話の委譲でも止められる（AI は ply_task_cancel で自分の子だけ）
+      cancel: async (taskId) => {
+        const task = agentTasks.get(taskId);
+        if (!task) throw new Error(t('delegation.taskNotFound'));
+        await agentTasks.cancel(task.taskId);
+        return agentTasks.get(task.taskId);
+      },
+      retry: (args) => retryAgentTask(args),
+      // 委譲先の自動振り分けの設定（設定 › 委譲）。キーは返さない（hasKey だけ）。refresh: true なら使用量を取り直してから返す
+      routing: async ({ refresh } = {}) => {
+        if (refresh && routingSettingsCache.enabled) await routingUsage.refresh();
+        return delegationRoutingState();
+      },
+      providerUsage: (id) => providerUsageOf({ backend: id }) },
+    conversations: opsConversations,
+    agents: opsAgents,
     browser: { call: (owner, name, args, locale) => callBrowserOp(owner, name, args, { locale }),
       setProfile: async (sessionId, profile) => {
         const meta = await store.get(sessionId);
@@ -2255,6 +3024,18 @@ function opsDeps(lng = currentLocale()) {
     prefs: () => store.getPrefs(),
     compactionSettings: () => compactionSettings,
     statuses: opsStatuses,
+    worktrees: opsWorktrees,
+    notify: opsNotify,
+    compat: opsCompat,
+    computer: opsComputer,
+    // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
+    mcp: opsMcp,
+    hooks: opsHooks,
+    context: opsContext,
+    remote: opsRemote,
+    endpoints: { list: (agent) => compatEndpoints.list(agent) },
+    sessionCwd: async (id) => (await store.get(id)).cwd ?? null,
+    sessionBackend: async (id) => (await resolveBackendForSession(id).catch(() => null))?.id,
     // 設定を検査するために、サーバーの知っていること（エージェントの有無・モデルと承認モードの語彙・アカウント・Pleiad の指示）を借りる
     host: {
       hasBackend: (id) => Boolean(getBackend(id)),
@@ -2361,10 +3142,15 @@ async function runningWork() {
     kind: "background", ...b, tasks: b.tasks.map((x) => ({ ...x })),
   }));
 
+  const dueRows = schedule.list();
   return {
     turns,
     permissions,
     subagents,
+    // 終了している間は動かない予定（送信予定・上限の解除後の再開）。終了の確認に件数と次の時刻を出す
+    scheduled: { send: dueRows.filter(r => r.kind === 'send' && !r.held).length, held: dueRows.filter(r => r.kind === 'send' && r.held).length,
+      resume: dueRows.filter(r => r.kind === 'resume').length,
+      nextSendAt: Math.min(Infinity, ...dueRows.filter(r => r.kind === 'send' && !r.held).map(r => r.at)) },
     tasks: (live => agentTasks?.list().map(({ result, ...r }) => (r.worktree ? { ...r, worktree: { ...r.worktree, live: live.has(r.worktree.id) } } : r)) ?? [])(new Set(worktreeHost.worktrees.ids().map(x => x.id))),
     background,
     // 中継の複製は数えない。1つの承認が会話の数だけ増えて見える
@@ -2634,9 +3420,13 @@ const liveNotices = new Map();
 // 指示の item id（task-send-<指示 ID>） -> { sessionId: 子の会話, taskId, instructionId }。合図で指示の状態を決め、
 // 合図が来ないままターンが終わったら待機へ戻して次のターンで送る（ADR 0065）
 const liveInstructions = new Map();
+const limitStates = new Map();
 const outbox = createMessageQueue({
   store,
   active: id => {
+    const limit = limitStates.get(id);
+    if (limit)
+      return { blocked: true, wait: { reason: 'limit', resetsAt: limit.resetsAt } };
     const turn = runtime.turns.get(id);
     if (!turn) {
       if (switching.has(id) || forking.has(id)) return { blocked: true, wait: { reason: 'turn' } };
@@ -2657,7 +3447,9 @@ const outbox = createMessageQueue({
     // 受理と「エージェントに渡った」は別。後から合図を出せるバックエンド（steerConfirms）の分だけ
     // pending を立て、画面は渡るまで待っていることを出す。出せないバックエンドは今までどおり即時扱い
     emitGlobal({ type: 'userMessage', sessionId, messageId: item.id, text: item.args.prompt, at: item.at,
-      ...(turn.control.steerConfirms ? { pending: true } : {}) });
+      ...(item.args.scheduledFor ? { scheduledFor: item.args.scheduledFor } : {}),
+      ...(turn.control.steerConfirms ? { pending: true } : {}), ...(item.args.sentBy ? { sentBy: publicSender(item.args.sentBy) } : {}) });
+    noteRelayHops(sessionId, item.args, { steered: true });
     if (item.args.attachments?.length) {
       (turn.steeredAttachments ??= []).push({ key: item.id, prompt: item.args.prompt });
       await presentAttachments(sessionId, item.args.attachments, makeEmit({ ...turn, presentKey: item.id }));
@@ -2974,6 +3766,7 @@ await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
 // 渡せなければ会話が空いてから新しいターンで。前の起動で待っていた要求は、再起動で取り下げた結果として届ける
 settingApprovals = await createSettingApprovals({
   dataDir: store.dataDir,
+  route: routeSettingNotice,
   onError: e => console.error('  設定の変更の承認の台帳:', String(e?.message ?? e)),
   deliver: async (sessionId, notices) => {
     const live = await noticeTarget(sessionId);
@@ -3186,6 +3979,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       // 中断の理由（abortSessions / giveUp が止める前に付ける。無いまま中断で終わったら user）
       abortReason: null,
       startedAtMs: Date.now(),
+      userSentAt: toMs(args.at) ?? Date.now(),
       backend,
       agentLocale,
       control: { handle: null, onReady: () => outbox.kick(sessionId).catch(() => {}) },
@@ -3211,6 +4005,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         model: model || "",
         effort,
         endpoint: endpointId,
+        account: accountId,
         status,
         attachments,
         // active = main が動いている / waiting = main は返答済みで、裏の subagent などを待っている
@@ -3225,6 +4020,8 @@ async function runTurnInternal(args, onStarted, hooks) {
     const abortFromTask = () => turn.ac.abort();
     hooks.signal?.addEventListener('abort', abortFromTask, { once: true });
     runtime.turns.set(turn.key, turn);
+    // 送信待ちから始まったターン（人の発言・別の会話からの発言）で、送信の連鎖の数を決め直す（sessions.send の歯止め）
+    if (args.messageId) noteRelayHops(sessionId, args);
     for (const read of liveReads) if (read.sessionId === sessionId) read.turn = turn;
     // 分けた作業場所を使うターン。会話の id を台帳に控える（新しい会話は id が決まったとき）。分けて始めた印の行は id が決まってから出す
     turn.worktreeId = worktreeEntry?.id ?? null;
@@ -3285,7 +4082,9 @@ async function runTurnInternal(args, onStarted, hooks) {
         const stops = (await store.get(sessionId).catch(() => null))?.stops;
         interruption = interruptionNote(agentLocale, stops, stops?.reason);
       }
-      if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true });
+      if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true,
+        ...(args.scheduledFor ? { scheduledFor: args.scheduledFor } : {}),
+        ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}) });
       if (interruption) emit({ type: 'interruptionNote', text: interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
       broadcastRunning();
       syncRunningPoll();
@@ -3478,8 +4277,15 @@ async function endTurn(turn, emit, { record = true } = {}) {
   const completedAt = requeued ? null : Date.now();
   // 中断で終わった（バックエンドが aborted を返した。止めた後に失敗として終わったものも含む）なら、会話に中断として残す。
   // 時刻は completedAt と同じ値にする（確認済みの印 readAt は completedAt で丸めるので、ずらすと未読から戻れない）
-  const stopped = !requeued && (turn.outcome === "aborted" || (turn.ac.signal.aborted && turn.outcome !== "ok"));
-  const interrupted = stopped ? { at: completedAt, reason: turn.abortReason ?? "user" } : null;
+  const limited = !requeued && turn.outcome === 'limited';
+  const stopped = !requeued && (limited || turn.outcome === "aborted" || (turn.ac.signal.aborted && turn.outcome !== "ok"));
+  const interrupted = limited ? { at: completedAt, reason: 'limit', sentAt: turn.userSentAt, ...turn.limit } : stopped ? { at: completedAt, reason: turn.abortReason ?? "user" } : null;
+  const autoResume = limited && limitResumeSettings.mode === 'auto' && Number.isFinite(interrupted.resetsAt)
+    && interrupted.resetsAt - completedAt <= 12 * 60 * 60_000;
+  const notifyAtReset = limited && limitResumeSettings.mode === 'ask' && Number.isFinite(interrupted.resetsAt)
+    && interrupted.resetsAt - completedAt <= 12 * 60 * 60_000;
+  if (limited) interrupted.autoResume = autoResume;
+  if (limited) interrupted.notifyAtReset = notifyAtReset;
   if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id, sessionId: turn.info.sessionId })
     .catch(() => { console.error('  使用量を記録できませんでした'); });
   if (turn.info.sessionId) {
@@ -3498,6 +4304,12 @@ async function endTurn(turn, emit, { record = true } = {}) {
     await store.setMeta(turn.info.sessionId, patch).catch(err => {
       console.error("  完了の記録に失敗:", String(err?.message ?? err));
     });
+    if (limited) {
+      const id = turn.info.sessionId;
+      limitStates.set(id, interrupted);
+      if (autoResume || notifyAtReset) await schedule.put({ id: `resume:${id}`, kind: 'resume', sessionId: id,
+        at: interrupted.resetsAt, createdAt: completedAt, by: 'limit', account: interrupted.account });
+    }
     // このターンで進んだ分を検索の写しへ（裏で読み直す。待たない）
     if (!requeued) sessionSearch.refresh(turn.info.sessionId);
     // 中断で終わったターンが抱えていた裏の作業・承認待ちを、会話の「止めたもの」に残す（次のターンで伝える）
@@ -3510,6 +4322,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // Retain turnEnd in snapshots already being read, then release the turn.
   emit({ type: "turnEnd", completedAt, outcome: turn.outcome, interrupted, ...(requeued ? { requeued: true } : {}), ...(delegated ? { delegated: true } : {}) });
   runtime.turns.delete(turn.key);
+  if (turn.info.sessionId) resumeQueue.settled(turn.info.sessionId);
   // 渡った合図が来ないまま終わった完了通知は、読まれたか分からない。通知は送り直してよいので、空いたときの経路へ戻す
   for (const [id, notice] of [...liveNotices]) {
     if (notice.owner !== turn.info.sessionId) continue;
@@ -3539,7 +4352,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 分けた作業場所: このターンで取り込まれたもの・使われなくなったものを片付ける（ADR 0089）
   worktreeSweepSoon();
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
-  if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt, { startedAt: turn.startedAtMs });
+  if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId,
+    limited && !interrupted.autoResume ? 'error' : turn.outcome, completedAt, { startedAt: turn.startedAtMs });
   settingApprovals?.changed();
   // bot の会話なら、ターンの投稿を確定し、たまった出来事を渡す（ターンを手放した後。待たない）
   if (!requeued) void botHost?.onTurnEnd(turn, { outcome: turn.outcome, interrupted, requeued });
@@ -3919,6 +4733,19 @@ const resumeRunning = () => Object.assign(new Error(t('resume.running')), { code
 async function resumeSession(sessionId) {
   if (!sessionId || typeof sessionId !== 'string' || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
   if (resuming.has(sessionId) || sessionBusy(sessionId)) throw resumeRunning();
+  const oldLimit = limitStates.get(sessionId);
+  if (oldLimit) {
+    const selected = await store.get(sessionId);
+    const currentAccount = selected.nextSettings?.account ?? selected.claudeAccount ?? '';
+    const currentBackend = selected.nextSettings?.backend ?? selected.backend;
+    if (currentBackend !== oldLimit.backend || (oldLimit.backend === 'claude' && currentAccount !== (oldLimit.account ?? ''))) {
+      limitStates.delete(sessionId);
+      await schedule.cancel(`resume:${sessionId}`);
+      resumeQueue.remove(sessionId);
+    } else if (!oldLimit.resetsAt || oldLimit.resetsAt > Date.now()) {
+      throw Object.assign(new Error(t('resume.limitWaiting')), { code: 'LIMIT_WAITING' });
+    } else limitStates.delete(sessionId);
+  }
   resuming.add(sessionId);
   let sent = null;
   try {
@@ -3931,9 +4758,14 @@ async function resumeSession(sessionId) {
     const open = items.filter(m => !['sent', 'cancelled'].includes(m.status));
     // 送信中、または先頭が送信待ち（すぐ送られる）なら、もう続きを送っている（再開の二度押し・別の端末から）。
     // 中断の後に送った（受け付けた）ものが既に渡っていても同じ（ターンの開始で中断の印が消えるまでの間）
-    if (open.some(m => m.status === 'sending') || open[0]?.status === 'queued'
+    if (open.some(m => m.status === 'sending') || (open[0]?.status === 'queued' && !oldLimit)
       || items.some(m => m.status === 'sent' && Date.parse(m.at) > interrupted.at)) throw resumeRunning();
     if (open.some(m => m.status === 'unknown')) throw Object.assign(new Error(t('resume.outboxUnknown')), { code: 'OUTBOX_UNKNOWN' });
+    if (open[0]?.status === 'queued' && oldLimit) {
+      sent = open.filter(m => m.status === 'queued').map(m => m.id);
+      outbox.kick(sessionId).catch(() => {});
+      return { sent: 'outbox', count: sent.length };
+    }
     const released = await outbox.retryPaused(sessionId, { failed: true });
     if (released.length) {
       sent = released;
@@ -3949,6 +4781,116 @@ async function resumeSession(sessionId) {
     if (sent) outboxSettled(sessionId, sent).finally(() => resuming.delete(sessionId));
     else resuming.delete(sessionId);
   }
+}
+
+/**
+ * 送信を受け付ける（画面の送信・送信予定の時刻・「今すぐ送る」が同じ入口）。
+ * 中断した会話に新しい指示を送ったら、中断で保留になった未送信を先に並びのまま送り直す（再開と同じ）。
+ * 戻さないと新しい指示は保留の後ろで順番を待ち続ける。画面は「保留中の N 件の後にこの指示で続けます」と出している
+ */
+async function acceptSend(sessionId, messageId, args) {
+  if (!sessionBusy(sessionId) && interruptedOf((await store.get(sessionId)).interrupted)?.reason !== 'limit'
+    && (await outbox.list(sessionId)).some(m => m.status === 'paused')) await outbox.retryPaused(sessionId);
+  return outbox.accept(sessionId, messageId, args);
+}
+
+async function limitSentAt(sessionId, fallback) {
+  const items = await outbox.list(sessionId).catch(() => []);
+  return Math.max(fallback, ...items.filter(item => item.status !== 'cancelled')
+    .map(item => toMs(item.at)).filter(Number.isFinite));
+}
+
+const resumeQueue = createResumeQueue({
+  settings: () => limitResumeSettings,
+  changed: state => emitGlobal({ type: 'resumeQueue', sessionId: null, state }),
+  guarded: row => { void conversationTitleOf(row.sessionId).then(title =>
+    pushNotifier.limitGuarded({ sessionId: row.sessionId, title })).catch(() => {}); },
+  guard: async row => {
+    const backend = getBackend(row.backend);
+    if (!backend?.usage) return null;
+    const quota = await backend.usage({ cwd: process.cwd(), ...(backend.capabilities?.claudeAccounts ? await usageAccounts() : {}) }).catch(() => null);
+    const windows = quota?.accounts ? (quota.accounts.find(a => a.accountId === row.account)?.windows ?? quota.accounts[0]?.windows ?? []) : quota?.windows ?? [];
+    const relevant = row.window === 'five_hour' ? windows.filter(w => w.minutes === 300) : windows;
+    const used = relevant.map(w => w.usedPercent).filter(Number.isFinite);
+    return used.length ? Math.max(...used) : null;
+  },
+  start: async row => {
+    const meta = await store.get(row.sessionId);
+    if (meta.interrupted?.reason !== 'limit' || meta.interrupted.at !== row.interruptedAt
+      || (meta.claudeAccount ?? '') !== (row.account ?? '')) return resumeQueue.settled(row.sessionId);
+    await resumeSession(row.sessionId);
+  },
+});
+const schedule = createSchedule({ file: path.join(store.dataDir, 'schedule.json'),
+  changed: entries => emitGlobal({ type: 'schedules', sessionId: null, entries }),
+  fire: async row => {
+    if (row.kind === 'send') return fireScheduledSend(row);
+    if (row.kind !== 'resume') throw new Error(`Unsupported schedule kind: ${row.kind}`);
+    const meta = await store.get(row.sessionId);
+    if (meta.interrupted?.reason !== 'limit' || meta.interrupted.at !== row.createdAt) return;
+    if ((meta.claudeAccount ?? '') !== (row.account ?? '')) return;
+    if (limitResumeSettings.mode === 'off' && !meta.interrupted.autoResume) return;
+    if (meta.interrupted.notifyAtReset) {
+      emitGlobal({ type: 'limitResumeReady', sessionId: row.sessionId });
+      pushNotifier.limitReady({ sessionId: row.sessionId, title: await conversationTitleOf(row.sessionId) });
+      return;
+    }
+    resumeQueue.enqueue({ sessionId: row.sessionId, interruptedAt: row.createdAt,
+      backend: meta.backend, account: row.account, window: meta.interrupted.window,
+      sentAt: await limitSentAt(row.sessionId, meta.interrupted.sentAt ?? row.createdAt),
+      priority: row.priority ?? (meta.delegation ? 1 : 0) });
+  },
+});
+
+/**
+ * 送信予定の時刻が来た。ふつうの送信と同じ入口（acceptSend）から送信待ちの末尾へ入れるので、会話が走っていれば
+ * 「作業が終わると自動で送信」で待ち、上限で止まっていれば解除まで待つ。予定は送信待ちの順番を塞がない。
+ * 遅れが 1 時間以内なら送り、それより遅れていたら送らずに行を残して確かめさせる（ADR 0103）
+ */
+async function fireScheduledSend(row) {
+  if (!(await resolveBackendForSession(row.sessionId).catch(() => null))) {
+    console.error(`  送信予定を捨てた（会話が無い）: ${row.sessionId}`);
+    return undefined;
+  }
+  if (decideFire(row).action === 'hold') {
+    notifyScheduleMissed(row);
+    return { hold: 'missed' };
+  }
+  await sendScheduledNow(row);
+  return undefined;
+}
+
+/** 送らずに確かめを待っている予定をスマホに知らせる（一度だけ。起動の直後はリモートがまだつながっていないので遅らせて呼ぶ） */
+function notifyScheduleMissed(row) {
+  if (row.notified) return;
+  void conversationTitleOf(row.sessionId).then(title => pushNotifier.scheduleMissed({ sessionId: row.sessionId, title }))
+    .then(sent => (sent?.length ? schedule.patch(row.id, { notified: true }) : null)).catch(() => {});
+}
+
+/** 予定の発言を送信待ちへ渡す。遅れて送ったことを、履歴の発言に添えるため会話に覚える（decorateScheduled） */
+async function sendScheduledNow(row) {
+  compactionScheduler.cancel(row.sessionId);
+  await acceptSend(row.sessionId, row.messageId, sendArgs(row));
+  const meta = await store.get(row.sessionId);
+  await store.setSessionData(row.sessionId, 'scheduledSends', addRecord(meta.scheduledSends, row));
+}
+
+/** 予定を置く。会話ごと・全体の数を絞り、同じ messageId の置き直しは 1 件のまま（二重の予定を作らない） */
+async function scheduleSendMessage(input, by = 'human') {
+  const { sessionId } = input ?? {};
+  if (!sessionId || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
+  const row = buildSendRow({ ...input, sessionId, by });
+  const rows = schedule.list().filter(r => r.kind === 'send');
+  const existing = rows.find(r => r.id === row.id);
+  if (existing) {
+    if (JSON.stringify(existing.args) !== JSON.stringify(row.args) || existing.sessionId !== row.sessionId || existing.at !== row.at)
+      throw new Error(t('queue.idConflict'));
+    return { id: existing.id, at: existing.at, messageId: existing.messageId };
+  }
+  if (rows.filter(r => r.sessionId === sessionId).length >= MAX_PER_SESSION || rows.length >= MAX_TOTAL)
+    throw new Error(t('schedule.full', { max: MAX_PER_SESSION }));
+  await schedule.put(row);
+  return { id: row.id, at: row.at, messageId: row.messageId };
 }
 
 wss.on("connection", (ws, req) => {
@@ -3975,6 +4917,8 @@ wss.on("connection", (ws, req) => {
     notify: 1,
     // 画面の言語。setting は設定値（auto|ja|en）、lang は実際に使う言語（ja|en）
     locale,
+    // 送信予定の時刻をこの PC の時刻でも添えるため（見ている端末と時刻帯が違うとき。ADR 0103）
+    hostTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   }));
   ws.on("close", () => {
     detach(ws);
@@ -3997,71 +4941,64 @@ wss.on("connection", (ws, req) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) }));
     };
 
+    // 画面のコマンドは、操作の一覧（core/ops/）の同じ操作を人（画面）として呼ぶだけの外側。返り値は人に返す形（uiHandler）のまま。
+    // viaOp(id)                  msg.args をそのまま渡す。then（成功の返り値を画面の形に直す）は第 2 引数に関数で渡せる
+    // viaOp(id, input, { shape })  input を渡す（送らない欄 null・undefined は省く）。shape は従来の返り値の形へ寄せるとき
+    // code が FAILED（code の無い失敗）なら画面へは code を付けない
+    // msg.args をそのまま渡すときは、操作の入力に無い欄を無視する（昔の呼び出しは、前の返りをそのまま重ねて渡すことがある。ADR 0095）
+    const args = msg.args;
+    const known = (id, raw) => {
+      const shape = opsRegistry.get(id)?.input?.shape;
+      if (!shape || !raw || typeof raw !== 'object' || Array.isArray(raw)) return raw ?? {};
+      return Object.fromEntries(Object.entries(raw).filter(([k]) => Object.hasOwn(shape, k)));
+    };
+    const viaOp = async (id, second, { shape = (r) => r } = {}) => {
+      const then = typeof second === 'function' ? second : shape;
+      const input = typeof second === 'function' || second === undefined ? known(id, msg.args)
+        : Object.fromEntries(Object.entries(second ?? {}).filter(([, v]) => v !== null && v !== undefined));
+      const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, id, input, opsDeps(locale.lang));
+      return r.ok ? reply(true, await then(r.result)) : reply(false, r.error, r.code === FAILED ? undefined : r.code, r.issues ? { issues: r.issues } : undefined);
+    };
+
     let releaseUpdateGate;
     try {
       releaseUpdateGate = updateGate.enter();
       switch (msg.command) {
         case 'listMcpConfig':
-          return reply(true, await mcpConfig.list(msg.args));
+          return await viaOp('mcp.nativeList');
         case 'readMcpServer':
-          return reply(true, await mcpConfig.get(msg.args));
+          return await viaOp('mcp.nativeRead');
         case 'saveMcpServer':
-          return reply(true, await mcpConfig.save(msg.args));
+          return await viaOp('mcp.nativeSave');
         // ---- Pleiad 自身の MCP 登録と、その認証（担当が Pleiad のときに使う）。秘密の値は返さない
-        case 'listPlyMcp': {
-          const data = await plyMcp.list();
-          const servers = await Promise.all(data.servers.map(async s => ({ ...s, authStatus: s.auth === 'oauth' ? await mcpOAuth.status(s.name, await plyMcp.registration(s.name)) : null })));
-          return reply(true, { ...data, servers, storage: await mcpSecrets.status(), settings: await plyMcp.settings() });
-        }
+        case 'listPlyMcp':
+          return await viaOp('mcp.list');
         case 'setPlyMcpSettings':
-          return reply(true, await plyMcp.setSettings(msg.args ?? {}));
-        case 'renamePlyMcp': {
-          // 秘密・OAuth の状態・リフレッシュのロック名を引き継いで名前だけ変える
-          const name = msg.args?.name, to = msg.args?.to;
-          const renamed = await plyMcp.rename(name, to, { guard: (definition, fn) => mcpOAuth.rename(name, to, definition, fn) });
-          // 設定 › コンテキストで名前で指したもの（外す・同じ名前の定義の選択）も新しい名前へ
-          const followed = await contextSettings.renameMcp(name, to, { plyFile: (await plyMcp.scanInput()).file }).catch(() => 0);
-          return reply(true, { ...renamed, settingsUpdated: followed });
-        }
+          return await viaOp('mcp.setSettings');
+        case 'renamePlyMcp':
+          return await viaOp('mcp.rename');
         case 'importPlyMcp':
-          // Claude / Codex の登録を取り込む。トークンは流用しない（core/mcp-import.mjs の先頭のコメント）
-          return reply(true, await importNativeMcp({ items: msg.args?.items, includeSecrets: msg.args?.includeSecrets === true, mcpConfig, plyMcp,
-            detect: definition => mcpOAuth.detect(definition) }));
+          return await viaOp('mcp.import');
         case 'readPlyMcp':
-          return reply(true, await plyMcp.read(msg.args?.name));
-        case 'savePlyMcp': {
-          const saved = await plyMcp.save(msg.args ?? {});
-          if (saved.oauthReset) mcpOAuth.cancel(saved.name);
-          return reply(true, { ...saved, storage: await mcpSecrets.status() });
-        }
-        case 'deletePlyMcp': {
-          const name = msg.args?.name, definition = await plyMcp.registration(name);
-          // 消す前に失効させる（トークンを残したまま登録だけ消さない）
-          const logout = definition.auth === 'oauth' ? await mcpOAuth.logout(name, definition, await plyMcp.connection(name, process.cwd()).catch(() => null)).catch(e => ({ revoked: false, reason: e.message })) : null;
-          return reply(true, { ...(await plyMcp.remove(name)), logout });
-        }
+          return await viaOp('mcp.read');
+        case 'savePlyMcp':
+          return await viaOp('mcp.save');
+        case 'deletePlyMcp':
+          return await viaOp('mcp.delete');
         case 'mcpAuthStart': {
           const name = msg.args?.name, definition = await plyMcp.registration(name);
           return reply(true, await mcpOAuth.start(name, definition, await plyMcp.connection(name, process.cwd())));
         }
-        case 'mcpAuthStatus': {
-          const names = msg.args?.name ? [msg.args.name] : (await plyMcp.list()).servers.map(s => s.name);
-          const rows = await Promise.all(names.map(async n => mcpOAuth.status(n, await plyMcp.registration(n))));
-          return reply(true, { servers: rows, storage: await mcpSecrets.status() });
-        }
+        case 'mcpAuthStatus':
+          return await viaOp('mcp.authStatus');
         case 'mcpAuthLogout': {
           const name = msg.args?.name, definition = await plyMcp.registration(name);
           return reply(true, await mcpOAuth.logout(name, definition, await plyMcp.connection(name, process.cwd()).catch(() => null)));
         }
-        case 'mcpReconnect': {
-          // 接続はターンごとに作り直すので、ここでは今の資格情報でつながるかを確かめる（期限切れならリフレッシュもする）
-          const name = msg.args?.name, definition = await plyMcp.registration(name);
-          const result = await connectServer({ id: 'manual', name, origins: [{ source: 'ply' }], definition }, { cwd: msg.args?.cwd ?? process.cwd(), plyMcp, oauth: mcpOAuth });
-          await result.client?.close().catch(() => {});
-          return reply(true, { name, status: result.status, tools: result.tools?.length ?? 0, reason: result.reason ?? null });
-        }
+        case 'mcpReconnect':
+          return await viaOp('mcp.reconnect');
         case 'contextSettings':
-          return reply(true, await contextSettings.view(msg.args?.cwd ?? null));
+          return await viaOp('context.settings');
         case 'sessionContext': {
           const saved = msg.args?.sessionId ? (await store.get(msg.args.sessionId)).contextSession : null;
           if (!saved?.report) return reply(true, null);
@@ -4079,15 +5016,11 @@ wss.on("connection", (ws, req) => {
             plyParts: saved.plyParts ?? null });
         }
         case 'plyInstructions':
-          return reply(true, plyInstructionsState());
-        case 'setPlyInstructions': {
-          await applyPlyInstructions(changePlyInstructions(plyInstructionsCache, msg.args, currentLocale()));
-          settingsChanged(['plyInstructions']);
-          return reply(true, plyInstructionsState());
-        }
+          return await viaOp('context.plyInstructions');
+        case 'setPlyInstructions':
+          return await viaOp('context.setPlyInstructions');
         case 'refreshContext':
-          await contextSession.refresh(msg.args?.sessionId);
-          return reply(true, { ok: true });
+          return await viaOp('context.refresh');
         case 'contextDiff':
           return reply(true, await contextSession.diff(msg.args?.sessionId));
         // ---- git の動き（読み取りだけ。ADR 0085）。作業場所は会話の cwd。git が無い・git 管理外は git: null
@@ -4121,105 +5054,56 @@ wss.on("connection", (ws, req) => {
           if (!cwd) return reply(true, { git: false, current: null, conflicts: [], canSplit: false, always });
           return reply(true, await worktreeHost.check({ sessionId, cwd, writes: await sessionWrites(sessionId, msg.args?.backend, msg.args?.mode) }));
         }
-        case 'worktreeSplit': {
-          const sessionId = typeof msg.args?.sessionId === 'string' && msg.args.sessionId ? msg.args.sessionId : null;
-          const cwd = await worktreeCwd(msg.args);
-          if (!cwd) throw new Error(t('worktree.fail.not-git'));
-          const made = await worktreeHost.split({ cwd, sessionId });
-          // i18n-dynamic: server:worktree.fail.
-          if (!made.ok) throw new Error(t(`worktree.fail.${made.reason}`, { error: made.error ?? '' }));
-          return reply(true, { worktree: made.entry, cwd: made.cwd });
-        }
-        case 'worktreeDiscard': {
-          const entry = await worktreeHost.worktrees.get(String(msg.args?.id ?? ''));
-          if (!entry) return reply(true, { action: 'skip' });
-          return reply(true, await worktreeHost.worktrees.settle(entry.id));
-        }
-        case 'worktreeKeep': {
-          const entry = await worktreeHost.worktrees.get(String(msg.args?.id ?? ''));
-          if (!entry) throw new Error(t('worktree.notFound'));
-          await worktreeHost.worktrees.keep(entry.id, msg.args?.kept !== false);
-          return reply(true, { id: entry.id, kept: msg.args?.kept !== false });
-        }
-        case 'worktreeArchive': {
-          const entry = await worktreeHost.worktrees.get(String(msg.args?.id ?? ''));
-          if (!entry) throw new Error(t('worktree.notFound'));
-          const result = await worktreeHost.archive(entry.id);
-          emitGlobal({ type: 'worktreesChanged', sessionId: null });
-          return reply(true, result);
-        }
-        case 'worktreeRestore': {
-          const cwd = await gitCwd(msg.args);
-          if (!cwd) throw new Error(t('worktree.fail.not-git'));
-          const made = await worktreeHost.restore({ cwd, ref: String(msg.args?.ref ?? '') });
-          // i18n-dynamic: server:worktree.fail.
-          if (!made.ok) throw new Error(t(`worktree.fail.${made.reason}`, { error: made.error ?? '' }));
-          emitGlobal({ type: 'worktreesChanged', sessionId: null });
-          return reply(true, { worktree: made.entry, cwd: made.cwd });
-        }
+        // 分ける・片付ける・残す・退避・元に戻す・いつも分けるは worktrees.*（core/ops/worktrees.mjs。AI も同じ操作を呼ぶ。ADR 0094）
+        case 'worktreeSplit':
+          return viaOp('worktrees.split');
+        case 'worktreeDiscard':
+          return viaOp('worktrees.discard');
+        case 'worktreeKeep':
+          return viaOp('worktrees.keep');
+        case 'worktreeArchive':
+          return viaOp('worktrees.archive');
+        case 'worktreeRestore':
+          return viaOp('worktrees.restore');
         case 'worktreeSettings':
           return reply(true, await worktreeHost.worktrees.getSettings());
-        case 'setWorktreeSettings': {
+        case 'setWorktreeSettings':
           if (typeof msg.args?.always !== 'boolean') throw new Error(t('worktree.settingsInvalid'));
-          const next = await worktreeHost.worktrees.setSettings({ always: msg.args.always });
-          emitGlobal({ type: 'worktreeSettings', sessionId: null, ...next });
-          return reply(true, next);
-        }
+          return viaOp('worktrees.setSettings');
         case 'setSessionMcp':
-          await contextSession.setMcp(msg.args?.sessionId, msg.args?.name, msg.args?.removed !== false);
-          return reply(true, { ok: true });
+          return await viaOp('context.setSessionMcp');
         case 'agentMcp':
           return reply(true, await contextSession.agentMcp((await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd));
         case 'nativeInstructions':
           return reply(true, await contextSession.nativeInstructions((await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd, msg.args?.backend));
         case 'contextFindings':
           return reply(true, await contextSession.findings(msg.args?.sessionId, (await contextSettings.get(msg.args?.cwd ?? process.cwd())).cwd, msg.args?.backend));
-        case 'setContextSettings': {
-          const view = await contextSettings.set(msg.args ?? {});
-          settingsChanged(['context.default']);
-          return reply(true, view);
-        }
+        case 'setContextSettings':
+          return await viaOp('context.setSettings');
         // ---- Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。コマンドは実行しない
-        case 'scanHooks': {
-          const cwd = msg.args?.cwd ? await scanDirectory(msg.args.cwd) : null;
-          const report = await hooksConfig.scan({ cwd, scopes: cwd && msg.args?.scope !== 'user' ? ['user', 'directory'] : ['user'] });
-          return reply(true, await withCodexTrust(report, cwd ?? os.homedir(), { trust: msg.args?.trust === true }));
-        }
+        case 'scanHooks':
+          return await viaOp('hooks.scan');
         case 'readHook':
-          return reply(true, await hooksConfig.read(msg.args ?? {}));
+          return viaOp('hooks.read');
         case 'hookTargets':
           return reply(true, await hooksConfig.targets(msg.args ?? {}));
         case 'saveHooks':
-          return reply(true, await hooksConfig.save(msg.args ?? {}));
+          return await viaOp('hooks.saveNative');
         case 'copyHooks':
-          return reply(true, await hooksConfig.copy(msg.args ?? {}));
-        case 'sessionHooks': {
-          // 会話の右パネル: その会話の場所で見つかった定義（読み込まれたかは分からない）と、受け取った発火の記録。
-          // Hooks を Pleiad がそろえた会話は、そのターンの記録（渡した登録・止めたネイティブ・渡せなかったもの・漏れ）も返す（unify）
-          const id = msg.args?.sessionId ?? null;
-          const agent = HOOK_AGENTS.includes(msg.args?.backend) ? msg.args.backend : null;
-          const cwd = msg.args?.cwd ? await scanDirectory(msg.args.cwd).catch(() => null) : null;
-          const report = agent && cwd ? await hooksConfig.scan({ cwd, agents: [agent] }) : null;
-          if (report && agent === 'codex') await withCodexTrust(report, cwd, { trust: msg.args?.trust === true });
-          const saved = id ? await store.get(id).catch(() => ({})) : {};
-          const live = id ? runtime.turns.get(id) : null;
-          const unify = live?.contextRecord?.hooks ?? saved.contextSession?.hooks ?? null;
-          const owner = cwd ? (await plyHooks.resolve(cwd).catch(() => null))?.owner ?? 'native' : 'native';
-          // 発火を受け取れる接続: Claude（通知・コールバック）、Codex（hook/started・hook/completed）、Antigravity は Pleiad が渡した分だけ（アダプターの記録）
-          const observable = agent === 'claude' || agent === 'codex' ? 'all' : agent === 'antigravity' && unify?.owner === 'ply' ? 'pleiad' : null;
-          return reply(true, { agent, cwd, report, observable: Boolean(observable), observed: observable, owner, unify, runs: trimHookRuns([...(saved.hookRuns ?? []), ...(live?.hookRuns ?? [])]) });
-        }
+          return await viaOp('hooks.copy');
+        case 'sessionHooks':
+          return await viaOp('hooks.session');
         // ---- Pleiad の Hooks の登録と担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0049）。エージェントの設定ファイルは書かない
         case 'plyHooks':
-          return reply(true, await plyHooks.view(msg.args?.cwd ?? null));
+          return await viaOp('hooks.list');
         case 'readPlyHook':
-          return reply(true, await plyHooks.readHook(msg.args?.id));
+          return viaOp('hooks.readPly');
         case 'savePlyHook':
-          return reply(true, await plyHooks.save(msg.args?.value ?? {}, { cwd: msg.args?.cwd ?? null }));
+          return await viaOp('hooks.save');
         case 'removePlyHook':
-          return reply(true, await plyHooks.remove(msg.args?.id, { cwd: msg.args?.cwd ?? null }));
+          return await viaOp('hooks.remove');
         case 'togglePlyHook':
-          return reply(true, await plyHooks.toggle(msg.args?.id, msg.args?.enabled !== false, { cwd: msg.args?.cwd ?? null }));
+          return await viaOp('hooks.toggle');
         case 'plyHookPreview': {
           // 追加・編集のシートの確認: エージェントごとの渡し方（イベント・matcher・アダプター・渡せない理由）。保存はしない
           const value = msg.args?.value ?? {};
@@ -4229,30 +5113,10 @@ wss.on("connection", (ws, req) => {
         }
         case 'hooksUnifyPreview':
           return reply(true, await hooksUnifyPreview({ cwd: msg.args?.cwd ?? null, direction: msg.args?.direction === 'native' ? 'native' : 'ply' }));
-        case 'setHooksOwner': {
-          // 担当と取り込みを 1 回で保存する。取り込む定義はサーバーがファイルから読み直す（画面から来たコマンドは使わない）
-          // 確認票: 確認の面で見た版（revision）と、取り込む行ごとの元の定義の hash（digest）。どちらかが変わっていれば保存しない（確認し直す）
-          const place = msg.args?.place ?? null;
-          if (typeof msg.args?.revision !== 'string') throw new Error(t('hooksUnify.reviewRequired'));
-          const wanted = Array.isArray(msg.args?.imports) ? msg.args.imports : [];
-          if (wanted.length > 100 || wanted.some(x => typeof x?.id !== 'string' || typeof x?.digest !== 'string')) throw new Error(t('hooksUnify.importFailed'));
-          const imports = [...new Map(wanted.map(x => [x.id, x])).values()];
-          const dir = place ? await scanDirectory(place) : null;
-          const { raws } = imports.length ? await nativeRaws(dir, imports.map(x => x.id)) : { raws: [] };
-          const add = [];
-          for (const want of imports) {
-            const raw = raws.find(r => r.row.id === want.id);
-            const c = raw ? importCandidate(raw) : null;
-            if (!c?.importable) throw new Error(t('hooksUnify.importFailed'));
-            if (c.digest !== want.digest) throw new Error(t('hooksUnify.importChanged'));
-            add.push(c.value);
-          }
-          return reply(true, await plyHooks.setOwner({ place, value: msg.args?.value ?? null, add, cwd: msg.args?.cwd ?? place, expect: msg.args.revision }));
-        }
-        case 'repairPlyHooks': {
-          // 壊れた hooks.json を退避して、読めた部分だけで書き直す（画面で影響を知らせてから押させる）
-          return reply(true, await plyHooks.repair({ cwd: msg.args?.cwd ?? null }));
-        }
+        case 'setHooksOwner':
+          return await viaOp('hooks.setOwner');
+        case 'repairPlyHooks':
+          return await viaOp('hooks.repair');
         case 'scanContext': {
           // One scan at a time per connection; no changes to running turns.
           // place: 'default' なら場所ごとの上書きを使わず既定だけで探す（設定の「すべての場所」）
@@ -4271,20 +5135,15 @@ wss.on("connection", (ws, req) => {
           finally { ws.contextScanning = false; }
         }
         case "listSessions":
-          return reply(true, await sessionList());
+          return viaOp('sessions.list', args);
 
         // リモート（ホスト側）。秘密・トークンは返さない（core/remote/connector.mjs）
         case 'remoteStatus':
-          return reply(true, await remoteStatus());
+          return await viaOp('remote.status');
         case 'setRemoteSettings':
           return reply(true, withResident(await remote.setSettings(msg.args ?? {})));
-        case 'setRemoteResident': {
-          await residentPrefs.set({ keepRunning: msg.args?.keepRunning, sleep: msg.args?.sleep });
-          const status = await remoteStatus();
-          emitGlobal({ type: 'remoteStatus', status, sessionId: null });
-          postResident({ status });
-          return reply(true, status);
-        }
+        case 'setRemoteResident':
+          return await viaOp('remote.setResident');
         case 'remotePairingStart':
           return reply(true, await remote.startPairing());
         case 'remotePairingCancel':
@@ -4299,20 +5158,11 @@ wss.on("connection", (ws, req) => {
         // 通知（ADR 0086）。この PC の設定とスマホの一覧は設定 › 通知。スマホの通知鍵と設定の登録は、端末の画面（中継越し）からだけ
         case 'notifyStatus':
           return reply(true, await notifyStatus());
-        case 'setNotifyPc': {
-          await notifySettings.set(msg.args ?? {});
-          const status = await notifyStatus();
-          emitGlobal({ type: 'notifyStatus', status, sessionId: null });
-          return reply(true, status);
-        }
-        case 'setNotifyDevice': {
-          const id = String(msg.args?.id ?? '');
-          if (!remote.deviceInfo(id)) throw new Error(t('notify.error.unknownDevice'));
-          await remote.setNotifyMuted(id, msg.args?.muted === true);
-          const status = await notifyStatus();
-          emitGlobal({ type: 'notifyStatus', status, sessionId: null });
-          return reply(true, status);
-        }
+        // この PC の通知・スマホごとの切り替えは notify.*（AI も同じ操作を呼ぶ。ADR 0094）。画面には設定 › 通知の材料を返す
+        case 'setNotifyPc':
+          return viaOp('notify.setPc', () => notifyStatus());
+        case 'setNotifyDevice':
+          return viaOp('notify.setDevice', () => notifyStatus());
         case 'notifyRegister': {
           const via = connectionDevices.get(ws);
           if (!via?.mobile) throw new Error(t('notify.error.notDevice'));
@@ -4326,7 +5176,7 @@ wss.on("connection", (ws, req) => {
         // Claude のアカウント（会話ごとに選ぶ）。トークンは返さない（登録済みかどうかだけ）
         // 互換の接続先（core/compat-endpoints.mjs）。キーは返さない。確認の失敗は例外ではなく { ok: false, error, lines } で返す（理由の行を画面に出すため）
         case 'compatEndpoints':
-          return reply(true, await compatEndpoints.list(msg.args?.agent));
+          return await viaOp('endpoints.list');
         case 'compatEndpointCheck': {
           try { return reply(true, await compatEndpoints.check(msg.args?.input, { id: msg.args?.id ?? null })); }
           catch (e) { if (e instanceof CheckError) return reply(true, { ok: false, error: e.message, lines: e.lines ?? [], code: e.code }); throw e; }
@@ -4336,16 +5186,11 @@ wss.on("connection", (ws, req) => {
           emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
           return reply(true, saved);
         }
-        case 'compatEndpointRecheck': {
-          const result = await compatEndpoints.recheck(String(msg.args?.id ?? ''));
-          emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
-          return reply(true, result);
-        }
-        case 'compatEndpointDelete': {
-          await compatEndpoints.remove(String(msg.args?.id ?? ''));
-          emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
-          return reply(true, await compatEndpoints.list());
-        }
+        // 保存済みの接続先の確認し直しと削除は compatEndpoints.*（キーを入力しない。AI も同じ操作を呼ぶ。ADR 0094）
+        case 'compatEndpointRecheck':
+          return viaOp('compatEndpoints.recheck');
+        case 'compatEndpointDelete':
+          return viaOp('compatEndpoints.delete', () => compatEndpoints.list());
         case 'compatEndpointDefault': {
           await compatEndpoints.setDefault(String(msg.args?.agent ?? ''), String(msg.args?.id ?? ''));
           emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
@@ -4380,89 +5225,13 @@ wss.on("connection", (ws, req) => {
           return reply(true, claudeLogin.cancel(String(msg.args?.loginId ?? '')));
 
         // 使えるエージェントと、その語彙・出し分けの材料
-        case 'providerUsage': {
-          const backend = getBackend(msg.args?.backend);
-          if (!backend) throw new Error(t('agents.notFound'));
-          const quota = await providerQuota(backend);
-          let local;
-          try { local = await usageStore.summary(backend.id); }
-          catch { local = { error: t('quota.localFailed') }; }
-          return reply(true, { backend: backend.id, label: backend.label, quota, local });
-        }
+        case 'providerUsage':
+          return viaOp('delegation.usage', args);
         case "backends":
-          return reply(true, describeBackends());
+          return viaOp('agents.list', args);
 
-        case "setTurnSettings": {
-          const { sessionId, backend: targetId, model, mode, cwd: requestedCwd, cancel, account, endpoint } = msg.args ?? {};
-          if (!sessionId) throw new Error(t('session.required'));
-          if (forking.has(sessionId) || switching.has(sessionId) && !runtime.turns.has(sessionId)) throw new Error(t('session.preparingSettings'));
-          const work = (settingsWrites.get(sessionId) ?? Promise.resolve()).catch(() => {}).then(async () => {
-            const source = refuseRetired(await resolveBackendForSession(sessionId));
-            if (!source) throw new Error(t('session.notFound'));
-            const current = { ...(await store.get(sessionId)) };
-            // 予約の行き先が今は無いエージェント（対応を終えた procway など）なら、予約は無かったものとして扱う（取り消し・選び直しができるように）
-            if (current.nextSettings?.backend && !getBackend(current.nextSettings.backend)) current.nextSettings = null;
-            const target = getBackend(targetId ?? current.nextSettings?.backend ?? source.id);
-            if (!target) throw new Error(t('agents.notFound'));
-            const selectedMode = mode ?? (target.id === (current.nextSettings?.backend ?? source.id)
-              ? current.nextSettings?.mode : target.id !== source.id ? await resolveMode(null, undefined, target) : undefined);
-            if (!cancel && selectedMode !== undefined && !target.modes()[selectedMode]) throw new Error(t('settings.modeUnavailable'));
-            const settingsCwd = requestedCwd || current.nextSettings?.cwd || current.cwd;
-            // 互換の接続先（'' = 公式）。エージェントを変えたら、変えた先の既定（設定で「既定にする」を押したもの。無ければ公式）。
-            // 元のエージェントへ戻したら、この会話の今の接続先に戻る
-            if (endpoint !== undefined && typeof endpoint !== 'string') throw new Error(t('settings.endpointInvalid'));
-            const previousSelection = current.nextSettings?.backend ?? source.id;
-            const currentEndpoint = current.compatEndpoint ?? '';
-            const previousEndpoint = current.nextSettings?.endpoint ?? currentEndpoint;
-            let selectedEndpoint = !endpointCapable(target) ? ''
-              : endpoint ?? (target.id === previousSelection ? previousEndpoint : target.id === source.id ? currentEndpoint : await compatEndpoints.defaultFor(target.id));
-            if (!cancel && endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error(t('settings.endpointNotRegistered'));
-            const endpointChanged = selectedEndpoint !== currentEndpoint;
-            // 接続先を変えたらモデルは接続先の既定（メインのモデル）に戻す（公式のモデル名を互換の先へ送らない）
-            const selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
-            if (!cancel && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) throw new Error(t('settings.modelUnavailable'));
-            const selectedEndpointRow = await endpointRow(selectedEndpoint);
-            const previousBackend = current.nextSettings?.backend ?? source.id;
-            const previousEffort = target.id === previousBackend ? current.nextSettings?.effort ?? current.effort ?? ''
-              : target.id === source.id ? current.effort ?? '' : (await store.getPrefs()).backends?.[target.id]?.effort ?? '';
-            const choices = cancel ? { '': {} } : await effortOptions(target, selectedModel, settingsCwd, selectedEndpointRow);
-            const selectedEffort = cancel ? '' : msg.args.effort !== undefined
-              ? await validateEffort(target, msg.args.effort, selectedModel, settingsCwd, selectedEndpointRow)
-              : Object.hasOwn(choices, previousEffort) ? previousEffort : '';
-            // Claude のアカウント（'' = ログイン中のアカウント）。モデルと同じく次のターンから効く
-            if (account !== undefined && typeof account !== 'string') throw new Error(t('settings.accountInvalid'));
-            const selectedAccount = account ?? current.nextSettings?.account ?? current.claudeAccount ?? '';
-            if (!cancel && account && !(await claudeAccounts.has(account))) throw new Error(t('settings.accountNotRegistered'));
-            const accountChanged = selectedAccount !== (current.claudeAccount ?? '');
-            let selectedCwd = current.nextSettings?.cwd;
-            if (!cancel && requestedCwd !== undefined) {
-              if (typeof requestedCwd !== "string" || !requestedCwd.trim() || requestedCwd.length > 8192) throw new Error(t('cwd.required'));
-              selectedCwd = (await resolveCwd(null, path.resolve(requestedCwd.trim()), source)).cwd;
-              const info = await source.getSession(sessionId);
-              const own = (current.history ?? []).some(h => h?.field === "cwd") ? current.cwd ?? info?.cwd : info?.cwd ?? current.cwd;
-              if (own && path.resolve(own) === selectedCwd) selectedCwd = undefined;
-            }
-            const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged && !endpointChanged)
-              ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(accountChanged ? { account: selectedAccount } : {}), ...(endpointChanged ? { endpoint: selectedEndpoint } : {}) };
-            await store.setSessionData(sessionId, "nextSettings", next);
-            // 取り消した・別の場所に替えた予約が分けた作業場所なら、使っていなければ片付ける（ADR 0089）
-            if (current.nextSettings?.cwd && current.nextSettings.cwd !== next?.cwd) settleWorktreeAt(current.nextSettings.cwd).catch(() => {});
-            if (!cancel) {
-              if (targetId !== undefined) await savePref("backend", target.id);
-              // 互換の接続先のモデル・段は公式の既定（prefs）に覚えない。接続先の既定は設定の「既定にする」だけで決まる（決定 2）
-              if (msg.args.rememberEffort && !selectedEndpoint) await savePref("effort", selectedEffort, target.id);
-              if (msg.args.rememberModel && !selectedEndpoint) await savePref("model", selectedModel, target.id);
-              if (msg.args.rememberMode && selectedMode !== undefined) await savePref("mode", selectedMode, target.id);
-              // 人が選んだ Claude のアカウントは、次に開く新しい会話の既定にする（newSession）
-              if (account !== undefined) await savePref("claudeAccount", account || null);
-            }
-            emitGlobal({ type: "nextSettings", sessionId, nextSettings: next });
-            return next;
-          });
-          settingsWrites.set(sessionId, work);
-          try { return reply(true, await work); }
-          finally { if (settingsWrites.get(sessionId) === work) settingsWrites.delete(sessionId); }
-        }
+        case "setTurnSettings":
+          return viaOp('sessions.setTurnSettings', args);
 
         case "saveDraft": {
           const { sessionId, text = "", attached = [], version } = msg.args ?? {};
@@ -4482,24 +5251,8 @@ wss.on("connection", (ws, req) => {
           return reply(true, "saved");
         }
 
-        case "deleteUnsentSession": {
-          const { sessionId } = msg.args ?? {};
-          if (!sessionId || switching.has(sessionId) || forking.has(sessionId) || runtime.turns.has(sessionId)
-              || (await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status))) throw new Error(t('session.cannotDeleteBusy'));
-          switching.add(sessionId);
-          try {
-            if (!(await store.get(sessionId)).unsent) throw new Error(t('session.onlyUnsentDeletable'));
-            compactionScheduler.cancel(sessionId);
-            queuedCompactions.delete(sessionId);
-            shellRuns.stopSession(sessionId);
-            await deleteUnsentConversation(sessionId);
-            await store.removeSession(sessionId);
-            releaseAgentConnection(sessionId);
-            settleWorktreesOf(sessionId).catch(() => {});
-            emitGlobal({ type: "sessionsChanged", sessionId: null, deleted: sessionId });
-            return reply(true, "deleted");
-          } finally { switching.delete(sessionId); completionNotices.changed(sessionId); }
-        }
+        case "deleteUnsentSession":
+          return viaOp('sessions.deleteUnsent', args, { shape: () => "deleted" });
 
         case "switchBackend": {
           const { sessionId, backend: targetId } = msg.args ?? {};
@@ -4512,6 +5265,17 @@ wss.on("connection", (ws, req) => {
             const target = getBackend(targetId);
             if (!source || !target) throw new Error(t('agents.notFound'));
             await switchBackend(sessionId, source, target);
+            if (source.id !== target.id) {
+              const stopped = (await store.get(sessionId)).interrupted;
+              if (stopped?.reason === 'limit') {
+                await schedule.cancel(`resume:${sessionId}`);
+                resumeQueue.remove(sessionId);
+                const interrupted = { ...stopped, autoResume: false, notifyAtReset: false };
+                await store.setMeta(sessionId, { interrupted });
+                limitStates.set(sessionId, interruptedOf(interrupted));
+                emitGlobal({ type: 'limitResumeChanged', sessionId, interrupted });
+              }
+            }
             // 入力欄の `!`: 走っている分は止め、渡していない分は捨てる（前のエージェントの形でしか渡せない。ADR 0054）
             if (source.id !== target.id) await shellRuns.switched(sessionId, source, target);
             // 接続先はエージェントごとの形式なので、エージェントが変わったら変えた先の既定（「既定にする」を押したもの。無ければ公式）に置き直す
@@ -4531,21 +5295,10 @@ wss.on("connection", (ws, req) => {
           if (typeof messageId !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(messageId)) throw new Error(t('send.messageIdRequired'));
           if (typeof prompt !== 'string' || !prompt.trim()) throw new Error(t('send.messageRequired'));
           if (attachments !== undefined && !Array.isArray(attachments)) throw new Error(t('send.invalidAttachments'));
-          // 同じ会話の中で、発言の手前まで巻き戻して送り直す（ADR 0091）。{ beforeMessageId, stopRunning? }
+          // 同じ会話の中で、発言の手前まで巻き戻して送り直す（ADR 0102）。{ beforeMessageId, stopRunning? }
           if (rewind !== undefined && (typeof rewind?.beforeMessageId !== 'string' || !rewind.beforeMessageId)) throw new Error(t('rewind.invalid'));
-          compactionScheduler.cancel(sessionId);
           const args = { prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}) };
-          if (rewind) {
-            // 受け付け済みの再送（応答が届かず送り直した同じ messageId）は、巻き戻し直さない（もう巻き戻してある）
-            if ((await outbox.list(sessionId)).some(m => m.id === messageId)) return reply(true, await outbox.accept(sessionId, messageId, args));
-            const rewound = await rewindConversation({ sessionId, beforeMessageId: rewind.beforeMessageId, stopRunning: rewind.stopRunning === true });
-            return reply(true, { ...(await outbox.accept(sessionId, messageId, args)), rewind: rewound });
-          }
-          // 中断した会話に新しい指示を送ったら、中断で保留になった未送信を先に並びのまま送り直す（再開と同じ）。
-          // 戻さないと新しい指示は保留の後ろで順番を待ち続ける。画面は「保留中の N 件の後にこの指示で続けます」と出している
-          if (!sessionBusy(sessionId) && interruptedOf((await store.get(sessionId)).interrupted)
-            && (await outbox.list(sessionId)).some(m => m.status === 'paused')) await outbox.retryPaused(sessionId);
-          return reply(true, await outbox.accept(sessionId, messageId, args));
+          return reply(true, await acceptMessage(sessionId, messageId, args, { rewind }));
         }
         // 入力欄の `!`（シェルの行。ADR 0054）。人の操作なので承認モードは掛けない。送信待ちにも送り直しの控えにも積まない
         case 'runShell': {
@@ -4582,76 +5335,42 @@ wss.on("connection", (ws, req) => {
             throw e;
           }
         }
-        case 'compactConversation': {
-          const sessionId = msg.args?.sessionId;
-          compactionScheduler.cancel(sessionId);
-          const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
-          if (!backend) throw new Error(t('session.notFound'));
-          if (!backend.capabilities?.compact) throw new Error(t('compaction.unsupported'));
-          const queued = sessionBusy(sessionId);
-          void compactConversation(sessionId).catch(err => compactionStartFailed(sessionId, 'manual', err));
-          return reply(true, { status: queued ? 'queued' : 'started' });
-        }
-        case 'cancelCompaction': {
-          const sessionId = msg.args?.sessionId;
-          compactionScheduler.cancel(sessionId);
-          queuedCompactions.delete(sessionId);
-          return reply(true, { cancelled: true });
-        }
-        case 'setConversationAutoCompaction': {
-          const sessionId = msg.args?.sessionId;
-          const off = msg.args?.off;
-          if (typeof off !== 'boolean') throw new Error(t('compaction.invalidSetting'));
-          if (!sessionId) throw new Error(t('session.notFound'));
-          if (off) compactionScheduler.cancel(sessionId);
-          if (!(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
-          await store.setSessionData(sessionId, 'autoCompactionOff', off);
-          emitGlobal({ type: 'conversationAutoCompaction', sessionId, off });
-          return reply(true, { off });
-        }
-        case 'messageAction': {
-          const { sessionId, messageId, action } = msg.args ?? {};
-          await outbox.action(sessionId, messageId, action);
-          return reply(true, await outbox.list(sessionId));
-        }
+        case 'compactConversation':
+          return viaOp('sessions.compact', args);
+        case 'cancelCompaction':
+          return viaOp('sessions.cancelCompaction', args);
+        case 'setConversationAutoCompaction':
+          return viaOp('sessions.setAutoCompaction', args);
+        case 'messageAction':
+          return viaOp('sessions.messageAction', args);
         case 'listMessages':
-          return reply(true, await outbox.list(msg.args?.sessionId));
+          return viaOp('sessions.listMessages', args);
 
-        case "abort": {
-          // { sessionId?, reason? }。sessionId を省略したら全部止める。reason は user|update|quit（ほかは user）
-          const { sessionId, reason } = msg.args ?? {};
-          return reply(true, await abortSessions({ sessionId, reason }));
-        }
+        // { sessionId?, reason? }。sessionId を省略したら全部止める。reason は user|update|quit（ほかは user）。操作では reason は理由の文で、この種類は kind
+        case "abort":
+          return viaOp('sessions.abort', { sessionId: args?.sessionId, kind: ['user', 'update', 'quit'].includes(args?.reason) ? args.reason : undefined });
 
         // 中断した会話を続ける（docs/design.md「中断と再開」）。{ sessionId } -> { sent: "outbox"|"text", count }
         case "resume":
-          return reply(true, await resumeSession(msg.args?.sessionId));
+          return viaOp('sessions.resume', args);
 
-        case 'agentTasks': return reply(true, agentTasks.list(msg.args?.sessionId));
-        case 'agentTaskInstructions': {
-          const result = agentTasks.instructions(msg.args?.taskId);
-          if (!result) throw new Error(t('delegation.taskNotFound'));
-          return reply(true, result);
-        }
-        case 'cancelAgentTask': {
-          const task = agentTasks.get(msg.args?.taskId);
-          if (!task) throw new Error(t('delegation.taskNotFound'));
-          await agentTasks.cancel(task.taskId); return reply(true, agentTasks.get(task.taskId));
-        }
+        case 'agentTasks':
+          return viaOp('delegation.tasks', { parentSessionId: args?.sessionId });
+        case 'agentTaskInstructions':
+          return viaOp('delegation.instructions', args);
+        case 'cancelAgentTask':
+          return viaOp('delegation.taskCancel', args);
         // 委譲カードの「別の候補でやり直す」。{ taskId, candidate, stop?, approved? } -> { task } か、承認モードが強くなるときは { confirm }
-        case 'retryAgentTask': return reply(true, await retryAgentTask(msg.args ?? {}));
+        case 'retryAgentTask':
+          return viaOp('delegation.retry', args);
 
         // 委譲先の自動振り分けの設定（設定 › 委譲）。タスクごとの振り分けの記録は agentTasks の各行の routing。
         // キーは返さない（hasKey だけ）。refresh: true なら使用量を取り直してから返す
         case 'delegationRouting':
-          if (msg.args?.refresh && routingSettingsCache.enabled) await routingUsage.refresh();
-          return reply(true, await delegationRoutingState());
-        // settings は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する
-        case 'setDelegationRouting': {
-          await applyRoutingSettings(msg.args?.settings);
-          settingsChanged(['delegationRouting']);
-          return reply(true, await delegationRoutingState());
-        }
+          return viaOp('delegation.routing', args);
+        // settings は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する（settings.set の delegationRouting と同じ定義）
+        case 'setDelegationRouting':
+          return viaOp('settings.set', { key: 'delegationRouting', value: args?.settings }, { shape: () => delegationRoutingState() });
         // 判定器のキー（service: openrouter = Jev / cerebras）。登録が外部送信の同意になる（キーが無ければ何も送らない）
         case 'setDelegationRoutingKey':
         case 'deleteDelegationRoutingKey': {
@@ -4736,6 +5455,8 @@ wss.on("connection", (ws, req) => {
             // 渡さなかった分は、次の人の発言の前に差す（ADR 0055）
             data.messages = msg.args?.outline ? shellRuns.decorate(data.messages, sidecar, backend)
               : [...shellRuns.placeKept(shellRuns.decorate(data.messages, sidecar, backend), sidecar), ...shellRuns.rows(sessionId, sidecar)];
+            // 送信予定で送った発言には、予定の時刻を付ける（画面は遅れて送ったものにだけ「9:00 の予定を 9:32 に送りました」を出す）
+            if (!msg.args?.outline) data.messages = decorateScheduled(data.messages, sidecar.scheduledSends);
             // 系譜の照合（web/branches.mjs）は uuid・役割・本文・ツール名しか見ない。
             // ツール結果や提示まで載せると、家族を開くたびに数十MBが流れて画面が止まる
             if (msg.args?.outline) return reply(true, { messages: data.messages.map(m => ({
@@ -4777,79 +5498,19 @@ wss.on("connection", (ws, req) => {
         }
 
         // Allocate the host identity before the native engine has a first turn.
-        case "newSession": {
-          const sourceId = msg.args?.sourceSessionId;
-          if (sourceId) await settingsWrites.get(sourceId);
-          const sourceBackend = sourceId ? await resolveBackendForSession(sourceId) : null;
-          if (sourceId && !sourceBackend) throw new Error(t('session.sourceNotFound'));
-          const source = sourceId ? await store.get(sourceId) : null;
-          const selected = source?.nextSettings?.backend ?? sourceBackend?.id;
-          // 引き継ぎ元が対応を終えたエージェントなら、エージェントは継がない（既定へ落とす）
-          const selectedBackend = getBackend(selected) ? selected : undefined;
-          const backend = await pickBackend(null, msg.args?.backend ?? selectedBackend);
-          const inherit = source && backend.id === selectedBackend;
-          const model = msg.args?.model ?? (inherit ? source.nextSettings?.model ?? source.model ?? "" : undefined);
-          const mode = msg.args?.mode ?? (inherit ? source.nextSettings?.mode ?? (backend.id === sourceBackend.id ? source.mode : undefined) : undefined);
-          const cwd = typeof msg.args?.cwd === "string" && msg.args.cwd.trim() ? msg.args.cwd.trim() : os.homedir();
-          const status = typeof msg.args?.status === "string" ? msg.args.status.trim() || null : null;
-          // draft: 入力欄に入れておく文（「見直しを頼む」。ADR 0056）。作るのと同時に下書きとして保存し、送らない
-          const draft = msg.args?.draft;
-          if (draft !== undefined && (typeof draft !== "string" || draft.length > 2_000_000)) throw new Error(t('session.draftTooLarge'));
-          const now = Date.now();
-          // 既定のタイトルは保存しない（空）。画面が今の言語で既定名を出す（web/style.css の .row-t:empty など）。過去の記録には「新しいセッション」が残っている
-          const info = { title: "", cwd, tag: status, createdAt: now, lastModified: now };
-          const sessionId = await createConversation(backend, info);
-          try {
-            await store.setMeta(sessionId, { backend: backend.id, ...info, status, unsent: true });
-            // 内蔵ブラウザーのプロフィール: 引き継ぎ元があればそのもの、無ければ作業フォルダーで最後に使ったもの / 既定（ADR 0078）
-            await store.setSessionData(sessionId, 'browserProfile', await browserProfiles.forNew(cwd, source));
-            // 互換の接続先（決定 2・3）: 同じエージェントの引き継ぎなら元の会話の接続先（予約中ならそれ）を継ぐ。
-            // それ以外は設定で「既定にする」を押した接続先（無ければ公式）。削除済みは継がない
-            let endpoint = '';
-            if (endpointCapable(backend)) {
-              if (typeof msg.args?.endpoint === 'string') {
-                endpoint = msg.args.endpoint;
-                if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) throw new Error(t('settings.endpointNotRegistered'));
-              } else {
-                endpoint = inherit ? source.nextSettings?.endpoint ?? source.compatEndpoint ?? '' : await compatEndpoints.defaultFor(backend.id);
-                if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) endpoint = '';
-              }
-            }
-            if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
-            const selected = await resolveModel(null, inherit || msg.args?.model !== undefined ? model : undefined, backend, cwd || undefined, endpoint);
-            await store.setModel(sessionId, selected);
-            const effort = msg.args?.effort ?? (inherit ? source.nextSettings?.effort ?? source.effort : undefined);
-            await store.setSessionData(sessionId, 'effort', await resolveEffort(null, effort, backend, selected, cwd || undefined, await endpointRow(endpoint)));
-            await store.setMode(sessionId, await resolveMode(null, mode, backend));
-            // 引き継ぎ元の会話で選んでいた Claude のアカウントも継ぐ（予約中ならそれを）
-            // 引き継ぎ元が無ければ前回選んだアカウント（削除済みなら、ログイン中のアカウントのまま）
-            const account = source ? source.nextSettings?.account ?? source.claudeAccount ?? '' : (await store.getPrefs()).claudeAccount ?? '';
-            if (account && await claudeAccounts.has(account)) await store.setSessionData(sessionId, 'claudeAccount', account);
-            if (draft) await store.setSessionData(sessionId, "draft", { text: draft, attached: [] });
-          } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
-          emitGlobal({ type: "sessionsChanged", sessionId: null });
-          return reply(true, { sessionId });
-        }
+        case "newSession":
+          return viaOp('sessions.new', args);
 
         // 既出の状態一覧。事前定義ではなく補完候補（設計メモ §6）。
         case "listStatuses":
-          return reply(true, await history.listStatuses(listBackends(), { list: nativeSessions }));
+          return viaOp('statuses.list', args);
 
-        case "modes": {
-          const backend = await pickBackend(null, msg.args?.backend);
-          return reply(true, backend.modes());
-        }
-
-        case "efforts": {
-          const backend = await pickBackend(null, msg.args?.backend);
-          // endpoint を渡すと互換の接続先の段（既定の段を作らない。Claude は「思考を送る」がオフなら段なし）
-          const endpoint = endpointCapable(backend) && typeof msg.args?.endpoint === 'string' ? await endpointRow(msg.args.endpoint) : null;
-          return reply(true, await effortOptions(backend, msg.args?.model ?? '', msg.args?.cwd, endpoint));
-        }
-        case "models": {
-          const backend = await pickBackend(null, msg.args?.backend);
-          return reply(true, await backend.models(msg.args?.cwd));
-        }
+        case "modes":
+          return viaOp('agents.modes', args);
+        case "efforts":
+          return viaOp('agents.efforts', args);
+        case "models":
+          return viaOp('agents.models', args);
         // 作業ディレクトリを選ぶ簡易ブラウザー（ブラウザー版の入力欄）。フォルダーの名前だけを返す
         case "listDirs":
           return reply(true, await listDirs(msg.args?.path, { files: msg.args?.files === true }));
@@ -4877,13 +5538,9 @@ wss.on("connection", (ws, req) => {
           // pcBrowser: この接続から PC の内蔵ブラウザーを見られるか（デスクトップ版で、リモートの接続のとき）
           return reply(true, { osActions: local, hostName: os.hostname(), pcBrowser: !local && !!screencastBridge?.ready,
             computerUse: computerUseCapability({ hasParentPort: Boolean(computerDriver), platform: computerDriver?.kind === 'fake' ? 'win32' : undefined, ready: computerDriver?.state() ?? null }) });
-        // コンピューターの操作を止める（docs/computer-use.md「computerStop」）。ホストの OS を操作する命令ではなく、止める側なので、リモートの端末からも受ける
-        case "computerStop": {
-          const { sessionId } = msg.args ?? {};
-          const result = typeof sessionId === 'string' && sessionId ? computerLock.stopSession(sessionId, 'stop') : { stopped: false };
-          if (result.stopped && result.owner) computerDriver?.stop(result.owner);
-          return reply(true, { stopped: result.stopped });
-        }
+        // コンピューターの操作を止める（docs/computer-use.md「computerStop」）。ホストの OS を操作する命令ではなく、止める側なので、リモートの端末からも受ける（computer.stop）
+        case "computerStop":
+          return viaOp('computer.stop');
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));
@@ -4930,13 +5587,8 @@ wss.on("connection", (ws, req) => {
 
         // 認証はエージェントごとに持ち方が違う。持たないものは supported:false を返す
         // （web はボタンごと隠す。「押せるのに何も起きない」を作らない）。
-        case "authStatus": {
-          const backend = await pickBackend(null, msg.args?.backend);
-          const installed = installation(backend.id);
-          if (!installed.installed) return reply(true, { supported: true, ...installed });
-          if (!backend.auth?.status) return reply(true, { supported: false });
-          return reply(true, { supported: true, ...installed, ...(await backend.auth.status()) });
-        }
+        case "authStatus":
+          return viaOp('agents.authStatus', args);
 
         case "authLogin": {
           const backend = await pickBackend(null, msg.args?.backend);
@@ -4968,7 +5620,7 @@ wss.on("connection", (ws, req) => {
         }
 
         case "running":
-          return reply(true, await runningWork());
+          return viaOp('app.running', args);
 
         // 操作の一覧（core/ops/）の汎用の口。画面は新しい機能をここから呼ぶ（protocol.mjs を触らずに増やせる。ADR 0080）
         case 'invoke': {
@@ -5003,51 +5655,17 @@ wss.on("connection", (ws, req) => {
           prefs.autoCompaction = compactionSettings;
           return reply(true, prefs);
         }
+        // 設定 › 自動圧縮。settings.set の compaction.auto と同じ定義を通る
         case 'setAutoCompaction':
-          return reply(true, await applyAutoCompaction(normalizeCompactionSettings(msg.args?.settings)).then((r) => { settingsChanged(['compaction.auto']); return r; }));
+          return viaOp('settings.set', { key: 'compaction.auto', value: args?.settings }, { shape: (r) => r.value });
 
         /**
          * AI にタイトルを考えてもらう。
          * 会話の中身を見て決めるので、走っているターンとは別に小さく1本立てる。
          * 生成はエージェントの仕事、整形（前後の記号を落とす）はここ。
          */
-        case "suggestTitle": {
-          const { sessionId } = msg.args ?? {};
-          if (!sessionId) return reply(false, t('session.required'));
-          const backend = await resolveBackendForSession(sessionId);
-          if (!backend) return reply(false, t('agents.notFound'));
-          if (!backend.suggestTitle) return reply(false, t('title.unsupported'));
-          const { messages } = await history.loadTranscript(sessionId, backend);
-          // タイトルは会話の言語で作る（渡す見出しもその言語）
-          const lng = await ensureAgentLocale(sessionId);
-          const gist = messages
-            .filter((m) => m.text)
-            .slice(0, 6)
-            .map((m) => m.role === "user" ? agentT(lng, 'title.request', { text: textForTitleModel(m.text).slice(0, 600) }) : agentT(lng, 'title.response', { text: m.text.slice(0, 600) }))
-            .join(NL + NL);
-          if (!gist) return reply(false, t('title.noContent'));
-
-          let title = "";
-          const context = {};
-          try {
-            // タイトル生成もその会話で選んだアカウントで回す。使えないアカウントなら生成しない（別のアカウントへ落とさない）
-            // 互換の接続先の会話は、その接続先の Haiku 相当（Codex は既定）のモデルで作る。使えない接続先なら作らない
-            const saved = await store.get(sessionId);
-            if (endpointCapable(backend) && saved.compatEndpoint) context.endpoint = await compatEndpoints.resolve(saved.compatEndpoint, backend.id);
-            if (!context.endpoint && backend.capabilities?.claudeAccounts) {
-              const account = await claudeAccounts.resolve(saved.claudeAccount ?? '');
-              if (account) context.oauthToken = account.token;
-            }
-            title = String(await backend.suggestTitle({ transcript: gist, locale: lng, ...context }) ?? "");
-          } catch (err) {
-            return reply(false, t('title.failed', { error: redactSecret(redactToken(err?.message ?? err, context.oauthToken), context.endpoint?.key) }));
-          }
-
-          // 前後の記号を落とす。モデルが鉤括弧やクオートで包むことがある
-          title = title.trim().split(NL)[0].replace(/^["'「『]|["'」』。]$/g, "").trim().slice(0, 60);
-          if (!title) return reply(false, t('title.empty'));
-          return reply(true, { title });
-        }
+        case "suggestTitle":
+          return viaOp('sessions.suggestTitle', args);
 
         /**
          * 人間が会話へファイルを渡す。present の逆方向（設計メモ §7）。
@@ -5132,29 +5750,8 @@ wss.on("connection", (ws, req) => {
         // 状態の一括改名。to が空なら状態を外す（＝グループの削除）。
         // 状態は事前定義しないので「グループ」は実体を持たず、付いているセッションの集合でしかない。
         // だから改名も削除も、対象セッションの状態を書き換えるだけで足りる。
-        case "renameStatus": {
-          const { from, to } = msg.args ?? {};
-          if (typeof from !== "string" || !from) return reply(false, t('statuses.renameFromRequired'));
-          const next = typeof to === "string" ? to.trim() : "";
-          const hit = (await sessionList({ limit: 500 })).filter((x) => (x.status ?? "") === from);
-          let done = 0;
-          for (const x of hit) {
-            const backend = getBackend(x.backend);
-            if (backend?.capabilities?.tag && backend.setTag) {
-              await backend.setTag(x.id, next || null).catch(() => {});
-            }
-            await store.recordChange(x.id, {
-              by: "human", field: "status", from, to: next || null, backend,
-              ...(next ? savedReason('renameStatus', { to: next }) : savedReason('deleteGroup')),
-            });
-            emitGlobal({ type: 'statusProgress', from, to: next, done: ++done, total: hit.length });
-          }
-          // statuses.json の器（アイコン・作った時刻）も一緒に移す。削除なら捨てる（空のグループはこれで消える）
-          await store.moveStatus(from, next || null);
-          emitGlobal({ type: "status", sessionId: null, status: next, by: "human", bulk: hit.length,
-                 ...(next ? savedReason('renamedGroup', { from, to: next }) : savedReason('deletedGroup', { from })) });
-          return reply(true, { moved: hit.length });
-        }
+        case "renameStatus":
+          return viaOp('statuses.rename', args);
 
         // 詳細の読み出しは停止から独立した操作。
         case "loadBackground": {
@@ -5216,28 +5813,9 @@ wss.on("connection", (ws, req) => {
           return reply(true, { agentId: null });
         }
 
-        // モデルの切り替えも人間の操作から。AI 用のツールは生やさない。
-        case "setModel": {
-          const { sessionId, model } = msg.args ?? {};
-          const backend = refuseRetired(await pickBackend(sessionId, msg.args?.backend));
-          // 互換の接続先の会話はモデル ID を形だけ見る（接続先の一覧＋自由入力）。公式の既定（prefs）には覚えない
-          const endpointId = endpointCapable(backend) ? (await store.get(sessionId)).compatEndpoint ?? '' : '';
-          if (!(await validModel(backend, model, undefined, endpointId))) return reply(false, t('settings.unknownModel', { value: model }));
-          const from = (await store.get(sessionId)).model ?? "";
-          await store.setModel(sessionId, model);
-          if (!endpointId) await savePref("model", model, backend.id);
-          await store.recordChange(sessionId, {
-            by: "human", field: "model", from, to: model, ...clientReason(msg.args), backend,
-          });
-          let live = false;
-          const liveTurn = runtime.turns.get(sessionId);
-          if (model && liveTurn?.control.handle && backend.setModelLive) {
-            live = await backend.setModelLive(liveTurn.control.handle, model)
-              .catch((err) => { console.error("  モデルの即時切り替えに失敗:", String(err?.message ?? err)); return false; });
-          }
-          emitGlobal({ type: "model", sessionId, model, by: "human", live });
-          return reply(true, { live });
-        }
+        // モデルの切り替え（sessions.setModel）。AI も同じ操作を呼ぶ（ADR 0094）。承認モードは人間だけ（下の setMode）
+        case "setModel":
+          return viaOp('sessions.setModel', (r) => ({ live: r.live }));
 
         // 承認モードの切り替えは人間の操作からしか来ない。AI にツールは生やさない。
         case "setMode": {
@@ -5270,14 +5848,11 @@ wss.on("connection", (ws, req) => {
 
         // 完了を確認した。ホストに 1 つで、別の窓・別の端末にも read で知らせる（store.markRead が巻き戻さない）。
         // 旧版がブラウザーに持っていた確認済みも、最初につないだときにここへまとめて届く（web/unread.mjs）
+        // 1 件（{ sessionId, at }）は sessions.markRead。画面がまとめて送る形（{ reads: [[sessionId, at], …] }）は同じ markReads を直に通す
         case "markRead": {
           const a = msg.args ?? {};
-          const reads = Array.isArray(a.reads) ? a.reads.slice(0, 5000) : [[a.sessionId, a.at]];
-          const changed = await store.markRead(reads);
-          if (changed.length) emitGlobal({ type: "read", sessionId: null, reads: changed });
-          // どこかで見た完了・失敗は、スマホに出ている通知を消す
-          for (const [id] of changed) pushNotifier.viewed(id);
-          return reply(true, { reads: changed });
+          if (!Array.isArray(a.reads)) return viaOp('sessions.markRead', { sessionId: a.sessionId, at: a.at });
+          return reply(true, { reads: await markReads(a.reads.slice(0, 5000)) });
         }
 
         // グループから外す / 戻す。まとまりは親子と状態から決まるので、覚えるのは「外した」ことだけ
@@ -5304,23 +5879,12 @@ wss.on("connection", (ws, req) => {
          * 根へ遡り、子孫を集める（core/lineage.mjs）。行はここに揃っているので、
          * 家族の分だけエージェントへ聞き直すことはしない。
          */
-        case "lineage": {
-          const { sessionId } = msg.args ?? {};
-          if (!sessionId) return reply(false, t('session.required'));
-          const rows = await sessionList({ limit: 500 });
-          const byId = new Map(rows.map((r) => [r.id, r]));
-          const { rootId, ids } = familyOf(rows, sessionId);
-          return reply(true, { rootId, sessions: ids.map((id) => byId.get(id) ?? { id, parent: null }) });
-        }
+        case "lineage":
+          return viaOp('sessions.lineage', args);
 
         // 会話の変更の記録（時刻・誰が・前 → 後・理由）。脇の会話の行の「変更の記録」が読む
-        case "sessionChanges": {
-          const { sessionId } = msg.args ?? {};
-          if (!sessionId) return reply(false, t('session.required'));
-          const entry = await store.get(sessionId);
-          return reply(true, { changes: (entry.history ?? []).map(({ at, by, field, from, to, reason, reasonKey, reasonParams }) =>
-            ({ at, by, field, from: from ?? null, to: to ?? null, reason: reason ?? null, ...(reasonKey ? { reasonKey, ...(reasonParams ? { reasonParams } : {}) } : {}) })) });
-        }
+        case "sessionChanges":
+          return viaOp('sessions.changes', args);
 
         // 会話の今の内蔵ブラウザーのプロフィールを人が替えた（右パネルのメニュー。main のタブの一覧は画面が先に替えている。ADR 0078）。
         // 会話に残し、作業フォルダーの「最後に使ったもの」と、走っているターン（ply_browser の今のもの）にも伝える
@@ -5350,6 +5914,7 @@ async function readOnboarding() {
 }
 
 process.parentPort?.on("message", async ({ data }) => {
+  if (data?.type === 'wake') await schedule.check();
   if (data?.type === 'update-lock') {
     // 断るときは何が止めているかを返す。画面に出さないと、見た目に何も動いていないのに更新できない理由が分からない
     const reason = runtime.turns.size ? t('updateLock.turns', { count: runtime.turns.size })
@@ -5408,6 +5973,12 @@ server.once("error", (err) => {
 // 検索の写しは、起動の混み合いが落ち着いてから裏で作る（探されたときは待たずに読めた分で答える）
 setTimeout(() => sessionSearch.start().catch(() => {}), 3000).unref();
 await restoreCompactionSchedule().catch(err => console.error('  自動圧縮の予約を戻せませんでした:', String(err?.message ?? err)));
+for (const [id, meta] of Object.entries(await store.getAll())) {
+  if (meta.interrupted?.reason === 'limit') limitStates.set(id, interruptedOf(meta.interrupted));
+}
+await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
+// 起動のときに過ぎていた送信予定の知らせは、リモートがつながってからでないと届かない。落ち着いたころにもう一度だけ確かめる
+setTimeout(() => { for (const row of schedule.list()) if (row.kind === 'send' && row.held && !row.notified) notifyScheduleMissed(row); }, 15_000).unref();
 // 届ける前の出来事の戻し・ルーティンの取りこぼし（P0 では何もしない）
 await botHost.start();
 server.listen(PORT, HOST, announce);

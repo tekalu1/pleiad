@@ -169,11 +169,21 @@ class InteropTest {
         ws.send(JSONObject().put("kind", "command").put("command", "listSessions").put("id", "k1").put("args", JSONObject()).toString())
         val resp = nextMsg { it.optString("kind") == "response" && it.optString("id") == "k1" }
         assertTrue(resp.optBoolean("ok"))
-        // a large message (loadSession-sized) passes the 60 KiB fragmentation both ways
+        // a large message (loadSession-sized) passes the 60 KiB fragmentation both ways: the draft text goes up in one
+        // command (saveDraft takes up to 2 MB of text) and comes back in one response (loadSession returns the draft).
+        // listSessions is a strict operation (core/ops/), so it cannot carry padding.
+        fun command(id: String, name: String, args: JSONObject): JSONObject {
+            ws.send(JSONObject().put("kind", "command").put("command", name).put("id", id).put("args", args).toString())
+            val r = nextMsg { it.optString("kind") == "response" && it.optString("id") == id }
+            assertTrue("$name: $r".take(300), r.optBoolean("ok"))
+            return r
+        }
+        val sessionId = command("k2", "newSession", JSONObject().put("backend", "fake").put("cwd", File(System.getProperty("pleiad.repo") ?: "../../..").absolutePath))
+            .getJSONObject("result").getString("sessionId")
         val bigText = "x".repeat(900_000)
-        ws.send(JSONObject().put("kind", "command").put("command", "listSessions").put("id", "k2").put("args", JSONObject().put("pad", bigText)).toString())
-        val r2 = nextMsg { it.optString("kind") == "response" && it.optString("id") == "k2" }
-        assertTrue(r2.optBoolean("ok"))
+        command("k3", "saveDraft", JSONObject().put("sessionId", sessionId).put("text", bigText))
+        val loaded = command("k4", "loadSession", JSONObject().put("sessionId", sessionId))
+        assertEquals("the large draft comes back whole", bigText.length, loaded.getJSONObject("result").getJSONObject("draft").getString("text").length)
         ws.close(1000, null)
 
         // ---- revoke on the host: state revoked, the page shows the revoked notice

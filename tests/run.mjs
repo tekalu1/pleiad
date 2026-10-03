@@ -19,6 +19,10 @@ installDomStub();
 const cases = [
   await import('./unit/compaction.mjs'),
   await import('./unit/server-compaction.mjs'),
+  await import('./unit/limit-resume.mjs'),
+  await import('./unit/server-limit-resume.mjs'),
+  await import('./unit/send-schedule.mjs'),
+  await import('./unit/server-scheduled-send.mjs'),
   await import('./unit/file-preview.mjs'),
   // プレビューの横のツリー: 経路の段は必ず返す・遅延読み込み・件数の枠と枠の外の経路・除外名も全部出す・roots の外は読めない
   await import('./unit/file-preview-tree.mjs'),
@@ -82,17 +86,26 @@ const cases = [
   await import('./unit/ops-surface.mjs'),
   // 操作の一覧の中身（会話・設定・委譲）・MCP の生成器と橋・ply_control の 3 つのエージェントへの渡し方・サーバー越しの HTTP と権限の配線・CLI と pleiad mcp
   await import('./unit/ops-sessions.mjs'),
+  // 会話・選べるもの・委譲の続き（sessions.new・abort・setTurnSettings・agents.*・delegation.retry ほか）: 危険度・人だけの項目・画面と AI の形・理由の記録・自分の子だけ
+  await import('./unit/ops-conversations.mjs'),
+  // 別の会話への送信（sessions.send）・送信待ちの取り消しと送り直し・既読（ADR 0104）: 強さの比べ方・歯止め・送り手の印
+  await import('./unit/ops-send.mjs'),
+  await import('./unit/server-ops-send.mjs'),
   // pleiad CLI の起動口（ADR 0090）: 会話のシェルの PATH・外の AI の MCP の設定（app.cliSetup）・起動口の改行・デスクトップ版の同梱
   await import('./unit/cli-launcher.mjs'),
   // 設定を書く(settings.set): 全設定 × 全主体の判定・値の検査・承認カードと受領証・bypass で承認なし・束縛なしの NEEDS_UI（身代わりのサーバー）
   await import('./unit/ops-settings.mjs'),
   await import('./unit/setting-change-ui.mjs'),
+  // MCP・Hooks・コンテキスト・リモートの操作（ADR 0095）: agent への伏せ字・伏せ字の書き戻し・guarded と riskOf
+  await import('./unit/ops-mcp-hooks.mjs'),
   await import('./unit/ops-mcp.mjs'),
   await import('./unit/control-delivery.mjs'),
   await import('./unit/ops-control.mjs'),
   await import('./unit/ops-cli.mjs'),
   // 設定の変更の承認: 待たずに返る・期限なしのカード・結果を会話へ届ける（ターンの終わり・中断・途中送信・置き換え・聞き直し・再起動。ADR 0088）
   await import('./unit/server-setting-approval.mjs'),
+  // 委譲の子が出した承認の結果の届け先: 子のタスクが終わっていれば依頼元の会話へ、動いていれば子へ、再起動の取り下げも同じ（ADR 0088）
+  await import('./unit/server-setting-approval-delegated.mjs'),
   await import('./unit/server-ops.mjs'),
   await import('./unit/sessions-search-op.mjs'),
   await import('./unit/agent-tasks.mjs'),
@@ -226,7 +239,7 @@ const cases = [
   await import("./unit/message-peek.mjs"),
   // 発言のメニュー（⋯・右クリック・キーボード）・長い発言の畳みを開く・送った直後の画像の枠（ADR 0067）
   await import("./unit/message-actions.mjs"),
-  // 送り直しの帯（ADR 0091）: 消えるものの見立て・キー（Ctrl/⌘+Enter・Shift・Esc）・巻き戻しの印と提示の切り取り
+  // 送り直しの帯（ADR 0102）: 消えるものの見立て・キー（Ctrl/⌘+Enter・Shift・Esc）・巻き戻しの印と提示の切り取り
   await import("./unit/resend-band.mjs"),
   // Claude の巻き戻し（resumeSessionAt・resumeDropsTurn を resume に添える。拒否は呼び出し側へ）: SDK の query を身代わりに
   await import("./unit/claude-rewind.mjs"),
@@ -334,7 +347,7 @@ const cases = [
   // 対応を終えた procway-code の会話・設定が残っていても安全に動く
   await import("./unit/server-retired.mjs"),
   await import("./unit/server-fork.mjs"),
-  // 同じ会話で巻き戻して送り直す（sendMessage の rewind。ADR 0091）: バックエンドの形ごと（Claude・拒否・Codex・巻き戻せない）× 実行中・送信待ち・検査。契約は身代わりのネイティブで
+  // 同じ会話で巻き戻して送り直す（sendMessage の rewind。ADR 0102）: バックエンドの形ごと（Claude・拒否・Codex・巻き戻せない）× 実行中・送信待ち・検査。契約は身代わりのネイティブで
   await import("./unit/server-rewind.mjs"),
   await import("./unit/server-ux.mjs"),
   // 変更の記録: sessionChanges の返す形と、statusByAi（AI が状態を変えたときだけ印。人が変えたら null）

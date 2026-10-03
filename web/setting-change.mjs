@@ -26,8 +26,8 @@ const LABELS = {
   "computerUse.alwaysAllowed": { section: "computer", name: () => t("settings.computer.allowedTitle"), kind: "apps" },
   plyInstructions: { section: "context", name: () => t("context.ply.title"), kind: "raw" },
 };
-// 項目の名前が辞書に無い設定でも、節だけは分かる（委譲の自動振り分け・コンテキストの既定）
-const SECTION_OF_ROOT = { delegationRouting: "delegation", "context.default": "context", addedContext: "context" };
+// 項目の名前が辞書に無い設定でも、節だけは分かる（委譲の自動振り分け・コンテキストの既定。MCP・Hooks・コンテキストの操作の行。ADR 0095）
+const SECTION_OF_ROOT = { delegationRouting: "delegation", "context.default": "context", addedContext: "context", context: "context", mcp: "context", hooks: "context", plyInstructions: "context" };
 
 /** 項目（path）の表示用の名前・節・値の種類。辞書に無ければ名前は path のまま（等幅で出す。mono: true） */
 export function labelOf(path) {

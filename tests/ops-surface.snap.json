@@ -1,6 +1,106 @@
 {
   "ops": [
     {
+      "id": "agents.authStatus",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "agents",
+            "auth"
+          ]
+        }
+      },
+      "legacyCommand": "authStatus",
+      "input": "42de447790d5"
+    },
+    {
+      "id": "agents.efforts",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "agents",
+            "efforts"
+          ]
+        }
+      },
+      "legacyCommand": "efforts",
+      "input": "1d0cc7c623e6"
+    },
+    {
+      "id": "agents.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "agents",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": "backends",
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "agents.models",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "agents",
+            "models"
+          ]
+        }
+      },
+      "legacyCommand": "models",
+      "input": "5d455995ab0e"
+    },
+    {
+      "id": "agents.modes",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "agents",
+            "modes"
+          ]
+        }
+      },
+      "legacyCommand": "modes",
+      "input": "d9721654ab73"
+    },
+    {
       "id": "app.cliSetup",
       "risk": "read",
       "riskOf": false,
@@ -31,7 +131,7 @@
           ]
         }
       },
-      "legacyCommand": null,
+      "legacyCommand": "running",
       "input": "25c7d85c859a"
     },
     {
@@ -546,6 +646,198 @@
       "input": "ea7af0bff606"
     },
     {
+      "id": "compatEndpoints.delete",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "endpoints",
+            "delete"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "compatEndpointDelete",
+      "input": "b0301f257a02"
+    },
+    {
+      "id": "compatEndpoints.recheck",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "endpoints",
+            "recheck"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "compatEndpointRecheck",
+      "input": "8f322763f141"
+    },
+    {
+      "id": "computer.stop",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "computer",
+            "stop"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "computerStop",
+      "input": "668810693a42"
+    },
+    {
+      "id": "context.plyInstructions",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "instructions"
+          ]
+        }
+      },
+      "legacyCommand": "plyInstructions",
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "context.refresh",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "refresh"
+          ]
+        }
+      },
+      "legacyCommand": "refreshContext",
+      "input": "d25acaa13541"
+    },
+    {
+      "id": "context.setPlyInstructions",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "set-instructions"
+          ]
+        }
+      },
+      "legacyCommand": "setPlyInstructions",
+      "input": "ea97bb332f04"
+    },
+    {
+      "id": "context.setSessionMcp",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "session-mcp"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "setSessionMcp",
+      "input": "5db0bc9fccea"
+    },
+    {
+      "id": "context.setSettings",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "set"
+          ]
+        }
+      },
+      "legacyCommand": "setContextSettings",
+      "input": "d5af065783bd"
+    },
+    {
+      "id": "context.settings",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "settings"
+          ]
+        }
+      },
+      "legacyCommand": "contextSettings",
+      "input": "e068ce313039"
+    },
+    {
       "id": "delegation.delegate",
       "risk": "write",
       "riskOf": false,
@@ -559,6 +851,73 @@
       },
       "legacyCommand": null,
       "input": "99f99ce422d2"
+    },
+    {
+      "id": "delegation.instructions",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "delegation",
+            "instructions"
+          ],
+          "positional": [
+            "taskId"
+          ]
+        }
+      },
+      "legacyCommand": "agentTaskInstructions",
+      "input": "2f2e13a9fa0a"
+    },
+    {
+      "id": "delegation.retry",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "delegation",
+            "retry"
+          ],
+          "positional": [
+            "taskId",
+            "candidate"
+          ]
+        }
+      },
+      "legacyCommand": "retryAgentTask",
+      "input": "629309f73cd2"
+    },
+    {
+      "id": "delegation.routing",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "delegation",
+            "routing"
+          ]
+        }
+      },
+      "legacyCommand": "delegationRouting",
+      "input": "e7f5ed427e6d"
     },
     {
       "id": "delegation.status",
@@ -591,11 +950,11 @@
       "modeGate": false,
       "hostScreenOnly": false,
       "surfaces": {
-        "ui": false,
+        "ui": true,
         "mcp": "catalog",
         "cli": true
       },
-      "legacyCommand": null,
+      "legacyCommand": "cancelAgentTask",
       "input": "aa46a1003ecf"
     },
     {
@@ -630,7 +989,7 @@
           ]
         }
       },
-      "legacyCommand": null,
+      "legacyCommand": "agentTasks",
       "input": "3674e4e2e03f"
     },
     {
@@ -686,12 +1045,546 @@
       "modeGate": true,
       "hostScreenOnly": false,
       "surfaces": {
-        "ui": false,
+        "ui": true,
         "mcp": "catalog",
         "cli": true
       },
-      "legacyCommand": null,
+      "legacyCommand": "providerUsage",
       "input": "e713b07977ab"
+    },
+    {
+      "id": "endpoints.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "endpoints",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": "compatEndpoints",
+      "input": "4a12c48b5c1b"
+    },
+    {
+      "id": "hooks.copy",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "copy"
+          ]
+        }
+      },
+      "legacyCommand": "copyHooks",
+      "input": "b0beb6b52083"
+    },
+    {
+      "id": "hooks.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": "plyHooks",
+      "input": "2a25f7c7c09a"
+    },
+    {
+      "id": "hooks.read",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "read"
+          ]
+        }
+      },
+      "legacyCommand": "readHook",
+      "input": "8f85e97463e7"
+    },
+    {
+      "id": "hooks.readPly",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "read-ply"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "readPlyHook",
+      "input": "968065a24633"
+    },
+    {
+      "id": "hooks.remove",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "remove"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "removePlyHook",
+      "input": "4a04b07e235a"
+    },
+    {
+      "id": "hooks.repair",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "repair"
+          ]
+        }
+      },
+      "legacyCommand": "repairPlyHooks",
+      "input": "2b3554901af9"
+    },
+    {
+      "id": "hooks.save",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "save"
+          ]
+        }
+      },
+      "legacyCommand": "savePlyHook",
+      "input": "e9a5be51a5ac"
+    },
+    {
+      "id": "hooks.saveNative",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "save-native"
+          ]
+        }
+      },
+      "legacyCommand": "saveHooks",
+      "input": "f580e751da12"
+    },
+    {
+      "id": "hooks.scan",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "scan"
+          ]
+        }
+      },
+      "legacyCommand": "scanHooks",
+      "input": "fc081f92bac6"
+    },
+    {
+      "id": "hooks.session",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "session"
+          ]
+        }
+      },
+      "legacyCommand": "sessionHooks",
+      "input": "c75aa5072de2"
+    },
+    {
+      "id": "hooks.setOwner",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "owner"
+          ]
+        }
+      },
+      "legacyCommand": "setHooksOwner",
+      "input": "ece98b454bc4"
+    },
+    {
+      "id": "hooks.toggle",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "toggle"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "togglePlyHook",
+      "input": "e009d35c6ad6"
+    },
+    {
+      "id": "mcp.authStatus",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "auth"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "mcpAuthStatus",
+      "input": "d0522fb33a1b"
+    },
+    {
+      "id": "mcp.delete",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "delete"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "deletePlyMcp",
+      "input": "4efa7b071261"
+    },
+    {
+      "id": "mcp.import",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "import"
+          ]
+        }
+      },
+      "legacyCommand": "importPlyMcp",
+      "input": "c716d50bd360"
+    },
+    {
+      "id": "mcp.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": "listPlyMcp",
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "mcp.nativeList",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "native"
+          ]
+        }
+      },
+      "legacyCommand": "listMcpConfig",
+      "input": "e062309ea1e6"
+    },
+    {
+      "id": "mcp.nativeRead",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "native-read"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "readMcpServer",
+      "input": "c2792a8c9829"
+    },
+    {
+      "id": "mcp.nativeSave",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "native-save"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "saveMcpServer",
+      "input": "051d03827897"
+    },
+    {
+      "id": "mcp.read",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "read"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "readPlyMcp",
+      "input": "066008b800ca"
+    },
+    {
+      "id": "mcp.reconnect",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "reconnect"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "mcpReconnect",
+      "input": "2027bcdfada0"
+    },
+    {
+      "id": "mcp.rename",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "rename"
+          ],
+          "positional": [
+            "name",
+            "to"
+          ]
+        }
+      },
+      "legacyCommand": "renamePlyMcp",
+      "input": "c7a591ea2191"
+    },
+    {
+      "id": "mcp.save",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "save"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "savePlyMcp",
+      "input": "584014bc9682"
+    },
+    {
+      "id": "mcp.setSettings",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "mcp-servers",
+            "settings"
+          ]
+        }
+      },
+      "legacyCommand": "setPlyMcpSettings",
+      "input": "f16d1746215b"
     },
     {
       "id": "memory.edit",
@@ -824,6 +1717,268 @@
       "input": "558cfb267283"
     },
     {
+      "id": "notify.setDevice",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notify",
+            "device"
+          ],
+          "positional": [
+            "id",
+            "muted"
+          ]
+        }
+      },
+      "legacyCommand": "setNotifyDevice",
+      "input": "8280a0cbad06"
+    },
+    {
+      "id": "notify.setPc",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "notify",
+            "pc"
+          ]
+        }
+      },
+      "legacyCommand": "setNotifyPc",
+      "input": "54e061176cb6"
+    },
+    {
+      "id": "remote.setResident",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "remote",
+            "resident"
+          ]
+        }
+      },
+      "legacyCommand": "setRemoteResident",
+      "input": "b3365589d9ee"
+    },
+    {
+      "id": "remote.status",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "remote",
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": "remoteStatus",
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "resumeQueue.get",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "resume-queue",
+            "get"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "resumeQueue.set",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "resume-queue",
+            "set"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "b4a434de6904"
+    },
+    {
+      "id": "sessions.abort",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "abort"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "abort",
+      "input": "d70835b046e2"
+    },
+    {
+      "id": "sessions.cancelCompaction",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "cancelCompaction"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "cancelCompaction",
+      "input": "e68070615d84"
+    },
+    {
+      "id": "sessions.cancelSchedule",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "sessions",
+            "cancel-schedule"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "fab80600bbbe"
+    },
+    {
+      "id": "sessions.changes",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "changes"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "sessionChanges",
+      "input": "cd8dabae9d20"
+    },
+    {
+      "id": "sessions.compact",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "compact"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "compactConversation",
+      "input": "716323b9326b"
+    },
+    {
+      "id": "sessions.deleteUnsent",
+      "risk": "guarded",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "deleteUnsent"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "deleteUnsentSession",
+      "input": "f2f3b93dbb87"
+    },
+    {
       "id": "sessions.fork",
       "risk": "write",
       "riskOf": false,
@@ -870,6 +2025,29 @@
       "input": "18e4482f0f74"
     },
     {
+      "id": "sessions.lineage",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "lineage"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "lineage",
+      "input": "196ff4b8d5bd"
+    },
+    {
       "id": "sessions.list",
       "risk": "read",
       "riskOf": false,
@@ -886,8 +2064,99 @@
           ]
         }
       },
-      "legacyCommand": null,
+      "legacyCommand": "listSessions",
       "input": "9b44cafbe720"
+    },
+    {
+      "id": "sessions.listMessages",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "unsent"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "listMessages",
+      "input": "e9dac191d271"
+    },
+    {
+      "id": "sessions.markRead",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "markRead"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "markRead",
+      "input": "114b410e48d8"
+    },
+    {
+      "id": "sessions.messageAction",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "messageAction"
+          ],
+          "positional": [
+            "sessionId",
+            "messageId",
+            "action"
+          ]
+        }
+      },
+      "legacyCommand": "messageAction",
+      "input": "f2ed4d0a6ace"
+    },
+    {
+      "id": "sessions.new",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "new"
+          ]
+        }
+      },
+      "legacyCommand": "newSession",
+      "input": "2796e364c1c8"
     },
     {
       "id": "sessions.read",
@@ -913,6 +2182,72 @@
       "input": "62fa526050a3"
     },
     {
+      "id": "sessions.resume",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "resume"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "resume",
+      "input": "8bb0ecf306f5"
+    },
+    {
+      "id": "sessions.schedules",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "sessions",
+            "schedules"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "5911c9a80b11"
+    },
+    {
+      "id": "sessions.scheduleSend",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "sessions",
+            "schedule-send"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "d0ef295ce476"
+    },
+    {
       "id": "sessions.search",
       "risk": "read",
       "riskOf": false,
@@ -932,6 +2267,100 @@
       },
       "legacyCommand": null,
       "input": "e62fd6215a96"
+    },
+    {
+      "id": "sessions.send",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "send"
+          ],
+          "positional": [
+            "sessionId",
+            "text"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "9ab6ba1a8ab7"
+    },
+    {
+      "id": "sessions.sendScheduledNow",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "sessions",
+            "send-scheduled-now"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "6fd588228159"
+    },
+    {
+      "id": "sessions.setAutoCompaction",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "autoCompaction"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "setConversationAutoCompaction",
+      "input": "46ccb253749e"
+    },
+    {
+      "id": "sessions.setModel",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "model"
+          ],
+          "positional": [
+            "sessionId",
+            "model"
+          ]
+        }
+      },
+      "legacyCommand": "setModel",
+      "input": "f599bf658363"
     },
     {
       "id": "sessions.setStatus",
@@ -980,6 +2409,52 @@
       },
       "legacyCommand": "setTitle",
       "input": "a2ea8053be13"
+    },
+    {
+      "id": "sessions.setTurnSettings",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "next"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "setTurnSettings",
+      "input": "ab66527a27f3"
+    },
+    {
+      "id": "sessions.suggestTitle",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "sessions",
+            "suggestTitle"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "suggestTitle",
+      "input": "4084dc263114"
     },
     {
       "id": "settings.get",
@@ -1069,6 +2544,10 @@
         }
       },
       "legacyCommand": "setPref",
+      "legacyAliases": [
+        "setAutoCompaction",
+        "setDelegationRouting"
+      ],
       "input": "cf5833e094bf"
     },
     {
@@ -1095,6 +2574,50 @@
       "input": "afc00334d287"
     },
     {
+      "id": "statuses.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "statuses",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": "listStatuses",
+      "input": "0843324c5576"
+    },
+    {
+      "id": "statuses.rename",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "statuses",
+            "rename"
+          ],
+          "positional": [
+            "from",
+            "to"
+          ]
+        }
+      },
+      "legacyCommand": "renameStatus",
+      "input": "23e6ec4470ab"
+    },
+    {
       "id": "statuses.setIcon",
       "risk": "write",
       "riskOf": false,
@@ -1117,6 +2640,141 @@
       },
       "legacyCommand": "setStatusIcon",
       "input": "6bf6e7291226"
+    },
+    {
+      "id": "worktrees.archive",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "archive"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "worktreeArchive",
+      "input": "3e8683a89327"
+    },
+    {
+      "id": "worktrees.discard",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "discard"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "worktreeDiscard",
+      "input": "66e4e5056d19"
+    },
+    {
+      "id": "worktrees.keep",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "keep"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": "worktreeKeep",
+      "input": "8b21cc520a6e"
+    },
+    {
+      "id": "worktrees.restore",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "restore"
+          ],
+          "positional": [
+            "ref"
+          ]
+        }
+      },
+      "legacyCommand": "worktreeRestore",
+      "input": "f58ff1aa555f"
+    },
+    {
+      "id": "worktrees.setSettings",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "settings"
+          ],
+          "positional": [
+            "always"
+          ]
+        }
+      },
+      "legacyCommand": "setWorktreeSettings",
+      "input": "b99244f5026b"
+    },
+    {
+      "id": "worktrees.split",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "worktrees",
+            "split"
+          ]
+        }
+      },
+      "legacyCommand": "worktreeSplit",
+      "input": "451dd4526c20"
     }
   ],
   "settings": [
@@ -1260,6 +2918,15 @@
       "writable": true,
       "prefKeys": [
         "instructionBudget"
+      ]
+    },
+    {
+      "key": "limitResume",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "limitResume"
       ]
     },
     {
@@ -1414,6 +3081,13 @@
       "agent-bound-never-full": "write=allow",
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
     },
+    "limitResume": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
     "linkOpen": {
       "human": "write=allow",
       "agent-unbound": "write=allow",
@@ -1473,7 +3147,7 @@
     },
     {
       "name": "list_ops",
-      "input": "bb8cd515f6e5"
+      "input": "55672f8720ec"
     },
     {
       "name": "call_op",
@@ -1481,6 +3155,31 @@
     }
   ],
   "cli": [
+    {
+      "id": "agents.authStatus",
+      "path": "agents auth",
+      "positional": []
+    },
+    {
+      "id": "agents.efforts",
+      "path": "agents efforts",
+      "positional": []
+    },
+    {
+      "id": "agents.list",
+      "path": "agents list",
+      "positional": []
+    },
+    {
+      "id": "agents.models",
+      "path": "agents models",
+      "positional": []
+    },
+    {
+      "id": "agents.modes",
+      "path": "agents modes",
+      "positional": []
+    },
     {
       "id": "bots.create",
       "path": "bots create",
@@ -1633,8 +3332,67 @@
       ]
     },
     {
+      "id": "computer.stop",
+      "path": "computer stop",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "context.plyInstructions",
+      "path": "context instructions",
+      "positional": []
+    },
+    {
+      "id": "context.refresh",
+      "path": "context refresh",
+      "positional": []
+    },
+    {
+      "id": "context.setSessionMcp",
+      "path": "context session-mcp",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "context.setSettings",
+      "path": "context set",
+      "positional": []
+    },
+    {
+      "id": "context.setPlyInstructions",
+      "path": "context set-instructions",
+      "positional": []
+    },
+    {
+      "id": "context.settings",
+      "path": "context settings",
+      "positional": []
+    },
+    {
       "id": "delegation.delegate",
       "path": "delegation delegate",
+      "positional": []
+    },
+    {
+      "id": "delegation.instructions",
+      "path": "delegation instructions",
+      "positional": [
+        "taskId"
+      ]
+    },
+    {
+      "id": "delegation.retry",
+      "path": "delegation retry",
+      "positional": [
+        "taskId",
+        "candidate"
+      ]
+    },
+    {
+      "id": "delegation.routing",
+      "path": "delegation routing",
       "positional": []
     },
     {
@@ -1680,6 +3438,168 @@
       "positional": []
     },
     {
+      "id": "compatEndpoints.delete",
+      "path": "endpoints delete",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "endpoints.list",
+      "path": "endpoints list",
+      "positional": []
+    },
+    {
+      "id": "compatEndpoints.recheck",
+      "path": "endpoints recheck",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "hooks.copy",
+      "path": "hooks copy",
+      "positional": []
+    },
+    {
+      "id": "hooks.list",
+      "path": "hooks list",
+      "positional": []
+    },
+    {
+      "id": "hooks.setOwner",
+      "path": "hooks owner",
+      "positional": []
+    },
+    {
+      "id": "hooks.read",
+      "path": "hooks read",
+      "positional": []
+    },
+    {
+      "id": "hooks.readPly",
+      "path": "hooks read-ply",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "hooks.remove",
+      "path": "hooks remove",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "hooks.repair",
+      "path": "hooks repair",
+      "positional": []
+    },
+    {
+      "id": "hooks.save",
+      "path": "hooks save",
+      "positional": []
+    },
+    {
+      "id": "hooks.saveNative",
+      "path": "hooks save-native",
+      "positional": []
+    },
+    {
+      "id": "hooks.scan",
+      "path": "hooks scan",
+      "positional": []
+    },
+    {
+      "id": "hooks.session",
+      "path": "hooks session",
+      "positional": []
+    },
+    {
+      "id": "hooks.toggle",
+      "path": "hooks toggle",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "mcp.authStatus",
+      "path": "mcp-servers auth",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.delete",
+      "path": "mcp-servers delete",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.import",
+      "path": "mcp-servers import",
+      "positional": []
+    },
+    {
+      "id": "mcp.list",
+      "path": "mcp-servers list",
+      "positional": []
+    },
+    {
+      "id": "mcp.nativeList",
+      "path": "mcp-servers native",
+      "positional": []
+    },
+    {
+      "id": "mcp.nativeRead",
+      "path": "mcp-servers native-read",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.nativeSave",
+      "path": "mcp-servers native-save",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.read",
+      "path": "mcp-servers read",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.reconnect",
+      "path": "mcp-servers reconnect",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.rename",
+      "path": "mcp-servers rename",
+      "positional": [
+        "name",
+        "to"
+      ]
+    },
+    {
+      "id": "mcp.save",
+      "path": "mcp-servers save",
+      "positional": [
+        "name"
+      ]
+    },
+    {
+      "id": "mcp.setSettings",
+      "path": "mcp-servers settings",
+      "positional": []
+    },
+    {
       "id": "memory.edit",
       "path": "memory edit",
       "positional": [
@@ -1715,9 +3635,91 @@
       ]
     },
     {
+      "id": "notify.setDevice",
+      "path": "notify device",
+      "positional": [
+        "id",
+        "muted"
+      ]
+    },
+    {
+      "id": "notify.setPc",
+      "path": "notify pc",
+      "positional": []
+    },
+    {
+      "id": "remote.setResident",
+      "path": "remote resident",
+      "positional": []
+    },
+    {
+      "id": "remote.status",
+      "path": "remote status",
+      "positional": []
+    },
+    {
+      "id": "resumeQueue.get",
+      "path": "resume-queue get",
+      "positional": []
+    },
+    {
+      "id": "resumeQueue.set",
+      "path": "resume-queue set",
+      "positional": []
+    },
+    {
       "id": "app.running",
       "path": "running",
       "positional": []
+    },
+    {
+      "id": "sessions.abort",
+      "path": "sessions abort",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.setAutoCompaction",
+      "path": "sessions autoCompaction",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.cancelSchedule",
+      "path": "sessions cancel-schedule",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "sessions.cancelCompaction",
+      "path": "sessions cancelCompaction",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.changes",
+      "path": "sessions changes",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.compact",
+      "path": "sessions compact",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.deleteUnsent",
+      "path": "sessions deleteUnsent",
+      "positional": [
+        "sessionId"
+      ]
     },
     {
       "id": "sessions.fork",
@@ -1734,9 +3736,52 @@
       ]
     },
     {
+      "id": "sessions.lineage",
+      "path": "sessions lineage",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
       "id": "sessions.list",
       "path": "sessions list",
       "positional": []
+    },
+    {
+      "id": "sessions.markRead",
+      "path": "sessions markRead",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.messageAction",
+      "path": "sessions messageAction",
+      "positional": [
+        "sessionId",
+        "messageId",
+        "action"
+      ]
+    },
+    {
+      "id": "sessions.setModel",
+      "path": "sessions model",
+      "positional": [
+        "sessionId",
+        "model"
+      ]
+    },
+    {
+      "id": "sessions.new",
+      "path": "sessions new",
+      "positional": []
+    },
+    {
+      "id": "sessions.setTurnSettings",
+      "path": "sessions next",
+      "positional": [
+        "sessionId"
+      ]
     },
     {
       "id": "sessions.read",
@@ -1754,10 +3799,44 @@
       ]
     },
     {
+      "id": "sessions.resume",
+      "path": "sessions resume",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.scheduleSend",
+      "path": "sessions schedule-send",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.schedules",
+      "path": "sessions schedules",
+      "positional": []
+    },
+    {
       "id": "sessions.search",
       "path": "sessions search",
       "positional": [
         "query"
+      ]
+    },
+    {
+      "id": "sessions.send",
+      "path": "sessions send",
+      "positional": [
+        "sessionId",
+        "text"
+      ]
+    },
+    {
+      "id": "sessions.sendScheduledNow",
+      "path": "sessions send-scheduled-now",
+      "positional": [
+        "id"
       ]
     },
     {
@@ -1766,6 +3845,20 @@
       "positional": [
         "sessionId",
         "status"
+      ]
+    },
+    {
+      "id": "sessions.suggestTitle",
+      "path": "sessions suggestTitle",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.listMessages",
+      "path": "sessions unsent",
+      "positional": [
+        "sessionId"
       ]
     },
     {
@@ -1814,6 +3907,59 @@
         "status",
         "icon"
       ]
+    },
+    {
+      "id": "statuses.list",
+      "path": "statuses list",
+      "positional": []
+    },
+    {
+      "id": "statuses.rename",
+      "path": "statuses rename",
+      "positional": [
+        "from",
+        "to"
+      ]
+    },
+    {
+      "id": "worktrees.archive",
+      "path": "worktrees archive",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "worktrees.discard",
+      "path": "worktrees discard",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "worktrees.keep",
+      "path": "worktrees keep",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "worktrees.restore",
+      "path": "worktrees restore",
+      "positional": [
+        "ref"
+      ]
+    },
+    {
+      "id": "worktrees.setSettings",
+      "path": "worktrees settings",
+      "positional": [
+        "always"
+      ]
+    },
+    {
+      "id": "worktrees.split",
+      "path": "worktrees split",
+      "positional": []
     }
   ],
   "policy": {

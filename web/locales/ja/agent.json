@@ -370,7 +370,12 @@
         "summary": "外の AI から pleiad mcp を起動する設定（MCP の設定の JSON と claude mcp add のコマンド）を返す。"
       }
     },
+    "resumeQueue": { "get": { "summary": "上限の解除後に再開する会話の順番と進みを返す。" }, "set": { "summary": "上限の解除後の再開の順番や自動再開を変える。", "action": "変更する操作。", "sessionId": "対象の会話 ID（first・auto で使う）。", "enabled": "auto のとき自動再開を有効にするか。" } },
     "sessions": {
+      "scheduleSend": { "summary": "会話に送信予定を置く。時刻が来たら、ふつうの送信と同じ送信待ちへ入る。人が決める操作なので承認が要る。", "sessionId": "送る会話の ID。", "prompt": "送る本文。", "at": "送る時刻（Unix ミリ秒、または ISO 8601 の日時）。", "messageId": "送信の ID（英数字とハイフンで 8〜80 文字）。省略すると新しく決める。", "attachments": "添付（パス・名前・MIME）。", "cwd": "作業ディレクトリ。", "mode": "承認モード。", "confirm": "会話 {{session}} に {{at}} の送信予定を置く: {{prompt}}" },
+      "sendScheduledNow": { "summary": "送信予定を、時刻を待たずに今すぐ送信待ちへ入れる。", "id": "予定の ID。", "confirm": "送信予定 {{id}} を今すぐ送る" },
+      "schedules": { "summary": "会話の予定を返す。", "sessionId": "絞り込む会話の ID。省略すると全件。" },
+      "cancelSchedule": { "summary": "会話の予定を取り消す。", "id": "予定の ID。" },
       "search": {
         "summary": "会話の題・状態・場所・本文を探す。語は空白で AND、\"…\" で完全一致。結果は会話ごとの抜粋つき。",
         "query": "検索語。空白区切りは AND、\"…\" で囲むと完全一致（大小・全角半角を区別）。空なら絞り込みだけ。",
@@ -436,6 +441,107 @@
         "reason": "分ける理由（変更の記録に残る）。",
         "beforeMessageId": "この発言（uuid）の手前まで写す。",
         "reasonKey": "画面の定型理由のキー。", "reasonParams": "定型理由に入れる値。", "backend": "会話のエージェント。"
+      },
+      "new": {
+        "summary": "新しい会話（まだ送っていない下書き）を作る。作るだけで、発言を送るのは人。承認モード・接続先は選べない（引き継ぎ元か既定）。",
+        "sourceSessionId": "設定の引き継ぎ元の会話の id（エージェント・モデル・思考の強さ・承認モードを継ぐ）。",
+        "backend": "エージェントの id（claude・codex・antigravity）。",
+        "model": "モデルの id。省くと引き継ぎ元か既定。",
+        "effort": "思考の強さ。省くと引き継ぎ元か既定。",
+        "mode": "承認モードの id。人（画面）だけが決められる。AI が渡すと NEEDS_UI。",
+        "cwd": "作業フォルダー。省くとホームフォルダー。",
+        "status": "付ける状態（グループ名）。",
+        "draft": "入力欄に入れておく文（送らない）。",
+        "endpoint": "互換の接続先の id。人（画面）だけが決められる。AI が渡すと NEEDS_UI。"
+      },
+      "deleteUnsent": {
+        "summary": "まだ送っていない（下書きだけの）会話を消す。送った会話は消せない。会話に承認カードが出て、ユーザーが許可したときだけ消える。",
+        "sessionId": "消す会話の id。",
+        "card": "まだ送っていない会話「{{title}}」を消します。"
+      },
+      "abort": {
+        "summary": "会話のターンを止める。このホストで動いている会話だけ。止めたターンは会話に中断として残り、人が再開できる。理由（reason）が必須で、止めた会話の変更の記録に残る。",
+        "sessionId": "止める会話の id。省くと自分の会話。",
+        "kind": "止める種類（user・update・quit）。省くと user。",
+        "reason": "止める理由（500 字まで）。AI は必ず書く。止めた会話の変更の記録に、誰が・どこから・なぜを残す。"
+      },
+      "resume": {
+        "summary": "中断した会話を続ける。保留の送信待ちを送り直すか、「続けて」の文を送る。続きは、その会話の承認モードで動く。",
+        "sessionId": "続ける会話の id。"
+      },
+      "compact": {
+        "summary": "会話の圧縮（文脈の要約）を始める。会話が動いていれば、そのターンのあとに回る。発言の記録は変わらない。",
+        "sessionId": "圧縮する会話の id。"
+      },
+      "cancelCompaction": {
+        "summary": "予約・待ちの圧縮を取り消す。",
+        "sessionId": "会話の id。"
+      },
+      "setAutoCompaction": {
+        "summary": "この会話の自動圧縮を切る・入れる。ホスト全体の設定は settings.set の compaction.auto。",
+        "sessionId": "会話の id。省くと自分の会話。",
+        "off": "true で切る、false で入れる。"
+      },
+      "setTurnSettings": {
+        "summary": "次のターンから効く設定を予約する（エージェント・モデル・思考の強さ・作業フォルダー）。作業フォルダーとエージェントを替えるのは承認カードが要る。承認モード・アカウント・接続先は人だけ。",
+        "sessionId": "会話の id。省くと自分の会話。",
+        "backend": "次のターンのエージェントの id。替えると承認カードが要る。",
+        "model": "次のターンのモデルの id。",
+        "effort": "次のターンの思考の強さ。",
+        "cwd": "次のターンの作業フォルダー。替えると承認カードが要る。",
+        "cancel": "true で予約を取り消す。",
+        "mode": "承認モードの id。人（画面）だけ。AI が渡すと NEEDS_UI。",
+        "account": "Claude のアカウントの id。人（画面）だけ。AI が渡すと NEEDS_UI。",
+        "endpoint": "互換の接続先の id。人（画面）だけ。AI が渡すと NEEDS_UI。",
+        "remember": "選んだ値を既定として覚える。人（画面）だけ（AI は settings.set）。"
+      },
+      "suggestTitle": {
+        "summary": "会話の中身から短い題を考えさせる。会話は変えない（付けるのは sessions.setTitle）。会話のアカウントで小さな 1 回が動く。",
+        "sessionId": "会話の id。省くと自分の会話。"
+      },
+      "listMessages": {
+        "summary": "会話の送信待ち（まだエージェントに渡っていない発言）を返す。本文は 500 字まで。",
+        "sessionId": "会話の id。省くと自分の会話。",
+        "limit": "返す件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      },
+      "send": {
+        "summary": "別の会話にメッセージを送る。画面からの送信と同じく送信待ちに積まれ、宛先の会話の承認モードで走る（走っていれば順番を待つ）。宛先の履歴には、あなたの会話が代わりに送ったと出る。宛先の承認モードがこの会話より強いときは、この会話に承認カードが出る。自分自身・委譲の親子（子には ply_task_send）・3 回を超える会話どうしの連鎖・10 分に 20 件を超える送信は断られる。",
+        "sessionId": "送る先の会話の id。",
+        "text": "送る本文。",
+        "reason": "送る理由（500 字まで）。宛先の会話の変更の記録に残る。",
+        "card": "会話「{{title}}」にメッセージを送ります。宛先の承認モード（{{mode}}）はこの会話より強く、宛先で確認なしに進む操作が増えます。\n本文: {{text}}"
+      },
+      "messageAction": {
+        "summary": "送信待ちの 1 件を取り消す（cancel）か、送れなかった・保留の 1 件を送り直す（retry）。取り消した発言はエージェントに渡らない。送り直しは宛先の会話の承認モードで走り、この会話より強い会話では承認カードが出る。",
+        "sessionId": "会話の id。省くと自分の会話。",
+        "messageId": "送信待ちの id（sessions.listMessages の id・sessions.send の messageId）。",
+        "action": "cancel（取り消す）か retry（送り直す）。",
+        "card": "会話「{{title}}」の送信待ち {{messageId}} を送り直します。宛先の承認モード（{{mode}}）はこの会話より強く、宛先で確認なしに進む操作が増えます。"
+      },
+      "markRead": {
+        "summary": "会話の完了を確認した印（既読）を付ける。ホストに 1 つで、どの画面・端末にも同じ。巻き戻らない。",
+        "sessionId": "会話の id。",
+        "at": "確認した完了の時刻（ミリ秒）。省くと今の完了まで。"
+      },
+      "changes": {
+        "summary": "会話の変更の記録（時刻・誰が・前 → 後・理由）を新しい順に返す。",
+        "sessionId": "会話の id。省くと自分の会話。",
+        "limit": "返す件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      },
+      "lineage": {
+        "summary": "同じ根を持つ会話（分岐の家族）を、根から幅優先で返す。",
+        "sessionId": "起点の会話の id。省くと自分の会話。",
+        "limit": "返す件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      },
+      "setModel": {
+        "summary": "会話のモデルを替える。走っているターンにも、できるエージェントなら即時に伝わる。変更の記録に、変えた主体と理由が残る。選べるモデルは settings.schema の model。",
+        "sessionId": "会話の id。省くとこの会話。",
+        "model": "モデルの id。空の文字列でエージェントの既定。",
+        "reason": "変える理由（変更の記録に残る）。",
+        "reasonKey": "画面の定型理由のキー。", "reasonParams": "定型理由に入れる値。", "backend": "会話のエージェント。"
       }
     },
     "statuses": {
@@ -447,6 +553,43 @@
       "create": {
         "summary": "空の状態のグループを作る。",
         "status": "グループの名前。"
+      },
+      "list": {
+        "summary": "使われた状態（グループ）の一覧を、使い始めの古い順に返す。件数・最初と最後に使った時刻・アイコン付き。",
+        "limit": "返す件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      },
+      "rename": {
+        "summary": "状態のグループの名前を替える。付いている会話の状態を全部替え、会話ごとに変更の記録が残る。to を空にするとグループを消して状態を外す。",
+        "from": "今のグループ名。",
+        "to": "新しい名前。空でグループを消す。"
+      }
+    },
+    "agents": {
+      "list": {
+        "summary": "使えるエージェント（claude・codex・antigravity など）の一覧。id・名前・説明・できること。"
+      },
+      "models": {
+        "summary": "エージェントのモデルの一覧（id・名前・注）。",
+        "backend": "エージェントの id。省くと既定のエージェント。",
+        "cwd": "作業フォルダー（モデルの一覧が場所で変わるとき）。",
+        "limit": "返す件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      },
+      "modes": {
+        "summary": "エージェントの承認モードの一覧（id・名前・注）。選ぶのは人だけ。",
+        "backend": "エージェントの id。省くと既定のエージェント。"
+      },
+      "efforts": {
+        "summary": "エージェントの思考の強さの選べる値（id・名前・注）。",
+        "backend": "エージェントの id。省くと既定のエージェント。",
+        "model": "モデルの id（段がモデルで変わる）。",
+        "cwd": "作業フォルダー。",
+        "endpoint": "互換の接続先の id。"
+      },
+      "authStatus": {
+        "summary": "エージェントにログインしているかを返す（入れているか・ログイン済みか）。メールアドレスやトークンは返さない。ログイン・ログアウトは画面だけ。",
+        "backend": "エージェントの id。省くと既定のエージェント。"
       }
     },
     "errors": {
@@ -476,10 +619,31 @@
       "BOT_NAME_TAKEN": "bot の名前「{{name}}」はすでに使われています。別の名前にしてください。",
       "MEMORY_SOURCE": "記憶に書けません。出どころが足りません: {{reason}}",
       "MEMORY_REJECTED": "記憶に書けません: {{reason}}",
-      "MEMORY_NOT_FOUND": "記憶「{{id}}」が見つかりません。memory.list で探してください。"
+      "MEMORY_NOT_FOUND": "記憶「{{id}}」が見つかりません。memory.list で探してください。",
+      "MASKED": "{{path}} に伏せ字（••••）が入っていますが、読んだときの値と合わないので戻せません。値を書くか、読んだときのまま渡してください。",
+      "SEND_SELF": "自分の会話には送れません。",
+      "SEND_TO_CHILD": "会話「{{id}}」はこの会話が委譲した子です。追加の指示は ply_task_send で送ってください。",
+      "SEND_TO_PARENT": "会話「{{id}}」はこの会話の依頼元です。結果は終わったときに自動で届くので、送らないでください。",
+      "RELAY_LIMIT": "会話どうしの送信が {{max}} 回続いたので、これ以上は送れません。続けるかどうかをユーザーに聞いてください。",
+      "SEND_RATE": "この会話からの送信が {{minutes}} 分で {{max}} 件を超えました。しばらく待つか、ユーザーに聞いてください。"
     },
     "pending": "{{target}}の変更は、ユーザーの承認を待っています（requestId: {{requestId}}）。まだ変わっていません。結果（許可・拒否）は後でこの会話に届きます。待たずにほかの作業を続けるか、応答を終えてかまいません。同じ変更を繰り返し求めないでください。",
     "settingTarget": "設定「{{key}}」",
+    "settingTargetLabeled": "設定「{{label}}」（{{key}}）",
+    "settingLabel": {
+      "confirmAgentSites": "エージェントがサイトを使う前に確認",
+      "confirmExternalLoads": "外部の読み込みの前に確認",
+      "agentSitePermissions": "許可したサイト · エージェントの利用",
+      "externalSitePermissions": "許可したサイト · 外部の読み込み",
+      "browserProfiles": "内蔵ブラウザーのプロフィール",
+      "computerUse": "コンピューターの操作",
+      "delegationRouting": "委譲先の自動振り分け",
+      "plyInstructions": "Pleiad の指示",
+      "addedContext": "委譲の指示のスイッチ（前の版）",
+      "context": {
+        "default": "コンテキストの既定"
+      }
+    },
     "opTarget": "操作「{{id}}」",
     "settingNotice": {
       "head": "[Pleiad 設定の変更の結果 / {{requestId}}]\n結果: {{status}}",
@@ -490,6 +654,7 @@
         "superseded": "取り下げ",
         "restart": "取り下げ"
       },
+      "fromChild": "委譲した子「{{title}}」（taskId: {{taskId}}）が求めた変更です。この子のタスクはすでに終わっている（{{state}}）ので、結果は子ではなくあなたに届けました。子に続きを頼むときは ply_task_send を使ってください。",
       "allowed": "ユーザーが{{target}}の変更を許可し、Pleiad が変更しました。元の依頼に必要な作業を続けてください。",
       "denied": "ユーザーが{{target}}の変更を拒否しました。設定は変わっていません。同じ変更を求め直さず、必要ならユーザーに理由を尋ねてください。",
       "failed": "ユーザーが{{target}}の変更を許可しましたが、変更できませんでした: {{error}}",
@@ -535,16 +700,223 @@
       "taskSend": { "summary": "自分が委譲した子へ追加の指示を送る。", "taskId": "子のタスク id。", "message": "追加の指示。" },
       "taskCancel": { "summary": "自分が委譲した子を止める。", "taskId": "子のタスク id。" },
       "taskList": { "summary": "自分が委譲した子の一覧を読む。" },
-      "usage": { "summary": "委譲先の使用枠を読む。", "backend": "調べるエージェント。省くと全部。" }
+      "usage": { "summary": "委譲先の使用枠を読む。", "backend": "調べるエージェント。省くと全部。" },
+      "instructions": {
+        "summary": "委譲の子への追加の指示の履歴を新しい順に返す（本文は 1,000 字まで）。",
+        "taskId": "タスクの id。",
+        "limit": "返す件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      },
+      "retry": {
+        "summary": "別の候補で、同じ依頼を新しい子のタスクとしてやり直す。自分が委譲した子だけ。依頼元より強い承認モードの子になる場合は NEEDS_UI（ユーザーの確認が要る）。",
+        "taskId": "やり直す元のタスクの id。",
+        "candidate": "委譲先の候補（<エージェント>:<モデル>）。delegation.routing の candidates から選ぶ。",
+        "stop": "元のタスクが動いているとき、止めるか（必須）。",
+        "account": "Claude のアカウントの id。人（画面）だけ。AI が渡すと NEEDS_UI。",
+        "approved": "承認モードが強くなる確認を済ませたか。人（画面）だけ。AI が渡すと NEEDS_UI。"
+      },
+      "routing": {
+        "summary": "委譲先の自動振り分けの今の状態（設定・警告・使える候補）を返す。判定器のキーは返さない（登録の有無だけ）。設定を変えるのは settings.set の delegationRouting。",
+        "refresh": "true で使用量を取り直してから返す。",
+        "limit": "返す候補の件数（既定 30、最大 100）。",
+        "cursor": "前の返り値の next。続きから返す。"
+      }
     },
     "browser": { "listProfiles": { "summary": "この会話で使えるブラウザーのプロフィール一覧を読む。" }, "useProfile": { "summary": "この会話のブラウザープロフィールを切り替える。", "profile": "プロフィールの id か名前。" }, "setProfile": { "summary": "会話のブラウザープロフィールを切り替える。", "sessionId": "会話の id。", "profile": "プロフィールの id。" } },
+    "worktrees": {
+      "split": { "summary": "会話の作業場所（git）を、別のブランチの分けた作業場所（git worktree）に分ける。元の作業ツリーは変わらない。返る cwd で作業する（次のターンの作業場所は変えない）。", "sessionId": "会話の id。sessionId も cwd も省くとこの会話。", "cwd": "分ける場所（どれかの会話が使った場所だけ）。" },
+      "discard": { "summary": "分けた作業場所を片付ける。変更が無いか取り込み済みのときだけ消し、未取り込みの変更・使っている会話があれば残す（action: kept）。", "id": "分けた作業場所の id（分けたときの返り値・委譲の子の結果にある）。" },
+      "keep": { "summary": "分けた作業場所を自動の片付けから外す（kept: false で戻す）。", "id": "分けた作業場所の id。", "kept": "残すか（既定 true）。" },
+      "archive": { "summary": "分けた作業場所を退避して消す。作業ツリー全体を隠し ref に撮ってから消し、90 日は worktrees.restore で戻せる。使っている会話があれば消さない。", "id": "分けた作業場所の id。" },
+      "restore": { "summary": "退避した作業場所を、新しい分けた作業場所として作り直す。", "ref": "退避の ref（refs/pleiad/archive/ で始まる。worktrees.archive の返り値）。", "sessionId": "リポジトリを決める会話の id。sessionId も cwd も省くとこの会話。", "cwd": "リポジトリの場所（どれかの会話が使った場所だけ）。" },
+      "setSettings": { "summary": "「いつも分ける」を切り替える（同じリポジトリに書いている別の会話があるとき、確かめずに分ける）。", "always": "いつも分けるか。" }
+    },
+    "notify": {
+      "setPc": { "summary": "この PC の通知を種類ごとに切り替える。渡した項目だけ変わる。", "done": "終わったとき。", "reply": "返事（承認・質問）が要るとき。", "failed": "失敗したとき。" },
+      "setDevice": { "summary": "ペアリング済みのスマホ 1 台への通知を止める・戻す。端末の一覧は出さない（id はユーザーに尋ねる）。", "id": "端末の id。", "muted": "止めるか。" }
+    },
+    "compatEndpoints": {
+      "recheck": { "summary": "保存済みの互換の接続先を、保存した URL とキーで確かめ直し、結果とモデルの一覧を記録する（キーは入力しない・返さない）。", "id": "接続先の id。" },
+      "delete": { "summary": "互換の接続先を削除する（保存したキーも消える）。承認が要る会話ではユーザーに確かめてから消す。", "id": "接続先の id。", "reason": "削除する理由（承認カードと記録に出る）。" }
+    },
+    "computer": {
+      "stop": { "summary": "会話のコンピューターの操作（この PC のマウスとキーボード）を止める。始める・許可することはできない。", "sessionId": "会話の id。省くとこの会話。" }
+    },
     "control": {
       "instructions": "Pleiad の機能と設定は ply_control から使えます。\nまず list_ops で操作を探し（id を渡すと入力の JSON Schema が分かります）、call_op で呼びます。検索・読み出し・設定の get/set は直に呼べます。\nPleiad の状態を変える操作はこの会話の承認モードに従います。関所を緩める変更はユーザーに承認カードを出し、待たずに status: pending で返ります（結果は後でこの会話に届きます）。code が NEEDS_UI・NEEDS_APPROVAL・READ_ONLY_MODE で返ったら、やり直さずユーザーに伝えてください。",
       "listOps": "Pleiad で使える操作の一覧。id を渡すと、その操作の説明・入力の JSON Schema・危険度を返す。呼ぶのは call_op。",
       "listOpsId": "操作の id（例: sessions.list）。省くと全部の id と 1 行の説明。",
+      "listOpsPrefix": "id の先頭で絞る（例: sessions.）。",
       "callOp": "Pleiad の操作を呼ぶ。入力が合わないと、どの項目がなぜ違うかが code: INVALID で返る。",
       "callOpOp": "操作の id（list_ops で探す）。",
       "callOpArgs": "操作の入力。list_ops に id を渡して得た JSON Schema の形。"
+    },
+    "mcp": {
+      "arg": {
+        "format": "どのエージェントの設定ファイルか（claude: ~/.claude.json・.mcp.json、codex: config.toml）。",
+        "scope": "user（ホームの設定）か directory（作業場所の設定）。",
+        "cwd": "作業場所のフォルダー。会話から呼ぶときは省くとその会話の作業場所。",
+        "nativeName": "設定ファイルの中の MCP サーバーの名前。",
+        "name": "Pleiad に登録した MCP サーバーの名前。",
+        "mode": "add（新しく足す）か edit（今の登録を変える）。",
+        "revision": "読んだときの revision。読んだ後で変わっていれば保存しない。",
+        "reason": "変える理由（承認カードと変更の記録に出る）。"
+      },
+      "nativeList": {
+        "summary": "エージェント（Claude・Codex）の設定ファイルにある MCP サーバーの名前の一覧と revision。"
+      },
+      "nativeRead": {
+        "summary": "エージェントの設定ファイルにある MCP サーバー 1 つの定義。env・ヘッダーの値・URL のクエリ・引数の秘密は伏せ字（••••）。"
+      },
+      "nativeSave": {
+        "summary": "エージェントの設定ファイルに MCP サーバーを足す・変える。任意のコマンドを動かせるようになるので、ユーザーの承認が要る。伏せ字のまま渡した値は今の値を残す。",
+        "value": "定義（stdio は command・args・env、HTTP は url と headers）。",
+        "allowReformat": "TOML を書き直して整形が変わってもよいか。"
+      },
+      "list": {
+        "summary": "Pleiad に登録した MCP サーバーの一覧（定義・どの秘密があるか・OAuth の状態）。秘密の値は返さない。"
+      },
+      "read": {
+        "summary": "Pleiad に登録した MCP サーバー 1 つの編集用の定義。秘密は伏せ字（••••）、まだ入れていない秘密は null。"
+      },
+      "save": {
+        "summary": "Pleiad に MCP サーバーを登録する・登録を変える。任意のコマンドを動かせるようになるので、ユーザーの承認が要る。伏せ字のまま渡した秘密は前の値を残す。",
+        "value": "定義（transport・command・args・env・url・auth・bearerToken・headers・oauth など。mcp.read の value の形）。"
+      },
+      "delete": {
+        "summary": "Pleiad の MCP サーバーの登録を消す（OAuth のトークンは失効させる）。ユーザーの承認が要る。"
+      },
+      "rename": {
+        "summary": "Pleiad の MCP サーバーの登録の名前を変える（秘密と OAuth の状態は引き継ぐ）。ユーザーの承認が要る。",
+        "to": "新しい名前。"
+      },
+      "import": {
+        "summary": "エージェントの設定ファイルの MCP サーバーを Pleiad の登録に取り込む。ユーザーの承認が要る。",
+        "items": "取り込むもの: { format, scope, name, cwd?, as?（登録する名前）, auth? } の並び。",
+        "includeSecrets": "env・ヘッダーの値・bearer も写すか（既定は写さず、後で入れる）。"
+      },
+      "setSettings": {
+        "summary": "Pleiad の MCP 全体の設定（OAuth の Client ID Metadata Document の URL）を変える。ユーザーの承認が要る。",
+        "clientMetadataUrl": "https の URL。null か空で外す。"
+      },
+      "authStatus": {
+        "summary": "Pleiad の MCP サーバーの OAuth の状態（ログイン済み・期限・要ログイン）。トークンは返さない。ログインとログアウトはユーザーが画面で行う。",
+        "name": "1 つだけ見るときの名前。省くと全部。"
+      },
+      "reconnect": {
+        "summary": "登録した MCP サーバーに今の資格情報でつながるかを確かめる（ツールの数と状態を返す）。"
+      }
+    },
+    "hooks": {
+      "read": { "summary": "エージェントの設定ファイルにある Hooks の定義 1 つ（コマンド・timeout など）を読む。コマンド中の秘密らしい値は伏せる。", "agent": "エージェント（claude・codex・antigravity）。", "scope": "範囲（user・project など）。", "base": "project の範囲の作業場所。", "file": "設定ファイルのパス。省くと既定の置き場。", "loc": "定義の位置（event・group・handler、Antigravity は name）。" },
+      "readPly": { "summary": "Pleiad の Hooks（hooks.json）の登録 1 つを読む。コマンド中の秘密らしい値は伏せる。", "id": "登録の id。" },
+      "arg": {
+        "cwd": "作業場所のフォルダー。会話から呼ぶときは省くとその会話の作業場所。",
+        "sessionId": "会話の id。会話から呼ぶときは省くとその会話。",
+        "id": "Pleiad の Hook の登録の id（hooks.list の hooks[].id）。",
+        "dryRun": "true なら書かずに、書き先と前後の本文（伏せ字）だけを返す。承認は要らない。",
+        "allowReformat": "書き直して整形が変わってもよいか。",
+        "reason": "変える理由（承認カードと変更の記録に出る）。"
+      },
+      "scan": {
+        "summary": "各エージェントの設定ファイルの Hooks の定義（ファイルごとの状態と行）。コマンドの秘密は伏せる。",
+        "scope": "user（ホームだけ）か directory（ホームと、Git のルートから cwd まで）。",
+        "trust": "Codex の信頼の状態も Codex に聞くか（少し時間がかかる）。"
+      },
+      "saveNative": {
+        "summary": "各エージェントの設定ファイルの Hooks を足す・変える・消す・有効にする。書くときはユーザーの承認が要る（先に dryRun で確かめる）。",
+        "items": "変更の並び: { op: add|edit|delete|enable, agent, scope, base?, file?, revision, loc?, event?, matcher?, command?, timeout?, name?, enabled? }。"
+      },
+      "copy": {
+        "summary": "ある Hook の定義を、別のエージェントの設定ファイルへ写す（形が違えばアダプターを通す）。書くときはユーザーの承認が要る。",
+        "source": "写す元: { agent, scope, base?, file, loc, revision }（hooks.scan の行）。",
+        "targets": "写し先の並び: { agent, scope, base?, matcher?, revision? }。"
+      },
+      "session": {
+        "summary": "会話の Hooks: その会話の場所で見つかった定義・Pleiad がそろえた記録・受け取った発火の記録。",
+        "backend": "エージェントの id。会話から呼ぶときは省くとその会話のエージェント。"
+      },
+      "list": {
+        "summary": "Pleiad の Hooks の登録と担当（エージェントに任せる／Pleiad がそろえる）。コマンドは伏せる。"
+      },
+      "save": {
+        "summary": "Pleiad に Hook を登録する・登録を変える（value.id があれば編集）。エージェントの操作のたびにコマンドが動くので、ユーザーの承認が要る。",
+        "value": "{ id?, name, agent, event, matcher?, command, timeout?, async?, targets }。伏せ字のまま渡したコマンドは前の値を残す。"
+      },
+      "remove": {
+        "summary": "Pleiad の Hook の登録を消す。ユーザーの承認が要る。"
+      },
+      "toggle": {
+        "summary": "Pleiad の Hook の登録を有効・無効にする。有効にするときはユーザーの承認が要る。",
+        "enabled": "true で有効、false で無効（既定 true）。"
+      },
+      "setOwner": {
+        "summary": "Hooks の担当（エージェントに任せる／Pleiad がそろえる）を変える。ユーザーの承認が要る。",
+        "place": "作業場所のパス。null か省くと全体の既定。",
+        "value": "{ owner: native|ply, disabled?: [登録の id] }。null で上の設定に戻す。",
+        "imports": "一緒に取り込むネイティブの定義（{ id, digest }）。",
+        "revision": "hooks.list の revision。"
+      },
+      "repair": {
+        "summary": "壊れた Pleiad の Hooks の登録ファイルを退避し、読めた部分だけで書き直す。ユーザーの承認が要る。"
+      }
+    },
+    "context": {
+      "arg": {
+        "cwd": "作業場所のフォルダー。会話から呼ぶときは省くとその会話の作業場所。",
+        "sessionId": "会話の id。会話から呼ぶときは省くとその会話。",
+        "reason": "変える理由（承認カードと変更の記録に出る）。"
+      },
+      "settings": {
+        "summary": "コンテキストの設定（指示・Skills・外部 MCP をどこから読み、誰が担当するか）。既定と、保存した場所ごとの上書き。"
+      },
+      "setSettings": {
+        "summary": "コンテキストの設定を 1 か所変える。全部の会話に渡る文脈が変わるので、ユーザーの承認が要る。",
+        "place": "作業場所のパス。null で既定。",
+        "kind": "instruction・skill・mcp のどれか。",
+        "value": "その種類の設定（{ owner, user, directory, disabled?, prefer? }）。null で上の設定に戻す。",
+        "roots": "追加で探すフォルダーの並び。null で上の設定に戻す。",
+        "add": "true で場所を一覧に足す。",
+        "remove": "true で場所を一覧から外す（上書きも消える）。"
+      },
+      "plyInstructions": {
+        "summary": "Pleiad の指示（会話ごとにエージェントへ足す指示の項目と、量の目安）。"
+      },
+      "setPlyInstructions": {
+        "summary": "Pleiad の指示を 1 つ変える。エージェントの振る舞いが変わるので、ユーザーの承認が要る。",
+        "action": "save（足す・変える）・toggle・delete（自分で足したもの）・reset（既定の項目）・order。",
+        "id": "項目の id（save で省くと足す）。",
+        "name": "項目の名前（save）。",
+        "body": "指示の本文（save）。",
+        "target": "all・parent・child（save）。",
+        "agents": "渡すエージェント（save）。",
+        "on": "オン・オフ（toggle）。",
+        "ids": "並べ替えた項目の id（order）。"
+      },
+      "refresh": {
+        "summary": "会話に固定した指示・Skills を、今のファイルから読み直す（走っていない会話だけ）。"
+      },
+      "setSessionMcp": {
+        "summary": "会話で外部 MCP サーバーを外す・戻す（次のターンから）。戻すときはユーザーの承認が要る。",
+        "name": "MCP サーバーの名前。",
+        "removed": "true で外す（既定）、false で戻す。"
+      }
+    },
+    "remote": {
+      "status": {
+        "summary": "リモートの状態（中継への接続・端末の一覧・常駐の設定）。鍵とペアリングの確認の番号は返さない。"
+      },
+      "setResident": {
+        "summary": "デスクトップ版の常駐の設定（窓を閉じても続けるか・スリープを止めるか）を変える。",
+        "keepRunning": "窓を閉じてもトレイで続けるか。",
+        "sleep": "スリープを止める規則（working: 作業中だけ、always: いつも、off: 止めない）。"
+      }
+    },
+    "endpoints": {
+      "list": {
+        "summary": "互換の接続先の一覧（URL・モデル・既定・確認の結果）。API キーは返さない（hasKey だけ）。",
+        "agent": "エージェントの id で絞る。"
+      }
     },
     "probe": {
       "guarded": {
@@ -721,6 +1093,7 @@
     "effort": "新しい会話の既定の思考の深さ。",
     "mode": "承認モードの既定（人間だけが変える）。",
     "claudeAccount": "既定の Claude のアカウント（id。トークンは持たない。人間だけが変える）。",
+    "limitResume": "使用量の上限の解除後に再開する方法・同時に動かす数・使用率の歯止め。",
     "compaction": {
       "auto": "自動圧縮の設定（有効・閾値のトークン数・エージェントごとの放置の分数）。"
     },

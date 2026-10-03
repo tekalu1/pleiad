@@ -45,7 +45,7 @@ class NotifyPlanner {
         return when (n.kind) {
             NoticeKind.CANCEL -> cancel(h, n)
             NoticeKind.APPROVAL, NoticeKind.QUESTION -> if (s.enabled && s.reply) post(h, n) else emptyList()
-            NoticeKind.FAILED -> if (s.enabled && s.failed) post(h, n) else emptyList()
+            NoticeKind.FAILED, NoticeKind.LIMIT_READY, NoticeKind.LIMIT_GUARDED, NoticeKind.SCHEDULE_MISSED -> if (s.enabled && s.failed) post(h, n) else emptyList()
             NoticeKind.DONE -> if (s.enabled && s.done) post(h, n) else emptyList()
             else -> emptyList()
         }
@@ -76,9 +76,9 @@ class NotifyPlanner {
         val hostId = n.hostId
         val old = h.slots.remove(n.session)
         val slot = Slot(n.kind, n.title, h.host, n.at)
-        if (attention(n.kind) && n.kind != NoticeKind.FAILED) {
+        if (attention(n.kind) && n.kind != NoticeKind.FAILED && n.kind != NoticeKind.LIMIT_READY && n.kind != NoticeKind.LIMIT_GUARDED && n.kind != NoticeKind.SCHEDULE_MISSED) {
             // approvals / questions already waiting in this conversation stay counted
-            if (old != null && attention(old.kind) && old.kind != NoticeKind.FAILED) slot.ids += old.ids
+            if (old != null && attention(old.kind) && old.kind != NoticeKind.FAILED && old.kind != NoticeKind.LIMIT_READY && old.kind != NoticeKind.LIMIT_GUARDED && old.kind != NoticeKind.SCHEDULE_MISSED) slot.ids += old.ids
             slot.ids += n.id ?: "?"
         }
         h.slots[n.session] = slot
@@ -113,7 +113,7 @@ class NotifyPlanner {
             }
             "seen" -> when {
                 slot == null -> listOf(NotifyAction.Cancel(key))
-                slot.kind == NoticeKind.DONE || slot.kind == NoticeKind.FAILED -> {
+                slot.kind == NoticeKind.DONE || slot.kind == NoticeKind.FAILED || slot.kind == NoticeKind.LIMIT_READY || slot.kind == NoticeKind.LIMIT_GUARDED || slot.kind == NoticeKind.SCHEDULE_MISSED -> {
                     h.slots.remove(n.session)
                     listOf<NotifyAction>(NotifyAction.Cancel(key)) + (if (slot.kind == NoticeKind.DONE) syncDone(h, hostId, alert = false) else emptyList())
                 }

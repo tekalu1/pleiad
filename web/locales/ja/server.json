@@ -125,13 +125,15 @@
   "resume": {
     "running": "この会話は実行中です。終わってから再開してください",
     "notInterrupted": "この会話は中断していません",
-    "outboxUnknown": "送信結果を確認できないメッセージがあるため、再開できません。会話を確かめてから、未送信の一覧でそのメッセージを再送するか取り消してください",
+      "outboxUnknown": "送信結果を確認できないメッセージがあるため、再開できません。会話を確かめてから、未送信の一覧でそのメッセージを再送するか取り消してください",
+      "limitWaiting": "このアカウントは上限の解除を待っています。別のアカウントを選ぶか、解除まで待ってください",
     "prompt": {
       "user": "続けてください",
       "update": "Pleiad の更新のため中断しました。途中だった操作は結果を確かめてから、続きを進めてください。",
       "quit": "Pleiad の終了のため中断しました。途中だった操作は結果を確かめてから、続きを進めてください。",
       "restart": "Pleiad が再起動したため中断しました。途中だった操作は結果を確かめてから、続きを進めてください。",
-      "hostAway": "接続が切れたため中断しました。途中だった操作は結果を確かめてから、続きを進めてください。"
+        "hostAway": "接続が切れたため中断しました。途中だった操作は結果を確かめてから、続きを進めてください。",
+        "limit": "使用量の上限で止まりました。止まる前の続きから進めてください。"
     }
   },
   "scan": {
@@ -198,6 +200,7 @@
   },
   "compat": {
     "redactedKey": "[キー]",
+    "deleteConfirm": "互換の接続先「{{name}}」を削除します。保存したキーも消え、また使うにはキーを入れ直す必要があります。この接続先で動いている会話は、続きを送れなくなります。",
     "listSeparator": "・",
     "url": {
       "empty": "URL を入力してください",
@@ -824,6 +827,13 @@
     "openFailed": "フォルダーを開けません: {{dir}}",
     "invalidPath": "パスの指定が不正です"
   },
+  "schedule": {
+    "invalidTime": "送信の日時を読めません",
+    "past": "過ぎた時刻・すぐの時刻は送信予定にできません。そのまま送ってください",
+    "tooFar": "送信予定は 1 年先までです",
+    "full": "送信予定は 1 会話に {{max}} 件までです",
+    "notFound": "送信予定が見つかりません（すでに送った・取り消した可能性があります）"
+  },
   "queue": {
     "idConflict": "同じ送信IDで内容を変更できません",
     "full": "送信待ちは{{max}}件までです",
@@ -1066,5 +1076,26 @@
       "notDevice": "登録済みのスマホからの接続ではありません",
       "unknownDevice": "その端末は一覧にありません"
     }
+  },
+  "opsApproval": {
+    "mcpNativeSave": "MCP サーバー「{{name}}」を {{file}} に保存します。会話の始まりにこのコマンドが動きます。",
+    "mcpSave": "Pleiad の MCP サーバー「{{name}}」を保存します。担当が Pleiad の会話の始まりにこのコマンドが動きます。",
+    "mcpDelete": "Pleiad の MCP サーバー「{{name}}」の登録を消します。",
+    "mcpRename": "Pleiad の MCP サーバー「{{name}}」の名前を「{{to}}」に変えます。",
+    "mcpImport_other": "エージェントの MCP サーバー {{count}} 件を Pleiad に取り込みます。",
+    "mcpImportSecrets_other": "エージェントの MCP サーバー {{count}} 件を、秘密の値も含めて Pleiad に取り込みます。",
+    "mcpSettings": "Pleiad の MCP の OAuth の設定を変えます。",
+    "hooksSaveNative_other": "エージェントの設定ファイルの Hooks を {{count}} 件変えます。エージェントの操作のたびにコマンドが動きます。",
+    "hooksCopy_other": "Hook を {{count}} か所へ写します。エージェントの操作のたびにコマンドが動きます。",
+    "hooksAdd": "Pleiad に Hook「{{name}}」を足します。エージェントの操作のたびにコマンドが動きます。",
+    "hooksEdit": "Pleiad の Hook「{{name}}」を変えます。",
+    "hooksRemove": "Pleiad の Hook「{{name}}」を消します。",
+    "hooksEnable": "Pleiad の Hook「{{name}}」の有効・無効を変えます（{{command}}）。",
+    "hooksOwner_other": "{{place}}の Hooks の担当を変えます（取り込み {{count}} 件）。",
+    "hooksRepair": "壊れた Hooks の登録ファイルを退避し、読めた部分だけで書き直します。",
+    "contextSettings": "{{place}}のコンテキストの設定を変えます。全部の会話に渡る指示・Skills・外部 MCP が変わります。",
+    "plyInstructions": "Pleiad の指示を変えます。会話ごとにエージェントへ足す指示が変わります。",
+    "sessionMcp": "この会話の外部 MCP「{{name}}」を変えます。",
+    "everywhere": "すべての場所"
   }
 }
