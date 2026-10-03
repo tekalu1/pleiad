@@ -9,6 +9,7 @@
 //                                    （hold があれば「承認の要る宛先を ops が決め済み」＝ checked。hold に入れた bot は起こさない）。
 //                                    botPost が返したターンの投稿に返事を入れたときも呼ぶ（extra.filled: true）
 //     edited(post, channel)     … 人の本文の編集後。送れる会話の参照を解決する（bot は起こさない）
+//     removed(post, channel)    … 投稿の削除後。エピソード要約を更新する（bot は起こさない）
 //     stopThread(args, author)    … [止める]（待つ。投げたら stopThread も投げる）。走っているターンを止めるのは S4（dispatch.stopThread）
 //     botPost({ channelId, threadId, botId, sessionId }) → { postId } | undefined
 //                                 … bot の post の前（同期）。postId があればその投稿（ターンの投稿）の本文に入れ、null なら新しい投稿。undefined なら下の既定（S4 の dispatch.claimPost）
@@ -404,6 +405,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       const saved = await store.append(channelId, { op: 'delete', id: postId, at: now() });
       edits.delete(postId);
       emit({ type: 'channelPost', channelId, op: 'delete', post: saved });
+      Promise.resolve().then(async () => hooks.removed?.(clone(saved), clone(await need(channelId)))).catch((e) => console.error('  channels: removed の後処理に失敗:', String(e?.message ?? e)));
     },
 
     async react({ channelId, postId, emoji, on }, author) {

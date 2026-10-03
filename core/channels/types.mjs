@@ -55,6 +55,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   state: 'idle'|'working'|'waiting'|'failed',
  *   tokens: { input: number, output: number, cached: number },  // このスレッドの bot の会話の合計（usage の出来事から）
  *   calls: number,                                        // bot が起こされた回数（表示だけ。上限には使わない）
+ *   digest?: { [botId: string]: { text: string, at: number, lastAt: number, fingerprint: string } }, // bot ごとのエピソード要約（ADR 0125）
  *   chain?: number,                                       // 人が最後に書いてから、bot が bot を起こした続けての回数（origin の根のスレッドに持つ。CHAIN_LIMIT で止める。ADR 0117）
  *   stopped: null | { by: Author, at: number },           // [止める]。人が次に書くまで新しく起こさない
  *   origin?: { channelId: string, threadId: string },     // bot が自分のスレッドからチャンネルの流れへ @ を書いて新しくできたスレッドの、起こした元。[止める] は origin で結ばれた派生のスレッドにも届く
@@ -78,6 +79,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, ROU
  *   channelId: string|null, threadId: string|null, routineId?: string, taint?: 'webhook',
  *   memRev: number,                                       // 末尾の差分をどこまで渡したか（memory/log.jsonl の rev）
  *   snapshotDue: boolean,                                 // 次のターンで核の写しを渡す（始まり・圧縮の完了で true）
+ *   recentDelivered?: boolean,                            // 最近のスレッドの申し送りを最初のターンで渡した印
  *   delivered: string[],                                  // この写しの後に渡した記憶の id（圧縮で空に）
  *   postCursor: string|null,                              // このスレッドの投稿をどこまで渡したか
  *   personaKey?: string }} SessionBot */                  // Antigravity の会話が最後に受け取った人格のハッシュ（直したら次のターンに新しい人格を渡す。ADR 0109）

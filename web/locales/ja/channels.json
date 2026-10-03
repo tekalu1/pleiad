@@ -352,6 +352,7 @@
     "post": "{{channel}} · {{from}}",
     "thread": "{{channel}} のこれまでの投稿を渡しました",
     "memoryCore": "覚えていることを渡しました",
+    "botRecent": "最近のスレッドを申し送りました",
     "turnContext": "時刻と記憶の変更を渡しました"
   }
 }

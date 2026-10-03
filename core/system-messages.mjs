@@ -44,11 +44,12 @@ export function splitInterruptionNotes(messages) {
 // bot の会話の user の行の先頭に付く包み（docs/design.md「Channels と bot」、ADR 0109・0110）。発言と同じ user の行に入る
 // （Claude は別の text ブロック、Codex は別の入力、agy は本文の前）ので、履歴で切り分ける。組み立ては core/channels/types.mjs
 export const MEMORY_CORE_TAG = "pleiad-memory-core";       // 会話の始まり・圧縮の後の最初のターンに 1 回だけ付く、核の記憶の写し
+export const BOT_RECENT_TAG = "pleiad-bot-recent";          // bot の会話の最初に 1 回だけ付く、最近のスレッドの申し送り
 export const TURN_CONTEXT_TAG = "pleiad-turn-context";     // 毎ターンの末尾: 時刻・記憶の差分・関係する記憶
 export const CHANNEL_THREAD_TAG = "pleiad-channel-thread"; // 初回に渡す、スレッドのそれまでの投稿（中に <pleiad-channel> が並ぶ）
 export const CHANNEL_TAG = "pleiad-channel";               // 起こした投稿・途中送信する投稿 1 件
 export const ROUTINE_PAYLOAD_TAG = "routine-payload";      // ルーティンの外から来た本文（先頭には付かない。<pleiad-channel> の中身に入る）
-const LEADING_TAGS = [INTERRUPTION_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, CHANNEL_THREAD_TAG, CHANNEL_TAG];
+const LEADING_TAGS = [INTERRUPTION_TAG, MEMORY_CORE_TAG, BOT_RECENT_TAG, TURN_CONTEXT_TAG, CHANNEL_THREAD_TAG, CHANNEL_TAG];
 const LEADING = new RegExp(`^\\s*<(${LEADING_TAGS.join("|")})(?=[\\s>])([^>]*)>([\\s\\S]*?)</\\1>\\s*`);
 const unescapeAttr = (s) => s.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#10;/g, "\n").replace(/&amp;/g, "&");
 const attrsOf = (text) => Object.fromEntries([...String(text).matchAll(/([\w-]+)="([^"]*)"/g)].map((m) => [m[1], unescapeAttr(m[2])]));
@@ -57,7 +58,7 @@ const attrsOf = (text) => Object.fromEntries([...String(text).matchAll(/([\w-]+)
 function leadingRow(tag, attrText, body, m) {
   const base = { role: "system", text: "", at: m.at ?? null, ...(m.backend ? { backend: m.backend } : {}) };
   if (tag === INTERRUPTION_TAG) return { ...base, kind: "interruptionNote", body };
-  if (tag === MEMORY_CORE_TAG || tag === TURN_CONTEXT_TAG) return { ...base, kind: "contextNote", tag: tag === MEMORY_CORE_TAG ? "memory-core" : "turn-context", body };
+  if (tag === MEMORY_CORE_TAG || tag === BOT_RECENT_TAG || tag === TURN_CONTEXT_TAG) return { ...base, kind: "contextNote", tag: tag === MEMORY_CORE_TAG ? "memory-core" : tag === BOT_RECENT_TAG ? "bot-recent" : "turn-context", body };
   const a = attrsOf(attrText);
   return { ...base, kind: "channelEvent", history: tag === CHANNEL_THREAD_TAG, channel: a.channel ?? "", threadId: a.thread ?? null,
     postId: a.post ?? null, from: a.from ?? "", sentAt: a.at ?? null, body };
@@ -66,7 +67,7 @@ function leadingRow(tag, attrText, body, m) {
 /**
  * user の行の先頭に並ぶ Pleiad の包みを、1 つずつシステム側の 1 行と、続く発言に分ける（splitInterruptionNotes を一般にしたもの）。
  *   - `<pleiad-interruption>` … `{ kind: 'interruptionNote', body }`
- *   - `<pleiad-memory-core>`・`<pleiad-turn-context>` … `{ kind: 'contextNote', tag: 'memory-core' | 'turn-context', body }`
+ *   - `<pleiad-memory-core>`・`<pleiad-bot-recent>`・`<pleiad-turn-context>` … `{ kind: 'contextNote', tag: 'memory-core' | 'bot-recent' | 'turn-context', body }`
  *   - `<pleiad-channel-thread …>`・`<pleiad-channel …>` … `{ kind: 'channelEvent', history, channel, threadId, postId, from, sentAt, body }`
  * 発言の uuid（分岐点）は続く発言に残す。続きが空なら最後の行に付ける。bot の会話では、包みだけの行は人の吹き出しにならない（ADR 0053）。何度かけても同じ
  */

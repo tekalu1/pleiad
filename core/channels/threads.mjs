@@ -40,6 +40,15 @@ export function applyThreadPatch(current, patch, now) {
   }
   if (patch.calls !== undefined) next.calls = num(patch.calls, next.calls);
   if (patch.chain !== undefined) next.chain = num(patch.chain, next.chain ?? 0);
+  if (patch.digest !== undefined) {
+    if (!patch.digest || typeof patch.digest !== 'object' || Array.isArray(patch.digest)) throw new Error('digest must be an object');
+    next.digest ??= {};
+    for (const [botId, entry] of Object.entries(patch.digest)) {
+      if (entry === null) { delete next.digest[botId]; continue; }
+      if (typeof entry?.text !== 'string' || [...entry.text].length > 500 || !Number.isFinite(entry.at) || !Number.isFinite(entry.lastAt) || typeof entry.fingerprint !== 'string') throw new Error('invalid thread digest');
+      next.digest[botId] = { text: entry.text, at: entry.at, lastAt: entry.lastAt, fingerprint: entry.fingerprint };
+    }
+  }
   if (patch.origin !== undefined) {
     if (patch.origin !== null && !(typeof patch.origin?.channelId === 'string' && patch.origin.channelId && typeof patch.origin?.threadId === 'string' && patch.origin.threadId)) throw new Error('origin must be null or { channelId: string, threadId: string }');
     if (patch.origin === null) delete next.origin; else next.origin = { channelId: patch.origin.channelId, threadId: patch.origin.threadId };

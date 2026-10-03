@@ -235,6 +235,12 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
   - `host` に足した口（`web/client.mjs` の `setupChannels` の引数）: `browser`（内蔵ブラウザーの部品。使えない画面では null）。`permissionCard` は質問のカードも出す。
 - Chats の一覧は bot の会話を出さない（あなた待ちの間だけ。`client.mjs` の `renderSessions`）。右パネルの作業場所の基準は `contextForPanel`。
 
+## スレッドのエピソードと申し送り
+
+スレッドが 3 分静かになると、そのスレッドで話した bot ごとに、何を話し、何を決め、誰が何を引き受けたかの要約を作る（[ADR 0125](adr/0125-bot-episodes.md)）。要約は `ThreadState.digest[botId]` に保存する。材料は taint のない人の投稿と、その bot の確定済み投稿だけ。モデルが選んだ長く残す決定・約束・好みは、夜の整理と同じ `memory.write` / `memory.edit` の出どころ検査を通して、その bot の記憶に書く。
+
+新しいスレッドの最初の bot ターンには、最近 5 スレッドまでの id・題・要約の冒頭（合計 1,300 字まで）を `<pleiad-bot-recent>` で、核の写しの後に 1 回だけ添える。詳しい投稿は `channels.read` で引ける。ほかの bot の投稿・taint のある投稿の本文は申し送りに入れない。圧縮時に核の写しを作り直しても、申し送りを繰り返さない。
+
 ## 記憶の強さ
 
 記憶の行は任意の種類 `k`・重み `w`・状態 `st` を markdown の行末のメタに持つ（`<!-- {"id":…,"k":"promise","w":3,"st":"open"} -->`。[ADR 0118](adr/0118-memory-strength-and-learner-runs.md)）。強さ ＝ 重み × 0.5^(経過日数 ÷ 半減期) を、読むたびに今の時刻から計算する（`core/memory/strength.mjs`。保存しない）。経過は最後に書いた・直した時刻から。

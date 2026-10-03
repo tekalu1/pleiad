@@ -93,7 +93,7 @@ const threadKeyOf = (channelId, threadId) => (threadId ? `${channelId}/${threadI
 const log = (...a) => console.error('  dispatch:', ...a);
 const errText = (e) => String(e?.message ?? e);
 
-export function createDispatcher({ channels, bots, memory, host, emit = () => {}, now = Date.now } = {}) {
+export function createDispatcher({ channels, bots, memory, episodes, host, emit = () => {}, now = Date.now } = {}) {
   const inbox = createInboxStore({ dir: channels?.dir ?? path.join(host?.dataDir ?? '.', 'channels'), now });
   const active = new Map();        // sessionId → ターンの記録（begin から onTurnEnd まで）
   const starting = new Map();      // sessionId → 自分が始めたターンのうち、まだ turnExtras に届いていないもの
@@ -628,6 +628,13 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       rec.tail = tail;
       notes = tail.notes ?? [];
     } catch (e) { log('could not build the turn tail:', errText(e)); }
+    if (sb.kind === 'thread' && !sb.recentDelivered) {
+      try {
+        const recent = await episodes?.recent(bot.id, channelId, rec.threadId, turn.agentLocale);
+        if (recent) notes.splice(notes[0]?.startsWith('<pleiad-memory-core>') ? 1 : 0, 0, recent);
+        rec.recentAttempted = true;
+      } catch (e) { log('could not build the recent-thread handoff:', errText(e)); }
+    }
     // Antigravity は、会話を続けるときに人格（エージェント定義）を渡し直しても、最初の指示のまま動く（実機の確認。2026-10-03）。
     // 人格を直した後の最初のターンに、新しい人格を末尾の文脈として渡す（会話の始めに渡した人格はこれに置き換わる）。
     // 会話が最後に受け取った人格のハッシュは、渡った（commit）ときに sidecar へ残す
@@ -676,6 +683,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
     updateSidecar(rec.sessionId, (sb) => ({
       ...sb,
       ...(tail ? { memRev: tail.memRev, delivered: rec.compactedDuring ? [] : tail.delivered, snapshotDue: rec.compactedDuring ? true : tail.snapshotDue } : {}),
+      ...(rec.recentAttempted ? { recentDelivered: true } : {}),
       ...(rec.cursor ? { postCursor: rec.cursor } : {}),
       ...(rec.personaKey ? { personaKey: rec.personaKey } : {}),
     }));
@@ -826,6 +834,10 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       for (const [id, live] of [...liveSteers]) if (live.sessionId === sessionId) { liveSteers.delete(id); inbox.mark(live.ids, 'pending').catch(() => {}); }
     }
     await refreshThread(rec.channelId, rec.threadId);
+    if (rec.kind === 'thread' && rec.threadId) {
+      try { episodes?.onTurnEnd(rec.channelId, rec.threadId); }
+      catch (e) { log('could not schedule the thread episode:', errText(e)); }
+    }
     // 返事の中の @ で、次の bot を起こす（止められたスレッドは起こさない）
     if (woke) {
       try {

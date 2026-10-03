@@ -29,6 +29,7 @@ import { createChannelService } from './channels/service.mjs';
 import { createBotService } from './bots/service.mjs';
 import { createMemoryService } from './memory/service.mjs';
 import { createMemoryLearner } from './memory/learn.mjs';
+import { createEpisodes } from './memory/episodes.mjs';
 import { createDispatcher } from './bots/dispatch.mjs';
 import { createRoutineService } from './routines/service.mjs';
 import { clock as routinesClock } from './routines/clock.mjs';
@@ -48,25 +49,29 @@ export function createBotHost(deps) {
   };
 
   // ---- channels（S1）
+  const noteEpisode = (post) => { try { episodes.onPosted(post); } catch (e) { console.error('  memory episode:', String(e?.message ?? e)); } };
   const channels = createChannelService({
     dir: path.join(dataDir, 'channels'), emit, listBots: () => bots.list(),
-    hooks: { posted: async (...args) => { await bots.noteShown(...args); return dispatch.onPosted(...args); },
-      edited: lazy(() => bots.noteShown), stopThread: lazy(() => dispatch.stopThread), botPost: lazy(() => dispatch.claimPost) },
+    hooks: { posted: async (...args) => { noteEpisode(args[0]); await bots.noteShown(...args); return dispatch.onPosted(...args); },
+      edited: async (...args) => { noteEpisode(args[0]); return bots.noteShown(...args); },
+      removed: noteEpisode, stopThread: lazy(() => dispatch.stopThread), botPost: lazy(() => dispatch.claimPost) },
   });
   // ---- bots（S2）
   const bots = createBotService({ dataDir, channels, host, emit });
   // ---- memory（S3）
   const memory = createMemoryService({ dataDir, channels, emit, localeOf: () => deps.currentLocale?.() ?? 'ja' });
+  let learner;
+  const episodes = createEpisodes({ channels, bots, summarize: (args) => learner.summarizeEpisode(args), localeOf: () => deps.currentLocale?.() ?? 'ja' });
   // ---- dispatch（S4）
-  const dispatch = createDispatcher({ channels, bots, memory, host, emit });
+  const dispatch = createDispatcher({ channels, bots, memory, episodes, host, emit });
   // ---- routines（R1）
   const routines = createRoutineService({ dataDir, channels, bots, dispatch, host, emit, clock: routinesClock });
   // ---- memory learner（L1。利用者のルーティン一覧には置かない）
-  const learner = createMemoryLearner({ dataDir, channels, bots, memory, host, clock: routinesClock });
+  learner = createMemoryLearner({ dataDir, channels, bots, memory, host, clock: routinesClock });
   // ---- webhook（H1）
   const webhook = createWebhookReceiver({ dataDir, routines, host });
 
-  const services = [channels, bots, memory, dispatch, routines, webhook, learner];
+  const services = [channels, bots, memory, dispatch, routines, webhook, learner, episodes];
   // つなぎ目は、bot の側の失敗でターン・承認・起動を巻き込まない
   const guard = (name, fn, fallback) => (...args) => {
     const fail = (err) => { console.error(`  bot host: ${name} に失敗:`, String(err?.message ?? err)); return fallback; };
