@@ -182,12 +182,20 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 
 中断は会話ごとの状態として残す。理由は [ADR 0036](adr/0036-interrupt-and-update-while-running.md)。画面の形は `docs/design-system.md`。
 
+使用量の上限は [ADR 0093](adr/0093-resume-after-usage-limit.md) に従う。`turnResult.outcome: limited` を正常終了・失敗と分け、`interrupted: { at, reason: "limit", resetsAt, window, account, backend, autoResume }` を保存する。Claude は SDK の `rate_limit_event` と合成 assistant の `error: rate_limit`、Codex は失敗の文と `account/rateLimits/read` の解除時刻で判定する。Antigravity は上限の失敗を安定して識別できる形がまだ確認できていないため対象外とする。解除時刻が分かり 12 時間以内なら既定で自動再開し、それ以外は人が確かめる。`user`・`update`・`quit`・`hostAway`・`restart` は ADR 0036 の押して再開する規則を保つ。
+
+上限中に受け付けた指示は送信待ちの `waiting: { reason: "limit", resetsAt }` に置き、API には渡さない。解除後は保留・配送失敗の指示、続く待機指示を順に送り、無ければ `resume.prompt.limit` を見える発言として送る。結果不明の指示は自動で送らない。最初の指示を重ねて送らない。解除時刻が分かる予定はデータ置き場の `schedule.json` に `kind: resume` で永続化し、起動時とスリープ解除時に確かめ直す。段階 2 の送信予定は同じ形式に `kind: send` を足す。放置時の自動圧縮は、上限中の会話では予約しない。
+
+再開待ち行列は委譲の子を親より先に置き、通常の会話は最後に人が送った順とする。既定は同時に 3 件、新しい枠の使用率が 50% 以上なら未開始分を止める。再び上限なら新しい解除時刻で並べ直す。設定 `limitResume` は `mode: auto|ask|off`、`concurrency: 1|2|3|all`（全部は 0）、`guardPercent: 30|50|null`（なしは null）。アカウントは自動で替えず、Claude の別アカウントを人が選んだときだけ切り替える。再開・予定・順番は `sessions.resume`、`sessions.listMessages`、`sessions.schedules`、`sessions.cancelSchedule`、`resumeQueue.get/set` の操作で画面と CLI に出す。
+
+自動再開する上限は完了通知と未確認の丸を出さない。自動再開しない上限と、解除が 12 時間より先の上限は失敗として通知する。「解除時に知らせる」を選んだ会話は、解除時に画面の再開の一行とスマホの `limitReady` 通知を出し、人が押したら再開待ち行列に渡す。新しい枠の使用率の歯止めで行列が止まったら `limitGuarded` 通知を一度出す。通知の題とロック画面の文には会話本文を含めない。
+
 - 保存: ターンが中断で終わったら（`turnResult` が aborted。止めた後に失敗として終わったものも含む）、sidecar の会話の行に `interrupted: { at, reason }` を書く。`at` は同じターンの `completedAt` と同じ値（確認済みの印 `readAt` は `completedAt` で丸めるので、ずらすと未読から戻れない）。次のターンの開始で `null` にする。始まらなかったターン（開始前の失敗）と requeue は消さない・書かない。
 - 理由（`reason`）: `user`（中断ボタン）・`update`（更新のため）・`quit`（終了のため）・`hostAway`（`AGENT_HOST_GRACE_MS` の猶予切れ）・`restart`（落ちた・強制終了）。
 - 落ちたターン: ターンの開始で `turnStartedAt` を書き、終わりで片付ける。起動時に `turnStartedAt > (completedAt ?? 0)` の会話は `interrupted: { at: 起動時刻, reason: "restart" }` にし、`completedAt` も同じ時刻にする（`store.recoverInterruptedTurns`）。
 - 公開: 一覧の行・`loadSession`・`turnEnd` に `interrupted`（`{ at, reason } | null`）を載せる。実行中の会話は `null`。`turnResult { outcome: "aborted" }` に `reason` を足す。
 - WS `abort { sessionId?, reason? }`: `sessionId` を省略したら全部。`reason` は `user|update|quit` だけを受け、省略・ほかの値は `user`。先に止め始めたターンは最初の理由のまま。1 つの会話を止めたときは、その取り消しで実際に止まる委譲の子の会話のターン（終わっていないタスクの子。孫以下も）にだけ同じ理由を付ける（止める所 `stopChild` で付ける。終わったタスクの子の会話を人が直接動かしているターンは止まらないので付けない）。全部の中断では子の会話も走っているターンとして同じ理由で止まり、個別に再開できる。委譲タスクは今どおり取り消し、親の再開で委譲し直さない（取り消したことは再開後のエージェントに伝える。下の「止めたもの」）。
-- WS `resume { sessionId } -> { sent: "outbox" | "text", count }`: 人が「再開」を押したときだけ送る（勝手に再開しない、は保つ）。保留（`paused`）の未送信があれば、それを並びのまま送信待ちへ戻す（1 件ずつの「再送する」と同じ経路。「続けて」は送らない）。送れなかった（`failed`。エージェントに渡っていない）未送信も一緒に戻す。保留の後ろで順番を待っていた送信待ち（中断中に送った指示）は、保留に続いて送られる。無ければ理由ごとの文（`server:resume.prompt.<reason>`、会話の言語）を普通の送信（`sendMessage` と同じ送信待ち）で送り、見える user の発言になる。実行中（準備・切り替え・分岐を含む）の会話、送信中か先頭が送信待ちの会話、中断の後に送ったものが既に渡っている会話（`SESSION_RUNNING`）、中断していない会話（`NOT_INTERRUPTED`）は断る。結果不明（`unknown`）の未送信があれば `OUTBOX_UNKNOWN` で断り、未送信の一覧で再送か取り消しを選ばせる（届いているかもしれないので勝手に送らない）。受け付けは送った項目が送信待ち・送信中を出る（ターンが始まる・失敗する）まで保ち、二度押し・別の端末からの再開で二重に送らない。画面は中断の印をターンの開始（`running`・`turnEnd`）まで下ろさない。
+- WS `resume { sessionId } -> { sent: "outbox" | "text", count }`: 人が「再開」を押したときに送る。使用量の上限の解除後の自動再開は [ADR 0093](adr/0093-resume-after-usage-limit.md) に従う。保留（`paused`）の未送信があれば、それを並びのまま送信待ちへ戻す（1 件ずつの「再送する」と同じ経路。「続けて」は送らない）。送れなかった（`failed`。エージェントに渡っていない）未送信も一緒に戻す。保留の後ろで順番を待っていた送信待ち（中断中に送った指示）は、保留に続いて送られる。無ければ理由ごとの文（`server:resume.prompt.<reason>`、会話の言語）を普通の送信（`sendMessage` と同じ送信待ち）で送り、見える user の発言になる。実行中（準備・切り替え・分岐を含む）の会話、送信中か先頭が送信待ちの会話、中断の後に送ったものが既に渡っている会話（`SESSION_RUNNING`）、中断していない会話（`NOT_INTERRUPTED`）は断る。結果不明（`unknown`）の未送信があれば `OUTBOX_UNKNOWN` で断り、未送信の一覧で再送か取り消しを選ばせる（届いているかもしれないので勝手に送らない）。受け付けは送った項目が送信待ち・送信中を出る（ターンが始まる・失敗する）まで保ち、二度押し・別の端末からの再開で二重に送らない。画面は中断の印をターンの開始（`running`・`turnEnd`）まで下ろさない。
 - 中断した会話への新しい送信: 実行中でなく保留があれば、`sendMessage` は保留を先に並びのまま送信待ちへ戻してから新しい指示を受け付ける（保留の後に新しい指示で続く。入力欄の下は「送ると、保留中の N 件の後にこの指示で続けます」）。
 - 止めたもの（2026-09-29）: 中断で Pleiad が止めたもののうちエージェントが知らないものを、sidecar の会話の行に `stops` として残す（`store.addStops`。同じものは 1 件、種類ごとに 30 件まで、超えた数は `dropped`。`reason` は最後に止めた理由）。
   - 委譲タスク: `abortSessions` の `agentTasks.cancelOwner` が返すもの。走っていた・待っていたタスクは止めた時点の状態で、終わっていて完了通知が届いていなかった（`none` / `pending`）タスクは `unread` として、依頼元の会話ごとに残す（孫は子の会話に）。後者の通知も `suppressed` にする（中断した会話へ完了通知で新しいターンを始めない）が、結果は `ply_task_status` で読める。子の会話を直接止めたときのそのタスク（`agentTasks.cancel`）は、走っていれば依頼元に残す。終わっていれば止めるものが無いので、届いていない完了通知はそのまま届ける。
@@ -253,9 +261,9 @@ Codex は実行中のハンドルに `steer` を公開し、`turn/steer` に `ex
 
 委譲の追加指示（`ply_task_send`）も、子のターンが走っていてこの途中送信を受けられるなら、同じ `control.steer` で子の今のターンへ渡す（item id は `task-send-<指示 ID>`）。子の会話には通常の user 発言として出し、`steerConfirms` のバックエンドでは合図まで `pending`。渡らなかった指示は待機へ戻して次のターンで送る。受けられない状態は完了通知と同じ（`docs/agent-delegation.md`「追加指示の配送」、[ADR 0065](adr/0065-steer-task-instructions.md)）。
 
-受理した発言を読まないままターンが死んだとき（中断・失敗・ラウンド上限）は `userMessage.dropped { messageId }` を出す（Claude は中断の interrupt で取り消された分。multi-backend.md §2.2）。server はその発言を送信待ちの「保留」へ戻し、web は吹き出しを会話から下げる。勝手には送り直さない（ターンが死んだ直後で、続けて送ってよいか分からない）。
+受理した発言を読まないままターンが死んだとき（中断・失敗・ラウンド上限）は `userMessage.dropped { messageId }` を出す（Claude は中断の interrupt で取り消された分。multi-backend.md §2.2）。server はその発言を送信待ちの「保留」へ戻し、web は吹き出しを会話から下げる。上限で止まった会話は解除後の再開に渡す。それ以外は勝手に送り直さない（ターンが死んだ直後で、続けて送ってよいか分からない）。
 
-待機メッセージは取り消し可能。停止・実行失敗では待機を保留し、勝手に再開しない（中断した会話の「再開」を押したときだけ、保留をまとめて送り直す。「中断と再開」）。サーバー再起動時は待機を保留、配送中を結果不明として復元し、人間が会話を確認して再送または取り消せる。送信待ちにエラー・保留がある場合は後続も順序を維持して待つ。新規送信による別ターンの並列起動はしない。各セッションの未処理メッセージは100件まで。送信待ち（`queued`）の画面向けの項目には、何を待っているかを `waiting` として添える: `turn`（この会話のターン・準備・外部ターン）、`order`（先頭が保留・失敗・結果不明）。`waiting` は保存せず、kick のたびに決め直す。会話をまたいだ同時実行の本数には上限を置かない（以前の `AGENT_HOST_MAX_TURNS` は 2026-09-23 に廃止）。
+待機メッセージは取り消し可能。停止・実行失敗では待機を保留し、人が中断した会話の「再開」を押したときに保留をまとめて送り直す（「中断と再開」）。使用量の上限による中断は、解除後に設定に従って再開する（[ADR 0093](adr/0093-resume-after-usage-limit.md)）。サーバー再起動時は待機を保留、配送中を結果不明として復元し、人間が会話を確認して再送または取り消せる。送信待ちにエラー・保留がある場合は後続も順序を維持して待つ。新規送信による別ターンの並列起動はしない。各セッションの未処理メッセージは100件まで。送信待ち（`queued`）の画面向けの項目には、何を待っているかを `waiting` として添える: `turn`（この会話のターン・準備・外部ターン）、`order`（先頭が保留・失敗・結果不明）。`waiting` は保存せず、kick のたびに決め直す。通常の会話をまたいだ同時実行の本数には上限を置かない（以前の `AGENT_HOST_MAX_TURNS` は 2026-09-23 に廃止）。上限解除後の自動再開には別の同時実行設定を使う。
 
 配送済みの追加発言を `userMessage` で配信し、実行中のスナップショットにも含める（`userMessage.delivered` も同じスナップショットに入れる。開き直しても「渡っていない」まま固まらない）。初回発言は `initialMessageId` でスナップショットのユーザー発言と対応させ、再生時に二重表示しない。追加指示のネイティブ履歴はエージェント側に保存される（Claude は折り込まれた分が `queued_command` として残るので、読み出しのときに元の位置へ差し戻す。multi-backend.md §2.2）。添付は従来の `present` 経路を使う。
 

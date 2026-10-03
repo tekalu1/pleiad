@@ -64,7 +64,7 @@
 
 ## 影響
 
-- `tests/ops-baseline.json` の `todo` は 63 → 32。操作の一覧の snapshot（`tests/ops-surface.snap.json`）に 31 の操作が載る。
+- `tests/ops-baseline.json` の `todo` は 61 → 30。操作の一覧の snapshot（`tests/ops-surface.snap.json`）に 31 の操作が載る。
 - `ply_control` の指示と tools/list の量は変わらない（ja 1733・en 1632 トークン。上限 1800）。新しい操作は `list_ops`・`call_op` から呼ぶ。
 - 失敗の code に `MASKED`（伏せ字の書き戻しが合わない）が増える。agent へのモジュールの失敗は、モジュールの `code`（大文字）か `FAILED`。
 - 検査: `ops-mcp-hooks`（依存を差し替えて、agent への伏せ字・書き戻し・guarded と `riskOf`）、`ops-control`（使い捨ての home とデータ置き場に秘密の目印を入れ、全 read 操作の返りに出ないこと・Hook の登録の承認カードと許可・MCP の登録の拒否・bypass の記録）、`ops-surface`（T6 の依存に MCP・Hooks・コンテキスト・リモート・接続先）。

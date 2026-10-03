@@ -52,6 +52,8 @@ import { parentIdOf } from './ops/sessions.mjs';
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
 import { createMessageQueue } from "./message-queue.mjs";
+import { createSchedule } from './schedule.mjs';
+import { createResumeQueue, normalizeLimitResume } from './resume-queue.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings } from './compaction-settings.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
@@ -128,6 +130,7 @@ const WEB = path.join(HERE, "..", "web");
 let locale = localeInfo(await store.getPrefs());
 setLocale(locale.lang);
 let compactionSettings;
+let limitResumeSettings = normalizeLimitResume((await store.getPrefs()).limitResume);
 try {
   compactionSettings = normalizeCompactionSettings((await store.getPrefs()).autoCompaction ?? {});
 } catch (err) {
@@ -946,14 +949,18 @@ const toMs = (v) => (Number.isFinite(v) ? v : (v ? Date.parse(v) || null : null)
 // ---- 中断と再開（docs/design.md「中断と再開」・ADR 0036） ----------------------------
 // 中断の理由。user = 中断ボタン、update = 更新のため、quit = 終了のため、hostAway = ホスト不在の猶予切れ、
 // restart = Pleiad が落ちた・強制終了で終わりが記録されていないターン（起動時に store.recoverInterruptedTurns が付ける）
-const INTERRUPT_REASONS = new Set(["user", "update", "quit", "hostAway", "restart"]);
+const INTERRUPT_REASONS = new Set(["user", "update", "quit", "hostAway", "restart", "limit"]);
 // abort で画面・デスクトップが渡せる理由。ほかの値（不正・省略）は user として扱う
 const ABORT_REASONS = new Set(["user", "update", "quit"]);
 const abortReason = (value) => (ABORT_REASONS.has(value) ? value : "user");
 /** 保存された中断の印を、画面へ渡す形 { at, reason } に揃える。形が崩れていれば null */
 function interruptedOf(value) {
   if (!value || typeof value !== "object" || !Number.isFinite(value.at)) return null;
-  return { at: value.at, reason: INTERRUPT_REASONS.has(value.reason) ? value.reason : "user" };
+  return { at: value.at, reason: INTERRUPT_REASONS.has(value.reason) ? value.reason : "user",
+    ...(value.reason === 'limit' ? { resetsAt: Number.isFinite(value.resetsAt) ? value.resetsAt : null,
+      window: value.window ?? null, account: value.account ?? null, backend: value.backend ?? null,
+      autoResume: value.autoResume === true, notifyAtReset: value.notifyAtReset === true,
+      sentAt: Number.isFinite(value.sentAt) ? value.sentAt : value.at } : {}) };
 }
 
 /** 状態を最後に変えたのが AI（host のツールの ai・操作の一覧の agent。ADR 0081）なら { reason, reasonKey?, reasonParams? }、そうでなければ null */
@@ -1454,6 +1461,7 @@ const completionNotices = createCompletionNotices({
 /** 保存した既定を全画面に通知する。セッション閲覧では既定を書き換えない。 */
 async function savePref(key, value, backendId) {
   const prefs = await store.setPref(key, value, backendId);   // ops-allow-setpref: prefs.json への書き込みの出口（設定の一覧 core/ops/settings.mjs と、既定の記憶だけがここを通る）
+  if (key === 'limitResume') { limitResumeSettings = normalizeLimitResume(prefs.limitResume); resumeQueue.update(); }
   locale = localeInfo(prefs);
   setLocale(locale.lang);
   // デスクトップ版の main（ダイアログ・通知・更新のエラー文）にも知らせる（desktop/main.cjs）
@@ -1662,10 +1670,15 @@ function makeEmit(turn) {
       if (turn.compactTrigger) event = { ...event, compact: true };
       if (turn.stream.initialMessageId) event = { ...event, messageId: turn.stream.initialMessageId };
       turn.outcome = event.outcome;
+      if (event.outcome === 'limited') {
+        turn.limit = { resetsAt: Number.isFinite(event.resetsAt) ? event.resetsAt : null,
+          window: event.window ?? null, account: turn.info.account ?? null, backend: turn.backend.id };
+        event = { ...event, ...turn.limit };
+      }
       // 中断で終わったら理由を添える（画面は会話の末尾の「中断しました」の文言を理由で選ぶ）
       if (event.outcome === "aborted") event = { ...event, reason: turn.abortReason ?? "user" };
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）
-      if (event.outcome === "error") turn.errorShown = true;
+      if (event.outcome === "error" || event.outcome === 'limited') turn.errorShown = true;
       const execution = taskExecutions.get(turn.info.sessionId);
       if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; }
     }
@@ -2361,6 +2374,57 @@ function opsDeps(lng = currentLocale()) {
     locale: lng,
     app: opsApp,
     sessions: opsSessions,
+    limitResume: {
+      resume: resumeSession,
+      messages: id => outbox.list(id),
+      schedules: id => schedule.list().filter(row => !id || row.sessionId === id),
+      cancel: async id => {
+        const row = schedule.list().find(entry => entry.id === id);
+        const cancelled = await schedule.cancel(id);
+        if (cancelled && row?.kind === 'resume') {
+          const meta = await store.get(row.sessionId);
+          if (meta.interrupted?.reason === 'limit' && meta.interrupted.at === row.createdAt) {
+            const interrupted = { ...meta.interrupted, autoResume: false, notifyAtReset: false };
+            await store.setMeta(row.sessionId, { interrupted });
+            limitStates.set(row.sessionId, interruptedOf(interrupted));
+            emitGlobal({ type: 'limitResumeChanged', sessionId: row.sessionId, interrupted });
+          }
+        }
+        return { cancelled };
+      },
+      queue: () => ({ ...resumeQueue.view(), schedules: schedule.list().filter(row => row.kind === 'resume'), settings: limitResumeSettings }),
+      setQueue: async ({ action, sessionId, enabled }) => {
+        if (action === 'stop') resumeQueue.stop();
+        else if (action === 'continue') resumeQueue.continue();
+        else if (action === 'release') {
+          for (const [id, meta] of Object.entries(await store.getAll())) {
+            const stopped = meta.interrupted;
+            if (stopped?.reason !== 'limit' || !stopped.notifyAtReset || !Number.isFinite(stopped.resetsAt)
+              || stopped.resetsAt > Date.now()) continue;
+            await store.setMeta(id, { interrupted: { ...stopped, notifyAtReset: false } });
+            resumeQueue.enqueue({ sessionId: id, interruptedAt: stopped.at, backend: meta.backend,
+              account: stopped.account, window: stopped.window, sentAt: await limitSentAt(id, stopped.sentAt ?? stopped.at),
+              priority: meta.delegation ? 1 : 0 });
+          }
+        }
+        else if (action === 'first') {
+          if (!resumeQueue.first(sessionId)) {
+            const row = schedule.list().find(r => r.id === `resume:${sessionId}`);
+            if (row) await schedule.put({ ...row, priority: Date.now() });
+          }
+        } else if (action === 'auto') {
+          const meta = await store.get(sessionId);
+          if (meta.interrupted?.reason !== 'limit') throw new Error(t('resume.notInterrupted'));
+          const changed = { ...meta.interrupted, autoResume: Boolean(enabled), notifyAtReset: false };
+          await store.setMeta(sessionId, { interrupted: changed });
+          emitGlobal({ type: 'limitResumeChanged', sessionId, interrupted: changed });
+          if (!enabled) { await schedule.cancel(`resume:${sessionId}`); resumeQueue.remove(sessionId); }
+          else if (Number.isFinite(changed.resetsAt)) await schedule.put({ id: `resume:${sessionId}`, kind: 'resume',
+            sessionId, at: Math.max(changed.resetsAt, Date.now()), createdAt: changed.at, by: 'limit', account: changed.account });
+        }
+        return { ...resumeQueue.view(), schedules: schedule.list().filter(row => row.kind === 'resume'), settings: limitResumeSettings };
+      },
+    },
     delegation: { list: (owner) => agentTasks?.list(owner) ?? [], get: (taskId, offset) => agentTasks?.get(taskId, offset) ?? null,
       call: (owner, name, args, locale) => callAgentOp(owner, name, args, { locale }) },
     browser: { call: (owner, name, args, locale) => callBrowserOp(owner, name, args, { locale }),
@@ -2757,9 +2821,13 @@ const liveNotices = new Map();
 // 指示の item id（task-send-<指示 ID>） -> { sessionId: 子の会話, taskId, instructionId }。合図で指示の状態を決め、
 // 合図が来ないままターンが終わったら待機へ戻して次のターンで送る（ADR 0065）
 const liveInstructions = new Map();
+const limitStates = new Map();
 const outbox = createMessageQueue({
   store,
   active: id => {
+    const limit = limitStates.get(id);
+    if (limit)
+      return { blocked: true, wait: { reason: 'limit', resetsAt: limit.resetsAt } };
     const turn = runtime.turns.get(id);
     if (!turn) {
       if (switching.has(id) || forking.has(id)) return { blocked: true, wait: { reason: 'turn' } };
@@ -3302,6 +3370,7 @@ async function runTurnInternal(args, onStarted, hooks) {
       // 中断の理由（abortSessions / giveUp が止める前に付ける。無いまま中断で終わったら user）
       abortReason: null,
       startedAtMs: Date.now(),
+      userSentAt: toMs(args.at) ?? Date.now(),
       backend,
       agentLocale,
       control: { handle: null, onReady: () => outbox.kick(sessionId).catch(() => {}) },
@@ -3327,6 +3396,7 @@ async function runTurnInternal(args, onStarted, hooks) {
         model: model || "",
         effort,
         endpoint: endpointId,
+        account: accountId,
         status,
         attachments,
         // active = main が動いている / waiting = main は返答済みで、裏の subagent などを待っている
@@ -3586,8 +3656,15 @@ async function endTurn(turn, emit, { record = true } = {}) {
   const completedAt = requeued ? null : Date.now();
   // 中断で終わった（バックエンドが aborted を返した。止めた後に失敗として終わったものも含む）なら、会話に中断として残す。
   // 時刻は completedAt と同じ値にする（確認済みの印 readAt は completedAt で丸めるので、ずらすと未読から戻れない）
-  const stopped = !requeued && (turn.outcome === "aborted" || (turn.ac.signal.aborted && turn.outcome !== "ok"));
-  const interrupted = stopped ? { at: completedAt, reason: turn.abortReason ?? "user" } : null;
+  const limited = !requeued && turn.outcome === 'limited';
+  const stopped = !requeued && (limited || turn.outcome === "aborted" || (turn.ac.signal.aborted && turn.outcome !== "ok"));
+  const interrupted = limited ? { at: completedAt, reason: 'limit', sentAt: turn.userSentAt, ...turn.limit } : stopped ? { at: completedAt, reason: turn.abortReason ?? "user" } : null;
+  const autoResume = limited && limitResumeSettings.mode === 'auto' && Number.isFinite(interrupted.resetsAt)
+    && interrupted.resetsAt - completedAt <= 12 * 60 * 60_000;
+  const notifyAtReset = limited && limitResumeSettings.mode === 'ask' && Number.isFinite(interrupted.resetsAt)
+    && interrupted.resetsAt - completedAt <= 12 * 60 * 60_000;
+  if (limited) interrupted.autoResume = autoResume;
+  if (limited) interrupted.notifyAtReset = notifyAtReset;
   if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id })
     .catch(() => { console.error('  使用量を記録できませんでした'); });
   if (turn.info.sessionId) {
@@ -3606,6 +3683,12 @@ async function endTurn(turn, emit, { record = true } = {}) {
     await store.setMeta(turn.info.sessionId, patch).catch(err => {
       console.error("  完了の記録に失敗:", String(err?.message ?? err));
     });
+    if (limited) {
+      const id = turn.info.sessionId;
+      limitStates.set(id, interrupted);
+      if (autoResume || notifyAtReset) await schedule.put({ id: `resume:${id}`, kind: 'resume', sessionId: id,
+        at: interrupted.resetsAt, createdAt: completedAt, by: 'limit', account: interrupted.account });
+    }
     // このターンで進んだ分を検索の写しへ（裏で読み直す。待たない）
     if (!requeued) sessionSearch.refresh(turn.info.sessionId);
     // 中断で終わったターンが抱えていた裏の作業・承認待ちを、会話の「止めたもの」に残す（次のターンで伝える）
@@ -3618,6 +3701,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // Retain turnEnd in snapshots already being read, then release the turn.
   emit({ type: "turnEnd", completedAt, outcome: turn.outcome, interrupted, ...(requeued ? { requeued: true } : {}), ...(delegated ? { delegated: true } : {}) });
   runtime.turns.delete(turn.key);
+  if (turn.info.sessionId) resumeQueue.settled(turn.info.sessionId);
   // 渡った合図が来ないまま終わった完了通知は、読まれたか分からない。通知は送り直してよいので、空いたときの経路へ戻す
   for (const [id, notice] of [...liveNotices]) {
     if (notice.owner !== turn.info.sessionId) continue;
@@ -3647,7 +3731,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 分けた作業場所: このターンで取り込まれたもの・使われなくなったものを片付ける（ADR 0089）
   worktreeSweepSoon();
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
-  if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt, { startedAt: turn.startedAtMs });
+  if (!delegated && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId,
+    limited && !interrupted.autoResume ? 'error' : turn.outcome, completedAt, { startedAt: turn.startedAtMs });
   settingApprovals?.changed();
   // 利用者の送信でも、委譲の完了通知などで始まったターンでも予約する（ADR 0068）。圧縮のターンの後は予約し直さない
   if (record && turn.outcome === 'ok' && !turn.compactTrigger && !turn.compaction
@@ -4025,6 +4110,19 @@ const resumeRunning = () => Object.assign(new Error(t('resume.running')), { code
 async function resumeSession(sessionId) {
   if (!sessionId || typeof sessionId !== 'string' || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
   if (resuming.has(sessionId) || sessionBusy(sessionId)) throw resumeRunning();
+  const oldLimit = limitStates.get(sessionId);
+  if (oldLimit) {
+    const selected = await store.get(sessionId);
+    const currentAccount = selected.nextSettings?.account ?? selected.claudeAccount ?? '';
+    const currentBackend = selected.nextSettings?.backend ?? selected.backend;
+    if (currentBackend !== oldLimit.backend || (oldLimit.backend === 'claude' && currentAccount !== (oldLimit.account ?? ''))) {
+      limitStates.delete(sessionId);
+      await schedule.cancel(`resume:${sessionId}`);
+      resumeQueue.remove(sessionId);
+    } else if (!oldLimit.resetsAt || oldLimit.resetsAt > Date.now()) {
+      throw Object.assign(new Error(t('resume.limitWaiting')), { code: 'LIMIT_WAITING' });
+    } else limitStates.delete(sessionId);
+  }
   resuming.add(sessionId);
   let sent = null;
   try {
@@ -4037,9 +4135,14 @@ async function resumeSession(sessionId) {
     const open = items.filter(m => !['sent', 'cancelled'].includes(m.status));
     // 送信中、または先頭が送信待ち（すぐ送られる）なら、もう続きを送っている（再開の二度押し・別の端末から）。
     // 中断の後に送った（受け付けた）ものが既に渡っていても同じ（ターンの開始で中断の印が消えるまでの間）
-    if (open.some(m => m.status === 'sending') || open[0]?.status === 'queued'
+    if (open.some(m => m.status === 'sending') || (open[0]?.status === 'queued' && !oldLimit)
       || items.some(m => m.status === 'sent' && Date.parse(m.at) > interrupted.at)) throw resumeRunning();
     if (open.some(m => m.status === 'unknown')) throw Object.assign(new Error(t('resume.outboxUnknown')), { code: 'OUTBOX_UNKNOWN' });
+    if (open[0]?.status === 'queued' && oldLimit) {
+      sent = open.filter(m => m.status === 'queued').map(m => m.id);
+      outbox.kick(sessionId).catch(() => {});
+      return { sent: 'outbox', count: sent.length };
+    }
     const released = await outbox.retryPaused(sessionId, { failed: true });
     if (released.length) {
       sent = released;
@@ -4056,6 +4159,53 @@ async function resumeSession(sessionId) {
     else resuming.delete(sessionId);
   }
 }
+
+async function limitSentAt(sessionId, fallback) {
+  const items = await outbox.list(sessionId).catch(() => []);
+  return Math.max(fallback, ...items.filter(item => item.status !== 'cancelled')
+    .map(item => toMs(item.at)).filter(Number.isFinite));
+}
+
+const resumeQueue = createResumeQueue({
+  settings: () => limitResumeSettings,
+  changed: state => emitGlobal({ type: 'resumeQueue', sessionId: null, state }),
+  guarded: row => { void conversationTitleOf(row.sessionId).then(title =>
+    pushNotifier.limitGuarded({ sessionId: row.sessionId, title })).catch(() => {}); },
+  guard: async row => {
+    const backend = getBackend(row.backend);
+    if (!backend?.usage) return null;
+    const quota = await backend.usage({ cwd: process.cwd(), ...(backend.capabilities?.claudeAccounts ? await usageAccounts() : {}) }).catch(() => null);
+    const windows = quota?.accounts ? (quota.accounts.find(a => a.accountId === row.account)?.windows ?? quota.accounts[0]?.windows ?? []) : quota?.windows ?? [];
+    const relevant = row.window === 'five_hour' ? windows.filter(w => w.minutes === 300) : windows;
+    const used = relevant.map(w => w.usedPercent).filter(Number.isFinite);
+    return used.length ? Math.max(...used) : null;
+  },
+  start: async row => {
+    const meta = await store.get(row.sessionId);
+    if (meta.interrupted?.reason !== 'limit' || meta.interrupted.at !== row.interruptedAt
+      || (meta.claudeAccount ?? '') !== (row.account ?? '')) return resumeQueue.settled(row.sessionId);
+    await resumeSession(row.sessionId);
+  },
+});
+const schedule = createSchedule({ file: path.join(store.dataDir, 'schedule.json'),
+  changed: entries => emitGlobal({ type: 'schedules', sessionId: null, entries }),
+  fire: async row => {
+    if (row.kind !== 'resume') throw new Error(`Unsupported schedule kind: ${row.kind}`);
+    const meta = await store.get(row.sessionId);
+    if (meta.interrupted?.reason !== 'limit' || meta.interrupted.at !== row.createdAt) return;
+    if ((meta.claudeAccount ?? '') !== (row.account ?? '')) return;
+    if (limitResumeSettings.mode === 'off' && !meta.interrupted.autoResume) return;
+    if (meta.interrupted.notifyAtReset) {
+      emitGlobal({ type: 'limitResumeReady', sessionId: row.sessionId });
+      pushNotifier.limitReady({ sessionId: row.sessionId, title: await conversationTitleOf(row.sessionId) });
+      return;
+    }
+    resumeQueue.enqueue({ sessionId: row.sessionId, interruptedAt: row.createdAt,
+      backend: meta.backend, account: row.account, window: meta.interrupted.window,
+      sentAt: await limitSentAt(row.sessionId, meta.interrupted.sentAt ?? row.createdAt),
+      priority: row.priority ?? (meta.delegation ? 1 : 0) });
+  },
+});
 
 wss.on("connection", (ws, req) => {
   // OS の操作（revealPath / openPath）を許すのは、サーバーのある PC の画面からの接続だけ（core/os-open.mjs）
@@ -4484,6 +4634,15 @@ wss.on("connection", (ws, req) => {
             const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged && !endpointChanged)
               ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(accountChanged ? { account: selectedAccount } : {}), ...(endpointChanged ? { endpoint: selectedEndpoint } : {}) };
             await store.setSessionData(sessionId, "nextSettings", next);
+            if (current.interrupted?.reason === 'limit'
+              && ((account !== undefined && accountChanged) || (!cancel && next?.backend && next.backend !== source.id))) {
+              await schedule.cancel(`resume:${sessionId}`);
+              resumeQueue.remove(sessionId);
+              const interrupted = { ...current.interrupted, autoResume: false, notifyAtReset: false };
+              await store.setMeta(sessionId, { interrupted });
+              limitStates.set(sessionId, interruptedOf(interrupted));
+              emitGlobal({ type: 'limitResumeChanged', sessionId, interrupted });
+            }
             // 取り消した・別の場所に替えた予約が分けた作業場所なら、使っていなければ片付ける（ADR 0089）
             if (current.nextSettings?.cwd && current.nextSettings.cwd !== next?.cwd) settleWorktreeAt(current.nextSettings.cwd).catch(() => {});
             if (!cancel) {
@@ -4551,6 +4710,17 @@ wss.on("connection", (ws, req) => {
             const target = getBackend(targetId);
             if (!source || !target) throw new Error(t('agents.notFound'));
             await switchBackend(sessionId, source, target);
+            if (source.id !== target.id) {
+              const stopped = (await store.get(sessionId)).interrupted;
+              if (stopped?.reason === 'limit') {
+                await schedule.cancel(`resume:${sessionId}`);
+                resumeQueue.remove(sessionId);
+                const interrupted = { ...stopped, autoResume: false, notifyAtReset: false };
+                await store.setMeta(sessionId, { interrupted });
+                limitStates.set(sessionId, interruptedOf(interrupted));
+                emitGlobal({ type: 'limitResumeChanged', sessionId, interrupted });
+              }
+            }
             // 入力欄の `!`: 走っている分は止め、渡していない分は捨てる（前のエージェントの形でしか渡せない。ADR 0054）
             if (source.id !== target.id) await shellRuns.switched(sessionId, source, target);
             // 接続先はエージェントごとの形式なので、エージェントが変わったら変えた先の既定（「既定にする」を押したもの。無ければ公式）に置き直す
@@ -4582,7 +4752,7 @@ wss.on("connection", (ws, req) => {
           }
           // 中断した会話に新しい指示を送ったら、中断で保留になった未送信を先に並びのまま送り直す（再開と同じ）。
           // 戻さないと新しい指示は保留の後ろで順番を待ち続ける。画面は「保留中の N 件の後にこの指示で続けます」と出している
-          if (!sessionBusy(sessionId) && interruptedOf((await store.get(sessionId)).interrupted)
+          if (!sessionBusy(sessionId) && interruptedOf((await store.get(sessionId)).interrupted)?.reason !== 'limit'
             && (await outbox.list(sessionId)).some(m => m.status === 'paused')) await outbox.retryPaused(sessionId);
           return reply(true, await outbox.accept(sessionId, messageId, args));
         }
@@ -5389,6 +5559,7 @@ async function readOnboarding() {
 }
 
 process.parentPort?.on("message", async ({ data }) => {
+  if (data?.type === 'wake') await schedule.check();
   if (data?.type === 'update-lock') {
     // 断るときは何が止めているかを返す。画面に出さないと、見た目に何も動いていないのに更新できない理由が分からない
     const reason = runtime.turns.size ? t('updateLock.turns', { count: runtime.turns.size })
@@ -5447,4 +5618,8 @@ server.once("error", (err) => {
 // 検索の写しは、起動の混み合いが落ち着いてから裏で作る（探されたときは待たずに読めた分で答える）
 setTimeout(() => sessionSearch.start().catch(() => {}), 3000).unref();
 await restoreCompactionSchedule().catch(err => console.error('  自動圧縮の予約を戻せませんでした:', String(err?.message ?? err)));
+for (const [id, meta] of Object.entries(await store.getAll())) {
+  if (meta.interrupted?.reason === 'limit') limitStates.set(id, interruptedOf(meta.interrupted));
+}
+await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
 server.listen(PORT, HOST, announce);

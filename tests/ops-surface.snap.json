@@ -901,6 +901,69 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "resumeQueue.get",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "resume-queue",
+            "get"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "resumeQueue.set",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "resume-queue",
+            "set"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "b4a434de6904"
+    },
+    {
+      "id": "sessions.cancelSchedule",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "sessions",
+            "cancel-schedule"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "fab80600bbbe"
+    },
+    {
       "id": "sessions.fork",
       "risk": "write",
       "riskOf": false,
@@ -967,6 +1030,29 @@
       "input": "9b44cafbe720"
     },
     {
+      "id": "sessions.listMessages",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "sessions",
+            "unsent"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "listMessages",
+      "input": "b5d37837d86c"
+    },
+    {
       "id": "sessions.read",
       "risk": "read",
       "riskOf": false,
@@ -988,6 +1074,49 @@
       },
       "legacyCommand": null,
       "input": "62fa526050a3"
+    },
+    {
+      "id": "sessions.resume",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "sessions",
+            "resume"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": "resume",
+      "input": "8bb0ecf306f5"
+    },
+    {
+      "id": "sessions.schedules",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": {
+          "path": [
+            "sessions",
+            "schedules"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "5911c9a80b11"
     },
     {
       "id": "sessions.search",
@@ -1340,6 +1469,15 @@
       ]
     },
     {
+      "key": "limitResume",
+      "risk": "human-only",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "limitResume"
+      ]
+    },
+    {
       "key": "linkOpen",
       "risk": "write",
       "riskOf": false,
@@ -1490,6 +1628,13 @@
       "agent-bound-ask": "write=allow",
       "agent-bound-never-full": "write=allow",
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "limitResume": {
+      "human": "human-only=allow",
+      "agent-unbound": "human-only=hidden",
+      "agent-bound-ask": "human-only=hidden",
+      "agent-bound-never-full": "human-only=hidden",
+      "agent-bound-readonly": "human-only=hidden"
     },
     "linkOpen": {
       "human": "write=allow",
@@ -1799,9 +1944,26 @@
       "positional": []
     },
     {
+      "id": "resumeQueue.get",
+      "path": "resume-queue get",
+      "positional": []
+    },
+    {
+      "id": "resumeQueue.set",
+      "path": "resume-queue set",
+      "positional": []
+    },
+    {
       "id": "app.running",
       "path": "running",
       "positional": []
+    },
+    {
+      "id": "sessions.cancelSchedule",
+      "path": "sessions cancel-schedule",
+      "positional": [
+        "id"
+      ]
     },
     {
       "id": "sessions.fork",
@@ -1838,6 +2000,18 @@
       ]
     },
     {
+      "id": "sessions.resume",
+      "path": "sessions resume",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "sessions.schedules",
+      "path": "sessions schedules",
+      "positional": []
+    },
+    {
       "id": "sessions.search",
       "path": "sessions search",
       "positional": [
@@ -1850,6 +2024,13 @@
       "positional": [
         "sessionId",
         "status"
+      ]
+    },
+    {
+      "id": "sessions.listMessages",
+      "path": "sessions unsent",
+      "positional": [
+        "sessionId"
       ]
     },
     {

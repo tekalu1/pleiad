@@ -15,6 +15,7 @@
 //   "question"     … askPermission（kind:"question"）を呼び、回答を本文にする
 //   "slow"         … 中断されるまで待つ
 //   "fail"         … 失敗で終わる（outcome: error。離れた端末への「失敗」の通知を測る）
+//   "limit <resetsAt>" … 指定時刻に解ける使用量の上限（ISO または Unix ミリ秒）
 //   "whoami"       … 渡されたアカウントのトークン（oauthToken）の指紋を本文にする。無ければ account:none
 //   "context:<json>" … ply_context（contextRuntime）のツールを { name, arguments } で 1 回呼び、返りを本文にする
 //   "computer:<json>" … ply_computer（computerRuntime）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。tool.result には印の行から作った images と computer を付ける
@@ -339,6 +340,14 @@ export const backend = {
     emit({ type: "activity", state: "thinking" });
 
     const text = String(prompt ?? "").trim();
+    if (text.startsWith('limit ')) {
+      const raw = text.slice(6).trim();
+      const resetsAt = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);
+      emit({ type: 'turnResult', outcome: 'limited', resetsAt: Number.isFinite(resetsAt) ? resetsAt : null,
+        window: 'five_hour' });
+      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
+      return { sessionId: id };
+    }
     // 発言の id は先に決めておき、text.end に載せる（履歴と同じ id で分岐の起点になる）
     const out = { uuid: crypto.randomUUID(), role: "assistant", text: "", toolCalls: null };
 

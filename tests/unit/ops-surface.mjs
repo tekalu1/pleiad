@@ -156,12 +156,14 @@ export default async function (t) {
     context: { view: async () => ({ defaults: { ...secret }, places: [] }), plyInstructions: () => ({ items: [{ id: 'x', ...secret }] }) },
     remote: { status: async () => ({ enabled: false, connection: { ...secret }, devices: [], ...secret }) },
     endpoints: { list: async () => ({ endpoints: [{ id: 'e', baseUrl: 'https://e.example', ...secret }], defaults: {} }) },
+    limitResume: { messages: () => [], schedules: () => [], queue: () => ({ pending: [], running: [] }) },
   };
   // 人の画面には返すが agent には伏せるもの（引数の秘密・承認の URL・ペアリングの番号・URL のクエリ）は tests/unit/ops-mcp-hooks.mjs
   // 必須の引数がある read 操作に渡す引数（設定は全部の key）
   const samples = {
     'settings.get': registry.settings.map((x) => ({ key: x.key })), 'settings.schema': registry.settings.map((x) => ({ key: x.key })),
-    'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
+    'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }],
+    'sessions.listMessages': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
     'mcp.nativeList': [{ format: 'claude', scope: 'user', cwd: 'x' }], 'mcp.nativeRead': [{ format: 'codex', scope: 'directory', cwd: 'x', name: 'a' }], 'mcp.read': [{ name: 'a' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {

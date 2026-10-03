@@ -66,6 +66,7 @@ export default async function (t) {
   t.ok('ホスト側で止めた端末には送らない', decideSend({ kind: 'done', device: { ...device(), muted: true }, sessionId: 's1', presence: [], now }).reason === 'muted');
   t.ok('返事が要るとき（承認・質問）は reply の設定に従う', decide('approval').send && decide('question').send && !decide('approval', { reply: false }).send && !decide('question', { reply: false }).send);
   t.ok('失敗は failed の設定に従う', decide('failed').send && !decide('failed', { failed: false }).send);
+  t.ok('再開待ち行列の歯止めは失敗通知の設定に従う', decide('limitGuarded').send && !decide('limitGuarded', { failed: false }).send);
   t.ok('完了は done の設定に従う', decide('done').send && !decide('done', { done: false }).send);
   t.ok('知らない種類は送らない', decide('weird').reason === 'kind');
   t.ok('2 分より古い完了は送らない（失敗・返事待ちには効かない）', decide('done', {}, { completedAt: now - STALE_DONE_MS - 1 }).reason === 'stale'
@@ -147,6 +148,9 @@ export default async function (t) {
   t.ok('中断は送らない（ok と error だけ）', sent.length === 0);
   notifier.finished({ sessionId: 's4', outcome: 'error', completedAt: nowMs, startedAt: nowMs - 2000, title: '失敗した' });
   t.ok('失敗: 短いターンでも failed を送る（tablet にも。failed は入）', sent.length === 2 && sent.every(s => s.notice.kind === 'failed' && s.notice.title === '失敗した'));
+  reset();
+  notifier.limitGuarded({ sessionId: 's8', title: '確認する会話' });
+  t.ok('歯止めで止まったらスマホに確認を知らせる', sent.length === 2 && sent.every(s => s.notice.kind === 'limitGuarded'));
   reset();
   notifier.viewed('s2');
   t.ok('完了を見たら、出ている完了の通知を消す（seen）', sent.length === 1 && sent[0].id === 'dPhone' && sent[0].notice.cancel === 'seen' && sent[0].notice.session === 's2');

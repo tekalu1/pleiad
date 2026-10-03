@@ -26,6 +26,8 @@
     <string name="notify_question">◆ 質問があります</string>
     <string name="notify_question_many">◆ 返事を待っています（%1$d 件）</string>
     <string name="notify_failed">✕ 作業が失敗しました</string>
+    <string name="notify_limit_ready">上限が解除されました。押して再開</string>
+    <string name="notify_limit_guarded">使用量の歯止めで再開待ち行列を止めました</string>
     <string name="notify_done">作業が完了しました</string>
     <plurals name="notify_bundle">
         <item quantity="other">%1$d 件の会話が終わりました</item>
@@ -36,6 +38,8 @@
     <string name="notify_public_approval">承認を待っている会話があります</string>
     <string name="notify_public_question">質問のある会話があります</string>
     <string name="notify_public_failed">作業が失敗した会話があります</string>
+    <string name="notify_public_limit_ready">再開を待っている会話があります</string>
+    <string name="notify_public_limit_guarded">再開待ち行列を確認してください</string>
     <string name="notify_public_done">作業が終わった会話があります</string>
     <string name="notify_battery_title">通知を確実に届けるために</string>
     <string name="notify_battery_message">電池の最適化の対象だと、画面を消している間に通知が遅れることがあります。Pleiad を対象から外す設定を開きますか？</string>
