@@ -43,7 +43,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
 import { registry as opsRegistry } from './ops/index.mjs';
-import { OpError, targetText as settingTarget } from './ops/registry.mjs';
+import { OpError, approvalWords, targetText as settingTarget } from './ops/registry.mjs';
 import { FAILED } from './ops/host.mjs';
 import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './ops/surfaces/control.mjs';
 import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
@@ -3110,12 +3110,19 @@ async function finishSettingApproval(requestId, outcome, extra = {}) {
   if (entry) emitGlobal({ type: 'settingApproval', sessionId: entry.sessionId, requestId, outcome });
 }
 
-/** 設定の変更の結果を、エージェントへ渡す文にする（会話の言語。1 件ずつの節を並べる）。via は、求めた子ではなく依頼元へ届けるときの子（routeSettingNotice） */
+/** 設定と操作の承認結果を、エージェントへ渡す文にする。via は、求めた子ではなく依頼元へ届けるときの子（routeSettingNotice） */
 function settingNotice(lng, notices) {
   // i18n-dynamic: agent:ops.settingNotice.
-  return notices.map((n) => agentT(lng, 'ops.settingNotice.head', { requestId: n.requestId, status: agentT(lng, `ops.settingNotice.status.${n.outcome}`) })
-    + (n.via ? '\n' + agentT(lng, 'ops.settingNotice.fromChild', { taskId: n.via.taskId, title: n.via.title ?? '', state: n.via.status }) : '')
-    + '\n' + agentT(lng, `ops.settingNotice.${n.outcome}`, { target: settingTarget(lng, n.op, n.key), error: n.error ?? '' })).join('\n\n');
+  return notices.map((n) => {
+    const setting = n.op === 'settings.set';
+    const words = setting ? null : opsRegistry.get(n.op)?.approvalWords ?? 'op';
+    const params = setting ? { target: settingTarget(lng, n.op, n.key) } : approvalWords(lng, words);
+    const kind = setting ? '' : 'op';
+    const outcome = kind + n.outcome[0].toUpperCase() + n.outcome.slice(1);
+    return agentT(lng, `ops.settingNotice.${setting ? 'head' : 'opHead'}`, { requestId: n.requestId, status: agentT(lng, `ops.settingNotice.status.${n.outcome}`), words })
+      + (n.via ? '\n' + agentT(lng, `ops.settingNotice.${setting ? 'fromChild' : 'opFromChild'}`, { taskId: n.via.taskId, title: n.via.title ?? '', state: n.via.status }) : '')
+      + '\n' + agentT(lng, `ops.settingNotice.${setting ? n.outcome : outcome}`, { ...params, error: n.error ?? '' });
+  }).join('\n\n');
 }
 
 /**

@@ -1644,6 +1644,58 @@
       "taskResultState": "Delegation result ({{state}})",
       "taskFull": "Full text given to the agent",
       "interruptionNote": "Told the agent what the interruption stopped",
+      "opResult": "Operation result ({{state}})",
+      "opResults_one": "Operation results ({{count}})",
+      "opResults_other": "Operation results ({{count}})",
+      "opState": {
+        "op": {
+          "allowed": "done"
+        },
+        "send": {
+          "allowed": "sent"
+        },
+        "resend": {
+          "allowed": "resent"
+        },
+        "schedule": {
+          "allowed": "scheduled"
+        },
+        "sendNow": {
+          "allowed": "sent"
+        },
+        "shell": {
+          "allowed": "ran"
+        },
+        "switchBackend": {
+          "allowed": "switched"
+        },
+        "turnSettings": {
+          "allowed": "changed"
+        },
+        "mcp": {
+          "allowed": "changed"
+        },
+        "mcpDelete": {
+          "allowed": "deleted"
+        },
+        "hooks": {
+          "allowed": "changed"
+        },
+        "hookDelete": {
+          "allowed": "deleted"
+        },
+        "context": {
+          "allowed": "changed"
+        },
+        "endpointDelete": {
+          "allowed": "deleted"
+        },
+        "sessionDelete": {
+          "allowed": "deleted"
+        },
+        "denied": "denied",
+        "withdrawn": "withdrawn"
+      },
       "settingResult": "Setting change result ({{state}})",
       "settingResults_one": "Setting change results ({{count}})",
       "settingResults_other": "Setting change results ({{count}})",

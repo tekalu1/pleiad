@@ -126,8 +126,8 @@ export default async function (t) {
 
   const asked = await call(agent('ask'), 'shell.run', { command: `echo ${MARKER}`, reason: '確かめる' });
   const card = asked.deps.calls.find((c) => c[0] === 'approve');
-  t.ok('shell.run: 承認が要る会話では承認待ち（PENDING_APPROVAL）で返り、まだ動かさない', asked.r.pending === true && asked.r.result.code === 'PENDING_APPROVAL' && !asked.deps.calls.some((c) => c[0] === 'shell.run'));
-  t.ok('shell.run: 承認カードはどの会話で何を動かすか（コマンドの行・説明・緩める印）', card?.[1] === 'shell.run' && card[2].rows[0].path === 'shell.command' && card[2].rows[0].after.includes('echo') && card[2].note.includes('会話 s1') && card[2].loosens === true, JSON.stringify(card?.[2]));
+  t.ok('shell.run: 承認が要る会話では承認待ち（PENDING_APPROVAL）で返り、まだ動かさない', asked.r.pending === true && asked.r.result.code === 'PENDING_APPROVAL' && asked.r.result.message.includes('コマンドの実行は') && asked.r.result.message.includes('まだ実行していません') && !asked.r.result.message.includes('shell.run') && !asked.deps.calls.some((c) => c[0] === 'shell.run'));
+  t.ok('shell.run: 承認カードはどの会話で何を動かすか（コマンドの行・説明・緩める印）', card?.[1] === 'shell.run' && card[2].rows[0].path === 'shell.command' && card[2].rows[0].before === undefined && card[2].rows[0].after.includes('echo') && card[2].note.includes('会話 s1') && card[2].loosens === true, JSON.stringify(card?.[2]));
   const ran = await call(agent('bypass'), 'shell.run', { command: 'echo hi' });
   const runArgs = ran.deps.calls.find((c) => c[0] === 'shell.run')?.[1];
   t.ok('shell.run: 承認なしの会話（bypass）は確認なしで通り、記録（audit）が残る。会話を省くとその会話、runId は作る', ran.r.ok && runArgs?.sessionId === 's1' && /^ply-[0-9a-f-]{36}$/.test(runArgs.runId)

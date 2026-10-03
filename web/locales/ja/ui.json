@@ -1605,6 +1605,57 @@
       "taskResultState": "委譲の結果（{{state}}）",
       "taskFull": "エージェントに渡した全文",
       "interruptionNote": "中断で止めたものをエージェントに伝えました",
+      "opResult": "操作の結果（{{state}}）",
+      "opResults_other": "操作の結果（{{count}} 件）",
+      "opState": {
+        "op": {
+          "allowed": "操作した"
+        },
+        "send": {
+          "allowed": "送信した"
+        },
+        "resend": {
+          "allowed": "再送した"
+        },
+        "schedule": {
+          "allowed": "送信予定にした"
+        },
+        "sendNow": {
+          "allowed": "送信した"
+        },
+        "shell": {
+          "allowed": "実行した"
+        },
+        "switchBackend": {
+          "allowed": "切り替えた"
+        },
+        "turnSettings": {
+          "allowed": "変更した"
+        },
+        "mcp": {
+          "allowed": "変更した"
+        },
+        "mcpDelete": {
+          "allowed": "削除した"
+        },
+        "hooks": {
+          "allowed": "変更した"
+        },
+        "hookDelete": {
+          "allowed": "削除した"
+        },
+        "context": {
+          "allowed": "変更した"
+        },
+        "endpointDelete": {
+          "allowed": "削除した"
+        },
+        "sessionDelete": {
+          "allowed": "削除した"
+        },
+        "denied": "拒否した",
+        "withdrawn": "取り下げた"
+      },
       "settingResult": "設定の変更の結果（{{state}}）",
       "settingResults_other": "設定の変更の結果（{{count}} 件）",
       "settingState": {

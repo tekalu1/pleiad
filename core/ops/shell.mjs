@@ -52,7 +52,7 @@ export const shellOps = [
     confirm: async (ctx, { sessionId: given, command }) => {
       const id = target(ctx, given);
       const where = await ctx.shell.describe(id);
-      return { key: null, before: { sessionId: id, backend: where.backend, cwd: where.cwd }, rows: [{ path: 'shell.command', before: '""', after: JSON.stringify(command) }],
+      return { key: null, before: { sessionId: id, backend: where.backend, cwd: where.cwd }, rows: [{ path: 'shell.command', after: JSON.stringify(command) }],
         note: t('opsApproval.shellRun', { title: where.title || id, cwd: where.cwd ?? '' }), loosens: true };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['shell', 'run'], positional: ['command'] } },

@@ -156,9 +156,15 @@ function listLine(tag, items) {
 function changeRow(row, withWhere) {
   const box = el("div", "ap-row");
   const name = el("div", `sub ap-key${row.mono ? " mono" : ""}`, row.name);
-  box.append(name);
+  if (row.path !== 'shell.command') box.append(name);
   if (withWhere && row.section) box.append(el("div", "sub", t("chat.settingApproval.where", { section: row.section })));
   const lines = [];
+  if (row.path === 'shell.command' && row.before === null && row.after !== null) {
+    const code = el('code', 'ap-now mono', readJson(row.after).value ?? row.after);
+    const line = el('div', 'sub ap-chg');
+    line.append(code);
+    lines.push(line);
+  }
   if (row.list) {
     if (row.list.added.length) lines.push(listLine(t("chat.settingApproval.added"), row.list.added));
     if (row.list.removed.length) lines.push(listLine(t("chat.settingApproval.removed"), row.list.removed));
@@ -167,7 +173,8 @@ function changeRow(row, withWhere) {
   box.append(...lines);
   const was = row.before ?? t("chat.settingApproval.unset"), now = row.after ?? t("chat.settingApproval.unset");
   box.setAttribute("role", "group");
-  box.setAttribute("aria-label", row.list ? `${row.name}: ${lines.map((l) => l.textContent).join(" / ")}` : `${row.name}: ${was} → ${now}`);
+  box.setAttribute("aria-label", row.path === 'shell.command' && row.before === null ? `${t('chat.opApproval.shell.label')}: ${lines[0].textContent}`
+    : row.list ? `${row.name}: ${lines.map((l) => l.textContent).join(" / ")}` : `${row.name}: ${was} → ${now}`);
   return box;
 }
 
