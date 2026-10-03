@@ -6,6 +6,8 @@ import { listOf, applyChange } from './routine-model.mjs';
 const stores = new WeakMap();
 const RELOAD_WAIT_MS = 250;      // 出来事が続けて来たら 1 回にまとめて読み直す（nextAt は読み直しで新しくなる）
 const TICK_MS = 60_000;          // 「今日 23:00」「明日 9:00」の言い回しが日をまたいで古くならないように
+// 読めなかったときの待ち（ms）。操作が無い版・まだつながっていない間に、出来事のたびに呼び続けないため。使い切ったら最後の長さの間は出来事でも読み直さない
+const BACKOFF_MS = Object.freeze([1000, 2000, 4000, 8000, 16000, 30000]);
 
 export function getRoutineStore(host) {
   let store = stores.get(host);
@@ -13,9 +15,11 @@ export function getRoutineStore(host) {
   return store;
 }
 
-export function createRoutineStore(host) {
+/** @param {{ now?: () => number, backoff?: number[] }} [opts]  テストが時計と待ちを差し替える */
+export function createRoutineStore(host, { now = Date.now, backoff = BACKOFF_MS } = {}) {
   let rows = [];
   let loaded = false, stale = true, loading = null, timer = 0, ticker = 0;
+  let fails = 0, lastTry = 0;
   const listeners = new Set();
   const emit = (reason) => { for (const fn of [...listeners]) fn(rows, reason); };
 
@@ -23,13 +27,18 @@ export function createRoutineStore(host) {
     clearTimeout(timer);
     if (loading) { stale = true; return loading; }
     stale = false;
+    lastTry = now();
     loading = (async () => {
       try {
         rows = listOf(await host.invoke('routines.list', {}));
         loaded = true;
+        fails = 0;
         emit('load');
       } catch {
-        stale = true;   // まだつながっていない・操作が無い。次の出来事で読み直す
+        // まだつながっていない・操作が無い。少し待って読み直す（回数に上限あり）。使い切ったら、待ちが明けてからの出来事で読み直す
+        stale = true;
+        if (fails < backoff.length) timer = setTimeout(refresh, backoff[fails]);
+        fails += 1;
         if (!loaded) { loaded = true; emit('load'); }
       } finally {
         loading = null;
@@ -66,7 +75,7 @@ export function createRoutineStore(host) {
         rows = applyChange(rows, ev);
         emit('event');
         refreshSoon();
-      } else if (stale && !loading && listeners.size) refresh();
+      } else if (stale && !loading && listeners.size && now() - lastTry >= (backoff[Math.min(fails, backoff.length) - 1] ?? 0)) refresh();
     },
   };
   return store;

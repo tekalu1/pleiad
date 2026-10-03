@@ -118,13 +118,19 @@ export default async function (t) {
   const calls = [];
   let fail = true;
   const host = { invoke: async (op, args) => { calls.push(op); if (fail) throw new Error('unknown op'); return { routines: [{ id: 'r_1', name: 'a', botId: 'b_owl', channelId: 'c_1', nextAt: 5 }, { id: 'r_2', name: 'b', botId: 'b_lynx', channelId: 'c_1' }] }; } };
-  const store = createRoutineStore(host);
+  let clock = 1000;
+  const store = createRoutineStore(host, { now: () => clock, backoff: [5, 5] });
   let notified = 0;
   const off = store.subscribe(() => { notified += 1; });
-  await new Promise((r) => setTimeout(r, 20));
+  await new Promise((r) => setTimeout(r, 40));
   t.ok('routines.list が使えない（R1 より前）ときは空のまま、読めた扱い・落ちない', store.list().length === 0 && store.loaded && calls[0] === 'routines.list' && notified === 1);
+  t.ok('読めない間は待ちを置いて決まった回数だけ読み直し、そのあとは呼び続けない', calls.length === 3, `${calls.length} 回`);
   fail = false;
-  store.onEvent({ type: 'channelPost' });   // 読めていなければ、ほかの出来事でも読み直す
+  store.onEvent({ type: 'channelPost' });
+  await new Promise((r) => setTimeout(r, 20));
+  t.ok('待ちの間の出来事では読み直さない（作業中の出来事のたびに呼ばない）', store.list().length === 0 && calls.length === 3);
+  clock += 10;
+  store.onEvent({ type: 'channelPost' });   // 待ちが明けたら、ほかの出来事でも読み直す
   await new Promise((r) => setTimeout(r, 20));
   t.ok('次の出来事で読み直す。チャンネル・bot ごとに引ける', store.list().length === 2 && store.forChannel('c_1').length === 2 && store.forBot('b_owl').length === 1 && store.get('r_2')?.name === 'b');
   store.onEvent({ type: 'routinesChanged', routine: { id: 'r_3', name: 'c', botId: 'b_owl', channelId: 'c_2' } });
