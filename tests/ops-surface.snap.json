@@ -500,7 +500,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "03238523559d"
+      "input": "a55e45280bf7"
     },
     {
       "id": "channels.react",
@@ -644,6 +644,21 @@
       },
       "legacyCommand": null,
       "input": "ea7af0bff606"
+    },
+    {
+      "id": "channels.wakePreview",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "6d11fb613445"
     },
     {
       "id": "compatEndpoints.delete",

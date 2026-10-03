@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { authorKey } from '../channels/types.mjs';
 import { ChannelError, LIMITS } from '../channels/service.mjs';
+import { groupTargets, expandGroups } from '../channels/group-mentions.mjs';
 import { OpError, defineOp } from './registry.mjs';
 import { strongerMode } from '../bots/approval.mjs';
 
@@ -164,6 +165,18 @@ export const channelOps = [
   }),
 
   defineOp({
+    id: 'channels.wakePreview', summary: D('wakePreview', 'summary'), risk: 'read',
+    input: z.object({ channelId: channelId('wakePreview'), threadId: z.string().min(1).nullable().optional().describe(D('wakePreview', 'threadId')), text: z.string().max(LIMITS.text).describe(D('wakePreview', 'text')) }),
+    output: z.object({ required: z.boolean(), botIds: z.array(z.string()) }),
+    surfaces: { ui: true, mcp: 'catalog', cli: false },
+    handler: async (ctx, args) => run(ctx, async () => {
+      const channel = await ctx.channels.get({ channelId: args.channelId });
+      const mentions = await ctx.channels.mentionsOf(args.text, { kind: 'human' });
+      const group = await groupTargets(ctx.channels, channel, args.threadId, mentions);
+      return { required: group.groups, botIds: group.groups ? expandGroups(mentions, group.botIds).filter((id) => !['you', 'here', 'everyone'].includes(id)) : [] };
+    }),
+  }),
+  defineOp({
     id: 'channels.post', summary: D('post', 'summary'), risk: 'write', modeGate: false,
     riskReason: 'Writing a message in a channel is what a human and a bot are for, so it is allowed even from a read-only or plan-mode bot. It only adds a post; an explicit @ may wake another bot, which runs in that bot\'s own approval mode (ADR 0109)',
     input: z.object({
@@ -173,12 +186,24 @@ export const channelOps = [
       attachments: z.array(z.object({ path: z.string().min(1), name: z.string().optional(), mime: z.string().optional() })).max(LIMITS.attachments).optional().describe(D('post', 'attachments')),
       new: z.boolean().optional().describe(D('post', 'new')),
       state: z.enum(['checking']).optional().describe(D('post', 'state')),
+      confirmedWake: z.array(z.string()).optional().describe(D('post', 'confirmedWake')),
     }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'post'], positional: ['channelId', 'text'] } },
-    handler: async (ctx, { state, threadId, attachments, ...args }) => {
+    handler: async (ctx, { state, threadId, attachments, confirmedWake, ...args }) => {
       const author = await authorOf(ctx);
       const files = attachments?.length ? await describeFiles(ctx, attachments) : null;
+      let groupMentions;
+      if (author.kind === 'human') {
+        const channel = await run(ctx, () => ctx.channels.get({ channelId: args.channelId }));
+        const mentions = await ctx.channels.mentionsOf(args.text, author);
+        const group = await groupTargets(ctx.channels, channel, threadId, mentions);
+        if (group.groups) {
+          const targets = expandGroups(mentions, group.botIds).filter((id) => !['you', 'here', 'everyone'].includes(id));
+          if (JSON.stringify(confirmedWake) !== JSON.stringify(targets)) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'wake targets changed; confirm again' }));
+          groupMentions = expandGroups(mentions, group.botIds);
+        }
+      }
       // bot の会話のスレッドの中の会話（スレッド・同じチャンネル）では、threadId を省いたらそのスレッド。流れへの新しい投稿は threadId: null と new: true を明示したときだけ
       // （落とした threadId が新しいスレッドを作って、元のスレッドの［止める］から外れるのを防ぐ）
       const sb = author.kind === 'bot' ? await boundBot(ctx) : null;
@@ -192,7 +217,7 @@ export const channelOps = [
       const held = author.kind === 'human' ? [] : await run(ctx, () => strongTargets(ctx, args.channelId, args.text, author));
       // 要確認の印は、実行を担う bot（ルーティンの実行を含む）だけが付けられる
       const saved = await run(ctx, () => ctx.channels.post({
-        ...args, ...(files ? { attachments: files } : {}), ...(sb?.taint ? { taint: sb.taint } : {}), ...(target !== undefined ? { threadId: target } : {}), ...(state && author.kind === 'bot' ? { state } : {}),
+        ...args, ...(files ? { attachments: files } : {}), ...(groupMentions ? { mentions: groupMentions } : {}), ...(sb?.taint ? { taint: sb.taint } : {}), ...(target !== undefined ? { threadId: target } : {}), ...(state && author.kind === 'bot' ? { state } : {}),
         ...(author.kind === 'human' ? {} : { hold: held }), ...(origin ? { origin } : {}),
         ...(author.kind === 'bot' ? { bySession: ctx.actor.sessionId } : {}),
       }, author));

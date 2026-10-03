@@ -124,6 +124,9 @@
 .ch-hint[hidden]{display:none}
 .ch-hint button{background:transparent;padding:1px 8px;border-radius:var(--r-pill);color:var(--ink-blue);font-size:var(--fs-xs);cursor:pointer}
 .ch-hint button:hover{background:var(--surface-2)}
+.ch-wake-confirm{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 8px 8px;padding:8px 10px;font-size:var(--fs-s)}
+.ch-wake-confirm[hidden]{display:none}
+.ch-wake-count{flex:1;min-width:140px;font-weight:600}
 
 /* ---- @ の候補（web/style.css の .clist と同じ面。slash-skills の #skillList と同じ位置） */
 .mention-list{position:absolute;left:16px;bottom:calc(100% - 2px);z-index:20;min-width:260px;max-width:calc(100% - 32px);max-height:240px;overflow-y:auto;list-style:none;margin:0;padding:6px;

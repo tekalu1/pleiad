@@ -27,8 +27,8 @@ export class BotStoreError extends Error {
 /** 名前の比較キー（NFKC・大小を区別しない。@ の解析と同じ規則）。名前はチャンネルを通して一意 */
 export const nameKey = (name) => String(name ?? '').normalize('NFKC').trim().toLowerCase();
 
-/** `@あなた` / `@you` は人への呼びかけなので、bot の名前にはできない */
-export const RESERVED_NAMES = Object.freeze(['you', 'あなた']);   // i18n-ignore: @あなた は @ の解析が受ける語（名前の予約。表示しない）
+/** 呼びかけと集団宛ての語は bot の名前にできない */
+export const RESERVED_NAMES = Object.freeze(['you', 'あなた', 'here', 'everyone']);   // i18n-ignore: @ の解析が受ける語（名前の予約。表示しない）
 export const NAME_MAX = 32;
 // 空白・@・タグの記号・文の区切りは、@ の解析（名前の後ろは空白・句読点・行末）と食い違うので名前に入れない
 const NAME_RX = /^[^\s@<>"'`.,;:!?、。，．！？：；()（）[\]{}「」『』]+$/u;
@@ -44,7 +44,7 @@ export function nameProblem(name) {
   if (name !== name.trim()) return 'name: must not start or end with a space';
   if ([...name].length > NAME_MAX) return `name: at most ${NAME_MAX} characters`;
   if (!NAME_RX.test(name)) return 'name: must not contain spaces, @, quotes, brackets or sentence punctuation';
-  if (RESERVED_NAMES.includes(nameKey(name))) return 'name: reserved (you)';
+  if (RESERVED_NAMES.includes(nameKey(name))) return 'name: reserved';
   return null;
 }
 export const iconProblem = (icon) => (oneEmoji(icon) ? null : 'icon: a single emoji');

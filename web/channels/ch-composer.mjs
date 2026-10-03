@@ -33,16 +33,27 @@ const SAVE_WAIT_MS = 400;
  * @param {() => object[]} o.candidates @ の候補（mention-complete.mjs の形）
  * @param {() => { id: string, name: string, icon: string }|null} [o.suggest] 誰も @ していないときに勧める bot（無ければ提案を出さない）
  * @param {(backend: string) => string} [o.backendLabel]
- * @param {(post: { text: string, attachments: { path: string, name: string, mime: string }[] }) => Promise<void>} o.onSend 投稿する。失敗したら投げる（字と添付は残る）
+ * @param {(text: string) => Promise<{required: boolean, botIds: string[]}>} [o.wakePreview] 集団宛てを投稿前に数える
+ * @param {(post: { text: string, attachments: { path: string, name: string, mime: string }[], confirmedWake?: string[] }) => Promise<void>} o.onSend 投稿する。失敗したら投げる（字と添付は残る）
  * @returns {{ el: HTMLFormElement, input: HTMLElement, focus(): void, setPlaceholder(text: string): void, setDisabled(on: boolean, reason?: string): void, refresh(): void, clear(): void,
  *   setDraftKey(key: string|null): void, saveDraft(): void, bindDropZone(zone: HTMLElement): void }}
  */
-export function createChComposer({ id, host, bucket = () => null, candidates, suggest = () => null, backendLabel, onSend, idPrefix = id }) {
+export function createChComposer({ id, host, bucket = () => null, candidates, suggest = () => null, backendLabel, wakePreview, onSend, idPrefix = id }) {
   const form = el('form', 'ch-composer');
   form.id = id;
   form.noValidate = true;
   const hint = el('div', 'ch-hint');
   hint.hidden = true;
+  const wakeCard = el('div', 'ch-wake-confirm card');
+  wakeCard.hidden = true;
+  wakeCard.setAttribute('role', 'group');
+  wakeCard.setAttribute('aria-label', t('channels:feed.wakeConfirm.label'));
+  const wakeText = el('span', 'ch-wake-count');
+  const wakeCancel = el('button', 'btn', t('channels:feed.wakeConfirm.cancel'));
+  wakeCancel.type = 'button';
+  const wakeButton = el('button', 'btn btn-primary', t('channels:feed.wakeConfirm.wake'));
+  wakeButton.type = 'button';
+  wakeCard.append(wakeText, wakeCancel, wakeButton);
   const list = el('ul', 'mention-list');
   list.id = `${id}Mentions`;
   list.setAttribute('role', 'listbox');
@@ -64,7 +75,9 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
   send.setAttribute('aria-label', t('channels:feed.composer.send'));
   send.append(sendIcon());
 
-  let busy = false, disabled = false, noteTimer = null, draftKey = null, saveTimer = null;
+  let busy = false, disabled = false, noteTimer = null, draftKey = null, saveTimer = null, pendingWake = null;
+  const dismissWake = () => { pendingWake = null; wakeCard.hidden = true; };
+  wakeCancel.onclick = dismissWake;
 
   const say = (text, sticky = false) => {
     clearTimeout(noteTimer);
@@ -91,11 +104,11 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
 
   const attach = createChAttachments({
     host, bucket, owner: () => draftKey ?? '', accepts: () => !disabled, say, adopt,
-    onChange: () => { saveDraft(); paintHint(); },
+    onChange: () => { dismissWake(); saveDraft(); paintHint(); },
   });
   row.append(attach.button, note, send);
   box.append(attach.strip, input, row);
-  form.append(hint, list, box, attach.fileInput);
+  form.append(hint, wakeCard, list, box, attach.fileInput);
 
   const editor = createMarkdownEditor(input, { resolve: () => null, ...attach.editorOptions });
   attach.bind(editor, input);
@@ -129,29 +142,55 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
     hint.hidden = false;
   }
 
+  async function sendBody(body, confirmedWake) {
+    busy = true;
+    send.disabled = true;
+    wakeButton.disabled = true;
+    say('');
+    try {
+      await onSend({ ...body, ...(confirmedWake ? { confirmedWake } : {}) });
+      input.value = '';
+      attach.clear();
+      dismissWake();
+      saveDraft();
+      paintHint();
+    } catch (err) {
+      dismissWake();
+      say(t('channels:feed.composer.failed', { error: err?.message ?? String(err) }), true);
+    } finally {
+      busy = false;
+      send.disabled = disabled;
+      wakeButton.disabled = false;
+    }
+  }
+
   async function submit() {
-    if (busy || disabled) return;
+    if (busy || disabled || pendingWake) return;
     // 送っている途中・失敗の添付があるうちは送らない（欠けた添付を前提に bot が動き出さないように）。札が理由と外す・再試行を持つ
     const body = attach.compose(input.value);
     if (!body.text.trim() && !body.attachments.length) return;
     const block = attach.blockReason();
     if (block) { say(block); attach.flash(); return; }
-    busy = true;
-    send.disabled = true;
-    say('');
-    try {
-      await onSend(body);
-      input.value = '';
-      attach.clear();
-      saveDraft();
-      paintHint();
-    } catch (err) {
-      say(t('channels:feed.composer.failed', { error: err?.message ?? String(err) }), true);
-    } finally {
-      busy = false;
-      send.disabled = disabled;
+    if (wakePreview && /[@＠](?:here|everyone)(?![\p{L}\p{N}_-])/iu.test(body.text)) {
+      const owner = draftKey;
+      busy = true;
+      send.disabled = true;
+      try {
+        const preview = await wakePreview(body.text);
+        if (owner !== draftKey || JSON.stringify(attach.compose(input.value)) !== JSON.stringify(body)) return;
+        if (preview.required) {
+          pendingWake = { body, botIds: preview.botIds };
+          wakeText.textContent = t('channels:feed.wakeConfirm.count', { count: preview.botIds.length });
+          wakeCard.hidden = false;
+          wakeButton.focus();
+          return;
+        }
+      } catch (err) { say(t('channels:feed.composer.failed', { error: err?.message ?? String(err) }), true); return; }
+      finally { busy = false; send.disabled = disabled; }
     }
+    await sendBody(body);
   }
+  wakeButton.onclick = () => { if (pendingWake && !busy && !disabled) sendBody(pendingWake.body, pendingWake.botIds); };
 
   form.addEventListener('submit', (e) => { e.preventDefault(); submit(); });
   input.addEventListener('keydown', (e) => {
@@ -159,7 +198,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
     if (mention.keydown(e)) return;
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); }
   });
-  input.addEventListener('input', () => { if (note.textContent && !busy) say(''); paintHint(); saveDraftSoon(); });
+  input.addEventListener('input', () => { dismissWake(); if (note.textContent && !busy) say(''); paintHint(); saveDraftSoon(); });
   input.addEventListener('blur', saveDraft);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveDraft(); });
   addEventListener('pagehide', saveDraft);
@@ -178,6 +217,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
     focus: () => input.focus({ preventScroll: true }),
     setPlaceholder(text) { input.placeholder = text; },
     setDisabled(on, reason = '') {
+      dismissWake();
       disabled = on;
       input.disabled = on;
       send.disabled = on || busy;
@@ -189,7 +229,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
     refresh() { paintHint(); fit(); },
     /** 入力欄の下の一行（失敗など）。sticky でなければ数秒で消える */
     say,
-    clear() { input.value = ''; attach.clear(); say(''); saveDraft(); paintHint(); },
+    clear() { dismissWake(); input.value = ''; attach.clear(); say(''); saveDraft(); paintHint(); },
     mention,
     /**
      * この入力欄の書きかけの持ち主（流れ = チャンネル・スレッド = スレッド）。変わったら、今の書きかけを元の持ち主へ残し、
@@ -197,6 +237,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
      */
     setDraftKey(key) {
       if (key === draftKey) return;
+      dismissWake();
       saveDraft();
       draftKey = key;
       const d = key ? draftStore().get(key) : null;

@@ -88,7 +88,15 @@
     },
     "mention": {
       "head": "bot とメンバー",
-      "label": "@ の候補"
+      "label": "@ の候補",
+      "here": "このスレッドで話した bot",
+      "everyone": "チャンネルの bot 全員"
+    },
+    "wakeConfirm": {
+      "label": "bot を起こす確認",
+      "count": "{{count}}体を起こします",
+      "cancel": "やめる",
+      "wake": "起こす"
     },
     "hint": {
       "nobody": "誰も呼ばれていないので、bot は反応しません",

@@ -350,7 +350,8 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
       } else {
         // 自分への @ は、書いた会話のスレッドの中では数えない（呼び合いの輪にならない）。別のスレッドへ書いた自分への @ は、そのスレッドの自分の会話を起こす（別の会話なので）
         const selfElsewhere = ownBot && extra.bySession ? await writtenElsewhere(extra.bySession, ownBot, channel.id, post.threadId ?? post.id) : false;
-        const mentioned = (post.mentions ?? []).filter((m) => m !== 'you' && (m !== ownBot || selfElsewhere));
+        const groupRequested = kind === 'human' && (post.mentions ?? []).some((m) => m === 'here' || m === 'everyone');
+        const mentioned = (post.mentions ?? []).filter((m) => !['you', 'here', 'everyone'].includes(m) && (m !== ownBot || selfElsewhere));
         if (post.threadId === null) {
           if (!mentioned.length) return;
           threadId = post.id;                                  // チャンネルの流れへの投稿で @ されたら、その投稿を根にスレッドを作る
@@ -359,7 +360,7 @@ export function createDispatcher({ channels, bots, memory, host, emit = () => {}
         } else {
           if (await threadStopped(channel.id, post.threadId)) return;
           if (mentioned.length) targets = mentioned;
-          else if (kind === 'human') {
+          else if (kind === 'human' && !groupRequested) {
             // @ の無い人の投稿は、そのスレッドで最後に話した bot へ（作業中なら途中送信、そうでなければ新しいターン）。bot・AI の @ の無い投稿は誰も起こさない
             const botId = await conversingBot(channel.id, post.threadId, post.id);
             if (!botId) return;

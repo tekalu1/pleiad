@@ -88,6 +88,7 @@ export function createThread(host) {
     bucket: () => S.channelId,
     candidates: () => candidates(),
     suggest: () => suggestion(),
+    wakePreview: (text) => host.invoke('channels.wakePreview', { channelId: S.channelId, threadId: S.threadId, text }),
     backendLabel: (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id,
     onSend: (draft) => send(draft),
   });
@@ -147,6 +148,8 @@ export function createThread(host) {
   function candidates() {
     const live = new Set(liveBots().map((b) => b.id));
     return [
+      { id: 'here', name: 'here', icon: '@', hint: t('channels:feed.mention.here') },
+      { id: 'everyone', name: 'everyone', icon: '@', hint: t('channels:feed.mention.everyone') },
       ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon || '🤖', backend: b.backend ?? null,
         // i18n-dynamic: channels:feed.botState.
         hint: live.has(b.id) ? t(`channels:feed.botState.${S.posts.findLast((p) => p.turn?.botId === b.id && LIVE.has(p.state))?.state ?? 'working'}`) : '' })),
@@ -428,8 +431,8 @@ export function createThread(host) {
   }
 
   // ---------------------------------------------------------------- 操作
-  async function send({ text, attachments }) {
-    const made = await host.invoke('channels.post', { channelId: S.channelId, threadId: S.threadId, text, ...(attachments?.length ? { attachments } : {}) });
+  async function send({ text, attachments, confirmedWake }) {
+    const made = await host.invoke('channels.post', { channelId: S.channelId, threadId: S.threadId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}) });
     if (made?.id && !S.index.has(made.id) && made.threadId === S.threadId) { addPost(made); afterPosts(); }
     toBottom();
   }

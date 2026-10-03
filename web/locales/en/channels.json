@@ -90,7 +90,15 @@
     },
     "mention": {
       "head": "Bots and members",
-      "label": "@ suggestions"
+      "label": "@ suggestions",
+      "here": "Bots who spoke in this thread",
+      "everyone": "All bots in this channel"
+    },
+    "wakeConfirm": {
+      "label": "Confirm waking bots",
+      "count": "Wake {{count}} bots?",
+      "cancel": "Cancel",
+      "wake": "Wake"
     },
     "hint": {
       "nobody": "Nobody is mentioned, so no bot will respond",
