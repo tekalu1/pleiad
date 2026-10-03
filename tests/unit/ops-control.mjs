@@ -380,7 +380,7 @@ export default async function (t) {
       const required = o.input.required ?? [];
       const inputs = o.id === 'settings.get' || o.id === 'settings.schema'
         ? (await api(cli, 'POST', '/api/ops/settings.list', {})).body.result.settings.map((s) => ({ key: s.key }))
-        : ['sessions.get', 'sessions.read', 'sessions.listMessages'].includes(o.id) ? [{ sessionId: ask.sessionId }] : ['delegation.status', 'delegation.taskStatus', 'delegation.taskWait'].includes(o.id) ? [{ taskId: 'none' }] : o.id === 'sessions.search' ? [{ query: 'control' }, { query: MARKER }]
+        : ['sessions.get', 'sessions.read', 'sessions.listMessages'].includes(o.id) ? [{ sessionId: ask.sessionId }] : ['delegation.status', 'delegation.taskStatus', 'delegation.taskWait', 'delegation.instructions'].includes(o.id) ? [{ taskId: 'none' }] : o.id === 'sessions.search' ? [{ query: 'control' }, { query: MARKER }]
         : o.id === 'hooks.readPly' ? [{ id: 'none' }] : o.id === 'hooks.read' ? [{ agent: 'claude', scope: 'project', base: scratch, loc: { event: 'PreToolUse', group: 0, handler: 0 } }]
         : o.id === 'mcp.nativeList' ? [{ format: 'claude', scope: 'user', cwd: home }] : o.id === 'mcp.nativeRead' ? [{ format: 'claude', scope: 'user', cwd: home, name: 'leak' }, { format: 'claude', scope: 'user', cwd: home, name: 'web' }]
         : o.id === 'mcp.read' ? [{ name: 'x' }] : o.id === 'hooks.scan' ? [{}, { cwd: home }] : o.id === 'hooks.session' ? [{ sessionId: ask.sessionId, cwd: home, backend: 'claude' }]
